@@ -53,6 +53,24 @@ skill/SKILL.md              /nomorevibe 스킬 단일 소스 — /skill.md 로 �
 DB 접근은 `lib/domain/products/repository.ts` 한 곳으로만 한다.
 새 진입점(크롤러 등)은 라우트를 거치지 않고 유스케이스를 직접 호출한다.
 
+## 백그라운드 작업
+
+큐 서버를 두지 않는다. 작업당 행 하나에 커서를 남기고, 매 틱이 그 지점부터 이어받는다.
+
+**한 틱은 유한하다.** HTTP 요청 안에서 돌기 때문에 무한정 이어갈 수 없고, GitHub 수집기처럼
+rate limit에 걸리는 작업은 애초에 한 번에 끝낼 수도 없다. 작업은 시간 예산 안에서 할 수 있는
+만큼만 하고 커서를 저장한 뒤 물러난다.
+
+```bash
+npm run job heartbeat                    # 로컬에서 한 틱
+
+curl -X POST $SITE/api/cron/heartbeat \  # 스케줄러가 주기적으로 호출
+  -H "Authorization: Bearer $CRON_SECRET"
+```
+
+새 작업은 `lib/jobs/registry.ts`에 이름과 핸들러를 추가하면 두 진입점 모두에서 쓸 수 있다.
+동시 실행은 잠금으로 막히므로 스케줄이 겹쳐 호출해도 안전하다.
+
 ## 도메인 검증
 
 등록은 누구나 할 수 있지만(마찰 0), **검증 전에는 공개 목록에 뜨지 않는다**.
