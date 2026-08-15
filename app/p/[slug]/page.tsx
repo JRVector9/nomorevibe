@@ -4,6 +4,8 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { findBySlug } from "@/lib/domain/products/repository";
 import { ProductIcon } from "@/components/ProductIcon";
+import { StatusBadge, BuilderBadge } from "@/components/TrustBadges";
+import { isUnclaimed, builderClaimOf } from "@/lib/domain/products/view";
 
 export const dynamic = "force-dynamic";
 
@@ -33,6 +35,7 @@ export default async function ProductPage({ params }: Props) {
   if (!product) notFound();
 
   const displayUrl = product.url.replace(/^https?:\/\//, "");
+  const unclaimed = isUnclaimed(product);
 
   return (
     <main className="mx-auto max-w-[1180px] px-6 pb-20">
@@ -51,15 +54,7 @@ export default async function ProductPage({ params }: Props) {
             <div className="min-w-0">
               <h1 className="flex flex-wrap items-center gap-3 text-[26px] font-extrabold tracking-tight">
                 {product.name}
-                {product.status === "verified" ? (
-                  <span className="rounded-full border border-up/40 bg-up/10 px-2.5 py-0.5 text-[11px] font-bold text-up">
-                    ✓ 도메인 검증됨
-                  </span>
-                ) : (
-                  <span className="rounded-full border border-line bg-bg-soft px-2.5 py-0.5 text-[11px] font-bold text-fg-3">
-                    미검증
-                  </span>
-                )}
+                <StatusBadge status={product.status} unclaimed={unclaimed} size="md" />
               </h1>
               <div className="mt-1 text-[14.5px] text-fg-2">{product.tagline}</div>
               <a
@@ -102,7 +97,10 @@ export default async function ProductPage({ params }: Props) {
         <div>
           <div className="rounded-[14px] border border-line bg-bg-card p-[22px]">
             <h2 className="text-[15px] font-bold">
-              Product Info <span className="ml-1 text-[11px] font-medium text-fg-3">from /nomorevibe</span>
+              Product Info{" "}
+              <span className="ml-1 text-[11px] font-medium text-fg-3">
+                {unclaimed ? "공개 저장소에서 수집" : "from /nomorevibe"}
+              </span>
             </h2>
             <dl className="mt-3">
               {product.makerName && (
@@ -115,7 +113,7 @@ export default async function ProductPage({ params }: Props) {
               {product.builder && (
                 <InfoRow
                   k="만든 AI"
-                  v={<span className="text-[#b8b0ff]">● {product.builder} <span className="text-[11px] font-normal text-fg-3">메이커 신고</span></span>}
+                  v={<BuilderBadge builder={product.builder} claim={builderClaimOf(product)} />}
                 />
               )}
               {(product.stack ?? []).length > 0 && (
@@ -154,6 +152,20 @@ export default async function ProductPage({ params }: Props) {
               )}
             </dl>
           </div>
+
+          {unclaimed && (
+            <div className="mt-5 rounded-[14px] border border-accent bg-accent-soft p-[22px]">
+              <h2 className="text-[15px] font-bold">이 제품의 주인이신가요?</h2>
+              <p className="mt-3 text-[12.5px] leading-[1.7] text-fg-2">
+                공개 저장소에서 찾아 저희가 대신 올린 제품입니다. 여기 적힌 정보는 저희가 추정한
+                것이라 사실과 다를 수 있습니다.
+              </p>
+              <p className="mt-3 text-[12.5px] leading-[1.7] text-fg-2">
+                프로젝트 폴더에서 <code className="font-mono text-accent">/nomorevibe</code> 를
+                실행하면 소유권을 확인하고 직접 수정하실 수 있습니다. 원치 않으시면 내려드립니다.
+              </p>
+            </div>
+          )}
 
           {product.status === "unverified" && (
             <div className="mt-5 rounded-[14px] border border-line bg-bg-card p-[22px]">
