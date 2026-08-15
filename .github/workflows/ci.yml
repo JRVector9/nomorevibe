@@ -1,0 +1,41 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: nomorevibe
+          POSTGRES_PASSWORD: nomorevibe
+          POSTGRES_DB: nomorevibe_test
+        ports: ["55435:5432"]
+        options: >-
+          --health-cmd "pg_isready -U nomorevibe"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - run: npm ci
+      - run: npx tsc --noEmit
+      - run: npm run lint
+      - run: npm test
+      - run: npm run test:integration
+      - run: npm run build
+        env:
+          # 빌드 중 페이지가 DB를 건드리지 않지만, 설정 누락으로 실패하지 않게 지정
+          DATABASE_URL: postgres://nomorevibe:nomorevibe@localhost:55435/nomorevibe_test
