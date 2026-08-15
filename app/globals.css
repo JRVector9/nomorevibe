@@ -1,26 +1,43 @@
 @import "tailwindcss";
 
+/* 목업(v2)의 다크 테마 토큰 */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --bg: #0d1117;
+  --bg-soft: #131926;
+  --bg-card: #161d2e;
+  --bg-hover: #1c2438;
+  --border: #232c42;
+  --text: #f0f3fa;
+  --text-2: #98a2b8;
+  --text-3: #5c667e;
+  --up: #16c784;
+  --down: #ea3943;
+  --accent: #7c6bff;
+  --accent-soft: rgba(124, 107, 255, 0.12);
+  --star: #f6b73c;
 }
 
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+  --color-bg: var(--bg);
+  --color-bg-soft: var(--bg-soft);
+  --color-bg-card: var(--bg-card);
+  --color-bg-hover: var(--bg-hover);
+  --color-line: var(--border);
+  --color-fg: var(--text);
+  --color-fg-2: var(--text-2);
+  --color-fg-3: var(--text-3);
+  --color-up: var(--up);
+  --color-down: var(--down);
+  --color-accent: var(--accent);
+  --color-accent-soft: var(--accent-soft);
+  --font-sans: var(--font-inter), -apple-system, sans-serif;
+  --font-mono: var(--font-jetbrains), monospace;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  color-scheme: dark; /* 스크롤바·폼 위젯도 다크로 */
+  font-size: 14px;
+  -webkit-font-smoothing: antialiased;
 }
