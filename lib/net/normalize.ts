@@ -1,6 +1,23 @@
 import net from "node:net";
 
 /**
+ * 호스트명 라벨 규칙 — 영숫자로 시작·끝나고 내부에만 하이픈이 올 수 있다.
+ * 밑줄은 규격상 호스트명에 쓸 수 없지만 실제로 동작하는 사이트가 있어 허용한다.
+ * 여기서 지나치게 엄격하면 멀쩡한 제품을 거부하게 되고, 어차피 해석되지 않는
+ * 호스트는 뒤따르는 DNS 조회에서 걸러진다.
+ */
+const HOST_LABEL = /^[a-z0-9_](?:[a-z0-9_-]*[a-z0-9_])?$/;
+
+/** IP 리터럴이거나 형식이 올바른 DNS 이름인지 */
+export function isValidHostname(host: string): boolean {
+  if (host.length === 0 || host.length > 253) return false;
+  if (net.isIP(host) !== 0) return true;
+  // IPv6는 URL에서 대괄호로 감싸인 형태로 나온다
+  if (host.startsWith("[") && host.endsWith("]")) return net.isIP(host.slice(1, -1)) !== 0;
+  return host.split(".").every((label) => label.length <= 63 && HOST_LABEL.test(label));
+}
+
+/**
  * URL 정규화 — 중복 등록 방지의 기준값을 만든다.
  * 소문자 호스트 + www. 제거 + 후행 슬래시 제거 + https 강제 + 쿼리/해시 제거.
  *
@@ -26,7 +43,11 @@ export function normalizeUrl(input: string, allowPrivate = false): string | null
   if (!u.hostname) return null;
 
   let host = u.hostname.toLowerCase();
+  // 루트 도메인 표기의 후행 점을 제거한다.
+  // 안 하면 example.com. 과 example.com 이 같은 사이트인데 별개 제품으로 등록된다.
+  if (host.endsWith(".") && host.length > 1) host = host.slice(0, -1);
   if (host.startsWith("www.")) host = host.slice(4);
+  if (!isValidHostname(host)) return null;
 
   let path = u.pathname.replace(/\/+$/, "");
   if (path === "/") path = "";
