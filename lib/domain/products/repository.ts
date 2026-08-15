@@ -1,4 +1,4 @@
-import { desc, eq, inArray, like, or } from "drizzle-orm";
+import { eq, inArray, like, or, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { products, ogImages, type Product, type NewProduct, type ProductStatus } from "@/lib/db/schema";
 import { slugifyName } from "@/lib/net/normalize";
@@ -25,8 +25,20 @@ export type ListOptions = {
   limit: number;
 };
 
+/**
+ * 등재 시각 — 검증된 제품은 검증 시점, 우리가 대신 올린 제품은 등록 시점.
+ * verified_at만으로 정렬하면 seeded(null)가 목록 맨 위를 차지한다.
+ */
+const listedAt = sql`coalesce(${products.verifiedAt}, ${products.createdAt})`;
+
 const SORTS = {
-  recent: desc(products.verifiedAt),
+  /**
+   * 검증된 제품을 먼저, 그 안에서 최신순.
+   *
+   * 수집기가 붙으면 미클레임 제품이 수천 개가 된다. 날짜만으로 섞으면
+   * 실제로 확인된 소수의 제품이 그 아래 묻힌다.
+   */
+  recent: [sql`(${products.status} = 'verified') desc`, sql`${listedAt} desc`],
 } as const;
 
 /** 정렬 파라미터 검증용 (쿼리스트링 → ProductSort) */
@@ -35,7 +47,7 @@ export const SORT_KEYS = Object.keys(SORTS) as ProductSort[];
 export async function listProducts({ statuses, sort = "recent", limit }: ListOptions): Promise<Product[]> {
   return db.query.products.findMany({
     where: inArray(products.status, statuses),
-    orderBy: SORTS[sort],
+    orderBy: [...SORTS[sort]],
     limit,
   });
 }

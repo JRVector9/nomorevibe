@@ -1,3 +1,4 @@
+import { sql } from "drizzle-orm";
 import {
   pgTable,
   serial,
@@ -17,8 +18,21 @@ const bytea = customType<{ data: Buffer }>({
   },
 });
 
-// 제품 상태: 미검증(상세만 노출, noindex) → 검증(공개 목록) / 차단(어드민)
-export type ProductStatus = "unverified" | "verified" | "banned";
+/**
+ * 제품 상태.
+ *
+ * - unverified: 메이커가 등록했고 검증 진행 중. 주인이 있는 일시적 상태.
+ *               상세만 보이고 목록에는 안 뜬다.
+ * - seeded:     우리가 공개 데이터를 보고 대신 올림. 주인이 아직 없다.
+ *               스스로 검증될 수 없으므로 지속될 수 있는 상태다.
+ *               목록에는 뜨되 미클레임 배지가 붙고 랭킹에서는 빠진다.
+ * - verified:   도메인 소유권을 우리가 직접 확인함.
+ * - banned:     어드민 차단. 행은 남겨 같은 URL의 재등록까지 막는다.
+ */
+export type ProductStatus = "unverified" | "seeded" | "verified" | "banned";
+
+/** 어떤 경로로 들어왔는지 — 클레임 후에도 남는다 */
+export type ProductSource = "skill" | "crawler";
 
 export const products = pgTable("products", {
   id: serial("id").primaryKey(),
@@ -39,6 +53,12 @@ export const products = pgTable("products", {
     .$type<ProductStatus>()
     .notNull()
     .default("unverified"),
+  source: varchar("source", { length: 20 })
+    .$type<ProductSource>()
+    .notNull()
+    .default("skill"),
+  // 우리가 대신 올린 제품을 메이커가 가져간 시각. null이면 아직 주인이 없다.
+  claimedAt: timestamp("claimed_at"),
   verifyToken: varchar("verify_token", { length: 80 }).notNull(),
   verifyMethod: varchar("verify_method", { length: 10 }), // 'file' | 'meta'
   verifiedAt: timestamp("verified_at"),
@@ -46,8 +66,16 @@ export const products = pgTable("products", {
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 }, (table) => [
-  // 홈 목록 쿼리(WHERE status='verified' ORDER BY verified_at DESC) 전용
-  index("products_status_verified_at_idx").on(table.status, table.verifiedAt.desc()),
+  /**
+   * 홈 목록 정렬용.
+   *
+   * seeded는 verified_at이 null이라 그것만으로 정렬하면 (Postgres에서 DESC의 NULL이
+   * 앞에 오므로) 미클레임 제품이 목록 맨 위를 차지한다. 등재 시각으로 정렬해야 한다.
+   */
+  index("products_status_listed_at_idx").on(
+    table.status,
+    sql`coalesce(${table.verifiedAt}, ${table.createdAt}) desc`,
+  ),
 ]);
 
 // OG 이미지 사본 — 로컬 디스크는 재배포/다중 인스턴스에서 유실되므로 DB에 저장
