@@ -2,6 +2,7 @@ import Link from "next/link";
 import { getPublicList, type ProductListItem } from "@/lib/domain/products/view";
 import { logger } from "@/lib/observability/logger";
 import { ProductIcon } from "@/components/ProductIcon";
+import { StatusBadge, BuilderBadge } from "@/components/TrustBadges";
 
 export const dynamic = "force-dynamic";
 
@@ -25,9 +26,11 @@ export default async function HomePage() {
     <main className="mx-auto max-w-[1280px] px-6 pb-20">
       <section className="pb-2 pt-9">
         <h1 className="text-[26px] font-extrabold tracking-tight">AI로 만든 제품들</h1>
-        <p className="mt-1.5 text-fg-2">
-          여기 있는 모든 제품은 AI로 만들어 배포된 실제 서비스입니다. 도메인 소유권이 검증된 제품만
-          보여줍니다.
+        <p className="mt-1.5 max-w-[68ch] text-fg-2">
+          AI로 만들어 배포된 실제 서비스들입니다. 도메인 소유권을 우리가 직접 확인한 제품에는{" "}
+          <span className="font-semibold text-up">✓ 검증됨</span>이 붙고, 우리가 찾아서 올렸지만 아직
+          주인이 나타나지 않은 제품은 <span className="font-semibold text-fg-2">미클레임</span>으로
+          표시합니다.
         </p>
       </section>
 
@@ -55,19 +58,14 @@ export default async function HomePage() {
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2">
                   <span className="truncate text-[14.5px] font-bold">{p.name}</span>
-                  <span className="text-[11px] font-semibold text-up">✓ 검증됨</span>
+                  <StatusBadge status={p.status} unclaimed={p.unclaimed} />
                 </div>
                 <div className="mt-0.5 truncate text-xs text-fg-3">{p.tagline}</div>
                 <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
                   <span className="rounded-full border border-line bg-bg-soft px-2 py-0.5 text-[10.5px] font-semibold text-fg-2">
                     {p.category}
                   </span>
-                  {p.builder && (
-                    <span className="rounded-full border border-accent/35 bg-accent-soft px-2 py-0.5 text-[10.5px] font-semibold text-[#b8b0ff]">
-                      ● {p.builder}
-                      <span className="ml-1 font-normal text-fg-3">메이커 신고</span>
-                    </span>
-                  )}
+                  {p.builder && <BuilderBadge builder={p.builder} claim={p.builderClaim} />}
                   {p.stack.slice(0, 4).map((s) => (
                     <span
                       key={s}
