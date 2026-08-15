@@ -8,8 +8,9 @@ describe("redact — 비밀값이 로그에 원문으로 남지 않는다", () =
       edit_token: "nmv_edit_deadbeef",
       verifyToken: "nmv_verify_cafe",
       authorization: "Bearer secret",
-      password: "hunter2",
-      api_key: "sk-live-1234",
+      password: "가짜비밀번호",
+      // 진짜 키처럼 생긴 문자열을 두면 공개 레포에서 스캐너 오탐을 부른다
+      api_key: "가짜API키",
     }) as Record<string, unknown>;
 
     expect(out.slug).toBe("simplehwp");
@@ -17,7 +18,7 @@ describe("redact — 비밀값이 로그에 원문으로 남지 않는다", () =
       expect(out[key], key).toBe("[redacted]");
     }
     expect(JSON.stringify(out)).not.toContain("deadbeef");
-    expect(JSON.stringify(out)).not.toContain("hunter2");
+    expect(JSON.stringify(out)).not.toContain("가짜비밀번호");
   });
 
   it("중첩 객체 안의 비밀값도 가린다", () => {
