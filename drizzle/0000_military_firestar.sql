@@ -1,0 +1,23 @@
+CREATE TABLE "products" (
+	"id" serial PRIMARY KEY NOT NULL,
+	"slug" varchar(80) NOT NULL,
+	"url" text NOT NULL,
+	"name" varchar(120) NOT NULL,
+	"tagline" varchar(200) NOT NULL,
+	"description" text NOT NULL,
+	"category" varchar(40) NOT NULL,
+	"builder" varchar(60),
+	"stack" jsonb DEFAULT '[]'::jsonb NOT NULL,
+	"og_image" text,
+	"maker_name" varchar(120),
+	"repo_url" text,
+	"status" varchar(20) DEFAULT 'unverified' NOT NULL,
+	"verify_token" varchar(80) NOT NULL,
+	"verify_method" varchar(10),
+	"verified_at" timestamp,
+	"edit_token_hash" varchar(64) NOT NULL,
+	"created_at" timestamp DEFAULT now() NOT NULL,
+	"updated_at" timestamp DEFAULT now() NOT NULL,
+	CONSTRAINT "products_slug_unique" UNIQUE("slug"),
+	CONSTRAINT "products_url_unique" UNIQUE("url")
+);
