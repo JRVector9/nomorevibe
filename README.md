@@ -25,9 +25,20 @@ npm run dev
 |---|---|
 | `npm run dev` | 개발 서버 |
 | `npm test` | 단위·회귀 테스트 (DB 불필요) |
+| `npm run test:integration` | 통합 테스트 (테스트 DB 필요 — 아래 참조) |
 | `npm run lint` | ESLint |
 | `npm run build` | 프로덕션 빌드 (standalone) |
 | `npx drizzle-kit generate` / `migrate` | 마이그레이션 생성 / 적용 |
+
+통합 테스트는 **개발 DB가 아닌 전용 DB**를 쓴다. 테이블을 비우므로 개발 DB를 가리키면
+작업 중인 데이터가 날아간다.
+
+```bash
+docker run -d --name nomorevibe-test-db \
+  -e POSTGRES_USER=nomorevibe -e POSTGRES_PASSWORD=nomorevibe -e POSTGRES_DB=nomorevibe_test \
+  -p 55435:5432 postgres:17
+npm run test:integration
+```
 
 ## 구조
 
