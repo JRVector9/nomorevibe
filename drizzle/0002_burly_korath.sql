@@ -1,0 +1,1 @@
+CREATE INDEX "products_status_verified_at_idx" ON "products" USING btree ("status","verified_at" DESC NULLS LAST);
