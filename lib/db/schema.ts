@@ -7,6 +7,7 @@ import {
   jsonb,
   customType,
   index,
+  integer,
 } from "drizzle-orm/pg-core";
 
 // drizzle pg-core에 내장 bytea 타입이 없어 customType으로 정의
@@ -56,6 +57,27 @@ export const ogImages = pgTable("og_images", {
   data: bytea("data").notNull(),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
+
+/**
+ * 백그라운드 작업 상태.
+ *
+ * 큐 서버를 두지 않는다. 이 규모에서는 작업당 행 하나로 충분하고,
+ * 커서만 남아 있으면 어디서 끊겼든 다음 틱이 이어받는다.
+ */
+export const jobs = pgTable("jobs", {
+  name: varchar("name", { length: 60 }).primaryKey(),
+  // 작업이 스스로 정의하는 재개 지점 (수집기: 검색 페이지, 롤업: 처리 완료 시각 등)
+  cursor: jsonb("cursor"),
+  // 동시 실행 방지. 프로세스가 죽어 잠금이 남으면 lockedAt 기준으로 회수한다
+  lockedAt: timestamp("locked_at"),
+  lastRunAt: timestamp("last_run_at"),
+  lastSuccessAt: timestamp("last_success_at"),
+  lastError: text("last_error"),
+  runs: integer("runs").notNull().default(0),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+export type Job = typeof jobs.$inferSelect;
 
 export type Product = typeof products.$inferSelect;
 export type NewProduct = typeof products.$inferInsert;
