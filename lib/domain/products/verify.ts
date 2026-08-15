@@ -1,6 +1,7 @@
 import { extractVerifyMeta } from "@/lib/net/normalize";
 import { assertPublicUrl } from "@/lib/net/ssrf";
 import { fetchPage } from "@/lib/net/fetch";
+import { logger } from "@/lib/observability/logger";
 import { type Result, ok, fail } from "./errors";
 import * as repo from "./repository";
 import { VERIFY_FILE_PATH, VERIFY_META_NAME, verifyExpectation } from "./verify-contract";
@@ -50,9 +51,12 @@ export async function verifyProduct(slug: string): Promise<Result<VerifyOutput>>
   }
 
   if (!method) {
+    // 재배포를 안 했는지, 경로가 틀렸는지 구분하려면 파일 응답 코드가 필요하다
+    logger.info("verify.failed", { slug, origin, fileStatus: filePage?.status ?? null });
     return fail({ kind: "verification_failed", expected: verifyExpectation(product.verifyToken) });
   }
 
   await repo.update(product.id, { status: "verified", verifyMethod: method, verifiedAt: new Date() });
+  logger.info("verify.succeeded", { slug, method });
   return ok({ slug, status: "verified", method });
 }

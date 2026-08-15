@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { getPublicList, type ProductListItem } from "@/lib/domain/products/view";
+import { logger } from "@/lib/observability/logger";
 import { ProductIcon } from "@/components/ProductIcon";
 
 export const dynamic = "force-dynamic";
@@ -14,7 +15,9 @@ export default async function HomePage() {
   let dbDown = false;
   try {
     list = await getPublicList(HOME_LIST_LIMIT);
-  } catch {
+  } catch (error) {
+    // 랜딩이 조용히 빈 화면이 되지 않도록, 폴백으로 떨어진 이유를 남긴다
+    logger.error("home.list_failed", { error });
     dbDown = true;
   }
 
