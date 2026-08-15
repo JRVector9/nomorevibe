@@ -3,10 +3,11 @@ import { registerSchema, formatIssues } from "@/lib/domain/products/schema";
 import { registerProduct } from "@/lib/domain/products/register";
 import { verifyInstructions } from "@/lib/domain/products/verify-contract";
 import { errorResponse, tooManyRequests, badJson } from "@/lib/http/respond";
+import { withRoute } from "@/lib/http/handler";
 import { rateLimit, clientIp } from "@/lib/rate-limit";
 import { siteOrigin } from "@/lib/site";
 
-export async function POST(req: Request) {
+export const POST = withRoute("products.register", async (req: Request) => {
   if (!rateLimit(`register:${clientIp(req)}`, 10, 60 * 60 * 1000)) return tooManyRequests();
 
   let body: unknown;
@@ -37,4 +38,4 @@ export async function POST(req: Request) {
     },
     { status: 201 },
   );
-}
+});

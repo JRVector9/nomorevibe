@@ -3,11 +3,12 @@ import { updateSchema, formatIssues } from "@/lib/domain/products/schema";
 import { updateProduct, deleteProduct } from "@/lib/domain/products/manage";
 import { findBySlug } from "@/lib/domain/products/repository";
 import { errorResponse, tooManyRequests, badJson } from "@/lib/http/respond";
+import { withRoute } from "@/lib/http/handler";
 import { rateLimit, clientIp } from "@/lib/rate-limit";
 
 type Params = { params: Promise<{ slug: string }> };
 
-export async function GET(_req: Request, { params }: Params) {
+export const GET = withRoute("products.get", async (_req: Request, { params }: Params) => {
   const { slug } = await params;
   const product = await findBySlug(slug);
   if (!product || product.status === "banned") {
@@ -18,9 +19,9 @@ export async function GET(_req: Request, { params }: Params) {
   void editTokenHash;
   void verifyToken;
   return NextResponse.json(publicFields);
-}
+});
 
-export async function PATCH(req: Request, { params }: Params) {
+export const PATCH = withRoute("products.update", async (req: Request, { params }: Params) => {
   const { slug } = await params;
   if (!rateLimit(`edit:${clientIp(req)}`, 30, 60 * 60 * 1000)) return tooManyRequests();
 
@@ -39,11 +40,11 @@ export async function PATCH(req: Request, { params }: Params) {
   const result = await updateProduct(slug, { editToken: req.headers.get("x-edit-token") }, parsed.data);
   if (!result.ok) return errorResponse(result.error);
   return NextResponse.json({ slug, updated: true });
-}
+});
 
-export async function DELETE(req: Request, { params }: Params) {
+export const DELETE = withRoute("products.delete", async (req: Request, { params }: Params) => {
   const { slug } = await params;
   const result = await deleteProduct(slug, { editToken: req.headers.get("x-edit-token") });
   if (!result.ok) return errorResponse(result.error);
   return NextResponse.json({ slug, deleted: true });
-}
+});
