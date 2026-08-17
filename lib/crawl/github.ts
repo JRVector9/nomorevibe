@@ -60,3 +60,38 @@ async function request<T>(path: string): Promise<GitHubResult<T>> {
 export async function getRepo(repo: string): Promise<GitHubResult<Record<string, unknown>>> {
   return request<Record<string, unknown>>(`/repos/${repo}`);
 }
+
+/** 검색 한 페이지의 최대 건수 */
+export const SEARCH_PER_PAGE = 100;
+
+/**
+ * 검색이 돌려주는 최대 건수(1000건 = 10페이지).
+ * 그 뒤 페이지는 422로 거절되므로 신호 하나를 여기까지만 본다.
+ */
+export const MAX_SEARCH_PAGES = 10;
+
+export type CommitSearchResult = { items: { repository: { full_name: string } }[] };
+
+/**
+ * 커밋 검색.
+ *
+ * 정렬은 표본 분포를 크게 바꾼다 — 실측으로 같은 100건에서 고유 레포가 relevance 63개,
+ * recent 2개였다. recent는 방금 활발히 커밋한 소수 레포에 몰린다.
+ */
+export async function searchCommits(params: {
+  query: string;
+  page: number;
+  sort: "relevance" | "recent";
+}): Promise<GitHubResult<CommitSearchResult>> {
+  const search = new URLSearchParams({
+    q: params.query,
+    per_page: String(SEARCH_PER_PAGE),
+    page: String(params.page),
+  });
+  // relevance는 정렬 파라미터를 붙이지 않는 것이 기본값이다
+  if (params.sort === "recent") {
+    search.set("sort", "committer-date");
+    search.set("order", "desc");
+  }
+  return request<CommitSearchResult>(`/search/commits?${search}`);
+}
