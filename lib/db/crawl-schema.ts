@@ -119,6 +119,25 @@ export const crawlCandidates = pgTable(
   (t) => [index("crawl_candidates_state_idx").on(t.state, t.updatedAt.desc())],
 );
 
+// ─────────────────────────── 설정 ───────────────────────────
+
+/**
+ * 크롤 기준. 한 행만 존재한다 (id = 1).
+ *
+ * 값을 jsonb 한 컬럼에 담는 이유: 필터를 추가할 때 마이그레이션이 필요 없다.
+ * 형태는 zod(lib/crawl/settings-schema.ts)가 지키므로 타입 안전성은 잃지 않는다.
+ *
+ * 누가 언제 바꿨는지 남긴다. "왜 갑자기 수집량이 줄었지"에 답할 수 있어야 한다.
+ */
+export const crawlSettings = pgTable("crawl_settings", {
+  id: integer("id").primaryKey().default(1),
+  values: jsonb("values").$type<Record<string, unknown>>().notNull(),
+  updatedBy: varchar("updated_by", { length: 120 }),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+export type CrawlSettingsRow = typeof crawlSettings.$inferSelect;
+
 export type FrontierEntry = typeof crawlFrontier.$inferSelect;
 export type CrawlDocument = typeof crawlDocuments.$inferSelect;
 export type CrawlCandidate = typeof crawlCandidates.$inferSelect;

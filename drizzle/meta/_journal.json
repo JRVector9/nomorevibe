@@ -43,6 +43,13 @@
       "when": 1786965140167,
       "tag": "0005_friendly_hammerhead",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1786969169636,
+      "tag": "0006_stale_rattler",
+      "breakpoints": true
     }
   ]
 }
