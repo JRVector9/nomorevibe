@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { judge, matchesPattern, isBlockedHost, factsFromRepoMeta, type RepoFacts } from "@/lib/crawl/rules";
 import { DEFAULT_CRAWL_SETTINGS, crawlSettingsSchema } from "@/lib/crawl/settings-schema";
+import { resolveCanonical } from "@/lib/domain/products/register";
 
 const NOW = new Date("2026-08-17T00:00:00Z");
 const settings = DEFAULT_CRAWL_SETTINGS;
@@ -198,5 +199,27 @@ describe("설정 스키마", () => {
   it("한 틱 페이지 수 상한을 강제한다 — rate limit 보호", () => {
     const bad = { ...settings, discover: { ...settings.discover, pagesPerTick: 100 } };
     expect(crawlSettingsSchema.safeParse(bad).success).toBe(false);
+  });
+});
+
+describe("resolveCanonical — 리다이렉트를 어디까지 따라가나", () => {
+  it("도메인이 바뀌면 목적지를 쓴다", () => {
+    // hibicalc.vercel.app → hibicalc.com. 안 따라가면 같은 제품이 두 번 등록된다
+    expect(resolveCanonical("https://shim.test", "https://real.test/")).toBe("https://real.test");
+  });
+
+  it("같은 도메인 안의 경로 이동은 입력 주소를 지킨다", () => {
+    // ko.wikipedia.org → ko.wikipedia.org/wiki/... 를 저장하면 안 된다
+    expect(resolveCanonical("https://site.test", "https://site.test/welcome")).toBe("https://site.test");
+    expect(resolveCanonical("https://site.test", "https://site.test/a/b?c=1")).toBe("https://site.test");
+  });
+
+  it("finalUrl이 없거나 깨지면 입력 주소를 쓴다", () => {
+    expect(resolveCanonical("https://site.test", undefined)).toBe("https://site.test");
+    expect(resolveCanonical("https://site.test", "ht!tp://깨짐")).toBe("https://site.test");
+  });
+
+  it("www 차이는 같은 도메인으로 본다 (정규화가 먼저 걷어낸다)", () => {
+    expect(resolveCanonical("https://site.test", "https://www.site.test/x")).toBe("https://site.test");
   });
 });
