@@ -58,6 +58,27 @@ export async function registerProduct(input: RegisterInput): Promise<Result<Regi
     });
   }
 
+  /**
+   * 리다이렉트 목적지를 기준값으로 삼는다.
+   *
+   * 배포 주소가 다른 도메인으로 넘기는 경우가 흔하다 (hibicalc.vercel.app → hibicalc.com).
+   * 입력 URL을 그대로 저장하면 같은 사이트가 두 주소로 등록돼 중복 방지가 뚫린다.
+   * 실제로 리허설에서 그렇게 두 번 등록됐다.
+   */
+  // finalUrl이 없으면 입력 주소를 쓴다 — 정규화에 실패했다고 등록을 막을 이유는 없다
+  const canonical = (page.finalUrl ? normalizeUrl(page.finalUrl, allowPrivate()) : null) ?? url;
+  if (canonical !== url) {
+    const alias = await repo.findByUrl(canonical);
+    if (alias) {
+      if (alias.status === "banned") {
+        return fail({ kind: "forbidden", message: "등록할 수 없는 URL입니다" });
+      }
+      logger.info("register.redirect_duplicate", { input: url, canonical, existing: alias.slug });
+      return fail({ kind: "duplicate", slug: alias.slug, status: alias.status });
+    }
+    logger.info("register.canonicalized", { input: url, canonical });
+  }
+
   const editToken = generateEditToken();
   const verifyToken = generateVerifyToken();
 
@@ -68,7 +89,7 @@ export async function registerProduct(input: RegisterInput): Promise<Result<Regi
     try {
       await repo.insert({
         slug,
-        url,
+        url: canonical,
         name: input.name,
         tagline: input.tagline,
         description: input.description,
@@ -85,7 +106,7 @@ export async function registerProduct(input: RegisterInput): Promise<Result<Regi
     } catch (e) {
       const constraint = repo.uniqueViolation(e);
       if (constraint === "products_url_unique") {
-        const winner = await repo.findByUrl(url);
+        const winner = await repo.findByUrl(canonical);
         return fail({ kind: "duplicate", slug: winner?.slug, status: winner?.status });
       }
       if (constraint !== null && attempt < MAX_SLUG_ATTEMPTS) {
@@ -100,13 +121,13 @@ export async function registerProduct(input: RegisterInput): Promise<Result<Regi
 
   // OG 이미지는 등록 성공 후 부가 작업 — 실패해도 등록 자체는 유효하다.
   // 다만 조용히 실패하면 목록에 아이콘이 빠진 이유를 알 수 없으므로 남긴다.
-  const ogUrl = extractOgImage(page.html, url);
+  const ogUrl = extractOgImage(page.html, canonical);
   if (ogUrl) {
     const path = await cacheOgImage(ogUrl, slug);
     if (path) await repo.setOgImage(slug, path);
     else logger.info("register.og_skipped", { slug, ogUrl });
   }
 
-  logger.info("register.succeeded", { slug, url, builder: input.builder ?? null });
+  logger.info("register.succeeded", { slug, url: canonical, builder: input.builder ?? null });
   return ok({ slug, editToken, verifyToken });
 }
