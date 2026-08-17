@@ -67,6 +67,25 @@ describe("judge — 거르기", () => {
     expect(judge(goodRepo({ ownerType: "Organization" }), livePage, settings, NOW).reason).toBe("large_oss");
   });
 
+  it("배포 호스트도 패턴에 건다 — 레포명만 보면 GitHub Pages가 통과한다", () => {
+    // 실데이터: terzidest/my_portfolio → terzidest.github.io/my_portfolio 가 빠져나갔다.
+    // *.github.io 패턴은 레포명이 아니라 호스트에 걸려야 의미가 있다.
+    const v = judge(
+      goodRepo({ repo: "someone/coolapp" }),
+      { productUrl: "https://someone.github.io/coolapp", status: 200 },
+      settings,
+      NOW,
+    );
+    expect(v.reason).toBe("personal_site");
+  });
+
+  it("밑줄 변형도 같은 것으로 본다", () => {
+    // my-portfolio는 걸리는데 my_portfolio는 통과하면 안 된다
+    for (const repo of ["someone/my_portfolio", "someone/dev_blog"]) {
+      expect(judge(goodRepo({ repo }), livePage, settings, NOW).reason, repo).toBe("personal_site");
+    }
+  });
+
   it("개인 홈페이지 패턴을 거른다", () => {
     for (const repo of [
       "someone/someone.github.io",
@@ -142,6 +161,9 @@ describe("보조 함수", () => {
     expect(matchesPattern("dotfiles", "dotfiles")).toBe(true);
     expect(matchesPattern("awesome-lists", "awesome-*")).toBe(true);
     expect(matchesPattern("my-awesome-app", "awesome-*")).toBe(false);
+    // 하이픈과 밑줄은 같게 본다
+    expect(matchesPattern("my_portfolio", "*-portfolio")).toBe(true);
+    expect(matchesPattern("dev_blog", "*-blog")).toBe(true);
   });
 
   it("차단 호스트는 서브도메인도 잡고 www는 무시한다", () => {

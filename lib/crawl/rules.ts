@@ -32,10 +32,18 @@ export type Verdict = {
   signals: Record<string, unknown>;
 };
 
-/** `*` 와일드카드만 지원하는 단순 패턴 매칭 */
+/**
+ * `*` 와일드카드만 지원하는 단순 패턴 매칭.
+ *
+ * 하이픈과 밑줄을 같은 것으로 본다. 실데이터에서 `my-portfolio`는 걸리는데
+ * `my_portfolio`는 통과했다 — 같은 것을 뜻하는 이름이 표기 하나로 갈리면 안 된다.
+ */
 export function matchesPattern(name: string, pattern: string): boolean {
-  const escaped = pattern.replace(/[.+?^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*");
-  return new RegExp(`^${escaped}$`, "i").test(name);
+  const normalize = (s: string) => s.replace(/_/g, "-");
+  const escaped = normalize(pattern)
+    .replace(/[.+?^${}()|[\]\\]/g, "\\$&")
+    .replace(/\*/g, ".*");
+  return new RegExp(`^${escaped}$`, "i").test(normalize(name));
 }
 
 /** URL의 호스트가 차단 목록에 있는지 (서브도메인 포함) */
@@ -88,7 +96,21 @@ export function judge(
   if (repo.isFork && rules.excludeForks) return reject("fork");
   if (repo.archived) return reject("personal_site"); // 보관된 레포는 살아있는 제품이 아니다
 
-  if (rules.excludedRepoPatterns.some((p) => matchesPattern(repo.repo.split("/")[1] ?? "", p))) {
+  /**
+   * 레포 이름과 배포 호스트를 모두 패턴에 건다.
+   *
+   * 이름만 보면 GitHub Pages 프로젝트 페이지가 통과한다. 실데이터에서
+   * terzidest/my_portfolio → terzidest.github.io/my_portfolio 가 그렇게 빠져나갔다.
+   * `*.github.io` 패턴은 레포명이 아니라 호스트에 걸려야 의미가 있다.
+   */
+  const repoName = repo.repo.split("/")[1] ?? "";
+  let productHost = "";
+  try {
+    productHost = new URL(page.productUrl).hostname.replace(/^www\./, "");
+  } catch {
+    /* 위에서 이미 걸러졌다 */
+  }
+  if (rules.excludedRepoPatterns.some((p) => matchesPattern(repoName, p) || matchesPattern(productHost, p))) {
     return reject("personal_site");
   }
 
