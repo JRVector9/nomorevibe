@@ -37,13 +37,18 @@ export type Verdict = {
  *
  * 하이픈과 밑줄을 같은 것으로 본다. 실데이터에서 `my-portfolio`는 걸리는데
  * `my_portfolio`는 통과했다 — 같은 것을 뜻하는 이름이 표기 하나로 갈리면 안 된다.
+ *
+ * 같은 이유로 와일드카드에 붙은 구분자는 와일드카드가 비면 함께 사라진다.
+ * `*-blog`는 `my-blog`뿐 아니라 `blog`도 잡아야 한다 — 실데이터에서 이름이 그냥
+ * `blog`인 개인 블로그가 `*-blog`를 통과했다.
  */
 export function matchesPattern(name: string, pattern: string): boolean {
   const normalize = (s: string) => s.replace(/_/g, "-");
-  const escaped = normalize(pattern)
+  // 한 번에 치환한다. 두 번 훑으면 앞 단계가 넣은 `.*`의 `*`를 다음 단계가 또 건드린다
+  const body = normalize(pattern)
     .replace(/[.+?^${}()|[\]\\]/g, "\\$&")
-    .replace(/\*/g, ".*");
-  return new RegExp(`^${escaped}$`, "i").test(normalize(name));
+    .replace(/\*-|-\*|\*/g, (m) => (m === "*-" ? "(?:.*-)?" : m === "-*" ? "(?:-.*)?" : ".*"));
+  return new RegExp(`^${body}$`, "i").test(normalize(name));
 }
 
 /** URL의 호스트가 차단 목록에 있는지 (서브도메인 포함) */
@@ -97,20 +102,32 @@ export function judge(
   if (repo.archived) return reject("personal_site"); // 보관된 레포는 살아있는 제품이 아니다
 
   /**
-   * 레포 이름과 배포 호스트를 모두 패턴에 건다.
+   * 레포 이름과 배포 호스트를 패턴에 건다. 단 호스트는 배포물이 사이트 루트일 때만 본다.
    *
-   * 이름만 보면 GitHub Pages 프로젝트 페이지가 통과한다. 실데이터에서
-   * terzidest/my_portfolio → terzidest.github.io/my_portfolio 가 그렇게 빠져나갔다.
-   * `*.github.io` 패턴은 레포명이 아니라 호스트에 걸려야 의미가 있다.
+   * 호스트로 판단한다는 것은 그 사이트 전체가 그런 성격이라는 뜻이다.
+   * `owner.github.io`(루트)는 개인 홈페이지지만, `owner.github.io/repo`는 그 위에 얹힌
+   * 배포물 하나일 뿐이라 호스트만 보고 개인 사이트라 할 수 없다. 실데이터에서 호스트를
+   * 무조건 걸었더니 GitHub Pages에 올린 진짜 제품(f1podigami, hidden-council)이
+   * 함께 거부됐다. 개인 홈페이지는 레포 이름(`owner.github.io`)이나 루트 배포로 잡는다.
+   *
+   * 루트가 아닌 경우는 아래에서 따로 다룬다 — 확실히 거부할 수도, 통과시킬 수도 없다.
    */
   const repoName = repo.repo.split("/")[1] ?? "";
   let productHost = "";
+  let productPath = "";
   try {
-    productHost = new URL(page.productUrl).hostname.replace(/^www\./, "");
+    const u = new URL(page.productUrl);
+    productHost = u.hostname.replace(/^www\./, "");
+    productPath = u.pathname.replace(/\/+$/, "");
   } catch {
     /* 위에서 이미 걸러졌다 */
   }
-  if (rules.excludedRepoPatterns.some((p) => matchesPattern(repoName, p) || matchesPattern(productHost, p))) {
+  const hostIsWholeSite = productPath === "";
+  if (
+    rules.excludedRepoPatterns.some(
+      (p) => matchesPattern(repoName, p) || (hostIsWholeSite && matchesPattern(productHost, p)),
+    )
+  ) {
     return reject("personal_site");
   }
 
@@ -134,6 +151,19 @@ export function judge(
   // 푸시 시각을 모르면 살아있는지 확신할 수 없다
   if (!repo.pushedAt && rules.holdAmbiguous) {
     return { state: "needs_review", reason: "ambiguous", signals };
+  }
+
+  /**
+   * 호스트는 제외 패턴에 걸리는데 루트 배포가 아닌 것 — 규칙으로 가를 수 없다.
+   *
+   * 실데이터에서 `owner.github.io/repo` 14개를 눈으로 보니 웹앱과, CLI·데스크톱 도구의
+   * 소개 페이지가 섞여 있었다. 우리가 모으는 것은 "배포한 서비스"이므로 후자를 자동으로
+   * 통과시키면 안 되고, 전자를 자동으로 버려서도 안 된다. 사람이 가른다.
+   */
+  if (!hostIsWholeSite && rules.excludedRepoPatterns.some((p) => matchesPattern(productHost, p))) {
+    return rules.holdAmbiguous
+      ? { state: "needs_review", reason: "ambiguous", signals }
+      : reject("personal_site");
   }
 
   return { state: "approved", reason: "passed", signals };

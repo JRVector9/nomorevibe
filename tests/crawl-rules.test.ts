@@ -67,16 +67,42 @@ describe("judge — 거르기", () => {
     expect(judge(goodRepo({ ownerType: "Organization" }), livePage, settings, NOW).reason).toBe("large_oss");
   });
 
-  it("배포 호스트도 패턴에 건다 — 레포명만 보면 GitHub Pages가 통과한다", () => {
-    // 실데이터: terzidest/my_portfolio → terzidest.github.io/my_portfolio 가 빠져나갔다.
-    // *.github.io 패턴은 레포명이 아니라 호스트에 걸려야 의미가 있다.
-    const v = judge(
+  it("배포 호스트도 패턴에 걸되 사이트 루트일 때만 본다", () => {
+    // owner.github.io 루트는 개인 홈페이지다
+    const root = judge(
       goodRepo({ repo: "someone/coolapp" }),
-      { productUrl: "https://someone.github.io/coolapp", status: 200 },
+      { productUrl: "https://someone.github.io", status: 200 },
       settings,
       NOW,
     );
-    expect(v.reason).toBe("personal_site");
+    expect(root.reason).toBe("personal_site");
+
+    // 개인 홈페이지 레포는 배포 URL이 어디든 이름으로 잡힌다
+    const byName = judge(
+      goodRepo({ repo: "someone/someone.github.io" }),
+      { productUrl: "https://someone.dev", status: 200 },
+      settings,
+      NOW,
+    );
+    expect(byName.reason).toBe("personal_site");
+  });
+
+  it("이름에 구분자가 없어도 개인 사이트 패턴에 걸린다", () => {
+    // 실데이터: 이름이 그냥 blog / personal-site 인 것들이 *-blog 를 통과했다
+    for (const repo of ["someone/blog", "someone/portfolio", "someone/personal-site"]) {
+      expect(judge(goodRepo({ repo }), livePage, settings, NOW).reason, repo).toBe("personal_site");
+    }
+  });
+
+  it("패키지·모드 등록 페이지는 배포물이 아니다", () => {
+    for (const url of [
+      "https://www.npmjs.com/package/labby-mcp",
+      "https://crates.io/crates/moadim",
+      "https://modrinth.com/project/auto-storage",
+    ]) {
+      const v = judge(goodRepo(), { productUrl: url, status: 200 }, settings, NOW);
+      expect(v.reason, url).toBe("not_a_product");
+    }
   });
 
   it("밑줄 변형도 같은 것으로 본다", () => {
@@ -129,6 +155,17 @@ describe("judge — 보류", () => {
     const relaxed = { ...settings, judge: { ...settings.judge, holdAmbiguous: false } };
     expect(judge(goodRepo({ pushedAt: null }), livePage, relaxed, NOW).state).toBe("approved");
   });
+
+  it("GitHub Pages 프로젝트 페이지는 사람에게 넘긴다", () => {
+    // 웹앱일 수도, CLI·데스크톱 도구의 소개 페이지일 수도 있어 규칙으로 못 가른다
+    const page = { productUrl: "https://someone.github.io/coolapp", status: 200 };
+    const v = judge(goodRepo({ repo: "someone/coolapp" }), page, settings, NOW);
+    expect(v).toMatchObject({ state: "needs_review", reason: "ambiguous" });
+
+    // 보류를 끄면 거부 쪽으로 떨어진다
+    const strict = { ...settings, judge: { ...settings.judge, holdAmbiguous: false } };
+    expect(judge(goodRepo({ repo: "someone/coolapp" }), page, strict, NOW).reason).toBe("personal_site");
+  });
 });
 
 describe("설정이 판정을 바꾼다 — 화면에서 조정하는 값들", () => {
@@ -164,6 +201,17 @@ describe("보조 함수", () => {
     // 하이픈과 밑줄은 같게 본다
     expect(matchesPattern("my_portfolio", "*-portfolio")).toBe(true);
     expect(matchesPattern("dev_blog", "*-blog")).toBe(true);
+  });
+
+  it("와일드카드가 비면 붙은 구분자도 사라진다", () => {
+    expect(matchesPattern("blog", "*-blog")).toBe(true);
+    expect(matchesPattern("portfolio", "*-portfolio")).toBe(true);
+    expect(matchesPattern("awesome", "awesome-*")).toBe(true);
+    // 한 글자만 앞에 와도 걸려야 한다 (치환을 두 번 훑으면 여기서 깨진다)
+    expect(matchesPattern("a-blog", "*-blog")).toBe(true);
+    // 구분자 없이 이어 붙은 것은 다른 이름이다
+    expect(matchesPattern("weblog", "*-blog")).toBe(false);
+    expect(matchesPattern("awesomeness", "awesome-*")).toBe(false);
   });
 
   it("차단 호스트는 서브도메인도 잡고 www는 무시한다", () => {
