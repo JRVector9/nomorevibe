@@ -53,6 +53,23 @@ skill/SKILL.md              /nomorevibe 스킬 단일 소스 — /skill.md 로 �
 DB 접근은 `lib/domain/products/repository.ts` 한 곳으로만 한다.
 새 진입점(크롤러 등)은 라우트를 거치지 않고 유스케이스를 직접 호출한다.
 
+## 로컬 배포
+
+개발 서버와 별개로, 실제 배포되는 형태를 그대로 띄운다. 목적은 **개발 서버에서 검증할 수 없는
+경로를 확인하는 것**이다 — 프로덕션 모드에서만 켜지는 SSRF 가드, 컨테이너 시작 시 마이그레이션,
+스케줄러 진입점.
+
+```bash
+cp .env.example .env          # AUTH_SECRET 등을 채운다 (openssl rand -hex 32)
+docker compose up -d --build  # http://localhost:3200
+docker compose logs -f app
+docker compose down           # 데이터는 볼륨에 남는다
+```
+
+`.env`와 `.env.local`을 분리한 이유가 있다. `.env.local`에는 `ALLOW_PRIVATE_URLS=1`이 있어
+SSRF 가드가 꺼지는데, 배포 형태 검증이 목적인 쪽에 그것을 넣으면 확인할 것이 없어진다.
+DB 포트도 개발용(55434)과 분리해(55437) 어느 쪽에 붙었는지 헷갈리지 않게 한다.
+
 ## 백그라운드 작업
 
 큐 서버를 두지 않는다. 작업당 행 하나에 커서를 남기고, 매 틱이 그 지점부터 이어받는다.
