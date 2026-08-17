@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, lte, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, lte, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import {
   crawlFrontier,
@@ -59,23 +59,47 @@ export async function enqueue(
  */
 export async function dequeue(limit: number, now?: Date): Promise<FrontierEntry[]> {
   const at = nowExpr(now);
-  const rows = await db.execute<FrontierEntry>(sql`
-    UPDATE ${crawlFrontier}
-    SET state = 'fetching',
-        attempts = ${crawlFrontier.attempts} + 1,
-        next_attempt_at = ${at} + interval '10 minutes',
-        updated_at = ${at}
-    WHERE id IN (
-      SELECT id FROM ${crawlFrontier}
-      WHERE (state = 'pending' OR state = 'fetching')
-        AND next_attempt_at <= ${at}
-      ORDER BY priority DESC, next_attempt_at ASC
-      LIMIT ${limit}
-      FOR UPDATE SKIP LOCKED
-    )
-    RETURNING *
-  `);
-  return rows as unknown as FrontierEntry[];
+
+  // 잠금과 갱신을 한 트랜잭션에 둔다. SELECT ... FOR UPDATE의 잠금은 트랜잭션이
+  // 끝날 때 풀리므로, 두 문장을 트랜잭션 밖에서 나눠 쓰면 잠금이 무의미해진다.
+  const rows = await db.transaction(async (tx) => {
+    const locked = await tx
+      .select({ id: crawlFrontier.id })
+      .from(crawlFrontier)
+      .where(
+        and(
+          inArray(crawlFrontier.state, ["pending", "fetching"]),
+          lte(crawlFrontier.nextAttemptAt, at),
+        ),
+      )
+      .orderBy(desc(crawlFrontier.priority), asc(crawlFrontier.nextAttemptAt))
+      .limit(limit)
+      .for("update", { skipLocked: true });
+
+    if (locked.length === 0) return [];
+
+    return tx
+      .update(crawlFrontier)
+      .set({
+        state: "fetching",
+        attempts: sql`${crawlFrontier.attempts} + 1`,
+        nextAttemptAt: sql`${at} + interval '10 minutes'`,
+        updatedAt: sql`${at}`,
+      })
+      .where(
+        inArray(
+          crawlFrontier.id,
+          locked.map((l) => l.id),
+        ),
+      )
+      .returning();
+  });
+
+  // RETURNING은 순서를 보장하지 않는다 — 갱신된 순서로 나올 뿐이다.
+  // 무엇을 꺼낼지는 SQL이 정하고, 어떤 순서로 처리할지는 여기서 확정한다.
+  return rows.sort(
+    (a, b) => b.priority - a.priority || a.nextAttemptAt.getTime() - b.nextAttemptAt.getTime(),
+  );
 }
 
 export async function markFrontier(
@@ -100,16 +124,18 @@ export async function markFailed(repo: string, error: string, now?: Date): Promi
   const backoff = BACKOFF_MINUTES[Math.min(current.attempts - 1, BACKOFF_MINUTES.length - 1)] ?? 5;
   const at = nowExpr(now);
 
-  await db.execute(sql`
-    UPDATE ${crawlFrontier}
-    SET state = ${exhausted ? "failed" : "pending"},
-        next_attempt_at = ${
-          exhausted ? sql`${crawlFrontier.nextAttemptAt}` : sql`${at} + ${`${backoff} minutes`}::interval`
-        },
-        last_error = ${error.slice(0, 2000)},
-        updated_at = ${at}
-    WHERE repo = ${repo}
-  `);
+  await db
+    .update(crawlFrontier)
+    .set({
+      state: exhausted ? "failed" : "pending",
+      // 소진됐으면 다음 시도 시각을 건드리지 않는다 (어차피 다시 꺼내지 않는다)
+      nextAttemptAt: exhausted
+        ? crawlFrontier.nextAttemptAt
+        : sql`${at} + ${`${backoff} minutes`}::interval`,
+      lastError: error.slice(0, 2000),
+      updatedAt: sql`${at}`,
+    })
+    .where(eq(crawlFrontier.repo, repo));
 }
 
 export async function frontierCounts(): Promise<Record<string, number>> {
