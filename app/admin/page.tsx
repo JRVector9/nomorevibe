@@ -1,7 +1,9 @@
 import type { Metadata } from "next";
+import Link from "next/link";
 import { redirect } from "next/navigation";
 import { currentAdmin } from "@/lib/auth/admin";
 import { getSettings, getSettingsMeta } from "@/lib/crawl/settings";
+import { candidateCounts } from "@/lib/crawl/repository";
 import { SettingsForm } from "./SettingsForm";
 
 export const dynamic = "force-dynamic";
@@ -13,7 +15,12 @@ export default async function AdminPage() {
   const admin = await currentAdmin();
   if (!admin) redirect("/admin/login");
 
-  const [settings, meta] = await Promise.all([getSettings(), getSettingsMeta()]);
+  const [settings, meta, counts] = await Promise.all([
+    getSettings(),
+    getSettingsMeta(),
+    candidateCounts(),
+  ]);
+  const waiting = counts.needs_review ?? 0;
 
   return (
     <main className="mx-auto max-w-[900px] px-6 pb-20">
@@ -26,6 +33,9 @@ export default async function AdminPage() {
             <span className="font-semibold text-fg-3">수집 꺼짐</span>
           )}
         </span>
+        <Link href="/admin/review" className="text-[12.5px] font-semibold text-fg-2 hover:text-fg">
+          심사 큐{waiting > 0 && <span className="ml-1 text-accent">{waiting}</span>}
+        </Link>
         <form action="/api/auth/logout" method="post" className="ml-auto">
           <span className="mr-3 text-[12.5px] text-fg-3">{admin.login}</span>
           <button type="submit" className="text-[12.5px] font-semibold text-fg-2 hover:text-fg">

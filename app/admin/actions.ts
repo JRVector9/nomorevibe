@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { currentAdmin } from "@/lib/auth/admin";
 import { saveSettings } from "@/lib/crawl/settings";
+import { decideCandidate, type ReviewDecision } from "@/lib/crawl/review";
 import { logger } from "@/lib/observability/logger";
 
 export type SaveState = { ok?: true; issues?: string[] } | null;
@@ -66,4 +67,34 @@ export async function saveCrawlSettings(_prev: SaveState, form: FormData): Promi
 
   revalidatePath("/admin");
   return { ok: true };
+}
+
+export type ReviewState = { error?: string } | null;
+
+/**
+ * 심사 결정.
+ *
+ * 설정 저장과 같은 이유로 여기서도 자격을 다시 확인한다 — 서버 액션은 URL 없이
+ * 호출될 수 있으므로 middleware가 막아주지 않는다.
+ */
+export async function decideCrawlCandidate(_prev: ReviewState, form: FormData): Promise<ReviewState> {
+  const admin = await currentAdmin();
+  if (!admin) return { error: "권한이 없습니다. 다시 로그인해주세요." };
+
+  const decision = String(form.get("decision") ?? "");
+  if (decision !== "approve" && decision !== "reject") return { error: "알 수 없는 결정입니다" };
+
+  const result = await decideCandidate({
+    repo: String(form.get("repo") ?? ""),
+    decision: decision as ReviewDecision,
+    reason: String(form.get("reason") ?? ""),
+    admin: admin.login,
+  });
+  if (!result.ok) {
+    logger.warn("admin.review_rejected", { login: admin.login, message: result.message });
+    return { error: result.message };
+  }
+
+  revalidatePath("/admin/review");
+  return null;
 }
