@@ -107,5 +107,8 @@ export const jobs = pgTable("jobs", {
 
 export type Job = typeof jobs.$inferSelect;
 
+// 크롤 파이프라인 테이블 — 수집 데이터는 제품 데이터와 섞이지 않도록 파일을 나눈다
+export * from "./crawl-schema";
+
 export type Product = typeof products.$inferSelect;
 export type NewProduct = typeof products.$inferInsert;
