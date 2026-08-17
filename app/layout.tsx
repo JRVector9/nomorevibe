@@ -12,9 +12,17 @@ export const metadata: Metadata = {
     "AI로 만들어 배포한 서비스를 /nomorevibe 한 번으로 등록하세요. 우리가 직접 확인한 것만 보여줍니다.",
 };
 
+/**
+ * html에 suppressHydrationWarning을 두는 이유:
+ * 브라우저 확장이 속성을 주입해(예: HWP 뷰어의 data-hwp-extension) 서버 HTML과
+ * 어긋나면 hydration 경고가 뜬다. 우리가 통제할 수 없는 값이다.
+ *
+ * 이 속성은 해당 요소에만, 한 단계 깊이로만 적용된다. 자식 트리의 실제 불일치는
+ * 계속 잡히므로 진짜 버그를 가리지 않는다.
+ */
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="ko">
+    <html lang="ko" suppressHydrationWarning>
       {/* min-h-screen flex — 짧은 페이지에서도 푸터를 하단에 고정 */}
       <body className={`${inter.variable} ${jetbrains.variable} flex min-h-screen flex-col font-sans`}>
         <header className="sticky top-0 z-50 border-b border-line bg-bg">
