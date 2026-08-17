@@ -88,10 +88,21 @@ export async function readBodyCapped(res: Response, maxBytes: number): Promise<B
   return Buffer.concat(chunks);
 }
 
-/** 대상 페이지를 안전하게 가져온다 (SSRF 가드 + 타임아웃 + 크기 상한) */
-export async function fetchPage(url: string): Promise<{ status: number; html: string } | null> {
+/**
+ * 대상 페이지를 안전하게 가져온다 (SSRF 가드 + 타임아웃 + 크기 상한).
+ *
+ * finalUrl을 함께 돌려준다. 리다이렉트가 있으면 입력 URL과 다르고, 중복 판정의
+ * 기준은 최종 도착지여야 한다 — 그러지 않으면 같은 사이트가 두 주소로 등록된다.
+ */
+export async function fetchPage(
+  url: string,
+): Promise<{ status: number; html: string; finalUrl: string } | null> {
   const fetched = await safeFetch(url);
   if (!fetched) return null;
   const body = await readBodyCapped(fetched.response, MAX_HTML_BYTES);
-  return { status: fetched.response.status, html: body.toString("utf-8") };
+  return {
+    status: fetched.response.status,
+    html: body.toString("utf-8"),
+    finalUrl: fetched.finalUrl,
+  };
 }

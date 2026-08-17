@@ -13,7 +13,11 @@ const { registerProduct } = await import("@/lib/domain/products/register");
 const repo = await import("@/lib/domain/products/repository");
 const { ensureSchema, resetTables } = await import("./setup");
 
-const livePage = (html = "<html><head><title>t</title></head></html>") => ({ status: 200, html });
+const livePage = (html = "<html><head><title>t</title></head></html>", finalUrl = "https://alpha.test") => ({
+  status: 200,
+  html,
+  finalUrl,
+});
 
 const input = (over: Partial<Record<string, unknown>> = {}) => ({
   url: "https://alpha.test",
@@ -29,7 +33,10 @@ beforeEach(async () => {
   await resetTables();
   fetchPage.mockReset();
   safeFetch.mockReset();
-  fetchPage.mockResolvedValue(livePage());
+  // 리다이렉트가 없을 때의 실제 동작: finalUrl은 요청한 주소와 같다
+  fetchPage.mockImplementation((url: unknown) =>
+    Promise.resolve(livePage("<html><head><title>t</title></head></html>", String(url))),
+  );
 });
 
 describe("registerProduct — 신규 등록", () => {
@@ -69,9 +76,56 @@ describe("registerProduct — 신규 등록", () => {
   });
 
   it("4xx를 반환하는 URL도 거부한다", async () => {
-    fetchPage.mockResolvedValue({ status: 404, html: "" });
+    fetchPage.mockResolvedValue({ status: 404, html: "", finalUrl: "https://alpha.test" });
     const result = await registerProduct(input());
     expect(result.ok).toBe(false);
+  });
+});
+
+describe("registerProduct — 리다이렉트 정규화", () => {
+  /**
+   * 배포 주소가 다른 도메인으로 넘기는 경우가 흔하다 (hibicalc.vercel.app → hibicalc.com).
+   * 스킬 리허설에서 실제로 같은 제품이 두 번 등록됐다.
+   */
+  it("리다이렉트 목적지를 저장한다", async () => {
+    fetchPage.mockResolvedValue(livePage("<html></html>", "https://real.test/"));
+    const result = await registerProduct(input({ url: "https://shim.test" }));
+
+    expect(result.ok).toBe(true);
+    // 입력 주소가 아니라 최종 주소가 남는다
+    expect(await repo.findByUrl("https://real.test")).toBeTruthy();
+    expect(await repo.findByUrl("https://shim.test")).toBeUndefined();
+  });
+
+  it("리다이렉트 목적지가 이미 등록됐으면 중복으로 잡는다", async () => {
+    // 먼저 최종 주소로 등록
+    fetchPage.mockResolvedValue(livePage("<html></html>", "https://real.test/"));
+    const first = await registerProduct(input({ url: "https://real.test" }));
+    expect(first.ok).toBe(true);
+
+    // 같은 곳으로 넘기는 다른 주소로 재등록 시도
+    const dup = await registerProduct(input({ url: "https://shim.test" }));
+    expect(dup.ok).toBe(false);
+    if (!dup.ok) expect(dup.error).toMatchObject({ kind: "duplicate", slug: "simplehwp" });
+  });
+
+  it("리다이렉트가 없으면 입력 주소를 그대로 쓴다", async () => {
+    fetchPage.mockResolvedValue(livePage("<html></html>", "https://alpha.test"));
+    const result = await registerProduct(input({ url: "https://alpha.test" }));
+
+    expect(result.ok).toBe(true);
+    expect((await repo.findBySlug("simplehwp"))?.url).toBe("https://alpha.test");
+  });
+
+  it("og:image 상대경로를 최종 주소 기준으로 푼다", async () => {
+    fetchPage.mockResolvedValue(
+      livePage(`<meta property="og:image" content="/cover.png">`, "https://real.test/"),
+    );
+    safeFetch.mockResolvedValue(null); // 캐싱은 실패시켜 등록만 본다
+
+    await registerProduct(input({ url: "https://shim.test" }));
+    // shim.test가 아니라 real.test 기준으로 해석돼야 한다
+    expect(safeFetch).toHaveBeenCalledWith("https://real.test/cover.png");
   });
 });
 
