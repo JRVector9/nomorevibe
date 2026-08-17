@@ -1,4 +1,5 @@
 import type { JobContext, JobOutcome } from "./runner";
+import { seedFrontier } from "@/lib/crawl/jobs/seed";
 import { fetchCrawlDocuments } from "@/lib/crawl/jobs/fetch";
 import { judgeCrawlDocuments } from "@/lib/crawl/jobs/judge";
 
@@ -22,6 +23,9 @@ export const JOBS: Record<string, AnyJob> = {
     ctx.log("heartbeat.tick", { count });
     return { done: false, cursor: { count } };
   },
+
+  /** GitHub 검색으로 프론티어를 채운다 — 파이프라인의 입구 */
+  "crawl-seed": seedFrontier,
 
   /** 프론티어에서 꺼낸 레포의 원본(레포 메타 + 배포 페이지)을 확보한다 */
   "crawl-fetch": fetchCrawlDocuments,

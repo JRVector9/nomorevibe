@@ -90,6 +90,30 @@ curl -X POST $SITE/api/cron/heartbeat \  # 스케줄러가 주기적으로 호�
 새 작업은 `lib/jobs/registry.ts`에 이름과 핸들러를 추가하면 두 진입점 모두에서 쓸 수 있다.
 동시 실행은 잠금으로 막히므로 스케줄이 겹쳐 호출해도 안전하다.
 
+## 수집 파이프라인
+
+검색엔진 크롤러의 뼈대를 따른다 — 프론티어(큐) → 원본 보관 → 판정 → 색인. 단계마다 작업이
+하나씩이고, 각자 자기 큐가 빌 때까지 시간 예산 안에서 조금씩 나아간다.
+
+| 작업 | 하는 일 | 다음 단계에 넘기는 것 |
+|---|---|---|
+| `crawl-seed` | GitHub 검색으로 레포를 발견 | `crawl_frontier`의 pending |
+| `crawl-fetch` | 레포 메타 + 배포 페이지 확보 | `crawl_documents` (원본) |
+| `crawl-judge` | 현재 기준으로 판정 | `crawl_candidates` (approved / rejected / needs_review) |
+
+```bash
+GITHUB_TOKEN=... npm run job crawl-seed      # 로컬에서 한 틱씩
+GITHUB_TOKEN=... npm run job crawl-fetch
+npm run job crawl-judge
+```
+
+**단계를 나눈 이유는 되돌릴 수 있게 하기 위함이다.** 원본을 보관하므로 판정 기준을 바꾸면
+GitHub을 다시 긁지 않고 다시 판정한다(후보 state를 `new`로 되돌리면 `crawl-judge`가 다시
+가져간다). 검색은 분당 30회, 레포 조회는 시간당 5000회로 묶여 있어 한 번에 끝낼 수 없는데,
+단계가 붙어 있으면 한도에 걸릴 때마다 처음부터 다시 해야 한다.
+
+세 작업 모두 크롤 설정의 `enabled`가 꺼져 있으면 아무것도 하지 않는다.
+
 ## 판정 기준 시험
 
 판정 규칙은 표본 40개를 눈대중으로 보고 정한 기본값에서 출발했다. 실제로 돌려 보기 전에는
