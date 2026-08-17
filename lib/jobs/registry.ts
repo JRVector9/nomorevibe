@@ -1,10 +1,11 @@
 import type { JobContext, JobOutcome } from "./runner";
+import { judgeCrawlDocuments } from "@/lib/crawl/jobs/judge";
 
 /**
  * 이름 → 작업 매핑.
  *
  * 진입점(HTTP cron, CLI)이 이 목록만 보고 실행한다.
- * 앞으로 붙을 것: github-seed(수집기), click-rollup(집계), uptime-ping(생존 확인).
+ * 앞으로 붙을 것: click-rollup(집계), uptime-ping(생존 확인).
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- 작업마다 커서 타입이 다르다
 export type AnyJob = (ctx: JobContext<any>) => Promise<JobOutcome<any>>;
@@ -20,6 +21,9 @@ export const JOBS: Record<string, AnyJob> = {
     ctx.log("heartbeat.tick", { count });
     return { done: false, cursor: { count } };
   },
+
+  /** 수집한 원본에 현재 기준을 적용해 후보로 남긴다 */
+  "crawl-judge": judgeCrawlDocuments,
 };
 
 export const JOB_NAMES = Object.keys(JOBS);
