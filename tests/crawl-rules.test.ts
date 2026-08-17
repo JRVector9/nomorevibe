@@ -1,0 +1,202 @@
+import { describe, it, expect } from "vitest";
+import { judge, matchesPattern, isBlockedHost, factsFromRepoMeta, type RepoFacts } from "@/lib/crawl/rules";
+import { DEFAULT_CRAWL_SETTINGS, crawlSettingsSchema } from "@/lib/crawl/settings-schema";
+
+const NOW = new Date("2026-08-17T00:00:00Z");
+const settings = DEFAULT_CRAWL_SETTINGS;
+
+/** 통과하는 기본 제품 — 각 테스트는 여기서 한 가지만 바꾼다 */
+const goodRepo = (over: Partial<RepoFacts> = {}): RepoFacts => ({
+  repo: "someone/my-app",
+  stars: 12,
+  isFork: false,
+  ownerType: "User",
+  pushedAt: new Date("2026-08-10T00:00:00Z"),
+  archived: false,
+  ...over,
+});
+const livePage = { productUrl: "https://my-app.vercel.app", status: 200 };
+
+describe("judge — 통과", () => {
+  it("개인이 최근 배포한 소규모 제품은 통과한다", () => {
+    const v = judge(goodRepo(), livePage, settings, NOW);
+    expect(v).toMatchObject({ state: "approved", reason: "passed" });
+  });
+
+  it("스타가 0개여도 통과한다 — 갓 배포한 제품이 그렇다", () => {
+    expect(judge(goodRepo({ stars: 0 }), livePage, settings, NOW).state).toBe("approved");
+  });
+
+  it("판정 근거를 함께 남긴다", () => {
+    const v = judge(goodRepo({ stars: 7 }), livePage, settings, NOW);
+    expect(v.signals).toMatchObject({ stars: 7, isFork: false, ownerType: "User", pageStatus: 200 });
+    expect(v.signals.pushAgeDays).toBe(7);
+  });
+});
+
+describe("judge — 거르기", () => {
+  it("배포 URL이 없으면 제품이 아니다", () => {
+    const v = judge(goodRepo(), { productUrl: null, status: null }, settings, NOW);
+    expect(v).toMatchObject({ state: "rejected", reason: "no_homepage" });
+  });
+
+  it("homepage가 GitHub·SNS면 배포물이 아니다", () => {
+    for (const url of [
+      "https://github.com/someone/my-app",
+      "https://www.instagram.com/someone",
+      "https://x.com/someone",
+      "https://medium.com/@someone",
+    ]) {
+      const v = judge(goodRepo(), { productUrl: url, status: 200 }, settings, NOW);
+      expect(v.reason, url).toBe("not_a_product");
+    }
+  });
+
+  it("대형 오픈소스를 스타 상한으로 거른다", () => {
+    // windmill-labs/windmill 처럼 AI가 커밋 일부에 참여했을 뿐인 것
+    const v = judge(goodRepo({ stars: 15_000 }), livePage, settings, NOW);
+    expect(v).toMatchObject({ state: "rejected", reason: "large_oss" });
+  });
+
+  it("포크를 거른다", () => {
+    expect(judge(goodRepo({ isFork: true }), livePage, settings, NOW).reason).toBe("fork");
+  });
+
+  it("조직 계정을 거른다 (설정에 따라)", () => {
+    expect(judge(goodRepo({ ownerType: "Organization" }), livePage, settings, NOW).reason).toBe("large_oss");
+  });
+
+  it("개인 홈페이지 패턴을 거른다", () => {
+    for (const repo of [
+      "someone/someone.github.io",
+      "someone/dotfiles",
+      "someone/awesome-ai-tools",
+      "someone/my-portfolio",
+      "someone/dev-blog",
+    ]) {
+      const v = judge(goodRepo({ repo }), livePage, settings, NOW);
+      expect(v.reason, repo).toBe("personal_site");
+    }
+  });
+
+  it("오래 방치된 프로젝트를 거른다", () => {
+    const v = judge(goodRepo({ pushedAt: new Date("2025-01-01T00:00:00Z") }), livePage, settings, NOW);
+    expect(v.reason).toBe("unreachable");
+  });
+
+  it("보관된 레포를 거른다", () => {
+    expect(judge(goodRepo({ archived: true }), livePage, settings, NOW).state).toBe("rejected");
+  });
+
+  it("배포 URL이 죽어 있으면 거른다", () => {
+    const v = judge(goodRepo(), { productUrl: "https://gone.test", status: 404 }, settings, NOW);
+    expect(v).toMatchObject({ state: "rejected", reason: "unreachable" });
+  });
+});
+
+describe("judge — 보류", () => {
+  it("배포 URL을 아직 확인 못 했으면 판단을 미룬다", () => {
+    const v = judge(goodRepo(), { productUrl: "https://my-app.test", status: null }, settings, NOW);
+    expect(v).toMatchObject({ state: "needs_review", reason: "ambiguous" });
+  });
+
+  it("푸시 시각을 모르면 보류한다", () => {
+    const v = judge(goodRepo({ pushedAt: null }), livePage, settings, NOW);
+    expect(v.state).toBe("needs_review");
+  });
+
+  it("보류를 끄면 통과시킨다", () => {
+    const relaxed = { ...settings, judge: { ...settings.judge, holdAmbiguous: false } };
+    expect(judge(goodRepo({ pushedAt: null }), livePage, relaxed, NOW).state).toBe("approved");
+  });
+});
+
+describe("설정이 판정을 바꾼다 — 화면에서 조정하는 값들", () => {
+  it("스타 상한을 올리면 대형 OSS도 통과한다", () => {
+    const loose = { ...settings, judge: { ...settings.judge, maxStars: 100_000 } };
+    expect(judge(goodRepo({ stars: 15_000 }), livePage, loose, NOW).state).toBe("approved");
+  });
+
+  it("조직 제외를 끄면 조직 레포도 통과한다", () => {
+    const loose = { ...settings, judge: { ...settings.judge, excludeOrganizations: false } };
+    expect(judge(goodRepo({ ownerType: "Organization" }), livePage, loose, NOW).state).toBe("approved");
+  });
+
+  it("방치 기준을 늘리면 오래된 것도 통과한다", () => {
+    const loose = { ...settings, judge: { ...settings.judge, maxPushAgeDays: 3650 } };
+    const old = goodRepo({ pushedAt: new Date("2025-01-01T00:00:00Z") });
+    expect(judge(old, livePage, loose, NOW).state).toBe("approved");
+  });
+
+  it("차단 도메인을 비우면 GitHub 링크도 통과한다", () => {
+    const loose = { ...settings, judge: { ...settings.judge, blockedHomepageDomains: [] } };
+    const v = judge(goodRepo(), { productUrl: "https://github.com/a/b", status: 200 }, loose, NOW);
+    expect(v.state).toBe("approved");
+  });
+});
+
+describe("보조 함수", () => {
+  it("와일드카드 패턴", () => {
+    expect(matchesPattern("someone.github.io", "*.github.io")).toBe(true);
+    expect(matchesPattern("dotfiles", "dotfiles")).toBe(true);
+    expect(matchesPattern("awesome-lists", "awesome-*")).toBe(true);
+    expect(matchesPattern("my-awesome-app", "awesome-*")).toBe(false);
+  });
+
+  it("차단 호스트는 서브도메인도 잡고 www는 무시한다", () => {
+    expect(isBlockedHost("https://github.com/a", ["github.com"])).toBe(true);
+    expect(isBlockedHost("https://gist.github.com/a", ["github.com"])).toBe(true);
+    expect(isBlockedHost("https://www.github.com/a", ["github.com"])).toBe(true);
+    expect(isBlockedHost("https://mygithub.com/a", ["github.com"])).toBe(false);
+    expect(isBlockedHost("깨진URL", ["github.com"])).toBe(true);
+  });
+
+  it("레포 메타에서 사실만 추린다", () => {
+    const facts = factsFromRepoMeta("a/b", {
+      stargazers_count: 42,
+      fork: true,
+      archived: false,
+      pushed_at: "2026-08-01T00:00:00Z",
+      owner: { type: "Organization" },
+      기타필드: "무시됨",
+    });
+    expect(facts).toEqual({
+      repo: "a/b",
+      stars: 42,
+      isFork: true,
+      ownerType: "Organization",
+      pushedAt: new Date("2026-08-01T00:00:00Z"),
+      archived: false,
+    });
+  });
+
+  it("메타가 비어도 안전한 기본값을 준다", () => {
+    const facts = factsFromRepoMeta("a/b", {});
+    expect(facts).toMatchObject({ stars: 0, isFork: false, ownerType: "User", pushedAt: null });
+  });
+
+  it("잘못된 날짜를 null로 처리한다", () => {
+    expect(factsFromRepoMeta("a/b", { pushed_at: "날짜아님" }).pushedAt).toBeNull();
+  });
+});
+
+describe("설정 스키마", () => {
+  it("기본값이 스키마를 만족한다", () => {
+    expect(crawlSettingsSchema.safeParse(DEFAULT_CRAWL_SETTINGS).success).toBe(true);
+  });
+
+  it("범위를 벗어난 값을 거부한다", () => {
+    const bad = { ...settings, judge: { ...settings.judge, maxStars: -1 } };
+    expect(crawlSettingsSchema.safeParse(bad).success).toBe(false);
+  });
+
+  it("검색 신호가 하나도 없으면 거부한다", () => {
+    const bad = { ...settings, discover: { ...settings.discover, queries: [] } };
+    expect(crawlSettingsSchema.safeParse(bad).success).toBe(false);
+  });
+
+  it("한 틱 페이지 수 상한을 강제한다 — rate limit 보호", () => {
+    const bad = { ...settings, discover: { ...settings.discover, pagesPerTick: 100 } };
+    expect(crawlSettingsSchema.safeParse(bad).success).toBe(false);
+  });
+});
