@@ -16,6 +16,19 @@ export type RegisterOutput = {
 
 const MAX_SLUG_ATTEMPTS = 4;
 
+/** 도메인이 바뀐 리다이렉트만 따라간다. 같은 도메인 안의 경로 이동은 입력 주소를 지킨다. */
+export function resolveCanonical(inputUrl: string, finalUrl: string | undefined): string {
+  if (!finalUrl) return inputUrl;
+  const normalized = normalizeUrl(finalUrl, allowPrivate());
+  if (!normalized) return inputUrl;
+  try {
+    if (new URL(normalized).host === new URL(inputUrl).host) return inputUrl;
+  } catch {
+    return inputUrl;
+  }
+  return normalized;
+}
+
 /**
  * 제품 등록 유스케이스 — HTTP를 모른다.
  * 라우트 핸들러도, (로드맵의) GitHub 시드 크롤러도 이 함수를 그대로 호출한다.
@@ -59,14 +72,18 @@ export async function registerProduct(input: RegisterInput): Promise<Result<Regi
   }
 
   /**
-   * 리다이렉트 목적지를 기준값으로 삼는다.
+   * 리다이렉트로 도메인이 바뀌면 목적지를 기준값으로 삼는다.
    *
    * 배포 주소가 다른 도메인으로 넘기는 경우가 흔하다 (hibicalc.vercel.app → hibicalc.com).
    * 입력 URL을 그대로 저장하면 같은 사이트가 두 주소로 등록돼 중복 방지가 뚫린다.
-   * 실제로 리허설에서 그렇게 두 번 등록됐다.
+   *
+   * 다만 같은 도메인 안에서의 경로 리다이렉트는 따라가지 않는다. 사이트가 루트에서
+   * 기본 페이지로 넘기는 것은 내부 라우팅일 뿐이고, 사람이 공유하는 주소는 루트다.
+   * (ko.wikipedia.org → ko.wikipedia.org/wiki/위키백과:대문 을 저장하면 안 된다)
+   *
+   * finalUrl이 없으면 입력 주소를 쓴다 — 정규화에 실패했다고 등록을 막을 이유는 없다.
    */
-  // finalUrl이 없으면 입력 주소를 쓴다 — 정규화에 실패했다고 등록을 막을 이유는 없다
-  const canonical = (page.finalUrl ? normalizeUrl(page.finalUrl, allowPrivate()) : null) ?? url;
+  const canonical = resolveCanonical(url, page.finalUrl);
   if (canonical !== url) {
     const alias = await repo.findByUrl(canonical);
     if (alias) {
