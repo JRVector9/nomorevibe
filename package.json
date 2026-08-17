@@ -10,7 +10,9 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:integration": "vitest run --config vitest.integration.config.ts",
-    "job": "tsx --env-file=.env.local scripts/run-job.ts"
+    "job": "tsx --env-file=.env.local scripts/run-job.ts",
+    "crawl:sample": "tsx scripts/crawl-sample.ts",
+    "crawl:rejudge": "tsx scripts/rejudge.ts"
   },
   "dependencies": {
     "drizzle-orm": "^0.45.2",
