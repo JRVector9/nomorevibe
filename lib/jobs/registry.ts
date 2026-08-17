@@ -1,4 +1,5 @@
 import type { JobContext, JobOutcome } from "./runner";
+import { fetchCrawlDocuments } from "@/lib/crawl/jobs/fetch";
 import { judgeCrawlDocuments } from "@/lib/crawl/jobs/judge";
 
 /**
@@ -21,6 +22,9 @@ export const JOBS: Record<string, AnyJob> = {
     ctx.log("heartbeat.tick", { count });
     return { done: false, cursor: { count } };
   },
+
+  /** 프론티어에서 꺼낸 레포의 원본(레포 메타 + 배포 페이지)을 확보한다 */
+  "crawl-fetch": fetchCrawlDocuments,
 
   /** 수집한 원본에 현재 기준을 적용해 후보로 남긴다 */
   "crawl-judge": judgeCrawlDocuments,

@@ -62,7 +62,7 @@ export const crawlDocuments = pgTable("crawl_documents", {
   repoMeta: jsonb("repo_meta").$type<Record<string, unknown>>().notNull(),
   /** 정규화된 배포 URL. 없으면 null (homepage 미설정) */
   productUrl: text("product_url"),
-  /** 배포 URL 응답 코드. null이면 아직 확인 안 함 */
+  /** 배포 URL 응답 코드. null이면 아직 확인 안 함, 0이면 확인했으나 닿지 않음 */
   pageStatus: integer("page_status"),
   /** 배포 페이지에서 뽑은 것 (title, description, ogImage) */
   pageMeta: jsonb("page_meta").$type<Record<string, unknown>>(),

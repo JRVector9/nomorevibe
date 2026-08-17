@@ -97,6 +97,60 @@ export function extractOgImage(html: string, baseUrl: string): string | null {
   }
 }
 
+/** 실체 참조 다섯 개만 되돌린다 — 제목에 &amp;가 그대로 남으면 그 글자가 제품 이름이 된다 */
+function decodeEntities(text: string): string {
+  return text
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/&quot;/gi, '"')
+    .replace(/&#0?39;|&apos;/gi, "'")
+    .replace(/&amp;/gi, "&");
+}
+
+/** 속성 순서가 어느 쪽이든 잡는다 (content가 앞에 오는 페이지가 흔하다) */
+function metaContent(html: string, attribute: "property" | "name", key: string): string | null {
+  const escaped = key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const found =
+    html.match(new RegExp(`<meta[^>]+${attribute}=["']${escaped}["'][^>]+content=["']([^"']*)["']`, "i")) ??
+    html.match(new RegExp(`<meta[^>]+content=["']([^"']*)["'][^>]+${attribute}=["']${escaped}["']`, "i"));
+  if (!found) return null;
+  const value = decodeEntities(found[1]).replace(/\s+/g, " ").trim();
+  return value || null;
+}
+
+/** 배포 페이지에서 뽑은 것 — 수집한 제품의 이름·소개는 여기서 나온다 */
+export type PageMeta = {
+  title: string | null;
+  description: string | null;
+  ogImage: string | null;
+};
+
+/**
+ * 페이지 메타 추출.
+ *
+ * og:* 를 먼저 본다. 공유용으로 사람이 손보는 값이라 <title>보다 제품 이름에 가깝다
+ * ("Home | 내 서비스" 같은 것이 <title>에는 흔하다).
+ * 없으면 없는 대로 null을 남긴다 — 여기서 지어내면 발행 단계에서 무엇이 사실이고
+ * 무엇이 추정인지 가를 수 없게 된다.
+ */
+export function extractPageMeta(html: string, baseUrl: string): PageMeta {
+  const titleTag = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
+  const title =
+    metaContent(html, "property", "og:title") ??
+    (titleTag ? decodeEntities(titleTag[1]).replace(/\s+/g, " ").trim() || null : null);
+
+  return {
+    // 저장 상한을 넘기지 않게 자른다. 이름은 120자, 소개는 200자가 상한이다
+    title: title ? title.slice(0, 300) : null,
+    description:
+      (metaContent(html, "property", "og:description") ?? metaContent(html, "name", "description"))?.slice(
+        0,
+        500,
+      ) ?? null,
+    ogImage: extractOgImage(html, baseUrl),
+  };
+}
+
 /** HTML에서 검증 메타태그 값 추출 */
 export function extractVerifyMeta(html: string, metaName: string): string | null {
   const pattern = metaName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
