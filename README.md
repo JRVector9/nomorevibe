@@ -28,6 +28,8 @@ npm run dev
 | `npm run test:integration` | 통합 테스트 (테스트 DB 필요 — 아래 참조) |
 | `npm run lint` | ESLint |
 | `npm run build` | 프로덕션 빌드 (standalone) |
+| `npm run crawl:sample` | 판정 시험용 표본 수집 (GitHub 토큰 필요 — 아래 참조) |
+| `npm run crawl:rejudge` | 떠 놓은 표본으로 현재 판정 규칙 재판정 |
 | `npx drizzle-kit generate` / `migrate` | 마이그레이션 생성 / 적용 |
 
 통합 테스트는 **개발 DB가 아닌 전용 DB**를 쓴다. 테이블을 비우므로 개발 DB를 가리키면
@@ -87,6 +89,26 @@ curl -X POST $SITE/api/cron/heartbeat \  # 스케줄러가 주기적으로 호�
 
 새 작업은 `lib/jobs/registry.ts`에 이름과 핸들러를 추가하면 두 진입점 모두에서 쓸 수 있다.
 동시 실행은 잠금으로 막히므로 스케줄이 겹쳐 호출해도 안전하다.
+
+## 판정 기준 시험
+
+판정 규칙은 표본 40개를 눈대중으로 보고 정한 기본값에서 출발했다. 실제로 돌려 보기 전에는
+무엇이 새고 무엇이 과하게 걸리는지 알 수 없으므로, GitHub을 다시 긁지 않고 기준만 바꿔 다시
+재는 판을 둔다. DB의 crawl_documents가 하는 일과 같고, 이쪽은 DB 없이 파일로 한다.
+
+```bash
+npm run crawl:sample -- --pages=6                  # 원본을 뜬다 (레포 메타 + 배포 URL 응답 코드)
+npm run crawl:rejudge -- --out=.crawl-samples/before.json
+# lib/crawl/rules.ts 또는 기본 설정을 고친 뒤
+npm run crawl:rejudge -- --out=.crawl-samples/after.json
+```
+
+**표본을 파일로 고정하는 것이 요점이다.** 다시 뜨면 기준을 바꾼 효과와 표본이 바뀐 효과가
+섞여 비교가 안 된다. 통과 수가 몇 개 줄었는지보다 **무엇이 빠지고 무엇이 새로 들어왔는지**를
+봐야 한다 — 실제로 이 방식으로 GitHub Pages 프로젝트 페이지가 통째로 거부되던 것과,
+이름이 `blog`인 개인 블로그가 `*-blog`를 통과하던 것을 잡았다.
+
+토큰은 `GITHUB_TOKEN` 환경변수를 쓰고, 없으면 `gh auth token`을 부른다.
 
 ## 도메인 검증
 
