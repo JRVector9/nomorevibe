@@ -6,6 +6,7 @@ import {
   slugifyName,
   extractOgImage,
   extractVerifyMeta,
+  extractPageMeta,
 } from "@/lib/net/normalize";
 
 describe("normalizeUrl — 중복 등록 방지의 기준값", () => {
@@ -126,5 +127,52 @@ describe("HTML 추출", () => {
     const html = `<meta name="nomorevibe-verify" content="nmv_verify_abc">`;
     expect(extractVerifyMeta(html, "nomorevibe-verify")).toBe("nmv_verify_abc");
     expect(extractVerifyMeta("<html></html>", "nomorevibe-verify")).toBeNull();
+  });
+});
+
+describe("extractPageMeta — 수집한 제품의 이름·소개 재료", () => {
+  it("og:*를 <title>보다 먼저 본다", () => {
+    // <title>에는 "Home | 서비스" 같은 것이 흔하다. og:title은 공유용으로 손본 값이다
+    const html = `
+      <title>Home | 헬로앱</title>
+      <meta property="og:title" content="헬로앱">
+      <meta property="og:description" content="한 줄 소개">
+      <meta name="description" content="긴 설명">
+      <meta property="og:image" content="/cover.png">`;
+    expect(extractPageMeta(html, "https://hello.test")).toEqual({
+      title: "헬로앱",
+      description: "한 줄 소개",
+      ogImage: "https://hello.test/cover.png",
+    });
+  });
+
+  it("og:*가 없으면 <title>과 description으로 내려간다", () => {
+    const html = `<title>  헬로앱\n  </title><meta name="description" content="설명">`;
+    expect(extractPageMeta(html, "https://hello.test")).toMatchObject({
+      title: "헬로앱",
+      description: "설명",
+    });
+  });
+
+  it("실체 참조를 되돌린다 — 안 그러면 &amp;가 제품 이름에 남는다", () => {
+    const html = `<title>Rock &amp; Roll</title>`;
+    expect(extractPageMeta(html, "https://a.test").title).toBe("Rock & Roll");
+  });
+
+  it("없으면 없는 대로 null을 남긴다 — 지어내지 않는다", () => {
+    expect(extractPageMeta("<html><body>본문뿐</body></html>", "https://a.test")).toEqual({
+      title: null,
+      description: null,
+      ogImage: null,
+    });
+    // 빈 값도 없는 것으로 본다
+    expect(extractPageMeta(`<title>   </title>`, "https://a.test").title).toBeNull();
+  });
+
+  it("저장 상한을 넘기지 않게 자른다", () => {
+    const html = `<title>${"가".repeat(500)}</title><meta name="description" content="${"나".repeat(800)}">`;
+    const meta = extractPageMeta(html, "https://a.test");
+    expect(meta.title).toHaveLength(300);
+    expect(meta.description).toHaveLength(500);
   });
 });
