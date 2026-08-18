@@ -26,6 +26,8 @@ export type PageFacts = {
   productUrl: string | null;
   /** 배포 URL 응답 코드. null이면 확인 못 함 */
   status: number | null;
+  /** 감지된 문서 생성기. 없거나 아직 안 본 문서면 null */
+  generator?: string | null;
 };
 
 export type Verdict = {
@@ -108,6 +110,7 @@ export function judge(
     archived: repo.archived,
     productUrl: page.productUrl,
     pageStatus: page.status,
+    generator: page.generator ?? null,
   };
 
   const reject = (reason: DecisionReason): Verdict => ({ state: "rejected", reason, signals });
@@ -116,6 +119,16 @@ export function judge(
   if (!page.productUrl) return reject("no_homepage");
   if (isBlockedHost(page.productUrl, rules.blockedHomepageDomains)) return reject("not_a_product");
   if (isDocumentation(page.productUrl)) return reject("not_a_product");
+
+  /**
+   * 페이지가 스스로 밝히는 문서 생성기.
+   *
+   * 주소만으로는 못 가른다 — owner.github.io/repo 아래에 문서와 웹앱이 섞여 있어 심사 큐의
+   * 92%가 그 모양이었다. 페이지가 mkdocs·pkgdown 같은 것으로 만들어졌다면 읽을거리다.
+   */
+  if (page.generator && rules.docsGenerators.includes(page.generator.toLowerCase())) {
+    return reject("not_a_product");
+  }
 
   if (repo.isFork && rules.excludeForks) return reject("fork");
   if (repo.archived) return reject("personal_site"); // 보관된 레포는 살아있는 제품이 아니다

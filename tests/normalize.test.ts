@@ -7,6 +7,7 @@ import {
   extractOgImage,
   extractVerifyMeta,
   extractPageMeta,
+  detectSiteGenerator,
 } from "@/lib/net/normalize";
 
 describe("normalizeUrl — 중복 등록 방지의 기준값", () => {
@@ -130,6 +131,29 @@ describe("HTML 추출", () => {
   });
 });
 
+describe("detectSiteGenerator — 문서 사이트 가르기", () => {
+  it("generator 메타태그를 읽는다", () => {
+    expect(detectSiteGenerator(`<meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.5">`)).toBe(
+      "mkdocs",
+    );
+    expect(detectSiteGenerator(`<meta name="generator" content="VitePress v1.6.4">`)).toBe("vitepress");
+  });
+
+  it("태그가 없으면 자산 경로에서 찾는다 — 실측 23건 중 4건만 태그를 달고 있었다", () => {
+    expect(detectSiteGenerator(`<script src="/pkgdown.js"></script>`)).toBe("pkgdown");
+    expect(detectSiteGenerator(`<link href="/assets/css/docusaurus.min.css">`)).toBe("docusaurus");
+  });
+
+  it("본문 텍스트는 보지 않는다 — 만들었다고 적어둔 제품까지 문서로 볼 수는 없다", () => {
+    expect(detectSiteGenerator(`<html><body><p>docusaurus로 만든 문서를 지원합니다</p></body></html>`)).toBeNull();
+  });
+
+  it("범용 생성기는 신호로 쓰지 않는다 — GitHub Pages의 기본 빌더다", () => {
+    expect(detectSiteGenerator(`<meta name="generator" content="Jekyll v4.3.2">`)).toBeNull();
+    expect(detectSiteGenerator(`<meta name="generator" content="Hugo 0.120">`)).toBeNull();
+  });
+});
+
 describe("extractPageMeta — 수집한 제품의 이름·소개 재료", () => {
   it("og:*를 <title>보다 먼저 본다", () => {
     // <title>에는 "Home | 서비스" 같은 것이 흔하다. og:title은 공유용으로 손본 값이다
@@ -143,6 +167,7 @@ describe("extractPageMeta — 수집한 제품의 이름·소개 재료", () => 
       title: "헬로앱",
       description: "한 줄 소개",
       ogImage: "https://hello.test/cover.png",
+      generator: null,
     });
   });
 
@@ -175,6 +200,7 @@ describe("extractPageMeta — 수집한 제품의 이름·소개 재료", () => 
       title: null,
       description: null,
       ogImage: null,
+      generator: null,
     });
     // 빈 값도 없는 것으로 본다
     expect(extractPageMeta(`<title>   </title>`, "https://a.test").title).toBeNull();

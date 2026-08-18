@@ -141,7 +141,54 @@ export type PageMeta = {
   title: string | null;
   description: string | null;
   ogImage: string | null;
+  /** 문서 생성기 이름 (감지된 경우) — 문서 사이트인지 가르는 데 쓴다 */
+  generator: string | null;
 };
+
+/**
+ * 문서 전용 생성기만 본다.
+ *
+ * jekyll·hugo는 뺐다. GitHub Pages의 기본 빌더라 개인 제품 페이지도 그것으로 만들어지므로,
+ * 신호로 쓰면 멀쩡한 제품을 함께 버린다. 문서 말고는 잘 쓰지 않는 것들만 남긴다.
+ */
+const DOC_GENERATORS = [
+  "mkdocs",
+  "docusaurus",
+  "sphinx",
+  "pkgdown",
+  "vitepress",
+  "docsify",
+  "gitbook",
+  "mdbook",
+  "quarto",
+  "bookdown",
+  "readthedocs",
+  "starlight",
+  "nextra",
+] as const;
+
+/**
+ * 문서 생성기 감지.
+ *
+ * generator 메타태그가 가장 확실하지만 실측에서 23건 중 4건만 달고 있었다. 태그가 없어도
+ * 자산 경로에는 남는다(pkgdown.js, /assets/js/docusaurus…) — 본문 텍스트는 보지 않는다.
+ * "docusaurus로 만들었습니다"라고 적어둔 제품 소개까지 문서로 볼 수는 없다.
+ */
+export function detectSiteGenerator(html: string): string | null {
+  // head 언저리만 본다. 본문까지 훑으면 단어 하나로 오탐이 난다
+  const head = html.slice(0, 50_000);
+
+  const declared = metaContent(head, "name", "generator")?.toLowerCase();
+  if (declared) {
+    const known = DOC_GENERATORS.find((g) => declared.includes(g));
+    if (known) return known;
+  }
+
+  const asset = head.match(
+    new RegExp(`(?:src|href)=["'][^"']*\\b(${DOC_GENERATORS.join("|")})\\b`, "i"),
+  );
+  return asset ? asset[1].toLowerCase() : null;
+}
 
 /**
  * 페이지 메타 추출.
@@ -166,6 +213,7 @@ export function extractPageMeta(html: string, baseUrl: string): PageMeta {
         500,
       ) ?? null,
     ogImage: extractOgImage(html, baseUrl),
+    generator: detectSiteGenerator(html),
   };
 }
 

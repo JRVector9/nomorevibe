@@ -90,6 +90,16 @@ describe("judge — 거르기", () => {
     expect(v.state).toBe("approved");
   });
 
+  it("페이지가 문서 생성기로 만들어졌으면 거른다", () => {
+    // 주소만으로는 못 가른다 — owner.github.io/repo 아래에 문서와 웹앱이 섞여 있다
+    const page = { productUrl: "https://someone.github.io/thing", status: 200, generator: "pkgdown" };
+    expect(judge(goodRepo({ repo: "someone/thing" }), page, settings, NOW).reason).toBe("not_a_product");
+
+    // 목록에 없는 생성기는 신호가 아니다
+    const other = { ...page, generator: "wordpress" };
+    expect(judge(goodRepo({ repo: "someone/thing" }), other, settings, NOW).state).toBe("needs_review");
+  });
+
   it("문서 사이트는 배포된 서비스가 아니다", () => {
     for (const url of [
       "https://docs.datadoghq.com",
