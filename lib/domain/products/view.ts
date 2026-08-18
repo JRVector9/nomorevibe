@@ -2,6 +2,7 @@ import type { Product, ProductStatus } from "@/lib/db/schema";
 import { listProducts, type ProductSort } from "./repository";
 import type { Category } from "./schema";
 import { clickMetrics, type ClickMetrics } from "./clicks";
+import { healthFor, type HealthSignal } from "./health";
 import { logger } from "@/lib/observability/logger";
 
 /**
@@ -34,8 +35,9 @@ export type ProductListItem = {
   status: ProductStatus;
   /** 우리가 대신 올렸고 아직 주인이 나타나지 않았다 */
   unclaimed: boolean;
-  /** 지표는 아직 없다 — 클릭 집계(트랙 B)가 붙으면 여기에 채워진다 */
   metrics?: { clicks: number; delta24h: number | null };
+  /** 생존 확인 결과. 확인한 적이 없으면 없다 */
+  health?: { down: boolean; since: Date | null };
 };
 
 /** 아직 아무도 가져가지 않은 수집 결과인가 */
@@ -86,9 +88,11 @@ export async function getPublicList(limit: number, options: BrowseOptions = {}):
 async function withMetrics(items: ProductListItem[]): Promise<ProductListItem[]> {
   if (items.length === 0) return items;
 
+  const slugs = items.map((i) => i.slug);
   let metrics: Map<string, ClickMetrics>;
+  let health: Map<string, HealthSignal>;
   try {
-    metrics = await clickMetrics(items.map((i) => i.slug));
+    [metrics, health] = await Promise.all([clickMetrics(slugs), healthFor(slugs)]);
   } catch (error) {
     // 주석만 그렇게 적어두고 실제로는 예외가 그대로 올라가 홈이 통째로 "불러올 수
     // 없습니다"가 됐다. 지표가 없는 목록은 볼 수 있지만, 목록 없는 홈은 볼 것이 없다.
@@ -96,10 +100,11 @@ async function withMetrics(items: ProductListItem[]): Promise<ProductListItem[]>
     return items;
   }
 
-  return items.map((item) => {
-    const found = metrics.get(item.slug);
-    return found ? { ...item, metrics: found } : item;
-  });
+  return items.map((item) => ({
+    ...item,
+    metrics: metrics.get(item.slug) ?? item.metrics,
+    health: health.get(item.slug) ?? item.health,
+  }));
 }
 
 /** 랭킹·지표 대상 — 우리가 직접 확인한 제품만 */
