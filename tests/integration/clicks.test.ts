@@ -11,6 +11,7 @@ import {
   clickMetrics,
   rollupDaily,
   pruneEvents,
+  topClickedSince,
 } from "@/lib/domain/products/clicks";
 import { getRankedList } from "@/lib/domain/products/view";
 import { ensureSchema, resetTables } from "./setup";
@@ -247,5 +248,45 @@ describe("지표는 부가물이다", () => {
     } finally {
       (db as unknown as { select: unknown }).select = original;
     }
+  });
+});
+
+describe("굴린 집계를 읽는다", () => {
+  it("30일 창의 제품별 합을 많이 눌린 순으로 준다", async () => {
+    // 원천은 35일이면 지워지므로 오래된 구간은 이 표로만 답할 수 있다
+    await product("loud", "https://loud.test");
+    await product("quiet", "https://quiet.test");
+    await db.insert(productClickDaily).values([
+      { slug: "loud", day: "2026-08-10", clicks: 5 },
+      { slug: "loud", day: "2026-08-11", clicks: 3 },
+      { slug: "quiet", day: "2026-08-11", clicks: 2 },
+    ]);
+
+    expect(await topClickedSince(30)).toEqual([
+      { slug: "loud", clicks: 8 },
+      { slug: "quiet", clicks: 2 },
+    ]);
+  });
+
+  it("창 밖의 날짜는 세지 않는다", async () => {
+    await product("old", "https://old.test");
+    await db.insert(productClickDaily).values({ slug: "old", day: "2020-01-01", clicks: 99 });
+
+    expect(await topClickedSince(30)).toEqual([]);
+  });
+});
+
+describe("제품을 지우면 딸린 기록도 지운다", () => {
+  it("slug가 재활용돼도 지워진 제품의 지표를 물려받지 않는다", async () => {
+    await product("app", "https://app.test");
+    await recordClick("app", "11111111-1111-1111-1111-111111111111");
+    await db.insert(productClickDaily).values({ slug: "app", day: "2026-08-11", clicks: 4 });
+
+    const found = await repo.findBySlug("app");
+    await repo.remove(found!.id);
+    await repo.removeTraces("app");
+
+    expect(await count()).toBe(0);
+    expect(await topClickedSince(3650)).toEqual([]);
   });
 });

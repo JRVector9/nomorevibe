@@ -65,7 +65,7 @@ export async function fetchCrawlDocuments(ctx: JobContext<null>): Promise<JobOut
 
       const repoMeta = result.value;
       const homepage = typeof repoMeta.homepage === "string" ? normalizeUrl(repoMeta.homepage) : null;
-      const page = homepage ? await visit(homepage) : null;
+      const page = homepage ? await visit(homepage, settings.judge.docsGenerators) : null;
 
       await crawl.putDocument({
         repo: entry.repo,
@@ -95,10 +95,19 @@ export async function fetchCrawlDocuments(ctx: JobContext<null>): Promise<JobOut
  * 리다이렉트로 도메인이 바뀌면 목적지를 기준값으로 삼는다. 메이커가 등록할 때와 같은
  * 기준이어야 "이미 등록된 URL"을 알아볼 수 있다.
  */
-async function visit(url: string) {
+async function visit(url: string, docsGenerators: readonly string[]) {
   const page = await fetchPage(url);
   if (!page) return { productUrl: url, status: 0, meta: null };
 
   const productUrl = resolveCanonical(url, page.finalUrl);
-  return { productUrl, status: page.status, meta: extractPageMeta(page.html, productUrl) };
+  /**
+   * 상대 경로는 실제로 받아온 주소(finalUrl) 기준으로 푼다. 기준값(productUrl)은 같은
+   * 호스트 안의 경로 이동을 따라가지 않으므로, example.com → example.com/en/ 같은 경우
+   * og:image의 상대 경로가 한 단계 위에서 풀려 404가 된다.
+   */
+  return {
+    productUrl,
+    status: page.status,
+    meta: extractPageMeta(page.html, page.finalUrl, docsGenerators),
+  };
 }

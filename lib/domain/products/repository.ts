@@ -1,7 +1,18 @@
 import { eq, inArray, like, or, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { products, ogImages, type Product, type NewProduct, type ProductStatus } from "@/lib/db/schema";
+import {
+  products,
+  ogImages,
+  clickEvents,
+  productClickDaily,
+  productHealth,
+  takedownRequests,
+  type Product,
+  type NewProduct,
+  type ProductStatus,
+} from "@/lib/db/schema";
 import { slugifyName } from "@/lib/net/normalize";
+import { METRICS_WINDOW_DAYS } from "./clicks";
 
 /** 제품 데이터 접근 — 도메인 바깥에서 DB를 직접 만지지 않도록 여기로 모은다 */
 
@@ -39,7 +50,8 @@ const listedAt = sql`coalesce(${products.verifiedAt}, ${products.createdAt})`;
  */
 const recentClicks = sql`(
   select coalesce(count(*), 0) from click_events c
-  where c.slug = ${products.slug} and c.occurred_at >= now() - interval '7 days'
+  where c.slug = ${products.slug}
+    and c.occurred_at >= now() - ${sql.raw(`interval '${METRICS_WINDOW_DAYS} days'`)}
 )`;
 
 const SORTS = {
@@ -96,6 +108,21 @@ export async function insert(values: NewProduct): Promise<void> {
 
 export async function update(id: number, values: Partial<Product>): Promise<void> {
   await db.update(products).set({ ...values, updatedAt: new Date() }).where(eq(products.id, id));
+}
+
+/**
+ * 제품에 딸린 기록.
+ *
+ * FK를 걸지 않았고 nextAvailableSlug가 비어 있는 slug를 다시 쓰므로, 지우지 않으면 같은
+ * 이름으로 새로 들어온 제품이 지워진 제품의 클릭·생존 이력·내려달라 요청을 물려받는다.
+ */
+export async function removeTraces(slug: string): Promise<void> {
+  await Promise.all([
+    db.delete(clickEvents).where(eq(clickEvents.slug, slug)),
+    db.delete(productClickDaily).where(eq(productClickDaily.slug, slug)),
+    db.delete(productHealth).where(eq(productHealth.slug, slug)),
+    db.delete(takedownRequests).where(eq(takedownRequests.slug, slug)),
+  ]);
 }
 
 export async function remove(id: number): Promise<void> {

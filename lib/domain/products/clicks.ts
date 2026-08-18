@@ -144,6 +144,25 @@ export async function rollupDaily(days = 3): Promise<number> {
   return rows.length;
 }
 
+/**
+ * 굴린 집계에서 많이 눌린 제품.
+ *
+ * 목록·랭킹은 원천(click_events)을 보지만 그쪽은 35일이면 지워진다. 오래된 구간을 답할 수
+ * 있는 것은 이 표뿐이고, 읽는 데가 없으면 굴리는 일 자체가 의미가 없다.
+ */
+export async function topClickedSince(days: number, limit = 10): Promise<{ slug: string; clicks: number }[]> {
+  return db
+    .select({
+      slug: productClickDaily.slug,
+      clicks: sql<number>`sum(${productClickDaily.clicks})::int`,
+    })
+    .from(productClickDaily)
+    .where(gte(productClickDaily.day, sql.raw(`(now() - interval '${days} days')::date`)))
+    .groupBy(productClickDaily.slug)
+    .orderBy(sql`sum(${productClickDaily.clicks}) desc`)
+    .limit(limit);
+}
+
 /** 굴린 뒤의 원천 정리. 개별 클릭은 오래 두면 행만 늘고 쓸 데가 없다 */
 export async function pruneEvents(olderThanDays = 35): Promise<void> {
   await db

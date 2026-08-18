@@ -146,47 +146,29 @@ export type PageMeta = {
 };
 
 /**
- * 문서 전용 생성기만 본다.
- *
- * jekyll·hugo는 뺐다. GitHub Pages의 기본 빌더라 개인 제품 페이지도 그것으로 만들어지므로,
- * 신호로 쓰면 멀쩡한 제품을 함께 버린다. 문서 말고는 잘 쓰지 않는 것들만 남긴다.
- */
-const DOC_GENERATORS = [
-  "mkdocs",
-  "docusaurus",
-  "sphinx",
-  "pkgdown",
-  "vitepress",
-  "docsify",
-  "gitbook",
-  "mdbook",
-  "quarto",
-  "bookdown",
-  "readthedocs",
-  "starlight",
-  "nextra",
-] as const;
-
-/**
  * 문서 생성기 감지.
+ *
+ * 찾을 이름은 밖에서 받는다. 예전에는 이 파일에 목록을 박아두고 설정에도 같은 목록을
+ * 뒀는데, 어드민에서 새 생성기를 추가해도 감지 쪽이 모르니 아무 일도 일어나지 않았다.
+ * 목록은 설정 하나가 갖고, 여기서는 찾기만 한다.
  *
  * generator 메타태그가 가장 확실하지만 실측에서 23건 중 4건만 달고 있었다. 태그가 없어도
  * 자산 경로에는 남는다(pkgdown.js, /assets/js/docusaurus…) — 본문 텍스트는 보지 않는다.
  * "docusaurus로 만들었습니다"라고 적어둔 제품 소개까지 문서로 볼 수는 없다.
  */
-export function detectSiteGenerator(html: string): string | null {
+export function detectSiteGenerator(html: string, generators: readonly string[]): string | null {
+  if (generators.length === 0) return null;
   // head 언저리만 본다. 본문까지 훑으면 단어 하나로 오탐이 난다
   const head = html.slice(0, 50_000);
+  const names = generators.map((g) => g.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
 
   const declared = metaContent(head, "name", "generator")?.toLowerCase();
   if (declared) {
-    const known = DOC_GENERATORS.find((g) => declared.includes(g));
-    if (known) return known;
+    const known = generators.find((g) => declared.includes(g.toLowerCase()));
+    if (known) return known.toLowerCase();
   }
 
-  const asset = head.match(
-    new RegExp(`(?:src|href)=["'][^"']*\\b(${DOC_GENERATORS.join("|")})\\b`, "i"),
-  );
+  const asset = head.match(new RegExp(`(?:src|href)=["'][^"']*\\b(${names.join("|")})\\b`, "i"));
   return asset ? asset[1].toLowerCase() : null;
 }
 
@@ -198,7 +180,11 @@ export function detectSiteGenerator(html: string): string | null {
  * 없으면 없는 대로 null을 남긴다 — 여기서 지어내면 발행 단계에서 무엇이 사실이고
  * 무엇이 추정인지 가를 수 없게 된다.
  */
-export function extractPageMeta(html: string, baseUrl: string): PageMeta {
+export function extractPageMeta(
+  html: string,
+  baseUrl: string,
+  docsGenerators: readonly string[] = [],
+): PageMeta {
   const titleTag = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
   const title =
     metaContent(html, "property", "og:title") ??
@@ -213,7 +199,7 @@ export function extractPageMeta(html: string, baseUrl: string): PageMeta {
         500,
       ) ?? null,
     ogImage: extractOgImage(html, baseUrl),
-    generator: detectSiteGenerator(html),
+    generator: detectSiteGenerator(html, docsGenerators),
   };
 }
 
