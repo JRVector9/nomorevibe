@@ -121,11 +121,17 @@ than casual ranking knobs, so `/admin/ranking` does not edit them.
 ### Season boundaries
 
 - Weekly seasons use Monday 00:00 KST through the next Monday 00:00 KST.
-- Monthly seasons use the first day of the month 00:00 KST through the first day of the next month
-  00:00 KST.
+- Monthly seasons normally use the first day of the month 00:00 KST through the first day of the
+  next month 00:00 KST.
 - All ranges are half-open: `[startsAt, endsAt)`.
 - Database comparisons use UTC instants derived from the KST boundary, rather than relying on the
   database session timezone.
+
+When cadence changes, the first season under the new cadence begins at the active season's end. If
+that instant is not a natural boundary for the new cadence, the system creates one explicitly
+labelled transition season ending at the next natural boundary. Later seasons use normal boundaries.
+The transition is a real, closed season and therefore advances cooldown history; the admin preview
+shows its shorter dates before the change is scheduled.
 
 The season key is stable and human-readable: for example, `2026-W34` or `2026-08`.
 
@@ -225,6 +231,8 @@ One row per season:
 - `policy_revision_id`
 - `policy_snapshot` JSONB
 - `effective_launch_window_days`
+- `is_transition`
+- `refreshed_at`, nullable
 - `started_at`
 - `closed_at`, nullable
 

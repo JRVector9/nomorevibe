@@ -2,8 +2,8 @@
 
 ## Current objective
 
-Design a click-based discovery ranking that rotates products by season, excludes known bot and rapid
-repeat clicks, shows click-based change, and exposes future-season policy controls in the admin.
+Implement the approved click-based seasonal discovery ranking using the completed task-by-task
+plan. No application implementation has started yet.
 
 ## Completed work
 
@@ -22,10 +22,15 @@ repeat clicks, shows click-based change, and exposes future-season policy contro
 - Produced and user-approved admin and public-home visual prototypes in `/private/tmp`.
 - Wrote the approved design at
   `docs/superpowers/specs/2026-08-18-weekly-ranking-design.md`.
+- Resolved cadence switching with an explicit short transition season when the active boundary is
+  not a natural boundary for the new cadence.
+- Wrote the implementation plan at
+  `docs/superpowers/plans/2026-08-18-weekly-ranking-implementation.md`.
 
 ## Modified files
 
 - `docs/superpowers/specs/2026-08-18-weekly-ranking-design.md`
+- `docs/superpowers/plans/2026-08-18-weekly-ranking-implementation.md`
 - `docs/CODEX_HANDOFF.md`
 
 No application code has been changed.
@@ -43,7 +48,8 @@ No application code has been changed.
 
 ## Test commands and results
 
-No test command was run. This phase changed documentation only.
+No application test command was run. This phase changed documentation only. `git diff --check`
+completed without errors.
 
 ## Failed approaches
 
@@ -53,10 +59,9 @@ No test command was run. This phase changed documentation only.
 
 ## Remaining work
 
-1. Ask the user to review the committed design document.
-2. After explicit approval, invoke the `writing-plans` skill and write an implementation plan.
-3. Do not implement before the implementation plan is approved.
-4. Production scheduler registration remains blocked as described in `PENDING.md`; the future
+1. Ask the user to choose subagent-driven or inline execution for the completed plan.
+2. Invoke the execution skill required by that choice before editing application code.
+3. Production scheduler registration remains blocked as described in `PENDING.md`; the future
    scheduler setup must include `ranking-refresh`.
 
 ## Exact commands for the next agent
@@ -66,8 +71,12 @@ cd /Users/jr/Desktop/projects/nomorevibe
 git status --short
 sed -n '1,260p' docs/superpowers/specs/2026-08-18-weekly-ranking-design.md
 sed -n '261,520p' docs/superpowers/specs/2026-08-18-weekly-ranking-design.md
+sed -n '1,260p' docs/superpowers/plans/2026-08-18-weekly-ranking-implementation.md
+sed -n '261,520p' docs/superpowers/plans/2026-08-18-weekly-ranking-implementation.md
+sed -n '521,900p' docs/superpowers/plans/2026-08-18-weekly-ranking-implementation.md
+sed -n '901,1400p' docs/superpowers/plans/2026-08-18-weekly-ranking-implementation.md
 sed -n '1,220p' docs/CODEX_HANDOFF.md
 ```
 
-After the user approves the written spec, read the `writing-plans` skill in full and create the
-implementation plan it requires.
+After the user chooses an execution mode, read the required execution skill in full and follow the
+plan one checked step at a time.
