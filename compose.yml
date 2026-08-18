@@ -40,6 +40,8 @@ services:
       CRON_SECRET: ${CRON_SECRET:-local-deploy-cron}
       # 수집기가 쓴다. 없으면 시간당 60회라 seed·fetch가 성립하지 않는다
       GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+      # 카테고리 분류. 없으면 키워드 규칙으로 떨어진다
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       ADMIN_GITHUB_LOGINS: ${ADMIN_GITHUB_LOGINS:-}
       GITHUB_OAUTH_CLIENT_ID: ${GITHUB_OAUTH_CLIENT_ID:-}
       GITHUB_OAUTH_CLIENT_SECRET: ${GITHUB_OAUTH_CLIENT_SECRET:-}

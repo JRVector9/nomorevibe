@@ -2,6 +2,7 @@ import type { CrawlCandidate, CrawlDocument } from "@/lib/db/schema";
 import { LIMITS, type Category } from "@/lib/domain/products/schema";
 import * as products from "@/lib/domain/products/repository";
 import { cacheOgImage } from "@/lib/domain/products/og";
+import { classifyCategory } from "./classify";
 import { generateEditToken, generateVerifyToken, hashToken } from "@/lib/tokens";
 import { logger } from "@/lib/observability/logger";
 import * as crawl from "./repository";
@@ -44,6 +45,23 @@ export async function publishCandidate(candidate: CrawlCandidate): Promise<Publi
   if (!draft.hasDescription && candidate.decidedBy !== "admin") {
     return { ok: false, reason: "no_description" };
   }
+
+  /**
+   * 카테고리는 문장을 읽어야 정해진다.
+   *
+   * 키워드 규칙은 대부분을 Other로 떨어뜨렸고, "…Offers, Payments…"라는 소개 하나로
+   * 업무 도구를 Finance로 보내기도 했다. 읽고 고르는 일은 읽을 수 있는 쪽에 맡기고,
+   * 분류가 실패하면 규칙 결과를 그대로 쓴다 — 카테고리 하나 때문에 발행을 막지 않는다.
+   */
+  const category =
+    (await classifyCategory({
+      repo: candidate.repo,
+      url,
+      name: draft.name,
+      tagline: draft.tagline,
+      topics: draft.topics,
+      language: draft.language,
+    })) ?? draft.category;
   const editToken = generateEditToken();
 
   let slug = "";
@@ -56,7 +74,7 @@ export async function publishCandidate(candidate: CrawlCandidate): Promise<Publi
         name: draft.name,
         tagline: draft.tagline,
         description: draft.description,
-        category: draft.category,
+        category,
         // "만든 AI"는 메이커 신고값이다. 우리가 커밋 트레일러를 보고 추측한 것을 여기 넣으면
         // 신고와 추정이 같은 칸에서 섞인다 — 주인이 클레임할 때 직접 밝힌다.
         builder: null,
@@ -98,7 +116,7 @@ export async function publishCandidate(candidate: CrawlCandidate): Promise<Publi
   }
 
   await crawl.markPublished(candidate.repo, slug);
-  logger.info("crawl.published", { repo: candidate.repo, slug, url, category: draft.category });
+  logger.info("crawl.published", { repo: candidate.repo, slug, url, category });
   return { ok: true, slug };
 }
 
@@ -127,6 +145,9 @@ function draftFrom(repo: string, document: CrawlDocument) {
     category: classify(meta),
     // 언어는 레포가 알려주는 사실이다. 나머지 스택은 추측이므로 넣지 않는다
     stack: language ? [language] : [],
+    // 분류가 함께 볼 것들 — 규칙도 이것으로 고르고, LLM도 같은 사실을 본다
+    language,
+    topics: Array.isArray(meta.topics) ? meta.topics.map((t) => String(t)) : [],
     ogImage: typeof page.ogImage === "string" ? page.ogImage : null,
   };
 }
