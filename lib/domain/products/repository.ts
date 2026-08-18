@@ -52,14 +52,13 @@ const SORTS = {
   recent: [sql`(${products.status} = 'verified') desc`, sql`${listedAt} desc`],
 
   /**
-   * 많이 눌린 순. 동률이 많으므로 최신순을 뒤에 둔다 — 클릭이 0인 제품끼리는 최신순이 된다.
-   * 검증 여부를 먼저 보는 것은 recent와 같다: 확인된 제품이 위에 온다.
+   * 많이 눌린 순.
+   *
+   * 여기서는 검증 여부를 먼저 보지 않는다. 그렇게 하면 클릭 0인 검증 제품이 클릭 5인
+   * 제품 위에 올라 "많이 눌린 순"이라는 이름이 거짓말이 된다 — 실제로 그렇게 나왔다.
+   * 대신 이 정렬은 랭킹 대상(검증된 제품)에만 쓴다. 순서의 이름과 내용이 맞아야 한다.
    */
-  popular: [
-    sql`(${products.status} = 'verified') desc`,
-    sql`${recentClicks} desc`,
-    sql`${listedAt} desc`,
-  ],
+  popular: [sql`${recentClicks} desc`, sql`${listedAt} desc`],
 } as const;
 
 /** 정렬 파라미터 검증용 (쿼리스트링 → ProductSort) */

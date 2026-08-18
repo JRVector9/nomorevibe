@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { getPublicList, type ProductListItem } from "@/lib/domain/products/view";
+import { getPublicList, getRankedList, type ProductListItem } from "@/lib/domain/products/view";
 import type { ProductSort } from "@/lib/domain/products/repository";
 import { logger } from "@/lib/observability/logger";
 import { ProductIcon } from "@/components/ProductIcon";
@@ -20,7 +20,12 @@ export default async function HomePage({ searchParams }: Props) {
   let list: ProductListItem[] = [];
   let dbDown = false;
   try {
-    list = await getPublicList(HOME_LIST_LIMIT, sort);
+    // 많이 눌린 순은 랭킹이므로 우리가 직접 확인한 제품만 다룬다.
+    // 미클레임 제품까지 섞으면 "확인한 것만 랭킹에 넣는다"는 원칙이 무너진다.
+    list =
+      sort === "popular"
+        ? await getRankedList(HOME_LIST_LIMIT, sort)
+        : await getPublicList(HOME_LIST_LIMIT, sort);
   } catch (error) {
     // 랜딩이 조용히 빈 화면이 되지 않도록, 폴백으로 떨어진 이유를 남긴다
     logger.error("home.list_failed", { error });
@@ -56,6 +61,9 @@ export default async function HomePage({ searchParams }: Props) {
             {label}
           </Link>
         ))}
+        {sort === "popular" && (
+          <span className="self-center text-[11.5px] text-fg-3">검증된 제품만</span>
+        )}
       </nav>
 
       {dbDown ? (

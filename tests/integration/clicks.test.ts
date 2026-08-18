@@ -10,7 +10,7 @@ import {
   rollupDaily,
   pruneEvents,
 } from "@/lib/domain/products/clicks";
-import { getPublicList } from "@/lib/domain/products/view";
+import { getRankedList } from "@/lib/domain/products/view";
 import { ensureSchema, resetTables } from "./setup";
 
 async function product(slug = "app", url = "https://app.test") {
@@ -150,15 +150,30 @@ describe("집계와 랭킹", () => {
       { slug: "quiet", occurredAt: new Date() },
     ]);
 
-    const list = await getPublicList(10, "popular");
+    const list = await getRankedList(10, "popular");
 
     expect(list.map((p) => p.slug)).toEqual(["loud", "quiet"]);
     expect(list[0].metrics).toMatchObject({ clicks: 2 });
   });
 
+  it("검증 여부가 클릭순을 덮지 않는다", async () => {
+    // 클릭 0인 검증 제품이 클릭 5인 제품 위에 오면 "많이 눌린 순"이 거짓말이 된다
+    await product("popular-one", "https://popular.test");
+    await product("empty-one", "https://empty.test");
+    await db.insert(clickEvents).values([
+      { slug: "popular-one", occurredAt: new Date() },
+      { slug: "popular-one", occurredAt: new Date() },
+    ]);
+
+    expect((await getRankedList(10, "popular")).map((p) => p.slug)).toEqual([
+      "popular-one",
+      "empty-one",
+    ]);
+  });
+
   it("클릭이 없어도 목록에서 사라지지 않는다", async () => {
     await product("silent", "https://silent.test");
-    const list = await getPublicList(10, "popular");
+    const list = await getRankedList(10, "popular");
     expect(list.map((p) => p.slug)).toEqual(["silent"]);
   });
 });
