@@ -169,7 +169,7 @@ npm run crawl:rejudge -- --out=.crawl-samples/after.json
 
 ## 운영 제약
 
-- **rate limit이 인메모리다** — 인스턴스 2대 이상으로 늘리면 한도가 인스턴스별로 나뉜다.
-  스케일아웃 전에 공유 저장소(Redis 등)로 옮겨야 한다.
+- rate limit은 DB(`rate_limits`)에 둔다. 인스턴스를 늘려도 한도가 하나로 유지된다.
+  한도를 거는 세 경로(등록·검증·수정)는 어차피 그 요청 안에서 DB를 타므로 왕복이 늘지 않는다.
 - `NEXT_PUBLIC_SITE_URL`을 반드시 설정한다. 미설정 시 메이커에게 내부 origin 주소가 전달된다.
 - `ALLOW_PRIVATE_URLS`는 SSRF 가드를 끄므로 프로덕션에서 절대 설정하지 않는다.

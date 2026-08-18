@@ -1,26 +1,45 @@
-// 단순 인메모리 rate limit — 단일 인스턴스 MVP 전제
-const buckets = new Map<string, { count: number; resetAt: number }>();
-const SWEEP_THRESHOLD = 10_000;
+import { sql } from "drizzle-orm";
+import { db } from "@/lib/db";
+import { rateLimits } from "@/lib/db/schema";
 
-/** 만료된 버킷 정리 — Map 무한 증가 방지 */
-function sweepExpired(now: number) {
-  if (buckets.size < SWEEP_THRESHOLD) return;
-  for (const [key, bucket] of buckets) {
-    if (bucket.resetAt < now) buckets.delete(key);
-  }
+/**
+ * rate limit — 인스턴스가 늘어도 한도가 하나로 유지되도록 DB에 둔다.
+ *
+ * 인메모리로 두면 인스턴스마다 버킷이 따로 생겨 2대로 늘리는 순간 실제 한도가 2배가 된다.
+ * Redis를 들이는 대신 이미 있는 Postgres를 쓴다 — 한도를 거는 세 경로(등록·검증·수정)는
+ * 어차피 그 요청 안에서 DB를 타므로 왕복이 늘지 않는다.
+ */
+
+/** 창 갱신과 증가를 한 문장에서 처리한다. 읽고 쓰기를 나누면 동시 요청이 한도를 넘긴다 */
+export async function rateLimit(key: string, limit: number, windowMs: number): Promise<boolean> {
+  const window = sql.raw(`interval '${Math.max(1, Math.round(windowMs / 1000))} seconds'`);
+
+  const [row] = await db
+    .insert(rateLimits)
+    .values({ key, count: 1, resetAt: sql`now() + ${window}` })
+    .onConflictDoUpdate({
+      target: rateLimits.key,
+      set: {
+        // 창이 지났으면 1부터 다시 센다
+        count: sql`case when ${rateLimits.resetAt} < now() then 1 else ${rateLimits.count} + 1 end`,
+        resetAt: sql`case when ${rateLimits.resetAt} < now() then now() + ${window} else ${rateLimits.resetAt} end`,
+      },
+    })
+    .returning({ count: rateLimits.count });
+
+  await sweepOccasionally();
+  return (row?.count ?? 1) <= limit;
 }
 
-export function rateLimit(key: string, limit: number, windowMs: number): boolean {
-  const now = Date.now();
-  sweepExpired(now);
-  const bucket = buckets.get(key);
-  if (!bucket || bucket.resetAt < now) {
-    buckets.set(key, { count: 1, resetAt: now + windowMs });
-    return true;
-  }
-  if (bucket.count >= limit) return false;
-  bucket.count += 1;
-  return true;
+/**
+ * 지난 창의 행 청소.
+ *
+ * 행은 키마다 하나씩 갱신되므로 요청 수만큼 늘지는 않지만, 지나간 클라이언트의 행은
+ * 계속 남는다. 별도 작업을 만들 만한 일이 아니라서 아주 가끔 같이 지운다.
+ */
+async function sweepOccasionally() {
+  if (Math.random() > 0.01) return;
+  await db.delete(rateLimits).where(sql`${rateLimits.resetAt} < now() - interval '1 day'`);
 }
 
 /**

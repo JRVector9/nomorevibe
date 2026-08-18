@@ -38,7 +38,7 @@ export const GET = withRoute("products.get", async (req: Request, { params }: Pa
 
 export const PATCH = withRoute("products.update", async (req: Request, { params }: Params) => {
   const { slug } = await params;
-  if (!rateLimit(`edit:${clientIp(req)}`, 30, 60 * 60 * 1000)) return tooManyRequests();
+  if (!(await rateLimit(`edit:${clientIp(req)}`, 30, 60 * 60 * 1000))) return tooManyRequests();
 
   let body: unknown;
   try {

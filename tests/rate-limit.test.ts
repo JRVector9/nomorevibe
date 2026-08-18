@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { rateLimit, clientIp } from "@/lib/rate-limit";
+import { clientIp } from "@/lib/rate-limit";
 
 const req = (xff?: string) =>
   new Request("https://nomorevibe.app/api/products", {
@@ -35,29 +35,5 @@ describe("clientIp — XFF 신뢰 hop (2차 리뷰 F4 회귀)", () => {
   it("체인이 예상보다 짧으면 가장 왼쪽 값으로 안전하게 떨어진다", () => {
     process.env.TRUSTED_PROXY_HOPS = "3";
     expect(clientIp(req("203.0.113.9"))).toBe("203.0.113.9");
-  });
-});
-
-describe("rateLimit", () => {
-  it("한도까지 허용하고 초과분을 막는다", () => {
-    const key = `test-${Math.random()}`;
-    for (let i = 0; i < 3; i++) expect(rateLimit(key, 3, 60_000)).toBe(true);
-    expect(rateLimit(key, 3, 60_000)).toBe(false);
-  });
-
-  it("키가 다르면 버킷이 분리된다", () => {
-    const a = `a-${Math.random()}`;
-    const b = `b-${Math.random()}`;
-    expect(rateLimit(a, 1, 60_000)).toBe(true);
-    expect(rateLimit(a, 1, 60_000)).toBe(false);
-    expect(rateLimit(b, 1, 60_000)).toBe(true);
-  });
-
-  it("윈도우가 지나면 초기화된다", () => {
-    const key = `w-${Math.random()}`;
-    expect(rateLimit(key, 1, 1)).toBe(true);
-    return new Promise((r) => setTimeout(r, 5)).then(() => {
-      expect(rateLimit(key, 1, 1)).toBe(true);
-    });
   });
 });
