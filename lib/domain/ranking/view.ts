@@ -220,6 +220,15 @@ export async function getSeasonHistory(limit = 12): Promise<SeasonSummary[]> {
   return seasons.map(toSeasonSummary);
 }
 
+export async function getSeasonByKey(
+  key: string,
+): Promise<{ season: SeasonSummary; items: RankingListItem[] } | null> {
+  if (!key) return null;
+  const result = await getSeasonRanking({ seasonKey: key, limit: 100 });
+  if (!result.season) return null;
+  return { season: result.season, items: result.items };
+}
+
 export async function getAllTimeRanking(options: {
   category?: Category;
   query?: string;

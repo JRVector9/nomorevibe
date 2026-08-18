@@ -1,17 +1,54 @@
 import type { RankingPolicy } from "@/lib/domain/ranking/policy";
+import type { SeasonSummary } from "@/lib/domain/ranking/view";
+
+const KST_DATE_TIME = new Intl.DateTimeFormat("ko-KR", {
+  timeZone: "Asia/Seoul",
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+  hour: "2-digit",
+  minute: "2-digit",
+  hour12: false,
+});
 
 function cadenceLabel(cadence: RankingPolicy["season"]["cadence"]): string {
   return cadence === "weekly" ? "주간" : "월간";
 }
 
-export function SeasonPolicy({ policy }: { policy: RankingPolicy }) {
+type SeasonPolicyProps =
+  | { policy: RankingPolicy }
+  | { season: SeasonSummary };
+
+export function SeasonPolicy(props: SeasonPolicyProps) {
+  const season = "season" in props ? props.season : undefined;
+  const policy = "season" in props ? props.season.policy : props.policy;
+  const launchWindowDays = season?.effectiveLaunchWindowDays
+    ?? policy.eligibility.launchWindowDays;
+
   return (
     <div className="grid grid-cols-1 gap-5 text-[12.5px] sm:grid-cols-2">
+      {season && (
+        <div className="sm:col-span-2">
+          <PolicyGroup title="시즌 스냅샷">
+            <PolicyRow
+              label="기간"
+              value={`${KST_DATE_TIME.format(season.startsAt)} – ${KST_DATE_TIME.format(season.endsAt)} KST`}
+            />
+            <PolicyRow label="상태" value={season.state === "active" ? "진행 중" : "종료"} />
+            <PolicyRow label="전환" value={season.isTransition ? "전환 시즌" : "정규 시즌"} />
+            <PolicyRow
+              label="마지막 집계"
+              value={season.refreshedAt ? `${KST_DATE_TIME.format(season.refreshedAt)} KST` : "집계 대기"}
+            />
+          </PolicyGroup>
+        </div>
+      )}
       <PolicyGroup title="시즌과 참가">
         <PolicyRow label="주기" value={`${cadenceLabel(policy.season.cadence)} · ${policy.season.timezone}`} />
-        <PolicyRow label="출시 참가 기간" value={`${policy.eligibility.launchWindowDays}일`} />
+        <PolicyRow label={season ? "확정 참가 기간" : "출시 참가 기간"} value={`${launchWindowDays}일`} />
         <PolicyRow label="최소 참가 제품" value={`${policy.eligibility.minimumProducts}개`} />
         <PolicyRow label="최대 확장 기간" value={`${policy.eligibility.maximumWindowDays}일`} />
+        <PolicyRow label="유효 클릭 기준" value="봇 제외 · 방문자·제품별 10분 중복 제외 · 외부 이동 클릭" />
       </PolicyGroup>
       <PolicyGroup title="노출과 급상승">
         <PolicyRow label="전체 랭킹" value={`${policy.leaderboard.limit}개`} />

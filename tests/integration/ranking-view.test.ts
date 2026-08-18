@@ -9,13 +9,17 @@ import {
   rankingPolicyRevisions,
   rankingSeasons,
 } from "@/lib/db/schema";
-import { DEFAULT_RANKING_POLICY } from "@/lib/domain/ranking/policy";
+import {
+  DEFAULT_RANKING_POLICY,
+  type RankingPolicy,
+} from "@/lib/domain/ranking/policy";
 import {
   RANKING_STALE_MS,
   getAllTimeRanking,
   getCurrentSeason,
   getDiscoveryBoards,
   getRankingAdminState,
+  getSeasonByKey,
   getSeasonHistory,
   getSeasonRanking,
 } from "@/lib/domain/ranking/view";
@@ -27,6 +31,23 @@ const POLICY = {
   ...DEFAULT_RANKING_POLICY,
   boards: { ...DEFAULT_RANKING_POLICY.boards, discoveredNewLimit: 4 },
 };
+const HISTORICAL_POLICY = {
+  ...DEFAULT_RANKING_POLICY,
+  eligibility: {
+    ...DEFAULT_RANKING_POLICY.eligibility,
+    launchWindowDays: 21,
+  },
+  leaderboard: { limit: 2 },
+  cooldown: {
+    enabled: true,
+    tiers: [{ rankFrom: 1, rankTo: 2, factorsBasisPoints: [5_000, 7_500, 10_000] }],
+  },
+  trend: {
+    ...DEFAULT_RANKING_POLICY.trend,
+    windowHours: 48,
+    minimumPreviousClicks: 8,
+  },
+} satisfies RankingPolicy;
 
 async function insertProduct(
   slug: string,
@@ -70,8 +91,8 @@ async function materializeRanking() {
     endsAt: new Date("2026-08-16T15:00:00.000Z"),
     state: "closed",
     policyRevisionId: revision.id,
-    policySnapshot: POLICY,
-    effectiveLaunchWindowDays: 28,
+    policySnapshot: HISTORICAL_POLICY,
+    effectiveLaunchWindowDays: 21,
     isTransition: false,
     refreshedAt: new Date("2026-08-16T15:00:00.000Z"),
     closedAt: new Date("2026-08-16T15:00:00.000Z"),
@@ -149,7 +170,7 @@ async function materializeRanking() {
     },
   ]);
 
-  return { active };
+  return { active, previous };
 }
 
 async function insertRankEleven(seasonId: number) {
@@ -272,6 +293,39 @@ describe("ranking read models", () => {
     });
     expect((await getSeasonHistory()).map((season) => season.key)).toEqual(["2026-W33"]);
     expect(RANKING_STALE_MS).toBe(2 * 60 * 60 * 1000);
+  });
+
+  it("loads a closed season from its locked snapshot and public rank boundary", async () => {
+    const { previous } = await materializeRanking();
+    await db.insert(rankingEntries).values({
+      seasonId: previous.id,
+      slug: "rank-three",
+      validClicks: 19,
+      cooldownFactorBasisPoints: 10_000,
+      scoreUnits: 190_000,
+      rank: 3,
+      recentClicks: 8,
+      previousClicks: 8,
+      changePercent: 0,
+      finalizedAt: previous.endsAt,
+    });
+
+    const history = await getSeasonByKey("2026-W33");
+
+    expect(history?.season).toMatchObject({
+      key: "2026-W33",
+      state: "closed",
+      effectiveLaunchWindowDays: 21,
+    });
+    expect(history?.items.map((item) => item.rank)).toEqual([1, 2]);
+    expect(history?.season.policy).toEqual(HISTORICAL_POLICY);
+  });
+
+  it("returns null for missing or invalid season keys", async () => {
+    await materializeRanking();
+
+    expect(await getSeasonByKey("missing-season")).toBeNull();
+    expect(await getSeasonByKey("")).toBeNull();
   });
 
   it("builds all-time verified ranks from daily totals in one product set", async () => {

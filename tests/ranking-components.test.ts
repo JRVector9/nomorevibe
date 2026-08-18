@@ -4,8 +4,10 @@ import { describe, expect, it } from "vitest";
 import { DiscoveryBoards } from "@/components/DiscoveryBoards";
 import { MarketStats } from "@/components/MarketStats";
 import { RankingTable } from "@/components/RankingTable";
+import { SeasonPolicy } from "@/components/SeasonPolicy";
+import { DEFAULT_RANKING_POLICY } from "@/lib/domain/ranking/policy";
 import type { ProductListItem } from "@/lib/domain/products/view";
-import type { RankingListItem } from "@/lib/domain/ranking/view";
+import type { RankingListItem, SeasonSummary } from "@/lib/domain/ranking/view";
 
 function product(slug: string, overrides: Partial<ProductListItem> = {}): ProductListItem {
   return {
@@ -106,6 +108,53 @@ describe("ranking table", () => {
     expect(html).toContain("sm:hidden");
     expect(html).toContain("클릭");
     expect(html).toContain("24h 변동률");
+  });
+});
+
+describe("season policy", () => {
+  it("shows the locked season period and valid-click methodology", () => {
+    const season: SeasonSummary = {
+      key: "2026-W33",
+      cadence: "weekly",
+      startsAt: new Date("2026-08-09T15:00:00.000Z"),
+      endsAt: new Date("2026-08-16T15:00:00.000Z"),
+      isTransition: true,
+      effectiveLaunchWindowDays: 21,
+      policy: {
+        ...DEFAULT_RANKING_POLICY,
+        trend: {
+          ...DEFAULT_RANKING_POLICY.trend,
+          windowHours: 48,
+          minimumPreviousClicks: 8,
+        },
+      },
+      refreshedAt: new Date("2026-08-16T15:05:00.000Z"),
+      state: "closed",
+    };
+
+    const html = renderToStaticMarkup(createElement(SeasonPolicy, { season }));
+
+    expect(html).toContain("2026. 08. 10. 00:00");
+    expect(html).toContain("2026. 08. 17. 00:00");
+    expect(html).toContain("KST");
+    expect(html).toContain("확정 참가 기간");
+    expect(html).toContain("21일");
+    expect(html).toContain("봇 제외");
+    expect(html).toContain("방문자·제품별 10분 중복 제외");
+    expect(html).toContain("48시간");
+    expect(html).toContain("이전 8클릭 이상");
+    expect(html).toContain("전환 시즌");
+    expect(html).toContain("마지막 집계");
+  });
+
+  it("keeps the administrator policy-only view compatible", () => {
+    const html = renderToStaticMarkup(createElement(SeasonPolicy, {
+      policy: DEFAULT_RANKING_POLICY,
+    }));
+
+    expect(html).toContain("출시 참가 기간");
+    expect(html).toContain("28일");
+    expect(html).not.toContain("마지막 집계");
   });
 });
 

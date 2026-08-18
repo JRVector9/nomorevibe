@@ -43,6 +43,12 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               >
                 Discover
               </Link>
+              <Link
+                href="/?sort=all-time"
+                className="rounded-lg px-3 py-2 text-[13.5px] font-semibold text-fg hover:bg-bg-hover"
+              >
+                역대 인기
+              </Link>
             </nav>
             {/* 좁은 화면에서는 줄바꿈되며 로고를 덮었다 — 줄이지 않고 문구를 줄인다 */}
             <div className="ml-auto shrink-0">
