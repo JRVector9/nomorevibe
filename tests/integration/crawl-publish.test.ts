@@ -3,6 +3,10 @@ import { describe, it, expect, beforeAll, beforeEach, vi } from "vitest";
 // OG 이미지 복사는 바깥 네트워크를 탄다 — 발행 자체를 보는 테스트에서는 끈다
 vi.mock("@/lib/domain/products/og", () => ({ cacheOgImage: vi.fn().mockResolvedValue(null) }));
 
+// 분류도 바깥을 탄다. 기본은 "못 했다"로 두어 규칙 폴백을 확인하고, 필요한 테스트에서만 값을 준다
+const classifyCategory = vi.fn().mockResolvedValue(null);
+vi.mock("@/lib/crawl/classify", () => ({ classifyCategory: (...a: unknown[]) => classifyCategory(...a) }));
+
 const { db } = await import("@/lib/db");
 const { crawlFrontier, crawlDocuments, crawlCandidates, crawlSettings, jobs } = await import(
   "@/lib/db/schema"
@@ -48,6 +52,8 @@ beforeEach(async () => {
   await db.delete(crawlSettings);
   await db.delete(jobs);
   await resetTables();
+  classifyCategory.mockReset();
+  classifyCategory.mockResolvedValue(null);
   await saveSettings({ enabled: true }, "테스트");
 });
 
@@ -148,6 +154,28 @@ describe("발행 잡", () => {
     await tick();
 
     expect((await products.findByUrl("https://my-app.test"))?.name).toBe("e-commerce-kit");
+  });
+
+  it("분류가 고른 카테고리를 쓴다", async () => {
+    classifyCategory.mockResolvedValueOnce("Design");
+    await approved("someone/paint", { meta: { topics: ["cli"], description: "그림 도구" } });
+
+    await tick();
+
+    // topics만 보면 Dev로 떨어질 것을 분류가 바로잡는다
+    expect((await products.findByUrl("https://my-app.test"))?.category).toBe("Design");
+    expect(classifyCategory).toHaveBeenCalledWith(
+      expect.objectContaining({ repo: "someone/paint", topics: ["cli"] }),
+    );
+  });
+
+  it("분류가 실패하면 규칙으로 되돌아간다 — 카테고리 하나로 발행을 막지 않는다", async () => {
+    classifyCategory.mockResolvedValueOnce(null);
+    await approved("someone/tool2", { meta: { topics: ["cli"], description: "도구" } });
+
+    await tick();
+
+    expect((await products.findByUrl("https://my-app.test"))?.category).toBe("Dev");
   });
 
   it("topics로 카테고리를 추정한다", async () => {
