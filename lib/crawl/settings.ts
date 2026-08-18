@@ -84,6 +84,56 @@ export async function getSettingsMeta(): Promise<{ updatedBy: string | null; upd
   return row ? { updatedBy: row.updatedBy, updatedAt: row.updatedAt } : null;
 }
 
+/**
+ * 저장된 설정이 코드 기본값과 어디가 다른지.
+ *
+ * 설정은 데이터라 한 번 저장하면 그 값이 기준이 된다. 그래서 판정 규칙을 고쳐 기본값을
+ * 바꿔도 이미 돌고 있는 환경에는 닿지 않는다 — 조직 계정 제외를 걷고 Codex 신호를 켰는데
+ * 정작 배포 환경은 옛 값으로 돌고 있는 일이 실제로 있었다.
+ *
+ * 조용히 어긋나는 것이 문제이므로 어긋난 것을 보여준다. 되돌릴지는 사람이 정한다.
+ */
+export type SettingsDrift = { label: string; stored: string; standard: string }[];
+
+const TRACKED: { label: string; read: (s: CrawlSettings) => unknown }[] = [
+  { label: "검색 신호", read: (s) => s.discover.queries.filter((q) => q.enabled).map((q) => q.label) },
+  { label: "검색 정렬", read: (s) => s.discover.sort },
+  { label: "기간 창(일)", read: (s) => s.discover.windowDays },
+  { label: "틱당 페이지", read: (s) => s.discover.pagesPerTick },
+  { label: "스타 상한", read: (s) => s.judge.maxStars },
+  { label: "스타 하한", read: (s) => s.judge.minStars },
+  { label: "방치 기준(일)", read: (s) => s.judge.maxPushAgeDays },
+  { label: "포크 제외", read: (s) => s.judge.excludeForks },
+  { label: "조직 계정 제외", read: (s) => s.judge.excludeOrganizations },
+  { label: "차단 도메인", read: (s) => s.judge.blockedHomepageDomains },
+  { label: "제외 패턴", read: (s) => s.judge.excludedRepoPatterns },
+  { label: "개인 사이트 키워드", read: (s) => s.judge.personalSiteKeywords },
+  { label: "문서 생성기", read: (s) => s.judge.docsGenerators },
+  { label: "애매하면 보류", read: (s) => s.judge.holdAmbiguous },
+];
+
+const show = (value: unknown): string =>
+  Array.isArray(value) ? (value.length ? value.join(", ") : "(없음)") : String(value);
+
+export function settingsDrift(current: CrawlSettings): SettingsDrift {
+  return TRACKED.flatMap(({ label, read }) => {
+    const stored = read(current);
+    const standard = read(DEFAULT_CRAWL_SETTINGS);
+    if (JSON.stringify(stored) === JSON.stringify(standard)) return [];
+    return [{ label, stored: show(stored), standard: show(standard) }];
+  });
+}
+
+/**
+ * 기본값으로 되돌린다.
+ *
+ * 수집 스위치(enabled)는 그대로 둔다 — 기준을 맞추려다 수집이 켜지거나 꺼지면 그게 더 큰 사고다.
+ */
+export async function resetSettings(updatedBy: string): Promise<SaveResult> {
+  const current = await getSettings();
+  return saveSettings({ ...DEFAULT_CRAWL_SETTINGS, enabled: current.enabled }, updatedBy);
+}
+
 /** 켜져 있는 검색 신호만 (discover 작업이 쓴다) */
 export function enabledQueries(settings: CrawlSettings) {
   return settings.discover.queries.filter((q) => q.enabled);
