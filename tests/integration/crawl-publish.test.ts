@@ -103,6 +103,25 @@ describe("발행 잡", () => {
     expect(product).toMatchObject({ name: "mystery", tagline: "someone/mystery", stack: [] });
   });
 
+  it("제목의 마케팅 문구를 이름에서 뗀다", async () => {
+    // 실제 수집: "RevealUI | Build it once. Every product after starts ahead." 가 통째로 이름이 됐다
+    await approved("someone/reveal", {
+      pageMeta: { title: "RevealUI | Build it once. Every product after starts ahead.", description: "소개" },
+    });
+
+    await tick();
+
+    expect((await products.findByUrl("https://my-app.test"))?.name).toBe("RevealUI");
+  });
+
+  it("이름 안의 하이픈은 자르지 않는다", async () => {
+    await approved("someone/shop", { pageMeta: { title: "e-commerce-kit", description: "소개" } });
+
+    await tick();
+
+    expect((await products.findByUrl("https://my-app.test"))?.name).toBe("e-commerce-kit");
+  });
+
   it("topics로 카테고리를 추정한다", async () => {
     await approved("someone/tool", { meta: { topics: ["cli", "rust"], description: "도구" } });
 

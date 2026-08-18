@@ -97,14 +97,32 @@ export function extractOgImage(html: string, baseUrl: string): string | null {
   }
 }
 
-/** 실체 참조 다섯 개만 되돌린다 — 제목에 &amp;가 그대로 남으면 그 글자가 제품 이름이 된다 */
+/**
+ * 실체 참조를 되돌린다 — 남겨두면 그 글자가 그대로 제품 이름이 된다.
+ *
+ * 숫자 참조까지 봐야 한다. 실제 수집에서 `DRYL &#x2014; the AI-native…`가 그대로 들어와
+ * slug가 `dryl-x2014-…`가 됐다. 이름 있는 참조만 알던 때 놓친 것이다.
+ */
 function decodeEntities(text: string): string {
   return text
+    .replace(/&#x([0-9a-f]{1,6});/gi, (whole, hex) => fromCodePoint(parseInt(hex, 16), whole))
+    .replace(/&#(\d{1,7});/g, (whole, dec) => fromCodePoint(Number(dec), whole))
     .replace(/&lt;/gi, "<")
     .replace(/&gt;/gi, ">")
     .replace(/&quot;/gi, '"')
-    .replace(/&#0?39;|&apos;/gi, "'")
+    .replace(/&apos;/gi, "'")
+    .replace(/&nbsp;/gi, " ")
     .replace(/&amp;/gi, "&");
+}
+
+/** 범위를 벗어난 코드포인트는 원문 그대로 둔다 — 깨진 참조 하나로 제목 전체를 잃지 않는다 */
+function fromCodePoint(code: number, whole: string): string {
+  if (!Number.isInteger(code) || code <= 0 || code > 0x10ffff) return whole;
+  try {
+    return String.fromCodePoint(code);
+  } catch {
+    return whole;
+  }
 }
 
 /** 속성 순서가 어느 쪽이든 잡는다 (content가 앞에 오는 페이지가 흔하다) */
