@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { currentAdmin } from "@/lib/auth/admin";
-import { saveSettings } from "@/lib/crawl/settings";
+import { saveSettings, resetSettings } from "@/lib/crawl/settings";
 import { decideCandidate, type ReviewDecision } from "@/lib/crawl/review";
 import { resolveTakedown, type TakedownAction } from "@/lib/domain/products/takedown";
 import { logger } from "@/lib/observability/logger";
@@ -121,4 +121,25 @@ export async function resolveTakedownRequest(_prev: ReviewState, form: FormData)
 
   revalidatePath("/admin/review");
   return null;
+}
+
+/**
+ * 기준을 코드 기본값으로 되돌린다.
+ *
+ * 판정 규칙을 고쳐도 저장된 설정이 있으면 그 값이 이긴다. 배포 환경이 옛 기준으로 도는 것을
+ * 손으로 고치게 두지 않는다. 수집 스위치는 건드리지 않는다.
+ */
+export async function resetCrawlSettings(): Promise<SaveState> {
+  const admin = await currentAdmin();
+  if (!admin) return { issues: ["권한이 없습니다. 다시 로그인해주세요."] };
+
+  const result = await resetSettings(admin.login);
+  if (!result.ok) {
+    logger.warn("admin.settings_reset_failed", { login: admin.login, issues: result.issues });
+    return { issues: result.issues };
+  }
+
+  logger.info("admin.settings_reset", { login: admin.login });
+  revalidatePath("/admin");
+  return { ok: true };
 }

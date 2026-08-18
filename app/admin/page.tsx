@@ -2,10 +2,11 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { currentAdmin } from "@/lib/auth/admin";
-import { getSettings, getSettingsMeta } from "@/lib/crawl/settings";
+import { getSettings, getSettingsMeta, settingsDrift } from "@/lib/crawl/settings";
 import { candidateCounts } from "@/lib/crawl/repository";
 import { SettingsForm } from "./SettingsForm";
 import { AdminNav } from "./AdminNav";
+import { SettingsDriftNotice } from "./SettingsDriftNotice";
 
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "크롤 설정 — NoMoreVibe", robots: { index: false } };
@@ -22,6 +23,7 @@ export default async function AdminPage() {
     candidateCounts(),
   ]);
   const waiting = counts.needs_review ?? 0;
+  const drift = settingsDrift(settings);
 
   return (
     <main className="mx-auto max-w-[900px] px-6 pb-20">
@@ -59,6 +61,8 @@ export default async function AdminPage() {
           {meta.updatedAt.toLocaleString("ko-KR", { dateStyle: "medium", timeStyle: "short" })}
         </p>
       )}
+
+      <SettingsDriftNotice drift={drift} />
 
       <SettingsForm settings={settings} />
     </main>
