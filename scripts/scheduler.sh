@@ -47,6 +47,10 @@ while true; do
   if [ $((tick % 10)) -eq 5 ]; then
     run uptime-ping
   fi
+  # 집계는 하루 단위라 자주 돌 이유가 없다. 한 시간에 한 번이면 그날 치가 계속 최신이다
+  if [ $((tick % 60)) -eq 30 ]; then
+    run click-rollup
+  fi
 
   sleep "$INTERVAL"
 done

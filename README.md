@@ -102,6 +102,7 @@ curl -X POST $SITE/api/cron/heartbeat \  # 스케줄러가 주기적으로 호�
 | `crawl-judge` | 현재 기준으로 판정 | `crawl_candidates` (approved / rejected / needs_review) |
 | `crawl-publish` | 통과한 후보를 목록에 올림 | `products` (status=seeded, source=crawler) |
 | `uptime-ping` | 등재된 제품이 아직 떠 있는지 확인 | `product_health` (기록만 — 목록은 안 건드린다) |
+| `click-rollup` | 클릭 원천을 하루 단위로 굴리고 오래된 원천 정리 | `product_click_daily` |
 
 ```bash
 GITHUB_TOKEN=... npm run job crawl-seed      # 로컬에서 한 틱씩
@@ -125,6 +126,7 @@ npm run job crawl-publish
 | `crawl-publish` | 5분 | 판정 직후에 돌아야 통과한 것이 바로 목록에 오른다 |
 | `crawl-seed` | 15분 | 검색 30회/분. 프론티어는 한 번 돌면 한참 차 있다 |
 | `uptime-ping` | 10분 | 제품이 죽는 것은 분 단위로 급한 일이 아니다 |
+| `click-rollup` | 1시간 | 집계는 하루 단위라 자주 돌 이유가 없다 |
 
 크론 데몬을 쓰지 않는 이유는 붙일 것이 네 개뿐이고 주기가 분 단위이며, 실패해도 다음 틱이
 이어받기 때문이다. 다른 스케줄러(Dokploy, GitHub Actions)를 쓴다면 같은 주기로 아래를 호출하면 된다.
@@ -171,6 +173,18 @@ npm run crawl:rejudge -- --out=.crawl-samples/after.json
 이름이 `blog`인 개인 블로그가 `*-blog`를 통과하던 것을 잡았다.
 
 토큰은 `GITHUB_TOKEN` 환경변수를 쓰고, 없으면 `gh auth token`을 부른다.
+
+## 클릭과 랭킹
+
+목록에서 제품으로 나가는 링크는 `/go/<slug>`를 거친다. JS 없이 동작하고, 세는 쪽이 서버라
+클라이언트가 조작할 수 없다. 같은 클라이언트의 같은 제품 클릭은 10분 창으로 묶는다 — 한 번
+누른 것과 백 번 누른 것이 같은 무게일 수는 없다.
+
+원천(`click_events`)을 그대로 쌓고 `click-rollup`이 하루 단위로 굴린다. 집계 기준을 바꿀 때
+원천이 있어야 다시 계산할 수 있다. 개별 클릭은 35일 뒤 지우고 하루 합계만 남긴다.
+
+"많이 눌린 순"은 최근 7일 클릭 합이고, 검증된 제품이 먼저 온다. 클릭이 0인 제품도 목록에서
+사라지지 않는다 — 순서만 뒤로 갈 뿐이다.
 
 ## 도메인 검증
 

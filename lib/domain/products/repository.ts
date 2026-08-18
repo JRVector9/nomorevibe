@@ -17,7 +17,7 @@ export async function findByUrl(url: string): Promise<Product | undefined> {
  * 정렬 기준. 지금은 최신 검증순 하나뿐이지만, 랭킹(NMR 점수·CTR)이 붙으면
  * 이 유니온에 값을 추가하고 아래 map에 한 줄만 넣으면 된다 — 호출부는 그대로다.
  */
-export type ProductSort = "recent";
+export type ProductSort = "recent" | "popular";
 
 export type ListOptions = {
   statuses: ProductStatus[];
@@ -31,6 +31,17 @@ export type ListOptions = {
  */
 const listedAt = sql`coalesce(${products.verifiedAt}, ${products.createdAt})`;
 
+/**
+ * 최근 창의 클릭 합.
+ *
+ * 서브쿼리로 두면 findMany의 정렬만 바꿔 끼울 수 있다 — 목록 조회 경로를 갈아엎지 않아도 된다.
+ * 클릭이 없는 제품도 목록에서 사라지면 안 되므로 coalesce로 0을 준다.
+ */
+const recentClicks = sql`(
+  select coalesce(count(*), 0) from click_events c
+  where c.slug = ${products.slug} and c.occurred_at >= now() - interval '7 days'
+)`;
+
 const SORTS = {
   /**
    * 검증된 제품을 먼저, 그 안에서 최신순.
@@ -39,6 +50,16 @@ const SORTS = {
    * 실제로 확인된 소수의 제품이 그 아래 묻힌다.
    */
   recent: [sql`(${products.status} = 'verified') desc`, sql`${listedAt} desc`],
+
+  /**
+   * 많이 눌린 순. 동률이 많으므로 최신순을 뒤에 둔다 — 클릭이 0인 제품끼리는 최신순이 된다.
+   * 검증 여부를 먼저 보는 것은 recent와 같다: 확인된 제품이 위에 온다.
+   */
+  popular: [
+    sql`(${products.status} = 'verified') desc`,
+    sql`${recentClicks} desc`,
+    sql`${listedAt} desc`,
+  ],
 } as const;
 
 /** 정렬 파라미터 검증용 (쿼리스트링 → ProductSort) */
