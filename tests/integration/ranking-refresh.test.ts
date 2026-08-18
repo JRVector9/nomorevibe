@@ -12,7 +12,11 @@ import {
 } from "@/lib/db/schema";
 import { schedulePolicy } from "@/lib/domain/ranking/policies";
 import { DEFAULT_RANKING_POLICY } from "@/lib/domain/ranking/policy";
-import { refreshRanking } from "@/lib/domain/ranking/refresh";
+import {
+  previewRanking,
+  refreshRanking,
+  slugArrayPredicate,
+} from "@/lib/domain/ranking/refresh";
 import { refreshRankings } from "@/lib/jobs/products/ranking-refresh";
 import { runJob } from "@/lib/jobs/runner";
 import { ensureSchema, resetTables } from "./setup";
@@ -95,6 +99,31 @@ describe("seasonal ranking refresh", () => {
 
     const [entry] = await db.select().from(rankingEntries);
     expect(entry.validClicks).toBe(1);
+  });
+
+  it("previews current clicks and trend while the next period is still in the future", async () => {
+    await insertProduct("previewed");
+    await refreshRanking(NOW);
+    await db.insert(clickEvents).values([
+      ...Array.from({ length: 10 }, () => ({
+        slug: "previewed",
+        occurredAt: new Date("2026-08-18T02:00:00.000Z"),
+      })),
+      ...Array.from({ length: 5 }, () => ({
+        slug: "previewed",
+        occurredAt: new Date("2026-08-17T02:00:00.000Z"),
+      })),
+    ]);
+
+    const [preview] = await previewRanking(DEFAULT_RANKING_POLICY, NOW);
+
+    expect(preview).toMatchObject({
+      slug: "previewed",
+      validClicks: 15,
+      recentClicks: 10,
+      previousClicks: 5,
+      changePercent: 100,
+    });
   });
 
   it("expands eligibility to the smallest whole-day window that reaches the minimum", async () => {
@@ -343,4 +372,24 @@ describe("seasonal ranking refresh", () => {
     expect(result.entries).toBe(count);
     expect(await db.$count(rankingEntries)).toBe(count);
   }, 30_000);
+
+  it("binds an arbitrarily large slug filter as one PostgreSQL array parameter", async () => {
+    await insertProduct("array-target");
+    const slugs = [
+      "array-target",
+      ...Array.from({ length: 65_535 }, (_, index) => `array-${index}`),
+    ];
+    const query = db
+      .select({ slug: products.slug })
+      .from(products)
+      .where(slugArrayPredicate(products.slug, slugs))
+      .toSQL();
+
+    expect(query.params).toHaveLength(1);
+    expect(await db
+      .select({ slug: products.slug })
+      .from(products)
+      .where(slugArrayPredicate(products.slug, slugs)))
+      .toEqual([{ slug: "array-target" }]);
+  });
 });

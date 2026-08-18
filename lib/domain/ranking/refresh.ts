@@ -6,8 +6,10 @@ import {
   inArray,
   lt,
   lte,
-  notInArray,
   sql,
+  type DriverValueEncoder,
+  type SQL,
+  type SQLWrapper,
 } from "drizzle-orm";
 import { db } from "@/lib/db";
 import {
@@ -60,6 +62,24 @@ export type RankingRefreshResult = {
 
 type ClickCounts = { recent: number; previous: number };
 type RevisionPolicy = { revision: RankingPolicyRevision; policy: RankingPolicy };
+
+const textArrayEncoder: DriverValueEncoder<string[], string> = {
+  mapToDriverValue(values) {
+    return `{${values.map((value) => (
+      `"${value.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`
+    )).join(",")}}`;
+  },
+};
+
+export function slugArrayPredicate(
+  column: SQLWrapper,
+  slugs: string[],
+  exclude = false,
+): SQL {
+  if (slugs.length === 0) return exclude ? sql`true` : sql`false`;
+  const matches = sql`${column} = any(${sql.param(slugs, textArrayEncoder)}::text[])`;
+  return exclude ? sql`not (${matches})` : matches;
+}
 
 function minDate(left: Date, right: Date): Date {
   return left.getTime() < right.getTime() ? left : right;
@@ -123,7 +143,7 @@ async function aggregateSeasonClicks(
       })
       .from(clickEvents)
       .where(and(
-        inArray(clickEvents.slug, slugs),
+        slugArrayPredicate(clickEvents.slug, slugs),
         gte(clickEvents.occurredAt, startsAt),
         lt(clickEvents.occurredAt, endsAt),
       ))
@@ -138,7 +158,7 @@ async function aggregateSeasonClicks(
     })
     .from(productClickDaily)
     .where(and(
-      inArray(productClickDaily.slug, slugs),
+      slugArrayPredicate(productClickDaily.slug, slugs),
       gte(productClickDaily.day, kstDay(startsAt)),
       lt(productClickDaily.day, kstDay(endsAt)),
     ))
@@ -165,7 +185,7 @@ async function aggregateTrendClicks(
     })
     .from(clickEvents)
     .where(and(
-      inArray(clickEvents.slug, slugs),
+      slugArrayPredicate(clickEvents.slug, slugs),
       gte(clickEvents.occurredAt, previousStart),
       lt(clickEvents.occurredAt, cutoff),
     ))
@@ -206,7 +226,7 @@ async function priorFinishes(
     .from(rankingEntries)
     .where(and(
       inArray(rankingEntries.seasonId, seasons.map((row) => row.id)),
-      inArray(rankingEntries.slug, slugs),
+      slugArrayPredicate(rankingEntries.slug, slugs),
     ));
 
   const bySlug = new Map<string, { rank: number; seasonsAgo: number }[]>();
@@ -355,7 +375,7 @@ async function replaceEntries(
     .delete(rankingEntries)
     .where(and(
       eq(rankingEntries.seasonId, seasonId),
-      notInArray(rankingEntries.slug, entries.map((entry) => entry.slug)),
+      slugArrayPredicate(rankingEntries.slug, entries.map((entry) => entry.slug), true),
     ));
   const values = entries.map((entry) => ({
     seasonId,
@@ -506,14 +526,16 @@ export async function previewRanking(
   const period = active
     ? nextSeasonPeriod(active.endsAt, policy.season.cadence)
     : periodContaining(now, policy.season.cadence);
-  const cutoff = now.getTime() < period.startsAt.getTime() ? period.startsAt : now;
-  const windowDays = await effectiveLaunchWindowDays(db, period.startsAt, cutoff, policy);
+  const previewStartsAt = new Date(now.getTime() - (
+    period.endsAt.getTime() - period.startsAt.getTime()
+  ));
+  const windowDays = await effectiveLaunchWindowDays(db, previewStartsAt, now, policy);
   const season: RankingSeason = {
     id: 0,
     key: period.key,
     cadence: period.cadence,
-    startsAt: period.startsAt,
-    endsAt: period.endsAt,
+    startsAt: previewStartsAt,
+    endsAt: now,
     state: "active",
     policyRevisionId: 0,
     policySnapshot: policy,
@@ -523,5 +545,5 @@ export async function previewRanking(
     startedAt: now,
     closedAt: null,
   };
-  return calculateRankingSnapshotAt(db, season, cutoff, policy, now);
+  return calculateRankingSnapshotAt(db, season, now, policy, now);
 }
