@@ -83,7 +83,19 @@ async function pooled<T, R>(items: T[], limit: number, fn: (item: T) => Promise<
 
 async function main() {
   const { discover } = DEFAULT_CRAWL_SETTINGS;
-  const signal = discover.queries.find((q) => q.enabled) ?? discover.queries[0];
+  /**
+   * 신호를 골라 뜰 수 있어야 한다. 신호별 수율을 비교하려면 같은 방법으로 각각 떠서
+   * 같은 기준으로 판정해봐야 하는데, 켜져 있는 것만 쓰면 한쪽밖에 못 본다.
+   */
+  const wanted = args.get("signal");
+  const signal = wanted
+    ? (discover.queries.find((q) => q.label === wanted) ??
+      (() => {
+        console.error(`모르는 신호: ${wanted}. 있는 것: ${discover.queries.map((q) => q.label).join(", ")}`);
+        process.exit(1);
+      })())
+    : (discover.queries.find((q) => q.enabled) ?? discover.queries[0]);
+  console.log(`신호: ${signal.label} (${signal.query})`);
   const since = new Date(Date.now() - discover.windowDays * 86_400_000).toISOString().slice(0, 10);
   const query = `${signal.query} committer-date:>=${since}`;
 

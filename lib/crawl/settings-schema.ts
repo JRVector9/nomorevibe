@@ -91,7 +91,9 @@ export const DEFAULT_CRAWL_SETTINGS: CrawlSettings = {
   discover: {
     queries: [
       { label: "Claude 커밋 트레일러", query: "Co-authored-by: Claude", enabled: true, priority: 100 },
-      { label: "Codex 커밋 트레일러", query: "Co-authored-by: Codex", enabled: false, priority: 90 },
+      // 실측으로 켰다. 표본 132개에서 통과율 23%로 Claude 신호(19%)보다 높았고,
+      // 두 신호가 같이 찾은 레포는 5%뿐이라 거의 겹치지 않는 집합을 데려온다.
+      { label: "Codex 커밋 트레일러", query: "Co-authored-by: Codex", enabled: true, priority: 90 },
     ],
     windowDays: 180,
     sort: "relevance",
@@ -129,6 +131,8 @@ export const DEFAULT_CRAWL_SETTINGS: CrawlSettings = {
       "modrinth.com",
       "pypi.org",
       "wordpress.org",
+      // 문서 호스팅. docs 라벨 규칙에 안 걸리는 형태다 (suews.readthedocs.io를 봤다)
+      "readthedocs.io",
     ],
     excludedRepoPatterns: [
       "*.github.io",

@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 import { currentAdmin } from "@/lib/auth/admin";
-import { frontierCounts, candidateCounts, rejectionBreakdown } from "@/lib/crawl/repository";
+import { frontierCounts, candidateCounts, rejectionBreakdown, yieldBySignal } from "@/lib/crawl/repository";
 import { getSettings } from "@/lib/crawl/settings";
 import { listJobStates } from "@/lib/jobs/runner";
 import { JOB_NAMES } from "@/lib/jobs/registry";
@@ -75,16 +75,26 @@ export default async function StatusPage() {
   const admin = await currentAdmin();
   if (!admin) redirect("/admin/login");
 
-  const [settings, frontier, candidates, rejections, jobStates] = await Promise.all([
+  const [settings, frontier, candidates, rejections, jobStates, signalRows] = await Promise.all([
     getSettings(),
     frontierCounts(),
     candidateCounts(),
     rejectionBreakdown(),
     listJobStates(),
+    yieldBySignal(),
   ]);
 
   const states = new Map(jobStates.map((job) => [job.name, job]));
   const rejectedTotal = rejections.reduce((sum, r) => sum + r.count, 0);
+
+  /** 신호별로 조사한 수와 그중 목록에 오른 수 */
+  const signals = new Map<string, { judged: number; kept: number }>();
+  for (const row of signalRows) {
+    const entry = signals.get(row.signal) ?? { judged: 0, kept: 0 };
+    entry.judged += row.count;
+    if (row.state === "approved" || row.state === "published") entry.kept += row.count;
+    signals.set(row.signal, entry);
+  }
 
   return (
     <main className="mx-auto max-w-[900px] px-6 pb-20">
@@ -142,6 +152,38 @@ export default async function StatusPage() {
 
         <Card title="후보" note="판정 결과입니다. 심사 대기는 사람이 가를 것, 발행 대기는 다음 발행 틱이 올릴 것입니다.">
           <Counts counts={candidates} empty="아직 판정한 것이 없습니다." />
+        </Card>
+
+        <Card
+          title="신호별 수율"
+          note="어떤 검색어가 쓸 만한 것을 데려오는지입니다. 켜고 끄기 전에 숫자로 봅니다."
+        >
+          {signals.size === 0 ? (
+            <p className="text-[13px] text-fg-3">아직 판정한 것이 없습니다.</p>
+          ) : (
+            <table className="w-full text-[12.5px]">
+              <thead className="text-fg-3">
+                <tr className="text-left">
+                  <th className="pb-2 font-medium">신호</th>
+                  <th className="pb-2 font-medium">판정한 수</th>
+                  <th className="pb-2 font-medium">목록에 오른 수</th>
+                  <th className="pb-2 font-medium">수율</th>
+                </tr>
+              </thead>
+              <tbody>
+                {[...signals]
+                  .sort((a, b) => b[1].kept / b[1].judged - a[1].kept / a[1].judged)
+                  .map(([signal, { judged, kept }]) => (
+                    <tr key={signal} className="border-t border-line">
+                      <td className="py-2">{signal}</td>
+                      <td className="py-2 font-mono text-fg-2">{judged}</td>
+                      <td className="py-2 font-mono text-fg-2">{kept}</td>
+                      <td className="py-2 font-mono font-bold">{Math.round((kept / judged) * 100)}%</td>
+                    </tr>
+                  ))}
+              </tbody>
+            </table>
+          )}
         </Card>
 
         <Card

@@ -266,6 +266,24 @@ export async function candidateCounts(): Promise<Record<string, number>> {
   return Object.fromEntries(rows.map((r) => [r.state, r.count]));
 }
 
+/**
+ * 신호별 수율.
+ *
+ * 어떤 검색어가 쓸 만한 것을 데려오는지는 켜고 끄기 전에 숫자로 봐야 한다. 프론티어에만
+ * 남는 signal과 후보의 판정 결과를 이어 붙여 센다 — 그래서 프론티어 행을 지우지 않는다.
+ */
+export async function yieldBySignal(): Promise<{ signal: string; state: CandidateState; count: number }[]> {
+  return db
+    .select({
+      signal: crawlFrontier.signal,
+      state: sql<CandidateState>`${crawlCandidates.state}`,
+      count: sql<number>`count(*)::int`,
+    })
+    .from(crawlFrontier)
+    .innerJoin(crawlCandidates, eq(crawlCandidates.repo, crawlFrontier.repo))
+    .groupBy(crawlFrontier.signal, crawlCandidates.state);
+}
+
 /** 규칙별로 얼마나 거르고 있는지 — 자동 판정이 블랙박스가 되지 않으려면 필요하다 */
 export async function rejectionBreakdown(): Promise<{ reason: string; count: number }[]> {
   return db
