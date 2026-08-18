@@ -108,6 +108,31 @@ export const jobs = pgTable("jobs", {
 export type Job = typeof jobs.$inferSelect;
 
 /**
+ * 제품 생존 상태.
+ *
+ * 등재된 제품이 언젠가는 죽는다. 죽은 링크가 목록에 남아 있으면 "직접 확인한 것만
+ * 보여준다"는 말이 무의미해진다.
+ *
+ * 여기서는 재기만 한다. 몇 번 실패했다고 자동으로 감추지 않는다 — 배포가 잠깐 흔들린 것과
+ * 서비스가 끝난 것을 응답 코드만으로 가를 수 없고, 목록에서 내리는 것은 되돌리기 어려운
+ * 판단이다. 어드민이 보고 차단한다.
+ *
+ * products와 나눠 둔 이유: 제품 기록은 사람이 쓴 것이고 이쪽은 기계가 매번 덮어쓰는 값이다.
+ */
+export const productHealth = pgTable("product_health", {
+  slug: varchar("slug", { length: 80 }).primaryKey(),
+  checkedAt: timestamp("checked_at").notNull().defaultNow(),
+  /** 마지막 응답 코드. 0이면 연결 자체가 안 됐다 */
+  status: integer("status").notNull(),
+  /** 연속 실패 횟수. 한 번 성공하면 0으로 돌아간다 */
+  failures: integer("failures").notNull().default(0),
+  /** 죽기 시작한 시각. 살아 있으면 null */
+  downSince: timestamp("down_since"),
+});
+
+export type ProductHealth = typeof productHealth.$inferSelect;
+
+/**
  * 내려달라는 요청.
  *
  * 우리가 대신 올린 제품은 주인이 부탁한 적이 없으므로, 내려달라는 말에 답할 창구가 있어야

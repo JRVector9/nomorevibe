@@ -4,6 +4,7 @@ import { currentAdmin } from "@/lib/auth/admin";
 import { frontierCounts, candidateCounts, rejectionBreakdown, yieldBySignal } from "@/lib/crawl/repository";
 import { getSettings } from "@/lib/crawl/settings";
 import { listJobStates } from "@/lib/jobs/runner";
+import { downProducts, DOWN_THRESHOLD } from "@/lib/domain/products/health";
 import { JOB_NAMES } from "@/lib/jobs/registry";
 import { AdminNav } from "../AdminNav";
 
@@ -83,6 +84,7 @@ export default async function StatusPage() {
     listJobStates(),
     yieldBySignal(),
   ]);
+  const down = await downProducts();
 
   const states = new Map(jobStates.map((job) => [job.name, job]));
   const rejectedTotal = rejections.reduce((sum, r) => sum + r.count, 0);
@@ -145,6 +147,27 @@ export default async function StatusPage() {
               </p>
             ))}
         </Card>
+
+        {down.length > 0 && (
+          <Card
+            title="응답하지 않는 제품"
+            note={`${DOWN_THRESHOLD}회 넘게 연속으로 실패한 것입니다. 자동으로 내리지 않습니다 — 배포가 잠깐 흔들린 것과 서비스가 끝난 것을 응답 코드만으로 가를 수 없습니다.`}
+          >
+            <ul className="flex flex-col gap-1.5 text-[12.5px]">
+              {down.map((item) => (
+                <li key={item.slug} className="flex flex-wrap items-baseline gap-x-2">
+                  <a href={`/p/${item.slug}`} className="font-semibold hover:text-accent">
+                    {item.name}
+                  </a>
+                  <span className="font-mono text-[11.5px] text-fg-3">
+                    {item.status === 0 ? "접속 실패" : `HTTP ${item.status}`} · {item.failures}회 연속
+                    {item.downSince && ` · ${when(item.downSince)}부터`}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </Card>
+        )}
 
         <Card title="프론티어" note="조사 대상 큐입니다. 대기가 0이면 crawl-seed가 더 찾아야 합니다.">
           <Counts counts={frontier} empty="아직 발견한 레포가 없습니다." />

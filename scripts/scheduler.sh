@@ -10,7 +10,8 @@
 #   fetch  : 레포 조회 5000회/시간. 한 틱에 30건 남짓이므로 1분마다 돌려도 여유가 있다.
 #   seed   : 검색 30회/분. 프론티어는 한 번 돌면 한참 차 있으므로 드물게 돈다.
 #   judge  : 계산만 한다. 원본이 쌓이는 속도를 따라가면 된다.
-#   publish: 판정 직후에 돌아야 통과한 것이 바로 목록에 오른다.
+#   publish: 판정 직후에 돌아야 통과한 것이 바로 목록에 오른다
+#   uptime : 제품이 죽는 것은 분 단위로 급한 일이 아니다. 한 바퀴를 천천히 돈다.
 set -eu
 
 BASE="${BASE_URL:-http://app:3000}"
@@ -42,6 +43,9 @@ while true; do
   fi
   if [ $((tick % 15)) -eq 1 ]; then
     run crawl-seed
+  fi
+  if [ $((tick % 10)) -eq 5 ]; then
+    run uptime-ping
   fi
 
   sleep "$INTERVAL"
