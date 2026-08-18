@@ -162,7 +162,7 @@ export function SettingsForm({ settings }: { settings: CrawlSettings }) {
         <button
           type="submit"
           disabled={pending}
-          className="rounded-[10px] bg-accent px-5 py-2.5 text-[13.5px] font-semibold text-white hover:brightness-110 disabled:opacity-50"
+          className="rounded-[10px] bg-accent-solid px-5 py-2.5 text-[13.5px] font-semibold text-white hover:brightness-110 disabled:opacity-50"
         >
           {pending ? "저장 중…" : "저장"}
         </button>

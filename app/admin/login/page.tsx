@@ -25,7 +25,7 @@ export default async function AdminLoginPage({
 
         <a
           href="/api/auth/github"
-          className="mt-6 flex items-center justify-center gap-2 rounded-[10px] bg-accent px-4 py-2.5 text-[13.5px] font-semibold text-white hover:brightness-110"
+          className="mt-6 flex items-center justify-center gap-2 rounded-[10px] bg-accent-solid px-4 py-2.5 text-[13.5px] font-semibold text-white hover:brightness-110"
         >
           GitHub으로 로그인
         </a>

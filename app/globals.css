@@ -16,11 +16,21 @@
   --border: #232c42;
   --text: #f0f3fa;
   --text-2: #98a2b8;
-  --text-3: #5c667e;
+  /* 4.5:1을 못 넘겨 올렸다. 원래 값(#5c667e)은 카드 위에서 2.93이었다 */
+  --text-3: #7d8799;
   --up: #16c784;
-  --down: #ea3943;
-  --accent: #7c6bff;
-  --accent-soft: rgba(124, 107, 255, 0.12);
+  /* #ea3943은 카드 위에서 4.13이었다 — 경고 문구가 기준 아래로 내려가면 안 된다 */
+  --down: #ef4d56;
+  /**
+   * 강조색이 두 가지인 이유.
+   *
+   * 어두운 바탕 위의 글자는 밝아야 읽히고, 흰 글자를 얹는 버튼은 어두워야 읽힌다.
+   * 한 값으로 둘 다 하면 어느 한쪽이 반드시 기준 아래로 내려간다 — 원래 값(#7c6bff)은
+   * 글자로 4.33, 버튼 위 흰 글자로 3.89였다.
+   */
+  --accent: #8f81ff;
+  --accent-solid: #6a56f0;
+  --accent-soft: rgba(124, 107, 255, 0.14);
   --star: #f6b73c;
 }
 
@@ -46,6 +56,7 @@
     --up: #0a7d4f;
     --down: #c62430;
     --accent: #5b46f0;
+    --accent-solid: #5b46f0;
     --accent-soft: rgba(91, 70, 240, 0.1);
     --star: #b8790a;
   }
@@ -66,6 +77,7 @@
   --up: #0a7d4f;
   --down: #c62430;
   --accent: #5b46f0;
+  --accent-solid: #5b46f0;
   --accent-soft: rgba(91, 70, 240, 0.1);
   --star: #b8790a;
 }
@@ -87,6 +99,7 @@
   --text-3: #5c667e;
   --up: #16c784;
   --down: #ea3943;
+  --accent: #8f81ff;
 }
 
 @theme inline {
@@ -101,6 +114,7 @@
   --color-up: var(--up);
   --color-down: var(--down);
   --color-accent: var(--accent);
+  --color-accent-solid: var(--accent-solid);
   --color-accent-soft: var(--accent-soft);
   --font-sans: var(--font-inter), -apple-system, sans-serif;
   --font-mono: var(--font-jetbrains), monospace;
