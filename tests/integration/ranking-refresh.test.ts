@@ -126,6 +126,25 @@ describe("seasonal ranking refresh", () => {
     });
   });
 
+  it("keeps the latest closed Top 3 cooldown in a rolling preview", async () => {
+    await insertProduct("preview-winner");
+    await db.insert(clickEvents).values({
+      slug: "preview-winner",
+      occurredAt: new Date("2026-08-18T02:00:00.000Z"),
+    });
+    await refreshRanking(NOW);
+    const afterBoundary = new Date(WEEK_END.getTime() + 1);
+    await refreshRanking(afterBoundary);
+
+    const [preview] = await previewRanking(DEFAULT_RANKING_POLICY, afterBoundary);
+
+    expect(preview).toMatchObject({
+      slug: "preview-winner",
+      validClicks: 1,
+      cooldownFactorBasisPoints: 3500,
+    });
+  });
+
   it("expands eligibility to the smallest whole-day window that reaches the minimum", async () => {
     const policy = {
       ...DEFAULT_RANKING_POLICY,

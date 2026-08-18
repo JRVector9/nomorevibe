@@ -195,7 +195,7 @@ async function aggregateTrendClicks(
 
 async function priorFinishes(
   executor: RankingExecutor,
-  season: RankingSeason,
+  historyBefore: Date,
   policy: RankingPolicy,
   slugs: string[],
 ) {
@@ -210,7 +210,7 @@ async function priorFinishes(
     .from(rankingSeasons)
     .where(and(
       eq(rankingSeasons.state, "closed"),
-      lte(rankingSeasons.endsAt, season.startsAt),
+      lte(rankingSeasons.endsAt, historyBefore),
     ))
     .orderBy(desc(rankingSeasons.endsAt), desc(rankingSeasons.id))
     .limit(historyLength);
@@ -246,6 +246,7 @@ async function calculateRankingSnapshotAt(
   at: Date,
   policy: RankingPolicy,
   retentionAt: Date,
+  historyBefore = season.startsAt,
 ): Promise<CalculatedEntry[]> {
   const cutoff = minDate(at, season.endsAt);
   const eligibleSince = new Date(
@@ -265,7 +266,7 @@ async function calculateRankingSnapshotAt(
   const [seasonClicks, trendClicks, finishes] = await Promise.all([
     aggregateSeasonClicks(executor, season.startsAt, cutoff, slugs, retentionAt),
     aggregateTrendClicks(executor, cutoff, policy.trend.windowHours, slugs),
-    priorFinishes(executor, season, policy, slugs),
+    priorFinishes(executor, historyBefore, policy, slugs),
   ]);
 
   const ranked = rankRows(candidates.map((candidate) => ({
@@ -545,5 +546,5 @@ export async function previewRanking(
     startedAt: now,
     closedAt: null,
   };
-  return calculateRankingSnapshotAt(db, season, now, policy, now);
+  return calculateRankingSnapshotAt(db, season, now, policy, now, period.startsAt);
 }
