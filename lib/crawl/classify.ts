@@ -35,10 +35,11 @@ const MODEL = "claude-sonnet-5";
 /**
  * 요청 하나가 이 시간을 넘기면 포기한다.
  *
- * effort를 high로 두면 생각이 길어져 12초로는 모자랄 수 있다. 넘겨도 발행은 규칙 분류로
- * 이어지지만, 그렇게 되면 이 호출은 값만 치르고 아무것도 못 얻는다.
+ * 발행 잡의 틱 예산이 25초이고 예산 확인은 후보 사이에서만 일어난다. 재시도까지 켜두면
+ * 한 후보가 40초를 먹어 틱 전체를 넘긴다 — cron 요청이 그 자리에서 끊긴다.
+ * 그래서 재시도를 끄고, 한 번의 호출이 예산의 절반을 넘지 않게 잡는다.
  */
-const TIMEOUT_MS = 20_000;
+const TIMEOUT_MS = 12_000;
 
 let client: Anthropic | null = null;
 let warned = false;
@@ -53,7 +54,7 @@ function getClient(): Anthropic | null {
     }
     return null;
   }
-  client = new Anthropic({ timeout: TIMEOUT_MS, maxRetries: 1 });
+  client = new Anthropic({ timeout: TIMEOUT_MS, maxRetries: 0 });
   return client;
 }
 
