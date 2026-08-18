@@ -108,6 +108,27 @@ export const jobs = pgTable("jobs", {
 export type Job = typeof jobs.$inferSelect;
 
 /**
+ * 아웃바운드 클릭 원천.
+ *
+ * 목록에서 제품으로 나가는 클릭을 센다. 지표가 있어야 랭킹이 생기고, 랭킹이 있어야 목록이
+ * 최신순 말고 다른 순서를 가질 수 있다.
+ *
+ * 원천을 그대로 쌓고 집계는 나중에 굴린다 — 집계 기준(창 길이, 봇 제외)을 바꿀 때 원천이
+ * 있어야 다시 계산할 수 있다. crawl_documents와 같은 이유다.
+ */
+export const clickEvents = pgTable(
+  "click_events",
+  {
+    id: serial("id").primaryKey(),
+    slug: varchar("slug", { length: 80 }).notNull(),
+    occurredAt: timestamp("occurred_at").notNull().defaultNow(),
+  },
+  (t) => [index("click_events_slug_time_idx").on(t.slug, t.occurredAt.desc())],
+);
+
+export type ClickEvent = typeof clickEvents.$inferSelect;
+
+/**
  * 제품 생존 상태.
  *
  * 등재된 제품이 언젠가는 죽는다. 죽은 링크가 목록에 남아 있으면 "직접 확인한 것만
