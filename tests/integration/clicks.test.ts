@@ -224,3 +224,28 @@ describe("집계와 랭킹", () => {
     expect(list.map((p) => p.slug)).toEqual(["silent"]);
   });
 });
+
+describe("지표는 부가물이다", () => {
+  it("지표 조회가 실패해도 목록은 그대로 나간다", async () => {
+    // 주석은 그렇게 적혀 있었지만 실제로는 예외가 올라가 홈이 통째로 "불러올 수 없습니다"가 됐다
+    await product("app", "https://app.test");
+    const original = db.select;
+    let restored = false;
+    // clickMetrics의 select만 실패시킨다
+    (db as unknown as { select: unknown }).select = (...args: unknown[]) => {
+      if (!restored) {
+        restored = true;
+        throw new Error("click_events 조회 실패");
+      }
+      return (original as (...a: unknown[]) => unknown).apply(db, args);
+    };
+
+    try {
+      const list = await getRankedList(10, "recent");
+      expect(list.map((p) => p.slug)).toEqual(["app"]);
+      expect(list[0].metrics).toBeUndefined();
+    } finally {
+      (db as unknown as { select: unknown }).select = original;
+    }
+  });
+});

@@ -12,6 +12,14 @@ import { products, productHealth, type ProductHealth } from "@/lib/db/schema";
 /** 이 횟수 이상 연속 실패하면 화면에서 눈에 띄게 표시한다 */
 export const DOWN_THRESHOLD = 3;
 
+/**
+ * 같은 제품을 이 시간 안에 다시 확인하지 않는다.
+ *
+ * 없으면 등재 제품이 한 틱 배치(15건)보다 적을 때 같은 사이트를 10분마다 두드린다 —
+ * 하루 144번이다. 남의 서버를 그렇게 치면 차단당해도 할 말이 없다.
+ */
+export const RECHECK_AFTER_MINUTES = 6 * 60;
+
 export type PingTarget = { slug: string; url: string };
 
 /**
@@ -25,7 +33,13 @@ export async function nextToCheck(limit: number): Promise<PingTarget[]> {
     .select({ slug: products.slug, url: products.url })
     .from(products)
     .leftJoin(productHealth, eq(productHealth.slug, products.slug))
-    .where(inArray(products.status, ["verified", "seeded"]))
+    .where(
+      and(
+        inArray(products.status, ["verified", "seeded"]),
+        // 한 번도 안 본 것과, 본 지 충분히 오래된 것만
+        sql`(${productHealth.checkedAt} is null or ${productHealth.checkedAt} < now() - ${sql.raw(`interval '${RECHECK_AFTER_MINUTES} minutes'`)})`,
+      ),
+    )
     .orderBy(sql`${productHealth.checkedAt} asc nulls first`)
     .limit(limit);
 }

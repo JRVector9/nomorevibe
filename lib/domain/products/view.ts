@@ -1,6 +1,7 @@
 import type { Product, ProductStatus } from "@/lib/db/schema";
 import { listProducts, type ProductSort } from "./repository";
-import { clickMetrics } from "./clicks";
+import { clickMetrics, type ClickMetrics } from "./clicks";
+import { logger } from "@/lib/observability/logger";
 
 /**
  * 목록 화면이 쓰는 뷰모델.
@@ -81,7 +82,17 @@ export async function getPublicList(limit: number, sort?: ProductSort): Promise<
  */
 async function withMetrics(items: ProductListItem[]): Promise<ProductListItem[]> {
   if (items.length === 0) return items;
-  const metrics = await clickMetrics(items.map((i) => i.slug));
+
+  let metrics: Map<string, ClickMetrics>;
+  try {
+    metrics = await clickMetrics(items.map((i) => i.slug));
+  } catch (error) {
+    // 주석만 그렇게 적어두고 실제로는 예외가 그대로 올라가 홈이 통째로 "불러올 수
+    // 없습니다"가 됐다. 지표가 없는 목록은 볼 수 있지만, 목록 없는 홈은 볼 것이 없다.
+    logger.warn("products.metrics_failed", { count: items.length, error });
+    return items;
+  }
+
   return items.map((item) => {
     const found = metrics.get(item.slug);
     return found ? { ...item, metrics: found } : item;

@@ -10,7 +10,9 @@ vi.mock("@/lib/net/fetch", () => ({
 const { db } = await import("@/lib/db");
 const { productHealth, jobs } = await import("@/lib/db/schema");
 const repo = await import("@/lib/domain/products/repository");
-const { nextToCheck, recordPing, downProducts } = await import("@/lib/domain/products/health");
+const { nextToCheck, recordPing, downProducts, RECHECK_AFTER_MINUTES } = await import(
+  "@/lib/domain/products/health"
+);
 const { pingProducts } = await import("@/lib/jobs/products/uptime");
 const { runJob } = await import("@/lib/jobs/runner");
 const { ensureSchema, resetTables } = await import("./setup");
@@ -47,8 +49,36 @@ describe("생존 확인", () => {
     await product("a", "https://a.test");
     await product("b", "https://b.test");
     await recordPing("a", 200);
+    // a는 재검사 간격이 지난 것으로 둬야 순서 비교가 된다
+    await db
+      .update(productHealth)
+      .set({ checkedAt: new Date(Date.now() - (RECHECK_AFTER_MINUTES + 1) * 60_000) });
 
     expect((await nextToCheck(5)).map((t) => t.slug)).toEqual(["b", "a"]);
+  });
+
+  it("방금 확인한 것은 다시 보지 않는다", async () => {
+    // 없으면 제품이 배치보다 적을 때 같은 사이트를 하루 144번 두드린다
+    await product("a", "https://a.test");
+    await recordPing("a", 200);
+
+    expect(await nextToCheck(5)).toEqual([]);
+
+    // 재검사 간격이 지나면 다시 대상이 된다
+    await db
+      .update(productHealth)
+      .set({ checkedAt: new Date(Date.now() - (RECHECK_AFTER_MINUTES + 1) * 60_000) });
+    expect((await nextToCheck(5)).map((t) => t.slug)).toEqual(["a"]);
+  });
+
+  it("잡이 본문 스트림을 닫는다 — 안 닫으면 연결이 쌓인다", async () => {
+    await product("a", "https://a.test");
+    const cancel = vi.fn().mockResolvedValue(undefined);
+    safeFetch.mockResolvedValue({ finalUrl: "x", response: { status: 200, body: { cancel } } });
+
+    await runJob("uptime-ping", pingProducts);
+
+    expect(cancel).toHaveBeenCalledTimes(1);
   });
 
   it("목록에 없는 상태는 확인하지 않는다", async () => {
