@@ -4,6 +4,8 @@ import { db } from "@/lib/db";
 import { clickEvents, rateLimits, productClickDaily } from "@/lib/db/schema";
 import * as repo from "@/lib/domain/products/repository";
 import {
+  isBotAgent,
+  visitorId,
   recordClick,
   clicksSince,
   clickMetrics,
@@ -88,6 +90,51 @@ describe("클릭 집계", () => {
   it("기록이 실패해도 던지지 않는다 — 사용자는 제품으로 가는 중이다", async () => {
     // 없는 제품의 클릭도 기록 자체는 조용히 처리된다 (라우트가 존재 여부를 먼저 본다)
     await expect(recordClick("ghost", "1.1.1.1")).resolves.toBeUndefined();
+  });
+});
+
+describe("누구의 클릭인가", () => {
+  it("방문자 쿠키가 다르면 따로 센다", async () => {
+    // 예전에는 IP로 묶었는데 TRUSTED_PROXY_HOPS 기본값(0)에서는 모두 "direct"라
+    // 전 세계 방문자가 한 버킷에 들어가 제품당 10분에 한 번만 세지고 있었다
+    await product();
+    await recordClick("app", "11111111-1111-1111-1111-111111111111");
+    await recordClick("app", "22222222-2222-2222-2222-222222222222");
+
+    expect(await count()).toBe(2);
+  });
+
+  it("같은 쿠키의 연타는 한 번으로 본다", async () => {
+    await product();
+    for (let i = 0; i < 4; i++) await recordClick("app", "11111111-1111-1111-1111-111111111111");
+    expect(await count()).toBe(1);
+  });
+
+  it("쿠키가 없거나 형식이 이상하면 새로 만든다", () => {
+    expect(visitorId(undefined)).toMatch(/^[a-f0-9-]{36}$/);
+    expect(visitorId("' OR 1=1")).toMatch(/^[a-f0-9-]{36}$/);
+    // 멀쩡한 값은 그대로 쓴다 (같은 방문자로 묶여야 하므로)
+    const id = "11111111-1111-1111-1111-111111111111";
+    expect(visitorId(id)).toBe(id);
+  });
+
+  it("봇은 세지 않는다 — 랭킹이 크롤 빈도순이 되면 안 된다", () => {
+    for (const ua of [
+      "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)",
+      "Slackbot-LinkExpanding 1.0 (+https://api.slack.com/robots)",
+      "Twitterbot/1.0",
+      "curl/8.4.0",
+      "python-requests/2.31.0",
+    ]) {
+      expect(isBotAgent(ua), ua).toBe(true);
+    }
+    // 사람 브라우저는 통과한다
+    expect(
+      isBotAgent(
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0 Safari/537.36",
+      ),
+    ).toBe(false);
+    expect(isBotAgent(null)).toBe(false);
   });
 });
 
