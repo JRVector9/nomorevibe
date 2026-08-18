@@ -17,7 +17,7 @@ export function parseHomeSort(value: string | undefined): HomeSort {
 }
 
 const SORTS = [
-  { key: "weekly", label: "이번 주" },
+  { key: "weekly", label: "이번 시즌" },
   { key: "trending", label: "급상승" },
   { key: "recent", label: "최신" },
   { key: "all-time", label: "역대 인기" },

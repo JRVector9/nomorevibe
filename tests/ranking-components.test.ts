@@ -65,6 +65,48 @@ describe("ranking table", () => {
     expect(html).toContain("+24%");
     expect(html).toContain("지난 시즌 2위");
   });
+
+  it("uses lifetime labels without seasonal placeholders in all-time mode", () => {
+    const html = renderToStaticMarkup(createElement(RankingTable, {
+      items: [ranked("lifetime", {
+        cooldownFactorBasisPoints: 10_000,
+        changePercent: null,
+        previousRank: null,
+      })],
+      windowHours: 24,
+      mode: "all-time",
+    }));
+
+    expect(html).toContain("누적 클릭");
+    expect(html).not.toContain("이번 시즌 클릭");
+    expect(html).not.toContain("변동률");
+    expect(html).not.toContain("순위 반영");
+    expect(html).not.toContain("신규");
+    expect(html).not.toContain("첫 시즌");
+  });
+
+  it("keeps trust and downtime visible in product identity", () => {
+    const html = renderToStaticMarkup(createElement(RankingTable, {
+      items: [ranked("down", { health: { down: true, since: null } })],
+      windowHours: 24,
+    }));
+
+    expect(html).toContain("✓ 검증됨");
+    expect(html).toContain("응답 없음");
+  });
+
+  it("shows core metrics in the narrow table and stacks secondary season state", () => {
+    const html = renderToStaticMarkup(createElement(RankingTable, {
+      items: [ranked("mobile")],
+      windowHours: 24,
+    }));
+
+    expect(html).toContain("min-w-full sm:min-w-[760px]");
+    expect(html).toContain("hidden sm:table-cell");
+    expect(html).toContain("sm:hidden");
+    expect(html).toContain("클릭");
+    expect(html).toContain("24h 변동률");
+  });
 });
 
 describe("discovery boards", () => {

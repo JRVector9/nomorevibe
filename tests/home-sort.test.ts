@@ -26,4 +26,15 @@ describe("home sort", () => {
     expect(html).toContain('href="/?category=Dev&amp;q=ai+tool"');
     expect(html).toContain('href="/?sort=trending&amp;category=Dev&amp;q=ai+tool"');
   });
+
+  it("uses a cadence-neutral label for the default season sort", () => {
+    const html = renderToStaticMarkup(createElement(BrowseFilters, {
+      state: { sort: "weekly" },
+      counts: {},
+      total: 0,
+    }));
+
+    expect(html).toContain("이번 시즌");
+    expect(html).not.toContain("이번 주");
+  });
 });

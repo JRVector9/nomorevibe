@@ -196,7 +196,11 @@ export default async function HomePage({ searchParams }: Props) {
         <div className="mt-6"><ProductList products={list} /></div>
       ) : (
         <div className="mt-6">
-          <RankingTable items={list as RankingListItem[]} windowHours={trendWindowHours} />
+          <RankingTable
+            items={list as RankingListItem[]}
+            windowHours={trendWindowHours}
+            mode={effectiveSort === "all-time" ? "all-time" : "season"}
+          />
         </div>
       )}
     </main>
