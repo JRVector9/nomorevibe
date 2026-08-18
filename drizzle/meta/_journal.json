@@ -71,6 +71,13 @@
       "when": 1787033427976,
       "tag": "0009_product_health",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1787033654041,
+      "tag": "0010_click_events",
+      "breakpoints": true
     }
   ]
 }

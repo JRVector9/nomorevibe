@@ -59,7 +59,7 @@ export default async function ProductPage({ params }: Props) {
               </h1>
               <div className="mt-1 text-[14.5px] text-fg-2">{product.tagline}</div>
               <a
-                href={product.url}
+                href={`/go/${product.slug}`}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="mt-2 inline-flex items-center gap-1 text-[13px] font-semibold text-accent hover:underline"
