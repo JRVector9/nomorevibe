@@ -17,6 +17,8 @@ export type RepoFacts = {
   /** 마지막 푸시. null이면 알 수 없음 */
   pushedAt: Date | null;
   archived: boolean;
+  /** 레포 설명. 이름과 URL에 단서가 없을 때 여기에만 있는 경우가 있다 */
+  description: string;
 };
 
 export type PageFacts = {
@@ -65,6 +67,22 @@ export function isBlockedHost(url: string, blocked: string[]): boolean {
   });
 }
 
+/**
+ * 문서 사이트인지.
+ *
+ * 도메인 목록으로는 못 잡는다 — docs.datadoghq.com, docs.owid.io, rocm.docs.amd.com,
+ * kestra.io/docs/... 넷이 실데이터에서 나왔는데 호스트도 경로도 제각각이고 공통점은
+ * "docs 라벨"뿐이다. 문서는 읽을거리이지 배포된 서비스가 아니다.
+ */
+export function isDocumentation(url: string): boolean {
+  try {
+    const u = new URL(url);
+    return /(^|\.)docs?\./i.test(u.hostname) || /^\/docs?(\/|$)/i.test(u.pathname);
+  } catch {
+    return false;
+  }
+}
+
 function daysSince(at: Date, now: Date): number {
   return (now.getTime() - at.getTime()) / 86_400_000;
 }
@@ -97,6 +115,7 @@ export function judge(
   // 배포물이 없으면 제품이 아니다 — 가장 값싼 거르기
   if (!page.productUrl) return reject("no_homepage");
   if (isBlockedHost(page.productUrl, rules.blockedHomepageDomains)) return reject("not_a_product");
+  if (isDocumentation(page.productUrl)) return reject("not_a_product");
 
   if (repo.isFork && rules.excludeForks) return reject("fork");
   if (repo.archived) return reject("personal_site"); // 보관된 레포는 살아있는 제품이 아니다
@@ -128,6 +147,17 @@ export function judge(
       (p) => matchesPattern(repoName, p) || (hostIsWholeSite && matchesPattern(productHost, p)),
     )
   ) {
+    return reject("personal_site");
+  }
+
+  /**
+   * 설명에만 단서가 있는 개인 사이트.
+   *
+   * "My very simple personal landing page app"처럼 이름도 URL도 평범한데 설명이 스스로
+   * 밝히는 경우가 있다. 그것까지 통과시키면 사람이 심사에서 걸러야 한다.
+   */
+  const description = repo.description.toLowerCase();
+  if (description && rules.personalSiteKeywords.some((k) => description.includes(k.toLowerCase()))) {
     return reject("personal_site");
   }
 
@@ -180,5 +210,6 @@ export function factsFromRepoMeta(repo: string, meta: Record<string, unknown>): 
     ownerType: owner.type ?? "User",
     pushedAt: pushed && !Number.isNaN(pushed.getTime()) ? pushed : null,
     archived: meta.archived === true,
+    description: typeof meta.description === "string" ? meta.description : "",
   };
 }

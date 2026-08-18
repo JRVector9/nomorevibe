@@ -14,6 +14,7 @@ const goodRepo = (over: Partial<RepoFacts> = {}): RepoFacts => ({
   ownerType: "User",
   pushedAt: new Date("2026-08-10T00:00:00Z"),
   archived: false,
+  description: "배포한 서비스입니다",
   ...over,
 });
 const livePage = { productUrl: "https://my-app.vercel.app", status: 200 };
@@ -63,8 +64,45 @@ describe("judge — 거르기", () => {
     expect(judge(goodRepo({ isFork: true }), livePage, settings, NOW).reason).toBe("fork");
   });
 
-  it("조직 계정을 거른다 (설정에 따라)", () => {
-    expect(judge(goodRepo({ ownerType: "Organization" }), livePage, settings, NOW).reason).toBe("large_oss");
+  it("조직 계정이라고 거르지 않는다 — 규모는 스타 상한이 본다", () => {
+    // 실측: large_oss로 거른 52건 중 39건이 "조직인데 스타 1000 이하"였고
+    // 그 안에 nodetool.ai·albyhub.com 같은 실제 배포 제품이 있었다
+    expect(judge(goodRepo({ ownerType: "Organization" }), livePage, settings, NOW).state).toBe("approved");
+
+    const strict = { ...settings, judge: { ...settings.judge, excludeOrganizations: true } };
+    expect(judge(goodRepo({ ownerType: "Organization" }), livePage, strict, NOW).reason).toBe("large_oss");
+  });
+
+  it("설명에만 단서가 있는 개인 사이트를 거른다", () => {
+    // 이름도 URL도 평범한데 설명이 스스로 밝히는 경우다
+    for (const description of [
+      "My very simple personal landing page app",
+      "Personal blog build with Astro",
+      "개인 블로그입니다",
+    ]) {
+      expect(judge(goodRepo({ description }), livePage, settings, NOW).reason, description).toBe("personal_site");
+    }
+  });
+
+  it("설명에 personal이 스쳐도 한 단어로는 걸리지 않는다", () => {
+    // personal-finance-tracker 같은 제품을 함께 버리면 안 된다
+    const v = judge(goodRepo({ description: "Personal finance tracker for freelancers" }), livePage, settings, NOW);
+    expect(v.state).toBe("approved");
+  });
+
+  it("문서 사이트는 배포된 서비스가 아니다", () => {
+    for (const url of [
+      "https://docs.datadoghq.com",
+      "https://rocm.docs.amd.com/projects/intellikit/en/latest",
+      "https://kestra.io/docs/api-reference/kestra-sdk",
+    ]) {
+      const v = judge(goodRepo(), { productUrl: url, status: 200 }, settings, NOW);
+      expect(v.reason, url).toBe("not_a_product");
+    }
+    // 이름에 docs가 들어간 제품까지 거르면 안 된다
+    expect(judge(goodRepo(), { productUrl: "https://docsend.test", status: 200 }, settings, NOW).state).toBe(
+      "approved",
+    );
   });
 
   it("배포 호스트도 패턴에 걸되 사이트 루트일 때만 본다", () => {
@@ -231,6 +269,7 @@ describe("보조 함수", () => {
       archived: false,
       pushed_at: "2026-08-01T00:00:00Z",
       owner: { type: "Organization" },
+      description: "설명",
       기타필드: "무시됨",
     });
     expect(facts).toEqual({
@@ -240,6 +279,7 @@ describe("보조 함수", () => {
       ownerType: "Organization",
       pushedAt: new Date("2026-08-01T00:00:00Z"),
       archived: false,
+      description: "설명",
     });
   });
 
