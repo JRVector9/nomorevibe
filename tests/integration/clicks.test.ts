@@ -255,6 +255,23 @@ describe("지표는 부가물이다", () => {
 });
 
 describe("굴린 집계를 읽는다", () => {
+  it("KST 자정이 지나면 일별 조회 시작 날짜도 넘어간다", async () => {
+    await db.insert(productClickDaily).values([
+      { slug: "boundary", day: "2025-12-30", clicks: 1 },
+      { slug: "boundary", day: "2025-12-31", clicks: 10 },
+    ]);
+
+    const beforeMidnight = new Date("2025-12-31T14:59:00Z");
+    const afterMidnight = new Date("2025-12-31T15:00:00Z");
+
+    expect(await topClickedSince(1, 10, beforeMidnight)).toEqual([
+      { slug: "boundary", clicks: 11 },
+    ]);
+    expect(await topClickedSince(1, 10, afterMidnight)).toEqual([
+      { slug: "boundary", clicks: 10 },
+    ]);
+  });
+
   it("30일 창의 제품별 합을 많이 눌린 순으로 준다", async () => {
     // 원천은 35일이면 지워지므로 오래된 구간은 이 표로만 답할 수 있다
     await product("loud", "https://loud.test");

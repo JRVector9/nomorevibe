@@ -150,14 +150,22 @@ export async function rollupDaily(days = 3): Promise<number> {
  * 목록·랭킹은 원천(click_events)을 보지만 그쪽은 35일이면 지워진다. 오래된 구간을 답할 수
  * 있는 것은 이 표뿐이고, 읽는 데가 없으면 굴리는 일 자체가 의미가 없다.
  */
-export async function topClickedSince(days: number, limit = 10): Promise<{ slug: string; clicks: number }[]> {
+export async function topClickedSince(
+  days: number,
+  limit = 10,
+  now = new Date(),
+): Promise<{ slug: string; clicks: number }[]> {
+  const instant = now.toISOString();
   return db
     .select({
       slug: productClickDaily.slug,
       clicks: sql<number>`sum(${productClickDaily.clicks})::int`,
     })
     .from(productClickDaily)
-    .where(gte(productClickDaily.day, sql.raw(`(now() - interval '${days} days')::date`)))
+    .where(gte(
+      productClickDaily.day,
+      sql<string>`(timezone('Asia/Seoul', ${instant}::timestamptz)::date - ${days}::integer)`,
+    ))
     .groupBy(productClickDaily.slug)
     .orderBy(sql`sum(${productClickDaily.clicks}) desc`)
     .limit(limit);
