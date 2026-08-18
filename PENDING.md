@@ -74,7 +74,7 @@ npm run job crawl-publish
 
 **지금 상태**: cron 진입점(`POST /api/cron/<job>`)과 로컬 배포용 스케줄러
 (`scripts/scheduler.sh`, compose의 `scheduler` 서비스)는 있다. **프로덕션에는 아무것도
-걸려 있지 않아 수집이 돌지 않는다.**
+걸려 있지 않아 수집과 랭킹 스냅샷 갱신이 돌지 않는다.**
 
 ### 걸어야 할 것
 
@@ -84,8 +84,12 @@ npm run job crawl-publish
 */5  * * * *   crawl-publish   판정 직후에 돌아야 바로 목록에 오른다
 */15 * * * *   crawl-seed      검색 30회/분, 프론티어는 한 번 차면 오래간다
 */10 * * * *   uptime-ping     같은 제품은 6시간에 한 번만 본다
-0    * * * *   click-rollup    집계는 하루 단위라 자주 돌 이유가 없다
+0 * * * *   click-rollup       KST 일별 클릭 집계
+5 * * * *   ranking-refresh    시즌 경계·쿨다운·공개 순위 스냅샷
 ```
+
+`ranking-refresh`는 반드시 `click-rollup`이 끝난 뒤 실행해야 한다. 두 작업을 포함한 위
+프로덕션 스케줄은 아직 등록되지 않았다.
 
 각 호출은 이 형태다.
 
