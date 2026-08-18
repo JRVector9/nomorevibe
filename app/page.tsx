@@ -7,6 +7,8 @@ import { logger } from "@/lib/observability/logger";
 import { ProductList } from "@/components/ProductCard";
 import { EmptyState } from "@/components/EmptyState";
 import { BrowseFilters } from "@/components/BrowseFilters";
+import { MarketStats } from "@/components/MarketStats";
+import { marketStats, type MarketStats as MarketStatsData } from "@/lib/domain/products/stats";
 
 export const dynamic = "force-dynamic";
 
@@ -27,18 +29,20 @@ export default async function HomePage({ searchParams }: Props) {
   // DB 장애가 랜딩 전체를 500으로 만들지 않도록 폴백 처리
   let list: ProductListItem[] = [];
   let counts: Record<string, number> = {};
+  let stats: MarketStatsData | null = null;
   let total = 0;
   let dbDown = false;
   try {
     // 많이 눌린 순은 랭킹이므로 우리가 직접 확인한 제품만 다룬다.
     // 미클레임 제품까지 섞으면 "확인한 것만 랭킹에 넣는다"는 원칙이 무너진다.
     const options = { sort, category, query };
-    [list, counts] = await Promise.all([
+    [list, counts, stats] = await Promise.all([
       sort === "popular"
         ? getRankedList(HOME_LIST_LIMIT, options)
         : getPublicList(HOME_LIST_LIMIT, options),
       // 칩의 숫자는 검색어와 무관하게 카테고리 전체를 센다 — 필터를 풀었을 때 무엇이 있는지 보여준다
       categoryCounts(LISTED),
+      marketStats(),
     ]);
     total = Object.values(counts).reduce((sum, n) => sum + n, 0);
   } catch (error) {
@@ -58,6 +62,8 @@ export default async function HomePage({ searchParams }: Props) {
           표시합니다.
         </p>
       </section>
+
+      {stats && <MarketStats stats={stats} />}
 
       <BrowseFilters
         state={{ sort, category, query }}
