@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, beforeEach } from "vitest";
 import { eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { jobs } from "@/lib/db/schema";
-import { runJob, getJobState } from "@/lib/jobs/runner";
+import { runJob, getJobState, listJobStates } from "@/lib/jobs/runner";
 import { ensureSchema } from "./setup";
 
 beforeAll(() => ensureSchema());
@@ -146,5 +146,25 @@ describe("runJob — 실패 기록", () => {
   it("실행 횟수를 센다 (스케줄이 도는지 확인하는 근거)", async () => {
     for (let i = 0; i < 3; i++) await runJob("counted", async () => ({ done: true }));
     expect((await getJobState("counted"))?.runs).toBe(3);
+  });
+});
+
+describe("listJobStates — 현황 화면이 읽는 것", () => {
+  it("한 번도 안 돈 작업은 행이 없다", async () => {
+    // 화면이 "실행 기록 없음"과 "돌다 실패함"을 갈라 보여줘야 하므로 여기서 채우지 않는다
+    expect(await listJobStates()).toEqual([]);
+  });
+
+  it("돌아본 작업만 이름순으로 준다", async () => {
+    await runJob("zzz-later", async () => ({ done: true }));
+    await runJob("aaa-first", async () => {
+      throw new Error("장애");
+    });
+
+    const states = await listJobStates();
+
+    expect(states.map((s) => s.name)).toEqual(["aaa-first", "zzz-later"]);
+    expect(states[0].lastError).toContain("장애");
+    expect(states[1].lastSuccessAt).toBeInstanceOf(Date);
   });
 });
