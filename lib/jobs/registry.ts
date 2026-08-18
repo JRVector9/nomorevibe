@@ -2,6 +2,7 @@ import type { JobContext, JobOutcome } from "./runner";
 import { seedFrontier } from "@/lib/crawl/jobs/seed";
 import { fetchCrawlDocuments } from "@/lib/crawl/jobs/fetch";
 import { judgeCrawlDocuments } from "@/lib/crawl/jobs/judge";
+import { publishCandidates } from "@/lib/crawl/jobs/publish";
 
 /**
  * 이름 → 작업 매핑.
@@ -32,6 +33,9 @@ export const JOBS: Record<string, AnyJob> = {
 
   /** 수집한 원본에 현재 기준을 적용해 후보로 남긴다 */
   "crawl-judge": judgeCrawlDocuments,
+
+  /** 통과한 후보를 seeded 제품으로 목록에 올린다 */
+  "crawl-publish": publishCandidates,
 };
 
 export const JOB_NAMES = Object.keys(JOBS);

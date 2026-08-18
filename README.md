@@ -100,12 +100,17 @@ curl -X POST $SITE/api/cron/heartbeat \  # 스케줄러가 주기적으로 호�
 | `crawl-seed` | GitHub 검색으로 레포를 발견 | `crawl_frontier`의 pending |
 | `crawl-fetch` | 레포 메타 + 배포 페이지 확보 | `crawl_documents` (원본) |
 | `crawl-judge` | 현재 기준으로 판정 | `crawl_candidates` (approved / rejected / needs_review) |
+| `crawl-publish` | 통과한 후보를 목록에 올림 | `products` (status=seeded, source=crawler) |
 
 ```bash
 GITHUB_TOKEN=... npm run job crawl-seed      # 로컬에서 한 틱씩
 GITHUB_TOKEN=... npm run job crawl-fetch
 npm run job crawl-judge
+npm run job crawl-publish
 ```
+
+규칙이 가르지 못한 것(`needs_review`)은 `/admin/review`에서 사람이 가른다. 발행된 제품은
+주인이 없는 상태(`seeded`)로 목록에 뜨고, 랭킹에는 들어가지 않는다.
 
 **단계를 나눈 이유는 되돌릴 수 있게 하기 위함이다.** 원본을 보관하므로 판정 기준을 바꾸면
 GitHub을 다시 긁지 않고 다시 판정한다(후보 state를 `new`로 되돌리면 `crawl-judge`가 다시
