@@ -127,3 +127,13 @@ export async function runJob<C>(
 export async function getJobState(name: string) {
   return db.query.jobs.findFirst({ where: eq(jobs.name, name) });
 }
+
+/**
+ * 등록된 작업 전부의 상태.
+ *
+ * 한 번도 안 돈 작업은 행이 없다 — 화면에서 "실행 기록 없음"과 "돌다 실패함"을 갈라
+ * 보여줘야 하므로 여기서 채우지 않는다.
+ */
+export async function listJobStates() {
+  return db.select().from(jobs).orderBy(jobs.name);
+}

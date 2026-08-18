@@ -1,10 +1,10 @@
 import type { Metadata } from "next";
-import Link from "next/link";
 import { redirect } from "next/navigation";
 import { currentAdmin } from "@/lib/auth/admin";
 import { listCandidates } from "@/lib/crawl/repository";
 import { REVIEW_REJECT_REASONS } from "@/lib/crawl/review";
 import { ReviewItem } from "./ReviewItem";
+import { AdminNav } from "../AdminNav";
 
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "심사 큐 — NoMoreVibe", robots: { index: false } };
@@ -23,9 +23,9 @@ export default async function ReviewPage() {
       <div className="flex flex-wrap items-baseline gap-3 pt-9">
         <h1 className="text-[26px] font-extrabold tracking-tight">심사 큐</h1>
         <span className="text-[12.5px] text-fg-3">{candidates.length}건</span>
-        <Link href="/admin" className="ml-auto text-[12.5px] font-semibold text-fg-2 hover:text-fg">
-          크롤 설정
-        </Link>
+        <div className="ml-auto">
+          <AdminNav current="/admin/review" />
+        </div>
       </div>
 
       <p className="mt-2 max-w-[68ch] text-[13.5px] leading-[1.7] text-fg-2">

@@ -5,6 +5,7 @@ import { currentAdmin } from "@/lib/auth/admin";
 import { getSettings, getSettingsMeta } from "@/lib/crawl/settings";
 import { candidateCounts } from "@/lib/crawl/repository";
 import { SettingsForm } from "./SettingsForm";
+import { AdminNav } from "./AdminNav";
 
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "크롤 설정 — NoMoreVibe", robots: { index: false } };
@@ -33,9 +34,12 @@ export default async function AdminPage() {
             <span className="font-semibold text-fg-3">수집 꺼짐</span>
           )}
         </span>
-        <Link href="/admin/review" className="text-[12.5px] font-semibold text-fg-2 hover:text-fg">
-          심사 큐{waiting > 0 && <span className="ml-1 text-accent">{waiting}</span>}
-        </Link>
+        <AdminNav current="/admin" />
+        {waiting > 0 && (
+          <Link href="/admin/review" className="text-[12.5px] font-semibold text-accent">
+            심사 대기 {waiting}건
+          </Link>
+        )}
         <form action="/api/auth/logout" method="post" className="ml-auto">
           <span className="mr-3 text-[12.5px] text-fg-3">{admin.login}</span>
           <button type="submit" className="text-[12.5px] font-semibold text-fg-2 hover:text-fg">
