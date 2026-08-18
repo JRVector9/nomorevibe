@@ -20,7 +20,7 @@ const MAX_SLUG_ATTEMPTS = 4;
 
 export type PublishResult =
   | { ok: true; slug: string }
-  | { ok: false; reason: "no_document" | "no_url" | "already_listed" };
+  | { ok: false; reason: "no_document" | "no_url" | "already_listed" | "no_description" };
 
 export async function publishCandidate(candidate: CrawlCandidate): Promise<PublishResult> {
   const document = await crawl.getDocument(candidate.repo);
@@ -30,6 +30,20 @@ export async function publishCandidate(candidate: CrawlCandidate): Promise<Publi
   if (!url) return { ok: false, reason: "no_url" };
 
   const draft = draftFrom(candidate.repo, document);
+
+  /**
+   * 우리가 아는 것이 이름뿐이면 자동으로 올리지 않는다.
+   *
+   * 실제로 rilla-dashboard-clone이 소개 없이 발행돼 태그라인 자리에 레포 전체 이름이
+   * 들어갔다. 무엇을 하는 것인지 아무도 모르는 항목을 목록에 올리는 것은 "직접 확인한
+   * 것만 보여준다"는 원칙과 어긋난다.
+   *
+   * 사람이 이미 본 것(decidedBy=admin)은 그대로 올린다. 그러지 않으면 심사에서 승인한
+   * 항목이 곧바로 심사로 되돌아와 끝나지 않는다.
+   */
+  if (!draft.hasDescription && candidate.decidedBy !== "admin") {
+    return { ok: false, reason: "no_description" };
+  }
   const editToken = generateEditToken();
 
   let slug = "";
@@ -105,6 +119,8 @@ function draftFrom(repo: string, document: CrawlDocument) {
   const tagline = pageDescription || repoDescription || repo;
 
   return {
+    /** 소개를 어디서도 못 찾았다는 표시 — 발행할지 말지를 이걸로 가른다 */
+    hasDescription: Boolean(pageDescription || repoDescription),
     name: productName(pageTitle || repoName).slice(0, LIMITS.name),
     tagline: tagline.slice(0, LIMITS.tagline),
     description: (repoDescription || pageDescription || tagline).slice(0, LIMITS.description),
