@@ -38,13 +38,48 @@ services:
       AUTH_SECRET: ${AUTH_SECRET:?AUTH_SECRET이 필요합니다 (openssl rand -hex 32)}
       ADMIN_TOKEN: ${ADMIN_TOKEN:-local-deploy-admin}
       CRON_SECRET: ${CRON_SECRET:-local-deploy-cron}
+      # 수집기가 쓴다. 없으면 시간당 60회라 seed·fetch가 성립하지 않는다
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
       ADMIN_GITHUB_LOGINS: ${ADMIN_GITHUB_LOGINS:-}
       GITHUB_OAUTH_CLIENT_ID: ${GITHUB_OAUTH_CLIENT_ID:-}
       GITHUB_OAUTH_CLIENT_SECRET: ${GITHUB_OAUTH_CLIENT_SECRET:-}
       TRUSTED_PROXY_HOPS: "0"
       LOG_LEVEL: info
+      # standalone 서버는 $HOSTNAME에 바인딩한다. 도커가 그 값을 컨테이너 ID로 채우므로
+      # 그대로 두면 컨테이너 안에서 127.0.0.1로 붙을 수 없다 — 헬스체크가 그 자리에서 막힌다.
+      HOSTNAME: 0.0.0.0
     ports:
       - "3200:3000"
+    restart: unless-stopped
+    # 스케줄러가 기동 중인 앱에 대고 헛발질하지 않도록 준비 상태를 알린다.
+    # (마이그레이션까지 끝나야 응답하므로 첫 요청이 실패하지 않는다)
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:3000/').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+
+  # 수집 파이프라인을 주기적으로 깨우는 쪽. 앱과 분리해 두면 스케줄을 껐다 켜는 것이
+  # 배포와 무관해지고, 인스턴스를 늘려도 스케줄러는 하나로 유지된다.
+  scheduler:
+    image: curlimages/curl:8.11.1
+    depends_on:
+      app:
+        condition: service_healthy
+    environment:
+      CRON_SECRET: ${CRON_SECRET:-local-deploy-cron}
+      BASE_URL: http://app:3000
+      TICK_SECONDS: ${TICK_SECONDS:-60}
+    volumes:
+      - ./scripts/scheduler.sh:/scheduler.sh:ro
+    entrypoint: ["sh", "/scheduler.sh"]
     restart: unless-stopped
 
 volumes:

@@ -112,6 +112,28 @@ npm run job crawl-publish
 규칙이 가르지 못한 것(`needs_review`)은 `/admin/review`에서 사람이 가른다. 발행된 제품은
 주인이 없는 상태(`seeded`)로 목록에 뜨고, 랭킹에는 들어가지 않는다.
 
+### 스케줄
+
+`scripts/scheduler.sh`가 주기를 쥐고 cron 진입점을 두드린다. compose에 `scheduler` 서비스로
+붙어 있고, 겹쳐 호출해도 러너의 잠금이 중복 실행을 막는다.
+
+| 작업 | 주기 | 근거 |
+|---|---|---|
+| `crawl-fetch` | 1분 | 레포 조회 5000회/시간. 한 틱에 30건 남짓이라 여유가 있다 |
+| `crawl-judge` | 5분 | 계산만 한다. 원본 쌓이는 속도만 따라가면 된다 |
+| `crawl-publish` | 5분 | 판정 직후에 돌아야 통과한 것이 바로 목록에 오른다 |
+| `crawl-seed` | 15분 | 검색 30회/분. 프론티어는 한 번 돌면 한참 차 있다 |
+
+크론 데몬을 쓰지 않는 이유는 붙일 것이 네 개뿐이고 주기가 분 단위이며, 실패해도 다음 틱이
+이어받기 때문이다. 다른 스케줄러(Dokploy, GitHub Actions)를 쓴다면 같은 주기로 아래를 호출하면 된다.
+
+```bash
+curl -X POST $SITE/api/cron/crawl-fetch -H "Authorization: Bearer $CRON_SECRET"
+```
+
+수집기는 `GITHUB_TOKEN`이 있어야 돈다. 없으면 시간당 60회라 성립하지 않으므로 작업이 실패로
+남는다(`jobs.last_error`).
+
 **단계를 나눈 이유는 되돌릴 수 있게 하기 위함이다.** 원본을 보관하므로 판정 기준을 바꾸면
 GitHub을 다시 긁지 않고 다시 판정한다(후보 state를 `new`로 되돌리면 `crawl-judge`가 다시
 가져간다). 검색은 분당 30회, 레포 조회는 시간당 5000회로 묶여 있어 한 번에 끝낼 수 없는데,
