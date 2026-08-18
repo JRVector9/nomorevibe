@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { DEFAULT_CRAWL_SETTINGS } from "@/lib/crawl/settings-schema";
 import {
   normalizeUrl,
   normalizeHttpUrl,
@@ -132,25 +133,35 @@ describe("HTML 추출", () => {
 });
 
 describe("detectSiteGenerator — 문서 사이트 가르기", () => {
+  // 찾을 이름은 설정이 갖는다. 여기서는 그 목록을 넘겨 찾기만 한다
+  const GENERATORS = DEFAULT_CRAWL_SETTINGS.judge.docsGenerators;
+
   it("generator 메타태그를 읽는다", () => {
-    expect(detectSiteGenerator(`<meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.5">`)).toBe(
+    expect(detectSiteGenerator(`<meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.5">`, GENERATORS)).toBe(
       "mkdocs",
     );
-    expect(detectSiteGenerator(`<meta name="generator" content="VitePress v1.6.4">`)).toBe("vitepress");
+    expect(detectSiteGenerator(`<meta name="generator" content="VitePress v1.6.4">`, GENERATORS)).toBe("vitepress");
   });
 
   it("태그가 없으면 자산 경로에서 찾는다 — 실측 23건 중 4건만 태그를 달고 있었다", () => {
-    expect(detectSiteGenerator(`<script src="/pkgdown.js"></script>`)).toBe("pkgdown");
-    expect(detectSiteGenerator(`<link href="/assets/css/docusaurus.min.css">`)).toBe("docusaurus");
+    expect(detectSiteGenerator(`<script src="/pkgdown.js"></script>`, GENERATORS)).toBe("pkgdown");
+    expect(detectSiteGenerator(`<link href="/assets/css/docusaurus.min.css">`, GENERATORS)).toBe("docusaurus");
   });
 
   it("본문 텍스트는 보지 않는다 — 만들었다고 적어둔 제품까지 문서로 볼 수는 없다", () => {
-    expect(detectSiteGenerator(`<html><body><p>docusaurus로 만든 문서를 지원합니다</p></body></html>`)).toBeNull();
+    expect(detectSiteGenerator(`<html><body><p>docusaurus로 만든 문서를 지원합니다</p></body></html>`, GENERATORS)).toBeNull();
+  });
+
+  it("설정에 없는 이름은 찾지 않는다 — 목록은 설정 하나가 갖는다", () => {
+    // 어드민이 추가하면 그 즉시 감지된다. 예전에는 목록이 두 군데라 추가해도 무효였다
+    const html = `<meta name="generator" content="Mintlify">`;
+    expect(detectSiteGenerator(html, GENERATORS)).toBeNull();
+    expect(detectSiteGenerator(html, [...GENERATORS, "mintlify"])).toBe("mintlify");
   });
 
   it("범용 생성기는 신호로 쓰지 않는다 — GitHub Pages의 기본 빌더다", () => {
-    expect(detectSiteGenerator(`<meta name="generator" content="Jekyll v4.3.2">`)).toBeNull();
-    expect(detectSiteGenerator(`<meta name="generator" content="Hugo 0.120">`)).toBeNull();
+    expect(detectSiteGenerator(`<meta name="generator" content="Jekyll v4.3.2">`, GENERATORS)).toBeNull();
+    expect(detectSiteGenerator(`<meta name="generator" content="Hugo 0.120">`, GENERATORS)).toBeNull();
   });
 });
 

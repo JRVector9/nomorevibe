@@ -2,10 +2,10 @@ import type { CrawlCandidate, CrawlDocument } from "@/lib/db/schema";
 import { LIMITS, type Category } from "@/lib/domain/products/schema";
 import * as products from "@/lib/domain/products/repository";
 import { cacheOgImage } from "@/lib/domain/products/og";
-import { classifyCategory } from "./classify";
 import { generateEditToken, generateVerifyToken, hashToken } from "@/lib/tokens";
 import { logger } from "@/lib/observability/logger";
 import * as crawl from "./repository";
+import { classifyCategory } from "./classify";
 
 /**
  * 발행 — 통과한 후보를 목록에 올린다.

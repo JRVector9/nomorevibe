@@ -5,6 +5,7 @@ import { frontierCounts, candidateCounts, rejectionBreakdown, yieldBySignal } fr
 import { getSettings } from "@/lib/crawl/settings";
 import { listJobStates } from "@/lib/jobs/runner";
 import { downProducts, DOWN_THRESHOLD } from "@/lib/domain/products/health";
+import { topClickedSince } from "@/lib/domain/products/clicks";
 import { JOB_NAMES } from "@/lib/jobs/registry";
 import { AdminNav } from "../AdminNav";
 
@@ -84,7 +85,7 @@ export default async function StatusPage() {
     listJobStates(),
     yieldBySignal(),
   ]);
-  const down = await downProducts();
+  const [down, topClicked] = await Promise.all([downProducts(), topClickedSince(30)]);
 
   const states = new Map(jobStates.map((job) => [job.name, job]));
   const rejectedTotal = rejections.reduce((sum, r) => sum + r.count, 0);
@@ -176,6 +177,24 @@ export default async function StatusPage() {
         <Card title="후보" note="판정 결과입니다. 심사 대기는 사람이 가를 것, 발행 대기는 다음 발행 틱이 올릴 것입니다.">
           <Counts counts={candidates} empty="아직 판정한 것이 없습니다." />
         </Card>
+
+        {topClicked.length > 0 && (
+          <Card
+            title="많이 눌린 제품 (30일)"
+            note="하루 단위로 굴린 집계입니다. 원천은 35일이면 지우므로 오래된 구간은 여기서만 볼 수 있습니다."
+          >
+            <ul className="flex flex-col gap-1.5 text-[12.5px]">
+              {topClicked.map((item) => (
+                <li key={item.slug} className="flex items-baseline gap-2">
+                  <a href={`/p/${item.slug}`} className="font-semibold hover:text-accent">
+                    {item.slug}
+                  </a>
+                  <span className="font-mono text-fg-3">{item.clicks}회</span>
+                </li>
+              ))}
+            </ul>
+          </Card>
+        )}
 
         <Card
           title="신호별 수율"

@@ -48,7 +48,9 @@ export async function publishCandidates(ctx: JobContext<null>): Promise<JobOutco
           productUrl: candidate.productUrl,
           state: held ? "needs_review" : "rejected",
           reason: held ? "ambiguous" : result.reason === "already_listed" ? "already_listed" : "not_a_product",
-          decidedBy: "auto",
+          // 사람이 내린 결정을 auto로 덮으면 "사람이 뒤집은 건수"가 규칙 품질의 지표라는
+          // 전제가 무너진다. 발행에 실패했을 뿐 심사 사실이 없던 일이 되지는 않는다.
+          decidedBy: candidate.decidedBy === "admin" ? "admin" : "auto",
           signals: candidate.signals ?? undefined,
         });
         ctx.log("crawl.publish_skipped_candidate", { repo: candidate.repo, reason: result.reason });

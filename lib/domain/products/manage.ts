@@ -51,6 +51,8 @@ export async function deleteProduct(
 
   await repo.remove(auth.value.id);
   await repo.deleteOgImage(slug);
+  // slug는 다시 쓰이므로 딸린 기록을 남기면 다음 제품이 그것을 물려받는다
+  await repo.removeTraces(slug);
   return ok({ slug });
 }
 

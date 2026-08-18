@@ -29,7 +29,8 @@ export default async function AdminProductsPage({ searchParams }: Props) {
   if (!admin) redirect("/admin/login");
 
   const { filter } = await searchParams;
-  const active = (filter && filter in FILTERS ? filter : "전체") as keyof typeof FILTERS;
+  // `in`은 프로토타입 키까지 통과시킨다 — ?filter=constructor 하나로 500이 났다
+  const active = (filter && Object.hasOwn(FILTERS, filter) ? filter : "전체") as keyof typeof FILTERS;
   const products = await listProducts({ statuses: [...FILTERS[active]], limit: PAGE_SIZE });
 
   return (
