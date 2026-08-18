@@ -108,6 +108,30 @@ export const jobs = pgTable("jobs", {
 export type Job = typeof jobs.$inferSelect;
 
 /**
+ * 내려달라는 요청.
+ *
+ * 우리가 대신 올린 제품은 주인이 부탁한 적이 없으므로, 내려달라는 말에 답할 창구가 있어야
+ * 한다. 상세 페이지가 그렇게 약속하고 있다.
+ *
+ * 요청 자체에는 소유 증명을 요구하지 않는다. 증명을 받으려면 우리 토큰을 그 사이트에
+ * 올리라고 해야 하는데, 내려달라는 사람에게 먼저 뭔가를 붙이라고 할 수는 없다.
+ * 대신 처리는 사람이 한다.
+ */
+export const takedownRequests = pgTable("takedown_requests", {
+  slug: varchar("slug", { length: 80 }).primaryKey(),
+  /** 요청자가 남긴 사유. 없을 수 있다 */
+  reason: text("reason"),
+  requestedAt: timestamp("requested_at").notNull().defaultNow(),
+  /** 처리 시각. null이면 아직 사람이 안 봤다 */
+  handledAt: timestamp("handled_at"),
+  handledBy: varchar("handled_by", { length: 120 }),
+  /** 'removed' | 'dismissed' */
+  outcome: varchar("outcome", { length: 20 }),
+});
+
+export type TakedownRequest = typeof takedownRequests.$inferSelect;
+
+/**
  * rate limit 버킷.
  *
  * 인메모리로 두면 인스턴스마다 한도가 따로 생겨, 2대로 늘리는 순간 실제 한도가 2배가 된다.

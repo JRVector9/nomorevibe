@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { currentAdmin } from "@/lib/auth/admin";
 import { saveSettings } from "@/lib/crawl/settings";
 import { decideCandidate, type ReviewDecision } from "@/lib/crawl/review";
+import { resolveTakedown, type TakedownAction } from "@/lib/domain/products/takedown";
 import { logger } from "@/lib/observability/logger";
 
 export type SaveState = { ok?: true; issues?: string[] } | null;
@@ -93,6 +94,29 @@ export async function decideCrawlCandidate(_prev: ReviewState, form: FormData): 
   if (!result.ok) {
     logger.warn("admin.review_rejected", { login: admin.login, message: result.message });
     return { error: result.message };
+  }
+
+  revalidatePath("/admin/review");
+  return null;
+}
+
+/**
+ * 내려달라는 요청 처리.
+ *
+ * 내릴 때 행을 지우지 않고 banned로 둔다 — 지우면 수집기가 다음 바퀴에 같은 URL을 다시
+ * 주워 온다. 유스케이스가 그렇게 하고, 여기서는 자격 확인과 파싱만 한다.
+ */
+export async function resolveTakedownRequest(_prev: ReviewState, form: FormData): Promise<ReviewState> {
+  const admin = await currentAdmin();
+  if (!admin) return { error: "권한이 없습니다. 다시 로그인해주세요." };
+
+  const action = String(form.get("action") ?? "");
+  if (action !== "remove" && action !== "dismiss") return { error: "알 수 없는 결정입니다" };
+
+  const result = await resolveTakedown(String(form.get("slug") ?? ""), action as TakedownAction, admin.login);
+  if (!result.ok) {
+    logger.warn("admin.takedown_rejected", { login: admin.login, error: result.error });
+    return { error: "요청을 처리하지 못했습니다" };
   }
 
   revalidatePath("/admin/review");
