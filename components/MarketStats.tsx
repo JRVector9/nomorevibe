@@ -20,7 +20,8 @@ function Stat({ label, value, note }: { label: string; value: number; note?: str
   );
 }
 
-export function MarketStats({ stats }: { stats: Stats }) {
+export function MarketStats({ stats, windowHours = 24 }: { stats: Stats; windowHours?: number }) {
+  const clickChange = stats.clicksChangePercent;
   return (
     <div className="mt-5 flex overflow-hidden rounded-[14px] border border-line bg-bg-card">
       <Stat label="제품" value={stats.products} />
@@ -29,7 +30,13 @@ export function MarketStats({ stats }: { stats: Stats }) {
         value={stats.newThisWeek}
         note={stats.newThisWeek > 0 ? "▲ 7일" : undefined}
       />
-      <Stat label="24시간 클릭" value={stats.clicks24h} />
+      <Stat
+        label={`유효 클릭 ${windowHours}h`}
+        value={stats.clicks24h}
+        note={clickChange === null
+          ? undefined
+          : `${clickChange >= 0 ? "▲" : "▼"} ${Math.abs(clickChange)}%`}
+      />
       <Stat
         label="검증됨"
         value={stats.verified}

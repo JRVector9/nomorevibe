@@ -1,55 +1,153 @@
 import Link from "next/link";
-import { getPublicList, getRankedList, type ProductListItem } from "@/lib/domain/products/view";
-import { categoryCounts, type ProductSort } from "@/lib/domain/products/repository";
-import { CATEGORIES } from "@/lib/domain/products/schema";
-import type { ProductStatus } from "@/lib/db/schema";
-import { logger } from "@/lib/observability/logger";
-import { ProductList } from "@/components/ProductCard";
+import { BrowseFilters, parseHomeSort, type HomeSort } from "@/components/BrowseFilters";
+import { DiscoveryBoards } from "@/components/DiscoveryBoards";
 import { EmptyState } from "@/components/EmptyState";
-import { BrowseFilters } from "@/components/BrowseFilters";
 import { MarketStats } from "@/components/MarketStats";
+import { ProductList } from "@/components/ProductCard";
+import { RankingTable } from "@/components/RankingTable";
+import { categoryCounts } from "@/lib/domain/products/repository";
+import { CATEGORIES } from "@/lib/domain/products/schema";
 import { marketStats, type MarketStats as MarketStatsData } from "@/lib/domain/products/stats";
+import { getVerifiedList, type ProductListItem } from "@/lib/domain/products/view";
+import {
+  getAllTimeRanking,
+  getCurrentSeason,
+  getDiscoveryBoards,
+  getSeasonHistory,
+  getSeasonRanking,
+  RANKING_STALE_MS,
+  type RankingListItem,
+  type SeasonSummary,
+} from "@/lib/domain/ranking/view";
+import { logger } from "@/lib/observability/logger";
 
 export const dynamic = "force-dynamic";
 
-// 홈은 가장 뜨거운 경로 — 전체 조회 대신 최근 N개만 (페이지네이션은 규모가 생기면)
 const HOME_LIST_LIMIT = 100;
+const KST_DATE_TIME = new Intl.DateTimeFormat("ko-KR", {
+  timeZone: "Asia/Seoul",
+  year: "numeric",
+  month: "numeric",
+  day: "numeric",
+  hour: "2-digit",
+  minute: "2-digit",
+  hour12: false,
+});
 
 type Props = { searchParams: Promise<{ sort?: string; category?: string; q?: string }> };
+type Boards = Awaited<ReturnType<typeof getDiscoveryBoards>>;
 
-const LISTED: ProductStatus[] = ["verified", "seeded"];
+function listFor(
+  sort: HomeSort,
+  active: SeasonSummary,
+  category: (typeof CATEGORIES)[number] | undefined,
+  query: string | undefined,
+): Promise<ProductListItem[] | RankingListItem[]> {
+  const options = { category, query, limit: HOME_LIST_LIMIT };
+  if (sort === "weekly") {
+    return getSeasonRanking({ ...options, seasonKey: active.key, order: "rank" })
+      .then((result) => result.items);
+  }
+  if (sort === "trending") {
+    return getSeasonRanking({ ...options, seasonKey: active.key, order: "trending" })
+      .then((result) => result.items);
+  }
+  if (sort === "all-time") return getAllTimeRanking(options);
+  return getVerifiedList(HOME_LIST_LIMIT, { sort: "recent", category, query });
+}
+
+function remainingTime(endsAt: Date, now: Date): string {
+  const milliseconds = endsAt.getTime() - now.getTime();
+  if (milliseconds <= 0) return "경계 처리 대기";
+  const hours = Math.ceil(milliseconds / 3_600_000);
+  if (hours < 24) return `${hours}시간 남음`;
+  return `${Math.ceil(hours / 24)}일 남음`;
+}
+
+function snapshotAge(refreshedAt: Date | null, now: Date): string {
+  if (!refreshedAt) return "스냅샷 집계 대기";
+  const age = Math.max(0, now.getTime() - refreshedAt.getTime());
+  const minutes = Math.floor(age / 60_000);
+  const label = minutes < 1 ? "방금" : minutes < 60 ? `${minutes}분 전` : `${Math.floor(minutes / 60)}시간 전`;
+  return `스냅샷 ${label}${age > RANKING_STALE_MS ? " · 오래됨" : ""}`;
+}
+
+function SeasonHeader({
+  season,
+  latestClosed,
+  now,
+}: {
+  season: SeasonSummary;
+  latestClosed: SeasonSummary | null;
+  now: Date;
+}) {
+  return (
+    <section className="mt-5 rounded-[14px] border border-line bg-bg-card px-5 py-4">
+      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+        <h2 className="font-mono text-[15px] font-extrabold">{season.key}</h2>
+        <span className="text-[12px] text-fg-2">
+          {KST_DATE_TIME.format(season.startsAt)} – {KST_DATE_TIME.format(season.endsAt)} KST
+        </span>
+        <span className="text-[12px] font-semibold text-accent">{remainingTime(season.endsAt, now)}</span>
+        <span className="text-[11.5px] text-fg-3">{snapshotAge(season.refreshedAt, now)}</span>
+        <div className="ml-auto flex gap-3 text-[12px] font-semibold">
+          <Link href={`/rankings/${season.key}`} className="text-accent hover:underline">현재 규칙 보기</Link>
+          {latestClosed && (
+            <Link href={`/rankings/${latestClosed.key}`} className="text-fg-2 hover:text-fg">지난 시즌</Link>
+          )}
+        </div>
+      </div>
+    </section>
+  );
+}
 
 export default async function HomePage({ searchParams }: Props) {
   const params = await searchParams;
-  const sort: ProductSort = params.sort === "popular" ? "popular" : "recent";
-  // 모르는 카테고리가 오면 필터를 걸지 않는다 — 빈 화면보다 전체가 낫다
-  const category = CATEGORIES.find((c) => c === params.category);
+  const requestedSort = parseHomeSort(params.sort);
+  const category = CATEGORIES.find((item) => item === params.category);
   const query = params.q?.trim() || undefined;
-  // 공개 목록에는 검증된 제품만 — 등록은 열고, 노출은 잠근다
-  // DB 장애가 랜딩 전체를 500으로 만들지 않도록 폴백 처리
-  let list: ProductListItem[] = [];
+  const now = new Date();
+
+  let active: SeasonSummary | null = null;
+  let latestClosed: SeasonSummary | null = null;
+  let effectiveSort: HomeSort = requestedSort;
+  let list: ProductListItem[] | RankingListItem[] = [];
+  let boards: Boards | null = null;
   let counts: Record<string, number> = {};
   let stats: MarketStatsData | null = null;
   let total = 0;
   let dbDown = false;
+
   try {
-    // 많이 눌린 순은 랭킹이므로 우리가 직접 확인한 제품만 다룬다.
-    // 미클레임 제품까지 섞으면 "확인한 것만 랭킹에 넣는다"는 원칙이 무너진다.
-    const options = { sort, category, query };
-    [list, counts, stats] = await Promise.all([
-      sort === "popular"
-        ? getRankedList(HOME_LIST_LIMIT, options)
-        : getPublicList(HOME_LIST_LIMIT, options),
-      // 칩의 숫자는 검색어와 무관하게 카테고리 전체를 센다 — 필터를 풀었을 때 무엇이 있는지 보여준다
-      categoryCounts(LISTED),
-      marketStats(),
+    active = await getCurrentSeason();
+    if (!active) {
+      logger.warn("home.ranking_unavailable");
+      effectiveSort = "recent";
+    }
+    const trendWindowHours = active?.policy.trend.windowHours ?? 24;
+    const listPromise = active
+      ? listFor(effectiveSort, active, category, query)
+      : getVerifiedList(HOME_LIST_LIMIT, { sort: "recent", category, query });
+
+    const [loadedBoards, loadedStats, loadedCounts, loadedList, history] = await Promise.all([
+      getDiscoveryBoards(),
+      marketStats({ windowHours: trendWindowHours }),
+      categoryCounts(["verified"]),
+      listPromise,
+      getSeasonHistory(1),
     ]);
-    total = Object.values(counts).reduce((sum, n) => sum + n, 0);
+    boards = loadedBoards;
+    stats = loadedStats;
+    counts = loadedCounts;
+    list = loadedList;
+    latestClosed = history[0] ?? null;
+    total = Object.values(counts).reduce((sum, count) => sum + count, 0);
   } catch (error) {
-    // 랜딩이 조용히 빈 화면이 되지 않도록, 폴백으로 떨어진 이유를 남긴다
     logger.error("home.list_failed", { error });
     dbDown = true;
   }
+
+  const trendWindowHours = active?.policy.trend.windowHours ?? 24;
 
   return (
     <main className="mx-auto max-w-[1280px] px-6 pb-20">
@@ -63,13 +161,17 @@ export default async function HomePage({ searchParams }: Props) {
         </p>
       </section>
 
-      {stats && <MarketStats stats={stats} />}
+      {active && <SeasonHeader season={active} latestClosed={latestClosed} now={now} />}
+      {stats && <MarketStats stats={stats} windowHours={trendWindowHours} />}
 
-      <BrowseFilters
-        state={{ sort, category, query }}
-        counts={counts}
-        total={total}
-      />
+      {boards && (
+        <section className="mt-5">
+          <h2 className="sr-only">발견 보드</h2>
+          <DiscoveryBoards boards={boards} now={now} />
+        </section>
+      )}
+
+      <BrowseFilters state={{ sort: effectiveSort, category, query }} counts={counts} total={total} />
 
       {dbDown ? (
         <div className="mt-10">
@@ -80,23 +182,21 @@ export default async function HomePage({ searchParams }: Props) {
           {query || category ? (
             <EmptyState>
               조건에 맞는 제품이 없습니다.{" "}
-              <Link href="/" className="font-semibold text-accent">
-                전체 보기
-              </Link>
+              <Link href="/" className="font-semibold text-accent">전체 보기</Link>
             </EmptyState>
           ) : (
             <EmptyState>
               아직 등록된 제품이 없습니다.{" "}
-              <Link href="/launch" className="font-semibold text-accent">
-                /nomorevibe
-              </Link>{" "}
+              <Link href="/launch" className="font-semibold text-accent">/nomorevibe</Link>{" "}
               로 첫 번째 제품을 등록해보세요.
             </EmptyState>
           )}
         </div>
+      ) : effectiveSort === "recent" ? (
+        <div className="mt-6"><ProductList products={list} /></div>
       ) : (
         <div className="mt-6">
-          <ProductList products={list} ranked={sort === "popular"} />
+          <RankingTable items={list as RankingListItem[]} windowHours={trendWindowHours} />
         </div>
       )}
     </main>
