@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, beforeEach } from "vitest";
 import { sql } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { clickEvents, rateLimits, productClickDaily } from "@/lib/db/schema";
+import { clickEvents, rateLimits, productClickDaily, productHealth } from "@/lib/db/schema";
 import * as repo from "@/lib/domain/products/repository";
 import {
   isBotAgent,
@@ -15,6 +15,7 @@ import {
 } from "@/lib/domain/products/clicks";
 import { getRankedList } from "@/lib/domain/products/view";
 import { marketStats } from "@/lib/domain/products/stats";
+import { recordPing } from "@/lib/domain/products/health";
 import { ensureSchema, resetTables } from "./setup";
 
 async function product(slug = "app", url = "https://app.test") {
@@ -40,6 +41,7 @@ beforeEach(async () => {
   await db.delete(clickEvents);
   await db.delete(productClickDaily);
   await db.delete(rateLimits);
+  await db.delete(productHealth);
   await resetTables();
 });
 
@@ -350,5 +352,27 @@ describe("마켓 통계", () => {
     await db.insert(clickEvents).values({ slug: "old", occurredAt: new Date(Date.now() - 30 * 60 * 60 * 1000) });
 
     expect((await marketStats()).clicks24h).toBe(0);
+  });
+});
+
+describe("목록의 생존 표시", () => {
+  it("연속 실패가 쌓인 제품만 표시한다", async () => {
+    await product("dead", "https://dead.test");
+    await product("alive", "https://alive.test");
+    for (let i = 0; i < 3; i++) await recordPing("dead", 0);
+    await recordPing("alive", 200);
+
+    const list = await getRankedList(10, { sort: "recent" });
+    const byslug = new Map(list.map((p) => [p.slug, p]));
+
+    expect(byslug.get("dead")?.health).toMatchObject({ down: true });
+    expect(byslug.get("dead")?.health?.since).toBeInstanceOf(Date);
+    expect(byslug.get("alive")?.health).toMatchObject({ down: false, since: null });
+  });
+
+  it("확인한 적 없는 제품에는 표시가 없다", async () => {
+    await product("unknown", "https://unknown.test");
+    const [item] = await getRankedList(10, { sort: "recent" });
+    expect(item.health).toBeUndefined();
   });
 });

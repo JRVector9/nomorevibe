@@ -70,6 +70,30 @@ export async function recordPing(slug: string, status: number): Promise<void> {
     });
 }
 
+/**
+ * 목록이 함께 보여줄 생존 상태.
+ *
+ * 죽은 링크가 아무 표시 없이 목록에 앉아 있으면 "직접 확인한 것만 보여준다"는 말이
+ * 무색해진다. 확인한 사실만 옮긴다 — 몇 번 연속 실패했고 언제부터인지.
+ */
+export type HealthSignal = { down: boolean; since: Date | null };
+
+export async function healthFor(slugs: string[]): Promise<Map<string, HealthSignal>> {
+  if (slugs.length === 0) return new Map();
+  const rows = await db
+    .select({
+      slug: productHealth.slug,
+      failures: productHealth.failures,
+      downSince: productHealth.downSince,
+    })
+    .from(productHealth)
+    .where(inArray(productHealth.slug, slugs));
+
+  return new Map(
+    rows.map((r) => [r.slug, { down: r.failures >= DOWN_THRESHOLD, since: r.downSince }]),
+  );
+}
+
 export type DownProduct = ProductHealth & { name: string; url: string };
 
 /** 연속으로 실패하고 있는 제품 (어드민 화면이 쓴다) */

@@ -96,7 +96,7 @@ export default async function HomePage({ searchParams }: Props) {
         </div>
       ) : (
         <div className="mt-6">
-          <ProductList products={list} />
+          <ProductList products={list} ranked={sort === "popular"} />
         </div>
       )}
     </main>
