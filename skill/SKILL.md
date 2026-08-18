@@ -57,9 +57,12 @@ API 베이스: 환경변수 `NOMOREVIBE_API`가 있으면 그 값, 없으면 `{{
      - `~/.config/nomorevibe/credentials.json`에 `{"<slug>": "<edit_token>"}` 병합 저장 (chmod 600)
      - 사용자에게 보고: 상세 페이지 주소(`page_url`), 현재 상태(미검증), 수정 키를 안전하게 저장했다는 사실
      - **검증 안내로 이어간다** (아래 8번)
-   - **409 (`already_registered: true`)**: 이미 등록된 URL이다. credentials에서 해당 slug의 수정 키를 찾아
-     `PATCH <API>/api/products/<slug>` (`X-Edit-Token` 헤더)로 4번에서 만든 정보를 갱신한다.
-     수정 키가 없으면: 다른 곳에서 등록된 제품이므로 수정할 수 없다고 안내한다.
+   - **409 (`already_registered: true`)**: 이미 등록된 URL이다. 응답의 `status`를 본다.
+     - `status`가 `"seeded"`: 우리가 공개 데이터를 보고 대신 올린 제품이다. 아직 주인이 없으므로
+       수정 키를 찾지 말고 **클레임으로 이어간다** (아래 4번).
+     - 그 밖: credentials에서 해당 slug의 수정 키를 찾아 `PATCH <API>/api/products/<slug>`
+       (`X-Edit-Token` 헤더)로 4번에서 만든 정보를 갱신한다.
+       수정 키가 없으면 다른 곳에서 등록된 제품이므로 수정할 수 없다고 안내한다.
 8. **검증 파일 제안**: 응답의 `verify.file` 정보로:
    - "공개 목록에 오르려면 도메인 소유권 검증이 필요합니다. 검증 파일을 추가해드릴까요?"
    - 동의하면 정적 파일이 서빙되는 위치를 찾아 (`public/`, `static/`, 프로젝트 구조에 따라)
@@ -75,7 +78,22 @@ API 베이스: 환경변수 `NOMOREVIBE_API`가 있으면 그 값, 없으면 `{{
 4. 실패(422): 응답의 `expected` 내용을 보여주며 배포가 완료됐는지, 파일 경로가 맞는지 확인하도록 안내한다.
    실제 배포 URL에서 `curl -s <url>/.well-known/nomorevibe.txt` 로 직접 확인해본다.
 
-## 3. 삭제 (`delete`)
+## 3. 클레임 — 우리가 대신 올린 제품 가져오기
+
+등록할 때 409에 `status: "seeded"`가 왔거나, 사용자가 "내 제품이 이미 올라와 있다"고 할 때.
+
+1. **확인**: `curl -s <API>/api/products/<slug>` — 응답에 `claimable: true`와 `verify`가 있으면
+   아직 주인이 없는 제품이다. 사용자에게 현재 등록된 이름·소개를 보여주고 본인 제품이 맞는지 묻는다.
+2. **소유 증명**: `verify.file` 정보로 검증 파일을 만든다 (등록 8번과 같은 방식). 재배포를 안내한다.
+3. **가져오기**: `curl -s -X POST <API>/api/products/<slug>/verify`
+   - 성공 응답에 `claimed: true`와 `edit_token`이 온다. **이 응답에만 나오는 값이다.**
+     `~/.config/nomorevibe/credentials.json`에 저장하고(chmod 600) `.nomorevibe.json`도 만든다.
+   - 이제 제품은 검증됨 상태가 되고 랭킹에 들어간다.
+4. **정보 갱신**: 우리가 채운 이름·소개는 공개 데이터에서 뽑은 것이라 부정확할 수 있다.
+   등록 4번처럼 정보를 만들어 `PATCH <API>/api/products/<slug>`로 갱신할지 사용자에게 묻는다.
+   `builder`(만든 AI)는 이때 처음 들어간다 — 우리가 대신 채우지 않는다.
+
+## 4. 삭제 (`delete`)
 
 1. `.nomorevibe.json`의 slug + credentials의 수정 키 확보.
 2. 정말 삭제할지 사용자에게 확인받는다 (삭제는 되돌릴 수 없다).

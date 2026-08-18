@@ -129,7 +129,7 @@ describe("신뢰 표기", () => {
     const before = await repo.findBySlug("found-app");
     expect(builderClaimOf(before!)).toBe("guessed");
 
-    // 클레임 플로우(PR-A4)가 할 일: 소유권 확인 후 claimedAt 기록
+    // 실제 경로는 도메인 검증이다 (tests/integration/claim.test.ts) — 여기서는 결과만 만든다
     await repo.update(before!.id, { claimedAt: new Date(), status: "verified" });
 
     const after = await repo.findBySlug("found-app");
