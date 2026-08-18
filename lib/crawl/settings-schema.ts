@@ -72,6 +72,13 @@ const judgeSchema = z.object({
   blockedHomepageDomains: z.array(z.string().min(1).max(120)).max(200),
   /** 레포 이름이 이 패턴이면 제외 (* 와일드카드) */
   excludedRepoPatterns: z.array(z.string().min(1).max(120)).max(200),
+  /**
+   * 이 생성기로 만들어진 페이지는 문서 사이트로 본다.
+   *
+   * 실측에서 심사 큐의 GitHub Pages 23건 중 10건이 문서 생성기 흔적을 남겼고, 그중 범용
+   * 생성기(jekyll·hugo)를 뺀 8건이 실제 문서였다. 사람이 같은 판단을 반복할 이유가 없다.
+   */
+  docsGenerators: z.array(z.string().min(2).max(40)).max(50),
   /** 규칙으로 못 가르면 needs_review로 보류할지, 그냥 거부할지 */
   holdAmbiguous: z.boolean(),
 });
@@ -147,6 +154,21 @@ export const DEFAULT_CRAWL_SETTINGS: CrawlSettings = {
       "*.jl",
       "*-personal-site",
       "*-personal-website",
+    ],
+    docsGenerators: [
+      "mkdocs",
+      "docusaurus",
+      "sphinx",
+      "pkgdown",
+      "vitepress",
+      "docsify",
+      "gitbook",
+      "mdbook",
+      "quarto",
+      "bookdown",
+      "readthedocs",
+      "starlight",
+      "nextra",
     ],
     holdAmbiguous: true,
   },
