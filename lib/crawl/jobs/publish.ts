@@ -37,14 +37,17 @@ export async function publishCandidates(ctx: JobContext<null>): Promise<JobOutco
 
       if (!result.ok) {
         /**
-         * 발행할 수 없는 후보는 거부로 내린다. 그대로 두면 다음 틱이 같은 것을 또 집어
-         * 큐가 막힌다 — approved 상태가 곧 대기 목록이기 때문이다.
+         * 발행하지 못한 후보는 어느 쪽으로든 approved에서 빼야 한다. 그대로 두면 다음 틱이
+         * 같은 것을 또 집어 큐가 막힌다 — approved 상태가 곧 대기 목록이기 때문이다.
+         *
+         * 소개가 없어서 못 올린 것만 사람에게 넘긴다. 나머지는 사람이 봐도 할 일이 없다.
          */
+        const held = result.reason === "no_description";
         await crawl.recordJudgement({
           repo: candidate.repo,
           productUrl: candidate.productUrl,
-          state: "rejected",
-          reason: result.reason === "already_listed" ? "already_listed" : "not_a_product",
+          state: held ? "needs_review" : "rejected",
+          reason: held ? "ambiguous" : result.reason === "already_listed" ? "already_listed" : "not_a_product",
           decidedBy: "auto",
           signals: candidate.signals ?? undefined,
         });

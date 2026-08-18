@@ -91,7 +91,8 @@ describe("발행 잡", () => {
     expect(await getRankedList(10)).toHaveLength(0);
   });
 
-  it("소개가 아무 데도 없으면 레포 이름을 쓴다 — 지어내지 않는다", async () => {
+  it("소개가 아무 데도 없으면 올리지 않고 사람에게 넘긴다", async () => {
+    // 무엇을 하는 것인지 아무도 모르는 항목을 목록에 올릴 수는 없다
     await approved("someone/mystery", {
       meta: { description: null, language: null },
       pageMeta: { title: null, description: null, ogImage: null },
@@ -99,8 +100,35 @@ describe("발행 잡", () => {
 
     await tick();
 
-    const product = await products.findByUrl("https://my-app.test");
-    expect(product).toMatchObject({ name: "mystery", tagline: "someone/mystery", stack: [] });
+    expect(await products.findByUrl("https://my-app.test")).toBeUndefined();
+    expect(await crawl.getCandidate("someone/mystery")).toMatchObject({
+      state: "needs_review",
+      reason: "ambiguous",
+    });
+  });
+
+  it("사람이 승인한 것은 소개가 없어도 올린다 — 심사로 되돌아오면 끝나지 않는다", async () => {
+    await approved("someone/mystery", {
+      meta: { description: null, language: null },
+      pageMeta: { title: null, description: null, ogImage: null },
+    });
+    // 심사에서 사람이 통과시킨 상태
+    await crawl.recordJudgement({
+      repo: "someone/mystery",
+      productUrl: "https://my-app.test",
+      state: "approved",
+      reason: "passed",
+      decidedBy: "admin",
+    });
+
+    await tick();
+
+    // 지어내지 않고 레포 이름을 쓴다
+    expect(await products.findByUrl("https://my-app.test")).toMatchObject({
+      name: "mystery",
+      tagline: "someone/mystery",
+      stack: [],
+    });
   });
 
   it("제목의 마케팅 문구를 이름에서 뗀다", async () => {
