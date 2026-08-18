@@ -5,6 +5,7 @@ import { judgeCrawlDocuments } from "@/lib/crawl/jobs/judge";
 import { publishCandidates } from "@/lib/crawl/jobs/publish";
 import { pingProducts } from "@/lib/jobs/products/uptime";
 import { rollupClicks } from "@/lib/jobs/products/click-rollup";
+import { refreshRankings } from "@/lib/jobs/products/ranking-refresh";
 
 /**
  * 이름 → 작업 매핑.
@@ -43,6 +44,9 @@ export const JOBS: Record<string, AnyJob> = {
 
   /** 클릭 원천을 하루 단위로 굴리고 오래된 원천을 지운다 */
   "click-rollup": rollupClicks,
+
+  /** 시즌 경계를 처리하고 공개 랭킹 스냅샷을 갱신한다 */
+  "ranking-refresh": refreshRankings,
 };
 
 export const JOB_NAMES = Object.keys(JOBS);
