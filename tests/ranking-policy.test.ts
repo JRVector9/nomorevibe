@@ -51,4 +51,25 @@ describe("ranking policy", () => {
     });
     expect(rankingPolicyWarnings(policy).join(" ")).toContain("월간");
   });
+
+  it("warns when the launch window is shorter than the cooldown", () => {
+    const policy = rankingPolicySchema.parse({
+      ...DEFAULT_RANKING_POLICY,
+      eligibility: { ...DEFAULT_RANKING_POLICY.eligibility, launchWindowDays: 14 },
+    });
+    expect(rankingPolicyWarnings(policy).join(" ")).toContain("쿨다운");
+  });
+
+  it("does not warn about cooldown when cooldown is disabled", () => {
+    const policy = rankingPolicySchema.parse({
+      ...DEFAULT_RANKING_POLICY,
+      eligibility: {
+        ...DEFAULT_RANKING_POLICY.eligibility,
+        launchWindowDays: 14,
+        maximumWindowDays: 21,
+      },
+      cooldown: { ...DEFAULT_RANKING_POLICY.cooldown, enabled: false },
+    });
+    expect(rankingPolicyWarnings(policy).join(" ")).not.toContain("쿨다운");
+  });
 });

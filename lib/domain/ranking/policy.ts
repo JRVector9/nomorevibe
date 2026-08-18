@@ -83,7 +83,10 @@ export function rankingPolicyWarnings(policy: RankingPolicy): string[] {
   }
   const longestCooldown = Math.max(0, ...policy.cooldown.tiers.map((tier) => tier.factorsBasisPoints.length));
   const approximateSeasonDays = policy.season.cadence === "weekly" ? 7 : 31;
-  if (longestCooldown * approximateSeasonDays > policy.eligibility.maximumWindowDays) {
+  if (
+    policy.cooldown.enabled
+    && longestCooldown * approximateSeasonDays > policy.eligibility.launchWindowDays
+  ) {
     warnings.push("쿨다운이 끝나기 전에 제품의 출시 참가 기간이 끝날 수 있습니다.");
   }
   return warnings;
