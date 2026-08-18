@@ -61,7 +61,7 @@ export default async function ProductPage({ params }: Props) {
               <a
                 href={`/go/${product.slug}`}
                 target="_blank"
-                rel="noopener noreferrer"
+                rel="nofollow noopener noreferrer"
                 className="mt-2 inline-flex items-center gap-1 text-[13px] font-semibold text-accent hover:underline"
               >
                 {displayUrl} ↗

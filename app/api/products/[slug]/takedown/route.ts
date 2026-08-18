@@ -14,7 +14,14 @@ type Params = { params: Promise<{ slug: string }> };
  */
 export const POST = withRoute("products.takedown", async (req: Request, { params }: Params) => {
   const { slug } = await params;
-  if (!(await rateLimit(`takedown:${clientIp(req)}`, 5, 60 * 60 * 1000))) return tooManyRequests();
+  /**
+   * 한도를 제품별로 건다. 클라이언트 하나로만 묶으면 TRUSTED_PROXY_HOPS가 기본값(0)일 때
+   * 모든 요청이 같은 버킷에 들어가, 한 사람이 다섯 번 보내면 다른 메이커가 한 시간 동안
+   * 아무것도 요청하지 못한다 — 내려주겠다는 약속이 그대로 깨진다.
+   */
+  if (!(await rateLimit(`takedown:${slug}:${clientIp(req)}`, 5, 60 * 60 * 1000))) {
+    return tooManyRequests();
+  }
 
   let reason: string | null = null;
   const body = await req.text();

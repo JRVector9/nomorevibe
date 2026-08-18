@@ -11,17 +11,52 @@ import { logger } from "@/lib/observability/logger";
  * 것을 한 번으로 묶는다 — 한 번 누른 것과 백 번 누른 것이 같은 무게일 수는 없다.
  */
 
-/** 같은 클라이언트의 같은 제품 클릭을 이 시간 안에서는 한 번으로 본다 */
+/** 같은 방문자의 같은 제품 클릭을 이 시간 안에서는 한 번으로 본다 */
 const DEDUPE_MS = 10 * 60 * 1000;
+
+/** 방문자를 구분하는 1st-party 쿠키. 신원이 아니라 "같은 브라우저인가"만 본다 */
+export const VISITOR_COOKIE = "nmv_visitor";
+
+export const visitorCookieOptions = {
+  httpOnly: true,
+  sameSite: "lax" as const,
+  secure: process.env.NODE_ENV === "production",
+  path: "/",
+  maxAge: 365 * 24 * 60 * 60,
+};
+
+/**
+ * 세지 않을 방문자.
+ *
+ * /go는 robots.txt로 막아두지만 그것을 지키지 않는 크롤러와 링크 미리보기(슬랙·트위터)가
+ * 남는다. 그것들이 만든 클릭이 랭킹에 들어가면 순위가 크롤 빈도순이 된다.
+ */
+const BOT_AGENT =
+  /bot\b|bot\/|crawler|spider|slurp|facebookexternalhit|embedly|quora link preview|whatsapp|telegrambot|slackbot|discordbot|twitterbot|linkedinbot|pinterest|redditbot|applebot|petalbot|bytespider|ahrefs|semrush|mj12|dotbot|curl\/|wget\/|python-requests|axios\/|go-http-client|headless|lighthouse|pingdom|uptimerobot|monitoring/i;
+
+export function isBotAgent(userAgent: string | null | undefined): boolean {
+  return Boolean(userAgent) && BOT_AGENT.test(userAgent!);
+}
+
+/**
+ * 방문자 식별자.
+ *
+ * 예전에는 clientIp()로 묶었는데, TRUSTED_PROXY_HOPS가 0(기본값)이면 그 값이 모든 요청에서
+ * "direct"라 전 세계 방문자가 한 버킷으로 묶였다 — 제품당 10분에 한 번만 세지고 있었다.
+ * 프록시 설정에 기대지 않도록 우리 쿠키로 구분한다.
+ */
+export function visitorId(cookie: string | undefined): string {
+  return cookie && /^[a-f0-9-]{8,64}$/i.test(cookie) ? cookie : crypto.randomUUID();
+}
 
 /**
  * 클릭 기록. 이미 센 클릭이면 조용히 넘긴다.
  *
  * 기록 실패가 이동을 막아서는 안 된다 — 지표는 부가물이고 사용자는 제품으로 가는 중이다.
  */
-export async function recordClick(slug: string, client: string): Promise<void> {
+export async function recordClick(slug: string, visitor: string): Promise<void> {
   try {
-    const fresh = await rateLimit(`click:${slug}:${client}`, 1, DEDUPE_MS);
+    const fresh = await rateLimit(`click:${slug}:${visitor}`, 1, DEDUPE_MS);
     if (!fresh) return;
     await db.insert(clickEvents).values({ slug });
   } catch (error) {
