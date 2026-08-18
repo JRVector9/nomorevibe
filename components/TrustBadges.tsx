@@ -64,7 +64,7 @@ export function BuilderBadge({ builder, claim }: { builder: string; claim: Build
       className={`rounded-full px-2 py-0.5 text-[10.5px] font-semibold ${
         guessed
           ? "border border-line bg-bg-soft text-fg-2"
-          : "border border-accent/35 bg-accent-soft text-[#b8b0ff]"
+          : "border border-accent/35 bg-accent-soft text-accent"
       }`}
       title={
         guessed

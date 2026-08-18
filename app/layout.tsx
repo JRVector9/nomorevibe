@@ -48,7 +48,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             <div className="ml-auto shrink-0">
               <Link
                 href="/launch"
-                className="whitespace-nowrap rounded-[9px] bg-accent px-3 py-[9px] text-[13px] font-semibold text-white hover:brightness-110 sm:px-[18px]"
+                className="whitespace-nowrap rounded-[9px] bg-accent-solid px-3 py-[9px] text-[13px] font-semibold text-white hover:brightness-110 sm:px-[18px]"
               >
                 + Launch<span className="hidden sm:inline"> /nomorevibe</span>
               </Link>
