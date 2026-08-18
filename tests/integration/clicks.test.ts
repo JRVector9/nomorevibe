@@ -14,6 +14,7 @@ import {
   topClickedSince,
 } from "@/lib/domain/products/clicks";
 import { getRankedList } from "@/lib/domain/products/view";
+import { marketStats } from "@/lib/domain/products/stats";
 import { ensureSchema, resetTables } from "./setup";
 
 async function product(slug = "app", url = "https://app.test") {
@@ -324,5 +325,30 @@ describe("목록 좁히기", () => {
     await repo.update((await repo.findBySlug("a"))!.id, { category: "Dev" });
 
     expect(await repo.categoryCounts(["verified", "seeded"])).toEqual({ Dev: 1, Other: 1 });
+  });
+});
+
+describe("마켓 통계", () => {
+  it("공개된 것만 세고, 신규·클릭·검증을 함께 준다", async () => {
+    // 도우미는 검증된 제품을 만든다 — 하나는 미클레임으로 되돌려 둘을 갈라 센다
+    await product("shown", "https://shown.test");
+    await repo.update((await repo.findBySlug("shown"))!.id, { status: "seeded", source: "crawler" });
+    await product("verified-one", "https://v.test");
+    // 목록에 없는 상태는 숫자에도 없어야 한다
+    await product("hidden", "https://hidden.test");
+    await repo.update((await repo.findBySlug("hidden"))!.id, { status: "banned" });
+    await recordClick("shown", "11111111-1111-1111-1111-111111111111");
+
+    const stats = await marketStats();
+
+    expect(stats).toMatchObject({ products: 2, verified: 1, clicks24h: 1 });
+    expect(stats.newThisWeek).toBe(2);
+  });
+
+  it("오래된 클릭은 24시간 숫자에 넣지 않는다", async () => {
+    await product("old", "https://old.test");
+    await db.insert(clickEvents).values({ slug: "old", occurredAt: new Date(Date.now() - 30 * 60 * 60 * 1000) });
+
+    expect((await marketStats()).clicks24h).toBe(0);
   });
 });
