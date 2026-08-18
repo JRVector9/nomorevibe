@@ -3,6 +3,7 @@
 import { useActionState } from "react";
 import { resetCrawlSettings, type SaveState } from "./actions";
 import type { SettingsDrift } from "@/lib/crawl/settings";
+import { Panel } from "@/components/Panel";
 
 /**
  * 저장된 기준이 코드 기본값과 어긋났을 때만 뜬다.
@@ -19,16 +20,14 @@ export function SettingsDriftNotice({ drift }: { drift: SettingsDrift }) {
   if (drift.length === 0) return null;
 
   return (
-    <section className="mt-6 rounded-[14px] border border-accent bg-accent-soft p-[22px]">
-      <h2 className="text-[15px] font-bold">
-        저장된 기준이 기본값과 다릅니다 <span className="ml-1 text-[12.5px]">{drift.length}항목</span>
-      </h2>
-      <p className="mt-1.5 max-w-[68ch] text-[12.5px] leading-[1.7] text-fg-2">
-        기준을 한 번 저장하면 그 값이 코드 기본값을 덮습니다. 판정 규칙을 고쳐 기본값이 바뀌어도
-        여기는 옛 값으로 돕니다. 일부러 조정한 것이면 그대로 두세요.
-      </p>
-
-      <dl className="mt-4 flex flex-col gap-2 text-[12px]">
+    <div className="mt-6">
+      <Panel
+        tone="warn"
+        title="저장된 기준이 기본값과 다릅니다"
+        actions={<span className="text-[12.5px] text-fg-2">{drift.length}항목</span>}
+        note="기준을 한 번 저장하면 그 값이 코드 기본값을 덮습니다. 판정 규칙을 고쳐 기본값이 바뀌어도 여기는 옛 값으로 돕니다. 일부러 조정한 것이면 그대로 두세요."
+      >
+      <dl className="flex flex-col gap-2 text-[12px]">
         {drift.map((item) => (
           <div key={item.label} className="flex flex-wrap items-baseline gap-x-2">
             <dt className="w-[110px] shrink-0 font-semibold text-fg-2">{item.label}</dt>
@@ -49,6 +48,7 @@ export function SettingsDriftNotice({ drift }: { drift: SettingsDrift }) {
         <span className="ml-2 text-[11.5px] text-fg-3">수집 스위치는 건드리지 않습니다</span>
       </form>
       {state?.issues && <p className="mt-2 text-[12px] text-down">{state.issues.join(", ")}</p>}
-    </section>
+      </Panel>
+    </div>
   );
 }

@@ -7,6 +7,7 @@ import { listJobStates } from "@/lib/jobs/runner";
 import { downProducts, DOWN_THRESHOLD } from "@/lib/domain/products/health";
 import { topClickedSince } from "@/lib/domain/products/clicks";
 import { JOB_NAMES } from "@/lib/jobs/registry";
+import { Panel } from "@/components/Panel";
 import { AdminNav } from "../AdminNav";
 
 export const dynamic = "force-dynamic";
@@ -46,16 +47,6 @@ function when(at: Date | null): string {
   if (minutes < 60) return `${minutes}분 전`;
   const hours = Math.round(minutes / 60);
   return hours < 24 ? `${hours}시간 전` : `${Math.round(hours / 24)}일 전`;
-}
-
-function Card({ title, note, children }: { title: string; note?: string; children: React.ReactNode }) {
-  return (
-    <section className="rounded-[14px] border border-line bg-bg-card p-[22px]">
-      <h2 className="text-[15px] font-bold">{title}</h2>
-      {note && <p className="mt-1.5 text-[12.5px] leading-[1.7] text-fg-2">{note}</p>}
-      <div className="mt-4">{children}</div>
-    </section>
-  );
 }
 
 function Counts({ counts, empty }: { counts: Record<string, number>; empty: string }) {
@@ -112,14 +103,16 @@ export default async function StatusPage() {
       </div>
 
       <div className="mt-6 flex flex-col gap-4">
-        <Card
+        <Panel
           title="작업"
           note="한 번도 안 돈 작업은 스케줄러가 아직 닿지 않았다는 뜻입니다. 마지막 성공이 계속 오래됐다면 오류를 봅니다."
         >
-          <table className="w-full text-[12.5px]">
-            <thead className="text-fg-3">
-              <tr className="text-left">
-                <th className="pb-2 font-medium">이름</th>
+          {/* 좁은 화면에서 표가 밀려 나가지 않게 감싼다 */}
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[420px] text-[12.5px]">
+              <thead className="text-fg-3">
+                <tr className="text-left">
+                  <th className="pb-2 font-medium">이름</th>
                 <th className="pb-2 font-medium">마지막 실행</th>
                 <th className="pb-2 font-medium">마지막 성공</th>
                 <th className="pb-2 font-medium">횟수</th>
@@ -138,7 +131,8 @@ export default async function StatusPage() {
                 );
               })}
             </tbody>
-          </table>
+            </table>
+          </div>
 
           {jobStates
             .filter((job) => job.lastError)
@@ -147,10 +141,10 @@ export default async function StatusPage() {
                 <span className="font-mono font-semibold">{job.name}</span> {job.lastError}
               </p>
             ))}
-        </Card>
+        </Panel>
 
         {down.length > 0 && (
-          <Card
+          <Panel
             title="응답하지 않는 제품"
             note={`${DOWN_THRESHOLD}회 넘게 연속으로 실패한 것입니다. 자동으로 내리지 않습니다 — 배포가 잠깐 흔들린 것과 서비스가 끝난 것을 응답 코드만으로 가를 수 없습니다.`}
           >
@@ -167,19 +161,19 @@ export default async function StatusPage() {
                 </li>
               ))}
             </ul>
-          </Card>
+          </Panel>
         )}
 
-        <Card title="프론티어" note="조사 대상 큐입니다. 대기가 0이면 crawl-seed가 더 찾아야 합니다.">
+        <Panel title="프론티어" note="조사 대상 큐입니다. 대기가 0이면 crawl-seed가 더 찾아야 합니다.">
           <Counts counts={frontier} empty="아직 발견한 레포가 없습니다." />
-        </Card>
+        </Panel>
 
-        <Card title="후보" note="판정 결과입니다. 심사 대기는 사람이 가를 것, 발행 대기는 다음 발행 틱이 올릴 것입니다.">
+        <Panel title="후보" note="판정 결과입니다. 심사 대기는 사람이 가를 것, 발행 대기는 다음 발행 틱이 올릴 것입니다.">
           <Counts counts={candidates} empty="아직 판정한 것이 없습니다." />
-        </Card>
+        </Panel>
 
         {topClicked.length > 0 && (
-          <Card
+          <Panel
             title="많이 눌린 제품 (30일)"
             note="하루 단위로 굴린 집계입니다. 원천은 35일이면 지우므로 오래된 구간은 여기서만 볼 수 있습니다."
           >
@@ -193,20 +187,21 @@ export default async function StatusPage() {
                 </li>
               ))}
             </ul>
-          </Card>
+          </Panel>
         )}
 
-        <Card
+        <Panel
           title="신호별 수율"
           note="어떤 검색어가 쓸 만한 것을 데려오는지입니다. 켜고 끄기 전에 숫자로 봅니다."
         >
           {signals.size === 0 ? (
             <p className="text-[13px] text-fg-3">아직 판정한 것이 없습니다.</p>
           ) : (
-            <table className="w-full text-[12.5px]">
-              <thead className="text-fg-3">
-                <tr className="text-left">
-                  <th className="pb-2 font-medium">신호</th>
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[420px] text-[12.5px]">
+                <thead className="text-fg-3">
+                  <tr className="text-left">
+                    <th className="pb-2 font-medium">신호</th>
                   <th className="pb-2 font-medium">판정한 수</th>
                   <th className="pb-2 font-medium">목록에 오른 수</th>
                   <th className="pb-2 font-medium">수율</th>
@@ -224,11 +219,12 @@ export default async function StatusPage() {
                     </tr>
                   ))}
               </tbody>
-            </table>
+              </table>
+            </div>
           )}
-        </Card>
+        </Panel>
 
-        <Card
+        <Panel
           title="거부 사유"
           note="어떤 규칙이 얼마나 거르고 있는지입니다. 한 사유가 압도적이면 그 기준부터 의심합니다."
         >
@@ -247,7 +243,7 @@ export default async function StatusPage() {
               ))}
             </ul>
           )}
-        </Card>
+        </Panel>
       </div>
     </main>
   );

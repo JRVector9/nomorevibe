@@ -3,20 +3,11 @@
 import { useActionState } from "react";
 import { saveCrawlSettings, type SaveState } from "./actions";
 import type { CrawlSettings } from "@/lib/crawl/settings-schema";
+import { Panel } from "@/components/Panel";
 
 const field = "w-full rounded-lg border border-line bg-bg-soft px-3 py-2 text-[13px] text-fg outline-none focus:border-accent";
 const label = "block text-[12px] font-semibold text-fg-2";
 const hint = "mt-1 text-[11.5px] leading-[1.6] text-fg-3";
-
-function Section({ title, note, children }: { title: string; note?: string; children: React.ReactNode }) {
-  return (
-    <section className="rounded-[14px] border border-line bg-bg-card p-[22px]">
-      <h2 className="text-[15px] font-bold">{title}</h2>
-      {note && <p className="mt-1.5 text-[12.5px] leading-[1.7] text-fg-2">{note}</p>}
-      <div className="mt-5 flex flex-col gap-5">{children}</div>
-    </section>
-  );
-}
 
 function Toggle({ name, defaultChecked, children }: { name: string; defaultChecked: boolean; children: React.ReactNode }) {
   return (
@@ -46,16 +37,16 @@ export function SettingsForm({ settings }: { settings: CrawlSettings }) {
         </div>
       )}
 
-      <Section
+      <Panel
         title="수집 스위치"
         note="무언가 잘못 돌 때 배포 없이 끊을 수 있어야 합니다. 끄면 discover 작업이 아무것도 하지 않습니다."
       >
         <Toggle name="enabled" defaultChecked={settings.enabled}>
           수집을 켠다
         </Toggle>
-      </Section>
+      </Panel>
 
-      <Section
+      <Panel
         title="검색 기준"
         note="GitHub이 검색 시점에 걸러주는 것들입니다. 커밋 검색에는 스타·언어 수식어가 없어 날짜만 쓸 수 있습니다."
       >
@@ -105,9 +96,9 @@ export function SettingsForm({ settings }: { settings: CrawlSettings }) {
             <p className={hint}>검색 한도가 30회/분입니다</p>
           </div>
         </div>
-      </Section>
+      </Panel>
 
-      <Section
+      <Panel
         title="판정 기준"
         note="수집한 레포 메타로 우리가 거르는 것들입니다. 원본을 보관하므로 이 값을 바꾸면 GitHub을 다시 긁지 않고 재판정됩니다."
       >
@@ -165,7 +156,7 @@ export function SettingsForm({ settings }: { settings: CrawlSettings }) {
             />
           </div>
         </div>
-      </Section>
+      </Panel>
 
       <div className="flex items-center gap-3">
         <button
