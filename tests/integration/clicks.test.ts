@@ -198,7 +198,7 @@ describe("집계와 랭킹", () => {
       { slug: "quiet", occurredAt: new Date() },
     ]);
 
-    const list = await getRankedList(10, "popular");
+    const list = await getRankedList(10, { sort: "popular" });
 
     expect(list.map((p) => p.slug)).toEqual(["loud", "quiet"]);
     expect(list[0].metrics).toMatchObject({ clicks: 2 });
@@ -213,7 +213,7 @@ describe("집계와 랭킹", () => {
       { slug: "popular-one", occurredAt: new Date() },
     ]);
 
-    expect((await getRankedList(10, "popular")).map((p) => p.slug)).toEqual([
+    expect((await getRankedList(10, { sort: "popular" })).map((p) => p.slug)).toEqual([
       "popular-one",
       "empty-one",
     ]);
@@ -221,7 +221,7 @@ describe("집계와 랭킹", () => {
 
   it("클릭이 없어도 목록에서 사라지지 않는다", async () => {
     await product("silent", "https://silent.test");
-    const list = await getRankedList(10, "popular");
+    const list = await getRankedList(10, { sort: "popular" });
     expect(list.map((p) => p.slug)).toEqual(["silent"]);
   });
 });
@@ -242,7 +242,7 @@ describe("지표는 부가물이다", () => {
     };
 
     try {
-      const list = await getRankedList(10, "recent");
+      const list = await getRankedList(10, { sort: "recent" });
       expect(list.map((p) => p.slug)).toEqual(["app"]);
       expect(list[0].metrics).toBeUndefined();
     } finally {
@@ -288,5 +288,41 @@ describe("제품을 지우면 딸린 기록도 지운다", () => {
 
     expect(await count()).toBe(0);
     expect(await topClickedSince(3650)).toEqual([]);
+  });
+});
+
+describe("목록 좁히기", () => {
+  it("카테고리로 좁힌다", async () => {
+    await product("dev-one", "https://dev1.test");
+    await product("dev-two", "https://dev2.test");
+    await repo.update((await repo.findBySlug("dev-one"))!.id, { category: "Dev" });
+
+    const list = await getRankedList(10, { category: "Dev" });
+
+    expect(list.map((p) => p.slug)).toEqual(["dev-one"]);
+  });
+
+  it("이름과 소개에서 찾는다", async () => {
+    await product("alpha", "https://a.test");
+    await repo.update((await repo.findBySlug("alpha"))!.id, { tagline: "에이전트를 위한 도구" });
+    await product("beta", "https://b.test");
+
+    expect((await getRankedList(10, { query: "alpha" })).map((p) => p.slug)).toEqual(["alpha"]);
+    expect((await getRankedList(10, { query: "에이전트" })).map((p) => p.slug)).toEqual(["alpha"]);
+    expect(await getRankedList(10, { query: "없는말" })).toEqual([]);
+  });
+
+  it("와일드카드는 글자로 취급한다 — %만 쳐도 전부 걸리면 안 된다", async () => {
+    await product("plain", "https://p.test");
+    expect(await getRankedList(10, { query: "%" })).toEqual([]);
+    expect(await getRankedList(10, { query: "_" })).toEqual([]);
+  });
+
+  it("카테고리별 개수를 센다 — 필터 칩의 숫자", async () => {
+    await product("a", "https://a.test");
+    await product("b", "https://b.test");
+    await repo.update((await repo.findBySlug("a"))!.id, { category: "Dev" });
+
+    expect(await repo.categoryCounts(["verified", "seeded"])).toEqual({ Dev: 1, Other: 1 });
   });
 });

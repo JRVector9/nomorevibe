@@ -1,5 +1,6 @@
 import type { Product, ProductStatus } from "@/lib/db/schema";
 import { listProducts, type ProductSort } from "./repository";
+import type { Category } from "./schema";
 import { clickMetrics, type ClickMetrics } from "./clicks";
 import { logger } from "@/lib/observability/logger";
 
@@ -69,8 +70,10 @@ export function toListItem(p: Product): ProductListItem {
  * 자기 제품이 올라와 있다는 걸 발견할 방법이 없어 시드 자체가 무의미해진다.
  * 대신 각 항목이 자기 근거를 배지로 밝히고, 확인된 것만 위에 온다.
  */
-export async function getPublicList(limit: number, sort?: ProductSort): Promise<ProductListItem[]> {
-  const rows = await listProducts({ statuses: ["verified", "seeded"], sort, limit });
+export type BrowseOptions = { sort?: ProductSort; category?: Category; query?: string };
+
+export async function getPublicList(limit: number, options: BrowseOptions = {}): Promise<ProductListItem[]> {
+  const rows = await listProducts({ statuses: ["verified", "seeded"], limit, ...options });
   return withMetrics(rows.map(toListItem));
 }
 
@@ -100,7 +103,7 @@ async function withMetrics(items: ProductListItem[]): Promise<ProductListItem[]>
 }
 
 /** 랭킹·지표 대상 — 우리가 직접 확인한 제품만 */
-export async function getRankedList(limit: number, sort?: ProductSort): Promise<ProductListItem[]> {
-  const rows = await listProducts({ statuses: ["verified"], sort, limit });
+export async function getRankedList(limit: number, options: BrowseOptions = {}): Promise<ProductListItem[]> {
+  const rows = await listProducts({ statuses: ["verified"], limit, ...options });
   return withMetrics(rows.map(toListItem));
 }
