@@ -171,6 +171,15 @@ npm run crawl:rejudge -- --out=.crawl-samples/after.json
 `/.well-known/nomorevibe.txt` 또는 `<meta name="nomorevibe-verify">` 중 하나를 우리 서버가 직접 확인한다.
 둘 다 해당 도메인에 배포할 수 있는 사람만 만들 수 있으므로 소유 증명이 된다.
 
+## 내려달라는 요청
+
+우리가 대신 올린 제품(`seeded`)은 주인이 부탁한 적이 없다. `POST /api/products/<slug>/takedown`으로
+누구나 요청할 수 있고, 소유 증명을 요구하지 않는다 — 내려달라는 사람에게 우리 토큰을 먼저
+사이트에 붙이라고 할 수는 없기 때문이다. 대신 어드민이 `/admin/review`에서 보고 처리한다.
+
+내릴 때는 행을 지우지 않고 `banned`로 둔다. 지우면 수집기가 다음 바퀴에 같은 URL을 다시
+주워 온다. 주인이 있는 제품은 이 창구를 쓰지 않는다 — 수정 키로 직접 삭제하면 된다.
+
 ## 운영 제약
 
 - rate limit은 DB(`rate_limits`)에 둔다. 인스턴스를 늘려도 한도가 하나로 유지된다.

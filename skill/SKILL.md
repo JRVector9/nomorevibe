@@ -89,7 +89,10 @@ API 베이스: 환경변수 `NOMOREVIBE_API`가 있으면 그 값, 없으면 `{{
    - 성공 응답에 `claimed: true`와 `edit_token`이 온다. **이 응답에만 나오는 값이다.**
      `~/.config/nomorevibe/credentials.json`에 저장하고(chmod 600) `.nomorevibe.json`도 만든다.
    - 이제 제품은 검증됨 상태가 되고 랭킹에 들어간다.
-4. **정보 갱신**: 우리가 채운 이름·소개는 공개 데이터에서 뽑은 것이라 부정확할 수 있다.
+4. **내리고 싶다면**: 사용자가 등록을 원치 않으면 클레임할 필요가 없다.
+   `curl -s -X POST <API>/api/products/<slug>/takedown -H 'content-type: application/json' -d '{"reason":"..."}'`
+   이유는 선택이다. 사람이 확인한 뒤 내려주며, 내려간 뒤에는 수집기가 다시 올리지 않는다.
+5. **정보 갱신**: 우리가 채운 이름·소개는 공개 데이터에서 뽑은 것이라 부정확할 수 있다.
    등록 4번처럼 정보를 만들어 `PATCH <API>/api/products/<slug>`로 갱신할지 사용자에게 묻는다.
    `builder`(만든 AI)는 이때 처음 들어간다 — 우리가 대신 채우지 않는다.
 

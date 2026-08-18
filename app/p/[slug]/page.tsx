@@ -6,6 +6,7 @@ import { findBySlug } from "@/lib/domain/products/repository";
 import { ProductIcon } from "@/components/ProductIcon";
 import { StatusBadge, BuilderBadge } from "@/components/TrustBadges";
 import { isUnclaimed, builderClaimOf } from "@/lib/domain/products/view";
+import { TakedownForm } from "./TakedownForm";
 
 export const dynamic = "force-dynamic";
 
@@ -162,8 +163,9 @@ export default async function ProductPage({ params }: Props) {
               </p>
               <p className="mt-3 text-[12.5px] leading-[1.7] text-fg-2">
                 프로젝트 폴더에서 <code className="font-mono text-accent">/nomorevibe</code> 를
-                실행하면 소유권을 확인하고 직접 수정하실 수 있습니다. 원치 않으시면 내려드립니다.
+                실행하면 소유권을 확인하고 직접 수정하실 수 있습니다.
               </p>
+              <TakedownForm slug={product.slug} />
             </div>
           )}
 
