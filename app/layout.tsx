@@ -26,8 +26,11 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       {/* min-h-screen flex — 짧은 페이지에서도 푸터를 하단에 고정 */}
       <body className={`${inter.variable} ${jetbrains.variable} flex min-h-screen flex-col font-sans`}>
         <header className="sticky top-0 z-50 border-b border-line bg-bg">
-          <div className="mx-auto flex h-[60px] max-w-[1280px] items-center gap-8 px-6">
-            <Link href="/" className="flex items-center gap-2 text-[19px] font-extrabold tracking-tight">
+          <div className="mx-auto flex h-[60px] max-w-[1280px] items-center gap-4 px-4 sm:gap-8 sm:px-6">
+            <Link
+              href="/"
+              className="flex shrink-0 items-center gap-2 text-[17px] font-extrabold tracking-tight sm:text-[19px]"
+            >
               <span className="inline-flex h-[22px] w-[22px] items-center justify-center rounded-[7px] bg-gradient-to-br from-accent to-[#4f9dff] text-xs">
                 ◉
               </span>
@@ -41,12 +44,13 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                 Discover
               </Link>
             </nav>
-            <div className="ml-auto">
+            {/* 좁은 화면에서는 줄바꿈되며 로고를 덮었다 — 줄이지 않고 문구를 줄인다 */}
+            <div className="ml-auto shrink-0">
               <Link
                 href="/launch"
-                className="rounded-[9px] bg-accent px-[18px] py-[9px] text-[13px] font-semibold text-white hover:brightness-110"
+                className="whitespace-nowrap rounded-[9px] bg-accent px-3 py-[9px] text-[13px] font-semibold text-white hover:brightness-110 sm:px-[18px]"
               >
-                + Launch /nomorevibe
+                + Launch<span className="hidden sm:inline"> /nomorevibe</span>
               </Link>
             </div>
           </div>

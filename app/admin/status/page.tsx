@@ -107,10 +107,12 @@ export default async function StatusPage() {
           title="작업"
           note="한 번도 안 돈 작업은 스케줄러가 아직 닿지 않았다는 뜻입니다. 마지막 성공이 계속 오래됐다면 오류를 봅니다."
         >
-          <table className="w-full text-[12.5px]">
-            <thead className="text-fg-3">
-              <tr className="text-left">
-                <th className="pb-2 font-medium">이름</th>
+          {/* 좁은 화면에서 표가 밀려 나가지 않게 감싼다 */}
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[420px] text-[12.5px]">
+              <thead className="text-fg-3">
+                <tr className="text-left">
+                  <th className="pb-2 font-medium">이름</th>
                 <th className="pb-2 font-medium">마지막 실행</th>
                 <th className="pb-2 font-medium">마지막 성공</th>
                 <th className="pb-2 font-medium">횟수</th>
@@ -129,7 +131,8 @@ export default async function StatusPage() {
                 );
               })}
             </tbody>
-          </table>
+            </table>
+          </div>
 
           {jobStates
             .filter((job) => job.lastError)
@@ -194,10 +197,11 @@ export default async function StatusPage() {
           {signals.size === 0 ? (
             <p className="text-[13px] text-fg-3">아직 판정한 것이 없습니다.</p>
           ) : (
-            <table className="w-full text-[12.5px]">
-              <thead className="text-fg-3">
-                <tr className="text-left">
-                  <th className="pb-2 font-medium">신호</th>
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[420px] text-[12.5px]">
+                <thead className="text-fg-3">
+                  <tr className="text-left">
+                    <th className="pb-2 font-medium">신호</th>
                   <th className="pb-2 font-medium">판정한 수</th>
                   <th className="pb-2 font-medium">목록에 오른 수</th>
                   <th className="pb-2 font-medium">수율</th>
@@ -215,7 +219,8 @@ export default async function StatusPage() {
                     </tr>
                   ))}
               </tbody>
-            </table>
+              </table>
+            </div>
           )}
         </Panel>
 

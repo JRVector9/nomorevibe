@@ -1,7 +1,14 @@
 @import "tailwindcss";
 
-/* 목업(v2)의 다크 테마 토큰 */
+/**
+ * 색은 이름으로만 쓴다.
+ *
+ * 화면 코드에는 --bg, --text 같은 역할 이름만 나오고 실제 값은 여기서만 정한다.
+ * 그래야 테마를 하나 더 붙일 때 화면을 건드리지 않는다 — 라이트 테마가 그 증거다.
+ */
 :root {
+  color-scheme: dark;
+
   --bg: #0d1117;
   --bg-soft: #131926;
   --bg-card: #161d2e;
@@ -15,6 +22,71 @@
   --accent: #7c6bff;
   --accent-soft: rgba(124, 107, 255, 0.12);
   --star: #f6b73c;
+}
+
+/**
+ * 라이트 테마.
+ *
+ * 값을 뒤집는 것으로 끝나지 않는다. 어두운 바탕에서 읽히던 색이 흰 바탕에서는 대비가
+ * 무너진다 — 초록(#16c784)은 흰 배경에서 3.4:1이라 작은 글씨로 쓸 수 없고, 보라
+ * (#7c6bff)도 마찬가지다. 역할은 그대로 두고 명도만 낮춰 4.5:1을 넘긴 값으로 바꾼다.
+ */
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    color-scheme: light;
+
+    --bg: #f7f8fb;
+    --bg-soft: #eef1f7;
+    --bg-card: #ffffff;
+    --bg-hover: #f0f2f8;
+    --border: #dfe4ee;
+    --text: #10141c;
+    --text-2: #4a5468;
+    --text-3: #6b7488;
+    --up: #0a7d4f;
+    --down: #c62430;
+    --accent: #5b46f0;
+    --accent-soft: rgba(91, 70, 240, 0.1);
+    --star: #b8790a;
+  }
+}
+
+/* 기기 설정과 다르게 보고 싶을 때. 토글 UI는 아직 없고, 이 값을 붙이면 그대로 적용된다 */
+:root[data-theme="light"] {
+  color-scheme: light;
+
+  --bg: #f7f8fb;
+  --bg-soft: #eef1f7;
+  --bg-card: #ffffff;
+  --bg-hover: #f0f2f8;
+  --border: #dfe4ee;
+  --text: #10141c;
+  --text-2: #4a5468;
+  --text-3: #6b7488;
+  --up: #0a7d4f;
+  --down: #c62430;
+  --accent: #5b46f0;
+  --accent-soft: rgba(91, 70, 240, 0.1);
+  --star: #b8790a;
+}
+
+/**
+ * 항상 어두운 면.
+ *
+ * 터미널 목업처럼 테마와 무관하게 어두워야 하는 자리가 있다. 그 안에서 토큰을 그대로 쓰면
+ * 라이트 테마에서 어두운 글자가 어두운 바탕에 얹혀 아무것도 안 보인다.
+ * 토큰은 상속되므로 이 면 안에서만 다크 값으로 되돌린다.
+ */
+.surface-dark {
+  color-scheme: dark;
+
+  --bg-soft: #131926;
+  --border: #232c42;
+  --text: #f0f3fa;
+  --text-2: #98a2b8;
+  --text-3: #5c667e;
+  --up: #16c784;
+  --down: #ea3943;
 }
 
 @theme inline {
@@ -37,7 +109,6 @@
 body {
   background: var(--bg);
   color: var(--text);
-  color-scheme: dark; /* 스크롤바·폼 위젯도 다크로 */
   font-size: 14px;
   -webkit-font-smoothing: antialiased;
 }

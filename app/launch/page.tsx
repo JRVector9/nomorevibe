@@ -9,7 +9,7 @@ export default function LaunchPage() {
   return (
     <main className="mx-auto max-w-[1080px] px-6 pb-20">
       <section className="pb-10 pt-16 text-center">
-        <span className="inline-block rounded-full border border-accent bg-accent-soft px-[22px] py-2 font-mono text-[15px] font-bold text-[#c9c2ff]">
+        <span className="inline-block rounded-full border border-accent bg-accent-soft px-[22px] py-2 font-mono text-[15px] font-bold text-accent">
           /nomorevibe
         </span>
         <h1 className="mt-[22px] text-[34px] font-extrabold tracking-tight">
@@ -20,7 +20,7 @@ export default function LaunchPage() {
           한 번이면 끝납니다.
         </p>
 
-        <div className="mx-auto mt-9 max-w-[680px] overflow-hidden rounded-[14px] border border-line bg-[#0a0e16] text-left shadow-2xl">
+        <div className="surface-dark mx-auto mt-9 max-w-[680px] overflow-hidden rounded-[14px] border border-line bg-[#0a0e16] text-left shadow-2xl">
           <div className="flex items-center gap-1.5 border-b border-line bg-bg-soft px-4 py-[11px]">
             <span className="h-2.5 w-2.5 rounded-full bg-[#ea3943]" />
             <span className="h-2.5 w-2.5 rounded-full bg-[#f6b73c]" />
