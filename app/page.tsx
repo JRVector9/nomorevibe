@@ -2,8 +2,8 @@ import Link from "next/link";
 import { getPublicList, getRankedList, type ProductListItem } from "@/lib/domain/products/view";
 import type { ProductSort } from "@/lib/domain/products/repository";
 import { logger } from "@/lib/observability/logger";
-import { ProductIcon } from "@/components/ProductIcon";
-import { StatusBadge, BuilderBadge } from "@/components/TrustBadges";
+import { ProductList } from "@/components/ProductCard";
+import { EmptyState } from "@/components/EmptyState";
 
 export const dynamic = "force-dynamic";
 
@@ -67,63 +67,22 @@ export default async function HomePage({ searchParams }: Props) {
       </nav>
 
       {dbDown ? (
-        <div className="mt-10 rounded-[14px] border border-line bg-bg-card p-12 text-center text-fg-3">
-          일시적으로 목록을 불러올 수 없습니다. 잠시 후 다시 시도해주세요.
+        <div className="mt-10">
+          <EmptyState>일시적으로 목록을 불러올 수 없습니다. 잠시 후 다시 시도해주세요.</EmptyState>
         </div>
       ) : list.length === 0 ? (
-        <div className="mt-10 rounded-[14px] border border-line bg-bg-card p-12 text-center text-fg-3">
-          아직 등록된 제품이 없습니다.{" "}
-          <Link href="/launch" className="font-semibold text-accent">
-            /nomorevibe
-          </Link>{" "}
-          로 첫 번째 제품을 등록해보세요.
+        <div className="mt-10">
+          <EmptyState>
+            아직 등록된 제품이 없습니다.{" "}
+            <Link href="/launch" className="font-semibold text-accent">
+              /nomorevibe
+            </Link>{" "}
+            로 첫 번째 제품을 등록해보세요.
+          </EmptyState>
         </div>
       ) : (
-        <div className="mt-6 overflow-hidden rounded-[14px] border border-line">
-          {list.map((p) => (
-            <Link
-              key={p.slug}
-              href={`/p/${p.slug}`}
-              className="flex items-center gap-4 border-b border-line bg-bg-card px-5 py-4 transition-colors last:border-b-0 hover:bg-bg-hover"
-            >
-              <ProductIcon name={p.name} ogImage={p.ogImage} size={44} />
-              <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-2">
-                  <span className="truncate text-[14.5px] font-bold">{p.name}</span>
-                  <StatusBadge status={p.status} unclaimed={p.unclaimed} />
-                </div>
-                <div className="mt-0.5 truncate text-xs text-fg-3">{p.tagline}</div>
-                <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
-                  <span className="rounded-full border border-line bg-bg-soft px-2 py-0.5 text-[10.5px] font-semibold text-fg-2">
-                    {p.category}
-                  </span>
-                  {p.builder && <BuilderBadge builder={p.builder} claim={p.builderClaim} />}
-                  {p.stack.slice(0, 4).map((s) => (
-                    <span
-                      key={s}
-                      className="rounded-full border border-line bg-bg-soft px-2 py-0.5 text-[10.5px] font-semibold text-fg-2"
-                    >
-                      {s}
-                    </span>
-                  ))}
-                </div>
-              </div>
-              <div className="hidden shrink-0 text-right text-xs text-fg-3 sm:block">
-                {p.metrics && p.metrics.clicks > 0 && (
-                  <div className="font-mono text-[12px] font-bold text-fg-2">
-                    {p.metrics.clicks}
-                    {p.metrics.delta24h !== null && p.metrics.delta24h !== 0 && (
-                      <span className={p.metrics.delta24h > 0 ? "ml-1 text-up" : "ml-1 text-down"}>
-                        {p.metrics.delta24h > 0 ? "▲" : "▼"}
-                        {Math.abs(p.metrics.delta24h)}
-                      </span>
-                    )}
-                  </div>
-                )}
-                {p.listedAt.toLocaleDateString("ko-KR", { month: "short", day: "numeric" })} 등록
-              </div>
-            </Link>
-          ))}
+        <div className="mt-6">
+          <ProductList products={list} />
         </div>
       )}
     </main>

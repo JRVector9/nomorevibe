@@ -4,6 +4,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { findBySlug } from "@/lib/domain/products/repository";
 import { ProductIcon } from "@/components/ProductIcon";
+import { Tag } from "@/components/Tag";
 import { StatusBadge, BuilderBadge } from "@/components/TrustBadges";
 import { isUnclaimed, builderClaimOf } from "@/lib/domain/products/view";
 import { TakedownForm } from "./TakedownForm";
@@ -123,12 +124,7 @@ export default async function ProductPage({ params }: Props) {
                   v={
                     <span className="flex flex-wrap justify-end gap-1">
                       {(product.stack ?? []).map((s) => (
-                        <span
-                          key={s}
-                          className="rounded-full border border-line bg-bg-soft px-2 py-0.5 text-[10.5px] font-semibold text-fg-2"
-                        >
-                          {s}
-                        </span>
+                        <Tag key={s}>{s}</Tag>
                       ))}
                     </span>
                   }
