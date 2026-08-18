@@ -56,10 +56,10 @@ export function ProductCard({ product, rank }: { product: ProductListItem; rank?
         {metrics && metrics.clicks > 0 && (
           <div className="font-mono text-[12px] font-bold text-fg-2">
             {metrics.clicks}
-            {metrics.delta24h !== null && metrics.delta24h !== 0 && (
-              <span className={metrics.delta24h > 0 ? "ml-1 text-up" : "ml-1 text-down"}>
-                {metrics.delta24h > 0 ? "▲" : "▼"}
-                {Math.abs(metrics.delta24h)}
+            {metrics.changePercent !== null && metrics.changePercent !== 0 && (
+              <span className={metrics.changePercent > 0 ? "ml-1 text-up" : "ml-1 text-down"}>
+                {metrics.changePercent > 0 ? "▲" : "▼"}
+                {Math.abs(metrics.changePercent)}%
               </span>
             )}
           </div>

@@ -1,6 +1,7 @@
-import { gte, inArray, sql } from "drizzle-orm";
+import { and, gte, inArray, lt, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { products, clickEvents, type ProductStatus } from "@/lib/db/schema";
+import { clickChangePercent } from "@/lib/domain/ranking/math";
 
 /**
  * 목록 위에 얹는 숫자들.
@@ -22,6 +23,8 @@ export type MarketStats = {
   newThisWeek: number;
   /** 최근 24시간 아웃바운드 클릭 */
   clicks24h: number;
+  /** 직전 동일 길이 창 대비 클릭 변동률 */
+  clicksChangePercent: number | null;
   /** 도메인 소유권까지 확인한 것 */
   verified: number;
 };
@@ -29,7 +32,13 @@ export type MarketStats = {
 /** 등재 시각 — 검증된 제품은 검증 시점, 우리가 올린 제품은 등록 시점 */
 const listedAt = sql`coalesce(${products.verifiedAt}, ${products.createdAt})`;
 
-export async function marketStats(): Promise<MarketStats> {
+export async function marketStats(
+  options: { windowHours?: number } = {},
+): Promise<MarketStats> {
+  const windowHours = options.windowHours ?? 24;
+  const currentTime = sql`timezone('UTC', now())`;
+  const recentStart = sql`${currentTime} - ${windowHours} * interval '1 hour'`;
+  const previousStart = sql`${currentTime} - ${windowHours * 2} * interval '1 hour'`;
   const [counts] = await db
     .select({
       products: sql<number>`count(*)::int`,
@@ -40,14 +49,24 @@ export async function marketStats(): Promise<MarketStats> {
     .where(inArray(products.status, LISTED));
 
   const [clicks] = await db
-    .select({ count: sql<number>`count(*)::int` })
+    .select({
+      recent: sql<number>`count(*) filter (where ${clickEvents.occurredAt} >= ${recentStart})::int`,
+      previous: sql<number>`count(*) filter (where ${clickEvents.occurredAt} < ${recentStart})::int`,
+    })
     .from(clickEvents)
-    .where(gte(clickEvents.occurredAt, sql`now() - interval '24 hours'`));
+    .where(and(
+      gte(clickEvents.occurredAt, previousStart),
+      lt(clickEvents.occurredAt, currentTime),
+    ));
+
+  const recentClicks = clicks?.recent ?? 0;
+  const previousClicks = clicks?.previous ?? 0;
 
   return {
     products: counts?.products ?? 0,
     newThisWeek: counts?.newThisWeek ?? 0,
-    clicks24h: clicks?.count ?? 0,
+    clicks24h: recentClicks,
+    clicksChangePercent: clickChangePercent(recentClicks, previousClicks, 1),
     verified: counts?.verified ?? 0,
   };
 }

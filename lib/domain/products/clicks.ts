@@ -1,6 +1,7 @@
 import { and, gte, inArray, lt, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { clickEvents, productClickDaily } from "@/lib/db/schema";
+import { clickChangePercent } from "@/lib/domain/ranking/math";
 import { rateLimit } from "@/lib/rate-limit";
 import { logger } from "@/lib/observability/logger";
 
@@ -82,7 +83,8 @@ export async function clicksSince(slug: string, windowMs: number, offsetMs = 0):
 }
 
 /** 목록이 함께 보여줄 지표 */
-export type ClickMetrics = { clicks: number; delta24h: number | null };
+export type ClickMetricOptions = { windowHours: number; minimumPreviousClicks: number };
+export type ClickMetrics = { clicks: number; changePercent: number | null };
 
 /** 랭킹과 표시가 보는 창 */
 export const METRICS_WINDOW_DAYS = 7;
@@ -93,25 +95,42 @@ export const METRICS_WINDOW_DAYS = 7;
  * 목록마다 제품 수만큼 쿼리를 돌리면 홈이 느려진다. 두 창(최근 24시간·그 이전 24시간)을
  * 한 쿼리에서 함께 센다.
  */
-export async function clickMetrics(slugs: string[]): Promise<Map<string, ClickMetrics>> {
+export async function clickMetrics(
+  slugs: string[],
+  options: ClickMetricOptions = { windowHours: 24, minimumPreviousClicks: 5 },
+): Promise<Map<string, ClickMetrics>> {
   if (slugs.length === 0) return new Map();
 
+  const currentTime = sql`timezone('UTC', now())`;
+  const recentStart = sql`${currentTime} - ${options.windowHours} * interval '1 hour'`;
+  const previousStart = sql`${currentTime} - ${options.windowHours * 2} * interval '1 hour'`;
+  const metricsStart = sql`${currentTime} - ${METRICS_WINDOW_DAYS} * interval '1 day'`;
   const rows = await db
     .select({
       slug: clickEvents.slug,
-      window: sql<number>`count(*) filter (where ${clickEvents.occurredAt} >= now() - ${sql.raw(`interval '${METRICS_WINDOW_DAYS} days'`)})::int`,
-      recent: sql<number>`count(*) filter (where ${clickEvents.occurredAt} >= now() - interval '24 hours')::int`,
-      previous: sql<number>`count(*) filter (where ${clickEvents.occurredAt} >= now() - interval '48 hours' and ${clickEvents.occurredAt} < now() - interval '24 hours')::int`,
+      window: sql<number>`count(*) filter (where ${clickEvents.occurredAt} >= ${metricsStart})::int`,
+      recent: sql<number>`count(*) filter (where ${clickEvents.occurredAt} >= ${recentStart})::int`,
+      previous: sql<number>`count(*) filter (where ${clickEvents.occurredAt} >= ${previousStart} and ${clickEvents.occurredAt} < ${recentStart})::int`,
     })
     .from(clickEvents)
-    .where(inArray(clickEvents.slug, slugs))
+    .where(and(
+      inArray(clickEvents.slug, slugs),
+      gte(clickEvents.occurredAt, sql`least(${metricsStart}, ${previousStart})`),
+      lt(clickEvents.occurredAt, currentTime),
+    ))
     .groupBy(clickEvents.slug);
 
   return new Map(
     rows.map((r) => [
       r.slug,
-      // 어제 클릭이 아예 없었으면 변화율은 말할 것이 없다 — 0으로 적으면 "변화 없음"이 된다
-      { clicks: r.window, delta24h: r.previous > 0 ? r.recent - r.previous : null },
+      {
+        clicks: r.window,
+        changePercent: clickChangePercent(
+          r.recent,
+          r.previous,
+          options.minimumPreviousClicks,
+        ),
+      },
     ]),
   );
 }

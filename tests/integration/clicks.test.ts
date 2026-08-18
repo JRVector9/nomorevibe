@@ -147,22 +147,30 @@ describe("집계와 랭킹", () => {
     await product("a");
     const hours = (n: number) => new Date(Date.now() - n * 60 * 60 * 1000);
     await db.insert(clickEvents).values([
-      { slug: "a", occurredAt: hours(1) },
-      { slug: "a", occurredAt: hours(2) },
-      { slug: "a", occurredAt: hours(30) },
+      ...Array.from({ length: 12 }, () => ({ slug: "a", occurredAt: hours(1) })),
+      ...Array.from({ length: 8 }, () => ({ slug: "a", occurredAt: hours(25) })),
     ]);
 
-    const metrics = await clickMetrics(["a"]);
+    const metrics = await clickMetrics(["a"], {
+      windowHours: 24,
+      minimumPreviousClicks: 5,
+    });
 
-    expect(metrics.get("a")).toEqual({ clicks: 3, delta24h: 1 });
+    expect(metrics.get("a")).toEqual({ clicks: 20, changePercent: 50 });
   });
 
-  it("어제 클릭이 없으면 변화율은 말하지 않는다", async () => {
-    // 0으로 적으면 "변화 없음"이 되어 아무것도 없던 것과 구분되지 않는다
+  it("이전 창의 기준 클릭 수가 작으면 변화율은 말하지 않는다", async () => {
     await product("a");
-    await db.insert(clickEvents).values({ slug: "a", occurredAt: new Date() });
+    const hours = (n: number) => new Date(Date.now() - n * 60 * 60 * 1000);
+    await db.insert(clickEvents).values([
+      ...Array.from({ length: 3 }, () => ({ slug: "a", occurredAt: hours(1) })),
+      { slug: "a", occurredAt: hours(25) },
+    ]);
 
-    expect((await clickMetrics(["a"]))?.get("a")).toEqual({ clicks: 1, delta24h: null });
+    expect((await clickMetrics(["a"], {
+      windowHours: 24,
+      minimumPreviousClicks: 5,
+    })).get("a")).toEqual({ clicks: 4, changePercent: null });
   });
 
   it("굴리면 하루 단위로 남고 다시 굴려도 같은 값이다", async () => {
@@ -362,6 +370,20 @@ describe("마켓 통계", () => {
 
     expect(stats).toMatchObject({ products: 2, verified: 1, clicks24h: 1 });
     expect(stats.newThisWeek).toBe(2);
+  });
+
+  it("인접한 클릭 창의 전체 변동률을 계산한다", async () => {
+    await product("app", "https://market-change.test");
+    const hours = (n: number) => new Date(Date.now() - n * 60 * 60 * 1000);
+    await db.insert(clickEvents).values([
+      ...Array.from({ length: 12 }, () => ({ slug: "app", occurredAt: hours(1) })),
+      ...Array.from({ length: 8 }, () => ({ slug: "app", occurredAt: hours(25) })),
+    ]);
+
+    expect(await marketStats({ windowHours: 24 })).toMatchObject({
+      clicks24h: 12,
+      clicksChangePercent: 50,
+    });
   });
 
   it("오래된 클릭은 24시간 숫자에 넣지 않는다", async () => {

@@ -35,7 +35,7 @@ export type ProductListItem = {
   status: ProductStatus;
   /** 우리가 대신 올렸고 아직 주인이 나타나지 않았다 */
   unclaimed: boolean;
-  metrics?: { clicks: number; delta24h: number | null };
+  metrics?: ClickMetrics;
   /** 생존 확인 결과. 확인한 적이 없으면 없다 */
   health?: { down: boolean; since: Date | null };
 };
@@ -107,8 +107,32 @@ async function withMetrics(items: ProductListItem[]): Promise<ProductListItem[]>
   }));
 }
 
-/** 랭킹·지표 대상 — 우리가 직접 확인한 제품만 */
-export async function getRankedList(limit: number, options: BrowseOptions = {}): Promise<ProductListItem[]> {
+/** 랭킹 스냅샷에 원천 클릭을 다시 조회하지 않고 생존 상태만 한 번에 붙인다. */
+export async function withProductHealth<T extends ProductListItem>(items: T[]): Promise<T[]> {
+  if (items.length === 0) return items;
+
+  try {
+    const health = await healthFor(items.map((item) => item.slug));
+    return items.map((item) => ({
+      ...item,
+      health: health.get(item.slug) ?? item.health,
+    }));
+  } catch (error) {
+    logger.warn("products.health_failed", { count: items.length, error });
+    return items;
+  }
+}
+
+/** 최신 목록의 경쟁 대상 — 검증된 제품만 */
+export async function getVerifiedList(
+  limit: number,
+  options: BrowseOptions = {},
+): Promise<ProductListItem[]> {
   const rows = await listProducts({ statuses: ["verified"], limit, ...options });
   return withMetrics(rows.map(toListItem));
+}
+
+/** 랭킹·지표 대상 — 우리가 직접 확인한 제품만 */
+export async function getRankedList(limit: number, options: BrowseOptions = {}): Promise<ProductListItem[]> {
+  return getVerifiedList(limit, options);
 }
