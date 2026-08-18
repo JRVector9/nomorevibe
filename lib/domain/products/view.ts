@@ -1,5 +1,5 @@
 import type { Product, ProductStatus } from "@/lib/db/schema";
-import { listProducts, type ProductSort } from "./repository";
+import { listProducts, listRecentlyDiscovered, type ProductSort } from "./repository";
 import type { Category } from "./schema";
 import { clickMetrics, type ClickMetrics } from "./clicks";
 import { healthFor, type HealthSignal } from "./health";
@@ -76,6 +76,12 @@ export type BrowseOptions = { sort?: ProductSort; category?: Category; query?: s
 
 export async function getPublicList(limit: number, options: BrowseOptions = {}): Promise<ProductListItem[]> {
   const rows = await listProducts({ statuses: ["verified", "seeded"], limit, ...options });
+  return withMetrics(rows.map(toListItem));
+}
+
+/** 발견 보드 — 검증·시드 제품을 실제 등재 시각순으로 함께 보여준다. */
+export async function getDiscoveryList(limit: number): Promise<ProductListItem[]> {
+  const rows = await listRecentlyDiscovered(limit);
   return withMetrics(rows.map(toListItem));
 }
 

@@ -148,6 +148,23 @@ async function materializeRanking() {
       changePercent: 25,
     },
   ]);
+
+  return { active };
+}
+
+async function insertRankEleven(seasonId: number) {
+  await insertProduct("rank-eleven", "Dev");
+  await db.insert(rankingEntries).values({
+    seasonId,
+    slug: "rank-eleven",
+    validClicks: 1,
+    cooldownFactorBasisPoints: 10_000,
+    scoreUnits: 10_000,
+    rank: 11,
+    recentClicks: 1,
+    previousClicks: 1,
+    changePercent: 0,
+  });
 }
 
 beforeAll(() => ensureSchema());
@@ -202,6 +219,47 @@ describe("ranking read models", () => {
     expect(boards.trending.map((item) => item.slug)).not.toContain("seeded-find");
     expect(boards.verifiedNew.map((item) => item.slug)).not.toContain("seeded-find");
     expect((await getVerifiedList(10)).map((item) => item.slug)).not.toContain("seeded-find");
+  });
+
+  it("keeps a newer seeded product visible within the default discovery limit", async () => {
+    await insertProduct("verified-one", "Dev");
+    await insertProduct("verified-two", "Dev");
+    await insertProduct("verified-three", "Dev");
+    await insertProduct("seeded-new", "Dev", "seeded");
+
+    const boards = await getDiscoveryBoards();
+
+    expect(DEFAULT_RANKING_POLICY.boards.discoveredNewLimit).toBe(3);
+    expect(boards.discoveredNew.map((item) => item.slug)).toContain("seeded-new");
+  });
+
+  it("does not expose stored ranks below the season leaderboard boundary", async () => {
+    const { active } = await materializeRanking();
+    await insertRankEleven(active.id);
+
+    const result = await getSeasonRanking({
+      seasonKey: "2026-W34",
+      category: "Dev",
+      query: "Rank Eleven",
+      limit: 100,
+    });
+
+    expect(result.items).toEqual([]);
+  });
+
+  it("keeps qualified products outside the main leaderboard on the trending board", async () => {
+    const { active } = await materializeRanking();
+    await insertRankEleven(active.id);
+
+    const result = await getSeasonRanking({
+      seasonKey: "2026-W34",
+      order: "trending",
+      category: "Dev",
+      query: "Rank Eleven",
+      limit: 100,
+    });
+
+    expect(result.items.map((item) => item.slug)).toEqual(["rank-eleven"]);
   });
 
   it("returns current and closed season summaries without discarding snapshots", async () => {

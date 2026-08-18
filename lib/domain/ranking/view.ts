@@ -20,7 +20,7 @@ import {
 import { topClickedSince } from "@/lib/domain/products/clicks";
 import type { Category } from "@/lib/domain/products/schema";
 import {
-  getPublicList,
+  getDiscoveryList,
   getVerifiedList,
   toListItem,
   withProductHealth,
@@ -98,6 +98,9 @@ export async function getSeasonRanking(options: {
     eq(rankingEntries.seasonId, season.id),
     eq(products.status, "verified"),
   ];
+  if (options.order !== "trending") {
+    conditions.push(lte(rankingEntries.rank, season.policySnapshot.leaderboard.limit));
+  }
   if (options.category) conditions.push(eq(products.category, options.category));
   if (options.query?.trim()) {
     const pattern = likePattern(options.query);
@@ -194,7 +197,7 @@ export async function getDiscoveryBoards(): Promise<{
   const [[weekly, trending], verifiedNew, discoveredNew] = await Promise.all([
     ranking,
     getVerifiedList(policy.boards.verifiedNewLimit, { sort: "recent" }),
-    getPublicList(policy.boards.discoveredNewLimit, { sort: "recent" }),
+    getDiscoveryList(policy.boards.discoveredNewLimit),
   ]);
 
   return {

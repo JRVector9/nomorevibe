@@ -113,6 +113,15 @@ export async function listProducts({
   });
 }
 
+/** 발견 보드 — 검증 상태보다 실제 등재 시각을 우선해 시드 제품도 노출한다. */
+export async function listRecentlyDiscovered(limit: number): Promise<Product[]> {
+  return db.query.products.findMany({
+    where: inArray(products.status, ["verified", "seeded"]),
+    orderBy: [sql`${listedAt} desc`, products.slug],
+    limit,
+  });
+}
+
 /** 카테고리별 개수 — 필터 칩이 숫자를 함께 보여준다 */
 export async function categoryCounts(statuses: ProductStatus[]): Promise<Record<string, number>> {
   const rows = await db
