@@ -297,6 +297,7 @@ describe("ranking read models", () => {
     await materializeRanking();
     const state = await getRankingAdminState(NOW);
     expect(state.active?.key).toBe("2026-W34");
+    expect(state.activeMetrics).toEqual({ eligibleProducts: 3, validClicks: 60 });
     expect(state.scheduled).toBeNull();
     expect(state.revisions).toHaveLength(1);
     expect(state.preview.map((item) => item.slug).sort()).toEqual([

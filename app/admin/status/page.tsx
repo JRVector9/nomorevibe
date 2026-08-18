@@ -7,6 +7,7 @@ import { listJobStates } from "@/lib/jobs/runner";
 import { downProducts, DOWN_THRESHOLD } from "@/lib/domain/products/health";
 import { topClickedSince } from "@/lib/domain/products/clicks";
 import { JOB_NAMES } from "@/lib/jobs/registry";
+import { getCurrentSeason, RANKING_STALE_MS } from "@/lib/domain/ranking/view";
 import { Panel } from "@/components/Panel";
 import { AdminNav } from "../AdminNav";
 
@@ -49,6 +50,10 @@ function when(at: Date | null): string {
   return hours < 24 ? `${hours}시간 전` : `${Math.round(hours / 24)}일 전`;
 }
 
+function rankingSnapshotIsStale(at: Date | null): boolean {
+  return !at || Date.now() - at.getTime() > RANKING_STALE_MS;
+}
+
 function Counts({ counts, empty }: { counts: Record<string, number>; empty: string }) {
   const rows = Object.entries(counts).sort((a, b) => b[1] - a[1]);
   if (rows.length === 0) return <p className="text-[13px] text-fg-3">{empty}</p>;
@@ -68,18 +73,20 @@ export default async function StatusPage() {
   const admin = await currentAdmin();
   if (!admin) redirect("/admin/login");
 
-  const [settings, frontier, candidates, rejections, jobStates, signalRows] = await Promise.all([
+  const [settings, frontier, candidates, rejections, jobStates, signalRows, rankingSeason] = await Promise.all([
     getSettings(),
     frontierCounts(),
     candidateCounts(),
     rejectionBreakdown(),
     listJobStates(),
     yieldBySignal(),
+    getCurrentSeason(),
   ]);
   const [down, topClicked] = await Promise.all([downProducts(), topClickedSince(30)]);
 
   const states = new Map(jobStates.map((job) => [job.name, job]));
   const rejectedTotal = rejections.reduce((sum, r) => sum + r.count, 0);
+  const rankingStale = rankingSnapshotIsStale(rankingSeason?.refreshedAt ?? null);
 
   /** 신호별로 조사한 수와 그중 목록에 오른 수 */
   const signals = new Map<string, { judged: number; kept: number }>();
@@ -141,6 +148,37 @@ export default async function StatusPage() {
                 <span className="font-mono font-semibold">{job.name}</span> {job.lastError}
               </p>
             ))}
+        </Panel>
+
+        <Panel
+          title="랭킹 스냅샷"
+          note="작업 실행 상태는 위 표의 ranking-refresh 한 곳에서만 확인하고, 여기서는 마지막으로 저장된 시즌 결과의 나이만 봅니다."
+        >
+          {rankingSeason ? (
+            <dl className="flex flex-wrap gap-x-8 gap-y-3 text-[12.5px]">
+              <div>
+                <dt className="text-fg-3">현재 시즌</dt>
+                <dd className="mt-1 font-mono font-semibold">{rankingSeason.key}</dd>
+              </div>
+              <div>
+                <dt className="text-fg-3">기간</dt>
+                <dd className="mt-1 font-semibold">
+                  {rankingSeason.startsAt.toLocaleDateString("ko-KR", { timeZone: "Asia/Seoul" })}
+                  {" – "}
+                  {rankingSeason.endsAt.toLocaleDateString("ko-KR", { timeZone: "Asia/Seoul" })}
+                </dd>
+              </div>
+              <div>
+                <dt className="text-fg-3">마지막 집계</dt>
+                <dd className={`mt-1 font-semibold ${rankingStale ? "text-down" : "text-up"}`}>
+                  {rankingSeason.refreshedAt ? when(rankingSeason.refreshedAt) : "집계 없음"}
+                  {rankingSeason.refreshedAt && rankingStale && " · 오래됨"}
+                </dd>
+              </div>
+            </dl>
+          ) : (
+            <p className="text-[13px] text-fg-3">아직 생성된 랭킹 시즌이 없습니다.</p>
+          )}
         </Panel>
 
         {down.length > 0 && (

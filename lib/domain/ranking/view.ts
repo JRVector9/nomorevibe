@@ -1,5 +1,6 @@
 import {
   and,
+  count,
   desc,
   eq,
   getTableColumns,
@@ -8,6 +9,7 @@ import {
   isNotNull,
   lte,
   or,
+  sql,
 } from "drizzle-orm";
 import { db } from "@/lib/db";
 import {
@@ -263,19 +265,31 @@ export async function getAllTimeRanking(options: {
 
 export async function getRankingAdminState(now = new Date()): Promise<{
   active: SeasonSummary | null;
+  activeMetrics: { eligibleProducts: number; validClicks: number };
   scheduled: RankingPolicyRevision | null;
   revisions: RankingPolicyRevision[];
   preview: CalculatedEntry[];
 }> {
-  const [active, scheduled, revisions] = await Promise.all([
-    getCurrentSeason(),
+  const [activeSeason, scheduled, revisions] = await Promise.all([
+    findSeason(),
     getScheduledPolicy(),
     listPolicyRevisions(),
   ]);
+  const active = activeSeason ? toSeasonSummary(activeSeason) : null;
+  const [metrics] = activeSeason
+    ? await db
+      .select({
+        eligibleProducts: count(),
+        validClicks: sql<number>`coalesce(sum(${rankingEntries.validClicks}), 0)::integer`,
+      })
+      .from(rankingEntries)
+      .where(eq(rankingEntries.seasonId, activeSeason.id))
+    : [{ eligibleProducts: 0, validClicks: 0 }];
   const policy = scheduled?.values ?? active?.policy ?? DEFAULT_RANKING_POLICY;
 
   return {
     active,
+    activeMetrics: metrics,
     scheduled: scheduled ?? null,
     revisions,
     preview: await previewRanking(policy, now),
