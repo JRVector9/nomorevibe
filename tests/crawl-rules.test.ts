@@ -99,6 +99,8 @@ describe("judge — 거르기", () => {
       "https://www.npmjs.com/package/labby-mcp",
       "https://crates.io/crates/moadim",
       "https://modrinth.com/project/auto-storage",
+      // 실제 수집에서 봇 확인 페이지("Client Challenge")가 제품 이름으로 발행됐다
+      "https://pypi.org/project/claude-usage-tracker",
     ]) {
       const v = judge(goodRepo(), { productUrl: url, status: 200 }, settings, NOW);
       expect(v.reason, url).toBe("not_a_product");

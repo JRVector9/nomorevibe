@@ -98,10 +98,11 @@ export const DEFAULT_CRAWL_SETTINGS: CrawlSettings = {
       "notion.site",
       "youtube.com",
       "discord.gg",
-      // 패키지·모드 등록처. 배포물이 아니라 배포물의 등록 페이지다 (실데이터에서 셋 다 나왔다)
+      // 패키지·모드 등록처. 배포물이 아니라 배포물의 등록 페이지다 (실데이터에서 넷 다 나왔다)
       "npmjs.com",
       "crates.io",
       "modrinth.com",
+      "pypi.org",
     ],
     excludedRepoPatterns: [
       "*.github.io",

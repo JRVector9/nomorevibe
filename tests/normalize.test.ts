@@ -159,6 +159,17 @@ describe("extractPageMeta — 수집한 제품의 이름·소개 재료", () => 
     expect(extractPageMeta(html, "https://a.test").title).toBe("Rock & Roll");
   });
 
+  it("숫자 참조도 되돌린다", () => {
+    // 실제 수집에서 DRYL &#x2014; … 가 그대로 들어와 slug가 dryl-x2014-… 가 됐다
+    expect(extractPageMeta(`<title>DRYL &#x2014; UI</title>`, "https://a.test").title).toBe("DRYL — UI");
+    expect(extractPageMeta(`<title>A &#8212; B</title>`, "https://a.test").title).toBe("A — B");
+    expect(extractPageMeta(`<title>It&#39;s fine</title>`, "https://a.test").title).toBe("It's fine");
+  });
+
+  it("범위를 벗어난 참조는 원문을 지킨다 — 하나 깨졌다고 제목을 잃지 않는다", () => {
+    expect(extractPageMeta(`<title>X &#x999999; Y</title>`, "https://a.test").title).toBe("X &#x999999; Y");
+  });
+
   it("없으면 없는 대로 null을 남긴다 — 지어내지 않는다", () => {
     expect(extractPageMeta("<html><body>본문뿐</body></html>", "https://a.test")).toEqual({
       title: null,

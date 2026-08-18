@@ -105,7 +105,7 @@ function draftFrom(repo: string, document: CrawlDocument) {
   const tagline = pageDescription || repoDescription || repo;
 
   return {
-    name: (pageTitle || repoName).slice(0, LIMITS.name),
+    name: productName(pageTitle || repoName).slice(0, LIMITS.name),
     tagline: tagline.slice(0, LIMITS.tagline),
     description: (repoDescription || pageDescription || tagline).slice(0, LIMITS.description),
     category: classify(meta),
@@ -113,6 +113,20 @@ function draftFrom(repo: string, document: CrawlDocument) {
     stack: language ? [language] : [],
     ogImage: typeof page.ogImage === "string" ? page.ogImage : null,
   };
+}
+
+/**
+ * 제목에서 제품 이름만 남긴다.
+ *
+ * og:title은 "이름 | 마케팅 한 줄" 형태가 흔하다. 실제 수집에서
+ * "RevealUI | Build it once. Every product after starts ahead."가 통째로 이름이 됐다.
+ * 구분자 앞이 이름이고 뒤는 소개다 — 소개는 이미 따로 있다.
+ *
+ * 앞뒤 공백이 있는 구분자만 자른다. 그러지 않으면 e-commerce 같은 이름이 잘린다.
+ */
+function productName(title: string): string {
+  const [head] = title.split(/\s+[|·–—]\s+/);
+  return head.trim() || title.trim();
 }
 
 /**
