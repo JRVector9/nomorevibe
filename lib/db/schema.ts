@@ -107,6 +107,22 @@ export const jobs = pgTable("jobs", {
 
 export type Job = typeof jobs.$inferSelect;
 
+/**
+ * rate limit 버킷.
+ *
+ * 인메모리로 두면 인스턴스마다 한도가 따로 생겨, 2대로 늘리는 순간 실제 한도가 2배가 된다.
+ * Redis를 들이는 대신 이미 있는 DB를 쓴다 — 한도를 거는 세 경로(등록·검증·수정)는 어차피
+ * 그 요청 안에서 DB를 타므로 왕복이 늘지 않는다.
+ *
+ * 키는 "행위:클라이언트" 형태다. 행 하나를 갱신할 뿐이므로 요청마다 늘지 않는다.
+ */
+export const rateLimits = pgTable("rate_limits", {
+  key: varchar("key", { length: 200 }).primaryKey(),
+  count: integer("count").notNull().default(0),
+  /** 이 시각이 지나면 창이 새로 열린다 */
+  resetAt: timestamp("reset_at").notNull(),
+});
+
 // 크롤 파이프라인 테이블 — 수집 데이터는 제품 데이터와 섞이지 않도록 파일을 나눈다
 export * from "./crawl-schema";
 

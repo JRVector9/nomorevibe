@@ -8,7 +8,7 @@ import { rateLimit, clientIp } from "@/lib/rate-limit";
 import { siteOrigin } from "@/lib/site";
 
 export const POST = withRoute("products.register", async (req: Request) => {
-  if (!rateLimit(`register:${clientIp(req)}`, 10, 60 * 60 * 1000)) return tooManyRequests();
+  if (!(await rateLimit(`register:${clientIp(req)}`, 10, 60 * 60 * 1000))) return tooManyRequests();
 
   let body: unknown;
   try {
