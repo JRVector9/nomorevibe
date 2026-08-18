@@ -5,6 +5,7 @@ import { currentAdmin } from "@/lib/auth/admin";
 import { saveSettings, resetSettings } from "@/lib/crawl/settings";
 import { decideCandidate, type ReviewDecision } from "@/lib/crawl/review";
 import { resolveTakedown, type TakedownAction } from "@/lib/domain/products/takedown";
+import { banProduct, unbanProduct } from "@/lib/domain/products/manage";
 import { logger } from "@/lib/observability/logger";
 
 export type SaveState = { ok?: true; issues?: string[] } | null;
@@ -142,4 +143,26 @@ export async function resetCrawlSettings(): Promise<SaveState> {
   logger.info("admin.settings_reset", { login: admin.login });
   revalidatePath("/admin");
   return { ok: true };
+}
+
+/**
+ * 제품 차단·해제.
+ *
+ * 차단은 행을 남기므로 같은 URL의 재등록과 재수집이 함께 막힌다. 해제는 차단 전 상태를
+ * 유도해 되돌린다 — 되돌릴 길이 없으면 차단 버튼을 누르는 것 자체가 무서운 일이 된다.
+ */
+export async function setProductBan(_prev: ReviewState, form: FormData): Promise<ReviewState> {
+  const admin = await currentAdmin();
+  if (!admin) return { error: "권한이 없습니다. 다시 로그인해주세요." };
+
+  const slug = String(form.get("slug") ?? "");
+  const action = String(form.get("action") ?? "");
+  if (action !== "ban" && action !== "unban") return { error: "알 수 없는 결정입니다" };
+
+  const result = action === "ban" ? await banProduct(slug) : await unbanProduct(slug);
+  if (!result.ok) return { error: "제품을 찾을 수 없습니다" };
+
+  logger.info("admin.product_ban", { slug, action, login: admin.login });
+  revalidatePath("/admin/products");
+  return null;
 }
