@@ -138,6 +138,24 @@ export async function markFailed(repo: string, error: string, now?: Date): Promi
     .where(eq(crawlFrontier.repo, repo));
 }
 
+/**
+ * 다시 조사할 대상으로 되돌린다.
+ *
+ * 판정 기준을 바꿀 때는 재판정으로 끝나지만, 원본에서 뽑는 방법을 바꿀 때는 여기까지 와야 한다.
+ * crawl_documents의 pageMeta는 원본이 아니라 가져올 때 뽑아 둔 가공물이라, 추출 로직을
+ * 고쳐도 이미 저장된 값은 그대로다. 실제로 제목의 실체 참조를 늦게 고쳤을 때 겪었다.
+ */
+export async function requeue(repos: string[], now?: Date): Promise<number> {
+  if (repos.length === 0) return 0;
+  const at = nowExpr(now);
+  const updated = await db
+    .update(crawlFrontier)
+    .set({ state: "pending", attempts: 0, nextAttemptAt: at, lastError: null, updatedAt: at })
+    .where(inArray(crawlFrontier.repo, repos))
+    .returning({ id: crawlFrontier.id });
+  return updated.length;
+}
+
 export async function frontierCounts(): Promise<Record<string, number>> {
   const rows = await db
     .select({ state: crawlFrontier.state, count: sql<number>`count(*)::int` })

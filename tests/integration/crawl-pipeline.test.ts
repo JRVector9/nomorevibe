@@ -32,6 +32,26 @@ describe("프론티어 — 큐 채우기", () => {
   it("빈 배열은 조회조차 하지 않는다", async () => {
     expect(await crawl.enqueue([])).toBe(0);
   });
+
+  it("다 조사한 것도 다시 조사 대상으로 되돌린다", async () => {
+    // 원본에서 뽑는 방법이 바뀌면(pageMeta 추출 로직) 다시 가져오는 수밖에 없다
+    await crawl.enqueue([{ repo: "a/one", signal: "commit-trailer" }]);
+    await crawl.dequeue(1);
+    await crawl.markFrontier("a/one", "done");
+    expect(await crawl.dequeue(1)).toEqual([]);
+
+    expect(await crawl.requeue(["a/one"])).toBe(1);
+
+    const [entry] = await crawl.dequeue(1);
+    expect(entry?.repo).toBe("a/one");
+    // 시도 횟수도 되돌린다 — 예전 실패 때문에 바로 소진되면 안 된다
+    expect(entry?.attempts).toBe(1);
+  });
+
+  it("없는 레포를 되돌려도 아무 일도 없다", async () => {
+    expect(await crawl.requeue(["없는/레포"])).toBe(0);
+    expect(await crawl.requeue([])).toBe(0);
+  });
 });
 
 describe("프론티어 — 꺼내기", () => {
