@@ -10,7 +10,9 @@ vi.mock("@/lib/net/fetch", () => ({
 
 const { registerProduct } = await import("@/lib/domain/products/register");
 const { verifyProduct } = await import("@/lib/domain/products/verify");
-const { updateProduct, deleteProduct, banProduct } = await import("@/lib/domain/products/manage");
+const { updateProduct, deleteProduct, banProduct, unbanProduct } = await import(
+  "@/lib/domain/products/manage"
+);
 const repo = await import("@/lib/domain/products/repository");
 const { VERIFY_META_NAME } = await import("@/lib/domain/products/verify-contract");
 const { ensureSchema, resetTables } = await import("./setup");
@@ -164,5 +166,43 @@ describe("공개 목록", () => {
 
     const listed = await repo.listProducts({ statuses: ["verified"], limit: 10 });
     expect(listed.map((p) => p.slug)).toEqual([slug]);
+  });
+});
+
+describe("차단 해제 — 차단 전 상태로 되돌린다", () => {
+  it("검증됐던 제품은 검증됨으로 돌아온다", async () => {
+    const { slug, verifyToken } = await seed();
+    fetchPage.mockResolvedValueOnce({ status: 200, html: verifyToken });
+    await verifyProduct(slug);
+    await banProduct(slug);
+
+    expect(await unbanProduct(slug)).toMatchObject({ ok: true, value: { status: "verified" } });
+    expect((await repo.findBySlug(slug))?.status).toBe("verified");
+  });
+
+  it("수집한 제품은 미클레임으로 돌아온다", async () => {
+    await repo.insert({
+      slug: "found-app",
+      url: "https://found.test",
+      name: "FoundApp",
+      tagline: "수집된 소개",
+      description: "공개 저장소에서 찾은 제품입니다.",
+      category: "Other",
+      stack: [],
+      status: "seeded",
+      source: "crawler",
+      verifyToken: "nmv_verify_found",
+      editTokenHash: "x".repeat(64),
+    });
+    await banProduct("found-app");
+
+    await unbanProduct("found-app");
+
+    expect((await repo.findBySlug("found-app"))?.status).toBe("seeded");
+  });
+
+  it("차단되지 않은 제품은 건드리지 않는다", async () => {
+    const { slug } = await seed();
+    expect(await unbanProduct(slug)).toMatchObject({ ok: true, value: { status: "unverified" } });
   });
 });
