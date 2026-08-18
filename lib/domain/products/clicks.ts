@@ -126,7 +126,7 @@ export async function rollupDaily(days = 3): Promise<number> {
   const rows = await db
     .select({
       slug: clickEvents.slug,
-      day: sql<string>`date_trunc('day', ${clickEvents.occurredAt})::date`,
+      day: sql<string>`timezone('Asia/Seoul', ${clickEvents.occurredAt} AT TIME ZONE 'UTC')::date`,
       clicks: sql<number>`count(*)::int`,
     })
     .from(clickEvents)

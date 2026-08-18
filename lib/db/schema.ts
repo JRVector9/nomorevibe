@@ -11,6 +11,10 @@ import {
   integer,
   date,
   primaryKey,
+  boolean,
+  bigint,
+  numeric,
+  uniqueIndex,
 } from "drizzle-orm/pg-core";
 
 // drizzle pg-core에 내장 bytea 타입이 없어 customType으로 정의
@@ -125,7 +129,10 @@ export const clickEvents = pgTable(
     slug: varchar("slug", { length: 80 }).notNull(),
     occurredAt: timestamp("occurred_at").notNull().defaultNow(),
   },
-  (t) => [index("click_events_slug_time_idx").on(t.slug, t.occurredAt.desc())],
+  (t) => [
+    index("click_events_slug_time_idx").on(t.slug, t.occurredAt.desc()),
+    index("click_events_time_slug_idx").on(t.occurredAt, t.slug),
+  ],
 );
 
 export type ClickEvent = typeof clickEvents.$inferSelect;
@@ -140,7 +147,7 @@ export const productClickDaily = pgTable(
   "product_click_daily",
   {
     slug: varchar("slug", { length: 80 }).notNull(),
-    /** 집계 날짜 (UTC 기준 하루) */
+    /** 집계 날짜 (KST 기준 하루) */
     day: date("day").notNull(),
     clicks: integer("clicks").notNull().default(0),
   },
@@ -148,6 +155,61 @@ export const productClickDaily = pgTable(
 );
 
 export type ProductClickDaily = typeof productClickDaily.$inferSelect;
+
+export type RankingPolicyRevisionState = "scheduled" | "applied" | "cancelled";
+export type RankingSeasonState = "active" | "closed";
+
+export const rankingPolicyRevisions = pgTable("ranking_policy_revisions", {
+  id: serial("id").primaryKey(),
+  values: jsonb("values").$type<import("@/lib/domain/ranking/policy").RankingPolicy>().notNull(),
+  state: varchar("state", { length: 20 }).$type<RankingPolicyRevisionState>().notNull(),
+  createdBy: varchar("created_by", { length: 120 }).notNull(),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  appliedAt: timestamp("applied_at"),
+  cancelledAt: timestamp("cancelled_at"),
+}, (table) => [
+  uniqueIndex("ranking_policy_one_scheduled_idx").on(table.state).where(sql`${table.state} = 'scheduled'`),
+]);
+
+export const rankingSeasons = pgTable("ranking_seasons", {
+  id: serial("id").primaryKey(),
+  key: varchar("key", { length: 48 }).notNull().unique(),
+  cadence: varchar("cadence", { length: 10 }).$type<"weekly" | "monthly">().notNull(),
+  startsAt: timestamp("starts_at").notNull(),
+  endsAt: timestamp("ends_at").notNull(),
+  state: varchar("state", { length: 10 }).$type<RankingSeasonState>().notNull(),
+  policyRevisionId: integer("policy_revision_id").notNull().references(() => rankingPolicyRevisions.id),
+  policySnapshot: jsonb("policy_snapshot").$type<import("@/lib/domain/ranking/policy").RankingPolicy>().notNull(),
+  effectiveLaunchWindowDays: integer("effective_launch_window_days").notNull(),
+  isTransition: boolean("is_transition").notNull().default(false),
+  refreshedAt: timestamp("refreshed_at"),
+  startedAt: timestamp("started_at").notNull().defaultNow(),
+  closedAt: timestamp("closed_at"),
+}, (table) => [
+  uniqueIndex("ranking_seasons_one_active_idx").on(table.state).where(sql`${table.state} = 'active'`),
+  index("ranking_seasons_dates_idx").on(table.startsAt, table.endsAt),
+]);
+
+export const rankingEntries = pgTable("ranking_entries", {
+  seasonId: integer("season_id").notNull().references(() => rankingSeasons.id),
+  slug: varchar("slug", { length: 80 }).notNull(),
+  validClicks: integer("valid_clicks").notNull().default(0),
+  cooldownFactorBasisPoints: integer("cooldown_factor_basis_points").notNull().default(10_000),
+  scoreUnits: bigint("score_units", { mode: "number" }).notNull().default(0),
+  rank: integer("rank").notNull(),
+  changePercent: numeric("change_percent", { precision: 12, scale: 1, mode: "number" }),
+  recentClicks: integer("recent_clicks").notNull().default(0),
+  previousClicks: integer("previous_clicks").notNull().default(0),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  finalizedAt: timestamp("finalized_at"),
+}, (table) => [
+  primaryKey({ columns: [table.seasonId, table.slug] }),
+  index("ranking_entries_rank_idx").on(table.seasonId, table.rank),
+]);
+
+export type RankingPolicyRevision = typeof rankingPolicyRevisions.$inferSelect;
+export type RankingSeason = typeof rankingSeasons.$inferSelect;
+export type RankingEntry = typeof rankingEntries.$inferSelect;
 
 /**
  * 제품 생존 상태.

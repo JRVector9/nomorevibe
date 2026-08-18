@@ -31,5 +31,8 @@ export function ensureSchema() {
  * 실제 커밋 경계를 재현하지 못한다. 경합 재시도 같은 동작은 진짜 커밋이 있어야 검증된다.
  */
 export async function resetTables() {
-  await db.execute(sql`TRUNCATE products, og_images RESTART IDENTITY CASCADE`);
+  await db.execute(sql`
+    TRUNCATE ranking_entries, ranking_seasons, ranking_policy_revisions,
+             products, og_images RESTART IDENTITY CASCADE
+  `);
 }

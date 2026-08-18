@@ -6,6 +6,7 @@ import {
   clickEvents,
   productClickDaily,
   productHealth,
+  rankingEntries,
   takedownRequests,
   type Product,
   type NewProduct,
@@ -159,6 +160,7 @@ export async function removeTraces(slug: string): Promise<void> {
     db.delete(clickEvents).where(eq(clickEvents.slug, slug)),
     db.delete(productClickDaily).where(eq(productClickDaily.slug, slug)),
     db.delete(productHealth).where(eq(productHealth.slug, slug)),
+    db.delete(rankingEntries).where(eq(rankingEntries.slug, slug)),
     db.delete(takedownRequests).where(eq(takedownRequests.slug, slug)),
   ]);
 }
