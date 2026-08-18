@@ -4,12 +4,12 @@ import { fetchCrawlDocuments } from "@/lib/crawl/jobs/fetch";
 import { judgeCrawlDocuments } from "@/lib/crawl/jobs/judge";
 import { publishCandidates } from "@/lib/crawl/jobs/publish";
 import { pingProducts } from "@/lib/jobs/products/uptime";
+import { rollupClicks } from "@/lib/jobs/products/click-rollup";
 
 /**
  * 이름 → 작업 매핑.
  *
  * 진입점(HTTP cron, CLI)이 이 목록만 보고 실행한다.
- * 앞으로 붙을 것: click-rollup(집계).
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- 작업마다 커서 타입이 다르다
 export type AnyJob = (ctx: JobContext<any>) => Promise<JobOutcome<any>>;
@@ -40,6 +40,9 @@ export const JOBS: Record<string, AnyJob> = {
 
   /** 등재된 제품이 아직 떠 있는지 확인한다 (기록만 하고 목록은 건드리지 않는다) */
   "uptime-ping": pingProducts,
+
+  /** 클릭 원천을 하루 단위로 굴리고 오래된 원천을 지운다 */
+  "click-rollup": rollupClicks,
 };
 
 export const JOB_NAMES = Object.keys(JOBS);

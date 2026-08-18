@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { getPublicList, type ProductListItem } from "@/lib/domain/products/view";
+import type { ProductSort } from "@/lib/domain/products/repository";
 import { logger } from "@/lib/observability/logger";
 import { ProductIcon } from "@/components/ProductIcon";
 import { StatusBadge, BuilderBadge } from "@/components/TrustBadges";
@@ -9,13 +10,17 @@ export const dynamic = "force-dynamic";
 // 홈은 가장 뜨거운 경로 — 전체 조회 대신 최근 N개만 (페이지네이션은 규모가 생기면)
 const HOME_LIST_LIMIT = 100;
 
-export default async function HomePage() {
+type Props = { searchParams: Promise<{ sort?: string }> };
+
+export default async function HomePage({ searchParams }: Props) {
+  const { sort: requested } = await searchParams;
+  const sort: ProductSort = requested === "popular" ? "popular" : "recent";
   // 공개 목록에는 검증된 제품만 — 등록은 열고, 노출은 잠근다
   // DB 장애가 랜딩 전체를 500으로 만들지 않도록 폴백 처리
   let list: ProductListItem[] = [];
   let dbDown = false;
   try {
-    list = await getPublicList(HOME_LIST_LIMIT);
+    list = await getPublicList(HOME_LIST_LIMIT, sort);
   } catch (error) {
     // 랜딩이 조용히 빈 화면이 되지 않도록, 폴백으로 떨어진 이유를 남긴다
     logger.error("home.list_failed", { error });
@@ -33,6 +38,25 @@ export default async function HomePage() {
           표시합니다.
         </p>
       </section>
+
+      <nav className="mt-4 flex gap-2">
+        {(
+          [
+            ["recent", "최신순"],
+            ["popular", "많이 눌린 순"],
+          ] as const
+        ).map(([key, label]) => (
+          <Link
+            key={key}
+            href={key === "recent" ? "/" : "/?sort=popular"}
+            className={`rounded-lg border px-3 py-1.5 text-[12.5px] font-semibold ${
+              key === sort ? "border-accent text-accent" : "border-line text-fg-2 hover:text-fg"
+            }`}
+          >
+            {label}
+          </Link>
+        ))}
+      </nav>
 
       {dbDown ? (
         <div className="mt-10 rounded-[14px] border border-line bg-bg-card p-12 text-center text-fg-3">
@@ -77,6 +101,17 @@ export default async function HomePage() {
                 </div>
               </div>
               <div className="hidden shrink-0 text-right text-xs text-fg-3 sm:block">
+                {p.metrics && p.metrics.clicks > 0 && (
+                  <div className="font-mono text-[12px] font-bold text-fg-2">
+                    {p.metrics.clicks}
+                    {p.metrics.delta24h !== null && p.metrics.delta24h !== 0 && (
+                      <span className={p.metrics.delta24h > 0 ? "ml-1 text-up" : "ml-1 text-down"}>
+                        {p.metrics.delta24h > 0 ? "▲" : "▼"}
+                        {Math.abs(p.metrics.delta24h)}
+                      </span>
+                    )}
+                  </div>
+                )}
                 {p.listedAt.toLocaleDateString("ko-KR", { month: "short", day: "numeric" })} 등록
               </div>
             </Link>

@@ -1,6 +1,6 @@
-import { and, gte, lt, sql } from "drizzle-orm";
+import { and, gte, inArray, lt, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { clickEvents } from "@/lib/db/schema";
+import { clickEvents, productClickDaily } from "@/lib/db/schema";
 import { rateLimit } from "@/lib/rate-limit";
 import { logger } from "@/lib/observability/logger";
 
@@ -44,4 +44,74 @@ export async function clicksSince(slug: string, windowMs: number, offsetMs = 0):
       ),
     );
   return row?.count ?? 0;
+}
+
+/** 목록이 함께 보여줄 지표 */
+export type ClickMetrics = { clicks: number; delta24h: number | null };
+
+/** 랭킹과 표시가 보는 창 */
+export const METRICS_WINDOW_DAYS = 7;
+
+/**
+ * 여러 제품의 지표를 한 번에.
+ *
+ * 목록마다 제품 수만큼 쿼리를 돌리면 홈이 느려진다. 두 창(최근 24시간·그 이전 24시간)을
+ * 한 쿼리에서 함께 센다.
+ */
+export async function clickMetrics(slugs: string[]): Promise<Map<string, ClickMetrics>> {
+  if (slugs.length === 0) return new Map();
+
+  const rows = await db
+    .select({
+      slug: clickEvents.slug,
+      window: sql<number>`count(*) filter (where ${clickEvents.occurredAt} >= now() - ${sql.raw(`interval '${METRICS_WINDOW_DAYS} days'`)})::int`,
+      recent: sql<number>`count(*) filter (where ${clickEvents.occurredAt} >= now() - interval '24 hours')::int`,
+      previous: sql<number>`count(*) filter (where ${clickEvents.occurredAt} >= now() - interval '48 hours' and ${clickEvents.occurredAt} < now() - interval '24 hours')::int`,
+    })
+    .from(clickEvents)
+    .where(inArray(clickEvents.slug, slugs))
+    .groupBy(clickEvents.slug);
+
+  return new Map(
+    rows.map((r) => [
+      r.slug,
+      // 어제 클릭이 아예 없었으면 변화율은 말할 것이 없다 — 0으로 적으면 "변화 없음"이 된다
+      { clicks: r.window, delta24h: r.previous > 0 ? r.recent - r.previous : null },
+    ]),
+  );
+}
+
+/**
+ * 원천을 하루 단위로 굴린다.
+ *
+ * 최근 며칠을 매번 다시 계산해 덮어쓴다. 멱등이라 커서가 필요 없고, 잡이 몇 틱 걸러 돌아도
+ * 빈 날이 생기지 않는다.
+ */
+export async function rollupDaily(days = 3): Promise<number> {
+  const rows = await db
+    .select({
+      slug: clickEvents.slug,
+      day: sql<string>`date_trunc('day', ${clickEvents.occurredAt})::date`,
+      clicks: sql<number>`count(*)::int`,
+    })
+    .from(clickEvents)
+    .where(gte(clickEvents.occurredAt, sql.raw(`now() - interval '${days} days'`)))
+    .groupBy(clickEvents.slug, sql`2`);
+
+  if (rows.length === 0) return 0;
+  await db
+    .insert(productClickDaily)
+    .values(rows)
+    .onConflictDoUpdate({
+      target: [productClickDaily.slug, productClickDaily.day],
+      set: { clicks: sql`excluded.clicks` },
+    });
+  return rows.length;
+}
+
+/** 굴린 뒤의 원천 정리. 개별 클릭은 오래 두면 행만 늘고 쓸 데가 없다 */
+export async function pruneEvents(olderThanDays = 35): Promise<void> {
+  await db
+    .delete(clickEvents)
+    .where(lt(clickEvents.occurredAt, sql.raw(`now() - interval '${olderThanDays} days'`)));
 }

@@ -1,9 +1,16 @@
 import { describe, it, expect, beforeAll, beforeEach } from "vitest";
 import { sql } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { clickEvents, rateLimits } from "@/lib/db/schema";
+import { clickEvents, rateLimits, productClickDaily } from "@/lib/db/schema";
 import * as repo from "@/lib/domain/products/repository";
-import { recordClick, clicksSince } from "@/lib/domain/products/clicks";
+import {
+  recordClick,
+  clicksSince,
+  clickMetrics,
+  rollupDaily,
+  pruneEvents,
+} from "@/lib/domain/products/clicks";
+import { getPublicList } from "@/lib/domain/products/view";
 import { ensureSchema, resetTables } from "./setup";
 
 async function product(slug = "app", url = "https://app.test") {
@@ -27,6 +34,7 @@ const count = async () => (await db.select({ n: sql<number>`count(*)::int` }).fr
 beforeAll(() => ensureSchema());
 beforeEach(async () => {
   await db.delete(clickEvents);
+  await db.delete(productClickDaily);
   await db.delete(rateLimits);
   await resetTables();
 });
@@ -80,5 +88,77 @@ describe("클릭 집계", () => {
   it("기록이 실패해도 던지지 않는다 — 사용자는 제품으로 가는 중이다", async () => {
     // 없는 제품의 클릭도 기록 자체는 조용히 처리된다 (라우트가 존재 여부를 먼저 본다)
     await expect(recordClick("ghost", "1.1.1.1")).resolves.toBeUndefined();
+  });
+});
+
+describe("집계와 랭킹", () => {
+  it("최근 창의 클릭과 하루 전 대비 변화를 함께 준다", async () => {
+    await product("a");
+    const hours = (n: number) => new Date(Date.now() - n * 60 * 60 * 1000);
+    await db.insert(clickEvents).values([
+      { slug: "a", occurredAt: hours(1) },
+      { slug: "a", occurredAt: hours(2) },
+      { slug: "a", occurredAt: hours(30) },
+    ]);
+
+    const metrics = await clickMetrics(["a"]);
+
+    expect(metrics.get("a")).toEqual({ clicks: 3, delta24h: 1 });
+  });
+
+  it("어제 클릭이 없으면 변화율은 말하지 않는다", async () => {
+    // 0으로 적으면 "변화 없음"이 되어 아무것도 없던 것과 구분되지 않는다
+    await product("a");
+    await db.insert(clickEvents).values({ slug: "a", occurredAt: new Date() });
+
+    expect((await clickMetrics(["a"]))?.get("a")).toEqual({ clicks: 1, delta24h: null });
+  });
+
+  it("굴리면 하루 단위로 남고 다시 굴려도 같은 값이다", async () => {
+    await product("a");
+    await db.insert(clickEvents).values([
+      { slug: "a", occurredAt: new Date() },
+      { slug: "a", occurredAt: new Date() },
+    ]);
+
+    await rollupDaily();
+    await rollupDaily();
+
+    const rows = await db.select().from(productClickDaily);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].clicks).toBe(2);
+  });
+
+  it("오래된 원천만 지운다", async () => {
+    await product("a");
+    await db.insert(clickEvents).values([
+      { slug: "a", occurredAt: new Date() },
+      { slug: "a", occurredAt: new Date(Date.now() - 40 * 24 * 60 * 60 * 1000) },
+    ]);
+
+    await pruneEvents();
+
+    expect(await count()).toBe(1);
+  });
+
+  it("많이 눌린 순으로 목록을 세운다", async () => {
+    await product("quiet", "https://quiet.test");
+    await product("loud", "https://loud.test");
+    await db.insert(clickEvents).values([
+      { slug: "loud", occurredAt: new Date() },
+      { slug: "loud", occurredAt: new Date() },
+      { slug: "quiet", occurredAt: new Date() },
+    ]);
+
+    const list = await getPublicList(10, "popular");
+
+    expect(list.map((p) => p.slug)).toEqual(["loud", "quiet"]);
+    expect(list[0].metrics).toMatchObject({ clicks: 2 });
+  });
+
+  it("클릭이 없어도 목록에서 사라지지 않는다", async () => {
+    await product("silent", "https://silent.test");
+    const list = await getPublicList(10, "popular");
+    expect(list.map((p) => p.slug)).toEqual(["silent"]);
   });
 });

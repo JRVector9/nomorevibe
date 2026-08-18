@@ -9,6 +9,8 @@ import {
   customType,
   index,
   integer,
+  date,
+  primaryKey,
 } from "drizzle-orm/pg-core";
 
 // drizzle pg-core에 내장 bytea 타입이 없어 customType으로 정의
@@ -127,6 +129,25 @@ export const clickEvents = pgTable(
 );
 
 export type ClickEvent = typeof clickEvents.$inferSelect;
+
+/**
+ * 일별 클릭 집계.
+ *
+ * 원천은 오래 두지 않는다(행이 계속 늘고, 오래된 개별 클릭은 쓸 데가 없다). 지우기 전에
+ * 하루 단위로 굴려 남긴다 — 몇 달 뒤에도 "이 제품이 언제 뜨거웠나"는 답할 수 있어야 한다.
+ */
+export const productClickDaily = pgTable(
+  "product_click_daily",
+  {
+    slug: varchar("slug", { length: 80 }).notNull(),
+    /** 집계 날짜 (UTC 기준 하루) */
+    day: date("day").notNull(),
+    clicks: integer("clicks").notNull().default(0),
+  },
+  (t) => [primaryKey({ columns: [t.slug, t.day] })],
+);
+
+export type ProductClickDaily = typeof productClickDaily.$inferSelect;
 
 /**
  * 제품 생존 상태.

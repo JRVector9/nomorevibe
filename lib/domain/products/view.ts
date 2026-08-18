@@ -1,5 +1,6 @@
 import type { Product, ProductStatus } from "@/lib/db/schema";
 import { listProducts, type ProductSort } from "./repository";
+import { clickMetrics } from "./clicks";
 
 /**
  * 목록 화면이 쓰는 뷰모델.
@@ -69,11 +70,26 @@ export function toListItem(p: Product): ProductListItem {
  */
 export async function getPublicList(limit: number, sort?: ProductSort): Promise<ProductListItem[]> {
   const rows = await listProducts({ statuses: ["verified", "seeded"], sort, limit });
-  return rows.map(toListItem);
+  return withMetrics(rows.map(toListItem));
+}
+
+/**
+ * 지표를 한 번에 붙인다.
+ *
+ * 항목마다 쿼리를 돌리면 홈이 목록 길이만큼 느려진다. 지표는 부가물이므로 실패해도 목록은
+ * 그대로 나가야 한다.
+ */
+async function withMetrics(items: ProductListItem[]): Promise<ProductListItem[]> {
+  if (items.length === 0) return items;
+  const metrics = await clickMetrics(items.map((i) => i.slug));
+  return items.map((item) => {
+    const found = metrics.get(item.slug);
+    return found ? { ...item, metrics: found } : item;
+  });
 }
 
 /** 랭킹·지표 대상 — 우리가 직접 확인한 제품만 */
 export async function getRankedList(limit: number, sort?: ProductSort): Promise<ProductListItem[]> {
   const rows = await listProducts({ statuses: ["verified"], sort, limit });
-  return rows.map(toListItem);
+  return withMetrics(rows.map(toListItem));
 }
