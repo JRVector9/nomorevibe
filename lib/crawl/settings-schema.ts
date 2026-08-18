@@ -51,8 +51,23 @@ const judgeSchema = z.object({
   /** 마지막 푸시가 이보다 오래되면 죽은 프로젝트로 본다 */
   maxPushAgeDays: z.number().int().min(1).max(3650),
   excludeForks: z.boolean(),
-  /** 조직 계정 레포를 제외할지. 개인이 조직 계정을 쓰는 경우도 있어 놓치는 것이 생긴다 */
+  /**
+   * 조직 계정 레포를 제외할지.
+   *
+   * 기본값이 false인 이유는 실측이다. 표본 341개에서 large_oss로 거른 52건 중 39건이
+   * "조직 계정인데 스타 1000 이하"였고, 그 안에 nodetool.ai·smithers.sh·albyhub.com 같은
+   * 실제 배포 제품이 섞여 있었다. 규모는 스타 상한이 이미 거른다 — 계정 종류로 한 번 더
+   * 거르면 소규모 팀이 통째로 빠진다.
+   */
   excludeOrganizations: z.boolean(),
+  /**
+   * 레포 설명에 이 문구가 있으면 개인 사이트로 본다.
+   *
+   * 이름과 URL에는 단서가 없는데 설명에만 있는 경우가 있다 — evansstepanov("My very simple
+   * personal landing page app"), villoro.com("Personal blog build with Astro")이 그렇게 통과했다.
+   * 한 단어짜리는 넣지 않는다. "personal"만 보면 personal-finance-tracker가 걸린다.
+   */
+  personalSiteKeywords: z.array(z.string().min(3).max(60)).max(100),
   /** homepage가 이 도메인이면 배포물이 아니다 */
   blockedHomepageDomains: z.array(z.string().min(1).max(120)).max(200),
   /** 레포 이름이 이 패턴이면 제외 (* 와일드카드) */
@@ -87,7 +102,17 @@ export const DEFAULT_CRAWL_SETTINGS: CrawlSettings = {
     minStars: 0,
     maxPushAgeDays: 180,
     excludeForks: true,
-    excludeOrganizations: true,
+    excludeOrganizations: false,
+    personalSiteKeywords: [
+      "personal blog",
+      "personal site",
+      "personal website",
+      "personal landing",
+      "my portfolio",
+      "portfolio website",
+      "개인 블로그",
+      "개인 홈페이지",
+    ],
     blockedHomepageDomains: [
       "github.com",
       "instagram.com",
@@ -103,14 +128,19 @@ export const DEFAULT_CRAWL_SETTINGS: CrawlSettings = {
       "crates.io",
       "modrinth.com",
       "pypi.org",
+      "wordpress.org",
     ],
     excludedRepoPatterns: [
       "*.github.io",
+      "documentation",
       "dotfiles",
       "awesome-*",
       "*-portfolio",
       "*-blog",
       "*-resume",
+      // 회사·단체 소개 사이트와 학술 패키지 (juxt/astro-website, Pathfinder.jl을 실제로 봤다)
+      "*-website",
+      "*.jl",
       "*-personal-site",
       "*-personal-website",
     ],
