@@ -135,9 +135,8 @@ npm run job crawl-publish
 curl -X POST $SITE/api/cron/crawl-fetch -H "Authorization: Bearer $CRON_SECRET"
 ```
 
-발행할 때 제품 카테고리는 Claude API(`claude-opus-5`)가 고른다. 다섯 칸 중 하나를 고르는 일이라
-`effort: low`로 부른다. `ANTHROPIC_API_KEY`가 없거나 호출이 실패하면 토픽·설명 키워드 규칙으로
-떨어지고 발행은 그대로 진행된다 — 카테고리 하나 때문에 목록에 못 오를 이유가 없다.
+발행할 때 제품 카테고리는 Claude API(`claude-sonnet-5`, `effort: high`)가 고른다.
+`ANTHROPIC_API_KEY`가 없거나 호출이 실패하면 토픽·설명 키워드 규칙으로 떨어지고 발행은 그대로 진행된다 — 카테고리 하나 때문에 목록에 못 오를 이유가 없다.
 
 수집기는 `GITHUB_TOKEN`이 있어야 돈다. 없으면 시간당 60회라 성립하지 않으므로 작업이 실패로
 남는다(`jobs.last_error`).

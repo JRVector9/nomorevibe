@@ -30,10 +30,15 @@ export type ClassifyInput = {
   language: string | null;
 };
 
-const MODEL = "claude-opus-5";
+const MODEL = "claude-sonnet-5";
 
-/** 요청 하나가 이 시간을 넘기면 포기한다. 발행 잡의 틱 예산이 25초다 */
-const TIMEOUT_MS = 12_000;
+/**
+ * 요청 하나가 이 시간을 넘기면 포기한다.
+ *
+ * effort를 high로 두면 생각이 길어져 12초로는 모자랄 수 있다. 넘겨도 발행은 규칙 분류로
+ * 이어지지만, 그렇게 되면 이 호출은 값만 치르고 아무것도 못 얻는다.
+ */
+const TIMEOUT_MS = 20_000;
 
 let client: Anthropic | null = null;
 let warned = false;
@@ -59,9 +64,12 @@ export async function classifyCategory(input: ClassifyInput): Promise<Category |
   try {
     const response = await anthropic.messages.parse({
       model: MODEL,
-      max_tokens: 512,
-      // 다섯 칸 중 하나를 고르는 일이다. 깊게 생각할수록 좋아지는 판단이 아니다
-      output_config: { effort: "low", format: zodOutputFormat(answer) },
+      /**
+       * 생각한 만큼도 출력 한도에서 나간다. effort를 올리면 한도가 작을 때 답을 내기 전에
+       * 잘려 분류가 통째로 실패한다 — 고르는 값은 한 단어지만 한도는 넉넉히 준다.
+       */
+      max_tokens: 4096,
+      output_config: { effort: "high", format: zodOutputFormat(answer) },
       system:
         "너는 배포된 웹 서비스를 다섯 카테고리 중 하나로 분류한다. " +
         "Productivity(일·기록·협업 도구), Dev(개발자 도구·인프라·SDK), Design(디자인·시각 도구), " +
