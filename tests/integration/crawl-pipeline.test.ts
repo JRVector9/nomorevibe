@@ -52,6 +52,27 @@ describe("프론티어 — 큐 채우기", () => {
     expect(await crawl.requeue(["없는/레포"])).toBe(0);
     expect(await crawl.requeue([])).toBe(0);
   });
+
+  it("신호별로 판정 결과를 센다 — 어떤 검색어가 쓸 만한지 보려면 필요하다", async () => {
+    await crawl.enqueue([
+      { repo: "a/one", signal: "claude" },
+      { repo: "a/two", signal: "claude" },
+      { repo: "b/one", signal: "codex" },
+    ]);
+    for (const [repo, state] of [
+      ["a/one", "approved"],
+      ["a/two", "rejected"],
+      ["b/one", "rejected"],
+    ] as const) {
+      await crawl.recordJudgement({ repo, productUrl: null, state, reason: "passed", decidedBy: "auto" });
+    }
+
+    const rows = await crawl.yieldBySignal();
+
+    expect(rows.find((r) => r.signal === "claude" && r.state === "approved")?.count).toBe(1);
+    expect(rows.find((r) => r.signal === "claude" && r.state === "rejected")?.count).toBe(1);
+    expect(rows.find((r) => r.signal === "codex" && r.state === "rejected")?.count).toBe(1);
+  });
 });
 
 describe("프론티어 — 꺼내기", () => {

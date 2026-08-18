@@ -114,6 +114,11 @@ describe("검색 잡", () => {
   });
 
   it("마지막 신호까지 훑으면 사이클을 끝내고 커서를 비운다", async () => {
+    // 신호를 하나로 못박는다 — 기본 신호 수가 바뀌면 이 테스트의 뜻이 흔들린다
+    await saveSettings(
+      { discover: { queries: [{ label: "하나뿐", query: "one", enabled: true, priority: 100 }] } },
+      "테스트",
+    );
     searchCommits.mockResolvedValue(searchPage(["a/one"]));
 
     const result = await tick();
