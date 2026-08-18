@@ -28,7 +28,7 @@ export async function ensureDefaultPolicy(
       .select()
       .from(rankingPolicyRevisions)
       .where(eq(rankingPolicyRevisions.state, "applied"))
-      .orderBy(desc(rankingPolicyRevisions.createdAt), desc(rankingPolicyRevisions.id))
+      .orderBy(desc(rankingPolicyRevisions.appliedAt), desc(rankingPolicyRevisions.id))
       .limit(1);
     if (existing) return existing;
 
@@ -51,7 +51,7 @@ export async function getAppliedPolicy(): Promise<RankingPolicyRevision | undefi
     .select()
     .from(rankingPolicyRevisions)
     .where(eq(rankingPolicyRevisions.state, "applied"))
-    .orderBy(desc(rankingPolicyRevisions.createdAt), desc(rankingPolicyRevisions.id))
+    .orderBy(desc(rankingPolicyRevisions.appliedAt), desc(rankingPolicyRevisions.id))
     .limit(1);
   return revision;
 }

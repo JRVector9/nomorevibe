@@ -1,10 +1,11 @@
-import { asc, count } from "drizzle-orm";
+import { asc, count, eq } from "drizzle-orm";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { db } from "@/lib/db";
 import { rankingPolicyRevisions } from "@/lib/db/schema";
 import {
   cancelScheduledPolicy,
   ensureDefaultPolicy,
+  getAppliedPolicy,
   getScheduledPolicy,
   listPolicyRevisions,
   schedulePolicy,
@@ -29,6 +30,24 @@ describe("ranking policy revisions", () => {
     expect(initial.appliedAt).toEqual(now);
     expect(existing.id).toBe(initial.id);
     expect(await listPolicyRevisions()).toHaveLength(1);
+  });
+
+  it("selects the revision applied most recently even when it was created earlier", async () => {
+    const scheduledAt = new Date("2026-08-18T03:00:00.000Z");
+    const scheduled = await schedulePolicy(DEFAULT_RANKING_POLICY, "jr", scheduledAt);
+    expect(scheduled.ok).toBe(true);
+    if (!scheduled.ok) throw new Error("expected policy scheduling to succeed");
+
+    await ensureDefaultPolicy("system", new Date(scheduledAt.getTime() + 1000));
+    const promotedAt = new Date(scheduledAt.getTime() + 2000);
+    await db
+      .update(rankingPolicyRevisions)
+      .set({ state: "applied", appliedAt: promotedAt })
+      .where(eq(rankingPolicyRevisions.id, scheduled.revision.id));
+
+    expect((await getAppliedPolicy())?.id).toBe(scheduled.revision.id);
+    expect((await ensureDefaultPolicy("system", new Date(scheduledAt.getTime() + 3000))).id)
+      .toBe(scheduled.revision.id);
   });
 
   it("replaces an existing scheduled policy without mutating applied history", async () => {
