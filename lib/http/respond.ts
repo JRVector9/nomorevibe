@@ -17,9 +17,15 @@ export function errorResponse(error: DomainError, context?: { origin?: string })
           already_registered: true,
           slug: error.slug,
           status: error.status,
-          hint: error.slug
-            ? `수정하려면 PATCH /api/products/${error.slug} 를 X-Edit-Token 헤더와 함께 호출하세요`
-            : undefined,
+          /**
+           * seeded는 우리가 대신 올린 제품이라 아무도 수정 키를 갖고 있지 않다.
+           * 수정하라고 안내하면 메이커는 있지도 않은 키를 찾게 된다 — 가져가는 길을 알려준다.
+           */
+          hint: !error.slug
+            ? undefined
+            : error.status === "seeded"
+              ? `우리가 대신 올린 제품입니다. POST /api/products/${error.slug}/verify 로 도메인을 증명하면 가져갈 수 있습니다`
+              : `수정하려면 PATCH /api/products/${error.slug} 를 X-Edit-Token 헤더와 함께 호출하세요`,
         },
         { status: 409 },
       );
