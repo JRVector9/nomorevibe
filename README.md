@@ -101,6 +101,7 @@ curl -X POST $SITE/api/cron/heartbeat \  # 스케줄러가 주기적으로 호�
 | `crawl-fetch` | 레포 메타 + 배포 페이지 확보 | `crawl_documents` (원본) |
 | `crawl-judge` | 현재 기준으로 판정 | `crawl_candidates` (approved / rejected / needs_review) |
 | `crawl-publish` | 통과한 후보를 목록에 올림 | `products` (status=seeded, source=crawler) |
+| `uptime-ping` | 등재된 제품이 아직 떠 있는지 확인 | `product_health` (기록만 — 목록은 안 건드린다) |
 
 ```bash
 GITHUB_TOKEN=... npm run job crawl-seed      # 로컬에서 한 틱씩
@@ -123,6 +124,7 @@ npm run job crawl-publish
 | `crawl-judge` | 5분 | 계산만 한다. 원본 쌓이는 속도만 따라가면 된다 |
 | `crawl-publish` | 5분 | 판정 직후에 돌아야 통과한 것이 바로 목록에 오른다 |
 | `crawl-seed` | 15분 | 검색 30회/분. 프론티어는 한 번 돌면 한참 차 있다 |
+| `uptime-ping` | 10분 | 제품이 죽는 것은 분 단위로 급한 일이 아니다 |
 
 크론 데몬을 쓰지 않는 이유는 붙일 것이 네 개뿐이고 주기가 분 단위이며, 실패해도 다음 틱이
 이어받기 때문이다. 다른 스케줄러(Dokploy, GitHub Actions)를 쓴다면 같은 주기로 아래를 호출하면 된다.
