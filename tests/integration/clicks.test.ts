@@ -204,9 +204,9 @@ describe("집계와 랭킹", () => {
     await product("quiet", "https://quiet.test");
     await product("loud", "https://loud.test");
     await db.insert(clickEvents).values([
-      { slug: "loud", occurredAt: new Date() },
-      { slug: "loud", occurredAt: new Date() },
-      { slug: "quiet", occurredAt: new Date() },
+      { slug: "loud" },
+      { slug: "loud" },
+      { slug: "quiet" },
     ]);
 
     const list = await getRankedList(10, { sort: "popular" });

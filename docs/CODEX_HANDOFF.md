@@ -5,7 +5,8 @@
 The approved click-based seasonal discovery ranking implementation is complete through Task 10.
 The local scheduler now refreshes ranking snapshots after click rollup, the operating docs describe
 the shipped behavior, and the public/admin flows have been exercised against a migrated development
-database. The remaining work requires external credentials or production-environment access.
+database. A post-Task-10 clock flake in the popular-ranking integration fixture has also been
+stabilized. The remaining work requires external credentials or production-environment access.
 
 Sources of truth:
 
@@ -35,6 +36,9 @@ Sources of truth:
 - Browser-smoked the public home and authenticated ranking admin on desktop and 390 px mobile. A
   draft changed the trend minimum baseline from 5 to 6 only in a scheduled revision; the active
   season key and policy revision were equal, and the policy snapshot passed a deep-equality check.
+- Stabilized the popular-ranking integration fixture by letting PostgreSQL assign `occurredAt`, the
+  same clock source used by production `recordClick`, instead of inserting JS timestamps that could
+  briefly be in the future relative to the database.
 
 Implementation commits before the Task 10 release commit:
 
@@ -62,6 +66,11 @@ Task 10 modifies only:
 - `scripts/scheduler.sh`
 - `README.md`
 - `PENDING.md`
+- `docs/CODEX_HANDOFF.md`
+
+The follow-up clock stabilization modifies:
+
+- `tests/integration/clicks.test.ts`
 - `docs/CODEX_HANDOFF.md`
 
 The temporary authenticated Playwright script was removed. Screenshots are diagnostic artifacts
@@ -121,6 +130,36 @@ codex review -c 'model_reasoning_effort="high"' --uncommitted
 The integration suite emitted expected error logs from explicit invalid-policy, transaction rollback,
 and job-failure regression cases. The suite result was still 22/22 files and 230/230 tests passed.
 
+Post-Task-10 root recheck and clock-flake stabilization:
+
+```bash
+npx vitest run --config vitest.integration.config.ts \
+  tests/integration/clicks.test.ts -t "많이 눌린 순으로 목록을 세운다"
+# RED before the fixture change: ordered slugs were correct, but metrics was undefined
+
+# The same target was then run five consecutive times after using the DB timestamp default.
+# 5/5 runs passed: one target test passed and 30 tests skipped in each run.
+
+npm run test:integration
+# 22 files passed, 230 tests passed
+
+npm test
+# 18 files passed, 170 tests passed
+
+npm run lint
+# passed, ESLint exit 0
+
+npm run build
+# passed, Next.js compilation and TypeScript succeeded
+
+git diff --check
+# passed, no output
+
+codex review -c 'model_reasoning_effort="high"' --uncommitted
+# clean: the fixture now matches the production PostgreSQL timestamp path; reviewer reran the
+# target test successfully and confirmed the documentation is accurate
+```
+
 Job and HTTP/browser smoke:
 
 ```bash
@@ -172,6 +211,12 @@ and no document-level horizontal overflow. Browser console errors and page error
   fresh-process smoke instead; the temporary server was stopped afterward.
 - The installed Python environment did not include Playwright. The planned `npx playwright` CLI and
   its cached Chromium were used without changing project dependencies.
+- Root's independent full-matrix rerun exposed a reproducible popular-ranking fixture failure: the
+  JS clock was about 45 ms ahead of PostgreSQL, so rows inserted with `occurredAt: new Date()` failed
+  the production query's strict `< timezone('UTC', now())` cutoff and returned no metrics. The same
+  persisted rows returned correct metrics after the clocks caught up. Production click inserts use
+  the database column default, so the test fixture was changed to use that same source instead of
+  weakening the production time boundary.
 
 ## Remaining work
 
