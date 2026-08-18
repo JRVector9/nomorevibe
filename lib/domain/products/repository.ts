@@ -1,4 +1,4 @@
-import { eq, inArray, like, or, sql } from "drizzle-orm";
+import { and, eq, ilike, inArray, like, or, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import {
   products,
@@ -12,6 +12,7 @@ import {
   type ProductStatus,
 } from "@/lib/db/schema";
 import { slugifyName } from "@/lib/net/normalize";
+import type { Category } from "./schema";
 import { METRICS_WINDOW_DAYS } from "./clicks";
 
 /** 제품 데이터 접근 — 도메인 바깥에서 DB를 직접 만지지 않도록 여기로 모은다 */
@@ -34,7 +35,21 @@ export type ListOptions = {
   statuses: ProductStatus[];
   sort?: ProductSort;
   limit: number;
+  /** 카테고리 하나로 좁힌다 */
+  category?: Category;
+  /** 이름·소개에서 찾는다 */
+  query?: string;
 };
+
+/**
+ * 검색어의 와일드카드를 죽인다.
+ *
+ * 값은 파라미터로 나가므로 주입은 아니지만, %나 _를 그대로 두면 사용자가 친 글자가
+ * 패턴 기호로 동작해 엉뚱한 것이 걸린다.
+ */
+function likePattern(query: string): string {
+  return `%${query.trim().replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
+}
 
 /**
  * 등재 시각 — 검증된 제품은 검증 시점, 우리가 대신 올린 제품은 등록 시점.
@@ -76,12 +91,35 @@ const SORTS = {
 /** 정렬 파라미터 검증용 (쿼리스트링 → ProductSort) */
 export const SORT_KEYS = Object.keys(SORTS) as ProductSort[];
 
-export async function listProducts({ statuses, sort = "recent", limit }: ListOptions): Promise<Product[]> {
+export async function listProducts({
+  statuses,
+  sort = "recent",
+  limit,
+  category,
+  query,
+}: ListOptions): Promise<Product[]> {
+  const conditions = [inArray(products.status, statuses)];
+  if (category) conditions.push(eq(products.category, category));
+  if (query?.trim()) {
+    const pattern = likePattern(query);
+    conditions.push(or(ilike(products.name, pattern), ilike(products.tagline, pattern))!);
+  }
+
   return db.query.products.findMany({
-    where: inArray(products.status, statuses),
+    where: and(...conditions),
     orderBy: [...SORTS[sort]],
     limit,
   });
+}
+
+/** 카테고리별 개수 — 필터 칩이 숫자를 함께 보여준다 */
+export async function categoryCounts(statuses: ProductStatus[]): Promise<Record<string, number>> {
+  const rows = await db
+    .select({ category: products.category, count: sql<number>`count(*)::int` })
+    .from(products)
+    .where(inArray(products.status, statuses))
+    .groupBy(products.category);
+  return Object.fromEntries(rows.map((r) => [r.category, r.count]));
 }
 
 /** base 계열 slug를 한 번에 조회해 메모리에서 빈 자리를 찾는다 (후보마다 왕복하지 않음) */
