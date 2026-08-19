@@ -1,190 +1,128 @@
-/* eslint-disable @next/next/no-img-element -- OG 스냅샷은 크기를 미리 알 수 없는 동적 이미지라 next/image 최적화 대상이 아님 */
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { findBySlug } from "@/lib/domain/products/repository";
-import { ProductIcon } from "@/components/ProductIcon";
-import { Tag } from "@/components/Tag";
-import { StatusBadge, BuilderBadge } from "@/components/TrustBadges";
-import { isUnclaimed, builderClaimOf } from "@/lib/domain/products/view";
+import { BuildProvenance } from "@/components/product-detail/BuildProvenance";
+import { EvidenceSummary } from "@/components/product-detail/EvidenceSummary";
+import { FreshnessPanel } from "@/components/product-detail/FreshnessPanel";
+import { ProductFacts } from "@/components/product-detail/ProductFacts";
+import { ProductGallery } from "@/components/product-detail/ProductGallery";
+import { ProductHero } from "@/components/product-detail/ProductHero";
+import { ProductIntroduction } from "@/components/product-detail/ProductIntroduction";
+import { ProductMetrics } from "@/components/product-detail/ProductMetrics";
+import { RepositoryEvidence } from "@/components/product-detail/RepositoryEvidence";
+import { UpdateTimeline } from "@/components/product-detail/UpdateTimeline";
+import { getProductDetail, getProductIdentity } from "@/lib/domain/products/detail-view";
 import { TakedownForm } from "./TakedownForm";
 
 export const dynamic = "force-dynamic";
 
 type Props = { params: Promise<{ slug: string }> };
 
-async function getProduct(slug: string) {
-  const product = await findBySlug(slug);
-  if (!product || product.status === "banned") return null;
-  return product;
-}
-
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { slug } = await params;
-  const product = await getProduct(slug);
+  const product = await getProductIdentity(slug);
   if (!product) return {};
   return {
     title: `${product.name} — NoMoreVibe`,
     description: product.tagline,
-    // 미검증 제품은 검색엔진에 노출하지 않는다
     robots: product.status === "verified" ? undefined : { index: false, follow: false },
   };
 }
 
 export default async function ProductPage({ params }: Props) {
   const { slug } = await params;
-  const product = await getProduct(slug);
-  if (!product) notFound();
-
-  const displayUrl = product.url.replace(/^https?:\/\//, "");
-  const unclaimed = isUnclaimed(product);
+  const detail = await getProductDetail(slug);
+  if (!detail) notFound();
 
   return (
-    <main className="mx-auto max-w-[1180px] px-6 pb-20">
-      <div className="pt-[18px] text-[13px] text-fg-3">
-        <Link href="/" className="hover:text-fg">
-          Products
-        </Link>{" "}
-        › {product.category} › {product.name}
-      </div>
+    <main className="mx-auto max-w-[1220px] px-4 pb-20 sm:px-6">
+      <nav aria-label="경로" className="py-4 text-[13px] text-fg-3">
+        <Link href="/" className="hover:text-fg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent">
+          제품
+        </Link>
+        <span aria-hidden className="px-2">›</span>
+        <span>{detail.product.category}</span>
+        <span aria-hidden className="px-2">›</span>
+        <span className="text-fg-2">{detail.product.name}</span>
+      </nav>
 
-      <div className="mt-5 grid grid-cols-1 gap-7 md:grid-cols-[1fr_320px]">
-        {/* 왼쪽 */}
-        <div>
-          <div className="flex items-start gap-[18px]">
-            <ProductIcon name={product.name} ogImage={product.ogImage} size={64} />
-            <div className="min-w-0">
-              <h1 className="flex flex-wrap items-center gap-3 text-[26px] font-extrabold tracking-tight">
-                {product.name}
-                <StatusBadge status={product.status} unclaimed={unclaimed} size="md" />
-              </h1>
-              <div className="mt-1 text-[14.5px] text-fg-2">{product.tagline}</div>
-              <a
-                href={`/go/${product.slug}`}
-                target="_blank"
-                rel="nofollow noopener noreferrer"
-                className="mt-2 inline-flex items-center gap-1 text-[13px] font-semibold text-accent hover:underline"
-              >
-                {displayUrl} ↗
-              </a>
-            </div>
-          </div>
-
-          {product.ogImage && (
-            <div className="mt-6 overflow-hidden rounded-[14px] border border-line bg-bg-card">
-              <div className="flex items-center gap-1.5 border-b border-line bg-bg-soft px-3.5 py-2">
-                <span className="h-[9px] w-[9px] rounded-full bg-[#ea3943]" />
-                <span className="h-[9px] w-[9px] rounded-full bg-[#f6b73c]" />
-                <span className="h-[9px] w-[9px] rounded-full bg-[#16c784]" />
-                <span className="ml-2 rounded-md bg-bg px-2.5 py-0.5 font-mono text-[13px] text-fg-3">
-                  {displayUrl}
-                </span>
-                <span className="ml-auto text-[13px] text-fg-3">등록 시점 OG 이미지</span>
-              </div>
-              <img src={product.ogImage} alt={`${product.name} 미리보기`} className="w-full" />
-            </div>
-          )}
-
-          <div className="mt-6 rounded-[14px] border border-line bg-bg-card p-[22px]">
-            <h2 className="text-[15px] font-bold">
-              소개 <span className="ml-1 text-[13px] font-medium text-fg-3">— 등록 시 AI가 작성</span>
-            </h2>
-            <p className="mt-4 whitespace-pre-line text-[13.5px] leading-[1.7] text-fg-2">
-              {product.description}
-            </p>
-          </div>
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-[minmax(0,1fr)_340px] md:gap-5">
+        <div className="md:col-span-2">
+          <ProductHero
+            product={detail.product}
+            unclaimed={detail.unclaimed}
+            lifecycle={detail.profile?.lifecycle ?? null}
+            rank={detail.rank}
+            health={detail.health}
+          />
         </div>
 
-        {/* 오른쪽 사이드바 */}
-        <div>
-          <div className="rounded-[14px] border border-line bg-bg-card p-[22px]">
-            <h2 className="text-[15px] font-bold">
-              Product Info{" "}
-              <span className="ml-1 text-[13px] font-medium text-fg-3">
-                {unclaimed ? "공개 저장소에서 수집" : "from /nomorevibe"}
-              </span>
-            </h2>
-            <dl className="mt-3">
-              {product.makerName && (
-                <InfoRow k="메이커" v={<>{product.makerName} <span className="text-[13px] text-fg-3">(미검증)</span></>} />
-              )}
-              <InfoRow
-                k="등록일"
-                v={product.createdAt.toLocaleDateString("ko-KR", { year: "numeric", month: "long", day: "numeric" })}
-              />
-              {product.builder && (
-                <InfoRow
-                  k="만든 AI"
-                  v={<BuilderBadge builder={product.builder} claim={builderClaimOf(product)} />}
-                />
-              )}
-              {(product.stack ?? []).length > 0 && (
-                <InfoRow
-                  k="스택"
-                  v={
-                    <span className="flex flex-wrap justify-end gap-1">
-                      {(product.stack ?? []).map((s) => (
-                        <Tag key={s}>{s}</Tag>
-                      ))}
-                    </span>
-                  }
-                />
-              )}
-              <InfoRow k="카테고리" v={product.category} />
-              {/* http(s)만 렌더 — 서버 검증에 더한 심층 방어 */}
-              {product.repoUrl && /^https?:\/\//i.test(product.repoUrl) && (
-                <InfoRow
-                  k="레포"
-                  v={
-                    <a
-                      href={product.repoUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-accent hover:underline"
-                    >
-                      {product.repoUrl.replace(/^https?:\/\/(www\.)?/, "")} ↗
-                    </a>
-                  }
-                />
-              )}
-            </dl>
-          </div>
+        <div className="md:col-span-2">
+          <ProductMetrics visits={detail.visits} health={detail.health} />
+        </div>
 
-          {unclaimed && (
-            <div className="mt-5 rounded-[14px] border border-accent bg-accent-soft p-[22px]">
-              <h2 className="text-[15px] font-bold">이 제품의 주인이신가요?</h2>
-              <p className="mt-3 text-[13px] leading-[1.7] text-fg-2">
-                공개 저장소에서 찾아 저희가 대신 올린 제품입니다. 여기 적힌 정보는 저희가 추정한
-                것이라 사실과 다를 수 있습니다.
-              </p>
-              <p className="mt-3 text-[13px] leading-[1.7] text-fg-2">
-                프로젝트 폴더에서 <code className="font-mono text-accent">/nomorevibe</code> 를
-                실행하면 소유권을 확인하고 직접 수정하실 수 있습니다.
-              </p>
-              <TakedownForm slug={product.slug} />
-            </div>
-          )}
+        <div className="md:col-span-2">
+          <EvidenceSummary
+            links={detail.links}
+            freshness={detail.freshness}
+            profileUpdatedAt={detail.profile?.updatedAt ?? null}
+          />
+        </div>
 
-          {product.status === "unverified" && (
-            <div className="mt-5 rounded-[14px] border border-line bg-bg-card p-[22px]">
-              <h2 className="text-[15px] font-bold">아직 공개 목록에 없습니다</h2>
-              <p className="mt-3 text-[13px] leading-[1.7] text-fg-2">
-                도메인 소유권을 검증하면 공개 목록에 게시됩니다. 프로젝트 폴더에서{" "}
-                <code className="font-mono text-accent">/nomorevibe verify</code> 를 실행하세요.
+        <div className="md:col-start-1 md:row-start-4">
+          <ProductGallery name={detail.product.name} media={detail.media} />
+        </div>
+
+        <div className="md:col-start-1 md:row-start-5">
+          <ProductIntroduction product={detail.product} profile={detail.profile} unclaimed={detail.unclaimed} />
+        </div>
+
+        <div className="space-y-4 md:col-start-2 md:row-start-4">
+          <ProductFacts product={detail.product} profile={detail.profile} links={detail.links} unclaimed={detail.unclaimed} />
+          {detail.unclaimed && (
+            <section className="rounded-[12px] border border-accent/35 bg-accent-soft p-5">
+              <h2 className="text-[15px] font-extrabold text-fg">이 제품의 주인이신가요?</h2>
+              <p className="mt-2 text-[13px] leading-6 text-fg-2">
+                공개 출처에서 발견해 대신 등록한 제품입니다. 현재 정보에는 추정값이 포함될 수 있습니다.
+                프로젝트 폴더에서 <code className="font-mono font-semibold text-accent">/nomorevibe</code>를
+                실행하면 소유권을 확인하고 직접 갱신할 수 있습니다.
               </p>
-            </div>
+              <TakedownForm slug={detail.product.slug} />
+            </section>
           )}
+          {detail.product.status === "unverified" && (
+            <section className="rounded-[12px] border border-line bg-bg-card p-5">
+              <h2 className="text-[15px] font-extrabold text-fg">아직 공개 목록에 없습니다</h2>
+              <p className="mt-2 text-[13px] leading-6 text-fg-2">
+                도메인 소유권을 확인하면 공개 목록에 게시됩니다. 프로젝트 폴더에서{" "}
+                <code className="font-mono font-semibold text-accent">/nomorevibe verify</code>를 실행하세요.
+              </p>
+            </section>
+          )}
+        </div>
+
+        <div className="md:col-start-2 md:row-start-5">
+          <RepositoryEvidence repository={detail.repository} license={detail.license} />
+        </div>
+
+        <div className="md:col-start-2 md:row-start-6">
+          <BuildProvenance
+            product={detail.product}
+            profile={detail.profile}
+            unclaimed={detail.unclaimed}
+            agents={detail.agents}
+            skills={detail.skills}
+          />
+        </div>
+
+        <div className="md:col-start-2 md:row-start-7">
+          <FreshnessPanel freshness={detail.freshness} />
+        </div>
+
+        <div className="md:col-start-1 md:row-span-2 md:row-start-6">
+          <UpdateTimeline updates={detail.updates} />
         </div>
       </div>
     </main>
-  );
-}
-
-function InfoRow({ k, v }: { k: string; v: React.ReactNode }) {
-  return (
-    <div className="flex items-start justify-between gap-3 border-b border-line py-2.5 text-[13px] last:border-b-0">
-      <dt className="shrink-0 text-fg-3">{k}</dt>
-      <dd className="min-w-0 text-right font-semibold">{v}</dd>
-    </div>
   );
 }

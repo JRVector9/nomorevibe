@@ -6,8 +6,8 @@ Execute plan 3, `docs/superpowers/plans/2026-08-19-product-detail-ui-implementat
 finished white-theme, global minimum-13px product-detail screen in the browser.
 
 Plan 2, `docs/superpowers/plans/2026-08-19-product-evidence-pipeline-implementation.md`, is complete.
-Plan 3 Tasks 1–4 are implemented, reviewed, verified, and committed through the server-only public
-detail read model. Continue at Task 5's approved evidence product page.
+Plan 3 Tasks 1–5 are implemented, reviewed, and verified through the evidence-based public product
+page. After Task 5's atomic commit, continue at Task 6's global light-first and 13 px UI contract.
 
 ## Completed work
 
@@ -24,12 +24,18 @@ Plan 3 commits and completed phases:
    authenticated Server Actions; immutable settings/update audits; explicit maker-versus-observed
    license conflicts; source freshness, media, update, provenance, and audit views; aggregate
    due/stale/failed evidence status; and a production-supported `server-only` boundary marker.
-4. Task 4, commit message `feat: compose product detail read model`:
+4. `4817b65 feat: compose product detail read model`:
    one server-only public read contract for safe product identity, stored season rank, seven-day
    valid/unique visits, 30-day health, profile, current visible links and evidence, internally
    mirrored media, visible updates, provenance, license comparison, and freshness states. Public
    identity queries explicitly omit verification/edit credentials and reject banned rows; a final
    generation/status check discards data assembled across a concurrent ban or slug replacement.
+5. Task 5, commit message `feat: show evidence-based product details`:
+   dynamic `/p/[slug]` composition with current rank, seven-day unique/valid visits, health,
+   compact evidence summary, internally mirrored gallery, sanitized structured introduction,
+   objective links, repository/license facts, agent/skill provenance, freshness, and filterable
+   updates. It keeps one mobile reading order, places the same nodes into a two-column desktop grid,
+   preserves claim/takedown notices, and adds no phase-2 comment or login surface.
 
 Task 2 does not add comments, login, reactions, follows, or provider I/O in request handlers.
 External gallery URLs are declarations only. The evidence job copies validated bytes into internal
@@ -82,6 +88,15 @@ Plan 3 Task 4 files:
 - `lib/domain/products/detail-view.ts`
 - `tests/integration/product-detail-view.test.ts`
 - `tests/integration/setup.ts`
+
+Plan 3 Task 5 files:
+
+- `app/p/[slug]/page.tsx`
+- `app/p/[slug]/TakedownForm.tsx`
+- `components/product-detail/*.tsx`
+- `components/product-detail/format.ts`
+- `tests/product-detail-components.test.tsx`
+- `vitest.config.ts`
 
 Plan 3 Task 3 files:
 
@@ -225,6 +240,22 @@ Task 4 public read boundaries:
 - Rendering reads PostgreSQL only. It never calls an external provider or serves an external media
   URL.
 
+Task 5 presentation boundaries:
+
+- Only gallery rows already mirrored to `/api/media/<hash>` render as images; stored dimensions,
+  eager first image, lazy later images, and last-copy missing-source notices are explicit.
+- Markdown skips raw HTML, uses GFM plus sanitization, removes all image nodes, and renders only safe
+  HTTP(S)/internal links. Maker Markdown cannot cause third-party image requests.
+- Both visible site link and primary action use `/go/[slug]`, so every outbound product visit uses
+  the same first-party measurement path.
+- Unclaimed crawler content says `자동 감지`/`우리 추정`; claimed maker content says
+  `메이커 제공·미검증`/`신고값`. A GitHub-confirmed badge requires parsed observed facts, not just
+  a pending or failed source row.
+- `validVisits` remains independently measurable before unique-browser collection starts; only
+  unique values say `집계 중`, and the valid-visit card states this distinction.
+- The timeline filter is the only detail client state besides sharing and takedown. There is no
+  connecting vertical line, no comment placeholder, and touched detail text never uses <13 px.
+
 ## Test commands and results
 
 Plan 3 Task 2 RED results actually observed:
@@ -321,6 +352,38 @@ git diff --check
   PASS
 ```
 
+Plan 3 Task 5 RED/fix history actually observed:
+
+- the component target initially was not discovered because the unit config matched only `.test.ts`;
+  the include now supports both `.test.ts` and `.test.tsx`, after which missing components produced
+  the intended RED;
+- two first assertions were incorrect: a legitimate measured `validVisits: 0` was treated as a
+  false zero, and `border-line` was mistaken for a vertical `border-l` utility. The contracts now
+  inspect the correct semantics/source pattern;
+- first review found five P2s. Four reproduced as RED: crawler content labeled as maker-provided,
+  GitHub confirmation on an unobserved source, external Markdown image requests, and the displayed
+  site URL bypassing `/go`. The fifth was resolved as a documented domain distinction: valid visits
+  predate unique-visitor collection and a real zero remains visible with an explanatory note.
+
+Plan 3 Task 5 final verification actually run:
+
+```text
+npx vitest run tests/product-detail-components.test.tsx tests/schema.test.ts
+  PASS — 2 files, 20 tests
+npx vitest run --config vitest.integration.config.ts tests/integration/product-detail-view.test.ts
+  PASS — 1 file, 9 tests
+npx next typegen
+  PASS
+npx tsc --noEmit
+  PASS
+npm run lint
+  PASS — 0 errors, 0 warnings
+npm run build
+  PASS — Next.js 16.3.1; `/p/[slug]` dynamic
+git diff --check
+  PASS
+```
+
 `npx drizzle-kit generate` created `0016_light_boomerang.sql`; `npx drizzle-kit migrate` applied
 the declaration revision to the local integration database. No production database was accessed.
 
@@ -413,6 +476,10 @@ Local development database state:
   a 250 ms test oracle—and both were reproduced or replaced with deterministic checks. Final narrow
   re-review returned `CLEAN`; its own target test could not start in the read-only sandbox because
   Vitest could not create a temporary directory, so no reviewer-run test pass is claimed.
+- Task 5's first focused review found five P2s. Four were fixed after RED reproduction; the
+  collecting-valid-visits concern was reconciled with the independent click-event contract and the
+  UI now explains it. Narrow re-review returned `CLEAN`. Both Task 5 review sandboxes were unable to
+  create Vitest's temporary SSR directory, so no reviewer-run test pass is claimed.
 - Running two integration Vitest processes in parallel against the same database made each process
   truncate the other's fixtures, causing false missing-row/duplicate-singleton failures. Related
   integration tests are intentionally run sequentially from here onward.
@@ -448,8 +515,8 @@ Local development database state:
 
 ## Remaining work
 
-- Execute plan 3 Tasks 5–8: white-theme detail components/page, the global light/13 px contract,
-  `/nomorevibe` commands, then full review/docs/QA. Comments
+- Execute plan 3 Tasks 6–8: global light/13 px contract, `/nomorevibe` commands, then full
+  review/docs/QA. Comments
   remain phase-2 design only; no comment persistence or login integration belongs in phase 1.
 - Launch the resulting local screen and perform browser/visual QA at desktop and mobile widths.
 
@@ -461,7 +528,7 @@ scheduler/provider-token verification. Do not claim either complete without exte
 ```sh
 git status --short
 cat docs/superpowers/plans/2026-08-19-product-detail-ui-implementation.md
-npx vitest run tests/product-detail-components.test.ts tests/schema.test.ts
+npx vitest run tests/ui-contract.test.ts
 npx tsc --noEmit
 npm run lint
 git diff --check

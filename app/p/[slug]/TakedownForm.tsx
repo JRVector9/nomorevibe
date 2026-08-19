@@ -53,12 +53,12 @@ export function TakedownForm({ slug }: { slug: string }) {
           rows={2}
           maxLength={500}
           placeholder="이유를 적어주셔도 되고, 비워두셔도 됩니다"
-          className="w-full rounded-lg border border-line bg-bg-soft px-3 py-2 text-[13px] text-fg outline-none focus:border-accent"
+          className="w-full rounded-[10px] border border-line bg-bg-soft px-3 py-2 text-[13px] text-fg outline-none focus:border-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
         />
         <button
           type="submit"
           disabled={state === "sending"}
-          className="self-start rounded-lg border border-line px-3 py-1.5 text-[13px] font-semibold text-fg-2 hover:text-fg disabled:opacity-50"
+          className="min-h-11 self-start rounded-[10px] border border-line px-4 text-[13px] font-semibold text-fg-2 hover:text-fg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:opacity-50"
         >
           {state === "sending" ? "보내는 중…" : "요청 보내기"}
         </button>
