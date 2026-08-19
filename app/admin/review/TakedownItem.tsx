@@ -16,7 +16,7 @@ export function TakedownItem({
   const [state, action, pending] = useActionState<ReviewState, FormData>(resolveTakedownRequest, null);
 
   return (
-    <li className="rounded-[14px] border border-down/40 bg-down/5 p-[18px]">
+    <li className="rounded-[12px] border border-down/40 bg-down/5 p-[18px]">
       <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
         <a href={`/p/${slug}`} target="_blank" rel="noreferrer noopener" className="text-[14px] font-bold hover:text-accent">
           {slug}

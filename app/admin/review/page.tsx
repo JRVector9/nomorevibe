@@ -64,7 +64,7 @@ export default async function ReviewPage() {
       )}
 
       {candidates.length === 0 ? (
-        <p className="mt-8 rounded-[14px] border border-line bg-bg-card px-5 py-8 text-center text-[13px] text-fg-3">
+        <p className="mt-8 rounded-[12px] border border-line bg-bg-card px-5 py-8 text-center text-[13px] text-fg-3">
           심사할 후보가 없습니다.
         </p>
       ) : (

@@ -57,7 +57,7 @@ export function RankingTable({
   const mobileTrendHeader = `${windowHours}h 변동`;
 
   return (
-    <div className="overflow-x-auto rounded-[14px] border border-line bg-bg-card">
+    <div className="overflow-x-auto rounded-[12px] border border-line bg-bg-card">
       <table className="w-full min-w-full sm:min-w-[760px] text-left text-[13px]">
         <thead className="text-fg-3">
           <tr>

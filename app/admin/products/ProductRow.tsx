@@ -25,7 +25,7 @@ export function ProductRow({ product }: { product: AdminProduct }) {
   const banned = product.status === "banned";
 
   return (
-    <li className={`rounded-[14px] border p-[18px] ${banned ? "border-line bg-bg-soft" : "border-line bg-bg-card"}`}>
+    <li className={`rounded-[12px] border p-[18px] ${banned ? "border-line bg-bg-soft" : "border-line bg-bg-card"}`}>
       <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
         <a href={`/p/${product.slug}`} target="_blank" rel="noreferrer noopener" className="text-[14px] font-bold hover:text-accent">
           {product.name}

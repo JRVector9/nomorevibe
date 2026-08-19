@@ -20,7 +20,7 @@ export default function LaunchPage() {
           한 번이면 끝납니다.
         </p>
 
-        <div className="surface-dark mx-auto mt-9 max-w-[680px] overflow-hidden rounded-[14px] border border-line bg-[#0a0e16] text-left shadow-2xl">
+        <div className="surface-dark mx-auto mt-9 max-w-[680px] overflow-hidden rounded-[12px] border border-line bg-[#0a0e16] text-left shadow-2xl">
           <div className="flex items-center gap-1.5 border-b border-line bg-bg-soft px-4 py-[11px]">
             <span className="h-2.5 w-2.5 rounded-full bg-[#ea3943]" />
             <span className="h-2.5 w-2.5 rounded-full bg-[#f6b73c]" />
@@ -64,7 +64,7 @@ export default function LaunchPage() {
             body: "검증한 척하지 않습니다. '만든 AI'는 메이커 신고로 표기되고, ✓ 표시는 우리가 직접 확인한 도메인 소유권에만 붙습니다.",
           },
         ].map((s) => (
-          <div key={s.n} className="rounded-[14px] border border-line bg-bg-card p-[22px]">
+          <div key={s.n} className="rounded-[12px] border border-line bg-bg-card p-[22px]">
             <div className="font-mono text-[13px] font-bold text-accent">{s.n}</div>
             <h3 className="mt-2 text-[15px] font-bold">{s.title}</h3>
             <p className="mt-2 text-[13px] leading-[1.7] text-fg-2">{s.body}</p>

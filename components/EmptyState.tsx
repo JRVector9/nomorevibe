@@ -6,7 +6,7 @@
  */
 export function EmptyState({ children }: { children: React.ReactNode }) {
   return (
-    <div className="rounded-[14px] border border-line bg-bg-card p-12 text-center text-[13px] text-fg-3">
+    <div className="rounded-[12px] border border-line bg-bg-card p-12 text-center text-[13px] text-fg-3">
       {children}
     </div>
   );

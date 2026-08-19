@@ -37,7 +37,7 @@ function ProductLink({ product, detail }: { product: ProductListItem; detail: Re
 
 function Board({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <section className="rounded-[14px] border border-line bg-bg-card p-4">
+    <section className="rounded-[12px] border border-line bg-bg-card p-4">
       <h3 className="mb-3 text-[13px] font-extrabold">{title}</h3>
       {children}
     </section>

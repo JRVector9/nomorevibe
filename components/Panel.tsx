@@ -30,7 +30,7 @@ export function Panel({
   children?: React.ReactNode;
 }) {
   return (
-    <section className={`rounded-[14px] border p-[22px] ${TONES[tone]}`}>
+    <section className={`rounded-[12px] border p-[22px] ${TONES[tone]}`}>
       {(title || actions) && (
         <div className="flex flex-wrap items-baseline gap-2">
           {title && <h2 className="text-[15px] font-bold">{title}</h2>}

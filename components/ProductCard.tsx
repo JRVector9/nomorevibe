@@ -78,7 +78,7 @@ export function ProductCard({ product, rank }: { product: ProductListItem; rank?
  */
 export function ProductList({ products, ranked }: { products: ProductListItem[]; ranked?: boolean }) {
   return (
-    <div className="overflow-hidden rounded-[14px] border border-line">
+    <div className="overflow-hidden rounded-[12px] border border-line">
       {products.map((product, index) => (
         <ProductCard key={product.slug} product={product} rank={ranked ? index + 1 : undefined} />
       ))}

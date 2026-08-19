@@ -11,7 +11,7 @@ export default async function AdminLoginPage({
 
   return (
     <main className="mx-auto flex min-h-[60vh] max-w-[420px] flex-col justify-center px-6">
-      <div className="rounded-[14px] border border-line bg-bg-card p-8">
+      <div className="rounded-[12px] border border-line bg-bg-card p-8">
         <h1 className="text-[19px] font-extrabold tracking-tight">어드민</h1>
         <p className="mt-2 text-[13px] leading-[1.7] text-fg-2">
           크롤 파이프라인을 관리합니다. 허용된 GitHub 계정만 들어올 수 있습니다.

@@ -82,7 +82,7 @@ function SeasonHeader({
   now: Date;
 }) {
   return (
-    <section className="mt-5 rounded-[14px] border border-line bg-bg-card px-5 py-4">
+    <section className="mt-5 rounded-[12px] border border-line bg-bg-card px-5 py-4">
       <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
         <h2 className="font-mono text-[15px] font-extrabold">{season.key}</h2>
         <span className="text-[13px] text-fg-2">

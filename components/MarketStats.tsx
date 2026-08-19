@@ -23,7 +23,7 @@ function Stat({ label, value, note }: { label: string; value: number; note?: str
 export function MarketStats({ stats, windowHours = 24 }: { stats: Stats; windowHours?: number }) {
   const clickChange = stats.clicksChangePercent;
   return (
-    <div className="mt-5 flex overflow-hidden rounded-[14px] border border-line bg-bg-card">
+    <div className="mt-5 flex overflow-hidden rounded-[12px] border border-line bg-bg-card">
       <Stat label="제품" value={stats.products} />
       <Stat
         label="이번 주 신규"

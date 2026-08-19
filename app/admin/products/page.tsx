@@ -58,7 +58,7 @@ export default async function AdminProductsPage({ searchParams }: Props) {
       </nav>
 
       {products.length === 0 ? (
-        <p className="mt-8 rounded-[14px] border border-line bg-bg-card px-5 py-8 text-center text-[13px] text-fg-3">
+        <p className="mt-8 rounded-[12px] border border-line bg-bg-card px-5 py-8 text-center text-[13px] text-fg-3">
           해당하는 제품이 없습니다.
         </p>
       ) : (

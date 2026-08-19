@@ -37,7 +37,7 @@ export function ReviewItem({
   const signals = signalLine(candidate.signals);
 
   return (
-    <li className="rounded-[14px] border border-line bg-bg-card p-[18px]">
+    <li className="rounded-[12px] border border-line bg-bg-card p-[18px]">
       <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
         <a
           href={`https://github.com/${candidate.repo}`}

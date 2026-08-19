@@ -6,8 +6,8 @@ Execute plan 3, `docs/superpowers/plans/2026-08-19-product-detail-ui-implementat
 finished white-theme, global minimum-13px product-detail screen in the browser.
 
 Plan 2, `docs/superpowers/plans/2026-08-19-product-evidence-pipeline-implementation.md`, is complete.
-Plan 3 Tasks 1–5 are implemented, reviewed, and verified through the evidence-based public product
-page. After Task 5's atomic commit, continue at Task 6's global light-first and 13 px UI contract.
+Plan 3 Tasks 1–6 are implemented, reviewed, and verified through the evidence-based public product
+page and the global light-first/13 px UI contract. Continue at Task 7's distributable skill update.
 
 ## Completed work
 
@@ -36,6 +36,12 @@ Plan 3 commits and completed phases:
    objective links, repository/license facts, agent/skill provenance, freshness, and filterable
    updates. It keeps one mobile reading order, places the same nodes into a two-column desktop grid,
    preserves claim/takedown notices, and adds no phase-2 comment or login surface.
+6. Task 6, pending commit message `style: enforce light 13px interface`:
+   makes light tokens unconditional while preserving an explicit future dark override and the
+   deliberate `.surface-dark` terminal; enforces the 13 px visible-text floor; reduces ordinary
+   section radii to 12 px while preserving the 14 px product hero and 10 px metric cards; sets
+   product prose to 15 px and structured/update copy to 14 px; adds global keyboard focus and
+   reduced-motion behavior; and tests muted-text contrast across every light surface.
 
 Task 2 does not add comments, login, reactions, follows, or provider I/O in request handlers.
 External gallery URLs are declarations only. The evidence job copies validated bytes into internal
@@ -480,6 +486,16 @@ Local development database state:
   collecting-valid-visits concern was reconciled with the independent click-event contract and the
   UI now explains it. Narrow re-review returned `CLEAN`. Both Task 5 review sandboxes were unable to
   create Vitest's temporary SSR directory, so no reviewer-run test pass is claimed.
+- Task 6's first review found one P2: unconditional light mode made 13 px muted text only 4.14:1
+  on `--bg-soft`. A RED contrast test reproduced it; `--text-3` changed from `#6b7488` to
+  `#636d80`, giving at least 4.60:1 across `--bg`, `--bg-soft`, and `--bg-card`. Final review
+  returned `No actionable defects were found` and independently reran unit tests, lint, build,
+  and diff checks successfully.
+- The first Task 6 review invocation tried to combine `--uncommitted` with a positional prompt and
+  failed immediately because this CLI rejects that combination. Bare `codex review --uncommitted`
+  worked. Its optional browser probe could not launch Chromium in the review sandbox because the
+  macOS Mach rendezvous port was denied; browser coverage remains Task 8 and no browser pass is
+  claimed here.
 - Running two integration Vitest processes in parallel against the same database made each process
   truncate the other's fixtures, causing false missing-row/duplicate-singleton failures. Related
   integration tests are intentionally run sequentially from here onward.
@@ -513,10 +529,31 @@ Local development database state:
   absent here. The installed global helper reported `NO_PRODUCT_MD`; `PRODUCT.md` was then derived
   from the already approved detail specification before resuming Plan 3.
 
+## Task 6 verification
+
+```text
+npx vitest run tests/ui-contract.test.ts
+  RED — 1/5 failed before the contrast fix; #6b7488 on #f7f8fb was 4.415:1
+  PASS — 1 file, 5 tests after the fix
+npm test
+  PASS — 36 files, 316 tests
+npx next typegen
+  PASS
+npx tsc --noEmit
+  PASS
+npm run lint
+  PASS — 0 errors, 0 warnings
+npm run build
+  PASS — Next.js 16.3.1; /p/[slug] remains dynamic
+git diff --check
+  PASS
+codex review --uncommitted
+  CLEAN — No actionable defects were found
+```
+
 ## Remaining work
 
-- Execute plan 3 Tasks 6–8: global light/13 px contract, `/nomorevibe` commands, then full
-  review/docs/QA. Comments
+- Execute plan 3 Tasks 7–8: `/nomorevibe` commands, then full review/docs/browser QA. Comments
   remain phase-2 design only; no comment persistence or login integration belongs in phase 1.
 - Launch the resulting local screen and perform browser/visual QA at desktop and mobile widths.
 
@@ -528,7 +565,7 @@ scheduler/provider-token verification. Do not claim either complete without exte
 ```sh
 git status --short
 cat docs/superpowers/plans/2026-08-19-product-detail-ui-implementation.md
-npx vitest run tests/ui-contract.test.ts
+npx vitest run tests/skill-contract.test.ts
 npx tsc --noEmit
 npm run lint
 git diff --check

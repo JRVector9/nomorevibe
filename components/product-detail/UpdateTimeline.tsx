@@ -54,8 +54,8 @@ export function UpdateTimeline({ updates }: { updates: ProductDetailView["update
                   <SourceBadge label={update.sourceLabel} />
                   <time className="text-[13px] text-fg-3">{formatDate(update.publishedAt ?? update.observedAt)}</time>
                 </div>
-                <h3 className="mt-3 text-[14px] font-extrabold leading-6 text-fg">{update.title}</h3>
-                {update.summary && <p className="mt-1.5 text-[13px] leading-6 text-fg-2">{update.summary}</p>}
+                <h3 className="mt-3 font-extrabold leading-6 text-[14px] text-fg">{update.title}</h3>
+                {update.summary && <p className="mt-1.5 text-[14px] leading-6 text-fg-2">{update.summary}</p>}
                 {update.beforeAfter && (
                   <p className="mt-3 overflow-hidden text-ellipsis rounded-[8px] bg-bg-soft px-3 py-2 font-mono text-[13px] text-fg-3">
                     {JSON.stringify(update.beforeAfter).slice(0, 500)}
