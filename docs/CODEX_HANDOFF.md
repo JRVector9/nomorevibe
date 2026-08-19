@@ -2,199 +2,279 @@
 
 ## Current objective
 
-Prepare an executable, TDD-first implementation plan for the approved evidence-based product
-detail feature. The design and implementation decomposition are now captured in:
+Finish plan 1 of 3, the privacy-preserving unique-visit collection and ranking transition:
 
-- `docs/superpowers/specs/2026-08-19-evidence-product-detail-design.md`
 - `docs/superpowers/plans/2026-08-19-unique-visit-ranking-implementation.md`
-- `docs/superpowers/plans/2026-08-19-product-evidence-pipeline-implementation.md`
-- `docs/superpowers/plans/2026-08-19-product-detail-ui-implementation.md`
 
-No application code, schema, migration, API, scheduler, or production environment was changed in
-this planning phase. The next step is implementation, beginning with the unique-visit ranking plan;
-do not start the evidence pipeline or UI plan out of order.
+Plan 1 implementation is complete and the complete diff passed independent final review. The two
+final P2 corrections are committed in `f15b10f`; their focused RED/GREEN verification is recorded
+below. Only the Task 8 operating documentation commit remains pending. Do not start plan 2 until
+those three documentation files are committed.
 
-The previously shipped seasonal ranking remains the repository baseline. Its source documents are:
-
-- `docs/superpowers/specs/2026-08-18-weekly-ranking-design.md`
-- `docs/superpowers/plans/2026-08-18-weekly-ranking-implementation.md`
-- `PENDING.md`
+No production database, secret store, scheduler, or deployment was accessed. Production migration,
+`VISITOR_HASH_SECRET`, first collection time, seven-day readiness, and scheduler execution are all
+unverified and remain explicit blockers in `PENDING.md`.
 
 ## Completed work
 
-- Inspected the supplied mockup at
-  `/Users/jr/Desktop/projects/Saju_On/nomorevibe-mockup/v2/product.html` and the current
-  `app/p/[slug]/page.tsx` implementation.
-- Audited the current PostgreSQL/Drizzle model. Products currently store a short profile, optional
-  builder/stack/repository, ownership state, raw accepted click timestamps, daily click aggregates,
-  and only the latest health status. There are no unique-visitor hashes, product profiles, gallery,
-  external facts, updates, provenance evidence, or comments.
-- Reviewed current Product Hunt product/profile, engagement, first-comment, forum/update, and API
-  patterns using official sources. The design adopts an ongoing product profile but not Product
-  Hunt's opaque ranking formula.
-- Confirmed that NoMoreVibe can objectively measure unique outbound browsers and valid outbound
-  visits, not a product's total visitors without a future analytics integration.
-- Defined a privacy-preserving product-scoped HMAC for new visit events; historical clicks cannot be
-  converted into unique visitors.
-- Approved a transparent unique-first ranking formula with capped 25% repeat-visit credit, existing
-  season/cooldown behavior, a seven-day warm-up, admin preview, and next-season-only activation.
-- Defined public GitHub facts, license display, App Store/Play Store/package/feed links, and explicit
-  service-to-repository evidence levels.
-- Defined optional agent/skill provenance with maker, repository, NoMoreVibe-recorded, and signed
-  build evidence levels. Provenance is ranking-neutral and never uploads prompts or skill content by
-  default.
-- Defined a unified maker/automatic update timeline. It uses source badges and dots without a
-  continuous left vertical line.
-- Moved public comments to phase two. The future design supports authenticated authors and replies
-  deeper than one level; login providers are selected once as a unified authentication project.
-- Replaced external image hotlinks with an approved internal media snapshot design: bounded fetch,
-  decode/re-encode, metadata removal, SHA-256 deduplication, PostgreSQL `bytea` at current scale,
-  immutable versions, and up to eight visible images. Videos retain external playback but store
-  their posters internally.
-- Produced and iterated an interactive temporary product-detail prototype. The final approved visual
-  direction is light-first, has a 13 px absolute font minimum, 15 px long prose, 14 px structured and
-  update copy, reduced section radii, no update timeline line, and no horizontal overflow at 390 px.
-- Read the repository-installed Next.js 16 Route Handler, cookies, data-fetching/Server Component,
-  and image guides before writing implementation-oriented snippets.
-- Split phase one into three ordered implementation plans so visitor/ranking migration, evidence
-  collection/media, and maker/admin/public UI can each be implemented and reviewed with focused TDD.
-- Specified additive migrations, exact storage boundaries, backward-compatible scoring policy
-  versions, test files, RED/GREEN commands, commit checkpoints, full release matrices, and
-  production-only blockers for every plan.
+- Added nullable product-scoped visitor hashes without rewriting legacy visit events, KST daily
+  unique counts, a singleton collection-start row, and finalized unique fields on ranking entries.
+- Added `HMAC-SHA256(secret, slug + "\0" + visitorCookie)` before rate limiting or persistence.
+  Missing/short secrets fail measurement closed while `/go/<slug>` still redirects. Raw cookies,
+  IPs, user agents, and hashes are excluded from logs.
+- Added batched seven-day valid-visit and exact distinct-browser metrics, adjacent distinct trend
+  windows, warm-up masking, idempotent KST daily rollups, and transaction-safe 35-day pruning.
+- Versioned ranking policies. The default and existing snapshots stay on `valid-visits-v1`; the
+  separately exported recommendation uses `unique-visitors-v1`, 25% repeat credit, one extra visit
+  per unique, and the existing cooldown.
+- Updated refresh/finalization to persist exact unique totals and trends. Unique seasons require raw
+  retained events and fail explicitly instead of summing daily unique counts; legacy catch-up still
+  uses daily valid-visit rollups.
+- Preserved public semantics: legacy seasons show `유효 방문`, unique seasons show `고유 유입자`
+  with secondary `유효 방문`, and all-time remains `누적 유효 방문`.
+- Added an admin readiness gate: unique policies cannot be scheduled until seven complete days from
+  the first successful hashed visit and can only apply at a future season boundary. The admin shows
+  current valid-visit and proposed unique-first previews from the same policy base.
+- Documented the metric definitions, 35-day retention boundary, prohibition on multi-day sums of
+  daily unique values, secret generation/separation/rotation effects, and production verification
+  procedure in `README.md` and `PENDING.md`.
+- Added the generated `0013_snapshot.json`. A fresh repository copy now reports no schema changes
+  instead of generating a duplicate 0014 migration.
+- Rebuilt the legacy-policy test fixture without unused destructuring; final lint is warning-free.
 
-## Modified files
+## Commits and modified files
 
-Repository files changed during this design phase:
+Implementation commits, in order:
 
-- `docs/superpowers/specs/2026-08-19-evidence-product-detail-design.md` (new)
-- `docs/superpowers/plans/2026-08-19-unique-visit-ranking-implementation.md` (new)
-- `docs/superpowers/plans/2026-08-19-product-evidence-pipeline-implementation.md` (new)
-- `docs/superpowers/plans/2026-08-19-product-detail-ui-implementation.md` (new)
-- `docs/CODEX_HANDOFF.md` (updated)
+1. `e04de85 feat: store privacy-safe unique visits`
+   - `lib/db/schema.ts`
+   - `drizzle/0013_unique_visits.sql`
+   - `drizzle/meta/_journal.json`
+   - `tests/integration/unique-visit-schema.test.ts`
+   - `tests/integration/setup.ts`
+2. `f589797 docs: clarify visit collection state`
+   - `docs/superpowers/plans/2026-08-19-unique-visit-ranking-implementation.md`
+3. `bb87d12 feat: anonymize outbound visit identity`
+   - `.env.example`
+   - `compose.yml`
+   - `app/go/[slug]/route.ts`
+   - `lib/domain/products/clicks.ts`
+   - `lib/domain/products/visitors.ts`
+   - `tests/visitor-hash.test.ts`
+   - `tests/integration/clicks.test.ts`
+4. `7723c2a feat: aggregate unique outbound visitors`
+   - `lib/domain/products/clicks.ts`
+   - `lib/jobs/products/click-rollup.ts`
+   - `tests/integration/clicks.test.ts`
+5. `49c152e feat: version unique-first ranking policy`
+   - `lib/domain/ranking/policy.ts`
+   - `lib/domain/ranking/math.ts`
+   - `tests/ranking-policy.test.ts`
+   - `tests/ranking-math.test.ts`
+6. `02b0a2d feat: refresh unique-first ranking seasons`
+   - `lib/domain/ranking/refresh.ts`
+   - `tests/integration/ranking-refresh.test.ts`
+7. `31f42e5 feat: explain season ranking metrics`
+   - `lib/domain/ranking/view.ts`
+   - `components/RankingTable.tsx`
+   - `components/SeasonPolicy.tsx`
+   - `components/DiscoveryBoards.tsx`
+   - `app/page.tsx`
+   - `app/rankings/[key]/page.tsx`
+   - `tests/integration/ranking-view.test.ts`
+   - `tests/ranking-components.test.ts`
+   - `tests/ranking-season-page.test.ts`
+8. `96ee6d9 feat: stage unique ranking transition`
+   - `lib/domain/ranking/policies.ts`
+   - `lib/domain/ranking/view.ts`
+   - `app/admin/ranking/RankingPolicyForm.tsx`
+   - `app/admin/ranking/page.tsx`
+   - `app/admin/AdminNav.tsx`
+   - `components/Panel.tsx`
+   - `tests/admin-ranking.test.ts`
+   - `tests/integration/ranking-policies.test.ts`
+9. `f15b10f fix: complete unique visit migration metadata`
+   - `drizzle/meta/0013_snapshot.json`
+   - `tests/integration/ranking-refresh.test.ts`
 
-Temporary visual artifacts outside the repository:
+Task 8 files remain modified and intentionally uncommitted pending the documentation commit:
 
-- `/private/tmp/nomorevibe-product-detail-v3.html`
-- `/private/tmp/nomorevibe-product-detail-v3-desktop.png`
-- `/private/tmp/nomorevibe-product-detail-v3-mobile.png`
-
-No production source file is modified.
+- `README.md`
+- `PENDING.md`
+- `docs/CODEX_HANDOFF.md`
 
 ## Key design decisions
 
-- PostgreSQL 17, Drizzle ORM, postgres.js, and Drizzle Kit remain the persistence stack.
-- No opaque public `NMR Score`; raw metrics, sources, evidence state, and observation times are shown.
-- `고유 유입자` means distinct first-party browser identifiers sent through NoMoreVibe, with a
-  methodology tooltip that it is not a verified human or total-product-traffic count.
-- New accepted visit events store only
-  `HMAC-SHA256(VISITOR_HASH_SECRET, slug + "\0" + visitorCookieValue)`. Raw cookies, IP addresses,
-  and user agents are not persisted with visits. The existing 35-day raw retention remains.
-- Current click-based seasons are immutable. After seven days of collection, a scheduled revision
-  can apply the unique-first formula at the next boundary; historical pages keep their stored labels
-  and formula.
-- Main score uses unique visitors plus at most one extra valid visit per unique visitor at 25%
-  weight, then the existing soft cooldown. GitHub/community/provenance facts do not affect rank.
-- Maker-provided but unverified links remain visible with `메이커 제공·미검증` rather than being
-  hidden.
-- Maker claims and observed facts are separate records. Conflicts show both values and sources.
-- GitHub facts use authenticated API calls, conditional requests, caching, and last-known-good
-  preservation. Google Play phase one verifies public link/package availability only.
-- Images are served from immutable internal copies, not mutable source URLs. Missing source images
-  remain visible with a disconnected-source state until retention/takedown policy removes them.
-- Automatic update events are immutable and idempotent. Admins hide/restore with reasons; maker
-  updates expose edits and leave deletion tombstones.
-- The public shell and detail page are light-first. Minimum computed text is 13 px; long prose is
-  15 px and update/structured copy is 14 px. Standard panel radius is 12 px, hero 14 px, metrics
-  10 px.
-- Phase one maker writes continue through the edit-token `/nomorevibe` flow. General user auth,
-  comments, follows, reviews, maker dashboard, direct uploads, and connected product analytics are
-  phase two.
+- `고유 유입자` is a distinct accepted first-party browser identifier observed through NoMoreVibe
+  for one product and time window. It is not a verified person or the product's total traffic.
+- `유효 방문` is an accepted outbound event after bot/link-preview exclusion and product/browser
+  ten-minute repeat filtering.
+- The persisted identity is a product-scoped 64-character HMAC only. `VISITOR_HASH_SECRET` must be
+  at least 32 characters, separately generated with `openssl rand -hex 32`, and not reused with
+  admin, cron, or edit-token secrets.
+- A secret rotation changes every derived identity, resets the ten-minute rate-limit identity, and
+  can double-count the same browser across a window. Historical hashes cannot be re-keyed because
+  raw identifiers are never stored. Routine rotation is therefore not recommended.
+- The first request that can derive a hash sets `unique_visitor_started_at` using database time.
+  Migration/deployment time never starts the seven-day clock.
+- Raw events are retained for 35 days. Daily unique values are exact only for one KST day and must
+  never be summed across days. Active/missed unique seasons outside raw retention fail explicitly;
+  closed season totals survive in `ranking_entries`.
+- The unique-first formula is `unique × 100% + min(extra valid visits, unique × 1) × 25%`, followed
+  by the existing cooldown. Facts, maker claims, agents, and skills remain ranking-neutral.
+- Existing and missing-scoring policy JSON normalizes to `valid-visits-v1`. Current seasons never
+  change formula mid-season, and all-time remains a historical valid-visit aggregation.
 
 ## Test commands and results
 
-No application implementation exists for this feature, so the repository unit/integration/build
-matrix was not run and is not claimed for this documentation-only planning phase.
+Task-level TDD and review verification actually run during implementation:
 
-The temporary prototype was actually rendered with:
+- Task 1: schema integration `1/1` passed; `npx drizzle-kit check` and `git diff --check` passed.
+- Task 2: visitor unit `6/6`, click integration `34/34`, and TypeScript passed.
+- Task 3: click integration `43/43`, ranking math `3/3`, TypeScript, and whitespace checks passed.
+- Task 4: policy/math targets `25/25`, full unit suite `190/190`, TypeScript, and whitespace checks
+  passed.
+- Task 5: the new tests first failed in six intended unique cases; after fixes the refresh target
+  passed `22/22` twice, followed by TypeScript and whitespace checks.
+- Task 6: final component `15/15`, season-page `3/3`, ranking-view integration `13/13`, TypeScript,
+  lint, and whitespace checks passed.
+- Task 7: final admin `11/11`, policy/view integration `23/23`, refresh integration `22/22`,
+  TypeScript, lint (0 errors; two fixture warnings later fixed during final review), and whitespace
+  checks passed.
 
-```bash
-npx playwright screenshot --browser chromium --color-scheme light \
-  --viewport-size="1440,1000" --full-page \
-  file:///private/tmp/nomorevibe-product-detail-v3.html \
-  /private/tmp/nomorevibe-product-detail-v3-desktop.png
-
-npx playwright screenshot --browser chromium --color-scheme light \
-  --device="iPhone 13" --full-page \
-  file:///private/tmp/nomorevibe-product-detail-v3.html \
-  /private/tmp/nomorevibe-product-detail-v3-mobile.png
-```
-
-Both screenshot commands passed. A headless computed-style diagnostic at 1440x1000 and 390x844
-reported:
+The exact Task 8 release matrix was run sequentially on 2026-08-19 KST:
 
 ```text
-minimum computed font: 13px
-elements below 13px: 0
-product prose: 15px
-structured introduction: 14px
-update copy: 14px
-timeline ::before display: none
-standard panel radius: 12px
-document horizontal overflow: false
+npx next typegen
+  PASS — route types generated successfully
+
+npx tsc --noEmit
+  PASS — exit 0, no diagnostics
+
+npm test
+  PASS — 19 files, 202 tests
+  NOTE — Vite warned that ESM syntax is loaded as CommonJS in vitest.config.ts
+
+npm run test:integration
+  PASS — 23 files, 259 tests
+  NOTE — expected negative-path error logs were emitted by policy/job/register failure tests
+  NOTE — the same Vite config-loader compatibility warning was emitted
+
+npm run lint
+  INITIAL PASS — 0 errors, 2 legacy-fixture warnings
+  FINAL PASS — 0 errors, 0 warnings after the independent-review fix
+
+npm run build
+  PASS — Next.js 16.3.1 production build compiled, typechecked, and generated 12/12 static pages
+
+git diff --check
+  PASS — exit 0, no output
 ```
 
-The plan files were scanned for `TBD`, `TODO`, `FIXME`, unresolved placeholder text, and unbalanced
-code fences. `git diff --check` was executed after the final documentation edits and passed.
+Focused final-review verification actually run:
 
-## Failed approaches
+```text
+# RED, in a temporary copy without 0013_snapshot.json
+npx drizzle-kit generate
+  GENERATED duplicate 0014 DDL for visit_collection_state, five columns, and the visitor index
 
-- The brainstorming skill referenced a `visual-companion.md` file that is not installed beside its
-  `SKILL.md`. The user accepted a fallback using a local HTML prototype and browser screenshots.
-- The installed `agbrowse` browser wrapper imports a missing local CLI module, so the visual work
-  used Playwright's CLI/cached Chromium instead of pretending browser QA succeeded.
-- The first UI recommendation search proposed a vibrant horizontal-scroll journey. That conflicts
-  with the existing NoMoreVibe information architecture and the evidence/trust goal, so it was not
-  applied. The final design keeps restrained purple accents and a conventional responsive profile.
-- A first programmatic Playwright import failed because `playwright` is not a project dependency;
-  only the `npx` CLI cache contained it. Inspection confirmed the root cause, and the read-only
-  diagnostic imported that cached package directly without changing `package.json`.
-- The first light prototype technically met a 13 px minimum, but its long introduction dropped to
-  exactly 13 px on mobile and looked too small. The approved revision uses 15 px prose and 14 px
-  structured/update copy while retaining 13 px only for metadata.
-- An initial post-edit selector guard overrode intended 14 px update copy back to 13 px. Computed
-  styles exposed the precedence issue; removing those prose selectors from the minimum-size guard
-  produced the verified 14 px result.
-- The first untracked-file whitespace-check loop used zsh's reserved read-only variable `status` and
-  exited before checking the new plans. It was rerun with a task-specific variable; tracked and all
-  three untracked documentation files passed their whitespace checks.
+# GREEN, in a new temporary copy with generated 0013_snapshot.json
+npx drizzle-kit generate
+  PASS — No schema changes, nothing to migrate
+
+npx drizzle-kit check
+  PASS — Everything's fine
+
+npx vitest run --config vitest.integration.config.ts \
+  tests/integration/unique-visit-schema.test.ts \
+  tests/integration/ranking-refresh.test.ts
+  PASS — 2 files, 23 tests (schema 1 + refresh 22)
+
+npx tsc --noEmit
+  PASS — exit 0, no diagnostics
+
+npm run lint
+  PASS — 0 errors, 0 warnings
+
+git diff --check
+  PASS — exit 0, no output after the documentation correction
+
+git diff --no-index --check /dev/null drizzle/meta/0013_snapshot.json
+  PASS — no whitespace diagnostics (the expected no-index difference status was ignored)
+```
+
+Migration `0013_unique_visits.sql` was applied repeatedly by the integration-test setup against the
+dedicated test database. It has not been applied or inspected in production. No production warm-up
+status is known; `PENDING.md` contains the exact verification sequence and forbids claiming it has
+started without checking the singleton state after a real hashed request.
+
+## Failed approaches and review findings
+
+- The `ak` skill's first Codex review invocation used an option unsupported by the installed CLI.
+  After correcting the invocation, the installed ChatGPT-account Codex rejected `gpt-5.6` with
+  HTTP 400. Independent reviewer subagents were used for every task instead of claiming the CLI
+  review ran.
+- Task 1 exposed a plan contradiction over whether collection start could be null. The schema and
+  contract require null until a real hashable visit; the plan was corrected in `f589797`.
+- Task 2 review found fail-open Compose secret handling and a vacuous privacy/log assertion. RED
+  regressions made `.env.example` empty, Compose require the secret, and proved missing/short secrets
+  persist no event/rate limit/start state and disclose no visitor/hash/IP/User-Agent.
+- Task 3 review found partial KST-day overwrite, pruning after an outage could drop unrolled events,
+  slug-array bind limits, a KST-midnight clock flake, and daily upsert parameter limits. RED tests led
+  to whole-day boundaries, aggregate-before-delete transactions, one encoded slug array, fixed KST
+  fixtures, and 1,000-row write batches.
+- Task 5 review found an exact `now - 35d` cutoff disagreed with KST-day pruning, causing legacy
+  undercount and false rejection of unique seasons. Two RED boundary cases led to one shared,
+  injected KST day-start cutoff.
+- Task 6 initially produced three TS2339 errors from discriminated-union narrowing; display values
+  were moved into the scoring branch. Review then found four P2 issues: DiscoveryBoards mislabeled
+  unique values, unique trend ties used visits, a home heading computed below 13 px, and long mobile
+  text could not wrap. RED regressions fixed all four and extended the font correction to discovery.
+- Task 7 review found dual previews used different policy bases, scheduled policy handling could
+  diverge, proposed-first slicing could hide current top products, and Panel/AdminNav text computed
+  to 12.5 px. RED tests produced a shared scheduled/form base with scoring-only variants, a union of
+  visible products, and 13 px minimums. Re-review found mapping the union after slicing could still
+  omit the opposite list's number 2; a second RED test led to a full lookup plus separate top-slug
+  sets.
+- Final review found that handwritten migration 0013 had no snapshot. A temporary-copy RED generated
+  a duplicate 0014 with the same table, columns, and index. The generated current-schema snapshot was
+  added as `drizzle/meta/0013_snapshot.json`; its `prevId` matches the actual 0012 snapshot, and a new
+  temporary copy now reports no changes. No 0014 artifact remains in the repository. The correction
+  is committed in `f15b10f`.
+- Final review also promoted the two ESLint warnings to an actionable P2. The legacy JSON fixture now
+  uses key filtering instead of unused destructuring, preserving its missing `scoring` and missing
+  unique-trend-default semantics with zero lint warnings. The earlier handoff description that called
+  the warnings pre-existing/non-failing was incorrect; `f15b10f` contains the warning-free fixture.
+- The first snapshot RED command created the temporary copy but failed to change into it, so Drizzle
+  briefly generated 0014 artifacts in the repository. Only those generated SQL/snapshot/journal
+  additions were immediately removed with `apply_patch`; the RED was then rerun successfully inside
+  the explicit temporary path.
+- The Vite config-loader warning remains a non-failing pre-existing warning and was not expanded into
+  unrelated configuration work.
 
 ## Remaining work
 
-1. Ask the user to choose subagent-driven execution or inline execution.
-2. Execute `2026-08-19-unique-visit-ranking-implementation.md` first and complete its full matrix.
-3. Execute `2026-08-19-product-evidence-pipeline-implementation.md` second; migrate and verify local
-   PostgreSQL before relying on new relational Drizzle queries in a long-lived dev process.
-4. Execute `2026-08-19-product-detail-ui-implementation.md` last, including Playwright computed-style
-   checks at 1440 px and 390 px.
-5. Existing non-code blockers remain in `PENDING.md`: real category-classification verification and
-   production scheduler registration. New production refresh jobs must also remain pending until
-   explicit production access and authorization exist.
+1. Commit the three Task 8 documentation files as `docs: operate unique visitor rankings`.
+2. Execute `docs/superpowers/plans/2026-08-19-product-evidence-pipeline-implementation.md`.
+3. Execute `docs/superpowers/plans/2026-08-19-product-detail-ui-implementation.md` only after plan 2.
+4. With explicit production access/approval, complete `PENDING.md` B1/B2: configure the distinct
+   secret, deploy/apply migration 0013, verify the first hashed visit starts collection, observe the
+   seven-day gate, and verify hourly rollup/refresh scheduling. None is complete yet.
 
-Comments and general user authentication are intentionally phase two, not unfinished phase-one
-work.
+Comments, reply depth, and unified user login remain phase two by design, not unfinished plan-1 work.
 
 ## Exact commands for the next agent
 
 ```bash
 cd /Users/jr/Desktop/projects/nomorevibe
 git status --short
+git log --oneline -10
 git diff --check
-sed -n '1,760p' docs/superpowers/specs/2026-08-19-evidence-product-detail-design.md
-sed -n '1,520p' docs/superpowers/plans/2026-08-19-unique-visit-ranking-implementation.md
+git add README.md PENDING.md docs/CODEX_HANDOFF.md
+git diff --cached --name-only
+git commit -m "docs: operate unique visitor rankings"
+git status --short
 
-# Then execute this plan task-by-task with its required execution skill.
-# Do not begin plan 2 until plan 1 completion criteria and full matrix pass.
+# Do not deploy or migrate production without access and explicit authorization.
+sed -n '1,760p' docs/superpowers/plans/2026-08-19-product-evidence-pipeline-implementation.md
 ```
-
-Do not run production migrations, register schedulers, or add external infrastructure without the
-required access and explicit authorization.

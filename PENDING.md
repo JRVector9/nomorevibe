@@ -119,3 +119,83 @@ curl -X POST $SITE/api/cron/<job> -H "Authorization: Bearer $CRON_SECRET"
 코드 기본값을 덮는다. `/admin`이 어긋난 항목을 짚어주고 "기본값으로 되돌리기" 버튼을 둔다
 (수집 스위치는 건드리지 않는다). 조직 계정 제외 해제·Codex 신호·차단 도메인·문서 생성기
 목록이 그렇게 반영된다.
+
+---
+
+## B2. 프로덕션 고유 유입자 수집 시작 및 전환 확인
+
+**막고 있는 것**: 프로덕션 비밀 저장소·데이터베이스·배포 환경 접근과 배포 승인. 이 작업에서는
+코드와 로컬 검증만 했으며, **프로덕션 마이그레이션 적용·비밀키 설정·수집 시작·7일 경과·정책
+예약을 확인하지 않았다.**
+
+**지금 상태**: `0013_unique_visits.sql`은 기존 이벤트와 시즌을 유지하는 가산 마이그레이션이다.
+`visit_collection_state.unique_visitor_started_at`은 마이그레이션 때 `NULL`로 두고, 유효한
+`VISITOR_HASH_SECRET`으로 `/go/<slug>` 요청의 HMAC을 처음 만들 수 있을 때 DB 시각으로 한 번만
+채운다. 따라서 코드 배포나 마이그레이션 시각을 수집 시작 시각으로 간주하면 안 된다.
+
+### 배포 순서
+
+1. 비밀 저장소에서 다른 용도로 재사용하지 않을 값을 생성한다.
+
+   ```bash
+   openssl rand -hex 32
+   ```
+
+   결과를 프로덕션 `VISITOR_HASH_SECRET`에 넣는다. `ADMIN_SESSION_SECRET`, `CRON_SECRET`,
+   수정 토큰용 키와 같은 값을 쓰지 않는다. 평문 값을 문서·로그·명령 기록에 복사하지 않는다.
+
+2. 새 이미지를 배포한다. 컨테이너 `scripts/entrypoint.sh`가 서버 시작 전에 마이그레이션을
+   적용하므로 로그에서 `[migrate] 완료` 뒤에 서버가 시작됐는지 확인한다. 운영 DB에서 다음
+   구조가 실제로 생겼는지도 읽기 전용으로 확인한다.
+
+   ```sql
+   select column_name
+   from information_schema.columns
+   where table_schema = 'public'
+     and table_name = 'click_events'
+     and column_name = 'visitor_hash';
+
+   select id, unique_visitor_started_at
+   from visit_collection_state
+   where id = 1;
+   ```
+
+   첫 정상 방문 전 두 번째 쿼리의 시각은 `NULL`이어야 한다. 기존 `click_events`의
+   `visitor_hash`도 억지로 채우지 않는다.
+
+3. 공개된 실제 제품 하나를 새 1st-party 쿠키로 `/go/<slug>`를 통해 방문한다. 리다이렉트가
+   정상인지 확인한 뒤 운영 DB에서 다음을 확인한다. 원본 쿠키, IP, User-Agent, 해시 본문은
+   로그에 출력하지 않는다.
+
+   ```sql
+   select id, unique_visitor_started_at is not null as started
+   from visit_collection_state
+   where id = 1;
+
+   select slug, length(visitor_hash) as hash_length
+   from click_events
+   where visitor_hash is not null
+   order by occurred_at desc
+   limit 1;
+   ```
+
+   `started=true`, `hash_length=64`인지 확인하고 시작 시각을 배포 기록에 남긴다. 이것이 7일
+   준비 기간의 기준이다. `/admin/ranking`에서 그 전에는 `집계 중`이고 고유 기준 예약이
+   거절되는지, 정확히 7일 뒤 준비 상태로 바뀌는지 확인한다.
+
+4. B1의 프로덕션 스케줄을 실제 등록하고 `/admin/status`에서 `click-rollup`과
+   `ranking-refresh`의 마지막 실행·성공 시각이 매시간 갱신되는지 확인한다. `click-rollup`을
+   정시에, `ranking-refresh`를 그 뒤(현재 제안은 매시 5분)에 실행한다. 하루가 지난 뒤
+   `product_click_daily.unique_visitors`가 채워지는지도 확인하되, 여러 날짜의 값을 합쳐
+   여러 날의 고유 유입자로 해석하지 않는다.
+
+5. 수집 시작 후 7일이 모두 지난 다음에만 고유 기준 정책을 예약한다. 예약이 현재 시즌을
+   바꾸지 않고 다음 자연 시즌 경계에 적용되는지, 이전 시즌과 전체 기간 보드가 각각
+   `유효 방문`·`누적 유효 방문` 표기를 유지하는지 확인한다.
+
+### 비밀키 교체 시 주의
+
+키를 교체하면 같은 브라우저도 새 해시가 되어 교체 전후가 한 집계 구간에 겹칠 때 둘로 셀 수
+있고 10분 중복 제거도 초기화된다. 원본 쿠키를 저장하지 않으므로 과거 해시를 새 키로 변환할 수
+없다. 유출 대응이 아니라면 일상적으로 교체하지 말고, 불가피하면 교체 시각과 영향을 기록한 뒤
+7일 준비 상태와 다음 시즌 예약을 다시 검토한다.
