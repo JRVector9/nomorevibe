@@ -2,15 +2,17 @@
 
 ## Current objective
 
-Design an evidence-based product detail page for NoMoreVibe before implementation. The functional
-design and the light desktop/mobile visual direction are approved. The approved design is now
-captured in:
+Prepare an executable, TDD-first implementation plan for the approved evidence-based product
+detail feature. The design and implementation decomposition are now captured in:
 
 - `docs/superpowers/specs/2026-08-19-evidence-product-detail-design.md`
+- `docs/superpowers/plans/2026-08-19-unique-visit-ranking-implementation.md`
+- `docs/superpowers/plans/2026-08-19-product-evidence-pipeline-implementation.md`
+- `docs/superpowers/plans/2026-08-19-product-detail-ui-implementation.md`
 
 No application code, schema, migration, API, scheduler, or production environment was changed in
-this design phase. The next step is user review of the written specification. Only after that review
-should the `writing-plans` workflow create an implementation plan.
+this planning phase. The next step is implementation, beginning with the unique-visit ranking plan;
+do not start the evidence pipeline or UI plan out of order.
 
 The previously shipped seasonal ranking remains the repository baseline. Its source documents are:
 
@@ -52,12 +54,22 @@ The previously shipped seasonal ranking remains the repository baseline. Its sou
 - Produced and iterated an interactive temporary product-detail prototype. The final approved visual
   direction is light-first, has a 13 px absolute font minimum, 15 px long prose, 14 px structured and
   update copy, reduced section radii, no update timeline line, and no horizontal overflow at 390 px.
+- Read the repository-installed Next.js 16 Route Handler, cookies, data-fetching/Server Component,
+  and image guides before writing implementation-oriented snippets.
+- Split phase one into three ordered implementation plans so visitor/ranking migration, evidence
+  collection/media, and maker/admin/public UI can each be implemented and reviewed with focused TDD.
+- Specified additive migrations, exact storage boundaries, backward-compatible scoring policy
+  versions, test files, RED/GREEN commands, commit checkpoints, full release matrices, and
+  production-only blockers for every plan.
 
 ## Modified files
 
 Repository files changed during this design phase:
 
 - `docs/superpowers/specs/2026-08-19-evidence-product-detail-design.md` (new)
+- `docs/superpowers/plans/2026-08-19-unique-visit-ranking-implementation.md` (new)
+- `docs/superpowers/plans/2026-08-19-product-evidence-pipeline-implementation.md` (new)
+- `docs/superpowers/plans/2026-08-19-product-detail-ui-implementation.md` (new)
 - `docs/CODEX_HANDOFF.md` (updated)
 
 Temporary visual artifacts outside the repository:
@@ -101,7 +113,7 @@ No production source file is modified.
 ## Test commands and results
 
 No application implementation exists for this feature, so the repository unit/integration/build
-matrix was not run and is not claimed for this design-only phase.
+matrix was not run and is not claimed for this documentation-only planning phase.
 
 The temporary prototype was actually rendered with:
 
@@ -131,7 +143,8 @@ standard panel radius: 12px
 document horizontal overflow: false
 ```
 
-Run `git diff --check` after any final documentation edits before handing off.
+The plan files were scanned for `TBD`, `TODO`, `FIXME`, unresolved placeholder text, and unbalanced
+code fences. `git diff --check` was executed after the final documentation edits and passed.
 
 ## Failed approaches
 
@@ -151,17 +164,18 @@ Run `git diff --check` after any final documentation edits before handing off.
 - An initial post-edit selector guard overrode intended 14 px update copy back to 13 px. Computed
   styles exposed the precedence issue; removing those prose selectors from the minimum-size guard
   produced the verified 14 px result.
+- The first untracked-file whitespace-check loop used zsh's reserved read-only variable `status` and
+  exited before checking the new plans. It was rerun with a task-specific variable; tracked and all
+  three untracked documentation files passed their whitespace checks.
 
 ## Remaining work
 
-1. User reviews the written design spec and requests any final corrections.
-2. After explicit approval, read and invoke `writing-plans`; create a task-by-task TDD implementation
-   plan under `docs/superpowers/plans/`. Do not implement directly from this handoff.
-3. The implementation plan must break phase one into backward-compatible migrations, visitor
-   capture/rollup, ranking policy transition, external collectors, internal media, profile/update
-   writes, public read model/UI, admin controls, skill/API updates, operations, and verification.
-4. Before code changes, read the applicable Next.js 16 documentation under
-   `node_modules/next/dist/docs/` as required by `AGENTS.md`.
+1. Ask the user to choose subagent-driven execution or inline execution.
+2. Execute `2026-08-19-unique-visit-ranking-implementation.md` first and complete its full matrix.
+3. Execute `2026-08-19-product-evidence-pipeline-implementation.md` second; migrate and verify local
+   PostgreSQL before relying on new relational Drizzle queries in a long-lived dev process.
+4. Execute `2026-08-19-product-detail-ui-implementation.md` last, including Playwright computed-style
+   checks at 1440 px and 390 px.
 5. Existing non-code blockers remain in `PENDING.md`: real category-classification verification and
    production scheduler registration. New production refresh jobs must also remain pending until
    explicit production access and authorization exist.
@@ -176,12 +190,10 @@ cd /Users/jr/Desktop/projects/nomorevibe
 git status --short
 git diff --check
 sed -n '1,760p' docs/superpowers/specs/2026-08-19-evidence-product-detail-design.md
+sed -n '1,520p' docs/superpowers/plans/2026-08-19-unique-visit-ranking-implementation.md
 
-# Do not run this step until the user approves the written spec.
-sed -n '1,400p' /Users/jr/.agents/skills/writing-plans/SKILL.md
-
-# Before any later Next.js implementation, locate and read the relevant v16 guides.
-find node_modules/next/dist/docs -type f | sort
+# Then execute this plan task-by-task with its required execution skill.
+# Do not begin plan 2 until plan 1 completion criteria and full matrix pass.
 ```
 
 Do not run production migrations, register schedulers, or add external infrastructure without the
