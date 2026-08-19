@@ -1,4 +1,13 @@
-import { and, gte, inArray, lt, sql } from "drizzle-orm";
+import {
+  and,
+  eq,
+  gte,
+  inArray,
+  lt,
+  sql,
+  type DriverValueEncoder,
+  type SQL,
+} from "drizzle-orm";
 import { db } from "@/lib/db";
 import { clickEvents, productClickDaily, visitCollectionState } from "@/lib/db/schema";
 import { clickChangePercent } from "@/lib/domain/ranking/math";
@@ -155,6 +164,158 @@ export async function clickMetrics(
   );
 }
 
+export type VisitMetricOptions = {
+  windowHours: number;
+  minimumPreviousUniqueVisitors: number;
+};
+
+export type VisitMetrics = {
+  validVisits: number;
+  uniqueVisitors: number | null;
+  uniqueChangePercent: number | null;
+  collectionStartedAt: Date | null;
+  collecting: boolean;
+};
+
+const visitSlugArrayEncoder: DriverValueEncoder<string[], string> = {
+  mapToDriverValue(values) {
+    return `{${values.map((value) => (
+      `"${value.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`
+    )).join(",")}}`;
+  },
+};
+
+export function visitSlugPredicate(slugs: string[]): SQL {
+  if (slugs.length === 0) return sql`false`;
+  return sql`${clickEvents.slug} = any(${sql.param(slugs, visitSlugArrayEncoder)}::text[])`;
+}
+
+const DAILY_ROLLUP_WRITE_BATCH_SIZE = 1_000;
+
+export function dailyRollupBatches<T>(rows: T[]): T[][] {
+  const batches: T[][] = [];
+  for (let start = 0; start < rows.length; start += DAILY_ROLLUP_WRITE_BATCH_SIZE) {
+    batches.push(rows.slice(start, start + DAILY_ROLLUP_WRITE_BATCH_SIZE));
+  }
+  return batches;
+}
+
+type DailyRollupRow = {
+  slug: string;
+  day: string;
+  clicks: number;
+  uniqueVisitors: number;
+};
+
+type ClickTransaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
+type ClickExecutor = typeof db | ClickTransaction;
+
+async function upsertDailyRollups(
+  executor: ClickExecutor,
+  rows: DailyRollupRow[],
+): Promise<void> {
+  for (const batch of dailyRollupBatches(rows)) {
+    await executor
+      .insert(productClickDaily)
+      .values(batch)
+      .onConflictDoUpdate({
+        target: [productClickDaily.slug, productClickDaily.day],
+        set: {
+          clicks: sql`excluded.clicks`,
+          uniqueVisitors: sql`excluded.unique_visitors`,
+        },
+      });
+  }
+}
+
+function kstDayStartDaysAgo(days: number): SQL {
+  return sql`timezone(
+    'UTC',
+    (
+      date_trunc('day', now() at time zone 'Asia/Seoul')
+      - ${days} * interval '1 day'
+    ) at time zone 'Asia/Seoul'
+  )`;
+}
+
+/** 여러 제품의 유효 방문과 제품별 고유 방문자를 한 번에 센다. */
+export async function visitMetrics(
+  slugs: string[],
+  options: VisitMetricOptions = {
+    windowHours: 24,
+    minimumPreviousUniqueVisitors: 5,
+  },
+): Promise<Map<string, VisitMetrics>> {
+  if (slugs.length === 0) return new Map();
+
+  const currentTime = sql`timezone('UTC', now())`;
+  const recentStart = sql`${currentTime} - ${options.windowHours} * interval '1 hour'`;
+  const previousStart = sql`${currentTime} - ${options.windowHours * 2} * interval '1 hour'`;
+  const metricsStart = sql`${currentTime} - ${METRICS_WINDOW_DAYS} * interval '1 day'`;
+  const rows = await db
+    .select({
+      slug: clickEvents.slug,
+      collectionStartedAt: visitCollectionState.uniqueVisitorStartedAt,
+      collecting: sql<boolean>`${visitCollectionState.uniqueVisitorStartedAt} is null
+        or ${currentTime} < ${visitCollectionState.uniqueVisitorStartedAt} + ${METRICS_WINDOW_DAYS} * interval '1 day'`,
+      validVisits: sql<number>`count(*) filter (
+        where ${clickEvents.id} is not null
+          and ${clickEvents.occurredAt} >= ${metricsStart}
+      )::int`,
+      uniqueVisitors: sql<number>`count(distinct ${clickEvents.visitorHash}) filter (
+        where ${clickEvents.visitorHash} is not null
+          and ${clickEvents.occurredAt} >= ${metricsStart}
+      )::int`,
+      recentUniqueVisitors: sql<number>`count(distinct ${clickEvents.visitorHash}) filter (
+        where ${clickEvents.visitorHash} is not null
+          and ${clickEvents.occurredAt} >= ${recentStart}
+      )::int`,
+      previousUniqueVisitors: sql<number>`count(distinct ${clickEvents.visitorHash}) filter (
+        where ${clickEvents.visitorHash} is not null
+          and ${clickEvents.occurredAt} >= ${previousStart}
+          and ${clickEvents.occurredAt} < ${recentStart}
+      )::int`,
+    })
+    .from(visitCollectionState)
+    .leftJoin(clickEvents, and(
+      visitSlugPredicate(slugs),
+      gte(clickEvents.occurredAt, sql`least(${metricsStart}, ${previousStart})`),
+      lt(clickEvents.occurredAt, currentTime),
+    ))
+    .where(eq(visitCollectionState.id, 1))
+    .groupBy(visitCollectionState.uniqueVisitorStartedAt, clickEvents.slug);
+
+  const state = rows[0];
+  const collecting = state?.collecting ?? true;
+  const collectionStartedAt = state?.collectionStartedAt ?? null;
+  const metrics = new Map<string, VisitMetrics>(slugs.map((slug) => [slug, {
+    validVisits: 0,
+    uniqueVisitors: collecting ? null : 0,
+    uniqueChangePercent: null,
+    collectionStartedAt,
+    collecting,
+  }]));
+
+  for (const row of rows) {
+    if (!row.slug) continue;
+    metrics.set(row.slug, {
+      validVisits: row.validVisits,
+      uniqueVisitors: row.collecting ? null : row.uniqueVisitors,
+      uniqueChangePercent: row.collecting
+        ? null
+        : clickChangePercent(
+          row.recentUniqueVisitors,
+          row.previousUniqueVisitors,
+          options.minimumPreviousUniqueVisitors,
+        ),
+      collectionStartedAt: row.collectionStartedAt,
+      collecting: row.collecting,
+    });
+  }
+
+  return metrics;
+}
+
 /**
  * 원천을 하루 단위로 굴린다.
  *
@@ -167,19 +328,19 @@ export async function rollupDaily(days = 3): Promise<number> {
       slug: clickEvents.slug,
       day: sql<string>`timezone('Asia/Seoul', ${clickEvents.occurredAt} AT TIME ZONE 'UTC')::date`,
       clicks: sql<number>`count(*)::int`,
+      uniqueVisitors: sql<number>`count(distinct ${clickEvents.visitorHash}) filter (
+        where ${clickEvents.visitorHash} is not null
+      )::int`,
     })
     .from(clickEvents)
-    .where(gte(clickEvents.occurredAt, sql.raw(`now() - interval '${days} days'`)))
+    .where(gte(
+      clickEvents.occurredAt,
+      kstDayStartDaysAgo(days),
+    ))
     .groupBy(clickEvents.slug, sql`2`);
 
   if (rows.length === 0) return 0;
-  await db
-    .insert(productClickDaily)
-    .values(rows)
-    .onConflictDoUpdate({
-      target: [productClickDaily.slug, productClickDaily.day],
-      set: { clicks: sql`excluded.clicks` },
-    });
+  await upsertDailyRollups(db, rows);
   return rows.length;
 }
 
@@ -210,9 +371,35 @@ export async function topClickedSince(
     .limit(limit);
 }
 
-/** 굴린 뒤의 원천 정리. 개별 클릭은 오래 두면 행만 늘고 쓸 데가 없다 */
+/** 오래된 원천을 일별 값으로 보존한 뒤 같은 트랜잭션에서 정리한다. */
 export async function pruneEvents(olderThanDays = 35): Promise<void> {
-  await db
-    .delete(clickEvents)
-    .where(lt(clickEvents.occurredAt, sql.raw(`now() - interval '${olderThanDays} days'`)));
+  await db.transaction(async (tx) => {
+    const [clock] = await tx
+      .select({
+        cutoff: kstDayStartDaysAgo(olderThanDays).mapWith(clickEvents.occurredAt),
+      })
+      .from(visitCollectionState)
+      .where(eq(visitCollectionState.id, 1))
+      .limit(1);
+    if (!clock) return;
+
+    const rows = await tx
+      .select({
+        slug: clickEvents.slug,
+        day: sql<string>`timezone('Asia/Seoul', ${clickEvents.occurredAt} AT TIME ZONE 'UTC')::date`,
+        clicks: sql<number>`count(*)::int`,
+        uniqueVisitors: sql<number>`count(distinct ${clickEvents.visitorHash}) filter (
+          where ${clickEvents.visitorHash} is not null
+        )::int`,
+      })
+      .from(clickEvents)
+      .where(lt(clickEvents.occurredAt, clock.cutoff))
+      .groupBy(clickEvents.slug, sql`2`);
+
+    if (rows.length === 0) return;
+    await upsertDailyRollups(tx, rows);
+    await tx
+      .delete(clickEvents)
+      .where(lt(clickEvents.occurredAt, clock.cutoff));
+  });
 }

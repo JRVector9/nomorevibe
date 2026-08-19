@@ -16,6 +16,9 @@ import {
   recordClick,
   clicksSince,
   clickMetrics,
+  visitMetrics,
+  visitSlugPredicate,
+  dailyRollupBatches,
   rollupDaily,
   pruneEvents,
   topClickedSince,
@@ -27,6 +30,20 @@ import { ensureSchema, resetTables } from "./setup";
 
 const VISITOR_HASH_SECRET = "integration-visitor-hash-secret-32-characters";
 const savedVisitorHashSecret = process.env.VISITOR_HASH_SECRET;
+
+async function fixedKstNoon(daysAgo: number): Promise<Date> {
+  const [row] = await db.select({
+    occurredAt: sql`timezone(
+      'UTC',
+      (
+        date_trunc('day', now() at time zone 'Asia/Seoul')
+        - ${daysAgo} * interval '1 day'
+        + interval '12 hours'
+      ) at time zone 'Asia/Seoul'
+    )`.mapWith(clickEvents.occurredAt),
+  }).from(visitCollectionState).limit(1);
+  return row.occurredAt;
+}
 
 async function product(slug = "app", url = "https://app.test") {
   await repo.insert({
@@ -265,31 +282,257 @@ describe("집계와 랭킹", () => {
     })).get("a")).toEqual({ clicks: 4, changePercent: null });
   });
 
-  it("굴리면 하루 단위로 남고 다시 굴려도 같은 값이다", async () => {
+  it("유효 방문과 제품별 고유 방문자를 한 번에 센다", async () => {
     await product("a");
+    await product("b", "https://b.test");
+    await db.update(visitCollectionState).set({
+      uniqueVisitorStartedAt: sql`timezone('UTC', now()) - interval '8 days'`,
+    });
     await db.insert(clickEvents).values([
-      { slug: "a", occurredAt: new Date() },
-      { slug: "a", occurredAt: new Date() },
+      { slug: "a", visitorHash: "a".repeat(64) },
+      { slug: "a", visitorHash: "a".repeat(64) },
+      { slug: "a", visitorHash: "b".repeat(64) },
+    ]);
+
+    const metrics = await visitMetrics(["a", "b"]);
+
+    expect(metrics.get("a")).toMatchObject({
+      validVisits: 3,
+      uniqueVisitors: 2,
+      collecting: false,
+    });
+    expect(metrics.get("b")).toMatchObject({
+      validVisits: 0,
+      uniqueVisitors: 0,
+      collecting: false,
+    });
+  });
+
+  it("레거시 null 해시는 유효 방문에만 더한다", async () => {
+    await product("a");
+    await db.update(visitCollectionState).set({
+      uniqueVisitorStartedAt: sql`timezone('UTC', now()) - interval '8 days'`,
+    });
+    await db.insert(clickEvents).values([
+      { slug: "a", visitorHash: "a".repeat(64) },
+      { slug: "a" },
+      { slug: "a" },
+    ]);
+
+    expect((await visitMetrics(["a"])).get("a")).toMatchObject({
+      validVisits: 3,
+      uniqueVisitors: 1,
+    });
+  });
+
+  it("수집 전과 첫 7일에는 유효 방문만 보여 준다", async () => {
+    await product("a");
+    await db.insert(clickEvents).values({
+      slug: "a",
+    });
+
+    expect((await visitMetrics(["a"])).get("a")).toEqual({
+      validVisits: 1,
+      uniqueVisitors: null,
+      uniqueChangePercent: null,
+      collectionStartedAt: null,
+      collecting: true,
+    });
+
+    await db.update(visitCollectionState).set({
+      uniqueVisitorStartedAt: sql`timezone('UTC', now()) - interval '6 days'`,
+    });
+    await db.insert(clickEvents).values({
+      slug: "a",
+      visitorHash: "a".repeat(64),
+    });
+    const warming = (await visitMetrics(["a"])).get("a")!;
+    expect(warming).toMatchObject({
+      validVisits: 2,
+      uniqueVisitors: null,
+      uniqueChangePercent: null,
+      collecting: true,
+    });
+    expect(warming.collectionStartedAt).toBeInstanceOf(Date);
+  });
+
+  it("7일 수집이 끝나면 해시 방문이 없는 제품은 고유 방문자 0이다", async () => {
+    await product("a");
+    await db.update(visitCollectionState).set({
+      uniqueVisitorStartedAt: sql`timezone('UTC', now()) - interval '7 days'`,
+    });
+
+    expect((await visitMetrics(["a"])).get("a")).toMatchObject({
+      validVisits: 0,
+      uniqueVisitors: 0,
+      uniqueChangePercent: null,
+      collecting: false,
+    });
+  });
+
+  it("인접 창의 고유 방문자 변화는 각 창에서 독립적으로 센다", async () => {
+    await product("a");
+    await db.update(visitCollectionState).set({
+      uniqueVisitorStartedAt: sql`timezone('UTC', now()) - interval '8 days'`,
+    });
+    await db.insert(clickEvents).values([
+      {
+        slug: "a",
+        visitorHash: "a".repeat(64),
+        occurredAt: sql`timezone('UTC', now()) - interval '1 hour'`,
+      },
+      {
+        slug: "a",
+        visitorHash: "a".repeat(64),
+        occurredAt: sql`timezone('UTC', now()) - interval '25 hours'`,
+      },
+      {
+        slug: "a",
+        visitorHash: "b".repeat(64),
+        occurredAt: sql`timezone('UTC', now()) - interval '1 hour'`,
+      },
+    ]);
+
+    expect((await visitMetrics(["a"], {
+      windowHours: 24,
+      minimumPreviousUniqueVisitors: 1,
+    })).get("a")).toMatchObject({
+      validVisits: 3,
+      uniqueVisitors: 2,
+      uniqueChangePercent: 100,
+    });
+  });
+
+  it("아주 많은 slug도 PostgreSQL 배열 파라미터 하나로 묶는다", () => {
+    const slugs = Array.from({ length: 65_536 }, (_, index) => `product-${index}`);
+
+    const query = db
+      .select({ slug: clickEvents.slug })
+      .from(clickEvents)
+      .where(visitSlugPredicate(slugs))
+      .toSQL();
+
+    expect(query.params).toHaveLength(1);
+  });
+
+  it("16,384개 일별 행을 PostgreSQL 한도보다 작은 배치로 나눈다", () => {
+    const rows = Array.from({ length: 16_384 }, (_, index) => ({
+      slug: `product-${index}`,
+      day: "2026-08-19",
+      clicks: 1,
+      uniqueVisitors: 1,
+    }));
+
+    const batches = dailyRollupBatches(rows);
+    const largestInsert = db
+      .insert(productClickDaily)
+      .values(batches[0])
+      .onConflictDoUpdate({
+        target: [productClickDaily.slug, productClickDaily.day],
+        set: {
+          clicks: sql`excluded.clicks`,
+          uniqueVisitors: sql`excluded.unique_visitors`,
+        },
+      })
+      .toSQL();
+
+    expect(batches).toHaveLength(17);
+    expect(batches.map((batch) => batch.length)).toEqual([
+      ...Array.from({ length: 16 }, () => 1_000),
+      384,
+    ]);
+    expect(largestInsert.params.length).toBeLessThan(65_535);
+  });
+
+  it("KST 일별 고유 수는 보존하되 여러 날의 고유 합계로 쓰지 않는다", async () => {
+    await product("a");
+    await db.update(visitCollectionState).set({
+      uniqueVisitorStartedAt: sql`timezone('UTC', now()) - interval '8 days'`,
+    });
+    const kstYesterday = sql`timezone(
+      'UTC',
+      (date_trunc('day', now() at time zone 'Asia/Seoul') - interval '1 day')
+        at time zone 'Asia/Seoul'
+    )`;
+    await db.insert(clickEvents).values([
+      {
+        slug: "a",
+        visitorHash: "a".repeat(64),
+        occurredAt: sql`${kstYesterday} - interval '1 minute'`,
+      },
+      {
+        slug: "a",
+        visitorHash: "a".repeat(64),
+        occurredAt: sql`${kstYesterday} + interval '1 minute'`,
+      },
     ]);
 
     await rollupDaily();
+
+    const daily = await db.select().from(productClickDaily).orderBy(productClickDaily.day);
+    expect(daily.map((row) => row.uniqueVisitors)).toEqual([1, 1]);
+    expect((await visitMetrics(["a"])).get("a")).toMatchObject({
+      validVisits: 2,
+      uniqueVisitors: 1,
+    });
+  });
+
+  it("가장 오래된 포함 KST 날짜도 하루 전체를 굴린다", async () => {
+    await product("a");
+    const oldestNoon = await fixedKstNoon(3);
+    const early = new Date(oldestNoon.getTime() - 12 * 60 * 60 * 1000 + 1);
+    const late = new Date(oldestNoon.getTime() + 12 * 60 * 60 * 1000 - 1);
+    await db.insert(clickEvents).values([
+      { slug: "a", visitorHash: "a".repeat(64), occurredAt: early },
+      { slug: "a", visitorHash: "b".repeat(64), occurredAt: late },
+    ]);
+
+    await rollupDaily(3);
+
+    expect(await db.select().from(productClickDaily)).toEqual([
+      expect.objectContaining({ clicks: 2, uniqueVisitors: 2 }),
+    ]);
+  });
+
+  it("굴리면 고유 방문자까지 하루 단위로 남고 재실행은 같은 행을 덮어쓴다", async () => {
+    await product("a");
+    const occurredAt = await fixedKstNoon(1);
+    await db.insert(clickEvents).values([
+      { slug: "a", visitorHash: "a".repeat(64), occurredAt },
+      { slug: "a", visitorHash: "a".repeat(64), occurredAt },
+    ]);
+
+    await rollupDaily();
+    await db.insert(clickEvents).values({
+      slug: "a",
+      visitorHash: "b".repeat(64),
+      occurredAt,
+    });
     await rollupDaily();
 
     const rows = await db.select().from(productClickDaily);
     expect(rows).toHaveLength(1);
-    expect(rows[0].clicks).toBe(2);
+    expect(rows[0]).toMatchObject({ clicks: 3, uniqueVisitors: 2 });
   });
 
-  it("오래된 원천만 지운다", async () => {
+  it("60일 된 원천도 지우기 전에 같은 트랜잭션에서 일별 값으로 보존한다", async () => {
     await product("a");
+    const oldOccurredAt = await fixedKstNoon(60);
     await db.insert(clickEvents).values([
-      { slug: "a", occurredAt: new Date() },
-      { slug: "a", occurredAt: new Date(Date.now() - 40 * 24 * 60 * 60 * 1000) },
+      { slug: "a", visitorHash: "a".repeat(64) },
+      {
+        slug: "a",
+        visitorHash: "b".repeat(64),
+        occurredAt: oldOccurredAt,
+      },
     ]);
 
     await pruneEvents();
 
     expect(await count()).toBe(1);
+    expect(await db.select().from(productClickDaily)).toEqual([
+      expect.objectContaining({ clicks: 1, uniqueVisitors: 1 }),
+    ]);
   });
 
   it("많이 눌린 순으로 목록을 세운다", async () => {
