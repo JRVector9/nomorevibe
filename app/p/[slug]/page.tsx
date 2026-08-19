@@ -41,7 +41,7 @@ export default async function ProductPage({ params }: Props) {
 
   return (
     <main className="mx-auto max-w-[1180px] px-6 pb-20">
-      <div className="pt-[18px] text-[12.5px] text-fg-3">
+      <div className="pt-[18px] text-[13px] text-fg-3">
         <Link href="/" className="hover:text-fg">
           Products
         </Link>{" "}
@@ -76,10 +76,10 @@ export default async function ProductPage({ params }: Props) {
                 <span className="h-[9px] w-[9px] rounded-full bg-[#ea3943]" />
                 <span className="h-[9px] w-[9px] rounded-full bg-[#f6b73c]" />
                 <span className="h-[9px] w-[9px] rounded-full bg-[#16c784]" />
-                <span className="ml-2 rounded-md bg-bg px-2.5 py-0.5 font-mono text-[11px] text-fg-3">
+                <span className="ml-2 rounded-md bg-bg px-2.5 py-0.5 font-mono text-[13px] text-fg-3">
                   {displayUrl}
                 </span>
-                <span className="ml-auto text-[10.5px] text-fg-3">등록 시점 OG 이미지</span>
+                <span className="ml-auto text-[13px] text-fg-3">등록 시점 OG 이미지</span>
               </div>
               <img src={product.ogImage} alt={`${product.name} 미리보기`} className="w-full" />
             </div>
@@ -87,7 +87,7 @@ export default async function ProductPage({ params }: Props) {
 
           <div className="mt-6 rounded-[14px] border border-line bg-bg-card p-[22px]">
             <h2 className="text-[15px] font-bold">
-              소개 <span className="ml-1 text-[11px] font-medium text-fg-3">— 등록 시 AI가 작성</span>
+              소개 <span className="ml-1 text-[13px] font-medium text-fg-3">— 등록 시 AI가 작성</span>
             </h2>
             <p className="mt-4 whitespace-pre-line text-[13.5px] leading-[1.7] text-fg-2">
               {product.description}
@@ -100,13 +100,13 @@ export default async function ProductPage({ params }: Props) {
           <div className="rounded-[14px] border border-line bg-bg-card p-[22px]">
             <h2 className="text-[15px] font-bold">
               Product Info{" "}
-              <span className="ml-1 text-[11px] font-medium text-fg-3">
+              <span className="ml-1 text-[13px] font-medium text-fg-3">
                 {unclaimed ? "공개 저장소에서 수집" : "from /nomorevibe"}
               </span>
             </h2>
             <dl className="mt-3">
               {product.makerName && (
-                <InfoRow k="메이커" v={<>{product.makerName} <span className="text-[11px] text-fg-3">(미검증)</span></>} />
+                <InfoRow k="메이커" v={<>{product.makerName} <span className="text-[13px] text-fg-3">(미검증)</span></>} />
               )}
               <InfoRow
                 k="등록일"
@@ -153,11 +153,11 @@ export default async function ProductPage({ params }: Props) {
           {unclaimed && (
             <div className="mt-5 rounded-[14px] border border-accent bg-accent-soft p-[22px]">
               <h2 className="text-[15px] font-bold">이 제품의 주인이신가요?</h2>
-              <p className="mt-3 text-[12.5px] leading-[1.7] text-fg-2">
+              <p className="mt-3 text-[13px] leading-[1.7] text-fg-2">
                 공개 저장소에서 찾아 저희가 대신 올린 제품입니다. 여기 적힌 정보는 저희가 추정한
                 것이라 사실과 다를 수 있습니다.
               </p>
-              <p className="mt-3 text-[12.5px] leading-[1.7] text-fg-2">
+              <p className="mt-3 text-[13px] leading-[1.7] text-fg-2">
                 프로젝트 폴더에서 <code className="font-mono text-accent">/nomorevibe</code> 를
                 실행하면 소유권을 확인하고 직접 수정하실 수 있습니다.
               </p>
@@ -168,7 +168,7 @@ export default async function ProductPage({ params }: Props) {
           {product.status === "unverified" && (
             <div className="mt-5 rounded-[14px] border border-line bg-bg-card p-[22px]">
               <h2 className="text-[15px] font-bold">아직 공개 목록에 없습니다</h2>
-              <p className="mt-3 text-[12.5px] leading-[1.7] text-fg-2">
+              <p className="mt-3 text-[13px] leading-[1.7] text-fg-2">
                 도메인 소유권을 검증하면 공개 목록에 게시됩니다. 프로젝트 폴더에서{" "}
                 <code className="font-mono text-accent">/nomorevibe verify</code> 를 실행하세요.
               </p>

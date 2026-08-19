@@ -6,7 +6,7 @@
  */
 export function Tag({ children }: { children: React.ReactNode }) {
   return (
-    <span className="rounded-full border border-line bg-bg-soft px-2 py-0.5 text-[10.5px] font-semibold text-fg-2">
+    <span className="rounded-full border border-line bg-bg-soft px-2 py-0.5 text-[13px] font-semibold text-fg-2">
       {children}
     </span>
   );

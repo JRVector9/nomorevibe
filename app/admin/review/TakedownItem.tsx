@@ -21,9 +21,9 @@ export function TakedownItem({
         <a href={`/p/${slug}`} target="_blank" rel="noreferrer noopener" className="text-[14px] font-bold hover:text-accent">
           {slug}
         </a>
-        <span className="font-mono text-[11.5px] text-fg-3">{requestedAt}</span>
+        <span className="font-mono text-[13px] text-fg-3">{requestedAt}</span>
       </div>
-      {reason && <p className="mt-2 text-[12.5px] leading-[1.7] text-fg-2">{reason}</p>}
+      {reason && <p className="mt-2 text-[13px] leading-[1.7] text-fg-2">{reason}</p>}
 
       <form action={action} className="mt-3.5 flex flex-wrap items-center gap-2">
         <input type="hidden" name="slug" value={slug} />
@@ -32,7 +32,7 @@ export function TakedownItem({
           name="action"
           value="remove"
           disabled={pending}
-          className="rounded-lg border border-down/40 bg-down/10 px-3 py-1.5 text-[12.5px] font-semibold text-down disabled:opacity-50"
+          className="rounded-lg border border-down/40 bg-down/10 px-3 py-1.5 text-[13px] font-semibold text-down disabled:opacity-50"
         >
           내린다
         </button>
@@ -41,12 +41,12 @@ export function TakedownItem({
           name="action"
           value="dismiss"
           disabled={pending}
-          className="rounded-lg border border-line px-3 py-1.5 text-[12.5px] font-semibold text-fg-2 hover:text-fg disabled:opacity-50"
+          className="rounded-lg border border-line px-3 py-1.5 text-[13px] font-semibold text-fg-2 hover:text-fg disabled:opacity-50"
         >
           두고 본다
         </button>
       </form>
-      {state?.error && <p className="mt-2 text-[12px] text-down">{state.error}</p>}
+      {state?.error && <p className="mt-2 text-[13px] text-down">{state.error}</p>}
     </li>
   );
 }

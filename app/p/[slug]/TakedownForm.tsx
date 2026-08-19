@@ -36,7 +36,7 @@ export function TakedownForm({ slug }: { slug: string }) {
 
   if (state === "sent") {
     return (
-      <p className="mt-4 rounded-[10px] border border-up/40 bg-up/10 px-4 py-3 text-[12.5px] text-up">
+      <p className="mt-4 rounded-[10px] border border-up/40 bg-up/10 px-4 py-3 text-[13px] text-up">
         요청을 받았습니다. 확인 후 내려드리겠습니다.
       </p>
     );
@@ -44,7 +44,7 @@ export function TakedownForm({ slug }: { slug: string }) {
 
   return (
     <details className="mt-4">
-      <summary className="cursor-pointer text-[12.5px] font-semibold text-fg-2 hover:text-fg">
+      <summary className="cursor-pointer text-[13px] font-semibold text-fg-2 hover:text-fg">
         목록에서 내려달라고 요청하기
       </summary>
       <form action={submit} className="mt-3 flex flex-col gap-2">
@@ -53,16 +53,16 @@ export function TakedownForm({ slug }: { slug: string }) {
           rows={2}
           maxLength={500}
           placeholder="이유를 적어주셔도 되고, 비워두셔도 됩니다"
-          className="w-full rounded-lg border border-line bg-bg-soft px-3 py-2 text-[12.5px] text-fg outline-none focus:border-accent"
+          className="w-full rounded-lg border border-line bg-bg-soft px-3 py-2 text-[13px] text-fg outline-none focus:border-accent"
         />
         <button
           type="submit"
           disabled={state === "sending"}
-          className="self-start rounded-lg border border-line px-3 py-1.5 text-[12.5px] font-semibold text-fg-2 hover:text-fg disabled:opacity-50"
+          className="self-start rounded-lg border border-line px-3 py-1.5 text-[13px] font-semibold text-fg-2 hover:text-fg disabled:opacity-50"
         >
           {state === "sending" ? "보내는 중…" : "요청 보내기"}
         </button>
-        {error && <p className="text-[12px] text-down">{error}</p>}
+        {error && <p className="text-[13px] text-down">{error}</p>}
       </form>
     </details>
   );

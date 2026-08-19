@@ -18,7 +18,7 @@ export default async function AdminLoginPage({
         </p>
 
         {error && (
-          <p className="mt-4 rounded-lg border border-down/40 bg-down/10 px-3 py-2 text-[12.5px] text-down">
+          <p className="mt-4 rounded-lg border border-down/40 bg-down/10 px-3 py-2 text-[13px] text-down">
             로그인하지 못했습니다. 허용된 계정인지 확인해주세요.
           </p>
         )}

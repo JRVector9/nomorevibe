@@ -35,7 +35,7 @@ function hrefWith(state: BrowseState, patch: Partial<BrowseState>): string {
 }
 
 const chip = (active: boolean) =>
-  `rounded-lg border px-3 py-1.5 text-[12.5px] font-semibold ${
+  `rounded-lg border px-3 py-1.5 text-[13px] font-semibold ${
     active ? "border-accent text-accent" : "border-line text-fg-2 hover:text-fg"
   }`;
 
@@ -58,7 +58,7 @@ export function BrowseFilters({
           </Link>
         ))}
         {(state.sort === "weekly" || state.sort === "trending" || state.sort === "all-time") && (
-          <span className="text-[11.5px] text-fg-3">검증된 제품만</span>
+          <span className="text-[13px] text-fg-3">검증된 제품만</span>
         )}
 
         {/* 검색은 폼 하나로 끝난다. 정렬·카테고리는 숨은 필드로 함께 실어 보낸다 */}
@@ -70,7 +70,7 @@ export function BrowseFilters({
             name="q"
             defaultValue={state.query ?? ""}
             placeholder="제품 검색"
-            className="w-[180px] rounded-lg border border-line bg-bg-soft px-3 py-1.5 text-[12.5px] text-fg outline-none focus:border-accent"
+            className="w-[180px] rounded-lg border border-line bg-bg-soft px-3 py-1.5 text-[13px] text-fg outline-none focus:border-accent"
           />
           <button type="submit" className={chip(false)}>
             찾기
@@ -80,7 +80,7 @@ export function BrowseFilters({
 
       <div className="flex flex-wrap items-center gap-2">
         <Link href={hrefWith(state, { category: undefined })} className={chip(!state.category)}>
-          전체 <span className="ml-1 font-mono text-[11px] text-fg-3">{total}</span>
+          전체 <span className="ml-1 font-mono text-[13px] text-fg-3">{total}</span>
         </Link>
         {CATEGORIES.filter((category) => (counts[category] ?? 0) > 0).map((category) => (
           <Link
@@ -88,7 +88,7 @@ export function BrowseFilters({
             href={hrefWith(state, { category })}
             className={chip(state.category === category)}
           >
-            {category} <span className="ml-1 font-mono text-[11px] text-fg-3">{counts[category]}</span>
+            {category} <span className="ml-1 font-mono text-[13px] text-fg-3">{counts[category]}</span>
           </Link>
         ))}
       </div>

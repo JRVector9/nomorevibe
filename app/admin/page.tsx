@@ -29,7 +29,7 @@ export default async function AdminPage() {
     <main className="mx-auto max-w-[900px] px-6 pb-20">
       <div className="flex flex-wrap items-baseline gap-3 pt-9">
         <h1 className="text-[26px] font-extrabold tracking-tight">크롤 설정</h1>
-        <span className="text-[12.5px] text-fg-3">
+        <span className="text-[13px] text-fg-3">
           {settings.enabled ? (
             <span className="font-semibold text-up">수집 켜짐</span>
           ) : (
@@ -38,13 +38,13 @@ export default async function AdminPage() {
         </span>
         <AdminNav current="/admin" />
         {waiting > 0 && (
-          <Link href="/admin/review" className="text-[12.5px] font-semibold text-accent">
+          <Link href="/admin/review" className="text-[13px] font-semibold text-accent">
             심사 대기 {waiting}건
           </Link>
         )}
         <form action="/api/auth/logout" method="post" className="ml-auto">
-          <span className="mr-3 text-[12.5px] text-fg-3">{admin.login}</span>
-          <button type="submit" className="text-[12.5px] font-semibold text-fg-2 hover:text-fg">
+          <span className="mr-3 text-[13px] text-fg-3">{admin.login}</span>
+          <button type="submit" className="text-[13px] font-semibold text-fg-2 hover:text-fg">
             로그아웃
           </button>
         </form>
@@ -56,7 +56,7 @@ export default async function AdminPage() {
       </p>
 
       {meta && (
-        <p className="mt-1.5 font-mono text-[11.5px] text-fg-3">
+        <p className="mt-1.5 font-mono text-[13px] text-fg-3">
           마지막 변경 {meta.updatedBy ?? "알 수 없음"} ·{" "}
           {meta.updatedAt.toLocaleString("ko-KR", { dateStyle: "medium", timeStyle: "short" })}
         </p>

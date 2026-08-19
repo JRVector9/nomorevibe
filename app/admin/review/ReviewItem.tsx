@@ -11,7 +11,7 @@ import type { CrawlCandidate } from "@/lib/db/schema";
 type Reason = { value: string; label: string };
 
 const button =
-  "rounded-lg border px-3 py-1.5 text-[12.5px] font-semibold disabled:opacity-50";
+  "rounded-lg border px-3 py-1.5 text-[13px] font-semibold disabled:opacity-50";
 
 /** 판정 근거를 사람이 읽는 순서대로 — 무엇을 보고 갈랐는지가 먼저다 */
 function signalLine(signals: Record<string, unknown> | null): string {
@@ -47,7 +47,7 @@ export function ReviewItem({
         >
           {candidate.repo}
         </a>
-        {signals && <span className="font-mono text-[11.5px] text-fg-3">{signals}</span>}
+        {signals && <span className="font-mono text-[13px] text-fg-3">{signals}</span>}
       </div>
 
       {candidate.productUrl && (
@@ -55,7 +55,7 @@ export function ReviewItem({
           href={candidate.productUrl}
           target="_blank"
           rel="noreferrer noopener"
-          className="mt-1 block text-[12.5px] text-fg-2 hover:text-accent"
+          className="mt-1 block text-[13px] text-fg-2 hover:text-accent"
         >
           {candidate.productUrl.replace(/^https?:\/\//, "")}
         </a>
@@ -75,7 +75,7 @@ export function ReviewItem({
         <select
           name="reason"
           defaultValue={reasons[0]?.value}
-          className="rounded-lg border border-line bg-bg-soft px-2.5 py-1.5 text-[12.5px] text-fg-2 outline-none focus:border-accent"
+          className="rounded-lg border border-line bg-bg-soft px-2.5 py-1.5 text-[13px] text-fg-2 outline-none focus:border-accent"
         >
           {reasons.map((reason) => (
             <option key={reason.value} value={reason.value}>
@@ -94,7 +94,7 @@ export function ReviewItem({
         </button>
       </form>
 
-      {state?.error && <p className="mt-2 text-[12px] text-down">{state.error}</p>}
+      {state?.error && <p className="mt-2 text-[13px] text-down">{state.error}</p>}
     </li>
   );
 }

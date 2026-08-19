@@ -4,7 +4,7 @@ import * as schema from "./schema";
 
 type Db = ReturnType<typeof drizzle<typeof schema>>;
 
-// Next.js dev 핫리로드 시 커넥션 중복 생성을 방지
+// Next.js 핫리로드와 프로덕션 요청 모두에서 커넥션 풀 중복 생성을 방지
 const globalForDb = globalThis as unknown as { pgClient?: ReturnType<typeof postgres>; db?: Db };
 
 /**
@@ -20,10 +20,8 @@ function getDb(): Db {
   }
   const client = globalForDb.pgClient ?? postgres(connectionString, { max: 10 });
   const instance = drizzle(client, { schema });
-  if (process.env.NODE_ENV !== "production") {
-    globalForDb.pgClient = client;
-    globalForDb.db = instance;
-  }
+  globalForDb.pgClient = client;
+  globalForDb.db = instance;
   return instance;
 }
 

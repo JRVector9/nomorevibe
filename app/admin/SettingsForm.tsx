@@ -6,8 +6,8 @@ import type { CrawlSettings } from "@/lib/crawl/settings-schema";
 import { Panel } from "@/components/Panel";
 
 const field = "w-full rounded-lg border border-line bg-bg-soft px-3 py-2 text-[13px] text-fg outline-none focus:border-accent";
-const label = "block text-[12px] font-semibold text-fg-2";
-const hint = "mt-1 text-[11.5px] leading-[1.6] text-fg-3";
+const label = "block text-[13px] font-semibold text-fg-2";
+const hint = "mt-1 text-[13px] leading-[1.6] text-fg-3";
 
 function Toggle({ name, defaultChecked, children }: { name: string; defaultChecked: boolean; children: React.ReactNode }) {
   return (
@@ -25,14 +25,14 @@ export function SettingsForm({ settings }: { settings: CrawlSettings }) {
   return (
     <form action={action} className="mt-6 flex flex-col gap-4">
       {state?.issues && state.issues.length > 0 && (
-        <div className="rounded-[10px] border border-down/40 bg-down/10 px-4 py-3 text-[12.5px] text-down">
+        <div className="rounded-[10px] border border-down/40 bg-down/10 px-4 py-3 text-[13px] text-down">
           {state.issues.map((issue) => (
             <div key={issue}>{issue}</div>
           ))}
         </div>
       )}
       {state?.ok && (
-        <div className="rounded-[10px] border border-up/40 bg-up/10 px-4 py-3 text-[12.5px] text-up">
+        <div className="rounded-[10px] border border-up/40 bg-up/10 px-4 py-3 text-[13px] text-up">
           저장했습니다. 다음 틱부터 적용됩니다.
         </div>
       )}
@@ -68,7 +68,7 @@ export function SettingsForm({ settings }: { settings: CrawlSettings }) {
                   className={`${field} sm:w-24`}
                   title="조사 우선순위"
                 />
-                <label className="flex items-center gap-2 whitespace-nowrap text-[12.5px]">
+                <label className="flex items-center gap-2 whitespace-nowrap text-[13px]">
                   <input type="checkbox" name={`query.${i}.enabled`} defaultChecked={q.enabled} className="accent-[var(--accent)]" />
                   사용
                 </label>

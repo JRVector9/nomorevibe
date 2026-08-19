@@ -2,20 +2,32 @@
 
 ## Current objective
 
-Finish plan 1 of 3, the privacy-preserving unique-visit collection and ranking transition:
+Stabilize and display the completed ranking UI after the user requested the live local screen:
 
-- `docs/superpowers/plans/2026-08-19-unique-visit-ranking-implementation.md`
+- reuse one PostgreSQL client/pool per Next.js server runtime in production;
+- enforce the user's global minimum 13 px font contract across `app/**/*.tsx` and
+  `components/**/*.tsx`;
+- leave the final production-mode local server running on port 43125 for visual review.
 
-Plan 1 implementation is complete and the complete diff passed independent final review. The two
-final P2 corrections are committed in `f15b10f`; their focused RED/GREEN verification is recorded
-below. Only the Task 8 operating documentation commit remains pending. Do not start plan 2 until
-those three documentation files are committed.
+Plan 1 of 3, the privacy-preserving unique-visit collection and ranking transition, is complete and
+committed through `845f056`. This follow-up runtime/typography fix is implemented, fully tested,
+reviewed clean, and committed as `fix: stabilize production ranking screens`. Only the local
+display server is now running from the final production build on `http://localhost:43125`.
 
 No production database, secret store, scheduler, or deployment was accessed. Production migration,
 `VISITOR_HASH_SECRET`, first collection time, seven-day readiness, and scheduler execution are all
 unverified and remain explicit blockers in `PENDING.md`.
 
 ## Completed work
+
+- Reproduced the production-only pool leak: each `db` proxy property access created a fresh
+  `postgres(..., { max: 10 })` pool because production skipped the global cache. `lib/db/index.ts`
+  now caches the client and Drizzle instance in every environment.
+- Raised every explicit sub-13 px Tailwind class (including `text-xs`) in rendered app/components
+  to `text-[13px]`. This covers public product/ranking/detail/launch screens and admin screens,
+  including trust, builder, status, and stack badges.
+- Added production-client lifecycle, trust-badge render, and repository-wide app typography
+  regressions. The typography test recursively scans all app/component TSX sources.
 
 - Added nullable product-scoped visitor hashes without rewriting legacy visit events, KST daily
   unique counts, a singleton collection-start row, and finalized unique fields on ranking entries.
@@ -96,14 +108,30 @@ Implementation commits, in order:
 9. `f15b10f fix: complete unique visit migration metadata`
    - `drizzle/meta/0013_snapshot.json`
    - `tests/integration/ranking-refresh.test.ts`
+10. `845f056 docs: operate unique visitor rankings`
+    - `README.md`
+    - `PENDING.md`
+    - `docs/CODEX_HANDOFF.md`
+11. `fix: stabilize production ranking screens` (current HEAD)
+    - production DB singleton reuse, global 13 px typography correction, regressions, and handoff
 
-Task 8 files remain modified and intentionally uncommitted pending the documentation commit:
+The follow-up fix currently modifies:
 
-- `README.md`
-- `PENDING.md`
+- `lib/db/index.ts`
+- `components/{BrowseFilters,MarketStats,ProductCard,Tag,TrustBadges}.tsx`
+- `app/layout.tsx`, `app/launch/page.tsx`, and `app/p/[slug]/{page,TakedownForm}.tsx`
+- admin typography in `app/admin/**/*.tsx`
+- `tests/{db-client,min-font-size,trust-badges}.test.ts`
 - `docs/CODEX_HANDOFF.md`
 
 ## Key design decisions
+
+- The PostgreSQL pool remains capped at 10 connections, but its client and Drizzle wrapper are now
+  cached once per Node/Next runtime regardless of `NODE_ENV`. This preserves dev HMR reuse and fixes
+  unbounded production pool creation without changing query behavior.
+- The 13 px rule is enforced at source level for rendered TSX, covering explicit px/rem values and
+  Tailwind `text-xs`. The change is typography-only; wording, data semantics, colors, and layout
+  structure are unchanged.
 
 - `고유 유입자` is a distinct accepted first-party browser identifier observed through NoMoreVibe
   for one product and time window. It is not a verified person or the product's total traffic.
@@ -126,6 +154,49 @@ Task 8 files remain modified and intentionally uncommitted pending the documenta
   change formula mid-season, and all-time remains a historical valid-visit aggregation.
 
 ## Test commands and results
+
+Follow-up runtime/typography TDD and final verification actually run on 2026-08-19 KST:
+
+```text
+npx vitest run tests/db-client.test.ts tests/trust-badges.test.ts
+  RED — production db property access created 3 PostgreSQL clients; badges rendered 11/10.5 px
+  GREEN — 2 files, 2 tests passed after client caching and badge correction
+
+npx vitest run tests/min-font-size.test.ts
+  RED — app/components still contained explicit 10.5–12.5 px and text-xs classes
+
+npx vitest run tests/min-font-size.test.ts tests/trust-badges.test.ts tests/db-client.test.ts
+  GREEN — 3 files, 3 tests passed after the global 13 px correction
+
+npm test
+  PASS — 22 files, 205 tests
+
+npm run test:integration
+  PASS — 23 files, 259 tests; expected negative-path logs and the existing Vite warning appeared
+
+npx tsc --noEmit
+  PASS — exit 0, no diagnostics
+
+npm run lint
+  PASS — 0 errors, 0 warnings
+
+npm run build
+  PASS — Next.js 16.3.1 production build; 12/12 static pages generated
+
+git diff --check
+  PASS — exit 0, no output
+
+production-mode local smoke after the final build
+  PASS — /, /rankings/2026-W34, and /p/simplehwp returned 200
+  PASS — first 40 repeated requests had 0 failures; lazy DB connections settled from 7 to 8
+  PASS — second 40 repeated requests had 0 failures; DB connections remained 8 before/after
+  PASS — rendered home, ranking, and detail HTML contained 0 sub-13 px class tokens
+```
+
+The required `gpt-5.6/high` Codex CLI review was attempted and rejected by the installed ChatGPT
+account with HTTP 400. The supported default `gpt-5.6-sol/xhigh` fallback review then ran the unit,
+integration, lint, and production-build checks itself and ended with:
+`No actionable defects were found.`
 
 Task-level TDD and review verification actually run during implementation:
 
@@ -210,6 +281,19 @@ started without checking the singleton state after a real hashed request.
 
 ## Failed approaches and review findings
 
+- The first local production-screen attempt failed because the development database had not yet
+  applied migration 0013. `npx drizzle-kit migrate` was applied only to the local development DB;
+  no production database was accessed.
+- After migration, the unchanged production server exhausted PostgreSQL connections. `lsof` showed
+  roughly 100 connections from one Next process; source tracing found production skipped the global
+  cache in `lib/db/index.ts`. Stopping that server released the connections, and the TDD fix keeps
+  the count stable.
+- The first repeated-request shell probe used zsh's read-only `status` variable and stopped before
+  the loop. Renaming it to `response_code` produced the valid 40-request result above.
+- The exact `gpt-5.6/high` Codex review command failed with the known ChatGPT-account HTTP 400. The
+  supported default `gpt-5.6-sol/xhigh` review completed clean instead; no unsupported-model success
+  is claimed.
+
 - The `ak` skill's first Codex review invocation used an option unsupported by the installed CLI.
   After correcting the invocation, the installed ChatGPT-account Codex rejected `gpt-5.6` with
   HTTP 400. Independent reviewer subagents were used for every task instead of claiming the CLI
@@ -254,10 +338,9 @@ started without checking the singleton state after a real hashed request.
 
 ## Remaining work
 
-1. Commit the three Task 8 documentation files as `docs: operate unique visitor rankings`.
-2. Execute `docs/superpowers/plans/2026-08-19-product-evidence-pipeline-implementation.md`.
-3. Execute `docs/superpowers/plans/2026-08-19-product-detail-ui-implementation.md` only after plan 2.
-4. With explicit production access/approval, complete `PENDING.md` B1/B2: configure the distinct
+1. Execute `docs/superpowers/plans/2026-08-19-product-evidence-pipeline-implementation.md`.
+2. Execute `docs/superpowers/plans/2026-08-19-product-detail-ui-implementation.md` only after plan 2.
+3. With explicit production access/approval, complete `PENDING.md` B1/B2: configure the distinct
    secret, deploy/apply migration 0013, verify the first hashed visit starts collection, observe the
    seven-day gate, and verify hourly rollup/refresh scheduling. None is complete yet.
 
@@ -268,13 +351,19 @@ Comments, reply depth, and unified user login remain phase two by design, not un
 ```bash
 cd /Users/jr/Desktop/projects/nomorevibe
 git status --short
+git diff --check
+npm test
+npm run test:integration
+npx tsc --noEmit
+npm run lint
+npm run build
+
+# Local visual review only; do not stop an unrelated server on port 3000.
+npm run start -- -p 43125
+open http://localhost:43125/rankings/2026-W34
+
+# Continue with plan 2 only after reviewing repository state.
 git log --oneline -10
 git diff --check
-git add README.md PENDING.md docs/CODEX_HANDOFF.md
-git diff --cached --name-only
-git commit -m "docs: operate unique visitor rankings"
-git status --short
-
-# Do not deploy or migrate production without access and explicit authorization.
 sed -n '1,760p' docs/superpowers/plans/2026-08-19-product-evidence-pipeline-implementation.md
 ```

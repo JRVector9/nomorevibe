@@ -24,10 +24,10 @@ export function SettingsDriftNotice({ drift }: { drift: SettingsDrift }) {
       <Panel
         tone="warn"
         title="저장된 기준이 기본값과 다릅니다"
-        actions={<span className="text-[12.5px] text-fg-2">{drift.length}항목</span>}
+        actions={<span className="text-[13px] text-fg-2">{drift.length}항목</span>}
         note="기준을 한 번 저장하면 그 값이 코드 기본값을 덮습니다. 판정 규칙을 고쳐 기본값이 바뀌어도 여기는 옛 값으로 돕니다. 일부러 조정한 것이면 그대로 두세요."
       >
-      <dl className="flex flex-col gap-2 text-[12px]">
+      <dl className="flex flex-col gap-2 text-[13px]">
         {drift.map((item) => (
           <div key={item.label} className="flex flex-wrap items-baseline gap-x-2">
             <dt className="w-[110px] shrink-0 font-semibold text-fg-2">{item.label}</dt>
@@ -41,13 +41,13 @@ export function SettingsDriftNotice({ drift }: { drift: SettingsDrift }) {
         <button
           type="submit"
           disabled={pending}
-          className="rounded-lg border border-line bg-bg-soft px-3 py-1.5 text-[12.5px] font-semibold text-fg-2 hover:text-fg disabled:opacity-50"
+          className="rounded-lg border border-line bg-bg-soft px-3 py-1.5 text-[13px] font-semibold text-fg-2 hover:text-fg disabled:opacity-50"
         >
           {pending ? "되돌리는 중…" : "기본값으로 되돌리기"}
         </button>
-        <span className="ml-2 text-[11.5px] text-fg-3">수집 스위치는 건드리지 않습니다</span>
+        <span className="ml-2 text-[13px] text-fg-3">수집 스위치는 건드리지 않습니다</span>
       </form>
-      {state?.issues && <p className="mt-2 text-[12px] text-down">{state.issues.join(", ")}</p>}
+      {state?.issues && <p className="mt-2 text-[13px] text-down">{state.issues.join(", ")}</p>}
       </Panel>
     </div>
   );

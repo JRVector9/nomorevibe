@@ -25,7 +25,7 @@ export default function LaunchPage() {
             <span className="h-2.5 w-2.5 rounded-full bg-[#ea3943]" />
             <span className="h-2.5 w-2.5 rounded-full bg-[#f6b73c]" />
             <span className="h-2.5 w-2.5 rounded-full bg-[#16c784]" />
-            <span className="ml-2.5 font-mono text-[11px] text-fg-3">스킬 설치</span>
+            <span className="ml-2.5 font-mono text-[13px] text-fg-3">스킬 설치</span>
           </div>
           <div className="px-6 py-5 font-mono text-[13px] leading-8 text-fg-2">
             <span className="font-bold text-fg">
@@ -65,9 +65,9 @@ export default function LaunchPage() {
           },
         ].map((s) => (
           <div key={s.n} className="rounded-[14px] border border-line bg-bg-card p-[22px]">
-            <div className="font-mono text-xs font-bold text-accent">{s.n}</div>
+            <div className="font-mono text-[13px] font-bold text-accent">{s.n}</div>
             <h3 className="mt-2 text-[15px] font-bold">{s.title}</h3>
-            <p className="mt-2 text-[12.5px] leading-[1.7] text-fg-2">{s.body}</p>
+            <p className="mt-2 text-[13px] leading-[1.7] text-fg-2">{s.body}</p>
           </div>
         ))}
       </section>

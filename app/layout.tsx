@@ -31,7 +31,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               href="/"
               className="flex shrink-0 items-center gap-2 text-[17px] font-extrabold tracking-tight sm:text-[19px]"
             >
-              <span className="inline-flex h-[22px] w-[22px] items-center justify-center rounded-[7px] bg-gradient-to-br from-accent to-[#4f9dff] text-xs">
+              <span className="inline-flex h-[22px] w-[22px] items-center justify-center rounded-[7px] bg-gradient-to-br from-accent to-[#4f9dff] text-[13px]">
                 ◉
               </span>
               NoMoreVibe
@@ -62,7 +62,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           </div>
         </header>
         <div className="flex-1">{children}</div>
-        <footer className="border-t border-line py-9 text-[12.5px] text-fg-3">
+        <footer className="border-t border-line py-9 text-[13px] text-fg-3">
           <div className="mx-auto max-w-[1280px] px-6">
             NoMoreVibe — AI로 만든 제품의 마켓 데이터베이스. 우리가 직접 확인한 것만 보여줍니다.
           </div>

@@ -24,7 +24,7 @@ export function StatusBadge({
   size?: "sm" | "md";
 }) {
   const md = size === "md";
-  const shell = md ? "rounded-full px-2.5 py-0.5 text-[11px] border" : "text-[11px]";
+  const shell = md ? "rounded-full px-2.5 py-0.5 text-[13px] border" : "text-[13px]";
 
   if (status === "verified") {
     return (
@@ -61,7 +61,7 @@ export function BuilderBadge({ builder, claim }: { builder: string; claim: Build
   const guessed = claim === "guessed";
   return (
     <span
-      className={`rounded-full px-2 py-0.5 text-[10.5px] font-semibold ${
+      className={`rounded-full px-2 py-0.5 text-[13px] font-semibold ${
         guessed
           ? "border border-line bg-bg-soft text-fg-2"
           : "border border-accent/35 bg-accent-soft text-accent"

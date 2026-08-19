@@ -30,18 +30,18 @@ export function ProductRow({ product }: { product: AdminProduct }) {
         <a href={`/p/${product.slug}`} target="_blank" rel="noreferrer noopener" className="text-[14px] font-bold hover:text-accent">
           {product.name}
         </a>
-        <span className="text-[11.5px] font-semibold text-fg-3">
+        <span className="text-[13px] font-semibold text-fg-3">
           {STATUS_LABELS[product.status] ?? product.status}
           {product.source === "crawler" && " · 수집"}
         </span>
-        <span className="ml-auto font-mono text-[11.5px] text-fg-3">{product.listedAt}</span>
+        <span className="ml-auto font-mono text-[13px] text-fg-3">{product.listedAt}</span>
       </div>
 
       <a
         href={product.url}
         target="_blank"
         rel="noreferrer noopener"
-        className="mt-1 block text-[12.5px] text-fg-2 hover:text-accent"
+        className="mt-1 block text-[13px] text-fg-2 hover:text-accent"
       >
         {product.url.replace(/^https?:\/\//, "")}
       </a>
@@ -53,17 +53,17 @@ export function ProductRow({ product }: { product: AdminProduct }) {
           name="action"
           value={banned ? "unban" : "ban"}
           disabled={pending}
-          className={`rounded-lg border px-3 py-1.5 text-[12.5px] font-semibold disabled:opacity-50 ${
+          className={`rounded-lg border px-3 py-1.5 text-[13px] font-semibold disabled:opacity-50 ${
             banned ? "border-line text-fg-2 hover:text-fg" : "border-down/40 bg-down/10 text-down"
           }`}
         >
           {banned ? "차단 해제" : "차단"}
         </button>
-        <span className="text-[11.5px] text-fg-3">
+        <span className="text-[13px] text-fg-3">
           {banned ? "차단 전 상태로 되돌립니다" : "행은 남아 같은 URL의 재등록·재수집을 막습니다"}
         </span>
       </form>
-      {state?.error && <p className="mt-2 text-[12px] text-down">{state.error}</p>}
+      {state?.error && <p className="mt-2 text-[13px] text-down">{state.error}</p>}
     </li>
   );
 }

@@ -61,7 +61,7 @@ function Counts({ counts, empty }: { counts: Record<string, number>; empty: stri
     <dl className="flex flex-wrap gap-x-6 gap-y-2">
       {rows.map(([key, count]) => (
         <div key={key} className="flex items-baseline gap-2">
-          <dt className="text-[12.5px] text-fg-2">{STATE_LABELS[key] ?? key}</dt>
+          <dt className="text-[13px] text-fg-2">{STATE_LABELS[key] ?? key}</dt>
           <dd className="font-mono text-[14px] font-bold">{count.toLocaleString("ko-KR")}</dd>
         </div>
       ))}
@@ -101,7 +101,7 @@ export default async function StatusPage() {
     <main className="mx-auto max-w-[900px] px-6 pb-20">
       <div className="flex flex-wrap items-baseline gap-3 pt-9">
         <h1 className="text-[26px] font-extrabold tracking-tight">수집 현황</h1>
-        <span className="text-[12.5px] font-semibold">
+        <span className="text-[13px] font-semibold">
           {settings.enabled ? <span className="text-up">수집 켜짐</span> : <span className="text-fg-3">수집 꺼짐</span>}
         </span>
         <div className="ml-auto">
@@ -116,7 +116,7 @@ export default async function StatusPage() {
         >
           {/* 좁은 화면에서 표가 밀려 나가지 않게 감싼다 */}
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[420px] text-[12.5px]">
+            <table className="w-full min-w-[420px] text-[13px]">
               <thead className="text-fg-3">
                 <tr className="text-left">
                   <th className="pb-2 font-medium">이름</th>
@@ -144,7 +144,7 @@ export default async function StatusPage() {
           {jobStates
             .filter((job) => job.lastError)
             .map((job) => (
-              <p key={job.name} className="mt-3 rounded-[10px] border border-down/40 bg-down/10 px-3 py-2 text-[12px] text-down">
+              <p key={job.name} className="mt-3 rounded-[10px] border border-down/40 bg-down/10 px-3 py-2 text-[13px] text-down">
                 <span className="font-mono font-semibold">{job.name}</span> {job.lastError}
               </p>
             ))}
@@ -155,7 +155,7 @@ export default async function StatusPage() {
           note="작업 실행 상태는 위 표의 ranking-refresh 한 곳에서만 확인하고, 여기서는 마지막으로 저장된 시즌 결과의 나이만 봅니다."
         >
           {rankingSeason ? (
-            <dl className="flex flex-wrap gap-x-8 gap-y-3 text-[12.5px]">
+            <dl className="flex flex-wrap gap-x-8 gap-y-3 text-[13px]">
               <div>
                 <dt className="text-fg-3">현재 시즌</dt>
                 <dd className="mt-1 font-mono font-semibold">{rankingSeason.key}</dd>
@@ -186,13 +186,13 @@ export default async function StatusPage() {
             title="응답하지 않는 제품"
             note={`${DOWN_THRESHOLD}회 넘게 연속으로 실패한 것입니다. 자동으로 내리지 않습니다 — 배포가 잠깐 흔들린 것과 서비스가 끝난 것을 응답 코드만으로 가를 수 없습니다.`}
           >
-            <ul className="flex flex-col gap-1.5 text-[12.5px]">
+            <ul className="flex flex-col gap-1.5 text-[13px]">
               {down.map((item) => (
                 <li key={item.slug} className="flex flex-wrap items-baseline gap-x-2">
                   <a href={`/p/${item.slug}`} className="font-semibold hover:text-accent">
                     {item.name}
                   </a>
-                  <span className="font-mono text-[11.5px] text-fg-3">
+                  <span className="font-mono text-[13px] text-fg-3">
                     {item.status === 0 ? "접속 실패" : `HTTP ${item.status}`} · {item.failures}회 연속
                     {item.downSince && ` · ${when(item.downSince)}부터`}
                   </span>
@@ -215,7 +215,7 @@ export default async function StatusPage() {
             title="많이 눌린 제품 (30일)"
             note="하루 단위로 굴린 집계입니다. 원천은 35일이면 지우므로 오래된 구간은 여기서만 볼 수 있습니다."
           >
-            <ul className="flex flex-col gap-1.5 text-[12.5px]">
+            <ul className="flex flex-col gap-1.5 text-[13px]">
               {topClicked.map((item) => (
                 <li key={item.slug} className="flex items-baseline gap-2">
                   <a href={`/p/${item.slug}`} className="font-semibold hover:text-accent">
@@ -236,7 +236,7 @@ export default async function StatusPage() {
             <p className="text-[13px] text-fg-3">아직 판정한 것이 없습니다.</p>
           ) : (
             <div className="overflow-x-auto">
-              <table className="w-full min-w-[420px] text-[12.5px]">
+              <table className="w-full min-w-[420px] text-[13px]">
                 <thead className="text-fg-3">
                   <tr className="text-left">
                     <th className="pb-2 font-medium">신호</th>
@@ -271,7 +271,7 @@ export default async function StatusPage() {
           ) : (
             <ul className="flex flex-col gap-1.5">
               {rejections.map((row) => (
-                <li key={row.reason} className="flex items-center gap-3 text-[12.5px]">
+                <li key={row.reason} className="flex items-center gap-3 text-[13px]">
                   <span className="w-[150px] shrink-0 text-fg-2">{REASON_LABELS[row.reason] ?? row.reason}</span>
                   <span className="h-[6px] rounded-full bg-accent/60" style={{ width: `${(row.count / rejectedTotal) * 60}%` }} />
                   <span className="font-mono text-fg-3">

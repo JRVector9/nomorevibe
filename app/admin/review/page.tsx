@@ -27,7 +27,7 @@ export default async function ReviewPage() {
     <main className="mx-auto max-w-[900px] px-6 pb-20">
       <div className="flex flex-wrap items-baseline gap-3 pt-9">
         <h1 className="text-[26px] font-extrabold tracking-tight">심사 큐</h1>
-        <span className="text-[12.5px] text-fg-3">{candidates.length}건</span>
+        <span className="text-[13px] text-fg-3">{candidates.length}건</span>
         <div className="ml-auto">
           <AdminNav current="/admin/review" />
         </div>
@@ -41,9 +41,9 @@ export default async function ReviewPage() {
       {takedowns.length > 0 && (
         <section className="mt-6">
           <h2 className="text-[15px] font-bold">
-            내려달라는 요청 <span className="ml-1 text-[12.5px] font-semibold text-down">{takedowns.length}</span>
+            내려달라는 요청 <span className="ml-1 text-[13px] font-semibold text-down">{takedowns.length}</span>
           </h2>
-          <p className="mt-1.5 max-w-[68ch] text-[12.5px] leading-[1.7] text-fg-2">
+          <p className="mt-1.5 max-w-[68ch] text-[13px] leading-[1.7] text-fg-2">
             우리가 대신 올린 제품의 주인이 내려달라고 한 것입니다. 먼저 처리합니다. 내리면 행은 남고
             차단 상태가 되어 수집기가 같은 URL을 다시 주워 오지 않습니다.
           </p>

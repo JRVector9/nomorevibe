@@ -37,7 +37,7 @@ export default async function AdminProductsPage({ searchParams }: Props) {
     <main className="mx-auto max-w-[900px] px-6 pb-20">
       <div className="flex flex-wrap items-baseline gap-3 pt-9">
         <h1 className="text-[26px] font-extrabold tracking-tight">제품</h1>
-        <span className="text-[12.5px] text-fg-3">{products.length}건</span>
+        <span className="text-[13px] text-fg-3">{products.length}건</span>
         <div className="ml-auto">
           <AdminNav current="/admin/products" />
         </div>
@@ -48,7 +48,7 @@ export default async function AdminProductsPage({ searchParams }: Props) {
           <Link
             key={name}
             href={name === "전체" ? "/admin/products" : `/admin/products?filter=${encodeURIComponent(name)}`}
-            className={`rounded-lg border px-3 py-1.5 text-[12.5px] font-semibold ${
+            className={`rounded-lg border px-3 py-1.5 text-[13px] font-semibold ${
               name === active ? "border-accent text-accent" : "border-line text-fg-2 hover:text-fg"
             }`}
           >

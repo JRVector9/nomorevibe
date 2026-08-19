@@ -26,7 +26,7 @@ export function ProductCard({ product, rank }: { product: ProductListItem; rank?
       className="flex items-center gap-4 border-b border-line bg-bg-card px-5 py-4 transition-colors last:border-b-0 hover:bg-bg-hover"
     >
       {rank !== undefined && (
-        <span className="hidden w-5 shrink-0 text-right font-mono text-[12px] font-semibold text-fg-3 sm:block">
+        <span className="hidden w-5 shrink-0 text-right font-mono text-[13px] font-semibold text-fg-3 sm:block">
           {rank}
         </span>
       )}
@@ -37,12 +37,12 @@ export function ProductCard({ product, rank }: { product: ProductListItem; rank?
           <span className="truncate text-[14.5px] font-bold">{product.name}</span>
           <StatusBadge status={product.status} unclaimed={product.unclaimed} />
           {health?.down && (
-            <span className="shrink-0 rounded-full border border-down/40 bg-down/10 px-2 py-0.5 text-[10.5px] font-semibold text-down">
+            <span className="shrink-0 rounded-full border border-down/40 bg-down/10 px-2 py-0.5 text-[13px] font-semibold text-down">
               {downFor(health.since)}
             </span>
           )}
         </div>
-        <div className="mt-0.5 truncate text-xs text-fg-3">{product.tagline}</div>
+        <div className="mt-0.5 truncate text-[13px] text-fg-3">{product.tagline}</div>
         <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
           <Tag>{product.category}</Tag>
           {product.builder && <BuilderBadge builder={product.builder} claim={product.builderClaim} />}
@@ -52,9 +52,9 @@ export function ProductCard({ product, rank }: { product: ProductListItem; rank?
         </div>
       </div>
 
-      <div className="hidden shrink-0 text-right text-xs text-fg-3 sm:block">
+      <div className="hidden shrink-0 text-right text-[13px] text-fg-3 sm:block">
         {metrics && metrics.clicks > 0 && (
-          <div className="font-mono text-[12px] font-bold text-fg-2">
+          <div className="font-mono text-[13px] font-bold text-fg-2">
             {metrics.clicks}
             {metrics.changePercent !== null && metrics.changePercent !== 0 && (
               <span className={metrics.changePercent > 0 ? "ml-1 text-up" : "ml-1 text-down"}>

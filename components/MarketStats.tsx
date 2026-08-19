@@ -11,11 +11,11 @@ const FORMAT = new Intl.NumberFormat("ko-KR");
 function Stat({ label, value, note }: { label: string; value: number; note?: string }) {
   return (
     <div className="flex-1 border-r border-line px-[22px] py-[18px] last:border-r-0">
-      <div className="text-[11.5px] font-semibold text-fg-3">{label}</div>
+      <div className="text-[13px] font-semibold text-fg-3">{label}</div>
       <div className="mt-1 font-mono text-[22px] font-extrabold tracking-tight">
         {FORMAT.format(value)}
       </div>
-      {note && <div className="mt-0.5 text-[12px] font-semibold text-fg-2">{note}</div>}
+      {note && <div className="mt-0.5 text-[13px] font-semibold text-fg-2">{note}</div>}
     </div>
   );
 }
