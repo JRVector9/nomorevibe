@@ -239,11 +239,14 @@ describe("seasonal ranking refresh", () => {
   });
 
   it("normalizes legacy policy snapshots and still keeps zero-visit candidates", async () => {
-    const { scoring: _scoring, ...legacyPolicyWithTrendDefault } = DEFAULT_RANKING_POLICY;
-    const {
-      minimumPreviousUniqueVisitors: _minimumPreviousUniqueVisitors,
-      ...legacyTrend
-    } = legacyPolicyWithTrendDefault.trend;
+    const legacyPolicyWithTrendDefault = Object.fromEntries(
+      Object.entries(DEFAULT_RANKING_POLICY).filter(([key]) => key !== "scoring"),
+    );
+    const legacyTrend = Object.fromEntries(
+      Object.entries(DEFAULT_RANKING_POLICY.trend).filter(
+        ([key]) => key !== "minimumPreviousUniqueVisitors",
+      ),
+    );
     const legacyPolicy = { ...legacyPolicyWithTrendDefault, trend: legacyTrend };
     const [revision] = await db.insert(rankingPolicyRevisions).values({
       values: legacyPolicy as never,
