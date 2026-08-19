@@ -1,6 +1,11 @@
 import { and, asc, desc, eq, gte, inArray, isNotNull, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { products, productHealth, type ProductHealth } from "@/lib/db/schema";
+import {
+  products,
+  productHealth,
+  productHealthDaily,
+  type ProductHealth,
+} from "@/lib/db/schema";
 
 /**
  * 제품 생존 확인.
@@ -45,29 +50,111 @@ export async function nextToCheck(limit: number): Promise<PingTarget[]> {
 }
 
 /** 확인 결과 기록. 2xx·3xx면 살아 있는 것으로 본다 */
-export async function recordPing(slug: string, status: number): Promise<void> {
+export async function recordPing(
+  slug: string,
+  status: number,
+  latencyMs: number | null = null,
+  observedAt = new Date(),
+): Promise<void> {
   const alive = status >= 200 && status < 400;
-  const now = new Date();
+  if (!Number.isFinite(observedAt.getTime())) throw new Error("invalid ping timestamp");
+  const successfulLatency = alive && latencyMs !== null
+    ? Math.max(0, Math.min(2_147_483_647, Math.round(latencyMs)))
+    : null;
+  const day = new Date(observedAt.getTime() + 9 * 60 * 60 * 1000).toISOString().slice(0, 10);
 
-  await db
-    .insert(productHealth)
-    .values({
-      slug,
-      checkedAt: now,
-      status,
-      failures: alive ? 0 : 1,
-      downSince: alive ? null : now,
-    })
-    .onConflictDoUpdate({
-      target: productHealth.slug,
-      set: {
-        checkedAt: now,
+  await db.transaction(async (tx) => {
+    await tx
+      .insert(productHealth)
+      .values({
+        slug,
+        checkedAt: observedAt,
         status,
-        failures: alive ? sql`0` : sql`${productHealth.failures} + 1`,
-        // 죽기 시작한 시각은 처음 실패한 때로 둔다 — 매번 갱신하면 얼마나 죽어 있었는지 잃는다
-        downSince: alive ? sql`null` : sql`coalesce(${productHealth.downSince}, ${now.toISOString()}::timestamp)`,
+        latencyMs: successfulLatency,
+        failures: alive ? 0 : 1,
+        downSince: alive ? null : observedAt,
+      })
+      .onConflictDoUpdate({
+        target: productHealth.slug,
+        set: {
+          checkedAt: observedAt,
+          status,
+          latencyMs: successfulLatency,
+          failures: alive ? sql`0` : sql`${productHealth.failures} + 1`,
+          // 죽기 시작한 시각은 처음 실패한 때로 둔다 — 매번 갱신하면 얼마나 죽어 있었는지 잃는다
+          downSince: alive
+            ? sql`null`
+            : sql`coalesce(${productHealth.downSince}, ${observedAt.toISOString()}::timestamp)`,
+        },
+      });
+    await tx.insert(productHealthDaily).values({
+      slug,
+      day,
+      checks: 1,
+      successes: alive ? 1 : 0,
+      latencyTotalMs: successfulLatency ?? 0,
+      latencySamples: successfulLatency === null ? 0 : 1,
+    }).onConflictDoUpdate({
+      target: [productHealthDaily.slug, productHealthDaily.day],
+      set: {
+        checks: sql`${productHealthDaily.checks} + 1`,
+        successes: sql`${productHealthDaily.successes} + ${alive ? 1 : 0}`,
+        latencyTotalMs: sql`${productHealthDaily.latencyTotalMs} + ${successfulLatency ?? 0}`,
+        latencySamples: sql`${productHealthDaily.latencySamples} + ${successfulLatency === null ? 0 : 1}`,
       },
     });
+  });
+}
+
+export type ProductHealthMetrics = {
+  latencyMs: number | null;
+  uptimePercent: number | null;
+};
+
+export async function healthMetrics(
+  slugInputs: string[],
+  days = 30,
+  now = new Date(),
+): Promise<Map<string, ProductHealthMetrics>> {
+  if (!Number.isInteger(days) || days < 1 || days > 365) throw new Error("invalid health window");
+  if (!Number.isFinite(now.getTime())) throw new Error("invalid health timestamp");
+  const slugs = [...new Set(slugInputs)];
+  const metrics = new Map<string, ProductHealthMetrics>(slugs.map((slug) => [slug, {
+    latencyMs: null,
+    uptimePercent: null,
+  }]));
+  const cutoffInstant = new Date(now.getTime() + 9 * 60 * 60 * 1000);
+  cutoffInstant.setUTCDate(cutoffInstant.getUTCDate() - days + 1);
+  const cutoffDay = cutoffInstant.toISOString().slice(0, 10);
+
+  for (let offset = 0; offset < slugs.length; offset += 1_000) {
+    const batch = slugs.slice(offset, offset + 1_000);
+    const [current, daily] = await Promise.all([
+      db.select({ slug: productHealth.slug, latencyMs: productHealth.latencyMs })
+        .from(productHealth)
+        .where(inArray(productHealth.slug, batch)),
+      db.select({
+        slug: productHealthDaily.slug,
+        checks: sql<number>`sum(${productHealthDaily.checks})::integer`,
+        successes: sql<number>`sum(${productHealthDaily.successes})::integer`,
+      })
+        .from(productHealthDaily)
+        .where(and(
+          inArray(productHealthDaily.slug, batch),
+          gte(productHealthDaily.day, cutoffDay),
+        ))
+        .groupBy(productHealthDaily.slug),
+    ]);
+    for (const row of current) {
+      metrics.get(row.slug)!.latencyMs = row.latencyMs;
+    }
+    for (const row of daily) {
+      metrics.get(row.slug)!.uptimePercent = row.checks > 0
+        ? Math.round((row.successes / row.checks) * 1_000) / 10
+        : null;
+    }
+  }
+  return metrics;
 }
 
 /**

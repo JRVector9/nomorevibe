@@ -33,10 +33,12 @@ export async function pingProducts(ctx: JobContext<null>): Promise<JobOutcome<nu
     // 본문은 읽지 않는다. 살아 있는지만 보는데 매번 페이지를 통째로 받을 이유가 없다.
     // 다만 GET이라 본문 스트림이 열린 채로 온다 — 취소하지 않으면 연결이 풀로 돌아가지
     // 않고 버퍼가 남는다. 10분마다 15건이면 조용히 쌓인다.
+    const startedAt = performance.now();
     const fetched = await safeFetch(target.url);
+    const latencyMs = Math.max(0, Math.round(performance.now() - startedAt));
     const status = fetched?.response.status ?? 0;
     await fetched?.response.body?.cancel().catch(() => {});
-    await recordPing(target.slug, status);
+    await recordPing(target.slug, status, fetched ? latencyMs : null);
 
     if (status >= 200 && status < 400) alive++;
     else down++;

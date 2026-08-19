@@ -3,6 +3,7 @@ import { eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { jobs } from "@/lib/db/schema";
 import { runJob, getJobState, listJobStates } from "@/lib/jobs/runner";
+import { JOBS } from "@/lib/jobs/registry";
 import { ensureSchema } from "./setup";
 
 beforeAll(() => ensureSchema());
@@ -150,6 +151,10 @@ describe("runJob — 실패 기록", () => {
 });
 
 describe("listJobStates — 현황 화면이 읽는 것", () => {
+  it("registers the bounded product evidence refresh job", () => {
+    expect(JOBS["product-evidence-refresh"]).toBeTypeOf("function");
+  });
+
   it("한 번도 안 돈 작업은 행이 없다", async () => {
     // 화면이 "실행 기록 없음"과 "돌다 실패함"을 갈라 보여줘야 하므로 여기서 채우지 않는다
     expect(await listJobStates()).toEqual([]);

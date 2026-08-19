@@ -8,9 +8,9 @@ vi.mock("@/lib/net/fetch", () => ({
 }));
 
 const { db } = await import("@/lib/db");
-const { productHealth, jobs } = await import("@/lib/db/schema");
+const { productHealth, productHealthDaily, jobs } = await import("@/lib/db/schema");
 const repo = await import("@/lib/domain/products/repository");
-const { nextToCheck, recordPing, downProducts, RECHECK_AFTER_MINUTES } = await import(
+const { nextToCheck, recordPing, downProducts, healthMetrics, RECHECK_AFTER_MINUTES } = await import(
   "@/lib/domain/products/health"
 );
 const { pingProducts } = await import("@/lib/jobs/products/uptime");
@@ -148,5 +148,61 @@ describe("생존 확인", () => {
     alive();
     expect(await runJob("uptime-ping", pingProducts)).toMatchObject({ done: true });
     expect(safeFetch).not.toHaveBeenCalled();
+  });
+
+  it("KST 일별 성공률과 성공 응답 지연시간을 원자적으로 집계한다", async () => {
+    await product("a", "https://a.test");
+    await product("b", "https://b.test");
+    const firstDay = new Date("2026-08-19T14:59:00.000Z");
+    const secondDay = new Date("2026-08-19T15:01:00.000Z");
+
+    await recordPing("a", 200, 120, firstDay);
+    await recordPing("a", 503, null, firstDay);
+    await recordPing("a", 204, 80, secondDay);
+
+    expect(await db.select().from(productHealthDaily)).toEqual([
+      {
+        slug: "a",
+        day: "2026-08-19",
+        checks: 2,
+        successes: 1,
+        latencyTotalMs: 120,
+        latencySamples: 1,
+      },
+      {
+        slug: "a",
+        day: "2026-08-20",
+        checks: 1,
+        successes: 1,
+        latencyTotalMs: 80,
+        latencySamples: 1,
+      },
+    ]);
+
+    const metrics = await healthMetrics(["a", "b"], 30, secondDay);
+    expect(metrics.get("a")).toEqual({ latencyMs: 80, uptimePercent: 66.7 });
+    expect(metrics.get("b")).toEqual({ latencyMs: null, uptimePercent: null });
+  });
+
+  it("잡이 monotonic clock으로 측정한 성공 latency를 기록한다", async () => {
+    await product("a", "https://a.test");
+    const clock = vi.spyOn(performance, "now")
+      .mockReturnValueOnce(100)
+      .mockReturnValueOnce(157);
+    const cancel = vi.fn().mockResolvedValue(undefined);
+    safeFetch.mockResolvedValue({ finalUrl: "x", response: { status: 200, body: { cancel } } });
+    try {
+      await runJob("uptime-ping", pingProducts);
+    } finally {
+      clock.mockRestore();
+    }
+
+    expect((await db.select().from(productHealth))[0].latencyMs).toBe(57);
+    expect((await db.select().from(productHealthDaily))[0]).toMatchObject({
+      checks: 1,
+      successes: 1,
+      latencyTotalMs: 57,
+      latencySamples: 1,
+    });
   });
 });
