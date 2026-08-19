@@ -10,6 +10,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:integration": "vitest run --config vitest.integration.config.ts",
+    "test:e2e": "playwright test",
+    "test:e2e:product": "playwright test tests/e2e/product-detail.spec.ts",
     "job": "tsx --env-file=.env.local scripts/run-job.ts",
     "crawl:sample": "tsx scripts/crawl-sample.ts",
     "crawl:rejudge": "tsx scripts/rejudge.ts"
@@ -22,11 +24,15 @@
     "postgres": "^3.4.9",
     "react": "19.2.8",
     "react-dom": "19.2.8",
+    "react-markdown": "^10.1.0",
+    "rehype-sanitize": "^6.0.0",
+    "remark-gfm": "^4.0.1",
     "sharp": "^0.35.3",
     "undici": "^8.10.0",
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@playwright/test": "^1.62.1",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
     "@types/react": "^19",

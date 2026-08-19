@@ -99,6 +99,18 @@ Task 8 commit files:
   the platform schedule and `/admin/status`; missing entries should be added without duplicating
   existing ones.
 
+Plan 3 local Next.js 16 guidance read before implementation:
+
+- Route Handler mutation methods are uncached, dynamic segment params are promises, and generated
+  `RouteContext<"/path/[param]">` types are available only after `next typegen`, dev, or build.
+- `cookies()` is asynchronous; cookie mutation is limited to Route Handlers or Server Functions and
+  must happen before response streaming starts.
+- Direct ORM reads belong in Server Components, but authorization still applies. The detail model
+  will use request-scoped `React.cache()` for the identity read, then eagerly start independent DB
+  reads and await them with `Promise.all`.
+- Gallery rendering will use only the internal media route with stored width/height to prevent
+  layout shift. Page rendering must not call external providers.
+
 ## Test commands and results
 
 RED regressions actually observed during Task 8/review:
@@ -191,6 +203,9 @@ Local development database state:
 - The first ban/delete regression fixture omitted its referenced `media_assets` row and failed on
   the foreign key before exercising deletion. Adding only the missing fixture row exposed the
   intended `true`-instead-of-`false` deletion failure.
+- The first `impeccable` helper lookup used its documented project-local `.Codex/...` path, which is
+  absent here. The installed global helper reported `NO_PRODUCT_MD`; `PRODUCT.md` was then derived
+  from the already approved detail specification before resuming Plan 3.
 
 ## Remaining work
 
