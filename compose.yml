@@ -36,6 +36,7 @@ services:
       # 배포 형태 검증이 목적이므로 개발 편의 스위치를 켜지 않는다.
       # ALLOW_PRIVATE_URLS를 넣으면 SSRF 가드가 꺼져 검증할 것이 없어진다.
       AUTH_SECRET: ${AUTH_SECRET:?AUTH_SECRET이 필요합니다 (openssl rand -hex 32)}
+      VISITOR_HASH_SECRET: ${VISITOR_HASH_SECRET:?VISITOR_HASH_SECRET이 필요합니다 (openssl rand -hex 32)}
       ADMIN_TOKEN: ${ADMIN_TOKEN:-local-deploy-admin}
       CRON_SECRET: ${CRON_SECRET:-local-deploy-cron}
       # 수집기가 쓴다. 없으면 시간당 60회라 seed·fetch가 성립하지 않는다

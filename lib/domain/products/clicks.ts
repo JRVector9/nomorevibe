@@ -1,7 +1,8 @@
 import { and, gte, inArray, lt, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { clickEvents, productClickDaily } from "@/lib/db/schema";
+import { clickEvents, productClickDaily, visitCollectionState } from "@/lib/db/schema";
 import { clickChangePercent } from "@/lib/domain/ranking/math";
+import { productVisitorHash } from "@/lib/domain/products/visitors";
 import { rateLimit } from "@/lib/rate-limit";
 import { logger } from "@/lib/observability/logger";
 
@@ -57,12 +58,31 @@ export function visitorId(cookie: string | undefined): string {
  */
 export async function recordClick(slug: string, visitor: string): Promise<void> {
   try {
-    const fresh = await rateLimit(`click:${slug}:${visitor}`, 1, DEDUPE_MS);
+    const hash = productVisitorHash(slug, visitor);
+    if (!hash) {
+      logger.warn("visit.hash_unavailable", { slug });
+      return;
+    }
+    await markUniqueCollectionStarted();
+    const fresh = await rateLimit(`visit:${slug}:${hash}`, 1, DEDUPE_MS);
     if (!fresh) return;
-    await db.insert(clickEvents).values({ slug });
-  } catch (error) {
-    logger.warn("click.record_failed", { slug, error });
+    await db.insert(clickEvents).values({ slug, visitorHash: hash });
+  } catch {
+    logger.warn("click.record_failed", { slug });
   }
+}
+
+async function markUniqueCollectionStarted(): Promise<void> {
+  const dbNow = sql`timezone('UTC', now())`;
+  await db
+    .insert(visitCollectionState)
+    .values({ id: 1, uniqueVisitorStartedAt: dbNow })
+    .onConflictDoUpdate({
+      target: visitCollectionState.id,
+      set: {
+        uniqueVisitorStartedAt: sql`coalesce(${visitCollectionState.uniqueVisitorStartedAt}, ${dbNow})`,
+      },
+    });
 }
 
 /** 창 안의 클릭 수 (지금부터 과거 windowMs 동안) */

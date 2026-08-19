@@ -35,8 +35,8 @@ export const GET = withRoute("products.go", async (req: Request, { params }: Par
   if (isBotAgent(req.headers.get("user-agent"))) return response;
 
   /**
-   * 방문자 구분은 우리 쿠키로 한다. IP는 프록시 설정(TRUSTED_PROXY_HOPS)에 기대는데,
-   * 기본값에서는 모든 요청이 같은 값이라 전 세계가 한 버킷으로 묶였다.
+   * 방문자 구분은 우리 쿠키로 한다. 원문은 응답 쿠키에만 쓰고, 기록 전에 제품별 HMAC으로
+   * 바꾼다. IP는 프록시 설정(TRUSTED_PROXY_HOPS)에 기대지 않는다.
    */
   const existing = (await cookies()).get(VISITOR_COOKIE)?.value;
   const visitor = visitorId(existing);

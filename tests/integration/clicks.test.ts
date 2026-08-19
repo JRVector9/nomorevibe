@@ -1,7 +1,14 @@
-import { describe, it, expect, beforeAll, beforeEach } from "vitest";
+import { createHmac } from "node:crypto";
+import { describe, it, expect, beforeAll, beforeEach, afterAll, vi } from "vitest";
 import { sql } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { clickEvents, rateLimits, productClickDaily, productHealth } from "@/lib/db/schema";
+import {
+  clickEvents,
+  rateLimits,
+  productClickDaily,
+  productHealth,
+  visitCollectionState,
+} from "@/lib/db/schema";
 import * as repo from "@/lib/domain/products/repository";
 import {
   isBotAgent,
@@ -17,6 +24,9 @@ import { getRankedList } from "@/lib/domain/products/view";
 import { marketStats } from "@/lib/domain/products/stats";
 import { recordPing } from "@/lib/domain/products/health";
 import { ensureSchema, resetTables } from "./setup";
+
+const VISITOR_HASH_SECRET = "integration-visitor-hash-secret-32-characters";
+const savedVisitorHashSecret = process.env.VISITOR_HASH_SECRET;
 
 async function product(slug = "app", url = "https://app.test") {
   await repo.insert({
@@ -36,7 +46,14 @@ async function product(slug = "app", url = "https://app.test") {
 
 const count = async () => (await db.select({ n: sql<number>`count(*)::int` }).from(clickEvents))[0].n;
 
-beforeAll(() => ensureSchema());
+beforeAll(() => {
+  process.env.VISITOR_HASH_SECRET = VISITOR_HASH_SECRET;
+  ensureSchema();
+});
+afterAll(() => {
+  if (savedVisitorHashSecret === undefined) delete process.env.VISITOR_HASH_SECRET;
+  else process.env.VISITOR_HASH_SECRET = savedVisitorHashSecret;
+});
 beforeEach(async () => {
   await db.delete(clickEvents);
   await db.delete(productClickDaily);
@@ -98,6 +115,81 @@ describe("클릭 집계", () => {
 });
 
 describe("누구의 클릭인가", () => {
+  it("원문 방문자 정보 대신 제품별 HMAC만 저장하고 제한 키로 쓴다", async () => {
+    const slug = "app";
+    const visitor = "11111111-1111-1111-1111-111111111111";
+    const expectedHash = createHmac("sha256", VISITOR_HASH_SECRET)
+      .update(slug)
+      .update("\0")
+      .update(visitor)
+      .digest("hex");
+    await product(slug);
+
+    await recordClick(slug, visitor);
+
+    const [event] = await db.select().from(clickEvents);
+    const [limit] = await db.select().from(rateLimits);
+    expect(event.visitorHash).toBe(expectedHash);
+    expect(limit.key).toBe(`visit:${slug}:${expectedHash}`);
+    expect(JSON.stringify(event)).not.toContain(visitor);
+    expect(limit.key).not.toContain(visitor);
+  });
+
+  it("비밀키가 없거나 짧으면 원문을 남기지 않고 수집을 시작하지 않는다", async () => {
+    const clientIp = "203.0.113.7";
+    const userAgent = "Mozilla/5.0 privacy-test-browser";
+    const visitor = `${clientIp}|${userAgent}`;
+    const hash = createHmac("sha256", VISITOR_HASH_SECRET)
+      .update("app")
+      .update("\0")
+      .update(visitor)
+      .digest("hex");
+    const writes: string[] = [];
+    const write = vi.spyOn(process.stdout, "write").mockImplementation((chunk) => {
+      writes.push(String(chunk));
+      return true;
+    });
+    const previousSecret = process.env.VISITOR_HASH_SECRET;
+    const previousLogLevel = process.env.LOG_LEVEL;
+    await product();
+
+    try {
+      process.env.LOG_LEVEL = "warn";
+      delete process.env.VISITOR_HASH_SECRET;
+      await recordClick("app", visitor);
+      process.env.VISITOR_HASH_SECRET = "short-secret";
+      await recordClick("app", visitor);
+    } finally {
+      if (previousSecret === undefined) delete process.env.VISITOR_HASH_SECRET;
+      else process.env.VISITOR_HASH_SECRET = previousSecret;
+      if (previousLogLevel === undefined) delete process.env.LOG_LEVEL;
+      else process.env.LOG_LEVEL = previousLogLevel;
+      write.mockRestore();
+    }
+
+    expect(await db.select().from(clickEvents)).toEqual([]);
+    expect(await db.select().from(rateLimits)).toEqual([]);
+    expect((await db.query.visitCollectionState.findFirst())?.uniqueVisitorStartedAt).toBeNull();
+    const output = writes.join("");
+    expect(output.match(/visit\.hash_unavailable/g)).toHaveLength(2);
+    for (const privateValue of [visitor, hash, clientIp, userAgent]) {
+      expect(output).not.toContain(privateValue);
+    }
+  });
+
+  it("고유 방문 수집 시작 시각은 최초 값만 유지한다", async () => {
+    const startedAt = new Date("2026-08-01T00:00:00.000Z");
+    await product();
+
+    await recordClick("app", "11111111-1111-1111-1111-111111111111");
+    expect((await db.query.visitCollectionState.findFirst())?.uniqueVisitorStartedAt).not.toBeNull();
+
+    await db.update(visitCollectionState).set({ uniqueVisitorStartedAt: startedAt });
+    await recordClick("app", "22222222-2222-2222-2222-222222222222");
+
+    expect((await db.query.visitCollectionState.findFirst())?.uniqueVisitorStartedAt).toEqual(startedAt);
+  });
+
   it("방문자 쿠키가 다르면 따로 센다", async () => {
     // 예전에는 IP로 묶었는데 TRUSTED_PROXY_HOPS 기본값(0)에서는 모두 "direct"라
     // 전 세계 방문자가 한 버킷에 들어가 제품당 10분에 한 번만 세지고 있었다
