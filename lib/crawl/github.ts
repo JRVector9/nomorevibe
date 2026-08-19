@@ -16,9 +16,30 @@ const API_ORIGIN = "https://api.github.com";
 export type GitHubFailure =
   | { kind: "rate_limited"; resetAt: Date | null }
   | { kind: "not_found" }
+  | { kind: "transport" }
+  | { kind: "invalid_response" }
   | { kind: "http"; status: number };
 
 export type GitHubResult<T> = { ok: true; value: T } | { ok: false; error: GitHubFailure };
+
+export type ConditionalRequest = { etag?: string | null; lastModified?: string | null };
+export type GitHubHttpResult<T> =
+  | {
+      ok: true;
+      status: 200;
+      value: T;
+      etag: string | null;
+      lastModified: string | null;
+      link: string | null;
+    }
+  | {
+      ok: true;
+      status: 304;
+      etag: string | null;
+      lastModified: string | null;
+      link: string | null;
+    }
+  | { ok: false; error: GitHubFailure };
 
 /** 토큰이 없으면 시간당 60회라 수집이 성립하지 않는다 — 조용히 도는 것보다 멈추는 게 낫다 */
 function requireToken(): string {
@@ -27,17 +48,51 @@ function requireToken(): string {
   return token;
 }
 
-async function request<T>(path: string): Promise<GitHubResult<T>> {
-  const res = await fetch(`${API_ORIGIN}${path}`, {
-    headers: {
-      Authorization: `Bearer ${requireToken()}`,
-      Accept: "application/vnd.github+json",
-      "user-agent": "NoMoreVibe/1.0 (+https://nomorevibe.app)",
-    },
-    signal: AbortSignal.timeout(10_000),
-  });
+export async function githubRequest<T>(
+  path: string,
+  conditional: ConditionalRequest = {},
+): Promise<GitHubHttpResult<T>> {
+  const headers: Record<string, string> = {
+    Authorization: `Bearer ${requireToken()}`,
+    Accept: "application/vnd.github+json",
+    "user-agent": "NoMoreVibe/1.0 (+https://nomorevibe.app)",
+  };
+  if (conditional.etag) headers["If-None-Match"] = conditional.etag;
+  if (conditional.lastModified) headers["If-Modified-Since"] = conditional.lastModified;
 
-  if (res.ok) return { ok: true, value: (await res.json()) as T };
+  let res: Response;
+  try {
+    res = await fetch(`${API_ORIGIN}${path}`, {
+      headers,
+      signal: AbortSignal.timeout(10_000),
+    });
+  } catch {
+    return { ok: false, error: { kind: "transport" } };
+  }
+
+  const responseHeaders = {
+    etag: res.headers.get("etag"),
+    lastModified: res.headers.get("last-modified"),
+    link: res.headers.get("link"),
+  };
+  if (res.status === 304) return { ok: true, status: 304, ...responseHeaders };
+  if (res.status === 204 && /\/contributors(?:\?|$)/.test(path)) {
+    return { ok: true, status: 200, value: [] as T, ...responseHeaders };
+  }
+  if (res.ok) {
+    let value: T;
+    try {
+      value = (await res.json()) as T;
+    } catch {
+      return { ok: false, error: { kind: "invalid_response" } };
+    }
+    return {
+      ok: true,
+      status: 200,
+      value,
+      ...responseHeaders,
+    };
+  }
 
   if (res.status === 404) return { ok: false, error: { kind: "not_found" } };
 
@@ -54,6 +109,13 @@ async function request<T>(path: string): Promise<GitHubResult<T>> {
   }
 
   return { ok: false, error: { kind: "http", status: res.status } };
+}
+
+async function request<T>(path: string): Promise<GitHubResult<T>> {
+  const result = await githubRequest<T>(path);
+  if (!result.ok) return result;
+  if (result.status === 200) return { ok: true, value: result.value };
+  return { ok: false, error: { kind: "http", status: 304 } };
 }
 
 /** 판정에 쓰는 레포 메타 원본. 가공하지 않고 그대로 보관한다 (기준이 바뀌면 다시 쓴다) */

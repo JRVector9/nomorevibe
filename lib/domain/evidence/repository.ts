@@ -6,6 +6,7 @@ import {
   productEvidenceSources,
   productLinks,
   productProfiles,
+  products,
 } from "@/lib/db/schema";
 import {
   makerLinksSchema,
@@ -61,6 +62,8 @@ const observedSourceSchema = z.object({
 }).strict();
 
 type MakerLinkInput = z.input<typeof makerLinksSchema>["links"][number];
+type EvidenceTransaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
+type EvidenceExecutor = typeof db | EvidenceTransaction;
 
 export async function saveMakerProfile(input: {
   slug: string;
@@ -146,11 +149,14 @@ export async function replaceMakerLinks(input: {
   });
 }
 
-export async function upsertObservedSource(input: unknown): Promise<void> {
+export async function upsertObservedSource(
+  input: unknown,
+  executor: EvidenceExecutor = db,
+): Promise<void> {
   const source = observedSourceSchema.parse(input);
   const now = new Date();
   if (source.state === "ok" && !source.normalizedFacts) {
-    const refreshed = await db.update(productEvidenceSources).set({
+    const refreshed = await executor.update(productEvidenceSources).set({
       provider: source.provider,
       state: "ok",
       nextAttemptAt: source.nextAttemptAt ?? now,
@@ -171,7 +177,7 @@ export async function upsertObservedSource(input: unknown): Promise<void> {
     return;
   }
 
-  await db.insert(productEvidenceSources).values({
+  await executor.insert(productEvidenceSources).values({
     slug: source.slug,
     kind: source.kind,
     provider: source.provider,
@@ -217,5 +223,63 @@ export async function upsertObservedSource(input: unknown): Promise<void> {
         : source.state === "ok" ? { lastErrorCode: null } : {}),
       updatedAt: now,
     },
+  });
+}
+
+export async function findObservedSource(input: {
+  slug: string;
+  kind: z.infer<typeof observedSourceSchema>["kind"];
+  sourceKey: string;
+}) {
+  return db.query.productEvidenceSources.findFirst({
+    where: and(
+      eq(productEvidenceSources.slug, input.slug),
+      eq(productEvidenceSources.kind, input.kind),
+      eq(productEvidenceSources.sourceKey, input.sourceKey),
+    ),
+  });
+}
+
+export async function isMakerLinkDeclared(input: {
+  slug: string;
+  kind: z.infer<typeof observedSourceSchema>["kind"];
+  normalizedKey: string;
+}): Promise<boolean> {
+  const link = await db.query.productLinks.findFirst({
+    where: and(
+      eq(productLinks.slug, input.slug),
+      eq(productLinks.kind, input.kind),
+      eq(productLinks.normalizedKey, input.normalizedKey),
+      eq(productLinks.declarationSource, "maker"),
+    ),
+    columns: { id: true },
+  });
+  return Boolean(link);
+}
+
+export async function findProductEvidenceIdentity(slug: string) {
+  return db.query.products.findFirst({
+    where: eq(products.slug, slugSchema.parse(slug)),
+    columns: { url: true },
+  });
+}
+
+export async function siteObservedRepository(input: {
+  slug: string;
+  repositoryKey: string;
+}): Promise<boolean> {
+  const sources = await db.query.productEvidenceSources.findMany({
+    where: and(
+      eq(productEvidenceSources.slug, slugSchema.parse(input.slug)),
+      eq(productEvidenceSources.provider, "product_site"),
+      eq(productEvidenceSources.state, "ok"),
+    ),
+    columns: { normalizedFacts: true },
+  });
+  return sources.some((source) => {
+    const facts = source.normalizedFacts;
+    if (!facts || facts.type !== "site_fingerprint") return false;
+    const keys = facts.repositoryKeys;
+    return Array.isArray(keys) && keys.some((key) => key === input.repositoryKey);
   });
 }

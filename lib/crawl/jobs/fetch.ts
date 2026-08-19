@@ -58,7 +58,10 @@ export async function fetchCrawlDocuments(ctx: JobContext<null>): Promise<JobOut
           skipped++;
           continue;
         }
-        await crawl.markFailed(entry.repo, `GitHub ${result.error.status}`);
+        const reason = result.error.kind === "http"
+          ? `GitHub ${result.error.status}`
+          : `GitHub ${result.error.kind}`;
+        await crawl.markFailed(entry.repo, reason);
         failed++;
         continue;
       }
