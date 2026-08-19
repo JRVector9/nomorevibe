@@ -70,7 +70,6 @@ const observedSourceSchema = z.object({
   lastErrorCode: z.string().max(80).nullish(),
 }).strict();
 
-type MakerLinkInput = z.input<typeof makerLinksSchema>["links"][number];
 type EvidenceTransaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
 type EvidenceExecutor = typeof db | EvidenceTransaction;
 
@@ -78,9 +77,10 @@ export async function saveMakerProfile(input: {
   slug: string;
   profile: unknown;
   actor: string;
+  productId?: number;
 }): Promise<void> {
   const slug = slugSchema.parse(input.slug);
-  const productId = await findProductGenerationId(slug);
+  const productId = input.productId ?? await findProductGenerationId(slug);
   if (productId === null) throw new ProductGenerationChangedError();
   const profile: MakerProfileInput = makerProfileSchema.parse(input.profile);
   const values = {
@@ -119,11 +119,12 @@ export async function saveMakerProfile(input: {
 
 export async function replaceMakerLinks(input: {
   slug: string;
-  links: MakerLinkInput[];
+  links: unknown;
   actor: string;
+  productId?: number;
 }): Promise<void> {
   const slug = slugSchema.parse(input.slug);
-  const productId = await findProductGenerationId(slug);
+  const productId = input.productId ?? await findProductGenerationId(slug);
   if (productId === null) throw new ProductGenerationChangedError();
   const { links } = makerLinksSchema.parse({ links: input.links });
 
@@ -327,9 +328,10 @@ export async function replaceProductProvenance(input: {
   provenance: unknown;
   actor: string;
   authority?: "maker" | "system";
+  productId?: number;
 }): Promise<void> {
   const slug = slugSchema.parse(input.slug);
-  const productId = await findProductGenerationId(slug);
+  const productId = input.productId ?? await findProductGenerationId(slug);
   if (productId === null) throw new ProductGenerationChangedError();
   const actor = actorSchema.parse(input.actor);
   const authority = input.authority ?? "maker";

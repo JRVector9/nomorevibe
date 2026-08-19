@@ -8,6 +8,7 @@ import {
   isNull,
   lte,
   or,
+  sql,
 } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/lib/db";
@@ -16,6 +17,7 @@ import {
   productEvidenceSources,
   productLinks,
   productMedia,
+  productMediaDeclarations,
   products,
 } from "@/lib/db/schema";
 import type { LinkKind } from "@/lib/db/product-evidence-schema";
@@ -72,6 +74,8 @@ type MediaSource = {
   sourceUrl: string;
   altText: string | null;
   position: number;
+  declarationId: number | null;
+  declarationRevision: number | null;
 };
 
 export type EvidenceSourceResult = {
@@ -179,7 +183,18 @@ export async function dueEvidenceProductSlugs(input: {
     .groupBy(productMedia.slug)
     .orderBy(asc(productMedia.slug))
     .limit(limit);
-  return [...new Set([...linkRows, ...mediaRows].map((row) => row.slug))]
+  const declarationRows = await db.select({ slug: productMediaDeclarations.slug })
+    .from(productMediaDeclarations)
+    .innerJoin(products, eq(products.slug, productMediaDeclarations.slug))
+    .where(and(
+      inArray(products.status, ["verified", "seeded"]),
+      cursor ? gt(productMediaDeclarations.slug, cursor) : undefined,
+      lte(productMediaDeclarations.nextAttemptAt, input.now),
+    ))
+    .groupBy(productMediaDeclarations.slug)
+    .orderBy(asc(productMediaDeclarations.slug))
+    .limit(limit);
+  return [...new Set([...linkRows, ...mediaRows, ...declarationRows].map((row) => row.slug))]
     .sort()
     .slice(0, limit);
 }
@@ -236,19 +251,42 @@ async function mediaSources(
   settings: EvidenceSettings,
 ): Promise<MediaSource[]> {
   const dueBefore = new Date(now.getTime() - settings.linkCheckHours * 60 * 60 * 1000);
-  return db.select({
-    productId: products.id,
-    slug: productMedia.slug,
-    sourceUrl: productMedia.sourceUrl,
-    altText: productMedia.altText,
-    position: productMedia.position,
-  }).from(productMedia)
-    .innerJoin(products, eq(products.slug, productMedia.slug))
-    .where(and(
-      eq(productMedia.slug, slug),
-      eq(productMedia.current, true),
-      force ? undefined : lte(productMedia.lastObservedAt, dueBefore),
-    )).orderBy(asc(productMedia.position), asc(productMedia.id));
+  const [declared, observed] = await Promise.all([
+    db.select({
+      productId: products.id,
+      slug: productMediaDeclarations.slug,
+      sourceUrl: productMediaDeclarations.sourceUrl,
+      altText: productMediaDeclarations.altText,
+      position: productMediaDeclarations.position,
+      declarationId: productMediaDeclarations.id,
+      declarationRevision: productMediaDeclarations.revision,
+    }).from(productMediaDeclarations)
+      .innerJoin(products, eq(products.slug, productMediaDeclarations.slug))
+      .where(and(
+        eq(productMediaDeclarations.slug, slug),
+        force ? undefined : lte(productMediaDeclarations.nextAttemptAt, now),
+      )).orderBy(asc(productMediaDeclarations.position), asc(productMediaDeclarations.id)),
+    db.select({
+      productId: products.id,
+      slug: productMedia.slug,
+      sourceUrl: productMedia.sourceUrl,
+      altText: productMedia.altText,
+      position: productMedia.position,
+      declarationId: sql<number | null>`null`,
+      declarationRevision: sql<number | null>`null`,
+    }).from(productMedia)
+      .innerJoin(products, eq(products.slug, productMedia.slug))
+      .where(and(
+        eq(productMedia.slug, slug),
+        eq(productMedia.current, true),
+        force ? undefined : lte(productMedia.lastObservedAt, dueBefore),
+      )).orderBy(asc(productMedia.position), asc(productMedia.id)),
+  ]);
+  const sources = new Map<string, MediaSource>();
+  for (const source of [...declared, ...observed]) {
+    if (!sources.has(source.sourceUrl)) sources.set(source.sourceUrl, source);
+  }
+  return [...sources.values()];
 }
 
 async function markSourceFailure(
@@ -438,6 +476,8 @@ async function collectMedia(
     asset: fetched.asset,
     observedAt: now,
     productId: source.productId,
+    declarationId: source.declarationId,
+    declarationRevision: source.declarationRevision,
   });
   return {
     factsChanged: 0,
@@ -523,6 +563,15 @@ export async function refreshProductEvidence(
     const startedAt = performance.now();
     try {
       const result = await collectMedia(source, now, dependencies);
+      if (source.declarationId !== null) {
+        await db.update(productMediaDeclarations).set({
+          nextAttemptAt: new Date(now.getTime() + settings.linkCheckHours * 60 * 60 * 1_000),
+          updatedAt: now,
+        }).where(and(
+          eq(productMediaDeclarations.id, source.declarationId),
+          eq(productMediaDeclarations.revision, source.declarationRevision!),
+        ));
+      }
       totals.mediaInserted += result.mediaInserted;
       dependencies.log?.("evidence.source_refresh", {
         sourceKind: "media",
@@ -536,6 +585,15 @@ export async function refreshProductEvidence(
       });
     } catch {
       totals.sourcesFailed += 1;
+      if (source.declarationId !== null) {
+        await db.update(productMediaDeclarations).set({
+          nextAttemptAt: new Date(now.getTime() + 6 * 60 * 60 * 1_000),
+          updatedAt: now,
+        }).where(and(
+          eq(productMediaDeclarations.id, source.declarationId),
+          eq(productMediaDeclarations.revision, source.declarationRevision!),
+        ));
+      }
       dependencies.log?.("evidence.source_refresh", {
         sourceKind: "media",
         slug,

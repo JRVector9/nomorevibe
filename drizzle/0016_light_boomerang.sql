@@ -1,0 +1,1 @@
+ALTER TABLE "product_media_declarations" ADD COLUMN "revision" integer DEFAULT 1 NOT NULL;

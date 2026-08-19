@@ -126,6 +126,22 @@ export const mediaAssets = pgTable("media_assets", {
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
+/** 메이커가 제출했고 백그라운드 수집기가 내부 자산으로 복사할 외부 이미지 URL. */
+export const productMediaDeclarations = pgTable("product_media_declarations", {
+  id: serial("id").primaryKey(),
+  slug: varchar("slug", { length: 80 }).notNull(),
+  sourceUrl: varchar("source_url", { length: 1_000 }).notNull(),
+  altText: varchar("alt_text", { length: 500 }).notNull(),
+  position: integer("position").notNull().default(0),
+  revision: integer("revision").notNull().default(1),
+  nextAttemptAt: timestamp("next_attempt_at").notNull().defaultNow(),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+}, (table) => [
+  uniqueIndex("product_media_declarations_slug_source_idx").on(table.slug, table.sourceUrl),
+  index("product_media_declarations_due_idx").on(table.nextAttemptAt, table.slug),
+]);
+
 export const productMedia = pgTable("product_media", {
   id: serial("id").primaryKey(),
   slug: varchar("slug", { length: 80 }).notNull(),
@@ -249,6 +265,7 @@ export type ProductProfile = typeof productProfiles.$inferSelect;
 export type ProductLink = typeof productLinks.$inferSelect;
 export type ProductEvidenceSource = typeof productEvidenceSources.$inferSelect;
 export type MediaAsset = typeof mediaAssets.$inferSelect;
+export type ProductMediaDeclaration = typeof productMediaDeclarations.$inferSelect;
 export type ProductMedia = typeof productMedia.$inferSelect;
 export type ProductUpdate = typeof productUpdates.$inferSelect;
 export type ProductAgent = typeof productAgents.$inferSelect;

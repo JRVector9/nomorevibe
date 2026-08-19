@@ -6,11 +6,22 @@ Execute plan 3, `docs/superpowers/plans/2026-08-19-product-detail-ui-implementat
 finished white-theme, global minimum-13px product-detail screen in the browser.
 
 Plan 2, `docs/superpowers/plans/2026-08-19-product-evidence-pipeline-implementation.md`, is complete.
-Tasks 1–7 are the commits listed below; Task 8 is the atomic commit containing this handoff. Its
-code, tests, operational docs, local migration, full matrix, RED fixes, and final narrow re-review
-are complete.
+Plan 3 Task 1 is committed and Task 2 is complete pending its atomic commit. Continue at Task 3.
 
 ## Completed work
+
+Plan 3 commits and completed phases:
+
+1. `6058fa2 test: prepare product detail browser coverage`
+2. Task 2, commit message `feat: let makers manage product evidence`:
+   authenticated/capped profile, link, media, provenance, maker-update, and refresh resource APIs;
+   transactional audit writes; asynchronous external-media declarations; maker-update tombstones;
+   per-product-generation and optional trusted-proxy IP rate limits; stale in-flight media response
+   rejection through declaration ID/revision checks.
+
+Task 2 does not add comments, login, reactions, follows, or provider I/O in request handlers.
+External gallery URLs are declarations only. The evidence job copies validated bytes into internal
+content-addressed storage before any image becomes public.
 
 Plan 2 commits:
 
@@ -54,6 +65,31 @@ Task 8 now also:
 
 ## Modified files
 
+Plan 3 Task 2 files:
+
+- `app/api/products/[slug]/maker-route.ts`
+- `app/api/products/[slug]/{profile,links,media,provenance,refresh}/route.ts`
+- `app/api/products/[slug]/updates/route.ts`
+- `app/api/products/[slug]/updates/[id]/route.ts`
+- `drizzle/0015_product_media_declarations.sql`
+- `drizzle/0016_light_boomerang.sql`
+- `drizzle/meta/0015_snapshot.json`
+- `drizzle/meta/0016_snapshot.json`
+- `drizzle/meta/_journal.json`
+- `lib/db/product-evidence-schema.ts`
+- `lib/domain/evidence/maker.ts`
+- `lib/domain/evidence/refresh.ts`
+- `lib/domain/evidence/repository.ts`
+- `lib/domain/media/repository.ts`
+- `lib/domain/products/maker-auth.ts`
+- `lib/domain/products/manage.ts`
+- `lib/domain/products/repository.ts`
+- `lib/rate-limit.ts`
+- `tests/integration/maker-evidence-api.test.ts`
+- `tests/integration/product-evidence-lifecycle.test.ts`
+- `tests/integration/setup.ts`
+- `tests/maker-evidence-routes.test.ts`
+
 Task 8 commit files:
 
 - `PENDING.md`
@@ -84,6 +120,20 @@ Task 8 commit files:
 
 ## Key design decisions
 
+- Maker mutation order is authorization, rate-limit charge, bounded body read, schema validation,
+  then transaction. Authenticated malformed and oversized bodies therefore consume quota.
+- Rate-limit product identity is immutable `products.id`, not reusable slug. A newly registered
+  same-slug generation never inherits the prior owner's exhausted bucket.
+- A raw `X-Forwarded-For` header is used only when `TRUSTED_PROXY_HOPS >= 1`. When no trusted
+  client address is available, maker routes skip the IP bucket rather than merging every tenant
+  into one global `direct` bucket; the product-generation bucket remains mandatory.
+- Media declaration rows carry a monotonically increasing revision. The collector captures
+  declaration ID/revision before network I/O and revalidates both after the product-media lock,
+  preventing removed or edited declarations from publishing a stale response.
+- Maker media replacement and collector publication share lifecycle then product-media lock order.
+- Two generated additive migrations are retained: `0015` creates declarations and `0016` adds the
+  revision used for in-flight compare-and-swap behavior.
+
 - Slug is reusable and is not identity. Long-running work captures `products.id`, then validates
   `(id, slug)` under the lifecycle advisory lock before any write.
 - Lock order is lifecycle, product-media, then sorted asset hashes.
@@ -112,6 +162,40 @@ Plan 3 local Next.js 16 guidance read before implementation:
   layout shift. Page rendering must not call external providers.
 
 ## Test commands and results
+
+Plan 3 Task 2 RED results actually observed:
+
+- initial route tests failed because the maker helper/routes did not exist;
+- initial resource integration tests failed because the APIs were absent;
+- declared gallery refresh returned `mediaInserted: 0` until declarations joined the evidence job;
+- an already-normalized link payload was parsed as a raw declaration twice and returned 500;
+- review regressions failed as expected: invalid bodies created no rate row, same-slug replacement
+  inherited a 429, and a removed in-flight gallery response was published;
+- first GREEN attempt after revision wiring failed with `ReferenceError: sql is not defined`; the
+  paused race test then timed out because collection never reached its start signal. Importing the
+  existing Drizzle `sql` helper fixed the root cause.
+
+Plan 3 Task 2 final verification actually run:
+
+```text
+npx vitest run tests/maker-evidence-routes.test.ts
+  PASS — 1 file, 2 tests
+npx vitest run --config vitest.integration.config.ts tests/integration/maker-evidence-api.test.ts
+  PASS — 1 file, 7 tests
+npx vitest run --config vitest.integration.config.ts tests/integration/maker-evidence-api.test.ts tests/integration/product-evidence-lifecycle.test.ts tests/integration/evidence-refresh.test.ts tests/integration/product-media.test.ts
+  PASS — 4 discovered files, 36 tests
+npx tsc --noEmit
+  PASS
+npm run lint
+  PASS — 0 errors, 0 warnings
+git diff --check
+  PASS
+npx drizzle-kit check
+  PASS
+```
+
+`npx drizzle-kit generate` created `0016_light_boomerang.sql`; `npx drizzle-kit migrate` applied
+the declaration revision to the local integration database. No production database was accessed.
 
 RED regressions actually observed during Task 8/review:
 
@@ -181,6 +265,16 @@ Local development database state:
 
 ## Review and failed approaches
 
+- The first Task 2 review found one P1 and three P2s: a global `direct` IP bucket, invalid-body
+  quota bypass, slug-keyed generation collision, and stale in-flight media publication. All four
+  were reproduced in RED integration tests and fixed as described above.
+- Three bounded read-only Codex re-review attempts did not return a final verdict: the first two
+  spent their three-minute windows loading the full review workflow and re-reading/rerunning broad
+  checks; the third focused run read the intended files but its final output was not returned by the
+  CLI wrapper before process exit. None is claimed as CLEAN. The repository was not modified by
+  these review attempts. A manual final diff inspection found no remaining instance of the four
+  reproduced regressions.
+
 - The installed gstack `/review` workflow cannot run because
   `.agents/skills/gstack/review/checklist.md` is absent.
 - Exact `gpt-5.6` is unsupported by this account; read-only reviews used supported
@@ -209,8 +303,9 @@ Local development database state:
 
 ## Remaining work
 
-- Execute plan 3 for the white-theme, global minimum-13px product-detail screen. Comments remain
-  phase-2 design only; no comment persistence or login integration belongs in plan 3 phase 1.
+- Execute plan 3 Tasks 3–8: evidence administration, detail read model, public media delivery,
+  white-theme detail components/page, `/nomorevibe` commands, then full review/docs/QA. Comments
+  remain phase-2 design only; no comment persistence or login integration belongs in phase 1.
 - Launch the resulting local screen and perform browser/visual QA at desktop and mobile widths.
 
 External blockers remain in `PENDING.md`: category classification API verification and production
@@ -221,7 +316,8 @@ scheduler/provider-token verification. Do not claim either complete without exte
 ```sh
 git status --short
 cat docs/superpowers/plans/2026-08-19-product-detail-ui-implementation.md
-npx vitest run tests/product-detail-page.test.tsx
+npx vitest run tests/admin-evidence.test.ts tests/evidence-admin-components.test.ts
+npx vitest run --config vitest.integration.config.ts tests/integration/evidence-admin.test.ts
 npx tsc --noEmit
 npm run lint
 npm run build

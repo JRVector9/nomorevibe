@@ -1,30 +1,16 @@
 import type { Product, ProductStatus } from "@/lib/db/schema";
 import type { UpdateInput } from "./schema";
 import { type Result, ok, fail } from "./errors";
-import { authenticate, type Credentials } from "./actor";
+import type { Credentials } from "./actor";
+import { authorizeMaker } from "./maker-auth";
 import * as repo from "./repository";
-
-/** 제품을 찾고 수정 자격을 확인한다 — 자격의 종류는 actor.ts가 안다 */
-async function authorize(slug: string, credentials: Credentials): Promise<Result<Product>> {
-  const product = await repo.findBySlug(slug);
-  if (!product) return fail({ kind: "not_found" });
-  if (product.status === "banned") return fail({ kind: "forbidden", message: "차단된 제품입니다" });
-
-  const outcome = authenticate(product, credentials);
-  if (!outcome.ok) {
-    return outcome.reason === "missing"
-      ? fail({ kind: "unauthorized", message: "X-Edit-Token 헤더가 필요합니다" })
-      : fail({ kind: "forbidden", message: "수정 키가 올바르지 않습니다" });
-  }
-  return ok(product);
-}
 
 export async function updateProduct(
   slug: string,
   credentials: Credentials,
   input: UpdateInput,
 ): Promise<Result<{ slug: string }>> {
-  const auth = await authorize(slug, credentials);
+  const auth = await authorizeMaker(slug, credentials);
   if (!auth.ok) return auth;
 
   // URL은 소유권의 기준이라 수정 대상에 없다 (스키마에서 이미 배제)
@@ -46,7 +32,7 @@ export async function deleteProduct(
   slug: string,
   credentials: Credentials,
 ): Promise<Result<{ slug: string }>> {
-  const auth = await authorize(slug, credentials);
+  const auth = await authorizeMaker(slug, credentials);
   if (!auth.ok) return auth;
 
   // slug는 다시 쓰이므로 제품 소유 데이터와 흔적을 한 트랜잭션에서 함께 지운다.

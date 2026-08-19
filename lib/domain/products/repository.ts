@@ -15,6 +15,7 @@ import {
   productEvidenceSources,
   productLinks,
   productMedia,
+  productMediaDeclarations,
   productProfiles,
   productSkills,
   productUpdates,
@@ -247,6 +248,7 @@ export async function removeProductAndEvidence(id: number, slug: string): Promis
     await tx.delete(productProfiles).where(eq(productProfiles.slug, slug));
     await tx.delete(productLinks).where(eq(productLinks.slug, slug));
     await tx.delete(productEvidenceSources).where(eq(productEvidenceSources.slug, slug));
+    await tx.delete(productMediaDeclarations).where(eq(productMediaDeclarations.slug, slug));
     await tx.delete(productMedia).where(eq(productMedia.slug, slug));
     await tx.delete(productUpdates).where(eq(productUpdates.slug, slug));
     await tx.delete(productAgents).where(eq(productAgents.slug, slug));

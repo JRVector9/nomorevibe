@@ -67,3 +67,11 @@ export function clientIp(req: Request): string {
   const index = parts.length - hops;
   return parts[Math.max(0, index)];
 }
+
+/** 신뢰 프록시가 없으면 모든 사용자를 하나의 `direct` 버킷으로 합치지 않는다. */
+export function trustedClientIp(req: Request): string | null {
+  const hops = Number(process.env.TRUSTED_PROXY_HOPS ?? "0");
+  if (!Number.isFinite(hops) || hops < 1) return null;
+  const value = clientIp(req);
+  return value === "direct" ? null : value;
+}

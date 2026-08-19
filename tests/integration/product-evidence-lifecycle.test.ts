@@ -10,6 +10,7 @@ import {
   productHealthDaily,
   productLinks,
   productMedia,
+  productMediaDeclarations,
   productProfiles,
   productSkills,
   productUpdates,
@@ -76,6 +77,11 @@ async function insertEvidence(slug: string, assetHash = SHARED_HASH) {
     current: true,
     visible: true,
   });
+  await db.insert(productMediaDeclarations).values({
+    slug,
+    sourceUrl: `https://${slug}.example/screenshot.png`,
+    altText: `${slug} screenshot`,
+  });
   await db.insert(productUpdates).values({
     slug,
     sourceKind: "github_release",
@@ -140,6 +146,7 @@ describe("product evidence lifecycle", () => {
       db.select({ count }).from(productLinks).where(eq(productLinks.slug, "delete-one")),
       db.select({ count }).from(productEvidenceSources).where(eq(productEvidenceSources.slug, "delete-one")),
       db.select({ count }).from(productMedia).where(eq(productMedia.slug, "delete-one")),
+      db.select({ count }).from(productMediaDeclarations).where(eq(productMediaDeclarations.slug, "delete-one")),
       db.select({ count }).from(productUpdates).where(eq(productUpdates.slug, "delete-one")),
       db.select({ count }).from(productAgents).where(eq(productAgents.slug, "delete-one")),
       db.select({ count }).from(productSkills).where(eq(productSkills.slug, "delete-one")),
@@ -147,7 +154,7 @@ describe("product evidence lifecycle", () => {
       db.select({ count }).from(productHealth).where(eq(productHealth.slug, "delete-one")),
       db.select({ count }).from(productHealthDaily).where(eq(productHealthDaily.slug, "delete-one")),
     ]);
-    expect(deletedCounts.map(([row]) => row.count)).toEqual(Array(10).fill(0));
+    expect(deletedCounts.map(([row]) => row.count)).toEqual(Array(11).fill(0));
     expect(await db.query.mediaAssets.findFirst({ where: eq(mediaAssets.hash, SHARED_HASH) }))
       .toBeTruthy();
     expect(await db.query.productMedia.findFirst({
@@ -187,11 +194,12 @@ describe("product evidence lifecycle", () => {
       db.select({ count }).from(productLinks).where(eq(productLinks.slug, "ban-me")),
       db.select({ count }).from(productEvidenceSources).where(eq(productEvidenceSources.slug, "ban-me")),
       db.select({ count }).from(productMedia).where(eq(productMedia.slug, "ban-me")),
+      db.select({ count }).from(productMediaDeclarations).where(eq(productMediaDeclarations.slug, "ban-me")),
       db.select({ count }).from(productUpdates).where(eq(productUpdates.slug, "ban-me")),
       db.select({ count }).from(productAgents).where(eq(productAgents.slug, "ban-me")),
       db.select({ count }).from(productSkills).where(eq(productSkills.slug, "ban-me")),
     ]);
-    expect(preservedCounts.map(([row]) => row.count)).toEqual(Array(7).fill(1));
+    expect(preservedCounts.map(([row]) => row.count)).toEqual(Array(8).fill(1));
     const audits = await db.select().from(productEvidenceAudit)
       .where(eq(productEvidenceAudit.slug, "ban-me"))
       .orderBy(asc(productEvidenceAudit.id));

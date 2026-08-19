@@ -1,7 +1,7 @@
 import { and, asc, eq, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/lib/db";
-import { mediaAssets, productMedia } from "@/lib/db/schema";
+import { mediaAssets, productMedia, productMediaDeclarations } from "@/lib/db/schema";
 import { safeHttpUrl } from "@/lib/domain/evidence/contracts";
 import { mediaAssetLock, mediaAssetValues, postgresMediaStorage } from "./postgres-storage";
 import type { NormalizedImageAsset, RelationshipMediaStorage } from "./storage";
@@ -29,6 +29,8 @@ export async function observeProductMedia(
     position: number;
     observedAt: Date;
     productId?: number;
+    declarationId?: number | null;
+    declarationRevision?: number | null;
   },
   storage: RelationshipMediaStorage = postgresMediaStorage,
 ): Promise<{
@@ -41,6 +43,11 @@ export async function observeProductMedia(
   const position = positionSchema.parse(input.position);
   const altText = normalizedAltText(input.altText);
   const productId = input.productId ?? await findProductGenerationId(slug);
+  const declarationId = input.declarationId ?? null;
+  const declarationRevision = input.declarationRevision ?? null;
+  if ((declarationId === null) !== (declarationRevision === null)) {
+    throw new Error("incomplete media declaration identity");
+  }
   if (productId === null) throw new ProductGenerationChangedError();
   if (!Number.isFinite(input.observedAt.getTime())) throw new Error("invalid observedAt");
   try {
@@ -49,6 +56,17 @@ export async function observeProductMedia(
         throw new ProductGenerationChangedError();
       }
       await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`product-media:${slug}`}))`);
+      if (declarationId !== null) {
+        const declaration = await tx.query.productMediaDeclarations.findFirst({
+          where: and(
+            eq(productMediaDeclarations.id, declarationId),
+            eq(productMediaDeclarations.slug, slug),
+            eq(productMediaDeclarations.sourceUrl, sourceUrl),
+            eq(productMediaDeclarations.revision, declarationRevision!),
+          ),
+        });
+        if (!declaration) throw new Error("media declaration changed");
+      }
       const current = await tx.query.productMedia.findFirst({
         where: and(
           eq(productMedia.slug, slug),

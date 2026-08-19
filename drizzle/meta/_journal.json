@@ -106,6 +106,20 @@
       "when": 1787131987213,
       "tag": "0014_product_evidence",
       "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "7",
+      "when": 1787152353520,
+      "tag": "0015_product_media_declarations",
+      "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1787153170140,
+      "tag": "0016_light_boomerang",
+      "breakpoints": true
     }
   ]
 }
