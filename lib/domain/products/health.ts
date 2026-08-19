@@ -103,6 +103,7 @@ export async function downProducts(limit = 50): Promise<DownProduct[]> {
       slug: productHealth.slug,
       checkedAt: productHealth.checkedAt,
       status: productHealth.status,
+      latencyMs: productHealth.latencyMs,
       failures: productHealth.failures,
       downSince: productHealth.downSince,
       name: products.name,

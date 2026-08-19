@@ -243,6 +243,8 @@ export const productHealth = pgTable("product_health", {
   checkedAt: timestamp("checked_at").notNull().defaultNow(),
   /** 마지막 응답 코드. 0이면 연결 자체가 안 됐다 */
   status: integer("status").notNull(),
+  /** 최근 정상/실패 확인의 요청 지연 시간 */
+  latencyMs: integer("latency_ms"),
   /** 연속 실패 횟수. 한 번 성공하면 0으로 돌아간다 */
   failures: integer("failures").notNull().default(0),
   /** 죽기 시작한 시각. 살아 있으면 null */
@@ -293,6 +295,7 @@ export const rateLimits = pgTable("rate_limits", {
 
 // 크롤 파이프라인 테이블 — 수집 데이터는 제품 데이터와 섞이지 않도록 파일을 나눈다
 export * from "./crawl-schema";
+export * from "./product-evidence-schema";
 
 export type Product = typeof products.$inferSelect;
 export type NewProduct = typeof products.$inferInsert;
