@@ -1,11 +1,13 @@
-import { and, eq, not, or, sql } from "drizzle-orm";
+import { and, asc, eq, not, or, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/lib/db";
 import {
   productEvidenceAudit,
   productEvidenceSources,
+  productAgents,
   productLinks,
   productProfiles,
+  productSkills,
   products,
 } from "@/lib/db/schema";
 import {
@@ -14,8 +16,10 @@ import {
   safeHttpUrl,
   type MakerProfileInput,
 } from "./contracts";
+import { EVIDENCE_LABELS, normalizeProductProvenance } from "./provenance";
 
 const slugSchema = z.string().min(1).max(80).regex(/^[a-z0-9][a-z0-9-]*$/);
+const actorSchema = z.string().min(1).max(120);
 
 const normalizedFactsSchema = z.object({
   type: z.enum([
@@ -281,5 +285,69 @@ export async function siteObservedRepository(input: {
     if (!facts || facts.type !== "site_fingerprint") return false;
     const keys = facts.repositoryKeys;
     return Array.isArray(keys) && keys.some((key) => key === input.repositoryKey);
+  });
+}
+
+export async function replaceProductProvenance(input: {
+  slug: string;
+  provenance: unknown;
+  actor: string;
+  authority?: "maker" | "system";
+}): Promise<void> {
+  const slug = slugSchema.parse(input.slug);
+  const actor = actorSchema.parse(input.actor);
+  const authority = input.authority ?? "maker";
+  const provenance = normalizeProductProvenance(input.provenance, authority);
+  await db.transaction(async (tx) => {
+    await tx.execute(sql`
+      select pg_advisory_xact_lock(hashtext(${`product-provenance:${slug}`}))
+    `);
+    await tx.delete(productAgents).where(eq(productAgents.slug, slug));
+    await tx.delete(productSkills).where(eq(productSkills.slug, slug));
+    if (provenance.agents.length > 0) {
+      await tx.insert(productAgents).values(provenance.agents.map((agent) => ({ slug, ...agent })));
+    }
+    if (provenance.skills.length > 0) {
+      await tx.insert(productSkills).values(provenance.skills.map((skill) => ({ slug, ...skill })));
+    }
+    await tx.insert(productEvidenceAudit).values({
+      slug,
+      actor,
+      action: authority === "maker" ? "maker.provenance.replace" : "system.provenance.replace",
+      metadata: {
+        agents: provenance.agents.length,
+        skills: provenance.skills.length,
+        authority,
+        evidenceLevels: [...new Set([
+          ...provenance.agents.map((agent) => agent.evidenceLevel),
+          ...provenance.skills.map((skill) => skill.evidenceLevel),
+        ])].sort(),
+      },
+    });
+  });
+}
+
+export async function listProductProvenance(slugInput: string) {
+  const slug = slugSchema.parse(slugInput);
+  return db.transaction(async (tx) => {
+    await tx.execute(sql`
+      select pg_advisory_xact_lock(hashtext(${`product-provenance:${slug}`}))
+    `);
+    const agents = await tx.select().from(productAgents)
+      .where(eq(productAgents.slug, slug))
+      .orderBy(asc(productAgents.id));
+    const skills = await tx.select().from(productSkills)
+      .where(eq(productSkills.slug, slug))
+      .orderBy(asc(productSkills.id));
+    return {
+      agents: agents.map((agent) => ({
+        ...agent,
+        evidenceLabel: EVIDENCE_LABELS[agent.evidenceLevel],
+      })),
+      skills: skills.map((skill) => ({
+        ...skill,
+        evidenceLabel: EVIDENCE_LABELS[skill.evidenceLevel],
+      })),
+    };
   });
 }
