@@ -1,10 +1,11 @@
-import type { RankingPolicy } from "./policy";
+import { DEFAULT_RANKING_POLICY, type RankingPolicy } from "./policy";
 
 export type PriorFinish = { rank: number; seasonsAgo: number };
 
 export type ScoreInput = {
   slug: string;
   validClicks: number;
+  uniqueVisitors?: number;
   factorBasisPoints: number;
   verifiedAt: Date;
 };
@@ -30,11 +31,32 @@ export function cooldownFactor(
   }, 10_000);
 }
 
-export function rankRows(rows: ScoreInput[]): RankedScore[] {
+export function rankRows(
+  rows: ScoreInput[],
+  scoring: RankingPolicy["scoring"] = DEFAULT_RANKING_POLICY.scoring,
+): RankedScore[] {
   return rows
-    .map((row) => ({ ...row, scoreUnits: row.validClicks * row.factorBasisPoints }))
+    .map((row) => {
+      if (scoring.mode === "valid_visits") {
+        return { ...row, scoreUnits: row.validClicks * row.factorBasisPoints };
+      }
+      const uniqueVisitors = row.uniqueVisitors ?? 0;
+      const extraVisits = Math.min(
+        Math.max(row.validClicks - uniqueVisitors, 0),
+        uniqueVisitors * scoring.maxExtraVisitsPerUnique,
+      );
+      const base = uniqueVisitors * 10_000
+        + extraVisits * scoring.repeatVisitWeightBasisPoints;
+      return {
+        ...row,
+        scoreUnits: Math.floor(base * row.factorBasisPoints / 10_000),
+      };
+    })
     .sort((a, b) => (
       b.scoreUnits - a.scoreUnits
+      || (scoring.mode === "unique_visitors"
+        ? (b.uniqueVisitors ?? 0) - (a.uniqueVisitors ?? 0)
+        : 0)
       || b.validClicks - a.validClicks
       || b.verifiedAt.getTime() - a.verifiedAt.getTime()
       || a.slug.localeCompare(b.slug)

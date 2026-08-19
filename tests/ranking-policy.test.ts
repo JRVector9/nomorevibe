@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   DEFAULT_RANKING_POLICY,
+  UNIQUE_FIRST_RANKING_POLICY,
+  parseRankingPolicy,
   rankingPolicySchema,
   rankingPolicyWarnings,
 } from "@/lib/domain/ranking/policy";
@@ -8,6 +10,58 @@ import {
 describe("ranking policy", () => {
   it("accepts the approved default", () => {
     expect(rankingPolicySchema.parse(DEFAULT_RANKING_POLICY)).toEqual(DEFAULT_RANKING_POLICY);
+  });
+
+  it("normalizes a legacy policy with valid-visit scoring and unique trend defaults", () => {
+    const legacyPolicy = {
+      season: DEFAULT_RANKING_POLICY.season,
+      eligibility: DEFAULT_RANKING_POLICY.eligibility,
+      leaderboard: DEFAULT_RANKING_POLICY.leaderboard,
+      cooldown: DEFAULT_RANKING_POLICY.cooldown,
+      trend: {
+        windowHours: DEFAULT_RANKING_POLICY.trend.windowHours,
+        minimumPreviousClicks: DEFAULT_RANKING_POLICY.trend.minimumPreviousClicks,
+        limit: DEFAULT_RANKING_POLICY.trend.limit,
+      },
+      boards: DEFAULT_RANKING_POLICY.boards,
+    };
+
+    expect(parseRankingPolicy(legacyPolicy)).toMatchObject({
+      scoring: { mode: "valid_visits", version: "valid-visits-v1" },
+      trend: { minimumPreviousUniqueVisitors: 5 },
+    });
+  });
+
+  it("keeps the default policy on the legacy scoring version", () => {
+    expect(DEFAULT_RANKING_POLICY.scoring).toEqual({
+      mode: "valid_visits",
+      version: "valid-visits-v1",
+    });
+  });
+
+  it("exports the approved unique-first policy", () => {
+    expect(UNIQUE_FIRST_RANKING_POLICY.scoring).toEqual({
+      mode: "unique_visitors",
+      version: "unique-visitors-v1",
+      repeatVisitWeightBasisPoints: 2_500,
+      maxExtraVisitsPerUnique: 1,
+      minimumUniqueVisitors: 1,
+    });
+    expect(UNIQUE_FIRST_RANKING_POLICY.trend.minimumPreviousUniqueVisitors).toBe(5);
+  });
+
+  it.each([
+    ["repeatVisitWeightBasisPoints", -1],
+    ["repeatVisitWeightBasisPoints", 10_001],
+    ["maxExtraVisitsPerUnique", -1],
+    ["maxExtraVisitsPerUnique", 11],
+    ["minimumUniqueVisitors", 0],
+    ["minimumUniqueVisitors", 100_001],
+  ] as const)("rejects unique scoring with %s=%s outside its bounds", (field, value) => {
+    expect(rankingPolicySchema.safeParse({
+      ...UNIQUE_FIRST_RANKING_POLICY,
+      scoring: { ...UNIQUE_FIRST_RANKING_POLICY.scoring, [field]: value },
+    }).success).toBe(false);
   });
 
   it("rejects overlapping cooldown tiers", () => {

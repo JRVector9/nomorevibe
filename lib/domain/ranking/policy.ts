@@ -2,6 +2,25 @@ import { z } from "zod";
 
 const factorSchema = z.number().int().min(1).max(10_000);
 
+const legacyScoring = {
+  mode: "valid_visits",
+  version: "valid-visits-v1",
+} as const;
+
+const scoringSchema = z.discriminatedUnion("mode", [
+  z.object({
+    mode: z.literal("valid_visits"),
+    version: z.literal("valid-visits-v1"),
+  }),
+  z.object({
+    mode: z.literal("unique_visitors"),
+    version: z.literal("unique-visitors-v1"),
+    repeatVisitWeightBasisPoints: z.number().int().min(0).max(10_000),
+    maxExtraVisitsPerUnique: z.number().int().min(0).max(10),
+    minimumUniqueVisitors: z.number().int().min(1).max(100_000),
+  }),
+]);
+
 const cooldownTierSchema = z.object({
   rankFrom: z.number().int().min(1).max(100),
   rankTo: z.number().int().min(1).max(100),
@@ -18,6 +37,7 @@ const cooldownTierSchema = z.object({
 });
 
 export const rankingPolicySchema = z.object({
+  scoring: scoringSchema.default(legacyScoring),
   season: z.object({
     cadence: z.enum(["weekly", "monthly"]),
     timezone: z.literal("Asia/Seoul"),
@@ -32,6 +52,7 @@ export const rankingPolicySchema = z.object({
   trend: z.object({
     windowHours: z.number().int().min(1).max(168),
     minimumPreviousClicks: z.number().int().min(1).max(100_000),
+    minimumPreviousUniqueVisitors: z.number().int().min(1).max(100_000).default(5),
     limit: z.number().int().min(1).max(20),
   }),
   boards: z.object({
@@ -61,7 +82,12 @@ export const rankingPolicySchema = z.object({
 
 export type RankingPolicy = z.infer<typeof rankingPolicySchema>;
 
+export function parseRankingPolicy(raw: unknown): RankingPolicy {
+  return rankingPolicySchema.parse(raw);
+}
+
 export const DEFAULT_RANKING_POLICY: RankingPolicy = rankingPolicySchema.parse({
+  scoring: legacyScoring,
   season: { cadence: "weekly", timezone: "Asia/Seoul" },
   eligibility: { launchWindowDays: 28, minimumProducts: 20, maximumWindowDays: 90 },
   leaderboard: { limit: 10 },
@@ -72,8 +98,24 @@ export const DEFAULT_RANKING_POLICY: RankingPolicy = rankingPolicySchema.parse({
       { rankFrom: 4, rankTo: 10, factorsBasisPoints: [6500, 8000, 9000, 10_000] },
     ],
   },
-  trend: { windowHours: 24, minimumPreviousClicks: 5, limit: 4 },
+  trend: {
+    windowHours: 24,
+    minimumPreviousClicks: 5,
+    minimumPreviousUniqueVisitors: 5,
+    limit: 4,
+  },
   boards: { weeklyLimit: 3, verifiedNewLimit: 3, discoveredNewLimit: 3 },
+});
+
+export const UNIQUE_FIRST_RANKING_POLICY: RankingPolicy = rankingPolicySchema.parse({
+  ...DEFAULT_RANKING_POLICY,
+  scoring: {
+    mode: "unique_visitors",
+    version: "unique-visitors-v1",
+    repeatVisitWeightBasisPoints: 2_500,
+    maxExtraVisitsPerUnique: 1,
+    minimumUniqueVisitors: 1,
+  },
 });
 
 export function rankingPolicyWarnings(policy: RankingPolicy): string[] {
