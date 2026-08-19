@@ -10,9 +10,14 @@ import {
   rankingPolicyRevisions,
   rankingSeasons,
 } from "@/lib/db/schema";
+import { pruneEvents } from "@/lib/domain/products/clicks";
 import { schedulePolicy } from "@/lib/domain/ranking/policies";
-import { DEFAULT_RANKING_POLICY } from "@/lib/domain/ranking/policy";
 import {
+  DEFAULT_RANKING_POLICY,
+  UNIQUE_FIRST_RANKING_POLICY,
+} from "@/lib/domain/ranking/policy";
+import {
+  calculateRankingSnapshot,
   previewRanking,
   refreshRanking,
   slugArrayPredicate,
@@ -126,6 +131,271 @@ describe("seasonal ranking refresh", () => {
     });
   });
 
+  it("counts active unique seasons and each trend window independently", async () => {
+    const policy = {
+      ...UNIQUE_FIRST_RANKING_POLICY,
+      trend: {
+        ...UNIQUE_FIRST_RANKING_POLICY.trend,
+        minimumPreviousUniqueVisitors: 1,
+      },
+    };
+    await db.insert(rankingPolicyRevisions).values({
+      values: policy,
+      state: "applied",
+      createdBy: "test",
+      createdAt: NOW,
+      appliedAt: NOW,
+    });
+    await insertProduct("unique-active");
+    await db.insert(clickEvents).values([
+      {
+        slug: "unique-active",
+        visitorHash: "1".repeat(64),
+        occurredAt: new Date("2026-08-17T01:00:00.000Z"),
+      },
+      {
+        slug: "unique-active",
+        visitorHash: "2".repeat(64),
+        occurredAt: new Date("2026-08-17T02:00:00.000Z"),
+      },
+    ]);
+    await refreshRanking(NOW);
+    await db.insert(clickEvents).values([
+      {
+        slug: "unique-active",
+        visitorHash: "2".repeat(64),
+        occurredAt: new Date("2026-08-18T01:00:00.000Z"),
+      },
+      {
+        slug: "unique-active",
+        visitorHash: "3".repeat(64),
+        occurredAt: new Date("2026-08-18T02:00:00.000Z"),
+      },
+      {
+        slug: "unique-active",
+        visitorHash: "3".repeat(64),
+        occurredAt: new Date("2026-08-18T02:30:00.000Z"),
+      },
+    ]);
+
+    await refreshRanking(NOW);
+
+    const [entry] = await db.select().from(rankingEntries);
+    expect(entry).toMatchObject({
+      slug: "unique-active",
+      validClicks: 5,
+      uniqueVisitors: 3,
+      recentClicks: 3,
+      previousClicks: 2,
+      recentUniqueVisitors: 2,
+      previousUniqueVisitors: 2,
+      changePercent: 0,
+      scoreUnits: 35_000,
+      rank: 1,
+    });
+  });
+
+  it("excludes unique-season candidates below the minimum unique visitors", async () => {
+    const policy = {
+      ...UNIQUE_FIRST_RANKING_POLICY,
+      scoring: {
+        ...UNIQUE_FIRST_RANKING_POLICY.scoring,
+        minimumUniqueVisitors: 2,
+      },
+    };
+    await db.insert(rankingPolicyRevisions).values({
+      values: policy,
+      state: "applied",
+      createdBy: "test",
+      createdAt: NOW,
+      appliedAt: NOW,
+    });
+    await insertProduct("unique-qualified");
+    await insertProduct("unique-unqualified");
+    await db.insert(clickEvents).values([
+      {
+        slug: "unique-qualified",
+        visitorHash: "a".repeat(64),
+        occurredAt: new Date("2026-08-18T01:00:00.000Z"),
+      },
+      {
+        slug: "unique-qualified",
+        visitorHash: "b".repeat(64),
+        occurredAt: new Date("2026-08-18T02:00:00.000Z"),
+      },
+      ...Array.from({ length: 10 }, () => ({
+        slug: "unique-unqualified",
+        visitorHash: "c".repeat(64),
+        occurredAt: new Date("2026-08-18T02:00:00.000Z"),
+      })),
+    ]);
+
+    const result = await refreshRanking(NOW);
+    const entries = await db.select().from(rankingEntries);
+
+    expect(result.entries).toBe(1);
+    expect(entries.map((entry) => entry.slug)).toEqual(["unique-qualified"]);
+    expect(entries[0]).toMatchObject({ uniqueVisitors: 2, validClicks: 2 });
+  });
+
+  it("normalizes legacy policy snapshots and still keeps zero-visit candidates", async () => {
+    const { scoring: _scoring, ...legacyPolicyWithTrendDefault } = DEFAULT_RANKING_POLICY;
+    const {
+      minimumPreviousUniqueVisitors: _minimumPreviousUniqueVisitors,
+      ...legacyTrend
+    } = legacyPolicyWithTrendDefault.trend;
+    const legacyPolicy = { ...legacyPolicyWithTrendDefault, trend: legacyTrend };
+    const [revision] = await db.insert(rankingPolicyRevisions).values({
+      values: legacyPolicy as never,
+      state: "applied",
+      createdBy: "test",
+      createdAt: NOW,
+      appliedAt: NOW,
+    }).returning();
+    const [season] = await db.insert(rankingSeasons).values({
+      key: "legacy-policy-snapshot",
+      cadence: "weekly",
+      startsAt: new Date("2026-08-16T15:00:00.000Z"),
+      endsAt: WEEK_END,
+      state: "active",
+      policyRevisionId: revision.id,
+      policySnapshot: legacyPolicy as never,
+      effectiveLaunchWindowDays: 90,
+      isTransition: false,
+      startedAt: NOW,
+    }).returning();
+    await insertProduct("legacy-zero");
+
+    const [calculated] = await calculateRankingSnapshot(db, season, NOW);
+    await refreshRanking(NOW);
+    const [persisted] = await db.select().from(rankingEntries);
+
+    expect(calculated).toMatchObject({
+      slug: "legacy-zero",
+      validClicks: 0,
+      uniqueVisitors: 0,
+      recentUniqueVisitors: 0,
+      previousUniqueVisitors: 0,
+    });
+    expect(persisted).toMatchObject({
+      slug: "legacy-zero",
+      validClicks: 0,
+      uniqueVisitors: 0,
+      scoreUnits: 0,
+    });
+  });
+
+  it("keeps finalized unique totals and score after raw events are pruned", async () => {
+    await db.insert(rankingPolicyRevisions).values({
+      values: UNIQUE_FIRST_RANKING_POLICY,
+      state: "applied",
+      createdBy: "test",
+      createdAt: NOW,
+      appliedAt: NOW,
+    });
+    await insertProduct("unique-finalized");
+    await refreshRanking(NOW);
+    await db.insert(clickEvents).values([
+      {
+        slug: "unique-finalized",
+        visitorHash: "d".repeat(64),
+        occurredAt: new Date("2026-08-18T01:00:00.000Z"),
+      },
+      {
+        slug: "unique-finalized",
+        visitorHash: "d".repeat(64),
+        occurredAt: new Date("2026-08-18T02:00:00.000Z"),
+      },
+      {
+        slug: "unique-finalized",
+        visitorHash: "e".repeat(64),
+        occurredAt: new Date("2026-08-18T02:30:00.000Z"),
+      },
+    ]);
+    await refreshRanking(NOW);
+    await refreshRanking(new Date(WEEK_END.getTime() + 1));
+    const closed = await db.query.rankingSeasons.findFirst({
+      where: eq(rankingSeasons.state, "closed"),
+    });
+    if (!closed) throw new Error("expected a finalized unique season");
+    const [beforePrune] = await db
+      .select()
+      .from(rankingEntries)
+      .where(eq(rankingEntries.seasonId, closed.id));
+
+    await pruneEvents(0);
+
+    const [afterPrune] = await db
+      .select()
+      .from(rankingEntries)
+      .where(eq(rankingEntries.seasonId, closed.id));
+    expect(await db.$count(clickEvents)).toBe(0);
+    expect(beforePrune).toMatchObject({
+      validClicks: 3,
+      uniqueVisitors: 2,
+      scoreUnits: 22_500,
+      finalizedAt: WEEK_END,
+    });
+    expect(afterPrune).toMatchObject({
+      validClicks: beforePrune.validClicks,
+      uniqueVisitors: beforePrune.uniqueVisitors,
+      scoreUnits: beforePrune.scoreUnits,
+      finalizedAt: beforePrune.finalizedAt,
+    });
+  });
+
+  it("keeps unique preview math in parity with the active snapshot", async () => {
+    const policy = {
+      ...UNIQUE_FIRST_RANKING_POLICY,
+      trend: {
+        ...UNIQUE_FIRST_RANKING_POLICY.trend,
+        minimumPreviousUniqueVisitors: 1,
+      },
+    };
+    await db.insert(rankingPolicyRevisions).values({
+      values: policy,
+      state: "applied",
+      createdBy: "test",
+      createdAt: NOW,
+      appliedAt: NOW,
+    });
+    await insertProduct("unique-preview");
+    await db.insert(clickEvents).values([
+      {
+        slug: "unique-preview",
+        visitorHash: "f".repeat(64),
+        occurredAt: new Date("2026-08-17T02:00:00.000Z"),
+      },
+      {
+        slug: "unique-preview",
+        visitorHash: "f".repeat(64),
+        occurredAt: new Date("2026-08-18T02:00:00.000Z"),
+      },
+      {
+        slug: "unique-preview",
+        visitorHash: "0".repeat(64),
+        occurredAt: new Date("2026-08-18T02:30:00.000Z"),
+      },
+    ]);
+    await refreshRanking(NOW);
+    const [activeEntry] = await db.select().from(rankingEntries);
+
+    const [preview] = await previewRanking(policy, NOW);
+
+    expect(preview).toMatchObject({
+      validClicks: activeEntry.validClicks,
+      uniqueVisitors: activeEntry.uniqueVisitors,
+      recentClicks: activeEntry.recentClicks,
+      previousClicks: activeEntry.previousClicks,
+      recentUniqueVisitors: activeEntry.recentUniqueVisitors,
+      previousUniqueVisitors: activeEntry.previousUniqueVisitors,
+      changePercent: activeEntry.changePercent,
+      cooldownFactorBasisPoints: activeEntry.cooldownFactorBasisPoints,
+      scoreUnits: activeEntry.scoreUnits,
+      rank: activeEntry.rank,
+    });
+  });
+
   it("keeps the latest closed Top 3 cooldown in a rolling preview", async () => {
     await insertProduct("preview-winner");
     await db.insert(clickEvents).values({
@@ -210,6 +480,139 @@ describe("seasonal ranking refresh", () => {
       .from(rankingEntries)
       .where(eq(rankingEntries.seasonId, missed.id));
     expect(finalized).toMatchObject({ validClicks: 3, finalizedAt: missed.endsAt });
+  });
+
+  it("uses retained raw events from the full KST cutoff day for a legacy season", async () => {
+    const retentionAt = new Date("2026-08-17T02:00:00.000Z");
+    const startsAt = new Date("2026-07-12T15:00:00.000Z");
+    const endsAt = new Date("2026-07-19T15:00:00.000Z");
+    await insertProduct("legacy-cutoff-day", "verified", new Date("2026-06-01T00:00:00.000Z"));
+    const [revision] = await db.insert(rankingPolicyRevisions).values({
+      values: DEFAULT_RANKING_POLICY,
+      state: "applied",
+      createdBy: "test",
+      createdAt: startsAt,
+      appliedAt: startsAt,
+    }).returning();
+    const [season] = await db.insert(rankingSeasons).values({
+      key: "2026-W29-legacy-cutoff",
+      cadence: "weekly",
+      startsAt,
+      endsAt,
+      state: "active",
+      policyRevisionId: revision.id,
+      policySnapshot: DEFAULT_RANKING_POLICY,
+      effectiveLaunchWindowDays: 90,
+      isTransition: false,
+    }).returning();
+    await db.insert(clickEvents).values({
+      slug: "legacy-cutoff-day",
+      occurredAt: new Date("2026-07-12T16:00:00.000Z"),
+    });
+
+    await refreshRanking(retentionAt);
+
+    const [entry] = await db
+      .select()
+      .from(rankingEntries)
+      .where(eq(rankingEntries.seasonId, season.id));
+    expect(entry).toMatchObject({ validClicks: 1, finalizedAt: endsAt });
+  });
+
+  it("allows a unique season whose raw events remain on the KST cutoff day", async () => {
+    const retentionAt = new Date("2026-08-17T02:00:00.000Z");
+    const startsAt = new Date("2026-07-12T15:00:00.000Z");
+    const endsAt = new Date("2026-07-19T15:00:00.000Z");
+    await insertProduct("unique-cutoff-day", "verified", new Date("2026-06-01T00:00:00.000Z"));
+    const [revision] = await db.insert(rankingPolicyRevisions).values({
+      values: UNIQUE_FIRST_RANKING_POLICY,
+      state: "applied",
+      createdBy: "test",
+      createdAt: startsAt,
+      appliedAt: startsAt,
+    }).returning();
+    const [season] = await db.insert(rankingSeasons).values({
+      key: "2026-W29-unique-cutoff",
+      cadence: "weekly",
+      startsAt,
+      endsAt,
+      state: "active",
+      policyRevisionId: revision.id,
+      policySnapshot: UNIQUE_FIRST_RANKING_POLICY,
+      effectiveLaunchWindowDays: 90,
+      isTransition: false,
+    }).returning();
+    await db.insert(clickEvents).values({
+      slug: "unique-cutoff-day",
+      visitorHash: "9".repeat(64),
+      occurredAt: new Date("2026-07-12T16:00:00.000Z"),
+    });
+
+    await refreshRanking(retentionAt);
+
+    const [entry] = await db
+      .select()
+      .from(rankingEntries)
+      .where(eq(rankingEntries.seasonId, season.id));
+    expect(entry).toMatchObject({
+      validClicks: 1,
+      uniqueVisitors: 1,
+      scoreUnits: 10_000,
+      finalizedAt: endsAt,
+    });
+  });
+
+  it("fails an old unique season instead of summing daily unique visitors", async () => {
+    await insertProduct("unique-archived", "verified", new Date("2026-05-20T00:00:00.000Z"));
+    const [revision] = await db.insert(rankingPolicyRevisions).values({
+      values: UNIQUE_FIRST_RANKING_POLICY,
+      state: "applied",
+      createdBy: "test",
+      createdAt: new Date("2026-06-28T15:00:00.000Z"),
+      appliedAt: new Date("2026-06-28T15:00:00.000Z"),
+    }).returning();
+    await db.insert(rankingSeasons).values({
+      key: "2026-W27-unique",
+      cadence: "weekly",
+      startsAt: new Date("2026-06-28T15:00:00.000Z"),
+      endsAt: new Date("2026-07-05T15:00:00.000Z"),
+      state: "active",
+      policyRevisionId: revision.id,
+      policySnapshot: UNIQUE_FIRST_RANKING_POLICY,
+      effectiveLaunchWindowDays: 90,
+      isTransition: false,
+    });
+    await db.insert(productClickDaily).values([
+      { slug: "unique-archived", day: "2026-07-01", clicks: 3, uniqueVisitors: 2 },
+      { slug: "unique-archived", day: "2026-07-02", clicks: 4, uniqueVisitors: 2 },
+    ]);
+
+    await expect(refreshRanking(NOW)).rejects.toThrow("unique season raw events unavailable");
+    expect(await db.$count(rankingEntries)).toBe(0);
+  });
+
+  it("fails an old unique season even when it has no eligible candidates", async () => {
+    const [revision] = await db.insert(rankingPolicyRevisions).values({
+      values: UNIQUE_FIRST_RANKING_POLICY,
+      state: "applied",
+      createdBy: "test",
+      createdAt: new Date("2026-06-28T15:00:00.000Z"),
+      appliedAt: new Date("2026-06-28T15:00:00.000Z"),
+    }).returning();
+    await db.insert(rankingSeasons).values({
+      key: "2026-W27-unique-empty",
+      cadence: "weekly",
+      startsAt: new Date("2026-06-28T15:00:00.000Z"),
+      endsAt: new Date("2026-07-05T15:00:00.000Z"),
+      state: "active",
+      policyRevisionId: revision.id,
+      policySnapshot: UNIQUE_FIRST_RANKING_POLICY,
+      effectiveLaunchWindowDays: 90,
+      isTransition: false,
+    });
+
+    await expect(refreshRanking(NOW)).rejects.toThrow("unique season raw events unavailable");
+    expect(await db.$count(rankingSeasons, eq(rankingSeasons.state, "closed"))).toBe(0);
   });
 
   it("applies a scheduled monthly policy once and creates a transition season", async () => {

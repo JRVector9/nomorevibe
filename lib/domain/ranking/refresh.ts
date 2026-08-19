@@ -27,6 +27,7 @@ import { clickChangePercent, cooldownFactor, rankRows } from "./math";
 import { nextSeasonPeriod, periodContaining, type SeasonPeriod } from "./period";
 import {
   DEFAULT_RANKING_POLICY,
+  parseRankingPolicy,
   rankingPolicySchema,
   type RankingPolicy,
 } from "./policy";
@@ -45,11 +46,14 @@ type RankingExecutor = typeof db | RankingTransaction;
 export type CalculatedEntry = {
   slug: string;
   validClicks: number;
+  uniqueVisitors: number;
   cooldownFactorBasisPoints: number;
   scoreUnits: number;
   rank: number;
   recentClicks: number;
   previousClicks: number;
+  recentUniqueVisitors: number;
+  previousUniqueVisitors: number;
   changePercent: number | null;
 };
 
@@ -60,7 +64,13 @@ export type RankingRefreshResult = {
   seasonKey: string;
 };
 
-type ClickCounts = { recent: number; previous: number };
+type VisitCounts = { validVisits: number; uniqueVisitors: number };
+type TrendCounts = {
+  recentVisits: number;
+  previousVisits: number;
+  recentUniqueVisitors: number;
+  previousUniqueVisitors: number;
+};
 type RevisionPolicy = { revision: RankingPolicyRevision; policy: RankingPolicy };
 
 const textArrayEncoder: DriverValueEncoder<string[], string> = {
@@ -91,6 +101,16 @@ function kstDay(date: Date): string {
   const month = String(shifted.getUTCMonth() + 1).padStart(2, "0");
   const day = String(shifted.getUTCDate()).padStart(2, "0");
   return `${year}-${month}-${day}`;
+}
+
+function rawRetentionCutoff(retentionAt: Date): Date {
+  const shifted = new Date(retentionAt.getTime() + KST_OFFSET_MS);
+  const kstDayStart = Date.UTC(
+    shifted.getUTCFullYear(),
+    shifted.getUTCMonth(),
+    shifted.getUTCDate(),
+  ) - KST_OFFSET_MS;
+  return new Date(kstDayStart - RAW_RETENTION_MS);
 }
 
 async function effectiveLaunchWindowDays(
@@ -125,21 +145,25 @@ async function effectiveLaunchWindowDays(
   return Math.min(maximumWindowDays, Math.max(launchWindowDays, requiredDays));
 }
 
-async function aggregateSeasonClicks(
+async function aggregateSeasonVisits(
   executor: RankingExecutor,
   startsAt: Date,
   endsAt: Date,
   slugs: string[],
   retentionAt: Date,
-): Promise<Map<string, number>> {
-  if (slugs.length === 0 || endsAt.getTime() <= startsAt.getTime()) return new Map();
+): Promise<Map<string, VisitCounts>> {
+  if (endsAt.getTime() <= startsAt.getTime()) return new Map();
 
-  const rawCutoff = new Date(retentionAt.getTime() - RAW_RETENTION_MS);
+  const rawCutoff = rawRetentionCutoff(retentionAt);
+  if (slugs.length === 0) return new Map();
   if (startsAt.getTime() >= rawCutoff.getTime()) {
     const rows = await executor
       .select({
         slug: clickEvents.slug,
-        clicks: sql<number>`count(*)::int`,
+        validVisits: sql<number>`count(*)::int`,
+        uniqueVisitors: sql<number>`count(distinct ${clickEvents.visitorHash}) filter (
+          where ${clickEvents.visitorHash} is not null
+        )::int`,
       })
       .from(clickEvents)
       .where(and(
@@ -148,13 +172,16 @@ async function aggregateSeasonClicks(
         lt(clickEvents.occurredAt, endsAt),
       ))
       .groupBy(clickEvents.slug);
-    return new Map(rows.map((row) => [row.slug, row.clicks]));
+    return new Map(rows.map((row) => [row.slug, {
+      validVisits: row.validVisits,
+      uniqueVisitors: row.uniqueVisitors,
+    }]));
   }
 
   const rows = await executor
     .select({
       slug: productClickDaily.slug,
-      clicks: sql<number>`sum(${productClickDaily.clicks})::int`,
+      validVisits: sql<number>`sum(${productClickDaily.clicks})::int`,
     })
     .from(productClickDaily)
     .where(and(
@@ -163,15 +190,18 @@ async function aggregateSeasonClicks(
       lt(productClickDaily.day, kstDay(endsAt)),
     ))
     .groupBy(productClickDaily.slug);
-  return new Map(rows.map((row) => [row.slug, row.clicks]));
+  return new Map(rows.map((row) => [row.slug, {
+    validVisits: row.validVisits,
+    uniqueVisitors: 0,
+  }]));
 }
 
-async function aggregateTrendClicks(
+async function aggregateTrendVisits(
   executor: RankingExecutor,
   cutoff: Date,
   windowHours: number,
   slugs: string[],
-): Promise<Map<string, ClickCounts>> {
+): Promise<Map<string, TrendCounts>> {
   if (slugs.length === 0) return new Map();
   const windowMs = windowHours * 60 * 60 * 1000;
   const recentStart = new Date(cutoff.getTime() - windowMs);
@@ -180,8 +210,20 @@ async function aggregateTrendClicks(
   const rows = await executor
     .select({
       slug: clickEvents.slug,
-      recent: sql<number>`count(*) filter (where ${clickEvents.occurredAt} >= ${recentStartIso}::timestamp)::int`,
-      previous: sql<number>`count(*) filter (where ${clickEvents.occurredAt} < ${recentStartIso}::timestamp)::int`,
+      recentVisits: sql<number>`count(*) filter (
+        where ${clickEvents.occurredAt} >= ${recentStartIso}::timestamp
+      )::int`,
+      previousVisits: sql<number>`count(*) filter (
+        where ${clickEvents.occurredAt} < ${recentStartIso}::timestamp
+      )::int`,
+      recentUniqueVisitors: sql<number>`count(distinct ${clickEvents.visitorHash}) filter (
+        where ${clickEvents.visitorHash} is not null
+          and ${clickEvents.occurredAt} >= ${recentStartIso}::timestamp
+      )::int`,
+      previousUniqueVisitors: sql<number>`count(distinct ${clickEvents.visitorHash}) filter (
+        where ${clickEvents.visitorHash} is not null
+          and ${clickEvents.occurredAt} < ${recentStartIso}::timestamp
+      )::int`,
     })
     .from(clickEvents)
     .where(and(
@@ -190,7 +232,12 @@ async function aggregateTrendClicks(
       lt(clickEvents.occurredAt, cutoff),
     ))
     .groupBy(clickEvents.slug);
-  return new Map(rows.map((row) => [row.slug, { recent: row.recent, previous: row.previous }]));
+  return new Map(rows.map((row) => [row.slug, {
+    recentVisits: row.recentVisits,
+    previousVisits: row.previousVisits,
+    recentUniqueVisitors: row.recentUniqueVisitors,
+    previousUniqueVisitors: row.previousUniqueVisitors,
+  }]));
 }
 
 async function priorFinishes(
@@ -244,10 +291,17 @@ async function calculateRankingSnapshotAt(
   executor: RankingExecutor,
   season: RankingSeason,
   at: Date,
-  policy: RankingPolicy,
   retentionAt: Date,
   historyBefore = season.startsAt,
 ): Promise<CalculatedEntry[]> {
+  const policy = parseRankingPolicy(season.policySnapshot);
+  const rawCutoff = rawRetentionCutoff(retentionAt);
+  if (
+    policy.scoring.mode === "unique_visitors"
+    && season.startsAt.getTime() < rawCutoff.getTime()
+  ) {
+    throw new Error("unique season raw events unavailable");
+  }
   const cutoff = minDate(at, season.endsAt);
   const eligibleSince = new Date(
     season.startsAt.getTime() - season.effectiveLaunchWindowDays * DAY_MS,
@@ -263,33 +317,62 @@ async function calculateRankingSnapshotAt(
   if (candidates.length === 0) return [];
 
   const slugs = candidates.map((candidate) => candidate.slug);
-  const [seasonClicks, trendClicks, finishes] = await Promise.all([
-    aggregateSeasonClicks(executor, season.startsAt, cutoff, slugs, retentionAt),
-    aggregateTrendClicks(executor, cutoff, policy.trend.windowHours, slugs),
+  const [seasonVisits, trendVisits, finishes] = await Promise.all([
+    aggregateSeasonVisits(
+      executor,
+      season.startsAt,
+      cutoff,
+      slugs,
+      retentionAt,
+    ),
+    aggregateTrendVisits(executor, cutoff, policy.trend.windowHours, slugs),
     priorFinishes(executor, historyBefore, policy, slugs),
   ]);
 
-  const ranked = rankRows(candidates.map((candidate) => ({
-    slug: candidate.slug,
-    validClicks: seasonClicks.get(candidate.slug) ?? 0,
-    factorBasisPoints: cooldownFactor(policy.cooldown, finishes.get(candidate.slug) ?? []),
-    verifiedAt: candidate.verifiedAt!,
-  })));
+  const scoreInputs = candidates.map((candidate) => {
+    const counts = seasonVisits.get(candidate.slug) ?? { validVisits: 0, uniqueVisitors: 0 };
+    return {
+      slug: candidate.slug,
+      validClicks: counts.validVisits,
+      uniqueVisitors: counts.uniqueVisitors,
+      factorBasisPoints: cooldownFactor(policy.cooldown, finishes.get(candidate.slug) ?? []),
+      verifiedAt: candidate.verifiedAt!,
+    };
+  });
+  let eligibleScoreInputs = scoreInputs;
+  if (policy.scoring.mode === "unique_visitors") {
+    const minimumUniqueVisitors = policy.scoring.minimumUniqueVisitors;
+    eligibleScoreInputs = scoreInputs.filter(
+      (row) => row.uniqueVisitors >= minimumUniqueVisitors,
+    );
+  }
+  const ranked = rankRows(eligibleScoreInputs, policy.scoring);
 
   return ranked.map((row) => {
-    const trend = trendClicks.get(row.slug) ?? { recent: 0, previous: 0 };
+    const trend = trendVisits.get(row.slug) ?? {
+      recentVisits: 0,
+      previousVisits: 0,
+      recentUniqueVisitors: 0,
+      previousUniqueVisitors: 0,
+    };
+    const uniqueScoring = policy.scoring.mode === "unique_visitors";
     return {
       slug: row.slug,
       validClicks: row.validClicks,
+      uniqueVisitors: row.uniqueVisitors ?? 0,
       cooldownFactorBasisPoints: row.factorBasisPoints,
       scoreUnits: row.scoreUnits,
       rank: row.rank,
-      recentClicks: trend.recent,
-      previousClicks: trend.previous,
+      recentClicks: trend.recentVisits,
+      previousClicks: trend.previousVisits,
+      recentUniqueVisitors: trend.recentUniqueVisitors,
+      previousUniqueVisitors: trend.previousUniqueVisitors,
       changePercent: clickChangePercent(
-        trend.recent,
-        trend.previous,
-        policy.trend.minimumPreviousClicks,
+        uniqueScoring ? trend.recentUniqueVisitors : trend.recentVisits,
+        uniqueScoring ? trend.previousUniqueVisitors : trend.previousVisits,
+        uniqueScoring
+          ? policy.trend.minimumPreviousUniqueVisitors
+          : policy.trend.minimumPreviousClicks,
       ),
     };
   });
@@ -301,7 +384,12 @@ export async function calculateRankingSnapshot(
   at: Date,
   policy: RankingPolicy = season.policySnapshot,
 ): Promise<CalculatedEntry[]> {
-  return calculateRankingSnapshotAt(executor, season, at, policy, new Date());
+  return calculateRankingSnapshotAt(
+    executor,
+    { ...season, policySnapshot: policy },
+    at,
+    new Date(),
+  );
 }
 
 async function ensureAppliedPolicy(
@@ -392,11 +480,14 @@ async function replaceEntries(
         target: [rankingEntries.seasonId, rankingEntries.slug],
         set: {
           validClicks: sql`excluded.valid_clicks`,
+          uniqueVisitors: sql`excluded.unique_visitors`,
           cooldownFactorBasisPoints: sql`excluded.cooldown_factor_basis_points`,
           scoreUnits: sql`excluded.score_units`,
           rank: sql`excluded.rank`,
           recentClicks: sql`excluded.recent_clicks`,
           previousClicks: sql`excluded.previous_clicks`,
+          recentUniqueVisitors: sql`excluded.recent_unique_visitors`,
+          previousUniqueVisitors: sql`excluded.previous_unique_visitors`,
           changePercent: sql`excluded.change_percent`,
           updatedAt: at,
           finalizedAt,
@@ -425,7 +516,7 @@ async function nextRevisionPolicy(
       .where(eq(rankingPolicyRevisions.id, active.policyRevisionId))
       .limit(1);
     if (!revision) throw new Error(`Ranking policy revision ${active.policyRevisionId} is missing`);
-    return { revision, policy: active.policySnapshot };
+    return { revision, policy: parseRankingPolicy(active.policySnapshot) };
   }
 
   const parsed = rankingPolicySchema.safeParse(scheduled.values);
@@ -444,7 +535,7 @@ async function nextRevisionPolicy(
       .where(eq(rankingPolicyRevisions.id, active.policyRevisionId))
       .limit(1);
     if (!revision) throw new Error(`Ranking policy revision ${active.policyRevisionId} is missing`);
-    return { revision, policy: active.policySnapshot };
+    return { revision, policy: parseRankingPolicy(active.policySnapshot) };
   }
 
   const [applied] = await tx
@@ -461,7 +552,7 @@ export async function refreshRanking(now = new Date()): Promise<RankingRefreshRe
     await tx.execute(refreshLock);
 
     const applied = await ensureAppliedPolicy(tx, now);
-    const parsedApplied = rankingPolicySchema.parse(applied.values);
+    const parsedApplied = parseRankingPolicy(applied.values);
     let active = await tx.query.rankingSeasons.findFirst({
       where: eq(rankingSeasons.state, "active"),
     });
@@ -479,7 +570,6 @@ export async function refreshRanking(now = new Date()): Promise<RankingRefreshRe
         tx,
         active,
         active.endsAt,
-        active.policySnapshot,
         now,
       );
       await replaceEntries(tx, active.id, finalized, active.endsAt, active.endsAt);
@@ -499,7 +589,6 @@ export async function refreshRanking(now = new Date()): Promise<RankingRefreshRe
       tx,
       active,
       now,
-      active.policySnapshot,
       now,
     );
     await replaceEntries(tx, active.id, entries, now, null);
@@ -521,16 +610,17 @@ export async function previewRanking(
   policy: RankingPolicy,
   now = new Date(),
 ): Promise<CalculatedEntry[]> {
+  const parsedPolicy = parseRankingPolicy(policy);
   const active = await db.query.rankingSeasons.findFirst({
     where: eq(rankingSeasons.state, "active"),
   });
   const period = active
-    ? nextSeasonPeriod(active.endsAt, policy.season.cadence)
-    : periodContaining(now, policy.season.cadence);
+    ? nextSeasonPeriod(active.endsAt, parsedPolicy.season.cadence)
+    : periodContaining(now, parsedPolicy.season.cadence);
   const previewStartsAt = new Date(now.getTime() - (
     period.endsAt.getTime() - period.startsAt.getTime()
   ));
-  const windowDays = await effectiveLaunchWindowDays(db, previewStartsAt, now, policy);
+  const windowDays = await effectiveLaunchWindowDays(db, previewStartsAt, now, parsedPolicy);
   const season: RankingSeason = {
     id: 0,
     key: period.key,
@@ -539,12 +629,12 @@ export async function previewRanking(
     endsAt: now,
     state: "active",
     policyRevisionId: 0,
-    policySnapshot: policy,
+    policySnapshot: parsedPolicy,
     effectiveLaunchWindowDays: windowDays,
     isTransition: period.isTransition,
     refreshedAt: null,
     startedAt: now,
     closedAt: null,
   };
-  return calculateRankingSnapshotAt(db, season, now, policy, now, period.startsAt);
+  return calculateRankingSnapshotAt(db, season, now, now, period.startsAt);
 }
