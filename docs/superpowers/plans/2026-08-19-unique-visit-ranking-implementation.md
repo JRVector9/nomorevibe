@@ -204,7 +204,7 @@ export type VisitMetrics = {
   validVisits: number;
   uniqueVisitors: number | null;
   uniqueChangePercent: number | null;
-  collectionStartedAt: Date;
+  collectionStartedAt: Date | null;
   collecting: boolean;
 };
 ```
