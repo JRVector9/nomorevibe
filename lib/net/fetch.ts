@@ -32,7 +32,7 @@ const ssrfSafeAgent = new Agent({
 
 export type FetchResult = { finalUrl: string; response: Response };
 
-type ManualRequest = (
+export type CappedRequest = (
   url: string,
   init: {
     redirect: "manual";
@@ -59,7 +59,7 @@ export type CappedFetchResult =
 
 async function defaultRequest(
   url: string,
-  init: Parameters<ManualRequest>[1],
+  init: Parameters<CappedRequest>[1],
 ): Promise<Response> {
   return (await undiciFetch(url, {
     ...init,
@@ -115,7 +115,7 @@ export async function fetchCapped(
     timeoutMs?: number;
     headers?: Record<string, string>;
     /** 테스트 전용 주입점. 프로덕션 기본 요청은 연결 시점 DNS도 재검사한다. */
-    request?: ManualRequest;
+    request?: CappedRequest;
   },
 ): Promise<CappedFetchResult> {
   if (!Number.isSafeInteger(options.maxBytes) || options.maxBytes < 0) {
