@@ -1,4 +1,5 @@
 import { logger } from "@/lib/observability/logger";
+import { readBodyStrictlyCapped } from "@/lib/net/fetch";
 
 /**
  * GitHub API — 수집기가 쓰는 만큼만.
@@ -12,6 +13,7 @@ import { logger } from "@/lib/observability/logger";
  */
 
 const API_ORIGIN = "https://api.github.com";
+const GITHUB_RESPONSE_MAX_BYTES = 2 * 1024 * 1024;
 
 export type GitHubFailure =
   | { kind: "rate_limited"; resetAt: Date | null }
@@ -82,7 +84,9 @@ export async function githubRequest<T>(
   if (res.ok) {
     let value: T;
     try {
-      value = (await res.json()) as T;
+      const body = await readBodyStrictlyCapped(res, GITHUB_RESPONSE_MAX_BYTES);
+      if (body === null) return { ok: false, error: { kind: "invalid_response" } };
+      value = JSON.parse(body.toString("utf8")) as T;
     } catch {
       return { ok: false, error: { kind: "invalid_response" } };
     }

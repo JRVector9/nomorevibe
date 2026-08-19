@@ -23,6 +23,10 @@ import { fetchCapped } from "@/lib/net/fetch";
 import { fetchAndNormalizeImage } from "@/lib/domain/media/images";
 import { markProductMediaMissing, observeProductMedia } from "@/lib/domain/media/repository";
 import type { NormalizedImageAsset } from "@/lib/domain/media/storage";
+import {
+  lockProductGeneration,
+  ProductGenerationChangedError,
+} from "@/lib/domain/products/repository";
 import { evidenceSettingsSchema, type EvidenceSettings } from "./settings";
 import { fetchFeedEvidence, feedUpdateCandidates } from "./providers/feeds";
 import { refreshGitHubEvidence } from "./providers/github";
@@ -52,6 +56,7 @@ const KINDS = [
 ] as const satisfies readonly LinkKind[];
 
 export type DeclaredEvidenceSource = {
+  productId: number;
   slug: string;
   kind: LinkKind;
   sourceKey: string;
@@ -62,6 +67,7 @@ export type DeclaredEvidenceSource = {
 };
 
 type MediaSource = {
+  productId: number;
   slug: string;
   sourceUrl: string;
   altText: string | null;
@@ -76,7 +82,8 @@ export type EvidenceSourceResult = {
 
 type CollectedEvidenceSourceResult = EvidenceSourceResult & {
   failed?: boolean;
-  httpClass?: "ok" | "not_modified" | "error";
+  complete?: boolean;
+  httpClass?: "ok" | "not_modified" | "error" | "budget";
 };
 
 export type ProductEvidenceRefreshResult = EvidenceSourceResult & {
@@ -183,6 +190,7 @@ async function declaredSources(
   force: boolean,
 ): Promise<DeclaredEvidenceSource[]> {
   const rows = await db.select({
+    productId: products.id,
     slug: productLinks.slug,
     kind: productLinks.kind,
     sourceKey: productLinks.normalizedKey,
@@ -194,6 +202,7 @@ async function declaredSources(
     nextAttemptAt: productEvidenceSources.nextAttemptAt,
   })
     .from(productLinks)
+    .innerJoin(products, eq(products.slug, productLinks.slug))
     .leftJoin(productEvidenceSources, and(
       eq(productEvidenceSources.slug, productLinks.slug),
       eq(productEvidenceSources.kind, productLinks.kind),
@@ -207,6 +216,7 @@ async function declaredSources(
   return rows.flatMap((row) => (
     force || row.sourceId === null || (row.nextAttemptAt && row.nextAttemptAt <= now)
       ? [{
+          productId: row.productId,
           slug: row.slug,
           kind: row.kind,
           sourceKey: row.sourceKey,
@@ -227,15 +237,18 @@ async function mediaSources(
 ): Promise<MediaSource[]> {
   const dueBefore = new Date(now.getTime() - settings.linkCheckHours * 60 * 60 * 1000);
   return db.select({
+    productId: products.id,
     slug: productMedia.slug,
     sourceUrl: productMedia.sourceUrl,
     altText: productMedia.altText,
     position: productMedia.position,
-  }).from(productMedia).where(and(
-    eq(productMedia.slug, slug),
-    eq(productMedia.current, true),
-    force ? undefined : lte(productMedia.lastObservedAt, dueBefore),
-  )).orderBy(asc(productMedia.position), asc(productMedia.id));
+  }).from(productMedia)
+    .innerJoin(products, eq(products.slug, productMedia.slug))
+    .where(and(
+      eq(productMedia.slug, slug),
+      eq(productMedia.current, true),
+      force ? undefined : lte(productMedia.lastObservedAt, dueBefore),
+    )).orderBy(asc(productMedia.position), asc(productMedia.id));
 }
 
 async function markSourceFailure(
@@ -256,7 +269,7 @@ async function markSourceFailure(
     nextAttemptAt: retryAt(now, attempts, settings),
     attempts,
     lastErrorCode: errorCode.replace(/[^a-z0-9_-]/gi, "_").slice(0, 80),
-  });
+  }, db, source.productId);
 }
 
 function providerFor(kind: LinkKind): string {
@@ -278,33 +291,45 @@ async function collectDeclaredSource(
   now: Date,
   settings: EvidenceSettings,
   dependencies: EvidenceRefreshDependencies,
+  hasBudget?: () => boolean,
 ): Promise<CollectedEvidenceSourceResult> {
   if (source.kind === "repository") {
     const result = await (dependencies.github ?? refreshGitHubEvidence)({
       slug: source.slug,
       repository: source.sourceKey,
-    }, { now: () => now, log: dependencies.log });
-    const refreshed = await db.query.productEvidenceSources.findFirst({
-      where: and(
+      productId: source.productId,
+    }, { now: () => now, hasBudget, log: dependencies.log });
+    if (result.status === "budget_exhausted") {
+      return {
+        factsChanged: 0,
+        eventsInserted: 0,
+        mediaInserted: 0,
+        complete: false,
+        httpClass: "budget",
+      };
+    }
+    const failed = result.status === "deferred" || result.status === "disconnected";
+    const refreshed = await db.transaction(async (tx) => {
+      if (!(await lockProductGeneration(tx, source.productId, source.slug))) {
+        throw new ProductGenerationChangedError();
+      }
+      const [row] = await tx.select().from(productEvidenceSources).where(and(
         eq(productEvidenceSources.slug, source.slug),
         eq(productEvidenceSources.kind, source.kind),
         eq(productEvidenceSources.sourceKey, source.sourceKey),
-      ),
+      )).limit(1);
+      if (row && result.status === "deferred") {
+        await tx.update(productEvidenceSources).set({
+          ...(failureState(source, now, settings) === "stale" ? { state: "stale" as const } : {}),
+          nextAttemptAt: result.retryAt ?? retryAt(now, row.attempts, settings),
+        }).where(eq(productEvidenceSources.id, row.id));
+      } else if (row && !failed) {
+        await tx.update(productEvidenceSources).set({
+          nextAttemptAt: new Date(now.getTime() + intervalHours(source.kind, settings) * 60 * 60 * 1000),
+        }).where(eq(productEvidenceSources.id, row.id));
+      }
+      return row;
     });
-    const failed = result.status === "deferred" || result.status === "disconnected";
-    if (
-      result.status === "deferred"
-      && refreshed
-      && failureState(source, now, settings) === "stale"
-    ) {
-      await db.update(productEvidenceSources).set({ state: "stale" })
-        .where(eq(productEvidenceSources.id, refreshed.id));
-    }
-    if (refreshed && !failed) {
-      await db.update(productEvidenceSources).set({
-        nextAttemptAt: new Date(now.getTime() + intervalHours(source.kind, settings) * 60 * 60 * 1000),
-      }).where(eq(productEvidenceSources.id, refreshed.id));
-    }
     return {
       factsChanged: !isDeepStrictEqual(source.normalizedFacts, refreshed?.normalizedFacts ?? null) ? 1 : 0,
       eventsInserted: result.releases,
@@ -339,8 +364,13 @@ async function collectDeclaredSource(
         nextAttemptAt: new Date(now.getTime() + intervalHours(source.kind, settings) * 60 * 60 * 1000),
         attempts: 0,
         lastErrorCode: null,
-      }, tx);
-      events = await insertUpdateCandidates(source.slug, feedUpdateCandidates(feed.items, now), tx);
+      }, tx, source.productId);
+      events = await insertUpdateCandidates(
+        source.slug,
+        feedUpdateCandidates(feed.items, now),
+        tx,
+        source.productId,
+      );
     });
   } else {
     const value = source.kind === "app_store"
@@ -374,7 +404,7 @@ async function collectDeclaredSource(
       nextAttemptAt: new Date(now.getTime() + intervalHours(source.kind, settings) * 60 * 60 * 1000),
       attempts: 0,
       lastErrorCode: null,
-    });
+    }, db, source.productId);
   }
   return {
     factsChanged: isDeepStrictEqual(source.normalizedFacts, facts) ? 0 : 1,
@@ -395,13 +425,19 @@ async function collectMedia(
       : { ok: false as const };
   }))(source.sourceUrl);
   if (!fetched.ok) {
-    await markProductMediaMissing({ slug: source.slug, sourceUrl: source.sourceUrl, observedAt: now });
+    await markProductMediaMissing({
+      slug: source.slug,
+      sourceUrl: source.sourceUrl,
+      observedAt: now,
+      productId: source.productId,
+    });
     throw new Error("media_unavailable");
   }
   const observed = await observeProductMedia({
     ...source,
     asset: fetched.asset,
     observedAt: now,
+    productId: source.productId,
   });
   return {
     factsChanged: 0,
@@ -442,7 +478,7 @@ export async function refreshProductEvidence(
     try {
       const result = dependencies.refreshSource
         ? await dependencies.refreshSource(source)
-        : await collectDeclaredSource(source, now, settings, dependencies);
+        : await collectDeclaredSource(source, now, settings, dependencies, options.hasBudget);
       totals.factsChanged += result.factsChanged;
       totals.eventsInserted += result.eventsInserted;
       totals.mediaInserted += result.mediaInserted;
@@ -451,12 +487,18 @@ export async function refreshProductEvidence(
         sourceKind: source.kind,
         slug,
         durationMs: Math.max(0, Math.round(performance.now() - startedAt)),
-        outcome: "failed" in result && result.failed ? "failed" : "succeeded",
+        outcome: "complete" in result && result.complete === false
+          ? "deferred"
+          : "failed" in result && result.failed ? "failed" : "succeeded",
         httpClass: "httpClass" in result ? result.httpClass : "ok",
         factsChanged: result.factsChanged,
         eventsInserted: result.eventsInserted,
         mediaInserted: result.mediaInserted,
       });
+      if ("complete" in result && result.complete === false) {
+        totals.complete = false;
+        return totals;
+      }
     } catch {
       totals.sourcesFailed += 1;
       await markSourceFailure(source, now, settings, "collection_failed");

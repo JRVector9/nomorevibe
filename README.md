@@ -105,6 +105,7 @@ curl -X POST $SITE/api/cron/heartbeat \  # 스케줄러가 주기적으로 호�
 | `uptime-ping` | 등재된 제품이 아직 떠 있는지 확인 | `product_health` (기록만 — 목록은 안 건드린다) |
 | `click-rollup` | 클릭 원천을 하루 단위로 굴리고 오래된 원천 정리 | `product_click_daily` |
 | `ranking-refresh` | 시즌 경계·쿨다운을 계산하고 공개 순위 스냅샷 갱신 | `ranking_seasons`, `ranking_entries` |
+| `product-evidence-refresh` | 공식 링크·저장소·업데이트·내부 보관 미디어 갱신 | `product_evidence_*`, `product_updates`, `product_media` |
 
 ```bash
 GITHUB_TOKEN=... npm run job crawl-seed      # 로컬에서 한 틱씩
@@ -130,6 +131,7 @@ npm run job crawl-publish
 | `uptime-ping` | 10분 | 제품이 죽는 것은 분 단위로 급한 일이 아니다. 같은 제품은 6시간에 한 번만 본다 |
 | `click-rollup` | 1시간 | 집계는 하루 단위라 자주 돌 이유가 없다 |
 | `ranking-refresh` | 1시간 | 클릭 집계 직후 시즌 경계와 공개 순위 스냅샷을 갱신한다 |
+| `product-evidence-refresh` | 6시간 | 출처별 유효기간과 재시도 시각을 확인해 필요한 제품만 갱신한다 |
 
 크론 데몬을 쓰지 않는 이유는 작업 수가 적고 주기가 분 단위이며, 실패해도 다음 틱이
 이어받기 때문이다. 다른 스케줄러(Dokploy, GitHub Actions)를 쓴다면 같은 주기로 아래를 호출하면 된다.
@@ -143,6 +145,50 @@ curl -X POST $SITE/api/cron/crawl-fetch -H "Authorization: Bearer $CRON_SECRET"
 
 수집기는 `GITHUB_TOKEN`이 있어야 돈다. 없으면 시간당 60회라 성립하지 않으므로 작업이 실패로
 남는다(`jobs.last_error`).
+
+## 제품 근거 수집 운영
+
+제품 상세의 정보는 두 권한 경계를 섞지 않는다. 소개·가격·팀·라이선스 신고와 공식 링크는
+`메이커 제공`이고, GitHub·스토어·패키지 레지스트리·RSS·changelog를 직접 읽어 얻은 값은
+`자동 감지`다. 자동 수집 실패가 메이커 값을 덮지 않으며, 마지막 정상 관측값은 출처 상태가
+`failed`나 `stale`이 되어도 보존한다. GitHub 저장소와 실제 서비스가 서로 링크하는지는 별도
+관계 상태로 기록하고, 한쪽 링크만으로 상호 연결을 주장하지 않는다.
+
+현재 인증이 필요한 제공자는 GitHub뿐이다. 프로덕션 비밀 저장소에 public repository를 읽을 수
+있는 `GITHUB_TOKEN`을 넣는다. 토큰이 없거나 유효하지 않으면 GitHub 근거 갱신은 실패로 남지만,
+App Store·Play Store·npm·PyPI·crates.io·일반 링크·RSS 수집은 각 공개 URL을 독립적으로 확인한다.
+토큰과 제공자 응답 본문은 로그나 감사 메타데이터에 저장하지 않는다.
+외부 수집은 DNS 조회와 실제 연결 시점 모두 공인 IP만 허용하며, GitHub JSON 응답도 선언 크기와
+실제 스트림을 각각 2 MiB로 제한한다.
+
+코드와 로컬 스케줄러에서 `product-evidence-refresh`의 실행 주기는 6시간으로 설정한다.
+프로덕션에 같은 주기가 실제 등록됐는지는 이 작업에서 확인하지 않았으므로 `PENDING.md`의
+점검 절차로 기존 등록 여부를 먼저 확인한다. 저장소·일반 링크의 기본 갱신 간격은 24시간,
+release feed는 6시간이며, 성공한 출처만 다음 시각으로 전진한다. 실패 재시도는 스케줄러 주기와
+맞춘 6시간에서 시작해 12·24·48시간으로 늘고 기본 최대 재시도 설정에서는 48시간이 상한이다
+(설정을 늘려도 절대 상한은 7일). 마지막 성공 이후 `출처 간격 × staleAfterIntervals`가 지나면
+`stale`로 표시한다. GitHub rate-limit이 준 재시도 시각은 자체 백오프로 덮지 않는다. 설정은
+`evidence_settings` 한 행에 저장되며 코드 기본값은 `lib/domain/evidence/settings.ts`에 있다.
+
+한 제품을 운영자가 즉시 다시 확인할 때는 전체 잡 커서를 건드리지 않고 강제 갱신한다. slug는
+직접 확인한 값만 넣고, 프로덕션에서는 해당 컨테이너의 `DATABASE_URL`과 제공자 비밀이 주입된
+상태에서 실행한다.
+
+```bash
+npx tsx --env-file=.env.local -e \
+  'import { refreshProductEvidence } from "./lib/domain/evidence/refresh.ts"; refreshProductEvidence("simplehwp", { force: true }).then((result) => { console.log(result); process.exit(0) }).catch((error) => { console.error(error); process.exit(1) })'
+```
+
+외부 갤러리 이미지는 URL만 저장하지 않는다. JPEG·PNG·WebP만 받고 원본 응답은 최대 5 MiB,
+한 변은 최대 10,000 px, 전체는 최대 4천만 픽셀로 제한한다. 메타데이터를 제거한 WebP 웹용
+(최대 1600×1200)과 썸네일(최대 480×360)을 만들고, 두 결과의 SHA-256으로 중복 제거해
+PostgreSQL `bytea`에 보관한다. 제품당 공개 이미지는 최대 8개다. 원본 URL이 사라져도 마지막
+정상 바이트를 유지하며, 공유 자산은 마지막 제품 참조가 삭제될 때만 제거한다.
+
+이 설계는 별도 오브젝트 스토리지 없이 시작하는 대신 PostgreSQL 데이터와 백업 크기가 미디어에
+비례한다. 운영 전 DB 볼륨·WAL·스냅샷 여유를 함께 산정하고, 논리/물리 백업에 `media_assets`의
+두 `bytea` 열이 실제 포함되는지 복구 연습으로 확인한다. DB 백업에서 미디어를 제외하면 상세
+갤러리는 복구되지 않는다.
 
 **단계를 나눈 이유는 되돌릴 수 있게 하기 위함이다.** 원본을 보관하므로 판정 기준을 바꾸면
 GitHub을 다시 긁지 않고 다시 판정한다(후보 state를 `new`로 되돌리면 `crawl-judge`가 다시
@@ -174,7 +220,7 @@ npm run crawl:rejudge -- --out=.crawl-samples/after.json
 봐야 한다 — 실제로 이 방식으로 GitHub Pages 프로젝트 페이지가 통째로 거부되던 것과,
 이름이 `blog`인 개인 블로그가 `*-blog`를 통과하던 것을 잡았다.
 
-토큰은 `GITHUB_TOKEN` 환경변수를 쓰고, 없으면 `gh auth token`을 부른다.
+토큰은 `GITHUB_TOKEN` 환경변수만 쓴다. 로컬 `gh auth` 상태를 자동으로 읽지 않는다.
 
 ## 클릭과 랭킹
 

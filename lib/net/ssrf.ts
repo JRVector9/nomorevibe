@@ -10,10 +10,10 @@ export function allowPrivate(): boolean {
   return process.env.ALLOW_PRIVATE_URLS === "1";
 }
 
-/** 사설·루프백·링크로컬(클라우드 메타데이터 포함) IP 판정 */
+/** 사설·루프백·링크로컬·예약(클라우드 메타데이터 포함) IP 판정 */
 export function isPrivateIp(ip: string): boolean {
   if (net.isIPv4(ip)) {
-    const [a, b] = ip.split(".").map(Number);
+    const [a, b, c] = ip.split(".").map(Number);
     return (
       a === 0 ||
       a === 10 ||
@@ -21,14 +21,24 @@ export function isPrivateIp(ip: string): boolean {
       (a === 100 && b >= 64 && b <= 127) ||
       (a === 169 && b === 254) || // 169.254.169.254 등 메타데이터 엔드포인트
       (a === 172 && b >= 16 && b <= 31) ||
-      (a === 192 && b === 168)
+      (a === 192 && b === 0 && (c === 0 || c === 2)) ||
+      (a === 192 && b === 88 && c === 99) ||
+      (a === 192 && b === 168) ||
+      (a === 198 && (b === 18 || b === 19)) ||
+      (a === 198 && b === 51 && c === 100) ||
+      (a === 203 && b === 0 && c === 113) ||
+      a >= 224
     );
   }
   const v6 = ip.toLowerCase();
   return (
     v6 === "::" ||
     v6 === "::1" ||
-    v6.startsWith("fe80") ||
+    v6.startsWith("64:ff9b::") ||
+    v6.startsWith("100:") ||
+    v6.startsWith("2001:db8:") ||
+    /^fe[89a-f]/.test(v6) ||
+    v6.startsWith("ff") ||
     v6.startsWith("fc") ||
     v6.startsWith("fd") ||
     v6.startsWith("::ffff:") // v4-mapped은 통째로 차단

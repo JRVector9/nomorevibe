@@ -55,6 +55,22 @@ describe("update candidate normalization", () => {
     expect(withRuntimeVersion.dedupeKey).toBe(normalizeUpdateCandidate(base).dedupeKey);
   });
 
+  it("does not abort release normalization on malformed percent encoding", () => {
+    const observedAt = new Date("2026-08-19T00:00:00Z");
+    const normalized = normalizeUpdateCandidate({
+      sourceKind: "feed",
+      dedupeKey: "feed-malformed-url",
+      canonicalUrl: "https://example.com/%E0%A4%A",
+      title: "v1.2.3 released",
+      summary: null,
+      beforeAfter: null,
+      publishedAt: observedAt,
+      observedAt,
+    });
+
+    expect(normalized.dedupeKey).toContain("release:");
+  });
+
   it("stores only meaningful site fields and ignores whitespace/timestamps/assets", () => {
     const first = meaningfulSiteFingerprint(`
       <html><head><title>Simple HWP</title><meta name="description" content="Browser viewer"></head>

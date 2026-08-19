@@ -413,6 +413,29 @@ describe("GitHub evidence refresh", () => {
     expect(request.mock.calls.filter(([path]) => String(path).includes("/releases"))).toHaveLength(2);
   });
 
+  it("stops release pagination when the enclosing job budget expires", async () => {
+    const baseRequest = successfulRequest();
+    let releaseRequests = 0;
+    const request = vi.fn(async (path: string): Promise<GitHubHttpResult<unknown>> => {
+      if (!path.includes("/releases")) return baseRequest(path);
+      releaseRequests += 1;
+      return ok([], {
+        link: releaseRequests === 1
+          ? '<https://api.github.com/repos/owner/repo/releases?per_page=100&page=2>; rel="next"'
+          : undefined,
+      });
+    });
+
+    await expect(refreshGitHubEvidence({
+      slug: "github-product",
+      repository: "owner/repo",
+    }, {
+      request,
+      hasBudget: () => releaseRequests < 1,
+    })).resolves.toEqual({ status: "budget_exhausted", releases: 0 });
+    expect(releaseRequests).toBe(1);
+  });
+
   it.each([
     [{ kind: "rate_limited", resetAt: new Date("2026-08-19T07:00:00.000Z") }, "rate_limited"],
     [{ kind: "http", status: 500 }, "http_500"],

@@ -1,6 +1,7 @@
 import net from "node:net";
 import { z } from "zod";
 import type { EvidenceLevel, LinkKind } from "@/lib/db/product-evidence-schema";
+import { isPrivateIp } from "@/lib/net/ssrf";
 
 const LINK_KINDS = [
   "repository",
@@ -52,32 +53,7 @@ function isPublicHostname(hostname: string): boolean {
 
   const version = net.isIP(host);
   if (version === 0) return host.includes(".");
-  if (version === 6) {
-    const value = host.replace(/^\[|\]$/g, "");
-    return !(
-      value === "::" ||
-      value === "::1" ||
-      value.startsWith("::ffff:") ||
-      value.startsWith("64:ff9b::") ||
-      value.startsWith("fc") ||
-      value.startsWith("fd") ||
-      /^fe[89ab]/.test(value) ||
-      value.startsWith("ff")
-    );
-  }
-
-  const [a, b] = host.split(".").map(Number);
-  return !(
-    a === 0 ||
-    a === 10 ||
-    a === 127 ||
-    (a === 100 && b >= 64 && b <= 127) ||
-    (a === 169 && b === 254) ||
-    (a === 172 && b >= 16 && b <= 31) ||
-    (a === 192 && b === 168) ||
-    (a === 198 && (b === 18 || b === 19)) ||
-    a >= 224
-  );
+  return !isPrivateIp(host);
 }
 
 function parseExternalUrl(input: string): URL | null {

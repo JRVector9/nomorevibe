@@ -68,15 +68,17 @@ npm run job crawl-publish
 
 ---
 
-## B1. 프로덕션 스케줄러 등록
+## B1. 프로덕션 스케줄러 확인 및 필요 시 등록
 
-**막고 있는 것**: 사용자 결정. 운영 환경(Dokploy) 변경이라 임의로 하지 않았다.
+**막고 있는 것**: 운영 환경(Dokploy) 접근과 변경 승인. 이 작업에서는 프로덕션 스케줄 목록과
+실행 이력을 읽지 않았다.
 
 **지금 상태**: cron 진입점(`POST /api/cron/<job>`)과 로컬 배포용 스케줄러
-(`scripts/scheduler.sh`, compose의 `scheduler` 서비스)는 있다. **프로덕션에는 아무것도
-걸려 있지 않아 수집과 랭킹 스냅샷 갱신이 돌지 않는다.**
+(`scripts/scheduler.sh`, compose의 `scheduler` 서비스)는 있다. 프로덕션 등록 여부는
+**확인하지 않았다**. 중복 등록하지 않도록 플랫폼 스케줄과 `/admin/status` 실행 이력을 먼저
+읽고, 누락된 작업만 추가해야 한다.
 
-### 걸어야 할 것
+### 확인 후 누락됐으면 등록할 주기
 
 ```
 */1  * * * *   crawl-fetch     레포 조회 5000회/시간, 한 틱 30건 남짓
@@ -86,10 +88,11 @@ npm run job crawl-publish
 */10 * * * *   uptime-ping     같은 제품은 6시간에 한 번만 본다
 0 * * * *   click-rollup       KST 일별 클릭 집계
 5 * * * *   ranking-refresh    시즌 경계·쿨다운·공개 순위 스냅샷
+1 */6 * * * * product-evidence-refresh 공식 출처·업데이트·내부 미디어 갱신
 ```
 
-`ranking-refresh`는 반드시 `click-rollup`이 끝난 뒤 실행해야 한다. 두 작업을 포함한 위
-프로덕션 스케줄은 아직 등록되지 않았다.
+`ranking-refresh`는 반드시 `click-rollup`이 끝난 뒤 실행해야 한다. 위 프로덕션 스케줄이
+없다고 추정하지 말고, 실제 등록 상태를 확인한 뒤 누락된 항목만 등록한다.
 
 각 호출은 이 형태다.
 
@@ -112,6 +115,21 @@ curl -X POST $SITE/api/cron/<job> -H "Authorization: Bearer $CRON_SECRET"
 
 `/admin/status`의 작업 표에서 마지막 실행·성공 시각이 갱신되는지 본다. "실행 기록 없음"은
 스케줄러가 아직 닿지 않았다는 뜻이고, 마지막 성공만 오래됐다면 그 아래 오류를 본다.
+
+`product-evidence-refresh`도 이 작업에서 코드와 로컬 루프에 추가했으며 **프로덕션 등록 여부는
+확인하지 않았다.** 기존 등록을 확인하고, 없으면 등록한 뒤 검증된 제품 하나에 공식 GitHub
+링크를 선언해 다음을 확인한다.
+
+1. 배포 비밀 저장소의 `GITHUB_TOKEN`으로 GitHub API 인증 요청이 실제 200인지 확인한다. 토큰
+   값이나 Authorization 헤더는 출력하지 않는다.
+2. 강제 단일 제품 갱신은 README의 `refreshProductEvidence(slug, { force: true })` 명령으로 한 번
+   실행하고, `product_evidence_sources.last_success_at`과 `normalized_facts`가 채워지는지 본다.
+3. 예약 호출 뒤 `/admin/status`의 `product-evidence-refresh` 마지막 실행·성공 시각이 갱신되고,
+   구조화 로그에 출처 종류·slug·소요 시간·성공/실패·변경 수만 남는지 확인한다.
+4. 토큰을 제거하거나 폐기하지 말고 별도 시험 환경에서 잘못된 토큰으로 실패 분기를 확인한다.
+   마지막 정상 facts가 보존되고 `last_error_code`/`next_attempt_at`만 전진해야 한다.
+5. DB 백업과 복구 표본에 `media_assets.web_data`·`thumbnail_data`가 포함되는지, 미디어 증가분을
+   감당할 볼륨·WAL·보존 기간인지 확인한다.
 
 ### 함께 해야 할 일
 

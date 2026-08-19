@@ -5,6 +5,11 @@ import { mediaAssets, productMedia } from "@/lib/db/schema";
 import { safeHttpUrl } from "@/lib/domain/evidence/contracts";
 import { mediaAssetLock, mediaAssetValues, postgresMediaStorage } from "./postgres-storage";
 import type { NormalizedImageAsset, RelationshipMediaStorage } from "./storage";
+import {
+  findProductGenerationId,
+  lockProductGeneration,
+  ProductGenerationChangedError,
+} from "@/lib/domain/products/repository";
 
 const slugSchema = z.string().min(1).max(80).regex(/^[a-z0-9][a-z0-9-]*$/);
 const positionSchema = z.number().int().min(0).max(1_000);
@@ -23,6 +28,7 @@ export async function observeProductMedia(
     altText: string | null;
     position: number;
     observedAt: Date;
+    productId?: number;
   },
   storage: RelationshipMediaStorage = postgresMediaStorage,
 ): Promise<{
@@ -34,9 +40,14 @@ export async function observeProductMedia(
   const sourceUrl = safeHttpUrl.parse(input.sourceUrl);
   const position = positionSchema.parse(input.position);
   const altText = normalizedAltText(input.altText);
+  const productId = input.productId ?? await findProductGenerationId(slug);
+  if (productId === null) throw new ProductGenerationChangedError();
   if (!Number.isFinite(input.observedAt.getTime())) throw new Error("invalid observedAt");
   try {
     return await db.transaction(async (tx) => {
+      if (!(await lockProductGeneration(tx, productId, slug))) {
+        throw new ProductGenerationChangedError();
+      }
       await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`product-media:${slug}`}))`);
       const current = await tx.query.productMedia.findFirst({
         where: and(
@@ -134,11 +145,17 @@ export async function markProductMediaMissing(input: {
   slug: string;
   sourceUrl: string;
   observedAt: Date;
+  productId?: number;
 }): Promise<boolean> {
   const slug = slugSchema.parse(input.slug);
   const sourceUrl = safeHttpUrl.parse(input.sourceUrl);
+  const productId = input.productId ?? await findProductGenerationId(slug);
+  if (productId === null) throw new ProductGenerationChangedError();
   if (!Number.isFinite(input.observedAt.getTime())) throw new Error("invalid observedAt");
   return db.transaction(async (tx) => {
+    if (!(await lockProductGeneration(tx, productId, slug))) {
+      throw new ProductGenerationChangedError();
+    }
     await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`product-media:${slug}`}))`);
     const current = await tx.query.productMedia.findFirst({
       where: and(

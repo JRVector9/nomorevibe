@@ -19,6 +19,7 @@ import { replaceMakerLinks, upsertObservedSource } from "@/lib/domain/evidence/r
 import { normalizeImage } from "@/lib/domain/media/images";
 import { observeProductMedia } from "@/lib/domain/media/repository";
 import { DEFAULT_EVIDENCE_SETTINGS } from "@/lib/domain/evidence/settings";
+import { removeProductAndEvidence } from "@/lib/domain/products/repository";
 import {
   refreshProductEvidenceJob,
   type EvidenceRefreshCursor,
@@ -130,6 +131,29 @@ describe("bounded product evidence refresh", () => {
     expect(calls).toEqual(["alpha", "beta", "gamma"]);
   });
 
+  it("logs a safe product identity and error code for an unexpected refresh failure", async () => {
+    await product("job-error");
+    await supportLink("job-error");
+    const run = context();
+
+    await refreshProductEvidenceJob(run.ctx, {
+      now: () => NOW,
+      refreshSource: async (source) => {
+        const current = await db.query.products.findFirst({
+          where: eq(products.slug, source.slug),
+        });
+        await removeProductAndEvidence(current!.id, source.slug);
+        throw new Error("provider secret body");
+      },
+    });
+
+    expect(run.logs).toContainEqual({
+      event: "evidence.product_refresh_failed",
+      fields: { slug: "job-error", errorCode: "product_generation_changed" },
+    });
+    expect(JSON.stringify(run.logs)).not.toContain("provider secret body");
+  });
+
   it("finishes an exact-full final page without waiting for another scheduled invocation", async () => {
     for (const slug of ["alpha", "beta"]) {
       await product(slug);
@@ -182,6 +206,23 @@ describe("bounded product evidence refresh", () => {
     await expect(refreshProductEvidenceJob(second.ctx, dependencies)).resolves.toEqual({ done: true });
     expect(calls).toEqual(["support", "rss"]);
     expect(await db.select().from(productEvidenceSources)).toHaveLength(2);
+  });
+
+  it("does not advance the product cursor when GitHub stops for job budget", async () => {
+    await product("github-budget");
+    await replaceMakerLinks({
+      slug: "github-budget",
+      actor: "maker:test",
+      links: [{ kind: "repository", url: "https://github.com/Owner/Repo" }],
+    });
+    const run = context();
+
+    await expect(refreshProductEvidenceJob(run.ctx, {
+      now: () => NOW,
+      github: async () => ({ status: "budget_exhausted", releases: 0 }),
+    })).resolves.toEqual({ done: false, cursor: null });
+    expect(run.saved()).toBeNull();
+    expect(await db.select().from(productEvidenceSources)).toHaveLength(0);
   });
 
   it("skips future sources normally, supports force refresh, and increases bounded retry delay", async () => {
@@ -411,7 +452,7 @@ describe("bounded product evidence refresh", () => {
             attempts: 1,
             lastErrorCode: "rate_limited",
           });
-          return { status: "deferred", releases: 0 };
+          return { status: "deferred", releases: 0, retryAt: providerRetryAt };
         },
       },
     });
@@ -428,6 +469,100 @@ describe("bounded product evidence refresh", () => {
       attempts: 1,
       lastErrorCode: "rate_limited",
     });
+  });
+
+  it("applies shared exponential backoff to transient GitHub failures", async () => {
+    await product("github-backoff");
+    await replaceMakerLinks({
+      slug: "github-backoff",
+      actor: "maker:test",
+      links: [{ kind: "repository", url: "https://github.com/Owner/Repo" }],
+    });
+    await upsertObservedSource({
+      slug: "github-backoff",
+      kind: "repository",
+      provider: "github",
+      sourceKey: "owner/repo",
+      sourceUrl: "https://github.com/owner/repo",
+      state: "failed",
+      nextAttemptAt: NOW,
+      attempts: 1,
+      lastErrorCode: "http_500",
+    });
+
+    await refreshProductEvidence("github-backoff", {
+      now: NOW,
+      dependencies: {
+        github: async () => {
+          await upsertObservedSource({
+            slug: "github-backoff",
+            kind: "repository",
+            provider: "github",
+            sourceKey: "owner/repo",
+            sourceUrl: "https://github.com/owner/repo",
+            state: "failed",
+            lastFailureAt: NOW,
+            nextAttemptAt: new Date("2026-08-20T03:00:00.000Z"),
+            attempts: 2,
+            lastErrorCode: "http_500",
+          });
+          return { status: "deferred", releases: 0 };
+        },
+      },
+    });
+
+    const [source] = await db.select().from(productEvidenceSources).where(eq(
+      productEvidenceSources.slug,
+      "github-backoff",
+    ));
+    expect(source.nextAttemptAt).toEqual(new Date("2026-08-19T15:00:00.000Z"));
+  });
+
+  it("uses shared backoff when a GitHub rate limit has no reset timestamp", async () => {
+    await product("github-rate-no-reset");
+    await replaceMakerLinks({
+      slug: "github-rate-no-reset",
+      actor: "maker:test",
+      links: [{ kind: "repository", url: "https://github.com/Owner/Repo" }],
+    });
+    await upsertObservedSource({
+      slug: "github-rate-no-reset",
+      kind: "repository",
+      provider: "github",
+      sourceKey: "owner/repo",
+      sourceUrl: "https://github.com/owner/repo",
+      state: "failed",
+      nextAttemptAt: NOW,
+      attempts: 1,
+      lastErrorCode: "rate_limited",
+    });
+
+    await refreshProductEvidence("github-rate-no-reset", {
+      now: NOW,
+      dependencies: {
+        github: async () => {
+          await upsertObservedSource({
+            slug: "github-rate-no-reset",
+            kind: "repository",
+            provider: "github",
+            sourceKey: "owner/repo",
+            sourceUrl: "https://github.com/owner/repo",
+            state: "failed",
+            lastFailureAt: NOW,
+            nextAttemptAt: new Date("2026-08-20T03:00:00.000Z"),
+            attempts: 2,
+            lastErrorCode: "rate_limited",
+          });
+          return { status: "deferred", releases: 0 };
+        },
+      },
+    });
+
+    const [source] = await db.select().from(productEvidenceSources).where(eq(
+      productEvidenceSources.slug,
+      "github-rate-no-reset",
+    ));
+    expect(source.nextAttemptAt).toEqual(new Date("2026-08-19T15:00:00.000Z"));
   });
 
   it("keeps successful source work when another source and media refresh fail", async () => {

@@ -185,10 +185,20 @@ type EvidenceRequest = (
   conditional?: ConditionalRequest,
 ) => Promise<GitHubHttpResult<unknown>>;
 
+type ReleaseFetchResult = GitHubHttpResult<ReleasePayload[]>
+  | { ok: false; error: { kind: "budget_exhausted" } };
+
+function isBudgetExhausted(
+  result: ReleaseFetchResult,
+): result is { ok: false; error: { kind: "budget_exhausted" } } {
+  return !result.ok && result.error.kind === "budget_exhausted";
+}
+
 async function fetchPublishedReleases(
   request: EvidenceRequest,
   repositoryKey: string,
-): Promise<GitHubHttpResult<ReleasePayload[]>> {
+  hasBudget: () => boolean,
+): Promise<ReleaseFetchResult> {
   const published: ReleasePayload[] = [];
   let page = 1;
   let responseHeaders = { etag: null, lastModified: null, link: null } as {
@@ -197,6 +207,7 @@ async function fetchPublishedReleases(
     link: string | null;
   };
   for (let pagesRead = 0; pagesRead < RELEASE_PAGE_LIMIT; pagesRead++) {
+    if (!hasBudget()) return { ok: false, error: { kind: "budget_exhausted" } };
     const result = await request(
       `/repos/${repositoryKey}/releases?per_page=${RELEASE_PAGE_SIZE}&page=${page}`,
     );
@@ -225,6 +236,7 @@ async function fetchPublishedReleases(
 type RefreshDependencies = {
   request?: EvidenceRequest;
   now?: () => Date;
+  hasBudget?: () => boolean;
   log?: (event: string, fields: Record<string, unknown>) => void;
 };
 
@@ -286,6 +298,7 @@ async function persistReleases(
   slug: string,
   releases: ReleasePayload[],
   observedAt: Date,
+  productId: number,
 ): Promise<number> {
   const normalized = normalizeReleases(releases);
   if (normalized.length === 0) return 0;
@@ -298,21 +311,32 @@ async function persistReleases(
     beforeAfter: null,
     publishedAt: new Date(release.publishedAt),
     observedAt,
-  })), executor);
+  })), executor, productId);
 }
 
 export async function refreshGitHubEvidence(
   input: {
     slug: string;
     repository: string;
+    productId?: number;
   },
   dependencies: RefreshDependencies = {},
-): Promise<{ status: "updated" | "not_modified" | "disconnected" | "deferred"; releases: number }> {
+): Promise<{
+  status: "updated" | "not_modified" | "disconnected" | "deferred" | "budget_exhausted";
+  releases: number;
+  retryAt?: Date | null;
+}> {
   const repositoryKey = input.repository.toLowerCase();
   if (!/^[a-z0-9_.-]+\/[a-z0-9_.-]+$/.test(repositoryKey)) {
     throw new Error("invalid GitHub repository key");
   }
+  const identity = await findProductEvidenceIdentity(input.slug);
+  if (!identity || (input.productId !== undefined && input.productId !== identity.id)) {
+    throw new Error("product generation changed");
+  }
+  const productId = input.productId ?? identity.id;
   const request: EvidenceRequest = dependencies.request ?? ((path, conditional) => githubRequest(path, conditional));
+  const hasBudget = dependencies.hasBudget ?? (() => true);
   const now = (dependencies.now ?? (() => new Date()))();
   const current = await findObservedSource({
     slug: input.slug,
@@ -343,9 +367,14 @@ export async function refreshGitHubEvidence(
         : new Date(now.getTime() + GITHUB_REFRESH_MS),
       attempts: (current?.attempts ?? 0) + 1,
       lastErrorCode: failureCode(root),
-    });
+    }, db, productId);
     log(disconnected ? "disconnected" : "deferred", root.error.kind === "http" ? String(root.error.status) : root.error.kind, 0);
-    return { status: disconnected ? "disconnected" : "deferred", releases: 0 };
+    if (disconnected) return { status: "disconnected", releases: 0 };
+    return {
+      status: "deferred",
+      releases: 0,
+      retryAt: root.error.kind === "rate_limited" ? root.error.resetAt : null,
+    };
   }
 
   const repository = root.status === 200 ? root.value as RepositoryPayload : null;
@@ -360,7 +389,7 @@ export async function refreshGitHubEvidence(
       nextAttemptAt: new Date(now.getTime() + GITHUB_REFRESH_MS),
       attempts: (current?.attempts ?? 0) + 1,
       lastErrorCode: "private_repository",
-    });
+    }, db, productId);
     log("disconnected", "private", 0);
     return { status: "disconnected", releases: 0 };
   }
@@ -368,9 +397,13 @@ export async function refreshGitHubEvidence(
   const [languages, contributors, releases, readme] = await Promise.all([
     request(`/repos/${repositoryKey}/languages`),
     request(`/repos/${repositoryKey}/contributors?per_page=1&anon=false`),
-    fetchPublishedReleases(request, repositoryKey),
+    fetchPublishedReleases(request, repositoryKey, hasBudget),
     request(`/repos/${repositoryKey}/readme`),
   ]);
+  if (isBudgetExhausted(releases)) {
+    log("budget_exhausted", "budget", 0);
+    return { status: "budget_exhausted", releases: 0 };
+  }
   const readmeMissing = !readme.ok && readme.error.kind === "not_found";
   const supporting = readmeMissing
     ? [languages, contributors, releases]
@@ -389,9 +422,13 @@ export async function refreshGitHubEvidence(
         : new Date(now.getTime() + GITHUB_REFRESH_MS),
       attempts: (current?.attempts ?? 0) + 1,
       lastErrorCode: failureCode(failed),
-    });
+    }, db, productId);
     log("deferred", failed.error.kind === "http" ? String(failed.error.status) : failed.error.kind, 0);
-    return { status: "deferred", releases: 0 };
+    return {
+      status: "deferred",
+      releases: 0,
+      retryAt: failed.error.kind === "rate_limited" ? failed.error.resetAt : null,
+    };
   }
   if (
     !isSuccessfulGitHubResponse(languages)
@@ -429,8 +466,7 @@ export async function refreshGitHubEvidence(
         languages: languageSummary(languages.value as Record<string, number>),
         latestRelease: normalizeReleases(releasePayloads)[0] ?? null,
       };
-  const [identity, makerDeclared, siteLinksRepository] = await Promise.all([
-    findProductEvidenceIdentity(input.slug),
+  const [makerDeclared, siteLinksRepository] = await Promise.all([
     isMakerLinkDeclared({
       slug: input.slug,
       kind: "repository",
@@ -438,7 +474,6 @@ export async function refreshGitHubEvidence(
     }),
     siteObservedRepository({ slug: input.slug, repositoryKey }),
   ]);
-  if (!identity) throw new Error("product identity not found");
   facts.relationshipState = relationshipState({
     makerDeclared,
     siteLinksRepository,
@@ -467,8 +502,8 @@ export async function refreshGitHubEvidence(
       nextAttemptAt: new Date(now.getTime() + GITHUB_REFRESH_MS),
       attempts: 0,
       lastErrorCode: null,
-    }, tx);
-    return persistReleases(tx, input.slug, releasePayloads, now);
+    }, tx, productId);
+    return persistReleases(tx, input.slug, releasePayloads, now, productId);
   });
   const status = root.status === 304 && !factsChanged && releaseCount === 0
     ? "not_modified"

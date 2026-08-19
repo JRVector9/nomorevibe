@@ -6,6 +6,11 @@ import { productUpdates } from "@/lib/db/schema";
 import { extractPageMeta } from "@/lib/net/normalize";
 import { safeHttpUrl } from "./contracts";
 import { sanitizeExternalSummary } from "./providers/feeds";
+import {
+  findProductGenerationId,
+  lockProductGeneration,
+  ProductGenerationChangedError,
+} from "@/lib/domain/products/repository";
 
 export type UpdateCandidate = {
   sourceKind: "maker" | "github_release" | "feed" | "site_change" | "repository_change" | "activity_digest";
@@ -61,7 +66,15 @@ function canonicalExternalUrl(value: string | null): string | null {
 }
 
 function normalizedVersion(title: string, canonicalUrl: string | null): string | null {
-  const values = [canonicalUrl ? decodeURIComponent(canonicalUrl) : "", title];
+  let decodedUrl = canonicalUrl ?? "";
+  if (canonicalUrl) {
+    try {
+      decodedUrl = decodeURIComponent(canonicalUrl);
+    } catch {
+      decodedUrl = canonicalUrl;
+    }
+  }
+  const values = [decodedUrl, title];
   for (const value of values) {
     const match = value.match(/(?:^|[^a-z0-9])v?(\d+\.\d+(?:\.\d+)?(?:[-+][0-9a-z.-]+)?)(?:$|[^a-z0-9])/i);
     if (match) return match[1].toLowerCase();
@@ -264,6 +277,7 @@ export async function insertUpdateCandidates(
   slugInput: string,
   candidates: UpdateCandidate[],
   executor: EvidenceExecutor = db,
+  expectedProductId?: number,
 ): Promise<number> {
   const slug = slugSchema.parse(slugInput);
   if (candidates.length > 100) throw new Error("too many update candidates");
@@ -273,6 +287,27 @@ export async function insertUpdateCandidates(
     if (!unique.has(normalized.dedupeKey)) unique.set(normalized.dedupeKey, normalized);
   }
   if (unique.size === 0) return 0;
+  if (executor === db) {
+    const productId = expectedProductId ?? await findProductGenerationId(slug);
+    if (productId === null) throw new ProductGenerationChangedError();
+    return db.transaction((tx) => insertUpdateCandidates(
+      slug,
+      [...unique.values()],
+      tx,
+      productId,
+    ));
+  }
+  let productId = expectedProductId;
+  if (productId === undefined) {
+    const current = await findProductGenerationId(slug);
+    productId = current ?? undefined;
+  }
+  if (
+    productId === undefined
+    || !(await lockProductGeneration(executor as EvidenceTransaction, productId, slug))
+  ) {
+    throw new ProductGenerationChangedError();
+  }
   const inserted = await executor.insert(productUpdates).values([...unique.values()].map((candidate) => ({
     slug,
     sourceKind: candidate.sourceKind,

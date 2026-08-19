@@ -107,6 +107,25 @@ describe("conditional GitHub HTTP", () => {
     });
   });
 
+  it("rejects declared and streamed GitHub response bodies above the cap", async () => {
+    const oversized = 2 * 1024 * 1024 + 1;
+    fetchMock
+      .mockResolvedValueOnce(new Response("{}", {
+        status: 200,
+        headers: { "content-length": String(oversized) },
+      }))
+      .mockResolvedValueOnce(new Response(Buffer.alloc(oversized, 32), { status: 200 }));
+
+    await expect(githubRequest("/repos/o/declared-large")).resolves.toEqual({
+      ok: false,
+      error: { kind: "invalid_response" },
+    });
+    await expect(githubRequest("/repos/o/streamed-large")).resolves.toEqual({
+      ok: false,
+      error: { kind: "invalid_response" },
+    });
+  });
+
   it("maps an empty-repository contributor 204 to an empty collection", async () => {
     fetchMock.mockResolvedValue(new Response(null, { status: 204 }));
 

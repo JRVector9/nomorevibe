@@ -5,6 +5,7 @@ import {
   refreshProductEvidence,
   type EvidenceRefreshDependencies,
 } from "@/lib/domain/evidence/refresh";
+import { ProductGenerationChangedError } from "@/lib/domain/products/repository";
 
 export type EvidenceRefreshCursor = { afterSlug?: string };
 export type EvidenceRefreshCounts = {
@@ -15,6 +16,13 @@ export type EvidenceRefreshCounts = {
   eventsInserted: number;
   mediaInserted: number;
 };
+
+function refreshErrorCode(error: unknown): string {
+  if (error instanceof ProductGenerationChangedError) return "product_generation_changed";
+  if (!(error instanceof Error)) return "unknown";
+  return error.name.replace(/[^a-z0-9]+/gi, "_").replace(/^_|_$/g, "").toLowerCase().slice(0, 80)
+    || "error";
+}
 
 export async function refreshProductEvidenceJob(
   ctx: JobContext<EvidenceRefreshCursor>,
@@ -73,8 +81,12 @@ export async function refreshProductEvidenceJob(
           completedPage = false;
           break;
         }
-      } catch {
+      } catch (error) {
         counts.failed += 1;
+        ctx.log("evidence.product_refresh_failed", {
+          slug,
+          errorCode: refreshErrorCode(error),
+        });
       }
       afterSlug = slug;
       await ctx.save({ afterSlug });

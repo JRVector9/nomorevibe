@@ -205,4 +205,33 @@ describe("생존 확인", () => {
       latencySamples: 1,
     });
   });
+
+  it("진행 중이던 확인 결과를 같은 slug의 재등록 제품에 붙이지 않는다", async () => {
+    await product("reuse", "https://old.test");
+    const oldProduct = await repo.findBySlug("reuse");
+    let signalStarted!: () => void;
+    let releaseResponse!: () => void;
+    const started = new Promise<void>((resolve) => { signalStarted = resolve; });
+    const responseReleased = new Promise<void>((resolve) => { releaseResponse = resolve; });
+    safeFetch.mockImplementation(async () => {
+      signalStarted();
+      await responseReleased;
+      return { finalUrl: "https://old.test", response: { status: 200 } };
+    });
+    const ping = pingProducts({
+      cursor: null,
+      save: async () => {},
+      hasBudget: () => true,
+      log: () => {},
+    });
+    await started;
+
+    await repo.removeProductAndEvidence(oldProduct!.id, "reuse");
+    await product("reuse", "https://replacement.test");
+    releaseResponse();
+
+    await expect(ping).rejects.toThrow(/product generation changed/);
+    expect(await db.select().from(productHealth)).toHaveLength(0);
+    expect(await db.select().from(productHealthDaily)).toHaveLength(0);
+  });
 });

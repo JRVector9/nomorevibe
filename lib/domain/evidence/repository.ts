@@ -17,6 +17,11 @@ import {
   type MakerProfileInput,
 } from "./contracts";
 import { EVIDENCE_LABELS, normalizeProductProvenance } from "./provenance";
+import {
+  findProductGenerationId,
+  lockProductGeneration,
+  ProductGenerationChangedError,
+} from "@/lib/domain/products/repository";
 
 const slugSchema = z.string().min(1).max(80).regex(/^[a-z0-9][a-z0-9-]*$/);
 const actorSchema = z.string().min(1).max(120);
@@ -75,6 +80,8 @@ export async function saveMakerProfile(input: {
   actor: string;
 }): Promise<void> {
   const slug = slugSchema.parse(input.slug);
+  const productId = await findProductGenerationId(slug);
+  if (productId === null) throw new ProductGenerationChangedError();
   const profile: MakerProfileInput = makerProfileSchema.parse(input.profile);
   const values = {
     slug,
@@ -94,6 +101,9 @@ export async function saveMakerProfile(input: {
   };
 
   await db.transaction(async (tx) => {
+    if (!(await lockProductGeneration(tx, productId, slug))) {
+      throw new ProductGenerationChangedError();
+    }
     await tx.insert(productProfiles).values(values).onConflictDoUpdate({
       target: productProfiles.slug,
       set: values,
@@ -113,9 +123,14 @@ export async function replaceMakerLinks(input: {
   actor: string;
 }): Promise<void> {
   const slug = slugSchema.parse(input.slug);
+  const productId = await findProductGenerationId(slug);
+  if (productId === null) throw new ProductGenerationChangedError();
   const { links } = makerLinksSchema.parse({ links: input.links });
 
   await db.transaction(async (tx) => {
+    if (!(await lockProductGeneration(tx, productId, slug))) {
+      throw new ProductGenerationChangedError();
+    }
     await tx.execute(sql`
       select pg_advisory_xact_lock(hashtext(${`product-evidence-maker-links:${slug}`}))
     `);
@@ -156,8 +171,27 @@ export async function replaceMakerLinks(input: {
 export async function upsertObservedSource(
   input: unknown,
   executor: EvidenceExecutor = db,
+  expectedProductId?: number,
 ): Promise<void> {
   const source = observedSourceSchema.parse(input);
+  if (executor === db) {
+    const productId = expectedProductId ?? await findProductGenerationId(source.slug);
+    if (productId === null) throw new ProductGenerationChangedError();
+    return db.transaction((tx) => upsertObservedSource(source, tx, productId));
+  }
+  let productId = expectedProductId;
+  if (productId === undefined) {
+    const [current] = await executor.select({ id: products.id })
+      .from(products)
+      .where(eq(products.slug, source.slug));
+    productId = current?.id;
+  }
+  if (
+    productId === undefined
+    || !(await lockProductGeneration(executor as EvidenceTransaction, productId, source.slug))
+  ) {
+    throw new ProductGenerationChangedError();
+  }
   const now = new Date();
   if (source.state === "ok" && !source.normalizedFacts) {
     const refreshed = await executor.update(productEvidenceSources).set({
@@ -264,7 +298,7 @@ export async function isMakerLinkDeclared(input: {
 export async function findProductEvidenceIdentity(slug: string) {
   return db.query.products.findFirst({
     where: eq(products.slug, slugSchema.parse(slug)),
-    columns: { url: true },
+    columns: { id: true, url: true },
   });
 }
 
@@ -295,10 +329,15 @@ export async function replaceProductProvenance(input: {
   authority?: "maker" | "system";
 }): Promise<void> {
   const slug = slugSchema.parse(input.slug);
+  const productId = await findProductGenerationId(slug);
+  if (productId === null) throw new ProductGenerationChangedError();
   const actor = actorSchema.parse(input.actor);
   const authority = input.authority ?? "maker";
   const provenance = normalizeProductProvenance(input.provenance, authority);
   await db.transaction(async (tx) => {
+    if (!(await lockProductGeneration(tx, productId, slug))) {
+      throw new ProductGenerationChangedError();
+    }
     await tx.execute(sql`
       select pg_advisory_xact_lock(hashtext(${`product-provenance:${slug}`}))
     `);

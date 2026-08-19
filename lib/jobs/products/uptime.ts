@@ -38,7 +38,7 @@ export async function pingProducts(ctx: JobContext<null>): Promise<JobOutcome<nu
     const latencyMs = Math.max(0, Math.round(performance.now() - startedAt));
     const status = fetched?.response.status ?? 0;
     await fetched?.response.body?.cancel().catch(() => {});
-    await recordPing(target.slug, status, fetched ? latencyMs : null);
+    await recordPing(target.slug, status, fetched ? latencyMs : null, new Date(), target.id);
 
     if (status >= 200 && status < 400) alive++;
     else down++;

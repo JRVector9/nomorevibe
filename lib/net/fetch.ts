@@ -77,7 +77,7 @@ function timedOut(error: unknown): boolean {
   );
 }
 
-async function readBodyStrictlyCapped(
+export async function readBodyStrictlyCapped(
   response: Response,
   maxBytes: number,
 ): Promise<Buffer | null> {

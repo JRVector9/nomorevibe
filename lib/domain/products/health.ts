@@ -6,6 +6,11 @@ import {
   productHealthDaily,
   type ProductHealth,
 } from "@/lib/db/schema";
+import {
+  findProductGenerationId,
+  lockProductGeneration,
+  ProductGenerationChangedError,
+} from "./repository";
 
 /**
  * 제품 생존 확인.
@@ -25,7 +30,7 @@ export const DOWN_THRESHOLD = 3;
  */
 export const RECHECK_AFTER_MINUTES = 6 * 60;
 
-export type PingTarget = { slug: string; url: string };
+export type PingTarget = { id: number; slug: string; url: string };
 
 /**
  * 다음에 확인할 제품.
@@ -35,7 +40,7 @@ export type PingTarget = { slug: string; url: string };
  */
 export async function nextToCheck(limit: number): Promise<PingTarget[]> {
   return db
-    .select({ slug: products.slug, url: products.url })
+    .select({ id: products.id, slug: products.slug, url: products.url })
     .from(products)
     .leftJoin(productHealth, eq(productHealth.slug, products.slug))
     .where(
@@ -55,6 +60,7 @@ export async function recordPing(
   status: number,
   latencyMs: number | null = null,
   observedAt = new Date(),
+  expectedProductId?: number,
 ): Promise<void> {
   const alive = status >= 200 && status < 400;
   if (!Number.isFinite(observedAt.getTime())) throw new Error("invalid ping timestamp");
@@ -62,8 +68,13 @@ export async function recordPing(
     ? Math.max(0, Math.min(2_147_483_647, Math.round(latencyMs)))
     : null;
   const day = new Date(observedAt.getTime() + 9 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  const productId = expectedProductId ?? await findProductGenerationId(slug);
+  if (productId === null) throw new ProductGenerationChangedError();
 
   await db.transaction(async (tx) => {
+    if (!(await lockProductGeneration(tx, productId, slug))) {
+      throw new ProductGenerationChangedError();
+    }
     await tx
       .insert(productHealth)
       .values({

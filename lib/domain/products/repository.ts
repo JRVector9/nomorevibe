@@ -6,8 +6,18 @@ import {
   clickEvents,
   productClickDaily,
   productHealth,
+  productHealthDaily,
   rankingEntries,
   takedownRequests,
+  mediaAssets,
+  productAgents,
+  productEvidenceAudit,
+  productEvidenceSources,
+  productLinks,
+  productMedia,
+  productProfiles,
+  productSkills,
+  productUpdates,
   type Product,
   type NewProduct,
   type ProductStatus,
@@ -158,6 +168,37 @@ export async function update(id: number, values: Partial<Product>): Promise<void
   await db.update(products).set({ ...values, updatedAt: new Date() }).where(eq(products.id, id));
 }
 
+export type ProductTransaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
+
+export class ProductGenerationChangedError extends Error {
+  constructor() {
+    super("product generation changed");
+    this.name = "ProductGenerationChangedError";
+  }
+}
+
+export async function findProductGenerationId(slug: string): Promise<number | null> {
+  const row = await db.query.products.findFirst({
+    where: eq(products.slug, slug),
+    columns: { id: true },
+  });
+  return row?.id ?? null;
+}
+
+/** 같은 slug의 삭제·재등록 세대를 직렬화하고 요청이 시작된 제품인지 확인한다. */
+export async function lockProductGeneration(
+  tx: ProductTransaction,
+  id: number,
+  slug: string,
+): Promise<boolean> {
+  await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`product-lifecycle:${slug}`}))`);
+  const [row] = await tx.select({ id: products.id })
+    .from(products)
+    .where(and(eq(products.id, id), eq(products.slug, slug)))
+    .for("update");
+  return Boolean(row);
+}
+
 /**
  * 제품에 딸린 기록.
  *
@@ -165,17 +206,100 @@ export async function update(id: number, values: Partial<Product>): Promise<void
  * 이름으로 새로 들어온 제품이 지워진 제품의 클릭·생존 이력·내려달라 요청을 물려받는다.
  */
 export async function removeTraces(slug: string): Promise<void> {
-  await Promise.all([
-    db.delete(clickEvents).where(eq(clickEvents.slug, slug)),
-    db.delete(productClickDaily).where(eq(productClickDaily.slug, slug)),
-    db.delete(productHealth).where(eq(productHealth.slug, slug)),
-    db.delete(rankingEntries).where(eq(rankingEntries.slug, slug)),
-    db.delete(takedownRequests).where(eq(takedownRequests.slug, slug)),
-  ]);
+  await db.transaction(async (tx) => {
+    await tx.delete(clickEvents).where(eq(clickEvents.slug, slug));
+    await tx.delete(productClickDaily).where(eq(productClickDaily.slug, slug));
+    await tx.delete(productHealth).where(eq(productHealth.slug, slug));
+    await tx.delete(productHealthDaily).where(eq(productHealthDaily.slug, slug));
+    await tx.delete(rankingEntries).where(eq(rankingEntries.slug, slug));
+    await tx.delete(takedownRequests).where(eq(takedownRequests.slug, slug));
+  });
 }
 
 export async function remove(id: number): Promise<void> {
   await db.delete(products).where(eq(products.id, id));
+}
+
+/**
+ * 메이커가 승인한 완전 삭제.
+ *
+ * slug는 재사용될 수 있으므로 제품 소유 데이터와 집계 흔적을 제품 행과 같은 트랜잭션에서
+ * 없앤다. 미디어는 관측 경로와 같은 잠금 순서(product → asset)를 사용하고, 다른 제품이
+ * 참조하지 않는 바이트만 제거한다.
+ */
+export async function removeProductAndEvidence(id: number, slug: string): Promise<boolean> {
+  return db.transaction(async (tx) => {
+    if (!(await lockProductGeneration(tx, id, slug))) return false;
+    const [current] = await tx.select({ status: products.status })
+      .from(products)
+      .where(and(eq(products.id, id), eq(products.slug, slug)));
+    // 메이커 삭제 승인 뒤 어드민 차단이 먼저 직렬화되면 차단과 증거 보존이 우선한다.
+    if (current?.status === "banned") return false;
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`product-media:${slug}`}))`);
+    const media = await tx.select({ hash: productMedia.assetHash })
+      .from(productMedia)
+      .where(eq(productMedia.slug, slug));
+    const hashes = [...new Set(media.map((row) => row.hash))].sort();
+    for (const hash of hashes) {
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`media-asset:${hash}`}))`);
+    }
+
+    await tx.delete(productProfiles).where(eq(productProfiles.slug, slug));
+    await tx.delete(productLinks).where(eq(productLinks.slug, slug));
+    await tx.delete(productEvidenceSources).where(eq(productEvidenceSources.slug, slug));
+    await tx.delete(productMedia).where(eq(productMedia.slug, slug));
+    await tx.delete(productUpdates).where(eq(productUpdates.slug, slug));
+    await tx.delete(productAgents).where(eq(productAgents.slug, slug));
+    await tx.delete(productSkills).where(eq(productSkills.slug, slug));
+    await tx.delete(productEvidenceAudit).where(eq(productEvidenceAudit.slug, slug));
+    await tx.delete(ogImages).where(eq(ogImages.slug, slug));
+    await tx.delete(clickEvents).where(eq(clickEvents.slug, slug));
+    await tx.delete(productClickDaily).where(eq(productClickDaily.slug, slug));
+    await tx.delete(productHealth).where(eq(productHealth.slug, slug));
+    await tx.delete(productHealthDaily).where(eq(productHealthDaily.slug, slug));
+    await tx.delete(rankingEntries).where(eq(rankingEntries.slug, slug));
+    await tx.delete(takedownRequests).where(eq(takedownRequests.slug, slug));
+    await tx.delete(products).where(and(eq(products.id, id), eq(products.slug, slug)));
+
+    for (const hash of hashes) {
+      await tx.delete(mediaAssets).where(and(
+        eq(mediaAssets.hash, hash),
+        sql`not exists (
+          select 1 from ${productMedia}
+          where ${productMedia.assetHash} = ${hash}
+        )`,
+      ));
+    }
+    return true;
+  });
+}
+
+export async function setStatusWithAudit(input: {
+  id: number;
+  slug: string;
+  status: ProductStatus;
+  action: "admin.product.ban" | "admin.product.unban";
+}): Promise<boolean> {
+  return db.transaction(async (tx) => {
+    if (!(await lockProductGeneration(tx, input.id, input.slug))) return false;
+    const [current] = await tx.select({ status: products.status })
+      .from(products)
+      .where(and(eq(products.id, input.id), eq(products.slug, input.slug)));
+    // 같은 전환이 잠금을 기다린 경우 이미 원하는 상태면 성공으로 끝내되 감사를 중복하지 않는다.
+    if (current?.status === input.status) return true;
+    const updated = await tx.update(products)
+      .set({ status: input.status, updatedAt: new Date() })
+      .where(and(eq(products.id, input.id), eq(products.slug, input.slug)))
+      .returning({ id: products.id });
+    if (updated.length !== 1) return false;
+    await tx.insert(productEvidenceAudit).values({
+      slug: input.slug,
+      actor: "admin",
+      action: input.action,
+      metadata: { status: input.status },
+    });
+    return true;
+  });
 }
 
 export async function setOgImage(slug: string, path: string): Promise<void> {

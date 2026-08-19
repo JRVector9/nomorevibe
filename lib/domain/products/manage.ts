@@ -49,10 +49,9 @@ export async function deleteProduct(
   const auth = await authorize(slug, credentials);
   if (!auth.ok) return auth;
 
-  await repo.remove(auth.value.id);
-  await repo.deleteOgImage(slug);
-  // slug는 다시 쓰이므로 딸린 기록을 남기면 다음 제품이 그것을 물려받는다
-  await repo.removeTraces(slug);
+  // slug는 다시 쓰이므로 제품 소유 데이터와 흔적을 한 트랜잭션에서 함께 지운다.
+  const removed = await repo.removeProductAndEvidence(auth.value.id, slug);
+  if (!removed) return fail({ kind: "not_found" });
   return ok({ slug });
 }
 
@@ -63,8 +62,15 @@ export async function deleteProduct(
 export async function banProduct(slug: string): Promise<Result<{ slug: string }>> {
   const product = await repo.findBySlug(slug);
   if (!product) return fail({ kind: "not_found" });
+  if (product.status === "banned") return ok({ slug });
 
-  await repo.update(product.id, { status: "banned" });
+  const changed = await repo.setStatusWithAudit({
+    id: product.id,
+    slug,
+    status: "banned",
+    action: "admin.product.ban",
+  });
+  if (!changed) return fail({ kind: "not_found" });
   return ok({ slug });
 }
 
@@ -85,6 +91,12 @@ export async function unbanProduct(slug: string): Promise<Result<{ slug: string;
     : product.source === "crawler"
       ? "seeded"
       : "unverified";
-  await repo.update(product.id, { status });
+  const changed = await repo.setStatusWithAudit({
+    id: product.id,
+    slug,
+    status,
+    action: "admin.product.unban",
+  });
+  if (!changed) return fail({ kind: "not_found" });
   return ok({ slug, status });
 }
