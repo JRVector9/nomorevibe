@@ -1,3 +1,4 @@
+import { and, eq } from "drizzle-orm";
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { db } from "@/lib/db";
 import {
@@ -11,6 +12,7 @@ import {
 } from "@/lib/db/schema";
 import {
   DEFAULT_RANKING_POLICY,
+  UNIQUE_FIRST_RANKING_POLICY,
   type RankingPolicy,
 } from "@/lib/domain/ranking/policy";
 import {
@@ -48,6 +50,14 @@ const HISTORICAL_POLICY = {
     minimumPreviousClicks: 8,
   },
 } satisfies RankingPolicy;
+const PRE_MIGRATION_HISTORICAL_POLICY: Omit<RankingPolicy, "scoring"> = {
+  season: HISTORICAL_POLICY.season,
+  eligibility: HISTORICAL_POLICY.eligibility,
+  leaderboard: HISTORICAL_POLICY.leaderboard,
+  cooldown: HISTORICAL_POLICY.cooldown,
+  trend: HISTORICAL_POLICY.trend,
+  boards: HISTORICAL_POLICY.boards,
+};
 
 async function insertProduct(
   slug: string,
@@ -91,7 +101,7 @@ async function materializeRanking() {
     endsAt: new Date("2026-08-16T15:00:00.000Z"),
     state: "closed",
     policyRevisionId: revision.id,
-    policySnapshot: HISTORICAL_POLICY,
+    policySnapshot: PRE_MIGRATION_HISTORICAL_POLICY as RankingPolicy,
     effectiveLaunchWindowDays: 21,
     isTransition: false,
     refreshedAt: new Date("2026-08-16T15:00:00.000Z"),
@@ -204,6 +214,10 @@ describe("ranking read models", () => {
     expect(dev.items.map((item) => item.rank)).toEqual([2]);
     expect(dev.items[0]).toMatchObject({
       validClicks: 20,
+      uniqueVisitors: 0,
+      recentUniqueVisitors: 0,
+      previousUniqueVisitors: 0,
+      scoreMode: "valid_visits",
       cooldownFactorBasisPoints: 8_000,
       previousRank: 1,
     });
@@ -228,6 +242,84 @@ describe("ranking read models", () => {
     expect(trending.items.map((item) => [item.slug, item.changePercent])).toEqual([
       ["rank-two", 50],
       ["rank-three", 25],
+    ]);
+  });
+
+  it("uses stored unique visitor values and unique change for a unique-first season", async () => {
+    const { active } = await materializeRanking();
+    await db.update(rankingSeasons)
+      .set({ policySnapshot: UNIQUE_FIRST_RANKING_POLICY })
+      .where(eq(rankingSeasons.id, active.id));
+    await db.update(rankingEntries)
+      .set({
+        uniqueVisitors: 14,
+        recentUniqueVisitors: 6,
+        previousUniqueVisitors: 4,
+        changePercent: 50,
+      })
+      .where(and(
+        eq(rankingEntries.seasonId, active.id),
+        eq(rankingEntries.slug, "rank-one"),
+      ));
+
+    const result = await getSeasonRanking({ seasonKey: "2026-W34", limit: 10 });
+
+    expect(result.season?.policy.scoring.mode).toBe("unique_visitors");
+    expect(result.items[0]).toMatchObject({
+      slug: "rank-one",
+      validClicks: 30,
+      uniqueVisitors: 14,
+      recentUniqueVisitors: 6,
+      previousUniqueVisitors: 4,
+      changePercent: 50,
+      scoreMode: "unique_visitors",
+    });
+  });
+
+  it("breaks trending ties with the recent metric selected by the season policy", async () => {
+    const { active } = await materializeRanking();
+    await db.update(rankingEntries)
+      .set({
+        recentClicks: 1,
+        recentUniqueVisitors: 20,
+        changePercent: 50,
+      })
+      .where(and(
+        eq(rankingEntries.seasonId, active.id),
+        eq(rankingEntries.slug, "rank-one"),
+      ));
+    await db.update(rankingEntries)
+      .set({
+        recentClicks: 99,
+        recentUniqueVisitors: 10,
+        changePercent: 50,
+      })
+      .where(and(
+        eq(rankingEntries.seasonId, active.id),
+        eq(rankingEntries.slug, "rank-two"),
+      ));
+
+    const legacy = await getSeasonRanking({
+      seasonKey: "2026-W34",
+      order: "trending",
+      limit: 10,
+    });
+    expect(legacy.items.slice(0, 2).map((item) => item.slug)).toEqual([
+      "rank-two",
+      "rank-one",
+    ]);
+
+    await db.update(rankingSeasons)
+      .set({ policySnapshot: UNIQUE_FIRST_RANKING_POLICY })
+      .where(eq(rankingSeasons.id, active.id));
+    const unique = await getSeasonRanking({
+      seasonKey: "2026-W34",
+      order: "trending",
+      limit: 10,
+    });
+    expect(unique.items.slice(0, 2).map((item) => item.slug)).toEqual([
+      "rank-one",
+      "rank-two",
     ]);
   });
 
@@ -316,6 +408,12 @@ describe("ranking read models", () => {
       key: "2026-W33",
       state: "closed",
       effectiveLaunchWindowDays: 21,
+      policy: {
+        scoring: {
+          mode: "valid_visits",
+          version: "valid-visits-v1",
+        },
+      },
     });
     expect(history?.items.map((item) => item.rank)).toEqual([1, 2]);
     expect(history?.season.policy).toEqual(HISTORICAL_POLICY);
@@ -343,6 +441,7 @@ describe("ranking read models", () => {
       ["rank-one", 2, 10],
     ]);
     expect(items.every((item) => item.cooldownFactorBasisPoints === 10_000)).toBe(true);
+    expect(items.every((item) => item.scoreMode === "valid_visits")).toBe(true);
   });
 
   it("returns an admin preview and handles a missing season safely", async () => {

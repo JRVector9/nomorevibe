@@ -85,12 +85,12 @@ function SeasonHeader({
     <section className="mt-5 rounded-[14px] border border-line bg-bg-card px-5 py-4">
       <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
         <h2 className="font-mono text-[15px] font-extrabold">{season.key}</h2>
-        <span className="text-[12px] text-fg-2">
+        <span className="text-[13px] text-fg-2">
           {KST_DATE_TIME.format(season.startsAt)} – {KST_DATE_TIME.format(season.endsAt)} KST
         </span>
-        <span className="text-[12px] font-semibold text-accent">{remainingTime(season.endsAt, now)}</span>
-        <span className="text-[11.5px] text-fg-3">{snapshotAge(season.refreshedAt, now)}</span>
-        <div className="ml-auto flex gap-3 text-[12px] font-semibold">
+        <span className="text-[13px] font-semibold text-accent">{remainingTime(season.endsAt, now)}</span>
+        <span className="text-[13px] text-fg-3">{snapshotAge(season.refreshedAt, now)}</span>
+        <div className="ml-auto flex gap-3 text-[13px] font-semibold">
           <Link href={`/rankings/${season.key}`} className="text-accent hover:underline">현재 규칙 보기</Link>
           {latestClosed && (
             <Link href={`/rankings/${latestClosed.key}`} className="text-fg-2 hover:text-fg">지난 시즌</Link>
@@ -199,6 +199,9 @@ export default async function HomePage({ searchParams }: Props) {
           <RankingTable
             items={list as RankingListItem[]}
             windowHours={trendWindowHours}
+            scoreMode={effectiveSort === "all-time"
+              ? "valid_visits"
+              : active?.policy.scoring.mode ?? "valid_visits"}
             mode={effectiveSort === "all-time" ? "all-time" : "season"}
           />
         </div>

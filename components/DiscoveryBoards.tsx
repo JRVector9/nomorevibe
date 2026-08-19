@@ -23,13 +23,13 @@ function ProductLink({ product, detail }: { product: ProductListItem; detail: Re
             {product.name}
           </span>
           {product.unclaimed && (
-            <span className="shrink-0 rounded-full border border-line px-2 py-0.5 text-[10px] font-semibold text-fg-3">
+            <span className="shrink-0 rounded-full border border-line px-2 py-0.5 text-[13px] font-semibold text-fg-3">
               미클레임
             </span>
           )}
         </div>
-        <p className="mt-0.5 truncate text-[11.5px] text-fg-3">{product.tagline}</p>
-        <div className="mt-1 font-mono text-[11.5px] font-semibold text-fg-2">{detail}</div>
+        <p className="mt-0.5 truncate text-[13px] text-fg-3">{product.tagline}</p>
+        <div className="mt-1 font-mono text-[13px] font-semibold text-fg-2">{detail}</div>
       </Link>
     </li>
   );
@@ -51,7 +51,7 @@ function Entries({
   items: ProductListItem[];
   detail: (item: ProductListItem) => React.ReactNode;
 }) {
-  if (items.length === 0) return <p className="text-[12px] text-fg-3">아직 표시할 제품이 없습니다.</p>;
+  if (items.length === 0) return <p className="text-[13px] text-fg-3">아직 표시할 제품이 없습니다.</p>;
   return <ol>{items.map((item) => <ProductLink key={item.slug} product={item} detail={detail(item)} />)}</ol>;
 }
 
@@ -63,7 +63,10 @@ export function DiscoveryBoards({ boards, now = new Date() }: { boards: Boards; 
           items={boards.weekly}
           detail={(item) => {
             const ranked = item as RankingListItem;
-            return `#${ranked.rank} · 유효 클릭 ${ranked.validClicks.toLocaleString("ko-KR")}`;
+            if (ranked.scoreMode === "unique_visitors") {
+              return `#${ranked.rank} · 고유 유입자 ${ranked.uniqueVisitors.toLocaleString("ko-KR")} · 유효 방문 ${ranked.validClicks.toLocaleString("ko-KR")}`;
+            }
+            return `#${ranked.rank} · 유효 방문 ${ranked.validClicks.toLocaleString("ko-KR")}`;
           }}
         />
       </Board>

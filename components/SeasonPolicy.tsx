@@ -24,9 +24,19 @@ export function SeasonPolicy(props: SeasonPolicyProps) {
   const policy = "season" in props ? props.season.policy : props.policy;
   const launchWindowDays = season?.effectiveLaunchWindowDays
     ?? policy.eligibility.launchWindowDays;
+  const uniqueScoring = policy.scoring.mode === "unique_visitors";
+  const trendMinimum = uniqueScoring
+    ? `${policy.trend.minimumPreviousUniqueVisitors}명`
+    : `${policy.trend.minimumPreviousClicks}회`;
+  const scoringMethod = policy.scoring.mode === "unique_visitors"
+    ? `제품별 고유 브라우저 · 반복 유효 방문 ${policy.scoring.repeatVisitWeightBasisPoints / 100}% 반영 · 최대 ${policy.scoring.maxExtraVisitsPerUnique}회`
+    : "봇 제외 · 방문자·제품별 10분 중복 제외 · 외부 이동 방문";
+  const minimumUniqueVisitors = policy.scoring.mode === "unique_visitors"
+    ? policy.scoring.minimumUniqueVisitors
+    : null;
 
   return (
-    <div className="grid grid-cols-1 gap-5 text-[12.5px] sm:grid-cols-2">
+    <div className="grid grid-cols-1 gap-5 text-[13px] sm:grid-cols-2">
       {season && (
         <div className="sm:col-span-2">
           <PolicyGroup title="시즌 스냅샷">
@@ -48,12 +58,18 @@ export function SeasonPolicy(props: SeasonPolicyProps) {
         <PolicyRow label={season ? "확정 참가 기간" : "출시 참가 기간"} value={`${launchWindowDays}일`} />
         <PolicyRow label="최소 참가 제품" value={`${policy.eligibility.minimumProducts}개`} />
         <PolicyRow label="최대 확장 기간" value={`${policy.eligibility.maximumWindowDays}일`} />
-        <PolicyRow label="유효 클릭 기준" value="봇 제외 · 방문자·제품별 10분 중복 제외 · 외부 이동 클릭" />
+        <PolicyRow
+          label={uniqueScoring ? "고유 유입자 기준" : "유효 방문 기준"}
+          value={scoringMethod}
+        />
+        {minimumUniqueVisitors !== null && (
+          <PolicyRow label="최소 고유 유입자" value={`${minimumUniqueVisitors}명`} />
+        )}
       </PolicyGroup>
       <PolicyGroup title="노출과 급상승">
         <PolicyRow label="전체 랭킹" value={`${policy.leaderboard.limit}개`} />
         <PolicyRow label="보드" value={`${policy.boards.weeklyLimit} / ${policy.boards.verifiedNewLimit} / ${policy.boards.discoveredNewLimit}개`} />
-        <PolicyRow label="변동률" value={`${policy.trend.windowHours}시간 · 이전 ${policy.trend.minimumPreviousClicks}클릭 이상`} />
+        <PolicyRow label="변동률" value={`${policy.trend.windowHours}시간 · 이전 ${trendMinimum} 이상`} />
         <PolicyRow label="급상승" value={`${policy.trend.limit}개`} />
       </PolicyGroup>
       <div className="sm:col-span-2">

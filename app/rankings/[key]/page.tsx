@@ -22,6 +22,7 @@ export default async function RankingSeasonPage({
         <RankingTable
           items={result.items}
           windowHours={result.season.policy.trend.windowHours}
+          scoreMode={result.season.policy.scoring.mode}
           mode="season"
         />
       </div>

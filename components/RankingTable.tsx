@@ -23,12 +23,12 @@ function ProductIdentity({ item, mobileDetails }: {
         </Link>
         <StatusBadge status={item.status} unclaimed={item.unclaimed} />
         {item.health?.down && (
-          <span className="shrink-0 rounded-full border border-down/40 bg-down/10 px-2 py-0.5 text-[10px] font-semibold text-down">
+          <span className="shrink-0 rounded-full border border-down/40 bg-down/10 px-2 py-0.5 text-[13px] font-semibold text-down">
             응답 없음
           </span>
         )}
       </div>
-      <span className="block max-w-64 truncate text-[11px] text-fg-3">{item.tagline}</span>
+      <span className="block max-w-64 truncate text-[13px] text-fg-3">{item.tagline}</span>
       {mobileDetails}
     </>
   );
@@ -37,31 +37,41 @@ function ProductIdentity({ item, mobileDetails }: {
 export function RankingTable({
   items,
   windowHours,
+  scoreMode,
   mode = "season",
 }: {
   items: RankingListItem[];
   windowHours: number;
+  scoreMode: RankingListItem["scoreMode"];
   mode?: "season" | "all-time";
 }) {
   const seasonal = mode === "season";
-  const clickHeader = seasonal ? "이번 시즌 클릭" : "누적 클릭";
+  const uniqueScoring = seasonal && scoreMode === "unique_visitors";
+  const desktopPrimaryHeader = seasonal
+    ? uniqueScoring ? "고유 유입자" : "이번 시즌 유효 방문"
+    : "누적 유효 방문";
+  const mobilePrimaryHeader = seasonal
+    ? uniqueScoring ? "고유 유입자" : "유효 방문"
+    : "누적 유효 방문";
+  const desktopTrendHeader = `${windowHours}h ${uniqueScoring ? "고유 유입자" : "유효 방문"} 변동률`;
+  const mobileTrendHeader = `${windowHours}h 변동`;
 
   return (
     <div className="overflow-x-auto rounded-[14px] border border-line bg-bg-card">
-      <table className="w-full min-w-full sm:min-w-[760px] text-left text-[12.5px]">
+      <table className="w-full min-w-full sm:min-w-[760px] text-left text-[13px]">
         <thead className="text-fg-3">
           <tr>
             <th className="w-8 px-2 py-3 font-medium sm:w-12 sm:px-4">#</th>
             <th className="w-full min-w-28 px-2 py-3 font-medium sm:min-w-48 sm:px-3">제품</th>
             <th className="whitespace-nowrap px-2 py-3 text-right font-medium sm:px-3">
-              <span className="sm:hidden">{seasonal ? "클릭" : "누적"}</span>
-              <span className="hidden sm:inline">{clickHeader}</span>
+              <span className="sm:hidden">{mobilePrimaryHeader}</span>
+              <span className="hidden sm:inline">{desktopPrimaryHeader}</span>
             </th>
             {seasonal && (
               <>
                 <th className="whitespace-nowrap px-2 py-3 text-right font-medium sm:px-3">
-                  <span className="sm:hidden">{windowHours}h 변동률</span>
-                  <span className="hidden sm:inline">{windowHours}h 변동률</span>
+                  <span className="sm:hidden">{mobileTrendHeader}</span>
+                  <span className="hidden sm:inline">{desktopTrendHeader}</span>
                 </th>
                 <th className="hidden sm:table-cell whitespace-nowrap px-3 py-3 text-right font-medium">순위 반영</th>
                 <th className="hidden sm:table-cell whitespace-nowrap px-4 py-3 text-right font-medium">상태</th>
@@ -80,7 +90,7 @@ export function RankingTable({
                   <ProductIdentity
                     item={item}
                     mobileDetails={seasonal ? (
-                      <span className="mt-1 flex flex-wrap gap-x-2 text-[10.5px] text-fg-3 sm:hidden">
+                      <span className="mt-1 flex flex-wrap gap-x-2 text-[13px] text-fg-3 sm:hidden">
                         <span className={factor < 100 ? "font-semibold text-down" : undefined}>반영 {factor}%</span>
                         <span>{status}</span>
                       </span>
@@ -88,7 +98,14 @@ export function RankingTable({
                   />
                 </td>
                 <td className="whitespace-nowrap px-2 py-3 text-right font-mono font-bold sm:px-3">
-                  {item.validClicks.toLocaleString("ko-KR")}
+                  <span className="block">
+                    {(uniqueScoring ? item.uniqueVisitors : item.validClicks).toLocaleString("ko-KR")}
+                  </span>
+                  {uniqueScoring && (
+                    <span className="block text-[13px] font-medium text-fg-3">
+                      유효 방문 {item.validClicks.toLocaleString("ko-KR")}
+                    </span>
+                  )}
                 </td>
                 {seasonal && (
                   <>

@@ -29,7 +29,11 @@ import {
   type ProductListItem,
 } from "@/lib/domain/products/view";
 import { getScheduledPolicy, listPolicyRevisions } from "./policies";
-import { DEFAULT_RANKING_POLICY, type RankingPolicy } from "./policy";
+import {
+  DEFAULT_RANKING_POLICY,
+  parseRankingPolicy,
+  type RankingPolicy,
+} from "./policy";
 import { previewRanking, slugArrayPredicate, type CalculatedEntry } from "./refresh";
 
 export const RANKING_STALE_MS = 2 * 60 * 60 * 1000;
@@ -37,6 +41,10 @@ export const RANKING_STALE_MS = 2 * 60 * 60 * 1000;
 export type RankingListItem = ProductListItem & {
   rank: number;
   validClicks: number;
+  uniqueVisitors: number;
+  recentUniqueVisitors: number;
+  previousUniqueVisitors: number;
+  scoreMode: RankingPolicy["scoring"]["mode"];
   changePercent: number | null;
   cooldownFactorBasisPoints: number;
   previousRank: number | null;
@@ -62,7 +70,7 @@ function toSeasonSummary(season: RankingSeason): SeasonSummary {
     endsAt: season.endsAt,
     isTransition: season.isTransition,
     effectiveLaunchWindowDays: season.effectiveLaunchWindowDays,
-    policy: season.policySnapshot,
+    policy: parseRankingPolicy(season.policySnapshot),
     refreshedAt: season.refreshedAt,
     state: season.state,
   };
@@ -95,13 +103,14 @@ export async function getSeasonRanking(options: {
 }): Promise<{ season: SeasonSummary | null; items: RankingListItem[] }> {
   const season = await findSeason(options.seasonKey);
   if (!season) return { season: null, items: [] };
+  const summary = toSeasonSummary(season);
 
   const conditions = [
     eq(rankingEntries.seasonId, season.id),
     eq(products.status, "verified"),
   ];
   if (options.order !== "trending") {
-    conditions.push(lte(rankingEntries.rank, season.policySnapshot.leaderboard.limit));
+    conditions.push(lte(rankingEntries.rank, summary.policy.leaderboard.limit));
   }
   if (options.category) conditions.push(eq(products.category, options.category));
   if (options.query?.trim()) {
@@ -111,15 +120,21 @@ export async function getSeasonRanking(options: {
   if (options.order === "trending") {
     conditions.push(isNotNull(rankingEntries.changePercent));
   }
+  const trendTieBreaker = summary.policy.scoring.mode === "unique_visitors"
+    ? rankingEntries.recentUniqueVisitors
+    : rankingEntries.recentClicks;
 
   const rows = await db
     .select({
       ...getTableColumns(products),
       rank: rankingEntries.rank,
       validClicks: rankingEntries.validClicks,
+      uniqueVisitors: rankingEntries.uniqueVisitors,
       changePercent: rankingEntries.changePercent,
       cooldownFactorBasisPoints: rankingEntries.cooldownFactorBasisPoints,
       recentClicks: rankingEntries.recentClicks,
+      recentUniqueVisitors: rankingEntries.recentUniqueVisitors,
+      previousUniqueVisitors: rankingEntries.previousUniqueVisitors,
     })
     .from(rankingEntries)
     .innerJoin(products, eq(products.slug, rankingEntries.slug))
@@ -128,7 +143,7 @@ export async function getSeasonRanking(options: {
       ...(options.order === "trending"
         ? [
           desc(rankingEntries.changePercent),
-          desc(rankingEntries.recentClicks),
+          desc(trendTieBreaker),
           rankingEntries.slug,
         ]
         : [rankingEntries.rank]),
@@ -160,13 +175,17 @@ export async function getSeasonRanking(options: {
     ...toListItem(row),
     rank: row.rank,
     validClicks: row.validClicks,
+    uniqueVisitors: row.uniqueVisitors,
+    recentUniqueVisitors: row.recentUniqueVisitors,
+    previousUniqueVisitors: row.previousUniqueVisitors,
+    scoreMode: summary.policy.scoring.mode,
     changePercent: row.changePercent,
     cooldownFactorBasisPoints: row.cooldownFactorBasisPoints,
     previousRank: previousRanks.get(row.slug) ?? null,
   }));
 
   return {
-    season: toSeasonSummary(season),
+    season: summary,
     items: await withProductHealth(items),
   };
 }
@@ -262,6 +281,10 @@ export async function getAllTimeRanking(options: {
       ...toListItem(product),
       rank,
       validClicks: total.clicks,
+      uniqueVisitors: 0,
+      recentUniqueVisitors: 0,
+      previousUniqueVisitors: 0,
+      scoreMode: "valid_visits",
       changePercent: null,
       cooldownFactorBasisPoints: 10_000,
       previousRank: null,

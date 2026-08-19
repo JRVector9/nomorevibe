@@ -2,7 +2,10 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { RankingListItem, SeasonSummary } from "@/lib/domain/ranking/view";
-import { DEFAULT_RANKING_POLICY } from "@/lib/domain/ranking/policy";
+import {
+  DEFAULT_RANKING_POLICY,
+  UNIQUE_FIRST_RANKING_POLICY,
+} from "@/lib/domain/ranking/policy";
 
 const { getSeasonByKey, notFound } = vi.hoisted(() => ({
   getSeasonByKey: vi.fn(),
@@ -42,6 +45,10 @@ const item: RankingListItem = {
   unclaimed: false,
   rank: 1,
   validClicks: 42,
+  uniqueVisitors: 0,
+  recentUniqueVisitors: 0,
+  previousUniqueVisitors: 0,
+  scoreMode: "valid_visits",
   changePercent: 25,
   cooldownFactorBasisPoints: 7_500,
   previousRank: 2,
@@ -65,8 +72,33 @@ describe("ranking season page", () => {
     expect(dynamic).toBe("force-dynamic");
     expect(getSeasonByKey).toHaveBeenCalledWith("2026-W33");
     expect(html).toContain("2026-W33 랭킹");
-    expect(html).toContain("24h 변동률");
+    expect(html).toContain("24h 유효 방문 변동률");
     expect(html).toContain("History One");
+  });
+
+  it("renders unique-first labels from the stored season policy", async () => {
+    getSeasonByKey.mockResolvedValue({
+      season: { ...season, policy: UNIQUE_FIRST_RANKING_POLICY },
+      items: [{
+        ...item,
+        uniqueVisitors: 17,
+        recentUniqueVisitors: 6,
+        previousUniqueVisitors: 4,
+        scoreMode: "unique_visitors",
+        changePercent: 50,
+      }],
+    });
+
+    const page = await RankingSeasonPage({
+      params: Promise.resolve({ key: season.key }),
+      searchParams: Promise.resolve({}),
+    });
+    const html = renderToStaticMarkup(createElement(() => page));
+
+    expect(html).toContain("고유 유입자");
+    expect(html).toContain("유효 방문 42");
+    expect(html).toContain("24h 고유 유입자 변동률");
+    expect(html).toContain("+50%");
   });
 
   it("uses notFound for an unknown season", async () => {
