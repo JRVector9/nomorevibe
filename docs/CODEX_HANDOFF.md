@@ -6,8 +6,8 @@ Execute plan 3, `docs/superpowers/plans/2026-08-19-product-detail-ui-implementat
 finished white-theme, global minimum-13px product-detail screen in the browser.
 
 Plan 2, `docs/superpowers/plans/2026-08-19-product-evidence-pipeline-implementation.md`, is complete.
-Plan 3 Tasks 1–2 are committed. Task 3 evidence administration is implemented and verified; after
-its atomic commit, continue at Task 4's server-only public detail read model.
+Plan 3 Tasks 1–4 are implemented, reviewed, verified, and committed through the server-only public
+detail read model. Continue at Task 5's approved evidence product page.
 
 ## Completed work
 
@@ -19,11 +19,17 @@ Plan 3 commits and completed phases:
    transactional audit writes; asynchronous external-media declarations; maker-update tombstones;
    per-product-generation and optional trusted-proxy IP rate limits; stale in-flight media response
    rejection through declaration ID/revision checks.
-3. Task 3, commit message `feat: administer product evidence`:
+3. `85fdb48 feat: administer product evidence`:
    protected `/admin/evidence` settings and `/admin/products/[slug]` evidence controls; safe
    authenticated Server Actions; immutable settings/update audits; explicit maker-versus-observed
    license conflicts; source freshness, media, update, provenance, and audit views; aggregate
    due/stale/failed evidence status; and a production-supported `server-only` boundary marker.
+4. Task 4, commit message `feat: compose product detail read model`:
+   one server-only public read contract for safe product identity, stored season rank, seven-day
+   valid/unique visits, 30-day health, profile, current visible links and evidence, internally
+   mirrored media, visible updates, provenance, license comparison, and freshness states. Public
+   identity queries explicitly omit verification/edit credentials and reject banned rows; a final
+   generation/status check discards data assembled across a concurrent ban or slug replacement.
 
 Task 2 does not add comments, login, reactions, follows, or provider I/O in request handlers.
 External gallery URLs are declarations only. The evidence job copies validated bytes into internal
@@ -70,6 +76,12 @@ Task 8 now also:
   operator to inspect existing schedules before adding missing entries.
 
 ## Modified files
+
+Plan 3 Task 4 files:
+
+- `lib/domain/products/detail-view.ts`
+- `tests/integration/product-detail-view.test.ts`
+- `tests/integration/setup.ts`
 
 Plan 3 Task 3 files:
 
@@ -198,6 +210,21 @@ Task 3 administrator boundaries:
 - Admin evidence UI is white-theme compatible, uses reduced 10–12 px radii, and contains no text
   utility below 13 px.
 
+Task 4 public read boundaries:
+
+- `PublicProduct` is an allowlisted projection; public detail code never loads `verifyToken`,
+  `verifyMethod`, or `editTokenHash`.
+- Evidence sources must still match a visible current product link by slug, kind, and normalized
+  key. Removed/replaced repository facts cannot remain public merely because the source row exists.
+- Failed refresh state takes precedence over age labels while last-known-good normalized facts stay
+  available. Disconnected, collecting, delayed, stale, and current remain distinct states.
+- Agent and skill rows are read lock-free and in parallel. Public reads do not enter the writer's
+  provenance transaction/advisory lock.
+- The first identity read is request-cached for metadata/page reuse; the final uncached allowlisted
+  identity read must find the same numeric product ID and a non-banned status before returning.
+- Rendering reads PostgreSQL only. It never calls an external provider or serves an external media
+  URL.
+
 ## Test commands and results
 
 Plan 3 Task 2 RED results actually observed:
@@ -258,6 +285,38 @@ npm run lint
   PASS — 0 errors, 0 warnings
 npm run build
   PASS — Next.js 16.3.1; `/admin/evidence` and `/admin/products/[slug]` dynamic
+git diff --check
+  PASS
+```
+
+Plan 3 Task 4 RED/fix history actually observed:
+
+- the first target run failed because `lib/domain/products/detail-view.ts` did not exist;
+- the first implementation passed once, then the immediate rerun hit duplicate `product_health`
+  rows because shared `resetTables()` omitted that table; adding it to the common TRUNCATE restored
+  isolation;
+- first review regressions reproduced five failures: credential-bearing/banned full product rows,
+  orphaned evidence winning over the current link, failed sources shown as collecting/stale, and a
+  public provenance read blocked on the writer advisory lock;
+- the next review found a concurrent-ban/generation race and a timing-based 250 ms lock test that
+  could flake. A deterministic mocked first identity read reproduced the race; the implementation
+  now does a final uncached same-ID/non-banned projection. The lock test now spies on the initialized
+  Drizzle transaction method instead of comparing wall-clock duration;
+- the first concurrent-ban test double returned a Promise where Drizzle's `findFirst` signature is
+  a thenable query, so runtime tests passed but `tsc` failed. The cast is now isolated at the test
+  double boundary and the full target/type checks pass.
+
+Plan 3 Task 4 final verification actually run:
+
+```text
+npx vitest run --config vitest.integration.config.ts tests/integration/product-detail-view.test.ts
+  PASS — 1 file, 9 tests; repeated in a separate process
+npx vitest run --config vitest.integration.config.ts tests/integration/product-detail-view.test.ts tests/integration/clicks.test.ts tests/integration/uptime.test.ts tests/integration/ranking-view.test.ts tests/integration/product-provenance.test.ts tests/integration/product-updates.test.ts
+  PASS — 6 files, 84 tests
+npx tsc --noEmit
+  PASS
+npm run lint
+  PASS — 0 errors, 0 warnings
 git diff --check
   PASS
 ```
@@ -348,6 +407,15 @@ Local development database state:
   `gpt-5.6-sol` high-effort focused read-only run inspected only the Task 3 boundaries but again
   reached the bound without writing its requested last-message file. Neither attempt is claimed
   as CLEAN, and neither modified the repository.
+- Task 4's first focused review returned two P1 and three P2 findings: secret/banned product row
+  exposure, orphaned evidence, failed-state precedence, and the locking sequential provenance read.
+  All were reproduced before fixes. Re-review found two P2s—the concurrent ban/generation race and
+  a 250 ms test oracle—and both were reproduced or replaced with deterministic checks. Final narrow
+  re-review returned `CLEAN`; its own target test could not start in the read-only sandbox because
+  Vitest could not create a temporary directory, so no reviewer-run test pass is claimed.
+- Running two integration Vitest processes in parallel against the same database made each process
+  truncate the other's fixtures, causing false missing-row/duplicate-singleton failures. Related
+  integration tests are intentionally run sequentially from here onward.
 - The first Task 3 review command tried to combine this CLI build's `--uncommitted` flag with a
   positional prompt and failed immediately because that combination is rejected despite the help
   usage text. The retry used the supported bare `--uncommitted` form.
@@ -380,8 +448,8 @@ Local development database state:
 
 ## Remaining work
 
-- Execute plan 3 Tasks 4–8: detail read model, public media delivery,
-  white-theme detail components/page, `/nomorevibe` commands, then full review/docs/QA. Comments
+- Execute plan 3 Tasks 5–8: white-theme detail components/page, the global light/13 px contract,
+  `/nomorevibe` commands, then full review/docs/QA. Comments
   remain phase-2 design only; no comment persistence or login integration belongs in phase 1.
 - Launch the resulting local screen and perform browser/visual QA at desktop and mobile widths.
 
@@ -393,7 +461,7 @@ scheduler/provider-token verification. Do not claim either complete without exte
 ```sh
 git status --short
 cat docs/superpowers/plans/2026-08-19-product-detail-ui-implementation.md
-npx vitest run --config vitest.integration.config.ts tests/integration/product-detail-view.test.ts
+npx vitest run tests/product-detail-components.test.ts tests/schema.test.ts
 npx tsc --noEmit
 npm run lint
 git diff --check

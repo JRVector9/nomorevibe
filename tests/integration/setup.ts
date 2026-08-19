@@ -35,6 +35,7 @@ export async function resetTables() {
     TRUNCATE product_evidence_audit, product_skills, product_agents, product_updates,
              product_media, product_media_declarations, media_assets, product_evidence_sources, product_links,
              product_profiles, evidence_settings, product_health_daily,
+             product_health,
              ranking_entries, ranking_seasons, ranking_policy_revisions,
              click_events, product_click_daily, visit_collection_state,
              products, og_images RESTART IDENTITY CASCADE
