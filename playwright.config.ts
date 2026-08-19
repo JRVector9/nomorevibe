@@ -22,7 +22,13 @@ export default defineConfig({
     screenshot: "only-on-failure",
   },
   webServer: {
-    command: `npx next dev --hostname 127.0.0.1 --port ${E2E_PORT}`,
+    command: [
+      "npm run build",
+      "cp -R public .next/standalone/public",
+      "mkdir -p .next/standalone/.next",
+      "cp -R .next/static .next/standalone/.next/static",
+      `HOSTNAME=127.0.0.1 PORT=${E2E_PORT} node .next/standalone/server.js`,
+    ].join(" && "),
     url: E2E_BASE_URL,
     reuseExistingServer: false,
     timeout: 120_000,

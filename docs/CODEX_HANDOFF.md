@@ -6,9 +6,11 @@ Execute plan 3, `docs/superpowers/plans/2026-08-19-product-detail-ui-implementat
 finished white-theme, global minimum-13px product-detail screen in the browser.
 
 Plan 2, `docs/superpowers/plans/2026-08-19-product-evidence-pipeline-implementation.md`, is complete.
-Plan 3 Tasks 1–7 are implemented and verified through the evidence-based public product page,
-global light-first/13 px UI contract, and the distributable maker-evidence skill. Continue at Task 8's
-Playwright browser QA, release documentation, complete-diff review, and final screen launch.
+Plan 3 Tasks 1–8 are implemented, the exact final matrix is green, and the seeded rich product
+screen is open from an isolated standalone server. The evidence-based public product page, global
+light-first/13 px UI contract, distributable maker-evidence skill, and desktop/mobile Playwright
+release contract are complete. The only local follow-up is retrying the independent diff review
+after the Codex usage window resets; the attempted review returned no verdict.
 
 ## Completed work
 
@@ -43,7 +45,7 @@ Plan 3 commits and completed phases:
    section radii to 12 px while preserving the 14 px product hero and 10 px metric cards; sets
    product prose to 15 px and structured/update copy to 14 px; adds global keyboard focus and
    reduced-motion behavior; and tests muted-text contrast across every light surface.
-7. Task 7, pending commit message `feat: extend nomorevibe evidence skill`:
+7. `edbcfc8 feat: extend nomorevibe evidence skill`:
    adds profile, links, media, provenance, update, and refresh commands without changing existing
    registration/verification/deletion behavior. Every maker replacement first reads a private,
    authenticated merge baseline, previews additions/changes/kept/deleted values, and requires
@@ -52,6 +54,14 @@ Plan 3 commits and completed phases:
    by API origin then slug so an untrusted project file or a second registry cannot redirect or
    overwrite an edit token. Provenance remains explicit opt-in, metadata-only, maker-reported, and
    ranking-neutral; Git commit IDs accept full SHA-1 or SHA-256 while content hashes remain SHA-256.
+8. Task 8, `docs: release evidence product profiles`:
+   adds serial Playwright coverage for rich, collecting, stale/conflict, and unclaimed profiles at
+   1440 px and 390 px; proves light mode, 13 px minimum visible text, WCAG AA text contrast,
+   approved 14/12/10 px radii, 15 px prose, 14 px structured/update copy, mobile reading order,
+   internal-only media, no provider requests, no horizontal overflow, no timeline connector,
+   visible keyboard focus, 44 px controls, and no comment surface. Browser QA found and fixed the
+   update filters' 36 px hit target by raising it to 44 px. The E2E server runs the same standalone
+   production artifact used by deployment.
 
 Task 2 does not add comments, login, reactions, follows, or provider I/O in request handlers.
 External gallery URLs are declarations only. The evidence job copies validated bytes into internal
@@ -174,7 +184,15 @@ Plan 3 Task 7 files:
 - `tests/skill-contract.test.ts` (new)
 - `docs/CODEX_HANDOFF.md`
 
-Task 8 commit files:
+Plan 3 Task 8 files:
+
+- `.gitignore`
+- `components/product-detail/UpdateTimeline.tsx`
+- `playwright.config.ts`
+- `tests/e2e/product-detail.spec.ts` (new)
+- `docs/CODEX_HANDOFF.md`
+
+Plan 2 Task 8 commit files:
 
 - `PENDING.md`
 - `README.md`
@@ -204,6 +222,17 @@ Task 8 commit files:
 
 ## Key design decisions
 
+- Product-detail browser coverage builds once and serves `.next/standalone/server.js`, copying
+  `public` and `.next/static` into the standalone directory as the production image does. This
+  avoids a second `next dev` process and exercises the deployable SSR artifact.
+- Browser tests attach request/error observers before navigation and treat any non-local request as
+  a failure. Gallery assertions require `/api/media/<hash>`, so rendering cannot silently regress
+  to volatile provider URLs.
+- Accessibility checks inspect computed, visible text sizes and composite foreground/background
+  contrast rather than relying only on source classes. Interactive share, outbound, and update
+  filter controls must render at least 44 px high and expose a keyboard-visible outline.
+- Comments and unified end-user authentication remain phase two. Task 8 explicitly verifies that
+  no comment surface leaked into phase one.
 - Maker mutation order is authorization, rate-limit charge, bounded body read, schema validation,
   then transaction. Authenticated malformed and oversized bodies therefore consume quota.
 - Rate-limit product identity is immutable `products.id`, not reusable slug. A newly registered
@@ -580,6 +609,21 @@ Local development database state:
 - The first `impeccable` helper lookup used its documented project-local `.Codex/...` path, which is
   absent here. The installed global helper reported `NO_PRODUCT_MD`; `PRODUCT.md` was then derived
   from the already approved detail specification before resuming Plan 3.
+- Task 8's first Playwright server used `next dev` and failed before tests because the user's
+  existing development process already held this repository's Next lock. That process was left
+  untouched; the browser suite now builds and serves an isolated standalone artifact on port 43127.
+- The first contrast RED came from the test helper compositing opaque ancestor backgrounds in the
+  wrong order, not the UI. Correcting the compositor exposed the actual UI RED: update filter
+  buttons were 36 px high. They are now 44 px and covered at both viewport sizes.
+- A programmatic `.focus()` check did not activate the browser's `:focus-visible` state. The test now
+  starts from the document and uses real Tab navigation until the share control receives focus.
+- An intermediate E2E server used `next start`, which passed but warned that standalone output must
+  use `.next/standalone/server.js`. The final server follows that deployment contract and the full
+  three-case browser suite passed again.
+- The required final `codex review --uncommitted` reached the CLI but exited immediately because the
+  account usage limit had been reached; it requested a retry after 12:30 PM. No Codex verdict or
+  reviewer-run test result is claimed. A manual read of the five-file Task 8 diff found no P1/P2,
+  but the independent review remains an explicit follow-up rather than being relabelled CLEAN.
 
 ## Task 6 verification
 
@@ -650,29 +694,71 @@ git diff --check
 Expected suite output remains the existing Vite native config-loader warning and intentional
 failure-path logs. No test command above is claimed beyond the result actually observed.
 
+## Task 8 verification
+
+Fixtures and screenshots:
+
+- `e2e-rich`: complete objective repository/license facts, seven-day unique/valid visits, internal
+  gallery, maker/automatic updates, agent and skill provenance;
+- `e2e-collecting`: explicit collecting/empty media and repository states;
+- `e2e-stale-conflict`: explicit stale, disconnected, down, and license-conflict states;
+- `e2e-unclaimed`: explicit unclaimed and missing maker introduction states;
+- desktop screenshot: `/private/tmp/nomorevibe-product-rich-desktop.png` at 1440 px;
+- mobile screenshot: `/private/tmp/nomorevibe-product-rich-mobile.png` at 390 px.
+
+Both screenshots were opened and visually inspected after the passing run. The desktop is a white
+two-column evidence profile with reduced radii and card-based updates without a left connector. The
+mobile page has no horizontal overflow and follows gallery → introduction → facts → repository /
+license → provenance → freshness → updates after the hero, metrics, and evidence summary.
+
+After the release commit, an isolated standalone server was started at
+`http://127.0.0.1:43128/p/e2e-rich` against the seeded test database. A direct HTTP probe returned
+200 and the URL was opened in the user's macOS browser. The user's existing port-3000 development
+server was not stopped or modified. The standalone process is a local session, not a durable deploy.
+
+Final matrix actually executed on the Task 8 code:
+
+```text
+npx next typegen
+  PASS
+npx tsc --noEmit
+  PASS
+npm test
+  PASS — 37 files, 324 tests
+npm run test:integration
+  PASS — 34 files, 345 tests
+npm run test:e2e:product
+  PASS — 3 tests in 9.1s using the final standalone server
+npm run lint
+  PASS — 0 errors, 0 warnings
+npm run build
+  PASS — Next.js 16.3.1; `/p/[slug]` remains dynamic
+git diff --check
+  PASS after the Task 8 handoff update
+```
+
+The E2E assertions cover computed minimum font size, light color scheme, exact radius/type scale,
+WCAG AA text contrast, 44 px controls, keyboard focus, descriptive/internal media, update filters,
+mobile order, no overflow, no external provider requests, and no console/page errors. The expected
+build-time `NO_COLOR`/`FORCE_COLOR` warnings remain non-failing.
+
 ## Remaining work
 
-- Execute plan 3 Task 8: rich/collecting/stale-conflict/unclaimed Playwright QA at 1440 px and
-  390 px, release docs, fresh complete-diff independent review, and final local browser launch.
+- After the Codex usage window resets, rerun the independent diff review and fix any actionable
+  P1/P2 through RED tests; the current attempt returned no verdict.
 - Comments and unified end-user authentication remain phase-2 design only; no comment persistence,
   reactions, follows, or login integration belongs in phase 1.
-- Launch the resulting local screen and perform browser/visual QA at desktop and mobile widths.
 
 External blockers remain in `PENDING.md`: category classification API verification and production
-scheduler/provider-token verification. Do not claim either complete without external access.
+scheduler/provider-token verification, production `VISITOR_HASH_SECRET` activation, and real-source
+smoke checks. Do not claim any complete without external access.
 
 ## Exact commands for the next agent
 
 ```sh
 git status --short
 cat docs/superpowers/plans/2026-08-19-product-detail-ui-implementation.md
-npm run test:e2e:product
-npx next typegen
-npx tsc --noEmit
-npm test
-npm run test:integration
-npm run lint
-npm run build
 git diff --check
 codex review --uncommitted
+# if review finds P1/P2: add a RED regression, fix, and rerun the relevant target plus full matrix
 ```

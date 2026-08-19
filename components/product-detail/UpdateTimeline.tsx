@@ -33,7 +33,7 @@ export function UpdateTimeline({ updates }: { updates: ProductDetailView["update
               type="button"
               onClick={() => setFilter(item.key)}
               aria-pressed={filter === item.key}
-              className={`min-h-9 rounded-[8px] px-3 text-[13px] font-bold transition-colors focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent ${
+              className={`min-h-11 rounded-[8px] px-3 text-[13px] font-bold transition-colors focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent ${
                 filter === item.key ? "bg-bg-card text-accent shadow-sm" : "text-fg-3 hover:text-fg"
               }`}
             >
