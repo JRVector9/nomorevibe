@@ -15,6 +15,8 @@ import {
   ProductGenerationChangedError,
 } from "@/lib/domain/products/repository";
 import { isSafeMakerMarkdown, makerMediaSchema, safeHttpUrl } from "./contracts";
+import { readMakerMediaResource } from "./repository";
+import { assertMakerResourceVersion } from "./resource-version";
 
 const MAX_MAKER_BODY_BYTES = 64 * 1024;
 const slugSchema = z.string().min(1).max(80).regex(/^[a-z0-9][a-z0-9-]*$/);
@@ -88,6 +90,7 @@ export async function replaceMakerMedia(input: {
   media: unknown;
   actor: string;
   productId?: number;
+  expectedVersion?: string;
 }): Promise<number> {
   const slug = slugSchema.parse(input.slug);
   const actor = actorSchema.parse(input.actor);
@@ -102,6 +105,7 @@ export async function replaceMakerMedia(input: {
       throw new ProductGenerationChangedError();
     }
     await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`product-media:${slug}`}))`);
+    assertMakerResourceVersion(input.expectedVersion, await readMakerMediaResource(tx, slug));
     if (items.length > 0) {
       await tx.insert(productMediaDeclarations).values(items.map((item, position) => ({
         slug,

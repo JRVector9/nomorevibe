@@ -1,4 +1,4 @@
-import { and, asc, eq, not, or, sql } from "drizzle-orm";
+import { and, asc, eq, ne, not, or, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/lib/db";
 import {
@@ -6,6 +6,7 @@ import {
   productEvidenceSources,
   productAgents,
   productLinks,
+  productMediaDeclarations,
   productProfiles,
   productSkills,
   products,
@@ -17,6 +18,7 @@ import {
   type MakerProfileInput,
 } from "./contracts";
 import { EVIDENCE_LABELS, normalizeProductProvenance } from "./provenance";
+import { assertMakerResourceVersion } from "./resource-version";
 import {
   findProductGenerationId,
   lockProductGeneration,
@@ -73,11 +75,141 @@ const observedSourceSchema = z.object({
 type EvidenceTransaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
 type EvidenceExecutor = typeof db | EvidenceTransaction;
 
+async function readMakerResource<T>(
+  slugInput: string,
+  productId: number,
+  resourceLock: string | null,
+  read: (tx: EvidenceTransaction, slug: string) => Promise<T>,
+): Promise<T> {
+  const slug = slugSchema.parse(slugInput);
+  return db.transaction(async (tx) => {
+    if (!(await lockProductGeneration(tx, productId, slug))) {
+      throw new ProductGenerationChangedError();
+    }
+    if (resourceLock) {
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${resourceLock}))`);
+    }
+    return read(tx, slug);
+  });
+}
+
+export async function getMakerProfileResource(slugInput: string, productId: number) {
+  return readMakerResource(
+    slugInput,
+    productId,
+    `product-profile:${slugSchema.parse(slugInput)}`,
+    readMakerProfileResource,
+  );
+}
+
+async function readMakerProfileResource(executor: EvidenceExecutor, slug: string) {
+  const [profile] = await executor.select().from(productProfiles).where(eq(productProfiles.slug, slug));
+  if (!profile) return null;
+  return {
+    ...(profile.problem === null ? {} : { problem: profile.problem }),
+    ...(profile.targetUsers === null ? {} : { targetUsers: profile.targetUsers }),
+    keyFeatures: profile.keyFeatures,
+    useCases: profile.useCases,
+    pricingModel: profile.pricingModel,
+    ...(profile.pricingUrl === null ? {} : { pricingUrl: profile.pricingUrl }),
+    lifecycle: profile.lifecycle,
+    platforms: profile.platforms,
+    ...(profile.privacySummary === null ? {} : { privacySummary: profile.privacySummary }),
+    longDescriptionMarkdown: profile.longDescriptionMarkdown,
+    team: profile.team,
+    ...(profile.makerLicense === null ? {} : { makerLicense: profile.makerLicense }),
+  };
+}
+
+async function readMakerLinksResource(executor: EvidenceExecutor, slug: string) {
+  const links = await executor.select({ kind: productLinks.kind, url: productLinks.url })
+    .from(productLinks)
+    .where(and(eq(productLinks.slug, slug), eq(productLinks.declarationSource, "maker")))
+    .orderBy(asc(productLinks.id));
+  return { links };
+}
+
+export async function getMakerLinksResource(slugInput: string, productId: number) {
+  return readMakerResource(
+    slugInput,
+    productId,
+    `product-evidence-maker-links:${slugSchema.parse(slugInput)}`,
+    readMakerLinksResource,
+  );
+}
+
+export async function readMakerMediaResource(executor: EvidenceExecutor, slug: string) {
+  const items = await executor.select({
+    url: productMediaDeclarations.sourceUrl,
+    altText: productMediaDeclarations.altText,
+  }).from(productMediaDeclarations)
+    .where(eq(productMediaDeclarations.slug, slug))
+    .orderBy(asc(productMediaDeclarations.position), asc(productMediaDeclarations.id));
+  return { items };
+}
+
+export async function getMakerMediaResource(slugInput: string, productId: number) {
+  return readMakerResource(
+    slugInput,
+    productId,
+    `product-media:${slugSchema.parse(slugInput)}`,
+    readMakerMediaResource,
+  );
+}
+
+async function readMakerProvenanceResource(executor: EvidenceExecutor, slug: string) {
+  const agents = await executor.select({
+    provider: productAgents.provider,
+    client: productAgents.client,
+    model: productAgents.model,
+    roles: productAgents.roles,
+    commitFrom: productAgents.commitFrom,
+    commitTo: productAgents.commitTo,
+    dateFrom: productAgents.dateFrom,
+    dateTo: productAgents.dateTo,
+    sourceUrl: productAgents.sourceUrl,
+    evidenceLevel: productAgents.evidenceLevel,
+  }).from(productAgents).where(and(
+    eq(productAgents.slug, slug),
+    eq(productAgents.evidenceLevel, "maker_reported"),
+  )).orderBy(asc(productAgents.id));
+  const skills = await executor.select({
+    namespace: productSkills.namespace,
+    name: productSkills.name,
+    version: productSkills.version,
+    source: productSkills.source,
+    hash: productSkills.hash,
+    commit: productSkills.commit,
+    evidenceLevel: productSkills.evidenceLevel,
+  }).from(productSkills).where(and(
+    eq(productSkills.slug, slug),
+    eq(productSkills.evidenceLevel, "maker_reported"),
+  )).orderBy(asc(productSkills.id));
+  return {
+    agents: agents.map((agent) => Object.fromEntries(
+      Object.entries(agent).filter(([, value]) => value !== null),
+    )),
+    skills: skills.map((skill) => Object.fromEntries(
+      Object.entries(skill).filter(([, value]) => value !== null),
+    )),
+  };
+}
+
+export async function getMakerProvenanceResource(slugInput: string, productId: number) {
+  return readMakerResource(
+    slugInput,
+    productId,
+    `product-provenance:${slugSchema.parse(slugInput)}`,
+    readMakerProvenanceResource,
+  );
+}
+
 export async function saveMakerProfile(input: {
   slug: string;
   profile: unknown;
   actor: string;
   productId?: number;
+  expectedVersion?: string;
 }): Promise<void> {
   const slug = slugSchema.parse(input.slug);
   const productId = input.productId ?? await findProductGenerationId(slug);
@@ -104,6 +236,10 @@ export async function saveMakerProfile(input: {
     if (!(await lockProductGeneration(tx, productId, slug))) {
       throw new ProductGenerationChangedError();
     }
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`product-profile:${slug}`}))`);
+    assertMakerResourceVersion(input.expectedVersion, {
+      profile: await readMakerProfileResource(tx, slug),
+    });
     await tx.insert(productProfiles).values(values).onConflictDoUpdate({
       target: productProfiles.slug,
       set: values,
@@ -122,6 +258,7 @@ export async function replaceMakerLinks(input: {
   links: unknown;
   actor: string;
   productId?: number;
+  expectedVersion?: string;
 }): Promise<void> {
   const slug = slugSchema.parse(input.slug);
   const productId = input.productId ?? await findProductGenerationId(slug);
@@ -135,6 +272,7 @@ export async function replaceMakerLinks(input: {
     await tx.execute(sql`
       select pg_advisory_xact_lock(hashtext(${`product-evidence-maker-links:${slug}`}))
     `);
+    assertMakerResourceVersion(input.expectedVersion, await readMakerLinksResource(tx, slug));
     if (links.length > 0) {
       await tx.insert(productLinks).values(links.map((link) => ({
         slug,
@@ -329,6 +467,7 @@ export async function replaceProductProvenance(input: {
   actor: string;
   authority?: "maker" | "system";
   productId?: number;
+  expectedVersion?: string;
 }): Promise<void> {
   const slug = slugSchema.parse(input.slug);
   const productId = input.productId ?? await findProductGenerationId(slug);
@@ -343,13 +482,49 @@ export async function replaceProductProvenance(input: {
     await tx.execute(sql`
       select pg_advisory_xact_lock(hashtext(${`product-provenance:${slug}`}))
     `);
-    await tx.delete(productAgents).where(eq(productAgents.slug, slug));
-    await tx.delete(productSkills).where(eq(productSkills.slug, slug));
+    if (authority === "maker") {
+      assertMakerResourceVersion(
+        input.expectedVersion,
+        await readMakerProvenanceResource(tx, slug),
+      );
+    }
+    await tx.delete(productAgents).where(and(
+      eq(productAgents.slug, slug),
+      authority === "maker" ? eq(productAgents.evidenceLevel, "maker_reported") : undefined,
+    ));
+    await tx.delete(productSkills).where(and(
+      eq(productSkills.slug, slug),
+      authority === "maker" ? eq(productSkills.evidenceLevel, "maker_reported") : undefined,
+    ));
+    let skills = provenance.skills;
+    if (authority === "maker" && skills.length > 0) {
+      const retained = await tx.select({
+        namespace: productSkills.namespace,
+        name: productSkills.name,
+        version: productSkills.version,
+        commit: productSkills.commit,
+      }).from(productSkills).where(and(
+        eq(productSkills.slug, slug),
+        ne(productSkills.evidenceLevel, "maker_reported"),
+      ));
+      const identities = new Set(retained.map((skill) => [
+        skill.namespace,
+        skill.name,
+        skill.version ?? "",
+        skill.commit ?? "",
+      ].join("\0")));
+      skills = skills.filter((skill) => !identities.has([
+        skill.namespace,
+        skill.name,
+        skill.version ?? "",
+        skill.commit ?? "",
+      ].join("\0")));
+    }
     if (provenance.agents.length > 0) {
       await tx.insert(productAgents).values(provenance.agents.map((agent) => ({ slug, ...agent })));
     }
-    if (provenance.skills.length > 0) {
-      await tx.insert(productSkills).values(provenance.skills.map((skill) => ({ slug, ...skill })));
+    if (skills.length > 0) {
+      await tx.insert(productSkills).values(skills.map((skill) => ({ slug, ...skill })));
     }
     await tx.insert(productEvidenceAudit).values({
       slug,
@@ -357,7 +532,7 @@ export async function replaceProductProvenance(input: {
       action: authority === "maker" ? "maker.provenance.replace" : "system.provenance.replace",
       metadata: {
         agents: provenance.agents.length,
-        skills: provenance.skills.length,
+        skills: skills.length,
         authority,
         evidenceLevels: [...new Set([
           ...provenance.agents.map((agent) => agent.evidenceLevel),

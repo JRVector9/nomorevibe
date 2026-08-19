@@ -1,11 +1,26 @@
 import { NextResponse } from "next/server";
 import { makerMediaSchema } from "@/lib/domain/evidence/contracts";
+import { getMakerMediaResource } from "@/lib/domain/evidence/repository";
 import { replaceMakerMedia } from "@/lib/domain/evidence/maker";
 import { formatIssues } from "@/lib/domain/products/schema";
 import { withRoute } from "@/lib/http/handler";
-import { allowMakerMutation, authorizeMakerRoute, makerJson } from "../maker-route";
+import {
+  allowMakerMutation,
+  authorizeMakerRoute,
+  makerJson,
+  makerResourcePreconditionResponse,
+  makerResourceResponse,
+  makerResourceVersion,
+} from "../maker-route";
 
 type Params = { params: Promise<{ slug: string }> };
+
+export const GET = withRoute("products.evidence.media.read", async (request: Request, { params }: Params) => {
+  const { slug } = await params;
+  const auth = await authorizeMakerRoute(request, slug);
+  if (!auth.ok) return auth.response;
+  return makerResourceResponse(await getMakerMediaResource(slug, auth.product.id));
+});
 
 export const PUT = withRoute("products.evidence.media", async (request: Request, { params }: Params) => {
   const { slug } = await params;
@@ -17,11 +32,21 @@ export const PUT = withRoute("products.evidence.media", async (request: Request,
   if (!body.ok) return body.response;
   const parsed = makerMediaSchema.safeParse(body.value);
   if (!parsed.success) return NextResponse.json({ error: formatIssues(parsed.error) }, { status: 400 });
-  const count = await replaceMakerMedia({
-    slug,
-    productId: auth.product.id,
-    actor: auth.actor,
-    media: parsed.data,
-  });
+  const version = makerResourceVersion(request);
+  if (!version.ok) return version.response;
+  let count: number;
+  try {
+    count = await replaceMakerMedia({
+      slug,
+      productId: auth.product.id,
+      actor: auth.actor,
+      media: parsed.data,
+      expectedVersion: version.value,
+    });
+  } catch (error) {
+    const response = makerResourcePreconditionResponse(error);
+    if (response) return response;
+    throw error;
+  }
   return NextResponse.json({ slug, queued: true, count }, { status: 202 });
 });

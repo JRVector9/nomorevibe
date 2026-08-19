@@ -10,6 +10,9 @@ import { siteOrigin } from "@/lib/site";
 export async function GET(req: Request) {
   const content = await fs.readFile(path.join(process.cwd(), "skill", "SKILL.md"), "utf-8");
   return new NextResponse(content.replaceAll("{{SITE_URL}}", siteOrigin(req)), {
-    headers: { "content-type": "text/markdown; charset=utf-8" },
+    headers: {
+      "content-type": "text/markdown; charset=utf-8",
+      "cache-control": "public, max-age=300",
+    },
   });
 }

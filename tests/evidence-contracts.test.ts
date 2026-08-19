@@ -99,7 +99,7 @@ describe("maker evidence contracts", () => {
     expect(makerMediaSchema.safeParse({ items: [{ url: "javascript:alert(1)", altText: "x" }] }).success).toBe(false);
   });
 
-  it("allows only bounded disclosed provenance, SHA-256 identifiers, and known roles", () => {
+  it("allows only bounded disclosed provenance, Git object IDs, SHA-256 hashes, and known roles", () => {
     const agent = {
       provider: "OpenAI",
       client: "Codex",
@@ -117,6 +117,10 @@ describe("maker evidence contracts", () => {
     expect(makerProvenanceSchema.safeParse({ agents: [agent], skills: Array.from({ length: 13 }, (_, i) => skill(i)) }).success).toBe(false);
     expect(makerProvenanceSchema.safeParse({ agents: [{ ...agent, roles: ["prompt_injection"] }], skills: [] }).success).toBe(false);
     expect(makerProvenanceSchema.safeParse({ agents: [], skills: [{ ...skill(1), hash: "not-sha256" }] }).success).toBe(false);
+    expect(makerProvenanceSchema.safeParse({ agents: [{ ...agent, commitTo: "b".repeat(40) }], skills: [] }).success).toBe(true);
+    expect(makerProvenanceSchema.safeParse({ agents: [{ ...agent, commitTo: "b".repeat(64) }], skills: [] }).success).toBe(true);
+    expect(makerProvenanceSchema.safeParse({ agents: [{ ...agent, commitTo: "b".repeat(39) }], skills: [] }).success).toBe(false);
+    expect(makerProvenanceSchema.safeParse({ agents: [], skills: [{ ...skill(1), commit: "C".repeat(40) }] }).success).toBe(false);
   });
 });
 

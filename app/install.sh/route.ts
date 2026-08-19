@@ -30,6 +30,7 @@ echo "✓ Codex 프롬프트 설치됨    $CODEX_DIR/nomorevibe.md"
 
 echo ""
 echo "이제 프로젝트 폴더에서 /nomorevibe 를 실행하세요."
+echo "등록 후에는 profile, links, media, provenance, update, refresh 명령으로 근거를 관리할 수 있습니다."
 `;
   return new NextResponse(script, {
     headers: { "content-type": "text/x-shellscript; charset=utf-8" },

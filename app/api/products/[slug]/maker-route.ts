@@ -1,5 +1,9 @@
 import { NextResponse } from "next/server";
 import type { Product } from "@/lib/db/schema";
+import {
+  MakerResourceVersionMismatchError,
+  makerResourceEtag,
+} from "@/lib/domain/evidence/resource-version";
 import { authorizeMaker } from "@/lib/domain/products/maker-auth";
 import { MakerRequestBodyError, readBoundedJson } from "@/lib/domain/evidence/maker";
 import { errorResponse, tooManyRequests } from "@/lib/http/respond";
@@ -49,4 +53,35 @@ export async function makerJson(
     }
     throw error;
   }
+}
+
+export function makerResourceResponse(body: unknown): Response {
+  return NextResponse.json(body, {
+    headers: {
+      "cache-control": "private, no-store",
+      etag: makerResourceEtag(body),
+    },
+  });
+}
+
+export function makerResourceVersion(request: Request) {
+  const value = request.headers.get("if-match");
+  return value
+    ? { ok: true as const, value }
+    : {
+        ok: false as const,
+        response: NextResponse.json(
+          { error: "최신 리소스 버전을 먼저 조회하세요" },
+          { status: 428 },
+        ),
+      };
+}
+
+export function makerResourcePreconditionResponse(error: unknown): Response | null {
+  return error instanceof MakerResourceVersionMismatchError
+    ? NextResponse.json(
+        { error: "다른 변경이 먼저 저장됐습니다. 최신 정보를 다시 불러오세요" },
+        { status: 412 },
+      )
+    : null;
 }

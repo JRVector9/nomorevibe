@@ -7,6 +7,27 @@ AI로 만든 제품의 마켓 데이터베이스. 메이커가 AI 코딩 툴에�
 `✓` 표시는 도메인 소유권 검증에만 붙는다. "만든 AI"는 기술적으로 검증할 방법이 없으므로
 **메이커 신고**로 표기하고 랭킹에 반영하지 않는다.
 
+## 메이커 스킬 명령
+
+`curl -fsSL <SITE>/install.sh | sh`로 설치한 뒤 프로젝트 폴더에서 `/nomorevibe`를 실행한다.
+등록·검증·삭제뿐 아니라 공개 상세 근거도 같은 credential-store 수정 키로 관리한다.
+
+| 명령 | 하는 일 |
+|---|---|
+| `/nomorevibe` | 제품 등록 또는 기본 정보 갱신 |
+| `/nomorevibe verify` | 배포 도메인 소유권 검증 |
+| `/nomorevibe profile` | 상세 소개·가격·팀·라이선스 신고 갱신 |
+| `/nomorevibe links` | 저장소·스토어·패키지·RSS·changelog 링크 갱신 |
+| `/nomorevibe media` | 최대 8개 외부 이미지 선언, 서버가 검증 후 내부 보관 |
+| `/nomorevibe provenance` | 동의한 에이전트·스킬 메타데이터만 선택적으로 공개 |
+| `/nomorevibe update` | 메이커 업데이트 작성 |
+| `/nomorevibe refresh` | 외부 근거 재수집을 대기열에 등록 |
+| `/nomorevibe delete` | 확인 후 제품 삭제 |
+
+모든 쓰기는 전송 payload와 `메이커 제공·미검증` 라벨을 먼저 보여주고 확인받는다. 수정 키는
+`~/.config/nomorevibe/credentials.json`에만 저장하며 프로젝트 파일, 프롬프트, 대화 로그,
+환경변수, 비밀값은 업로드하지 않는다. provenance는 명시적 opt-in이며 랭킹에 반영하지 않는다.
+
 ## 개발 환경
 
 ```bash

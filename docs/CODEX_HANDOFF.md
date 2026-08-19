@@ -6,8 +6,9 @@ Execute plan 3, `docs/superpowers/plans/2026-08-19-product-detail-ui-implementat
 finished white-theme, global minimum-13px product-detail screen in the browser.
 
 Plan 2, `docs/superpowers/plans/2026-08-19-product-evidence-pipeline-implementation.md`, is complete.
-Plan 3 Tasks 1–6 are implemented, reviewed, and verified through the evidence-based public product
-page and the global light-first/13 px UI contract. Continue at Task 7's distributable skill update.
+Plan 3 Tasks 1–7 are implemented and verified through the evidence-based public product page,
+global light-first/13 px UI contract, and the distributable maker-evidence skill. Continue at Task 8's
+Playwright browser QA, release documentation, complete-diff review, and final screen launch.
 
 ## Completed work
 
@@ -30,18 +31,27 @@ Plan 3 commits and completed phases:
    mirrored media, visible updates, provenance, license comparison, and freshness states. Public
    identity queries explicitly omit verification/edit credentials and reject banned rows; a final
    generation/status check discards data assembled across a concurrent ban or slug replacement.
-5. Task 5, commit message `feat: show evidence-based product details`:
+5. `66eace7 feat: show evidence-based product details`:
    dynamic `/p/[slug]` composition with current rank, seven-day unique/valid visits, health,
    compact evidence summary, internally mirrored gallery, sanitized structured introduction,
    objective links, repository/license facts, agent/skill provenance, freshness, and filterable
    updates. It keeps one mobile reading order, places the same nodes into a two-column desktop grid,
    preserves claim/takedown notices, and adds no phase-2 comment or login surface.
-6. Task 6, pending commit message `style: enforce light 13px interface`:
+6. `de5306b style: enforce light 13px interface`:
    makes light tokens unconditional while preserving an explicit future dark override and the
    deliberate `.surface-dark` terminal; enforces the 13 px visible-text floor; reduces ordinary
    section radii to 12 px while preserving the 14 px product hero and 10 px metric cards; sets
    product prose to 15 px and structured/update copy to 14 px; adds global keyboard focus and
    reduced-motion behavior; and tests muted-text contrast across every light surface.
+7. Task 7, pending commit message `feat: extend nomorevibe evidence skill`:
+   adds profile, links, media, provenance, update, and refresh commands without changing existing
+   registration/verification/deletion behavior. Every maker replacement first reads a private,
+   authenticated merge baseline, previews additions/changes/kept/deleted values, and requires
+   confirmation. GET returns a strong content ETag; PUT requires the matching `If-Match` and rejects
+   stale replacement with 412 inside the same lifecycle/resource lock. Credential storage is keyed
+   by API origin then slug so an untrusted project file or a second registry cannot redirect or
+   overwrite an edit token. Provenance remains explicit opt-in, metadata-only, maker-reported, and
+   ranking-neutral; Git commit IDs accept full SHA-1 or SHA-256 while content hashes remain SHA-256.
 
 Task 2 does not add comments, login, reactions, follows, or provider I/O in request handlers.
 External gallery URLs are declarations only. The evidence job copies validated bytes into internal
@@ -147,6 +157,23 @@ Plan 3 Task 2 files:
 - `tests/integration/setup.ts`
 - `tests/maker-evidence-routes.test.ts`
 
+Plan 3 Task 7 files:
+
+- `README.md`
+- `app/api/products/[slug]/{profile,links,media,provenance}/route.ts`
+- `app/api/products/[slug]/maker-route.ts`
+- `app/install.sh/route.ts`
+- `app/skill.md/route.ts`
+- `lib/domain/evidence/contracts.ts`
+- `lib/domain/evidence/maker.ts`
+- `lib/domain/evidence/repository.ts`
+- `lib/domain/evidence/resource-version.ts` (new)
+- `skill/SKILL.md`
+- `tests/evidence-contracts.test.ts`
+- `tests/integration/maker-evidence-api.test.ts`
+- `tests/skill-contract.test.ts` (new)
+- `docs/CODEX_HANDOFF.md`
+
 Task 8 commit files:
 
 - `PENDING.md`
@@ -190,6 +217,14 @@ Task 8 commit files:
 - Maker media replacement and collector publication share lifecycle then product-media lock order.
 - Two generated additive migrations are retained: `0015` creates declarations and `0016` adds the
   revision used for in-flight compare-and-swap behavior.
+- Maker replacement APIs use a strong SHA-256 content ETag over the exact authenticated GET body.
+  A valid PUT requires that ETag in `If-Match`; the writer recomputes it after acquiring lifecycle
+  then resource advisory locks and returns 412 before any mutation when it is stale. Missing
+  preconditions return 428. System-observed provenance does not invalidate or get deleted by the
+  maker-only comparison.
+- Edit-token credentials are stored as `origin → slug → token`. Project `.nomorevibe.json` data may
+  select an already-bound origin/slug pair but can never supply the authenticated destination.
+  Legacy unbound credentials are not sent until the user explicitly trusts and migrates them.
 
 - Slug is reusable and is not identity. Long-running work captures `products.id`, then validates
   `(id, slug)` under the lifecycle advisory lock before any write.
@@ -496,6 +531,23 @@ Local development database state:
   worked. Its optional browser probe could not launch Chromium in the review sandbox because the
   macOS Mach rendezvous port was denied; browser coverage remains Task 8 and no browser pass is
   claimed here.
+- Task 7 review iterations found and fixed: 40-character Git SHA-1 rejection; omitted maker license
+  payload; replacement PUTs without a server baseline; unsupported non-GitHub repository proposals;
+  project-controlled credential destinations; stale product-generation reads; unserialized
+  provenance baselines; maker/system provenance identity collisions; same-slug credentials
+  colliding across API origins; and finally GET-to-PUT stale replacement. The final P1 was
+  reproduced with all four resources before adding ETag/`If-Match` compare-and-swap.
+- The first Task 7 concurrency regression held a PostgreSQL advisory lock but released it after an
+  assertion. When that assertion failed, the test process waited indefinitely. Only the matching
+  Vitest processes were terminated; the fixture now releases the lock in `finally` before asserting
+  the result.
+- A Task 7 review-side `npm test -- --runInBand` attempt failed because Vitest does not support that
+  Jest option. The reviewer then ran the correct `npm test` command and it passed.
+- The post-P1 Task 7 Codex re-review could not start because the CLI account reported its usage
+  limit and asked to retry after 12:30 PM. It is not claimed as CLEAN. The corrected diff was
+  manually traced across all four GET/PUT bodies and lock boundaries, and the regression plus full
+  matrix below passed; Task 8 must run a fresh complete-diff independent review when capacity is
+  available.
 - Running two integration Vitest processes in parallel against the same database made each process
   truncate the other's fixtures, causing false missing-row/duplicate-singleton failures. Related
   integration tests are intentionally run sequentially from here onward.
@@ -551,10 +603,59 @@ codex review --uncommitted
   CLEAN — No actionable defects were found
 ```
 
+## Task 7 verification
+
+RED failures actually observed during Task 7/review:
+
+- missing distributed skill contract and command documentation;
+- full Git SHA-1 rejected and maker license absent from the profile proposal;
+- merge-ready GET endpoints absent, non-GitHub repository proposal allowed, and replacement capable
+  of erasing unknown current fields;
+- project-controlled API destination could receive a global edit token;
+- replacement-generation reads, provenance read serialization, and stronger retained skill identity
+  preservation failed;
+- credentials keyed only by slug collided across API origins;
+- authenticated GET returned no ETag and a stale second full-replacement PUT overwrote the first.
+
+Final verification actually run on the current Task 7 code:
+
+```text
+npx vitest run tests/skill-contract.test.ts tests/evidence-contracts.test.ts
+  PASS — 2 files, 39 tests (before the final ETag regression; final skill target: 8/8)
+npx vitest run --config vitest.integration.config.ts tests/integration/maker-evidence-api.test.ts tests/integration/product-provenance.test.ts
+  PASS — 2 files, 14 tests before the final ETag regression
+npx vitest run --config vitest.integration.config.ts tests/integration/maker-evidence-api.test.ts -t 'rejects stale merge-and-replace writes'
+  RED — GET ETag missing
+  PASS — 1 passed, 11 skipped after the fix
+npx vitest run --config vitest.integration.config.ts tests/integration/maker-evidence-api.test.ts
+  PASS — 1 file, 13 tests after the fix
+npm test
+  PASS — 37 files, 324 tests
+npm run test:integration
+  PASS — 34 files, 345 tests
+npx next typegen
+  PASS
+npx tsc --noEmit
+  PASS
+npm run lint
+  PASS — 0 errors, 0 warnings
+npx tsx -e 'import("./app/install.sh/route.ts").then(async ({GET}) => { process.stdout.write(await (await GET(new Request("https://registry.example/install.sh"))).text()); })' | sh -n
+  PASS
+npm run build
+  PASS — Next.js 16.3.1; maker evidence routes and `/p/[slug]` remain dynamic
+git diff --check
+  PASS
+```
+
+Expected suite output remains the existing Vite native config-loader warning and intentional
+failure-path logs. No test command above is claimed beyond the result actually observed.
+
 ## Remaining work
 
-- Execute plan 3 Tasks 7–8: `/nomorevibe` commands, then full review/docs/browser QA. Comments
-  remain phase-2 design only; no comment persistence or login integration belongs in phase 1.
+- Execute plan 3 Task 8: rich/collecting/stale-conflict/unclaimed Playwright QA at 1440 px and
+  390 px, release docs, fresh complete-diff independent review, and final local browser launch.
+- Comments and unified end-user authentication remain phase-2 design only; no comment persistence,
+  reactions, follows, or login integration belongs in phase 1.
 - Launch the resulting local screen and perform browser/visual QA at desktop and mobile widths.
 
 External blockers remain in `PENDING.md`: category classification API verification and production
@@ -565,8 +666,13 @@ scheduler/provider-token verification. Do not claim either complete without exte
 ```sh
 git status --short
 cat docs/superpowers/plans/2026-08-19-product-detail-ui-implementation.md
-npx vitest run tests/skill-contract.test.ts
+npm run test:e2e:product
+npx next typegen
 npx tsc --noEmit
+npm test
+npm run test:integration
 npm run lint
+npm run build
 git diff --check
+codex review --uncommitted
 ```

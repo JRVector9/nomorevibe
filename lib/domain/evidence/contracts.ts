@@ -37,6 +37,7 @@ export const PROVENANCE_ROLES = [
 ] as const;
 
 const sha256 = z.string().regex(/^[a-f0-9]{64}$/, "소문자 SHA-256 형식이어야 합니다");
+const gitObjectId = z.string().regex(/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/, "소문자 Git object ID 형식이어야 합니다");
 
 function isPublicHostname(hostname: string): boolean {
   const host = hostname.toLowerCase().replace(/^\[|\]$/g, "").replace(/\.$/, "");
@@ -237,8 +238,8 @@ const agentSchema = z.object({
   client: z.string().max(120).optional(),
   model: z.string().max(160).optional(),
   roles: z.array(z.enum(PROVENANCE_ROLES)).min(1).max(PROVENANCE_ROLES.length),
-  commitFrom: sha256.optional(),
-  commitTo: sha256.optional(),
+  commitFrom: gitObjectId.optional(),
+  commitTo: gitObjectId.optional(),
   dateFrom: z.iso.date().optional(),
   dateTo: z.iso.date().optional(),
   sourceUrl: safeHttpUrl.optional(),
@@ -251,7 +252,7 @@ const skillSchema = z.object({
   version: z.string().max(80).optional(),
   source: safeHttpUrl.optional(),
   hash: sha256.optional(),
-  commit: sha256.optional(),
+  commit: gitObjectId.optional(),
   evidenceLevel,
 }).strict();
 

@@ -1,22 +1,30 @@
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import {
   productEvidenceAudit,
   productEvidenceSources,
+  productAgents,
   productMedia,
   productMediaDeclarations,
   productProfiles,
+  productSkills,
   productUpdates,
   products,
   rateLimits,
 } from "@/lib/db/schema";
 import { hashToken } from "@/lib/tokens";
 import { refreshProductEvidence } from "@/lib/domain/evidence/refresh";
-import { PUT as putProfile } from "@/app/api/products/[slug]/profile/route";
-import { PUT as putLinks } from "@/app/api/products/[slug]/links/route";
-import { PUT as putMedia } from "@/app/api/products/[slug]/media/route";
-import { PUT as putProvenance } from "@/app/api/products/[slug]/provenance/route";
+import {
+  getMakerLinksResource,
+  getMakerMediaResource,
+  getMakerProfileResource,
+  getMakerProvenanceResource,
+} from "@/lib/domain/evidence/repository";
+import { GET as getProfile, PUT as putProfile } from "@/app/api/products/[slug]/profile/route";
+import { GET as getLinks, PUT as putLinks } from "@/app/api/products/[slug]/links/route";
+import { GET as getMedia, PUT as putMedia } from "@/app/api/products/[slug]/media/route";
+import { GET as getProvenance, PUT as putProvenance } from "@/app/api/products/[slug]/provenance/route";
 import { POST as postUpdate } from "@/app/api/products/[slug]/updates/route";
 import {
   DELETE as deleteUpdate,
@@ -42,12 +50,13 @@ const PROFILE = {
 
 type Handler = (request: Request, context: never) => Promise<Response>;
 
-function request(method: string, path: string, body?: unknown, token?: string): Request {
+function request(method: string, path: string, body?: unknown, token?: string, ifMatch?: string): Request {
   return new Request(`https://nomorevibe.test${path}`, {
     method,
     headers: {
       ...(body === undefined ? {} : { "content-type": "application/json" }),
       ...(token ? { "x-edit-token": token } : {}),
+      ...(ifMatch ? { "if-match": ifMatch } : {}),
     },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
@@ -59,6 +68,23 @@ function slugContext(slug: string) {
 
 function updateContext(slug: string, id: number) {
   return { params: Promise.resolve({ slug, id: String(id) }) } as never;
+}
+
+const makerResourceReaders: Record<string, Handler> = {
+  "/profile": getProfile as Handler,
+  "/links": getLinks as Handler,
+  "/media": getMedia as Handler,
+  "/provenance": getProvenance as Handler,
+};
+
+async function replaceResource(handler: Handler, path: string, body: unknown, slug = "maker-api") {
+  const baseline = await makerResourceReaders[path](
+    request("GET", path, undefined, TOKEN),
+    slugContext(slug),
+  );
+  const etag = baseline.headers.get("etag");
+  expect(etag, path).toMatch(/^"[a-f0-9]{64}"$/);
+  return handler(request("PUT", path, body, TOKEN, etag!), slugContext(slug));
 }
 
 async function insertProduct(slug: string, status: "verified" | "banned" = "verified") {
@@ -87,6 +113,223 @@ beforeEach(async () => {
 });
 
 describe("maker evidence resource APIs", () => {
+  it("requires a current resource version for valid replacement requests", async () => {
+    const response = await (putLinks as Handler)(
+      request("PUT", "/links", { links: [] }, TOKEN),
+      slugContext("maker-api"),
+    );
+    expect(response.status).toBe(428);
+    expect(await response.json()).toEqual({ error: "최신 리소스 버전을 먼저 조회하세요" });
+  });
+
+  it("rejects stale merge-and-replace writes for every maker resource", async () => {
+    const cases = [
+      {
+        get: getProfile as Handler,
+        put: putProfile as Handler,
+        path: "/profile",
+        first: PROFILE,
+        stale: { ...PROFILE, problem: "뒤늦은 소개" },
+      },
+      {
+        get: getLinks as Handler,
+        put: putLinks as Handler,
+        path: "/links",
+        first: { links: [{ kind: "documentation", url: "https://maker-api.example/docs" }] },
+        stale: { links: [] },
+      },
+      {
+        get: getMedia as Handler,
+        put: putMedia as Handler,
+        path: "/media",
+        first: { items: [{ url: "https://maker-api.example/one.png", altText: "첫 화면" }] },
+        stale: { items: [] },
+      },
+      {
+        get: getProvenance as Handler,
+        put: putProvenance as Handler,
+        path: "/provenance",
+        first: {
+          agents: [{ provider: "OpenAI", roles: ["implementation"], evidenceLevel: "maker_reported" }],
+          skills: [],
+        },
+        stale: { agents: [], skills: [] },
+      },
+    ];
+
+    for (const item of cases) {
+      const baseline = await item.get(request("GET", item.path, undefined, TOKEN), slugContext("maker-api"));
+      const etag = baseline.headers.get("etag");
+      expect(etag, item.path).toMatch(/^"[a-f0-9]{64}"$/);
+      expect((await item.put(
+        request("PUT", item.path, item.first, TOKEN, etag!),
+        slugContext("maker-api"),
+      )).status).toBeLessThan(300);
+
+      const stale = await item.put(
+        request("PUT", item.path, item.stale, TOKEN, etag!),
+        slugContext("maker-api"),
+      );
+      expect(stale.status, item.path).toBe(412);
+      expect(await stale.json()).toEqual({ error: "다른 변경이 먼저 저장됐습니다. 최신 정보를 다시 불러오세요" });
+
+      const current = await item.get(request("GET", item.path, undefined, TOKEN), slugContext("maker-api"));
+      expect(await current.json(), item.path).not.toEqual(item.stale);
+    }
+  });
+
+  it("rejects merge reads for a replaced product generation", async () => {
+    const old = await db.query.products.findFirst({ where: eq(products.slug, "maker-api") });
+    expect(old).toBeDefined();
+    await db.delete(products).where(eq(products.slug, "maker-api"));
+    const replacement = await insertProduct("maker-api");
+    expect(replacement.id).not.toBe(old!.id);
+
+    for (const read of [
+      getMakerProfileResource,
+      getMakerLinksResource,
+      getMakerMediaResource,
+      getMakerProvenanceResource,
+    ]) {
+      await expect(read("maker-api", old!.id)).rejects.toThrow("product generation changed");
+    }
+  });
+
+  it("serializes the maker provenance merge baseline with replacement", async () => {
+    const product = await db.query.products.findFirst({ where: eq(products.slug, "maker-api") });
+    expect(product).toBeDefined();
+    await db.insert(productAgents).values({
+      slug: "maker-api",
+      provider: "OpenAI",
+      roles: ["implementation"],
+      evidenceLevel: "maker_reported",
+    });
+    await db.insert(productSkills).values({
+      slug: "maker-api",
+      namespace: "openai",
+      name: "review",
+      evidenceLevel: "maker_reported",
+    });
+
+    let release!: () => void;
+    let signalHeld!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const held = new Promise<void>((resolve) => { signalHeld = resolve; });
+    const holder = db.transaction(async (tx) => {
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtext('product-provenance:maker-api'))`);
+      signalHeld();
+      await gate;
+    });
+    await held;
+
+    let settled = false;
+    const reading = getMakerProvenanceResource("maker-api", product!.id).then((value) => {
+      settled = true;
+      return value;
+    });
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 75));
+      expect(settled).toBe(false);
+    } finally {
+      release();
+      await holder;
+    }
+    await expect(reading).resolves.toMatchObject({
+      agents: [{ provider: "OpenAI" }],
+      skills: [{ namespace: "openai", name: "review" }],
+    });
+  });
+
+  it("preserves a stronger retained skill when a maker submits the same identity", async () => {
+    await db.insert(productSkills).values({
+      slug: "maker-api",
+      namespace: "openai",
+      name: "review",
+      version: "1.0.0",
+      commit: "b".repeat(40),
+      evidenceLevel: "repository_evidenced",
+    });
+    const response = await replaceResource(putProvenance as Handler, "/provenance", {
+      agents: [{ provider: "OpenAI", roles: ["implementation"], evidenceLevel: "maker_reported" }],
+      skills: [{
+        namespace: "openai",
+        name: "review",
+        version: "1.0.0",
+        commit: "b".repeat(40),
+        evidenceLevel: "maker_reported",
+      }],
+    });
+    expect(response.status).toBe(200);
+    expect(await db.select().from(productAgents)).toHaveLength(1);
+    expect(await db.select().from(productSkills)).toEqual([
+      expect.objectContaining({ evidenceLevel: "repository_evidenced" }),
+    ]);
+  });
+
+  it("returns authenticated merge-ready maker resources without internal fields", async () => {
+    await replaceResource(putProfile as Handler, "/profile", PROFILE);
+    await replaceResource(putLinks as Handler, "/links", {
+      links: [{ kind: "repository", url: "https://github.com/Example/Maker-API" }],
+    });
+    await replaceResource(putMedia as Handler, "/media", {
+      items: [{ url: "https://maker-api.example/gallery.png", altText: "Maker API 화면" }],
+    });
+    await replaceResource(putProvenance as Handler, "/provenance", {
+      agents: [{ provider: "OpenAI", client: "Codex", roles: ["implementation"], evidenceLevel: "maker_reported" }],
+      skills: [{ namespace: "openai", name: "review", evidenceLevel: "maker_reported" }],
+    });
+    await db.insert(productAgents).values({
+      slug: "maker-api",
+      provider: "GitHub",
+      roles: ["testing"],
+      evidenceLevel: "repository_evidenced",
+    });
+    await db.insert(productSkills).values({
+      slug: "maker-api",
+      namespace: "github",
+      name: "actions",
+      evidenceLevel: "repository_evidenced",
+    });
+
+    const cases = [
+      { handler: getProfile as Handler, path: "/profile", expected: { profile: PROFILE } },
+      {
+        handler: getLinks as Handler,
+        path: "/links",
+        expected: { links: [{ kind: "repository", url: "https://github.com/example/maker-api" }] },
+      },
+      {
+        handler: getMedia as Handler,
+        path: "/media",
+        expected: { items: [{ url: "https://maker-api.example/gallery.png", altText: "Maker API 화면" }] },
+      },
+      {
+        handler: getProvenance as Handler,
+        path: "/provenance",
+        expected: {
+          agents: [{ provider: "OpenAI", client: "Codex", roles: ["implementation"], evidenceLevel: "maker_reported" }],
+          skills: [{ namespace: "openai", name: "review", evidenceLevel: "maker_reported" }],
+        },
+      },
+    ];
+    for (const item of cases) {
+      expect((await item.handler(request("GET", item.path), slugContext("maker-api"))).status).toBe(401);
+      const response = await item.handler(request("GET", item.path, undefined, TOKEN), slugContext("maker-api"));
+      expect(response.status).toBe(200);
+      expect(response.headers.get("cache-control")).toBe("private, no-store");
+      const body = await response.json();
+      expect(body).toEqual(item.expected);
+      expect(JSON.stringify(body)).not.toMatch(/(?:slug|createdAt|updatedAt|evidenceLabel|revision|nextAttemptAt)/);
+    }
+
+    expect((await replaceResource(putProvenance as Handler, "/provenance", {
+      agents: [{ provider: "OpenAI", client: "Codex", roles: ["implementation"], evidenceLevel: "maker_reported" }],
+      skills: [{ namespace: "openai", name: "review", evidenceLevel: "maker_reported" }],
+    })).status).toBe(200);
+    expect(await db.select().from(productAgents)).toHaveLength(2);
+    expect(await db.select().from(productSkills)).toHaveLength(2);
+  });
+
   it("authenticates every resource before mutation and rejects banned products", async () => {
     const [automatic] = await db.insert(productUpdates).values({
       slug: "maker-api",
@@ -133,20 +376,17 @@ describe("maker evidence resource APIs", () => {
       nextAttemptAt: new Date("2030-01-01T00:00:00.000Z"),
     });
 
-    expect((await (putProfile as Handler)(
-      request("PUT", "/profile", PROFILE, TOKEN),
-      slugContext("maker-api"),
-    )).status).toBe(200);
-    expect((await (putLinks as Handler)(request("PUT", "/links", {
+    expect((await replaceResource(putProfile as Handler, "/profile", PROFILE)).status).toBe(200);
+    expect((await replaceResource(putLinks as Handler, "/links", {
       links: [{ kind: "repository", url: "https://github.com/Example/Maker-API" }],
-    }, TOKEN), slugContext("maker-api"))).status).toBe(200);
-    expect((await (putMedia as Handler)(request("PUT", "/media", {
+    })).status).toBe(200);
+    expect((await replaceResource(putMedia as Handler, "/media", {
       items: [{ url: "https://maker-api.example/gallery.png", altText: "Maker API 화면" }],
-    }, TOKEN), slugContext("maker-api"))).status).toBe(202);
-    expect((await (putProvenance as Handler)(request("PUT", "/provenance", {
+    })).status).toBe(202);
+    expect((await replaceResource(putProvenance as Handler, "/provenance", {
       agents: [{ provider: "OpenAI", client: "Codex", roles: ["implementation"], evidenceLevel: "maker_reported" }],
       skills: [{ namespace: "openai", name: "review", evidenceLevel: "maker_reported" }],
-    }, TOKEN), slugContext("maker-api"))).status).toBe(200);
+    })).status).toBe(200);
 
     expect(await db.query.productProfiles.findFirst({ where: eq(productProfiles.slug, "maker-api") }))
       .toMatchObject({ lifecycle: "ga", pricingModel: "freemium" });
@@ -175,9 +415,10 @@ describe("maker evidence resource APIs", () => {
     expect((await db.query.productEvidenceSources.findFirst({
       where: eq(productEvidenceSources.slug, "maker-api"),
     }))?.normalizedFacts).toEqual(observedFacts);
-    const responseText = JSON.stringify(await (await (putLinks as Handler)(
-      request("PUT", "/links", { links: [] }, TOKEN),
-      slugContext("maker-api"),
+    const responseText = JSON.stringify(await (await replaceResource(
+      putLinks as Handler,
+      "/links",
+      { links: [] },
     )).json());
     expect(responseText).not.toContain(TOKEN);
     expect(responseText).not.toContain("Apache-2.0");
@@ -322,9 +563,9 @@ describe("maker evidence resource APIs", () => {
 
   it("does not publish a gallery response after its declaration is removed or revised", async () => {
     const sourceUrl = "https://maker-api.example/racing-gallery.png";
-    const declare = (altText: string) => (putMedia as Handler)(request("PUT", "/media", {
+    const declare = (altText: string) => replaceResource(putMedia as Handler, "/media", {
       items: [{ url: sourceUrl, altText }],
-    }, TOKEN), slugContext("maker-api"));
+    });
     expect((await declare("이전 설명")).status).toBe(202);
 
     async function pausedRefresh(onStarted: () => void, gate: Promise<void>, hash: string) {
@@ -355,7 +596,7 @@ describe("maker evidence resource APIs", () => {
     const removedStarted = new Promise<void>((resolve) => { startedRemoved = resolve; });
     const removingRefresh = pausedRefresh(startedRemoved, removedGate, "e".repeat(64));
     await removedStarted;
-    expect((await (putMedia as Handler)(request("PUT", "/media", { items: [] }, TOKEN), slugContext("maker-api"))).status).toBe(202);
+    expect((await replaceResource(putMedia as Handler, "/media", { items: [] })).status).toBe(202);
     releaseRemoved();
     expect(await removingRefresh).toMatchObject({ mediaInserted: 0, sourcesFailed: 1 });
     expect(await db.select().from(productMedia)).toHaveLength(0);
