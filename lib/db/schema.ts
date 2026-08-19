@@ -128,10 +128,16 @@ export const clickEvents = pgTable(
     id: serial("id").primaryKey(),
     slug: varchar("slug", { length: 80 }).notNull(),
     occurredAt: timestamp("occurred_at").notNull().defaultNow(),
+    visitorHash: varchar("visitor_hash", { length: 64 }),
   },
   (t) => [
     index("click_events_slug_time_idx").on(t.slug, t.occurredAt.desc()),
     index("click_events_time_slug_idx").on(t.occurredAt, t.slug),
+    index("click_events_slug_visitor_time_idx").on(
+      t.slug,
+      t.visitorHash,
+      t.occurredAt.desc(),
+    ),
   ],
 );
 
@@ -150,11 +156,17 @@ export const productClickDaily = pgTable(
     /** 집계 날짜 (KST 기준 하루) */
     day: date("day").notNull(),
     clicks: integer("clicks").notNull().default(0),
+    uniqueVisitors: integer("unique_visitors").notNull().default(0),
   },
   (t) => [primaryKey({ columns: [t.slug, t.day] })],
 );
 
 export type ProductClickDaily = typeof productClickDaily.$inferSelect;
+
+export const visitCollectionState = pgTable("visit_collection_state", {
+  id: integer("id").primaryKey().default(1),
+  uniqueVisitorStartedAt: timestamp("unique_visitor_started_at"),
+});
 
 export type RankingPolicyRevisionState = "scheduled" | "applied" | "cancelled";
 export type RankingSeasonState = "active" | "closed";
@@ -194,12 +206,15 @@ export const rankingEntries = pgTable("ranking_entries", {
   seasonId: integer("season_id").notNull().references(() => rankingSeasons.id),
   slug: varchar("slug", { length: 80 }).notNull(),
   validClicks: integer("valid_clicks").notNull().default(0),
+  uniqueVisitors: integer("unique_visitors").notNull().default(0),
   cooldownFactorBasisPoints: integer("cooldown_factor_basis_points").notNull().default(10_000),
   scoreUnits: bigint("score_units", { mode: "number" }).notNull().default(0),
   rank: integer("rank").notNull(),
   changePercent: numeric("change_percent", { precision: 12, scale: 1, mode: "number" }),
   recentClicks: integer("recent_clicks").notNull().default(0),
   previousClicks: integer("previous_clicks").notNull().default(0),
+  recentUniqueVisitors: integer("recent_unique_visitors").notNull().default(0),
+  previousUniqueVisitors: integer("previous_unique_visitors").notNull().default(0),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
   finalizedAt: timestamp("finalized_at"),
 }, (table) => [

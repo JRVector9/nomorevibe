@@ -33,6 +33,11 @@ export function ensureSchema() {
 export async function resetTables() {
   await db.execute(sql`
     TRUNCATE ranking_entries, ranking_seasons, ranking_policy_revisions,
+             click_events, product_click_daily, visit_collection_state,
              products, og_images RESTART IDENTITY CASCADE
+  `);
+  await db.execute(sql`
+    INSERT INTO visit_collection_state (id, unique_visitor_started_at)
+    VALUES (1, NULL)
   `);
 }
