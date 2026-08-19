@@ -14,6 +14,7 @@ import {
   saveMakerProfile,
   upsertObservedSource,
 } from "@/lib/domain/evidence/repository";
+import { insertUpdateCandidates } from "@/lib/domain/evidence/updates";
 import { ensureSchema, resetTables } from "./setup";
 
 beforeAll(() => ensureSchema());
@@ -119,6 +120,32 @@ function successfulRequest() {
 }
 
 describe("GitHub evidence refresh", () => {
+  it("does not duplicate a canonical release that an RSS feed observed first", async () => {
+    const observedAt = new Date("2026-08-19T00:00:00.000Z");
+    await insertUpdateCandidates("github-product", [{
+      sourceKind: "feed",
+      dedupeKey: "feed-v1.1.0",
+      canonicalUrl: "https://github.com/Owner/Repo/releases/tag/v1.1.0?source=rss",
+      title: "Version 1.1.0 released",
+      summary: "Feed observation",
+      beforeAfter: null,
+      publishedAt: new Date("2026-08-17T00:00:00.000Z"),
+      observedAt,
+    }]);
+
+    await expect(refreshGitHubEvidence({
+      slug: "github-product",
+      repository: "owner/repo",
+    }, { request: successfulRequest(), now: () => observedAt })).resolves.toEqual({
+      status: "updated",
+      releases: 1,
+    });
+
+    const updates = await db.select().from(productUpdates).where(eq(productUpdates.slug, "github-product"));
+    expect(updates).toHaveLength(2);
+    expect(updates.filter((update) => update.canonicalUrl?.includes("v1.1.0"))).toHaveLength(1);
+  });
+
   it("stores normalized facts/releases, retains license conflict, and advances 304 freshness", async () => {
     const request = successfulRequest();
     const firstNow = new Date("2026-08-19T00:00:00.000Z");
@@ -155,9 +182,11 @@ describe("GitHub evidence refresh", () => {
         license: { spdxId: "Apache-2.0" },
       },
     });
-    expect(updates.map((update) => update.dedupeKey).sort()).toEqual([
-      "github-release:1",
-      "github-release:2",
+    expect(updates).toHaveLength(2);
+    expect(updates.every((update) => update.dedupeKey.startsWith("release:"))).toBe(true);
+    expect(updates.map((update) => update.canonicalUrl).sort()).toEqual([
+      "https://github.com/owner/repo/releases/tag/v1.0.0",
+      "https://github.com/owner/repo/releases/tag/v1.1.0",
     ]);
 
     const secondNow = new Date("2026-08-19T06:00:00.000Z");
@@ -282,10 +311,12 @@ describe("GitHub evidence refresh", () => {
     const [source] = await db.select().from(productEvidenceSources).where(eq(productEvidenceSources.slug, "github-product"));
     const updates = await db.select().from(productUpdates).where(eq(productUpdates.slug, "github-product"));
     expect(source.normalizedFacts).toMatchObject({ latestRelease: { id: 3, tagName: "v1.2.0" } });
-    expect(updates.map((update) => update.dedupeKey).sort()).toEqual([
-      "github-release:1",
-      "github-release:2",
-      "github-release:3",
+    expect(updates).toHaveLength(3);
+    expect(updates.every((update) => update.dedupeKey.startsWith("release:"))).toBe(true);
+    expect(updates.map((update) => update.canonicalUrl).sort()).toEqual([
+      "https://github.com/owner/repo/releases/tag/v1.0.0",
+      "https://github.com/owner/repo/releases/tag/v1.1.0",
+      "https://github.com/owner/repo/releases/tag/v1.2.0",
     ]);
   });
 

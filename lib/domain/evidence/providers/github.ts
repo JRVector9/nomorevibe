@@ -1,6 +1,5 @@
 import { isDeepStrictEqual } from "node:util";
 import { db } from "@/lib/db";
-import { productUpdates } from "@/lib/db/schema";
 import {
   githubRequest,
   type ConditionalRequest,
@@ -15,6 +14,7 @@ import {
   upsertObservedSource,
 } from "../repository";
 import { relationshipState } from "../relationship";
+import { insertUpdateCandidates } from "../updates";
 
 export const CONTRIBUTOR_COUNT_CAP = 500;
 const README_BYTES_CAP = 256 * 1024;
@@ -289,19 +289,16 @@ async function persistReleases(
 ): Promise<number> {
   const normalized = normalizeReleases(releases);
   if (normalized.length === 0) return 0;
-  const inserted = await executor.insert(productUpdates).values(normalized.map((release) => ({
-    slug,
+  return insertUpdateCandidates(slug, normalized.map((release) => ({
     sourceKind: "github_release" as const,
     dedupeKey: `github-release:${release.id}`,
     canonicalUrl: release.url,
     title: release.name,
     summary: null,
+    beforeAfter: null,
     publishedAt: new Date(release.publishedAt),
     observedAt,
-  }))).onConflictDoNothing({
-    target: [productUpdates.slug, productUpdates.dedupeKey],
-  }).returning({ id: productUpdates.id });
-  return inserted.length;
+  })), executor);
 }
 
 export async function refreshGitHubEvidence(

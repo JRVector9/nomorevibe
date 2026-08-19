@@ -32,6 +32,149 @@ const ssrfSafeAgent = new Agent({
 
 export type FetchResult = { finalUrl: string; response: Response };
 
+type ManualRequest = (
+  url: string,
+  init: {
+    redirect: "manual";
+    signal: AbortSignal;
+    headers: Record<string, string>;
+  },
+) => Promise<Response>;
+
+export type CappedFetchFailure =
+  | { ok: false; reason: "too_large" }
+  | { ok: false; reason: "unsafe_url" }
+  | { ok: false; reason: "timeout" }
+  | { ok: false; reason: "http"; status: number };
+
+export type CappedFetchResult =
+  | {
+      ok: true;
+      status: number;
+      finalUrl: string;
+      headers: Headers;
+      body: Buffer;
+    }
+  | CappedFetchFailure;
+
+async function defaultRequest(
+  url: string,
+  init: Parameters<ManualRequest>[1],
+): Promise<Response> {
+  return (await undiciFetch(url, {
+    ...init,
+    dispatcher: allowPrivate() ? undefined : ssrfSafeAgent,
+  })) as unknown as Response;
+}
+
+function timedOut(error: unknown): boolean {
+  return Boolean(
+    error &&
+    typeof error === "object" &&
+    "name" in error &&
+    ((error as { name?: unknown }).name === "TimeoutError" ||
+      (error as { name?: unknown }).name === "AbortError"),
+  );
+}
+
+async function readBodyStrictlyCapped(
+  response: Response,
+  maxBytes: number,
+): Promise<Buffer | null> {
+  const declared = response.headers.get("content-length");
+  if (declared !== null) {
+    const bytes = Number(declared);
+    if (Number.isFinite(bytes) && bytes > maxBytes) return null;
+  }
+
+  const reader = response.body?.getReader();
+  if (!reader) return Buffer.alloc(0);
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.length;
+    if (total > maxBytes) {
+      await reader.cancel();
+      return null;
+    }
+    chunks.push(value);
+  }
+  return Buffer.concat(chunks);
+}
+
+/**
+ * 외부 증거 수집용 fetch. 모든 redirect hop과 실제 연결에서 SSRF 정책을 적용하고,
+ * 선언된 Content-Length와 실제 stream 양쪽을 같은 상한으로 검증한다.
+ */
+export async function fetchCapped(
+  url: string,
+  options: {
+    maxBytes: number;
+    timeoutMs?: number;
+    headers?: Record<string, string>;
+    /** 테스트 전용 주입점. 프로덕션 기본 요청은 연결 시점 DNS도 재검사한다. */
+    request?: ManualRequest;
+  },
+): Promise<CappedFetchResult> {
+  if (!Number.isSafeInteger(options.maxBytes) || options.maxBytes < 0) {
+    throw new Error("maxBytes must be a non-negative safe integer");
+  }
+  const request = options.request ?? defaultRequest;
+  const headers = {
+    "user-agent": "NoMoreVibe/1.0 (+https://nomorevibe.app)",
+    ...options.headers,
+  };
+  let current = url;
+
+  for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
+    const guard = await assertPublicUrl(current);
+    if (!guard.ok) return { ok: false, reason: "unsafe_url" };
+
+    let response: Response;
+    try {
+      response = await request(current, {
+        redirect: "manual",
+        signal: AbortSignal.timeout(options.timeoutMs ?? FETCH_TIMEOUT_MS),
+        headers,
+      });
+    } catch (error) {
+      if (timedOut(error)) return { ok: false, reason: "timeout" };
+      return { ok: false, reason: "http", status: 0 };
+    }
+
+    if (response.status >= 300 && response.status < 400) {
+      const location = response.headers.get("location");
+      if (!location) return { ok: false, reason: "http", status: response.status };
+      try {
+        current = new URL(location, current).toString();
+      } catch {
+        return { ok: false, reason: "unsafe_url" };
+      }
+      continue;
+    }
+    if (!response.ok) return { ok: false, reason: "http", status: response.status };
+
+    let body: Buffer | null;
+    try {
+      body = await readBodyStrictlyCapped(response, options.maxBytes);
+    } catch (error) {
+      if (timedOut(error)) return { ok: false, reason: "timeout" };
+      return { ok: false, reason: "http", status: 0 };
+    }
+    if (body === null) return { ok: false, reason: "too_large" };
+    return {
+      ok: true,
+      status: response.status,
+      finalUrl: current,
+      headers: response.headers,
+      body,
+    };
+  }
+  return { ok: false, reason: "http", status: 310 };
+}
+
 /**
  * SSRF-안전 fetch — 리다이렉트를 수동으로 추적하며 매 hop마다 정책을 다시 적용한다.
  * (redirect:"follow"는 검증 없이 사설망으로 향하는 302를 그대로 따라가므로 쓰지 않는다)
