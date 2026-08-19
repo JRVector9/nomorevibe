@@ -6,6 +6,7 @@ const PAGES = [
   { href: "/admin/review", label: "심사 큐" },
   { href: "/admin/status", label: "수집 현황" },
   { href: "/admin/ranking", label: "랭킹" },
+  { href: "/admin/evidence", label: "근거 설정" },
   { href: "/admin/products", label: "제품" },
 ] as const;
 

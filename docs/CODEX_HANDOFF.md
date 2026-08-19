@@ -6,18 +6,24 @@ Execute plan 3, `docs/superpowers/plans/2026-08-19-product-detail-ui-implementat
 finished white-theme, global minimum-13px product-detail screen in the browser.
 
 Plan 2, `docs/superpowers/plans/2026-08-19-product-evidence-pipeline-implementation.md`, is complete.
-Plan 3 Task 1 is committed and Task 2 is complete pending its atomic commit. Continue at Task 3.
+Plan 3 Tasks 1–2 are committed. Task 3 evidence administration is implemented and verified; after
+its atomic commit, continue at Task 4's server-only public detail read model.
 
 ## Completed work
 
 Plan 3 commits and completed phases:
 
 1. `6058fa2 test: prepare product detail browser coverage`
-2. Task 2, commit message `feat: let makers manage product evidence`:
+2. `e6eeae4 feat: let makers manage product evidence`:
    authenticated/capped profile, link, media, provenance, maker-update, and refresh resource APIs;
    transactional audit writes; asynchronous external-media declarations; maker-update tombstones;
    per-product-generation and optional trusted-proxy IP rate limits; stale in-flight media response
    rejection through declaration ID/revision checks.
+3. Task 3, commit message `feat: administer product evidence`:
+   protected `/admin/evidence` settings and `/admin/products/[slug]` evidence controls; safe
+   authenticated Server Actions; immutable settings/update audits; explicit maker-versus-observed
+   license conflicts; source freshness, media, update, provenance, and audit views; aggregate
+   due/stale/failed evidence status; and a production-supported `server-only` boundary marker.
 
 Task 2 does not add comments, login, reactions, follows, or provider I/O in request handlers.
 External gallery URLs are declarations only. The evidence job copies validated bytes into internal
@@ -64,6 +70,24 @@ Task 8 now also:
   operator to inspect existing schedules before adding missing entries.
 
 ## Modified files
+
+Plan 3 Task 3 files:
+
+- `app/admin/AdminNav.tsx`
+- `app/admin/evidence/page.tsx`
+- `app/admin/evidence/EvidenceSettingsForm.tsx`
+- `app/admin/evidence/actions.ts`
+- `app/admin/products/ProductRow.tsx`
+- `app/admin/products/[slug]/page.tsx`
+- `app/admin/products/[slug]/EvidenceProductActions.tsx`
+- `app/admin/products/[slug]/actions.ts`
+- `app/admin/status/page.tsx`
+- `lib/domain/evidence/admin.ts`
+- `package.json`
+- `package-lock.json`
+- `tests/admin-evidence.test.ts`
+- `tests/evidence-admin-components.test.ts`
+- `tests/integration/evidence-admin.test.ts`
 
 Plan 3 Task 2 files:
 
@@ -161,6 +185,19 @@ Plan 3 local Next.js 16 guidance read before implementation:
 - Gallery rendering will use only the internal media route with stored width/height to prevent
   layout shift. Page rendering must not call external providers.
 
+Task 3 administrator boundaries:
+
+- Every page and Server Action authenticates before any evidence read, refresh, setting write, or
+  visibility mutation. Page protection is not treated as action protection.
+- Force refresh returns only bounded counts and a completion flag; provider bodies and thrown
+  errors are never serialized to the browser.
+- Automatic update visibility changes run under the reusable-slug product-generation lock and
+  append a new audit row. Maker updates remain exclusively controlled by the maker API.
+- Admin evidence reads expose only normalized fact subsets and safe error codes. Raw provider
+  responses are not part of the read model.
+- Admin evidence UI is white-theme compatible, uses reduced 10–12 px radii, and contains no text
+  utility below 13 px.
+
 ## Test commands and results
 
 Plan 3 Task 2 RED results actually observed:
@@ -191,6 +228,37 @@ npm run lint
 git diff --check
   PASS
 npx drizzle-kit check
+  PASS
+```
+
+Plan 3 Task 3 RED/fix history actually observed:
+
+- the first unit and integration runs failed because the new admin pages/domain module did not
+  exist;
+- after implementation, Vitest could not resolve the documented Next `server-only` marker because
+  the package was not installed; `server-only@0.0.1` was added as a production dependency and the
+  client component test mocked its Server Action boundary;
+- the first evidence-admin integration run had two real failures: audit assertions depended on
+  unspecified row order, and a raw Drizzle SQL template bound a JavaScript `Date` where the
+  postgres driver required a serialized timestamp. The test now orders audit IDs explicitly and
+  the query binds an ISO string cast to `timestamptz`.
+
+Plan 3 Task 3 final verification actually run:
+
+```text
+npx vitest run tests/admin-evidence.test.ts tests/evidence-admin-components.test.ts
+  PASS — 2 files, 7 tests
+npx vitest run --config vitest.integration.config.ts tests/integration/evidence-admin.test.ts
+  PASS — 1 file, 4 tests
+npx vitest run --config vitest.integration.config.ts tests/integration/evidence-admin.test.ts tests/integration/product-evidence-lifecycle.test.ts tests/integration/product-evidence-repository.test.ts tests/integration/evidence-refresh.test.ts tests/integration/product-evidence-schema.test.ts tests/integration/product-media.test.ts tests/integration/maker-evidence-api.test.ts tests/integration/github-evidence.test.ts
+  PASS — 8 files, 62 tests
+npx tsc --noEmit
+  PASS
+npm run lint
+  PASS — 0 errors, 0 warnings
+npm run build
+  PASS — Next.js 16.3.1; `/admin/evidence` and `/admin/products/[slug]` dynamic
+git diff --check
   PASS
 ```
 
@@ -274,6 +342,15 @@ Local development database state:
   CLI wrapper before process exit. None is claimed as CLEAN. The repository was not modified by
   these review attempts. A manual final diff inspection found no remaining instance of the four
   reproduced regressions.
+- Task 3's first read-only `codex review --uncommitted` reran the 7 unit tests, 4 integration tests,
+  TypeScript, focused ESLint, and the production build successfully, but spent the rest of its
+  three-minute bound reading the broad review workflow and returned no final verdict. A second
+  `gpt-5.6-sol` high-effort focused read-only run inspected only the Task 3 boundaries but again
+  reached the bound without writing its requested last-message file. Neither attempt is claimed
+  as CLEAN, and neither modified the repository.
+- The first Task 3 review command tried to combine this CLI build's `--uncommitted` flag with a
+  positional prompt and failed immediately because that combination is rejected despite the help
+  usage text. The retry used the supported bare `--uncommitted` form.
 
 - The installed gstack `/review` workflow cannot run because
   `.agents/skills/gstack/review/checklist.md` is absent.
@@ -303,7 +380,7 @@ Local development database state:
 
 ## Remaining work
 
-- Execute plan 3 Tasks 3–8: evidence administration, detail read model, public media delivery,
+- Execute plan 3 Tasks 4–8: detail read model, public media delivery,
   white-theme detail components/page, `/nomorevibe` commands, then full review/docs/QA. Comments
   remain phase-2 design only; no comment persistence or login integration belongs in phase 1.
 - Launch the resulting local screen and perform browser/visual QA at desktop and mobile widths.
@@ -316,9 +393,8 @@ scheduler/provider-token verification. Do not claim either complete without exte
 ```sh
 git status --short
 cat docs/superpowers/plans/2026-08-19-product-detail-ui-implementation.md
-npx vitest run tests/admin-evidence.test.ts tests/evidence-admin-components.test.ts
-npx vitest run --config vitest.integration.config.ts tests/integration/evidence-admin.test.ts
+npx vitest run --config vitest.integration.config.ts tests/integration/product-detail-view.test.ts
 npx tsc --noEmit
 npm run lint
-npm run build
+git diff --check
 ```

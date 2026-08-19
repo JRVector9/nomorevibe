@@ -63,6 +63,12 @@ export function ProductRow({ product }: { product: AdminProduct }) {
           {banned ? "차단 전 상태로 되돌립니다" : "행은 남아 같은 URL의 재등록·재수집을 막습니다"}
         </span>
       </form>
+      <a
+        href={`/admin/products/${product.slug}`}
+        className="mt-3 inline-block text-[13px] font-semibold text-accent hover:underline"
+      >
+        근거·업데이트 관리
+      </a>
       {state?.error && <p className="mt-2 text-[13px] text-down">{state.error}</p>}
     </li>
   );

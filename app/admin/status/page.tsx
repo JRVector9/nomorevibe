@@ -8,6 +8,7 @@ import { downProducts, DOWN_THRESHOLD } from "@/lib/domain/products/health";
 import { topClickedSince } from "@/lib/domain/products/clicks";
 import { JOB_NAMES } from "@/lib/jobs/registry";
 import { getCurrentSeason, RANKING_STALE_MS } from "@/lib/domain/ranking/view";
+import { getEvidenceStatusSummary } from "@/lib/domain/evidence/admin";
 import { Panel } from "@/components/Panel";
 import { AdminNav } from "../AdminNav";
 
@@ -73,7 +74,7 @@ export default async function StatusPage() {
   const admin = await currentAdmin();
   if (!admin) redirect("/admin/login");
 
-  const [settings, frontier, candidates, rejections, jobStates, signalRows, rankingSeason] = await Promise.all([
+  const [settings, frontier, candidates, rejections, jobStates, signalRows, rankingSeason, evidenceSummary] = await Promise.all([
     getSettings(),
     frontierCounts(),
     candidateCounts(),
@@ -81,12 +82,14 @@ export default async function StatusPage() {
     listJobStates(),
     yieldBySignal(),
     getCurrentSeason(),
+    getEvidenceStatusSummary(new Date()),
   ]);
   const [down, topClicked] = await Promise.all([downProducts(), topClickedSince(30)]);
 
   const states = new Map(jobStates.map((job) => [job.name, job]));
   const rejectedTotal = rejections.reduce((sum, r) => sum + r.count, 0);
   const rankingStale = rankingSnapshotIsStale(rankingSeason?.refreshedAt ?? null);
+  const evidenceJob = states.get("product-evidence-refresh");
 
   /** 신호별로 조사한 수와 그중 목록에 오른 수 */
   const signals = new Map<string, { judged: number; kept: number }>();
@@ -148,6 +151,18 @@ export default async function StatusPage() {
                 <span className="font-mono font-semibold">{job.name}</span> {job.lastError}
               </p>
             ))}
+        </Panel>
+
+        <Panel
+          title="제품 근거 수집"
+          note="오류 원문은 위 작업 표 한 곳에서만 보고, 여기서는 처리해야 할 출처 수와 마지막 성공 시각만 봅니다."
+        >
+          <dl className="flex flex-wrap gap-x-8 gap-y-3 text-[13px]">
+            <div><dt className="text-fg-3">지금 처리 대상</dt><dd className="mt-1 font-mono font-bold">{evidenceSummary.due}</dd></div>
+            <div><dt className="text-fg-3">오래됨</dt><dd className="mt-1 font-mono font-bold">{evidenceSummary.stale}</dd></div>
+            <div><dt className="text-fg-3">실패·연결 끊김</dt><dd className="mt-1 font-mono font-bold">{evidenceSummary.failed}</dd></div>
+            <div><dt className="text-fg-3">마지막 성공</dt><dd className="mt-1 font-semibold">{evidenceJob ? when(evidenceJob.lastSuccessAt) : "실행 기록 없음"}</dd></div>
+          </dl>
         </Panel>
 
         <Panel
