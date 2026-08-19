@@ -37,7 +37,7 @@ export function Panel({
           {actions}
         </div>
       )}
-      {note && <p className="mt-1.5 max-w-[68ch] text-[12.5px] leading-[1.7] text-fg-2">{note}</p>}
+      {note && <p className="mt-1.5 max-w-[68ch] text-[13px] leading-[1.7] text-fg-2">{note}</p>}
       {children && <div className={title || note ? "mt-4" : ""}>{children}</div>}
     </section>
   );

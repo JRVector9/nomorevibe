@@ -28,7 +28,13 @@ import {
   withProductHealth,
   type ProductListItem,
 } from "@/lib/domain/products/view";
-import { getScheduledPolicy, listPolicyRevisions } from "./policies";
+import {
+  getScheduledPolicy,
+  getUniqueCollectionReadiness,
+  listPolicyRevisions,
+  transitionPreviewPolicies,
+  type UniqueCollectionReadiness,
+} from "./policies";
 import {
   DEFAULT_RANKING_POLICY,
   parseRankingPolicy,
@@ -301,29 +307,52 @@ export async function getRankingAdminState(now = new Date()): Promise<{
   scheduled: RankingPolicyRevision | null;
   revisions: RankingPolicyRevision[];
   preview: CalculatedEntry[];
+  currentPreview: CalculatedEntry[];
+  proposedUniquePreview: CalculatedEntry[];
+  collectionReadiness: UniqueCollectionReadiness;
 }> {
-  const [activeSeason, scheduled, revisions] = await Promise.all([
+  const [activeSeason, scheduled, revisions, collectionReadiness] = await Promise.all([
     findSeason(),
     getScheduledPolicy(),
     listPolicyRevisions(),
+    getUniqueCollectionReadiness(now),
   ]);
   const active = activeSeason ? toSeasonSummary(activeSeason) : null;
-  const [metrics] = activeSeason
-    ? await db
+  const metricsPromise = activeSeason
+    ? db
       .select({
         eligibleProducts: count(),
         validClicks: sql<number>`coalesce(sum(${rankingEntries.validClicks}), 0)::integer`,
       })
       .from(rankingEntries)
       .where(eq(rankingEntries.seasonId, activeSeason.id))
-    : [{ eligibleProducts: 0, validClicks: 0 }];
-  const policy = scheduled?.values ?? active?.policy ?? DEFAULT_RANKING_POLICY;
+      .then(([metrics]) => metrics)
+    : Promise.resolve({ eligibleProducts: 0, validClicks: 0 });
+  const activePolicy = active?.policy ?? DEFAULT_RANKING_POLICY;
+  const comparisonPolicies = transitionPreviewPolicies(scheduled?.values ?? activePolicy);
+  const policy = comparisonPolicies.form;
+  const previewPromise = previewRanking(policy, now);
+  const [metrics, preview, currentPreview, proposedUniquePreview] = await Promise.all([
+    metricsPromise,
+    previewPromise,
+    comparisonPolicies.valid === policy
+      ? previewPromise
+      : previewRanking(comparisonPolicies.valid, now),
+    activePolicy.scoring.mode === "valid_visits"
+      ? (comparisonPolicies.unique === policy
+        ? previewPromise
+        : previewRanking(comparisonPolicies.unique, now))
+      : Promise.resolve([]),
+  ]);
 
   return {
     active,
     activeMetrics: metrics,
     scheduled: scheduled ?? null,
     revisions,
-    preview: await previewRanking(policy, now),
+    preview,
+    currentPreview,
+    proposedUniquePreview,
+    collectionReadiness,
   };
 }

@@ -2,12 +2,16 @@
 
 import { useActionState, useState } from "react";
 import { Panel } from "@/components/Panel";
-import type { RankingPolicy } from "@/lib/domain/ranking/policy";
+import {
+  DEFAULT_RANKING_POLICY,
+  UNIQUE_FIRST_RANKING_POLICY,
+  type RankingPolicy,
+} from "@/lib/domain/ranking/policy";
 import { saveRankingPolicy } from "./actions";
 
 const field = "w-full rounded-lg border border-line bg-bg-soft px-3 py-2 text-[13px] text-fg outline-none focus:border-accent";
-const label = "block text-[12px] font-semibold text-fg-2";
-const hint = "mt-1 text-[11.5px] leading-[1.6] text-fg-3";
+const label = "block text-[13px] font-semibold text-fg-2";
+const hint = "mt-1 text-[13px] leading-[1.6] text-fg-3";
 
 export function percentList(value: string): number[] {
   return value.split(",").map((item) => Math.round(Number(item.trim()) * 100));
@@ -16,6 +20,23 @@ export function percentList(value: string): number[] {
 export function numberOrPrevious(value: string, previous: number): number {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : previous;
+}
+
+export function policyForScoringMode(
+  policy: RankingPolicy,
+  mode: RankingPolicy["scoring"]["mode"],
+): RankingPolicy {
+  const template = mode === "unique_visitors"
+    ? UNIQUE_FIRST_RANKING_POLICY
+    : DEFAULT_RANKING_POLICY;
+  return {
+    ...policy,
+    scoring: { ...template.scoring },
+    trend: {
+      ...policy.trend,
+      minimumPreviousUniqueVisitors: template.trend.minimumPreviousUniqueVisitors,
+    },
+  };
 }
 
 export function RankingPolicyForm({ initialPolicy }: { initialPolicy: RankingPolicy }) {
@@ -50,6 +71,15 @@ export function RankingPolicyForm({ initialPolicy }: { initialPolicy: RankingPol
         [key]: numberOrPrevious(value, previous.trend[key]),
       },
     }));
+  }
+
+  function updateUniqueScoring(
+    key: "repeatVisitWeightBasisPoints" | "maxExtraVisitsPerUnique" | "minimumUniqueVisitors",
+    value: number,
+  ) {
+    setPolicy((previous) => previous.scoring.mode === "unique_visitors"
+      ? { ...previous, scoring: { ...previous.scoring, [key]: value } }
+      : previous);
   }
 
   function updateTier(index: number, patch: Partial<RankingPolicy["cooldown"]["tiers"][number]>) {
@@ -98,21 +128,85 @@ export function RankingPolicyForm({ initialPolicy }: { initialPolicy: RankingPol
 
       <div aria-live="polite">
         {state?.issues && state.issues.length > 0 && (
-          <div className="rounded-[10px] border border-down/40 bg-down/10 px-4 py-3 text-[12.5px] text-down">
+          <div className="rounded-[10px] border border-down/40 bg-down/10 px-4 py-3 text-[13px] text-down">
             {state.issues.map((issue) => <p key={issue}>{issue}</p>)}
           </div>
         )}
         {state?.ok && (
-          <div className="rounded-[10px] border border-up/40 bg-up/10 px-4 py-3 text-[12.5px] text-up">
+          <div className="rounded-[10px] border border-up/40 bg-up/10 px-4 py-3 text-[13px] text-up">
             다음 시즌 설정으로 예약했습니다.
           </div>
         )}
         {state?.warnings && state.warnings.length > 0 && (
-          <div className="mt-2 rounded-[10px] border border-accent bg-accent-soft px-4 py-3 text-[12.5px] text-fg-2">
+          <div className="mt-2 rounded-[10px] border border-accent bg-accent-soft px-4 py-3 text-[13px] text-fg-2">
             {state.warnings.map((warning) => <p key={warning}>{warning}</p>)}
           </div>
         )}
       </div>
+
+      <Panel title="랭킹 기준" note="고유 유입자 기준은 7일 집계가 끝난 뒤 다음 시즌부터 예약할 수 있습니다.">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <div>
+            <label className={label} htmlFor="ranking-scoring-mode">점수 기준</label>
+            <select
+              id="ranking-scoring-mode"
+              value={policy.scoring.mode}
+              onChange={(event) => setPolicy((previous) => policyForScoringMode(
+                previous,
+                event.target.value as RankingPolicy["scoring"]["mode"],
+              ))}
+              className={`${field} mt-1.5`}
+            >
+              <option value="valid_visits">유효 방문</option>
+              <option value="unique_visitors">고유 유입자</option>
+            </select>
+          </div>
+          <div>
+            <span className={label}>적용 시점</span>
+            <p className="mt-3 text-[13px] text-fg-2">다음 시즌 경계부터</p>
+          </div>
+        </div>
+        {policy.scoring.mode === "unique_visitors" && (
+          <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-3">
+            <NumberField
+              id="repeat-visit-weight"
+              label="반복 방문 가중치(%)"
+              value={policy.scoring.repeatVisitWeightBasisPoints / 100}
+              onChange={(value) => updateUniqueScoring(
+                "repeatVisitWeightBasisPoints",
+                Math.round(numberOrPrevious(
+                  value,
+                  policy.scoring.mode === "unique_visitors"
+                    ? policy.scoring.repeatVisitWeightBasisPoints / 100
+                    : 0,
+                ) * 100),
+              )}
+            />
+            <NumberField
+              id="extra-visit-cap"
+              label="고유 유입자당 추가 방문 상한"
+              value={policy.scoring.maxExtraVisitsPerUnique}
+              onChange={(value) => updateUniqueScoring(
+                "maxExtraVisitsPerUnique",
+                numberOrPrevious(value, policy.scoring.mode === "unique_visitors"
+                  ? policy.scoring.maxExtraVisitsPerUnique
+                  : 0),
+              )}
+            />
+            <NumberField
+              id="minimum-unique-visitors"
+              label="최소 고유 유입자"
+              value={policy.scoring.minimumUniqueVisitors}
+              onChange={(value) => updateUniqueScoring(
+                "minimumUniqueVisitors",
+                numberOrPrevious(value, policy.scoring.mode === "unique_visitors"
+                  ? policy.scoring.minimumUniqueVisitors
+                  : 1),
+              )}
+            />
+          </div>
+        )}
+      </Panel>
 
       <Panel title="시즌" note="예약한 값은 현재 시즌을 바꾸지 않고 다음 경계부터 적용됩니다.">
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
@@ -191,21 +285,22 @@ export function RankingPolicyForm({ initialPolicy }: { initialPolicy: RankingPol
                   aria-label={`${tier.rankFrom}위부터 ${tier.rankTo}위 적용률`}
                 />
               </div>
-              <button type="button" onClick={() => removeTier(index)} className="self-end px-2 py-2 text-[12px] font-semibold text-down">
+              <button type="button" onClick={() => removeTier(index)} className="self-end px-2 py-2 text-[13px] font-semibold text-down">
                 구간 삭제
               </button>
             </div>
           ))}
         </div>
-        <button type="button" onClick={addTier} className="mt-3 text-[12.5px] font-semibold text-accent">
+        <button type="button" onClick={addTier} className="mt-3 text-[13px] font-semibold text-accent">
           + 구간
         </button>
       </Panel>
 
-      <Panel title="급상승" note="최근 구간과 바로 앞의 같은 길이 구간을 비교합니다. 이전 클릭이 기준보다 적으면 변동률을 계산하지 않습니다.">
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+      <Panel title="급상승" note="최근 구간과 바로 앞의 같은 길이 구간을 비교합니다. 선택한 점수 기준의 이전 값이 최소 기준보다 적으면 변동률을 계산하지 않습니다.">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
           <NumberField id="trend-window" label="비교 구간(시간)" value={policy.trend.windowHours} onChange={(value) => updateTrend("windowHours", value)} />
-          <NumberField id="trend-baseline" label="이전 최소 클릭" value={policy.trend.minimumPreviousClicks} onChange={(value) => updateTrend("minimumPreviousClicks", value)} />
+          <NumberField id="trend-baseline" label="이전 최소 유효 방문" value={policy.trend.minimumPreviousClicks} onChange={(value) => updateTrend("minimumPreviousClicks", value)} />
+          <NumberField id="trend-unique-baseline" label="이전 최소 고유 유입자" value={policy.trend.minimumPreviousUniqueVisitors} onChange={(value) => updateTrend("minimumPreviousUniqueVisitors", value)} />
           <NumberField id="trend-limit" label="급상승 노출 수" value={policy.trend.limit} onChange={(value) => updateTrend("limit", value)} />
         </div>
       </Panel>

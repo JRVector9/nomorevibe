@@ -16,7 +16,7 @@ export function AdminNav({ current }: { current: (typeof PAGES)[number]["href"] 
         <Link
           key={page.href}
           href={page.href}
-          className="text-[12.5px] font-semibold text-fg-2 hover:text-fg"
+          className="text-[13px] font-semibold text-fg-2 hover:text-fg"
         >
           {page.label}
         </Link>
