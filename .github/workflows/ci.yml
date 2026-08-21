@@ -31,6 +31,9 @@ jobs:
           cache: npm
 
       - run: npm ci
+      # PageProps 같은 라우트 전역 타입은 Next가 .next/types에 만든다.
+      # 새 체크아웃에는 그 파일이 없으므로 타입 검사 전에 먼저 생성한다.
+      - run: npx next typegen
       - run: npx tsc --noEmit
       - run: npm run lint
       - run: npm test
