@@ -17,8 +17,15 @@ import { logger } from "@/lib/observability/logger";
 
 const answer = z.object({
   category: z.enum(CATEGORIES),
-  /** 왜 그렇게 봤는지 한 줄. 로그로 남겨 분류가 이상할 때 되짚는다 */
-  reason: z.string().max(200),
+  /**
+   * 왜 그렇게 봤는지 한 줄. 로그로 남겨 분류가 이상할 때 되짚는다.
+   *
+   * 길이를 스키마로 막지 않는다. 이 API가 받는 JSON Schema에는 maxLength가 없어서
+   * 제약이 서버까지 가지 못하고 zod가 응답을 받은 뒤에야 걸러낸다 — 모델이 두 문장을
+   * 쓰면 멀쩡한 카테고리까지 버려지고 키워드 규칙으로 되돌아간다.
+   * 로그용 값 하나 때문에 분류를 버릴 이유가 없으므로 남길 때 자른다.
+   */
+  reason: z.string(),
 });
 
 export type ClassifyInput = {
@@ -109,7 +116,7 @@ export async function classifyCategory(input: ClassifyInput): Promise<Category |
     logger.info("crawl.classified", {
       repo: input.repo,
       category: parsed.category,
-      reason: parsed.reason,
+      reason: parsed.reason.slice(0, 200),
     });
     return parsed.category;
   } catch (error) {
