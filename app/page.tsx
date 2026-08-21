@@ -56,6 +56,41 @@ function listFor(
   return getVerifiedList(HOME_LIST_LIMIT, { sort: "recent", category, query });
 }
 
+/**
+ * 빈 화면은 이유마다 다른 말을 해야 한다.
+ *
+ * 순위 정렬에서 결과가 없는 것은 제품이 없다는 뜻이 아니다 — 순위는 검증된 제품의 유효
+ * 방문으로만 매기므로, 제품이 34개 있어도 그 방문이 없으면 비어 보인다. 거기에 "아직
+ * 등록된 제품이 없습니다"라고 적으면 등록부터 하라고 잘못 안내하게 된다.
+ */
+function EmptyReason({ sort, filtered }: { sort: HomeSort; filtered: boolean }) {
+  if (filtered) {
+    return (
+      <EmptyState>
+        조건에 맞는 제품이 없습니다.{" "}
+        <Link href="/" className="font-semibold text-accent">전체 보기</Link>
+      </EmptyState>
+    );
+  }
+
+  if (sort !== "recent") {
+    return (
+      <EmptyState>
+        아직 순위에 오른 제품이 없습니다. 검증된 제품에 유효 방문이 쌓이면 나타납니다.{" "}
+        <Link href="/?sort=recent" className="font-semibold text-accent">최신순으로 보기</Link>
+      </EmptyState>
+    );
+  }
+
+  return (
+    <EmptyState>
+      아직 등록된 제품이 없습니다.{" "}
+      <Link href="/launch" className="font-semibold text-accent">/nomorevibe</Link>{" "}
+      로 첫 번째 제품을 등록해보세요.
+    </EmptyState>
+  );
+}
+
 function remainingTime(endsAt: Date, now: Date): string {
   const milliseconds = endsAt.getTime() - now.getTime();
   if (milliseconds <= 0) return "경계 처리 대기";
@@ -179,18 +214,7 @@ export default async function HomePage({ searchParams }: Props) {
         </div>
       ) : list.length === 0 ? (
         <div className="mt-10">
-          {query || category ? (
-            <EmptyState>
-              조건에 맞는 제품이 없습니다.{" "}
-              <Link href="/" className="font-semibold text-accent">전체 보기</Link>
-            </EmptyState>
-          ) : (
-            <EmptyState>
-              아직 등록된 제품이 없습니다.{" "}
-              <Link href="/launch" className="font-semibold text-accent">/nomorevibe</Link>{" "}
-              로 첫 번째 제품을 등록해보세요.
-            </EmptyState>
-          )}
+          <EmptyReason sort={effectiveSort} filtered={Boolean(query || category)} />
         </div>
       ) : effectiveSort === "recent" ? (
         <div className="mt-6"><ProductList products={list} /></div>
