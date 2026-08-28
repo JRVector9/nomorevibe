@@ -8,7 +8,7 @@ vi.mock("@/lib/net/fetch", () => ({
 }));
 
 const repo = await import("@/lib/domain/products/repository");
-const { getPublicList, getRankedList, isUnclaimed, builderClaimOf } = await import(
+const { getPublicList, getRankedList, getUnclaimedList, isUnclaimed, builderClaimOf } = await import(
   "@/lib/domain/products/view"
 );
 const { registerProduct } = await import("@/lib/domain/products/register");
@@ -163,4 +163,24 @@ describe("기본값", () => {
     expect(saved?.claimedAt).toBeNull();
     expect(isUnclaimed(saved!)).toBe(false);
   });
+
+  it("주인을 기다리는 제품만 따로 꺼낸다 — 검증된 제품은 섞이지 않는다", async () => {
+    await seedProduct({ slug: "found-a", url: "https://a.test", name: "A" });
+    await seedProduct({ slug: "found-b", url: "https://b.test", name: "B" });
+    await verifiedProduct("https://mine.test", "Mine");
+
+    const unclaimed = await getUnclaimedList(10);
+
+    expect(unclaimed.map((p) => p.slug).sort()).toEqual(["found-a", "found-b"]);
+    expect(unclaimed.every((p) => p.unclaimed)).toBe(true);
+  });
+
+  it("주인을 기다리는 목록도 카테고리·검색으로 좁힌다", async () => {
+    await seedProduct({ slug: "found-a", url: "https://a.test", name: "Ledger" });
+    await seedProduct({ slug: "found-b", url: "https://b.test", name: "Notes" });
+
+    expect((await getUnclaimedList(10, { query: "ledg" })).map((p) => p.slug)).toEqual(["found-a"]);
+    expect(await getUnclaimedList(10, { category: "Finance" })).toEqual([]);
+  });
+
 });

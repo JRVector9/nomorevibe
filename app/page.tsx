@@ -6,7 +6,7 @@ import { ProductList } from "@/components/ProductCard";
 import { RankingTable } from "@/components/RankingTable";
 import { categoryCounts } from "@/lib/domain/products/repository";
 import { CATEGORIES } from "@/lib/domain/products/schema";
-import { getVerifiedList, type ProductListItem } from "@/lib/domain/products/view";
+import { getUnclaimedList, getVerifiedList, type ProductListItem } from "@/lib/domain/products/view";
 import {
   getAllTimeRanking,
   getCurrentSeason,
@@ -15,6 +15,7 @@ import {
   type RankingListItem,
   type SeasonSummary,
 } from "@/lib/domain/ranking/view";
+import { DEFAULT_RANKING_POLICY } from "@/lib/domain/ranking/policy";
 import { logger } from "@/lib/observability/logger";
 
 export const dynamic = "force-dynamic";
@@ -88,6 +89,7 @@ export default async function HomePage({ searchParams }: Props) {
   let active: SeasonSummary | null = null;
   let effectiveSort: HomeSort = requestedSort;
   let list: ProductListItem[] | RankingListItem[] = [];
+  let unclaimed: ProductListItem[] = [];
   let boards: Boards | null = null;
   let counts: Record<string, number> = {};
   let total = 0;
@@ -112,6 +114,17 @@ export default async function HomePage({ searchParams }: Props) {
     counts = loadedCounts;
     list = loadedList;
     total = Object.values(counts).reduce((sum, count) => sum + count, 0);
+
+    /**
+     * 검증된 제품이 시즌을 채울 만큼 없으면 첫 화면이 두어 개로 끝난다.
+     *
+     * 그 아래에 우리가 대신 올린 제품을 따로 이어 붙인다. 랭킹에 섞지 않고 구획을 나누므로
+     * "검증된 것만 겨룬다"는 원칙은 그대로다. 검증된 제품이 차오르면 이 구획은 저절로 빠진다.
+     */
+    const minimumProducts = (active?.policy ?? DEFAULT_RANKING_POLICY).eligibility.minimumProducts;
+    if (list.length < minimumProducts) {
+      unclaimed = await getUnclaimedList(HOME_LIST_LIMIT - list.length, { category, query });
+    }
   } catch (error) {
     logger.error("home.list_failed", { error });
     dbDown = true;
@@ -164,6 +177,17 @@ export default async function HomePage({ searchParams }: Props) {
         </div>
       )}
 
+      {unclaimed.length > 0 && (
+        <section className="mt-10">
+          <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+            <h2 className="text-[15px] font-extrabold">새로 발견됨</h2>
+            <p className="text-[13px] text-fg-3">
+              우리가 찾아서 올렸고 아직 주인이 나타나지 않은 제품입니다. 랭킹에는 들어가지 않습니다.
+            </p>
+          </div>
+          <div className="mt-3"><ProductList products={unclaimed} /></div>
+        </section>
+      )}
     </main>
   );
 }

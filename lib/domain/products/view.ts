@@ -138,6 +138,20 @@ export async function getVerifiedList(
   return withMetrics(rows.map(toListItem));
 }
 
+/**
+ * 주인을 기다리는 제품 — 우리가 대신 올렸고 아직 아무도 가져가지 않은 것만.
+ *
+ * 홈의 주 목록은 검증된 제품만 담는다. 검증된 제품이 몇 없을 때 그 아래에 이것을 따로
+ * 이어 붙인다 — 랭킹에는 섞지 않고, 각 항목이 미클레임·우리 추정 배지로 자기 근거를 밝힌다.
+ */
+export async function getUnclaimedList(
+  limit: number,
+  options: BrowseOptions = {},
+): Promise<ProductListItem[]> {
+  const rows = await listProducts({ statuses: ["seeded"], sort: "recent", limit, ...options });
+  return withMetrics(rows.map(toListItem));
+}
+
 /** 랭킹·지표 대상 — 우리가 직접 확인한 제품만 */
 export async function getRankedList(limit: number, options: BrowseOptions = {}): Promise<ProductListItem[]> {
   return getVerifiedList(limit, options);
