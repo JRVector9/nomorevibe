@@ -262,6 +262,39 @@ function previousGitHubRepositoryFacts(value: unknown): GitHubRepositoryFacts | 
     : null;
 }
 
+/**
+ * 이번 관측의 저장소 facts.
+ *
+ * 레포 본문에만 조건부 요청(etag)을 건다. 304면 본문이 오지 않으므로 지난 facts를 바탕에
+ * 두고, 조건부 요청을 걸지 않아 매번 새로 받는 것(언어·기여자·릴리스)만 덮어쓴다.
+ * 지난 facts도 없이 304가 오는 것은 우리가 보낸 etag의 출처가 사라졌다는 뜻이라 진행할 수 없다.
+ */
+function repositoryFacts(input: {
+  repository: RepositoryPayload | null;
+  previousFacts: GitHubRepositoryFacts | null;
+  languages: Record<string, number>;
+  contributors: { items: ContributorPayload[]; link: string | null };
+  releases: ReleasePayload[];
+}): GitHubRepositoryFacts {
+  if (input.repository) {
+    return mapGitHubRepositoryFacts({
+      repository: input.repository,
+      languages: input.languages,
+      contributors: input.contributors,
+      releases: input.releases,
+    });
+  }
+  if (!input.previousFacts) {
+    throw new Error("GitHub returned 304 without previous repository facts");
+  }
+  return {
+    ...input.previousFacts,
+    contributors: contributorSummary(input.contributors),
+    languages: languageSummary(input.languages),
+    latestRelease: normalizeReleases(input.releases)[0] ?? null,
+  };
+}
+
 function canonicalHost(value: string | null): string | null {
   if (!value) return null;
   const normalized = normalizeUrl(value);
@@ -478,28 +511,16 @@ export async function refreshGitHubEvidence(
 
   const releasePayloads = releases.value as ReleasePayload[];
   const previousFacts = previousGitHubRepositoryFacts(current?.normalizedFacts);
-  if (!repository && !previousFacts) {
-    throw new Error("GitHub returned 304 without previous repository facts");
-  }
-  const facts = repository
-    ? mapGitHubRepositoryFacts({
-        repository,
-        languages: languages.value as Record<string, number>,
-        contributors: {
-          items: contributors.value as ContributorPayload[],
-          link: contributors.link,
-        },
-        releases: releasePayloads,
-      })
-    : {
-        ...previousFacts!,
-        contributors: contributorSummary({
-          items: contributors.value as ContributorPayload[],
-          link: contributors.link,
-        }),
-        languages: languageSummary(languages.value as Record<string, number>),
-        latestRelease: normalizeReleases(releasePayloads)[0] ?? null,
-      };
+  const facts = repositoryFacts({
+    repository,
+    previousFacts,
+    languages: languages.value as Record<string, number>,
+    contributors: {
+      items: contributors.value as ContributorPayload[],
+      link: contributors.link,
+    },
+    releases: releasePayloads,
+  });
   const [makerDeclared, siteLinksRepository] = await Promise.all([
     isMakerLinkDeclared({
       slug: input.slug,
