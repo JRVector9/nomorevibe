@@ -20,11 +20,24 @@ export const metadata: Metadata = {
  * 이 속성은 해당 요소에만, 한 단계 깊이로만 적용된다. 자식 트리의 실제 불일치는
  * 계속 잡히므로 진짜 버그를 가리지 않는다.
  */
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+/**
+ * topbar는 병렬 라우트 슬롯이다. 헤더가 여기 있어서 페이지가 그 위에 무엇을 둘 수 없는데,
+ * 슬롯으로 받으면 메인(app/@topbar/page.tsx)에서만 채우고 나머지 경로는 비운다.
+ */
+export default function RootLayout({
+  children,
+  topbar,
+  seasonfooter,
+}: {
+  children: React.ReactNode;
+  topbar: React.ReactNode;
+  seasonfooter: React.ReactNode;
+}) {
   return (
     <html lang="ko" suppressHydrationWarning>
       {/* min-h-screen flex — 짧은 페이지에서도 푸터를 하단에 고정 */}
       <body className={`${inter.variable} ${jetbrains.variable} flex min-h-screen flex-col font-sans`}>
+        {topbar}
         <header className="sticky top-0 z-50 border-b border-line bg-bg">
           <div className="mx-auto flex h-[60px] max-w-[1280px] items-center gap-4 px-4 sm:gap-8 sm:px-6">
             <Link
@@ -64,6 +77,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <div className="flex-1">{children}</div>
         <footer className="border-t border-line py-9 text-[13px] text-fg-3">
           <div className="mx-auto max-w-[1280px] px-6">
+            {seasonfooter}
             NoMoreVibe — AI로 만든 제품의 마켓 데이터베이스. 우리가 직접 확인한 것만 보여줍니다.
           </div>
         </footer>
