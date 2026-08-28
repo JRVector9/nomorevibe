@@ -1,4 +1,5 @@
 import type { MetadataRoute } from "next";
+import { siteOrigin } from "@/lib/site";
 
 /**
  * 크롤러에게 어디를 보지 말라고 알린다.
@@ -14,5 +15,6 @@ export default function robots(): MetadataRoute.Robots {
       allow: "/",
       disallow: ["/go/", "/admin", "/api/"],
     },
+    sitemap: `${siteOrigin()}/sitemap.xml`,
   };
 }
