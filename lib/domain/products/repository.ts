@@ -102,7 +102,6 @@ const SORTS = {
 } as const;
 
 /** 정렬 파라미터 검증용 (쿼리스트링 → ProductSort) */
-export const SORT_KEYS = Object.keys(SORTS) as ProductSort[];
 
 export async function listProducts({
   statuses,

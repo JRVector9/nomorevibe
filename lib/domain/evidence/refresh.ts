@@ -641,5 +641,3 @@ export async function refreshProductEvidence(
   }
   return totals;
 }
-
-export const EVIDENCE_SOURCE_KINDS = Object.keys(EVIDENCE_KINDS) as LinkKind[];
