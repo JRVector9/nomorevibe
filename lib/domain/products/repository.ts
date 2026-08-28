@@ -1,5 +1,6 @@
 import { and, eq, ilike, inArray, like, or, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
+import { lockProductGeneration } from "./generation";
 import {
   products,
   ogImages,
@@ -167,37 +168,6 @@ export async function insert(values: NewProduct): Promise<void> {
 
 export async function update(id: number, values: Partial<Product>): Promise<void> {
   await db.update(products).set({ ...values, updatedAt: new Date() }).where(eq(products.id, id));
-}
-
-export type ProductTransaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
-
-export class ProductGenerationChangedError extends Error {
-  constructor() {
-    super("product generation changed");
-    this.name = "ProductGenerationChangedError";
-  }
-}
-
-export async function findProductGenerationId(slug: string): Promise<number | null> {
-  const row = await db.query.products.findFirst({
-    where: eq(products.slug, slug),
-    columns: { id: true },
-  });
-  return row?.id ?? null;
-}
-
-/** 같은 slug의 삭제·재등록 세대를 직렬화하고 요청이 시작된 제품인지 확인한다. */
-export async function lockProductGeneration(
-  tx: ProductTransaction,
-  id: number,
-  slug: string,
-): Promise<boolean> {
-  await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`product-lifecycle:${slug}`}))`);
-  const [row] = await tx.select({ id: products.id })
-    .from(products)
-    .where(and(eq(products.id, id), eq(products.slug, slug)))
-    .for("update");
-  return Boolean(row);
 }
 
 /**

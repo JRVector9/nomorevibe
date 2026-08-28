@@ -10,7 +10,7 @@ import {
   findProductGenerationId,
   lockProductGeneration,
   ProductGenerationChangedError,
-} from "./repository";
+} from "./generation";
 
 /**
  * 제품 생존 확인.

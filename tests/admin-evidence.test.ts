@@ -18,8 +18,10 @@ vi.mock("next/navigation", () => ({
   redirect: mocks.redirect,
 }));
 vi.mock("@/lib/auth/admin", () => ({ currentAdmin: mocks.currentAdmin }));
-vi.mock("@/lib/domain/evidence/refresh", () => ({
+vi.mock("@/lib/domain/evidence/settings-store", () => ({
   currentEvidenceSettings: mocks.currentEvidenceSettings,
+}));
+vi.mock("@/lib/domain/evidence/refresh", () => ({
   refreshProductEvidence: mocks.refreshProductEvidence,
 }));
 vi.mock("@/lib/domain/evidence/admin", () => ({

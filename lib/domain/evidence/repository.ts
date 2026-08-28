@@ -23,7 +23,7 @@ import {
   findProductGenerationId,
   lockProductGeneration,
   ProductGenerationChangedError,
-} from "@/lib/domain/products/repository";
+} from "@/lib/domain/products/generation";
 
 const slugSchema = z.string().min(1).max(80).regex(/^[a-z0-9][a-z0-9-]*$/);
 const actorSchema = z.string().min(1).max(120);

@@ -13,7 +13,6 @@ import {
 import { z } from "zod";
 import { db } from "@/lib/db";
 import {
-  evidenceSettings,
   productEvidenceSources,
   productLinks,
   productMedia,
@@ -28,8 +27,9 @@ import type { NormalizedImageAsset } from "@/lib/domain/media/storage";
 import {
   lockProductGeneration,
   ProductGenerationChangedError,
-} from "@/lib/domain/products/repository";
-import { evidenceSettingsSchema, type EvidenceSettings } from "./settings";
+} from "@/lib/domain/products/generation";
+import type { EvidenceSettings } from "./settings";
+import { currentEvidenceSettings } from "./settings-store";
 import { fetchFeedEvidence, feedUpdateCandidates } from "./providers/feeds";
 import { refreshGitHubEvidence } from "./providers/github";
 import {
@@ -43,19 +43,65 @@ import { insertUpdateCandidates } from "./updates";
 
 const slugSchema = z.string().min(1).max(80).regex(/^[a-z0-9][a-z0-9-]*$/);
 const GENERIC_LINK_CAP = 64 * 1024;
-const KINDS = [
-  "repository",
-  "app_store",
-  "play_store",
-  "npm",
-  "pypi",
-  "crates",
-  "documentation",
-  "support",
-  "rss",
-  "changelog",
-  "video",
-] as const satisfies readonly LinkKind[];
+
+/**
+ * 출처 종류별 규칙 한 곳.
+ *
+ * 이전에는 같은 `kind` 분기가 갱신 주기·provider 이름·검증 함수 선택 세 곳에 흩어져 있어,
+ * 종류를 하나 추가할 때 어디를 고쳐야 하는지 코드가 알려주지 않았다. `Record<LinkKind, _>`로
+ * 묶어 두면 종류를 빠뜨렸을 때 타입 검사가 먼저 막는다.
+ *
+ * `repository`와 `rss`는 자체 영속화 경로가 있어 `verify`가 없다 — collectDeclaredSource 참고.
+ */
+type LinkVerifier = (
+  source: DeclaredEvidenceSource,
+  dependencies: EvidenceRefreshDependencies,
+) => Promise<Record<string, unknown> | null>;
+
+type EvidenceKindSpec = {
+  provider: string;
+  /** 갱신 간격을 읽어올 설정 필드 */
+  interval: "githubFactsHours" | "releaseFeedHours" | "linkCheckHours";
+  verify: LinkVerifier | null;
+};
+
+const EVIDENCE_KINDS: Record<LinkKind, EvidenceKindSpec> = {
+  repository: { provider: "github", interval: "githubFactsHours", verify: null },
+  rss: { provider: "feed", interval: "releaseFeedHours", verify: null },
+  changelog: {
+    provider: "changelog",
+    interval: "releaseFeedHours",
+    verify: (source, deps) => (deps.changelog ?? verifyChangelogLink)(source.sourceUrl),
+  },
+  app_store: {
+    provider: "apple",
+    interval: "linkCheckHours",
+    verify: (source, deps) => (deps.appStore ?? verifyAppStoreLink)(source.sourceUrl),
+  },
+  play_store: {
+    provider: "google_play",
+    interval: "linkCheckHours",
+    verify: (source, deps) => (deps.playStore ?? verifyPlayStoreLink)(source.sourceUrl),
+  },
+  npm: {
+    provider: "npm",
+    interval: "linkCheckHours",
+    verify: (source, deps) => (deps.package ?? verifyPackageLink)("npm", source.sourceUrl),
+  },
+  pypi: {
+    provider: "pypi",
+    interval: "linkCheckHours",
+    verify: (source, deps) => (deps.package ?? verifyPackageLink)("pypi", source.sourceUrl),
+  },
+  crates: {
+    provider: "crates",
+    interval: "linkCheckHours",
+    verify: (source, deps) => (deps.package ?? verifyPackageLink)("crates", source.sourceUrl),
+  },
+  documentation: { provider: "documentation", interval: "linkCheckHours", verify: verifyGenericLink },
+  support: { provider: "support", interval: "linkCheckHours", verify: verifyGenericLink },
+  video: { provider: "video", interval: "linkCheckHours", verify: verifyGenericLink },
+};
 
 export type DeclaredEvidenceSource = {
   productId: number;
@@ -117,15 +163,8 @@ export type EvidenceRefreshOptions = {
   dependencies?: EvidenceRefreshDependencies;
 };
 
-export async function currentEvidenceSettings(): Promise<EvidenceSettings> {
-  const row = await db.query.evidenceSettings.findFirst({ where: eq(evidenceSettings.id, 1) });
-  return evidenceSettingsSchema.parse(row?.values ?? {});
-}
-
 function intervalHours(kind: LinkKind, settings: EvidenceSettings): number {
-  if (kind === "repository") return settings.githubFactsHours;
-  if (kind === "rss" || kind === "changelog") return settings.releaseFeedHours;
-  return settings.linkCheckHours;
+  return settings[EVIDENCE_KINDS[kind].interval];
 }
 
 function failureState(
@@ -311,12 +350,23 @@ async function markSourceFailure(
 }
 
 function providerFor(kind: LinkKind): string {
-  if (kind === "repository") return "github";
-  if (kind === "app_store") return "apple";
-  if (kind === "play_store") return "google_play";
-  if (kind === "npm" || kind === "pypi" || kind === "crates") return kind;
-  if (kind === "rss") return "feed";
-  return kind;
+  return EVIDENCE_KINDS[kind].provider;
+}
+
+/** 전용 검증기가 없는 종류(문서·지원·영상)는 도달 여부만 확인한다 */
+async function verifyGenericLink(
+  source: DeclaredEvidenceSource,
+  dependencies: EvidenceRefreshDependencies,
+) {
+  const result = await (dependencies.genericLink ?? defaultGenericLink)(source.sourceUrl);
+  return result
+    ? {
+        type: "link" as const,
+        provider: providerFor(source.kind),
+        url: result.finalUrl,
+        evidenceLabel: "링크 확인" as const,
+      }
+    : null;
 }
 
 async function defaultGenericLink(url: string) {
@@ -411,22 +461,9 @@ async function collectDeclaredSource(
       );
     });
   } else {
-    const value = source.kind === "app_store"
-      ? await (dependencies.appStore ?? verifyAppStoreLink)(source.sourceUrl)
-      : source.kind === "play_store"
-        ? await (dependencies.playStore ?? verifyPlayStoreLink)(source.sourceUrl)
-        : source.kind === "npm" || source.kind === "pypi" || source.kind === "crates"
-          ? await (dependencies.package ?? verifyPackageLink)(source.kind, source.sourceUrl)
-          : source.kind === "changelog"
-            ? await (dependencies.changelog ?? verifyChangelogLink)(source.sourceUrl)
-            : await (dependencies.genericLink ?? defaultGenericLink)(source.sourceUrl).then((result) => (
-                result ? {
-                  type: "link" as const,
-                  provider: providerFor(source.kind),
-                  url: result.finalUrl,
-                  evidenceLabel: "링크 확인" as const,
-                } : null
-              ));
+    // repository·rss는 위에서 처리되므로 여기 오는 종류는 모두 검증기가 있다
+    const verify = EVIDENCE_KINDS[source.kind].verify;
+    const value = verify ? await verify(source, dependencies) : null;
     if (!value) throw new Error("invalid_response");
     facts = value;
     await upsertObservedSource({
@@ -609,4 +646,4 @@ export async function refreshProductEvidence(
   return totals;
 }
 
-export const EVIDENCE_SOURCE_KINDS = KINDS;
+export const EVIDENCE_SOURCE_KINDS = Object.keys(EVIDENCE_KINDS) as LinkKind[];

@@ -69,13 +69,33 @@ npm run test:integration
 ```
 app/api/*/route.ts          파싱 → 유스케이스 호출 → 응답 매핑
 lib/http/respond.ts         도메인 에러 → HTTP 상태코드 매핑
-lib/domain/products/        유스케이스 · zod 스키마 · repository (HTTP 무관)
+lib/domain/<모듈>/          유스케이스 · zod 스키마 · repository (HTTP 무관)
 lib/net/                    normalize(순수) / ssrf(정책) / fetch(I/O)
 skill/SKILL.md              /nomorevibe 스킬 단일 소스 — /skill.md 로 서빙
 ```
 
-DB 접근은 `lib/domain/products/repository.ts` 한 곳으로만 한다.
-새 진입점(크롤러 등)은 라우트를 거치지 않고 유스케이스를 직접 호출한다.
+도메인은 HTTP를 모른다 — `lib/domain`·`lib/crawl`·`lib/net`·`lib/jobs`에서 `next/*`를
+import 하지 않는다. 그래서 새 진입점(크롤러 등)은 라우트를 거치지 않고 유스케이스를 직접
+호출할 수 있고, 단위 테스트가 서버 없이 돈다.
+
+DB 접근은 **모듈마다 그 모듈의 파일 안에서** 한다. `products`·`evidence`·`ranking`·`media`가
+각자 자기 테이블을 읽고 쓰며, 다른 모듈의 테이블을 직접 건드리지 않는다. 모듈 하나에 통과만
+하는 위임 함수를 쌓지 않으려고 단일 repository 파일을 강제하지 않는다.
+
+모듈 사이에 공유되는 것은 아래 둘뿐이고, 어느 쪽도 상대 모듈을 import 하지 않는다.
+
+| 모듈 | 하는 일 | 쓰는 곳 |
+|---|---|---|
+| `products/generation.ts` | 제품 세대 잠금 (`lockProductGeneration`) | evidence · media · health |
+| `evidence/settings-store.ts` | 근거 설정 한 행 읽기 | 상세 페이지 · 어드민 · 갱신 잡 |
+
+**둘을 분리한 이유는 순환을 끊기 위해서다.** 잠금이 `products/repository.ts`에 있을 때는
+evidence가 잠금 하나를 쓰려고 products repository 전체를 import 했고, 설정 읽기가
+`evidence/refresh.ts`에 있을 때는 상세 페이지가 세 줄을 읽으려고 수집 provider와 `net/fetch`
+까지 끌고 들어왔다(파일 36개 → 22개로 줄었다).
+
+새 근거 출처 종류를 추가할 때는 `evidence/refresh.ts`의 `EVIDENCE_KINDS` 한 곳에 행을
+더한다. `Record<LinkKind, _>`이므로 빠뜨리면 타입 검사가 막는다.
 
 ## 로컬 배포
 

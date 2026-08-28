@@ -1,11 +1,11 @@
 import type { JobContext, JobOutcome } from "@/lib/jobs/runner";
+import { currentEvidenceSettings } from "@/lib/domain/evidence/settings-store";
 import {
-  currentEvidenceSettings,
   dueEvidenceProductSlugs,
   refreshProductEvidence,
   type EvidenceRefreshDependencies,
 } from "@/lib/domain/evidence/refresh";
-import { ProductGenerationChangedError } from "@/lib/domain/products/repository";
+import { ProductGenerationChangedError } from "@/lib/domain/products/generation";
 
 export type EvidenceRefreshCursor = { afterSlug?: string };
 export type EvidenceRefreshCounts = {

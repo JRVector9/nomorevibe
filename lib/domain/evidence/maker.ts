@@ -13,7 +13,7 @@ import {
   findProductGenerationId,
   lockProductGeneration,
   ProductGenerationChangedError,
-} from "@/lib/domain/products/repository";
+} from "@/lib/domain/products/generation";
 import { isSafeMakerMarkdown, makerMediaSchema, safeHttpUrl } from "./contracts";
 import { readMakerMediaResource } from "./repository";
 import { assertMakerResourceVersion } from "./resource-version";
