@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 import { currentAdmin } from "@/lib/auth/admin";
-import { currentEvidenceSettings } from "@/lib/domain/evidence/refresh";
+import { currentEvidenceSettings } from "@/lib/domain/evidence/settings-store";
 import { AdminNav } from "../AdminNav";
 import { EvidenceSettingsForm } from "./EvidenceSettingsForm";
 

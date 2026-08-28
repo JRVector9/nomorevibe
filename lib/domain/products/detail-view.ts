@@ -29,7 +29,7 @@ import {
   type RelationshipState,
   type SourceState,
 } from "@/lib/db/schema";
-import { currentEvidenceSettings } from "@/lib/domain/evidence/refresh";
+import { currentEvidenceSettings } from "@/lib/domain/evidence/settings-store";
 import { EVIDENCE_LABELS } from "@/lib/domain/evidence/provenance";
 import type { EvidenceSettings } from "@/lib/domain/evidence/settings";
 import { parseRankingPolicy } from "@/lib/domain/ranking/policy";

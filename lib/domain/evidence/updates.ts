@@ -10,7 +10,7 @@ import {
   findProductGenerationId,
   lockProductGeneration,
   ProductGenerationChangedError,
-} from "@/lib/domain/products/repository";
+} from "@/lib/domain/products/generation";
 
 export type UpdateCandidate = {
   sourceKind: "maker" | "github_release" | "feed" | "site_change" | "repository_change" | "activity_digest";

@@ -23,7 +23,8 @@ import {
   findProductGenerationId,
   lockProductGeneration,
   ProductGenerationChangedError,
-} from "@/lib/domain/products/repository";
+  withProductGeneration,
+} from "@/lib/domain/products/generation";
 
 const slugSchema = z.string().min(1).max(80).regex(/^[a-z0-9][a-z0-9-]*$/);
 const actorSchema = z.string().min(1).max(120);
@@ -82,10 +83,7 @@ async function readMakerResource<T>(
   read: (tx: EvidenceTransaction, slug: string) => Promise<T>,
 ): Promise<T> {
   const slug = slugSchema.parse(slugInput);
-  return db.transaction(async (tx) => {
-    if (!(await lockProductGeneration(tx, productId, slug))) {
-      throw new ProductGenerationChangedError();
-    }
+  return withProductGeneration(slug, productId, async (tx) => {
     if (resourceLock) {
       await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${resourceLock}))`);
     }
@@ -232,10 +230,7 @@ export async function saveMakerProfile(input: {
     updatedAt: new Date(),
   };
 
-  await db.transaction(async (tx) => {
-    if (!(await lockProductGeneration(tx, productId, slug))) {
-      throw new ProductGenerationChangedError();
-    }
+  await withProductGeneration(slug, productId, async (tx) => {
     await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`product-profile:${slug}`}))`);
     assertMakerResourceVersion(input.expectedVersion, {
       profile: await readMakerProfileResource(tx, slug),
@@ -265,10 +260,7 @@ export async function replaceMakerLinks(input: {
   if (productId === null) throw new ProductGenerationChangedError();
   const { links } = makerLinksSchema.parse({ links: input.links });
 
-  await db.transaction(async (tx) => {
-    if (!(await lockProductGeneration(tx, productId, slug))) {
-      throw new ProductGenerationChangedError();
-    }
+  await withProductGeneration(slug, productId, async (tx) => {
     await tx.execute(sql`
       select pg_advisory_xact_lock(hashtext(${`product-evidence-maker-links:${slug}`}))
     `);
@@ -475,10 +467,7 @@ export async function replaceProductProvenance(input: {
   const actor = actorSchema.parse(input.actor);
   const authority = input.authority ?? "maker";
   const provenance = normalizeProductProvenance(input.provenance, authority);
-  await db.transaction(async (tx) => {
-    if (!(await lockProductGeneration(tx, productId, slug))) {
-      throw new ProductGenerationChangedError();
-    }
+  await withProductGeneration(slug, productId, async (tx) => {
     await tx.execute(sql`
       select pg_advisory_xact_lock(hashtext(${`product-provenance:${slug}`}))
     `);

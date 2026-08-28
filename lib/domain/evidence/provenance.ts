@@ -84,7 +84,6 @@ function normalizedVersion(value: string | undefined): string | undefined {
   return normalized;
 }
 
-export type NormalizedProductProvenance = ReturnType<typeof normalizeProductProvenance>;
 
 export function normalizeProductProvenance(
   input: unknown,

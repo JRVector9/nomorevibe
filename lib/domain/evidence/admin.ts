@@ -16,7 +16,7 @@ import {
   productUpdates,
   products,
 } from "@/lib/db/schema";
-import { lockProductGeneration } from "@/lib/domain/products/repository";
+import { lockProductGeneration } from "@/lib/domain/products/generation";
 import { evidenceSettingsSchema, type EvidenceSettings } from "./settings";
 
 const slugSchema = z.string().min(1).max(80).regex(/^[a-z0-9][a-z0-9-]*$/);

@@ -27,19 +27,25 @@ export async function rateLimit(key: string, limit: number, windowMs: number): P
     })
     .returning({ count: rateLimits.count });
 
-  await sweepOccasionally();
   return (row?.count ?? 1) <= limit;
 }
 
 /**
  * 지난 창의 행 청소.
  *
- * 행은 키마다 하나씩 갱신되므로 요청 수만큼 늘지는 않지만, 지나간 클라이언트의 행은
- * 계속 남는다. 별도 작업을 만들 만한 일이 아니라서 아주 가끔 같이 지운다.
+ * 행은 키마다 하나씩 갱신되므로 요청 수만큼 늘지는 않지만, 지나간 클라이언트의 행은 계속
+ * 남는다. 특히 클릭 중복 제거가 (제품 × 방문자)마다 키를 하나씩 만들어 여기가 제일 빨리 큰다.
+ *
+ * 예전에는 rateLimit 안에서 1% 확률로 같이 지웠다. 그러면 등록·검증·수정·클릭 요청 백 번에
+ * 한 번은 사용자가 기다리는 동안 DELETE가 돌고, 트래픽이 없으면 아예 청소가 안 된다.
+ * 시간마다 도는 click-rollup이 부른다.
  */
-async function sweepOccasionally() {
-  if (Math.random() > 0.01) return;
-  await db.delete(rateLimits).where(sql`${rateLimits.resetAt} < now() - interval '1 day'`);
+export async function pruneExpiredRateLimits(): Promise<number> {
+  const deleted = await db
+    .delete(rateLimits)
+    .where(sql`${rateLimits.resetAt} < now() - interval '1 day'`)
+    .returning({ key: rateLimits.key });
+  return deleted.length;
 }
 
 /**
