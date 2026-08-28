@@ -1,0 +1,1 @@
+ALTER TABLE "products" ADD COLUMN "claim_invited_at" timestamp;

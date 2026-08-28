@@ -4,6 +4,8 @@ import { redirect } from "next/navigation";
 import { currentAdmin } from "@/lib/auth/admin";
 import { listProducts } from "@/lib/domain/products/repository";
 import { isUnclaimed } from "@/lib/domain/products/view";
+import { claimInviteUrl } from "@/lib/domain/products/claim-invite";
+import { siteOrigin } from "@/lib/site";
 import type { ProductStatus } from "@/lib/db/schema";
 import { AdminNav } from "../AdminNav";
 import { ProductRow } from "./ProductRow";
@@ -32,6 +34,7 @@ export default async function AdminProductsPage({ searchParams }: Props) {
   // `in`은 프로토타입 키까지 통과시킨다 — ?filter=constructor 하나로 500이 났다
   const active = (filter && Object.hasOwn(FILTERS, filter) ? filter : "전체") as keyof typeof FILTERS;
   const products = await listProducts({ statuses: [...FILTERS[active]], limit: PAGE_SIZE });
+  const origin = siteOrigin();
 
   return (
     <main className="mx-auto max-w-[900px] px-6 pb-20">
@@ -74,6 +77,8 @@ export default async function AdminProductsPage({ searchParams }: Props) {
                 source: product.source,
                 unclaimed: isUnclaimed(product),
                 listedAt: (product.verifiedAt ?? product.createdAt).toLocaleDateString("ko-KR"),
+                inviteUrl: claimInviteUrl(product, origin),
+                invitedAt: product.claimInvitedAt?.toLocaleDateString("ko-KR") ?? null,
               }}
             />
           ))}

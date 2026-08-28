@@ -1,7 +1,7 @@
 "use client";
 
 import { useActionState } from "react";
-import { setProductBan, type ReviewState } from "../actions";
+import { markClaimInvite, setProductBan, type ReviewState } from "../actions";
 
 export type AdminProduct = {
   slug: string;
@@ -11,6 +11,9 @@ export type AdminProduct = {
   source: string;
   unclaimed: boolean;
   listedAt: string;
+  /** 미리 채운 GitHub 새 이슈 주소. 초대할 수 없는 제품이면 null */
+  inviteUrl: string | null;
+  invitedAt: string | null;
 };
 
 const STATUS_LABELS: Record<string, string> = {
@@ -22,6 +25,7 @@ const STATUS_LABELS: Record<string, string> = {
 
 export function ProductRow({ product }: { product: AdminProduct }) {
   const [state, action, pending] = useActionState<ReviewState, FormData>(setProductBan, null);
+  const [inviteState, inviteAction, inviting] = useActionState<ReviewState, FormData>(markClaimInvite, null);
   const banned = product.status === "banned";
 
   return (
@@ -63,13 +67,43 @@ export function ProductRow({ product }: { product: AdminProduct }) {
           {banned ? "차단 전 상태로 되돌립니다" : "행은 남아 같은 URL의 재등록·재수집을 막습니다"}
         </span>
       </form>
+      {/* 주인이 없는 제품에만. 보내는 것은 GitHub에서 운영자가 직접 하고 여기서는 보냈다고만 표시한다 */}
+      {product.unclaimed && !banned && (
+        product.invitedAt ? (
+          <p className="mt-3 text-[13px] text-fg-3">클레임 초대 보냄 · {product.invitedAt}</p>
+        ) : product.inviteUrl ? (
+          <form action={inviteAction} className="mt-3 flex flex-wrap items-center gap-2">
+            <input type="hidden" name="slug" value={product.slug} />
+            <a
+              href={product.inviteUrl}
+              target="_blank"
+              rel="noreferrer noopener"
+              className="rounded-lg border border-accent/35 bg-accent-soft px-3 py-1.5 text-[13px] font-semibold text-accent"
+            >
+              초대 이슈 열기 ↗
+            </a>
+            <button
+              type="submit"
+              disabled={inviting}
+              className="rounded-lg border border-line px-3 py-1.5 text-[13px] font-semibold text-fg-2 hover:text-fg disabled:opacity-50"
+            >
+              보냈음으로 표시
+            </button>
+            <span className="text-[13px] text-fg-3">레포에 미리 채운 이슈를 직접 제출한 뒤 표시합니다</span>
+          </form>
+        ) : (
+          <p className="mt-3 text-[13px] text-fg-3">GitHub 레포가 없어 초대할 곳이 없습니다</p>
+        )
+      )}
       <a
         href={`/admin/products/${product.slug}`}
         className="mt-3 inline-block text-[13px] font-semibold text-accent hover:underline"
       >
         근거·업데이트 관리
       </a>
-      {state?.error && <p className="mt-2 text-[13px] text-down">{state.error}</p>}
+      {(state?.error || inviteState?.error) && (
+        <p className="mt-2 text-[13px] text-down">{state?.error ?? inviteState?.error}</p>
+      )}
     </li>
   );
 }
