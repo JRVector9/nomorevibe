@@ -56,9 +56,16 @@ export function SettingsForm({ settings }: { settings: CrawlSettings }) {
           <input type="hidden" name="queryCount" value={discover.queries.length} />
           <div className="mt-3 flex flex-col gap-2">
             {discover.queries.map((q, i) => (
-              <div key={i} className="grid grid-cols-1 gap-2 rounded-lg border border-line p-3 sm:grid-cols-[1fr_1.6fr_auto_auto]">
+              <div key={i} className="grid grid-cols-1 gap-2 rounded-lg border border-line p-3 sm:grid-cols-[1fr_1.6fr_auto_auto_auto]">
                 <input name={`query.${i}.label`} defaultValue={q.label} className={field} placeholder="이름" />
                 <input name={`query.${i}.query`} defaultValue={q.query} className={`${field} font-mono`} placeholder="검색 문자열" />
+                <input
+                  name={`query.${i}.builder`}
+                  defaultValue={q.builder ?? ""}
+                  className={`${field} sm:w-28`}
+                  placeholder="추정 AI"
+                  title="이 신호로 찾은 제품에 '우리 추정'으로 붙일 만든 AI. 비우면 추정하지 않습니다."
+                />
                 <input
                   name={`query.${i}.priority`}
                   defaultValue={q.priority}

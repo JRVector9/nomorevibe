@@ -16,7 +16,7 @@ const products = await import("@/lib/domain/products/repository");
 const { saveSettings } = await import("@/lib/crawl/settings");
 const { publishCandidates } = await import("@/lib/crawl/jobs/publish");
 const { runJob } = await import("@/lib/jobs/runner");
-const { getPublicList, getRankedList, isUnclaimed } = await import("@/lib/domain/products/view");
+const { getPublicList, getRankedList, isUnclaimed, builderClaimOf } = await import("@/lib/domain/products/view");
 const { ensureSchema, resetTables } = await import("./setup");
 
 /** 발행 대기 상태의 후보 하나 (원본 + approved 판정) */
@@ -75,7 +75,31 @@ describe("발행 잡", () => {
     });
     // 주인이 없는 상태다 — 랭킹에서 빠지고 미클레임 배지가 붙는다
     expect(isUnclaimed(product!)).toBe(true);
+    // 프론티어에 발견 기록이 없으면 "만든 AI"를 지어내지 않는다
     expect(product?.builder).toBeNull();
+  });
+
+  it("데려온 검색 신호로 만든 AI를 추정해 붙인다 — 화면에는 우리 추정으로 뜬다", async () => {
+    await crawl.enqueue([{ repo: "someone/my-app", signal: "Claude 커밋 트레일러" }]);
+    await approved("someone/my-app");
+
+    await tick();
+
+    const product = await products.findByUrl("https://my-app.test");
+    expect(product?.builder).toBe("Claude");
+    expect(builderClaimOf(product!)).toBe("guessed");
+  });
+
+  it("신호 설정에 추정 AI가 비어 있으면 붙이지 않는다", async () => {
+    await saveSettings({
+      discover: { queries: [{ label: "Claude 커밋 트레일러", query: "Co-authored-by: Claude", enabled: true, priority: 100, builder: null }] },
+    }, "테스트");
+    await crawl.enqueue([{ repo: "someone/my-app", signal: "Claude 커밋 트레일러" }]);
+    await approved("someone/my-app");
+
+    await tick();
+
+    expect((await products.findByUrl("https://my-app.test"))?.builder).toBeNull();
   });
 
   it("후보를 발행됨으로 표시하고 slug를 남긴다", async () => {

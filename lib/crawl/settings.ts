@@ -97,6 +97,8 @@ export type SettingsDrift = { label: string; stored: string; standard: string }[
 
 const TRACKED: { label: string; read: (s: CrawlSettings) => unknown }[] = [
   { label: "검색 신호", read: (s) => s.discover.queries.filter((q) => q.enabled).map((q) => q.label) },
+  // 저장된 설정에 이 필드가 없으면 null로 읽혀 추정이 조용히 꺼진다 — 그것을 보여준다
+  { label: "추정 AI", read: (s) => s.discover.queries.filter((q) => q.enabled).map((q) => q.builder ?? "(없음)") },
   { label: "검색 정렬", read: (s) => s.discover.sort },
   { label: "기간 창(일)", read: (s) => s.discover.windowDays },
   { label: "틱당 페이지", read: (s) => s.discover.pagesPerTick },

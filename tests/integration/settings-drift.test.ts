@@ -39,6 +39,28 @@ describe("저장된 기준과 기본값의 차이", () => {
     expect(settings.judge.personalSiteKeywords).toEqual(DEFAULT_CRAWL_SETTINGS.judge.personalSiteKeywords);
   });
 
+  it("옛 설정의 신호에 추정 AI가 없으면 어긋남으로 짚는다 — 추정이 조용히 꺼지지 않게", async () => {
+    await db.insert(crawlSettings).values({
+      id: 1,
+      values: {
+        enabled: true,
+        discover: {
+          queries: [
+            { label: "Claude 커밋 트레일러", query: "Co-authored-by: Claude", enabled: true, priority: 100 },
+            { label: "Codex 커밋 트레일러", query: "Co-authored-by: Codex", enabled: true, priority: 90 },
+          ],
+        },
+      },
+    });
+
+    const drift = settingsDrift(await getSettings());
+
+    expect(drift.find((d) => d.label === "추정 AI")).toMatchObject({
+      stored: "(없음), (없음)",
+      standard: "Claude, Codex",
+    });
+  });
+
   it("되돌리면 기준은 기본값이 되고 수집 스위치는 유지된다", async () => {
     // 기준을 맞추려다 수집이 켜지거나 꺼지면 그게 더 큰 사고다
     await saveSettings({ enabled: true, judge: { maxStars: 5, excludeOrganizations: true } }, "테스트");

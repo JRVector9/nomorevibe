@@ -29,6 +29,14 @@ const discoverSchema = z.object({
         enabled: z.boolean(),
         /** 이 신호로 발견한 레포의 조사 우선순위 */
         priority: z.number().int().min(0).max(1000),
+        /**
+         * 이 신호로 찾은 제품에 "만든 AI"로 추정해 붙일 이름. null이면 추정하지 않는다.
+         *
+         * 트레일러가 문자 그대로 말하는 것만 적는다 — "Co-authored-by: Claude"는 Claude가
+         * 커밋했다는 뜻이지 어느 도구였는지까지는 말하지 않는다. 화면에는 "우리 추정"으로
+         * 붙고, 주인이 클레임하면 비워진다(verify.ts).
+         */
+        builder: z.string().min(1).max(40).nullable().default(null),
       }),
     )
     .min(1),
@@ -97,10 +105,10 @@ export const DEFAULT_CRAWL_SETTINGS: CrawlSettings = {
   enabled: false, // 켜는 것은 명시적 행위여야 한다
   discover: {
     queries: [
-      { label: "Claude 커밋 트레일러", query: "Co-authored-by: Claude", enabled: true, priority: 100 },
+      { label: "Claude 커밋 트레일러", query: "Co-authored-by: Claude", enabled: true, priority: 100, builder: "Claude" },
       // 실측으로 켰다. 표본 132개에서 통과율 23%로 Claude 신호(19%)보다 높았고,
       // 두 신호가 같이 찾은 레포는 5%뿐이라 거의 겹치지 않는 집합을 데려온다.
-      { label: "Codex 커밋 트레일러", query: "Co-authored-by: Codex", enabled: true, priority: 90 },
+      { label: "Codex 커밋 트레일러", query: "Co-authored-by: Codex", enabled: true, priority: 90, builder: "Codex" },
     ],
     windowDays: 180,
     sort: "relevance",

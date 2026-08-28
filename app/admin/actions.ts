@@ -39,6 +39,7 @@ export async function saveCrawlSettings(_prev: SaveState, form: FormData): Promi
     query: String(form.get(`query.${i}.query`) ?? ""),
     enabled: form.get(`query.${i}.enabled`) === "on",
     priority: num(form.get(`query.${i}.priority`)),
+    builder: String(form.get(`query.${i}.builder`) ?? "").trim() || null,
   })).filter((q) => q.label && q.query);
 
   const patch = {

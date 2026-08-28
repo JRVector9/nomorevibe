@@ -50,6 +50,15 @@ export async function enqueue(
   return inserted.length;
 }
 
+/** 이 레포를 어느 검색 신호가 데려왔는지. 발행이 "만든 AI"를 추정할 때 본다 */
+export async function getFrontierSignal(repo: string): Promise<string | null> {
+  const row = await db.query.crawlFrontier.findFirst({
+    where: eq(crawlFrontier.repo, repo),
+    columns: { signal: true },
+  });
+  return row?.signal ?? null;
+}
+
 /**
  * 조사할 대상을 꺼낸다.
  *

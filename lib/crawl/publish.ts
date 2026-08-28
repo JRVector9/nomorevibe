@@ -6,6 +6,7 @@ import { generateEditToken, generateVerifyToken, hashToken } from "@/lib/tokens"
 import { logger } from "@/lib/observability/logger";
 import * as crawl from "./repository";
 import { classifyCategory } from "./classify";
+import type { CrawlSettings } from "./settings-schema";
 
 /**
  * 발행 — 통과한 후보를 목록에 올린다.
@@ -23,7 +24,10 @@ export type PublishResult =
   | { ok: true; slug: string }
   | { ok: false; reason: "no_document" | "no_url" | "already_listed" | "no_description" };
 
-export async function publishCandidate(candidate: CrawlCandidate): Promise<PublishResult> {
+export async function publishCandidate(
+  candidate: CrawlCandidate,
+  settings: CrawlSettings,
+): Promise<PublishResult> {
   const document = await crawl.getDocument(candidate.repo);
   if (!document) return { ok: false, reason: "no_document" };
 
@@ -63,6 +67,7 @@ export async function publishCandidate(candidate: CrawlCandidate): Promise<Publi
       language: draft.language,
     })) ?? draft.category;
   const editToken = generateEditToken();
+  const builder = await guessedBuilder(candidate.repo, settings);
 
   let slug = "";
   for (let attempt = 0; ; attempt++) {
@@ -75,9 +80,9 @@ export async function publishCandidate(candidate: CrawlCandidate): Promise<Publi
         tagline: draft.tagline,
         description: draft.description,
         category,
-        // "만든 AI"는 메이커 신고값이다. 우리가 커밋 트레일러를 보고 추측한 것을 여기 넣으면
-        // 신고와 추정이 같은 칸에서 섞인다 — 주인이 클레임할 때 직접 밝힌다.
-        builder: null,
+        // 커밋 트레일러로 추정한 값이다. 주인이 없는 동안은 "우리 추정"으로 표시되고(view.ts),
+        // 클레임하는 순간 비워져 메이커가 직접 밝힌 값만 "메이커 신고"가 된다(verify.ts).
+        builder,
         stack: draft.stack,
         ogImage: null,
         makerName: null,
@@ -118,6 +123,19 @@ export async function publishCandidate(candidate: CrawlCandidate): Promise<Publi
   await crawl.markPublished(candidate.repo, slug);
   logger.info("crawl.published", { repo: candidate.repo, slug, url, category });
   return { ok: true, slug };
+}
+
+/**
+ * "만든 AI" 추정.
+ *
+ * 이 레포를 데려온 검색 신호가 곧 근거다 — "Co-authored-by: Claude"로 찾았으면 Claude가
+ * 커밋한 것이다. 신호 설정에 builder가 없거나(운영자가 비웠거나 옛 설정), 프론티어에 기록이
+ * 없으면 추정하지 않는다. 없는 값을 지어내지 않는 것이 발행의 원칙이다.
+ */
+async function guessedBuilder(repo: string, settings: CrawlSettings): Promise<string | null> {
+  const signal = await crawl.getFrontierSignal(repo);
+  if (!signal) return null;
+  return settings.discover.queries.find((q) => q.label === signal)?.builder ?? null;
 }
 
 /** 원본에서 목록에 올릴 값을 만든다 */

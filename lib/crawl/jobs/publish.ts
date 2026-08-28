@@ -33,7 +33,7 @@ export async function publishCandidates(ctx: JobContext<null>): Promise<JobOutco
     }
 
     for (const candidate of candidates) {
-      const result = await publishCandidate(candidate);
+      const result = await publishCandidate(candidate, settings);
 
       if (!result.ok) {
         /**
