@@ -114,11 +114,27 @@ npm run job crawl-publish
 */10 * * * *   uptime-ping     같은 제품은 6시간에 한 번만 본다
 0 * * * *   click-rollup       KST 일별 클릭 집계
 5 * * * *   ranking-refresh    시즌 경계·쿨다운·공개 순위 스냅샷
-1 */6 * * * * product-evidence-refresh 공식 출처·업데이트·내부 미디어 갱신
+1 */6 * * *   product-evidence-refresh 공식 출처·업데이트·내부 미디어 갱신
 ```
 
-`ranking-refresh`는 반드시 `click-rollup`이 끝난 뒤 실행해야 한다. 위 프로덕션 스케줄이
-없다고 추정하지 말고, 실제 등록 상태를 확인한 뒤 누락된 항목만 등록한다.
+표기는 **다섯 칸(분 시 일 월 요일)**이다. 초를 앞에 받는 스케줄러에 여섯 칸으로 넣으면
+`product-evidence-refresh`가 6시간이 아니라 6분마다 돌아 외부 출처를 60배로 두드린다.
+
+`ranking-refresh`는 `click-rollup` 뒤에 실행해야 한다. 이유는 정책마다 다르다.
+
+- `valid-visits-v1`(현재 기본): 시즌 점수를 `product_click_daily`에서 읽는다. rollup이 아직
+  안 돌았으면 그 시간의 클릭이 빠진 채로 스냅샷이 잡힌다.
+- `unique-visitors-v1`: 원천 `click_events`를 직접 읽는다(날짜별 고유 수는 더할 수 없다).
+  이쪽은 rollup의 산출물이 아니라 rollup이 함께 하는 **원천 정리**에 걸린다 — 35일이 지난
+  원천을 지우는 것도 같은 잡이다.
+
+**정시/5분으로 나눠 등록하는 것은 순서를 보장하지 않는다.** `click-rollup`이 5분을 넘기면
+`ranking-refresh`가 한 시간 전 집계를 보고 스냅샷을 잡는다. 치명적이지는 않다 — 다음 시간에
+바로잡힌다. 순서를 확실히 하려면 로컬 스케줄러(`scripts/scheduler.sh`)처럼 한 번의 호출에서
+`click-rollup`을 기다린 뒤 `ranking-refresh`를 부르는 편이 낫다. 두 잡은 이름이 달라 러너의
+잠금이 서로를 막아주지 않는다.
+
+위 프로덕션 스케줄이 없다고 추정하지 말고, 실제 등록 상태를 확인한 뒤 누락된 항목만 등록한다.
 
 각 호출은 이 형태다.
 
