@@ -55,9 +55,10 @@ describe("저장된 기준과 기본값의 차이", () => {
 
     const drift = settingsDrift(await getSettings());
 
+    // 기본 신호 셋 — 트레일러 둘은 추정 AI가 있고 topic 신호는 어떤 AI인지 말하지 않아 비어 있다
     expect(drift.find((d) => d.label === "추정 AI")).toMatchObject({
       stored: "(없음), (없음)",
-      standard: "Claude, Codex",
+      standard: "Claude, Codex, (없음)",
     });
   });
 

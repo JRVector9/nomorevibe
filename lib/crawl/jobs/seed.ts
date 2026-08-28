@@ -1,7 +1,13 @@
 import type { JobContext, JobOutcome } from "@/lib/jobs/runner";
 import * as crawl from "@/lib/crawl/repository";
 import { getSettings, enabledQueries } from "@/lib/crawl/settings";
-import { searchCommits, SEARCH_PER_PAGE, MAX_SEARCH_PAGES } from "@/lib/crawl/github";
+import {
+  searchCommits,
+  searchRepositories,
+  SEARCH_PER_PAGE,
+  MAX_SEARCH_PAGES,
+  type GitHubFailure,
+} from "@/lib/crawl/github";
 
 /**
  * 검색 잡 — 프론티어를 채운다. 파이프라인의 입구다.
@@ -44,16 +50,14 @@ export async function seedFrontier(ctx: JobContext<SeedCursor>): Promise<JobOutc
   const since = windowStart(settings.discover.windowDays);
   let discovered = 0;
   let seen = 0;
+  /** 레포 검색에서 배포 URL이 없어 넣지 않은 수 — fetch 예산을 아낀 만큼이다 */
+  let skippedNoHomepage = 0;
 
   for (let visited = 0; visited < settings.discover.pagesPerTick; visited++) {
     if (!ctx.hasBudget()) break;
 
     const signal = queries[index];
-    const result = await searchCommits({
-      query: `${signal.query} committer-date:>=${since}`,
-      page,
-      sort: settings.discover.sort,
-    });
+    const result = await searchSignal(signal, since, page, settings.discover.sort);
 
     if (!result.ok) {
       if (result.error.kind === "rate_limited") {
@@ -70,8 +74,9 @@ export async function seedFrontier(ctx: JobContext<SeedCursor>): Promise<JobOutc
       continue;
     }
 
-    const repos = [...new Set(result.value.items.map((item) => item.repository.full_name))];
+    const repos = [...new Set(result.value.deployed)];
     seen += repos.length;
+    skippedNoHomepage += result.value.skipped;
     discovered += await crawl.enqueue(
       repos.map((repo) => ({ repo, signal: signal.label, priority: signal.priority })),
     );
@@ -80,11 +85,11 @@ export async function seedFrontier(ctx: JobContext<SeedCursor>): Promise<JobOutc
      * 페이지가 덜 찼거나 검색이 돌려주는 한계에 닿았으면 이 신호는 여기까지다.
      * 다음 신호로 넘기고, 마지막 신호였으면 사이클을 끝낸다(커서가 비워져 다음 틱은 처음부터).
      */
-    const exhausted = result.value.items.length < SEARCH_PER_PAGE || page >= MAX_SEARCH_PAGES;
+    const exhausted = result.value.pageSize < SEARCH_PER_PAGE || page >= MAX_SEARCH_PAGES;
     if (exhausted) {
       const next = advance(queries, index);
       if (!next) {
-        ctx.log("crawl.seeded", { discovered, seen, cycle: "완료" });
+        ctx.log("crawl.seeded", { discovered, seen, skippedNoHomepage, cycle: "완료" });
         return { done: true };
       }
       ({ index, page } = next);
@@ -94,8 +99,53 @@ export async function seedFrontier(ctx: JobContext<SeedCursor>): Promise<JobOutc
     await ctx.save({ signal: queries[index].label, page });
   }
 
-  ctx.log("crawl.seeded", { discovered, seen, signal: queries[index].label, page });
+  ctx.log("crawl.seeded", { discovered, seen, skippedNoHomepage, signal: queries[index].label, page });
   return { done: false, cursor: { signal: queries[index].label, page } };
+}
+
+type SignalPage = {
+  /** 프론티어에 넣을 레포. 레포 검색이면 homepage가 있는 것만 */
+  deployed: string[];
+  /** 배포 URL이 없어 뺀 수 */
+  skipped: number;
+  /** 페이지가 꽉 찼는지 보기 위한 원래 건수 */
+  pageSize: number;
+};
+
+/**
+ * 신호 종류에 맞는 검색을 타고 같은 모양으로 돌려준다.
+ *
+ * 커밋 검색은 결과에 레포 메타가 없어 그대로 넣는다 — 배포 여부는 fetch가 알아낸다.
+ * 레포 검색은 homepage가 실려 오므로 없는 것은 여기서 뺀다. 그 레포는 fetch까지 가도
+ * no_homepage로 거부될 뿐이라, 예산만 쓰고 결과가 같다.
+ */
+async function searchSignal(
+  signal: { kind: "commits" | "repositories"; query: string },
+  since: string,
+  page: number,
+  sort: "relevance" | "recent",
+): Promise<{ ok: true; value: SignalPage } | { ok: false; error: GitHubFailure }> {
+  if (signal.kind === "repositories") {
+    const result = await searchRepositories({ query: `${signal.query} pushed:>=${since}`, page, sort });
+    if (!result.ok) return result;
+    const deployed = result.value.items
+      .filter((item) => typeof item.homepage === "string" && item.homepage.trim() !== "")
+      .map((item) => item.full_name);
+    return {
+      ok: true,
+      value: { deployed, skipped: result.value.items.length - deployed.length, pageSize: result.value.items.length },
+    };
+  }
+  const result = await searchCommits({ query: `${signal.query} committer-date:>=${since}`, page, sort });
+  if (!result.ok) return result;
+  return {
+    ok: true,
+    value: {
+      deployed: result.value.items.map((item) => item.repository.full_name),
+      skipped: 0,
+      pageSize: result.value.items.length,
+    },
+  };
 }
 
 /** 다음 신호로. 마지막이었으면 null (사이클 완료) */

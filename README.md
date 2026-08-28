@@ -188,6 +188,11 @@ curl -X POST $SITE/api/cron/crawl-fetch -H "Authorization: Bearer $CRON_SECRET"
 수집기는 `GITHUB_TOKEN`이 있어야 돈다. 없으면 시간당 60회라 성립하지 않으므로 작업이 실패로
 남는다(`jobs.last_error`).
 
+검색 신호는 두 종류다. **커밋 검색**(`Co-authored-by: Claude` 같은 트레일러)은 결과에 레포
+메타가 없어 배포 여부를 모른 채 프론티어에 넣고, 그중 상당수가 `no_homepage`로 거부된다(실측
+206건 중 122건). **레포 검색**(`topic:vibe-coding` 같은 수식어)은 결과에 `homepage`가 실려 와
+배포 URL이 없는 레포를 애초에 넣지 않는다. 신호는 `/admin`에서 종류와 함께 추가한다.
+
 ## 제품 근거 수집 운영
 
 제품 상세의 정보는 두 권한 경계를 섞지 않는다. 소개·가격·팀·라이선스 신고와 공식 링크는

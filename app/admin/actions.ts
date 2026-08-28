@@ -37,6 +37,7 @@ export async function saveCrawlSettings(_prev: SaveState, form: FormData): Promi
   const queryCount = num(form.get("queryCount"));
   const queries = Array.from({ length: Number.isFinite(queryCount) ? queryCount : 0 }, (_, i) => ({
     label: String(form.get(`query.${i}.label`) ?? ""),
+    kind: form.get(`query.${i}.kind`) === "repositories" ? "repositories" : "commits",
     query: String(form.get(`query.${i}.query`) ?? ""),
     enabled: form.get(`query.${i}.enabled`) === "on",
     priority: num(form.get(`query.${i}.priority`)),

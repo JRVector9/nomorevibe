@@ -56,8 +56,17 @@ export function SettingsForm({ settings }: { settings: CrawlSettings }) {
           <input type="hidden" name="queryCount" value={discover.queries.length} />
           <div className="mt-3 flex flex-col gap-2">
             {discover.queries.map((q, i) => (
-              <div key={i} className="grid grid-cols-1 gap-2 rounded-lg border border-line p-3 sm:grid-cols-[1fr_1.6fr_auto_auto_auto]">
+              <div key={i} className="grid grid-cols-1 gap-2 rounded-lg border border-line p-3 sm:grid-cols-[1fr_auto_1.6fr_auto_auto_auto]">
                 <input name={`query.${i}.label`} defaultValue={q.label} className={field} placeholder="이름" />
+                <select
+                  name={`query.${i}.kind`}
+                  defaultValue={q.kind}
+                  className={field}
+                  title="커밋 검색은 트레일러를, 레포 검색은 topic 같은 레포 수식어를 찾습니다. 레포 검색은 배포 URL이 없는 레포를 넣지 않습니다."
+                >
+                  <option value="commits">커밋</option>
+                  <option value="repositories">레포</option>
+                </select>
                 <input name={`query.${i}.query`} defaultValue={q.query} className={`${field} font-mono`} placeholder="검색 문자열" />
                 <input
                   name={`query.${i}.builder`}
