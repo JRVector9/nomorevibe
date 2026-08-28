@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, beforeEach } from "vitest";
 import { sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { rateLimits } from "@/lib/db/schema";
-import { rateLimit } from "@/lib/rate-limit";
+import { rateLimit, pruneExpiredRateLimits } from "@/lib/rate-limit";
 import { ensureSchema } from "./setup";
 
 /**
@@ -45,6 +45,20 @@ describe("rateLimit", () => {
     );
 
     expect(results.filter(Boolean)).toHaveLength(4);
+  });
+
+  it("지난 창의 행만 청소한다 — 살아 있는 한도는 건드리지 않는다", async () => {
+    await rateLimit("expired:1.1.1.1", 1, 60_000);
+    await rateLimit("live:2.2.2.2", 1, 60_000);
+    // 하루보다 오래 지난 것으로 위조한다
+    await db.update(rateLimits)
+      .set({ resetAt: sql`now() - interval '2 days'` })
+      .where(sql`${rateLimits.key} = 'expired:1.1.1.1'`);
+
+    expect(await pruneExpiredRateLimits()).toBe(1);
+
+    const keys = (await db.select({ key: rateLimits.key }).from(rateLimits)).map((r) => r.key);
+    expect(keys).toEqual(["live:2.2.2.2"]);
   });
 
   it("행은 키마다 하나만 쓴다 — 요청 수만큼 늘지 않는다", async () => {
