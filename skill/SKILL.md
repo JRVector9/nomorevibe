@@ -205,6 +205,12 @@ SHA-256)만 사용한다. 스킬 파일 바이트의 `hash`는 소문자 64자 S
 1. `.nomorevibe.json`에서 slug를 읽는다. 없으면 먼저 등록하라고 안내.
 2. `curl -s -X POST <API>/api/products/<slug>/verify`
 3. 성공(`status: "verified"`): 공개 목록에 게시됐다고 알리고 상세 페이지 주소를 보여준다.
+   이어서 README에 배지를 넣을지 **한 번** 묻는다. 검증된 제품만 받을 수 있는 배지라 검증 사실
+   자체를 보여준다. 동의하면 README 상단(제목 아래)에 다음 한 줄을 추가한다 — 다른 내용은 건드리지
+   않는다.
+   ```markdown
+   [![Verified on NoMoreVibe](<API>/badge/<slug>.svg)](<API>/p/<slug>)
+   ```
 4. 실패(422): 응답의 `expected` 내용을 보여주며 배포가 완료됐는지, 파일 경로가 맞는지 확인하도록 안내한다.
    실제 배포 URL에서 `curl -s <url>/.well-known/nomorevibe.txt` 로 직접 확인해본다.
 
@@ -219,7 +225,7 @@ SHA-256)만 사용한다. 스킬 파일 바이트의 `hash`는 소문자 64자 S
    - 성공 응답에 `claimed: true`와 `edit_token`이 온다. **이 응답에만 나오는 값이다.**
       `~/.config/nomorevibe/credentials.json`의 토큰을 발급한 API origin 아래 해당 slug에 저장하고
       (chmod 600) `.nomorevibe.json`도 만든다.
-   - 이제 제품은 검증됨 상태가 되고 랭킹에 들어간다.
+   - 이제 제품은 검증됨 상태가 되고 랭킹에 들어간다. 검증 3번과 같이 README 배지를 넣을지 묻는다.
 4. **내리고 싶다면**: 사용자가 등록을 원치 않으면 클레임할 필요가 없다.
    `curl -s -X POST <API>/api/products/<slug>/takedown -H 'content-type: application/json' -d '{"reason":"..."}'`
    이유는 선택이다. 사람이 확인한 뒤 내려주며, 내려간 뒤에는 수집기가 다시 올리지 않는다.
