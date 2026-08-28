@@ -25,8 +25,7 @@ import { fetchAndNormalizeImage } from "@/lib/domain/media/images";
 import { markProductMediaMissing, observeProductMedia } from "@/lib/domain/media/repository";
 import type { NormalizedImageAsset } from "@/lib/domain/media/storage";
 import {
-  lockProductGeneration,
-  ProductGenerationChangedError,
+  withProductGeneration,
 } from "@/lib/domain/products/generation";
 import type { EvidenceSettings } from "./settings";
 import { currentEvidenceSettings } from "./settings-store";
@@ -397,10 +396,7 @@ async function collectDeclaredSource(
       };
     }
     const failed = result.status === "deferred" || result.status === "disconnected";
-    const refreshed = await db.transaction(async (tx) => {
-      if (!(await lockProductGeneration(tx, source.productId, source.slug))) {
-        throw new ProductGenerationChangedError();
-      }
+    const refreshed = await withProductGeneration(source.slug, source.productId, async (tx) => {
       const [row] = await tx.select().from(productEvidenceSources).where(and(
         eq(productEvidenceSources.slug, source.slug),
         eq(productEvidenceSources.kind, source.kind),

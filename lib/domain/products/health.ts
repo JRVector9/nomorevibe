@@ -8,8 +8,8 @@ import {
 } from "@/lib/db/schema";
 import {
   findProductGenerationId,
-  lockProductGeneration,
   ProductGenerationChangedError,
+  withProductGeneration,
 } from "./generation";
 
 /**
@@ -71,10 +71,7 @@ export async function recordPing(
   const productId = expectedProductId ?? await findProductGenerationId(slug);
   if (productId === null) throw new ProductGenerationChangedError();
 
-  await db.transaction(async (tx) => {
-    if (!(await lockProductGeneration(tx, productId, slug))) {
-      throw new ProductGenerationChangedError();
-    }
+  await withProductGeneration(slug, productId, async (tx) => {
     await tx
       .insert(productHealth)
       .values({

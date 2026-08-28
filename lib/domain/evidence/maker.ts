@@ -13,6 +13,7 @@ import {
   findProductGenerationId,
   lockProductGeneration,
   ProductGenerationChangedError,
+  withProductGeneration,
 } from "@/lib/domain/products/generation";
 import { isSafeMakerMarkdown, makerMediaSchema, safeHttpUrl } from "./contracts";
 import { readMakerMediaResource } from "./repository";
@@ -100,10 +101,7 @@ export async function replaceMakerMedia(input: {
   if (new Set(urls).size !== urls.length) throw new Error("duplicate media URL");
   const now = new Date();
 
-  await db.transaction(async (tx) => {
-    if (!(await lockProductGeneration(tx, productId, slug))) {
-      throw new ProductGenerationChangedError();
-    }
+  await withProductGeneration(slug, productId, async (tx) => {
     await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`product-media:${slug}`}))`);
     assertMakerResourceVersion(input.expectedVersion, await readMakerMediaResource(tx, slug));
     if (items.length > 0) {
@@ -164,10 +162,7 @@ export async function createMakerUpdate(input: {
   const actor = actorSchema.parse(input.actor);
   const productId = await expectedProductId(slug, input.productId);
   const update = makerUpdateCreateSchema.parse(input.update);
-  return db.transaction(async (tx) => {
-    if (!(await lockProductGeneration(tx, productId, slug))) {
-      throw new ProductGenerationChangedError();
-    }
+  return withProductGeneration(slug, productId, async (tx) => {
     const [created] = await tx.insert(productUpdates).values({
       slug,
       sourceKind: "maker",
@@ -268,10 +263,7 @@ export async function queueMakerRefresh(input: {
   const slug = slugSchema.parse(input.slug);
   const actor = actorSchema.parse(input.actor);
   const productId = await expectedProductId(slug, input.productId);
-  await db.transaction(async (tx) => {
-    if (!(await lockProductGeneration(tx, productId, slug))) {
-      throw new ProductGenerationChangedError();
-    }
+  await withProductGeneration(slug, productId, async (tx) => {
     const now = new Date();
     await tx.update(productEvidenceSources).set({ nextAttemptAt: now, updatedAt: now })
       .where(eq(productEvidenceSources.slug, slug));

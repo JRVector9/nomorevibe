@@ -43,3 +43,26 @@ export async function lockProductGeneration(
     .for("update");
   return Boolean(row);
 }
+
+/**
+ * 제품 세대를 잠근 트랜잭션 안에서 실행한다.
+ *
+ * 잠금을 잡지 못했다는 것은 요청이 시작된 그 제품이 그 사이 삭제·재등록됐다는 뜻이므로,
+ * 여기까지 쌓은 것을 커밋하면 안 된다. 쓰기 경로마다 이 세 줄을 손으로 다시 쓰면 새 경로를
+ * 추가할 때 빠뜨려도 아무것도 막지 않는다.
+ *
+ * 잠금 실패를 예외가 아니라 값으로 다뤄야 하는 경로(어드민 차단·미디어 정리 등)는 이것을
+ * 쓰지 않고 직접 lockProductGeneration을 부른다 — 반환하는 값이 저마다 다르다.
+ */
+export async function withProductGeneration<T>(
+  slug: string,
+  productId: number,
+  run: (tx: ProductTransaction) => Promise<T>,
+): Promise<T> {
+  return db.transaction(async (tx) => {
+    if (!(await lockProductGeneration(tx, productId, slug))) {
+      throw new ProductGenerationChangedError();
+    }
+    return run(tx);
+  });
+}
