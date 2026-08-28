@@ -293,6 +293,19 @@ function failureCode(result: Extract<GitHubHttpResult<unknown>, { ok: false }>):
   return result.error.kind;
 }
 
+/** 로그에 남길 실패 구분 — HTTP 오류는 상태 코드로, 그 밖은 종류 이름으로 */
+function httpClass(result: Extract<GitHubHttpResult<unknown>, { ok: false }>): string {
+  if (result.error.kind === "http") return String(result.error.status);
+  return result.error.kind;
+}
+
+/** rate limit이 알려준 재시도 시각. 그 밖의 실패는 자체 백오프를 쓰므로 null이다 */
+function rateLimitRetryAt(
+  result: Extract<GitHubHttpResult<unknown>, { ok: false }>,
+): Date | null {
+  return result.error.kind === "rate_limited" ? result.error.resetAt ?? null : null;
+}
+
 async function persistReleases(
   executor: EvidenceExecutor,
   slug: string,
@@ -312,6 +325,52 @@ async function persistReleases(
     publishedAt: new Date(release.publishedAt),
     observedAt,
   })), executor, productId);
+}
+
+type GitHubFailureContext = {
+  slug: string;
+  repositoryKey: string;
+  productId: number;
+  now: Date;
+  attempts: number;
+  log: (outcome: string, httpClass: string, count: number) => void;
+};
+
+type GitHubFailure = {
+  state: "failed" | "disconnected";
+  /** rate limit이 알려준 시각. 없으면 자체 백오프를 쓴다 */
+  retryAt: Date | null;
+  errorCode: string;
+  httpClass: string;
+};
+
+/**
+ * 실패한 관측을 기록하고 호출부가 그대로 돌려줄 결과를 만든다.
+ *
+ * 실패 분기 셋(레포 조회 실패·비공개 레포·보조 조회 실패)이 같은 행을 남긴다. 다른 것은
+ * 상태와 재시도 시각, 오류 코드뿐이라 판정은 호출부에, 기록은 여기에 둔다.
+ */
+async function recordGitHubFailure(
+  context: GitHubFailureContext,
+  failure: GitHubFailure,
+): Promise<{ status: "disconnected" | "deferred"; releases: number; retryAt?: Date | null }> {
+  await upsertObservedSource({
+    slug: context.slug,
+    kind: "repository",
+    provider: "github",
+    sourceKey: context.repositoryKey,
+    state: failure.state,
+    lastFailureAt: context.now,
+    nextAttemptAt: failure.retryAt ?? new Date(context.now.getTime() + GITHUB_REFRESH_MS),
+    attempts: context.attempts,
+    lastErrorCode: failure.errorCode,
+  }, db, context.productId);
+  if (failure.state === "disconnected") {
+    context.log("disconnected", failure.httpClass, 0);
+    return { status: "disconnected", releases: 0 };
+  }
+  context.log("deferred", failure.httpClass, 0);
+  return { status: "deferred", releases: 0, retryAt: failure.retryAt };
 }
 
 export async function refreshGitHubEvidence(
@@ -352,46 +411,34 @@ export async function refreshGitHubEvidence(
     "evidence.github_refresh",
     { sourceKind: "repository", slug: input.slug, outcome, httpClass, count },
   );
+  const failureContext: GitHubFailureContext = {
+    slug: input.slug,
+    repositoryKey,
+    productId,
+    now,
+    attempts: (current?.attempts ?? 0) + 1,
+    log,
+  };
+
 
   if (!root.ok) {
-    const disconnected = root.error.kind === "not_found";
-    await upsertObservedSource({
-      slug: input.slug,
-      kind: "repository",
-      provider: "github",
-      sourceKey: repositoryKey,
-      state: disconnected ? "disconnected" : "failed",
-      lastFailureAt: now,
-      nextAttemptAt: root.error.kind === "rate_limited" && root.error.resetAt
-        ? root.error.resetAt
-        : new Date(now.getTime() + GITHUB_REFRESH_MS),
-      attempts: (current?.attempts ?? 0) + 1,
-      lastErrorCode: failureCode(root),
-    }, db, productId);
-    log(disconnected ? "disconnected" : "deferred", root.error.kind === "http" ? String(root.error.status) : root.error.kind, 0);
-    if (disconnected) return { status: "disconnected", releases: 0 };
-    return {
-      status: "deferred",
-      releases: 0,
-      retryAt: root.error.kind === "rate_limited" ? root.error.resetAt : null,
-    };
+    // 레포가 없어진 것은 재시도할 일이 아니라 연결이 끊긴 것이다
+    return recordGitHubFailure(failureContext, {
+      state: root.error.kind === "not_found" ? "disconnected" : "failed",
+      retryAt: rateLimitRetryAt(root),
+      errorCode: failureCode(root),
+      httpClass: httpClass(root),
+    });
   }
 
   const repository = root.status === 200 ? root.value as RepositoryPayload : null;
   if (repository && repository.private !== false) {
-    await upsertObservedSource({
-      slug: input.slug,
-      kind: "repository",
-      provider: "github",
-      sourceKey: repositoryKey,
+    return recordGitHubFailure(failureContext, {
       state: "disconnected",
-      lastFailureAt: now,
-      nextAttemptAt: new Date(now.getTime() + GITHUB_REFRESH_MS),
-      attempts: (current?.attempts ?? 0) + 1,
-      lastErrorCode: "private_repository",
-    }, db, productId);
-    log("disconnected", "private", 0);
-    return { status: "disconnected", releases: 0 };
+      retryAt: null,
+      errorCode: "private_repository",
+      httpClass: "private",
+    });
   }
 
   const [languages, contributors, releases, readme] = await Promise.all([
@@ -410,25 +457,12 @@ export async function refreshGitHubEvidence(
     : [languages, contributors, releases, readme];
   const failed = supporting.find((result): result is Extract<GitHubHttpResult<unknown>, { ok: false }> => !result.ok);
   if (failed) {
-    await upsertObservedSource({
-      slug: input.slug,
-      kind: "repository",
-      provider: "github",
-      sourceKey: repositoryKey,
+    return recordGitHubFailure(failureContext, {
       state: "failed",
-      lastFailureAt: now,
-      nextAttemptAt: failed.error.kind === "rate_limited" && failed.error.resetAt
-        ? failed.error.resetAt
-        : new Date(now.getTime() + GITHUB_REFRESH_MS),
-      attempts: (current?.attempts ?? 0) + 1,
-      lastErrorCode: failureCode(failed),
-    }, db, productId);
-    log("deferred", failed.error.kind === "http" ? String(failed.error.status) : failed.error.kind, 0);
-    return {
-      status: "deferred",
-      releases: 0,
-      retryAt: failed.error.kind === "rate_limited" ? failed.error.resetAt : null,
-    };
+      retryAt: rateLimitRetryAt(failed),
+      errorCode: failureCode(failed),
+      httpClass: httpClass(failed),
+    });
   }
   if (
     !isSuccessfulGitHubResponse(languages)
