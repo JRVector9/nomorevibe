@@ -66,13 +66,14 @@ export async function judgeCrawlDocuments(ctx: JobContext<null>): Promise<JobOut
  * 아무 의미가 없고, 조회는 후보 수만큼 늘어난다.
  */
 async function judgeDocument(document: CrawlDocument, settings: CrawlSettings): Promise<Verdict> {
-  const pageMeta = (document.pageMeta ?? {}) as { generator?: unknown };
+  const pageMeta = (document.pageMeta ?? {}) as { generator?: unknown; title?: unknown };
   const verdict = judge(
     factsFromRepoMeta(document.repo, document.repoMeta),
     {
       productUrl: document.productUrl,
       status: document.pageStatus,
       generator: typeof pageMeta.generator === "string" ? pageMeta.generator : null,
+      title: typeof pageMeta.title === "string" ? pageMeta.title : null,
     },
     settings,
   );

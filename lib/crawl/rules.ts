@@ -28,6 +28,8 @@ export type PageFacts = {
   status: number | null;
   /** 감지된 문서 생성기. 없거나 아직 안 본 문서면 null */
   generator?: string | null;
+  /** 페이지 제목(og:title 또는 <title>). 스캐폴드 기본값을 가려내는 데 쓴다 */
+  title?: string | null;
 };
 
 export type Verdict = {
@@ -111,6 +113,7 @@ export function judge(
     productUrl: page.productUrl,
     pageStatus: page.status,
     generator: page.generator ?? null,
+    pageTitle: page.title ?? null,
   };
 
   const reject = (reason: DecisionReason): Verdict => ({ state: "rejected", reason, signals });
@@ -127,6 +130,18 @@ export function judge(
    * 92%가 그 모양이었다. 페이지가 mkdocs·pkgdown 같은 것으로 만들어졌다면 읽을거리다.
    */
   if (page.generator && rules.docsGenerators.includes(page.generator.toLowerCase())) {
+    return reject("not_a_product");
+  }
+
+  /**
+   * 프레임워크가 만들어 준 제목을 그대로 배포한 것.
+   *
+   * 실데이터에서 "Create Next App"이 셋, "Document"와 "Svelte app"이 하나씩 목록에 올라
+   * 있었다. 제목을 안 바꿨다는 것은 아직 아무것도 만들지 않았다는 뜻이다. 같은 제목이
+   * 여럿이면 목록이 스스로 못 미더워 보인다.
+   */
+  const pageTitle = page.title?.trim().toLowerCase() ?? "";
+  if (pageTitle && rules.placeholderTitles.some((t) => t.toLowerCase() === pageTitle)) {
     return reject("not_a_product");
   }
 
