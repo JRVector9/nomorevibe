@@ -25,6 +25,8 @@ describe("distributed /nomorevibe evidence skill", () => {
     expect(source).toContain("삭제될 항목");
     expect(source).toContain("제안 payload");
     expect(source).toContain("명시적으로 확인");
+    // 남의 README에 쓰는 배지 삽입도 멱등이어야 한다 — 재검증에 두 줄이 생기면 안 된다
+    expect(source).toContain("이미 있으면 묻지 않고");
     for (const command of ["profile", "links", "media", "provenance", "update"]) {
       expect(source, command).toMatch(new RegExp(`\\b${command}\\b[\\s\\S]*확인`));
     }

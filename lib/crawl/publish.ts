@@ -63,6 +63,12 @@ export async function publishCandidate(candidate: CrawlCandidate): Promise<Publi
       language: draft.language,
     })) ?? draft.category;
   const editToken = generateEditToken();
+  /**
+   * "만든 AI" 추정은 이 레포를 데려온 신호가 근거다 — "Co-authored-by: Claude"로 찾았으면
+   * Claude가 커밋한 것이다. 그 판단은 발견 시점에 프론티어에 굳어 있으므로 여기서는 읽기만
+   * 한다. 기록이 없으면 추정하지 않는다 — 없는 값을 지어내지 않는 것이 발행의 원칙이다.
+   */
+  const builder = await crawl.getFrontierBuilder(candidate.repo);
 
   let slug = "";
   for (let attempt = 0; ; attempt++) {
@@ -75,9 +81,9 @@ export async function publishCandidate(candidate: CrawlCandidate): Promise<Publi
         tagline: draft.tagline,
         description: draft.description,
         category,
-        // "만든 AI"는 메이커 신고값이다. 우리가 커밋 트레일러를 보고 추측한 것을 여기 넣으면
-        // 신고와 추정이 같은 칸에서 섞인다 — 주인이 클레임할 때 직접 밝힌다.
-        builder: null,
+        // 발견 신호로 추정한 값이다. 주인이 없는 동안은 "우리 추정"으로 표시되고(view.ts),
+        // 클레임하는 순간 비워져 메이커가 직접 밝힌 값만 "메이커 신고"가 된다(verify.ts).
+        builder,
         stack: draft.stack,
         ogImage: null,
         makerName: null,

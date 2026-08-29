@@ -49,7 +49,7 @@ export const products = pgTable("products", {
   tagline: varchar("tagline", { length: 200 }).notNull(),
   description: text("description").notNull(),
   category: varchar("category", { length: 40 }).notNull(),
-  // 메이커 신고값 — 랭킹에 반영하지 않음
+  // 만든 AI. 수집 발행은 우리 추정으로 채우고 클레임 때 비워 메이커 신고값만 남긴다 — 랭킹에 반영하지 않음
   builder: varchar("builder", { length: 60 }),
   stack: jsonb("stack").$type<string[]>().notNull().default([]),
   ogImage: text("og_image"),
@@ -65,6 +65,8 @@ export const products = pgTable("products", {
     .default("skill"),
   // 우리가 대신 올린 제품을 메이커가 가져간 시각. null이면 아직 주인이 없다.
   claimedAt: timestamp("claimed_at"),
+  // 주인에게 클레임 초대(레포 이슈)를 보냈다고 운영자가 표시한 시각. 두 번 보내지 않기 위한 기록이다.
+  claimInvitedAt: timestamp("claim_invited_at"),
   verifyToken: varchar("verify_token", { length: 80 }).notNull(),
   verifyMethod: varchar("verify_method", { length: 10 }), // 'file' | 'meta'
   verifiedAt: timestamp("verified_at"),

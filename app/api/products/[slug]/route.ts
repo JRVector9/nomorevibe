@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import type { Product } from "@/lib/db/schema";
 import { updateSchema, formatIssues } from "@/lib/domain/products/schema";
 import { updateProduct, deleteProduct } from "@/lib/domain/products/manage";
 import { findBySlug } from "@/lib/domain/products/repository";
@@ -11,15 +12,44 @@ import { siteOrigin } from "@/lib/site";
 
 type Params = { params: Promise<{ slug: string }> };
 
+/**
+ * 밖으로 나가는 제품 필드.
+ *
+ * 전에는 토큰 둘만 빼고 행 전체를 내보냈다. products에 컬럼을 더할 때마다 기본이 공개였고,
+ * 운영자가 누구에게 언제 클레임 초대를 보냈는지(claimInvitedAt)가 그렇게 익명 호출자에게
+ * 나갔다. 여기 적은 것만 나간다 — 새 컬럼은 이 목록에 손대야 공개된다.
+ */
+function publicView(product: Product) {
+  return {
+    id: product.id,
+    slug: product.slug,
+    url: product.url,
+    name: product.name,
+    tagline: product.tagline,
+    description: product.description,
+    category: product.category,
+    builder: product.builder,
+    stack: product.stack,
+    ogImage: product.ogImage,
+    makerName: product.makerName,
+    repoUrl: product.repoUrl,
+    status: product.status,
+    source: product.source,
+    claimedAt: product.claimedAt,
+    verifyMethod: product.verifyMethod,
+    verifiedAt: product.verifiedAt,
+    createdAt: product.createdAt,
+    updatedAt: product.updatedAt,
+  };
+}
+
 export const GET = withRoute("products.get", async (req: Request, { params }: Params) => {
   const { slug } = await params;
   const product = await findBySlug(slug);
   if (!product || product.status === "banned") {
     return errorResponse({ kind: "not_found" });
   }
-  // 토큰류는 응답에서 제외
-  const { editTokenHash, verifyToken, ...publicFields } = product;
-  void editTokenHash;
+  const publicFields = publicView(product);
 
   /**
    * 우리가 대신 올린 제품은 검증 규약을 함께 준다.
@@ -32,7 +62,7 @@ export const GET = withRoute("products.get", async (req: Request, { params }: Pa
   return NextResponse.json({
     ...publicFields,
     claimable: true,
-    verify: verifyInstructions(siteOrigin(req), verifyToken, slug),
+    verify: verifyInstructions(siteOrigin(req), product.verifyToken, slug),
   });
 });
 

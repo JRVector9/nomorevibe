@@ -1,9 +1,11 @@
 import { describe, it, expect, beforeAll, beforeEach, vi } from "vitest";
 
 const searchCommits = vi.fn();
+const searchRepositories = vi.fn();
 vi.mock("@/lib/crawl/github", async (original) => ({
   ...(await original<Record<string, unknown>>()),
   searchCommits: (...a: unknown[]) => searchCommits(...a),
+  searchRepositories: (...a: unknown[]) => searchRepositories(...a),
 }));
 
 const { db } = await import("@/lib/db");
@@ -40,7 +42,74 @@ beforeEach(async () => {
   await db.delete(crawlSettings);
   await db.delete(jobs);
   searchCommits.mockReset();
-  await saveSettings({ enabled: true, discover: { pagesPerTick: 1 } }, "테스트");
+  searchRepositories.mockReset();
+  // 기본 신호 셋 중 커밋 둘만 켠다 — 레포 검색은 자기 테스트에서 따로 켠다
+  await saveSettings({
+    enabled: true,
+    discover: {
+      pagesPerTick: 1,
+      queries: [
+        { label: "Claude 커밋 트레일러", query: "Co-authored-by: Claude", enabled: true, priority: 100, builder: "Claude" },
+        { label: "Codex 커밋 트레일러", query: "Co-authored-by: Codex", enabled: true, priority: 90, builder: "Codex" },
+      ],
+    },
+  }, "테스트");
+});
+
+describe("레포 검색 신호", () => {
+  const only = (query: string) => saveSettings({
+    discover: { queries: [{ label: "토픽", kind: "repositories", query, enabled: true, priority: 80, builder: null }] },
+  }, "테스트");
+
+  it("배포 URL이 있는 레포만 프론티어에 넣는다 — 없는 것은 fetch까지 가도 거부될 뿐이다", async () => {
+    await only("topic:vibe-coding");
+    searchRepositories.mockResolvedValue({
+      ok: true,
+      value: { items: [
+        { full_name: "a/deployed", homepage: "https://a.test" },
+        { full_name: "b/bare", homepage: null },
+        { full_name: "c/blank", homepage: "   " },
+      ] },
+    });
+
+    await tick();
+
+    const repos = (await db.select({ repo: crawlFrontier.repo }).from(crawlFrontier)).map((r) => r.repo);
+    expect(repos).toEqual(["a/deployed"]);
+    expect(searchCommits).not.toHaveBeenCalled();
+  });
+
+  it("URL이 아닌 homepage는 배포 URL로 치지 않는다", async () => {
+    // GitHub의 homepage는 자유 입력이라 "soon"·"TBD" 같은 값이 온다. 그런 레포는 fetch까지
+    // 가도 normalizeUrl이 거부할 뿐이라, 예산만 쓰고 결과가 같다
+    await only("topic:vibe-coding");
+    searchRepositories.mockResolvedValue({
+      ok: true,
+      value: { items: [
+        { full_name: "a/deployed", homepage: "https://a.test" },
+        { full_name: "d/bare-domain", homepage: "d.example.com" },
+        { full_name: "e/soon", homepage: "soon" },
+        { full_name: "f/tbd", homepage: "TBD" },
+        { full_name: "g/scheme", homepage: "ftp://g.example.com" },
+      ] },
+    });
+
+    await tick();
+
+    const repos = (await db.select({ repo: crawlFrontier.repo }).from(crawlFrontier)).map((r) => r.repo);
+    expect(repos.sort()).toEqual(["a/deployed", "d/bare-domain"]);
+  });
+
+  it("레포 검색에는 푸시 기간 창을 넣는다", async () => {
+    await only("topic:vibe-coding");
+    searchRepositories.mockResolvedValue({ ok: true, value: { items: [] } });
+
+    await tick();
+
+    expect(searchRepositories).toHaveBeenCalledWith(
+      expect.objectContaining({ query: expect.stringMatching(/^topic:vibe-coding pushed:>=\d{4}-\d{2}-\d{2}$/) }),
+    );
+  });
 });
 
 describe("검색 잡", () => {
@@ -53,6 +122,25 @@ describe("검색 잡", () => {
     const [entry] = await crawl.dequeue(1);
     // 어떤 신호로 발견했는지 남는다 — 신호별 수율을 비교하려면 필요하다
     expect(entry).toMatchObject({ signal: "Claude 커밋 트레일러", priority: 100 });
+    // 추정 AI도 발견 시점에 굳는다 — 나중에 라벨이 바뀌어도 발행이 이 값을 쓴다
+    expect(entry.builder).toBe("Claude");
+  });
+
+  it("어떤 AI인지 말하지 않는 신호는 추정을 비운 채 넣는다", async () => {
+    await saveSettings(
+      { discover: { queries: [{ label: "토픽", kind: "repositories", query: "topic:vibe-coding", enabled: true, priority: 80, builder: null }] } },
+      "테스트",
+    );
+    searchRepositories.mockResolvedValue({
+      ok: true,
+      value: { items: [{ full_name: "a/deployed", homepage: "https://a.test" }] },
+    });
+
+    await tick();
+
+    const [entry] = await crawl.dequeue(1);
+    expect(entry).toMatchObject({ signal: "토픽" });
+    expect(entry.builder).toBeNull();
   });
 
   it("검색어에 신호와 기간 창을 함께 넣는다", async () => {

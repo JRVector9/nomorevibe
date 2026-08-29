@@ -187,12 +187,32 @@ SHA-256)만 사용한다. 스킬 파일 바이트의 `hash`는 소문자 64자 S
      `.well-known/nomorevibe.txt` 파일을 verify_token 내용으로 생성한다.
    - SPA 등 파일 방식이 곤란하면 `<meta name="nomorevibe-verify" content="...">` 태그를 HTML head에 추가한다.
    - "재배포하신 뒤 `/nomorevibe verify` 를 실행해주세요"라고 안내한다.
+9. **근거 이어 채우기**: 3번에서 읽은 README·manifest·git remote는 상세 소개와 공식 링크의 재료이기도
+   하다. 같은 세션에서 "상세 소개와 공식 링크도 지금 채울까요?"라고 **한 번** 묻는다. 동의하면
+   `profile`과 `links`를 차례로 **쓰기 전 공통 절차** 그대로 진행한다(각각 GET → 제안 미리보기 →
+   확인 → PUT). 나중에 따로 실행하라고 미루지 않는다 — 등록만 하고 떠난 제품은 상세 페이지가
+   비어 있고, 그 재료를 다시 읽으러 돌아오는 사람은 없다.
+   - `links`에는 3번의 git remote가 `github.com`이면 `repository` 항목으로 넣는다. 이 링크가 있어야
+     서버가 저장소의 스타·릴리스·라이선스를 수집한다. 등록 payload의 `repo_url`은 표시용일 뿐
+     수집을 시작시키지 않는다.
+   - `media`와 `provenance`는 여기서 권하지 않는다. 전자는 공개 이미지 URL이 따로 필요하고,
+     후자는 명시적 옵트인이다.
+   - 거절하면 다시 묻지 않고 `/nomorevibe profile`, `/nomorevibe links`로 언제든 채울 수 있다고만
+     알린다.
 
 ## 2. 검증 (`verify`)
 
 1. `.nomorevibe.json`에서 slug를 읽는다. 없으면 먼저 등록하라고 안내.
 2. `curl -s -X POST <API>/api/products/<slug>/verify`
 3. 성공(`status: "verified"`): 공개 목록에 게시됐다고 알리고 상세 페이지 주소를 보여준다.
+   이어서 README에 배지를 넣을지 **한 번** 묻는다. 검증된 제품만 받을 수 있는 배지라 검증 사실
+   자체를 보여준다. 다만 **README에 `/badge/<slug>.svg`를 가리키는 줄이 이미 있으면 묻지 않고
+   넘어간다** — 이 응답은 이미 검증된 제품에도 성공(`already: true`)으로 오므로, 재검증할 때마다
+   물으면 같은 줄이 하나씩 늘어난다. 동의하면 README 상단(제목 아래)에 다음 한 줄을 추가한다 —
+   다른 내용은 건드리지 않는다.
+   ```markdown
+   [![Verified on NoMoreVibe](<API>/badge/<slug>.svg)](<API>/p/<slug>)
+   ```
 4. 실패(422): 응답의 `expected` 내용을 보여주며 배포가 완료됐는지, 파일 경로가 맞는지 확인하도록 안내한다.
    실제 배포 URL에서 `curl -s <url>/.well-known/nomorevibe.txt` 로 직접 확인해본다.
 
@@ -207,13 +227,16 @@ SHA-256)만 사용한다. 스킬 파일 바이트의 `hash`는 소문자 64자 S
    - 성공 응답에 `claimed: true`와 `edit_token`이 온다. **이 응답에만 나오는 값이다.**
       `~/.config/nomorevibe/credentials.json`의 토큰을 발급한 API origin 아래 해당 slug에 저장하고
       (chmod 600) `.nomorevibe.json`도 만든다.
-   - 이제 제품은 검증됨 상태가 되고 랭킹에 들어간다.
+   - 이제 제품은 검증됨 상태가 되고 랭킹에 들어간다. 검증 3번과 같이 README 배지를 넣을지 묻는다
+     (같은 배지 줄이 이미 있으면 묻지 않고 넘어가는 것까지 같다).
 4. **내리고 싶다면**: 사용자가 등록을 원치 않으면 클레임할 필요가 없다.
    `curl -s -X POST <API>/api/products/<slug>/takedown -H 'content-type: application/json' -d '{"reason":"..."}'`
    이유는 선택이다. 사람이 확인한 뒤 내려주며, 내려간 뒤에는 수집기가 다시 올리지 않는다.
 5. **정보 갱신**: 우리가 채운 이름·소개는 공개 데이터에서 뽑은 것이라 부정확할 수 있다.
    등록 4번처럼 정보를 만들어 `PATCH <API>/api/products/<slug>`로 갱신할지 사용자에게 묻는다.
-   `builder`(만든 AI)는 이때 처음 들어간다 — 우리가 대신 채우지 않는다.
+   갱신 뒤에는 등록 9번과 같이 상세 소개와 공식 링크를 이어서 채울지 한 번 묻는다.
+   `builder`(만든 AI)는 여기서 메이커가 직접 밝힌다. 우리가 커밋 트레일러로 붙여 둔 "우리 추정"
+   값은 클레임과 함께 비워지므로, 묻지 않으면 빈 채로 남는다.
 
 ## 4. 삭제 (`delete`)
 

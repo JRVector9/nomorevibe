@@ -6,6 +6,7 @@ import { saveSettings, resetSettings } from "@/lib/crawl/settings";
 import { decideCandidate, type ReviewDecision } from "@/lib/crawl/review";
 import { resolveTakedown, type TakedownAction } from "@/lib/domain/products/takedown";
 import { banProduct, unbanProduct } from "@/lib/domain/products/manage";
+import { markClaimInvited } from "@/lib/domain/products/claim-invite";
 import { logger } from "@/lib/observability/logger";
 
 export type SaveState = { ok?: true; issues?: string[] } | null;
@@ -36,9 +37,11 @@ export async function saveCrawlSettings(_prev: SaveState, form: FormData): Promi
   const queryCount = num(form.get("queryCount"));
   const queries = Array.from({ length: Number.isFinite(queryCount) ? queryCount : 0 }, (_, i) => ({
     label: String(form.get(`query.${i}.label`) ?? ""),
+    kind: form.get(`query.${i}.kind`) === "repositories" ? "repositories" : "commits",
     query: String(form.get(`query.${i}.query`) ?? ""),
     enabled: form.get(`query.${i}.enabled`) === "on",
     priority: num(form.get(`query.${i}.priority`)),
+    builder: String(form.get(`query.${i}.builder`) ?? "").trim() || null,
   })).filter((q) => q.label && q.query);
 
   const patch = {
@@ -163,6 +166,27 @@ export async function setProductBan(_prev: ReviewState, form: FormData): Promise
   if (!result.ok) return { error: "제품을 찾을 수 없습니다" };
 
   logger.info("admin.product_ban", { slug, action, login: admin.login });
+  revalidatePath("/admin/products");
+  return null;
+}
+
+/**
+ * 클레임 초대를 보냈다고 표시한다.
+ *
+ * 보내는 것은 운영자가 GitHub에서 직접 한다(미리 채운 새 이슈 링크). 여기서는 두 번 보내지
+ * 않도록 시각만 남긴다.
+ */
+export async function markClaimInvite(_prev: ReviewState, form: FormData): Promise<ReviewState> {
+  const admin = await currentAdmin();
+  if (!admin) return { error: "권한이 없습니다. 다시 로그인해주세요." };
+
+  const slug = String(form.get("slug") ?? "");
+  const result = await markClaimInvited(slug);
+  if (!result.ok) {
+    return { error: result.error.kind === "forbidden" ? result.error.message : "제품을 찾을 수 없습니다" };
+  }
+
+  logger.info("admin.claim_invited", { slug, login: admin.login });
   revalidatePath("/admin/products");
   return null;
 }

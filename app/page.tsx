@@ -2,37 +2,25 @@ import Link from "next/link";
 import { BrowseFilters, parseHomeSort, type HomeSort } from "@/components/BrowseFilters";
 import { DiscoveryBoards } from "@/components/DiscoveryBoards";
 import { EmptyState } from "@/components/EmptyState";
-import { MarketStats } from "@/components/MarketStats";
 import { ProductList } from "@/components/ProductCard";
 import { RankingTable } from "@/components/RankingTable";
 import { categoryCounts } from "@/lib/domain/products/repository";
 import { CATEGORIES } from "@/lib/domain/products/schema";
-import { marketStats, type MarketStats as MarketStatsData } from "@/lib/domain/products/stats";
-import { getVerifiedList, type ProductListItem } from "@/lib/domain/products/view";
+import { getUnclaimedList, getVerifiedList, type ProductListItem } from "@/lib/domain/products/view";
 import {
   getAllTimeRanking,
   getCurrentSeason,
   getDiscoveryBoards,
-  getSeasonHistory,
   getSeasonRanking,
-  RANKING_STALE_MS,
   type RankingListItem,
   type SeasonSummary,
 } from "@/lib/domain/ranking/view";
+import { DEFAULT_RANKING_POLICY } from "@/lib/domain/ranking/policy";
 import { logger } from "@/lib/observability/logger";
 
 export const dynamic = "force-dynamic";
 
 const HOME_LIST_LIMIT = 100;
-const KST_DATE_TIME = new Intl.DateTimeFormat("ko-KR", {
-  timeZone: "Asia/Seoul",
-  year: "numeric",
-  month: "numeric",
-  day: "numeric",
-  hour: "2-digit",
-  minute: "2-digit",
-  hour12: false,
-});
 
 type Props = { searchParams: Promise<{ sort?: string; category?: string; q?: string }> };
 type Boards = Awaited<ReturnType<typeof getDiscoveryBoards>>;
@@ -57,82 +45,70 @@ function listFor(
 }
 
 /**
+ * 미클레임 구획을 붙일지.
+ *
+ * 기준은 "검증된 제품이 몇 개나 모였느냐"지 지금 화면에 몇 줄이 떴느냐가 아니다. 순위
+ * 목록은 policy.leaderboard.limit(기본 10)에서 잘리고 그 상한은 언제나 minimumProducts
+ * (기본 20) 이하라(policy.ts의 superRefine), 목록 길이로 재면 조건이 늘 참이 되어 구획이
+ * 영영 빠지지 않는다. 필터가 걸린 화면도 전역 수를 본다 — 카테고리 하나가 비었다고
+ * 시장에 제품이 모자란 것은 아니다.
+ */
+export function needsUnclaimedFill(verifiedTotal: number, minimumProducts: number): boolean {
+  return verifiedTotal < minimumProducts;
+}
+
+/**
  * 빈 화면은 이유마다 다른 말을 해야 한다.
  *
  * 순위 정렬에서 결과가 없는 것은 제품이 없다는 뜻이 아니다 — 순위는 검증된 제품의 유효
  * 방문으로만 매기므로, 제품이 34개 있어도 그 방문이 없으면 비어 보인다. 거기에 "아직
  * 등록된 제품이 없습니다"라고 적으면 등록부터 하라고 잘못 안내하게 된다.
+ *
+ * 아래에 미클레임 목록이 붙는 화면에서는 "없습니다"라고 말할 수 없다 — 화면이 제 말을
+ * 반박한다. 순위가 비었다는 설명만 그 목록과 어긋나지 않는다. 미클레임 제품은 애초에
+ * 순위에 들어가지 않기 때문이다.
  */
-function EmptyReason({ sort, filtered }: { sort: HomeSort; filtered: boolean }) {
-  if (filtered) {
+function EmptyReason({
+  sort,
+  filtered,
+  hasUnclaimed,
+}: {
+  sort: HomeSort;
+  filtered: boolean;
+  hasUnclaimed: boolean;
+}) {
+  if (filtered && !hasUnclaimed) {
     return (
-      <EmptyState>
-        조건에 맞는 제품이 없습니다.{" "}
-        <Link href="/" className="font-semibold text-accent">전체 보기</Link>
-      </EmptyState>
+      <div className="mt-10">
+        <EmptyState>
+          조건에 맞는 제품이 없습니다.{" "}
+          <Link href="/" className="font-semibold text-accent">전체 보기</Link>
+        </EmptyState>
+      </div>
     );
   }
 
   if (sort !== "recent") {
     return (
-      <EmptyState>
-        아직 순위에 오른 제품이 없습니다. 검증된 제품에 유효 방문이 쌓이면 나타납니다.{" "}
-        <Link href="/?sort=recent" className="font-semibold text-accent">최신순으로 보기</Link>
-      </EmptyState>
+      <div className="mt-10">
+        <EmptyState>
+          아직 순위에 오른 제품이 없습니다. 검증된 제품에 유효 방문이 쌓이면 나타납니다.{" "}
+          <Link href="/?sort=recent" className="font-semibold text-accent">최신순으로 보기</Link>
+        </EmptyState>
+      </div>
     );
   }
 
+  if (hasUnclaimed) return null;
+
   return (
-    <EmptyState>
-      아직 등록된 제품이 없습니다.{" "}
-      <Link href="/launch" className="font-semibold text-accent">/nomorevibe</Link>{" "}
-      로 첫 번째 제품을 등록해보세요.
-    </EmptyState>
-  );
-}
-
-function remainingTime(endsAt: Date, now: Date): string {
-  const milliseconds = endsAt.getTime() - now.getTime();
-  if (milliseconds <= 0) return "경계 처리 대기";
-  const hours = Math.ceil(milliseconds / 3_600_000);
-  if (hours < 24) return `${hours}시간 남음`;
-  return `${Math.ceil(hours / 24)}일 남음`;
-}
-
-function snapshotAge(refreshedAt: Date | null, now: Date): string {
-  if (!refreshedAt) return "스냅샷 집계 대기";
-  const age = Math.max(0, now.getTime() - refreshedAt.getTime());
-  const minutes = Math.floor(age / 60_000);
-  const label = minutes < 1 ? "방금" : minutes < 60 ? `${minutes}분 전` : `${Math.floor(minutes / 60)}시간 전`;
-  return `스냅샷 ${label}${age > RANKING_STALE_MS ? " · 오래됨" : ""}`;
-}
-
-function SeasonHeader({
-  season,
-  latestClosed,
-  now,
-}: {
-  season: SeasonSummary;
-  latestClosed: SeasonSummary | null;
-  now: Date;
-}) {
-  return (
-    <section className="mt-5 rounded-[12px] border border-line bg-bg-card px-5 py-4">
-      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-        <h2 className="font-mono text-[15px] font-extrabold">{season.key}</h2>
-        <span className="text-[13px] text-fg-2">
-          {KST_DATE_TIME.format(season.startsAt)} – {KST_DATE_TIME.format(season.endsAt)} KST
-        </span>
-        <span className="text-[13px] font-semibold text-accent">{remainingTime(season.endsAt, now)}</span>
-        <span className="text-[13px] text-fg-3">{snapshotAge(season.refreshedAt, now)}</span>
-        <div className="ml-auto flex gap-3 text-[13px] font-semibold">
-          <Link href={`/rankings/${season.key}`} className="text-accent hover:underline">현재 규칙 보기</Link>
-          {latestClosed && (
-            <Link href={`/rankings/${latestClosed.key}`} className="text-fg-2 hover:text-fg">지난 시즌</Link>
-          )}
-        </div>
-      </div>
-    </section>
+    <div className="mt-10">
+      <EmptyState>
+        아직 등록된 제품이 없습니다.{" "}
+        <Link href="/launch" className="font-semibold text-accent">/nomorevibe</Link>{" "}
+        로 첫 번째 제품을 등록해보세요.
+      </EmptyState>
+    </div>
   );
 }
 
@@ -144,12 +120,11 @@ export default async function HomePage({ searchParams }: Props) {
   const now = new Date();
 
   let active: SeasonSummary | null = null;
-  let latestClosed: SeasonSummary | null = null;
   let effectiveSort: HomeSort = requestedSort;
   let list: ProductListItem[] | RankingListItem[] = [];
+  let unclaimed: ProductListItem[] = [];
   let boards: Boards | null = null;
   let counts: Record<string, number> = {};
-  let stats: MarketStatsData | null = null;
   let total = 0;
   let dbDown = false;
 
@@ -159,24 +134,30 @@ export default async function HomePage({ searchParams }: Props) {
       logger.warn("home.ranking_unavailable");
       effectiveSort = "recent";
     }
-    const trendWindowHours = active?.policy.trend.windowHours ?? 24;
     const listPromise = active
       ? listFor(effectiveSort, active, category, query)
       : getVerifiedList(HOME_LIST_LIMIT, { sort: "recent", category, query });
 
-    const [loadedBoards, loadedStats, loadedCounts, loadedList, history] = await Promise.all([
+    const [loadedBoards, loadedCounts, loadedList] = await Promise.all([
       getDiscoveryBoards(),
-      marketStats({ windowHours: trendWindowHours }),
       categoryCounts(["verified"]),
       listPromise,
-      getSeasonHistory(1),
     ]);
     boards = loadedBoards;
-    stats = loadedStats;
     counts = loadedCounts;
     list = loadedList;
-    latestClosed = history[0] ?? null;
     total = Object.values(counts).reduce((sum, count) => sum + count, 0);
+
+    /**
+     * 검증된 제품이 시즌을 채울 만큼 없으면 첫 화면이 두어 개로 끝난다.
+     *
+     * 그 아래에 우리가 대신 올린 제품을 따로 이어 붙인다. 랭킹에 섞지 않고 구획을 나누므로
+     * "검증된 것만 겨룬다"는 원칙은 그대로다. 검증된 제품이 차오르면 이 구획은 저절로 빠진다.
+     */
+    const minimumProducts = (active?.policy ?? DEFAULT_RANKING_POLICY).eligibility.minimumProducts;
+    if (needsUnclaimedFill(total, minimumProducts)) {
+      unclaimed = await getUnclaimedList(HOME_LIST_LIMIT - list.length, { category, query });
+    }
   } catch (error) {
     logger.error("home.list_failed", { error });
     dbDown = true;
@@ -196,8 +177,6 @@ export default async function HomePage({ searchParams }: Props) {
         </p>
       </section>
 
-      {active && <SeasonHeader season={active} latestClosed={latestClosed} now={now} />}
-      {stats && <MarketStats stats={stats} windowHours={trendWindowHours} />}
 
       {boards && (
         <section className="mt-5">
@@ -213,9 +192,11 @@ export default async function HomePage({ searchParams }: Props) {
           <EmptyState>일시적으로 목록을 불러올 수 없습니다. 잠시 후 다시 시도해주세요.</EmptyState>
         </div>
       ) : list.length === 0 ? (
-        <div className="mt-10">
-          <EmptyReason sort={effectiveSort} filtered={Boolean(query || category)} />
-        </div>
+        <EmptyReason
+          sort={effectiveSort}
+          filtered={Boolean(query || category)}
+          hasUnclaimed={unclaimed.length > 0}
+        />
       ) : effectiveSort === "recent" ? (
         <div className="mt-6"><ProductList products={list} /></div>
       ) : (
@@ -229,6 +210,20 @@ export default async function HomePage({ searchParams }: Props) {
             mode={effectiveSort === "all-time" ? "all-time" : "season"}
           />
         </div>
+      )}
+
+      {unclaimed.length > 0 && (
+        <section className="mt-10">
+          {/* 발견 보드의 "새로 발견됨"은 최근 등재된 것 몇 개고, 이 구획은 미클레임 전부다 —
+              같은 제목을 쓰면 같은 것의 반복으로 읽힌다 */}
+          <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+            <h2 className="text-[15px] font-extrabold">주인을 기다리는 제품</h2>
+            <p className="text-[13px] text-fg-3">
+              우리가 찾아서 올렸고 아직 주인이 나타나지 않은 제품입니다. 랭킹에는 들어가지 않습니다.
+            </p>
+          </div>
+          <div className="mt-3"><ProductList products={unclaimed} /></div>
+        </section>
       )}
     </main>
   );

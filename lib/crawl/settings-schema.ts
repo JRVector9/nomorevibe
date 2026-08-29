@@ -24,11 +24,27 @@ const discoverSchema = z.object({
     .array(
       z.object({
         label: z.string().min(1).max(40),
-        /** GitHub 검색 문자열 */
+        /**
+         * 어느 검색을 타는지.
+         *
+         * commits는 커밋 메시지를 찾는다(트레일러 신호). 결과에 레포 메타가 없어 배포 여부를
+         * 모른 채 프론티어에 넣고, 그중 상당수가 no_homepage로 거부된다(실측 206건 중 122건).
+         * repositories는 결과에 homepage가 실려 오므로 배포된 레포만 골라 넣을 수 있다.
+         */
+        kind: z.enum(["commits", "repositories"]).default("commits"),
+        /** GitHub 검색 문자열. repositories면 `topic:` 같은 레포 검색 수식어를 쓴다 */
         query: z.string().min(1).max(200),
         enabled: z.boolean(),
         /** 이 신호로 발견한 레포의 조사 우선순위 */
         priority: z.number().int().min(0).max(1000),
+        /**
+         * 이 신호로 찾은 제품에 "만든 AI"로 추정해 붙일 이름. null이면 추정하지 않는다.
+         *
+         * 트레일러가 문자 그대로 말하는 것만 적는다 — "Co-authored-by: Claude"는 Claude가
+         * 커밋했다는 뜻이지 어느 도구였는지까지는 말하지 않는다. 화면에는 "우리 추정"으로
+         * 붙고, 주인이 클레임하면 비워진다(verify.ts).
+         */
+        builder: z.string().min(1).max(40).nullable().default(null),
       }),
     )
     .min(1),
@@ -97,10 +113,15 @@ export const DEFAULT_CRAWL_SETTINGS: CrawlSettings = {
   enabled: false, // 켜는 것은 명시적 행위여야 한다
   discover: {
     queries: [
-      { label: "Claude 커밋 트레일러", query: "Co-authored-by: Claude", enabled: true, priority: 100 },
+      { label: "Claude 커밋 트레일러", kind: "commits", query: "Co-authored-by: Claude", enabled: true, priority: 100, builder: "Claude" },
       // 실측으로 켰다. 표본 132개에서 통과율 23%로 Claude 신호(19%)보다 높았고,
       // 두 신호가 같이 찾은 레포는 5%뿐이라 거의 겹치지 않는 집합을 데려온다.
-      { label: "Codex 커밋 트레일러", query: "Co-authored-by: Codex", enabled: true, priority: 90 },
+      { label: "Codex 커밋 트레일러", kind: "commits", query: "Co-authored-by: Codex", enabled: true, priority: 90, builder: "Codex" },
+      // 실측(2026-08-29, 최근 180일): 4,326개 레포, 상위 100건 중 52%에 homepage. 커밋 신호의
+      // 41%보다 높고, 레포 검색이라 homepage 없는 것은 애초에 넣지 않는다. topic은 어떤 AI가
+      // 만들었는지 말하지 않으므로 builder는 비운다. claude-code(61k, 43%)·cursor-ai(575, 46%)·
+      // codex-cli(2.3k, 33%)·ai-generated(596, 41%)는 같은 방식으로 /admin에서 더할 수 있다.
+      { label: "vibe-coding 토픽", kind: "repositories", query: "topic:vibe-coding", enabled: true, priority: 80, builder: null },
     ],
     windowDays: 180,
     sort: "relevance",

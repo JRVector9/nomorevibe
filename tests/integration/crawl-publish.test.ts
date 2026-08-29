@@ -16,7 +16,7 @@ const products = await import("@/lib/domain/products/repository");
 const { saveSettings } = await import("@/lib/crawl/settings");
 const { publishCandidates } = await import("@/lib/crawl/jobs/publish");
 const { runJob } = await import("@/lib/jobs/runner");
-const { getPublicList, getRankedList, isUnclaimed } = await import("@/lib/domain/products/view");
+const { getPublicList, getRankedList, isUnclaimed, builderClaimOf } = await import("@/lib/domain/products/view");
 const { ensureSchema, resetTables } = await import("./setup");
 
 /** 발행 대기 상태의 후보 하나 (원본 + approved 판정) */
@@ -75,7 +75,47 @@ describe("발행 잡", () => {
     });
     // 주인이 없는 상태다 — 랭킹에서 빠지고 미클레임 배지가 붙는다
     expect(isUnclaimed(product!)).toBe(true);
+    // 프론티어에 발견 기록이 없으면 "만든 AI"를 지어내지 않는다
     expect(product?.builder).toBeNull();
+  });
+
+  it("데려온 검색 신호로 만든 AI를 추정해 붙인다 — 화면에는 우리 추정으로 뜬다", async () => {
+    await crawl.enqueue([
+      { repo: "someone/my-app", signal: "Claude 커밋 트레일러", builder: "Claude" },
+    ]);
+    await approved("someone/my-app");
+
+    await tick();
+
+    const product = await products.findByUrl("https://my-app.test");
+    expect(product?.builder).toBe("Claude");
+    expect(builderClaimOf(product!)).toBe("guessed");
+  });
+
+  it("데려온 신호가 어떤 AI인지 말하지 않으면 붙이지 않는다", async () => {
+    // topic:vibe-coding 같은 레포 신호가 그렇다 — 배포물인 것만 말하고 도구는 말하지 않는다
+    await crawl.enqueue([{ repo: "someone/my-app", signal: "vibe-coding 토픽", builder: null }]);
+    await approved("someone/my-app");
+
+    await tick();
+
+    expect((await products.findByUrl("https://my-app.test"))?.builder).toBeNull();
+  });
+
+  it("발견 뒤에 신호 이름이 바뀌어도 추정이 살아남는다", async () => {
+    // 프론티어의 signal은 첫 발견 때 굳은 문자열이다. 그것을 현재 설정에서 이름으로 찾으면
+    // 운영자가 라벨을 고치는 순간(정상적인 운영 행위다) 밀려 있던 후보가 전부 추정을 잃는다.
+    await crawl.enqueue([
+      { repo: "someone/my-app", signal: "Claude 커밋 트레일러", builder: "Claude" },
+    ]);
+    await approved("someone/my-app");
+    await saveSettings({
+      discover: { queries: [{ label: "Claude 트레일러", query: "Co-authored-by: Claude", enabled: true, priority: 100, builder: "Claude" }] },
+    }, "테스트");
+
+    await tick();
+
+    expect((await products.findByUrl("https://my-app.test"))?.builder).toBe("Claude");
   });
 
   it("후보를 발행됨으로 표시하고 slug를 남긴다", async () => {

@@ -17,11 +17,12 @@ const { ensureSchema, resetTables } = await import("./setup");
 const SEED_TOKEN = "nmv_verify_found_app";
 
 /** 수집기가 올린 제품 — 수정 키는 아무도 쥐고 있지 않다 */
-async function seeded(slug = "found-app", url = "https://found.test") {
+async function seeded(slug = "found-app", url = "https://found.test", builder: string | null = null) {
   await repo.insert({
     slug,
     url,
     name: "FoundApp",
+    builder,
     tagline: "수집된 소개",
     description: "공개 저장소에서 찾은 제품입니다.",
     category: "Other",
@@ -62,6 +63,15 @@ describe("클레임 — 우리가 대신 올린 제품 가져가기", () => {
     expect(isUnclaimed(product!)).toBe(false);
     // 어디서 왔는지는 클레임 후에도 남는다
     expect(product?.source).toBe("crawler");
+  });
+
+  it("클레임하면 우리가 추정한 만든 AI는 비워진다 — 추측이 신고로 둔갑하지 않는다", async () => {
+    await seeded("found-app", "https://found.test", "Claude");
+    domainProves(SEED_TOKEN);
+
+    await verifyProduct("found-app");
+
+    expect((await repo.findBySlug("found-app"))?.builder).toBeNull();
   });
 
   it("클레임 전에는 아무도 수정할 수 없다", async () => {

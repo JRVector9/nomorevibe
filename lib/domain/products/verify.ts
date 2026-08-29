@@ -85,7 +85,13 @@ export async function verifyProduct(slug: string): Promise<Result<VerifyOutput>>
     status: "verified",
     verifyMethod: method,
     verifiedAt: now,
-    ...(editToken ? { claimedAt: now, editTokenHash: hashToken(editToken) } : {}),
+    /**
+     * 클레임과 함께 "만든 AI" 추정값을 비운다.
+     *
+     * 화면은 주인이 없는 동안만 이 값을 "우리 추정"으로 표시한다(view.ts). 그대로 두면
+     * 클레임하는 순간 우리 추측이 "메이커 신고"로 둔갑한다. 메이커가 직접 밝힌 값만 남긴다.
+     */
+    ...(editToken ? { claimedAt: now, editTokenHash: hashToken(editToken), builder: null } : {}),
   });
 
   logger.info("verify.succeeded", { slug, method, claimed: claiming });

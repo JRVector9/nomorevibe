@@ -18,9 +18,27 @@ function Toggle({ name, defaultChecked, children }: { name: string; defaultCheck
   );
 }
 
+/**
+ * 신호를 더하는 유일한 길 — 목록 끝의 빈 행.
+ *
+ * 저장된 신호 목록이 코드 기본값을 통째로 덮으므로(settings.ts), 기본 신호를 새로 넣어도
+ * 이미 저장된 환경에는 닿지 않는다. 빈 행이 없던 동안 남은 길은 판정 기준까지 함께
+ * 되돌리는 "기본값으로 되돌리기"뿐이었다. 라벨이나 검색어가 비면 서버 액션이 버리므로
+ * (actions.ts) 그냥 저장을 눌러도 신호가 늘지 않는다.
+ */
+const BLANK_QUERY = {
+  label: "",
+  kind: "commits" as const,
+  query: "",
+  enabled: false,
+  priority: 0,
+  builder: null,
+};
+
 export function SettingsForm({ settings }: { settings: CrawlSettings }) {
   const [state, action, pending] = useActionState<SaveState, FormData>(saveCrawlSettings, null);
   const { discover, judge } = settings;
+  const queryRows = [...discover.queries, BLANK_QUERY];
 
   return (
     <form action={action} className="mt-6 flex flex-col gap-4">
@@ -52,13 +70,32 @@ export function SettingsForm({ settings }: { settings: CrawlSettings }) {
       >
         <div>
           <span className={label}>검색 신호</span>
-          <p className={hint}>신호별 수율을 비교하려면 개별로 끌 수 있어야 합니다.</p>
-          <input type="hidden" name="queryCount" value={discover.queries.length} />
+          <p className={hint}>
+            신호별 수율을 비교하려면 개별로 끌 수 있어야 합니다. 마지막 빈 행에 적으면 신호가
+            늘고, 이름이나 검색어를 지우면 그 신호가 빠집니다.
+          </p>
+          <input type="hidden" name="queryCount" value={queryRows.length} />
           <div className="mt-3 flex flex-col gap-2">
-            {discover.queries.map((q, i) => (
-              <div key={i} className="grid grid-cols-1 gap-2 rounded-lg border border-line p-3 sm:grid-cols-[1fr_1.6fr_auto_auto]">
+            {queryRows.map((q, i) => (
+              <div key={i} className="grid grid-cols-1 gap-2 rounded-lg border border-line p-3 sm:grid-cols-[1fr_auto_1.6fr_auto_auto_auto]">
                 <input name={`query.${i}.label`} defaultValue={q.label} className={field} placeholder="이름" />
+                <select
+                  name={`query.${i}.kind`}
+                  defaultValue={q.kind}
+                  className={field}
+                  title="커밋 검색은 트레일러를, 레포 검색은 topic 같은 레포 수식어를 찾습니다. 레포 검색은 배포 URL이 없는 레포를 넣지 않습니다."
+                >
+                  <option value="commits">커밋</option>
+                  <option value="repositories">레포</option>
+                </select>
                 <input name={`query.${i}.query`} defaultValue={q.query} className={`${field} font-mono`} placeholder="검색 문자열" />
+                <input
+                  name={`query.${i}.builder`}
+                  defaultValue={q.builder ?? ""}
+                  className={`${field} sm:w-28`}
+                  placeholder="추정 AI"
+                  title="이 신호로 찾은 제품에 '우리 추정'으로 붙일 만든 AI. 비우면 추정하지 않습니다."
+                />
                 <input
                   name={`query.${i}.priority`}
                   defaultValue={q.priority}

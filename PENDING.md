@@ -5,92 +5,51 @@
 
 ---
 
-## D1. 카테고리 분류를 실제로 호출해 확인하기
+## D1. 카테고리 분류 — 프로덕션에서 `claude` CLI가 돌게 하기
 
-**막고 있는 것**: `ANTHROPIC_API_KEY`. 이 머신에 키도 `ant` 프로필도 없다.
+**막고 있는 것**: 프로덕션 이미지에 `claude` CLI가 없고, 컨테이너에 로그인 토큰이 없다.
 
-**지금 상태**: 코드는 있고(`lib/crawl/classify.ts`) 키가 없으면 조용히 규칙 분류로 떨어진다.
-즉 **키를 넣기 전까지 새로 발행되는 제품은 계속 키워드 규칙으로 분류된다.**
+**지금 상태**: 분류는 API가 아니라 `claude -p`로 돈다(`lib/crawl/classify.ts`). API 키는 쓰지
+않는다. 개발 머신에서는 keychain 로그인으로 그대로 돌고 **실측을 마쳤다**(아래). 프로덕션에서는
+CLI가 없어 `crawl.classify_disabled { reason: "no_cli" }`가 한 번 남고 키워드 규칙으로 떨어진다.
+즉 **아래 두 가지를 넣기 전까지 프로덕션에서 새로 발행되는 제품은 계속 규칙으로 분류된다.**
 
 ```
-모델      claude-sonnet-5
-effort    high
-max_tokens 4096   (생각한 만큼도 출력 한도에서 나간다 — 작게 두면 답 전에 잘린다)
-timeout   12초, 재시도 0회   (발행 잡의 틱 예산이 25초다)
-출력      zod 구조화 출력으로 5개 카테고리 중 하나 + 판단 근거 한 줄
+실행      claude -p --output-format json --json-schema <5카테고리> --tools "" --max-turns 1
+          --no-session-persistence --model claude-sonnet-5 --effort high --system-prompt <주입 방어 포함>
+          (CLAUDE_CODE_OAUTH_TOKEN 이 있으면 --bare 추가 — keychain 대신 토큰으로)
+cwd       빈 임시 디렉터리 — 프로젝트 CLAUDE.md 가 프롬프트에 섞이지 않게
+timeout   15초, 재시도 0회   (발행 잡의 틱 예산이 25초다)
+출력      structured_output 을 zod 로 다시 검증 — 5개 카테고리 중 하나 + 근거 한 줄
 실패 시   null → 호출부가 토픽·설명 키워드 규칙으로 되돌아간다
 ```
 
-### 이미 확인한 것 — 다시 재지 말 것
+### 실측 — 2026-08-29, 개발 DB에 발행된 32건의 원본, sonnet · effort high
 
-API 자리에 로컬 서버를 세워 SDK가 실제로 주고받는 경로를 그대로 태웠다. **키가 필요한
-것은 모델의 판단뿐이고, 응답을 다루는 쪽은 전부 밟아봤다.** 결과는 `tests/classify.test.ts`가
-붙들고 있으니 고치다 무너지면 거기서 잡힌다.
+| | |
+|---|---|
+| 성공 | 32/32 — 4병렬 첫 실행에서 1건이 15초에 걸렸고, 단독 재실행은 11.2초에 성공 |
+| 소요 | 단독 6.2초 · 4병렬 평균 10.3초, 최대 14.7초. 병렬이면 늘어난다. 발행 잡은 순차라 단독 값이 기준 |
+| 출력 토큰 | 473 (생각 288) |
+| codex 백필과 일치 | 26/31 (**83%**) — 앞서 codex↔qwen 일치율은 75%였다 |
+| RevealUI | **Productivity** — 규칙은 Finance로 틀렸던 그 케이스 |
 
-| 들어온 응답 | 결과 | 남는 로그 |
-|---|---|---|
-| 정상 구조화 출력 | 카테고리 | `crawl.classified` |
-| 생각 블록 + 답 | 카테고리 | `crawl.classified` |
-| 허용 밖 카테고리 | null | `crawl.classify_failed` |
-| 한도에 걸려 잘림 | null | `crawl.classify_failed` |
-| 답 블록 없음 | null | `crawl.classify_unparsed` |
-| 401 / 429 / 500 | null | `reason: auth` / `rate_limit` / 오류 객체 |
-| 12초 초과 | null | 정확히 12,001ms에 끊김, 요청 1건(재시도 없음) |
+분포: Productivity 15 · Dev 13 · Finance 2 · Design 1 · Other 1 (codex 백필: 13·11·4·1·3).
+불일치 5건은 전부 codex가 Finance/Other로 보낸 것을 CLI가 Productivity/Dev로 본 것이고, 프롬프트의
+"결제 기능이 있다는 이유로 Finance를 고르지 않는다"와 맞는 방향이다. **개발 DB에는 CLI 결과를
+반영했다.** 되돌릴 값은 이 실측 전 codex 분포뿐이므로 다시 재지 말 것.
 
-보내는 요청도 확인했다 — `model`, `max_tokens: 4096`, `output_config.effort: "high"`,
-`json_schema` 형식, 시스템 프롬프트의 주입 방어 문장이 그대로 실려 나간다.
+응답 처리 경로는 `tests/classify.test.ts`가 붙들고 있다 — 구조화 출력, 허용 밖 카테고리, 로그인
+풀림(`auth`)과 그 밖 실패의 구분, JSON 아닌 출력, 타임아웃, CLI 없음(한 번만 알림), 보내는 인자.
 
-**알아둘 것: enum은 서버까지 가지 않는다.** 이 API가 받는 JSON Schema는 부분집합이라
-SDK(`transform-json-schema.js`)가 `enum`·`maxLength` 같은 키워드를 `description` 안의
-문자열로 옮긴다. 그래서 카테고리를 다섯 개로 묶어두는 것은 **시스템 프롬프트와 응답을 받은
-뒤의 zod 검증뿐이다.** 스키마에 제약을 더 걸어도 강제되지 않는다는 뜻이다.
+### 프로덕션에서 풀려면
 
-이 과정에서 결함을 하나 고쳤다 — `reason`에 걸려 있던 `.max(200)`이 서버에서 강제되지
-않는 탓에, 모델이 두 문장을 쓰면 멀쩡한 카테고리까지 버려지고 키워드 규칙으로 되돌아갔다.
-로그용 값이 분류를 무르게 둘 이유가 없어 제약을 걷고 남길 때 자른다.
-
-### 키가 생기면 확인할 것
-
-남은 것은 둘뿐이다. 실제 모델을 불러야만 알 수 있다.
-
-1. **판단 품질** — 아래 codex 결과와 얼마나 겹치는지. 특히 `RevealUI`를 `Productivity`로
-   보는지(규칙은 `Finance`로 틀렸다).
-2. **effort: high에서 실제 소요 시간과 출력 토큰** — 12초와 4096이 충분한지. 잘리면 위 표의
-   "한도에 걸려 잘림"으로 떨어져 분류가 통째로 버려진다.
-
-```bash
-echo 'ANTHROPIC_API_KEY=sk-ant-...' >> .env.local   # .env.local은 gitignore된다
-
-# 후보를 되돌려 재발행 (개발 DB)
-#   crawl_candidates를 state='new'로, 해당 products 행을 지운 뒤
-npm run job crawl-judge
-npm run job crawl-publish
-
-# 로그에서 확인
-#   crawl.classified   { repo, category, reason }   ← 성공
-#   crawl.classify_failed { reason: auth | rate_limit | ... }
-#   crawl.classify_disabled { reason: no_api_key }  ← 키가 없을 때 한 번만
-```
-
-### 이미 알고 있는 것 (다시 재지 말 것)
-
-키가 없어 같은 프롬프트를 다른 모델로 태워 **접근이 규칙보다 낫다는 것은 확인했다.**
-
-| | 규칙 | codex (gpt-5.5 high) | qwen3.5-122b |
-|---|---|---|---|
-| Productivity | 0 | 13 | 11 |
-| Dev | 9 | 11 | 7 |
-| Finance | 2 | 4 | 2 |
-| Design | 2 | 1 | 0 |
-| Other | **19** | 3 | 4 |
-
-- 규칙은 `Productivity`를 **한 건도 못 골랐다**. 제품 소개가 `todo`·`note` 같은 키워드를
-  쓰지 않아 업무 도구가 전부 `Other`로 떨어졌다.
-- 대표적 오분류: `RevealUI` — 소개에 `Payments`가 있다는 이유로 `Finance`가 됐다.
-  두 모델 모두 `Productivity`(업무 운영 도구)로 바로잡았다.
-- 두 모델의 일치율 75%. qwen은 32건 중 8건에서 JSON 형식을 못 지켰다 — 우리가 구조화
-  출력을 강제한 이유가 여기서 드러난다.
-- **개발 DB의 seeded 제품 32건은 codex 결과로 이미 백필돼 있다.** 실측 후 비교 대상으로 쓸 것.
+1. **이미지에 CLI**: Dockerfile의 runner 단계에 `RUN npm i -g @anthropic-ai/claude-code`. 이미지가
+   커지므로 크기를 확인하고, 컨테이너 안에서 `claude --version`이 도는지 본다.
+2. **토큰**: 로그인된 개발 머신에서 `claude setup-token` → 배포 비밀 저장소의 `CLAUDE_CODE_OAUTH_TOKEN`.
+   값이 있으면 분류기가 `--bare`로 띄운다(keychain 없이 토큰만으로). 값은 로그·문서에 남기지 않는다.
+3. **확인**: `crawl-publish` 뒤 로그에 `crawl.classified { repo, category, reason }`가 남고
+   `crawl.classify_disabled`가 없는지. `crawl.classify_failed { reason: "auth" }`면 토큰이 풀린 것이다.
 
 ---
 
@@ -150,7 +109,7 @@ curl -X POST $SITE/api/cron/<job> -H "Authorization: Bearer $CRON_SECRET"
 |---|---|
 | `CRON_SECRET` | cron 진입점이 항상 403 |
 | `GITHUB_TOKEN` | 시간당 60회라 seed·fetch가 성립하지 않는다 (`jobs.last_error`에 남는다) |
-| `ANTHROPIC_API_KEY` | 카테고리가 규칙 분류로 떨어진다 (D1 참고) |
+| `CLAUDE_CODE_OAUTH_TOKEN` + 이미지의 `claude` CLI | 카테고리가 규칙 분류로 떨어진다 (D1 참고) |
 | `TRUSTED_PROXY_HOPS` | **0이면 rate limit이 전역으로 묶인다.** 프록시 뒤라면 hop 수를 맞출 것 |
 
 ### 확인
@@ -178,7 +137,27 @@ curl -X POST $SITE/api/cron/<job> -H "Authorization: Bearer $CRON_SECRET"
 **배포 환경의 크롤 설정이 옛 값으로 돌고 있을 수 있다.** 설정은 데이터라 한 번 저장하면
 코드 기본값을 덮는다. `/admin`이 어긋난 항목을 짚어주고 "기본값으로 되돌리기" 버튼을 둔다
 (수집 스위치는 건드리지 않는다). 조직 계정 제외 해제·Codex 신호·차단 도메인·문서 생성기
-목록이 그렇게 반영된다.
+목록이 그렇게 반영된다. `builder`(추정 AI)·`kind`(신호 종류)·`vibe-coding 토픽` 신호도 같은
+길로 들어온다 — 어긋남 표시 "추정 AI"·"검색 신호"가 짚어준다. 빈 행에 적어 저장하면 신호를
+더할 수 있다.
+
+**배포 후 백필 두 건 — 마이그레이션은 컬럼만 더한다.** 프로덕션에 이미 쌓인 행에는 "만든 AI"
+추정이 비어 있다. 라벨이 기본값 그대로일 때만 아래가 맞고, 운영자가 라벨을 바꿨으면 그 라벨로
+맞춘다. 읽기 전용으로 건수를 먼저 확인한 뒤 실행한다.
+
+```sql
+-- 프론티어: 앞으로 발행될 후보의 추정 (0018 이후 NULL)
+update crawl_frontier set builder = case signal
+  when 'Claude 커밋 트레일러' then 'Claude'
+  when 'Codex 커밋 트레일러' then 'Codex' end
+where builder is null;
+
+-- 이미 발행된 미클레임 제품의 추정
+update products p set builder = f.builder, updated_at = now()
+from crawl_candidates c join crawl_frontier f on f.repo = c.repo
+where c.published_slug = p.slug and p.source = 'crawler' and p.claimed_at is null
+  and p.builder is null and f.builder is not null;
+```
 
 ---
 

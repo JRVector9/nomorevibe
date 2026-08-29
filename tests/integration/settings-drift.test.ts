@@ -39,6 +39,45 @@ describe("저장된 기준과 기본값의 차이", () => {
     expect(settings.judge.personalSiteKeywords).toEqual(DEFAULT_CRAWL_SETTINGS.judge.personalSiteKeywords);
   });
 
+  it("옛 설정의 신호에 추정 AI가 없으면 어긋남으로 짚는다 — 추정이 조용히 꺼지지 않게", async () => {
+    await db.insert(crawlSettings).values({
+      id: 1,
+      values: {
+        enabled: true,
+        discover: {
+          queries: [
+            { label: "Claude 커밋 트레일러", query: "Co-authored-by: Claude", enabled: true, priority: 100 },
+            { label: "Codex 커밋 트레일러", query: "Co-authored-by: Codex", enabled: true, priority: 90 },
+          ],
+        },
+      },
+    });
+
+    const drift = settingsDrift(await getSettings());
+
+    // 기본 신호 셋 — 트레일러 둘은 추정 AI가 있고 topic 신호는 어떤 AI인지 말하지 않아 비어 있다
+    expect(drift.find((d) => d.label === "추정 AI")).toMatchObject({
+      stored: "(없음), (없음)",
+      standard: "Claude, Codex, (없음)",
+    });
+  });
+
+  it("기본 신호가 새로 생기면 저장된 설정에 없다고 짚는다", async () => {
+    // 저장된 신호 목록이 기본 목록을 통째로 덮으므로 새 신호는 저절로 오지 않는다.
+    // 어긋남 표시가 그것을 짚어야 /admin에서 빈 행에 적어 더할 수 있다.
+    await saveSettings(
+      { discover: { queries: DEFAULT_CRAWL_SETTINGS.discover.queries.slice(0, 2) } },
+      "테스트",
+    );
+
+    const drift = settingsDrift(await getSettings());
+
+    expect(drift.find((d) => d.label === "검색 신호")).toMatchObject({
+      stored: "Claude 커밋 트레일러, Codex 커밋 트레일러",
+      standard: "Claude 커밋 트레일러, Codex 커밋 트레일러, vibe-coding 토픽",
+    });
+  });
+
   it("되돌리면 기준은 기본값이 되고 수집 스위치는 유지된다", async () => {
     // 기준을 맞추려다 수집이 켜지거나 꺼지면 그게 더 큰 사고다
     await saveSettings({ enabled: true, judge: { maxStars: 5, excludeOrganizations: true } }, "테스트");

@@ -137,6 +137,9 @@ export const SEARCH_PER_PAGE = 100;
 export const MAX_SEARCH_PAGES = 10;
 
 export type CommitSearchResult = { items: { repository: { full_name: string } }[] };
+export type RepositorySearchResult = {
+  items: { full_name: string; homepage: string | null }[];
+};
 
 /**
  * 커밋 검색.
@@ -160,4 +163,27 @@ export async function searchCommits(params: {
     search.set("order", "desc");
   }
   return request<CommitSearchResult>(`/search/commits?${search}`);
+}
+
+/**
+ * 레포 검색.
+ *
+ * 커밋 검색과 달리 결과에 레포 메타(homepage)가 실려 온다. 배포 URL이 없는 레포를 프론티어에
+ * 넣기 전에 거를 수 있다는 뜻이다. 정렬 "recent"는 마지막 푸시순이다.
+ */
+export async function searchRepositories(params: {
+  query: string;
+  page: number;
+  sort: "relevance" | "recent";
+}): Promise<GitHubResult<RepositorySearchResult>> {
+  const search = new URLSearchParams({
+    q: params.query,
+    per_page: String(SEARCH_PER_PAGE),
+    page: String(params.page),
+  });
+  if (params.sort === "recent") {
+    search.set("sort", "updated");
+    search.set("order", "desc");
+  }
+  return request<RepositorySearchResult>(`/search/repositories?${search}`);
 }

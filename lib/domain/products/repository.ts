@@ -133,6 +133,22 @@ export async function listRecentlyDiscovered(limit: number): Promise<Product[]> 
   });
 }
 
+/**
+ * sitemap이 쓰는 것만 — 검증된 제품의 주소와 갱신 시각.
+ *
+ * 상한이 50,000건이라 전체 컬럼(description·stack·og_image…)을 읽으면 쓰지도 않을 바이트를
+ * 그만큼 실어 나른다. 정렬은 listProducts의 recent와 같다 — 검증된 것만 담으므로 그 정렬의
+ * 첫 키(검증 여부)가 상수가 되어 등재 시각순만 남는다.
+ */
+export async function listVerifiedSlugs(limit: number): Promise<{ slug: string; updatedAt: Date }[]> {
+  return db
+    .select({ slug: products.slug, updatedAt: products.updatedAt })
+    .from(products)
+    .where(eq(products.status, "verified"))
+    .orderBy(sql`${listedAt} desc`)
+    .limit(limit);
+}
+
 /** 카테고리별 개수 — 필터 칩이 숫자를 함께 보여준다 */
 export async function categoryCounts(statuses: ProductStatus[]): Promise<Record<string, number>> {
   const rows = await db

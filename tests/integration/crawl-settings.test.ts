@@ -78,6 +78,25 @@ describe("설정 저장", () => {
 
     expect(enabledQueries(await getSettings())).toHaveLength(0);
   });
+
+  it("저장된 신호 목록이 기본 신호를 통째로 덮는다 — 새 기본 신호는 저절로 오지 않는다", async () => {
+    /**
+     * 배열은 병합할 방법이 없다. 두 배열을 이어 붙이면 운영자가 지운 신호가 되살아나고,
+     * 이름으로 맞춰 덮으면 이름을 바꾼 신호가 둘로 늘어난다. 그래서 저장된 목록이 곧 목록이다.
+     *
+     * 즉 코드에 기본 신호를 더해도 이미 저장된 환경에는 닿지 않는다 — 커밋 신호 둘만
+     * 저장된 프로덕션은 vibe-coding 토픽을 영영 못 본다. 어긋남 표시가 이것을 짚고,
+     * 사람은 /admin의 빈 행에 적어 더한다.
+     */
+    await saveSettings(
+      { discover: { queries: DEFAULT_CRAWL_SETTINGS.discover.queries.slice(0, 2) } },
+      "admin",
+    );
+
+    const labels = (await getSettings()).discover.queries.map((q) => q.label);
+    expect(labels).toEqual(["Claude 커밋 트레일러", "Codex 커밋 트레일러"]);
+    expect(labels).not.toContain("vibe-coding 토픽");
+  });
 });
 
 describe("스키마가 자란 뒤에도 읽힌다", () => {

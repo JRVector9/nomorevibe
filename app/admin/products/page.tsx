@@ -4,6 +4,8 @@ import { redirect } from "next/navigation";
 import { currentAdmin } from "@/lib/auth/admin";
 import { listProducts } from "@/lib/domain/products/repository";
 import { isUnclaimed } from "@/lib/domain/products/view";
+import { claimInviteUrl, isPublicOrigin } from "@/lib/domain/products/claim-invite";
+import { siteOrigin } from "@/lib/site";
 import type { ProductStatus } from "@/lib/db/schema";
 import { AdminNav } from "../AdminNav";
 import { ProductRow } from "./ProductRow";
@@ -32,6 +34,10 @@ export default async function AdminProductsPage({ searchParams }: Props) {
   // `in`은 프로토타입 키까지 통과시킨다 — ?filter=constructor 하나로 500이 났다
   const active = (filter && Object.hasOwn(FILTERS, filter) ? filter : "전체") as keyof typeof FILTERS;
   const products = await listProducts({ statuses: [...FILTERS[active]], limit: PAGE_SIZE });
+  // 요청을 넘기지 않으므로 NEXT_PUBLIC_SITE_URL이 없으면 localhost로 떨어진다. 그 주소는
+  // 초대 이슈에 실을 수 없으므로(claimInviteUrl이 null을 준다) 행에 이유를 대신 보여준다.
+  const origin = siteOrigin();
+  const publicOriginMissing = !isPublicOrigin(origin);
 
   return (
     <main className="mx-auto max-w-[900px] px-6 pb-20">
@@ -74,6 +80,10 @@ export default async function AdminProductsPage({ searchParams }: Props) {
                 source: product.source,
                 unclaimed: isUnclaimed(product),
                 listedAt: (product.verifiedAt ?? product.createdAt).toLocaleDateString("ko-KR"),
+                inviteUrl: claimInviteUrl(product, origin),
+                publicOriginMissing,
+                invitedAt:
+                  product.claimInvitedAt?.toLocaleDateString("ko-KR", { timeZone: "Asia/Seoul" }) ?? null,
               }}
             />
           ))}

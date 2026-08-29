@@ -31,6 +31,14 @@ export const crawlFrontier = pgTable(
     repo: varchar("repo", { length: 200 }).notNull().unique(),
     /** 어떤 신호로 발견했는지 (commit-trailer 등) — 신호별 수율을 나중에 비교하려면 필요 */
     signal: varchar("signal", { length: 40 }).notNull(),
+    /**
+     * 그 신호가 말하는 "만든 AI" 추정값. 없으면 추정하지 않는다.
+     *
+     * signal(자유 텍스트 라벨)로 설정을 되짚지 않고 발견 시점의 값을 굳혀 둔다. 운영자가
+     * 라벨을 고치면 밀려 있던 후보가 전부 추정을 잃고, 라벨을 재사용하면 과거 발견분이
+     * 소급 재라벨되기 때문이다.
+     */
+    builder: varchar("builder", { length: 40 }),
     /** 높을수록 먼저 조사한다 */
     priority: integer("priority").notNull().default(0),
     state: varchar("state", { length: 20 }).$type<FrontierState>().notNull().default("pending"),
