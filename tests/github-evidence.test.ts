@@ -92,6 +92,34 @@ describe("conditional GitHub HTTP", () => {
     });
   });
 
+  it("treats a 403 with retry-after as a rate limit even when the primary quota remains", async () => {
+    // 2차 한도: 1차 한도가 남은 채로 403 + retry-after만 온다. 일반 403으로 보면 신호를 잃는다
+    fetchMock
+      .mockResolvedValueOnce(new Response(null, {
+        status: 403,
+        headers: { "retry-after": "60", "x-ratelimit-remaining": "29" },
+      }))
+      .mockResolvedValueOnce(new Response(null, {
+        status: 403,
+        headers: { "x-ratelimit-remaining": "29" },
+      }));
+
+    const before = Date.now();
+    const limited = await githubRequest("/search/commits?q=x");
+    expect(limited.ok).toBe(false);
+    if (limited.ok) return;
+    expect(limited.error.kind).toBe("rate_limited");
+    if (limited.error.kind !== "rate_limited") return;
+    expect(limited.error.resetAt!.getTime()).toBeGreaterThanOrEqual(before + 60_000);
+    expect(limited.error.resetAt!.getTime()).toBeLessThanOrEqual(Date.now() + 60_000);
+
+    // retry-after도 remaining 0도 없는 403은 여전히 다른 이유의 거절이다
+    await expect(githubRequest("/repos/o/blocked")).resolves.toEqual({
+      ok: false,
+      error: { kind: "http", status: 403 },
+    });
+  });
+
   it("returns typed failures for transport and invalid JSON responses", async () => {
     fetchMock
       .mockRejectedValueOnce(new Error("test-token network body"))
