@@ -13,6 +13,8 @@ export type AdminProduct = {
   listedAt: string;
   /** 미리 채운 GitHub 새 이슈 주소. 초대할 수 없는 제품이면 null */
   inviteUrl: string | null;
+  /** 이슈 본문에 실을 공개 주소가 없다 — 레포가 있어도 초대를 만들 수 없다 */
+  publicOriginMissing: boolean;
   invitedAt: string | null;
 };
 
@@ -70,7 +72,15 @@ export function ProductRow({ product }: { product: AdminProduct }) {
       {/* 주인이 없는 제품에만. 보내는 것은 GitHub에서 운영자가 직접 하고 여기서는 보냈다고만 표시한다 */}
       {product.unclaimed && !banned && (
         product.invitedAt ? (
-          <p className="mt-3 text-[13px] text-fg-3">클레임 초대 보냄 · {product.invitedAt}</p>
+          <p className="mt-3 flex flex-wrap items-center gap-3 text-[13px] text-fg-3">
+            <span>클레임 초대 보냄 · {product.invitedAt}</span>
+            {/* 제출 전에 표시를 눌렀을 수 있다. 링크는 남겨 다시 꺼낼 수 있게 한다 */}
+            {product.inviteUrl && (
+              <a href={product.inviteUrl} target="_blank" rel="noreferrer noopener" className="underline hover:text-fg">
+                이슈 다시 열기 ↗
+              </a>
+            )}
+          </p>
         ) : product.inviteUrl ? (
           <form action={inviteAction} className="mt-3 flex flex-wrap items-center gap-2">
             <input type="hidden" name="slug" value={product.slug} />
@@ -91,6 +101,10 @@ export function ProductRow({ product }: { product: AdminProduct }) {
             </button>
             <span className="text-[13px] text-fg-3">레포에 미리 채운 이슈를 직접 제출한 뒤 표시합니다</span>
           </form>
+        ) : product.publicOriginMissing ? (
+          <p className="mt-3 text-[13px] text-fg-3">
+            NEXT_PUBLIC_SITE_URL이 공개 주소가 아니라 초대 링크를 만들 수 없습니다
+          </p>
         ) : (
           <p className="mt-3 text-[13px] text-fg-3">GitHub 레포가 없어 초대할 곳이 없습니다</p>
         )
@@ -101,9 +115,9 @@ export function ProductRow({ product }: { product: AdminProduct }) {
       >
         근거·업데이트 관리
       </a>
-      {(state?.error || inviteState?.error) && (
-        <p className="mt-2 text-[13px] text-down">{state?.error ?? inviteState?.error}</p>
-      )}
+      {/* 둘을 한 줄에 합치면 남아 있는 차단 오류가 방금 난 초대 오류를 가린다 */}
+      {state?.error && <p className="mt-2 text-[13px] text-down">차단: {state.error}</p>}
+      {inviteState?.error && <p className="mt-2 text-[13px] text-down">초대: {inviteState.error}</p>}
     </li>
   );
 }

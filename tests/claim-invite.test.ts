@@ -23,6 +23,20 @@ describe("클레임 초대 링크", () => {
     expect(body).toContain("takedown");
   });
 
+  it("발견 경위를 단정하지 않는다 — 커밋을 본 적 없이 찾은 레포도 있다", () => {
+    const body = new URL(claimInviteUrl(seeded, "https://nomorevibe.app")!).searchParams.get("body")!;
+
+    expect(body).toContain("public signals");
+    expect(body).not.toContain("We found this repository through its AI co-authored commits");
+  });
+
+  it("이슈에 실을 수 없는 주소로는 만들지 않는다", () => {
+    // NEXT_PUBLIC_SITE_URL이 비면 origin이 여기로 떨어진다 — 받는 사람은 열 수 없는 링크다
+    for (const origin of ["http://localhost:3000", "http://127.0.0.1:3200", "http://[::1]:3000", "설정 없음"]) {
+      expect(claimInviteUrl(seeded, origin), origin).toBeNull();
+    }
+  });
+
   it(".git 접미사와 끝 슬래시를 받아준다", () => {
     for (const repoUrl of ["https://github.com/a/b.git", "https://github.com/a/b/", "http://GitHub.com/a/b"]) {
       expect(claimInviteUrl({ ...seeded, repoUrl }, "https://x.test")).toContain("github.com/a/b/issues/new");

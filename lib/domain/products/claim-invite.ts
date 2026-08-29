@@ -1,4 +1,5 @@
 import type { Product } from "@/lib/db/schema";
+import { isPrivateHostname, isPrivateIp } from "@/lib/net/ssrf";
 import { type Result, fail, ok } from "./errors";
 import * as repo from "./repository";
 import { isUnclaimed } from "./view";
@@ -20,7 +21,7 @@ function inviteIssue(product: Pick<Product, "name" | "slug">, origin: string) {
   return {
     title: `${product.name} is listed on NoMoreVibe — claim or remove it`,
     body: [
-      `Hi! We found this repository through its AI co-authored commits and listed the deployed product on NoMoreVibe, a public database of products built with AI.`,
+      `Hi! We found this repository through public signals — an AI co-authored commit trailer or a repository topic — and listed the deployed product on NoMoreVibe, a public database of products built with AI.`,
       ``,
       `Listing: ${page}`,
       ``,
@@ -35,6 +36,27 @@ function inviteIssue(product: Pick<Product, "name" | "slug">, origin: string) {
   };
 }
 
+/**
+ * 이슈 본문에 실을 수 있는 주소인가.
+ *
+ * NEXT_PUBLIC_SITE_URL이 비면 origin이 http://localhost:3000으로 떨어진다. 그대로 두면 남의
+ * 레포에 열리지 않는 상세 페이지 링크와 설치 명령이 실려 나가고, 받는 사람은 확인할 길이 없다.
+ * 초대는 사람이 마지막에 제출하지만 본문을 눈으로 검사하리라 기대하지 않는다.
+ * 어디가 사설 대상인지는 SSRF 정책이 이미 정의해 두었으므로 그것을 그대로 쓴다.
+ */
+export function isPublicOrigin(origin: string): boolean {
+  let url: URL;
+  try {
+    url = new URL(origin);
+  } catch {
+    return false;
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") return false;
+  // URL.hostname은 IPv6를 대괄호째 준다
+  const host = url.hostname.replace(/^\[|\]$/g, "");
+  return !isPrivateHostname(host) && !isPrivateIp(host);
+}
+
 /** github.com 레포의 owner/repo. 다른 호스트는 이슈 링크를 만들 수 없다 */
 function githubRepo(repoUrl: string | null): string | null {
   if (!repoUrl) return null;
@@ -43,7 +65,8 @@ function githubRepo(repoUrl: string | null): string | null {
 }
 
 /**
- * 미리 채운 GitHub "새 이슈" 주소. 초대할 수 없는 제품(주인이 있거나 GitHub 레포가 아님)이면 null.
+ * 미리 채운 GitHub "새 이슈" 주소. 초대할 수 없으면(주인이 있거나, GitHub 레포가 아니거나,
+ * 본문에 실을 공개 주소가 없음) null.
  * origin은 밖에서 받는다 — 순수하게 두어 셸 환경 없이 잴 수 있게.
  */
 export function claimInviteUrl(
@@ -51,6 +74,7 @@ export function claimInviteUrl(
   origin: string,
 ): string | null {
   if (!isUnclaimed(product)) return null;
+  if (!isPublicOrigin(origin)) return null;
   const repo = githubRepo(product.repoUrl);
   if (!repo) return null;
   const issue = inviteIssue(product, origin);

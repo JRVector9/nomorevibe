@@ -17,6 +17,7 @@ const base: AdminProduct = {
   unclaimed: true,
   listedAt: "2026. 8. 18.",
   inviteUrl: "https://github.com/someone/found-app/issues/new?title=x",
+  publicOriginMissing: false,
   invitedAt: null,
 };
 
@@ -35,12 +36,21 @@ describe("admin product row — 클레임 초대", () => {
     const html = render({ invitedAt: "2026. 8. 29." });
     expect(html).toContain("클레임 초대 보냄 · 2026. 8. 29.");
     expect(html).not.toContain("보냈음으로 표시");
+    // 제출 전에 표시를 눌렀을 수 있으니 링크는 남는다
+    expect(html).toContain("이슈 다시 열기");
   });
 
   it("GitHub 레포가 없으면 초대할 곳이 없다고 말한다", () => {
     const html = render({ inviteUrl: null });
     expect(html).toContain("초대할 곳이 없습니다");
     expect(html).not.toContain("초대 이슈 열기");
+  });
+
+  it("공개 주소가 없어 초대를 못 만들면 레포 탓으로 돌리지 않는다", () => {
+    const html = render({ inviteUrl: null, publicOriginMissing: true });
+
+    expect(html).toContain("NEXT_PUBLIC_SITE_URL");
+    expect(html).not.toContain("GitHub 레포가 없어");
   });
 
   it("주인이 있는 제품에는 초대 UI가 없다", () => {
