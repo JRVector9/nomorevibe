@@ -6,8 +6,8 @@ import { logger } from "@/lib/observability/logger";
  * 메인 푸터에만 붙는 시즌 줄.
  *
  * 푸터가 루트 레이아웃에 있어서 페이지가 그 안에 무엇을 넣을 수 없다. 병렬 라우트 슬롯이면
- * "/"에서만 이 파일이 렌더되고 다른 경로는 default.tsx가 비운다 — 상세·어드민 페이지가
- * 시즌을 조회하지 않는다.
+ * "/"에서만 이 파일이 렌더되고, 다른 경로는 [...catchAll]/page.tsx(소프트 내비게이션)와
+ * default.tsx(하드 내비게이션)가 비운다 — 상세·어드민 페이지가 시즌을 조회하지 않는다.
  */
 export default async function SeasonFooterSlot() {
   let loaded: { season: SeasonSummary; latestClosed: SeasonSummary | null } | null = null;

@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Inter, JetBrains_Mono } from "next/font/google";
 import Link from "next/link";
+import { siteOrigin } from "@/lib/site";
 import "./globals.css";
 
 const inter = Inter({ subsets: ["latin"], variable: "--font-inter" });
@@ -10,6 +11,15 @@ export const metadata: Metadata = {
   title: "NoMoreVibe — AI로 만든 제품의 마켓 데이터베이스",
   description:
     "AI로 만들어 배포한 서비스를 /nomorevibe 한 번으로 등록하세요. 우리가 직접 확인한 것만 보여줍니다.",
+  /**
+   * 피드 리더가 /feed.xml을 스스로 찾게 한다 — 주소를 알려주지 않으면 있어도 없는 것이다.
+   *
+   * metadataBase를 두지 않았으므로 상대 경로는 빌드를 막는다. robots.ts·sitemap.ts와 같이
+   * siteOrigin()으로 절대 URL을 만든다.
+   */
+  alternates: {
+    types: { "application/rss+xml": `${siteOrigin()}/feed.xml` },
+  },
 };
 
 /**
@@ -21,8 +31,12 @@ export const metadata: Metadata = {
  * 계속 잡히므로 진짜 버그를 가리지 않는다.
  */
 /**
- * topbar는 병렬 라우트 슬롯이다. 헤더가 여기 있어서 페이지가 그 위에 무엇을 둘 수 없는데,
- * 슬롯으로 받으면 메인(app/@topbar/page.tsx)에서만 채우고 나머지 경로는 비운다.
+ * topbar·seasonfooter는 병렬 라우트 슬롯이다. 헤더와 푸터가 여기 있어서 페이지가 그 안에
+ * 무엇을 둘 수 없는데, 슬롯으로 받으면 메인(app/@topbar/page.tsx)에서만 채운다.
+ *
+ * 나머지 경로를 비우려면 슬롯마다 [...catchAll]/page.tsx와 default.tsx가 둘 다 필요하다.
+ * default.tsx는 하드 내비게이션에서만 쓰이고, 소프트 내비게이션에서는 슬롯이 이전 활성
+ * 상태를 유지하기 때문이다.
  */
 export default function RootLayout({
   children,

@@ -1,3 +1,4 @@
+import { cache } from "react";
 import {
   and,
   count,
@@ -95,10 +96,20 @@ function likePattern(query: string): string {
   return `%${query.trim().replace(/[\\%_]/g, (character) => `\\${character}`)}%`;
 }
 
-export async function getCurrentSeason(): Promise<SeasonSummary | null> {
+/**
+ * 요청 안에서 한 번만 조회한다.
+ *
+ * 홈 하나가 네 번 부른다 — 페이지, getDiscoveryBoards, @topbar 슬롯, @seasonfooter 슬롯.
+ * 서로를 모르는 자리들이라 인자로 넘겨 합칠 수가 없어서, 요청 단위 중복만 접는다
+ * (detail-view.ts의 getProductIdentity와 같은 방식).
+ *
+ * 잡·스크립트처럼 React 요청 스코프 밖에서 부르면 cache는 메모하지 않고 그대로 통과시킨다
+ * — 매 틱이 시즌을 새로 읽어야 하는 ranking-refresh가 묵은 값을 잡을 일은 없다.
+ */
+export const getCurrentSeason = cache(async (): Promise<SeasonSummary | null> => {
   const season = await findSeason();
   return season ? toSeasonSummary(season) : null;
-}
+});
 
 export async function getSeasonRanking(options: {
   seasonKey?: string;
