@@ -137,7 +137,27 @@ curl -X POST $SITE/api/cron/<job> -H "Authorization: Bearer $CRON_SECRET"
 **배포 환경의 크롤 설정이 옛 값으로 돌고 있을 수 있다.** 설정은 데이터라 한 번 저장하면
 코드 기본값을 덮는다. `/admin`이 어긋난 항목을 짚어주고 "기본값으로 되돌리기" 버튼을 둔다
 (수집 스위치는 건드리지 않는다). 조직 계정 제외 해제·Codex 신호·차단 도메인·문서 생성기
-목록이 그렇게 반영된다.
+목록이 그렇게 반영된다. `builder`(추정 AI)·`kind`(신호 종류)·`vibe-coding 토픽` 신호도 같은
+길로 들어온다 — 어긋남 표시 "추정 AI"·"검색 신호"가 짚어준다. 빈 행에 적어 저장하면 신호를
+더할 수 있다.
+
+**배포 후 백필 두 건 — 마이그레이션은 컬럼만 더한다.** 프로덕션에 이미 쌓인 행에는 "만든 AI"
+추정이 비어 있다. 라벨이 기본값 그대로일 때만 아래가 맞고, 운영자가 라벨을 바꿨으면 그 라벨로
+맞춘다. 읽기 전용으로 건수를 먼저 확인한 뒤 실행한다.
+
+```sql
+-- 프론티어: 앞으로 발행될 후보의 추정 (0018 이후 NULL)
+update crawl_frontier set builder = case signal
+  when 'Claude 커밋 트레일러' then 'Claude'
+  when 'Codex 커밋 트레일러' then 'Codex' end
+where builder is null;
+
+-- 이미 발행된 미클레임 제품의 추정
+update products p set builder = f.builder, updated_at = now()
+from crawl_candidates c join crawl_frontier f on f.repo = c.repo
+where c.published_slug = p.slug and p.source = 'crawler' and p.claimed_at is null
+  and p.builder is null and f.builder is not null;
+```
 
 ---
 
