@@ -1,5 +1,5 @@
 import type { MetadataRoute } from "next";
-import { listProducts } from "@/lib/domain/products/repository";
+import { listVerifiedSlugs } from "@/lib/domain/products/repository";
 import { getCurrentSeason, getSeasonHistory } from "@/lib/domain/ranking/view";
 import { siteOrigin } from "@/lib/site";
 
@@ -19,7 +19,7 @@ export const dynamic = "force-dynamic";
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   const origin = siteOrigin();
   const [verified, current, closed] = await Promise.all([
-    listProducts({ statuses: ["verified"], sort: "recent", limit: 50_000 }),
+    listVerifiedSlugs(50_000),
     getCurrentSeason(),
     getSeasonHistory(1_000),
   ]);
