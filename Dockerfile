@@ -42,6 +42,11 @@ COPY --from=deps --chown=nextjs:nodejs /app/node_modules/postgres ./node_modules
 COPY --chown=nextjs:nodejs scripts/entrypoint.sh ./scripts/entrypoint.sh
 RUN chmod +x ./scripts/entrypoint.sh
 
+# 카테고리 분류가 claude CLI로 돈다(lib/crawl/classify.ts). 로그인은 CLAUDE_CODE_OAUTH_TOKEN으로
+# 주입한다. 실측(2026-08-29): 이 한 줄로 이미지가 322MB → 817MB. postinstall이 네이티브
+# 바이너리를 받는 탓이다. 없으면 분류는 키워드 규칙으로 떨어지고 나머지는 그대로 돈다.
+RUN npm i -g @anthropic-ai/claude-code && claude --version
+
 USER nextjs
 EXPOSE 3000
 

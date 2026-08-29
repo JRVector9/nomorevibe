@@ -206,6 +206,16 @@ describe("extractPageMeta — 수집한 제품의 이름·소개 재료", () => 
     expect(extractPageMeta(`<title>X &#x999999; Y</title>`, "https://a.test").title).toBe("X &#x999999; Y");
   });
 
+  it("제어문자와 짝 없는 서로게이트를 걷어낸다 — 하나가 피드 전체를 XML로 못 읽게 만든다", () => {
+    // &#8;은 U+0008로 풀린다. 공백 접기는 이 범위를 덮지 않는다
+    expect(extractPageMeta(`<title>Ship&#8;fast &#x1f;now</title>`, "https://a.test").title).toBe("Shipfast now");
+    // 원문에 그대로 박힌 제어문자도, 짝 없는 서로게이트도 같다
+    const html = `<meta property="og:description" content="A\u0001B \ud800 C">`;
+    expect(extractPageMeta(html, "https://a.test").description).toBe("AB  C".replace(/\s+/g, " "));
+    // 탭·줄바꿈은 공백으로, 이모지·대시·✓는 그대로
+    expect(extractPageMeta(`<title>A\tB\nC — ✓ 🚀</title>`, "https://a.test").title).toBe("A B C — ✓ 🚀");
+  });
+
   it("없으면 없는 대로 null을 남긴다 — 지어내지 않는다", () => {
     expect(extractPageMeta("<html><body>본문뿐</body></html>", "https://a.test")).toEqual({
       title: null,

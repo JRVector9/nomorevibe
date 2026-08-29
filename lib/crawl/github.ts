@@ -101,14 +101,21 @@ export async function githubRequest<T>(
   if (res.status === 404) return { ok: false, error: { kind: "not_found" } };
 
   /**
-   * 한도 소진은 403이나 429로 온다. 남은 호출 수가 0이면 한도이고, 아니면 다른 이유의
-   * 403(차단된 레포 등)이므로 구분한다.
+   * 한도는 두 종류다. 1차 한도 소진은 403/429에 x-ratelimit-remaining이 0이다. 2차 한도
+   * (짧은 시간에 검색을 몰아치면 걸린다)는 1차 한도가 남은 채로 403에 retry-after만 실려 온다.
+   * 후자를 일반 403으로 보면 검색 잡이 그 신호를 이번 사이클에서 통째로 건너뛴다 — 로컬
+   * 배포 시험에서 seed 4틱을 20초에 몰아치자 Codex 신호가 그렇게 빠졌다. 그 밖의 403
+   * (차단된 레포 등)은 여전히 http 실패다.
    */
   const remaining = res.headers.get("x-ratelimit-remaining");
-  if (res.status === 429 || (res.status === 403 && remaining === "0")) {
+  const retryAfterSeconds = Number(res.headers.get("retry-after"));
+  const secondaryLimit = Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0;
+  if (res.status === 429 || (res.status === 403 && (remaining === "0" || secondaryLimit))) {
     const resetSeconds = Number(res.headers.get("x-ratelimit-reset"));
-    const resetAt = Number.isFinite(resetSeconds) && resetSeconds > 0 ? new Date(resetSeconds * 1000) : null;
-    logger.warn("github.rate_limited", { path, resetAt });
+    const resetAt = Number.isFinite(resetSeconds) && resetSeconds > 0
+      ? new Date(resetSeconds * 1000)
+      : secondaryLimit ? new Date(Date.now() + retryAfterSeconds * 1000) : null;
+    logger.warn("github.rate_limited", { path, resetAt, secondary: secondaryLimit && remaining !== "0" });
     return { ok: false, error: { kind: "rate_limited", resetAt } };
   }
 

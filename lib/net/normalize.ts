@@ -115,6 +115,19 @@ function decodeEntities(text: string): string {
     .replace(/&amp;/gi, "&");
 }
 
+/**
+ * 글자로 볼 수 없는 것을 걷어낸다 — C0/C1 제어문자(탭·줄바꿈·CR 제외)와 짝 없는 서로게이트.
+ *
+ * 남의 페이지에서 `&#8;` 하나가 U+0008로 풀려 들어오면 그 제품이 실린 RSS 전체가 XML로
+ * 읽히지 않고, 화면·OG 경로도 같은 텍스트를 쓴다. 공백 접기(\s)는 이 범위를 덮지 않아
+ * 여기서 따로 거른다. 탭·줄바꿈은 뒤의 공백 접기가 처리하므로 남긴다.
+ */
+function stripUnsafeText(text: string): string {
+  return text
+    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F\uFFFE\uFFFF]/g, "")
+    .replace(/\p{Cs}/gu, "");
+}
+
 /** 범위를 벗어난 코드포인트는 원문 그대로 둔다 — 깨진 참조 하나로 제목 전체를 잃지 않는다 */
 function fromCodePoint(code: number, whole: string): string {
   if (!Number.isInteger(code) || code <= 0 || code > 0x10ffff) return whole;
@@ -132,7 +145,7 @@ function metaContent(html: string, attribute: "property" | "name", key: string):
     html.match(new RegExp(`<meta[^>]+${attribute}=["']${escaped}["'][^>]+content=["']([^"']*)["']`, "i")) ??
     html.match(new RegExp(`<meta[^>]+content=["']([^"']*)["'][^>]+${attribute}=["']${escaped}["']`, "i"));
   if (!found) return null;
-  const value = decodeEntities(found[1]).replace(/\s+/g, " ").trim();
+  const value = stripUnsafeText(decodeEntities(found[1])).replace(/\s+/g, " ").trim();
   return value || null;
 }
 
@@ -188,7 +201,7 @@ export function extractPageMeta(
   const titleTag = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
   const title =
     metaContent(html, "property", "og:title") ??
-    (titleTag ? decodeEntities(titleTag[1]).replace(/\s+/g, " ").trim() || null : null);
+    (titleTag ? stripUnsafeText(decodeEntities(titleTag[1])).replace(/\s+/g, " ").trim() || null : null);
 
   return {
     // 저장 상한을 넘기지 않게 자른다. 이름은 120자, 소개는 200자가 상한이다
