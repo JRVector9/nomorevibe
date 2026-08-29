@@ -127,6 +127,13 @@
       "when": 1787959826710,
       "tag": "0017_claim_invites",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1787967066462,
+      "tag": "0018_frontier_builder",
+      "breakpoints": true
     }
   ]
 }

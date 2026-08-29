@@ -80,7 +80,9 @@ describe("발행 잡", () => {
   });
 
   it("데려온 검색 신호로 만든 AI를 추정해 붙인다 — 화면에는 우리 추정으로 뜬다", async () => {
-    await crawl.enqueue([{ repo: "someone/my-app", signal: "Claude 커밋 트레일러" }]);
+    await crawl.enqueue([
+      { repo: "someone/my-app", signal: "Claude 커밋 트레일러", builder: "Claude" },
+    ]);
     await approved("someone/my-app");
 
     await tick();
@@ -90,16 +92,30 @@ describe("발행 잡", () => {
     expect(builderClaimOf(product!)).toBe("guessed");
   });
 
-  it("신호 설정에 추정 AI가 비어 있으면 붙이지 않는다", async () => {
-    await saveSettings({
-      discover: { queries: [{ label: "Claude 커밋 트레일러", query: "Co-authored-by: Claude", enabled: true, priority: 100, builder: null }] },
-    }, "테스트");
-    await crawl.enqueue([{ repo: "someone/my-app", signal: "Claude 커밋 트레일러" }]);
+  it("데려온 신호가 어떤 AI인지 말하지 않으면 붙이지 않는다", async () => {
+    // topic:vibe-coding 같은 레포 신호가 그렇다 — 배포물인 것만 말하고 도구는 말하지 않는다
+    await crawl.enqueue([{ repo: "someone/my-app", signal: "vibe-coding 토픽", builder: null }]);
     await approved("someone/my-app");
 
     await tick();
 
     expect((await products.findByUrl("https://my-app.test"))?.builder).toBeNull();
+  });
+
+  it("발견 뒤에 신호 이름이 바뀌어도 추정이 살아남는다", async () => {
+    // 프론티어의 signal은 첫 발견 때 굳은 문자열이다. 그것을 현재 설정에서 이름으로 찾으면
+    // 운영자가 라벨을 고치는 순간(정상적인 운영 행위다) 밀려 있던 후보가 전부 추정을 잃는다.
+    await crawl.enqueue([
+      { repo: "someone/my-app", signal: "Claude 커밋 트레일러", builder: "Claude" },
+    ]);
+    await approved("someone/my-app");
+    await saveSettings({
+      discover: { queries: [{ label: "Claude 트레일러", query: "Co-authored-by: Claude", enabled: true, priority: 100, builder: "Claude" }] },
+    }, "테스트");
+
+    await tick();
+
+    expect((await products.findByUrl("https://my-app.test"))?.builder).toBe("Claude");
   });
 
   it("후보를 발행됨으로 표시하고 slug를 남긴다", async () => {

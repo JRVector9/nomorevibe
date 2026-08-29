@@ -1,0 +1,1 @@
+ALTER TABLE "crawl_frontier" ADD COLUMN "builder" varchar(40);

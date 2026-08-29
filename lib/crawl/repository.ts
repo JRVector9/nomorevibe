@@ -37,26 +37,41 @@ function nowExpr(at?: Date) {
 /**
  * 발견한 레포를 큐에 넣는다.
  * 이미 있으면 아무것도 하지 않는다 — 같은 레포가 여러 검색 결과에 나와도 한 번만 조사한다.
+ *
+ * 그래서 여러 신호에 걸리는 레포는 **첫 발견 신호가 이긴다.** signal도 builder도 그때 굳고
+ * 나중 신호는 덮지 않는다. Claude·Codex 두 트레일러가 같이 찾은 레포가 실측 5%였다.
  */
 export async function enqueue(
-  entries: { repo: string; signal: string; priority?: number }[],
+  entries: { repo: string; signal: string; builder?: string | null; priority?: number }[],
 ): Promise<number> {
   if (entries.length === 0) return 0;
   const inserted = await db
     .insert(crawlFrontier)
-    .values(entries.map((e) => ({ repo: e.repo, signal: e.signal, priority: e.priority ?? 0 })))
+    .values(
+      entries.map((e) => ({
+        repo: e.repo,
+        signal: e.signal,
+        builder: e.builder ?? null,
+        priority: e.priority ?? 0,
+      })),
+    )
     .onConflictDoNothing({ target: crawlFrontier.repo })
     .returning({ id: crawlFrontier.id });
   return inserted.length;
 }
 
-/** 이 레포를 어느 검색 신호가 데려왔는지. 발행이 "만든 AI"를 추정할 때 본다 */
-export async function getFrontierSignal(repo: string): Promise<string | null> {
+/**
+ * 발견 시점에 굳은 "만든 AI" 추정값. 발행이 이것을 그대로 쓴다.
+ *
+ * 자유 텍스트인 signal로 현재 설정을 되짚지 않는다 — 라벨을 고치면 밀려 있던 후보가 추정을
+ * 잃고, 라벨을 재사용하면 과거 발견분이 소급 재라벨된다.
+ */
+export async function getFrontierBuilder(repo: string): Promise<string | null> {
   const row = await db.query.crawlFrontier.findFirst({
     where: eq(crawlFrontier.repo, repo),
-    columns: { signal: true },
+    columns: { builder: true },
   });
-  return row?.signal ?? null;
+  return row?.builder ?? null;
 }
 
 /**

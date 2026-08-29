@@ -49,7 +49,7 @@ export const products = pgTable("products", {
   tagline: varchar("tagline", { length: 200 }).notNull(),
   description: text("description").notNull(),
   category: varchar("category", { length: 40 }).notNull(),
-  // 메이커 신고값 — 랭킹에 반영하지 않음
+  // 만든 AI. 수집 발행은 우리 추정으로 채우고 클레임 때 비워 메이커 신고값만 남긴다 — 랭킹에 반영하지 않음
   builder: varchar("builder", { length: 60 }),
   stack: jsonb("stack").$type<string[]>().notNull().default([]),
   ogImage: text("og_image"),

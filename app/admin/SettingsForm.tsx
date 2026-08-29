@@ -18,9 +18,27 @@ function Toggle({ name, defaultChecked, children }: { name: string; defaultCheck
   );
 }
 
+/**
+ * 신호를 더하는 유일한 길 — 목록 끝의 빈 행.
+ *
+ * 저장된 신호 목록이 코드 기본값을 통째로 덮으므로(settings.ts), 기본 신호를 새로 넣어도
+ * 이미 저장된 환경에는 닿지 않는다. 빈 행이 없던 동안 남은 길은 판정 기준까지 함께
+ * 되돌리는 "기본값으로 되돌리기"뿐이었다. 라벨이나 검색어가 비면 서버 액션이 버리므로
+ * (actions.ts) 그냥 저장을 눌러도 신호가 늘지 않는다.
+ */
+const BLANK_QUERY = {
+  label: "",
+  kind: "commits" as const,
+  query: "",
+  enabled: false,
+  priority: 0,
+  builder: null,
+};
+
 export function SettingsForm({ settings }: { settings: CrawlSettings }) {
   const [state, action, pending] = useActionState<SaveState, FormData>(saveCrawlSettings, null);
   const { discover, judge } = settings;
+  const queryRows = [...discover.queries, BLANK_QUERY];
 
   return (
     <form action={action} className="mt-6 flex flex-col gap-4">
@@ -52,10 +70,13 @@ export function SettingsForm({ settings }: { settings: CrawlSettings }) {
       >
         <div>
           <span className={label}>검색 신호</span>
-          <p className={hint}>신호별 수율을 비교하려면 개별로 끌 수 있어야 합니다.</p>
-          <input type="hidden" name="queryCount" value={discover.queries.length} />
+          <p className={hint}>
+            신호별 수율을 비교하려면 개별로 끌 수 있어야 합니다. 마지막 빈 행에 적으면 신호가
+            늘고, 이름이나 검색어를 지우면 그 신호가 빠집니다.
+          </p>
+          <input type="hidden" name="queryCount" value={queryRows.length} />
           <div className="mt-3 flex flex-col gap-2">
-            {discover.queries.map((q, i) => (
+            {queryRows.map((q, i) => (
               <div key={i} className="grid grid-cols-1 gap-2 rounded-lg border border-line p-3 sm:grid-cols-[1fr_auto_1.6fr_auto_auto_auto]">
                 <input name={`query.${i}.label`} defaultValue={q.label} className={field} placeholder="이름" />
                 <select
