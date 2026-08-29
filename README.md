@@ -102,7 +102,7 @@ evidence가 잠금 하나를 쓰려고 products repository 전체를 import 했�
 
 개발 서버와 별개로, 실제 배포되는 형태를 그대로 띄운다. 목적은 **개발 서버에서 검증할 수 없는
 경로를 확인하는 것**이다 — 프로덕션 모드에서만 켜지는 SSRF 가드, 컨테이너 시작 시 마이그레이션,
-스케줄러 진입점.
+스케줄러 진입점, 그리고 방문자 해시·고유 집계처럼 비밀키가 있어야 도는 경로.
 
 ```bash
 cp .env.example .env          # AUTH_SECRET, VISITOR_HASH_SECRET 등을 채운다 (openssl rand -hex 32)
