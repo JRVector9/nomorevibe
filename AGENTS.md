@@ -13,7 +13,8 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 ## 멈춰 있는 작업
 
 `PENDING.md`에 코드로 끝낼 수 없어 대기 중인 작업이 있다. 지금은 두 건이다 — 카테고리
-분류의 실제 호출 검증(API 키 필요)과 프로덕션 스케줄러 등록(운영 환경 접근 필요).
+분류를 프로덕션에서 `claude` CLI로 돌리기(이미지에 CLI + 토큰 필요)와 프로덕션 스케줄러
+등록(운영 환경 접근 필요).
 그 파일에 막고 있는 것과 풀렸을 때 할 일이 그대로 실행할 수 있게 적혀 있다.
 
 

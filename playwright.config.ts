@@ -43,7 +43,8 @@ export default defineConfig({
       CRON_SECRET: "playwright-cron-secret",
       VISITOR_HASH_SECRET: "playwright-visitor-hash-secret-32-characters",
       GITHUB_TOKEN: "",
-      ANTHROPIC_API_KEY: "",
+      // 분류 CLI를 없는 실행 파일로 돌려 e2e가 모델을 부르지 않게 한다
+      CLAUDE_CLI: "claude-disabled-for-e2e",
     },
   },
 });
