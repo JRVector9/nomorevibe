@@ -5,6 +5,32 @@
 
 ---
 
+## P0. 첫 프로덕션 배포 — 아직 어디에도 배포돼 있지 않다
+
+**실측(2026-08-29)**: 프로덕션 Dokploy(`deploy.brut.bot`) 14개 프로젝트에 nomorevibe가 없고,
+개발 Dokploy(`dev.ahto.city`)에도 없다. `nomorevibe.app`은 A 레코드가 없다(코드의 User-Agent
+문자열만 그 주소를 가리킨다). 아래 B1·B2·D1은 전부 **배포가 있다는 전제**로 적혀 있었다 —
+프로덕션 스케줄러 등록도, 백필도, CLI 토큰도 붙일 곳이 없다.
+
+**막고 있는 것**: 결정 네 가지. 코드가 아니라 사람이 정할 일이다.
+
+| 결정 | 선택지 | 실측·참고 |
+|---|---|---|
+| 형태 | (a) Dokploy **Compose**로 `compose.yml`(db+app+scheduler) 통째로 / (b) **Application**(Dockerfile) + 외부 Postgres + Dokploy 스케줄 | 다른 프로젝트 13개는 (b)형, compose는 1개. (a)는 스케줄러가 같이 올라와 B1이 저절로 풀린다 |
+| 서버 | m3-ultra · m4-mini · otd-osaka-a1 · worker-edge | `/prod` 스킬은 M3+mini 동시 배포가 관례. 이 앱은 잠금·한도가 DB에 있어 2인스턴스 가능, **스케줄러는 하나**여야 한다 |
+| 도메인 | `nomorevibe.app` 보유 여부 → DNS → `NEXT_PUBLIC_SITE_URL` | 없으면 GitHub OAuth 콜백 URL도 못 정한다 |
+| DB | Dokploy 안 postgres 서비스 / 공용 PostgreSQL(배포 스킬의 192.168.139.217) | 미디어가 `bytea`로 들어가므로 백업 범위를 같이 정한다(README "제품 근거 수집 운영") |
+
+**정해지면 순서**: 비밀값 생성(`AUTH_SECRET`·`VISITOR_HASH_SECRET`·`CRON_SECRET`·`ADMIN_TOKEN`
+각각 `openssl rand -hex 32`, 서로 재사용 금지) → GitHub OAuth 앱(콜백 `<SITE>/api/auth/github/callback`)
+→ `GITHUB_TOKEN`(public repo 읽기) → `CLAUDE_CODE_OAUTH_TOKEN`(`claude setup-token`) → 배포 →
+`[migrate] 완료` 로그 확인 → B1(스케줄) → B2(고유 유입자 시작) → D1 확인.
+
+**이미지에 CLI는 이미 넣었다** — Dockerfile, 실측 +495MB(322 → 817MB). 부담이면 그 `RUN` 한 줄을
+빼면 분류만 규칙으로 떨어진다.
+
+---
+
 ## D1. 카테고리 분류 — 프로덕션에서 `claude` CLI가 돌게 하기
 
 **막고 있는 것**: 프로덕션 이미지에 `claude` CLI가 없고, 컨테이너에 로그인 토큰이 없다.
@@ -44,8 +70,8 @@ timeout   15초, 재시도 0회   (발행 잡의 틱 예산이 25초다)
 
 ### 프로덕션에서 풀려면
 
-1. **이미지에 CLI**: Dockerfile의 runner 단계에 `RUN npm i -g @anthropic-ai/claude-code`. 이미지가
-   커지므로 크기를 확인하고, 컨테이너 안에서 `claude --version`이 도는지 본다.
+1. **이미지에 CLI**: 넣었다(Dockerfile runner 단계). 실측 322MB → 817MB, 컨테이너 안에서
+   `claude --version` 2.1.251 확인.
 2. **토큰**: 로그인된 개발 머신에서 `claude setup-token` → 배포 비밀 저장소의 `CLAUDE_CODE_OAUTH_TOKEN`.
    값이 있으면 분류기가 `--bare`로 띄운다(keychain 없이 토큰만으로). 값은 로그·문서에 남기지 않는다.
 3. **확인**: `crawl-publish` 뒤 로그에 `crawl.classified { repo, category, reason }`가 남고
