@@ -77,6 +77,12 @@ timeout   15초, 재시도 0회   (발행 잡의 틱 예산이 25초다)
 3. **확인**: `crawl-publish` 뒤 로그에 `crawl.classified { repo, category, reason }`가 남고
    `crawl.classify_disabled`가 없는지. `crawl.classify_failed { reason: "auth" }`면 토큰이 풀린 것이다.
 
+**로컬 배포에서 확인한 것(2026-08-29)**: 이미지에 CLI가 들어갔고 컨테이너 안에서
+`claude --version` 2.1.251이 돈다. 토큰 없이 발행하면 131건 전부
+`crawl.classify_failed { reason: "auth", message: "Not logged in" }`을 남기고 **키워드 규칙으로
+떨어져 발행은 그대로 진행된다** — 폴백 경로는 검증됐다. 남은 것은 토큰을 넣었을 때 실제로
+분류가 되는지뿐이다.
+
 ---
 
 ## B1. 프로덕션 스케줄러 확인 및 필요 시 등록
@@ -197,6 +203,26 @@ where c.published_slug = p.slug and p.source = 'crawler' and p.claimed_at is nul
 `visit_collection_state.unique_visitor_started_at`은 마이그레이션 때 `NULL`로 두고, 유효한
 `VISITOR_HASH_SECRET`으로 `/go/<slug>` 요청의 HMAC을 처음 만들 수 있을 때 DB 시각으로 한 번만
 채운다. 따라서 코드 배포나 마이그레이션 시각을 수집 시작 시각으로 간주하면 안 된다.
+
+### 로컬 배포에서 이미 확인한 것 — 다시 재지 말 것
+
+2026-08-29, `docker compose`로 띄운 배포 형태(앱+DB+스케줄러)에서 **작동 원리는 전부 밟았다.**
+프로덕션에서 남은 것은 아래 "배포 순서"의 환경 고유 단계(비밀값 주입·마이그레이션 적용 확인·
+수집 시작 시각 기록·7일 경과)뿐이다.
+
+| 확인한 것 | 결과 |
+|---|---|
+| `/go/<slug>` 첫 방문이 `unique_visitor_started_at`을 채운다 | 채워짐. 그 전에는 NULL |
+| `visitor_hash` 길이 | 64자 |
+| 같은 브라우저·같은 제품 10분 재방문 | 기록 안 됨 (중복 제거 동작) |
+| 같은 브라우저·**다른 제품** | 기록되며 **해시가 다르다** — 제품별 HMAC이 실제로 분리된다 |
+| 다른 브라우저·같은 제품 | 별도 기록 |
+| 봇 User-Agent(Slackbot) | 이동은 되고 기록은 안 됨 |
+| `click-rollup` | `product_click_daily`에 유효 방문과 **고유 수**가 함께 남는다 (예: 유효 2 / 고유 2) |
+| 중복 제거 키 | `rate_limits`의 `visit:<slug>:<hash>` — 제품×방문자마다 하나 |
+| `ranking-refresh` | 시즌 스냅샷 갱신. `ranking_entries`는 0 — 검증된 제품만 참가하므로 맞다 |
+
+즉 프로덕션에서 새로 확인할 것은 **"이 환경에서도 같은 일이 일어나는가"**이지 동작 자체가 아니다.
 
 ### 배포 순서
 
