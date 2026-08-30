@@ -188,6 +188,16 @@ describe("발행 잡", () => {
     expect((await products.findByUrl("https://my-app.test"))?.name).toBe("RevealUI");
   });
 
+  it("공백이 있는 하이픈에서 이름을 자른다 — 실데이터에서 가장 흔한 구분자다", async () => {
+    await approved("someone/swarms", {
+      pageMeta: { title: "DEEPSEEKAGENTS - AI-Powered Agentic Swarms for Product Development", description: "소개" },
+    });
+
+    await tick();
+
+    expect((await products.findByUrl("https://my-app.test"))?.name).toBe("DEEPSEEKAGENTS");
+  });
+
   it("이름 안의 하이픈은 자르지 않는다", async () => {
     await approved("someone/shop", { pageMeta: { title: "e-commerce-kit", description: "소개" } });
 

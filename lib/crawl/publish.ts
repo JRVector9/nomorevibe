@@ -166,9 +166,16 @@ function draftFrom(repo: string, document: CrawlDocument) {
  * 구분자 앞이 이름이고 뒤는 소개다 — 소개는 이미 따로 있다.
  *
  * 앞뒤 공백이 있는 구분자만 자른다. 그러지 않으면 e-commerce 같은 이름이 잘린다.
+ *
+ * 하이픈-마이너스도 구분자다. 실데이터 451건에서 60자를 넘긴 이름 21건 중 11건이
+ * "DEEPSEEKAGENTS - AI-Powered Agentic Swarms…"처럼 그것으로 갈라져 있었다. 앞뒤 공백
+ * 조건이 있어 e-commerce·Well-Architected·Ready-to-use는 그대로 남는다(확인함).
+ *
+ * 콜론("Vibe Coding Starter Guide: from Design to…")은 넣지 않았다. 앞에 공백이 없어
+ * 같은 조건으로 거를 수 없고, 이름 안에 콜론을 쓰는 제품과 가릴 방법이 없다.
  */
 function productName(title: string): string {
-  const [head] = title.split(/\s+[|·–—]\s+/);
+  const [head] = title.split(/\s+[|·–—-]\s+/);
   return head.trim() || title.trim();
 }
 
