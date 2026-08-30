@@ -95,6 +95,13 @@ const judgeSchema = z.object({
    * 생성기(jekyll·hugo)를 뺀 8건이 실제 문서였다. 사람이 같은 판단을 반복할 이유가 없다.
    */
   docsGenerators: z.array(z.string().min(2).max(40)).max(50),
+  /**
+   * 페이지 제목이 이것과 정확히 같으면 손대지 않은 스캐폴드다.
+   *
+   * 프레임워크가 만들어 준 기본 제목을 그대로 배포한 것은 아직 제품이 아니다. 부분 일치가
+   * 아니라 정확 일치로 본다 — "Create Next App Alternatives" 같은 진짜 제품을 치지 않게.
+   */
+  placeholderTitles: z.array(z.string().min(2).max(60)).max(100),
   /** 규칙으로 못 가르면 needs_review로 보류할지, 그냥 거부할지 */
   holdAmbiguous: z.boolean(),
 });
@@ -175,6 +182,26 @@ export const DEFAULT_CRAWL_SETTINGS: CrawlSettings = {
       "*.jl",
       "*-personal-site",
       "*-personal-website",
+    ],
+    /**
+     * 실측(2026-08-30, 원본 1445건): 정확히 이 제목으로 배포된 것이 5건 있었고 전부 발행돼
+     * 목록에 "Create Next App"이 셋, "Document"와 "Svelte app"이 하나씩 올라 있었다.
+     * "Home"은 5건이 걸렸지만 진짜 제목일 수 있어 넣지 않는다 — 이미 다른 규칙이 처리했다.
+     * 지금 걸리는 것이 없는 항목도 프레임워크 기본값이라 넣어 둔다.
+     */
+    placeholderTitles: [
+      "create next app",
+      "next app",
+      "react app",
+      "vite app",
+      "vite + react",
+      "vite + react + ts",
+      "vite + vue",
+      "vite + svelte",
+      "nuxt app",
+      "svelte app",
+      "document",
+      "untitled",
     ],
     docsGenerators: [
       "mkdocs",

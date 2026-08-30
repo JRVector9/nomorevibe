@@ -54,6 +54,26 @@ describe("judge — 거르기", () => {
     }
   });
 
+  it("프레임워크 기본 제목을 그대로 배포한 것은 제품이 아니다", () => {
+    // 실측: 목록에 "Create Next App"이 셋, "Document"와 "Svelte app"이 하나씩 올라 있었다
+    for (const title of ["Create Next App", "create next app", " Svelte app ", "Document", "Vite + React"]) {
+      const v = judge(goodRepo(), { ...livePage, title }, settings, NOW);
+      expect(v, title).toMatchObject({ state: "rejected", reason: "not_a_product" });
+    }
+  });
+
+  it("기본 제목을 품고 있을 뿐인 진짜 제품은 통과시킨다 — 정확 일치로만 본다", () => {
+    for (const title of ["Create Next App Alternatives", "Documentation Hub", "React App Builder", "Docsy"]) {
+      const v = judge(goodRepo(), { ...livePage, title }, settings, NOW);
+      expect(v.state, title).toBe("approved");
+    }
+  });
+
+  it("제목이 없으면 그것만으로 거부하지 않는다", () => {
+    expect(judge(goodRepo(), { ...livePage, title: null }, settings, NOW).state).toBe("approved");
+    expect(judge(goodRepo(), { ...livePage, title: "  " }, settings, NOW).state).toBe("approved");
+  });
+
   it("대형 오픈소스를 스타 상한으로 거른다", () => {
     // windmill-labs/windmill 처럼 AI가 커밋 일부에 참여했을 뿐인 것
     const v = judge(goodRepo({ stars: 15_000 }), livePage, settings, NOW);
