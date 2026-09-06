@@ -1,5 +1,37 @@
 # Codex handoff
 
+## Full product-detail redesign proposal — 2026-09-07 KST
+
+- Current objective: explain why Drever's development-AI fields are unknown and redesign the entire
+  lower product-detail area as an HTML proposal. Production React components were not changed.
+- Drever scan 31 completed at pinned commit `502eff05d9b629370b51ee03cafceb571562e3c2`
+  without collection issues. It found root `AGENTS.md`, but that catalog rule has `client=null` and is
+  compatible with Codex, Kimi, Grok Build, OpenCode, GitHub Copilot, Cursor and Kiro. The parser
+  intentionally does not interpret instruction prose as model configuration. No client-specific
+  config, selected model, gateway or commit attribution was observed.
+- The AI judge also requires a current product-site link back to exactly one matching repository.
+  Drever has a repository-to-site homepage link, while its site fingerprint exposed no repository
+  key, so the agent relationship remains `unknown`. `summarizeAgentEvidence` therefore returns
+  `ai_evidence_insufficient`; `executionVerified` is intentionally always false for static public
+  repository evidence.
+- Created `docs/designs/2026-09-06-product-detail-full-redesign.html`. It keeps the approved editorial
+  hero and redesigns product story, evidence map, development-AI reasoning, repository/languages,
+  updates, and ownership CTA. The mock uses the actual Drever snapshot and labels public-page product
+  claims separately from externally confirmed facts.
+- Verification: static HTML returned HTTP 200 (29,569 bytes); Playwright found all five section IDs,
+  verified anchor navigation, no console/page errors, no external requests, and no horizontal overflow
+  at 1440px and 390px. Final screenshots are `/private/tmp/nomorevibe-detail-full-redesign-
+  {desktop,mobile}-final.png`.
+- Failed approach: the first QA one-liner read browser `location` in the Node context. Replaced it with
+  `page.evaluate(() => location.hash)` and the verification passed.
+- Remaining work: wait for user approval of this complete lower-page direction before changing the
+  production components.
+
+```sh
+open http://127.0.0.1:8767/2026-09-06-product-detail-full-redesign.html
+git diff --check
+```
+
 ## Product detail editorial redesign COMPLETE — 2026-09-06 23:52 KST
 
 - Current objective: implement the user's selected A (editorial profile) direction on the real
