@@ -1,5 +1,24 @@
 # Codex handoff
 
+## Compact development-clue design — 2026-09-07 KST
+
+- User feedback: development AI is secondary. Hide the section when there is no evidence; when only
+  `AGENTS.md`, `CLAUDE.md` or another instruction artifact exists, show only the observed file facts;
+  append tool/model details in that same section only when they are supportable.
+- Updated `docs/designs/2026-09-06-product-detail-full-redesign.html`. Removed the large dark AI panel,
+  the four repeated unknown fields and the third unknown card in the evidence map. Replaced them with
+  one compact `개발 지침 파일` row containing `AGENTS.md`, pinned commit, root scope and a concise
+  `AI 사용 미확정` explanation.
+- Verification: Playwright rendered desktop 1440px and mobile 390px with no console/page errors or
+  horizontal overflow. It also asserted the development-clue section is shorter than the repository
+  section. Screenshots: `/private/tmp/nomorevibe-detail-full-redesign-compact-ai-{desktop,mobile}.png`.
+- Production components remain unchanged; wait for approval of the revised full-page mockup.
+
+```sh
+open http://127.0.0.1:8767/2026-09-06-product-detail-full-redesign.html
+git diff --check
+```
+
 ## Full product-detail redesign proposal — 2026-09-07 KST
 
 - Current objective: explain why Drever's development-AI fields are unknown and redesign the entire

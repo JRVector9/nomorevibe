@@ -143,7 +143,7 @@
     .overview-title { display: flex; justify-content: space-between; align-items: end; gap: 30px; margin-bottom: 26px; }
     .overview-title h2 { margin: 8px 0 0; font-size: 38px; letter-spacing: -.05em; }
     .overview-title p { max-width: 510px; margin: 0; color: var(--ink-2); line-height: 1.7; }
-    .evidence-columns { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+    .evidence-columns { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
     .evidence-column { border: 1px solid var(--line); border-radius: 12px; background: var(--paper); padding: 24px; }
     .evidence-column header { display: flex; justify-content: space-between; align-items: center; gap: 14px; }
     .evidence-column h3 { margin: 0; font-size: 16px; }
@@ -151,32 +151,16 @@
     .evidence-list { margin: 20px 0 0; padding: 0; list-style: none; }
     .evidence-list li { padding: 13px 0; border-top: 1px solid var(--line); display: flex; justify-content: space-between; gap: 16px; color: var(--ink-2); }
     .evidence-list b { color: var(--ink); text-align: right; }
-    .ai-section { display: grid; grid-template-columns: .8fr 1.2fr; }
-    .ai-intro { padding: 52px; border-right: 1px solid var(--line); background: var(--dark); color: white; }
-    .ai-intro .eyebrow { color: #a99cff; }
-    .ai-intro h2 { margin: 14px 0 0; font-size: 42px; line-height: 1.08; letter-spacing: -.055em; }
-    .ai-intro p { color: #adb4c7; line-height: 1.8; }
-    .status-box { margin-top: 32px; padding: 20px; border: 1px solid #34384a; border-radius: 12px; background: #1c1f2c; }
-    .status-box strong { display: block; color: #ffd77a; font-size: 18px; }
-    .status-box span { display: block; margin-top: 8px; color: #c4cad8; line-height: 1.65; }
-    .ai-body { padding: 46px; }
-    .proof-step { display: grid; grid-template-columns: 38px minmax(0,1fr) auto; gap: 16px; align-items: start; padding: 20px 0; border-bottom: 1px solid var(--line); }
-    .proof-step:first-child { padding-top: 0; }
-    .proof-step:last-child { border-bottom: 0; }
-    .step-number { width: 32px; height: 32px; display: grid; place-items: center; border: 1px solid var(--line); border-radius: 50%; color: var(--accent); font: 800 12px ui-monospace, monospace; }
-    .proof-step h3 { margin: 0; font-size: 15px; }
-    .proof-step p { margin: 6px 0 0; color: var(--ink-2); line-height: 1.65; }
-    .proof-step code { color: var(--accent); font-size: 12px; word-break: break-all; }
-    .unknown-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-top: 26px; }
-    .unknown-item { padding: 15px; border-radius: 10px; background: var(--soft); }
-    .unknown-item span { color: var(--muted); font-size: 12px; }
-    .unknown-item strong { display: block; margin-top: 6px; font-size: 14px; }
-    .why-box { margin-top: 22px; padding: 20px; border-left: 3px solid var(--amber); background: var(--amber-soft); }
-    .why-box b { color: #6e4800; }
-    .why-box p { margin: 7px 0 0; color: #6e531b; line-height: 1.65; }
-    .confirm-path { margin-top: 24px; }
-    .confirm-path h3 { margin: 0; font-size: 15px; }
-    .confirm-path ul { margin: 12px 0 0; padding-left: 20px; color: var(--ink-2); line-height: 1.85; }
+    .artifact-section { display: grid; grid-template-columns: 230px minmax(0,1fr) 210px; gap: 28px; align-items: center; padding: 30px 34px; }
+    .artifact-intro h2 { margin: 8px 0 0; font-size: 24px; letter-spacing: -.035em; }
+    .artifact-intro p { margin: 8px 0 0; color: var(--muted); font-size: 12px; line-height: 1.6; }
+    .artifact-file { padding: 18px 20px; border: 1px solid var(--line); border-radius: 11px; background: var(--soft-2); }
+    .artifact-file header { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+    .artifact-file h3 { margin: 0; font-size: 16px; }
+    .artifact-file p { margin: 9px 0 0; color: var(--ink-2); line-height: 1.65; }
+    .artifact-file code { display: block; margin-top: 8px; color: var(--accent); font-size: 12px; word-break: break-all; }
+    .artifact-result { padding-left: 24px; border-left: 1px solid var(--line); }
+    .artifact-result p { margin: 10px 0 0; color: var(--ink-2); font-size: 13px; line-height: 1.65; }
     .repo-section { display: grid; grid-template-columns: .9fr 1.1fr; }
     .repo-copy { padding: 52px; border-right: 1px solid var(--line); }
     .repo-copy h2 { margin: 12px 0 0; font-size: 40px; line-height: 1.1; letter-spacing: -.05em; }
@@ -229,13 +213,14 @@
       .image-stage { min-height: 0; }
       .metrics { grid-template-columns: repeat(2, 1fr); }
       .metric:last-child { grid-column: span 2; }
-      .section-head, .ai-section, .repo-section { grid-template-columns: 1fr; }
+      .section-head, .repo-section { grid-template-columns: 1fr; }
       .section-head { gap: 24px; padding: 38px; }
       .feature-grid, .evidence-columns { grid-template-columns: 1fr; }
       .feature { border-right: 0; border-bottom: 1px solid var(--line); }
       .feature:last-child { border-bottom: 0; }
-      .ai-intro, .repo-copy { border-right: 0; border-bottom: 1px solid var(--line); }
-      .unknown-grid { grid-template-columns: repeat(2, 1fr); }
+      .repo-copy { border-right: 0; border-bottom: 1px solid var(--line); }
+      .artifact-section { grid-template-columns: 1fr; }
+      .artifact-result { padding: 0; border-left: 0; }
     }
     @media (max-width: 620px) {
       .container { width: min(100% - 20px, 1240px); }
@@ -255,8 +240,9 @@
       .section-nav { top: 56px; margin-top: 18px; }
       .evidence-chip { display: none; }
       .section { margin-top: 18px; }
-      .section-head, .evidence-overview, .ai-intro, .ai-body, .repo-copy, .language-panel, .updates { padding: 28px 20px; }
-      .section-head h2, .overview-title h2, .ai-intro h2, .repo-copy h2, .updates h2 { font-size: 31px; }
+      .section-head, .evidence-overview, .repo-copy, .language-panel, .updates { padding: 28px 20px; }
+      .section-head h2, .overview-title h2, .repo-copy h2, .updates h2 { font-size: 31px; }
+      .artifact-section { padding: 24px 20px; gap: 18px; }
       .feature { padding: 26px 20px; }
       .overview-title, .updates-head { align-items: start; flex-direction: column; }
       .evidence-columns { gap: 9px; }
@@ -308,7 +294,7 @@
     <nav class="section-nav" aria-label="상세 페이지 섹션">
       <div class="section-nav-inner">
         <div class="section-links">
-          <a href="#story">제품 개요</a><a href="#evidence">근거 현황</a><a href="#ai">개발 AI</a><a href="#repository">저장소</a><a href="#updates">업데이트</a>
+          <a href="#story">제품 개요</a><a href="#evidence">근거 현황</a><a href="#ai">개발 단서</a><a href="#repository">저장소</a><a href="#updates">업데이트</a>
         </div>
         <span class="evidence-chip">공개 출처 5개 항목 확인</span>
       </div>
@@ -332,7 +318,7 @@
     <section id="evidence" class="section evidence-overview">
       <div class="overview-title">
         <div><span class="eyebrow">Evidence map</span><h2>확인 수준을<br>한눈에</h2></div>
-        <p>관측된 사실, 제작자의 설명, 아직 판단할 수 없는 항목을 같은 카드에 섞지 않습니다. 숫자가 많아 보여도 근거 수준은 따로 읽을 수 있습니다.</p>
+        <p>외부에서 확인한 제품 사실과 저장소에서 발견한 파일을 분리합니다. 확인할 수 없는 개발 AI 항목은 반복해서 나열하지 않습니다.</p>
       </div>
       <div class="evidence-columns">
         <article class="evidence-column">
@@ -349,37 +335,23 @@
             <li><span>스캔 상태</span><b>완료</b></li><li><span>의미</span><b>공용 에이전트 지침</b></li>
           </ul>
         </article>
-        <article class="evidence-column">
-          <header><h3>아직 미확인</h3><span class="count" style="color:var(--amber)">4</span></header>
-          <ul class="evidence-list">
-            <li><span>실제 사용 도구</span><b>미확인</b></li><li><span>실행 모델</span><b>미확인</b></li>
-            <li><span>게이트웨이</span><b>미확인</b></li><li><span>개발 기여 범위</span><b>미확인</b></li>
-          </ul>
-        </article>
       </div>
     </section>
 
-    <section id="ai" class="section ai-section">
-      <div class="ai-intro">
-        <span class="eyebrow">Development AI</span>
-        <h2>발견은 됐지만<br>특정할 수 없음</h2>
-        <p>공개 저장소 전체 스캔은 정상 완료됐습니다. “미확인”은 수집 오류가 아니라 현재 공개 근거가 허용하는 결론입니다.</p>
-        <div class="status-box"><strong>개발 AI 미확정</strong><span>AGENTS.md 하나만으로 Codex, Kimi, Grok Build 가운데 무엇을 실제로 사용했는지 판정하지 않습니다.</span></div>
+    <section id="ai" class="section artifact-section">
+      <div class="artifact-intro">
+        <span class="eyebrow">Development clue</span>
+        <h2>개발 지침 파일</h2>
+        <p>확실한 개발 AI 정보가 있을 때만 이 영역에 함께 표시합니다.</p>
       </div>
-      <div class="ai-body">
-        <article class="proof-step"><span class="step-number">01</span><div><h3>저장소 스캔 완료</h3><p>zhangdroid/drever의 고정 커밋을 기준으로 에이전트 관련 파일을 검사했습니다.</p><code>commit 502eff05d9b629370b51ee03cafceb571562e3c2</code></div><span class="badge green">확인</span></article>
-        <article class="proof-step"><span class="step-number">02</span><div><h3>공용 지침 파일 발견</h3><p>루트의 AGENTS.md를 찾았습니다. 파일 내용은 보관하지 않고 경로와 blob 식별자만 기록합니다.</p><code>AGENTS.md · blob e9638d1…</code></div><span class="badge blue">관측</span></article>
-        <article class="proof-step"><span class="step-number">03</span><div><h3>호환 가능한 도구가 여러 개</h3><p>이 형식은 Codex, Kimi, Grok Build, OpenCode, GitHub Copilot, Cursor, Kiro가 함께 사용할 수 있습니다.</p></div><span class="badge amber">특정 불가</span></article>
-        <article class="proof-step"><span class="step-number">04</span><div><h3>식별 가능한 설정·기여 표기 없음</h3><p>.codex/config.toml 같은 전용 설정, 선택 모델, 게이트웨이, 커밋 기여 표기를 찾지 못했습니다.</p></div><span class="badge">미확인</span></article>
-
-        <div class="unknown-grid">
-          <div class="unknown-item"><span>개발 도구</span><strong>미확인</strong></div>
-          <div class="unknown-item"><span>선택 모델</span><strong>미확인</strong></div>
-          <div class="unknown-item"><span>연결 경로</span><strong>미확인</strong></div>
-          <div class="unknown-item"><span>실제 실행</span><strong>검증 불가</strong></div>
-        </div>
-        <div class="why-box"><b>왜 AGENTS.md를 Codex 사용으로 보지 않나요?</b><p>파일명이 Codex 문서 규칙과 같아도 다른 에이전트가 같은 파일을 읽을 수 있습니다. 파일 존재를 특정 도구의 실행 기록으로 해석하면 오탐이 생깁니다.</p></div>
-        <div class="confirm-path"><h3>확정도를 높일 수 있는 공개 근거</h3><ul><li>도구 전용 설정 파일과 명시적으로 선택된 모델</li><li>공개 커밋의 AI 기여 표기 또는 제작자 신고</li><li>제품 사이트와 저장소의 양방향 링크</li></ul></div>
+      <article class="artifact-file">
+        <header><h3>AGENTS.md</h3><span class="badge blue">파일 발견</span></header>
+        <p>저장소 루트의 공용 에이전트 지침 파일입니다. 저장소 스캔은 정상 완료됐습니다.</p>
+        <code>commit 502eff0 · root scope</code>
+      </article>
+      <div class="artifact-result">
+        <span class="badge amber">AI 사용 미확정</span>
+        <p>여러 개발 도구가 읽을 수 있는 공용 형식이므로 특정 도구나 모델을 추정하지 않습니다.</p>
       </div>
     </section>
 
@@ -426,7 +398,7 @@
       <a class="button primary" href="#">소유권 확인 방법 보기 ↗</a>
     </section>
 
-    <aside class="prototype-note"><b>시안 안내</b><br>이 화면은 2026-09-06 Drever 수집 결과를 사용한 전체 상세 페이지 디자인 제안입니다. 제품 기능 문장은 공개 페이지 설명으로 표시했고, 개발 AI는 공개 근거로 확인 가능한 수준만 표현했습니다.</aside>
+    <aside class="prototype-note"><b>시안 안내</b><br>이 화면은 2026-09-06 Drever 수집 결과를 사용한 전체 상세 페이지 디자인 제안입니다. 개발 AI는 확실한 정보가 있을 때만 추가하며, 현재는 발견한 AGENTS.md 정보만 한 개의 짧은 섹션으로 표시합니다.</aside>
   </main>
   <footer><div class="container">NoMoreVibe — AI로 만든 제품의 사실, 주장, 미확인 정보를 분리해 보여줍니다.</div></footer>
 </body>
