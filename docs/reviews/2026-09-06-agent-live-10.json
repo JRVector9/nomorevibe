@@ -1,0 +1,4528 @@
+{
+  "startedAt": "2026-09-06T00:14:55.791Z",
+  "apply": true,
+  "selectedCount": 10,
+  "completedAt": "2026-09-06T00:20:51.244Z",
+  "products": [
+    {
+      "slug": "revealui",
+      "repository": "revealuistudio/revealui",
+      "legacyGuessPresent": true,
+      "linkBefore": "visible",
+      "linkAction": "unchanged",
+      "factsRefresh": {
+        "sourcesAttempted": 1,
+        "sourcesFailed": 0,
+        "factsChanged": 1,
+        "eventsInserted": 10,
+        "mediaInserted": 0,
+        "complete": true
+      },
+      "scan": {
+        "id": 1,
+        "state": "complete",
+        "commitSha": "18a8ed4bde2fe02a28d8f733a061cdd457899d73",
+        "detectorVersion": "2026-09-06.1",
+        "observedAt": "2026-09-06T00:15:26.403Z",
+        "coverage": {
+          "limited": false
+        }
+      },
+      "rounds": 8,
+      "errorCode": null,
+      "relationship": "unknown",
+      "eligibility": {
+        "eligible": false,
+        "reason": "ai_evidence_insufficient",
+        "executionVerified": false
+      },
+      "repositoryFacts": {
+        "kind": "repository",
+        "key": "revealuistudio/revealui",
+        "state": "ok",
+        "facts": {
+          "fork": false,
+          "type": "github_repository",
+          "forks": 0,
+          "stars": 4,
+          "public": true,
+          "license": {
+            "url": "https://api.github.com/licenses/mit",
+            "value": "MIT License",
+            "spdxId": "MIT"
+          },
+          "archived": false,
+          "homepage": "https://revealui.com",
+          "pushedAt": "2026-09-05T23:11:17.000Z",
+          "createdAt": "2026-01-03T11:43:19.000Z",
+          "languages": [
+            {
+              "name": "TypeScript",
+              "bytes": 25209257,
+              "percent": 92.4
+            },
+            {
+              "name": "MDX",
+              "bytes": 1543652,
+              "percent": 5.7
+            },
+            {
+              "name": "JavaScript",
+              "bytes": 315265,
+              "percent": 1.2
+            },
+            {
+              "name": "CSS",
+              "bytes": 69477,
+              "percent": 0.3
+            },
+            {
+              "name": "Shell",
+              "bytes": 46164,
+              "percent": 0.2
+            },
+            {
+              "name": "PLpgSQL",
+              "bytes": 42561,
+              "percent": 0.2
+            },
+            {
+              "name": "Nix",
+              "bytes": 16791,
+              "percent": 0.1
+            },
+            {
+              "name": "Dockerfile",
+              "bytes": 16107,
+              "percent": 0.1
+            },
+            {
+              "name": "HTML",
+              "bytes": 7278,
+              "percent": 0
+            },
+            {
+              "name": "PowerShell",
+              "bytes": 6733,
+              "percent": 0
+            }
+          ],
+          "updatedAt": "2026-09-05T22:02:53.000Z",
+          "agentScanId": 1,
+          "contributors": {
+            "cap": 500,
+            "count": 7,
+            "incomplete": false
+          },
+          "latestRelease": {
+            "id": 383400862,
+            "url": "https://github.com/RevealUIStudio/revealui/releases/tag/create-revealui%400.5.23",
+            "name": "create-revealui@0.5.23",
+            "tagName": "create-revealui@0.5.23",
+            "notesUrl": "https://github.com/RevealUIStudio/revealui/releases/tag/create-revealui%400.5.23",
+            "publishedAt": "2026-09-05T23:11:22.000Z"
+          },
+          "repositoryKey": "revealuistudio/revealui",
+          "repositoryUrl": "https://github.com/RevealUIStudio/revealui",
+          "relationshipState": "repository_link",
+          "agentDetectorVersion": "2026-09-06.1"
+        },
+        "observedAt": "2026-09-06T00:14:55.803Z",
+        "lastSuccessAt": "2026-09-06T00:14:55.803Z",
+        "error": null
+      },
+      "site": {
+        "kind": "documentation",
+        "key": "canonical_site",
+        "state": "ok",
+        "facts": {
+          "type": "site_fingerprint",
+          "finalUrl": "https://revealui.com",
+          "repositoryKeys": []
+        },
+        "observedAt": "2026-09-06T00:14:55.803Z",
+        "lastSuccessAt": "2026-09-06T00:14:55.803Z",
+        "error": null
+      },
+      "observations": [
+        {
+          "kind": "instruction_file",
+          "client": null,
+          "compatibleClients": [
+            "codex",
+            "kimi",
+            "grok-build",
+            "opencode",
+            "github-copilot",
+            "cursor",
+            "kiro"
+          ],
+          "modelDeveloper": null,
+          "declaredModelId": null,
+          "gateway": null,
+          "routing": "unknown",
+          "role": null,
+          "scope": "",
+          "keyPath": null,
+          "ruleId": "shared.agents.v1",
+          "sourcePath": "AGENTS.md",
+          "commitSha": "18a8ed4bde2fe02a28d8f733a061cdd457899d73",
+          "blobSha": "adecc4b440e7ca70cded9d73a40e0dcd0abfb3b5",
+          "sourceUrl": "https://github.com/revealuistudio/revealui/blob/18a8ed4bde2fe02a28d8f733a061cdd457899d73/AGENTS.md"
+        },
+        {
+          "kind": "instruction_file",
+          "client": null,
+          "compatibleClients": [
+            "claude-code",
+            "cursor",
+            "opencode",
+            "kimi",
+            "grok-build"
+          ],
+          "modelDeveloper": null,
+          "declaredModelId": null,
+          "gateway": null,
+          "routing": "unknown",
+          "role": null,
+          "scope": "",
+          "keyPath": null,
+          "ruleId": "shared.claude.v1",
+          "sourcePath": "CLAUDE.md",
+          "commitSha": "18a8ed4bde2fe02a28d8f733a061cdd457899d73",
+          "blobSha": "8762b59ab55236acc01e3d33b7a1ddb54a68ce35",
+          "sourceUrl": "https://github.com/revealuistudio/revealui/blob/18a8ed4bde2fe02a28d8f733a061cdd457899d73/CLAUDE.md"
+        },
+        {
+          "kind": "instruction_file",
+          "client": "github-copilot",
+          "compatibleClients": [
+            "github-copilot"
+          ],
+          "modelDeveloper": null,
+          "declaredModelId": null,
+          "gateway": null,
+          "routing": "unknown",
+          "role": null,
+          "scope": "",
+          "keyPath": null,
+          "ruleId": "copilot.instructions.v1",
+          "sourcePath": ".github/copilot-instructions.md",
+          "commitSha": "18a8ed4bde2fe02a28d8f733a061cdd457899d73",
+          "blobSha": "24f52adc884bea006ae29b9ff65c7b7b26f678d4",
+          "sourceUrl": "https://github.com/revealuistudio/revealui/blob/18a8ed4bde2fe02a28d8f733a061cdd457899d73/.github/copilot-instructions.md"
+        },
+        {
+          "kind": "client_config",
+          "client": "grok-build",
+          "compatibleClients": [
+            "grok-build"
+          ],
+          "modelDeveloper": null,
+          "declaredModelId": null,
+          "gateway": null,
+          "routing": "unknown",
+          "role": null,
+          "scope": "",
+          "keyPath": null,
+          "ruleId": "grok.config.v1",
+          "sourcePath": ".grok/config.toml",
+          "commitSha": "18a8ed4bde2fe02a28d8f733a061cdd457899d73",
+          "blobSha": "837318e51b5d78b85444f2a9d77afec15afd6363",
+          "sourceUrl": "https://github.com/revealuistudio/revealui/blob/18a8ed4bde2fe02a28d8f733a061cdd457899d73/.grok/config.toml"
+        },
+        {
+          "kind": "instruction_file",
+          "client": "claude-code",
+          "compatibleClients": [
+            "claude-code"
+          ],
+          "modelDeveloper": null,
+          "declaredModelId": null,
+          "gateway": null,
+          "routing": "unknown",
+          "role": null,
+          "scope": "",
+          "keyPath": null,
+          "ruleId": "claude.agents.v1",
+          "sourcePath": ".claude/agents/builder.md",
+          "commitSha": "18a8ed4bde2fe02a28d8f733a061cdd457899d73",
+          "blobSha": "98a19eac147de283850df70c1f88a1281bc8a568",
+          "sourceUrl": "https://github.com/revealuistudio/revealui/blob/18a8ed4bde2fe02a28d8f733a061cdd457899d73/.claude/agents/builder.md"
+        },
+        {
+          "kind": "instruction_file",
+          "client": "claude-code",
+          "compatibleClients": [
+            "claude-code"
+          ],
+          "modelDeveloper": null,
+          "declaredModelId": null,
+          "gateway": null,
+          "routing": "unknown",
+          "role": null,
+          "scope": "",
+          "keyPath": null,
+          "ruleId": "claude.agents.v1",
+          "sourcePath": ".claude/agents/docs-sync.md",
+          "commitSha": "18a8ed4bde2fe02a28d8f733a061cdd457899d73",
+          "blobSha": "a2cba4a981e9ab203e34314e7d12af036ddac69d",
+          "sourceUrl": "https://github.com/revealuistudio/revealui/blob/18a8ed4bde2fe02a28d8f733a061cdd457899d73/.claude/agents/docs-sync.md"
+        },
+        {
+          "kind": "instruction_file",
+          "client": "claude-code",
+          "compatibleClients": [
+            "claude-code"
+          ],
+          "modelDeveloper": null,
+          "declaredModelId": null,
+          "gateway": null,
+          "routing": "unknown",
+          "role": null,
+          "scope": "",
+          "keyPath": null,
+          "ruleId": "claude.agents.v1",
+          "sourcePath": ".claude/agents/gate-runner.md",
+          "commitSha": "18a8ed4bde2fe02a28d8f733a061cdd457899d73",
+          "blobSha": "363b9b715fe071f5d98cb848278871296a27dbda",
+          "sourceUrl": "https://github.com/revealuistudio/revealui/blob/18a8ed4bde2fe02a28d8f733a061cdd457899d73/.claude/agents/gate-runner.md"
+        },
+        {
+          "kind": "instruction_file",
+          "client": "claude-code",
+          "compatibleClients": [
+            "claude-code"
+          ],
+          "modelDeveloper": null,
+          "declaredModelId": null,
+          "gateway": null,
+          "routing": "unknown",
+          "role": null,
+          "scope": "",
+          "keyPath": null,
+          "ruleId": "claude.agents.v1",
+          "sourcePath": ".claude/agents/linter.md",
+          "commitSha": "18a8ed4bde2fe02a28d8f733a061cdd457899d73",
+          "blobSha": "75b10b4ceaf2fc05eeab551a7624835b03e372ea",
+          "sourceUrl": "https://github.com/revealuistudio/revealui/blob/18a8ed4bde2fe02a28d8f733a061cdd457899d73/.claude/agents/linter.md"
+        },
+        {
+          "kind": "instruction_file",
+          "client": "claude-code",
+          "compatibleClients": [
+            "claude-code"
+          ],
+          "modelDeveloper": null,
+          "declaredModelId": null,
+          "gateway": null,
+          "routing": "unknown",
+          "role": null,
+          "scope": "",
+          "keyPath": null,
+          "ruleId": "claude.agents.v1",
+          "sourcePath": ".claude/agents/security-reviewer.md",
+          "commitSha": "18a8ed4bde2fe02a28d8f733a061cdd457899d73",
+          "blobSha": "9058c9602db791ad8e7a1ae5f845a7823679e75e",
+          "sourceUrl": "https://github.com/revealuistudio/revealui/blob/18a8ed4bde2fe02a28d8f733a061cdd457899d73/.claude/agents/security-reviewer.md"
+        },
+        {
+          "kind": "instruction_file",
+          "client": "claude-code",
+          "compatibleClients": [
+            "claude-code"
+          ],
+          "modelDeveloper": null,
+          "declaredModelId": null,
+          "gateway": null,
+          "routing": "unknown",
+          "role": null,
+          "scope": "",
+          "keyPath": null,
+          "ruleId": "claude.agents.v1",
+          "sourcePath": ".claude/agents/tester.md",
+          "commitSha": "18a8ed4bde2fe02a28d8f733a061cdd457899d73",
+          "blobSha": "d5056b2832503bb004c12c3b73b07937f77437ff",
+          "sourceUrl": "https://github.com/revealuistudio/revealui/blob/18a8ed4bde2fe02a28d8f733a061cdd457899d73/.claude/agents/tester.md"
+        },
+        {
+          "kind": "instruction_file",
+          "client": "claude-code",
+          "compatibleClients": [
+            "claude-code"
+          ],
+          "modelDeveloper": null,
+          "declaredModelId": null,
+          "gateway": null,
+          "routing": "unknown",
+          "role": null,
+          "scope": "",
+          "keyPath": null,
+          "ruleId": "claude.rules.v1",
+          "sourcePath": ".claude/rules/adapter-only.md",
+          "commitSha": "18a8ed4bde2fe02a28d8f733a061cdd457899d73",
+          "blobSha": "5b35d0cd0ae2e9bc568d0a0d5ae2df90589efd5d",
+          "sourceUrl": "https://github.com/revealuistudio/revealui/blob/18a8ed4bde2fe02a28d8f733a061cdd457899d73/.claude/rules/adapter-only.md"
+        },
+        {
+          "kind": "instruction_file",
+          "client": "claude-code",
+          "compatibleClients": [
+            "claude-code"
+          ],
+          "modelDeveloper": null,
+          "declaredModelId": null,
+          "gateway": null,
+          "routing": "unknown",
+          "role": null,
+          "scope": "",
+          "keyPath": null,
+          "ruleId": "claude.rules.v1",
+          "sourcePath": ".claude/rules/agent-dispatch.md",
+          "commitSha": "18a8ed4bde2fe02a28d8f733a061cdd457899d73",
+          "blobSha": "7409db2bb13083b38365da14ae4ea92e0c7731f2",
+          "sourceUrl": "https://github.com/revealuistudio/revealui/blob/18a8ed4bde2fe02a28d8f733a061cdd457899d73/.claude/rules/agent-dispatch.md"
+        },
+        {
+          "kind": "instruction_file",
+          "client": "claude-code",
+          "compatibleClients": [
+            "claude-code"
+          ],
+          "modelDeveloper": null,
+          "declaredModelId": null,
+          "gateway": null,
+          "routing": "unknown",
+          "role": null,
+          "scope": "",
+          "keyPath": null,
+          "ruleId": "claude.rules.v1",
+          "sourcePath": ".claude/rules/ai-mechanics.md",
+          "commitSha": "18a8ed4bde2fe02a28d8f733a061cdd457899d73",
+          "blobSha": "1ef6a8c638107b1b17c61f8834f4fafc44ea4685",
+          "sourceUrl": "https://github.com/revealuistudio/revealui/blob/18a8ed4bde2fe02a28d8f733a061cdd457899d73/.claude/rules/ai-mechanics.md"
+        },
+        {
+          "kind": "instruction_file",
+          "client": "claude-code",
+          "compatibleClients": [
+            "claude-code"
+          ],
+          "modelDeveloper": null,
+          "declaredModelId": null,
+          "gateway": null,
+          "routing": "unknown",
+          "role": null,
+          "scope": "",
+          "keyPath": null,
+          "ruleId": "claude.rules.v1",
+          "sourcePath": ".claude/rules/biome.md",
+          "commitSha": "18a8ed4bde2fe02a28d8f733a061cdd457899d73",
+          "blobSha": "df6db975521e41cd7a50e28c84247c57f0465d23",
+          "sourceUrl": "https://github.com/revealuistudio/revealui/blob/18a8ed4bde2fe02a28d8f733a061cdd457899d73/.claude/rules/biome.md"
+        },
+        {
+          "kind": "instruction_file",
+          "client": "claude-code",
+          "compatibleClients": [
+            "claude-code"
+          ],
+          "modelDeveloper": null,
+          "declaredModelId": null,
+          "gateway": null,
+          "routing": "unknown",
+          "role": null,
+          "scope": "",
+          "keyPath": null,
+          "ruleId": "claude.rules.v1",
+          "sourcePath": ".claude/rules/code-analysis-policy.md",
+          "commitSha": "18a8ed4bde2fe02a28d8f733a061cdd457899d73",
+          "blobSha": "d066c92b942fbc69d47e10eec6b2cffcf8e99931",
+          "sourceUrl": "https://github.com/revealuistudio/revealui/blob/18a8ed4bde2fe02a28d8f733a061cdd457899d73/.claude/rules/code-analysis-policy.md"
+        },
+        {
+          "kind": "instruction_file",
+          "client": "claude-code",
+          "compatibleClients": [
+            "claude-code"
+          ],
+          "modelDeveloper": null,
+          "declaredModelId": null,
+          "gateway": null,
+          "routing": "unknown",
+          "role": null,
+          "scope": "",
+          "keyPath": null,
+          "ruleId": "claude.rules.v1",
+          "sourcePath": ".claude/rules/code-over-docs.md",
+          "commitSha": "18a8ed4bde2fe02a28d8f733a061cdd457899d73",
+          "blobSha": "1287c3392efa634ce825350f8b1d0c04f64291cf",
+          "sourceUrl": "https://github.com/revealuistudio/revealui/blob/18a8ed4bde2fe02a28d8f733a061cdd457899d73/.claude/rules/code-over-docs.md"
+        },
+        {
+          "kind": "instruction_file",
+          "client": "claude-code",
+          "compatibleClients": [
+            "claude-code"
+          ],
+          "modelDeveloper": null,
+          "declaredModelId": null,
+          "gateway": null,
+          "routing": "unknown",
+          "role": null,
+          "scope": "",
+          "keyPath": null,
+          "ruleId": "claude.rules.v1",
+          "sourcePath": ".claude/rules/coordination.md",
+          "commitSha": "18a8ed4bde2fe02a28d8f733a061cdd457899d73",
+          "blobSha": "4075b4acf547219dcab181818d8c983a5a610a35",
+          "sourceUrl": "https://github.com/revealuistudio/revealui/blob/18a8ed4bde2fe02a28d8f733a061cdd457899d73/.claude/rules/coordination.md"
+        },
+        {
+          "kind": "instruction_file",
+          "client": "claude-code",
+          "compatibleClients": [
+            "claude-code"
+          ],
+          "modelDeveloper": null,
+          "declaredModelId": null,
+          "gateway": null,
+          "routing": "unknown",
+          "role": null,
+          "scope": "",
+          "keyPath": null,
+          "ruleId": "claude.rules.v1",
+          "sourcePath": ".claude/rules/database.md",
+          "commitSha": "18a8ed4bde2fe02a28d8f733a061cdd457899d73",
+          "blobSha": "40330380d0fc52154fa2fe513d2683d283cdf7bd",
+          "sourceUrl": "https://github.com/revealuistudio/revealui/blob/18a8ed4bde2fe02a28d8f733a061cdd457899d73/.claude/rules/database.md"
+        },
+        {
+          "kind": "instruction_file",
+          "client": "claude-code",
+          "compatibleClients": [
+            "claude-code"
+          ],
+          "modelDeveloper": null,
+          "declaredModelId": null,
+          "gateway": null,
+          "routing": "unknown",
+          "role": null,
+          "scope": "",
+          "keyPath": null,
+          "ruleId": "claude.rules.v1",
+          "sourcePath": ".claude/rules/disposition-actions.md",
+          "commitSha": "18a8ed4bde2fe02a28d8f733a061cdd457899d73",
+          "blobSha": "e8e1a619a47b7a4c95c6a0496723aecc6e69351a",
+          "sourceUrl": "https://github.com/revealuistudio/revealui/blob/18a8ed4bde2fe02a28d8f733a061cdd457899d73/.claude/rules/disposition-actions.md"
+        },
+        {
+          "kind": "instruction_file",
+          "client": "claude-code",
+          "compatibleClients": [
+            "claude-code"
+          ],
+          "modelDeveloper": null,
+          "declaredModelId": null,
+          "gateway": null,
+          "routing": "unknown",
+          "role": null,
+          "scope": "",
+          "keyPath": null,
+          "ruleId": "claude.rules.v1",
+          "sourcePath": ".claude/rules/durable-solutions.md",
+          "commitSha": "18a8ed4bde2fe02a28d8f733a061cdd457899d73",
+          "blobSha": "1d47da68a3e4605f16ee2a01c98372b94ccd8fac",
+          "sourceUrl": "https://github.com/revealuistudio/revealui/blob/18a8ed4bde2fe02a28d8f733a061cdd457899d73/.claude/rules/durable-solutions.md"
+        },
+        {
+          "kind": "instruction_file",
+          "client": "claude-code",
+          "compatibleClients": [
+            "claude-code"
+          ],
+          "modelDeveloper": null,
+          "declaredModelId": null,
+          "gateway": null,
+          "routing": "unknown",
+          "role": null,
+          "scope": "",
+          "keyPath": null,
+          "ruleId": "claude.rules.v1",
+          "sourcePath": ".claude/rules/git.md",
+          "commitSha": "18a8ed4bde2fe02a28d8f733a061cdd457899d73",
+          "blobSha": "75687ba4fecfc52475329ba58f8517b781776026",
+          "sourceUrl": "https://github.com/revealuistudio/revealui/blob/18a8ed4bde2fe02a28d8f733a061cdd457899d73/.claude/rules/git.md"
+        },
+        {
+          "kind": "instruction_file",
+          "client": "claude-code",
+          "compatibleClients": [
+            "claude-code"
+          ],
+          "modelDeveloper": null,
+          "declaredModelId": null,
+          "gateway": null,
+          "routing": "unknown",
+          "role": null,
+          "scope": "",
+          "keyPath": null,
+          "ruleId": "claude.rules.v1",
+          "sourcePath": ".claude/rules/monorepo.md",
+          "commitSha": "18a8ed4bde2fe02a28d8f733a061cdd457899d73",
+          "blobSha": "6ec33606ff59b0fdb7d6536314779326aafd7887",
+          "sourceUrl": "https://github.com/revealuistudio/revealui/blob/18a8ed4bde2fe02a28d8f733a061cdd457899d73/.claude/rules/monorepo.md"
+        },
+        {
+          "kind": "instruction_file",
+          "client": "claude-code",
+          "compatibleClients": [
+            "claude-code"
+          ],
+          "modelDeveloper": null,
+          "declaredModelId": null,
+          "gateway": null,
+          "routing": "unknown",
+          "role": null,
+          "scope": "",
+          "keyPath": null,
+          "ruleId": "claude.rules.v1",
+          "sourcePath": ".claude/rules/no-regex.md",
+          "commitSha": "18a8ed4bde2fe02a28d8f733a061cdd457899d73",
+          "blobSha": "8b80ad444a39fca7042ddc03baaeafd70ab5c2c4",
+          "sourceUrl": "https://github.com/revealuistudio/revealui/blob/18a8ed4bde2fe02a28d8f733a061cdd457899d73/.claude/rules/no-regex.md"
+        },
+        {
+          "kind": "instruction_file",
+          "client": "claude-code",
+          "compatibleClients": [
+            "claude-code"
+          ],
+          "modelDeveloper": null,
+          "declaredModelId": null,
+          "gateway": null,
+          "routing": "unknown",
+          "role": null,
+          "scope": "",
+          "keyPath": null,
+          "ruleId": "claude.rules.v1",
+          "sourcePath": ".claude/rules/npm-oidc-publish.md",
+          "commitSha": "18a8ed4bde2fe02a28d8f733a061cdd457899d73",
+          "blobSha": "6c0c46fe430e0f7215bf3b264677f4dc69795cfc",
+          "sourceUrl": "https://github.com/revealuistudio/revealui/blob/18a8ed4bde2fe02a28d8f733a061cdd457899d73/.claude/rules/npm-oidc-publish.md"
+        },
+        {
+          "kind": "instruction_file",
+          "client": "claude-code",
+          "compatibleClients": [
+            "claude-code"
+          ],
+          "modelDeveloper": null,
+          "declaredModelId": null,
+          "gateway": null,
+          "routing": "unknown",
+          "role": null,
+          "scope": "",
+          "keyPath": null,
+          "ruleId": "claude.rules.v1",
+          "sourcePath": ".claude/rules/opensrc.md",
+          "commitSha": "18a8ed4bde2fe02a28d8f733a061cdd457899d73",
+          "blobSha": "e2db1aed662281c5ec9886007752f9134b633a91",
+          "sourceUrl": "https://github.com/revealuistudio/revealui/blob/18a8ed4bde2fe02a28d8f733a061cdd457899d73/.claude/rules/opensrc.md"
+        },
+        {
+          "kind": "instruction_file",
+          "client": "claude-code",
+          "compatibleClients": [
+            "claude-code"
+          ],
+          "modelDeveloper": null,
+          "declaredModelId": null,
+          "gateway": null,
+          "routing": "unknown",
+          "role": null,
+          "scope": "",
+          "keyPath": null,
+          "ruleId": "claude.rules.v1",
+          "sourcePath": ".claude/rules/parameterization.md",
+          "commitSha": "18a8ed4bde2fe02a28d8f733a061cdd457899d73",
+          "blobSha": "02501ac10d8234a644001a0fca418ec62501c9fa",
+          "sourceUrl": "https://github.com/revealuistudio/revealui/blob/18a8ed4bde2fe02a28d8f733a061cdd457899d73/.claude/rules/parameterization.md"
+        },
+        {
+          "kind": "instruction_file",
+          "client": "claude-code",
+          "compatibleClients": [
+            "claude-code"
+          ],
+          "modelDeveloper": null,
+          "declaredModelId": null,
+          "gateway": null,
+          "routing": "unknown",
+          "role": null,
+          "scope": "",
+          "keyPath": null,
+          "ruleId": "claude.rules.v1",
+          "sourcePath": ".claude/rules/planning.md",
+          "commitSha": "18a8ed4bde2fe02a28d8f733a061cdd457899d73",
+          "blobSha": "2c05d6c257256f4ebe23f346a5a48d063178f313",
+          "sourceUrl": "https://github.com/revealuistudio/revealui/blob/18a8ed4bde2fe02a28d8f733a061cdd457899d73/.claude/rules/planning.md"
+        },
+        {
+          "kind": "instruction_file",
+          "client": "claude-code",
+          "compatibleClients": [
+            "claude-code"
+          ],
+          "modelDeveloper": null,
+          "declaredModelId": null,
+          "gateway": null,
+          "routing": "unknown",
+          "role": null,
+          "scope": "",
+          "keyPath": null,
+          "ruleId": "claude.rules.v1",
+          "sourcePath": ".claude/rules/priorities.md",
+          "commitSha": "18a8ed4bde2fe02a28d8f733a061cdd457899d73",
+          "blobSha": "a995e5c90ee976c3f7cfb4f7d34898a152261b1a",
+          "sourceUrl": "https://github.com/revealuistudio/revealui/blob/18a8ed4bde2fe02a28d8f733a061cdd457899d73/.claude/rules/priorities.md"
+        },
+        {
+          "kind": "instruction_file",
+          "client": "claude-code",
+          "compatibleClients": [
+            "claude-code"
+          ],
+          "modelDeveloper": null,
+          "declaredModelId": null,
+          "gateway": null,
+          "routing": "unknown",
+          "role": null,
+          "scope": "",
+          "keyPath": null,
+          "ruleId": "claude.rules.v1",
+          "sourcePath": ".claude/rules/public-issue-redaction.md",
+          "commitSha": "18a8ed4bde2fe02a28d8f733a061cdd457899d73",
+          "blobSha": "b74c3bd946284a8c8b309d58e41b79c33fc0b404",
+          "sourceUrl": "https://github.com/revealuistudio/revealui/blob/18a8ed4bde2fe02a28d8f733a061cdd457899d73/.claude/rules/public-issue-redaction.md"
+        },
+        {
+          "kind": "instruction_file",
+          "client": "claude-code",
+          "compatibleClients": [
+            "claude-code"
+          ],
+          "modelDeveloper": null,
+          "declaredModelId": null,
+          "gateway": null,
+          "routing": "unknown",
+          "role": null,
+          "scope": "",
+          "keyPath": null,
+          "ruleId": "claude.rules.v1",
+          "sourcePath": ".claude/rules/quality-over-speed.md",
+          "commitSha": "18a8ed4bde2fe02a28d8f733a061cdd457899d73",
+          "blobSha": "245302fd71726f4bd9aa2486066cdc261677f074",
+          "sourceUrl": "https://github.com/revealuistudio/revealui/blob/18a8ed4bde2fe02a28d8f733a061cdd457899d73/.claude/rules/quality-over-speed.md"
+        },
+        {
+          "kind": "instruction_file",
+          "client": "claude-code",
+          "compatibleClients": [
+            "claude-code"
+          ],
+          "modelDeveloper": null,
+          "declaredModelId": null,
+          "gateway": null,
+          "routing": "unknown",
+          "role": null,
+          "scope": "",
+          "keyPath": null,
+          "ruleId": "claude.rules.v1",
+          "sourcePath": ".claude/rules/single-source-of-truth.md",
+          "commitSha": "18a8ed4bde2fe02a28d8f733a061cdd457899d73",
+          "blobSha": "b29fe84dcf77257962bddd9e04fd5db672431e0d",
+          "sourceUrl": "https://github.com/revealuistudio/revealui/blob/18a8ed4bde2fe02a28d8f733a061cdd457899d73/.claude/rules/single-source-of-truth.md"
+        },
+        {
+          "kind": "instruction_file",
+          "client": "claude-code",
+          "compatibleClients": [
+            "claude-code"
+          ],
+          "modelDeveloper": null,
+          "declaredModelId": null,
+          "gateway": null,
+          "routing": "unknown",
+          "role": null,
+          "scope": "",
+          "keyPath": null,
+          "ruleId": "claude.rules.v1",
+          "sourcePath": ".claude/rules/skills-usage.md",
+          "commitSha": "18a8ed4bde2fe02a28d8f733a061cdd457899d73",
+          "blobSha": "620d3514c029943c02633012892e5a61ae80b825",
+          "sourceUrl": "https://github.com/revealuistudio/revealui/blob/18a8ed4bde2fe02a28d8f733a061cdd457899d73/.claude/rules/skills-usage.md"
+        },
+        {
+          "kind": "instruction_file",
+          "client": "claude-code",
+          "compatibleClients": [
+            "claude-code"
+          ],
+          "modelDeveloper": null,
+          "declaredModelId": null,
+          "gateway": null,
+          "routing": "unknown",
+          "role": null,
+          "scope": "",
+          "keyPath": null,
+          "ruleId": "claude.rules.v1",
+          "sourcePath": ".claude/rules/stream-safe-secrets.md",
+          "commitSha": "18a8ed4bde2fe02a28d8f733a061cdd457899d73",
+          "blobSha": "ef60cdfed18fa2dde827dbdfeda4cba4335a321f",
+          "sourceUrl": "https://github.com/revealuistudio/revealui/blob/18a8ed4bde2fe02a28d8f733a061cdd457899d73/.claude/rules/stream-safe-secrets.md"
+        },
+        {
+          "kind": "instruction_file",
+          "client": "claude-code",
+          "compatibleClients": [
+            "claude-code"
+          ],
+          "modelDeveloper": null,
+          "declaredModelId": null,
+          "gateway": null,
+          "routing": "unknown",
+          "role": null,
+          "scope": "",
+          "keyPath": null,
+          "ruleId": "claude.rules.v1",
+          "sourcePath": ".claude/rules/tailwind.md",
+          "commitSha": "18a8ed4bde2fe02a28d8f733a061cdd457899d73",
+          "blobSha": "d9459e46a09f9d3802a03c02aa028b82404254d0",
+          "sourceUrl": "https://github.com/revealuistudio/revealui/blob/18a8ed4bde2fe02a28d8f733a061cdd457899d73/.claude/rules/tailwind.md"
+        },
+        {
+          "kind": "instruction_file",
+          "client": "claude-code",
+          "compatibleClients": [
+            "claude-code"
+          ],
+          "modelDeveloper": null,
+          "declaredModelId": null,
+          "gateway": null,
+          "routing": "unknown",
+          "role": null,
+          "scope": "",
+          "keyPath": null,
+          "ruleId": "claude.rules.v1",
+          "sourcePath": ".claude/rules/token-economy.md",
+          "commitSha": "18a8ed4bde2fe02a28d8f733a061cdd457899d73",
+          "blobSha": "639a260d4a77a73f51bb2302bec5c632a9f72e34",
+          "sourceUrl": "https://github.com/revealuistudio/revealui/blob/18a8ed4bde2fe02a28d8f733a061cdd457899d73/.claude/rules/token-economy.md"
+        },
+        {
+          "kind": "instruction_file",
+          "client": "claude-code",
+          "compatibleClients": [
+            "claude-code"
+          ],
+          "modelDeveloper": null,
+          "declaredModelId": null,
+          "gateway": null,
+          "routing": "unknown",
+          "role": null,
+          "scope": "",
+          "keyPath": null,
+          "ruleId": "claude.rules.v1",
+          "sourcePath": ".claude/rules/tool-routing.md",
+          "commitSha": "18a8ed4bde2fe02a28d8f733a061cdd457899d73",
+          "blobSha": "8b1f26c4196c7f290952fdc2f0a2fa842b9271b5",
+          "sourceUrl": "https://github.com/revealuistudio/revealui/blob/18a8ed4bde2fe02a28d8f733a061cdd457899d73/.claude/rules/tool-routing.md"
+        },
+        {
+          "kind": "instruction_file",
+          "client": "claude-code",
+          "compatibleClients": [
+            "claude-code"
+          ],
+          "modelDeveloper": null,
+          "declaredModelId": null,
+          "gateway": null,
+          "routing": "unknown",
+          "role": null,
+          "scope": "",
+          "keyPath": null,
+          "ruleId": "claude.rules.v1",
+          "sourcePath": ".claude/rules/tracker-first.md",
+          "commitSha": "18a8ed4bde2fe02a28d8f733a061cdd457899d73",
+          "blobSha": "0730fffc0e577765aa0199a699ae07136a0c8a14",
+          "sourceUrl": "https://github.com/revealuistudio/revealui/blob/18a8ed4bde2fe02a28d8f733a061cdd457899d73/.claude/rules/tracker-first.md"
+        },
+        {
+          "kind": "instruction_file",
+          "client": "claude-code",
+          "compatibleClients": [
+            "claude-code"
+          ],
+          "modelDeveloper": null,
+          "declaredModelId": null,
+          "gateway": null,
+          "routing": "unknown",
+          "role": null,
+          "scope": "",
+          "keyPath": null,
+          "ruleId": "claude.rules.v1",
+          "sourcePath": ".claude/rules/unused-declarations.md",
+          "commitSha": "18a8ed4bde2fe02a28d8f733a061cdd457899d73",
+          "blobSha": "f728c67840ee659530405797c4aeb2eacb3b8c6c",
+          "sourceUrl": "https://github.com/revealuistudio/revealui/blob/18a8ed4bde2fe02a28d8f733a061cdd457899d73/.claude/rules/unused-declarations.md"
+        },
+        {
+          "kind": "instruction_file",
+          "client": "claude-code",
+          "compatibleClients": [
+            "claude-code"
+          ],
+          "modelDeveloper": null,
+          "declaredModelId": null,
+          "gateway": null,
+          "routing": "unknown",
+          "role": null,
+          "scope": "",
+          "keyPath": null,
+          "ruleId": "claude.rules.v1",
+          "sourcePath": ".claude/rules/versioning.md",
+          "commitSha": "18a8ed4bde2fe02a28d8f733a061cdd457899d73",
+          "blobSha": "2ec21011973fc96a19803b74c9581c848491c958",
+          "sourceUrl": "https://github.com/revealuistudio/revealui/blob/18a8ed4bde2fe02a28d8f733a061cdd457899d73/.claude/rules/versioning.md"
+        },
+        {
+          "kind": "instruction_file",
+          "client": null,
+          "compatibleClients": [
+            "codex",
+            "kimi",
+            "grok-build",
+            "opencode",
+            "github-copilot",
+            "cursor",
+            "kiro"
+          ],
+          "modelDeveloper": null,
+          "declaredModelId": null,
+          "gateway": null,
+          "routing": "unknown",
+          "role": null,
+          "scope": "",
+          "keyPath": null,
+          "ruleId": "shared.skills.v1",
+          "sourcePath": ".claude/skills/revealui-conventions/SKILL.md",
+          "commitSha": "18a8ed4bde2fe02a28d8f733a061cdd457899d73",
+          "blobSha": "7d61c2754fb5c9350263ac7692147ba10baefba4",
+          "sourceUrl": "https://github.com/revealuistudio/revealui/blob/18a8ed4bde2fe02a28d8f733a061cdd457899d73/.claude/skills/revealui-conventions/SKILL.md"
+        },
+        {
+          "kind": "instruction_file",
+          "client": null,
+          "compatibleClients": [
+            "codex",
+            "kimi",
+            "grok-build",
+            "opencode",
+            "github-copilot",
+            "cursor",
+            "kiro"
+          ],
+          "modelDeveloper": null,
+          "declaredModelId": null,
+          "gateway": null,
+          "routing": "unknown",
+          "role": null,
+          "scope": "",
+          "keyPath": null,
+          "ruleId": "shared.skills.v1",
+          "sourcePath": ".claude/skills/revealui-db/SKILL.md",
+          "commitSha": "18a8ed4bde2fe02a28d8f733a061cdd457899d73",
+          "blobSha": "7f6c5bc1d7099ade466e29df09749ee2f7c7a723",
+          "sourceUrl": "https://github.com/revealuistudio/revealui/blob/18a8ed4bde2fe02a28d8f733a061cdd457899d73/.claude/skills/revealui-db/SKILL.md"
+        },
+        {
+          "kind": "instruction_file",
+          "client": null,
+          "compatibleClients": [
+            "codex",
+            "kimi",
+            "grok-build",
+            "opencode",
+            "github-copilot",
+            "cursor",
+            "kiro"
+          ],
+          "modelDeveloper": null,
+          "declaredModelId": null,
+          "gateway": null,
+          "routing": "unknown",
+          "role": null,
+          "scope": "",
+          "keyPath": null,
+          "ruleId": "shared.skills.v1",
+          "sourcePath": ".claude/skills/revealui-debugging/SKILL.md",
+          "commitSha": "18a8ed4bde2fe02a28d8f733a061cdd457899d73",
+          "blobSha": "de685c846791c236bdee5cb3e0a6a721318caa48",
+          "sourceUrl": "https://github.com/revealuistudio/revealui/blob/18a8ed4bde2fe02a28d8f733a061cdd457899d73/.claude/skills/revealui-debugging/SKILL.md"
+        },
+        {
+          "kind": "instruction_file",
+          "client": null,
+          "compatibleClients": [
+            "codex",
+            "kimi",
+            "grok-build",
+            "opencode",
+            "github-copilot",
+            "cursor",
+            "kiro"
+          ],
+          "modelDeveloper": null,
+          "declaredModelId": null,
+          "gateway": null,
+          "routing": "unknown",
+          "role": null,
+          "scope": "",
+          "keyPath": null,
+          "ruleId": "shared.skills.v1",
+          "sourcePath": ".claude/skills/revealui-deploy/SKILL.md",
+          "commitSha": "18a8ed4bde2fe02a28d8f733a061cdd457899d73",
+          "blobSha": "4e43a4724830e5488e1929b9b04a967a0367a9d1",
+          "sourceUrl": "https://github.com/revealuistudio/revealui/blob/18a8ed4bde2fe02a28d8f733a061cdd457899d73/.claude/skills/revealui-deploy/SKILL.md"
+        },
+        {
+          "kind": "instruction_file",
+          "client": null,
+          "compatibleClients": [
+            "codex",
+            "kimi",
+            "grok-build",
+            "opencode",
+            "github-copilot",
+            "cursor",
+            "kiro"
+          ],
+          "modelDeveloper": null,
+          "declaredModelId": null,
+          "gateway": null,
+          "routing": "unknown",
+          "role": null,
+          "scope": "",
+          "keyPath": null,
+          "ruleId": "shared.skills.v1",
+          "sourcePath": ".claude/skills/revealui-review/SKILL.md",
+          "commitSha": "18a8ed4bde2fe02a28d8f733a061cdd457899d73",
+          "blobSha": "7726f67a2de81f6797751b4fe9636d6f0d02a361",
+          "sourceUrl": "https://github.com/revealuistudio/revealui/blob/18a8ed4bde2fe02a28d8f733a061cdd457899d73/.claude/skills/revealui-review/SKILL.md"
+        },
+        {
+          "kind": "instruction_file",
+          "client": null,
+          "compatibleClients": [
+            "codex",
+            "kimi",
+            "grok-build",
+            "opencode",
+            "github-copilot",
+            "cursor",
+            "kiro"
+          ],
+          "modelDeveloper": null,
+          "declaredModelId": null,
+          "gateway": null,
+          "routing": "unknown",
+          "role": null,
+          "scope": "",
+          "keyPath": null,
+          "ruleId": "shared.skills.v1",
+          "sourcePath": ".claude/skills/revealui-safety/SKILL.md",
+          "commitSha": "18a8ed4bde2fe02a28d8f733a061cdd457899d73",
+          "blobSha": "01fb0849034274b50b286ebe801384d295b171e4",
+          "sourceUrl": "https://github.com/revealuistudio/revealui/blob/18a8ed4bde2fe02a28d8f733a061cdd457899d73/.claude/skills/revealui-safety/SKILL.md"
+        },
+        {
+          "kind": "instruction_file",
+          "client": null,
+          "compatibleClients": [
+            "codex",
+            "kimi",
+            "grok-build",
+            "opencode",
+            "github-copilot",
+            "cursor",
+            "kiro"
+          ],
+          "modelDeveloper": null,
+          "declaredModelId": null,
+          "gateway": null,
+          "routing": "unknown",
+          "role": null,
+          "scope": "",
+          "keyPath": null,
+          "ruleId": "shared.skills.v1",
+          "sourcePath": ".claude/skills/revealui-tdd/SKILL.md",
+          "commitSha": "18a8ed4bde2fe02a28d8f733a061cdd457899d73",
+          "blobSha": "3bf9b11ac9ea84a0a508e0f718d411662396c176",
+          "sourceUrl": "https://github.com/revealuistudio/revealui/blob/18a8ed4bde2fe02a28d8f733a061cdd457899d73/.claude/skills/revealui-tdd/SKILL.md"
+        },
+        {
+          "kind": "instruction_file",
+          "client": null,
+          "compatibleClients": [
+            "codex",
+            "kimi",
+            "grok-build",
+            "opencode",
+            "github-copilot",
+            "cursor",
+            "kiro"
+          ],
+          "modelDeveloper": null,
+          "declaredModelId": null,
+          "gateway": null,
+          "routing": "unknown",
+          "role": null,
+          "scope": "",
+          "keyPath": null,
+          "ruleId": "shared.skills.v1",
+          "sourcePath": ".claude/skills/revealui-testing/SKILL.md",
+          "commitSha": "18a8ed4bde2fe02a28d8f733a061cdd457899d73",
+          "blobSha": "004dcadcd3819c0adf6aa53dd76890f95278cc8b",
+          "sourceUrl": "https://github.com/revealuistudio/revealui/blob/18a8ed4bde2fe02a28d8f733a061cdd457899d73/.claude/skills/revealui-testing/SKILL.md"
+        },
+        {
+          "kind": "instruction_file",
+          "client": null,
+          "compatibleClients": [
+            "codex",
+            "kimi",
+            "grok-build",
+            "opencode",
+            "github-copilot",
+            "cursor",
+            "kiro"
+          ],
+          "modelDeveloper": null,
+          "declaredModelId": null,
+          "gateway": null,
+          "routing": "unknown",
+          "role": null,
+          "scope": "",
+          "keyPath": null,
+          "ruleId": "shared.skills.v1",
+          "sourcePath": ".grok/skills/rule-agent-dispatch/SKILL.md",
+          "commitSha": "18a8ed4bde2fe02a28d8f733a061cdd457899d73",
+          "blobSha": "97e30b8a00ba27814b848eb3153f0a32ce9895a8",
+          "sourceUrl": "https://github.com/revealuistudio/revealui/blob/18a8ed4bde2fe02a28d8f733a061cdd457899d73/.grok/skills/rule-agent-dispatch/SKILL.md"
+        },
+        {
+          "kind": "instruction_file",
+          "client": null,
+          "compatibleClients": [
+            "codex",
+            "kimi",
+            "grok-build",
+            "opencode",
+            "github-copilot",
+            "cursor",
+            "kiro"
+          ],
+          "modelDeveloper": null,
+          "declaredModelId": null,
+          "gateway": null,
+          "routing": "unknown",
+          "role": null,
+          "scope": "",
+          "keyPath": null,
+          "ruleId": "shared.skills.v1",
+          "sourcePath": ".grok/skills/rule-biome/SKILL.md",
+          "commitSha": "18a8ed4bde2fe02a28d8f733a061cdd457899d73",
+          "blobSha": "f201571ca0d5b950cd8c66f80601ae6fb45137a8",
+          "sourceUrl": "https://github.com/revealuistudio/revealui/blob/18a8ed4bde2fe02a28d8f733a061cdd457899d73/.grok/skills/rule-biome/SKILL.md"
+        },
+        {
+          "kind": "instruction_file",
+          "client": null,
+          "compatibleClients": [
+            "codex",
+            "kimi",
+            "grok-build",
+            "opencode",
+            "github-copilot",
+            "cursor",
+            "kiro"
+          ],
+          "modelDeveloper": null,
+          "declaredModelId": null,
+          "gateway": null,
+          "routing": "unknown",
+          "role": null,
+          "scope": "",
+          "keyPath": null,
+          "ruleId": "shared.skills.v1",
+          "sourcePath": ".grok/skills/rule-code-analysis-policy/SKILL.md",
+          "commitSha": "18a8ed4bde2fe02a28d8f733a061cdd457899d73",
+          "blobSha": "b9db757c3776d97aa62d29d4a55200b1235cabaa",
+          "sourceUrl": "https://github.com/revealuistudio/revealui/blob/18a8ed4bde2fe02a28d8f733a061cdd457899d73/.grok/skills/rule-code-analysis-policy/SKILL.md"
+        },
+        {
+          "kind": "instruction_file",
+          "client": null,
+          "compatibleClients": [
+            "codex",
+            "kimi",
+            "grok-build",
+            "opencode",
+            "github-copilot",
+            "cursor",
+            "kiro"
+          ],
+          "modelDeveloper": null,
+          "declaredModelId": null,
+          "gateway": null,
+          "routing": "unknown",
+          "role": null,
+          "scope": "",
+          "keyPath": null,
+          "ruleId": "shared.skills.v1",
+          "sourcePath": ".grok/skills/rule-database/SKILL.md",
+          "commitSha": "18a8ed4bde2fe02a28d8f733a061cdd457899d73",
+          "blobSha": "cdb9a19161b3c3f3e284024b98eaab06e6de21d3",
+          "sourceUrl": "https://github.com/revealuistudio/revealui/blob/18a8ed4bde2fe02a28d8f733a061cdd457899d73/.grok/skills/rule-database/SKILL.md"
+        },
+        {
+          "kind": "instruction_file",
+          "client": null,
+          "compatibleClients": [
+            "codex",
+            "kimi",
+            "grok-build",
+            "opencode",
+            "github-copilot",
+            "cursor",
+            "kiro"
+          ],
+          "modelDeveloper": null,
+          "declaredModelId": null,
+          "gateway": null,
+          "routing": "unknown",
+          "role": null,
+          "scope": "",
+          "keyPath": null,
+          "ruleId": "shared.skills.v1",
+          "sourcePath": ".grok/skills/rule-parameterization/SKILL.md",
+          "commitSha": "18a8ed4bde2fe02a28d8f733a061cdd457899d73",
+          "blobSha": "10c5a20c75733906159629c4eca398dc5b33c777",
+          "sourceUrl": "https://github.com/revealuistudio/revealui/blob/18a8ed4bde2fe02a28d8f733a061cdd457899d73/.grok/skills/rule-parameterization/SKILL.md"
+        },
+        {
+          "kind": "instruction_file",
+          "client": null,
+          "compatibleClients": [
+            "codex",
+            "kimi",
+            "grok-build",
+            "opencode",
+            "github-copilot",
+            "cursor",
+            "kiro"
+          ],
+          "modelDeveloper": null,
+          "declaredModelId": null,
+          "gateway": null,
+          "routing": "unknown",
+          "role": null,
+          "scope": "",
+          "keyPath": null,
+          "ruleId": "shared.skills.v1",
+          "sourcePath": ".grok/skills/rule-skills-usage/SKILL.md",
+          "commitSha": "18a8ed4bde2fe02a28d8f733a061cdd457899d73",
+          "blobSha": "f0ed286949e2af81defffa09ccbdedfdcfaf741f",
+          "sourceUrl": "https://github.com/revealuistudio/revealui/blob/18a8ed4bde2fe02a28d8f733a061cdd457899d73/.grok/skills/rule-skills-usage/SKILL.md"
+        },
+        {
+          "kind": "instruction_file",
+          "client": null,
+          "compatibleClients": [
+            "codex",
+            "kimi",
+            "grok-build",
+            "opencode",
+            "github-copilot",
+            "cursor",
+            "kiro"
+          ],
+          "modelDeveloper": null,
+          "declaredModelId": null,
+          "gateway": null,
+          "routing": "unknown",
+          "role": null,
+          "scope": "",
+          "keyPath": null,
+          "ruleId": "shared.skills.v1",
+          "sourcePath": ".grok/skills/rule-tailwind/SKILL.md",
+          "commitSha": "18a8ed4bde2fe02a28d8f733a061cdd457899d73",
+          "blobSha": "24660330ae779a9bd52d18258cf6617735f81822",
+          "sourceUrl": "https://github.com/revealuistudio/revealui/blob/18a8ed4bde2fe02a28d8f733a061cdd457899d73/.grok/skills/rule-tailwind/SKILL.md"
+        }
+      ],
+      "problem": null,
+      "issues": []
+    },
+    {
+      "slug": "colleague",
+      "repository": "agentculture/colleague",
+      "legacyGuessPresent": true,
+      "linkBefore": "visible",
+      "linkAction": "unchanged",
+      "factsRefresh": {
+        "sourcesAttempted": 1,
+        "sourcesFailed": 0,
+        "factsChanged": 1,
+        "eventsInserted": 0,
+        "mediaInserted": 0,
+        "complete": true
+      },
+      "scan": {
+        "id": 9,
+        "state": "complete",
+        "commitSha": "6081b8c82373b3242e630656510e82dc84eeeaed",
+        "detectorVersion": "2026-09-06.1",
+        "observedAt": "2026-09-06T00:15:55.802Z",
+        "coverage": {
+          "limited": false
+        }
+      },
+      "rounds": 6,
+      "errorCode": null,
+      "relationship": "unknown",
+      "eligibility": {
+        "eligible": false,
+        "reason": "ai_evidence_insufficient",
+        "executionVerified": false
+      },
+      "repositoryFacts": {
+        "kind": "repository",
+        "key": "agentculture/colleague",
+        "state": "ok",
+        "facts": {
+          "fork": false,
+          "type": "github_repository",
+          "forks": 2,
+          "stars": 7,
+          "public": true,
+          "license": {
+            "url": "https://api.github.com/licenses/apache-2.0",
+            "value": "Apache License 2.0",
+            "spdxId": "Apache-2.0"
+          },
+          "archived": false,
+          "homepage": "https://agentculture.org/agents/colleague",
+          "pushedAt": "2026-09-02T07:37:33.000Z",
+          "createdAt": "2026-05-26T22:44:15.000Z",
+          "languages": [
+            {
+              "name": "Python",
+              "bytes": 11430922,
+              "percent": 98.8
+            },
+            {
+              "name": "Shell",
+              "bytes": 133709,
+              "percent": 1.2
+            }
+          ],
+          "updatedAt": "2026-09-02T07:37:40.000Z",
+          "agentScanId": 9,
+          "contributors": {
+            "cap": 500,
+            "count": 1,
+            "incomplete": false
+          },
+          "latestRelease": null,
+          "repositoryKey": "agentculture/colleague",
+          "repositoryUrl": "https://github.com/agentculture/colleague",
+          "relationshipState": "repository_link",
+          "agentDetectorVersion": "2026-09-06.1"
+        },
+        "observedAt": "2026-09-06T00:15:30.146Z",
+        "lastSuccessAt": "2026-09-06T00:15:30.146Z",
+        "error": null
+      },
+      "site": {
+        "kind": "documentation",
+        "key": "canonical_site",
+        "state": "ok",
+        "facts": {
+          "type": "site_fingerprint",
+          "finalUrl": "https://agentculture.org/agents/colleague/",
+          "repositoryKeys": []
+        },
+        "observedAt": "2026-09-06T00:15:30.146Z",
+        "lastSuccessAt": "2026-09-06T00:15:30.146Z",
+        "error": null
+      },
+      "observations": [
+        {
+          "kind": "instruction_file",
+          "client": null,
+          "compatibleClients": [
+            "claude-code",
+            "cursor",
+            "opencode",
+            "kimi",
+            "grok-build"
+          ],
+          "modelDeveloper": null,
+          "declaredModelId": null,
+          "gateway": null,
+          "routing": "unknown",
+          "role": null,
+          "scope": "",
+          "keyPath": null,
+          "ruleId": "shared.claude.v1",
+          "sourcePath": "CLAUDE.md",
+          "commitSha": "6081b8c82373b3242e630656510e82dc84eeeaed",
+          "blobSha": "4f6413fef17bdd703a4317752ba172e5a15d7680",
+          "sourceUrl": "https://github.com/agentculture/colleague/blob/6081b8c82373b3242e630656510e82dc84eeeaed/CLAUDE.md"
+        },
+        {
+          "kind": "instruction_file",
+          "client": null,
+          "compatibleClients": [
+            "codex",
+            "kimi",
+            "grok-build",
+            "opencode",
+            "github-copilot",
+            "cursor",
+            "kiro"
+          ],
+          "modelDeveloper": null,
+          "declaredModelId": null,
+          "gateway": null,
+          "routing": "unknown",
+          "role": null,
+          "scope": "",
+          "keyPath": null,
+          "ruleId": "shared.skills.v1",
+          "sourcePath": ".claude/skills/agent-config/SKILL.md",
+          "commitSha": "6081b8c82373b3242e630656510e82dc84eeeaed",
+          "blobSha": "71322633d7fd98029beaffc1009d4d913a1ce481",
+          "sourceUrl": "https://github.com/agentculture/colleague/blob/6081b8c82373b3242e630656510e82dc84eeeaed/.claude/skills/agent-config/SKILL.md"
+        },
+        {
+          "kind": "instruction_file",
+          "client": null,
+          "compatibleClients": [
+            "codex",
+            "kimi",
+            "grok-build",
+            "opencode",
+            "github-copilot",
+            "cursor",
+            "kiro"
+          ],
+          "modelDeveloper": null,
+          "declaredModelId": null,
+          "gateway": null,
+          "routing": "unknown",
+          "role": null,
+          "scope": "",
+          "keyPath": null,
+          "ruleId": "shared.skills.v1",
+          "sourcePath": ".claude/skills/ask-colleague/SKILL.md",
+          "commitSha": "6081b8c82373b3242e630656510e82dc84eeeaed",
+          "blobSha": "fb0dfd4a6c67b611a105d83c00fc2fb0ede105e1",
+          "sourceUrl": "https://github.com/agentculture/colleague/blob/6081b8c82373b3242e630656510e82dc84eeeaed/.claude/skills/ask-colleague/SKILL.md"
+        },
+        {
+          "kind": "instruction_file",
+          "client": null,
+          "compatibleClients": [
+            "codex",
+            "kimi",
+            "grok-build",
+            "opencode",
+            "github-copilot",
+            "cursor",
+            "kiro"
+          ],
+          "modelDeveloper": null,
+          "declaredModelId": null,
+          "gateway": null,
+          "routing": "unknown",
+          "role": null,
+          "scope": "",
+          "keyPath": null,
+          "ruleId": "shared.skills.v1",
+          "sourcePath": ".claude/skills/assign-to-workforce/SKILL.md",
+          "commitSha": "6081b8c82373b3242e630656510e82dc84eeeaed",
+          "blobSha": "5a171d04d6ff96c9f858a72f103dc8080d10f401",
+          "sourceUrl": "https://github.com/agentculture/colleague/blob/6081b8c82373b3242e630656510e82dc84eeeaed/.claude/skills/assign-to-workforce/SKILL.md"
+        },
+        {
+          "kind": "instruction_file",
+          "client": null,
+          "compatibleClients": [
+            "codex",
+            "kimi",
+            "grok-build",
+            "opencode",
+            "github-copilot",
+            "cursor",
+            "kiro"
+          ],
+          "modelDeveloper": null,
+          "declaredModelId": null,
+          "gateway": null,
+          "routing": "unknown",
+          "role": null,
+          "scope": "",
+          "keyPath": null,
+          "ruleId": "shared.skills.v1",
+          "sourcePath": ".claude/skills/challenge/SKILL.md",
+          "commitSha": "6081b8c82373b3242e630656510e82dc84eeeaed",
+          "blobSha": "fd738a2018c33feb6d5a70ef866c9fded81c9b89",
+          "sourceUrl": "https://github.com/agentculture/colleague/blob/6081b8c82373b3242e630656510e82dc84eeeaed/.claude/skills/challenge/SKILL.md"
+        },
+        {
+          "kind": "instruction_file",
+          "client": null,
+          "compatibleClients": [
+            "codex",
+            "kimi",
+            "grok-build",
+            "opencode",
+            "github-copilot",
+            "cursor",
+            "kiro"
+          ],
+          "modelDeveloper": null,
+          "declaredModelId": null,
+          "gateway": null,
+          "routing": "unknown",
+          "role": null,
+          "scope": "",
+          "keyPath": null,
+          "ruleId": "shared.skills.v1",
+          "sourcePath": ".claude/skills/cicd/SKILL.md",
+          "commitSha": "6081b8c82373b3242e630656510e82dc84eeeaed",
+          "blobSha": "0014f2a6ce570c57336b90e20229e32a9b4b2c31",
+          "sourceUrl": "https://github.com/agentculture/colleague/blob/6081b8c82373b3242e630656510e82dc84eeeaed/.claude/skills/cicd/SKILL.md"
+        },
+        {
+          "kind": "instruction_file",
+          "client": null,
+          "compatibleClients": [
+            "codex",
+            "kimi",
+            "grok-build",
+            "opencode",
+            "github-copilot",
+            "cursor",
+            "kiro"
+          ],
+          "modelDeveloper": null,
+          "declaredModelId": null,
+          "gateway": null,
+          "routing": "unknown",
+          "role": null,
+          "scope": "",
+          "keyPath": null,
+          "ruleId": "shared.skills.v1",
+          "sourcePath": ".claude/skills/communicate/SKILL.md",
+          "commitSha": "6081b8c82373b3242e630656510e82dc84eeeaed",
+          "blobSha": "466d54877cc6a93168872816b58fe66d3bf42231",
+          "sourceUrl": "https://github.com/agentculture/colleague/blob/6081b8c82373b3242e630656510e82dc84eeeaed/.claude/skills/communicate/SKILL.md"
+        },
+        {
+          "kind": "instruction_file",
+          "client": null,
+          "compatibleClients": [
+            "codex",
+            "kimi",
+            "grok-build",
+            "opencode",
+            "github-copilot",
+            "cursor",
+            "kiro"
+          ],
+          "modelDeveloper": null,
+          "declaredModelId": null,
+          "gateway": null,
+          "routing": "unknown",
+          "role": null,
+          "scope": "",
+          "keyPath": null,
+          "ruleId": "shared.skills.v1",
+          "sourcePath": ".claude/skills/deviate/SKILL.md",
+          "commitSha": "6081b8c82373b3242e630656510e82dc84eeeaed",
+          "blobSha": "088402279f347bebb3801ae9c793cc0d23095882",
+          "sourceUrl": "https://github.com/agentculture/colleague/blob/6081b8c82373b3242e630656510e82dc84eeeaed/.claude/skills/deviate/SKILL.md"
+        },
+        {
+          "kind": "instruction_file",
+          "client": null,
+          "compatibleClients": [
+            "codex",
+            "kimi",
+            "grok-build",
+            "opencode",
+            "github-copilot",
+            "cursor",
+            "kiro"
+          ],
+          "modelDeveloper": null,
+          "declaredModelId": null,
+          "gateway": null,
+          "routing": "unknown",
+          "role": null,
+          "scope": "",
+          "keyPath": null,
+          "ruleId": "shared.skills.v1",
+          "sourcePath": ".claude/skills/doc-test-alignment/SKILL.md",
+          "commitSha": "6081b8c82373b3242e630656510e82dc84eeeaed",
+          "blobSha": "43188030597e1f00ca4c93410d02a7c5440e516c",
+          "sourceUrl": "https://github.com/agentculture/colleague/blob/6081b8c82373b3242e630656510e82dc84eeeaed/.claude/skills/doc-test-alignment/SKILL.md"
+        },
+        {
+          "kind": "instruction_file",
+          "client": null,
+          "compatibleClients": [
+            "codex",
+            "kimi",
+            "grok-build",
+            "opencode",
+            "github-copilot",
+            "cursor",
+            "kiro"
+          ],
+          "modelDeveloper": null,
+          "declaredModelId": null,
+          "gateway": null,
+          "routing": "unknown",
+          "role": null,
+          "scope": "",
+          "keyPath": null,
+          "ruleId": "shared.skills.v1",
+          "sourcePath": ".claude/skills/promote/SKILL.md",
+          "commitSha": "6081b8c82373b3242e630656510e82dc84eeeaed",
+          "blobSha": "146c5afde16e49e89ff2cc68363be7255a7a831c",
+          "sourceUrl": "https://github.com/agentculture/colleague/blob/6081b8c82373b3242e630656510e82dc84eeeaed/.claude/skills/promote/SKILL.md"
+        },
+        {
+          "kind": "instruction_file",
+          "client": null,
+          "compatibleClients": [
+            "codex",
+            "kimi",
+            "grok-build",
+            "opencode",
+            "github-copilot",
+            "cursor",
+            "kiro"
+          ],
+          "modelDeveloper": null,
+          "declaredModelId": null,
+          "gateway": null,
+          "routing": "unknown",
+          "role": null,
+          "scope": "",
+          "keyPath": null,
+          "ruleId": "shared.skills.v1",
+          "sourcePath": ".claude/skills/pypi-maintainer/SKILL.md",
+          "commitSha": "6081b8c82373b3242e630656510e82dc84eeeaed",
+          "blobSha": "b4bf3a12b0b8dcbcc50d3ea65d3ddd44e8407eee",
+          "sourceUrl": "https://github.com/agentculture/colleague/blob/6081b8c82373b3242e630656510e82dc84eeeaed/.claude/skills/pypi-maintainer/SKILL.md"
+        },
+        {
+          "kind": "instruction_file",
+          "client": null,
+          "compatibleClients": [
+            "codex",
+            "kimi",
+            "grok-build",
+            "opencode",
+            "github-copilot",
+            "cursor",
+            "kiro"
+          ],
+          "modelDeveloper": null,
+          "declaredModelId": null,
+          "gateway": null,
+          "routing": "unknown",
+          "role": null,
+          "scope": "",
+          "keyPath": null,
+          "ruleId": "shared.skills.v1",
+          "sourcePath": ".claude/skills/recall/SKILL.md",
+          "commitSha": "6081b8c82373b3242e630656510e82dc84eeeaed",
+          "blobSha": "1397b5fe0fc4efeb84dc97ccdc3a0dd2beb5417e",
+          "sourceUrl": "https://github.com/agentculture/colleague/blob/6081b8c82373b3242e630656510e82dc84eeeaed/.claude/skills/recall/SKILL.md"
+        },
+        {
+          "kind": "instruction_file",
+          "client": null,
+          "compatibleClients": [
+            "codex",
+            "kimi",
+            "grok-build",
+            "opencode",
+            "github-copilot",
+            "cursor",
+            "kiro"
+          ],
+          "modelDeveloper": null,
+          "declaredModelId": null,
+          "gateway": null,
+          "routing": "unknown",
+          "role": null,
+          "scope": "",
+          "keyPath": null,
+          "ruleId": "shared.skills.v1",
+          "sourcePath": ".claude/skills/remember/SKILL.md",
+          "commitSha": "6081b8c82373b3242e630656510e82dc84eeeaed",
+          "blobSha": "5ab3ea6647f83ea852d0d0ba44df69d5673f38e2",
+          "sourceUrl": "https://github.com/agentculture/colleague/blob/6081b8c82373b3242e630656510e82dc84eeeaed/.claude/skills/remember/SKILL.md"
+        },
+        {
+          "kind": "instruction_file",
+          "client": null,
+          "compatibleClients": [
+            "codex",
+            "kimi",
+            "grok-build",
+            "opencode",
+            "github-copilot",
+            "cursor",
+            "kiro"
+          ],
+          "modelDeveloper": null,
+          "declaredModelId": null,
+          "gateway": null,
+          "routing": "unknown",
+          "role": null,
+          "scope": "",
+          "keyPath": null,
+          "ruleId": "shared.skills.v1",
+          "sourcePath": ".claude/skills/run-tests/SKILL.md",
+          "commitSha": "6081b8c82373b3242e630656510e82dc84eeeaed",
+          "blobSha": "1dce35466742857ad15d8e78e3f6a9816a93861d",
+          "sourceUrl": "https://github.com/agentculture/colleague/blob/6081b8c82373b3242e630656510e82dc84eeeaed/.claude/skills/run-tests/SKILL.md"
+        },
+        {
+          "kind": "instruction_file",
+          "client": null,
+          "compatibleClients": [
+            "codex",
+            "kimi",
+            "grok-build",
+            "opencode",
+            "github-copilot",
+            "cursor",
+            "kiro"
+          ],
+          "modelDeveloper": null,
+          "declaredModelId": null,
+          "gateway": null,
+          "routing": "unknown",
+          "role": null,
+          "scope": "",
+          "keyPath": null,
+          "ruleId": "shared.skills.v1",
+          "sourcePath": ".claude/skills/scope/SKILL.md",
+          "commitSha": "6081b8c82373b3242e630656510e82dc84eeeaed",
+          "blobSha": "62780851b093e97c79c2e2bdf7ab25c1ae0b31b2",
+          "sourceUrl": "https://github.com/agentculture/colleague/blob/6081b8c82373b3242e630656510e82dc84eeeaed/.claude/skills/scope/SKILL.md"
+        },
+        {
+          "kind": "instruction_file",
+          "client": null,
+          "compatibleClients": [
+            "codex",
+            "kimi",
+            "grok-build",
+            "opencode",
+            "github-copilot",
+            "cursor",
+            "kiro"
+          ],
+          "modelDeveloper": null,
+          "declaredModelId": null,
+          "gateway": null,
+          "routing": "unknown",
+          "role": null,
+          "scope": "",
+          "keyPath": null,
+          "ruleId": "shared.skills.v1",
+          "sourcePath": ".claude/skills/sonarclaude/SKILL.md",
+          "commitSha": "6081b8c82373b3242e630656510e82dc84eeeaed",
+          "blobSha": "7262ab63b7896b99dfe11515a3900efa497411d0",
+          "sourceUrl": "https://github.com/agentculture/colleague/blob/6081b8c82373b3242e630656510e82dc84eeeaed/.claude/skills/sonarclaude/SKILL.md"
+        },
+        {
+          "kind": "instruction_file",
+          "client": null,
+          "compatibleClients": [
+            "codex",
+            "kimi",
+            "grok-build",
+            "opencode",
+            "github-copilot",
+            "cursor",
+            "kiro"
+          ],
+          "modelDeveloper": null,
+          "declaredModelId": null,
+          "gateway": null,
+          "routing": "unknown",
+          "role": null,
+          "scope": "",
+          "keyPath": null,
+          "ruleId": "shared.skills.v1",
+          "sourcePath": ".claude/skills/spec-to-plan/SKILL.md",
+          "commitSha": "6081b8c82373b3242e630656510e82dc84eeeaed",
+          "blobSha": "3e749c0a1854c9dfe05e6d242d89dc6cb9ea98d5",
+          "sourceUrl": "https://github.com/agentculture/colleague/blob/6081b8c82373b3242e630656510e82dc84eeeaed/.claude/skills/spec-to-plan/SKILL.md"
+        },
+        {
+          "kind": "instruction_file",
+          "client": null,
+          "compatibleClients": [
+            "codex",
+            "kimi",
+            "grok-build",
+            "opencode",
+            "github-copilot",
+            "cursor",
+            "kiro"
+          ],
+          "modelDeveloper": null,
+          "declaredModelId": null,
+          "gateway": null,
+          "routing": "unknown",
+          "role": null,
+          "scope": "",
+          "keyPath": null,
+          "ruleId": "shared.skills.v1",
+          "sourcePath": ".claude/skills/summarize-delivery/SKILL.md",
+          "commitSha": "6081b8c82373b3242e630656510e82dc84eeeaed",
+          "blobSha": "3e94124a37ec4d3d70441b0d0f1bfb9aba5bc946",
+          "sourceUrl": "https://github.com/agentculture/colleague/blob/6081b8c82373b3242e630656510e82dc84eeeaed/.claude/skills/summarize-delivery/SKILL.md"
+        },
+        {
+          "kind": "instruction_file",
+          "client": null,
+          "compatibleClients": [
+            "codex",
+            "kimi",
+            "grok-build",
+            "opencode",
+            "github-copilot",
+            "cursor",
+            "kiro"
+          ],
+          "modelDeveloper": null,
+          "declaredModelId": null,
+          "gateway": null,
+          "routing": "unknown",
+          "role": null,
+          "scope": "",
+          "keyPath": null,
+          "ruleId": "shared.skills.v1",
+          "sourcePath": ".claude/skills/think/SKILL.md",
+          "commitSha": "6081b8c82373b3242e630656510e82dc84eeeaed",
+          "blobSha": "81afed0a6f44c81defca481371afa3d637b1fbcb",
+          "sourceUrl": "https://github.com/agentculture/colleague/blob/6081b8c82373b3242e630656510e82dc84eeeaed/.claude/skills/think/SKILL.md"
+        },
+        {
+          "kind": "instruction_file",
+          "client": null,
+          "compatibleClients": [
+            "codex",
+            "kimi",
+            "grok-build",
+            "opencode",
+            "github-copilot",
+            "cursor",
+            "kiro"
+          ],
+          "modelDeveloper": null,
+          "declaredModelId": null,
+          "gateway": null,
+          "routing": "unknown",
+          "role": null,
+          "scope": "",
+          "keyPath": null,
+          "ruleId": "shared.skills.v1",
+          "sourcePath": ".claude/skills/validate-delivery/SKILL.md",
+          "commitSha": "6081b8c82373b3242e630656510e82dc84eeeaed",
+          "blobSha": "5037b92e98d6c3816fe98360c7e6a69d23f89555",
+          "sourceUrl": "https://github.com/agentculture/colleague/blob/6081b8c82373b3242e630656510e82dc84eeeaed/.claude/skills/validate-delivery/SKILL.md"
+        },
+        {
+          "kind": "instruction_file",
+          "client": null,
+          "compatibleClients": [
+            "codex",
+            "kimi",
+            "grok-build",
+            "opencode",
+            "github-copilot",
+            "cursor",
+            "kiro"
+          ],
+          "modelDeveloper": null,
+          "declaredModelId": null,
+          "gateway": null,
+          "routing": "unknown",
+          "role": null,
+          "scope": "",
+          "keyPath": null,
+          "ruleId": "shared.skills.v1",
+          "sourcePath": ".claude/skills/version-bump/SKILL.md",
+          "commitSha": "6081b8c82373b3242e630656510e82dc84eeeaed",
+          "blobSha": "eac83856d1bb2c7e171a80326ffc2a9766b0c61b",
+          "sourceUrl": "https://github.com/agentculture/colleague/blob/6081b8c82373b3242e630656510e82dc84eeeaed/.claude/skills/version-bump/SKILL.md"
+        }
+      ],
+      "problem": null,
+      "issues": []
+    },
+    {
+      "slug": "goodboy-stop-re-explaining-yourself-to-ai-agents",
+      "repository": "akhayam99/goodboy",
+      "legacyGuessPresent": true,
+      "linkBefore": "visible",
+      "linkAction": "unchanged",
+      "factsRefresh": {
+        "sourcesAttempted": 1,
+        "sourcesFailed": 0,
+        "factsChanged": 1,
+        "eventsInserted": 10,
+        "mediaInserted": 0,
+        "complete": true
+      },
+      "scan": {
+        "id": 15,
+        "state": "complete",
+        "commitSha": "f08e583ae64dca24d5636d50fb36eebf2bb90543",
+        "detectorVersion": "2026-09-06.1",
+        "observedAt": "2026-09-06T00:16:01.506Z",
+        "coverage": {
+          "limited": false
+        }
+      },
+      "rounds": 1,
+      "errorCode": null,
+      "relationship": "unknown",
+      "eligibility": {
+        "eligible": false,
+        "reason": "ai_evidence_insufficient",
+        "executionVerified": false
+      },
+      "repositoryFacts": {
+        "kind": "repository",
+        "key": "akhayam99/goodboy",
+        "state": "ok",
+        "facts": {
+          "fork": false,
+          "type": "github_repository",
+          "forks": 4,
+          "stars": 89,
+          "public": true,
+          "license": {
+            "url": "https://api.github.com/licenses/mit",
+            "value": "MIT License",
+            "spdxId": "MIT"
+          },
+          "archived": false,
+          "homepage": "https://goodboy-ai.dev/",
+          "pushedAt": "2026-09-04T21:04:02.000Z",
+          "createdAt": "2026-05-06T21:33:28.000Z",
+          "languages": [
+            {
+              "name": "TypeScript",
+              "bytes": 11670826,
+              "percent": 90
+            },
+            {
+              "name": "Rust",
+              "bytes": 1151817,
+              "percent": 8.9
+            },
+            {
+              "name": "CSS",
+              "bytes": 93824,
+              "percent": 0.7
+            },
+            {
+              "name": "JavaScript",
+              "bytes": 34432,
+              "percent": 0.3
+            },
+            {
+              "name": "HTML",
+              "bytes": 10899,
+              "percent": 0.1
+            },
+            {
+              "name": "Ruby",
+              "bytes": 744,
+              "percent": 0
+            }
+          ],
+          "updatedAt": "2026-09-04T21:04:07.000Z",
+          "agentScanId": 15,
+          "contributors": {
+            "cap": 500,
+            "count": 2,
+            "incomplete": false
+          },
+          "latestRelease": {
+            "id": 382730682,
+            "url": "https://github.com/akhayam99/goodboy/releases/tag/v0.2.15",
+            "name": "Goodboy v0.2.15",
+            "tagName": "v0.2.15",
+            "notesUrl": "https://github.com/akhayam99/goodboy/releases/tag/v0.2.15",
+            "publishedAt": "2026-09-04T13:13:56.000Z"
+          },
+          "repositoryKey": "akhayam99/goodboy",
+          "repositoryUrl": "https://github.com/akhayam99/goodboy",
+          "relationshipState": "repository_link",
+          "agentDetectorVersion": "2026-09-06.1"
+        },
+        "observedAt": "2026-09-06T00:15:59.696Z",
+        "lastSuccessAt": "2026-09-06T00:15:59.696Z",
+        "error": null
+      },
+      "site": {
+        "kind": "documentation",
+        "key": "canonical_site",
+        "state": "ok",
+        "facts": {
+          "type": "site_fingerprint",
+          "finalUrl": "https://goodboy-ai.dev",
+          "repositoryKeys": []
+        },
+        "observedAt": "2026-09-06T00:15:59.696Z",
+        "lastSuccessAt": "2026-09-06T00:15:59.696Z",
+        "error": null
+      },
+      "observations": [
+        {
+          "kind": "instruction_file",
+          "client": null,
+          "compatibleClients": [
+            "codex",
+            "kimi",
+            "grok-build",
+            "opencode",
+            "github-copilot",
+            "cursor",
+            "kiro"
+          ],
+          "modelDeveloper": null,
+          "declaredModelId": null,
+          "gateway": null,
+          "routing": "unknown",
+          "role": null,
+          "scope": "",
+          "keyPath": null,
+          "ruleId": "shared.agents.v1",
+          "sourcePath": "AGENTS.md",
+          "commitSha": "f08e583ae64dca24d5636d50fb36eebf2bb90543",
+          "blobSha": "4cf99080886c3a1cb4aff3a7b49135c8d35d2d14",
+          "sourceUrl": "https://github.com/akhayam99/goodboy/blob/f08e583ae64dca24d5636d50fb36eebf2bb90543/AGENTS.md"
+        },
+        {
+          "kind": "instruction_file",
+          "client": null,
+          "compatibleClients": [
+            "claude-code",
+            "cursor",
+            "opencode",
+            "kimi",
+            "grok-build"
+          ],
+          "modelDeveloper": null,
+          "declaredModelId": null,
+          "gateway": null,
+          "routing": "unknown",
+          "role": null,
+          "scope": "",
+          "keyPath": null,
+          "ruleId": "shared.claude.v1",
+          "sourcePath": "CLAUDE.md",
+          "commitSha": "f08e583ae64dca24d5636d50fb36eebf2bb90543",
+          "blobSha": "385ead878d5e45371bae7a300b9313a5afc98fbe",
+          "sourceUrl": "https://github.com/akhayam99/goodboy/blob/f08e583ae64dca24d5636d50fb36eebf2bb90543/CLAUDE.md"
+        }
+      ],
+      "problem": null,
+      "issues": []
+    },
+    {
+      "slug": "defang",
+      "repository": "defanglabs/defang",
+      "legacyGuessPresent": true,
+      "linkBefore": "visible",
+      "linkAction": "unchanged",
+      "factsRefresh": {
+        "sourcesAttempted": 1,
+        "sourcesFailed": 0,
+        "factsChanged": 1,
+        "eventsInserted": 10,
+        "mediaInserted": 0,
+        "complete": true
+      },
+      "scan": {
+        "id": 16,
+        "state": "complete",
+        "commitSha": "4c68071fab7c01741006f9bf007ef3a5026d57f8",
+        "detectorVersion": "2026-09-06.1",
+        "observedAt": "2026-09-06T00:16:09.999Z",
+        "coverage": {
+          "limited": false
+        }
+      },
+      "rounds": 2,
+      "errorCode": null,
+      "relationship": "unknown",
+      "eligibility": {
+        "eligible": false,
+        "reason": "ai_evidence_insufficient",
+        "executionVerified": false
+      },
+      "repositoryFacts": {
+        "kind": "repository",
+        "key": "defanglabs/defang",
+        "state": "ok",
+        "facts": {
+          "fork": false,
+          "type": "github_repository",
+          "forks": 24,
+          "stars": 166,
+          "public": true,
+          "license": {
+            "url": "https://api.github.com/licenses/mit",
+            "value": "MIT License",
+            "spdxId": "MIT"
+          },
+          "archived": false,
+          "homepage": "https://defang.io",
+          "pushedAt": "2026-09-05T06:06:05.000Z",
+          "createdAt": "2023-06-18T06:15:46.000Z",
+          "languages": [
+            {
+              "name": "Go",
+              "bytes": 2414581,
+              "percent": 98
+            },
+            {
+              "name": "TypeScript",
+              "bytes": 18304,
+              "percent": 0.7
+            },
+            {
+              "name": "Shell",
+              "bytes": 16051,
+              "percent": 0.7
+            },
+            {
+              "name": "Makefile",
+              "bytes": 7849,
+              "percent": 0.3
+            },
+            {
+              "name": "Nix",
+              "bytes": 5209,
+              "percent": 0.2
+            },
+            {
+              "name": "Dockerfile",
+              "bytes": 1009,
+              "percent": 0
+            }
+          ],
+          "updatedAt": "2026-09-05T05:30:12.000Z",
+          "agentScanId": 16,
+          "contributors": {
+            "cap": 500,
+            "count": 25,
+            "incomplete": false
+          },
+          "latestRelease": {
+            "id": 383151932,
+            "url": "https://github.com/DefangLabs/defang/releases/tag/nightly",
+            "name": "nightly",
+            "tagName": "nightly",
+            "notesUrl": "https://github.com/DefangLabs/defang/releases/tag/nightly",
+            "publishedAt": "2026-09-05T06:06:06.000Z"
+          },
+          "repositoryKey": "defanglabs/defang",
+          "repositoryUrl": "https://github.com/DefangLabs/defang",
+          "relationshipState": "repository_link",
+          "agentDetectorVersion": "2026-09-06.1"
+        },
+        "observedAt": "2026-09-06T00:16:03.636Z",
+        "lastSuccessAt": "2026-09-06T00:16:03.636Z",
+        "error": null
+      },
+      "site": {
+        "kind": "documentation",
+        "key": "canonical_site",
+        "state": "ok",
+        "facts": {
+          "type": "site_fingerprint",
+          "finalUrl": "https://defang.io",
+          "repositoryKeys": []
+        },
+        "observedAt": "2026-09-06T00:16:03.636Z",
+        "lastSuccessAt": "2026-09-06T00:16:03.636Z",
+        "error": null
+      },
+      "observations": [
+        {
+          "kind": "instruction_file",
+          "client": null,
+          "compatibleClients": [
+            "codex",
+            "kimi",
+            "grok-build",
+            "opencode",
+            "github-copilot",
+            "cursor",
+            "kiro"
+          ],
+          "modelDeveloper": null,
+          "declaredModelId": null,
+          "gateway": null,
+          "routing": "unknown",
+          "role": null,
+          "scope": "",
+          "keyPath": null,
+          "ruleId": "shared.agents.v1",
+          "sourcePath": "AGENTS.md",
+          "commitSha": "4c68071fab7c01741006f9bf007ef3a5026d57f8",
+          "blobSha": "ea668b57745dd1c6fbefec6f1ab1511ead5bc04d",
+          "sourceUrl": "https://github.com/defanglabs/defang/blob/4c68071fab7c01741006f9bf007ef3a5026d57f8/AGENTS.md"
+        },
+        {
+          "kind": "instruction_file",
+          "client": null,
+          "compatibleClients": [
+            "claude-code",
+            "cursor",
+            "opencode",
+            "kimi",
+            "grok-build"
+          ],
+          "modelDeveloper": null,
+          "declaredModelId": null,
+          "gateway": null,
+          "routing": "unknown",
+          "role": null,
+          "scope": "",
+          "keyPath": null,
+          "ruleId": "shared.claude.v1",
+          "sourcePath": "CLAUDE.md",
+          "commitSha": "4c68071fab7c01741006f9bf007ef3a5026d57f8",
+          "blobSha": "99271a54b9d1f7ebe7e97e885f5ebd8d0487778f",
+          "sourceUrl": "https://github.com/defanglabs/defang/blob/4c68071fab7c01741006f9bf007ef3a5026d57f8/CLAUDE.md"
+        },
+        {
+          "kind": "client_config",
+          "client": "claude-code",
+          "compatibleClients": [
+            "claude-code"
+          ],
+          "modelDeveloper": null,
+          "declaredModelId": null,
+          "gateway": null,
+          "routing": "unknown",
+          "role": null,
+          "scope": "",
+          "keyPath": null,
+          "ruleId": "claude.settings.v1",
+          "sourcePath": ".claude/settings.json",
+          "commitSha": "4c68071fab7c01741006f9bf007ef3a5026d57f8",
+          "blobSha": "14ec32ad2293fbd0eea200b7cba94204ea8dd722",
+          "sourceUrl": "https://github.com/defanglabs/defang/blob/4c68071fab7c01741006f9bf007ef3a5026d57f8/.claude/settings.json"
+        },
+        {
+          "kind": "instruction_file",
+          "client": "claude-code",
+          "compatibleClients": [
+            "claude-code"
+          ],
+          "modelDeveloper": null,
+          "declaredModelId": null,
+          "gateway": null,
+          "routing": "unknown",
+          "role": null,
+          "scope": "",
+          "keyPath": null,
+          "ruleId": "claude.rules.v1",
+          "sourcePath": ".claude/rules/go-quality.md",
+          "commitSha": "4c68071fab7c01741006f9bf007ef3a5026d57f8",
+          "blobSha": "fd4601614353d4ea0dd6d269b2883458fc7a4e7f",
+          "sourceUrl": "https://github.com/defanglabs/defang/blob/4c68071fab7c01741006f9bf007ef3a5026d57f8/.claude/rules/go-quality.md"
+        },
+        {
+          "kind": "instruction_file",
+          "client": "claude-code",
+          "compatibleClients": [
+            "claude-code"
+          ],
+          "modelDeveloper": null,
+          "declaredModelId": null,
+          "gateway": null,
+          "routing": "unknown",
+          "role": null,
+          "scope": "",
+          "keyPath": null,
+          "ruleId": "claude.rules.v1",
+          "sourcePath": ".claude/rules/linting.md",
+          "commitSha": "4c68071fab7c01741006f9bf007ef3a5026d57f8",
+          "blobSha": "f91db438f9af76b8de7e69614357e1d4635085fc",
+          "sourceUrl": "https://github.com/defanglabs/defang/blob/4c68071fab7c01741006f9bf007ef3a5026d57f8/.claude/rules/linting.md"
+        },
+        {
+          "kind": "instruction_file",
+          "client": "claude-code",
+          "compatibleClients": [
+            "claude-code"
+          ],
+          "modelDeveloper": null,
+          "declaredModelId": null,
+          "gateway": null,
+          "routing": "unknown",
+          "role": null,
+          "scope": "",
+          "keyPath": null,
+          "ruleId": "claude.rules.v1",
+          "sourcePath": ".claude/rules/provider-pattern.md",
+          "commitSha": "4c68071fab7c01741006f9bf007ef3a5026d57f8",
+          "blobSha": "b9093a7859b2f115d6fb8a8959fd76cb7b156534",
+          "sourceUrl": "https://github.com/defanglabs/defang/blob/4c68071fab7c01741006f9bf007ef3a5026d57f8/.claude/rules/provider-pattern.md"
+        },
+        {
+          "kind": "instruction_file",
+          "client": "claude-code",
+          "compatibleClients": [
+            "claude-code"
+          ],
+          "modelDeveloper": null,
+          "declaredModelId": null,
+          "gateway": null,
+          "routing": "unknown",
+          "role": null,
+          "scope": "",
+          "keyPath": null,
+          "ruleId": "claude.rules.v1",
+          "sourcePath": ".claude/rules/testing.md",
+          "commitSha": "4c68071fab7c01741006f9bf007ef3a5026d57f8",
+          "blobSha": "dc79f456e4a59cf7080e02f3e79c4cd48d9d07b2",
+          "sourceUrl": "https://github.com/defanglabs/defang/blob/4c68071fab7c01741006f9bf007ef3a5026d57f8/.claude/rules/testing.md"
+        }
+      ],
+      "problem": null,
+      "issues": []
+    },
+    {
+      "slug": "dotorixel",
+      "repository": "siluat/dotorixel",
+      "legacyGuessPresent": true,
+      "linkBefore": "visible",
+      "linkAction": "unchanged",
+      "factsRefresh": {
+        "sourcesAttempted": 1,
+        "sourcesFailed": 0,
+        "factsChanged": 1,
+        "eventsInserted": 0,
+        "mediaInserted": 0,
+        "complete": true
+      },
+      "scan": {
+        "id": 18,
+        "state": "complete",
+        "commitSha": "36015711f6cb1cd9e63d4c4147aab438981ef35e",
+        "detectorVersion": "2026-09-06.1",
+        "observedAt": "2026-09-06T00:16:25.306Z",
+        "coverage": {
+          "limited": false
+        }
+      },
+      "rounds": 4,
+      "errorCode": null,
+      "relationship": "unknown",
+      "eligibility": {
+        "eligible": false,
+        "reason": "ai_evidence_insufficient",
+        "executionVerified": false
+      },
+      "repositoryFacts": {
+        "kind": "repository",
+        "key": "siluat/dotorixel",
+        "state": "ok",
+        "facts": {
+          "fork": false,
+          "type": "github_repository",
+          "forks": 0,
+          "stars": 1,
+          "public": true,
+          "license": {
+            "url": "https://api.github.com/licenses/agpl-3.0",
+            "value": "GNU Affero General Public License v3.0",
+            "spdxId": "AGPL-3.0"
+          },
+          "archived": false,
+          "homepage": "https://dotorixel.vercel.app",
+          "pushedAt": "2026-08-20T12:18:18.000Z",
+          "createdAt": "2026-03-06T07:41:43.000Z",
+          "languages": [
+            {
+              "name": "TypeScript",
+              "bytes": 1493928,
+              "percent": 38.6
+            },
+            {
+              "name": "Swift",
+              "bytes": 1364933,
+              "percent": 35.3
+            },
+            {
+              "name": "Rust",
+              "bytes": 642748,
+              "percent": 16.6
+            },
+            {
+              "name": "Svelte",
+              "bytes": 352897,
+              "percent": 9.1
+            },
+            {
+              "name": "CSS",
+              "bytes": 6197,
+              "percent": 0.2
+            },
+            {
+              "name": "Metal",
+              "bytes": 4905,
+              "percent": 0.1
+            },
+            {
+              "name": "Shell",
+              "bytes": 4017,
+              "percent": 0.1
+            },
+            {
+              "name": "HTML",
+              "bytes": 1320,
+              "percent": 0
+            },
+            {
+              "name": "JavaScript",
+              "bytes": 317,
+              "percent": 0
+            },
+            {
+              "name": "C",
+              "bytes": 63,
+              "percent": 0
+            }
+          ],
+          "updatedAt": "2026-08-20T12:19:48.000Z",
+          "agentScanId": 18,
+          "contributors": {
+            "cap": 500,
+            "count": 1,
+            "incomplete": false
+          },
+          "latestRelease": null,
+          "repositoryKey": "siluat/dotorixel",
+          "repositoryUrl": "https://github.com/siluat/dotorixel",
+          "relationshipState": "repository_link",
+          "agentDetectorVersion": "2026-09-06.1"
+        },
+        "observedAt": "2026-09-06T00:16:11.572Z",
+        "lastSuccessAt": "2026-09-06T00:16:11.572Z",
+        "error": null
+      },
+      "site": {
+        "kind": "documentation",
+        "key": "canonical_site",
+        "state": "ok",
+        "facts": {
+          "type": "site_fingerprint",
+          "finalUrl": "https://dotorixel.vercel.app",
+          "repositoryKeys": []
+        },
+        "observedAt": "2026-09-06T00:16:11.572Z",
+        "lastSuccessAt": "2026-09-06T00:16:11.572Z",
+        "error": null
+      },
+      "observations": [
+        {
+          "kind": "instruction_file",
+          "client": null,
+          "compatibleClients": [
+            "codex",
+            "kimi",
+            "grok-build",
+            "opencode",
+            "github-copilot",
+            "cursor",
+            "kiro"
+          ],
+          "modelDeveloper": null,
+          "declaredModelId": null,
+          "gateway": null,
+          "routing": "unknown",
+          "role": null,
+          "scope": "",
+          "keyPath": null,
+          "ruleId": "shared.agents.v1",
+          "sourcePath": "AGENTS.md",
+          "commitSha": "36015711f6cb1cd9e63d4c4147aab438981ef35e",
+          "blobSha": "973572a375b6056758eaa0dc52fc966b03f34eda",
+          "sourceUrl": "https://github.com/siluat/dotorixel/blob/36015711f6cb1cd9e63d4c4147aab438981ef35e/AGENTS.md"
+        },
+        {
+          "kind": "instruction_file",
+          "client": "claude-code",
+          "compatibleClients": [
+            "claude-code"
+          ],
+          "modelDeveloper": null,
+          "declaredModelId": null,
+          "gateway": null,
+          "routing": "unknown",
+          "role": null,
+          "scope": "",
+          "keyPath": null,
+          "ruleId": "claude.rules.v1",
+          "sourcePath": ".claude/rules/pencil-design.md",
+          "commitSha": "36015711f6cb1cd9e63d4c4147aab438981ef35e",
+          "blobSha": "a521af3b279e5597f1d393a2bb5a315961b888fe",
+          "sourceUrl": "https://github.com/siluat/dotorixel/blob/36015711f6cb1cd9e63d4c4147aab438981ef35e/.claude/rules/pencil-design.md"
+        },
+        {
+          "kind": "instruction_file",
+          "client": "claude-code",
+          "compatibleClients": [
+            "claude-code"
+          ],
+          "modelDeveloper": null,
+          "declaredModelId": null,
+          "gateway": null,
+          "routing": "unknown",
+          "role": null,
+          "scope": "",
+          "keyPath": null,
+          "ruleId": "claude.rules.v1",
+          "sourcePath": ".claude/rules/rust-conventions.md",
+          "commitSha": "36015711f6cb1cd9e63d4c4147aab438981ef35e",
+          "blobSha": "3da9a23a4157702b7a3de875cd0a9b6a2995968d",
+          "sourceUrl": "https://github.com/siluat/dotorixel/blob/36015711f6cb1cd9e63d4c4147aab438981ef35e/.claude/rules/rust-conventions.md"
+        },
+        {
+          "kind": "instruction_file",
+          "client": "claude-code",
+          "compatibleClients": [
+            "claude-code"
+          ],
+          "modelDeveloper": null,
+          "declaredModelId": null,
+          "gateway": null,
+          "routing": "unknown",
+          "role": null,
+          "scope": "",
+          "keyPath": null,
+          "ruleId": "claude.rules.v1",
+          "sourcePath": ".claude/rules/svelte-stories.md",
+          "commitSha": "36015711f6cb1cd9e63d4c4147aab438981ef35e",
+          "blobSha": "d83bd488a475cc756ab2c137f4bb580e3e49231a",
+          "sourceUrl": "https://github.com/siluat/dotorixel/blob/36015711f6cb1cd9e63d4c4147aab438981ef35e/.claude/rules/svelte-stories.md"
+        },
+        {
+          "kind": "instruction_file",
+          "client": "claude-code",
+          "compatibleClients": [
+            "claude-code"
+          ],
+          "modelDeveloper": null,
+          "declaredModelId": null,
+          "gateway": null,
+          "routing": "unknown",
+          "role": null,
+          "scope": "",
+          "keyPath": null,
+          "ruleId": "claude.rules.v1",
+          "sourcePath": ".claude/rules/testing.md",
+          "commitSha": "36015711f6cb1cd9e63d4c4147aab438981ef35e",
+          "blobSha": "963aecaa4a3d0c7d838c9391b9d4d8eacc6fcdb2",
+          "sourceUrl": "https://github.com/siluat/dotorixel/blob/36015711f6cb1cd9e63d4c4147aab438981ef35e/.claude/rules/testing.md"
+        },
+        {
+          "kind": "instruction_file",
+          "client": "claude-code",
+          "compatibleClients": [
+            "claude-code"
+          ],
+          "modelDeveloper": null,
+          "declaredModelId": null,
+          "gateway": null,
+          "routing": "unknown",
+          "role": null,
+          "scope": "",
+          "keyPath": null,
+          "ruleId": "claude.rules.v1",
+          "sourcePath": ".claude/rules/web-styling.md",
+          "commitSha": "36015711f6cb1cd9e63d4c4147aab438981ef35e",
+          "blobSha": "86fe6ee1b32dd74b771b440e33b23fd7ef39c4eb",
+          "sourceUrl": "https://github.com/siluat/dotorixel/blob/36015711f6cb1cd9e63d4c4147aab438981ef35e/.claude/rules/web-styling.md"
+        },
+        {
+          "kind": "instruction_file",
+          "client": null,
+          "compatibleClients": [
+            "codex",
+            "kimi",
+            "grok-build",
+            "opencode",
+            "github-copilot",
+            "cursor",
+            "kiro"
+          ],
+          "modelDeveloper": null,
+          "declaredModelId": null,
+          "gateway": null,
+          "routing": "unknown",
+          "role": null,
+          "scope": "",
+          "keyPath": null,
+          "ruleId": "shared.skills.v1",
+          "sourcePath": ".agents/skills/codebase-design/SKILL.md",
+          "commitSha": "36015711f6cb1cd9e63d4c4147aab438981ef35e",
+          "blobSha": "f82d600b273a3dd192de5e433c4b0422084c7d93",
+          "sourceUrl": "https://github.com/siluat/dotorixel/blob/36015711f6cb1cd9e63d4c4147aab438981ef35e/.agents/skills/codebase-design/SKILL.md"
+        },
+        {
+          "kind": "instruction_file",
+          "client": null,
+          "compatibleClients": [
+            "codex",
+            "kimi",
+            "grok-build",
+            "opencode",
+            "github-copilot",
+            "cursor",
+            "kiro"
+          ],
+          "modelDeveloper": null,
+          "declaredModelId": null,
+          "gateway": null,
+          "routing": "unknown",
+          "role": null,
+          "scope": "",
+          "keyPath": null,
+          "ruleId": "shared.skills.v1",
+          "sourcePath": ".agents/skills/domain-modeling/SKILL.md",
+          "commitSha": "36015711f6cb1cd9e63d4c4147aab438981ef35e",
+          "blobSha": "111ee71407cf698e4b20a729d6c6255964ff6daf",
+          "sourceUrl": "https://github.com/siluat/dotorixel/blob/36015711f6cb1cd9e63d4c4147aab438981ef35e/.agents/skills/domain-modeling/SKILL.md"
+        },
+        {
+          "kind": "instruction_file",
+          "client": null,
+          "compatibleClients": [
+            "codex",
+            "kimi",
+            "grok-build",
+            "opencode",
+            "github-copilot",
+            "cursor",
+            "kiro"
+          ],
+          "modelDeveloper": null,
+          "declaredModelId": null,
+          "gateway": null,
+          "routing": "unknown",
+          "role": null,
+          "scope": "",
+          "keyPath": null,
+          "ruleId": "shared.skills.v1",
+          "sourcePath": ".agents/skills/grill-me/SKILL.md",
+          "commitSha": "36015711f6cb1cd9e63d4c4147aab438981ef35e",
+          "blobSha": "9470cfcfe231a35e46494cddbacdd395991afb1e",
+          "sourceUrl": "https://github.com/siluat/dotorixel/blob/36015711f6cb1cd9e63d4c4147aab438981ef35e/.agents/skills/grill-me/SKILL.md"
+        },
+        {
+          "kind": "instruction_file",
+          "client": null,
+          "compatibleClients": [
+            "codex",
+            "kimi",
+            "grok-build",
+            "opencode",
+            "github-copilot",
+            "cursor",
+            "kiro"
+          ],
+          "modelDeveloper": null,
+          "declaredModelId": null,
+          "gateway": null,
+          "routing": "unknown",
+          "role": null,
+          "scope": "",
+          "keyPath": null,
+          "ruleId": "shared.skills.v1",
+          "sourcePath": ".agents/skills/grill-with-docs/SKILL.md",
+          "commitSha": "36015711f6cb1cd9e63d4c4147aab438981ef35e",
+          "blobSha": "bed05d2bd3245306267cea57cd696b5dd94d50fe",
+          "sourceUrl": "https://github.com/siluat/dotorixel/blob/36015711f6cb1cd9e63d4c4147aab438981ef35e/.agents/skills/grill-with-docs/SKILL.md"
+        },
+        {
+          "kind": "instruction_file",
+          "client": null,
+          "compatibleClients": [
+            "codex",
+            "kimi",
+            "grok-build",
+            "opencode",
+            "github-copilot",
+            "cursor",
+            "kiro"
+          ],
+          "modelDeveloper": null,
+          "declaredModelId": null,
+          "gateway": null,
+          "routing": "unknown",
+          "role": null,
+          "scope": "",
+          "keyPath": null,
+          "ruleId": "shared.skills.v1",
+          "sourcePath": ".agents/skills/grilling/SKILL.md",
+          "commitSha": "36015711f6cb1cd9e63d4c4147aab438981ef35e",
+          "blobSha": "52d8eb3cadd2dca62634d5dccfa73ea6b725b117",
+          "sourceUrl": "https://github.com/siluat/dotorixel/blob/36015711f6cb1cd9e63d4c4147aab438981ef35e/.agents/skills/grilling/SKILL.md"
+        },
+        {
+          "kind": "instruction_file",
+          "client": null,
+          "compatibleClients": [
+            "codex",
+            "kimi",
+            "grok-build",
+            "opencode",
+            "github-copilot",
+            "cursor",
+            "kiro"
+          ],
+          "modelDeveloper": null,
+          "declaredModelId": null,
+          "gateway": null,
+          "routing": "unknown",
+          "role": null,
+          "scope": "",
+          "keyPath": null,
+          "ruleId": "shared.skills.v1",
+          "sourcePath": ".agents/skills/improve-codebase-architecture/SKILL.md",
+          "commitSha": "36015711f6cb1cd9e63d4c4147aab438981ef35e",
+          "blobSha": "b56969e92f0705d70700f908b8ec929a1edfa782",
+          "sourceUrl": "https://github.com/siluat/dotorixel/blob/36015711f6cb1cd9e63d4c4147aab438981ef35e/.agents/skills/improve-codebase-architecture/SKILL.md"
+        },
+        {
+          "kind": "instruction_file",
+          "client": null,
+          "compatibleClients": [
+            "codex",
+            "kimi",
+            "grok-build",
+            "opencode",
+            "github-copilot",
+            "cursor",
+            "kiro"
+          ],
+          "modelDeveloper": null,
+          "declaredModelId": null,
+          "gateway": null,
+          "routing": "unknown",
+          "role": null,
+          "scope": "",
+          "keyPath": null,
+          "ruleId": "shared.skills.v1",
+          "sourcePath": ".agents/skills/review-changes/SKILL.md",
+          "commitSha": "36015711f6cb1cd9e63d4c4147aab438981ef35e",
+          "blobSha": "e4eb6ae830e14f1f21d7950b94ee1daf7ec72226",
+          "sourceUrl": "https://github.com/siluat/dotorixel/blob/36015711f6cb1cd9e63d4c4147aab438981ef35e/.agents/skills/review-changes/SKILL.md"
+        },
+        {
+          "kind": "instruction_file",
+          "client": null,
+          "compatibleClients": [
+            "codex",
+            "kimi",
+            "grok-build",
+            "opencode",
+            "github-copilot",
+            "cursor",
+            "kiro"
+          ],
+          "modelDeveloper": null,
+          "declaredModelId": null,
+          "gateway": null,
+          "routing": "unknown",
+          "role": null,
+          "scope": "",
+          "keyPath": null,
+          "ruleId": "shared.skills.v1",
+          "sourcePath": ".agents/skills/task-done/SKILL.md",
+          "commitSha": "36015711f6cb1cd9e63d4c4147aab438981ef35e",
+          "blobSha": "4e4215ca6de983b862c9827509c6570f3bacc71c",
+          "sourceUrl": "https://github.com/siluat/dotorixel/blob/36015711f6cb1cd9e63d4c4147aab438981ef35e/.agents/skills/task-done/SKILL.md"
+        },
+        {
+          "kind": "instruction_file",
+          "client": null,
+          "compatibleClients": [
+            "codex",
+            "kimi",
+            "grok-build",
+            "opencode",
+            "github-copilot",
+            "cursor",
+            "kiro"
+          ],
+          "modelDeveloper": null,
+          "declaredModelId": null,
+          "gateway": null,
+          "routing": "unknown",
+          "role": null,
+          "scope": "",
+          "keyPath": null,
+          "ruleId": "shared.skills.v1",
+          "sourcePath": ".agents/skills/task-start/SKILL.md",
+          "commitSha": "36015711f6cb1cd9e63d4c4147aab438981ef35e",
+          "blobSha": "e733959fb466a088269902c2fe844eae9a55d82c",
+          "sourceUrl": "https://github.com/siluat/dotorixel/blob/36015711f6cb1cd9e63d4c4147aab438981ef35e/.agents/skills/task-start/SKILL.md"
+        },
+        {
+          "kind": "instruction_file",
+          "client": null,
+          "compatibleClients": [
+            "codex",
+            "kimi",
+            "grok-build",
+            "opencode",
+            "github-copilot",
+            "cursor",
+            "kiro"
+          ],
+          "modelDeveloper": null,
+          "declaredModelId": null,
+          "gateway": null,
+          "routing": "unknown",
+          "role": null,
+          "scope": "",
+          "keyPath": null,
+          "ruleId": "shared.skills.v1",
+          "sourcePath": ".agents/skills/tdd/SKILL.md",
+          "commitSha": "36015711f6cb1cd9e63d4c4147aab438981ef35e",
+          "blobSha": "93097eb257e95b774b68f42478ad7b530e5de833",
+          "sourceUrl": "https://github.com/siluat/dotorixel/blob/36015711f6cb1cd9e63d4c4147aab438981ef35e/.agents/skills/tdd/SKILL.md"
+        },
+        {
+          "kind": "instruction_file",
+          "client": null,
+          "compatibleClients": [
+            "codex",
+            "kimi",
+            "grok-build",
+            "opencode",
+            "github-copilot",
+            "cursor",
+            "kiro"
+          ],
+          "modelDeveloper": null,
+          "declaredModelId": null,
+          "gateway": null,
+          "routing": "unknown",
+          "role": null,
+          "scope": "",
+          "keyPath": null,
+          "ruleId": "shared.skills.v1",
+          "sourcePath": ".agents/skills/to-spec/SKILL.md",
+          "commitSha": "36015711f6cb1cd9e63d4c4147aab438981ef35e",
+          "blobSha": "4db92fe234ae76b84382c8035d57f464bfee374e",
+          "sourceUrl": "https://github.com/siluat/dotorixel/blob/36015711f6cb1cd9e63d4c4147aab438981ef35e/.agents/skills/to-spec/SKILL.md"
+        },
+        {
+          "kind": "instruction_file",
+          "client": null,
+          "compatibleClients": [
+            "codex",
+            "kimi",
+            "grok-build",
+            "opencode",
+            "github-copilot",
+            "cursor",
+            "kiro"
+          ],
+          "modelDeveloper": null,
+          "declaredModelId": null,
+          "gateway": null,
+          "routing": "unknown",
+          "role": null,
+          "scope": "",
+          "keyPath": null,
+          "ruleId": "shared.skills.v1",
+          "sourcePath": ".agents/skills/to-tickets/SKILL.md",
+          "commitSha": "36015711f6cb1cd9e63d4c4147aab438981ef35e",
+          "blobSha": "0cc7ef5a167e5a311bb8f67f3e6723d6ea532a5d",
+          "sourceUrl": "https://github.com/siluat/dotorixel/blob/36015711f6cb1cd9e63d4c4147aab438981ef35e/.agents/skills/to-tickets/SKILL.md"
+        },
+        {
+          "kind": "instruction_file",
+          "client": null,
+          "compatibleClients": [
+            "codex",
+            "kimi",
+            "grok-build",
+            "opencode",
+            "github-copilot",
+            "cursor",
+            "kiro"
+          ],
+          "modelDeveloper": null,
+          "declaredModelId": null,
+          "gateway": null,
+          "routing": "unknown",
+          "role": null,
+          "scope": "",
+          "keyPath": null,
+          "ruleId": "shared.skills.v1",
+          "sourcePath": ".agents/skills/triage/SKILL.md",
+          "commitSha": "36015711f6cb1cd9e63d4c4147aab438981ef35e",
+          "blobSha": "f387d56decb467cdad1ce68065e99bf3d0f84f98",
+          "sourceUrl": "https://github.com/siluat/dotorixel/blob/36015711f6cb1cd9e63d4c4147aab438981ef35e/.agents/skills/triage/SKILL.md"
+        },
+        {
+          "kind": "instruction_file",
+          "client": null,
+          "compatibleClients": [
+            "codex",
+            "kimi",
+            "grok-build",
+            "opencode",
+            "github-copilot",
+            "cursor",
+            "kiro"
+          ],
+          "modelDeveloper": null,
+          "declaredModelId": null,
+          "gateway": null,
+          "routing": "unknown",
+          "role": null,
+          "scope": "",
+          "keyPath": null,
+          "ruleId": "shared.skills.v1",
+          "sourcePath": ".claude/skills/verify/SKILL.md",
+          "commitSha": "36015711f6cb1cd9e63d4c4147aab438981ef35e",
+          "blobSha": "60abe48286d24d0c9a43f4c4eb9d5b1fd4815737",
+          "sourceUrl": "https://github.com/siluat/dotorixel/blob/36015711f6cb1cd9e63d4c4147aab438981ef35e/.claude/skills/verify/SKILL.md"
+        }
+      ],
+      "problem": null,
+      "issues": []
+    },
+    {
+      "slug": "brigade-trackable-work-for-coding-agent-fleets",
+      "repository": "escoffier-labs/brigade",
+      "legacyGuessPresent": true,
+      "linkBefore": "visible",
+      "linkAction": "unchanged",
+      "factsRefresh": {
+        "sourcesAttempted": 1,
+        "sourcesFailed": 0,
+        "factsChanged": 1,
+        "eventsInserted": 10,
+        "mediaInserted": 0,
+        "complete": true
+      },
+      "scan": {
+        "id": 22,
+        "state": "complete",
+        "commitSha": "bf1aa33fdd58c520e702945425ca6a11b643fcfb",
+        "detectorVersion": "2026-09-06.1",
+        "observedAt": "2026-09-06T00:16:30.790Z",
+        "coverage": {
+          "limited": false
+        }
+      },
+      "rounds": 1,
+      "errorCode": null,
+      "relationship": "unknown",
+      "eligibility": {
+        "eligible": false,
+        "reason": "ai_evidence_insufficient",
+        "executionVerified": false
+      },
+      "repositoryFacts": {
+        "kind": "repository",
+        "key": "escoffier-labs/brigade",
+        "state": "ok",
+        "facts": {
+          "fork": false,
+          "type": "github_repository",
+          "forks": 5,
+          "stars": 72,
+          "public": true,
+          "license": {
+            "url": "https://api.github.com/licenses/mit",
+            "value": "MIT License",
+            "spdxId": "MIT"
+          },
+          "archived": false,
+          "homepage": "https://brigade.tools",
+          "pushedAt": "2026-09-06T00:15:49.000Z",
+          "createdAt": "2026-05-13T21:55:58.000Z",
+          "languages": [
+            {
+              "name": "Python",
+              "bytes": 23346403,
+              "percent": 90.5
+            },
+            {
+              "name": "Go",
+              "bytes": 1530937,
+              "percent": 5.9
+            },
+            {
+              "name": "Rust",
+              "bytes": 525916,
+              "percent": 2
+            },
+            {
+              "name": "JavaScript",
+              "bytes": 242599,
+              "percent": 0.9
+            },
+            {
+              "name": "Shell",
+              "bytes": 59122,
+              "percent": 0.2
+            },
+            {
+              "name": "PowerShell",
+              "bytes": 50791,
+              "percent": 0.2
+            },
+            {
+              "name": "HTML",
+              "bytes": 36659,
+              "percent": 0.1
+            },
+            {
+              "name": "Makefile",
+              "bytes": 2086,
+              "percent": 0
+            },
+            {
+              "name": "Dockerfile",
+              "bytes": 1430,
+              "percent": 0
+            },
+            {
+              "name": "TypeScript",
+              "bytes": 575,
+              "percent": 0
+            }
+          ],
+          "updatedAt": "2026-09-06T00:15:51.000Z",
+          "agentScanId": 22,
+          "contributors": {
+            "cap": 500,
+            "count": 7,
+            "incomplete": false
+          },
+          "latestRelease": {
+            "id": 367541549,
+            "url": "https://github.com/escoffier-labs/brigade/releases/tag/v0.26.1",
+            "name": "v0.26.1",
+            "tagName": "v0.26.1",
+            "notesUrl": "https://github.com/escoffier-labs/brigade/releases/tag/v0.26.1",
+            "publishedAt": "2026-08-09T17:35:02.000Z"
+          },
+          "repositoryKey": "escoffier-labs/brigade",
+          "repositoryUrl": "https://github.com/escoffier-labs/brigade",
+          "relationshipState": "repository_link",
+          "agentDetectorVersion": "2026-09-06.1"
+        },
+        "observedAt": "2026-09-06T00:16:29.525Z",
+        "lastSuccessAt": "2026-09-06T00:16:29.525Z",
+        "error": null
+      },
+      "site": {
+        "kind": "documentation",
+        "key": "canonical_site",
+        "state": "ok",
+        "facts": {
+          "type": "site_fingerprint",
+          "finalUrl": "https://brigade.tools",
+          "repositoryKeys": []
+        },
+        "observedAt": "2026-09-06T00:16:29.525Z",
+        "lastSuccessAt": "2026-09-06T00:16:29.525Z",
+        "error": null
+      },
+      "observations": [
+        {
+          "kind": "instruction_file",
+          "client": null,
+          "compatibleClients": [
+            "codex",
+            "kimi",
+            "grok-build",
+            "opencode",
+            "github-copilot",
+            "cursor",
+            "kiro"
+          ],
+          "modelDeveloper": null,
+          "declaredModelId": null,
+          "gateway": null,
+          "routing": "unknown",
+          "role": null,
+          "scope": "",
+          "keyPath": null,
+          "ruleId": "shared.agents.v1",
+          "sourcePath": "AGENTS.md",
+          "commitSha": "bf1aa33fdd58c520e702945425ca6a11b643fcfb",
+          "blobSha": "cbe3d49373c3fa75970efd26bf23f5352a851a02",
+          "sourceUrl": "https://github.com/escoffier-labs/brigade/blob/bf1aa33fdd58c520e702945425ca6a11b643fcfb/AGENTS.md"
+        }
+      ],
+      "problem": null,
+      "issues": []
+    },
+    {
+      "slug": "threa",
+      "repository": "threahq/threa",
+      "legacyGuessPresent": true,
+      "linkBefore": "visible",
+      "linkAction": "unchanged",
+      "factsRefresh": {
+        "sourcesAttempted": 1,
+        "sourcesFailed": 0,
+        "factsChanged": 1,
+        "eventsInserted": 0,
+        "mediaInserted": 0,
+        "complete": true
+      },
+      "scan": {
+        "id": 23,
+        "state": "complete",
+        "commitSha": "ba94bde00936ca94f245f98914b2dee29a9a55f0",
+        "detectorVersion": "2026-09-06.1",
+        "observedAt": "2026-09-06T00:17:01.170Z",
+        "coverage": {
+          "limited": false
+        }
+      },
+      "rounds": 7,
+      "errorCode": null,
+      "relationship": "same_product",
+      "eligibility": {
+        "eligible": false,
+        "reason": "ai_evidence_insufficient",
+        "executionVerified": false
+      },
+      "repositoryFacts": {
+        "kind": "repository",
+        "key": "threahq/threa",
+        "state": "ok",
+        "facts": {
+          "fork": false,
+          "type": "github_repository",
+          "forks": 0,
+          "stars": 2,
+          "public": true,
+          "license": {
+            "url": "https://api.github.com/licenses/mit",
+            "value": "MIT License",
+            "spdxId": "MIT"
+          },
+          "archived": false,
+          "homepage": "https://threa.io",
+          "pushedAt": "2026-09-05T23:59:22.000Z",
+          "createdAt": "2025-11-15T08:42:45.000Z",
+          "languages": [
+            {
+              "name": "TypeScript",
+              "bytes": 32073856,
+              "percent": 98.7
+            },
+            {
+              "name": "Astro",
+              "bytes": 169373,
+              "percent": 0.5
+            },
+            {
+              "name": "CSS",
+              "bytes": 137855,
+              "percent": 0.4
+            },
+            {
+              "name": "JavaScript",
+              "bytes": 44726,
+              "percent": 0.1
+            },
+            {
+              "name": "PLpgSQL",
+              "bytes": 22014,
+              "percent": 0.1
+            },
+            {
+              "name": "HTML",
+              "bytes": 21866,
+              "percent": 0.1
+            },
+            {
+              "name": "Shell",
+              "bytes": 14658,
+              "percent": 0
+            },
+            {
+              "name": "HCL",
+              "bytes": 5924,
+              "percent": 0
+            }
+          ],
+          "updatedAt": "2026-09-05T22:52:12.000Z",
+          "agentScanId": 23,
+          "contributors": {
+            "cap": 500,
+            "count": 3,
+            "incomplete": false
+          },
+          "latestRelease": null,
+          "repositoryKey": "threahq/threa",
+          "repositoryUrl": "https://github.com/threahq/threa",
+          "relationshipState": "bidirectional",
+          "agentDetectorVersion": "2026-09-06.1"
+        },
+        "observedAt": "2026-09-06T00:16:33.919Z",
+        "lastSuccessAt": "2026-09-06T00:16:33.919Z",
+        "error": null
+      },
+      "site": {
+        "kind": "documentation",
+        "key": "canonical_site",
+        "state": "ok",
+        "facts": {
+          "type": "site_fingerprint",
+          "finalUrl": "https://threa.io",
+          "repositoryKeys": [
+            "threahq/threa"
+          ]
+        },
+        "observedAt": "2026-09-06T00:16:33.919Z",
+        "lastSuccessAt": "2026-09-06T00:16:33.919Z",
+        "error": null
+      },
+      "observations": [
+        {
+          "kind": "instruction_file",
+          "client": null,
+          "compatibleClients": [
+            "codex",
+            "kimi",
+            "grok-build",
+            "opencode",
+            "github-copilot",
+            "cursor",
+            "kiro"
+          ],
+          "modelDeveloper": null,
+          "declaredModelId": null,
+          "gateway": null,
+          "routing": "unknown",
+          "role": null,
+          "scope": "",
+          "keyPath": null,
+          "ruleId": "shared.agents.v1",
+          "sourcePath": "AGENTS.md",
+          "commitSha": "ba94bde00936ca94f245f98914b2dee29a9a55f0",
+          "blobSha": "3a63417d1c03c921da45f225e42abfdf902dc6cf",
+          "sourceUrl": "https://github.com/threahq/threa/blob/ba94bde00936ca94f245f98914b2dee29a9a55f0/AGENTS.md"
+        },
+        {
+          "kind": "instruction_file",
+          "client": null,
+          "compatibleClients": [
+            "claude-code",
+            "cursor",
+            "opencode",
+            "kimi",
+            "grok-build"
+          ],
+          "modelDeveloper": null,
+          "declaredModelId": null,
+          "gateway": null,
+          "routing": "unknown",
+          "role": null,
+          "scope": "",
+          "keyPath": null,
+          "ruleId": "shared.claude.v1",
+          "sourcePath": "CLAUDE.md",
+          "commitSha": "ba94bde00936ca94f245f98914b2dee29a9a55f0",
+          "blobSha": "5d608bc85614eaf223edf4594f21473ba76a336e",
+          "sourceUrl": "https://github.com/threahq/threa/blob/ba94bde00936ca94f245f98914b2dee29a9a55f0/CLAUDE.md"
+        },
+        {
+          "kind": "client_config",
+          "client": "claude-code",
+          "compatibleClients": [
+            "claude-code"
+          ],
+          "modelDeveloper": null,
+          "declaredModelId": null,
+          "gateway": null,
+          "routing": "unknown",
+          "role": null,
+          "scope": "",
+          "keyPath": null,
+          "ruleId": "claude.settings.v1",
+          "sourcePath": ".claude/settings.json",
+          "commitSha": "ba94bde00936ca94f245f98914b2dee29a9a55f0",
+          "blobSha": "6ae1589679eee362e22c0efe59ecad98d531e82a",
+          "sourceUrl": "https://github.com/threahq/threa/blob/ba94bde00936ca94f245f98914b2dee29a9a55f0/.claude/settings.json"
+        },
+        {
+          "kind": "instruction_file",
+          "client": null,
+          "compatibleClients": [
+            "codex",
+            "kimi",
+            "grok-build",
+            "opencode",
+            "github-copilot",
+            "cursor",
+            "kiro"
+          ],
+          "modelDeveloper": null,
+          "declaredModelId": null,
+          "gateway": null,
+          "routing": "unknown",
+          "role": null,
+          "scope": "",
+          "keyPath": null,
+          "ruleId": "shared.skills.v1",
+          "sourcePath": ".agents/skills/add-migration/SKILL.md",
+          "commitSha": "ba94bde00936ca94f245f98914b2dee29a9a55f0",
+          "blobSha": "7270c1d633f9cbba632eb332ba99eebc9bf759e8",
+          "sourceUrl": "https://github.com/threahq/threa/blob/ba94bde00936ca94f245f98914b2dee29a9a55f0/.agents/skills/add-migration/SKILL.md"
+        },
+        {
+          "kind": "instruction_file",
+          "client": null,
+          "compatibleClients": [
+            "codex",
+            "kimi",
+            "grok-build",
+            "opencode",
+            "github-copilot",
+            "cursor",
+            "kiro"
+          ],
+          "modelDeveloper": null,
+          "declaredModelId": null,
+          "gateway": null,
+          "routing": "unknown",
+          "role": null,
+          "scope": "",
+          "keyPath": null,
+          "ruleId": "shared.skills.v1",
+          "sourcePath": ".agents/skills/audit-config-sprawl/SKILL.md",
+          "commitSha": "ba94bde00936ca94f245f98914b2dee29a9a55f0",
+          "blobSha": "4f8e634864cce33217320bc7879b4c063775a30b",
+          "sourceUrl": "https://github.com/threahq/threa/blob/ba94bde00936ca94f245f98914b2dee29a9a55f0/.agents/skills/audit-config-sprawl/SKILL.md"
+        },
+        {
+          "kind": "instruction_file",
+          "client": null,
+          "compatibleClients": [
+            "codex",
+            "kimi",
+            "grok-build",
+            "opencode",
+            "github-copilot",
+            "cursor",
+            "kiro"
+          ],
+          "modelDeveloper": null,
+          "declaredModelId": null,
+          "gateway": null,
+          "routing": "unknown",
+          "role": null,
+          "scope": "",
+          "keyPath": null,
+          "ruleId": "shared.skills.v1",
+          "sourcePath": ".agents/skills/build-feature/SKILL.md",
+          "commitSha": "ba94bde00936ca94f245f98914b2dee29a9a55f0",
+          "blobSha": "d4a93026ed947bb6cea9a4c264032e8b020a9a80",
+          "sourceUrl": "https://github.com/threahq/threa/blob/ba94bde00936ca94f245f98914b2dee29a9a55f0/.agents/skills/build-feature/SKILL.md"
+        },
+        {
+          "kind": "instruction_file",
+          "client": null,
+          "compatibleClients": [
+            "codex",
+            "kimi",
+            "grok-build",
+            "opencode",
+            "github-copilot",
+            "cursor",
+            "kiro"
+          ],
+          "modelDeveloper": null,
+          "declaredModelId": null,
+          "gateway": null,
+          "routing": "unknown",
+          "role": null,
+          "scope": "",
+          "keyPath": null,
+          "ruleId": "shared.skills.v1",
+          "sourcePath": ".agents/skills/code-review/SKILL.md",
+          "commitSha": "ba94bde00936ca94f245f98914b2dee29a9a55f0",
+          "blobSha": "0d48e444ce85a71b54b4b503f4b63c8b60206a2c",
+          "sourceUrl": "https://github.com/threahq/threa/blob/ba94bde00936ca94f245f98914b2dee29a9a55f0/.agents/skills/code-review/SKILL.md"
+        },
+        {
+          "kind": "instruction_file",
+          "client": null,
+          "compatibleClients": [
+            "codex",
+            "kimi",
+            "grok-build",
+            "opencode",
+            "github-copilot",
+            "cursor",
+            "kiro"
+          ],
+          "modelDeveloper": null,
+          "declaredModelId": null,
+          "gateway": null,
+          "routing": "unknown",
+          "role": null,
+          "scope": "",
+          "keyPath": null,
+          "ruleId": "shared.skills.v1",
+          "sourcePath": ".agents/skills/commit/SKILL.md",
+          "commitSha": "ba94bde00936ca94f245f98914b2dee29a9a55f0",
+          "blobSha": "467a37a08977131067fd34ab24db1c8cf39069a0",
+          "sourceUrl": "https://github.com/threahq/threa/blob/ba94bde00936ca94f245f98914b2dee29a9a55f0/.agents/skills/commit/SKILL.md"
+        },
+        {
+          "kind": "instruction_file",
+          "client": null,
+          "compatibleClients": [
+            "codex",
+            "kimi",
+            "grok-build",
+            "opencode",
+            "github-copilot",
+            "cursor",
+            "kiro"
+          ],
+          "modelDeveloper": null,
+          "declaredModelId": null,
+          "gateway": null,
+          "routing": "unknown",
+          "role": null,
+          "scope": "",
+          "keyPath": null,
+          "ruleId": "shared.skills.v1",
+          "sourcePath": ".agents/skills/create-pr/SKILL.md",
+          "commitSha": "ba94bde00936ca94f245f98914b2dee29a9a55f0",
+          "blobSha": "90da8f85edfa9fde9dd6a5ceb67f2611b5683da6",
+          "sourceUrl": "https://github.com/threahq/threa/blob/ba94bde00936ca94f245f98914b2dee29a9a55f0/.agents/skills/create-pr/SKILL.md"
+        },
+        {
+          "kind": "instruction_file",
+          "client": null,
+          "compatibleClients": [
+            "codex",
+            "kimi",
+            "grok-build",
+            "opencode",
+            "github-copilot",
+            "cursor",
+            "kiro"
+          ],
+          "modelDeveloper": null,
+          "declaredModelId": null,
+          "gateway": null,
+          "routing": "unknown",
+          "role": null,
+          "scope": "",
+          "keyPath": null,
+          "ruleId": "shared.skills.v1",
+          "sourcePath": ".agents/skills/deslopify/SKILL.md",
+          "commitSha": "ba94bde00936ca94f245f98914b2dee29a9a55f0",
+          "blobSha": "2ad9f84dc498dff080bd23450684302a7f48ed43",
+          "sourceUrl": "https://github.com/threahq/threa/blob/ba94bde00936ca94f245f98914b2dee29a9a55f0/.agents/skills/deslopify/SKILL.md"
+        },
+        {
+          "kind": "instruction_file",
+          "client": null,
+          "compatibleClients": [
+            "codex",
+            "kimi",
+            "grok-build",
+            "opencode",
+            "github-copilot",
+            "cursor",
+            "kiro"
+          ],
+          "modelDeveloper": null,
+          "declaredModelId": null,
+          "gateway": null,
+          "routing": "unknown",
+          "role": null,
+          "scope": "",
+          "keyPath": null,
+          "ruleId": "shared.skills.v1",
+          "sourcePath": ".agents/skills/find-plan/SKILL.md",
+          "commitSha": "ba94bde00936ca94f245f98914b2dee29a9a55f0",
+          "blobSha": "639bad909418fde9bbb87f3cc8c25cf7e2ba824b",
+          "sourceUrl": "https://github.com/threahq/threa/blob/ba94bde00936ca94f245f98914b2dee29a9a55f0/.agents/skills/find-plan/SKILL.md"
+        },
+        {
+          "kind": "instruction_file",
+          "client": null,
+          "compatibleClients": [
+            "codex",
+            "kimi",
+            "grok-build",
+            "opencode",
+            "github-copilot",
+            "cursor",
+            "kiro"
+          ],
+          "modelDeveloper": null,
+          "declaredModelId": null,
+          "gateway": null,
+          "routing": "unknown",
+          "role": null,
+          "scope": "",
+          "keyPath": null,
+          "ruleId": "shared.skills.v1",
+          "sourcePath": ".agents/skills/frontend-design/SKILL.md",
+          "commitSha": "ba94bde00936ca94f245f98914b2dee29a9a55f0",
+          "blobSha": "a5333457c414d20d625f307df945842c0952ecc3",
+          "sourceUrl": "https://github.com/threahq/threa/blob/ba94bde00936ca94f245f98914b2dee29a9a55f0/.agents/skills/frontend-design/SKILL.md"
+        },
+        {
+          "kind": "instruction_file",
+          "client": null,
+          "compatibleClients": [
+            "codex",
+            "kimi",
+            "grok-build",
+            "opencode",
+            "github-copilot",
+            "cursor",
+            "kiro"
+          ],
+          "modelDeveloper": null,
+          "declaredModelId": null,
+          "gateway": null,
+          "routing": "unknown",
+          "role": null,
+          "scope": "",
+          "keyPath": null,
+          "ruleId": "shared.skills.v1",
+          "sourcePath": ".agents/skills/gh-stack/SKILL.md",
+          "commitSha": "ba94bde00936ca94f245f98914b2dee29a9a55f0",
+          "blobSha": "227615f76ef0bd3434b9910331de5ac632842383",
+          "sourceUrl": "https://github.com/threahq/threa/blob/ba94bde00936ca94f245f98914b2dee29a9a55f0/.agents/skills/gh-stack/SKILL.md"
+        },
+        {
+          "kind": "instruction_file",
+          "client": null,
+          "compatibleClients": [
+            "codex",
+            "kimi",
+            "grok-build",
+            "opencode",
+            "github-copilot",
+            "cursor",
+            "kiro"
+          ],
+          "modelDeveloper": null,
+          "declaredModelId": null,
+          "gateway": null,
+          "routing": "unknown",
+          "role": null,
+          "scope": "",
+          "keyPath": null,
+          "ruleId": "shared.skills.v1",
+          "sourcePath": ".agents/skills/github-api-web/SKILL.md",
+          "commitSha": "ba94bde00936ca94f245f98914b2dee29a9a55f0",
+          "blobSha": "93e7009b61af567b48c0a2323c611109b96200f4",
+          "sourceUrl": "https://github.com/threahq/threa/blob/ba94bde00936ca94f245f98914b2dee29a9a55f0/.agents/skills/github-api-web/SKILL.md"
+        },
+        {
+          "kind": "instruction_file",
+          "client": null,
+          "compatibleClients": [
+            "codex",
+            "kimi",
+            "grok-build",
+            "opencode",
+            "github-copilot",
+            "cursor",
+            "kiro"
+          ],
+          "modelDeveloper": null,
+          "declaredModelId": null,
+          "gateway": null,
+          "routing": "unknown",
+          "role": null,
+          "scope": "",
+          "keyPath": null,
+          "ruleId": "shared.skills.v1",
+          "sourcePath": ".agents/skills/handover/SKILL.md",
+          "commitSha": "ba94bde00936ca94f245f98914b2dee29a9a55f0",
+          "blobSha": "c42221ee414fd71fd9caf1072d65e0f329f1c85b",
+          "sourceUrl": "https://github.com/threahq/threa/blob/ba94bde00936ca94f245f98914b2dee29a9a55f0/.agents/skills/handover/SKILL.md"
+        },
+        {
+          "kind": "instruction_file",
+          "client": null,
+          "compatibleClients": [
+            "codex",
+            "kimi",
+            "grok-build",
+            "opencode",
+            "github-copilot",
+            "cursor",
+            "kiro"
+          ],
+          "modelDeveloper": null,
+          "declaredModelId": null,
+          "gateway": null,
+          "routing": "unknown",
+          "role": null,
+          "scope": "",
+          "keyPath": null,
+          "ruleId": "shared.skills.v1",
+          "sourcePath": ".agents/skills/monitor-prod/SKILL.md",
+          "commitSha": "ba94bde00936ca94f245f98914b2dee29a9a55f0",
+          "blobSha": "2e9bf84bb612629c5e24f855a626d1304557a641",
+          "sourceUrl": "https://github.com/threahq/threa/blob/ba94bde00936ca94f245f98914b2dee29a9a55f0/.agents/skills/monitor-prod/SKILL.md"
+        },
+        {
+          "kind": "instruction_file",
+          "client": null,
+          "compatibleClients": [
+            "codex",
+            "kimi",
+            "grok-build",
+            "opencode",
+            "github-copilot",
+            "cursor",
+            "kiro"
+          ],
+          "modelDeveloper": null,
+          "declaredModelId": null,
+          "gateway": null,
+          "routing": "unknown",
+          "role": null,
+          "scope": "",
+          "keyPath": null,
+          "ruleId": "shared.skills.v1",
+          "sourcePath": ".agents/skills/prod-db-readonly/SKILL.md",
+          "commitSha": "ba94bde00936ca94f245f98914b2dee29a9a55f0",
+          "blobSha": "eee92d2a00b1fd66bd5ce76c637396a90ad684e7",
+          "sourceUrl": "https://github.com/threahq/threa/blob/ba94bde00936ca94f245f98914b2dee29a9a55f0/.agents/skills/prod-db-readonly/SKILL.md"
+        },
+        {
+          "kind": "instruction_file",
+          "client": null,
+          "compatibleClients": [
+            "codex",
+            "kimi",
+            "grok-build",
+            "opencode",
+            "github-copilot",
+            "cursor",
+            "kiro"
+          ],
+          "modelDeveloper": null,
+          "declaredModelId": null,
+          "gateway": null,
+          "routing": "unknown",
+          "role": null,
+          "scope": "",
+          "keyPath": null,
+          "ruleId": "shared.skills.v1",
+          "sourcePath": ".agents/skills/rebase-on-main/SKILL.md",
+          "commitSha": "ba94bde00936ca94f245f98914b2dee29a9a55f0",
+          "blobSha": "aeb2673c2664eb4b408ab0ab0baae251217e92e4",
+          "sourceUrl": "https://github.com/threahq/threa/blob/ba94bde00936ca94f245f98914b2dee29a9a55f0/.agents/skills/rebase-on-main/SKILL.md"
+        },
+        {
+          "kind": "instruction_file",
+          "client": null,
+          "compatibleClients": [
+            "codex",
+            "kimi",
+            "grok-build",
+            "opencode",
+            "github-copilot",
+            "cursor",
+            "kiro"
+          ],
+          "modelDeveloper": null,
+          "declaredModelId": null,
+          "gateway": null,
+          "routing": "unknown",
+          "role": null,
+          "scope": "",
+          "keyPath": null,
+          "ruleId": "shared.skills.v1",
+          "sourcePath": ".agents/skills/respond-to-pr-review/SKILL.md",
+          "commitSha": "ba94bde00936ca94f245f98914b2dee29a9a55f0",
+          "blobSha": "3fb47a30fdb69600d02395556116fc29b5fd9a31",
+          "sourceUrl": "https://github.com/threahq/threa/blob/ba94bde00936ca94f245f98914b2dee29a9a55f0/.agents/skills/respond-to-pr-review/SKILL.md"
+        },
+        {
+          "kind": "instruction_file",
+          "client": null,
+          "compatibleClients": [
+            "codex",
+            "kimi",
+            "grok-build",
+            "opencode",
+            "github-copilot",
+            "cursor",
+            "kiro"
+          ],
+          "modelDeveloper": null,
+          "declaredModelId": null,
+          "gateway": null,
+          "routing": "unknown",
+          "role": null,
+          "scope": "",
+          "keyPath": null,
+          "ruleId": "shared.skills.v1",
+          "sourcePath": ".agents/skills/search-model/SKILL.md",
+          "commitSha": "ba94bde00936ca94f245f98914b2dee29a9a55f0",
+          "blobSha": "fcbcebe5acf9fb5f0ad9539e93623dc8e2801b76",
+          "sourceUrl": "https://github.com/threahq/threa/blob/ba94bde00936ca94f245f98914b2dee29a9a55f0/.agents/skills/search-model/SKILL.md"
+        },
+        {
+          "kind": "instruction_file",
+          "client": null,
+          "compatibleClients": [
+            "codex",
+            "kimi",
+            "grok-build",
+            "opencode",
+            "github-copilot",
+            "cursor",
+            "kiro"
+          ],
+          "modelDeveloper": null,
+          "declaredModelId": null,
+          "gateway": null,
+          "routing": "unknown",
+          "role": null,
+          "scope": "",
+          "keyPath": null,
+          "ruleId": "shared.skills.v1",
+          "sourcePath": ".agents/skills/sync-frontend-design/SKILL.md",
+          "commitSha": "ba94bde00936ca94f245f98914b2dee29a9a55f0",
+          "blobSha": "63d9ebbca4473d545055a79b7474c657accf04c6",
+          "sourceUrl": "https://github.com/threahq/threa/blob/ba94bde00936ca94f245f98914b2dee29a9a55f0/.agents/skills/sync-frontend-design/SKILL.md"
+        },
+        {
+          "kind": "instruction_file",
+          "client": null,
+          "compatibleClients": [
+            "codex",
+            "kimi",
+            "grok-build",
+            "opencode",
+            "github-copilot",
+            "cursor",
+            "kiro"
+          ],
+          "modelDeveloper": null,
+          "declaredModelId": null,
+          "gateway": null,
+          "routing": "unknown",
+          "role": null,
+          "scope": "",
+          "keyPath": null,
+          "ruleId": "shared.skills.v1",
+          "sourcePath": ".agents/skills/sync-plan/SKILL.md",
+          "commitSha": "ba94bde00936ca94f245f98914b2dee29a9a55f0",
+          "blobSha": "63d67c1cc9143e7be2fe8ebec19453bcd6693a77",
+          "sourceUrl": "https://github.com/threahq/threa/blob/ba94bde00936ca94f245f98914b2dee29a9a55f0/.agents/skills/sync-plan/SKILL.md"
+        },
+        {
+          "kind": "instruction_file",
+          "client": null,
+          "compatibleClients": [
+            "codex",
+            "kimi",
+            "grok-build",
+            "opencode",
+            "github-copilot",
+            "cursor",
+            "kiro"
+          ],
+          "modelDeveloper": null,
+          "declaredModelId": null,
+          "gateway": null,
+          "routing": "unknown",
+          "role": null,
+          "scope": "",
+          "keyPath": null,
+          "ruleId": "shared.skills.v1",
+          "sourcePath": ".agents/skills/threa-cli/SKILL.md",
+          "commitSha": "ba94bde00936ca94f245f98914b2dee29a9a55f0",
+          "blobSha": "837504c5f3a0599381b07f78b6f59906de3d3486",
+          "sourceUrl": "https://github.com/threahq/threa/blob/ba94bde00936ca94f245f98914b2dee29a9a55f0/.agents/skills/threa-cli/SKILL.md"
+        },
+        {
+          "kind": "instruction_file",
+          "client": null,
+          "compatibleClients": [
+            "codex",
+            "kimi",
+            "grok-build",
+            "opencode",
+            "github-copilot",
+            "cursor",
+            "kiro"
+          ],
+          "modelDeveloper": null,
+          "declaredModelId": null,
+          "gateway": null,
+          "routing": "unknown",
+          "role": null,
+          "scope": "",
+          "keyPath": null,
+          "ruleId": "shared.skills.v1",
+          "sourcePath": ".agents/skills/threa-public-api/SKILL.md",
+          "commitSha": "ba94bde00936ca94f245f98914b2dee29a9a55f0",
+          "blobSha": "ea8af824262d4facea9ecc54f4efee1aa4cd4991",
+          "sourceUrl": "https://github.com/threahq/threa/blob/ba94bde00936ca94f245f98914b2dee29a9a55f0/.agents/skills/threa-public-api/SKILL.md"
+        },
+        {
+          "kind": "instruction_file",
+          "client": null,
+          "compatibleClients": [
+            "codex",
+            "kimi",
+            "grok-build",
+            "opencode",
+            "github-copilot",
+            "cursor",
+            "kiro"
+          ],
+          "modelDeveloper": null,
+          "declaredModelId": null,
+          "gateway": null,
+          "routing": "unknown",
+          "role": null,
+          "scope": "",
+          "keyPath": null,
+          "ruleId": "shared.skills.v1",
+          "sourcePath": ".agents/skills/typecheck/SKILL.md",
+          "commitSha": "ba94bde00936ca94f245f98914b2dee29a9a55f0",
+          "blobSha": "259b2ad9fb937bc491591076d0e54edfd1ddd86f",
+          "sourceUrl": "https://github.com/threahq/threa/blob/ba94bde00936ca94f245f98914b2dee29a9a55f0/.agents/skills/typecheck/SKILL.md"
+        },
+        {
+          "kind": "instruction_file",
+          "client": null,
+          "compatibleClients": [
+            "codex",
+            "kimi",
+            "grok-build",
+            "opencode",
+            "github-copilot",
+            "cursor",
+            "kiro"
+          ],
+          "modelDeveloper": null,
+          "declaredModelId": null,
+          "gateway": null,
+          "routing": "unknown",
+          "role": null,
+          "scope": "",
+          "keyPath": null,
+          "ruleId": "shared.skills.v1",
+          "sourcePath": ".agents/skills/update-pi-remote-plugin/SKILL.md",
+          "commitSha": "ba94bde00936ca94f245f98914b2dee29a9a55f0",
+          "blobSha": "735ef661c17b570e468a63badc3b8d48b2731ffc",
+          "sourceUrl": "https://github.com/threahq/threa/blob/ba94bde00936ca94f245f98914b2dee29a9a55f0/.agents/skills/update-pi-remote-plugin/SKILL.md"
+        },
+        {
+          "kind": "instruction_file",
+          "client": null,
+          "compatibleClients": [
+            "codex",
+            "kimi",
+            "grok-build",
+            "opencode",
+            "github-copilot",
+            "cursor",
+            "kiro"
+          ],
+          "modelDeveloper": null,
+          "declaredModelId": null,
+          "gateway": null,
+          "routing": "unknown",
+          "role": null,
+          "scope": "",
+          "keyPath": null,
+          "ruleId": "shared.skills.v1",
+          "sourcePath": ".agents/skills/update-pr/SKILL.md",
+          "commitSha": "ba94bde00936ca94f245f98914b2dee29a9a55f0",
+          "blobSha": "6e15b083cad93cd5f14c03c73c835679807e393f",
+          "sourceUrl": "https://github.com/threahq/threa/blob/ba94bde00936ca94f245f98914b2dee29a9a55f0/.agents/skills/update-pr/SKILL.md"
+        },
+        {
+          "kind": "instruction_file",
+          "client": null,
+          "compatibleClients": [
+            "codex",
+            "kimi",
+            "grok-build",
+            "opencode",
+            "github-copilot",
+            "cursor",
+            "kiro"
+          ],
+          "modelDeveloper": null,
+          "declaredModelId": null,
+          "gateway": null,
+          "routing": "unknown",
+          "role": null,
+          "scope": "",
+          "keyPath": null,
+          "ruleId": "shared.skills.v1",
+          "sourcePath": ".agents/skills/use-railway/SKILL.md",
+          "commitSha": "ba94bde00936ca94f245f98914b2dee29a9a55f0",
+          "blobSha": "70d21bbca5d4b74e7192890bbb3d4702da714662",
+          "sourceUrl": "https://github.com/threahq/threa/blob/ba94bde00936ca94f245f98914b2dee29a9a55f0/.agents/skills/use-railway/SKILL.md"
+        },
+        {
+          "kind": "instruction_file",
+          "client": null,
+          "compatibleClients": [
+            "codex",
+            "kimi",
+            "grok-build",
+            "opencode",
+            "github-copilot",
+            "cursor",
+            "kiro"
+          ],
+          "modelDeveloper": null,
+          "declaredModelId": null,
+          "gateway": null,
+          "routing": "unknown",
+          "role": null,
+          "scope": "",
+          "keyPath": null,
+          "ruleId": "shared.skills.v1",
+          "sourcePath": ".agents/skills/watch-pr/SKILL.md",
+          "commitSha": "ba94bde00936ca94f245f98914b2dee29a9a55f0",
+          "blobSha": "348d526a2a59970c19f5138e012e9ef5716b0c1d",
+          "sourceUrl": "https://github.com/threahq/threa/blob/ba94bde00936ca94f245f98914b2dee29a9a55f0/.agents/skills/watch-pr/SKILL.md"
+        }
+      ],
+      "problem": null,
+      "issues": []
+    },
+    {
+      "slug": "tradinggoose-visual-workflow-platform-for-llm-trading",
+      "repository": "tradinggoose/tradinggoose-studio",
+      "legacyGuessPresent": true,
+      "linkBefore": "visible",
+      "linkAction": "unchanged",
+      "factsRefresh": {
+        "sourcesAttempted": 1,
+        "sourcesFailed": 0,
+        "factsChanged": 1,
+        "eventsInserted": 0,
+        "mediaInserted": 0,
+        "complete": true
+      },
+      "scan": {
+        "id": 30,
+        "state": "complete",
+        "commitSha": "8ea6b549bbbf64eb603a697990f580235f060250",
+        "detectorVersion": "2026-09-06.1",
+        "observedAt": "2026-09-06T00:19:47.923Z",
+        "coverage": {
+          "limited": false
+        }
+      },
+      "rounds": 1,
+      "errorCode": null,
+      "relationship": "same_product",
+      "eligibility": {
+        "eligible": false,
+        "reason": "ai_evidence_insufficient",
+        "executionVerified": false
+      },
+      "repositoryFacts": {
+        "kind": "repository",
+        "key": "tradinggoose/tradinggoose-studio",
+        "state": "ok",
+        "facts": {
+          "fork": false,
+          "type": "github_repository",
+          "forks": 11,
+          "stars": 137,
+          "public": true,
+          "license": {
+            "url": "https://api.github.com/licenses/agpl-3.0",
+            "value": "GNU Affero General Public License v3.0",
+            "spdxId": "AGPL-3.0"
+          },
+          "archived": false,
+          "homepage": "https://TradingGoose.ai",
+          "pushedAt": "2026-09-04T17:47:17.000Z",
+          "createdAt": "2025-11-18T18:05:18.000Z",
+          "languages": [
+            {
+              "name": "TypeScript",
+              "bytes": 26733395,
+              "percent": 79.3
+            },
+            {
+              "name": "MDX",
+              "bytes": 6892821,
+              "percent": 20.4
+            },
+            {
+              "name": "Python",
+              "bytes": 44742,
+              "percent": 0.1
+            },
+            {
+              "name": "CSS",
+              "bytes": 19075,
+              "percent": 0.1
+            },
+            {
+              "name": "Go Template",
+              "bytes": 9500,
+              "percent": 0
+            },
+            {
+              "name": "Shell",
+              "bytes": 9051,
+              "percent": 0
+            },
+            {
+              "name": "Dockerfile",
+              "bytes": 7698,
+              "percent": 0
+            },
+            {
+              "name": "JavaScript",
+              "bytes": 571,
+              "percent": 0
+            }
+          ],
+          "updatedAt": "2026-09-03T15:59:20.000Z",
+          "agentScanId": 30,
+          "contributors": {
+            "cap": 500,
+            "count": 4,
+            "incomplete": false
+          },
+          "latestRelease": {
+            "id": 360109903,
+            "url": "https://github.com/TradingGoose/TradingGoose-Studio/releases/tag/v2026.07.26",
+            "name": "v2026.07.26",
+            "tagName": "v2026.07.26",
+            "notesUrl": "https://github.com/TradingGoose/TradingGoose-Studio/releases/tag/v2026.07.26",
+            "publishedAt": "2026-07-26T20:20:10.000Z"
+          },
+          "repositoryKey": "tradinggoose/tradinggoose-studio",
+          "repositoryUrl": "https://github.com/TradingGoose/TradingGoose-Studio",
+          "relationshipState": "bidirectional",
+          "agentDetectorVersion": "2026-09-06.1"
+        },
+        "observedAt": "2026-09-06T00:19:45.666Z",
+        "lastSuccessAt": "2026-09-06T00:19:45.666Z",
+        "error": null
+      },
+      "site": {
+        "kind": "documentation",
+        "key": "canonical_site",
+        "state": "ok",
+        "facts": {
+          "type": "site_fingerprint",
+          "finalUrl": "https://www.tradinggoose.ai/en",
+          "repositoryKeys": [
+            "tradinggoose/tradinggoose-studio"
+          ]
+        },
+        "observedAt": "2026-09-06T00:19:45.666Z",
+        "lastSuccessAt": "2026-09-06T00:19:45.666Z",
+        "error": null
+      },
+      "observations": [
+        {
+          "kind": "instruction_file",
+          "client": null,
+          "compatibleClients": [
+            "codex",
+            "kimi",
+            "grok-build",
+            "opencode",
+            "github-copilot",
+            "cursor",
+            "kiro"
+          ],
+          "modelDeveloper": null,
+          "declaredModelId": null,
+          "gateway": null,
+          "routing": "unknown",
+          "role": null,
+          "scope": "",
+          "keyPath": null,
+          "ruleId": "shared.agents.v1",
+          "sourcePath": "AGENTS.md",
+          "commitSha": "8ea6b549bbbf64eb603a697990f580235f060250",
+          "blobSha": "9f8ccc8955c776e1d1b643a717bcebdc93d0086c",
+          "sourceUrl": "https://github.com/tradinggoose/tradinggoose-studio/blob/8ea6b549bbbf64eb603a697990f580235f060250/AGENTS.md"
+        },
+        {
+          "kind": "instruction_file",
+          "client": null,
+          "compatibleClients": [
+            "claude-code",
+            "cursor",
+            "opencode",
+            "kimi",
+            "grok-build"
+          ],
+          "modelDeveloper": null,
+          "declaredModelId": null,
+          "gateway": null,
+          "routing": "unknown",
+          "role": null,
+          "scope": "",
+          "keyPath": null,
+          "ruleId": "shared.claude.v1",
+          "sourcePath": "CLAUDE.md",
+          "commitSha": "8ea6b549bbbf64eb603a697990f580235f060250",
+          "blobSha": "616c60303d8508b46268f4811880854fff858685",
+          "sourceUrl": "https://github.com/tradinggoose/tradinggoose-studio/blob/8ea6b549bbbf64eb603a697990f580235f060250/CLAUDE.md"
+        }
+      ],
+      "problem": null,
+      "issues": []
+    },
+    {
+      "slug": "drever",
+      "repository": "zhangdroid/drever",
+      "legacyGuessPresent": true,
+      "linkBefore": "visible",
+      "linkAction": "unchanged",
+      "factsRefresh": {
+        "sourcesAttempted": 1,
+        "sourcesFailed": 0,
+        "factsChanged": 1,
+        "eventsInserted": 10,
+        "mediaInserted": 0,
+        "complete": true
+      },
+      "scan": {
+        "id": 31,
+        "state": "complete",
+        "commitSha": "502eff05d9b629370b51ee03cafceb571562e3c2",
+        "detectorVersion": "2026-09-06.1",
+        "observedAt": "2026-09-06T00:17:11.400Z",
+        "coverage": {
+          "limited": false
+        }
+      },
+      "rounds": 1,
+      "errorCode": null,
+      "relationship": "unknown",
+      "eligibility": {
+        "eligible": false,
+        "reason": "ai_evidence_insufficient",
+        "executionVerified": false
+      },
+      "repositoryFacts": {
+        "kind": "repository",
+        "key": "zhangdroid/drever",
+        "state": "ok",
+        "facts": {
+          "fork": false,
+          "type": "github_repository",
+          "forks": 1,
+          "stars": 2,
+          "public": true,
+          "license": {
+            "url": "https://api.github.com/licenses/mit",
+            "value": "MIT License",
+            "spdxId": "MIT"
+          },
+          "archived": false,
+          "homepage": "https://drever.dev",
+          "pushedAt": "2026-09-01T15:50:08.000Z",
+          "createdAt": "2026-07-22T23:49:56.000Z",
+          "languages": [
+            {
+              "name": "TypeScript",
+              "bytes": 3065680,
+              "percent": 73
+            },
+            {
+              "name": "CSS",
+              "bytes": 605042,
+              "percent": 14.4
+            },
+            {
+              "name": "JavaScript",
+              "bytes": 436770,
+              "percent": 10.4
+            },
+            {
+              "name": "MDX",
+              "bytes": 90851,
+              "percent": 2.2
+            },
+            {
+              "name": "HTML",
+              "bytes": 2188,
+              "percent": 0.1
+            }
+          ],
+          "updatedAt": "2026-09-01T16:36:09.000Z",
+          "agentScanId": 31,
+          "contributors": {
+            "cap": 500,
+            "count": 4,
+            "incomplete": false
+          },
+          "latestRelease": {
+            "id": 369042766,
+            "url": "https://github.com/Zhangdroid/drever/releases/tag/v0.17.4",
+            "name": "Drever 0.17.4",
+            "tagName": "v0.17.4",
+            "notesUrl": "https://github.com/Zhangdroid/drever/releases/tag/v0.17.4",
+            "publishedAt": "2026-08-12T06:49:36.000Z"
+          },
+          "repositoryKey": "zhangdroid/drever",
+          "repositoryUrl": "https://github.com/Zhangdroid/drever",
+          "relationshipState": "repository_link",
+          "agentDetectorVersion": "2026-09-06.1"
+        },
+        "observedAt": "2026-09-06T00:17:09.656Z",
+        "lastSuccessAt": "2026-09-06T00:17:09.656Z",
+        "error": null
+      },
+      "site": {
+        "kind": "documentation",
+        "key": "canonical_site",
+        "state": "ok",
+        "facts": {
+          "type": "site_fingerprint",
+          "finalUrl": "https://drever.dev",
+          "repositoryKeys": []
+        },
+        "observedAt": "2026-09-06T00:17:09.656Z",
+        "lastSuccessAt": "2026-09-06T00:17:09.656Z",
+        "error": null
+      },
+      "observations": [
+        {
+          "kind": "instruction_file",
+          "client": null,
+          "compatibleClients": [
+            "codex",
+            "kimi",
+            "grok-build",
+            "opencode",
+            "github-copilot",
+            "cursor",
+            "kiro"
+          ],
+          "modelDeveloper": null,
+          "declaredModelId": null,
+          "gateway": null,
+          "routing": "unknown",
+          "role": null,
+          "scope": "",
+          "keyPath": null,
+          "ruleId": "shared.agents.v1",
+          "sourcePath": "AGENTS.md",
+          "commitSha": "502eff05d9b629370b51ee03cafceb571562e3c2",
+          "blobSha": "e9638d1276ca023a620973d6640d09827cb861ad",
+          "sourceUrl": "https://github.com/zhangdroid/drever/blob/502eff05d9b629370b51ee03cafceb571562e3c2/AGENTS.md"
+        }
+      ],
+      "problem": null,
+      "issues": []
+    },
+    {
+      "slug": "opanel",
+      "repository": "opanel-mc/opanel",
+      "legacyGuessPresent": true,
+      "linkBefore": "visible",
+      "linkAction": "unchanged",
+      "factsRefresh": {
+        "sourcesAttempted": 1,
+        "sourcesFailed": 0,
+        "factsChanged": 1,
+        "eventsInserted": 10,
+        "mediaInserted": 0,
+        "complete": true
+      },
+      "scan": {
+        "id": 32,
+        "state": "complete",
+        "commitSha": "7f5ac8d8d0888045ff2feeaad09274484d5ca553",
+        "detectorVersion": "2026-09-06.1",
+        "observedAt": "2026-09-06T00:20:50.131Z",
+        "coverage": {
+          "limited": false
+        }
+      },
+      "rounds": 1,
+      "errorCode": null,
+      "relationship": "unknown",
+      "eligibility": {
+        "eligible": false,
+        "reason": "ai_evidence_insufficient",
+        "executionVerified": false
+      },
+      "repositoryFacts": {
+        "kind": "repository",
+        "key": "opanel-mc/opanel",
+        "state": "ok",
+        "facts": {
+          "fork": false,
+          "type": "github_repository",
+          "forks": 23,
+          "stars": 285,
+          "public": true,
+          "license": {
+            "url": "https://api.github.com/licenses/gpl-3.0",
+            "value": "GNU General Public License v3.0",
+            "spdxId": "GPL-3.0"
+          },
+          "archived": false,
+          "homepage": "https://opanel.cn",
+          "pushedAt": "2026-09-05T02:08:15.000Z",
+          "createdAt": "2025-08-02T06:24:42.000Z",
+          "languages": [
+            {
+              "name": "Java",
+              "bytes": 2557150,
+              "percent": 71.9
+            },
+            {
+              "name": "TypeScript",
+              "bytes": 927345,
+              "percent": 26.1
+            },
+            {
+              "name": "Rust",
+              "bytes": 51448,
+              "percent": 1.4
+            },
+            {
+              "name": "JavaScript",
+              "bytes": 10162,
+              "percent": 0.3
+            },
+            {
+              "name": "CSS",
+              "bytes": 9572,
+              "percent": 0.3
+            },
+            {
+              "name": "Shell",
+              "bytes": 2521,
+              "percent": 0.1
+            },
+            {
+              "name": "HTML",
+              "bytes": 456,
+              "percent": 0
+            }
+          ],
+          "updatedAt": "2026-09-05T08:19:07.000Z",
+          "agentScanId": 32,
+          "contributors": {
+            "cap": 500,
+            "count": 10,
+            "incomplete": false
+          },
+          "latestRelease": {
+            "id": 383100326,
+            "url": "https://github.com/opanel-mc/opanel/releases/tag/2.2.1",
+            "name": "OPanel 2.2.1",
+            "tagName": "2.2.1",
+            "notesUrl": "https://github.com/opanel-mc/opanel/releases/tag/2.2.1",
+            "publishedAt": "2026-09-05T02:08:16.000Z"
+          },
+          "repositoryKey": "opanel-mc/opanel",
+          "repositoryUrl": "https://github.com/opanel-mc/opanel",
+          "relationshipState": "repository_link",
+          "agentDetectorVersion": "2026-09-06.1"
+        },
+        "observedAt": "2026-09-06T00:20:48.447Z",
+        "lastSuccessAt": "2026-09-06T00:20:48.447Z",
+        "error": null
+      },
+      "site": {
+        "kind": "documentation",
+        "key": "canonical_site",
+        "state": "ok",
+        "facts": {
+          "type": "site_fingerprint",
+          "finalUrl": "https://opanel.cn",
+          "repositoryKeys": []
+        },
+        "observedAt": "2026-09-06T00:20:48.447Z",
+        "lastSuccessAt": "2026-09-06T00:20:48.447Z",
+        "error": null
+      },
+      "observations": [
+        {
+          "kind": "instruction_file",
+          "client": null,
+          "compatibleClients": [
+            "codex",
+            "kimi",
+            "grok-build",
+            "opencode",
+            "github-copilot",
+            "cursor",
+            "kiro"
+          ],
+          "modelDeveloper": null,
+          "declaredModelId": null,
+          "gateway": null,
+          "routing": "unknown",
+          "role": null,
+          "scope": "",
+          "keyPath": null,
+          "ruleId": "shared.agents.v1",
+          "sourcePath": "AGENTS.md",
+          "commitSha": "7f5ac8d8d0888045ff2feeaad09274484d5ca553",
+          "blobSha": "29aa31c001f304f50ca8bd916648f197a4adb74d",
+          "sourceUrl": "https://github.com/opanel-mc/opanel/blob/7f5ac8d8d0888045ff2feeaad09274484d5ca553/AGENTS.md"
+        },
+        {
+          "kind": "instruction_file",
+          "client": null,
+          "compatibleClients": [
+            "claude-code",
+            "cursor",
+            "opencode",
+            "kimi",
+            "grok-build"
+          ],
+          "modelDeveloper": null,
+          "declaredModelId": null,
+          "gateway": null,
+          "routing": "unknown",
+          "role": null,
+          "scope": "",
+          "keyPath": null,
+          "ruleId": "shared.claude.v1",
+          "sourcePath": "CLAUDE.md",
+          "commitSha": "7f5ac8d8d0888045ff2feeaad09274484d5ca553",
+          "blobSha": "37f680c641a2e9618b90417cfeb0eb4619953396",
+          "sourceUrl": "https://github.com/opanel-mc/opanel/blob/7f5ac8d8d0888045ff2feeaad09274484d5ca553/CLAUDE.md"
+        },
+        {
+          "kind": "instruction_file",
+          "client": null,
+          "compatibleClients": [
+            "codex",
+            "kimi",
+            "grok-build",
+            "opencode",
+            "github-copilot",
+            "cursor",
+            "kiro"
+          ],
+          "modelDeveloper": null,
+          "declaredModelId": null,
+          "gateway": null,
+          "routing": "unknown",
+          "role": null,
+          "scope": "",
+          "keyPath": null,
+          "ruleId": "shared.skills.v1",
+          "sourcePath": ".agents/skills/compare-version-modules/SKILL.md",
+          "commitSha": "7f5ac8d8d0888045ff2feeaad09274484d5ca553",
+          "blobSha": "25b673425b39461752b78bf898743d43d53b6483",
+          "sourceUrl": "https://github.com/opanel-mc/opanel/blob/7f5ac8d8d0888045ff2feeaad09274484d5ca553/.agents/skills/compare-version-modules/SKILL.md"
+        },
+        {
+          "kind": "instruction_file",
+          "client": null,
+          "compatibleClients": [
+            "codex",
+            "kimi",
+            "grok-build",
+            "opencode",
+            "github-copilot",
+            "cursor",
+            "kiro"
+          ],
+          "modelDeveloper": null,
+          "declaredModelId": null,
+          "gateway": null,
+          "routing": "unknown",
+          "role": null,
+          "scope": "",
+          "keyPath": null,
+          "ruleId": "shared.skills.v1",
+          "sourcePath": ".agents/skills/opanel-extension-dev/SKILL.md",
+          "commitSha": "7f5ac8d8d0888045ff2feeaad09274484d5ca553",
+          "blobSha": "70070f93e7639fff2f97d696ca214cee85317c1f",
+          "sourceUrl": "https://github.com/opanel-mc/opanel/blob/7f5ac8d8d0888045ff2feeaad09274484d5ca553/.agents/skills/opanel-extension-dev/SKILL.md"
+        }
+      ],
+      "problem": null,
+      "issues": []
+    }
+  ],
+  "recheckedAfterFixes": [
+    "tradinggoose-visual-workflow-platform-for-llm-trading",
+    "opanel"
+  ]
+}

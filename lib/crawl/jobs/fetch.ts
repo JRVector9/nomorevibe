@@ -5,6 +5,7 @@ import { resolveCanonical } from "@/lib/domain/products/register";
 import * as crawl from "@/lib/crawl/repository";
 import { getSettings } from "@/lib/crawl/settings";
 import { getRepo } from "@/lib/crawl/github";
+import { extractSiteRepositoryKeys } from "@/lib/domain/evidence/providers/site-fingerprint";
 
 /**
  * 수집 잡 — 프론티어에서 꺼낸 레포의 원본을 확보한다.
@@ -111,6 +112,7 @@ async function visit(url: string, docsGenerators: readonly string[]) {
   return {
     productUrl,
     status: page.status,
-    meta: extractPageMeta(page.html, page.finalUrl, docsGenerators),
+    meta: { ...extractPageMeta(page.html, page.finalUrl, docsGenerators),
+      repositoryKeys: extractSiteRepositoryKeys(page.html, page.finalUrl) },
   };
 }

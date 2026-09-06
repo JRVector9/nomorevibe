@@ -53,7 +53,16 @@ function requireToken(): string {
 export async function githubRequest<T>(
   path: string,
   conditional: ConditionalRequest = {},
+  options: { timeoutMs?: number } = {},
 ): Promise<GitHubHttpResult<T>> {
+  // Paths come from repository metadata and cursors; never let them change the API origin.
+  let decoded: string;
+  try { decoded = decodeURIComponent(path.split("?")[0]); }
+  catch { return { ok: false, error: { kind: "invalid_response" } }; }
+  if (!path.startsWith("/") || path.startsWith("//") || /[\\\x00-\x20#]/.test(path)
+    || decoded.split("/").some((part) => part === "." || part === "..")) {
+    return { ok: false, error: { kind: "invalid_response" } };
+  }
   const headers: Record<string, string> = {
     Authorization: `Bearer ${requireToken()}`,
     Accept: "application/vnd.github+json",
@@ -66,7 +75,8 @@ export async function githubRequest<T>(
   try {
     res = await fetch(`${API_ORIGIN}${path}`, {
       headers,
-      signal: AbortSignal.timeout(10_000),
+      redirect: "error",
+      signal: AbortSignal.timeout(Math.max(1, Math.min(options.timeoutMs ?? 10_000, 10_000))),
     });
   } catch {
     return { ok: false, error: { kind: "transport" } };
@@ -143,9 +153,15 @@ export const SEARCH_PER_PAGE = 100;
  */
 export const MAX_SEARCH_PAGES = 10;
 
-export type CommitSearchResult = { items: { repository: { full_name: string } }[] };
+export type CommitSearchResult = {
+  items: { repository: { full_name: string }; sha?: string; html_url?: string; commit?: { message?: string } }[];
+  incomplete_results?: boolean;
+  total_count?: number;
+};
 export type RepositorySearchResult = {
   items: { full_name: string; homepage: string | null }[];
+  incomplete_results?: boolean;
+  total_count?: number;
 };
 
 /**

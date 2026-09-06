@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { githubRequest } from "@/lib/crawl/github";
 import {
   CONTRIBUTOR_COUNT_CAP,
+  fetchPublishedReleases,
   mapGitHubRepositoryFacts,
 } from "@/lib/domain/evidence/providers/github";
 
@@ -274,5 +275,49 @@ describe("GitHub repository fact mapping", () => {
       cap: CONTRIBUTOR_COUNT_CAP,
     });
     expect(facts.latestRelease).toBeNull();
+  });
+});
+
+describe("bounded release collection", () => {
+  const releases = Array.from({ length: 10 }, (_, index) => ({ id: index + 1, tag_name: `v${10-index}`, name: null,
+    html_url: `https://github.com/opanel-mc/opanel/releases/tag/v${10-index}`, published_at: "2026-09-06T00:00:00Z", draft: false,
+    assets: [{ description: "x".repeat(60_000) }],
+  }));
+  it("fetches ten asset-heavy releases without exceeding the existing two MiB HTTP cap", async () => {
+    fetchMock.mockImplementation(async (url: string) => {
+      const count = Number(new URL(url).searchParams.get("per_page"));
+      return new Response(JSON.stringify(count === 10 ? releases : Array.from({ length: 54 }, (_, i) => ({ ...releases[i % 10], id: i + 1 }))), { status: 200 });
+    });
+    const result = await fetchPublishedReleases(path => githubRequest(path), "opanel-mc/opanel", () => true);
+    expect(result.ok).toBe(true);
+    if (result.ok && result.status === 200) expect(result.value).toHaveLength(10);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+  it("retries an oversized page with one release while preserving the body cap", async () => {
+    fetchMock.mockImplementation(async (url: string) => {
+      if (new URL(url).searchParams.get("per_page") === "1") return new Response(JSON.stringify([releases[0]]), { status: 200 });
+      return new Response("{}", { status: 200, headers: { "content-length": String(3 * 1024 * 1024) } });
+    });
+    const result = await fetchPublishedReleases(path => githubRequest(path), "opanel-mc/opanel", () => true);
+    expect(result.ok).toBe(true);
+    if (result.ok && result.status === 200) expect(result.value).toHaveLength(1);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+  it("preserves the absolute release offset when reducing page size after page one", async () => {
+    fetchMock.mockImplementation(async (url: string) => {
+      const query = new URL(url).searchParams;
+      const perPage = Number(query.get("per_page")), page = Number(query.get("page"));
+      if (perPage === 10 && page === 1) return new Response(JSON.stringify(releases.map((release, index) => ({ ...release, draft: index < 5 }))), { status: 200, headers: { link: '<https://api.github.com/repos/o/r/releases?per_page=10&page=2>; rel="next"' } });
+      if (perPage === 10) return new Response("{}", { status: 200, headers: { "content-length": String(3 * 1024 * 1024) } });
+      return new Response(JSON.stringify([{ ...releases[0], id: page + 100 }]), { status: 200, headers: { link: `<https://api.github.com/repos/o/r/releases?per_page=1&page=${page + 1}>; rel="next"` } });
+    });
+    const result = await fetchPublishedReleases(path => githubRequest(path), "o/r", () => true);
+    expect(result.ok).toBe(true);
+    if (result.ok && result.status === 200) expect(result.value).toHaveLength(10);
+    expect(fetchMock.mock.calls.map(([url]) => url)).toContain("https://api.github.com/repos/o/r/releases?per_page=1&page=11");
+  });
+  it("returns a typed invalid response for a non-array release body", async () => {
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({ message: "unexpected payload" }), { status: 200 }));
+    await expect(fetchPublishedReleases(path => githubRequest(path), "owner/repo", () => true)).resolves.toMatchObject({ ok: false, error: { kind: "invalid_response" } });
   });
 });

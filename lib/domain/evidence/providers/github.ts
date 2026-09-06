@@ -19,7 +19,8 @@ import { insertUpdateCandidates } from "../updates";
 export const CONTRIBUTOR_COUNT_CAP = 500;
 const README_BYTES_CAP = 256 * 1024;
 const GITHUB_REFRESH_MS = 24 * 60 * 60 * 1000;
-const RELEASE_PAGE_SIZE = 100;
+// Asset metadata is included in release payloads; 100 entries can exceed the 2 MiB HTTP cap.
+const RELEASE_PAGE_SIZE = 10;
 const RELEASE_LIMIT = 10;
 const RELEASE_PAGE_LIMIT = 10;
 
@@ -194,13 +195,14 @@ function isBudgetExhausted(
   return !result.ok && result.error.kind === "budget_exhausted";
 }
 
-async function fetchPublishedReleases(
+export async function fetchPublishedReleases(
   request: EvidenceRequest,
   repositoryKey: string,
   hasBudget: () => boolean,
 ): Promise<ReleaseFetchResult> {
   const published: ReleasePayload[] = [];
   let page = 1;
+  let perPage = RELEASE_PAGE_SIZE;
   let responseHeaders = { etag: null, lastModified: null, link: null } as {
     etag: string | null;
     lastModified: string | null;
@@ -208,15 +210,28 @@ async function fetchPublishedReleases(
   };
   for (let pagesRead = 0; pagesRead < RELEASE_PAGE_LIMIT; pagesRead++) {
     if (!hasBudget()) return { ok: false, error: { kind: "budget_exhausted" } };
-    const result = await request(
-      `/repos/${repositoryKey}/releases?per_page=${RELEASE_PAGE_SIZE}&page=${page}`,
+    let result = await request(
+      `/repos/${repositoryKey}/releases?per_page=${perPage}&page=${page}`,
     );
+    if (!result.ok && result.error.kind === "invalid_response" && perPage > 1) {
+      // Retry a capped page with one item; retain its absolute offset after changing page size.
+      page = (page - 1) * perPage + 1;
+      perPage = 1;
+      if (!hasBudget()) return { ok: false, error: { kind: "budget_exhausted" } };
+      result = await request(`/repos/${repositoryKey}/releases?per_page=${perPage}&page=${page}`);
+    }
     if (!result.ok || result.status === 304) return result;
     responseHeaders = {
       etag: result.etag,
       lastModified: result.lastModified,
       link: result.link,
     };
+    if (!Array.isArray(result.value) || result.value.some(release =>
+      !release || typeof release !== "object" || !Number.isSafeInteger(release.id)
+      || typeof release.tag_name !== "string" || typeof release.html_url !== "string"
+      || (release.name !== null && typeof release.name !== "string") || typeof release.draft !== "boolean"
+      || (release.published_at !== null && typeof release.published_at !== "string")
+    )) return { ok: false, error: { kind: "invalid_response" } };
     const payload = result.value as ReleasePayload[];
     published.push(...payload.filter((release) => !release.draft && iso(release.published_at)));
     if (published.length >= RELEASE_LIMIT) break;

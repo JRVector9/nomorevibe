@@ -105,11 +105,12 @@ timeout   15초, 재시도 0회   (발행 잡의 틱 예산이 25초다)
 */10 * * * *   uptime-ping     같은 제품은 6시간에 한 번만 본다
 0 * * * *   click-rollup       KST 일별 클릭 집계
 5 * * * *   ranking-refresh    시즌 경계·쿨다운·공개 순위 스냅샷
-1 */6 * * *   product-evidence-refresh 공식 출처·업데이트·내부 미디어 갱신
+*/1 * * * *   product-evidence-refresh 공식 출처·업데이트·내부 미디어의 due 항목 갱신
+*/1 * * * *   agent-evidence-refresh 공개 에이전트 근거의 due 항목·partial 재개
 ```
 
-표기는 **다섯 칸(분 시 일 월 요일)**이다. 초를 앞에 받는 스케줄러에 여섯 칸으로 넣으면
-`product-evidence-refresh`가 6시간이 아니라 6분마다 돌아 외부 출처를 60배로 두드린다.
+표기는 **다섯 칸(분 시 일 월 요일)**이다. 초를 앞에 받는 스케줄러에서는 형식을 변환해야 한다. evidence 잡은 매분 호출하되
+출처별 due 시각(일반 저장소/에이전트 완료 스캔 기본 24시간)이 실제 외부 요청을 제한한다.
 
 `ranking-refresh`는 `click-rollup` 뒤에 실행해야 한다. 이유는 정책마다 다르다.
 

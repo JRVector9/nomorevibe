@@ -1,0 +1,321 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>NoMoreVibe 제품 상세 A/B 시안 — Drever</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --paper: #f4f5f8;
+      --surface: #fff;
+      --ink: #11131a;
+      --ink-2: #41495a;
+      --muted: #737c90;
+      --line: #dfe3ec;
+      --violet: #5b46f0;
+      --violet-soft: #eeebff;
+      --green: #087a4c;
+      --green-soft: #e9f7ef;
+      --amber: #9b6100;
+      --amber-soft: #fff6dd;
+      --dark: #171925;
+      --dark-2: #242736;
+      --shadow: 0 18px 50px rgba(31, 35, 48, .09);
+    }
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      background: var(--paper);
+      color: var(--ink);
+      font-family: Inter, Pretendard, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      -webkit-font-smoothing: antialiased;
+    }
+    button, a { font: inherit; }
+    a { color: inherit; }
+    button:focus-visible, a:focus-visible { outline: 3px solid rgba(91,70,240,.38); outline-offset: 3px; }
+
+    .topbar {
+      position: sticky;
+      top: 0;
+      z-index: 20;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      min-height: 66px;
+      padding: 0 28px;
+      border-bottom: 1px solid rgba(223,227,236,.9);
+      background: rgba(244,245,248,.92);
+      backdrop-filter: blur(16px);
+    }
+    .brand { display: flex; align-items: center; gap: 10px; font-weight: 900; letter-spacing: -.04em; }
+    .brand-mark { width: 26px; height: 26px; display: grid; place-items: center; border-radius: 7px; color: white; background: var(--violet); font-size: 12px; }
+    .switcher { display: flex; align-items: center; gap: 4px; padding: 4px; border: 1px solid var(--line); background: var(--surface); border-radius: 12px; box-shadow: 0 4px 18px rgba(31,35,48,.05); }
+    .switcher button { border: 0; border-radius: 8px; padding: 10px 15px; background: transparent; color: var(--muted); font-weight: 800; cursor: pointer; }
+    .switcher button[aria-selected="true"] { background: var(--ink); color: white; }
+    .switcher small { padding: 0 10px 0 5px; color: var(--muted); }
+    .concept { display: none; }
+    .concept.active { display: block; }
+    .container { width: min(1240px, calc(100% - 40px)); margin: 0 auto; }
+    .crumbs { padding: 24px 0 18px; color: var(--muted); font-size: 13px; }
+    .crumbs b { color: var(--ink-2); }
+    .eyebrow { margin: 0; color: var(--violet); font-size: 12px; font-weight: 900; letter-spacing: .12em; text-transform: uppercase; }
+    .badge { display: inline-flex; align-items: center; gap: 6px; min-height: 28px; padding: 4px 10px; border: 1px solid var(--line); border-radius: 999px; background: #f3f5f9; color: var(--ink-2); font-size: 12px; font-weight: 800; }
+    .badge.green { border-color: #b7ddc9; background: var(--green-soft); color: var(--green); }
+    .badge.amber { border-color: #edd69b; background: var(--amber-soft); color: var(--amber); }
+    .button { display: inline-flex; align-items: center; justify-content: center; min-height: 48px; padding: 0 18px; border: 1px solid var(--line); border-radius: 10px; background: white; font-size: 14px; font-weight: 900; text-decoration: none; }
+    .button.primary { border-color: var(--violet); background: var(--violet); color: white; }
+    .source { color: var(--green); font-size: 12px; font-weight: 800; }
+
+    /* A — editorial profile */
+    .a-hero { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(330px, .65fr); border: 1px solid var(--line); background: var(--surface); box-shadow: var(--shadow); }
+    .a-visual { position: relative; min-height: 520px; padding: 34px; display: flex; align-items: center; background: #e9e6df; overflow: hidden; }
+    .a-visual::before { content: ""; position: absolute; inset: 18px; border: 1px solid rgba(17,19,26,.12); pointer-events: none; }
+    .media-label { position: absolute; top: 24px; left: 28px; z-index: 2; padding: 7px 10px; background: rgba(255,255,255,.92); font-size: 11px; font-weight: 900; letter-spacing: .05em; }
+    .a-visual img { position: relative; width: 100%; height: auto; display: block; box-shadow: 0 24px 70px rgba(25,27,34,.22); transform: rotate(-.7deg); }
+    .a-copy { padding: 46px 42px; display: flex; flex-direction: column; justify-content: center; }
+    .a-title-row { display: flex; align-items: center; gap: 12px; margin: 12px 0 0; }
+    .a-title { margin: 0; font-size: clamp(46px, 5vw, 72px); line-height: .98; letter-spacing: -.065em; }
+    .a-tagline { margin: 26px 0 0; color: var(--ink); font-size: 21px; font-weight: 750; line-height: 1.5; letter-spacing: -.025em; }
+    .a-description { margin: 16px 0 0; color: var(--ink-2); font-size: 15px; line-height: 1.8; }
+    .tags { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 23px; }
+    .actions { display: flex; flex-wrap: wrap; gap: 9px; margin-top: 30px; }
+    .trust-note { margin-top: 18px; color: var(--muted); font-size: 12px; line-height: 1.6; }
+    .metric-rail { display: grid; grid-template-columns: repeat(5, 1fr); border: 1px solid var(--line); border-top: 0; background: var(--surface); }
+    .mini-metric { padding: 18px 22px; border-right: 1px solid var(--line); }
+    .mini-metric:last-child { border-right: 0; }
+    .mini-metric span { display: block; color: var(--muted); font-size: 11px; font-weight: 800; }
+    .mini-metric strong { display: block; margin-top: 7px; font-size: 16px; letter-spacing: -.02em; }
+    .a-layout { display: grid; grid-template-columns: minmax(0,1.45fr) 360px; gap: 52px; padding: 68px 0 100px; }
+    .section-kicker { color: var(--violet); font-size: 12px; font-weight: 900; letter-spacing: .1em; }
+    .story h2 { margin: 8px 0 20px; max-width: 650px; font-size: 34px; line-height: 1.22; letter-spacing: -.045em; }
+    .story > p { max-width: 720px; color: var(--ink-2); font-size: 17px; line-height: 1.9; }
+    .feature-list { margin-top: 40px; border-top: 1px solid var(--ink); }
+    .feature { display: grid; grid-template-columns: 42px 180px 1fr; gap: 18px; padding: 23px 0; border-bottom: 1px solid var(--line); }
+    .feature em { color: var(--violet); font-style: normal; font-family: ui-monospace, monospace; }
+    .feature strong { font-size: 15px; }
+    .feature p { margin: 0; color: var(--ink-2); line-height: 1.7; }
+    .side { align-self: start; position: sticky; top: 92px; }
+    .side-block { padding: 22px 0; border-top: 1px solid var(--ink); }
+    .side-block h3 { margin: 0 0 15px; font-size: 15px; }
+    .fact-row { display: flex; justify-content: space-between; gap: 18px; padding: 9px 0; color: var(--muted); font-size: 13px; }
+    .fact-row b { color: var(--ink); text-align: right; }
+    .evidence-link { display: block; padding: 12px 0; border-bottom: 1px solid var(--line); color: var(--ink); text-decoration: none; font-size: 13px; line-height: 1.55; }
+    .evidence-link span { display: block; color: var(--muted); font-size: 11px; }
+
+    /* B — full visual showcase */
+    .b-shell { background: var(--dark); color: #f5f6fb; }
+    .b-shell .crumbs { color: #9299aa; }
+    .b-shell .crumbs b { color: #d7dbea; }
+    .b-stage { min-height: 760px; padding: 26px 0 64px; overflow: hidden; }
+    .b-head { display: flex; align-items: end; justify-content: space-between; gap: 30px; padding: 18px 0 42px; }
+    .b-title { margin: 8px 0 0; font-size: clamp(68px, 9vw, 132px); line-height: .82; letter-spacing: -.08em; }
+    .b-head aside { max-width: 430px; padding-bottom: 3px; }
+    .b-head aside p { margin: 0; color: #b8bece; font-size: 17px; line-height: 1.7; }
+    .b-stage .button { border-color: #44485b; background: transparent; color: white; }
+    .b-stage .button.primary { border-color: #7b68ff; background: #7b68ff; }
+    .b-frame { position: relative; width: min(1040px, 88vw); margin: 0 auto; padding: 13px; border: 1px solid #3c4050; background: #222532; box-shadow: 0 35px 110px rgba(0,0,0,.42); transform: rotate(.35deg); }
+    .b-frame img { display: block; width: 100%; height: auto; }
+    .frame-top { display: flex; gap: 6px; padding: 2px 2px 12px; }
+    .frame-top i { width: 7px; height: 7px; border-radius: 50%; background: #5d6172; }
+    .b-index { display: flex; justify-content: space-between; width: min(1040px,88vw); margin: 20px auto 0; color: #858da0; font: 11px ui-monospace, monospace; letter-spacing: .1em; text-transform: uppercase; }
+    .b-body { background: #f7f6f2; color: var(--ink); }
+    .b-intro { display: grid; grid-template-columns: minmax(0, 1fr) minmax(300px, .7fr); gap: 100px; padding: 96px 0 80px; }
+    .b-intro h2 { margin: 0; max-width: 700px; font-size: clamp(38px, 5vw, 70px); line-height: 1.08; letter-spacing: -.06em; }
+    .b-intro-copy p { margin: 0 0 20px; color: var(--ink-2); font-size: 17px; line-height: 1.9; }
+    .b-statline { display: grid; grid-template-columns: repeat(4,1fr); padding: 0 0 85px; border-top: 1px solid var(--ink); }
+    .b-stat { padding: 22px 14px 0 0; }
+    .b-stat small { display: block; color: var(--muted); font-weight: 800; }
+    .b-stat strong { display: block; margin-top: 13px; font: 800 30px ui-monospace, monospace; }
+    .b-feature-band { background: var(--surface); border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+    .b-feature-grid { display: grid; grid-template-columns: .72fr 1.28fr; min-height: 560px; }
+    .b-feature-copy { padding: 70px 70px 70px 0; border-right: 1px solid var(--line); }
+    .b-feature-copy h2 { margin: 10px 0 20px; font-size: 42px; letter-spacing: -.05em; }
+    .b-feature-copy p { color: var(--ink-2); font-size: 16px; line-height: 1.8; }
+    .deck-flow { padding: 70px 0 70px 70px; display: grid; gap: 16px; }
+    .flow-card { display: grid; grid-template-columns: 46px 1fr auto; align-items: center; gap: 20px; padding: 22px 0; border-bottom: 1px solid var(--line); }
+    .flow-card:last-child { border-bottom: 0; }
+    .flow-card i { display: grid; place-items: center; width: 42px; height: 42px; border: 1px solid var(--line); border-radius: 50%; color: var(--violet); font-style: normal; font-weight: 900; }
+    .flow-card strong { display: block; font-size: 17px; }
+    .flow-card span { display: block; margin-top: 5px; color: var(--muted); line-height: 1.5; }
+    .flow-card code { color: var(--muted); }
+    .b-evidence { display: grid; grid-template-columns: 1fr 1fr; gap: 80px; padding: 90px 0 110px; }
+    .b-evidence h2 { margin: 8px 0 25px; font-size: 38px; letter-spacing: -.05em; }
+    .timeline { border-top: 1px solid var(--ink); }
+    .timeline-row { display: grid; grid-template-columns: 100px 1fr; gap: 20px; padding: 18px 0; border-bottom: 1px solid var(--line); }
+    .timeline-row time { color: var(--muted); font: 12px ui-monospace, monospace; }
+    .prototype-note { max-width: 1240px; margin: 40px auto; padding: 14px 18px; border: 1px solid #e1d397; background: #fff8d9; color: #5d4a08; font-size: 11px; line-height: 1.55; }
+
+    @media (max-width: 900px) {
+      .topbar { padding: 0 14px; }
+      .switcher small { display: none; }
+      .container { width: min(100% - 28px, 680px); }
+      .a-hero, .a-layout, .b-intro, .b-evidence, .b-feature-grid { grid-template-columns: 1fr; }
+      .a-visual { min-height: 0; padding: 24px; }
+      .a-copy { padding: 34px 24px; }
+      .metric-rail { grid-template-columns: repeat(2,1fr); }
+      .mini-metric { border-bottom: 1px solid var(--line); }
+      .a-layout { gap: 40px; padding: 50px 0 80px; }
+      .side { position: static; }
+      .feature { grid-template-columns: 34px 1fr; }
+      .feature p { grid-column: 2; }
+      .b-stage { min-height: 0; }
+      .b-head { display: block; }
+      .b-head aside { margin-top: 28px; }
+      .b-title { font-size: 72px; }
+      .b-frame { width: 96%; }
+      .b-intro { gap: 36px; padding: 65px 0; }
+      .b-statline { grid-template-columns: repeat(2,1fr); }
+      .b-feature-copy { padding: 55px 0; border-right: 0; border-bottom: 1px solid var(--line); }
+      .deck-flow { padding: 36px 0 55px; }
+      .prototype-note { margin: 24px 10px; }
+    }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand"><span class="brand-mark">N</span>NoMoreVibe <span style="color:var(--muted);font-size:12px;font-weight:700;letter-spacing:0">상세 페이지 시안</span></div>
+    <div class="switcher" role="tablist" aria-label="시안 선택">
+      <button id="tab-a" role="tab" aria-selected="true" aria-controls="concept-a">A · 에디토리얼</button>
+      <button id="tab-b" role="tab" aria-selected="false" aria-controls="concept-b">B · 쇼케이스</button>
+      <small>같은 데이터, 다른 우선순위</small>
+    </div>
+  </header>
+
+  <main>
+    <article id="concept-a" class="concept active" role="tabpanel" aria-labelledby="tab-a">
+      <div class="container">
+        <nav class="crumbs">제품 &nbsp;›&nbsp; Productivity &nbsp;›&nbsp; <b>Drever</b></nav>
+        <section class="a-hero">
+          <div class="a-visual">
+            <span class="media-label">대표 화면 · 1200 × 630</span>
+            <img src="drever-og.png" alt="Drever 프레젠테이션 작업 공간 대표 화면">
+          </div>
+          <div class="a-copy">
+            <p class="eyebrow">AI presentation workspace</p>
+            <div class="a-title-row"><h1 class="a-title">Drever</h1><span class="badge">미클레임</span></div>
+            <p class="a-tagline">에이전트가 초안을 만들고, 사용자가 방향을 잡는 프레젠테이션 작업 공간</p>
+            <p class="a-description">검토가 끝난 덱은 서비스 안에 갇히지 않고 사용자가 소유한 파일로 남습니다. 초안 작성부터 수정, 검토, 보관까지 한 흐름으로 이어지는 AI 우선 도구입니다.</p>
+            <div class="tags"><span class="badge">Productivity</span><span class="badge green">온라인 · 706ms</span><span class="badge">오픈소스</span></div>
+            <div class="actions"><a class="button primary" href="#">Drever 방문 ↗</a><a class="button" href="#evidence-a">GitHub 근거 보기</a></div>
+            <p class="trust-note">소개는 공개 페이지에서 자동 수집했습니다. 제작자가 아직 직접 확인하지 않았습니다.</p>
+          </div>
+        </section>
+        <section class="metric-rail" aria-label="핵심 지표">
+          <div class="mini-metric"><span>최근 7일 유효 방문</span><strong>1</strong></div>
+          <div class="mini-metric"><span>30일 가동률</span><strong>100%</strong></div>
+          <div class="mini-metric"><span>GitHub</span><strong>공개 저장소</strong></div>
+          <div class="mini-metric"><span>stars / forks</span><strong>2 / 0</strong></div>
+          <div class="mini-metric"><span>최근 릴리스</span><strong>v0.17.4</strong></div>
+        </section>
+
+        <div class="a-layout">
+          <div class="story">
+            <span class="section-kicker">PRODUCT STORY</span>
+            <h2>슬라이드 생성보다<br>검토 가능한 작업 흐름에 집중합니다</h2>
+            <p>Drever의 핵심은 AI에게 프레젠테이션을 통째로 맡기는 것이 아니라, 에이전트가 초안을 만들고 사람이 각 판단을 통제하는 데 있습니다. 결과물이 로컬 파일로 남아 이후 수정과 재사용이 쉽다는 점도 일반적인 생성 도구와 구분됩니다.</p>
+            <div class="feature-list">
+              <div class="feature"><em>01</em><strong>에이전트 초안</strong><p>주제와 목표를 바탕으로 덱 구조와 첫 슬라이드를 빠르게 구성합니다.</p></div>
+              <div class="feature"><em>02</em><strong>사람이 방향 결정</strong><p>제안된 흐름을 검토하고 순서, 메시지, 표현을 직접 조정합니다.</p></div>
+              <div class="feature"><em>03</em><strong>내 파일로 보관</strong><p>완료한 결과물이 서비스 내부 기록에만 남지 않고 사용자가 관리하는 파일이 됩니다.</p></div>
+            </div>
+          </div>
+          <aside class="side" id="evidence-a">
+            <div class="side-block">
+              <h3>확인된 제품 정보</h3>
+              <div class="fact-row"><span>등록일</span><b>2026년 8월 18일</b></div>
+              <div class="fact-row"><span>라이선스</span><b>MIT</b></div>
+              <div class="fact-row"><span>주요 언어</span><b>TypeScript</b></div>
+              <div class="fact-row"><span>최근 push</span><b>2026년 9월 5일</b></div>
+            </div>
+            <div class="side-block">
+              <h3>제작 근거</h3>
+              <a class="evidence-link" href="#"><b>AGENTS.md 확인</b><span>고정 커밋 502eff0 · 실제 실행 증명 아님</span></a>
+              <a class="evidence-link" href="#"><b>GitHub 저장소 응답 확인</b><span>저장소 → 서비스 링크 · 관계 일부 확인</span></a>
+            </div>
+            <div class="side-block">
+              <h3>최근 업데이트</h3>
+              <a class="evidence-link" href="#"><b>v0.17.4 출시</b><span>2026년 9월 5일 · GitHub release</span></a>
+              <a class="evidence-link" href="#"><b>v0.17.3 출시</b><span>GitHub에서 자동 확인</span></a>
+            </div>
+          </aside>
+        </div>
+      </div>
+    </article>
+
+    <article id="concept-b" class="concept b-shell" role="tabpanel" aria-labelledby="tab-b">
+      <section class="b-stage">
+        <div class="container">
+          <nav class="crumbs">제품 &nbsp;›&nbsp; Productivity &nbsp;›&nbsp; <b>Drever</b></nav>
+          <div class="b-head">
+            <div><p class="eyebrow" style="color:#9b8dff">AI presentation workspace</p><h1 class="b-title">Drever</h1></div>
+            <aside>
+              <p>에이전트가 초안을 만들고 사용자가 방향을 잡습니다. 완성한 덱은 사용자가 소유한 파일로 남습니다.</p>
+              <div class="actions"><a class="button primary" href="#">제품 방문 ↗</a><a class="button" href="#story-b">제품 알아보기 ↓</a></div>
+            </aside>
+          </div>
+        </div>
+        <div class="b-frame"><div class="frame-top"><i></i><i></i><i></i></div><img src="drever-og.png" alt="Drever 프레젠테이션 작업 공간 대표 화면"></div>
+        <div class="b-index"><span>Product view 01</span><span>1200 × 630 · 공식 페이지 사본</span></div>
+      </section>
+
+      <div class="b-body" id="story-b">
+        <div class="container">
+          <section class="b-intro">
+            <h2>AI가 시작하고,<br>당신이 완성하는 덱</h2>
+            <div class="b-intro-copy">
+              <p>Drever는 프레젠테이션 제작을 하나의 검토 가능한 과정으로 다룹니다. 에이전트가 구조와 초안을 제안하면 사용자는 의도에 맞게 직접 수정하고 결정합니다.</p>
+              <p>최종 결과는 플랫폼 안에만 남지 않습니다. 파일을 직접 소유하고 다음 발표와 팀 작업에 다시 사용할 수 있습니다.</p>
+              <span class="source">자동 감지된 소개 · 메이커 미검증</span>
+            </div>
+          </section>
+          <section class="b-statline">
+            <div class="b-stat"><small>가동 상태</small><strong style="color:var(--green)">100%</strong></div>
+            <div class="b-stat"><small>응답 시간</small><strong>706ms</strong></div>
+            <div class="b-stat"><small>라이선스</small><strong>MIT</strong></div>
+            <div class="b-stat"><small>최근 릴리스</small><strong>v0.17.4</strong></div>
+          </section>
+        </div>
+
+        <section class="b-feature-band">
+          <div class="container b-feature-grid">
+            <div class="b-feature-copy"><span class="section-kicker">HOW IT WORKS</span><h2>초안에서<br>내 파일까지</h2><p>기능을 카드 여러 개로 흩뜨리지 않고, 사용자가 제품을 쓰는 순서대로 보여줍니다.</p></div>
+            <div class="deck-flow">
+              <div class="flow-card"><i>1</i><div><strong>목표와 맥락을 전달</strong><span>발표 대상, 목적, 핵심 메시지를 에이전트에게 설명합니다.</span></div><code>BRIEF</code></div>
+              <div class="flow-card"><i>2</i><div><strong>에이전트가 덱 초안 작성</strong><span>슬라이드 순서와 콘텐츠의 첫 버전을 빠르게 만듭니다.</span></div><code>DRAFT</code></div>
+              <div class="flow-card"><i>3</i><div><strong>사용자가 검토하고 결정</strong><span>각 슬라이드의 논리와 표현을 직접 수정합니다.</span></div><code>DIRECT</code></div>
+              <div class="flow-card"><i>4</i><div><strong>소유 가능한 파일로 보관</strong><span>검토를 마친 덱을 내 작업 파일로 남깁니다.</span></div><code>OWN</code></div>
+            </div>
+          </div>
+        </section>
+
+        <section class="container b-evidence">
+          <div><span class="section-kicker">EVIDENCE</span><h2>확인된 것만<br>명확하게</h2><p style="color:var(--ink-2);line-height:1.8">공개 저장소의 AGENTS.md를 확인했지만, 파일 존재만으로 실제 개발 과정이나 실행 모델을 확정하지 않습니다.</p><div class="tags"><span class="badge green">GitHub 응답 확인</span><span class="badge amber">제품 관계 일부 확인</span><span class="badge">AI 실행 미확인</span></div></div>
+          <div class="timeline">
+            <div class="timeline-row"><time>2026.09.05</time><div><b>v0.17.4 출시</b><br><span style="color:var(--muted)">GitHub release에서 확인</span></div></div>
+            <div class="timeline-row"><time>COMMIT</time><div><b>AGENTS.md 확인</b><br><span style="color:var(--muted)">고정 커밋 502eff0</span></div></div>
+            <div class="timeline-row"><time>REPOSITORY</time><div><b>공개 저장소 · MIT</b><br><span style="color:var(--muted)">stars 2 · fork 0 · TypeScript</span></div></div>
+          </div>
+        </section>
+      </div>
+    </article>
+  </main>
+
+  <aside class="prototype-note"><b>시안 안내</b><br>확장 설명과 기능 문구는 정보 밀도를 확인하기 위한 제안 문구입니다. 실제 적용 시 메이커 제공 정보와 공개 출처를 구분해 노출합니다.</aside>
+
+  <script>
+    const tabs = [...document.querySelectorAll('[role="tab"]')];
+    const panels = [...document.querySelectorAll('[role="tabpanel"]')];
+    function select(id) {
+      tabs.forEach(tab => tab.setAttribute('aria-selected', String(tab.id === id)));
+      panels.forEach(panel => panel.classList.toggle('active', panel.getAttribute('aria-labelledby') === id));
+      history.replaceState(null, '', id === 'tab-b' ? '#b' : '#a');
+      window.scrollTo({ top: 0, behavior: 'instant' });
+    }
+    tabs.forEach(tab => tab.addEventListener('click', () => select(tab.id)));
+    if (location.hash === '#b') select('tab-b');
+  </script>
+</body>
+</html>

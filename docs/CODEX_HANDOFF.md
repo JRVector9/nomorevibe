@@ -1,5 +1,402 @@
 # Codex handoff
 
+## Product detail editorial redesign COMPLETE — 2026-09-06 23:52 KST
+
+- Current objective: implement the user's selected A (editorial profile) direction on the real
+  product detail page. The local app now uses the new layout at `/p/drever`.
+- `ProductHero` now renders the first mirrored media item as a large representative screen. When a
+  product has no media row, a safe internal `/api/og-cache/...` copy is rendered at full width; only
+  products with neither source receive the explicit empty state. Product description, tagline,
+  provenance status, health, rank and actions are all visible beside the image.
+- The separate duplicate gallery block was removed from the route. Metrics remain directly below the
+  hero. The body now uses an editorial story column and an evidence sidebar; mobile DOM order remains
+  product screen, description, factual evidence and updates.
+- `ProductIntroduction` has the approved PRODUCT STORY hierarchy. Metrics are denser, and the evidence
+  summary is shaped for the sidebar. No product facts or proposal-only mockup copy were invented.
+- Modified for the implementation: `app/p/[slug]/page.tsx`, `components/product-detail/{ProductHero,
+  ProductIntroduction,ProductMetrics,EvidenceSummary}.tsx`, `tests/{product-detail-components.test.tsx,
+  e2e/product-detail.spec.ts}`. Design records: `docs/designs/`, `docs/superpowers/specs/
+  2026-09-06-product-detail-editorial-design.md`, and `docs/superpowers/plans/
+  2026-09-06-product-detail-editorial-implementation.md`.
+- TDD evidence: the first component run failed 3 intended assertions; the OG fallback regression then
+  failed 1 intended assertion. Final component run passed 16/16. Full unit suite passed 64 files and
+  528 tests. TypeScript and ESLint passed.
+- Product E2E rebuilt the standalone app and passed 3/3 after the final change, including contrast,
+  keyboard target size, mobile reading order, internal image requests, no external provider requests,
+  and no horizontal overflow. The build retains the pre-existing Turbopack whole-project tracing
+  warning from `lib/crawl/classify.ts`; it is unrelated to this layout.
+- Real Drever browser check: `/api/og-cache/drever` rendered at 747.47px wide on a 1440px viewport;
+  desktop and 390px mobile had no page/console errors or horizontal overflow. Screenshots:
+  `/private/tmp/nomorevibe-drever-editorial-{desktop,mobile}-final.png`.
+- Failed approach fixed during verification: relying only on `detail.media` left Drever's large hero
+  empty because it currently has only an internal OG copy. The fallback now promotes that safe copy.
+- Remaining work: no code work remains for the chosen design. Remote production deployment remains
+  governed by the existing P0 decisions in `PENDING.md`.
+
+```sh
+npm test -- tests/product-detail-components.test.tsx
+npx tsc --noEmit
+npm run test:e2e:product
+npm test
+npm run lint
+open http://localhost:3000/p/drever
+```
+
+## Product detail A/B HTML concepts — 2026-09-06 23:36 KST
+
+- Current objective: compare two redesigned product-detail directions before changing production UI.
+- Created `docs/designs/2026-09-06-product-detail-ab.html` and copied the current Drever OG image to
+  `docs/designs/drever-og.png` so the mockup is self-contained.
+- Concept A is an editorial product profile with a large thumbnail, expanded product story, compact
+  metrics, and a persistent evidence column. Concept B is a visual showcase with a dark image-led
+  hero, expanded introduction, workflow sequence, and a quieter evidence timeline.
+- The expanded Korean descriptions are proposal copy. The mockup explicitly says production must
+  distinguish maker-provided claims from verified public sources.
+- Actual application components were not changed. Wait for the user to choose A, B, or a hybrid
+  before writing the production implementation plan and editing `app/p/[slug]` components.
+- Verification executed: both static assets returned HTTP 200; Playwright opened both concepts at
+  1440px and 390px, switched both tabs, found no console/page errors and no horizontal overflow.
+  Screenshots are `/private/tmp/nomorevibe-detail-concept-{a,b}{,-mobile}.png`.
+- Local preview server: PID 18009, `http://127.0.0.1:8767/2026-09-06-product-detail-ab.html`.
+
+```sh
+curl -I http://127.0.0.1:8767/2026-09-06-product-detail-ab.html
+open http://127.0.0.1:8767/2026-09-06-product-detail-ab.html
+git diff -- docs/designs docs/CODEX_HANDOFF.md
+```
+
+## Local crawler scheduler verified — 2026-09-06 23:05 KST
+
+- The existing Docker scheduler is alive and its traditional crawler calls to the isolated Docker
+  app (port 3200 / separate DB) return HTTP 200. It was not driving the development DB.
+- The prior tool-session processes on port 3000 did not persist after that turn. Replaced them with
+  detached local processes: Next dev PID 28962, evidence worker PID 28963, and full crawler
+  scheduler PID 28965. PID files and logs are under `/private/tmp/nomorevibe-*`.
+- The local scheduler targets `http://localhost:3000` every 60 seconds. Its first actual tick returned
+  200 for crawl-fetch, crawl-judge, crawl-publish, crawl-seed, product-evidence-refresh, and
+  agent-evidence-refresh. Development DB job rows show fresh `lastSuccessAt`, `lastError=null`, and
+  no locks for all six jobs. TradingGoose returned HTTP 200 after startup.
+- Keep in mind that the detached evidence worker and the full scheduler both invoke the two evidence
+  jobs. DB leases make overlap safe; this is intentional for the user's explicit worker restart, but
+  one of them can be removed later to avoid redundant no-op invocations.
+
+
+## Local processes restarted — 2026-09-06 22:54 KST
+
+- Restarted the latest local Next development server and evidence worker after terminating process
+  groups 43023 and 58634 with SIGTERM.
+- Next dev process group 99538, application PID 190, next-server PID 213; port 3000 is listening.
+- Evidence worker PID 99541; its first cycle completed both jobs successfully. Agent evidence reached
+  `done:true` with no error after resuming the stored cursor.
+- Actual probes: `/` HTTP 200 and
+  `/p/tradinggoose-visual-workflow-platform-for-llm-trading` HTTP 200.
+- Current interactive exec sessions: server 28636 and worker 89957. PID files under `/private/tmp`
+  were updated to 99538 and 99541. No remote service or Docker service was changed.
+
+## Follow-up recheck and application COMPLETE — 2026-09-06
+
+User requested another check/fix/apply pass. Parallel agents and root fixed additional concrete bugs,
+reviewed them, applied the changes locally, and verified runtime continuation. Report:
+`docs/reviews/2026-09-06-agent-followup-result.md`.
+
+- Fixed unsaved pre-SHA budget exhaustion: explicit `budget_exhausted`, pending log and unchanged
+  pagination cursor. HTTP timeout stays within the remaining deadline.
+- Failed private/404/timeout rechecks now retain historical observations while invalidating the
+  prior confirmation. Pure budget deferral does not invalidate a successful previous observation.
+- Root reproduced four RED cases and fixed stale/future/invalid site timestamps and failed rechecks
+  in `lib/crawl/agent-evidence.ts`. Publication repeats timestamp and last-error validation.
+- Automatic judge writes now compare candidate/document/settings snapshots under locks. Concurrent
+  admin decisions are preserved; explicit pre-existing admin state:new rejudge requests still work.
+- Missing archive/fork/relationship values no longer imply active or connected. Recent failed HTTP
+  checks no longer show online merely because the three-failure down threshold has not been reached.
+- New changes in this pass: `lib/crawl/{agent-evidence,repository,publication-guard}.ts`, jobs/judge,
+  agents/{collect,repository}, jobs/products/agent-evidence-refresh, products/detail-view,
+  ProductHero/RepositoryEvidence components and their unit/integration regression suites.
+- Runtime metadata audit: all 32 repository sources state=ok. Final browser audit: 32/32 products,
+  desktop/mobile, 210 immutable citations matched stored visible observations, no JS errors/overflow.
+  Agent collection is still in progress; 32 UI passes do not mean all 32 agent scans are complete.
+- Worker75975 gracefully terminated and replaced by **58634** with the same command and log:
+  `node --import tsx --env-file=.env.local scripts/evidence-worker.ts`,
+  `/private/tmp/nomorevibe-evidence-worker.log`. DB cursor resumed from onlycastle/popdict, later
+  advanced to rrzu777/agendita; job runs increased from 11 to 13, both lastError=null.
+- Explicitly recollected formerly skipped capsule-zero: scan86 complete, no collection issues.
+- Tests executed: unit 64 files/526 PASS; E2E production build +3 PASS (11.7s); type/lint/diff PASS.
+  Final full integration: 41 files/405 PASS in 41.22s; log
+  `/private/tmp/nomorevibe-recheck-integration-verified.log`.
+- Failed approaches: initial read-only SQL template had an extra dollar sign; Drizzle query corrected
+  it. Browser snapshot changed during active collection; post-browser DB verification confirmed all
+  new citations. No service DB corruption or hidden source exposure was found.
+- No new migration, commit or remote deploy. Local dev supervisor43023 remains on port3000.
+- Required work is complete. Final integration, runtime process and document/diff checks passed.
+  Factual unknowns and partial scans remain explicitly labeled; collection continues.
+
+```sh
+tail -n 6 /private/tmp/nomorevibe-recheck-integration-verified.log
+git diff --check
+ps -o pid,etime,command -p 58634
+tail -n 15 /private/tmp/nomorevibe-evidence-worker.log
+# Current worker PID is 58634; earlier sections below are historical.
+```
+
+## Current objective — implementation and live recrawl COMPLETE, 2026-09-06
+
+The user authorized parallel implementation, independent review, restarting collection, and ten real
+product checks. The implementation and live checks are complete locally. No commit or remote deploy
+was performed. Read `docs/reviews/2026-09-06-agent-implementation-result.md` for the Korean report.
+
+### Completed work and key decisions
+
+- Added versioned artifact catalog, bounded parsers, and separate client/model developer/declared
+  model/gateway/role/scope observations for Grok, Kimi, GLM, DeepSeek, OpenRouter and other clients.
+  Files, configuration and commit attribution never establish actual execution. Shared formats,
+  unknown/auto/inherit and subproject scopes are retained; maker declarations remain separate.
+- Migration 0019 adds scans, observations and multi-signal discovery. Collection pins SHA, rechecks
+  public visibility on resume, and stores safe projections without credentials, prompts or logs.
+- Added repository link synchronization/backfill with generation, current URL and tombstone checks;
+  site fingerprints, primary repository selection, source URLs/dates and stale observation labels.
+- Added conservative eligibility and transactional publication guards. New admin decisions, source
+  edits and settings changes cannot be overwritten by classification or early failure handling.
+- Added durable search page/item/attribution cursors, split/incomplete windows, five provider hints,
+  partial-first scheduling, bounded scheduler HTTP calls and a standalone evidence worker.
+- Independently reviewed and fixed private collection, missing commit enrichment, same-SHA freshness,
+  search budget loss, source selection, publication/backfill races and absent recurring collection.
+- Backfilled 32 missing links. Ten real products have complete scans and metadata, with 141 facts
+  (138 instruction files, 3 client configs). Two site/repository relations are confirmed, eight are
+  unknown. No actual execution model is confirmed; none of these ten qualifies for automatic
+  publication under the strict gate. Existing published products are preserved.
+- Final browser verification passed for all ten products on desktop and 390px mobile: HTTP 200,
+  no JavaScript errors or horizontal overflow, visible citations and accurate unknown labels.
+
+### Modified files
+
+- `lib/domain/evidence/agents/*`, `lib/db/agent-evidence-schema.ts`, schema exports,
+  `drizzle/0019_agent_evidence.sql` and metadata, package.json/package-lock.json.
+- `lib/crawl/{agent-evidence,publication-guard,search-window,github,rules,publish,settings,settings-schema}.ts`,
+  `lib/crawl/jobs/{seed,fetch,judge,publish}.ts`, crawl schema reason types and admin status labels.
+- `lib/domain/evidence/{repository-link-sync,repository,refresh}.ts`, providers/{github,site-fingerprint}.ts,
+  `lib/domain/products/{repository,detail-view,health,health-freshness}.ts`, job registry/agent refresh.
+- Product detail page, TrustBadges and BuildProvenance/EvidenceSummary/ProductHero components.
+- `scripts/{scheduler.sh,evidence-worker.ts,backfill-agent-evidence.ts,verify-agent-evidence-live.mjs}`;
+  new/updated unit and integration suites, README, PENDING, plan, this handoff and review artifacts.
+  `git status --short` is the complete inventory; pre-existing uncommitted documents were preserved.
+
+### Tests actually executed
+
+- `npm test`: 63 files, 517 tests passed.
+- `npm run test:integration`: final 41 files, 395 tests passed in 45.63 seconds at 09:25 KST.
+  Log: `/private/tmp/nomorevibe-agent-integration-final-pass.log`. Two stale search-default
+  expectations were corrected after a RED run, then the full suite passed.
+- `npm run test:e2e:product`: production build plus 3 tests passed, final run 10.8 seconds.
+- `npx tsc --noEmit`, `npm run lint`, `git diff --check` passed; final doc checks are repeated.
+- `node scripts/verify-agent-evidence-live.mjs`: ten live products passed after collection fixes.
+  TradingGoose screenshot `/private/tmp/nomorevibe-tradinggoose-agent-mobile.png` was opened and inspected.
+
+### Failed approaches and corrections
+
+- Concurrent TDD briefly exposed incomplete seed/UI types. Final targeted and full checks were rerun.
+- Maker API test selected an arbitrary source by slug after adding site sources. Exact repository
+  identity and deterministic external fixtures fixed the assertion; GitHub facts were preserved.
+- Long-running Next dev cached the old Drizzle schema, causing 500 after the new table was accessed.
+  Restarting the project development server resolved it; all ten pages subsequently passed.
+- TradingGoose HTML was 1,169,782 bytes. Site fingerprint now reads up to 2MiB without truncating
+  source-link analysis. Its explicit GitHub repository link confirms the product relation.
+- Opanel's 100-release response was 2,800,798 bytes. The collector now requests 10 items, falling
+  back to one while preserving pagination offset. The 2MiB transport cap remains unchanged.
+- Both products were actually recollected after fixes. Initial failures are preserved in
+  `docs/reviews/2026-09-06-agent-live-10-initial.json`; final rows and browser results have separate files.
+- Python Playwright was unavailable; installed Node Playwright was used headlessly instead.
+
+### Runtime and rollout
+
+- Development DB: localhost:55434/nomorevibe, `.env.local`. Backup before migration:
+  `/private/tmp/nomorevibe-before-agent-evidence-20260906.dump`. Migration 0019 applied successfully.
+- Next development supervisor PID 43023, port 3000; log `/private/tmp/nomorevibe-dev-agent-evidence.log`.
+  Only the prior project development parent 52359 was stopped.
+- Evidence worker PID 75975, running `node --import tsx --env-file=.env.local scripts/evidence-worker.ts`.
+  Log `/private/tmp/nomorevibe-evidence-worker.log`; PID file has the same basename plus `.pid`.
+  Both jobs succeeded repeatedly with null lastError and saved DB cursors. Default wait is 60 seconds
+  between cycles; the process stops when the Mac shuts down.
+- Development flags collection/display/enforcement are all enabled. Five provider hints were explicitly
+  merged without resetting user queries. General crawler enabled was already true and was preserved.
+  The evidence worker does not run the new-candidate publication pipeline.
+- Separate Docker app 3200/DB 55437/scheduler image and remote infrastructure were untouched.
+  Destructive integration fixtures use only DB 55435.
+
+### Remaining work and exact commands
+
+Final integration and document checks are complete. No required work remains for the user's
+ten-product request. Eight unresolved relationships and actual execution models
+need stronger public evidence or maker declarations. Arbitrary monorepo scopes and external referenced
+files remain outside coverage. The original plan's 50 representative repos, separate audit CLI,
+per-task commits and remote deployment were not performed.
+
+```sh
+git status --short
+tail -n 8 /private/tmp/nomorevibe-agent-integration-final-pass.log
+git diff --check
+ps -o pid,etime,rss,%cpu,command -p 75975
+tail -n 20 /private/tmp/nomorevibe-evidence-worker.log
+node scripts/verify-agent-evidence-live.mjs
+# Read-only audit:
+npx tsx --env-file=.env.local scripts/backfill-agent-evidence.ts --limit 1000
+# Restart only if the old worker is no longer running:
+node --import tsx --env-file=.env.local scripts/evidence-worker.ts
+```
+
+## Current objective — multi-provider agent evidence plan, 2026-09-06
+
+User requested Grok, Kimi, GLM, DeepSeek, OpenRouter and other agent cases be checked, and a
+concrete code modification plan reported. This phase is research and planning only, not execution
+or deployment. The earlier audits below remain evidence snapshots, not a fresh production check.
+
+- Completed: reviewed official provider/client documentation and current discovery, storage,
+  judgement, publication, evidence refresh and provenance presentation code. Produced a Korean
+  source-linked detection matrix/design and an implementation plan with Tasks 0–11, exact target
+  paths, contracts, regression cases, future commands and rollout criteria.
+- Modified files this phase: `docs/superpowers/specs/2026-09-06-agent-evidence-design.md`,
+  `docs/superpowers/plans/2026-09-06-agent-evidence-implementation.md`, this handoff.
+  Existing uncommitted `docs/reviews/` and prior handoff sections are preserved.
+- Decisions: separate client, declared model ID/model developer, API gateway and evidence kind.
+  Instruction/config presence is observed, never proof of execution. AGENTS and skills are shared;
+  Claude Code may use GLM/DeepSeek/OpenRouter. Grok Build project config has narrower allowed scope
+  than user model config. Kimi old/new documentation and Windsurf/Devin paths need versioned rules.
+  Keep unknown/auto/inherit/unpublished settings unresolved. Runtime AI features are separate from
+  AI-assisted development. Use bounded deterministic parsing, fixed commit SHA, secret-free facts,
+  resumable scans and separate automatic observations rather than system provenance replacement.
+- Corrected code understanding: maker replaceProductProvenance deletes only maker_reported rows;
+  system authority can replace all rows. Do not describe maker edits as deleting every system row.
+- Integration priorities: preserve commit trailers/multiple discovery evidence; repair repoUrl/link
+  synchronization; implement missing site_fingerprint repositoryKeys writer and source-derived
+  relationship/freshness; add explicit eligibility gate; produce dry-run correction rows and
+  backfill without reviving maker-hidden/deleted links. Repo homepage alone is insufficient to
+  transfer authorship evidence to a product; detached copies remain review candidates.
+- Validation actually executed this phase: Python document inspection confirmed all 5 local links
+  across the two new documents exist, code fences pair, and neither document has trailing spaces.
+  Ran git diff --check with no diagnostics; final check is repeated after this handoff write.
+  No new application tests, migration, build, backfill, DB mutation, deployment or commit ran.
+  Earlier targeted PASS counts below belong to the previous review, not a new detector.
+- Failed/corrected approaches: broad combined web searches often returned irrelevant/dominant
+  results; used primary documentation and targeted opens/finds. Guessed Grok agents-md and Goose
+  guide URLs failed; followed Grok's official project-rules link and Goose's official repository.
+  Draft language inconsistency was corrected before delivery. Long scope strings were changed to
+  a scope hash in the planned unique index. Added missing site-to-repository ingestion to Task 8.
+- Remaining: all Tasks 0–11 are proposed and unchecked. No cross-provider live detection precision
+  is established; implementation must validate synthetic counterexamples and a manually labelled
+  real public-repository sample before changing automatic publication. Server deploy remains a
+  separate subsequent phase under the prior infrastructure recommendations.
+
+Exact next commands (read the plan before beginning authorized implementation):
+
+```sh
+cd /Users/jr/Desktop/projects/nomorevibe
+git status --short
+cat AGENTS.md
+cat docs/superpowers/specs/2026-09-06-agent-evidence-design.md
+cat docs/superpowers/plans/2026-09-06-agent-evidence-implementation.md
+cat tests/integration/setup.ts
+cat node_modules/next/dist/docs/01-app/02-guides/self-hosting.md
+git diff --check
+```
+
+The new tests/scripts named in the plan do not yet exist. Integration tests must use the separate
+55435 test database, never the development database (55434) or local Docker database (55437).
+
+## Current objective — AI eligibility and deployment review, 2026-09-06
+
+User requested a second review of AI-related project detection, a fix list, and an assessment of
+web/worker colocation and server sizing before deploying. This supersedes the intervening request
+to deploy immediately: report before deployment. Review completed; deployment and fixes remain unperformed.
+
+- Completed: traced discovery → queue → judgement → publication; sampled 100 Claude and 100 Codex
+  GitHub search commits; compared canonical sites/repos; replayed 4,652 stored candidates read-only;
+  inspected 24h Docker logs, restart/resource settings, database sizes and six resource samples;
+  ran targeted unit/integration tests; produced an actionable fix list and deployment recommendation.
+- Important findings: judgement has no AI evidence gate. Codex sample has 2/100 results without a
+  Codex coauthor line (not an overall false-positive rate). Search evidence SHA/URL is discarded.
+  Detached copies of vLLM/Vector pass with zero stars and unrelated canonical homepage. Current
+  scheduler only calls the web process; it is not a separate worker. CLI category classification
+  failed auth 184 times / 24h, with zero successful classifications. DB restart policy is `no`;
+  curl has no total timeout. Uptime 15 targets/10min cannot meet 6h coverage for ~1,006 products;
+  measured 479/1,004 checked rows overdue, oldest 11.40h.
+- Snapshot: 4,652 candidates / 1,006 published (two new products arrived during the audit).
+  Replay flags 12 published items under current rules: 5 placeholder titles, 7 old stored push
+  times. These are not 7 confirmed offline sites; fresh metadata/review needed.
+- Decisions: retain distinction between AI-made evidence and AI-powered functionality. Unknown
+  evidence/relationship should be held for review. Start with same host, separate web/actual worker/
+  DB containers; propose 4 vCPU / 8GB / 80GB with external builds and single CLI/image concurrency.
+  Sizing is a planning estimate, not a proven capacity. Worker-only API design could be smaller.
+- Modified files this phase: `docs/reviews/2026-09-06-ai-crawler-deployment-review.md`,
+  `docs/reviews/2026-09-06-ai-crawler-deployment-evidence.json`, this handoff. Prior audit retained.
+- Tests executed: unit `crawl-rules`, `classify`, `github-evidence`: 3 files / 64 PASS.
+  Dedicated DB 55435 integration `crawl-seed`, `crawl-fetch`, `crawl-judge`, `crawl-publish`,
+  `crawl-pipeline`, `crawl-review`: 6 files / 76 PASS. No full suite/build/max-load/reboot test.
+- Failed/corrected analysis: initial exact prefix missed `OpenAI Codex`; corrected provider-name
+  coauthor-line check yields 98/100. One temporary log-summary JS syntax error corrected and rerun.
+- Remaining: implement the report's AI/EV/OP fix list, confirm real provider classification, clean
+  existing bad records through review, package actual worker and backfill, then deployment staging
+  and reboot/recovery/load validation. No app/dev DB or Docker deployment mutations were made;
+  only the explicitly separate integration test DB was reset by existing test fixtures.
+
+Exact next commands:
+
+```sh
+git status --short
+cat docs/reviews/2026-09-06-ai-crawler-deployment-review.md
+cat docs/reviews/2026-09-06-ai-crawler-deployment-evidence.json
+cat AGENTS.md
+cat node_modules/next/dist/docs/01-app/02-guides/self-hosting.md
+npx vitest run tests/crawl-rules.test.ts tests/classify.test.ts tests/github-evidence.test.ts
+TEST_DATABASE_URL=postgres://nomorevibe:nomorevibe@localhost:55435/nomorevibe_test npx vitest run --config vitest.integration.config.ts tests/integration/crawl-seed.test.ts tests/integration/crawl-fetch.test.ts tests/integration/crawl-judge.test.ts tests/integration/crawl-publish.test.ts tests/integration/crawl-pipeline.test.ts tests/integration/crawl-review.test.ts
+```
+
+## Earlier review context
+
+## Current objective — 2026-09-06 crawler/evidence audit
+
+User asked whether the crawler is running and requested an overall review to show more confirmed
+information, using `/p/tradinggoose-visual-workflow-platform-for-llm-trading` on localhost:3000.
+The review is complete; implementation and data backfill have not been performed.
+
+- Completed: compared development and Docker DBs/jobs/logs, reproduced public pages with Playwright,
+  queried the actual due-product selector read-only, checked TradingGoose's live GitHub APIs/site,
+  traced ingestion/read-model/label/scheduler gaps, and documented prioritized remediation.
+- Findings: localhost:3000 uses DB 55434 (crawler last ran Aug 18; evidence job never ran).
+  Docker localhost:3200 uses DB 55437 and its scheduler is active. Development has 32 repository
+  products but zero evidence links; Docker has 1,004 repository products but only one evidence link.
+  Publishing/basic registration writes repo_url without linking product_links. Source success does
+  not update the link state used by public badges. Old health checks still render as online.
+- Modified files: this handoff and `docs/reviews/2026-09-06-crawler-evidence-audit.md` only.
+- Decisions: preserve maker/discovered provenance; distinguish observed repository facts, product
+  relationship, and mere URL reachability. Do not convert AI authorship inference into verification.
+  Review recommends backfill plus ongoing synchronization, consistent source-derived presentation,
+  health freshness, shorter worker ticks, and explicit ingestion coverage metrics.
+- Tests: `npx vitest run tests/github-evidence.test.ts tests/evidence-links.test.ts tests/product-detail-components.test.tsx`
+  executed 2 existing files / 18 tests, all passed. The evidence-links path does not exist and added
+  no coverage. Two public browser pages returned 200 with zero pageerrors. GitHub's five read
+  endpoints returned 200; website returned 200 after redirect. No integration/full-suite/build run.
+- Failed approaches: agbrowse unavailable; browser wrapper's cli.mjs missing. Used installed
+  Playwright successfully. Initial enabled-column SQL failed; corrected to values->>'enabled'.
+- Remaining: all remediation in the review is proposed, not implemented. No app/DB/scheduler
+  mutation, deployment, or commit was made. Existing dev server remains available at port 3000.
+
+Exact next commands (inspection first; test DB must remain separate for any implementation):
+
+```sh
+git status --short
+cat docs/reviews/2026-09-06-crawler-evidence-audit.md
+cat AGENTS.md
+rg --files node_modules/next/dist/docs | head -30
+sed -n '175,240p' lib/domain/evidence/refresh.ts
+sed -n '75,122p' lib/crawl/publish.ts
+sed -n '440,490p' lib/domain/products/detail-view.ts
+npx vitest run tests/github-evidence.test.ts tests/product-detail-components.test.tsx
+```
+
+The implementation history below is retained as historical context; its completion statements do
+not establish end-to-end real-data ingestion, as the Sep 6 audit demonstrated.
+
+## Historical implementation context
+
 ## Current objective
 
 Execute plan 3, `docs/superpowers/plans/2026-08-19-product-detail-ui-implementation.md`, and show the

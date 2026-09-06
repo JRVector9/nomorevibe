@@ -43,6 +43,15 @@ export function RepositoryEvidence({ repository, license }: {
 }) {
   const facts = repository?.facts;
   const repositoryUrl = safeExternalUrl(facts?.repositoryUrl ?? repository?.sourceUrl ?? null);
+  const relationshipLabels = {
+    bidirectional: "서비스 ↔ 저장소 연결 확인",
+    site_link: "서비스 → 저장소 링크 확인",
+    repository_link: "저장소 → 서비스 링크 확인",
+    maker_reported: "메이커 제공·관계 미확인",
+    disconnected: "연결 끊김",
+  };
+  const activityLabel = facts?.archived === true ? "보관됨" : facts?.fork === true ? "fork 저장소"
+    : facts?.archived === false && facts?.fork === false ? "활성" : "상태 미확인";
   return (
     <section className="rounded-[12px] border border-line bg-bg-card p-5">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -61,9 +70,9 @@ export function RepositoryEvidence({ repository, license }: {
           <RepoRow label="최근 push">{formatDate(facts.pushedAt)}</RepoRow>
           <RepoRow label="stars / forks">★ {formatNumber(facts.stars)} · forks {formatNumber(facts.forks)}</RepoRow>
           <RepoRow label="contributors">{facts.contributors ? `${formatNumber(facts.contributors.count)}명${facts.contributors.incomplete ? "+" : ""}` : "확인 안 됨"}</RepoRow>
-          <RepoRow label="상태">{facts.archived ? "보관됨" : facts.fork ? "fork 저장소" : "활성"}</RepoRow>
+          <RepoRow label="상태">{activityLabel}</RepoRow>
           {facts.languages.length > 0 && <RepoRow label="주요 언어">{facts.languages.map((item) => `${item.name} ${item.percent}%`).join(" · ")}</RepoRow>}
-          <RepoRow label="서비스 연결">{facts.relationshipState === "bidirectional" ? "서비스 ↔ 저장소 연결 확인" : facts.relationshipState === "disconnected" ? "연결 끊김" : "일부 방향만 확인"}</RepoRow>
+          <RepoRow label="서비스 연결">{facts.relationshipState ? relationshipLabels[facts.relationshipState] : "관계 미확인"}</RepoRow>
           <RepoRow label="최신 release">{facts.latestRelease ? <>{facts.latestRelease.tagName} · {formatDate(facts.latestRelease.publishedAt)}</> : "확인 안 됨"}</RepoRow>
         </dl>
       )}

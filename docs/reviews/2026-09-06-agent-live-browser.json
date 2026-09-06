@@ -1,0 +1,195 @@
+{
+  "checkedAt": "2026-09-06T00:21:37.830Z",
+  "results": [
+    {
+      "slug": "revealui",
+      "passed": true,
+      "checks": {
+        "http200": true,
+        "heading": true,
+        "noBrowserErrors": true,
+        "legacyGuessWithheld": true,
+        "observationsVisible": true,
+        "executionNotClaimed": true,
+        "unknownRelationVisible": true,
+        "fitsDesktop": true,
+        "fitsMobile": true
+      },
+      "errors": [],
+      "observedFacts": 54,
+      "dataIssues": [],
+      "scanState": "complete"
+    },
+    {
+      "slug": "colleague",
+      "passed": true,
+      "checks": {
+        "http200": true,
+        "heading": true,
+        "noBrowserErrors": true,
+        "legacyGuessWithheld": true,
+        "observationsVisible": true,
+        "executionNotClaimed": true,
+        "unknownRelationVisible": true,
+        "fitsDesktop": true,
+        "fitsMobile": true
+      },
+      "errors": [],
+      "observedFacts": 21,
+      "dataIssues": [],
+      "scanState": "complete"
+    },
+    {
+      "slug": "goodboy-stop-re-explaining-yourself-to-ai-agents",
+      "passed": true,
+      "checks": {
+        "http200": true,
+        "heading": true,
+        "noBrowserErrors": true,
+        "legacyGuessWithheld": true,
+        "observationsVisible": true,
+        "executionNotClaimed": true,
+        "unknownRelationVisible": true,
+        "fitsDesktop": true,
+        "fitsMobile": true
+      },
+      "errors": [],
+      "observedFacts": 2,
+      "dataIssues": [],
+      "scanState": "complete"
+    },
+    {
+      "slug": "defang",
+      "passed": true,
+      "checks": {
+        "http200": true,
+        "heading": true,
+        "noBrowserErrors": true,
+        "legacyGuessWithheld": true,
+        "observationsVisible": true,
+        "executionNotClaimed": true,
+        "unknownRelationVisible": true,
+        "fitsDesktop": true,
+        "fitsMobile": true
+      },
+      "errors": [],
+      "observedFacts": 7,
+      "dataIssues": [],
+      "scanState": "complete"
+    },
+    {
+      "slug": "dotorixel",
+      "passed": true,
+      "checks": {
+        "http200": true,
+        "heading": true,
+        "noBrowserErrors": true,
+        "legacyGuessWithheld": true,
+        "observationsVisible": true,
+        "executionNotClaimed": true,
+        "unknownRelationVisible": true,
+        "fitsDesktop": true,
+        "fitsMobile": true
+      },
+      "errors": [],
+      "observedFacts": 20,
+      "dataIssues": [],
+      "scanState": "complete"
+    },
+    {
+      "slug": "brigade-trackable-work-for-coding-agent-fleets",
+      "passed": true,
+      "checks": {
+        "http200": true,
+        "heading": true,
+        "noBrowserErrors": true,
+        "legacyGuessWithheld": true,
+        "observationsVisible": true,
+        "executionNotClaimed": true,
+        "unknownRelationVisible": true,
+        "fitsDesktop": true,
+        "fitsMobile": true
+      },
+      "errors": [],
+      "observedFacts": 1,
+      "dataIssues": [],
+      "scanState": "complete"
+    },
+    {
+      "slug": "threa",
+      "passed": true,
+      "checks": {
+        "http200": true,
+        "heading": true,
+        "noBrowserErrors": true,
+        "legacyGuessWithheld": true,
+        "observationsVisible": true,
+        "executionNotClaimed": true,
+        "unknownRelationVisible": true,
+        "fitsDesktop": true,
+        "fitsMobile": true
+      },
+      "errors": [],
+      "observedFacts": 29,
+      "dataIssues": [],
+      "scanState": "complete"
+    },
+    {
+      "slug": "tradinggoose-visual-workflow-platform-for-llm-trading",
+      "passed": true,
+      "checks": {
+        "http200": true,
+        "heading": true,
+        "noBrowserErrors": true,
+        "legacyGuessWithheld": true,
+        "observationsVisible": true,
+        "executionNotClaimed": true,
+        "unknownRelationVisible": true,
+        "fitsDesktop": true,
+        "fitsMobile": true
+      },
+      "errors": [],
+      "observedFacts": 2,
+      "dataIssues": [],
+      "scanState": "complete"
+    },
+    {
+      "slug": "drever",
+      "passed": true,
+      "checks": {
+        "http200": true,
+        "heading": true,
+        "noBrowserErrors": true,
+        "legacyGuessWithheld": true,
+        "observationsVisible": true,
+        "executionNotClaimed": true,
+        "unknownRelationVisible": true,
+        "fitsDesktop": true,
+        "fitsMobile": true
+      },
+      "errors": [],
+      "observedFacts": 1,
+      "dataIssues": [],
+      "scanState": "complete"
+    },
+    {
+      "slug": "opanel",
+      "passed": true,
+      "checks": {
+        "http200": true,
+        "heading": true,
+        "noBrowserErrors": true,
+        "legacyGuessWithheld": true,
+        "observationsVisible": true,
+        "executionNotClaimed": true,
+        "unknownRelationVisible": true,
+        "fitsDesktop": true,
+        "fitsMobile": true
+      },
+      "errors": [],
+      "observedFacts": 4,
+      "dataIssues": [],
+      "scanState": "complete"
+    }
+  ]
+}

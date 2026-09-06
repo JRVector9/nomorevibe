@@ -2,12 +2,13 @@ import { BuilderBadge } from "@/components/TrustBadges";
 import type { ProductDetailView } from "@/lib/domain/products/detail-view";
 import { SourceBadge } from "./SourceBadge";
 
-export function BuildProvenance({ product, profile, unclaimed, agents, skills }: {
+export function BuildProvenance({ product, profile, unclaimed, agents, skills, observedAgentFacts = [] }: {
   product: ProductDetailView["product"];
   profile: ProductDetailView["profile"];
   unclaimed: boolean;
   agents: ProductDetailView["agents"];
   skills: ProductDetailView["skills"];
+  observedAgentFacts?: ProductDetailView["observedAgentFacts"];
 }) {
   return (
     <section className="rounded-[12px] border border-line bg-bg-card p-5">
@@ -24,6 +25,22 @@ export function BuildProvenance({ product, profile, unclaimed, agents, skills }:
           ))}
         </div>
       ) : null}
+      {observedAgentFacts.length > 0 && <div className="mt-5 space-y-3 border-t border-line pt-4">
+        <h3 className="text-[14px] font-bold text-fg">공개 저장소에서 확인한 정보</h3>
+        <p className="text-[13px] leading-5 text-fg-3">파일과 설정의 존재를 확인했습니다. 실제 실행 모델이나 전체 제작 과정을 증명하지 않습니다.</p>
+        {observedAgentFacts.map((fact, index) => <article key={`${fact.sourceUrl}:${index}`} className="rounded-[10px] bg-bg-soft p-3.5 text-[13px] leading-6">
+          <SourceBadge label={fact.label} />
+          <dl className="mt-2 text-fg-2"><div><dt className="inline">도구: </dt><dd className="inline">{fact.clientLabel}</dd></div>
+            <div><dt className="inline">설정 모델: </dt><dd className="inline">{fact.modelLabel}</dd></div>
+            <div><dt className="inline">연결: </dt><dd className="inline">{fact.gatewayLabel}</dd></div></dl>
+          {fact.scope && <p>설정 적용 경로: {fact.scope}</p>}
+          {fact.role && <p>설정 역할: {fact.role}</p>}
+          {fact.coverageLabel && <p className="text-fg-3">{fact.coverageLabel}</p>}
+          {fact.relationshipLabel && <p className="text-fg-3">{fact.relationshipLabel}</p>}
+          <a href={fact.sourceUrl} target="_blank" rel="noopener noreferrer" className="break-all text-accent underline">{fact.sourcePath ?? "커밋 기여 표기"} · {fact.commitSha.slice(0, 7)} ↗</a>
+          <p className="text-fg-3">확인: {fact.observedAt.toISOString().slice(0, 10)}</p>
+        </article>)}
+      </div>}
       <div className="mt-5 space-y-3 border-t border-line pt-4">
         <h3 className="text-[14px] font-bold text-fg">에이전트</h3>
         {agents.length === 0 ? <p className="text-[13px] text-fg-3">공개된 에이전트 정보가 없습니다.</p> : agents.map((agent) => (

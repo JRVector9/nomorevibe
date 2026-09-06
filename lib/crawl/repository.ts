@@ -1,9 +1,11 @@
 import { and, asc, desc, eq, inArray, lte, sql } from "drizzle-orm";
+import { isDeepStrictEqual } from "node:util";
 import { db } from "@/lib/db";
 import {
   crawlFrontier,
   crawlDocuments,
   crawlCandidates,
+  crawlSettings,
   type FrontierEntry,
   type FrontierState,
   type CrawlDocument,
@@ -11,6 +13,8 @@ import {
   type CandidateState,
   type DecisionReason,
 } from "@/lib/db/schema";
+import { mergeWithDefaults } from "./settings";
+import type { CrawlSettings } from "./settings-schema";
 
 /** 크롤 파이프라인 데이터 접근 — 파이프라인 바깥에서 이 테이블들을 직접 만지지 않는다 */
 
@@ -256,6 +260,32 @@ export async function recordJudgement(judgement: {
     .insert(crawlCandidates)
     .values(values)
     .onConflictDoUpdate({ target: crawlCandidates.repo, set: values });
+}
+
+/** Automatic results may only replace the exact pending inputs read before asynchronous checks. */
+export async function recordAutomaticJudgement(input: {
+  document:CrawlDocument; settings:CrawlSettings; candidate:CrawlCandidate|undefined;
+  verdict:{state:"approved"|"rejected"|"needs_review";reason:DecisionReason;signals:Record<string,unknown>};
+}):Promise<boolean> {
+  return db.transaction(async tx => {
+    const [candidate] = await tx.select().from(crawlCandidates).where(eq(crawlCandidates.repo,input.document.repo)).for("update");
+    const [document] = await tx.select().from(crawlDocuments).where(eq(crawlDocuments.id,input.document.id)).for("share");
+    const [settingsRow] = await tx.select().from(crawlSettings).where(eq(crawlSettings.id,1)).for("share");
+    // A pre-existing admin `new` is an explicit rejudge request. A later admin decision is never replaced.
+    if ((candidate && candidate.state !== "new") || !isDeepStrictEqual(candidate,input.candidate)
+      || !isDeepStrictEqual(document,input.document) || !isDeepStrictEqual(mergeWithDefaults(settingsRow?.values),input.settings)) return false;
+    const now = new Date();
+    const values = {repo:input.document.repo,productUrl:input.document.productUrl,state:input.verdict.state,
+      reason:input.verdict.reason,signals:input.verdict.signals,decidedBy:"auto" as const,
+      judgedAt:now,updatedAt:now,decidedAt:null};
+    if (candidate) {
+      await tx.update(crawlCandidates).set(values).where(eq(crawlCandidates.id,candidate.id));
+      return true;
+    }
+    // A missing row cannot be locked. A concurrent manual insert wins its unique-key race.
+    const inserted = await tx.insert(crawlCandidates).values(values).onConflictDoNothing().returning({id:crawlCandidates.id});
+    return inserted.length === 1;
+  });
 }
 
 export async function listCandidates(

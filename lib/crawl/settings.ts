@@ -17,13 +17,14 @@ const ROW_ID = 1;
  * 못 읽어 수집이 멈추고, 마이그레이션으로 채우려면 "마이그레이션 없이 필터를 추가한다"는
  * 이점이 사라진다. 기본값을 바탕으로 얕게 병합해 없는 필드를 메운다.
  */
-function mergeWithDefaults(stored: unknown): CrawlSettings {
+export function mergeWithDefaults(stored: unknown): CrawlSettings {
   const raw = (stored ?? {}) as Record<string, unknown>;
   const merged = {
     ...DEFAULT_CRAWL_SETTINGS,
     ...raw,
     discover: { ...DEFAULT_CRAWL_SETTINGS.discover, ...((raw.discover as object) ?? {}) },
     judge: { ...DEFAULT_CRAWL_SETTINGS.judge, ...((raw.judge as object) ?? {}) },
+    agentEvidence: { ...DEFAULT_CRAWL_SETTINGS.agentEvidence, ...((raw.agentEvidence as object) ?? {}) },
   };
 
   const parsed = crawlSettingsSchema.safeParse(merged);
@@ -58,6 +59,7 @@ export async function saveSettings(patch: unknown, updatedBy: string): Promise<S
     ...raw,
     discover: { ...current.discover, ...((raw.discover as object) ?? {}) },
     judge: { ...current.judge, ...((raw.judge as object) ?? {}) },
+    agentEvidence: { ...current.agentEvidence, ...((raw.agentEvidence as object) ?? {}) },
   };
 
   const parsed = crawlSettingsSchema.safeParse(next);

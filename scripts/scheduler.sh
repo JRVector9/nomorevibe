@@ -13,7 +13,7 @@
 #   publish: 판정 직후에 돌아야 통과한 것이 바로 목록에 오른다
 #   uptime : 제품이 죽는 것은 분 단위로 급한 일이 아니다. 한 바퀴를 천천히 돈다.
 #   ranking: 클릭 집계 직후 공개 랭킹 스냅샷을 한 시간마다 갱신한다.
-#   evidence: 외부 근거와 제품 업데이트를 독립적으로 6시간마다 갱신한다.
+#   evidence: 매 틱 실행하되 각 source의 due 시각과 재개 cursor가 실제 요청 주기를 정한다.
 set -eu
 
 BASE="${BASE_URL:-http://app:3000}"
@@ -23,7 +23,7 @@ INTERVAL="${TICK_SECONDS:-60}"
 
 run() {
   code=$(
-    curl -sS -X POST "$BASE/api/cron/$1" \
+    curl -sS --connect-timeout 5 --max-time 35 -X POST "$BASE/api/cron/$1" \
       -H "Authorization: Bearer $CRON_SECRET" \
       -o /tmp/cron-out -w '%{http_code}'
   ) || code="000"
@@ -54,9 +54,8 @@ while true; do
     run click-rollup
     run ranking-refresh
   fi
-  if [ $((tick % 360)) -eq 1 ]; then
-    run product-evidence-refresh
-  fi
+  run product-evidence-refresh
+  run agent-evidence-refresh
 
   sleep "$INTERVAL"
 done

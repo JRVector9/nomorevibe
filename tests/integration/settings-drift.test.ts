@@ -55,10 +55,10 @@ describe("저장된 기준과 기본값의 차이", () => {
 
     const drift = settingsDrift(await getSettings());
 
-    // 기본 신호 셋 — 트레일러 둘은 추정 AI가 있고 topic 신호는 어떤 AI인지 말하지 않아 비어 있다
+    // 과거 두 트레일러의 호환 힌트 외에 새 검색 신호는 제작 AI를 지정하지 않는다.
     expect(drift.find((d) => d.label === "추정 AI")).toMatchObject({
       stored: "(없음), (없음)",
-      standard: "Claude, Codex, (없음)",
+      standard: "Claude, Codex, (없음), (없음), (없음), (없음), (없음), (없음)",
     });
   });
 
@@ -74,7 +74,7 @@ describe("저장된 기준과 기본값의 차이", () => {
 
     expect(drift.find((d) => d.label === "검색 신호")).toMatchObject({
       stored: "Claude 커밋 트레일러, Codex 커밋 트레일러",
-      standard: "Claude 커밋 트레일러, Codex 커밋 트레일러, vibe-coding 토픽",
+      standard: "Claude 커밋 트레일러, Codex 커밋 트레일러, vibe-coding 토픽, Grok Build 기여 표기 탐색, Kimi CLI 기여 표기 탐색, GLM 관련 저장소 탐색, DeepSeek 관련 저장소 탐색, OpenRouter 관련 저장소 탐색",
     });
   });
 

@@ -1,181 +1,195 @@
-import type { JobContext, JobOutcome } from "@/lib/jobs/runner";
-import * as crawl from "@/lib/crawl/repository";
-import { normalizeUrl } from "@/lib/net/normalize";
-import { getSettings, enabledQueries } from "@/lib/crawl/settings";
-import {
-  searchCommits,
-  searchRepositories,
-  SEARCH_PER_PAGE,
-  MAX_SEARCH_PAGES,
-  type GitHubFailure,
-} from "@/lib/crawl/github";
+import { createHash } from 'node:crypto';
+import type { JobContext, JobOutcome } from '@/lib/jobs/runner';
+import * as crawl from '@/lib/crawl/repository';
+import { normalizeUrl } from '@/lib/net/normalize';
+import { getSettings, enabledQueries } from '@/lib/crawl/settings';
+import { searchCommits, searchRepositories, SEARCH_PER_PAGE, MAX_SEARCH_PAGES, type CommitSearchResult, type RepositorySearchResult } from '@/lib/crawl/github';
+import { recordDiscoveryEvidence } from '@/lib/domain/evidence/agents/repository';
+import { parseCommitAttributions, type CommitAttribution } from '@/lib/domain/evidence/agents/commit-attribution';
+import { splitSearchWindow, type SearchWindow } from '@/lib/crawl/search-window';
 
-/**
- * 검색 잡 — 프론티어를 채운다. 파이프라인의 입구다.
- *
- * 신호(검색어)를 하나씩, 페이지를 하나씩 넘기며 본 위치를 커서에 남긴다. 검색은 분당
- * 30회로 묶여 있어 한 틱에 다 볼 수 없고, 애초에 다 볼 필요도 없다 — 다음 틱이 이어받는다.
- *
- * 재귀 크롤이 아니다. 프론티어는 여기서만 채워지고 가져온 문서에서 새 링크를 뽑아
- * 확장하지 않는다. 그래서 URL 정규화 폭발도 스팸 트랩도 없다.
- */
-
+export const MAX_SEED_ATTRIBUTIONS = 8;
+const INCOMPLETE_RETRY_MS = 60 * 60_000;
+const MAX_INCOMPLETE_WINDOWS = 128;
+type PendingItem = {repo:string; sha:string|null; attributions:(CommitAttribution|null)[]; attributionLimited:boolean};
+type PendingPage = {items:PendingItem[]; itemIndex:number; attributionIndex:number; size:number; incomplete:boolean; saturated:boolean; capped:boolean};
+type IncompleteWindow = {signal:string; window:SearchWindow; retryAt:string};
 export type SeedCursor = {
-  /** 보고 있던 신호의 label */
-  signal: string;
-  /** 다음에 볼 페이지 (1부터) */
-  page: number;
+  signal:string; page:number; queryHash?:string; configHash?:string;
+  window?:SearchWindow; cycleWindow?:SearchWindow; pendingWindows?:SearchWindow[];
+  retryAt?:string; pendingPage?:PendingPage; windowIncomplete?:boolean;
+  incompleteWindows?:IncompleteWindow[]; phase?:'discovery'|'retry';
 };
+const iso = (date:Date) => date.toISOString().replace(/\.\d{3}Z$/, 'Z');
+const sameWindow = (a:SearchWindow,b:SearchWindow) => a.from === b.from && a.to === b.to;
 
-export async function seedFrontier(ctx: JobContext<SeedCursor>): Promise<JobOutcome<SeedCursor>> {
+/** Search finds candidates; stored cursors contain bounded normalized facts, never commit messages. */
+export async function seedFrontier(ctx:JobContext<SeedCursor>):Promise<JobOutcome<SeedCursor>> {
   const settings = await getSettings();
-  if (!settings.enabled) {
-    ctx.log("crawl.seed_skipped", { reason: "disabled" });
-    return { done: true };
-  }
-
+  if (!settings.enabled) return {done:true};
   const queries = enabledQueries(settings);
-  if (queries.length === 0) {
-    ctx.log("crawl.seed_skipped", { reason: "no_signals" });
-    return { done: true };
-  }
-
-  /**
-   * 커서가 가리키던 신호가 사라졌으면(꺼졌거나 지워졌으면) 처음부터 본다.
-   * 없어진 이름을 붙들고 있으면 그 사이클은 아무것도 안 하고 끝난다.
-   */
-  const resumed = queries.findIndex((q) => q.label === ctx.cursor?.signal);
-  let index = resumed === -1 ? 0 : resumed;
-  let page = resumed === -1 ? 1 : (ctx.cursor?.page ?? 1);
-
-  const since = windowStart(settings.discover.windowDays);
-  let discovered = 0;
-  let seen = 0;
-  /** 레포 검색에서 배포 URL로 풀리지 않아 넣지 않은 수 — fetch 예산을 아낀 만큼이다 */
-  let skippedNoHomepage = 0;
-
-  for (let visited = 0; visited < settings.discover.pagesPerTick; visited++) {
-    if (!ctx.hasBudget()) break;
-
-    const signal = queries[index];
-    const result = await searchSignal(signal, since, page, settings.discover.sort);
-
-    if (!result.ok) {
-      if (result.error.kind === "rate_limited") {
-        // 본 데까지만 남기고 물러난다 — 다음 틱이 같은 페이지부터 이어받는다
-        ctx.log("crawl.seed_rate_limited", { signal: signal.label, page, discovered });
-        return { done: false, cursor: { signal: signal.label, page } };
-      }
-      // 검색 자체가 실패하면 이 신호는 이번 사이클에 건너뛴다. 커서는 다음 신호를 가리킨다
-      ctx.log("crawl.seed_failed", { signal: signal.label, page, error: result.error });
-      const next = advance(queries, index);
-      if (!next) return { done: true };
-      ({ index, page } = next);
-      await ctx.save({ signal: queries[index].label, page });
-      continue;
-    }
-
-    const repos = [...new Set(result.value.deployed)];
-    seen += repos.length;
-    skippedNoHomepage += result.value.skipped;
-    // builder를 여기서 굳힌다 — 발행 때 설정을 되짚으면 그 사이 바뀐 라벨에 추정이 걸린다
-    discovered += await crawl.enqueue(
-      repos.map((repo) => ({
-        repo,
-        signal: signal.label,
-        builder: signal.builder,
-        priority: signal.priority,
-      })),
-    );
-
-    /**
-     * 페이지가 덜 찼거나 검색이 돌려주는 한계에 닿았으면 이 신호는 여기까지다.
-     * 다음 신호로 넘기고, 마지막 신호였으면 사이클을 끝낸다(커서가 비워져 다음 틱은 처음부터).
-     */
-    const exhausted = result.value.pageSize < SEARCH_PER_PAGE || page >= MAX_SEARCH_PAGES;
-    if (exhausted) {
-      const next = advance(queries, index);
-      if (!next) {
-        ctx.log("crawl.seeded", { discovered, seen, skippedNoHomepage, cycle: "완료" });
-        return { done: true };
-      }
-      ({ index, page } = next);
-    } else {
-      page++;
-    }
-    await ctx.save({ signal: queries[index].label, page });
-  }
-
-  ctx.log("crawl.seeded", { discovered, seen, skippedNoHomepage, signal: queries[index].label, page });
-  return { done: false, cursor: { signal: queries[index].label, page } };
-}
-
-type SignalPage = {
-  /** 프론티어에 넣을 레포. 레포 검색이면 homepage가 URL로 풀리는 것만 */
-  deployed: string[];
-  /** 배포 URL로 풀리지 않아 뺀 수 */
-  skipped: number;
-  /** 페이지가 꽉 찼는지 보기 위한 원래 건수 */
-  pageSize: number;
-};
-
-/**
- * 신호 종류에 맞는 검색을 타고 같은 모양으로 돌려준다.
- *
- * 커밋 검색은 결과에 레포 메타가 없어 그대로 넣는다 — 배포 여부는 fetch가 알아낸다.
- * 레포 검색은 homepage가 실려 오므로 URL로 풀리지 않는 것은 여기서 뺀다. 그 레포는 fetch까지
- * 가도 거부될 뿐이라, 예산만 쓰고 결과가 같다.
- */
-async function searchSignal(
-  signal: { kind: "commits" | "repositories"; query: string },
-  since: string,
-  page: number,
-  sort: "relevance" | "recent",
-): Promise<{ ok: true; value: SignalPage } | { ok: false; error: GitHubFailure }> {
-  if (signal.kind === "repositories") {
-    const result = await searchRepositories({ query: `${signal.query} pushed:>=${since}`, page, sort });
-    if (!result.ok) return result;
-    const deployed = result.value.items
-      .filter((item) => isDeploymentUrl(item.homepage))
-      .map((item) => item.full_name);
-    return {
-      ok: true,
-      value: { deployed, skipped: result.value.items.length - deployed.length, pageSize: result.value.items.length },
-    };
-  }
-  const result = await searchCommits({ query: `${signal.query} committer-date:>=${since}`, page, sort });
-  if (!result.ok) return result;
-  return {
-    ok: true,
-    value: {
-      deployed: result.value.items.map((item) => item.repository.full_name),
-      skipped: 0,
-      pageSize: result.value.items.length,
-    },
+  if (!queries.length) return {done:true};
+  const freshWindow = ():SearchWindow => ({from:iso(new Date(Date.now()-settings.discover.windowDays*86_400_000)),to:iso(new Date())});
+  // Sort and every active query participate: an edited configuration cannot replay old page data or retry delays.
+  const configHash = createHash('sha256').update(JSON.stringify({queries,sort:settings.discover.sort,windowDays:settings.discover.windowDays})).digest('hex');
+  const queryHash = (index:number) => createHash('sha256').update(queries[index].kind+'\0'+queries[index].query+'\0'+settings.discover.windowDays).digest('hex');
+  const resumedIndex = queries.findIndex(q => q.label === ctx.cursor?.signal);
+  const matches = ctx.cursor?.configHash === configHash && resumedIndex >= 0 && ctx.cursor.queryHash === queryHash(resumedIndex);
+  let index = matches ? resumedIndex : 0;
+  let initial = matches && ctx.cursor?.cycleWindow ? ctx.cursor.cycleWindow : freshWindow();
+  let cursor:SeedCursor = matches ? structuredClone(ctx.cursor!) : {
+    signal:queries[0].label,page:1,queryHash:queryHash(0),configHash,window:initial,cycleWindow:initial,pendingWindows:[],incompleteWindows:[],phase:'discovery',
   };
+  if (cursor.retryAt && Date.parse(cursor.retryAt) > Date.now()) return {done:false,cursor};
+  delete cursor.retryAt;
+  let discovered = 0;
+  const save = () => ctx.save(cursor);
+  const defer = async () => {await save(); return {done:false,cursor};};
+  const resetWindow = (next:SearchWindow) => {
+    cursor = {...cursor,page:1,window:next,windowIncomplete:false};
+    delete cursor.pendingPage;
+  };
+  const clearIncomplete = () => {
+    cursor.incompleteWindows = (cursor.incompleteWindows ?? []).filter(entry => !(entry.signal === cursor.signal && sameWindow(entry.window,cursor.window ?? initial)));
+  };
+  const retainIncomplete = ():boolean => {
+    const entries = [...(cursor.incompleteWindows ?? [])];
+    const item = {signal:cursor.signal,window:cursor.window ?? initial,retryAt:new Date(Date.now()+INCOMPLETE_RETRY_MS).toISOString()};
+    const existing = entries.findIndex(entry => entry.signal === item.signal && sameWindow(entry.window,item.window));
+    if (existing >= 0) entries[existing] = item;
+    else if (entries.length < MAX_INCOMPLETE_WINDOWS) entries.push(item);
+    else {
+      // Preserve this current window as well as the full bounded queue; never silently drop coverage.
+      cursor.retryAt = item.retryAt;
+      cursor.page = 1;
+      cursor.windowIncomplete = false;
+      ctx.log('crawl.seed_incomplete_queue_full',{windows:entries.length});
+      return false;
+    }
+    cursor.incompleteWindows = entries;
+    return true;
+  };
+  const advance = ():boolean => {
+    const pending = [...(cursor.pendingWindows ?? [])];
+    const next = pending.shift();
+    if (next) {cursor.pendingWindows = pending; resetWindow(next); return true;}
+    if (cursor.phase === 'retry') {
+      // A persistently capped second must not starve discovery of newly pushed repositories.
+      initial = freshWindow(); index = 0;
+      cursor = {signal:queries[0].label,page:1,configHash,queryHash:queryHash(0),window:initial,cycleWindow:initial,pendingWindows:[],incompleteWindows:cursor.incompleteWindows,phase:'discovery'};
+      return true;
+    }
+    index++;
+    if (index < queries.length) {
+      cursor = {signal:queries[index].label,page:1,configHash,queryHash:queryHash(index),window:initial,cycleWindow:initial,pendingWindows:[],incompleteWindows:cursor.incompleteWindows,phase:'discovery'};
+      return true;
+    }
+    const retry = [...(cursor.incompleteWindows ?? [])].sort((a,b) => a.retryAt.localeCompare(b.retryAt))[0];
+    if (!retry) return false;
+    index = queries.findIndex(q => q.label === retry.signal);
+    cursor = {signal:retry.signal,page:1,configHash,queryHash:queryHash(index),window:retry.window,cycleWindow:initial,pendingWindows:[],incompleteWindows:cursor.incompleteWindows,phase:'retry',retryAt:retry.retryAt};
+    return true;
+  };
+
+  for (let visited = 0; visited < settings.discover.pagesPerTick && ctx.hasBudget(); visited++) {
+    if (cursor.retryAt && Date.parse(cursor.retryAt) > Date.now()) return defer();
+    const signal = queries[index];
+    const window = cursor.window ?? initial;
+    if (!cursor.pendingPage) {
+      const query = `${signal.query} ${signal.kind === 'commits' ? 'committer-date' : 'pushed'}:${window.from}..${window.to}`;
+      const result = signal.kind === 'commits'
+        ? await searchCommits({query,page:cursor.page,sort:settings.discover.sort})
+        : await searchRepositories({query,page:cursor.page,sort:settings.discover.sort});
+      if (!result.ok) {
+        ctx.log('crawl.seed_failed',{signal:signal.label,error:result.error.kind});
+        const reset = result.error.kind === 'rate_limited' ? result.error.resetAt : null;
+        cursor.retryAt = new Date(Math.max(Date.now()+60_000,reset?.getTime() ?? 0)).toISOString();
+        return defer();
+      }
+      if (!Array.isArray(result.value.items)) {
+        cursor.retryAt = new Date(Date.now()+60_000).toISOString();
+        ctx.log('crawl.seed_failed',{signal:signal.label,error:'invalid_response'});
+        return defer();
+      }
+      cursor.pendingPage = {
+        items:normalizeItems(result.value.items.slice(0,SEARCH_PER_PAGE)),itemIndex:0,attributionIndex:0,
+        size:Math.min(result.value.items.length,SEARCH_PER_PAGE),
+        incomplete:result.value.incomplete_results === true || result.value.items.length > SEARCH_PER_PAGE,
+        saturated:(result.value.total_count ?? 0) > SEARCH_PER_PAGE*MAX_SEARCH_PAGES,
+        capped:cursor.page >= MAX_SEARCH_PAGES && result.value.items.length >= SEARCH_PER_PAGE,
+      };
+      // Save before side effects so a process restart does not need to repeat a shifting API page.
+      await save();
+    }
+    const page = cursor.pendingPage;
+    while (page.itemIndex < page.items.length) {
+      if (!ctx.hasBudget()) return defer();
+      const item = page.items[page.itemIndex];
+      while (page.attributionIndex < item.attributions.length) {
+        if (!ctx.hasBudget()) return defer();
+        await recordDiscoveryEvidence({
+          repositoryKey:item.repo,signalId:signal.label,sourceUrl:`https://github.com/${item.repo}${item.sha ? `/commit/${item.sha}` : ''}`,
+          commitSha:item.sha,attribution:item.attributions[page.attributionIndex],
+          searchWindowFrom:new Date(window.from),searchWindowTo:new Date(window.to),
+          incomplete:page.incomplete || page.saturated || page.capped || item.attributionLimited,
+        });
+        page.attributionIndex++;
+        await save();
+      }
+      if (!ctx.hasBudget()) return defer();
+      discovered += await crawl.enqueue([{repo:item.repo,signal:signal.label,builder:null,priority:signal.priority}]);
+      page.itemIndex++; page.attributionIndex = 0;
+      await save();
+    }
+    delete cursor.pendingPage;
+    const incomplete = page.incomplete || page.saturated || page.capped;
+    if (incomplete) {
+      const pieces = splitSearchWindow(window);
+      if (pieces) {
+        cursor.pendingWindows = [pieces[1],...(cursor.pendingWindows ?? [])];
+        resetWindow(pieces[0]);
+        await save();
+        continue;
+      }
+      cursor.windowIncomplete = true;
+    }
+    // Even at one-second granularity, pages 2..10 remain accessible and may contain new repos.
+    if (page.size >= SEARCH_PER_PAGE && cursor.page < MAX_SEARCH_PAGES) cursor.page++;
+    else {
+      if (cursor.windowIncomplete) {
+        ctx.log('crawl.seed_incomplete',{signal:signal.label,window,page:cursor.page});
+        if (!retainIncomplete()) return defer();
+      } else clearIncomplete();
+      if (!advance()) {ctx.log('crawl.seeded',{discovered,drained:true}); return {done:true};}
+    }
+    await save();
+  }
+  ctx.log('crawl.seeded',{discovered,signal:cursor.signal,page:cursor.page,incompleteWindows:cursor.incompleteWindows?.length ?? 0});
+  return {done:false,cursor};
 }
 
-/**
- * homepage가 배포 URL로 풀리는지.
- *
- * GitHub의 homepage는 자유 입력이라 "soon"·"TBD" 같은 값이 온다. 비어 있지 않다는 것만 보면
- * 그런 레포까지 프론티어에 들어가 fetch 예산을 쓰고 닿지 않아 거부된다.
- *
- * 점 없는 호스트를 함께 거른다. normalizeUrl은 스킴이 없으면 https를 붙이므로 "soon"이
- * https://soon으로, "TBD"가 https://tbd로 풀린다 — 형식은 맞지만 공개 도메인이 아니다.
- */
-function isDeploymentUrl(homepage: unknown): boolean {
-  if (typeof homepage !== "string") return false;
+function normalizeItems(items:CommitSearchResult['items']|RepositorySearchResult['items']):PendingItem[] {
+  const output:PendingItem[] = [];
+  const seen = new Set<string>();
+  for (const item of items) {
+    if (!item || typeof item !== 'object') continue;
+    const repo = 'repository' in item ? item.repository?.full_name : item.full_name;
+    if (typeof repo !== 'string' || repo.length > 200 || !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo)) continue;
+    if (!('repository' in item) && !isDeploymentUrl(item.homepage)) continue;
+    const sha = 'sha' in item && typeof item.sha === 'string' && /^[a-f0-9]{40,64}$/i.test(item.sha) ? item.sha.toLowerCase() : null;
+    const message = 'commit' in item && typeof item.commit?.message === 'string' ? item.commit.message : '';
+    const parsed = sha ? parseCommitAttributions(message) : [];
+    // Known agent names take precedence within the cap; unknown coauthors cannot crowd them out.
+    const attributions = [...parsed.filter(a => a.client !== null),...parsed.filter(a => a.client === null)].slice(0,MAX_SEED_ATTRIBUTIONS);
+    const key = JSON.stringify([repo,sha,attributions]);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    output.push({repo,sha,attributions:attributions.length ? attributions : [null],attributionLimited:parsed.length > MAX_SEED_ATTRIBUTIONS});
+  }
+  return output;
+}
+function isDeploymentUrl(homepage:unknown):boolean {
+  if (typeof homepage !== 'string') return false;
   const normalized = normalizeUrl(homepage);
-  return normalized !== null && new URL(normalized).hostname.includes(".");
-}
-
-/** 다음 신호로. 마지막이었으면 null (사이클 완료) */
-function advance(queries: { label: string }[], index: number): { index: number; page: number } | null {
-  return index + 1 < queries.length ? { index: index + 1, page: 1 } : null;
-}
-
-/** 최근 N일 이내의 커밋만 본다 — 오래된 레포까지 긁으면 큐가 죽은 프로젝트로 찬다 */
-function windowStart(days: number): string {
-  return new Date(Date.now() - days * 86_400_000).toISOString().slice(0, 10);
+  return normalized !== null && new URL(normalized).hostname.includes('.');
 }

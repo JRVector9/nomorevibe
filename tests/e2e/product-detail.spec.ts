@@ -126,6 +126,12 @@ async function expectDetailGeometry(page: Page) {
     .evaluate((node) => getComputedStyle(node).borderRadius))).toBe(10);
   expect(parseFloat(await section("상세 소개").evaluate((node) => getComputedStyle(node).borderRadius))).toBe(12);
 
+  const heroMedia = page.getByTestId("product-hero-media");
+  const heroCopy = page.getByTestId("product-hero-copy");
+  const [mediaBox, copyBox] = await Promise.all([heroMedia.boundingBox(), heroCopy.boundingBox()]);
+  expect(mediaBox?.width).toBeGreaterThanOrEqual(650);
+  expect(mediaBox?.width ?? 0).toBeGreaterThan(copyBox?.width ?? 0);
+
   const description = section("상세 소개").getByText("Evidence Studio은 AI로 만든 제품을 실제 사용자에게 설명하는 테스트 제품입니다.");
   expect(parseFloat(await description.evaluate((node) => getComputedStyle(node).fontSize))).toBe(15);
   const structured = section("상세 소개").getByText("흩어진 제품 근거와 업데이트를 한 화면에서 확인하기 어렵습니다.");

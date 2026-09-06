@@ -5,7 +5,6 @@ import { BuildProvenance } from "@/components/product-detail/BuildProvenance";
 import { EvidenceSummary } from "@/components/product-detail/EvidenceSummary";
 import { FreshnessPanel } from "@/components/product-detail/FreshnessPanel";
 import { ProductFacts } from "@/components/product-detail/ProductFacts";
-import { ProductGallery } from "@/components/product-detail/ProductGallery";
 import { ProductHero } from "@/components/product-detail/ProductHero";
 import { ProductIntroduction } from "@/components/product-detail/ProductIntroduction";
 import { ProductMetrics } from "@/components/product-detail/ProductMetrics";
@@ -46,38 +45,29 @@ export default async function ProductPage({ params }: Props) {
         <span className="text-fg-2">{detail.product.name}</span>
       </nav>
 
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-[minmax(0,1fr)_340px] md:gap-5">
-        <div className="md:col-span-2">
-          <ProductHero
-            product={detail.product}
-            unclaimed={detail.unclaimed}
-            lifecycle={detail.profile?.lifecycle ?? null}
-            rank={detail.rank}
-            health={detail.health}
-          />
+      <div className="space-y-5">
+        <ProductHero
+          product={detail.product}
+          media={detail.media}
+          unclaimed={detail.unclaimed}
+          lifecycle={detail.profile?.lifecycle ?? null}
+          rank={detail.rank}
+          health={detail.health}
+        />
+        <ProductMetrics visits={detail.visits} health={detail.health} />
+      </div>
+
+      <div className="mt-8 grid gap-6 lg:grid-cols-[minmax(0,1fr)_340px] lg:items-start lg:gap-8">
+        <div className="lg:col-start-1 lg:row-start-1">
+          <ProductIntroduction product={detail.product} profile={detail.profile} unclaimed={detail.unclaimed} />
         </div>
 
-        <div className="md:col-span-2">
-          <ProductMetrics visits={detail.visits} health={detail.health} />
-        </div>
-
-        <div className="md:col-span-2">
+        <aside className="space-y-4 lg:col-start-2 lg:row-span-2 lg:row-start-1">
           <EvidenceSummary
             links={detail.links}
             freshness={detail.freshness}
             profileUpdatedAt={detail.profile?.updatedAt ?? null}
           />
-        </div>
-
-        <div className="md:col-start-1 md:row-start-4">
-          <ProductGallery name={detail.product.name} media={detail.media} />
-        </div>
-
-        <div className="md:col-start-1 md:row-start-5">
-          <ProductIntroduction product={detail.product} profile={detail.profile} unclaimed={detail.unclaimed} />
-        </div>
-
-        <div className="space-y-4 md:col-start-2 md:row-start-4">
           <ProductFacts product={detail.product} profile={detail.profile} links={detail.links} unclaimed={detail.unclaimed} />
           {detail.unclaimed && (
             <section className="rounded-[12px] border border-accent/35 bg-accent-soft p-5">
@@ -99,27 +89,19 @@ export default async function ProductPage({ params }: Props) {
               </p>
             </section>
           )}
-        </div>
-
-        <div className="md:col-start-2 md:row-start-5">
           <RepositoryEvidence repository={detail.repository} license={detail.license} />
-        </div>
-
-        <div className="md:col-start-2 md:row-start-6">
           <BuildProvenance
             product={detail.product}
             profile={detail.profile}
             unclaimed={detail.unclaimed}
             agents={detail.agents}
+            observedAgentFacts={detail.observedAgentFacts}
             skills={detail.skills}
           />
-        </div>
-
-        <div className="md:col-start-2 md:row-start-7">
           <FreshnessPanel freshness={detail.freshness} />
-        </div>
+        </aside>
 
-        <div className="md:col-start-1 md:row-span-2 md:row-start-6">
+        <div className="lg:col-start-1 lg:row-start-2">
           <UpdateTimeline updates={detail.updates} />
         </div>
       </div>

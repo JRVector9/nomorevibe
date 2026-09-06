@@ -104,7 +104,13 @@ export type DecisionReason =
   | "already_listed" // 같은 URL이 이미 products에 있음
   | "banned" // 차단된 URL
   | "ambiguous" // 규칙으로 못 가름 → 사람이 판단
-  | "passed"; // 통과
+  | "passed" // 통과
+  | "ai_evidence_pending"
+  | "ai_evidence_insufficient"
+  | "ai_evidence_not_found"
+  | "repository_relationship_conflict"
+  | "source_changed"
+  | "ai_evidence_supported";
 
 export const crawlCandidates = pgTable(
   "crawl_candidates",

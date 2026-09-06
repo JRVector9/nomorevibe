@@ -37,13 +37,7 @@ const discoverSchema = z.object({
         enabled: z.boolean(),
         /** 이 신호로 발견한 레포의 조사 우선순위 */
         priority: z.number().int().min(0).max(1000),
-        /**
-         * 이 신호로 찾은 제품에 "만든 AI"로 추정해 붙일 이름. null이면 추정하지 않는다.
-         *
-         * 트레일러가 문자 그대로 말하는 것만 적는다 — "Co-authored-by: Claude"는 Claude가
-         * 커밋했다는 뜻이지 어느 도구였는지까지는 말하지 않는다. 화면에는 "우리 추정"으로
-         * 붙고, 주인이 클레임하면 비워진다(verify.ts).
-         */
+        /** 검색 설정의 과거 호환용 힌트. 제작 AI 확정이나 공개 builder에 사용하지 않는다. */
         builder: z.string().min(1).max(40).nullable().default(null),
       }),
     )
@@ -106,18 +100,54 @@ const judgeSchema = z.object({
   holdAmbiguous: z.boolean(),
 });
 
+const defaultAgentEvidence = {
+  enabled: false,
+  enforceEligibility: false,
+  displayObservedFacts: false,
+  detectorVersion: "2026-09-06.1",
+  policyVersion: "2026-09-06.1",
+};
+
 export const crawlSettingsSchema = z.object({
   /** 수집 자체를 멈추는 스위치. 무언가 잘못 돌 때 배포 없이 끊을 수 있어야 한다 */
   enabled: z.boolean(),
   discover: discoverSchema,
   judge: judgeSchema,
+  agentEvidence: z.object({
+    enabled: z.boolean(),
+    enforceEligibility: z.boolean(),
+    displayObservedFacts: z.boolean(),
+    detectorVersion: z.string().regex(/^[a-zA-Z0-9.-]{1,40}$/),
+    policyVersion: z.string().regex(/^[a-zA-Z0-9.-]{1,40}$/),
+  }).default(defaultAgentEvidence),
 });
 
 export type CrawlSettings = z.infer<typeof crawlSettingsSchema>;
+export type AgentDiscoveryQuery = CrawlSettings["discover"]["queries"][number];
+
+/** Discovery hints only: a topic may describe runtime functionality, not AI-assisted development. */
+export const ADDITIONAL_AGENT_DISCOVERY_QUERIES: readonly AgentDiscoveryQuery[] = [
+  {label:"Grok Build 기여 표기 탐색",kind:"commits",query:"Co-authored-by: Grok",enabled:true,priority:70,builder:null},
+  {label:"Kimi CLI 기여 표기 탐색",kind:"commits",query:"Co-authored-by: Kimi",enabled:true,priority:65,builder:null},
+  {label:"GLM 관련 저장소 탐색",kind:"repositories",query:"topic:glm",enabled:true,priority:50,builder:null},
+  {label:"DeepSeek 관련 저장소 탐색",kind:"repositories",query:"topic:deepseek",enabled:true,priority:45,builder:null},
+  {label:"OpenRouter 관련 저장소 탐색",kind:"repositories",query:"topic:openrouter",enabled:true,priority:40,builder:null},
+];
+
+/** Explicit rollout helper. Reading stored settings never calls this or changes a maker's queries. */
+export function mergeAdditionalAgentDiscoveryQueries(existing: readonly AgentDiscoveryQuery[]):AgentDiscoveryQuery[] {
+  const merged = existing.map(query => ({...query}));
+  const key = (query:AgentDiscoveryQuery) => `${query.kind}:${query.query.trim().replace(/\s+/g," ").toLowerCase()}`;
+  for (const query of ADDITIONAL_AGENT_DISCOVERY_QUERIES) {
+    if (!merged.some(current => current.label === query.label || key(current) === key(query))) merged.push({...query});
+  }
+  return merged;
+}
 
 /** 기본값. 실측을 근거로 잡았다 (수율 42%, 노이즈는 대형 OSS와 개인 홈페이지) */
 export const DEFAULT_CRAWL_SETTINGS: CrawlSettings = {
   enabled: false, // 켜는 것은 명시적 행위여야 한다
+  agentEvidence: defaultAgentEvidence,
   discover: {
     queries: [
       { label: "Claude 커밋 트레일러", kind: "commits", query: "Co-authored-by: Claude", enabled: true, priority: 100, builder: "Claude" },
@@ -129,6 +159,7 @@ export const DEFAULT_CRAWL_SETTINGS: CrawlSettings = {
       // 만들었는지 말하지 않으므로 builder는 비운다. claude-code(61k, 43%)·cursor-ai(575, 46%)·
       // codex-cli(2.3k, 33%)·ai-generated(596, 41%)는 같은 방식으로 /admin에서 더할 수 있다.
       { label: "vibe-coding 토픽", kind: "repositories", query: "topic:vibe-coding", enabled: true, priority: 80, builder: null },
+      ...ADDITIONAL_AGENT_DISCOVERY_QUERIES.map(query => ({...query})),
     ],
     windowDays: 180,
     sort: "relevance",

@@ -6,6 +6,10 @@ import { generateEditToken, generateVerifyToken, hashToken } from "@/lib/tokens"
 import { logger } from "@/lib/observability/logger";
 import * as crawl from "./repository";
 import { classifyCategory } from "./classify";
+import { getSettings } from "./settings";
+import { guardPublication, publicationSourceChanged, PublicationStateChangedError } from "./publication-guard";
+import { loadAgentJudgeInput } from "./agent-evidence";
+import { summarizeAgentEvidence, type AgentEvidenceSummary } from "@/lib/domain/evidence/agents/summary";
 
 /**
  * 발행 — 통과한 후보를 목록에 올린다.
@@ -21,15 +25,23 @@ const MAX_SLUG_ATTEMPTS = 4;
 
 export type PublishResult =
   | { ok: true; slug: string }
-  | { ok: false; reason: "no_document" | "no_url" | "already_listed" | "no_description" };
+  | { ok: false; reason: "no_document" | "no_url" | "already_listed" | "no_description" | "publication_state_changed" | "source_changed" | AgentEvidenceSummary["reason"] };
 
 export async function publishCandidate(candidate: CrawlCandidate): Promise<PublishResult> {
   const document = await crawl.getDocument(candidate.repo);
   if (!document) return { ok: false, reason: "no_document" };
+  if (publicationSourceChanged(candidate,document)) return {ok:false,reason:"source_changed"};
 
   const url = candidate.productUrl ?? document.productUrl;
   if (!url) return { ok: false, reason: "no_url" };
 
+  const settings = await getSettings();
+  const checkedEvidence = settings.agentEvidence.enforceEligibility && candidate.decidedBy !== "admin"
+    ? await loadAgentJudgeInput(document, settings) : null;
+  if (checkedEvidence) {
+    const summary = summarizeAgentEvidence(checkedEvidence);
+    if (!summary.eligible) return { ok: false, reason: summary.reason };
+  }
   const draft = draftFrom(candidate.repo, document);
 
   /**
@@ -63,12 +75,8 @@ export async function publishCandidate(candidate: CrawlCandidate): Promise<Publi
       language: draft.language,
     })) ?? draft.category;
   const editToken = generateEditToken();
-  /**
-   * "만든 AI" 추정은 이 레포를 데려온 신호가 근거다 — "Co-authored-by: Claude"로 찾았으면
-   * Claude가 커밋한 것이다. 그 판단은 발견 시점에 프론티어에 굳어 있으므로 여기서는 읽기만
-   * 한다. 기록이 없으면 추정하지 않는다 — 없는 값을 지어내지 않는 것이 발행의 원칙이다.
-   */
-  const builder = await crawl.getFrontierBuilder(candidate.repo);
+  // Search metadata is a discovery hint, not a maker or model assertion.
+  const builder = null;
 
   let slug = "";
   for (let attempt = 0; ; attempt++) {
@@ -81,8 +89,7 @@ export async function publishCandidate(candidate: CrawlCandidate): Promise<Publi
         tagline: draft.tagline,
         description: draft.description,
         category,
-        // 발견 신호로 추정한 값이다. 주인이 없는 동안은 "우리 추정"으로 표시되고(view.ts),
-        // 클레임하는 순간 비워져 메이커가 직접 밝힌 값만 "메이커 신고"가 된다(verify.ts).
+        // Search hints are not maker or model assertions; observed facts have a separate view.
         builder,
         stack: draft.stack,
         ogImage: null,
@@ -97,9 +104,10 @@ export async function publishCandidate(candidate: CrawlCandidate): Promise<Publi
          */
         verifyToken: generateVerifyToken(),
         editTokenHash: hashToken(editToken),
-      });
+      }, tx => guardPublication(tx, {candidate,document,settings,slug,scanId:checkedEvidence?.scanId ?? null}));
       break;
     } catch (e) {
+      if (e instanceof PublicationStateChangedError) return {ok:false,reason:"publication_state_changed"};
       const constraint = products.uniqueViolation(e);
       if (constraint === "products_url_unique") {
         // 판정 뒤 메이커가 먼저 등록했다 — 우리가 늦은 것이지 오류가 아니다
@@ -121,7 +129,6 @@ export async function publishCandidate(candidate: CrawlCandidate): Promise<Publi
     if (path) await products.setOgImage(slug, path);
   }
 
-  await crawl.markPublished(candidate.repo, slug);
   logger.info("crawl.published", { repo: candidate.repo, slug, url, category });
   return { ok: true, slug };
 }

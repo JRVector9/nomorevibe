@@ -1,5 +1,5 @@
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { eq, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import {
   productEvidenceAudit,
@@ -15,6 +15,7 @@ import {
 } from "@/lib/db/schema";
 import { hashToken } from "@/lib/tokens";
 import { refreshProductEvidence } from "@/lib/domain/evidence/refresh";
+import { refreshSiteFingerprint } from "@/lib/domain/evidence/providers/site-fingerprint";
 import {
   getMakerLinksResource,
   getMakerMediaResource,
@@ -397,6 +398,12 @@ describe("maker evidence resource APIs", () => {
     const refresh = await refreshProductEvidence("maker-api", {
       force: true,
       dependencies: {
+        // Provider failure is deterministic; this API resource test never needs
+        // live GitHub or DNS. The site failure creates a separate source row.
+        siteFingerprint: (input) => refreshSiteFingerprint(input, {
+          fetch: async () => ({ ok: false, reason: "http", status: 503 }),
+        }),
+        github: async () => ({ status: "deferred", releases: 0 }),
         image: async () => ({
           ok: true,
           asset: {
@@ -413,8 +420,15 @@ describe("maker evidence resource APIs", () => {
     expect(await db.query.productMedia.findFirst({ where: eq(productMedia.slug, "maker-api") }))
       .toMatchObject({ sourceUrl: "https://maker-api.example/gallery.png", current: true });
     expect((await db.query.productEvidenceSources.findFirst({
-      where: eq(productEvidenceSources.slug, "maker-api"),
+      where: and(
+        eq(productEvidenceSources.slug, "maker-api"),
+        eq(productEvidenceSources.kind, "repository"),
+        eq(productEvidenceSources.sourceKey, "example/maker-api"),
+      ),
     }))?.normalizedFacts).toEqual(observedFacts);
+    expect(await db.query.productEvidenceSources.findFirst({
+      where: and(eq(productEvidenceSources.slug, "maker-api"), eq(productEvidenceSources.provider, "product_site")),
+    })).toMatchObject({ state: "failed", normalizedFacts: null });
     const responseText = JSON.stringify(await (await replaceResource(
       putLinks as Handler,
       "/links",

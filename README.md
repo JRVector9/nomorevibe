@@ -178,7 +178,8 @@ npm run job crawl-publish
 | `uptime-ping` | 10분 | 제품이 죽는 것은 분 단위로 급한 일이 아니다. 같은 제품은 6시간에 한 번만 본다 |
 | `click-rollup` | 1시간 | 집계는 하루 단위라 자주 돌 이유가 없다 |
 | `ranking-refresh` | 1시간 | 클릭 집계 직후 시즌 경계와 공개 순위 스냅샷을 갱신한다 |
-| `product-evidence-refresh` | 6시간 | 출처별 유효기간과 재시도 시각을 확인해 필요한 제품만 갱신한다 |
+| `product-evidence-refresh` | 매 틱(기본 60초 + 작업 시간) | 출처별 due 시각으로 실제 요청을 제한한다 |
+| `agent-evidence-refresh` | 매 틱(기본 60초 + 작업 시간) | 공개 저장소 문서·설정 수집, partial 우선 재개, 완료 후 24시간 캐시 |
 
 크론 데몬을 쓰지 않는 이유는 작업 수가 적고 주기가 분 단위이며, 실패해도 다음 틱이
 이어받기 때문이다. 다른 스케줄러(Dokploy, GitHub Actions)를 쓴다면 같은 주기로 아래를 호출하면 된다.
@@ -213,6 +214,29 @@ CLI가 없거나 로그인이 풀렸거나 15초를 넘기면 토픽·설명 키
 
 ## 제품 근거 수집 운영
 
+공개 에이전트 근거는 `agentEvidence.enabled` → `displayObservedFacts` → `enforceEligibility`
+순으로 적용한다. 파일·설정·커밋 표기는 실제 실행 증명이 아니다. 도구/선언 모델/연결 경로를
+분리하며 제품과 저장소 관계가 불명확하면 자동 발행을 보류한다. 기존 제품은 삭제하지 않는다.
+기본 루트와 알려진 에이전트 디렉터리가 수집 범위이며, 임의의 monorepo 하위 프로젝트 전체를
+검사했다고 주장하지 않는다. migration 0019 적용 후 기존 개발 서버는 재시작해야 한다.
+
+```sh
+# 읽기 전용 점검 (기본 10개)
+npx tsx --env-file=.env.local scripts/backfill-agent-evidence.ts --limit 1000
+# 기존 제작자 삭제/숨김 의도를 보존하면서 저장소 연결만 복구
+npx tsx --env-file=.env.local scripts/backfill-agent-evidence.ts --apply --links-only --limit 1000
+# 특정 제품의 일반 근거와 에이전트 근거를 즉시 갱신
+npx tsx --env-file=.env.local scripts/backfill-agent-evidence.ts --apply --slug tradinggoose-visual-workflow-platform-for-llm-trading
+# 별도 로컬 프로세스 (종료/재시작 시 DB cursor에서 재개)
+npx tsx --env-file=.env.local scripts/evidence-worker.ts
+```
+
+백필 JSON의 `issues`, `problem`, `selectedCount`를 함께 확인한다. 외부 수집 오류가 있으면
+종료 코드 1이며, 관계/실행 여부 미확인은 오류를 숨기기 위해 확정으로 바꾸지 않는다.
+워커는 새 후보를 발행하는 잡을 실행하지 않으며, 서버 상시 운영에는 기존 compose scheduler와
+재시작 정책을 사용한다. 로컬 프로세스는 Mac 종료 뒤 자동 복구되는 서비스가 아니다.
+
+
 제품 상세의 정보는 두 권한 경계를 섞지 않는다. 소개·가격·팀·라이선스 신고와 공식 링크는
 `메이커 제공`이고, GitHub·스토어·패키지 레지스트리·RSS·changelog를 직접 읽어 얻은 값은
 `자동 감지`다. 자동 수집 실패가 메이커 값을 덮지 않으며, 마지막 정상 관측값은 출처 상태가
@@ -226,11 +250,10 @@ App Store·Play Store·npm·PyPI·crates.io·일반 링크·RSS 수집은 각 �
 외부 수집은 DNS 조회와 실제 연결 시점 모두 공인 IP만 허용하며, GitHub JSON 응답도 선언 크기와
 실제 스트림을 각각 2 MiB로 제한한다.
 
-코드와 로컬 스케줄러에서 `product-evidence-refresh`의 실행 주기는 6시간으로 설정한다.
+코드와 로컬 스케줄러는 두 evidence 잡을 매 틱 실행한다. due 시각 이전에는 외부 요청을 생략한다.
 프로덕션에 같은 주기가 실제 등록됐는지는 이 작업에서 확인하지 않았으므로 `PENDING.md`의
 점검 절차로 기존 등록 여부를 먼저 확인한다. 저장소·일반 링크의 기본 갱신 간격은 24시간,
-release feed는 6시간이며, 성공한 출처만 다음 시각으로 전진한다. 실패 재시도는 스케줄러 주기와
-맞춘 6시간에서 시작해 12·24·48시간으로 늘고 기본 최대 재시도 설정에서는 48시간이 상한이다
+release feed는 6시간이며, 성공한 출처만 다음 시각으로 전진한다. 일반 출처 실패 재시도는 6시간에서 시작해 12·24·48시간으로 늘고 기본 최대 재시도 설정에서는 48시간이 상한이다
 (설정을 늘려도 절대 상한은 7일). 마지막 성공 이후 `출처 간격 × staleAfterIntervals`가 지나면
 `stale`로 표시한다. GitHub rate-limit이 준 재시도 시각은 자체 백오프로 덮지 않는다. 설정은
 `evidence_settings` 한 행에 저장되며 코드 기본값은 `lib/domain/evidence/settings.ts`에 있다.

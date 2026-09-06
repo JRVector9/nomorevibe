@@ -28,7 +28,8 @@ export const DOWN_THRESHOLD = 3;
  * 없으면 등재 제품이 한 틱 배치(15건)보다 적을 때 같은 사이트를 10분마다 두드린다 —
  * 하루 144번이다. 남의 서버를 그렇게 치면 차단당해도 할 말이 없다.
  */
-export const RECHECK_AFTER_MINUTES = 6 * 60;
+export { RECHECK_AFTER_MINUTES } from "./health-freshness";
+import { RECHECK_AFTER_MINUTES } from "./health-freshness";
 
 export type PingTarget = { id: number; slug: string; url: string };
 

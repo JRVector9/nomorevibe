@@ -29,7 +29,11 @@ import {
   type RelationshipState,
   type SourceState,
 } from "@/lib/db/schema";
+import { getSettings as getCrawlSettings } from "@/lib/crawl/settings";
+import { getRepositoryAgentEvidence, getLatestRepositoryAgentScan } from "@/lib/domain/evidence/agents/repository";
+import { presentObservedAgentFacts, type ObservedAgentFactView } from "@/lib/domain/evidence/agents/view";
 import { currentEvidenceSettings } from "@/lib/domain/evidence/settings-store";
+import { normalizeTypedLink } from "@/lib/domain/evidence/contracts";
 import { EVIDENCE_LABELS } from "@/lib/domain/evidence/provenance";
 import type { EvidenceSettings } from "@/lib/domain/evidence/settings";
 import { parseRankingPolicy } from "@/lib/domain/ranking/policy";
@@ -44,7 +48,7 @@ export type DetailVisitMetrics = VisitMetrics & { periodDays: typeof METRICS_WIN
 
 export type ProductLinkView = Pick<ProductLink,
   "id" | "kind" | "url" | "declarationSource" | "verificationState" | "relationshipState" | "verifiedAt"
-> & { evidenceLabel: "공식 출처에서 확인" | "메이커 제공·미검증" | "자동 감지" };
+> & { evidenceLabel: "공식 출처에서 확인" | "출처 응답 확인·관계 미확인" | "메이커 제공·미검증" | "자동 감지" };
 
 export type RepositoryFactsView = {
   repositoryKey: string | null;
@@ -166,6 +170,7 @@ export type ProductDetailView = {
     uptime30d: number | null;
     latencyMs: number | null;
     checkedAt: Date | null;
+    lastCheckSucceeded?: boolean | null;
     down: boolean;
   };
   profile: ProductProfile | null;
@@ -175,6 +180,7 @@ export type ProductDetailView = {
   media: ProductMediaView[];
   updates: ProductUpdateView[];
   agents: AgentView[];
+  observedAgentFacts: ObservedAgentFactView[];
   skills: SkillView[];
   freshness: FreshnessView[];
 };
@@ -364,8 +370,9 @@ function repositoryFacts(
   };
 }
 
-function linkEvidenceLabel(link: Pick<ProductLink, "verificationState" | "declarationSource">): ProductLinkView["evidenceLabel"] {
-  if (link.verificationState === "ok") return "공식 출처에서 확인";
+export function linkEvidenceLabel(link: Pick<ProductLink, "verificationState" | "declarationSource" | "relationshipState">): ProductLinkView["evidenceLabel"] {
+  if (link.verificationState === "ok") return link.relationshipState === "site_link" || link.relationshipState === "bidirectional"
+    ? "공식 출처에서 확인" : "출처 응답 확인·관계 미확인";
   return link.declarationSource === "maker" ? "메이커 제공·미검증" : "자동 감지";
 }
 
@@ -432,7 +439,7 @@ async function detailHealth(slug: string): Promise<ProductDetailView["health"]> 
     healthMetrics([slug], 30),
     db.query.productHealth.findFirst({
       where: eq(productHealth.slug, slug),
-      columns: { checkedAt: true, failures: true },
+      columns: { checkedAt: true, failures: true, status: true },
     }),
   ]);
   const metric = metrics.get(slug);
@@ -440,11 +447,12 @@ async function detailHealth(slug: string): Promise<ProductDetailView["health"]> 
     uptime30d: metric?.uptimePercent ?? null,
     latencyMs: metric?.latencyMs ?? null,
     checkedAt: current?.checkedAt ?? null,
+    lastCheckSucceeded: current ? current.status >= 200 && current.status < 400 : null,
     down: (current?.failures ?? 0) >= DOWN_THRESHOLD,
   };
 }
 
-async function visibleLinks(slug: string): Promise<ProductLinkView[]> {
+async function visibleLinks(slug: string): Promise<Array<ProductLinkView & { normalizedKey: string }>> {
   const rows = await db.select({
     id: productLinks.id,
     kind: productLinks.kind,
@@ -453,6 +461,7 @@ async function visibleLinks(slug: string): Promise<ProductLinkView[]> {
     verificationState: productLinks.verificationState,
     relationshipState: productLinks.relationshipState,
     verifiedAt: productLinks.verifiedAt,
+    normalizedKey: productLinks.normalizedKey,
   }).from(productLinks)
     .where(and(eq(productLinks.slug, slug), eq(productLinks.visible, true)))
     .orderBy(asc(productLinks.id));
@@ -578,7 +587,45 @@ export async function getProductDetail(slugInput: string): Promise<ProductDetail
     visibleProvenance(slug),
     currentEvidenceSettings(),
   ]);
-  const repositorySource = sources.find((source) => source.kind === "repository") ?? null;
+  const crawlSettings = await getCrawlSettings();
+  const observedAgentFacts: ObservedAgentFactView[] = [];
+  if (crawlSettings.agentEvidence.displayObservedFacts) {
+    for (const source of sources.filter(row => row.kind === "repository")) {
+      const scanId = source.normalizedFacts?.agentScanId;
+      const [linked, latest] = await Promise.all([
+        typeof scanId === "number" ? getRepositoryAgentEvidence(scanId) : Promise.resolve(null),
+        getLatestRepositoryAgentScan(source.sourceKey),
+      ]);
+      const attempted = latest ? await getRepositoryAgentEvidence(latest.id) : null;
+      const validLinked = linked?.scan.scope === "" && linked.scan.repositoryKey.toLowerCase() === source.sourceKey.toLowerCase() ? linked : null;
+      const evidence = attempted ?? validLinked;
+      if (!evidence || evidence.scan.scope !== "") continue;
+      const relation = source.normalizedFacts?.relationshipState;
+      const relationshipConfirmed = sourceFreshness(source, settings, now).state === "current" && (relation === "site_link" || relation === "bidirectional");
+      // Incomplete attempts cannot prove previous files disappeared. Each retained
+      // fact keeps its own commit and observation date, rather than acquiring a new date.
+      const batches = evidence.scan.state !== "complete" && validLinked && validLinked.scan.id !== evidence.scan.id
+        ? [validLinked, evidence] : [evidence];
+      for (const batch of batches) observedAgentFacts.push(...presentObservedAgentFacts({ observations: batch.observations,
+        scanState: evidence.scan.state, observedAt: batch.scan.completedAt ?? batch.scan.startedAt,
+        now, scanLastError: evidence.scan.lastErrorCode,
+        relationship: relationshipConfirmed ? "same_product" : "unknown" }));
+    }
+  }
+  const publicLinks = links.map(link => {
+    const source = sources.find(row => row.kind === link.kind && row.sourceKey === link.normalizedKey);
+    if (!source) {
+      const unobserved = { ...link, verificationState: "unobserved" as const, verifiedAt: null };
+      return { ...unobserved, evidenceLabel: linkEvidenceLabel(unobserved) };
+    }
+    const fresh = sourceFreshness(source, settings, now);
+    const observed = { ...link, verificationState: fresh.state === "current" ? source.state : "stale" as const,
+      relationshipState: relationship(source.normalizedFacts?.relationshipState), verifiedAt: source.lastSuccessAt };
+    return { ...observed, evidenceLabel: linkEvidenceLabel(observed) };
+  });
+  const primaryRepository = product.repoUrl ? normalizeTypedLink("repository", product.repoUrl) : null;
+  const repositorySource = sources.find((source) => source.kind === "repository"
+    && (!product.repoUrl || source.sourceKey === primaryRepository?.normalizedKey)) ?? null;
   const facts = repositorySource
     ? repositoryFacts(
         repositorySource.normalizedFacts,
@@ -604,7 +651,7 @@ export async function getProductDetail(slugInput: string): Promise<ProductDetail
     visits: { ...visits, periodDays: METRICS_WINDOW_DAYS },
     health,
     profile: profile ?? null,
-    links,
+    links: publicLinks,
     repository: repositorySource ? {
       provider: repositorySource.provider,
       sourceUrl: repositorySource.sourceUrl,
@@ -618,6 +665,7 @@ export async function getProductDetail(slugInput: string): Promise<ProductDetail
     media,
     updates,
     agents: withEvidenceLabels(provenance.agents),
+    observedAgentFacts,
     skills: withEvidenceLabels(provenance.skills),
     freshness: sources.map((source) => sourceFreshness(source, settings, now)),
   };
