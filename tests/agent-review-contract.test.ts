@@ -14,7 +14,7 @@ const observation = { kind: "instruction_file", client: null, compatibleClients:
   declaredModelId: null, gateway: null, routing: "unknown", role: null, scope: "", keyPath: null,
   ruleId: "agents-md", sourcePath: "AGENTS.md", commitSha: "a".repeat(40), blobSha: "b".repeat(40),
   sourceUrl: "https://github.com/owner/app/blob/main/AGENTS.md" } satisfies AgentObservation;
-const scan = { id: 1, completedAt: now, state: "complete", detectorVersion: DEFAULT_CRAWL_SETTINGS.agentEvidence.detectorVersion,
+const scan = { id: 1, startedAt: now, completedAt: now, state: "complete", detectorVersion: DEFAULT_CRAWL_SETTINGS.agentEvidence.detectorVersion,
   lastErrorCode: null, commitSha: observation.commitSha } as AgentRepositoryScan;
 const evidence = { scan, observations: [{ id: "observation:1", observation }] };
 
@@ -38,6 +38,14 @@ it("invalidates semantic approval on product, source relationship, evidence or p
     createReviewInput(candidate, document, { ...DEFAULT_CRAWL_SETTINGS, judge: { ...DEFAULT_CRAWL_SETTINGS.judge, maxStars: 99 } }, evidence, now),
     createReviewInput(candidate, document, DEFAULT_CRAWL_SETTINGS, { ...evidence, observations: [] }, now),
   ]) expect(changed.inputHash).not.toBe(first.inputHash);
+});
+
+it("tracks a same-SHA scan refresh even when completion time and semantic observations stay unchanged", () => {
+  const first = createReviewInput(candidate, document, DEFAULT_CRAWL_SETTINGS, evidence, now);
+  const refreshed = createReviewInput(candidate, document, DEFAULT_CRAWL_SETTINGS,
+    { ...evidence, scan: { ...scan, startedAt: new Date(now.getTime() - 1) } }, now);
+  expect(refreshed.inputHash).toBe(first.inputHash);
+  expect(refreshed.sourceRevisionHash).not.toBe(first.sourceRevisionHash);
 });
 
 it("preserves static file discovery as evidence without claiming model execution", () => {

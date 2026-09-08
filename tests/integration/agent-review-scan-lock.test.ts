@@ -3,11 +3,12 @@ import { eq, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { agentRepositoryScans, crawlCandidates, crawlDocuments, crawlReviewAttempts, crawlSettings, jobs } from "@/lib/db/schema";
 import { getSettings, saveSettings, changeReviewMode } from "@/lib/crawl/settings";
-import { loadReviewInput, claimAgentReview, recordAgentReview } from "@/lib/crawl/agent-review-repository";
+import { loadReviewInput, claimAgentReview, recordAgentReview, listReviewCandidates, reviewApprovalPredicate } from "@/lib/crawl/agent-review-repository";
 import { guardPublication } from "@/lib/crawl/publication-guard";
 import { saveRepositoryAgentScan } from "@/lib/domain/evidence/agents/repository";
 import { lockRepositoryAgentEvidence } from "@/lib/domain/evidence/agents/lock";
-import type { CollectResult } from "@/lib/domain/evidence/agents/collect";
+import { collectRepositoryAgentEvidence, type CollectResult } from "@/lib/domain/evidence/agents/collect";
+import type { GitHubHttpResult } from "@/lib/crawl/github";
 import { ensureSchema } from "./setup";
 
 const repo = "scan-lock/app";
@@ -91,4 +92,33 @@ it("serializes same-SHA updates before scan row locks and rejects the superseded
     await expect(publication).rejects.toThrow("review_approval_changed");
     expect(await db.select().from(crawlCandidates)).toMatchObject([{state:"approved"}]);
   } finally {continueWrite.release();await writer.catch(()=>{});await publication?.catch(()=>{});}
+});
+
+it("returns a same-SHA partial discovery to review before LIMIT and removes the stale publishing approval", async () => {
+  const input=await fixture();
+  expect(await listReviewCandidates(input.settings,1)).toEqual([]);
+  expect(await db.select().from(crawlCandidates).where(reviewApprovalPredicate(input.settings))).toHaveLength(1);
+  const discovered="c".repeat(40), pending="d".repeat(40);
+  const request=async <T>(path:string):Promise<GitHubHttpResult<T>>=>{
+    let value:unknown;
+    if(path===`/repos/${repo}`) value={id:987654321,private:false,default_branch:"main"};
+    else if(path===`/repos/${repo}/commits/main`) value={sha:input.scan.commitSha,commit:{tree:{sha:"e".repeat(40)}}};
+    else if(path===`/repos/${repo}/commits/${discovered}`) value={sha:discovered,
+      commit:{message:"Update\n\nCo-authored-by: Codex <codex@example.com>"},parents:[{sha:"f".repeat(40)}]};
+    else if(path===`/repos/${repo}/compare/${discovered}...${input.scan.commitSha}`) value={status:"ahead"};
+    else throw new Error(`unexpected request: ${path}`);
+    return {ok:true,status:200,value:value as T,etag:null,lastModified:null,link:null};
+  };
+  const result=await collectRepositoryAgentEvidence({repositoryKey:repo,request,maxRequests:4,
+    knownComplete:{repositoryId:String(input.scan.githubRepositoryId),commitSha:input.scan.commitSha},
+    discoveryCommitShas:[discovered,pending]});
+  expect(result).toMatchObject({state:"partial",errorCode:null,observations:[{kind:"commit_attribution",client:"codex"}]});
+  const saved=(await saveRepositoryAgentScan(result))!;
+  expect(saved).toMatchObject({id:input.scan.id,state:"complete",completedAt:input.scan.completedAt,lastErrorCode:null});
+  expect(saved.startedAt).not.toEqual(input.scan.startedAt);
+  const fresh=await loadReviewInput(input.candidate,input.document,input.settings);
+  expect(fresh.inputHash).not.toBe(input.input.inputHash);
+  expect(fresh.sourceRevisionHash).not.toBe(input.input.sourceRevisionHash);
+  expect(await listReviewCandidates(input.settings,1)).toMatchObject([{id:input.candidate.id}]);
+  expect(await db.select().from(crawlCandidates).where(reviewApprovalPredicate(input.settings))).toEqual([]);
 });

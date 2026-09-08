@@ -26,6 +26,7 @@ export type ReviewSource = {
   productUrl: string | null;
   scanId: number | null;
   scanSha: string | null;
+  scanStartedAt: string | null;
   scanCompletedAt: string | null;
   scanState: string | null;
   scanError: string | null;
@@ -112,7 +113,8 @@ export function createReviewInput(
   const source: ReviewSource = {
     candidateJudgedAt: candidate.judgedAt?.toISOString() ?? null,
     documentId: document.id, documentFetchedAt: document.fetchedAt.toISOString(), productUrl: document.productUrl,
-    scanId: scan?.id ?? null, scanSha: scan?.commitSha ?? null, scanCompletedAt: scan?.completedAt?.toISOString() ?? null,
+    scanId: scan?.id ?? null, scanSha: scan?.commitSha ?? null, scanStartedAt: scan?.startedAt?.toISOString() ?? null,
+    scanCompletedAt: scan?.completedAt?.toISOString() ?? null,
     scanState: scan?.state ?? null, scanError: scan?.lastErrorCode ?? null, detectorVersion: settings.agentEvidence.detectorVersion,
   };
   const policyHash = reviewPolicyHash(settings);

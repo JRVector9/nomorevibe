@@ -73,6 +73,7 @@ function matchingSource(settings: CrawlSettings): SQL {
         AND rd.product_url IS NOT DISTINCT FROM ${crawlReviewAttempts.source}->>'productUrl'
         AND rs.id::text IS NOT DISTINCT FROM ${crawlReviewAttempts.source}->>'scanId'
         AND rs.commit_sha IS NOT DISTINCT FROM ${crawlReviewAttempts.source}->>'scanSha'
+        AND date_trunc('milliseconds', rs.started_at) IS NOT DISTINCT FROM (${crawlReviewAttempts.source}->>'scanStartedAt')::timestamp
         AND date_trunc('milliseconds', rs.completed_at) IS NOT DISTINCT FROM (${crawlReviewAttempts.source}->>'scanCompletedAt')::timestamp
         AND rs.state IS NOT DISTINCT FROM ${crawlReviewAttempts.source}->>'scanState'
         AND rs.last_error_code IS NOT DISTINCT FROM ${crawlReviewAttempts.source}->>'scanError')`;
