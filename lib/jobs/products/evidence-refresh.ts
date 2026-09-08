@@ -6,8 +6,10 @@ import {
   type EvidenceRefreshDependencies,
 } from "@/lib/domain/evidence/refresh";
 import { ProductGenerationChangedError } from "@/lib/domain/products/generation";
+import { beginProductRefresh, dueProductRefreshRequests, saveProductRefreshProgress } from "@/lib/domain/evidence/refresh-requests";
+import { JobLeaseLostError } from "@/lib/jobs/control";
 
-export type EvidenceRefreshCursor = { afterSlug?: string };
+export type EvidenceRefreshCursor = { afterSlug?: string; requestTurn?: boolean };
 export type EvidenceRefreshCounts = {
   attempted: number;
   succeeded: number;
@@ -46,6 +48,50 @@ export async function refreshProductEvidenceJob(
       ctx.log(event, fields);
     },
   };
+  const [pendingRequest] = await dueProductRefreshRequests(now);
+  let requestProcessed = false;
+  let requestTurn = ctx.cursor?.requestTurn ?? true;
+  const saveCursor = () => ctx.save({ ...(afterSlug ? { afterSlug } : {}),
+    ...(pendingRequest ? { requestTurn } : {}) });
+  const runRequest = async () => {
+    if (!pendingRequest || requestProcessed || !ctx.hasBudget()) return;
+    requestProcessed = true;
+    requestTurn = false;
+    // Save the next lane before external I/O so a slow forced refresh cannot starve due work.
+    await saveCursor();
+    const request = await beginProductRefresh(pendingRequest, now, ctx.lease);
+    if (!request) return;
+    let progress = request.progress;
+    counts.attempted += 1;
+    try {
+      const result = await refreshProductEvidence(request.slug, {
+        now, productId: request.productId, force: request.activeForce,
+        hasBudget: ctx.hasBudget, dependencies: sourceDependencies, progress,
+        saveProgress: async next => {
+          await saveProductRefreshProgress(request, next, { now, lease: ctx.lease });
+          progress = next;
+        },
+      });
+      await saveProductRefreshProgress(request, progress, { now, lease: ctx.lease, result });
+      if (result.sourcesFailed) counts.failed += 1;
+      else if (result.complete) counts.succeeded += 1;
+      counts.factsChanged += result.factsChanged;
+      counts.eventsInserted += result.eventsInserted;
+      counts.mediaInserted += result.mediaInserted;
+      ctx.log("evidence.request_refresh", { productId: request.productId, requestedVersion: request.activeVersion,
+        complete: result.complete, completedSources: progress.completedKeys.length });
+    } catch (error) {
+      if (error instanceof JobLeaseLostError) throw error;
+      counts.failed += 1;
+      const errorCode = refreshErrorCode(error);
+      if (!(error instanceof ProductGenerationChangedError)) {
+        await saveProductRefreshProgress(request, progress, { now, lease: ctx.lease, error: errorCode });
+      }
+      ctx.log("evidence.product_refresh_failed", { slug: request.slug, errorCode });
+    }
+  };
+
+  if (pendingRequest && requestTurn) await runRequest();
 
   while (ctx.hasBudget()) {
     const slugs = await dueEvidenceProductSlugs({
@@ -55,6 +101,7 @@ export async function refreshProductEvidenceJob(
       settings,
     });
     if (slugs.length === 0) {
+      await runRequest();
       ctx.log("evidence.refresh_batch", counts);
       return { done: true };
     }
@@ -78,6 +125,8 @@ export async function refreshProductEvidenceJob(
         counts.eventsInserted += result.eventsInserted;
         counts.mediaInserted += result.mediaInserted;
         if (!result.complete) {
+          requestTurn = true;
+          if (pendingRequest) await saveCursor();
           completedPage = false;
           break;
         }
@@ -89,7 +138,9 @@ export async function refreshProductEvidenceJob(
         });
       }
       afterSlug = slug;
-      await ctx.save({ afterSlug });
+      requestTurn = true;
+      await saveCursor();
+      await runRequest();
     }
     if (!completedPage) break;
     if (slugs.length < settings.batchSize) {
@@ -99,5 +150,7 @@ export async function refreshProductEvidenceJob(
   }
 
   ctx.log("evidence.refresh_batch", counts);
-  return { done: false, cursor: afterSlug ? { afterSlug } : ctx.cursor };
+  return { done: false, cursor: pendingRequest
+    ? { ...(afterSlug ? { afterSlug } : {}), requestTurn }
+    : afterSlug ? { afterSlug } : ctx.cursor };
 }

@@ -1,4 +1,5 @@
 import { isDeepStrictEqual } from "node:util";
+import { createHash } from "node:crypto";
 import {
   and,
   asc,
@@ -19,13 +20,14 @@ import {
   productMediaDeclarations,
   products,
 } from "@/lib/db/schema";
-import type { LinkKind } from "@/lib/db/product-evidence-schema";
+import type { LinkKind, ProductRefreshProgress } from "@/lib/db/product-evidence-schema";
 import { fetchCapped } from "@/lib/net/fetch";
 import { fetchAndNormalizeImage } from "@/lib/domain/media/images";
 import { markProductMediaMissing, observeProductMedia } from "@/lib/domain/media/repository";
 import type { NormalizedImageAsset } from "@/lib/domain/media/storage";
 import {
   withProductGeneration,
+  ProductGenerationChangedError,
 } from "@/lib/domain/products/generation";
 import type { EvidenceSettings } from "./settings";
 import { currentEvidenceSettings } from "./settings-store";
@@ -112,6 +114,7 @@ export type DeclaredEvidenceSource = {
   attempts: number;
   normalizedFacts: Record<string, unknown> | null;
   lastSuccessAt: Date | null;
+  retryAt?: Date | null;
 };
 
 type MediaSource = {
@@ -140,6 +143,7 @@ export type ProductEvidenceRefreshResult = EvidenceSourceResult & {
   sourcesAttempted: number;
   sourcesFailed: number;
   complete: boolean;
+  nextAttemptAt?: Date;
 };
 
 export type EvidenceRefreshDependencies = {
@@ -162,7 +166,20 @@ export type EvidenceRefreshOptions = {
   now?: Date;
   hasBudget?: () => boolean;
   dependencies?: EvidenceRefreshDependencies;
+  productId?: number;
+  progress?: ProductRefreshProgress;
+  saveProgress?: (progress: ProductRefreshProgress) => Promise<void>;
 };
+
+/** A URL or declaration revision change must not inherit another input's completion. */
+export function evidenceRefreshKey(source: Pick<DeclaredEvidenceSource, "kind" | "sourceKey" | "sourceUrl">): string {
+  return createHash("sha256").update(JSON.stringify(["source", source.kind, source.sourceKey, source.sourceUrl])).digest("hex");
+}
+
+export function mediaRefreshKey(source: Pick<MediaSource, "sourceUrl" | "declarationId" | "declarationRevision">): string {
+  return createHash("sha256").update(JSON.stringify(["media", source.sourceUrl,
+    source.declarationId, source.declarationRevision])).digest("hex");
+}
 
 function intervalHours(kind: LinkKind, settings: EvidenceSettings): number {
   return settings[EVIDENCE_KINDS[kind].interval];
@@ -243,6 +260,7 @@ async function declaredSources(
   slug: string,
   now: Date,
   force: boolean,
+  progress?: ProductRefreshProgress,
 ): Promise<DeclaredEvidenceSource[]> {
   const rows = await db.select({
     productId: products.id,
@@ -255,6 +273,7 @@ async function declaredSources(
     lastSuccessAt: productEvidenceSources.lastSuccessAt,
     sourceId: productEvidenceSources.id,
     nextAttemptAt: productEvidenceSources.nextAttemptAt,
+    lastErrorCode: productEvidenceSources.lastErrorCode,
   })
     .from(productLinks)
     .innerJoin(products, eq(products.slug, productLinks.slug))
@@ -270,6 +289,7 @@ async function declaredSources(
     .orderBy(asc(productLinks.id));
   return rows.flatMap((row) => (
     force || row.sourceId === null || (row.nextAttemptAt && row.nextAttemptAt <= now)
+      || (progress && (row.lastErrorCode || progress.retryAfterByKey[evidenceRefreshKey(row)]))
       ? [{
           productId: row.productId,
           slug: row.slug,
@@ -279,6 +299,7 @@ async function declaredSources(
           attempts: row.attempts ?? 0,
           normalizedFacts: row.normalizedFacts ?? null,
           lastSuccessAt: row.lastSuccessAt ?? null,
+          retryAt: row.lastErrorCode && row.nextAttemptAt && row.nextAttemptAt > now ? row.nextAttemptAt : null,
         }]
       : []
   ));
@@ -289,6 +310,7 @@ async function mediaSources(
   now: Date,
   force: boolean,
   settings: EvidenceSettings,
+  progress?: ProductRefreshProgress,
 ): Promise<MediaSource[]> {
   const dueBefore = new Date(now.getTime() - settings.linkCheckHours * 60 * 60 * 1000);
   const [declared, observed] = await Promise.all([
@@ -300,11 +322,12 @@ async function mediaSources(
       position: productMediaDeclarations.position,
       declarationId: productMediaDeclarations.id,
       declarationRevision: productMediaDeclarations.revision,
+      nextAttemptAt: productMediaDeclarations.nextAttemptAt,
     }).from(productMediaDeclarations)
       .innerJoin(products, eq(products.slug, productMediaDeclarations.slug))
       .where(and(
         eq(productMediaDeclarations.slug, slug),
-        force ? undefined : lte(productMediaDeclarations.nextAttemptAt, now),
+        force || progress ? undefined : lte(productMediaDeclarations.nextAttemptAt, now),
       )).orderBy(asc(productMediaDeclarations.position), asc(productMediaDeclarations.id)),
     db.select({
       productId: products.id,
@@ -314,16 +337,19 @@ async function mediaSources(
       position: productMedia.position,
       declarationId: sql<number | null>`null`,
       declarationRevision: sql<number | null>`null`,
+      nextAttemptAt: productMedia.lastObservedAt,
     }).from(productMedia)
       .innerJoin(products, eq(products.slug, productMedia.slug))
       .where(and(
         eq(productMedia.slug, slug),
         eq(productMedia.current, true),
-        force ? undefined : lte(productMedia.lastObservedAt, dueBefore),
+        force || progress ? undefined : lte(productMedia.lastObservedAt, dueBefore),
       )).orderBy(asc(productMedia.position), asc(productMedia.id)),
   ]);
   const sources = new Map<string, MediaSource>();
   for (const source of [...declared, ...observed]) {
+    const due = source.declarationId === null ? source.nextAttemptAt <= dueBefore : source.nextAttemptAt <= now;
+    if (!force && !due && !progress?.retryAfterByKey[mediaRefreshKey(source)]) continue;
     if (!sources.has(source.sourceUrl)) sources.set(source.sourceUrl, source);
   }
   return [...sources.values()];
@@ -536,27 +562,75 @@ export async function refreshProductEvidence(
   const dependencies = options.dependencies ?? {};
   const now = options.now ?? (dependencies.now ?? (() => new Date()))();
   if (!Number.isFinite(now.getTime())) throw new Error("invalid refresh timestamp");
+  if (options.productId !== undefined) await withProductGeneration(slug, options.productId, async () => {});
   const settings = await currentEvidenceSettings();
+  const progress: ProductRefreshProgress | undefined = options.progress ? {
+    completedKeys: [...options.progress.completedKeys], retryAfterByKey: { ...options.progress.retryAfterByKey },
+  } : undefined;
+  const force = options.force ?? false;
   const [sources, media] = await Promise.all([
-    declaredSources(slug, now, options.force ?? false),
-    mediaSources(slug, now, options.force ?? false, settings),
+    declaredSources(slug, now, force, progress),
+    mediaSources(slug, now, force, settings, progress),
   ]);
+  if (options.productId !== undefined && [...sources, ...media].some(source => source.productId !== options.productId)) {
+    throw new ProductGenerationChangedError();
+  }
   const totals: ProductEvidenceRefreshResult = {
-    sourcesAttempted: 0,
-    sourcesFailed: 0,
-    factsChanged: 0,
-    eventsInserted: 0,
-    mediaInserted: 0,
-    complete: true,
+    sourcesAttempted: 0, sourcesFailed: 0, factsChanged: 0, eventsInserted: 0, mediaInserted: 0, complete: true,
+  };
+  const completed = new Set(progress?.completedKeys ?? []);
+  const persist = async (key: string, retry?: Date) => {
+    if (!progress) return;
+    if (retry) progress.retryAfterByKey[key] = retry.toISOString();
+    else {
+      completed.add(key);
+      delete progress.retryAfterByKey[key];
+    }
+    progress.completedKeys = [...completed];
+    await options.saveProgress?.(progress);
+  };
+  const waiting = (key: string) => {
+    const retry = progress?.retryAfterByKey[key];
+    return retry && new Date(retry) > now;
+  };
+  const finish = async (budgetEnded = false) => {
+    if (!progress) return totals;
+    // Re-read declarations so an edit during external I/O remains pending in this request.
+    const [currentSources, currentMedia] = await Promise.all([
+      declaredSources(slug, now, force, progress), mediaSources(slug, now, force, settings, progress),
+    ]);
+    const keys = [...currentSources.map(evidenceRefreshKey), ...currentMedia.map(mediaRefreshKey)];
+    const currentKeys = new Set(keys);
+    progress.completedKeys = progress.completedKeys.filter(key => currentKeys.has(key));
+    progress.retryAfterByKey = Object.fromEntries(Object.entries(progress.retryAfterByKey)
+      .filter(([key]) => currentKeys.has(key)));
+    const pending = keys.filter(key => !completed.has(key));
+    totals.complete = !budgetEnded && pending.length === 0;
+    if (!totals.complete) {
+      const waits = pending.map(key => new Date(progress.retryAfterByKey[key] ?? now).getTime());
+      totals.nextAttemptAt = new Date(Math.max(now.getTime(), Math.min(...waits, ...(budgetEnded ? [now.getTime()] : []))));
+    }
+    await options.saveProgress?.(progress);
+    return totals;
   };
 
   for (const source of sources) {
+    const key = evidenceRefreshKey(source);
+    if (completed.has(key) || waiting(key)) continue;
+    if (source.retryAt && source.retryAt > now) {
+      // Force bypasses normal freshness intervals, never an upstream failure/cooldown.
+      if (progress) await persist(key, source.retryAt);
+      else { totals.complete = false; totals.nextAttemptAt = source.retryAt; }
+      continue;
+    }
     if (options.hasBudget && !options.hasBudget()) {
       totals.complete = false;
-      return totals;
+      return finish(true);
     }
     totals.sourcesAttempted += 1;
     const startedAt = performance.now();
+    let retry: Date | undefined;
+    let partial = false;
     try {
       const result = dependencies.refreshSource
         ? await dependencies.refreshSource(source)
@@ -564,89 +638,73 @@ export async function refreshProductEvidence(
       totals.factsChanged += result.factsChanged;
       totals.eventsInserted += result.eventsInserted;
       totals.mediaInserted += result.mediaInserted;
-      if ("failed" in result && result.failed) totals.sourcesFailed += 1;
-      dependencies.log?.("evidence.source_refresh", {
-        sourceKind: source.kind,
-        slug,
-        durationMs: Math.max(0, Math.round(performance.now() - startedAt)),
-        outcome: "complete" in result && result.complete === false
-          ? "deferred"
-          : "failed" in result && result.failed ? "failed" : "succeeded",
-        httpClass: "httpClass" in result ? result.httpClass : "ok",
-        factsChanged: result.factsChanged,
-        eventsInserted: result.eventsInserted,
-        mediaInserted: result.mediaInserted,
-      });
-      if ("complete" in result && result.complete === false) {
-        totals.complete = false;
-        return totals;
+      const failed = "failed" in result && Boolean(result.failed);
+      if (failed) {
+        totals.sourcesFailed += 1;
+        const [stored] = await db.select({ nextAttemptAt: productEvidenceSources.nextAttemptAt })
+          .from(productEvidenceSources).where(and(eq(productEvidenceSources.slug, slug),
+            eq(productEvidenceSources.kind, source.kind), eq(productEvidenceSources.sourceKey, source.sourceKey))).limit(1);
+        retry = stored?.nextAttemptAt && stored.nextAttemptAt > now ? stored.nextAttemptAt : retryAt(now, source.attempts + 1, settings);
       }
-    } catch {
+      partial = "complete" in result && result.complete === false;
+      dependencies.log?.("evidence.source_refresh", {
+        sourceKind: source.kind, slug, durationMs: Math.max(0, Math.round(performance.now() - startedAt)),
+        outcome: partial ? "deferred" : failed ? "failed" : "succeeded",
+        httpClass: "httpClass" in result ? result.httpClass : "ok",
+        factsChanged: result.factsChanged, eventsInserted: result.eventsInserted, mediaInserted: result.mediaInserted,
+      });
+    } catch (error) {
+      if (error instanceof ProductGenerationChangedError) throw error;
       totals.sourcesFailed += 1;
       await markSourceFailure(source, now, settings, "collection_failed");
+      retry = retryAt(now, source.attempts + 1, settings);
       dependencies.log?.("evidence.source_refresh", {
-        sourceKind: source.kind,
-        slug,
-        durationMs: Math.max(0, Math.round(performance.now() - startedAt)),
-        outcome: "failed",
-        httpClass: "error",
-        factsChanged: 0,
-        eventsInserted: 0,
-        mediaInserted: 0,
+        sourceKind: source.kind, slug, durationMs: Math.max(0, Math.round(performance.now() - startedAt)),
+        outcome: "failed", httpClass: "error", factsChanged: 0, eventsInserted: 0, mediaInserted: 0,
       });
     }
+    if (partial) { totals.complete = false; return finish(true); }
+    // Progress writes sit outside the collector catch: losing ownership must abort the tick.
+    await persist(key, retry);
   }
   for (const source of media) {
+    const key = mediaRefreshKey(source);
+    if (completed.has(key) || waiting(key)) continue;
     if (options.hasBudget && !options.hasBudget()) {
       totals.complete = false;
-      return totals;
+      return finish(true);
     }
     totals.sourcesAttempted += 1;
     const startedAt = performance.now();
+    let retry: Date | undefined;
     try {
       const result = await collectMedia(source, now, dependencies);
       if (source.declarationId !== null) {
         await db.update(productMediaDeclarations).set({
-          nextAttemptAt: new Date(now.getTime() + settings.linkCheckHours * 60 * 60 * 1_000),
-          updatedAt: now,
-        }).where(and(
-          eq(productMediaDeclarations.id, source.declarationId),
-          eq(productMediaDeclarations.revision, source.declarationRevision!),
-        ));
+          nextAttemptAt: new Date(now.getTime() + settings.linkCheckHours * 60 * 60 * 1_000), updatedAt: now,
+        }).where(and(eq(productMediaDeclarations.id, source.declarationId),
+          eq(productMediaDeclarations.revision, source.declarationRevision!)));
       }
       totals.mediaInserted += result.mediaInserted;
       dependencies.log?.("evidence.source_refresh", {
-        sourceKind: "media",
-        slug,
-        durationMs: Math.max(0, Math.round(performance.now() - startedAt)),
-        outcome: "succeeded",
-        httpClass: "ok",
-        factsChanged: 0,
-        eventsInserted: 0,
-        mediaInserted: result.mediaInserted,
+        sourceKind: "media", slug, durationMs: Math.max(0, Math.round(performance.now() - startedAt)),
+        outcome: "succeeded", httpClass: "ok", factsChanged: 0, eventsInserted: 0, mediaInserted: result.mediaInserted,
       });
-    } catch {
+    } catch (error) {
+      if (error instanceof ProductGenerationChangedError) throw error;
       totals.sourcesFailed += 1;
+      retry = new Date(now.getTime() + 6 * 60 * 60 * 1_000);
       if (source.declarationId !== null) {
-        await db.update(productMediaDeclarations).set({
-          nextAttemptAt: new Date(now.getTime() + 6 * 60 * 60 * 1_000),
-          updatedAt: now,
-        }).where(and(
-          eq(productMediaDeclarations.id, source.declarationId),
-          eq(productMediaDeclarations.revision, source.declarationRevision!),
+        await db.update(productMediaDeclarations).set({ nextAttemptAt: retry, updatedAt: now }).where(and(
+          eq(productMediaDeclarations.id, source.declarationId), eq(productMediaDeclarations.revision, source.declarationRevision!),
         ));
       }
       dependencies.log?.("evidence.source_refresh", {
-        sourceKind: "media",
-        slug,
-        durationMs: Math.max(0, Math.round(performance.now() - startedAt)),
-        outcome: "failed",
-        httpClass: "error",
-        factsChanged: 0,
-        eventsInserted: 0,
-        mediaInserted: 0,
+        sourceKind: "media", slug, durationMs: Math.max(0, Math.round(performance.now() - startedAt)),
+        outcome: "failed", httpClass: "error", factsChanged: 0, eventsInserted: 0, mediaInserted: 0,
       });
     }
+    await persist(key, retry);
   }
-  return totals;
+  return finish();
 }
