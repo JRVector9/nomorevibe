@@ -5,6 +5,7 @@ import { crawlCandidates, crawlDocuments, crawlSettings, crawlReviewAttempts,
   agentRepositoryScans, agentRepositoryObservations,
   type CrawlCandidate, type CrawlDocument, type CrawlReviewAttempt } from "@/lib/db/schema";
 import type { ProductTransaction } from "@/lib/domain/products/generation";
+import { lockRepositoryAgentEvidence } from "@/lib/domain/evidence/agents/lock";
 import { assertJobLease, type JobLease } from "@/lib/jobs/control";
 import { mergeWithDefaults } from "./settings";
 import type { CrawlSettings } from "./settings-schema";
@@ -28,13 +29,14 @@ export async function loadReviewInput(
     observations: observations.map(row => ({ id: `observation:${row.id}`, observation: row.facts })) });
 }
 
-/** All callers lock candidate → document → settings → scan → lease, with no network while locked. */
+/** Lock candidate → document → settings → repository identity → scan → lease, with no network. */
 async function currentReviewInput(tx: ProductTransaction, expected: {
   candidate: CrawlCandidate; document: CrawlDocument; settings: CrawlSettings; input: ReviewInput; lease: JobLease;
 }): Promise<ReviewInput | null> {
   const [candidate] = await tx.select().from(crawlCandidates).where(eq(crawlCandidates.id, expected.candidate.id)).for("update");
   const [document] = await tx.select().from(crawlDocuments).where(eq(crawlDocuments.id, expected.document.id)).for("share");
   const [settingsRow] = await tx.select().from(crawlSettings).where(eq(crawlSettings.id, 1)).for("share");
+  await lockRepositoryAgentEvidence(tx, expected.candidate.repo);
   const [scan] = await tx.select().from(agentRepositoryScans).where(and(
     eq(agentRepositoryScans.repositoryKey, expected.candidate.repo.toLowerCase()), eq(agentRepositoryScans.scope, ""),
   )).orderBy(desc(agentRepositoryScans.startedAt), desc(agentRepositoryScans.id)).limit(1).for("share");
@@ -216,6 +218,7 @@ export async function assertReviewApproval(tx: ProductTransaction, input: {
     await assertJobLease(tx, input.lease);
     return null;
   }
+  await lockRepositoryAgentEvidence(tx, input.candidate.repo);
   const [scan] = await tx.select().from(agentRepositoryScans).where(and(
     eq(agentRepositoryScans.repositoryKey, input.candidate.repo.toLowerCase()), eq(agentRepositoryScans.scope, ""),
   )).orderBy(desc(agentRepositoryScans.startedAt), desc(agentRepositoryScans.id)).limit(1).for("share");

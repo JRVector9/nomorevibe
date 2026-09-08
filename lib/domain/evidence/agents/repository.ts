@@ -6,6 +6,7 @@ import { agentRepositoryScans, agentRepositoryObservations, crawlDiscoveryEviden
 import { withProductGeneration } from '@/lib/domain/products/generation';
 import { agentObservationSchema, AGENT_DETECTOR_VERSION, type AgentObservation } from './types';
 import { collectRepositoryAgentEvidence, normalizeAgentRepositoryKey, type CollectResult, type AgentGitHubRequest } from './collect';
+import { lockRepositoryAgentEvidence } from './lock';
 const DAY = 24 * 60 * 60 * 1000;
 const digest = (input: unknown) => createHash('sha256').update(JSON.stringify(input)).digest('hex');
 const observationKey = (observation: AgentObservation) => digest(Object.keys(observation).sort().map(key => [key, observation[key as keyof AgentObservation]]));
@@ -46,6 +47,7 @@ export async function saveRepositoryAgentScan(result: CollectResult, now = new D
   })) throw new Error('invalid agent observation');
   const nextAttemptAt = result.retryAt && result.retryAt > now ? result.retryAt : new Date(now.getTime() + (result.state === 'complete' || result.cursor?.coverageLimited && !result.cursor.pendingTrees.length && !result.cursor.pendingBlobs.length && !result.cursor.pendingCommits?.length ? DAY : result.errorCode ? 15 * 60_000 : 60_000));
   return db.transaction(async tx => {
+    await lockRepositoryAgentEvidence(tx, result.repositoryKey, result.scope);
     const [scan] = await tx.insert(agentRepositoryScans).values({ githubRepositoryId: BigInt(result.repositoryId!), repositoryKey: result.repositoryKey, commitSha: result.commitSha!, detectorVersion: AGENT_DETECTOR_VERSION, scope: result.scope, scopeHash: digest(result.scope), state: result.state, cursor: result.cursor, requestCount: result.requestCount, fileCount: result.fileCount, coverage: { limited: result.cursor?.coverageLimited ?? false }, startedAt: now, completedAt: result.state === 'complete' ? now : null, lastErrorCode: result.errorCode, nextAttemptAt }).onConflictDoUpdate({ target: [agentRepositoryScans.githubRepositoryId, agentRepositoryScans.commitSha, agentRepositoryScans.detectorVersion, agentRepositoryScans.scopeHash], set: { state: sql`CASE WHEN ${agentRepositoryScans.state} = 'complete' THEN 'complete' ELSE ${result.state} END`, cursor: sql`CASE WHEN ${agentRepositoryScans.state} = 'complete' THEN NULL ELSE ${JSON.stringify(result.cursor)}::jsonb END`, requestCount: sql`${agentRepositoryScans.requestCount} + ${result.requestCount}`, fileCount: sql`${agentRepositoryScans.fileCount} + ${result.fileCount}`, startedAt: now, completedAt: result.state === 'complete' ? now : sql`${agentRepositoryScans.completedAt}`, lastErrorCode: result.errorCode, nextAttemptAt } }).returning();
     for (const facts of observations) await tx.insert(agentRepositoryObservations).values({ scanId: scan.id, observationKey: observationKey(facts), facts }).onConflictDoNothing();
     return scan;

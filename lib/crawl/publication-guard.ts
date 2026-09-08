@@ -7,6 +7,7 @@ import { mergeWithDefaults } from "./settings";
 import type { CrawlSettings } from "./settings-schema";
 import { assertJobLease, type JobLease } from "@/lib/jobs/control";
 import { assertReviewApproval, ReviewApprovalChangedError } from "./agent-review-repository";
+import { lockRepositoryAgentEvidence } from "@/lib/domain/evidence/agents/lock";
 
 export class PublicationStateChangedError extends Error {
   constructor() { super("publication_state_changed"); }
@@ -49,6 +50,7 @@ export async function guardPublication(tx: ProductTransaction, input: {
     {candidate:input.candidate,document:input.document,settings:input.settings},
     {candidate,document,settings:mergeWithDefaults(settingsRow?.values)},
   );
+  await lockRepositoryAgentEvidence(tx, input.candidate.repo);
   if (input.scanId !== null) {
     const now = Date.now();
     const documentAge = now-document.fetchedAt.getTime();
