@@ -184,13 +184,33 @@ describe("빈 화면 문구", () => {
   });
 
   it("정렬을 명시하지 않은 검색은 순위가 아니라 공개 목록 전체에서 찾는다", async () => {
-    getVerifiedList.mockResolvedValue([product("searched-project")]);
+    getPublicList.mockResolvedValue([product("searched-project")]);
 
     const html = await render({ q: "searched" });
 
-    expect(getVerifiedList).toHaveBeenCalled();
+    expect(getPublicList).toHaveBeenCalled();
+    expect(getVerifiedList).not.toHaveBeenCalled();
     expect(getSeasonRanking).not.toHaveBeenCalled();
     expect(html).toContain("searched-project");
+  });
+
+  it("최신 탭은 수집 제품을 포함한 공개 목록을 사용한다", async () => {
+    categoryCounts.mockResolvedValue({ Other: 1_119 });
+    getPublicList.mockResolvedValue([product("seeded-project")]);
+
+    const html = await render({ sort: "recent" });
+
+    expect(getPublicList).toHaveBeenCalled();
+    expect(getVerifiedList).not.toHaveBeenCalled();
+    expect(html).toContain("seeded-project");
+  });
+
+  it("최신 탭의 카테고리와 공개 개수에는 수집 제품을 포함한다", async () => {
+    categoryCounts.mockResolvedValue({ Other: 1_119 });
+
+    await render({ sort: "recent" });
+
+    expect(categoryCounts).toHaveBeenCalledWith(["verified", "seeded"]);
   });
 
   it("미클레임 목록이 붙으면 등록부터 하라고 말하지 않는다", async () => {

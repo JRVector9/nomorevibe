@@ -71,7 +71,7 @@ function listFor(
       .then((result) => result.items);
   }
   if (sort === "all-time") return getAllTimeRanking(options);
-  return getVerifiedList(HOME_LIST_LIMIT, { sort: "recent", category, query, builder });
+  return getPublicList(HOME_LIST_LIMIT, { sort: "recent", category, query, builder });
 }
 
 /**
@@ -192,14 +192,21 @@ export default async function HomePage({ searchParams }: Props) {
       logger.warn("home.ranking_unavailable");
       effectiveSort = requestedSort === "weekly" || requestedSort === "trending" ? "recent" : requestedSort;
     }
+    const publicCatalogue = effectiveSort === "recent" || effectiveSort === "open";
     const listPromise = active
       ? listFor(effectiveSort, active, category, query, builder)
-      : effectiveSort === "open"
-        ? getPublicList(HOME_LIST_LIMIT, { sort: "recent", category, query, builder, hasRepository: true })
+      : publicCatalogue
+        ? getPublicList(HOME_LIST_LIMIT, {
+            sort: "recent",
+            category,
+            query,
+            builder,
+            hasRepository: effectiveSort === "open" ? true : undefined,
+          })
         : getVerifiedList(HOME_LIST_LIMIT, { sort: "recent", category, query, builder });
 
     const [loadedCounts, loadedList] = await Promise.all([
-      categoryCounts(["verified"]),
+      categoryCounts(publicCatalogue ? ["verified", "seeded"] : ["verified"]),
       listPromise,
     ]);
     counts = loadedCounts;
