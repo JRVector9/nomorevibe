@@ -19,3 +19,14 @@ it('continues the other job after a failure and bounds sleep', async () => {
   expect(result.failures).toBe(1);
   expect(jobs).toBe(2);
 });
+it('queues a legacy explicit request before consuming it with the shared runner contract', async () => {
+  const events: string[] = [];
+  await runEvidenceWorker({ once: true }, {
+    request: async name => { events.push(`request:${name}`); },
+    run: async (name, options) => { expect(options.requestedOnly).toBe(true); events.push(`run:${name}`); return { status: 'completed' }; },
+  });
+  expect(events).toEqual([
+    'request:product-evidence-refresh', 'run:product-evidence-refresh',
+    'request:agent-evidence-refresh', 'run:agent-evidence-refresh',
+  ]);
+});
