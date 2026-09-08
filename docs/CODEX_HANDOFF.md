@@ -1777,3 +1777,25 @@ docker exec nomorevibe-db-1 psql -U nomorevibe -d nomorevibe -c \
   "select name,requested_version,processed_version,last_error from jobs order by name"
 cat PENDING.md
 ```
+
+## Admin operations HTML concept and Deppy-aibox review — 2026-09-09
+
+- Objective: show all real service roles and jobs in an administrator design; review manual Codex reconnect using Deppy-aibox. User approved the proposed concept with `진행해`; this phase delivers the standalone HTML, not production integration.
+- Completed: four-tab operating-center concept with seven observed services, ten executable jobs, service/search filters, explicit snapshot timestamps, disconnected Codex status, four-step mock reconnection dialog, and proposed manual category selection. No backend/OAuth/job request is sent by the demo controls.
+- Files: `docs/designs/2026-09-09-admin-operations.html`, `docs/superpowers/specs/2026-09-09-admin-operations-design.md`, this handoff.
+- Decisions: reuse `/admin/status` and existing jobs/catalog/queue/review data; distinguish liveness, job completion, disabled AI and model success. Job request versions are not item counts. Missing progress denominator means no percentage. AI failure hold/manual category are proposed changes, not existing policy. Container runtime/AI metadata requires central observations. Do not mount Docker socket into the web.
+- Aibox review: private repo pinned to `814144a2d37cb60359486219393f93f32c7267fc`, checkout `/private/tmp/deppy-aibox-review.2Ncv9E`. Build → 64 actual tests → typecheck PASS in prior review. No live OAuth/refresh/Spark entitlement validation was performed. The design identifies whole auth.json retention, atomic generation/refresh ownership, webhook replay/schema/provider binding, version pin and real admin session requirements.
+- Actual HTML checks: Playwright HTTP200; 1440/1024/768/390 widths across all four tabs without page overflow; role filter/search/empty state; request demo; four reconnect stages and Escape; manual missing-category/selected-category feedback; 0 page errors. Desktop and mobile screenshots visually inspected. Mobile notice changed to a stacked button layout after inspection.
+- Failed approaches: port 8767 occupied, used loopback 8879. First manual selection test found malformed option markup; explicit option elements/values repaired, complete interaction rerun passed. Prior Aibox invocation had wrong cwd; test-before-build produced zero tests. Correct build-first results are recorded in the design document.
+- Preview server: Python http.server session 30614, loopback port 8879; serves only docs/designs. Screenshots `/tmp/nomorevibe-ops-{1440,1024,768,390}.png`, `/tmp/nomorevibe-ops-connect.png`.
+- Remaining: user design feedback, then scoped production implementation plan and integration. Real runtime settings, credentials and fallback publication policy are unchanged. Preserve existing unrelated local edits and stash.
+
+Exact next commands:
+```sh
+cd /Users/jr/Desktop/projects/nomorevibe
+git status --short --branch
+open http://127.0.0.1:8879/2026-09-09-admin-operations.html
+cat docs/superpowers/specs/2026-09-09-admin-operations-design.md
+# If preview server has stopped:
+python3 -m http.server 8879 --bind 127.0.0.1 --directory docs/designs
+```
