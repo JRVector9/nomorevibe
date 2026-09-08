@@ -140,6 +140,21 @@ export async function markFrontier(
     .where(eq(crawlFrontier.repo, repo));
 }
 
+/** Return only this batch's still-owned claims; quota/budget waits are not failed attempts. */
+export async function deferFrontier(entries: FrontierEntry[], retryAt?: Date): Promise<void> {
+  if (entries.length === 0) return;
+  const at = nowExpr();
+  await db.update(crawlFrontier).set({
+    state: "pending",
+    attempts: sql`greatest(0, ${crawlFrontier.attempts} - 1)`,
+    nextAttemptAt: retryAt ? sql`greatest(${at}, ${retryAt.toISOString()}::timestamp)` : at,
+    updatedAt: at,
+  }).where(sql`${crawlFrontier.state} = 'fetching' and (${sql.join(entries.map(entry => sql`(
+    ${crawlFrontier.id} = ${entry.id} and ${crawlFrontier.attempts} = ${entry.attempts}
+    and date_trunc('milliseconds', ${crawlFrontier.nextAttemptAt}) = ${entry.nextAttemptAt.toISOString()}::timestamp
+  )`), sql` or `)})`);
+}
+
 /**
  * 실패 기록. 재시도가 남았으면 백오프로 미루고, 소진되면 failed로 내린다.
  * 일시적 장애(rate limit, 네트워크)와 영구적 실패를 같게 다루면 큐가 막히거나 영원히 돈다.

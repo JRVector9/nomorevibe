@@ -1,5 +1,6 @@
 import { logger } from "@/lib/observability/logger";
 import { readBodyStrictlyCapped } from "@/lib/net/fetch";
+import { githubCooldown, githubResource, readGitHubCooldown, recordGitHubCooldown } from "./github-quota";
 
 /**
  * GitHub API — 수집기가 쓰는 만큼만.
@@ -63,8 +64,12 @@ export async function githubRequest<T>(
     || decoded.split("/").some((part) => part === "." || part === "..")) {
     return { ok: false, error: { kind: "invalid_response" } };
   }
+  const token = requireToken();
+  const resource = githubResource(path);
+  const waitingUntil = await readGitHubCooldown(token, resource);
+  if (waitingUntil) return { ok: false, error: { kind: "rate_limited", resetAt: waitingUntil } };
   const headers: Record<string, string> = {
-    Authorization: `Bearer ${requireToken()}`,
+    Authorization: `Bearer ${token}`,
     Accept: "application/vnd.github+json",
     "user-agent": "NoMoreVibe/1.0 (+https://nomorevibe.app)",
   };
@@ -80,6 +85,24 @@ export async function githubRequest<T>(
     });
   } catch {
     return { ok: false, error: { kind: "transport" } };
+  }
+
+  // A successful response can consume the last primary request. Persist it while retaining its body.
+  let cooldown = githubCooldown(res.status, res.headers);
+  if (res.status === 403 && !cooldown?.secondary) {
+    // GitHub also reports secondary limits in the error message without Retry-After.
+    try {
+      const body = await readBodyStrictlyCapped(res, GITHUB_RESPONSE_MAX_BYTES);
+      const message = body ? (JSON.parse(body.toString("utf8")) as { message?: unknown }).message : null;
+      cooldown = githubCooldown(res.status, res.headers, new Date(), typeof message === "string"
+        && /secondary rate limit|abuse detection/i.test(message));
+    } catch { /* The status remains an ordinary HTTP failure when the error body is invalid. */ }
+  }
+  const resetAt = cooldown ? await recordGitHubCooldown(token, resource, cooldown) : null;
+  if (cooldown && (res.status === 403 || res.status === 429)) {
+    await res.body?.cancel().catch(() => {});
+    logger.warn("github.rate_limited", { path, resetAt: resetAt?.toISOString(), secondary: cooldown.secondary });
+    return { ok: false, error: { kind: "rate_limited", resetAt } };
   }
 
   const responseHeaders = {
@@ -109,25 +132,6 @@ export async function githubRequest<T>(
   }
 
   if (res.status === 404) return { ok: false, error: { kind: "not_found" } };
-
-  /**
-   * 한도는 두 종류다. 1차 한도 소진은 403/429에 x-ratelimit-remaining이 0이다. 2차 한도
-   * (짧은 시간에 검색을 몰아치면 걸린다)는 1차 한도가 남은 채로 403에 retry-after만 실려 온다.
-   * 후자를 일반 403으로 보면 검색 잡이 그 신호를 이번 사이클에서 통째로 건너뛴다 — 로컬
-   * 배포 시험에서 seed 4틱을 20초에 몰아치자 Codex 신호가 그렇게 빠졌다. 그 밖의 403
-   * (차단된 레포 등)은 여전히 http 실패다.
-   */
-  const remaining = res.headers.get("x-ratelimit-remaining");
-  const retryAfterSeconds = Number(res.headers.get("retry-after"));
-  const secondaryLimit = Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0;
-  if (res.status === 429 || (res.status === 403 && (remaining === "0" || secondaryLimit))) {
-    const resetSeconds = Number(res.headers.get("x-ratelimit-reset"));
-    const resetAt = Number.isFinite(resetSeconds) && resetSeconds > 0
-      ? new Date(resetSeconds * 1000)
-      : secondaryLimit ? new Date(Date.now() + retryAfterSeconds * 1000) : null;
-    logger.warn("github.rate_limited", { path, resetAt, secondary: secondaryLimit && remaining !== "0" });
-    return { ok: false, error: { kind: "rate_limited", resetAt } };
-  }
 
   return { ok: false, error: { kind: "http", status: res.status } };
 }

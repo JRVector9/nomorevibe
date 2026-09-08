@@ -38,18 +38,20 @@ export async function fetchCrawlDocuments(ctx: JobContext<null>): Promise<JobOut
       return { done: true };
     }
 
-    for (const entry of entries) {
+    for (const [index, entry] of entries.entries()) {
+      if (!ctx.hasBudget()) {
+        await crawl.deferFrontier(entries.slice(index));
+        return { done: false };
+      }
       const result = await getRepo(entry.repo);
 
       if (!result.ok) {
         if (result.error.kind === "rate_limited") {
-          /**
-           * 남은 항목은 fetching 상태로 둔 채 물러난다. dequeue가 next_attempt_at이 지난
-           * fetching 항목을 회수하므로 다음 틱이 그대로 이어받는다.
-           */
+          const retryAt = result.error.resetAt ?? new Date(Date.now() + 60_000);
+          await crawl.deferFrontier(entries.slice(index), retryAt);
           ctx.log("crawl.fetch_rate_limited", {
             fetched,
-            resetAt: result.error.resetAt?.toISOString() ?? null,
+            resetAt: retryAt.toISOString(),
           });
           return { done: false };
         }
@@ -67,6 +69,10 @@ export async function fetchCrawlDocuments(ctx: JobContext<null>): Promise<JobOut
         continue;
       }
 
+      if (!ctx.hasBudget()) {
+        await crawl.deferFrontier(entries.slice(index));
+        return { done: false };
+      }
       const repoMeta = result.value;
       const homepage = typeof repoMeta.homepage === "string" ? normalizeUrl(repoMeta.homepage) : null;
       const page = homepage ? await visit(homepage, settings.judge.docsGenerators) : null;
@@ -81,7 +87,7 @@ export async function fetchCrawlDocuments(ctx: JobContext<null>): Promise<JobOut
       await crawl.markFrontier(entry.repo, "done");
       fetched++;
 
-      if (!ctx.hasBudget()) break;
+      // The next iteration releases any unvisited claims when the time budget expires.
     }
   }
 

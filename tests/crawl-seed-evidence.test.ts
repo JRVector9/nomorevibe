@@ -1,8 +1,8 @@
 import { beforeEach, expect, it, vi } from 'vitest';
 import { ADDITIONAL_AGENT_DISCOVERY_QUERIES, DEFAULT_CRAWL_SETTINGS, type CrawlSettings } from '@/lib/crawl/settings-schema';
 import { seedFrontier, type SeedCursor } from '@/lib/crawl/jobs/seed';
-const mocks = vi.hoisted(() => ({enqueue:vi.fn(), search:vi.fn(), record:vi.fn(), settings:null as CrawlSettings|null}));
-vi.mock('@/lib/crawl/repository', () => ({enqueue:mocks.enqueue}));
+const mocks = vi.hoisted(() => ({enqueue:vi.fn(), counts:vi.fn(), search:vi.fn(), record:vi.fn(), settings:null as CrawlSettings|null}));
+vi.mock('@/lib/crawl/repository', () => ({enqueue:mocks.enqueue,frontierCounts:mocks.counts}));
 vi.mock('@/lib/crawl/github', () => ({searchCommits:mocks.search,searchRepositories:mocks.search,SEARCH_PER_PAGE:100,MAX_SEARCH_PAGES:10}));
 vi.mock('@/lib/crawl/settings', () => ({getSettings:async () => mocks.settings,enabledQueries:(settings:CrawlSettings) => settings.discover.queries.filter(q => q.enabled)}));
 vi.mock('@/lib/domain/evidence/agents/repository', () => ({recordDiscoveryEvidence:mocks.record}));
@@ -11,7 +11,23 @@ const page = (items: unknown[], more = {}) => ({ok:true,value:{items,...more}});
 const context = (cursor:SeedCursor|null = null, hasBudget = () => true) => ({cursor,hasBudget,save:vi.fn().mockResolvedValue(undefined),log:vi.fn()});
 beforeEach(() => {
   mocks.enqueue.mockReset().mockResolvedValue(1); mocks.record.mockReset().mockResolvedValue(undefined); mocks.search.mockReset();
+  mocks.counts.mockReset().mockResolvedValue({ pending: 0, fetching: 0 });
   mocks.settings = {...DEFAULT_CRAWL_SETTINGS,enabled:true,discover:{...DEFAULT_CRAWL_SETTINGS.discover,pagesPerTick:1,queries:[{label:'Codex hint',kind:'commits',query:'Co-authored-by: Codex',enabled:true,builder:'Codex',priority:90}]}};
+});
+it('pauses within a saved page at 10000 and resumes below 5000 without refetching', async () => {
+  mocks.counts.mockResolvedValue({ pending: 9998, fetching: 1 });
+  mocks.search.mockResolvedValue(page([commit('acme/one'),commit('acme/two')]));
+  const first = await seedFrontier(context());
+  expect(first.cursor).toMatchObject({ backlogPaused:true,pendingPage:{itemIndex:1} });
+  mocks.counts.mockResolvedValue({ pending: 5001 });
+  const waiting = await seedFrontier(context(first.cursor!));
+  expect(waiting.cursor).toEqual(first.cursor);
+  expect(mocks.enqueue).toHaveBeenCalledTimes(1);
+  mocks.counts.mockResolvedValue({ pending: 5000 });
+  const resumed = await seedFrontier(context(waiting.cursor!));
+  expect(resumed.done).toBe(true);
+  expect(mocks.search).toHaveBeenCalledTimes(1);
+  expect(mocks.enqueue.mock.calls.flatMap(([items]) => items).map(item => item.repo)).toEqual(['acme/one','acme/two']);
 });
 it('does not turn a search hint into a project builder', async () => {
   mocks.search.mockResolvedValue(page([commit('acme/app')]));
