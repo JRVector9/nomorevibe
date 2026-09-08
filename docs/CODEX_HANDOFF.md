@@ -1,5 +1,49 @@
 # Codex handoff
 
+## Existing catalogue restored and independent local crawler activated — 2026-09-08 19:45 KST
+
+- Objective: explain why previously crawled products were absent from the redesigned local page, restore them
+  without data loss, verify the independent crawler against the existing DB, and fix the catalogue query that
+  could hide seeded products again later.
+- Root cause: the accepted redesign at port 43201 intentionally used isolated DB
+  `nomorevibe_workers_local_deploy` with one synthetic verified product. The original port-3200 DB still held
+  1,118 seeded products, 5,336 crawl documents and all candidate history. Its legacy HTTP scheduler was no
+  longer crawling: every request returned 403 because its cron secret differed from the web container.
+- Recovery: created `/tmp/nomorevibe-before-worker-split-20260908.dump` (151 MiB, SHA-256
+  `8bbb4e26f75988fb840c019410925af8f75f0e156a0c888520a830fe99f831ce`), stopped the old web/scheduler,
+  applied additive migrations once, then started the current web and one scheduler/crawler/reviewer/publisher/
+  maintenance process each against the preserved `nomorevibe` DB. All six services are healthy at port 3200.
+  The temporary secret env file was removed; the rollback dump remains on the host.
+- Runtime proof: the DB scheduler requested nine due jobs. The crawler discovered two repositories and fetched
+  both. A bounded judge tick classified one as `passed` and one as `no_homepage`; a publisher tick added
+  `Dark Factory`, bringing seeded products to 1,119. Job requested/processed versions match and last errors are
+  empty. The obsolete isolated web/five-worker set was stopped and removed.
+- AI state: collection is enabled, but automatic AI review is effectively `off`; no `CRAWL_REVIEW_MODEL` is
+  configured and repository agent-evidence collection is disabled in the preserved settings. Publisher category
+  classification attempted Claude and received `Not logged in`, then used the existing deterministic fallback.
+  Configure a valid long-lived Claude token/model and verify `observe` results before enabling `enforce`.
+- Follow-up code: branch `fix/public-catalogue-home` changes the Recent tab and plain search to query both
+  `verified` and `seeded` products and uses the same statuses for category/public totals. This prevents seeded
+  products disappearing once verified products exceed the unclaimed-fill threshold. The regression tests were
+  observed failing first (3 expected failures), then passed after the minimal fix.
+- Actual checks for the follow-up: targeted 1 file/13 tests PASS; full unit 80 files/610 tests PASS;
+  nonincremental TypeScript, ESLint, Playwright 6 tests and Docker runner build PASS. Production-mode browser QA
+  at port 3200 returned 200 for default/recent views, rendered six initial cards, reported
+  `최신 100개 · 공개 1119개`, and had no console/page errors.
+- Remaining: commit/push/CI/merge the small public-catalogue follow-up. AI review and agent evidence remain
+  intentionally inactive until credentials, model and an observed sample are accepted.
+
+Exact next commands:
+
+```sh
+cd /Users/jr/Desktop/projects/nomorevibe-workers
+git diff --check
+git status --short
+docker compose -p nomorevibe ps
+curl -I http://127.0.0.1:3200/
+docker exec nomorevibe-db-1 psql -U nomorevibe -d nomorevibe -c "select status,count(*) from products group by status"
+```
+
 ## Port 3200 home redesign applied, verified and merged — 2026-09-08 19:08 KST
 
 - Objective: inspect the home design running on port 3200, apply that design to the clean current-main
