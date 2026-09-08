@@ -1,0 +1,413 @@
+{
+  "at": "2026-09-08T06:26:44.012Z",
+  "mode": "observe",
+  "sampleSize": 10,
+  "published": 0,
+  "costUsd": 0.1264348,
+  "samples": [
+    {
+      "repo": "TradingGoose/TradingGoose-Studio",
+      "frontier": "done",
+      "fetchedAt": "2026-09-08T05:54:22.458Z",
+      "url": "https://tradinggoose.ai",
+      "pageStatus": 200,
+      "candidateState": "needs_review",
+      "ruleReason": "ai_evidence_insufficient",
+      "reviewHistoryCount": 3,
+      "latestReview": {
+        "id": 27,
+        "state": "succeeded",
+        "provider": "rules",
+        "model": "2026-09-08.2",
+        "attemptNumber": 1,
+        "promptVersion": "2026-09-08.2",
+        "rulesVersion": "2026-09-08.2",
+        "reusedFromAttemptId": null,
+        "inputHash": "e9ecf6f8760f0ee05d3d6ab9fad2cb346debc362148eb86ab44e266116af5e83",
+        "sourceRevisionHash": "413fe137aae6407c13f3283b8d6e533f4e68f467d865d331adf17316b6843ca8",
+        "outcome": {
+          "reason": "개발 근거 확인이 필요합니다 (ai_evidence_insufficient). 현재 수집 내용만으로 승인하거나 부적격으로 확정하지 않습니다.",
+          "decision": "needs_review",
+          "evidenceIds": [
+            "product",
+            "observation:22",
+            "observation:21"
+          ]
+        },
+        "error": null,
+        "evidenceCount": 2,
+        "evidenceSummary": {
+          "reason": "ai_evidence_insufficient",
+          "eligible": false,
+          "executionVerified": false
+        }
+      }
+    },
+    {
+      "repo": "Zhangdroid/drever",
+      "frontier": "done",
+      "fetchedAt": "2026-09-08T05:54:23.170Z",
+      "url": "https://drever.dev",
+      "pageStatus": 200,
+      "candidateState": "needs_review",
+      "ruleReason": "ai_evidence_insufficient",
+      "reviewHistoryCount": 3,
+      "latestReview": {
+        "id": 28,
+        "state": "succeeded",
+        "provider": "rules",
+        "model": "2026-09-08.2",
+        "attemptNumber": 1,
+        "promptVersion": "2026-09-08.2",
+        "rulesVersion": "2026-09-08.2",
+        "reusedFromAttemptId": null,
+        "inputHash": "6c0792578bfb852b08ef37b02569378e7f642b879ed8fa304581f9796ca5fb0a",
+        "sourceRevisionHash": "4f8e87c858ae3d6ff3b4dc8b5489bfec14a72c4219b957a2050f67e1c1dd2b6e",
+        "outcome": {
+          "reason": "개발 근거 확인이 필요합니다 (ai_evidence_insufficient). 현재 수집 내용만으로 승인하거나 부적격으로 확정하지 않습니다.",
+          "decision": "needs_review",
+          "evidenceIds": [
+            "product",
+            "observation:23"
+          ]
+        },
+        "error": null,
+        "evidenceCount": 1,
+        "evidenceSummary": {
+          "reason": "ai_evidence_insufficient",
+          "eligible": false,
+          "executionVerified": false
+        }
+      }
+    },
+    {
+      "repo": "ryanportfolio/lab-demo",
+      "frontier": "done",
+      "fetchedAt": "2026-09-08T05:54:24.216Z",
+      "url": "https://web-production-563b7.up.railway.app",
+      "pageStatus": 200,
+      "candidateState": "needs_review",
+      "ruleReason": "ai_evidence_pending",
+      "reviewHistoryCount": 3,
+      "latestReview": {
+        "id": 21,
+        "state": "succeeded",
+        "provider": "rules",
+        "model": "2026-09-08.2",
+        "attemptNumber": 1,
+        "promptVersion": "2026-09-08.2",
+        "rulesVersion": "2026-09-08.2",
+        "reusedFromAttemptId": null,
+        "inputHash": "ad72de243da9b680d1750191f4d7f1d90ba77598d1224a3e5d9846e53d3d7ba4",
+        "sourceRevisionHash": "357f51f2bc66c0648d77db29dd09fb1dbd28317c6039fe7901b8448f7fcd42a2",
+        "outcome": {
+          "reason": "개발 근거 확인이 필요합니다 (ai_evidence_pending). 현재 수집 내용만으로 승인하거나 부적격으로 확정하지 않습니다.",
+          "decision": "needs_review",
+          "evidenceIds": [
+            "product",
+            "observation:16",
+            "observation:42",
+            "observation:17"
+          ]
+        },
+        "error": null,
+        "evidenceCount": 3,
+        "evidenceSummary": {
+          "reason": "ai_evidence_pending",
+          "eligible": false,
+          "executionVerified": false
+        }
+      }
+    },
+    {
+      "repo": "motioneso/moss",
+      "frontier": "done",
+      "fetchedAt": "2026-09-08T05:54:25.226Z",
+      "url": "https://motioneso.github.io/moss",
+      "pageStatus": 200,
+      "candidateState": "needs_review",
+      "ruleReason": "ambiguous",
+      "reviewHistoryCount": 3,
+      "latestReview": {
+        "id": 22,
+        "state": "succeeded",
+        "provider": "rules",
+        "model": "2026-09-08.2",
+        "attemptNumber": 1,
+        "promptVersion": "2026-09-08.2",
+        "rulesVersion": "2026-09-08.2",
+        "reusedFromAttemptId": null,
+        "inputHash": "8f4858173a06ba781a913fd4f28431cf15a1294d196ac23f03ddda910b338bcf",
+        "sourceRevisionHash": "1cec8c9fc5cdeea65259c29505912201cb5a04ee27b4d539ade1eecae68600e2",
+        "outcome": {
+          "reason": "개발 근거 확인이 필요합니다 (ai_evidence_pending). 현재 수집 내용만으로 승인하거나 부적격으로 확정하지 않습니다.",
+          "decision": "needs_review",
+          "evidenceIds": [
+            "product",
+            "observation:32",
+            "observation:30",
+            "observation:6",
+            "observation:5",
+            "observation:33",
+            "observation:31",
+            "observation:7"
+          ]
+        },
+        "error": null,
+        "evidenceCount": 7,
+        "evidenceSummary": {
+          "reason": "ai_evidence_pending",
+          "eligible": false,
+          "executionVerified": false
+        }
+      }
+    },
+    {
+      "repo": "onlycastle/popdict",
+      "frontier": "done",
+      "fetchedAt": "2026-09-08T05:54:25.896Z",
+      "url": "https://popdict.space",
+      "pageStatus": 200,
+      "candidateState": "needs_review",
+      "ruleReason": "ai_evidence_insufficient",
+      "reviewHistoryCount": 3,
+      "latestReview": {
+        "id": 30,
+        "state": "succeeded",
+        "provider": "rules",
+        "model": "2026-09-08.2",
+        "attemptNumber": 1,
+        "promptVersion": "2026-09-08.2",
+        "rulesVersion": "2026-09-08.2",
+        "reusedFromAttemptId": null,
+        "inputHash": "e9ee613d32bdbd8b6528f2dac2b7b9a7a57563c4a4b774f94f00a195349f4896",
+        "sourceRevisionHash": "736b24da7727d9ad65372a68b84923199dc2e68fcb57436eada56b0839bea2a3",
+        "outcome": {
+          "reason": "개발 근거 확인이 필요합니다 (ai_evidence_insufficient). 현재 수집 내용만으로 승인하거나 부적격으로 확정하지 않습니다.",
+          "decision": "needs_review",
+          "evidenceIds": [
+            "product",
+            "observation:9",
+            "observation:35",
+            "observation:36",
+            "observation:8",
+            "observation:34",
+            "observation:37",
+            "observation:10",
+            "observation:38"
+          ]
+        },
+        "error": null,
+        "evidenceCount": 8,
+        "evidenceSummary": {
+          "reason": "ai_evidence_insufficient",
+          "eligible": false,
+          "executionVerified": false
+        }
+      }
+    },
+    {
+      "repo": "malachuk-josh/rilla-dashboard-clone",
+      "frontier": "done",
+      "fetchedAt": "2026-09-08T05:54:26.868Z",
+      "url": "https://rilla-dashboard-clone.vercel.app",
+      "pageStatus": 200,
+      "candidateState": "needs_review",
+      "ruleReason": "ai_evidence_insufficient",
+      "reviewHistoryCount": 3,
+      "latestReview": {
+        "id": 29,
+        "state": "succeeded",
+        "provider": "rules",
+        "model": "2026-09-08.2",
+        "attemptNumber": 1,
+        "promptVersion": "2026-09-08.2",
+        "rulesVersion": "2026-09-08.2",
+        "reusedFromAttemptId": null,
+        "inputHash": "8636aaff71487f5e40b5dc3839332d43ba3a192cf36d3efd3097a1004287f7fa",
+        "sourceRevisionHash": "7f14d7e0131a4528d5e69bf36f618bbc9cabbfc983d269b0ced92a10fec86467",
+        "outcome": {
+          "reason": "개발 근거 확인이 필요합니다 (ai_evidence_insufficient). 현재 수집 내용만으로 승인하거나 부적격으로 확정하지 않습니다.",
+          "decision": "needs_review",
+          "evidenceIds": [
+            "product"
+          ]
+        },
+        "error": null,
+        "evidenceCount": 0,
+        "evidenceSummary": {
+          "reason": "ai_evidence_insufficient",
+          "eligible": false,
+          "executionVerified": false
+        }
+      }
+    },
+    {
+      "repo": "LEMing/softbox",
+      "frontier": "done",
+      "fetchedAt": "2026-09-08T05:54:27.845Z",
+      "url": "https://leming.github.io/softbox",
+      "pageStatus": 200,
+      "candidateState": "needs_review",
+      "ruleReason": "ambiguous",
+      "reviewHistoryCount": 3,
+      "latestReview": {
+        "id": 23,
+        "state": "succeeded",
+        "provider": "rules",
+        "model": "2026-09-08.2",
+        "attemptNumber": 1,
+        "promptVersion": "2026-09-08.2",
+        "rulesVersion": "2026-09-08.2",
+        "reusedFromAttemptId": null,
+        "inputHash": "77dea322908bdcc5d58d8e6cb7175d0445e8b365c0808823f119a1b670c36000",
+        "sourceRevisionHash": "43cfb20efa91b44ad76c6022bbeaf0f38f984b6330abffc913602769c2096125",
+        "outcome": {
+          "reason": "개발 근거 확인이 필요합니다 (ai_evidence_insufficient). 현재 수집 내용만으로 승인하거나 부적격으로 확정하지 않습니다.",
+          "decision": "needs_review",
+          "evidenceIds": [
+            "product",
+            "observation:4"
+          ]
+        },
+        "error": null,
+        "evidenceCount": 1,
+        "evidenceSummary": {
+          "reason": "ai_evidence_insufficient",
+          "eligible": false,
+          "executionVerified": false
+        }
+      }
+    },
+    {
+      "repo": "koshaji/openclaw",
+      "frontier": "done",
+      "fetchedAt": "2026-09-08T05:54:28.381Z",
+      "url": "https://openclaw.ai",
+      "pageStatus": 200,
+      "candidateState": "needs_review",
+      "ruleReason": "repository_relationship_conflict",
+      "reviewHistoryCount": 3,
+      "latestReview": {
+        "id": 24,
+        "state": "succeeded",
+        "provider": "rules",
+        "model": "2026-09-08.2",
+        "attemptNumber": 1,
+        "promptVersion": "2026-09-08.2",
+        "rulesVersion": "2026-09-08.2",
+        "reusedFromAttemptId": null,
+        "inputHash": "26bd44e2028f7e00c5f5c81431488dac563af9fcdce3d6ecf7618408e76c545a",
+        "sourceRevisionHash": "9349e87c493547ec114554cf684c205248c21d96078f97b16ccf388ad482b90f",
+        "outcome": {
+          "reason": "개발 근거 확인이 필요합니다 (repository_relationship_conflict). 현재 수집 내용만으로 승인하거나 부적격으로 확정하지 않습니다.",
+          "decision": "needs_review",
+          "evidenceIds": [
+            "product",
+            "observation:1",
+            "observation:24",
+            "observation:2",
+            "observation:25",
+            "observation:26",
+            "observation:3",
+            "observation:28",
+            "observation:27"
+          ]
+        },
+        "error": null,
+        "evidenceCount": 9,
+        "evidenceSummary": {
+          "reason": "repository_relationship_conflict",
+          "eligible": false,
+          "executionVerified": false
+        }
+      }
+    },
+    {
+      "repo": "SinhyeokKang/bugshot-2",
+      "frontier": "done",
+      "fetchedAt": "2026-09-08T05:54:28.927Z",
+      "url": "https://bug-shot.com",
+      "pageStatus": 200,
+      "candidateState": "needs_review",
+      "ruleReason": "ai_evidence_pending",
+      "reviewHistoryCount": 3,
+      "latestReview": {
+        "id": 25,
+        "state": "succeeded",
+        "provider": "rules",
+        "model": "2026-09-08.2",
+        "attemptNumber": 1,
+        "promptVersion": "2026-09-08.2",
+        "rulesVersion": "2026-09-08.2",
+        "reusedFromAttemptId": null,
+        "inputHash": "dca5d371f73b46d532a15052a333ca2d98b6efe9f57e18226e5d372325973467",
+        "sourceRevisionHash": "2457a40b68d3774b30a200fc798a6374329bf1df51b185db7c3fef221d572e82",
+        "outcome": {
+          "reason": "개발 근거 확인이 필요합니다 (ai_evidence_pending). 현재 수집 내용만으로 승인하거나 부적격으로 확정하지 않습니다.",
+          "decision": "needs_review",
+          "evidenceIds": [
+            "product",
+            "observation:18",
+            "observation:20",
+            "observation:43",
+            "observation:44",
+            "observation:19",
+            "observation:45"
+          ]
+        },
+        "error": null,
+        "evidenceCount": 6,
+        "evidenceSummary": {
+          "reason": "ai_evidence_pending",
+          "eligible": false,
+          "executionVerified": false
+        }
+      }
+    },
+    {
+      "repo": "Orlando-Villanueva/delight",
+      "frontier": "done",
+      "fetchedAt": "2026-09-08T05:54:30.257Z",
+      "url": "https://mydelight.app",
+      "pageStatus": 200,
+      "candidateState": "needs_review",
+      "ruleReason": "ai_evidence_pending",
+      "reviewHistoryCount": 3,
+      "latestReview": {
+        "id": 26,
+        "state": "succeeded",
+        "provider": "rules",
+        "model": "2026-09-08.2",
+        "attemptNumber": 1,
+        "promptVersion": "2026-09-08.2",
+        "rulesVersion": "2026-09-08.2",
+        "reusedFromAttemptId": null,
+        "inputHash": "897501be0e6f5cd9f97ed075a2abcb55c9aae2af0833a82e4a302afc09c27a17",
+        "sourceRevisionHash": "2f76bed7f4d24e34cb22425a0d17f81ff92c8ed8d361d4411d1a990611d2e2a8",
+        "outcome": {
+          "reason": "개발 근거 확인이 필요합니다 (ai_evidence_pending). 현재 수집 내용만으로 승인하거나 부적격으로 확정하지 않습니다.",
+          "decision": "needs_review",
+          "evidenceIds": [
+            "product",
+            "observation:41",
+            "observation:14",
+            "observation:39",
+            "observation:40",
+            "observation:11",
+            "observation:13",
+            "observation:15",
+            "observation:12"
+          ]
+        },
+        "error": null,
+        "evidenceCount": 8,
+        "evidenceSummary": {
+          "reason": "ai_evidence_pending",
+          "eligible": false,
+          "executionVerified": false
+        }
+      }
+    }
+  ]
+}

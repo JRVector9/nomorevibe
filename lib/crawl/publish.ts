@@ -10,6 +10,8 @@ import { getSettings } from "./settings";
 import { guardPublication, publicationSourceChanged, PublicationStateChangedError } from "./publication-guard";
 import { loadAgentJudgeInput } from "./agent-evidence";
 import { summarizeAgentEvidence, type AgentEvidenceSummary } from "@/lib/domain/evidence/agents/summary";
+import type { JobLease } from "@/lib/jobs/control";
+import { ReviewApprovalChangedError } from "./agent-review-repository";
 
 /**
  * 발행 — 통과한 후보를 목록에 올린다.
@@ -25,9 +27,9 @@ const MAX_SLUG_ATTEMPTS = 4;
 
 export type PublishResult =
   | { ok: true; slug: string }
-  | { ok: false; reason: "no_document" | "no_url" | "already_listed" | "no_description" | "publication_state_changed" | "source_changed" | AgentEvidenceSummary["reason"] };
+  | { ok: false; reason: "no_document" | "no_url" | "already_listed" | "no_description" | "publication_state_changed" | "review_approval_changed" | "source_changed" | AgentEvidenceSummary["reason"] };
 
-export async function publishCandidate(candidate: CrawlCandidate): Promise<PublishResult> {
+export async function publishCandidate(candidate: CrawlCandidate, lease?: JobLease): Promise<PublishResult> {
   const document = await crawl.getDocument(candidate.repo);
   if (!document) return { ok: false, reason: "no_document" };
   if (publicationSourceChanged(candidate,document)) return {ok:false,reason:"source_changed"};
@@ -104,10 +106,11 @@ export async function publishCandidate(candidate: CrawlCandidate): Promise<Publi
          */
         verifyToken: generateVerifyToken(),
         editTokenHash: hashToken(editToken),
-      }, tx => guardPublication(tx, {candidate,document,settings,slug,scanId:checkedEvidence?.scanId ?? null}));
+      }, tx => guardPublication(tx, {candidate,document,settings,slug,scanId:checkedEvidence?.scanId ?? null,lease}));
       break;
     } catch (e) {
       if (e instanceof PublicationStateChangedError) return {ok:false,reason:"publication_state_changed"};
+      if (e instanceof ReviewApprovalChangedError) return {ok:false,reason:"review_approval_changed"};
       const constraint = products.uniqueViolation(e);
       if (constraint === "products_url_unique") {
         // 판정 뒤 메이커가 먼저 등록했다 — 우리가 늦은 것이지 오류가 아니다

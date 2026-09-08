@@ -94,6 +94,10 @@ export async function decideCrawlCandidate(_prev: ReviewState, form: FormData): 
     decision: decision as ReviewDecision,
     reason: String(form.get("reason") ?? ""),
     admin: admin.login,
+    note: String(form.get("note") ?? ""),
+    inputHash: String(form.get("inputHash") ?? ""),
+    sourceRevisionHash: String(form.get("sourceRevisionHash") ?? ""),
+    candidateRevisionHash: String(form.get("candidateRevisionHash") ?? ""),
   });
   if (!result.ok) {
     logger.warn("admin.review_rejected", { login: admin.login, message: result.message });

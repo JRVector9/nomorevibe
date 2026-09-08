@@ -245,6 +245,38 @@ export const productEvidenceAudit = pgTable("product_evidence_audit", {
   createdAt: timestamp("created_at").notNull().defaultNow(),
 }, (table) => [index("product_evidence_audit_slug_time_idx").on(table.slug, table.createdAt.desc())]);
 
+export type ProductRefreshProgress = {
+  completedKeys: string[];
+  retryAfterByKey: Record<string, string>;
+};
+
+/** One request stream per product generation; a newer request never resets the active run. */
+export const productRefreshRequests = pgTable("product_refresh_requests", {
+  productId: integer("product_id").primaryKey(),
+  slug: varchar("slug", { length: 80 }).notNull(),
+  requestedVersion: integer("requested_version").notNull().default(1),
+  completedVersion: integer("completed_version").notNull().default(0),
+  activeVersion: integer("active_version"),
+  force: boolean("force").notNull().default(false),
+  activeForce: boolean("active_force").notNull().default(false),
+  progress: jsonb("progress").$type<ProductRefreshProgress>().notNull()
+    .default({ completedKeys: [], retryAfterByKey: {} }),
+  actor: varchar("actor", { length: 120 }).notNull(),
+  requestedAt: timestamp("requested_at").notNull().defaultNow(),
+  startedAt: timestamp("started_at"),
+  completedAt: timestamp("completed_at"),
+  nextAttemptAt: timestamp("next_attempt_at").notNull().defaultNow(),
+  result: jsonb("result").$type<Record<string, number>>().notNull().default({}),
+  lastError: varchar("last_error", { length: 200 }),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+}, (table) => [
+  index("product_refresh_requests_due_idx").on(table.nextAttemptAt, table.productId)
+    .where(sql`${table.requestedVersion} > ${table.completedVersion}`),
+  index("product_refresh_requests_slug_idx").on(table.slug),
+]);
+
+export type ProductRefreshRequest = typeof productRefreshRequests.$inferSelect;
+
 export const evidenceSettings = pgTable("evidence_settings", {
   id: integer("id").primaryKey().default(1),
   values: jsonb("values").$type<Record<string, unknown>>().notNull(),

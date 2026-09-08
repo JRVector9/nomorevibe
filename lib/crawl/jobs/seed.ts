@@ -9,6 +9,8 @@ import { parseCommitAttributions, type CommitAttribution } from '@/lib/domain/ev
 import { splitSearchWindow, type SearchWindow } from '@/lib/crawl/search-window';
 
 export const MAX_SEED_ATTRIBUTIONS = 8;
+export const SEED_BACKLOG_PAUSE = 10_000;
+export const SEED_BACKLOG_RESUME = 5_000;
 const INCOMPLETE_RETRY_MS = 60 * 60_000;
 const MAX_INCOMPLETE_WINDOWS = 128;
 type PendingItem = {repo:string; sha:string|null; attributions:(CommitAttribution|null)[]; attributionLimited:boolean};
@@ -19,6 +21,7 @@ export type SeedCursor = {
   window?:SearchWindow; cycleWindow?:SearchWindow; pendingWindows?:SearchWindow[];
   retryAt?:string; pendingPage?:PendingPage; windowIncomplete?:boolean;
   incompleteWindows?:IncompleteWindow[]; phase?:'discovery'|'retry';
+  backlogPaused?:boolean;
 };
 const iso = (date:Date) => date.toISOString().replace(/\.\d{3}Z$/, 'Z');
 const sameWindow = (a:SearchWindow,b:SearchWindow) => a.from === b.from && a.to === b.to;
@@ -40,6 +43,16 @@ export async function seedFrontier(ctx:JobContext<SeedCursor>):Promise<JobOutcom
   let cursor:SeedCursor = matches ? structuredClone(ctx.cursor!) : {
     signal:queries[0].label,page:1,queryHash:queryHash(0),configHash,window:initial,cycleWindow:initial,pendingWindows:[],incompleteWindows:[],phase:'discovery',
   };
+  const counts = await crawl.frontierCounts();
+  let backlog = (counts.pending ?? 0) + (counts.fetching ?? 0);
+  const shouldPause = () => backlog >= SEED_BACKLOG_PAUSE || (cursor.backlogPaused === true && backlog > SEED_BACKLOG_RESUME);
+  if (shouldPause()) {
+    cursor.backlogPaused = true;
+    await ctx.save(cursor);
+    ctx.log('crawl.seed_backlog_paused', { backlog, resumeAt: SEED_BACKLOG_RESUME });
+    return { done: false, cursor };
+  }
+  delete cursor.backlogPaused;
   if (cursor.retryAt && Date.parse(cursor.retryAt) > Date.now()) return {done:false,cursor};
   delete cursor.retryAt;
   let discovered = 0;
@@ -137,8 +150,15 @@ export async function seedFrontier(ctx:JobContext<SeedCursor>):Promise<JobOutcom
         await save();
       }
       if (!ctx.hasBudget()) return defer();
-      discovered += await crawl.enqueue([{repo:item.repo,signal:signal.label,builder:null,priority:signal.priority}]);
+      const added = await crawl.enqueue([{repo:item.repo,signal:signal.label,builder:null,priority:signal.priority}]);
+      discovered += added;
+      backlog += added;
       page.itemIndex++; page.attributionIndex = 0;
+      if (backlog >= SEED_BACKLOG_PAUSE) {
+        cursor.backlogPaused = true;
+        ctx.log('crawl.seed_backlog_paused', { backlog, resumeAt: SEED_BACKLOG_RESUME });
+        return defer();
+      }
       await save();
     }
     delete cursor.pendingPage;

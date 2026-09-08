@@ -1,0 +1,717 @@
+{
+  "schemaVersion": 1,
+  "status": "completed",
+  "scope": "Local Docker runtime acceptance; empty dedicated database; crawl and agent review disabled",
+  "observedImage": {
+    "tagAtStart": "nomorevibe-worker:workers-acceptance",
+    "configId": "sha256:1901c81cbb234a8f8558b46e86a9fb9c64e8c2d64d14399811d1f387f467fd59",
+    "shutdownFixIncluded": false
+  },
+  "shutdownFixProbe": {
+    "commit": "0466398b6e4ac751a1a152ba0ee7bc5753ab28bb",
+    "modifiedSupervisorMounted": true,
+    "otherRuntimeFilesFromObservedImage": true,
+    "integratedCommit": "74c60ba"
+  },
+  "continuous": {
+    "startedAt": "2026-09-08T06:10:09.786256+00:00",
+    "endedAt": "2026-09-08T06:40:10.118256+00:00",
+    "elapsedSeconds": 1800.307,
+    "samples": 31,
+    "allSamplesHealthy": true,
+    "maxConnections": 5,
+    "restartCounts": {
+      "scheduler": 0,
+      "crawler": 0,
+      "reviewer": 0,
+      "publisher": 0,
+      "maintenance": 0
+    },
+    "tableCounts": {
+      "products": 0,
+      "frontier": 0,
+      "documents": 0,
+      "candidates": 0,
+      "reviews": 0,
+      "scans": 0
+    },
+    "poolLimitTotal": 15,
+    "poolLimits": {
+      "scheduler": 2,
+      "crawler": 4,
+      "reviewer": 3,
+      "publisher": 3,
+      "maintenance": 3
+    },
+    "memoryLimitMiBPerRole": 512,
+    "cpuLimitPerRole": 0.5,
+    "webServiceForTestDatabase": false,
+    "finalJobs": [
+      {
+        "name": "agent-evidence-refresh",
+        "requestsAdded": 30,
+        "runsAdded": 30,
+        "requestedVersion": 32,
+        "processedVersion": 32,
+        "lastSuccessAt": "2026-09-08T06:40:04.280724",
+        "workerSeenAt": "2026-09-08T06:40:09.285165",
+        "hasError": false,
+        "hasLease": false
+      },
+      {
+        "name": "click-rollup",
+        "requestsAdded": 0,
+        "runsAdded": 0,
+        "requestedVersion": 1,
+        "processedVersion": 1,
+        "lastSuccessAt": "2026-09-08T06:09:00.547084",
+        "workerSeenAt": "2026-09-08T06:40:08.41857",
+        "hasError": false,
+        "hasLease": false
+      },
+      {
+        "name": "crawl-agent-review",
+        "requestsAdded": 30,
+        "runsAdded": 30,
+        "requestedVersion": 32,
+        "processedVersion": 32,
+        "lastSuccessAt": "2026-09-08T06:40:03.418706",
+        "workerSeenAt": "2026-09-08T06:40:08.423417",
+        "hasError": false,
+        "hasLease": false
+      },
+      {
+        "name": "crawl-fetch",
+        "requestsAdded": 30,
+        "runsAdded": 30,
+        "requestedVersion": 32,
+        "processedVersion": 32,
+        "lastSuccessAt": "2026-09-08T06:40:04.262244",
+        "workerSeenAt": "2026-09-08T06:40:09.285165",
+        "hasError": false,
+        "hasLease": false
+      },
+      {
+        "name": "crawl-judge",
+        "requestsAdded": 6,
+        "runsAdded": 6,
+        "requestedVersion": 7,
+        "processedVersion": 7,
+        "lastSuccessAt": "2026-09-08T06:39:03.3105",
+        "workerSeenAt": "2026-09-08T06:40:08.423417",
+        "hasError": false,
+        "hasLease": false
+      },
+      {
+        "name": "crawl-publish",
+        "requestsAdded": 6,
+        "runsAdded": 6,
+        "requestedVersion": 7,
+        "processedVersion": 7,
+        "lastSuccessAt": "2026-09-08T06:39:03.304528",
+        "workerSeenAt": "2026-09-08T06:40:08.41857",
+        "hasError": false,
+        "hasLease": false
+      },
+      {
+        "name": "crawl-seed",
+        "requestsAdded": 2,
+        "runsAdded": 2,
+        "requestedVersion": 3,
+        "processedVersion": 3,
+        "lastSuccessAt": "2026-09-08T06:39:04.092822",
+        "workerSeenAt": "2026-09-08T06:40:09.285165",
+        "hasError": false,
+        "hasLease": false
+      },
+      {
+        "name": "heartbeat",
+        "requestsAdded": 0,
+        "runsAdded": 0,
+        "requestedVersion": 0,
+        "processedVersion": 0,
+        "lastSuccessAt": null,
+        "workerSeenAt": "2026-09-08T06:40:10.050461",
+        "hasError": false,
+        "hasLease": false
+      },
+      {
+        "name": "product-evidence-refresh",
+        "requestsAdded": 30,
+        "runsAdded": 30,
+        "requestedVersion": 32,
+        "processedVersion": 32,
+        "lastSuccessAt": "2026-09-08T06:40:04.27487",
+        "workerSeenAt": "2026-09-08T06:40:09.285165",
+        "hasError": false,
+        "hasLease": false
+      },
+      {
+        "name": "ranking-refresh",
+        "requestsAdded": 0,
+        "runsAdded": 0,
+        "requestedVersion": 1,
+        "processedVersion": 1,
+        "lastSuccessAt": "2026-09-08T06:09:05.586941",
+        "workerSeenAt": "2026-09-08T06:40:08.41857",
+        "hasError": false,
+        "hasLease": false
+      },
+      {
+        "name": "uptime-ping",
+        "requestsAdded": 3,
+        "runsAdded": 3,
+        "requestedVersion": 4,
+        "processedVersion": 4,
+        "lastSuccessAt": "2026-09-08T06:39:04.103566",
+        "workerSeenAt": "2026-09-08T06:40:09.285165",
+        "hasError": false,
+        "hasLease": false
+      }
+    ],
+    "samplesSummary": [
+      {
+        "at": "2026-09-08T06:10:09.953366+00:00",
+        "elapsedSeconds": 0.06,
+        "allHealthy": true,
+        "connections": 5,
+        "restarts": {
+          "scheduler": 0,
+          "crawler": 0,
+          "reviewer": 0,
+          "publisher": 0,
+          "maintenance": 0
+        },
+        "jobErrorCount": 0
+      },
+      {
+        "at": "2026-09-08T06:11:10.195661+00:00",
+        "elapsedSeconds": 60.26,
+        "allHealthy": true,
+        "connections": 5,
+        "restarts": {
+          "scheduler": 0,
+          "crawler": 0,
+          "reviewer": 0,
+          "publisher": 0,
+          "maintenance": 0
+        },
+        "jobErrorCount": 0
+      },
+      {
+        "at": "2026-09-08T06:12:10.429975+00:00",
+        "elapsedSeconds": 120.5,
+        "allHealthy": true,
+        "connections": 5,
+        "restarts": {
+          "scheduler": 0,
+          "crawler": 0,
+          "reviewer": 0,
+          "publisher": 0,
+          "maintenance": 0
+        },
+        "jobErrorCount": 0
+      },
+      {
+        "at": "2026-09-08T06:13:10.622160+00:00",
+        "elapsedSeconds": 180.72,
+        "allHealthy": true,
+        "connections": 5,
+        "restarts": {
+          "scheduler": 0,
+          "crawler": 0,
+          "reviewer": 0,
+          "publisher": 0,
+          "maintenance": 0
+        },
+        "jobErrorCount": 0
+      },
+      {
+        "at": "2026-09-08T06:14:10.826321+00:00",
+        "elapsedSeconds": 240.91,
+        "allHealthy": true,
+        "connections": 5,
+        "restarts": {
+          "scheduler": 0,
+          "crawler": 0,
+          "reviewer": 0,
+          "publisher": 0,
+          "maintenance": 0
+        },
+        "jobErrorCount": 0
+      },
+      {
+        "at": "2026-09-08T06:15:11.069270+00:00",
+        "elapsedSeconds": 301.13,
+        "allHealthy": true,
+        "connections": 5,
+        "restarts": {
+          "scheduler": 0,
+          "crawler": 0,
+          "reviewer": 0,
+          "publisher": 0,
+          "maintenance": 0
+        },
+        "jobErrorCount": 0
+      },
+      {
+        "at": "2026-09-08T06:16:11.309214+00:00",
+        "elapsedSeconds": 361.37,
+        "allHealthy": true,
+        "connections": 5,
+        "restarts": {
+          "scheduler": 0,
+          "crawler": 0,
+          "reviewer": 0,
+          "publisher": 0,
+          "maintenance": 0
+        },
+        "jobErrorCount": 0
+      },
+      {
+        "at": "2026-09-08T06:17:11.521240+00:00",
+        "elapsedSeconds": 421.6,
+        "allHealthy": true,
+        "connections": 5,
+        "restarts": {
+          "scheduler": 0,
+          "crawler": 0,
+          "reviewer": 0,
+          "publisher": 0,
+          "maintenance": 0
+        },
+        "jobErrorCount": 0
+      },
+      {
+        "at": "2026-09-08T06:18:11.713534+00:00",
+        "elapsedSeconds": 481.81,
+        "allHealthy": true,
+        "connections": 5,
+        "restarts": {
+          "scheduler": 0,
+          "crawler": 0,
+          "reviewer": 0,
+          "publisher": 0,
+          "maintenance": 0
+        },
+        "jobErrorCount": 0
+      },
+      {
+        "at": "2026-09-08T06:19:11.919669+00:00",
+        "elapsedSeconds": 542.01,
+        "allHealthy": true,
+        "connections": 5,
+        "restarts": {
+          "scheduler": 0,
+          "crawler": 0,
+          "reviewer": 0,
+          "publisher": 0,
+          "maintenance": 0
+        },
+        "jobErrorCount": 0
+      },
+      {
+        "at": "2026-09-08T06:20:12.139733+00:00",
+        "elapsedSeconds": 602.22,
+        "allHealthy": true,
+        "connections": 5,
+        "restarts": {
+          "scheduler": 0,
+          "crawler": 0,
+          "reviewer": 0,
+          "publisher": 0,
+          "maintenance": 0
+        },
+        "jobErrorCount": 0
+      },
+      {
+        "at": "2026-09-08T06:21:12.407148+00:00",
+        "elapsedSeconds": 662.49,
+        "allHealthy": true,
+        "connections": 5,
+        "restarts": {
+          "scheduler": 0,
+          "crawler": 0,
+          "reviewer": 0,
+          "publisher": 0,
+          "maintenance": 0
+        },
+        "jobErrorCount": 0
+      },
+      {
+        "at": "2026-09-08T06:22:12.634239+00:00",
+        "elapsedSeconds": 722.71,
+        "allHealthy": true,
+        "connections": 5,
+        "restarts": {
+          "scheduler": 0,
+          "crawler": 0,
+          "reviewer": 0,
+          "publisher": 0,
+          "maintenance": 0
+        },
+        "jobErrorCount": 0
+      },
+      {
+        "at": "2026-09-08T06:23:12.865184+00:00",
+        "elapsedSeconds": 782.93,
+        "allHealthy": true,
+        "connections": 5,
+        "restarts": {
+          "scheduler": 0,
+          "crawler": 0,
+          "reviewer": 0,
+          "publisher": 0,
+          "maintenance": 0
+        },
+        "jobErrorCount": 0
+      },
+      {
+        "at": "2026-09-08T06:24:13.052458+00:00",
+        "elapsedSeconds": 843.15,
+        "allHealthy": true,
+        "connections": 5,
+        "restarts": {
+          "scheduler": 0,
+          "crawler": 0,
+          "reviewer": 0,
+          "publisher": 0,
+          "maintenance": 0
+        },
+        "jobErrorCount": 0
+      },
+      {
+        "at": "2026-09-08T06:25:13.293804+00:00",
+        "elapsedSeconds": 903.35,
+        "allHealthy": true,
+        "connections": 5,
+        "restarts": {
+          "scheduler": 0,
+          "crawler": 0,
+          "reviewer": 0,
+          "publisher": 0,
+          "maintenance": 0
+        },
+        "jobErrorCount": 0
+      },
+      {
+        "at": "2026-09-08T06:26:13.492771+00:00",
+        "elapsedSeconds": 963.59,
+        "allHealthy": true,
+        "connections": 5,
+        "restarts": {
+          "scheduler": 0,
+          "crawler": 0,
+          "reviewer": 0,
+          "publisher": 0,
+          "maintenance": 0
+        },
+        "jobErrorCount": 0
+      },
+      {
+        "at": "2026-09-08T06:27:13.712304+00:00",
+        "elapsedSeconds": 1023.78,
+        "allHealthy": true,
+        "connections": 5,
+        "restarts": {
+          "scheduler": 0,
+          "crawler": 0,
+          "reviewer": 0,
+          "publisher": 0,
+          "maintenance": 0
+        },
+        "jobErrorCount": 0
+      },
+      {
+        "at": "2026-09-08T06:28:13.960990+00:00",
+        "elapsedSeconds": 1084.01,
+        "allHealthy": true,
+        "connections": 5,
+        "restarts": {
+          "scheduler": 0,
+          "crawler": 0,
+          "reviewer": 0,
+          "publisher": 0,
+          "maintenance": 0
+        },
+        "jobErrorCount": 0
+      },
+      {
+        "at": "2026-09-08T06:29:14.207666+00:00",
+        "elapsedSeconds": 1144.27,
+        "allHealthy": true,
+        "connections": 5,
+        "restarts": {
+          "scheduler": 0,
+          "crawler": 0,
+          "reviewer": 0,
+          "publisher": 0,
+          "maintenance": 0
+        },
+        "jobErrorCount": 0
+      },
+      {
+        "at": "2026-09-08T06:30:14.418410+00:00",
+        "elapsedSeconds": 1204.49,
+        "allHealthy": true,
+        "connections": 5,
+        "restarts": {
+          "scheduler": 0,
+          "crawler": 0,
+          "reviewer": 0,
+          "publisher": 0,
+          "maintenance": 0
+        },
+        "jobErrorCount": 0
+      },
+      {
+        "at": "2026-09-08T06:31:14.628433+00:00",
+        "elapsedSeconds": 1264.7,
+        "allHealthy": true,
+        "connections": 5,
+        "restarts": {
+          "scheduler": 0,
+          "crawler": 0,
+          "reviewer": 0,
+          "publisher": 0,
+          "maintenance": 0
+        },
+        "jobErrorCount": 0
+      },
+      {
+        "at": "2026-09-08T06:32:14.867688+00:00",
+        "elapsedSeconds": 1324.92,
+        "allHealthy": true,
+        "connections": 5,
+        "restarts": {
+          "scheduler": 0,
+          "crawler": 0,
+          "reviewer": 0,
+          "publisher": 0,
+          "maintenance": 0
+        },
+        "jobErrorCount": 0
+      },
+      {
+        "at": "2026-09-08T06:33:15.077866+00:00",
+        "elapsedSeconds": 1385.15,
+        "allHealthy": true,
+        "connections": 5,
+        "restarts": {
+          "scheduler": 0,
+          "crawler": 0,
+          "reviewer": 0,
+          "publisher": 0,
+          "maintenance": 0
+        },
+        "jobErrorCount": 0
+      },
+      {
+        "at": "2026-09-08T06:34:15.348504+00:00",
+        "elapsedSeconds": 1445.36,
+        "allHealthy": true,
+        "connections": 5,
+        "restarts": {
+          "scheduler": 0,
+          "crawler": 0,
+          "reviewer": 0,
+          "publisher": 0,
+          "maintenance": 0
+        },
+        "jobErrorCount": 0
+      },
+      {
+        "at": "2026-09-08T06:35:15.563361+00:00",
+        "elapsedSeconds": 1505.64,
+        "allHealthy": true,
+        "connections": 5,
+        "restarts": {
+          "scheduler": 0,
+          "crawler": 0,
+          "reviewer": 0,
+          "publisher": 0,
+          "maintenance": 0
+        },
+        "jobErrorCount": 0
+      },
+      {
+        "at": "2026-09-08T06:36:15.806895+00:00",
+        "elapsedSeconds": 1565.85,
+        "allHealthy": true,
+        "connections": 5,
+        "restarts": {
+          "scheduler": 0,
+          "crawler": 0,
+          "reviewer": 0,
+          "publisher": 0,
+          "maintenance": 0
+        },
+        "jobErrorCount": 0
+      },
+      {
+        "at": "2026-09-08T06:37:16.049031+00:00",
+        "elapsedSeconds": 1626.11,
+        "allHealthy": true,
+        "connections": 5,
+        "restarts": {
+          "scheduler": 0,
+          "crawler": 0,
+          "reviewer": 0,
+          "publisher": 0,
+          "maintenance": 0
+        },
+        "jobErrorCount": 0
+      },
+      {
+        "at": "2026-09-08T06:38:16.282947+00:00",
+        "elapsedSeconds": 1686.33,
+        "allHealthy": true,
+        "connections": 5,
+        "restarts": {
+          "scheduler": 0,
+          "crawler": 0,
+          "reviewer": 0,
+          "publisher": 0,
+          "maintenance": 0
+        },
+        "jobErrorCount": 0
+      },
+      {
+        "at": "2026-09-08T06:39:16.496920+00:00",
+        "elapsedSeconds": 1746.56,
+        "allHealthy": true,
+        "connections": 5,
+        "restarts": {
+          "scheduler": 0,
+          "crawler": 0,
+          "reviewer": 0,
+          "publisher": 0,
+          "maintenance": 0
+        },
+        "jobErrorCount": 0
+      },
+      {
+        "at": "2026-09-08T06:40:09.982545+00:00",
+        "elapsedSeconds": 1800.0,
+        "allHealthy": true,
+        "connections": 5,
+        "restarts": {
+          "scheduler": 0,
+          "crawler": 0,
+          "reviewer": 0,
+          "publisher": 0,
+          "maintenance": 0
+        },
+        "jobErrorCount": 0
+      }
+    ]
+  },
+  "checks": {
+    "normalStopOriginal": {
+      "exitCode": 0,
+      "elapsedSeconds": 0.133
+    },
+    "startupStopOriginal": {
+      "exitCode": 1,
+      "elapsedSeconds": 0.293
+    },
+    "startupStopFixed": [
+      {
+        "exitCode": 0,
+        "elapsedSeconds": 1.477
+      },
+      {
+        "exitCode": 0,
+        "elapsedSeconds": 1.47
+      },
+      {
+        "exitCode": 0,
+        "elapsedSeconds": 1.676
+      }
+    ],
+    "normalStopFixed": {
+      "exitCode": 0,
+      "elapsedSeconds": 0.1
+    },
+    "heartbeatRecovery": {
+      "signal": "SIGSTOP",
+      "heartbeatDeadlineSeconds": 15,
+      "drainSeconds": 5,
+      "restartCount": 1,
+      "elapsedSeconds": 30.339,
+      "hostPidChanged": true,
+      "healthyAfterRestart": true
+    },
+    "jobDeadlineRecovery": {
+      "elapsedSeconds": 76.165,
+      "hostPidChanged": true,
+      "jobTimeoutLogged": true,
+      "forceStopLogged": true,
+      "groupCleanupIncomplete": false,
+      "network": "none",
+      "supervisorPatchMounted": true,
+      "jobDeadlineSeconds": 60,
+      "drainSeconds": 5,
+      "restartCount": 1,
+      "healthyAfterRestart": true,
+      "childFixture": "Node child ignores SIGTERM; live IPC and nonresolving job"
+    },
+    "schedulerPauseResume": {
+      "pauseSeconds": 66.95,
+      "periodicVersionsUnchanged": true,
+      "queuedRequestsConsumed": true,
+      "fetchVersionIncrementOne": true
+    }
+  },
+  "shutdown": {
+    "at": "2026-09-08T06:40:55.573693+00:00",
+    "elapsedSeconds": 0.725,
+    "pendingBeforeConsumerStop": 0,
+    "exitCodes": {
+      "scheduler": 0,
+      "crawler": 0,
+      "reviewer": 0,
+      "publisher": 0,
+      "maintenance": 0
+    },
+    "allStopped": true,
+    "dbConnectionsAfterStop": 0,
+    "remainingLeases": 0,
+    "jobErrors": 0
+  },
+  "idleResourceSnapshotBeforeShutdown": [
+    {
+      "role": "scheduler",
+      "memory": "48.58MiB / 512MiB",
+      "cpuPercent": "0.00%"
+    },
+    {
+      "role": "crawler",
+      "memory": "108.4MiB / 512MiB",
+      "cpuPercent": "0.40%"
+    },
+    {
+      "role": "reviewer",
+      "memory": "103.4MiB / 512MiB",
+      "cpuPercent": "0.15%"
+    },
+    {
+      "role": "publisher",
+      "memory": "104.6MiB / 512MiB",
+      "cpuPercent": "0.12%"
+    },
+    {
+      "role": "maintenance",
+      "memory": "104.7MiB / 512MiB",
+      "cpuPercent": "0.28%"
+    }
+  ],
+  "limitations": [
+    "Thirty minutes, not a 24-hour or high-load validation.",
+    "Health status sampled every approximately 60 seconds.",
+    "Crawling and agent review disabled; no active LLM/crawl capacity conclusion.",
+    "Original image used for continuous observation; modified supervisor mounted only for fix probes.",
+    "SIGSTOP/fixture recovery timing does not prove recovery time of in-flight database leases.",
+    "Created test databases and logs retained; own test containers stopped."
+  ]
+}

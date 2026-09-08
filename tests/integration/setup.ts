@@ -32,7 +32,7 @@ export function ensureSchema() {
  */
 export async function resetTables() {
   await db.execute(sql`
-    TRUNCATE agent_repository_observations, agent_repository_scans, crawl_discovery_evidence,
+    TRUNCATE product_refresh_requests, agent_repository_observations, agent_repository_scans, crawl_discovery_evidence,
              product_evidence_audit, product_skills, product_agents, product_updates,
              product_media, product_media_declarations, media_assets, product_evidence_sources, product_links,
              product_profiles, evidence_settings, product_health_daily,

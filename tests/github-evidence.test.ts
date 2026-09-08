@@ -7,6 +7,11 @@ import {
 } from "@/lib/domain/evidence/providers/github";
 
 const fetchMock = vi.fn();
+vi.mock("@/lib/crawl/github-quota", async importOriginal => ({
+  ...await importOriginal<typeof import("@/lib/crawl/github-quota")>(),
+  readGitHubCooldown: async () => null,
+  recordGitHubCooldown: async (_token: string, _resource: string, cooldown: { retryAt: Date }) => cooldown.retryAt,
+}));
 
 beforeEach(() => {
   vi.stubEnv("GITHUB_TOKEN", "test-token");
@@ -71,11 +76,12 @@ describe("conditional GitHub HTTP", () => {
   });
 
   it("preserves not-found, rate-limit, and transient HTTP failures", async () => {
+    const resetAt = new Date(Math.ceil(Date.now() / 1000) * 1000 + 120_000);
     fetchMock
       .mockResolvedValueOnce(new Response(null, { status: 404 }))
       .mockResolvedValueOnce(new Response(null, {
         status: 429,
-        headers: { "x-ratelimit-reset": "1787137200" },
+        headers: { "x-ratelimit-reset": String(resetAt.getTime() / 1000) },
       }))
       .mockResolvedValueOnce(new Response(null, { status: 500 }));
 
@@ -85,7 +91,7 @@ describe("conditional GitHub HTTP", () => {
     });
     await expect(githubRequest("/repos/o/limited")).resolves.toEqual({
       ok: false,
-      error: { kind: "rate_limited", resetAt: new Date(1_787_137_200_000) },
+      error: { kind: "rate_limited", resetAt },
     });
     await expect(githubRequest("/repos/o/flaky")).resolves.toEqual({
       ok: false,

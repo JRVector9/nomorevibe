@@ -4,7 +4,6 @@ import { z } from "zod";
 import { db } from "@/lib/db";
 import {
   productEvidenceAudit,
-  productEvidenceSources,
   productMedia,
   productMediaDeclarations,
   productUpdates,
@@ -18,6 +17,7 @@ import {
 import { isSafeMakerMarkdown, makerMediaSchema, safeHttpUrl } from "./contracts";
 import { readMakerMediaResource } from "./repository";
 import { assertMakerResourceVersion } from "./resource-version";
+import { queueProductRefresh } from "./refresh-requests";
 
 const MAX_MAKER_BODY_BYTES = 64 * 1024;
 const slugSchema = z.string().min(1).max(80).regex(/^[a-z0-9][a-z0-9-]*$/);
@@ -260,20 +260,5 @@ export async function queueMakerRefresh(input: {
   actor: string;
   productId?: number;
 }): Promise<void> {
-  const slug = slugSchema.parse(input.slug);
-  const actor = actorSchema.parse(input.actor);
-  const productId = await expectedProductId(slug, input.productId);
-  await withProductGeneration(slug, productId, async (tx) => {
-    const now = new Date();
-    await tx.update(productEvidenceSources).set({ nextAttemptAt: now, updatedAt: now })
-      .where(eq(productEvidenceSources.slug, slug));
-    await tx.update(productMediaDeclarations).set({ nextAttemptAt: now, updatedAt: now })
-      .where(eq(productMediaDeclarations.slug, slug));
-    await tx.insert(productEvidenceAudit).values({
-      slug,
-      actor,
-      action: "maker.refresh.queue",
-      metadata: {},
-    });
-  });
+  await queueProductRefresh({ ...input, force: false });
 }

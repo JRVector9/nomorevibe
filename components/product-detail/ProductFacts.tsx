@@ -50,6 +50,7 @@ export function ProductFacts({ product, profile, links, unclaimed }: {
         <FactRow label="카테고리">{product.category}</FactRow>
         {profile && <FactRow label="가격">{PRICING_LABELS[profile.pricingModel]}</FactRow>}
         {profile?.platforms.length ? <FactRow label="플랫폼"><span className="flex flex-wrap justify-end gap-1">{profile.platforms.map((item) => <Tag key={item}>{item}</Tag>)}</span></FactRow> : null}
+        {profile?.team.length ? <FactRow label="팀"><span className="space-y-1">{profile.team.map((member) => <span key={`${member.name}:${member.role}`} className="block">{member.name} <span className="font-normal text-fg-3">· {member.role}</span></span>)}</span></FactRow> : null}
         {product.stack.length ? <FactRow label="기술 스택"><span className="flex flex-wrap justify-end gap-1">{product.stack.map((item) => <Tag key={item}>{item}</Tag>)}</span></FactRow> : null}
       </dl>
       {links.length > 0 ? (

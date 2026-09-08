@@ -6,7 +6,8 @@ import { getSettings } from "@/lib/crawl/settings";
 import { listJobStates } from "@/lib/jobs/runner";
 import { downProducts, DOWN_THRESHOLD } from "@/lib/domain/products/health";
 import { topClickedSince } from "@/lib/domain/products/clicks";
-import { JOB_NAMES } from "@/lib/jobs/registry";
+import { JOB_NAMES, JOB_CATALOG } from "@/lib/jobs/catalog";
+import { jobStatusLabel } from "@/lib/jobs/status";
 import { getCurrentSeason, RANKING_STALE_MS } from "@/lib/domain/ranking/view";
 import { getEvidenceStatusSummary } from "@/lib/domain/evidence/admin";
 import { Panel } from "@/components/Panel";
@@ -121,7 +122,7 @@ export default async function StatusPage() {
       <div className="mt-6 flex flex-col gap-4">
         <Panel
           title="작업"
-          note="한 번도 안 돈 작업은 스케줄러가 아직 닿지 않았다는 뜻입니다. 마지막 성공이 계속 오래됐다면 오류를 봅니다."
+          note="예약과 실행, 워커 생존을 구분합니다. 마지막 tick 성공은 대기 중인 모든 항목의 처리 완료를 뜻하지 않습니다."
         >
           {/* 좁은 화면에서 표가 밀려 나가지 않게 감싼다 */}
           <div className="overflow-x-auto">
@@ -129,8 +130,10 @@ export default async function StatusPage() {
               <thead className="text-fg-3">
                 <tr className="text-left">
                   <th className="pb-2 font-medium">이름</th>
+                  <th className="pb-2 font-medium">상태</th>
+                  <th className="pb-2 font-medium">워커 관측</th>
                 <th className="pb-2 font-medium">마지막 실행</th>
-                <th className="pb-2 font-medium">마지막 성공</th>
+                <th className="pb-2 font-medium">tick 성공</th>
                 <th className="pb-2 font-medium">횟수</th>
               </tr>
             </thead>
@@ -139,8 +142,10 @@ export default async function StatusPage() {
                 const state = states.get(name);
                 return (
                   <tr key={name} className="border-t border-line">
-                    <td className="py-2 font-mono">{name}</td>
-                    <td className="py-2 text-fg-2">{state ? when(state.lastRunAt) : "실행 기록 없음"}</td>
+                    <td className="py-2 font-mono">{name}<span className="block text-[13px] text-fg-3">{JOB_CATALOG.find(job => job.name === name)?.role}</span></td>
+                    <td className="py-2 text-fg-2">{name === "heartbeat" ? "스케줄러 관측" : jobStatusLabel(state)}</td>
+                    <td className="py-2 text-fg-2">{when(state?.workerSeenAt ?? null)}</td>
+                    <td className="py-2 text-fg-2">{state?.lastRunAt ? when(state.lastRunAt) : "실행 기록 없음"}</td>
                     <td className="py-2 text-fg-2">{state ? when(state.lastSuccessAt) : "—"}</td>
                     <td className="py-2 font-mono text-fg-2">{state?.runs ?? 0}</td>
                   </tr>

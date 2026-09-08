@@ -229,7 +229,7 @@ test("mobile profile keeps the approved reading order and visible core content",
   const observed = observePage(page);
   await gotoProduct(page, PRODUCT_DETAIL_FIXTURES.rich);
 
-  const headings = ["제품 화면", "상세 소개", "객관적 정보", "저장소와 라이선스", "어떤 AI로 만들었나", "업데이트"];
+  const headings = ["제품 화면", "상세 소개", "객관적 정보", "저장소와 라이선스", "개발 근거", "업데이트"];
   const tops = await Promise.all(headings.map(async (name) => {
     const box = await page.getByRole("heading", { name }).boundingBox();
     return box?.y ?? -1;

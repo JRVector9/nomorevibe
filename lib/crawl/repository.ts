@@ -15,6 +15,7 @@ import {
 } from "@/lib/db/schema";
 import { mergeWithDefaults } from "./settings";
 import type { CrawlSettings } from "./settings-schema";
+import { assertJobLease, requestJob, type JobLease } from "@/lib/jobs/control";
 
 /** 크롤 파이프라인 데이터 접근 — 파이프라인 바깥에서 이 테이블들을 직접 만지지 않는다 */
 
@@ -140,6 +141,21 @@ export async function markFrontier(
     .where(eq(crawlFrontier.repo, repo));
 }
 
+/** Return only this batch's still-owned claims; quota/budget waits are not failed attempts. */
+export async function deferFrontier(entries: FrontierEntry[], retryAt?: Date): Promise<void> {
+  if (entries.length === 0) return;
+  const at = nowExpr();
+  await db.update(crawlFrontier).set({
+    state: "pending",
+    attempts: sql`greatest(0, ${crawlFrontier.attempts} - 1)`,
+    nextAttemptAt: retryAt ? sql`greatest(${at}, ${retryAt.toISOString()}::timestamp)` : at,
+    updatedAt: at,
+  }).where(sql`${crawlFrontier.state} = 'fetching' and (${sql.join(entries.map(entry => sql`(
+    ${crawlFrontier.id} = ${entry.id} and ${crawlFrontier.attempts} = ${entry.attempts}
+    and date_trunc('milliseconds', ${crawlFrontier.nextAttemptAt}) = ${entry.nextAttemptAt.toISOString()}::timestamp
+  )`), sql` or `)})`);
+}
+
 /**
  * 실패 기록. 재시도가 남았으면 백오프로 미루고, 소진되면 failed로 내린다.
  * 일시적 장애(rate limit, 네트워크)와 영구적 실패를 같게 다루면 큐가 막히거나 영원히 돈다.
@@ -216,6 +232,27 @@ export async function putDocument(doc: {
     .onConflictDoUpdate({ target: crawlDocuments.repo, set: values });
 }
 
+/**
+ * A successful refetch may resolve to a different deployed URL. Automatic, unpublished
+ * decisions must return to the existing rule judge; administrator and published decisions
+ * remain immutable. The fetch lease and judge request share the scheduler's lock order.
+ */
+export async function requeueAutomaticCandidateAfterSourceChange(repo: string, lease?: JobLease): Promise<boolean> {
+  return db.transaction(async tx => {
+    const [candidate] = await tx.select().from(crawlCandidates).where(eq(crawlCandidates.repo, repo)).for("update");
+    const [document] = await tx.select().from(crawlDocuments).where(eq(crawlDocuments.repo, repo)).for("share");
+    if (lease) await assertJobLease(tx, lease);
+    if (!candidate || !document || candidate.decidedBy !== "auto" || candidate.publishedSlug
+      || !["approved", "needs_review"].includes(candidate.state)
+      || candidate.productUrl === document.productUrl) return false;
+    await tx.update(crawlCandidates).set({
+      productUrl: document.productUrl, state: "new", reason: "source_changed", decidedAt: null, updatedAt: new Date(),
+    }).where(eq(crawlCandidates.id, candidate.id));
+    await requestJob("crawl-judge", tx);
+    return true;
+  });
+}
+
 export async function getDocument(repo: string): Promise<CrawlDocument | undefined> {
   return db.query.crawlDocuments.findFirst({ where: eq(crawlDocuments.repo, repo) });
 }
@@ -276,7 +313,10 @@ export async function recordAutomaticJudgement(input: {
       || !isDeepStrictEqual(document,input.document) || !isDeepStrictEqual(mergeWithDefaults(settingsRow?.values),input.settings)) return false;
     const now = new Date();
     const values = {repo:input.document.repo,productUrl:input.document.productUrl,state:input.verdict.state,
-      reason:input.verdict.reason,signals:input.verdict.signals,decidedBy:"auto" as const,
+      reason:input.verdict.reason,signals:{ ...input.verdict.signals,
+        ...(typeof candidate?.signals?.adminEvidenceRefreshConsumedId === "number"
+          ? { adminEvidenceRefreshConsumedId: candidate.signals.adminEvidenceRefreshConsumedId } : {}),
+      },decidedBy:"auto" as const,
       judgedAt:now,updatedAt:now,decidedAt:null};
     if (candidate) {
       await tx.update(crawlCandidates).set(values).where(eq(crawlCandidates.id,candidate.id));
@@ -291,11 +331,12 @@ export async function recordAutomaticJudgement(input: {
 export async function listCandidates(
   states: CandidateState[],
   limit: number,
+  condition?: import("drizzle-orm").SQL,
 ): Promise<CrawlCandidate[]> {
   return db
     .select()
     .from(crawlCandidates)
-    .where(inArray(crawlCandidates.state, states))
+    .where(and(inArray(crawlCandidates.state, states), condition))
     .orderBy(desc(crawlCandidates.updatedAt))
     .limit(limit);
 }

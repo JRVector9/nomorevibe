@@ -1,6 +1,6 @@
 import { eq } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { crawlSettings } from "@/lib/db/schema";
+import { crawlSettings, productEvidenceAudit } from "@/lib/db/schema";
 import { logger } from "@/lib/observability/logger";
 import {
   crawlSettingsSchema,
@@ -52,11 +52,16 @@ export type SaveResult =
  * 검증에 실패하면 아무것도 쓰지 않는다.
  */
 export async function saveSettings(patch: unknown, updatedBy: string): Promise<SaveResult> {
-  const current = await getSettings();
+  return db.transaction(async tx => {
+  await tx.insert(crawlSettings).values({ id: ROW_ID, values: DEFAULT_CRAWL_SETTINGS }).onConflictDoNothing();
+  const [row] = await tx.select().from(crawlSettings).where(eq(crawlSettings.id, ROW_ID)).for("update");
+  const current = mergeWithDefaults(row?.values);
   const raw = (patch ?? {}) as Record<string, unknown>;
   const next = {
     ...current,
     ...raw,
+    // A general or stale settings form cannot change the publication gate.
+    reviewMode: current.reviewMode,
     discover: { ...current.discover, ...((raw.discover as object) ?? {}) },
     judge: { ...current.judge, ...((raw.judge as object) ?? {}) },
     agentEvidence: { ...current.agentEvidence, ...((raw.agentEvidence as object) ?? {}) },
@@ -67,7 +72,7 @@ export async function saveSettings(patch: unknown, updatedBy: string): Promise<S
     return { ok: false, issues: parsed.error.issues.map((i) => `${i.path.join(".") || "설정"}: ${i.message}`) };
   }
 
-  await db
+  await tx
     .insert(crawlSettings)
     .values({ id: ROW_ID, values: parsed.data, updatedBy, updatedAt: new Date() })
     .onConflictDoUpdate({
@@ -78,6 +83,36 @@ export async function saveSettings(patch: unknown, updatedBy: string): Promise<S
   // 기준이 바뀌면 수집 결과가 바뀐다. 나중에 "왜 이때부터 달라졌지"를 되짚을 수 있어야 한다.
   logger.info("crawl.settings_saved", { updatedBy, enabled: parsed.data.enabled });
   return { ok: true, settings: parsed.data };
+  });
+}
+
+/** Mode changes have explicit intent, readiness and compare-and-swap, independently of rule edits. */
+export async function changeReviewMode(input: {
+  mode: CrawlSettings["reviewMode"];
+  expectedMode: CrawlSettings["reviewMode"];
+  actor: string;
+  reason: string;
+}): Promise<SaveResult> {
+  if (!["off", "observe", "enforce"].includes(input.mode)
+    || !input.actor.trim() || input.actor.length > 120 || !input.reason.trim() || input.reason.length > 500) {
+    return { ok: false, issues: ["모드 변경 담당자와 사유를 확인해주세요"] };
+  }
+  if (input.mode !== "off" && process.env.CRAWL_REVIEW_READY !== "true") {
+    return { ok: false, issues: ["리뷰·발행 보호 배포 확인 후 모드를 변경해주세요"] };
+  }
+  return db.transaction(async tx => {
+    // Ensure the singleton exists before locking it; initial concurrent changes must also use CAS.
+    await tx.insert(crawlSettings).values({ id: ROW_ID, values: DEFAULT_CRAWL_SETTINGS }).onConflictDoNothing();
+    const [row] = await tx.select().from(crawlSettings).where(eq(crawlSettings.id, ROW_ID)).for("update");
+    const current = mergeWithDefaults(row.values);
+    if (current.reviewMode !== input.expectedMode) return { ok: false, issues: ["리뷰 모드가 변경되었습니다. 새로고침해주세요"] };
+    const settings = { ...current, reviewMode: input.mode };
+    await tx.update(crawlSettings).set({ values: settings, updatedBy: input.actor, updatedAt: new Date() })
+      .where(eq(crawlSettings.id, ROW_ID));
+    await tx.insert(productEvidenceAudit).values({ slug: null, actor: input.actor, action: "admin.crawl.review_mode",
+      reason: input.reason, metadata: { before: current.reviewMode, after: input.mode } });
+    return { ok: true, settings };
+  });
 }
 
 /** 누가 언제 바꿨는지 (화면 표시용) */

@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => {
-  const client = {};
+  const client = Object.assign(vi.fn(), { unsafe: vi.fn() });
   const instance = {
     insert: vi.fn(),
     query: {},

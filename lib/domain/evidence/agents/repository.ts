@@ -6,6 +6,7 @@ import { agentRepositoryScans, agentRepositoryObservations, crawlDiscoveryEviden
 import { withProductGeneration } from '@/lib/domain/products/generation';
 import { agentObservationSchema, AGENT_DETECTOR_VERSION, type AgentObservation } from './types';
 import { collectRepositoryAgentEvidence, normalizeAgentRepositoryKey, type CollectResult, type AgentGitHubRequest } from './collect';
+import { lockRepositoryAgentEvidence } from './lock';
 const DAY = 24 * 60 * 60 * 1000;
 const digest = (input: unknown) => createHash('sha256').update(JSON.stringify(input)).digest('hex');
 const observationKey = (observation: AgentObservation) => digest(Object.keys(observation).sort().map(key => [key, observation[key as keyof AgentObservation]]));
@@ -46,7 +47,9 @@ export async function saveRepositoryAgentScan(result: CollectResult, now = new D
   })) throw new Error('invalid agent observation');
   const nextAttemptAt = result.retryAt && result.retryAt > now ? result.retryAt : new Date(now.getTime() + (result.state === 'complete' || result.cursor?.coverageLimited && !result.cursor.pendingTrees.length && !result.cursor.pendingBlobs.length && !result.cursor.pendingCommits?.length ? DAY : result.errorCode ? 15 * 60_000 : 60_000));
   return db.transaction(async tx => {
-    const [scan] = await tx.insert(agentRepositoryScans).values({ githubRepositoryId: BigInt(result.repositoryId!), repositoryKey: result.repositoryKey, commitSha: result.commitSha!, detectorVersion: AGENT_DETECTOR_VERSION, scope: result.scope, scopeHash: digest(result.scope), state: result.state, cursor: result.cursor, requestCount: result.requestCount, fileCount: result.fileCount, coverage: { limited: result.cursor?.coverageLimited ?? false }, startedAt: now, completedAt: result.state === 'complete' ? now : null, lastErrorCode: result.errorCode, nextAttemptAt }).onConflictDoUpdate({ target: [agentRepositoryScans.githubRepositoryId, agentRepositoryScans.commitSha, agentRepositoryScans.detectorVersion, agentRepositoryScans.scopeHash], set: { state: sql`CASE WHEN ${agentRepositoryScans.state} = 'complete' THEN 'complete' ELSE ${result.state} END`, cursor: sql`CASE WHEN ${agentRepositoryScans.state} = 'complete' THEN NULL ELSE ${JSON.stringify(result.cursor)}::jsonb END`, requestCount: sql`${agentRepositoryScans.requestCount} + ${result.requestCount}`, fileCount: sql`${agentRepositoryScans.fileCount} + ${result.fileCount}`, startedAt: now, completedAt: result.state === 'complete' ? now : sql`${agentRepositoryScans.completedAt}`, lastErrorCode: result.errorCode, nextAttemptAt } }).returning();
+    await lockRepositoryAgentEvidence(tx, result.repositoryKey, result.scope);
+    // Complete immutable evidence can coexist with unfinished later discovery work.
+    const [scan] = await tx.insert(agentRepositoryScans).values({ githubRepositoryId: BigInt(result.repositoryId!), repositoryKey: result.repositoryKey, commitSha: result.commitSha!, detectorVersion: AGENT_DETECTOR_VERSION, scope: result.scope, scopeHash: digest(result.scope), state: result.state, cursor: result.cursor, requestCount: result.requestCount, fileCount: result.fileCount, coverage: { limited: result.cursor?.coverageLimited ?? false }, startedAt: now, completedAt: result.state === 'complete' ? now : null, lastErrorCode: result.errorCode, nextAttemptAt }).onConflictDoUpdate({ target: [agentRepositoryScans.githubRepositoryId, agentRepositoryScans.commitSha, agentRepositoryScans.detectorVersion, agentRepositoryScans.scopeHash], set: { state: sql`CASE WHEN ${agentRepositoryScans.state} = 'complete' THEN 'complete' ELSE ${result.state} END`, cursor: result.cursor, requestCount: sql`${agentRepositoryScans.requestCount} + ${result.requestCount}`, fileCount: sql`${agentRepositoryScans.fileCount} + ${result.fileCount}`, startedAt: now, completedAt: result.state === 'complete' ? now : sql`${agentRepositoryScans.completedAt}`, lastErrorCode: result.errorCode, nextAttemptAt } }).returning();
     for (const facts of observations) await tx.insert(agentRepositoryObservations).values({ scanId: scan.id, observationKey: observationKey(facts), facts }).onConflictDoNothing();
     return scan;
   });
@@ -74,14 +77,19 @@ export async function refreshRepositoryAgentEvidence(input: { repositoryKey: str
     if (latest.state === 'complete' && input.productSlug && input.productId) await attachRepositoryAgentScan({ productSlug: input.productSlug, productId: input.productId, scanId: latest.id });
     return { ...(await getRepositoryAgentEvidence(latest.id))!, cached: true, errorCode: latest.lastErrorCode, retryAt: latest.nextAttemptAt };
   }
-  const resume = latest?.state === 'partial' && latest.cursor && (latest.cursor.pendingTrees.length || latest.cursor.pendingBlobs.length || latest.cursor.pendingCommits?.length) ? latest.cursor : null;
+  const resume = latest && ['partial', 'complete'].includes(latest.state) && latest.cursor && (latest.cursor.pendingTrees.length || latest.cursor.pendingBlobs.length || latest.cursor.pendingCommits?.length) ? latest.cursor : null;
   const discovery = await listDiscoveryEvidence(input.repositoryKey);
   const discoveryCommitShas = discovery.flatMap(row => row.commitSha ? [row.commitSha] : []);
   const result = await collectRepositoryAgentEvidence({ ...input, discoveryCommitShas, cursor: resume, knownComplete: latest?.state === 'complete' ? { repositoryId: String(latest.githubRepositoryId), commitSha: latest.commitSha } : undefined });
+  // An unfinished public recheck must preserve the existing confirmation and any failed-recheck hold.
+  if (result.errorCode === 'budget_exhausted') return {
+    ...(latest ? (await getRepositoryAgentEvidence(latest.id))! : { scan: null, observations: [] }),
+    cached: false, errorCode: result.errorCode, retryAt: result.retryAt,
+  };
   // A failed metadata/branch request cannot create a new immutable scan, but it must
   // invalidate the previous confirmation until a successful public recheck clears it.
   // Budget exhaustion is a deferred attempt, never an upstream failure.
-  const persistedResult: CollectResult = !result.commitSha && result.errorCode && result.errorCode !== 'budget_exhausted' && latest
+  const persistedResult: CollectResult = !result.commitSha && result.errorCode && latest
     ? { ...result, repositoryId: String(latest.githubRepositoryId), commitSha: latest.commitSha, scope: latest.scope, state: 'failed', cursor: null }
     : result;
   const scan = await saveRepositoryAgentScan(persistedResult, now);

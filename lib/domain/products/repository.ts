@@ -19,6 +19,7 @@ import {
   productMedia,
   productMediaDeclarations,
   productProfiles,
+  productRefreshRequests,
   productSkills,
   productUpdates,
   type Product,
@@ -242,6 +243,7 @@ export async function removeProductAndEvidence(id: number, slug: string): Promis
       await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`media-asset:${hash}`}))`);
     }
 
+    await tx.delete(productRefreshRequests).where(eq(productRefreshRequests.productId, id));
     await tx.delete(productProfiles).where(eq(productProfiles.slug, slug));
     await tx.delete(productLinks).where(eq(productLinks.slug, slug));
     await tx.delete(productEvidenceSources).where(eq(productEvidenceSources.slug, slug));

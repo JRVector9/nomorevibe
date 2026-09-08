@@ -2,11 +2,17 @@ import { afterEach, expect, it, vi } from "vitest";
 import { DEFAULT_CRAWL_SETTINGS } from "@/lib/crawl/settings-schema";
 import { loadAgentJudgeInput } from "@/lib/crawl/agent-evidence";
 const scan = vi.hoisted(() => ({id:1,state:"complete",scope:"",detectorVersion:"2026-09-06.1",completedAt:new Date(),lastErrorCode:null as string|null}));
-afterEach(()=>{scan.lastErrorCode=null;});
+const missing = vi.hoisted(() => ({ value: false }));
+afterEach(()=>{scan.lastErrorCode=null;missing.value=false;});
 vi.mock("@/lib/domain/evidence/agents/repository", () => ({
-  getLatestRepositoryAgentScan:async()=>scan,
-  getLatestRepositoryAgentEvidence:async()=>({scan,observations:[]}),
+  getLatestRepositoryAgentScan:async()=>missing.value ? null : scan,
+  getLatestRepositoryAgentEvidence:async()=>missing.value ? null : ({scan,observations:[]}),
 }));
+it("keeps the first unseen repository pending before its first scan", async () => {
+  missing.value = true;
+  expect(await loadAgentJudgeInput({repo:"new/app",pageMeta:{},fetchedAt:new Date()},DEFAULT_CRAWL_SETTINGS))
+    .toMatchObject({ scanState: "pending", scanId: null, observations: [] });
+});
 it("does not trust a repository's homepage alone", async () => {
   const input = await loadAgentJudgeInput({repo:"copy/app",pageMeta:{},fetchedAt:new Date()},DEFAULT_CRAWL_SETTINGS);
   expect(input.relationship).toBe("unknown");
