@@ -1,11 +1,11 @@
 # Codex handoff
 
-## Port 3200 home redesign applied and locally accepted — 2026-09-08 19:00 KST
+## Port 3200 home redesign applied, verified and merged — 2026-09-08 19:08 KST
 
 - Objective: inspect the home design running on port 3200, apply that design to the clean current-main
   integration without carrying unrelated dirty-worktree changes, verify it locally, and land it after CI.
-- Worktree/branch: `/Users/jr/Desktop/projects/nomorevibe-workers`, `feat/home-redesign`, based on
-  `origin/main` at `bc525e9`. Preserve `/Users/jr/Desktop/projects/nomorevibe`; its local main still has
+- Worktree/branch: `/Users/jr/Desktop/projects/nomorevibe-workers`; implementation commit `a4ac7fa` was based
+  on `origin/main` at `bc525e9`. Preserve `/Users/jr/Desktop/projects/nomorevibe`; its local main still has
   unrelated uncommitted auth/detail/Compose/design-source files.
 - Completed: responsive shared header/footer/mobile navigation, hero, four KST pulse panels and methodology
   dialog, larger project cards, saved-project flow, search/category/builder/repository-link browsing, curated
@@ -38,19 +38,24 @@
   full-diff `codex review --base origin/main` inspected the large redesign for more than 30 minutes without
   returning a verdict and was stopped; do not represent that run as a clean review. Manual review found and fixed
   the interest collection-window issue, then the full checks above passed.
-- Remaining: commit, push, PR checks and main merge for this branch, then record the merge result here. Production
-  deployment and a 24-hour external-worker observation remain blocked by the P0 target/credential decisions in
-  `PENDING.md`.
+- Merge result: PR60 merged to main as `db682a3165cef02e382f2803bf5baaa34e9f6e20`; Git verified implementation
+  commit `a4ac7fa711c1133e9554f12a085207931cf5ef29` is its ancestor. PR checks passed, and post-merge main CI run
+  `34213468456` passed typegen, TypeScript, lint, unit, integration and build. The first `gh pr merge --delete-branch`
+  command exited 1 only because another worktree already had local `main` checked out; GitHub had completed the
+  merge before the CLI attempted that local switch.
+- Remaining work is production-specific: deployment and a 24-hour external-worker observation remain blocked by
+  the P0 target/credential decisions in `PENDING.md`. No production mutation occurred.
 
 Exact next commands:
 
 ```sh
 cd /Users/jr/Desktop/projects/nomorevibe-workers
-git diff --check
-git status --short
+git fetch origin main
+git show --stat --oneline db682a3165cef02e382f2803bf5baaa34e9f6e20
+gh run view 34213468456
 docker ps --filter name=nomorevibe-workers-local
 curl -I http://127.0.0.1:43201/
-cat docs/operations/2026-09-08-home-redesign-qa.md
+cat PENDING.md
 ```
 
 ## Local deployment QA and main merge completed — 2026-09-08 17:02 KST
