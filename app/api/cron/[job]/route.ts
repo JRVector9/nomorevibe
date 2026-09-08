@@ -1,9 +1,10 @@
 import { NextResponse } from "next/server";
-import { isJobName, JOB_NAMES } from "@/lib/jobs/catalog";
+import { isJobName, JOB_CATALOG } from "@/lib/jobs/catalog";
 import { requestJob } from "@/lib/jobs/control";
 import { withRoute } from "@/lib/http/handler";
 
 type Params = { params: Promise<{ job: string }> };
+const requestableJobs = JOB_CATALOG.filter(job => job.role !== "scheduler").map(job => job.name);
 
 /**
  * 스케줄러 진입점.
@@ -18,7 +19,10 @@ export const POST = withRoute("cron.run", async (req: Request, { params }: Param
 
   const { job } = await params;
   if (!isJobName(job)) {
-    return NextResponse.json({ error: `알 수 없는 작업입니다`, available: JOB_NAMES }, { status: 404 });
+    return NextResponse.json({ error: `알 수 없는 작업입니다`, available: requestableJobs }, { status: 404 });
+  }
+  if (!requestableJobs.includes(job)) {
+    return NextResponse.json({ error: "스케줄러 생존 관측은 예약 작업이 아닙니다", available: requestableJobs }, { status: 400 });
   }
 
   return NextResponse.json(await requestJob(job), { status: 202 });

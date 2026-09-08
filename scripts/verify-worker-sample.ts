@@ -1,6 +1,6 @@
 /** Bounded live-source acceptance on a dedicated local DB. Never points at an application DB. */
 import { mkdir, writeFile } from "node:fs/promises";
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { crawlCandidates, crawlDocuments, crawlFrontier, crawlReviewAttempts, products } from "@/lib/db/schema";
 import { saveSettings, changeReviewMode, getSettings } from "@/lib/crawl/settings";
@@ -57,7 +57,8 @@ async function main() {
     const candidates = await db.select().from(crawlCandidates).where(inArray(crawlCandidates.repo, REPOSITORIES));
     const documents = await db.select().from(crawlDocuments).where(inArray(crawlDocuments.repo, REPOSITORIES));
     const attempts = candidates.length ? await db.select().from(crawlReviewAttempts)
-      .where(inArray(crawlReviewAttempts.candidateId, candidates.map(candidate => candidate.id))) : [];
+      .where(inArray(crawlReviewAttempts.candidateId, candidates.map(candidate => candidate.id)))
+      .orderBy(asc(crawlReviewAttempts.id)) : [];
     const listed = await db.select({ slug: products.slug }).from(products).where(and(
       eq(products.source, "crawler"), inArray(products.repoUrl, REPOSITORIES.map(repo => `https://github.com/${repo}`)),
     ));
@@ -71,7 +72,8 @@ async function main() {
           fetchedAt: document?.fetchedAt, url: document?.productUrl, pageStatus: document?.pageStatus,
           candidateState: candidate?.state, ruleReason: candidate?.reason,
           reviews: attempts.filter(row => row.candidateId === candidate?.id).map(row => ({
-            state: row.state, provider: row.provider, model: row.model, attemptNumber: row.attemptNumber,
+            id: row.id, state: row.state, provider: row.provider, model: row.model, attemptNumber: row.attemptNumber,
+            promptVersion: row.promptVersion, rulesVersion: row.rulesVersion, reusedFromAttemptId: row.reusedFromAttemptId,
             inputHash: row.inputHash, sourceRevisionHash: row.sourceRevisionHash,
             outcome: row.outcome, error: row.errorCode, evidenceCount: row.snapshot.evidence.length,
             evidenceSummary: row.snapshot.evidenceSummary,

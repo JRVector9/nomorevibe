@@ -59,10 +59,21 @@ export async function measureCapacity(options: CapacityOptions, request: typeof 
           method: 'GET', redirect: 'manual', signal: AbortSignal.timeout(5_000),
           headers: { 'user-agent': 'NoMoreVibe-local-capacity-check/1' },
         });
+        // Measure response completion, including streamed HTML, without retaining the body.
+        // A header-only timing can miss later rendering failures or expensive stream work.
+        const reader = response.body?.getReader();
+        let bytes = 0;
+        if (reader) try {
+          while (true) {
+            const chunk = await reader.read();
+            if (chunk.done) break;
+            bytes += chunk.value.byteLength;
+            if (bytes > 2 * 1024 * 1024) throw new Error('Measurement response exceeds 2 MiB');
+          }
+        } finally { await reader.cancel().catch(() => {}); }
         const key = `${Math.floor(response.status / 100)}xx`;
         statuses[key] = (statuses[key] ?? 0) + 1;
         if (response.status === 429) statuses['429']++;
-        await response.body?.cancel();
       } catch { statuses.error++; }
       finally { latencies.push(performance.now() - at); }
     })();
@@ -76,6 +87,7 @@ export async function measureCapacity(options: CapacityOptions, request: typeof 
   const percentile = (p: number) => latencies.length ? Math.round(latencies[Math.max(0, Math.ceil(latencies.length * p) - 1)] * 10) / 10 : null;
   return {
     origin: options.origin, paths: options.paths, requestedRps: options.rps,
+    measurement: 'response_complete', maxResponseBytes: 2 * 1024 * 1024,
     scheduledDurationSeconds: options.durationSeconds, elapsedSeconds: Math.round(elapsedSeconds * 100) / 100,
     started, completed: latencies.length, skipped, peakInflight,
     achievedRps: Math.round(latencies.length / Math.max(elapsedSeconds, options.durationSeconds) * 100) / 100,
