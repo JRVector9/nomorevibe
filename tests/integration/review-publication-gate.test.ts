@@ -10,7 +10,10 @@ import { publishCandidates } from "@/lib/crawl/jobs/publish";
 import { ensureSchema, resetTables } from "./setup";
 
 const classify = vi.hoisted(() => vi.fn().mockResolvedValue(null));
-vi.mock("@/lib/crawl/classify", () => ({ classifyCategory: classify }));
+vi.mock("@/lib/crawl/classify", () => ({
+  classifyCategory: classify,
+  classifyCategories: async (inputs: unknown[]) => Promise.all(inputs.map(input => classify(input))),
+}));
 vi.mock("@/lib/domain/products/og", () => ({ cacheOgImage: async () => null }));
 
 beforeAll(ensureSchema);

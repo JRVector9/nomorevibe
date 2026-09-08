@@ -202,15 +202,16 @@ Compose `scheduler`가 10초마다 `lib/jobs/catalog.ts`의 주기를 확인해 
 호환 cron API는 요청만 접수하므로 소비 워커를 대신하지 않는다. `ranking-refresh`를 별도 정기
 스케줄로 등록하면 집계 완료 순서를 우회하므로 등록하지 않는다.
 
-발행할 때 제품 카테고리는 **`claude` CLI**(`claude -p`, `claude-sonnet-5`, `effort: high`, 구조화
-출력)가 고른다. API 키가 아니라 로그인 세션으로 돈다 — 개발 머신은 `claude` 로그인(keychain),
-서버는 `CLAUDE_CODE_OAUTH_TOKEN`(`claude setup-token`으로 발급)이다. worker 이미지에는 CLI
-`2.1.263`이 고정돼 있다. `--safe-mode`로 사용자 설정을 격리하면서 OAuth 인증을 보존하고,
-도구를 끈 채 프로젝트 밖 임시 경로에서 한 턴만 실행한다. 이 버전의 `--bare`는 OAuth도 건너뛴다.
-실행 파일 경로는 `CLAUDE_CLI`로 바꿀 수 있다(기본 `claude`).
-카테고리 CLI가 없거나 로그인이 풀렸거나 15초를 넘기면 토픽·설명 키워드 규칙으로 분류한다.
-AI 리뷰는 별도 `CRAWL_REVIEW_MODEL`을 명시해야 하며 기본 모델은 없다. 리뷰 실패는 보류·재시도로
-남고, `enforce`에서 유효 승인 없이 카테고리 폴백만으로 발행할 수 없다.
+발행할 때 제품 카테고리는 **`codex` CLI**가 승인 후보를 최대 10개씩 묶어 고른다. 1차는
+`gpt-5.3-codex-spark`·effort xhigh·8초, 2차는 `gpt-5.6-terra`·effort high·12초이며 둘 다
+실패하면 토픽·설명 키워드 규칙을 쓴다. worker 이미지에는 Codex CLI `0.153.4`와 Claude Code CLI
+`2.1.263`이 함께 고정돼 있다. Spark는 `CODEX_ACCESS_TOKEN`, Terra는 `OPENAI_API_KEY`로 로그인하며
+시작 스크립트가 인증 뒤 원문 비밀값을 환경에서 지운다. 사용자 설정·저장소 지침·플러그인·셸·웹을
+격리하고 구조화 출력의 제품 ID 전체 집합과 카테고리를 검증한다. 실행 파일은 `CODEX_CLI`로 바꿀 수
+있다(기본 `codex`). 카테고리는 게임을 포함한 17개다.
+
+AI 심사는 별도 `claude` CLI와 명시한 `CRAWL_REVIEW_MODEL`을 사용하며 기본 모델은 없다. 리뷰 실패는
+보류·재시도로 남고, `enforce`에서 유효 승인 없이 카테고리 폴백만으로 발행할 수 없다.
 
 수집기는 `GITHUB_TOKEN`이 있어야 돈다. 없으면 시간당 60회라 성립하지 않으므로 작업이 실패로
 남는다(`jobs.last_error`).

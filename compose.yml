@@ -144,13 +144,15 @@ services:
 
   publisher:
     <<: *worker
+    entrypoint: ["sh", "scripts/codex-auth.sh"]
     command: ["node", "--import", "tsx", "scripts/worker-supervisor.ts", "--role=publisher"]
     environment:
       <<: *worker-environment
       WORKER_ROLE: publisher
       DB_POOL_MAX: "3"
       WORKER_JOB_TIMEOUT_SECONDS: "180"
-      CLAUDE_CODE_OAUTH_TOKEN: ${CLAUDE_CODE_OAUTH_TOKEN:-}
+      CODEX_ACCESS_TOKEN: ${CODEX_ACCESS_TOKEN:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
     mem_limit: 1536m
 
   maintenance:

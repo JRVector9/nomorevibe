@@ -75,8 +75,9 @@ URL 변경, 잠금 순서 문제는 위 최종 수정과 통합 테스트로 막
 
 ## 운영 전 남은 조건
 
-서버·도메인·운영 PostgreSQL과 비밀 저장소가 아직 확정되지 않았고, 장기
-`CLAUDE_CODE_OAUTH_TOKEN` 및 `CRAWL_REVIEW_MODEL`도 운영 환경에 설정하지 않았다. 따라서 실제
+서버·도메인·운영 PostgreSQL과 비밀 저장소가 아직 확정되지 않았고, publisher용
+`CODEX_ACCESS_TOKEN` 또는 `OPENAI_API_KEY`, reviewer용 장기 `CLAUDE_CODE_OAUTH_TOKEN` 및
+`CRAWL_REVIEW_MODEL`도 운영 환경에 설정하지 않았다. 따라서 실제
 GitHub API·LLM을 켠 24시간 수집/심사/발행 관측은 남아 있다. 운영 전환은
 [독립 워커 운영 절차](independent-workers-runbook.md)의 stop/drain, migration 1회, 역할별 시작,
 observe 비교, 운영자 enforce 전환 순서를 따른다.

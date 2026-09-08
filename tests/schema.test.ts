@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { registerSchema, updateSchema, LIMITS } from "@/lib/domain/products/schema";
+import { registerSchema, updateSchema, LIMITS, CATEGORIES } from "@/lib/domain/products/schema";
 
 const valid = {
   url: "https://example.com",
@@ -10,6 +10,14 @@ const valid = {
 };
 
 describe("registerSchema", () => {
+  it("게임을 포함한 확장 카테고리를 등록할 수 있다", () => {
+    const expanded = ["Business", "Marketing", "Commerce", "Education", "Health", "Media", "Games", "Social", "Data", "Security", "Lifestyle", "Sports"];
+    expect(CATEGORIES).toEqual(expect.arrayContaining(expanded));
+    for (const category of expanded) {
+      expect(registerSchema.safeParse({ ...valid, category }).success, category).toBe(true);
+    }
+  });
+
   it("최소 필드로 통과한다", () => {
     expect(registerSchema.safeParse(valid).success).toBe(true);
   });

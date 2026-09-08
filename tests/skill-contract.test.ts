@@ -15,6 +15,17 @@ describe("distributed /nomorevibe evidence skill", () => {
     expect(source).toContain("등록/업데이트");
   });
 
+  it("documents every category accepted by the registration API", () => {
+    const source = skill();
+    for (const category of [
+      "Productivity", "Dev", "Design", "Business", "Marketing", "Finance", "Commerce",
+      "Education", "Health", "Media", "Games", "Social", "Data", "Security", "Lifestyle",
+      "Sports", "Other",
+    ]) {
+      expect(source, category).toContain(`\`${category}\``);
+    }
+  });
+
   it("requires a preview and explicit confirmation before every maker write", () => {
     const source = skill();
     expect(source).toContain("쓰기 전 공통 절차");

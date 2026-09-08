@@ -5,7 +5,7 @@ import { cacheOgImage } from "@/lib/domain/products/og";
 import { generateEditToken, generateVerifyToken, hashToken } from "@/lib/tokens";
 import { logger } from "@/lib/observability/logger";
 import * as crawl from "./repository";
-import { classifyCategory } from "./classify";
+import { classifyCategory, type ClassifyInput } from "./classify";
 import { getSettings } from "./settings";
 import { guardPublication, publicationSourceChanged, PublicationStateChangedError } from "./publication-guard";
 import { loadAgentJudgeInput } from "./agent-evidence";
@@ -29,11 +29,30 @@ export type PublishResult =
   | { ok: true; slug: string }
   | { ok: false; reason: "no_document" | "no_url" | "already_listed" | "no_description" | "publication_state_changed" | "review_approval_changed" | "source_changed" | AgentEvidenceSummary["reason"] };
 
-export async function publishCandidate(candidate: CrawlCandidate, lease?: JobLease): Promise<PublishResult> {
+type PublicationSnapshot = {
+  document: CrawlDocument;
+  url: string;
+  settings: Awaited<ReturnType<typeof getSettings>>;
+  checkedEvidence: Awaited<ReturnType<typeof loadAgentJudgeInput>> | null;
+  draft: ReturnType<typeof draftFrom>;
+};
+
+export type PreparedClassification = {
+  input: ClassifyInput;
+  snapshot: PublicationSnapshot;
+};
+
+type Preclassification = {
+  category: Category | null;
+  snapshot?: PublicationSnapshot;
+};
+
+async function preparePublication(candidate: CrawlCandidate): Promise<
+  { ok: true; snapshot: PublicationSnapshot } | Exclude<PublishResult, { ok: true }>
+> {
   const document = await crawl.getDocument(candidate.repo);
   if (!document) return { ok: false, reason: "no_document" };
-  if (publicationSourceChanged(candidate,document)) return {ok:false,reason:"source_changed"};
-
+  if (publicationSourceChanged(candidate, document)) return { ok: false, reason: "source_changed" };
   const url = candidate.productUrl ?? document.productUrl;
   if (!url) return { ok: false, reason: "no_url" };
 
@@ -45,6 +64,22 @@ export async function publishCandidate(candidate: CrawlCandidate, lease?: JobLea
     if (!summary.eligible) return { ok: false, reason: summary.reason };
   }
   const draft = draftFrom(candidate.repo, document);
+  if (!draft.hasDescription && candidate.decidedBy !== "admin") {
+    return { ok: false, reason: "no_description" };
+  }
+  return { ok: true, snapshot: { document, url, settings, checkedEvidence, draft } };
+}
+
+export async function publishCandidate(
+  candidate: CrawlCandidate,
+  lease?: JobLease,
+  preclassification?: Preclassification,
+): Promise<PublishResult> {
+  const prepared = preclassification?.snapshot
+    ? { ok: true as const, snapshot: preclassification.snapshot }
+    : await preparePublication(candidate);
+  if (!prepared.ok) return prepared;
+  const { document, url, settings, checkedEvidence, draft } = prepared.snapshot;
 
   /**
    * 우리가 아는 것이 이름뿐이면 자동으로 올리지 않는다.
@@ -56,10 +91,6 @@ export async function publishCandidate(candidate: CrawlCandidate, lease?: JobLea
    * 사람이 이미 본 것(decidedBy=admin)은 그대로 올린다. 그러지 않으면 심사에서 승인한
    * 항목이 곧바로 심사로 되돌아와 끝나지 않는다.
    */
-  if (!draft.hasDescription && candidate.decidedBy !== "admin") {
-    return { ok: false, reason: "no_description" };
-  }
-
   /**
    * 카테고리는 문장을 읽어야 정해진다.
    *
@@ -67,15 +98,19 @@ export async function publishCandidate(candidate: CrawlCandidate, lease?: JobLea
    * 업무 도구를 Finance로 보내기도 했다. 읽고 고르는 일은 읽을 수 있는 쪽에 맡기고,
    * 분류가 실패하면 규칙 결과를 그대로 쓴다 — 카테고리 하나 때문에 발행을 막지 않는다.
    */
-  const category =
-    (await classifyCategory({
+  const classificationInput = {
       repo: candidate.repo,
       url,
       name: draft.name,
       tagline: draft.tagline,
       topics: draft.topics,
       language: draft.language,
-    })) ?? draft.category;
+    };
+  const category = (
+    preclassification === undefined
+      ? await classifyCategory(classificationInput)
+      : preclassification.category
+  ) ?? draft.category;
   const editToken = generateEditToken();
   // Search metadata is a discovery hint, not a maker or model assertion.
   const builder = null;
@@ -136,6 +171,28 @@ export async function publishCandidate(candidate: CrawlCandidate, lease?: JobLea
   return { ok: true, slug };
 }
 
+/**
+ * Builds the same facts used by direct publication so the job can classify its ten
+ * approved candidates in one CLI call. The returned snapshot travels with the result;
+ * the publication transaction locks and compares it after the model call so source or
+ * admin changes cannot be published from a stale classification.
+ */
+export async function prepareCandidateClassification(
+  candidate: CrawlCandidate,
+): Promise<PreparedClassification | null> {
+  const prepared = await preparePublication(candidate);
+  if (!prepared.ok) return null;
+  const { url, draft } = prepared.snapshot;
+  return { input: {
+    repo: candidate.repo,
+    url,
+    name: draft.name,
+    tagline: draft.tagline,
+    topics: draft.topics,
+    language: draft.language,
+  }, snapshot: prepared.snapshot };
+}
+
 /** 원본에서 목록에 올릴 값을 만든다 */
 function draftFrom(repo: string, document: CrawlDocument) {
   const page = (document.pageMeta ?? {}) as { title?: unknown; description?: unknown; ogImage?: unknown };
@@ -192,25 +249,41 @@ function productName(title: string): string {
 /**
  * 카테고리 추정.
  *
- * 다섯 칸뿐이라 정확할 수 없고, 정확할 필요도 없다 — 틀리면 Other보다 나쁠 것이 없고
- * 주인이 클레임하면 스스로 고친다. 확실한 신호(topics)를 먼저 보고, 없으면 설명을 본다.
+ * 모델과 CLI를 쓸 수 없을 때도 발행을 멈추지 않는 최종 폴백이다. 확실한 신호(topics)를
+ * 먼저 보고, 없으면 설명을 본다. 단어가 여러 뜻인 경우를 줄이기 위해 좁은 표현만 둔다.
  */
-const CATEGORY_KEYWORDS: [Category, string[]][] = [
-  ["Finance", ["finance", "fintech", "trading", "invest", "crypto", "banking", "accounting", "budget", "payment"]],
-  ["Design", ["design", "figma", "ui-kit", "icons", "illustration", "css", "tailwind", "font", "color"]],
-  ["Dev", ["cli", "developer-tools", "devtools", "sdk", "api", "framework", "library", "compiler", "kubernetes", "docker", "devops", "mcp", "agent"]],
-  ["Productivity", ["productivity", "todo", "note", "task", "calendar", "workflow", "automation", "tracker", "dashboard"]],
+const CATEGORY_KEYWORDS: { category: Category; topics: string[]; text: string[] }[] = [
+  { category: "Security", topics: ["security", "cybersecurity", "privacy", "phishing", "fraud"], text: ["cybersecurity", "phishing detection", "fraud prevention"] },
+  { category: "Games", topics: ["game", "games", "gaming", "video-game", "game-development", "indie-game", "godot", "unity"], text: ["playable game", "video game", "puzzle game", "battle game", "game editor", "game creation", "game information"] },
+  { category: "Sports", topics: ["sports", "fitness", "workout", "football", "soccer", "basketball", "running"], text: ["fitness training", "workout", "football team", "sports league"] },
+  { category: "Health", topics: ["health", "wellness", "mental-health", "medical", "therapy"], text: ["mental health", "medical support", "therapy", "wellness"] },
+  { category: "Commerce", topics: ["commerce", "ecommerce", "e-commerce", "marketplace", "shopping", "retail"], text: ["online marketplace", "online store", "shopping platform", "product marketplace"] },
+  { category: "Finance", topics: ["finance", "fintech", "trading", "investing", "crypto", "banking", "accounting"], text: ["stock valuation", "financial analysis", "investment portfolio", "accounting software"] },
+  { category: "Education", topics: ["education", "learning", "teaching", "tutoring", "course"], text: ["online course", "learning platform", "study tool", "teaching assistant"] },
+  { category: "Media", topics: ["video", "audio", "music", "film", "podcast", "news"], text: ["video editor", "audio editor", "film creation", "music creation", "news reader"] },
+  { category: "Marketing", topics: ["marketing", "seo", "advertising", "growth", "campaign"], text: ["marketing campaign", "seo tool", "advertising platform", "sales enablement"] },
+  { category: "Business", topics: ["business", "crm", "hr", "operations", "invoicing", "project-management"], text: ["customer relationship management", "business operations", "invoice management", "project documentation"] },
+  { category: "Data", topics: ["data", "analytics", "database", "business-intelligence", "visualization"], text: ["data analytics", "business intelligence", "data visualization", "database management"] },
+  { category: "Social", topics: ["social", "community", "messaging", "dating"], text: ["social network", "community platform", "two-way messaging", "dating app"] },
+  { category: "Design", topics: ["design", "figma", "ui-kit", "icons", "illustration"], text: ["design tool", "ui kit", "icon library", "illustration tool"] },
+  { category: "Dev", topics: ["cli", "developer-tools", "devtools", "sdk", "api", "framework", "library", "compiler", "kubernetes", "docker", "devops", "mcp"], text: ["developer tool", "software development", "command line", "api client", "sdk", "devops"] },
+  { category: "Productivity", topics: ["productivity", "todo", "note", "task", "calendar", "workflow", "automation", "tracker"], text: ["task manager", "note taking", "team calendar", "workflow automation", "time tracking"] },
+  { category: "Lifestyle", topics: ["travel", "food", "recipe", "home", "hobby", "wedding"], text: ["travel planner", "recipe app", "wedding celebration", "wedding invitation"] },
 ];
 
 function classify(meta: Record<string, unknown>): Category {
   const topics = Array.isArray(meta.topics) ? meta.topics.map((t) => String(t).toLowerCase()) : [];
   const text = [meta.description, meta.language].filter((v) => typeof v === "string").join(" ").toLowerCase();
 
-  for (const [category, keywords] of CATEGORY_KEYWORDS) {
-    if (keywords.some((k) => topics.includes(k))) return category;
+  // Hosting or operating a game server is infrastructure, not a playable game.
+  if (/\bgame servers?\b/.test(text) && /\b(?:self-host|hosting|docker|kubernetes|infrastructure)\b/.test(text)) {
+    return "Dev";
   }
-  for (const [category, keywords] of CATEGORY_KEYWORDS) {
-    if (keywords.some((k) => text.includes(k))) return category;
+  for (const rule of CATEGORY_KEYWORDS) {
+    if (rule.topics.some((keyword) => topics.includes(keyword))) return rule.category;
+  }
+  for (const rule of CATEGORY_KEYWORDS) {
+    if (rule.text.some((keyword) => text.includes(keyword))) return rule.category;
   }
   return "Other";
 }

@@ -134,5 +134,7 @@ describe("카테고리 표시 이름", () => {
     expect(CATEGORY_LABELS.Design).toBe("디자인");
     expect(CATEGORY_LABELS.Finance).toBe("금융");
     expect(CATEGORY_LABELS.Other).toBe("기타");
+    expect(CATEGORY_LABELS.Games).toBe("게임");
+    expect(CATEGORY_LABELS.Sports).toBe("스포츠·피트니스");
   });
 });

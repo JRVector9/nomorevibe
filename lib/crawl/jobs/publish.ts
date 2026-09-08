@@ -1,7 +1,8 @@
 import type { JobContext, JobOutcome } from "@/lib/jobs/runner";
 import * as crawl from "@/lib/crawl/repository";
 import { getSettings } from "@/lib/crawl/settings";
-import { publishCandidate } from "@/lib/crawl/publish";
+import { prepareCandidateClassification, publishCandidate } from "@/lib/crawl/publish";
+import { classifyCategories } from "@/lib/crawl/classify";
 import { recordPublicationFailure } from "@/lib/crawl/publication-guard";
 import { reviewApprovalPredicate } from "@/lib/crawl/agent-review-repository";
 
@@ -35,9 +36,23 @@ export async function publishCandidates(ctx: JobContext<null>): Promise<JobOutco
       return { done: true };
     }
 
+    const prepared = await Promise.all(candidates.map(async candidate => ({
+      candidate,
+      classification: await prepareCandidateClassification(candidate),
+    })));
+    const inputs = prepared.flatMap(item => item.classification ? [item.classification.input] : []);
+    const classified = inputs.length > 0 ? await classifyCategories(inputs) : [];
+    const categoryByRepo = new Map(inputs.map((input, index) => [input.repo, classified[index] ?? null]));
+    const snapshotByRepo = new Map(prepared.flatMap(item => item.classification
+      ? [[item.candidate.repo, item.classification.snapshot] as const]
+      : []));
+
     for (const candidate of candidates) {
       if (!ctx.hasBudget()) return { done: false };
-      const result = await publishCandidate(candidate, ctx.lease);
+      const result = await publishCandidate(candidate, ctx.lease, {
+        category: categoryByRepo.get(candidate.repo) ?? null,
+        snapshot: snapshotByRepo.get(candidate.repo),
+      });
 
       if (!result.ok) {
         if (result.reason === "publication_state_changed" || result.reason === "review_approval_changed") {

@@ -11,6 +11,8 @@ A/B 통합 검증 기록은 `docs/CODEX_HANDOFF.md`와 해당 릴리스 보고�
   다른 역할은 `scheduler`, `reviewer`, `publisher`, `maintenance`다. 역할당 활성 프로세스는 1개다.
 - 워커는 DB 요청만 소비한다. 스케줄러는 10초마다 주기가 도래한 요청을 기록한다.
   웹/어드민 종료와 무관하게 동작하며 스케줄러 중단 시 이미 접수한 요청까지만 처리한다.
+- 일반 잡은 25초 협력 예산을 유지하고, publisher는 최대 20초 모델 폴백 뒤 10건 발행을 마치도록
+  120초 협력 예산을 쓴다. supervisor의 publisher hard timeout은 180초다.
 - `npm run worker -- --role=crawler --once`, `npm run scheduler -- --once`는 제한된 한 회차다.
   큐 전체를 소진하거나 24시간 운영을 검증하는 명령이 아니다. 직접 실행에는 환경변수를 별도로 주입한다.
 - 로컬 `npm run job <name>`은 `.env.local`을 읽고 명시적 요청을 남긴 뒤 한 tick을 실행한다.
@@ -19,10 +21,10 @@ A/B 통합 검증 기록은 `docs/CODEX_HANDOFF.md`와 해당 릴리스 보고�
 - `scripts/evidence-worker.ts`는 이전 로컬 사용을 위한 두 evidence 잡 전용 접수/실행 wrapper다.
   새 `crawler`와 함께 상시 배포하지 않는다. `scripts/scheduler.sh`는 HTTP 없이 새 DB 스케줄러를 exec한다.
 - 이미지에는 `tsx`가 production 의존성으로 포함된다. `lib`, `scripts`, `drizzle`, `tsconfig.json`도 포함한다.
-  CLI는 worker 이미지에만 설치하며 기본 고정 버전은 로컬에서 확인한 `2.1.263`이다.
-  버전을 바꾸면 `CLAUDE_CODE_VERSION` build arg를 명시하고 이미지 내부 호출/timeout을 다시 검증한다.
-- 기존 카테고리 분류의 Claude CLI/키워드 폴백을 보존한다. 신규 AI 리뷰 모델 `CRAWL_REVIEW_MODEL`은
-  기본값이 없으며 승인된 모델·인증·관측 결과를 확인한 뒤 심사 정책에 맞춰 켠다.
+  CLI는 worker 이미지에만 설치하며 Codex `0.153.4`, Claude Code `2.1.263`을 고정한다. 버전을 바꾸면
+  `CODEX_CLI_VERSION` 또는 `CLAUDE_CODE_VERSION` build arg를 명시하고 이미지 내부 호출/timeout을 다시 검증한다.
+- 카테고리는 Codex CLI 2단계와 키워드 폴백을 사용한다. 신규 AI 리뷰 모델 `CRAWL_REVIEW_MODEL`은
+  별도 Claude CLI 경로이며 기본값이 없다. 승인된 모델·인증·관측 결과를 확인한 뒤 심사 정책에 맞춰 켠다.
 - `ranking-refresh`는 정기 스케줄이 없다. `click-rollup`의 done=true 성공 완료 트랜잭션이 요청한다.
   예전 매시 5분 HTTP 스케줄은 제거한다. `heartbeat`는 scheduler 생존 관측 전용으로 HTTP 예약은 400을 반환한다. cron API의 HTTP 202는 접수 결과이며 완료 확인은 `/admin/status`에서 한다.
 
@@ -73,16 +75,19 @@ docker compose logs --since=5m scheduler crawler reviewer publisher maintenance
 워커 시작 조건으로 사용하지 않는다. 배포 서버에서는 이 순서를 릴리스 작업으로 한 번 수행한다.
 동일 role 복제본 자동 확대와 무중단 rolling 교체는 A의 지원 범위가 아니다.
 
-## Claude 인증과 AI 리뷰 모드 전환
+## Codex 분류·Claude 리뷰 인증과 AI 리뷰 모드 전환
 
-카테고리는 `claude-sonnet-5`·effort high·15초 제한을 사용한다. 리뷰는 별도 `CRAWL_REVIEW_MODEL`·
-effort low·20초 제한으로 한 tick에 AI 호출 최대 1개다. 모델 기본값은 없으며 카테고리 모델을
-리뷰 모델로 자동 채택하지 않는다. 도구를 끄고 구조화 출력을 다시 검증한다.
+카테고리는 승인 후보를 최대 10개씩 묶어 `gpt-5.3-codex-spark`·effort xhigh·8초로 분류하고,
+실패하면 `gpt-5.6-terra`·effort high·12초, 다시 실패하면 키워드 규칙을 쓴다. Spark는
+`CODEX_ACCESS_TOKEN`, Terra는 `OPENAI_API_KEY`가 필요하다. publisher 시작 스크립트가 Codex 로그인
+뒤 두 원문 비밀값을 환경에서 제거한다. CLI 설정·저장소 지침·플러그인·셸·웹을 격리하고, 구조화
+출력의 제품 ID 전체 집합이 입력과 정확히 같을 때만 결과를 채택한다.
 
-CLI `2.1.263`에서는 `--safe-mode`로 사용자 설정을 격리하면서 keychain/OAuth 인증을 보존한다.
-`--bare`는 OAuth도 건너뛰므로 기존 bare 안내를 사용하지 않는다. 운영에서는 `claude setup-token`으로
-발급한 장기 `CLAUDE_CODE_OAUTH_TOKEN`을 reviewer/publisher에만 주입한다. 로컬 단기 토큰을 사용한
-실제 worker 이미지 인증·구조화 응답 smoke는 통과했으나 운영 장기 토큰 설정은 아직 남아 있다.
+리뷰는 별도 Claude CLI의 `CRAWL_REVIEW_MODEL`·effort low·20초 제한으로 한 tick에 AI 호출 최대
+1개다. 모델 기본값은 없으며 카테고리 모델을 리뷰 모델로 자동 채택하지 않는다. Claude Code CLI
+`2.1.263`은 `--safe-mode`로 사용자 설정을 격리하면서 OAuth 인증을 보존한다. 운영에서는
+`claude setup-token`으로 발급한 장기 `CLAUDE_CODE_OAUTH_TOKEN`을 reviewer에만 주입한다. 로컬
+CLI smoke는 통과했으나 운영 장기 Codex/Claude 인증 설정과 24시간 관측은 아직 남아 있다.
 
 1. 초기 DB 모드는 `off`로 둔다. B 전체 릴리스가 모든 reviewer/publisher에 적용됐고
    reviewer의 명시한 모델·실제 인증·제한 시간 내 응답을 확인한다.
@@ -107,7 +112,7 @@ CLI `2.1.263`에서는 `--safe-mode`로 사용자 설정을 격리하면서 keyc
 | 웹 | 8 | 1536 MiB | 2 | OAuth·세션·방문자 키·관리자/cron 접수 토큰 |
 | 크롤러 | 4 | 1536 MiB | 1 | GitHub token |
 | 리뷰 | 3 | 2 GiB | 1 | 리뷰용 Claude CLI token |
-| 발행 | 3 | 1536 MiB | 1 | 분류용 Claude CLI token |
+| 발행 | 3 | 1536 MiB | 1 | Codex access token 또는 OpenAI API key |
 | 집계 | 3 | 1 GiB | 1 | 없음 |
 | 스케줄러 | 2 | 256 MiB | 0.25 | 없음 |
 | 로컬 DB | 별도 | 4 GiB | 2 | 로컬 DB 계정 |

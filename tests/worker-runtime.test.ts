@@ -1,5 +1,5 @@
 import { expect, it, vi } from 'vitest';
-import { interruptibleSleep, parseWorkerArgs, runWorker } from '@/scripts/worker';
+import { interruptibleSleep, jobRunOptions, parseWorkerArgs, runWorker } from '@/scripts/worker';
 
 it('runs only pending role jobs sequentially and consumes requests without scheduling', async () => {
   const jobs: string[] = [];
@@ -95,4 +95,10 @@ it('validates role and bounded CLI interval before loading database modules', ()
   expect(() => parseWorkerArgs(['--role=crawler', '--role=publisher'])).toThrow();
   expect(() => parseWorkerArgs(['--role=crawler', '--interval-seconds=0'])).toThrow();
   expect(() => parseWorkerArgs(['--role=crawler', '--interval-seconds=61'])).toThrow();
+});
+
+it('gives the publisher batch enough cooperative time below the supervisor deadline', () => {
+  const base = { requestedOnly: true as const };
+  expect(jobRunOptions('crawl-publish', base)).toEqual({ ...base, budgetMs: 120_000 });
+  expect(jobRunOptions('crawl-fetch', base)).toBe(base);
 });

@@ -27,10 +27,11 @@ COPY --chown=worker:nodejs package.json package-lock.json tsconfig.json ./
 COPY --chown=worker:nodejs lib ./lib
 COPY --chown=worker:nodejs scripts ./scripts
 COPY --chown=worker:nodejs drizzle ./drizzle
-# Category classification still uses this CLI; AI review uses the same executable later.
-# Pin matches the locally inspected CLI. Override deliberately when upgrading and revalidate.
+# Reviewer uses Claude; publisher category classification uses Codex. Pin both inspected CLIs.
 ARG CLAUDE_CODE_VERSION=2.1.263
-RUN npm install -g @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION} && claude --version
+ARG CODEX_CLI_VERSION=0.153.4
+RUN npm install -g @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION} @openai/codex@${CODEX_CLI_VERSION} \
+  && claude --version && codex --version
 USER worker
 HEALTHCHECK --interval=15s --timeout=5s --start-period=30s --retries=3 \
   CMD node --import tsx scripts/worker-healthcheck.ts

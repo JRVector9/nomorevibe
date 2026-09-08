@@ -15,6 +15,7 @@ export type RuntimeHeartbeat = {
 };
 export type RuntimeReport = (state: RuntimeState, currentJob?: string | null) => void;
 export type RequestedRunOptions = { requestedOnly: true; signal?: AbortSignal };
+export type JobRunOptions = RequestedRunOptions & { budgetMs?: number };
 type WorkerOptions = { role: JobRole; once?: boolean; intervalMs?: number; signal?: AbortSignal };
 type WorkerDependencies = {
   names: readonly string[];
@@ -37,6 +38,11 @@ export function interruptibleSleep(ms: number, signal?: AbortSignal): Promise<vo
 
 export function runtimeLog(event: string, fields: Record<string, unknown>) {
   console.log(JSON.stringify({ event, at: new Date().toISOString(), ...fields }));
+}
+
+/** A classification batch can use 20 seconds before inserts and image copies begin. */
+export function jobRunOptions(name: string, options: RequestedRunOptions): JobRunOptions {
+  return name === 'crawl-publish' ? { ...options, budgetMs: 120_000 } : options;
 }
 
 /** A once run processes one pending snapshot, not the entire queue or future requests. */
@@ -163,7 +169,7 @@ async function main() {
       names: jobsForRole(options.role),
       pending: () => pendingJobNames(options.role),
       seen: markWorkerSeen,
-      run: (name, runOptions) => runJob(name, JOBS[name], runOptions),
+      run: (name, runOptions) => runJob(name, JOBS[name], jobRunOptions(name, runOptions)),
       report, log: runtimeLog,
     });
     runtimeLog('worker.stopped', { role: options.role, ...result });

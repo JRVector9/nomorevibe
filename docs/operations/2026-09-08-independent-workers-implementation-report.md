@@ -118,8 +118,10 @@ web/worker 7.75 GiB + PostgreSQL 4 GiB이므로 OS·여유를 포함한 16 GiB�
 
 운영 대상 서버/도메인과 사용할 DB가 확정되지 않았다. 읽기 전용 Dokploy 프로젝트 조회에서 일치하는
 nomorevibe 프로젝트는 찾지 못했다. 이것을 모든 서버에 배포가 없다는 증명으로 취급하지 않는다.
-로컬에서는 Keychain에서 얻은 단기 OAuth access token으로 container 호출을 확인했으며,
-운영용 장기 `CLAUDE_CODE_OAUTH_TOKEN` 설정은 아직 남아 있다. 현재 Compose는 이 OAuth 환경변수를 전달한다.
+로컬에서는 Keychain에서 얻은 단기 OAuth access token으로 Claude container 호출을 확인했으며,
+운영용 장기 `CLAUDE_CODE_OAUTH_TOKEN` 설정은 아직 남아 있다. 이후 카테고리 분류기는 Codex CLI로
+분리되어 publisher에는 `CODEX_ACCESS_TOKEN` 또는 `OPENAI_API_KEY`, reviewer에는 Claude OAuth만
+전달한다. 두 운영 인증 모두 아직 설정되지 않았다.
 
 서버·도메인·인증이 준비되면 [운영 절차](independent-workers-runbook.md)에 따라 기존 소비자 stop/drain,
 migration 1회, 역할당 1개 시작, 웹 접수 확인, observe 비교, 운영자의 enforce 전환 순서로 적용한다.

@@ -7,7 +7,11 @@ vi.mock("@/lib/domain/products/og", () => ({ cacheOgImage: vi.fn().mockResolvedV
 
 // 분류도 바깥을 탄다. 기본은 "못 했다"로 두어 규칙 폴백을 확인하고, 필요한 테스트에서만 값을 준다
 const classifyCategory = vi.fn().mockResolvedValue(null);
-vi.mock("@/lib/crawl/classify", () => ({ classifyCategory: (...a: unknown[]) => classifyCategory(...a) }));
+const classifyCategories = vi.fn().mockImplementation(async (inputs: unknown[]) => inputs.map(() => null));
+vi.mock("@/lib/crawl/classify", () => ({
+  classifyCategory: (...a: unknown[]) => classifyCategory(...a),
+  classifyCategories: (...a: unknown[]) => classifyCategories(...a),
+}));
 
 const { db } = await import("@/lib/db");
 const { crawlFrontier, crawlDocuments, crawlCandidates, crawlSettings, jobs, agentRepositoryScans, agentRepositoryObservations } = await import(
@@ -56,6 +60,8 @@ beforeEach(async () => {
   await resetTables();
   classifyCategory.mockReset();
   classifyCategory.mockResolvedValue(null);
+  classifyCategories.mockReset();
+  classifyCategories.mockImplementation(async (inputs: unknown[]) => inputs.map(() => null));
   await saveSettings({ enabled: true }, "테스트");
 });
 
@@ -209,20 +215,34 @@ describe("발행 잡", () => {
   });
 
   it("분류가 고른 카테고리를 쓴다", async () => {
-    classifyCategory.mockResolvedValueOnce("Design");
+    classifyCategories.mockResolvedValueOnce(["Design"]);
     await approved("someone/paint", { meta: { topics: ["cli"], description: "그림 도구" } });
 
     await tick();
 
     // topics만 보면 Dev로 떨어질 것을 분류가 바로잡는다
     expect((await products.findByUrl("https://my-app.test"))?.category).toBe("Design");
-    expect(classifyCategory).toHaveBeenCalledWith(
+    expect(classifyCategories).toHaveBeenCalledWith([
       expect.objectContaining({ repo: "someone/paint", topics: ["cli"] }),
-    );
+    ]);
+  });
+
+  it("승인 후보 여러 개를 한 번의 분류 배치로 처리한다", async () => {
+    await approved("someone/game", { productUrl: "https://game.test", pageMeta: { title: "Game", description: "A playable puzzle game" } });
+    await approved("someone/ledger", { productUrl: "https://ledger.test", pageMeta: { title: "Ledger", description: "Stock valuation and backtesting" } });
+    classifyCategories.mockImplementationOnce(async (inputs: { repo: string }[]) =>
+      inputs.map((input) => input.repo === "someone/game" ? "Games" : "Finance"));
+
+    await tick();
+
+    expect(classifyCategories).toHaveBeenCalledOnce();
+    expect(classifyCategories.mock.calls[0][0]).toHaveLength(2);
+    expect((await products.findByUrl("https://game.test"))?.category).toBe("Games");
+    expect((await products.findByUrl("https://ledger.test"))?.category).toBe("Finance");
   });
 
   it("분류가 실패하면 규칙으로 되돌아간다 — 카테고리 하나로 발행을 막지 않는다", async () => {
-    classifyCategory.mockResolvedValueOnce(null);
+    classifyCategories.mockResolvedValueOnce([null]);
     await approved("someone/tool2", { meta: { topics: ["cli"], description: "도구" } });
 
     await tick();
@@ -232,6 +252,39 @@ describe("발행 잡", () => {
 
   it("topics로 카테고리를 추정한다", async () => {
     await approved("someone/tool", { meta: { topics: ["cli", "rust"], description: "도구" } });
+
+    await tick();
+
+    expect((await products.findByUrl("https://my-app.test"))?.category).toBe("Dev");
+  });
+
+  it("모델을 쓸 수 없어도 명확한 게임 토픽은 Games로 분류한다", async () => {
+    await approved("someone/puzzle", {
+      meta: { topics: ["game", "godot"], description: "A playable 2D puzzle" },
+      pageMeta: { title: "Puzzle", description: "A playable 2D puzzle" },
+    });
+
+    await tick();
+
+    expect((await products.findByUrl("https://my-app.test"))?.category).toBe("Games");
+  });
+
+  it("결혼식 소개의 games라는 단어를 게임 제품으로 오인하지 않는다", async () => {
+    await approved("someone/wedding", {
+      meta: { topics: [], description: "Wedding celebration with food, games and friends" },
+      pageMeta: { title: "Our Wedding", description: "Wedding celebration with food, games and friends" },
+    });
+
+    await tick();
+
+    expect((await products.findByUrl("https://my-app.test"))?.category).toBe("Lifestyle");
+  });
+
+  it("게임 서버 호스팅 도구는 Games보다 Dev를 우선한다", async () => {
+    await approved("someone/game-host", {
+      meta: { topics: ["docker", "game-server"], description: "Self-host game servers with Docker and Kubernetes" },
+      pageMeta: { title: "Game Host", description: "Self-host game servers with Docker and Kubernetes" },
+    });
 
     await tick();
 
@@ -298,9 +351,9 @@ describe("발행 잡", () => {
 
   it("분류를 기다리는 동안 관리자가 거부하면 제품을 삽입하지 않고 새 결정을 보존한다", async () => {
     await approved("someone/my-app");
-    classifyCategory.mockImplementationOnce(async () => {
+    classifyCategories.mockImplementationOnce(async () => {
       await crawl.recordJudgement({repo:"someone/my-app",productUrl:"https://my-app.test",state:"rejected",reason:"not_a_product",decidedBy:"admin",signals:{review:"newer rejection"}});
-      return "Dev";
+      return ["Dev"];
     });
     expect(await tick()).toMatchObject({status:"completed",done:false});
     expect(await products.findByUrl("https://my-app.test")).toBeUndefined();
@@ -309,9 +362,9 @@ describe("발행 잡", () => {
 
   it("분류를 기다리는 동안 원본 URL이나 저장소 관계가 바뀌면 과거 내용으로 발행하지 않는다", async () => {
     await approved("someone/my-app");
-    classifyCategory.mockImplementationOnce(async () => {
+    classifyCategories.mockImplementationOnce(async () => {
       await crawl.putDocument({repo:"someone/my-app",repoMeta:{description:"Changed app"},productUrl:"https://changed.test",pageStatus:200,pageMeta:{repositoryKeys:["github:other/repo"],title:"Changed"}});
-      return "Dev";
+      return ["Dev"];
     });
     expect(await tick()).toMatchObject({status:"completed",done:false});
     expect(await products.findByUrl("https://my-app.test")).toBeUndefined();
@@ -322,7 +375,7 @@ describe("발행 잡", () => {
 
   it("분류를 기다리는 동안 수집 설정이 바뀌면 새 설정으로 재검토할 때까지 발행하지 않는다", async () => {
     await approved("someone/my-app");
-    classifyCategory.mockImplementationOnce(async () => {await saveSettings({enabled:false},"concurrent admin"); return "Dev";});
+    classifyCategories.mockImplementationOnce(async () => {await saveSettings({enabled:false},"concurrent admin"); return ["Dev"];});
     expect(await tick()).toMatchObject({status:"completed",done:false});
     expect(await products.findByUrl("https://my-app.test")).toBeUndefined();
     expect(await crawl.getCandidate("someone/my-app")).toMatchObject({state:"approved"});
@@ -350,7 +403,7 @@ describe("발행 잡", () => {
     expect(await products.findByUrl("https://my-app.test")).toBeUndefined();
     expect(await products.findByUrl("https://changed.test")).toBeUndefined();
     expect(await crawl.getCandidate("someone/my-app")).toMatchObject({state:"needs_review",reason:"source_changed",productUrl:"https://my-app.test"});
-    expect(classifyCategory).not.toHaveBeenCalled();
+    expect(classifyCategories).not.toHaveBeenCalled();
     expect(await tick()).toMatchObject({status:"completed",done:true});
   });
 
@@ -362,12 +415,12 @@ describe("발행 잡", () => {
     await db.insert(agentRepositoryObservations).values({scanId:scan.id,observationKey:"b".repeat(64),facts:{
       kind:"model_config",client:"codex",compatibleClients:["codex"],modelDeveloper:"openai",declaredModelId:"gpt-5",gateway:null,routing:"fixed",role:"main",scope:"",keyPath:"model",ruleId:"codex.config.v1",sourcePath:".codex/config.toml",commitSha,blobSha:"b".repeat(40),sourceUrl:`https://github.com/someone/my-app/blob/${commitSha}/.codex/config.toml`,
     }});
-    classifyCategory.mockImplementationOnce(async () => {
+    classifyCategories.mockImplementationOnce(async () => {
       await db.update(agentRepositoryScans).set({lastErrorCode:"rate_limited"}).where(eq(agentRepositoryScans.id,scan.id));
-      return "Dev";
+      return ["Dev"];
     });
     expect(await tick()).toMatchObject({status:"completed",done:false});
-    expect(classifyCategory).toHaveBeenCalledOnce();
+    expect(classifyCategories).toHaveBeenCalledOnce();
     expect(await products.findByUrl("https://my-app.test")).toBeUndefined();
     expect(await crawl.getCandidate("someone/my-app")).toMatchObject({state:"approved"});
   });

@@ -155,7 +155,9 @@ SHA-256)만 사용한다. 스킬 파일 바이트의 `hash`는 소문자 64자 S
    - `name`: 제품 이름
    - `tagline`: 한 줄 소개 (200자 이내)
    - `description`: 3–5문장 소개. **언어는 해당 제품 랜딩 페이지의 언어를 따른다** (한국어 서비스면 한국어)
-   - `category`: `Productivity` | `Dev` | `Design` | `Finance` | `Other` 중 하나
+   - `category`: `Productivity` | `Dev` | `Design` | `Business` | `Marketing` | `Finance` |
+     `Commerce` | `Education` | `Health` | `Media` | `Games` | `Social` | `Data` | `Security` |
+     `Lifestyle` | `Sports` | `Other` 중 하나
    - `builder`: 지금 이 스킬을 실행 중인 AI 툴 이름 (예: "Claude Code", "Codex")
    - `stack`: 핵심 기술 최대 12개 (예: ["Next.js", "PostgreSQL"])
 5. **확인**: 수집한 정보를 표로 보여주고 "이대로 등록할까요?" 확인을 받는다. 수정 요청이 있으면 반영한다.

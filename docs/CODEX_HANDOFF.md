@@ -1631,3 +1631,149 @@ git diff --check
 codex review --uncommitted
 # if review finds P1/P2: add a RED regression, fix, and rerun the relevant target plus full matrix
 ```
+
+# 2026-09-09 Publisher category expansion and Codex classifier
+
+## Current objective
+
+Apply the measured category expansion and publisher classifier choice: add Games and a broader product taxonomy,
+use `gpt-5.3-codex-spark` xhigh first with a `gpt-5.6-terra` high fallback, preserve the independent Claude review
+worker, and integrate the finished change without losing the dirty main worktree.
+
+## Completed work
+
+- Expanded the accepted product taxonomy from 5 to 17 values and added Korean labels. The database column is an
+  unconstrained `varchar(40)`, so no migration or stored-value rewrite is required.
+- Replaced per-product Claude category calls with Codex batches of at most 10. Spark xhigh has an 8-second deadline,
+  Terra high has a 12-second deadline, and complete CLI failure returns nulls for the existing rule fallback.
+- Added strict structured output, exact numeric-ID set validation, input-order restoration, output caps, process
+  termination on timeout/overflow, isolated Codex configuration, and escaped untrusted product JSON.
+- Preserved publication race protection by carrying the pre-classification document/settings/evidence snapshot into
+  the insert transaction and comparing it after the model call.
+- Expanded the keyword fallback, including explicit playable-game detection, wedding/Lifestyle handling, and the
+  game-server/Dev exception.
+- Added `scripts/codex-auth.sh`. Publisher authentication prefers `CODEX_ACCESS_TOKEN`, tries `OPENAI_API_KEY` when
+  access-token login fails, removes raw secrets before exec, and leaves the worker running for rule fallback if login
+  is unavailable. Reviewer continues to receive only `CLAUDE_CODE_OAUTH_TOKEN`.
+- Pinned Codex CLI `0.153.4` and Claude Code `2.1.263` in the worker image. Publisher gets a 120-second cooperative
+  budget below its 180-second supervisor hard timeout so a 20-second model fallback does not repeatedly classify a
+  batch while publishing only its first rows.
+- Updated the distributed registration skill and operations documentation to use all 17 accepted categories.
+
+## Modified files
+
+- Runtime/domain: `.env.example`, `Dockerfile`, `compose.yml`, `lib/crawl/classify.ts`,
+  `lib/crawl/jobs/publish.ts`, `lib/crawl/publish.ts`, `lib/domain/products/schema.ts`,
+  `lib/domain/products/labels.ts`, `scripts/codex-auth.sh`, `scripts/worker.ts`, `skill/SKILL.md`.
+- Tests: `tests/classify.test.ts`, `tests/codex-auth.test.ts`, `tests/schema.test.ts`,
+  `tests/home-pulse.test.ts`, `tests/skill-contract.test.ts`, `tests/worker-runtime.test.ts`,
+  `tests/integration/crawl-publish.test.ts`, `tests/integration/review-publication-gate.test.ts`.
+- Documentation: `README.md`, `PENDING.md`, this handoff, `docs/operations/independent-workers-runbook.md`,
+  `docs/operations/2026-09-08-independent-workers-implementation-report.md`,
+  `docs/operations/2026-09-08-local-deployment-qa.md`, and
+  `docs/operations/2026-09-08-publisher-category-classification.md`.
+
+## Key design decisions
+
+- Keep existing English category keys and only add values; Korean labels remain presentation data.
+- Use one batch per publication selection because measured CLI startup/context cost dominates the small product input.
+- Adopt Spark xhigh because it agreed with Terra xhigh on 21/22 sampled records while the two measured batches were
+  roughly twice as fast. Use Terra high as the API-key-capable availability fallback.
+- Category classification remains non-blocking. AI review approval remains a separate blocking publication policy.
+- Keep all tool access disabled for classification. Inspection of Codex `rust-v0.153.4` confirmed shell tool
+  registration requires `Feature::ShellTool`; `features.shell_tool=false` prevents both one-shot and unified exec.
+
+## Test commands and results
+
+```text
+npm test
+  PASS — 82 files, 623 tests on the final code
+npm run test:integration
+  PASS — 49 files, 450 tests after repairing the separate review-gate module mock
+npx tsc --noEmit
+  PASS on the final code
+npm run lint
+  PASS — 0 errors/warnings on the final code
+npm run build
+  PASS — Next.js 16.3.1 on the final code
+npm test -- tests/codex-auth.test.ts
+  RED for CODEX_CLI override, then PASS — 2 tests
+  RED for expired access token plus valid API key, then PASS — 2 tests
+npm test -- tests/skill-contract.test.ts tests/worker-runtime.test.ts
+  RED — stale five-category skill contract and missing publisher budget
+  PASS — 2 files, 17 tests after both fixes
+npm run test:integration -- tests/integration/review-publication-gate.test.ts
+  PASS — 1 file, 6 tests after adding the batch mock
+docker compose config --quiet
+  PASS
+docker compose build publisher
+  PASS on final code — image includes Claude Code 2.1.263 and codex-cli 0.153.4
+docker run --rm --entrypoint sh nomorevibe-worker:local scripts/codex-auth.sh codex --version
+  PASS — codex-cli 0.153.4
+node --import tsx -e '<actual classifyCategories smoke>'
+  PASS — actual Spark path returned Lifestyle for wedding and Games for playable puzzle
+```
+
+Expected Vitest failure-path logs and the existing Vite native-config-loader warning remain non-failing.
+
+## Failed approaches
+
+- The first full integration run failed 4/450 because `review-publication-gate.test.ts` fully mocked the old classifier
+  export and omitted `classifyCategories`. The production path was not failing; the mock was updated and the full
+  integration suite then passed 450/450.
+- A `codex review --uncommitted` run re-executed unit, integration, build, image, and upstream CLI-source checks but
+  did not produce a final verdict after an extended investigation, so it was terminated. Its concrete discovery was
+  the stale five-category `skill/SKILL.md`; a RED contract test now covers that. Upstream source inspection also
+  confirmed the shell isolation flag instead of leaving that as an assumption.
+- Per-product Spark calls were rejected after a single sample took 4.275 seconds and 6,889 tokens. Batch calls are the
+  adopted path.
+
+## Remaining work
+
+- The feature is committed on local `main`, one commit ahead of `origin/main`. The root worktree was first
+  fast-forwarded from `9c84bb9` to `b220e93`, then the feature commit was cherry-picked. The pre-existing local
+  design/login work was restored as uncommitted work. Conflicts were older versions of changes already merged into
+  upstream, so the newer upstream versions were retained; non-conflicting local files and edits were preserved.
+  `stash@{0}` (`pre-category-integration-2026-09-09`) remains as a safety copy.
+- Root integration checks: `npm test` PASS — 83 files/628 tests; focused category/auth/detail checks PASS — 8
+  files/73 tests; `npx tsc --noEmit --incremental false` PASS; production build PASS. The first build failed because
+  macOS created `.next/standalone/node_modules/.DS_Store` while Next was removing that generated directory; moving
+  only that metadata file to `/tmp` and rerunning the same build passed. `npm run lint` sees the restored untracked
+  standalone concept at `nomorevibe-final/` and fails on its CommonJS fixture; linting the application with
+  `--ignore-pattern nomorevibe-final` PASS. `git diff --check` PASS.
+- Local runtime applied: built `nomorevibe-web:category-c0d4287` and
+  `nomorevibe-worker:category-c0d4287`, stopped/drained only app and publisher, ran the migration command
+  successfully, and recreated those two services. Port 3200 returns HTTP 200; app and publisher are healthy with
+  restart count 0; the existing scheduler/crawler/reviewer/maintenance stayed up. Rendered HTML contains the new
+  Games/Business/Marketing/Data/Security/Sports labels. Every job row has matching requested/processed versions and
+  an empty `last_error`. The publisher contains codex-cli 0.153.4 but reports `Not logged in` because neither Codex
+  credential is configured, so runtime classification currently uses the deterministic rule fallback.
+- Controlled publisher verification requested `crawl-publish` version 60 against the existing local queue. It
+  completed version 60 with no `last_error` in 93.163 seconds, published 17 candidates and skipped one missing a
+  description. Spark xhigh timed out for batches of 9 and 8, Terra high also timed out for both batches, and the
+  deterministic fallback produced 16 `Other` plus one `Security`. This proves the publication loop works but is
+  not evidence of a successful Spark classification; inject `CODEX_ACCESS_TOKEN`, recreate publisher, and require a
+  `crawl.classified` event naming `gpt-5.3-codex-spark` before claiming Spark is active.
+- Production remains blocked by `PENDING.md` P0: target server, domain, PostgreSQL, secret store, publisher Codex
+  credential, reviewer Claude credential/model, and a real 24-hour observation are not configured. Existing stored
+  products were not bulk-reclassified; the new taxonomy applies when the publisher classifies new candidates.
+
+## Exact commands for the next agent
+
+```sh
+cd /Users/jr/Desktop/projects/nomorevibe
+git status --short --branch
+git log -2 --oneline
+git stash list | head -n 3
+git diff --check
+npm test
+npx tsc --noEmit --incremental false
+npm run lint -- --ignore-pattern nomorevibe-final
+npm run build
+docker compose -p nomorevibe ps
+curl -I http://127.0.0.1:3200/
+docker exec nomorevibe-publisher-1 sh -lc 'codex --version; codex login status 2>&1'
+docker exec nomorevibe-db-1 psql -U nomorevibe -d nomorevibe -c \
+  "select name,requested_version,processed_version,last_error from jobs order by name"
+cat PENDING.md
+```

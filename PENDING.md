@@ -26,32 +26,50 @@ Dokploy 프로젝트 수·DNS 조회 결과는 과거 기록이며 현재 배포
 정확한 명령은 [독립 워커 운영 절차](docs/operations/independent-workers-runbook.md)를 따른다.
 `AUTH_SECRET`·`VISITOR_HASH_SECRET`·`CRON_SECRET`·`ADMIN_TOKEN`은 서로 다른 값을 사용한다.
 
-CLI `2.1.263`은 Dockerfile **worker target**에 들어 있으며 웹 runner에는 없다.
-CLI 제거는 카테고리 폴백뿐 아니라 신규 AI 리뷰 실행에도 영향을 주므로 운영 장애 대응으로 제거하지 않는다.
+Codex CLI `0.153.4`와 Claude Code CLI `2.1.263`은 Dockerfile **worker target**에 들어 있으며 웹
+runner에는 없다. Codex는 publisher 카테고리 분류, Claude는 reviewer 심사에 사용하므로 한쪽 장애를
+다른 역할의 인증 문제로 해석하지 않는다.
 
 ---
 
-## D1. 카테고리·AI 리뷰 — 운영용 Claude CLI 인증과 모델 확인
+## D1. 카테고리·AI 리뷰 — 운영용 Codex·Claude CLI 인증과 모델 확인
 
-**막고 있는 것**: 운영 대상과 장기 `CLAUDE_CODE_OAUTH_TOKEN`이 아직 설정되지 않았다.
+**막고 있는 것**: 운영 대상, publisher용 `CODEX_ACCESS_TOKEN` 또는 `OPENAI_API_KEY`, reviewer용
+장기 `CLAUDE_CODE_OAUTH_TOKEN`과 `CRAWL_REVIEW_MODEL`이 아직 설정되지 않았다.
 
-**현재 상태(2026-09-08)**: 로컬의 짧은 수명 OAuth 토큰으로 worker 이미지 안의 실제 CLI 인증과
-구조화 심사 응답을 확인했다. 이 결과는 생산 환경의 장기 인증이나 24시간 운영 검증을 대신하지 않는다.
-카테고리 분류는 `lib/crawl/classify.ts`의 `claude-sonnet-5`, 신규 리뷰는 기본값 없는
-`CRAWL_REVIEW_MODEL`을 사용한다. 리뷰 모델은 운영 자격 정보의 접근 가능 여부를 확인한 뒤 명시한다.
+**현재 상태(2026-09-08)**: 로컬 로그인으로 실제 Spark 구조화 카테고리 응답과 worker 이미지의
+Codex CLI 실행을 확인했다. 앞선 단기 OAuth 시험으로 Claude 구조화 리뷰 응답도 확인했다. 이 결과는
+생산 환경의 장기 인증이나 24시간 운영 검증을 대신하지 않는다. 카테고리와 리뷰는 서로 다른 CLI,
+모델, 인증을 사용한다.
 
 ```text
-카테고리  claude -p / structured output / tools 비활성 / max-turns 1
-          claude-sonnet-5 / effort high / safe-mode / 15초 / 재시도 0회
+카테고리  codex exec / structured output / CLI 설정·지침·plugin·shell·web 격리 / 최대 10건 batch
+          gpt-5.3-codex-spark / effort xhigh / 8초
+          실패 시 gpt-5.6-terra / effort high / 12초, 다시 실패 시 키워드 폴백
 리뷰      명시한 CRAWL_REVIEW_MODEL / effort low / safe-mode / 20초 / 한 tick AI 호출 최대 1개
-인증      개발 keychain 로그인 또는 주입한 CLAUDE_CODE_OAUTH_TOKEN
+인증      Spark는 CODEX_ACCESS_TOKEN, Terra는 OPENAI_API_KEY, 리뷰는 CLAUDE_CODE_OAUTH_TOKEN
 실패      카테고리는 키워드 폴백. 리뷰는 보류·제한 재시도이며 enforce의 승인 조건을 우회하지 않음
 ```
 
-현재 CLI에서 `--bare`는 OAuth도 건너뛴다. 운영 코드와 동일한 `--safe-mode`로 인증을 확인한다.
-토큰 값·Authorization 헤더·인증 응답 본문은 문서와 로그에 남기지 않는다.
+publisher 시작 스크립트는 Codex 로그인 뒤 원문 토큰을 환경에서 제거한다. 분류 결과는 입력의 숫자
+ID 전체 집합이 중복·누락 없이 돌아왔을 때만 채택한다. reviewer의 Claude CLI에서 `--bare`는 OAuth도
+건너뛰므로 운영 코드와 동일한 `--safe-mode`로 인증을 확인한다. 토큰 값·Authorization 헤더·인증
+응답 본문은 문서와 로그에 남기지 않는다.
 
-### 실측 — 2026-08-29, 개발 DB에 발행된 32건의 원본, sonnet · effort high
+### 실측 — 2026-09-08, 개발 DB의 기존 Other 표본 22건
+
+| | Spark xhigh | Terra xhigh |
+|---|---:|---:|
+| 분류 일치 | 21/22 (95.5%) | 기준 비교 |
+| 일반 표본 10건 | 5.119초 · 8,775 tokens | 10.463초 · 10,410 tokens |
+| 게임 후보 12건 | 5.276초 · 3,731 tokens | 12.983초 · 10,725 tokens |
+
+불일치 1건은 Craft Football을 Spark가 Social, Terra가 Lifestyle로 분류한 경우다. 실제 구현 경로의
+2건 smoke에서는 wedding → Lifestyle, playable puzzle → Games를 반환했다. 이 비교로 1차를 더 빠른
+Spark xhigh, 서버 인증·접근 실패 시 2차를 Terra high로 정했다. Spark는 현재 일반 API 모델이 아닌
+Codex 연구 프리뷰이므로 서버 access token과 계정 제공 여부를 운영 배포 전에 반드시 확인한다.
+
+### 과거 실측 — 2026-08-29, 개발 DB에 발행된 32건의 원본, sonnet · effort high
 
 | | |
 |---|---|
@@ -71,10 +89,11 @@ CLI 제거는 카테고리 폴백뿐 아니라 신규 AI 리뷰 실행에도 영
 
 ### 프로덕션에서 풀려면
 
-1. 준비한 worker 이미지 안에서 `claude --version`이 고정 버전 `2.1.263`인지 확인한다.
-2. `claude setup-token`으로 발급한 장기 토큰을 운영 비밀 저장소에 저장하고 reviewer/publisher에만
-   주입한다. 로컬의 짧은 수명 시험 토큰을 그대로 운영 인증으로 채택하지 않는다.
-3. 카테고리 분류와 명시한 리뷰 모델의 실제 구조화 응답·시간 제한을 격리된 후보로 확인한다.
+1. 준비한 worker 이미지 안에서 `codex --version`이 `0.153.4`, `claude --version`이 `2.1.263`인지 확인한다.
+2. Spark를 쓸 수 있는 `CODEX_ACCESS_TOKEN` 또는 Terra용 `OPENAI_API_KEY`를 publisher에만 저장한다.
+   `claude setup-token`으로 발급한 장기 토큰은 reviewer에만 주입한다. 로컬의 짧은 수명 시험 토큰을
+   그대로 운영 인증으로 채택하지 않는다.
+3. Spark 사용 가능 여부, Terra 폴백, 명시한 리뷰 모델의 실제 구조화 응답·시간 제한을 격리된 후보로 확인한다.
    카테고리 로그의 `crawl.classified`와 인증 실패 여부를 확인하고, 리뷰 실패를 자동 거절로 처리하지 않는다.
 4. 모든 reviewer/publisher에 B 릴리스가 적용된 것을 확인한 뒤 웹 `CRAWL_REVIEW_READY=true`를
    주입한다. `/admin/review`에서 사유와 함께 `off → observe → 판정 비교 → enforce`로 전환한다.
@@ -114,7 +133,9 @@ CLI 제거는 카테고리 폴백뿐 아니라 신규 AI 리뷰 실행에도 영
 | `DATABASE_URL` | 웹·모든 워커·migration에 필요 |
 | `CRON_SECRET` | 웹의 호환 cron 접수 인증. 미설정이면 403 |
 | `GITHUB_TOKEN` | crawler의 GitHub 요청. 없으면 seed·fetch 실패 |
-| `CLAUDE_CODE_OAUTH_TOKEN` | reviewer/publisher. 카테고리는 폴백, 리뷰 오류는 보류·제한 재시도 |
+| `CODEX_ACCESS_TOKEN` | publisher의 Spark 분류. 없거나 실패하면 Terra로 진행 |
+| `OPENAI_API_KEY` | publisher의 Terra 분류. 없거나 실패하면 키워드 폴백 |
+| `CLAUDE_CODE_OAUTH_TOKEN` | reviewer. 리뷰 오류는 보류·제한 재시도 |
 | `CRAWL_REVIEW_MODEL` | reviewer의 명시적 모델. 기본값 없음 |
 | `CRAWL_REVIEW_READY` | 웹 모드 변경 준비 플래그. true여야 observe/enforce 전환 가능 |
 | `TRUSTED_PROXY_HOPS` | 웹 프록시 환경의 클라이언트 IP 판별. 실제 hop 수에 맞춤 |
