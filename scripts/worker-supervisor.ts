@@ -107,7 +107,10 @@ export async function superviseWorker(role: RuntimeRole, options: {
       exitCode = requested ? 0 : 1;
       health = { ...health, status: 'stopping', reason };
       log('supervisor.stopping', { reason });
-      signalGroup(child, 'SIGTERM');
+      // Let the worker abort and drain first. Signalling its whole group here also kills
+      // tsx/esbuild during startup and turns a requested graceful shutdown into a failure.
+      // The deadline and final cleanup still SIGKILL the entire group, including CLI children.
+      child.kill('SIGTERM');
       drainTimer = setTimeout(() => {
         log('supervisor.force_stop', { reason });
         exitCode = 1;
