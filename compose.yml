@@ -1,11 +1,40 @@
-# 로컬 배포. 개발 서버(npm run dev)와 별개로, 실제 배포되는 형태를 그대로 띄운다.
-#
-# 목적은 로컬에서 검증할 수 없는 경로를 확인하는 것이다 — 프로덕션 모드에서만
-# 켜지는 SSRF 가드, 컨테이너 시작 시 마이그레이션, 스케줄러 진입점.
-#
-#   docker compose up -d --build
-#   docker compose logs -f app
-#   docker compose down          (데이터는 볼륨에 남는다)
+# Local production-mode topology. Existing ports and deploy-pgdata volume are preserved.
+# Build off-load, then stop/drain old consumers, run migrate once, and start the new release.
+# See docs/operations/independent-workers-runbook.md. Do not scale a role above one yet.
+x-runtime: &runtime
+  init: true
+  restart: unless-stopped
+  stop_grace_period: 60s
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "3"
+
+x-worker-environment: &worker-environment
+  DATABASE_URL: postgres://nomorevibe:nomorevibe@db:5432/nomorevibe
+  NEXT_PUBLIC_SITE_URL: http://localhost:3200
+  LOG_LEVEL: info
+  WORKER_DRAIN_SECONDS: "45"
+  WORKER_HEARTBEAT_TIMEOUT_SECONDS: "30"
+  WORKER_PROGRESS_TIMEOUT_SECONDS: "90"
+
+x-worker: &worker
+  <<: *runtime
+  image: nomorevibe-worker:${RELEASE_TAG:-local}
+  build:
+    context: .
+    target: worker
+  depends_on:
+    db:
+      condition: service_healthy
+    migrate:
+      condition: service_completed_successfully
+  cpus: 1.0
 
 services:
   db:
@@ -16,74 +45,122 @@ services:
       POSTGRES_DB: nomorevibe
     volumes:
       - deploy-pgdata:/var/lib/postgresql/data
-    # 개발용 DB(55434)와 겹치지 않게 분리한다. 같은 포트를 쓰면 어느 쪽에 붙었는지 모른다.
     ports:
       - "55437:5432"
+    restart: unless-stopped
+    mem_limit: 4g
+    cpus: 2.0
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U nomorevibe"]
       interval: 5s
       timeout: 5s
       retries: 10
 
-  app:
-    build: .
-    depends_on:
-      db:
-        condition: service_healthy
+  # Explicit release step, reused by every role. Never run migrations from app/worker entrypoints.
+  migrate:
+    image: nomorevibe-worker:${RELEASE_TAG:-local}
+    build: { context: ., target: worker }
+    command: ["node", "scripts/migrate.mjs"]
     environment:
       DATABASE_URL: postgres://nomorevibe:nomorevibe@db:5432/nomorevibe
+    depends_on:
+      db: { condition: service_healthy }
+    restart: "no"
+    mem_limit: 512m
+    healthcheck: { disable: true }
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+
+  app:
+    <<: *runtime
+    build: { context: ., target: runner }
+    image: nomorevibe-web:${RELEASE_TAG:-local}
+    depends_on:
+      db: { condition: service_healthy }
+      migrate: { condition: service_completed_successfully }
+    environment:
+      DATABASE_URL: postgres://nomorevibe:nomorevibe@db:5432/nomorevibe
+      DB_POOL_MAX: "8"
       NEXT_PUBLIC_SITE_URL: http://localhost:3200
-      # 배포 형태 검증이 목적이므로 개발 편의 스위치를 켜지 않는다.
-      # ALLOW_PRIVATE_URLS를 넣으면 SSRF 가드가 꺼져 검증할 것이 없어진다.
-      AUTH_SECRET: ${AUTH_SECRET:?AUTH_SECRET이 필요합니다 (openssl rand -hex 32)}
-      VISITOR_HASH_SECRET: ${VISITOR_HASH_SECRET:?VISITOR_HASH_SECRET이 필요합니다 (openssl rand -hex 32)}
+      AUTH_SECRET: ${AUTH_SECRET:?AUTH_SECRET is required (openssl rand -hex 32)}
+      VISITOR_HASH_SECRET: ${VISITOR_HASH_SECRET:?VISITOR_HASH_SECRET is required (openssl rand -hex 32)}
       ADMIN_TOKEN: ${ADMIN_TOKEN:-local-deploy-admin}
       CRON_SECRET: ${CRON_SECRET:-local-deploy-cron}
-      # 수집기가 쓴다. 없으면 시간당 60회라 seed·fetch가 성립하지 않는다
-      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
-      # 카테고리 분류는 claude CLI가 한다. 이미지에 CLI가 없으면 키워드 규칙으로 떨어진다
-      CLAUDE_CODE_OAUTH_TOKEN: ${CLAUDE_CODE_OAUTH_TOKEN:-}
       ADMIN_GITHUB_LOGINS: ${ADMIN_GITHUB_LOGINS:-}
       GITHUB_OAUTH_CLIENT_ID: ${GITHUB_OAUTH_CLIENT_ID:-}
       GITHUB_OAUTH_CLIENT_SECRET: ${GITHUB_OAUTH_CLIENT_SECRET:-}
       TRUSTED_PROXY_HOPS: "0"
       LOG_LEVEL: info
-      # standalone 서버는 $HOSTNAME에 바인딩한다. 도커가 그 값을 컨테이너 ID로 채우므로
-      # 그대로 두면 컨테이너 안에서 127.0.0.1로 붙을 수 없다 — 헬스체크가 그 자리에서 막힌다.
       HOSTNAME: 0.0.0.0
     ports:
       - "3200:3000"
-    restart: unless-stopped
-    # 스케줄러가 기동 중인 앱에 대고 헛발질하지 않도록 준비 상태를 알린다.
-    # (마이그레이션까지 끝나야 응답하므로 첫 요청이 실패하지 않는다)
+    cpus: 2.0
+    mem_limit: 1536m
     healthcheck:
-      test:
-        [
-          "CMD",
-          "node",
-          "-e",
-          "fetch('http://127.0.0.1:3000/').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
-        ]
-      interval: 5s
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
       timeout: 5s
-      retries: 12
-      start_period: 10s
+      retries: 4
+      start_period: 30s
 
-  # 수집 파이프라인을 주기적으로 깨우는 쪽. 앱과 분리해 두면 스케줄을 껐다 켜는 것이
-  # 배포와 무관해지고, 인스턴스를 늘려도 스케줄러는 하나로 유지된다.
   scheduler:
-    image: curlimages/curl:8.11.1
-    depends_on:
-      app:
-        condition: service_healthy
+    <<: *worker
+    command: ["node", "--import", "tsx", "scripts/worker-supervisor.ts", "--role=scheduler"]
     environment:
-      CRON_SECRET: ${CRON_SECRET:-local-deploy-cron}
-      BASE_URL: http://app:3000
-      TICK_SECONDS: ${TICK_SECONDS:-60}
-    volumes:
-      - ./scripts/scheduler.sh:/scheduler.sh:ro
-    entrypoint: ["sh", "/scheduler.sh"]
-    restart: unless-stopped
+      <<: *worker-environment
+      WORKER_ROLE: scheduler
+      DB_POOL_MAX: "2"
+      WORKER_JOB_TIMEOUT_SECONDS: "120"
+    cpus: 0.25
+    mem_limit: 256m
+
+  crawler:
+    <<: *worker
+    command: ["node", "--import", "tsx", "scripts/worker-supervisor.ts", "--role=crawler"]
+    environment:
+      <<: *worker-environment
+      WORKER_ROLE: crawler
+      DB_POOL_MAX: "4"
+      WORKER_JOB_TIMEOUT_SECONDS: "180"
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+    mem_limit: 1536m
+
+  reviewer:
+    <<: *worker
+    command: ["node", "--import", "tsx", "scripts/worker-supervisor.ts", "--role=reviewer"]
+    environment:
+      <<: *worker-environment
+      WORKER_ROLE: reviewer
+      DB_POOL_MAX: "3"
+      WORKER_JOB_TIMEOUT_SECONDS: "180"
+      CLAUDE_CODE_OAUTH_TOKEN: ${CLAUDE_CODE_OAUTH_TOKEN:-}
+      CRAWL_REVIEW_MODEL: ${CRAWL_REVIEW_MODEL:-}
+    mem_limit: 2g
+
+  publisher:
+    <<: *worker
+    command: ["node", "--import", "tsx", "scripts/worker-supervisor.ts", "--role=publisher"]
+    environment:
+      <<: *worker-environment
+      WORKER_ROLE: publisher
+      DB_POOL_MAX: "3"
+      WORKER_JOB_TIMEOUT_SECONDS: "180"
+      CLAUDE_CODE_OAUTH_TOKEN: ${CLAUDE_CODE_OAUTH_TOKEN:-}
+    mem_limit: 1536m
+
+  maintenance:
+    <<: *worker
+    command: ["node", "--import", "tsx", "scripts/worker-supervisor.ts", "--role=maintenance"]
+    environment:
+      <<: *worker-environment
+      WORKER_ROLE: maintenance
+      DB_POOL_MAX: "3"
+      WORKER_JOB_TIMEOUT_SECONDS: "600"
+    mem_limit: 1g
 
 volumes:
   deploy-pgdata:
