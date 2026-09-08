@@ -36,10 +36,15 @@
   local forwarded port changed from 55434 to the preserved DB at 55437. The first Playwright accessibility-name
   selector expected `GitHub` in a link whose visible label was only the owner; selecting the exact sidebar href
   fixed the QA script. The temporary script was removed.
-- Remaining: land this focused UI change. A category expansion should be a separate measured change: sample and
-  label current `Other` records, agree on stable primary categories plus functional tags, restore a long-lived
-  classifier credential, add confidence/versioned decisions, then reclassify existing records with review and
-  rollback support.
+- Merge and local deployment: PR64 passed its checks and merged to main as `bb19bc2456daa0c20dc2fa756404ff6fd800a973`;
+  post-merge main CI run `34230385038` passed. Port 3200 now runs image
+  `nomorevibe-web:github-owner-5431902` against the preserved catalogue DB; only the app was recreated, so all
+  independent workers kept running. The container is healthy. Post-deploy Playwright used an exact search query
+  because ongoing publication moved the earlier fixture off the first six cards; search and detail returned 200,
+  the detail had three owner-profile links, mobile had no horizontal overflow, and browser errors were zero.
+- Remaining: category expansion should be a separate measured change: sample and label current `Other` records,
+  agree on stable primary categories plus functional tags, restore a long-lived classifier credential, add
+  confidence/versioned decisions, then reclassify existing records with review and rollback support.
 
 Exact next commands:
 
@@ -49,7 +54,8 @@ git status --short
 npm test
 npm run build
 git diff --check
-open http://127.0.0.1:3201/
+open http://127.0.0.1:3200/?q=Automatizaci%C3%B3n
+gh run view 34230385038
 docker logs --since 2h nomorevibe-publisher-1 2>&1 | rg 'crawl.classif|Not logged|auth' | tail -n 30
 docker exec nomorevibe-db-1 psql -U nomorevibe -d nomorevibe -c "select category,count(*) from products where status in ('seeded','verified') group by category order by count(*) desc"
 ```
