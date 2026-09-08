@@ -111,6 +111,7 @@ const defaultAgentEvidence = {
 export const crawlSettingsSchema = z.object({
   /** 수집 자체를 멈추는 스위치. 무언가 잘못 돌 때 배포 없이 끊을 수 있어야 한다 */
   enabled: z.boolean(),
+  reviewMode: z.enum(["off", "observe", "enforce"]).default("off"),
   discover: discoverSchema,
   judge: judgeSchema,
   agentEvidence: z.object({
@@ -147,6 +148,7 @@ export function mergeAdditionalAgentDiscoveryQueries(existing: readonly AgentDis
 /** 기본값. 실측을 근거로 잡았다 (수율 42%, 노이즈는 대형 OSS와 개인 홈페이지) */
 export const DEFAULT_CRAWL_SETTINGS: CrawlSettings = {
   enabled: false, // 켜는 것은 명시적 행위여야 한다
+  reviewMode: "off",
   agentEvidence: defaultAgentEvidence,
   discover: {
     queries: [

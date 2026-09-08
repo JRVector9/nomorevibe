@@ -1,4 +1,6 @@
-import { pgTable, serial, text, varchar, timestamp, jsonb, integer, index } from "drizzle-orm/pg-core";
+import { pgTable, serial, text, varchar, timestamp, jsonb, integer, index, doublePrecision, uniqueIndex } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
+import type { ReviewOutcome, ReviewSnapshot, ReviewSource } from "@/lib/crawl/agent-review-contract";
 
 /**
  * 크롤 파이프라인.
@@ -155,3 +157,39 @@ export type CrawlSettingsRow = typeof crawlSettings.$inferSelect;
 export type FrontierEntry = typeof crawlFrontier.$inferSelect;
 export type CrawlDocument = typeof crawlDocuments.$inferSelect;
 export type CrawlCandidate = typeof crawlCandidates.$inferSelect;
+
+export const crawlReviewAttempts = pgTable("crawl_review_attempts", {
+  id: serial("id").primaryKey(),
+  candidateId: integer("candidate_id").notNull().references(() => crawlCandidates.id, { onDelete: "cascade" }),
+  kind: varchar("kind", { length: 24 }).$type<"automatic" | "admin_override" | "evidence_refresh">().notNull().default("automatic"),
+  state: varchar("state", { length: 20 }).$type<"running" | "succeeded" | "failed" | "superseded">().notNull(),
+  inputHash: varchar("input_hash", { length: 64 }).notNull(),
+  policyHash: varchar("policy_hash", { length: 64 }).notNull(),
+  sourceRevisionHash: varchar("source_revision_hash", { length: 64 }).notNull(),
+  snapshot: jsonb("snapshot").$type<ReviewSnapshot>().notNull(),
+  source: jsonb("source").$type<ReviewSource>().notNull(),
+  promptVersion: varchar("prompt_version", { length: 40 }).notNull(),
+  rulesVersion: varchar("rules_version", { length: 40 }).notNull(),
+  provider: varchar("provider", { length: 80 }),
+  model: varchar("model", { length: 160 }),
+  attemptNumber: integer("attempt_number").notNull(),
+  reusedFromAttemptId: integer("reused_from_attempt_id"),
+  outcome: jsonb("outcome").$type<ReviewOutcome>(),
+  errorCode: varchar("error_code", { length: 120 }),
+  inputTokens: integer("input_tokens"),
+  outputTokens: integer("output_tokens"),
+  costUsd: doublePrecision("cost_usd"),
+  actor: varchar("actor", { length: 120 }),
+  reason: varchar("reason", { length: 2000 }),
+  leaseToken: varchar("lease_token", { length: 80 }),
+  startedAt: timestamp("started_at").notNull().defaultNow(),
+  completedAt: timestamp("completed_at"),
+  retryAfter: timestamp("retry_after"),
+  validUntil: timestamp("valid_until").notNull(),
+}, table => [
+  uniqueIndex("crawl_review_one_active_idx").on(table.candidateId).where(sql`${table.state} = 'running'`),
+  index("crawl_review_input_idx").on(table.candidateId, table.inputHash, table.sourceRevisionHash, table.startedAt.desc()),
+  index("crawl_review_approval_idx").on(table.candidateId, table.policyHash, table.validUntil)
+    .where(sql`${table.state} = 'succeeded' AND ${table.kind} = 'automatic'`),
+]);
+export type CrawlReviewAttempt = typeof crawlReviewAttempts.$inferSelect;
