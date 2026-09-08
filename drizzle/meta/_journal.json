@@ -148,6 +148,13 @@
       "when": 1788844736106,
       "tag": "0020_job_control",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1788845275915,
+      "tag": "0021_product_refresh_requests",
+      "breakpoints": true
     }
   ]
 }
