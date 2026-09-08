@@ -1,5 +1,6 @@
 import { drizzle } from "drizzle-orm/postgres-js";
-import postgres from "postgres";
+import type postgres from "postgres";
+import { createDbClient } from "./pool";
 import * as schema from "./schema";
 
 type Db = ReturnType<typeof drizzle<typeof schema>>;
@@ -18,7 +19,7 @@ function getDb(): Db {
   if (!connectionString) {
     throw new Error("DATABASE_URL 환경변수가 설정되지 않았습니다");
   }
-  const client = globalForDb.pgClient ?? postgres(connectionString, { max: 10 });
+  const client = globalForDb.pgClient ?? createDbClient(connectionString);
   const instance = drizzle(client, { schema });
   globalForDb.pgClient = client;
   globalForDb.db = instance;
