@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { notFound, redirect } from "next/navigation";
 import { currentAdmin } from "@/lib/auth/admin";
 import { getEvidenceAdminProduct } from "@/lib/domain/evidence/admin";
+import { getProductRefreshRequest } from "@/lib/domain/evidence/refresh-requests";
 import { Panel } from "@/components/Panel";
 import { AdminNav } from "../../AdminNav";
 import { ForceRefreshForm, UpdateVisibilityForm } from "./EvidenceProductActions";
@@ -31,6 +32,8 @@ export default async function AdminEvidenceProductPage({ params }: Props) {
   const { slug } = await params;
   const view = await getEvidenceAdminProduct(slug);
   if (!view) notFound();
+  const refresh = await getProductRefreshRequest(slug);
+  const refreshPending = refresh && refresh.requestedVersion > refresh.completedVersion;
 
   return (
     <main className="mx-auto max-w-[980px] px-6 pb-20">
@@ -49,6 +52,16 @@ export default async function AdminEvidenceProductPage({ params }: Props) {
         </a>
       </div>
       <div className="mt-5"><ForceRefreshForm slug={view.product.slug} /></div>
+      {refresh && (
+        <div className="mt-3 rounded-[10px] border border-line p-3 text-[13px]" aria-live="polite">
+          <strong>{refreshPending ? (refresh.activeVersion ? "갱신 진행 중" : "갱신 예약됨") : "갱신 완료"}</strong>
+          <span className="ml-3 text-fg-2">요청 #{refresh.requestedVersion} · 완료 #{refresh.completedVersion}</span>
+          {refreshPending && <p className="mt-1 text-fg-2">출처 {refresh.progress.completedKeys.length}개 처리 · 다음 확인 {date(refresh.nextAttemptAt)}</p>}
+          {refresh.completedAt && <p className="mt-1 text-fg-2">최근 완료 {date(refresh.completedAt)}</p>}
+          {refresh.lastError && <p className="mt-1 text-down">{refresh.lastError}</p>}
+          <a href={`/admin/products/${slug}`} className="mt-2 inline-block text-accent hover:underline">진행 상태 새로고침</a>
+        </div>
+      )}
 
       <div className="mt-6 flex flex-col gap-4">
         <Panel title="메이커와 관측값 충돌" note="메이커 제공값을 숨기지 않고 객관적 출처의 값과 나란히 봅니다.">

@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { currentAdmin } from "@/lib/auth/admin";
 import { setAutomaticUpdateVisibility } from "@/lib/domain/evidence/admin";
-import { refreshProductEvidence } from "@/lib/domain/evidence/refresh";
+import { queueProductRefresh } from "@/lib/domain/evidence/refresh-requests";
 
 const slugSchema = z.string().min(1).max(80).regex(/^[a-z0-9][a-z0-9-]*$/);
 const updateSchema = z.object({
@@ -15,14 +15,7 @@ const updateSchema = z.object({
 export type ProductEvidenceActionState = {
   ok?: true;
   issues?: string[];
-  summary?: {
-    attempted: number;
-    failed: number;
-    facts: number;
-    updates: number;
-    media: number;
-    complete: boolean;
-  };
+  request?: { productId: number; requestedVersion: number };
 } | null;
 
 function paths(slug: string) {
@@ -40,21 +33,14 @@ export async function forceProductRefresh(
   const parsed = slugSchema.safeParse(String(form.get("slug") ?? ""));
   if (!parsed.success) return { issues: ["제품 식별자를 확인해주세요."] };
   try {
-    const result = await refreshProductEvidence(parsed.data, { force: true });
+    const result = await queueProductRefresh({ slug: parsed.data, actor: admin.login, force: true });
     paths(parsed.data);
     return {
       ok: true,
-      summary: {
-        attempted: result.sourcesAttempted,
-        failed: result.sourcesFailed,
-        facts: result.factsChanged,
-        updates: result.eventsInserted,
-        media: result.mediaInserted,
-        complete: result.complete,
-      },
+      request: { productId: result.productId, requestedVersion: result.requestedVersion },
     };
   } catch {
-    return { issues: ["근거 갱신을 완료하지 못했습니다. 작업 상태를 확인해주세요."] };
+    return { issues: ["갱신 요청을 접수하지 못했습니다. 잠시 후 다시 시도해주세요."] };
   }
 }
 

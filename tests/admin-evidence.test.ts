@@ -6,7 +6,8 @@ const mocks = vi.hoisted(() => ({
   currentEvidenceSettings: vi.fn(),
   getEvidenceAdminProduct: vi.fn(),
   redirect: vi.fn(),
-  refreshProductEvidence: vi.fn(),
+  queueProductRefresh: vi.fn(),
+  getProductRefreshRequest: vi.fn(),
   revalidatePath: vi.fn(),
   saveEvidenceSettingsValue: vi.fn(),
   setAutomaticUpdateVisibility: vi.fn(),
@@ -21,8 +22,9 @@ vi.mock("@/lib/auth/admin", () => ({ currentAdmin: mocks.currentAdmin }));
 vi.mock("@/lib/domain/evidence/settings-store", () => ({
   currentEvidenceSettings: mocks.currentEvidenceSettings,
 }));
-vi.mock("@/lib/domain/evidence/refresh", () => ({
-  refreshProductEvidence: mocks.refreshProductEvidence,
+vi.mock("@/lib/domain/evidence/refresh-requests", () => ({
+  queueProductRefresh: mocks.queueProductRefresh,
+  getProductRefreshRequest: mocks.getProductRefreshRequest,
 }));
 vi.mock("@/lib/domain/evidence/admin", () => ({
   getEvidenceAdminProduct: mocks.getEvidenceAdminProduct,
@@ -87,7 +89,7 @@ describe("evidence administrator authorization", () => {
     await restoreAutomaticUpdate(null, updateForm);
     await saveEvidenceSettings(null, evidenceForm());
 
-    expect(mocks.refreshProductEvidence).not.toHaveBeenCalled();
+    expect(mocks.queueProductRefresh).not.toHaveBeenCalled();
     expect(mocks.setAutomaticUpdateVisibility).not.toHaveBeenCalled();
     expect(mocks.saveEvidenceSettingsValue).not.toHaveBeenCalled();
     expect(mocks.revalidatePath).not.toHaveBeenCalled();
@@ -111,15 +113,12 @@ describe("evidence administrator authorization", () => {
     expect(mocks.setAutomaticUpdateVisibility).not.toHaveBeenCalled();
   });
 
-  it("returns only a safe force-refresh count summary and revalidates both views", async () => {
+  it("returns a queued receipt and revalidates both views", async () => {
     mocks.currentAdmin.mockResolvedValue({ login: "admin" });
-    mocks.refreshProductEvidence.mockResolvedValue({
-      sourcesAttempted: 4,
-      sourcesFailed: 1,
-      factsChanged: 2,
-      eventsInserted: 3,
-      mediaInserted: 1,
-      complete: true,
+    mocks.queueProductRefresh.mockResolvedValue({
+      productId: 1,
+      requestedVersion: 3,
+      status: "queued",
       upstreamBody: "secret",
     });
     const form = new FormData();
@@ -129,7 +128,7 @@ describe("evidence administrator authorization", () => {
 
     expect(state).toEqual({
       ok: true,
-      summary: { attempted: 4, failed: 1, facts: 2, updates: 3, media: 1, complete: true },
+      request: { productId: 1, requestedVersion: 3 },
     });
     expect(JSON.stringify(state)).not.toContain("secret");
     expect(mocks.revalidatePath).toHaveBeenCalledWith("/admin/products/alpha");
