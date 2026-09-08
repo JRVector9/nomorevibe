@@ -100,6 +100,24 @@ describe("수집 잡", () => {
     expect(await crawl.getDocument("someone/moved")).toMatchObject({ productUrl: "https://my-app.com" });
   });
 
+  it("rejudges an automatic unpublished candidate when a refetch changes its product URL", async () => {
+    await crawl.enqueue([{ repo: "someone/changed", signal: "commit-trailer" }]);
+    await crawl.putDocument({ repo: "someone/changed", repoMeta: repoMeta(), productUrl: "https://old.test" });
+    await crawl.recordJudgement({ repo: "someone/changed", productUrl: "https://old.test",
+      state: "approved", reason: "passed", decidedBy: "auto" });
+    getRepo.mockResolvedValue({ ok: true, value: repoMeta({ homepage: "https://new.test" }) });
+    fetchPage.mockResolvedValue({ status: 200, finalUrl: "https://new.test", html: "" });
+
+    await tick();
+
+    expect(await crawl.getDocument("someone/changed")).toMatchObject({ productUrl: "https://new.test" });
+    expect(await crawl.getCandidate("someone/changed")).toMatchObject({
+      productUrl: "https://new.test", state: "new", reason: "source_changed", decidedBy: "auto",
+    });
+    expect(await db.query.jobs.findFirst({ where: eq(jobs.name, "crawl-judge") }))
+      .toMatchObject({ requestedVersion: 1, processedVersion: 0 });
+  });
+
   it("사라진 레포는 건너뛴다 — 다시 시도할 이유가 없다", async () => {
     await crawl.enqueue([{ repo: "someone/gone", signal: "commit-trailer" }]);
     getRepo.mockResolvedValue({ ok: false, error: { kind: "not_found" } });

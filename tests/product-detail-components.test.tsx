@@ -332,7 +332,6 @@ describe("evidence product detail components", () => {
 
     const provenance = renderToStaticMarkup(<BuildProvenance
       product={product}
-      profile={profile}
       unclaimed={false}
       agents={[{
         id: 1,
@@ -364,15 +363,14 @@ describe("evidence product detail components", () => {
         evidenceLabel: "메이커 제공",
       }]}
     />);
-    expect(provenance).toContain("어떤 AI로 만들었나");
+    expect(provenance).toContain("개발 근거");
     expect(provenance).toContain("Codex");
-    expect(provenance).toContain("사용한 스킬");
     expect(provenance).toContain("review");
-    expect(provenance).toContain("동일한 바이트를 가리킬 뿐 저작자를 증명하지 않습니다");
+    expect(provenance).not.toContain("공개된 에이전트 정보가 없습니다");
   });
 
   it("renders observed tool, configured model and gateway separately with citations while preserving maker reporting", () => {
-    const html = renderToStaticMarkup(<BuildProvenance product={product} profile={profile} unclaimed={false} agents={[]} skills={[]}
+    const html = renderToStaticMarkup(<BuildProvenance product={product} unclaimed={false} agents={[]} skills={[]}
       observedAgentFacts={[{ label: "모델 설정 확인", clientLabel: "Claude Code", modelLabel: "glm-4.7", gatewayLabel: "Z.AI",
         role: "sonnet", scope: "", sourceUrl: "https://github.com/acme/app/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/.claude/settings.json",
         sourcePath: ".claude/settings.json", commitSha: "a".repeat(40), observedAt,
@@ -385,7 +383,13 @@ describe("evidence product detail components", () => {
     expect(html).toContain("일부 미확인");
     expect(html).toContain("실제 실행 모델이나 전체 제작 과정을 증명하지 않습니다");
     expect(html).toContain(".claude/settings.json");
-    expect(html).toContain("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+    expect(html).toContain("aaaaaaa");
+  });
+
+  it("omits the development section when no confirmed or observed information exists", () => {
+    const html = renderToStaticMarkup(<BuildProvenance product={{ ...product, builder: null }} unclaimed={true}
+      agents={[]} skills={[]} observedAgentFacts={[]} />);
+    expect(html).toBe("");
   });
 
   it.each([null, "maker_reported"] as const)("does not invent activity or a verified direction from unknown repository facts (%s)", (relationshipState) => {

@@ -4,7 +4,8 @@ import { getDocument } from "@/lib/crawl/repository";
 import { getSettings } from "@/lib/crawl/settings";
 import { judge, factsFromRepoMeta } from "@/lib/crawl/rules";
 import { isReviewCandidate, REVIEW_RULES_VERSION, type ReviewOutcome } from "@/lib/crawl/agent-review-contract";
-import { listReviewCandidates, loadReviewInput, claimAgentReview, recordAgentReview } from "@/lib/crawl/agent-review-repository";
+import { listReviewCandidates, loadReviewInput, claimAgentReview, recordAgentReview,
+  requeueStaleReviewSources } from "@/lib/crawl/agent-review-repository";
 import { reviewModel, reviewWithAgent, REVIEW_CLI_TIMEOUT_MS } from "@/lib/crawl/agent-review";
 
 /** One external review per bounded tick; existing rules, candidate states and publication remain intact. */
@@ -18,6 +19,8 @@ export async function reviewCrawlCandidates(ctx: JobContext<null>): Promise<JobO
   if (!ctx.lease) throw new Error("AI review requires a valid worker job lease");
   const model = reviewModel();
   if (!model) throw new Error("CRAWL_REVIEW_MODEL must be configured before enabling AI review");
+  const requeued = await requeueStaleReviewSources(settings, ctx.lease, 20);
+  if (requeued) ctx.log("crawl.agent_review_sources_queued", { count: requeued });
   const candidates = await listReviewCandidates(settings, 20);
   if (!candidates.length) return { done: true };
   const remaining = () => 24_000 - (Date.now() - startedAt);

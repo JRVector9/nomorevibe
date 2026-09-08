@@ -1,12 +1,12 @@
 import { isDeepStrictEqual } from "node:util";
 import { and, asc, desc, eq, inArray, or, sql, type SQL } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { crawlCandidates, crawlDocuments, crawlSettings, crawlReviewAttempts,
+import { crawlCandidates, crawlDocuments, crawlFrontier, crawlSettings, crawlReviewAttempts,
   agentRepositoryScans, agentRepositoryObservations,
   type CrawlCandidate, type CrawlDocument, type CrawlReviewAttempt } from "@/lib/db/schema";
 import type { ProductTransaction } from "@/lib/domain/products/generation";
 import { lockRepositoryAgentEvidence } from "@/lib/domain/evidence/agents/lock";
-import { assertJobLease, type JobLease } from "@/lib/jobs/control";
+import { assertJobLease, requestJob, type JobLease } from "@/lib/jobs/control";
 import { mergeWithDefaults } from "./settings";
 import type { CrawlSettings } from "./settings-schema";
 import {
@@ -85,6 +85,57 @@ export function reviewApprovalPredicate(settings: CrawlSettings): SQL {
     SELECT 1 FROM ${crawlReviewAttempts} WHERE ${matchingSource(settings)}
     AND ${crawlReviewAttempts.state} = 'succeeded' AND ${crawlReviewAttempts.outcome}->>'decision' = 'approve'
     AND ${crawlReviewAttempts.validUntil} > now()))`;
+}
+
+/**
+ * A review approval expires after its source document. Reopen only terminal frontier rows that
+ * have also been idle for a day, so a reviewer outage cannot strand an auto-approved candidate
+ * and a deleted repository cannot be retried on every poll.
+ */
+export async function requeueStaleReviewSources(
+  settings: CrawlSettings,
+  lease: JobLease,
+  limit = 20,
+): Promise<number> {
+  if (!settings.enabled || settings.reviewMode === "off") return 0;
+  return db.transaction(async tx => {
+    const candidates = await tx.select({ repo: crawlCandidates.repo }).from(crawlCandidates).where(and(
+      eq(crawlCandidates.decidedBy, "auto"),
+      or(
+        eq(crawlCandidates.state, "approved"),
+        and(eq(crawlCandidates.state, "needs_review"), inArray(crawlCandidates.reason, [...REVIEW_RETRIABLE_REASONS])),
+      ),
+      sql`NOT EXISTS (SELECT 1 FROM crawl_documents review_document
+        WHERE review_document.repo = ${crawlCandidates.repo}
+          AND review_document.product_url IS NOT DISTINCT FROM ${crawlCandidates.productUrl}
+          AND review_document.fetched_at <= now()
+          AND review_document.fetched_at > now() - interval '24 hours')`,
+      sql`NOT EXISTS (SELECT 1 FROM crawl_frontier blocked_frontier
+        WHERE blocked_frontier.repo = ${crawlCandidates.repo}
+          AND (blocked_frontier.state IN ('pending', 'fetching')
+            OR blocked_frontier.updated_at > now() - interval '24 hours'))`,
+    )).orderBy(asc(crawlCandidates.updatedAt), asc(crawlCandidates.id))
+      .limit(Math.max(1, Math.min(100, limit))).for("update", { skipLocked: true });
+    let queued = 0;
+    for (const candidate of candidates) {
+      const [row] = await tx.insert(crawlFrontier).values({
+        repo: candidate.repo, signal: "review-source-refresh", priority: 100,
+      }).onConflictDoUpdate({
+        target: crawlFrontier.repo,
+        set: {
+          state: "pending", attempts: 0, nextAttemptAt: sql`now()`, lastError: null, updatedAt: sql`now()`,
+        },
+        setWhere: sql`${crawlFrontier.state} NOT IN ('pending', 'fetching')
+          AND ${crawlFrontier.updatedAt} <= now() - interval '24 hours'`,
+      }).returning({ repo: crawlFrontier.repo });
+      if (row) queued += 1;
+    }
+    if (queued) await requestJob("crawl-fetch", tx);
+    // Scheduler locks catalog jobs in crawl-fetch → crawl-agent-review order. Keep the
+    // same order here; a lost lease still rolls this whole transaction back.
+    await assertJobLease(tx, lease);
+    return queued;
+  });
 }
 
 export async function listReviewCandidates(settings: CrawlSettings, limit = 20): Promise<CrawlCandidate[]> {

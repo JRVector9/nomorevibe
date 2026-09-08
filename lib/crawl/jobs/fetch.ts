@@ -85,8 +85,9 @@ export async function fetchCrawlDocuments(ctx: JobContext<null>): Promise<JobOut
         pageStatus: page?.status ?? null,
         pageMeta: page?.meta ?? null,
       });
-      await crawl.markFrontier(entry.repo, "done");
       await requeueAfterAdminEvidenceRefresh(entry.repo);
+      await crawl.requeueAutomaticCandidateAfterSourceChange(entry.repo, ctx.lease);
+      await crawl.markFrontier(entry.repo, "done");
       fetched++;
 
       // The next iteration releases any unvisited claims when the time budget expires.

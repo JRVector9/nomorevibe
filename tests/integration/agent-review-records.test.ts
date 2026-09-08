@@ -1,10 +1,11 @@
 import { beforeAll, beforeEach, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { jobs, crawlCandidates, crawlDocuments, crawlSettings, crawlReviewAttempts } from "@/lib/db/schema";
+import { jobs, crawlCandidates, crawlDocuments, crawlFrontier, crawlSettings, crawlReviewAttempts } from "@/lib/db/schema";
 import * as crawl from "@/lib/crawl/repository";
 import { saveSettings, changeReviewMode, getSettings, resetSettings } from "@/lib/crawl/settings";
-import { loadReviewInput, claimAgentReview, recordAgentReview } from "@/lib/crawl/agent-review-repository";
+import { loadReviewInput, claimAgentReview, recordAgentReview,
+  requeueStaleReviewSources } from "@/lib/crawl/agent-review-repository";
 import { ensureSchema } from "./setup";
 
 beforeAll(() => ensureSchema());
@@ -12,6 +13,7 @@ beforeEach(async () => {
   await db.delete(crawlReviewAttempts);
   await db.delete(crawlCandidates);
   await db.delete(crawlDocuments);
+  await db.delete(crawlFrontier);
   await db.delete(crawlSettings);
   await db.delete(jobs);
 });
@@ -88,6 +90,23 @@ it("stops after three infrastructure failures without rejecting the product", as
   }
   expect(await claimAgentReview(context)).toEqual({ kind: "skipped", reason: "attempts_exhausted" });
   expect(await crawl.getCandidate(context.candidate.repo)).toEqual(context.candidate);
+});
+
+it("requeues an expired automatic review source instead of stranding publication", async () => {
+  const context = await fixture("enforce");
+  const stale = new Date(Date.now() - 25 * 60 * 60_000);
+  await db.update(crawlDocuments).set({ fetchedAt: stale }).where(eq(crawlDocuments.id, context.document.id));
+  await db.insert(crawlFrontier).values({
+    repo: context.candidate.repo, signal: "original", state: "done", attempts: 1,
+    nextAttemptAt: stale, updatedAt: stale,
+  });
+
+  expect(await requeueStaleReviewSources(context.settings, context.lease)).toBe(1);
+  expect(await db.query.crawlFrontier.findFirst({ where: eq(crawlFrontier.repo, context.candidate.repo) }))
+    .toMatchObject({ state: "pending", attempts: 0, lastError: null });
+  expect(await db.query.jobs.findFirst({ where: eq(jobs.name, "crawl-fetch") }))
+    .toMatchObject({ requestedVersion: 1, processedVersion: 0 });
+  expect(await crawl.getCandidate(context.candidate.repo)).toMatchObject({ state: "approved", decidedBy: "auto" });
 });
 
 it("preserves enforce across a stale settings form and reset; mode changes use CAS", async () => {

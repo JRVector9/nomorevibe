@@ -1,5 +1,64 @@
 # Codex handoff
 
+## Local deployment QA and merge preparation — 2026-09-08 16:52 KST
+
+- Objective: deploy the completed stacked worker changes locally, exercise the public/admin/worker paths,
+  fix every blocker found, then merge PR57 and PR58 to remote main after CI succeeds.
+- Worktree: `/Users/jr/Desktop/projects/nomorevibe-workers`, branch `feat/independent-workers`.
+  Preserve all unrelated uncommitted files in `/Users/jr/Desktop/projects/nomorevibe`; do not reset or merge
+  inside that dirty worktree.
+- Completed code changes: stale automatic review sources are requeued to `crawl-fetch` after the terminal
+  cooldown; successful refetches that change the product URL reset only automatic unpublished candidates
+  to `source_changed/new` and request `crawl-judge`; lock order matches scheduler order and lease loss rolls
+  back the transaction. The product detail now conditionally renders one compact development-evidence
+  section and keeps team information under objective facts.
+- Modified code/tests: `app/p/[slug]/page.tsx`, `components/product-detail/{BuildProvenance,ProductFacts}.tsx`,
+  `lib/crawl/{agent-review-repository,repository}.ts`, `lib/crawl/jobs/{agent-review,fetch}.ts`, and the
+  corresponding unit/integration/E2E tests including the backpressure mock. Final report:
+  `docs/operations/2026-09-08-local-deployment-qa.md`.
+- Independent read-only review confirmed the three prior blockers are resolved and found no additional
+  correctness/security/concurrency merge blocker.
+- Actual final tests: `npm test` 78 files/592 tests PASS; `npm run test:integration` 49/445 PASS;
+  targeted unit 2/22 plus backpressure 1/2 PASS; targeted integration 2/16 PASS; `npm run test:e2e`
+  5 PASS; Next typegen, full nonincremental TypeScript, ESLint and diff check PASS; final worker and web
+  Docker target builds PASS.
+- Actual local deployment: `nomorevibe-web:local-merge-qa` plus `nomorevibe-worker:local-merge-qa` run at
+  `http://127.0.0.1:43201` against isolated DB `nomorevibe_workers_local_deploy`. Web plus five roles are up;
+  workers are healthy; all six restart0/OOM0/error-log0. Browser QA passed 20 public/admin flows with no
+  console/page/request errors. Authenticated crawl-fetch returned202 and was consumed; all executable job
+  requested/processed versions match with empty last_error. Product force refresh requested1/completed1.
+- External collection and Claude were deliberately disabled for final local QA; the earlier bounded real
+  CLI/sample evidence remains documented separately. This is not a production deployment or 24h proof.
+- Failed approaches: the first final unit run failed one test because its complete repository mock omitted
+  the new export; the mock was fixed and the full suite rerun. Integration cleanup removed the fixture and
+  the old temporary seed imported crawl tables from the pre-split schema; the temporary import was corrected
+  and the production-mode browser run then passed. A diagnostic query guessed `job_controls`; the real table
+  is `jobs`, and the corrected query showed complete consumption.
+- Remaining sequence: commit and push this diff, wait for PR58 checks, merge PR57, retarget PR58 to main,
+  wait for the recalculated checks, then merge PR58 and verify the final commit is contained in origin/main.
+  Keep the final local containers running. Production still waits on P0 server/domain/DB and long-lived
+  Claude credentials in `PENDING.md`.
+
+Exact next commands:
+
+```sh
+cd /Users/jr/Desktop/projects/nomorevibe-workers
+git diff --check
+git status --short
+git add app components lib tests docs/CODEX_HANDOFF.md docs/operations/2026-09-08-local-deployment-qa.md
+git commit -m "fix: recover stale review sources before worker merge"
+git push origin feat/independent-workers
+gh pr checks 58 --watch
+gh pr ready 57
+gh pr merge 57 --merge
+gh pr edit 58 --base main
+gh pr checks 58 --watch
+gh pr ready 58
+gh pr merge 58 --merge
+git fetch origin main
+git merge-base --is-ancestor HEAD origin/main
+```
+
 ## Independent worker implementation completed locally — 2026-09-08 15:46 KST
 
 - Latest user authorized parallel implementation, review, fixes and operational verification, with

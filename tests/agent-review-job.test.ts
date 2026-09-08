@@ -3,17 +3,18 @@ import { reviewCrawlCandidates } from "@/lib/crawl/jobs/agent-review";
 import { createReviewInput } from "@/lib/crawl/agent-review-contract";
 import { DEFAULT_CRAWL_SETTINGS, type CrawlSettings } from "@/lib/crawl/settings-schema";
 import type { CrawlCandidate, CrawlDocument } from "@/lib/db/schema";
-const mocks = vi.hoisted(() => ({settings:null as CrawlSettings|null,list:vi.fn(),document:vi.fn(),input:vi.fn(),claim:vi.fn(),record:vi.fn(),review:vi.fn(),existing:vi.fn()}));
+const mocks = vi.hoisted(() => ({settings:null as CrawlSettings|null,requeue:vi.fn(),list:vi.fn(),document:vi.fn(),input:vi.fn(),claim:vi.fn(),record:vi.fn(),review:vi.fn(),existing:vi.fn()}));
 vi.mock("@/lib/crawl/settings", () => ({getSettings:async () => mocks.settings}));
 vi.mock("@/lib/crawl/repository", () => ({getDocument:mocks.document}));
 vi.mock("@/lib/domain/products/repository", () => ({findByUrl:mocks.existing}));
-vi.mock("@/lib/crawl/agent-review-repository", () => ({listReviewCandidates:mocks.list,loadReviewInput:mocks.input,claimAgentReview:mocks.claim,recordAgentReview:mocks.record}));
+vi.mock("@/lib/crawl/agent-review-repository", () => ({requeueStaleReviewSources:mocks.requeue,listReviewCandidates:mocks.list,loadReviewInput:mocks.input,claimAgentReview:mocks.claim,recordAgentReview:mocks.record}));
 vi.mock("@/lib/crawl/agent-review", () => ({reviewModel:()=>"tested-model",reviewWithAgent:mocks.review,REVIEW_CLI_TIMEOUT_MS:20_000}));
 const context = () => ({cursor:null,hasBudget:()=>true,save:vi.fn(),log:vi.fn(),lease:{name:"crawl-agent-review",token:"token",requestedVersion:1}});
 const candidate = () => ({id:1,repo:"acme/demo",productUrl:"https://demo.example",state:"approved",decidedBy:"auto",judgedAt:new Date()} as CrawlCandidate);
 beforeEach(() => {
   vi.resetAllMocks();
   mocks.settings = {...DEFAULT_CRAWL_SETTINGS,enabled:true,reviewMode:"observe"};
+  mocks.requeue.mockResolvedValue(0);
   const now = new Date();
   const document = {id:1,repo:"acme/demo",productUrl:"https://demo.example",repoMeta:{description:"Task tracker",homepage:"https://demo.example",pushed_at:now.toISOString(),stargazers_count:0,owner:{type:"User"}},
     pageMeta:{title:"Demo"},pageStatus:200,fetchedAt:now} as CrawlDocument;
@@ -26,7 +27,7 @@ beforeEach(() => {
 it("does not select or call AI when review mode is off", async () => {
   mocks.settings!.reviewMode = "off";
   expect(await reviewCrawlCandidates(context())).toEqual({done:true});
-  expect(mocks.list).not.toHaveBeenCalled();expect(mocks.review).not.toHaveBeenCalled();
+  expect(mocks.requeue).not.toHaveBeenCalled();expect(mocks.list).not.toHaveBeenCalled();expect(mocks.review).not.toHaveBeenCalled();
 });
 it("runs at most one external review and records through the transactional repository", async () => {
   mocks.list.mockResolvedValue([candidate(),{...candidate(),id:2}]);

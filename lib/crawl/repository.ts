@@ -15,6 +15,7 @@ import {
 } from "@/lib/db/schema";
 import { mergeWithDefaults } from "./settings";
 import type { CrawlSettings } from "./settings-schema";
+import { assertJobLease, requestJob, type JobLease } from "@/lib/jobs/control";
 
 /** 크롤 파이프라인 데이터 접근 — 파이프라인 바깥에서 이 테이블들을 직접 만지지 않는다 */
 
@@ -229,6 +230,27 @@ export async function putDocument(doc: {
     .insert(crawlDocuments)
     .values(values)
     .onConflictDoUpdate({ target: crawlDocuments.repo, set: values });
+}
+
+/**
+ * A successful refetch may resolve to a different deployed URL. Automatic, unpublished
+ * decisions must return to the existing rule judge; administrator and published decisions
+ * remain immutable. The fetch lease and judge request share the scheduler's lock order.
+ */
+export async function requeueAutomaticCandidateAfterSourceChange(repo: string, lease?: JobLease): Promise<boolean> {
+  return db.transaction(async tx => {
+    const [candidate] = await tx.select().from(crawlCandidates).where(eq(crawlCandidates.repo, repo)).for("update");
+    const [document] = await tx.select().from(crawlDocuments).where(eq(crawlDocuments.repo, repo)).for("share");
+    if (lease) await assertJobLease(tx, lease);
+    if (!candidate || !document || candidate.decidedBy !== "auto" || candidate.publishedSlug
+      || !["approved", "needs_review"].includes(candidate.state)
+      || candidate.productUrl === document.productUrl) return false;
+    await tx.update(crawlCandidates).set({
+      productUrl: document.productUrl, state: "new", reason: "source_changed", decidedAt: null, updatedAt: new Date(),
+    }).where(eq(crawlCandidates.id, candidate.id));
+    await requestJob("crawl-judge", tx);
+    return true;
+  });
 }
 
 export async function getDocument(repo: string): Promise<CrawlDocument | undefined> {

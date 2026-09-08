@@ -92,7 +92,6 @@ export default async function ProductPage({ params }: Props) {
           <RepositoryEvidence repository={detail.repository} license={detail.license} />
           <BuildProvenance
             product={detail.product}
-            profile={detail.profile}
             unclaimed={detail.unclaimed}
             agents={detail.agents}
             observedAgentFacts={detail.observedAgentFacts}
