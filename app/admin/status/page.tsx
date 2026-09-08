@@ -142,7 +142,7 @@ export default async function StatusPage() {
                 const state = states.get(name);
                 return (
                   <tr key={name} className="border-t border-line">
-                    <td className="py-2 font-mono">{name}<span className="block text-[12px] text-fg-3">{JOB_CATALOG.find(job => job.name === name)?.role}</span></td>
+                    <td className="py-2 font-mono">{name}<span className="block text-[13px] text-fg-3">{JOB_CATALOG.find(job => job.name === name)?.role}</span></td>
                     <td className="py-2 text-fg-2">{name === "heartbeat" ? "스케줄러 관측" : jobStatusLabel(state)}</td>
                     <td className="py-2 text-fg-2">{when(state?.workerSeenAt ?? null)}</td>
                     <td className="py-2 text-fg-2">{state?.lastRunAt ? when(state.lastRunAt) : "실행 기록 없음"}</td>

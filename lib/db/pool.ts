@@ -12,7 +12,9 @@ export type DbPoolConfig = {
   lifetimeSeconds: number;
 };
 
-function integerSetting(env: NodeJS.ProcessEnv, key: string, fallback: number, min: number, max: number): number {
+type PoolEnvironment = Readonly<Record<string, string | undefined>>;
+
+function integerSetting(env: PoolEnvironment, key: string, fallback: number, min: number, max: number): number {
   const input = env[key];
   if (input === undefined) return fallback;
   const value = /^\d+$/.test(input) ? Number(input) : Number.NaN;
@@ -20,7 +22,7 @@ function integerSetting(env: NodeJS.ProcessEnv, key: string, fallback: number, m
   return value;
 }
 
-export function dbPoolConfig(env: NodeJS.ProcessEnv = process.env): DbPoolConfig {
+export function dbPoolConfig(env: PoolEnvironment = process.env): DbPoolConfig {
   const role = env.WORKER_ROLE ?? "web";
   if (!Object.hasOwn(ROLE_POOL_MAX, role)) throw new Error("Invalid WORKER_ROLE for database pool");
   const selected = role as DbRole;

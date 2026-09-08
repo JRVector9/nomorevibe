@@ -7,6 +7,7 @@ export const JOB_CATALOG: readonly { name: string; role: JobRole | "scheduler"; 
   { name: "crawl-seed", role: "crawler", intervalMs: 15 * 60_000 },
   { name: "crawl-fetch", role: "crawler", intervalMs: 60_000 },
   { name: "crawl-judge", role: "reviewer", intervalMs: 5 * 60_000 },
+  { name: "crawl-agent-review", role: "reviewer", intervalMs: 60_000 },
   { name: "crawl-publish", role: "publisher", intervalMs: 5 * 60_000 },
   { name: "uptime-ping", role: "crawler", intervalMs: 10 * 60_000 },
   { name: "click-rollup", role: "maintenance", intervalMs: 60 * 60_000 },

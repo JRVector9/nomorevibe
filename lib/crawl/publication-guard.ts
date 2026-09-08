@@ -5,6 +5,8 @@ import { crawlCandidates, crawlDocuments, crawlSettings, agentRepositoryScans, t
 import type { ProductTransaction } from "@/lib/domain/products/generation";
 import { mergeWithDefaults } from "./settings";
 import type { CrawlSettings } from "./settings-schema";
+import { assertJobLease, type JobLease } from "@/lib/jobs/control";
+import { assertReviewApproval, ReviewApprovalChangedError } from "./agent-review-repository";
 
 export class PublicationStateChangedError extends Error {
   constructor() { super("publication_state_changed"); }
@@ -22,9 +24,10 @@ export function assertPublicationSnapshot(expected: Snapshot, current: Snapshot)
 /** Failure handling has the same race as insertion: never overwrite a newer review decision. */
 export async function recordPublicationFailure(candidate: CrawlCandidate, failure: {
   state:"needs_review"|"rejected"; reason:DecisionReason;
-}):Promise<boolean> {
+}, lease?: JobLease):Promise<boolean> {
   return db.transaction(async tx => {
     const [current] = await tx.select().from(crawlCandidates).where(eq(crawlCandidates.id,candidate.id)).for("update");
+    if (lease) await assertJobLease(tx, lease);
     if (!current || current.state !== "approved" || !isDeepStrictEqual(candidate,current)) return false;
     const now = new Date();
     await tx.update(crawlCandidates).set({
@@ -37,7 +40,7 @@ export async function recordPublicationFailure(candidate: CrawlCandidate, failur
 
 /** Locks the reviewed rows and marks publication in the same transaction as the product insert. */
 export async function guardPublication(tx: ProductTransaction, input: {
-  candidate:CrawlCandidate; document:CrawlDocument; settings:CrawlSettings; slug:string; scanId:number|null;
+  candidate:CrawlCandidate; document:CrawlDocument; settings:CrawlSettings; slug:string; scanId:number|null; lease?: JobLease;
 }) {
   const [candidate] = await tx.select().from(crawlCandidates).where(eq(crawlCandidates.repo,input.candidate.repo)).for("update");
   const [document] = await tx.select().from(crawlDocuments).where(eq(crawlDocuments.repo,input.document.repo)).for("share");
@@ -58,6 +61,8 @@ export async function guardPublication(tx: ProductTransaction, input: {
       || !scan.completedAt || !Number.isFinite(scan.completedAt.getTime())
       || now-scan.completedAt.getTime() < 0 || now-scan.completedAt.getTime() >= 24*3600_000) throw new PublicationStateChangedError();
   }
+  if (input.lease) await assertReviewApproval(tx, { candidate, document, settings: input.settings, lease: input.lease });
+  else if (input.settings.reviewMode === "enforce") throw new ReviewApprovalChangedError();
   await tx.update(crawlCandidates).set({state:"published",publishedSlug:input.slug,updatedAt:new Date()})
     .where(eq(crawlCandidates.id,candidate.id));
 }

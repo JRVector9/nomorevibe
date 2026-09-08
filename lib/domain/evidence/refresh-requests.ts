@@ -65,13 +65,14 @@ export async function queueProductRefresh(input: z.input<typeof requestSchema>):
       return { productId, requestedVersion, status: "queued" };
     }
     const values = { productId, slug: value.slug, requestedVersion, force,
-      actor: value.actor, requestedAt: now, updatedAt: now };
+      actor: value.actor, requestedAt: now, updatedAt: now,
+      // Use the same clock as the request. Database/app clock skew must not
+      // defer a newly accepted request until a later poll.
+      nextAttemptAt: current?.activeVersion ? current.nextAttemptAt : now };
     await tx.insert(productRefreshRequests).values(values).onConflictDoUpdate({
       target: productRefreshRequests.productId,
-      set: { ...values,
-        // A new request cannot bypass a provider wait of the captured run.
-        nextAttemptAt: current?.activeVersion ? current.nextAttemptAt : now,
-      },
+      // A new request cannot bypass a provider wait of the captured run.
+      set: values,
     });
     if (!value.force) {
       // Preserve the maker's due refresh; provider failures retain their retry deadline.

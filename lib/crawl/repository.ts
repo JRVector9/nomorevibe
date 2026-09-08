@@ -291,7 +291,10 @@ export async function recordAutomaticJudgement(input: {
       || !isDeepStrictEqual(document,input.document) || !isDeepStrictEqual(mergeWithDefaults(settingsRow?.values),input.settings)) return false;
     const now = new Date();
     const values = {repo:input.document.repo,productUrl:input.document.productUrl,state:input.verdict.state,
-      reason:input.verdict.reason,signals:input.verdict.signals,decidedBy:"auto" as const,
+      reason:input.verdict.reason,signals:{ ...input.verdict.signals,
+        ...(typeof candidate?.signals?.adminEvidenceRefreshConsumedId === "number"
+          ? { adminEvidenceRefreshConsumedId: candidate.signals.adminEvidenceRefreshConsumedId } : {}),
+      },decidedBy:"auto" as const,
       judgedAt:now,updatedAt:now,decidedAt:null};
     if (candidate) {
       await tx.update(crawlCandidates).set(values).where(eq(crawlCandidates.id,candidate.id));
@@ -306,11 +309,12 @@ export async function recordAutomaticJudgement(input: {
 export async function listCandidates(
   states: CandidateState[],
   limit: number,
+  condition?: import("drizzle-orm").SQL,
 ): Promise<CrawlCandidate[]> {
   return db
     .select()
     .from(crawlCandidates)
-    .where(inArray(crawlCandidates.state, states))
+    .where(and(inArray(crawlCandidates.state, states), condition))
     .orderBy(desc(crawlCandidates.updatedAt))
     .limit(limit);
 }

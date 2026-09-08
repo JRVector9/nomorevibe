@@ -17,7 +17,7 @@ const JOB_LIMIT_MS: Record<RuntimeRole, number> = {
   scheduler: 120_000, crawler: 180_000, reviewer: 180_000, publisher: 180_000, maintenance: 600_000,
 };
 
-export function supervisorLimits(role: RuntimeRole, env: NodeJS.ProcessEnv = process.env): SupervisorLimits {
+export function supervisorLimits(role: RuntimeRole, env: Readonly<Record<string, string | undefined>> = process.env): SupervisorLimits {
   const seconds = (name: string, fallback: number, minimum: number) => {
     const value = env[name] ? Number(env[name]) : fallback / 1_000;
     if (!Number.isSafeInteger(value) || value < minimum || value > 3_600) throw new Error(`Invalid ${name}`);

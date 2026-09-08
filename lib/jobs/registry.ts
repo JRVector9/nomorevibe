@@ -2,6 +2,7 @@ import type { JobContext, JobOutcome } from "./runner";
 import { seedFrontier } from "@/lib/crawl/jobs/seed";
 import { fetchCrawlDocuments } from "@/lib/crawl/jobs/fetch";
 import { judgeCrawlDocuments } from "@/lib/crawl/jobs/judge";
+import { reviewCrawlCandidates } from "@/lib/crawl/jobs/agent-review";
 import { publishCandidates } from "@/lib/crawl/jobs/publish";
 import { pingProducts } from "@/lib/jobs/products/uptime";
 import { rollupClicks } from "@/lib/jobs/products/click-rollup";
@@ -37,6 +38,7 @@ export const JOBS: Record<string, AnyJob> = {
 
   /** 수집한 원본에 현재 기준을 적용해 후보로 남긴다 */
   "crawl-judge": judgeCrawlDocuments,
+  "crawl-agent-review": reviewCrawlCandidates,
 
   /** 통과한 후보를 seeded 제품으로 목록에 올린다 */
   "crawl-publish": publishCandidates,

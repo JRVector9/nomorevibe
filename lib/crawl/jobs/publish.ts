@@ -3,6 +3,7 @@ import * as crawl from "@/lib/crawl/repository";
 import { getSettings } from "@/lib/crawl/settings";
 import { publishCandidate } from "@/lib/crawl/publish";
 import { recordPublicationFailure } from "@/lib/crawl/publication-guard";
+import { reviewApprovalPredicate } from "@/lib/crawl/agent-review-repository";
 
 /**
  * 발행 잡 — 통과한 후보를 목록에 올린다. 파이프라인의 마지막 단계다.
@@ -27,17 +28,19 @@ export async function publishCandidates(ctx: JobContext<null>): Promise<JobOutco
   let skipped = 0;
 
   while (ctx.hasBudget()) {
-    const candidates = await crawl.listCandidates(["approved"], BATCH);
+    // Filter before LIMIT so pending reviews cannot starve approved products.
+    const candidates = await crawl.listCandidates(["approved"], BATCH, reviewApprovalPredicate(settings));
     if (candidates.length === 0) {
       ctx.log("crawl.publish_done", { published, skipped, drained: true });
       return { done: true };
     }
 
     for (const candidate of candidates) {
-      const result = await publishCandidate(candidate);
+      if (!ctx.hasBudget()) return { done: false };
+      const result = await publishCandidate(candidate, ctx.lease);
 
       if (!result.ok) {
-        if (result.reason === "publication_state_changed") {
+        if (result.reason === "publication_state_changed" || result.reason === "review_approval_changed") {
           ctx.log("crawl.publication_changed", {repo:candidate.repo});
           return {done:false}; // Preserve the newer human/source decision.
         }
@@ -52,7 +55,7 @@ export async function publishCandidates(ctx: JobContext<null>): Promise<JobOutco
         const recorded = await recordPublicationFailure(candidate, {
           state: held ? "needs_review" : "rejected",
           reason: evidenceHeld ? result.reason as import("@/lib/db/schema").DecisionReason : held ? "ambiguous" : result.reason === "already_listed" ? "already_listed" : "not_a_product",
-        });
+        }, ctx.lease);
         if (!recorded) {
           ctx.log("crawl.publication_changed", {repo:candidate.repo});
           return {done:false};
