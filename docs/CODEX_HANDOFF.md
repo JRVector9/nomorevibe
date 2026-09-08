@@ -1,5 +1,38 @@
 # Codex handoff
 
+## Independent worker implementation completed locally — 2026-09-08 15:46 KST
+
+- Latest user authorized parallel implementation, review, fixes and operational verification, with
+  essential intermediate tests and comprehensive checks after large phases. PR01–10 code is complete.
+- Use `/Users/jr/Desktop/projects/nomorevibe-workers`, branch `feat/independent-workers` for this work.
+  Original main's home/auth/UI uncommitted changes are preserved. Do not reset, blanket stage, or merge over them.
+- Draft PR58: https://github.com/JRVector9/nomorevibe/pull/58 (new worker implementation).
+  Prerequisite draft PR57: https://github.com/JRVector9/nomorevibe/pull/57 (the4existing local commits through9c84bb9).
+  PR58 targets review/agent-evidence-foundation; after PR57 lands, retarget58 to main. Neither PR was merged.
+- Actual local verification: fullB unit589/integration441; subsequent affected DB28/unit26; finalE2E5,
+  cron3 plusrealcontainer400/202, type/lint and web/workerDockerbuilds PASS. Counts are from different phases.
+- Real10publicsources allHTTP200; latest .2 allrules needs_review, zero sample publication. CLI authenticated
+  structured response succeeded; rules holds are not10AIapprovals. See final report for cost/limits.
+- Actual no-web5role30min:1800.307s/31samples allhealthy/restarts0/maxDBconnections5. Externalcollectiondisabled.
+  Runtime report integrated070ac57 from agent4865797. Testcontainers exited0; pending/lease/connections/errors0.
+- Product1000/click100000/ranking1000, actual recent+weeklyHTML20RPS120s:2400/2400success,p95=33.6ms.
+  Not active crawler/LLM capacity or24h assurance. Local acceptanceapp43200 contains testfixtures, not productiondata.
+- Reports/runbook/evidence/prompts live under `../nomorevibe-workers/docs/operations/` and its docs/superpowers/plans/.
+- Remaining external prerequisites: choose productionserver/domain/DB, configure long-lived ClaudeOAuth,
+  deploy with stop/drain→migrationonce→oneofeachrole and observe→enforce, then real24hobservation.
+  Read-only Dokploy inventory found no matching project. No production deployment or database reset occurred.
+- This handoff update preserves prior entries below. Existing uncommitted original-main files are not in PR58.
+- Next agent commands:
+
+```sh
+cd /Users/jr/Desktop/projects/nomorevibe-workers
+git status --short
+gh pr checks 58
+cat docs/operations/2026-09-08-independent-workers-implementation-report.md
+cat docs/operations/independent-workers-runbook.md
+# Resolve production target/credentials before deployment. Never enable acceptance fixture publishers.
+```
+
 ## Independent workers implementation — 2026-09-08 15:42 KST
 
 - Objective: finish approved PR01–10 in parallel through operational readiness. User requests essential
