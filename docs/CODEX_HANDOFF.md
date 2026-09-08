@@ -1,5 +1,60 @@
 # Codex handoff
 
+## Minimal worker refactor design re-review — 2026-09-08 KST
+
+- Current objective: correct the worker architecture report against current code and prevent a
+  rewrite-sized implementation. User requested documentation changes only.
+- Completed: re-read runtime/cron/admin imports, runner/frontier locks, existing maker refresh,
+  force media semantics, rule/review/publish paths and their tests. Revised the existing report:
+  `docs/superpowers/specs/2026-09-08-independent-workers-and-capacity-design.md`.
+- This revision supersedes the earlier generic work_items/schedules/outbox-first proposal. Preserve
+  runJob/JobContext/JobOutcome, jobs cursors, frontier, documents, candidate/product statuses,
+  evidence collector, publication transaction, public registration/verify and ranking policies.
+- Plan A: independent role processes using one worker image/entrypoint and existing handlers;
+  add narrow request-version/schedule/owner-token fields to jobs. Role-specific singleton execution
+  first; stop/drain on replacement. Runner tokens alone do not fence all domain writes.
+- Plan B: crawler-only AI review with bounded input snapshots in crawl_review_attempts and a separate
+  reviewMode off/observe/enforce setting. Preserve candidate states and human decisions. Add approval
+  filtering before publish LIMIT and validation inside the existing publication guard.
+- Plan C: improve measured bottlenecks only. Redis, generalized queues/outbox/DAG, immutable source
+  storage, object-storage migration, universal async APIs, ownership/listing policy changes and
+  immediate horizontal worker scaling are deferred, not prerequisite work.
+- Important corrections: maker refresh already returns 202; queueMakerRefresh does not force recent
+  observed media. Preserve admin force scope through a small product_refresh_requests record and
+  resumable progress in the existing evidence job. Admin status imports JOB_NAMES from the executable
+  registry; split out metadata so removing cron imports actually separates the web graph. Existing
+  guard covers publication-time inputs, not a prior AI review snapshot. Agent evidence enforcement
+  is conditional, and the code default is false; live DB settings were not inspected.
+- Modified files this phase: the design report and docs/CODEX_HANDOFF.md only. Existing home/auth/UI/
+  compose edits and untracked artifacts belong to other work; do not revert or stage them.
+- Test actually executed:
+
+```sh
+npm test -- tests/evidence-worker.test.ts tests/evidence-scheduler.test.ts tests/agent-evidence-refresh-demand.test.ts tests/crawl-publication-guard.test.ts tests/crawl-publish-evidence.test.ts tests/crawl-agent-input.test.ts tests/agent-evidence-summary.test.ts
+```
+
+- Result: 7 files, 25 tests passed, exit 0. HTTP/LLM are mocked. Vite printed a future native-config
+  loader compatibility warning; no config changes were made. Integration/build/E2E/load/24h tests
+  and live crawler/deployment checks were not run. The integration setup truncates tables and must
+  use the dedicated TEST_DATABASE_URL when implementation starts.
+- Documentation validation executed: git diff --check for this handoff passed; a read-only check of
+  the report/current handoff section passed whitespace, code-fence and placeholder checks. All 10
+  referenced test paths and key existing source paths were found. Added idle workerSeenAt separately
+  from lock/progress timestamps, and an explicit manual-review stop after the AI attempt cap.
+- Failed approach: apply_patch rejected a delete+add targeting the same existing report path before
+  mutation. Replaced it with a single update patch. No partial service changes occurred.
+- Remaining: user reviews the corrected design; implementation begins only upon a subsequent request.
+  Initial server sizes and load targets remain assumptions until measured. Plans A/B/C include
+  bounded change lists, preservation criteria, migration and rollback limits.
+- Exact next commands:
+
+```sh
+cd /Users/jr/Desktop/projects/nomorevibe
+git status --short
+cat docs/superpowers/specs/2026-09-08-independent-workers-and-capacity-design.md
+git diff --check -- docs/CODEX_HANDOFF.md
+```
+
 ## Compact development-clue design — 2026-09-07 KST
 
 - User feedback: development AI is secondary. Hide the section when there is no evidence; when only
