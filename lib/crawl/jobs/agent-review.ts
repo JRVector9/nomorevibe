@@ -41,17 +41,24 @@ export async function reviewCrawlCandidates(ctx: JobContext<null>): Promise<JobO
     const existing = document.productUrl && verdict.state !== "rejected" ? await findByUrl(document.productUrl) : null;
     const hardReason = verdict.state === "rejected" ? verdict.reason
       : existing ? existing.status === "banned" ? "banned" : "already_listed" : null;
-    const provider = hardReason ? "rules" : "claude-cli";
+    // Missing development evidence is a hold, never proof the product is ineligible.
+    // Enforce this before a model call: real-source review showed the model conflating the two.
+    const evidenceHold = !hardReason && settings.agentEvidence.enforceEligibility
+      && !input.snapshot.evidenceSummary.eligible ? input.snapshot.evidenceSummary.reason : null;
+    const provider = hardReason || evidenceHold ? "rules" : "claude-cli";
     if (!ctx.hasBudget() || remaining() < 1_000) return { done: false };
     const context = { candidate, document, settings, input, lease: ctx.lease };
-    const claim = await claimAgentReview({ ...context, provider, model: hardReason ? REVIEW_RULES_VERSION : model });
+    const claim = await claimAgentReview({ ...context, provider, model: provider === "rules" ? REVIEW_RULES_VERSION : model });
     if (claim.kind === "skipped") {
       ctx.log("crawl.agent_review_skipped", { repo: candidate.repo, reason: claim.reason });
       continue;
     }
-    if (hardReason || claim.kind === "reused") {
+    if (hardReason || evidenceHold || claim.kind === "reused") {
       const outcome: ReviewOutcome | undefined = hardReason ? {
         decision: "reject", reason: `기존 등재 규칙에 해당합니다: ${hardReason}`, evidenceIds: ["product"],
+      } : evidenceHold ? {
+        decision: "needs_review", reason: `개발 근거 확인이 필요합니다 (${evidenceHold}). 현재 수집 내용만으로 승인하거나 부적격으로 확정하지 않습니다.`,
+        evidenceIds: ["product", ...input.snapshot.evidence.slice(0, 8).map(item => item.id)],
       } : claim.attempt.outcome ?? undefined;
       const recorded = await recordAgentReview({ ...context, attempt: claim.attempt, outcome });
       ctx.log("crawl.agent_reviewed", { repo: candidate.repo, provider, reused: claim.kind === "reused", ...recorded });

@@ -51,3 +51,10 @@ it("records transient AI failures with a retry time without inventing a verdict"
   const recorded = mocks.record.mock.calls[0][0];
   expect(recorded.error).toBe("auth");expect(recorded.outcome).toBeUndefined();expect(recorded.retryAfter.getTime()).toBeGreaterThan(Date.now());
 });
+it("holds incomplete AI evidence deterministically instead of asking a model to reject it", async () => {
+  mocks.settings!.agentEvidence = { ...mocks.settings!.agentEvidence, enforceEligibility: true };
+  await reviewCrawlCandidates(context());
+  expect(mocks.claim).toHaveBeenCalledWith(expect.objectContaining({ provider: "rules" }));
+  expect(mocks.record).toHaveBeenCalledWith(expect.objectContaining({ outcome: expect.objectContaining({ decision: "needs_review" }) }));
+  expect(mocks.review).not.toHaveBeenCalled();
+});

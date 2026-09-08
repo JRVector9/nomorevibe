@@ -6,8 +6,8 @@ import type { AgentObservation } from "@/lib/domain/evidence/agents/types";
 import { summarizeAgentEvidence } from "@/lib/domain/evidence/agents/summary";
 import type { CrawlSettings } from "./settings-schema";
 
-export const REVIEW_PROMPT_VERSION = "2026-09-08.1";
-export const REVIEW_RULES_VERSION = "2026-09-08.1";
+export const REVIEW_PROMPT_VERSION = "2026-09-08.2";
+export const REVIEW_RULES_VERSION = "2026-09-08.2";
 export const MAX_REVIEW_INPUT_BYTES = 64 * 1024;
 export const MAX_REVIEW_ATTEMPTS = 3;
 export const REVIEW_FRESH_MS = 24 * 3600_000;
