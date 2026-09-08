@@ -8,12 +8,13 @@ export function EvidenceSummary({ links, freshness, profileUpdatedAt }: {
   profileUpdatedAt: Date | null;
 }) {
   const official = links.filter((link) => link.evidenceLabel === "공식 출처에서 확인").length;
+  const observed = links.filter((link) => link.evidenceLabel === "출처 응답 확인·관계 미확인").length;
   const maker = links.filter((link) => link.evidenceLabel === "메이커 제공·미검증").length;
   const automatic = links.filter((link) => link.evidenceLabel === "자동 감지").length;
   const problems = freshness.filter((item) => item.state === "failed" || item.state === "stale" || item.state === "disconnected").length;
 
   return (
-    <section className="flex flex-col gap-3 rounded-[12px] border border-line bg-bg-card px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
+    <section className="flex flex-col gap-4 rounded-[12px] border border-line bg-bg-card px-5 py-5">
       <div>
         <h2 className="text-[14px] font-bold text-fg">근거 요약</h2>
         <p className="mt-1 text-[13px] leading-5 text-fg-3">
@@ -22,6 +23,7 @@ export function EvidenceSummary({ links, freshness, profileUpdatedAt }: {
       </div>
       <div className="flex flex-wrap items-center gap-2">
         <SourceBadge label={`공식 출처 ${official}`} />
+        {observed > 0 && <SourceBadge label={`출처 응답 확인 ${observed}`} />}
         <SourceBadge label={`메이커 제공·미검증 ${maker}`} />
         {automatic > 0 && <SourceBadge label={`자동 감지 ${automatic}`} />}
         {problems > 0 && (

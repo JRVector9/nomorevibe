@@ -5,6 +5,7 @@ import * as crawl from "@/lib/crawl/repository";
 import { getSettings } from "@/lib/crawl/settings";
 import { judge, factsFromRepoMeta, type Verdict } from "@/lib/crawl/rules";
 import type { CrawlSettings } from "@/lib/crawl/settings-schema";
+import { loadAgentJudgeInput } from "@/lib/crawl/agent-evidence";
 
 /**
  * 판정 잡 — 수집한 원본에 현재 기준을 적용해 후보로 남긴다.
@@ -39,15 +40,12 @@ export async function judgeCrawlDocuments(ctx: JobContext<null>): Promise<JobOut
     }
 
     for (const document of documents) {
+      const candidate = await crawl.getCandidate(document.repo);
       const verdict = await judgeDocument(document, settings);
-      await crawl.recordJudgement({
-        repo: document.repo,
-        productUrl: document.productUrl,
-        state: verdict.state,
-        reason: verdict.reason,
-        decidedBy: "auto",
-        signals: verdict.signals,
-      });
+      if (!await crawl.recordAutomaticJudgement({document,settings,candidate,verdict})) {
+        ctx.log("crawl.judgement_changed", {repo:document.repo});
+        return {done:false};
+      }
       counts[verdict.reason] = (counts[verdict.reason] ?? 0) + 1;
       judged++;
       if (!ctx.hasBudget()) break;
@@ -66,6 +64,8 @@ export async function judgeCrawlDocuments(ctx: JobContext<null>): Promise<JobOut
  * 아무 의미가 없고, 조회는 후보 수만큼 늘어난다.
  */
 async function judgeDocument(document: CrawlDocument, settings: CrawlSettings): Promise<Verdict> {
+  const agentEvidence = settings.agentEvidence.enforceEligibility
+    ? await loadAgentJudgeInput(document, settings) : undefined;
   const pageMeta = (document.pageMeta ?? {}) as { generator?: unknown; title?: unknown };
   const verdict = judge(
     factsFromRepoMeta(document.repo, document.repoMeta),
@@ -76,7 +76,10 @@ async function judgeDocument(document: CrawlDocument, settings: CrawlSettings): 
       title: typeof pageMeta.title === "string" ? pageMeta.title : null,
     },
     settings,
+    new Date(),
+    agentEvidence,
   );
+  if (agentEvidence) verdict.signals.agentScanId = agentEvidence.scanId;
   if (verdict.state === "rejected" || !document.productUrl) return verdict;
 
   const existing = await findByUrl(document.productUrl);

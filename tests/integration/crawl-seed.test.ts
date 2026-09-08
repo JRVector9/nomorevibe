@@ -107,7 +107,7 @@ describe("레포 검색 신호", () => {
     await tick();
 
     expect(searchRepositories).toHaveBeenCalledWith(
-      expect.objectContaining({ query: expect.stringMatching(/^topic:vibe-coding pushed:>=\d{4}-\d{2}-\d{2}$/) }),
+      expect.objectContaining({ query: expect.stringMatching(/^topic:vibe-coding pushed:[^ ]+\.\.[^ ]+$/) }),
     );
   });
 });
@@ -122,8 +122,8 @@ describe("검색 잡", () => {
     const [entry] = await crawl.dequeue(1);
     // 어떤 신호로 발견했는지 남는다 — 신호별 수율을 비교하려면 필요하다
     expect(entry).toMatchObject({ signal: "Claude 커밋 트레일러", priority: 100 });
-    // 추정 AI도 발견 시점에 굳는다 — 나중에 라벨이 바뀌어도 발행이 이 값을 쓴다
-    expect(entry.builder).toBe("Claude");
+    // 검색 힌트는 제작 AI 값으로 전달하지 않는다
+    expect(entry.builder).toBeNull();
   });
 
   it("어떤 AI인지 말하지 않는 신호는 추정을 비운 채 넣는다", async () => {
@@ -150,7 +150,7 @@ describe("검색 잡", () => {
 
     expect(searchCommits).toHaveBeenCalledWith(
       expect.objectContaining({
-        query: expect.stringMatching(/^Co-authored-by: Claude committer-date:>=\d{4}-\d{2}-\d{2}$/),
+        query: expect.stringMatching(/^Co-authored-by: Claude committer-date:[^ ]+\.\.[^ ]+$/),
         page: 1,
         sort: "relevance",
       }),

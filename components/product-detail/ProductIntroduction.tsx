@@ -34,22 +34,23 @@ export function ProductIntroduction({ product, profile, unclaimed }: {
   unclaimed: boolean;
 }) {
   return (
-    <section className="rounded-[12px] border border-line bg-bg-card p-5 sm:p-6">
-      <div className="flex flex-wrap items-center gap-2">
-        <h2 className="text-[17px] font-extrabold text-fg">상세 소개</h2>
+    <section className="rounded-[12px] border border-line bg-bg-card p-6 sm:p-8">
+      <p className="text-[13px] font-extrabold tracking-[0.14em] text-accent">PRODUCT STORY</p>
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        <h2 className="text-[26px] font-extrabold tracking-[-0.035em] text-fg sm:text-[30px]">상세 소개</h2>
         <SourceBadge label={unclaimed ? "자동 감지" : "메이커 제공·미검증"} />
       </div>
-      <p className="mt-4 whitespace-pre-line text-[15px] leading-7 text-fg-2">{product.description}</p>
+      <p className="mt-5 max-w-[760px] whitespace-pre-line text-[15px] leading-7 text-fg-2">{product.description}</p>
       {profile ? (
         <>
           {(profile.problem || profile.targetUsers || profile.privacySummary) && (
-            <dl className="mt-6 grid gap-4 rounded-[10px] bg-bg-soft p-4 sm:grid-cols-2">
+            <dl className="mt-7 grid gap-5 border-y border-line py-6 sm:grid-cols-2">
               {profile.problem && <div><dt className="text-[13px] font-bold text-fg">해결하는 문제</dt><dd className="mt-1 leading-6 text-[14px] text-fg-2">{profile.problem}</dd></div>}
               {profile.targetUsers && <div><dt className="text-[13px] font-bold text-fg">주요 사용자</dt><dd className="mt-1 leading-6 text-[14px] text-fg-2">{profile.targetUsers}</dd></div>}
               {profile.privacySummary && <div className="sm:col-span-2"><dt className="text-[13px] font-bold text-fg">개인정보·처리 방식</dt><dd className="mt-1 leading-6 text-[14px] text-fg-2">{profile.privacySummary}</dd></div>}
             </dl>
           )}
-          <div className="mt-6 grid gap-5 sm:grid-cols-2">
+          <div className="mt-7 grid gap-7 sm:grid-cols-2">
             <ListBlock title="주요 기능" items={profile.keyFeatures} />
             <ListBlock title="활용 예시" items={profile.useCases} />
           </div>

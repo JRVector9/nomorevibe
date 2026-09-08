@@ -1,5 +1,6 @@
 import type { DecisionReason } from "@/lib/db/schema";
 import type { CrawlSettings } from "./settings-schema";
+import { summarizeAgentEvidence, type SummaryInput } from "@/lib/domain/evidence/agents/summary";
 
 /**
  * 판정 규칙.
@@ -102,6 +103,7 @@ export function judge(
   page: PageFacts,
   settings: CrawlSettings,
   now = new Date(),
+  agentEvidence?: SummaryInput,
 ): Verdict {
   const { judge: rules } = settings;
   const signals: Record<string, unknown> = {
@@ -224,6 +226,14 @@ export function judge(
       : reject("personal_site");
   }
 
+  if (settings.agentEvidence.enforceEligibility) {
+    const summary = summarizeAgentEvidence(agentEvidence ?? {
+      scanState: "pending", relationship: "unknown", observations: [],
+    });
+    signals.agentEvidence = summary;
+    signals.agentPolicyVersion = settings.agentEvidence.policyVersion;
+    if (!summary.eligible) return { state: "needs_review", reason: summary.reason, signals };
+  }
   return { state: "approved", reason: "passed", signals };
 }
 

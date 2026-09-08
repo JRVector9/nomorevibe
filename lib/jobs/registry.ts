@@ -6,6 +6,7 @@ import { publishCandidates } from "@/lib/crawl/jobs/publish";
 import { pingProducts } from "@/lib/jobs/products/uptime";
 import { rollupClicks } from "@/lib/jobs/products/click-rollup";
 import { refreshRankings } from "@/lib/jobs/products/ranking-refresh";
+import { refreshAgentEvidenceJob } from "@/lib/jobs/products/agent-evidence-refresh";
 import { refreshProductEvidenceJob } from "@/lib/jobs/products/evidence-refresh";
 
 /**
@@ -51,6 +52,7 @@ export const JOBS: Record<string, AnyJob> = {
 
   /** 외부 근거와 내부 미디어를 bounded batch로 갱신한다 */
   "product-evidence-refresh": refreshProductEvidenceJob,
+  "agent-evidence-refresh": refreshAgentEvidenceJob,
 };
 
 export const JOB_NAMES = Object.keys(JOBS);

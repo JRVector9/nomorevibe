@@ -31,6 +31,7 @@ import type { EvidenceSettings } from "./settings";
 import { currentEvidenceSettings } from "./settings-store";
 import { fetchFeedEvidence, feedUpdateCandidates } from "./providers/feeds";
 import { refreshGitHubEvidence } from "./providers/github";
+import { refreshSiteFingerprint } from "./providers/site-fingerprint";
 import {
   verifyAppStoreLink,
   verifyChangelogLink,
@@ -144,6 +145,7 @@ export type ProductEvidenceRefreshResult = EvidenceSourceResult & {
 export type EvidenceRefreshDependencies = {
   now?: () => Date;
   github?: typeof refreshGitHubEvidence;
+  siteFingerprint?: typeof refreshSiteFingerprint;
   feed?: typeof fetchFeedEvidence;
   appStore?: typeof verifyAppStoreLink;
   playStore?: typeof verifyPlayStoreLink;
@@ -381,6 +383,13 @@ async function collectDeclaredSource(
   hasBudget?: () => boolean,
 ): Promise<CollectedEvidenceSourceResult> {
   if (source.kind === "repository") {
+    // A supplied GitHub provider owns its network dependencies. The production path
+    // records site-to-repository evidence before deriving the GitHub relationship.
+    if (!dependencies.github || dependencies.siteFingerprint) {
+      const product = await db.query.products.findFirst({ where: eq(products.id, source.productId), columns: { url: true } });
+      if (product) await (dependencies.siteFingerprint ?? refreshSiteFingerprint)({ slug: source.slug, productId: source.productId, url: product.url }, { now });
+      if (hasBudget && !hasBudget()) return { factsChanged: 0, eventsInserted: 0, mediaInserted: 0, complete: false, httpClass: "budget" };
+    }
     const result = await (dependencies.github ?? refreshGitHubEvidence)({
       slug: source.slug,
       repository: source.sourceKey,

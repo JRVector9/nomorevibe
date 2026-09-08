@@ -1,0 +1,405 @@
+{
+  "observedAt": "2026-09-05T22:31:17.306Z",
+  "baselineCommit": "be4aee0",
+  "scope": "Read-only application audit; integration tests used dedicated port 55435 database",
+  "snapshotCandidates": 4652,
+  "snapshotPublished": 1006,
+  "groups": {
+    "Claude 커밋 트레일러": {
+      "found": 2916,
+      "published": 555,
+      "needsReview": 118,
+      "rejected": 2243
+    },
+    "Codex 커밋 트레일러": {
+      "found": 1157,
+      "published": 153,
+      "needsReview": 50,
+      "rejected": 954
+    },
+    "vibe-coding 토픽": {
+      "found": 579,
+      "published": 298,
+      "needsReview": 50,
+      "rejected": 231
+    }
+  },
+  "searches": [
+    {
+      "model": "Claude",
+      "query": "Co-authored-by: Claude committer-date:>=2026-03-09",
+      "status": 200,
+      "sampleCount": 100,
+      "totalCount": 8398884,
+      "incompleteResults": true,
+      "uniqueRepos": 67,
+      "rowsWithProviderCoauthorLine": 100,
+      "missingProviderCoauthorExamples": []
+    },
+    {
+      "model": "Codex",
+      "query": "Co-authored-by: Codex committer-date:>=2026-03-09",
+      "status": 200,
+      "sampleCount": 100,
+      "totalCount": 1643488,
+      "incompleteResults": true,
+      "uniqueRepos": 49,
+      "rowsWithProviderCoauthorLine": 98,
+      "missingProviderCoauthorExamples": [
+        {
+          "repo": "QwenLM/qwen-code",
+          "sha": "3133e835e6da5a37b682aad50e927d8d13ebdb8d",
+          "url": "https://github.com/QwenLM/qwen-code/commit/3133e835e6da5a37b682aad50e927d8d13ebdb8d"
+        },
+        {
+          "repo": "QwenLM/qwen-code",
+          "sha": "37cb9ac161f1c98e7fec0731f7050a1809126273",
+          "url": "https://github.com/QwenLM/qwen-code/commit/37cb9ac161f1c98e7fec0731f7050a1809126273"
+        }
+      ]
+    }
+  ],
+  "logs": [
+    {
+      "event": "crawl.fetched",
+      "count": 1391,
+      "first": "2026-09-04T22:31:31.993Z",
+      "last": "2026-09-05T22:31:06.959Z",
+      "totals": {
+        "fetched": 1040,
+        "discovered": 0,
+        "seen": 0,
+        "alive": 0,
+        "down": 0,
+        "attempted": 0,
+        "succeeded": 0,
+        "failed": 1
+      },
+      "reasons": {}
+    },
+    {
+      "event": "crawl.seeded",
+      "count": 93,
+      "first": "2026-09-04T22:34:38.962Z",
+      "last": "2026-09-05T22:23:52.765Z",
+      "totals": {
+        "fetched": 0,
+        "discovered": 1040,
+        "seen": 12325,
+        "alive": 0,
+        "down": 0,
+        "attempted": 0,
+        "succeeded": 0,
+        "failed": 0
+      },
+      "reasons": {}
+    },
+    {
+      "event": "crawl.classified",
+      "count": 0,
+      "totals": {
+        "fetched": 0,
+        "discovered": 0,
+        "seen": 0,
+        "alive": 0,
+        "down": 0,
+        "attempted": 0,
+        "succeeded": 0,
+        "failed": 0
+      },
+      "reasons": {}
+    },
+    {
+      "event": "crawl.classify_failed",
+      "count": 184,
+      "first": "2026-09-04T23:11:02.157Z",
+      "last": "2026-09-05T22:29:08.114Z",
+      "totals": {
+        "fetched": 0,
+        "discovered": 0,
+        "seen": 0,
+        "alive": 0,
+        "down": 0,
+        "attempted": 0,
+        "succeeded": 0,
+        "failed": 0
+      },
+      "reasons": {
+        "auth": 184
+      }
+    },
+    {
+      "event": "uptime.checked",
+      "count": 139,
+      "first": "2026-09-04T22:38:49.889Z",
+      "last": "2026-09-05T22:28:07.286Z",
+      "totals": {
+        "fetched": 0,
+        "discovered": 0,
+        "seen": 0,
+        "alive": 2064,
+        "down": 15,
+        "attempted": 0,
+        "succeeded": 0,
+        "failed": 0
+      },
+      "reasons": {}
+    },
+    {
+      "event": "evidence.refresh_batch",
+      "count": 4,
+      "first": "2026-09-05T03:15:24.353Z",
+      "last": "2026-09-05T21:53:14.377Z",
+      "totals": {
+        "fetched": 0,
+        "discovered": 0,
+        "seen": 0,
+        "alive": 0,
+        "down": 0,
+        "attempted": 1,
+        "succeeded": 1,
+        "failed": 0
+      },
+      "reasons": {}
+    },
+    {
+      "event": "job.failed",
+      "count": 0,
+      "totals": {
+        "fetched": 0,
+        "discovered": 0,
+        "seen": 0,
+        "alive": 0,
+        "down": 0,
+        "attempted": 0,
+        "succeeded": 0,
+        "failed": 0
+      },
+      "reasons": {}
+    }
+  ],
+  "stats": [
+    {
+      "at": "2026-09-05T22:33:14.536Z",
+      "containers": [
+        {
+          "name": "nomorevibe-app-1",
+          "cpu": "0.00%",
+          "memory": "246.5MiB / 7.737GiB",
+          "pids": "11"
+        },
+        {
+          "name": "nomorevibe-db-1",
+          "cpu": "1.57%",
+          "memory": "176.6MiB / 7.737GiB",
+          "pids": "14"
+        },
+        {
+          "name": "nomorevibe-scheduler-1",
+          "cpu": "0.00%",
+          "memory": "4.73MiB / 7.737GiB",
+          "pids": "2"
+        }
+      ]
+    },
+    {
+      "at": "2026-09-05T22:33:26.547Z",
+      "containers": [
+        {
+          "name": "nomorevibe-app-1",
+          "cpu": "10.80%",
+          "memory": "237MiB / 7.737GiB",
+          "pids": "11"
+        },
+        {
+          "name": "nomorevibe-db-1",
+          "cpu": "0.50%",
+          "memory": "176.6MiB / 7.737GiB",
+          "pids": "14"
+        },
+        {
+          "name": "nomorevibe-scheduler-1",
+          "cpu": "0.00%",
+          "memory": "4.73MiB / 7.737GiB",
+          "pids": "2"
+        }
+      ]
+    },
+    {
+      "at": "2026-09-05T22:33:38.568Z",
+      "containers": [
+        {
+          "name": "nomorevibe-app-1",
+          "cpu": "0.00%",
+          "memory": "247.2MiB / 7.737GiB",
+          "pids": "11"
+        },
+        {
+          "name": "nomorevibe-db-1",
+          "cpu": "0.00%",
+          "memory": "176.6MiB / 7.737GiB",
+          "pids": "14"
+        },
+        {
+          "name": "nomorevibe-scheduler-1",
+          "cpu": "0.00%",
+          "memory": "4.73MiB / 7.737GiB",
+          "pids": "2"
+        }
+      ]
+    },
+    {
+      "at": "2026-09-05T22:33:50.591Z",
+      "containers": [
+        {
+          "name": "nomorevibe-app-1",
+          "cpu": "0.00%",
+          "memory": "233.1MiB / 7.737GiB",
+          "pids": "11"
+        },
+        {
+          "name": "nomorevibe-db-1",
+          "cpu": "0.00%",
+          "memory": "176.6MiB / 7.737GiB",
+          "pids": "14"
+        },
+        {
+          "name": "nomorevibe-scheduler-1",
+          "cpu": "0.00%",
+          "memory": "4.73MiB / 7.737GiB",
+          "pids": "2"
+        }
+      ]
+    },
+    {
+      "at": "2026-09-05T22:34:02.607Z",
+      "containers": [
+        {
+          "name": "nomorevibe-app-1",
+          "cpu": "11.00%",
+          "memory": "247.8MiB / 7.737GiB",
+          "pids": "11"
+        },
+        {
+          "name": "nomorevibe-db-1",
+          "cpu": "0.00%",
+          "memory": "176.6MiB / 7.737GiB",
+          "pids": "14"
+        },
+        {
+          "name": "nomorevibe-scheduler-1",
+          "cpu": "0.00%",
+          "memory": "4.73MiB / 7.737GiB",
+          "pids": "2"
+        }
+      ]
+    },
+    {
+      "at": "2026-09-05T22:34:14.630Z",
+      "containers": [
+        {
+          "name": "nomorevibe-app-1",
+          "cpu": "0.00%",
+          "memory": "233MiB / 7.737GiB",
+          "pids": "11"
+        },
+        {
+          "name": "nomorevibe-db-1",
+          "cpu": "1.56%",
+          "memory": "176.8MiB / 7.737GiB",
+          "pids": "14"
+        },
+        {
+          "name": "nomorevibe-scheduler-1",
+          "cpu": "0.00%",
+          "memory": "4.73MiB / 7.737GiB",
+          "pids": "2"
+        }
+      ]
+    }
+  ],
+  "rejudge": {
+    "observedAt": "2026-09-05T22:33:14.896Z",
+    "total": 4652,
+    "published": 1006,
+    "publishedNoLongerApproved": 12,
+    "counts": {
+      "unreachable": 7,
+      "not_a_product": 5
+    },
+    "examples": [
+      {
+        "repo": "bliporg/blip",
+        "url": "https://blip.game",
+        "decidedBy": "auto",
+        "reason": "unreachable"
+      },
+      {
+        "repo": "wsher0901/roam",
+        "url": "https://roam-pink-eight.vercel.app",
+        "decidedBy": "auto",
+        "reason": "not_a_product"
+      },
+      {
+        "repo": "liyupi/github-global",
+        "url": "https://codefather.cn/course/2014303010343092226",
+        "decidedBy": "auto",
+        "reason": "unreachable"
+      },
+      {
+        "repo": "sa4hnd/vibra-code",
+        "url": "https://mintlify.wiki/sa4hnd/vibra-code",
+        "decidedBy": "auto",
+        "reason": "unreachable"
+      },
+      {
+        "repo": "null-n11o/sns-automation",
+        "url": "https://sns-automation-one.vercel.app",
+        "decidedBy": "auto",
+        "reason": "not_a_product"
+      },
+      {
+        "repo": "jhd3197/CachiBot",
+        "url": "https://cachibot.ai",
+        "decidedBy": "auto",
+        "reason": "unreachable"
+      },
+      {
+        "repo": "mattwoodco/drops",
+        "url": "https://drops.mattwood.co",
+        "decidedBy": "auto",
+        "reason": "not_a_product"
+      },
+      {
+        "repo": "cnoles1980/Vibe-Coder-Code-Review",
+        "url": "https://theneuron.ai/explainer-articles/10-vibe-coding-questions-beginners-dont-know-to-ask-but-should",
+        "decidedBy": "auto",
+        "reason": "unreachable"
+      },
+      {
+        "repo": "pmptwiki/pmpt-cli",
+        "url": "https://pmptwiki.com",
+        "decidedBy": "auto",
+        "reason": "unreachable"
+      },
+      {
+        "repo": "jigjoy-ai/spektrum-sdk-example",
+        "url": "https://jigjoy.ai/spektrum",
+        "decidedBy": "auto",
+        "reason": "unreachable"
+      },
+      {
+        "repo": "osori/korean-romanizer",
+        "url": "https://korean-romanizer.ij.fyi",
+        "decidedBy": "auto",
+        "reason": "not_a_product"
+      },
+      {
+        "repo": "pnsk-lab/eclipsa",
+        "url": "https://eclipsa-docs-alpha.nakasyou.workers.dev",
+        "decidedBy": "auto",
+        "reason": "not_a_product"
+      }
+    ]
+  }
+}

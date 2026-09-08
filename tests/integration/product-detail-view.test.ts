@@ -549,6 +549,14 @@ describe("public product detail read model", () => {
     }
   });
 
+  it("keeps the latest failed response distinct from the consecutive-failure down threshold", async () => {
+    const product = await insertProduct("detail-one-failure");
+    await db.insert(productHealth).values({ slug: product.slug, checkedAt: now(), status: 503, failures: 1 });
+    expect((await getProductDetail(product.slug))?.health).toMatchObject({ lastCheckSucceeded: false, down: false });
+    await db.update(productHealth).set({ status: 200, failures: 0 }).where(eq(productHealth.slug, product.slug));
+    expect((await getProductDetail(product.slug))?.health).toMatchObject({ lastCheckSucceeded: true, down: false });
+  });
+
   it("returns null for banned and missing products", async () => {
     await insertProduct("detail-banned", "banned");
     await expect(getProductIdentity("detail-banned")).resolves.toBeNull();

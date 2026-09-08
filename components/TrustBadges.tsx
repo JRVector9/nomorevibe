@@ -59,6 +59,8 @@ export function StatusBadge({
  */
 export function BuilderBadge({ builder, claim }: { builder: string; claim: BuilderClaim }) {
   const guessed = claim === "guessed";
+  if (guessed) return <span className="rounded-full border border-line bg-bg-soft px-2 py-0.5 text-[13px] font-semibold text-fg-3"
+    title="이전 검색 분류만으로 개발 도구나 모델을 확인할 수 없습니다.">개발 AI 미확인</span>;
   return (
     <span
       className={`rounded-full px-2 py-0.5 text-[13px] font-semibold ${

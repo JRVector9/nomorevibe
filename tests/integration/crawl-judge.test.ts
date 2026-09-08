@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, beforeEach } from "vitest";
+import { describe, it, expect, beforeAll, beforeEach, vi } from "vitest";
 import { db } from "@/lib/db";
 import { crawlFrontier, crawlDocuments, crawlCandidates, crawlSettings } from "@/lib/db/schema";
 import * as crawl from "@/lib/crawl/repository";
@@ -168,5 +168,48 @@ describe("판정 잡", () => {
 
     expect(result).toMatchObject({ status: "completed", done: true });
     expect(await crawl.getCandidate("someone/my-app")).toBeUndefined();
+  });
+
+  it.each([false,true])("비동기 판정 중 관리자 거부가 도착하면 보존한다 (기존 new 후보 %s)", async existing => {
+    await putDocument({repo:"someone/my-app"});
+    if (existing) await crawl.recordJudgement({repo:"someone/my-app",productUrl:"https://my-app.test",state:"new",reason:"passed",decidedBy:"auto"});
+    const findByUrl = products.findByUrl;
+    const spy = vi.spyOn(products,"findByUrl").mockImplementationOnce(async url => {
+      await crawl.recordJudgement({repo:"someone/my-app",productUrl:url,state:"rejected",reason:"banned",decidedBy:"admin",signals:{review:"newer admin"}});
+      return findByUrl(url);
+    });
+    try {
+      expect(await tick()).toMatchObject({status:"completed",done:false});
+      expect(await crawl.getCandidate("someone/my-app")).toMatchObject({state:"rejected",reason:"banned",decidedBy:"admin",signals:{review:"newer admin"}});
+    } finally {spy.mockRestore();}
+  });
+
+  it("비동기 판정 중 문서 URL이 바뀌면 과거 결과를 저장하지 않는다", async () => {
+    await putDocument({repo:"someone/my-app"});
+    const findByUrl = products.findByUrl;
+    const spy = vi.spyOn(products,"findByUrl").mockImplementationOnce(async url => {
+      await putDocument({repo:"someone/my-app",productUrl:"https://changed.test"});
+      return findByUrl(url);
+    });
+    try {
+      expect(await tick()).toMatchObject({status:"completed",done:false});
+      expect(await crawl.getCandidate("someone/my-app")).toBeUndefined();
+      expect(await crawl.getDocument("someone/my-app")).toMatchObject({productUrl:"https://changed.test"});
+    } finally {spy.mockRestore();}
+  });
+
+  it("비동기 판정 중 설정이 바뀌면 최신 설정으로 다시 판단한다", async () => {
+    await putDocument({repo:"someone/my-app"});
+    const findByUrl = products.findByUrl;
+    const spy = vi.spyOn(products,"findByUrl").mockImplementationOnce(async url => {
+      await saveSettings({judge:{maxStars:1}},"concurrent admin");
+      return findByUrl(url);
+    });
+    try {
+      expect(await tick()).toMatchObject({status:"completed",done:false});
+      expect(await crawl.getCandidate("someone/my-app")).toBeUndefined();
+    } finally {spy.mockRestore();}
+    expect(await tick()).toMatchObject({status:"completed",done:true});
+    expect(await crawl.getCandidate("someone/my-app")).toMatchObject({reason:"large_oss",state:"rejected"});
   });
 });

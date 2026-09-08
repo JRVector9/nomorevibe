@@ -397,10 +397,10 @@ describe("GitHub evidence refresh", () => {
       }
       if (path.includes("/releases")) {
         return ok([
-          ...Array.from({ length: 10 }, (_, index) => draft(index + 1)),
+          ...Array.from({ length: 5 }, (_, index) => draft(index + 1)),
           ...[1, 2, 3, 4, 5].map(published),
         ], {
-          link: '<https://api.github.com/repos/owner/repo/releases?per_page=100&page=2>; rel="next", <https://api.github.com/repos/owner/repo/releases?per_page=100&page=2>; rel="last"',
+          link: '<https://api.github.com/repos/owner/repo/releases?per_page=10&page=2>; rel="next", <https://api.github.com/repos/owner/repo/releases?per_page=10&page=2>; rel="last"',
         });
       }
       return baseRequest(path);
@@ -410,7 +410,10 @@ describe("GitHub evidence refresh", () => {
       slug: "github-product",
       repository: "owner/repo",
     }, { request })).resolves.toEqual({ status: "updated", releases: 10 });
-    expect(request.mock.calls.filter(([path]) => String(path).includes("/releases"))).toHaveLength(2);
+    expect(request.mock.calls.filter(([path]) => String(path).includes("/releases")).map(([path]) => path)).toEqual([
+      "/repos/owner/repo/releases?per_page=10&page=1",
+      "/repos/owner/repo/releases?per_page=10&page=2",
+    ]);
   });
 
   it("stops release pagination when the enclosing job budget expires", async () => {
@@ -421,7 +424,7 @@ describe("GitHub evidence refresh", () => {
       releaseRequests += 1;
       return ok([], {
         link: releaseRequests === 1
-          ? '<https://api.github.com/repos/owner/repo/releases?per_page=100&page=2>; rel="next"'
+          ? '<https://api.github.com/repos/owner/repo/releases?per_page=10&page=2>; rel="next"'
           : undefined,
       });
     });

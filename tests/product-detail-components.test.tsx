@@ -86,10 +86,26 @@ const freshness: ProductDetailView["freshness"] = [{
   nextAttemptAt: new Date("2026-08-20T03:00:00.000Z"),
 }];
 
+const heroMedia: ProductDetailView["media"] = [{
+  id: 1,
+  hash: "a".repeat(64),
+  src: `/api/media/${"a".repeat(64)}`,
+  thumbnailSrc: `/api/media/${"a".repeat(64)}?variant=thumbnail`,
+  width: 1200,
+  height: 630,
+  thumbnailWidth: 480,
+  thumbnailHeight: 252,
+  altText: "simpleHWP 대표 제품 화면",
+  position: 0,
+  sourceMissing: false,
+  lastSuccessAt: observedAt,
+}];
+
 describe("evidence product detail components", () => {
   it("renders the current stored rank, verification, lifecycle, and a 44px outbound action", () => {
     const html = renderToStaticMarkup(<ProductHero
       product={product}
+      media={heroMedia}
       unclaimed={false}
       lifecycle="ga"
       rank={{ seasonKey: "2026-W34", rank: 2, scoreMode: "unique_visitors" }}
@@ -104,6 +120,48 @@ describe("evidence product detail components", () => {
     expect(html).not.toContain('href="https://simplehwp.example"');
     expect(html).toContain("min-h-11");
     expect(html).toContain("공유");
+    expect(html).toContain('data-layout="editorial-product-hero"');
+    expect(html).toContain("제품 화면");
+    expect(html).toContain(product.description);
+    expect(html).toContain(heroMedia[0].src);
+    expect(html).toContain('width="1200"');
+    expect(html).toContain('height="630"');
+  });
+
+  it("gives products without mirrored media an explicit large-screen empty state", () => {
+    const html = renderToStaticMarkup(<ProductHero product={product} media={[]} unclaimed={false} lifecycle={null} rank={null}
+      health={{ uptime30d: null, latencyMs: null, checkedAt: null, down: false }} />);
+    expect(html).toContain("제품 화면");
+    expect(html).toContain("아직 보관된 제품 화면이 없습니다.");
+  });
+
+  it("uses a safe internal OG copy as the large representative image when media is empty", () => {
+    const html = renderToStaticMarkup(<ProductHero
+      product={{ ...product, ogImage: "/api/og-cache/simple-hwp" }}
+      media={[]}
+      unclaimed={false}
+      lifecycle={null}
+      rank={null}
+      health={{ uptime30d: null, latencyMs: null, checkedAt: null, down: false }}
+    />);
+    expect(html).toContain('src="/api/og-cache/simple-hwp"');
+    expect(html).toContain("공개 페이지 대표 이미지");
+    expect(html).not.toContain("아직 보관된 제품 화면이 없습니다.");
+  });
+
+  it("does not call a nineteen-day-old health observation online", () => {
+    const html = renderToStaticMarkup(<ProductHero product={product} media={[]} unclaimed={false} lifecycle={null} rank={null}
+      health={{ uptime30d: 99, latencyMs: 84, checkedAt: new Date(Date.now() - 19 * 86400000), down: false }} />);
+    expect(html).not.toContain("온라인");
+    expect(html).toContain("가동 상태 재확인 필요");
+  });
+
+  it("does not label a fresh failed health check online before the down threshold", () => {
+    const html = renderToStaticMarkup(<ProductHero product={product} media={[]} unclaimed={false} lifecycle={null} rank={null}
+      health={{ uptime30d: 99, latencyMs: null, checkedAt: new Date(), down: false, lastCheckSucceeded: false }} />);
+    expect(html).not.toContain("온라인");
+    expect(html).toContain("최근 접속 확인 실패");
+    expect(html).not.toContain("접속 불안정");
   });
 
   it("labels only NoMoreVibe-originated seven-day visits and preserves collecting states", () => {
@@ -313,6 +371,36 @@ describe("evidence product detail components", () => {
     expect(provenance).toContain("동일한 바이트를 가리킬 뿐 저작자를 증명하지 않습니다");
   });
 
+  it("renders observed tool, configured model and gateway separately with citations while preserving maker reporting", () => {
+    const html = renderToStaticMarkup(<BuildProvenance product={product} profile={profile} unclaimed={false} agents={[]} skills={[]}
+      observedAgentFacts={[{ label: "모델 설정 확인", clientLabel: "Claude Code", modelLabel: "glm-4.7", gatewayLabel: "Z.AI",
+        role: "sonnet", scope: "", sourceUrl: "https://github.com/acme/app/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/.claude/settings.json",
+        sourcePath: ".claude/settings.json", commitSha: "a".repeat(40), observedAt,
+        coverageLabel: "일부 미확인", relationshipLabel: "제품과 저장소 관계 미확인", executionVerified: false }]} />);
+    expect(html).toContain("메이커 신고");
+    expect(html).toContain("Codex");
+    expect(html).toContain("Claude Code");
+    expect(html).toContain("glm-4.7");
+    expect(html).toContain("Z.AI");
+    expect(html).toContain("일부 미확인");
+    expect(html).toContain("실제 실행 모델이나 전체 제작 과정을 증명하지 않습니다");
+    expect(html).toContain(".claude/settings.json");
+    expect(html).toContain("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+  });
+
+  it.each([null, "maker_reported"] as const)("does not invent activity or a verified direction from unknown repository facts (%s)", (relationshipState) => {
+    const html = renderToStaticMarkup(<RepositoryEvidence repository={{
+      provider: "github", sourceUrl: "https://github.com/acme/app", state: "ok", observedAt, lastSuccessAt: observedAt, lastFailureAt: null,
+      facts: { repositoryKey: "acme/app", repositoryUrl: "https://github.com/acme/app", createdAt: null, pushedAt: null, updatedAt: null,
+        stars: null, forks: null, public: null, archived: null, fork: null, homepage: null, contributors: null, license: null,
+        languages: [], latestRelease: null, relationshipState },
+    }} license={{ state: "missing", label: "라이선스 확인 안 됨", maker: null, observed: null }} />);
+    expect(html).not.toContain("활성");
+    expect(html).not.toContain("일부 방향만 확인");
+    expect(html).toContain("상태 미확인");
+    expect(html).toContain("관계 미확인");
+  });
+
   it("renders compact evidence and freshness empty states without inventing data", () => {
     const summary = renderToStaticMarkup(<EvidenceSummary
       links={links}
@@ -390,12 +478,13 @@ describe("evidence product detail components", () => {
     expect(source).toContain("getProductDetail(slug)");
     expect(source).not.toContain("findBySlug");
     expect(source).not.toMatch(/댓글|comment/i);
+    expect(source).toContain("media={detail.media}");
+    expect(source).not.toContain("<ProductGallery");
     const order = [
       "<ProductHero",
       "<ProductMetrics",
-      "<EvidenceSummary",
-      "<ProductGallery",
       "<ProductIntroduction",
+      "<EvidenceSummary",
       "<ProductFacts",
       "<RepositoryEvidence",
       "<BuildProvenance",

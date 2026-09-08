@@ -1,6 +1,7 @@
+import { syncRepositoryLink } from "@/lib/domain/evidence/repository-link-sync";
 import { and, eq, ilike, inArray, like, or, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { lockProductGeneration } from "./generation";
+import { lockProductGeneration, type ProductTransaction } from "./generation";
 import {
   products,
   ogImages,
@@ -177,12 +178,23 @@ export async function nextAvailableSlug(name: string): Promise<string> {
   }
 }
 
-export async function insert(values: NewProduct): Promise<void> {
-  await db.insert(products).values(values);
+export async function insert(values: NewProduct, beforeInsert?: (tx: ProductTransaction) => Promise<void>): Promise<void> {
+  await db.transaction(async (tx) => {
+    await beforeInsert?.(tx);
+    const [product] = await tx.insert(products).values(values).returning();
+    await syncRepositoryLink({ productId: product.id, slug: product.slug, repoUrl: product.repoUrl,
+      declarationSource: product.source === "crawler" ? "discovered" : "maker", mode: "explicit" }, tx);
+  });
 }
 
 export async function update(id: number, values: Partial<Product>): Promise<void> {
-  await db.update(products).set({ ...values, updatedAt: new Date() }).where(eq(products.id, id));
+  await db.transaction(async (tx) => {
+    const [current] = await tx.select({ slug: products.slug }).from(products).where(eq(products.id, id));
+    if (!current || !(await lockProductGeneration(tx, id, current.slug))) return;
+    const [product] = await tx.update(products).set({ ...values, updatedAt: new Date() }).where(eq(products.id, id)).returning();
+    if (values.repoUrl !== undefined) await syncRepositoryLink({ productId: product.id, slug: product.slug,
+      repoUrl: product.repoUrl, declarationSource: "maker", mode: "explicit" }, tx);
+  });
 }
 
 /**

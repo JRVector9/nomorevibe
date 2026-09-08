@@ -27,6 +27,12 @@ const REASON_LABELS: Record<string, string> = {
   banned: "차단된 URL",
   ambiguous: "규칙으로 못 가름",
   passed: "통과",
+  ai_evidence_pending: "AI 개발 근거 수집 대기",
+  ai_evidence_insufficient: "AI 개발 근거 추가 검토",
+  ai_evidence_not_found: "공개 개발 근거 미확인",
+  repository_relationship_conflict: "제품과 저장소 관계 충돌",
+  source_changed: "발행 대상 URL 변경 — 재검토 필요",
+  ai_evidence_supported: "개발 설정·기여 표기 확인",
 };
 
 const STATE_LABELS: Record<string, string> = {

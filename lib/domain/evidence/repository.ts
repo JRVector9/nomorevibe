@@ -285,11 +285,15 @@ export async function replaceMakerLinks(input: {
       eq(productLinks.kind, link.kind),
       eq(productLinks.normalizedKey, link.normalizedKey),
     )));
-    await tx.delete(productLinks).where(and(
+    const removed = await tx.delete(productLinks).where(and(
       eq(productLinks.slug, slug),
       eq(productLinks.declarationSource, "maker"),
       keep ? not(keep) : undefined,
-    ));
+    )).returning({ kind: productLinks.kind, normalizedKey: productLinks.normalizedKey });
+    if (removed.length > 0) await tx.insert(productEvidenceAudit).values({
+      slug, actor: input.actor, action: "maker.links.remove",
+      metadata: { keys: removed.map(link => `${link.kind}:${link.normalizedKey}`) },
+    });
     await tx.insert(productEvidenceAudit).values({
       slug,
       actor: input.actor,
@@ -346,6 +350,16 @@ export async function upsertObservedSource(
     return;
   }
 
+  if (source.kind === "repository" && source.normalizedFacts) {
+    const [previous] = await executor.select({ facts: productEvidenceSources.normalizedFacts }).from(productEvidenceSources)
+      .where(and(eq(productEvidenceSources.slug, source.slug), eq(productEvidenceSources.kind, source.kind), eq(productEvidenceSources.sourceKey, source.sourceKey)));
+    // Independent agent scans attach to this same source; metadata refresh must not
+    // erase their reference. The product generation lock serializes both writers.
+    for (const key of ["agentScanId", "agentDetectorVersion"] as const) {
+      const value = previous?.facts?.[key];
+      if ((typeof value === "number" || typeof value === "string") && source.normalizedFacts[key] === undefined) source.normalizedFacts[key] = value;
+    }
+  }
   await executor.insert(productEvidenceSources).values({
     slug: source.slug,
     kind: source.kind,
@@ -449,7 +463,7 @@ export async function siteObservedRepository(input: {
     const facts = source.normalizedFacts;
     if (!facts || facts.type !== "site_fingerprint") return false;
     const keys = facts.repositoryKeys;
-    return Array.isArray(keys) && keys.some((key) => key === input.repositoryKey);
+    return Array.isArray(keys) && keys.length === 1 && keys[0] === input.repositoryKey;
   });
 }
 

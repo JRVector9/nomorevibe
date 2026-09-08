@@ -9,9 +9,9 @@ function MetricCard({ label, value, note, tone = "default" }: {
 }) {
   const color = tone === "up" ? "text-up" : tone === "down" ? "text-down" : "text-fg";
   return (
-    <div className="min-w-0 bg-bg-card p-4 sm:p-5">
+    <div className="min-w-0 bg-bg-card px-4 py-3.5 sm:px-5 sm:py-4">
       <p className="text-[13px] font-semibold leading-5 text-fg-3">{label}</p>
-      <p className={`mt-2 font-mono text-[23px] font-extrabold tracking-[-0.04em] ${color}`}>{value}</p>
+      <p className={`mt-1.5 font-mono text-[21px] font-extrabold tracking-[-0.04em] ${color}`}>{value}</p>
       <p className="mt-1.5 text-[13px] leading-5 text-fg-3">{note}</p>
     </div>
   );
@@ -38,7 +38,7 @@ export function ProductMetrics({ visits, health }: {
     : `${health.latencyMs === null ? "응답 시간 미측정" : `${health.latencyMs}ms`} · ${formatDateTime(health.checkedAt)} 확인`;
 
   return (
-    <section aria-label="NoMoreVibe 유입 및 가동 지표" className="overflow-hidden rounded-[10px] border border-line bg-line">
+    <section aria-label="NoMoreVibe 유입 및 가동 지표" className="overflow-hidden rounded-[10px] border border-line bg-line shadow-[0_8px_30px_rgba(16,20,28,0.03)]">
       <div className="grid grid-cols-2 gap-px lg:grid-cols-4">
         <MetricCard
           label={`고유 유입자 · 최근 ${visits.periodDays}일`}
