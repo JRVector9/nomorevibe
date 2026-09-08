@@ -1,7 +1,7 @@
 # 독립 워커 병렬 개발 — PR Implementation Plan
 
 > **For agentic workers:** 사용자 요청에 따라 PR별 서브에이전트가 별도 worktree에서 병렬 개발한다.
-> 주 조정자는 공통 계약·마이그레이션·통합 리뷰·배포 전환을 담당한다. 체크박스는 구현 시 진행 기록이다.
+> 주 조정자는 공통 계약·마이그레이션·통합 리뷰·배포 전환을 담당한다. 아래 체크박스는 최초 작업 분해이며, 실제 완료·검증 상태는 상단 구현 기록과 결과 보고서를 따른다.
 
 **Goal:** 기존 수집 코드를 보존하면서 웹과 독립된 상시 워커를 운영하고, 크롤링 후보의 AI 심사와 유효 승인에 따른 발행을 추가한다.
 
@@ -12,11 +12,26 @@
 
 ---
 
+## 구현 진행 기록 — 2026-09-08
+
+사용자의 후속 구현 지시에 따라 PR 01~10 범위를 별도 worktree `feat/independent-workers`에 구현하고
+교차 리뷰·수정했다. 원래 작업 트리의 미커밋 홈/인증/디자인은 보존했다. 아래 최초 계획의
+PR 번호는 논리적 작업 단위이며 GitHub PR 번호가 아니다.
+
+- 구현/실측 결과: [최종 구현 보고서](../../operations/2026-09-08-independent-workers-implementation-report.md).
+- 배포 실행 순서와 현재 명령: [운영 절차](../../operations/independent-workers-runbook.md)가 우선한다.
+- 서브에이전트 실행 지시: [실행 프롬프트](2026-09-08-worker-execution-prompts.md).
+- 중간에는 계약·경합에 필요한 검사만 실행하고, A/B 큰 통합 뒤 전체 검사를 수행했다.
+  수정 이후에는 영향받는 검사만 재실행했다. 아래의 테스트 선행 문구를 매 단계 전체 검사 요구로 해석하지 않는다.
+- PR 11·12는 실측 병목과 기존 홈 변경 통합이 선행되는 선택 작업으로 남겼다.
+- 서버/도메인·운영 인증 준비와 실제 배포 후 24시간 관측은 로컬 시험 통과와 구분한다.
+  로컬 결과만으로 배포 또는 24시간 운영 완료를 선언하지 않는다.
+
 ## 1. 기준과 결과물
 
 - 기준 설계: `docs/superpowers/specs/2026-09-08-independent-workers-and-capacity-design.md`.
 - 확인한 HEAD: `9c84bb9`. 2026-09-08의 현재 미커밋 홈·인증·Compose 변경도 읽기 전용으로 확인했다.
-- 이번 결과물은 구현 계획이다. 서비스 코드·DB·실행 프로세스·배포를 변경하지 않는다.
+- 최초 작성은 구현 계획만 포함했다. 후속 구현의 범위와 실행 결과는 위 구현 기록을 따른다.
 - **필수 PR은 A 6개 + B 4개, 총 10개다.** 성능 PR 11·12는 기준 측정 후 필요할 때 진행한다.
 - PR 병렬 개발은 런타임 크롤러 복제본 확대와 다르다. 배포 초기에는 역할당 활성 프로세스 1개,
   한 번에 잡 1개, AI 리뷰 동시 호출 1개를 유지한다.
@@ -232,7 +247,7 @@ B의 운영 전환은 A 검증 뒤다. PR 06의 이미지 초안도 PR 02의 실
 **변경:** `app/api/cron/[job]/route.ts`, `app/admin/status/page.tsx`,
 `app/admin/products/[slug]/actions.ts`, `app/admin/products/[slug]/EvidenceProductActions.tsx`,
 `app/admin/products/[slug]/page.tsx`, `lib/domain/evidence/admin.ts`, `tests/evidence-admin-components.test.ts`.
-**신규:** `tests/cron-request.test.ts`, `tests/admin-job-status.test.tsx`, `tests/e2e/worker-admin.spec.ts`.
+**신규:** `tests/cron-request.test.ts`, `tests/admin-job-status.test.ts`, `tests/e2e/worker-review-admin.spec.ts`.
 
 - [ ] 인증403/미등록 job404/접수202와 HTTP 요청 중 collector·CLI 미호출 테스트를 작성한다.
 - [ ] cron은 `{job, status: "queued", requestedVersion}`만 반환한다. 내부 cron 소비자의 응답 계약을 함께 수정한다.
@@ -243,8 +258,8 @@ B의 운영 전환은 A 검증 뒤다. PR 06의 이미지 초안도 PR 02의 실
   force의 예약/진행/결과를 기존 관리자 조회에 표시한다. 별도 실시간 통신 서버는 만들지 않는다.
 - [ ] 설치된 Next의 route handler/서버 action 문서를 읽고 단위·컴포넌트·관리자 E2E로 검증한다.
 
-검증: `npm test -- tests/cron-request.test.ts tests/admin-job-status.test.tsx tests/evidence-admin-components.test.ts`,
-`npm run test:e2e -- tests/e2e/worker-admin.spec.ts`.
+검증: `npm test -- tests/cron-request.test.ts tests/admin-job-status.test.ts tests/evidence-admin-components.test.ts`,
+`npm run test:e2e -- tests/e2e/worker-review-admin.spec.ts`.
 완료: 관리자 탭 없이 작업이 진행되며 접수와 실제 완료가 구분된다.
 롤백: PR 05만 운영에 먼저 배포하지 않는다. A 배포 묶음에서 소비자 준비 후 요청 생산자를 전환한다.
 
@@ -312,7 +327,7 @@ worker 장애/유휴/외부 API 대기 구분, 이미지 내부 CLI 실행·time
 ### PR 08 — 리뷰 AI 호출과 독립 잡
 
 **신규:** `lib/crawl/agent-review.ts`, `lib/crawl/jobs/agent-review.ts`,
-`tests/agent-review.test.ts`, `tests/integration/crawl-agent-review.test.ts`.
+`tests/agent-review-cli.test.ts`, `tests/integration/agent-review-records.test.ts`.
 **변경:** `lib/jobs/catalog.ts`, `lib/jobs/registry.ts`, `.env.example`, 필요 시 기존 `lib/crawl/classify.ts`의 작은 CLI 공통 부분.
 
 - [ ] 도구 없는 구조화 응답·미등록 근거 ID·악성 지침·잘못된 JSON·timeout·인증 실패 테스트를 작성한다.
@@ -326,14 +341,14 @@ worker 장애/유휴/외부 API 대기 구분, 이미지 내부 CLI 실행·time
 - [ ] off에서 미실행, observe에서 이력만 기록, enforce에서 유효 결과를 적용한다.
   동일 입력/정책의 성공 재사용 시에도 freshness와 현재 모드를 다시 검사하고 종료/lease 상실 시 결과 적용을 막는다.
 
-검증: `npm test -- tests/agent-review.test.ts tests/classify.test.ts`,
-`npm run test:integration -- tests/integration/crawl-agent-review.test.ts`.
+검증: `npm test -- tests/agent-review-cli.test.ts tests/classify.test.ts`,
+`npm run test:integration -- tests/integration/agent-review-records.test.ts`.
 완료: AI 실패 때문에 후보가 부적격으로 바뀌지 않고 재시도 폭주가 없다. 실제 모델 호출 확인은 mock 통과와 따로 기록한다.
 롤백: reviewer 중지/재시도로 대응한다. enforce 운영에서 AI를 끄는 것으로 자동 발행 보호를 해제하지 않는다.
 
 ### PR 09 — 발행 전 승인 필터와 commit 직전 검증
 
-**신규:** `lib/crawl/publication-query.ts`, `tests/integration/crawl-review-publication.test.ts`.
+**신규:** `lib/crawl/agent-review-repository.ts`, `tests/integration/review-publication-gate.test.ts`.
 **변경:** `lib/crawl/jobs/publish.ts`, `lib/crawl/publish.ts`, `lib/crawl/publication-guard.ts`,
 `tests/crawl-publication-guard.test.ts`, `tests/crawl-publish-evidence.test.ts`.
 
@@ -348,7 +363,7 @@ worker 장애/유휴/외부 API 대기 구분, 이미지 내부 CLI 실행·time
   off/observe에서는 기존 발행 결과를 보존하고 enforce에서만 추가 승인 조건을 적용한다.
 
 검증: `npm test -- tests/crawl-publication-guard.test.ts tests/crawl-publish-evidence.test.ts`,
-`npm run test:integration -- tests/integration/crawl-review-publication.test.ts tests/integration/crawl-publish.test.ts tests/integration/crawl-pipeline.test.ts`.
+`npm run test:integration -- tests/integration/review-publication-gate.test.ts tests/integration/crawl-publish.test.ts tests/integration/crawl-pipeline.test.ts`.
 완료: 오래된 승인으로 제품이 생성되지 않고 AI 대기 후보가 준비된 후보를 막지 않는다.
 롤백: 신규 자동 발행을 보류한다. 기존 제품을 숨기거나 과거 AI 승인을 생성하지 않는다.
 
@@ -357,8 +372,8 @@ worker 장애/유휴/외부 API 대기 구분, 이미지 내부 CLI 실행·time
 **변경:** `app/admin/review/page.tsx`, `app/admin/review/ReviewItem.tsx`, `app/admin/actions.ts`,
 `app/admin/SettingsForm.tsx`, `lib/crawl/review.ts`, `lib/jobs/products/agent-evidence-refresh.ts`,
 `lib/crawl/repository.ts`, PR 07의 `lib/crawl/agent-review-repository.ts`, `docs/operations/independent-workers-runbook.md`.
-**신규:** `tests/agent-review-admin.test.tsx`, `tests/integration/agent-review-retry.test.ts`,
-`tests/e2e/agent-review-admin.spec.ts`, `docs/operations/worker-acceptance-report.md`.
+**신규:** `tests/admin-review.test.ts`, `tests/integration/admin-review-evidence.test.ts`,
+`tests/e2e/worker-review-admin.spec.ts`, `docs/operations/2026-09-08-independent-workers-implementation-report.md`.
 
 - [ ] 현재 needs_review만 조회하는 어드민을 확장해 approved 중 AI 대기/시도 소진도 파생 조회로 표시한다.
   기존 후보 상태를 추가 enum으로 교체하지 않고 입력·모델·사유·시각·대기/오류를 노출한다.
@@ -373,9 +388,9 @@ worker 장애/유휴/외부 API 대기 구분, 이미지 내부 CLI 실행·time
 - [ ] 실제 후보 10개 비교·장애 주입·24시간 관측을 수행해 아래 B 완료 기준과 함께 결과를 기록한다.
   보고서는 수행 후 수치/근거를 채우며 미실행 항목을 통과로 작성하지 않는다.
 
-검증: `npm test -- tests/agent-review-admin.test.tsx tests/agent-evidence-refresh-demand.test.ts tests/agent-evidence-refresh-budget.test.ts`,
-`npm run test:integration -- tests/integration/agent-review-retry.test.ts tests/integration/crawl-review.test.ts tests/integration/agent-evidence-refresh.test.ts`,
-`npm run test:e2e -- tests/e2e/agent-review-admin.spec.ts`.
+검증: `npm test -- tests/admin-review.test.ts tests/agent-evidence-refresh-demand.test.ts tests/agent-evidence-refresh-budget.test.ts`,
+`npm run test:integration -- tests/integration/admin-review-evidence.test.ts tests/integration/crawl-review.test.ts tests/integration/agent-evidence-refresh.test.ts`,
+`npm run test:e2e -- tests/e2e/worker-review-admin.spec.ts`.
 설정 화면 회귀: `npm test -- tests/crawl-settings-form.test.ts tests/crawl-agent-settings.test.ts`.
 완료: 담당자가 대기 이유·사용 근거·다음 행동을 확인할 수 있고 자동/수동 결정 경합과 반복 재수집이 제어된다.
 롤백: enforce를 유지한 채 새 자동 발행 보류. 기존 정책으로 복귀는 별도 명시적 운영 결정과 감사 기록으로 처리한다.
@@ -425,7 +440,7 @@ worker 장애/유휴/외부 API 대기 구분, 이미지 내부 CLI 실행·time
 4. 지적된 결함을 수정하고 영향받는 테스트를 다시 실행한다. 같은 결과가 이미 확인된 검사를 이유 없이 반복하지 않는다.
 5. 주 조정자가 공통 파일/마이그레이션을 통합하고 해당 단계의 체크포인트를 확인한다.
 
-**통합 검사 명령** — 모두 구현 이후 실행할 계획이며 이번 문서 작성에서 실행한 결과가 아니다.
+**통합 검사 명령** — 전용 DB에서 실행한다. 실제 결과와 수정 후 재검증 범위는 구현 보고서에 기록한다.
 
 ```sh
 npm test
@@ -434,7 +449,7 @@ npx next typegen
 npx tsc --noEmit
 npm run lint
 npm run build
-npm run test:e2e -- tests/e2e/worker-admin.spec.ts tests/e2e/agent-review-admin.spec.ts
+npm run test:e2e -- tests/e2e/product-detail.spec.ts tests/e2e/worker-review-admin.spec.ts
 git diff --check
 ```
 
@@ -444,7 +459,7 @@ A에서는 아직 없는 agent-review E2E를 실행 목록에 넣지 않는다. 
 **배포 묶음 A**
 
 - PR 01~06의 merge와 운영 배포를 구분한다. cron 접수 전환만 먼저 배포해 요청만 쌓이는 상태를 만들지 않는다.
-- 가산 migration → 이전 HTTP scheduler/evidence-worker/수동 소비자 확인·stop/drain → 새 역할당 1개 시작
+- 이전 HTTP scheduler/evidence-worker/수동 소비자 확인·stop/drain → 가산 migration 1회 → 새 역할당 1개 시작
   → 웹 접수 전환 순서로 적용한다. 실제 종료 확인 없이 구/신 소비자를 겹치지 않는다.
 - 웹 중지 30분, scheduler 단독 중지, worker 정상 종료/강제 종료, API 제한/장애, pool 포화를 확인한다.
   성공 tick 수와 큐 처리량을 따로 보고하고 기존 cursor/후보/제품·force 수집 범위를 비교한다.
@@ -468,8 +483,11 @@ A에서는 아직 없는 agent-review E2E를 실행 목록에 넣지 않는다. 
 **부하 측정**
 
 동일 시험 DB 크기·이미지·정책·하드웨어에서 worker OFF/ON, cold/warm 조건을 나눠 비교한다.
-홈/목록/상세와 격리 fixture의 클릭·허용된 갱신을 포함한다. 10→50→100 RPS는 시험 단계이며 보장 처리량이 아니다.
-각 단계 warm-up 1분/측정 5분, 최초 오류 급증·지연 누적·pool 대기 한도 도달 시 증량을 중단한다.
+현재 제공한 `scripts/measure-worker-capacity.ts`는 GET 페이지 전용, 최대 20 RPS·120초·동시 10개,
+응답 전체 2 MiB·5초 상한을 갖는다. 최신순/주간 랭킹 경로는 `/?sort=recent,/?sort=weekly`이며
+`/ranking`은 존재하지 않는다. 실제 시즌/랭킹 스냅샷과 응답 내용을 확인해 fallback 측정을 구분한다.
+클릭·갱신 쓰기, worker OFF/ON·cold/warm 비교와 50/100 RPS·5분 시험은 별도 후속 부하 시나리오다.
+현재 도구나 측정 결과로 수행했다고 기록하지 않는다. 오류 급증·지연 누적·pool 대기 한도 도달 시 증량을 중단한다.
 성공 응답 p50/p95/p99, 오류와 정책상429, 실제 달성률, 큐 대기, CPU/RSS, DB 대기/쿼리·락을 기록한다.
 목표 SLO는 기준 측정 결과와 서비스 요구에 맞춰 보고서에 명시하고, 측정하지 않은 동시 사용자 수를 약속하지 않는다.
 
@@ -484,11 +502,11 @@ A에서는 아직 없는 agent-review E2E를 실행 목록에 넣지 않는다. 
 7. dirty Compose/환경 설정과 untracked 홈 모듈을 새 worktree의 기준에 이미 포함됐다고 가정하지 않는다.
 8. 테스트 DB·E2E 포트 공유는 코드 충돌과 별도로 제어한다. 병렬 에이전트가 같은 DB를 비우지 않는다.
 
-이번 작성에서는 세 서브에이전트가 코드/설계 대조를 읽기 전용으로 수행했다. 신규 구현 테스트,
+최초 계획 작성에서는 세 서브에이전트가 코드/설계 대조를 읽기 전용으로 수행했다. 신규 구현 테스트,
 DB 통합 시험·LLM 실호출·빌드·E2E·부하·24시간 관측은 실행하지 않았다. 이전 설계 검토의
 7개 파일·25개 테스트 통과는 기존 코드 검증 이력이며 이 계획 구현의 성공 증거가 아니다.
 
-## 10. 다음 작업의 정확한 시작 명령
+## 10. 최초 구현 시작 명령 (이력)
 
 구현 요청을 받은 뒤 먼저 기준을 확인한다. 아래 명령은 지금 서비스 프로세스를 변경하지 않는다.
 

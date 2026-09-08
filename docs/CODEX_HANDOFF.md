@@ -1,5 +1,80 @@
 # Codex handoff
 
+## Independent workers implementation — 2026-09-08 15:42 KST
+
+- Objective: finish approved PR01–10 in parallel through operational readiness. User requests essential
+  intermediate checks only, comprehensive verification after large phases, and fixes for discovered failures.
+- Integration: `/Users/jr/Desktop/projects/nomorevibe-workers`, `feat/independent-workers`, base9c84bb9.
+  Original main worktree has unrelated uncommitted home/auth/UI/Compose changes. Preserve them all.
+- Completed PR01–10: DB request versions/leases/schedules; independent 5 roles; GitHub shared cooldown;
+  resumable force refresh; queue-only web/cron; role pools and supervised images; immutable review attempts;
+  bounded Claude reviewer; current-source publication approval; audited admin mode/decision/recollection.
+- Execution prompts: docs/superpowers/plans/2026-09-08-worker-execution-prompts.md.
+  Implementation report: docs/operations/2026-09-08-independent-workers-implementation-report.md.
+  Runtime acceptance: docs/operations/2026-09-08-worker-runtime-acceptance.md (agent completing).
+- Final source fixes through06cfbaa: HTTP rejects scheduler-only heartbeat400 (no consumer), realjobs202; no-first-scan null guard; scan identity advisory lock and scanStartedAt
+  source version; completed scan with pending discovery resumes; postgres3.4.9 exact queued cancellation,
+  pipeline/BEGIN/connection rotation; graceful leader-only SIGTERM then group cleanup; rules/prompt .2
+  deterministically hold missing development evidence before LLM, invalidating mistaken .1 reuse.
+- Design: preserve existing handlers/states/SQL queues. Each role singleton; stop/drain before release
+  migration and replacement. Web has no CLI. Review off/observe/enforce changes require separate audited
+  CAS action and readiness flag. Off removes the gate and is not an automatic rollback. No Redis or
+  horizontal worker expansion. Conditional PR11/12 not implemented; no measured need to rewrite home.
+- Actual tests: B full unit78files589PASS, full integration49files441PASS; after final evidence/review fixes
+  targeted5DBfiles28PASS and3unitfiles26PASS, finalcron3PASS plusactualcontainer400/202. Final Playwright5PASS (product3/admin2), typegen/tsc/lint PASS.
+  Final Docker worker+web builds PASS. Do not combine different-stage counts as one final full suite.
+  Browser actions: mode changes/admin approval/extra collection/force queue, mobile390 no overflow/JS error.
+- Live10: fixed public repos from verify-worker-sample.ts, all pageHTTP200; latest `.2` all rules needs_review,
+  zero published sample products, reported historicalAIcost$0.1264348. This is evidence-hold acceptance,
+  not 10 successful AI approvals. CLI errors retry rather than reject; actual .1 errors remain history.
+  Local container Claude2.1.263/claude-sonnet-5 real auth/structured response passed; smoke1458ms/$0.0070588.
+- Capacity: isolated1000products/100000rawclicks; actual click-rollup110ms, ranking-refresh110ms and1000entries
+  in2026-W37. Latest Docker web fullresponse20RPS120s:2400/2400HTTP2xx,0errors/skipped,p50=22.7,p95=33.6,
+  p99=39.3ms,peakInflight2. Real recent/weeklybody contained fixtures; no rankingfallback/errorpage/logevents.
+  VM4CPU7.737GiB,webcap2CPU1.5GiB, other local containers shared. This is not active crawler/LLM capacity.
+- Acceptance DB `nomorevibe_workers_acceptance`, no truncation. Root integration DB
+  `postgres://nomorevibe:nomorevibe@localhost:55435/nomorevibe_workers_test` (truncating suites must not overlap).
+  Agent separate DBs: runtime_test, agent_resume_test, pool_review_test prefixed nomorevibe_workers_/nomorevibe_.
+- Local Docker app43200 `nomorevibe-workers-acceptance-app-1` uses synthetic acceptance data. Original
+  app3200/DB55437 and devDB55434 unchanged. Do not start acceptance crawler/publisher: it also contains
+  reserved.example browser fixtures, including an admin-approved candidate and force refresh request.
+- `/root/implement_runtime`: actual no-web5role observation06:10:09.786Z→06:40:10.118Z,1800.307s,
+  31samples allhealthy,restarts0,maxDBconnections5. Cleanup06:40:55Z: all5exit0,pending/lease/connections/errors0. Source image original1901c81, gracefulfix verified
+  separately mounted supervisor: earlySIGTERM3/3exit0,steadyexit0; staleheartbeat actualrestart30.34s;
+  jobhang+SIGTERM-ignoringCLI actualrestart76.165s with group cleanup. Agent commits report+sanitized evidence JSON; its runtime containers are stopped.
+  No24h claim from any local check.
+- Final images: docker inspect IDs worker0b5a6690306c4179e75c2ca058eda839ae01aa8acbda0389f49efb88bd181cf7,
+  web72ee522e36a2fe9efb630572896310916cac282cd75479eaa479178dfab1dc0c; tags
+  nomorevibe-worker:workers-acceptance and nomorevibe-web:workers-acceptance.
+- `/root/plan_review` owns README/PENDING/.env.example/runbook docs-only update in pool-review worktree,
+  integrated as7719471; root owns plan/handoff/report/sample/capacity/E2E. `/root/plan_runtime` final read-only
+  review found no new blocker in recent sourcefixes or verification scripts. No extra tests repeated.
+- Failed approaches: initialforceclock skew; CLI detached process group; minfont12; wrong lease test expectation;
+  Turbopack node_modules external symlink (own npm ci fixed); browser label selector fixed to selectname;
+  nonexistent /ranking404 and missingseason fallback load probes excluded, corrected fullpath numbers above.
+- Production: async server/domain question still pending. Read-only Dokploy project.all found no matching
+  project. No production mutation. Remote main is4commits behind localbase9c84bb9;
+  prepare stacked draftPRs foundationreview/agent-evidence-foundation and feat/independent-workers. Long-lived production Claude credential not configured;
+  local token is short-lived Keychain accessToken in private/tmp env files. Never print token/config contents.
+- Remaining: cherry-pick final runtime docs commit, final report status/artifacts/handoff,
+  commit isolated branch, prepare/push reviewable PR without overwriting dirty main, report exact deployment
+  prerequisites and remaining24h observation. No repeating whole tests absent changed behavior/failures.
+
+Exact commands:
+
+```sh
+cd /Users/jr/Desktop/projects/nomorevibe-workers
+git status --short
+git log -10 --oneline
+# Incorporate only the two agents' docs-only commits; inspect each diff.
+git diff --check
+# Finished verification logs (all exit0):
+tail -n 8 /tmp/nomorevibe-workers-e2e-admin-final.log
+cat /tmp/nomorevibe-workers-acceptance/capacity-ranking-20rps.json
+# Read-only sample report; never prepare/reset existing acceptance DB:
+DATABASE_URL=postgres://nomorevibe:nomorevibe@localhost:55435/nomorevibe_workers_acceptance node --import tsx scripts/verify-worker-sample.ts report
+```
+
 ## Minimal worker refactor design re-review — 2026-09-08 KST
 
 - Current objective: correct the worker architecture report against current code and prevent a

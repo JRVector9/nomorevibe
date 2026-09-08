@@ -1,0 +1,42 @@
+{
+  "origin": "http://127.0.0.1:43200",
+  "paths": [
+    "/?sort=recent",
+    "/?sort=weekly"
+  ],
+  "requestedRps": 20,
+  "measurement": "response_complete",
+  "maxResponseBytes": 2097152,
+  "scheduledDurationSeconds": 120,
+  "elapsedSeconds": 119.97,
+  "started": 2400,
+  "completed": 2400,
+  "skipped": 0,
+  "peakInflight": 2,
+  "achievedRps": 20,
+  "statuses": {
+    "429": 0,
+    "2xx": 2400,
+    "3xx": 0,
+    "4xx": 0,
+    "5xx": 0,
+    "error": 0
+  },
+  "latencyMs": {
+    "p50": 22.7,
+    "p95": 33.6,
+    "p99": 39.3
+  },
+  "context": {
+    "at": "2026-09-08",
+    "products": 1000,
+    "rawClicks": 100000,
+    "season": "2026-W37",
+    "rankingEntries": 1000,
+    "workerExternalLoad": false,
+    "vmCpu": 4,
+    "vmMemoryGiB": 7.737,
+    "webCpuLimit": 2,
+    "webMemoryLimitGiB": 1.5
+  }
+}
