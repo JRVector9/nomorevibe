@@ -47,10 +47,10 @@ export class DbPoolWaitTimeoutError extends Error {
 }
 
 /**
- * Compatibility surface of postgres 3.4.9 src/query.js and src/index.js cancel(query).
+ * Compatibility surface of postgres 3.4.9 Query cancellation/onexecute and Connection.connect.
  * Pending query cancellation removes the real queued write; Promise.race alone would leave it queued.
  * Do not use Query.cancel(): that version drops the canceller Promise (including cancellation errors).
- * Revalidate the real saturated-pool and BEGIN integration tests when upgrading postgres.
+ * Revalidate the real saturation, BEGIN and connection replacement tests when upgrading postgres.
  */
 interface DriverQuery {
   handler: (query: DriverQuery) => unknown;
@@ -58,23 +58,40 @@ interface DriverQuery {
   reject: (error: unknown) => unknown;
   state: unknown | null;
   canceller: ((query: DriverQuery) => Promise<void>) | null;
+  options: { onexecute?: (connection: DriverConnection) => unknown };
 }
 
-type WaitingQueries = Map<DriverQuery, (error: Error) => void>;
+interface DriverConnection {
+  connect: (query: DriverQuery) => unknown;
+  execute: (query: DriverQuery) => unknown;
+}
+type WaitingQueries = Map<DriverQuery, { assigned: () => void }>;
 
-function waitDeadline<T>(value: T, waitMs: number, waiting: WaitingQueries): T {
+function waitDeadline<T>(value: T, waitMs: number, waiting: WaitingQueries,
+  trackConnection: (connection: DriverConnection) => void): T {
   const query = value as T & DriverQuery;
-  if (!query || typeof query.handler !== "function" || typeof query.resolve !== "function" || typeof query.reject !== "function") {
+  if (!query || typeof query.handler !== "function" || typeof query.resolve !== "function" || typeof query.reject !== "function" || !query.options) {
     throw new Error("Unsupported postgres query internals; validate the pool adapter before upgrading");
   }
   const originalHandler = query.handler;
   const originalResolve = query.resolve;
   const originalReject = query.reject;
+  const originalOnExecute = query.options.onexecute;
   let timer: ReturnType<typeof setTimeout> | undefined;
   let cancellation: Error | null = null;
   const clear = () => { if (timer !== undefined) clearTimeout(timer); timer = undefined; waiting.delete(query); };
   query.resolve = result => { clear(); return originalResolve(result); };
   query.reject = error => { clear(); return originalReject(cancellation ?? error); };
+  query.options.onexecute = connection => {
+    trackConnection(connection);
+    clear();
+    // Preserve BEGIN's reservation callback. Setting max_pipeline=0/1 instead can
+    // short-circuit this callback and leave postgres.begin without its connection.
+    originalOnExecute?.(connection);
+    // Keep standalone backlog in the cancellable pool queue, not the driver's
+    // already-sent pipeline, where statement_timeout does not bound queue wait.
+    return false;
+  };
   const cancelWaiting = (reason: Error) => {
     clear();
     if (query.state !== null || !query.canceller) return;
@@ -86,7 +103,7 @@ function waitDeadline<T>(value: T, waitMs: number, waiting: WaitingQueries): T {
     catch (error) { query.reject(error); }
   };
   query.handler = Object.assign((pending: DriverQuery) => {
-    waiting.set(pending, cancelWaiting);
+    waiting.set(pending, { assigned: clear });
     timer = setTimeout(() => {
       // A connection already owns the query. PostgreSQL statement/lock timeouts bound that work.
       // Only a query that has not been sent is cancelled; no detached in-flight write is reported failed.
@@ -96,7 +113,10 @@ function waitDeadline<T>(value: T, waitMs: number, waiting: WaitingQueries): T {
     const connection = originalHandler(pending);
     // Initial connect returns its Connection before state is set. connect_timeout bounds it;
     // cancelling that initial query can otherwise strand postgres 3.4.9's connecting slot.
-    if (pending.state !== null || (connection && typeof connection === "object" && "execute" in connection)) clear();
+    if (connection && typeof connection === "object" && "execute" in connection && "connect" in connection) {
+      trackConnection(connection as DriverConnection);
+      clear();
+    } else if (pending.state !== null) clear();
     return connection;
   }, originalHandler);
   return value;
@@ -105,15 +125,23 @@ function waitDeadline<T>(value: T, waitMs: number, waiting: WaitingQueries): T {
 /** Drizzle executes unsafe queries; postgres.begin also calls this exact object's unsafe for BEGIN. */
 export function createDbClient(connectionString: string, config: DbPoolConfig = dbPoolConfig()): ReturnType<typeof postgres> {
   const waiting: WaitingQueries = new Map();
+  const tracked = new WeakSet<DriverConnection>();
+  const trackConnection = (connection: DriverConnection) => {
+    if (tracked.has(connection)) return;
+    tracked.add(connection);
+    const connect = connection.connect;
+    connection.connect = function(query) {
+      // A normal lifetime rotation assigns one queued query to its replacement.
+      // That exact query now uses connect_timeout; other waiters retain their
+      // deadlines. Cancelling an initial handshake can strand this driver slot.
+      waiting.get(query)?.assigned();
+      return connect.call(this, query);
+    };
+  };
   const options = {
     max: config.max,
     connect_timeout: config.connectSeconds,
     max_lifetime: config.lifetimeSeconds,
-    onclose: () => {
-      // postgres calls this hook BEFORE moving a queued query onto a reconnecting slot.
-      // Reject waiting work now so its queue timer cannot later cancel an initial connect.
-      for (const cancel of waiting.values()) cancel(new Error("Database connection closed while waiting for the pool; retry the operation"));
-    },
     connection: {
       application_name: `nomorevibe:${config.role}`,
       statement_timeout: config.statementMs,
@@ -123,13 +151,13 @@ export function createDbClient(connectionString: string, config: DbPoolConfig = 
   };
   const client = postgres(connectionString, options);
   client.unsafe = new Proxy(client.unsafe, {
-    apply: (unsafe, receiver, args) => waitDeadline(Reflect.apply(unsafe, receiver, args), config.waitMs, waiting),
+    apply: (unsafe, receiver, args) => waitDeadline(Reflect.apply(unsafe, receiver, args), config.waitMs, waiting, trackConnection),
   });
   // Preserve tagged-query use of the public client without changing SQL fragments or identifiers.
   return new Proxy(client, {
     apply(target, receiver, args) {
       const result = Reflect.apply(target, receiver, args);
-      return Array.isArray(args[0]?.raw) ? waitDeadline(result, config.waitMs, waiting) : result;
+      return Array.isArray(args[0]?.raw) ? waitDeadline(result, config.waitMs, waiting, trackConnection) : result;
     },
   });
 }
