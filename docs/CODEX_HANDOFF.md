@@ -1,5 +1,93 @@
 # Codex handoff
 
+## GitHub owner identity and detail-sidebar evidence — 2026-09-08 22:08 KST
+
+- Objective: replace the anonymous creator label on crawler-listed product cards with the public GitHub
+  repository owner, and move the useful unclaimed-product identity/repository facts into the existing detail
+  sidebar. Audit the current category classifier without expanding its taxonomy in the same change.
+- Completed: unclaimed cards backed by a canonical GitHub repository now show a linked `@owner`; claimed maker
+  labels remain unchanged. The detail sidebar now includes one compact owner/contact/claim card and renames the
+  repository panel to `현재 확인 가능한 정보`, with owner, repository, visibility, dates, stars, forks,
+  contributors, activity, languages, service relationship, release and license facts. Invalid or non-GitHub
+  repository URLs do not receive an attributed owner.
+- Modified files: `components/home/ProjectCard.tsx`, `app/home.css`, `app/p/[slug]/page.tsx`,
+  `components/product-detail/{UnclaimedOwnerContact,RepositoryEvidence}.tsx`,
+  `lib/domain/products/github-owner.ts`, their focused tests, the accepted standalone concept at
+  `docs/designs/2026-09-08-unclaimed-product-contact.html`, and this handoff.
+- Key design decisions: call the account `GitHub 저장소 소유자`, since repository ownership does not prove who
+  built the deployed service; derive identity only from strict two-segment github.com repository URLs; preserve
+  the existing unclaimed badge and takedown flow; keep all observed facts in the existing 340px sidebar; make no
+  category/schema migration before agreeing on a richer taxonomy and measuring existing `Other` records.
+- Category audit: the schema has only `Productivity`, `Dev`, `Design`, `Finance`, and `Other`. Publication asks
+  hard-coded `claude-sonnet-5` for one of those five using name, tagline, URL, repository, language and topics;
+  any CLI/auth/timeout/parse failure falls back to ordered topic/description keyword rules. The live local
+  publisher currently logs `reason=auth` / `Not logged in`, so its new publications are using that fallback.
+  Latest live local public counts were Other 646, Dev 407, Productivity 55, Design 41, Finance 36. Categories are
+  stored at publication and there is no automatic reclassification job; a claimed maker can edit the category.
+- Actual checks: TDD red run failed for the missing helper/component/link, then focused 3 files/29 tests PASS;
+  full unit 81 files/620 tests PASS; nonincremental TypeScript PASS; ESLint PASS; production Next build PASS;
+  `git diff --check` PASS. Playwright against the preserved live-data DB returned HTTP 200 for home/detail,
+  resolved the owner link to `https://github.com/AISecurity365`, found both new sidebar headings, had no
+  console/page errors, and had no horizontal overflow at 1440px or 390px. Screenshots:
+  `/tmp/nomorevibe-owner-list.png`, `/tmp/nomorevibe-owner-detail-desktop.png`, and
+  `/tmp/nomorevibe-owner-detail-mobile.png`.
+- Failed approaches: an existing Next development lock pointed to port 43128 and its isolated DB did not contain
+  the selected live product. A production server was therefore started on port 3201 with only DATABASE_URL's
+  local forwarded port changed from 55434 to the preserved DB at 55437. The first Playwright accessibility-name
+  selector expected `GitHub` in a link whose visible label was only the owner; selecting the exact sidebar href
+  fixed the QA script. The temporary script was removed.
+- Remaining: land this focused UI change. A category expansion should be a separate measured change: sample and
+  label current `Other` records, agree on stable primary categories plus functional tags, restore a long-lived
+  classifier credential, add confidence/versioned decisions, then reclassify existing records with review and
+  rollback support.
+
+Exact next commands:
+
+```sh
+cd /Users/jr/Desktop/projects/nomorevibe-workers
+git status --short
+npm test
+npm run build
+git diff --check
+open http://127.0.0.1:3201/
+docker logs --since 2h nomorevibe-publisher-1 2>&1 | rg 'crawl.classif|Not logged|auth' | tail -n 30
+docker exec nomorevibe-db-1 psql -U nomorevibe -d nomorevibe -c "select category,count(*) from products where status in ('seeded','verified') group by category order by count(*) desc"
+```
+
+## Unclaimed product owner/contact HTML concept — 2026-09-08 21:30 KST
+
+- Objective: produce a reviewable HTML concept that gathers useful public information for crawler-listed,
+  unclaimed products and gives visitors a realistic way to contact the repository owner.
+- Completed: added `docs/designs/2026-09-08-unclaimed-product-contact.html`, using the current product-detail
+  visual language and live `AgentWorkforce/relay` metadata. The design keeps owner identity, available contact
+  routes and ownership claim in one section, followed by a compact observed-facts panel and an explanation of
+  the unclaimed state.
+- Design decisions: label the account as `GitHub 저장소 소유자`, never as the confirmed maker; distinguish
+  organization accounts; expose only working routes (GitHub profile, new issue and official website); avoid
+  scraped commit email; keep `GitHub에서 확인` and the observation date visible; let verified makers replace
+  the unclaimed treatment through the existing claim flow.
+- Modified files: the standalone HTML concept above and this handoff only. No production component, schema or
+  crawler behavior changed.
+- Actual checks: HTML parser PASS; `git diff --check` PASS; Playwright desktop 1440px and mobile 390px rendered
+  HTTP 200 with three contact links, the source label and claim CTA; both had zero console/page errors and no
+  horizontal overflow. Screenshots: `/tmp/nomorevibe-unclaimed-desktop.png` and
+  `/tmp/nomorevibe-unclaimed-mobile.png`.
+- Failed approaches: `agbrowse` was unavailable on PATH, so the existing Playwright installation was used. A
+  temporary QA module under `/tmp` could not resolve the project dependency; moving it to the repository for the
+  run fixed module resolution, and the temporary file was then removed.
+- Remaining: collect user feedback on this concept. If accepted, normalize GitHub owner fields into the detail
+  view, add the responsive production component, conditionally expose Issues/Discussions/site links, then run
+  focused component and browser checks.
+
+Exact next commands:
+
+```sh
+cd /Users/jr/Desktop/projects/nomorevibe-workers
+python3 -m http.server 8766 --directory docs/designs
+open http://127.0.0.1:8766/2026-09-08-unclaimed-product-contact.html
+git diff -- docs/designs/2026-09-08-unclaimed-product-contact.html docs/CODEX_HANDOFF.md
+```
+
 ## Existing catalogue restored and independent local crawler activated — 2026-09-08 21:06 KST
 
 - Objective: explain why previously crawled products were absent from the redesigned local page, restore them

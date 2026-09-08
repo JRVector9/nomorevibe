@@ -4,6 +4,7 @@ import { Icon } from "@/components/home/icons";
 import { ProjectCover, coverArtFor } from "@/components/home/ProjectCover";
 import { categoryLabel } from "@/lib/domain/products/labels";
 import type { HomeCardProduct } from "@/components/home/types";
+import { githubOwnerFromRepositoryUrl } from "@/lib/domain/products/github-owner";
 
 function interestCount(product: HomeCardProduct): number {
   if (typeof product.validClicks === "number") return product.validClicks;
@@ -28,8 +29,10 @@ export function ProjectCard({
   browseState: BrowseState;
 }) {
   const hasRepository = Boolean(product.repoUrl);
+  const githubOwner = product.unclaimed ? githubOwnerFromRepositoryUrl(product.repoUrl) : null;
   const interest = interestCount(product);
-  const initial = makerLabel(product).replace(/^@/, "").slice(0, 1).toUpperCase();
+  const visibleMaker = githubOwner ? `@${githubOwner.login}` : makerLabel(product);
+  const initial = visibleMaker.replace(/^@/, "").slice(0, 1).toUpperCase();
 
   return (
     <article className="project-card">
@@ -76,10 +79,25 @@ export function ProjectCard({
           {product.health?.down && <span className="pill pill-down">응답 없음</span>}
         </div>
         <div className="project-bottom">
-          <span className="maker">
-            <span className="avatar" aria-hidden="true">{initial}</span>
-            {product.makerName ? `@${product.makerName.replace(/^@/, "")}` : makerLabel(product)}
-          </span>
+          {githubOwner ? (
+            <a
+              className="maker maker-link"
+              href={githubOwner.profileUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              title="GitHub 저장소 소유자"
+              aria-label={`${githubOwner.login} GitHub 저장소 소유자 프로필`}
+            >
+              <span className="avatar" aria-hidden="true">{initial}</span>
+              <span className="truncate">{visibleMaker}</span>
+              <span aria-hidden>↗</span>
+            </a>
+          ) : (
+            <span className="maker">
+              <span className="avatar" aria-hidden="true">{initial}</span>
+              {product.makerName ? `@${product.makerName.replace(/^@/, "")}` : visibleMaker}
+            </span>
+          )}
           <div className="card-actions">
             <span className="save-count" title="이 브라우저에 저장">
               <Icon name="bookmark" size={11} />

@@ -35,4 +35,14 @@ describe("home project card builder evidence", () => {
     expect(render({ ...baseProduct, builderClaim: "reported", unclaimed: false }))
       .toContain("Claude Code");
   });
+
+  it("links an unclaimed project's creator label to the GitHub repository owner", () => {
+    const html = render({
+      ...baseProduct,
+      repoUrl: "https://github.com/AgentWorkforce/relay",
+    });
+    expect(html).toContain('href="https://github.com/AgentWorkforce"');
+    expect(html).toContain("@AgentWorkforce");
+    expect(html).toContain("GitHub 저장소 소유자");
+  });
 });

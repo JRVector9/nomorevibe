@@ -735,6 +735,15 @@ button {
   gap: 5px;
   min-width: 0;
 }
+.maker-link:hover {
+  color: var(--accent);
+  text-decoration: underline;
+}
+.maker-link:focus-visible {
+  border-radius: 4px;
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
 .avatar {
   height: 19px;
   width: 19px;

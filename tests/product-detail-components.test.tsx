@@ -12,6 +12,7 @@ import { ProductMetrics } from "@/components/product-detail/ProductMetrics";
 import { RepositoryEvidence } from "@/components/product-detail/RepositoryEvidence";
 import { SourceBadge } from "@/components/product-detail/SourceBadge";
 import { UpdateTimeline } from "@/components/product-detail/UpdateTimeline";
+import { UnclaimedOwnerContact } from "@/components/product-detail/UnclaimedOwnerContact";
 import type { ProductDetailView } from "@/lib/domain/products/detail-view";
 
 const observedAt = new Date("2026-08-19T03:00:00.000Z");
@@ -309,6 +310,9 @@ describe("evidence product detail components", () => {
       }}
     />);
     expect(repository).toContain("저장소 생성일");
+    expect(repository).toContain("현재 확인 가능한 정보");
+    expect(repository).toContain('href="https://github.com/example"');
+    expect(repository).toContain("@example");
     expect(repository).toContain("최근 push");
     expect(repository).toContain("최신 release");
     expect(repository).toContain("146");
@@ -367,6 +371,23 @@ describe("evidence product detail components", () => {
     expect(provenance).toContain("Codex");
     expect(provenance).toContain("review");
     expect(provenance).not.toContain("공개된 에이전트 정보가 없습니다");
+  });
+
+  it("renders one compact owner and contact section only for a valid GitHub repository", () => {
+    const html = renderToStaticMarkup(<UnclaimedOwnerContact
+      repoUrl="https://github.com/AgentWorkforce/relay"
+      slug="agent-relay"
+    />);
+    expect(html).toContain("운영 주체와 연락");
+    expect(html).toContain("@AgentWorkforce");
+    expect(html).toContain('href="https://github.com/AgentWorkforce"');
+    expect(html).toContain('href="https://github.com/AgentWorkforce/relay"');
+    expect(html).toContain("GitHub 저장소 소유자");
+    expect(html).toContain("실제 제작자가 다를 수 있습니다");
+    expect(html).toContain("목록에서 내려달라고 요청하기");
+
+    expect(renderToStaticMarkup(<UnclaimedOwnerContact repoUrl="https://gitlab.com/acme/app" slug="app" />))
+      .toBe("");
   });
 
   it("renders observed tool, configured model and gateway separately with citations while preserving maker reporting", () => {
@@ -469,6 +490,7 @@ describe("evidence product detail components", () => {
       "FreshnessPanel.tsx",
       "UpdateTimeline.tsx",
       "SourceBadge.tsx",
+      "UnclaimedOwnerContact.tsx",
     ];
     for (const file of files) {
       const source = readFileSync(`components/product-detail/${file}`, "utf8");
@@ -489,6 +511,7 @@ describe("evidence product detail components", () => {
       "<ProductMetrics",
       "<ProductIntroduction",
       "<EvidenceSummary",
+      "<UnclaimedOwnerContact",
       "<ProductFacts",
       "<RepositoryEvidence",
       "<BuildProvenance",

@@ -10,8 +10,8 @@ import { ProductIntroduction } from "@/components/product-detail/ProductIntroduc
 import { ProductMetrics } from "@/components/product-detail/ProductMetrics";
 import { RepositoryEvidence } from "@/components/product-detail/RepositoryEvidence";
 import { UpdateTimeline } from "@/components/product-detail/UpdateTimeline";
+import { UnclaimedOwnerContact } from "@/components/product-detail/UnclaimedOwnerContact";
 import { getProductDetail, getProductIdentity } from "@/lib/domain/products/detail-view";
-import { TakedownForm } from "./TakedownForm";
 
 export const dynamic = "force-dynamic";
 
@@ -68,18 +68,10 @@ export default async function ProductPage({ params }: Props) {
             freshness={detail.freshness}
             profileUpdatedAt={detail.profile?.updatedAt ?? null}
           />
-          <ProductFacts product={detail.product} profile={detail.profile} links={detail.links} unclaimed={detail.unclaimed} />
           {detail.unclaimed && (
-            <section className="rounded-[12px] border border-accent/35 bg-accent-soft p-5">
-              <h2 className="text-[15px] font-extrabold text-fg">이 제품의 주인이신가요?</h2>
-              <p className="mt-2 text-[13px] leading-6 text-fg-2">
-                공개 출처에서 발견해 대신 등록한 제품입니다. 현재 정보에는 추정값이 포함될 수 있습니다.
-                프로젝트 폴더에서 <code className="font-mono font-semibold text-accent">/nomorevibe</code>를
-                실행하면 소유권을 확인하고 직접 갱신할 수 있습니다.
-              </p>
-              <TakedownForm slug={detail.product.slug} />
-            </section>
+            <UnclaimedOwnerContact repoUrl={detail.product.repoUrl} slug={detail.product.slug} />
           )}
+          <ProductFacts product={detail.product} profile={detail.profile} links={detail.links} unclaimed={detail.unclaimed} />
           {detail.product.status === "unverified" && (
             <section className="rounded-[12px] border border-line bg-bg-card p-5">
               <h2 className="text-[15px] font-extrabold text-fg">아직 공개 목록에 없습니다</h2>
