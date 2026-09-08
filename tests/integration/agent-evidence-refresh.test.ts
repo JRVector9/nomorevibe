@@ -1,4 +1,5 @@
 import { beforeAll, beforeEach, expect, it } from 'vitest';
+import { eq } from 'drizzle-orm';
 import { db } from '@/lib/db';
 import { agentRepositoryScans, crawlCandidates, crawlSettings, products } from '@/lib/db/schema';
 import { saveRepositoryAgentScan, getLatestRepositoryAgentScan } from '@/lib/domain/evidence/agents/repository';
@@ -30,11 +31,13 @@ it('merges product and pending candidate demand, preserves admin decisions and r
   expect(paths).toHaveLength(count);
 });
 
-it('resumes an overdue partial scan behind the normal cursor before a full demand cycle', async () => {
+it.each(['partial', 'complete'] as const)('resumes an overdue %s scan with pending work behind the normal cursor', async state => {
   await saveSettings({ agentEvidence: { enabled: true } }, 'test');
   await db.insert(crawlCandidates).values({ repo: 'acme/early', state: 'needs_review', reason: 'ai_evidence_pending', decidedBy: 'auto' });
   const commitSha = 'a'.repeat(40), blobSha = 'b'.repeat(40);
   await saveRepositoryAgentScan({ repositoryId: '1', repositoryKey: 'acme/early', commitSha, scope: '', state: 'partial', observations: [], requestCount: 3, fileCount: 0, errorCode: null, retryAt: null, cursor: { repositoryId: '1', repositoryKey: 'acme/early', commitSha, detectorVersion: AGENT_DETECTOR_VERSION, scope: '', pendingTrees: [], pendingBlobs: [{ path: 'AGENTS.md', sha: blobSha, size: 7, ruleId: ARTIFACT_RULES.find(rule => rule.id.startsWith('shared.agents'))!.id }] } }, new Date('2026-01-01'));
+  if (state === 'complete') await db.update(agentRepositoryScans).set({ state, completedAt: new Date('2026-01-01') })
+    .where(eq(agentRepositoryScans.repositoryKey, 'acme/early'));
   const paths: string[] = [];
   const saved: string[] = [];
   const request = async <T>(path: string): Promise<GitHubHttpResult<T>> => {

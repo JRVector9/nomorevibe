@@ -33,7 +33,7 @@ export async function refreshAgentEvidenceJob(ctx: JobContext<AgentEvidenceRefre
       FROM agent_repository_scans WHERE scope = '' AND detector_version = ${AGENT_DETECTOR_VERSION}
       ORDER BY repository_key, started_at DESC, id DESC
     ) latest JOIN (${demand}) demand USING (repository_key)
-    WHERE latest.state = 'partial' AND latest.next_attempt_at <= now()
+    WHERE latest.state IN ('partial', 'complete') AND latest.next_attempt_at <= now()
       AND (jsonb_array_length(coalesce(latest.cursor->'pendingTrees', '[]'::jsonb)) > 0
         OR jsonb_array_length(coalesce(latest.cursor->'pendingBlobs', '[]'::jsonb)) > 0
         OR jsonb_array_length(coalesce(latest.cursor->'pendingCommits', '[]'::jsonb)) > 0)

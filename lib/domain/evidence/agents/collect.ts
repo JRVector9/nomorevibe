@@ -50,7 +50,7 @@ export async function collectRepositoryAgentEvidence(input: {
   const get = async <T>(path: string) => { result.requestCount++; return request<T>(path); };
   const fail = (error: GitHubFailure) => { Object.assign(result, failure(error)); result.state = cursor ? 'partial' : 'failed'; result.cursor = cursor; return result; };
   if (cursor) {
-    if (!budget()) return result;
+    if (!budget()) return { ...result, errorCode: 'budget_exhausted' };
     // Visibility can change between ticks; token access is not public publication permission.
     const repository = await get<{ id: number; private: boolean }>(`/repos/${repositoryKey}`);
     if (!repository.ok) return fail(repository.error);

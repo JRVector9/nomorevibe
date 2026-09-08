@@ -56,6 +56,45 @@ describe('repository agent observations', () => {
     expect(retained?.scan.lastErrorCode).toBeNull();
     expect(retained?.scan.completedAt).toEqual(original?.completedAt);
   });
+  it('resumes additional commit discoveries on a complete scan and preserves a failed recheck across an empty budget', async () => {
+    const original = (await saveRepositoryAgentScan(result(), new Date(Date.now() - 2000)))!;
+    const discovered = ['c'.repeat(40), 'd'.repeat(40)];
+    for (const commitSha of discovered) await recordDiscoveryEvidence({ repositoryKey: 'acme/app', signalId: 'codex',
+      sourceUrl: `https://github.com/acme/app/commit/${commitSha}`, commitSha });
+    const paths: string[] = [];
+    const request = async <T>(path: string): Promise<GitHubHttpResult<T>> => {
+      paths.push(path);
+      let value: unknown;
+      if (path === '/repos/acme/app') value = { id: 12, private: false, default_branch: 'main' };
+      else if (path.endsWith('/commits/main')) value = { sha: SHA, commit: { tree: { sha: 'e'.repeat(40) } } };
+      else if (path.includes('/compare/')) value = { status: 'ahead' };
+      else if (discovered.some(sha => path.endsWith(`/commits/${sha}`))) value = { sha: path.split('/').at(-1),
+        commit: { message: 'Update\n\nCo-authored-by: Codex <codex@example.com>' }, parents: [{ sha: 'f'.repeat(40) }] };
+      else throw new Error(`unexpected request: ${path}`);
+      return { ok: true, status: 200, value: value as T, etag: null, lastModified: null, link: null };
+    };
+    const partial = await refreshRepositoryAgentEvidence({ repositoryKey: 'acme/app', force: true,
+      request, hasBudget: () => paths.length < 4 });
+    expect(partial.scan).toMatchObject({ id: original.id, state: 'complete', completedAt: original.completedAt,
+      lastErrorCode: null, cursor: { pendingCommits: [expect.objectContaining({ sha: expect.any(String) })] } });
+    expect(partial.observations).toHaveLength(2);
+    const pending = partial.scan!.cursor!.pendingCommits![0].sha;
+    const failed = await refreshRepositoryAgentEvidence({ repositoryKey: 'acme/app', force: true,
+      request: async () => ({ ok: false, error: { kind: 'transport' } }) });
+    expect(failed.scan).toMatchObject({ state: 'complete', completedAt: original.completedAt, lastErrorCode: 'timeout',
+      cursor: { pendingCommits: [{ sha: pending }] } });
+    const empty = await refreshRepositoryAgentEvidence({ repositoryKey: 'acme/app', force: true, hasBudget: () => false, request });
+    expect(empty.errorCode).toBe('budget_exhausted');
+    expect((await getLatestRepositoryAgentEvidence('acme/app'))?.scan.lastErrorCode).toBe('timeout');
+    expect((await loadAgentJudgeInput({ repo: 'acme/app', pageMeta: { repositoryKeys: ['acme/app'] }, fetchedAt: new Date() },
+      DEFAULT_CRAWL_SETTINGS)).scanState).toBe('pending');
+    paths.length = 0;
+    const resumed = await refreshRepositoryAgentEvidence({ repositoryKey: 'acme/app', force: true, request });
+    expect(paths).toEqual(['/repos/acme/app', `/repos/acme/app/commits/${pending}`, `/repos/acme/app/compare/${pending}...${SHA}`]);
+    expect(resumed.scan).toMatchObject({ id: original.id, state: 'complete', cursor: null, lastErrorCode: null });
+    expect(resumed.scan!.completedAt!.getTime()).toBeGreaterThan(original.completedAt!.getTime());
+    expect(resumed.observations).toHaveLength(3);
+  });
   it('keeps maker disclosures untouched and attaches only to visible matching links', async () => {
     const [product] = await db.insert(products).values({ slug: 'app', url: 'https://app.example', name: 'app', tagline: 'test', description: 'test', category: 'Dev', verifyToken: 'token', editTokenHash: 'a'.repeat(64) }).returning();
     await db.insert(productAgents).values({ slug: 'app', provider: 'Maker provider', evidenceLevel: 'maker_reported' });
