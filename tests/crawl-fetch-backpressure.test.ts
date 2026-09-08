@@ -4,6 +4,7 @@ const mocks = vi.hoisted(() => ({dequeue:vi.fn(),defer:vi.fn(),repo:vi.fn(),put:
 vi.mock("@/lib/crawl/repository", () => ({dequeue:mocks.dequeue,deferFrontier:mocks.defer,putDocument:mocks.put,markFrontier:mocks.mark}));
 vi.mock("@/lib/crawl/settings", () => ({getSettings:async () => ({enabled:true,judge:{docsGenerators:[]}})}));
 vi.mock("@/lib/crawl/github", () => ({getRepo:mocks.repo}));
+vi.mock("@/lib/crawl/admin-review", () => ({requeueAfterAdminEvidenceRefresh:async () => false}));
 const entries = [{repo:"acme/one"},{repo:"acme/two"}];
 beforeEach(() => {
   vi.clearAllMocks();

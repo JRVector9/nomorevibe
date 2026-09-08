@@ -6,6 +6,7 @@ import { getSettings } from '@/lib/crawl/settings';
 import { refreshRepositoryAgentEvidence } from '@/lib/domain/evidence/agents/repository';
 import type { AgentGitHubRequest } from '@/lib/domain/evidence/agents/collect';
 import type { JobContext, JobOutcome } from '@/lib/jobs/runner';
+import { requeueAfterAdminEvidenceRefresh } from '@/lib/crawl/admin-review';
 
 export type AgentEvidenceRefreshCursor = { afterRepository?: string; retryAfter?: string };
 export function prioritizeAgentRefreshDemand(duePartial: string[], repositories: string[]) {
@@ -56,6 +57,7 @@ export async function refreshAgentEvidenceJob(ctx: JobContext<AgentEvidenceRefre
       }
       ctx.log('agent_evidence.scanned', { repositoryKey, scanId: result.scan?.id ?? null, state: result.scan?.state ?? 'failed', observations: result.observations.length, cached: result.cached, errorCode: result.errorCode });
       if (result.scan?.state === 'complete' && !result.errorCode) {
+        if (!result.cached) await requeueAfterAdminEvidenceRefresh(repositoryKey);
         // Attach all products sharing the repo; refresh's cache prevents repeated HTTP work.
         const linkedProducts = await db.select({ id: products.id, slug: products.slug }).from(products).where(sql`lower(regexp_replace(${products.repoUrl}, '/$', '')) IN (${`https://github.com/${repositoryKey}`}, ${`https://github.com/${repositoryKey}.git`})`);
         for (const product of linkedProducts) await refreshRepositoryAgentEvidence({ repositoryKey, productSlug: product.slug, productId: product.id });

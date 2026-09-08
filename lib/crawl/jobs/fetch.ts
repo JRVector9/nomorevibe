@@ -6,6 +6,7 @@ import * as crawl from "@/lib/crawl/repository";
 import { getSettings } from "@/lib/crawl/settings";
 import { getRepo } from "@/lib/crawl/github";
 import { extractSiteRepositoryKeys } from "@/lib/domain/evidence/providers/site-fingerprint";
+import { requeueAfterAdminEvidenceRefresh } from "@/lib/crawl/admin-review";
 
 /**
  * 수집 잡 — 프론티어에서 꺼낸 레포의 원본을 확보한다.
@@ -85,6 +86,7 @@ export async function fetchCrawlDocuments(ctx: JobContext<null>): Promise<JobOut
         pageMeta: page?.meta ?? null,
       });
       await crawl.markFrontier(entry.repo, "done");
+      await requeueAfterAdminEvidenceRefresh(entry.repo);
       fetched++;
 
       // The next iteration releases any unvisited claims when the time budget expires.
