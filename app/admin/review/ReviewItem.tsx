@@ -30,12 +30,12 @@ export function ReviewItem({ entry, reasons }: { entry: AdminReviewEntry; reason
     <li className="rounded-xl border border-line bg-bg-card p-5">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <a href={`https://github.com/${candidate.repo}`} target="_blank" rel="noreferrer noopener" className="text-[15px] font-bold hover:text-accent">{candidate.repo}</a>
-        <span className="text-[12px] font-semibold text-fg-2">{STATES[candidate.state]} · {candidate.decidedBy === 'admin' ? '관리자 결정' : STATUS[entry.status]}</span>
+        <span className="text-[13px] font-semibold text-fg-2">{STATES[candidate.state]} · {candidate.decidedBy === 'admin' ? '관리자 결정' : STATUS[entry.status]}</span>
       </div>
       <h3 className="mt-2 text-[14px] font-semibold">{entry.name}</h3>
       {entry.description && <p className="mt-1 whitespace-pre-line text-[13px] leading-relaxed text-fg-2">{entry.description.slice(0, 1200)}</p>}
       {productUrl && <a href={productUrl} target="_blank" rel="noreferrer noopener" className="mt-2 block break-all text-[13px] text-accent">{productUrl}</a>}
-      <p className="mt-2 text-[12px] text-fg-3">규칙 사유: {candidate.reason ?? '아직 없음'} · 저장소 연결: {entry.relationship} · 근거 수집: {entry.scanState}</p>
+      <p className="mt-2 text-[13px] text-fg-3">규칙 사유: {candidate.reason ?? '아직 없음'} · 저장소 연결: {entry.relationship} · 근거 수집: {entry.scanState}</p>
       {entry.latest && <div className="mt-3 rounded-lg bg-bg-soft p-3 text-[13px] leading-relaxed text-fg-2">
         <p className="font-semibold">{entry.latest.kind === 'admin_override' ? '관리자 결정 기록' : entry.latest.kind === 'evidence_refresh' ? '추가 수집 접수 기록' : '최근 AI·규칙 심사 기록'}</p>
         {entry.latest.kind === 'automatic' && <p>{entry.latest.provider ?? '실행기 미확인'}{entry.latest.model ? ` · ${entry.latest.model}` : ''} · {entry.latest.decision ?? entry.latest.state}</p>}
@@ -43,11 +43,11 @@ export function ReviewItem({ entry, reasons }: { entry: AdminReviewEntry; reason
         {entry.latest.reason && <p className="whitespace-pre-line">{entry.latest.reason}</p>}
         {entry.latest.error && <p className="text-down">실행 오류: {entry.latest.error}</p>}
         {entry.latest.retryAfter && <p>재시도 가능 시각: {entry.latest.retryAfter}</p>}
-        <p className="mt-1 text-[12px] text-fg-3">{entry.latest.at}</p>
+        <p className="mt-1 text-[13px] text-fg-3">{entry.latest.at}</p>
       </div>}
       <details className="mt-3 text-[13px] text-fg-2">
         <summary className="cursor-pointer">발견한 근거 {entry.evidence.length}개</summary>
-        <p className="mt-2 text-[12px] text-fg-3">지침·설정 파일의 발견은 해당 AI로 실제 개발했다는 확인이 아닙니다.</p>
+        <p className="mt-2 text-[13px] text-fg-3">지침·설정 파일의 발견은 해당 AI로 실제 개발했다는 확인이 아닙니다.</p>
         {entry.evidence.length ? <ul className="mt-2 space-y-1">{entry.evidence.map(item => <li key={item.id}>
           {safeUrl(item.url) ? <a href={safeUrl(item.url)!} target="_blank" rel="noreferrer noopener" className="break-all hover:text-accent">{item.label}</a> : item.label}
         </li>)}</ul> : <p className="mt-2">저장된 공개 근거가 없습니다.</p>}
@@ -64,7 +64,7 @@ export function ReviewItem({ entry, reasons }: { entry: AdminReviewEntry; reason
           </select>
           <button name="decision" value="reject" disabled={pending || refreshing} className={`${button} border-line text-fg-2`}>거부</button>
         </div>
-        <p className="mt-2 text-[12px] text-fg-3">관리자 승인은 AI 판정과 별개로 기록되며 발행 워커의 중복·차단 검사는 유지됩니다.</p>
+        <p className="mt-2 text-[13px] text-fg-3">관리자 승인은 AI 판정과 별개로 기록되며 발행 워커의 중복·차단 검사는 유지됩니다.</p>
       </form>}
       {state?.error && <p role="status" className="mt-2 text-[13px] text-down">{state.error}</p>}
       {canCollect && <form action={refreshAction} className="mt-4 border-t border-line pt-4">
@@ -73,7 +73,7 @@ export function ReviewItem({ entry, reasons }: { entry: AdminReviewEntry; reason
           <input name="note" required maxLength={2000} className="mt-2 block w-full rounded-lg border border-line bg-bg-soft p-2 font-normal" />
         </label>
         <button disabled={refreshing || pending} className={`${button} mt-2 border-line text-fg-2`}>추가 수집 요청 ({entry.refreshCount}/2)</button>
-        <p className="mt-2 text-[12px] text-fg-3">수집을 예약합니다. 같은 입력당 최대 2회이며 외부 호출 제한과 재시도 대기를 유지합니다.</p>
+        <p className="mt-2 text-[13px] text-fg-3">수집을 예약합니다. 같은 입력당 최대 2회이며 외부 호출 제한과 재시도 대기를 유지합니다.</p>
       </form>}
       {refresh && <p role="status" className={`mt-2 text-[13px] ${refresh.error ? 'text-down' : 'text-up'}`}>{refresh.error ?? refresh.message}</p>}
     </li>
