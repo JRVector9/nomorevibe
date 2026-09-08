@@ -1,4 +1,9 @@
 import { afterEach, expect, it, vi } from "vitest";
+import { spawn, execFileSync } from "node:child_process";
+import { once } from "node:events";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import { createReviewInput } from "@/lib/crawl/agent-review-contract";
 import { DEFAULT_CRAWL_SETTINGS } from "@/lib/crawl/settings-schema";
 import type { CrawlCandidate, CrawlDocument } from "@/lib/db/schema";
@@ -8,7 +13,7 @@ function input() {
   const now = new Date();
   return createReviewInput({repo:"acme/demo",productUrl:"https://demo.example",judgedAt:now} as CrawlCandidate,
     {id:1,repo:"acme/demo",productUrl:"https://demo.example",repoMeta:{description:"A usable task tracker"},
-      pageMeta:{title:"Demo"},fetchedAt:now} as CrawlDocument, DEFAULT_CRAWL_SETTINGS, {scan:null,observations:[]}, now);
+      pageMeta:{title:"Demo"},pageStatus:200,fetchedAt:now} as CrawlDocument, DEFAULT_CRAWL_SETTINGS, {scan:null,observations:[]}, now);
 }
 const answer = (outcome: unknown): ReviewCliRun => async () => ({kind:"exit",code:0,stderr:"",stdout:JSON.stringify({
   structured_output:outcome,usage:{input_tokens:20,output_tokens:10},total_cost_usd:0.01,
@@ -69,4 +74,43 @@ it("stops overflowing and overdue children and waits for their close event", asy
   expect(await runReviewCli(["-e","process.stdin.resume();setInterval(()=>{},1000)"],"",{timeoutMs:60})).toEqual({kind:"timeout"});
   expect(await runReviewCli(["-e",'process.stdin.resume();process.stdout.write("x".repeat(80_000));setInterval(()=>{},1000)'],"",{timeoutMs:2000}))
     .toEqual({kind:"output_too_large"});
+});
+
+it.skipIf(process.platform === "win32")("inherits the supervised worker group so group shutdown also stops the CLI", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "review-group-test-"));
+  const pidFile = path.join(directory, "cli.pid");
+  const cliCode = 'require("node:fs").writeFileSync(process.env.REVIEW_PID_FILE,String(process.pid));process.stdin.resume();setInterval(()=>{},1000)';
+  const workerCode = 'const {runReviewCli}=require(process.env.REVIEW_MODULE_PATH);runReviewCli(["-e",process.env.REVIEW_CHILD_CODE],"",{timeoutMs:10000}).then(()=>process.exit(0));';
+  const worker = spawn(process.execPath, ["--import", "tsx", "-e", workerCode], {
+    detached: true, stdio: "ignore", env: { ...process.env, CLAUDE_CLI: process.execPath,
+      REVIEW_PID_FILE: pidFile, REVIEW_CHILD_CODE: cliCode,
+      REVIEW_MODULE_PATH: path.resolve("lib/crawl/agent-review.ts") },
+  });
+  const exited = once(worker, "close");
+  let cliPid: number | undefined;
+  const alive = (pid: number) => {
+    try {
+      const state = execFileSync("ps", ["-o", "stat=", "-p", String(pid)], {encoding:"utf8",stdio:["ignore","pipe","ignore"]}).trim();
+      return state !== "" && !state.includes("Z");
+    } catch { return false; }
+  };
+  try {
+    const deadline = Date.now()+2500;
+    while (Date.now()<deadline) {
+      try { cliPid=Number(await readFile(pidFile,"utf8")); break; } catch { await new Promise(resolve=>setTimeout(resolve,10)); }
+    }
+    expect(cliPid).toBeGreaterThan(0);
+    const group = Number(execFileSync("ps",["-o","pgid=","-p",String(cliPid)],{encoding:"utf8"}).trim());
+    expect(group).toBe(worker.pid);
+    process.kill(-worker.pid!,"SIGKILL");
+    await exited;
+    for (let i=0; i<50 && alive(cliPid!); i++) await new Promise(resolve=>setTimeout(resolve,10));
+    expect(alive(worker.pid!)).toBe(false);
+    expect(alive(cliPid!)).toBe(false);
+  } finally {
+    if (worker.pid) try { process.kill(-worker.pid,"SIGKILL"); } catch { /* already exited */ }
+    if (cliPid && alive(cliPid)) try { process.kill(cliPid,"SIGKILL"); } catch { /* already exited */ }
+    await exited;
+    await rm(directory,{recursive:true,force:true});
+  }
 });

@@ -56,7 +56,8 @@ export const runReviewCli: ReviewCliRun = async (args, stdin, options) => {
       const env = { ...process.env, CLAUDE_CODE_MAX_OUTPUT_TOKENS: String(MAX_OUTPUT_TOKENS) };
       delete (env as NodeJS.ProcessEnv).CLAUDECODE;
       const child = spawn(process.env.CLAUDE_CLI ?? "claude", args, {
-        cwd: directory, env, stdio: ["pipe", "pipe", "pipe"], detached: process.platform !== "win32",
+        // Inherit the worker process group so supervisor shutdown also reaches this child.
+        cwd: directory, env, stdio: ["pipe", "pipe", "pipe"], detached: false,
       });
       const stdout: Buffer[] = [], stderr: Buffer[] = [];
       let stdoutBytes = 0, stderrBytes = 0;
@@ -65,9 +66,8 @@ export const runReviewCli: ReviewCliRun = async (args, stdin, options) => {
         stopped ??= { kind };
         if (!child.pid) return;
         try {
-          if (process.platform === "win32") child.kill("SIGKILL");
-          else process.kill(-child.pid, "SIGKILL");
-        } catch { try { child.kill("SIGKILL"); } catch { /* Supervisor must confirm exit if the OS refuses termination. */ } }
+          child.kill("SIGKILL");
+        } catch { /* Supervisor must confirm exit if the OS refuses termination. */ }
       };
       const abort = () => stop("cancelled");
       const timer = setTimeout(() => stop("timeout"), options.timeoutMs);
