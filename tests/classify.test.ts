@@ -118,9 +118,11 @@ describe("classifyCategory", () => {
     expect(args).not.toContain("--bare");
   });
 
-  it("서버 토큰이 있을 때만 bare로 띄운다 — 개발 머신의 keychain 로그인은 bare에서 읽히지 않는다", () => {
+  it("safe mode keeps OAuth and keychain authentication while disabling customizations", () => {
+    expect(cliArgs()).toContain("--safe-mode");
     expect(cliArgs()).not.toContain("--bare");
     process.env.CLAUDE_CODE_OAUTH_TOKEN = "sk-ant-oat-test";
-    expect(cliArgs()).toContain("--bare");
+    expect(cliArgs()).toContain("--safe-mode");
+    expect(cliArgs()).not.toContain("--bare");
   });
 });

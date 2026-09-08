@@ -89,12 +89,9 @@ export function cliArgs(): string[] {
     "--model", MODEL,
     "--effort", "high",
     "--system-prompt", SYSTEM,
-    /**
-     * 서버에는 keychain이 없고 토큰을 환경변수로 준다. 그때는 bare로 띄워 훅·플러그인·
-     * CLAUDE.md 탐색을 건너뛴다. 개발 머신은 keychain 로그인이라 bare면 로그인이 안 된
-     * 것으로 나온다(실측) — 그래서 토큰이 있을 때만 붙인다.
-     */
-    ...(process.env.CLAUDE_CODE_OAUTH_TOKEN ? ["--bare"] : []),
+    // CLI 2.1.263: bare skips OAuth as well as keychain. Safe mode isolates customizations
+    // while retaining both supported login methods and the existing classification behavior.
+    "--safe-mode",
   ];
 }
 
