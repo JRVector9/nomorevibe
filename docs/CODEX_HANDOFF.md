@@ -1,6 +1,6 @@
 # Codex handoff
 
-## Existing catalogue restored and independent local crawler activated — 2026-09-08 19:45 KST
+## Existing catalogue restored and independent local crawler activated — 2026-09-08 21:06 KST
 
 - Objective: explain why previously crawled products were absent from the redesigned local page, restore them
   without data loss, verify the independent crawler against the existing DB, and fix the catalogue query that
@@ -16,8 +16,10 @@
   The temporary secret env file was removed; the rollback dump remains on the host.
 - Runtime proof: the DB scheduler requested nine due jobs. The crawler discovered two repositories and fetched
   both. A bounded judge tick classified one as `passed` and one as `no_homepage`; a publisher tick added
-  `Dark Factory`, bringing seeded products to 1,119. Job requested/processed versions match and last errors are
-  empty. The obsolete isolated web/five-worker set was stopped and removed.
+  `Dark Factory`. Continuous operation then raised the preserved catalogue from 1,118 to 1,146 seeded products.
+  The latest DB snapshot has 1,146 published candidates, 260 `needs_review` candidates and 4,168 rule-rejected
+  candidates. All job requested/processed versions match and `last_error` is empty. The obsolete isolated
+  web/five-worker set was stopped and removed.
 - AI state: collection is enabled, but automatic AI review is effectively `off`; no `CRAWL_REVIEW_MODEL` is
   configured and repository agent-evidence collection is disabled in the preserved settings. Publisher category
   classification attempted Claude and received `Not logged in`, then used the existing deterministic fallback.
@@ -30,8 +32,13 @@
   nonincremental TypeScript, ESLint, Playwright 6 tests and Docker runner build PASS. Production-mode browser QA
   at port 3200 returned 200 for default/recent views, rendered six initial cards, reported
   `최신 100개 · 공개 1119개`, and had no console/page errors.
-- Remaining: commit/push/CI/merge the small public-catalogue follow-up. AI review and agent evidence remain
-  intentionally inactive until credentials, model and an observed sample are accepted.
+- Merge result: PR62 merged as `1d0bdd2c816efeeb252a3f422d1bf36bc0907f10`; Git verified implementation
+  commit `f72ec909d9ac486d11737849188d28cb4929d071` is its ancestor. PR checks and post-merge main CI run
+  `34223497961` passed typegen, TypeScript, lint, unit, integration and build. The live local page at port 3200
+  returns HTTP 200 and all six current services are healthy.
+- Remaining: AI review and agent evidence remain intentionally inactive until credentials, model and an
+  observed sample are accepted. Publisher category classification currently logs Claude authentication failures
+  and uses the deterministic fallback; it does not block rule-approved publication.
 
 Exact next commands:
 
@@ -42,6 +49,8 @@ git status --short
 docker compose -p nomorevibe ps
 curl -I http://127.0.0.1:3200/
 docker exec nomorevibe-db-1 psql -U nomorevibe -d nomorevibe -c "select status,count(*) from products group by status"
+docker exec nomorevibe-db-1 psql -U nomorevibe -d nomorevibe -c "select name,requested_version,processed_version,last_error from jobs order by name"
+gh run view 34223497961
 ```
 
 ## Port 3200 home redesign applied, verified and merged — 2026-09-08 19:08 KST
