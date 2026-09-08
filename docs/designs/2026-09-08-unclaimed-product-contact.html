@@ -1,0 +1,510 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>NoMoreVibe 미확인 프로젝트 상세 시안</title>
+  <style>
+    :root {
+      --page: #f4f5f8;
+      --paper: #ffffff;
+      --soft: #f0f2f6;
+      --soft-2: #f8f8fb;
+      --ink: #11131a;
+      --ink-2: #4e5668;
+      --muted: #727c90;
+      --line: #dce1e9;
+      --line-strong: #c8ced9;
+      --accent: #5b46f0;
+      --accent-deep: #4935d7;
+      --accent-soft: #efedff;
+      --green: #08794a;
+      --green-soft: #e8f7ef;
+      --amber: #805b00;
+      --amber-soft: #fff3ce;
+      --shadow: 0 18px 48px rgba(23, 29, 45, .07);
+    }
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      background: var(--page);
+      color: var(--ink);
+      font-family: Inter, Pretendard, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-size: 14px;
+      -webkit-font-smoothing: antialiased;
+    }
+    a { color: inherit; text-decoration: none; }
+    button { font: inherit; }
+    svg { display: block; }
+    .container { width: min(1180px, calc(100% - 40px)); margin-inline: auto; }
+
+    .prototype-bar {
+      background: #171924;
+      color: #dfe2ec;
+      font-size: 13px;
+    }
+    .prototype-bar .container {
+      min-height: 34px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+    }
+    .prototype-bar strong { color: #fff; }
+    .prototype-bar span:last-child { color: #aeb5c6; }
+
+    .topbar {
+      height: 64px;
+      border-bottom: 1px solid var(--line);
+      background: rgba(244, 245, 248, .94);
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      backdrop-filter: blur(14px);
+    }
+    .topbar-inner {
+      height: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 24px;
+    }
+    .brand { display: inline-flex; align-items: center; gap: 10px; font-size: 16px; font-weight: 850; letter-spacing: -.035em; }
+    .brand-mark {
+      width: 29px;
+      height: 29px;
+      display: grid;
+      place-items: center;
+      border-radius: 8px;
+      background: var(--accent);
+      color: #fff;
+      font-size: 13px;
+      font-weight: 900;
+    }
+    .nav { display: flex; align-items: center; gap: 22px; color: var(--ink-2); font-size: 13px; font-weight: 700; }
+    .launch { min-height: 38px; display: inline-flex; align-items: center; padding: 0 14px; border-radius: 9px; background: var(--accent); color: #fff; }
+
+    .breadcrumb { padding: 22px 0 16px; color: var(--muted); font-size: 13px; }
+    .breadcrumb b { color: var(--ink); }
+
+    .hero {
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: 15px;
+      background: var(--paper);
+      box-shadow: var(--shadow);
+    }
+    .hero-grid { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(340px, .75fr); }
+    .preview { min-width: 0; border-right: 1px solid var(--line); background: #e7e9ef; }
+    .preview-head, .preview-foot {
+      min-height: 47px;
+      padding: 12px 16px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      border-bottom: 1px solid var(--line);
+      background: var(--paper);
+      color: var(--muted);
+      font-size: 13px;
+    }
+    .preview-head b { color: var(--ink); }
+    .preview-foot { border-top: 1px solid var(--line); border-bottom: 0; }
+    .preview-stage { min-height: 420px; padding: 28px; display: grid; place-items: center; }
+    .app-shot {
+      width: min(100%, 670px);
+      overflow: hidden;
+      border: 1px solid #2c3140;
+      border-radius: 12px;
+      background: #11141b;
+      color: #f7f8fb;
+      box-shadow: 0 28px 60px rgba(17, 20, 27, .24);
+    }
+    .shot-toolbar {
+      height: 37px;
+      padding: 0 13px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-bottom: 1px solid #2a2e39;
+      background: #181b24;
+      color: #8f97aa;
+      font: 11px ui-monospace, SFMono-Regular, Menlo, monospace;
+    }
+    .dots { display: flex; gap: 5px; }
+    .dots i { width: 7px; height: 7px; border-radius: 50%; background: #565d70; }
+    .shot-body { display: grid; grid-template-columns: 160px 1fr; min-height: 300px; }
+    .shot-side { padding: 18px 13px; border-right: 1px solid #2a2e39; background: #151821; }
+    .shot-label { color: #777f91; font: 9px ui-monospace, monospace; letter-spacing: .12em; }
+    .agent { margin-top: 11px; padding: 10px; border-radius: 7px; color: #aab1c0; font-size: 10px; }
+    .agent.active { background: #29253f; color: #dbd6ff; }
+    .agent-row { display: flex; align-items: center; gap: 8px; }
+    .agent-dot { width: 7px; height: 7px; border-radius: 50%; background: #7d6bf6; box-shadow: 0 0 0 3px rgba(125, 107, 246, .12); }
+    .agent-dot.green { background: #31bf7b; box-shadow: 0 0 0 3px rgba(49, 191, 123, .12); }
+    .shot-main { padding: 22px; }
+    .shot-title { display: flex; justify-content: space-between; align-items: center; font-size: 12px; font-weight: 800; }
+    .live-pill { padding: 4px 7px; border-radius: 999px; background: rgba(49, 191, 123, .12); color: #59d497; font-size: 9px; }
+    .message { margin-top: 15px; padding: 13px 14px; border: 1px solid #303542; border-radius: 9px; background: #191d26; }
+    .message-meta { display: flex; justify-content: space-between; color: #777f91; font: 9px ui-monospace, monospace; }
+    .message p { margin: 8px 0 0; color: #c9ced9; font-size: 10px; line-height: 1.55; }
+    .message.accent { border-color: #4a416d; background: #211e31; }
+
+    .hero-copy { min-width: 0; padding: 34px 32px 30px; display: flex; flex-direction: column; }
+    .hero-kicker { color: var(--accent); font-size: 13px; font-weight: 850; }
+    .title-line { margin-top: 17px; display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
+    h1 { margin: 0; font-size: 43px; line-height: 1.02; letter-spacing: -.052em; text-wrap: balance; }
+    .status {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 9px;
+      border: 1px solid #ead18c;
+      border-radius: 999px;
+      background: var(--amber-soft);
+      color: var(--amber);
+      font-size: 13px;
+      font-weight: 800;
+      white-space: nowrap;
+    }
+    .status i { width: 6px; height: 6px; border-radius: 50%; background: #b98200; }
+    .tagline { margin: 28px 0 0; font-size: 19px; font-weight: 800; line-height: 1.55; letter-spacing: -.025em; text-wrap: pretty; }
+    .description { margin: 14px 0 0; color: var(--ink-2); font-size: 14px; line-height: 1.75; text-wrap: pretty; }
+    .chips { margin-top: 20px; display: flex; flex-wrap: wrap; gap: 7px; }
+    .chip { padding: 6px 9px; border: 1px solid var(--line); border-radius: 999px; background: var(--soft-2); color: var(--ink-2); font-size: 13px; font-weight: 700; }
+    .actions { margin-top: 24px; display: flex; gap: 8px; }
+    .button {
+      min-height: 44px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      padding: 0 16px;
+      border: 1px solid var(--line-strong);
+      border-radius: 9px;
+      background: var(--paper);
+      color: var(--ink);
+      font-size: 13px;
+      font-weight: 800;
+      cursor: pointer;
+      transition: border-color 180ms ease, background 180ms ease, transform 180ms ease;
+    }
+    .button:hover { border-color: var(--accent); background: var(--accent-soft); }
+    .button:active { transform: translateY(1px); }
+    .button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+    .button.primary { border-color: var(--accent); background: var(--accent); color: #fff; }
+    .button.primary:hover { background: var(--accent-deep); }
+    .source-note { margin-top: auto; padding-top: 26px; color: var(--muted); font-size: 13px; line-height: 1.6; }
+
+    .owner-section {
+      margin-top: 18px;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: var(--paper);
+    }
+    .section-heading {
+      min-height: 62px;
+      padding: 14px 20px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      border-bottom: 1px solid var(--line);
+    }
+    .section-heading h2 { margin: 0; font-size: 17px; letter-spacing: -.025em; }
+    .section-heading p { margin: 5px 0 0; color: var(--muted); font-size: 13px; }
+    .source-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 9px;
+      border: 1px solid #bed8ca;
+      border-radius: 999px;
+      background: var(--green-soft);
+      color: var(--green);
+      font-size: 13px;
+      font-weight: 800;
+      white-space: nowrap;
+    }
+    .source-badge svg { width: 13px; height: 13px; }
+    .owner-content { display: grid; grid-template-columns: minmax(310px, .92fr) minmax(0, 1.38fr); }
+    .identity { padding: 28px; border-right: 1px solid var(--line); }
+    .identity-main { display: flex; align-items: center; gap: 15px; }
+    .avatar {
+      width: 58px;
+      height: 58px;
+      flex: 0 0 auto;
+      display: grid;
+      place-items: center;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: 13px;
+      background: #171923;
+      color: #fff;
+      font-size: 20px;
+      font-weight: 900;
+    }
+    .avatar img { width: 100%; height: 100%; object-fit: cover; }
+    .owner-name { margin: 0; font-size: 18px; letter-spacing: -.02em; }
+    .owner-type { margin: 5px 0 0; color: var(--muted); font-size: 13px; }
+    .identity-copy { margin: 20px 0 0; max-width: 42ch; color: var(--ink-2); font-size: 13px; line-height: 1.7; }
+    .identity-copy strong { color: var(--ink); }
+    .verified-line { margin-top: 17px; padding-top: 15px; border-top: 1px solid var(--line); color: var(--muted); font-size: 13px; line-height: 1.55; }
+
+    .contact { padding: 28px; }
+    .contact-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; }
+    .contact h3 { margin: 0; font-size: 15px; }
+    .contact-sub { margin: 5px 0 0; color: var(--muted); font-size: 13px; }
+    .availability { color: var(--green); font: 800 13px ui-monospace, SFMono-Regular, Menlo, monospace; white-space: nowrap; }
+    .contact-links { margin-top: 19px; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+    .contact-link {
+      min-height: 78px;
+      padding: 13px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      gap: 12px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: var(--soft-2);
+      transition: border-color 180ms ease, background 180ms ease;
+    }
+    .contact-link:hover { border-color: var(--accent); background: var(--accent-soft); }
+    .contact-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+    .contact-link-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+    .contact-link svg { width: 17px; height: 17px; color: var(--ink-2); }
+    .contact-link span { font-size: 13px; font-weight: 800; }
+    .contact-link small { color: var(--muted); font-size: 13px; line-height: 1.4; }
+    .claim-row {
+      margin-top: 20px;
+      padding-top: 19px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 20px;
+      border-top: 1px solid var(--line);
+    }
+    .claim-row strong { display: block; font-size: 13px; }
+    .claim-row p { margin: 5px 0 0; color: var(--muted); font-size: 13px; line-height: 1.5; }
+    .claim-button { flex: 0 0 auto; border-color: var(--accent); color: var(--accent); }
+
+    .facts-layout { margin: 18px 0 70px; display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(300px, .65fr); gap: 18px; }
+    .facts, .method { border: 1px solid var(--line); border-radius: 13px; background: var(--paper); }
+    .facts { padding: 24px; }
+    .facts h2, .method h2 { margin: 0; font-size: 16px; letter-spacing: -.02em; }
+    .fact-grid { margin-top: 17px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); border-top: 1px solid var(--line); }
+    .fact { padding: 15px 0; display: grid; grid-template-columns: 105px 1fr; gap: 12px; border-bottom: 1px solid var(--line); }
+    .fact:nth-child(odd) { padding-right: 24px; border-right: 1px solid var(--line); }
+    .fact:nth-child(even) { padding-left: 24px; }
+    .fact dt { color: var(--muted); font-size: 13px; }
+    .fact dd { margin: 0; text-align: right; font-size: 13px; font-weight: 750; overflow-wrap: anywhere; }
+    .method { padding: 24px; background: var(--soft-2); }
+    .method p { margin: 13px 0 0; color: var(--ink-2); font-size: 13px; line-height: 1.7; }
+    .method details { margin-top: 17px; border-top: 1px solid var(--line); padding-top: 15px; }
+    .method summary { cursor: pointer; color: var(--accent); font-size: 13px; font-weight: 800; }
+    .method ul { margin: 13px 0 0; padding-left: 18px; color: var(--muted); font-size: 13px; line-height: 1.8; }
+
+    @media (max-width: 900px) {
+      .hero-grid, .owner-content, .facts-layout { grid-template-columns: 1fr; }
+      .preview { border-right: 0; border-bottom: 1px solid var(--line); }
+      .identity { border-right: 0; border-bottom: 1px solid var(--line); }
+      .preview-stage { min-height: 360px; }
+    }
+    @media (max-width: 640px) {
+      .container { width: min(100% - 20px, 1180px); }
+      .prototype-bar span:last-child, .nav > a:not(.launch) { display: none; }
+      .topbar { height: 57px; }
+      .breadcrumb { padding: 15px 0 11px; }
+      .preview-stage { min-height: 280px; padding: 12px; }
+      .shot-body { grid-template-columns: 108px 1fr; min-height: 250px; }
+      .shot-side { padding: 14px 8px; }
+      .shot-main { padding: 15px 11px; }
+      .hero-copy { padding: 27px 20px 24px; }
+      h1 { font-size: 35px; }
+      .tagline { margin-top: 23px; font-size: 18px; }
+      .actions .button.primary { flex: 1; }
+      .section-heading { align-items: flex-start; }
+      .identity, .contact { padding: 22px 20px; }
+      .contact-top { display: block; }
+      .availability { display: block; margin-top: 8px; }
+      .contact-links { grid-template-columns: 1fr; }
+      .contact-link { min-height: 66px; }
+      .claim-row { align-items: stretch; flex-direction: column; }
+      .claim-button { width: 100%; }
+      .fact-grid { grid-template-columns: 1fr; }
+      .fact:nth-child(odd), .fact:nth-child(even) { padding: 14px 0; border-right: 0; }
+      .facts-layout { margin-bottom: 42px; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      html { scroll-behavior: auto; }
+      *, *::before, *::after { transition-duration: .01ms !important; }
+    }
+  </style>
+</head>
+<body>
+  <div class="prototype-bar">
+    <div class="container">
+      <span><strong>미확인 프로젝트 상세 시안</strong> · 운영 주체와 연락 경로 통합</span>
+      <span>실제 수집 데이터 예시</span>
+    </div>
+  </div>
+
+  <header class="topbar">
+    <div class="container topbar-inner">
+      <a class="brand" href="#"><span class="brand-mark">N</span><span>nomorevibe</span></a>
+      <nav class="nav" aria-label="주요 메뉴">
+        <a href="#">프로젝트</a>
+        <a href="#">랭킹</a>
+        <a class="launch" href="#owner">프로젝트 등록</a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="container">
+    <nav class="breadcrumb" aria-label="현재 위치">제품 &nbsp;›&nbsp; Dev &nbsp;›&nbsp; <b>Agent Relay</b></nav>
+
+    <section class="hero" aria-labelledby="product-title">
+      <div class="hero-grid">
+        <div class="preview">
+          <div class="preview-head"><b>제품 화면</b><span>공개 페이지 대표 이미지</span></div>
+          <div class="preview-stage">
+            <div class="app-shot" role="img" aria-label="Agent Relay 제품 화면 예시">
+              <div class="shot-toolbar"><span class="dots"><i></i><i></i><i></i></span><span>agentrelay.com / workspace</span></div>
+              <div class="shot-body">
+                <aside class="shot-side">
+                  <div class="shot-label">AGENTS</div>
+                  <div class="agent active"><div class="agent-row"><i class="agent-dot"></i><b>CLAUDE</b></div></div>
+                  <div class="agent"><div class="agent-row"><i class="agent-dot green"></i><b>CODEX</b></div></div>
+                  <div class="agent"><div class="agent-row"><i class="agent-dot"></i><b>REVIEWER</b></div></div>
+                </aside>
+                <div class="shot-main">
+                  <div class="shot-title"><span># product-build</span><span class="live-pill">3 agents live</span></div>
+                  <div class="message accent"><div class="message-meta"><b>CLAUDE</b><span>12:31</span></div><p>Implementation is ready for review. I left the migration isolated.</p></div>
+                  <div class="message"><div class="message-meta"><b>CODEX</b><span>12:32</span></div><p>Reviewing the worker boundary and deployment path now.</p></div>
+                  <div class="message"><div class="message-meta"><b>REVIEWER</b><span>12:33</span></div><p>No blocking issues. Queue ownership is explicit.</p></div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="preview-foot"><span>공개 페이지에서 보관한 대표 이미지</span><span>최근 확인 2026.09.08</span></div>
+        </div>
+
+        <div class="hero-copy">
+          <div class="hero-kicker">Dev</div>
+          <div class="title-line">
+            <h1 id="product-title">Agent Relay</h1>
+            <span class="status"><i></i> 자동 수집 · 미확인</span>
+          </div>
+          <p class="tagline">코딩 에이전트를 하나의 작업 팀처럼 연결합니다.</p>
+          <p class="description">Claude, Codex와 여러 개발 에이전트가 채널과 메시지를 통해 실시간으로 협업할 수 있도록 돕는 에이전트 통신 도구입니다.</p>
+          <div class="chips"><span class="chip">Dev</span><span class="chip">온라인 · 132ms</span><span class="chip">공개 저장소</span></div>
+          <div class="actions">
+            <a class="button primary" href="https://agentrelay.com" target="_blank" rel="noreferrer">제품 방문하기 <span aria-hidden>↗</span></a>
+            <button class="button" type="button" onclick="navigator.clipboard?.writeText(location.href); this.textContent='링크 복사됨'">공유</button>
+          </div>
+          <p class="source-note">공개 페이지와 GitHub에서 자동 수집한 설명입니다. 프로젝트 운영자가 아직 내용을 직접 확인하지 않았습니다.</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="owner-section" id="owner" aria-labelledby="owner-title">
+      <header class="section-heading">
+        <div>
+          <h2 id="owner-title">운영 주체와 연락</h2>
+          <p>현재 공개된 정보 안에서 연락 가능한 경로만 표시합니다.</p>
+        </div>
+        <span class="source-badge">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M12 3 4.8 6v5c0 4.6 2.9 8.2 7.2 10 4.3-1.8 7.2-5.4 7.2-10V6L12 3Z"/><path d="m9 12 2 2 4-4"/></svg>
+          GitHub에서 확인
+        </span>
+      </header>
+
+      <div class="owner-content">
+        <div class="identity">
+          <div class="identity-main">
+            <span class="avatar"><img src="https://avatars.githubusercontent.com/u/252050005?v=4" alt="AgentWorkforce GitHub 아바타" onerror="this.remove(); this.parentElement.textContent='A'"></span>
+            <div>
+              <h3 class="owner-name">@AgentWorkforce</h3>
+              <p class="owner-type">GitHub 저장소 소유자 · 조직 계정</p>
+            </div>
+          </div>
+          <p class="identity-copy"><strong>AgentWorkforce/relay</strong> 저장소를 소유한 공개 계정입니다. 저장소 소유자와 실제 제작자가 다를 수 있습니다.</p>
+          <p class="verified-line">계정 및 저장소 관계 확인 · 2026.09.08<br>개인 이메일은 수집하거나 표시하지 않습니다.</p>
+        </div>
+
+        <div class="contact">
+          <div class="contact-top">
+            <div>
+              <h3>연락 가능한 경로</h3>
+              <p class="contact-sub">열려 있는 공식 채널만 버튼으로 제공합니다.</p>
+            </div>
+            <span class="availability">3개 경로 확인</span>
+          </div>
+          <div class="contact-links">
+            <a class="contact-link" href="https://github.com/AgentWorkforce" target="_blank" rel="noreferrer">
+              <span class="contact-link-top">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4.5 21c.7-4 3.2-6 7.5-6s6.8 2 7.5 6"/></svg>
+                <span aria-hidden>↗</span>
+              </span>
+              <span>GitHub 프로필</span>
+              <small>소유 계정 정보 보기</small>
+            </a>
+            <a class="contact-link" href="https://github.com/AgentWorkforce/relay/issues/new" target="_blank" rel="noreferrer">
+              <span class="contact-link-top">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M5 5h14v11H9l-4 4V5Z"/><path d="M9 9h6M9 12h4"/></svg>
+                <span aria-hidden>↗</span>
+              </span>
+              <span>이슈로 문의</span>
+              <small>저장소에 공개 문의 남기기</small>
+            </a>
+            <a class="contact-link" href="https://agentrelay.com" target="_blank" rel="noreferrer">
+              <span class="contact-link-top">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.6 2.5 4 5.5 4 9s-1.4 6.5-4 9c-2.6-2.5-4-5.5-4-9s1.4-6.5 4-9Z"/></svg>
+                <span aria-hidden>↗</span>
+              </span>
+              <span>공식 웹사이트</span>
+              <small>제품에서 제공하는 연락처 확인</small>
+            </a>
+          </div>
+          <div class="claim-row">
+            <div>
+              <strong>이 프로젝트의 운영자인가요?</strong>
+              <p>소유권을 확인하면 소개와 공식 연락처를 직접 관리할 수 있습니다.</p>
+            </div>
+            <a class="button claim-button" href="https://github.com/AgentWorkforce/relay/issues/new" target="_blank" rel="noreferrer">내 프로젝트예요 <span aria-hidden>↗</span></a>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <div class="facts-layout">
+      <section class="facts" aria-labelledby="facts-title">
+        <h2 id="facts-title">현재 확인 가능한 정보</h2>
+        <dl class="fact-grid">
+          <div class="fact"><dt>저장소</dt><dd>AgentWorkforce/relay</dd></div>
+          <div class="fact"><dt>공개 여부</dt><dd>공개 저장소</dd></div>
+          <div class="fact"><dt>최근 push</dt><dd>2026.09.08</dd></div>
+          <div class="fact"><dt>GitHub stars</dt><dd>813</dd></div>
+          <div class="fact"><dt>서비스 연결</dt><dd>저장소 → 서비스 확인</dd></div>
+          <div class="fact"><dt>라이선스</dt><dd>확인 안 됨</dd></div>
+        </dl>
+      </section>
+
+      <aside class="method" aria-labelledby="method-title">
+        <h2 id="method-title">왜 ‘미확인’인가요?</h2>
+        <p>서비스와 저장소는 공개 정보로 확인했지만, 실제 운영자가 NoMoreVibe에서 소개 내용과 연락처를 확인하지 않았습니다.</p>
+        <details>
+          <summary>표시 기준 보기</summary>
+          <ul>
+            <li>GitHub 계정과 저장소 관계는 공개 API로 확인</li>
+            <li>실제 제작자 여부는 소유권 확인 전까지 단정하지 않음</li>
+            <li>연락 버튼은 공개된 공식 경로만 표시</li>
+          </ul>
+        </details>
+      </aside>
+    </div>
+  </main>
+</body>
+</html>
