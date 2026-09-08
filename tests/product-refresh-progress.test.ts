@@ -54,7 +54,10 @@ it("force revisits recent observed media, while maker refresh does not", async (
 it("resumes force after a budget stop without repeating completed URLs", async () => {
   state.sources = [source("https://test.example/a"), source("https://test.example/b")];
   let progress: ProductRefreshProgress = fresh();
-  const refreshSource = vi.fn(async (_source: DeclaredEvidenceSource) => ({ factsChanged: 0, eventsInserted: 0, mediaInserted: 0 }));
+  const refreshSource = vi.fn(async (source: DeclaredEvidenceSource) => {
+    void source;
+    return { factsChanged: 0, eventsInserted: 0, mediaInserted: 0 };
+  });
   const options = { now, force: true, dependencies: { refreshSource },
     saveProgress: async (next: ProductRefreshProgress) => { progress = structuredClone(next); } };
   const first = await refreshProductEvidence("test", { ...options, progress, hasBudget: () => refreshSource.mock.calls.length === 0 });

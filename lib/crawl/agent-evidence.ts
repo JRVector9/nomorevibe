@@ -24,8 +24,8 @@ export async function loadAgentJudgeInput(
   return {
     relationship,
     scanState: latest?.state === "complete" && !fresh ? "pending" : latest?.state ?? "pending",
-    observations: evidence?.scan.id === latest?.id
-      ? evidence!.observations.filter(observation => observation.scope === "") : [],
+    observations: evidence && latest && evidence.scan.id === latest.id
+      ? evidence.observations.filter(observation => observation.scope === "") : [],
     scanId: latest?.id ?? null,
   };
 }
