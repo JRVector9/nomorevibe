@@ -1,9 +1,9 @@
 # Codex handoff
 
-## Local deployment QA and merge preparation — 2026-09-08 16:52 KST
+## Local deployment QA and main merge completed — 2026-09-08 17:02 KST
 
-- Objective: deploy the completed stacked worker changes locally, exercise the public/admin/worker paths,
-  fix every blocker found, then merge PR57 and PR58 to remote main after CI succeeds.
+- Objective completed: deployed the stacked worker changes locally, exercised the public/admin/worker paths,
+  fixed every blocker found, and merged PR57 and PR58 to remote main after CI succeeded.
 - Worktree: `/Users/jr/Desktop/projects/nomorevibe-workers`, branch `feat/independent-workers`.
   Preserve all unrelated uncommitted files in `/Users/jr/Desktop/projects/nomorevibe`; do not reset or merge
   inside that dirty worktree.
@@ -34,29 +34,23 @@
   the old temporary seed imported crawl tables from the pre-split schema; the temporary import was corrected
   and the production-mode browser run then passed. A diagnostic query guessed `job_controls`; the real table
   is `jobs`, and the corrected query showed complete consumption.
-- Remaining sequence: commit and push this diff, wait for PR58 checks, merge PR57, retarget PR58 to main,
-  wait for the recalculated checks, then merge PR58 and verify the final commit is contained in origin/main.
-  Keep the final local containers running. Production still waits on P0 server/domain/DB and long-lived
-  Claude credentials in `PENDING.md`.
+- Merge result: PR57 merged as `f6a0d88`; PR58 merged as `8b3a99c`. Git verified final feature commit
+  `7384fc4` is an ancestor of `origin/main`. The post-merge main CI run `34202033925` passed typegen,
+  TypeScript, lint, unit, integration and build. Keep the final local containers running.
+- Remaining work is production-specific: P0 server/domain/DB and long-lived Claude credentials in
+  `PENDING.md`, followed by the runbook's deployment and 24-hour observation. No production mutation occurred.
 
 Exact next commands:
 
 ```sh
 cd /Users/jr/Desktop/projects/nomorevibe-workers
-git diff --check
 git status --short
-git add app components lib tests docs/CODEX_HANDOFF.md docs/operations/2026-09-08-local-deployment-qa.md
-git commit -m "fix: recover stale review sources before worker merge"
-git push origin feat/independent-workers
-gh pr checks 58 --watch
-gh pr ready 57
-gh pr merge 57 --merge
-gh pr edit 58 --base main
-gh pr checks 58 --watch
-gh pr ready 58
-gh pr merge 58 --merge
 git fetch origin main
-git merge-base --is-ancestor HEAD origin/main
+git merge-base --is-ancestor 7384fc49642f4d3beb68443015b675d129fadaf2 origin/main
+docker ps --filter name=nomorevibe-workers-local
+curl -I http://127.0.0.1:43201/p/local-qa-product
+cat PENDING.md
+cat docs/operations/independent-workers-runbook.md
 ```
 
 ## Independent worker implementation completed locally — 2026-09-08 15:46 KST
