@@ -5,6 +5,7 @@ import { agentRepositoryObservations, agentRepositoryScans, crawlCandidates, cra
   crawlReviewAttempts, crawlSettings, type CrawlCandidate, type CrawlReviewAttempt } from '@/lib/db/schema';
 import type { ProductTransaction } from '@/lib/domain/products/generation';
 import { requestJob } from '@/lib/jobs/control';
+import { lockRepositoryAgentEvidence } from '@/lib/domain/evidence/agents/lock';
 import { createReviewInput, MAX_REVIEW_ATTEMPTS, REVIEW_PROMPT_VERSION, REVIEW_RULES_VERSION, reviewHash,
   type ReviewInput } from './agent-review-contract';
 import { loadReviewInput } from './agent-review-repository';
@@ -35,6 +36,7 @@ async function lockedInput(tx: ProductTransaction, repo: string) {
   await tx.insert(crawlSettings).values({ id: 1, values: DEFAULT_CRAWL_SETTINGS }).onConflictDoNothing();
   const [settingsRow] = await tx.select().from(crawlSettings).where(eq(crawlSettings.id, 1)).for('share');
   const settings = mergeWithDefaults(settingsRow.values);
+  await lockRepositoryAgentEvidence(tx, repo.toLowerCase());
   const [scan] = await tx.select().from(agentRepositoryScans).where(and(
     eq(agentRepositoryScans.repositoryKey, repo.toLowerCase()), eq(agentRepositoryScans.scope, ''),
   )).orderBy(desc(agentRepositoryScans.startedAt), desc(agentRepositoryScans.id)).limit(1).for('update');
@@ -175,12 +177,19 @@ export function currentReviewStatus(input: ReviewInput | null, attempts: CrawlRe
   if (current.some(row => row.state === 'failed')) return 'failed';
   return attempts.some(row => row.kind === 'automatic') ? 'outdated' : 'unreviewed';
 }
+type AdminReviewAttempt = { kind: string; state: string; decision: string | null; reason: string | null; provider: string | null;
+  model: string | null; actor: string | null; error: string | null; retryAfter: string | null; at: string };
+function summarizeAttempt(attempt: CrawlReviewAttempt | undefined): AdminReviewAttempt | null {
+  return attempt ? { kind: attempt.kind, state: attempt.state, decision: attempt.outcome?.decision ?? null,
+    reason: attempt.reason ?? attempt.outcome?.reason ?? null, provider: attempt.provider, model: attempt.model,
+    actor: attempt.actor, error: attempt.errorCode, retryAfter: attempt.retryAfter?.toISOString() ?? null,
+    at: attempt.startedAt.toISOString() } : null;
+}
 export type AdminReviewEntry = {
   candidate: CrawlCandidate; inputHash: string | null; sourceRevisionHash: string | null; candidateRevisionHash: string;
   name: string; description: string; relationship: string; scanState: string;
   evidence: { id: string; label: string; url: string }[]; status: AdminReviewStatus; refreshCount: number;
-  latest: { kind: string; state: string; decision: string | null; reason: string | null; provider: string | null;
-    model: string | null; actor: string | null; error: string | null; retryAfter: string | null; at: string } | null;
+  latest: AdminReviewAttempt | null; review: AdminReviewAttempt | null;
 };
 
 /** Bounded batch reads, with keyset pagination so the rest of the review queue remains reachable. */
@@ -195,12 +204,15 @@ export async function listAdminReviewEntries(settings: CrawlSettings, options: {
   const page = candidates.slice(0, limit);
   if (!page.length) return { entries: [] as AdminReviewEntry[], nextAfter: null };
   const ids = page.map(row => row.id), repos = page.map(row => row.repo);
-  const [documents, scans, latest] = await Promise.all([
+  const [documents, scans, latest, latestAutomatic] = await Promise.all([
     db.select().from(crawlDocuments).where(inArray(crawlDocuments.repo, repos)),
     db.selectDistinctOn([agentRepositoryScans.repositoryKey]).from(agentRepositoryScans).where(and(
       inArray(agentRepositoryScans.repositoryKey, repos.map(repo => repo.toLowerCase())), eq(agentRepositoryScans.scope, ''),
     )).orderBy(agentRepositoryScans.repositoryKey, desc(agentRepositoryScans.startedAt), desc(agentRepositoryScans.id)),
     db.selectDistinctOn([crawlReviewAttempts.candidateId]).from(crawlReviewAttempts).where(inArray(crawlReviewAttempts.candidateId, ids))
+      .orderBy(crawlReviewAttempts.candidateId, desc(crawlReviewAttempts.id)),
+    db.selectDistinctOn([crawlReviewAttempts.candidateId]).from(crawlReviewAttempts).where(and(
+      inArray(crawlReviewAttempts.candidateId, ids), eq(crawlReviewAttempts.kind, 'automatic')))
       .orderBy(crawlReviewAttempts.candidateId, desc(crawlReviewAttempts.id)),
   ]);
   const observations = scans.length ? await db.select().from(agentRepositoryObservations)
@@ -221,19 +233,17 @@ export async function listAdminReviewEntries(settings: CrawlSettings, options: {
     const input = inputs[index];
     const attempts = current.filter(row => row.candidateId === candidate.id);
     const last = latest.find(row => row.candidateId === candidate.id);
+    const review = latestAutomatic.find(row => row.candidateId === candidate.id);
     return {
       candidate, inputHash: input?.inputHash ?? null, sourceRevisionHash: input?.sourceRevisionHash ?? null,
       candidateRevisionHash: candidateRevisionHash(candidate), name: input?.snapshot.product.name ?? candidate.repo,
       description: input?.snapshot.product.description ?? '', relationship: input?.snapshot.relationship ?? 'unknown',
-      scanState: input?.snapshot.scanState ?? 'pending', status: currentReviewStatus(input, [...attempts, ...(last ? [last] : [])]),
+      scanState: input?.snapshot.scanState ?? 'pending', status: currentReviewStatus(input, [...attempts, ...(review ? [review] : [])]),
       evidence: input?.snapshot.evidence.slice(0, 12).map(item => ({ id: item.id,
         label: [item.observation.kind, item.observation.sourcePath, item.observation.declaredModelId].filter(Boolean).join(' · '),
         url: item.observation.sourceUrl })) ?? [],
       refreshCount: attempts.filter(row => row.kind === 'evidence_refresh').length,
-      latest: last ? { kind: last.kind, state: last.state, decision: last.outcome?.decision ?? null,
-        reason: last.reason ?? last.outcome?.reason ?? null, provider: last.provider, model: last.model,
-        actor: last.actor, error: last.errorCode, retryAfter: last.retryAfter?.toISOString() ?? null,
-        at: last.startedAt.toISOString() } : null,
+      latest: summarizeAttempt(last), review: summarizeAttempt(review),
     };
   });
   return { entries, nextAfter: candidates.length > limit ? page.at(-1)!.id : null };

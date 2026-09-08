@@ -36,6 +36,14 @@ export function ReviewItem({ entry, reasons }: { entry: AdminReviewEntry; reason
       {entry.description && <p className="mt-1 whitespace-pre-line text-[13px] leading-relaxed text-fg-2">{entry.description.slice(0, 1200)}</p>}
       {productUrl && <a href={productUrl} target="_blank" rel="noreferrer noopener" className="mt-2 block break-all text-[13px] text-accent">{productUrl}</a>}
       <p className="mt-2 text-[13px] text-fg-3">규칙 사유: {candidate.reason ?? '아직 없음'} · 저장소 연결: {entry.relationship} · 근거 수집: {entry.scanState}</p>
+      {entry.review && entry.latest?.kind !== 'automatic' && <div className="mt-3 rounded-lg bg-bg-soft p-3 text-[13px] leading-relaxed text-fg-2">
+        <p className="font-semibold">최근 AI·규칙 심사 기록</p>
+        <p>{entry.review.provider ?? '실행기 미확인'}{entry.review.model ? ` · ${entry.review.model}` : ''} · {entry.review.decision ?? entry.review.state}</p>
+        {entry.review.reason && <p className="whitespace-pre-line">{entry.review.reason}</p>}
+        {entry.review.error && <p className="text-down">실행 오류: {entry.review.error}</p>}
+        {entry.review.retryAfter && <p>재시도 가능 시각: {entry.review.retryAfter}</p>}
+        <p className="mt-1 text-[13px] text-fg-3">{entry.review.at}</p>
+      </div>}
       {entry.latest && <div className="mt-3 rounded-lg bg-bg-soft p-3 text-[13px] leading-relaxed text-fg-2">
         <p className="font-semibold">{entry.latest.kind === 'admin_override' ? '관리자 결정 기록' : entry.latest.kind === 'evidence_refresh' ? '추가 수집 접수 기록' : '최근 AI·규칙 심사 기록'}</p>
         {entry.latest.kind === 'automatic' && <p>{entry.latest.provider ?? '실행기 미확인'}{entry.latest.model ? ` · ${entry.latest.model}` : ''} · {entry.latest.decision ?? entry.latest.state}</p>}
