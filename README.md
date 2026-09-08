@@ -4,9 +4,9 @@ AI로 만든 제품의 마켓 데이터베이스. 메이커가 AI 코딩 툴에�
 배포한 서비스가 등록된다.
 
 **원칙: 우리가 직접 확인한 것만 보여준다.**
-`✓` 표시는 도메인 소유권 검증에만 붙는다. "만든 AI"는 기술적으로 검증할 방법이 없으므로
-**메이커 신고**로 표기하고 랭킹에 반영하지 않는다. 우리가 커밋 트레일러를 보고 올린 제품에는
-**우리 추정**으로 붙이고, 주인이 클레임하면 비워 메이커가 직접 밝히게 한다.
+`✓` 표시는 도메인 소유권 검증에만 붙는다. 메이커가 밝힌 제작 AI는
+**메이커 신고**로 표기하고 랭킹에 반영하지 않는다. 검색 신호로 제작 AI를 채우지 않는다.
+공개 저장소에서 발견한 지침 파일·설정·기여 표기는 관측 사실로 보여주며 실제 실행 증명과 구분한다.
 
 ## 메이커 스킬 명령
 
@@ -51,6 +51,8 @@ npm run dev
 | `npm run test:integration` | 통합 테스트 (테스트 DB 필요 — 아래 참조) |
 | `npm run lint` | ESLint |
 | `npm run build` | 프로덕션 빌드 (standalone) |
+| `npm run worker -- --role=crawler --once` | 주입된 환경변수로 크롤러 요청을 한 회차 소비 |
+| `npm run scheduler -- --once` | 주입된 환경변수로 주기가 도래한 DB 요청을 한 회차 접수 |
 | `npm run crawl:sample` | 판정 시험용 표본 수집 (GitHub 토큰 필요 — 아래 참조) |
 | `npm run crawl:rejudge` | 떠 놓은 표본으로 현재 판정 규칙 재판정 |
 | `npx drizzle-kit generate` / `migrate` | 마이그레이션 생성 / 적용 |
@@ -101,12 +103,16 @@ evidence가 잠금 하나를 쓰려고 products repository 전체를 import 했�
 ## 로컬 배포
 
 개발 서버와 별개로, 실제 배포되는 형태를 그대로 띄운다. 목적은 **개발 서버에서 검증할 수 없는
-경로를 확인하는 것**이다 — 프로덕션 모드에서만 켜지는 SSRF 가드, 컨테이너 시작 시 마이그레이션,
-스케줄러 진입점, 그리고 방문자 해시·고유 집계처럼 비밀키가 있어야 도는 경로.
+경로를 확인하는 것**이다 — 프로덕션 모드의 SSRF 가드, 별도 마이그레이션 작업,
+웹과 독립된 워커·스케줄러, 방문자 해시·고유 집계처럼 비밀키가 있어야 도는 경로.
+
+실행 순서는 [독립 워커 운영 절차](docs/operations/independent-workers-runbook.md)를 따른다.
+이미지 빌드 → 기존 소비자 stop/drain → migration 성공 확인 → 웹·역할별 워커 시작 순서다.
+웹과 워커의 entrypoint는 마이그레이션을 실행하지 않는다.
 
 ```bash
 cp .env.example .env          # AUTH_SECRET, VISITOR_HASH_SECRET 등을 채운다 (openssl rand -hex 32)
-docker compose up -d --build  # http://localhost:3200
+# 위 운영 절차의 최초 실행/릴리스 명령을 순서대로 수행한다.
 docker compose logs -f app
 docker compose down           # 데이터는 볼륨에 남는다
 ```
@@ -119,19 +125,23 @@ DB 포트도 개발용(55434)과 분리해(55437) 어느 쪽에 붙었는지 헷
 
 큐 서버를 두지 않는다. 작업당 행 하나에 커서를 남기고, 매 틱이 그 지점부터 이어받는다.
 
-**한 틱은 유한하다.** HTTP 요청 안에서 돌기 때문에 무한정 이어갈 수 없고, GitHub 수집기처럼
-rate limit에 걸리는 작업은 애초에 한 번에 끝낼 수도 없다. 작업은 시간 예산 안에서 할 수 있는
-만큼만 하고 커서를 저장한 뒤 물러난다.
+**한 틱은 유한하다.** 독립 워커가 DB에 접수된 요청을 소비하고, 시간 예산 안에서 처리한
+진행점을 저장한다. GitHub 제한이나 실패가 있으면 대기 시각을 남기고 다음 요청에서 재개한다.
+웹·어드민은 요청 접수와 상태 조회를 담당하며 HTTP 안에서 수집기를 실행하지 않는다.
 
 ```bash
-npm run job heartbeat                    # 로컬에서 한 틱
+npm run job heartbeat                    # .env.local을 읽는 로컬 한 틱 명령
 
-curl -X POST $SITE/api/cron/heartbeat \  # 스케줄러가 주기적으로 호출
+# 호환 운영 API: 202 접수 응답이며 완료 응답이 아니다. crawler가 별도로 실행 중이어야 한다.
+curl -X POST "$SITE/api/cron/crawl-fetch" \
   -H "Authorization: Bearer $CRON_SECRET"
+
+# 컨테이너는 주입된 환경변수를 사용한다(.env.local 파일 불필요).
+docker compose exec crawler node --import tsx scripts/run-job.ts crawl-fetch
 ```
 
-새 작업은 `lib/jobs/registry.ts`에 이름과 핸들러를 추가하면 두 진입점 모두에서 쓸 수 있다.
-동시 실행은 잠금으로 막히므로 스케줄이 겹쳐 호출해도 안전하다.
+새 작업은 `lib/jobs/catalog.ts`에 이름·역할·주기를, `lib/jobs/registry.ts`에 핸들러를 추가한다.
+요청 버전과 실행 소유권으로 중복 실행과 실행 중 재요청 유실을 막는다. 초기 배포는 역할당 워커 1개다.
 
 ## 수집 파이프라인
 
@@ -143,21 +153,26 @@ curl -X POST $SITE/api/cron/heartbeat \  # 스케줄러가 주기적으로 호�
 | `crawl-seed` | GitHub 검색으로 레포를 발견 | `crawl_frontier`의 pending |
 | `crawl-fetch` | 레포 메타 + 배포 페이지 확보 | `crawl_documents` (원본) |
 | `crawl-judge` | 현재 기준으로 판정 | `crawl_candidates` (approved / rejected / needs_review) |
+| `crawl-agent-review` | 규칙 재확인 후 제한된 AI 심사 | `crawl_review_attempts`, enforce에서 유효한 후보 판정 |
 | `crawl-publish` | 통과한 후보를 목록에 올림 | `products` (status=seeded, source=crawler) |
 | `uptime-ping` | 등재된 제품이 아직 떠 있는지 확인 | `product_health` (기록만 — 목록은 안 건드린다) |
 | `click-rollup` | 클릭 원천을 하루 단위로 굴리고 오래된 원천 정리 | `product_click_daily` |
 | `ranking-refresh` | 시즌 경계·쿨다운을 계산하고 공개 순위 스냅샷 갱신 | `ranking_seasons`, `ranking_entries` |
 | `product-evidence-refresh` | 공식 링크·저장소·업데이트·내부 보관 미디어 갱신 | `product_evidence_*`, `product_updates`, `product_media` |
+| `agent-evidence-refresh` | 공개 저장소의 지침·설정·기여 근거 갱신 | `agent_repository_scans`, `agent_repository_observations` |
 
 ```bash
 GITHUB_TOKEN=... npm run job crawl-seed      # 로컬에서 한 틱씩
 GITHUB_TOKEN=... npm run job crawl-fetch
 npm run job crawl-judge
+npm run job crawl-agent-review              # 기본 off에서는 심사하지 않음
 npm run job crawl-publish
 ```
 
-규칙이 가르지 못한 것(`needs_review`)은 `/admin/review`에서 사람이 가른다. 발행된 제품은
-주인이 없는 상태(`seeded`)로 목록에 뜨고, 랭킹에는 들어가지 않는다.
+`/admin/review`에서 대기 사유·심사 근거·시도 이력을 보고 사유와 함께 관리자 판정이나 제한 재수집을
+요청한다. AI 리뷰는 기본 `off`, 이력만 남기는 `observe`, 현재 입력의 유효 승인을 발행에 요구하는
+`enforce`로 나뉜다. 모드 전환과 인증 준비는 운영 절차를 따른다. 개발 근거 부족은 보류이며 자동
+부적격 판정의 근거로 쓰지 않는다. 발행된 제품은 주인 없는 `seeded` 상태이며 랭킹에는 들어가지 않는다.
 
 밖으로 나가는 문은 둘이고 담는 것이 다르다. `/sitemap.xml`은 검증된 제품만 싣는다 — 상세
 페이지가 나머지를 noindex로 두므로 실어봐야 크롤러가 헛걸음한다. `/feed.xml`은 홈의 발견
@@ -166,35 +181,36 @@ npm run job crawl-publish
 
 ### 스케줄
 
-`scripts/scheduler.sh`가 주기를 쥐고 cron 진입점을 두드린다. compose에 `scheduler` 서비스로
-붙어 있고, 겹쳐 호출해도 러너의 잠금이 중복 실행을 막는다.
+Compose `scheduler`가 10초마다 `lib/jobs/catalog.ts`의 주기를 확인해 DB에 요청을 남긴다.
+각 역할 워커는 기본 5초 간격으로 요청을 순차 소비한다. `scripts/scheduler.sh`는 이 DB 스케줄러의
+호환 진입점이다. 웹이 중지돼도 운영되며, 아래 주기는 요청 주기여서 처리 완료 시각을 보장하지 않는다.
 
 | 작업 | 주기 | 근거 |
 |---|---|---|
-| `crawl-fetch` | 1분 | 레포 조회 5000회/시간. 한 틱에 30건 남짓이라 여유가 있다 |
+| `crawl-fetch` | 1분 | 실제 API quota·쿨다운과 frontier due 시각을 준수 |
 | `crawl-judge` | 5분 | 계산만 한다. 원본 쌓이는 속도만 따라가면 된다 |
+| `crawl-agent-review` | 1분 | 모드·입력 유효성·시도 한도에 따라 한 틱 AI 호출 최대 1개 |
 | `crawl-publish` | 5분 | 판정 직후에 돌아야 통과한 것이 바로 목록에 오른다 |
-| `crawl-seed` | 15분 | 검색 30회/분. 프론티어는 한 번 돌면 한참 차 있다 |
+| `crawl-seed` | 15분 | 공유 API 대기와 frontier 적체 시 탐색 양보 |
 | `uptime-ping` | 10분 | 제품이 죽는 것은 분 단위로 급한 일이 아니다. 같은 제품은 6시간에 한 번만 본다 |
 | `click-rollup` | 1시간 | 집계는 하루 단위라 자주 돌 이유가 없다 |
-| `ranking-refresh` | 1시간 | 클릭 집계 직후 시즌 경계와 공개 순위 스냅샷을 갱신한다 |
-| `product-evidence-refresh` | 매 틱(기본 60초 + 작업 시간) | 출처별 due 시각으로 실제 요청을 제한한다 |
-| `agent-evidence-refresh` | 매 틱(기본 60초 + 작업 시간) | 공개 저장소 문서·설정 수집, partial 우선 재개, 완료 후 24시간 캐시 |
+| `ranking-refresh` | 독립 주기 없음 | `click-rollup`의 done=true 성공 완료 트랜잭션이 요청 |
+| `product-evidence-refresh` | 1분 | 출처별 due 시각으로 실제 요청을 제한한다 |
+| `agent-evidence-refresh` | 1분 | 공개 저장소 문서·설정 수집, partial 재개, 완료 후 기본 24시간 캐시 |
 
-크론 데몬을 쓰지 않는 이유는 작업 수가 적고 주기가 분 단위이며, 실패해도 다음 틱이
-이어받기 때문이다. 다른 스케줄러(Dokploy, GitHub Actions)를 쓴다면 같은 주기로 아래를 호출하면 된다.
-
-```bash
-curl -X POST $SITE/api/cron/crawl-fetch -H "Authorization: Bearer $CRON_SECRET"
-```
+기존 Dokploy/GitHub Actions의 HTTP 스케줄과 evidence wrapper는 전환 때 중지한다.
+호환 cron API는 요청만 접수하므로 소비 워커를 대신하지 않는다. `ranking-refresh`를 별도 정기
+스케줄로 등록하면 집계 완료 순서를 우회하므로 등록하지 않는다.
 
 발행할 때 제품 카테고리는 **`claude` CLI**(`claude -p`, `claude-sonnet-5`, `effort: high`, 구조화
 출력)가 고른다. API 키가 아니라 로그인 세션으로 돈다 — 개발 머신은 `claude` 로그인(keychain),
-서버는 `CLAUDE_CODE_OAUTH_TOKEN`(`claude setup-token`으로 발급)이다. 토큰이 있을 때만 `--bare`로
-띄워 훅·플러그인·CLAUDE.md 탐색을 건너뛰고, 언제나 도구를 끄고 빈 디렉터리에서 한 턴만 돈다.
+서버는 `CLAUDE_CODE_OAUTH_TOKEN`(`claude setup-token`으로 발급)이다. worker 이미지에는 CLI
+`2.1.263`이 고정돼 있다. `--safe-mode`로 사용자 설정을 격리하면서 OAuth 인증을 보존하고,
+도구를 끈 채 프로젝트 밖 임시 경로에서 한 턴만 실행한다. 이 버전의 `--bare`는 OAuth도 건너뛴다.
 실행 파일 경로는 `CLAUDE_CLI`로 바꿀 수 있다(기본 `claude`).
-CLI가 없거나 로그인이 풀렸거나 15초를 넘기면 토픽·설명 키워드 규칙으로 떨어지고 발행은 그대로
-진행된다 — 카테고리 하나 때문에 목록에 못 오를 이유가 없다.
+카테고리 CLI가 없거나 로그인이 풀렸거나 15초를 넘기면 토픽·설명 키워드 규칙으로 분류한다.
+AI 리뷰는 별도 `CRAWL_REVIEW_MODEL`을 명시해야 하며 기본 모델은 없다. 리뷰 실패는 보류·재시도로
+남고, `enforce`에서 유효 승인 없이 카테고리 폴백만으로 발행할 수 없다.
 
 수집기는 `GITHUB_TOKEN`이 있어야 돈다. 없으면 시간당 60회라 성립하지 않으므로 작업이 실패로
 남는다(`jobs.last_error`).
@@ -208,9 +224,9 @@ CLI가 없거나 로그인이 풀렸거나 15초를 넘기면 토픽·설명 키
 신호는 `/admin` 검색 신호 목록 **끝의 빈 행**에 이름·종류·검색어를 적어 저장하면 늘어나고,
 이름이나 검색어를 지우면 빠진다. 저장된 목록이 코드 기본값을 통째로 덮으므로 기본 신호를
 새로 넣어도 이미 저장된 환경에는 닿지 않는다 — `/admin`이 그 차이를 "검색 신호"로 짚는다.
-신호마다 적는 **추정 AI**는 발견 시점에 `crawl_frontier.builder`로 굳는다. 나중에 라벨을
-고쳐도 밀려 있던 후보가 추정을 잃지 않게 하기 위해서다. 여러 신호에 걸리는 레포는 첫 발견
-신호가 이긴다.
+검색 신호의 이름이나 `builder` 설정은 제작 AI의 증명이 아니다. 현재 seed는 이 값으로
+`crawl_frontier.builder`를 채우지 않으며, 제품의 제작 AI로 복사하지 않는다. 공개 표시는 별도
+수집한 근거와 메이커 신고를 사용한다.
 
 ## 제품 근거 수집 운영
 
@@ -218,7 +234,7 @@ CLI가 없거나 로그인이 풀렸거나 15초를 넘기면 토픽·설명 키
 순으로 적용한다. 파일·설정·커밋 표기는 실제 실행 증명이 아니다. 도구/선언 모델/연결 경로를
 분리하며 제품과 저장소 관계가 불명확하면 자동 발행을 보류한다. 기존 제품은 삭제하지 않는다.
 기본 루트와 알려진 에이전트 디렉터리가 수집 범위이며, 임의의 monorepo 하위 프로젝트 전체를
-검사했다고 주장하지 않는다. migration 0019 적용 후 기존 개발 서버는 재시작해야 한다.
+검사했다고 주장하지 않는다. 운영 전환 시 이번 릴리스의 가산 마이그레이션까지 적용하고 프로세스를 재시작한다.
 
 ```sh
 # 읽기 전용 점검 (기본 10개)
@@ -227,14 +243,14 @@ npx tsx --env-file=.env.local scripts/backfill-agent-evidence.ts --limit 1000
 npx tsx --env-file=.env.local scripts/backfill-agent-evidence.ts --apply --links-only --limit 1000
 # 특정 제품의 일반 근거와 에이전트 근거를 즉시 갱신
 npx tsx --env-file=.env.local scripts/backfill-agent-evidence.ts --apply --slug tradinggoose-visual-workflow-platform-for-llm-trading
-# 별도 로컬 프로세스 (종료/재시작 시 DB cursor에서 재개)
+# 이전 로컬 사용을 위한 evidence 전용 wrapper (crawler와 함께 상시 실행하지 않음)
 npx tsx --env-file=.env.local scripts/evidence-worker.ts
 ```
 
 백필 JSON의 `issues`, `problem`, `selectedCount`를 함께 확인한다. 외부 수집 오류가 있으면
 종료 코드 1이며, 관계/실행 여부 미확인은 오류를 숨기기 위해 확정으로 바꾸지 않는다.
-워커는 새 후보를 발행하는 잡을 실행하지 않으며, 서버 상시 운영에는 기존 compose scheduler와
-재시작 정책을 사용한다. 로컬 프로세스는 Mac 종료 뒤 자동 복구되는 서비스가 아니다.
+이 wrapper는 새 후보를 발행하지 않는다. 서버 상시 운영은 역할별 Compose 워커와 독립 scheduler,
+supervisor·재시작 정책을 사용한다. 로컬 직접 실행은 Mac 종료 뒤 자동 복구되는 서비스가 아니다.
 
 
 제품 상세의 정보는 두 권한 경계를 섞지 않는다. 소개·가격·팀·라이선스 신고와 공식 링크는
@@ -243,24 +259,24 @@ npx tsx --env-file=.env.local scripts/evidence-worker.ts
 `failed`나 `stale`이 되어도 보존한다. GitHub 저장소와 실제 서비스가 서로 링크하는지는 별도
 관계 상태로 기록하고, 한쪽 링크만으로 상호 연결을 주장하지 않는다.
 
-현재 인증이 필요한 제공자는 GitHub뿐이다. 프로덕션 비밀 저장소에 public repository를 읽을 수
+제품의 외부 근거 수집 중 인증이 필요한 제공자는 GitHub다. 프로덕션 비밀 저장소에 public repository를 읽을 수
 있는 `GITHUB_TOKEN`을 넣는다. 토큰이 없거나 유효하지 않으면 GitHub 근거 갱신은 실패로 남지만,
 App Store·Play Store·npm·PyPI·crates.io·일반 링크·RSS 수집은 각 공개 URL을 독립적으로 확인한다.
 토큰과 제공자 응답 본문은 로그나 감사 메타데이터에 저장하지 않는다.
 외부 수집은 DNS 조회와 실제 연결 시점 모두 공인 IP만 허용하며, GitHub JSON 응답도 선언 크기와
 실제 스트림을 각각 2 MiB로 제한한다.
 
-코드와 로컬 스케줄러는 두 evidence 잡을 매 틱 실행한다. due 시각 이전에는 외부 요청을 생략한다.
-프로덕션에 같은 주기가 실제 등록됐는지는 이 작업에서 확인하지 않았으므로 `PENDING.md`의
-점검 절차로 기존 등록 여부를 먼저 확인한다. 저장소·일반 링크의 기본 갱신 간격은 24시간,
+DB 스케줄러는 두 evidence 잡을 매분 요청하며 crawler가 소비한다. due 시각 이전에는 외부 요청을 생략한다.
+운영 서버·도메인은 아직 확정되지 않았고 생산 배포는 수행하지 않았다. 전환 절차와 남은 환경 설정은
+`PENDING.md`를 따른다. 저장소·일반 링크의 기본 갱신 간격은 24시간,
 release feed는 6시간이며, 성공한 출처만 다음 시각으로 전진한다. 일반 출처 실패 재시도는 6시간에서 시작해 12·24·48시간으로 늘고 기본 최대 재시도 설정에서는 48시간이 상한이다
 (설정을 늘려도 절대 상한은 7일). 마지막 성공 이후 `출처 간격 × staleAfterIntervals`가 지나면
 `stale`로 표시한다. GitHub rate-limit이 준 재시도 시각은 자체 백오프로 덮지 않는다. 설정은
 `evidence_settings` 한 행에 저장되며 코드 기본값은 `lib/domain/evidence/settings.ts`에 있다.
 
-한 제품을 운영자가 즉시 다시 확인할 때는 전체 잡 커서를 건드리지 않고 강제 갱신한다. slug는
-직접 확인한 값만 넣고, 프로덕션에서는 해당 컨테이너의 `DATABASE_URL`과 제공자 비밀이 주입된
-상태에서 실행한다.
+운영에서는 `/admin/products/<slug>`의 강제 갱신으로 요청 버전을 접수하고 완료 상태를 확인한다.
+최근 관측 미디어도 다시 확인하며, 재요청·부분 진행과 GitHub 대기를 보존한다. 아래는 독립 워커를
+대신하는 상시 실행 명령이 아닌 로컬 수동 진단용이다. 직접 확인한 slug와 전용 환경을 사용한다.
 
 ```bash
 npx tsx --env-file=.env.local -e \
@@ -283,7 +299,8 @@ GitHub을 다시 긁지 않고 다시 판정한다(후보 state를 `new`로 되�
 가져간다). 검색은 분당 30회, 레포 조회는 시간당 5000회로 묶여 있어 한 번에 끝낼 수 없는데,
 단계가 붙어 있으면 한도에 걸릴 때마다 처음부터 다시 해야 한다.
 
-세 작업 모두 크롤 설정의 `enabled`가 꺼져 있으면 아무것도 하지 않는다.
+seed·fetch·judge·AI 리뷰·publish는 크롤 설정의 `enabled`가 꺼져 있으면 수집·판정을 수행하지 않는다.
+일반 제품 근거·가동 상태·집계 잡은 각각의 설정과 due 조건을 따른다.
 
 **기준은 데이터라 한 번 저장하면 코드 기본값을 덮는다.** 판정 규칙을 고쳐 기본값을 바꿔도 이미
 돌고 있는 환경은 옛 값으로 돈다. `/admin`이 어긋난 항목을 짚어 보여주고, 되돌리는 버튼을 둔다
