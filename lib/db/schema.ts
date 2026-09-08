@@ -102,6 +102,12 @@ export const ogImages = pgTable("og_images", {
  */
 export const jobs = pgTable("jobs", {
   name: varchar("name", { length: 60 }).primaryKey(),
+  requestedVersion: bigint("requested_version", { mode: "number" }).notNull().default(0),
+  processedVersion: bigint("processed_version", { mode: "number" }).notNull().default(0),
+  nextScheduledAt: timestamp("next_scheduled_at"),
+  notBefore: timestamp("not_before"),
+  leaseToken: varchar("lease_token", { length: 36 }),
+  workerSeenAt: timestamp("worker_seen_at"),
   // 작업이 스스로 정의하는 재개 지점 (수집기: 검색 페이지, 롤업: 처리 완료 시각 등)
   cursor: jsonb("cursor"),
   // 동시 실행 방지. 프로세스가 죽어 잠금이 남으면 lockedAt 기준으로 회수한다

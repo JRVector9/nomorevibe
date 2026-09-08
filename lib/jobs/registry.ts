@@ -55,4 +55,4 @@ export const JOBS: Record<string, AnyJob> = {
   "agent-evidence-refresh": refreshAgentEvidenceJob,
 };
 
-export const JOB_NAMES = Object.keys(JOBS);
+export { JOB_NAMES } from "./catalog";
