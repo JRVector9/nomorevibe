@@ -113,6 +113,21 @@ describe("신뢰 표기", () => {
 
     expect(item.unclaimed).toBe(true);
     expect(item.builderClaim).toBe("guessed");
+    expect(item.builder).toBeNull();
+  });
+
+  it("추정 제작 도구는 공개 필터·검색·필터 옵션에서 제외한다", async () => {
+    await seedProduct({
+      slug: "found-app",
+      url: "https://found.test",
+      name: "FoundApp",
+      builder: "Claude Code",
+    });
+    await verifiedProduct("https://mine.test", "MyApp");
+
+    expect(await repo.listBuilders(["verified", "seeded"])).toEqual(["Codex"]);
+    expect(await getPublicList(50, { builder: "Claude Code" })).toEqual([]);
+    expect(await getPublicList(50, { query: "Claude Code" })).toEqual([]);
   });
 
   it("메이커가 등록한 제품은 메이커 신고다", async () => {

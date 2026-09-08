@@ -40,6 +40,8 @@ const item: RankingListItem = {
   builderClaim: "reported",
   stack: [],
   ogImage: null,
+  makerName: null,
+  repoUrl: null,
   listedAt: new Date("2026-08-01T00:00:00.000Z"),
   status: "verified",
   unclaimed: false,

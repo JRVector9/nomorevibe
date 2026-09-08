@@ -6,28 +6,37 @@ import type { RankingListItem, SeasonSummary } from "@/lib/domain/ranking/view";
 
 const {
   categoryCounts,
+  listBuilders,
   getAllTimeRanking,
   getCurrentSeason,
-  getDiscoveryBoards,
   getSeasonRanking,
   getUnclaimedList,
   getVerifiedList,
+  getPublicList,
+  getHomePulse,
 } = vi.hoisted(() => ({
   categoryCounts: vi.fn(),
+  listBuilders: vi.fn(),
   getAllTimeRanking: vi.fn(),
   getCurrentSeason: vi.fn(),
-  getDiscoveryBoards: vi.fn(),
   getSeasonRanking: vi.fn(),
   getUnclaimedList: vi.fn(),
   getVerifiedList: vi.fn(),
+  getPublicList: vi.fn(),
+  getHomePulse: vi.fn(),
 }));
 
-vi.mock("@/lib/domain/products/repository", () => ({ categoryCounts }));
-vi.mock("@/lib/domain/products/view", () => ({ getUnclaimedList, getVerifiedList }));
+vi.mock("@/lib/domain/products/repository", () => ({ categoryCounts, listBuilders }));
+vi.mock("@/lib/domain/products/view", () => ({ getUnclaimedList, getVerifiedList, getPublicList }));
+vi.mock("@/lib/domain/products/home-pulse", async () => {
+  const actual = await vi.importActual<typeof import("@/lib/domain/products/home-pulse")>(
+    "@/lib/domain/products/home-pulse",
+  );
+  return { ...actual, getHomePulse };
+});
 vi.mock("@/lib/domain/ranking/view", () => ({
   getAllTimeRanking,
   getCurrentSeason,
-  getDiscoveryBoards,
   getSeasonRanking,
 }));
 
@@ -55,6 +64,8 @@ function product(slug: string): ProductListItem {
     builderClaim: "guessed",
     stack: [],
     ogImage: null,
+    makerName: null,
+    repoUrl: null,
     listedAt: new Date("2026-08-20T00:00:00.000Z"),
     status: "seeded",
     unclaimed: true,
@@ -79,20 +90,33 @@ function ranked(slug: string, rank: number): RankingListItem {
   };
 }
 
-const emptyBoards = { weekly: [], trending: [], verifiedNew: [], discoveredNew: [] };
-
-async function render(params: { sort?: string; category?: string; q?: string } = {}): Promise<string> {
+async function render(
+  params: Record<string, string | string[] | undefined> = {},
+): Promise<string> {
   return renderToStaticMarkup(await HomePage({ searchParams: Promise.resolve(params) }));
 }
 
 beforeEach(() => {
   vi.clearAllMocks();
   getCurrentSeason.mockResolvedValue(season);
-  getDiscoveryBoards.mockResolvedValue(emptyBoards);
   getUnclaimedList.mockResolvedValue([]);
   getVerifiedList.mockResolvedValue([]);
+  getPublicList.mockResolvedValue([]);
   getAllTimeRanking.mockResolvedValue([]);
   getSeasonRanking.mockResolvedValue({ season, items: [] });
+  listBuilders.mockResolvedValue([]);
+  categoryCounts.mockResolvedValue({});
+  getHomePulse.mockResolvedValue({
+    asOf: new Date("2026-09-08T00:00:00+09:00"),
+    timezone: "Asia/Seoul",
+    methodVersion: "1.0",
+    launches: { current: 0, previous: 0, change: null, days: [] },
+    tools: { total: 0, reported: 0, coverage: null, rows: [] },
+    interestReady: false,
+    categories: [],
+    updates: { projects: 0, releases: 0 },
+    total: 0,
+  });
 });
 
 /**
@@ -153,6 +177,22 @@ describe("미클레임 구획을 붙이는 기준", () => {
  * 커밋 cb64f25가 세운 불변식이다.
  */
 describe("빈 화면 문구", () => {
+  it("중복 쿼리 값은 첫 값만 사용하고 500을 내지 않는다", async () => {
+    await render({ builder: ["Codex", "Claude"] });
+
+    expect(getSeasonRanking).toHaveBeenCalledWith(expect.objectContaining({ builder: "Codex" }));
+  });
+
+  it("정렬을 명시하지 않은 검색은 순위가 아니라 공개 목록 전체에서 찾는다", async () => {
+    getVerifiedList.mockResolvedValue([product("searched-project")]);
+
+    const html = await render({ q: "searched" });
+
+    expect(getVerifiedList).toHaveBeenCalled();
+    expect(getSeasonRanking).not.toHaveBeenCalled();
+    expect(html).toContain("searched-project");
+  });
+
   it("미클레임 목록이 붙으면 등록부터 하라고 말하지 않는다", async () => {
     categoryCounts.mockResolvedValue({});
     getUnclaimedList.mockResolvedValue([product("seeded-one")]);
@@ -193,13 +233,13 @@ describe("빈 화면 문구", () => {
 });
 
 describe("구획 제목", () => {
-  it("발견 보드의 \"새로 발견됨\"과 겹치지 않는다", async () => {
+  it("미클레임 구획을 발견 보드 제목과 섞지 않는다", async () => {
     categoryCounts.mockResolvedValue({});
     getUnclaimedList.mockResolvedValue([product("seeded-one")]);
 
     const html = await render();
 
-    expect(html.match(/새로 발견됨/g)).toHaveLength(1);
+    expect(html).not.toContain("새로 발견됨");
     expect(html).toContain("주인을 기다리는 제품");
   });
 });

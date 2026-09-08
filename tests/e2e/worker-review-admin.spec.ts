@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { and, eq, inArray } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { crawlCandidates, crawlDocuments, crawlReviewAttempts, crawlSettings, jobs, productRefreshRequests, products } from "@/lib/db/schema";
+import { crawlCandidates, crawlDocuments, crawlFrontier, crawlReviewAttempts, crawlSettings, jobs, productRefreshRequests, products } from "@/lib/db/schema";
 import { DEFAULT_CRAWL_SETTINGS } from "@/lib/crawl/settings-schema";
 import { SESSION_COOKIE, signSession } from "@/lib/auth/session";
 import { ensureSchema } from "../integration/setup";
@@ -13,6 +13,7 @@ test.beforeAll(async () => {
   ensureSchema();
   await db.delete(crawlCandidates).where(inArray(crawlCandidates.repo, repos));
   await db.delete(crawlDocuments).where(inArray(crawlDocuments.repo, repos));
+  await db.delete(crawlFrontier).where(inArray(crawlFrontier.repo, repos));
   await db.delete(jobs);
   await db.delete(productRefreshRequests).where(eq(productRefreshRequests.slug, slug));
   await db.delete(products).where(eq(products.slug, slug));

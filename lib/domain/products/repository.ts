@@ -1,5 +1,5 @@
 import { syncRepositoryLink } from "@/lib/domain/evidence/repository-link-sync";
-import { and, eq, ilike, inArray, like, or, sql } from "drizzle-orm";
+import { and, eq, ilike, inArray, isNotNull, like, ne, or, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { lockProductGeneration, type ProductTransaction } from "./generation";
 import {
@@ -54,6 +54,10 @@ export type ListOptions = {
   category?: Category;
   /** 이름·소개에서 찾는다 */
   query?: string;
+  /** 제작자가 등록한 도구 이름 */
+  builder?: string;
+  /** 저장소 URL이 등록된 제품만. 공개 여부나 라이선스를 뜻하지 않는다. */
+  hasRepository?: boolean;
 };
 
 /**
@@ -71,6 +75,7 @@ function likePattern(query: string): string {
  * verified_at만으로 정렬하면 seeded(null)가 목록 맨 위를 차지한다.
  */
 const listedAt = sql`coalesce(${products.verifiedAt}, ${products.createdAt})`;
+const builderIsReported = or(ne(products.source, "crawler"), isNotNull(products.claimedAt))!;
 
 /**
  * 최근 창의 클릭 합.
@@ -111,12 +116,23 @@ export async function listProducts({
   limit,
   category,
   query,
+  builder,
+  hasRepository,
 }: ListOptions): Promise<Product[]> {
   const conditions = [inArray(products.status, statuses)];
   if (category) conditions.push(eq(products.category, category));
+  if (builder) conditions.push(and(eq(products.builder, builder), builderIsReported)!);
+  if (hasRepository) {
+    conditions.push(isNotNull(products.repoUrl));
+    conditions.push(sql`btrim(${products.repoUrl}) <> ''`);
+  }
   if (query?.trim()) {
     const pattern = likePattern(query);
-    conditions.push(or(ilike(products.name, pattern), ilike(products.tagline, pattern))!);
+    conditions.push(or(
+      ilike(products.name, pattern),
+      ilike(products.tagline, pattern),
+      and(builderIsReported, ilike(products.builder, pattern)),
+    )!);
   }
 
   return db.query.products.findMany({
@@ -149,6 +165,22 @@ export async function listVerifiedSlugs(limit: number): Promise<{ slug: string; 
     .where(eq(products.status, "verified"))
     .orderBy(sql`${listedAt} desc`)
     .limit(limit);
+}
+
+/** 필터 셀렉트에 올릴 제작 도구 이름 */
+export async function listBuilders(statuses: ProductStatus[]): Promise<string[]> {
+  const rows = await db
+    .select({ builder: products.builder, count: sql<number>`count(*)::int` })
+    .from(products)
+    .where(and(
+      inArray(products.status, statuses),
+      builderIsReported,
+      isNotNull(products.builder),
+      sql`btrim(${products.builder}) <> ''`,
+    ))
+    .groupBy(products.builder)
+    .orderBy(sql`count(*) desc`, products.builder);
+  return rows.map((row) => row.builder).filter((name): name is string => Boolean(name));
 }
 
 /** 카테고리별 개수 — 필터 칩이 숫자를 함께 보여준다 */
