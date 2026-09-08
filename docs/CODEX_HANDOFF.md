@@ -1,5 +1,58 @@
 # Codex handoff
 
+## Port 3200 home redesign applied and locally accepted — 2026-09-08 19:00 KST
+
+- Objective: inspect the home design running on port 3200, apply that design to the clean current-main
+  integration without carrying unrelated dirty-worktree changes, verify it locally, and land it after CI.
+- Worktree/branch: `/Users/jr/Desktop/projects/nomorevibe-workers`, `feat/home-redesign`, based on
+  `origin/main` at `bc525e9`. Preserve `/Users/jr/Desktop/projects/nomorevibe`; its local main still has
+  unrelated uncommitted auth/detail/Compose/design-source files.
+- Completed: responsive shared header/footer/mobile navigation, hero, four KST pulse panels and methodology
+  dialog, larger project cards, saved-project flow, search/category/builder/repository-link browsing, curated
+  AI news, and accurate empty/unclaimed states. The existing worker architecture and product detail remain.
+- Accuracy rule: only maker-reported builders reach public view models, cards, builder search/filter options,
+  and pulse counts. Crawler guesses remain hidden. Repository URLs are labelled `저장소 있음`, not open source.
+  Interest change is exposed only after both completed seven-day windows have been collected; a complete window
+  with no rising category is distinguished from collection still in progress.
+- Main modified areas: `app/page.tsx`, `app/layout.tsx`, `app/globals.css`, `app/home.css`,
+  `components/home/*`, `components/BrowseFilters.tsx`,
+  `lib/domain/products/{repository,view,home-pulse,labels}.ts`, `lib/domain/ranking/view.ts`, and corresponding
+  unit/integration/E2E tests. Full report: `docs/operations/2026-09-08-home-redesign-qa.md`.
+- Actual final tests: unit 80 files/608 tests PASS; integration 49/446 PASS; Playwright 6 PASS;
+  nonincremental TypeScript, ESLint, diff check, and Docker runner build PASS. Local production browser QA
+  passed all 10 flows in 10 consecutive runs with no console/page/request errors; duplicate builder query
+  returned HTTP 200. The fast-navigation hydration reproducer also passed 10 consecutive development runs.
+- Local deployment: `nomorevibe-workers-local-app` runs `nomorevibe-web:local-home-qa` at
+  `http://127.0.0.1:43201` against `nomorevibe_workers_local_deploy`; five independent worker containers are
+  healthy. Keep them running. Port 3200 and its dirty source worktree were not changed.
+- Findings fixed during QA: misplaced save control, unranked search miss, duplicate-param 500, non-modal dialog,
+  broken card fragment, saved/unclaimed mixing, route-invalid skip link, low BETA contrast, guessed-builder
+  exposure, a false category-level unique-visitor description, a mislabeled interest-sort tab, a fast-navigation
+  header hydration mismatch, premature interest comparison before two full collection windows, a false collection
+  message when no category was rising, and non-repeatable admin E2E cleanup.
+- Failed check: the first lint attempt overlapped Playwright deleting `test-results` and got ENOENT. A sequential
+  standalone lint run passed. Negative-path unit/integration log messages are expected assertions; both suites
+  exited 0. The first E2E after adding the interest-copy assertion raced dialog URL cleanup; waiting for dialog
+  close and `metric` removal made the full rerun pass. The first hydration diagnostic used unsupported top-level
+  await under the CommonJS loader; wrapping its execution exposed the exact header DOM mismatch. An automated
+  full-diff `codex review --base origin/main` inspected the large redesign for more than 30 minutes without
+  returning a verdict and was stopped; do not represent that run as a clean review. Manual review found and fixed
+  the interest collection-window issue, then the full checks above passed.
+- Remaining: commit, push, PR checks and main merge for this branch, then record the merge result here. Production
+  deployment and a 24-hour external-worker observation remain blocked by the P0 target/credential decisions in
+  `PENDING.md`.
+
+Exact next commands:
+
+```sh
+cd /Users/jr/Desktop/projects/nomorevibe-workers
+git diff --check
+git status --short
+docker ps --filter name=nomorevibe-workers-local
+curl -I http://127.0.0.1:43201/
+cat docs/operations/2026-09-08-home-redesign-qa.md
+```
+
 ## Local deployment QA and main merge completed — 2026-09-08 17:02 KST
 
 - Objective completed: deployed the stacked worker changes locally, exercised the public/admin/worker paths,

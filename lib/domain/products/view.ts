@@ -31,6 +31,8 @@ export type ProductListItem = {
   builderClaim: BuilderClaim;
   stack: string[];
   ogImage: string | null;
+  makerName: string | null;
+  repoUrl: string | null;
   listedAt: Date;
   status: ProductStatus;
   /** 우리가 대신 올렸고 아직 주인이 나타나지 않았다 */
@@ -50,15 +52,19 @@ export function builderClaimOf(product: Pick<Product, "source" | "claimedAt">): 
 }
 
 export function toListItem(p: Product): ProductListItem {
+  const builderClaim = builderClaimOf(p);
   return {
     slug: p.slug,
     name: p.name,
     tagline: p.tagline,
     category: p.category,
-    builder: p.builder,
-    builderClaim: builderClaimOf(p),
+    // 수집기가 추정한 값은 공개 뷰모델에서 제거한다. 메이커가 확인한 값만 UI와 검색에 쓴다.
+    builder: builderClaim === "reported" ? p.builder : null,
+    builderClaim,
     stack: p.stack ?? [],
     ogImage: p.ogImage,
+    makerName: p.makerName,
+    repoUrl: p.repoUrl,
     listedAt: p.verifiedAt ?? p.createdAt,
     status: p.status,
     unclaimed: isUnclaimed(p),
@@ -72,7 +78,13 @@ export function toListItem(p: Product): ProductListItem {
  * 자기 제품이 올라와 있다는 걸 발견할 방법이 없어 시드 자체가 무의미해진다.
  * 대신 각 항목이 자기 근거를 배지로 밝히고, 확인된 것만 위에 온다.
  */
-export type BrowseOptions = { sort?: ProductSort; category?: Category; query?: string };
+export type BrowseOptions = {
+  sort?: ProductSort;
+  category?: Category;
+  query?: string;
+  builder?: string;
+  hasRepository?: boolean;
+};
 
 export async function getPublicList(limit: number, options: BrowseOptions = {}): Promise<ProductListItem[]> {
   const rows = await listProducts({ statuses: ["verified", "seeded"], limit, ...options });

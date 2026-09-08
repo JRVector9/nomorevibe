@@ -1,6 +1,9 @@
 import type { Metadata } from "next";
+import { Suspense } from "react";
 import { Inter, JetBrains_Mono } from "next/font/google";
-import Link from "next/link";
+import { MobileNav } from "@/components/home/MobileNav";
+import { SiteFooter } from "@/components/home/SiteFooter";
+import { SiteHeader } from "@/components/home/SiteHeader";
 import { siteOrigin } from "@/lib/site";
 import "./globals.css";
 
@@ -8,7 +11,7 @@ const inter = Inter({ subsets: ["latin"], variable: "--font-inter" });
 const jetbrains = JetBrains_Mono({ subsets: ["latin"], variable: "--font-jetbrains" });
 
 export const metadata: Metadata = {
-  title: "NoMoreVibe — AI로 만든 제품의 마켓 데이터베이스",
+  title: "nomorevibe — AI로 만든 것들, 세상에 나오다.",
   description:
     "AI로 만들어 배포한 서비스를 /nomorevibe 한 번으로 등록하세요. 우리가 직접 확인한 것만 보여줍니다.",
   /**
@@ -51,50 +54,14 @@ export default function RootLayout({
     <html lang="ko" suppressHydrationWarning>
       {/* min-h-screen flex — 짧은 페이지에서도 푸터를 하단에 고정 */}
       <body className={`${inter.variable} ${jetbrains.variable} flex min-h-screen flex-col font-sans`}>
+        <a className="skip" href="#main">본문으로 건너뛰기</a>
         {topbar}
-        <header className="sticky top-0 z-50 border-b border-line bg-bg">
-          <div className="mx-auto flex h-[60px] max-w-[1280px] items-center gap-4 px-4 sm:gap-8 sm:px-6">
-            <Link
-              href="/"
-              className="flex shrink-0 items-center gap-2 text-[17px] font-extrabold tracking-tight sm:text-[19px]"
-            >
-              <span className="inline-flex h-[22px] w-[22px] items-center justify-center rounded-[7px] bg-gradient-to-br from-accent to-[#4f9dff] text-[13px]">
-                ◉
-              </span>
-              NoMoreVibe
-            </Link>
-            <nav className="hidden gap-1 sm:flex">
-              <Link
-                href="/"
-                className="rounded-lg px-3 py-2 text-[13.5px] font-semibold text-fg hover:bg-bg-hover"
-              >
-                Discover
-              </Link>
-              <Link
-                href="/?sort=all-time"
-                className="rounded-lg px-3 py-2 text-[13.5px] font-semibold text-fg hover:bg-bg-hover"
-              >
-                역대 인기
-              </Link>
-            </nav>
-            {/* 좁은 화면에서는 줄바꿈되며 로고를 덮었다 — 줄이지 않고 문구를 줄인다 */}
-            <div className="ml-auto shrink-0">
-              <Link
-                href="/launch"
-                className="whitespace-nowrap rounded-[9px] bg-accent-solid px-3 py-[9px] text-[13px] font-semibold text-white hover:brightness-110 sm:px-[18px]"
-              >
-                + Launch<span className="hidden sm:inline"> /nomorevibe</span>
-              </Link>
-            </div>
-          </div>
-        </header>
-        <div className="flex-1">{children}</div>
-        <footer className="border-t border-line py-9 text-[13px] text-fg-3">
-          <div className="mx-auto max-w-[1280px] px-6">
-            {seasonfooter}
-            NoMoreVibe — AI로 만든 제품의 마켓 데이터베이스. 우리가 직접 확인한 것만 보여줍니다.
-          </div>
-        </footer>
+        <Suspense fallback={<header className="nmb-header" />}>
+          <SiteHeader />
+        </Suspense>
+        <div className="flex-1" id="main" tabIndex={-1}>{children}</div>
+        <SiteFooter>{seasonfooter}</SiteFooter>
+        <MobileNav />
       </body>
     </html>
   );

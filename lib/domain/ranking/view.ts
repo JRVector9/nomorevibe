@@ -9,6 +9,7 @@ import {
   inArray,
   isNotNull,
   lte,
+  ne,
   or,
   sql,
 } from "drizzle-orm";
@@ -96,6 +97,8 @@ function likePattern(query: string): string {
   return `%${query.trim().replace(/[\\%_]/g, (character) => `\\${character}`)}%`;
 }
 
+const builderIsReported = or(ne(products.source, "crawler"), isNotNull(products.claimedAt))!;
+
 /**
  * 요청 안에서 한 번만 조회한다.
  *
@@ -116,6 +119,7 @@ export async function getSeasonRanking(options: {
   order?: "rank" | "trending";
   category?: Category;
   query?: string;
+  builder?: string;
   limit: number;
 }): Promise<{ season: SeasonSummary | null; items: RankingListItem[] }> {
   const season = await findSeason(options.seasonKey);
@@ -130,6 +134,7 @@ export async function getSeasonRanking(options: {
     conditions.push(lte(rankingEntries.rank, summary.policy.leaderboard.limit));
   }
   if (options.category) conditions.push(eq(products.category, options.category));
+  if (options.builder) conditions.push(and(eq(products.builder, options.builder), builderIsReported)!);
   if (options.query?.trim()) {
     const pattern = likePattern(options.query);
     conditions.push(or(ilike(products.name, pattern), ilike(products.tagline, pattern))!);
@@ -268,6 +273,7 @@ export async function getSeasonByKey(
 export async function getAllTimeRanking(options: {
   category?: Category;
   query?: string;
+  builder?: string;
   limit: number;
 }): Promise<RankingListItem[]> {
   const totals = (await topClickedSince(3650, 50_000))
@@ -290,9 +296,12 @@ export async function getAllTimeRanking(options: {
     const product = bySlug.get(total.slug);
     if (!product) continue;
     rank += 1;
+    const hasReportedBuilder = product.source !== "crawler" || product.claimedAt !== null;
     if (options.category && product.category !== options.category) continue;
+    if (options.builder && (!hasReportedBuilder || product.builder !== options.builder)) continue;
     if (query && !product.name.toLocaleLowerCase().includes(query)
-      && !product.tagline.toLocaleLowerCase().includes(query)) continue;
+      && !product.tagline.toLocaleLowerCase().includes(query)
+      && !(hasReportedBuilder && (product.builder ?? "").toLocaleLowerCase().includes(query))) continue;
 
     items.push({
       ...toListItem(product),
