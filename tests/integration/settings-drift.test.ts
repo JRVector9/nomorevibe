@@ -56,9 +56,12 @@ describe("저장된 기준과 기본값의 차이", () => {
     const drift = settingsDrift(await getSettings());
 
     // 과거 두 트레일러의 호환 힌트 외에 새 검색 신호는 제작 AI를 지정하지 않는다.
+    // 목록 전체를 박아 두면 신호를 더할 때마다 깨지므로 불변식만 검사한다.
+    const enabled = DEFAULT_CRAWL_SETTINGS.discover.queries.filter((q) => q.enabled);
+    expect(enabled.filter((q) => q.builder !== null).map((q) => q.builder)).toEqual(["Claude", "Codex"]);
     expect(drift.find((d) => d.label === "추정 AI")).toMatchObject({
       stored: "(없음), (없음)",
-      standard: "Claude, Codex, (없음), (없음), (없음), (없음), (없음), (없음)",
+      standard: enabled.map((q) => q.builder ?? "(없음)").join(", "),
     });
   });
 
@@ -72,9 +75,12 @@ describe("저장된 기준과 기본값의 차이", () => {
 
     const drift = settingsDrift(await getSettings());
 
+    const labels = DEFAULT_CRAWL_SETTINGS.discover.queries.filter((q) => q.enabled).map((q) => q.label);
+    // 저장본에 없는 기본 신호가 실제로 있어야 이 검사가 의미를 가진다
+    expect(labels.length).toBeGreaterThan(2);
     expect(drift.find((d) => d.label === "검색 신호")).toMatchObject({
       stored: "Claude 커밋 트레일러, Codex 커밋 트레일러",
-      standard: "Claude 커밋 트레일러, Codex 커밋 트레일러, vibe-coding 토픽, Grok Build 기여 표기 탐색, Kimi CLI 기여 표기 탐색, GLM 관련 저장소 탐색, DeepSeek 관련 저장소 탐색, OpenRouter 관련 저장소 탐색",
+      standard: labels.join(", "),
     });
   });
 

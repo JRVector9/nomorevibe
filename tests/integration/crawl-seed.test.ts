@@ -33,6 +33,8 @@ const searchPage = (repos: string[], full = false) => ({
 });
 
 const tick = () => runJob("crawl-seed", seedFrontier);
+const signalOf = (arg: { query: string }) => arg.query.split(" committer-date")[0];
+
 
 beforeAll(() => ensureSchema());
 beforeEach(async () => {
@@ -164,9 +166,16 @@ describe("검색 잡", () => {
     await tick();
 
     expect(searchCommits).toHaveBeenCalledTimes(3);
-    expect(searchCommits.mock.calls.map(([arg]) => arg.page)).toEqual([1, 2, 3]);
-    // 다음 틱이 이어받을 지점이 남는다
-    expect((await getJobState("crawl-seed"))?.cursor).toMatchObject({ page: 4 });
+    // 페이지마다 차례를 넘긴다 — 넓은 신호가 뒤 신호를 굶기지 않아야 한다
+    expect(searchCommits.mock.calls.map(([arg]) => [signalOf(arg), arg.page])).toEqual([
+      ["Co-authored-by: Claude", 1],
+      ["Co-authored-by: Codex", 1],
+      ["Co-authored-by: Claude", 2],
+    ]);
+    // 신호마다 다음에 이어받을 지점이 따로 남는다
+    expect((await getJobState("crawl-seed"))?.cursor).toMatchObject({
+      states: { "Claude 커밋 트레일러": { page: 3 }, "Codex 커밋 트레일러": { page: 2 } },
+    });
   });
 
   it("다음 틱이 커서 지점부터 이어본다", async () => {
@@ -174,8 +183,14 @@ describe("검색 잡", () => {
 
     await tick();
     await tick();
+    await tick();
 
-    expect(searchCommits.mock.calls.map(([arg]) => arg.page)).toEqual([1, 2]);
+    // 두 신호를 한 바퀴 돈 뒤, 세 번째 틱은 첫 신호를 1페이지가 아니라 2페이지부터 이어본다
+    expect(searchCommits.mock.calls.map(([arg]) => [signalOf(arg), arg.page])).toEqual([
+      ["Co-authored-by: Claude", 1],
+      ["Co-authored-by: Codex", 1],
+      ["Co-authored-by: Claude", 2],
+    ]);
   });
 
   it("페이지가 덜 차면 다음 신호로 넘어간다", async () => {
@@ -201,7 +216,7 @@ describe("검색 잡", () => {
     ]);
   });
 
-  it("마지막 신호까지 훑으면 사이클을 끝내고 커서를 비운다", async () => {
+  it("마지막 신호까지 훑으면 사이클을 끝내되 어디까지 덮었는지는 남긴다", async () => {
     // 신호를 하나로 못박는다 — 기본 신호 수가 바뀌면 이 테스트의 뜻이 흔들린다
     await saveSettings(
       { discover: { queries: [{ label: "하나뿐", query: "one", enabled: true, priority: 100 }] } },
@@ -212,7 +227,11 @@ describe("검색 잡", () => {
     const result = await tick();
 
     expect(result).toMatchObject({ status: "completed", done: true });
-    expect((await getJobState("crawl-seed"))?.cursor).toBeNull();
+    // 커서를 비우면 다음 주기가 같은 구간을 다시 긁는다. 덮은 끝을 남기고 기다린다.
+    expect((await getJobState("crawl-seed"))?.cursor).toMatchObject({
+      waiting: true,
+      cycleWindow: { to: expect.any(String) },
+    });
   });
 
   it("한도에 걸리면 같은 페이지를 커서에 남기고 물러난다", async () => {
@@ -227,9 +246,10 @@ describe("검색 잡", () => {
   it("커서가 가리키던 신호가 꺼지면 처음부터 본다", async () => {
     searchCommits.mockResolvedValue(searchPage(["a/one"], true));
     await tick();
+    // 첫 신호는 2페이지를 남긴 채 다음 신호에게 차례를 넘겼다
     expect((await getJobState("crawl-seed"))?.cursor).toMatchObject({
-      signal: "Claude 커밋 트레일러",
-      page: 2,
+      signal: "Codex 커밋 트레일러",
+      states: { "Claude 커밋 트레일러": { page: 2 } },
     });
 
     // 신호 이름을 바꾼다 (= 기존 커서가 가리키던 것이 사라진다)
