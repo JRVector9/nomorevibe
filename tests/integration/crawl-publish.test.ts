@@ -222,9 +222,12 @@ describe("발행 잡", () => {
 
     // topics만 보면 Dev로 떨어질 것을 분류가 바로잡는다
     expect((await products.findByUrl("https://my-app.test"))?.category).toBe("Design");
-    expect(classifyCategories).toHaveBeenCalledWith([
-      expect.objectContaining({ repo: "someone/paint", topics: ["cli"] }),
-    ]);
+    // 저장된 카테고리 기준을 함께 넘긴다 — 기준이 코드 상수가 아니라 설정이다
+    expect(classifyCategories).toHaveBeenCalledWith(
+      [expect.objectContaining({ repo: "someone/paint", topics: ["cli"] })],
+      undefined, undefined, undefined,
+      expect.objectContaining({ Design: expect.objectContaining({ summary: expect.any(String) }) }),
+    );
   });
 
   it("승인 후보 여러 개를 한 번의 분류 배치로 처리한다", async () => {

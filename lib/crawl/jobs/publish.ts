@@ -49,9 +49,9 @@ export async function publishCandidates(ctx: JobContext<null>): Promise<JobOutco
     let classified: (Category | null)[] = [];
     if (inputs.length > 0) {
       if (process.env.CONNECT_AGENT_URL) {
-        try { classified = (await agentRequest<{ categories: (Category | null)[] }>('classify', { inputs })).categories; }
+        try { classified = (await agentRequest<{ categories: (Category | null)[] }>('classify', { inputs, definitions: settings.classify.definitions })).categories; }
         catch { classified = inputs.map(() => null); ctx.log('crawl.classification_held', { count: inputs.length }); }
-      } else classified = await classifyCategories(inputs);
+      } else classified = await classifyCategories(inputs, undefined, undefined, undefined, settings.classify.definitions);
     }
     const categoryByRepo = new Map(inputs.map((input, index) => [input.repo, classified[index] ?? null]));
     const snapshotByRepo = new Map(prepared.flatMap(item => item.classification

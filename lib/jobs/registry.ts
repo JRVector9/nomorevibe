@@ -1,5 +1,6 @@
 import type { JobContext, JobOutcome } from "./runner";
 import { seedFrontier } from "@/lib/crawl/jobs/seed";
+import { seedFromShowHN } from "@/lib/crawl/jobs/hn-show";
 import { fetchCrawlDocuments } from "@/lib/crawl/jobs/fetch";
 import { judgeCrawlDocuments } from "@/lib/crawl/jobs/judge";
 import { reviewCrawlCandidates } from "@/lib/crawl/jobs/agent-review";
@@ -32,6 +33,9 @@ export const JOBS: Record<string, AnyJob> = {
 
   /** GitHub 검색으로 프론티어를 채운다 — 파이프라인의 입구 */
   "crawl-seed": seedFrontier,
+
+  /** Show HN에서 배포를 알린 프로젝트를 프론티어에 넣는다 — 반대 방향의 입구 */
+  "hn-show-seed": seedFromShowHN,
 
   /** 프론티어에서 꺼낸 레포의 원본(레포 메타 + 배포 페이지)을 확보한다 */
   "crawl-fetch": fetchCrawlDocuments,

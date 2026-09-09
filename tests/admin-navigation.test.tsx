@@ -3,9 +3,9 @@ import { describe, expect, it } from 'vitest';
 import { AdminNav } from '@/app/admin/AdminNav';
 
 describe('shared administrator navigation', () => {
-  it('keeps all six menus including the selected page visible', () => {
+  it('keeps all seven menus including the selected page visible', () => {
     const html = renderToStaticMarkup(<AdminNav current="/admin/status" />);
-    expect(html.match(/href="\/admin/g)).toHaveLength(6);
+    expect(html.match(/href="\/admin/g)).toHaveLength(7);
     expect(html).toContain('운영센터');
     expect(html).toContain('aria-current="page"');
   });

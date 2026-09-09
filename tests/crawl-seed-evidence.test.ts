@@ -94,16 +94,33 @@ it('invalidates retry delay on query or sort configuration edits', async () => {
 it('retains unresolved windows across other signals and resumes fresh discovery after a retry', async () => {
   mocks.settings!.discover.queries.push({label:'Kimi',kind:'commits',query:'Kimi',enabled:true,builder:null,priority:80});
   mocks.search.mockResolvedValue(page([], {incomplete_results:true}));
+  // 1번 신호가 창을 쪼개면 남은 절반을 자기 상태에 보관하고 차례를 넘긴다
   const first = await seedFrontier(context());
+  expect(first.cursor?.signal).toBe('Kimi');
+  expect(first.cursor?.states?.['Codex hint'].pendingWindows).toHaveLength(1);
+  // 더 쪼갤 수 없는 창은 미완으로 남기고 다시 1번 신호에게 차례를 넘긴다
   const minimum = {from:'2026-09-01T00:00:00Z',to:'2026-09-01T00:00:00Z'};
   const pending = await seedFrontier(context({...first.cursor!,window:minimum,pendingWindows:[]}));
-  expect(pending.cursor?.signal).toBe('Kimi');
-  expect(pending.cursor?.incompleteWindows).toHaveLength(1);
+  expect(pending.cursor?.signal).toBe('Codex hint');
+  expect(pending.cursor?.incompleteWindows).toMatchObject([{signal:'Kimi',window:minimum}]);
+  // 1번 신호가 보관해 둔 절반을 마저 본다 (Kimi는 이번 주기를 마쳤으므로 차례가 가지 않는다)
   mocks.search.mockResolvedValue(page([]));
-  const finishedOther = await seedFrontier(context(pending.cursor!));
-  expect(finishedOther.cursor).toMatchObject({phase:'retry',signal:'Codex hint',window:minimum});
+  const drained = await seedFrontier(context(pending.cursor!));
+  expect(drained.cursor).toMatchObject({signal:'Codex hint',phase:'discovery'});
+  // 모든 신호가 주기를 마치면 미완으로 남겨둔 창을 다시 본다
+  const finishedOther = await seedFrontier(context(drained.cursor!));
+  expect(finishedOther.cursor).toMatchObject({phase:'retry',signal:'Kimi',window:minimum});
+  // 미완 창까지 마치면 덮을 것이 없다 — 새로 쌓일 때까지 검색하지 않고 기다린다
   const retried = await seedFrontier(context({...finishedOther.cursor!,retryAt:new Date(0).toISOString()}));
-  expect(retried.cursor).toMatchObject({phase:'discovery',signal:'Codex hint',incompleteWindows:[]});
+  expect(retried.cursor).toMatchObject({incompleteWindows:[],waiting:true});
+  // 시간이 지나 덮지 않은 구간이 생기면 첫 신호부터 새 주기를 연다
+  const searches = mocks.search.mock.calls.length;
+  const nextCycle = await seedFrontier(context({...retried.cursor!,retryAt:new Date(0).toISOString(),
+    cycleWindow:{from:'2026-01-01T00:00:00Z',to:'2026-01-02T00:00:00Z'}}));
+  expect(nextCycle.cursor).toMatchObject({phase:'discovery',incompleteWindows:[]});
+  // 새 주기의 첫 검색은 첫 신호로, 지난 주기가 덮은 끝에서 시작한다
+  expect(mocks.search.mock.calls[searches][0].query)
+    .toBe('Co-authored-by: Codex committer-date:2026-01-02T00:00:00Z..2026-01-05T00:00:00Z');
 });
 it('retries a failed database write at the saved attribution offset without refetching', async () => {
   mocks.search.mockResolvedValue(page([commit('acme/app','fix\n\nCo-authored-by: Codex <a@example.com>\nCo-authored-by: Claude <b@example.com>')]));

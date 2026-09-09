@@ -12,16 +12,26 @@ export const MAX_SEED_ATTRIBUTIONS = 8;
 export const SEED_BACKLOG_PAUSE = 10_000;
 export const SEED_BACKLOG_RESUME = 5_000;
 const INCOMPLETE_RETRY_MS = 60 * 60_000;
+/** 몇 초짜리 구간을 훑자고 신호마다 검색을 한 번씩 쓰지는 않는다. 이만큼 쌓이면 그때 본다 */
+const MIN_CYCLE_SPAN_MS = 60_000;
 const MAX_INCOMPLETE_WINDOWS = 128;
 type PendingItem = {repo:string; sha:string|null; attributions:(CommitAttribution|null)[]; attributionLimited:boolean};
 type PendingPage = {items:PendingItem[]; itemIndex:number; attributionIndex:number; size:number; incomplete:boolean; saturated:boolean; capped:boolean};
 type IncompleteWindow = {signal:string; window:SearchWindow; retryAt:string};
+/** 차례를 넘길 때 보관하는 신호별 진행 위치. 페이지 경계에서만 저장하므로 pendingPage는 담지 않는다 */
+type SignalState = {page:number; window:SearchWindow; pendingWindows:SearchWindow[]; windowIncomplete?:boolean};
 export type SeedCursor = {
   signal:string; page:number; queryHash?:string; configHash?:string;
   window?:SearchWindow; cycleWindow?:SearchWindow; pendingWindows?:SearchWindow[];
   retryAt?:string; pendingPage?:PendingPage; windowIncomplete?:boolean;
   incompleteWindows?:IncompleteWindow[]; phase?:'discovery'|'retry';
   backlogPaused?:boolean;
+  /** 신호별로 어디까지 봤는지. 차례가 돌아오면 여기서 이어간다 */
+  states?:Record<string,SignalState>;
+  /** 이번 주기의 창을 다 본 신호. 다시 차례를 주지 않는다 */
+  doneSignals?:string[];
+  /** 덮은 구간을 따라잡아 더 훑을 것이 없는 상태. 검색하기 전에 새 구간부터 확인한다 */
+  waiting?:boolean;
 };
 const iso = (date:Date) => date.toISOString().replace(/\.\d{3}Z$/, 'Z');
 const sameWindow = (a:SearchWindow,b:SearchWindow) => a.from === b.from && a.to === b.to;
@@ -32,7 +42,13 @@ export async function seedFrontier(ctx:JobContext<SeedCursor>):Promise<JobOutcom
   if (!settings.enabled) return {done:true};
   const queries = enabledQueries(settings);
   if (!queries.length) return {done:true};
-  const freshWindow = ():SearchWindow => ({from:iso(new Date(Date.now()-settings.discover.windowDays*86_400_000)),to:iso(new Date())});
+  const spanMs = settings.discover.windowDays*86_400_000;
+  /**
+   * 훑을 구간을 from 에서 windowDays 만큼 잘라 낸다. 끝은 지금을 넘지 않는다.
+   * 뒤처져 있으면 이 조각을 이어 붙여 따라잡고, 따라잡았으면 지금까지만 본다.
+   */
+  const chunkFrom = (from:number):SearchWindow => ({from:iso(new Date(from)),to:iso(new Date(Math.min(Date.now(),from+spanMs)))});
+  const freshWindow = ():SearchWindow => chunkFrom(Date.now()-spanMs);
   // Sort and every active query participate: an edited configuration cannot replay old page data or retry delays.
   const configHash = createHash('sha256').update(JSON.stringify({queries,sort:settings.discover.sort,windowDays:settings.discover.windowDays})).digest('hex');
   const queryHash = (index:number) => createHash('sha256').update(queries[index].kind+'\0'+queries[index].query+'\0'+settings.discover.windowDays).digest('hex');
@@ -41,7 +57,7 @@ export async function seedFrontier(ctx:JobContext<SeedCursor>):Promise<JobOutcom
   let index = matches ? resumedIndex : 0;
   let initial = matches && ctx.cursor?.cycleWindow ? ctx.cursor.cycleWindow : freshWindow();
   let cursor:SeedCursor = matches ? structuredClone(ctx.cursor!) : {
-    signal:queries[0].label,page:1,queryHash:queryHash(0),configHash,window:initial,cycleWindow:initial,pendingWindows:[],incompleteWindows:[],phase:'discovery',
+    signal:queries[0].label,page:1,queryHash:queryHash(0),configHash,window:initial,cycleWindow:initial,pendingWindows:[],incompleteWindows:[],phase:'discovery',states:{},doneSignals:[],
   };
   const counts = await crawl.frontierCounts();
   let backlog = (counts.pending ?? 0) + (counts.fetching ?? 0);
@@ -60,6 +76,34 @@ export async function seedFrontier(ctx:JobContext<SeedCursor>):Promise<JobOutcom
   const defer = async () => {await save(); return {done:false,cursor};};
   const resetWindow = (next:SearchWindow) => {
     cursor = {...cursor,page:1,window:next,windowIncomplete:false};
+    delete cursor.pendingPage;
+  };
+  const park = () => {
+    cursor.states = {...cursor.states,[cursor.signal]:{
+      page:cursor.page,window:cursor.window ?? initial,
+      pendingWindows:[...(cursor.pendingWindows ?? [])],windowIncomplete:cursor.windowIncomplete,
+    }};
+  };
+  /**
+   * 다음 신호에게 차례를 넘긴다.
+   *
+   * 넓은 검색어는 결과가 1,000건을 넘어 창이 절반씩 계속 쪼개진다. 한 신호를 끝까지 파고들면
+   * 뒤 신호는 차례를 받지 못한다 — 실측에서 180일 창이 4분까지 쪼개진 채 1번 신호에 머물러
+   * 나머지 여섯 신호가 한 건도 수집되지 않았다. 페이지 하나마다 차례를 넘기고 각 신호가
+   * 어디까지 봤는지는 따로 보관한다.
+   */
+  const rotate = () => {
+    park();
+    const finished = new Set(cursor.doneSignals ?? []);
+    for (let step = 1; step <= queries.length; step++) {
+      const next = (index + step) % queries.length;
+      if (finished.has(queries[next].label) && step < queries.length) continue;
+      index = next; break;
+    }
+    const saved = cursor.states?.[queries[index].label];
+    cursor = {...cursor,signal:queries[index].label,queryHash:queryHash(index),
+      page:saved?.page ?? 1,window:saved?.window ?? initial,
+      pendingWindows:saved?.pendingWindows ?? [],windowIncomplete:saved?.windowIncomplete};
     delete cursor.pendingPage;
   };
   const clearIncomplete = () => {
@@ -82,27 +126,42 @@ export async function seedFrontier(ctx:JobContext<SeedCursor>):Promise<JobOutcom
     cursor.incompleteWindows = entries;
     return true;
   };
+  /**
+   * 다음 주기를 지난 주기가 덮은 끝에서 시작한다.
+   *
+   * 지금까지는 주기가 끝나면 무조건 `지금-windowDays … 지금`으로 되돌아갔다. 주기가
+   * windowDays보다 빨리 끝나면 같은 구간을 다시 긁고, 느리게 끝나면 그 사이에 푸시된
+   * 커밋을 통째로 건너뛰었다. 덮은 끝을 이어받으면 둘 다 생기지 않는다.
+   */
+  const startNextCycle = ():boolean => {
+    const covered = Date.parse(cursor.cycleWindow?.to ?? '');
+    const from = Number.isFinite(covered) ? covered : Date.now()-spanMs;
+    // 따라잡았다. 새로 쌓일 때까지 기다린다 — 같은 구간을 다시 검색하지 않는다.
+    if (from+MIN_CYCLE_SPAN_MS > Date.now()) {cursor.retryAt = iso(new Date(from+MIN_CYCLE_SPAN_MS)); cursor.waiting = true; return false;}
+    initial = chunkFrom(from); index = 0;
+    cursor = {signal:queries[0].label,page:1,configHash,queryHash:queryHash(0),window:initial,cycleWindow:initial,
+      pendingWindows:[],incompleteWindows:cursor.incompleteWindows,phase:'discovery',states:{},doneSignals:[]};
+    return true;
+  };
   const advance = ():boolean => {
     const pending = [...(cursor.pendingWindows ?? [])];
     const next = pending.shift();
-    if (next) {cursor.pendingWindows = pending; resetWindow(next); return true;}
-    if (cursor.phase === 'retry') {
-      // A persistently capped second must not starve discovery of newly pushed repositories.
-      initial = freshWindow(); index = 0;
-      cursor = {signal:queries[0].label,page:1,configHash,queryHash:queryHash(0),window:initial,cycleWindow:initial,pendingWindows:[],incompleteWindows:cursor.incompleteWindows,phase:'discovery'};
-      return true;
-    }
-    index++;
-    if (index < queries.length) {
-      cursor = {signal:queries[index].label,page:1,configHash,queryHash:queryHash(index),window:initial,cycleWindow:initial,pendingWindows:[],incompleteWindows:cursor.incompleteWindows,phase:'discovery'};
-      return true;
-    }
+    if (next) {cursor.pendingWindows = pending; resetWindow(next); rotate(); return true;}
+    // 이 신호는 이번 주기의 창을 다 봤다. 남은 신호가 있으면 그쪽으로 넘긴다.
+    cursor.doneSignals = [...new Set([...(cursor.doneSignals ?? []),cursor.signal])];
+    // A persistently capped second must not starve discovery of newly pushed repositories.
+    if (cursor.phase === 'retry') return startNextCycle();
+    if (queries.some(query => !cursor.doneSignals!.includes(query.label))) {rotate(); return true;}
     const retry = [...(cursor.incompleteWindows ?? [])].sort((a,b) => a.retryAt.localeCompare(b.retryAt))[0];
-    if (!retry) return false;
+    if (!retry) return startNextCycle();
     index = queries.findIndex(q => q.label === retry.signal);
-    cursor = {signal:retry.signal,page:1,configHash,queryHash:queryHash(index),window:retry.window,cycleWindow:initial,pendingWindows:[],incompleteWindows:cursor.incompleteWindows,phase:'retry',retryAt:retry.retryAt};
+    cursor = {signal:retry.signal,page:1,configHash,queryHash:queryHash(index),window:retry.window,cycleWindow:initial,pendingWindows:[],incompleteWindows:cursor.incompleteWindows,phase:'retry',retryAt:retry.retryAt,states:{},doneSignals:[]};
     return true;
   };
+
+  // 지난번에 다 따라잡았다면, 검색을 쓰기 전에 새로 쌓인 구간이 있는지부터 본다.
+  // 이 확인 없이 반복하면 이미 덮은 마지막 창을 매 틱 다시 긁는다.
+  if (cursor.waiting && !startNextCycle()) return {done:true,cursor};
 
   for (let visited = 0; visited < settings.discover.pagesPerTick && ctx.hasBudget(); visited++) {
     if (cursor.retryAt && Date.parse(cursor.retryAt) > Date.now()) return defer();
@@ -168,19 +227,21 @@ export async function seedFrontier(ctx:JobContext<SeedCursor>):Promise<JobOutcom
       if (pieces) {
         cursor.pendingWindows = [pieces[1],...(cursor.pendingWindows ?? [])];
         resetWindow(pieces[0]);
+        rotate();
         await save();
         continue;
       }
       cursor.windowIncomplete = true;
     }
     // Even at one-second granularity, pages 2..10 remain accessible and may contain new repos.
-    if (page.size >= SEARCH_PER_PAGE && cursor.page < MAX_SEARCH_PAGES) cursor.page++;
+    if (page.size >= SEARCH_PER_PAGE && cursor.page < MAX_SEARCH_PAGES) {cursor.page++; rotate();}
     else {
       if (cursor.windowIncomplete) {
         ctx.log('crawl.seed_incomplete',{signal:signal.label,window,page:cursor.page});
         if (!retainIncomplete()) return defer();
       } else clearIncomplete();
-      if (!advance()) {ctx.log('crawl.seeded',{discovered,drained:true}); return {done:true};}
+      // 훑을 것은 없지만(done) 어디까지 덮었는지는 남긴다 — 잃으면 다음 주기가 같은 구간을 다시 긁는다.
+      if (!advance()) {ctx.log('crawl.seeded',{discovered,drained:true}); return {done:true,cursor};}
     }
     await save();
   }
