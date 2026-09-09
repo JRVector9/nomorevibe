@@ -11,7 +11,7 @@ import type { CliRun } from '@/lib/crawl/classify';
 const secret='test-secret-at-least-thirty-two-characters';
 const token='sk-ant-oat01-'+ 'A'.repeat(64);
 const auth=JSON.stringify({tokens:{access_token:'a'.repeat(30),refresh_token:'r'.repeat(30),id_token:'i'.repeat(30)}});
-const input=[{repo:'o/r',url:'https://example.com',name:'Tasks',tagline:'Shared tasks',topics:[],language:null}];
+const input={inputs:[{repo:'o/r',url:'https://example.com',name:'Tasks',tagline:'Shared tasks',topics:[],language:null}]};
 const success={kind:'exit' as const,code:0,stdout:JSON.stringify({results:[{id:0,category:'Productivity',reason:'Tasks'}]}),stderr:''};
 const dirs:string[]=[];let agent:ConnectAgent|undefined;
 const original={home:process.env.CODEX_HOME,cli:process.env.CLAUDE_CLI,path:process.env.PATH};

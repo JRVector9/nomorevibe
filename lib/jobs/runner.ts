@@ -92,7 +92,10 @@ export async function runJob<C>(
     if (lost) throw new JobLeaseLostError();
     await db.transaction(async tx => {
       const [row] = await tx.update(jobs).set({
-        cursor: (outcome.done ? null : (outcome.cursor ?? cursor)) as never,
+        // done은 "지금 할 일이 없다", cursor는 "내 상태"다. 둘을 묶으면 이어서 훑어야 하는
+        // 작업이 완료를 알릴 때마다 진행 위치를 잃는다. 커서를 명시하면 그것을 따르고,
+        // 말이 없으면 종전대로 done에서 비운다.
+        cursor: (outcome.cursor !== undefined ? outcome.cursor : (outcome.done ? null : cursor)) as never,
         processedVersion: lease.requestedVersion,
         lockedAt: null, leaseToken: null, notBefore: null,
         lastSuccessAt: sql`now()`, lastError: null, updatedAt: sql`now()`,

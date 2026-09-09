@@ -11,6 +11,19 @@ import {
 const ROW_ID = 1;
 
 /**
+ * 카테고리 정의는 한 단계 더 깊다. 얕게 병합하면 카테고리를 하나만 고쳐 저장한 행에서
+ * 나머지 16개가 통째로 사라지고, 열거형 키가 전부 필요한 스키마라 검증이 실패한다.
+ */
+function mergeClassify(current: CrawlSettings["classify"], raw: unknown): CrawlSettings["classify"] {
+  const patch = (raw ?? {}) as { definitions?: Record<string, unknown> };
+  return {
+    ...current,
+    ...(raw as object ?? {}),
+    definitions: { ...current.definitions, ...(patch.definitions ?? {}) } as CrawlSettings["classify"]["definitions"],
+  };
+}
+
+/**
  * 저장된 값을 기본값 위에 덮어 읽는다.
  *
  * 필터를 새로 추가하면 기존 행에는 그 필드가 없다. 그때 검증을 실패시키면 설정을
@@ -24,6 +37,7 @@ export function mergeWithDefaults(stored: unknown): CrawlSettings {
     ...raw,
     discover: { ...DEFAULT_CRAWL_SETTINGS.discover, ...((raw.discover as object) ?? {}) },
     judge: { ...DEFAULT_CRAWL_SETTINGS.judge, ...((raw.judge as object) ?? {}) },
+    classify: mergeClassify(DEFAULT_CRAWL_SETTINGS.classify, raw.classify),
     agentEvidence: { ...DEFAULT_CRAWL_SETTINGS.agentEvidence, ...((raw.agentEvidence as object) ?? {}) },
   };
 
@@ -64,6 +78,7 @@ export async function saveSettings(patch: unknown, updatedBy: string): Promise<S
     reviewMode: current.reviewMode,
     discover: { ...current.discover, ...((raw.discover as object) ?? {}) },
     judge: { ...current.judge, ...((raw.judge as object) ?? {}) },
+    classify: mergeClassify(current.classify, raw.classify),
     agentEvidence: { ...current.agentEvidence, ...((raw.agentEvidence as object) ?? {}) },
   };
 
@@ -139,6 +154,7 @@ const TRACKED: { label: string; read: (s: CrawlSettings) => unknown }[] = [
   { label: "검색 정렬", read: (s) => s.discover.sort },
   { label: "기간 창(일)", read: (s) => s.discover.windowDays },
   { label: "틱당 페이지", read: (s) => s.discover.pagesPerTick },
+  { label: "Show HN 수집", read: (s) => s.discover.showHn.enabled },
   { label: "스타 상한", read: (s) => s.judge.maxStars },
   { label: "스타 하한", read: (s) => s.judge.minStars },
   { label: "방치 기준(일)", read: (s) => s.judge.maxPushAgeDays },

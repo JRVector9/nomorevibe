@@ -24,7 +24,7 @@ const server=createServer(async(req,res)=>{
       case 'probe':result=agent.probe(data.provider);break;
       case 'test':result=agent.test(data.config);break;
       case 'apply':result=agent.apply(data);break;
-      case 'classify':result=await agent.classify(data.inputs);break;
+      case 'classify':result=await agent.classify(data);break;
       default:throw new Error('알 수 없는 작업입니다.');
     }
     res.end(JSON.stringify(result));

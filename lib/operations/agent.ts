@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { classifyCategories, defaultRun, failureReason, type CliRun } from '@/lib/crawl/classify';
-import { classifyInputsSchema, DEFAULT_CONFIG, modelConfigSchema, type AgentStatus } from './contracts';
+import { classifyPayloadSchema, DEFAULT_CONFIG, modelConfigSchema, type AgentStatus } from './contracts';
 import { stripAnsi } from '@/lib/vendor/deppy-aibox/core';
 import { claudeProvider } from '@/lib/vendor/deppy-aibox/claude';
 import { isolatedClaudeEnv, killProcessGroup, runClaude, validateClaudeCredential } from './claude';
@@ -209,13 +209,13 @@ export class ConnectAgent {
     return this.snapshot();
   }
   async classify(input: unknown) {
-    this.available();const inputs=classifyInputsSchema.parse(input);
+    this.available();const {inputs,definitions}=classifyPayloadSchema.parse(input);
     if((!this.credential && !this.claudeCredential) || this.appliedGeneration!==this.state.generation)throw new Error('AI 연결 후 모델 검사·적용이 필요합니다.');
     this.state.busy='classification';const config=this.state.config;
     try {
       const result=await classifyCategories(inputs,this.routeRun,[config.primary,...(config.fallback?[config.fallback]:[])].map(m=>({...m,timeoutMs:35_000})),(model,result)=>{
         this.checkedAccount(model,result);this.state.lastAttempt={model,result,at:new Date().toISOString(),generation:this.state.generation,configVersion:this.state.configVersion};
-      });
+      },definitions);
       this.state.lastUsedVersion=this.state.configVersion;
       return { categories: result, configVersion:this.state.configVersion, generation:this.state.generation };
     } finally { try {this.captureRefresh();}finally{this.state.busy=null;this.state.activity=null;} }

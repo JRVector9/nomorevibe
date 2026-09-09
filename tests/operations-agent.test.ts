@@ -34,7 +34,7 @@ describe('operations credentials and model lifecycle',()=>{
  });
  it('cannot classify before verification/apply; rejects stale apply and uses validated config',async()=>{
   const calls:string[][]=[];const a=connected(async args=>{calls.push(args);return {kind:'exit',code:0,stdout:JSON.stringify({results:[{id:0,category:'Productivity',reason:'Shared tasks'}]}),stderr:''};});
-  const input=[{repo:'o/r',url:'https://example.com',name:'Tasks',tagline:'Tasks',topics:[],language:null}];
+  const input={inputs:[{repo:'o/r',url:'https://example.com',name:'Tasks',tagline:'Tasks',topics:[],language:null}]};
   await expect(a.classify(input)).rejects.toThrow('모델 검사');a.test(DEFAULT_CONFIG);await settle();
   const v=a.snapshot().verification!;expect(v.state).toBe('verified');expect(v.results).toHaveLength(2);
   expect(()=>a.apply({verificationId:v.id,expectedVersion:2,config:DEFAULT_CONFIG})).toThrow();

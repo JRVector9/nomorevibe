@@ -2,9 +2,9 @@ import { expect, it } from 'vitest';
 import { ADDITIONAL_AGENT_DISCOVERY_QUERIES, DEFAULT_CRAWL_SETTINGS, crawlSettingsSchema, mergeAdditionalAgentDiscoveryQueries } from '@/lib/crawl/settings-schema';
 import { mergeWithDefaults } from '@/lib/crawl/settings';
 
-it('adds five provider discovery hints without asserting a development tool or model', () => {
-  expect(ADDITIONAL_AGENT_DISCOVERY_QUERIES).toHaveLength(5);
-  expect(ADDITIONAL_AGENT_DISCOVERY_QUERIES.map(query => query.kind)).toEqual(['commits','commits','repositories','repositories','repositories']);
+it('adds provider and AI-authorship discovery hints without asserting a development tool or model', () => {
+  expect(ADDITIONAL_AGENT_DISCOVERY_QUERIES).toHaveLength(9);
+  expect(ADDITIONAL_AGENT_DISCOVERY_QUERIES.map(query => query.kind)).toEqual(['commits','commits',...Array(7).fill('repositories')]);
   for (const query of ADDITIONAL_AGENT_DISCOVERY_QUERIES) {
     expect(query.builder).toBeNull();
     expect(query.enabled).toBe(true);
@@ -20,7 +20,7 @@ it('explicit rollout preserves disabled custom queries and deduplicates by label
   const merged = mergeAdditionalAgentDiscoveryQueries(custom);
   expect(custom).toEqual(before);
   expect(merged.slice(0,2)).toEqual(before);
-  expect(merged).toHaveLength(5);
+  expect(merged).toHaveLength(9);
   expect(mergeAdditionalAgentDiscoveryQueries(merged)).toEqual(merged);
 });
 it('reading persisted settings never implicitly merges the new discovery queries', () => {

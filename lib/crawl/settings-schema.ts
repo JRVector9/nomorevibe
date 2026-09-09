@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { CATEGORIES, type Category } from "@/lib/domain/products/categories";
 
 /**
  * 크롤 기준.
@@ -47,6 +48,17 @@ const discoverSchema = z.object({
   sort: searchSortSchema,
   /** 한 틱에 볼 검색 페이지 수. rate limit(30회/분)을 고려해 낮게 유지한다 */
   pagesPerTick: z.number().int().min(1).max(10),
+  /**
+   * Show HN 수집.
+   *
+   * GitHub 검색과 반대 방향이다 — 만든 사람이 배포했다고 직접 올린 목록에서 시작한다.
+   * 다른 수집원과 마찬가지로 배포 없이 끊을 수 있어야 하므로 데이터로 둔다.
+   */
+  showHn: z.object({
+    enabled: z.boolean(),
+    /** 스스로 내놓은 것이라 커밋 트레일러로 주운 것보다 먼저 본다 */
+    priority: z.number().int().min(0).max(1000),
+  }).strict().default({ enabled: true, priority: 120 }),
 });
 
 const judgeSchema = z.object({
@@ -100,6 +112,52 @@ const judgeSchema = z.object({
   holdAmbiguous: z.boolean(),
 });
 
+/**
+ * 카테고리 분류 기준.
+ *
+ * 판정 규칙과 같은 이유로 코드 상수가 아니라 데이터다. 분류가 어긋날 때 고쳐야 하는 것은
+ * 이 문장인데, 상수로 두면 한 줄을 고치려고 재배포를 해야 한다.
+ *
+ * summary는 지금 프롬프트에 있는 문장을 그대로 옮긴 것이다. include/exclude가 비어 있으면
+ * 렌더 결과가 기존 프롬프트와 한 글자도 다르지 않다 — 옮기는 것만으로 분류가 바뀌면 안 된다.
+ */
+export const categoryDefinitionSchema = z.object({
+  summary: z.string().min(1).max(300),
+  /** 애매할 때 여기에 넣을 것 */
+  include: z.array(z.string().min(1).max(120)).max(12),
+  /** 잘못 분류된 것을 볼 때마다 쌓는다. "무엇 → 어느 카테고리" 형태로 쓴다 */
+  exclude: z.array(z.string().min(1).max(120)).max(12),
+}).strict();
+
+/** 열거형 키라 17개가 모두 있어야 하고 모르는 카테고리는 거부된다 */
+export const categoryDefinitionsSchema = z.record(z.enum(CATEGORIES), categoryDefinitionSchema);
+export type CategoryDefinition = z.infer<typeof categoryDefinitionSchema>;
+export type CategoryDefinitions = Record<Category, CategoryDefinition>;
+
+const definition = (summary: string): CategoryDefinition => ({ summary, include: [], exclude: [] });
+
+export const DEFAULT_CATEGORY_DEFINITIONS: CategoryDefinitions = {
+  Productivity: definition("개인·팀의 일정, 문서, 메모, 작업 및 워크플로 도구"),
+  Dev: definition("코딩, API, SDK, 테스트, 인프라 및 개발자 도구"),
+  Design: definition("UI/UX, 그래픽, 3D 및 시각 디자인 도구"),
+  Business: definition("CRM, HR, 회사 운영, 프로젝트 운영 및 업무 협업"),
+  Marketing: definition("광고, SEO, 영업 지원, 소셜 발행 및 고객 성장"),
+  Finance: definition("투자, 은행, 회계, 결제 및 금융 분석"),
+  Commerce: definition("쇼핑, 마켓플레이스, 소매, 주문 및 상품 탐색"),
+  Education: definition("교육, 학습, 튜터링, 강의 및 학업"),
+  Health: definition("신체·정신 건강, 웰니스 및 의료 지원"),
+  Media: definition("영상, 오디오, 음악, 스토리 및 뉴스의 제작·편집·소비"),
+  Games: definition("비디오게임, 게임 제작 도구 및 게임 커뮤니티"),
+  Social: definition("메시징, 커뮤니티, 데이팅 및 소셜 네트워크"),
+  Data: definition("분석, 데이터베이스, BI, 데이터 처리 및 시각화"),
+  Security: definition("개인정보, 인증, 사이버보안 및 사기 방지"),
+  Lifestyle: definition("여행, 음식, 집, 취미 및 개인 생활 서비스"),
+  Sports: definition("운동, 스포츠 경기, 팀 운영 및 피트니스"),
+  Other: definition("정보가 부족하거나 어느 분류에도 명확히 맞지 않음"),
+};
+
+const defaultClassify = { definitions: DEFAULT_CATEGORY_DEFINITIONS };
+
 const defaultAgentEvidence = {
   enabled: false,
   enforceEligibility: false,
@@ -114,6 +172,7 @@ export const crawlSettingsSchema = z.object({
   reviewMode: z.enum(["off", "observe", "enforce"]).default("off"),
   discover: discoverSchema,
   judge: judgeSchema,
+  classify: z.object({ definitions: categoryDefinitionsSchema }).strict().default(defaultClassify),
   agentEvidence: z.object({
     enabled: z.boolean(),
     enforceEligibility: z.boolean(),
@@ -133,6 +192,17 @@ export const ADDITIONAL_AGENT_DISCOVERY_QUERIES: readonly AgentDiscoveryQuery[] 
   {label:"GLM 관련 저장소 탐색",kind:"repositories",query:"topic:glm",enabled:true,priority:50,builder:null},
   {label:"DeepSeek 관련 저장소 탐색",kind:"repositories",query:"topic:deepseek",enabled:true,priority:45,builder:null},
   {label:"OpenRouter 관련 저장소 탐색",kind:"repositories",query:"topic:openrouter",enabled:true,priority:40,builder:null},
+  /**
+   * 개발에 AI를 썼다고 스스로 붙인 토픽. 실측 모집단(2026-09-09)을 라벨 옆에 남긴다 —
+   * 커밋 검색은 180일에 6,600만 건이라 다 훑을 수 없지만, 이쪽은 4자릿수라 한 주기에 끝난다.
+   * 게다가 레포 검색이라 homepage가 실려 와 배포 없는 것을 프론티어에 넣지 않는다.
+   * topic:ai-agent(30,341)는 넣지 않았다 — 실행 기능을 설명할 뿐 개발에 AI를 썼다는 뜻이 아니다.
+   */
+  {label:"Cursor 관련 저장소 탐색",kind:"repositories",query:"topic:cursor-ai",enabled:true,priority:55,builder:null},        // 921
+  {label:"Codex CLI 관련 저장소 탐색",kind:"repositories",query:"topic:codex-cli",enabled:true,priority:52,builder:null},     // 2,569
+  {label:"AI 생성 표기 저장소 탐색",kind:"repositories",query:"topic:ai-generated",enabled:true,priority:48,builder:null},    // 1,031
+  // 가장 크다. 한 주기에 다 못 훑어도 순회가 다른 신호를 굶기지 않으므로 우선순위만 낮춘다.
+  {label:"Claude Code 관련 저장소 탐색",kind:"repositories",query:"topic:claude-code",enabled:true,priority:35,builder:null}, // 70,152
 ];
 
 /** Explicit rollout helper. Reading stored settings never calls this or changes a maker's queries. */
@@ -150,6 +220,7 @@ export const DEFAULT_CRAWL_SETTINGS: CrawlSettings = {
   enabled: false, // 켜는 것은 명시적 행위여야 한다
   reviewMode: "off",
   agentEvidence: defaultAgentEvidence,
+  classify: defaultClassify,
   discover: {
     queries: [
       { label: "Claude 커밋 트레일러", kind: "commits", query: "Co-authored-by: Claude", enabled: true, priority: 100, builder: "Claude" },
@@ -163,9 +234,10 @@ export const DEFAULT_CRAWL_SETTINGS: CrawlSettings = {
       { label: "vibe-coding 토픽", kind: "repositories", query: "topic:vibe-coding", enabled: true, priority: 80, builder: null },
       ...ADDITIONAL_AGENT_DISCOVERY_QUERIES.map(query => ({...query})),
     ],
-    windowDays: 180,
+    windowDays: 3,
     sort: "relevance",
-    pagesPerTick: 2,
+    pagesPerTick: 10,
+    showHn: { enabled: true, priority: 120 },
   },
   judge: {
     maxStars: 1000,
