@@ -3,6 +3,7 @@
 'use client';
 import Link from 'next/link';
 import { useState } from 'react';
+import { Countdown } from './Countdown';
 import { OperationsDialog } from './OperationsDialog';
 import { useAgentConnection } from './useAgentConnection';
 import { DEFAULT_CONFIG, MODEL_IDS, modelConfigSchema, type AgentStatus, type ModelConfig } from '@/lib/operations/contracts';
@@ -12,7 +13,7 @@ const PROVIDERS: Provider[]=['codex','claude'];
 const providerName=(p:Provider)=>p==='codex'?'Codex':'Claude';
 const modelName=(m:string)=>m==='sonnet'?'Claude Sonnet':m==='gpt-5.3-codex-spark'?'Codex Spark':'Codex Terra';
 const time=(value:string|null|undefined)=>value?new Date(value).toLocaleString('ko-KR',{timeZone:'Asia/Seoul',month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit',second:'2-digit'}):'기록 없음';
-const LABELS:Record<string,string>={starting:'인증 페이지 준비 중',awaiting_approval:'공식 페이지 승인 대기',exchanging:'인증 코드 확인 중',stored:'연결 완료',cancelled:'연결 취소됨',expired:'연결 시간 만료',failed:'연결 실패',running:'검사 중',verified:'검사 통과',applied:'설정 적용 완료',success:'정상 응답 확인',auth:'인증 필요',timeout:'응답 시간 초과',access_denied:'이 모델에 접근할 수 없음',rate_limit:'사용 한도 또는 요청 제한',invalid_output:'분류 응답 형식 오류',no_cli:'CLI 실행 불가',error:'요청 실패',cli_error:'CLI 요청 실패',output_too_large:'응답 크기 초과',credential_store_failed:'인증 저장 실패'};
+const LABELS:Record<string,string>={starting:'인증 페이지 준비 중',awaiting_approval:'공식 페이지 승인 대기',exchanging:'인증 코드 확인 중',stored:'연결 완료',cancelled:'연결 취소됨',expired:'연결 시간 만료',failed:'연결 실패',running:'검사 중',verified:'검사 통과',applied:'설정 적용 완료',success:'정상 응답 확인',auth:'인증 실패 · 재연결 필요',timeout:'응답 시간 초과',access_denied:'이 모델에 접근할 수 없음',rate_limit:'사용 한도 또는 요청 제한',invalid_output:'응답 형식 오류',no_cli:'CLI 실행 불가',error:'요청 실패',cli_error:'CLI 요청 실패',output_too_large:'응답 크기 초과',credential_store_failed:'인증 저장 실패'};
 const label=(s:string)=>LABELS[s]??s;
 const CONNECTION_ERRORS:Record<string,string>={oauth_rejected:'Claude가 인증 코드를 거절했습니다. 새 연결을 시작한 뒤 공식 페이지에서 받은 최신 코드를 입력해주세요.',exchange_timeout:'코드 확인에 응답이 없습니다. 새 연결을 시작해주세요.',credential_capture_failed:'인증 정보를 저장하지 못했습니다. 새 연결로 다시 시도해주세요.'};
 
@@ -28,6 +29,8 @@ export function AiConnection({initial,reviewMode,oauthConfigured,localCodexAllow
   const ready=status?.configReady===true;
   const connection=dialogProvider&&(status?.connection?.provider??'codex')===dialogProvider?status?.connection:null;
   const terminal=Boolean(connection&&['stored','failed','expired','cancelled'].includes(connection.state));
+  const activity=status?.activity;
+  const countdown=activity&&status?.serverNow?<Countdown key={activity.id} deadlineAt={activity.deadlineAt} serverNow={status.serverNow} label={activity.kind==='model'?`${modelName(activity.model!)} 응답 대기`:activity.kind==='oauth_exchange'?'인증 코드 확인':'계정 연결 유효시간'}/>:null;
   const busyText=status?.busy==='login'?`${providerName(status.connection?.provider??'codex')} 계정 연결이 진행 중입니다. 모델은 미리 선택할 수 있으며, 검사는 연결을 완료하거나 취소한 뒤 실행할 수 있습니다.`:status?.busy==='verification'?'선택한 모델에 샘플 분류를 요청하고 있습니다. 모델당 최대 35초가 걸립니다.':status?.busy==='account_check'?'저장된 계정으로 모델 응답을 확인하고 있습니다. 최대 35초가 걸립니다.':status?.busy==='classification'?'퍼블리셔가 분류 중입니다. 완료 후 연결·검사를 진행할 수 있습니다.':'';
   function update(which:'primary'|'fallback',key:'model'|'effort',value:string) {
     setDraft({...config,[which]:key==='model'&&value==='none'?null:{...(config[which]??{model:'sonnet',effort:'high'}),[key]:value,...(key==='model'&&value==='sonnet'?{effort:'high'}:{})}} as ModelConfig);
@@ -60,12 +63,14 @@ export function AiConnection({initial,reviewMode,oauthConfigured,localCodexAllow
           <div className="ai-provider-name"><h4>{providerName(p)}</h4><span className={`ops-badge ${stored?'ok':'warn'}`}>{stored?'인증 저장 완료':status?'연결 안 됨':'확인 중'}</span></div>
           <div className="ai-provider-status"><strong>{connecting?label(status!.connection!.state):account?.result?label(account.result):stored?'연결 저장됨 · 모델 응답 미검사':'사용할 계정을 연결해주세요'}</strong>
             <p>{account?.checkedAt?`${modelName(account.model!)} · ${time(account.checkedAt)} 검사`:account?.storedAt?`${time(account.storedAt)} 인증 저장`:stored?'서버의 암호화 저장소에서 인증을 확인했습니다.':'공식 인증 페이지에서 직접 승인합니다.'}</p>
+            {p==='claude'&&account?.probe&&<div className="ai-probe-reply" aria-live="polite"><span>연결 확인 · {time(account.probe.checkedAt)}</span><p><b>보낸 메시지</b> <span>{account.probe.prompt}</span></p>{account.probe.result==='success'&&account.probe.reply?<p><b>Claude 답변</b> <span>{account.probe.reply}</span></p>:<p className="ai-warning">답변을 받지 못했습니다: {label(account.probe.result)}</p>}</div>}
             {!connecting&&latest&&['expired','failed'].includes(latest.state)&&<p className="ai-warning">최근 연결 시도: {label(latest.state)}{stored?' · 기존 인증은 보존됨':''}</p>}
           </div>
           <div className="ops-actions"><button disabled={!stored||pending||busy} onClick={()=>void perform('probe',{provider:p})}>{providerName(p)} 연결 확인</button><button disabled={pending||busy&&!connecting} onClick={()=>void connect(p)}>{providerName(p)} {connecting?'연결 계속':stored?'재연결':'연결'}</button></div>
         </article>;
       })}
-      {busyText&&<div className="ai-notice" role="status"><p>{busyText}</p>{status?.busy==='login'&&<button disabled={pending} onClick={()=>void cancel()}>진행 중인 연결 취소</button>}</div>}
+      {busyText&&<div className="ai-notice"><p role="status">{busyText}</p>{countdown}{status?.busy==='login'&&<button disabled={pending} onClick={()=>void cancel()}>진행 중인 연결 취소</button>}</div>}
+      <p className="ai-caption">Claude 연결 확인은 저장된 인증으로 hi~를 보내고 실제 답변을 표시합니다. 분류 설정 적용에는 아래의 선택 모델 검사가 필요합니다.</p>
       {!localCodexAllowed&&<p className="ai-caption">{oauthConfigured?<a href="/api/auth/github">GitHub 관리자 계정으로 로그인</a>:'서버의 관리자 GitHub OAuth 설정이 필요합니다.'}</p>}
     </section>
     <section className="ops-panel ai-model-panel" aria-labelledby="ai-model-title">
@@ -80,6 +85,7 @@ export function AiConnection({initial,reviewMode,oauthConfigured,localCodexAllow
     {dialogProvider&&<OperationsDialog labelledBy="connect-title" onClose={()=>setDialogProvider(null)}>
       <div className="ai-connect-dialog"><div className="ops-row"><h2 id="connect-title">{providerName(dialogProvider)} 계정 연결</h2><button onClick={()=>setDialogProvider(null)}>닫기</button></div>
       <p className="ai-dialog-state" role="status">{pending&&!connection?'연결 요청 중':connection?label(connection.state):'연결 상태를 확인하고 있습니다.'}</p>
+      {!terminal&&countdown}
       {transportError&&<p className="ai-notice error" role="alert">{transportError}</p>}
       {dialogError&&<p className="ai-notice error" role="alert">{dialogError}</p>}
       {connection?.state==='stored'?<><p>인증을 저장했습니다. 이제 모델 응답을 검사하고 퍼블리셔에 적용할 수 있습니다.</p><button className="primary" onClick={()=>setDialogProvider(null)}>모델 설정으로 이동</button></>:terminal?<><p>{connection?.error?CONNECTION_ERRORS[connection.error]??'연결을 완료하지 못했습니다. 다시 시도해주세요.':connection?.state==='expired'?'10분 내에 인증이 완료되지 않았습니다. 새 코드로 다시 연결해주세요.':'이 연결은 종료되었습니다. 다시 연결할 수 있습니다.'}</p><button disabled={pending||busy} onClick={()=>void connect(dialogProvider)}>새 연결 시작</button></>:<>

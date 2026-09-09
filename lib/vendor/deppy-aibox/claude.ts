@@ -53,6 +53,12 @@ export function captureClaudeToken(buf: string, atEof: boolean): string | null {
 
   for (let i = 1; i < lines.length; i++) {
     const line = lines[i]!;
+    // setup-token's footer can be split at "Store" by Ink/PTY updates. It is never a token continuation.
+    if (/^\s*Store(?:\s|$)/.test(line)) {
+      if (i === lines.length - 1 && !atEof) return null;
+      done = true;
+      break;
+    }
     const runs = tokenRuns(line);
     if (runs.length === 1) {
       token += runs[0]!;
@@ -61,7 +67,8 @@ export function captureClaudeToken(buf: string, atEof: boolean): string | null {
 
     const lastIncomplete = i === lines.length - 1 && !atEof;
     if (runs.length >= 2) done = true;
-    else if (line.trim() !== '' && !lastIncomplete) done = true;
+    // Ink renders setup-token with gap:1: a completed blank line also terminates the token.
+    else if (!lastIncomplete) done = true;
     break;
   }
 

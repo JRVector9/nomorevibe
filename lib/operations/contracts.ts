@@ -17,7 +17,9 @@ export const JOB_LABELS: Record<string, string> = {
 };
 export const ROLE_LABELS: Record<string, string> = { app: '웹·관리자 서비스', db: '데이터베이스', scheduler: '작업 일정 관리', crawler: '프로젝트 수집', reviewer: '후보 심사', publisher: '제품 발행', maintenance: '지표 집계', 'connect-agent': 'AI 연결·분류 실행' };
 export type AgentStatus = {
-  accounts?: Partial<Record<'codex' | 'claude', { storedAt?: string; checkedAt?: string; result?: string; model?: string }>>;
+  serverNow?: number;
+  activity?: { id: string; kind: 'login' | 'oauth_exchange' | 'model'; startedAt: number; deadlineAt: number; model?: string } | null;
+  accounts?: Partial<Record<'codex' | 'claude', { storedAt?: string; checkedAt?: string; result?: string; model?: string; probe?: { prompt: 'hi~'; reply?: string; result: string; model: string; checkedAt: string } }>>;
   configReady?: boolean;
   connected: boolean; claudeConnected?: boolean; generation: number; configVersion: number; config: ModelConfig;
   busy: string | null; connection: { provider?: 'codex' | 'claude'; inputRequired?: boolean; error?: string; id: string; state: string; url?: string; code?: string; expiresAt: number } | null;

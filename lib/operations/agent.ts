@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, readFileSync, writeFileSync, renameSync, rmSync
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
-import { classifyCategories, defaultRun, type CliRun } from '@/lib/crawl/classify';
+import { classifyCategories, defaultRun, failureReason, type CliRun } from '@/lib/crawl/classify';
 import { classifyInputsSchema, DEFAULT_CONFIG, modelConfigSchema, type AgentStatus } from './contracts';
 import { stripAnsi } from '@/lib/vendor/deppy-aibox/core';
 import { claudeProvider } from '@/lib/vendor/deppy-aibox/claude';
@@ -18,8 +18,9 @@ export class ConnectAgent {
   private appliedGeneration = 0;
   private home: string;
   private loginChild: ChildProcess | null = null;
+  private pendingEnter: ReturnType<typeof setTimeout> | null = null;
   private state: AgentStatus = { connected: false, generation: 0, configVersion: 0, config: DEFAULT_CONFIG,
-    busy: null, connection: null, verification: null, lastAttempt: null, appliedAt: null, lastUsedVersion: null };
+    busy: null, activity: null, connection: null, verification: null, lastAttempt: null, appliedAt: null, lastUsedVersion: null };
   constructor(private directory: string, private secret: string, private run: CliRun = defaultRun, private claudeRun?: CliRun) {
     mkdirSync(directory, { recursive: true, mode: 0o700 }); chmodSync(directory, 0o700);
     this.home = mkdtempSync(join(tmpdir(), 'nomorevibe-codex-'));
@@ -29,20 +30,20 @@ export class ConnectAgent {
       this.credential = saved.credential ? validateCredential(saved.credential) : null;
       this.claudeCredential = saved.claudeCredential ? validateClaudeCredential(saved.claudeCredential) : null;
       this.appliedGeneration = saved.appliedGeneration;
-      this.state = { ...this.state, ...saved.state, config: modelConfigSchema.parse(saved.state.config), busy: null, connection: null, verification: null };
+      this.state = { ...this.state, ...saved.state, config: modelConfigSchema.parse(saved.state.config), busy: null, activity: null, connection: null, verification: null };
       this.state.connected = !!this.credential; this.state.claudeConnected = !!this.claudeCredential;
       if (this.credential) this.writeAuth(this.home, this.credential);
     }
     process.env.CODEX_HOME = this.home;
     delete process.env.CODEX_ACCESS_TOKEN; delete process.env.OPENAI_API_KEY;
   }
-  snapshot(): AgentStatus { return structuredClone({...this.state, configReady: this.state.configVersion > 0 && this.appliedGeneration === this.state.generation}); }
+  snapshot(): AgentStatus { return structuredClone({...this.state, serverNow: Date.now(), configReady: this.state.configVersion > 0 && this.appliedGeneration === this.state.generation}); }
   private writeAuth(home: string, value: string) {
     const file = join(home, 'auth.json'); writeFileSync(file+'.tmp', value, { mode: 0o600 }); renameSync(file+'.tmp',file); chmodSync(file,0o600);
   }
   private persist() {
     const file = join(this.directory,'vault.enc');
-    const saved = { credential: this.credential, claudeCredential: this.claudeCredential, appliedGeneration: this.appliedGeneration, state: { ...this.state, busy: null, connection: null, verification: null } };
+    const saved = { credential: this.credential, claudeCredential: this.claudeCredential, appliedGeneration: this.appliedGeneration, state: { ...this.state, busy: null, activity: null, connection: null, verification: null } };
     writeFileSync(file+'.tmp',seal(JSON.stringify(saved),this.secret),{mode:0o600});renameSync(file+'.tmp',file);
   }
   private captureRefresh() {
@@ -50,13 +51,16 @@ export class ConnectAgent {
     if (this.credential && existsSync(join(this.home,'auth.json'))) this.credential = validateCredential(readFileSync(join(this.home,'auth.json'),'utf8'));
     this.persist();
   }
+  private startActivity(kind: 'login' | 'oauth_exchange' | 'model', durationMs: number, model?: string) {
+    const startedAt=Date.now();this.state.activity={id:randomUUID(),kind,startedAt,deadlineAt:startedAt+durationMs,...(model?{model}:{})};
+  }
   private available() { if (this.state.busy) throw new Error('다른 AI 작업이 진행 중입니다. 잠시 후 다시 시도해주세요.'); }
   connect(provider: 'codex' | 'claude' = 'codex') {
     this.available();
     if(provider === 'claude') return this.connectClaude();
     if(provider !== 'codex') throw new Error('지원하지 않는 AI 제공자입니다.');
     const id = randomUUID(), loginHome = mkdtempSync(join(tmpdir(),'nomorevibe-login-'));
-    this.state.busy = 'login';
+    this.state.busy = 'login';this.startActivity('login',10*60_000);
     this.state.connection = { id, provider: 'codex', state: 'starting', expiresAt: Date.now()+10*60_000 };
     const child = spawn(process.env.CODEX_CLI ?? 'codex',['login','--device-auth'], { cwd: tmpdir(), env: { ...process.env, CODEX_HOME: loginHome }, detached: true, stdio: ['ignore','pipe','pipe'] });
     this.loginChild = child; let output = '', cancelled = false;
@@ -76,16 +80,18 @@ export class ConnectAgent {
           if(this.state.connection)this.state.connection.state='stored';
         } else if(this.state.connection && !['cancelled','expired'].includes(this.state.connection.state)) this.state.connection.state='failed';
       } catch { if(this.state.connection)this.state.connection.state='failed'; }
-      finally { this.state.busy=null;this.loginChild=null;output='';rmSync(loginHome,{recursive:true,force:true}); }
+      finally { this.state.busy=null;this.state.activity=null;this.loginChild=null;output='';rmSync(loginHome,{recursive:true,force:true}); }
     });
     return this.snapshot();
   }
   private routeRun: CliRun = (args, stdin, timeout) => {
     const claude = args[args.indexOf('-m') + 1] === 'sonnet';
     if (claude ? !this.claudeCredential : !this.credential) return Promise.resolve({kind:'exit',code:1,stdout:'',stderr:'authentication required'});
+    this.startActivity('model',timeout,args[args.indexOf('-m')+1]);
     return (claude ? this.claudeRun ?? runClaude(this.claudeCredential!) : this.run)(args,stdin,timeout);
   };
   private stopLogin() {
+    if(this.pendingEnter)clearTimeout(this.pendingEnter);this.pendingEnter=null;
     killProcessGroup(this.loginChild?.pid);
   }
   private connectClaude() {
@@ -93,7 +99,7 @@ export class ConnectAgent {
     const provider = claudeProvider(), captureState = provider.createState!();
     const ctx = {tmpDir: loginHome, env: isolatedClaudeEnv(loginHome)};
     const spec = provider.spawn(ctx);
-    this.state.busy='login';
+    this.state.busy='login';this.startActivity('login',10*60_000);
     this.state.connection={id,provider:'claude',state:'starting',inputRequired:false,expiresAt:Date.now()+10*60_000};
     const child = spawn(spec.command,spec.args ?? [],{cwd:loginHome,env:{...spec.env,NODE_ENV:process.env.NODE_ENV},detached:true,stdio:['pipe','pipe','pipe']});
     this.loginChild=child;
@@ -113,7 +119,7 @@ export class ConnectAgent {
     child.stdin.on('error',()=>{});
     child.on('error',()=>{if(this.state.connection?.id===id)this.state.connection.state='failed';});
     child.on('close',()=>{
-      clearTimeout(timer);clearTimeout(exchangeTimer);this.exchangeDeadline=null;killProcessGroup(child.pid);
+      clearTimeout(timer);clearTimeout(exchangeTimer);if(this.pendingEnter)clearTimeout(this.pendingEnter);this.pendingEnter=null;this.exchangeDeadline=null;killProcessGroup(child.pid);
       try {
         if(!this.state.connection || ['cancelled','expired','failed'].includes(this.state.connection.state))return;
         captured ??= provider.onClose!(captureState,ctx)?.credential?.value ?? null;
@@ -123,7 +129,7 @@ export class ConnectAgent {
         try{this.persist();}catch{this.claudeCredential=old;this.state=previous;this.appliedGeneration=oldApplied;throw new Error('store_failed');}
         this.state.connection={id,provider:'claude',state:'stored',expiresAt:Date.now()};
       }catch{if(this.state.connection)this.state.connection={id,provider:'claude',state:'failed',error:'credential_capture_failed',expiresAt:Date.now()};}
-      finally{captured=null;captureState.buf='';captureState.dispOut='';captureState.dispTail='';this.loginChild=null;this.state.busy=null;rmSync(loginHome,{recursive:true,force:true});}
+      finally{captured=null;captureState.buf='';captureState.dispOut='';captureState.dispTail='';this.loginChild=null;this.state.busy=null;this.state.activity=null;rmSync(loginHome,{recursive:true,force:true});}
     });
     this.exchangeDeadline=()=>{exchangeTimer=setTimeout(()=>{if(this.state.connection?.id===id && this.state.connection.state==='exchanging'){this.state.connection.state='failed';this.state.connection.error='exchange_timeout';killProcessGroup(child.pid);}},45_000);};
     return this.snapshot();
@@ -133,7 +139,10 @@ export class ConnectAgent {
     const c=this.state.connection;
     if(!c || c.id!==id || c.provider!=='claude' || c.state!=='awaiting_approval' || !c.inputRequired || !this.loginChild?.stdin)throw new Error('Claude 인증 입력 대기 상태가 아닙니다.');
     if(typeof code!=='string' || !/^[A-Za-z0-9_#.-]{1,2048}$/.test(code))throw new Error('인증 코드 형식을 확인해주세요.');
-    this.loginChild.stdin.write(code+'\r');c.inputRequired=false;c.state='exchanging';this.exchangeDeadline?.();
+    // Ink treats a long code plus Enter in one chunk as a paste. Submit a separate key event.
+    this.loginChild.stdin.write(code);
+    this.pendingEnter=setTimeout(()=>{this.pendingEnter=null;if(this.state.connection?.id===id&&this.state.connection.state==='exchanging'&&this.loginChild?.stdin?.writable)this.loginChild.stdin.write('\r');},250);
+    c.inputRequired=false;c.state='exchanging';this.startActivity('oauth_exchange',45_000);this.exchangeDeadline?.();
     return this.snapshot();
   }
   cancel(id: string) {
@@ -156,9 +165,20 @@ export class ConnectAgent {
     const model=selected??{model:provider==='claude'?'sonnet':'gpt-5.3-codex-spark',effort:'high' as const};
     this.state.busy='account_check';
     void (async()=>{
-      try{await classifyCategories(SAMPLE,this.routeRun,[{...model,timeoutMs:35_000}],(model,result)=>this.checkedAccount(model,result));}
+      try{
+        if(provider==='claude') {
+          this.startActivity('model',35_000,model.model);
+          const response=await (this.claudeRun??runClaude(this.claudeCredential!,'text'))(['-m',model.model],'hi~',35_000);
+          const ok=response.kind==='exit'&&response.code===0&&Boolean(response.stdout.trim());
+          const result=ok?'success':failureReason(response);
+          this.checkedAccount(model.model,result);
+          // Only the fixed greeting's successful reply is exposed, never raw CLI diagnostics or credentials.
+          const reply=ok&&response.kind==='exit'?response.stdout.trim().slice(0,2000).replace(/sk-ant-[A-Za-z0-9_-]+/g,'[REDACTED]'):undefined;
+          this.state.accounts!.claude!.probe={prompt:'hi~',reply,result,model:model.model,checkedAt:new Date().toISOString()};
+        } else await classifyCategories(SAMPLE,this.routeRun,[{...model,timeoutMs:35_000}],(model,result)=>this.checkedAccount(model,result));
+      }
       catch{this.checkedAccount(model.model,'error');}
-      finally{try{this.captureRefresh();}catch{this.checkedAccount(model.model,'credential_store_failed');}this.state.busy=null;}
+      finally{try{this.captureRefresh();}catch{this.checkedAccount(model.model,'credential_store_failed');}this.state.busy=null;this.state.activity=null;}
     })();
     return this.snapshot();
   }
@@ -175,7 +195,7 @@ export class ConnectAgent {
         }
         this.state.verification!.state=successes > 0 ? 'verified' : 'failed';
       } catch { this.state.verification!.state='failed'; }
-      finally { try {this.captureRefresh();}catch{this.state.verification!.state='failed';}this.state.busy=null; }
+      finally { try {this.captureRefresh();}catch{this.state.verification!.state='failed';}this.state.busy=null;this.state.activity=null; }
     })();
     return this.snapshot();
   }
@@ -198,7 +218,7 @@ export class ConnectAgent {
       });
       this.state.lastUsedVersion=this.state.configVersion;
       return { categories: result, configVersion:this.state.configVersion, generation:this.state.generation };
-    } finally { try {this.captureRefresh();}finally{this.state.busy=null;} }
+    } finally { try {this.captureRefresh();}finally{this.state.busy=null;this.state.activity=null;} }
   }
   close() {this.stopLogin();rmSync(this.home,{recursive:true,force:true});}
 }

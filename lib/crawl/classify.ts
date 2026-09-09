@@ -207,7 +207,7 @@ function promptFor(inputs: ClassifyInput[]): string {
   return `${SYSTEM}\n\n<untrusted_products>\n${serialized}\n</untrusted_products>`;
 }
 
-function failureReason(result: CliResult): string {
+export function failureReason(result: CliResult): string {
   if (result.kind !== "exit") return result.kind === "missing" ? "no_cli" : result.kind;
   const message = `${result.stdout}\n${result.stderr}`;
   if (/429|rate.?limit|quota/i.test(message)) return "rate_limit";

@@ -52,7 +52,7 @@ describe('Claude fallback through the Deppy-aibox provider',()=>{
  });
  it('captures Claude OAuth through aibox, persists it and drains the PTY process',async()=>{
   const dir=directory(),script=join(dir,'script');
-  writeFileSync(script,'#!/usr/bin/env node\nconsole.log("https://claude.ai/oauth/authorize?client_id=test&state=test");process.stdin.on("data",data=>{if(!data.includes(13))return;console.log("sk-ant-oat01-"+"A".repeat(64)+"\\nToken ready");});setInterval(()=>{},1000);\n',{mode:0o700});
+  writeFileSync(script,'#!/usr/bin/env node\nconsole.log("https://claude.ai/oauth/authorize?client_id=test&state=test");process.stdin.on("data",data=>{if(data.length!==1||data[0]!==13)return;console.log("sk-ant-oat01-"+"A".repeat(64)+"\\nToken ready");});setInterval(()=>{},1000);\n',{mode:0o700});
   process.env.PATH=dir+':'+original.path;
   const {agent:a,dir:vault}=create(async()=>success,async()=>success);
   a.connect('claude');
@@ -89,6 +89,31 @@ describe('Claude fallback through the Deppy-aibox provider',()=>{
   for(let i=0;i<100&&a.snapshot().busy;i++)await new Promise(r=>setTimeout(r,10));
   expect(a.snapshot().busy).toBe(null);expect(a.snapshot().connection?.error).toBe('oauth_rejected');expect(a.snapshot().connection?.state).toBe('failed');
   expect(a.snapshot().generation).toBe(2);expect(a.snapshot().connected).toBe(true);expect(a.snapshot().claudeConnected).toBe(true);
+ });
+
+ it('captures the real setup-token success layout with blank lines',()=>{
+  const state=createClaudeCaptureState();
+  const output='Long-lived authentication token created successfully!\r\n\r\nYour OAuth token (valid for 1 year):\r\n\r\n'+token+'\r\n\r\nStore this token securely. You won\'t be able to see it again.\r\n';
+  expect(handleClaudeOutput(Buffer.from(output),state).credential?.value).toBe(token);
+ });
+
+ it('does not append the setup-token footer to a wrapped token',()=>{
+  expect(captureClaudeToken(token+'\nStore\nthis token securely.\n',false)).toBe(token);
+  const state=createClaudeCaptureState();
+  expect(handleClaudeOutput(Buffer.from(token+'\nStore'),state).credential).toBeUndefined();
+  expect(handleClaudeOutput(Buffer.from(' this token securely.\n'),state).credential?.value).toBe(token);
+ });
+ it('probes Claude with hi~ and retains the actual reply separately from classification',async()=>{
+  let prompt='';const {agent:a}=create(async()=>success,async(_args,stdin)=>{prompt=stdin;return {kind:'exit',code:0,stdout:'Hi! How can I help?',stderr:''};});
+  a.probe('claude');for(let i=0;i<100&&a.snapshot().busy;i++)await new Promise(r=>setTimeout(r,5));
+  expect(prompt).toBe('hi~');expect(a.snapshot().accounts?.claude?.result).toBe('success');
+  expect(a.snapshot().accounts?.claude?.probe).toMatchObject({prompt:'hi~',reply:'Hi! How can I help?',result:'success'});
+  expect(a.snapshot().verification).toBe(null);
+ });
+ it('extracts a plain greeting reply without the category schema',async()=>{
+  const dir=directory(),cli=join(dir,'claude');
+  writeFileSync(cli,'#!/usr/bin/env node\nprocess.stdin.resume();process.stdin.on("end",()=>{if(process.argv.includes("--json-schema"))process.exit(2);console.log(JSON.stringify({is_error:false,result:"Hi there!"}));});\n',{mode:0o700});process.env.CLAUDE_CLI=cli;
+  expect(await runClaude(token,'text')(['-m','sonnet'],'hi~',3000)).toEqual({kind:'exit',code:0,stdout:'Hi there!',stderr:''});
  });
 
 });

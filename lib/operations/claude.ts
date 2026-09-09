@@ -18,12 +18,12 @@ export function isolatedClaudeEnv(home: string): NodeJS.ProcessEnv {
     CLAUDE_CONFIG_DIR: join(home, 'claude'), XDG_CONFIG_HOME: join(home, '.config'),
     CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1', CLAUDE_CODE_MAX_OUTPUT_TOKENS: '4000' };
 }
-export const runClaude = (token: string): CliRun => async (codexArgs, stdin, timeoutMs) => {
+export const runClaude = (token: string, output: 'category' | 'text' = 'category'): CliRun => async (codexArgs, stdin, timeoutMs) => {
   const home = mkdtempSync(join(tmpdir(), 'nomorevibe-claude-run-'));
   try {
     return await new Promise<CliResult>(resolve => {
       const model = codexArgs[codexArgs.indexOf('-m') + 1];
-      const args = ['-p', '--output-format', 'json', '--json-schema', JSON.stringify(OUTPUT_SCHEMA),
+      const args = ['-p', '--output-format', 'json', ...(output === 'category' ? ['--json-schema', JSON.stringify(OUTPUT_SCHEMA)] : []),
         '--model', model, '--effort', 'high', '--tools', '', '--max-turns', '1', '--no-session-persistence',
         '--safe-mode', '--disable-slash-commands', '--strict-mcp-config', '--mcp-config', '{"mcpServers":{}}', '--no-chrome'];
       const child = spawn(process.env.CLAUDE_CLI ?? 'claude', args, { cwd: home,
@@ -45,6 +45,7 @@ export const runClaude = (token: string): CliRun => async (codexArgs, stdin, tim
         try {
           const envelope = JSON.parse(stdout);
           if (envelope.is_error) code = 1;
+          else if (output === 'text') stdout = typeof envelope.result === 'string' ? envelope.result.trim() : '';
           else if (envelope.structured_output) stdout = JSON.stringify(envelope.structured_output);
           else stdout = ''; // Only structured output is accepted.
         } catch { stdout = ''; }

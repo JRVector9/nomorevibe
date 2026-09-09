@@ -1,5 +1,98 @@
 # Codex handoff
 
+## Claude stored-token corruption repaired; live greeting and classification verified — 2026-09-09 13:49 KST
+
+- Objective: investigate Claude authentication failure despite credential storage; show an actual hi~ reply.
+- Root cause proven: the saved token was 113 characters and ended with the literal footer word `Store`.
+  The provider stitched this isolated footer word onto the token as if it were a wrapped token segment.
+  Actual CLI returned HTTP 401 `OAuth access token is invalid` both with and without --safe-mode, so safety
+  isolation was not the cause and remains enabled. Removing only that diagnosed suffix yielded a real Sonnet
+  greeting and structured product classification. Previous blank-line fix alone was insufficient.
+- Completed: parser excludes the Store footer and waits for incomplete footer lines. Claude adapter supports
+  plain text output for a fixed hi~ probe; default category output remains schema-bound. Probe records contain
+  timestamp/model/prompt/reply/result separately from classification. UI displays sent hi~ and actual reply;
+  auth errors read `인증 실패 · 재연결 필요`. No raw CLI errors or tokens exposed; reply bounded to 2,000 chars.
+- Modified files this phase: `lib/vendor/deppy-aibox/{claude.ts,README.md}`, `lib/operations/{claude,agent,contracts}.ts`,
+  `lib/crawl/classify.ts` (export existing failure classifier), `app/admin/status/{AiConnection.tsx,operations.css}`,
+  `tests/operations-claude.test.ts`, operations runbook and this handoff. Prior countdown changes still uncommitted.
+- Data repair: while connect-agent idle, stopped it, read the encrypted vault via a temporary worker container,
+  required exact diagnosed 113-char/Store shape, verified corrected candidate using a real hi~ call, backed up
+  encrypted original to `vault.enc.before-footer-repair-20260909`, then atomically stored corrected credential.
+  No general-purpose token trimming was added. Temporary env file was mode0600 and removed. Helpers:
+  `/tmp/nomorevibe-repair-claude.py` and `/tmp/claude-repair-footer.cjs` (one-time; do not rerun after repair).
+- Local deployment: new worker/runner images use existing operations-v2-20260909 tags; only app/connect-agent
+  recreated. Both healthy; five independent workers healthy. Existing configVersion=2, generation=2,
+  appliedGeneration=2, configReady=true preserved. Primary Spark xhigh, fallback Sonnet high.
+- Verification actually executed: three regressions failed before implementation, then 2 files/24 tests PASS;
+  full suite 89 files/663 tests PASS (`/tmp/claude-hi-full.log`), TypeScript/targeted ESLint/diff check PASS;
+  Docker worker and runner builds PASS. CUA at localhost3200: clicked Claude connection check, saw real
+  `Hi! What are you working on?`; clicked selected-model test, saw Spark AND Sonnet `정상 응답 확인`.
+  DB observation confirms both connected=true, busy=null, configReady=true and both test results success.
+- Failed approaches: toggling --safe-mode produced the same401 and was diagnostic only. Fixture token capture
+  from previous phase omitted the isolated Store footer case. No further user OAuth approval is needed now.
+- Remaining: no requested implementation outstanding. User can reload localhost3200/admin/status -> AI 연결.
+  No new commit/push this phase. Preserve unrelated ProductHero/product-detail test edits and design artifacts.
+
+Exact next commands:
+
+```sh
+cd /Users/jr/Desktop/projects/nomorevibe
+git status --short
+npx vitest run tests/operations-claude.test.ts tests/operations-countdown.test.ts tests/operations-agent.test.ts
+docker exec nomorevibe-db-1 psql -U nomorevibe -d nomorevibe -Atc "select value->>'busy',value->>'claudeConnected',value->>'configReady',value->'verification'->'results' from operations_observations where key='connect-agent'"
+```
+
+Do not rerun token-repair helpers: repaired token intentionally no longer matches the corruption guard.
+
+
+## AI countdown and Claude setup-token compatibility — 2026-09-09 13:38 KST
+
+- Objective: display an actual 35-second model countdown and Claude connection countdown; investigate repeated
+  Claude connection failures against `/Users/jr/Desktop/projects/Deppy-aibox` and fix the integration.
+- Completed: added server activity IDs/deadlines/current time and a client countdown (model 35s, login 600s,
+  code exchange 45s). Countdown survives dialog close/reopen and polling; terminal state clears activity.
+  Claude code and Enter are now separate stdin writes, 250ms apart, with cancellation cleanup. Token capture
+  now accepts completed blank lines in the real setup-token success layout.
+- Root cause evidence: aibox HEAD 814144a2d37cb60359486219393f93f32c7267fc pins Claude 2.1.186; our image uses
+  2.1.263. Original combined long `code#state` + CR stalled for 55 seconds. A separate CR immediately yielded
+  HTTP 400. With the corrected ConnectAgent, an isolated real CLI run yielded `oauth_rejected` in 713ms and
+  drained the busy lock. Installed CLI source confirms a blank line after the token (Ink gap:1); old parser
+  failed to capture that layout while the process remained open. No real OAuth secrets were used in diagnostics.
+- Modified files: `lib/operations/{agent,contracts,countdown}.ts`, `app/admin/status/{AiConnection,Countdown}.tsx`,
+  `app/admin/status/operations.css`, `lib/vendor/deppy-aibox/{claude.ts,README.md}`,
+  `tests/operations-{claude,countdown}.test.ts`, `docs/operations/operations-center-runbook.md`, this handoff.
+- Actual checks: two new regressions failed before fixes; focused 3 files/23 tests PASS; full Vitest 89 files/
+  660 tests PASS (`/tmp/claude-countdown-full-tests.log`); TypeScript, targeted ESLint, git diff --check PASS.
+  Docker worker and runner builds PASS. Isolated real CLI check `/tmp/claude-agent-submit-check.cjs` PASS.
+  CUA at localhost:3200/admin/status showed 35 -> 29 seconds then real Codex Spark success; Claude showed
+  600 -> 595 -> 588 seconds across dialog close/reopen. The diagnostic Claude session was cancelled.
+- Local deployment: rebuilt `nomorevibe-{web,worker}:operations-v2-20260909`, recreated app and connect-agent
+  only with `/tmp/nomorevibe-operations-deploy.py connect-agent app`. Both healthy; all five worker roles
+  healthy. Existing encrypted vault and applied config version 1 preserved; configReady=true, Codex connected
+  and probe success, Claude not connected. No production deployment or push performed.
+- Failed approaches: testing a short dummy code without #state only exercised CLI local validation and missed
+  real exchange; combined long input was the actual failure. Direct dummy token endpoint POST returned 400
+  in 373ms, so no evidence for changing proxy/certificate handling. Early Python UI edit had syntax error;
+  corrected before tests/build. CUA binding was absent after compaction; recovered existing tab 1/browser 1.
+- Remaining: user must approve a fresh Claude OAuth session to verify real account storage and actual Sonnet
+  response. Do not claim authenticated Claude success from a fake-code exchange or fixture-token tests.
+  Current task uncommitted. Prior commit 605203f contains the operations center. Preserve unrelated existing
+  ProductHero.tsx / product-detail-components.test.tsx edits and untracked nomorevibe-final artifacts.
+
+Exact next commands:
+
+```sh
+cd /Users/jr/Desktop/projects/nomorevibe
+git status --short
+npx vitest run tests/operations-claude.test.ts tests/operations-countdown.test.ts tests/operations-agent.test.ts
+docker ps --filter name=nomorevibe --format '{{.Names}} {{.Status}}'
+docker exec nomorevibe-db-1 psql -U nomorevibe -d nomorevibe -Atc "select value->>'busy',value->>'connected',value->>'claudeConnected',value->>'configVersion',value->>'configReady',value->'connection'->>'state' from operations_observations where key='connect-agent'"
+```
+
+Use the admin UI at http://localhost:3200/admin/status for fresh Claude approval, then Claude connection check,
+selected model test and settings apply. Never print credential contents, real authorization codes or vault keys.
+
+
 ## GitHub owner identity and detail-sidebar evidence — 2026-09-08 22:08 KST
 
 - Objective: replace the anonymous creator label on crawler-listed product cards with the public GitHub
