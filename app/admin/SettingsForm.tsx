@@ -76,8 +76,14 @@ export function SettingsForm({ settings }: { settings: CrawlSettings }) {
           </p>
           <input type="hidden" name="queryCount" value={queryRows.length} />
           <div className="mt-3 flex flex-col gap-2">
+            {/*
+              키를 순번으로 잡으면 저장 뒤 빈 행의 DOM 노드가 새 행으로 재사용되고,
+              defaultValue는 다시 적용되지 않아 낡은 값이 그대로 남는다. 다음 저장이 그것을
+              제출해 방금 고른 검색 종류가 조용히 되돌아간다 (실제로 topic 신호가 커밋 검색으로
+              바뀌었다). 행의 내용을 키에 넣어 값이 바뀌면 다시 그리게 한다.
+            */}
             {queryRows.map((q, i) => (
-              <div key={i} className="grid grid-cols-1 gap-2 rounded-lg border border-line p-3 sm:grid-cols-[1fr_auto_1.6fr_auto_auto_auto]">
+              <div key={`${i}:${q.label}:${q.query}:${q.kind}`} className="grid grid-cols-1 gap-2 rounded-lg border border-line p-3 sm:grid-cols-[1fr_auto_1.6fr_auto_auto_auto]">
                 <input name={`query.${i}.label`} defaultValue={q.label} className={field} placeholder="이름" />
                 <select
                   name={`query.${i}.kind`}
