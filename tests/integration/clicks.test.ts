@@ -625,7 +625,8 @@ describe("굴린 집계를 읽는다", () => {
       { slug: "quiet", day: "2026-08-11", clicks: 2 },
     ]);
 
-    expect(await topClickedSince(30)).toEqual([
+    // 창의 끝을 못박는다 — 실제 오늘을 쓰면 하드코딩한 날짜가 30일 밖으로 밀려나 언젠가 깨진다
+    expect(await topClickedSince(30, 10, new Date("2026-08-12T00:00:00Z"))).toEqual([
       { slug: "loud", clicks: 8 },
       { slug: "quiet", clicks: 2 },
     ]);
