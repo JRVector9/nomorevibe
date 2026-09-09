@@ -33,10 +33,32 @@ export type PageFacts = {
   title?: string | null;
 };
 
+/**
+ * 판정이 지나온 규칙 하나.
+ *
+ * 심사 화면이 "어디까지 통과했고 어디서 멈췄는지"를 그대로 보여주기 위한 것이다.
+ * 화면이 규칙을 따로 구현하면 반드시 어긋나므로, 판정하면서 여기에 남긴다.
+ */
+export type RuleStep = { rule: string; detail: string; passed: boolean };
+
+/**
+ * 규칙으로 가르지 못한 이유. reason은 전부 "ambiguous"로 뭉뚱그려지지만
+ * 사람이 할 판단은 갈래마다 다르다 — 묶어서 처리하려면 갈래를 알아야 한다.
+ */
+export type AmbiguityCause =
+  | "page_status_unknown"
+  | "push_time_unknown"
+  | "host_excluded_subpath"
+  | "agent_evidence";
+
 export type Verdict = {
   state: "approved" | "rejected" | "needs_review";
   reason: DecisionReason;
   signals: Record<string, unknown>;
+  /** 지나온 규칙. 마지막 항목이 멈춘 지점이다 */
+  trace: RuleStep[];
+  /** needs_review 일 때만 채워진다 */
+  cause?: AmbiguityCause;
 };
 
 /**
@@ -88,6 +110,11 @@ export function isDocumentation(url: string): boolean {
   }
 }
 
+/** 표시용 호스트. 파싱 실패는 위에서 이미 걸러진다 */
+function hostOf(url: string): string {
+  try { return new URL(url).hostname.replace(/^www\./, ""); } catch { return url; }
+}
+
 function daysSince(at: Date, now: Date): number {
   return (now.getTime() - at.getTime()) / 86_400_000;
 }
@@ -118,12 +145,27 @@ export function judge(
     pageTitle: page.title ?? null,
   };
 
-  const reject = (reason: DecisionReason): Verdict => ({ state: "rejected", reason, signals });
+  const trace: RuleStep[] = [];
+  /** 통과한 규칙 — 측정값과 기준을 함께 남긴다 */
+  const pass = (rule: string, detail: string) => { trace.push({ rule, detail, passed: true }); };
+  const reject = (reason: DecisionReason, rule: string, detail: string): Verdict => {
+    trace.push({ rule, detail, passed: false });
+    return { state: "rejected", reason, signals, trace };
+  };
+  const hold = (reason: DecisionReason, cause: AmbiguityCause, rule: string, detail: string): Verdict => {
+    trace.push({ rule, detail, passed: false });
+    return { state: "needs_review", reason, signals, trace, cause };
+  };
 
   // 배포물이 없으면 제품이 아니다 — 가장 값싼 거르기
-  if (!page.productUrl) return reject("no_homepage");
-  if (isBlockedHost(page.productUrl, rules.blockedHomepageDomains)) return reject("not_a_product");
-  if (isDocumentation(page.productUrl)) return reject("not_a_product");
+  if (!page.productUrl) return reject("no_homepage", "배포 URL 있음", "homepage 미설정");
+  pass("배포 URL 있음", page.productUrl);
+  if (isBlockedHost(page.productUrl, rules.blockedHomepageDomains)) {
+    return reject("not_a_product", "차단 도메인 아님", `${hostOf(page.productUrl)} 는 차단 목록에 있음`);
+  }
+  pass("차단 도메인 아님", `${hostOf(page.productUrl)} 미등록`);
+  if (isDocumentation(page.productUrl)) return reject("not_a_product", "문서 URL 아님", "docs 라벨 또는 /docs 경로");
+  pass("문서 URL 아님", "docs 라벨·경로 아님");
 
   /**
    * 페이지가 스스로 밝히는 문서 생성기.
@@ -132,8 +174,9 @@ export function judge(
    * 92%가 그 모양이었다. 페이지가 mkdocs·pkgdown 같은 것으로 만들어졌다면 읽을거리다.
    */
   if (page.generator && rules.docsGenerators.includes(page.generator.toLowerCase())) {
-    return reject("not_a_product");
+    return reject("not_a_product", "문서 생성기 아님", `${page.generator} 로 만들어짐`);
   }
+  pass("문서 생성기 아님", page.generator ? `${page.generator} (문서 생성기 아님)` : "generator 표기 없음");
 
   /**
    * 프레임워크가 만들어 준 제목을 그대로 배포한 것.
@@ -144,11 +187,15 @@ export function judge(
    */
   const pageTitle = page.title?.trim().toLowerCase() ?? "";
   if (pageTitle && rules.placeholderTitles.some((t) => t.toLowerCase() === pageTitle)) {
-    return reject("not_a_product");
+    return reject("not_a_product", "스캐폴드 제목 아님", `제목이 “${page.title}” — 프레임워크 기본값`);
   }
+  pass("스캐폴드 제목 아님", page.title ? `“${page.title}”` : "제목 없음");
 
-  if (repo.isFork && rules.excludeForks) return reject("fork");
-  if (repo.archived) return reject("personal_site"); // 보관된 레포는 살아있는 제품이 아니다
+  if (repo.isFork && rules.excludeForks) return reject("fork", "포크 아님", "포크 저장소");
+  pass("포크 아님", rules.excludeForks ? "isFork=false" : "포크 제외 꺼짐");
+  // 보관된 레포는 살아있는 제품이 아니다
+  if (repo.archived) return reject("personal_site", "보관됨 아님", "archived=true");
+  pass("보관됨 아님", "archived=false");
 
   /**
    * 레포 이름과 배포 호스트를 패턴에 건다. 단 호스트는 배포물이 사이트 루트일 때만 본다.
@@ -172,13 +219,16 @@ export function judge(
     /* 위에서 이미 걸러졌다 */
   }
   const hostIsWholeSite = productPath === "";
-  if (
-    rules.excludedRepoPatterns.some(
-      (p) => matchesPattern(repoName, p) || (hostIsWholeSite && matchesPattern(productHost, p)),
-    )
-  ) {
-    return reject("personal_site");
+  const nameOrRootPattern = rules.excludedRepoPatterns.find(
+    (p) => matchesPattern(repoName, p) || (hostIsWholeSite && matchesPattern(productHost, p)),
+  );
+  if (nameOrRootPattern) {
+    return reject("personal_site", "제외 패턴 아님",
+      matchesPattern(repoName, nameOrRootPattern)
+        ? `레포 이름 ${repoName} 이 ${nameOrRootPattern} 에 걸림`
+        : `루트 배포 호스트 ${productHost} 가 ${nameOrRootPattern} 에 걸림`);
   }
+  pass("제외 패턴 아님", repoName);
 
   /**
    * 설명에만 단서가 있는 개인 사이트.
@@ -187,31 +237,47 @@ export function judge(
    * 밝히는 경우가 있다. 그것까지 통과시키면 사람이 심사에서 걸러야 한다.
    */
   const description = repo.description.toLowerCase();
-  if (description && rules.personalSiteKeywords.some((k) => description.includes(k.toLowerCase()))) {
-    return reject("personal_site");
-  }
+  const keyword = description
+    ? rules.personalSiteKeywords.find((k) => description.includes(k.toLowerCase())) : undefined;
+  if (keyword) return reject("personal_site", "개인 사이트 키워드 없음", `설명에 “${keyword}”`);
+  pass("개인 사이트 키워드 없음", `${rules.personalSiteKeywords.length}개 중 0개 일치`);
 
   // 스타 상한이 대형 오픈소스를 거른다. 하한이 아니라 상한인 것이 요지다 —
   // 갓 배포한 제품은 정당하게 스타가 0개다.
-  if (repo.stars > rules.maxStars) return reject("large_oss");
-  if (repo.stars < rules.minStars) return reject("large_oss");
+  const n = (value: number) => value.toLocaleString("en-US");
+  if (repo.stars > rules.maxStars) {
+    return reject("large_oss", "스타 상한 이하", `${n(repo.stars)} > ${n(rules.maxStars)}`);
+  }
+  if (repo.stars < rules.minStars) {
+    return reject("large_oss", "스타 하한 이상", `${n(repo.stars)} < ${n(rules.minStars)}`);
+  }
+  pass("스타 상한 이하", `${n(repo.stars)} ≤ ${n(rules.maxStars)}`);
+  if (rules.excludeOrganizations && repo.ownerType === "Organization") {
+    return reject("large_oss", "조직 계정 아님", "조직 계정 제외가 켜져 있음");
+  }
+  pass("조직 계정 제외", rules.excludeOrganizations ? `${repo.ownerType}` : `꺼짐 (${repo.ownerType})`);
 
-  if (rules.excludeOrganizations && repo.ownerType === "Organization") return reject("large_oss");
-
+  const pushAge = repo.pushedAt ? Math.round(daysSince(repo.pushedAt, now)) : null;
   if (repo.pushedAt && daysSince(repo.pushedAt, now) > rules.maxPushAgeDays) {
-    return reject("unreachable"); // 죽은 프로젝트
+    // 죽은 프로젝트
+    return reject("unreachable", "방치 기준 이내", `마지막 푸시 ${pushAge}일 전 > ${rules.maxPushAgeDays}일`);
   }
 
   // 배포 URL이 살아있는지 확인 못 했으면 판단을 미룬다 (fetch가 끝나면 다시 온다)
   if (page.status === null) {
-    return { state: "needs_review", reason: "ambiguous", signals };
+    return hold("ambiguous", "page_status_unknown", "배포 URL 응답 확인",
+      "아직 열어보지 못했습니다 (pageStatus 없음)");
   }
-  if (page.status < 200 || page.status >= 400) return reject("unreachable");
+  if (page.status < 200 || page.status >= 400) {
+    return reject("unreachable", "배포 URL 응답 정상", page.status === 0 ? "접속 실패" : `HTTP ${page.status}`);
+  }
+  pass("배포 URL 응답 정상", `HTTP ${page.status}`);
 
   // 푸시 시각을 모르면 살아있는지 확신할 수 없다
   if (!repo.pushedAt && rules.holdAmbiguous) {
-    return { state: "needs_review", reason: "ambiguous", signals };
+    return hold("ambiguous", "push_time_unknown", "마지막 푸시 시각 확인", "레포 메타에 pushed_at 없음");
   }
+  pass("방치 기준 이내", pushAge === null ? "푸시 시각 미상 (보류 꺼짐)" : `${pushAge}일 ≤ ${rules.maxPushAgeDays}일`);
 
   /**
    * 호스트는 제외 패턴에 걸리는데 루트 배포가 아닌 것 — 규칙으로 가를 수 없다.
@@ -220,11 +286,15 @@ export function judge(
    * 소개 페이지가 섞여 있었다. 우리가 모으는 것은 "배포한 서비스"이므로 후자를 자동으로
    * 통과시키면 안 되고, 전자를 자동으로 버려서도 안 된다. 사람이 가른다.
    */
-  if (!hostIsWholeSite && rules.excludedRepoPatterns.some((p) => matchesPattern(productHost, p))) {
+  const subPathPattern = hostIsWholeSite
+    ? undefined : rules.excludedRepoPatterns.find((p) => matchesPattern(productHost, p));
+  if (subPathPattern) {
+    const detail = `제외 패턴 ${subPathPattern} 이 호스트 ${productHost} 에 걸리지만, 배포물이 루트가 아니라 ${productPath} 경로입니다`;
     return rules.holdAmbiguous
-      ? { state: "needs_review", reason: "ambiguous", signals }
-      : reject("personal_site");
+      ? hold("ambiguous", "host_excluded_subpath", "호스트 제외 패턴", detail)
+      : reject("personal_site", "호스트 제외 패턴", detail);
   }
+  pass("호스트 제외 패턴 아님", hostIsWholeSite ? `${productHost} (루트 배포)` : `${productHost}${productPath}`);
 
   if (settings.agentEvidence.enforceEligibility) {
     const summary = summarizeAgentEvidence(agentEvidence ?? {
@@ -232,9 +302,32 @@ export function judge(
     });
     signals.agentEvidence = summary;
     signals.agentPolicyVersion = settings.agentEvidence.policyVersion;
-    if (!summary.eligible) return { state: "needs_review", reason: summary.reason, signals };
+    if (!summary.eligible) {
+      return hold(summary.reason, "agent_evidence", "개발 AI 근거", `근거가 기준에 못 미침 (${summary.reason})`);
+    }
+    pass("개발 AI 근거", "기준 충족");
   }
-  return { state: "approved", reason: "passed", signals };
+  return { state: "approved", reason: "passed", signals, trace };
+}
+
+/**
+ * 수집한 원본에서 페이지 사실을 추린다.
+ *
+ * 판정 잡과 심사 화면이 같은 입력을 써야 한다 — 화면이 따로 만들면 근거가 실제 판정과
+ * 어긋난다.
+ */
+export function pageFactsFromDocument(document: {
+  productUrl: string | null;
+  pageStatus: number | null;
+  pageMeta: unknown;
+}): PageFacts {
+  const meta = (document.pageMeta ?? {}) as { generator?: unknown; title?: unknown };
+  return {
+    productUrl: document.productUrl,
+    status: document.pageStatus,
+    generator: typeof meta.generator === "string" ? meta.generator : null,
+    title: typeof meta.title === "string" ? meta.title : null,
+  };
 }
 
 /** GitHub 레포 메타 원본에서 판정에 쓸 사실만 추린다 */

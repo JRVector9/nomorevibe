@@ -3,7 +3,7 @@ import type { CrawlDocument } from "@/lib/db/schema";
 import { findByUrl } from "@/lib/domain/products/repository";
 import * as crawl from "@/lib/crawl/repository";
 import { getSettings } from "@/lib/crawl/settings";
-import { judge, factsFromRepoMeta, type Verdict } from "@/lib/crawl/rules";
+import { judge, factsFromRepoMeta, pageFactsFromDocument, type Verdict } from "@/lib/crawl/rules";
 import type { CrawlSettings } from "@/lib/crawl/settings-schema";
 import { loadAgentJudgeInput } from "@/lib/crawl/agent-evidence";
 
@@ -66,15 +66,9 @@ export async function judgeCrawlDocuments(ctx: JobContext<null>): Promise<JobOut
 async function judgeDocument(document: CrawlDocument, settings: CrawlSettings): Promise<Verdict> {
   const agentEvidence = settings.agentEvidence.enforceEligibility
     ? await loadAgentJudgeInput(document, settings) : undefined;
-  const pageMeta = (document.pageMeta ?? {}) as { generator?: unknown; title?: unknown };
   const verdict = judge(
     factsFromRepoMeta(document.repo, document.repoMeta),
-    {
-      productUrl: document.productUrl,
-      status: document.pageStatus,
-      generator: typeof pageMeta.generator === "string" ? pageMeta.generator : null,
-      title: typeof pageMeta.title === "string" ? pageMeta.title : null,
-    },
+    pageFactsFromDocument(document),
     settings,
     new Date(),
     agentEvidence,
@@ -86,9 +80,15 @@ async function judgeDocument(document: CrawlDocument, settings: CrawlSettings): 
   if (!existing) return verdict;
 
   // 차단한 URL이 수집기를 통해 되돌아오는 것을 막는다. 차단은 재등록까지 막는 조치다.
+  // 규칙이 아니라 DB가 아는 사실이라 규칙 발자국 뒤에 따로 붙인다.
   return {
     state: "rejected",
     reason: existing.status === "banned" ? "banned" : "already_listed",
     signals: { ...verdict.signals, existingSlug: existing.slug, existingStatus: existing.status },
+    trace: [...verdict.trace, {
+      rule: existing.status === "banned" ? "차단된 URL 아님" : "이미 등록된 URL 아님",
+      detail: `같은 URL이 /p/${existing.slug} 로 ${existing.status === "banned" ? "차단" : "등재"}되어 있음`,
+      passed: false,
+    }],
   };
 }
