@@ -17,6 +17,7 @@ x-runtime: &runtime
 
 x-worker-environment: &worker-environment
   DATABASE_URL: postgres://nomorevibe:nomorevibe@db:5432/nomorevibe
+  DB_POOLER_MODE: direct
   NEXT_PUBLIC_SITE_URL: http://localhost:3200
   LOG_LEVEL: info
   RELEASE_TAG: ${RELEASE_TAG:-local}
@@ -78,17 +79,29 @@ services:
 
   app:
     <<: *runtime
-    build: { context: ., target: runner }
+    build:
+      context: .
+      target: runner
+      args:
+        NEXT_DEPLOYMENT_ID: ${RELEASE_TAG:-local}
+      secrets:
+        - NEXT_SERVER_ACTIONS_ENCRYPTION_KEY
     image: nomorevibe-web:${RELEASE_TAG:-local}
     depends_on:
       db: { condition: service_healthy }
       migrate: { condition: service_completed_successfully }
     environment:
       DATABASE_URL: postgres://nomorevibe:nomorevibe@db:5432/nomorevibe
+      DB_POOLER_MODE: direct
       DB_POOL_MAX: "8"
+      WORKER_ROLE: web
+      SERVICE_INSTANCE_ID: local-web
       CONNECT_AGENT_URL: http://connect-agent:3020
       OPERATIONS_AGENT_SECRET: ${AUTH_SECRET:?AUTH_SECRET is required}
       NEXT_PUBLIC_SITE_URL: http://localhost:3200
+      NEXT_DEPLOYMENT_ID: ${RELEASE_TAG:-local}
+      NEXT_SERVER_ACTIONS_ENCRYPTION_KEY: ${NEXT_SERVER_ACTIONS_ENCRYPTION_KEY:-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=}
+      RELEASE_TAG: ${RELEASE_TAG:-local}
       AUTH_SECRET: ${AUTH_SECRET:?AUTH_SECRET is required (openssl rand -hex 32)}
       VISITOR_HASH_SECRET: ${VISITOR_HASH_SECRET:?VISITOR_HASH_SECRET is required (openssl rand -hex 32)}
       ADMIN_TOKEN: ${ADMIN_TOKEN:-local-deploy-admin}
@@ -108,7 +121,7 @@ services:
     cpus: 2.0
     mem_limit: 1536m
     healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 15s
       timeout: 5s
       retries: 4
@@ -120,6 +133,7 @@ services:
     environment:
       <<: *worker-environment
       WORKER_ROLE: scheduler
+      SERVICE_INSTANCE_ID: local-scheduler
       DB_POOL_MAX: "2"
       WORKER_JOB_TIMEOUT_SECONDS: "120"
     cpus: 0.25
@@ -131,6 +145,7 @@ services:
     environment:
       <<: *worker-environment
       WORKER_ROLE: crawler
+      SERVICE_INSTANCE_ID: local-crawler
       DB_POOL_MAX: "4"
       WORKER_JOB_TIMEOUT_SECONDS: "180"
       GITHUB_TOKEN: ${GITHUB_TOKEN:-}
@@ -142,6 +157,7 @@ services:
     environment:
       <<: *worker-environment
       WORKER_ROLE: reviewer
+      SERVICE_INSTANCE_ID: local-reviewer
       DB_POOL_MAX: "3"
       WORKER_JOB_TIMEOUT_SECONDS: "180"
       CLAUDE_CODE_OAUTH_TOKEN: ${CLAUDE_CODE_OAUTH_TOKEN:-}
@@ -155,6 +171,7 @@ services:
     environment:
       <<: *worker-environment
       WORKER_ROLE: publisher
+      SERVICE_INSTANCE_ID: local-publisher
       DB_POOL_MAX: "3"
       WORKER_JOB_TIMEOUT_SECONDS: "180"
       CONNECT_AGENT_URL: http://connect-agent:3020
@@ -165,10 +182,14 @@ services:
 
   connect-agent:
     <<: *worker
+    image: nomorevibe-connect-agent:${RELEASE_TAG:-local}
+    build: { context: ., target: connect-agent }
     command: ["node", "--import", "tsx", "scripts/connect-agent.ts"]
     environment:
       <<: *worker-environment
       DB_POOL_MAX: "1"
+      WORKER_ROLE: connect-agent
+      SERVICE_INSTANCE_ID: local-connect-agent
       OPERATIONS_AGENT_SECRET: ${AUTH_SECRET:?AUTH_SECRET is required}
       CODEX_VAULT_DIR: /var/lib/nomorevibe-codex
     volumes:
@@ -188,6 +209,7 @@ services:
     environment:
       <<: *worker-environment
       WORKER_ROLE: maintenance
+      SERVICE_INSTANCE_ID: local-maintenance
       DB_POOL_MAX: "3"
       WORKER_JOB_TIMEOUT_SECONDS: "600"
     mem_limit: 1g
@@ -195,3 +217,7 @@ services:
 volumes:
   codex-vault:
   deploy-pgdata:
+
+secrets:
+  NEXT_SERVER_ACTIONS_ENCRYPTION_KEY:
+    environment: NEXT_SERVER_ACTIONS_ENCRYPTION_KEY

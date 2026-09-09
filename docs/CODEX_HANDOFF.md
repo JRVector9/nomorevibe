@@ -1,5 +1,55 @@
 # Codex handoff
 
+## Production multi-instance hardening complete; deployment pending — 2026-09-09 17:47 KST
+
+- Current objective: deploy NoMoreVibe for the first time with two load-balanced web instances, one M3-only
+  scheduler/crawler/reviewer/publisher/maintenance set, one persistent M3 connect-agent, and the existing
+  catalogue copied into the dedicated production PostgreSQL database.
+- Completed work: added explicit PgBouncer transaction-pool mode and per-role connection budgets; separated
+  migration from the runtime pool URL; added DB-backed `/api/health`; added per-instance service heartbeats and
+  release/RSS/freshness visibility; made partially stale replica groups degraded; gave connect-agent its own
+  Docker target and HTTP health check; removed the `AUTH_SECRET` fallback for agent control; configured a stable
+  Next deployment ID and BuildKit-only Server Action key; documented M3/mini placement and cutover/rollback.
+- Modified files: `.env.example`, `Dockerfile`, `compose.yml`, `next.config.ts`, root `instrumentation.ts`,
+  `app/api/health/route.ts`, `app/admin/status/OperationsCenter.tsx`, `lib/db/pool.ts`,
+  `lib/operations/{admin,agent-client,health,instance,observations,web-observer}.ts`,
+  `scripts/{connect-agent,migrate,worker-supervisor}.ts`, `scripts/migration-config.{mjs,d.mts}`,
+  `tests/{db-pool-options,migration-config,next-config,operations-agent-client,operations-health,operations-instance}.test.ts`,
+  `.env.example`, `PENDING.md`, and the production operations/design/plan documents.
+- Key design decisions: both web replicas use one release SHA, Server Action encryption key and session/visitor
+  secrets; only the M3 runs singleton jobs; runtime traffic uses PgBouncer port 6432 while the one-shot migration
+  uses direct PostgreSQL port 5432; Redis is not introduced because the current DB lease/job system already
+  provides atomic claims and measured load does not require another dependency; each process reports a stable
+  `SERVICE_INSTANCE_ID`, so a healthy replica cannot hide a stale one.
+- Tests actually executed: full unit suite 95 files/681 tests PASS; full integration suite 50 files/456 tests
+  PASS before the final review corrections; focused operations-center integration 1 file/6 tests PASS after
+  those corrections; TypeScript/typegen PASS; ESLint PASS with the pre-existing `_ctx` warning in
+  `lib/vendor/deppy-aibox/claude.ts:158`; Next production build PASS; runner, worker and connect-agent Docker
+  targets PASS; Compose config and `git diff --check` PASS. A runner container returned `status=ok` and `db=ok`
+  from `/api/health`. A real connect-agent container reached Docker `healthy`; both smoke observation rows were
+  removed. Thirty-two concurrent query/transaction operations through the production PgBouncer endpoint passed.
+- Review: `codex review --uncommitted` completed. Its migration-URL and stale-replica findings were fixed and
+  covered by regressions. No known code blocker remains for deployment.
+- Failed approaches: the first Next build failed because the worktree's `node_modules` symlink pointed outside
+  the Turbopack filesystem root; an independent `npm ci` fixed it. The first Dockerfile exposed the Server Action
+  key through `ARG`/`ENV`; it was replaced with a required BuildKit secret and rebuilt successfully.
+- Remaining work: commit/push/merge this branch; create Dokploy applications on M3 and mini; generate and store
+  distinct production secrets; stop and drain local singleton consumers; copy data without the Drizzle migration
+  ledger into the already migrated production DB; clear any stale leases; deploy the same release to both web
+  nodes and singleton roles only on M3; attach the public domain/load balancer; verify health, row counts, jobs,
+  AI connectivity and direct/public routes; then update `PENDING.md`, this handoff and the project journal.
+
+Exact next commands:
+
+```sh
+cd /Users/jr/Desktop/projects/nomorevibe-prod-fix
+git diff --check
+git status --short
+git add .env.example Dockerfile PENDING.md app/api/health app/admin/status/OperationsCenter.tsx compose.yml docs/CODEX_HANDOFF.md docs/operations/independent-workers-runbook.md docs/operations/production-multi-instance.env.example docs/superpowers/plans/2026-09-09-production-multi-instance.md instrumentation.ts lib/db/pool.ts lib/operations/admin.ts lib/operations/agent-client.ts lib/operations/health.ts lib/operations/instance.ts lib/operations/observations.ts lib/operations/web-observer.ts next.config.ts scripts/connect-agent.ts scripts/migrate.mjs scripts/migration-config.d.mts scripts/migration-config.mjs scripts/worker-supervisor.ts tests/db-pool-options.test.ts tests/migration-config.test.ts tests/next-config.test.ts tests/operations-agent-client.test.ts tests/operations-health.test.ts tests/operations-instance.test.ts
+git commit -m "fix: harden production multi-instance runtime"
+git push -u origin fix/production-multi-instance
+```
+
 ## Claude stored-token corruption repaired; live greeting and classification verified — 2026-09-09 13:49 KST
 
 - Objective: investigate Claude authentication failure despite credential storage; show an actual hi~ reply.

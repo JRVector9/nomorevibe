@@ -9,10 +9,11 @@
 import postgres from "postgres";
 import { drizzle } from "drizzle-orm/postgres-js";
 import { migrate } from "drizzle-orm/postgres-js/migrator";
+import { migrationDatabaseUrl } from "./migration-config.mjs";
 
-const url = process.env.DATABASE_URL;
+const url = migrationDatabaseUrl();
 if (!url) {
-  console.error("[migrate] DATABASE_URL이 없습니다");
+  console.error("[migrate] MIGRATION_DATABASE_URL 또는 DATABASE_URL이 없습니다");
   process.exit(1);
 }
 
@@ -21,6 +22,10 @@ if (!url) {
 const client = postgres(url, { max: 1 });
 
 try {
+  // The production role has conservative defaults for pooled runtime sessions.
+  // Migrations are a one-shot direct connection and must not inherit that statement limit.
+  await client.unsafe("set statement_timeout = 0");
+  await client.unsafe("set lock_timeout = '10s'");
   await migrate(drizzle(client), { migrationsFolder: "./drizzle" });
   console.log("[migrate] 완료");
 } catch (error) {

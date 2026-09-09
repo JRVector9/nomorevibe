@@ -3,6 +3,7 @@ import { db } from '@/lib/db';
 import { jobs, operationsObservations, operationsAudit, categoryDecisions } from '@/lib/db/schema';
 import { JOB_NAMES } from '@/lib/jobs/catalog';
 import { requestJob } from '@/lib/jobs/control';
+import { serviceInstancesFromObservations } from './instance';
 export async function requestAdminJob(name:string,actor:string) {
   if(name==='heartbeat'||!JOB_NAMES.includes(name))throw new Error('실행 요청할 수 없는 작업입니다.');
   return db.transaction(async tx=>{
@@ -23,5 +24,6 @@ export async function operationsData() {
     db.select().from(operationsAudit).orderBy(desc(operationsAudit.createdAt)).limit(20),
     db.select({count:sql<number>`count(*)::int`}).from(categoryDecisions).where(sql`category is null and exists(select 1 from crawl_candidates c where c.repo=${categoryDecisions.repo} and c.state='approved')`),
   ]);
-  return {fetchedAt:new Date().toISOString(),observations:observations.map(row=>({...row,observedAt:row.observedAt.toISOString()})),dbLatencyMs,audit:audit.map(row=>({...row,createdAt:row.createdAt.toISOString()})),held:held[0].count};
+  const serialized=observations.map(row=>({...row,observedAt:row.observedAt.toISOString()}));
+  return {fetchedAt:new Date().toISOString(),observations:serialized,serviceInstances:serviceInstancesFromObservations(serialized),dbLatencyMs,audit:audit.map(row=>({...row,createdAt:row.createdAt.toISOString()})),held:held[0].count};
 }
