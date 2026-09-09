@@ -80,3 +80,22 @@ it('기준이 바뀌면 저장된 판정과 다르다고 알린다', async () =>
   const { entries } = await listAdminReviewEntries(await getSettings(), { state: 'needs_review' });
   expect(entries[0].verdict).toMatchObject({ state: 'rejected', reason: 'large_oss', matchesStored: false });
 });
+
+it('지금 기준으로는 보류가 아닌 것과 원본이 없어 못 되짚는 것을 가른다', async () => {
+  await held('acme/stale', 'https://stale.test', 200);
+  // 판정 뒤에 기준이 바뀌어 지금은 거부다 — 사람이 볼 필요가 없다
+  await saveSettings({ judge: { maxStars: 0 } }, 'fixture');
+  // 원본이 없어 규칙 자체를 되짚을 수 없는 후보
+  await crawl.recordJudgement({ repo: 'acme/orphan', productUrl: 'https://orphan.test', state: 'needs_review', reason: 'ambiguous', decidedBy: 'auto' });
+
+  const causes = await reviewQueueCauses(await getSettings());
+  expect(causes.counts).toEqual([
+    { cause: 'resolved', count: 1 },
+    { cause: 'unknown', count: 1 },
+  ]);
+  const { entries } = await listAdminReviewEntries(await getSettings(), {
+    state: 'needs_review', ids: causes.ids.get('unknown'),
+  });
+  expect(entries.map((entry) => entry.candidate.repo)).toEqual(['acme/orphan']);
+  expect(entries[0].verdict).toBeNull();
+});

@@ -1,5 +1,6 @@
 import type { AmbiguityCause } from "@/lib/crawl/rules";
 
+
 /**
  * 갈래마다 사람이 할 판단이 다르다.
  *
@@ -7,7 +8,7 @@ import type { AmbiguityCause } from "@/lib/crawl/rules";
  * 여기에 갈래별로 "무엇을 묻는 것인지"와 "어느 쪽이면 어느 결정인지"를 적어 둔다.
  * 같은 갈래는 판단도 같으므로 묶어서 처리할 수 있다.
  */
-export type CauseKey = AmbiguityCause | "unknown";
+export type CauseKey = AmbiguityCause | "resolved" | "unknown";
 
 export const CAUSE_GUIDE: Record<CauseKey, {
   label: string;
@@ -50,6 +51,15 @@ export const CAUSE_GUIDE: Record<CauseKey, {
     hints: [
       { decision: "추가 수집", when: "근거가 더 있을 법하다 — 같은 입력당 2회까지" },
       { decision: "거부", when: "근거를 찾을 수 없다" },
+    ],
+  },
+  resolved: {
+    label: "지금 기준으로는 보류가 아님",
+    summary: "판정한 뒤 시간이 지났거나 기준이 바뀌어, 다시 판정하면 승인이나 거부로 갈립니다.",
+    question: "사람이 볼 필요가 없습니다.",
+    hints: [
+      { decision: "재판정", when: "크롤 설정에서 재판정하면 큐에서 한 번에 빠집니다" },
+      { decision: "직접 결정", when: "지금 처리하고 싶다면 각 항목의 근거에 새 판정이 적혀 있습니다" },
     ],
   },
   unknown: {

@@ -187,9 +187,17 @@ export type AdminReviewVerdict = {
 
 /** 한 번에 갈래를 셀 후보 수. 넘으면 세다 만 것을 화면이 밝힌다 */
 export const REVIEW_QUEUE_SCAN_LIMIT = 500;
+/**
+ * 갈래 버킷.
+ *
+ * 'resolved' 는 지금 기준으로 다시 판정하면 보류가 아닌 것 — 판정한 뒤 시간이 지나
+ * 방치 기준을 넘겼거나 기준을 바꾼 경우다. 사람이 볼 필요가 없으므로 재판정으로 한 번에
+ * 빠진다. 'unknown' 은 원본이 없어 되짚을 수 없는 것이고, 둘은 할 일이 전혀 다르다.
+ */
+export type ReviewQueueBucket = AmbiguityCause | 'resolved' | 'unknown';
 export type ReviewQueueCauses = {
-  counts: { cause: AmbiguityCause | 'unknown'; count: number }[];
-  ids: Map<AmbiguityCause | 'unknown', number[]>;
+  counts: { cause: ReviewQueueBucket; count: number }[];
+  ids: Map<ReviewQueueBucket, number[]>;
   total: number;
   truncated: boolean;
 };
@@ -207,13 +215,13 @@ export async function reviewQueueCauses(settings: CrawlSettings): Promise<Review
   const page = candidates.slice(0, REVIEW_QUEUE_SCAN_LIMIT);
   const documents = page.length
     ? await db.select().from(crawlDocuments).where(inArray(crawlDocuments.repo, page.map(row => row.repo))) : [];
-  const ids = new Map<AmbiguityCause | 'unknown', number[]>();
+  const ids = new Map<ReviewQueueBucket, number[]>();
   for (const candidate of page) {
     const document = documents.find(row => row.repo === candidate.repo);
     const verdict = document
       ? judge(factsFromRepoMeta(candidate.repo, document.repoMeta), pageFactsFromDocument(document), settings)
       : null;
-    const key = verdict?.cause ?? 'unknown';
+    const key: ReviewQueueBucket = !verdict ? 'unknown' : verdict.cause ?? 'resolved';
     ids.set(key, [...(ids.get(key) ?? []), candidate.id]);
   }
   return {
