@@ -11,6 +11,8 @@ import { createReviewInput, MAX_REVIEW_ATTEMPTS, REVIEW_PROMPT_VERSION, REVIEW_R
 import { loadReviewInput } from './agent-review-repository';
 import { DEFAULT_CRAWL_SETTINGS, type CrawlSettings } from './settings-schema';
 import { mergeWithDefaults } from './settings';
+import { judge, factsFromRepoMeta, pageFactsFromDocument, type AmbiguityCause, type RuleStep } from './rules';
+import { loadAgentJudgeInput } from './agent-evidence';
 
 export const MAX_EVIDENCE_REFRESHES = 2;
 export const EVIDENCE_REFRESH_COOLDOWN_MS = 15 * 60_000;
@@ -165,6 +167,61 @@ export async function requeueAfterAdminEvidenceRefresh(repo: string): Promise<bo
   });
 }
 
+/**
+ * 지금 기준으로 다시 판정한 결과.
+ *
+ * 규칙은 순수 함수이고 원본을 보관하므로, 저장된 사유 코드("ambiguous") 대신 어디까지
+ * 통과했고 어디서 왜 멈췄는지를 그대로 재생할 수 있다. 화면이 규칙을 따로 구현하지
+ * 않으므로 규칙을 고치면 근거도 함께 바뀐다.
+ */
+export type AdminReviewVerdict = {
+  trace: RuleStep[];
+  /** 다시 판정하며 잰 사실. 목록 요약도 이걸 써야 근거의 숫자와 어긋나지 않는다 */
+  signals: Record<string, unknown>;
+  cause: AmbiguityCause | null;
+  state: 'approved' | 'rejected' | 'needs_review';
+  reason: string;
+  /** 저장된 판정과 다르면 그 뒤로 기준이 바뀐 것이다 */
+  matchesStored: boolean;
+};
+
+/** 한 번에 갈래를 셀 후보 수. 넘으면 세다 만 것을 화면이 밝힌다 */
+export const REVIEW_QUEUE_SCAN_LIMIT = 500;
+export type ReviewQueueCauses = {
+  counts: { cause: AmbiguityCause | 'unknown'; count: number }[];
+  ids: Map<AmbiguityCause | 'unknown', number[]>;
+  total: number;
+  truncated: boolean;
+};
+
+/**
+ * 보류 후보를 갈래별로 센다.
+ *
+ * 저장된 사유는 전부 "ambiguous"라 목록만 봐서는 무엇을 판단해야 하는지 알 수 없다.
+ * 갈래를 알면 같은 판단을 한 번에 처리할 수 있다.
+ */
+export async function reviewQueueCauses(settings: CrawlSettings): Promise<ReviewQueueCauses> {
+  const candidates = await db.select().from(crawlCandidates)
+    .where(eq(crawlCandidates.state, 'needs_review'))
+    .orderBy(asc(crawlCandidates.id)).limit(REVIEW_QUEUE_SCAN_LIMIT + 1);
+  const page = candidates.slice(0, REVIEW_QUEUE_SCAN_LIMIT);
+  const documents = page.length
+    ? await db.select().from(crawlDocuments).where(inArray(crawlDocuments.repo, page.map(row => row.repo))) : [];
+  const ids = new Map<AmbiguityCause | 'unknown', number[]>();
+  for (const candidate of page) {
+    const document = documents.find(row => row.repo === candidate.repo);
+    const verdict = document
+      ? judge(factsFromRepoMeta(candidate.repo, document.repoMeta), pageFactsFromDocument(document), settings)
+      : null;
+    const key = verdict?.cause ?? 'unknown';
+    ids.set(key, [...(ids.get(key) ?? []), candidate.id]);
+  }
+  return {
+    counts: [...ids].map(([cause, list]) => ({ cause, count: list.length })).sort((a, b) => b.count - a.count),
+    ids, total: page.length, truncated: candidates.length > REVIEW_QUEUE_SCAN_LIMIT,
+  };
+}
+
 export type AdminReviewStatus = 'unreviewed' | 'running' | 'succeeded' | 'failed' | 'exhausted' | 'outdated';
 export function currentReviewStatus(input: ReviewInput | null, attempts: CrawlReviewAttempt[], now = new Date()): AdminReviewStatus {
   if (!input) return 'unreviewed';
@@ -190,16 +247,21 @@ export type AdminReviewEntry = {
   name: string; description: string; relationship: string; scanState: string;
   evidence: { id: string; label: string; url: string }[]; status: AdminReviewStatus; refreshCount: number;
   latest: AdminReviewAttempt | null; review: AdminReviewAttempt | null;
+  verdict: AdminReviewVerdict | null;
 };
 
 /** Bounded batch reads, with keyset pagination so the rest of the review queue remains reachable. */
 export async function listAdminReviewEntries(settings: CrawlSettings, options: {
   state?: 'pending' | 'needs_review' | 'rejected' | 'published'; after?: number; limit?: number;
+  /** 갈래로 걸러 볼 때. 계산으로 얻은 값이라 SQL로 거를 수 없어 id 를 받는다 */
+  ids?: number[];
 } = {}) {
   const limit = Math.max(1, Math.min(options.limit ?? 50, 50));
   const states = options.state === 'rejected' ? ['rejected'] as const : options.state === 'published' ? ['published'] as const :
     options.state === 'needs_review' ? ['needs_review'] as const : ['new', 'approved', 'needs_review'] as const;
+  if (options.ids?.length === 0) return { entries: [] as AdminReviewEntry[], nextAfter: null };
   const candidates = await db.select().from(crawlCandidates).where(and(inArray(crawlCandidates.state, [...states]),
+    options.ids ? inArray(crawlCandidates.id, options.ids) : undefined,
     sql`${crawlCandidates.id} > ${Math.max(0, options.after ?? 0)}`)).orderBy(asc(crawlCandidates.id)).limit(limit + 1);
   const page = candidates.slice(0, limit);
   if (!page.length) return { entries: [] as AdminReviewEntry[], nextAfter: null };
@@ -229,8 +291,21 @@ export async function listAdminReviewEntries(settings: CrawlSettings, options: {
       and(eq(crawlReviewAttempts.kind, 'automatic'), eq(crawlReviewAttempts.sourceRevisionHash, input.sourceRevisionHash))))!] : []);
   const current = matching.length ? await db.select().from(crawlReviewAttempts).where(or(...matching))
     .orderBy(desc(crawlReviewAttempts.id)).limit(500) : [];
+  // 개발 근거를 강제할 때만 스캔을 읽는다 — 꺼져 있으면 판정이 쓰지 않는 조회다
+  const agentInputs = settings.agentEvidence.enforceEligibility
+    ? await Promise.all(page.map(candidate => {
+        const document = documents.find(row => row.repo === candidate.repo);
+        return document ? loadAgentJudgeInput(document, settings) : Promise.resolve(undefined);
+      }))
+    : page.map(() => undefined);
+
   const entries = page.map((candidate, index): AdminReviewEntry => {
     const input = inputs[index];
+    const document = documents.find(row => row.repo === candidate.repo);
+    const recomputed = document
+      ? judge(factsFromRepoMeta(candidate.repo, document.repoMeta), pageFactsFromDocument(document),
+          settings, new Date(), agentInputs[index])
+      : null;
     const attempts = current.filter(row => row.candidateId === candidate.id);
     const last = latest.find(row => row.candidateId === candidate.id);
     const review = latestAutomatic.find(row => row.candidateId === candidate.id);
@@ -244,6 +319,11 @@ export async function listAdminReviewEntries(settings: CrawlSettings, options: {
         url: item.observation.sourceUrl })) ?? [],
       refreshCount: attempts.filter(row => row.kind === 'evidence_refresh').length,
       latest: summarizeAttempt(last), review: summarizeAttempt(review),
+      verdict: recomputed ? {
+        trace: recomputed.trace, signals: recomputed.signals, cause: recomputed.cause ?? null,
+        state: recomputed.state, reason: recomputed.reason,
+        matchesStored: recomputed.state === candidate.state && recomputed.reason === candidate.reason,
+      } : null,
     };
   });
   return { entries, nextAfter: candidates.length > limit ? page.at(-1)!.id : null };

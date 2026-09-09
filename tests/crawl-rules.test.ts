@@ -365,3 +365,48 @@ describe("resolveCanonical — 리다이렉트를 어디까지 따라가나", ()
     expect(resolveCanonical("https://site.test", "https://www.site.test/x")).toBe("https://site.test");
   });
 });
+
+describe("판정 근거 — 심사 화면이 보여줄 발자국", () => {
+  const stopped = (v: { trace: { rule: string; detail: string; passed: boolean }[] }) => v.trace.at(-1)!;
+
+  it("통과한 후보는 지나온 규칙이 전부 통과로 남는다", () => {
+    const v = judge(goodRepo(), livePage, settings, NOW);
+    expect(v.trace.every((s) => s.passed)).toBe(true);
+    expect(v.trace.map((s) => s.rule)).toContain("스타 상한 이하");
+    expect(v.cause).toBeUndefined();
+  });
+
+  it("멈춘 지점이 마지막 항목이고, 측정값과 기준을 함께 남긴다", () => {
+    const v = judge(goodRepo({ stars: 5000 }), livePage, settings, NOW);
+    expect(v).toMatchObject({ state: "rejected", reason: "large_oss" });
+    expect(stopped(v)).toEqual({ rule: "스타 상한 이하", detail: "5,000 > 1,000", passed: false });
+    // 멈추기 전까지는 전부 통과다
+    expect(v.trace.slice(0, -1).every((s) => s.passed)).toBe(true);
+  });
+
+  it("호스트는 제외 대상인데 하위 경로면 갈래를 남긴다 — 심사 큐 대부분이 이것이다", () => {
+    const v = judge(goodRepo({ repo: "tmokmss/my-ambient-agents" }),
+      { productUrl: "https://tmokmss.github.io/my-ambient-agents", status: 200 }, settings, NOW);
+    expect(v).toMatchObject({ state: "needs_review", reason: "ambiguous", cause: "host_excluded_subpath" });
+    expect(stopped(v).detail).toContain("*.github.io");
+    expect(stopped(v).detail).toContain("/my-ambient-agents");
+  });
+
+  it("응답을 확인하지 못한 것과 푸시 시각을 모르는 것은 갈래가 다르다", () => {
+    expect(judge(goodRepo(), { productUrl: "https://a.test", status: null }, settings, NOW).cause)
+      .toBe("page_status_unknown");
+    expect(judge(goodRepo({ pushedAt: null }), livePage, settings, NOW).cause).toBe("push_time_unknown");
+  });
+
+  it("배포 URL이 없으면 첫 규칙에서 멈춘다", () => {
+    const v = judge(goodRepo(), { productUrl: null, status: null }, settings, NOW);
+    expect(v.trace).toEqual([{ rule: "배포 URL 있음", detail: "homepage 미설정", passed: false }]);
+  });
+
+  it("기준을 바꾸면 근거의 숫자도 함께 바뀐다 — 화면이 규칙을 따로 구현하지 않는다는 뜻이다", () => {
+    const loose = { ...settings, judge: { ...settings.judge, maxStars: 9000 } };
+    const v = judge(goodRepo({ stars: 5000 }), livePage, loose, NOW);
+    expect(v.state).toBe("approved");
+    expect(v.trace.find((s) => s.rule === "스타 상한 이하")?.detail).toBe("5,000 ≤ 9,000");
+  });
+});

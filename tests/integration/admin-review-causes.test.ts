@@ -1,0 +1,82 @@
+import { beforeAll, beforeEach, expect, it } from 'vitest';
+import { db } from '@/lib/db';
+import { crawlCandidates, crawlDocuments, crawlFrontier, crawlReviewAttempts, crawlSettings } from '@/lib/db/schema';
+import * as crawl from '@/lib/crawl/repository';
+import { listAdminReviewEntries, reviewQueueCauses } from '@/lib/crawl/admin-review';
+import { getSettings, saveSettings } from '@/lib/crawl/settings';
+import { ensureSchema } from './setup';
+
+beforeAll(() => ensureSchema());
+beforeEach(async () => {
+  await db.delete(crawlReviewAttempts);
+  await db.delete(crawlCandidates);
+  await db.delete(crawlDocuments);
+  await db.delete(crawlFrontier);
+  await db.delete(crawlSettings);
+  await saveSettings({ enabled: true }, 'fixture');
+});
+
+/** 보류로 남은 후보 하나 — 원본을 보관하므로 규칙을 다시 태울 수 있다 */
+async function held(repo: string, productUrl: string, pageStatus: number | null) {
+  await crawl.putDocument({
+    repo, productUrl, pageStatus,
+    repoMeta: { description: '배포한 서비스', stargazers_count: 3, pushed_at: new Date().toISOString(), owner: { type: 'User' } },
+    pageMeta: { title: '제품' },
+  });
+  await crawl.recordJudgement({ repo, productUrl, state: 'needs_review', reason: 'ambiguous', decidedBy: 'auto' });
+}
+
+it('저장된 사유는 모두 ambiguous 지만 갈래는 따로 센다', async () => {
+  // owner.github.io/repo — 호스트는 제외 대상인데 배포물이 루트가 아니다
+  await held('tmokmss/my-ambient-agents', 'https://tmokmss.github.io/my-ambient-agents', 200);
+  await held('acme/tool', 'https://acme.github.io/tool', 200);
+  // 아직 열어보지 못한 것
+  await held('acme/pending', 'https://pending.test', null);
+
+  const settings = await getSettings();
+  const stored = await db.select().from(crawlCandidates);
+  expect(new Set(stored.map((row) => row.reason))).toEqual(new Set(['ambiguous']));
+
+  const causes = await reviewQueueCauses(settings);
+  expect(causes.total).toBe(3);
+  expect(causes.truncated).toBe(false);
+  expect(causes.counts).toEqual([
+    { cause: 'host_excluded_subpath', count: 2 },
+    { cause: 'page_status_unknown', count: 1 },
+  ]);
+});
+
+it('갈래로 거르면 그 갈래의 후보만 나온다', async () => {
+  await held('tmokmss/my-ambient-agents', 'https://tmokmss.github.io/my-ambient-agents', 200);
+  await held('acme/pending', 'https://pending.test', null);
+
+  const settings = await getSettings();
+  const causes = await reviewQueueCauses(settings);
+  const { entries } = await listAdminReviewEntries(settings, {
+    state: 'needs_review', ids: causes.ids.get('page_status_unknown'),
+  });
+  expect(entries.map((entry) => entry.candidate.repo)).toEqual(['acme/pending']);
+});
+
+it('심사 항목마다 어디까지 통과하고 어디서 멈췄는지가 실린다', async () => {
+  await held('tmokmss/my-ambient-agents', 'https://tmokmss.github.io/my-ambient-agents', 200);
+
+  const { entries } = await listAdminReviewEntries(await getSettings(), { state: 'needs_review' });
+  const verdict = entries[0].verdict!;
+  expect(verdict).toMatchObject({ state: 'needs_review', reason: 'ambiguous', cause: 'host_excluded_subpath', matchesStored: true });
+  // 멈춘 지점이 마지막이고, 그 앞은 전부 통과다
+  expect(verdict.trace.at(-1)!.passed).toBe(false);
+  expect(verdict.trace.slice(0, -1).every((step) => step.passed)).toBe(true);
+  // 근거에는 무엇이 걸렸는지가 그대로 적힌다
+  expect(verdict.trace.at(-1)!.detail).toContain('*.github.io');
+  expect(verdict.trace.at(-1)!.detail).toContain('/my-ambient-agents');
+});
+
+it('기준이 바뀌면 저장된 판정과 다르다고 알린다', async () => {
+  await held('acme/big', 'https://big.test', 200);
+  // 판정 뒤에 스타 상한을 0으로 낮추면 지금 기준으로는 거부다
+  await saveSettings({ judge: { maxStars: 0 } }, 'fixture');
+
+  const { entries } = await listAdminReviewEntries(await getSettings(), { state: 'needs_review' });
+  expect(entries[0].verdict).toMatchObject({ state: 'rejected', reason: 'large_oss', matchesStored: false });
+});

@@ -8,6 +8,7 @@ import { resolveTakedown, type TakedownAction } from "@/lib/domain/products/take
 import { banProduct, unbanProduct } from "@/lib/domain/products/manage";
 import { markClaimInvited } from "@/lib/domain/products/claim-invite";
 import { logger } from "@/lib/observability/logger";
+import { MAX_BULK_DECISIONS, type BulkReviewState } from "./review/contract";
 
 export type SaveState = { ok?: true; issues?: string[] } | null;
 
@@ -106,6 +107,52 @@ export async function decideCrawlCandidate(_prev: ReviewState, form: FormData): 
 
   revalidatePath("/admin/review");
   return null;
+}
+
+/**
+ * 여러 후보를 같은 사유로 한 번에 결정한다.
+ *
+ * 갈래가 같으면 사람이 내리는 판단도 같다 — 심사 큐 대부분이 한 갈래라 한 건씩 누르는 것은
+ * 같은 판단을 수백 번 반복하는 일이다.
+ *
+ * 묶어서 보낼 뿐, 검사는 한 건씩 그대로 받는다. 각 후보의 입력·원본·후보 해시를 따로 실어
+ * 보내므로 그중 하나라도 그 사이에 바뀌었으면 그 건만 거절되고 나머지는 처리된다.
+ */
+export async function decideCrawlCandidates(_prev: BulkReviewState, form: FormData): Promise<BulkReviewState> {
+  const admin = await currentAdmin();
+  if (!admin) return { error: "권한이 없습니다. 다시 로그인해주세요." };
+
+  const decision = String(form.get("decision") ?? "");
+  if (decision !== "approve" && decision !== "reject") return { error: "알 수 없는 결정입니다" };
+  const note = String(form.get("note") ?? "").trim();
+  if (!note) return { error: "판단 사유를 적어주세요. 기록에 남습니다." };
+
+  const selected = form.getAll("selected").map(String).filter(Boolean);
+  if (!selected.length) return { error: "처리할 후보를 선택해주세요." };
+  if (selected.length > MAX_BULK_DECISIONS) {
+    return { error: `한 번에 최대 ${MAX_BULK_DECISIONS}건까지 처리합니다. 나눠서 선택해주세요.` };
+  }
+
+  const failures: { repo: string; message: string }[] = [];
+  let ok = 0;
+  for (const packed of selected) {
+    // 레포 이름과 해시에는 공백이 들어갈 수 없다 — 폼 인코딩에 안전한 구분자다
+    const [repo, inputHash, sourceRevisionHash, candidateRevisionHash] = packed.split(" ");
+    if (!repo || !inputHash || !sourceRevisionHash || !candidateRevisionHash) {
+      failures.push({ repo: repo || "(알 수 없음)", message: "화면이 오래됐습니다. 새로고침해주세요." });
+      continue;
+    }
+    const result = await decideCandidate({
+      repo, decision: decision as ReviewDecision, reason: String(form.get("reason") ?? ""),
+      admin: admin.login, note, inputHash, sourceRevisionHash, candidateRevisionHash,
+    });
+    if (result.ok) ok++;
+    else failures.push({ repo, message: result.message });
+  }
+
+  logger.info("admin.review_bulk", { login: admin.login, decision, ok, failed: failures.length });
+  revalidatePath("/admin/review");
+  return { ok, failures };
 }
 
 /**
