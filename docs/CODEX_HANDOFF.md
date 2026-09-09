@@ -1799,3 +1799,192 @@ cat docs/superpowers/specs/2026-09-09-admin-operations-design.md
 # If preview server has stopped:
 python3 -m http.server 8879 --bind 127.0.0.1 --directory docs/designs
 ```
+
+## Operations concept v2 — worker roles and model configuration
+
+- Objective: expand the existing approved administrator concept with role-first worker names, detailed task progress, and Codex model settings after connection.
+- Completed: each of six service cards shows its Korean role above the worker key; database has role/name too. Selected worker panel shows purpose, owned jobs, schedules, activity constraints and dated real result excerpts. Task modal and Korean role/job search work. Codex reconnect demo now leads to primary/fallback model and effort configuration, test success/access denial/timeout scenarios, and guarded apply preview. Duplicate models are rejected; changing settings invalidates verification.
+- Files: `docs/designs/2026-09-09-admin-operations.html`, corresponding `docs/superpowers/specs/2026-09-09-admin-operations-design.md`, and this handoff only.
+- Decisions: retain explicit historical snapshots, avoid fictitious progress percentages, use only existing Spark/Terra model IDs, separate account connection from model compatibility and worker application. Actual configuration implementation must bind credential generation/config hash and apply only on the next batch. Current fallback publication policy is unchanged.
+- Validation executed: Playwright 4 widths × 4 tabs no page overflow; six worker detail switches; job modal; Korean search; pre-auth fieldset disabled and post-auth enabled; denied/duplicate configuration cannot apply; successful configuration applies in demo; effort edits invalidate verification; mobile model section no overflow; zero page errors. Inspected desktop overview and model screen screenshots. No failing checks in this phase.
+- Artifacts: `/tmp/nomorevibe-ops-v2-{1440,1024,768,390}.png`, `/tmp/nomorevibe-ops-v2-models.png`, `/tmp/nomorevibe-ops-v2-models-mobile.png`. Existing loopback preview 8879 remains active.
+- Remaining: design feedback, then implement data/credential/config endpoints under separate scope. No new production code, runtime settings, credentials, or service processes changed.
+- Next commands: `cd /Users/jr/Desktop/projects/nomorevibe`; `git diff --check`; `open http://127.0.0.1:8879/2026-09-09-admin-operations.html`; `git diff --stat`.
+
+## Shared admin layout implementation — in progress
+
+- Objective: implement persistent sidebar and content navigation across all real admin menus.
+- Completed: added nested admin layout, client shell, scoped responsive CSS, all-menu active navigation; removed duplicate per-page nav, renamed status heading to 운영센터. Auth remains in pages/actions; login bypasses shell.
+- Modified: app/admin/{layout.tsx,AdminShell.tsx,AdminNav.tsx,admin.css}, existing admin pages, tests/admin-navigation.test.tsx. Preserve other dirty work.
+- Validation: navigation tests ran RED (3 failures before implementation); after implementation two assertions failed because Next serializes aria-current before href. Adjusted assertions to ignore attribute order; rerun pending.
+- Remaining: actual job-role overview, final tests/typecheck/lint/build, local web update and browser navigation verification. OAuth/model settings remain concept only.
+- Next commands: `npx vitest run tests/admin-navigation.test.tsx`; `npx tsc --noEmit --incremental false`; `docker compose -p nomorevibe ps`.
+
+## Shared admin layout implementation — completed locally (2026-09-09)
+
+- Objective completed: the real admin sidebar persists across 운영센터, 심사 큐, 제품 관리, 크롤 설정, 근거 설정 and 랭킹; page bodies render in the shared content area. Product detail selects 제품 관리 and now uses client navigation. Mobile navigation collapses after route changes. Login is outside the sidebar; returning to the public site restores its header/footer.
+- Files: `app/admin/layout.tsx`, `AdminShell.tsx`, `AdminNav.tsx`, `admin.css`; existing admin pages with duplicate nav removed; `app/admin/products/ProductRow.tsx`; `app/admin/status/{page.tsx,WorkerOverview.tsx,RefreshStatus.tsx}`; `tests/admin-navigation.test.tsx`; this handoff. Earlier unrelated dirty edits remain intact.
+- Operations: added five actual job-role cards from JOB_CATALOG and existing jobs query, role before worker name, expandable owned-job state/schedule/last run/last success/retry timestamps, manual refresh and KST snapshot timestamp. Observed DB timestamps explicitly do not claim current container health or successful AI authentication. No extra collector is loaded and no new DB query is needed for these cards. Existing status panels remain.
+- Decisions: use a nested layout rather than moving every admin route; keep authorization on server pages/actions; no menu prefetch to avoid loading all admin datasets. Scope public chrome hiding to the mounted admin shell. Long text wraps inside the content column. Existing Codex reconnect/model configuration remains HTML concept only; this phase does not implement credentials or runtime model settings.
+- Tests actually run: navigation regression tests RED before changes, then 3/3 PASS after fixing attribute-order-dependent assertions. Full `npm test`: 84 files / 631 tests PASS. `npx tsc --noEmit --incremental false`: PASS. `npm run lint -- --ignore-pattern nomorevibe-final`: PASS (unrelated imported design folder excluded). After final Link/CSS changes: targeted nav tests 3/3 and `npx eslint app/admin` PASS; final Docker production build, including TypeScript, PASS. `git diff --check`: PASS.
+- Browser verification on updated localhost:3200: all six client menu transitions preserve the same sidebar DOM; active menu correct; product detail also preserves sidebar; back/reload work; 1024/768/390 widths for six menus plus detail have no page overflow; mobile menu opens/closes and closes on navigation; public header restored on return home; refresh works; zero page errors. Desktop 1440 and mobile screenshots inspected. Auth-disabled temporary instance on loopback3212 redirects unauthenticated status/product-detail/ranking requests to login without sidebar or protected content; temporary container stopped after checks.
+- Failed approaches fixed: Next Link HTML emits aria-current before href (test assertion corrected). First browser pass found mobile product URL text extending page to537px at390px; `overflow-wrap:anywhere` fixed it and complete QA rerun passed. First recreate helper copied container PATH into host subprocess and could not find docker; no mutation occurred. Retried with only explicit Compose runtime variables in memory, preserving host PATH and existing credentials.
+- Local deployment: `nomorevibe-app-1` on port3200 now uses `nomorevibe-web:admin-sidebar-20260909`; rebuilt/recreated app only with existing app credentials. Existing crawler/reviewer/publisher/maintenance/scheduler and DB were not restarted. Compose reports all seven services healthy. No production deployment, commit or push in this phase.
+- Artifacts: `/tmp/nomorevibe-admin-sidebar-desktop.png`, `/tmp/nomorevibe-admin-sidebar-mobile.png`; read-only navigation QA `/tmp/nomorevibe-admin-qa.cjs`.
+- Remaining: requested sidebar work is complete. Real Codex reconnect/model settings and broader service runtime telemetry remain separate implementation work described in the existing design specification.
+
+Exact verification commands:
+```sh
+cd /Users/jr/Desktop/projects/nomorevibe
+git status --short
+git diff --check
+npx vitest run tests/admin-navigation.test.tsx
+node /tmp/nomorevibe-admin-qa.cjs
+docker compose -p nomorevibe ps
+curl -I http://127.0.0.1:3200/admin/status
+# Browser: http://localhost:3200/admin/status
+```
+
+## Full operations v2 implementation — in progress, current objective supersedes sidebar-only phase
+
+- User explicitly requested ALL functionality in the8879 v2 concept. Implementing overview/jobs/AI/manual tabs, real operations requests, isolated Codex credential owner/model checks, and manual classification holds.
+- New code: lib/operations/{contracts,observations,agent-client,credential-vault,agent,categories,admin}.ts; lib/db/operations-schema.ts + schema export; additive drizzle0023 + journal; scripts/connect-agent.ts; supervisor DB observation hook; classifier accepts models and attempt callback; publisher broker calls/holds/manual decisions; publication guard checks category decision revision; real admin/status components/actions/operations.css replacing summary-only presentation. Compose adds internal connect-agent encrypted vault; Dockerfile creates owned vault directory.
+- Architecture adjustment: one internal connect-agent owns login+CLI+refresh+encrypted full auth.json; publisher calls bounded authenticated RPC. This avoids shared auth file refresh races and credential webhooks. RPC derives its internal token from existing AUTH_SECRET. Credential actions require an actual allowlisted GitHub session; local bypass is insufficient. No OAuth approval has been started.
+- Tests executed: operations-agent + classify + worker-runtime =21 PASS. Full unit suite/typecheck currently in progress. Initial typecheck before latest UI fixes PASS. Lint found plain OAuth API anchor false positive, internal review anchor, Date.now in render, unused ModelConfig. Fixing those now. No local migration/deploy of this full phase yet;3200 still sidebar-only image.
+- Important remaining: fix login persist rollback and supervisor DB connection shutdown; final lint/type/tests; isolated DB category/guard/job coalescing integration; build images; preserve current service env secrets in memory while replacing roles; migrate existing local DB only after checks and backup; all-tabs Playwright QA (real OAuth requires operator approval, do not fake it). Existing unrelated dirty work remains.
+- Plan: docs/superpowers/plans/2026-09-09-operations-implementation.md. Tests sessions55789,50435; current helpers /tmp/nomorevibe-admin-qa.cjs is previous sidebar QA and needs full-v2 replacement.
+
+## Full operations v2 — final verification/deployment checkpoint
+
+- Full unit suite639/639 PASS (86 files); new category+publication gate integration12/12 PASS. Initial hold cooldown test exposed host/DB timestamp skew; use DB clock_timestamp()/now() for hold writes. One unrelated public-network SSRF test transiently failed then targeted9/9 and whole639/639 passed.
+- New runner stores last12 numeric/boolean event summaries atomically with successful completion in operations_observations job:<name>; UI job details shows last run duration/results, no original/model output. Integration12/12 rerun after runner change PASS; whole unit639/639 rerun PASS.
+- Production Docker web build initially failed because client ManualClassification imported server product schema (node:net). Extracted pure lib/domain/products/categories.ts and re-exported original schema interface. Next build then passed. Final manual form accessibility edit accidentally left a closing label; replaced component with readable explicit labels; typecheck/lint PASS, final web build session97683 pending/just completed.
+- First full-v2 local deployment complete: all8 services healthy; supervisor observations recorded for5 worker roles and connect-agent; actual publisher tick135/135, no last_error,13 classification holds. Existing publisher Codex reported Not logged in before replacement; no usable credential migrated or lost. Backup /var/folders/5g/tm96jknx43n8r04kl5j12kvm0000gn/T/nomorevibe-before-ops-q6nnysgb.dump; additive0023 applied to local55437. Credentials preserved in memory with temporary0600 Compose override removed after use. Helper /tmp/nomorevibe-operations-deploy.py.
+- Browser on real3200: all four tabs ×1440/1024/768/390 no page overflow;8 role detail selections;5 crawler jobs, Korean search, empty state; modal Escape; disabled model test before connection; local bypass cannot manage credentials; sidebar navigation; zero page errors. Screenshots /tmp/nomorevibe-ops-live-<width>-<tabIndex>.png inspected desktop/mobile. QA /tmp/nomorevibe-ops-v2-qa.cjs.
+- Isolated fixture app3214/agent3213 + test DB55435: fake pinned-CLI contract executable (no network/real account) completed login credential storage, primary+fallback validation, apply; editing effort invalidated verification; actual manual-category and job-request server actions passed. Earlier manual getByLabel exact failed due implicit label/select options; fixed explicit htmlFor. Fixture Docker app stopped; fixture node22331 terminated. No real OpenAI login approval or real model inference tested.
+- Latest worker image operations-v2-20260909 includes completion summaries and one-use model apply; built successfully. Need rerun /tmp/nomorevibe-operations-deploy.py after final web build to place final images on real stack; rerun browser QA, verify latest job summaries/health, final docs/check report. No commits/push in this phase. Real OAuth remains operator action, not an implementation stub.
+
+## Full operations v2 — completed locally
+
+- Final web and worker images deployed to3200 under operations-v2-20260909, preserving existing credentials. All8 services verified healthy after full replacement; final web-only rebuild adds explicit missing OAuth configuration notice. Full four-tab responsive/browser QA rerun PASS with zero page errors on deployed stack. Latest source typecheck and status-component ESLint PASS; final web production build PASS; whole lint passed after manual JSX repair. Whole639-unit suite and12 DB integrations passed as recorded above.
+- Real runtime now records job:crawl-fetch, job:crawl-agent-review, job:product-evidence-refresh and job:agent-evidence-refresh completion summaries. Final browser spot-check verifies recent job result and OAuth-setup notice. Publisher queue resumes after refresh with category holds instead of fallback publication; no stale human classification can bypass publication guard.
+- Operator configuration remaining: local GITHUB_OAUTH_CLIENT_ID and GITHUB_OAUTH_CLIENT_SECRET are absent (allowlist is configured). The actual UI clearly reports this and does not present an unusable login link. Need configure the GitHub OAuth app, sign in as an allowlisted admin, then explicitly approve Codex device authorization and test/apply models. This is an external configuration/approval requirement; code paths are implemented and tested with isolated fixtures, not real OpenAI inference. No production deployment/commit/push.
+- Next verification: `cd /Users/jr/Desktop/projects/nomorevibe`; `git diff --check`; `node /tmp/nomorevibe-ops-v2-qa.cjs`; `docker compose -p nomorevibe ps`. Local web-only redeploy helper: `python3 /tmp/nomorevibe-operations-deploy.py app` (preserves current secrets through a private temporary Compose override).
+
+## Local Codex connection bug fixed — next objective Claude fallback via local Deppy-aibox
+
+- Root cause: actualAdmin required a GitHub session while local UI bypass was enabled and GitHub OAuth client/secret absent. Failed request left the modal in fake code-preparing state.
+- Fixed: explicit `localCodexEnabled` requires ADMIN_LOCAL_LOGIN=1 + ADMIN_LOCAL_CODEX=1 + HTTP loopback site URL. Local Compose binds web only127.0.0.1:3200. Server mode retains actual allowlisted session checks. AI tab describes local mode, catches failed requests, has proper retry/failed/cancelled/expired branches, resumes active login with 연결 계속 and prevents overlapping status polls. No prior credentials were used or exposed.
+- Files: lib/auth/local-codex.ts, status actions/page/OperationsCenter/AiConnection, compose.yml, .env.example, tests/local-codex.test.ts and operations-actions.test.ts, operations runbook. Existing other dirty work preserved.
+- Validation:10 targeted tests passed, typecheck and scoped ESLint passed, production web build passed; deployed web only with existing secrets and loopback port. Actual real Codex CLI device code and official URL generated via browser UI; close/resume worked; cancellation cleared code/wait state; no page errors. QA canceled the actual pending test login; no OpenAI account approval occurred. /tmp/nomorevibe-local-codex-qa.cjs reproduces without logging the code. Last failure/mobile QA session61443 pending result.
+- User now asks: use `/Users/jr/Desktop/projects/Deppy-aibox` so Claude is used when Codex fails. New objective includes inspecting that local repo and integrating actual provider/auth/fallback behavior, retaining the above fixed local login capability. Do not revert to GitHub-only requirement. Existing connect-agent is Codex-only and provider fallback still Spark→Terra; Claude fallback NOT implemented yet.
+
+## 2026-09-09 — Deppy-aibox Claude publisher fallback (implemented locally)
+
+### Objective and completed work
+User asked to integrate `/Users/jr/Desktop/projects/Deppy-aibox` so the publisher can use Claude when Codex fails. Implemented in the existing private connect-agent, preserving the current publisher/reviewer separation and publication guards. Local app and connect-agent have been rebuilt/recreated; both are healthy at port3200 (web loopback only). Other five worker services remain healthy and unchanged; publisher already delegates classification to the broker.
+
+- Vendored the actual aibox core and Claude provider from commit `814144a2d37cb60359486219393f93f32c7267fc`, with Apache-2.0 license/provenance. Did not edit the sibling repository or add its unrelated server/webhook/Naver components.
+- Added Claude `setup-token` PTY login, official OAuth URL, transient authorization-code input, encrypted token storage alongside existing full Codex refresh credential, and credential generation invalidation.
+- Added isolated Claude classification adapter consuming the same strict category schema. Default new selection is Spark xhigh → Claude Sonnet high; existing applied configurations are preserved. Explicit preset button selects this policy.
+- At least one selected model must pass a real sample probe before config apply; a failed Codex probe does not block a verified Claude fallback. Both failures reject apply. Runtime primary failures (auth/timeout/CLI missing/invalid output and other errors) invoke fallback; both failures retain the established approved/hold policy.
+- Actual recent attempt model distinguishes Sonnet from Codex. General observations preserve login provider, not OAuth URL/code/token. Authorization input is omitted from audit.
+- Codex cancellation previously killed the wrapper only, leaving a child CLI and a permanent busy login. Both login providers now run in detached groups and cancellation/expiry kills the group; CLI-close drains the lock.
+
+### Files in this phase
+`lib/vendor/deppy-aibox/{core.ts,claude.ts,LICENSE,README.md}`; `lib/operations/{claude.ts,agent.ts,contracts.ts}`; `lib/crawl/classify.ts`; `scripts/connect-agent.ts`; `app/admin/status/{AiConnection.tsx,OperationsCenter.tsx,actions.ts}`; `Dockerfile`; `tests/{operations-claude.test.ts,operations-agent.test.ts,operations-actions.test.ts}`; `docs/operations/operations-center-runbook.md`; this handoff. Existing large dirty admin implementation/unrelated work remains uncommitted; do not indiscriminately stage/revert it.
+
+### Decisions and limitations
+- No Redis/new service/schema migration was required for this phase. Both credentials use existing AES-GCM vault/volume; no credentials were printed or placed in web env.
+- Claude inference receives OAuth token only in that child environment, isolated HOME/config, no ambient API key/proxy/customizations, no tools/MCP/session persistence. Review worker token/model remain separately configured.
+- Claude Sonnet is the installed CLI alias, not a promise of a specific dated model. Actual account access requires the in-app model test.
+- Local QA generated OAuth URLs/device codes, then cancelled only QA-owned sessions; no user account was approved and no live authenticated Claude inference was claimed. Unit tests use dummy credentials and structured CLI fixtures.
+- User must connect Claude under `/admin/status` → AI 연결, enter the official authorization code, select Spark → Claude preset, run model test, then apply. Current automatic fallback capability is deployed but no account/model configuration was authorized by the assistant.
+
+### Verification actually executed
+- `npx vitest run`: **88 files / 655 tests passed**, `/tmp/nomorevibe-claude-tests.log`.
+- `npx vitest run --config vitest.integration.config.ts tests/integration/operations-center.test.ts tests/integration/review-publication-gate.test.ts`: **2 files / 12 passed**, `/tmp/nomorevibe-claude-integration.log`.
+- `npx tsc --noEmit`: passed after final source changes.
+- Targeted ESLint for operations/UI/RPC/tests: passed. Vendored original provider has one unused `_ctx` warning when explicitly included, no errors.
+- Docker worker and runner builds passed. Final local deployment: `python3 /tmp/nomorevibe-operations-deploy.py connect-agent`, then `... app`. Helper retains existing env without printing secrets; encrypted volume preserved. Live expired old Codex login was observed before broker restart.
+- Actual pinned Claude2.1.263 in worker image: official OAuth URL generated, inputRequired=true; cancellation drained entire process group. `/tmp/nomorevibe-claude-cli-qa.cjs` via `docker run --rm -i --init --entrypoint node nomorevibe-worker:operations-v2-20260909 --import tsx - < /tmp/nomorevibe-claude-cli-qa.cjs`.
+- `node /tmp/nomorevibe-claude-ui-qa.cjs`: passed real Claude URL/input, invalid-code inline feedback, close/resume/cancel; real Codex device code + cancellation; preset values; 1280/390 widths without overflow; zero browser page errors. Screenshots `/tmp/nomorevibe-claude-{1280,390}.png`.
+- `git diff --check`: passed.
+
+### Failed approaches corrected
+- Initial aibox PTY startup failed `This account is not available`: worker's passwd shell is nologin. Added explicit isolated `SHELL=/bin/sh`, plus util-linux package for Linux `script`; real startup passed afterwards.
+- Initial TS errors from aibox optional capture results/ProcessEnv NODE_ENV contract were corrected.
+- First token-redaction assertion expected a string even when provider deliberately omits `.out` after token detection; corrected assertion; capture credential still verified.
+- Docker bind mount from host `/tmp` resolved to a directory under this Docker context. Switched diagnostic script transport to stdin; no source/runtime workaround needed.
+
+### Remaining / exact next commands
+User account approval and actual model access test remain user-operated in the admin UI; do not automatically approve OAuth or claim live AI output. No commit/push in this phase. Before any broker restart, inspect login state and avoid interrupting an active user approval:
+```
+cd /Users/jr/Desktop/projects/nomorevibe
+git status --short
+docker exec nomorevibe-db-1 psql -U nomorevibe -d nomorevibe -Atc "select observed_at,value->>'busy',value->>'connected',value->>'claudeConnected',value->>'configVersion',value->'connection'->>'state' from operations_observations where key='connect-agent'"
+docker ps --filter name=nomorevibe --format '{{.Names}} {{.Status}} {{.Ports}}'
+npx vitest run tests/operations-agent.test.ts tests/operations-claude.test.ts tests/operations-actions.test.ts
+```
+Do not run the real-login QA script while the user is authenticating; it intentionally starts/cancels its own login sessions.
+
+## 2026-09-09 — Follow-up: Codex visibility, Claude Enter protocol, readable operations UI
+
+### Objective
+User reported at `http://localhost:3200/admin/status`: cannot tell whether Codex connected, cannot set models, Claude still cannot connect, UI unreadable. Asked whether aibox was actually reused. Fixed the integration defects and redesigned the existing AI tab and operations typography, then deployed locally.
+
+### Root causes (observed, not inferred from prior claims)
+- Live DB showed `connected=true`, generation1, configVersion0, no model verification. Codex had successfully connected; the user lacked a clear distinction between stored credential and usable/applied model.
+- A Claude login held the single CLI lock for10minutes. Frontend disabled the entire model fieldset while any login was pending, with no clear reason; status polling could stop permanently after an error.
+- Deppy-aibox USAGE.md lines216/282 use `sendInput(code + '\r')`. Our integration sent LF (`\n`). Actual pinned Claude CLI diagnostic reproduced **LF_error=false / CR_error=true** with a deliberately invalid code: LF did not submit, CR caused a rejection response. This is an integration bug; the previous fixture accepted any stdin and missed it. The regression fixture now requires byte13 and was run failing first (`exchanging` instead of `stored`).
+- Core/provider-claude are actual vendored aibox modules. Entire server/client/React SDK were NOT imported. Explained this distinction to the user; preserved existing broker ownership/access control/vault architecture rather than rewriting the project.
+
+### Completed / modified files in this follow-up
+- `lib/operations/agent.ts`: CR submission,45s exchange deadline, safe OAuth rejection classification and process cleanup. Rejected/timed-out reconnection preserves existing credentials. Added per-provider stored/checked metadata, `probe(provider)` async real model response check, and computed `configReady` independent of stored credential/verification.
+- `lib/operations/contracts.ts`: optional backwards-compatible account metadata, configReady, safe connection error code.
+- `scripts/connect-agent.ts`, `app/admin/status/actions.ts`: privileged probe RPC/action, observation carries safe error/provider only; no credential/code content in audit.
+- New `app/admin/status/useAgentConnection.ts`: mount/focus/3s visible-tab polling, retry after error, preserve last known state and drafts, reject older overlapping response after mutation. Initial load is scheduled/cleaned with an effect timer (direct async callback initially tripped the React lint rule).
+- `app/admin/status/AiConnection.tsx`: account rows with stored state/actual response/time, individual connection check and reconnect buttons; login reason/cancel shown inline; model selection remains editable during login; actual execution remains serialized. Clearly separates model draft, sample verification, application and recent execution. Technical generation/version metadata moved into details. Claude modal shows code entry, exchange progress, safe failure reason and new-session retry; Codex has code copy. Displays transport errors inside dialog too.
+- `app/admin/status/operations.css`:14–15px operational body/labels,13px minimum badges/metadata,44px controls, darker muted text, structured account/model/result layout, responsive grids. Desktop/mobile visually inspected.
+- `app/admin/status/OperationsCenter.tsx`: alert based on applied config, not just Codex credential; redundant global alert hidden on AI tab.
+- `tests/operations-claude.test.ts`: CR-sensitive success, rejected-code preservation, account probe vs apply separation. `tests/operations-actions.test.ts`: probe respects admin gate.
+- `docs/operations/operations-center-runbook.md`, this handoff updated.
+
+### Tests actually executed / results
+- CR-sensitive regression before fix: FAILED as expected (exchanging instead of stored), `/tmp/claude-enter-regression.log`.
+- Actual isolated Docker pinned Claude CLI input comparison: `{"LF_error":false,"CR_error":true}`; `/tmp/claude-enter-diagnostic.cjs`. No real OAuth code/token printed.
+- `npx vitest run`: **88 files /657 tests passed**; `/tmp/ops-connect-all-tests.log`.
+- `npx tsc --noEmit`, targeted ESLint, `git diff --check`: passed.
+- Worker and web Docker builds passed, tags remain `operations-v2-20260909`. Only local app/connect-agent changed. Encrypted vault preserved.
+- `node /tmp/ops-connect-current-qa.cjs`: real localhost browser passed stored Codex vs unapplied config, model editing during active Claude login with execution reason, actual Claude invalid-code rejection (CR reaches real CLI), automatic recovery after deliberately aborted status request,4 widths1440/1024/768/390, no page errors. Initial attempt used incorrect getByLabel selector; changed to role=combobox matching the actual accessible name. Initial probe wait matched '미검사' too early; corrected script to match timestamp paragraph. Live DB and final separate test confirmed actual probe success.
+- `node /tmp/ops-model-verification-qa.cjs`: **actual Codex Spark sample succeeded**; after broker restart its saved probe result remained visible. Live selected-model verification succeeded for Spark, returned auth-required for unconnected Claude, and **Apply button became enabled**. Config was NOT applied as part of this diagnostic. Desktop/mobile final layout passed with zero page errors. Screenshots `/tmp/ops-connect-final-{1440,390}.png`; earlier four widths `/tmp/ops-connect-after-*.png`.
+- Re-ran no publication integration suite this follow-up: publication guard/queue behavior unchanged. Prior12 integration tests remain prior-phase evidence, not newly executed evidence.
+
+### Live state / remaining
+Local web `http://localhost:3200/admin/status` and connect-agent healthy. Codex connected with actual Spark response success. Claude still has no stored OAuth token; user must reconnect through official page. Verified config in live broker is Spark xhigh → Sonnet high; results Spark success / Sonnet auth; configReady=false, configVersion0. User can Apply current verified policy, or connect Claude then re-test/apply (reconnection changes generation).
+Do not claim Claude account authorization succeeded: only actual CLI submission/rejection plus fixture credential persistence were tested. No user account approval or product publishing was performed in this diagnostic. Latest QA-owned failed session was cleared by broker restart, before final model verification. No active login remained at completion.
+
+No commit/push. Dirty tree includes earlier admin implementation and unrelated files; do not bulk revert/stage. Do not restart broker while user is approving Claude now.
+
+### Exact next commands
+```
+cd /Users/jr/Desktop/projects/nomorevibe
+git status --short
+docker exec nomorevibe-db-1 psql -U nomorevibe -d nomorevibe -Atc "select observed_at,value->>'busy',value->>'connected',value->>'claudeConnected',value->>'configReady',value->'accounts',value->'verification'->>'state' from operations_observations where key='connect-agent'"
+npx vitest run tests/operations-agent.test.ts tests/operations-claude.test.ts tests/operations-actions.test.ts
+```
+Real browser scripts initiate login/model probes and must not be rerun during the user's approval session. Local deploy helper remains `/tmp/nomorevibe-operations-deploy.py`; app/connect-agent image builds use Dockerfile runner/worker targets. Preserve existing env/vault when deploying.
+
+## 2026-09-09 10:43 KST — User asked to check Claude again
+- Live check: `claudeConnected=false`, previous Sonnet result `auth`; broker healthy. No valid Claude account credential exists, so actual authenticated Sonnet inference remains unverified.
+- Re-ran `npx vitest run tests/operations-claude.test.ts`: **15/15 passed** (`/tmp/claude-current-check.log`); includes CR submission, persistence with fixture tokens, rejection handling and fallback. These are not live authenticated model calls.
+- Opened the local admin AI tab in the CUA in-app browser and initiated a fresh Claude login. UI visibly shows official Claude OAuth URL and authorization-code field. Live state `provider=claude,state=awaiting_approval` at10:43KST.
+- **ACTIVE USER HANDOFF:** Claude connection window shown to user. Do not cancel this session, restart connect-agent, or run login QA while they are approving. Session expires10minutes after start (~10:52KST). Browser `browser` binding ID1, `adminTab` tab1, marked handoff. Mark again if reused in another turn.
+- User must approve through the official page and input the resulting code in the local modal. After connection is stored, use the Claude account's `연결 확인` to test actual Sonnet; then selected model test/apply according to user instruction. Do not assume verification from the fixture tests.
+- No application code/config changed or model config applied this turn; only this handoff updated. The browser create-tab operation unexpectedly took~12minutes; no service failure was observed.
+
+## 2026-09-09 — Commit preparation requested by user
+- Commit scope: persistent admin shell/operations center, jobs/manual classification, private Codex/Claude connect-agent and aibox provider integration, local admin access needed by the tested setup, migrations, documentation and associated tests.
+- Existing unrelated ProductHero/product-detail test edits and `nomorevibe-final/`, `nomorevibe_final.html`, `nomorevibe_final_source.zip` remain outside this commit.
+- Most recent verification: full unit suite657 passed; Claude-focused15 passed; TypeScript, targeted ESLint, Docker builds and browser checks recorded above. No application code changed after those checks; commit preparation uses staged diff validation.
+- No runtime restart, authentication cancellation, model application, push or deployment requested/performed as part of commit preparation. Preserve any active Claude user approval.

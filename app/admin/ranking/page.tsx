@@ -11,7 +11,6 @@ import {
 } from "@/lib/domain/ranking/policy";
 import type { CalculatedEntry } from "@/lib/domain/ranking/refresh";
 import { getRankingAdminState } from "@/lib/domain/ranking/view";
-import { AdminNav } from "../AdminNav";
 import { cancelRankingPolicy } from "./actions";
 import { RankingPolicyForm } from "./RankingPolicyForm";
 
@@ -163,7 +162,7 @@ export default async function AdminRankingPage() {
       <div className="flex flex-wrap items-baseline gap-3 pt-9">
         <h1 className="text-[26px] font-extrabold tracking-tight">랭킹 설정</h1>
         <span className="text-[13px] text-fg-3">{admin.login}</span>
-        <div className="ml-auto"><AdminNav current="/admin/ranking" /></div>
+
       </div>
 
       <p className="mt-2 max-w-[68ch] text-[13.5px] leading-[1.7] text-fg-2">

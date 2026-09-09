@@ -1,7 +1,7 @@
 import { isDeepStrictEqual } from "node:util";
 import { and, desc, eq } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { crawlCandidates, crawlDocuments, crawlSettings, agentRepositoryScans, type CrawlCandidate, type CrawlDocument, type DecisionReason } from "@/lib/db/schema";
+import { categoryDecisions, crawlCandidates, crawlDocuments, crawlSettings, agentRepositoryScans, type CrawlCandidate, type CrawlDocument, type DecisionReason } from "@/lib/db/schema";
 import type { ProductTransaction } from "@/lib/domain/products/generation";
 import { mergeWithDefaults } from "./settings";
 import type { CrawlSettings } from "./settings-schema";
@@ -41,6 +41,7 @@ export async function recordPublicationFailure(candidate: CrawlCandidate, failur
 
 /** Locks the reviewed rows and marks publication in the same transaction as the product insert. */
 export async function guardPublication(tx: ProductTransaction, input: {
+  decision?: { revision: number | null; sourceHash: string | null };
   candidate:CrawlCandidate; document:CrawlDocument; settings:CrawlSettings; slug:string; scanId:number|null; lease?: JobLease;
 }) {
   const [candidate] = await tx.select().from(crawlCandidates).where(eq(crawlCandidates.repo,input.candidate.repo)).for("update");
@@ -50,6 +51,10 @@ export async function guardPublication(tx: ProductTransaction, input: {
     {candidate:input.candidate,document:input.document,settings:input.settings},
     {candidate,document,settings:mergeWithDefaults(settingsRow?.values)},
   );
+  if (input.decision) {
+    const [decision] = await tx.select().from(categoryDecisions).where(eq(categoryDecisions.repo,input.candidate.repo)).for('share');
+    if ((decision?.revision ?? null) !== input.decision.revision || (decision?.sourceHash ?? null) !== input.decision.sourceHash) throw new PublicationStateChangedError();
+  }
   await lockRepositoryAgentEvidence(tx, input.candidate.repo);
   if (input.scanId !== null) {
     const now = Date.now();

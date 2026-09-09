@@ -5,7 +5,6 @@ import { currentAdmin } from "@/lib/auth/admin";
 import { getSettings, getSettingsMeta, settingsDrift } from "@/lib/crawl/settings";
 import { candidateCounts } from "@/lib/crawl/repository";
 import { SettingsForm } from "./SettingsForm";
-import { AdminNav } from "./AdminNav";
 import { SettingsDriftNotice } from "./SettingsDriftNotice";
 
 export const dynamic = "force-dynamic";
@@ -36,7 +35,6 @@ export default async function AdminPage() {
             <span className="font-semibold text-fg-3">수집 꺼짐</span>
           )}
         </span>
-        <AdminNav current="/admin" />
         {waiting > 0 && (
           <Link href="/admin/review" className="text-[13px] font-semibold text-accent">
             심사 대기 {waiting}건

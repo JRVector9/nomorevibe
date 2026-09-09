@@ -7,7 +7,6 @@ import { isUnclaimed } from "@/lib/domain/products/view";
 import { claimInviteUrl, isPublicOrigin } from "@/lib/domain/products/claim-invite";
 import { siteOrigin } from "@/lib/site";
 import type { ProductStatus } from "@/lib/db/schema";
-import { AdminNav } from "../AdminNav";
 import { ProductRow } from "./ProductRow";
 
 export const dynamic = "force-dynamic";
@@ -44,9 +43,7 @@ export default async function AdminProductsPage({ searchParams }: Props) {
       <div className="flex flex-wrap items-baseline gap-3 pt-9">
         <h1 className="text-[26px] font-extrabold tracking-tight">제품</h1>
         <span className="text-[13px] text-fg-3">{products.length}건</span>
-        <div className="ml-auto">
-          <AdminNav current="/admin/products" />
-        </div>
+
       </div>
 
       <nav className="mt-4 flex flex-wrap gap-2">

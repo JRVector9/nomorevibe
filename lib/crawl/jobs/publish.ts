@@ -1,3 +1,7 @@
+import { and } from 'drizzle-orm';
+import { agentRequest } from '@/lib/operations/agent-client';
+import { classificationReadyPredicate, decisionFor, holdClassification } from '@/lib/operations/categories';
+import type { Category } from '@/lib/domain/products/schema';
 import type { JobContext, JobOutcome } from "@/lib/jobs/runner";
 import * as crawl from "@/lib/crawl/repository";
 import { getSettings } from "@/lib/crawl/settings";
@@ -30,7 +34,7 @@ export async function publishCandidates(ctx: JobContext<null>): Promise<JobOutco
 
   while (ctx.hasBudget()) {
     // Filter before LIMIT so pending reviews cannot starve approved products.
-    const candidates = await crawl.listCandidates(["approved"], BATCH, reviewApprovalPredicate(settings));
+    const candidates = await crawl.listCandidates(["approved"], BATCH, process.env.CONNECT_AGENT_URL ? and(reviewApprovalPredicate(settings), classificationReadyPredicate()) : reviewApprovalPredicate(settings));
     if (candidates.length === 0) {
       ctx.log("crawl.publish_done", { published, skipped, drained: true });
       return { done: true };
@@ -40,8 +44,15 @@ export async function publishCandidates(ctx: JobContext<null>): Promise<JobOutco
       candidate,
       classification: await prepareCandidateClassification(candidate),
     })));
-    const inputs = prepared.flatMap(item => item.classification ? [item.classification.input] : []);
-    const classified = inputs.length > 0 ? await classifyCategories(inputs) : [];
+    const decisions = new Map(await Promise.all(prepared.map(async item => [item.candidate.repo, item.classification && process.env.CONNECT_AGENT_URL ? await decisionFor(item.candidate, item.classification.snapshot.document) : null] as const)));
+    const inputs = prepared.filter(item => !decisions.get(item.candidate.repo)?.category).flatMap(item => item.classification ? [item.classification.input] : []);
+    let classified: (Category | null)[] = [];
+    if (inputs.length > 0) {
+      if (process.env.CONNECT_AGENT_URL) {
+        try { classified = (await agentRequest<{ categories: (Category | null)[] }>('classify', { inputs })).categories; }
+        catch { classified = inputs.map(() => null); ctx.log('crawl.classification_held', { count: inputs.length }); }
+      } else classified = await classifyCategories(inputs);
+    }
     const categoryByRepo = new Map(inputs.map((input, index) => [input.repo, classified[index] ?? null]));
     const snapshotByRepo = new Map(prepared.flatMap(item => item.classification
       ? [[item.candidate.repo, item.classification.snapshot] as const]
@@ -49,8 +60,15 @@ export async function publishCandidates(ctx: JobContext<null>): Promise<JobOutco
 
     for (const candidate of candidates) {
       if (!ctx.hasBudget()) return { done: false };
+      const manual = decisions.get(candidate.repo);
+      const category = manual?.category as Category | null ?? categoryByRepo.get(candidate.repo) ?? null;
+      const snapshot = snapshotByRepo.get(candidate.repo);
+      if (process.env.CONNECT_AGENT_URL && snapshot && category === null) {
+        await holdClassification(candidate, snapshot.document); skipped++; continue;
+      }
       const result = await publishCandidate(candidate, ctx.lease, {
-        category: categoryByRepo.get(candidate.repo) ?? null,
+        category,
+        decision: process.env.CONNECT_AGENT_URL ? { revision: manual?.revision ?? null, sourceHash: manual?.sourceHash ?? null } : undefined,
         snapshot: snapshotByRepo.get(candidate.repo),
       });
 

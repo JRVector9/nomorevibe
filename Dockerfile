@@ -30,8 +30,9 @@ COPY --chown=worker:nodejs drizzle ./drizzle
 # Reviewer uses Claude; publisher category classification uses Codex. Pin both inspected CLIs.
 ARG CLAUDE_CODE_VERSION=2.1.263
 ARG CODEX_CLI_VERSION=0.153.4
-RUN npm install -g @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION} @openai/codex@${CODEX_CLI_VERSION} \
+RUN apk add --no-cache util-linux && npm install -g @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION} @openai/codex@${CODEX_CLI_VERSION} \
   && claude --version && codex --version
+RUN mkdir -p /var/lib/nomorevibe-codex && chown worker:nodejs /var/lib/nomorevibe-codex
 USER worker
 HEALTHCHECK --interval=15s --timeout=5s --start-period=30s --retries=3 \
   CMD node --import tsx scripts/worker-healthcheck.ts

@@ -2,6 +2,8 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { writeFileSync, renameSync } from 'node:fs';
 import { basename, resolve } from 'node:path';
+import { randomUUID } from 'node:crypto';
+import { observe } from '../lib/operations/observations';
 import type { RuntimeHeartbeat } from './worker';
 
 export type RuntimeRole = 'scheduler' | 'crawler' | 'reviewer' | 'publisher' | 'maintenance';
@@ -86,6 +88,8 @@ export async function superviseWorker(role: RuntimeRole, options: {
     detached: process.platform !== 'win32', stdio: ['ignore', 'inherit', 'inherit', 'ipc'],
   });
   const started = Date.now();
+  const bootId = randomUUID();
+  let lastObserved = 0, observationPending = false;
   let health: WorkerHealth = {
     role, pid: process.pid, childPid: child.pid ?? null, updatedAt: started,
     lastHeartbeatAt: started, lastProgressAt: started, state: 'idle', currentJob: null,
@@ -97,6 +101,11 @@ export async function superviseWorker(role: RuntimeRole, options: {
     const log = (event: string, fields: Record<string, unknown> = {}) =>
       console.log(JSON.stringify({ event, role, at: new Date().toISOString(), ...fields }));
     const publish = () => {
+      if (!observationPending && Date.now() - lastObserved >= 15_000) {
+        lastObserved = Date.now(); observationPending = true;
+        void observe(role, { ...health, bootId, bootedAt: started, release: process.env.RELEASE_TAG ?? "unknown", supervisorRssBytes: process.memoryUsage().rss })
+          .catch(() => {}).finally(() => { observationPending = false; });
+      }
       health.updatedAt = Date.now();
       try { writeHealth(healthPath, health); }
       catch { stop('health_write_failed', false); }
@@ -138,6 +147,8 @@ export async function superviseWorker(role: RuntimeRole, options: {
       process.removeListener('SIGINT', onSignal);
       process.removeListener('SIGTERM', onSignal);
       log('supervisor.stopped', { exitCode });
+      const client=(globalThis as unknown as {pgClient?:{end:(options:{timeout:number})=>Promise<void>}}).pgClient;
+      if(client)await client.end({timeout:1}).catch(()=>{});
       resolveResult(exitCode);
     };
     process.on('SIGINT', onSignal);

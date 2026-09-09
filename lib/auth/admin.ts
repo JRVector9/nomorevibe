@@ -7,7 +7,16 @@ import { SESSION_COOKIE, verifySession, type Session } from "./session";
  * GitHub OAuth로 "이 사람이 누구인지"는 알 수 있지만, "어드민인지"는 우리가 정해야 한다.
  * 허용목록을 환경변수로 둔다 — 계정을 추가하려면 배포가 필요하지만, 그게 이 규모에서는
  * DB에 권한 테이블을 두는 것보다 안전하다.
+ *
+ * 로컬에서 GitHub 앱을 만들기 전에 화면을 보려면 ADMIN_LOCAL_LOGIN=1 로 연다.
+ * 운영에는 넣지 않는다.
  */
+
+export const LOCAL_ADMIN_LOGIN = "local";
+
+export function adminLocalLoginEnabled(): boolean {
+  return process.env.ADMIN_LOCAL_LOGIN === "1";
+}
 
 /** 설정이 비어 있으면 아무도 어드민이 아니다 — 실수로 열려 있는 것보다 낫다 */
 export function adminLogins(): string[] {
@@ -19,8 +28,10 @@ export function adminLogins(): string[] {
 
 /** GitHub 로그인명은 대소문자를 구분하지 않는다 */
 export function isAdminLogin(login: string): boolean {
+  const normalized = login.trim().toLowerCase();
+  if (adminLocalLoginEnabled() && normalized === LOCAL_ADMIN_LOGIN) return true;
   const allowed = adminLogins();
-  return allowed.length > 0 && allowed.includes(login.trim().toLowerCase());
+  return allowed.length > 0 && allowed.includes(normalized);
 }
 
 export function authSecret(): string | null {
@@ -34,6 +45,10 @@ export function authSecret(): string | null {
  * 화면과 서버 액션이 이걸로 자격을 확인한다.
  */
 export async function currentAdmin(): Promise<Session | null> {
+  if (adminLocalLoginEnabled()) {
+    return { login: LOCAL_ADMIN_LOGIN, exp: Math.floor(Date.now() / 1000) + 12 * 60 * 60 };
+  }
+
   const secret = authSecret();
   if (!secret) return null;
 

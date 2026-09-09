@@ -8,7 +8,6 @@ import { REVIEW_REJECT_REASONS } from "@/lib/crawl/review";
 import { pendingTakedowns } from "@/lib/domain/products/takedown";
 import { ReviewItem } from "./ReviewItem";
 import { TakedownItem } from "./TakedownItem";
-import { AdminNav } from "../AdminNav";
 import { ReviewModeForm } from "./ReviewModeForm";
 
 export const dynamic = "force-dynamic";
@@ -38,9 +37,7 @@ export default async function ReviewPage({ searchParams }: {
       <div className="flex flex-wrap items-baseline gap-3 pt-9">
         <h1 className="text-[26px] font-extrabold tracking-tight">심사 큐</h1>
         <span className="text-[13px] text-fg-3">현재 페이지 {entries.length}건</span>
-        <div className="ml-auto">
-          <AdminNav current="/admin/review" />
-        </div>
+
       </div>
 
       <p className="mt-2 max-w-[68ch] text-[13.5px] leading-[1.7] text-fg-2">

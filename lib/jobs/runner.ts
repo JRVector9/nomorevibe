@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { and, eq, isNull, or, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { jobs } from "@/lib/db/schema";
+import { jobs, operationsObservations } from "@/lib/db/schema";
 import { logger } from "@/lib/observability/logger";
 import { JobLeaseLostError, requestJob, type JobLease } from "./control";
 
@@ -68,6 +68,7 @@ export async function runJob<C>(
   }, 15_000);
   timer.unref();
   const stopHeartbeat = async () => { clearInterval(timer); await renewing; };
+  const events: Array<{event:string;counts:Record<string,number|boolean>}> = [];
   const ctx: JobContext<C> = {
     get cursor() { return cursor; },
     lease,
@@ -79,7 +80,11 @@ export async function runJob<C>(
       cursor = next;
     },
     hasBudget: () => !lost && !options.signal?.aborted && Date.now() - startedAt < (options.budgetMs ?? 25_000),
-    log: (event, fields) => logger.info(event, { job: name, ...fields }),
+    log: (event, fields) => {
+      logger.info(event, { job: name, ...fields });
+      events.push({event:event.slice(0,100),counts:Object.fromEntries(Object.entries(fields ?? {}).filter(([,v])=>typeof v==='number'&&Number.isFinite(v)||typeof v==='boolean')) as Record<string,number|boolean>});
+      if(events.length>12)events.shift();
+    },
   };
   try {
     const outcome = await handler(ctx);
@@ -93,6 +98,10 @@ export async function runJob<C>(
         lastSuccessAt: sql`now()`, lastError: null, updatedAt: sql`now()`,
       }).where(owned).returning({ name: jobs.name });
       if (!row) throw new JobLeaseLostError();
+      const observedAt = new Date();
+      const value = { requestedVersion: lease.requestedVersion, done: outcome.done, durationMs: Date.now()-startedAt, events };
+      await tx.insert(operationsObservations).values({key:`job:${name}`,value,observedAt})
+        .onConflictDoUpdate({target:operationsObservations.key,set:{value,observedAt}});
       // A single dependency, committed with the successful rollup tick.
       if (name === "click-rollup" && outcome.done) await requestJob("ranking-refresh", tx);
     });

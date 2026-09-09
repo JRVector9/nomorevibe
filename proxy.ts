@@ -14,6 +14,11 @@ import { SESSION_COOKIE, verifySession } from "@/lib/auth/session";
  * 끊기는 순간 차단이 조용히 풀린다.
  */
 export async function proxy(req: NextRequest) {
+  // GitHub OAuth 없이 로컬에서 어드민을 연다. 운영에는 ADMIN_LOCAL_LOGIN을 넣지 않는다.
+  if (process.env.ADMIN_LOCAL_LOGIN === "1") {
+    return NextResponse.next();
+  }
+
   const secret = process.env.AUTH_SECRET;
   const loginUrl = new URL("/admin/login", req.url);
 

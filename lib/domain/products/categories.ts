@@ -1,0 +1,20 @@
+export const CATEGORIES = [
+  "Productivity",
+  "Dev",
+  "Design",
+  "Business",
+  "Marketing",
+  "Finance",
+  "Commerce",
+  "Education",
+  "Health",
+  "Media",
+  "Games",
+  "Social",
+  "Data",
+  "Security",
+  "Lifestyle",
+  "Sports",
+  "Other",
+] as const;
+export type Category = (typeof CATEGORIES)[number];

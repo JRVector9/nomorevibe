@@ -1,26 +1,8 @@
 import { z } from "zod";
 import { normalizeHttpUrl } from "@/lib/net/normalize";
 
-export const CATEGORIES = [
-  "Productivity",
-  "Dev",
-  "Design",
-  "Business",
-  "Marketing",
-  "Finance",
-  "Commerce",
-  "Education",
-  "Health",
-  "Media",
-  "Games",
-  "Social",
-  "Data",
-  "Security",
-  "Lifestyle",
-  "Sports",
-  "Other",
-] as const;
-export type Category = (typeof CATEGORIES)[number];
+import { CATEGORIES } from "./categories";
+export { CATEGORIES, type Category } from "./categories";
 
 // 입력 길이 상한 — DB 비대와 상세 페이지 수 MB 렌더를 막는다
 export const LIMITS = {

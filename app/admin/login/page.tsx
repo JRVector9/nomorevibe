@@ -1,4 +1,6 @@
 import type { Metadata } from "next";
+import { redirect } from "next/navigation";
+import { adminLocalLoginEnabled } from "@/lib/auth/admin";
 
 export const metadata: Metadata = { title: "어드민 로그인 — NoMoreVibe", robots: { index: false } };
 
@@ -7,6 +9,8 @@ export default async function AdminLoginPage({
 }: {
   searchParams: Promise<{ error?: string }>;
 }) {
+  if (adminLocalLoginEnabled()) redirect("/admin");
+
   const { error } = await searchParams;
 
   return (

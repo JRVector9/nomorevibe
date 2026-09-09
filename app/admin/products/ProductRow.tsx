@@ -1,6 +1,7 @@
 "use client";
 
 import { useActionState } from "react";
+import Link from "next/link";
 import { markClaimInvite, setProductBan, type ReviewState } from "../actions";
 
 export type AdminProduct = {
@@ -109,12 +110,13 @@ export function ProductRow({ product }: { product: AdminProduct }) {
           <p className="mt-3 text-[13px] text-fg-3">GitHub 레포가 없어 초대할 곳이 없습니다</p>
         )
       )}
-      <a
+      <Link
         href={`/admin/products/${product.slug}`}
+        prefetch={false}
         className="mt-3 inline-block text-[13px] font-semibold text-accent hover:underline"
       >
         근거·업데이트 관리
-      </a>
+      </Link>
       {/* 둘을 한 줄에 합치면 남아 있는 차단 오류가 방금 난 초대 오류를 가린다 */}
       {state?.error && <p className="mt-2 text-[13px] text-down">차단: {state.error}</p>}
       {inviteState?.error && <p className="mt-2 text-[13px] text-down">초대: {inviteState.error}</p>}

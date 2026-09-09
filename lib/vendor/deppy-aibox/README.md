@@ -1,0 +1,1 @@
+Vendored from JRVector9/Deppy-aibox, commit 814144a2d37cb60359486219393f93f32c7267fc (Apache-2.0). Core contracts and Claude OAuth capture provider. Only package import paths changed. Broker owns persistence, access controls and process lifecycle.

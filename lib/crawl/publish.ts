@@ -43,6 +43,7 @@ export type PreparedClassification = {
 };
 
 type Preclassification = {
+  decision?: { revision: number | null; sourceHash: string | null };
   category: Category | null;
   snapshot?: PublicationSnapshot;
 };
@@ -141,7 +142,7 @@ export async function publishCandidate(
          */
         verifyToken: generateVerifyToken(),
         editTokenHash: hashToken(editToken),
-      }, tx => guardPublication(tx, {candidate,document,settings,slug,scanId:checkedEvidence?.scanId ?? null,lease}));
+      }, tx => guardPublication(tx, {candidate,document,settings,slug,scanId:checkedEvidence?.scanId ?? null,lease,decision:preclassification?.decision}));
       break;
     } catch (e) {
       if (e instanceof PublicationStateChangedError) return {ok:false,reason:"publication_state_changed"};

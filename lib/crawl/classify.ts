@@ -24,7 +24,7 @@ const answer = z.object({
   results: z.array(resultItem).min(1).max(CATEGORY_BATCH_SIZE),
 });
 
-const OUTPUT_SCHEMA = {
+export const OUTPUT_SCHEMA = {
   type: "object",
   properties: {
     results: {
@@ -57,7 +57,7 @@ export type ClassifyInput = {
 };
 
 type ReasoningEffort = "high" | "xhigh";
-type ClassifierModel = {
+export type ClassifierModel = {
   model: string;
   effort: ReasoningEffort;
   timeoutMs: number;
@@ -140,7 +140,7 @@ export function cliArgs(model = MODELS[0].model, effort: ReasoningEffort = MODEL
 }
 
 /** Kill on deadline/overflow and resolve only after close confirms that the child is gone. */
-const defaultRun: CliRun = async (args, stdin, timeoutMs) =>
+export const defaultRun: CliRun = async (args, stdin, timeoutMs) =>
   new Promise<CliResult>((resolve) => {
     const child = spawn(process.env.CODEX_CLI ?? "codex", args, {
       cwd: os.tmpdir(),
@@ -210,11 +210,10 @@ function promptFor(inputs: ClassifyInput[]): string {
 function failureReason(result: CliResult): string {
   if (result.kind !== "exit") return result.kind === "missing" ? "no_cli" : result.kind;
   const message = `${result.stdout}\n${result.stderr}`;
-  return /not logged in|login|unauthenticated|authentication|oauth|401|403/i.test(message)
-    ? "auth"
-    : result.code === 0
-      ? "invalid_output"
-      : "error";
+  if (/429|rate.?limit|quota/i.test(message)) return "rate_limit";
+  if (/403|access.denied|not supported|does not exist|not have access/i.test(message)) return "access_denied";
+  return /not logged in|login|unauthenticated|authentication|oauth|401/i.test(message)
+    ? "auth" : result.code === 0 ? "invalid_output" : "error";
 }
 
 function parseCategories(result: CliResult, size: number) {
@@ -235,9 +234,9 @@ function parseCategories(result: CliResult, size: number) {
   return Array.from({ length: size }, (_, id) => byId.get(id)!);
 }
 
-async function classifyBatch(inputs: ClassifyInput[], run: CliRun): Promise<(Category | null)[]> {
+async function classifyBatch(inputs: ClassifyInput[], run: CliRun, models: readonly ClassifierModel[], onAttempt?: (model: string, result: string) => void): Promise<(Category | null)[]> {
   const prompt = promptFor(inputs);
-  for (const config of MODELS) {
+  for (const config of models) {
     let result: CliResult;
     try {
       result = await run(cliArgs(config.model, config.effort), prompt, config.timeoutMs);
@@ -245,17 +244,20 @@ async function classifyBatch(inputs: ClassifyInput[], run: CliRun): Promise<(Cat
       result = { kind: "cli_error" };
     }
     if (result.kind === "missing") {
+      onAttempt?.(config.model, "no_cli");
       if (!warnedMissing) {
         logger.info("crawl.classify_disabled", { reason: "no_cli" });
         warnedMissing = true;
       }
-      break;
+      if (!models.some(m => (m.model === "sonnet") !== (config.model === "sonnet"))) break;
+      continue;
     }
     const parsed = parseCategories(result, inputs.length);
     if (parsed) {
+      onAttempt?.(config.model, "success");
       parsed.forEach((item, index) => logger.info("crawl.classified", {
         repo: inputs[index].repo,
-        provider: "codex-cli",
+        provider: config.model === "sonnet" ? "claude-cli" : "codex-cli",
         model: config.model,
         category: item.category,
         reason: item.reason.slice(0, 200),
@@ -263,6 +265,7 @@ async function classifyBatch(inputs: ClassifyInput[], run: CliRun): Promise<(Cat
       return parsed.map((item) => item.category);
     }
     const reason = failureReason(result);
+    onAttempt?.(config.model, reason);
     logger[reason === "auth" ? "error" : "warn"]("crawl.classify_failed", {
       repo: inputs[0]?.repo,
       count: inputs.length,
@@ -277,10 +280,12 @@ async function classifyBatch(inputs: ClassifyInput[], run: CliRun): Promise<(Cat
 export async function classifyCategories(
   inputs: ClassifyInput[],
   run: CliRun = defaultRun,
+  models: readonly ClassifierModel[] = MODELS,
+  onAttempt?: (model: string, result: string) => void,
 ): Promise<(Category | null)[]> {
   const categories: (Category | null)[] = [];
   for (let index = 0; index < inputs.length; index += CATEGORY_BATCH_SIZE) {
-    categories.push(...await classifyBatch(inputs.slice(index, index + CATEGORY_BATCH_SIZE), run));
+    categories.push(...await classifyBatch(inputs.slice(index, index + CATEGORY_BATCH_SIZE), run, models, onAttempt));
   }
   return categories;
 }

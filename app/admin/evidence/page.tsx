@@ -2,7 +2,6 @@ import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 import { currentAdmin } from "@/lib/auth/admin";
 import { currentEvidenceSettings } from "@/lib/domain/evidence/settings-store";
-import { AdminNav } from "../AdminNav";
 import { EvidenceSettingsForm } from "./EvidenceSettingsForm";
 
 export const dynamic = "force-dynamic";
@@ -17,7 +16,7 @@ export default async function AdminEvidencePage() {
       <div className="flex flex-wrap items-baseline gap-3 pt-9">
         <h1 className="text-[26px] font-extrabold tracking-tight">근거 수집 설정</h1>
         <p className="text-[13px] text-fg-3">외부 근거의 주기와 실패 기준</p>
-        <div className="ml-auto"><AdminNav current="/admin/evidence" /></div>
+
       </div>
       <p className="mt-4 max-w-[720px] text-[13px] leading-6 text-fg-2">
         주기는 수집 작업이 각 출처를 다시 확인하는 간격입니다. 마지막으로 성공한 객관적 사실은

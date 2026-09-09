@@ -4,7 +4,6 @@ import { currentAdmin } from "@/lib/auth/admin";
 import { getEvidenceAdminProduct } from "@/lib/domain/evidence/admin";
 import { getProductRefreshRequest } from "@/lib/domain/evidence/refresh-requests";
 import { Panel } from "@/components/Panel";
-import { AdminNav } from "../../AdminNav";
 import { ForceRefreshForm, UpdateVisibilityForm } from "./EvidenceProductActions";
 
 export const dynamic = "force-dynamic";
@@ -41,7 +40,7 @@ export default async function AdminEvidenceProductPage({ params }: Props) {
         <h1 className="text-[26px] font-extrabold tracking-tight">{view.product.name}</h1>
         <span className="font-mono text-[13px] text-fg-3">{view.product.slug}</span>
         <span className="text-[13px] font-semibold text-fg-2">{view.product.status}</span>
-        <div className="ml-auto"><AdminNav current="/admin/products" /></div>
+
       </div>
       <div className="mt-3 flex flex-wrap items-center gap-4 text-[13px]">
         <a href={view.product.url} target="_blank" rel="noreferrer noopener" className="text-accent hover:underline">

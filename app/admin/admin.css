@@ -1,0 +1,38 @@
+/* Scope to mounted admin layouts: public navigation returns on client navigation home. */
+body:has(.admin-area) > .nmb-header,
+body:has(.admin-area) > .nmb-footer,
+body:has(.admin-login-area) > .nmb-header,
+body:has(.admin-login-area) > .nmb-footer { display: none; }
+.admin-area{display:grid;grid-template-columns:224px minmax(0,1fr);min-height:100vh;background:var(--color-bg)}
+.admin-sidebar{position:sticky;top:0;align-self:start;height:100dvh;overflow-y:auto;border-right:1px solid var(--color-line);background:var(--color-bg-card);padding:30px 18px;}
+.admin-brand{display:block;font-size:21px;font-weight:850;letter-spacing:-.8px;padding:0 12px;color:var(--color-fg)}
+.admin-brand span{color:var(--color-accent)}
+.admin-brand small{display:block;font-size:10px;letter-spacing:.15em;color:var(--color-fg-3);margin-top:6px;font-weight:650}
+.admin-navigation{display:flex;flex-direction:column;gap:7px;margin-top:32px}
+.admin-navigation a{display:flex;flex-direction:column;gap:3px;padding:12px;border-radius:9px;color:var(--color-fg-2);font-size:14px;font-weight:650;min-height:48px}
+.admin-navigation small{font-size:11px;font-weight:400;color:var(--color-fg-3)}
+.admin-navigation a:hover{background:var(--color-bg-soft)}
+.admin-navigation a[aria-current=page]{color:var(--color-accent);background:color-mix(in srgb,var(--color-accent) 9%,transparent)}
+.admin-sidebar-bottom{margin:28px 12px 0;padding-top:20px;border-top:1px solid var(--color-line);font-size:12px;color:var(--color-fg-2)}
+.admin-sidebar-bottom p{font-size:11px;margin-top:12px;line-height:1.7;color:var(--color-fg-3)}
+.admin-content{overflow-wrap:anywhere;min-width:0;padding:0 32px 24px;width:100%;max-width:1520px;margin:0 auto}
+.admin-content>main{width:100%;max-width:none;margin:0;padding-left:0;padding-right:0}
+.admin-content h1{letter-spacing:-.7px}
+.admin-menu-toggle{display:none}
+.admin-area a:focus-visible,.admin-area button:focus-visible{outline:3px solid var(--color-accent);outline-offset:3px}
+.admin-worker-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+.admin-worker{border:1px solid var(--color-line);background:var(--color-bg-card);border-radius:12px;padding:20px;min-width:0}
+.admin-worker h2{font-size:17px;font-weight:750}
+.admin-worker p{font-size:12px;color:var(--color-fg-3);line-height:1.6}
+.admin-worker code{display:block;font-size:12px;margin:3px 0 14px;color:var(--color-fg-3);overflow-wrap:anywhere}
+.admin-worker dl{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:16px 0}
+.admin-worker dt{font-size:11px;color:var(--color-fg-3)}
+.admin-worker dd{font-size:13px;margin-top:3px;font-weight:650;overflow-wrap:anywhere}
+.admin-worker summary{cursor:pointer;font-size:13px;color:var(--color-accent);padding:10px 0;min-height:44px}
+.admin-job-detail{border-top:1px solid var(--color-line);padding:12px 0}
+.admin-job-detail strong{font-size:13px}
+.admin-job-detail dl{margin:10px 0;font-size:12px}
+.admin-job-detail pre{white-space:pre-wrap;overflow-wrap:anywhere;max-height:200px;overflow:auto;font-size:11px}
+.admin-refresh{border:1px solid var(--color-line);padding:9px 14px;border-radius:8px;min-height:44px;font-size:13px;cursor:pointer}
+@media(max-width:1150px){.admin-area{grid-template-columns:200px minmax(0,1fr)}.admin-content{padding:0 22px 24px}.admin-worker-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:760px){.admin-area{display:block}.admin-sidebar{height:auto;position:sticky;z-index:30;padding:14px 16px;border-right:0;border-bottom:1px solid var(--color-line);overflow:visible}.admin-brand-row{display:flex;align-items:center;justify-content:space-between;gap:16px}.admin-brand{padding:0;font-size:18px}.admin-menu-toggle{display:block;font-size:13px;padding:10px 12px;border:1px solid var(--color-line);border-radius:8px;min-height:44px}.admin-sidebar-menu{display:none}.admin-sidebar-menu.is-expanded{display:block;max-height:70dvh;overflow:auto}.admin-navigation{display:grid;grid-template-columns:1fr 1fr;margin-top:16px}.admin-sidebar-bottom{margin-top:14px}.admin-content{padding:0 16px 24px}.admin-worker-grid{grid-template-columns:1fr}.admin-login-area{min-height:100dvh}}
