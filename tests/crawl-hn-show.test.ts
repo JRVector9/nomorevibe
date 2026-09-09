@@ -1,6 +1,7 @@
 import { beforeEach, expect, it, vi } from 'vitest';
 import { DEFAULT_CRAWL_SETTINGS, type CrawlSettings } from '@/lib/crawl/settings-schema';
 import { repoFromUrl, seedFromShowHN, SHOW_HN_SIGNAL, type ShowHnCursor } from '@/lib/crawl/jobs/hn-show';
+import type { CappedRequest } from '@/lib/net/fetch';
 
 const mocks = vi.hoisted(() => ({ enqueue: vi.fn(), settings: null as CrawlSettings | null }));
 vi.mock('@/lib/crawl/repository', () => ({ enqueue: mocks.enqueue }));
@@ -10,7 +11,7 @@ const context = (cursor: ShowHnCursor | null = null, hasBudget = () => true) =>
   ({ cursor, hasBudget, save: vi.fn().mockResolvedValue(undefined), log: vi.fn() });
 
 /** fetchCapped 의 주입점. 응답 본문만 흉내 낸다 */
-const respond = (body: unknown, status = 200) => async () =>
+const respond = (body: unknown, status = 200): CappedRequest => async () =>
   new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
 const hit = (id: string, at: number, url: string | null) => ({ objectID: id, created_at_i: at, url, title: 'Show HN: x' });
 
@@ -57,10 +58,10 @@ it('밀려 있으면 오래된 페이지부터 당겨 건너뛰는 구간을 만
     '0': { nbPages: 3, hits: [hit('n', 900, 'https://github.com/acme/newest')] },
     '2': { nbPages: 3, hits: [hit('o', 110, 'https://github.com/acme/oldest')] },
   };
-  const request = vi.fn(async (url: string | URL) => {
-    const page = new URL(String(url)).searchParams.get('page')!;
+  const request: CappedRequest = async (url) => {
+    const page = new URL(url).searchParams.get('page')!;
     return new Response(JSON.stringify(pages[page] ?? { nbPages: 3, hits: [] }), { status: 200 });
-  });
+  };
   const outcome = await seedFromShowHN(context({ seenUntil: 100 }), request);
   // 최신(900)이 아니라 가장 오래된 것(110)까지만 올라간다
   expect(outcome).toMatchObject({ done: false, cursor: { seenUntil: 110 } });
