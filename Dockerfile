@@ -13,9 +13,11 @@ FROM node:24-alpine AS builder
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
+ARG NEXT_DEPLOYMENT_ID
 ENV DATABASE_URL=postgres://build:build@localhost:5432/build
 ENV NEXT_TELEMETRY_DISABLED=1
-RUN npm run build
+ENV NEXT_DEPLOYMENT_ID=${NEXT_DEPLOYMENT_ID}
+RUN --mount=type=secret,id=NEXT_SERVER_ACTIONS_ENCRYPTION_KEY,env=NEXT_SERVER_ACTIONS_ENCRYPTION_KEY,required=true npm run build
 
 FROM node:24-alpine AS worker
 WORKDIR /app
@@ -37,6 +39,11 @@ USER worker
 HEALTHCHECK --interval=15s --timeout=5s --start-period=30s --retries=3 \
   CMD node --import tsx scripts/worker-healthcheck.ts
 CMD ["node", "--import", "tsx", "scripts/worker-supervisor.ts", "--role=crawler"]
+
+FROM worker AS connect-agent
+HEALTHCHECK --interval=15s --timeout=5s --start-period=30s --retries=3 \
+  CMD node -e "fetch('http://127.0.0.1:3020/rpc').then(r=>process.exit(r.status===401?0:1)).catch(()=>process.exit(1))"
+CMD ["node", "--import", "tsx", "scripts/connect-agent.ts"]
 
 # Keep the default final target as the web image for existing docker build callers.
 FROM node:24-alpine AS runner

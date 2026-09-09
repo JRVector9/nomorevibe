@@ -2,11 +2,12 @@ import { createServer } from 'node:http';
 import { timingSafeEqual } from 'node:crypto';
 import { ConnectAgent } from '../lib/operations/agent';
 import { agentToken } from '../lib/operations/agent-client';
-import { observe } from '../lib/operations/observations';
+import { observeService } from '../lib/operations/observations';
 const secret=process.env.OPERATIONS_AGENT_SECRET ?? '';
 if(secret.length<32)throw new Error('OPERATIONS_AGENT_SECRET is required');
 const agent=new ConnectAgent(process.env.CODEX_VAULT_DIR ?? '/var/lib/nomorevibe-codex',secret);
 const expected=Buffer.from(`Bearer ${agentToken(secret)}`);
+const startedAt=Date.now();
 const server=createServer(async(req,res)=>{
   res.setHeader('content-type','application/json');res.setHeader('cache-control','no-store');
   const auth=Buffer.from(req.headers.authorization ?? '');
@@ -35,7 +36,7 @@ let observing=false;
 const timer=setInterval(()=>{
   if(observing)return;observing=true;const state=agent.snapshot();
   // Device codes are available only through the privileged live RPC, never general DB snapshots.
-  void observe('connect-agent',{...state,connection:state.connection?{id:state.connection.id,provider:state.connection.provider,error:state.connection.error,state:state.connection.state,expiresAt:state.connection.expiresAt}:null,rssBytes:process.memoryUsage().rss})
+  void observeService('connect-agent',{...state,status:'running',bootedAt:startedAt,release:process.env.RELEASE_TAG??'unknown',connection:state.connection?{id:state.connection.id,provider:state.connection.provider,error:state.connection.error,state:state.connection.state,expiresAt:state.connection.expiresAt}:null,rssBytes:process.memoryUsage().rss})
     .catch(()=>{}).finally(()=>{observing=false;});
 },5000);
 server.listen(Number(process.env.PORT ?? 3020),'0.0.0.0');

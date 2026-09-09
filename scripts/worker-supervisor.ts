@@ -3,7 +3,7 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { writeFileSync, renameSync } from 'node:fs';
 import { basename, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { observe } from '../lib/operations/observations';
+import { observeService } from '../lib/operations/observations';
 import type { RuntimeHeartbeat } from './worker';
 
 export type RuntimeRole = 'scheduler' | 'crawler' | 'reviewer' | 'publisher' | 'maintenance';
@@ -103,7 +103,7 @@ export async function superviseWorker(role: RuntimeRole, options: {
     const publish = () => {
       if (!observationPending && Date.now() - lastObserved >= 15_000) {
         lastObserved = Date.now(); observationPending = true;
-        void observe(role, { ...health, bootId, bootedAt: started, release: process.env.RELEASE_TAG ?? "unknown", supervisorRssBytes: process.memoryUsage().rss })
+        void observeService(role, { ...health, bootId, bootedAt: started, release: process.env.RELEASE_TAG ?? "unknown", supervisorRssBytes: process.memoryUsage().rss })
           .catch(() => {}).finally(() => { observationPending = false; });
       }
       health.updatedAt = Date.now();

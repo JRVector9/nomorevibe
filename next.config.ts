@@ -4,6 +4,9 @@ const nextConfig: NextConfig = {
   // Docker/Dokploy 배포용 — .next/standalone만 복사해도 동작하게
   output: "standalone",
 
+  // 두 웹 인스턴스와 롤링 배포 사이의 asset/action 버전 불일치를 감지한다.
+  deploymentId: process.env.NEXT_DEPLOYMENT_ID || undefined,
+
   /**
    * DB 드라이버를 번들에 넣지 않고 node_modules에 남긴다.
    *

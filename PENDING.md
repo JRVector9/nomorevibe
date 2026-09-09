@@ -5,26 +5,23 @@
 
 ---
 
-## P0. 첫 프로덕션 배포 — 운영 대상 미확정
+## P0. 첫 프로덕션 배포 — 연결·데이터 컷오버
 
-**현재 상태(2026-09-08)**: 운영 서버·도메인·DB 구성이 확정되지 않아 이번 독립 워커 릴리스를
-생산 환경에 배포하지 않았다. 로컬 Compose 검증과 운영 배포를 구분한다. 2026-08-29의
-Dokploy 프로젝트 수·DNS 조회 결과는 과거 기록이며 현재 배포 유무의 증거로 재사용하지 않는다.
+**현재 상태(2026-09-09)**: M3와 mini에 웹을 하나씩 두고 기존 로드밸런서로 묶는다. M3에는
+scheduler·crawler·reviewer·publisher·maintenance와 영구 볼륨을 가진 connect-agent를 각 1개 둔다.
+운영 PostgreSQL 17에 전용 `nomorevibe` DB·계정을 만들고 마이그레이션을 적용했다. DB는 아직
+스키마만 있고 Dokploy에는 NoMoreVibe 앱이 없으므로 생산 서비스가 시작된 상태는 아니다.
 
-**막고 있는 것**: 아래 환경 결정과 운영 비밀값 설정.
+**막고 있는 것**: PgBouncer 호환 릴리스 배포, 공통 Next.js build key와 운영 비밀값 주입,
+로드밸런서의 실제 proxy hop 확인, 기존 데이터 컷오버, DB/PgBouncer 백업·용량 확인이다.
+운영 런타임은 6432, 일회성 migration은 5432를 사용한다. 역할별 워커를 두 서버에 중복 배포하지 않는다.
 
-| 결정 | 확인할 내용 |
-|---|---|
-| 형태 | 현재 Compose의 웹·scheduler·crawler·reviewer·publisher·maintenance 및 일회성 migrate. 외부 DB를 쓰더라도 각 소비 역할은 필요함 |
-| 서버 | 역할당 워커 1개로 시작할 호스트, CPU/RAM·DB·백업 여유. 웹 복제본 추가 시 DB pool 예산을 함께 계산 |
-| 도메인 | 보유 도메인·DNS·프록시·`NEXT_PUBLIC_SITE_URL`·GitHub OAuth 콜백 |
-| DB | 운영 PostgreSQL 연결·접근 제어·미디어 bytea를 포함한 백업과 복구 |
-
-**정해지면 순서**: 환경별 비밀값 생성 → GitHub OAuth/수집 자격 정보·장기 CLI OAuth 토큰 설정
-→ 이미지 빌드 → 기존 소비자 stop/drain → migration 종료 코드 0 확인 → 웹·역할별 워커 시작
+**실행 순서**: 환경별 비밀값 생성 → GitHub OAuth/수집 자격 정보·장기 CLI OAuth 토큰 설정
+→ 동일 release/build key로 이미지 빌드 → 기존 소비자 stop/drain → 기존 데이터의 일관된 dump/restore
+→ migration 종료 코드 0 확인 → M3 singleton 역할과 두 웹 시작 → 직접 health 확인 → 로드밸런서 연결
 → B1(독립 운영 확인) → B2(고유 유입자 시작) → D1(운영 CLI 확인).
 정확한 명령은 [독립 워커 운영 절차](docs/operations/independent-workers-runbook.md)를 따른다.
-`AUTH_SECRET`·`VISITOR_HASH_SECRET`·`CRON_SECRET`·`ADMIN_TOKEN`은 서로 다른 값을 사용한다.
+`AUTH_SECRET`·`VISITOR_HASH_SECRET`·`OPERATIONS_AGENT_SECRET`·`CRON_SECRET`·`ADMIN_TOKEN`은 서로 다른 값을 사용한다.
 
 Codex CLI `0.153.4`와 Claude Code CLI `2.1.263`은 Dockerfile **worker target**에 들어 있으며 웹
 runner에는 없다. Codex는 publisher 카테고리 분류, Claude는 reviewer 심사에 사용하므로 한쪽 장애를
@@ -34,7 +31,7 @@ runner에는 없다. Codex는 publisher 카테고리 분류, Claude는 reviewer 
 
 ## D1. 카테고리·AI 리뷰 — 운영용 Codex·Claude CLI 인증과 모델 확인
 
-**막고 있는 것**: 운영 대상, publisher용 `CODEX_ACCESS_TOKEN` 또는 `OPENAI_API_KEY`, reviewer용
+**막고 있는 것**: publisher용 `CODEX_ACCESS_TOKEN` 또는 `OPENAI_API_KEY`, reviewer용
 장기 `CLAUDE_CODE_OAUTH_TOKEN`과 `CRAWL_REVIEW_MODEL`이 아직 설정되지 않았다.
 
 **현재 상태(2026-09-08)**: 로컬 로그인으로 실제 Spark 구조화 카테고리 응답과 worker 이미지의
@@ -106,7 +103,7 @@ Codex 연구 프리뷰이므로 서버 access token과 계정 제공 여부를 �
 
 ## B1. 프로덕션 독립 스케줄러·워커 전환과 운영 확인
 
-**막고 있는 것**: P0의 운영 대상·DB·비밀값 확정. 로컬 구현과 검증은 생산 배포 완료가 아니다.
+**막고 있는 것**: P0의 연결·데이터 컷오버와 운영 비밀값 적용. 로컬 구현과 검증은 생산 배포 완료가 아니다.
 격리 환경의 웹 없는 5역할 관측을 1,800.307초 동안 완료했다(31표본 모두 healthy, 재시작0). 외부 수집 비활성·빈 DB 조건이며 24시간 관측은 수행하지 않았다.
 완료 기록은 [운영 절차](docs/operations/independent-workers-runbook.md)와 릴리스 보고서에 별도로 남긴다.
 
@@ -170,7 +167,7 @@ Codex 연구 프리뷰이므로 서버 access token과 계정 제공 여부를 �
 
 ## B2. 프로덕션 고유 유입자 수집 시작 및 전환 확인
 
-**막고 있는 것**: P0의 운영 대상·데이터베이스·비밀값 확정과 적용. 이 작업에서는
+**막고 있는 것**: P0의 데이터 컷오버·비밀값 적용. 이 작업에서는
 코드와 로컬 검증만 했으며, **프로덕션 마이그레이션 적용·비밀키 설정·수집 시작·7일 경과·정책
 예약을 확인하지 않았다.**
 

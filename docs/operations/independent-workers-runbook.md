@@ -1,7 +1,8 @@
 # 독립 워커 운영 절차
 
 이 문서는 로컬 Compose의 실제 실행 명령과 운영 전환 시 지켜야 하는 순서를 정리한다.
-현재 대상 운영 서버·도메인·외부 DB는 별도로 확인해야 하며 이 파일이 실제 배포 완료 증거는 아니다.
+운영은 M3 singleton 역할과 M3·mini 웹 2개가 외부 `nomorevibe` DB를 공유한다. 이 파일 자체는
+실제 배포 완료 증거가 아니며 완료 여부는 Dokploy 상태·DB 결과·health 응답으로 확인한다.
 A/B 통합 검증 기록은 `docs/CODEX_HANDOFF.md`와 해당 릴리스 보고서를 따른다.
 
 ## 구성과 실행 계약
@@ -75,6 +76,37 @@ docker compose logs --since=5m scheduler crawler reviewer publisher maintenance
 워커 시작 조건으로 사용하지 않는다. 배포 서버에서는 이 순서를 릴리스 작업으로 한 번 수행한다.
 동일 role 복제본 자동 확대와 무중단 rolling 교체는 A의 지원 범위가 아니다.
 
+## 운영 M3·mini 배포와 데이터 컷오버
+
+운영 환경 계약은 `docs/operations/production-multi-instance.env.example`을 사용한다. 실제 비밀값은
+Dokploy와 Keychain에만 저장하고 렌더링된 환경을 로그나 문서에 출력하지 않는다.
+
+1. 같은 commit을 두 웹에서 사용하고, build 시 동일한 base64 32-byte
+   `NEXT_SERVER_ACTIONS_ENCRYPTION_KEY`를 Dokploy build secret으로, `NEXT_DEPLOYMENT_ID=<commit>`을
+   build argument로 전달한다. 런타임에는 두 웹의
+   `AUTH_SECRET`, `VISITOR_HASH_SECRET`, OAuth, site URL과 agent secret을 같게 둔다.
+2. 런타임 `DATABASE_URL`은 PgBouncer 6432와 `DB_POOLER_MODE=pgbouncer`를 사용한다. 일회성 migration은
+   직접 5432 URL로 실행한다. PgBouncer의 pool mode/size와 DB 전체 연결 사용량을 확인하기 전 pool을
+   늘리지 않는다. 공통 DB role timeout은 PgBouncer backend에 적용되도록 DB에서 설정한다.
+   초기값은 `statement_timeout=120s`, `lock_timeout=5s`,
+   `idle_in_transaction_session_timeout=120s`다. `scripts/migrate.mjs`는 직접 연결한 세션에서만
+   statement timeout을 해제하고 lock timeout을 10초로 바꾼 뒤 migration을 실행한다.
+3. 로컬 수집 데이터를 옮길 때 scheduler와 5개 워커를 먼저 stop/drain한다. 일관된 dump를 복원한 뒤
+   `jobs.locked_at`, `jobs.lease_token`, `jobs.worker_seen_at`을 비우고 fetching frontier를 pending으로
+   되돌린다. 제품·후보·근거·클릭·정책 데이터는 유지한다. production이 빈 DB임을 확인한 첫 컷오버에만
+   전체 복원을 사용하며, 이후 릴리스에서 반복하지 않는다.
+4. M3에서 Dockerfile의 `connect-agent` target 한 개를 영구 볼륨과 함께 시작한다. 전용 target의
+   HTTP healthcheck를 사용해야 worker supervisor 파일을 찾는 기본 healthcheck가 적용되지 않는다.
+   M3/mini web과 publisher는 Tailscale 내부
+   주소로 연결하고 해당 포트는 공개 domain을 만들지 않는다. 각 서비스에는 고유한
+   `SERVICE_INSTANCE_ID`를 넣는다.
+5. M3 singleton 역할을 시작하고 `/api/health` 및 `/admin/status`에서 DB, 두 web instance, scheduler와
+   4개 worker, connect-agent 관측을 확인한다. 두 web을 직접 확인한 뒤 같은 public domain의
+   load-balancer target으로 넣는다. `TRUSTED_PROXY_HOPS`는 실제 전달된 header를 표본으로 정한다.
+
+롤백은 load-balancer에서 새 web target을 빼고 singleton consumer를 stop/drain한 다음 이전 호환
+이미지를 시작한다. 데이터 복원을 되감지 않고 가산 schema와 작업 요청 버전을 보존한다.
+
 ## Codex 분류·Claude 리뷰 인증과 AI 리뷰 모드 전환
 
 카테고리는 승인 후보를 최대 10개씩 묶어 `gpt-5.3-codex-spark`·effort xhigh·8초로 분류하고,
@@ -117,8 +149,9 @@ CLI smoke는 통과했으나 운영 장기 Codex/Claude 인증 설정과 24시�
 | 스케줄러 | 2 | 256 MiB | 0.25 | 없음 |
 | 로컬 DB | 별도 | 4 GiB | 2 | 로컬 DB 계정 |
 
-앱 pool 상한 합계는 23이며 migration/관리/다른 앱/교체 중 연결을 추가 계산한다. 웹 복제본을 하나
-더 띄우면 31이다. RAM은 앱 7.75 GiB + DB 4 GiB에 OS·파일 캐시 여유가 필요하다.
+웹 1개와 5역할의 pool 상한 합계는 23이다. 웹 복제본과 connect-agent pool 1개를 더하면 32이며
+migration/관리/다른 앱/교체 중 연결을 추가 계산한다. 운영 초기 웹 pool을 각각 6으로 설정하면 합계는
+28이다. RAM은 singleton 역할을 배치한 M3에 OS·파일 캐시 여유가 필요하다.
 CPU 상한은 예약량이 아니므로 모든 역할의 동시 peak를 보장하지 않는다. 8 vCPU/16 GiB 예시는
 측정을 시작할 동거형 예산이며 호스트 장애까지 견디는 무중단 구성은 아니다.
 
@@ -166,7 +199,7 @@ DB 드라이버는 `postgres` 3.4.9로 고정했다. `lib/db/pool.ts`는 대기 
 아래는 수행할 체크포인트이며 이 문서 작성 시 통과한 것으로 간주하지 않는다.
 2026-09-08 웹 없이 5역할을 1,800.307초 관측했다(31표본 모두 healthy, 재시작0, DB연결 최대5).
 외부 수집 비활성·빈 DB 조건의 독립 실행 검증이며 24시간 운영 관측은 미수행이다.
-운영 서버·도메인이 미확정이므로 생산 배포 완료를 뜻하지 않는다. 완료한 항목은 릴리스 보고서의
+운영 배포 전 로컬 결과이므로 생산 배포 완료를 뜻하지 않는다. 완료한 항목은 릴리스 보고서의
 실제 환경·명령·시각과 함께 구분한다.
 
 - 웹 30분 중지 중 scheduler 요청과 각 워커 tick/cursor 진행. 수집 설정과 외부 자격 정보가 활성인지 함께 기록.

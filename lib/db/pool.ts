@@ -1,9 +1,10 @@
 import postgres from "postgres";
 
-const ROLE_POOL_MAX = { web: 8, crawler: 4, reviewer: 3, publisher: 3, maintenance: 3, scheduler: 2 } as const;
+const ROLE_POOL_MAX = { web: 8, crawler: 4, reviewer: 3, publisher: 3, maintenance: 3, scheduler: 2, "connect-agent": 1 } as const;
 export type DbRole = keyof typeof ROLE_POOL_MAX;
 export type DbPoolConfig = {
   role: DbRole;
+  poolerMode: "direct" | "pgbouncer";
   max: number;
   waitMs: number;
   connectSeconds: number;
@@ -26,18 +27,40 @@ export function dbPoolConfig(env: PoolEnvironment = process.env): DbPoolConfig {
   const role = env.WORKER_ROLE ?? "web";
   if (!Object.hasOwn(ROLE_POOL_MAX, role)) throw new Error("Invalid WORKER_ROLE for database pool");
   const selected = role as DbRole;
+  const poolerMode = env.DB_POOLER_MODE ?? "direct";
+  if (poolerMode !== "direct" && poolerMode !== "pgbouncer") {
+    throw new Error("Invalid DB_POOLER_MODE: expected direct or pgbouncer");
+  }
   const statementDefault = selected === "maintenance" ? 120_000 : selected === "web" ? 15_000 : selected === "scheduler" ? 10_000 : 60_000;
   const statementMs = integerSetting(env, "DB_STATEMENT_TIMEOUT_MS", statementDefault, 100, 600_000);
   const lockMs = integerSetting(env, "DB_LOCK_TIMEOUT_MS", Math.min(5_000, statementMs), 100, 60_000);
   if (lockMs > statementMs) throw new Error("DB_LOCK_TIMEOUT_MS must not exceed DB_STATEMENT_TIMEOUT_MS");
   return {
     role: selected,
+    poolerMode,
     max: integerSetting(env, "DB_POOL_MAX", ROLE_POOL_MAX[selected], 1, 64),
     waitMs: integerSetting(env, "DB_POOL_WAIT_MS", 5_000, 10, 60_000),
     connectSeconds: integerSetting(env, "DB_CONNECT_TIMEOUT_SECONDS", 3, 1, 30),
     statementMs,
     lockMs,
     lifetimeSeconds: integerSetting(env, "DB_MAX_LIFETIME_SECONDS", 1_800, 30, 86_400),
+  };
+}
+
+export function postgresClientOptions(config: DbPoolConfig) {
+  const connection = config.poolerMode === "pgbouncer"
+    ? { application_name: `nomorevibe:${config.role}` }
+    : {
+        application_name: `nomorevibe:${config.role}`,
+        statement_timeout: config.statementMs,
+        lock_timeout: config.lockMs,
+        idle_in_transaction_session_timeout: Math.max(config.statementMs, 60_000),
+      };
+  return {
+    max: config.max,
+    connect_timeout: config.connectSeconds,
+    max_lifetime: config.lifetimeSeconds,
+    connection,
   };
 }
 
@@ -138,18 +161,7 @@ export function createDbClient(connectionString: string, config: DbPoolConfig = 
       return connect.call(this, query);
     };
   };
-  const options = {
-    max: config.max,
-    connect_timeout: config.connectSeconds,
-    max_lifetime: config.lifetimeSeconds,
-    connection: {
-      application_name: `nomorevibe:${config.role}`,
-      statement_timeout: config.statementMs,
-      lock_timeout: config.lockMs,
-      idle_in_transaction_session_timeout: Math.max(config.statementMs, 60_000),
-    },
-  };
-  const client = postgres(connectionString, options);
+  const client = postgres(connectionString, postgresClientOptions(config));
   client.unsafe = new Proxy(client.unsafe, {
     apply: (unsafe, receiver, args) => waitDeadline(Reflect.apply(unsafe, receiver, args), config.waitMs, waiting, trackConnection),
   });

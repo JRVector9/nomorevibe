@@ -18,10 +18,10 @@
 - Test: `tests/db-pool.test.ts`
 - Test: `tests/integration/db-pool-budget.test.ts`
 
-- [ ] Add `poolerMode: "direct" | "pgbouncer"` to the validated pool configuration.
-- [ ] In PgBouncer mode, send only `application_name` as a startup parameter; retain the existing timeout parameters for direct connections.
-- [ ] Add a pure options assertion proving unsupported parameters are absent in PgBouncer mode.
-- [ ] Run the pool unit and integration tests, then run a read-only smoke query through the production 6432 endpoint.
+- [x] Add `poolerMode: "direct" | "pgbouncer"` to the validated pool configuration.
+- [x] In PgBouncer mode, send only `application_name` as a startup parameter; retain the existing timeout parameters for direct connections.
+- [x] Add a pure options assertion proving unsupported parameters are absent in PgBouncer mode.
+- [x] Run the pool unit and integration tests, then run a read-only smoke query through the production 6432 endpoint.
 
 ### Task 2: Stable Next.js multi-server build identity
 
@@ -31,9 +31,9 @@
 - Modify: `compose.yml`
 - Test: `tests/next-config.test.ts`
 
-- [ ] Set `deploymentId` from `NEXT_DEPLOYMENT_ID` when provided.
-- [ ] Document and pass `NEXT_SERVER_ACTIONS_ENCRYPTION_KEY`, `NEXT_DEPLOYMENT_ID`, and stable instance IDs.
-- [ ] Assert the config reads the deployment ID without changing local builds when the variable is absent.
+- [x] Set `deploymentId` from `NEXT_DEPLOYMENT_ID` when provided.
+- [x] Document and pass `NEXT_SERVER_ACTIONS_ENCRYPTION_KEY`, `NEXT_DEPLOYMENT_ID`, and stable instance IDs.
+- [x] Assert the config reads the deployment ID without changing local builds when the variable is absent.
 
 ### Task 3: Instance-scoped service observations
 
@@ -48,12 +48,12 @@
 - Test: `tests/operations-observations.test.ts`
 - Test: `tests/operations-center.test.ts`
 
-- [ ] Validate `SERVICE_INSTANCE_ID` and build role/instance observation keys.
-- [ ] Keep job observation keys unchanged and scope service observations to instances.
-- [ ] Start one throttled web heartbeat from the Node instrumentation hook.
-- [ ] Group service instances in the administrator read model and render each instance's freshness,
+- [x] Validate `SERVICE_INSTANCE_ID` and build role/instance observation keys.
+- [x] Keep job observation keys unchanged and scope service observations to instances.
+- [x] Start one throttled web heartbeat from the Node instrumentation hook.
+- [x] Group service instances in the administrator read model and render each instance's freshness,
   release, current work, process start, and memory.
-- [ ] Verify legacy singleton observations remain readable during a rolling upgrade.
+- [x] Verify legacy singleton observations remain readable during a rolling upgrade.
 
 ### Task 4: Production configuration and runbook
 
@@ -63,10 +63,10 @@
 - Modify: `docs/operations/independent-workers-runbook.md`
 - Create: `docs/operations/production-multi-instance.env.example`
 
-- [ ] Separate local-only defaults from the production environment contract.
-- [ ] Record M3 singleton roles, mini web replica, private connect-agent routing, one-shot migration,
+- [x] Separate local-only defaults from the production environment contract.
+- [x] Record M3 singleton roles, mini web replica, private connect-agent routing, one-shot migration,
   common secrets, PgBouncer runtime URL, direct migration URL, proxy hop validation, and rollback.
-- [ ] Replace the stale “server/DB undecided” blocker with the remaining domain, load-balancer, backup,
+- [x] Replace the stale “server/DB undecided” blocker with the remaining domain, load-balancer, backup,
   PgBouncer, and data-cutover checks.
 
 ### Task 5: Verification, review, and release
@@ -75,10 +75,9 @@
 - Modify: `docs/CODEX_HANDOFF.md`
 - Create outside repository: Obsidian project journal entry
 
-- [ ] Run focused unit tests while implementing, then the full unit, integration, type, lint, and build checks.
-- [ ] Run `codex review --uncommitted`, fix Critical/High findings and relevant Medium findings, and rerun affected checks.
+- [x] Run focused unit tests while implementing, then the full unit, integration, type, lint, and build checks.
+- [x] Run `codex review --uncommitted`, fix Critical/High findings and relevant Medium findings, and rerun affected checks.
 - [ ] Commit and push the production fix branch, merge it to main, and deploy the same release to M3 and mini through the Dokploy API.
 - [ ] Apply database role timeout defaults, migrate existing data with writers stopped, run migration once,
   start singleton roles, and validate direct and load-balanced health.
 - [ ] Record exact application IDs, release, DB counts, worker progress, tests, failed approaches, and remaining operational risks.
-
