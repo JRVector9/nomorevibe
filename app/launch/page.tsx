@@ -1,11 +1,16 @@
 import type { Metadata } from "next";
+import { connection } from "next/server";
 
 export const metadata: Metadata = {
   title: "Launch with /nomorevibe — NoMoreVibe",
   description: "배포한 서비스를 AI 코딩 툴에서 한 번의 명령으로 등록하세요.",
 };
 
-export default function LaunchPage() {
+export default async function LaunchPage() {
+  // The public origin is a deployment setting. Wait for a request so the Docker
+  // build cannot freeze a local/default URL into this otherwise-static page.
+  await connection();
+
   return (
     <main className="mx-auto max-w-[1080px] px-6 pb-20">
       <section className="pb-10 pt-16 text-center">
