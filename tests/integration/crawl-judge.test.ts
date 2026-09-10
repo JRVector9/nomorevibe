@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeAll, beforeEach, vi } from "vitest";
+import { eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { crawlFrontier, crawlDocuments, crawlCandidates, crawlSettings } from "@/lib/db/schema";
 import * as crawl from "@/lib/crawl/repository";
@@ -158,6 +159,42 @@ describe("판정 잡", () => {
       state: "approved",
       reason: "passed",
     });
+  });
+
+  /**
+   * 승인에서 발행까지 스케줄(5분)을 기다리지 않는다. 다만 후보마다가 아니라 묶음이 끝날 때
+   * 한 번이다 — 후보마다 부르면 잡 행 하나를 두고 경합한다.
+   */
+  it("승인한 묶음은 발행을 한 번만 요청한다", async () => {
+    await putDocument({ repo: "someone/one", productUrl: "https://one.test" });
+    await putDocument({ repo: "someone/two", productUrl: "https://two.test" });
+
+    await tick();
+
+    expect(await crawl.candidateCounts()).toEqual({ approved: 2 });
+    expect(await db.query.jobs.findFirst({ where: eq(jobs.name, "crawl-publish") }))
+      .toMatchObject({ requestedVersion: 1, processedVersion: 0 });
+  });
+
+  it("승인한 것이 없으면 발행을 요청하지 않는다", async () => {
+    await putDocument({ repo: "someone/no-deploy", productUrl: null, pageStatus: null });
+
+    await tick();
+
+    expect(await db.query.jobs.findFirst({ where: eq(jobs.name, "crawl-publish") })).toBeUndefined();
+  });
+
+  it("대기 목록을 읽을 때 가져온 후보를 다시 조회하지 않는다", async () => {
+    await putDocument({ repo: "someone/one", productUrl: "https://one.test" });
+    await putDocument({ repo: "someone/two", productUrl: "https://two.test" });
+    await crawl.recordJudgement({ repo: "someone/two", productUrl: "https://two.test",
+      state: "new", reason: "source_changed", decidedBy: "auto" });
+    const spy = vi.spyOn(crawl, "getCandidate");
+    try {
+      await tick();
+      expect(spy).not.toHaveBeenCalled();
+    } finally { spy.mockRestore(); }
+    expect(await crawl.candidateCounts()).toEqual({ approved: 2 });
   });
 
   it("수집이 꺼져 있으면 아무것도 판정하지 않는다", async () => {

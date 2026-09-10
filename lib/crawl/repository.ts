@@ -15,7 +15,8 @@ import {
 } from "@/lib/db/schema";
 import { mergeWithDefaults } from "./settings";
 import type { CrawlSettings } from "./settings-schema";
-import { assertJobLease, requestJob, type JobLease } from "@/lib/jobs/control";
+import { factsFromRepoMeta } from "./rules";
+import { assertJobLease, type JobLease } from "@/lib/jobs/control";
 
 /** 크롤 파이프라인 데이터 접근 — 파이프라인 바깥에서 이 테이블들을 직접 만지지 않는다 */
 
@@ -131,14 +132,29 @@ export async function dequeue(limit: number, now?: Date): Promise<FrontierEntry[
   );
 }
 
+/**
+ * 꺼낼 때 받은 소유권. dequeue가 attempts와 next_attempt_at을 함께 바꾸므로, 둘이 그대로면
+ * 아직 내 것이다. 10분이 지나 회수돼 다른 워커가 다시 꺼냈으면 둘 다 바뀌어 있다.
+ */
+export type FrontierClaim = Pick<FrontierEntry, "id" | "attempts" | "nextAttemptAt">;
+
+/** RETURNING으로 받은 시각은 밀리초까지라, 비교도 밀리초에서 자른다 */
+function claimed(claim: FrontierClaim) {
+  return sql`(${crawlFrontier.state} = 'fetching' and ${crawlFrontier.id} = ${claim.id}
+    and ${crawlFrontier.attempts} = ${claim.attempts}
+    and date_trunc('milliseconds', ${crawlFrontier.nextAttemptAt}) = ${claim.nextAttemptAt.toISOString()}::timestamp)`;
+}
+
+/** claim을 주면 아직 내 것일 때만 바꾼다 — 회수된 항목을 옛 워커가 끝내 버리지 않도록 */
 export async function markFrontier(
   repo: string,
   state: Extract<FrontierState, "done" | "skipped">,
+  claim?: FrontierClaim,
 ): Promise<void> {
   await db
     .update(crawlFrontier)
     .set({ state, lastError: null, updatedAt: new Date() })
-    .where(eq(crawlFrontier.repo, repo));
+    .where(claim ? and(eq(crawlFrontier.repo, repo), claimed(claim)) : eq(crawlFrontier.repo, repo));
 }
 
 /** Return only this batch's still-owned claims; quota/budget waits are not failed attempts. */
@@ -150,17 +166,17 @@ export async function deferFrontier(entries: FrontierEntry[], retryAt?: Date): P
     attempts: sql`greatest(0, ${crawlFrontier.attempts} - 1)`,
     nextAttemptAt: retryAt ? sql`greatest(${at}, ${retryAt.toISOString()}::timestamp)` : at,
     updatedAt: at,
-  }).where(sql`${crawlFrontier.state} = 'fetching' and (${sql.join(entries.map(entry => sql`(
-    ${crawlFrontier.id} = ${entry.id} and ${crawlFrontier.attempts} = ${entry.attempts}
-    and date_trunc('milliseconds', ${crawlFrontier.nextAttemptAt}) = ${entry.nextAttemptAt.toISOString()}::timestamp
-  )`), sql` or `)})`);
+  }).where(sql.join(entries.map(claimed), sql` or `));
 }
 
 /**
  * 실패 기록. 재시도가 남았으면 백오프로 미루고, 소진되면 failed로 내린다.
  * 일시적 장애(rate limit, 네트워크)와 영구적 실패를 같게 다루면 큐가 막히거나 영원히 돈다.
+ *
+ * claim을 주면 아직 내 것일 때만 기록한다. 회수된 항목에 옛 워커가 실패를 적으면 새 워커의
+ * claim이 풀려, 그 워커가 받아 온 원본까지 버려진다.
  */
-export async function markFailed(repo: string, error: string, now?: Date): Promise<void> {
+export async function markFailed(repo: string, error: string, now?: Date, claim?: FrontierClaim): Promise<void> {
   const current = await db.query.crawlFrontier.findFirst({ where: eq(crawlFrontier.repo, repo) });
   if (!current) return;
 
@@ -179,7 +195,7 @@ export async function markFailed(repo: string, error: string, now?: Date): Promi
       lastError: error.slice(0, 2000),
       updatedAt: sql`${at}`,
     })
-    .where(eq(crawlFrontier.repo, repo));
+    .where(claim ? and(eq(crawlFrontier.repo, repo), claimed(claim)) : eq(crawlFrontier.repo, repo));
 }
 
 /**
@@ -252,24 +268,76 @@ export async function putDocument(doc: {
 }
 
 /**
- * A successful refetch may resolve to a different deployed URL. Automatic, unpublished
- * decisions must return to the existing rule judge; administrator and published decisions
- * remain immutable. The fetch lease and judge request share the scheduler's lock order.
+ * 가져온 원본을 저장하고 프론티어 항목을 끝낸다 — 소유권 확인과 한 트랜잭션이다.
+ *
+ * 저장·재판정 되돌림·완료 표시를 따로 커밋하던 때는, 리스를 잃고 멈췄던 워커가 재개하면서
+ * 그사이 다른 워커가 저장한 최신 원본을 옛것으로 덮어썼다. 리스 검사는 그다음 함수에서야
+ * 실패했고, 이미 커밋된 원본은 되돌릴 수 없었다(codex 재현). 그래서 셋을 묶고 소유권을
+ * 함께 본다 — 잡 리스, 그리고 이 항목을 꺼낼 때 받은 claim. 잡 리스가 살아 있어도 항목은
+ * 회수돼 다른 워커에게 갔을 수 있다.
+ *
+ * 원본이 판정 입력 쪽에서 바뀌면 자동·미발행 결정을 new로 되돌린다. 주소만 보던 때는 같은
+ * 주소가 200에서 404로 바뀌어도 승인이 그대로 남아, 발행이 규칙을 다시 태우지 않는 모드
+ * (reviewMode off/observe)에서 죽은 페이지가 올라갔다. 관리자·발행된 결정은 건드리지 않는다.
+ * 후보가 아직 없던 사이 판정이 끼어들어 옛 원본으로 승인을 만든 경우는 여기서 못 본다 —
+ * 없는 행은 잠글 수 없다. 그것은 발행 직전 재판정(publish.ts)이 받친다.
+ *
+ * 잠금 순서는 관리자 심사(lockedInput)·발행 가드와 같다: 후보 → 원본 → 프론티어 → 잡.
+ * 판정 요청(requestJob)은 여기서 하지 않는다 — 부른 쪽이 묶음이 끝날 때 한 번 한다.
+ *
+ * @returns claim을 잃었으면 null. 저장했으면 판정할 것이 새로 생겼는지.
  */
-export async function requeueAutomaticCandidateAfterSourceChange(repo: string, lease?: JobLease): Promise<boolean> {
-  return db.transaction(async tx => {
-    const [candidate] = await tx.select().from(crawlCandidates).where(eq(crawlCandidates.repo, repo)).for("update");
-    const [document] = await tx.select().from(crawlDocuments).where(eq(crawlDocuments.repo, repo)).for("share");
+export async function saveFetchedDocument(
+  claim: FrontierClaim,
+  doc: {
+    repo: string;
+    repoMeta: Record<string, unknown>;
+    productUrl: string | null;
+    pageStatus: number | null;
+    pageMeta: Record<string, unknown> | null;
+  },
+  lease?: JobLease,
+): Promise<{ needsJudgement: boolean } | null> {
+  return db.transaction(async (tx) => {
+    const [candidate] = await tx.select().from(crawlCandidates).where(eq(crawlCandidates.repo, doc.repo)).for("update");
+    const [previous] = await tx.select().from(crawlDocuments).where(eq(crawlDocuments.repo, doc.repo)).for("update");
+    const [owned] = await tx.update(crawlFrontier)
+      .set({ state: "done", lastError: null, updatedAt: new Date() })
+      .where(claimed(claim))
+      .returning({ id: crawlFrontier.id });
     if (lease) await assertJobLease(tx, lease);
-    if (!candidate || !document || candidate.decidedBy !== "auto" || candidate.publishedSlug
+    if (!owned) return null;
+
+    const values = { ...doc, fetchedAt: new Date() };
+    const [saved] = await tx.insert(crawlDocuments).values(values)
+      .onConflictDoUpdate({ target: crawlDocuments.repo, set: values })
+      .returning();
+    if (!candidate || candidate.state === "new") return { needsJudgement: true };
+    if (candidate.decidedBy !== "auto" || candidate.publishedSlug
       || !["approved", "needs_review"].includes(candidate.state)
-      || candidate.productUrl === document.productUrl) return false;
+      || (candidate.productUrl === saved.productUrl && previous && !judgedSourceChanged(previous, saved))) {
+      return { needsJudgement: false };
+    }
     await tx.update(crawlCandidates).set({
-      productUrl: document.productUrl, state: "new", reason: "source_changed", decidedAt: null, updatedAt: new Date(),
+      productUrl: saved.productUrl, state: "new", reason: "source_changed", decidedAt: null, updatedAt: new Date(),
     }).where(eq(crawlCandidates.id, candidate.id));
-    await requestJob("crawl-judge", tx);
-    return true;
+    return { needsJudgement: true };
   });
+}
+
+/**
+ * 판정이 보는 쪽이 바뀌었는지.
+ *
+ * 레포 메타 전체를 비교하지 않는다 — updated_at·watchers 같은 것은 다시 받을 때마다 바뀌어,
+ * 모든 재수집이 재판정이 된다. 레포는 규칙이 쓰는 사실(RepoFacts)만 보고, 페이지는 메타를
+ * 통째로 본다. 규칙이 쓰는 제목·본문·생성기·도착 주소에 더해, 개발 근거 판정이 쓰는
+ * repositoryKeys(agent-evidence.ts)와 발행이 그대로 쓰는 소개·이미지가 모두 거기 있다.
+ */
+function judgedSourceChanged(previous: CrawlDocument, next: CrawlDocument): boolean {
+  return previous.productUrl !== next.productUrl
+    || previous.pageStatus !== next.pageStatus
+    || !isDeepStrictEqual(previous.pageMeta, next.pageMeta)
+    || !isDeepStrictEqual(factsFromRepoMeta(previous.repo, previous.repoMeta), factsFromRepoMeta(next.repo, next.repoMeta));
 }
 
 export async function getDocument(repo: string): Promise<CrawlDocument | undefined> {
@@ -281,13 +349,27 @@ export async function getDocument(repo: string): Promise<CrawlDocument | undefin
  * 판정 규칙을 바꾼 뒤 재판정할 때는 후보의 state를 new로 되돌리면 여기로 다시 들어온다.
  */
 export async function documentsAwaitingJudgement(limit: number): Promise<CrawlDocument[]> {
-  return db
+  return (await judgementQueue(limit)).map((row) => row.document);
+}
+
+/**
+ * 판정 대기 원본과, 같은 조회로 읽은 후보.
+ *
+ * 대기 목록은 원래 후보를 조인해서 고른다. 그 후보를 버리고 판정 잡이 원본마다 다시 읽으면
+ * 묶음(50건)마다 SELECT가 50번 더 나간다. 조인한 것을 그대로 넘긴다 — 판정을 저장하는 쪽
+ * (recordAutomaticJudgement)이 잠근 뒤 이 스냅샷과 비교하므로 조금 오래된 값이어도 안전하다.
+ */
+export async function judgementQueue(
+  limit: number,
+): Promise<{ document: CrawlDocument; candidate: CrawlCandidate | undefined }[]> {
+  const rows = await db
     .select()
     .from(crawlDocuments)
     .leftJoin(crawlCandidates, eq(crawlDocuments.repo, crawlCandidates.repo))
     .where(sql`${crawlCandidates.id} IS NULL OR ${crawlCandidates.state} = 'new'`)
-    .limit(limit)
-    .then((rows) => rows.map((r) => r.crawl_documents));
+    .limit(limit);
+  // 후보가 없으면 null이 아니라 undefined다 — 저장 쪽이 잠근 행(없으면 undefined)과 그대로 비교한다
+  return rows.map((row) => ({ document: row.crawl_documents, candidate: row.crawl_candidates ?? undefined }));
 }
 
 // ─────────────────────────── 후보 ───────────────────────────
