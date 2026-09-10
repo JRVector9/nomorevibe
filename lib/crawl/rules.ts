@@ -31,6 +31,8 @@ export type PageFacts = {
   generator?: string | null;
   /** 페이지 제목(og:title 또는 <title>). 스캐폴드 기본값을 가려내는 데 쓴다 */
   title?: string | null;
+  /** 본문 앞부분. 없으면 이 신호가 없는 것이지, 통과했다는 뜻이 아니다 */
+  textSample?: string | null;
 };
 
 /**
@@ -306,6 +308,30 @@ export function judge(
   }
   pass("배포 URL 응답 정상", `HTTP ${page.status}`);
 
+  /**
+   * 본문이 "이걸 설치해서 쓰라"고 말하면 그 페이지는 배포물이 아니다.
+   *
+   * 제목·주소·생성기가 다 통과해도 여기서 갈린다. 실측(2026-09-10): owner.github.io
+   * 하위 경로로 사람 심사에 쌓인 509건 중 359건이 이 모양이었고, 사람이 한 건씩
+   * 열어 보는 것 말고는 가를 방법이 없었다.
+   *
+   * 본문을 못 가져왔으면(textSample 없음) 이 규칙은 지나간다 — 신호가 없는 것이지
+   * 통과한 것이 아니라서, 뒤의 규칙이 계속 가른다.
+   */
+  const sample = page.textSample?.toLowerCase() ?? "";
+  const landing = sample ? rules.landingPhrases.find((p) => sample.includes(p.toLowerCase())) : undefined;
+  if (landing) {
+    return reject("not_a_product", "설치 유도 아님", `본문에 “${landing}” — 실물은 이 페이지가 아니다`);
+  }
+  // 목차 낱말은 하나만으로는 아무것도 아니다. 여럿이 함께 있어야 목차다
+  const navs = sample ? [...new Set(rules.docsNavPhrases.filter((p) => sample.includes(p.toLowerCase())))] : [];
+  if (navs.length >= rules.docsNavThreshold) {
+    return reject("not_a_product", "설치 유도 아님", `본문이 문서 목차 — ${navs.slice(0, 4).join(", ")}`);
+  }
+  pass("설치 유도 아님", sample
+    ? `본문 ${sample.length}자 · 설치 문구 0개 · 목차 낱말 ${navs.length}개 < ${rules.docsNavThreshold}`
+    : "본문 없음 (신호 없음)");
+
   // 푸시 시각을 모르면 살아있는지 확신할 수 없다
   if (!repo.pushedAt && rules.holdAmbiguous) {
     return hold("ambiguous", "push_time_unknown", "마지막 푸시 시각 확인", "레포 메타에 pushed_at 없음");
@@ -354,12 +380,13 @@ export function pageFactsFromDocument(document: {
   pageStatus: number | null;
   pageMeta: unknown;
 }): PageFacts {
-  const meta = (document.pageMeta ?? {}) as { generator?: unknown; title?: unknown };
+  const meta = (document.pageMeta ?? {}) as { generator?: unknown; title?: unknown; textSample?: unknown };
   return {
     productUrl: document.productUrl,
     status: document.pageStatus,
     generator: typeof meta.generator === "string" ? meta.generator : null,
     title: typeof meta.title === "string" ? meta.title : null,
+    textSample: typeof meta.textSample === "string" ? meta.textSample : null,
   };
 }
 

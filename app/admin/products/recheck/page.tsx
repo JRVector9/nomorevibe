@@ -60,6 +60,14 @@ export default async function RecheckPage({ searchParams }: {
           이 지금 기준으로는 거부입니다.
           {result.checked === 0 && " 원본이 남아 있는 발행분이 이 범위에 없습니다."}
         </p>
+        {/* 2차 검수가 아직 닿지 않은 몫. 이걸 숨기면 "걸린 게 없다"가 거짓말이 된다 */}
+        {result.withoutText > 0 && (
+          <p className="mt-2 rounded-lg border border-warn/40 bg-warn/10 px-3 py-2 text-[13px] leading-[1.7] text-fg-2">
+            이 중 <b className="font-semibold text-warn">{result.withoutText.toLocaleString("ko-KR")}건</b>은
+            본문이 아직 없어 <b className="font-semibold">설치 유도 아님</b> 규칙을 태우지 못했습니다.
+            생존 확인이 6시간 주기로 채우는 중이라 시간이 지나면 0이 됩니다 — 그때 다시 보세요.
+          </p>
+        )}
       </div>
 
       {result.hits.length > 0 && <BanHits formId={BAN_FORM} total={result.hits.length} />}

@@ -183,6 +183,23 @@ export async function markFailed(repo: string, error: string, now?: Date): Promi
 }
 
 /**
+ * 발행된 제품의 본문 글자를 다시 채운다.
+ *
+ * 판정 규칙이 본문을 보게 됐는데, 이미 발행된 것들은 그 값이 없던 시절에 수집됐다.
+ * 생존 확인이 어차피 6시간마다 같은 주소를 여는 김에 본문을 실어 보내면, 새 요청 없이
+ * 하루 안에 전부 채워진다. 그래야 발행분 재검수가 지금 기준으로 다시 태울 수 있다.
+ *
+ * 본문만 덮는다 — 제목·소개는 발행 시점의 것이 남아야 한다.
+ */
+export async function refreshTextSample(slug: string, textSample: string): Promise<void> {
+  await db.execute(sql`
+    update crawl_documents
+       set page_meta = coalesce(page_meta, '{}'::jsonb) || jsonb_build_object('textSample', ${textSample}::text)
+     where repo in (select repo from crawl_candidates where published_slug = ${slug})
+  `);
+}
+
+/**
  * 다시 조사할 대상으로 되돌린다.
  *
  * 판정 기준을 바꿀 때는 재판정으로 끝나지만, 원본에서 뽑는 방법을 바꿀 때는 여기까지 와야 한다.

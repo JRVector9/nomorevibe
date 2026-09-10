@@ -94,6 +94,55 @@ describe("judge — 거르기", () => {
     }
   });
 
+  /**
+   * 실측(2026-09-10): owner.github.io 하위 경로로 사람 심사에 쌓인 509건을 전부 열어 보니
+   * 359건이 배포물이 아니라 소개 페이지였다. 제목·주소·생성기는 하나도 못 걸렀고,
+   * 본문 첫머리에는 그대로 적혀 있었다.
+   */
+  it("본문이 설치를 시키면 그 페이지는 배포물이 아니다", () => {
+    const cases = [
+      "VibeTree Features FAQ Docs Install GitHub — npm install -g vibetree", // 실측: sahithvibudhi/vibe-tree
+      "Zephyr 안전 특성 아키텍처 성능 안 装 winget install Juwan.Zephyr",
+      "Palm — understand code, remember what you learn. Download for Mac ↓",
+      "Home | autospec Skip to main content Menu Expand Document Search Copy Copied",
+    ];
+    for (const textSample of cases) {
+      const v = judge(goodRepo(), { ...livePage, textSample }, settings, NOW);
+      expect(v, textSample).toMatchObject({ state: "rejected", reason: "not_a_product" });
+      expect(v.trace.at(-1)?.rule).toBe("설치 유도 아님");
+    }
+  });
+
+  it("목차 낱말은 여럿이 함께 있어야 문서로 본다", () => {
+    // 하나는 진짜 제품 페이지에도 흔하다 — "Getting Started" 버튼 하나로 내리면 안 된다
+    const one = "Nivelato — measure glass offsets. Getting Started";
+    expect(judge(goodRepo(), { ...livePage, textSample: one }, settings, NOW).state).toBe("approved");
+
+    const many = "karasu Getting Started Installation API Reference Configuration Changelog";
+    expect(judge(goodRepo(), { ...livePage, textSample: many }, settings, NOW)).toMatchObject({
+      state: "rejected", reason: "not_a_product",
+    });
+  });
+
+  it("본문을 못 가져왔으면 이 규칙은 지나간다 — 신호가 없는 것이지 통과가 아니다", () => {
+    // 이 규칙 전에 걸린 것은 그대로 걸려야 한다
+    expect(judge(goodRepo(), { ...livePage, textSample: null }, settings, NOW).state).toBe("approved");
+    expect(judge(goodRepo(), { ...livePage, textSample: null, title: "Scut Docs" }, settings, NOW))
+      .toMatchObject({ state: "rejected", reason: "not_a_product" });
+  });
+
+  it("브라우저에서 바로 쓰는 것은 통과시킨다", () => {
+    // 실측 승인분에서 가져온 본문 — 설치 문구도, 목차도 없다
+    const cases = [
+      "ngspiceX | Browser-Based SPICE Circuit Simulator",
+      "Scheinkognat Karte Stammbaum Einreichen Über 395 Einträge, 136 Sprachen.",
+      "점검서류 사진 분류 사진을 업로드하면 브라우저 안에서 사업명과 서류 제목을 읽어 자동으로 분류합니다",
+    ];
+    for (const textSample of cases) {
+      expect(judge(goodRepo(), { ...livePage, textSample }, settings, NOW).state, textSample).toBe("approved");
+    }
+  });
+
   it("제목이 없으면 그것만으로 거부하지 않는다", () => {
     expect(judge(goodRepo(), { ...livePage, title: null }, settings, NOW).state).toBe("approved");
     expect(judge(goodRepo(), { ...livePage, title: "  " }, settings, NOW).state).toBe("approved");
