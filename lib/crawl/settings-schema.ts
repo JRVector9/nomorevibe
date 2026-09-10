@@ -283,6 +283,16 @@ export const DEFAULT_CRAWL_SETTINGS: CrawlSettings = {
       "modrinth.com",
       "pypi.org",
       "wordpress.org",
+      // 같은 성격인데 빠져 있었다 — 발행된 제품에서 rubygems 패키지 페이지가 나왔다
+      "rubygems.org",
+      "packagist.org",
+      "nuget.org",
+      "hex.pm",
+      "pub.dev",
+      "hub.docker.com",
+      "marketplace.visualstudio.com",
+      "chromewebstore.google.com",
+      "addons.mozilla.org",
       // 문서 호스팅. docs 라벨 규칙에 안 걸리는 형태다 (suews.readthedocs.io를 봤다)
       "readthedocs.io",
     ],
