@@ -5,7 +5,7 @@ import { normalizeUrl } from '@/lib/net/normalize';
 import { getSettings, enabledQueries } from '@/lib/crawl/settings';
 import { searchCommits, searchRepositories, SEARCH_PER_PAGE, MAX_SEARCH_PAGES, type CommitSearchResult, type RepositorySearchResult } from '@/lib/crawl/github';
 import { recordDiscoveryEvidenceBatch } from '@/lib/domain/evidence/agents/repository';
-import { parseCommitAttributions, type CommitAttribution } from '@/lib/domain/evidence/agents/commit-attribution';
+import { isStorableLabel, parseCommitAttributions, type CommitAttribution } from '@/lib/domain/evidence/agents/commit-attribution';
 import { splitSearchWindow, type SearchWindow } from '@/lib/crawl/search-window';
 
 export const MAX_SEED_ATTRIBUTIONS = 8;
@@ -208,7 +208,7 @@ export async function seedFrontier(ctx:JobContext<SeedCursor>):Promise<JobOutcom
     while (page.itemIndex < page.items.length) {
       if (!ctx.hasBudget()) return defer();
       const batch = page.items.slice(page.itemIndex,page.itemIndex+SEED_BACKLOG_PAUSE-backlog);
-      await recordDiscoveryEvidenceBatch(batch.flatMap(item => item.attributions.map(attribution => ({
+      await recordDiscoveryEvidenceBatch(batch.flatMap(item => storableAttributions(item).map(attribution => ({
         repositoryKey:item.repo,signalId:signal.label,sourceUrl:`https://github.com/${item.repo}${item.sha ? `/commit/${item.sha}` : ''}`,
         commitSha:item.sha,attribution,
         searchWindowFrom:new Date(window.from),searchWindowTo:new Date(window.to),
@@ -253,6 +253,11 @@ export async function seedFrontier(ctx:JobContext<SeedCursor>):Promise<JobOutcom
   return {done:false,cursor};
 }
 
+/** 예전 파서가 저장한 커서의 표기도 저장이 받는 것만 남긴다. 다 빠지면 파싱 때처럼 표기 없는 근거 한 건 */
+function storableAttributions(item:PendingItem):(CommitAttribution|null)[] {
+  const kept = item.attributions.filter(attribution => attribution === null || isStorableLabel(attribution.label));
+  return kept.length ? kept : [null];
+}
 function normalizeItems(items:CommitSearchResult['items']|RepositorySearchResult['items']):PendingItem[] {
   const output:PendingItem[] = [];
   const seen = new Set<string>();

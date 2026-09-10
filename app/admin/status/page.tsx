@@ -14,6 +14,7 @@ import { getEvidenceStatusSummary } from "@/lib/domain/evidence/admin";
 import { Panel } from "@/components/Panel";
 import { OperationsCenter } from "./OperationsCenter";
 import { operationsData } from "@/lib/operations/admin";
+import { latestServiceInstance } from "@/lib/operations/instance";
 import { pipelineFlow, oldestReviewWaitDays, stalledReviewCount } from "@/lib/operations/pipeline";
 import { ActionQueue, type ActionItem } from "./ActionQueue";
 import { PipelineRail } from "./PipelineRail";
@@ -113,7 +114,7 @@ export default async function StatusPage() {
    * 막고 있는 순서대로 놓는다 — AI 연결이 끊겨 있으면 심사 큐가 쌓이는 것은 결과이지
    * 원인이 아니다. 원인을 위에 두어야 아래가 저절로 풀린다.
    */
-  const agent = ops.observations.find(row => row.key === "connect-agent")?.value as AgentStatus | undefined;
+  const agent = latestServiceInstance(ops.serviceInstances, "connect-agent")?.value as AgentStatus | undefined;
   const failedJobs = jobStates.filter(job => job.lastError);
   const actions: ActionItem[] = [];
 

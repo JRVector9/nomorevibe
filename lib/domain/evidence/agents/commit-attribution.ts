@@ -7,6 +7,14 @@ const aliases: Record<string,string> = {
   copilot:'github-copilot',goose:'goose','factory droid':'factory-droid',
 };
 
+/**
+ * 근거 저장(recordDiscoveryEvidence)이 받는 표기인가. 저장 검증보다 느슨하면 걸린 한 건 때문에
+ * 검색 페이지 전체가 거부된다. `@`는 이메일·핸들이라 사람을 가리키고 도구 이름에는 쓰이지 않는다.
+ */
+export function isStorableLabel(label: string): boolean {
+  return label.length > 0 && label.length <= 80 && !/[\x00-\x1f<>@]|(?:sk-|ghp_|github_pat_)/i.test(label);
+}
+
 /** Attribution is a claim in the final Git trailer block, not an authenticated execution record. */
 export function parseCommitAttributions(message: string): CommitAttribution[] {
   if (message.length > 128 * 1024) return [];
@@ -27,7 +35,7 @@ export function parseCommitAttributions(message: string): CommitAttribution[] {
     const match = line.match(/^Co-authored-by:\s*([^<>\r\n]+?)\s*<[^<>\s]+@[^<>\s]+>\s*$/i);
     if (!match) continue;
     const label = match[1].trim().replace(/\s+/g,' ');
-    if (!label || label.length > 80 || /[\x00-\x1f]|(?:sk-|ghp_|github_pat_)/i.test(label)) continue;
+    if (!isStorableLabel(label)) continue;
     const client = aliases[label.toLowerCase()] ?? (/^Claude (?:Opus|Sonnet|Haiku) [0-9]+(?:\.[0-9]+)*$/i.test(label) ? 'claude-code' : null);
     if (!result.some(item => item.label === label)) result.push({client,label});
   }

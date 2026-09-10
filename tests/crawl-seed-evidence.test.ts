@@ -57,6 +57,22 @@ it('persists normalized pending items and resumes the saved page after budget ex
   expect(recorded().map(row => row.repositoryKey)).toEqual(['acme/one','acme/two']);
   expect(mocks.enqueue.mock.calls.flatMap(([items]) => items).map(item => item.repo)).toEqual(['acme/one','acme/two']);
 });
+/**
+ * 예전 파서가 저장한 커서에는 근거 저장이 받지 않는 표기가 남아 있을 수 있다. 그대로 넣으면 페이지가
+ * 통째로 거부되고 커서가 그 페이지에 묶여 수집이 멈춘다(2026-09-09~11 실측). 걸러 넣고 넘어간다.
+ */
+it('drops labels the evidence store refuses from a page saved by an older parser', async () => {
+  let budget = true;
+  mocks.search.mockImplementation(async () => {budget = false; return page([commit('acme/one'),commit('acme/two')]);});
+  const saved = structuredClone((await seedFrontier(context(null,() => budget))).cursor!);
+  saved.pendingPage!.items[0].attributions = [{client:null,label:'David Hansen @RvFax'},{client:'codex',label:'Codex'}];
+  saved.pendingPage!.items[1].attributions = [{client:null,label:'David Hansen @RvFax'}];
+  budget = true;
+  const resumed = await seedFrontier(context(saved));
+  expect(resumed.done).toBe(true);
+  expect(recorded().map(row => [row.repositoryKey,row.attribution])).toEqual([['acme/one',{client:'codex',label:'Codex'}],['acme/two',null]]);
+  expect(mocks.enqueue.mock.calls.flatMap(([items]) => items).map(item => item.repo)).toEqual(['acme/one','acme/two']);
+});
 it('caps a hostile commit attribution block and marks truncated evidence incomplete', async () => {
   const names = Array.from({length:50},(_,i) => `Co-authored-by: Person ${i} <private${i}@example.com>`).join('\n');
   mocks.search.mockResolvedValue(page([commit('acme/app',`fix\n\n${names}`)]));

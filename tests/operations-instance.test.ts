@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  latestServiceInstance,
   parseServiceObservationKey,
   serviceObservationKey,
   serviceInstanceId,
@@ -30,6 +31,25 @@ describe("service instance observations", () => {
   it("rejects invalid or oversized instance IDs", () => {
     expect(() => serviceInstanceId({ SERVICE_INSTANCE_ID: "m3:web" })).toThrow("Invalid SERVICE_INSTANCE_ID");
     expect(() => serviceInstanceId({ SERVICE_INSTANCE_ID: "x".repeat(49) })).toThrow("Invalid SERVICE_INSTANCE_ID");
+  });
+
+  /**
+   * 인스턴스 키로 바뀐 뒤 예전 키("connect-agent")만 찾던 운영센터는 연결된 계정을 못 봐서
+   * "AI 계정이 연결돼 있지 않습니다"를 띄웠다(2026-09-11 실측: 실제로는 configReady=true).
+   */
+  it("finds a role's latest observation under instance keys and the legacy key alike", () => {
+    const scoped = serviceInstancesFromObservations([
+      { key: "service:connect-agent:m3-a", value: { configReady: false }, observedAt: "2026-09-11T00:00:00.000Z" },
+      { key: "service:connect-agent:m3-b", value: { configReady: true }, observedAt: "2026-09-11T00:00:05.000Z" },
+      { key: "service:app:m3-web", value: { configReady: false }, observedAt: "2026-09-11T00:00:09.000Z" },
+    ]);
+    expect(latestServiceInstance(scoped, "connect-agent")?.value).toEqual({ configReady: true });
+
+    const legacy = serviceInstancesFromObservations([
+      { key: "connect-agent", value: { configReady: true }, observedAt: "2026-09-11T00:00:00.000Z" },
+    ]);
+    expect(latestServiceInstance(legacy, "connect-agent")?.value).toEqual({ configReady: true });
+    expect(latestServiceInstance(legacy, "crawler")).toBeUndefined();
   });
 
   it("does not treat job observations as service instances", () => {

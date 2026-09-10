@@ -54,6 +54,17 @@ export function serviceInstancesFromObservations<
   return instances.filter((row) => row.instanceId !== 'legacy' || !scopedRoles.has(row.role));
 }
 
+/** 역할의 가장 최근 관측. 인스턴스 키(service:<role>:<id>)든 예전 키(<role>)든 같이 본다 */
+export function latestServiceInstance<T extends { role: ServiceRole; observedAt: unknown }>(
+  rows: T[],
+  role: ServiceRole,
+): T | undefined {
+  const time = (row: T) => row.observedAt instanceof Date
+    ? row.observedAt.getTime()
+    : new Date(row.observedAt as string | number).getTime();
+  return rows.filter((row) => row.role === role).sort((a, b) => time(b) - time(a))[0];
+}
+
 export function staleServiceInstanceCount<T extends { observedAt: unknown }>(
   rows: T[],
   now: number,
