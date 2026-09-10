@@ -25,6 +25,7 @@ import {
   getSeasonHistory,
   getSeasonRanking,
 } from "@/lib/domain/ranking/view";
+import { DOWN_THRESHOLD } from "@/lib/domain/products/health";
 import { getVerifiedList } from "@/lib/domain/products/view";
 import { ensureSchema, resetTables } from "./setup";
 
@@ -442,6 +443,45 @@ describe("ranking read models", () => {
     ]);
     expect(items.every((item) => item.cooldownFactorBasisPoints === 10_000)).toBe(true);
     expect(items.every((item) => item.scoreMode === "valid_visits")).toBe(true);
+  });
+
+  /**
+   * 공개 목록은 연속 실패한 제품을 notDown으로 뺀다. 랭킹이 상태만 보면 같은 제품이
+   * 목록에서는 빠지고 홈 기본 탭인 주간 순위에는 남는다 — 눌러도 열리지 않는 1위가 된다.
+   */
+  it("hides unreachable products from public rankings but keeps them in the admin preview", async () => {
+    await materializeRanking();
+    const today = new Date(Date.now() + 9 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    await db.insert(productClickDaily).values([
+      { slug: "rank-one", day: today, clicks: 10 },
+      { slug: "rank-two", day: today, clicks: 15 },
+    ]);
+    await db.insert(productHealth).values([
+      { slug: "rank-two", status: 0, failures: DOWN_THRESHOLD, downSince: new Date("2026-08-17T00:00:00.000Z") },
+      // 문턱 아래는 잠깐 흔들린 것이다 — 목록과 같은 기준으로 남는다
+      { slug: "rank-three", status: 0, failures: DOWN_THRESHOLD - 1, downSince: new Date("2026-08-17T12:00:00.000Z") },
+    ]);
+
+    const weekly = await getSeasonRanking({ seasonKey: "2026-W34", limit: 10 });
+    expect(weekly.items.map((item) => [item.slug, item.rank])).toEqual([
+      ["rank-one", 1],
+      ["rank-three", 3],
+    ]);
+    const trending = await getSeasonRanking({ seasonKey: "2026-W34", order: "trending", limit: 10 });
+    expect(trending.items.map((item) => item.slug)).toEqual(["rank-three"]);
+    const boards = await getDiscoveryBoards();
+    expect(boards.weekly.map((item) => item.slug)).not.toContain("rank-two");
+    expect(boards.trending.map((item) => item.slug)).not.toContain("rank-two");
+    expect((await getSeasonByKey("2026-W33"))?.items.map((item) => item.slug)).toEqual(["rank-one"]);
+    expect((await getAllTimeRanking({ limit: 10 })).map((item) => [item.slug, item.rank])).toEqual([
+      ["rank-one", 1],
+    ]);
+    expect((await getVerifiedList(10)).map((item) => item.slug)).not.toContain("rank-two");
+
+    // 어드민은 봐야 처리한다 — 미리보기와 집계에서는 빼지 않는다
+    const state = await getRankingAdminState(NOW);
+    expect(state.activeMetrics.eligibleProducts).toBe(3);
+    expect(state.preview.map((item) => item.slug)).toContain("rank-two");
   });
 
   it("returns an admin preview and handles a missing season safely", async () => {

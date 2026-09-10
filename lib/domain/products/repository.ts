@@ -121,8 +121,11 @@ const SORTS = {
  * 6시간마다 확인하므로 DOWN_THRESHOLD(3)회 연속 실패는 하루 가까이 계속 안 열렸다는 뜻이다.
  * 그 정도면 잠깐 흔들린 것이 아니다. 행은 그대로 두고 조건으로만 가리므로, 다시 열리면
  * 실패 횟수가 0으로 돌아가면서 목록에도 그대로 돌아온다 — 사람이 되돌릴 일이 없다.
+ *
+ * 공개 랭킹(ranking/view.ts)도 이것을 그대로 쓴다. 조건을 두 벌 두면 한쪽만 고쳐져 목록에서
+ * 빠진 제품이 순위에는 남는다. products 테이블을 별칭 없이 조인한 쿼리에서만 쓸 수 있다.
  */
-const notDown = sql`not exists (
+export const notDown = sql`not exists (
   select 1 from product_health h
   where h.slug = ${products.slug} and h.failures >= ${DOWN_THRESHOLD}
 )`;
