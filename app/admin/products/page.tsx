@@ -62,6 +62,12 @@ export default async function AdminProductsPage({ searchParams }: Props) {
 
       </div>
 
+      <p className="mt-2 text-[13px] leading-[1.7] text-fg-2">
+        발행되면 규칙이 다시 닿지 않습니다. 기준을 고친 뒤에는{" "}
+        <Link href="/admin/products/recheck" className="font-semibold text-accent">발행분 재검수</Link>로
+        이미 올라간 것에도 지금 기준을 태워 보세요.
+      </p>
+
       <nav className="mt-4 flex flex-wrap gap-2">
         {Object.keys(FILTERS).map((name) => (
           <Link
