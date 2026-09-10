@@ -22,6 +22,7 @@ import {
   type RankingSeason,
 } from "@/lib/db/schema";
 import { topClickedSince } from "@/lib/domain/products/clicks";
+import { notDown } from "@/lib/domain/products/repository";
 import type { Category } from "@/lib/domain/products/schema";
 import {
   getDiscoveryList,
@@ -129,6 +130,8 @@ export async function getSeasonRanking(options: {
   const conditions = [
     eq(rankingEntries.seasonId, season.id),
     eq(products.status, "verified"),
+    // 공개 목록과 같은 기준으로 닿지 않는 제품을 가린다. 어드민 미리보기는 이 조회를 쓰지 않는다
+    notDown,
   ];
   if (options.order !== "trending") {
     conditions.push(lte(rankingEntries.rank, summary.policy.leaderboard.limit));
@@ -285,6 +288,7 @@ export async function getAllTimeRanking(options: {
     .from(products)
     .where(and(
       eq(products.status, "verified"),
+      notDown,
       slugArrayPredicate(products.slug, totals.map((row) => row.slug)),
     ));
   const bySlug = new Map(rows.map((row) => [row.slug, row]));
