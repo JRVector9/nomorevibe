@@ -10,6 +10,7 @@ import {
   extractPageMeta,
   detectSiteGenerator,
   extractTextSample,
+  metaRefreshTarget,
   TEXT_SAMPLE_LIMIT,
 } from "@/lib/net/normalize";
 
@@ -244,8 +245,27 @@ describe("extractPageMeta — 수집한 제품의 이름·소개 재료", () => 
   });
 
   it("본문 글자는 상한에서 자른다", () => {
-    expect(extractTextSample(`<body>${"가".repeat(3000)}</body>`)?.length).toBe(TEXT_SAMPLE_LIMIT);
+    expect(extractTextSample(`<body>${"가".repeat(TEXT_SAMPLE_LIMIT * 2)}</body>`)?.length).toBe(TEXT_SAMPLE_LIMIT);
     expect(extractTextSample("<body>   </body>")).toBeNull();
+  });
+
+  /**
+   * meta refresh는 판정 근거가 아니라 리다이렉트다. 실측 24건의 목적지가 문서이기도
+   * 진짜 앱이기도 했다 — 껍데기를 보고 정하면 둘 다 틀린다.
+   */
+  it("meta refresh가 가리키는 곳을 푼다", () => {
+    const rel = `<meta http-equiv="refresh" content="0; url=./demo/">`;
+    expect(metaRefreshTarget(rel, "https://a.test/p/")).toBe("https://a.test/p/demo/");
+    // 공백 없는 형태도 실데이터에 있었다: content="0;url=docs/1.29"
+    expect(metaRefreshTarget(`<meta http-equiv="refresh" content="0;url=docs/1.29">`, "https://a.test/p/"))
+      .toBe("https://a.test/p/docs/1.29");
+    expect(metaRefreshTarget(`<meta http-equiv="refresh" content="5">`, "https://a.test/")).toBeNull();
+    expect(metaRefreshTarget("<title>없음</title>", "https://a.test/")).toBeNull();
+  });
+
+  it("제자리를 가리키는 새로고침은 따라가지 않는다 — 무한히 돈다", () => {
+    expect(metaRefreshTarget(`<meta http-equiv="refresh" content="30; url=https://a.test/">`, "https://a.test/"))
+      .toBeNull();
   });
 
   it("저장 상한을 넘기지 않게 자른다", () => {

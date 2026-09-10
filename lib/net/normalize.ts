@@ -169,8 +169,36 @@ export type PageMeta = {
   textSample: string | null;
 };
 
-/** 본문 글자를 뽑는 상한. 소개 페이지의 행동유도는 첫머리에 있다 */
-export const TEXT_SAMPLE_LIMIT = 1_500;
+/**
+ * 본문 글자를 뽑는 상한.
+ *
+ * 실측 509건에 걸어 본 값이다: 1,500자면 106건, 3,000자면 136건, 6,000자면 160건이
+ * 자동으로 갈리고 오탐률은 2.8% → 2.2% → 2.5%로 거의 같다. 12,000자부터는 24건 늘리는
+ * 값으로 오탐이 늘고, 전체를 보면 4.5%가 된다 — 아래쪽 푸터의 낱말까지 집기 시작한다.
+ */
+export const TEXT_SAMPLE_LIMIT = 6_000;
+
+/**
+ * `<meta http-equiv="refresh">`가 가리키는 곳.
+ *
+ * 이것은 판정 근거가 아니라 리다이렉트다. 실측 509건 중 24건이 이 껍데기였는데,
+ * 목적지는 문서(`/docs/`)이기도 하고 진짜 앱(`/zh-TW/7.1h/`)이기도 했다 — 껍데기를
+ * 보고 정하면 둘 다 틀린다. 게다가 껍데기 주소를 그대로 발행하면 눌렀을 때 빈 화면이
+ * 잠깐 스친다. 따라가서 목적지를 판정하고 목적지를 저장한다.
+ */
+export function metaRefreshTarget(html: string, baseUrl: string): string | null {
+  const m = html.match(/<meta[^>]+http-equiv=["']?refresh["']?[^>]*content=["']([^"']*)["']/i)
+    ?? html.match(/<meta[^>]+content=["']([^"']*)["'][^>]+http-equiv=["']?refresh["']?/i);
+  if (!m) return null;
+  const url = m[1].match(/url\s*=\s*["']?([^"';]+)/i)?.[1]?.trim();
+  if (!url) return null;
+  try {
+    const resolved = new URL(url, baseUrl).toString();
+    return resolved === baseUrl ? null : normalizeHttpUrl(resolved);
+  } catch {
+    return null;
+  }
+}
 
 /** 태그를 걷어내고 보이는 글자만 남긴다 */
 export function extractTextSample(html: string, limit = TEXT_SAMPLE_LIMIT): string | null {

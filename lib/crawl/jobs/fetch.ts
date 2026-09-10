@@ -1,6 +1,6 @@
 import type { JobContext, JobOutcome } from "@/lib/jobs/runner";
 import { fetchPage } from "@/lib/net/fetch";
-import { normalizeUrl, extractPageMeta } from "@/lib/net/normalize";
+import { normalizeUrl, extractPageMeta, metaRefreshTarget } from "@/lib/net/normalize";
 import { resolveCanonical } from "@/lib/domain/products/register";
 import * as crawl from "@/lib/crawl/repository";
 import { getSettings } from "@/lib/crawl/settings";
@@ -107,10 +107,21 @@ export async function fetchCrawlDocuments(ctx: JobContext<null>): Promise<JobOut
  *
  * 리다이렉트로 도메인이 바뀌면 목적지를 기준값으로 삼는다. 메이커가 등록할 때와 같은
  * 기준이어야 "이미 등록된 URL"을 알아볼 수 있다.
+ *
+ * `<meta http-equiv="refresh">`도 리다이렉트다. HTTP 리다이렉트만 따라가면 껍데기를
+ * 판정하게 되는데, 실측 509건 중 24건이 그랬고 목적지는 문서이기도 진짜 앱이기도 했다.
+ * 한 번만 따라간다 — 사슬을 무한정 좇을 이유가 없고, 두 번 이상 튀는 것은 드물다.
  */
 async function visit(url: string, docsGenerators: readonly string[]) {
-  const page = await fetchPage(url);
+  let page = await fetchPage(url);
   if (!page) return { productUrl: url, status: 0, meta: null };
+
+  const hop = metaRefreshTarget(page.html, page.finalUrl);
+  if (hop) {
+    const next = await fetchPage(hop);
+    // 목적지가 열리지 않으면 껍데기 쪽을 그대로 쓴다 — 없는 주소로 바꾸면 더 나쁘다
+    if (next) page = next;
+  }
 
   const productUrl = resolveCanonical(url, page.finalUrl);
   /**
