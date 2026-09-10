@@ -4,6 +4,8 @@ import { crawlCandidates, crawlDocuments, crawlFrontier, crawlReviewAttempts, cr
 import * as crawl from '@/lib/crawl/repository';
 import { listAdminReviewEntries, requeueResolvedCandidates, reviewQueueCauses } from '@/lib/crawl/admin-review';
 import { getSettings, saveSettings } from '@/lib/crawl/settings';
+import { loadReviewInput } from '@/lib/crawl/agent-review-repository';
+import { eq } from 'drizzle-orm';
 import { ensureSchema } from './setup';
 
 beforeAll(() => ensureSchema());
@@ -123,4 +125,29 @@ it('사람이 결정한 후보는 되돌리지 않는다', async () => {
 
   expect(await requeueResolvedCandidates('테스트')).toMatchObject({ requeued: 0 });
   expect((await db.select().from(crawlCandidates))[0].state).toBe('needs_review');
+});
+
+it('AI가 거부로 판정한 것은 따로 센다 — 규칙이 못 가른 것을 AI가 갈랐다는 뜻이다', async () => {
+  await held('acme/lib', 'https://acme.github.io/lib', 200);
+  await held('acme/app', 'https://acme.github.io/app', 200);
+
+  const [candidate] = await db.select().from(crawlCandidates).where(eq(crawlCandidates.repo, 'acme/lib'));
+  const settings = await getSettings();
+  const input = await loadReviewInput(candidate, (await crawl.getDocument('acme/lib'))!, settings);
+  await db.insert(crawlReviewAttempts).values({
+    candidateId: candidate.id, kind: 'automatic', state: 'succeeded', attemptNumber: 1,
+    inputHash: input.inputHash, policyHash: input.policyHash, sourceRevisionHash: input.sourceRevisionHash,
+    snapshot: input.snapshot, source: input.source, promptVersion: 'v', rulesVersion: 'v',
+    provider: 'claude-cli', model: 'sonnet', startedAt: new Date(), completedAt: new Date(),
+    validUntil: input.validUntil, outcome: { decision: 'reject', reason: '라이브러리 문서 사이트', evidenceIds: [] },
+  });
+
+  const causes = await reviewQueueCauses(settings);
+  expect(causes.counts).toEqual([
+    { cause: 'ai_reject', count: 1 },
+    { cause: 'host_excluded_subpath', count: 1 },
+  ]);
+  const { entries } = await listAdminReviewEntries(settings, { state: 'needs_review', ids: causes.ids.get('ai_reject') });
+  expect(entries.map((e) => e.candidate.repo)).toEqual(['acme/lib']);
+  expect(entries[0].review).toMatchObject({ decision: 'reject', model: 'sonnet' });
 });

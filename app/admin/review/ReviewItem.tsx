@@ -85,6 +85,14 @@ export function ReviewItem({ entry, reasons, bulkFormId }: {
           {entry.verdict?.cause && (
             <p className="mt-1.5 text-[13px] font-semibold text-down">{causeLabel(entry.verdict.cause)}</p>
           )}
+          {/* AI가 갈랐으면 사유를 접지 않고 보여준다 — 묶어서 처리하려면 목록에서 읽혀야 한다 */}
+          {entry.review?.decision === 'reject' && (
+            <p className="mt-1.5 rounded-lg border border-down/40 bg-down/10 px-2.5 py-1.5 text-[13px] leading-[1.7] text-fg-2">
+              <b className="font-semibold text-down">AI 거부</b>
+              {entry.review.model ? <span className="ml-1.5 font-mono text-fg-3">{entry.review.model}</span> : null}
+              {entry.review.reason ? <span className="ml-1.5">{entry.review.reason.slice(0, 220)}</span> : null}
+            </p>
+          )}
           {!entry.verdict?.cause && (
             <p className="mt-1.5 text-[13px] text-fg-2">
               {STATES[candidate.state]} · {candidate.reason ?? '사유 없음'} ·{' '}

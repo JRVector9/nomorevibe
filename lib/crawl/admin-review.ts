@@ -199,8 +199,12 @@ export const REVIEW_QUEUE_SCAN_LIMIT = 2_000;
  * 'resolved' 는 지금 기준으로 다시 판정하면 보류가 아닌 것 — 판정한 뒤 시간이 지나
  * 방치 기준을 넘겼거나 기준을 바꾼 경우다. 사람이 볼 필요가 없으므로 재판정으로 한 번에
  * 빠진다. 'unknown' 은 원본이 없어 되짚을 수 없는 것이고, 둘은 할 일이 전혀 다르다.
+ *
+ * 'ai_reject' 는 AI 심사가 거부로 판정한 것이다. 규칙이 못 가른 것을 AI가 갈랐다는 뜻이라
+ * 사람은 사유만 확인하면 된다 — 목록을 손으로 옮기지 않고 갈래로 묶어 한 번에 처리한다.
+ * 규칙이 지금 스스로 가르는 것('resolved')이 더 싸므로 그쪽을 먼저 본다.
  */
-export type ReviewQueueBucket = AmbiguityCause | 'resolved' | 'unknown';
+export type ReviewQueueBucket = AmbiguityCause | 'ai_reject' | 'resolved' | 'unknown';
 export type ReviewQueueCauses = {
   counts: { cause: ReviewQueueBucket; count: number }[];
   ids: Map<ReviewQueueBucket, number[]>;
@@ -219,15 +223,21 @@ export async function reviewQueueCauses(settings: CrawlSettings): Promise<Review
     .where(eq(crawlCandidates.state, 'needs_review'))
     .orderBy(asc(crawlCandidates.id)).limit(REVIEW_QUEUE_SCAN_LIMIT + 1);
   const page = candidates.slice(0, REVIEW_QUEUE_SCAN_LIMIT);
-  const documents = page.length
-    ? await db.select().from(crawlDocuments).where(inArray(crawlDocuments.repo, page.map(row => row.repo))) : [];
+  const [documents, aiAttempts] = page.length ? await Promise.all([
+    db.select().from(crawlDocuments).where(inArray(crawlDocuments.repo, page.map(row => row.repo))),
+    db.selectDistinctOn([crawlReviewAttempts.candidateId]).from(crawlReviewAttempts).where(and(
+      inArray(crawlReviewAttempts.candidateId, page.map(row => row.id)), eq(crawlReviewAttempts.kind, 'automatic'),
+    )).orderBy(crawlReviewAttempts.candidateId, desc(crawlReviewAttempts.id)),
+  ]) : [[], []];
   const ids = new Map<ReviewQueueBucket, number[]>();
   for (const candidate of page) {
     const document = documents.find(row => row.repo === candidate.repo);
     const verdict = document
       ? judge(factsFromRepoMeta(candidate.repo, document.repoMeta), pageFactsFromDocument(document), settings)
       : null;
-    const key: ReviewQueueBucket = !verdict ? 'unknown' : verdict.cause ?? 'resolved';
+    const aiRejected = aiAttempts.find(row => row.candidateId === candidate.id)?.outcome?.decision === 'reject';
+    const key: ReviewQueueBucket = !verdict ? 'unknown'
+      : verdict.cause ? (aiRejected ? 'ai_reject' : verdict.cause) : 'resolved';
     ids.set(key, [...(ids.get(key) ?? []), candidate.id]);
   }
   return {
