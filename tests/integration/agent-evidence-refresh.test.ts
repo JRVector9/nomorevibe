@@ -1,7 +1,7 @@
-import { beforeAll, beforeEach, expect, it } from 'vitest';
+import { beforeAll, beforeEach, expect, it, vi } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { db } from '@/lib/db';
-import { agentRepositoryScans, crawlCandidates, crawlSettings, products } from '@/lib/db/schema';
+import { agentRepositoryScans, crawlCandidates, crawlSettings, productEvidenceSources, productLinks, products } from '@/lib/db/schema';
 import { saveRepositoryAgentScan, getLatestRepositoryAgentScan } from '@/lib/domain/evidence/agents/repository';
 import { AGENT_DETECTOR_VERSION } from '@/lib/domain/evidence/agents/types';
 import { ARTIFACT_RULES } from '@/lib/domain/evidence/agents/catalog';
@@ -9,8 +9,64 @@ import { saveSettings } from '@/lib/crawl/settings';
 import { refreshAgentEvidenceJob } from '@/lib/jobs/products/agent-evidence-refresh';
 import type { GitHubHttpResult } from '@/lib/crawl/github';
 import { ensureSchema, resetTables } from './setup';
+const spies = vi.hoisted(() => ({ refresh: vi.fn() }));
+/** 실제 refresh 를 그대로 부르되 몇 번 불렸는지 센다 — 틱이 일반 슬롯을 어디에 썼는지의 척도다 */
+vi.mock('@/lib/domain/evidence/agents/repository', async importOriginal => {
+  const original = await importOriginal<typeof import('@/lib/domain/evidence/agents/repository')>();
+  spies.refresh.mockImplementation(original.refreshRepositoryAgentEvidence);
+  return { ...original, refreshRepositoryAgentEvidence: spies.refresh };
+});
 beforeAll(() => ensureSchema());
-beforeEach(async () => { await resetTables(); await db.delete(crawlCandidates); await db.delete(crawlSettings); });
+beforeEach(async () => { await resetTables(); await db.delete(crawlCandidates); await db.delete(crawlSettings); spies.refresh.mockClear(); });
+/** 방금 끝나 하루 뒤에야 다시 볼 스캔 */
+const completeScan = (repositoryKey: string, repositoryId: string) => saveRepositoryAgentScan({ repositoryId, repositoryKey,
+  commitSha: 'c'.repeat(40), scope: '', state: 'complete', observations: [], requestCount: 1, fileCount: 0, errorCode: null, retryAt: null, cursor: null });
+/** 파일이 없는 공개 레포 하나를 그리는 GitHub. 불린 경로를 남긴다 */
+const emptyRepository = (paths: string[]) => async <T>(path: string): Promise<GitHubHttpResult<T>> => {
+  paths.push(path);
+  const value = path.includes('/git/trees/') ? { tree: [], truncated: false } : path.includes('/commits/') ? { sha: 'a'.repeat(40), commit: { tree: { sha: 'b'.repeat(40) } } } : { private: false, id: 999, default_branch: 'main', full_name: path.slice(7) };
+  return { ok: true, status: 200, value: value as T, etag: null, lastModified: null, link: null };
+};
+const listProduct = async (slug: string, repositoryKey: string) => {
+  await db.insert(products).values({ slug, url: `https://${slug}.example`, name: slug, tagline: 'test', description: 'test', category: 'Dev', verifyToken: `token-${slug}`, editTokenHash: 'a'.repeat(64), repoUrl: `https://github.com/${repositoryKey}` });
+  await db.insert(productLinks).values({ slug, kind: 'repository', declarationSource: 'maker', url: `https://github.com/${repositoryKey}`, normalizedKey: repositoryKey });
+  await db.insert(productEvidenceSources).values({ slug, kind: 'repository', provider: 'github', sourceKey: repositoryKey, normalizedFacts: { type: 'github_repository' } });
+};
+const context = () => ({ cursor: null, save: async () => {}, hasBudget: () => true, log: () => {} });
+
+it('spends no general slot on fresh repositories and reaches a due one behind them in the same tick', async () => {
+  await saveSettings({ agentEvidence: { enabled: true } }, 'test');
+  const fresh = Array.from({ length: 10 }, (_, i) => `aaa/r${i}`);
+  await db.insert(crawlCandidates).values([...fresh, 'zzz/due'].map(repo => ({ repo })));
+  for (const [i, repositoryKey] of fresh.entries()) await completeScan(repositoryKey, String(i + 1));
+  await refreshAgentEvidenceJob(context(), { request: emptyRepository([]) });
+  // 신선한 10개는 캐시 확인·근거 로딩도 하지 않는다. 슬롯은 다시 볼 때가 된 레포에만 간다
+  expect(spies.refresh.mock.calls.map(([input]) => input.repositoryKey)).toEqual(['zzz/due']);
+  expect((await getLatestRepositoryAgentScan('zzz/due'))?.state).toBe('complete');
+});
+
+it('attaches a completed scan to its products without re-entering the refresh path', async () => {
+  await saveSettings({ agentEvidence: { enabled: true } }, 'test');
+  await listProduct('app', 'acme/app');
+  await refreshAgentEvidenceJob(context(), { request: emptyRepository([]) });
+  const scan = await getLatestRepositoryAgentScan('acme/app');
+  expect(scan?.state).toBe('complete');
+  expect((await db.select().from(productEvidenceSources))[0].normalizedFacts).toMatchObject({ agentScanId: scan!.id });
+  // 스캔 한 번이면 된다. 제품을 붙이려고 refresh(캐시 확인 → 붙이기 → 근거 다시 읽기)를 또 타지 않는다
+  expect(spies.refresh).toHaveBeenCalledTimes(1);
+});
+
+it('attaches existing fresh evidence to a newly listed product as separate work, without a scan', async () => {
+  await saveSettings({ agentEvidence: { enabled: true } }, 'test');
+  const scan = await completeScan('acme/app', '1');
+  // 근거가 이미 있는 레포를 가리키는 제품이 나중에 올라왔다
+  await listProduct('app', 'acme/app');
+  const paths: string[] = [];
+  await refreshAgentEvidenceJob(context(), { request: emptyRepository(paths) });
+  expect((await db.select().from(productEvidenceSources))[0].normalizedFacts).toMatchObject({ agentScanId: scan!.id });
+  expect(spies.refresh).not.toHaveBeenCalled();
+  expect(paths).toEqual([]);
+});
 it('merges product and pending candidate demand, preserves admin decisions and reuses due cache', async () => {
   await saveSettings({ agentEvidence: { enabled: true } }, 'test');
   await db.insert(products).values({ slug: 'test', url: 'https://app.example', name: 'Test', tagline: 'test', description: 'test', category: 'Dev', verifyToken: 'token', editTokenHash: 'a'.repeat(64), repoUrl: 'https://github.com/acme/app' });
