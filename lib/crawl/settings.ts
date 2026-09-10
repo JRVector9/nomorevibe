@@ -165,6 +165,7 @@ const TRACKED: { label: string; read: (s: CrawlSettings) => unknown }[] = [
   { label: "개인 사이트 키워드", read: (s) => s.judge.personalSiteKeywords },
   { label: "문서 생성기", read: (s) => s.judge.docsGenerators },
   { label: "스캐폴드 제목", read: (s) => s.judge.placeholderTitles },
+  { label: "문서 제목 패턴", read: (s) => s.judge.docsTitlePatterns },
   { label: "애매하면 보류", read: (s) => s.judge.holdAmbiguous },
 ];
 

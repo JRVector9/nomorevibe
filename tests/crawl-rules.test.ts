@@ -69,6 +69,21 @@ describe("judge — 거르기", () => {
     }
   });
 
+  it("제목이 스스로 문서라고 말하면 거부한다 — 주소로는 못 가르는 것이다", () => {
+    // 실측(2026-09-10): owner.github.io/repo 로 보류된 576건 중 28건이 이 모양이었다
+    for (const title of ["VibeLign Docs", "temple8 — Documentation", "Documentation", "forty-cdk docs", "Redirecting"]) {
+      const v = judge(goodRepo(), { ...livePage, title }, settings, NOW);
+      expect(v, title).toMatchObject({ state: "rejected", reason: "not_a_product" });
+    }
+  });
+
+  it("제목 끝이 아니라 앞이나 안에 품고 있을 뿐이면 통과시킨다", () => {
+    // "Documentation Generator" 같은 진짜 제품을 치지 않으려면 끝만 봐야 한다
+    for (const title of ["Documentation Hub", "Docsy", "Docs Genie — 문서를 만들어 주는 도구", "Redirecting Proxy"]) {
+      expect(judge(goodRepo(), { ...livePage, title }, settings, NOW).state, title).toBe("approved");
+    }
+  });
+
   it("제목이 없으면 그것만으로 거부하지 않는다", () => {
     expect(judge(goodRepo(), { ...livePage, title: null }, settings, NOW).state).toBe("approved");
     expect(judge(goodRepo(), { ...livePage, title: "  " }, settings, NOW).state).toBe("approved");
