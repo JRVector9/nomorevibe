@@ -39,6 +39,7 @@ export function mergeWithDefaults(stored: unknown): CrawlSettings {
     judge: { ...DEFAULT_CRAWL_SETTINGS.judge, ...((raw.judge as object) ?? {}) },
     classify: mergeClassify(DEFAULT_CRAWL_SETTINGS.classify, raw.classify),
     agentEvidence: { ...DEFAULT_CRAWL_SETTINGS.agentEvidence, ...((raw.agentEvidence as object) ?? {}) },
+    news: { ...DEFAULT_CRAWL_SETTINGS.news, ...((raw.news as object) ?? {}) },
   };
 
   const parsed = crawlSettingsSchema.safeParse(merged);
@@ -80,6 +81,7 @@ export async function saveSettings(patch: unknown, updatedBy: string): Promise<S
     judge: { ...current.judge, ...((raw.judge as object) ?? {}) },
     classify: mergeClassify(current.classify, raw.classify),
     agentEvidence: { ...current.agentEvidence, ...((raw.agentEvidence as object) ?? {}) },
+    news: { ...current.news, ...((raw.news as object) ?? {}) },
   };
 
   const parsed = crawlSettingsSchema.safeParse(next);

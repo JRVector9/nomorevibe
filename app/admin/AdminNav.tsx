@@ -8,6 +8,7 @@ const PAGES = [
   { href: "/admin/categories", label: "카테고리 기준", hint: "분류 정의·예시" },
   { href: "/admin/evidence", label: "근거 설정", hint: "출처·갱신 정책" },
   { href: "/admin/ranking", label: "랭킹", hint: "집계·시즌 정책" },
+  { href: "/admin/news", label: "AI 소식", hint: "공식 피드·게시 승인" },
 ] as const;
 
 export function AdminNav({ current }: { current: string }) {

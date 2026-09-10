@@ -2,6 +2,7 @@ import { Suspense } from "react";
 import Link from "next/link";
 import { BrowseFilters, parseHomeSort, parseShown, type HomeSort } from "@/components/BrowseFilters";
 import { HomeAside } from "@/components/home/HomeAside";
+import { listHomeNews } from "@/lib/news/repository";
 import { HomeHero } from "@/components/home/HomeHero";
 import { HomePulse } from "@/components/home/HomePulse";
 import { Icon } from "@/components/home/icons";
@@ -186,7 +187,7 @@ export default async function HomePage({ searchParams }: Props) {
    * allSettled 로 받는 이유: 목록 쪽이 먼저 던져 여기까지 늦게 와도 처리되지 않은 거부가 남지 않고,
    * 하나가 실패해도 다른 하나는 쓴다.
    */
-  const asideLoad = Promise.allSettled([getHomePulse(now), listBuilders(["verified", "seeded"])]);
+  const asideLoad = Promise.allSettled([getHomePulse(now), listBuilders(["verified", "seeded"]), listHomeNews()]);
 
   try {
     active = await getCurrentSeason();
@@ -242,10 +243,11 @@ export default async function HomePage({ searchParams }: Props) {
     dbDown = true;
   }
 
-  const [pulseResult, buildersResult] = await asideLoad;
+  const [pulseResult, buildersResult, newsResult] = await asideLoad;
   if (pulseResult.status === "fulfilled") pulse = pulseResult.value;
   if (buildersResult.status === "fulfilled") builders = buildersResult.value;
-  const asideFailure = [pulseResult, buildersResult]
+  const news = newsResult.status === "fulfilled" ? newsResult.value : [];
+  const asideFailure = [pulseResult, buildersResult, newsResult]
     .find((result): result is PromiseRejectedResult => result.status === "rejected");
   if (asideFailure) logger.warn("home.pulse_unavailable", { error: asideFailure.reason });
 
@@ -319,7 +321,7 @@ export default async function HomePage({ searchParams }: Props) {
           </div>
         </section>
 
-        <HomeAside />
+        <HomeAside news={news} />
       </div>
 
       <Suspense>

@@ -176,6 +176,13 @@
       "when": 1789048075233,
       "tag": "0024_crawl_candidate_lookup_indexes",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1789076971541,
+      "tag": "0025_news_items",
+      "breakpoints": true
     }
   ]
 }

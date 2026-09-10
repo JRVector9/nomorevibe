@@ -11,6 +11,11 @@ const MAX_DISCOVERED_FEEDS = 8;
 export type FeedItem = {
   title: string;
   canonicalUrl: string | null;
+  /**
+   * 원문 링크 그대로(http·https만). canonicalUrl 은 #앵커가 붙은 주소를 버린다 — 한 페이지에
+   * 날짜별 앵커로 글을 싣는 피드(Z.ai 릴리스 노트)는 이것으로만 글을 가를 수 있다.
+   */
+  link?: string | null;
   summary: string | null;
   externalId: string | null;
   publishedAt: Date | null;
@@ -117,6 +122,17 @@ function safeUrl(value: unknown, baseUrl: string): string | null {
   }
 }
 
+function rawLink(value: unknown, baseUrl: string): string | null {
+  const raw = oneLine(value, 1_000);
+  if (!raw) return null;
+  try {
+    const url = new URL(raw, baseUrl);
+    return url.protocol === "https:" || url.protocol === "http:" ? url.toString() : null;
+  } catch {
+    return null;
+  }
+}
+
 function date(value: unknown): Date | null {
   const raw = oneLine(value, 100);
   if (!raw) return null;
@@ -136,7 +152,9 @@ function rssItem(value: Record<string, unknown>, baseUrl: string): FeedItem | nu
   return {
     title,
     canonicalUrl: safeUrl(value.link, baseUrl),
-    summary: sanitizeExternalSummary(value.description ?? value["content:encoded"]),
+    link: rawLink(value.link, baseUrl),
+    // removeNSPrefix 가 content:encoded 를 encoded 로 바꾼다
+    summary: sanitizeExternalSummary(value.description ?? value.encoded ?? value["content:encoded"]),
     externalId: oneLine(value.guid, 500),
     publishedAt: date(value.pubDate ?? value.date),
   };
@@ -148,15 +166,20 @@ function atomItem(value: Record<string, unknown>, baseUrl: string): FeedItem | n
   return {
     title,
     canonicalUrl: safeUrl(atomLink(value.link), baseUrl),
+    link: rawLink(atomLink(value.link), baseUrl),
     summary: sanitizeExternalSummary(value.summary ?? value.content),
     externalId: oneLine(value.id, 500),
     publishedAt: date(value.published ?? value.updated),
   };
 }
 
-export function parseFeed(xml: string, sourceUrl: string): FeedItem[] {
-  if (Buffer.byteLength(xml, "utf8") > MAX_FEED_BYTES) throw new Error("feed too large");
-  if (/<!DOCTYPE|<!ENTITY/i.test(xml)) throw new Error("unsafe feed XML");
+/** maxBytes: 제품 피드는 512KB로 막는다. 회사 공식 피드는 더 크다 — OpenAI 소식 피드가 720KB다 */
+export function parseFeed(xml: string, sourceUrl: string, maxBytes = MAX_FEED_BYTES): FeedItem[] {
+  if (Buffer.byteLength(xml, "utf8") > maxBytes) throw new Error("feed too large");
+  // CDATA 안의 글자는 마크업이 아니다 — 본문에 HTML 문서를 통째로 싣는 피드가 있다(GitHub 체인지로그).
+  // 주석을 먼저 지운다: 주석 속 CDATA 표시로 진짜 DOCTYPE 을 감싸 숨기지 못하게
+  const markup = xml.replace(/<!--[\s\S]*?-->/g, "").replace(/<!\[CDATA\[[\s\S]*?\]\]>/g, "");
+  if (/<!DOCTYPE|<!ENTITY/i.test(markup)) throw new Error("unsafe feed XML");
   if (XMLValidator.validate(xml) !== true) throw new Error("malformed feed");
 
   let document: Record<string, unknown>;

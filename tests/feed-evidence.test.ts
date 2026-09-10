@@ -110,6 +110,27 @@ describe("RSS and Atom parsing", () => {
     expect(() => parseFeed("<rss><channel><item></rss>", "https://product.example/feed.xml")).toThrow("malformed feed");
     expect(() => parseFeed(`<!DOCTYPE foo [<!ENTITY xxe SYSTEM "file:///etc/passwd">]><rss/>`, "https://product.example/feed.xml"))
       .toThrow("unsafe feed XML");
+  });
+
+  /** GitHub 체인지로그는 본문 CDATA 에 HTML 문서를 통째로 싣는다 — 피드 전체가 거부됐었다(2026-09-11) */
+  it("CDATA 안의 DOCTYPE 은 마크업이 아니므로 받는다", () => {
+    const xml = `<rss><channel><item><title>Copilot</title><link>https://github.blog/changelog/x</link><content:encoded><![CDATA[<!DOCTYPE html PUBLIC "-//W3C//DTD HTML 4.0"><p>body</p>]]></content:encoded></item></channel></rss>`;
+    expect(parseFeed(xml, "https://github.blog/changelog/feed/")).toEqual([
+      expect.objectContaining({ title: "Copilot", summary: "body" }),
+    ]);
+  });
+
+  it("주석 속 CDATA 표시로 감싼 진짜 DOCTYPE 은 여전히 거부한다", () => {
+    const xml = `<!--<![CDATA[--><!DOCTYPE foo [<!ENTITY xxe SYSTEM "file:///etc/passwd">]><!--]]>--><rss/>`;
+    expect(() => parseFeed(xml, "https://product.example/feed.xml")).toThrow("unsafe feed XML");
+  });
+
+  /** removeNSPrefix 가 content:encoded 를 encoded 로 바꿔 본문을 놓치고 있었다 */
+  it("description 이 없으면 content:encoded 를 요약으로 읽는다", () => {
+    const xml = `<rss xmlns:content="http://purl.org/rss/1.0/modules/content/"><channel><item><title>2026-08-26</title><link>https://docs.z.ai/release-notes/new-released#2026-08-26</link><content:encoded><![CDATA[<ul><li><p>New model</p></li></ul>]]></content:encoded></item></channel></rss>`;
+    expect(parseFeed(xml, "https://docs.z.ai/release-notes/new-released/rss.xml")).toEqual([
+      expect.objectContaining({ summary: "New model", canonicalUrl: null, link: "https://docs.z.ai/release-notes/new-released#2026-08-26" }),
+    ]);
     expect(() => parseFeed(`<rss>${"x".repeat(600_000)}</rss>`, "https://product.example/feed.xml"))
       .toThrow("feed too large");
   });
