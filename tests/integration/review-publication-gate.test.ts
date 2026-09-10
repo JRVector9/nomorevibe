@@ -4,6 +4,7 @@ import { db } from "@/lib/db";
 import { crawlCandidates, crawlDocuments, crawlSettings, crawlReviewAttempts, jobs, products } from "@/lib/db/schema";
 import { getSettings, saveSettings, changeReviewMode } from "@/lib/crawl/settings";
 import { loadReviewInput } from "@/lib/crawl/agent-review-repository";
+import { judgeRevision } from "@/lib/crawl/rules";
 import { REVIEW_PROMPT_VERSION, REVIEW_RULES_VERSION } from "@/lib/crawl/agent-review-contract";
 import { runJob } from "@/lib/jobs/runner";
 import { publishCandidates } from "@/lib/crawl/jobs/publish";
@@ -35,8 +36,10 @@ async function candidate(index: number, approve = false) {
   const [document] = await db.insert(crawlDocuments).values({ repo, productUrl, fetchedAt: now,
     repoMeta: { description: "A useful application" }, pageStatus: 200,
     pageMeta: { title: `Gate ${index}`, description: "An application for daily work" } }).returning();
+  // 운영의 판정 잡처럼 판정이 본 원본의 리비전을 남긴다
   const [row] = await db.insert(crawlCandidates).values({ repo, productUrl, state: "approved", reason: "passed",
-    decidedBy: "auto", judgedAt: now, updatedAt: new Date(now.getTime() + index) }).returning();
+    decidedBy: "auto", judgedAt: now, updatedAt: new Date(now.getTime() + index),
+    signals: { judgedRevision: judgeRevision(document) } }).returning();
   const input = await loadReviewInput(row, document, await getSettings());
   const [attempt] = approve ? await db.insert(crawlReviewAttempts).values({ candidateId: row.id,
     kind: "automatic", state: "succeeded", inputHash: input.inputHash, policyHash: input.policyHash,
@@ -74,6 +77,17 @@ it("excludes an approval whose source revision or policy changed", async () => {
   await tick();
   expect(classify).not.toHaveBeenCalled();
   expect(await db.select().from(products)).toHaveLength(0);
+});
+
+it("does not publish an approval whose model never saw the current page body", async () => {
+  const { document } = await candidate(0, true);
+  await db.update(crawlDocuments).set({ pageMeta: { ...document.pageMeta, textSample: "Gate 0 — an application for daily work" } })
+    .where(eq(crawlDocuments.id, document.id));
+  await tick();
+  expect(await db.select().from(products)).toHaveLength(0);
+  // 본문이 바뀌면 판정이 본 원본이 아니다 — 승인 상태로 멈춰 있지 않고 판정으로 돌아간다.
+  // 판정이 다시 보류하면 AI가 새 본문으로 재심사한다 (발행의 judgeRevision 검사)
+  expect(await db.select().from(crawlCandidates)).toMatchObject([{ state: "new", reason: "source_changed" }]);
 });
 
 it("rechecks the exact approval in the product insert transaction", async () => {

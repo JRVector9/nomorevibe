@@ -42,7 +42,8 @@ export async function verifyProduct(slug: string): Promise<Result<VerifyOutput>>
   const origin = new URL(product.url).origin;
   let method: "file" | "meta" | null = null;
 
-  const filePage = await fetchPage(`${origin}${VERIFY_FILE_PATH}`);
+  // 본문이 끊기면 fetchPage는 예외를 던진다. 검증에서는 "확인하지 못했다"로 본다
+  const filePage = await fetchPage(`${origin}${VERIFY_FILE_PATH}`).catch(() => null);
   if (
     filePage &&
     filePage.status >= 200 &&
@@ -53,7 +54,7 @@ export async function verifyProduct(slug: string): Promise<Result<VerifyOutput>>
   }
 
   if (!method) {
-    const page = await fetchPage(product.url);
+    const page = await fetchPage(product.url).catch(() => null);
     if (
       page &&
       page.status >= 200 &&
@@ -81,8 +82,7 @@ export async function verifyProduct(slug: string): Promise<Result<VerifyOutput>>
   const editToken = claiming ? generateEditToken() : null;
   const now = new Date();
 
-  await repo.update(product.id, {
-    status: "verified",
+  const saved = await repo.markVerified(product.id, slug, product.verifyToken, {
     verifyMethod: method,
     verifiedAt: now,
     /**
@@ -93,6 +93,11 @@ export async function verifyProduct(slug: string): Promise<Result<VerifyOutput>>
      */
     ...(editToken ? { claimedAt: now, editTokenHash: hashToken(editToken), builder: null } : {}),
   });
+  if (!saved) {
+    // 페이지를 읽는 사이 차단됐거나 지워졌다. 차단이 우선하고, 시작부터 차단돼 있던 제품과 같은 답을 준다.
+    logger.info("verify.superseded", { slug, method });
+    return fail({ kind: "not_found" });
+  }
 
   logger.info("verify.succeeded", { slug, method, claimed: claiming });
   if (editToken) {

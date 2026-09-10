@@ -13,7 +13,7 @@ import { loadReviewInput } from './agent-review-repository';
 import { DEFAULT_CRAWL_SETTINGS, type CrawlSettings } from './settings-schema';
 import { mergeWithDefaults, getSettings } from './settings';
 import { judge, factsFromRepoMeta, pageFactsFromDocument, type AmbiguityCause, type RuleStep } from './rules';
-import { loadAgentJudgeInput } from './agent-evidence';
+import { loadAgentJudgeInputs } from './admin-review-batch';
 
 export const MAX_EVIDENCE_REFRESHES = 2;
 export const EVIDENCE_REFRESH_COOLDOWN_MS = 15 * 60_000;
@@ -360,20 +360,18 @@ export async function listAdminReviewEntries(settings: CrawlSettings, options: {
       and(eq(crawlReviewAttempts.kind, 'automatic'), eq(crawlReviewAttempts.sourceRevisionHash, input.sourceRevisionHash))))!] : []);
   const current = matching.length ? await db.select().from(crawlReviewAttempts).where(or(...matching))
     .orderBy(desc(crawlReviewAttempts.id)).limit(500) : [];
-  // 개발 근거를 강제할 때만 스캔을 읽는다 — 꺼져 있으면 판정이 쓰지 않는 조회다
+  // 개발 근거를 강제할 때만 스캔을 읽는다 — 꺼져 있으면 판정이 쓰지 않는 조회다.
+  // 후보마다 helper 를 부르지 않고 한꺼번에 읽는다 (후보당 SELECT 4~5번 → 화면당 2~3번)
   const agentInputs = settings.agentEvidence.enforceEligibility
-    ? await Promise.all(page.map(candidate => {
-        const document = documents.find(row => row.repo === candidate.repo);
-        return document ? loadAgentJudgeInput(document, settings) : Promise.resolve(undefined);
-      }))
-    : page.map(() => undefined);
+    ? await loadAgentJudgeInputs(documents, settings, { scanIds: scans.map(row => row.id), observations })
+    : null;
 
   const entries = page.map((candidate, index): AdminReviewEntry => {
     const input = inputs[index];
     const document = documents.find(row => row.repo === candidate.repo);
     const recomputed = document
       ? judge(factsFromRepoMeta(candidate.repo, document.repoMeta), pageFactsFromDocument(document),
-          settings, new Date(), agentInputs[index])
+          settings, new Date(), agentInputs?.get(candidate.repo))
       : null;
     const attempts = current.filter(row => row.candidateId === candidate.id);
     const last = latest.find(row => row.candidateId === candidate.id);

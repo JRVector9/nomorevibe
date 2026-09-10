@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type { DecisionReason } from "@/lib/db/schema";
 import type { CrawlSettings } from "./settings-schema";
 import { summarizeAgentEvidence, type SummaryInput } from "@/lib/domain/evidence/agents/summary";
@@ -33,6 +34,15 @@ export type PageFacts = {
   title?: string | null;
   /** 본문 앞부분. 없으면 이 신호가 없는 것이지, 통과했다는 뜻이 아니다 */
   textSample?: string | null;
+  /**
+   * 내용을 실제로 받아 온 주소 — HTTP·meta refresh 리다이렉트를 따라간 끝.
+   *
+   * productUrl은 제품을 가리키는 기준값이라 같은 호스트 안의 이동을 따라가지 않는다
+   * (resolveCanonical). 그래서 https://app.test 가 meta refresh로 /docs/ 에 넘기면 제목·본문은
+   * 문서의 것을 읽으면서 주소 규칙은 루트에 걸었다 — codex 재현에서 제목이 App이고 차단
+   * 문구가 없는 문서가 그대로 승인됐다. 없으면(이 값을 남기기 전 원본) productUrl만 본다.
+   */
+  finalUrl?: string | null;
 };
 
 /**
@@ -183,6 +193,10 @@ export function judge(
   }
   pass("차단 도메인 아님", `${hostOf(page.productUrl)} 미등록`);
   if (isDocumentation(page.productUrl)) return reject("not_a_product", "문서 URL 아님", "docs 라벨 또는 /docs 경로");
+  // 내용을 읽은 곳이 문서면 제품 주소가 루트여도 문서다 — 판정은 읽은 곳을 기준으로 한다
+  if (page.finalUrl && isDocumentation(page.finalUrl)) {
+    return reject("not_a_product", "문서 URL 아님", `도착한 주소 ${page.finalUrl} 가 docs 라벨 또는 /docs 경로`);
+  }
   pass("문서 URL 아님", "docs 라벨·경로 아님");
 
   /**
@@ -393,14 +407,52 @@ export function pageFactsFromDocument(document: {
   pageStatus: number | null;
   pageMeta: unknown;
 }): PageFacts {
-  const meta = (document.pageMeta ?? {}) as { generator?: unknown; title?: unknown; textSample?: unknown };
+  const meta = (document.pageMeta ?? {}) as {
+    generator?: unknown; title?: unknown; textSample?: unknown; finalUrl?: unknown;
+  };
   return {
     productUrl: document.productUrl,
     status: document.pageStatus,
     generator: typeof meta.generator === "string" ? meta.generator : null,
     title: typeof meta.title === "string" ? meta.title : null,
     textSample: typeof meta.textSample === "string" ? meta.textSample : null,
+    finalUrl: typeof meta.finalUrl === "string" ? meta.finalUrl : null,
   };
+}
+
+/**
+ * 판정이 본 원본의 리비전.
+ *
+ * 판정은 이 원본에 대해서만 유효하다. 발행 직전에 같은 값을 다시 계산해 다르면 판정으로
+ * 돌려보낸다 — "이것이 판정받은 그 원본인가"만 보고, 발행 단계가 판정을 대신하지 않는다.
+ *
+ * 전에는 수집 시각과 판정 시각을 비교했다(fetchedAt > judgedAt). 두 시각이 서로 다른 워커의
+ * 시계라, 판정 쪽 시계가 빠르고 후보 생성이 재수집과 겹치면 새 404 원본이 재판정 없이
+ * 발행됐다(codex가 재현). 원본 내용을 직접 비교하면 시계가 끼지 않는다.
+ *
+ * 판정이 읽는 것만 넣는다 — 레포 사실과 페이지 사실. 시각은 넣지 않는다: 시간이 흐른 것은
+ * 원본이 바뀐 것이 아니다(그걸 넣으면 방치 기준만으로 승인이 뒤집힌다).
+ */
+export function judgeRevision(document: {
+  repo: string;
+  repoMeta: Record<string, unknown>;
+  productUrl: string | null;
+  pageStatus: number | null;
+  pageMeta: unknown;
+}): string {
+  const repo = factsFromRepoMeta(document.repo, document.repoMeta);
+  const page = pageFactsFromDocument(document);
+  const input = {
+    repo: { ...repo, pushedAt: repo.pushedAt?.toISOString() ?? null },
+    page,
+  };
+  const canonical = (v: unknown): string => {
+    if (v === null || typeof v !== "object") return JSON.stringify(v ?? null);
+    if (Array.isArray(v)) return `[${v.map(canonical).join(",")}]`;
+    return `{${Object.entries(v as Record<string, unknown>).sort(([a], [b]) => a.localeCompare(b))
+      .map(([k, x]) => `${JSON.stringify(k)}:${canonical(x)}`).join(",")}}`;
+  };
+  return createHash("sha256").update(canonical(input)).digest("hex");
 }
 
 /** GitHub 레포 메타 원본에서 판정에 쓸 사실만 추린다 */

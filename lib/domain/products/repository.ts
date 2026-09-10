@@ -5,6 +5,7 @@ import { lockProductGeneration, type ProductTransaction } from "./generation";
 import { DOWN_THRESHOLD } from "./health";
 import {
   products,
+  crawlCandidates,
   ogImages,
   clickEvents,
   productClickDaily,
@@ -121,8 +122,11 @@ const SORTS = {
  * 6시간마다 확인하므로 DOWN_THRESHOLD(3)회 연속 실패는 하루 가까이 계속 안 열렸다는 뜻이다.
  * 그 정도면 잠깐 흔들린 것이 아니다. 행은 그대로 두고 조건으로만 가리므로, 다시 열리면
  * 실패 횟수가 0으로 돌아가면서 목록에도 그대로 돌아온다 — 사람이 되돌릴 일이 없다.
+ *
+ * 공개 랭킹(ranking/view.ts)도 이것을 그대로 쓴다. 조건을 두 벌 두면 한쪽만 고쳐져 목록에서
+ * 빠진 제품이 순위에는 남는다. products 테이블을 별칭 없이 조인한 쿼리에서만 쓸 수 있다.
  */
-const notDown = sql`not exists (
+export const notDown = sql`not exists (
   select 1 from product_health h
   where h.slug = ${products.slug} and h.failures >= ${DOWN_THRESHOLD}
 )`;
@@ -265,6 +269,35 @@ export async function update(id: number, values: Partial<Product>): Promise<void
 }
 
 /**
+ * 도메인 검증 결과를 verified로 기록한다. 기록했으면 true.
+ *
+ * 검증은 외부 페이지를 읽느라 수 초가 걸린다. 시작할 때 읽은 상태만 믿고 덮어쓰면 그 사이
+ * 내려진 어드민 차단이 verified로 뒤집혀 공개 목록에 돌아왔다. 차단과 같은 세대 잠금 안에서
+ * 조건으로 다시 확인해 차단이 우선하게 한다. 검증 토큰도 조건에 건다 — 도메인이 증명한 것은
+ * 그 토큰이지 이 행이 아니다.
+ */
+export async function markVerified(
+  id: number,
+  slug: string,
+  verifyToken: string,
+  values: Partial<Product>,
+): Promise<boolean> {
+  return db.transaction(async (tx) => {
+    if (!(await lockProductGeneration(tx, id, slug))) return false;
+    const updated = await tx.update(products)
+      .set({ ...values, status: "verified", updatedAt: new Date() })
+      .where(and(
+        eq(products.id, id),
+        eq(products.slug, slug),
+        ne(products.status, "banned"),
+        eq(products.verifyToken, verifyToken),
+      ))
+      .returning({ id: products.id });
+    return updated.length === 1;
+  });
+}
+
+/**
  * 제품에 딸린 기록.
  *
  * FK를 걸지 않았고 nextAvailableSlug가 비어 있는 slug를 다시 쓰므로, 지우지 않으면 같은
@@ -326,6 +359,16 @@ export async function removeProductAndEvidence(id: number, slug: string): Promis
     await tx.delete(productHealthDaily).where(eq(productHealthDaily.slug, slug));
     await tx.delete(rankingEntries).where(eq(rankingEntries.slug, slug));
     await tx.delete(takedownRequests).where(eq(takedownRequests.slug, slug));
+    /**
+     * 수집 원본과의 연결도 slug 문자열이라 같이 푼다.
+     *
+     * 남겨 두면 같은 slug를 얻은 새 제품이 지워진 제품의 레포·문서를 물려받아, 재검수가 남의
+     * 원본으로 판정하고 생존 확인이 새 본문으로 남의 문서를 덮는다. 후보 행과 발행 상태는
+     * 남긴다 — 주인이 지운 것을 수집기가 다시 올리지 않게 하는 기록이다.
+     */
+    await tx.update(crawlCandidates)
+      .set({ publishedSlug: null, updatedAt: new Date() })
+      .where(eq(crawlCandidates.publishedSlug, slug));
     await tx.delete(products).where(and(eq(products.id, id), eq(products.slug, slug)));
 
     for (const hash of hashes) {

@@ -179,12 +179,14 @@ export default async function HomePage({ searchParams }: Props) {
   let total = 0;
   let dbDown = false;
 
-  try {
-    pulse = await getHomePulse(now);
-    builders = await listBuilders(["verified", "seeded"]);
-  } catch (error) {
-    logger.warn("home.pulse_unavailable", { error });
-  }
+  /**
+   * 상단 집계·도구 목록은 제품 목록과 서로의 결과를 쓰지 않는다 — 먼저 띄워 두고 목록 조회와 겹친다.
+   * 차례로 기다리면 목록 조회가 집계 쿼리 6개가 끝난 뒤에야 시작한다.
+   *
+   * allSettled 로 받는 이유: 목록 쪽이 먼저 던져 여기까지 늦게 와도 처리되지 않은 거부가 남지 않고,
+   * 하나가 실패해도 다른 하나는 쓴다.
+   */
+  const asideLoad = Promise.allSettled([getHomePulse(now), listBuilders(["verified", "seeded"])]);
 
   try {
     active = await getCurrentSeason();
@@ -239,6 +241,13 @@ export default async function HomePage({ searchParams }: Props) {
     logger.error("home.list_failed", { error });
     dbDown = true;
   }
+
+  const [pulseResult, buildersResult] = await asideLoad;
+  if (pulseResult.status === "fulfilled") pulse = pulseResult.value;
+  if (buildersResult.status === "fulfilled") builders = buildersResult.value;
+  const asideFailure = [pulseResult, buildersResult]
+    .find((result): result is PromiseRejectedResult => result.status === "rejected");
+  if (asideFailure) logger.warn("home.pulse_unavailable", { error: asideFailure.reason });
 
   const state = { ...browseState, sort: effectiveSort };
   const filtered = Boolean(query || category || builder);

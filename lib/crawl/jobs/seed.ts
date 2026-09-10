@@ -4,7 +4,7 @@ import * as crawl from '@/lib/crawl/repository';
 import { normalizeUrl } from '@/lib/net/normalize';
 import { getSettings, enabledQueries } from '@/lib/crawl/settings';
 import { searchCommits, searchRepositories, SEARCH_PER_PAGE, MAX_SEARCH_PAGES, type CommitSearchResult, type RepositorySearchResult } from '@/lib/crawl/github';
-import { recordDiscoveryEvidence } from '@/lib/domain/evidence/agents/repository';
+import { recordDiscoveryEvidenceBatch } from '@/lib/domain/evidence/agents/repository';
 import { parseCommitAttributions, type CommitAttribution } from '@/lib/domain/evidence/agents/commit-attribution';
 import { splitSearchWindow, type SearchWindow } from '@/lib/crawl/search-window';
 
@@ -16,7 +16,7 @@ const INCOMPLETE_RETRY_MS = 60 * 60_000;
 const MIN_CYCLE_SPAN_MS = 60_000;
 const MAX_INCOMPLETE_WINDOWS = 128;
 type PendingItem = {repo:string; sha:string|null; attributions:(CommitAttribution|null)[]; attributionLimited:boolean};
-type PendingPage = {items:PendingItem[]; itemIndex:number; attributionIndex:number; size:number; incomplete:boolean; saturated:boolean; capped:boolean};
+type PendingPage = {items:PendingItem[]; itemIndex:number; size:number; incomplete:boolean; saturated:boolean; capped:boolean};
 type IncompleteWindow = {signal:string; window:SearchWindow; retryAt:string};
 /** 차례를 넘길 때 보관하는 신호별 진행 위치. 페이지 경계에서만 저장하므로 pendingPage는 담지 않는다 */
 type SignalState = {page:number; window:SearchWindow; pendingWindows:SearchWindow[]; windowIncomplete?:boolean};
@@ -184,7 +184,7 @@ export async function seedFrontier(ctx:JobContext<SeedCursor>):Promise<JobOutcom
         return defer();
       }
       cursor.pendingPage = {
-        items:normalizeItems(result.value.items.slice(0,SEARCH_PER_PAGE)),itemIndex:0,attributionIndex:0,
+        items:normalizeItems(result.value.items.slice(0,SEARCH_PER_PAGE)),itemIndex:0,
         size:Math.min(result.value.items.length,SEARCH_PER_PAGE),
         incomplete:result.value.incomplete_results === true || result.value.items.length > SEARCH_PER_PAGE,
         saturated:(result.value.total_count ?? 0) > SEARCH_PER_PAGE*MAX_SEARCH_PAGES,
@@ -194,31 +194,35 @@ export async function seedFrontier(ctx:JobContext<SeedCursor>):Promise<JobOutcom
       await save();
     }
     const page = cursor.pendingPage;
+    /**
+     * 페이지의 남은 항목을 근거 한 번, 프론티어 한 번으로 넣는다.
+     *
+     * 항목마다 근거 → 커서 → 프론티어 → 커서를 쓰면 한 페이지에 400번 가까이 DB를 오간다.
+     * 커서는 두 저장이 끝난 뒤 페이지 경계에서만 옮긴다 — 커서가 먼저 페이지를 넘기고 저장이
+     * 실패하면 그 페이지는 다시 읽히지 않는다. 반대로 저장 뒤 커서를 못 옮기면 같은 페이지를
+     * 다시 넣을 뿐이고, 두 저장 모두 이미 있는 행은 건너뛰므로 겹치지 않는다.
+     * 프론티어 enqueue 는 트랜잭션을 받지 않으므로 근거 트랜잭션에서 리스를 확인하고 근거를 먼저
+     * 넣는다 (종전 순서 그대로 — 근거 없는 레포가 프론티어에 먼저 오르지 않는다).
+     * 한 번에 넣는 수는 백로그 상한까지로 자른다. 상한에 닿으면 그 자리에서 멈추고 이어 받는다.
+     */
     while (page.itemIndex < page.items.length) {
       if (!ctx.hasBudget()) return defer();
-      const item = page.items[page.itemIndex];
-      while (page.attributionIndex < item.attributions.length) {
-        if (!ctx.hasBudget()) return defer();
-        await recordDiscoveryEvidence({
-          repositoryKey:item.repo,signalId:signal.label,sourceUrl:`https://github.com/${item.repo}${item.sha ? `/commit/${item.sha}` : ''}`,
-          commitSha:item.sha,attribution:item.attributions[page.attributionIndex],
-          searchWindowFrom:new Date(window.from),searchWindowTo:new Date(window.to),
-          incomplete:page.incomplete || page.saturated || page.capped || item.attributionLimited,
-        });
-        page.attributionIndex++;
-        await save();
-      }
-      if (!ctx.hasBudget()) return defer();
-      const added = await crawl.enqueue([{repo:item.repo,signal:signal.label,builder:null,priority:signal.priority}]);
+      const batch = page.items.slice(page.itemIndex,page.itemIndex+SEED_BACKLOG_PAUSE-backlog);
+      await recordDiscoveryEvidenceBatch(batch.flatMap(item => item.attributions.map(attribution => ({
+        repositoryKey:item.repo,signalId:signal.label,sourceUrl:`https://github.com/${item.repo}${item.sha ? `/commit/${item.sha}` : ''}`,
+        commitSha:item.sha,attribution,
+        searchWindowFrom:new Date(window.from),searchWindowTo:new Date(window.to),
+        incomplete:page.incomplete || page.saturated || page.capped || item.attributionLimited,
+      }))),ctx.lease);
+      const added = await crawl.enqueue(batch.map(item => ({repo:item.repo,signal:signal.label,builder:null,priority:signal.priority})));
       discovered += added;
       backlog += added;
-      page.itemIndex++; page.attributionIndex = 0;
+      page.itemIndex += batch.length;
       if (backlog >= SEED_BACKLOG_PAUSE) {
         cursor.backlogPaused = true;
         ctx.log('crawl.seed_backlog_paused', { backlog, resumeAt: SEED_BACKLOG_RESUME });
         return defer();
       }
-      await save();
     }
     delete cursor.pendingPage;
     const incomplete = page.incomplete || page.saturated || page.capped;

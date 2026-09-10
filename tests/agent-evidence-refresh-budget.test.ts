@@ -6,7 +6,9 @@ vi.mock('@/lib/domain/evidence/agents/repository', () => ({ refreshRepositoryAge
 import { refreshAgentEvidenceJob } from '@/lib/jobs/products/agent-evidence-refresh';
 beforeEach(() => { vi.clearAllMocks(); });
 it('retains the repository pagination position when the budget expires before a scan can be persisted', async () => {
-  mocks.execute.mockResolvedValueOnce([]).mockResolvedValueOnce([{ repository_key: 'kiaquila/capsule-zero' }]);
+  // 재개 대상 → 일반 대기 → (스캔 뒤) 제품 연결 대기 → 근거 대기 후보 풀기 순으로 조회한다
+  mocks.execute.mockResolvedValueOnce([]).mockResolvedValueOnce([{ repository_key: 'kiaquila/capsule-zero' }])
+    .mockResolvedValueOnce([]).mockResolvedValueOnce([]);
   mocks.refresh.mockResolvedValue({ scan: null, observations: [], cached: false, errorCode: 'budget_exhausted', retryAt: null });
   const save = vi.fn(), log = vi.fn();
   const result = await refreshAgentEvidenceJob({ cursor: { afterRepository: 'before/last' }, save, log, hasBudget: () => true });

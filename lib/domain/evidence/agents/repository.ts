@@ -4,13 +4,15 @@ import { z } from 'zod';
 import { db } from '@/lib/db';
 import { agentRepositoryScans, agentRepositoryObservations, crawlDiscoveryEvidence, productEvidenceSources, productLinks, type AgentRepositoryScan } from '@/lib/db/schema';
 import { withProductGeneration } from '@/lib/domain/products/generation';
+import { assertJobLease, type JobLease } from '@/lib/jobs/control';
 import { agentObservationSchema, AGENT_DETECTOR_VERSION, type AgentObservation } from './types';
 import { collectRepositoryAgentEvidence, normalizeAgentRepositoryKey, type CollectResult, type AgentGitHubRequest } from './collect';
 import { lockRepositoryAgentEvidence } from './lock';
 const DAY = 24 * 60 * 60 * 1000;
 const digest = (input: unknown) => createHash('sha256').update(JSON.stringify(input)).digest('hex');
 const observationKey = (observation: AgentObservation) => digest(Object.keys(observation).sort().map(key => [key, observation[key as keyof AgentObservation]]));
-export async function recordDiscoveryEvidence(input: { repositoryKey: string; signalId: string; sourceUrl: string; commitSha?: string | null; attribution?: { client: string | null; label: string } | null; searchWindowFrom?: Date | null; searchWindowTo?: Date | null; incomplete?: boolean }): Promise<void> {
+export type DiscoveryEvidenceInput = { repositoryKey: string; signalId: string; sourceUrl: string; commitSha?: string | null; attribution?: { client: string | null; label: string } | null; searchWindowFrom?: Date | null; searchWindowTo?: Date | null; incomplete?: boolean };
+function discoveryEvidenceRow(input: DiscoveryEvidenceInput) {
   const repositoryKey = normalizeAgentRepositoryKey(input.repositoryKey);
   const url = new URL(input.sourceUrl);
   if (url.protocol !== 'https:' || url.hostname !== 'github.com' || url.username || url.password || !url.pathname.toLowerCase().startsWith(`/${repositoryKey}/`) && url.pathname.toLowerCase() !== `/${repositoryKey}`) throw new Error('invalid discovery source');
@@ -18,7 +20,24 @@ export async function recordDiscoveryEvidence(input: { repositoryKey: string; si
   const commitSha = input.commitSha == null ? null : z.string().regex(/^[a-f0-9]{40,64}$/).parse(input.commitSha);
   const attribution = input.attribution == null ? null : z.object({ client: z.string().max(80).nullable(), label: z.string().max(120).regex(/^[^\x00-\x1f<>@]+$/) }).parse(input.attribution);
   const evidenceKey = digest([input.sourceUrl, commitSha, attribution, signalId]);
-  await db.insert(crawlDiscoveryEvidence).values({ repositoryKey, signalId, evidenceKey, sourceUrl: url.href, commitSha, attribution, searchWindowFrom: input.searchWindowFrom, searchWindowTo: input.searchWindowTo, incomplete: input.incomplete ?? false }).onConflictDoNothing();
+  return { repositoryKey, signalId, evidenceKey, sourceUrl: url.href, commitSha, attribution, searchWindowFrom: input.searchWindowFrom, searchWindowTo: input.searchWindowTo, incomplete: input.incomplete ?? false };
+}
+export async function recordDiscoveryEvidence(input: DiscoveryEvidenceInput): Promise<void> {
+  await db.insert(crawlDiscoveryEvidence).values(discoveryEvidenceRow(input)).onConflictDoNothing();
+}
+/**
+ * 검색 한 페이지의 근거를 한 문장으로 넣는다. 검증은 한 건짜리와 같고, 한 건이라도 어긋나면 아무것도 넣지 않는다.
+ *
+ * 작업 리스를 받으면 같은 트랜잭션에서 리스부터 확인한다. 멈췄다 깨어난 워커가 새 주인이
+ * 이미 넘겨받은 페이지를 뒤늦게 쓰지 않게 한다 (lib/jobs/control.ts 의 assertJobLease 규약).
+ */
+export async function recordDiscoveryEvidenceBatch(inputs: DiscoveryEvidenceInput[], lease?: JobLease): Promise<void> {
+  if (!inputs.length) return;
+  const rows = inputs.map(discoveryEvidenceRow);
+  await db.transaction(async tx => {
+    if (lease) await assertJobLease(tx, lease);
+    await tx.insert(crawlDiscoveryEvidence).values(rows).onConflictDoNothing();
+  });
 }
 export async function listDiscoveryEvidence(repositoryKey: string) {
   return db.select().from(crawlDiscoveryEvidence).where(eq(crawlDiscoveryEvidence.repositoryKey, normalizeAgentRepositoryKey(repositoryKey))).orderBy(desc(crawlDiscoveryEvidence.observedAt)).limit(200);

@@ -49,8 +49,8 @@ it('레포를 가리키는 게시물만 프론티어에 넣고, 읽은 지점까
     { repo: 'acme/app', signal: SHOW_HN_SIGNAL, builder: null, priority: 120 },
   ]);
   expect(outcome).toMatchObject({ done: true, cursor: { seenUntil: 300 } });
-  // 이미 읽은 지점 이후만 조회한다
-  expect(String(request.mock.calls[0][0])).toContain('created_at_i%3E50');
+  // 경계 초부터 다시 조회한다 — 같은 초에 남은 글을 놓치지 않는다 (이미 본 것은 ID로 거른다)
+  expect(String(request.mock.calls[0][0])).toContain('created_at_i%3E%3D50');
 });
 
 it('밀려 있으면 오래된 페이지부터 당겨 건너뛰는 구간을 만들지 않는다', async () => {
@@ -97,4 +97,86 @@ it('예산이 끊기면 처리한 곳까지만 커서를 올린다', async () =>
   const outcome = await seedFromShowHN(context({ seenUntil: 0 }, () => budget), request);
   expect(outcome).toMatchObject({ done: false, cursor: { seenUntil: 100 } });
   expect(mocks.enqueue).toHaveBeenCalledTimes(1);
+});
+
+type Post = { id: string; at: number; url: string };
+/**
+ * 알골리아 search_by_date 흉내. numericFilters(쉼표는 "그리고")를 지키고 최신순으로 주며,
+ * page*hitsPerPage < 1000 까지만 넘겨준다 — 1,000건 너머를 주지 않는 실제 API 상한까지 재현한다.
+ * 같은 초의 게시물은 넣은 순서를 지킨다(안정 정렬).
+ */
+function algolia(posts: Post[]): CappedRequest {
+  return async (url) => {
+    const params = new URL(url).searchParams;
+    const filters = (params.get('numericFilters') ?? '').split(',').filter(Boolean).map((filter) => {
+      const [, op, value] = /^created_at_i(>=|<=|>|<|=)(\d+)$/.exec(filter)!;
+      return (at: number) => ({ '>=': at >= +value, '<=': at <= +value, '>': at > +value, '<': at < +value, '=': at === +value })[op]!;
+    });
+    const matched = posts.filter((post) => filters.every((keep) => keep(post.at))).sort((a, b) => b.at - a.at);
+    const perPage = Number(params.get('hitsPerPage')), page = Number(params.get('page'));
+    const reachable = matched.slice(0, 1000);
+    const hits = reachable.slice(page * perPage, (page + 1) * perPage).map((post) => hit(post.id, post.at, post.url));
+    return new Response(JSON.stringify({ nbHits: matched.length, nbPages: Math.ceil(reachable.length / perPage), hits }), { status: 200 });
+  };
+}
+const post = (i: number, at: number): Post => ({ id: `p${i}`, at, url: `https://github.com/acme/r${i}` });
+const enqueuedRepos = (): string[] => mocks.enqueue.mock.calls.flatMap(([entries]) => entries).map((entry) => entry.repo);
+
+/** 끝났다고 할 때까지 틱을 돌린다. 30분마다 도는 실제 스케줄을 몰아서 재현한다 */
+async function drain(request: CappedRequest, cursor: ShowHnCursor, ticks = 60): Promise<ShowHnCursor> {
+  for (let tick = 0; tick < ticks; tick++) {
+    const outcome = await seedFromShowHN(context(cursor), request);
+    cursor = outcome.cursor ?? cursor;
+    if (outcome.done) return cursor;
+  }
+  throw new Error(`${ticks}틱 안에 끝나지 않았다`);
+}
+
+it('같은 초의 게시물 중 하나만 넣고 끊겨도, 다음 틱이 나머지를 읽는다', async () => {
+  const request = algolia([
+    { id: 'A', at: 500, url: 'https://github.com/acme/a' },
+    { id: 'B', at: 500, url: 'https://github.com/acme/b' },
+  ]);
+  let budget = true;
+  mocks.enqueue.mockImplementation(async (entries: unknown[]) => { budget = false; return entries.length; });
+  const first = await seedFromShowHN(context({ seenUntil: 100 }, () => budget), request);
+  expect(first.done).toBe(false);
+  expect(enqueuedRepos()).toEqual(['acme/a']);
+
+  mocks.enqueue.mockImplementation(async (entries: unknown[]) => entries.length);
+  const second = await seedFromShowHN(context(first.cursor!), request);
+  // 같은 초를 다시 읽되 이미 넣은 A는 거른다
+  expect(enqueuedRepos()).toEqual(['acme/a', 'acme/b']);
+  expect(second.done).toBe(true);
+});
+
+it('같은 초의 게시물이 페이지 경계에 갈라져도 놓치지 않고, 이미 본 것뿐인 페이지에 갇히지 않는다', async () => {
+  // p49·p50 이 같은 초다. 최신순으로 99·100번째라 0페이지 끝과 1페이지 처음으로 갈라진다
+  const posts = Array.from({ length: 150 }, (_, i) => post(i, 1000 + (i <= 49 ? i : i - 1)));
+  await drain(algolia(posts), { seenUntil: 900 });
+  expect(new Set(enqueuedRepos())).toEqual(new Set(posts.map((p) => `acme/r${p.id.slice(1)}`)));
+});
+
+it('1,000건 넘게 밀려도 가장 오래된 게시물까지 모두 넣는다', async () => {
+  // 알골리아는 최신 1,000건까지만 넘겨준다. 나누지 않으면 가장 오래된 100건은 읽을 수 없다
+  const posts = Array.from({ length: 1100 }, (_, i) => post(i, 10_000 + i));
+  await drain(algolia(posts), { seenUntil: 9_000 });
+  const repos = enqueuedRepos();
+  expect(new Set(repos).size).toBe(1100);
+  expect(repos).toContain('acme/r0');
+});
+
+it('훑는 사이 새 글이 올라와 페이지가 밀리면, 밀린 페이지로 커서를 올리지 않는다', async () => {
+  const posts = Array.from({ length: 300 }, (_, i) => post(i, 1000 + i));
+  const listing = algolia(posts);
+  let arrived = false;
+  // 첫 조회(0페이지) 직후 새 글이 하나 올라온다 — 301건이 되어 가장 오래된 글이 3페이지로 밀린다
+  const request: CappedRequest = async (url, init) => {
+    const response = await listing(url, init);
+    if (!arrived) { arrived = true; posts.push(post(300, 5000)); }
+    return response;
+  };
+  await drain(request, { seenUntil: 900 });
+  expect(new Set(enqueuedRepos()).size).toBe(301);
+  expect(enqueuedRepos()).toContain('acme/r0');
 });

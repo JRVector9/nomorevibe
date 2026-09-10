@@ -1,18 +1,22 @@
 import { beforeEach, expect, it, vi } from "vitest";
 import type { CrawlCandidate } from "@/lib/db/schema";
 import { DEFAULT_CRAWL_SETTINGS } from "@/lib/crawl/settings-schema";
-const state = vi.hoisted(() => ({enforce:false,insert:vi.fn(),published:vi.fn()}));
+const state = vi.hoisted(() => ({enforce:false,insert:vi.fn(),published:vi.fn(),
+  document:{repo:"acme/app",productUrl:"https://app.example",pageStatus:200,repoMeta:{description:"Useful project"},pageMeta:{title:"Sample",description:"A useful service"}}}));
 vi.mock("@/lib/crawl/settings",()=>({getSettings:async()=>({...DEFAULT_CRAWL_SETTINGS,agentEvidence:{...DEFAULT_CRAWL_SETTINGS.agentEvidence,enforceEligibility:state.enforce}})}));
 vi.mock("@/lib/crawl/agent-evidence",()=>({loadAgentJudgeInput:async()=>({scanState:"pending",relationship:"unknown",observations:[],scanId:null})}));
 vi.mock("@/lib/domain/products/repository",()=>({nextAvailableSlug:async()=>"sample",insert:state.insert}));
 vi.mock("@/lib/domain/products/og",()=>({cacheOgImage:async()=>null}));
 vi.mock("@/lib/crawl/classify",()=>({classifyCategory:async()=>null}));
 vi.mock("@/lib/crawl/repository",()=>({
-  getDocument:async()=>({repo:"acme/app",productUrl:"https://app.example",repoMeta:{description:"Useful project"},pageMeta:{title:"Sample",description:"A useful service"}}),
+  getDocument:async()=>state.document,
   getFrontierBuilder:async()=>"Claude",markPublished:state.published,
 }));
 import { publishCandidate } from "@/lib/crawl/publish";
-const candidate={repo:"acme/app",productUrl:"https://app.example",decidedBy:"auto",state:"approved"} as CrawlCandidate;
+import { judgeRevision } from "@/lib/crawl/rules";
+// 운영의 판정 잡처럼 판정이 본 원본의 리비전을 남긴다 — 없으면 발행이 "그 원본인가"를 못 가려 멈춘다
+const candidate={repo:"acme/app",productUrl:"https://app.example",decidedBy:"auto",state:"approved",
+  signals:{judgedRevision:judgeRevision(state.document)}} as unknown as CrawlCandidate;
 beforeEach(()=>{state.enforce=false;state.insert.mockClear();state.published.mockClear();});
 it("does not publish a legacy search hint as a builder", async()=>{
   expect((await publishCandidate(candidate)).ok).toBe(true);

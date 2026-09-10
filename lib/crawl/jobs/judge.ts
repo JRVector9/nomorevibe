@@ -3,9 +3,10 @@ import type { CrawlDocument } from "@/lib/db/schema";
 import { findByUrl } from "@/lib/domain/products/repository";
 import * as crawl from "@/lib/crawl/repository";
 import { getSettings } from "@/lib/crawl/settings";
-import { judge, factsFromRepoMeta, pageFactsFromDocument, type Verdict } from "@/lib/crawl/rules";
+import { judge, factsFromRepoMeta, pageFactsFromDocument, judgeRevision, type Verdict } from "@/lib/crawl/rules";
 import type { CrawlSettings } from "@/lib/crawl/settings-schema";
 import { loadAgentJudgeInput } from "@/lib/crawl/agent-evidence";
+import { requestJob } from "@/lib/jobs/control";
 
 /**
  * 판정 잡 — 수집한 원본에 현재 기준을 적용해 후보로 남긴다.
@@ -33,22 +34,31 @@ export async function judgeCrawlDocuments(ctx: JobContext<null>): Promise<JobOut
   let judged = 0;
 
   while (ctx.hasBudget()) {
-    const documents = await crawl.documentsAwaitingJudgement(BATCH);
-    if (documents.length === 0) {
+    const queue = await crawl.judgementQueue(BATCH);
+    if (queue.length === 0) {
       ctx.log("crawl.judged", { judged, counts, drained: true });
       return { done: true };
     }
 
-    for (const document of documents) {
-      const candidate = await crawl.getCandidate(document.repo);
-      const verdict = await judgeDocument(document, settings);
-      if (!await crawl.recordAutomaticJudgement({document,settings,candidate,verdict})) {
-        ctx.log("crawl.judgement_changed", {repo:document.repo});
-        return {done:false};
+    let approved = 0;
+    try {
+      for (const { document, candidate } of queue) {
+        const verdict = await judgeDocument(document, settings);
+        if (!await crawl.recordAutomaticJudgement({document,settings,candidate,verdict})) {
+          ctx.log("crawl.judgement_changed", {repo:document.repo});
+          return {done:false};
+        }
+        counts[verdict.reason] = (counts[verdict.reason] ?? 0) + 1;
+        judged++;
+        if (verdict.state === "approved") approved++;
+        if (!ctx.hasBudget()) break;
       }
-      counts[verdict.reason] = (counts[verdict.reason] ?? 0) + 1;
-      judged++;
-      if (!ctx.hasBudget()) break;
+    } finally {
+      /**
+       * 승인이 발행까지 스케줄(5분)을 기다리지 않게 한다. 묶음이 끝날 때 한 번만 부른다 —
+       * 후보마다 부르면 잡 행 하나를 두고 경합한다. 승인이 없으면 부르지 않는다.
+       */
+      if (approved > 0) await requestJob("crawl-publish");
     }
   }
 
@@ -74,6 +84,8 @@ async function judgeDocument(document: CrawlDocument, settings: CrawlSettings): 
     agentEvidence,
   );
   if (agentEvidence) verdict.signals.agentScanId = agentEvidence.scanId;
+  // 발행 직전에 "이것이 판정받은 그 원본인가"를 이 값으로 가린다 (judgeRevision 참고)
+  verdict.signals.judgedRevision = judgeRevision(document);
   if (verdict.state === "rejected" || !document.productUrl) return verdict;
 
   const existing = await findByUrl(document.productUrl);

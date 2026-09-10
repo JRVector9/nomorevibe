@@ -98,6 +98,43 @@ describe("verifyProduct — 상태 전이", () => {
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error.kind).toBe("not_found");
   });
+
+  /**
+   * 검증은 외부 페이지를 읽느라 수 초가 걸린다. 처음 읽은 상태만 믿고 저장하면
+   * 그 사이 내려진 차단을 verified로 덮어써 공개 목록에 되돌려 놓는다.
+   */
+  it("외부 페이지를 읽는 사이 차단되면 차단이 우선한다", async () => {
+    await repo.insert({
+      slug: "found-app",
+      url: "https://found.test",
+      name: "FoundApp",
+      tagline: "수집된 소개",
+      description: "공개 저장소에서 찾은 제품입니다.",
+      category: "Other",
+      stack: [],
+      status: "seeded",
+      source: "crawler",
+      verifyToken: "nmv_verify_found",
+      editTokenHash: "x".repeat(64),
+    });
+    // 검증 파일을 읽는 도중에 어드민이 차단한다 — 도메인 증명 자체는 맞다
+    fetchPage.mockImplementationOnce(async () => {
+      await banProduct("found-app");
+      return { status: 200, html: "nmv_verify_found" };
+    });
+
+    const result = await verifyProduct("found-app");
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.kind).toBe("not_found");
+    const saved = await repo.findBySlug("found-app");
+    expect(saved?.status).toBe("banned");
+    expect(saved?.verifiedAt).toBeNull();
+    // 클레임도 일어나지 않는다 — 차단된 제품의 수정 키가 새로 발급되지 않는다
+    expect(saved?.claimedAt).toBeNull();
+    expect(saved?.editTokenHash).toBe("x".repeat(64));
+    expect(await repo.listProducts({ statuses: ["verified", "seeded"], limit: 10 })).toEqual([]);
+  });
 });
 
 describe("updateProduct — 수정 자격", () => {

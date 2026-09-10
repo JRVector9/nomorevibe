@@ -136,7 +136,33 @@ function at(date: Date) {
   return sql`${date.toISOString()}::timestamptz`;
 }
 
+/**
+ * 집계를 잠깐 재사용하는 시간.
+ *
+ * 창은 KST 0시에 닫힌 완료 구간이라 같은 날에는 결과가 거의 바뀌지 않지만, 제품 상태(차단·검증)는
+ * 지금 값으로 거르므로 하루 내내 담아 두면 차단한 제품이 자정까지 숫자·도구 이름에 남는다. 1분이면
+ * 요청마다 돌던 SQL 6개가 인스턴스당 분당 한 번으로 줄고, 상태 변화는 1분 안에 반영된다.
+ * 공개 목록·카테고리 개수·도구 목록은 담아 두지 않는다 — 차단·생존 상태가 바로 보여야 한다.
+ */
+const HOME_PULSE_TTL_MS = 60_000;
+let cachedPulse: { key: string; expiresAt: number; value: Promise<HomePulse> } | null = null;
+
+/** 집계 창은 now 의 KST 날짜로만 정해진다 — 그 날짜와 집계 버전을 키로 잡는다 */
 export async function getHomePulse(now = new Date()): Promise<HomePulse> {
+  const key = `${kstCalendarDate(now)}:${METHOD_VERSION}`;
+  if (cachedPulse?.key === key && now.getTime() < cachedPulse.expiresAt) return cachedPulse.value;
+  const entry = { key, expiresAt: now.getTime() + HOME_PULSE_TTL_MS, value: loadHomePulse(now) };
+  cachedPulse = entry;
+  try {
+    return await entry.value;
+  } catch (error) {
+    // 실패는 담아 두지 않는다 — 다음 요청이 다시 집계한다
+    if (cachedPulse === entry) cachedPulse = null;
+    throw error;
+  }
+}
+
+async function loadHomePulse(now: Date): Promise<HomePulse> {
   const { asOf, weekStart, prevStart, monthStart } = completedWindows(now);
   const listed = inArray(products.status, LISTED);
   const asOfAt = at(asOf);
