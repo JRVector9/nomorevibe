@@ -76,6 +76,15 @@ it("excludes an approval whose source revision or policy changed", async () => {
   expect(await db.select().from(products)).toHaveLength(0);
 });
 
+it("does not publish an approval whose model never saw the current page body", async () => {
+  const { document } = await candidate(0, true);
+  await db.update(crawlDocuments).set({ pageMeta: { ...document.pageMeta, textSample: "Gate 0 — an application for daily work" } })
+    .where(eq(crawlDocuments.id, document.id));
+  await tick();
+  expect(await db.select().from(products)).toHaveLength(0);
+  expect(await db.select().from(crawlCandidates)).toMatchObject([{ state: "approved" }]);
+});
+
 it("rechecks the exact approval in the product insert transaction", async () => {
   const { attempt } = await candidate(0, true);
   classify.mockImplementationOnce(async () => {

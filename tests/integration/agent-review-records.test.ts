@@ -68,6 +68,19 @@ it("copies reusable success to a new source revision without rewriting history",
   expect(await db.select().from(crawlReviewAttempts)).toHaveLength(2);
 });
 
+it("does not carry an approval over to a refetched page whose body changed", async () => {
+  const context = await fixture();
+  const first = await claimAgentReview(context);
+  if (first.kind === "skipped") throw new Error(first.reason);
+  await recordAgentReview({ ...context, attempt: first.attempt, outcome });
+  await db.update(crawlDocuments).set({ fetchedAt: new Date(), pageMeta: { ...context.document.pageMeta,
+    textSample: "Review App — run it locally. Install: npm install -g review-app" } }).where(eq(crawlDocuments.id, context.document.id));
+  const document = (await crawl.getDocument(context.candidate.repo))!;
+  const next = { ...context, document, input: await loadReviewInput(context.candidate, document, context.settings) };
+  expect(next.input.inputHash).not.toBe(context.input.inputHash);
+  expect(await claimAgentReview(next)).toMatchObject({ kind: "claimed", attempt: { reusedFromAttemptId: null, outcome: null } });
+});
+
 it("protects an administrator decision and refuses a stale worker token", async () => {
   const context = await fixture("enforce");
   const claim = await claimAgentReview(context);
