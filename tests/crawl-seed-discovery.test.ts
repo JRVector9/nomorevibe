@@ -6,7 +6,7 @@ const mocks = vi.hoisted(() => ({enqueue:vi.fn(), counts:vi.fn(), search:vi.fn()
 vi.mock('@/lib/crawl/repository', () => ({enqueue:mocks.enqueue,frontierCounts:mocks.counts}));
 vi.mock('@/lib/crawl/github', () => ({searchCommits:mocks.search,searchRepositories:mocks.search,SEARCH_PER_PAGE:100,MAX_SEARCH_PAGES:10}));
 vi.mock('@/lib/crawl/settings', () => ({getSettings:async () => mocks.settings,enabledQueries:(settings:CrawlSettings) => settings.discover.queries.filter(q => q.enabled)}));
-vi.mock('@/lib/domain/evidence/agents/repository', () => ({recordDiscoveryEvidence:mocks.record}));
+vi.mock('@/lib/domain/evidence/agents/repository', () => ({recordDiscoveryEvidenceBatch:mocks.record}));
 
 const page = (items: unknown[], more = {}) => ({ok:true,value:{items,...more}});
 const context = (cursor:SeedCursor|null = null, hasBudget = () => true) => ({cursor,hasBudget,save:vi.fn().mockResolvedValue(undefined),log:vi.fn()});

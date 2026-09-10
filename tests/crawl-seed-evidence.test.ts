@@ -5,12 +5,14 @@ const mocks = vi.hoisted(() => ({enqueue:vi.fn(), counts:vi.fn(), search:vi.fn()
 vi.mock('@/lib/crawl/repository', () => ({enqueue:mocks.enqueue,frontierCounts:mocks.counts}));
 vi.mock('@/lib/crawl/github', () => ({searchCommits:mocks.search,searchRepositories:mocks.search,SEARCH_PER_PAGE:100,MAX_SEARCH_PAGES:10}));
 vi.mock('@/lib/crawl/settings', () => ({getSettings:async () => mocks.settings,enabledQueries:(settings:CrawlSettings) => settings.discover.queries.filter(q => q.enabled)}));
-vi.mock('@/lib/domain/evidence/agents/repository', () => ({recordDiscoveryEvidence:mocks.record}));
+vi.mock('@/lib/domain/evidence/agents/repository', () => ({recordDiscoveryEvidenceBatch:mocks.record}));
 const commit = (repo:string, message = 'fix\n\nCo-authored-by: Codex <private@example.com>') => ({repository:{full_name:repo},sha:'a'.repeat(40),commit:{message}});
 const page = (items: unknown[], more = {}) => ({ok:true,value:{items,...more}});
 const context = (cursor:SeedCursor|null = null, hasBudget = () => true) => ({cursor,hasBudget,save:vi.fn().mockResolvedValue(undefined),log:vi.fn()});
+/** 근거는 페이지 단위로 한 번에 들어간다. 호출마다 담긴 행을 펼친다 */
+const recorded = ():{repositoryKey:string;attribution:{client:string|null}|null;incomplete:boolean}[] => mocks.record.mock.calls.flatMap(([rows]) => rows);
 beforeEach(() => {
-  mocks.enqueue.mockReset().mockResolvedValue(1); mocks.record.mockReset().mockResolvedValue(undefined); mocks.search.mockReset();
+  mocks.enqueue.mockReset().mockImplementation(async (entries:unknown[]) => entries.length); mocks.record.mockReset().mockResolvedValue(undefined); mocks.search.mockReset();
   mocks.counts.mockReset().mockResolvedValue({ pending: 0, fetching: 0 });
   mocks.settings = {...DEFAULT_CRAWL_SETTINGS,enabled:true,discover:{...DEFAULT_CRAWL_SETTINGS.discover,pagesPerTick:1,queries:[{label:'Codex hint',kind:'commits',query:'Co-authored-by: Codex',enabled:true,builder:'Codex',priority:90}]}};
 });
@@ -40,28 +42,27 @@ it.each(ADDITIONAL_AGENT_DISCOVERY_QUERIES)('$label finds candidates without ass
   await seedFrontier(context());
   expect(mocks.enqueue).toHaveBeenCalledWith([{repo:'acme/app',signal:query.label,priority:query.priority,builder:null}]);
 });
-it('persists normalized pending items and resumes within a page after budget expiry', async () => {
-  mocks.search.mockResolvedValue(page([commit('acme/one'),commit('acme/two')]));
+it('persists normalized pending items and resumes the saved page after budget expiry', async () => {
   let budget = true;
-  mocks.record.mockImplementationOnce(async () => {budget = false;});
+  mocks.search.mockImplementation(async () => {budget = false; return page([commit('acme/one'),commit('acme/two')]);});
   const first = await seedFrontier(context(null,() => budget));
   expect(first.done).toBe(false);
-  expect(mocks.record).toHaveBeenCalledTimes(1);
+  expect(mocks.record).not.toHaveBeenCalled();
   expect(JSON.stringify(first.cursor)).not.toContain('private@example.com');
   expect(JSON.stringify(first.cursor)).not.toContain('Co-authored-by:');
   budget = true;
   const resumed = await seedFrontier(context(first.cursor!));
   expect(resumed.done).toBe(true);
   expect(mocks.search).toHaveBeenCalledTimes(1);
-  expect(mocks.record.mock.calls.map(([input]) => input.repositoryKey)).toEqual(['acme/one','acme/two']);
+  expect(recorded().map(row => row.repositoryKey)).toEqual(['acme/one','acme/two']);
   expect(mocks.enqueue.mock.calls.flatMap(([items]) => items).map(item => item.repo)).toEqual(['acme/one','acme/two']);
 });
 it('caps a hostile commit attribution block and marks truncated evidence incomplete', async () => {
   const names = Array.from({length:50},(_,i) => `Co-authored-by: Person ${i} <private${i}@example.com>`).join('\n');
   mocks.search.mockResolvedValue(page([commit('acme/app',`fix\n\n${names}`)]));
   await seedFrontier(context());
-  expect(mocks.record.mock.calls.length).toBeLessThanOrEqual(8);
-  expect(mocks.record.mock.calls.every(([input]) => input.incomplete)).toBe(true);
+  expect(recorded().length).toBeLessThanOrEqual(8);
+  expect(recorded().every(row => row.incomplete)).toBe(true);
 });
 it('durably retains a zero-result incomplete minimal window and waits before retrying', async () => {
   mocks.search.mockResolvedValue(page([], {incomplete_results:true,total_count:0}));
@@ -122,15 +123,52 @@ it('retains unresolved windows across other signals and resumes fresh discovery 
   expect(mocks.search.mock.calls[searches][0].query)
     .toBe('Co-authored-by: Codex committer-date:2026-01-02T00:00:00Z..2026-01-05T00:00:00Z');
 });
-it('retries a failed database write at the saved attribution offset without refetching', async () => {
+it('keeps the cursor at the page start when the evidence write fails, then replays the page without refetching', async () => {
   mocks.search.mockResolvedValue(page([commit('acme/app','fix\n\nCo-authored-by: Codex <a@example.com>\nCo-authored-by: Claude <b@example.com>')]));
   let saved:SeedCursor|null = null;
   const ctx = {...context(),save:vi.fn(async (cursor:SeedCursor) => {saved = structuredClone(cursor);})};
-  mocks.record.mockResolvedValueOnce(undefined).mockRejectedValueOnce(new Error('DB unavailable'));
+  mocks.record.mockRejectedValueOnce(new Error('DB unavailable'));
   await expect(seedFrontier(ctx)).rejects.toThrow('DB unavailable');
-  expect(saved).toMatchObject({pendingPage:{attributionIndex:1,itemIndex:0}});
-  mocks.record.mockResolvedValue(undefined);
+  expect(saved).toMatchObject({pendingPage:{itemIndex:0}});
+  // 근거가 먼저다 — 근거를 못 넣은 레포를 프론티어에 먼저 올리지 않는다
+  expect(mocks.enqueue).not.toHaveBeenCalled();
   await seedFrontier(context(saved));
   expect(mocks.search).toHaveBeenCalledTimes(1);
-  expect(mocks.record.mock.calls.map(([input]) => input.attribution.client)).toEqual(['codex','claude-code','claude-code']);
+  expect(mocks.record.mock.calls.map(([rows]) => rows.map((row:{attribution:{client:string}}) => row.attribution.client)))
+    .toEqual([['codex','claude-code'],['codex','claude-code']]);
+  expect(mocks.enqueue.mock.calls.flatMap(([items]) => items).map(item => item.repo)).toEqual(['acme/app']);
+});
+it('keeps the cursor at the page start when the frontier write fails', async () => {
+  mocks.search.mockResolvedValue(page([commit('acme/one'),commit('acme/two')]));
+  let saved:SeedCursor|null = null;
+  const ctx = {...context(),save:vi.fn(async (cursor:SeedCursor) => {saved = structuredClone(cursor);})};
+  mocks.enqueue.mockRejectedValueOnce(new Error('DB unavailable'));
+  await expect(seedFrontier(ctx)).rejects.toThrow('DB unavailable');
+  // 페이지를 넘긴 커서가 저장되면 이 두 레포는 다시 읽히지 않는다
+  expect(saved).toMatchObject({pendingPage:{itemIndex:0}});
+  await seedFrontier(context(saved));
+  expect(mocks.search).toHaveBeenCalledTimes(1);
+  expect(mocks.enqueue.mock.calls.at(-1)![0].map((item:{repo:string}) => item.repo)).toEqual(['acme/one','acme/two']);
+});
+/**
+ * 검색 한 페이지(최대 100건)를 항목마다 근거 insert → 커서 → enqueue → 커서로 쓰면 400번 가까이
+ * DB를 오간다. 근거 한 번, 프론티어 한 번, 커서는 페이지 경계에서만 쓴다.
+ */
+it('writes a page of evidence and frontier entries in one batch each and saves the cursor only at page boundaries', async () => {
+  mocks.search.mockResolvedValue(page(Array.from({length:100},(_,i) => commit(`acme/r${i}`))));
+  const ctx = context();
+  await seedFrontier(ctx);
+  expect(mocks.record).toHaveBeenCalledTimes(1);
+  expect(recorded()).toHaveLength(100);
+  expect(mocks.enqueue).toHaveBeenCalledTimes(1);
+  expect(mocks.enqueue.mock.calls[0][0]).toHaveLength(100);
+  // 검색 직후(부수효과 전에 페이지를 남긴다) 한 번, 페이지를 마치고 한 번
+  expect(ctx.save).toHaveBeenCalledTimes(2);
+});
+it('writes evidence under the job lease before the frontier entries', async () => {
+  mocks.search.mockResolvedValue(page([commit('acme/app')]));
+  const lease = {name:'crawl-seed',token:'token',requestedVersion:1};
+  await seedFrontier({...context(),lease});
+  expect(mocks.record).toHaveBeenCalledWith(expect.any(Array),lease);
+  expect(mocks.record.mock.invocationCallOrder[0]).toBeLessThan(mocks.enqueue.mock.invocationCallOrder[0]);
 });
