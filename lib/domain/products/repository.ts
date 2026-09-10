@@ -265,6 +265,35 @@ export async function update(id: number, values: Partial<Product>): Promise<void
 }
 
 /**
+ * 도메인 검증 결과를 verified로 기록한다. 기록했으면 true.
+ *
+ * 검증은 외부 페이지를 읽느라 수 초가 걸린다. 시작할 때 읽은 상태만 믿고 덮어쓰면 그 사이
+ * 내려진 어드민 차단이 verified로 뒤집혀 공개 목록에 돌아왔다. 차단과 같은 세대 잠금 안에서
+ * 조건으로 다시 확인해 차단이 우선하게 한다. 검증 토큰도 조건에 건다 — 도메인이 증명한 것은
+ * 그 토큰이지 이 행이 아니다.
+ */
+export async function markVerified(
+  id: number,
+  slug: string,
+  verifyToken: string,
+  values: Partial<Product>,
+): Promise<boolean> {
+  return db.transaction(async (tx) => {
+    if (!(await lockProductGeneration(tx, id, slug))) return false;
+    const updated = await tx.update(products)
+      .set({ ...values, status: "verified", updatedAt: new Date() })
+      .where(and(
+        eq(products.id, id),
+        eq(products.slug, slug),
+        ne(products.status, "banned"),
+        eq(products.verifyToken, verifyToken),
+      ))
+      .returning({ id: products.id });
+    return updated.length === 1;
+  });
+}
+
+/**
  * 제품에 딸린 기록.
  *
  * FK를 걸지 않았고 nextAvailableSlug가 비어 있는 slug를 다시 쓰므로, 지우지 않으면 같은

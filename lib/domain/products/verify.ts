@@ -81,8 +81,7 @@ export async function verifyProduct(slug: string): Promise<Result<VerifyOutput>>
   const editToken = claiming ? generateEditToken() : null;
   const now = new Date();
 
-  await repo.update(product.id, {
-    status: "verified",
+  const saved = await repo.markVerified(product.id, slug, product.verifyToken, {
     verifyMethod: method,
     verifiedAt: now,
     /**
@@ -93,6 +92,11 @@ export async function verifyProduct(slug: string): Promise<Result<VerifyOutput>>
      */
     ...(editToken ? { claimedAt: now, editTokenHash: hashToken(editToken), builder: null } : {}),
   });
+  if (!saved) {
+    // 페이지를 읽는 사이 차단됐거나 지워졌다. 차단이 우선하고, 시작부터 차단돼 있던 제품과 같은 답을 준다.
+    logger.info("verify.superseded", { slug, method });
+    return fail({ kind: "not_found" });
+  }
 
   logger.info("verify.succeeded", { slug, method, claimed: claiming });
   if (editToken) {
