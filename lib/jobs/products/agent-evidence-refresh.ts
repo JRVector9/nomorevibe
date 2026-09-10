@@ -99,25 +99,35 @@ export async function refreshAgentEvidenceJob(ctx: JobContext<AgentEvidenceRefre
  * 삼킨다. 스캔의 다음 시도는 하루 뒤라 due 선별이 그 레포를 다시 고르지 않아, 후보가 하루
  * 동안 멈췄다(codex가 재현). 그래서 스캔과 떼어 매 틱 쓴다 — 멈춘 원인이 무엇이든 여기서 풀린다.
  *
- * **판정이 "근거 있음"으로 볼 때만** 푼다 — 판정(loadAgentJudgeInput)과 같은 조건이다: 설정의
- * 탐지기 버전, 오류 없음, 24시간 안에 완료. 낡은 스캔으로 풀면 판정이 다시 "근거 대기"로
- * 보류하고, 이것이 또 풀어 매 틱 돈다. 탐지기 버전도 코드 상수가 아니라 판정이 쓰는 설정값을 쓴다.
+ * **판정이 "근거 있음"으로 볼 때만** 푼다. 판정(loadAgentJudgeInput)은 수집이 쓰는 탐지기 버전
+ * (AGENT_DETECTOR_VERSION)으로 최신 스캔을 고르고, 그 버전이 설정값과 같고 오류 없이 24시간 안에
+ * 끝났을 때만 근거로 본다. 여기도 똑같이 고른다 — 다르게 고르면 풀고 → 판정이 다시 보류하고 →
+ * 또 푸는 일이 매 틱 되풀이된다. 설정 버전이 상수와 다르면 판정은 어떤 스캔도 근거로 보지 않으니
+ * 아예 풀지 않는다.
+ *
+ * **다른 결정을 덮지 않는다.** 서브쿼리가 고른 행을 UPDATE가 잠그려고 기다리는 사이 관리자가 그 행을
+ * 거부로 바꾸면, READ COMMITTED의 UPDATE는 잠금을 푼 뒤 `id IN (...)`만 다시 보고 상태 조건은 다시 보지
+ * 않는다 — 관리자 거부가 new로 돌아가고, 판정은 admin+new를 재판정 요청으로 읽어 자동 승인으로 뒤집을
+ * 수 있었다(codex가 짚음). 그래서 잠긴 행은 건너뛰고(SKIP LOCKED), 바깥 UPDATE에도 상태 조건을 다시 건다.
  */
 async function releaseEvidencePendingCandidates(detectorVersion: string) {
+  if (detectorVersion !== AGENT_DETECTOR_VERSION) return;
   const released = await db.execute<{ id: number }>(sql`
     UPDATE crawl_candidates SET state = 'new', updated_at = now()
     WHERE id IN (
       SELECT candidate.id FROM crawl_candidates candidate
       CROSS JOIN LATERAL (
         SELECT scan.state, scan.last_error_code, scan.completed_at FROM agent_repository_scans scan
-        WHERE scan.repository_key = lower(candidate.repo) AND scan.scope = '' AND scan.detector_version = ${detectorVersion}
+        WHERE scan.repository_key = lower(candidate.repo) AND scan.scope = '' AND scan.detector_version = ${AGENT_DETECTOR_VERSION}
         ORDER BY scan.started_at DESC, scan.id DESC LIMIT 1
       ) latest
       WHERE candidate.state = 'needs_review' AND candidate.reason = 'ai_evidence_pending' AND candidate.decided_by = 'auto'
         AND latest.state = 'complete' AND latest.last_error_code IS NULL
         AND latest.completed_at <= now() AND latest.completed_at > now() - interval '24 hours'
       LIMIT 50
+      FOR UPDATE OF candidate SKIP LOCKED
     )
+      AND state = 'needs_review' AND reason = 'ai_evidence_pending' AND decided_by = 'auto'
     RETURNING id
   `);
   // 푼 것은 곧바로 판정한다 — 스케줄(5분)을 기다리지 않는다

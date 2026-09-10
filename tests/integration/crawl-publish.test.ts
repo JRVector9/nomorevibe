@@ -460,6 +460,21 @@ describe("발행 잡", () => {
    * 원본을 "판정 전에 받은 것"으로 보고 검사를 건너뛰었다. 후보 생성이 재수집과 겹치면 수집의
    * 되돌림도 비껴가, 죽은 페이지가 재판정 없이 발행됐다. 내용(리비전)을 비교하면 시계가 끼지 않는다.
    */
+  /**
+   * 발행 잡은 백그라운드다. OG 이미지를 interactive(hop마다 10초)로 받으면 느린 리다이렉트가
+   * 이어질 때 발행 워커를 최대 60초 붙잡는다(codex 재리뷰가 짚음).
+   */
+  it("OG 이미지는 백그라운드 모드로 받는다", async () => {
+    const og = await import("@/lib/domain/products/og");
+    await approved("someone/my-app", {
+      pageMeta: { title: "My App", description: "페이지가 말하는 소개", ogImage: "https://my-app.test/og.png" },
+    });
+
+    await tick();
+
+    expect(og.cacheOgImage).toHaveBeenCalledWith("https://my-app.test/og.png", expect.any(String), "background");
+  });
+
   it("판정 쪽 시계가 빨라도 원본이 바뀌었으면 발행하지 않는다", async () => {
     await approved("someone/my-app", { meta: LIVE_REPO });
     // 판정 워커의 시계가 1분 빠르다 — 뒤에 받은 원본의 fetchedAt이 judgedAt보다 작아진다

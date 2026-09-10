@@ -16,7 +16,7 @@ vi.mock("undici", () => ({
   },
 }));
 
-const { safeFetch } = await import("@/lib/net/fetch");
+const { safeFetch, readBodyCapped, acquireOrigin } = await import("@/lib/net/fetch");
 
 const response = (status: number, location?: string, body: unknown = null) =>
   ({
@@ -125,4 +125,73 @@ it("같은 서버로 되돌아오는 사슬이 스스로를 기다리지 않는�
   const result = await safeFetch("https://example.com/", "background");
 
   expect(result?.finalUrl).toBe("https://example.com/b");
+});
+
+/**
+ * 헤더에서 자리를 놓으면 같은 서버로 모인 세 요청의 본문이 동시에 흐른다 — 동시 요청을 막는 서버에서
+ * 200·429·429가 났다(codex 재리뷰 재현). 마지막 응답은 본문이 끝날 때까지 자리를 쥔다.
+ */
+const slowBodies = () => {
+  let active = 0;
+  let peak = 0;
+  fetchMock.mockImplementation(async (url: string) => {
+    const { hostname } = new URL(url);
+    if (hostname !== "shared.test") return response(302, `https://shared.test/${hostname}`);
+    active += 1;
+    peak = Math.max(peak, active);
+    let sent = 0;
+    const stream = new ReadableStream<Uint8Array>({
+      async pull(controller) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        if (sent++ < 3) controller.enqueue(new Uint8Array([1]));
+        else { active -= 1; controller.close(); }
+      },
+    });
+    return new Response(stream, { status: 200 });
+  });
+  return () => peak;
+};
+const readAll = (mode?: "background") => Promise.all(three.map(async (url) => {
+  const fetched = await safeFetch(url, mode);
+  return (await readBodyCapped(fetched!.response, 1024)).length;
+}));
+
+it("백그라운드는 같은 서버로 모인 요청의 본문 전송도 겹치지 않는다", async () => {
+  const peak = slowBodies();
+
+  expect(await readAll("background")).toEqual([3, 3, 3]);
+  expect(peak()).toBe(1);
+});
+
+it("본문 겹침 대조 — 사람이 기다리는 경로에서는 셋이 함께 흐른다", async () => {
+  const peak = slowBodies();
+
+  await readAll();
+
+  expect(peak()).toBe(3);
+});
+
+/**
+ * 앞 요청이 늦으면 뒤 요청이 자기 10초를 넘겨서도 줄에서 기다렸다(codex 재리뷰: 100ms 기한에 152ms).
+ * 기다리다 끊긴 자리는 앞이 끝나는 대로 넘겨 줄이 멈추지 않게 하고, 앞 요청의 자리는 풀지 않는다.
+ */
+it("줄에서 기다리다 기한이 끝나면 곧장 끊기고, 앞 요청의 자리는 그대로 둔다", async () => {
+  const holder = await acquireOrigin("https://x.test", new AbortController().signal);
+  const deadline = new AbortController();
+  const waiting = acquireOrigin("https://x.test", deadline.signal);
+  setTimeout(() => deadline.abort(new Error("deadline")), 20);
+
+  const started = Date.now();
+  await expect(waiting).rejects.toThrow("deadline");
+  expect(Date.now() - started).toBeLessThan(200);
+
+  // 앞 요청은 아직 자리를 쥐고 있다 — 세 번째는 앞이 놓을 때까지 못 들어온다
+  let third = false;
+  const next = acquireOrigin("https://x.test", new AbortController().signal).then((release) => { third = true; return release; });
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  expect(third).toBe(false);
+
+  holder();
+  (await next)();
+  expect(third).toBe(true);
 });

@@ -189,26 +189,78 @@ export async function fetchCapped(
 export type FetchMode = "interactive" | "background";
 
 /**
- * origin 하나에 한 번에 하나.
+ * origin 하나에 한 번에 하나 — 자리를 얻으면 놓는 함수를 돌려준다.
  *
- * 헤더를 받을 때까지만 자리를 쥔다 — 리다이렉트면 본문을 닫고 다음 hop 전에 놓아야 같은 서버로
- * 튀는 사슬이 스스로를 기다리지 않는다. 마지막 응답의 본문은 부르는 쪽이 자리 없이 읽는다.
+ * 줄에서 기다리는 것도 기한(signal)에 끊긴다. 앞 요청이 늦으면 뒤 요청이 자기 10초를 넘겨서도
+ * 계속 기다렸다(codex 재현: 100ms 기한에 152ms). 기다리다 끊긴 자리는 앞이 끝나는 대로 곧장
+ * 넘긴다 — 줄이 거기서 멈추지 않게 하고, 앞 요청의 자리를 대신 풀지 않는다.
  * 프로세스 안에서만 지킨다(역할별 워커는 서로 다른 프로세스다).
  */
 const originTails = new Map<string, Promise<void>>();
-async function oneAtATimeFor<T>(origin: string, run: () => Promise<T>): Promise<T> {
+export async function acquireOrigin(origin: string, signal: AbortSignal): Promise<() => void> {
   const before = originTails.get(origin) ?? Promise.resolve();
-  let release!: () => void;
-  const mine = new Promise<void>((resolve) => { release = resolve; });
+  let open!: () => void;
+  const mine = new Promise<void>((resolve) => { open = resolve; });
   const tail = before.then(() => mine);
   originTails.set(origin, tail);
-  await before;
-  try {
-    return await run();
-  } finally {
-    release();
+  let released = false;
+  const release = () => {
+    if (released) return;
+    released = true;
+    open();
     if (originTails.get(origin) === tail) originTails.delete(origin);
+  };
+  try {
+    await new Promise<void>((resolve, reject) => {
+      if (signal.aborted) return reject(signal.reason);
+      const onAbort = () => reject(signal.reason);
+      signal.addEventListener("abort", onAbort, { once: true });
+      before.then(() => { signal.removeEventListener("abort", onAbort); resolve(); });
+    });
+  } catch (error) {
+    void before.then(release);
+    throw error;
   }
+  return release;
+}
+
+/**
+ * 마지막 응답의 본문이 끝날 때 자리를 놓는다.
+ *
+ * 헤더에서 놓으면 같은 서버로 모인 세 요청의 본문이 동시에 흘러, 동시 요청을 막는 서버에서
+ * 200·429·429가 났다(codex 재현). 본문이 끝나거나·취소되거나·오류가 나면 놓는다.
+ * 본문을 안 읽고 버리는 호출부가 있어도 자리가 영영 묶이지 않게 **기한(signal)이 끝나면 무조건
+ * 놓는다** — 기한이 본문 스트림도 끊으므로 그때는 이미 쓸모없는 연결이다.
+ */
+function releaseWhenBodyEnds(res: Response, release: () => void, signal: AbortSignal): Response {
+  // 본문을 가질 수 없는 상태 코드는 새 Response로 감쌀 수 없다 — 곧장 놓는다
+  if (!res.body || [101, 204, 205, 304].includes(res.status)) {
+    release();
+    return res;
+  }
+  signal.addEventListener("abort", release, { once: true });
+  const reader = res.body.getReader();
+  const body = new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      try {
+        const { done, value } = await reader.read();
+        if (done) {
+          release();
+          controller.close();
+        } else {
+          controller.enqueue(value);
+        }
+      } catch (error) {
+        release();
+        controller.error(error);
+      }
+    },
+    cancel(reason) {
+      release();
+      return reader.cancel(reason);
+    },
+  });
+  return new Response(body, { status: res.status, statusText: res.statusText, headers: res.headers });
 }
 
 /**
@@ -223,32 +275,39 @@ export async function safeFetch(url: string, mode: FetchMode = "interactive"): P
     const guard = await assertPublicUrl(current);
     if (!guard.ok) return null;
 
+    const signal = total ?? AbortSignal.timeout(FETCH_TIMEOUT_MS);
+    let release: (() => void) | null = null;
     let res: Response;
     try {
-      const request = () => undiciFetch(current, {
+      // 백그라운드는 hop마다 목적지 origin의 자리를 잡는다 (acquireOrigin 참고)
+      if (background) release = await acquireOrigin(new URL(current).origin, signal);
+      res = (await undiciFetch(current, {
         redirect: "manual",
-        signal: total ?? AbortSignal.timeout(FETCH_TIMEOUT_MS),
+        signal,
         headers: { "user-agent": "NoMoreVibe/1.0 (+https://nomorevibe.app)" },
         dispatcher: allowPrivate() ? undefined : ssrfSafeAgent,
-      }) as unknown as Promise<Response>;
-      res = background ? await oneAtATimeFor(new URL(current).origin, request) : await request();
+      })) as unknown as Response;
     } catch {
+      release?.();
       return null;
     }
 
     if (res.status >= 300 && res.status < 400) {
       const location = res.headers.get("location");
-      if (!location) return { finalUrl: current, response: res };
-      // 따라갈 응답의 본문은 읽지 않는다. 닫지 않으면 연결이 풀로 돌아가지 않는다
-      await res.body?.cancel().catch(() => {});
-      try {
-        current = new URL(location, current).toString();
-      } catch {
-        return null;
+      if (location) {
+        // 따라갈 응답의 본문은 읽지 않는다. 닫지 않으면 연결이 풀로 돌아가지 않는다.
+        // 다음 hop 전에 자리를 놓아야 같은 서버로 돌아오는 사슬이 스스로를 기다리지 않는다
+        await res.body?.cancel().catch(() => {});
+        release?.();
+        try {
+          current = new URL(location, current).toString();
+        } catch {
+          return null;
+        }
+        continue;
       }
-      continue;
     }
-    return { finalUrl: current, response: res };
+    return { finalUrl: current, response: release ? releaseWhenBodyEnds(res, release, signal) : res };
   }
   return null; // 리다이렉트 한도 초과
 }

@@ -1,5 +1,5 @@
 import { beforeAll, beforeEach, expect, it, vi } from 'vitest';
-import { eq } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import { db } from '@/lib/db';
 import { agentRepositoryScans, crawlCandidates, crawlSettings, productEvidenceSources, productLinks, products } from '@/lib/db/schema';
 import { saveRepositoryAgentScan, getLatestRepositoryAgentScan } from '@/lib/domain/evidence/agents/repository';
@@ -145,4 +145,37 @@ it('never releases an administrator decision', async () => {
   await refreshAgentEvidenceJob(context(), { request: emptyRepository([]) });
 
   expect(await db.select().from(crawlCandidates)).toMatchObject([{ state: 'needs_review', decidedBy: 'admin' }]);
+});
+
+/**
+ * codex 재리뷰: 서브쿼리가 고른 행을 UPDATE가 잠그려고 기다리는 사이 관리자가 거부하면, 잠금을
+ * 푼 뒤 UPDATE가 상태 조건을 다시 보지 않아 거부를 new로 되돌렸다. 판정은 admin+new를 재판정
+ * 요청으로 읽어 거부를 자동 승인으로 뒤집을 수 있었다. 잠긴 행은 건너뛰어야 한다.
+ */
+it('does not overwrite an administrator decision taken while the candidate is locked', async () => {
+  await saveSettings({ agentEvidence: { enabled: true } }, 'test');
+  await completeScan('acme/race', '1');
+  await db.insert(crawlCandidates).values({ repo: 'acme/race', state: 'needs_review', reason: 'ai_evidence_pending', decidedBy: 'auto' });
+
+  await db.transaction(async (tx) => {
+    // 관리자가 이 후보를 잠그고 결정하는 중이다
+    await tx.execute(sql`SELECT id FROM crawl_candidates WHERE repo = 'acme/race' FOR UPDATE`);
+    // 쓸기는 다른 연결에서 돈다. 잠긴 행을 기다리면 이 트랜잭션과 서로를 기다려 테스트가 멈춘다
+    await refreshAgentEvidenceJob(context(), { request: emptyRepository([]) });
+    await tx.update(crawlCandidates).set({ state: 'rejected', reason: 'not_a_product', decidedBy: 'admin' })
+      .where(eq(crawlCandidates.repo, 'acme/race'));
+  });
+
+  expect(await db.select().from(crawlCandidates)).toMatchObject([{ state: 'rejected', decidedBy: 'admin' }]);
+});
+
+it('does not release candidates when the configured detector differs from the one scans are collected with', async () => {
+  // 판정은 수집 버전의 스캔만 고르고 그 버전이 설정과 같을 때만 근거로 본다 — 다르면 풀어도 다시 보류된다
+  await saveSettings({ agentEvidence: { enabled: true, detectorVersion: 'another.1' } }, 'test');
+  await completeScan('acme/version', '1');
+  await db.insert(crawlCandidates).values({ repo: 'acme/version', state: 'needs_review', reason: 'ai_evidence_pending', decidedBy: 'auto' });
+
+  await refreshAgentEvidenceJob(context(), { request: emptyRepository([]) });
+
+  expect(await db.select().from(crawlCandidates)).toMatchObject([{ state: 'needs_review', reason: 'ai_evidence_pending' }]);
 });

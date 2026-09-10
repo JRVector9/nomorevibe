@@ -137,8 +137,8 @@ describe("registerProduct — 리다이렉트 정규화", () => {
     safeFetch.mockResolvedValue(null); // 캐싱은 실패시켜 등록만 본다
 
     await registerProduct(input({ url: "https://shim.test" }));
-    // shim.test가 아니라 real.test 기준으로 해석돼야 한다
-    expect(safeFetch).toHaveBeenCalledWith("https://real.test/cover.png");
+    // shim.test가 아니라 real.test 기준으로 해석돼야 한다. 메이커가 기다리는 등록이라 interactive다
+    expect(safeFetch).toHaveBeenCalledWith("https://real.test/cover.png", "interactive");
   });
 });
 
