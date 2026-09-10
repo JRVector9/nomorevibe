@@ -8,7 +8,7 @@ import type { AmbiguityCause } from "@/lib/crawl/rules";
  * 여기에 갈래별로 "무엇을 묻는 것인지"와 "어느 쪽이면 어느 결정인지"를 적어 둔다.
  * 같은 갈래는 판단도 같으므로 묶어서 처리할 수 있다.
  */
-export type CauseKey = AmbiguityCause | "resolved" | "unknown";
+export type CauseKey = AmbiguityCause | "ai_reject" | "resolved" | "unknown";
 
 export const CAUSE_GUIDE: Record<CauseKey, {
   label: string;
@@ -51,6 +51,15 @@ export const CAUSE_GUIDE: Record<CauseKey, {
     hints: [
       { decision: "추가 수집", when: "근거가 더 있을 법하다 — 같은 입력당 2회까지" },
       { decision: "거부", when: "근거를 찾을 수 없다" },
+    ],
+  },
+  ai_reject: {
+    label: "AI가 거부로 판정함",
+    summary: "규칙이 못 가른 것을 AI 심사가 갈랐습니다. 사유를 확인하고 묶어서 처리할 수 있습니다.",
+    question: "AI가 든 사유가 맞습니까?",
+    hints: [
+      { decision: "선택 거부", when: "사유가 맞다 — 스타터 템플릿, 라이브러리, 강의 자료, 문서 사이트 같은 것" },
+      { decision: "개별 승인", when: "AI가 틀렸다 — 사유를 남기면 AI 판정과 별개로 기록됩니다" },
     ],
   },
   resolved: {
