@@ -7,7 +7,7 @@ import { logger } from "@/lib/observability/logger";
 import * as crawl from "./repository";
 import { classifyCategory, type ClassifyInput } from "./classify";
 import { getSettings } from "./settings";
-import { judge, factsFromRepoMeta, pageFactsFromDocument } from "./rules";
+import { judgeRevision } from "./rules";
 import { guardPublication, publicationSourceChanged, PublicationStateChangedError } from "./publication-guard";
 import { loadAgentJudgeInput } from "./agent-evidence";
 import { summarizeAgentEvidence, type AgentEvidenceSummary } from "@/lib/domain/evidence/agents/summary";
@@ -68,21 +68,21 @@ async function preparePublication(candidate: CrawlCandidate): Promise<
   /**
    * 자동 승인은 그 판정이 본 원본에 대해서만 유효하다.
    *
-   * codex 재현: 200일 때 승인된 후보가 발행 전에 다시 수집돼 404가 됐는데, 주소가 같아 new로
-   * 되돌려지지 않았고 reviewMode off/observe의 발행은 규칙을 다시 태우지 않아 죽은 페이지가
-   * seeded로 올라갔다. 수집은 이제 원본이 바뀌면 되돌리지만(saveFetchedDocument), 그 전의
-   * 원본이나 수집 밖에서 바뀐 원본이 여기까지 올 수 있다. 판정 뒤에 받은 원본이면 지금 규칙을
-   * 한 번 더 태운다 — 순수 함수라 싸다. 통과하지 못하면 판정으로 되돌린다(발행 잡).
+   * codex 재현: 200일 때 승인된 후보가 발행 전에 다시 수집돼 404가 됐는데, reviewMode off/observe
+   * 의 발행은 규칙을 다시 태우지 않아 죽은 페이지가 seeded로 올라갔다. 수집은 원본이 바뀌면
+   * 후보를 되돌리지만(saveFetchedDocument), 후보 생성이 재수집과 겹치면 그 되돌림을 비껴간다.
    *
-   * 판정 뒤에 받은 원본일 때만 본다. 판정할 때 본 원본은 판정이 이미 가른 것이고, 늘 다시 태우면
-   * 판정 뒤 흐른 시간(방치 기준)만으로도 승인이 뒤집힌다 — 원본이 바뀐 것이 아니다. 두 시각은
-   * 서로 다른 워커의 시계라 조금 어긋날 수 있지만, 수집 경로는 저장 트랜잭션이 이미 되돌리므로
-   * 여기는 그 밖의 경로를 받치는 자리다. 사람의 결정은 규칙으로 뒤집지 않는다.
+   * 그래서 판정이 본 원본의 리비전(judgeRevision)을 지금 원본과 맞춰 본다. 다르면 판정으로
+   * 돌려보낸다 — 여기서 다시 판정하지 않는다. 판정은 한 곳에서만 하고, 발행은 "판정받은 그
+   * 원본인가"만 본다. 전에는 두 워커의 시계(fetchedAt > judgedAt)를 비교해, 시계가 어긋나면
+   * 새 원본을 놓쳤다. 리비전이 없는 옛 후보도 한 번 판정을 다시 받는다 — 안전한 쪽이다.
+   *
+   * 사람의 결정은 규칙으로 뒤집지 않는다. AI 승인은 판정이 남긴 signals를 그대로 이어받으므로
+   * (agent-review-repository) 원본이 그대로면 여기를 지난다.
    */
-  if (candidate.decidedBy === "auto" && candidate.judgedAt && document.fetchedAt > candidate.judgedAt) {
-    const verdict = judge(factsFromRepoMeta(document.repo, document.repoMeta), pageFactsFromDocument(document),
-      settings, new Date(), checkedEvidence ?? undefined);
-    if (verdict.state !== "approved") return { ok: false, reason: "stale_judgement" };
+  if (candidate.decidedBy === "auto") {
+    const judged = (candidate.signals as { judgedRevision?: unknown } | null)?.judgedRevision;
+    if (judged !== judgeRevision(document)) return { ok: false, reason: "stale_judgement" };
   }
   const draft = draftFrom(candidate.repo, document);
   if (!draft.hasDescription && candidate.decidedBy !== "admin") {

@@ -3,7 +3,7 @@ import type { CrawlDocument } from "@/lib/db/schema";
 import { findByUrl } from "@/lib/domain/products/repository";
 import * as crawl from "@/lib/crawl/repository";
 import { getSettings } from "@/lib/crawl/settings";
-import { judge, factsFromRepoMeta, pageFactsFromDocument, type Verdict } from "@/lib/crawl/rules";
+import { judge, factsFromRepoMeta, pageFactsFromDocument, judgeRevision, type Verdict } from "@/lib/crawl/rules";
 import type { CrawlSettings } from "@/lib/crawl/settings-schema";
 import { loadAgentJudgeInput } from "@/lib/crawl/agent-evidence";
 import { requestJob } from "@/lib/jobs/control";
@@ -84,6 +84,8 @@ async function judgeDocument(document: CrawlDocument, settings: CrawlSettings): 
     agentEvidence,
   );
   if (agentEvidence) verdict.signals.agentScanId = agentEvidence.scanId;
+  // 발행 직전에 "이것이 판정받은 그 원본인가"를 이 값으로 가린다 (judgeRevision 참고)
+  verdict.signals.judgedRevision = judgeRevision(document);
   if (verdict.state === "rejected" || !document.productUrl) return verdict;
 
   const existing = await findByUrl(document.productUrl);

@@ -56,8 +56,10 @@ export async function registerProduct(input: RegisterInput): Promise<Result<Regi
     return fail({ kind: "duplicate", slug: existing.slug, status: existing.status });
   }
 
-  // 실제로 떠 있는 서비스인지 우리가 직접 확인한다
-  const page = await fetchPage(url);
+  // 실제로 떠 있는 서비스인지 우리가 직접 확인한다.
+  // 헤더 뒤 본문이 끊기면 fetchPage는 예외를 던진다(수집 잡이 항목별로 다시 시도하려고).
+  // 메이커가 기다리는 여기서는 그것도 "열리지 않았다"다 — 500을 돌려줄 일이 아니다.
+  const page = await fetchPage(url).catch(() => null);
   if (!page || page.status < 200 || page.status >= 400) {
     // 가장 흔한 등록 실패 사유 — 배포가 안 됐거나 URL 오타다
     logger.warn("register.rejected", {

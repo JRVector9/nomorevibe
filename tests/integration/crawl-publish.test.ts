@@ -18,6 +18,7 @@ const { crawlFrontier, crawlDocuments, crawlCandidates, crawlSettings, jobs, age
   "@/lib/db/schema"
 );
 const crawl = await import("@/lib/crawl/repository");
+const { judgeRevision } = await import("@/lib/crawl/rules");
 const products = await import("@/lib/domain/products/repository");
 const { saveSettings } = await import("@/lib/crawl/settings");
 const { publishCandidates } = await import("@/lib/crawl/jobs/publish");
@@ -38,13 +39,15 @@ async function approved(
     pageStatus: 200,
     pageMeta: over.pageMeta ?? { title: "My App", description: "페이지가 말하는 소개", ogImage: null },
   });
+  // 운영의 판정 잡처럼, 판정이 본 원본의 리비전을 남긴다 — 발행이 "그 원본인가"를 이 값으로 본다
+  const document = await crawl.getDocument(repo);
   await crawl.recordJudgement({
     repo,
     productUrl,
     state: "approved",
     reason: "passed",
     decidedBy: "auto",
-    signals: { stars: 3 },
+    signals: { stars: 3, judgedRevision: judgeRevision(document!) },
   });
 }
 
@@ -452,7 +455,25 @@ describe("발행 잡", () => {
       .toMatchObject({ requestedVersion: 1, processedVersion: 0 });
   });
 
-  it("승인 뒤 다시 받은 원본도 지금 규칙을 통과하면 그대로 발행한다", async () => {
+  /**
+   * codex 재현: 판정 쪽 워커 시계가 빠르면(judgedAt > fetchedAt) 전의 시각 비교가 새 404
+   * 원본을 "판정 전에 받은 것"으로 보고 검사를 건너뛰었다. 후보 생성이 재수집과 겹치면 수집의
+   * 되돌림도 비껴가, 죽은 페이지가 재판정 없이 발행됐다. 내용(리비전)을 비교하면 시계가 끼지 않는다.
+   */
+  it("판정 쪽 시계가 빨라도 원본이 바뀌었으면 발행하지 않는다", async () => {
+    await approved("someone/my-app", { meta: LIVE_REPO });
+    // 판정 워커의 시계가 1분 빠르다 — 뒤에 받은 원본의 fetchedAt이 judgedAt보다 작아진다
+    await db.update(crawlCandidates).set({ judgedAt: new Date(Date.now() + 60_000) })
+      .where(eq(crawlCandidates.repo, "someone/my-app"));
+    await refetched("someone/my-app", 404);
+
+    await tick();
+
+    expect(await products.findByUrl("https://my-app.test")).toBeUndefined();
+    expect(await crawl.getCandidate("someone/my-app")).toMatchObject({ state: "new" });
+  });
+
+  it("다시 받은 원본이라도 판정에 쓰이는 내용이 그대로면 발행한다", async () => {
     await approved("someone/my-app", { meta: LIVE_REPO });
     await judgedEarlier("someone/my-app");
     await refetched("someone/my-app", 200);

@@ -179,7 +179,8 @@ describe("생존 확인", () => {
 
     await runJob("uptime-ping", pingProducts);
 
-    expect(fetchPage).toHaveBeenCalledWith("https://a.test/docs/");
+    // 백그라운드 잡이라 요청 전체 기한("background")으로 연다
+    expect(fetchPage).toHaveBeenCalledWith("https://a.test/docs/", "background");
   });
 
   it("본문을 못 읽어도 생존 확인은 기록한다 — 본문은 부가물이다", async () => {

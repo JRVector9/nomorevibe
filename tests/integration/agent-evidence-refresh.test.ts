@@ -107,3 +107,42 @@ it.each(['partial', 'complete'] as const)('resumes an overdue %s scan with pendi
   expect((await getLatestRepositoryAgentScan('acme/early'))?.state).toBe('complete');
   expect(saved).toEqual(['zzz/last']);
 });
+
+/**
+ * codex 재현: 스캔이 끝나 저장된 직후 후보를 되돌리는 update가 일시 오류로 실패하면 catch가
+ * 삼킨다. 스캔의 다음 시도는 하루 뒤라 due 선별이 그 레포를 다시 고르지 않아, 후보가 하루 동안
+ * "근거 대기"로 멈췄다. 멈춘 원인과 상관없이 매 틱 쓸어 풀어야 한다.
+ */
+it('releases a candidate stuck on evidence-pending even though its repository is not due', async () => {
+  await saveSettings({ agentEvidence: { enabled: true } }, 'test');
+  await completeScan('acme/stuck', '1'); // 방금 끝났다 — 하루 뒤에야 다시 due
+  await db.insert(crawlCandidates).values({ repo: 'acme/stuck', state: 'needs_review', reason: 'ai_evidence_pending', decidedBy: 'auto' });
+
+  await refreshAgentEvidenceJob(context(), { request: emptyRepository([]) });
+
+  expect(spies.refresh).not.toHaveBeenCalled(); // 레포는 due가 아니다 — 쓸기가 풀어야 한다
+  expect(await db.select().from(crawlCandidates)).toMatchObject([{ repo: 'acme/stuck', state: 'new' }]);
+});
+
+it('leaves an evidence-pending candidate alone when the scan is too old for the judge', async () => {
+  await saveSettings({ agentEvidence: { enabled: true } }, 'test');
+  await completeScan('acme/stale', '1');
+  // 판정은 24시간 안에 끝난 스캔만 근거로 본다. 이걸 풀면 판정이 다시 보류하고 매 틱 돈다
+  await db.update(agentRepositoryScans).set({ completedAt: new Date(Date.now() - 25 * 3600_000), nextAttemptAt: new Date(Date.now() + 3600_000) })
+    .where(eq(agentRepositoryScans.repositoryKey, 'acme/stale'));
+  await db.insert(crawlCandidates).values({ repo: 'acme/stale', state: 'needs_review', reason: 'ai_evidence_pending', decidedBy: 'auto' });
+
+  await refreshAgentEvidenceJob(context(), { request: emptyRepository([]) });
+
+  expect(await db.select().from(crawlCandidates)).toMatchObject([{ state: 'needs_review', reason: 'ai_evidence_pending' }]);
+});
+
+it('never releases an administrator decision', async () => {
+  await saveSettings({ agentEvidence: { enabled: true } }, 'test');
+  await completeScan('acme/admin', '1');
+  await db.insert(crawlCandidates).values({ repo: 'acme/admin', state: 'needs_review', reason: 'ai_evidence_pending', decidedBy: 'admin' });
+
+  await refreshAgentEvidenceJob(context(), { request: emptyRepository([]) });
+
+  expect(await db.select().from(crawlCandidates)).toMatchObject([{ state: 'needs_review', decidedBy: 'admin' }]);
+});

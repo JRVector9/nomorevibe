@@ -9,6 +9,7 @@ vi.mock("@/lib/crawl/classify", () => ({
 const { db } = await import("@/lib/db");
 const { crawlFrontier, crawlDocuments, crawlCandidates, crawlSettings, jobs } = await import("@/lib/db/schema");
 const crawl = await import("@/lib/crawl/repository");
+const { judgeRevision } = await import("@/lib/crawl/rules");
 const { saveSettings, getSettings } = await import("@/lib/crawl/settings");
 const { publishCandidates } = await import("@/lib/crawl/jobs/publish");
 const { runJob } = await import("@/lib/jobs/runner");
@@ -33,8 +34,11 @@ async function published(
       ...(over.textSample ? { textSample: over.textSample } : {}),
     },
   });
+  // 운영의 판정 잡처럼 판정이 본 원본의 리비전을 남긴다 — 없으면 발행이 "그 원본인가"를 못 가린다
+  const document = await crawl.getDocument(repo);
   await crawl.recordJudgement({
-    repo, productUrl, state: "approved", reason: "passed", decidedBy: "auto", signals: { stars: 3 },
+    repo, productUrl, state: "approved", reason: "passed", decidedBy: "auto",
+    signals: { stars: 3, judgedRevision: judgeRevision(document!) },
   });
   await runJob("crawl-publish", publishCandidates);
 }

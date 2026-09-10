@@ -270,12 +270,12 @@ function originOf(url: string): string {
  * 걸었다(codex 재현). 기준값은 그대로 두고, 판정이 도착한 주소도 보게 한다(rules.ts).
  */
 async function visit(url: string, docsGenerators: readonly string[], oneAtATime: OneAtATime) {
-  let page = await oneAtATime(url, () => fetchPage(url));
+  let page = await oneAtATime(url, () => fetchPage(url, "background"));
   if (!page) return { productUrl: url, status: 0, meta: null };
 
   const hop = metaRefreshTarget(page.html, page.finalUrl);
   if (hop) {
-    const next = await oneAtATime(hop, () => fetchPage(hop));
+    const next = await oneAtATime(hop, () => fetchPage(hop, "background"));
     // 목적지가 열리지 않으면 껍데기 쪽을 그대로 쓴다 — 없는 주소로 바꾸면 더 나쁘다
     if (next) page = next;
   }

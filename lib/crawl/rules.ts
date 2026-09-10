@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type { DecisionReason } from "@/lib/db/schema";
 import type { CrawlSettings } from "./settings-schema";
 import { summarizeAgentEvidence, type SummaryInput } from "@/lib/domain/evidence/agents/summary";
@@ -417,6 +418,41 @@ export function pageFactsFromDocument(document: {
     textSample: typeof meta.textSample === "string" ? meta.textSample : null,
     finalUrl: typeof meta.finalUrl === "string" ? meta.finalUrl : null,
   };
+}
+
+/**
+ * 판정이 본 원본의 리비전.
+ *
+ * 판정은 이 원본에 대해서만 유효하다. 발행 직전에 같은 값을 다시 계산해 다르면 판정으로
+ * 돌려보낸다 — "이것이 판정받은 그 원본인가"만 보고, 발행 단계가 판정을 대신하지 않는다.
+ *
+ * 전에는 수집 시각과 판정 시각을 비교했다(fetchedAt > judgedAt). 두 시각이 서로 다른 워커의
+ * 시계라, 판정 쪽 시계가 빠르고 후보 생성이 재수집과 겹치면 새 404 원본이 재판정 없이
+ * 발행됐다(codex가 재현). 원본 내용을 직접 비교하면 시계가 끼지 않는다.
+ *
+ * 판정이 읽는 것만 넣는다 — 레포 사실과 페이지 사실. 시각은 넣지 않는다: 시간이 흐른 것은
+ * 원본이 바뀐 것이 아니다(그걸 넣으면 방치 기준만으로 승인이 뒤집힌다).
+ */
+export function judgeRevision(document: {
+  repo: string;
+  repoMeta: Record<string, unknown>;
+  productUrl: string | null;
+  pageStatus: number | null;
+  pageMeta: unknown;
+}): string {
+  const repo = factsFromRepoMeta(document.repo, document.repoMeta);
+  const page = pageFactsFromDocument(document);
+  const input = {
+    repo: { ...repo, pushedAt: repo.pushedAt?.toISOString() ?? null },
+    page,
+  };
+  const canonical = (v: unknown): string => {
+    if (v === null || typeof v !== "object") return JSON.stringify(v ?? null);
+    if (Array.isArray(v)) return `[${v.map(canonical).join(",")}]`;
+    return `{${Object.entries(v as Record<string, unknown>).sort(([a], [b]) => a.localeCompare(b))
+      .map(([k, x]) => `${JSON.stringify(k)}:${canonical(x)}`).join(",")}}`;
+  };
+  return createHash("sha256").update(canonical(input)).digest("hex");
 }
 
 /** GitHub 레포 메타 원본에서 판정에 쓸 사실만 추린다 */

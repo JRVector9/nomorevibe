@@ -98,7 +98,7 @@ async function ping(target: PingTarget, write: ReturnType<typeof oneAtATime>): P
   // GET이라 본문 스트림이 열린 채로 온다. 안 읽고 취소하지 않으면 연결이 풀로 돌아가지
   // 않고 버퍼가 남는다 — 어느 쪽이든 스트림을 반드시 닫는다.
   const startedAt = performance.now();
-  const fetched = await safeFetch(target.url);
+  const fetched = await safeFetch(target.url, "background");
   const latencyMs = Math.max(0, Math.round(performance.now() - startedAt));
   const status = fetched?.response.status ?? 0;
   const up = status >= 200 && status < 400;
@@ -113,7 +113,7 @@ async function ping(target: PingTarget, write: ReturnType<typeof oneAtATime>): P
        * "Redirecting…"이 수집이 확보한 목적지 본문을 덮어써, 재검수의 근거가 사라진다.
        */
       const hop = metaRefreshTarget(html, fetched.finalUrl);
-      sample = extractTextSample(hop ? (await fetchPage(hop))?.html ?? html : html);
+      sample = extractTextSample(hop ? (await fetchPage(hop, "background"))?.html ?? html : html);
     } catch {
       sample = null; // 본문은 부가물이다 — 못 읽어도 생존 확인은 그대로 기록한다
     }

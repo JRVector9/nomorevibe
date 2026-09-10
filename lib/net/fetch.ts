@@ -176,16 +176,48 @@ export async function fetchCapped(
 }
 
 /**
+ * 누가 기다리는가 — 기한과 서버 예절이 둘 다 여기서 갈린다.
+ *
+ * - "interactive"(기본): 메이커가 기다리는 등록·검증. 리다이렉트마다 새 10초. 느린 302가
+ *   두 번 이어져도(6초+6초) 정상 사이트이므로 받아야 한다 — 전체 10초로 묶었더니 그런
+ *   사이트의 등록이 "접속 불가"로 거절됐다(codex가 재현). 한 번에 한 사이트만 여니 줄은 필요 없다.
+ * - "background": 수집·생존 확인처럼 여러 사이트를 동시에 여는 잡. 요청 전체(모든 hop + 본문)에
+ *   10초 하나라 동시 칸을 오래 붙잡지 않고, **같은 origin에는 hop 단위로 한 번에 하나**만 보낸다.
+ *   부르는 쪽은 처음 주소의 origin으로만 줄을 세울 수 있어, 서로 다른 세 주소가 같은 서버로
+ *   302하면 그 서버에 셋이 동시에 갔다(codex 실측 3). 느린 사이트를 한 번 놓쳐도 다음 바퀴가 본다.
+ */
+export type FetchMode = "interactive" | "background";
+
+/**
+ * origin 하나에 한 번에 하나.
+ *
+ * 헤더를 받을 때까지만 자리를 쥔다 — 리다이렉트면 본문을 닫고 다음 hop 전에 놓아야 같은 서버로
+ * 튀는 사슬이 스스로를 기다리지 않는다. 마지막 응답의 본문은 부르는 쪽이 자리 없이 읽는다.
+ * 프로세스 안에서만 지킨다(역할별 워커는 서로 다른 프로세스다).
+ */
+const originTails = new Map<string, Promise<void>>();
+async function oneAtATimeFor<T>(origin: string, run: () => Promise<T>): Promise<T> {
+  const before = originTails.get(origin) ?? Promise.resolve();
+  let release!: () => void;
+  const mine = new Promise<void>((resolve) => { release = resolve; });
+  const tail = before.then(() => mine);
+  originTails.set(origin, tail);
+  await before;
+  try {
+    return await run();
+  } finally {
+    release();
+    if (originTails.get(origin) === tail) originTails.delete(origin);
+  }
+}
+
+/**
  * SSRF-안전 fetch — 리다이렉트를 수동으로 추적하며 매 hop마다 정책을 다시 적용한다.
  * (redirect:"follow"는 검증 없이 사설망으로 향하는 302를 그대로 따라가므로 쓰지 않는다)
- *
- * 기한은 요청 하나에 하나다. hop마다 새 10초 타이머를 걸면 리다이렉트 다섯 번에 60초까지
- * 늘어나, 동시에 받는 수집 잡의 한 칸을 그만큼 붙잡는다. 이 신호는 마지막 응답의 본문
- * 스트림에도 걸려 있으므로, 본문 수신까지 같은 10초 안에서 끝난다 — uptime이 "하나에 최대
- * 10초"로 예산을 잡은 것도 이 뜻이었다.
  */
-export async function safeFetch(url: string): Promise<FetchResult | null> {
-  const signal = AbortSignal.timeout(FETCH_TIMEOUT_MS);
+export async function safeFetch(url: string, mode: FetchMode = "interactive"): Promise<FetchResult | null> {
+  const background = mode === "background";
+  const total = background ? AbortSignal.timeout(FETCH_TIMEOUT_MS) : null;
   let current = url;
   for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
     const guard = await assertPublicUrl(current);
@@ -193,12 +225,13 @@ export async function safeFetch(url: string): Promise<FetchResult | null> {
 
     let res: Response;
     try {
-      res = (await undiciFetch(current, {
+      const request = () => undiciFetch(current, {
         redirect: "manual",
-        signal,
+        signal: total ?? AbortSignal.timeout(FETCH_TIMEOUT_MS),
         headers: { "user-agent": "NoMoreVibe/1.0 (+https://nomorevibe.app)" },
         dispatcher: allowPrivate() ? undefined : ssrfSafeAgent,
-      })) as unknown as Response;
+      }) as unknown as Promise<Response>;
+      res = background ? await oneAtATimeFor(new URL(current).origin, request) : await request();
     } catch {
       return null;
     }
@@ -252,8 +285,9 @@ export async function readBodyCapped(res: Response, maxBytes: number): Promise<B
  */
 export async function fetchPage(
   url: string,
+  mode: FetchMode = "interactive",
 ): Promise<{ status: number; html: string; finalUrl: string } | null> {
-  const fetched = await safeFetch(url);
+  const fetched = await safeFetch(url, mode);
   if (!fetched) return null;
   const body = await readBodyCapped(fetched.response, MAX_HTML_BYTES);
   return {

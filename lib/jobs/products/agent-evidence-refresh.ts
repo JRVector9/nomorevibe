@@ -7,6 +7,7 @@ import { attachRepositoryAgentScan, refreshRepositoryAgentEvidence } from '@/lib
 import type { AgentGitHubRequest } from '@/lib/domain/evidence/agents/collect';
 import type { JobContext, JobOutcome } from '@/lib/jobs/runner';
 import { requeueAfterAdminEvidenceRefresh } from '@/lib/crawl/admin-review';
+import { requestJob } from '@/lib/jobs/control';
 
 export type AgentEvidenceRefreshCursor = { afterRepository?: string; retryAfter?: string };
 export function prioritizeAgentRefreshDemand(duePartial: string[], repositories: string[]) {
@@ -87,7 +88,40 @@ export async function refreshAgentEvidenceJob(ctx: JobContext<AgentEvidenceRefre
   const outcome = await collect();
   // 제품 연결은 스캔과 따로 돈다. 앞에서 예산이 끊겨도 매 틱 돌아 굶지 않는다 (GitHub를 쓰지 않는다)
   await attachPendingScans(ctx);
+  await releaseEvidencePendingCandidates(settings.agentEvidence.detectorVersion);
   return outcome;
+}
+
+/**
+ * 근거가 갖춰졌는데도 "근거 대기"로 멈춰 있는 후보를 판정으로 되돌린다.
+ *
+ * 스캔이 끝나면 위 루프가 곧바로 후보를 되돌리지만, 그 update가 일시 오류로 실패하면 catch가
+ * 삼킨다. 스캔의 다음 시도는 하루 뒤라 due 선별이 그 레포를 다시 고르지 않아, 후보가 하루
+ * 동안 멈췄다(codex가 재현). 그래서 스캔과 떼어 매 틱 쓴다 — 멈춘 원인이 무엇이든 여기서 풀린다.
+ *
+ * **판정이 "근거 있음"으로 볼 때만** 푼다 — 판정(loadAgentJudgeInput)과 같은 조건이다: 설정의
+ * 탐지기 버전, 오류 없음, 24시간 안에 완료. 낡은 스캔으로 풀면 판정이 다시 "근거 대기"로
+ * 보류하고, 이것이 또 풀어 매 틱 돈다. 탐지기 버전도 코드 상수가 아니라 판정이 쓰는 설정값을 쓴다.
+ */
+async function releaseEvidencePendingCandidates(detectorVersion: string) {
+  const released = await db.execute<{ id: number }>(sql`
+    UPDATE crawl_candidates SET state = 'new', updated_at = now()
+    WHERE id IN (
+      SELECT candidate.id FROM crawl_candidates candidate
+      CROSS JOIN LATERAL (
+        SELECT scan.state, scan.last_error_code, scan.completed_at FROM agent_repository_scans scan
+        WHERE scan.repository_key = lower(candidate.repo) AND scan.scope = '' AND scan.detector_version = ${detectorVersion}
+        ORDER BY scan.started_at DESC, scan.id DESC LIMIT 1
+      ) latest
+      WHERE candidate.state = 'needs_review' AND candidate.reason = 'ai_evidence_pending' AND candidate.decided_by = 'auto'
+        AND latest.state = 'complete' AND latest.last_error_code IS NULL
+        AND latest.completed_at <= now() AND latest.completed_at > now() - interval '24 hours'
+      LIMIT 50
+    )
+    RETURNING id
+  `);
+  // 푼 것은 곧바로 판정한다 — 스케줄(5분)을 기다리지 않는다
+  if (released.length > 0) await requestJob("crawl-judge");
 }
 
 /** 레포 하나의 최신 스캔 (refresh 의 캐시 판단과 같은 기준: 이 탐지기 버전, 전체 범위, 가장 늦게 시작한 것) */

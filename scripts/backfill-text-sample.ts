@@ -41,10 +41,10 @@ async function pending(limit: number): Promise<Target[]> {
 
 /** 수집 잡과 같은 규칙으로 연다 — meta refresh 한 번 따라가고 본문을 뽑는다 */
 async function sampleOf(url: string): Promise<string | null> {
-  let page = await fetchPage(url);
+  let page = await fetchPage(url, "background");
   if (!page) return null;
   const hop = metaRefreshTarget(page.html, page.finalUrl);
-  if (hop) page = (await fetchPage(hop)) ?? page;
+  if (hop) page = (await fetchPage(hop, "background")) ?? page;
   return extractTextSample(page.html);
 }
 

@@ -42,7 +42,8 @@ export async function verifyProduct(slug: string): Promise<Result<VerifyOutput>>
   const origin = new URL(product.url).origin;
   let method: "file" | "meta" | null = null;
 
-  const filePage = await fetchPage(`${origin}${VERIFY_FILE_PATH}`);
+  // 본문이 끊기면 fetchPage는 예외를 던진다. 검증에서는 "확인하지 못했다"로 본다
+  const filePage = await fetchPage(`${origin}${VERIFY_FILE_PATH}`).catch(() => null);
   if (
     filePage &&
     filePage.status >= 200 &&
@@ -53,7 +54,7 @@ export async function verifyProduct(slug: string): Promise<Result<VerifyOutput>>
   }
 
   if (!method) {
-    const page = await fetchPage(product.url);
+    const page = await fetchPage(product.url).catch(() => null);
     if (
       page &&
       page.status >= 200 &&

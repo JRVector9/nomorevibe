@@ -80,6 +80,19 @@ describe("registerProduct — 신규 등록", () => {
     const result = await registerProduct(input());
     expect(result.ok).toBe(false);
   });
+
+  /**
+   * 헤더 뒤 본문이 끊기면 fetchPage는 예외를 던진다 — 수집 잡이 항목별로 다시 시도하려고.
+   * 메이커가 기다리는 등록에서는 그것도 "열리지 않았다"다. 예외가 새면 메이커는 500을 본다.
+   */
+  it("본문 수신이 끊겨도 예외가 아니라 접속 불가로 답한다", async () => {
+    fetchPage.mockRejectedValue(new Error("body stream aborted"));
+
+    const result = await registerProduct(input());
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.kind).toBe("unreachable");
+  });
 });
 
 describe("registerProduct — 리다이렉트 정규화", () => {
