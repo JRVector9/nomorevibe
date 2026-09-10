@@ -11,3 +11,7 @@ export const MAX_BULK_DECISIONS = 50;
 export type BulkReviewState =
   | { error?: string; ok?: number; failures?: { repo: string; message: string }[] }
   | null;
+
+export type RequeueState =
+  | { error?: string; ok?: number; scanned?: number; byReason?: { reason: string; count: number }[] }
+  | null;

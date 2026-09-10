@@ -2,8 +2,9 @@
 
 import { revalidatePath } from 'next/cache';
 import { currentAdmin } from '@/lib/auth/admin';
-import { requestCandidateEvidence } from '@/lib/crawl/admin-review';
+import { requestCandidateEvidence, requeueResolvedCandidates } from '@/lib/crawl/admin-review';
 import { changeReviewMode } from '@/lib/crawl/settings';
+import type { RequeueState } from './contract';
 
 export type ReviewActionState = { error?: string; message?: string } | null;
 export async function collectCandidateEvidence(_previous: ReviewActionState, form: FormData): Promise<ReviewActionState> {
@@ -34,4 +35,19 @@ export async function setReviewMode(_previous: ReviewActionState, form: FormData
   revalidatePath('/admin');
   revalidatePath('/admin/status');
   return { message: '리뷰 모드와 변경 사유를 기록했습니다.' };
+}
+
+/**
+ * 지금 기준으로는 보류가 아닌 후보를 규칙 판정으로 되돌린다.
+ *
+ * 지우거나 대신 결정하지 않는다 — 규칙이 다시 가르도록 큐에 올려놓을 뿐이다.
+ */
+// useActionState 가 (이전 상태, 폼)을 넘기지만 이 액션은 입력이 없다 — 큐 전체가 대상이다
+export async function requeueResolved(): Promise<RequeueState> {
+  const admin = await currentAdmin();
+  if (!admin) return { error: "권한이 없습니다. 다시 로그인해주세요." };
+  const result = await requeueResolvedCandidates(admin.login);
+  revalidatePath("/admin/review");
+  revalidatePath("/admin/status");
+  return { ok: result.requeued, scanned: result.scanned, byReason: result.byReason };
 }

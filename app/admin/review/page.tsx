@@ -10,6 +10,7 @@ import { ReviewItem } from "./ReviewItem";
 import { TakedownItem } from "./TakedownItem";
 import { ReviewModeForm } from "./ReviewModeForm";
 import { BulkDecision } from "./BulkDecision";
+import { RequeueResolved } from "./RequeueResolved";
 import { CAUSE_GUIDE, type CauseKey } from "./causes";
 
 export const dynamic = "force-dynamic";
@@ -103,6 +104,11 @@ export default async function ReviewPage({ searchParams }: {
           </div>
         </section>
       )}
+
+      {(() => {
+        const resolved = causes.counts.find((row) => row.cause === "resolved");
+        return resolved && (!cause || cause === "resolved") ? <RequeueResolved count={resolved.count} /> : null;
+      })()}
 
       <nav aria-label="심사 상태 필터" className="mt-6 flex flex-wrap gap-2 text-[13px]">
         {STATES.map(([value, label]) => (
