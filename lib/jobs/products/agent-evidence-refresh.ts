@@ -108,23 +108,25 @@ function latestScan(repositoryKey: SQL) {
  * 붙인 뒤에는 다시 골리지 않아야 매 틱 같은 제품을 되붙이지 않는다.
  */
 async function attachPendingScans(ctx: JobContext<AgentEvidenceRefreshCursor>) {
-  const repositorySource = (condition: SQL) => sql`
-    SELECT 1 FROM product_links link
-    JOIN product_evidence_sources source ON source.slug = link.slug AND source.kind = 'repository' AND source.source_key = link.normalized_key
-    WHERE link.slug = product.slug AND link.kind = 'repository' AND link.visible
-      AND (lower(link.normalized_key) IN (latest.repository_key, 'github:' || latest.repository_key)
-        OR lower(regexp_replace(link.url, '/$', '')) = 'https://github.com/' || latest.repository_key)
-      AND ${condition}
-  `;
   // 일반 대기의 제품 쪽 수요와 같은 식으로 repo_url 에서 레포를 뽑는다
   const productRepositoryKey = sql`lower(regexp_replace(product.repo_url, '^https://github.com/([^/]+/[^/#?]+?)([.]git)?/?$', '\\1'))`;
+  // 제품마다 붙일 수 있는 레포 근거(보이는 레포 링크 + 그 근거 행) 중 최신 스캔을 가리키는 것이 있는가.
+  // 없으면 NULL(붙일 곳이 없다), 있는데 아무것도 안 가리키면 false(붙일 차례다).
+  // EXISTS·NOT EXISTS 두 번으로 쓰면 플래너가 링크×근거 조인을 통째로 들고 제품마다 훑는다 —
+  // 제품 5,000개에서 0.7초였다. 제품별 인덱스 조회 한 번으로 묶으면 0.06초다.
   const pending = await db.execute<{ id: number; slug: string; scan_id: number }>(sql`
     SELECT product.id, product.slug, latest.id AS scan_id FROM products product
     CROSS JOIN LATERAL (${latestScan(productRepositoryKey)}) latest
+    CROSS JOIN LATERAL (
+      SELECT bool_or((source.normalized_facts->>'agentScanId') IS NOT DISTINCT FROM latest.id::text) AS attached
+      FROM product_links link
+      JOIN product_evidence_sources source ON source.slug = link.slug AND source.kind = 'repository' AND source.source_key = link.normalized_key
+      WHERE link.slug = product.slug AND link.kind = 'repository' AND link.visible
+        AND (lower(link.normalized_key) IN (latest.repository_key, 'github:' || latest.repository_key)
+          OR lower(regexp_replace(link.url, '/$', '')) = 'https://github.com/' || latest.repository_key)
+    ) sources
     WHERE product.status != 'banned' AND product.repo_url ~ '^https://github.com/[^/]+/[^/#?]+/?$'
-      AND latest.state = 'complete' AND latest.last_error_code IS NULL
-      AND EXISTS (${repositorySource(sql`true`)})
-      AND NOT EXISTS (${repositorySource(sql`(source.normalized_facts->>'agentScanId') = latest.id::text`)})
+      AND latest.state = 'complete' AND latest.last_error_code IS NULL AND sources.attached IS FALSE
     ORDER BY product.id LIMIT 10
   `);
   for (const row of pending) {
