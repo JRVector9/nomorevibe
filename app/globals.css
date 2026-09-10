@@ -20,6 +20,8 @@
   --text-3: #636d80;
   --up: #0a7d4f;
   --down: #c62430;
+  /* 위험과 정상 사이 — "지금 막혀 있지만 사람이 처리하면 풀린다" */
+  --warn: #a2650f;
   --accent: #5b46f0;
   --accent-solid: #5b46f0;
   --accent-soft: rgba(91, 70, 240, 0.1);
@@ -42,6 +44,7 @@
   --text-3: #7d8799;
   --up: #16c784;
   --down: #ef4d56;
+  --warn: #e0a33c;
   --accent: #8f81ff;
   --accent-solid: #6a56f0;
   --accent-soft: rgba(124, 107, 255, 0.14);
@@ -65,6 +68,7 @@
   --text-3: #5c667e;
   --up: #16c784;
   --down: #ea3943;
+  --warn: #e0a33c;
   --accent: #8f81ff;
 }
 
@@ -79,6 +83,7 @@
   --color-fg-3: var(--text-3);
   --color-up: var(--up);
   --color-down: var(--down);
+  --color-warn: var(--warn);
   --color-accent: var(--accent);
   --color-accent-solid: var(--accent-solid);
   --color-accent-soft: var(--accent-soft);

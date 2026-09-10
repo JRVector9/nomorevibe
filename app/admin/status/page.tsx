@@ -14,6 +14,10 @@ import { getEvidenceStatusSummary } from "@/lib/domain/evidence/admin";
 import { Panel } from "@/components/Panel";
 import { OperationsCenter } from "./OperationsCenter";
 import { operationsData } from "@/lib/operations/admin";
+import { pipelineFlow, oldestReviewWaitDays, stalledReviewCount } from "@/lib/operations/pipeline";
+import { ActionQueue, type ActionItem } from "./ActionQueue";
+import { PipelineRail } from "./PipelineRail";
+import type { AgentStatus } from "@/lib/operations/contracts";
 import { manualCandidates } from "@/lib/operations/categories";
 import { redact } from "@/lib/observability/logger";
 
@@ -96,11 +100,67 @@ export default async function StatusPage() {
     getEvidenceStatusSummary(new Date()),
   ]);
   const [down, topClicked, ops, manual] = await Promise.all([downProducts(), topClickedSince(30), operationsData(), manualCandidates()]);
+  const [flow, oldestWait, stalled] = await Promise.all([pipelineFlow(), oldestReviewWaitDays(), stalledReviewCount()]);
 
   const states = new Map(jobStates.map((job) => [job.name, job]));
   const rejectedTotal = rejections.reduce((sum, r) => sum + r.count, 0);
   const rankingStale = rankingSnapshotIsStale(rankingSeason?.refreshedAt ?? null);
   const evidenceJob = states.get("product-evidence-refresh");
+
+  /**
+   * 지금 사람이 손대야 하는 것.
+   *
+   * 막고 있는 순서대로 놓는다 — AI 연결이 끊겨 있으면 심사 큐가 쌓이는 것은 결과이지
+   * 원인이 아니다. 원인을 위에 두어야 아래가 저절로 풀린다.
+   */
+  const agent = ops.observations.find(row => row.key === "connect-agent")?.value as AgentStatus | undefined;
+  const failedJobs = jobStates.filter(job => job.lastError);
+  const actions: ActionItem[] = [];
+
+  if (!agent?.configReady) {
+    actions.push({
+      key: "ai", tone: "critical", count: "!", title: "AI 계정이 연결돼 있지 않습니다",
+      detail: <>AI 심사(<span className="font-mono">crawl-agent-review</span>)가 매 틱 건너뛰고, 발행 워커는 카테고리를 정하지 못해 승인 후보를 보류합니다. 아래 쌓인 것들의 원인입니다.</>,
+      action: { label: "연결 상태", href: "/admin/status?tab=ai" },
+    });
+  }
+  if (failedJobs.length > 0) {
+    actions.push({
+      key: "jobs", tone: "critical", count: failedJobs.length, title: "마지막 회차가 실패한 작업",
+      detail: <>{failedJobs.map(job => job.name).join(", ")} — 실패한 작업 뒤의 단계는 새 일감을 받지 못합니다.</>,
+    });
+  }
+  const needsReview = candidates.needs_review ?? 0;
+  if (needsReview > 0) {
+    actions.push({
+      key: "review", tone: "hold", count: needsReview, title: "사람이 가려야 할 후보",
+      detail: <>
+        {oldestWait !== null && <>가장 오래 기다린 것 <span className="font-mono">{oldestWait}일</span>. </>}
+        {stalled > 0 && <>그중 <span className="font-mono">{stalled}건</span>은 판정한 지 2주가 넘었습니다 — 갈래별로 묶으면 한 번에 처리할 수 있습니다.</>}
+      </>,
+      action: { label: "심사 큐", href: "/admin/review" },
+    });
+  }
+  if (ops.held > 0) {
+    actions.push({
+      key: "held", tone: "hold", count: ops.held, title: "분류를 못 정해 발행이 멈춘 후보",
+      detail: <>승인은 끝났고 카테고리만 없습니다. 수동으로 지정하면 다음 발행 틱에 올라갑니다.</>,
+      action: { label: "카테고리 기준", href: "/admin/categories" },
+    });
+  }
+  if (down.length > 0) {
+    actions.push({
+      key: "down", tone: "critical", count: down.length, title: "응답하지 않는 공개 제품",
+      detail: <>{DOWN_THRESHOLD}회 넘게 연속으로 실패했습니다. 자동으로 내리지 않습니다 — 배포가 잠깐 흔들린 것과 서비스가 끝난 것을 응답 코드만으로 가를 수 없습니다.</>,
+      action: { label: "제품 관리", href: "/admin/products" },
+    });
+  }
+  if (actions.length === 0) {
+    actions.push({
+      key: "clear", tone: "clear", count: "0", title: "지금 손댈 것이 없습니다",
+      detail: <>실패한 작업이 없고, 사람이 가려야 할 후보도 없습니다.</>,
+    });
+  }
 
   /** 신호별로 조사한 수와 그중 목록에 오른 수 */
   const signals = new Map<string, { judged: number; kept: number }>();
@@ -113,7 +173,7 @@ export default async function StatusPage() {
 
   return (
     <main className="mx-auto max-w-[900px] px-6 pb-20">
-      <OperationsCenter data={ops} candidates={manual} frontier={frontier} counts={candidates} reviewMode={settings.reviewMode} enabled={settings.enabled} localCodexAllowed={localCodexEnabled()} oauthConfigured={Boolean(process.env.GITHUB_OAUTH_CLIENT_ID && process.env.GITHUB_OAUTH_CLIENT_SECRET)}
+      <OperationsCenter data={ops} candidates={manual} reviewMode={settings.reviewMode} enabled={settings.enabled} localCodexAllowed={localCodexEnabled()} actionQueue={<ActionQueue items={actions}/>} pipeline={<PipelineRail flow={flow}/>} oauthConfigured={Boolean(process.env.GITHUB_OAUTH_CLIENT_ID && process.env.GITHUB_OAUTH_CLIENT_SECRET)}
         jobs={JOB_NAMES.map(name => {
           const job = states.get(name);
           return { name, status: jobStatusLabel(job), lastRunAt: job?.lastRunAt?.toISOString() ?? null,
