@@ -169,6 +169,13 @@
       "when": 1788900000000,
       "tag": "0023_operations_center",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1789048075233,
+      "tag": "0024_crawl_candidate_lookup_indexes",
+      "breakpoints": true
     }
   ]
 }
