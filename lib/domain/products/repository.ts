@@ -58,6 +58,8 @@ export type ListOptions = {
   builder?: string;
   /** 저장소 URL이 등록된 제품만. 공개 여부나 라이선스를 뜻하지 않는다. */
   hasRepository?: boolean;
+  /** 건너뛸 개수. 목록이 상한에서 조용히 잘리지 않으려면 뒤를 볼 수 있어야 한다 */
+  offset?: number;
 };
 
 /**
@@ -110,15 +112,8 @@ const SORTS = {
 
 /** 정렬 파라미터 검증용 (쿼리스트링 → ProductSort) */
 
-export async function listProducts({
-  statuses,
-  sort = "recent",
-  limit,
-  category,
-  query,
-  builder,
-  hasRepository,
-}: ListOptions): Promise<Product[]> {
+/** 목록과 개수가 같은 조건을 쓰도록 한 곳에서 만든다 */
+function listConditions({ statuses, category, query, builder, hasRepository }: Omit<ListOptions, "limit" | "sort" | "offset">) {
   const conditions = [inArray(products.status, statuses)];
   if (category) conditions.push(eq(products.category, category));
   if (builder) conditions.push(and(eq(products.builder, builder), builderIsReported)!);
@@ -134,12 +129,29 @@ export async function listProducts({
       and(builderIsReported, ilike(products.builder, pattern)),
     )!);
   }
+  return conditions;
+}
 
+export async function listProducts({ sort = "recent", limit, offset, ...options }: ListOptions): Promise<Product[]> {
+  const conditions = listConditions(options);
   return db.query.products.findMany({
     where: and(...conditions),
     orderBy: [...SORTS[sort]],
     limit,
+    offset,
   });
+}
+
+/**
+ * 같은 조건의 전체 개수.
+ *
+ * 목록만 주면 "상한에 걸린 것"과 "그게 전부인 것"을 구분할 수 없다. 실제로 제품이
+ * 2,986개인데 100개만 보이고 나머지로 갈 길이 없었다.
+ */
+export async function countProducts(options: Omit<ListOptions, "limit" | "sort" | "offset">): Promise<number> {
+  const [row] = await db.select({ count: sql<number>`count(*)::int` })
+    .from(products).where(and(...listConditions(options)));
+  return row?.count ?? 0;
 }
 
 /** 발견 보드 — 검증 상태보다 실제 등재 시각을 우선해 시드 제품도 노출한다. */
