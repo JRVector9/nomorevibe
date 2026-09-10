@@ -5,12 +5,13 @@ import { agentRepositoryObservations, agentRepositoryScans, crawlCandidates, cra
   crawlReviewAttempts, crawlSettings, type CrawlCandidate, type CrawlReviewAttempt } from '@/lib/db/schema';
 import type { ProductTransaction } from '@/lib/domain/products/generation';
 import { requestJob } from '@/lib/jobs/control';
+import { operationsAudit } from '@/lib/db/operations-schema';
 import { lockRepositoryAgentEvidence } from '@/lib/domain/evidence/agents/lock';
 import { createReviewInput, MAX_REVIEW_ATTEMPTS, REVIEW_PROMPT_VERSION, REVIEW_RULES_VERSION, reviewHash,
   type ReviewInput } from './agent-review-contract';
 import { loadReviewInput } from './agent-review-repository';
 import { DEFAULT_CRAWL_SETTINGS, type CrawlSettings } from './settings-schema';
-import { mergeWithDefaults } from './settings';
+import { mergeWithDefaults, getSettings } from './settings';
 import { judge, factsFromRepoMeta, pageFactsFromDocument, type AmbiguityCause, type RuleStep } from './rules';
 import { loadAgentJudgeInput } from './agent-evidence';
 
@@ -185,8 +186,13 @@ export type AdminReviewVerdict = {
   matchesStored: boolean;
 };
 
-/** 한 번에 갈래를 셀 후보 수. 넘으면 세다 만 것을 화면이 밝힌다 */
-export const REVIEW_QUEUE_SCAN_LIMIT = 500;
+/**
+ * 한 번에 갈래를 셀 후보 수. 넘으면 세다 만 것을 화면이 밝힌다.
+ *
+ * 갈래는 원본을 다시 태워 얻으므로 문서를 읽어야 한다 — 실측 평균 2KB라 2,000건이 4MB
+ * 남짓이다. 500이면 큐가 그보다 커진 순간 칩 합계가 큐 크기와 어긋나 오히려 헷갈린다.
+ */
+export const REVIEW_QUEUE_SCAN_LIMIT = 2_000;
 /**
  * 갈래 버킷.
  *
@@ -228,6 +234,51 @@ export async function reviewQueueCauses(settings: CrawlSettings): Promise<Review
     counts: [...ids].map(([cause, list]) => ({ cause, count: list.length })).sort((a, b) => b.count - a.count),
     ids, total: page.length, truncated: candidates.length > REVIEW_QUEUE_SCAN_LIMIT,
   };
+}
+
+/**
+ * 지금 기준으로는 보류가 아닌 후보를 규칙 판정으로 되돌린다.
+ *
+ * 판정한 뒤 시간이 지나 방치 기준을 넘겼거나 기준을 바꾸면, 저장된 상태는 보류인데 지금
+ * 규칙으로는 승인이나 거부로 갈린다. 사람이 볼 필요가 없는데 큐에 남아 진짜 판단해야 할
+ * 것을 가린다.
+ *
+ * 지우지 않는다 — state 만 new 로 되돌려 규칙이 다시 가르게 한다. 사람이 이미 결정한
+ * 후보(decidedBy='admin')는 건드리지 않는다.
+ */
+export async function requeueResolvedCandidates(actor: string, limit = REVIEW_QUEUE_SCAN_LIMIT): Promise<{
+  scanned: number; requeued: number; byReason: { reason: string; count: number }[];
+}> {
+  const settings = await getSettings();
+  const candidates = await db.select().from(crawlCandidates).where(and(
+    eq(crawlCandidates.state, 'needs_review'), eq(crawlCandidates.decidedBy, 'auto'),
+  )).orderBy(asc(crawlCandidates.id)).limit(limit);
+  if (!candidates.length) return { scanned: 0, requeued: 0, byReason: [] };
+
+  const documents = await db.select().from(crawlDocuments)
+    .where(inArray(crawlDocuments.repo, candidates.map(row => row.repo)));
+  const resolved: { id: number; reason: string }[] = [];
+  for (const candidate of candidates) {
+    const document = documents.find(row => row.repo === candidate.repo);
+    if (!document) continue;
+    const verdict = judge(factsFromRepoMeta(candidate.repo, document.repoMeta),
+      pageFactsFromDocument(document), settings);
+    if (verdict.state !== 'needs_review') resolved.push({ id: candidate.id, reason: `${verdict.state}:${verdict.reason}` });
+  }
+  if (!resolved.length) return { scanned: candidates.length, requeued: 0, byReason: [] };
+
+  await db.transaction(async tx => {
+    // 판정 큐로만 되돌린다. 결과는 규칙이 정한다 — 여기서 승인·거부를 대신 쓰지 않는다.
+    await tx.update(crawlCandidates).set({ state: 'new', updatedAt: new Date() })
+      .where(and(inArray(crawlCandidates.id, resolved.map(row => row.id)), eq(crawlCandidates.state, 'needs_review')));
+    await tx.insert(operationsAudit).values({ actor, action: 'requeue-resolved', target: 'crawl_candidates',
+      detail: { requeued: resolved.length, scanned: candidates.length } });
+    await requestJob('crawl-judge', tx);
+  });
+
+  const byReason = [...resolved.reduce((map, row) => map.set(row.reason, (map.get(row.reason) ?? 0) + 1), new Map<string, number>())]
+    .map(([reason, count]) => ({ reason, count })).sort((a, b) => b.count - a.count);
+  return { scanned: candidates.length, requeued: resolved.length, byReason };
 }
 
 export type AdminReviewStatus = 'unreviewed' | 'running' | 'succeeded' | 'failed' | 'exhausted' | 'outdated';

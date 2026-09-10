@@ -2,7 +2,7 @@ import { beforeAll, beforeEach, expect, it } from 'vitest';
 import { db } from '@/lib/db';
 import { crawlCandidates, crawlDocuments, crawlFrontier, crawlReviewAttempts, crawlSettings } from '@/lib/db/schema';
 import * as crawl from '@/lib/crawl/repository';
-import { listAdminReviewEntries, reviewQueueCauses } from '@/lib/crawl/admin-review';
+import { listAdminReviewEntries, requeueResolvedCandidates, reviewQueueCauses } from '@/lib/crawl/admin-review';
 import { getSettings, saveSettings } from '@/lib/crawl/settings';
 import { ensureSchema } from './setup';
 
@@ -17,10 +17,10 @@ beforeEach(async () => {
 });
 
 /** 보류로 남은 후보 하나 — 원본을 보관하므로 규칙을 다시 태울 수 있다 */
-async function held(repo: string, productUrl: string, pageStatus: number | null) {
+async function held(repo: string, productUrl: string, pageStatus: number | null, stars = 3) {
   await crawl.putDocument({
     repo, productUrl, pageStatus,
-    repoMeta: { description: '배포한 서비스', stargazers_count: 3, pushed_at: new Date().toISOString(), owner: { type: 'User' } },
+    repoMeta: { description: '배포한 서비스', stargazers_count: stars, pushed_at: new Date().toISOString(), owner: { type: 'User' } },
     pageMeta: { title: '제품' },
   });
   await crawl.recordJudgement({ repo, productUrl, state: 'needs_review', reason: 'ambiguous', decidedBy: 'auto' });
@@ -98,4 +98,29 @@ it('지금 기준으로는 보류가 아닌 것과 원본이 없어 못 되짚�
   });
   expect(entries.map((entry) => entry.candidate.repo)).toEqual(['acme/orphan']);
   expect(entries[0].verdict).toBeNull();
+});
+
+it('지금 기준으로는 보류가 아닌 것만 판정 대기로 되돌린다 — 지우지 않는다', async () => {
+  await held('acme/stale', 'https://stale.test', 200);
+  // 스타 0이라 아래 maxStars:0 에 걸리지 않는다 — 규칙 순서상 스타가 호스트 패턴보다 앞이다
+  await held('acme/still', 'https://still.github.io/still', 200, 0);
+  await saveSettings({ judge: { maxStars: 0 } }, 'fixture'); // stale 은 이제 거부로 갈린다
+
+  const result = await requeueResolvedCandidates('테스트');
+  expect(result).toMatchObject({ requeued: 1, byReason: [{ reason: 'rejected:large_oss', count: 1 }] });
+
+  const rows = await db.select().from(crawlCandidates);
+  // 후보는 그대로 있고 상태만 판정 대기로 돌아간다
+  expect(rows).toHaveLength(2);
+  expect(rows.find((row) => row.repo === 'acme/stale')?.state).toBe('new');
+  expect(rows.find((row) => row.repo === 'acme/still')?.state).toBe('needs_review');
+});
+
+it('사람이 결정한 후보는 되돌리지 않는다', async () => {
+  await held('acme/decided', 'https://decided.test', 200);
+  await db.update(crawlCandidates).set({ decidedBy: 'admin' });
+  await saveSettings({ judge: { maxStars: 0 } }, 'fixture');
+
+  expect(await requeueResolvedCandidates('테스트')).toMatchObject({ requeued: 0 });
+  expect((await db.select().from(crawlCandidates))[0].state).toBe('needs_review');
 });
