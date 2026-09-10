@@ -30,8 +30,14 @@ export type RecheckResult = {
   hits: RecheckHit[];
   /** 원본이 남아 있어 실제로 다시 판정한 수 */
   checked: number;
-  /** 이번 범위에서 원본을 찾지 못해 건너뛴 수 */
-  skipped: number;
+  /**
+   * 본문이 아직 없어 "설치 유도 아님"을 못 태운 수.
+   *
+   * 이 규칙은 본문을 보는데, 그 값이 생기기 전에 수집된 것들이 있다. 생존 확인이
+   * 6시간 주기로 채우는 중이라 시간이 지나면 0으로 간다. 0이 아닌 동안 "걸린 게 없다"는
+   * 말은 절반만 참이라, 화면이 그 사실을 밝혀야 한다.
+   */
+  withoutText: number;
   offset: number;
   limit: number;
 };
@@ -54,10 +60,13 @@ export async function recheckPublishedProducts(
     .offset(offset);
 
   const hits: RecheckHit[] = [];
+  let withoutText = 0;
   for (const row of rows) {
+    const page = pageFactsFromDocument(row.document);
+    if (!page.textSample) withoutText += 1;
     const verdict = judge(
       factsFromRepoMeta(row.repo, row.document.repoMeta),
-      pageFactsFromDocument(row.document),
+      page,
       settings,
     );
     // 보류는 "규칙이 못 가른 것"이라 이미 올라간 제품을 내릴 근거가 못 된다. 거부만 짚는다.
@@ -78,7 +87,7 @@ export async function recheckPublishedProducts(
       reason: verdict.reason, stopped: verdict.trace.at(-1) ?? null,
     });
   }
-  return { hits, checked: rows.length, skipped: 0, offset, limit };
+  return { hits, checked: rows.length, withoutText, offset, limit };
 }
 
 /** 발행된 제품 중 원본이 남아 있어 다시 판정할 수 있는 수 */

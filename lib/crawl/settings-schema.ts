@@ -121,6 +121,25 @@ const judgeSchema = z.object({
    * (그 경계는 기존 테스트가 지키고 있다. rules.ts의 DOCS_TITLE_MAX_WORDS 참고).
    */
   docsTitlePatterns: z.array(z.string().min(2).max(60)).max(50),
+  /**
+   * 본문이 "설치해서 쓰라"고 말하는 것.
+   *
+   * 실측(2026-09-10): owner.github.io 하위 경로 509건을 전부 열어 보니 359건이 배포물이
+   * 아니라 소개 페이지였다. 제목·주소·생성기로는 하나도 못 걸렀는데, 본문 첫머리에는
+   * 그대로 적혀 있었다 — `npm install`, `Download for macOS`, 문서 목차.
+   *
+   * 소문자로 맞춘 본문에서 찾는다. 정규식이 아니라 그냥 들어 있는지만 본다.
+   */
+  landingPhrases: z.array(z.string().min(2).max(60)).max(120),
+  /**
+   * 문서 사이트의 목차 낱말.
+   *
+   * 한 낱말은 진짜 제품 페이지에도 흔하다("Getting Started" 버튼). 여러 개가 함께 있으면
+   * 그것은 목차이고, 목차가 있는 페이지는 읽는 곳이지 쓰는 곳이 아니다.
+   */
+  docsNavPhrases: z.array(z.string().min(2).max(60)).max(60),
+  /** 이 수 이상 함께 나오면 문서 사이트로 본다. 실측에서 3이 오탐 없이 68건을 갈랐다 */
+  docsNavThreshold: z.number().int().min(2).max(10),
   /** 규칙으로 못 가르면 needs_review로 보류할지, 그냥 거부할지 */
   holdAmbiguous: z.boolean(),
 });
@@ -333,6 +352,27 @@ export const DEFAULT_CRAWL_SETTINGS: CrawlSettings = {
       // 리다이렉트 껍데기. 실측 보류 576건에서 3건 (2026-09-10)
       "redirecting",
     ],
+    /**
+     * 실측 509건에 걸어 고른 것만 남겼다(2026-09-10). 확실한 것만 넣는다 —
+     * "다운로드"·"下载"·"on this page"·"view on github"는 진짜 앱 페이지에도 흔해서 뺐다.
+     * 이 목록으로 509건 중 136건이 갈렸고 그중 3건이 오탐이었다(2.2%).
+     */
+    landingPhrases: [
+      // 설치 명령 — 실물은 CLI·플러그인·라이브러리다
+      "npm install", "npm i -g", "npm i @", "npx ", "pnpm add", "yarn add",
+      "pip install", "pipx install", "cargo install", "go install", "brew install",
+      "winget install", "scoop install", "choco install", "docker run", "uvx ", "curl -fsSL",
+      // 내려받기 — 실물은 데스크톱·모바일 앱이다
+      "download for mac", "download for windows", "download for linux",
+      // 문서·넘김 껍데기
+      "skip to main content", "keyboard shortcuts press", "if it does not open automatically",
+    ],
+    docsNavPhrases: [
+      "getting started", "quick start", "quickstart", "installation", "api reference",
+      "cli reference", "configuration", "changelog", "troubleshooting", "reference",
+      "시작하기", "설치",
+    ],
+    docsNavThreshold: 3,
     docsTitlePatterns: [
       // 끝에 오는 것만 본다. "Documentation Hub"처럼 앞에 오면 진짜 제품일 수 있다
       "*documentation",

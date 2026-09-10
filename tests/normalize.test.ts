@@ -9,6 +9,8 @@ import {
   extractVerifyMeta,
   extractPageMeta,
   detectSiteGenerator,
+  extractTextSample,
+  TEXT_SAMPLE_LIMIT,
 } from "@/lib/net/normalize";
 
 describe("normalizeUrl — 중복 등록 방지의 기준값", () => {
@@ -179,6 +181,7 @@ describe("extractPageMeta — 수집한 제품의 이름·소개 재료", () => 
       description: "한 줄 소개",
       ogImage: "https://hello.test/cover.png",
       generator: null,
+      textSample: "Home | 헬로앱",
     });
   });
 
@@ -222,9 +225,27 @@ describe("extractPageMeta — 수집한 제품의 이름·소개 재료", () => 
       description: null,
       ogImage: null,
       generator: null,
+      // 제목·소개는 지어내지 않지만 본문 글자는 본문 그대로다
+      textSample: "본문뿐",
     });
     // 빈 값도 없는 것으로 본다
     expect(extractPageMeta(`<title>   </title>`, "https://a.test").title).toBeNull();
+  });
+
+  /**
+   * 판정 규칙이 이 글자를 본다("설치 유도 아님"). 스크립트·스타일이 섞여 들어오면
+   * 번들 안의 낱말 하나로 진짜 제품이 내려간다.
+   */
+  it("본문 글자에서 스크립트·스타일·주석을 걷어낸다", () => {
+    const html = `<html><head><style>.a{content:"npm install"}</style>
+      <script>const x = "brew install foo";</script></head>
+      <body><!-- pip install bar --><h1>Nivelato</h1><p>유리 오프셋을 잽니다</p></body></html>`;
+    expect(extractTextSample(html)).toBe("Nivelato 유리 오프셋을 잽니다");
+  });
+
+  it("본문 글자는 상한에서 자른다", () => {
+    expect(extractTextSample(`<body>${"가".repeat(3000)}</body>`)?.length).toBe(TEXT_SAMPLE_LIMIT);
+    expect(extractTextSample("<body>   </body>")).toBeNull();
   });
 
   it("저장 상한을 넘기지 않게 자른다", () => {

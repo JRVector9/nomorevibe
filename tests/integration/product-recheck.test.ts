@@ -20,7 +20,7 @@ const daysAgo = (days: number) => new Date(Date.now() - days * 24 * 60 * 60 * 10
 /** 발행까지 마친 제품 하나 */
 async function published(
   repo: string,
-  over: { title?: string; pushedAt?: string; productUrl?: string } = {},
+  over: { title?: string; pushedAt?: string; productUrl?: string; textSample?: string } = {},
 ) {
   const productUrl = over.productUrl ?? `https://${repo.split("/")[1]}.test`;
   await crawl.putDocument({
@@ -28,7 +28,10 @@ async function published(
     repoMeta: { description: "레포 설명", language: "TypeScript", pushed_at: over.pushedAt ?? daysAgo(3) },
     productUrl,
     pageStatus: 200,
-    pageMeta: { title: over.title ?? "My App", description: "소개", ogImage: null },
+    pageMeta: {
+      title: over.title ?? "My App", description: "소개", ogImage: null,
+      ...(over.textSample ? { textSample: over.textSample } : {}),
+    },
   });
   await crawl.recordJudgement({
     repo, productUrl, state: "approved", reason: "passed", decidedBy: "auto", signals: { stars: 3 },
@@ -70,6 +73,30 @@ describe("발행분 재검수", () => {
     const result = await recheckPublishedProducts(settings);
 
     expect(result.checked).toBe(1);
+    expect(result.hits).toEqual([]);
+  });
+
+  /**
+   * 2차 검수. 규칙이 본문을 보게 됐지만 이미 발행된 것들은 그 값이 없던 시절에 수집됐다.
+   * 못 태운 몫을 세지 않으면 "걸린 게 없다"가 거짓말이 된다.
+   */
+  it("본문이 채워지면 설치 유도 페이지를 다시 짚는다", async () => {
+    await published("someone/cli-landing", { textSample: "Loom · orchestrate agents. Install: npm install -g loom" });
+
+    const result = await recheckPublishedProducts(await getSettings());
+
+    expect(result.withoutText).toBe(0);
+    expect(result.hits).toHaveLength(1);
+    expect(result.hits[0].stopped?.rule).toBe("설치 유도 아님");
+  });
+
+  it("본문이 아직 없는 발행분은 못 태운 몫으로 센다", async () => {
+    await published("someone/no-text");
+
+    const result = await recheckPublishedProducts(await getSettings());
+
+    expect(result.checked).toBe(1);
+    expect(result.withoutText).toBe(1);
     expect(result.hits).toEqual([]);
   });
 

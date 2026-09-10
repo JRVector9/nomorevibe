@@ -156,7 +156,32 @@ export type PageMeta = {
   ogImage: string | null;
   /** 문서 생성기 이름 (감지된 경우) — 문서 사이트인지 가르는 데 쓴다 */
   generator: string | null;
+  /**
+   * 본문에서 보이는 글자 앞부분.
+   *
+   * 제목·설명만으로는 "쓸 수 있는 배포물"과 "그것을 소개하는 페이지"를 못 가른다.
+   * 실측(2026-09-10, owner.github.io 하위 경로 509건): 359건이 소개 페이지였고,
+   * 그 사실은 본문 첫머리에 그대로 적혀 있었다 — 설치 명령, 내려받기 버튼, 문서 목차.
+   *
+   * 뽑은 값이 아니라 글자를 담는다. 기준이 바뀌면 이것으로 다시 판정한다 — 판정 결과를
+   * 저장하면 규칙을 고쳐도 옛 판단이 남는다.
+   */
+  textSample: string | null;
 };
+
+/** 본문 글자를 뽑는 상한. 소개 페이지의 행동유도는 첫머리에 있다 */
+export const TEXT_SAMPLE_LIMIT = 1_500;
+
+/** 태그를 걷어내고 보이는 글자만 남긴다 */
+export function extractTextSample(html: string, limit = TEXT_SAMPLE_LIMIT): string | null {
+  const body = html
+    .replace(/<script[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<svg[\s\S]*?<\/svg>/gi, " ")
+    .replace(/<!--[\s\S]*?-->/g, " ");
+  const text = stripUnsafeText(decodeEntities(body.replace(/<[^>]+>/g, " "))).replace(/\s+/g, " ").trim();
+  return text ? text.slice(0, limit) : null;
+}
 
 /**
  * 문서 생성기 감지.
@@ -213,6 +238,7 @@ export function extractPageMeta(
       ) ?? null,
     ogImage: extractOgImage(html, baseUrl),
     generator: detectSiteGenerator(html, docsGenerators),
+    textSample: extractTextSample(html),
   };
 }
 

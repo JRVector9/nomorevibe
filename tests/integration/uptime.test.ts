@@ -1,10 +1,11 @@
 import { describe, it, expect, beforeAll, beforeEach, vi } from "vitest";
 
 const safeFetch = vi.fn();
+const readBodyCapped = vi.fn();
 vi.mock("@/lib/net/fetch", () => ({
   safeFetch: (...a: unknown[]) => safeFetch(...a),
   fetchPage: vi.fn(),
-  readBodyCapped: vi.fn(),
+  readBodyCapped: (...a: unknown[]) => readBodyCapped(...a),
 }));
 
 const { db } = await import("@/lib/db");
@@ -42,6 +43,8 @@ beforeEach(async () => {
   await db.delete(jobs);
   await resetTables();
   safeFetch.mockReset();
+  readBodyCapped.mockReset();
+  readBodyCapped.mockResolvedValue(Buffer.from(""));
 });
 
 describe("생존 확인", () => {
@@ -71,14 +74,42 @@ describe("생존 확인", () => {
     expect((await nextToCheck(5)).map((t) => t.slug)).toEqual(["a"]);
   });
 
-  it("잡이 본문 스트림을 닫는다 — 안 닫으면 연결이 쌓인다", async () => {
+  /**
+   * GET이라 본문 스트림이 열린 채로 온다. 읽든 끊든 반드시 닫아야 한다 —
+   * 안 닫으면 연결이 풀로 돌아가지 않고 10분마다 15건씩 조용히 쌓인다.
+   */
+  it("살아 있으면 본문을 읽는다 — 그 자체로 스트림이 닫힌다", async () => {
     await product("a", "https://a.test");
     const cancel = vi.fn().mockResolvedValue(undefined);
     safeFetch.mockResolvedValue({ finalUrl: "x", response: { status: 200, body: { cancel } } });
+    readBodyCapped.mockResolvedValue(Buffer.from("<h1>Nivelato</h1>"));
 
     await runJob("uptime-ping", pingProducts);
 
+    expect(readBodyCapped).toHaveBeenCalledTimes(1);
+    expect(cancel).not.toHaveBeenCalled();
+  });
+
+  it("죽어 있으면 읽지 않고 끊는다 — 받을 본문이 없다", async () => {
+    await product("a", "https://a.test");
+    const cancel = vi.fn().mockResolvedValue(undefined);
+    safeFetch.mockResolvedValue({ finalUrl: "x", response: { status: 500, body: { cancel } } });
+
+    await runJob("uptime-ping", pingProducts);
+
+    expect(readBodyCapped).not.toHaveBeenCalled();
     expect(cancel).toHaveBeenCalledTimes(1);
+  });
+
+  it("본문을 못 읽어도 생존 확인은 기록한다 — 본문은 부가물이다", async () => {
+    await product("a", "https://a.test");
+    safeFetch.mockResolvedValue({ finalUrl: "x", response: { status: 200, body: { cancel: vi.fn() } } });
+    readBodyCapped.mockRejectedValue(new Error("stream broke"));
+
+    await runJob("uptime-ping", pingProducts);
+
+    const [row] = await db.select().from(productHealth);
+    expect({ status: row.status, failures: row.failures }).toEqual({ status: 200, failures: 0 });
   });
 
   it("목록에 없는 상태는 확인하지 않는다", async () => {
