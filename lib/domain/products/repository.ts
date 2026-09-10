@@ -5,6 +5,7 @@ import { lockProductGeneration, type ProductTransaction } from "./generation";
 import { DOWN_THRESHOLD } from "./health";
 import {
   products,
+  crawlCandidates,
   ogImages,
   clickEvents,
   productClickDaily,
@@ -358,6 +359,16 @@ export async function removeProductAndEvidence(id: number, slug: string): Promis
     await tx.delete(productHealthDaily).where(eq(productHealthDaily.slug, slug));
     await tx.delete(rankingEntries).where(eq(rankingEntries.slug, slug));
     await tx.delete(takedownRequests).where(eq(takedownRequests.slug, slug));
+    /**
+     * 수집 원본과의 연결도 slug 문자열이라 같이 푼다.
+     *
+     * 남겨 두면 같은 slug를 얻은 새 제품이 지워진 제품의 레포·문서를 물려받아, 재검수가 남의
+     * 원본으로 판정하고 생존 확인이 새 본문으로 남의 문서를 덮는다. 후보 행과 발행 상태는
+     * 남긴다 — 주인이 지운 것을 수집기가 다시 올리지 않게 하는 기록이다.
+     */
+    await tx.update(crawlCandidates)
+      .set({ publishedSlug: null, updatedAt: new Date() })
+      .where(eq(crawlCandidates.publishedSlug, slug));
     await tx.delete(products).where(and(eq(products.id, id), eq(products.slug, slug)));
 
     for (const hash of hashes) {
