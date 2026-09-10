@@ -9,7 +9,7 @@ vi.mock("@/lib/crawl/github", async (original) => ({
 }));
 
 const { db } = await import("@/lib/db");
-const { crawlFrontier, crawlDocuments, crawlCandidates, crawlSettings, jobs } = await import(
+const { crawlFrontier, crawlDocuments, crawlCandidates, crawlSettings, crawlDiscoveryEvidence, jobs } = await import(
   "@/lib/db/schema"
 );
 const crawl = await import("@/lib/crawl/repository");
@@ -41,6 +41,7 @@ beforeEach(async () => {
   await db.delete(crawlCandidates);
   await db.delete(crawlDocuments);
   await db.delete(crawlFrontier);
+  await db.delete(crawlDiscoveryEvidence);
   await db.delete(crawlSettings);
   await db.delete(jobs);
   searchCommits.mockReset();
@@ -271,5 +272,42 @@ describe("검색 잡", () => {
 
     expect(searchCommits).not.toHaveBeenCalled();
     expect(await crawl.frontierCounts()).toEqual({});
+  });
+});
+
+describe("페이지 저장", () => {
+  const commit = (repo: string, sha: string, agent: string) => ({
+    repository: { full_name: repo }, sha: sha.repeat(40), commit: { message: `fix\n\nCo-authored-by: ${agent} <bot@example.com>` },
+  });
+
+  it("한 페이지의 근거와 프론티어를 한 번에 넣는다 — 같은 레포가 여러 커밋으로 나와도 프론티어에는 한 번만", async () => {
+    searchCommits.mockResolvedValue({ ok: true, value: { items: [
+      commit("a/one", "a", "Claude"), commit("a/one", "b", "Codex"), commit("b/two", "c", "Claude"),
+    ] } });
+
+    await tick();
+
+    const frontier = await db.select({ repo: crawlFrontier.repo }).from(crawlFrontier);
+    expect(frontier.map((row) => row.repo).sort()).toEqual(["a/one", "b/two"]);
+    const evidence = await db.select().from(crawlDiscoveryEvidence);
+    expect(evidence.map((row) => [row.repositoryKey, row.commitSha?.[0], row.attribution?.client]).sort()).toEqual([
+      ["a/one", "a", "claude-code"], ["a/one", "b", "codex"], ["b/two", "c", "claude-code"],
+    ]);
+  });
+
+  it("리스를 잃은 틱은 근거도 프론티어도 남기지 않는다", async () => {
+    // 이 틱이 멈춘 사이 다른 워커가 잠금을 가져갔다 — 들고 있는 토큰은 이미 무효다.
+    // 이때 쓰면 새 주인이 같은 페이지를 다시 쓰는 것과 겹치고, 누가 커서를 옮겼는지 흐려진다.
+    await db.insert(jobs).values({ name: "crawl-seed", leaseToken: "other-worker", lockedAt: new Date() });
+    searchCommits.mockResolvedValue({ ok: true, value: { items: [commit("a/one", "a", "Claude")] } });
+    const ctx = {
+      cursor: null, save: async () => {}, hasBudget: () => true, log: () => {},
+      lease: { name: "crawl-seed", token: "stale-worker", requestedVersion: 1 },
+    };
+
+    await expect(seedFrontier(ctx)).rejects.toThrow("job_lease_lost");
+
+    expect(await db.select().from(crawlDiscoveryEvidence)).toEqual([]);
+    expect(await db.select().from(crawlFrontier)).toEqual([]);
   });
 });
