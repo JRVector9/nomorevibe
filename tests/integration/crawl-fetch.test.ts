@@ -100,6 +100,50 @@ describe("수집 잡", () => {
     expect(await crawl.getDocument("someone/moved")).toMatchObject({ productUrl: "https://my-app.com" });
   });
 
+  /**
+   * 실측 509건 중 24건이 meta refresh 껍데기였다. 목적지는 문서(`/docs/`)이기도
+   * 진짜 앱(`/zh-TW/7.1h/`)이기도 해서, 껍데기를 보고 정하면 둘 다 틀린다.
+   *
+   * 주소는 그대로 둔다 — 같은 호스트 안의 이동이라 기준값은 바뀌지 않고(resolveCanonical),
+   * 브라우저는 어차피 새로고침을 따라간다. 바뀌어야 하는 것은 판정이 보는 내용이다.
+   */
+  it("meta refresh를 따라가 목적지의 내용으로 판정한다", async () => {
+    await crawl.enqueue([{ repo: "someone/shell", signal: "commit-trailer" }]);
+    getRepo.mockResolvedValue({ ok: true, value: repoMeta({ homepage: "https://my-app.test" }) });
+    fetchPage
+      .mockResolvedValueOnce({
+        status: 200, finalUrl: "https://my-app.test/",
+        html: `<title>Redirecting…</title><meta http-equiv="refresh" content="0; url=./docs/">`,
+      })
+      .mockResolvedValueOnce({
+        status: 200, finalUrl: "https://my-app.test/docs/",
+        html: `<title>My App Docs</title><body>Getting Started Installation API Reference</body>`,
+      });
+
+    await tick();
+
+    const meta = (await crawl.getDocument("someone/shell"))?.pageMeta as
+      { title?: string; textSample?: string } | null;
+    // 껍데기의 "Redirecting…"이 아니라 목적지의 제목과 본문이 남는다
+    expect(meta?.title).toBe("My App Docs");
+    expect(meta?.textSample).toContain("Getting Started");
+  });
+
+  it("목적지가 열리지 않으면 껍데기 쪽을 그대로 쓴다 — 없는 주소로 바꾸면 더 나쁘다", async () => {
+    await crawl.enqueue([{ repo: "someone/broken-shell", signal: "commit-trailer" }]);
+    getRepo.mockResolvedValue({ ok: true, value: repoMeta({ homepage: "https://my-app.test" }) });
+    fetchPage
+      .mockResolvedValueOnce({
+        status: 200, finalUrl: "https://my-app.test/",
+        html: `<title>Shell</title><meta http-equiv="refresh" content="0; url=./gone/">`,
+      })
+      .mockResolvedValueOnce(null);
+
+    await tick();
+
+    expect(await crawl.getDocument("someone/broken-shell")).toMatchObject({ productUrl: "https://my-app.test" });
+  });
+
   it("rejudges an automatic unpublished candidate when a refetch changes its product URL", async () => {
     await crawl.enqueue([{ repo: "someone/changed", signal: "commit-trailer" }]);
     await crawl.putDocument({ repo: "someone/changed", repoMeta: repoMeta(), productUrl: "https://old.test" });

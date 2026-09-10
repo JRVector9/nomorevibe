@@ -366,6 +366,14 @@ export const DEFAULT_CRAWL_SETTINGS: CrawlSettings = {
       "download for mac", "download for windows", "download for linux",
       // 문서·넘김 껍데기
       "skip to main content", "keyboard shortcuts press", "if it does not open automatically",
+      /**
+       * 스스로 "이건 진짜 데이터가 아니다"라고 밝힌 것.
+       *
+       * 실측 5건이 걸리고 오탐 0건이다. "demo"·"prototype"은 진짜 앱에도 흔해서 넣지
+       * 않는다 — 넣었더니 교사용 도구·견적 앱·브라우저 게임이 걸렸다.
+       */
+      "synthetic data", "this is a demo", "演示数据", "示例数据", "画面案",
+      "デモデータ", "데모 데이터", "예시 데이터",
     ],
     docsNavPhrases: [
       "getting started", "quick start", "quickstart", "installation", "api reference",
