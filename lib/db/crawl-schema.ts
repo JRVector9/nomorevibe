@@ -132,7 +132,15 @@ export const crawlCandidates = pgTable(
     decidedAt: timestamp("decided_at"),
     updatedAt: timestamp("updated_at").notNull().defaultNow(),
   },
-  (t) => [index("crawl_candidates_state_idx").on(t.state, t.updatedAt.desc())],
+  (t) => [
+    index("crawl_candidates_state_idx").on(t.state, t.updatedAt.desc()),
+    // 발행분 재검수·본문 채우기는 products.slug 로 후보를 찾아 repo 로 원본에 잇는다 — repo 까지 담아 표를 다시 읽지 않게.
+    // 발행된 것(수 %)만 담는다: 나머지는 늘 null 이라 찾을 일이 없다. 100만 행 실측에서 전부 담으면 생성(쓰기 잠금)
+    // 3.4초·74MB, 발행분만 담으면 0.1초·2.5MB 였다
+    index("crawl_candidates_published_slug_idx").on(t.publishedSlug, t.repo).where(sql`${t.publishedSlug} is not null`),
+    // 심사 화면·갈래 집계는 상태로 거른 뒤 id 순으로 넘긴다 — 위 인덱스는 updated_at 순이라 이 정렬을 못 받는다
+    index("crawl_candidates_state_id_idx").on(t.state, t.id),
+  ],
 );
 
 // ─────────────────────────── 설정 ───────────────────────────
