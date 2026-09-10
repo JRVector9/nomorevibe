@@ -173,6 +173,18 @@ export function SettingsForm({ settings }: { settings: CrawlSettings }) {
             애매하면 보류
             <span className="ml-1 text-fg-3">— 끄면 애매한 것을 바로 거부합니다</span>
           </Toggle>
+          {/*
+            근거를 모으는 것과 그것을 발행 조건으로 삼는 것은 다른 결정이다.
+            모으기만 하면 판정은 그대로이므로 먼저 켜서 무엇이 쌓이는지 볼 수 있다.
+          */}
+          <Toggle name="agentEvidenceEnabled" defaultChecked={settings.agentEvidence.enabled}>
+            개발 AI 근거 수집
+            <span className="ml-1 text-fg-3">— AGENTS.md·설정 파일·커밋 표기를 모읍니다. 판정은 바뀌지 않습니다</span>
+          </Toggle>
+          <Toggle name="agentEvidenceEnforce" defaultChecked={settings.agentEvidence.enforceEligibility}>
+            근거를 발행 조건으로 사용
+            <span className="ml-1 text-fg-3">— 켜면 근거가 기준에 못 미치는 후보를 보류합니다. 수집을 먼저 켜세요</span>
+          </Toggle>
         </div>
 
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">

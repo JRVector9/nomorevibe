@@ -8,7 +8,7 @@ import { resolveTakedown, type TakedownAction } from "@/lib/domain/products/take
 import { banProduct, unbanProduct } from "@/lib/domain/products/manage";
 import { markClaimInvited } from "@/lib/domain/products/claim-invite";
 import { logger } from "@/lib/observability/logger";
-import { MAX_BULK_DECISIONS, type BulkReviewState } from "./review/contract";
+import { MAX_BULK_DECISIONS, parseSelection, type BulkReviewState } from "./review/contract";
 
 export type SaveState = { ok?: true; issues?: string[] } | null;
 
@@ -62,6 +62,11 @@ export async function saveCrawlSettings(_prev: SaveState, form: FormData): Promi
       blockedHomepageDomains: lines(form.get("blockedHomepageDomains")),
       excludedRepoPatterns: lines(form.get("excludedRepoPatterns")),
       holdAmbiguous: form.get("holdAmbiguous") === "on",
+    },
+    // 수집을 켜는 것과 그것을 발행 조건으로 삼는 것은 다른 결정이다 — 따로 둔다
+    agentEvidence: {
+      enabled: form.get("agentEvidenceEnabled") === "on",
+      enforceEligibility: form.get("agentEvidenceEnforce") === "on",
     },
   };
 
@@ -136,12 +141,12 @@ export async function decideCrawlCandidates(_prev: BulkReviewState, form: FormDa
   const failures: { repo: string; message: string }[] = [];
   let ok = 0;
   for (const packed of selected) {
-    // 레포 이름과 해시에는 공백이 들어갈 수 없다 — 폼 인코딩에 안전한 구분자다
-    const [repo, inputHash, sourceRevisionHash, candidateRevisionHash] = packed.split(" ");
-    if (!repo || !inputHash || !sourceRevisionHash || !candidateRevisionHash) {
-      failures.push({ repo: repo || "(알 수 없음)", message: "화면이 오래됐습니다. 새로고침해주세요." });
+    const parsed = parseSelection(packed);
+    if (!parsed) {
+      failures.push({ repo: packed.split(" ")[0] || "(알 수 없음)", message: "화면이 오래됐습니다. 새로고침해주세요." });
       continue;
     }
+    const { repo, inputHash, sourceRevisionHash, candidateRevisionHash } = parsed;
     const result = await decideCandidate({
       repo, decision: decision as ReviewDecision, reason: String(form.get("reason") ?? ""),
       admin: admin.login, note, inputHash, sourceRevisionHash, candidateRevisionHash,
