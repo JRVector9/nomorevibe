@@ -2,9 +2,10 @@ import { describe, it, expect, beforeAll, beforeEach, vi } from "vitest";
 
 const safeFetch = vi.fn();
 const readBodyCapped = vi.fn();
+const fetchPage = vi.fn();
 vi.mock("@/lib/net/fetch", () => ({
   safeFetch: (...a: unknown[]) => safeFetch(...a),
-  fetchPage: vi.fn(),
+  fetchPage: (...a: unknown[]) => fetchPage(...a),
   readBodyCapped: (...a: unknown[]) => readBodyCapped(...a),
 }));
 
@@ -45,6 +46,7 @@ beforeEach(async () => {
   safeFetch.mockReset();
   readBodyCapped.mockReset();
   readBodyCapped.mockResolvedValue(Buffer.from(""));
+  fetchPage.mockReset();
 });
 
 describe("생존 확인", () => {
@@ -99,6 +101,21 @@ describe("생존 확인", () => {
 
     expect(readBodyCapped).not.toHaveBeenCalled();
     expect(cancel).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * 수집 잡과 같은 규칙으로 봐야 한다. 여기만 meta refresh를 안 따라가면 껍데기의
+   * "Redirecting…"이 수집이 확보한 목적지 본문을 덮어써 재검수 근거가 사라진다.
+   */
+  it("meta refresh를 따라가 목적지 본문을 담는다", async () => {
+    await product("a", "https://a.test");
+    safeFetch.mockResolvedValue({ finalUrl: "https://a.test/", response: { status: 200, body: { cancel: vi.fn() } } });
+    readBodyCapped.mockResolvedValue(Buffer.from(`<title>Redirecting…</title><meta http-equiv="refresh" content="0; url=./docs/">`));
+    fetchPage.mockResolvedValue({ status: 200, finalUrl: "https://a.test/docs/", html: "<body>npm install -g thing</body>" });
+
+    await runJob("uptime-ping", pingProducts);
+
+    expect(fetchPage).toHaveBeenCalledWith("https://a.test/docs/");
   });
 
   it("본문을 못 읽어도 생존 확인은 기록한다 — 본문은 부가물이다", async () => {

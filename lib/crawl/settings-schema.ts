@@ -140,6 +140,15 @@ const judgeSchema = z.object({
   docsNavPhrases: z.array(z.string().min(2).max(60)).max(60),
   /** 이 수 이상 함께 나오면 문서 사이트로 본다. 실측에서 3이 오탐 없이 68건을 갈랐다 */
   docsNavThreshold: z.number().int().min(2).max(10),
+  /**
+   * "이 페이지에서 뭔가 할 수 있다"는 표시.
+   *
+   * 설치 명령이 있다고 다 소개 페이지가 아니다. 로그인·가격·대시보드가 있으면 그 페이지가
+   * 곧 제품이고, 설치 문구는 개발자용 곁다리다. 실측(발행분 표본 134건): 이 신호를 넣기
+   * 전 오탐 13건, 넣은 뒤 0건. 대신 맞는 것도 절반쯤 놓친다 — 놓친 것은 사람에게 가므로
+   * 그 방향의 실패가 안전하다.
+   */
+  usableSignals: z.array(z.string().min(2).max(60)).max(60),
   /** 규칙으로 못 가르면 needs_review로 보류할지, 그냥 거부할지 */
   holdAmbiguous: z.boolean(),
 });
@@ -364,8 +373,15 @@ export const DEFAULT_CRAWL_SETTINGS: CrawlSettings = {
       "winget install", "scoop install", "choco install", "docker run", "uvx ", "curl -fsSL",
       // 내려받기 — 실물은 데스크톱·모바일 앱이다
       "download for mac", "download for windows", "download for linux",
-      // 문서·넘김 껍데기
-      "skip to main content", "keyboard shortcuts press", "if it does not open automatically",
+      /**
+       * 문서·넘김 껍데기.
+       *
+       * "skip to main content"는 뺐다. 문서 생성기의 chrome이기도 하지만 **접근성 스킵
+       * 링크**라 잘 만든 웹앱에는 다 있다. 실측(발행분 700건 중 129건이 이것으로 걸렸고,
+       * 무작위 9건을 열어 보니 6건이 진짜 제품이었다) — 접근성을 지킨 사이트를 벌주는
+       * 규칙이 된다.
+       */
+      "keyboard shortcuts press", "if it does not open automatically",
       /**
        * 스스로 "이건 진짜 데이터가 아니다"라고 밝힌 것.
        *
@@ -381,6 +397,10 @@ export const DEFAULT_CRAWL_SETTINGS: CrawlSettings = {
       "시작하기", "설치",
     ],
     docsNavThreshold: 3,
+    usableSignals: [
+      "sign in", "log in", "sign up", "get api key", "book demo", "pricing", "dashboard",
+      "로그인", "가입하기", "登录", "ログイン",
+    ],
     docsTitlePatterns: [
       // 끝에 오는 것만 본다. "Documentation Hub"처럼 앞에 오면 진짜 제품일 수 있다
       "*documentation",

@@ -100,6 +100,23 @@ describe("발행분 재검수", () => {
     expect(result.hits).toEqual([]);
   });
 
+  /**
+   * 푸시 나이에서 멈추면 그 뒤 규칙("설치 유도 아님")을 아직 안 태운 것이다.
+   * 판정을 통째로 버리면 210일 전에 손을 뗀 설치 안내 페이지가 조용히 빠져나간다.
+   */
+  it("푸시가 끊겨 멈춘 것도 나머지 규칙까지 태운다", async () => {
+    const settings = await getSettings();
+    await published("someone/old-cli", {
+      pushedAt: daysAgo(settings.judge.maxPushAgeDays + 30),
+      textSample: "old-cli — install with npm install -g old-cli",
+    });
+
+    const result = await recheckPublishedProducts(settings);
+
+    expect(result.hits).toHaveLength(1);
+    expect(result.hits[0].stopped?.rule).toBe("설치 유도 아님");
+  });
+
   it("푸시가 끊겼어도 제품이 아니면 그 사유로 짚는다", async () => {
     const settings = await getSettings();
     await published("someone/old-docs", {

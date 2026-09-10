@@ -104,13 +104,37 @@ describe("judge — 거르기", () => {
       "VibeTree Features FAQ Docs Install GitHub — npm install -g vibetree", // 실측: sahithvibudhi/vibe-tree
       "Zephyr 안전 특성 아키텍처 성능 안 装 winget install Juwan.Zephyr",
       "Palm — understand code, remember what you learn. Download for Mac ↓",
-      "Home | autospec Skip to main content Menu Expand Document Search Copy Copied",
+      "Introduction - brink Keyboard shortcuts Press S or / to search in the book",
     ];
     for (const textSample of cases) {
       const v = judge(goodRepo(), { ...livePage, textSample }, settings, NOW);
       expect(v, textSample).toMatchObject({ state: "rejected", reason: "not_a_product" });
       expect(v.trace.at(-1)?.rule).toBe("설치 유도 아님");
     }
+  });
+
+  /**
+   * 설치 명령이 있다고 다 소개 페이지가 아니다. 이 확인이 없을 때 발행분 표본에서
+   * 오탐이 27%였다 — 개발자용 npm 한 줄이 붙은 진짜 SaaS가 줄줄이 걸렸다.
+   */
+  it("그 페이지에서 쓸 수 있으면 설치 문구가 있어도 통과시킨다", () => {
+    const cases = [
+      "node9 — IAM for your AI agents. Docs Pricing Login Signup. npm install node9",
+      "Usage Monitor · API & infra spend in one place. Log in. brew install usage-monitor",
+      "트레이더 — 수출 인텔리전스 로그인 npm install tradar-cli",
+    ];
+    for (const textSample of cases) {
+      expect(judge(goodRepo(), { ...livePage, textSample }, settings, NOW).state, textSample).toBe("approved");
+    }
+  });
+
+  /**
+   * "skip to main content"는 접근성 스킵 링크다. 넣었을 때 발행분 129건이 걸렸고
+   * 무작위 9건 중 6건이 진짜 제품이었다 — 접근성을 지킨 사이트를 벌주면 안 된다.
+   */
+  it("접근성 스킵 링크만으로는 문서로 보지 않는다", () => {
+    const t = "Bonnie Wee Plot Skip to main content 🍂 My Allotment Today This Month Plant Guide";
+    expect(judge(goodRepo(), { ...livePage, textSample: t }, settings, NOW).state).toBe("approved");
   });
 
   it("목차 낱말은 여럿이 함께 있어야 문서로 본다", () => {

@@ -1,6 +1,6 @@
 import type { JobContext, JobOutcome } from "@/lib/jobs/runner";
-import { safeFetch, readBodyCapped } from "@/lib/net/fetch";
-import { extractTextSample } from "@/lib/net/normalize";
+import { safeFetch, readBodyCapped, fetchPage } from "@/lib/net/fetch";
+import { extractTextSample, metaRefreshTarget } from "@/lib/net/normalize";
 import { refreshTextSample } from "@/lib/crawl/repository";
 import { nextToCheck, recordPing } from "@/lib/domain/products/health";
 
@@ -59,7 +59,13 @@ export async function pingProducts(ctx: JobContext<null>): Promise<JobOutcome<nu
     if (fetched && up) {
       // readBodyCapped은 상한에 닿으면 스스로 스트림을 끊는다
       try {
-        sample = extractTextSample((await readBodyCapped(fetched.response, BODY_BYTES)).toString("utf-8"));
+        const html = (await readBodyCapped(fetched.response, BODY_BYTES)).toString("utf-8");
+        /**
+         * 수집 잡과 같은 규칙으로 본다. 여기만 meta refresh를 안 따라가면 껍데기의
+         * "Redirecting…"이 수집이 확보한 목적지 본문을 덮어써, 재검수의 근거가 사라진다.
+         */
+        const hop = metaRefreshTarget(html, fetched.finalUrl);
+        sample = extractTextSample(hop ? (await fetchPage(hop))?.html ?? html : html);
       } catch {
         sample = null; // 본문은 부가물이다 — 못 읽어도 생존 확인은 그대로 기록한다
       }
