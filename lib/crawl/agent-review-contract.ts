@@ -4,10 +4,19 @@ import type { CrawlCandidate, CrawlDocument, AgentRepositoryScan } from "@/lib/d
 import { CATEGORIES } from "@/lib/domain/products/schema";
 import type { AgentObservation } from "@/lib/domain/evidence/agents/types";
 import { summarizeAgentEvidence } from "@/lib/domain/evidence/agents/summary";
+import { TEXT_SAMPLE_LIMIT } from "@/lib/net/normalize";
 import type { CrawlSettings } from "./settings-schema";
+import { pageFactsFromDocument } from "./rules";
 
-export const REVIEW_PROMPT_VERSION = "2026-09-08.2";
-export const REVIEW_RULES_VERSION = "2026-09-08.2";
+/**
+ * 심사 입력이 바뀌면 둘 다 올린다.
+ *
+ * 2026-09-10.1: 규칙 재호출과 모델 입력에 본문(textSample)을 넣었다. 올리지 않으면 본문 없이 받은
+ * 옛 승인이 SQL 대조(matchingSource)에는 그대로 맞는데 inputHash만 어긋나, 발행 잡이 그 후보에서
+ * review_approval_changed로 매 틱 멈춘다. 올리면 옛 기록이 대조에서 빠져 후보가 심사로 돌아간다.
+ */
+export const REVIEW_PROMPT_VERSION = "2026-09-10.1";
+export const REVIEW_RULES_VERSION = "2026-09-10.1";
 export const MAX_REVIEW_INPUT_BYTES = 64 * 1024;
 export const MAX_REVIEW_ATTEMPTS = 3;
 export const REVIEW_FRESH_MS = 24 * 3600_000;
@@ -33,7 +42,7 @@ export type ReviewSource = {
   detectorVersion: string;
 };
 export type ReviewSnapshot = {
-  product: { repo: string; name: string; description: string; url: string | null; topics: string[]; language: string | null };
+  product: { repo: string; name: string; description: string; pageText: string; url: string | null; topics: string[]; language: string | null };
   policy: { rulesVersion: string; promptVersion: string; detectorVersion: string; policyVersion: string; enforceEligibility: boolean };
   evidence: ReviewEvidence[];
   evidenceSummary: ReturnType<typeof summarizeAgentEvidence>;
@@ -92,6 +101,14 @@ export function createReviewInput(
       repo: candidate.repo,
       name: limitedText(page.title, 300) || candidate.repo.split("/").at(-1)!,
       description: [limitedText(page.description, 6000), limitedText(document.repoMeta.description, 6000)].filter(Boolean).join("\n"),
+      /**
+       * 규칙의 "설치 유도 아님"이 보는 바로 그 본문. 같은 추출기로 뽑는다.
+       *
+       * 빠져 있을 때 모델은 제목·소개만 보고 설치 안내 페이지를 승인했고, 해시에도 없어서 본문이
+       * 바뀌어도 옛 승인이 새 원본으로 복사됐다(codex 재현). 스냅숏에 두면 inputHash에 들어가,
+       * 본문이 바뀌면 옛 승인은 재사용도 발행 검증도 통과하지 못한다.
+       */
+      pageText: limitedText(pageFactsFromDocument(document).textSample, TEXT_SAMPLE_LIMIT),
       url: candidate.productUrl,
       topics: Array.isArray(document.repoMeta.topics) ? document.repoMeta.topics.slice(0, 30).map(item => limitedText(item, 100)) : [],
       language: limitedText(document.repoMeta.language, 100) || null,

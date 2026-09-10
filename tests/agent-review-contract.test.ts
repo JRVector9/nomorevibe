@@ -37,7 +37,18 @@ it("invalidates semantic approval on product, source relationship, evidence or p
     createReviewInput(candidate, { ...document, pageMeta: { ...document.pageMeta, repositoryKeys: ["other/app"] } }, DEFAULT_CRAWL_SETTINGS, evidence, now),
     createReviewInput(candidate, document, { ...DEFAULT_CRAWL_SETTINGS, judge: { ...DEFAULT_CRAWL_SETTINGS.judge, maxStars: 99 } }, evidence, now),
     createReviewInput(candidate, document, DEFAULT_CRAWL_SETTINGS, { ...evidence, observations: [] }, now),
+    createReviewInput(candidate, { ...document, pageMeta: { ...document.pageMeta, textSample: "App CLI. Install: npm install -g app" } }, DEFAULT_CRAWL_SETTINGS, evidence, now),
   ]) expect(changed.inputHash).not.toBe(first.inputHash);
+});
+
+it("gives the model the same page body the rules judge", () => {
+  const body = "App — plan your week. Sign in to your dashboard.";
+  const input = createReviewInput(candidate, { ...document, pageMeta: { ...document.pageMeta, textSample: body } }, DEFAULT_CRAWL_SETTINGS, evidence, now);
+  expect(input.snapshot.product.pageText).toBe(body);
+  const edited = createReviewInput(candidate, { ...document, pageMeta: { ...document.pageMeta, textSample: `${body} Install: brew install app` } },
+    DEFAULT_CRAWL_SETTINGS, evidence, now);
+  expect(edited.inputHash).not.toBe(input.inputHash);
+  expect(createReviewInput(candidate, document, DEFAULT_CRAWL_SETTINGS, evidence, now).snapshot.product.pageText).toBe("");
 });
 
 it("tracks a same-SHA scan refresh even when completion time and semantic observations stay unchanged", () => {
