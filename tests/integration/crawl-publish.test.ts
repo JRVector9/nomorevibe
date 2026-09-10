@@ -50,6 +50,27 @@ async function approved(
 
 const tick = () => runJob("crawl-publish", publishCandidates);
 
+/** 지금 규칙을 그대로 통과하는 레포 사실 — 발행 직전 재판정을 태우는 테스트가 쓴다 */
+const LIVE_REPO = {
+  stargazers_count: 3, fork: false, archived: false, owner: { type: "User" }, pushed_at: new Date().toISOString(),
+};
+
+/** 판정이 원본보다 먼저였던 것으로 만든다 — 같은 밀리초에 두 값이 찍히면 선후를 가를 수 없다 */
+async function judgedEarlier(repo: string) {
+  await db.update(crawlCandidates).set({ judgedAt: new Date(Date.now() - 60_000) }).where(eq(crawlCandidates.repo, repo));
+}
+
+/** 승인 뒤 같은 주소로 다시 받아 온 원본 */
+async function refetched(repo: string, pageStatus: number) {
+  await crawl.putDocument({
+    repo,
+    repoMeta: { description: "레포 설명", language: "TypeScript", ...LIVE_REPO },
+    productUrl: "https://my-app.test",
+    pageStatus,
+    pageMeta: { title: "My App", description: "페이지가 말하는 소개", ogImage: null },
+  });
+}
+
 beforeAll(() => ensureSchema());
 beforeEach(async () => {
   await db.delete(crawlCandidates);
@@ -408,6 +429,50 @@ describe("발행 잡", () => {
     expect(await crawl.getCandidate("someone/my-app")).toMatchObject({state:"needs_review",reason:"source_changed",productUrl:"https://my-app.test"});
     expect(classifyCategories).not.toHaveBeenCalled();
     expect(await tick()).toMatchObject({status:"completed",done:true});
+  });
+
+  /**
+   * codex 재현: HTTP 200일 때 승인된 후보가 발행 전에 다시 수집돼 404가 됐다. 주소가 같아
+   * new로 되돌려지지 않았고, reviewMode가 off/observe면 발행은 규칙을 다시 태우지 않아
+   * 최신 404 원본으로 seeded가 됐다. 되돌림이 빠진 어떤 경로로 와도 여기서 막는다.
+   */
+  it("승인 뒤 다시 받은 원본이 지금 규칙을 통과하지 못하면 발행하지 않고 재판정으로 되돌린다", async () => {
+    await approved("someone/my-app", { meta: LIVE_REPO });
+    await judgedEarlier("someone/my-app");
+    await refetched("someone/my-app", 404);
+
+    expect(await tick()).toMatchObject({ status: "completed", done: true });
+
+    expect(await products.findByUrl("https://my-app.test")).toBeUndefined();
+    expect(await crawl.getCandidate("someone/my-app")).toMatchObject({
+      state: "new", reason: "source_changed", decidedBy: "auto",
+    });
+    // 되돌린 것은 곧바로 다시 판정해야 한다 — 스케줄(5분)을 기다리지 않는다
+    expect(await db.query.jobs.findFirst({ where: eq(jobs.name, "crawl-judge") }))
+      .toMatchObject({ requestedVersion: 1, processedVersion: 0 });
+  });
+
+  it("승인 뒤 다시 받은 원본도 지금 규칙을 통과하면 그대로 발행한다", async () => {
+    await approved("someone/my-app", { meta: LIVE_REPO });
+    await judgedEarlier("someone/my-app");
+    await refetched("someone/my-app", 200);
+
+    await tick();
+
+    expect(await products.findByUrl("https://my-app.test")).toMatchObject({ status: "seeded" });
+    expect(await db.query.jobs.findFirst({ where: eq(jobs.name, "crawl-judge") })).toBeUndefined();
+  });
+
+  it("사람이 승인한 것은 원본이 바뀌어도 규칙으로 되돌리지 않는다", async () => {
+    await approved("someone/my-app", { meta: LIVE_REPO });
+    await crawl.recordJudgement({ repo: "someone/my-app", productUrl: "https://my-app.test",
+      state: "approved", reason: "passed", decidedBy: "admin" });
+    await judgedEarlier("someone/my-app");
+    await refetched("someone/my-app", 404);
+
+    await tick();
+
+    expect(await crawl.getCandidate("someone/my-app")).toMatchObject({ state: "published", decidedBy: "admin" });
   });
 
   it("분류 도중 같은 SHA의 재확인이 실패하면 보존된 complete 상태로 발행하지 않는다", async () => {

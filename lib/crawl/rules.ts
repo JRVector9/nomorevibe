@@ -33,6 +33,15 @@ export type PageFacts = {
   title?: string | null;
   /** 본문 앞부분. 없으면 이 신호가 없는 것이지, 통과했다는 뜻이 아니다 */
   textSample?: string | null;
+  /**
+   * 내용을 실제로 받아 온 주소 — HTTP·meta refresh 리다이렉트를 따라간 끝.
+   *
+   * productUrl은 제품을 가리키는 기준값이라 같은 호스트 안의 이동을 따라가지 않는다
+   * (resolveCanonical). 그래서 https://app.test 가 meta refresh로 /docs/ 에 넘기면 제목·본문은
+   * 문서의 것을 읽으면서 주소 규칙은 루트에 걸었다 — codex 재현에서 제목이 App이고 차단
+   * 문구가 없는 문서가 그대로 승인됐다. 없으면(이 값을 남기기 전 원본) productUrl만 본다.
+   */
+  finalUrl?: string | null;
 };
 
 /**
@@ -183,6 +192,10 @@ export function judge(
   }
   pass("차단 도메인 아님", `${hostOf(page.productUrl)} 미등록`);
   if (isDocumentation(page.productUrl)) return reject("not_a_product", "문서 URL 아님", "docs 라벨 또는 /docs 경로");
+  // 내용을 읽은 곳이 문서면 제품 주소가 루트여도 문서다 — 판정은 읽은 곳을 기준으로 한다
+  if (page.finalUrl && isDocumentation(page.finalUrl)) {
+    return reject("not_a_product", "문서 URL 아님", `도착한 주소 ${page.finalUrl} 가 docs 라벨 또는 /docs 경로`);
+  }
   pass("문서 URL 아님", "docs 라벨·경로 아님");
 
   /**
@@ -393,13 +406,16 @@ export function pageFactsFromDocument(document: {
   pageStatus: number | null;
   pageMeta: unknown;
 }): PageFacts {
-  const meta = (document.pageMeta ?? {}) as { generator?: unknown; title?: unknown; textSample?: unknown };
+  const meta = (document.pageMeta ?? {}) as {
+    generator?: unknown; title?: unknown; textSample?: unknown; finalUrl?: unknown;
+  };
   return {
     productUrl: document.productUrl,
     status: document.pageStatus,
     generator: typeof meta.generator === "string" ? meta.generator : null,
     title: typeof meta.title === "string" ? meta.title : null,
     textSample: typeof meta.textSample === "string" ? meta.textSample : null,
+    finalUrl: typeof meta.finalUrl === "string" ? meta.finalUrl : null,
   };
 }
 

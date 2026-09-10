@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { judge, matchesPattern, isBlockedHost, factsFromRepoMeta, type RepoFacts } from "@/lib/crawl/rules";
+import { judge, matchesPattern, isBlockedHost, factsFromRepoMeta, pageFactsFromDocument, type RepoFacts } from "@/lib/crawl/rules";
 import { DEFAULT_CRAWL_SETTINGS, crawlSettingsSchema } from "@/lib/crawl/settings-schema";
 import { resolveCanonical } from "@/lib/domain/products/register";
 
@@ -506,5 +506,35 @@ describe("판정 근거 — 심사 화면이 보여줄 발자국", () => {
     const v = judge(goodRepo({ stars: 5000 }), livePage, loose, NOW);
     expect(v.state).toBe("approved");
     expect(v.trace.find((s) => s.rule === "스타 상한 이하")?.detail).toBe("5,000 ≤ 9,000");
+  });
+});
+
+/**
+ * 실제로 도착한 주소.
+ *
+ * 제품 주소(productUrl)는 같은 호스트 안의 이동을 따라가지 않는다(resolveCanonical). 그래서
+ * https://app.test 가 meta refresh로 /docs/ 에 넘기면 내용은 문서의 것을 읽으면서 주소 규칙은
+ * 루트에 걸렸다 — codex가 재현한 대로, 제목이 App이고 차단 문구가 없으면 그대로 승인됐다.
+ */
+describe("judge — 도착한 주소", () => {
+  it("같은 호스트에서 /docs/로 넘어간 페이지는 제품 주소가 루트여도 문서다", () => {
+    const v = judge(goodRepo(),
+      { productUrl: "https://app.test", status: 200, title: "App", finalUrl: "https://app.test/docs/" }, settings, NOW);
+    expect(v).toMatchObject({ state: "rejected", reason: "not_a_product" });
+    expect(v.trace.at(-1)).toMatchObject({ rule: "문서 URL 아님", passed: false });
+    expect(v.trace.at(-1)?.detail).toContain("https://app.test/docs/");
+  });
+
+  it("도착한 곳이 문서가 아니면 그대로 통과한다 — 목적지가 진짜 앱인 경우도 있다", () => {
+    // 실측 509건 중 24건이 meta refresh 껍데기였고, 목적지는 /zh-TW/7.1h/ 같은 진짜 앱이기도 했다
+    const v = judge(goodRepo(), { ...livePage, finalUrl: "https://my-app.vercel.app/zh-TW/7.1h/" }, settings, NOW);
+    expect(v.state).toBe("approved");
+  });
+
+  it("원본의 pageMeta에서 도착한 주소를 읽는다 — 예전 원본에는 없으니 없는 대로 둔다", () => {
+    expect(pageFactsFromDocument({ productUrl: "https://app.test", pageStatus: 200,
+      pageMeta: { title: "App", finalUrl: "https://app.test/docs/" } }).finalUrl).toBe("https://app.test/docs/");
+    expect(pageFactsFromDocument({ productUrl: "https://app.test", pageStatus: 200,
+      pageMeta: { title: "App" } }).finalUrl).toBeNull();
   });
 });

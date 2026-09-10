@@ -9,6 +9,7 @@ import { prepareCandidateClassification, publishCandidate } from "@/lib/crawl/pu
 import { classifyCategories } from "@/lib/crawl/classify";
 import { recordPublicationFailure } from "@/lib/crawl/publication-guard";
 import { reviewApprovalPredicate } from "@/lib/crawl/agent-review-repository";
+import { requestJob } from "@/lib/jobs/control";
 
 /**
  * 발행 잡 — 통과한 후보를 목록에 올린다. 파이프라인의 마지막 단계다.
@@ -58,48 +59,65 @@ export async function publishCandidates(ctx: JobContext<null>): Promise<JobOutco
       ? [[item.candidate.repo, item.classification.snapshot] as const]
       : []));
 
-    for (const candidate of candidates) {
-      if (!ctx.hasBudget()) return { done: false };
-      const manual = decisions.get(candidate.repo);
-      const category = manual?.category as Category | null ?? categoryByRepo.get(candidate.repo) ?? null;
-      const snapshot = snapshotByRepo.get(candidate.repo);
-      if (process.env.CONNECT_AGENT_URL && snapshot && category === null) {
-        await holdClassification(candidate, snapshot.document); skipped++; continue;
-      }
-      const result = await publishCandidate(candidate, ctx.lease, {
-        category,
-        decision: process.env.CONNECT_AGENT_URL ? { revision: manual?.revision ?? null, sourceHash: manual?.sourceHash ?? null } : undefined,
-        snapshot: snapshotByRepo.get(candidate.repo),
-      });
-
-      if (!result.ok) {
-        if (result.reason === "publication_state_changed" || result.reason === "review_approval_changed") {
-          ctx.log("crawl.publication_changed", {repo:candidate.repo});
-          return {done:false}; // Preserve the newer human/source decision.
+    let rejudge = 0;
+    try {
+      for (const candidate of candidates) {
+        if (!ctx.hasBudget()) return { done: false };
+        const manual = decisions.get(candidate.repo);
+        const category = manual?.category as Category | null ?? categoryByRepo.get(candidate.repo) ?? null;
+        const snapshot = snapshotByRepo.get(candidate.repo);
+        if (process.env.CONNECT_AGENT_URL && snapshot && category === null) {
+          await holdClassification(candidate, snapshot.document); skipped++; continue;
         }
-        /**
-         * 발행하지 못한 후보는 어느 쪽으로든 approved에서 빼야 한다. 그대로 두면 다음 틱이
-         * 같은 것을 또 집어 큐가 막힌다 — approved 상태가 곧 대기 목록이기 때문이다.
-         *
-         * 소개가 없어서 못 올린 것만 사람에게 넘긴다. 나머지는 사람이 봐도 할 일이 없다.
-         */
-        const evidenceHeld = result.reason.startsWith("ai_evidence_") || result.reason === "repository_relationship_conflict" || result.reason === "source_changed";
-        const held = result.reason === "no_description" || evidenceHeld;
-        const recorded = await recordPublicationFailure(candidate, {
-          state: held ? "needs_review" : "rejected",
-          reason: evidenceHeld ? result.reason as import("@/lib/db/schema").DecisionReason : held ? "ambiguous" : result.reason === "already_listed" ? "already_listed" : "not_a_product",
-        }, ctx.lease);
-        if (!recorded) {
-          ctx.log("crawl.publication_changed", {repo:candidate.repo});
-          return {done:false};
-        }
-        ctx.log("crawl.publish_skipped_candidate", { repo: candidate.repo, reason: result.reason });
-        skipped++;
-        continue;
-      }
+        const result = await publishCandidate(candidate, ctx.lease, {
+          category,
+          decision: process.env.CONNECT_AGENT_URL ? { revision: manual?.revision ?? null, sourceHash: manual?.sourceHash ?? null } : undefined,
+          snapshot: snapshotByRepo.get(candidate.repo),
+        });
 
-      published++;
-      if (!ctx.hasBudget()) break;
+        if (!result.ok) {
+          if (result.reason === "publication_state_changed" || result.reason === "review_approval_changed") {
+            ctx.log("crawl.publication_changed", {repo:candidate.repo});
+            return {done:false}; // Preserve the newer human/source decision.
+          }
+          // 승인 뒤 바뀐 원본이 지금 규칙을 통과하지 못했다 — 사람에게 넘기지 않고 판정에 되돌린다
+          if (result.reason === "stale_judgement") {
+            if (!await recordPublicationFailure(candidate, { state: "new", reason: "source_changed" }, ctx.lease)) {
+              ctx.log("crawl.publication_changed", {repo:candidate.repo});
+              return {done:false};
+            }
+            ctx.log("crawl.publish_rejudge", { repo: candidate.repo });
+            rejudge++;
+            skipped++;
+            continue;
+          }
+          /**
+           * 발행하지 못한 후보는 어느 쪽으로든 approved에서 빼야 한다. 그대로 두면 다음 틱이
+           * 같은 것을 또 집어 큐가 막힌다 — approved 상태가 곧 대기 목록이기 때문이다.
+           *
+           * 소개가 없어서 못 올린 것만 사람에게 넘긴다. 나머지는 사람이 봐도 할 일이 없다.
+           */
+          const evidenceHeld = result.reason.startsWith("ai_evidence_") || result.reason === "repository_relationship_conflict" || result.reason === "source_changed";
+          const held = result.reason === "no_description" || evidenceHeld;
+          const recorded = await recordPublicationFailure(candidate, {
+            state: held ? "needs_review" : "rejected",
+            reason: evidenceHeld ? result.reason as import("@/lib/db/schema").DecisionReason : held ? "ambiguous" : result.reason === "already_listed" ? "already_listed" : "not_a_product",
+          }, ctx.lease);
+          if (!recorded) {
+            ctx.log("crawl.publication_changed", {repo:candidate.repo});
+            return {done:false};
+          }
+          ctx.log("crawl.publish_skipped_candidate", { repo: candidate.repo, reason: result.reason });
+          skipped++;
+          continue;
+        }
+
+        published++;
+        if (!ctx.hasBudget()) break;
+      }
+    } finally {
+      // 되돌린 것은 곧바로 다시 판정한다. 묶음당 한 번이다 — 후보마다 부르면 잡 행을 두고 경합한다
+      if (rejudge > 0) await requestJob("crawl-judge");
     }
   }
 

@@ -178,8 +178,14 @@ export async function fetchCapped(
 /**
  * SSRF-안전 fetch — 리다이렉트를 수동으로 추적하며 매 hop마다 정책을 다시 적용한다.
  * (redirect:"follow"는 검증 없이 사설망으로 향하는 302를 그대로 따라가므로 쓰지 않는다)
+ *
+ * 기한은 요청 하나에 하나다. hop마다 새 10초 타이머를 걸면 리다이렉트 다섯 번에 60초까지
+ * 늘어나, 동시에 받는 수집 잡의 한 칸을 그만큼 붙잡는다. 이 신호는 마지막 응답의 본문
+ * 스트림에도 걸려 있으므로, 본문 수신까지 같은 10초 안에서 끝난다 — uptime이 "하나에 최대
+ * 10초"로 예산을 잡은 것도 이 뜻이었다.
  */
 export async function safeFetch(url: string): Promise<FetchResult | null> {
+  const signal = AbortSignal.timeout(FETCH_TIMEOUT_MS);
   let current = url;
   for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
     const guard = await assertPublicUrl(current);
@@ -189,7 +195,7 @@ export async function safeFetch(url: string): Promise<FetchResult | null> {
     try {
       res = (await undiciFetch(current, {
         redirect: "manual",
-        signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+        signal,
         headers: { "user-agent": "NoMoreVibe/1.0 (+https://nomorevibe.app)" },
         dispatcher: allowPrivate() ? undefined : ssrfSafeAgent,
       })) as unknown as Response;
@@ -200,6 +206,8 @@ export async function safeFetch(url: string): Promise<FetchResult | null> {
     if (res.status >= 300 && res.status < 400) {
       const location = res.headers.get("location");
       if (!location) return { finalUrl: current, response: res };
+      // 따라갈 응답의 본문은 읽지 않는다. 닫지 않으면 연결이 풀로 돌아가지 않는다
+      await res.body?.cancel().catch(() => {});
       try {
         current = new URL(location, current).toString();
       } catch {
@@ -236,6 +244,11 @@ export async function readBodyCapped(res: Response, maxBytes: number): Promise<B
  *
  * finalUrl을 함께 돌려준다. 리다이렉트가 있으면 입력 URL과 다르고, 중복 판정의
  * 기준은 최종 도착지여야 한다 — 그러지 않으면 같은 사이트가 두 주소로 등록된다.
+ *
+ * 닿지 않으면 null이지만, 헤더를 받은 뒤 본문이 끊기거나 기한을 넘기면 예외로 알린다.
+ * 둘은 다른 일이다 — null은 "죽은 주소"로 저장돼 판정이 거르고, 예외는 부른 쪽이 항목별
+ * 실패로 다시 시도한다(수집 잡). 본문 실패를 null로 뭉개면 한 번 끊긴 페이지가 영영 죽은
+ * 것으로 판정된다.
  */
 export async function fetchPage(
   url: string,

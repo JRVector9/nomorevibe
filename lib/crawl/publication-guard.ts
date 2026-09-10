@@ -22,9 +22,15 @@ export function assertPublicationSnapshot(expected: Snapshot, current: Snapshot)
   }
 }
 
-/** Failure handling has the same race as insertion: never overwrite a newer review decision. */
+/**
+ * Failure handling has the same race as insertion: never overwrite a newer review decision.
+ *
+ * state "new"는 실패가 아니라 되돌림이다 — 판정 뒤에 바뀐 원본이 지금 규칙을 통과하지 못한
+ * 자동 승인(publish.ts의 stale_judgement)을 판정 잡에 다시 맡긴다. 결과를 여기서 지어 적지
+ * 않는 것은, 판정 기록(신호·발자국·중복 URL 확인)을 남기는 곳이 판정 잡 하나여야 해서다.
+ */
 export async function recordPublicationFailure(candidate: CrawlCandidate, failure: {
-  state:"needs_review"|"rejected"; reason:DecisionReason;
+  state:"needs_review"|"rejected"|"new"; reason:DecisionReason;
 }, lease?: JobLease):Promise<boolean> {
   return db.transaction(async tx => {
     const [current] = await tx.select().from(crawlCandidates).where(eq(crawlCandidates.id,candidate.id)).for("update");
