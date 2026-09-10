@@ -273,6 +273,50 @@ describe("카테고리 드롭다운", () => {
   });
 });
 
+/**
+ * 상단 집계·도구 목록과 제품 목록은 서로의 결과를 쓰지 않는다. 차례로 기다리면 첫 화면이
+ * 집계 6개 쿼리가 끝날 때까지 목록 조회를 시작하지도 못한다.
+ */
+describe("조회 순서", () => {
+  it("목록 조회가 상단 집계를 기다리지 않는다", async () => {
+    const pulse = await getHomePulse();
+    let releasePulse: (value: unknown) => void = () => {};
+    getHomePulse.mockReturnValue(new Promise((resolve) => { releasePulse = resolve; }));
+    getSeasonRanking.mockResolvedValue({ season, items: [ranked("verified-one", 1)] });
+
+    const rendering = render();
+    await vi.waitFor(() => {
+      expect(listBuilders).toHaveBeenCalled();
+      expect(getSeasonRanking).toHaveBeenCalled();
+      expect(categoryCounts).toHaveBeenCalled();
+    });
+    releasePulse(pulse);
+
+    expect(await rendering).toContain("verified-one");
+  });
+
+  it("집계가 실패해도 목록과 도구 목록은 그대로 뜬다", async () => {
+    getHomePulse.mockRejectedValue(new Error("pulse down"));
+    listBuilders.mockResolvedValue(["Codex"]);
+    getSeasonRanking.mockResolvedValue({ season, items: [ranked("verified-one", 1)] });
+
+    const html = await render();
+
+    expect(html).toContain("verified-one");
+    expect(html).toContain('<option value="Codex">');
+  });
+
+  it("목록과 집계가 함께 실패해도 처리되지 않은 거부 없이 안내를 낸다", async () => {
+    getHomePulse.mockRejectedValue(new Error("pulse down"));
+    listBuilders.mockRejectedValue(new Error("builders down"));
+    getCurrentSeason.mockRejectedValue(new Error("db down"));
+
+    const html = await render();
+
+    expect(html).toContain("일시적으로 목록을 불러올 수 없습니다");
+  });
+});
+
 describe("구획 제목", () => {
   it("미클레임 구획을 발견 보드 제목과 섞지 않는다", async () => {
     categoryCounts.mockResolvedValue({});
