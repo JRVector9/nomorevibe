@@ -88,6 +88,14 @@ export function matchesPattern(name: string, pattern: string): boolean {
  */
 export const DOCS_TITLE_MAX_WORDS = 5;
 
+/**
+ * 마지막 푸시가 오래됐다는 규칙의 이름.
+ *
+ * 발행분 재검수가 이 규칙만 따로 걸러내야 해서 한 곳에 둔다 — 화면과 규칙이 각자
+ * 문자열을 적으면 한쪽만 고쳐졌을 때 조용히 어긋난다.
+ */
+export const PUSH_AGE_RULE = "방치 기준 이내";
+
 /** URL의 호스트가 차단 목록에 있는지 (서브도메인 포함) */
 export function isBlockedHost(url: string, blocked: string[]): boolean {
   let host: string;
@@ -285,7 +293,7 @@ export function judge(
   const pushAge = repo.pushedAt ? Math.round(daysSince(repo.pushedAt, now)) : null;
   if (repo.pushedAt && daysSince(repo.pushedAt, now) > rules.maxPushAgeDays) {
     // 죽은 프로젝트
-    return reject("unreachable", "방치 기준 이내", `마지막 푸시 ${pushAge}일 전 > ${rules.maxPushAgeDays}일`);
+    return reject("unreachable", PUSH_AGE_RULE, `마지막 푸시 ${pushAge}일 전 > ${rules.maxPushAgeDays}일`);
   }
 
   // 배포 URL이 살아있는지 확인 못 했으면 판단을 미룬다 (fetch가 끝나면 다시 온다)
@@ -302,7 +310,7 @@ export function judge(
   if (!repo.pushedAt && rules.holdAmbiguous) {
     return hold("ambiguous", "push_time_unknown", "마지막 푸시 시각 확인", "레포 메타에 pushed_at 없음");
   }
-  pass("방치 기준 이내", pushAge === null ? "푸시 시각 미상 (보류 꺼짐)" : `${pushAge}일 ≤ ${rules.maxPushAgeDays}일`);
+  pass(PUSH_AGE_RULE, pushAge === null ? "푸시 시각 미상 (보류 꺼짐)" : `${pushAge}일 ≤ ${rules.maxPushAgeDays}일`);
 
   /**
    * 호스트는 제외 패턴에 걸리는데 루트 배포가 아닌 것 — 규칙으로 가를 수 없다.

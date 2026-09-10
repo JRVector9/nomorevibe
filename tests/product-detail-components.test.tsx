@@ -133,7 +133,9 @@ describe("evidence product detail components", () => {
     const html = renderToStaticMarkup(<ProductHero product={product} media={[]} unclaimed={false} lifecycle={null} rank={null}
       health={{ uptime30d: null, latencyMs: null, checkedAt: null, down: false }} />);
     expect(html).toContain("제품 화면");
+    expect(html).toContain('id="product-screen"');
     expect(html).toContain("아직 보관된 제품 화면이 없습니다.");
+    expect(html).toContain("목록 미리보기");
   });
 
   it("uses a safe internal OG copy as the large representative image when media is empty", () => {

@@ -47,6 +47,8 @@ export default async function RecheckPage({ searchParams }: {
         보관한 원본으로 <b className="font-semibold">지금 기준을 다시 태워</b> 거부로 갈리는 것을 짚습니다.
         저절로 내려가지는 않습니다 — 기준을 실험하다 공개 목록이 흔들리면 안 되므로,
         무엇을 내릴지는 아래에서 사람이 골라 누릅니다.
+        <b className="font-semibold">푸시가 끊긴 것은 세지 않습니다</b> — 시간이 가면 저절로 걸리는 규칙이라
+        놔두면 목록이 그것으로 덮입니다. 살아 있는지는 생존 확인이 따로 재고 있습니다.
       </p>
 
       <div className="mt-5 rounded-[12px] border border-line bg-bg-card p-4">
