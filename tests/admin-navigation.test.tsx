@@ -3,10 +3,11 @@ import { describe, expect, it } from 'vitest';
 import { AdminNav } from '@/app/admin/AdminNav';
 
 describe('shared administrator navigation', () => {
-  it('keeps all seven menus including the selected page visible', () => {
+  it('keeps all eight menus including the selected page visible', () => {
     const html = renderToStaticMarkup(<AdminNav current="/admin/status" />);
-    expect(html.match(/href="\/admin/g)).toHaveLength(7);
+    expect(html.match(/href="\/admin/g)).toHaveLength(8);
     expect(html).toContain('운영센터');
+    expect(html).toContain('AI 소식');
     expect(html).toContain('aria-current="page"');
   });
   it('keeps product management selected on nested product pages', () => {

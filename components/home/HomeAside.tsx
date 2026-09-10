@@ -1,8 +1,15 @@
 import Link from "next/link";
 import { Icon } from "@/components/home/icons";
-import { HOME_NEWS } from "@/components/home/news";
+import type { HomeNewsItem } from "@/lib/news/repository";
 
-export function HomeAside() {
+/** 게시일을 KST 날짜로 — 2026.09.02 */
+function postedOn(at: Date): string {
+  return new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Seoul", year: "numeric", month: "2-digit", day: "2-digit" })
+    .format(at)
+    .replaceAll("-", ".");
+}
+
+export function HomeAside({ news }: { news: HomeNewsItem[] }) {
   return (
     <aside className="aside">
       <section id="briefing" className="aside-card" aria-labelledby="briefing-title">
@@ -12,7 +19,7 @@ export function HomeAside() {
         </div>
         <p className="aside-sub">만드는 사람에게 필요한 변화만 모았습니다.</p>
         <div>
-          {HOME_NEWS.map((item) => (
+          {news.map((item) => (
             <a
               key={item.url}
               className="news-item"
@@ -21,23 +28,24 @@ export function HomeAside() {
               rel="noopener noreferrer"
             >
               <div className="news-type">
-                <span className={`mini-source ${item.tone}`}>{item.letter}</span>
+                <span className={`mini-source ${item.tone}`}>{item.vendor.charAt(0).toUpperCase()}</span>
                 {item.source}
                 <span>·</span>
-                {item.type}
+                {item.label}
               </div>
               <h3>{item.title}</h3>
               <div className="news-meta">
-                <span>{item.date} 게시</span>
+                <span>{postedOn(item.publishedAt)} 게시</span>
                 <span>원문 <Icon name="arrow-up-right" size={10} /></span>
               </div>
             </a>
           ))}
+          {news.length === 0 && <p className="news-item">공식 피드에서 소식을 모으는 중입니다.</p>}
         </div>
         <div className="brief-bottom">
-          선정 기사 예시 · 실시간 피드 아님
+          회사 공식 피드에서 자동으로 모읍니다 · 회사마다 최신 1건
           <br />
-          기사 게시일을 표시하며, 제목을 누르면 원문으로 이동합니다.
+          출처의 게시일을 표시하며, 제목을 누르면 원문으로 이동합니다.
         </div>
       </section>
 

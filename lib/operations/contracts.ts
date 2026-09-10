@@ -24,7 +24,7 @@ export const JOB_LABELS: Record<string, string> = {
   heartbeat: '스케줄러 관측', 'crawl-seed': '수집 대상 탐색', 'hn-show-seed': 'Show HN 수집', 'crawl-fetch': '프로젝트 원본 수집',
   'crawl-judge': '규칙 심사', 'crawl-agent-review': 'AI 후보 심사', 'crawl-publish': '제품 분류·발행',
   'uptime-ping': '서비스 응답 점검', 'click-rollup': '유효 방문 집계', 'ranking-refresh': '랭킹 갱신',
-  'product-evidence-refresh': '제품 근거 갱신', 'agent-evidence-refresh': '개발 AI 근거 갱신',
+  'product-evidence-refresh': '제품 근거 갱신', 'agent-evidence-refresh': '개발 AI 근거 갱신', 'news-refresh': 'AI 소식 수집',
 };
 export const ROLE_LABELS: Record<string, string> = { app: '웹·관리자 서비스', db: '데이터베이스', scheduler: '작업 일정 관리', crawler: '프로젝트 수집', reviewer: '후보 심사', publisher: '제품 발행', maintenance: '생존 확인·지표 집계', 'connect-agent': 'AI 연결·분류 실행' };
 export type AgentStatus = {

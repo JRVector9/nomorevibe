@@ -199,6 +199,9 @@ export const DEFAULT_CATEGORY_DEFINITIONS: CategoryDefinitions = {
 
 const defaultClassify = { definitions: DEFAULT_CATEGORY_DEFINITIONS };
 
+/** AI 소식. 새 글은 기본으로 곧바로 공개한다 — 관리자는 내릴 것만 고른다 */
+const defaultNews = { autoApprove: true, disabledSources: [] as string[] };
+
 const defaultAgentEvidence = {
   enabled: false,
   enforceEligibility: false,
@@ -221,6 +224,12 @@ export const crawlSettingsSchema = z.object({
     detectorVersion: z.string().regex(/^[a-zA-Z0-9.-]{1,40}$/),
     policyVersion: z.string().regex(/^[a-zA-Z0-9.-]{1,40}$/),
   }).default(defaultAgentEvidence),
+  news: z.object({
+    /** 끄면 새 글이 승인 대기로 들어간다 */
+    autoApprove: z.boolean(),
+    /** 수집하지 않을 출처 key (lib/news/sources.ts) */
+    disabledSources: z.array(z.string().regex(/^[a-z0-9-]{1,60}$/)).max(100),
+  }).default(defaultNews),
 });
 
 export type CrawlSettings = z.infer<typeof crawlSettingsSchema>;
@@ -261,6 +270,7 @@ export const DEFAULT_CRAWL_SETTINGS: CrawlSettings = {
   enabled: false, // 켜는 것은 명시적 행위여야 한다
   reviewMode: "off",
   agentEvidence: defaultAgentEvidence,
+  news: defaultNews,
   classify: defaultClassify,
   discover: {
     queries: [

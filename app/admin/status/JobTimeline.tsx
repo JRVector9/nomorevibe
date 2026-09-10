@@ -14,7 +14,7 @@ import type { OperationJob } from './OperationsCenter';
 const PIPELINE_ORDER = [
   'crawl-seed', 'hn-show-seed', 'crawl-fetch', 'agent-evidence-refresh',
   'crawl-judge', 'crawl-agent-review', 'crawl-publish',
-  'uptime-ping', 'product-evidence-refresh', 'click-rollup', 'ranking-refresh',
+  'uptime-ping', 'product-evidence-refresh', 'click-rollup', 'ranking-refresh', 'news-refresh',
 ];
 
 /** 이 작업이 무엇을 읽어 무엇을 남기는지 */
@@ -30,6 +30,7 @@ const FLOW: Record<string, { reads: string; writes: string }> = {
   'product-evidence-refresh': { reads: '공개 제품', writes: '외부 근거' },
   'click-rollup': { reads: '클릭 원천', writes: '일별 집계' },
   'ranking-refresh': { reads: '일별 집계', writes: '시즌 스냅샷' },
+  'news-refresh': { reads: '공식 피드', writes: 'AI 소식' },
 };
 
 const time = (value: string | null) =>

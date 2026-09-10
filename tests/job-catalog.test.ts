@@ -13,8 +13,16 @@ it('생존 확인은 maintenance 역할에서 1분마다 돈다', () => {
   expect(JOB_CATALOG.find(job => job.name === 'uptime-ping')).toEqual({
     name: 'uptime-ping', role: 'maintenance', intervalMs: 60_000,
   });
-  expect(new Set(jobsForRole('maintenance'))).toEqual(new Set(['uptime-ping', 'click-rollup', 'ranking-refresh']));
+  expect(new Set(jobsForRole('maintenance'))).toEqual(new Set(['uptime-ping', 'click-rollup', 'ranking-refresh', 'news-refresh']));
   expect(jobsForRole('crawler')).not.toContain('uptime-ping');
+});
+
+/** 회사 발표는 하루 몇 건이다. 이미 시간을 넘겨 쓰는 crawler에 얹지 않는다 */
+it('AI 소식 수집은 maintenance 역할에서 한 시간마다 돈다', () => {
+  expect(JOB_CATALOG.find(job => job.name === 'news-refresh')).toEqual({
+    name: 'news-refresh', role: 'maintenance', intervalMs: 60 * 60_000,
+  });
+  expect(jobsForRole('crawler')).not.toContain('news-refresh');
 });
 
 it('maintenance 워커가 생존 확인 요청을 소비하고 crawler 워커는 건드리지 않는다', async () => {

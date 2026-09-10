@@ -32,6 +32,11 @@ export const JOB_CATALOG: readonly { name: string; role: JobRole | "scheduler"; 
   { name: "click-rollup", role: "maintenance", intervalMs: 60 * 60_000 },
   // The rollup completion transaction requests ranking; there is no independent schedule.
   { name: "ranking-refresh", role: "maintenance", intervalMs: null },
+  /**
+   * AI 소식(공식 피드 18곳)은 한 시간에 한 번이면 된다 — 회사 발표는 하루 몇 건이다.
+   * crawler는 이미 시간을 넘겨 쓰고 있어 한가한 maintenance에 둔다(위 uptime-ping 설명).
+   */
+  { name: "news-refresh", role: "maintenance", intervalMs: 60 * 60_000 },
   { name: "product-evidence-refresh", role: "crawler", intervalMs: 60_000 },
   { name: "agent-evidence-refresh", role: "crawler", intervalMs: 60_000 },
 ];
