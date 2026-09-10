@@ -17,7 +17,18 @@ export const JOB_CATALOG: readonly { name: string; role: JobRole | "scheduler"; 
   { name: "crawl-judge", role: "reviewer", intervalMs: 5 * 60_000 },
   { name: "crawl-agent-review", role: "reviewer", intervalMs: 60_000 },
   { name: "crawl-publish", role: "publisher", intervalMs: 5 * 60_000 },
-  { name: "uptime-ping", role: "crawler", intervalMs: 10 * 60_000 },
+  /**
+   * 1분마다 15건 = 시간당 900건. 발행분 3,147건을 재확인 간격 6시간마다 보려면 시간당 525건이
+   * 필요한데, 10분 주기(시간당 90건)로는 6시간 안에 17%만 볼 수 있었다.
+   *
+   * crawler가 아니라 maintenance에서 돈다. 워커는 역할 안의 잡을 하나씩 차례로 돌린다
+   * (scripts/worker.ts). crawler는 1분짜리 셋(예산 25·25·20초)만으로 시간당 4,200초라 이미
+   * 한 프로세스의 3,600초를 넘는다 — 여기에 1분 주기(시간당 1,500초)를 얹으면 수집이 더 밀린다.
+   * maintenance는 1시간에 한 번 도는 집계(click-rollup, 뒤따르는 ranking-refresh)뿐이라 한가하고,
+   * 잡 한도도 600초로 느린 틱을 견딘다. 집계가 도는 동안은 기다린다 — 한 시간에 10틱을 잃어도
+   * 시간당 750건이라 6시간 재확인은 지킨다.
+   */
+  { name: "uptime-ping", role: "maintenance", intervalMs: 60_000 },
   { name: "click-rollup", role: "maintenance", intervalMs: 60 * 60_000 },
   // The rollup completion transaction requests ranking; there is no independent schedule.
   { name: "ranking-refresh", role: "maintenance", intervalMs: null },
