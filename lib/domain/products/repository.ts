@@ -2,6 +2,7 @@ import { syncRepositoryLink } from "@/lib/domain/evidence/repository-link-sync";
 import { and, eq, ilike, inArray, isNotNull, like, ne, or, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { lockProductGeneration, type ProductTransaction } from "./generation";
+import { DOWN_THRESHOLD } from "./health";
 import {
   products,
   ogImages,
@@ -60,6 +61,8 @@ export type ListOptions = {
   hasRepository?: boolean;
   /** 건너뛸 개수. 목록이 상한에서 조용히 잘리지 않으려면 뒤를 볼 수 있어야 한다 */
   offset?: number;
+  /** 연속 실패로 닿지 않는 제품을 뺀다. 공개 목록만 켠다 — 어드민은 그것을 봐야 처리한다 */
+  excludeDown?: boolean;
 };
 
 /**
@@ -112,9 +115,22 @@ const SORTS = {
 
 /** 정렬 파라미터 검증용 (쿼리스트링 → ProductSort) */
 
+/**
+ * 닿지 않는 제품을 뺀다.
+ *
+ * 6시간마다 확인하므로 DOWN_THRESHOLD(3)회 연속 실패는 하루 가까이 계속 안 열렸다는 뜻이다.
+ * 그 정도면 잠깐 흔들린 것이 아니다. 행은 그대로 두고 조건으로만 가리므로, 다시 열리면
+ * 실패 횟수가 0으로 돌아가면서 목록에도 그대로 돌아온다 — 사람이 되돌릴 일이 없다.
+ */
+const notDown = sql`not exists (
+  select 1 from product_health h
+  where h.slug = ${products.slug} and h.failures >= ${DOWN_THRESHOLD}
+)`;
+
 /** 목록과 개수가 같은 조건을 쓰도록 한 곳에서 만든다 */
-function listConditions({ statuses, category, query, builder, hasRepository }: Omit<ListOptions, "limit" | "sort" | "offset">) {
+function listConditions({ statuses, category, query, builder, hasRepository, excludeDown }: Omit<ListOptions, "limit" | "sort" | "offset">) {
   const conditions = [inArray(products.status, statuses)];
+  if (excludeDown) conditions.push(notDown);
   if (category) conditions.push(eq(products.category, category));
   if (builder) conditions.push(and(eq(products.builder, builder), builderIsReported)!);
   if (hasRepository) {
@@ -157,7 +173,7 @@ export async function countProducts(options: Omit<ListOptions, "limit" | "sort" 
 /** 발견 보드 — 검증 상태보다 실제 등재 시각을 우선해 시드 제품도 노출한다. */
 export async function listRecentlyDiscovered(limit: number): Promise<Product[]> {
   return db.query.products.findMany({
-    where: inArray(products.status, ["verified", "seeded"]),
+    where: and(inArray(products.status, ["verified", "seeded"]), notDown),
     orderBy: [sql`${listedAt} desc`, products.slug],
     limit,
   });
@@ -195,12 +211,18 @@ export async function listBuilders(statuses: ProductStatus[]): Promise<string[]>
   return rows.map((row) => row.builder).filter((name): name is string => Boolean(name));
 }
 
-/** 카테고리별 개수 — 필터 칩이 숫자를 함께 보여준다 */
-export async function categoryCounts(statuses: ProductStatus[]): Promise<Record<string, number>> {
+/**
+ * 카테고리별 개수 — 필터 칩이 숫자를 함께 보여준다.
+ *
+ * 목록과 같은 조건을 쓴다. 갈라지면 "3개"라고 적힌 칩을 눌렀는데 아무것도 안 나온다.
+ */
+export async function categoryCounts(
+  options: Omit<ListOptions, "limit" | "sort" | "offset">,
+): Promise<Record<string, number>> {
   const rows = await db
     .select({ category: products.category, count: sql<number>`count(*)::int` })
     .from(products)
-    .where(inArray(products.status, statuses))
+    .where(and(...listConditions(options)))
     .groupBy(products.category);
   return Object.fromEntries(rows.map((r) => [r.category, r.count]));
 }

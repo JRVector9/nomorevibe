@@ -6,6 +6,7 @@ import type { RankingListItem, SeasonSummary } from "@/lib/domain/ranking/view";
 
 const {
   categoryCounts,
+  countProducts,
   listBuilders,
   getAllTimeRanking,
   getCurrentSeason,
@@ -16,6 +17,7 @@ const {
   getHomePulse,
 } = vi.hoisted(() => ({
   categoryCounts: vi.fn(),
+  countProducts: vi.fn(),
   listBuilders: vi.fn(),
   getAllTimeRanking: vi.fn(),
   getCurrentSeason: vi.fn(),
@@ -26,7 +28,7 @@ const {
   getHomePulse: vi.fn(),
 }));
 
-vi.mock("@/lib/domain/products/repository", () => ({ categoryCounts, listBuilders }));
+vi.mock("@/lib/domain/products/repository", () => ({ categoryCounts, countProducts, listBuilders }));
 vi.mock("@/lib/domain/products/view", () => ({ getUnclaimedList, getVerifiedList, getPublicList }));
 vi.mock("@/lib/domain/products/home-pulse", async () => {
   const actual = await vi.importActual<typeof import("@/lib/domain/products/home-pulse")>(
@@ -106,6 +108,7 @@ beforeEach(() => {
   getSeasonRanking.mockResolvedValue({ season, items: [] });
   listBuilders.mockResolvedValue([]);
   categoryCounts.mockResolvedValue({});
+  countProducts.mockResolvedValue(0);
   getHomePulse.mockResolvedValue({
     asOf: new Date("2026-09-08T00:00:00+09:00"),
     timezone: "Asia/Seoul",
@@ -142,7 +145,7 @@ describe("미클레임 구획을 붙이는 기준", () => {
       season,
       items: Array.from({ length: limit }, (_, index) => ranked(`ranked-${index}`, index + 1)),
     });
-    categoryCounts.mockResolvedValue({ Dev: 25 });
+    countProducts.mockResolvedValue(25);
 
     const html = await render();
 
@@ -152,7 +155,7 @@ describe("미클레임 구획을 붙이는 기준", () => {
 
   it("검증 제품이 모자라면 구획을 붙인다", async () => {
     getSeasonRanking.mockResolvedValue({ season, items: [ranked("verified-one", 1)] });
-    categoryCounts.mockResolvedValue({ Dev: 3 });
+    countProducts.mockResolvedValue(3);
     getUnclaimedList.mockResolvedValue([product("seeded-one")]);
 
     const html = await render();
@@ -163,7 +166,7 @@ describe("미클레임 구획을 붙이는 기준", () => {
   });
 
   it("필터가 걸려 목록이 비어도 전역 검증 수가 충분하면 붙이지 않는다", async () => {
-    categoryCounts.mockResolvedValue({ Dev: 25 });
+    countProducts.mockResolvedValue(25);
 
     const html = await render({ category: "Finance" });
 
@@ -210,7 +213,7 @@ describe("빈 화면 문구", () => {
 
     await render({ sort: "recent" });
 
-    expect(categoryCounts).toHaveBeenCalledWith(["verified", "seeded"]);
+    expect(categoryCounts).toHaveBeenCalledWith({ statuses: ["verified", "seeded"], excludeDown: true });
   });
 
   it("미클레임 목록이 붙으면 등록부터 하라고 말하지 않는다", async () => {
@@ -249,6 +252,24 @@ describe("빈 화면 문구", () => {
 
     expect(html).toContain("아직 순위에 오른 제품이 없습니다");
     expect(html).toContain("주인을 기다리는 제품");
+  });
+});
+
+/**
+ * 추천 탭에서 카테고리 드롭다운이 "모든 카테고리" 하나만 남아 있었다.
+ * 개수를 검증분으로만 셌는데 검증 제품이 0이라 모든 카테고리가 0으로 떨어졌고,
+ * 필터가 개수 0인 것을 지웠다. 화면에는 시드 제품이 나열되는 중이었다.
+ */
+describe("카테고리 드롭다운", () => {
+  it("추천 탭에서도 고를 수 있는 카테고리가 뜬다", async () => {
+    getSeasonRanking.mockResolvedValue({ season, items: [] });
+    categoryCounts.mockResolvedValue({ Dev: 12 });
+    getUnclaimedList.mockResolvedValue([product("seeded-one")]);
+
+    const html = await render();
+
+    expect(categoryCounts).toHaveBeenCalledWith({ statuses: ["verified", "seeded"], excludeDown: true });
+    expect(html).toContain('<option value="Dev">');
   });
 });
 

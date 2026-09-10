@@ -151,7 +151,7 @@ export default async function StatusPage() {
   if (down.length > 0) {
     actions.push({
       key: "down", tone: "critical", count: down.length, title: "응답하지 않는 공개 제품",
-      detail: <>{DOWN_THRESHOLD}회 넘게 연속으로 실패했습니다. 자동으로 내리지 않습니다 — 배포가 잠깐 흔들린 것과 서비스가 끝난 것을 응답 코드만으로 가를 수 없습니다.</>,
+      detail: <>{DOWN_THRESHOLD}회 넘게 연속으로 실패해 공개 목록에서 빠져 있습니다. 지우거나 차단하지는 않습니다 — 다시 열리면 그대로 돌아옵니다. 끝난 서비스인지는 사람이 보고 정합니다.</>,
       action: { label: "제품 관리", href: "/admin/products" },
     });
   }
@@ -273,7 +273,7 @@ export default async function StatusPage() {
         {down.length > 0 && (
           <Panel
             title="응답하지 않는 제품"
-            note={`${DOWN_THRESHOLD}회 넘게 연속으로 실패한 것입니다. 자동으로 내리지 않습니다 — 배포가 잠깐 흔들린 것과 서비스가 끝난 것을 응답 코드만으로 가를 수 없습니다.`}
+            note={`${DOWN_THRESHOLD}회 넘게 연속으로 실패해 공개 목록에서 빠진 것입니다. 지우거나 차단하지는 않습니다 — 다시 열리면 그대로 돌아옵니다.`}
           >
             <ul className="flex flex-col gap-1.5 text-[13px]">
               {down.map((item) => (
