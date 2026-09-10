@@ -191,6 +191,10 @@ export function judge(
   }
   pass("스캐폴드 제목 아님", page.title ? `“${page.title}”` : "제목 없음");
 
+  const docsTitle = pageTitle ? rules.docsTitlePatterns.find((p) => matchesPattern(pageTitle, p)) : undefined;
+  if (docsTitle) return reject("not_a_product", "문서 제목 아님", `제목 “${page.title}” 이 ${docsTitle} 에 걸림`);
+  pass("문서 제목 아님", page.title ? `“${page.title}”` : "제목 없음");
+
   if (repo.isFork && rules.excludeForks) return reject("fork", "포크 아님", "포크 저장소");
   pass("포크 아님", rules.excludeForks ? "isFork=false" : "포크 제외 꺼짐");
   // 보관된 레포는 살아있는 제품이 아니다

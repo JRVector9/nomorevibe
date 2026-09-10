@@ -108,6 +108,18 @@ const judgeSchema = z.object({
    * 아니라 정확 일치로 본다 — "Create Next App Alternatives" 같은 진짜 제품을 치지 않게.
    */
   placeholderTitles: z.array(z.string().min(2).max(60)).max(100),
+  /**
+   * 제목이 스스로 문서라고 말하는 것.
+   *
+   * 주소와 생성기로는 못 잡는다 — owner.github.io/repo 아래에 문서와 웹앱이 섞여 있어
+   * 규칙이 판단을 미루는데, 그중 상당수는 제목만 봐도 문서다.
+   * 실측(2026-09-10, 보류 576건): 29건이 걸렸고 눈으로 확인한 오탐은 없었다.
+   *
+   * 스캐폴드 제목과 달리 정확 일치가 아니라 와일드카드를 쓴다. 대신 제목의 끝만 본다 —
+   * "Documentation Hub"나 "Docsy"처럼 앞이나 안에 품고 있을 뿐인 진짜 제품을 치지 않기
+   * 위해서다 (그 경계는 기존 테스트가 지키고 있다).
+   */
+  docsTitlePatterns: z.array(z.string().min(2).max(60)).max(50),
   /** 규칙으로 못 가르면 needs_review로 보류할지, 그냥 거부할지 */
   holdAmbiguous: z.boolean(),
 });
@@ -307,6 +319,15 @@ export const DEFAULT_CRAWL_SETTINGS: CrawlSettings = {
       "svelte app",
       "document",
       "untitled",
+      // 리다이렉트 껍데기. 실측 보류 576건에서 3건 (2026-09-10)
+      "redirecting",
+    ],
+    docsTitlePatterns: [
+      // 끝에 오는 것만 본다. "Documentation Hub"처럼 앞에 오면 진짜 제품일 수 있다
+      "*documentation",
+      "documentation",
+      "* docs",
+      "docs",
     ],
     docsGenerators: [
       "mkdocs",
