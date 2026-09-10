@@ -77,6 +77,10 @@ export function toListItem(p: Product): ProductListItem {
  * 검증된 제품과 우리가 대신 올린 제품을 함께 보여준다. 후자를 감추면 메이커가
  * 자기 제품이 올라와 있다는 걸 발견할 방법이 없어 시드 자체가 무의미해진다.
  * 대신 각 항목이 자기 근거를 배지로 밝히고, 확인된 것만 위에 온다.
+ *
+ * 닿지 않는 제품은 여기서 뺀다(excludeDown). 열리지 않는 주소를 목록에 두는 것은
+ * "직접 확인한 것만 보여준다"는 말과 정면으로 어긋난다. 지우는 것이 아니라 가리는 것이라
+ * 다시 열리면 그대로 돌아온다.
  */
 export type BrowseOptions = {
   sort?: ProductSort;
@@ -87,7 +91,7 @@ export type BrowseOptions = {
 };
 
 export async function getPublicList(limit: number, options: BrowseOptions = {}): Promise<ProductListItem[]> {
-  const rows = await listProducts({ statuses: ["verified", "seeded"], limit, ...options });
+  const rows = await listProducts({ statuses: ["verified", "seeded"], limit, excludeDown: true, ...options });
   return withMetrics(rows.map(toListItem));
 }
 
@@ -146,7 +150,7 @@ export async function getVerifiedList(
   limit: number,
   options: BrowseOptions = {},
 ): Promise<ProductListItem[]> {
-  const rows = await listProducts({ statuses: ["verified"], limit, ...options });
+  const rows = await listProducts({ statuses: ["verified"], limit, excludeDown: true, ...options });
   return withMetrics(rows.map(toListItem));
 }
 
@@ -160,7 +164,7 @@ export async function getUnclaimedList(
   limit: number,
   options: BrowseOptions = {},
 ): Promise<ProductListItem[]> {
-  const rows = await listProducts({ statuses: ["seeded"], sort: "recent", limit, ...options });
+  const rows = await listProducts({ statuses: ["seeded"], sort: "recent", limit, excludeDown: true, ...options });
   return withMetrics(rows.map(toListItem));
 }
 

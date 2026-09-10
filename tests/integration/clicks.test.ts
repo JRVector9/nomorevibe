@@ -687,7 +687,7 @@ describe("목록 좁히기", () => {
     await product("b", "https://b.test");
     await repo.update((await repo.findBySlug("a"))!.id, { category: "Dev" });
 
-    expect(await repo.categoryCounts(["verified", "seeded"])).toEqual({ Dev: 1, Other: 1 });
+    expect(await repo.categoryCounts({ statuses: ["verified", "seeded"] })).toEqual({ Dev: 1, Other: 1 });
   });
 });
 
@@ -731,18 +731,32 @@ describe("마켓 통계", () => {
 });
 
 describe("목록의 생존 표시", () => {
-  it("연속 실패가 쌓인 제품만 표시한다", async () => {
+  it("닿지 않는 제품은 목록에서 빠지고, 흔들리는 중인 것은 표시만 한다", async () => {
     await product("dead", "https://dead.test");
+    await product("wobbly", "https://wobbly.test");
     await product("alive", "https://alive.test");
     for (let i = 0; i < 3; i++) await recordPing("dead", 0);
+    for (let i = 0; i < 2; i++) await recordPing("wobbly", 0);
     await recordPing("alive", 200);
 
-    const list = await getRankedList(10, { sort: "recent" });
-    const byslug = new Map(list.map((p) => [p.slug, p]));
+    const byslug = new Map((await getRankedList(10, { sort: "recent" })).map((p) => [p.slug, p]));
 
-    expect(byslug.get("dead")?.health).toMatchObject({ down: true });
-    expect(byslug.get("dead")?.health?.since).toBeInstanceOf(Date);
+    // 눌러도 아무 데도 가지 않는 주소를 목록에 둘 이유가 없다
+    expect(byslug.has("dead")).toBe(false);
+    // 두 번은 배포가 잠깐 흔들린 것일 수 있다 — 내리지 않고 표시만 한다
+    expect(byslug.get("wobbly")?.health).toMatchObject({ down: false });
+    expect(byslug.get("wobbly")?.health?.since).toBeInstanceOf(Date);
     expect(byslug.get("alive")?.health).toMatchObject({ down: false, since: null });
+  });
+
+  it("다시 열리면 사람이 손대지 않아도 목록으로 돌아온다", async () => {
+    await product("back", "https://back.test");
+    for (let i = 0; i < 3; i++) await recordPing("back", 0);
+    expect((await getRankedList(10, { sort: "recent" })).map((p) => p.slug)).not.toContain("back");
+
+    await recordPing("back", 200);
+
+    expect((await getRankedList(10, { sort: "recent" })).map((p) => p.slug)).toContain("back");
   });
 
   it("확인한 적 없는 제품에는 표시가 없다", async () => {

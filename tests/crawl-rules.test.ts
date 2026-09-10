@@ -77,6 +77,16 @@ describe("judge — 거르기", () => {
     }
   });
 
+  it("문장으로 된 제목은 마지막 단어가 docs여도 치지 않는다", () => {
+    // 실측 오탐: 이 제품을 문서로 보고 내릴 뻔했다. 문서 사이트는 제목에 문장을 쓰지 않는다
+    for (const title of [
+      "BFFless — The home for your AI-generated apps, internal tools, and HTML docs",
+      "Turn your messy notes into clean searchable docs",
+    ]) {
+      expect(judge(goodRepo(), { ...livePage, title }, settings, NOW).state, title).toBe("approved");
+    }
+  });
+
   it("제목 끝이 아니라 앞이나 안에 품고 있을 뿐이면 통과시킨다", () => {
     // "Documentation Generator" 같은 진짜 제품을 치지 않으려면 끝만 봐야 한다
     for (const title of ["Documentation Hub", "Docsy", "Docs Genie — 문서를 만들어 주는 도구", "Redirecting Proxy"]) {

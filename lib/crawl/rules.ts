@@ -80,6 +80,14 @@ export function matchesPattern(name: string, pattern: string): boolean {
   return new RegExp(`^${body}$`, "i").test(normalize(name));
 }
 
+/**
+ * 문서 제목 규칙을 적용할 최대 단어 수.
+ *
+ * 실측 오탐이 13단어짜리 소개문이었고, 실제 문서 제목("Elastic Docs", "temple8 — Documentation")은
+ * 셋을 넘지 않았다. 다섯이면 둘 사이가 넉넉히 벌어진다.
+ */
+export const DOCS_TITLE_MAX_WORDS = 5;
+
 /** URL의 호스트가 차단 목록에 있는지 (서브도메인 포함) */
 export function isBlockedHost(url: string, blocked: string[]): boolean {
   let host: string;
@@ -191,9 +199,22 @@ export function judge(
   }
   pass("스캐폴드 제목 아님", page.title ? `“${page.title}”` : "제목 없음");
 
-  const docsTitle = pageTitle ? rules.docsTitlePatterns.find((p) => matchesPattern(pageTitle, p)) : undefined;
+  /**
+   * 문서 제목은 짧을 때만 본다.
+   *
+   * "* docs"는 끝만 보는데도 한 문장짜리 소개문의 마지막 단어를 집는다. 실제로
+   * "BFFless — The home for your AI-generated apps, internal tools, and HTML docs"가
+   * 걸려 내릴 뻔했다. 문서 사이트는 자기 제목을 "Elastic Docs"처럼 짧게 단다 —
+   * 문장을 제목으로 다는 것은 자기를 설명하려는 제품 쪽이다.
+   */
+  const titleWords = pageTitle ? pageTitle.split(/\s+/).filter(Boolean).length : 0;
+  const docsTitle = titleWords > 0 && titleWords <= DOCS_TITLE_MAX_WORDS
+    ? rules.docsTitlePatterns.find((p) => matchesPattern(pageTitle, p))
+    : undefined;
   if (docsTitle) return reject("not_a_product", "문서 제목 아님", `제목 “${page.title}” 이 ${docsTitle} 에 걸림`);
-  pass("문서 제목 아님", page.title ? `“${page.title}”` : "제목 없음");
+  pass("문서 제목 아님", page.title
+    ? titleWords > DOCS_TITLE_MAX_WORDS ? `“${page.title}” — ${titleWords}단어, 문장은 보지 않음` : `“${page.title}”`
+    : "제목 없음");
 
   if (repo.isFork && rules.excludeForks) return reject("fork", "포크 아님", "포크 저장소");
   pass("포크 아님", rules.excludeForks ? "isFork=false" : "포크 제외 꺼짐");

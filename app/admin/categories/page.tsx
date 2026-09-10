@@ -15,7 +15,7 @@ export default async function AdminCategoriesPage() {
   const [settings, meta, counts] = await Promise.all([
     getSettings(),
     getSettingsMeta(),
-    categoryCounts(["verified", "seeded"]),
+    categoryCounts({ statuses: ["verified", "seeded"] }),
   ]);
 
   return (

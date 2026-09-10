@@ -4,12 +4,16 @@ import { redirect } from "next/navigation";
 import { currentAdmin } from "@/lib/auth/admin";
 import { getSettings } from "@/lib/crawl/settings";
 import { recheckPublishedProducts, recheckableCount } from "@/lib/domain/products/recheck";
+import { BanHits } from "./BanHits";
 
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "발행분 재검수 — NoMoreVibe", robots: { index: false } };
 
 /** 한 번에 다시 판정할 수. 원본을 읽으므로 무한정 늘리지 않는다 (실측 평균 2KB) */
 const BATCH = 500;
+
+/** 체크박스가 실릴 폼. 행 안에 폼을 겹칠 수 없어 form 속성으로 잇는다 */
+const BAN_FORM = "recheck-ban";
 
 export default async function RecheckPage({ searchParams }: {
   searchParams: Promise<{ offset?: string }>;
@@ -41,8 +45,8 @@ export default async function RecheckPage({ searchParams }: {
       <p className="mt-2 max-w-[68ch] text-[13.5px] leading-[1.7] text-fg-2">
         발행되면 규칙이 다시 닿지 않습니다. 기준을 고쳐도 이미 올라간 것은 그대로 남습니다.
         보관한 원본으로 <b className="font-semibold">지금 기준을 다시 태워</b> 거부로 갈리는 것을 짚습니다.
-        여기서 내리지는 않습니다 — 잠깐의 응답 실패나 기준 실험이 공개 목록을 흔들면 안 되므로,
-        내릴지는 제품 화면에서 사람이 정합니다.
+        저절로 내려가지는 않습니다 — 기준을 실험하다 공개 목록이 흔들리면 안 되므로,
+        무엇을 내릴지는 아래에서 사람이 골라 누릅니다.
       </p>
 
       <div className="mt-5 rounded-[12px] border border-line bg-bg-card p-4">
@@ -56,12 +60,17 @@ export default async function RecheckPage({ searchParams }: {
         </p>
       </div>
 
+      {result.hits.length > 0 && <BanHits formId={BAN_FORM} total={result.hits.length} />}
+
       {result.hits.length > 0 && (
         <ul className="mt-5 flex flex-col gap-3">
           {result.hits.map((hit) => (
             <li key={hit.slug} className="rounded-xl border border-line bg-bg-card p-4">
               <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-                <span className="text-[14.5px] font-bold">{hit.name}</span>
+                <label className="flex items-center gap-2 text-[14.5px] font-bold">
+                  <input type="checkbox" form={BAN_FORM} name="slug" value={hit.slug} className="size-4 accent-[var(--down)]" />
+                  {hit.name}
+                </label>
                 <a href={`https://github.com/${hit.repo}`} target="_blank" rel="noreferrer noopener"
                   className="font-mono text-[13px] text-fg-3 hover:text-accent">{hit.repo}</a>
                 <Link href={`/admin/products/${hit.slug}`}

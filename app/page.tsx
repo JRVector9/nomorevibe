@@ -7,7 +7,7 @@ import { HomePulse } from "@/components/home/HomePulse";
 import { Icon } from "@/components/home/icons";
 import { MethodologyDialog } from "@/components/home/MethodologyDialog";
 import { ProjectGrid } from "@/components/home/ProjectGrid";
-import { categoryCounts, listBuilders } from "@/lib/domain/products/repository";
+import { categoryCounts, countProducts, listBuilders } from "@/lib/domain/products/repository";
 import { CATEGORIES } from "@/lib/domain/products/schema";
 import {
   getPublicList,
@@ -205,9 +205,19 @@ export default async function HomePage({ searchParams }: Props) {
           })
         : getVerifiedList(HOME_LIST_LIMIT, { sort: "recent", category, query, builder });
 
-    const [loadedCounts, loadedList] = await Promise.all([
-      categoryCounts(publicCatalogue ? ["verified", "seeded"] : ["verified"]),
+    /**
+     * 카테고리 개수는 어느 탭이든 화면에 실제로 오를 수 있는 것을 센다.
+     *
+     * 순위 탭에서 검증된 것만 세던 때는 검증 제품이 0이라 개수가 전부 0이 됐고, 필터가
+     * 개수 0인 카테고리를 지우므로 드롭다운에 "모든 카테고리"만 남았다. 순위 탭도 그 아래
+     * 미클레임 구획으로 시드 제품을 보여주므로, 고를 수 있는 것은 처음부터 둘 다였다.
+     */
+    const [loadedCounts, loadedList, verifiedTotal] = await Promise.all([
+      categoryCounts({ statuses: ["verified", "seeded"], excludeDown: true }),
       listPromise,
+      // 미클레임 구획을 붙일지는 이 탭이 긷는 우물의 크기로 정한다 — 위 개수와 다른 질문이다.
+      // 공개 목록 탭은 시드까지 긷으므로 위 합이 그대로 우물이고, 순위 탭은 검증분만 긷는다
+      publicCatalogue ? null : countProducts({ statuses: ["verified"], excludeDown: true }),
     ]);
     counts = loadedCounts;
     list = loadedList;
@@ -220,7 +230,7 @@ export default async function HomePage({ searchParams }: Props) {
      * "검증된 것만 겨룬다"는 원칙은 그대로다. 검증된 제품이 차오르면 이 구획은 저절로 빠진다.
      */
     const minimumProducts = (active?.policy ?? DEFAULT_RANKING_POLICY).eligibility.minimumProducts;
-    if (needsUnclaimedFill(total, minimumProducts)) {
+    if (needsUnclaimedFill(verifiedTotal ?? total, minimumProducts)) {
       unclaimed = await getUnclaimedList(HOME_LIST_LIMIT - list.length, { category, query, builder });
       const seen = new Set(list.map((item) => item.slug));
       unclaimed = unclaimed.filter((item) => !seen.has(item.slug));

@@ -227,6 +227,40 @@ export async function setProductBan(_prev: ReviewState, form: FormData): Promise
 }
 
 /**
+ * 재검수에서 걸린 것을 한 번에 내린다.
+ *
+ * 걸린 것을 제품 목록에서 다시 찾아 하나씩 누르게 하면 30페이지를 넘겨야 한다. 실제로
+ * 그 옮겨 적기에서 이름을 잘못 적은 적이 있어, 화면이 짚은 것을 화면에서 바로 내린다.
+ *
+ * 차단이므로 행은 남는다 — 같은 URL의 재수집·재등록까지 함께 막히고, 되돌릴 수 있다.
+ */
+export type BulkBanState = { error?: string; ok?: number; failures?: string[] } | null;
+
+export async function banProducts(_prev: BulkBanState, form: FormData): Promise<BulkBanState> {
+  const admin = await currentAdmin();
+  if (!admin) return { error: "권한이 없습니다. 다시 로그인해주세요." };
+
+  const slugs = [...new Set(form.getAll("slug").map(String).filter(Boolean))];
+  if (slugs.length === 0) return { error: "선택한 제품이 없습니다" };
+  if (slugs.length > MAX_BULK_DECISIONS) {
+    return { error: `한 번에 ${MAX_BULK_DECISIONS}건까지 내립니다. 나눠서 눌러주세요.` };
+  }
+
+  let ok = 0;
+  const failures: string[] = [];
+  for (const slug of slugs) {
+    const result = await banProduct(slug);
+    if (result.ok) ok += 1;
+    else failures.push(slug);
+  }
+
+  logger.info("admin.product_ban_bulk", { login: admin.login, ok, failed: failures.length });
+  revalidatePath("/admin/products");
+  revalidatePath("/admin/products/recheck");
+  return { ok, failures };
+}
+
+/**
  * 클레임 초대를 보냈다고 표시한다.
  *
  * 보내는 것은 운영자가 GitHub에서 직접 한다(미리 채운 새 이슈 링크). 여기서는 두 번 보내지
