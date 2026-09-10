@@ -46,6 +46,23 @@ export async function recheckPublishedProducts(
   settings: CrawlSettings,
   { limit = 500, offset = 0 }: { limit?: number; offset?: number } = {},
 ): Promise<RecheckResult> {
+  /**
+   * 푸시가 끊긴 것은 내릴 근거가 아니다.
+   *
+   * 이 규칙은 수집에서 죽은 레포를 안 들이려고 쓰는 것이지, 올라간 제품이 살아 있는지를
+   * 재는 것이 아니다. 실측(2026-09-10): 이 규칙에 걸린 31건의 주소를 전부 열어봤더니
+   * 31건 모두 HTTP 200이었다 — 다 만들어 놓고 손을 뗀 작은 도구는 커밋이 없는 게 정상이다.
+   * 게다가 시간이 가면 저절로 걸려서, 놔두면 재검수 목록이 그것으로 덮인다.
+   *
+   * 그렇다고 판정을 통째로 버리면 안 된다. 푸시 나이에서 멈추면 그 뒤 규칙("설치 유도
+   * 아님" 등)을 아직 안 태운 것이라, 210일 전에 푸시가 끊긴 설치 안내 페이지가 조용히
+   * 빠져나간다. 규칙을 꺼서 다시 태우고 나머지를 끝까지 본다.
+   */
+  const withoutPushAge: CrawlSettings = {
+    ...settings,
+    judge: { ...settings.judge, maxPushAgeDays: Number.MAX_SAFE_INTEGER },
+  };
+
   const rows = await db
     .select({
       slug: products.slug, name: products.name, url: products.url,
@@ -62,26 +79,15 @@ export async function recheckPublishedProducts(
   const hits: RecheckHit[] = [];
   let withoutText = 0;
   for (const row of rows) {
+    const repo = factsFromRepoMeta(row.repo, row.document.repoMeta);
     const page = pageFactsFromDocument(row.document);
     if (!page.textSample) withoutText += 1;
-    const verdict = judge(
-      factsFromRepoMeta(row.repo, row.document.repoMeta),
-      page,
-      settings,
-    );
+
+    let verdict = judge(repo, page, settings);
+    // 푸시 나이에서 멈췄으면 그 뒤 규칙을 아직 안 태운 것이다 — 끄고 다시 태운다
+    if (verdict.trace.at(-1)?.rule === PUSH_AGE_RULE) verdict = judge(repo, page, withoutPushAge);
     // 보류는 "규칙이 못 가른 것"이라 이미 올라간 제품을 내릴 근거가 못 된다. 거부만 짚는다.
     if (verdict.state !== "rejected") continue;
-    /**
-     * 푸시가 끊긴 것은 내릴 근거가 아니다.
-     *
-     * 이 규칙은 수집에서 죽은 레포를 안 들이려고 쓰는 것이지, 올라간 제품이 살아 있는지를
-     * 재는 것이 아니다. 실측(2026-09-10): 이 규칙에 걸린 31건의 주소를 전부 열어봤더니
-     * 31건 모두 HTTP 200이었다 — 다 만들어 놓고 손을 뗀 작은 도구는 커밋이 없는 게 정상이다.
-     *
-     * 게다가 이 규칙은 시간이 가면 저절로 걸린다. 걸러내지 않으면 재검수 목록이 날마다
-     * 불어나 실제로 내려야 할 것을 덮는다. 살아 있는지는 생존 확인이 따로 재고 있다.
-     */
-    if (verdict.trace.at(-1)?.rule === PUSH_AGE_RULE) continue;
     hits.push({
       slug: row.slug, name: row.name, url: row.url, repo: row.repo,
       reason: verdict.reason, stopped: verdict.trace.at(-1) ?? null,

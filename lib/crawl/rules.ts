@@ -319,18 +319,31 @@ export function judge(
    * 통과한 것이 아니라서, 뒤의 규칙이 계속 가른다.
    */
   const sample = page.textSample?.toLowerCase() ?? "";
-  const landing = sample ? rules.landingPhrases.find((p) => sample.includes(p.toLowerCase())) : undefined;
+  /**
+   * 그 페이지에서 뭔가 할 수 있으면 소개 페이지가 아니다.
+   *
+   * 설치 명령이 있다고 다 소개 페이지는 아니다 — 로그인·가격·대시보드가 있으면 그 페이지가
+   * 곧 제품이고 설치 문구는 개발자용 곁다리다. 이 확인이 없을 때 실측 오탐이 27%였다.
+   */
+  const usable = sample ? rules.usableSignals.find((p) => sample.includes(p.toLowerCase())) : undefined;
+  const landing = sample && !usable
+    ? rules.landingPhrases.find((p) => sample.includes(p.toLowerCase()))
+    : undefined;
   if (landing) {
     return reject("not_a_product", "설치 유도 아님", `본문에 “${landing}” — 실물은 이 페이지가 아니다`);
   }
   // 목차 낱말은 하나만으로는 아무것도 아니다. 여럿이 함께 있어야 목차다
-  const navs = sample ? [...new Set(rules.docsNavPhrases.filter((p) => sample.includes(p.toLowerCase())))] : [];
+  const navs = sample && !usable
+    ? [...new Set(rules.docsNavPhrases.filter((p) => sample.includes(p.toLowerCase())))]
+    : [];
   if (navs.length >= rules.docsNavThreshold) {
     return reject("not_a_product", "설치 유도 아님", `본문이 문서 목차 — ${navs.slice(0, 4).join(", ")}`);
   }
-  pass("설치 유도 아님", sample
-    ? `본문 ${sample.length}자 · 설치 문구 0개 · 목차 낱말 ${navs.length}개 < ${rules.docsNavThreshold}`
-    : "본문 없음 (신호 없음)");
+  pass("설치 유도 아님", !sample
+    ? "본문 없음 (신호 없음)"
+    : usable
+      ? `본문에 “${usable}” — 이 페이지에서 쓸 수 있다`
+      : `본문 ${sample.length}자 · 설치 문구 0개 · 목차 낱말 ${navs.length}개 < ${rules.docsNavThreshold}`);
 
   // 푸시 시각을 모르면 살아있는지 확신할 수 없다
   if (!repo.pushedAt && rules.holdAmbiguous) {
