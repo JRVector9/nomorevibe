@@ -6,6 +6,7 @@ import { generateEditToken, generateVerifyToken, hashToken } from "@/lib/tokens"
 import { logger } from "@/lib/observability/logger";
 import * as crawl from "./repository";
 import { classifyCategory, type ClassifyInput } from "./classify";
+import { productName } from "./product-name";
 import { getSettings } from "./settings";
 import { judgeRevision } from "./rules";
 import { guardPublication, publicationSourceChanged, PublicationStateChangedError } from "./publication-guard";
@@ -219,7 +220,6 @@ export async function prepareCandidateClassification(
 function draftFrom(repo: string, document: CrawlDocument) {
   const page = (document.pageMeta ?? {}) as { title?: unknown; description?: unknown; ogImage?: unknown };
   const meta = document.repoMeta;
-  const repoName = repo.split("/")[1] ?? repo;
   const repoDescription = typeof meta.description === "string" ? meta.description.trim() : "";
   const pageTitle = typeof page.title === "string" ? page.title.trim() : "";
   const pageDescription = typeof page.description === "string" ? page.description.trim() : "";
@@ -234,7 +234,7 @@ function draftFrom(repo: string, document: CrawlDocument) {
   return {
     /** 소개를 어디서도 못 찾았다는 표시 — 발행할지 말지를 이걸로 가른다 */
     hasDescription: Boolean(pageDescription || repoDescription),
-    name: productName(pageTitle || repoName).slice(0, LIMITS.name),
+    name: productName(pageTitle, repo, document.productUrl).slice(0, LIMITS.name),
     tagline: tagline.slice(0, LIMITS.tagline),
     description: (repoDescription || pageDescription || tagline).slice(0, LIMITS.description),
     category: classify(meta),
@@ -245,27 +245,6 @@ function draftFrom(repo: string, document: CrawlDocument) {
     topics: Array.isArray(meta.topics) ? meta.topics.map((t) => String(t)) : [],
     ogImage: typeof page.ogImage === "string" ? page.ogImage : null,
   };
-}
-
-/**
- * 제목에서 제품 이름만 남긴다.
- *
- * og:title은 "이름 | 마케팅 한 줄" 형태가 흔하다. 실제 수집에서
- * "RevealUI | Build it once. Every product after starts ahead."가 통째로 이름이 됐다.
- * 구분자 앞이 이름이고 뒤는 소개다 — 소개는 이미 따로 있다.
- *
- * 앞뒤 공백이 있는 구분자만 자른다. 그러지 않으면 e-commerce 같은 이름이 잘린다.
- *
- * 하이픈-마이너스도 구분자다. 실데이터 451건에서 60자를 넘긴 이름 21건 중 11건이
- * "DEEPSEEKAGENTS - AI-Powered Agentic Swarms…"처럼 그것으로 갈라져 있었다. 앞뒤 공백
- * 조건이 있어 e-commerce·Well-Architected·Ready-to-use는 그대로 남는다(확인함).
- *
- * 콜론("Vibe Coding Starter Guide: from Design to…")은 넣지 않았다. 앞에 공백이 없어
- * 같은 조건으로 거를 수 없고, 이름 안에 콜론을 쓰는 제품과 가릴 방법이 없다.
- */
-function productName(title: string): string {
-  const [head] = title.split(/\s+[|·–—-]\s+/);
-  return head.trim() || title.trim();
 }
 
 /**
