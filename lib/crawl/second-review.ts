@@ -61,8 +61,11 @@ const ENQUEUE_LIMIT = 50;
 
 /**
  * 2차에 올린다. 같은 후보·같은 입력은 한 번만(유일 색인).
- *  - ai_decided: 규칙이 못 가른 보류 후보를 AI 1차가 승인·거부로 가른 것
+ *  - ai_decided: 규칙이 못 가른 보류 후보를 AI 1차가 승인·거부로 가른 것 — 확신을 낸 1차만.
+ *    확신이 없던 옛 1차(프롬프트 2026-09-11.2 이전)는 일치 기준에 닿을 수 없어 전부 "사람 확인"이 된다.
+ *    배포 직후 프로드에서 그렇게 쌓였다 — 새 프롬프트가 다시 보면 그 판단으로 올린다.
  *  - risk / sample: 규칙만 통과해 최근 공개된 것 중 위험 신호가 있거나 표본에 든 것
+ * 같은 후보에 새 1차 판단이 오면 앞의 것은 superseded 로 닫는다 — 한 후보가 두 칩에 겹쳐 세어지지 않게.
  */
 export async function enqueueSecondReviews(settings: CrawlSettings, now = new Date()): Promise<number> {
   const decided = await db.selectDistinctOn([crawlReviewAttempts.candidateId], {
@@ -70,7 +73,8 @@ export async function enqueueSecondReviews(settings: CrawlSettings, now = new Da
     decision: sql<string>`${crawlReviewAttempts.outcome}->>'decision'`, confidence: sql<number | null>`(${crawlReviewAttempts.outcome}->>'confidence')::float`,
   }).from(crawlReviewAttempts).innerJoin(crawlCandidates, eq(crawlCandidates.id, crawlReviewAttempts.candidateId))
     .where(and(eq(crawlCandidates.state, "needs_review"), eq(crawlCandidates.decidedBy, "auto"),
-      eq(crawlReviewAttempts.kind, "automatic"), eq(crawlReviewAttempts.state, "succeeded"), eq(crawlReviewAttempts.provider, "claude-cli")))
+      eq(crawlReviewAttempts.kind, "automatic"), eq(crawlReviewAttempts.state, "succeeded"), eq(crawlReviewAttempts.provider, "claude-cli"),
+      sql`${crawlReviewAttempts.outcome}->>'confidence' is not null`))
     .orderBy(crawlReviewAttempts.candidateId, desc(crawlReviewAttempts.id)).limit(ENQUEUE_LIMIT * 4);
   const rows: (typeof secondReviews.$inferInsert)[] = decided.filter((row) => row.decision === "approve" || row.decision === "reject")
     .slice(0, ENQUEUE_LIMIT)
@@ -95,7 +99,14 @@ export async function enqueueSecondReviews(settings: CrawlSettings, now = new Da
     if (rows.length >= ENQUEUE_LIMIT * 2) break;
   }
   if (!rows.length) return 0;
-  const inserted = await db.insert(secondReviews).values(rows).onConflictDoNothing().returning({ id: secondReviews.id });
+  const inserted = await db.insert(secondReviews).values(rows).onConflictDoNothing()
+    .returning({ id: secondReviews.id, candidateId: secondReviews.candidateId, trigger: secondReviews.trigger });
+  const renewed = inserted.filter((row) => row.trigger === "ai_decided");
+  if (renewed.length) {
+    await db.update(secondReviews).set({ status: "resolved", resolution: "superseded", resolvedAt: now })
+      .where(and(eq(secondReviews.trigger, "ai_decided"), inArray(secondReviews.candidateId, renewed.map((row) => row.candidateId)),
+        notInArray(secondReviews.id, renewed.map((row) => row.id)), inArray(secondReviews.status, ["pending", "agreed", "needs_human", "failed"])));
+  }
   return inserted.length;
 }
 
@@ -104,6 +115,15 @@ export async function enqueueSecondReviews(settings: CrawlSettings, now = new Da
  * 지우지 않는다. 몇 건을 누가 어떻게 끝냈는지가 2차 심사의 정확도다.
  */
 export async function closeSettledSecondReviews(now = new Date()): Promise<number> {
+  // 확신 없는 옛 1차로 올린 것 — 일치할 수 없으니 닫는다. 2차 의견은 남아 심사 상세에 그대로 보인다
+  const legacy = await db.update(secondReviews).set({ status: "resolved", resolution: "no_first_confidence", resolvedAt: now })
+    .where(and(eq(secondReviews.trigger, "ai_decided"), isNull(secondReviews.firstConfidence),
+      inArray(secondReviews.status, ["pending", "agreed", "needs_human", "failed"])))
+    .returning({ id: secondReviews.id });
+  return legacy.length + await closeDecidedSecondReviews(now);
+}
+
+async function closeDecidedSecondReviews(now: Date): Promise<number> {
   // 공개분의 일치는 끝난 기록이다(그대로 둔다) — 훑는 대상에 넣으면 날마다 쌓여 한도를 잡아먹는다
   const open = await db.select({ id: secondReviews.id, candidateId: secondReviews.candidateId, published: secondReviews.publishedSlug })
     .from(secondReviews).where(or(inArray(secondReviews.status, ["pending", "needs_human"]),
