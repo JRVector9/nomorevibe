@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { and, desc, eq, gte, inArray, isNotNull, isNull, notInArray, or, sql } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, isNotNull, isNull, lt, notInArray, or, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { crawlCandidates, crawlDocuments, crawlReviewAttempts, secondReviews, type SecondReviewStatus } from "@/lib/db/schema";
 import { pageFactsFromDocument } from "./rules";
@@ -134,10 +134,15 @@ export async function recordSecondReview(id: number, result:
     .where(eq(secondReviews.id, id));
 }
 
-/** 실패한 것을 다시 대기로 — 한 시간 뒤. CLI 가 잠깐 막혔던 것이 영영 남지 않게 */
+/**
+ * 실패한 것을 다시 대기로 — 한 시간 뒤. CLI 가 잠깐 막혔던 것이 영영 남지 않게.
+ *
+ * 비교는 lt() 로 한다. sql`` 안에 Date 를 그대로 넣으면 "Fri Sep 11 2026 …" 문자열로 넘어가
+ * 프로드에서 매 틱 실패했다(2026-09-11) — 컬럼 타입을 거쳐야 시각으로 바뀐다.
+ */
 export async function retryFailedSecondReviews(now = new Date()): Promise<void> {
   await db.update(secondReviews).set({ status: "pending" })
-    .where(and(eq(secondReviews.status, "failed"), sql`${secondReviews.reviewedAt} < ${new Date(now.getTime() - 3600_000)}`));
+    .where(and(eq(secondReviews.status, "failed"), lt(secondReviews.reviewedAt, new Date(now.getTime() - 3600_000))));
 }
 
 export type SecondReviewCounts = { agreedReject: number; agreedApprove: number; needsHuman: number; published: number; pending: number };

@@ -6,7 +6,7 @@ import * as crawl from '@/lib/crawl/repository';
 import { getSettings, saveSettings } from '@/lib/crawl/settings';
 import { loadReviewInput } from '@/lib/crawl/agent-review-repository';
 import { closeSettledSecondReviews, enqueueSecondReviews, pendingSecondReviews, publishedInputHash, publishedSecondReviews, recordSecondReview,
-  resolveSecondReviews, secondReviewSummary, secondReviewsFor } from '@/lib/crawl/second-review';
+  resolveSecondReviews, retryFailedSecondReviews, secondReviewSummary, secondReviewsFor } from '@/lib/crawl/second-review';
 import { ensureSchema } from './setup';
 
 beforeAll(() => ensureSchema());
@@ -168,4 +168,22 @@ it('실패한 호출은 기록만 남기고 판단을 지어내지 않는다', a
   const [row] = await db.select().from(secondReviews);
   expect(row).toMatchObject({ status: 'failed', errorCode: 'rate_limited', secondDecision: null });
   expect((await secondReviewSummary()).counts).toEqual({ agreedReject: 0, agreedApprove: 0, needsHuman: 0, published: 0, pending: 0 });
+});
+
+it('실패한 것은 한 시간이 지나야 다시 대기로 돌린다', async () => {
+  await held('acme/old-fail');
+  await held('acme/new-fail');
+  await firstReview('acme/old-fail', 'reject');
+  await firstReview('acme/new-fail', 'reject');
+  await enqueueSecondReviews(await getSettings());
+  const byRepo = new Map((await pendingSecondReviews(10)).map((row) => [row.repo, row.id]));
+  const now = new Date();
+  await recordSecondReview(byRepo.get('acme/old-fail')!, { ok: false, error: 'timeout', model: 'opus' }, new Date(now.getTime() - 2 * 3600_000));
+  await recordSecondReview(byRepo.get('acme/new-fail')!, { ok: false, error: 'timeout', model: 'opus' }, new Date(now.getTime() - 10 * 60_000));
+
+  // 2026-09-11 프로드: 이 쿼리가 Date 를 문자열로 넘겨 매 틱 실패했다
+  await retryFailedSecondReviews(now);
+
+  const rows = await db.select().from(secondReviews).orderBy(secondReviews.repo);
+  expect(rows.map((row) => [row.repo, row.status])).toEqual([['acme/new-fail', 'failed'], ['acme/old-fail', 'pending']]);
 });
