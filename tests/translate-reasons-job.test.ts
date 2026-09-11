@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { translateReasons } from "@/lib/crawl/jobs/translate-reasons";
+import { packBatch, translateReasons } from "@/lib/crawl/jobs/translate-reasons";
 
 const mocks = vi.hoisted(() => ({ pending: vi.fn(), record: vi.fn(), translate: vi.fn() }));
 vi.mock("@/lib/crawl/translations", () => ({ pendingTranslations: mocks.pending, recordTranslations: mocks.record }));
@@ -29,7 +29,7 @@ it("처음 보는 글을 묶어 옮기고, 남은 것이 없으면 끝낸다", a
   mocks.translate.mockResolvedValue({ ok: true, translations: ["가", "나", null] });
 
   expect(await translateReasons(context())).toEqual({ done: true });
-  expect(mocks.pending).toHaveBeenCalledWith(3);
+  expect(mocks.pending).toHaveBeenCalledWith(8);
   expect(mocks.translate.mock.calls[0][0]).toEqual(["English reason a", "English reason b", "English reason c"]);
   // 한 항목이 비면 그것만 실패로 — 나머지는 남긴다
   expect(mocks.record).toHaveBeenCalledWith([
@@ -59,4 +59,12 @@ it("시간이 모자라면 다음 틱으로 넘긴다", async () => {
   mocks.translate.mockResolvedValue({ ok: true, translations: ["가"] });
   expect(await translateReasons(ctx)).toEqual({ done: false });
   expect(mocks.translate).toHaveBeenCalledTimes(1);
+});
+
+it("글자 수로 묶는다 — 최대 4건·1,600자, 순서를 지키고, 긴 글 하나는 혼자 간다", () => {
+  const text = (chars: number, id: string) => ({ id, body: "x".repeat(chars) });
+  expect(packBatch([text(400, "a"), text(400, "b"), text(400, "c"), text(400, "d"), text(10, "e")]).map((i) => i.id)).toEqual(["a", "b", "c", "d"]);
+  expect(packBatch([text(700, "a"), text(700, "b"), text(700, "c")]).map((i) => i.id)).toEqual(["a", "b"]);
+  expect(packBatch([text(2_000, "long"), text(10, "b")]).map((i) => i.id)).toEqual(["long"]);
+  expect(packBatch([])).toEqual([]);
 });
