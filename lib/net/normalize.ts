@@ -102,11 +102,20 @@ export function extractOgImage(html: string, baseUrl: string): string | null {
  *
  * 숫자 참조까지 봐야 한다. 실제 수집에서 `DRYL &#x2014; the AI-native…`가 그대로 들어와
  * slug가 `dryl-x2014-…`가 됐다. 이름 있는 참조만 알던 때 놓친 것이다.
+ *
+ * 이름 있는 참조도 문장부호 몇 개는 흔하다. 2026-09-11 실측: 공개된 이름 8개가
+ * `WrzDJ &mdash; Real-Time Song Requests`, `MITRE ATT&CK&reg;`처럼 남아 있었다.
  */
-function decodeEntities(text: string): string {
+const NAMED_ENTITIES: Record<string, string> = {
+  mdash: "—", ndash: "–", hellip: "…", middot: "·", bull: "•", reg: "®", copy: "©", trade: "™",
+  lsquo: "‘", rsquo: "’", ldquo: "“", rdquo: "”", laquo: "«", raquo: "»",
+};
+
+export function decodeEntities(text: string): string {
   return text
     .replace(/&#x([0-9a-f]{1,6});/gi, (whole, hex) => fromCodePoint(parseInt(hex, 16), whole))
     .replace(/&#(\d{1,7});/g, (whole, dec) => fromCodePoint(Number(dec), whole))
+    .replace(/&([a-z]+);/gi, (whole, name: string) => NAMED_ENTITIES[name.toLowerCase()] ?? whole)
     .replace(/&lt;/gi, "<")
     .replace(/&gt;/gi, ">")
     .replace(/&quot;/gi, '"')

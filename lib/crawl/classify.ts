@@ -64,7 +64,7 @@ export type ClassifierModel = {
   timeoutMs: number;
 };
 
-const MODELS: readonly ClassifierModel[] = [
+export const MODELS: readonly ClassifierModel[] = [
   // Fast path. Spark is currently available through a ChatGPT/Codex access token.
   { model: "gpt-5.3-codex-spark", effort: "xhigh", timeoutMs: 8_000 },
   // Stable API-key path when Spark is unavailable, queued, or rate limited.

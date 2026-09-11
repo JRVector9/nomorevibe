@@ -206,6 +206,16 @@ describe("extractPageMeta — 수집한 제품의 이름·소개 재료", () => 
     expect(extractPageMeta(`<title>It&#39;s fine</title>`, "https://a.test").title).toBe("It's fine");
   });
 
+  it("흔한 문장부호 이름 참조도 되돌린다", () => {
+    // 프로드 실측: "WrzDJ &mdash; Real-Time Song Requests", "MITRE ATT&CK&reg;"가 이름에 남았다
+    const meta = (title: string) => extractPageMeta(`<meta property="og:title" content="${title}">`, "https://a.test").title;
+    expect(meta("WrzDJ &mdash; Real-Time Song Requests")).toBe("WrzDJ — Real-Time Song Requests");
+    expect(meta("MITRE ATT&amp;CK&reg;")).toBe("MITRE ATT&CK®");
+    expect(meta("Redirecting&hellip;")).toBe("Redirecting…");
+    // 모르는 이름은 그대로 둔다
+    expect(meta("A &zwsp; B")).toBe("A &zwsp; B");
+  });
+
   it("범위를 벗어난 참조는 원문을 지킨다 — 하나 깨졌다고 제목을 잃지 않는다", () => {
     expect(extractPageMeta(`<title>X &#x999999; Y</title>`, "https://a.test").title).toBe("X &#x999999; Y");
   });
