@@ -2,17 +2,15 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { HomePulse } from "@/components/home/HomePulse";
+import { PulseStrip } from "@/components/home/PulseStrip";
 import { clickChangePercent } from "@/lib/domain/ranking/math";
 import {
-  bucketDailyCounts,
+  BORN_CHANGE_MIN,
   completedWindows,
   emptyHomePulse,
   formatAsOfKst,
-  INTEREST_CHANGE_MIN,
-  interestWindowReady,
   kstMidnightUtc,
-  LAUNCH_CHANGE_MIN,
-  TOOL_PERCENT_MIN,
+  type HomePulse as Pulse,
 } from "@/lib/domain/products/home-pulse";
 import { CATEGORY_LABELS } from "@/lib/domain/products/labels";
 
@@ -25,7 +23,6 @@ describe("완료된 KST 집계 창", () => {
     expect(asOf.toISOString()).toBe("2026-09-07T15:00:00.000Z");
     expect(windows.weekStart.toISOString()).toBe("2026-08-31T15:00:00.000Z");
     expect(windows.prevStart.toISOString()).toBe("2026-08-24T15:00:00.000Z");
-    expect(windows.monthStart.toISOString()).toBe("2026-08-08T15:00:00.000Z");
     expect(formatAsOfKst(asOf)).toBe("09.08 00:00 KST 기준");
   });
 
@@ -38,92 +35,101 @@ describe("완료된 KST 집계 창", () => {
 });
 
 describe("표본 임계값", () => {
-  it("출시 증감률은 직전 20개 미만이면 숨긴다", () => {
-    expect(LAUNCH_CHANGE_MIN).toBe(20);
-    expect(clickChangePercent(74, 62, LAUNCH_CHANGE_MIN)).toBe(19.4);
-    expect(clickChangePercent(19, 19, LAUNCH_CHANGE_MIN)).toBeNull();
-    expect(clickChangePercent(0, 0, LAUNCH_CHANGE_MIN)).toBeNull();
-  });
-
-  it("관심 증감률은 직전 제품별 고유 방문 100건 미만이면 숨긴다", () => {
-    expect(INTEREST_CHANGE_MIN).toBe(100);
-    expect(clickChangePercent(160, 125, INTEREST_CHANGE_MIN)).toBe(28);
-    expect(clickChangePercent(99, 99, INTEREST_CHANGE_MIN)).toBeNull();
-  });
-
-  it("두 비교 기간을 모두 수집한 경우에만 관심 증감률을 준비한다", () => {
-    const previousStart = new Date("2026-08-24T15:00:00.000Z");
-    expect(interestWindowReady(new Date("2026-08-24T14:59:59.999Z"), previousStart)).toBe(true);
-    expect(interestWindowReady(new Date("2026-08-24T15:00:00.000Z"), previousStart)).toBe(true);
-    expect(interestWindowReady(new Date("2026-08-24T15:00:00.001Z"), previousStart)).toBe(false);
-    expect(interestWindowReady(null, previousStart)).toBe(false);
-  });
-
-  it("도구 비율은 응답 20개부터 보여 준다", () => {
-    expect(TOOL_PERCENT_MIN).toBe(20);
-  });
-});
-
-describe("일별 출시 막대", () => {
-  it("끝난 7일을 빈 날 0으로 채운다", () => {
-    const weekStart = new Date("2026-08-31T15:00:00.000Z");
-    const asOf = new Date("2026-09-07T15:00:00.000Z");
-    const days = bucketDailyCounts(
-      [new Date("2026-08-31T16:00:00.000Z"), new Date("2026-09-06T16:00:00.000Z")],
-      weekStart,
-    );
-
-    expect(days).toHaveLength(7);
-    expect(days.map((day) => day.count)).toEqual([1, 0, 0, 0, 0, 0, 1]);
-    expect(days.map((day) => day.weekday)).toEqual(["화", "수", "목", "금", "토", "일", "월"]);
-    expect(asOf.toISOString()).toBe("2026-09-07T15:00:00.000Z");
+  it("태어난 프로젝트 증감률은 직전 20개 미만이면 숨긴다", () => {
+    expect(BORN_CHANGE_MIN).toBe(20);
+    expect(clickChangePercent(74, 62, BORN_CHANGE_MIN)).toBe(19.4);
+    expect(clickChangePercent(19, 19, BORN_CHANGE_MIN)).toBeNull();
+    expect(clickChangePercent(0, 0, BORN_CHANGE_MIN)).toBeNull();
   });
 });
 
 describe("초기 상태", () => {
   it("확인된 0과 계산 불가 비율을 구별한다", () => {
     const pulse = emptyHomePulse(new Date("2026-09-08T10:00:00+09:00"));
-    expect(pulse.launches.current).toBe(0);
-    expect(pulse.launches.previous).toBe(0);
-    expect(pulse.launches.change).toBeNull();
-    expect(pulse.launches.days).toHaveLength(7);
-    expect(pulse.tools.reported).toBe(0);
-    expect(pulse.tools.coverage).toBeNull();
-    expect(pulse.interestReady).toBe(false);
-    expect(pulse.categories).toEqual([]);
+    expect(pulse.born).toEqual({ current: 0, previous: 0, change: null });
     expect(pulse.updates).toEqual({ projects: 0, releases: 0 });
+    expect(pulse.active).toEqual([]);
+    expect(pulse.categories).toEqual([]);
+    expect(pulse.tools).toBeNull();
     expect(pulse.total).toBe(0);
     expect(pulse.timezone).toBe("Asia/Seoul");
   });
 });
 
-describe("관심 지표 설명", () => {
-  it("제품마다 중복을 제거한 방문을 분야별로 합산한다고 표시한다", () => {
-    const pulse = emptyHomePulse(new Date("2026-09-08T10:00:00+09:00"));
-    pulse.interestReady = true;
-    pulse.categories = [{ key: "Dev", current: 125, previous: 100, change: 25, qualified: true }];
+function samplePulse(): Pulse {
+  return {
+    ...emptyHomePulse(new Date("2026-09-12T10:00:00+09:00")),
+    born: { current: 280, previous: 204, change: 37.3 },
+    updates: { projects: 788, releases: 3045 },
+    active: [
+      { slug: "soleur", name: "Soleur", category: "Dev", releases: 40, stars: 15 },
+      { slug: "big", name: "Big Tool", category: "Data", releases: 12, stars: 2400 },
+    ],
+    categories: [
+      { key: "Dev", total: 1652, born: 67 },
+      { key: "Other", total: 272, born: 22 },
+      { key: "Games", total: 143, born: 0 },
+    ],
+    total: 2067,
+  };
+}
 
-    const html = renderToStaticMarkup(createElement(HomePulse, {
-      pulse,
-      state: { sort: "weekly" },
-    }));
+describe("윗줄", () => {
+  const hrefFor = (metric: string) => `/?metric=${metric}`;
 
-    expect(html).toContain("제품별 고유 방문");
-    expect(html).toContain("같은 방문자는 제품마다 기간별 1회 집계");
-    expect(html).not.toContain("같은 방문자는 분야별 1회 집계");
+  it("태어난과 새 버전을 이름으로 가르고, 누르면 그 숫자의 기준을 연다", () => {
+    const html = renderToStaticMarkup(createElement(PulseStrip, { pulse: samplePulse(), hrefFor }));
+
+    expect(html).toContain("태어난 프로젝트");
+    expect(html).toContain("↗37.3%");
+    expect(html).toContain("새 버전을 낸 프로젝트");
+    expect(html).toContain("릴리스 3,045건");
+    expect(html).toContain('href="/?metric=born"');
+    expect(html).toContain('href="/?metric=updates"');
   });
 
-  it("수집 기간이 찼지만 상승 분야가 없으면 수집 중으로 표시하지 않는다", () => {
-    const pulse = emptyHomePulse(new Date("2026-09-08T10:00:00+09:00"));
-    pulse.interestReady = true;
+  it("관찰 사실 공개가 꺼져 있으면 제작 도구를 싣지 않는다", () => {
+    const hidden = renderToStaticMarkup(createElement(PulseStrip, { pulse: samplePulse(), hrefFor }));
+    expect(hidden).not.toContain("가장 많이 쓰인 제작 도구");
 
-    const html = renderToStaticMarkup(createElement(HomePulse, {
-      pulse,
-      state: { sort: "weekly" },
-    }));
+    const pulse = { ...samplePulse(), tools: { scanned: 2754, withTool: 1208, rows: [
+      { label: "Claude Code", count: 1051 }, { label: "Cursor", count: 119 }, { label: "GitHub Copilot", count: 91 }, { label: "Codex", count: 81 },
+    ] } };
+    const shown = renderToStaticMarkup(createElement(PulseStrip, { pulse, hrefFor }));
+    expect(shown).toContain("가장 많이 쓰인 제작 도구");
+    expect(shown).toContain("1,051 · Cursor 119 · GitHub Copilot 91");
+    expect(shown).not.toContain("Codex");
+  });
 
-    expect(html).toContain("최근 7일에 관심이 커진 분야가 없습니다.");
-    expect(html).not.toContain("관심 데이터를 모으고 있습니다.");
+  it("증감률을 계산할 수 없으면 0%를 채우지 않는다", () => {
+    const pulse = { ...samplePulse(), born: { current: 3, previous: 2, change: null } };
+    const html = renderToStaticMarkup(createElement(PulseStrip, { pulse, hrefFor }));
+    expect(html).not.toContain("%");
+  });
+});
+
+describe("리더보드", () => {
+  it("활발한 프로젝트는 상세로 잇고, 별이 적으면 별 수를 달지 않는다", () => {
+    const html = renderToStaticMarkup(createElement(HomePulse, { pulse: samplePulse(), state: { sort: "weekly" } }));
+
+    expect(html).toContain('href="/p/soleur"');
+    expect(html).toContain("40건");
+    expect(html).toContain("★2,400");
+    expect(html).not.toContain("★15");
+  });
+
+  it("분야 순위는 기타를 빼고, 이번 주 태어난 수를 곁에 단다", () => {
+    const html = renderToStaticMarkup(createElement(HomePulse, { pulse: samplePulse(), state: { sort: "weekly" } }));
+
+    expect(html).toContain("+67");
+    expect(html).toContain("&quot;기타&quot; 272개 제외 · 공개 2,067개 기준");
+    expect(html).toContain('href="/?sort=recent&amp;category=Dev"');
+    expect(html).not.toContain('category=Other');
+  });
+
+  it("관찰 사실 공개가 꺼져 있으면 제작 도구 보드를 내지 않는다", () => {
+    const html = renderToStaticMarkup(createElement(HomePulse, { pulse: samplePulse(), state: { sort: "weekly" } }));
+    expect(html).not.toContain("제작 도구 집계 기준");
   });
 });
 

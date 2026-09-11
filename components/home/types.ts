@@ -3,27 +3,11 @@ export type HomePulseView = {
   asOfLabel: string;
   timezone: "Asia/Seoul";
   methodVersion: string;
-  launches: {
-    current: number;
-    previous: number;
-    change: number | null;
-    days: { date: string; count: number; weekday: string }[];
-  };
-  tools: {
-    total: number;
-    reported: number;
-    coverage: number | null;
-    rows: { name: string; count: number; percent: number | null }[];
-  };
-  interestReady: boolean;
-  categories: {
-    key: string;
-    current: number;
-    previous: number;
-    change: number | null;
-    qualified: boolean;
-  }[];
+  born: { current: number; previous: number; change: number | null };
   updates: { projects: number; releases: number };
+  active: { slug: string; name: string; category: string; releases: number; stars: number | null }[];
+  categories: { key: string; total: number; born: number }[];
+  tools: { scanned: number; withTool: number; rows: { label: string; count: number }[] } | null;
   total: number;
 };
 
