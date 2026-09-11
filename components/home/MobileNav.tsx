@@ -19,7 +19,7 @@ export function MobileNav() {
         <Icon name="grid" />
         발견
       </Link>
-      <Link href="/#briefing">
+      <Link href="/news" className={pathname.startsWith("/news") ? "active" : undefined}>
         <Icon name="news" />
         AI 소식
       </Link>

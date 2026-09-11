@@ -28,6 +28,7 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   return [
     { url: `${origin}/`, changeFrequency: "hourly", priority: 1 },
     { url: `${origin}/launch`, changeFrequency: "monthly", priority: 0.5 },
+    { url: `${origin}/news`, changeFrequency: "hourly", priority: 0.7 },
     ...verified.map((product) => ({
       url: `${origin}/p/${product.slug}`,
       lastModified: product.updatedAt,

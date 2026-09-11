@@ -78,6 +78,15 @@ export const NEWS_SOURCES: readonly NewsSource[] = [
 export const NEWS_SOURCE_KEYS = NEWS_SOURCES.map((source) => source.key);
 export const HOME_NEWS_SOURCE_KEYS = NEWS_SOURCES.filter((source) => source.section === "news").map((source) => source.key);
 
+/** 주소에 쓰는 회사 이름 — "Z.ai" → "z-ai" */
+export function vendorSlug(vendor: string): string {
+  return vendor.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+}
+
+/** 필터에 보일 회사들. 출처 목록 순서 그대로 */
+export const NEWS_VENDORS: readonly { name: string; slug: string }[] = [...new Set(NEWS_SOURCES.map((source) => source.vendor))]
+  .map((name) => ({ name, slug: vendorSlug(name) }));
+
 export function newsSource(key: string): NewsSource | undefined {
   return NEWS_SOURCES.find((source) => source.key === key);
 }

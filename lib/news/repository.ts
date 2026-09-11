@@ -2,7 +2,7 @@ import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { jobs, newsItems, type NewsState } from "@/lib/db/schema";
 import type { NewsCandidate } from "./normalize";
-import { HOME_NEWS_SOURCE_KEYS, newsSource } from "./sources";
+import { HOME_NEWS_SOURCE_KEYS, NEWS_SOURCES, newsSource, type NewsSection, type NewsTone } from "./sources";
 
 export const NEWS_JOB = "news-refresh";
 
@@ -54,6 +54,64 @@ export async function listHomeNews(limit = 3): Promise<HomeNewsItem[]> {
     if (picked.length === limit) break;
   }
   return picked;
+}
+
+export type PublicNewsItem = {
+  id: number;
+  url: string;
+  title: string;
+  summary: string | null;
+  publishedAt: Date;
+  sourceKey: string;
+  source: string;
+  vendor: string;
+  label: string;
+  tone: NewsTone;
+  section: NewsSection;
+};
+
+/** 소식 페이지·피드의 거르기. 비우면 전체 */
+export type NewsFilter = { vendor?: string; section?: NewsSection };
+
+function sourceKeysFor(filter: NewsFilter): string[] {
+  return NEWS_SOURCES
+    .filter((source) => (!filter.vendor || source.vendor === filter.vendor) && (!filter.section || source.section === filter.section))
+    .map((source) => source.key);
+}
+
+/** 공개 글을 최신부터. 한 건 더 읽어 다음 쪽이 있는지 안다 */
+export async function listPublicNews(filter: NewsFilter, limit: number, offset = 0): Promise<{ items: PublicNewsItem[]; hasMore: boolean }> {
+  const keys = sourceKeysFor(filter);
+  if (!keys.length) return { items: [], hasMore: false };
+  const rows = await db
+    .select({ id: newsItems.id, url: newsItems.url, title: newsItems.title, summary: newsItems.summary, publishedAt: newsItems.publishedAt, sourceKey: newsItems.sourceKey })
+    .from(newsItems)
+    .where(and(eq(newsItems.state, "approved"), inArray(newsItems.sourceKey, keys)))
+    .orderBy(desc(newsItems.publishedAt), desc(newsItems.id))
+    .limit(limit + 1)
+    .offset(offset);
+  const items = rows.slice(0, limit).flatMap((row) => {
+    const source = newsSource(row.sourceKey);
+    return source
+      ? [{ ...row, source: source.name, vendor: source.vendor, label: source.label, tone: source.tone, section: source.section }]
+      : [];
+  });
+  return { items, hasMore: rows.length > limit };
+}
+
+/** 회사별 공개 글 수 — 필터 칩에 붙인다 */
+export async function publicNewsCountsByVendor(section?: NewsSection): Promise<Map<string, number>> {
+  const rows = await db
+    .select({ sourceKey: newsItems.sourceKey, count: sql<number>`count(*)::int` })
+    .from(newsItems)
+    .where(and(eq(newsItems.state, "approved"), inArray(newsItems.sourceKey, sourceKeysFor({ section }))))
+    .groupBy(newsItems.sourceKey);
+  const counts = new Map<string, number>();
+  for (const row of rows) {
+    const vendor = newsSource(row.sourceKey)?.vendor;
+    if (vendor) counts.set(vendor, (counts.get(vendor) ?? 0) + row.count);
+  }
+  return counts;
 }
 
 export async function listNewsForAdmin(state: NewsState | "all", limit = 200) {

@@ -46,6 +46,7 @@ export function HomeAside({ news }: { news: HomeNewsItem[] }) {
           회사 공식 피드에서 자동으로 모읍니다 · 회사마다 최신 1건
           <br />
           출처의 게시일을 표시하며, 제목을 누르면 원문으로 이동합니다.
+          <Link href="/news" className="build-link">AI 소식 전체 보기 <Icon name="arrow-right" size={12} /></Link>
         </div>
       </section>
 

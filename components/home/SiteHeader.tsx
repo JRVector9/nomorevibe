@@ -33,6 +33,7 @@ export function SiteHeader() {
   const savedRaw = useSyncExternalStore(subscribeSaved, savedSnapshot, () => "[]");
   const hasSaved = parseSaved(savedRaw).size > 0;
   const home = hydrated && pathname === "/";
+  const news = hydrated && pathname.startsWith("/news");
 
   useEffect(() => {
     function onKey(event: KeyboardEvent) {
@@ -60,7 +61,7 @@ export function SiteHeader() {
         </Link>
         <nav className="navigation" aria-label="주 메뉴">
           <Link href="/" className={home ? "active" : undefined}>발견하기</Link>
-          <Link href="/#briefing">AI 소식</Link>
+          <Link href="/news" className={news ? "active" : undefined}>AI 소식</Link>
           <Link href="/?metric=tools">제작 도구</Link>
         </nav>
         <form className="header-search" action="/" method="get">
