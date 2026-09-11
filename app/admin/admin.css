@@ -3,19 +3,19 @@ body:has(.admin-area) > .nmb-header,
 body:has(.admin-area) > .nmb-footer,
 body:has(.admin-login-area) > .nmb-header,
 body:has(.admin-login-area) > .nmb-footer { display: none; }
-.admin-area{display:grid;grid-template-columns:224px minmax(0,1fr);min-height:100vh;background:var(--color-bg)}
-.admin-sidebar{position:sticky;top:0;align-self:start;height:100dvh;overflow-y:auto;border-right:1px solid var(--color-line);background:var(--color-bg-card);padding:30px 18px;}
+.admin-area{display:grid;grid-template-columns:200px minmax(0,1fr);min-height:100vh;background:var(--color-bg)}
+.admin-sidebar{position:sticky;top:0;align-self:start;height:100dvh;overflow-y:auto;border-right:1px solid var(--color-line);background:var(--color-bg-card);padding:18px 12px;}
 .admin-brand{display:block;font-size:21px;font-weight:850;letter-spacing:-.8px;padding:0 12px;color:var(--color-fg)}
 .admin-brand span{color:var(--color-accent)}
 .admin-brand small{display:block;font-size:10px;letter-spacing:.15em;color:var(--color-fg-3);margin-top:6px;font-weight:650}
-.admin-navigation{display:flex;flex-direction:column;gap:7px;margin-top:32px}
-.admin-navigation a{display:flex;flex-direction:column;gap:3px;padding:12px;border-radius:9px;color:var(--color-fg-2);font-size:14px;font-weight:650;min-height:48px}
+.admin-navigation{display:flex;flex-direction:column;gap:2px;margin-top:18px}
+.admin-navigation a{display:flex;flex-direction:column;gap:0;padding:6px 10px;border-radius:8px;color:var(--color-fg-2);font-size:14px;font-weight:650}
 .admin-navigation small{font-size:11px;font-weight:400;color:var(--color-fg-3)}
 .admin-navigation a:hover{background:var(--color-bg-soft)}
 .admin-navigation a[aria-current=page]{color:var(--color-accent);background:color-mix(in srgb,var(--color-accent) 9%,transparent)}
-.admin-sidebar-bottom{margin:28px 12px 0;padding-top:20px;border-top:1px solid var(--color-line);font-size:12px;color:var(--color-fg-2)}
+.admin-sidebar-bottom{margin:16px 10px 0;padding-top:14px;border-top:1px solid var(--color-line);font-size:12px;color:var(--color-fg-2)}
 .admin-sidebar-bottom p{font-size:11px;margin-top:12px;line-height:1.7;color:var(--color-fg-3)}
-.admin-content{overflow-wrap:anywhere;min-width:0;padding:0 32px 24px;width:100%;max-width:1520px;margin:0 auto}
+.admin-content{overflow-wrap:anywhere;min-width:0;padding:0 24px 20px;width:100%;max-width:1520px;margin:0 auto}
 .admin-content>main{width:100%;max-width:none;margin:0;padding-left:0;padding-right:0}
 .admin-content h1{letter-spacing:-.7px}
 .admin-menu-toggle{display:none}

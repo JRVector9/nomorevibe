@@ -13,8 +13,8 @@ export default async function AdminEvidencePage() {
   const settings = await currentEvidenceSettings();
   return (
     <main className="mx-auto max-w-[900px] px-6 pb-20">
-      <div className="flex flex-wrap items-baseline gap-3 pt-9">
-        <h1 className="text-[26px] font-extrabold tracking-tight">근거 수집 설정</h1>
+      <div className="flex flex-wrap items-baseline gap-3 pt-6">
+        <h1 className="text-[22px] font-extrabold tracking-tight">근거 수집 설정</h1>
         <p className="text-[13px] text-fg-3">외부 근거의 주기와 실패 기준</p>
 
       </div>

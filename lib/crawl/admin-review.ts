@@ -319,21 +319,30 @@ export type AdminReviewEntry = {
   verdict: AdminReviewVerdict | null;
 };
 
-/** Bounded batch reads, with keyset pagination so the rest of the review queue remains reachable. */
+/**
+ * Bounded batch reads. 두 가지 넘김을 받는다 — after(id 다음부터, 끝까지 이어 읽기)와
+ * offset(쪽 번호). 심사 화면은 한 화면에 들어오는 만큼만 보여 주고 쪽을 넘기므로 offset 과
+ * 전체 수(total)를 쓴다.
+ */
 export async function listAdminReviewEntries(settings: CrawlSettings, options: {
-  state?: 'pending' | 'needs_review' | 'rejected' | 'published'; after?: number; limit?: number;
+  state?: 'pending' | 'needs_review' | 'rejected' | 'published'; after?: number; offset?: number; limit?: number;
   /** 갈래로 걸러 볼 때. 계산으로 얻은 값이라 SQL로 거를 수 없어 id 를 받는다 */
   ids?: number[];
 } = {}) {
   const limit = Math.max(1, Math.min(options.limit ?? 50, 50));
   const states = options.state === 'rejected' ? ['rejected'] as const : options.state === 'published' ? ['published'] as const :
     options.state === 'needs_review' ? ['needs_review'] as const : ['new', 'approved', 'needs_review'] as const;
-  if (options.ids?.length === 0) return { entries: [] as AdminReviewEntry[], nextAfter: null };
-  const candidates = await db.select().from(crawlCandidates).where(and(inArray(crawlCandidates.state, [...states]),
+  if (options.ids?.length === 0) return { entries: [] as AdminReviewEntry[], nextAfter: null, total: 0 };
+  const where = and(inArray(crawlCandidates.state, [...states]),
     options.ids ? inArray(crawlCandidates.id, options.ids) : undefined,
-    sql`${crawlCandidates.id} > ${Math.max(0, options.after ?? 0)}`)).orderBy(asc(crawlCandidates.id)).limit(limit + 1);
+    sql`${crawlCandidates.id} > ${Math.max(0, options.after ?? 0)}`);
+  const [candidates, [{ total }]] = await Promise.all([
+    db.select().from(crawlCandidates).where(where).orderBy(asc(crawlCandidates.id))
+      .limit(limit + 1).offset(Math.max(0, options.offset ?? 0)),
+    db.select({ total: sql<number>`count(*)::int` }).from(crawlCandidates).where(where),
+  ]);
   const page = candidates.slice(0, limit);
-  if (!page.length) return { entries: [] as AdminReviewEntry[], nextAfter: null };
+  if (!page.length) return { entries: [] as AdminReviewEntry[], nextAfter: null, total };
   const ids = page.map(row => row.id), repos = page.map(row => row.repo);
   const [documents, scans, latest, latestAutomatic] = await Promise.all([
     db.select().from(crawlDocuments).where(inArray(crawlDocuments.repo, repos)),
@@ -393,5 +402,33 @@ export async function listAdminReviewEntries(settings: CrawlSettings, options: {
       } : null,
     };
   });
-  return { entries, nextAfter: candidates.length > limit ? page.at(-1)!.id : null };
+  return { entries, nextAfter: candidates.length > limit ? page.at(-1)!.id : null, total };
+}
+
+export type ReviewAiDecision = 'reject' | 'approve' | 'needs_review' | 'none';
+
+/**
+ * 보류 후보를 AI 1차 판단으로 나눈다.
+ *
+ * 후보마다 마지막으로 성공한 자동 심사의 결론이다. 실패만 있거나 아직 안 돈 것은 'none'.
+ * 심사 화면이 "AI가 거부라고 한 것만" 같은 거르기에 쓴다 — 갈래와 같은 방식으로 id 를 넘긴다.
+ */
+export async function reviewQueueAiDecisions(): Promise<{ counts: Record<ReviewAiDecision, number>; ids: Map<ReviewAiDecision, number[]> }> {
+  const candidates = await db.select({ id: crawlCandidates.id }).from(crawlCandidates)
+    .where(eq(crawlCandidates.state, 'needs_review')).orderBy(asc(crawlCandidates.id)).limit(REVIEW_QUEUE_SCAN_LIMIT);
+  const latest = candidates.length ? await db.selectDistinctOn([crawlReviewAttempts.candidateId], {
+    candidateId: crawlReviewAttempts.candidateId, decision: sql<string | null>`${crawlReviewAttempts.outcome}->>'decision'`,
+  }).from(crawlReviewAttempts).where(and(
+    inArray(crawlReviewAttempts.candidateId, candidates.map(row => row.id)),
+    eq(crawlReviewAttempts.kind, 'automatic'), eq(crawlReviewAttempts.state, 'succeeded'),
+  )).orderBy(crawlReviewAttempts.candidateId, desc(crawlReviewAttempts.id)) : [];
+  const decided = new Map(latest.map(row => [row.candidateId, row.decision]));
+  const ids = new Map<ReviewAiDecision, number[]>([['reject', []], ['approve', []], ['needs_review', []], ['none', []]]);
+  for (const { id } of candidates) {
+    const decision = decided.get(id);
+    const key: ReviewAiDecision = decision === 'reject' || decision === 'approve' || decision === 'needs_review' ? decision : 'none';
+    ids.get(key)!.push(id);
+  }
+  const counts = Object.fromEntries([...ids].map(([key, list]) => [key, list.length])) as Record<ReviewAiDecision, number>;
+  return { counts, ids };
 }

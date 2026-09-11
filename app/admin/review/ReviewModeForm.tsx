@@ -5,15 +5,17 @@ import { setReviewMode } from './actions';
 
 export function ReviewModeForm({ mode, ready }: { mode: 'off' | 'observe' | 'enforce'; ready: boolean }) {
   const [state, action, pending] = useActionState(setReviewMode, null);
+  const label = { off: '끄기', observe: '관측', enforce: '적용' }[mode];
+  // 바꿀 일이 드물어 접어 둔다 — 펼쳐 두면 표보다 먼저 한 화면을 차지한다
   return (
-    <section className="mt-6 rounded-xl border border-line bg-bg-card p-5">
-      <h2 className="text-[15px] font-bold">AI 리뷰 운영 모드</h2>
+    <details className="rounded-lg border border-line bg-bg-card px-3 py-1.5 text-[13px]">
+      <summary className="cursor-pointer font-semibold text-fg-2">AI 리뷰 운영 모드 · <span className="text-accent">{label}</span></summary>
       <p className="mt-2 text-[13px] leading-relaxed text-fg-2">
         끄기는 기존 규칙으로 발행합니다. 관측은 AI 판정만 기록합니다. 적용은 현재 근거의 AI 승인을 발행 조건으로 사용합니다.
         관리자 승인은 사유와 함께 별도 기록합니다.
       </p>
       {!ready && <p className="mt-2 text-[13px] text-fg-3">리뷰와 발행 보호 배포 확인 전에는 관측·적용을 켤 수 없습니다.</p>}
-      <form action={action} className="mt-4 flex flex-wrap items-end gap-3">
+      <form action={action} className="my-2 flex flex-wrap items-end gap-3">
         <input type="hidden" name="expectedMode" value={mode} />
         <label className="text-[13px] text-fg-2">모드
           <select name="mode" defaultValue={mode} className="mt-1 block rounded-lg border border-line bg-bg-soft px-3 py-2">
@@ -28,6 +30,6 @@ export function ReviewModeForm({ mode, ready }: { mode: 'off' | 'observe' | 'enf
         <button disabled={pending} className="rounded-lg border border-line px-4 py-2 text-[13px] font-semibold disabled:opacity-50">모드 변경</button>
       </form>
       {state && <p role="status" className={`mt-3 text-[13px] ${state.error ? 'text-down' : 'text-up'}`}>{state.error ?? state.message}</p>}
-    </section>
+    </details>
   );
 }

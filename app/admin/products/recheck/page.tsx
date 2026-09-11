@@ -35,8 +35,8 @@ export default async function RecheckPage({ searchParams }: {
 
   return (
     <main className="mx-auto max-w-[900px] px-6 pb-20">
-      <div className="flex flex-wrap items-baseline gap-3 pt-9">
-        <h1 className="text-[26px] font-extrabold tracking-tight">발행분 재검수</h1>
+      <div className="flex flex-wrap items-baseline gap-3 pt-6">
+        <h1 className="text-[22px] font-extrabold tracking-tight">발행분 재검수</h1>
         <span className="text-[13px] text-fg-3">
           {total.toLocaleString("ko-KR")}건 중 {(offset + 1).toLocaleString("ko-KR")}–{next.toLocaleString("ko-KR")} 확인
         </span>
