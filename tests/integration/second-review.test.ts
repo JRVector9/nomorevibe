@@ -33,15 +33,16 @@ async function held(repo: string, title = '제품') {
 }
 
 /** 1차 AI 판단 하나 */
-async function firstReview(repo: string, decision: 'approve' | 'reject' | 'needs_review', confidence = 0.9) {
+/** confidence 가 null 이면 확신을 내지 않던 옛 프롬프트의 판단이다 */
+async function firstReview(repo: string, decision: 'approve' | 'reject' | 'needs_review', confidence: number | null = 0.9, inputHash?: string) {
   const [candidate] = await db.select().from(crawlCandidates).where(eq(crawlCandidates.repo, repo));
   const input = await loadReviewInput(candidate, (await crawl.getDocument(repo))!, await getSettings());
   await db.insert(crawlReviewAttempts).values({
     candidateId: candidate.id, kind: 'automatic', state: 'succeeded', attemptNumber: 1,
-    inputHash: input.inputHash, policyHash: input.policyHash, sourceRevisionHash: input.sourceRevisionHash,
+    inputHash: inputHash ?? input.inputHash, policyHash: input.policyHash, sourceRevisionHash: input.sourceRevisionHash,
     snapshot: input.snapshot, source: input.source, promptVersion: 'v', rulesVersion: 'v',
     provider: 'claude-cli', model: 'sonnet', startedAt: new Date(), completedAt: new Date(), validUntil: input.validUntil,
-    outcome: { decision, reason: '사유', evidenceIds: ['product'], confidence },
+    outcome: confidence === null ? { decision, reason: '사유', evidenceIds: ['product'] } : { decision, reason: '사유', evidenceIds: ['product'], confidence },
   });
 }
 
@@ -186,4 +187,42 @@ it('실패한 것은 한 시간이 지나야 다시 대기로 돌린다', async 
 
   const rows = await db.select().from(secondReviews).orderBy(secondReviews.repo);
   expect(rows.map((row) => [row.repo, row.status])).toEqual([['acme/new-fail', 'failed'], ['acme/old-fail', 'pending']]);
+});
+
+it('확신을 내지 않던 옛 1차 판단은 올리지 않고, 이미 올린 것은 닫는다 — 2차 의견은 상세에 남는다', async () => {
+  const legacy = await held('acme/legacy');
+  await held('acme/fresh');
+  await firstReview('acme/legacy', 'reject', null);
+  await firstReview('acme/fresh', 'reject', 0.9);
+
+  expect(await enqueueSecondReviews(await getSettings())).toBe(1);
+  expect((await db.select().from(secondReviews)).map((row) => row.repo)).toEqual(['acme/fresh']);
+
+  // 배포 직후 프로드처럼, 옛 1차로 이미 올라가 2차까지 받은 것
+  await db.insert(secondReviews).values({ candidateId: legacy.id, repo: 'acme/legacy', trigger: 'ai_decided', firstDecision: 'reject',
+    firstConfidence: null, inputHash: 'legacy', status: 'needs_human', secondDecision: 'reject', secondConfidence: 0.88, model: 'opus' });
+  expect(await closeSettledSecondReviews()).toBe(1);
+  const [closed] = await db.select().from(secondReviews).where(eq(secondReviews.repo, 'acme/legacy'));
+  expect(closed).toMatchObject({ status: 'resolved', resolution: 'no_first_confidence' });
+  expect((await secondReviewSummary()).counts.needsHuman).toBe(0);
+  expect(await secondReviewsFor([legacy.id])).toEqual([expect.objectContaining({ secondDecision: 'reject', status: 'resolved' })]);
+});
+
+it('같은 후보에 새 1차 판단이 오면 앞의 것을 닫는다 — 두 칩에 겹쳐 세지 않는다', async () => {
+  await held('acme/changing');
+  await firstReview('acme/changing', 'reject', 0.9, 'first-input');
+  await enqueueSecondReviews(await getSettings());
+  const [first] = await pendingSecondReviews(1);
+  await recordSecondReview(first.id, { ok: true, decision: 'approve', confidence: 0.9, reason: '엇갈림', model: 'opus', status: 'needs_human' });
+
+  // 원본이 바뀌어 1차가 다시 봤다
+  await firstReview('acme/changing', 'approve', 0.92, 'second-input');
+  expect(await enqueueSecondReviews(await getSettings())).toBe(1);
+
+  const rows = await db.select().from(secondReviews).orderBy(secondReviews.id);
+  expect(rows.map((row) => [row.inputHash, row.status, row.resolution])).toEqual([
+    ['first-input', 'resolved', 'superseded'],
+    ['second-input', 'pending', null],
+  ]);
+  expect((await secondReviewSummary()).counts).toMatchObject({ needsHuman: 0, pending: 1 });
 });
