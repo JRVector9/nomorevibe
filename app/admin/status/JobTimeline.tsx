@@ -13,7 +13,7 @@ import type { OperationJob } from './OperationsCenter';
  */
 const PIPELINE_ORDER = [
   'crawl-seed', 'hn-show-seed', 'crawl-fetch', 'agent-evidence-refresh',
-  'crawl-judge', 'crawl-agent-review', 'crawl-publish',
+  'crawl-judge', 'crawl-agent-review', 'second-review', 'crawl-publish',
   'uptime-ping', 'product-evidence-refresh', 'click-rollup', 'ranking-refresh', 'news-refresh',
 ];
 
@@ -25,6 +25,7 @@ const FLOW: Record<string, { reads: string; writes: string }> = {
   'agent-evidence-refresh': { reads: '원본', writes: '개발 AI 근거' },
   'crawl-judge': { reads: '후보(new)', writes: '승인 · 보류 · 거부' },
   'crawl-agent-review': { reads: '보류', writes: 'AI 심사 기록' },
+  'second-review': { reads: 'AI 판단 · 공개분 표본', writes: '2차 판단' },
   'crawl-publish': { reads: '승인', writes: '카테고리 · 공개 제품' },
   'uptime-ping': { reads: '공개 제품', writes: '응답 기록' },
   'product-evidence-refresh': { reads: '공개 제품', writes: '외부 근거' },

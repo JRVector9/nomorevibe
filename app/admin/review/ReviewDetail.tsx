@@ -81,6 +81,16 @@ export function ReviewDetail({ entry, reasons }: { entry: AdminReviewEntry; reas
         </p>
       )}
 
+      {entry.second && (
+        <p className={`rounded-lg border px-2.5 py-2 text-[13px] leading-[1.6] text-fg-2 ${entry.second.status === 'agreed' ? 'border-up/40 bg-up/5' : 'border-warn/40 bg-warn/5'}`}>
+          <b className="font-semibold">2차 {entry.second.decision === 'approve' ? '승인' : entry.second.decision === 'reject' ? '거부' : entry.second.decision === 'needs_review' ? '보류' : entry.second.status}</b>
+          {entry.second.model ? <span className="ml-1.5 font-mono text-fg-3">{entry.second.model}</span> : null}
+          {typeof entry.second.confidence === 'number' ? <span className="ml-1.5 font-mono text-fg-3">확신 {entry.second.confidence.toFixed(2)}</span> : null}
+          <span className="ml-1.5 font-semibold">{entry.second.status === 'agreed' ? '· 1차와 일치' : entry.second.status === 'needs_human' ? '· 사람 확인' : ''}</span>
+          {entry.second.reason ? <span className="mt-1 block">{entry.second.reason.slice(0, 400)}</span> : null}
+        </p>
+      )}
+
       <p className="text-[13px] text-fg-2">
         {entry.verdict?.cause
           ? <b className="font-semibold text-down">{causeLabel(entry.verdict.cause)}</b>

@@ -235,6 +235,53 @@ export function SettingsForm({ settings }: { settings: CrawlSettings }) {
         </div>
       </Panel>
 
+      <Panel
+        title="2차 심사"
+        note="1차 AI가 확정한 것·위험 신호가 있는 것·규칙만 통과한 공개분 일부를 다른 모델이 다시 봅니다. 결과는 제안일 뿐 판정을 바꾸지 않습니다."
+      >
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+          <div>
+            <label className={label} htmlFor="secondReviewModel">모델</label>
+            <input id="secondReviewModel" name="secondReviewModel" defaultValue={settings.secondReview.model} className={`${field} mt-1.5 font-mono`} />
+            <p className={hint}>1차와 다른 모델이어야 같은 실수를 되풀이하지 않습니다</p>
+          </div>
+          <div>
+            <label className={label} htmlFor="secondReviewSamplePercent">공개분 표본 (%)</label>
+            <input
+              id="secondReviewSamplePercent"
+              name="secondReviewSamplePercent"
+              type="number"
+              min={0}
+              max={50}
+              step={1}
+              defaultValue={Math.round(settings.secondReview.sampleRate * 100)}
+              className={`${field} mt-1.5`}
+            />
+            <p className={hint}>규칙만 통과해 공개된 것 중 다시 볼 비율</p>
+          </div>
+          <div>
+            <label className={label} htmlFor="secondReviewAgreeAt">일치 기준 확신</label>
+            <input
+              id="secondReviewAgreeAt"
+              name="secondReviewAgreeAt"
+              type="number"
+              min={0.5}
+              max={1}
+              step={0.05}
+              defaultValue={settings.secondReview.agreeAt}
+              className={`${field} mt-1.5`}
+            />
+            <p className={hint}>두 판단이 같고 둘 다 이 값 이상이면 한 번에 확정할 수 있게 묶습니다</p>
+          </div>
+        </div>
+        <div className="mt-4">
+          <Toggle name="secondReviewEnabled" defaultChecked={settings.secondReview.enabled}>
+            2차 심사 켜기
+            <span className="ml-1 text-fg-3">— 끄면 새로 쌓지 않습니다. 이미 받은 결과는 그대로 보입니다</span>
+          </Toggle>
+        </div>
+      </Panel>
+
       <div className="flex items-center gap-3">
         <button
           type="submit"

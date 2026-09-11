@@ -1,0 +1,45 @@
+import { pgTable, serial, integer, varchar, text, timestamp, doublePrecision, index, uniqueIndex, jsonb } from "drizzle-orm/pg-core";
+
+/**
+ * 2차 심사 — 1차(규칙·AI)와 다른 모델이 같은 입력을 따로 본다.
+ *
+ * 규칙만 통과해 공개된 것이 공개분의 96%였고(2026-09-11), 1차 AI 는 관찰 모드라 결정에 쓰이지 않았다.
+ * 두 판단이 같고 확신이 높으면 "일치", 아니면 사람에게 넘긴다. 공개된 제품은 자동으로 내리지 않는다.
+ *
+ * - trigger: ai_decided(규칙이 못 가른 것을 AI 1차가 가름) · risk(위험 신호) · sample(무작위 표본)
+ * - status: pending(2차 대기) · agreed(일치 — 확정 대기) · needs_human(엇갈림·확신 낮음) · failed · resolved
+ */
+export type SecondReviewTrigger = "ai_decided" | "risk" | "sample";
+export type SecondReviewStatus = "pending" | "agreed" | "needs_human" | "failed" | "resolved";
+
+export const secondReviews = pgTable("second_reviews", {
+  id: serial("id").primaryKey(),
+  candidateId: integer("candidate_id").notNull(),
+  repo: varchar("repo", { length: 200 }).notNull(),
+  /** 공개된 제품을 다시 본 것이면 그 slug — 사람이 내릴지 정한다 */
+  publishedSlug: varchar("published_slug", { length: 80 }),
+  trigger: varchar("trigger", { length: 20 }).$type<SecondReviewTrigger>().notNull(),
+  /** 위험 신호 이름들 (trigger=risk) */
+  signals: jsonb("signals").$type<string[]>().notNull().default([]),
+  /** 1차 판단: AI 1차의 결론, 규칙만 통과한 공개분은 approve */
+  firstDecision: varchar("first_decision", { length: 20 }).notNull(),
+  firstConfidence: doublePrecision("first_confidence"),
+  /** 이 입력으로 본 것 — 입력이 바뀌면 다시 본다 */
+  inputHash: varchar("input_hash", { length: 64 }).notNull(),
+  model: varchar("model", { length: 160 }),
+  secondDecision: varchar("second_decision", { length: 20 }),
+  secondConfidence: doublePrecision("second_confidence"),
+  secondReason: text("second_reason"),
+  errorCode: varchar("error_code", { length: 60 }),
+  status: varchar("status", { length: 20 }).$type<SecondReviewStatus>().notNull().default("pending"),
+  resolvedBy: varchar("resolved_by", { length: 120 }),
+  resolution: varchar("resolution", { length: 40 }),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  reviewedAt: timestamp("reviewed_at"),
+  resolvedAt: timestamp("resolved_at"),
+}, (table) => [
+  uniqueIndex("second_reviews_candidate_input_idx").on(table.candidateId, table.inputHash),
+  index("second_reviews_status_idx").on(table.status, table.createdAt.desc()),
+]);
+
+export type SecondReview = typeof secondReviews.$inferSelect;

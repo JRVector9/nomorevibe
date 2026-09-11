@@ -183,6 +183,13 @@
       "when": 1789076971541,
       "tag": "0025_news_items",
       "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1789103566846,
+      "tag": "0026_second_reviews",
+      "breakpoints": true
     }
   ]
 }

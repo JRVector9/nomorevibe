@@ -221,6 +221,13 @@ const defaultAgentEvidence = {
   policyVersion: "2026-09-06.1",
 };
 
+/**
+ * 2차 심사. 1차와 다른 모델이 같은 입력을 따로 본다.
+ * 실측(2026-09-11, 사람이 결정한 50건): opus 단독 86% 일치·실패 0·최대 13.5초. 1차(sonnet v2)와
+ * 결론이 같은 41건 중 40건이 사람과 일치했고, 둘 다 확신 ≥0.85 인 14건은 모두 일치했다.
+ */
+const defaultSecondReview = { enabled: true, model: "opus", sampleRate: 0.05, agreeAt: 0.85 };
+
 export const crawlSettingsSchema = z.object({
   /** 수집 자체를 멈추는 스위치. 무언가 잘못 돌 때 배포 없이 끊을 수 있어야 한다 */
   enabled: z.boolean(),
@@ -235,6 +242,15 @@ export const crawlSettingsSchema = z.object({
     detectorVersion: z.string().regex(/^[a-zA-Z0-9.-]{1,40}$/),
     policyVersion: z.string().regex(/^[a-zA-Z0-9.-]{1,40}$/),
   }).default(defaultAgentEvidence),
+  secondReview: z.object({
+    enabled: z.boolean(),
+    /** 1차(CRAWL_REVIEW_MODEL)와 다른 모델이어야 같은 실수를 되풀이하지 않는다 */
+    model: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:/-]{0,159}$/),
+    /** 규칙만 통과한 공개분 중 무작위로 다시 볼 비율 — 자동 공개의 실제 정확도를 잰다 */
+    sampleRate: z.number().min(0).max(0.5),
+    /** 두 판단이 같고 둘 다 이 확신 이상이면 일치로 본다 */
+    agreeAt: z.number().min(0.5).max(1),
+  }).default(defaultSecondReview),
   news: z.object({
     /** 끄면 새 글이 승인 대기로 들어간다 */
     autoApprove: z.boolean(),
@@ -282,6 +298,7 @@ export const DEFAULT_CRAWL_SETTINGS: CrawlSettings = {
   reviewMode: "off",
   agentEvidence: defaultAgentEvidence,
   news: defaultNews,
+  secondReview: defaultSecondReview,
   classify: defaultClassify,
   discover: {
     queries: [

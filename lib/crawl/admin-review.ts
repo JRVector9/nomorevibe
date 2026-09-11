@@ -7,6 +7,7 @@ import type { ProductTransaction } from '@/lib/domain/products/generation';
 import { requestJob } from '@/lib/jobs/control';
 import { operationsAudit } from '@/lib/db/operations-schema';
 import { lockRepositoryAgentEvidence } from '@/lib/domain/evidence/agents/lock';
+import { secondReviewsFor } from './second-review';
 import { createReviewInput, MAX_REVIEW_ATTEMPTS, REVIEW_PROMPT_VERSION, REVIEW_RULES_VERSION, reviewHash,
   type ReviewInput } from './agent-review-contract';
 import { loadReviewInput } from './agent-review-repository';
@@ -318,6 +319,8 @@ export type AdminReviewEntry = {
   evidence: { id: string; label: string; url: string }[]; status: AdminReviewStatus; refreshCount: number;
   latest: AdminReviewAttempt | null; review: AdminReviewAttempt | null;
   verdict: AdminReviewVerdict | null;
+  /** 2차 심사 판단 — 1차와 나란히 본다 */
+  second: { decision: string | null; confidence: number | null; reason: string | null; model: string | null; status: string; trigger: string } | null;
 };
 
 /**
@@ -356,6 +359,7 @@ export async function listAdminReviewEntries(settings: CrawlSettings, options: {
       inArray(crawlReviewAttempts.candidateId, ids), eq(crawlReviewAttempts.kind, 'automatic')))
       .orderBy(crawlReviewAttempts.candidateId, desc(crawlReviewAttempts.id)),
   ]);
+  const seconds = await secondReviewsFor(ids);
   const observations = scans.length ? await db.select().from(agentRepositoryObservations)
     .where(inArray(agentRepositoryObservations.scanId, scans.map(row => row.id))) : [];
   const inputs = page.map(candidate => {
@@ -396,6 +400,10 @@ export async function listAdminReviewEntries(settings: CrawlSettings, options: {
         url: item.observation.sourceUrl })) ?? [],
       refreshCount: attempts.filter(row => row.kind === 'evidence_refresh').length,
       latest: summarizeAttempt(last), review: summarizeAttempt(review),
+      second: (() => {
+        const row = seconds.find(item => item.candidateId === candidate.id);
+        return row ? { decision: row.secondDecision, confidence: row.secondConfidence, reason: row.secondReason, model: row.model, status: row.status, trigger: row.trigger } : null;
+      })(),
       verdict: recomputed ? {
         trace: recomputed.trace, signals: recomputed.signals, cause: recomputed.cause ?? null,
         state: recomputed.state, reason: recomputed.reason,

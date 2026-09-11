@@ -16,6 +16,8 @@ export const JOB_CATALOG: readonly { name: string; role: JobRole | "scheduler"; 
   { name: "crawl-fetch", role: "crawler", intervalMs: 60_000 },
   { name: "crawl-judge", role: "reviewer", intervalMs: 5 * 60_000 },
   { name: "crawl-agent-review", role: "reviewer", intervalMs: 60_000 },
+  // 2차 심사 — 1차와 다른 모델. 하루 수십~백여 건이라 5분이면 밀리지 않는다
+  { name: "second-review", role: "reviewer", intervalMs: 5 * 60_000 },
   { name: "crawl-publish", role: "publisher", intervalMs: 5 * 60_000 },
   /**
    * 1분마다 15건 = 시간당 900건. 발행분 3,147건을 재확인 간격 6시간마다 보려면 시간당 525건이
