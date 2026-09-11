@@ -25,14 +25,18 @@ const UNIQUE_SOURCES = sql`select encode(sha256(convert_to(body, 'UTF8')), 'hex'
 
 export type PendingTranslation = { hash: string; body: string; attempts: number };
 
-/** 아직 번역이 없는 글 — 처음 보는 것부터, 최근 것부터. 실패한 것은 다시 볼 때가 된 것만 */
+/**
+ * 아직 번역이 없는 글 — 최근 것부터. 실패한 것은 다시 볼 때가 된 것만(5분부터 두 배씩).
+ * 실패한 것을 뒤로 미루면 몇 시간씩 "실패"로 남는다 — 첫 배포 때 시간 제한 탓에 실패한 39건이
+ * 처음 보는 2,300건 뒤에 줄을 섰다. 최근 순서만 따르고, 실패한 글은 작업이 한 건씩 따로 옮긴다.
+ */
 export async function pendingTranslations(limit: number): Promise<PendingTranslation[]> {
   const rows = await db.execute<{ hash: string; body: string; attempts: number }>(sql`
     select u.hash, u.body, coalesce(t.attempts, 0)::int as attempts
       from (${UNIQUE_SOURCES}) u
       left join ${textTranslations} t on t.source_hash = u.hash and t.target_lang = 'ko'
      where t.source_hash is null or (t.status = 'failed' and (t.retry_at is null or t.retry_at <= now()))
-     order by coalesce(t.attempts, 0), u.at desc nulls last
+     order by u.at desc nulls last
      limit ${limit}`);
   return [...rows].map((row) => ({ hash: row.hash, body: row.body, attempts: Number(row.attempts) }));
 }
