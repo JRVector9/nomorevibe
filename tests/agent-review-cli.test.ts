@@ -7,7 +7,7 @@ import path from "node:path";
 import { createReviewInput } from "@/lib/crawl/agent-review-contract";
 import { DEFAULT_CRAWL_SETTINGS } from "@/lib/crawl/settings-schema";
 import type { CrawlCandidate, CrawlDocument } from "@/lib/db/schema";
-import { reviewCliArgs, reviewModel, reviewWithAgent, runReviewCli, type ReviewCliRun } from "@/lib/crawl/agent-review";
+import { cliFailure, reviewCliArgs, reviewModel, reviewWithAgent, runReviewCli, type ReviewCliRun } from "@/lib/crawl/agent-review";
 
 function input() {
   const now = new Date();
@@ -37,7 +37,8 @@ it("isolates instructions and tools while preserving OAuth/keychain authenticati
   expect(args).not.toContain("--bare");
   expect(args).toContain("--strict-mcp-config");
   expect(value("--tools")).toBe("");
-  expect(value("--max-turns")).toBe("1");
+  // 형식을 한 번 고쳐 쓸 턴을 준다 — 1이면 형식이 한 번만 어긋나도 error_max_turns 로 끝났다
+  expect(value("--max-turns")).toBe("2");
   expect(value("--max-budget-usd")).toBe("0.15");
   expect(value("--system-prompt")).toContain("executionVerified remains false");
 });
@@ -113,4 +114,32 @@ it.skipIf(process.platform === "win32")("inherits the supervised worker group so
     await exited;
     await rm(directory,{recursive:true,force:true});
   }
+});
+
+/**
+ * 실측(2026-09-11): 호출의 34%가 error_max_turns 였다. 근거 배열이 빈 입력에서 모델이 evidenceIds 를
+ * 빼고, CLI 형식 검사가 그것을 거절하고, 모델이 같은 출력을 되풀이하다 턴을 다 썼다.
+ */
+it("출력 형식에서 evidenceIds 는 필수가 아니다", () => {
+  const args = reviewCliArgs("tested-model");
+  const schema = JSON.parse(args[args.indexOf("--json-schema") + 1]);
+  expect(schema.required).toEqual(["decision", "reason"]);
+});
+
+it("인용 없이 보류하는 답은 받고, 인용 없는 승인·거부는 여전히 거절한다", async () => {
+  const held = await reviewWithAgent(input(), {model:"tested-model",run:answer({decision:"needs_review",reason:"근거가 모자란다"})});
+  expect(held).toMatchObject({ok:true,outcome:{decision:"needs_review",evidenceIds:[]}});
+  for (const decision of ["approve", "reject"]) {
+    expect(await reviewWithAgent(input(), {model:"tested-model",run:answer({decision,reason:"사유"})})).toMatchObject({ok:false,error:"invalid_output"});
+  }
+});
+
+it("CLI 오류는 종류를 남긴다 — 전에는 모두 cli_error 라 530건의 사유가 비어 있었다", async () => {
+  expect(cliFailure({subtype:"error_max_turns",is_error:true})).toBe("max_turns");
+  expect(cliFailure({subtype:"error_max_budget_usd",is_error:true})).toBe("budget");
+  expect(cliFailure({is_error:true,result:"API Error: 429 rate_limit_error"})).toBe("rate_limited");
+  expect(cliFailure({is_error:true,result:"Invalid API key · Please run /login"})).toBe("auth");
+  expect(cliFailure({is_error:true,result:"something else"})).toBe("cli_error");
+  const run: ReviewCliRun = async () => ({kind:"exit",code:1,stderr:"",stdout:JSON.stringify({subtype:"error_max_turns",is_error:true,num_turns:3})});
+  expect(await reviewWithAgent(input(), {model:"tested-model",run})).toMatchObject({ok:false,error:"max_turns"});
 });

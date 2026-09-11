@@ -192,6 +192,10 @@ export function judge(
     return reject("not_a_product", "차단 도메인 아님", `${hostOf(page.productUrl)} 는 차단 목록에 있음`);
   }
   pass("차단 도메인 아님", `${hostOf(page.productUrl)} 미등록`);
+  if (isBlockedHost(page.productUrl, rules.thirdPartyHosts)) {
+    return reject("not_a_product", "남의 사이트 아님", `${hostOf(page.productUrl)} 는 제작자의 사이트가 아님 — 글·초대·양식·목록 페이지`);
+  }
+  pass("남의 사이트 아님", `${hostOf(page.productUrl)}`);
   if (isDocumentation(page.productUrl)) return reject("not_a_product", "문서 URL 아님", "docs 라벨 또는 /docs 경로");
   // 내용을 읽은 곳이 문서면 제품 주소가 루트여도 문서다 — 판정은 읽은 곳을 기준으로 한다
   if (page.finalUrl && isDocumentation(page.finalUrl)) {
@@ -222,6 +226,11 @@ export function judge(
     return reject("not_a_product", "스캐폴드 제목 아님", `제목이 “${page.title}” — 프레임워크 기본값`);
   }
   pass("스캐폴드 제목 아님", page.title ? `“${page.title}”` : "제목 없음");
+
+  /** 로그인 벽·기본 페이지·공사 중 화면. 배포 주소가 아직 제품을 보여 주지 않는다 */
+  const stub = pageTitle ? rules.stubPageTitles.find((p) => matchesPattern(pageTitle, p)) : undefined;
+  if (stub) return reject("not_a_product", "빈 페이지·대기 화면 아님", `제목 “${page.title}” 이 ${stub} 에 걸림`);
+  pass("빈 페이지·대기 화면 아님", page.title ? `“${page.title}”` : "제목 없음");
 
   /**
    * 문서 제목은 짧을 때만 본다.

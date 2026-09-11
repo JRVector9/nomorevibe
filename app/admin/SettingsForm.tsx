@@ -200,6 +200,28 @@ export function SettingsForm({ settings }: { settings: CrawlSettings }) {
             />
           </div>
           <div>
+            <label className={label} htmlFor="thirdPartyHosts">남의 사이트 주소</label>
+            <p className={hint}>제작자의 사이트가 아닌 곳(글·초대·양식·패키지 목록). 뒤쪽 일치, 한 줄에 하나.</p>
+            <textarea
+              id="thirdPartyHosts"
+              name="thirdPartyHosts"
+              rows={8}
+              defaultValue={judge.thirdPartyHosts.join("\n")}
+              className={`${field} mt-1.5 font-mono`}
+            />
+          </div>
+          <div>
+            <label className={label} htmlFor="stubPageTitles">빈 페이지·대기 화면 제목</label>
+            <p className={hint}>로그인 벽·기본 페이지·공사 중 화면의 제목. * 와일드카드, 한 줄에 하나.</p>
+            <textarea
+              id="stubPageTitles"
+              name="stubPageTitles"
+              rows={8}
+              defaultValue={judge.stubPageTitles.join("\n")}
+              className={`${field} mt-1.5 font-mono`}
+            />
+          </div>
+          <div>
             <label className={label} htmlFor="excludedRepoPatterns">레포명 제외 패턴</label>
             <p className={hint}>* 와일드카드를 씁니다. 한 줄에 하나.</p>
             <textarea

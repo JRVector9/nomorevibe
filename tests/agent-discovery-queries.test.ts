@@ -27,3 +27,14 @@ it('reading persisted settings never implicitly merges the new discovery queries
   const queries = [{label:'User query',kind:'repositories' as const,query:'topic:private-choice',enabled:false,priority:1,builder:null}];
   expect(mergeWithDefaults({discover:{queries}}).discover.queries).toEqual(queries);
 });
+
+/**
+ * 프로드에 저장된 판정 설정은 placeholderTitles·blockedHomepageDomains 를 갖고 있어 기본값에
+ * 더한 항목이 닿지 않는다. 새 규칙은 새 항목으로 두었고, 저장값에 없으면 기본값이 채워져야 한다.
+ */
+it('저장된 판정 설정에 없는 새 규칙 목록은 기본값으로 채워진다', () => {
+  const merged = mergeWithDefaults({ judge: { placeholderTitles: ['create next app'], blockedHomepageDomains: ['github.com'] } });
+  expect(merged.judge.placeholderTitles).toEqual(['create next app']);
+  expect(merged.judge.stubPageTitles).toEqual(DEFAULT_CRAWL_SETTINGS.judge.stubPageTitles);
+  expect(merged.judge.thirdPartyHosts).toEqual(DEFAULT_CRAWL_SETTINGS.judge.thirdPartyHosts);
+});
