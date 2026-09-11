@@ -2,7 +2,7 @@ import { beforeAll, beforeEach, expect, it } from 'vitest';
 import { db } from '@/lib/db';
 import { crawlCandidates, crawlDocuments, crawlFrontier, crawlReviewAttempts, crawlSettings } from '@/lib/db/schema';
 import * as crawl from '@/lib/crawl/repository';
-import { listAdminReviewEntries, requeueResolvedCandidates, reviewQueueCauses } from '@/lib/crawl/admin-review';
+import { listAdminReviewEntries, requeueResolvedCandidates, reviewQueueAiDecisions, reviewQueueCauses } from '@/lib/crawl/admin-review';
 import { getSettings, saveSettings } from '@/lib/crawl/settings';
 import { loadReviewInput } from '@/lib/crawl/agent-review-repository';
 import { eq } from 'drizzle-orm';
@@ -150,4 +150,54 @@ it('AI가 거부로 판정한 것은 따로 센다 — 규칙이 못 가른 것�
   const { entries } = await listAdminReviewEntries(settings, { state: 'needs_review', ids: causes.ids.get('ai_reject') });
   expect(entries.map((e) => e.candidate.repo)).toEqual(['acme/lib']);
   expect(entries[0].review).toMatchObject({ decision: 'reject', model: 'sonnet' });
+});
+
+/** AI 판단 기록 하나. state 가 failed 면 outcome 이 없다 */
+async function attempt(repo: string, state: 'succeeded' | 'failed', decision?: 'reject' | 'approve' | 'needs_review') {
+  const [candidate] = await db.select().from(crawlCandidates).where(eq(crawlCandidates.repo, repo));
+  const input = await loadReviewInput(candidate, (await crawl.getDocument(repo))!, await getSettings());
+  await db.insert(crawlReviewAttempts).values({
+    candidateId: candidate.id, kind: 'automatic', state, attemptNumber: 1,
+    inputHash: input.inputHash, policyHash: input.policyHash, sourceRevisionHash: input.sourceRevisionHash,
+    snapshot: input.snapshot, source: input.source, promptVersion: 'v', rulesVersion: 'v',
+    provider: 'claude-cli', model: 'sonnet', startedAt: new Date(), completedAt: new Date(), validUntil: input.validUntil,
+    outcome: decision ? { decision, reason: '사유', evidenceIds: [] } : null, errorCode: decision ? null : 'cli_error',
+  });
+}
+
+/**
+ * 심사 화면은 한 화면에 들어오는 만큼만 보여 주고 쪽을 넘긴다. 카드 50장을 한 쪽에 두면
+ * 화면 9개였다(2026-09-11 실측).
+ */
+it('쪽 번호로 넘기고 이 조건의 전체 수를 준다', async () => {
+  await held('acme/a', 'https://acme.github.io/a', 200);
+  await held('acme/b', 'https://acme.github.io/b', 200);
+  await held('acme/c', 'https://acme.github.io/c', 200);
+  const settings = await getSettings();
+
+  const first = await listAdminReviewEntries(settings, { state: 'needs_review', limit: 2, offset: 0 });
+  const second = await listAdminReviewEntries(settings, { state: 'needs_review', limit: 2, offset: 2 });
+
+  expect(first.total).toBe(3);
+  expect(first.entries.map((e) => e.candidate.repo)).toEqual(['acme/a', 'acme/b']);
+  expect(second.entries.map((e) => e.candidate.repo)).toEqual(['acme/c']);
+  expect(second.total).toBe(3);
+});
+
+it('보류 후보를 마지막으로 성공한 AI 판단으로 나눈다 — 실패만 있거나 안 돈 것은 판단 없음', async () => {
+  await held('acme/rejected', 'https://acme.github.io/rejected', 200);
+  await held('acme/approved', 'https://acme.github.io/approved', 200);
+  await held('acme/failed', 'https://acme.github.io/failed', 200);
+  await held('acme/untouched', 'https://acme.github.io/untouched', 200);
+  await attempt('acme/rejected', 'succeeded', 'reject');
+  await attempt('acme/approved', 'succeeded', 'approve');
+  // 뒤이은 실패가 앞선 성공 판단을 지우지 않는다
+  await attempt('acme/approved', 'failed');
+  await attempt('acme/failed', 'failed');
+
+  const { counts, ids } = await reviewQueueAiDecisions();
+
+  expect(counts).toEqual({ reject: 1, approve: 1, needs_review: 0, none: 2 });
+  const { entries } = await listAdminReviewEntries(await getSettings(), { state: 'needs_review', ids: ids.get('none') });
+  expect(entries.map((e) => e.candidate.repo).sort()).toEqual(['acme/failed', 'acme/untouched']);
 });

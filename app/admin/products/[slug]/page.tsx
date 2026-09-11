@@ -36,8 +36,8 @@ export default async function AdminEvidenceProductPage({ params }: Props) {
 
   return (
     <main className="mx-auto max-w-[980px] px-6 pb-20">
-      <div className="flex flex-wrap items-baseline gap-3 pt-9">
-        <h1 className="text-[26px] font-extrabold tracking-tight">{view.product.name}</h1>
+      <div className="flex flex-wrap items-baseline gap-3 pt-6">
+        <h1 className="text-[22px] font-extrabold tracking-tight">{view.product.name}</h1>
         <span className="font-mono text-[13px] text-fg-3">{view.product.slug}</span>
         <span className="text-[13px] font-semibold text-fg-2">{view.product.status}</span>
 

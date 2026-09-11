@@ -55,8 +55,8 @@ export default async function AdminNewsPage({ searchParams }: Props) {
 
   return (
     <main className="mx-auto max-w-[1000px] px-6 pb-20">
-      <div className="flex flex-wrap items-baseline gap-3 pt-9">
-        <h1 className="text-[26px] font-extrabold tracking-tight">AI 소식</h1>
+      <div className="flex flex-wrap items-baseline gap-3 pt-6">
+        <h1 className="text-[22px] font-extrabold tracking-tight">AI 소식</h1>
         <span className="text-[13px] text-fg-3">{admin.login}</span>
       </div>
       <p className="mt-2 max-w-[68ch] text-[13.5px] leading-[1.7] text-fg-2">

@@ -21,6 +21,8 @@ import { PipelineRail } from "./PipelineRail";
 import type { AgentStatus } from "@/lib/operations/contracts";
 import { manualCandidates } from "@/lib/operations/categories";
 import { redact } from "@/lib/observability/logger";
+import { listAdminReviewEntries, reviewQueueAiDecisions } from "@/lib/crawl/admin-review";
+import { QueuePreview } from "./QueuePreview";
 
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "운영센터 — NoMoreVibe", robots: { index: false } };
@@ -101,7 +103,9 @@ export default async function StatusPage() {
     getEvidenceStatusSummary(new Date()),
   ]);
   const [down, topClicked, ops, manual] = await Promise.all([downProducts(), topClickedSince(30), operationsData(), manualCandidates()]);
-  const [flow, oldestWait, stalled] = await Promise.all([pipelineFlow(), oldestReviewWaitDays(), stalledReviewCount()]);
+  const [flow, oldestWait, stalled, queue, decisions] = await Promise.all([pipelineFlow(), oldestReviewWaitDays(), stalledReviewCount(),
+    // 운영센터 가운데 표 — 한 화면에 들어오는 만큼만. 처리는 심사 큐에서 한다
+    listAdminReviewEntries(settings, { state: "needs_review", limit: 14 }), reviewQueueAiDecisions()]);
 
   const states = new Map(jobStates.map((job) => [job.name, job]));
   const rejectedTotal = rejections.reduce((sum, r) => sum + r.count, 0);
@@ -173,8 +177,8 @@ export default async function StatusPage() {
   }
 
   return (
-    <main className="mx-auto max-w-[900px] px-6 pb-20">
-      <OperationsCenter data={ops} candidates={manual} reviewMode={settings.reviewMode} enabled={settings.enabled} localCodexAllowed={localCodexEnabled()} actionQueue={<ActionQueue items={actions}/>} pipeline={<PipelineRail flow={flow}/>} oauthConfigured={Boolean(process.env.GITHUB_OAUTH_CLIENT_ID && process.env.GITHUB_OAUTH_CLIENT_SECRET)}
+    <main className="pb-10">
+      <OperationsCenter queue={<QueuePreview entries={queue.entries} total={queue.total} counts={decisions.counts} />} data={ops} candidates={manual} reviewMode={settings.reviewMode} enabled={settings.enabled} localCodexAllowed={localCodexEnabled()} actionQueue={<ActionQueue items={actions}/>} pipeline={<PipelineRail flow={flow}/>} oauthConfigured={Boolean(process.env.GITHUB_OAUTH_CLIENT_ID && process.env.GITHUB_OAUTH_CLIENT_SECRET)}
         jobs={JOB_NAMES.map(name => {
           const job = states.get(name);
           return { name, status: jobStatusLabel(job), lastRunAt: job?.lastRunAt?.toISOString() ?? null,
@@ -183,7 +187,7 @@ export default async function StatusPage() {
             requestedVersion: job?.requestedVersion ?? 0, processedVersion: job?.processedVersion ?? 0, runs: job?.runs ?? 0,
             lastError: job?.lastError?.slice(0,1000) ?? null, cursor: JSON.stringify(redact(job?.cursor ?? null),null,2).slice(0,8000) };
         })}>
-      <div className="mt-6 flex flex-col gap-4">
+      <div className="mt-3 grid gap-3 xl:grid-cols-2">
         <Panel
           title="작업"
           note="예약과 실행, 워커 생존을 구분합니다. 마지막 tick 성공은 대기 중인 모든 항목의 처리 완료를 뜻하지 않습니다."
