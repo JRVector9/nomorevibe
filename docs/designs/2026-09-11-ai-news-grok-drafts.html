@@ -1,0 +1,1221 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>AI 소식 /news 시안 — NoMoreVibe</title>
+  <style>
+    :root {
+      --bg: #f7f8fb;
+      --card: #ffffff;
+      --border: #dfe4ee;
+      --text: #10141c;
+      --muted: #5b6478;
+      --accent: #5b46f0;
+      --accent-soft: rgba(91, 70, 240, 0.1);
+      --green: #3f826a;
+      --green-bg: #edf6f1;
+      --warn: #a2650f;
+      --warn-bg: #f8f1e4;
+      --radius: 17px;
+      --shadow: 0 3px 16px rgba(31, 39, 79, 0.025);
+      --font: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", "Apple SD Gothic Neo", "Noto Sans KR", sans-serif;
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      font: 14px/1.55 var(--font);
+      color: var(--text);
+      background: var(--bg);
+      -webkit-font-smoothing: antialiased;
+    }
+    button, input { font: inherit; color: inherit; }
+    button { cursor: pointer; border: 0; background: none; }
+    a { color: inherit; text-decoration: none; }
+    h1, h2, h3, p { margin: 0; }
+    svg { vertical-align: middle; flex-shrink: 0; }
+    button:focus-visible, a:focus-visible, input:focus-visible {
+      outline: 3px solid #b5aaff;
+      outline-offset: 3px;
+    }
+    .sr-only {
+      position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+      overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0;
+    }
+
+    /* 시안 검토 크롬 — 제품 화면과 구분 */
+    .rev {
+      position: sticky; top: 0; z-index: 80;
+      background: #fff; border-bottom: 1px solid var(--border);
+    }
+    .rev-inner {
+      max-width: 1180px; margin: 0 auto; padding: 10px 20px 12px;
+    }
+    .rev-kicker {
+      font-size: 13px; color: var(--muted); margin-bottom: 8px;
+    }
+    .rev-tabs { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 2px; }
+    .rev-tab {
+      min-height: 44px; padding: 8px 14px; border-radius: 10px;
+      border: 1px solid var(--border); background: #fff; color: var(--muted);
+      font-size: 13px; font-weight: 650; white-space: nowrap;
+    }
+    .rev-tab[aria-selected="true"] {
+      background: var(--accent); color: #fff; border-color: var(--accent);
+    }
+
+    .pane { max-width: 1180px; margin: 0 auto; padding: 22px 20px 72px; }
+    .pane[hidden] { display: none; }
+
+    .brief {
+      margin-bottom: 18px;
+    }
+    .brief h1 {
+      font-size: 22px; font-weight: 780; letter-spacing: -0.6px;
+      text-wrap: balance;
+    }
+    .brief .lede {
+      margin-top: 6px; font-size: 14px; color: var(--muted); max-width: 62ch;
+    }
+    .who {
+      display: inline-flex; align-items: center; gap: 6px;
+      margin-top: 10px; font-size: 13px; color: var(--green);
+      background: var(--green-bg); padding: 5px 8px; border-radius: 6px;
+    }
+
+    .stage {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      overflow: hidden;
+      box-shadow: var(--shadow);
+      min-width: 0;
+    }
+    .stage-label {
+      font-size: 13px; color: var(--muted);
+      padding: 8px 16px; border-bottom: 1px solid var(--border);
+      background: #fafbfe;
+    }
+
+    .nmb-header {
+      height: 68px; background: #ffffffed; border-bottom: 1px solid var(--border);
+    }
+    .nmb-header .wrap {
+      height: 100%; display: flex; align-items: center; gap: 22px;
+      max-width: 1100px; margin: 0 auto; padding: 0 20px;
+    }
+    .brand {
+      display: inline-flex; align-items: center; gap: 8px;
+      font-size: 22px; font-weight: 800; letter-spacing: -1px; white-space: nowrap;
+    }
+    .brand-symbol { color: var(--accent); font-size: 22px; font-weight: 700; }
+    .brand-beta { font-size: 13px; color: #6b6384; font-weight: 500; margin-top: -8px; }
+    .navigation { display: flex; gap: 22px; height: 100%; }
+    .navigation a {
+      color: var(--muted); font-size: 14px; font-weight: 500;
+      display: flex; align-items: center; height: 100%; position: relative;
+    }
+    .navigation a.active { color: var(--text); font-weight: 750; }
+    .navigation a.active:after {
+      content: ""; height: 3px; border-radius: 3px; background: var(--accent);
+      position: absolute; left: 0; right: 0; bottom: 0;
+    }
+    .header-search {
+      margin-left: auto; max-width: 240px; flex: 1;
+      display: flex; align-items: center; gap: 8px;
+      background: #f5f6fa; border: 1px solid #eff0f6; border-radius: 11px;
+      padding: 8px 12px; color: var(--muted); min-width: 0;
+    }
+    .header-search span { font-size: 13px; white-space: nowrap; overflow: hidden; }
+    .primary {
+      display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+      border-radius: 10px; background: var(--accent); color: #fff;
+      font-weight: 650; font-size: 13px; min-height: 42px; padding: 8px 14px;
+      white-space: nowrap; box-shadow: 0 3px 8px #5d4ce516;
+    }
+
+    .page { max-width: 1100px; margin: 0 auto; padding: 22px 20px 28px; min-width: 0; }
+    .page-top { display: flex; justify-content: space-between; gap: 16px; align-items: flex-end; flex-wrap: wrap; }
+    .page-top h2 { font-size: 28px; font-weight: 780; letter-spacing: -1.2px; }
+    .page-top p { margin-top: 6px; color: var(--muted); font-size: 14px; max-width: 54ch; }
+    .sample-flag {
+      font-size: 13px; color: var(--warn); background: var(--warn-bg);
+      border-radius: 8px; padding: 8px 10px; max-width: 280px; line-height: 1.45;
+    }
+
+    .callout {
+      margin-top: 14px; font-size: 13px; color: var(--muted);
+      background: #fff; border: 1px solid var(--border); border-radius: 12px;
+      padding: 10px 12px;
+    }
+
+    .filters { margin-top: 16px; display: grid; gap: 10px; min-width: 0; }
+    .filter-row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; min-width: 0; max-width: 100%; }
+    .filter-label {
+      font-size: 13px; color: var(--muted); min-width: 64px; font-weight: 650;
+    }
+    .chip {
+      display: inline-flex; align-items: center; gap: 6px;
+      min-height: 40px; padding: 6px 12px; border-radius: 999px;
+      border: 1px solid var(--border); background: #fff; color: var(--muted);
+      font-size: 13px; white-space: nowrap; flex: 0 0 auto;
+    }
+    .chip[aria-pressed="true"] {
+      background: var(--accent-soft); border-color: #c9c3f4; color: var(--text); font-weight: 650;
+    }
+    .chip-row { display: flex; flex-wrap: wrap; gap: 6px; flex: 1; min-width: 0; max-width: 100%; }
+    .toggle {
+      display: inline-flex; align-items: center; gap: 8px;
+      min-height: 44px; padding: 0 12px; border-radius: 10px;
+      border: 1px solid var(--border); background: #fff; font-size: 13px; font-weight: 650;
+    }
+    .toggle[aria-pressed="true"] { background: var(--accent-soft); border-color: #c9c3f4; }
+    .sw {
+      width: 28px; height: 16px; border-radius: 99px; background: #d9deea; position: relative;
+    }
+    .toggle[aria-pressed="true"] .sw { background: var(--accent); }
+    .sw:after {
+      content: ""; width: 12px; height: 12px; border-radius: 50%; background: #fff;
+      position: absolute; top: 2px; left: 2px;
+    }
+    .toggle[aria-pressed="true"] .sw:after { left: 14px; }
+    .result-meta { font-size: 13px; color: var(--muted); margin-left: auto; }
+    .ghost {
+      min-height: 40px; padding: 0 10px; border-radius: 8px; color: var(--muted);
+      font-size: 13px; text-decoration: underline; text-underline-offset: 3px;
+    }
+
+    .list-card {
+      margin-top: 14px; background: #fff; border: 1px solid var(--border);
+      border-radius: var(--radius); box-shadow: var(--shadow); padding: 6px 18px 10px;
+    }
+    .news-item {
+      display: block; padding: 16px 0 14px; border-bottom: 1px solid var(--border);
+    }
+    .news-item:last-child { border: 0; }
+    .news-type {
+      display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+      font-size: 13px; color: var(--muted); margin-bottom: 6px;
+    }
+    .mini-source {
+      width: 18px; height: 18px; display: grid; place-items: center;
+      border-radius: 5px; font-size: 12px; font-weight: 750;
+    }
+    .mini-source.dark { background: #272e40; color: #fff; }
+    .mini-source.mint { background: #e5f1e8; color: #456851; }
+    .mini-source.peach { background: #f3e3d5; color: #967359; }
+    .cat-pill {
+      font-size: 12px; padding: 2px 6px; border-radius: 4px;
+      background: #f0f2f8; color: var(--muted);
+    }
+    .cat-pill.model { background: var(--accent-soft); color: #3d32b0; }
+    .cat-pill.pricing { background: var(--warn-bg); color: var(--warn); }
+    .news-item h3 {
+      font-size: 15px; line-height: 1.5; font-weight: 650; letter-spacing: -0.2px;
+    }
+    .news-item:hover h3 { color: var(--accent); }
+    .ex {
+      display: inline-block; margin-left: 6px; font-size: 12px; font-weight: 650;
+      color: var(--warn); background: var(--warn-bg); padding: 1px 5px; border-radius: 4px;
+      vertical-align: 1px;
+    }
+    .sum { margin-top: 6px; font-size: 13px; color: var(--muted); max-width: 68ch; }
+    .news-meta {
+      margin-top: 7px; color: var(--muted); font-size: 13px;
+      display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap;
+    }
+    .news-meta .go { display: inline-flex; align-items: center; gap: 4px; }
+
+    .empty {
+      display: none; text-align: center; padding: 42px 18px;
+      background: #fff; border: 1px dashed #dcd9ea; border-radius: 18px; margin-top: 14px;
+    }
+    .empty.show { display: block; }
+    .empty h3 { font-size: 16px; margin: 8px 0 6px; }
+    .empty p { color: var(--muted); font-size: 13px; margin-bottom: 14px; }
+    .list-card.is-empty { display: none; }
+    .group-block:first-child .group-head { padding-top: 8px; }
+
+    /* 시안 2 */
+    .stack-layout { display: grid; gap: 14px; margin-top: 14px; }
+    @media (min-width: 900px) {
+      .stack-layout { grid-template-columns: 250px minmax(0, 1fr); align-items: start; }
+    }
+    .tool-rail {
+      background: #fff; border: 1px solid var(--border); border-radius: var(--radius);
+      box-shadow: var(--shadow); padding: 14px 12px 12px;
+    }
+    .tool-rail h3 { font-size: 14px; font-weight: 750; padding: 0 6px; }
+    .tool-rail .hint { font-size: 13px; color: var(--muted); padding: 4px 6px 10px; }
+    .tool-group { font-size: 12px; font-weight: 750; color: var(--muted); padding: 8px 6px 4px; }
+    .tool-opt {
+      display: flex; align-items: center; gap: 8px; min-height: 40px;
+      padding: 0 8px; border-radius: 10px; font-size: 13px; cursor: pointer;
+    }
+    .tool-opt:hover { background: #f5f6fb; }
+    .tool-opt input { width: 16px; height: 16px; accent-color: var(--accent); }
+    .rail-actions { display: flex; gap: 8px; padding: 8px 4px 0; }
+    .group-head {
+      display: flex; align-items: center; gap: 8px;
+      padding: 16px 0 4px; font-size: 14px; font-weight: 750;
+    }
+    .group-head .kind { font-size: 13px; color: var(--muted); font-weight: 500; }
+    .group-block + .group-block { border-top: 1px solid var(--border); }
+
+    /* 시안 3 */
+    .impact-grid { display: grid; gap: 12px; margin-top: 14px; }
+    @media (min-width: 820px) {
+      .impact-grid.top { grid-template-columns: 1.15fr 1fr; }
+    }
+    .impact-card {
+      background: #fff; border: 1px solid var(--border); border-radius: var(--radius);
+      box-shadow: var(--shadow); padding: 14px 16px 8px; min-width: 0;
+    }
+    .impact-card header {
+      display: flex; justify-content: space-between; align-items: baseline; gap: 8px;
+      margin-bottom: 4px;
+    }
+    .impact-card h3 { font-size: 14px; font-weight: 750; }
+    .impact-card header span { font-size: 13px; color: var(--muted); }
+    .impact-card.pricing { border-color: #ead9b3; }
+    .impact-card .news-item { padding: 12px 0; }
+    .impact-card .news-item h3 { font-size: 14px; }
+    .quiet { opacity: 0.96; }
+    .section-empty {
+      font-size: 13px; color: var(--muted); padding: 14px 0 18px;
+    }
+
+    /* 홈 연결 */
+    .after { margin-top: 28px; display: grid; gap: 16px; }
+    @media (min-width: 860px) {
+      .after { grid-template-columns: 320px minmax(0, 1fr); align-items: start; }
+    }
+    .aside-card {
+      border-radius: var(--radius); background: #fff; border: 1px solid var(--border);
+      padding: 18px 18px 14px; box-shadow: var(--shadow);
+    }
+    .aside-title { display: flex; justify-content: space-between; gap: 10px; align-items: center; }
+    .aside-title h2 { font-size: 15px; font-weight: 750; letter-spacing: -0.3px; }
+    .source-pill {
+      font-size: 13px; color: var(--green); background: var(--green-bg);
+      padding: 3px 6px; border-radius: 4px; white-space: nowrap;
+    }
+    .aside-sub { font-size: 13px; color: var(--muted); margin-top: 5px; }
+    .aside-card .news-item { padding: 14px 0 12px; }
+    .aside-card .news-item h3 { font-size: 14px; }
+    .brief-bottom {
+      font-size: 13px; color: var(--muted); line-height: 1.5;
+      margin-top: 8px; padding-top: 10px; border-top: 1px solid var(--border);
+    }
+    .home-copy h3 { font-size: 15px; font-weight: 750; }
+    .home-copy p { margin-top: 8px; color: var(--muted); font-size: 14px; max-width: 60ch; }
+    .home-copy ul { margin: 8px 0 0; padding-left: 18px; color: var(--muted); font-size: 14px; }
+    .home-copy li { margin: 4px 0; }
+
+    .trade {
+      margin-top: 22px; display: grid; gap: 12px;
+    }
+    @media (min-width: 700px) { .trade { grid-template-columns: 1fr 1fr; } }
+    .trade article {
+      background: #fff; border: 1px solid var(--border); border-radius: 14px; padding: 14px 16px;
+    }
+    .trade h3 { font-size: 14px; font-weight: 750; margin-bottom: 8px; }
+    .trade ul { margin: 0; padding-left: 18px; color: var(--muted); font-size: 14px; }
+    .trade li { margin: 5px 0; }
+
+    /* 추천 */
+    .rec-box {
+      background: #fff; border: 1px solid var(--border); border-radius: var(--radius);
+      box-shadow: var(--shadow); padding: 20px 20px 16px; margin-bottom: 18px;
+    }
+    .rec-box h1 { font-size: 22px; font-weight: 780; letter-spacing: -0.5px; text-wrap: balance; }
+    .rec-box .pick {
+      display: inline-block; margin-top: 8px; font-size: 13px; font-weight: 700;
+      color: var(--accent); background: var(--accent-soft); padding: 4px 8px; border-radius: 6px;
+    }
+    .rec-box p { margin-top: 10px; font-size: 14px; max-width: 70ch; }
+    .rec-box ol, .rec-box ul { margin: 8px 0 0; padding-left: 20px; }
+    .rec-box li { margin: 6px 0; font-size: 14px; }
+    .why-grid { display: grid; gap: 10px; margin-top: 14px; }
+    @media (min-width: 720px) { .why-grid { grid-template-columns: 1fr 1fr 1fr; } }
+    .why-grid div {
+      border: 1px solid var(--border); border-radius: 12px; padding: 12px;
+    }
+    .why-grid strong { display: block; font-size: 13px; margin-bottom: 4px; }
+    .why-grid span { font-size: 13px; color: var(--muted); }
+
+    .pin {
+      display: grid; gap: 8px; margin-top: 12px;
+    }
+    @media (min-width: 720px) { .pin { grid-template-columns: 1fr 1fr; } }
+    .pin a {
+      display: block; background: #fff; border: 1px solid var(--border);
+      border-radius: 14px; padding: 12px 14px;
+    }
+    .pin a:hover h3 { color: var(--accent); }
+    .pin .k { font-size: 12px; font-weight: 750; color: #3d32b0; }
+    .pin .pricing .k { color: var(--warn); }
+    .pin h3 { font-size: 14px; font-weight: 650; margin-top: 4px; }
+
+    @media (max-width: 720px) {
+      .navigation { display: none; }
+      .header-search { display: none; }
+      .page-top h2 { font-size: 24px; }
+      .nmb-header { height: 56px; }
+      .nmb-header .wrap { gap: 10px; }
+      .sample-flag { max-width: none; }
+      .result-meta { margin-left: 0; width: 100%; }
+      .filter-row { flex-direction: column; align-items: flex-start; gap: 6px; width: 100%; }
+      .filter-label { min-width: 0; }
+      .chip-row { width: 100%; max-width: 100%; }
+      .chip { min-height: 36px; }
+      [data-group="company"] {
+        flex-wrap: nowrap;
+        overflow-x: auto;
+        width: 100%;
+        padding-bottom: 6px;
+        -webkit-overflow-scrolling: touch;
+      }
+      [data-group="company"] .chip { flex: 0 0 auto; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      html { scroll-behavior: auto; }
+      * { transition: none !important; }
+    }
+  </style>
+</head>
+<body>
+  <div class="rev">
+    <div class="rev-inner">
+      <p class="rev-kicker">시안 검토 · 제품 화면이 아닙니다 · 제목·날짜는 예시</p>
+      <div class="rev-tabs" role="tablist" aria-label="시안 선택">
+        <button class="rev-tab" role="tab" id="tab-1" data-tab="1" aria-selected="true" aria-controls="pane-1">시안 1</button>
+        <button class="rev-tab" role="tab" id="tab-2" data-tab="2" aria-selected="false" aria-controls="pane-2">시안 2</button>
+        <button class="rev-tab" role="tab" id="tab-3" data-tab="3" aria-selected="false" aria-controls="pane-3">시안 3</button>
+        <button class="rev-tab" role="tab" id="tab-r" data-tab="r" aria-selected="false" aria-controls="pane-r">추천</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 시안 1 -->
+  <section class="pane" id="pane-1" role="tabpanel" aria-labelledby="tab-1">
+    <div class="brief">
+      <h1>시안 1. 공식 변경 로그</h1>
+      <p class="lede">홈 오른쪽 카드를 그대로 늘린 시간순 피드입니다. 회사·종류·기간을 걸러 원문으로 바로 갑니다.</p>
+      <p class="who">누구에게: 출근 전 5분, 오늘 뭐가 바뀌었나만 확인하는 메이커</p>
+    </div>
+    <div class="stage">
+      <div class="stage-label">/news 목업 · 필터를 눌러 목록이 줄어듭니다</div>
+      <header class="nmb-header">
+        <div class="wrap">
+          <a class="brand" href="#"><span class="brand-symbol" aria-hidden="true">✳</span> nomorevibe <span class="brand-beta">BETA</span></a>
+          <nav class="navigation" aria-label="주 메뉴">
+            <a href="#">발견하기</a>
+            <a class="active" href="#">AI 소식</a>
+            <a href="#">제작 도구</a>
+          </nav>
+          <div class="header-search" aria-hidden="true">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="10.8" cy="10.8" r="6.8"/><path d="m16 16 4 4"/></svg>
+            <span>프로젝트, 도구, 아이디어 검색</span>
+          </div>
+          <span class="primary">프로젝트 공개</span>
+        </div>
+      </header>
+      <div class="page" data-panel="log">
+        <div class="page-top">
+          <div>
+            <h2>AI 소식</h2>
+            <p>공식 피드만 모읍니다. 제목은 원문 그대로이고, 누르면 원문으로 이동합니다. 우리가 기사를 다시 쓰지 않습니다.</p>
+          </div>
+          <p class="sample-flag">회사 이름은 실제 수집 소스입니다. 제목과 날짜는 구성 검토용 예시입니다.</p>
+        </div>
+        <p class="callout">관리자 승인(기본값 자동 승인) · 수집 시각과 게시일은 다릅니다 · 실시간 피드가 아닙니다.</p>
+        <div class="filters">
+          <div class="filter-row">
+            <span class="filter-label">기간</span>
+            <div class="chip-row" data-group="period">
+              <button class="chip" type="button" data-filter="period" data-value="7">7일</button>
+              <button class="chip" type="button" data-filter="period" data-value="30" aria-pressed="true">30일</button>
+              <button class="chip" type="button" data-filter="period" data-value="all">전체</button>
+            </div>
+          </div>
+          <div class="filter-row">
+            <span class="filter-label">종류</span>
+            <div class="chip-row" data-group="kind">
+              <button class="chip" type="button" data-filter="kind" data-value="all" aria-pressed="true">모두</button>
+              <button class="chip" type="button" data-filter="kind" data-value="lab">모델 연구소</button>
+              <button class="chip" type="button" data-filter="kind" data-value="tool">개발 도구</button>
+              <button class="chip" type="button" data-filter="kind" data-value="cli">CLI 릴리스</button>
+            </div>
+          </div>
+          <div class="filter-row">
+            <span class="filter-label">분류</span>
+            <div class="chip-row" data-group="cat">
+              <button class="chip" type="button" data-filter="cat" data-value="all" aria-pressed="true">모두</button>
+              <button class="chip" type="button" data-filter="cat" data-value="model">모델 출시</button>
+              <button class="chip" type="button" data-filter="cat" data-value="tool">도구 업데이트</button>
+              <button class="chip" type="button" data-filter="cat" data-value="pricing">API·가격 변경</button>
+              <button class="chip" type="button" data-filter="cat" data-value="research">연구</button>
+              <button class="chip" type="button" data-filter="cat" data-value="policy">정책</button>
+            </div>
+          </div>
+          <div class="filter-row">
+            <span class="filter-label">회사</span>
+            <div class="chip-row" data-group="company" data-companies></div>
+          </div>
+          <div class="filter-row">
+            <button class="toggle" type="button" data-mine aria-pressed="false">
+              <span class="sw" aria-hidden="true"></span> 내가 쓰는 도구만
+            </button>
+            <button class="ghost" type="button" data-empty>빈 상태 보기</button>
+            <span class="result-meta" data-count></span>
+          </div>
+        </div>
+        <div class="list-card" data-list></div>
+        <div class="empty" data-empty-box>
+          <h3>이 조건의 공식 소식이 없습니다</h3>
+          <p>공식 피드에 항목이 없거나, 아직 승인 전입니다. 없는 변경을 0건으로 바꾸지 않습니다.</p>
+          <button class="primary" type="button" data-reset>필터 지우기</button>
+        </div>
+      </div>
+    </div>
+    <div class="after">
+      <aside class="aside-card" aria-label="홈 카드 연결">
+        <div class="aside-title">
+          <h2>빌더를 위한 AI 소식</h2>
+          <span class="source-pill">공식 출처</span>
+        </div>
+        <p class="aside-sub">만드는 사람에게 필요한 변화만 모았습니다.</p>
+        <div data-home></div>
+        <div class="brief-bottom">홈은 /news와 같은 목록의 앞 3건입니다. 전체 보기 → /news</div>
+      </aside>
+      <div class="home-copy">
+        <h3>홈과 이어지는 방식</h3>
+        <p>오른쪽 카드 컴포넌트를 재사용합니다. 지금은 고정 3건이지만, 같은 행 구조로 최신 승인 항목 3개를 넣고 ‘전체 보기’만 /news로 보냅니다.</p>
+        <ul>
+          <li>헤더 ‘AI 소식’은 앵커(#briefing) 대신 /news로 바꿉니다.</li>
+          <li>홈에서 고른 필터는 없습니다. 홈은 항상 최신 3건입니다.</li>
+          <li>‘내가 쓰는 도구’를 켠 사람은 시안 2처럼 홈도 맞출 수 있습니다. 이 시안 기본값은 전체입니다.</li>
+        </ul>
+      </div>
+    </div>
+    <div class="trade">
+      <article>
+        <h3>장점</h3>
+        <ul>
+          <li>지금 홈 카드와 같은 언어라 새로 배울 화면이 없습니다.</li>
+          <li>구현이 가장 얇습니다. 리스트 + 필터 + 원문 링크입니다.</li>
+          <li>항목이 적어도, 많아도 형태가 무너지지 않습니다.</li>
+        </ul>
+      </article>
+      <article>
+        <h3>단점</h3>
+        <ul>
+          <li>CLI 패치 노트가 새 모델·가격 변경을 덮습니다.</li>
+          <li>영문 제목만 시간순으로 쌓이면 스캔 부담이 큽니다.</li>
+          <li>‘내가 쓰는 것’이 토글 뒤에 숨어 핵심 직무가 약합니다.</li>
+        </ul>
+      </article>
+    </div>
+  </section>
+
+  <!-- 시안 2 -->
+  <section class="pane" id="pane-2" role="tabpanel" aria-labelledby="tab-2" hidden>
+    <div class="brief">
+      <h1>시안 2. 내 스택 레이더</h1>
+      <p class="lede">기본값이 전체가 아닙니다. 쓰는 회사·도구를 고르면 홈 카드와 /news가 같은 렌즈를 씁니다.</p>
+      <p class="who">누구에게: Cursor + Claude, Codex + GPT처럼 스택이 고정된 바이브 코더</p>
+    </div>
+    <div class="stage">
+      <div class="stage-label">/news 목업 · 왼쪽에서 도구를 켜고 끄면 그룹이 바뀝니다</div>
+      <header class="nmb-header">
+        <div class="wrap">
+          <a class="brand" href="#"><span class="brand-symbol" aria-hidden="true">✳</span> nomorevibe <span class="brand-beta">BETA</span></a>
+          <nav class="navigation" aria-label="주 메뉴">
+            <a href="#">발견하기</a>
+            <a class="active" href="#">AI 소식</a>
+            <a href="#">제작 도구</a>
+          </nav>
+          <div class="header-search" aria-hidden="true">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="10.8" cy="10.8" r="6.8"/><path d="m16 16 4 4"/></svg>
+            <span>프로젝트, 도구, 아이디어 검색</span>
+          </div>
+          <span class="primary">프로젝트 공개</span>
+        </div>
+      </header>
+      <div class="page" data-panel="stack">
+        <div class="page-top">
+          <div>
+            <h2>내 도구 기준 소식</h2>
+            <p>고른 도구의 공식 변경만 남깁니다. 저장은 이 브라우저에만 남습니다. 계정과 아직 묶지 않습니다.</p>
+          </div>
+          <p class="sample-flag">회사 이름은 실제 수집 소스입니다. 제목과 날짜는 구성 검토용 예시입니다.</p>
+        </div>
+        <div class="filters">
+          <div class="filter-row">
+            <span class="filter-label">기간</span>
+            <div class="chip-row" data-group="period">
+              <button class="chip" type="button" data-filter="period" data-value="7">7일</button>
+              <button class="chip" type="button" data-filter="period" data-value="30" aria-pressed="true">30일</button>
+              <button class="chip" type="button" data-filter="period" data-value="all">전체</button>
+            </div>
+            <button class="ghost" type="button" data-empty>빈 상태 보기</button>
+            <span class="result-meta" data-count></span>
+          </div>
+        </div>
+        <div class="stack-layout">
+          <aside class="tool-rail">
+            <h3>내가 쓰는 도구</h3>
+            <p class="hint">기본 선택은 흔한 바이브 스택 예시입니다. 체크를 끄면 그 회사 소식이 사라집니다.</p>
+            <div data-tools></div>
+            <div class="rail-actions">
+              <button class="ghost" type="button" data-all>모두</button>
+              <button class="ghost" type="button" data-none>선택 해제</button>
+            </div>
+          </aside>
+          <div>
+            <div class="list-card" data-list></div>
+            <div class="empty" data-empty-box>
+              <h3>고른 도구에 최근 공식 변경이 없습니다</h3>
+              <p>없는 상태를 숨기지 않습니다. 기간을 넓히거나 도구를 추가해 보세요. 도구를 하나도 고르지 않으면 전체를 보여 줄 수도 있습니다.</p>
+              <button class="primary" type="button" data-reset>기간 30일 · 기본 도구로</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="after">
+      <aside class="aside-card">
+        <div class="aside-title">
+          <h2>빌더를 위한 AI 소식</h2>
+          <span class="source-pill">내 도구 기준</span>
+        </div>
+        <p class="aside-sub">Cursor · Anthropic · OpenAI 예시 선택</p>
+        <div data-home></div>
+        <div class="brief-bottom">도구를 아직 고르지 않았다면 전체 최근 3건을 보여 주고, 고르라고 한 줄만 안내합니다.</div>
+      </aside>
+      <div class="home-copy">
+        <h3>홈과 이어지는 방식</h3>
+        <p>홈 카드와 /news가 같은 ‘내 도구’ 값을 읽습니다. 프로젝트 등록 때 적은 제작 도구가 있으면 나중에는 그 값으로 채울 수 있습니다.</p>
+        <ul>
+          <li>미설정: 전체 최신 3건 + ‘쓰는 도구 고르기’.</li>
+          <li>설정됨: 그 회사 최신 3건, 배지는 ‘내 도구 기준’.</li>
+          <li>홈에서 도구를 바꾸지 않습니다. 설정은 /news에만 둡니다.</li>
+        </ul>
+      </div>
+    </div>
+    <div class="trade">
+      <article>
+        <h3>장점</h3>
+        <ul>
+          <li>메이커가 실제로 묻는 질문(“내 도구가 바뀌었나”)에 가장 가깝습니다.</li>
+          <li>회사별 그룹이라 영문 제목을 출처 단위로 훑기 쉽습니다.</li>
+          <li>노이즈(관심 없는 연구소 발표)를 기본값에서 잘라 냅니다.</li>
+        </ul>
+      </article>
+      <article>
+        <h3>단점</h3>
+        <ul>
+          <li>첫 방문에 선택이 필요합니다. 잘못 비우면 빈 화면이 됩니다.</li>
+          <li>새 모델이 고르지 않은 회사에서 나와도 놓칩니다.</li>
+          <li>도구 레일이 모바일에서 길어져 접어야 합니다.</li>
+        </ul>
+      </article>
+    </div>
+  </section>
+
+  <!-- 시안 3 -->
+  <section class="pane" id="pane-3" role="tabpanel" aria-labelledby="tab-3" hidden>
+    <div class="brief">
+      <h1>시안 3. 영향 유형 보드</h1>
+      <p class="lede">시간보다 영향입니다. 새 모델과 가격·한도를 도구 패치 노트보다 위에 둡니다.</p>
+      <p class="who">누구에게: 모델 교체와 토큰 비용에 민감한 메이커</p>
+    </div>
+    <div class="stage">
+      <div class="stage-label">/news 목업 · 기본 기간은 7일입니다. 연구 칸이 비는 상태를 같이 보여 줍니다</div>
+      <header class="nmb-header">
+        <div class="wrap">
+          <a class="brand" href="#"><span class="brand-symbol" aria-hidden="true">✳</span> nomorevibe <span class="brand-beta">BETA</span></a>
+          <nav class="navigation" aria-label="주 메뉴">
+            <a href="#">발견하기</a>
+            <a class="active" href="#">AI 소식</a>
+            <a href="#">제작 도구</a>
+          </nav>
+          <div class="header-search" aria-hidden="true">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="10.8" cy="10.8" r="6.8"/><path d="m16 16 4 4"/></svg>
+            <span>프로젝트, 도구, 아이디어 검색</span>
+          </div>
+          <span class="primary">프로젝트 공개</span>
+        </div>
+      </header>
+      <div class="page" data-panel="impact">
+        <div class="page-top">
+          <div>
+            <h2>이번 주 영향</h2>
+            <p>분류가 곧 화면입니다. 패치 노트와 가격 변경을 같은 높이로 두지 않습니다.</p>
+          </div>
+          <p class="sample-flag">회사 이름은 실제 수집 소스입니다. 제목과 날짜는 구성 검토용 예시입니다.</p>
+        </div>
+        <div class="filters">
+          <div class="filter-row">
+            <span class="filter-label">기간</span>
+            <div class="chip-row" data-group="period">
+              <button class="chip" type="button" data-filter="period" data-value="7" aria-pressed="true">7일</button>
+              <button class="chip" type="button" data-filter="period" data-value="30">30일</button>
+              <button class="chip" type="button" data-filter="period" data-value="all">전체</button>
+            </div>
+          </div>
+          <div class="filter-row">
+            <span class="filter-label">종류</span>
+            <div class="chip-row" data-group="kind">
+              <button class="chip" type="button" data-filter="kind" data-value="all" aria-pressed="true">모두</button>
+              <button class="chip" type="button" data-filter="kind" data-value="lab">모델 연구소</button>
+              <button class="chip" type="button" data-filter="kind" data-value="tool">개발 도구</button>
+              <button class="chip" type="button" data-filter="kind" data-value="cli">CLI 릴리스</button>
+            </div>
+          </div>
+          <div class="filter-row">
+            <span class="filter-label">회사</span>
+            <div class="chip-row" data-group="company" data-companies></div>
+          </div>
+          <div class="filter-row">
+            <button class="toggle" type="button" data-mine aria-pressed="false">
+              <span class="sw" aria-hidden="true"></span> 내가 쓰는 도구만
+            </button>
+            <button class="ghost" type="button" data-empty>빈 보드 보기</button>
+            <span class="result-meta" data-count></span>
+          </div>
+        </div>
+        <div data-board></div>
+      </div>
+    </div>
+    <div class="after">
+      <aside class="aside-card">
+        <div class="aside-title">
+          <h2>빌더를 위한 AI 소식</h2>
+          <span class="source-pill">이번 주 영향</span>
+        </div>
+        <p class="aside-sub">시간순 3건이 아니라 유형에서 하나씩.</p>
+        <div data-home></div>
+        <div class="brief-bottom">해당 유형이 없으면 다음으로 최근 공식 항목을 채웁니다. 빈 칸을 광고로 메우지 않습니다.</div>
+      </aside>
+      <div class="home-copy">
+        <h3>홈과 이어지는 방식</h3>
+        <p>홈 카드는 ‘새 모델 / 가격·한도 / 도구’에서 최대 1건씩입니다. 분류 라벨이 제목 위에 있어, 홈에서도 영향 종류가 먼저 보입니다.</p>
+        <ul>
+          <li>/news의 윗단(모델·가격)과 홈이 같은 우선순위를 공유합니다.</li>
+          <li>연구·정책은 홈에 올리지 않습니다. 전용 페이지에서만 봅니다.</li>
+        </ul>
+      </div>
+    </div>
+    <div class="trade">
+      <article>
+        <h3>장점</h3>
+        <ul>
+          <li>가격·한도와 새 모델이 패치 노트에 묻히지 않습니다.</li>
+          <li>메이커의 판단(갈아탈까, 한도가 줄었나)에 맞춰 읽습니다.</li>
+          <li>칸이 비면 ‘이번 주 이 유형은 없음’이 정보입니다.</li>
+        </ul>
+      </article>
+      <article>
+        <h3>단점</h3>
+        <ul>
+          <li>출시 초기처럼 항목이 적으면 보드가 휑합니다.</li>
+          <li>같은 날 여러 회사 패치는 한 칸에 몰려 밀도가 어색합니다.</li>
+          <li>홈·로그와 구조가 달라 컴포넌트를 두 벌 유지해야 합니다.</li>
+        </ul>
+      </article>
+    </div>
+  </section>
+
+  <!-- 추천 -->
+  <section class="pane" id="pane-r" role="tabpanel" aria-labelledby="tab-r" hidden>
+    <div class="rec-box">
+      <h1>추천: 로그를 뼈대로, 내 도구를 렌즈로, 영향만 위에 고정</h1>
+      <p class="pick">시안 1 + 시안 2의 렌즈 + 시안 3의 상단 핀</p>
+      <p>NoMoreVibe의 소식은 매거진이 아닙니다. 메이커가 묻는 말은 세 개뿐입니다. 내가 쓰는 도구가 바뀌었나, 새 모델이 나왔나, 가격·한도가 바뀌었나. 그래서 본문은 시안 1처럼 홈과 같은 리스트로 두고, 기본 렌즈는 시안 2의 ‘내 도구’, 모델 출시와 API·가격만 시안 3처럼 리스트 위에 고정하는 편이 맞습니다.</p>
+      <div class="why-grid">
+        <div><strong>시안 1에서</strong><span>행 구조, 필터, 원문 이동, 빈 상태. 홈 카드와 한 컴포넌트.</span></div>
+        <div><strong>시안 2에서</strong><span>내 도구 저장. 미설정이면 전체 최근으로 폴백. 빈 화면을 기본값으로 두지 않음.</span></div>
+        <div><strong>시안 3에서</strong><span>7일 안의 모델 출시·가격만 상단 핀. 연구·정책은 본문 리스트에만.</span></div>
+      </div>
+      <p>보드 전체(시안 3)는 1차로 쓰지 않습니다. 항목이 적은 운영 초기에 휑하고, 모바일에서 칸이 무너지며, 홈 카드와 다른 뼈대를 유지해야 합니다. 완전 개인화 기본값(시안 2 그대로)도 1차가 아닙니다. 고르지 않은 회사의 새 모델을 놓치고, 첫 방문 빈 화면 위험이 있습니다.</p>
+    </div>
+
+    <div class="stage">
+      <div class="stage-label">추천안 목업 · 상단 핀 + 내 도구 켜짐 + 시간순 리스트</div>
+      <header class="nmb-header">
+        <div class="wrap">
+          <a class="brand" href="#"><span class="brand-symbol" aria-hidden="true">✳</span> nomorevibe <span class="brand-beta">BETA</span></a>
+          <nav class="navigation" aria-label="주 메뉴">
+            <a href="#">발견하기</a>
+            <a class="active" href="#">AI 소식</a>
+            <a href="#">제작 도구</a>
+          </nav>
+          <div class="header-search" aria-hidden="true">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="10.8" cy="10.8" r="6.8"/><path d="m16 16 4 4"/></svg>
+            <span>프로젝트, 도구, 아이디어 검색</span>
+          </div>
+          <span class="primary">프로젝트 공개</span>
+        </div>
+      </header>
+      <div class="page" data-panel="rec">
+        <div class="page-top">
+          <div>
+            <h2>AI 소식</h2>
+            <p>공식 피드 · 제목은 원문 · 클릭은 원문. 내 도구가 있으면 그 기준이고, 없으면 전체 최근입니다.</p>
+          </div>
+          <p class="sample-flag">회사 이름은 실제 수집 소스입니다. 제목과 날짜는 구성 검토용 예시입니다.</p>
+        </div>
+        <p class="callout">이번 주 영향은 모델 출시와 API·가격만 올립니다. 나머지는 아래 로그입니다.</p>
+        <div class="pin" data-pin></div>
+        <div class="filters">
+          <div class="filter-row">
+            <span class="filter-label">기간</span>
+            <div class="chip-row" data-group="period">
+              <button class="chip" type="button" data-filter="period" data-value="7">7일</button>
+              <button class="chip" type="button" data-filter="period" data-value="30" aria-pressed="true">30일</button>
+              <button class="chip" type="button" data-filter="period" data-value="all">전체</button>
+            </div>
+          </div>
+          <div class="filter-row">
+            <span class="filter-label">종류</span>
+            <div class="chip-row" data-group="kind">
+              <button class="chip" type="button" data-filter="kind" data-value="all" aria-pressed="true">모두</button>
+              <button class="chip" type="button" data-filter="kind" data-value="lab">모델 연구소</button>
+              <button class="chip" type="button" data-filter="kind" data-value="tool">개발 도구</button>
+              <button class="chip" type="button" data-filter="kind" data-value="cli">CLI 릴리스</button>
+            </div>
+          </div>
+          <div class="filter-row">
+            <span class="filter-label">분류</span>
+            <div class="chip-row" data-group="cat">
+              <button class="chip" type="button" data-filter="cat" data-value="all" aria-pressed="true">모두</button>
+              <button class="chip" type="button" data-filter="cat" data-value="model">모델 출시</button>
+              <button class="chip" type="button" data-filter="cat" data-value="tool">도구 업데이트</button>
+              <button class="chip" type="button" data-filter="cat" data-value="pricing">API·가격 변경</button>
+              <button class="chip" type="button" data-filter="cat" data-value="research">연구</button>
+              <button class="chip" type="button" data-filter="cat" data-value="policy">정책</button>
+            </div>
+          </div>
+          <div class="filter-row">
+            <span class="filter-label">회사</span>
+            <div class="chip-row" data-group="company" data-companies></div>
+          </div>
+          <div class="filter-row">
+            <button class="toggle" type="button" data-mine aria-pressed="true">
+              <span class="sw" aria-hidden="true"></span> 내가 쓰는 도구만
+            </button>
+            <button class="ghost" type="button" data-empty>빈 상태 보기</button>
+            <span class="result-meta" data-count></span>
+          </div>
+        </div>
+        <div class="list-card" data-list></div>
+        <div class="empty" data-empty-box>
+          <h3>이 조건의 공식 소식이 없습니다</h3>
+          <p>필터를 지우거나 내 도구를 끄면 전체 최근이 다시 보입니다.</p>
+          <button class="primary" type="button" data-reset>필터 지우기</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="after">
+      <aside class="aside-card">
+        <div class="aside-title">
+          <h2>빌더를 위한 AI 소식</h2>
+          <span class="source-pill">내 도구 기준</span>
+        </div>
+        <p class="aside-sub">만드는 사람에게 필요한 변화만 모았습니다.</p>
+        <div data-home></div>
+        <div class="brief-bottom">같은 렌즈의 최신 3건 · 전체 보기 → /news</div>
+      </aside>
+      <div class="home-copy">
+        <h3>1차에 넣을 것 / 넣지 말 것</h3>
+        <ul>
+          <li>넣기: /news 리스트, 회사·종류·분류·기간, 내 도구(localStorage), 7일 모델·가격 핀, 홈 3건, 원문 새 탭, 예시·수집 시각 표시, 빈 상태.</li>
+          <li>넣지 않기: 기사 재작성, 중요도 점수, 썸네일 복제, 연구 해설, 5칸 보드, 계정 필수.</li>
+          <li>다음: 프로젝트에 등록한 제작 도구로 내 도구 채우기, 관리자 큐 화면, 내 도구 RSS.</li>
+        </ul>
+      </div>
+    </div>
+    <div class="trade">
+      <article>
+        <h3>이 조합이 맞는 이유</h3>
+        <ul>
+          <li>홈 카드와 전용 페이지가 같은 행이라 구현과 인지가 한 줄입니다.</li>
+          <li>직무(내 스택)는 기본 렌즈이고, 놓치면 안 되는 유형만 예외적으로 위에 둡니다.</li>
+          <li>피드가 늘어도 로그는 버티고, 피드가 적어도 핀과 빈 상태가 버팁니다.</li>
+        </ul>
+      </article>
+      <article>
+        <h3>감수할 점</h3>
+        <ul>
+          <li>상단 핀과 아래 로그에 같은 항목이 한 번 더 보이면 안 됩니다. 핀에 올린 것은 로그에서 뺍니다.</li>
+          <li>내 도구를 켠 채로는 다른 회사 모델을 못 봅니다. 핀은 ‘내 도구’와 무관하게 7일 모델·가격을 보여 구제를 만듭니다.</li>
+          <li>영문 제목은 번역하지 않습니다. 요약은 피드에 있을 때만 붙입니다.</li>
+        </ul>
+      </article>
+    </div>
+  </section>
+
+  <script>
+    (function () {
+      var ARROW = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 18 18 6M6 6h12v12"/></svg>';
+      var TODAY = 20260911;
+      var KIND = { lab: "모델 연구소", tool: "개발 도구", cli: "CLI 릴리스" };
+      var CAT = { model: "모델 출시", tool: "도구 업데이트", pricing: "API·가격 변경", research: "연구", policy: "정책" };
+      var SOURCES = [
+        { id: "anthropic", name: "Anthropic", kind: "lab", letter: "A", tone: "peach", mine: true, url: "https://www.anthropic.com/news" },
+        { id: "openai", name: "OpenAI", kind: "lab", letter: "O", tone: "mint", mine: true, url: "https://openai.com/news" },
+        { id: "google", name: "Google Gemini", kind: "lab", letter: "G", tone: "peach", mine: false, url: "https://blog.google/technology/google-deepmind/" },
+        { id: "xai", name: "xAI", kind: "lab", letter: "X", tone: "dark", mine: false, url: "https://x.ai/news" },
+        { id: "moonshot", name: "Moonshot", kind: "lab", letter: "K", tone: "peach", mine: false, url: "https://www.moonshot.ai" },
+        { id: "zhipu", name: "Zhipu", kind: "lab", letter: "Z", tone: "dark", mine: false, url: "https://z.ai" },
+        { id: "deepseek", name: "DeepSeek", kind: "lab", letter: "D", tone: "mint", mine: false, url: "https://www.deepseek.com" },
+        { id: "qwen", name: "Alibaba Qwen", kind: "lab", letter: "Q", tone: "dark", mine: false, url: "https://qwen.ai" },
+        { id: "mistral", name: "Mistral", kind: "lab", letter: "M", tone: "dark", mine: false, url: "https://mistral.ai/news" },
+        { id: "meta", name: "Meta AI", kind: "lab", letter: "M", tone: "mint", mine: false, url: "https://ai.meta.com/blog/" },
+        { id: "cursor", name: "Cursor", kind: "tool", letter: "C", tone: "dark", mine: true, url: "https://cursor.com/changelog" },
+        { id: "copilot", name: "GitHub Copilot", kind: "tool", letter: "G", tone: "mint", mine: false, url: "https://github.blog/changelog/" },
+        { id: "claude-code", name: "Claude Code", kind: "cli", letter: "C", tone: "peach", mine: true, url: "https://github.com/anthropics/claude-code/releases" },
+        { id: "codex", name: "Codex CLI", kind: "cli", letter: "C", tone: "mint", mine: true, url: "https://github.com/openai/codex/releases" },
+        { id: "gemini-cli", name: "Gemini CLI", kind: "cli", letter: "G", tone: "dark", mine: false, url: "https://github.com/google-gemini/gemini-cli/releases" }
+      ];
+      var SRC = {};
+      SOURCES.forEach(function (s) { SRC[s.id] = s; });
+      var ITEMS = [
+        { id: 1, src: "anthropic", cat: "model", date: 20260908, dateLabel: "2026.09.08", title: "Introducing Claude Sonnet 4.6", summary: "Coding and agent workflows get a faster default model." },
+        { id: 2, src: "openai", cat: "pricing", date: 20260907, dateLabel: "2026.09.07", title: "API rate limits and pricing update for GPT-5", summary: "New weekly caps for the coding-tier API." },
+        { id: 3, src: "cursor", cat: "tool", date: 20260905, dateLabel: "2026.09.05", title: "Cursor 1.7: self-hosted machines generally available", summary: "Run agents on machines you operate." },
+        { id: 4, src: "xai", cat: "model", date: 20260904, dateLabel: "2026.09.04", title: "Grok Code Fast is generally available" },
+        { id: 5, src: "copilot", cat: "tool", date: 20260903, dateLabel: "2026.09.03", title: "Copilot coding agent: repo-wide edits" },
+        { id: 6, src: "google", cat: "research", date: 20260902, dateLabel: "2026.09.02", title: "Gemini 2.5 technical report" },
+        { id: 7, src: "claude-code", cat: "tool", date: 20260902, dateLabel: "2026.09.02", title: "claude-code v2.1.4", summary: "Release notes for the terminal agent." },
+        { id: 8, src: "mistral", cat: "model", date: 20260901, dateLabel: "2026.09.01", title: "Mistral Medium 3 available via API" },
+        { id: 9, src: "deepseek", cat: "pricing", date: 20260830, dateLabel: "2026.08.30", title: "DeepSeek API price reduction", summary: "Input tokens for the V-class models." },
+        { id: 10, src: "codex", cat: "tool", date: 20260829, dateLabel: "2026.08.29", title: "codex 0.44.0: worktree support" },
+        { id: 11, src: "moonshot", cat: "model", date: 20260828, dateLabel: "2026.08.28", title: "Kimi K2 context window expansion" },
+        { id: 12, src: "qwen", cat: "policy", date: 20260827, dateLabel: "2026.08.27", title: "Qwen usage policy update for commercial apps" }
+      ];
+
+      function inPeriod(date, period) {
+        if (period === "7") return date >= 20260904;
+        if (period === "30") return date >= 20260812;
+        return true;
+      }
+      function sourceOf(item) { return SRC[item.src]; }
+      function match(item, st, selected) {
+        var s = sourceOf(item);
+        if (!inPeriod(item.date, st.period)) return false;
+        if (st.kind !== "all" && s.kind !== st.kind) return false;
+        if (st.cat !== "all" && item.cat !== st.cat) return false;
+        if (st.company !== "all" && item.src !== st.company) return false;
+        if (st.mine) {
+          if (selected) {
+            if (selected.indexOf(item.src) === -1) return false;
+          } else if (!s.mine) return false;
+        }
+        return true;
+      }
+      function row(item, opts) {
+        var s = sourceOf(item);
+        var sum = item.summary && !(opts && opts.compact) ? '<p class="sum">' + item.summary + "</p>" : "";
+        var type = (opts && opts.grouped)
+          ? '<div class="news-type"><span class="cat-pill ' + item.cat + '">' + CAT[item.cat] + "</span></div>"
+          : '<div class="news-type">' +
+              '<span class="mini-source ' + s.tone + '">' + s.letter + "</span>" +
+              s.name + "<span>·</span>" + KIND[s.kind] +
+              '<span class="cat-pill ' + item.cat + '">' + CAT[item.cat] + "</span>" +
+            "</div>";
+        return (
+          '<a class="news-item" href="' + s.url + '" target="_blank" rel="noopener noreferrer">' +
+            type +
+            "<h3>" + item.title + '<span class="ex">예시</span></h3>' +
+            sum +
+            '<div class="news-meta"><span>' + item.dateLabel + " 게시 · 예시 날짜</span>" +
+            '<span class="go">원문 ' + ARROW + "</span></div>" +
+          "</a>"
+        );
+      }
+
+      function companyChips(host, includeAll) {
+        var html = includeAll !== false ? '<button class="chip" type="button" data-filter="company" data-value="all" aria-pressed="true">모두</button>' : "";
+        SOURCES.forEach(function (s) {
+          html += '<button class="chip" type="button" data-filter="company" data-value="' + s.id + '">' + s.name + "</button>";
+        });
+        host.innerHTML = html;
+      }
+
+      function setPressed(group, value) {
+        group.querySelectorAll("[data-filter]").forEach(function (btn) {
+          btn.setAttribute("aria-pressed", btn.getAttribute("data-value") === value ? "true" : "false");
+        });
+      }
+
+      function bindFilters(root, st, onChange) {
+        root.addEventListener("click", function (e) {
+          var chip = e.target.closest("[data-filter]");
+          if (chip) {
+            var key = chip.getAttribute("data-filter");
+            var val = chip.getAttribute("data-value");
+            st[key] = val;
+            st.emptyDemo = false;
+            var group = chip.parentElement;
+            setPressed(group, val);
+            onChange();
+            return;
+          }
+          var mine = e.target.closest("[data-mine]");
+          if (mine) {
+            var on = mine.getAttribute("aria-pressed") !== "true";
+            mine.setAttribute("aria-pressed", on ? "true" : "false");
+            st.mine = on;
+            st.emptyDemo = false;
+            onChange();
+            return;
+          }
+          if (e.target.closest("[data-empty]")) {
+            st.emptyDemo = true;
+            onChange();
+            return;
+          }
+          if (e.target.closest("[data-reset]")) {
+            st.period = st.defaultPeriod || "30";
+            st.kind = "all";
+            st.cat = "all";
+            st.company = "all";
+            st.mine = !!st.defaultMine;
+            st.emptyDemo = false;
+            root.querySelectorAll("[data-group]").forEach(function (g) {
+              var key = g.getAttribute("data-group");
+              setPressed(g, st[key] || "all");
+            });
+            var t = root.querySelector("[data-mine]");
+            if (t) t.setAttribute("aria-pressed", st.mine ? "true" : "false");
+            if (st.onReset) st.onReset();
+            onChange();
+          }
+        });
+      }
+
+      function renderList(root, items, st) {
+        var list = root.querySelector("[data-list]");
+        var empty = root.querySelector("[data-empty-box]");
+        var count = root.querySelector("[data-count]");
+        var shown = st.emptyDemo ? [] : items.filter(function (it) { return match(it, st); });
+        list.innerHTML = shown.map(function (it) { return row(it); }).join("");
+        list.classList.toggle("is-empty", shown.length === 0);
+        if (empty) empty.classList.toggle("show", shown.length === 0);
+        if (count) count.textContent = shown.length ? "공식 " + shown.length + "건 · 예시 데이터" : "";
+        return shown;
+      }
+
+      function renderHome(node, items) {
+        node.innerHTML = items.slice(0, 3).map(function (it) { return row(it, { compact: true }); }).join("");
+      }
+
+      /* 시안 1 */
+      (function () {
+        var root = document.querySelector('[data-panel="log"]');
+        companyChips(root.querySelector("[data-companies]"));
+        var st = { period: "30", kind: "all", cat: "all", company: "all", mine: false, emptyDemo: false };
+        function paint() {
+          var shown = renderList(root, ITEMS, st);
+          renderHome(root.closest(".pane").querySelector("[data-home]"), shown.length ? shown : ITEMS);
+        }
+        bindFilters(root, st, paint);
+        paint();
+      })();
+
+      /* 시안 2 */
+      (function () {
+        var root = document.querySelector('[data-panel="stack"]');
+        var selected = SOURCES.filter(function (s) { return s.mine; }).map(function (s) { return s.id; });
+        var st = { period: "30", kind: "all", cat: "all", company: "all", mine: true, emptyDemo: false, defaultPeriod: "30", defaultMine: true };
+        var toolsHost = root.querySelector("[data-tools]");
+        var groups = [
+          { key: "lab", label: "모델 연구소" },
+          { key: "tool", label: "개발 도구" },
+          { key: "cli", label: "CLI 릴리스" }
+        ];
+        function drawTools() {
+          var html = "";
+          groups.forEach(function (g) {
+            html += '<div class="tool-group">' + g.label + "</div>";
+            SOURCES.filter(function (s) { return s.kind === g.key; }).forEach(function (s) {
+              var on = selected.indexOf(s.id) !== -1;
+              html += '<label class="tool-opt"><input type="checkbox" value="' + s.id + '"' + (on ? " checked" : "") + ">" +
+                '<span class="mini-source ' + s.tone + '">' + s.letter + "</span>" + s.name + "</label>";
+            });
+          });
+          toolsHost.innerHTML = html;
+        }
+        function paint() {
+          st.mine = true;
+          var use = { period: st.period, kind: "all", cat: "all", company: "all", mine: true, emptyDemo: st.emptyDemo };
+          var shown = st.emptyDemo ? [] : ITEMS.filter(function (it) { return match(it, use, selected); });
+          var list = root.querySelector("[data-list]");
+          var empty = root.querySelector("[data-empty-box]");
+          var count = root.querySelector("[data-count]");
+          var bySrc = {};
+          shown.forEach(function (it) {
+            (bySrc[it.src] = bySrc[it.src] || []).push(it);
+          });
+          var html = "";
+          Object.keys(bySrc).forEach(function (id) {
+            var s = SRC[id];
+            html += '<div class="group-block"><div class="group-head">' +
+              '<span class="mini-source ' + s.tone + '">' + s.letter + "</span>" + s.name +
+              '<span class="kind">' + KIND[s.kind] + " · " + bySrc[id].length + "건</span></div>" +
+              bySrc[id].map(function (it) { return row(it, { grouped: true }); }).join("") + "</div>";
+          });
+          list.innerHTML = html;
+          list.classList.toggle("is-empty", shown.length === 0);
+          empty.classList.toggle("show", shown.length === 0);
+          if (!shown.length && selected.length === 0 && !st.emptyDemo) {
+            empty.querySelector("h3").textContent = "쓰는 도구를 고르면 소식이 줄어듭니다";
+            empty.querySelector("p").textContent = "지금은 선택된 도구가 없습니다. ‘모두’를 누르거나 기본 스택으로 돌아가 보세요.";
+          } else {
+            empty.querySelector("h3").textContent = "고른 도구에 최근 공식 변경이 없습니다";
+            empty.querySelector("p").textContent = "없는 상태를 숨기지 않습니다. 기간을 넓히거나 도구를 추가해 보세요. 도구를 하나도 고르지 않으면 전체를 보여 줄 수도 있습니다.";
+          }
+          count.textContent = shown.length ? "내 도구 기준 공식 " + shown.length + "건 · 예시 데이터" : "";
+          renderHome(root.closest(".pane").querySelector("[data-home]"), shown.length ? shown : ITEMS.filter(function (it) { return SRC[it.src].mine; }));
+        }
+        st.onReset = function () {
+          selected = SOURCES.filter(function (s) { return s.mine; }).map(function (s) { return s.id; });
+          drawTools();
+        };
+        drawTools();
+        toolsHost.addEventListener("change", function (e) {
+          var input = e.target;
+          if (input.tagName !== "INPUT") return;
+          var id = input.value;
+          if (input.checked) {
+            if (selected.indexOf(id) === -1) selected.push(id);
+          } else {
+            selected = selected.filter(function (x) { return x !== id; });
+          }
+          st.emptyDemo = false;
+          paint();
+        });
+        root.querySelector("[data-all]").addEventListener("click", function () {
+          selected = SOURCES.map(function (s) { return s.id; });
+          st.emptyDemo = false;
+          drawTools();
+          paint();
+        });
+        root.querySelector("[data-none]").addEventListener("click", function () {
+          selected = [];
+          st.emptyDemo = false;
+          drawTools();
+          paint();
+        });
+        bindFilters(root, st, paint);
+        paint();
+      })();
+
+      /* 시안 3 */
+      (function () {
+        var root = document.querySelector('[data-panel="impact"]');
+        companyChips(root.querySelector("[data-companies]"));
+        var st = { period: "7", kind: "all", cat: "all", company: "all", mine: false, emptyDemo: false, defaultPeriod: "7" };
+        var board = root.querySelector("[data-board]");
+        function section(title, extraClass, items, emptyText) {
+          var body = items.length
+            ? items.map(function (it) { return row(it, { compact: true }); }).join("")
+            : '<p class="section-empty">' + emptyText + "</p>";
+          return '<section class="impact-card ' + extraClass + '"><header><h3>' + title + "</h3><span>" +
+            (items.length ? items.length + "건" : "없음") + "</span></header>" + body + "</section>";
+        }
+        function paint() {
+          var shown = st.emptyDemo ? [] : ITEMS.filter(function (it) { return match(it, st); });
+          var by = { model: [], pricing: [], tool: [], research: [], policy: [] };
+          shown.forEach(function (it) { by[it.cat].push(it); });
+          board.innerHTML =
+            '<div class="impact-grid top">' +
+              section("모델 출시", "", by.model, "이번 기간에 공식 모델 출시가 없습니다.") +
+              section("API·가격 변경", "pricing", by.pricing, "이번 기간에 공식 가격·한도 변경이 없습니다.") +
+            "</div>" +
+            '<div class="impact-grid" style="margin-top:12px">' +
+              section("도구 업데이트", "", by.tool, "이번 기간에 공식 도구 업데이트가 없습니다.") +
+            "</div>" +
+            '<div class="impact-grid" style="margin-top:12px">' +
+              section("연구", "quiet", by.research, "이번 기간에 공식 연구 항목이 없습니다.") +
+              section("정책", "quiet", by.policy, "이번 기간에 공식 정책 항목이 없습니다.") +
+            "</div>";
+          var count = root.querySelector("[data-count]");
+          count.textContent = shown.length ? "공식 " + shown.length + "건 · 예시 데이터" : "표시할 공식 항목 없음";
+          var homePick = [];
+          ["model", "pricing", "tool"].forEach(function (c) {
+            if (by[c][0]) homePick.push(by[c][0]);
+          });
+          renderHome(root.closest(".pane").querySelector("[data-home]"), homePick.length ? homePick : ITEMS);
+        }
+        bindFilters(root, st, paint);
+        paint();
+      })();
+
+      /* 추천 */
+      (function () {
+        var root = document.querySelector('[data-panel="rec"]');
+        companyChips(root.querySelector("[data-companies]"));
+        var st = { period: "30", kind: "all", cat: "all", company: "all", mine: true, emptyDemo: false, defaultPeriod: "30", defaultMine: true };
+        var pin = root.querySelector("[data-pin]");
+        function paint() {
+          var shown = st.emptyDemo ? [] : ITEMS.filter(function (it) { return match(it, st); });
+          var week = ITEMS.filter(function (it) {
+            return inPeriod(it.date, "7") && (it.cat === "model" || it.cat === "pricing");
+          });
+          pin.innerHTML = week.map(function (it) {
+            var s = sourceOf(it);
+            return '<a class="' + it.cat + '" href="' + s.url + '" target="_blank" rel="noopener noreferrer">' +
+              '<div class="k">' + (it.cat === "model" ? "이번 주 · 모델 출시" : "이번 주 · API·가격") + "</div>" +
+              "<h3>" + it.title + '<span class="ex">예시</span></h3>' +
+              '<div class="news-meta"><span>' + s.name + " · " + it.dateLabel + "</span><span class='go'>원문 " + ARROW + "</span></div></a>";
+          }).join("");
+          var pinIds = week.map(function (it) { return it.id; });
+          var rest = shown.filter(function (it) { return pinIds.indexOf(it.id) === -1; });
+          var list = root.querySelector("[data-list]");
+          var empty = root.querySelector("[data-empty-box]");
+          var count = root.querySelector("[data-count]");
+          list.innerHTML = rest.map(function (it) { return row(it); }).join("");
+          var none = shown.length === 0;
+          list.classList.toggle("is-empty", none);
+          empty.classList.toggle("show", none);
+          count.textContent = none ? "" : "로그 " + rest.length + "건 · 핀 " + week.length + "건 · 예시 데이터";
+          var homeItems = ITEMS.filter(function (it) { return SRC[it.src].mine; });
+          renderHome(root.closest(".pane").querySelector("[data-home]"), homeItems);
+        }
+        bindFilters(root, st, paint);
+        paint();
+      })();
+
+      /* 탭 */
+      var tabs = document.querySelectorAll(".rev-tab");
+      var panes = {
+        "1": document.getElementById("pane-1"),
+        "2": document.getElementById("pane-2"),
+        "3": document.getElementById("pane-3"),
+        "r": document.getElementById("pane-r")
+      };
+      function show(id) {
+        if (!panes[id]) id = "1";
+        tabs.forEach(function (t) {
+          var on = t.getAttribute("data-tab") === id;
+          t.setAttribute("aria-selected", on ? "true" : "false");
+        });
+        Object.keys(panes).forEach(function (k) { panes[k].hidden = k !== id; });
+        if (history.replaceState) history.replaceState(null, "", "#" + id);
+        window.scrollTo(0, 0);
+      }
+      tabs.forEach(function (t) {
+        t.addEventListener("click", function () { show(t.getAttribute("data-tab")); });
+      });
+      var hash = (location.hash || "#1").slice(1);
+      show(hash);
+    })();
+  </script>
+</body>
+</html>
