@@ -23,6 +23,7 @@ import { manualCandidates } from "@/lib/operations/categories";
 import { redact } from "@/lib/observability/logger";
 import { listAdminReviewEntries, reviewQueueAiDecisions } from "@/lib/crawl/admin-review";
 import { QueuePreview } from "./QueuePreview";
+import { secondReviewSummary } from "@/lib/crawl/second-review";
 
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "운영센터 — NoMoreVibe", robots: { index: false } };
@@ -103,9 +104,9 @@ export default async function StatusPage() {
     getEvidenceStatusSummary(new Date()),
   ]);
   const [down, topClicked, ops, manual] = await Promise.all([downProducts(), topClickedSince(30), operationsData(), manualCandidates()]);
-  const [flow, oldestWait, stalled, queue, decisions] = await Promise.all([pipelineFlow(), oldestReviewWaitDays(), stalledReviewCount(),
+  const [flow, oldestWait, stalled, queue, decisions, seconds] = await Promise.all([pipelineFlow(), oldestReviewWaitDays(), stalledReviewCount(),
     // 운영센터 가운데 표 — 한 화면에 들어오는 만큼만. 처리는 심사 큐에서 한다
-    listAdminReviewEntries(settings, { state: "needs_review", limit: 14 }), reviewQueueAiDecisions()]);
+    listAdminReviewEntries(settings, { state: "needs_review", limit: 14 }), reviewQueueAiDecisions(), secondReviewSummary()]);
 
   const states = new Map(jobStates.map((job) => [job.name, job]));
   const rejectedTotal = rejections.reduce((sum, r) => sum + r.count, 0);
@@ -144,6 +145,14 @@ export default async function StatusPage() {
         {stalled > 0 && <>그중 <span className="font-mono">{stalled}건</span>은 판정한 지 2주가 넘었습니다 — 갈래별로 묶으면 한 번에 처리할 수 있습니다.</>}
       </>,
       action: { label: "심사 큐", href: "/admin/review" },
+    });
+  }
+  const secondOpen = seconds.counts.agreedReject + seconds.counts.agreedApprove + seconds.counts.needsHuman + seconds.counts.published;
+  if (secondOpen > 0) {
+    actions.push({
+      key: "second", tone: "hold", count: secondOpen, title: "2차 심사 확인",
+      detail: <>1차와 일치 {seconds.counts.agreedReject + seconds.counts.agreedApprove}건은 한 번에 확정 · 엇갈림 {seconds.counts.needsHuman}건 · 공개분 {seconds.counts.published}건은 사람이 봅니다.</>,
+      action: { label: "2차 심사", href: seconds.counts.needsHuman ? "/admin/review?second=needs_human" : "/admin/review?second=agreed_reject" },
     });
   }
   if (ops.held > 0) {

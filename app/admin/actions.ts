@@ -65,6 +65,12 @@ export async function saveCrawlSettings(_prev: SaveState, form: FormData): Promi
       excludedRepoPatterns: lines(form.get("excludedRepoPatterns")),
       holdAmbiguous: form.get("holdAmbiguous") === "on",
     },
+    secondReview: {
+      enabled: form.get("secondReviewEnabled") === "on",
+      model: String(form.get("secondReviewModel") ?? "").trim(),
+      sampleRate: num(form.get("secondReviewSamplePercent")) / 100,
+      agreeAt: num(form.get("secondReviewAgreeAt")),
+    },
     // 수집을 켜는 것과 그것을 발행 조건으로 삼는 것은 다른 결정이다 — 따로 둔다
     agentEvidence: {
       enabled: form.get("agentEvidenceEnabled") === "on",

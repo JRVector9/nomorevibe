@@ -310,4 +310,5 @@ export type NewProduct = typeof products.$inferInsert;
 
 export * from './agent-evidence-schema';
 export * from './operations-schema';
+export * from './second-review-schema';
 export * from './news-schema';

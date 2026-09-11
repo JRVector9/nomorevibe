@@ -4,6 +4,8 @@ import { revalidatePath } from 'next/cache';
 import { currentAdmin } from '@/lib/auth/admin';
 import { requestCandidateEvidence, requeueResolvedCandidates } from '@/lib/crawl/admin-review';
 import { changeReviewMode } from '@/lib/crawl/settings';
+import { resolveSecondReviews } from '@/lib/crawl/second-review';
+import { banProduct } from '@/lib/domain/products/manage';
 import type { RequeueState } from './contract';
 
 export type ReviewActionState = { error?: string; message?: string } | null;
@@ -50,4 +52,24 @@ export async function requeueResolved(): Promise<RequeueState> {
   revalidatePath("/admin/review");
   revalidatePath("/admin/status");
   return { ok: result.requeued, scanned: result.scanned, byReason: result.byReason };
+}
+
+/**
+ * 공개된 제품을 2차가 제품이 아니라고 본 것 — 사람이 내리거나 그대로 둔다. 자동으로 내리지 않는다.
+ */
+export async function resolvePublishedSecondReview(_previous: ReviewActionState, form: FormData): Promise<ReviewActionState> {
+  const admin = await currentAdmin();
+  if (!admin) return { error: '권한이 없습니다. 다시 로그인해주세요.' };
+  const id = Number(form.get('id'));
+  const slug = String(form.get('slug') ?? '');
+  const decision = form.get('decision');
+  if (!Number.isSafeInteger(id) || id <= 0 || !slug || (decision !== 'ban' && decision !== 'keep')) return { error: '요청을 읽을 수 없습니다.' };
+  if (decision === 'ban') {
+    const banned = await banProduct(slug);
+    if (!banned.ok) return { error: '제품을 찾지 못했습니다.' };
+  }
+  const changed = await resolveSecondReviews([id], decision === 'ban' ? 'banned' : 'kept', admin.login);
+  revalidatePath('/admin/review');
+  revalidatePath('/admin/products');
+  return changed ? { message: decision === 'ban' ? '내렸습니다.' : '그대로 둡니다.' } : { error: '이미 처리된 항목입니다.' };
 }
