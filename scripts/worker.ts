@@ -40,9 +40,15 @@ export function runtimeLog(event: string, fields: Record<string, unknown>) {
   console.log(JSON.stringify({ event, at: new Date().toISOString(), ...fields }));
 }
 
-/** A classification batch can use 20 seconds before inserts and image copies begin. */
+/**
+ * A classification batch can use 20 seconds before inserts and image copies begin.
+ * 사유 번역은 한 번 부르는 데 15~25초라 기본 25초 틱에는 한 번도 빠듯하다(프로드 첫 4틱이 모두 20초 제한에 걸렸다).
+ * 발행 워커는 5분에 한 번만 발행하므로 나머지 시간을 번역이 쓴다.
+ */
 export function jobRunOptions(name: string, options: RequestedRunOptions): JobRunOptions {
-  return name === 'crawl-publish' ? { ...options, budgetMs: 120_000 } : options;
+  if (name === 'crawl-publish') return { ...options, budgetMs: 120_000 };
+  if (name === 'reason-translate') return { ...options, budgetMs: 55_000 };
+  return options;
 }
 
 /** A once run processes one pending snapshot, not the entire queue or future requests. */

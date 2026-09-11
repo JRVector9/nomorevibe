@@ -100,5 +100,6 @@ it('validates role and bounded CLI interval before loading database modules', ()
 it('gives the publisher batch enough cooperative time below the supervisor deadline', () => {
   const base = { requestedOnly: true as const };
   expect(jobRunOptions('crawl-publish', base)).toEqual({ ...base, budgetMs: 120_000 });
+  expect(jobRunOptions('reason-translate', base)).toEqual({ ...base, budgetMs: 55_000 });
   expect(jobRunOptions('crawl-fetch', base)).toBe(base);
 });
