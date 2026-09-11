@@ -76,6 +76,7 @@ export function ReviewDetail({ entry, reasons }: { entry: AdminReviewEntry; reas
         <p className={`rounded-lg border px-2.5 py-2 text-[13px] leading-[1.6] text-fg-2 ${verdict.className}`}>
           <b className={`font-semibold ${verdict.text}`}>{verdict.label}</b>
           {entry.review?.model ? <span className="ml-1.5 font-mono text-fg-3">{entry.review.model}</span> : null}
+          {typeof entry.review?.confidence === 'number' ? <span className="ml-1.5 font-mono text-fg-3">확신 {entry.review.confidence.toFixed(2)}</span> : null}
           {entry.review?.reason ? <span className="mt-1 block">{entry.review.reason.slice(0, 400)}</span> : null}
         </p>
       )}
