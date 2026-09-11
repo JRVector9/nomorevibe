@@ -5,6 +5,7 @@ import { fetchCrawlDocuments } from "@/lib/crawl/jobs/fetch";
 import { judgeCrawlDocuments } from "@/lib/crawl/jobs/judge";
 import { reviewCrawlCandidates } from "@/lib/crawl/jobs/agent-review";
 import { secondReviewCandidates } from "@/lib/crawl/jobs/second-review";
+import { translateReasons } from "@/lib/crawl/jobs/translate-reasons";
 import { publishCandidates } from "@/lib/crawl/jobs/publish";
 import { pingProducts } from "@/lib/jobs/products/uptime";
 import { rollupClicks } from "@/lib/jobs/products/click-rollup";
@@ -50,6 +51,8 @@ export const JOBS: Record<string, AnyJob> = {
 
   /** 통과한 후보를 seeded 제품으로 목록에 올린다 */
   "crawl-publish": publishCandidates,
+  /** 심사 화면의 영어 사유를 미리 한국어로 옮겨 둔다 */
+  "reason-translate": translateReasons,
 
   /** 등재된 제품이 아직 떠 있는지 확인한다 (기록만 하고 목록은 건드리지 않는다) */
   "uptime-ping": pingProducts,

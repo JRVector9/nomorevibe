@@ -24,6 +24,8 @@ import { redact } from "@/lib/observability/logger";
 import { listAdminReviewEntries, reviewQueueAiDecisions } from "@/lib/crawl/admin-review";
 import { QueuePreview } from "./QueuePreview";
 import { secondReviewSummary } from "@/lib/crawl/second-review";
+import { translationProgress } from "@/lib/crawl/translations";
+import { TranslationProgress } from "./TranslationProgress";
 
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "운영센터 — NoMoreVibe", robots: { index: false } };
@@ -104,9 +106,9 @@ export default async function StatusPage() {
     getEvidenceStatusSummary(new Date()),
   ]);
   const [down, topClicked, ops, manual] = await Promise.all([downProducts(), topClickedSince(30), operationsData(), manualCandidates()]);
-  const [flow, oldestWait, stalled, queue, decisions, seconds] = await Promise.all([pipelineFlow(), oldestReviewWaitDays(), stalledReviewCount(),
+  const [flow, oldestWait, stalled, queue, decisions, seconds, translation] = await Promise.all([pipelineFlow(), oldestReviewWaitDays(), stalledReviewCount(),
     // 운영센터 가운데 표 — 한 화면에 들어오는 만큼만. 처리는 심사 큐에서 한다
-    listAdminReviewEntries(settings, { state: "needs_review", limit: 14 }), reviewQueueAiDecisions(), secondReviewSummary()]);
+    listAdminReviewEntries(settings, { state: "needs_review", limit: 14 }), reviewQueueAiDecisions(), secondReviewSummary(), translationProgress()]);
 
   const states = new Map(jobStates.map((job) => [job.name, job]));
   const rejectedTotal = rejections.reduce((sum, r) => sum + r.count, 0);
@@ -187,7 +189,7 @@ export default async function StatusPage() {
 
   return (
     <main className="pb-10">
-      <OperationsCenter queue={<QueuePreview entries={queue.entries} total={queue.total} counts={decisions.counts} />} data={ops} candidates={manual} reviewMode={settings.reviewMode} enabled={settings.enabled} localCodexAllowed={localCodexEnabled()} actionQueue={<ActionQueue items={actions}/>} pipeline={<PipelineRail flow={flow}/>} oauthConfigured={Boolean(process.env.GITHUB_OAUTH_CLIENT_ID && process.env.GITHUB_OAUTH_CLIENT_SECRET)}
+      <OperationsCenter queue={<QueuePreview entries={queue.entries} total={queue.total} counts={decisions.counts} />} data={ops} candidates={manual} reviewMode={settings.reviewMode} enabled={settings.enabled} localCodexAllowed={localCodexEnabled()} actionQueue={<ActionQueue items={actions}/>} pipeline={<div className="flex flex-col gap-2"><PipelineRail flow={flow}/><TranslationProgress progress={translation}/></div>} oauthConfigured={Boolean(process.env.GITHUB_OAUTH_CLIENT_ID && process.env.GITHUB_OAUTH_CLIENT_SECRET)}
         jobs={JOB_NAMES.map(name => {
           const job = states.get(name);
           return { name, status: jobStatusLabel(job), lastRunAt: job?.lastRunAt?.toISOString() ?? null,

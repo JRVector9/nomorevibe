@@ -15,6 +15,8 @@ import { CAUSE_GUIDE, type CauseKey } from "./causes";
 import { pageWindow } from "../paging";
 import { publishedSecondReviews, secondReviewSummary } from "@/lib/crawl/second-review";
 import { PublishedSecondReviews } from "./PublishedSecondReviews";
+import { ReasonLanguageToggle } from "./ReasonText";
+import { translationProgress, translationsFor } from "@/lib/crawl/translations";
 
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "심사 큐 — NoMoreVibe", robots: { index: false } };
@@ -47,7 +49,7 @@ export default async function ReviewPage({ searchParams }: { searchParams: Promi
   const second = ([...SECOND_FILTERS.map(([key]) => key), 'published'] as string[]).includes(one(params.second)) ? one(params.second) as SecondFilter : '';
 
   const settings = await getSettings();
-  const [takedowns, causes, decisions, seconds] = await Promise.all([pendingTakedowns(), reviewQueueCauses(settings), reviewQueueAiDecisions(), secondReviewSummary()]);
+  const [takedowns, causes, decisions, seconds, translation] = await Promise.all([pendingTakedowns(), reviewQueueCauses(settings), reviewQueueAiDecisions(), secondReviewSummary(), translationProgress()]);
 
   // 갈래·AI 판단은 계산으로 얻은 값이라 SQL로 거를 수 없다 — 해당하는 id 만 넘긴다. 둘 다 고르면 겹치는 것만
   const causeIds = cause ? (causes.ids.get(cause) ?? []) : undefined;
@@ -76,7 +78,10 @@ export default async function ReviewPage({ searchParams }: { searchParams: Promi
         <span className="text-[13px] text-fg-3">
           보류 {causes.total}건{causes.truncated && ` 이상 (${REVIEW_QUEUE_SCAN_LIMIT}건까지 셈)`} · 이 조건 {total.toLocaleString("ko-KR")}건 · {page}/{pages}쪽
         </span>
-        <div className="ml-auto"><ReviewModeForm key={settings.reviewMode} mode={settings.reviewMode} ready={process.env.CRAWL_REVIEW_READY === 'true'} /></div>
+        <div className="ml-auto flex flex-wrap items-center gap-3">
+          <ReasonLanguageToggle done={translation.done} total={translation.total} />
+          <ReviewModeForm key={settings.reviewMode} mode={settings.reviewMode} ready={process.env.CRAWL_REVIEW_READY === 'true'} />
+        </div>
       </div>
 
       {takedowns.length > 0 && (
@@ -130,8 +135,13 @@ export default async function ReviewPage({ searchParams }: { searchParams: Promi
       {resolved && (!cause || cause === "resolved") ? <RequeueResolved count={resolved.count} /> : null}
 
       {second === 'published' ? (
-        <PublishedSecondReviews rows={(await publishedSecondReviews()).map((row) => ({ id: row.id, slug: row.publishedSlug ?? '', repo: row.repo,
-          decision: row.secondDecision, confidence: row.secondConfidence, reason: row.secondReason, trigger: row.trigger, signals: row.signals }))} />
+        <PublishedSecondReviews rows={await (async () => {
+          const rows = await publishedSecondReviews();
+          const korean = await translationsFor(rows.map((row) => row.secondReason));
+          return rows.map((row) => ({ id: row.id, slug: row.publishedSlug ?? '', repo: row.repo, decision: row.secondDecision,
+            confidence: row.secondConfidence, reason: row.secondReason, reasonKo: row.secondReason ? korean.get(row.secondReason) ?? null : null,
+            trigger: row.trigger, signals: row.signals }));
+        })()} />
       ) : entries.length === 0 ? (
         <p className="rounded-[12px] border border-line bg-bg-card px-5 py-8 text-center text-[13px] text-fg-3">
           {filtered ? '이 조건으로 보류된 후보가 없습니다.' : '심사할 후보가 없습니다.'}
