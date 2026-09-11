@@ -60,6 +60,8 @@ export async function saveCrawlSettings(_prev: SaveState, form: FormData): Promi
       excludeForks: form.get("excludeForks") === "on",
       excludeOrganizations: form.get("excludeOrganizations") === "on",
       blockedHomepageDomains: lines(form.get("blockedHomepageDomains")),
+      thirdPartyHosts: lines(form.get("thirdPartyHosts")),
+      stubPageTitles: lines(form.get("stubPageTitles")),
       excludedRepoPatterns: lines(form.get("excludedRepoPatterns")),
       holdAmbiguous: form.get("holdAmbiguous") === "on",
     },

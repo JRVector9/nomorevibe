@@ -15,7 +15,7 @@ import { pageFactsFromDocument } from "./rules";
  * 옛 승인이 SQL 대조(matchingSource)에는 그대로 맞는데 inputHash만 어긋나, 발행 잡이 그 후보에서
  * review_approval_changed로 매 틱 멈춘다. 올리면 옛 기록이 대조에서 빠져 후보가 심사로 돌아간다.
  */
-export const REVIEW_PROMPT_VERSION = "2026-09-10.1";
+export const REVIEW_PROMPT_VERSION = "2026-09-11.1";
 export const REVIEW_RULES_VERSION = "2026-09-10.1";
 export const MAX_REVIEW_INPUT_BYTES = 64 * 1024;
 export const MAX_REVIEW_ATTEMPTS = 3;
@@ -23,7 +23,8 @@ export const REVIEW_FRESH_MS = 24 * 3600_000;
 export const reviewOutcomeSchema = z.object({
   decision: z.enum(["approve", "reject", "needs_review"]),
   reason: z.string().trim().min(1).max(2000),
-  evidenceIds: z.array(z.string().min(1).max(100)).max(40),
+  // 빠지면 빈 목록 — 승인·거부의 인용 요구는 validateReviewOutcome 이 따로 건다
+  evidenceIds: z.array(z.string().min(1).max(100)).max(40).default([]),
   category: z.enum(CATEGORIES).optional(),
 }).strict();
 export type ReviewOutcome = z.infer<typeof reviewOutcomeSchema>;

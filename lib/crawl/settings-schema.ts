@@ -109,6 +109,17 @@ const judgeSchema = z.object({
    */
   placeholderTitles: z.array(z.string().min(2).max(60)).max(100),
   /**
+   * 빈 페이지·대기 화면의 제목(* 와일드카드). 배포 주소가 제품이 아니라 로그인 벽·기본 페이지·
+   * 공사 중 화면을 보여 준다. placeholderTitles 와 따로 둔다 — 저장된 설정이 그 목록을 덮고 있어
+   * 새 항목을 거기에 더하면 적용되지 않는다(2026-09-11 확인).
+   */
+  stubPageTitles: z.array(z.string().min(2).max(60)).max(100),
+  /**
+   * 제작자의 사이트가 아닌 주소(뒤쪽 일치). 글·초대·양식·패키지 목록 페이지는 쓸 수 있는 제품이 아니다.
+   * blockedHomepageDomains 와 따로 두는 이유는 위와 같다.
+   */
+  thirdPartyHosts: z.array(z.string().min(3).max(120)).max(200),
+  /**
    * 제목이 스스로 문서라고 말하는 것.
    *
    * 주소와 생성기로는 못 잡는다 — owner.github.io/repo 아래에 문서와 웹앱이 섞여 있어
@@ -355,6 +366,28 @@ export const DEFAULT_CRAWL_SETTINGS: CrawlSettings = {
      * "Home"은 5건이 걸렸지만 진짜 제목일 수 있어 넣지 않는다 — 이미 다른 규칙이 처리했다.
      * 지금 걸리는 것이 없는 항목도 프레임워크 기본값이라 넣어 둔다.
      */
+    /**
+     * 실측(2026-09-11, 사람 승인 142 · 자동 공개 3,698 · 대기 349)으로 골랐다. 사람 승인분에서 0건.
+     * "redirecting"·"* storybook" 은 사람이 승인한 것이 하나씩 있어 뺐다 — AI 심사에 맡긴다.
+     * "home"·"app" 처럼 흔한 제목도 뺐다.
+     */
+    stubPageTitles: [
+      "overview – vercel", "overview - vercel", "login – vercel", "log in to vercel",
+      "hello world", "hello world!", "hello, world!", "my google ai studio app",
+      "* test report", "* test reports", "allure report",
+      "under construction", "coming soon", "under maintenance", "site under maintenance",
+      "404", "404: not_found", "404 not found", "page not found", "not found", "site not found", "deployment not found",
+      "index of /", "welcome to nginx!", "it works!", "domain for sale", "this domain is for sale", "untitled", "document", "new tab",
+    ],
+    /**
+     * 실측: 자동 공개분의 디스코드 초대 4 · Substack 글 3 · Product Hunt 1 · AWS 워크숍 1. 사람 승인분 0.
+     * 기본 차단 목록과 겹치는 것(youtube·npmjs·pypi)도 넣는다 — 프로드에 저장된 차단 목록에는 빠져 있다.
+     */
+    thirdPartyHosts: [
+      "workshops.aws", "docs.google.com", "drive.google.com", "forms.gle", "youtube.com", "youtu.be", "loom.com",
+      "linktr.ee", "bit.ly", "discord.gg", "discord.com", "calendly.com", "npmjs.com", "pypi.org", "figma.com",
+      "gamma.app", "producthunt.com", "devpost.com", "typeform.com", "tally.so", "substack.com",
+    ],
     placeholderTitles: [
       "create next app",
       "next app",

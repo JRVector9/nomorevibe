@@ -69,6 +69,40 @@ describe("judge — 거르기", () => {
     }
   });
 
+  it("로그인 벽·기본 페이지·공사 중 화면은 제품이 아니다", () => {
+    // 실측(2026-09-11): 대기열에서 AI가 거부한 것들이 이 제목이었다 — 규칙으로 끝낼 수 있다
+    for (const title of ["Overview – Vercel", "Hello World!", "My Google AI Studio App", "ShyTalk Test Reports",
+      "Coming Soon", "404: NOT_FOUND", "Welcome to nginx!", "Under Construction"]) {
+      const v = judge(goodRepo(), { ...livePage, title }, settings, NOW);
+      expect(v, title).toMatchObject({ state: "rejected", reason: "not_a_product" });
+      expect(v.trace.at(-1)?.rule, title).toBe("빈 페이지·대기 화면 아님");
+    }
+  });
+
+  it("대기 화면 제목을 품고 있을 뿐인 제품과 흔한 제목은 통과시킨다", () => {
+    // "Home"·"App" 은 사람이 승인한 제품에도 있다. 정확 일치나 끝 일치로만 본다
+    for (const title of ["Home", "App", "Coming Soon Tracker", "Hello World Translator", "Vercel Cost Calculator", "Test Report Generator Pro"]) {
+      expect(judge(goodRepo(), { ...livePage, title }, settings, NOW).state, title).toBe("approved");
+    }
+  });
+
+  it("제작자의 사이트가 아닌 주소는 제품이 아니다 — 글·초대·목록 페이지", () => {
+    // 실측(2026-09-11): 자동 공개분에 디스코드 초대 4, Substack 글 3, Product Hunt 1, AWS 워크숍 1
+    for (const productUrl of ["https://discord.com/invite/abc", "https://someone.substack.com/p/how-i-built",
+      "https://catalog.us-east-1.prod.workshops.aws/workshops/1/ko-KR", "https://www.producthunt.com/products/x", "https://docs.google.com/document/d/1"]) {
+      const v = judge(goodRepo(), { productUrl, status: 200 }, settings, NOW);
+      expect(v, productUrl).toMatchObject({ state: "rejected", reason: "not_a_product" });
+      expect(v.trace.at(-1)?.rule, productUrl).toBe("남의 사이트 아님");
+    }
+  });
+
+  it("앱 스토어·베타·봇·Spaces 주소는 막지 않는다 — 그것이 곧 제품일 수 있다", () => {
+    for (const productUrl of ["https://testflight.apple.com/join/abc", "https://t.me/some_bot", "https://apps.apple.com/app/id1", "https://huggingface.co/spaces/a/b"]) {
+      const v = judge(goodRepo(), { productUrl, status: 200 }, settings, NOW);
+      expect(v.trace.find((step) => step.rule === "남의 사이트 아님")?.passed, productUrl).toBe(true);
+    }
+  });
+
   it("제목이 스스로 문서라고 말하면 거부한다 — 주소로는 못 가르는 것이다", () => {
     // 실측(2026-09-10): owner.github.io/repo 로 보류된 576건 중 28건이 이 모양이었다
     for (const title of ["VibeLign Docs", "temple8 — Documentation", "Documentation", "forty-cdk docs", "Redirecting"]) {
