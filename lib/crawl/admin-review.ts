@@ -8,6 +8,7 @@ import { requestJob } from '@/lib/jobs/control';
 import { operationsAudit } from '@/lib/db/operations-schema';
 import { lockRepositoryAgentEvidence } from '@/lib/domain/evidence/agents/lock';
 import { secondReviewsFor } from './second-review';
+import { translationsFor } from './translations';
 import { createReviewInput, MAX_REVIEW_ATTEMPTS, REVIEW_PROMPT_VERSION, REVIEW_RULES_VERSION, reviewHash,
   type ReviewInput } from './agent-review-contract';
 import { loadReviewInput } from './agent-review-repository';
@@ -304,12 +305,13 @@ export function currentReviewStatus(input: ReviewInput | null, attempts: CrawlRe
   if (current.some(row => row.state === 'failed')) return 'failed';
   return attempts.some(row => row.kind === 'automatic') ? 'outdated' : 'unreviewed';
 }
-type AdminReviewAttempt = { kind: string; state: string; decision: string | null; confidence: number | null; reason: string | null; provider: string | null;
+/** reasonKo: 미리 옮겨 둔 한국어 사유(translations.ts). 없으면 null — 화면이 원문과 "번역 대기"를 보여 준다 */
+type AdminReviewAttempt = { kind: string; state: string; decision: string | null; confidence: number | null; reason: string | null; reasonKo: string | null; provider: string | null;
   model: string | null; actor: string | null; error: string | null; retryAfter: string | null; at: string };
 function summarizeAttempt(attempt: CrawlReviewAttempt | undefined): AdminReviewAttempt | null {
   return attempt ? { kind: attempt.kind, state: attempt.state, decision: attempt.outcome?.decision ?? null,
     confidence: typeof attempt.outcome?.confidence === 'number' ? attempt.outcome.confidence : null,
-    reason: attempt.reason ?? attempt.outcome?.reason ?? null, provider: attempt.provider, model: attempt.model,
+    reason: attempt.reason ?? attempt.outcome?.reason ?? null, reasonKo: null, provider: attempt.provider, model: attempt.model,
     actor: attempt.actor, error: attempt.errorCode, retryAfter: attempt.retryAfter?.toISOString() ?? null,
     at: attempt.startedAt.toISOString() } : null;
 }
@@ -320,7 +322,7 @@ export type AdminReviewEntry = {
   latest: AdminReviewAttempt | null; review: AdminReviewAttempt | null;
   verdict: AdminReviewVerdict | null;
   /** 2차 심사 판단 — 1차와 나란히 본다 */
-  second: { decision: string | null; confidence: number | null; reason: string | null; model: string | null; status: string; trigger: string } | null;
+  second: { decision: string | null; confidence: number | null; reason: string | null; reasonKo: string | null; model: string | null; status: string; trigger: string } | null;
 };
 
 /**
@@ -402,7 +404,7 @@ export async function listAdminReviewEntries(settings: CrawlSettings, options: {
       latest: summarizeAttempt(last), review: summarizeAttempt(review),
       second: (() => {
         const row = seconds.find(item => item.candidateId === candidate.id);
-        return row ? { decision: row.secondDecision, confidence: row.secondConfidence, reason: row.secondReason, model: row.model, status: row.status, trigger: row.trigger } : null;
+        return row ? { decision: row.secondDecision, confidence: row.secondConfidence, reason: row.secondReason, reasonKo: null, model: row.model, status: row.status, trigger: row.trigger } : null;
       })(),
       verdict: recomputed ? {
         trace: recomputed.trace, signals: recomputed.signals, cause: recomputed.cause ?? null,
@@ -411,6 +413,10 @@ export async function listAdminReviewEntries(settings: CrawlSettings, options: {
       } : null,
     };
   });
+  const korean = await translationsFor(entries.flatMap((entry) => [entry.review?.reason, entry.latest?.reason, entry.second?.reason]));
+  for (const entry of entries) {
+    for (const part of [entry.review, entry.latest, entry.second]) if (part?.reason) part.reasonKo = korean.get(part.reason) ?? null;
+  }
   return { entries, nextAfter: candidates.length > limit ? page.at(-1)!.id : null, total };
 }
 

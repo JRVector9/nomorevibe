@@ -2,8 +2,9 @@
 
 import { useActionState } from 'react';
 import { resolvePublishedSecondReview, type ReviewActionState } from './actions';
+import { ReasonText } from './ReasonText';
 
-export type PublishedSecondRow = { id: number; slug: string; repo: string; decision: string | null; confidence: number | null; reason: string | null; trigger: string; signals: string[] };
+export type PublishedSecondRow = { id: number; slug: string; repo: string; decision: string | null; confidence: number | null; reason: string | null; reasonKo: string | null; trigger: string; signals: string[] };
 
 const TRIGGER: Record<string, string> = { risk: '위험 신호', sample: '무작위 표본' };
 const SIGNAL: Record<string, string> = { store_or_messenger: '스토어·메신저 주소', sentence_name: '문장 같은 이름', seo_name: '광고성 이름', no_text: '본문·README 없음' };
@@ -15,7 +16,7 @@ function Row({ row }: { row: PublishedSecondRow }) {
       <td className="px-3 py-2">
         <a href={`/p/${row.slug}`} target="_blank" rel="noreferrer noopener" className="font-semibold hover:text-accent">{row.slug}</a>
         <span className="ml-2 font-mono text-fg-3">{row.repo}</span>
-        <p className="mt-0.5 text-fg-2">{row.reason?.slice(0, 260)}</p>
+        <p className="mt-0.5 text-fg-2"><ReasonText text={row.reason} korean={row.reasonKo} limit={260} /></p>
         {state?.error && <p className="text-down">{state.error}</p>}
         {state?.message && <p className="text-up">{state.message}</p>}
       </td>

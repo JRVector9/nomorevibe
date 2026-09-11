@@ -6,6 +6,7 @@ import { collectCandidateEvidence } from './actions';
 import type { AdminReviewEntry } from '@/lib/crawl/admin-review';
 import { RuleTrace } from './RuleTrace';
 import { causeLabel } from './causes';
+import { ReasonText } from './ReasonText';
 
 type Reason = { value: string; label: string };
 const button = 'rounded-lg border px-3 py-1.5 text-[13px] font-semibold disabled:opacity-50';
@@ -77,7 +78,7 @@ export function ReviewDetail({ entry, reasons }: { entry: AdminReviewEntry; reas
           <b className={`font-semibold ${verdict.text}`}>{verdict.label}</b>
           {entry.review?.model ? <span className="ml-1.5 font-mono text-fg-3">{entry.review.model}</span> : null}
           {typeof entry.review?.confidence === 'number' ? <span className="ml-1.5 font-mono text-fg-3">확신 {entry.review.confidence.toFixed(2)}</span> : null}
-          {entry.review?.reason ? <span className="mt-1 block">{entry.review.reason.slice(0, 400)}</span> : null}
+          {entry.review?.reason ? <span className="mt-1 block"><ReasonText text={entry.review.reason} korean={entry.review.reasonKo} limit={400} /></span> : null}
         </p>
       )}
 
@@ -87,7 +88,7 @@ export function ReviewDetail({ entry, reasons }: { entry: AdminReviewEntry; reas
           {entry.second.model ? <span className="ml-1.5 font-mono text-fg-3">{entry.second.model}</span> : null}
           {typeof entry.second.confidence === 'number' ? <span className="ml-1.5 font-mono text-fg-3">확신 {entry.second.confidence.toFixed(2)}</span> : null}
           <span className="ml-1.5 font-semibold">{entry.second.status === 'agreed' ? '· 1차와 일치' : entry.second.status === 'needs_human' ? '· 사람 확인' : ''}</span>
-          {entry.second.reason ? <span className="mt-1 block">{entry.second.reason.slice(0, 400)}</span> : null}
+          {entry.second.reason ? <span className="mt-1 block"><ReasonText text={entry.second.reason} korean={entry.second.reasonKo} limit={400} /></span> : null}
         </p>
       )}
 
@@ -130,7 +131,7 @@ export function ReviewDetail({ entry, reasons }: { entry: AdminReviewEntry; reas
         <p className="font-semibold">{entry.latest.kind === 'admin_override' ? '관리자 결정 기록' : entry.latest.kind === 'evidence_refresh' ? '추가 수집 접수 기록' : '최근 AI·규칙 심사 기록'}</p>
         {entry.latest.kind === 'automatic' && <p>{entry.latest.provider ?? '실행기 미확인'}{entry.latest.model ? ` · ${entry.latest.model}` : ''} · {entry.latest.decision ?? entry.latest.state}</p>}
         {entry.latest.actor && <p>담당자: {entry.latest.actor}</p>}
-        {entry.latest.reason && <p className="whitespace-pre-line">{entry.latest.reason}</p>}
+        {entry.latest.reason && <p className="whitespace-pre-line"><ReasonText text={entry.latest.reason} korean={entry.latest.reasonKo} /></p>}
         {entry.latest.error && <p className="text-down">실행 오류: {entry.latest.error}</p>}
         <p className="mt-1 text-[13px] text-fg-3">{entry.latest.at}</p>
       </div>}
