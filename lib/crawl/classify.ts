@@ -204,13 +204,25 @@ function promptFor(inputs: ClassifyInput[], definitions: CategoryDefinitions): s
   return `${systemPrompt(definitions)}\n\n<untrusted_products>\n${serialized}\n</untrusted_products>`;
 }
 
+/**
+ * 실패 사유를 가른다.
+ *
+ * CLI 가 사람에게 보여 주는 오류 줄("ERROR: …", "Error: …")이 있으면 그것만 본다. 2026-09-11 실측:
+ * Spark 사용 한도("You've hit your usage limit…")가 매번 error·access_denied·auth 로 흩어져 찍혔다 —
+ * 함께 나온 로그 줄의 타임스탬프·세션 id 숫자가 401·403 으로 읽혔다. 운영 화면은 그것을
+ * "인증 실패 · 재연결 필요"로 보여 줬다. 숫자는 낱말로 떨어져 있을 때만 상태 코드로 본다.
+ */
 export function failureReason(result: CliResult): string {
   if (result.kind !== "exit") return result.kind === "missing" ? "no_cli" : result.kind;
-  const message = `${result.stdout}\n${result.stderr}`;
-  if (/429|rate.?limit|quota/i.test(message)) return "rate_limit";
-  if (/403|access.denied|not supported|does not exist|not have access/i.test(message)) return "access_denied";
-  return /not logged in|login|unauthenticated|authentication|oauth|401/i.test(message)
-    ? "auth" : result.code === 0 ? "invalid_output" : "error";
+  const all = `${result.stdout}\n${result.stderr}`;
+  const errors = all.split("\n").filter((line) => /^(?:ERROR|Error):/.test(line.trim())).join("\n");
+  const message = errors || all;
+  if (/usage limit|rate.?limit|quota|too many requests|\b429\b/i.test(message)) return "rate_limit";
+  if (/\b403\b|access.denied|not supported|does not exist|not have access/i.test(message)) return "access_denied";
+  if (/not logged in|login|unauthenticated|authentication|oauth|\b401\b/i.test(message)) return "auth";
+  // Claude CLI 가 스키마에 맞는 답을 끝내 못 냈다(error_max_turns) — 응답 형식 문제다
+  if (/max.?turns/i.test(message)) return "invalid_output";
+  return result.code === 0 ? "invalid_output" : "error";
 }
 
 function parseCategories(result: CliResult, size: number) {

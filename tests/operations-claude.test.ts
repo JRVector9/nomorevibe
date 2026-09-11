@@ -7,7 +7,7 @@ import { seal, unseal } from '@/lib/operations/credential-vault';
 import { DEFAULT_CONFIG, modelConfigSchema } from '@/lib/operations/contracts';
 import { isolatedClaudeEnv, runClaude, validateClaudeCredential } from '@/lib/operations/claude';
 import { captureClaudeToken, createClaudeCaptureState, handleClaudeOutput } from '@/lib/vendor/deppy-aibox/claude';
-import type { CliRun } from '@/lib/crawl/classify';
+import { failureReason, type CliRun } from '@/lib/crawl/classify';
 const secret='test-secret-at-least-thirty-two-characters';
 const token='sk-ant-oat01-'+ 'A'.repeat(64);
 const auth=JSON.stringify({tokens:{access_token:'a'.repeat(30),refresh_token:'r'.repeat(30),id_token:'i'.repeat(30)}});
@@ -49,6 +49,17 @@ describe('Claude fallback through the Deppy-aibox provider',()=>{
  it('runs the Claude adapter with isolated OAuth and consumes structured output',async()=>{
   const dir=directory(),cli=join(dir,'claude');writeFileSync(cli,'#!/usr/bin/env node\nlet input="";process.stdin.on("data",c=>input+=c);process.stdin.on("end",()=>{const args=process.argv;if(!args.includes("--safe-mode")||!args.includes("--json-schema")||!process.env.CLAUDE_CODE_OAUTH_TOKEN||process.env.ANTHROPIC_API_KEY)process.exit(2);console.log(JSON.stringify({structured_output:{results:[{id:0,category:"Productivity",reason:"Tasks"}]}}));});\n',{mode:0o700});process.env.CLAUDE_CLI=cli;
   const result=await runClaude(token)(['-m','sonnet'],'untrusted sample',3000);expect(result).toEqual(success);
+ });
+ it('gives the structured-output retry one more turn',async()=>{
+  const dir=directory(),cli=join(dir,'claude');writeFileSync(cli,'#!/usr/bin/env node\nconst a=process.argv;process.stdin.resume();process.stdin.on("end",()=>{if(a[a.indexOf("--max-turns")+1]!=="2")process.exit(2);console.log(JSON.stringify({structured_output:{results:[{id:0,category:"Productivity",reason:"Tasks"}]}}));});\n',{mode:0o700});process.env.CLAUDE_CLI=cli;
+  expect(await runClaude(token)(['-m','sonnet'],'x',3000)).toEqual(success);
+ });
+ it('keeps why Claude failed so the account check does not read every failure as a generic error',async()=>{
+  const dir=directory(),cli=join(dir,'claude');writeFileSync(cli,'#!/usr/bin/env node\nprocess.stdin.resume();process.stdin.on("end",()=>{console.log(JSON.stringify({is_error:true,subtype:"error_max_turns",session_id:"01a08ef7-4031-7612-86fe-ed32aedce5e1"}));});\n',{mode:0o700});process.env.CLAUDE_CLI=cli;
+  const result=await runClaude(token)(['-m','sonnet'],'x',3000);
+  expect(result).toMatchObject({kind:'exit',code:1});expect(failureReason(result)).toBe('invalid_output');
+  writeFileSync(cli,'#!/usr/bin/env node\nprocess.stdin.resume();process.stdin.on("end",()=>{console.log(JSON.stringify({is_error:true,subtype:"success",result:"Claude AI usage limit reached|1789200000"}));});\n',{mode:0o700});
+  expect(failureReason(await runClaude(token)(['-m','sonnet'],'x',3000))).toBe('rate_limit');
  });
  it('captures Claude OAuth through aibox, persists it and drains the PTY process',async()=>{
   const dir=directory(),script=join(dir,'script');
