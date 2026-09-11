@@ -30,10 +30,11 @@ test("home discovery, saved projects, search, methodology, and mobile layout wor
   await page.goto("/", { waitUntil: "domcontentloaded" });
 
   await expect(page.getByRole("heading", { name: "AI로 만든 것들, 세상에 나오다." })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "최근 7일 출시" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "메이커들의 제작 도구" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "관심이 커진 분야" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "최근 7일 업데이트" })).toBeVisible();
+  const strip = page.getByRole("region", { name: "이번 주 nomorevibe" });
+  await expect(strip.getByText("태어난 프로젝트")).toBeVisible();
+  await expect(strip.getByText("새 버전을 낸 프로젝트")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "이번 주 가장 활발한 프로젝트" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "분야 순위" })).toBeVisible();
 
   const card = page.locator(".project-card").filter({ hasText: "Evidence Studio" });
   const cover = card.locator(".card-visual");
@@ -48,18 +49,17 @@ test("home discovery, saved projects, search, methodology, and mobile layout wor
   await save.click();
   await expect(card.getByRole("button", { name: "Evidence Studio 저장 취소" })).toHaveAttribute("aria-pressed", "true");
 
-  await page.getByRole("link", { name: "최근 7일 출시 집계 기준" }).click();
+  await strip.getByRole("link", { name: /태어난 프로젝트/ }).click();
   const dialog = page.getByRole("dialog", { name: "숫자의 기준" });
   await expect(dialog).toBeVisible();
   expect(await dialog.evaluate((node) => node.matches(":modal"))).toBe(true);
-  await expect(dialog.getByText("점수가 아니라 개수입니다.")).toBeVisible();
+  await expect(dialog.getByText("태어난 프로젝트 — 저장소를 처음 만든 날로 셉니다.")).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(dialog).toBeHidden();
   await expect(page).not.toHaveURL(/metric=/);
 
-  await page.getByRole("link", { name: "관심이 커진 분야 집계 기준" }).click();
-  await expect(dialog.getByText("제품마다 같은 브라우저의 중복을 제거한", { exact: false })).toBeVisible();
-  await expect(dialog.getByText("다른 제품을 보면 각각 집계됩니다.", { exact: false })).toBeVisible();
+  await page.getByRole("link", { name: "분야 순위 집계 기준" }).click();
+  await expect(dialog.getByText("분야 순위 — 공개 수와 이번 주 태어난 수.")).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(dialog).toBeHidden();
   await expect(page).not.toHaveURL(/metric=/);

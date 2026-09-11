@@ -112,12 +112,12 @@ beforeEach(() => {
   getHomePulse.mockResolvedValue({
     asOf: new Date("2026-09-08T00:00:00+09:00"),
     timezone: "Asia/Seoul",
-    methodVersion: "1.0",
-    launches: { current: 0, previous: 0, change: null, days: [] },
-    tools: { total: 0, reported: 0, coverage: null, rows: [] },
-    interestReady: false,
-    categories: [],
+    methodVersion: "2.0",
+    born: { current: 0, previous: 0, change: null },
     updates: { projects: 0, releases: 0 },
+    active: [],
+    categories: [],
+    tools: null,
     total: 0,
   });
 });
