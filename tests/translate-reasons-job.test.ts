@@ -68,3 +68,15 @@ it("글자 수로 묶는다 — 최대 4건·1,600자, 순서를 지키고, 긴 
   expect(packBatch([text(2_000, "long"), text(10, "b")]).map((i) => i.id)).toEqual(["long"]);
   expect(packBatch([])).toEqual([]);
 });
+
+it("틱 끝에 시간이 모자라면 새로 부르지 않는다 — 줄어든 제한으로 헛실패하지 않게", async () => {
+  vi.useFakeTimers();
+  try {
+    mocks.pending.mockResolvedValue([item("a")]);
+    // 한 번 부르는 데 30초 — 두 번째를 부르기엔 24초밖에 남지 않는다
+    mocks.translate.mockImplementation(async () => { vi.advanceTimersByTime(30_000); return { ok: true, translations: ["가"] }; });
+    expect(await translateReasons(context())).toEqual({ done: false });
+    expect(mocks.translate).toHaveBeenCalledTimes(1);
+    expect(mocks.translate.mock.calls[0][1]).toBe(45_000);
+  } finally { vi.useRealTimers(); }
+});

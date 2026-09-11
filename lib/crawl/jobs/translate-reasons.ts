@@ -15,6 +15,11 @@ const BATCH_CHARS = 1_600;
 const CALL_MS = 45_000;
 /** 틱 예산(worker.ts jobRunOptions 55초)보다 조금 짧게 */
 const TICK_MS = 54_000;
+/**
+ * 이만큼 남아 있을 때만 새로 부른다. 묶음 하나가 15~25초라, 틱 끝에 남은 16초로 부르면 제한이
+ * 16초로 줄어 거의 늘 시간 초과였다 — 프로드에서 틱마다 3건씩 헛실패가 났다(2026-09-11).
+ */
+const MIN_CALL_MS = 30_000;
 
 /** 앞에서부터 글자 수 한도까지 — 순서(최근 것부터)를 지킨다 */
 export function packBatch<T extends { body: string }>(items: T[]): T[] {
@@ -43,7 +48,7 @@ export async function translateReasons(ctx: JobContext<null>): Promise<JobOutcom
   const remaining = () => TICK_MS - (Date.now() - startedAt);
   let translated = 0, failed = 0;
 
-  while (ctx.hasBudget() && remaining() > 15_000) {
+  while (ctx.hasBudget() && remaining() >= MIN_CALL_MS) {
     const pending = await pendingTranslations(BATCH * 2);
     if (!pending.length) {
       ctx.log("translate.done", { translated, failed, drained: true });
