@@ -6,7 +6,8 @@ import type { AgentObservation } from "@/lib/domain/evidence/agents/types";
 import { summarizeAgentEvidence } from "@/lib/domain/evidence/agents/summary";
 import { TEXT_SAMPLE_LIMIT } from "@/lib/net/normalize";
 import type { CrawlSettings } from "./settings-schema";
-import { pageFactsFromDocument } from "./rules";
+import { factsFromRepoMeta, judge, pageFactsFromDocument } from "./rules";
+import { README_SAMPLE_LIMIT } from "./readme";
 
 /**
  * 심사 입력이 바뀌면 둘 다 올린다.
@@ -15,7 +16,7 @@ import { pageFactsFromDocument } from "./rules";
  * 옛 승인이 SQL 대조(matchingSource)에는 그대로 맞는데 inputHash만 어긋나, 발행 잡이 그 후보에서
  * review_approval_changed로 매 틱 멈춘다. 올리면 옛 기록이 대조에서 빠져 후보가 심사로 돌아간다.
  */
-export const REVIEW_PROMPT_VERSION = "2026-09-11.1";
+export const REVIEW_PROMPT_VERSION = "2026-09-11.2";
 export const REVIEW_RULES_VERSION = "2026-09-10.1";
 export const MAX_REVIEW_INPUT_BYTES = 64 * 1024;
 export const MAX_REVIEW_ATTEMPTS = 3;
@@ -25,6 +26,8 @@ export const reviewOutcomeSchema = z.object({
   reason: z.string().trim().min(1).max(2000),
   // 빠지면 빈 목록 — 승인·거부의 인용 요구는 validateReviewOutcome 이 따로 건다
   evidenceIds: z.array(z.string().min(1).max(100)).max(40).default([]),
+  /** 결정이 맞을 확률(0~1). 2차 심사가 1차와 엇갈림을 잴 때 쓴다 */
+  confidence: z.number().min(0).max(1).optional(),
   category: z.enum(CATEGORIES).optional(),
 }).strict();
 export type ReviewOutcome = z.infer<typeof reviewOutcomeSchema>;
@@ -43,7 +46,13 @@ export type ReviewSource = {
   detectorVersion: string;
 };
 export type ReviewSnapshot = {
-  product: { repo: string; name: string; description: string; pageText: string; url: string | null; topics: string[]; language: string | null };
+  product: { repo: string; name: string; description: string; pageText: string; url: string | null; topics: string[]; language: string | null;
+    /** README 앞부분(lib/crawl/readme.ts). 아직 못 받았으면 "" */
+    readme: string };
+  /** 저장소의 바뀌지 않는 사실. 스타·마지막 푸시·생성일 */
+  repoFacts: { stars: number | null; pushedAt: string | null; createdAt: string | null };
+  /** 규칙이 어디서 멈췄는지 — 모델이 무엇을 대신 가르는지 알게 한다 */
+  rules: { stoppedAt: string | null; detail: string | null; cause: string | null };
   policy: { rulesVersion: string; promptVersion: string; detectorVersion: string; policyVersion: string; enforceEligibility: boolean };
   evidence: ReviewEvidence[];
   evidenceSummary: ReturnType<typeof summarizeAgentEvidence>;
@@ -75,6 +84,15 @@ export function reviewPolicyHash(settings: CrawlSettings): string {
   }, rulesVersion: REVIEW_RULES_VERSION, promptVersion: REVIEW_PROMPT_VERSION });
 }
 const limitedText = (value: unknown, size: number) => typeof value === "string" ? value.slice(0, size).trim() : "";
+
+/** 규칙이 멈춘 곳. 보류 후보는 마지막 단계가 멈춘 규칙이다 */
+function ruleStop(document: CrawlDocument, settings: CrawlSettings, now: Date): ReviewSnapshot["rules"] {
+  const verdict = judge(factsFromRepoMeta(document.repo, document.repoMeta), pageFactsFromDocument(document), settings, now);
+  const last = verdict.trace.at(-1);
+  return last && !last.passed
+    ? { stoppedAt: last.rule, detail: limitedText(last.detail, 300) || null, cause: verdict.cause ?? null }
+    : { stoppedAt: null, detail: null, cause: null };
+}
 
 export function createReviewInput(
   candidate: CrawlCandidate,
@@ -113,7 +131,14 @@ export function createReviewInput(
       url: candidate.productUrl,
       topics: Array.isArray(document.repoMeta.topics) ? document.repoMeta.topics.slice(0, 30).map(item => limitedText(item, 100)) : [],
       language: limitedText(document.repoMeta.language, 100) || null,
+      readme: limitedText(page.readmeSample, README_SAMPLE_LIMIT),
     },
+    repoFacts: {
+      stars: typeof document.repoMeta.stargazers_count === "number" ? document.repoMeta.stargazers_count : null,
+      pushedAt: limitedText(document.repoMeta.pushed_at, 40) || null,
+      createdAt: limitedText(document.repoMeta.created_at, 40) || null,
+    },
+    rules: ruleStop(document, settings, now),
     policy: { rulesVersion: REVIEW_RULES_VERSION, promptVersion: REVIEW_PROMPT_VERSION,
       detectorVersion: settings.agentEvidence.detectorVersion, policyVersion: settings.agentEvidence.policyVersion,
       enforceEligibility: settings.agentEvidence.enforceEligibility },

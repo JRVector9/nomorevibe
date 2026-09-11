@@ -77,3 +77,39 @@ it("rejects invented or missing evidence IDs and caps the actual UTF-8 input sna
   expect(() => validateReviewOutcome(input, { decision: "approve", reason: "Made up", evidenceIds: ["unknown"] })).toThrow("review_unknown_evidence");
   expect(() => validateReviewOutcome(input, { decision: "approve", reason: "No evidence", evidenceIds: [] })).toThrow("review_missing_evidence");
 });
+
+/**
+ * 실측(2026-09-11, 사람이 결정한 50건): 옛 입력·지시문은 90%를 보류했다. README·저장소 사실·규칙이 멈춘
+ * 곳을 싣고 "쓸 수 있는 제품인가" 하나만 물으니 보류 10%, 사람과 일치 84%, 반대 판단 6%.
+ */
+it("README·저장소 사실·규칙이 멈춘 곳을 싣고, README 가 바뀌면 입력 해시도 바뀐다", () => {
+  const withReadme = { ...document, repoMeta: { ...document.repoMeta, stargazers_count: 7, pushed_at: "2026-09-01T00:00:00Z", created_at: "2026-08-01T00:00:00Z" },
+    pageMeta: { ...document.pageMeta, readmeSample: "Oigo — dictation for macOS. brew install oigo" } } as CrawlDocument;
+  const input = createReviewInput(candidate, withReadme, DEFAULT_CRAWL_SETTINGS, evidence, now);
+  expect(input.snapshot.product.readme).toBe("Oigo — dictation for macOS. brew install oigo");
+  expect(input.snapshot.repoFacts).toEqual({ stars: 7, pushedAt: "2026-09-01T00:00:00Z", createdAt: "2026-08-01T00:00:00Z" });
+  expect(input.snapshot.rules).toHaveProperty("stoppedAt");
+
+  const changed = createReviewInput(candidate, { ...withReadme, pageMeta: { ...withReadme.pageMeta, readmeSample: "A CLI. npm i -g oigo" } } as CrawlDocument,
+    DEFAULT_CRAWL_SETTINGS, evidence, now);
+  expect(changed.inputHash).not.toBe(input.inputHash);
+});
+
+it("README 를 아직 못 받았으면 빈 글자로 싣는다", () => {
+  expect(createReviewInput(candidate, document, DEFAULT_CRAWL_SETTINGS, evidence, now).snapshot.product.readme).toBe("");
+});
+
+it("규칙이 멈춘 곳은 보류 후보의 마지막 단계다", () => {
+  const held = { ...document, productUrl: "https://owner.github.io/app",
+    repoMeta: { ...document.repoMeta, pushed_at: "2026-09-07T00:00:00Z", stargazers_count: 3, owner: { type: "User" } } } as CrawlDocument;
+  const { rules } = createReviewInput({ ...candidate, productUrl: held.productUrl }, held, DEFAULT_CRAWL_SETTINGS, evidence, now).snapshot;
+  expect(rules.stoppedAt).toBeTruthy();
+  expect(rules.cause).toBe("host_excluded_subpath");
+});
+
+it("확신도는 0~1 만 받고, 없어도 된다", () => {
+  const input = createReviewInput(candidate, document, DEFAULT_CRAWL_SETTINGS, evidence, now);
+  expect(validateReviewOutcome(input, { decision: "reject", reason: "문서 사이트", evidenceIds: ["product"], confidence: 0.9 }).confidence).toBe(0.9);
+  expect(validateReviewOutcome(input, { decision: "reject", reason: "문서 사이트", evidenceIds: ["product"] }).confidence).toBeUndefined();
+  expect(() => validateReviewOutcome(input, { decision: "reject", reason: "문서 사이트", evidenceIds: ["product"], confidence: 1.5 })).toThrow();
+});

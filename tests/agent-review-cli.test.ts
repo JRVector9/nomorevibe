@@ -143,3 +143,13 @@ it("CLI 오류는 종류를 남긴다 — 전에는 모두 cli_error 라 530건�
   const run: ReviewCliRun = async () => ({kind:"exit",code:1,stderr:"",stdout:JSON.stringify({subtype:"error_max_turns",is_error:true,num_turns:3})});
   expect(await reviewWithAgent(input(), {model:"tested-model",run})).toMatchObject({ok:false,error:"max_turns"});
 });
+
+it("지시문은 쓸 수 있는 제품인가 하나만 묻고, 개발 근거로 보류하지 말라고 한다", () => {
+  const args = reviewCliArgs("tested-model");
+  const system = args[args.indexOf("--system-prompt") + 1];
+  expect(system).toContain("Answer one question: is product.url a usable deployed product");
+  expect(system).toContain("missing development evidence is never a reason for needs_review");
+  const schema = JSON.parse(args[args.indexOf("--json-schema") + 1]);
+  expect(schema.properties.confidence).toEqual({ type: "number", minimum: 0, maximum: 1 });
+  expect(schema.required).not.toContain("confidence");
+});

@@ -98,7 +98,7 @@ export function ReviewConsole({ entries, reasons, bulkFormId, focus }: {
                       : <span className="text-fg-3">{candidate.reason ?? '—'}</span>}
                   </td>
                   <td className="whitespace-nowrap px-2 py-1.5">
-                    {chip ? <span className={`rounded px-1.5 py-0.5 font-semibold ${chip.className}`}>{chip.label}</span> : <span className="text-fg-3">—</span>}
+                    {chip ? <span title={typeof entry.review?.confidence === 'number' ? `확신 ${entry.review.confidence.toFixed(2)}` : undefined} className={`rounded px-1.5 py-0.5 font-semibold ${chip.className}`}>{chip.label}</span> : <span className="text-fg-3">—</span>}
                   </td>
                   <td className="px-2 py-1.5 text-right">{facts.stars ?? '—'}</td>
                   <td className="px-2 py-1.5 text-right">{facts.pushDays === null ? '—' : `${facts.pushDays}일`}</td>

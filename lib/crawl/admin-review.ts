@@ -303,10 +303,11 @@ export function currentReviewStatus(input: ReviewInput | null, attempts: CrawlRe
   if (current.some(row => row.state === 'failed')) return 'failed';
   return attempts.some(row => row.kind === 'automatic') ? 'outdated' : 'unreviewed';
 }
-type AdminReviewAttempt = { kind: string; state: string; decision: string | null; reason: string | null; provider: string | null;
+type AdminReviewAttempt = { kind: string; state: string; decision: string | null; confidence: number | null; reason: string | null; provider: string | null;
   model: string | null; actor: string | null; error: string | null; retryAfter: string | null; at: string };
 function summarizeAttempt(attempt: CrawlReviewAttempt | undefined): AdminReviewAttempt | null {
   return attempt ? { kind: attempt.kind, state: attempt.state, decision: attempt.outcome?.decision ?? null,
+    confidence: typeof attempt.outcome?.confidence === 'number' ? attempt.outcome.confidence : null,
     reason: attempt.reason ?? attempt.outcome?.reason ?? null, provider: attempt.provider, model: attempt.model,
     actor: attempt.actor, error: attempt.errorCode, retryAfter: attempt.retryAfter?.toISOString() ?? null,
     at: attempt.startedAt.toISOString() } : null;

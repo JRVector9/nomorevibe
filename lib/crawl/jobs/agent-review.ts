@@ -1,7 +1,8 @@
 import type { JobContext, JobOutcome } from "@/lib/jobs/runner";
 import { requestJob } from "@/lib/jobs/control";
 import { findByUrl } from "@/lib/domain/products/repository";
-import { getDocument } from "@/lib/crawl/repository";
+import { getDocument, setReadmeSample } from "@/lib/crawl/repository";
+import { fetchReadmeSample } from "@/lib/crawl/readme";
 import { getSettings } from "@/lib/crawl/settings";
 import { judge, factsFromRepoMeta, pageFactsFromDocument } from "@/lib/crawl/rules";
 import { isReviewCandidate, REVIEW_RULES_VERSION, type ReviewOutcome } from "@/lib/crawl/agent-review-contract";
@@ -44,8 +45,16 @@ export async function reviewCrawlCandidates(ctx: JobContext<null>): Promise<JobO
     for (const candidate of candidates) {
       if (reviews.length >= MAX_CONCURRENT_REVIEWS || !ctx.hasBudget() || remaining() < 1_000) break;
       if (!isReviewCandidate(candidate)) continue;
-      const document = await getDocument(candidate.repo);
+      let document = await getDocument(candidate.repo);
       if (!document) continue;
+      // README 는 처음 심사할 때 한 번 받아 원본 옆에 둔다("" = 없음). 잠깐의 실패면 이번엔 없이 간다
+      if (typeof document.pageMeta?.readmeSample !== "string") {
+        const readme = await fetchReadmeSample(candidate.repo);
+        if (typeof readme === "string") {
+          await setReadmeSample(candidate.repo, readme);
+          document = { ...document, pageMeta: { ...(document.pageMeta ?? {}), readmeSample: readme } };
+        }
+      }
       const input = await loadReviewInput(candidate, document, settings);
       if (input.validUntil.getTime() <= Date.now()) continue;
       // 판정 잡과 같은 추출기로 규칙을 태운다. 여기서 PageFacts를 손으로 조립했을 때 본문이 빠져
