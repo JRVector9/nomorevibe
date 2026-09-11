@@ -105,3 +105,12 @@ it('진행을 센다 — 옮길 글 중 몇 개를 옮겼고 몇 개가 실패�
   expect(await translationProgress()).toMatchObject({ total: 2, done: 1, failed: 1, pending: 1, lastHour: 1 });
   expect((await translationProgress()).lastSecondsAgo).toBeLessThan(60);
 });
+
+it('다시 볼 때가 된 실패는 처음 보는 글 뒤로 밀리지 않는다 — 최근 순서대로다', async () => {
+  await attempt('acme/old', EN_B, new Date(Date.now() - 3600_000));
+  await attempt('acme/new', EN_A);
+  await recordTranslations([{ hash: textHash(EN_A), translated: null, error: 'timeout' }], 'gpt-oss');
+  await db.update(textTranslations).set({ retryAt: sql`now() - interval '1 minute'` });
+
+  expect((await pendingTranslations(10)).map((row) => [row.body, row.attempts])).toEqual([[EN_A, 1], [EN_B, 0]]);
+});
