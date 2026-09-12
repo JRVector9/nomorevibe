@@ -30,6 +30,21 @@ function mergeClassify(current: CrawlSettings["classify"], raw: unknown): CrawlS
  * 못 읽어 수집이 멈추고, 마이그레이션으로 채우려면 "마이그레이션 없이 필터를 추가한다"는
  * 이점이 사라진다. 기본값을 바탕으로 얕게 병합해 없는 필드를 메운다.
  */
+/**
+ * 2차 심사는 모델 하나(provider·model)에서 표 여럿(voters)으로 넓혔다.
+ * 옛 모양으로 저장된 값은 그 모델을 첫 표로 옮긴다 — 다시 저장하기 전까지 기준이 바뀌면 안 된다.
+ */
+function mergeSecondReview(stored: unknown) {
+  // 저장된 것을 먼저 본다 — 기본값을 덮은 뒤에 보면 voters 가 늘 채워져 있어 옛 모델이 조용히 사라진다
+  const saved = (stored ?? {}) as Record<string, unknown>;
+  const legacy = typeof saved.model === "string" && saved.model.trim()
+    ? [{ provider: saved.provider === "abcllm" ? "abcllm" : "claude-cli", model: saved.model.trim() }]
+    : null;
+  const voters = Array.isArray(saved.voters) && saved.voters.length ? saved.voters
+    : legacy ?? DEFAULT_CRAWL_SETTINGS.secondReview.voters;
+  return { ...DEFAULT_CRAWL_SETTINGS.secondReview, ...saved, voters };
+}
+
 export function mergeWithDefaults(stored: unknown): CrawlSettings {
   const raw = (stored ?? {}) as Record<string, unknown>;
   const merged = {
@@ -40,7 +55,7 @@ export function mergeWithDefaults(stored: unknown): CrawlSettings {
     classify: mergeClassify(DEFAULT_CRAWL_SETTINGS.classify, raw.classify),
     agentEvidence: { ...DEFAULT_CRAWL_SETTINGS.agentEvidence, ...((raw.agentEvidence as object) ?? {}) },
     news: { ...DEFAULT_CRAWL_SETTINGS.news, ...((raw.news as object) ?? {}) },
-    secondReview: { ...DEFAULT_CRAWL_SETTINGS.secondReview, ...((raw.secondReview as object) ?? {}) },
+    secondReview: mergeSecondReview(raw.secondReview),
   };
 
   const parsed = crawlSettingsSchema.safeParse(merged);

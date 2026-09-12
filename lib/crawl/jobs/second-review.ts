@@ -29,12 +29,14 @@ export async function secondReviewCandidates(ctx: JobContext<null>): Promise<Job
   await retryFailedSecondReviews();
   const pending = await pendingSecondReviews(CONCURRENT);
   const remaining = () => 24_000 - (Date.now() - startedAt);
-  const { model, provider } = settings.secondReview;
-  const limit = provider === "abcllm" ? REVIEW_GATEWAY_TIMEOUT_MS : REVIEW_CLI_TIMEOUT_MS;
   let reviewed = 0, failed = 0;
 
   await Promise.all(pending.map(async (row) => {
     if (!ctx.hasBudget() || remaining() < 5_000) return;
+    // 누가 볼지는 행에 적혀 있다 — 도중에 설정이 바뀌어도 올릴 때 정한 모델이 그 표를 낸다
+    const provider = row.provider ?? "claude-cli";
+    const model = row.model ?? settings.secondReview.voters[0].model;
+    const limit = provider === "abcllm" ? REVIEW_GATEWAY_TIMEOUT_MS : REVIEW_CLI_TIMEOUT_MS;
     const [candidate] = await db.select().from(crawlCandidates).where(eq(crawlCandidates.id, row.candidateId)).limit(1);
     const document = candidate ? await loadReviewDocument(candidate.repo) : undefined;
     if (!candidate || !document) {
@@ -53,11 +55,11 @@ export async function secondReviewCandidates(ctx: JobContext<null>): Promise<Job
       return;
     }
     reviewed += 1;
-    const second = { decision: result.outcome.decision, confidence: result.outcome.confidence ?? null };
-    await recordSecondReview(row.id, { ok: true, ...second, reason: result.outcome.reason, model, provider,
+    const second = { decision: result.outcome.decision, confidence: result.outcome.confidence ?? null, provider };
+    await recordSecondReview(row.id, { ok: true, ...second, reason: result.outcome.reason, model,
       status: combineVerdicts({ decision: row.firstDecision, confidence: row.firstConfidence }, second, settings.secondReview.agreeAt, Boolean(row.publishedSlug)) });
   }));
 
-  ctx.log("crawl.second_reviewed", { provider, model, enqueued, closed, reviewed, failed });
+  ctx.log("crawl.second_reviewed", { enqueued, closed, reviewed, failed });
   return { done: pending.length === 0 };
 }

@@ -108,7 +108,7 @@ export default async function StatusPage() {
   const [down, topClicked, ops, manual] = await Promise.all([downProducts(), topClickedSince(30), operationsData(), manualCandidates()]);
   const [flow, oldestWait, stalled, queue, decisions, seconds, translation, secondFailures] = await Promise.all([pipelineFlow(), oldestReviewWaitDays(), stalledReviewCount(),
     // 운영센터 가운데 표 — 한 화면에 들어오는 만큼만. 처리는 심사 큐에서 한다
-    listAdminReviewEntries(settings, { state: "needs_review", limit: 14 }), reviewQueueAiDecisions(), secondReviewSummary(), translationProgress(),
+    listAdminReviewEntries(settings, { state: "needs_review", limit: 14 }), reviewQueueAiDecisions(), secondReviewSummary(settings.secondReview.agreeAt), translationProgress(),
     recentSecondReviewFailures()]);
 
   const states = new Map(jobStates.map((job) => [job.name, job]));
@@ -150,12 +150,16 @@ export default async function StatusPage() {
       action: { label: "심사 큐", href: "/admin/review" },
     });
   }
-  const secondOpen = seconds.counts.agreedReject + seconds.counts.agreedApprove + seconds.counts.needsHuman + seconds.counts.published;
+  const secondAgreed = seconds.counts.unanimousReject + seconds.counts.unanimousApprove + seconds.counts.agreedReject + seconds.counts.agreedApprove;
+  const secondOpen = secondAgreed + seconds.counts.needsHuman + seconds.counts.published;
   if (secondOpen > 0) {
     actions.push({
       key: "second", tone: "hold", count: secondOpen, title: "2차 심사 확인",
-      detail: <>1차와 일치 {seconds.counts.agreedReject + seconds.counts.agreedApprove}건은 한 번에 확정 · 엇갈림 {seconds.counts.needsHuman}건 · 공개분 {seconds.counts.published}건은 사람이 봅니다.</>,
-      action: { label: "2차 심사", href: seconds.counts.needsHuman ? "/admin/review?second=needs_human" : "/admin/review?second=agreed_reject" },
+      detail: <>일치 {secondAgreed}건은 한 번에 확정(그중 만장일치 {seconds.counts.unanimousReject + seconds.counts.unanimousApprove}건) · 엇갈림 {seconds.counts.needsHuman}건 · 공개분 {seconds.counts.published}건은 사람이 봅니다.</>,
+      // 비어 있는 칩을 열지 않는다 — 할 일이 있다고 해 놓고 빈 화면을 주면 신뢰를 잃는다
+      action: { label: "2차 심사", href: `/admin/review?second=${
+        (["needs_human", "unanimous_reject", "unanimous_approve", "agreed_reject", "agreed_approve"] as const)
+          .find((key) => seconds.ids[key].length) ?? "needs_human"}` },
     });
   }
   /**

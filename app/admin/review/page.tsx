@@ -27,7 +27,8 @@ const BULK_FORM = "review-bulk";
 const STATES = [['pending', '진행 중'], ['needs_review', '보류'], ['rejected', '거부'], ['published', '발행 완료']] as const;
 const AI_FILTERS: [ReviewAiDecision, string][] = [['reject', 'AI 거부'], ['approve', 'AI 승인'], ['needs_review', 'AI 보류'], ['none', '판단 없음']];
 /** 2차 심사 거르기 — 같은 결론끼리 모아 한 번에 확정한다 */
-const SECOND_FILTERS = [['agreed_reject', '2차 일치·거부'], ['agreed_approve', '2차 일치·승인'], ['needs_human', '2차 사람 확인']] as const;
+const SECOND_FILTERS = [['unanimous_reject', '만장일치·거부'], ['unanimous_approve', '만장일치·승인'],
+  ['agreed_reject', '2표 일치·거부'], ['agreed_approve', '2표 일치·승인'], ['needs_human', '2차 사람 확인']] as const;
 type SecondFilter = typeof SECOND_FILTERS[number][0] | 'published';
 
 type Search = { state?: string | string[]; page?: string | string[]; cause?: string | string[]; ai?: string | string[]; second?: string | string[]; focus?: string | string[] };
@@ -49,7 +50,7 @@ export default async function ReviewPage({ searchParams }: { searchParams: Promi
   const second = ([...SECOND_FILTERS.map(([key]) => key), 'published'] as string[]).includes(one(params.second)) ? one(params.second) as SecondFilter : '';
 
   const settings = await getSettings();
-  const [takedowns, causes, decisions, seconds, translation] = await Promise.all([pendingTakedowns(), reviewQueueCauses(settings), reviewQueueAiDecisions(), secondReviewSummary(), translationProgress()]);
+  const [takedowns, causes, decisions, seconds, translation] = await Promise.all([pendingTakedowns(), reviewQueueCauses(settings), reviewQueueAiDecisions(), secondReviewSummary(settings.secondReview.agreeAt), translationProgress()]);
 
   // 갈래·AI 판단은 계산으로 얻은 값이라 SQL로 거를 수 없다 — 해당하는 id 만 넘긴다. 둘 다 고르면 겹치는 것만
   const causeIds = cause ? (causes.ids.get(cause) ?? []) : undefined;
@@ -110,7 +111,8 @@ export default async function ReviewPage({ searchParams }: { searchParams: Promi
         ))}
         <span className="mx-1 h-4 w-px bg-line" aria-hidden />
         {SECOND_FILTERS.map(([key, label]) => {
-          const count = key === 'agreed_reject' ? seconds.counts.agreedReject : key === 'agreed_approve' ? seconds.counts.agreedApprove : seconds.counts.needsHuman;
+          const count = key === 'unanimous_reject' ? seconds.counts.unanimousReject : key === 'unanimous_approve' ? seconds.counts.unanimousApprove
+            : key === 'agreed_reject' ? seconds.counts.agreedReject : key === 'agreed_approve' ? seconds.counts.agreedApprove : seconds.counts.needsHuman;
           return (
             <Link key={key} href={query({ second: second === key ? undefined : key, state: undefined, page: 1 })}
               aria-current={second === key ? 'page' : undefined} className={chip(second === key)}>

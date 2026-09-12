@@ -239,20 +239,37 @@ export function SettingsForm({ settings }: { settings: CrawlSettings }) {
         title="2차 심사"
         note="1차 AI가 확정한 것·위험 신호가 있는 것·규칙만 통과한 공개분 일부를 다른 모델이 다시 봅니다. 결과는 제안일 뿐 판정을 바꾸지 않습니다."
       >
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-          <div>
-            <label className={label} htmlFor="secondReviewProvider">부르는 곳</label>
-            <select id="secondReviewProvider" name="secondReviewProvider" defaultValue={settings.secondReview.provider} className={`${field} mt-1.5`}>
-              <option value="claude-cli">Claude CLI (사용 한도 있음)</option>
-              <option value="abcllm">사내 게이트웨이 abcllm (한도 없음)</option>
-            </select>
-            <p className={hint}>게이트웨이는 모델 목록이 바뀝니다 — 없는 모델을 적으면 2차가 통째로 멈춥니다</p>
+        <fieldset className="mb-4">
+          <legend className={label}>다시 볼 모델 (최대 3)</legend>
+          <p className={hint}>
+            성향이 서로 다른 모델을 세울수록 좋습니다 — 관대한 모델과 엄격한 모델이 같은 결론을 내면 실수가 상쇄됩니다.
+            게이트웨이는 모델 목록이 바뀝니다. 없는 모델을 적으면 그 표만 실패로 남고 운영센터에 뜹니다.
+          </p>
+          <div className="mt-2 grid gap-2">
+            {[0, 1, 2].map((index) => {
+              const voter = settings.secondReview.voters[index];
+              /*
+               * 키에 내용을 넣는다. 순번만 쓰면 칸을 지웠을 때 다음 칸이 이 DOM 을 물려받는데,
+               * 다루지 않는(uncontrolled) select 는 defaultValue 가 바뀌어도 다시 그려지지 않아
+               * 남은 모델이 앞 칸의 제공자를 뒤집어쓴다 — 검색 신호 행이 같은 이유로 이렇게 한다.
+               */
+              return (
+                <div key={`${index}:${voter?.provider ?? ""}:${voter?.model ?? ""}`} className="flex flex-wrap items-center gap-2">
+                  <select name={`voterProvider${index}`} aria-label={`${index + 1}번째 표 부르는 곳`}
+                    defaultValue={voter?.provider ?? "abcllm"} className={`${field} w-auto`}>
+                    <option value="claude-cli">Claude CLI (한도 있음)</option>
+                    <option value="abcllm">사내 게이트웨이 (한도 없음)</option>
+                  </select>
+                  <input name={`voterModel${index}`} aria-label={`${index + 1}번째 표 모델`} defaultValue={voter?.model ?? ""}
+                    placeholder={index === 0 ? "opus" : "[MLX] gemma4-26b — 비우면 세우지 않습니다"}
+                    className={`${field} min-w-[220px] flex-1 font-mono`} />
+                </div>
+              );
+            })}
           </div>
-          <div>
-            <label className={label} htmlFor="secondReviewModel">모델</label>
-            <input id="secondReviewModel" name="secondReviewModel" defaultValue={settings.secondReview.model} className={`${field} mt-1.5 font-mono`} />
-            <p className={hint}>1차와 다른 모델이어야 같은 실수를 되풀이하지 않습니다. 게이트웨이 예: [MLX] gemma4-26b</p>
-          </div>
+        </fieldset>
+
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <div>
             <label className={label} htmlFor="secondReviewSamplePercent">공개분 표본 (%)</label>
             <input
