@@ -1,5 +1,14 @@
 # Codex handoff
 
+## Compact popular preview — 2026-09-13
+
+- Objective: user's screenshot feedback requests project name, GitHub ID, one-line description and at most5items per tier, with compact spacing. This supersedes the earlier10-item home preview.
+- Completed locally: home query limit5; each row has project link/stars, linked @GitHub owner, one-line tagline with full-text title; removed ordinal and account-type rows; tightened header/padding; methodology now says maximum5. Full table remains15/page.
+- Modified: components/home/PopularTiers.tsx, app/home.css, lib/domain/products/popular.ts, components/home/MethodologyDialog.tsx, tests/e2e/popular-projects.spec.ts, this handoff. Existing user ProductHero edit and design artifacts remain untouched.
+- Tests executed: TSC, targeted ESLint and diffcheck PASS. Existing Playwright3/3 PASS (1440/390px, minimum13px, no document overflow, filter/paging,5row cap and GitHub/description fields). Screenshot /tmp/nomorevibe-popular-home-1440.png opened and inspected: panel approximately461px vs737px previously.
+- Failed approaches: none. Remaining: commit/push; update web release IDs, deploy M3+mini only; live screen check and final handoff evidence.
+- Next commands: `git status --short`; `node .crawl-samples/live-popular-smoke.mjs` after updating its expected per-tier count to5. Production /tmp helpers use Keychain secrets only in childenv; restrict deployments to the two web apps for this UI-only change.
+
 ## C-track complete: deployed, live UI verified, omission review complete — 2026-09-13 01:46 KST
 
 - Objective fulfilled: entire C-track handoff implemented, approved C1 applied, deployed and visually verified, then reviewed again for omissions as requested. C4 was conditional: all default groups exceed10, so retain existing12discoveryqueries and budget2. B-track commit streaks remain separate per original document.

@@ -1507,20 +1507,24 @@ dialog::backdrop {
 .popular-filter { display: inline-flex; gap: 9px; align-items: center; white-space: nowrap; cursor: pointer; font-size: 14px; min-height: 44px; }
 .popular-filter input { width: 18px; height: 18px; accent-color: var(--accent); }
 .popular-columns { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); border: 1px solid var(--border); border-radius: 16px; overflow: hidden; background: white; }
-.popular-tier { padding: 20px 18px 0; min-width: 0; display: flex; flex-direction: column; }
+.popular-tier { padding: 14px 14px 0; min-width: 0; display: flex; flex-direction: column; }
 .popular-tier + .popular-tier { border-left: 1px solid var(--border); }
-.popular-tier header { display: flex; gap: 8px; flex-wrap: wrap; align-items: baseline; justify-content: space-between; padding-bottom: 15px; border-bottom: 1px solid var(--border); }
-.popular-tier h3 { font-size: 18px; margin: 0; font-weight: 750; }
+.popular-tier header { display: flex; gap: 8px; flex-wrap: wrap; align-items: baseline; justify-content: space-between; padding-bottom: 10px; border-bottom: 1px solid var(--border); }
+.popular-tier h3 { font-size: 16px; margin: 0; font-weight: 750; }
 .popular-tier header > span { font-size: 13px; color: var(--text-3); }
-.popular-tier ol { list-style: none; margin: 7px 0 10px; padding: 0; flex: 1; }
-.popular-tier li { display: flex; gap: 9px; align-items: center; min-height: 56px; border-bottom: 1px solid #f4f3f7; }
+.popular-tier ol { list-style: none; margin: 0; padding: 0; flex: 1; }
+.popular-tier li { padding: 8px 0; border-bottom: 1px solid #f4f3f7; min-width: 0; }
+.popular-project-heading { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
 .popular-rank { color: var(--text-3); width: 18px; font-size: 13px; font-variant-numeric: tabular-nums; flex-shrink: 0; }
-.popular-project { min-width: 0; flex: 1; padding: 8px 0; }
+.popular-project { min-width: 0; flex: 1; line-height: 20px; }
 .popular-project strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; }
-.popular-project span { display: block; font-size: 13px; color: var(--text-3); margin-top: 3px; }
+.popular-owner, .popular-description { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; line-height: 18px; margin: 0; }
+.popular-owner { color: var(--text-3); width: fit-content; max-width: 100%; }
+.popular-owner:hover { color: var(--accent); text-decoration: underline; }
+.popular-description { color: var(--text-2); }
 .popular-project:hover strong, .popular-all:hover, .popular-note a { color: var(--accent); }
 .popular-stars { font-variant-numeric: tabular-nums; font-size: 13px; white-space: nowrap; color: var(--text-2); }
-.popular-all { display: flex; justify-content: space-between; border-top: 1px solid var(--border); padding: 15px 0; font-size: 13px; font-weight: 650; margin-top: auto; }
+.popular-all { display: flex; justify-content: space-between; border-top: 1px solid var(--border); padding: 11px 0; font-size: 13px; font-weight: 650; margin-top: auto; }
 .popular-empty { padding: 38px 18px; text-align: center; color: var(--text-3); font-size: 14px; flex: 1; }
 .popular-note { color: var(--text-3); font-size: 13px; line-height: 1.8; margin: 14px 0; }
 .popular-note a { text-decoration: underline; text-underline-offset: 3px; white-space: nowrap; }

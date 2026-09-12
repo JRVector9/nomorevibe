@@ -14,7 +14,9 @@ test('홈 네 구간과 전체 목록·페이지·개인 필터가 연결된다'
  const popular=page.locator('#popular-projects');
  await expect(popular.getByRole('heading',{name:'많이 쓰이는 프로젝트'})).toBeVisible();
  await expect(popular.locator('.popular-tier')).toHaveCount(4);
- await expect(popular.locator('.popular-tier').first().locator('li')).toHaveCount(10);
+ await expect(popular.locator('.popular-tier').first().locator('li')).toHaveCount(5);
+ await expect(popular.locator('.popular-tier').first().locator('li').first().getByRole('link',{name:'@example',exact:true})).toHaveAttribute('href','https://github.com/example');
+ await expect(popular.locator('.popular-description').first()).toHaveText('매일의 일을 돕는 공개 제품 1');
  await expect(popular.locator('.popular-tier').last().getByText('아직 없음')).toBeVisible();
  await popular.getByRole('link',{name:'20개 모두 보기'}).click();
  await expect(page).toHaveURL(/popular\?tier=rising/);

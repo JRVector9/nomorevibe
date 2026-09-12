@@ -1,6 +1,7 @@
 import {Suspense} from 'react';
 import Link from 'next/link';
 import {getPopularGroups} from '@/lib/domain/products/popular';
+import {githubOwnerFromRepositoryUrl} from '@/lib/domain/products/github-owner';
 import {popularHref} from '@/lib/domain/products/stars';
 import {PopularFilter} from './PopularFilter';
 import {logger} from '@/lib/observability/logger';
@@ -17,11 +18,17 @@ export async function PopularTiers({personal=false}:{personal?:boolean}){
    <Suspense><PopularFilter personal={personal}/></Suspense></div>
   <div className="popular-columns">{groups.map(group=><article className="popular-tier" key={group.key}>
    <header><h3>{group.label}</h3><span>★ {group.range}</span></header>
-   {group.items.length?<ol>{group.items.map((p,index)=><li key={p.slug}>
-    <span className="popular-rank" aria-hidden="true">{index+1}</span>
-    <Link className="popular-project" href={`/p/${p.slug}`} title={`${p.name} — ${p.tagline}`}><strong>{p.name}</strong><span>{p.ownerType==='User'?'개인 계정':p.ownerType==='Organization'?'조직 계정':'계정 유형 미확인'}</span></Link>
-    <span className="popular-stars" aria-label={`스타 ${p.stars.toLocaleString('ko-KR')}개`}>★ {p.stars.toLocaleString('ko-KR')}</span>
-   </li>)}</ol>:<p className="popular-empty">아직 없음</p>}
+   {group.items.length?<ol>{group.items.map(p=>{
+    const owner=githubOwnerFromRepositoryUrl(p.repoUrl);
+    return <li key={p.slug}>
+     <div className="popular-project-heading">
+      <Link className="popular-project" href={`/p/${p.slug}`} title={p.name}><strong>{p.name}</strong></Link>
+      <span className="popular-stars" aria-label={`스타 ${p.stars.toLocaleString('ko-KR')}개`}>★ {p.stars.toLocaleString('ko-KR')}</span>
+     </div>
+     {owner?<a className="popular-owner" href={owner.profileUrl} target="_blank" rel="noopener noreferrer" title={`GitHub @${owner.login}`}>@{owner.login}</a>:<span className="popular-owner">GitHub 아이디 미확인</span>}
+     <p className="popular-description" title={p.tagline}>{p.tagline || '소개가 아직 없습니다.'}</p>
+    </li>;
+   })}</ol>:<p className="popular-empty">아직 없음</p>}
    <Link className="popular-all" href={popularHref(group.key,personal)}>{group.total.toLocaleString('ko-KR')}개 모두 보기 <span aria-hidden="true">→</span></Link>
   </article>)}</div>
   <p className="popular-note">스타는 GitHub의 관심 표시이며 실제 이용자 수가 아닙니다. <Link href="/?metric=popular#popular-projects" scroll={false}>집계 기준</Link></p>

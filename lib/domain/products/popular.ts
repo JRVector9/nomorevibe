@@ -24,7 +24,7 @@ async function items(tier:StarTier,personal:boolean,limit:number,offset=0):Promi
   .orderBy(desc(products.stars),asc(products.id)).limit(limit).offset(offset);
 }
 export async function getPopularGroups(personal=false){
- const [totals,...lists]=await Promise.all([counts(personal),...STAR_TIERS.map(t=>items(t.key,personal,10))]);
+ const [totals,...lists]=await Promise.all([counts(personal),...STAR_TIERS.map(t=>items(t.key,personal,5))]);
  return STAR_TIERS.map((tier,index)=>({...tier,total:(totals as number[])[index],items:lists[index] as PopularProduct[]}));
 }
 export async function getPopularPage(tier:StarTier,personal=false,requestedPage=1,pageSize=15){
