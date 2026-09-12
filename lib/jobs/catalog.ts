@@ -17,7 +17,7 @@ export const JOB_CATALOG: readonly { name: string; role: JobRole | "scheduler"; 
   { name: "crawl-judge", role: "reviewer", intervalMs: 5 * 60_000 },
   { name: "crawl-agent-review", role: "reviewer", intervalMs: 60_000 },
   // 2차 심사 — 1차와 다른 모델. 하루 수십~백여 건이라 5분이면 밀리지 않는다
-  { name: "second-review", role: "reviewer", intervalMs: 5 * 60_000 },
+  { name: "second-review", role: "reviewer", intervalMs: 60_000 },
   { name: "crawl-publish", role: "publisher", intervalMs: 5 * 60_000 },
   // 사유 번역 — 발행 워커가 대부분 비어 있어 여기서 1분마다 옮긴다(틱 55초, 한 번에 4건·1,600자까지)
   { name: "reason-translate", role: "publisher", intervalMs: 60_000 },

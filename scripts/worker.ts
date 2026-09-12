@@ -48,6 +48,8 @@ export function runtimeLog(event: string, fields: Record<string, unknown>) {
 export function jobRunOptions(name: string, options: RequestedRunOptions): JobRunOptions {
   if (name === 'crawl-publish') return { ...options, budgetMs: 120_000 };
   if (name === 'reason-translate') return { ...options, budgetMs: 55_000 };
+  // 게이트웨이 호출 상한이 30초라 24초 예산에서는 긴 답이 늘 잘렸다
+  if (name === 'second-review') return { ...options, budgetMs: 55_000 };
   return options;
 }
 

@@ -226,7 +226,7 @@ const defaultAgentEvidence = {
  * 실측(2026-09-11, 사람이 결정한 50건): opus 단독 86% 일치·실패 0·최대 13.5초. 1차(sonnet v2)와
  * 결론이 같은 41건 중 40건이 사람과 일치했고, 둘 다 확신 ≥0.85 인 14건은 모두 일치했다.
  */
-const defaultSecondReview = { enabled: true, voters: [{ provider: "claude-cli" as const, model: "opus" }], sampleRate: 0.05, agreeAt: 0.85 };
+const defaultSecondReview = { enabled: true, voters: [{ provider: "claude-cli" as const, model: "opus" }], includeAiHeld: false, sampleRate: 0.05, agreeAt: 0.85 };
 
 export const crawlSettingsSchema = z.object({
   /** 수집 자체를 멈추는 스위치. 무언가 잘못 돌 때 배포 없이 끊을 수 있어야 한다 */
@@ -268,6 +268,14 @@ export const crawlSettingsSchema = z.object({
        */
       .refine((voters) => new Set(voters.map((voter) => voter.model)).size === voters.length,
         { message: "같은 모델을 두 번 세울 수 없다" }),
+    /**
+     * 1차 AI 도 못 가른 것까지 2차에 올릴지.
+     *
+     * 그 건들은 1차가 표를 내지 않으므로 사내 모델 둘이 같은 결론을 내야 일치가 된다.
+     * 사람이 판정한 80건(전부 1차가 보류했던 것)에서 성향이 반대인 두 모델이 일치한 56건 중
+     * 55건이 사람과 같았다. 지금 그 건들은 통째로 사람 몫이라, 켜면 사람이 볼 양이 줄어든다.
+     */
+    includeAiHeld: z.boolean().default(false),
     /** 규칙만 통과한 공개분 중 무작위로 다시 볼 비율 — 자동 공개의 실제 정확도를 잰다 */
     sampleRate: z.number().min(0).max(0.5),
     /**

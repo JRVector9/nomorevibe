@@ -6,10 +6,11 @@ import { pgTable, serial, integer, varchar, text, timestamp, doublePrecision, in
  * 규칙만 통과해 공개된 것이 공개분의 96%였고(2026-09-11), 1차 AI 는 관찰 모드라 결정에 쓰이지 않았다.
  * 두 판단이 같고 확신이 높으면 "일치", 아니면 사람에게 넘긴다. 공개된 제품은 자동으로 내리지 않는다.
  *
- * - trigger: ai_decided(규칙이 못 가른 것을 AI 1차가 가름) · risk(위험 신호) · sample(무작위 표본)
+ * - trigger: ai_decided(규칙이 못 가른 것을 AI 1차가 가름) · ai_held(1차도 못 가름) · risk(위험 신호) · sample(무작위 표본)
  * - status: pending(2차 대기) · agreed(일치 — 확정 대기) · needs_human(엇갈림·확신 낮음) · failed · resolved
  */
-export type SecondReviewTrigger = "ai_decided" | "risk" | "sample";
+/** ai_held: 1차 AI 도 못 가른 것 — 1차는 표를 내지 않고 2차들끼리 견준다 */
+export type SecondReviewTrigger = "ai_decided" | "ai_held" | "risk" | "sample";
 export type SecondReviewStatus = "pending" | "agreed" | "needs_human" | "failed" | "resolved";
 export type SecondReviewProvider = "claude-cli" | "abcllm";
 

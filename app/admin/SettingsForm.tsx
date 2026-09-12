@@ -300,6 +300,10 @@ export function SettingsForm({ settings }: { settings: CrawlSettings }) {
           </div>
         </div>
         <div className="mt-4">
+          <Toggle name="secondReviewIncludeAiHeld" defaultChecked={settings.secondReview.includeAiHeld}>
+            1차 AI도 못 가른 것까지 본다
+            <span className="ml-1 text-fg-3">— 1차가 표를 내지 않으므로 세워 둔 모델 둘이 같은 결론을 내야 일치가 됩니다</span>
+          </Toggle>
           <Toggle name="secondReviewEnabled" defaultChecked={settings.secondReview.enabled}>
             2차 심사 켜기
             <span className="ml-1 text-fg-3">— 끄면 새로 쌓지 않습니다. 이미 받은 결과는 그대로 보입니다</span>
