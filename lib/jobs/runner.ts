@@ -4,6 +4,7 @@ import { db } from "@/lib/db";
 import { jobs, operationsObservations } from "@/lib/db/schema";
 import { logger } from "@/lib/observability/logger";
 import { JobLeaseLostError, requestJob, type JobLease } from "./control";
+import { STALE_LOCK_MS } from "./lease";
 
 /** Existing bounded handlers keep their cursors; execution ownership belongs to this runner. */
 export type JobContext<C> = {
@@ -33,7 +34,7 @@ export type RunResult =
  * 배포 때마다 2차 심사가 그만큼 놀았다(2026-09-12 실측 6분간 분당 0.3건). 여섯 번을 놓치면
  * 죽은 것으로 본다.
  */
-const LEASE_TAKEOVER = sql`now() - interval '90 seconds'`;
+const LEASE_TAKEOVER = sql`now() - ${STALE_LOCK_MS} * interval '1 millisecond'`;
 
 export async function runJob<C>(
   name: string,
@@ -130,7 +131,9 @@ export async function runJob<C>(
     return { status: "completed", done: outcome.done, durationMs };
   } catch (error) {
     await stopHeartbeat();
-    const message = error instanceof Error ? error.message : String(error);
+    // PostgreSQL rejects NUL even in diagnostic text. A failed error write used to
+    // leave the lease locked and hide the original failure from operations.
+    const message = (error instanceof Error ? error.message : String(error)).replaceAll("\0", "\\0");
     // Preserve pending version/cursor and never release somebody else's lease.
     await db.update(jobs).set({
       lockedAt: null, leaseToken: null, lastError: message.slice(0, 2000),

@@ -6,6 +6,11 @@ const ok = (text: string): CappedFetchResult => ({ ok: true, status: 200, finalU
 const missing: CappedFetchResult = { ok: false, reason: "http", status: 404 };
 
 describe("README 앞부분", () => {
+  it("removes embedded NUL before README text reaches PostgreSQL review storage", async () => {
+    expect(await fetchReadmeSample("acme/app", async () => ok("# App\0\nUseful\0 product")))
+      .toBe("App\nUseful product");
+  });
+
   it("배지·이미지·링크 주소·HTML 은 버리고 글과 설치 명령은 남긴다", () => {
     const text = readmeText([
       "# Oigo", "![build](https://img.shields.io/badge.svg) <img src=x>", "",

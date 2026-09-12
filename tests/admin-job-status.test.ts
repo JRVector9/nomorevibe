@@ -8,6 +8,7 @@ describe("job observation labels", () => {
     expect(jobStatusLabel({ ...empty, requestedVersion: 1 }, now)).toBe("예약됨");
     expect(jobStatusLabel({ ...empty, lockedAt: new Date(now) }, now)).toBe("실행 중");
     expect(jobStatusLabel({ ...empty, notBefore: new Date(now + 1000) }, now)).toBe("재시도 대기");
-    expect(jobStatusLabel({ ...empty, lockedAt: new Date(now - 600_001) }, now)).toBe("중단·회수 대기");
+    expect(jobStatusLabel({ ...empty, lockedAt: new Date(now - 90_000) }, now)).toBe("실행 중");
+    expect(jobStatusLabel({ ...empty, lockedAt: new Date(now - 90_001) }, now)).toBe("중단·회수 대기");
   });
 });

@@ -1,8 +1,8 @@
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { jobs } from "@/lib/db/schema";
-import { requestDueJobs, requestJob } from "@/lib/jobs/control";
+import { assertJobLease, pendingJobNames, requestDueJobs, requestJob } from "@/lib/jobs/control";
 import { getJobState, runJob } from "@/lib/jobs/runner";
 import { ensureSchema } from "./setup";
 
@@ -10,6 +10,42 @@ beforeAll(() => ensureSchema());
 beforeEach(async () => { await db.delete(jobs); });
 
 describe("persistent job requests", () => {
+  it("releases ownership even when a handler error contains a PostgreSQL-forbidden NUL", async () => {
+    await requestJob("crawl-agent-review");
+    expect(await runJob("crawl-agent-review", async () => {
+      throw new Error("upstream\0invalid text");
+    }, { requestedOnly: true })).toMatchObject({ status: "failed" });
+    expect(await getJobState("crawl-agent-review")).toMatchObject({
+      lockedAt: null, leaseToken: null, processedVersion: 0,
+      lastError: "upstream\\0invalid text",
+    });
+    expect((await getJobState("crawl-agent-review"))?.notBefore).toBeInstanceOf(Date);
+  });
+
+  it("reclaims a two-minute abandoned review through the worker queue", async () => {
+    await db.insert(jobs).values({ name: "crawl-agent-review", requestedVersion: 1,
+      leaseToken: "abandoned", lockedAt: sql`now() - interval '2 minutes'`, cursor: { resume: true } });
+    expect(await pendingJobNames("reviewer")).toContain("crawl-agent-review");
+    await expect(db.transaction(tx => assertJobLease(tx, {
+      name: "crawl-agent-review", token: "abandoned", requestedVersion: 1,
+    }))).rejects.toThrow("job_lease_lost");
+    expect(await runJob("crawl-agent-review", async ctx => {
+      expect(ctx.cursor).toEqual({ resume: true });
+      await db.transaction(tx => assertJobLease(tx, ctx.lease!));
+      return { done: true };
+    }, { requestedOnly: true })).toMatchObject({ status: "completed" });
+    expect(await getJobState("crawl-agent-review")).toMatchObject({ processedVersion: 1, lockedAt: null });
+  });
+
+  it("keeps a recently renewed review exclusive", async () => {
+    await db.insert(jobs).values({ name: "crawl-agent-review", requestedVersion: 1,
+      leaseToken: "live", lockedAt: sql`now() - interval '60 seconds'` });
+    expect(await pendingJobNames("reviewer")).not.toContain("crawl-agent-review");
+    await db.transaction(tx => assertJobLease(tx, { name: "crawl-agent-review", token: "live", requestedVersion: 1 }));
+    expect(await runJob("crawl-agent-review", async () => { throw new Error("duplicate execution"); },
+      { requestedOnly: true })).toEqual({ status: "skipped", reason: "locked" });
+  });
+
   it("coalesces overlapping scheduler polls without running any handler", async () => {
     await Promise.all([requestDueJobs(), requestDueJobs()]);
     const state = await getJobState("crawl-fetch");

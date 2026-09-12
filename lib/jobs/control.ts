@@ -3,8 +3,8 @@ import { db } from "@/lib/db";
 import { jobs } from "@/lib/db/schema";
 import type { ProductTransaction } from "@/lib/domain/products/generation";
 import { isJobName, JOB_CATALOG, jobsForRole, type JobRole } from "./catalog";
+import { STALE_LOCK_MS } from "./lease";
 
-export const STALE_LOCK_MS = 10 * 60_000;
 export type JobLease = { name: string; token: string; requestedVersion: number };
 export class JobLeaseLostError extends Error {
   constructor() { super("job_lease_lost"); }
@@ -58,7 +58,7 @@ export async function pendingJobNames(role: JobRole): Promise<string[]> {
   const rows = await db.select({ name: jobs.name }).from(jobs).where(and(
     inArray(jobs.name, jobsForRole(role)), sql`${jobs.requestedVersion} > ${jobs.processedVersion}`,
     or(isNull(jobs.notBefore), sql`${jobs.notBefore} <= now()`),
-    or(isNull(jobs.lockedAt), sql`${jobs.lockedAt} < now() - interval '10 minutes'`),
+    or(isNull(jobs.lockedAt), sql`${jobs.lockedAt} < now() - ${STALE_LOCK_MS} * interval '1 millisecond'`),
   ));
   return rows.map(row => row.name);
 }
@@ -67,7 +67,7 @@ export async function pendingJobNames(role: JobRole): Promise<string[]> {
 export async function assertJobLease(tx: ProductTransaction, lease: JobLease): Promise<void> {
   const [owned] = await tx.select({ name: jobs.name }).from(jobs).where(and(
     eq(jobs.name, lease.name), eq(jobs.leaseToken, lease.token),
-    sql`${jobs.lockedAt} >= now() - interval '10 minutes'`,
+    sql`${jobs.lockedAt} >= now() - ${STALE_LOCK_MS} * interval '1 millisecond'`,
   )).for("share");
   if (!owned) throw new JobLeaseLostError();
 }

@@ -18,6 +18,9 @@ type Request = (url: string, options: { maxBytes: number; timeoutMs?: number }) 
 /** 마크다운을 읽을 수 있는 글자로. 배지·이미지·링크 주소·HTML 은 버리고 코드(설치 명령)는 남긴다 */
 export function readmeText(markdown: string, limit = README_SAMPLE_LIMIT): string {
   return markdown
+    // Public READMEs can contain NUL (including mixed-encoding fragments).
+    // PostgreSQL text/JSONB cannot store it; one such repo stalled the review queue.
+    .replaceAll("\0", "")
     .replace(/<!--[\s\S]*?-->/g, " ")
     .replace(/!\[[^\]]*\]\([^)]*\)/g, " ")
     .replace(/\[([^\]]*)\]\([^)]*\)/g, "$1")
