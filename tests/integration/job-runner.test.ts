@@ -173,3 +173,46 @@ describe("listJobStates — 현황 화면이 읽는 것", () => {
     expect(states[1].lastSuccessAt).toBeInstanceOf(Date);
   });
 });
+
+describe("배포 — 멈추라는 신호와 남은 잠금", () => {
+  it("신호를 받으면 진행 중인 일을 끊고 잠금을 놓고 나간다", async () => {
+    const stopping = new AbortController();
+    let finished = false;
+    const run = runJob("shutdown-test", async (ctx) => {
+      // 바깥을 오래 기다리는 일 — 신호가 오면 즉시 끝난다
+      await new Promise<void>((resolve) => {
+        if (ctx.signal?.aborted) return resolve();
+        ctx.signal?.addEventListener("abort", () => resolve(), { once: true });
+        setTimeout(resolve, 10_000).unref();
+      });
+      finished = true;
+      return { done: false };
+    }, { budgetMs: 110_000, signal: stopping.signal });
+
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    stopping.abort();
+    const result = await run;
+
+    expect(result.status).toBe("completed");
+    expect(finished).toBe(true);
+    // 잠금을 놓았다 — 다음 컨테이너가 곧바로 집을 수 있다
+    const state = await getJobState("shutdown-test");
+    expect(state?.lockedAt).toBeNull();
+    expect(state?.leaseToken).toBeNull();
+    expect(await runJob("shutdown-test", async () => ({ done: true }))).toMatchObject({ status: "completed" });
+  });
+
+  it("주인이 사라져 남은 잠금은 90초가 지나면 넘겨받는다", async () => {
+    await runJob("stale-lock", async () => ({ done: false }));
+    // 심장 박동이 끊긴 주인 — 30초 전이면 아직 살아 있는 것으로 본다
+    const hold = async (secondsAgo: number) => db.update(jobs)
+      .set({ lockedAt: new Date(Date.now() - secondsAgo * 1_000), leaseToken: "dead-worker" })
+      .where(eq(jobs.name, "stale-lock"));
+
+    await hold(30);
+    expect(await runJob("stale-lock", async () => ({ done: true }))).toMatchObject({ status: "skipped", reason: "locked" });
+
+    await hold(120);
+    expect(await runJob("stale-lock", async () => ({ done: true }))).toMatchObject({ status: "completed" });
+  });
+});
