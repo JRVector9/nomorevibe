@@ -14,10 +14,14 @@ function input() {
 
 const outcome = { decision: "approve", reason: "The page text shows a working task tracker.", evidenceIds: ["product"], confidence: 0.86 };
 /** 게이트웨이가 돌려주는 봉투 */
-const answer = (content: unknown, extra: Record<string, unknown> = {}) => vi.fn(async () => new Response(JSON.stringify({
-  choices: [{ message: { content: typeof content === "string" ? content : JSON.stringify(content) } }],
-  usage: { prompt_tokens: 4_200, completion_tokens: 120 }, ...extra,
+const answer = (content: unknown, choice: Record<string, unknown> = {}) => vi.fn(async () => new Response(JSON.stringify({
+  choices: [{ message: { content: typeof content === "string" ? content : JSON.stringify(content) }, ...choice }],
+  usage: { prompt_tokens: 4_200, completion_tokens: 120 },
 }), { status: 200 }) as unknown as Response) as unknown as typeof fetch;
+/** 끊길 때까지 답하지 않는 게이트웨이 */
+const hanging = ((_url: string, init: RequestInit) => new Promise<Response>((_resolve, reject) => {
+  init.signal?.addEventListener("abort", () => reject(init.signal?.reason), { once: true });
+})) as unknown as typeof fetch;
 const status = (code: number) => (async () => new Response("{}", { status: code })) as unknown as typeof fetch;
 
 afterEach(() => vi.unstubAllEnvs());
@@ -74,4 +78,30 @@ it("게이트웨이 모델 이름은 대괄호와 공백을 허용하되 제어 
   expect(gatewayModel("")).toBeNull();
   expect(gatewayModel("bad\nmodel")).toBeNull();
   expect(parseGatewayContent("설명만 있고 JSON 이 없다")).toBeNull();
+});
+
+it("길이에 걸려 잘린 답은 판단으로 받지 않는다", async () => {
+  vi.stubEnv("ABCLLM_API_KEY", "k");
+  // 생각이 끝나지 않은 채 잘린 답 안의 초안 JSON 이 표가 되면 안 된다
+  const draft = `<think>Maybe: ${JSON.stringify(outcome)}`;
+  expect(await reviewWithGateway(input(), { model: "m", request: answer(draft) })).toMatchObject({ ok: false, error: "invalid_output" });
+  expect(parseGatewayContent(draft)).toBeNull();
+  expect(await reviewWithGateway(input(), { model: "m", request: answer(outcome, { finish_reason: "length" }) }))
+    .toMatchObject({ ok: false, error: "output_too_large" });
+});
+
+it("바깥 신호를 받아도 제한 시간은 살아 있다", async () => {
+  vi.stubEnv("ABCLLM_API_KEY", "k");
+  const external = new AbortController();
+  const started = Date.now();
+  const result = await reviewWithGateway(input(), { model: "m", timeoutMs: 20, signal: external.signal, request: hanging });
+
+  expect(result).toEqual({ ok: false, error: "timeout" });
+  expect(Date.now() - started).toBeLessThan(1_000);
+
+  // 바깥에서 끊으면 그것은 취소다 — 제한 시간과 구별해 적는다
+  const cancelled = new AbortController();
+  setTimeout(() => cancelled.abort(), 5);
+  expect(await reviewWithGateway(input(), { model: "m", timeoutMs: 5_000, signal: cancelled.signal, request: hanging }))
+    .toEqual({ ok: false, error: "cancelled" });
 });

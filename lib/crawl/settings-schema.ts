@@ -251,8 +251,9 @@ export const crawlSettingsSchema = z.object({
     provider: z.enum(["claude-cli", "abcllm"]).default("claude-cli"),
     /** 1차(CRAWL_REVIEW_MODEL)와 다른 모델이어야 같은 실수를 되풀이하지 않는다 */
     model: z.string().trim().min(1).max(160)
-      // 게이트웨이 이름은 "[MLX] gpt-oss-120b" 처럼 대괄호·공백이 들어간다. 제어 문자만 막는다
-      .regex(/^[^\p{Cc}]+$/u),
+      // 게이트웨이 이름은 "[MLX] gpt-oss-120b" 처럼 대괄호·공백이 들어간다. 제어 문자와
+      // 셸·따옴표 문자는 막는다 — 지금은 JSON 본문으로만 나가지만, 이름은 좁게 받는 편이 낫다
+      .regex(/^[^\p{Cc}"'`\\;$]+$/u),
     /** 규칙만 통과한 공개분 중 무작위로 다시 볼 비율 — 자동 공개의 실제 정확도를 잰다 */
     sampleRate: z.number().min(0).max(0.5),
     /** 두 판단이 같고 둘 다 이 확신 이상이면 일치로 본다 */

@@ -44,9 +44,16 @@ function httpFailure(status: number): ReviewFailure {
   return "gateway_error";
 }
 
-/** <think>…</think> 를 걷어내고 첫 JSON 덩이만 — 추론을 끄라고 해도 남기는 모델이 있다 */
+/**
+ * <think>…</think> 를 걷어내고 첫 JSON 덩이만 — 추론을 끄라고 해도 남기는 모델이 있다.
+ *
+ * 닫히지 않은 <think> 는 통째로 버린다. 답이 잘려 생각이 끝나지 않았을 때 그 안의 초안 JSON 을
+ * 판단으로 읽으면, 모델이 아직 고민 중이던 결론이 표가 된다.
+ */
 export function parseGatewayContent(content: string): unknown {
-  const body = content.replace(/<think>[\s\S]*?<\/think>/g, "").trim();
+  const closed = content.replace(/<think>[\s\S]*?<\/think>/g, "");
+  const unclosed = closed.indexOf("<think>");
+  const body = (unclosed >= 0 ? closed.slice(0, unclosed) : closed).trim();
   const start = body.indexOf("{");
   const end = body.lastIndexOf("}");
   if (start < 0 || end <= start) return null;
@@ -74,6 +81,13 @@ export async function reviewWithGateway(input: ReviewInput, options: {
   // 꺾쇠를 막아 두어야 증거 안의 글이 구분자를 끝내지 못한다 — CLI 쪽과 같은 처리다
   const prompt = `<untrusted_evidence_json>\n${serialized.replace(/</g, "\\u003c").replace(/>/g, "\\u003e")}\n</untrusted_evidence_json>`;
 
+  const deadline = AbortSignal.timeout(Math.max(1, options.timeoutMs ?? REVIEW_GATEWAY_TIMEOUT_MS));
+  const timeout = options.signal ? AbortSignal.any([options.signal, deadline]) : deadline;
+  const failure = (error: unknown): ReviewFailure => {
+    const name = error instanceof Error ? error.name : "";
+    if (deadline.aborted) return "timeout";
+    return name === "TimeoutError" ? "timeout" : name === "AbortError" ? "cancelled" : "gateway_error";
+  };
   let response: Response;
   try {
     response = await (options.request ?? fetch)(`${BASE_URL}/v1/chat/completions`, {
@@ -88,18 +102,18 @@ export async function reviewWithGateway(input: ReviewInput, options: {
           { role: "user", content: prompt },
         ],
       }),
-      signal: options.signal ?? AbortSignal.timeout(Math.max(1, options.timeoutMs ?? REVIEW_GATEWAY_TIMEOUT_MS)),
+      // 바깥 신호가 와도 제한 시간은 살아 있어야 한다 — 둘 중 먼저 오는 것으로 끊는다
+      signal: timeout,
     });
   } catch (error) {
-    const name = error instanceof Error ? error.name : "";
-    return { ok: false, error: name === "TimeoutError" ? "timeout" : name === "AbortError" ? "cancelled" : "gateway_error" };
+    return { ok: false, error: failure(error) };
   }
   if (!response.ok) return { ok: false, error: httpFailure(response.status) };
 
   let body: string;
   try {
     body = await response.text();
-  } catch { return { ok: false, error: "gateway_error" }; }
+  } catch (error) { return { ok: false, error: failure(error) }; }
   if (Buffer.byteLength(body, "utf8") > MAX_BODY_BYTES) return { ok: false, error: "output_too_large" };
   let envelope: Record<string, unknown>;
   try {
@@ -109,7 +123,10 @@ export async function reviewWithGateway(input: ReviewInput, options: {
   } catch { return { ok: false, error: "invalid_output" }; }
   const usage = usageFrom(envelope);
   const choices = Array.isArray(envelope.choices) ? envelope.choices : [];
-  const message = choices[0] && typeof choices[0] === "object" ? (choices[0] as Record<string, unknown>).message : null;
+  const choice = choices[0] && typeof choices[0] === "object" ? choices[0] as Record<string, unknown> : null;
+  // 길이에 걸려 잘린 답은 판단이 아니다 — 초안이 표가 되지 않게 여기서 끊는다
+  if (choice?.finish_reason === "length") return { ok: false, error: "output_too_large", usage };
+  const message = choice ? choice.message : null;
   const content = message && typeof message === "object" ? (message as Record<string, unknown>).content : null;
   if (typeof content !== "string") return { ok: false, error: "invalid_output", usage };
   const value = parseGatewayContent(content);
