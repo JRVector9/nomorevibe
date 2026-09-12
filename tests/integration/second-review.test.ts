@@ -460,3 +460,24 @@ it('올린 것을 건너뛰고 다음 것을 올린다 — 앞부분이 남아 �
   const rows = await db.select({ repo: secondReviews.repo }).from(secondReviews);
   expect(new Set(rows.map((row) => row.repo)).size).toBe(55);
 });
+
+it('1차가 다시 보면 그 판단으로만 올린다 — 지나간 입력으로 되돌아가지 않는다', async () => {
+  await saveSettings({ secondReview: { enabled: true, sampleRate: 0, agreeAt: 0.85,
+    voters: [{ provider: 'abcllm', model: '[MLX] gemma4-26b' }] } }, 'fixture');
+  await held('acme/rewound');
+  // 입력이 다른 1차 판단이 둘 — 뒤의 것이 지금 판단이다
+  await firstReview('acme/rewound', 'reject', 0.9, 'a'.repeat(64));
+  await firstReview('acme/rewound', 'approve', 0.95, 'b'.repeat(64));
+
+  expect(await enqueueSecondReviews(await getSettings())).toBe(1);
+  const [first] = await pendingSecondReviews(10);
+  expect(first).toMatchObject({ inputHash: 'b'.repeat(64), firstDecision: 'approve' });
+
+  // 그 표를 받은 뒤에도 앞선 입력으로 되돌아가지 않는다
+  await recordSecondReview(first.id, { ok: true, decision: 'approve', confidence: 0.9, reason: '쓸 수 있는 앱',
+    model: '[MLX] gemma4-26b', provider: 'abcllm', status: 'agreed' });
+  expect(await enqueueSecondReviews(await getSettings())).toBe(0);
+
+  const rows = await db.select().from(secondReviews).where(eq(secondReviews.repo, 'acme/rewound'));
+  expect(rows.map((row) => row.inputHash)).toEqual(['b'.repeat(64)]);
+});

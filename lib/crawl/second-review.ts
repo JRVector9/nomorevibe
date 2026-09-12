@@ -128,28 +128,37 @@ const PUBLISHED_LIMIT = 25;
  */
 export async function enqueueSecondReviews(settings: CrawlSettings, now = new Date()): Promise<number> {
   const held = settings.secondReview.includeAiHeld;
-  const decided = await db.selectDistinctOn([crawlReviewAttempts.candidateId], {
+  /**
+   * 후보마다 마지막 1차 판단 하나 — 그것이 지금 물어야 할 입력이다.
+   *
+   * 고르는 것(distinct on)을 먼저 하고 거르는 것을 나중에 한다. 거꾸로 하면 "표를 다 받았다"에
+   * 걸린 마지막 판단이 빠지고 그 앞의 판단이 골라져, 이미 지나간 입력으로 다시 묻는다 —
+   * 그렇게 올린 행은 다음 틱에 superseded 로 닫히고 표는 버려진다(2026-09-12 프로드에서 20분
+   * 사이 후보 53개에 해시 150개가 올라갔고, 닫힌 324행 중 160행은 이미 판단을 받은 것이었다).
+   */
+  const latest = db.selectDistinctOn([crawlReviewAttempts.candidateId], {
     candidateId: crawlReviewAttempts.candidateId, repo: crawlCandidates.repo, inputHash: crawlReviewAttempts.inputHash,
-    decision: sql<string>`${crawlReviewAttempts.outcome}->>'decision'`, confidence: sql<number | null>`(${crawlReviewAttempts.outcome}->>'confidence')::float`,
+    decision: sql<string>`${crawlReviewAttempts.outcome}->>'decision'`.as("decision"),
+    confidence: sql<number | null>`(${crawlReviewAttempts.outcome}->>'confidence')::float`.as("confidence"),
   }).from(crawlReviewAttempts).innerJoin(crawlCandidates, eq(crawlCandidates.id, crawlReviewAttempts.candidateId))
     .where(and(eq(crawlCandidates.state, "needs_review"), eq(crawlCandidates.decidedBy, "auto"),
       eq(crawlReviewAttempts.kind, "automatic"), eq(crawlReviewAttempts.state, "succeeded"), eq(crawlReviewAttempts.provider, "claude-cli"),
-      /*
-       * 세워 둔 표를 다 받은 후보는 건너뛴다.
-       *
-       * 이 쿼리는 후보 id 가 작은 것부터 집는데, 그것들이 전부 올라가 있으면 매 틱 같은 것을
-       * 다시 집어 한 건도 못 넣는다. 사람이 앞부분을 치우기 전에는 뒤가 영영 올라가지 않는다 —
-       * 2026-09-12 프로드에서 대상 738건 중 654건이 그렇게 밀려 있었다.
-       *
-       * 행 수로 재는 이유: 모델을 하나 더 세우면 이미 올라간 후보에도 그 모델의 표를 더해야 한다.
-       */
-      sql`(select count(*) from ${secondReviews} s
-        where s.candidate_id = ${crawlReviewAttempts.candidateId} and s.input_hash = ${crawlReviewAttempts.inputHash})
-        < ${settings.secondReview.voters.length}`,
       // 가른 판단은 확신을 낸 것만 — 1차가 보류한 것은 애초에 확신을 재지 않는다
       or(sql`${crawlReviewAttempts.outcome}->>'confidence' is not null`,
         held ? sql`${crawlReviewAttempts.outcome}->>'decision' = 'needs_review'` : undefined)!))
-    .orderBy(crawlReviewAttempts.candidateId, desc(crawlReviewAttempts.id)).limit(ENQUEUE_LIMIT * 4);
+    .orderBy(crawlReviewAttempts.candidateId, desc(crawlReviewAttempts.id))
+    .as("latest");
+
+  /**
+   * 그중 세워 둔 표를 아직 다 못 받은 것만. 행 수로 재는 이유는 모델을 하나 더 세우면 이미
+   * 올라간 후보에도 그 모델의 표를 더해야 하기 때문이다. 이 조건이 없으면 후보 id 가 작은
+   * 것들만 매 틱 다시 집혀 뒤가 영영 올라가지 않는다(대상 738건 중 654건이 그렇게 밀렸다).
+   */
+  const decided = await db.select().from(latest)
+    .where(sql`(select count(*) from ${secondReviews} s
+      where s.candidate_id = ${latest.candidateId} and s.input_hash = ${latest.inputHash})
+      < ${settings.secondReview.voters.length}`)
+    .limit(ENQUEUE_LIMIT * 4);
   /**
    * 세워 둔 모델마다 한 행. 누가 볼지를 올릴 때 적는다 — 유일 색인이 (후보, 입력, 모델)이라
    * 모델을 비워 두면 Postgres 가 NULL 을 서로 다른 값으로 보아 같은 후보가 매 틱 다시 올라온다.
