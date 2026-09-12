@@ -239,16 +239,23 @@ it('누가 볼지를 올릴 때 적고, 같은 모델로는 다시 올리지 않
   expect(await pendingSecondReviews(10)).toMatchObject([{ provider: 'abcllm', model: '[MLX] gemma4-26b' }]);
 });
 
-it('모델을 바꾸면 같은 후보를 새 모델이 따로 본다 — 표가 쌓인다', async () => {
-  await held('acme/two-voters');
-  await firstReview('acme/two-voters', 'reject');
-  await saveSettings({ secondReview: { enabled: true, voters: [{ provider: 'abcllm', model: '[MLX] gemma4-26b' }], sampleRate: 0, agreeAt: 0.85 } }, 'fixture');
-  await enqueueSecondReviews(await getSettings());
-  await saveSettings({ secondReview: { enabled: true, voters: [{ provider: 'abcllm', model: '[MLX] gpt-oss-120b' }], sampleRate: 0, agreeAt: 0.85 } }, 'fixture');
+it('모델을 바꾸면 그다음 후보부터 새 모델이 본다 — 이미 받은 표를 다시 받지는 않는다', async () => {
+  await saveSettings({ secondReview: { enabled: true, sampleRate: 0, agreeAt: 0.85,
+    voters: [{ provider: 'abcllm', model: '[MLX] gemma4-26b' }] } }, 'fixture');
+  await held('acme/before-swap');
+  await firstReview('acme/before-swap', 'reject');
   await enqueueSecondReviews(await getSettings());
 
-  const rows = await db.select().from(secondReviews).where(eq(secondReviews.repo, 'acme/two-voters'));
-  expect(rows.map((row) => row.model).sort()).toEqual(['[MLX] gemma4-26b', '[MLX] gpt-oss-120b']);
+  // 모델을 갈아 끼운다 — 표 수는 그대로 하나다
+  await saveSettings({ secondReview: { enabled: true, sampleRate: 0, agreeAt: 0.85,
+    voters: [{ provider: 'abcllm', model: '[MLX] gpt-oss-120b' }] } }, 'fixture');
+  await held('acme/after-swap');
+  await firstReview('acme/after-swap', 'reject');
+  expect(await enqueueSecondReviews(await getSettings())).toBe(1);
+
+  const rows = await db.select().from(secondReviews);
+  expect(rows.map((row) => [row.repo, row.model]).sort())
+    .toEqual([['acme/after-swap', '[MLX] gpt-oss-120b'], ['acme/before-swap', '[MLX] gemma4-26b']]);
 });
 
 it('실패는 모델·까닭별로 세어 운영 화면에 드러난다', async () => {
@@ -434,4 +441,22 @@ it('잠깐 막힌 실패는 5분 뒤 다시 보고, 그렇지 않은 실패는 �
   // 한 시간 뒤 — 나머지도 돌아온다
   await retryFailedSecondReviews(new Date(Date.now() + 61 * 60_000));
   expect((await pendingSecondReviews(10)).map((row) => row.repo).sort()).toEqual(['acme/bad-json', 'acme/timed-out']);
+});
+
+it('올린 것을 건너뛰고 다음 것을 올린다 — 앞부분이 남아 있어도 뒤가 밀리지 않는다', async () => {
+  await saveSettings({ secondReview: { enabled: true, sampleRate: 0, agreeAt: 0.85,
+    voters: [{ provider: 'abcllm', model: '[MLX] gemma4-26b' }] } }, 'fixture');
+  // 한 번에 올리는 상한(50)보다 많이 쌓아 둔다
+  for (let index = 0; index < 55; index += 1) {
+    await held(`acme/wave-${String(index).padStart(2, '0')}`);
+    await firstReview(`acme/wave-${String(index).padStart(2, '0')}`, 'reject');
+  }
+
+  expect(await enqueueSecondReviews(await getSettings())).toBe(50);
+  // 앞의 50건은 아직 아무도 보지 않았지만, 다음 틱은 그 뒤를 올린다
+  expect(await enqueueSecondReviews(await getSettings())).toBe(5);
+  expect(await enqueueSecondReviews(await getSettings())).toBe(0);
+
+  const rows = await db.select({ repo: secondReviews.repo }).from(secondReviews);
+  expect(new Set(rows.map((row) => row.repo)).size).toBe(55);
 });

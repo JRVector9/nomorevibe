@@ -134,6 +134,18 @@ export async function enqueueSecondReviews(settings: CrawlSettings, now = new Da
   }).from(crawlReviewAttempts).innerJoin(crawlCandidates, eq(crawlCandidates.id, crawlReviewAttempts.candidateId))
     .where(and(eq(crawlCandidates.state, "needs_review"), eq(crawlCandidates.decidedBy, "auto"),
       eq(crawlReviewAttempts.kind, "automatic"), eq(crawlReviewAttempts.state, "succeeded"), eq(crawlReviewAttempts.provider, "claude-cli"),
+      /*
+       * 세워 둔 표를 다 받은 후보는 건너뛴다.
+       *
+       * 이 쿼리는 후보 id 가 작은 것부터 집는데, 그것들이 전부 올라가 있으면 매 틱 같은 것을
+       * 다시 집어 한 건도 못 넣는다. 사람이 앞부분을 치우기 전에는 뒤가 영영 올라가지 않는다 —
+       * 2026-09-12 프로드에서 대상 738건 중 654건이 그렇게 밀려 있었다.
+       *
+       * 행 수로 재는 이유: 모델을 하나 더 세우면 이미 올라간 후보에도 그 모델의 표를 더해야 한다.
+       */
+      sql`(select count(*) from ${secondReviews} s
+        where s.candidate_id = ${crawlReviewAttempts.candidateId} and s.input_hash = ${crawlReviewAttempts.inputHash})
+        < ${settings.secondReview.voters.length}`,
       // 가른 판단은 확신을 낸 것만 — 1차가 보류한 것은 애초에 확신을 재지 않는다
       or(sql`${crawlReviewAttempts.outcome}->>'confidence' is not null`,
         held ? sql`${crawlReviewAttempts.outcome}->>'decision' = 'needs_review'` : undefined)!))
