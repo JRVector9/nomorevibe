@@ -1,5 +1,17 @@
 # Codex handoff
 
+## Thumbnail/pipeline audit complete — 2026-09-13 08:54 KST
+
+- Objective completed: explain image availability, audit actual collection/classification/review, repair proven review stall and re-review omissions. Full report: docs/operations/2026-09-13-thumbnail-pipeline-audit.md.
+- Code2ed85c499fd1e80bbcf7070fa8f06a9d9d68cff1 committed/pushed; deployed webM3+mini/crawler/publisher/reviewer/maintenance. BothwebhealthsameSHA/dbok,4workerheartbeatsnewSHA. Scheduler/connect-agent unchanged intentionally.
+- Root cause: upstream spmixx12-creator/sperok README had10NULs → PostgreSQL text write failed → error message also hadNUL, catchDBwritefailed and leftlease → queue still10min while runner90s. Fixed README NULstrip, errorNULescape, shared90s queue/runner/assert/status.
+- Final production proof23:53:33UTC: first-review completed two ticks23:50:53/23:52:54;4successful review records including originalrepo needs_review. README367chars persisted. Job lock/errornull, requested/processed5848/5848. Second-reviewcompleted23:52:43andnexttickactive. No manual lease reset or policy changes.
+- Verification: RED regressions all reproduced; fullintegration64/591PASS atleasefix; finaltargeted3/24+unit2/6PASS,TSC/lint/diffcheck/isolatedproductionbuildPASS. Actualbrowser afterdeploy:detail3,home4x5owner+description,filter/paging15rows/mobile/methodologyPASS,errors0. Final own code review completed.
+- Remaining findings (not hidden): OG automaticretry/screenshotcaptureabsent; reviewModeobserve and evidenceeligibility/displayoff;2ndreviewhumanqueue453candidatesat23:38,somegatewaytimeout/invalidoutput; source title/description quality examples inreport. Avoid presenting publication asAIapproval. UserProductHero anddesignartifacts remain untouched.
+- Files: lib/crawl/readme.ts;lib/jobs/lease.ts,control.ts,runner.ts,status.ts;tests/crawl-readme.test.ts,admin-job-status.test.ts,integration/job-control.test.ts;handoff/report.
+- Failed approaches: rootbuildENOTEMPTY;isolatednode_modulesoutsideTurbopackrootrejected;APFScloneofdepsresolved. SSHread-only source/loginspectionandboundedoldrunJobprobeidentified22021withoutprintingSQLparams/secrets.
+- Next commands if asked to continue: `git status --short`; `python3 /tmp/nomorevibe-prod-db.py npx tsx .crawl-samples/review-recovery.ts`; `python3 /tmp/nomorevibe-lease-deploy.py status`; `node .crawl-samples/thumbnail-live-smoke.mjs`. Evidence final `.crawl-samples/review-recovery-2026-09-12T23-53-33-252Z.json`. Do not rerun broad tests withoutnewchanges. Do not changeobserve→enforceorbulkpublicstatuswithoutconcreteuserpolicyinstruction.
+
 ## Thumbnail and pipeline audit — 2026-09-13 08:45 KST (in progress)
 
 - Objective: explain thumbnails and verify production collection/classification/review. Read-only receipts at `.crawl-samples/pipeline-audit-2026-09-12T23-37-04-155Z.json`, second at23:40:56Z, `pipeline-followup.json` and `thumbnail-live-smoke.json`.
