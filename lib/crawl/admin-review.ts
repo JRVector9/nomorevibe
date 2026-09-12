@@ -321,8 +321,9 @@ export type AdminReviewEntry = {
   evidence: { id: string; label: string; url: string }[]; status: AdminReviewStatus; refreshCount: number;
   latest: AdminReviewAttempt | null; review: AdminReviewAttempt | null;
   verdict: AdminReviewVerdict | null;
-  /** 2차 심사 판단 — 1차와 나란히 본다 */
-  second: { decision: string | null; confidence: number | null; reason: string | null; reasonKo: string | null; model: string | null; status: string; trigger: string } | null;
+  /** 2차 심사의 표 — 모델마다 하나. 1차와 나란히 본다 */
+  seconds: { decision: string | null; confidence: number | null; reason: string | null; reasonKo: string | null; model: string | null;
+    provider: string | null; status: string; trigger: string }[];
 };
 
 /**
@@ -402,10 +403,9 @@ export async function listAdminReviewEntries(settings: CrawlSettings, options: {
         url: item.observation.sourceUrl })) ?? [],
       refreshCount: attempts.filter(row => row.kind === 'evidence_refresh').length,
       latest: summarizeAttempt(last), review: summarizeAttempt(review),
-      second: (() => {
-        const row = seconds.find(item => item.candidateId === candidate.id);
-        return row ? { decision: row.secondDecision, confidence: row.secondConfidence, reason: row.secondReason, reasonKo: null, model: row.model, status: row.status, trigger: row.trigger } : null;
-      })(),
+      seconds: seconds.filter(item => item.candidateId === candidate.id).map(row => ({ decision: row.secondDecision,
+        confidence: row.secondConfidence, reason: row.secondReason, reasonKo: null, model: row.model, provider: row.provider,
+        status: row.status, trigger: row.trigger })),
       verdict: recomputed ? {
         trace: recomputed.trace, signals: recomputed.signals, cause: recomputed.cause ?? null,
         state: recomputed.state, reason: recomputed.reason,
@@ -413,9 +413,9 @@ export async function listAdminReviewEntries(settings: CrawlSettings, options: {
       } : null,
     };
   });
-  const korean = await translationsFor(entries.flatMap((entry) => [entry.review?.reason, entry.latest?.reason, entry.second?.reason]));
+  const korean = await translationsFor(entries.flatMap((entry) => [entry.review?.reason, entry.latest?.reason, ...entry.seconds.map((vote) => vote.reason)]));
   for (const entry of entries) {
-    for (const part of [entry.review, entry.latest, entry.second]) if (part?.reason) part.reasonKo = korean.get(part.reason) ?? null;
+    for (const part of [entry.review, entry.latest, ...entry.seconds]) if (part?.reason) part.reasonKo = korean.get(part.reason) ?? null;
   }
   return { entries, nextAfter: candidates.length > limit ? page.at(-1)!.id : null, total };
 }

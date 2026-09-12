@@ -67,8 +67,11 @@ export async function saveCrawlSettings(_prev: SaveState, form: FormData): Promi
     },
     secondReview: {
       enabled: form.get("secondReviewEnabled") === "on",
-      provider: String(form.get("secondReviewProvider") ?? "claude-cli"),
-      model: String(form.get("secondReviewModel") ?? "").trim(),
+      // 모델을 비운 칸은 세우지 않는다 — 표를 지우는 방법이 칸을 비우는 것이어야 한다
+      voters: [0, 1, 2].flatMap((index) => {
+        const model = String(form.get(`voterModel${index}`) ?? "").trim();
+        return model ? [{ provider: String(form.get(`voterProvider${index}`) ?? "claude-cli"), model }] : [];
+      }),
       sampleRate: num(form.get("secondReviewSamplePercent")) / 100,
       agreeAt: num(form.get("secondReviewAgreeAt")),
     },

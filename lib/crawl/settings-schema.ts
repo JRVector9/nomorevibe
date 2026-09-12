@@ -226,7 +226,7 @@ const defaultAgentEvidence = {
  * 실측(2026-09-11, 사람이 결정한 50건): opus 단독 86% 일치·실패 0·최대 13.5초. 1차(sonnet v2)와
  * 결론이 같은 41건 중 40건이 사람과 일치했고, 둘 다 확신 ≥0.85 인 14건은 모두 일치했다.
  */
-const defaultSecondReview = { enabled: true, provider: "claude-cli" as const, model: "opus", sampleRate: 0.05, agreeAt: 0.85 };
+const defaultSecondReview = { enabled: true, voters: [{ provider: "claude-cli" as const, model: "opus" }], sampleRate: 0.05, agreeAt: 0.85 };
 
 export const crawlSettingsSchema = z.object({
   /** 수집 자체를 멈추는 스위치. 무언가 잘못 돌 때 배포 없이 끊을 수 있어야 한다 */
@@ -245,24 +245,34 @@ export const crawlSettingsSchema = z.object({
   secondReview: z.object({
     enabled: z.boolean(),
     /**
-     * 누가 모델을 돌리나 — claude-cli(로컬 CLI, 사용 한도가 있다) 또는 abcllm(사내 게이트웨이, 한도가 없다).
-     * 게이트웨이는 모델 목록이 예고 없이 바뀌므로 배포 없이 갈아 끼울 수 있어야 한다.
+     * 누가 다시 보나 — 모델마다 한 표.
+     *
+     * claude-cli 는 사용 한도가 있고, abcllm(사내 게이트웨이)은 한도가 없는 대신 모델 목록이
+     * 예고 없이 바뀐다. 그래서 배포 없이 갈아 끼울 수 있어야 한다. 성향이 서로 다른 모델을
+     * 세울수록 좋다 — 관대한 모델과 엄격한 모델이 같은 결론을 내면 실수가 상쇄된다(2026-09-12 평가).
      */
-    provider: z.enum(["claude-cli", "abcllm"]).default("claude-cli"),
-    /** 1차(CRAWL_REVIEW_MODEL)와 다른 모델이어야 같은 실수를 되풀이하지 않는다 */
-    model: z.string().trim().min(1).max(160)
-      // 게이트웨이 이름은 "[MLX] gpt-oss-120b" 처럼 대괄호·공백이 들어간다. 제어 문자와
-      // 셸·따옴표 문자는 막는다 — 지금은 JSON 본문으로만 나가지만, 이름은 좁게 받는 편이 낫다
-      .regex(/^[^\p{Cc}"'`\\;$]+$/u),
+    voters: z.array(z.object({
+      provider: z.enum(["claude-cli", "abcllm"]),
+      model: z.string().trim().min(1).max(160)
+        // 게이트웨이 이름은 "[MLX] gpt-oss-120b" 처럼 대괄호·공백이 들어간다. 제어 문자와
+        // 셸·따옴표 문자는 막는다 — 지금은 JSON 본문으로만 나가지만, 이름은 좁게 받는 편이 낫다
+        .regex(/^[^\p{Cc}"'`\\;$]+$/u),
+    })
+      // CLI 쪽 이름은 명령 인자로 나가므로 예전 규칙 그대로 좁게 받는다
+      .refine((value) => value.provider !== "claude-cli" || /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,159}$/.test(value.model),
+        { path: ["model"], message: "claude-cli 모델 이름은 영숫자와 . _ : / - 만 쓸 수 있다" }))
+      .min(1).max(3)
+      // 같은 모델을 두 번 세우면 표가 아니라 메아리다
+      .refine((voters) => new Set(voters.map((voter) => `${voter.provider}:${voter.model}`)).size === voters.length,
+        { message: "같은 모델을 두 번 세울 수 없다" }),
     /** 규칙만 통과한 공개분 중 무작위로 다시 볼 비율 — 자동 공개의 실제 정확도를 잰다 */
     sampleRate: z.number().min(0).max(0.5),
-    /** 두 판단이 같고 둘 다 이 확신 이상이면 일치로 본다 */
+    /**
+     * 확신이 이 값 이상이어야 표로 센다 — Claude 계열(1차·claude-cli)에만 건다.
+     * 사내 모델은 틀릴 때도 0.9~1.0 을 달아 확신이 신호가 아니었다(2026-09-12, 130건).
+     */
     agreeAt: z.number().min(0.5).max(1),
-  })
-    // CLI 쪽 이름은 명령 인자로 나가므로 예전 규칙 그대로 좁게 받는다
-    .refine((value) => value.provider !== "claude-cli" || /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,159}$/.test(value.model),
-      { path: ["model"], message: "claude-cli 모델 이름은 영숫자와 . _ : / - 만 쓸 수 있다" })
-    .default(defaultSecondReview),
+  }).default(defaultSecondReview),
   news: z.object({
     /** 끄면 새 글이 승인 대기로 들어간다 */
     autoApprove: z.boolean(),

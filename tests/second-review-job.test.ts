@@ -20,7 +20,7 @@ vi.mock("@/lib/crawl/second-review", async (importOriginal) => ({
 }));
 
 const context = () => ({ cursor: null, hasBudget: () => true, save: vi.fn(), log: vi.fn(), lease: { name: "second-review", token: "t", requestedVersion: 1 } });
-const row = (over: Record<string, unknown> = {}) => ({ id: 7, candidateId: 1, repo: "acme/demo", publishedSlug: null, firstDecision: "reject", firstConfidence: 0.9, ...over });
+const row = (over: Record<string, unknown> = {}) => ({ id: 7, candidateId: 1, repo: "acme/demo", publishedSlug: null, firstDecision: "reject", firstConfidence: 0.9, provider: "claude-cli", model: "opus", ...over });
 
 beforeEach(() => {
   vi.resetAllMocks();
@@ -79,7 +79,8 @@ it("한 틱에 둘까지만 본다", async () => {
 });
 
 it("사내 게이트웨이로 설정하면 CLI 대신 그쪽으로 묻고, 누가 봤는지 함께 적는다", async () => {
-  mocks.settings!.secondReview = { ...mocks.settings!.secondReview, provider: "abcllm", model: "[MLX] gemma4-26b" };
+  mocks.settings!.secondReview = { ...mocks.settings!.secondReview, voters: [{ provider: "abcllm", model: "[MLX] gemma4-26b" }] };
+  mocks.pending.mockResolvedValue([row({ provider: "abcllm", model: "[MLX] gemma4-26b" })]);
   await secondReviewCandidates(context());
 
   expect(mocks.review).not.toHaveBeenCalled();
@@ -90,7 +91,8 @@ it("사내 게이트웨이로 설정하면 CLI 대신 그쪽으로 묻고, 누�
 });
 
 it("게이트웨이에 모델이 없으면 판단을 지어내지 않고 그 까닭으로 적는다", async () => {
-  mocks.settings!.secondReview = { ...mocks.settings!.secondReview, provider: "abcllm", model: "[MLX] 사라진모델" };
+  mocks.settings!.secondReview = { ...mocks.settings!.secondReview, voters: [{ provider: "abcllm", model: "[MLX] 사라진모델" }] };
+  mocks.pending.mockResolvedValue([row({ provider: "abcllm", model: "[MLX] 사라진모델" })]);
   mocks.gateway.mockResolvedValue({ ok: false, error: "model_unavailable" });
   await secondReviewCandidates(context());
 
