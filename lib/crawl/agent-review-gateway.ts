@@ -7,11 +7,14 @@ import { REVIEW_SYSTEM_PROMPT, type AgentReviewResult, type ReviewFailure, type 
  * CLI 제공자와 같은 입력·같은 정책 글(REVIEW_SYSTEM_PROMPT)·같은 검증(validateReviewOutcome)을 쓴다.
  * 다른 것은 부르는 방법뿐이라, 어느 쪽으로 봐도 같은 질문에 답한 기록이 된다.
  *
+ * 제한 시간 60초: 답이 길어지면(464~646 토큰) 붐빌 때 45초를 넘긴다. 틱 예산이 110초라
+ * t=48초까지 새 호출을 시작할 수 있어 자리는 있다.
+ *
  * 게이트웨이는 스트리밍이 기본이라 stream:false 를 꼭 보낸다. 모델 목록이 예고 없이 바뀌므로
  * (2026-09-12 실측: gemma4-26b 가 사라졌다 돌아왔고 그 사이 gpt-oss 가 502) 없는 모델은
  * model_unavailable 로 남겨 운영 화면에 드러낸다 — 조용히 넘기면 심사가 통째로 멈춘 줄 모른다.
  */
-export const REVIEW_GATEWAY_TIMEOUT_MS = 45_000;
+export const REVIEW_GATEWAY_TIMEOUT_MS = 60_000;
 /**
  * 받을 답의 상한.
  *
