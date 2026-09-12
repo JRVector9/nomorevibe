@@ -13,10 +13,14 @@ import { REVIEW_SYSTEM_PROMPT, type AgentReviewResult, type ReviewFailure, type 
  */
 export const REVIEW_GATEWAY_TIMEOUT_MS = 45_000;
 /**
- * 받을 답의 상한. 실측(2026-09-12)에서 판단 한 건이 70~82 토큰이었다 — 1,500 은 붐비는 서버에
- * 자리를 크게 잡아 둘 뿐이고, 길게 쓰기 시작한 답을 끊어 주지도 못했다.
+ * 받을 답의 상한.
+ *
+ * 판단 한 건은 70~82 토큰이지만(2026-09-12 실측) 가끔 길게 쓰는 모델이 있다. 400 으로 조였더니
+ * gemma4-26b 가 20분에 5건 잘렸고, 잘린 답은 판단으로 받지 않으므로 그대로 실패가 된다.
+ * 넉넉히 둔다 — 길이로 조이는 것은 붐비는 서버에 도움이 되지 않았다(같은 요청이 4.7초에서
+ * 29초까지 흔들렸고 상한과는 무관했다).
  */
-const MAX_OUTPUT_TOKENS = 400;
+const MAX_OUTPUT_TOKENS = 3_000;
 const BASE_URL = process.env.ABCLLM_BASE_URL?.trim() || "https://abcllm-api.brut.bot";
 const MAX_BODY_BYTES = 128 * 1024;
 
