@@ -226,7 +226,7 @@ const defaultAgentEvidence = {
  * 실측(2026-09-11, 사람이 결정한 50건): opus 단독 86% 일치·실패 0·최대 13.5초. 1차(sonnet v2)와
  * 결론이 같은 41건 중 40건이 사람과 일치했고, 둘 다 확신 ≥0.85 인 14건은 모두 일치했다.
  */
-const defaultSecondReview = { enabled: true, model: "opus", sampleRate: 0.05, agreeAt: 0.85 };
+const defaultSecondReview = { enabled: true, provider: "claude-cli" as const, model: "opus", sampleRate: 0.05, agreeAt: 0.85 };
 
 export const crawlSettingsSchema = z.object({
   /** 수집 자체를 멈추는 스위치. 무언가 잘못 돌 때 배포 없이 끊을 수 있어야 한다 */
@@ -244,13 +244,25 @@ export const crawlSettingsSchema = z.object({
   }).default(defaultAgentEvidence),
   secondReview: z.object({
     enabled: z.boolean(),
+    /**
+     * 누가 모델을 돌리나 — claude-cli(로컬 CLI, 사용 한도가 있다) 또는 abcllm(사내 게이트웨이, 한도가 없다).
+     * 게이트웨이는 모델 목록이 예고 없이 바뀌므로 배포 없이 갈아 끼울 수 있어야 한다.
+     */
+    provider: z.enum(["claude-cli", "abcllm"]).default("claude-cli"),
     /** 1차(CRAWL_REVIEW_MODEL)와 다른 모델이어야 같은 실수를 되풀이하지 않는다 */
-    model: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:/-]{0,159}$/),
+    model: z.string().trim().min(1).max(160)
+      // 게이트웨이 이름은 "[MLX] gpt-oss-120b" 처럼 대괄호·공백이 들어간다. 제어 문자와
+      // 셸·따옴표 문자는 막는다 — 지금은 JSON 본문으로만 나가지만, 이름은 좁게 받는 편이 낫다
+      .regex(/^[^\p{Cc}"'`\\;$]+$/u),
     /** 규칙만 통과한 공개분 중 무작위로 다시 볼 비율 — 자동 공개의 실제 정확도를 잰다 */
     sampleRate: z.number().min(0).max(0.5),
     /** 두 판단이 같고 둘 다 이 확신 이상이면 일치로 본다 */
     agreeAt: z.number().min(0.5).max(1),
-  }).default(defaultSecondReview),
+  })
+    // CLI 쪽 이름은 명령 인자로 나가므로 예전 규칙 그대로 좁게 받는다
+    .refine((value) => value.provider !== "claude-cli" || /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,159}$/.test(value.model),
+      { path: ["model"], message: "claude-cli 모델 이름은 영숫자와 . _ : / - 만 쓸 수 있다" })
+    .default(defaultSecondReview),
   news: z.object({
     /** 끄면 새 글이 승인 대기로 들어간다 */
     autoApprove: z.boolean(),

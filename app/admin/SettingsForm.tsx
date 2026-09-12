@@ -241,9 +241,17 @@ export function SettingsForm({ settings }: { settings: CrawlSettings }) {
       >
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
           <div>
+            <label className={label} htmlFor="secondReviewProvider">부르는 곳</label>
+            <select id="secondReviewProvider" name="secondReviewProvider" defaultValue={settings.secondReview.provider} className={`${field} mt-1.5`}>
+              <option value="claude-cli">Claude CLI (사용 한도 있음)</option>
+              <option value="abcllm">사내 게이트웨이 abcllm (한도 없음)</option>
+            </select>
+            <p className={hint}>게이트웨이는 모델 목록이 바뀝니다 — 없는 모델을 적으면 2차가 통째로 멈춥니다</p>
+          </div>
+          <div>
             <label className={label} htmlFor="secondReviewModel">모델</label>
             <input id="secondReviewModel" name="secondReviewModel" defaultValue={settings.secondReview.model} className={`${field} mt-1.5 font-mono`} />
-            <p className={hint}>1차와 다른 모델이어야 같은 실수를 되풀이하지 않습니다</p>
+            <p className={hint}>1차와 다른 모델이어야 같은 실수를 되풀이하지 않습니다. 게이트웨이 예: [MLX] gemma4-26b</p>
           </div>
           <div>
             <label className={label} htmlFor="secondReviewSamplePercent">공개분 표본 (%)</label>

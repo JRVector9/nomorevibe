@@ -11,6 +11,7 @@ import { pgTable, serial, integer, varchar, text, timestamp, doublePrecision, in
  */
 export type SecondReviewTrigger = "ai_decided" | "risk" | "sample";
 export type SecondReviewStatus = "pending" | "agreed" | "needs_human" | "failed" | "resolved";
+export type SecondReviewProvider = "claude-cli" | "abcllm";
 
 export const secondReviews = pgTable("second_reviews", {
   id: serial("id").primaryKey(),
@@ -26,6 +27,8 @@ export const secondReviews = pgTable("second_reviews", {
   firstConfidence: doublePrecision("first_confidence"),
   /** 이 입력으로 본 것 — 입력이 바뀌면 다시 본다 */
   inputHash: varchar("input_hash", { length: 64 }).notNull(),
+  /** 누가 모델을 돌렸나 — claude-cli(로컬 CLI) 또는 abcllm(사내 게이트웨이) */
+  provider: varchar("provider", { length: 20 }).$type<SecondReviewProvider>(),
   model: varchar("model", { length: 160 }),
   secondDecision: varchar("second_decision", { length: 20 }),
   secondConfidence: doublePrecision("second_confidence"),
@@ -38,7 +41,13 @@ export const secondReviews = pgTable("second_reviews", {
   reviewedAt: timestamp("reviewed_at"),
   resolvedAt: timestamp("resolved_at"),
 }, (table) => [
-  uniqueIndex("second_reviews_candidate_input_idx").on(table.candidateId, table.inputHash),
+  /**
+   * 한 후보·한 입력에 모델마다 한 행.
+   *
+   * 모델을 여럿 세울 수 있어야 표가 쌓인다. model 은 올릴 때(enqueue) 설정값으로 채운다 —
+   * 비워 두면 Postgres 가 NULL 을 서로 다른 값으로 보아 같은 후보가 매 틱 다시 올라온다.
+   */
+  uniqueIndex("second_reviews_candidate_input_model_idx").on(table.candidateId, table.inputHash, table.model),
   index("second_reviews_status_idx").on(table.status, table.createdAt.desc()),
 ]);
 

@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { and, desc, eq, gte, inArray, isNotNull, isNull, lt, notInArray, or, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { crawlCandidates, crawlDocuments, crawlReviewAttempts, secondReviews, type SecondReviewStatus } from "@/lib/db/schema";
+import { crawlCandidates, crawlDocuments, crawlReviewAttempts, secondReviews, type SecondReviewProvider, type SecondReviewStatus } from "@/lib/db/schema";
 import { pageFactsFromDocument } from "./rules";
 import type { CrawlSettings } from "./settings-schema";
 
@@ -76,9 +76,14 @@ export async function enqueueSecondReviews(settings: CrawlSettings, now = new Da
       eq(crawlReviewAttempts.kind, "automatic"), eq(crawlReviewAttempts.state, "succeeded"), eq(crawlReviewAttempts.provider, "claude-cli"),
       sql`${crawlReviewAttempts.outcome}->>'confidence' is not null`))
     .orderBy(crawlReviewAttempts.candidateId, desc(crawlReviewAttempts.id)).limit(ENQUEUE_LIMIT * 4);
+  /**
+   * 누가 볼지를 올릴 때 적는다. 유일 색인이 (후보, 입력, 모델)이라 모델을 비워 두면 Postgres 가
+   * NULL 을 서로 다른 값으로 보아 같은 후보가 매 틱 다시 올라온다.
+   */
+  const voter = { provider: settings.secondReview.provider, model: settings.secondReview.model };
   const rows: (typeof secondReviews.$inferInsert)[] = decided.filter((row) => row.decision === "approve" || row.decision === "reject")
     .slice(0, ENQUEUE_LIMIT)
-    .map((row) => ({ candidateId: row.candidateId, repo: row.repo, trigger: "ai_decided" as const, firstDecision: row.decision,
+    .map((row) => ({ ...voter, candidateId: row.candidateId, repo: row.repo, trigger: "ai_decided" as const, firstDecision: row.decision,
       firstConfidence: row.confidence, inputHash: row.inputHash }));
 
   const published = await db.select({ id: crawlCandidates.id, repo: crawlCandidates.repo, slug: crawlCandidates.publishedSlug,
@@ -94,7 +99,7 @@ export async function enqueueSecondReviews(settings: CrawlSettings, now = new Da
       textSample: facts.textSample ?? null, readme: typeof meta.readmeSample === "string" ? meta.readmeSample : null });
     const sampled = inSample(row.repo, settings.secondReview.sampleRate);
     if (!signals.length && !sampled) continue;
-    rows.push({ candidateId: row.id, repo: row.repo, publishedSlug: row.slug, trigger: signals.length ? "risk" : "sample", signals,
+    rows.push({ ...voter, candidateId: row.id, repo: row.repo, publishedSlug: row.slug, trigger: signals.length ? "risk" : "sample", signals,
       firstDecision: "approve", firstConfidence: null, inputHash: publishedInputHash(row.slug!) });
     if (rows.length >= ENQUEUE_LIMIT * 2) break;
   }
@@ -145,13 +150,30 @@ export async function pendingSecondReviews(limit: number) {
 }
 
 export async function recordSecondReview(id: number, result:
-  | { ok: true; decision: string; confidence: number | null; reason: string; model: string; status: "agreed" | "needs_human" }
-  | { ok: false; error: string; model: string }, now = new Date()): Promise<void> {
+  | { ok: true; decision: string; confidence: number | null; reason: string; model: string; provider: SecondReviewProvider; status: "agreed" | "needs_human" }
+  | { ok: false; error: string; model: string; provider: SecondReviewProvider }, now = new Date()): Promise<void> {
   await db.update(secondReviews).set(result.ok
-    ? { status: result.status, model: result.model, secondDecision: result.decision, secondConfidence: result.confidence,
+    ? { status: result.status, model: result.model, provider: result.provider, secondDecision: result.decision, secondConfidence: result.confidence,
         secondReason: result.reason.slice(0, 2000), errorCode: null, reviewedAt: now }
-    : { status: "failed", model: result.model, errorCode: result.error.slice(0, 60), reviewedAt: now })
+    : { status: "failed", model: result.model, provider: result.provider, errorCode: result.error.slice(0, 60), reviewedAt: now })
     .where(eq(secondReviews.id, id));
+}
+
+export type SecondReviewFailure = { provider: string | null; model: string | null; errorCode: string; count: number };
+
+/**
+ * 최근 하루 동안 2차가 실패한 까닭 — 모델별로.
+ *
+ * 게이트웨이는 모델 목록이 바뀌면 404 를 낸다. 그때 화면이 "대기 N건"만 보여 주면 심사가 멈춘 것을
+ * 아무도 모른다. 실패를 숫자로 드러내 무엇을 갈아 끼워야 하는지 바로 보이게 한다.
+ */
+export async function recentSecondReviewFailures(now = new Date()): Promise<SecondReviewFailure[]> {
+  const rows = await db.select({ provider: secondReviews.provider, model: secondReviews.model, errorCode: secondReviews.errorCode,
+    count: sql<number>`count(*)::int` }).from(secondReviews)
+    .where(and(isNotNull(secondReviews.errorCode), gte(secondReviews.reviewedAt, new Date(now.getTime() - 24 * 3600_000))))
+    .groupBy(secondReviews.provider, secondReviews.model, secondReviews.errorCode)
+    .orderBy(desc(sql`count(*)`));
+  return rows.map((row) => ({ ...row, errorCode: row.errorCode ?? "unknown", count: Number(row.count) }));
 }
 
 /**
