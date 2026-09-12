@@ -5,6 +5,7 @@ import { crawlCandidates } from "@/lib/db/schema";
 import { getSettings } from "@/lib/crawl/settings";
 import { loadReviewInput } from "@/lib/crawl/agent-review-repository";
 import { reviewWithAgent, REVIEW_CLI_TIMEOUT_MS } from "@/lib/crawl/agent-review";
+import { reviewWithGateway, REVIEW_GATEWAY_TIMEOUT_MS } from "@/lib/crawl/agent-review-gateway";
 import { closeSettledSecondReviews, combineVerdicts, enqueueSecondReviews, pendingSecondReviews, recordSecondReview,
   retryFailedSecondReviews } from "@/lib/crawl/second-review";
 import { loadReviewDocument } from "./review-document";
@@ -28,7 +29,8 @@ export async function secondReviewCandidates(ctx: JobContext<null>): Promise<Job
   await retryFailedSecondReviews();
   const pending = await pendingSecondReviews(CONCURRENT);
   const remaining = () => 24_000 - (Date.now() - startedAt);
-  const model = settings.secondReview.model;
+  const { model, provider } = settings.secondReview;
+  const limit = provider === "abcllm" ? REVIEW_GATEWAY_TIMEOUT_MS : REVIEW_CLI_TIMEOUT_MS;
   let reviewed = 0, failed = 0;
 
   await Promise.all(pending.map(async (row) => {
@@ -37,22 +39,25 @@ export async function secondReviewCandidates(ctx: JobContext<null>): Promise<Job
     const document = candidate ? await loadReviewDocument(candidate.repo) : undefined;
     if (!candidate || !document) {
       failed += 1;
-      await recordSecondReview(row.id, { ok: false, error: "missing_source", model });
+      await recordSecondReview(row.id, { ok: false, error: "missing_source", model, provider });
       return;
     }
     const input = await loadReviewInput(candidate, document, settings);
-    const result = await reviewWithAgent(input, { model, timeoutMs: Math.max(1, Math.min(REVIEW_CLI_TIMEOUT_MS, remaining())) });
+    const timeoutMs = Math.max(1, Math.min(limit, remaining()));
+    const result = provider === "abcllm"
+      ? await reviewWithGateway(input, { model, timeoutMs })
+      : await reviewWithAgent(input, { model, timeoutMs });
     if (!result.ok) {
       failed += 1;
-      await recordSecondReview(row.id, { ok: false, error: result.error, model });
+      await recordSecondReview(row.id, { ok: false, error: result.error, model, provider });
       return;
     }
     reviewed += 1;
     const second = { decision: result.outcome.decision, confidence: result.outcome.confidence ?? null };
-    await recordSecondReview(row.id, { ok: true, ...second, reason: result.outcome.reason, model,
+    await recordSecondReview(row.id, { ok: true, ...second, reason: result.outcome.reason, model, provider,
       status: combineVerdicts({ decision: row.firstDecision, confidence: row.firstConfidence }, second, settings.secondReview.agreeAt, Boolean(row.publishedSlug)) });
   }));
 
-  ctx.log("crawl.second_reviewed", { enqueued, closed, reviewed, failed });
+  ctx.log("crawl.second_reviewed", { provider, model, enqueued, closed, reviewed, failed });
   return { done: pending.length === 0 };
 }

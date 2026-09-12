@@ -5,8 +5,8 @@ import { crawlCandidates, crawlDocuments, crawlFrontier, crawlReviewAttempts, cr
 import * as crawl from '@/lib/crawl/repository';
 import { getSettings, saveSettings } from '@/lib/crawl/settings';
 import { loadReviewInput } from '@/lib/crawl/agent-review-repository';
-import { closeSettledSecondReviews, enqueueSecondReviews, pendingSecondReviews, publishedInputHash, publishedSecondReviews, recordSecondReview,
-  resolveSecondReviews, retryFailedSecondReviews, secondReviewSummary, secondReviewsFor } from '@/lib/crawl/second-review';
+import { closeSettledSecondReviews, enqueueSecondReviews, pendingSecondReviews, publishedInputHash, publishedSecondReviews, recentSecondReviewFailures,
+  recordSecondReview, resolveSecondReviews, retryFailedSecondReviews, secondReviewSummary, secondReviewsFor } from '@/lib/crawl/second-review';
 import { ensureSchema } from './setup';
 
 beforeAll(() => ensureSchema());
@@ -109,7 +109,7 @@ it('일치·엇갈림·공개분을 따로 세고, 심사 화면이 후보 id �
   await enqueueSecondReviews(await getSettings());
 
   const byRepo = new Map((await pendingSecondReviews(10)).map((row) => [row.repo, row.id]));
-  const ok = (decision: string, status: 'agreed' | 'needs_human') => ({ ok: true as const, decision, confidence: 0.9, reason: '두 번째 판단', model: 'opus', status });
+  const ok = (decision: string, status: 'agreed' | 'needs_human') => ({ ok: true as const, decision, confidence: 0.9, reason: '두 번째 판단', model: 'opus', provider: 'claude-cli' as const, status });
   await recordSecondReview(byRepo.get('acme/agreed-reject')!, ok('reject', 'agreed'));
   await recordSecondReview(byRepo.get('acme/agreed-approve')!, ok('approve', 'agreed'));
   await recordSecondReview(byRepo.get('acme/split')!, ok('approve', 'needs_human'));
@@ -135,7 +135,7 @@ it('공개분을 2차도 제품이라 보면 끝난 기록으로 남고 닫는 �
   await published('acme/sentence', 'the quick way to plan all of your week with friends');
   await enqueueSecondReviews(await getSettings());
   const [pending] = await pendingSecondReviews(1);
-  await recordSecondReview(pending.id, { ok: true, decision: 'approve', confidence: 0.9, reason: '쓸 수 있는 앱', model: 'opus', status: 'agreed' });
+  await recordSecondReview(pending.id, { ok: true, decision: 'approve', confidence: 0.9, reason: '쓸 수 있는 앱', model: 'opus', provider: 'claude-cli', status: 'agreed' });
 
   expect(await closeSettledSecondReviews()).toBe(0);
   expect((await secondReviewSummary()).counts).toMatchObject({ published: 0, agreedApprove: 0 });
@@ -146,7 +146,7 @@ it('공개분은 사람이 내리거나 유지하기로 정할 때까지 남는�
   await published('acme/sentence', 'the quick way to plan all of your week with friends');
   await enqueueSecondReviews(await getSettings());
   const [pending] = await pendingSecondReviews(1);
-  await recordSecondReview(pending.id, { ok: true, decision: 'reject', confidence: 0.9, reason: '문장이 이름이 됐다', model: 'opus', status: 'needs_human' });
+  await recordSecondReview(pending.id, { ok: true, decision: 'reject', confidence: 0.9, reason: '문장이 이름이 됐다', model: 'opus', provider: 'claude-cli', status: 'needs_human' });
 
   const rows = await publishedSecondReviews();
   expect(rows.map((row) => [row.publishedSlug, row.secondReason])).toEqual([['sentence', '문장이 이름이 됐다']]);
@@ -164,7 +164,7 @@ it('실패한 호출은 기록만 남기고 판단을 지어내지 않는다', a
   await firstReview('acme/flaky', 'reject');
   await enqueueSecondReviews(await getSettings());
   const [pending] = await pendingSecondReviews(1);
-  await recordSecondReview(pending.id, { ok: false, error: 'rate_limited', model: 'opus' });
+  await recordSecondReview(pending.id, { ok: false, error: 'rate_limited', model: 'opus', provider: 'claude-cli' });
 
   const [row] = await db.select().from(secondReviews);
   expect(row).toMatchObject({ status: 'failed', errorCode: 'rate_limited', secondDecision: null });
@@ -179,8 +179,8 @@ it('실패한 것은 한 시간이 지나야 다시 대기로 돌린다', async 
   await enqueueSecondReviews(await getSettings());
   const byRepo = new Map((await pendingSecondReviews(10)).map((row) => [row.repo, row.id]));
   const now = new Date();
-  await recordSecondReview(byRepo.get('acme/old-fail')!, { ok: false, error: 'timeout', model: 'opus' }, new Date(now.getTime() - 2 * 3600_000));
-  await recordSecondReview(byRepo.get('acme/new-fail')!, { ok: false, error: 'timeout', model: 'opus' }, new Date(now.getTime() - 10 * 60_000));
+  await recordSecondReview(byRepo.get('acme/old-fail')!, { ok: false, error: 'timeout', model: 'opus', provider: 'claude-cli' }, new Date(now.getTime() - 2 * 3600_000));
+  await recordSecondReview(byRepo.get('acme/new-fail')!, { ok: false, error: 'timeout', model: 'opus', provider: 'claude-cli' }, new Date(now.getTime() - 10 * 60_000));
 
   // 2026-09-11 프로드: 이 쿼리가 Date 를 문자열로 넘겨 매 틱 실패했다
   await retryFailedSecondReviews(now);
@@ -213,7 +213,7 @@ it('같은 후보에 새 1차 판단이 오면 앞의 것을 닫는다 — 두 �
   await firstReview('acme/changing', 'reject', 0.9, 'first-input');
   await enqueueSecondReviews(await getSettings());
   const [first] = await pendingSecondReviews(1);
-  await recordSecondReview(first.id, { ok: true, decision: 'approve', confidence: 0.9, reason: '엇갈림', model: 'opus', status: 'needs_human' });
+  await recordSecondReview(first.id, { ok: true, decision: 'approve', confidence: 0.9, reason: '엇갈림', model: 'opus', provider: 'claude-cli', status: 'needs_human' });
 
   // 원본이 바뀌어 1차가 다시 봤다
   await firstReview('acme/changing', 'approve', 0.92, 'second-input');
@@ -225,4 +225,43 @@ it('같은 후보에 새 1차 판단이 오면 앞의 것을 닫는다 — 두 �
     ['second-input', 'pending', null],
   ]);
   expect((await secondReviewSummary()).counts).toMatchObject({ needsHuman: 0, pending: 1 });
+});
+
+it('누가 볼지를 올릴 때 적고, 같은 모델로는 다시 올리지 않는다', async () => {
+  await held('acme/voter');
+  await firstReview('acme/voter', 'reject');
+  await saveSettings({ secondReview: { enabled: true, provider: 'abcllm', model: '[MLX] gemma4-26b', sampleRate: 0, agreeAt: 0.85 } }, 'fixture');
+
+  expect(await enqueueSecondReviews(await getSettings())).toBe(1);
+  expect(await enqueueSecondReviews(await getSettings())).toBe(0);
+  expect(await pendingSecondReviews(10)).toMatchObject([{ provider: 'abcllm', model: '[MLX] gemma4-26b' }]);
+});
+
+it('모델을 바꾸면 같은 후보를 새 모델이 따로 본다 — 표가 쌓인다', async () => {
+  await held('acme/two-voters');
+  await firstReview('acme/two-voters', 'reject');
+  await saveSettings({ secondReview: { enabled: true, provider: 'abcllm', model: '[MLX] gemma4-26b', sampleRate: 0, agreeAt: 0.85 } }, 'fixture');
+  await enqueueSecondReviews(await getSettings());
+  await saveSettings({ secondReview: { enabled: true, provider: 'abcllm', model: '[MLX] gpt-oss-120b', sampleRate: 0, agreeAt: 0.85 } }, 'fixture');
+  await enqueueSecondReviews(await getSettings());
+
+  const rows = await db.select().from(secondReviews).where(eq(secondReviews.repo, 'acme/two-voters'));
+  expect(rows.map((row) => row.model).sort()).toEqual(['[MLX] gemma4-26b', '[MLX] gpt-oss-120b']);
+});
+
+it('실패는 모델·까닭별로 세어 운영 화면에 드러난다', async () => {
+  await held('acme/gone-a');
+  await held('acme/gone-b');
+  await firstReview('acme/gone-a', 'reject');
+  await firstReview('acme/gone-b', 'approve');
+  await saveSettings({ secondReview: { enabled: true, provider: 'abcllm', model: '[MLX] 사라진모델', sampleRate: 0, agreeAt: 0.85 } }, 'fixture');
+  await enqueueSecondReviews(await getSettings());
+  const ids = (await pendingSecondReviews(10)).map((row) => row.id);
+  for (const id of ids) await recordSecondReview(id, { ok: false, error: 'model_unavailable', model: '[MLX] 사라진모델', provider: 'abcllm' });
+
+  expect(await recentSecondReviewFailures()).toEqual([
+    { provider: 'abcllm', model: '[MLX] 사라진모델', errorCode: 'model_unavailable', count: 2 },
+  ]);
+  // 하루가 지난 실패는 지금 문제가 아니다
+  expect(await recentSecondReviewFailures(new Date(Date.now() + 25 * 3600_000))).toEqual([]);
 });

@@ -67,6 +67,7 @@ export async function saveCrawlSettings(_prev: SaveState, form: FormData): Promi
     },
     secondReview: {
       enabled: form.get("secondReviewEnabled") === "on",
+      provider: String(form.get("secondReviewProvider") ?? "claude-cli"),
       model: String(form.get("secondReviewModel") ?? "").trim(),
       sampleRate: num(form.get("secondReviewSamplePercent")) / 100,
       agreeAt: num(form.get("secondReviewAgreeAt")),

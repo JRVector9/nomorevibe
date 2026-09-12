@@ -23,7 +23,7 @@ import { manualCandidates } from "@/lib/operations/categories";
 import { redact } from "@/lib/observability/logger";
 import { listAdminReviewEntries, reviewQueueAiDecisions } from "@/lib/crawl/admin-review";
 import { QueuePreview } from "./QueuePreview";
-import { secondReviewSummary } from "@/lib/crawl/second-review";
+import { recentSecondReviewFailures, secondReviewSummary } from "@/lib/crawl/second-review";
 import { translationProgress } from "@/lib/crawl/translations";
 import { TranslationProgress } from "./TranslationProgress";
 
@@ -106,9 +106,10 @@ export default async function StatusPage() {
     getEvidenceStatusSummary(new Date()),
   ]);
   const [down, topClicked, ops, manual] = await Promise.all([downProducts(), topClickedSince(30), operationsData(), manualCandidates()]);
-  const [flow, oldestWait, stalled, queue, decisions, seconds, translation] = await Promise.all([pipelineFlow(), oldestReviewWaitDays(), stalledReviewCount(),
+  const [flow, oldestWait, stalled, queue, decisions, seconds, translation, secondFailures] = await Promise.all([pipelineFlow(), oldestReviewWaitDays(), stalledReviewCount(),
     // 운영센터 가운데 표 — 한 화면에 들어오는 만큼만. 처리는 심사 큐에서 한다
-    listAdminReviewEntries(settings, { state: "needs_review", limit: 14 }), reviewQueueAiDecisions(), secondReviewSummary(), translationProgress()]);
+    listAdminReviewEntries(settings, { state: "needs_review", limit: 14 }), reviewQueueAiDecisions(), secondReviewSummary(), translationProgress(),
+    recentSecondReviewFailures()]);
 
   const states = new Map(jobStates.map((job) => [job.name, job]));
   const rejectedTotal = rejections.reduce((sum, r) => sum + r.count, 0);
@@ -155,6 +156,24 @@ export default async function StatusPage() {
       key: "second", tone: "hold", count: secondOpen, title: "2차 심사 확인",
       detail: <>1차와 일치 {seconds.counts.agreedReject + seconds.counts.agreedApprove}건은 한 번에 확정 · 엇갈림 {seconds.counts.needsHuman}건 · 공개분 {seconds.counts.published}건은 사람이 봅니다.</>,
       action: { label: "2차 심사", href: seconds.counts.needsHuman ? "/admin/review?second=needs_human" : "/admin/review?second=agreed_reject" },
+    });
+  }
+  /**
+   * 2차가 실패하고 있으면 대기 수만 보여 줘선 안 된다.
+   *
+   * 게이트웨이는 모델 목록이 예고 없이 바뀌어, 없는 모델을 적어 두면 매 틱 404 로 끝난다 —
+   * 화면에는 "대기 N건"만 늘어나 멈춘 줄 모른다. 어느 모델이 무슨 까닭으로 실패했는지 적는다.
+   */
+  if (secondFailures.length > 0) {
+    const total = secondFailures.reduce((sum, row) => sum + row.count, 0);
+    const gone = secondFailures.some((row) => row.errorCode === "model_unavailable" || row.errorCode === "not_configured");
+    actions.push({
+      key: "second-failed", tone: gone ? "critical" : "hold", count: total, title: "2차 심사가 실패하고 있습니다",
+      detail: <>
+        최근 24시간 · {secondFailures.slice(0, 3).map((row) => `${row.model ?? "모델 미상"} ${row.errorCode} ${row.count}건`).join(" · ")}
+        {gone && <> — 설정한 모델을 게이트웨이가 더 이상 갖고 있지 않습니다.</>}
+      </>,
+      action: { label: "2차 심사 설정", href: "/admin#second-review" },
     });
   }
   if (ops.held > 0) {
