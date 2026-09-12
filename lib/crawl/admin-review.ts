@@ -323,7 +323,9 @@ export type AdminReviewEntry = {
   verdict: AdminReviewVerdict | null;
   /** 2차 심사의 표 — 모델마다 하나. 1차와 나란히 본다 */
   seconds: { decision: string | null; confidence: number | null; reason: string | null; reasonKo: string | null; model: string | null;
-    provider: string | null; status: string; trigger: string; errorCode: string | null }[];
+    provider: string | null; status: string; trigger: string; errorCode: string | null;
+    /** 1차와 같은 모델이라 셈에서 뺀 표 */
+    echo: boolean }[];
 };
 
 /**
@@ -405,7 +407,8 @@ export async function listAdminReviewEntries(settings: CrawlSettings, options: {
       latest: summarizeAttempt(last), review: summarizeAttempt(review),
       seconds: seconds.filter(item => item.candidateId === candidate.id).map(row => ({ decision: row.secondDecision,
         confidence: row.secondConfidence, reason: row.secondReason, reasonKo: null, model: row.model, provider: row.provider,
-        status: row.status, trigger: row.trigger, errorCode: row.errorCode })),
+        status: row.status, trigger: row.trigger, errorCode: row.errorCode,
+        echo: Boolean(row.firstModel && row.model && row.firstModel === row.model) })),
       verdict: recomputed ? {
         trace: recomputed.trace, signals: recomputed.signals, cause: recomputed.cause ?? null,
         state: recomputed.state, reason: recomputed.reason,

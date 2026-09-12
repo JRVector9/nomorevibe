@@ -26,6 +26,8 @@ export const secondReviews = pgTable("second_reviews", {
   /** 1차 판단: AI 1차의 결론, 규칙만 통과한 공개분은 approve */
   firstDecision: varchar("first_decision", { length: 20 }).notNull(),
   firstConfidence: doublePrecision("first_confidence"),
+  /** 1차를 본 모델 — 2차에 같은 모델이 서면 그 표는 메아리라 셈에서 뺀다 */
+  firstModel: varchar("first_model", { length: 160 }),
   /** 이 입력으로 본 것 — 입력이 바뀌면 다시 본다 */
   inputHash: varchar("input_hash", { length: 64 }).notNull(),
   /** 누가 모델을 돌렸나 — claude-cli(로컬 CLI) 또는 abcllm(사내 게이트웨이) */

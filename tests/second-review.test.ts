@@ -123,3 +123,28 @@ describe("combineVotes — 표 여럿을 합친다", () => {
     expect(combineVotes(first, [], published)).toMatchObject({ status: "needs_human" });
   });
 });
+
+describe("1차와 같은 모델의 표", () => {
+  const first = { decision: "reject", confidence: 0.9 };
+  const gateway = (decision: string, model: string) => ({ decision, confidence: 0.9, provider: "abcllm" as const, model });
+
+  it("같은 모델이 되풀이한 답은 셈에 넣지 않는다 — 검증이 아니라 메아리다", () => {
+    const options = { agreeAt: 0.85, published: false, pending: 0, firstModel: "[MLX] gemma4-26b" };
+    // 1차와 같은 모델 하나뿐이면 표가 하나도 안 남는다
+    expect(combineVotes(first, [gateway("reject", "[MLX] gemma4-26b")], options)).toMatchObject({ status: "needs_human", votes: 1 });
+    // 다른 모델이 더해져야 둘이 된다
+    expect(combineVotes(first, [gateway("reject", "[MLX] gemma4-26b"), gateway("reject", "[MLX] gemma4-31b")], options))
+      .toMatchObject({ status: "agreed", votes: 2 });
+  });
+
+  it("1차 모델을 모르면 예전처럼 전부 센다", () => {
+    const options = { agreeAt: 0.85, published: false, pending: 0 };
+    expect(combineVotes(first, [gateway("reject", "[MLX] gemma4-26b")], options)).toMatchObject({ status: "agreed", votes: 2 });
+  });
+
+  it("행 상태도 같은 규칙을 따른다", () => {
+    const echo = { decision: "reject", confidence: 0.9, provider: "abcllm" as const, model: "sonnet" };
+    expect(combineVerdicts({ decision: "reject", confidence: 0.9, model: "sonnet" }, echo, 0.85, false)).toBe("needs_human");
+    expect(combineVerdicts({ decision: "reject", confidence: 0.9, model: "opus" }, echo, 0.85, false)).toBe("agreed");
+  });
+});

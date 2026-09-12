@@ -481,3 +481,24 @@ it('1차가 다시 보면 그 판단으로만 올린다 — 지나간 입력으�
   const rows = await db.select().from(secondReviews).where(eq(secondReviews.repo, 'acme/rewound'));
   expect(rows.map((row) => row.inputHash)).toEqual(['b'.repeat(64)]);
 });
+
+it('1차를 본 모델을 적어 두고, 2차에 같은 모델이 서면 그 표는 셈에서 뺀다', async () => {
+  await saveSettings({ secondReview: { enabled: true, sampleRate: 0, agreeAt: 0.85,
+    voters: [{ provider: 'abcllm', model: 'sonnet' }, { provider: 'abcllm', model: '[MLX] gemma4-31b' }] } }, 'fixture');
+  const candidate = await held('acme/echo');
+  // firstReview 헬퍼는 1차를 sonnet 으로 적는다 — 2차 첫 표와 같은 모델이다
+  await firstReview('acme/echo', 'reject');
+  await enqueueSecondReviews(await getSettings());
+
+  const rows = await pendingSecondReviews(10);
+  expect(rows.every((row) => row.firstModel === 'sonnet')).toBe(true);
+
+  for (const row of rows) {
+    await recordSecondReview(row.id, { ok: true, decision: 'reject', confidence: 0.9, reason: '문서 사이트',
+      model: row.model!, provider: 'abcllm', status: 'needs_human' });
+  }
+  // 1차(sonnet) + 메아리(sonnet) + 다른 모델 하나 → 셈에 드는 표는 둘이다
+  const { ids } = await secondReviewSummary(0.85);
+  expect(ids.agreed_reject).toEqual([candidate.id]);
+  expect(ids.unanimous_reject).toEqual([]);
+});

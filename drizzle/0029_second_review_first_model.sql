@@ -1,0 +1,1 @@
+ALTER TABLE "second_reviews" ADD COLUMN "first_model" varchar(160);
