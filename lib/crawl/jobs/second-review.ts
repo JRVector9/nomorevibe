@@ -70,9 +70,10 @@ export async function secondReviewCandidates(ctx: JobContext<null>): Promise<Job
         continue;
       }
       reviewed += 1;
-      const second = { decision: result.outcome.decision, confidence: result.outcome.confidence ?? null, provider };
-      await recordSecondReview(row.id, { ok: true, ...second, reason: result.outcome.reason, model,
-        status: combineVerdicts({ decision: row.firstDecision, confidence: row.firstConfidence }, second, settings.secondReview.agreeAt, Boolean(row.publishedSlug)) });
+      const second = { decision: result.outcome.decision, confidence: result.outcome.confidence ?? null, provider, model };
+      await recordSecondReview(row.id, { ok: true, ...second, reason: result.outcome.reason,
+        status: combineVerdicts({ decision: row.firstDecision, confidence: row.firstConfidence, model: row.firstModel },
+          second, settings.secondReview.agreeAt, Boolean(row.publishedSlug)) });
     }
   }));
 

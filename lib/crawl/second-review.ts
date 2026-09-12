@@ -44,15 +44,20 @@ type Verdict = { decision: string; confidence: number | null };
  * 대기 후보: 결론이 같고 둘 다 확신이 기준 이상이면 일치 — 사람은 한 번에 확정만 한다. 아니면 사람에게.
  * 공개된 제품: 2차도 제품이라 하면 일치(그대로 둔다), 아니라거나 모르겠다면 사람에게 — 자동으로 내리지 않는다.
  */
-/** 표 하나를 1차와 견준 결과 — 행에 남는 상태다. 후보 전체의 결론은 combineVotes 가 낸다 */
-export function combineVerdicts(first: Verdict, second: Vote, agreeAt: number, published: boolean): Exclude<SecondReviewStatus, "pending" | "failed" | "resolved"> {
-  if (published) return second.decision === "approve" ? "agreed" : "needs_human";
-  const agreed = first.decision === second.decision && first.decision !== "needs_review" && counts(second, agreeAt)
+/**
+ * 표 하나를 1차와 견준 결과 — 행에 남는 상태다. 후보 전체의 결론은 combineVotes 가 낸다.
+ * 1차와 같은 모델이면 같은 답을 되풀이한 것이라 "일치"로 적지 않는다.
+ */
+export function combineVerdicts(first: Verdict & { model?: string | null }, second: Vote, agreeAt: number, published: boolean):
+  Exclude<SecondReviewStatus, "pending" | "failed" | "resolved"> {
+  const echo = Boolean(first.model && second.model && first.model === second.model);
+  if (published) return !echo && second.decision === "approve" ? "agreed" : "needs_human";
+  const agreed = !echo && first.decision === second.decision && first.decision !== "needs_review" && counts(second, agreeAt)
     && (first.confidence ?? 0) >= agreeAt;
   return agreed ? "agreed" : "needs_human";
 }
 
-export type Vote = Verdict & { provider: SecondReviewProvider | null };
+export type Vote = Verdict & { provider: SecondReviewProvider | null; model?: string | null };
 
 /**
  * 표 하나가 셈에 드는가.
@@ -84,7 +89,22 @@ export type CandidateVerdict = {
  *
  * 공개된 제품: 2차가 하나라도 제품이 아니라고 하면 사람에게. 자동으로 내리지 않는다.
  */
-export function combineVotes(first: Verdict, second: Vote[], options: { agreeAt: number; published: boolean; pending: number }): CandidateVerdict {
+export function combineVotes(first: Verdict, second: Vote[], options: {
+  agreeAt: number; published: boolean; pending: number;
+  /** 1차를 본 모델. 2차에 같은 모델이 서면 그 표는 같은 답을 되풀이할 뿐이라 셈에서 뺀다 */
+  firstModel?: string | null;
+}): CandidateVerdict {
+  /*
+   * 1차와 같은 모델의 표는 검증이 아니라 메아리다.
+   *
+   * 온도 0으로 같은 글·같은 입력을 보내므로 같은 답이 돌아온다. 그것을 표로 세면 "둘이 일치"가
+   * 되어 한 번에 확정하는 묶음에 올라가는데, 실제로는 1차 판단을 그대로 승인하는 것이다.
+   * 사람이 판정한 80건에서 모델 하나의 정확도는 87%, 성향이 다른 둘이 일치한 것은 98%였다.
+   * 기록으로는 남기고 셈에서만 뺀다 — 화면에는 그 모델이 무엇이라 했는지 그대로 보인다.
+   */
+  const votes = options.firstModel
+    ? second.filter((vote) => !vote.model || vote.model !== options.firstModel)
+    : second;
   /*
    * 표가 다 모이기 전에는 칩에 올리지 않는다.
    *
@@ -95,12 +115,12 @@ export function combineVotes(first: Verdict, second: Vote[], options: { agreeAt:
   if (options.pending > 0) return { status: "pending", decision: null, votes: 0 };
   if (options.published) {
     // 제품이 아니라는 표든 모르겠다는 표든 사람이 본다 — 자동으로 내리지 않지만 넘기지도 않는다
-    if (!second.length || second.some((vote) => vote.decision !== "approve")) {
-      return { status: "needs_human", decision: second.length ? "reject" : null, votes: second.length };
+    if (!votes.length || votes.some((vote) => vote.decision !== "approve")) {
+      return { status: "needs_human", decision: votes.length ? "reject" : null, votes: votes.length };
     }
-    return { status: "agreed", decision: "approve", votes: second.length };
+    return { status: "agreed", decision: "approve", votes: votes.length };
   }
-  const all = [...(counts(first, options.agreeAt) ? [first.decision] : []), ...second.filter((vote) => counts(vote, options.agreeAt)).map((vote) => vote.decision)];
+  const all = [...(counts(first, options.agreeAt) ? [first.decision] : []), ...votes.filter((vote) => counts(vote, options.agreeAt)).map((vote) => vote.decision)];
   const decision = all[0] === "approve" || all[0] === "reject" ? all[0] : null;
   if (new Set(all).size > 1) return { status: "needs_human", decision: null, votes: all.length };
   if (all.length >= 2) return { status: "agreed", decision, votes: all.length };
@@ -138,6 +158,7 @@ export async function enqueueSecondReviews(settings: CrawlSettings, now = new Da
    */
   const latest = db.selectDistinctOn([crawlReviewAttempts.candidateId], {
     candidateId: crawlReviewAttempts.candidateId, repo: crawlCandidates.repo, inputHash: crawlReviewAttempts.inputHash,
+    firstModel: crawlReviewAttempts.model,
     decision: sql<string>`${crawlReviewAttempts.outcome}->>'decision'`.as("decision"),
     confidence: sql<number | null>`(${crawlReviewAttempts.outcome}->>'confidence')::float`.as("confidence"),
   }).from(crawlReviewAttempts).innerJoin(crawlCandidates, eq(crawlCandidates.id, crawlReviewAttempts.candidateId))
@@ -173,7 +194,7 @@ export async function enqueueSecondReviews(settings: CrawlSettings, now = new Da
     .slice(0, ENQUEUE_LIMIT)
     .flatMap((row) => voters.map((voter) => ({ ...voter, candidateId: row.candidateId, repo: row.repo,
       trigger: (row.decision === "needs_review" ? "ai_held" : "ai_decided") as SecondReviewTrigger,
-      firstDecision: row.decision, firstConfidence: row.confidence, inputHash: row.inputHash })));
+      firstDecision: row.decision, firstConfidence: row.confidence, firstModel: row.firstModel, inputHash: row.inputHash })));
 
   const published = await db.select({ id: crawlCandidates.id, repo: crawlCandidates.repo, slug: crawlCandidates.publishedSlug,
     productUrl: crawlCandidates.productUrl, pageMeta: crawlDocuments.pageMeta, pageStatus: crawlDocuments.pageStatus, documentUrl: crawlDocuments.productUrl })
@@ -312,8 +333,9 @@ export type SecondChipKey = "unanimous_reject" | "unanimous_approve" | "agreed_r
  */
 export async function secondReviewSummary(agreeAt: number): Promise<{ counts: SecondReviewCounts; ids: Record<SecondChipKey, number[]> }> {
   const rows = await db.select({ candidateId: secondReviews.candidateId, status: secondReviews.status, decision: secondReviews.secondDecision,
-    confidence: secondReviews.secondConfidence, provider: secondReviews.provider, published: secondReviews.publishedSlug,
-    firstDecision: secondReviews.firstDecision, firstConfidence: secondReviews.firstConfidence }).from(secondReviews)
+    confidence: secondReviews.secondConfidence, provider: secondReviews.provider, model: secondReviews.model,
+    published: secondReviews.publishedSlug, firstDecision: secondReviews.firstDecision,
+    firstConfidence: secondReviews.firstConfidence, firstModel: secondReviews.firstModel }).from(secondReviews)
     // 실패한 표도 읽는다 — 한 시간 뒤 다시 보므로 아직 끝나지 않은 표이고, 모두 실패한 후보가
     // 집계에서 통째로 사라지면 멈춘 줄 모른다
     .where(inArray(secondReviews.status, ["pending", "agreed", "needs_human", "failed"]));
@@ -327,8 +349,9 @@ export async function secondReviewSummary(agreeAt: number): Promise<{ counts: Se
     const first = { decision: group[0].firstDecision, confidence: group[0].firstConfidence };
     const outstanding = group.filter((row) => row.status === "pending" || row.status === "failed").length;
     const votes = group.filter((row) => row.status === "agreed" || row.status === "needs_human")
-      .map((row) => ({ decision: row.decision ?? "", confidence: row.confidence, provider: row.provider }));
-    const verdict = combineVotes(first, votes, { agreeAt, published: Boolean(group[0].published), pending: outstanding });
+      .map((row) => ({ decision: row.decision ?? "", confidence: row.confidence, provider: row.provider, model: row.model }));
+    const verdict = combineVotes(first, votes, { agreeAt, published: Boolean(group[0].published),
+      pending: outstanding, firstModel: group[0].firstModel });
     if (verdict.status === "pending") { pending += 1; continue; }
     if (group[0].published) { if (verdict.status === "needs_human") published += 1; continue; }
     if (verdict.status === "needs_human" || !verdict.decision) { ids.needs_human.push(candidateId); continue; }

@@ -96,7 +96,9 @@ export function ReviewDetail({ entry, reasons }: { entry: AdminReviewEntry; reas
               : vote.decision === 'approve' ? '승인' : vote.decision === 'reject' ? '거부' : vote.decision === 'needs_review' ? '보류' : vote.status}</b>
           {vote.model ? <span className="ml-1.5 font-mono text-fg-3">{vote.model}</span> : null}
           {typeof vote.confidence === 'number' ? <span className="ml-1.5 font-mono text-fg-3">확신 {vote.confidence.toFixed(2)}</span> : null}
-          <span className="ml-1.5 font-semibold">{vote.status === 'agreed' ? '· 1차와 일치' : vote.status === 'needs_human' ? '· 사람 확인' : ''}</span>
+          <span className="ml-1.5 font-semibold">{
+            vote.echo ? '· 1차와 같은 모델 — 셈에서 뺌'
+              : vote.status === 'agreed' ? '· 1차와 일치' : vote.status === 'needs_human' ? '· 사람 확인' : ''}</span>
           {vote.reason ? <span className="mt-1 block"><ReasonText text={vote.reason} korean={vote.reasonKo} limit={400} /></span> : null}
         </p>
       ))}
