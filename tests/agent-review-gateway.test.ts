@@ -50,8 +50,8 @@ it("CLI 와 같은 정책 글로 묻고, 증거는 신뢰할 수 없는 것으�
   // 증거 안의 꺾쇠가 구분자를 끝내지 못한다
   expect(body.messages[1].content).not.toContain("<script>");
   expect(body.response_format.json_schema.schema.required).toContain("confidence");
-  // 판단 한 건은 100 토큰이 안 된다 — 붐비는 서버에 자리를 크게 잡아 둘 이유가 없다
-  expect(body.max_tokens).toBe(400);
+  // 가끔 길게 쓰는 모델이 있다 — 잘린 답은 판단으로 받지 않으므로 상한을 넉넉히 둔다
+  expect(body.max_tokens).toBe(3_000);
 });
 
 it("모델이 사라졌는지, 막혔는지, 잠깐 죽었는지를 갈라 적는다", async () => {
