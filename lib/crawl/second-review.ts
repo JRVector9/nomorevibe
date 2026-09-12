@@ -127,22 +127,31 @@ const PUBLISHED_LIMIT = 25;
  * 같은 후보에 새 1차 판단이 오면 앞의 것은 superseded 로 닫는다 — 한 후보가 두 칩에 겹쳐 세어지지 않게.
  */
 export async function enqueueSecondReviews(settings: CrawlSettings, now = new Date()): Promise<number> {
+  const held = settings.secondReview.includeAiHeld;
   const decided = await db.selectDistinctOn([crawlReviewAttempts.candidateId], {
     candidateId: crawlReviewAttempts.candidateId, repo: crawlCandidates.repo, inputHash: crawlReviewAttempts.inputHash,
     decision: sql<string>`${crawlReviewAttempts.outcome}->>'decision'`, confidence: sql<number | null>`(${crawlReviewAttempts.outcome}->>'confidence')::float`,
   }).from(crawlReviewAttempts).innerJoin(crawlCandidates, eq(crawlCandidates.id, crawlReviewAttempts.candidateId))
     .where(and(eq(crawlCandidates.state, "needs_review"), eq(crawlCandidates.decidedBy, "auto"),
       eq(crawlReviewAttempts.kind, "automatic"), eq(crawlReviewAttempts.state, "succeeded"), eq(crawlReviewAttempts.provider, "claude-cli"),
-      sql`${crawlReviewAttempts.outcome}->>'confidence' is not null`))
+      // 가른 판단은 확신을 낸 것만 — 1차가 보류한 것은 애초에 확신을 재지 않는다
+      or(sql`${crawlReviewAttempts.outcome}->>'confidence' is not null`,
+        held ? sql`${crawlReviewAttempts.outcome}->>'decision' = 'needs_review'` : undefined)!))
     .orderBy(crawlReviewAttempts.candidateId, desc(crawlReviewAttempts.id)).limit(ENQUEUE_LIMIT * 4);
   /**
    * 세워 둔 모델마다 한 행. 누가 볼지를 올릴 때 적는다 — 유일 색인이 (후보, 입력, 모델)이라
    * 모델을 비워 두면 Postgres 가 NULL 을 서로 다른 값으로 보아 같은 후보가 매 틱 다시 올라온다.
    */
   const voters = settings.secondReview.voters;
-  const rows: (typeof secondReviews.$inferInsert)[] = decided.filter((row) => row.decision === "approve" || row.decision === "reject")
+  /**
+   * 한 후보가 모델 수만큼 행을 쓰므로, 후보 수로 상한을 잡는다 — 행 수로 자르면 모델을 셋
+   * 세웠을 때 한 후보의 표가 반만 올라가 영영 짝이 맞지 않는다.
+   */
+  const rows: (typeof secondReviews.$inferInsert)[] = decided
+    .filter((row) => row.decision === "approve" || row.decision === "reject" || (held && row.decision === "needs_review"))
     .slice(0, ENQUEUE_LIMIT)
-    .flatMap((row) => voters.map((voter) => ({ ...voter, candidateId: row.candidateId, repo: row.repo, trigger: "ai_decided" as const,
+    .flatMap((row) => voters.map((voter) => ({ ...voter, candidateId: row.candidateId, repo: row.repo,
+      trigger: (row.decision === "needs_review" ? "ai_held" : "ai_decided") as SecondReviewTrigger,
       firstDecision: row.decision, firstConfidence: row.confidence, inputHash: row.inputHash })));
 
   const published = await db.select({ id: crawlCandidates.id, repo: crawlCandidates.repo, slug: crawlCandidates.publishedSlug,
@@ -169,7 +178,7 @@ export async function enqueueSecondReviews(settings: CrawlSettings, now = new Da
   if (!rows.length) return 0;
   const inserted = await db.insert(secondReviews).values(rows).onConflictDoNothing()
     .returning({ id: secondReviews.id, candidateId: secondReviews.candidateId, trigger: secondReviews.trigger, inputHash: secondReviews.inputHash });
-  const renewed = inserted.filter((row) => row.trigger === "ai_decided");
+  const renewed = inserted.filter((row) => row.trigger === "ai_decided" || row.trigger === "ai_held");
   if (renewed.length) {
     /**
      * 앞선 것을 닫는 기준은 "입력이 바뀌었다"이지 "새 행이 들어왔다"가 아니다.
@@ -179,7 +188,7 @@ export async function enqueueSecondReviews(settings: CrawlSettings, now = new Da
      * 올릴 수도 없어 그 표는 영영 사라진다. 입력 해시가 다른 것만 닫는다.
      */
     await db.update(secondReviews).set({ status: "resolved", resolution: "superseded", resolvedAt: now })
-      .where(and(eq(secondReviews.trigger, "ai_decided"), inArray(secondReviews.candidateId, renewed.map((row) => row.candidateId)),
+      .where(and(inArray(secondReviews.trigger, ["ai_decided", "ai_held"]), inArray(secondReviews.candidateId, renewed.map((row) => row.candidateId)),
         notInArray(secondReviews.inputHash, [...new Set(renewed.map((row) => row.inputHash))]),
         inArray(secondReviews.status, ["pending", "agreed", "needs_human", "failed"])));
   }

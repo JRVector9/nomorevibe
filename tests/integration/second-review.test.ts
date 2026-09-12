@@ -387,3 +387,28 @@ it('모델을 여럿 세워도 공개분 표본이 대기 후보에 밀리지 �
   const rows = await db.select().from(secondReviews).where(eq(secondReviews.repo, 'acme/fresh-publish'));
   expect(rows).toHaveLength(2);
 });
+
+it('1차가 보류한 것은 설정을 켤 때만 올라가고, 확신이 없다고 닫히지 않는다', async () => {
+  const voters = [{ provider: 'abcllm' as const, model: '[MLX] gemma4-26b' }, { provider: 'abcllm' as const, model: '[MLX] gemma4-31b' }];
+  await saveSettings({ secondReview: { enabled: true, sampleRate: 0, agreeAt: 0.85, voters, includeAiHeld: false } }, 'fixture');
+  const candidate = await held('acme/ai-held');
+  await firstReview('acme/ai-held', 'needs_review', null);
+
+  // 꺼 두면 올리지 않는다 — 1차가 가른 것만 본다
+  expect(await enqueueSecondReviews(await getSettings())).toBe(0);
+
+  await saveSettings({ secondReview: { enabled: true, sampleRate: 0, agreeAt: 0.85, voters, includeAiHeld: true } }, 'fixture');
+  expect(await enqueueSecondReviews(await getSettings())).toBe(2);
+  // 확신 없는 옛 1차를 닫는 규칙에 걸리면 안 된다 — 이 갈래는 애초에 확신을 재지 않는다
+  await closeSettledSecondReviews();
+  const rows = await pendingSecondReviews(10);
+  expect(rows.map((row) => row.trigger)).toEqual(['ai_held', 'ai_held']);
+
+  // 1차가 표를 내지 않으므로 두 모델이 같아야 일치가 된다
+  for (const row of rows) {
+    await recordSecondReview(row.id, { ok: true, decision: 'reject', confidence: 0.9, reason: '문서 사이트',
+      model: row.model!, provider: 'abcllm', status: 'needs_human' });
+  }
+  const { ids } = await secondReviewSummary(0.85);
+  expect(ids.agreed_reject).toEqual([candidate.id]);
+});

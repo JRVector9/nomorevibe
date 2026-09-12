@@ -73,9 +73,23 @@ it("원본이 없으면 모델을 부르지 않는다", async () => {
   expect(mocks.record).toHaveBeenCalledWith(7, { ok: false, error: "missing_source", model: "opus", provider: "claude-cli" });
 });
 
-it("한 틱에 둘까지만 본다", async () => {
+it("한 틱에 일감을 넉넉히 집어 끝나는 대로 이어 본다", async () => {
+  mocks.pending.mockResolvedValue([row({ id: 7 }), row({ id: 8 }), row({ id: 9 })]);
   await secondReviewCandidates(context());
-  expect(mocks.pending).toHaveBeenCalledWith(2);
+
+  expect(mocks.pending).toHaveBeenCalledWith(24);
+  expect(mocks.record).toHaveBeenCalledTimes(3);
+});
+
+it("남은 시간에 끝낼 수 없는 호출은 시작하지 않는다 — 잘린 호출은 한 시간을 버린다", async () => {
+  mocks.settings!.secondReview = { ...mocks.settings!.secondReview, voters: [{ provider: "abcllm", model: "[MLX] gemma4-26b" }] };
+  mocks.pending.mockResolvedValue([row({ provider: "abcllm", model: "[MLX] gemma4-26b" })]);
+  // 예산이 이미 다 된 틱
+  const spent = { ...context(), hasBudget: () => false };
+  await secondReviewCandidates(spent);
+
+  expect(mocks.gateway).not.toHaveBeenCalled();
+  expect(mocks.record).not.toHaveBeenCalled();
 });
 
 it("사내 게이트웨이로 설정하면 CLI 대신 그쪽으로 묻고, 누가 봤는지 함께 적는다", async () => {
