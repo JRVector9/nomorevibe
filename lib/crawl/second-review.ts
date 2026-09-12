@@ -134,6 +134,18 @@ export async function enqueueSecondReviews(settings: CrawlSettings, now = new Da
   }).from(crawlReviewAttempts).innerJoin(crawlCandidates, eq(crawlCandidates.id, crawlReviewAttempts.candidateId))
     .where(and(eq(crawlCandidates.state, "needs_review"), eq(crawlCandidates.decidedBy, "auto"),
       eq(crawlReviewAttempts.kind, "automatic"), eq(crawlReviewAttempts.state, "succeeded"), eq(crawlReviewAttempts.provider, "claude-cli"),
+      /*
+       * 세워 둔 표를 다 받은 후보는 건너뛴다.
+       *
+       * 이 쿼리는 후보 id 가 작은 것부터 집는데, 그것들이 전부 올라가 있으면 매 틱 같은 것을
+       * 다시 집어 한 건도 못 넣는다. 사람이 앞부분을 치우기 전에는 뒤가 영영 올라가지 않는다 —
+       * 2026-09-12 프로드에서 대상 738건 중 654건이 그렇게 밀려 있었다.
+       *
+       * 행 수로 재는 이유: 모델을 하나 더 세우면 이미 올라간 후보에도 그 모델의 표를 더해야 한다.
+       */
+      sql`(select count(*) from ${secondReviews} s
+        where s.candidate_id = ${crawlReviewAttempts.candidateId} and s.input_hash = ${crawlReviewAttempts.inputHash})
+        < ${settings.secondReview.voters.length}`,
       // 가른 판단은 확신을 낸 것만 — 1차가 보류한 것은 애초에 확신을 재지 않는다
       or(sql`${crawlReviewAttempts.outcome}->>'confidence' is not null`,
         held ? sql`${crawlReviewAttempts.outcome}->>'decision' = 'needs_review'` : undefined)!))
@@ -256,15 +268,28 @@ export async function recentSecondReviewFailures(now = new Date()): Promise<Seco
   return rows.map((row) => ({ ...row, errorCode: row.errorCode ?? "unknown", count: Number(row.count) }));
 }
 
+/** 잠깐 막힌 것과 그렇지 않은 것 — 다시 보는 때가 다르다 */
+const TRANSIENT = ["timeout", "gateway_error", "rate_limited", "budget"];
+export const TRANSIENT_RETRY_MS = 5 * 60_000;
+const RETRY_MS = 60 * 60_000;
+
 /**
- * 실패한 것을 다시 대기로 — 한 시간 뒤. CLI 가 잠깐 막혔던 것이 영영 남지 않게.
+ * 실패한 것을 다시 대기로.
+ *
+ * 잠깐 막힌 것(시간 초과·게이트웨이 오류·한도)은 5분 뒤, 나머지는 한 시간 뒤. 게이트웨이가
+ * 붐비는 동안 난 시간 초과를 한 시간씩 묵히면 그만큼 사람이 기다린다 — 2026-09-12 실측에서
+ * gemma 두 모델의 24~30%가 시간 초과였고, 다시 부르면 대개 통과했다.
  *
  * 비교는 lt() 로 한다. sql`` 안에 Date 를 그대로 넣으면 "Fri Sep 11 2026 …" 문자열로 넘어가
  * 프로드에서 매 틱 실패했다(2026-09-11) — 컬럼 타입을 거쳐야 시각으로 바뀐다.
  */
 export async function retryFailedSecondReviews(now = new Date()): Promise<void> {
   await db.update(secondReviews).set({ status: "pending" })
-    .where(and(eq(secondReviews.status, "failed"), lt(secondReviews.reviewedAt, new Date(now.getTime() - 3600_000))));
+    .where(and(eq(secondReviews.status, "failed"),
+      or(
+        and(inArray(secondReviews.errorCode, TRANSIENT), lt(secondReviews.reviewedAt, new Date(now.getTime() - TRANSIENT_RETRY_MS))),
+        lt(secondReviews.reviewedAt, new Date(now.getTime() - RETRY_MS)),
+      )));
 }
 
 export type SecondReviewCounts = { unanimousReject: number; unanimousApprove: number; agreedReject: number; agreedApprove: number; needsHuman: number; published: number; pending: number };
