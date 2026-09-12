@@ -11,7 +11,12 @@ import { REVIEW_SYSTEM_PROMPT, type AgentReviewResult, type ReviewFailure, type 
  * (2026-09-12 실측: gemma4-26b 가 사라졌다 돌아왔고 그 사이 gpt-oss 가 502) 없는 모델은
  * model_unavailable 로 남겨 운영 화면에 드러낸다 — 조용히 넘기면 심사가 통째로 멈춘 줄 모른다.
  */
-export const REVIEW_GATEWAY_TIMEOUT_MS = 30_000;
+export const REVIEW_GATEWAY_TIMEOUT_MS = 45_000;
+/**
+ * 받을 답의 상한. 실측(2026-09-12)에서 판단 한 건이 70~82 토큰이었다 — 1,500 은 붐비는 서버에
+ * 자리를 크게 잡아 둘 뿐이고, 길게 쓰기 시작한 답을 끊어 주지도 못했다.
+ */
+const MAX_OUTPUT_TOKENS = 400;
 const BASE_URL = process.env.ABCLLM_BASE_URL?.trim() || "https://abcllm-api.brut.bot";
 const MAX_BODY_BYTES = 128 * 1024;
 
@@ -94,7 +99,7 @@ export async function reviewWithGateway(input: ReviewInput, options: {
       method: "POST",
       headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
       body: JSON.stringify({
-        model, stream: false, temperature: 0, max_tokens: 1_500, reasoning_effort: "low",
+        model, stream: false, temperature: 0, max_tokens: MAX_OUTPUT_TOKENS, reasoning_effort: "low",
         chat_template_kwargs: { enable_thinking: false },
         response_format: { type: "json_schema", json_schema: { name: "review", schema: GATEWAY_SCHEMA } },
         messages: [

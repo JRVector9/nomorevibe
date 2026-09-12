@@ -6,7 +6,7 @@ import * as crawl from '@/lib/crawl/repository';
 import { getSettings, saveSettings } from '@/lib/crawl/settings';
 import { loadReviewInput } from '@/lib/crawl/agent-review-repository';
 import { closeSettledSecondReviews, enqueueSecondReviews, pendingSecondReviews, publishedInputHash, publishedSecondReviews, recentSecondReviewFailures,
-  recordSecondReview, resolveSecondReviews, retryFailedSecondReviews, secondReviewSummary, secondReviewsFor } from '@/lib/crawl/second-review';
+  recordSecondReview, resolveSecondReviews, retryFailedSecondReviews, secondReviewSummary, secondReviewsFor, TRANSIENT_RETRY_MS } from '@/lib/crawl/second-review';
 import { ensureSchema } from './setup';
 
 beforeAll(() => ensureSchema());
@@ -172,7 +172,7 @@ it('실패한 호출은 기록만 남기고 판단을 지어내지 않는다', a
   expect((await secondReviewSummary(0.85)).counts).toEqual({ unanimousReject: 0, unanimousApprove: 0, agreedReject: 0, agreedApprove: 0, needsHuman: 0, published: 0, pending: 1 });
 });
 
-it('실패한 것은 한 시간이 지나야 다시 대기로 돌린다', async () => {
+it('실패한 것은 때가 되어야 다시 대기로 돌린다', async () => {
   await held('acme/old-fail');
   await held('acme/new-fail');
   await firstReview('acme/old-fail', 'reject');
@@ -181,7 +181,8 @@ it('실패한 것은 한 시간이 지나야 다시 대기로 돌린다', async 
   const byRepo = new Map((await pendingSecondReviews(10)).map((row) => [row.repo, row.id]));
   const now = new Date();
   await recordSecondReview(byRepo.get('acme/old-fail')!, { ok: false, error: 'timeout', model: 'opus', provider: 'claude-cli' }, new Date(now.getTime() - 2 * 3600_000));
-  await recordSecondReview(byRepo.get('acme/new-fail')!, { ok: false, error: 'timeout', model: 'opus', provider: 'claude-cli' }, new Date(now.getTime() - 10 * 60_000));
+  // 시간 초과는 5분이면 다시 보므로, 아직 때가 안 된 것은 2분 전 것으로 둔다
+  await recordSecondReview(byRepo.get('acme/new-fail')!, { ok: false, error: 'timeout', model: 'opus', provider: 'claude-cli' }, new Date(now.getTime() - 2 * 60_000));
 
   // 2026-09-11 프로드: 이 쿼리가 Date 를 문자열로 넘겨 매 틱 실패했다
   await retryFailedSecondReviews(now);
@@ -411,4 +412,26 @@ it('1차가 보류한 것은 설정을 켤 때만 올라가고, 확신이 없다
   }
   const { ids } = await secondReviewSummary(0.85);
   expect(ids.agreed_reject).toEqual([candidate.id]);
+});
+
+it('잠깐 막힌 실패는 5분 뒤 다시 보고, 그렇지 않은 실패는 한 시간을 기다린다', async () => {
+  await saveSettings({ secondReview: { enabled: true, sampleRate: 0, agreeAt: 0.85,
+    voters: [{ provider: 'abcllm', model: '[MLX] gemma4-26b' }] } }, 'fixture');
+  await held('acme/timed-out');
+  await held('acme/bad-json');
+  await firstReview('acme/timed-out', 'reject');
+  await firstReview('acme/bad-json', 'reject');
+  await enqueueSecondReviews(await getSettings());
+  const rows = await pendingSecondReviews(10);
+  const byRepo = new Map(rows.map((row) => [row.repo, row]));
+  await recordSecondReview(byRepo.get('acme/timed-out')!.id, { ok: false, error: 'timeout', model: '[MLX] gemma4-26b', provider: 'abcllm' });
+  await recordSecondReview(byRepo.get('acme/bad-json')!.id, { ok: false, error: 'invalid_output', model: '[MLX] gemma4-26b', provider: 'abcllm' });
+
+  // 5분 뒤 — 시간 초과만 돌아온다
+  await retryFailedSecondReviews(new Date(Date.now() + TRANSIENT_RETRY_MS + 1_000));
+  expect((await pendingSecondReviews(10)).map((row) => row.repo)).toEqual(['acme/timed-out']);
+
+  // 한 시간 뒤 — 나머지도 돌아온다
+  await retryFailedSecondReviews(new Date(Date.now() + 61 * 60_000));
+  expect((await pendingSecondReviews(10)).map((row) => row.repo).sort()).toEqual(['acme/bad-json', 'acme/timed-out']);
 });

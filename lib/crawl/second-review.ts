@@ -256,15 +256,28 @@ export async function recentSecondReviewFailures(now = new Date()): Promise<Seco
   return rows.map((row) => ({ ...row, errorCode: row.errorCode ?? "unknown", count: Number(row.count) }));
 }
 
+/** 잠깐 막힌 것과 그렇지 않은 것 — 다시 보는 때가 다르다 */
+const TRANSIENT = ["timeout", "gateway_error", "rate_limited", "budget"];
+export const TRANSIENT_RETRY_MS = 5 * 60_000;
+const RETRY_MS = 60 * 60_000;
+
 /**
- * 실패한 것을 다시 대기로 — 한 시간 뒤. CLI 가 잠깐 막혔던 것이 영영 남지 않게.
+ * 실패한 것을 다시 대기로.
+ *
+ * 잠깐 막힌 것(시간 초과·게이트웨이 오류·한도)은 5분 뒤, 나머지는 한 시간 뒤. 게이트웨이가
+ * 붐비는 동안 난 시간 초과를 한 시간씩 묵히면 그만큼 사람이 기다린다 — 2026-09-12 실측에서
+ * gemma 두 모델의 24~30%가 시간 초과였고, 다시 부르면 대개 통과했다.
  *
  * 비교는 lt() 로 한다. sql`` 안에 Date 를 그대로 넣으면 "Fri Sep 11 2026 …" 문자열로 넘어가
  * 프로드에서 매 틱 실패했다(2026-09-11) — 컬럼 타입을 거쳐야 시각으로 바뀐다.
  */
 export async function retryFailedSecondReviews(now = new Date()): Promise<void> {
   await db.update(secondReviews).set({ status: "pending" })
-    .where(and(eq(secondReviews.status, "failed"), lt(secondReviews.reviewedAt, new Date(now.getTime() - 3600_000))));
+    .where(and(eq(secondReviews.status, "failed"),
+      or(
+        and(inArray(secondReviews.errorCode, TRANSIENT), lt(secondReviews.reviewedAt, new Date(now.getTime() - TRANSIENT_RETRY_MS))),
+        lt(secondReviews.reviewedAt, new Date(now.getTime() - RETRY_MS)),
+      )));
 }
 
 export type SecondReviewCounts = { unanimousReject: number; unanimousApprove: number; agreedReject: number; agreedApprove: number; needsHuman: number; published: number; pending: number };
