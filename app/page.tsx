@@ -4,6 +4,7 @@ import { BrowseFilters, parseHomeSort, parseShown, type HomeSort } from "@/compo
 import { HomeAside } from "@/components/home/HomeAside";
 import { listHomeNews } from "@/lib/news/repository";
 import { HomeHero } from "@/components/home/HomeHero";
+import { PopularTiers } from "@/components/home/PopularTiers";
 import { HomePulse } from "@/components/home/HomePulse";
 import { Icon } from "@/components/home/icons";
 import { MethodologyDialog } from "@/components/home/MethodologyDialog";
@@ -45,6 +46,7 @@ type Props = {
     builder?: SearchValue;
     shown?: SearchValue;
     saved?: SearchValue;
+    personal?: SearchValue;
   }>;
 };
 
@@ -259,6 +261,9 @@ export default async function HomePage({ searchParams }: Props) {
     <main className="wrap">
       <HomeHero />
       <HomePulse pulse={pulse} state={state} />
+      <Suspense fallback={<section className="popular-section"><h2>많이 쓰이는 프로젝트</h2><p>스타 구간을 불러오는 중입니다.</p></section>}>
+        <PopularTiers personal={firstValue(params.personal) === "1"} />
+      </Suspense>
 
       <div className="content-layout">
         <section id="projects" aria-labelledby="projects-title">

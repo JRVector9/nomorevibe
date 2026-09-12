@@ -14,6 +14,7 @@ import { loadAgentJudgeInput } from "./agent-evidence";
 import { summarizeAgentEvidence, type AgentEvidenceSummary } from "@/lib/domain/evidence/agents/summary";
 import type { JobLease } from "@/lib/jobs/control";
 import { ReviewApprovalChangedError } from "./agent-review-repository";
+import { parseRepositoryStats } from "@/lib/domain/products/stars";
 
 /**
  * 발행 — 통과한 후보를 목록에 올린다.
@@ -102,6 +103,7 @@ export async function publishCandidate(
     : await preparePublication(candidate);
   if (!prepared.ok) return prepared;
   const { document, url, settings, checkedEvidence, draft } = prepared.snapshot;
+  const repoStats = parseRepositoryStats(document.repoMeta);
 
   /**
    * 우리가 아는 것이 이름뿐이면 자동으로 올리지 않는다.
@@ -154,6 +156,7 @@ export async function publishCandidate(
         ogImage: null,
         makerName: null,
         repoUrl: `https://github.com/${candidate.repo}`,
+        ...(repoStats ? { ...repoStats, starsAt: document.fetchedAt } : {}),
         status: "seeded",
         source: "crawler",
         /**

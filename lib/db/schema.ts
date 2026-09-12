@@ -55,6 +55,11 @@ export const products = pgTable("products", {
   ogImage: text("og_image"),
   makerName: varchar("maker_name", { length: 120 }),
   repoUrl: text("repo_url"),
+  /** GitHub 저장소 메타. 조회하지 못한 값은 0이나 개인 계정으로 추정하지 않는다. */
+  stars: integer("stars"),
+  starsAt: timestamp("stars_at"),
+  ownerType: varchar("owner_type", { length: 20 }).$type<"User" | "Organization">(),
+  starsCheckedAt: timestamp("stars_checked_at"),
   status: varchar("status", { length: 20 })
     .$type<ProductStatus>()
     .notNull()
@@ -74,6 +79,10 @@ export const products = pgTable("products", {
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 }, (table) => [
+  index("products_public_stars_idx").on(table.stars.desc(), table.id)
+    .where(sql`${table.status} in ('seeded', 'verified') and ${table.stars} >= 2000 and ${table.stars} < 100000`),
+  index("products_stars_refresh_idx").on(table.id)
+    .where(sql`${table.status} in ('seeded', 'verified') and ${table.repoUrl} is not null`),
   /**
    * 홈 목록 정렬용.
    *

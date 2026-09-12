@@ -1,0 +1,47 @@
+import {expect,test} from '@playwright/test';
+import {db} from '@/lib/db';
+import {products} from '@/lib/db/schema';
+import {ensureSchema,resetTables} from '@/tests/integration/setup';
+test.describe.configure({mode:'serial'});
+test.beforeAll(async()=>{
+ ensureSchema();await resetTables();
+ const rows=Array.from({length:24},(_,i)=>({slug:`popular-fixture-${i}`,name:`인기 제품 ${i+1}`,url:`https://popular-${i}.example`,tagline:`매일의 일을 돕는 공개 제품 ${i+1}`,description:'제품 소개',category:'Dev',repoUrl:`https://github.com/example/product-${i}`,stars:i<20?4900-i:i<23?6000+i:12000,starsAt:new Date(),ownerType:i%2===0?'User' as const:'Organization' as const,status:'seeded' as const,source:'crawler' as const,verifyToken:`verify-${i}`,editTokenHash:'a'.repeat(64)}));
+ await db.insert(products).values(rows);
+});
+test('홈 네 구간과 전체 목록·페이지·개인 필터가 연결된다',async({page})=>{
+ const errors:string[]=[];page.on('pageerror',e=>errors.push(e.message));
+ await page.goto('/');await page.waitForLoadState('networkidle');
+ const popular=page.locator('#popular-projects');
+ await expect(popular.getByRole('heading',{name:'많이 쓰이는 프로젝트'})).toBeVisible();
+ await expect(popular.locator('.popular-tier')).toHaveCount(4);
+ await expect(popular.locator('.popular-tier').first().locator('li')).toHaveCount(10);
+ await expect(popular.locator('.popular-tier').last().getByText('아직 없음')).toBeVisible();
+ await popular.getByRole('link',{name:'20개 모두 보기'}).click();
+ await expect(page).toHaveURL(/popular\?tier=rising/);
+ await expect(page.locator('.popular-table tbody tr')).toHaveCount(15);
+ await page.getByRole('link',{name:'다음 →',exact:true}).click();
+ await expect(page).toHaveURL(/page=2/);await expect(page.locator('.popular-table tbody tr')).toHaveCount(5);
+ await page.getByRole('checkbox',{name:'개인 계정만'}).check();
+ await expect(page).toHaveURL(/personal=1/);await expect(page).not.toHaveURL(/page=2/);
+ await expect(page.locator('.popular-table tbody tr')).toHaveCount(10);
+ await expect(page.locator('.popular-table tbody').getByText('조직',{exact:true})).toHaveCount(0);
+ await page.reload();await expect(page.getByRole('checkbox',{name:'개인 계정만'})).toBeChecked();
+ await page.getByRole('navigation',{name:'스타 구간'}).getByRole('link',{name:/대형/}).click();
+ await expect(page.getByText('아직 없음',{exact:true})).toBeVisible();
+ await page.getByRole('link',{name:'집계 기준',exact:true}).click();
+ await expect(page.getByRole('dialog',{name:'숫자의 기준'})).toBeVisible();
+ await expect(page.getByRole('heading',{name:'많이 쓰이는 프로젝트 — GitHub 스타 구간.'})).toBeVisible();
+ expect(errors).toEqual([]);
+});
+for(const width of [1440,390])test(`${width}px에서 글자·가로 넘침·표 스크롤을 확인한다`,async({page})=>{
+ await page.setViewportSize({width,height:1000});
+ await page.goto('/');await page.waitForLoadState('networkidle');
+ await page.locator('#popular-projects').scrollIntoViewIfNeeded();
+ await page.locator('#popular-projects').screenshot({path:`/tmp/nomorevibe-popular-home-${width}.png`});
+ expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+ expect(await page.locator('#popular-projects').evaluate(root=>Array.from(root.querySelectorAll('*')).filter(e=>e.textContent?.trim()&&getComputedStyle(e).display!=='none').every(e=>parseFloat(getComputedStyle(e).fontSize)>=13))).toBe(true);
+ await page.goto('/popular?tier=rising');await page.waitForLoadState('networkidle');
+ expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+ if(width===390)expect(await page.locator('.popular-table-scroll').evaluate(e=>e.scrollWidth>e.clientWidth)).toBe(true);
+ await page.screenshot({path:`/tmp/nomorevibe-popular-table-${width}.png`,fullPage:true});
+});

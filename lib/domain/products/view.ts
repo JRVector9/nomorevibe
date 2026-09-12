@@ -172,3 +172,6 @@ export async function getUnclaimedList(
 export async function getRankedList(limit: number, options: BrowseOptions = {}): Promise<ProductListItem[]> {
   return getVerifiedList(limit, options);
 }
+
+// 스타 구간은 별도 조회 모듈에 두되 공개 제품 뷰 진입점에서도 제공한다.
+export { getPopularGroups, getPopularPage } from "./popular";

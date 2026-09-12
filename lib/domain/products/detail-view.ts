@@ -1,7 +1,7 @@
 import "server-only";
 
 import { cache } from "react";
-import { and, asc, desc, eq, isNull, ne, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, ne, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/lib/db";
 import {
@@ -468,9 +468,10 @@ async function visibleLinks(slug: string): Promise<Array<ProductLinkView & { nor
   return rows.map((link) => ({ ...link, evidenceLabel: linkEvidenceLabel(link) }));
 }
 
-async function evidenceSources(slug: string) {
+async function evidenceSources(slug: string | string[]) {
   return db.select({
     id: productEvidenceSources.id,
+    slug: productEvidenceSources.slug,
     kind: productEvidenceSources.kind,
     provider: productEvidenceSources.provider,
     sourceKey: productEvidenceSources.sourceKey,
@@ -488,8 +489,46 @@ async function evidenceSources(slug: string) {
       eq(productLinks.normalizedKey, productEvidenceSources.sourceKey),
       eq(productLinks.visible, true),
     ))
-    .where(eq(productEvidenceSources.slug, slug))
+    .where(Array.isArray(slug) ? inArray(productEvidenceSources.slug, slug) : eq(productEvidenceSources.slug, slug))
     .orderBy(asc(productEvidenceSources.id));
+}
+
+async function observedFacts(sources: Awaited<ReturnType<typeof evidenceSources>>, settings: EvidenceSettings, display: boolean, now: Date) {
+  const observedAgentFacts: ObservedAgentFactView[] = [];
+  if (display) {
+    for (const source of sources.filter(row => row.kind === "repository")) {
+      const scanId = source.normalizedFacts?.agentScanId;
+      const [linked, latest] = await Promise.all([
+        typeof scanId === "number" ? getRepositoryAgentEvidence(scanId) : Promise.resolve(null),
+        getLatestRepositoryAgentScan(source.sourceKey),
+      ]);
+      const attempted = latest ? await getRepositoryAgentEvidence(latest.id) : null;
+      const validLinked = linked?.scan.scope === "" && linked.scan.repositoryKey.toLowerCase() === source.sourceKey.toLowerCase() ? linked : null;
+      const evidence = attempted ?? validLinked;
+      if (!evidence || evidence.scan.scope !== "") continue;
+      const relation = source.normalizedFacts?.relationshipState;
+      const relationshipConfirmed = sourceFreshness(source, settings, now).state === "current" && (relation === "site_link" || relation === "bidirectional");
+      // Incomplete attempts cannot prove previous files disappeared. Each retained
+      // fact keeps its own commit and observation date, rather than acquiring a new date.
+      const batches = evidence.scan.state !== "complete" && validLinked && validLinked.scan.id !== evidence.scan.id
+        ? [validLinked, evidence] : [evidence];
+      for (const batch of batches) observedAgentFacts.push(...presentObservedAgentFacts({ observations: batch.observations,
+        scanState: evidence.scan.state, observedAt: batch.scan.completedAt ?? batch.scan.startedAt,
+        now, scanLastError: evidence.scan.lastErrorCode,
+        relationship: relationshipConfirmed ? "same_product" : "unknown" }));
+    }
+  }
+  return observedAgentFacts;
+}
+
+/** 목록도 상세 화면과 동일한 공개 링크·표시 설정·관측 상태를 적용한다. */
+export async function getPublicObservedAgentFacts(slugs: string[]): Promise<Map<string, ObservedAgentFactView[]>> {
+  if (!slugs.length) return new Map();
+  const [sources, settings, crawl] = await Promise.all([evidenceSources(slugs), currentEvidenceSettings(), getCrawlSettings()]);
+  const now = new Date();
+  return new Map(await Promise.all(slugs.map(async slug => [slug,
+    await observedFacts(sources.filter(source => source.slug === slug), settings, crawl.agentEvidence.displayObservedFacts, now),
+  ] as const)));
 }
 
 async function visibleMedia(slug: string): Promise<ProductMediaView[]> {
@@ -588,30 +627,7 @@ export async function getProductDetail(slugInput: string): Promise<ProductDetail
     currentEvidenceSettings(),
   ]);
   const crawlSettings = await getCrawlSettings();
-  const observedAgentFacts: ObservedAgentFactView[] = [];
-  if (crawlSettings.agentEvidence.displayObservedFacts) {
-    for (const source of sources.filter(row => row.kind === "repository")) {
-      const scanId = source.normalizedFacts?.agentScanId;
-      const [linked, latest] = await Promise.all([
-        typeof scanId === "number" ? getRepositoryAgentEvidence(scanId) : Promise.resolve(null),
-        getLatestRepositoryAgentScan(source.sourceKey),
-      ]);
-      const attempted = latest ? await getRepositoryAgentEvidence(latest.id) : null;
-      const validLinked = linked?.scan.scope === "" && linked.scan.repositoryKey.toLowerCase() === source.sourceKey.toLowerCase() ? linked : null;
-      const evidence = attempted ?? validLinked;
-      if (!evidence || evidence.scan.scope !== "") continue;
-      const relation = source.normalizedFacts?.relationshipState;
-      const relationshipConfirmed = sourceFreshness(source, settings, now).state === "current" && (relation === "site_link" || relation === "bidirectional");
-      // Incomplete attempts cannot prove previous files disappeared. Each retained
-      // fact keeps its own commit and observation date, rather than acquiring a new date.
-      const batches = evidence.scan.state !== "complete" && validLinked && validLinked.scan.id !== evidence.scan.id
-        ? [validLinked, evidence] : [evidence];
-      for (const batch of batches) observedAgentFacts.push(...presentObservedAgentFacts({ observations: batch.observations,
-        scanState: evidence.scan.state, observedAt: batch.scan.completedAt ?? batch.scan.startedAt,
-        now, scanLastError: evidence.scan.lastErrorCode,
-        relationship: relationshipConfirmed ? "same_product" : "unknown" }));
-    }
-  }
+  const observedAgentFacts = await observedFacts(sources, settings, crawlSettings.agentEvidence.displayObservedFacts, now);
   const publicLinks = links.map(link => {
     const source = sources.find(row => row.kind === link.kind && row.sourceKey === link.normalizedKey);
     if (!source) {

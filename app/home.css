@@ -1497,3 +1497,74 @@ dialog::backdrop {
   .project-card { transition: none; }
   .project-card:hover { transform: none; }
 }
+
+/* 스타 구간 — 네 목록과 상세 표는 같은 구간·정렬을 사용한다. */
+.popular-section { margin: 34px 0 42px; scroll-margin-top: 95px; }
+.popular-heading { display: flex; justify-content: space-between; align-items: center; gap: 24px; margin-bottom: 22px; }
+.popular-eyebrow { color: var(--accent); font-size: 13px; font-weight: 750; letter-spacing: .08em; }
+.popular-heading h2, .popular-heading h1 { font-size: 28px; letter-spacing: -.8px; margin: 6px 0 9px; line-height: 1.3; }
+.popular-heading p { color: var(--text-2); font-size: 14px; line-height: 1.7; margin: 0; }
+.popular-filter { display: inline-flex; gap: 9px; align-items: center; white-space: nowrap; cursor: pointer; font-size: 14px; min-height: 44px; }
+.popular-filter input { width: 18px; height: 18px; accent-color: var(--accent); }
+.popular-columns { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); border: 1px solid var(--border); border-radius: 16px; overflow: hidden; background: white; }
+.popular-tier { padding: 20px 18px 0; min-width: 0; display: flex; flex-direction: column; }
+.popular-tier + .popular-tier { border-left: 1px solid var(--border); }
+.popular-tier header { display: flex; gap: 8px; flex-wrap: wrap; align-items: baseline; justify-content: space-between; padding-bottom: 15px; border-bottom: 1px solid var(--border); }
+.popular-tier h3 { font-size: 18px; margin: 0; font-weight: 750; }
+.popular-tier header > span { font-size: 13px; color: var(--text-3); }
+.popular-tier ol { list-style: none; margin: 7px 0 10px; padding: 0; flex: 1; }
+.popular-tier li { display: flex; gap: 9px; align-items: center; min-height: 56px; border-bottom: 1px solid #f4f3f7; }
+.popular-rank { color: var(--text-3); width: 18px; font-size: 13px; font-variant-numeric: tabular-nums; flex-shrink: 0; }
+.popular-project { min-width: 0; flex: 1; padding: 8px 0; }
+.popular-project strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; }
+.popular-project span { display: block; font-size: 13px; color: var(--text-3); margin-top: 3px; }
+.popular-project:hover strong, .popular-all:hover, .popular-note a { color: var(--accent); }
+.popular-stars { font-variant-numeric: tabular-nums; font-size: 13px; white-space: nowrap; color: var(--text-2); }
+.popular-all { display: flex; justify-content: space-between; border-top: 1px solid var(--border); padding: 15px 0; font-size: 13px; font-weight: 650; margin-top: auto; }
+.popular-empty { padding: 38px 18px; text-align: center; color: var(--text-3); font-size: 14px; flex: 1; }
+.popular-note { color: var(--text-3); font-size: 13px; line-height: 1.8; margin: 14px 0; }
+.popular-note a { text-decoration: underline; text-underline-offset: 3px; white-space: nowrap; }
+.popular-page { padding-top: 32px; padding-bottom: 65px; }
+.popular-back { display: inline-block; font-size: 14px; color: var(--text-3); padding: 8px 0; margin-bottom: 23px; }
+.popular-page .popular-heading h1 { font-size: 34px; }
+.popular-tabs { display: flex; border-bottom: 1px solid var(--border); gap: 9px; margin: 30px 0 24px; overflow-x: auto; }
+.popular-tabs a { display: inline-flex; align-items: center; gap: 9px; padding: 15px 17px; white-space: nowrap; border-bottom: 3px solid transparent; font-size: 14px; }
+.popular-tabs a[aria-current] { border-color: var(--accent); color: var(--accent); background: #f6f3ff; }
+.popular-tabs span, .popular-tabs b { font-size: 13px; }
+.popular-tabs b { border-radius: 20px; background: #efedf6; padding: 2px 7px; }
+.popular-table-caption { display: flex; align-items: baseline; justify-content: space-between; gap: 15px; margin-bottom: 14px; }
+.popular-table-caption h2 { font-size: 20px; margin: 0; }
+.popular-table-caption span, .popular-table-caption p { color: var(--text-3); font-size: 13px; font-weight: 400; }
+.popular-table-scroll { overflow-x: auto; border: 1px solid var(--border); border-radius: 12px; }
+.popular-table { border-collapse: collapse; width: 100%; min-width: 850px; text-align: left; font-size: 14px; }
+.popular-table thead { background: #f8f7fb; color: var(--text-2); }
+.popular-table th, .popular-table td { padding: 17px 16px; border-bottom: 1px solid var(--border); }
+.popular-table thead th { font-size: 13px; font-weight: 650; white-space: nowrap; }
+.popular-table tbody th { min-width: 160px; max-width: 280px; font-weight: 650; }
+.popular-table tbody th span { display: block; font-size: 13px; color: var(--text-3); font-weight: 400; margin-top: 5px; }
+.popular-table td:nth-child(3) { min-width: 220px; max-width: 450px; color: var(--text-2); line-height: 1.6; }
+.popular-table td:nth-child(n+4) { white-space: nowrap; }
+.popular-table td a { color: var(--accent); font-size: 13px; }
+.popular-table tr:last-child td, .popular-table tr:last-child th { border-bottom: 0; }
+.popular-table tbody tr:hover { background: #fcfbff; }
+.popular-pagination { display: flex; justify-content: center; align-items: center; gap: 28px; padding: 25px 0 12px; font-size: 14px; }
+.popular-pagination a { padding: 12px 15px; border: 1px solid var(--border); border-radius: 8px; }
+.popular-pagination [aria-disabled] { color: var(--text-3); opacity: .65; }
+@media(max-width:1100px) {
+ .popular-columns { grid-template-columns: repeat(2,minmax(0,1fr)); }
+ .popular-tier:nth-child(3) { border-left: 0; }
+ .popular-tier:nth-child(n+3) { border-top: 1px solid var(--border); }
+}
+@media(max-width:600px) {
+ .popular-heading { align-items: flex-start; flex-direction: column; gap: 10px; }
+ .popular-heading h2, .popular-page .popular-heading h1 { font-size: 25px; }
+ .popular-columns { grid-template-columns: 1fr; }
+ .popular-tier + .popular-tier { border-left: 0; border-top: 1px solid var(--border); }
+ .popular-table-caption { align-items: flex-start; flex-direction: column; gap: 4px; }
+ .popular-table-caption p { margin: 0; }
+ .popular-tabs a { padding: 13px 10px; }
+}
+
+.popular-evidence { min-width: 170px; }
+.popular-evidence span, .popular-evidence small, .popular-evidence a { display: block; font-size: 13px; }
+.popular-evidence small { color: var(--text-3); margin: 3px 0; }

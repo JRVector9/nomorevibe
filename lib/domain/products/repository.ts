@@ -262,7 +262,10 @@ export async function update(id: number, values: Partial<Product>): Promise<void
   await db.transaction(async (tx) => {
     const [current] = await tx.select({ slug: products.slug }).from(products).where(eq(products.id, id));
     if (!current || !(await lockProductGeneration(tx, id, current.slug))) return;
-    const [product] = await tx.update(products).set({ ...values, updatedAt: new Date() }).where(eq(products.id, id)).returning();
+    const [locked] = await tx.select({ repoUrl: products.repoUrl }).from(products).where(eq(products.id, id));
+    const resetStats = values.repoUrl !== undefined && values.repoUrl !== locked.repoUrl
+      ? { stars: null, starsAt: null, ownerType: null, starsCheckedAt: null } : {};
+    const [product] = await tx.update(products).set({ ...values, ...resetStats, updatedAt: new Date() }).where(eq(products.id, id)).returning();
     if (values.repoUrl !== undefined) await syncRepositoryLink({ productId: product.id, slug: product.slug,
       repoUrl: product.repoUrl, declarationSource: "maker", mode: "explicit" }, tx);
   });
