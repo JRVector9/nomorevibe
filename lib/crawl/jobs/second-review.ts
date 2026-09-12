@@ -64,10 +64,13 @@ export async function secondReviewCandidates(ctx: JobContext<null>): Promise<Job
         continue;
       }
       const input = await loadReviewInput(candidate, document, settings);
+      // 멈추라는 신호를 그대로 넘긴다 — 배포 때 진행 중인 호출이 바로 끊겨야 잠금을 놓고 나갈 수 있다
       const result = provider === "abcllm"
-        ? await reviewWithGateway(input, { model, timeoutMs: limit })
-        : await reviewWithAgent(input, { model, timeoutMs: limit });
+        ? await reviewWithGateway(input, { model, timeoutMs: limit, signal: ctx.signal })
+        : await reviewWithAgent(input, { model, timeoutMs: limit, signal: ctx.signal });
       if (!result.ok) {
+        // 멈추라고 해서 끊긴 것은 실패가 아니다 — 그대로 두면 다음 회차가 처음부터 본다
+        if (result.error === "cancelled" || ctx.signal?.aborted) { deferred += 1; continue; }
         failed += 1;
         await recordSecondReview(row.id, { ok: false, error: result.error, model, provider });
         continue;

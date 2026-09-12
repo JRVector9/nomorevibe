@@ -12,12 +12,28 @@ export type JobContext<C> = {
   hasBudget: () => boolean;
   log: (event: string, fields?: Record<string, unknown>) => void;
   lease?: JobLease;
+  /**
+   * 멈추라는 신호. 바깥을 오래 기다리는 작업(모델 호출 등)에 그대로 넘긴다.
+   *
+   * 넘기지 않으면 종료 신호를 받고도 그 호출이 끝날 때까지(최대 1분) 프로세스가 남고,
+   * 컨테이너가 먼저 죽어 잠금이 그대로 남는다 — 다음 컨테이너는 그 잠금이 만료될 때까지 논다.
+   */
+  signal?: AbortSignal;
 };
 export type JobOutcome<C> = { done: boolean; cursor?: C | null };
 export type RunResult =
   | { status: "completed"; done: boolean; durationMs: number }
   | { status: "skipped"; reason: "locked" | "not_requested" | "backoff" | "stopping" }
   | { status: "failed"; error: string; durationMs: number };
+
+/**
+ * 주인이 사라진 잠금을 언제 넘겨받나.
+ *
+ * 심장 박동이 15초마다 lockedAt 을 갱신하므로 살아 있는 주인은 늘 최신이다. 10분이던 때는
+ * 배포 때마다 2차 심사가 그만큼 놀았다(2026-09-12 실측 6분간 분당 0.3건). 여섯 번을 놓치면
+ * 죽은 것으로 본다.
+ */
+const LEASE_TAKEOVER = sql`now() - interval '90 seconds'`;
 
 export async function runJob<C>(
   name: string,
@@ -37,7 +53,7 @@ export async function runJob<C>(
     }),
   }).where(and(
     eq(jobs.name, name),
-    or(isNull(jobs.lockedAt), sql`${jobs.lockedAt} < now() - interval '10 minutes'`),
+    or(isNull(jobs.lockedAt), sql`${jobs.lockedAt} < ${LEASE_TAKEOVER}`),
     sql`${jobs.requestedVersion} < 9007199254740991`,
     ...(options.requestedOnly ? [
       sql`${jobs.requestedVersion} > ${jobs.processedVersion}`,
@@ -54,7 +70,7 @@ export async function runJob<C>(
 
   const lease: JobLease = { name, token, requestedVersion: claimed.requestedVersion };
   const owned = and(eq(jobs.name, name), eq(jobs.leaseToken, token),
-    sql`${jobs.lockedAt} >= now() - interval '10 minutes'`);
+    sql`${jobs.lockedAt} >= ${LEASE_TAKEOVER}`);
   let cursor = (claimed.cursor ?? null) as C | null;
   let lost = false;
   let renewing: Promise<void> | null = null;
@@ -72,6 +88,7 @@ export async function runJob<C>(
   const ctx: JobContext<C> = {
     get cursor() { return cursor; },
     lease,
+    signal: options.signal,
     save: async next => {
       if (lost) throw new JobLeaseLostError();
       const [row] = await db.update(jobs).set({ cursor: next, updatedAt: sql`now()` })
