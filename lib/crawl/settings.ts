@@ -35,13 +35,14 @@ function mergeClassify(current: CrawlSettings["classify"], raw: unknown): CrawlS
  * 옛 모양으로 저장된 값은 그 모델을 첫 표로 옮긴다 — 다시 저장하기 전까지 기준이 바뀌면 안 된다.
  */
 function mergeSecondReview(stored: unknown) {
-  const raw = { ...DEFAULT_CRAWL_SETTINGS.secondReview, ...((stored as object) ?? {}) } as Record<string, unknown>;
-  if (!Array.isArray(raw.voters) || !raw.voters.length) {
-    const model = typeof raw.model === "string" ? raw.model.trim() : "";
-    const provider = raw.provider === "abcllm" ? "abcllm" : "claude-cli";
-    raw.voters = model ? [{ provider, model }] : DEFAULT_CRAWL_SETTINGS.secondReview.voters;
-  }
-  return raw;
+  // 저장된 것을 먼저 본다 — 기본값을 덮은 뒤에 보면 voters 가 늘 채워져 있어 옛 모델이 조용히 사라진다
+  const saved = (stored ?? {}) as Record<string, unknown>;
+  const legacy = typeof saved.model === "string" && saved.model.trim()
+    ? [{ provider: saved.provider === "abcllm" ? "abcllm" : "claude-cli", model: saved.model.trim() }]
+    : null;
+  const voters = Array.isArray(saved.voters) && saved.voters.length ? saved.voters
+    : legacy ?? DEFAULT_CRAWL_SETTINGS.secondReview.voters;
+  return { ...DEFAULT_CRAWL_SETTINGS.secondReview, ...saved, voters };
 }
 
 export function mergeWithDefaults(stored: unknown): CrawlSettings {

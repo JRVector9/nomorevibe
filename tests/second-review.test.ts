@@ -113,9 +113,13 @@ describe("combineVotes — 표 여럿을 합친다", () => {
     expect(combineVotes(first, [], { agreeAt: 0.85, published: false, pending: 0 })).toMatchObject({ status: "needs_human" });
   });
 
-  it("공개분은 한 표라도 제품이 아니라고 하면 사람에게", () => {
+  it("공개분은 한 표라도 제품이 아니거나 모르겠다고 하면 사람에게", () => {
     const published = { agreeAt: 0.85, published: true, pending: 0 };
-    expect(combineVotes({ decision: "approve", confidence: null }, [vote("approve", 0.4), vote("approve", 1)], published)).toMatchObject({ status: "agreed" });
-    expect(combineVotes({ decision: "approve", confidence: null }, [vote("approve", 1), vote("reject", 1)], published)).toMatchObject({ status: "needs_human" });
+    const first = { decision: "approve", confidence: null };
+    expect(combineVotes(first, [vote("approve", 0.4), vote("approve", 1)], published)).toMatchObject({ status: "agreed" });
+    expect(combineVotes(first, [vote("approve", 1), vote("reject", 1)], published)).toMatchObject({ status: "needs_human" });
+    // 모르겠다는 표를 걸러내고 나머지만 보면 "그대로 두기"가 되어 버린다
+    expect(combineVotes(first, [vote("approve", 1), vote("needs_review", 1)], published)).toMatchObject({ status: "needs_human" });
+    expect(combineVotes(first, [], published)).toMatchObject({ status: "needs_human" });
   });
 });

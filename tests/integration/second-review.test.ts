@@ -168,7 +168,8 @@ it('실패한 호출은 기록만 남기고 판단을 지어내지 않는다', a
 
   const [row] = await db.select().from(secondReviews);
   expect(row).toMatchObject({ status: 'failed', errorCode: 'rate_limited', secondDecision: null });
-  expect((await secondReviewSummary(0.85)).counts).toEqual({ unanimousReject: 0, unanimousApprove: 0, agreedReject: 0, agreedApprove: 0, needsHuman: 0, published: 0, pending: 0 });
+  // 실패는 아직 끝나지 않은 표다 — 한 시간 뒤 다시 보므로 확정 칩이 아니라 대기로 센다
+  expect((await secondReviewSummary(0.85)).counts).toEqual({ unanimousReject: 0, unanimousApprove: 0, agreedReject: 0, agreedApprove: 0, needsHuman: 0, published: 0, pending: 1 });
 });
 
 it('실패한 것은 한 시간이 지나야 다시 대기로 돌린다', async () => {
@@ -343,4 +344,46 @@ it('1차 판단이 새로 오면(입력이 바뀌면) 앞선 표는 닫는다', 
   expect(rows).toHaveLength(2);
   expect(rows.filter((row) => row.resolution === 'superseded')).toHaveLength(1);
   expect((await pendingSecondReviews(10)).map((row) => row.firstDecision)).toEqual(['approve']);
+});
+
+it('실패한 표가 남아 있으면 확정 칩에 올리지 않는다 — 한 시간 뒤 다시 보고 뒤집을 수 있다', async () => {
+  const voters = [{ provider: 'abcllm' as const, model: '[MLX] gemma4-26b' }, { provider: 'abcllm' as const, model: '[MLX] gemma4-31b' }];
+  await saveSettings({ secondReview: { enabled: true, sampleRate: 0, agreeAt: 0.85, voters } }, 'fixture');
+  await held('acme/one-failed');
+  await firstReview('acme/one-failed', 'reject');
+  await enqueueSecondReviews(await getSettings());
+  const rows = await pendingSecondReviews(10);
+  await recordSecondReview(rows[0].id, { ok: true, decision: 'reject', confidence: 0.9, reason: '문서', model: rows[0].model!, provider: 'abcllm', status: 'agreed' });
+  await recordSecondReview(rows[1].id, { ok: false, error: 'model_unavailable', model: rows[1].model!, provider: 'abcllm' });
+
+  const { counts } = await secondReviewSummary(0.85);
+  expect(counts).toMatchObject({ pending: 1, agreedReject: 0, unanimousReject: 0, needsHuman: 0 });
+});
+
+it('표가 모두 실패해도 집계에서 사라지지 않는다', async () => {
+  await saveSettings({ secondReview: { enabled: true, sampleRate: 0, agreeAt: 0.85,
+    voters: [{ provider: 'abcllm', model: '[MLX] 사라진모델' }] } }, 'fixture');
+  await held('acme/all-failed');
+  await firstReview('acme/all-failed', 'reject');
+  await enqueueSecondReviews(await getSettings());
+  const [row] = await pendingSecondReviews(10);
+  await recordSecondReview(row.id, { ok: false, error: 'model_unavailable', model: row.model!, provider: 'abcllm' });
+
+  expect((await secondReviewSummary(0.85)).counts).toMatchObject({ pending: 1 });
+});
+
+it('모델을 여럿 세워도 공개분 표본이 대기 후보에 밀리지 않는다', async () => {
+  const voters = [{ provider: 'abcllm' as const, model: '[MLX] a' }, { provider: 'abcllm' as const, model: '[MLX] b' }];
+  await saveSettings({ secondReview: { enabled: true, sampleRate: 0, agreeAt: 0.85, voters } }, 'fixture');
+  // 대기 후보를 상한 넘게 쌓아 둔다
+  for (let index = 0; index < 55; index += 1) {
+    await held(`acme/queued-${index}`);
+    await firstReview(`acme/queued-${index}`, 'reject');
+  }
+  // 위험 신호가 있는 공개분 — 문장을 이름으로 가져온 것
+  await published('acme/fresh-publish', 'the quick way to plan all of your week with friends');
+
+  await enqueueSecondReviews(await getSettings());
+  const rows = await db.select().from(secondReviews).where(eq(secondReviews.repo, 'acme/fresh-publish'));
+  expect(rows).toHaveLength(2);
 });

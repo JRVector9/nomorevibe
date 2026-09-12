@@ -82,11 +82,18 @@ export function ReviewDetail({ entry, reasons }: { entry: AdminReviewEntry; reas
         </p>
       )}
 
-      {/* 2차는 모델마다 한 줄 — 어느 모델이 무엇이라 했는지가 한눈에 보여야 사람이 가른다 */}
+      {/*
+        2차는 모델마다 한 줄 — 어느 모델이 무엇이라 했는지가 한눈에 보여야 사람이 가른다.
+        아직 보지 않은 표와 실패한 표도 보여 준다. 무엇을 기다리는지 모르면 사람이 먼저 확정해 버린다.
+      */}
       {entry.seconds.map((vote, index) => (
         <p key={`${vote.model ?? 'model'}-${index}`}
-          className={`rounded-lg border px-2.5 py-2 text-[13px] leading-[1.6] text-fg-2 ${vote.status === 'agreed' ? 'border-up/40 bg-up/5' : 'border-warn/40 bg-warn/5'}`}>
-          <b className="font-semibold">2차 {vote.decision === 'approve' ? '승인' : vote.decision === 'reject' ? '거부' : vote.decision === 'needs_review' ? '보류' : vote.status}</b>
+          className={`rounded-lg border px-2.5 py-2 text-[13px] leading-[1.6] text-fg-2 ${
+            vote.status === 'agreed' ? 'border-up/40 bg-up/5' : vote.status === 'pending' ? 'border-line bg-bg-soft' : 'border-warn/40 bg-warn/5'}`}>
+          <b className="font-semibold">2차 {
+            vote.status === 'pending' ? '아직 안 봄'
+              : vote.status === 'failed' ? `실패 · ${vote.errorCode ?? '알 수 없음'}`
+              : vote.decision === 'approve' ? '승인' : vote.decision === 'reject' ? '거부' : vote.decision === 'needs_review' ? '보류' : vote.status}</b>
           {vote.model ? <span className="ml-1.5 font-mono text-fg-3">{vote.model}</span> : null}
           {typeof vote.confidence === 'number' ? <span className="ml-1.5 font-mono text-fg-3">확신 {vote.confidence.toFixed(2)}</span> : null}
           <span className="ml-1.5 font-semibold">{vote.status === 'agreed' ? '· 1차와 일치' : vote.status === 'needs_human' ? '· 사람 확인' : ''}</span>

@@ -262,8 +262,11 @@ export const crawlSettingsSchema = z.object({
       .refine((value) => value.provider !== "claude-cli" || /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,159}$/.test(value.model),
         { path: ["model"], message: "claude-cli 모델 이름은 영숫자와 . _ : / - 만 쓸 수 있다" }))
       .min(1).max(3)
-      // 같은 모델을 두 번 세우면 표가 아니라 메아리다
-      .refine((voters) => new Set(voters.map((voter) => `${voter.provider}:${voter.model}`)).size === voters.length,
+      /*
+       * 같은 모델을 두 번 세우면 표가 아니라 메아리다. 제공자가 달라도 막는다 —
+       * 2차 기록의 유일 색인이 (후보, 입력, 모델)이라 한쪽 행이 조용히 사라진다.
+       */
+      .refine((voters) => new Set(voters.map((voter) => voter.model)).size === voters.length,
         { message: "같은 모델을 두 번 세울 수 없다" }),
     /** 규칙만 통과한 공개분 중 무작위로 다시 볼 비율 — 자동 공개의 실제 정확도를 잰다 */
     sampleRate: z.number().min(0).max(0.5),

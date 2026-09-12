@@ -248,8 +248,13 @@ export function SettingsForm({ settings }: { settings: CrawlSettings }) {
           <div className="mt-2 grid gap-2">
             {[0, 1, 2].map((index) => {
               const voter = settings.secondReview.voters[index];
+              /*
+               * 키에 내용을 넣는다. 순번만 쓰면 칸을 지웠을 때 다음 칸이 이 DOM 을 물려받는데,
+               * 다루지 않는(uncontrolled) select 는 defaultValue 가 바뀌어도 다시 그려지지 않아
+               * 남은 모델이 앞 칸의 제공자를 뒤집어쓴다 — 검색 신호 행이 같은 이유로 이렇게 한다.
+               */
               return (
-                <div key={index} className="flex flex-wrap items-center gap-2">
+                <div key={`${index}:${voter?.provider ?? ""}:${voter?.model ?? ""}`} className="flex flex-wrap items-center gap-2">
                   <select name={`voterProvider${index}`} aria-label={`${index + 1}번째 표 부르는 곳`}
                     defaultValue={voter?.provider ?? "abcllm"} className={`${field} w-auto`}>
                     <option value="claude-cli">Claude CLI (한도 있음)</option>

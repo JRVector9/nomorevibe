@@ -156,7 +156,10 @@ export default async function StatusPage() {
     actions.push({
       key: "second", tone: "hold", count: secondOpen, title: "2차 심사 확인",
       detail: <>일치 {secondAgreed}건은 한 번에 확정(그중 만장일치 {seconds.counts.unanimousReject + seconds.counts.unanimousApprove}건) · 엇갈림 {seconds.counts.needsHuman}건 · 공개분 {seconds.counts.published}건은 사람이 봅니다.</>,
-      action: { label: "2차 심사", href: seconds.counts.needsHuman ? "/admin/review?second=needs_human" : "/admin/review?second=unanimous_reject" },
+      // 비어 있는 칩을 열지 않는다 — 할 일이 있다고 해 놓고 빈 화면을 주면 신뢰를 잃는다
+      action: { label: "2차 심사", href: `/admin/review?second=${
+        (["needs_human", "unanimous_reject", "unanimous_approve", "agreed_reject", "agreed_approve"] as const)
+          .find((key) => seconds.ids[key].length) ?? "needs_human"}` },
     });
   }
   /**

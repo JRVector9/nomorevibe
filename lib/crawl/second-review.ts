@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { and, desc, eq, gte, inArray, isNotNull, isNull, lt, notInArray, or, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { crawlCandidates, crawlDocuments, crawlReviewAttempts, secondReviews, type SecondReviewProvider, type SecondReviewStatus } from "@/lib/db/schema";
+import { crawlCandidates, crawlDocuments, crawlReviewAttempts, secondReviews, type SecondReviewProvider, type SecondReviewStatus, type SecondReviewTrigger } from "@/lib/db/schema";
 import { pageFactsFromDocument } from "./rules";
 import type { CrawlSettings } from "./settings-schema";
 
@@ -94,10 +94,11 @@ export function combineVotes(first: Verdict, second: Vote[], options: { agreeAt:
    */
   if (options.pending > 0) return { status: "pending", decision: null, votes: 0 };
   if (options.published) {
-    const decided = second.filter((vote) => vote.decision === "approve" || vote.decision === "reject");
-    if (decided.some((vote) => vote.decision !== "approve")) return { status: "needs_human", decision: "reject", votes: decided.length };
-    if (!decided.length) return { status: "needs_human", decision: null, votes: 0 };
-    return { status: "agreed", decision: "approve", votes: decided.length };
+    // 제품이 아니라는 표든 모르겠다는 표든 사람이 본다 — 자동으로 내리지 않지만 넘기지도 않는다
+    if (!second.length || second.some((vote) => vote.decision !== "approve")) {
+      return { status: "needs_human", decision: second.length ? "reject" : null, votes: second.length };
+    }
+    return { status: "agreed", decision: "approve", votes: second.length };
   }
   const all = [...(counts(first, options.agreeAt) ? [first.decision] : []), ...second.filter((vote) => counts(vote, options.agreeAt)).map((vote) => vote.decision)];
   const decision = all[0] === "approve" || all[0] === "reject" ? all[0] : null;
@@ -114,6 +115,8 @@ export function publishedInputHash(slug: string): string {
   return createHash("sha256").update(`published:${slug}`).digest("hex");
 }
 const ENQUEUE_LIMIT = 50;
+/** 공개분 표본은 대기 후보와 몫을 나눈다 — 모델을 여럿 세우면 행 수로는 앞쪽이 다 먹는다 */
+const PUBLISHED_LIMIT = 25;
 
 /**
  * 2차에 올린다. 같은 후보·같은 입력은 한 번만(유일 색인).
@@ -148,6 +151,8 @@ export async function enqueueSecondReviews(settings: CrawlSettings, now = new Da
     .where(and(eq(crawlCandidates.state, "published"), eq(crawlCandidates.decidedBy, "auto"), isNotNull(crawlCandidates.publishedSlug),
       gte(crawlCandidates.decidedAt, new Date(now.getTime() - PUBLISHED_LOOKBACK_MS))))
     .limit(2_000);
+  const publishedRows: (typeof secondReviews.$inferInsert)[] = [];
+  let publishedCount = 0;
   for (const row of published) {
     const meta = (row.pageMeta ?? {}) as { title?: unknown; readmeSample?: unknown };
     const facts = pageFactsFromDocument({ productUrl: row.documentUrl, pageStatus: row.pageStatus, pageMeta: row.pageMeta });
@@ -155,12 +160,12 @@ export async function enqueueSecondReviews(settings: CrawlSettings, now = new Da
       textSample: facts.textSample ?? null, readme: typeof meta.readmeSample === "string" ? meta.readmeSample : null });
     const sampled = inSample(row.repo, settings.secondReview.sampleRate);
     if (!signals.length && !sampled) continue;
-    for (const voter of voters) {
-      rows.push({ ...voter, candidateId: row.id, repo: row.repo, publishedSlug: row.slug, trigger: signals.length ? "risk" : "sample", signals,
-        firstDecision: "approve", firstConfidence: null, inputHash: publishedInputHash(row.slug!) });
-    }
-    if (rows.length >= ENQUEUE_LIMIT * 2) break;
+    publishedRows.push(...voters.map((voter) => ({ ...voter, candidateId: row.id, repo: row.repo, publishedSlug: row.slug,
+      trigger: (signals.length ? "risk" : "sample") as SecondReviewTrigger, signals,
+      firstDecision: "approve", firstConfidence: null, inputHash: publishedInputHash(row.slug!) })));
+    if (++publishedCount >= PUBLISHED_LIMIT) break;
   }
+  rows.push(...publishedRows);
   if (!rows.length) return 0;
   const inserted = await db.insert(secondReviews).values(rows).onConflictDoNothing()
     .returning({ id: secondReviews.id, candidateId: secondReviews.candidateId, trigger: secondReviews.trigger, inputHash: secondReviews.inputHash });
@@ -266,7 +271,9 @@ export async function secondReviewSummary(agreeAt: number): Promise<{ counts: Se
   const rows = await db.select({ candidateId: secondReviews.candidateId, status: secondReviews.status, decision: secondReviews.secondDecision,
     confidence: secondReviews.secondConfidence, provider: secondReviews.provider, published: secondReviews.publishedSlug,
     firstDecision: secondReviews.firstDecision, firstConfidence: secondReviews.firstConfidence }).from(secondReviews)
-    .where(inArray(secondReviews.status, ["pending", "agreed", "needs_human"]));
+    // 실패한 표도 읽는다 — 한 시간 뒤 다시 보므로 아직 끝나지 않은 표이고, 모두 실패한 후보가
+    // 집계에서 통째로 사라지면 멈춘 줄 모른다
+    .where(inArray(secondReviews.status, ["pending", "agreed", "needs_human", "failed"]));
 
   const byCandidate = new Map<number, typeof rows>();
   for (const row of rows) byCandidate.set(row.candidateId, [...(byCandidate.get(row.candidateId) ?? []), row]);
@@ -275,9 +282,10 @@ export async function secondReviewSummary(agreeAt: number): Promise<{ counts: Se
   let published = 0, pending = 0;
   for (const [candidateId, group] of byCandidate) {
     const first = { decision: group[0].firstDecision, confidence: group[0].firstConfidence };
-    const votes = group.filter((row) => row.status !== "pending")
+    const outstanding = group.filter((row) => row.status === "pending" || row.status === "failed").length;
+    const votes = group.filter((row) => row.status === "agreed" || row.status === "needs_human")
       .map((row) => ({ decision: row.decision ?? "", confidence: row.confidence, provider: row.provider }));
-    const verdict = combineVotes(first, votes, { agreeAt, published: Boolean(group[0].published), pending: group.filter((row) => row.status === "pending").length });
+    const verdict = combineVotes(first, votes, { agreeAt, published: Boolean(group[0].published), pending: outstanding });
     if (verdict.status === "pending") { pending += 1; continue; }
     if (group[0].published) { if (verdict.status === "needs_human") published += 1; continue; }
     if (verdict.status === "needs_human" || !verdict.decision) { ids.needs_human.push(candidateId); continue; }
@@ -291,11 +299,20 @@ export async function secondReviewSummary(agreeAt: number): Promise<{ counts: Se
   };
 }
 
-/** 후보별 2차 표 — 심사 상세에 1차와 나란히, 모델마다 한 줄로 보인다 */
+/**
+ * 후보별 지금 표 — 심사 상세에 1차와 나란히, 모델마다 한 줄로 보인다.
+ *
+ * 새 입력이 대신한 표(superseded)는 뺀다. 입력이 바뀌어 다시 본 뒤에도 옛 표가 남아 있으면
+ * 같은 모델이 두 줄로 보이고, 어느 쪽이 지금 의견인지 화면으로는 가릴 수 없다.
+ * 아직 보지 않은 표는 그대로 보여 준다 — 무엇을 기다리는지가 보여야 사람이 기다릴지 정한다.
+ */
 export async function secondReviewsFor(candidateIds: number[]) {
   if (!candidateIds.length) return [];
   return db.select().from(secondReviews)
-    .where(and(inArray(secondReviews.candidateId, candidateIds), notInArray(secondReviews.status, ["pending"])))
+    .where(and(inArray(secondReviews.candidateId, candidateIds),
+      // 새 입력이 대신한 표만 뺀다. 사람이 먼저 결정해 닫힌 표나 확신 없는 1차로 닫힌 표는
+      // 그 입력에 대한 지금 의견이라 그대로 보여 준다
+      or(isNull(secondReviews.resolution), notInArray(secondReviews.resolution, ["superseded"]))!))
     .orderBy(secondReviews.candidateId, secondReviews.id);
 }
 
