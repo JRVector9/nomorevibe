@@ -310,3 +310,37 @@ it('한 표만 보고 나머지가 남았으면 아직 기다린다', async () =
   const { counts } = await secondReviewSummary(0.85);
   expect(counts).toMatchObject({ pending: 1, unanimousReject: 0, agreedReject: 0, needsHuman: 0 });
 });
+
+it('모델을 하나 더 세워도 먼저 세운 모델의 표가 닫히지 않는다', async () => {
+  await saveSettings({ secondReview: { enabled: true, sampleRate: 0, agreeAt: 0.85,
+    voters: [{ provider: 'abcllm', model: '[MLX] gemma4-26b' }] } }, 'fixture');
+  await held('acme/added-voter');
+  await firstReview('acme/added-voter', 'reject');
+  await enqueueSecondReviews(await getSettings());
+
+  // 두 번째 모델을 더한다 — 같은 입력이라 먼저 올린 표는 그대로 있어야 한다
+  await saveSettings({ secondReview: { enabled: true, sampleRate: 0, agreeAt: 0.85,
+    voters: [{ provider: 'abcllm', model: '[MLX] gemma4-26b' }, { provider: 'abcllm', model: '[MLX] gemma4-31b' }] } }, 'fixture');
+  expect(await enqueueSecondReviews(await getSettings())).toBe(1);
+
+  const rows = await db.select().from(secondReviews).where(eq(secondReviews.repo, 'acme/added-voter'));
+  expect(rows.map((row) => [row.model, row.status]).sort())
+    .toEqual([['[MLX] gemma4-26b', 'pending'], ['[MLX] gemma4-31b', 'pending']]);
+  expect(rows.some((row) => row.resolution === 'superseded')).toBe(false);
+});
+
+it('1차 판단이 새로 오면(입력이 바뀌면) 앞선 표는 닫는다', async () => {
+  await saveSettings({ secondReview: { enabled: true, sampleRate: 0, agreeAt: 0.85,
+    voters: [{ provider: 'abcllm', model: '[MLX] gemma4-26b' }] } }, 'fixture');
+  await held('acme/new-input');
+  await firstReview('acme/new-input', 'reject');
+  await enqueueSecondReviews(await getSettings());
+  // 입력이 달라진 새 1차 판단
+  await firstReview('acme/new-input', 'approve', 0.95, 'b'.repeat(64));
+  await enqueueSecondReviews(await getSettings());
+
+  const rows = await db.select().from(secondReviews).where(eq(secondReviews.repo, 'acme/new-input'));
+  expect(rows).toHaveLength(2);
+  expect(rows.filter((row) => row.resolution === 'superseded')).toHaveLength(1);
+  expect((await pendingSecondReviews(10)).map((row) => row.firstDecision)).toEqual(['approve']);
+});

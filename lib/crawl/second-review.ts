@@ -163,12 +163,20 @@ export async function enqueueSecondReviews(settings: CrawlSettings, now = new Da
   }
   if (!rows.length) return 0;
   const inserted = await db.insert(secondReviews).values(rows).onConflictDoNothing()
-    .returning({ id: secondReviews.id, candidateId: secondReviews.candidateId, trigger: secondReviews.trigger });
+    .returning({ id: secondReviews.id, candidateId: secondReviews.candidateId, trigger: secondReviews.trigger, inputHash: secondReviews.inputHash });
   const renewed = inserted.filter((row) => row.trigger === "ai_decided");
   if (renewed.length) {
+    /**
+     * 앞선 것을 닫는 기준은 "입력이 바뀌었다"이지 "새 행이 들어왔다"가 아니다.
+     *
+     * 모델을 하나 더 세우면 같은 입력에 새 행이 생기는데, 그때 후보 id 로만 닫으면 먼저 세운
+     * 모델의 표(아직 안 본 것까지)가 함께 닫힌다. 같은 입력은 이미 낸 유일 색인 때문에 다시
+     * 올릴 수도 없어 그 표는 영영 사라진다. 입력 해시가 다른 것만 닫는다.
+     */
     await db.update(secondReviews).set({ status: "resolved", resolution: "superseded", resolvedAt: now })
       .where(and(eq(secondReviews.trigger, "ai_decided"), inArray(secondReviews.candidateId, renewed.map((row) => row.candidateId)),
-        notInArray(secondReviews.id, renewed.map((row) => row.id)), inArray(secondReviews.status, ["pending", "agreed", "needs_human", "failed"])));
+        notInArray(secondReviews.inputHash, [...new Set(renewed.map((row) => row.inputHash))]),
+        inArray(secondReviews.status, ["pending", "agreed", "needs_human", "failed"])));
   }
   return inserted.length;
 }
