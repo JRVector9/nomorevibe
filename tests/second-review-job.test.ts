@@ -77,7 +77,7 @@ it("한 틱에 일감을 넉넉히 집어 끝나는 대로 이어 본다", async
   mocks.pending.mockResolvedValue([row({ id: 7 }), row({ id: 8 }), row({ id: 9 })]);
   await secondReviewCandidates(context());
 
-  expect(mocks.pending).toHaveBeenCalledWith(24);
+  expect(mocks.pending).toHaveBeenCalledWith(48);
   expect(mocks.record).toHaveBeenCalledTimes(3);
 });
 
