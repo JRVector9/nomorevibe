@@ -1,5 +1,29 @@
 # Codex handoff
 
+## C-track complete: deployed, live UI verified, omission review complete — 2026-09-13 01:46 KST
+
+- Objective fulfilled: entire C-track handoff implemented, approved C1 applied, deployed and visually verified, then reviewed again for omissions as requested. C4 was conditional: all default groups exceed10, so retain existing12discoveryqueries and budget2. B-track commit streaks remain separate per original document.
+- Completed C1: maxStars99999;318 applied/0 skipped; after30.39min published249,needs_review12,rejected57 (duplicate34/not_product22/unreachable1),new/approved0. reviewMode observe unchanged; publication count is not AI approvals. Receipt remains .crawl-samples/stars-prod-receipt-20260913.json.
+- Completed C2: migration0030 applied directly on production5432,5995products backfilled. Publisher initializes stars, repository changes clear them. New bounded crawler job schedules every5min/40rows,24h freshness. First real execution16:44:27→33UTC updated40/40,error0,cursor afterId52,request/processed1/1.
+- Completed C3: home4×10 rows, /popular15rows,personal/tier/page URL state,public evidence summaries with freshness/relationship caveats,methodology2.1,min13px,responsive overflow handling,empty and failed-load states. Live groups78/65/61/45,personal23/17/9/15.
+- Source PR109 merged: d7b832be7a7bfccb06183daa6d7ad91c02435c6c. WebM3+mini/crawler/publisher/scheduler all deployment.done on that SHA. Code release418d734028990df808068a4a38debc6bd38d301a was set consistently in runtime tags and web build/runtime deployment IDs. Both direct node health checks and public domain return ok/dbok. New-release worker heartbeats verified16:45UTC.
+- Tests actually executed: GitHub CI unit116files/897PASS,integration64files/589PASS,fullESLint,TSC,NextproductionbuildPASS. Separate checkout containing only committed source passed7Playwright tests covering old home,new lists,and desktop/mobile detail. Expanded stars integration9/9PASS. Live browser smoke on https://nomorevibe.brut.bot completed16:44:40UTC: all bands/bounds/order/filter/paging/reload/evidence anchor/mobile/methodology PASS,pageerrors0. Screenshots opened and visually inspected.
+- Final review fixes: optimistic checkbox state; missing evidence anchor; repository changed-and-returned response race; locked current repo for resetting stats; preserve stale/relationship caveats in table; stale detail test expectations; stale production release identifiers.
+- Modified files: implementation f5d94eb (32files incl schema0030/rejudge/domain/stars job/home/popular/shared detail evidence/tests/docs); test correction418d734. Final docs record operational evidence. User ProductHero.tsx edit and nomorevibe-final artifacts remain untouched and uncommitted. No user stash touched.
+- Failed approaches: public artifact fetch only shell, native Chrome read succeeded earlier; server-only test needs existing vi.mock pattern; Turbopack rejects external node_modules symlink in isolated checkout, actual cloned dependencies fixed it. No claimed success before actual execution.
+- Remaining implementation work: none for C1–C4. Twelve candidates remain in normal human-review queue. Full operational report and local screenshot links: docs/operations/2026-09-13-popular-projects.md. Earlier pending entries below are historical and superseded.
+
+Exact verification commands:
+```sh
+cd /Users/jr/Desktop/projects/nomorevibe
+git status --short
+curl -fsS https://nomorevibe.brut.bot/api/health
+node .crawl-samples/live-popular-smoke.mjs
+python3 /tmp/nomorevibe-prod-db.py npx tsx .crawl-samples/observe-stars.ts
+python3 /tmp/nomorevibe-prod-db.py npx tsx .crawl-samples/observe-stars-job.ts
+```
+The local /tmp production helper retrieves secrets from Keychain into childenv only. Never print/save app env or credentials. The isolated validation checkout is /tmp/nomorevibe-release-check (detached418d734); do not confuse it with the user's working tree.
+
 ## C-track implementation verified, release in progress — 2026-09-13 01:35 KST
 
 - C1 production applied318/0 skipped under approved existing policy; 30min observation still due at16:41:36Z.

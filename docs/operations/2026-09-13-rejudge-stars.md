@@ -102,3 +102,4 @@ C-2/C-3 구현 및 운영 DB 마이그레이션 완료. 화면 배포·최종 �
 - 16:17:41Z(약6분): published123 / approved112 / needs_review15 / new19 / rejected49.
   거부는 already_listed32, not_a_product17. 최신 AI review 기록은 reject1건으로 관측됐다.
 - 운영 reviewMode는 observe다. 따라서 published와 AI 승인 건수를 동일하게 해석하지 않는다.
+- 16:42:00Z(30.39분): published249 / needs_review12 / rejected57. 거부 사유는 already_listed34, not_a_product22, unreachable1. new/approved 대기0. 최신 AI review 기록은 reject1건이며 observe 정책 특성상 발행 수와 다르다.
