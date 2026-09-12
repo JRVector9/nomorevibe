@@ -193,7 +193,8 @@ test("rich desktop profile shows objective evidence and behaves without provider
   await expect(page.getByText("고유 유입자 · 최근 7일")).toBeVisible();
   await expect(page.getByText("유효 방문 · 최근 7일")).toBeVisible();
   await expect(page.getByText("저장소 생성일")).toBeVisible();
-  await expect(page.getByText("★ 146 · forks 18")).toBeVisible();
+  await expect(page.getByText("★ 146", { exact: true })).toBeVisible();
+  await expect(page.getByText("forks", { exact: true }).locator("..")).toContainText("18");
   await expect(page.getByText("12명")).toBeVisible();
   await expect(page.getByText("OpenAI · Codex · GPT-5")).toBeVisible();
   await expect(page.getByText("openai/review@1.0.0")).toBeVisible();
@@ -229,7 +230,7 @@ test("mobile profile keeps the approved reading order and visible core content",
   const observed = observePage(page);
   await gotoProduct(page, PRODUCT_DETAIL_FIXTURES.rich);
 
-  const headings = ["제품 화면", "상세 소개", "객관적 정보", "저장소와 라이선스", "개발 근거", "업데이트"];
+  const headings = ["제품 화면", "상세 소개", "객관적 정보", "현재 확인 가능한 정보", "개발 근거", "업데이트"];
   const tops = await Promise.all(headings.map(async (name) => {
     const box = await page.getByRole("heading", { name }).boundingBox();
     return box?.y ?? -1;
@@ -263,7 +264,9 @@ test("collecting, stale-conflict, and unclaimed states remain explicit", async (
   await gotoProduct(page, PRODUCT_DETAIL_FIXTURES.unclaimed);
   await expect(page.getByRole("heading", { name: "Open Seed" })).toBeVisible();
   await expect(page.getByText("미클레임")).toBeVisible();
-  await expect(page.getByRole("heading", { name: "이 제품의 주인이신가요?" })).toBeVisible();
+  // 저장소가 없는 미클레임 제품은 운영 주체를 추정해 표시하지 않는다.
+  await expect(page.getByRole("heading", { name: "운영 주체와 연락" })).toHaveCount(0);
+  await expect(page.getByText("저장소 미제공", { exact: true })).toBeVisible();
   await expect(page.getByText("메이커가 아직 상세 소개를 제공하지 않았습니다.")).toBeVisible();
 
   await expectViewportContract(page);

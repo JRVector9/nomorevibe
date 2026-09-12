@@ -1,5 +1,99 @@
 # Codex handoff
 
+## C-track implementation verified, release in progress — 2026-09-13 01:35 KST
+
+- C1 production applied318/0 skipped under approved existing policy; 30min observation still due at16:41:36Z.
+- C2 production0030 migration successfully applied directly to5432. At16:33:05Z all5995 products backfilled; public eligible bands78/65/61/45, personal23/17/9/15. C4 conditional expansion not triggered: all four default groups already exceed10. Existing12queries/pagesPerTick2 unchanged.
+- C3 implementation and final review corrections: optimistic checkbox state, actual evidence anchor, reuse detail public observed facts including stale/relationship qualifiers, repository change-and-return CAS guarded by exact DB updated_at, latest locked repo used when clearing stats.
+- Tests executed: full unit116/897 PASS, integration64/587 PASS; expanded focused9/9 PASS (includes public setting/link hiding/old evidence and change-return race); TSC+targetedESLint+diffcheck PASS. New Playwright3/3 PASS with1440/390px screenshots visually inspected. Final browser regression run now includes home-redesign and product-detail.
+- Failure fixed in test setup: server-only module needs same vi.mock used by existing detail integration tests. No application workaround.
+- Modified files: git status plus app/p/[slug]/page.tsx anchor and lib/domain/products/detail-view.ts shared evidence helper; docs/operations/2026-09-13-popular-projects.md tracks whole requirement review. ProductHero and user design artifacts remain excluded.
+- Remaining: commit explicit files/PR/merge, deploywebM3+mini/crawler/publisher/scheduler (web autoDeploy is true, DB already ready), inspect deployments and public https://nomorevibe.brut.bot, run30min receipt observation, update finalreport/handoff. Production migration helper `/tmp/nomorevibe-migrate.py` only transforms the verified existing host's6432→5432 in childenv; no secrets on disk.
+- Next commands: `tail -15 /tmp/nomorevibe-popular-e2e-final.log`; `git diff --check`; `python3 /tmp/nomorevibe-prod-db.py npx tsx .crawl-samples/observe-stars.ts`. Native Chrome currently user other task; use new browser tab or repository Playwright live smoke, do not alter their tab.
+
+## C-track full implementation in progress — 2026-09-13 01:28 KST
+
+- Objective: user authorized C1 apply, then requested the entire document implemented, deployed and checked on screen, followed by another omission review. No further approval needed for that scope.
+- Production C1: maxStars 2000→99999 saved 2026-09-12T16:10:44.910Z. Reviewed 318-row plan applied: 318 changed, 0 skipped. Receipt `.crawl-samples/stars-prod-receipt-20260913.json`. At 16:17:41Z (~6 min): published123, approved112, needs_review15, new19, rejected49. These are actual pipeline states, not AI approval claims. Observe again after16:41:36Z.
+- C2/C3 implemented locally: migration0030 stars/stars_at/owner_type/stars_checked_at + latest document backfill + indexes; publisher writes stats; repository URL edits clear stats; bounded crawler refresh job scheduled every5min; home four10-item lists; /popular fifteen-row table; URL-preserved personal filter/tier/page; methodology and responsive13px styles.
+- Tests executed: new stars unit3 PASS; new popular integration7 PASS including backfill, failure throttle, quota cursor and repository-edit race. TSC and targeted ESLint PASS before latest test additions. Full unit and new Playwright are currently running; do not claim passed until exit checked.
+- Modified files: see git status, C1 files in previous entry plus new stars/popular domain modules, stars refresh job, schema/migration0030, home/popular UI and tests. User preexisting ProductHero.tsx edit and nomorevibe-final artifacts must remain unstaged. No commits/push/deploy yet.
+- Decisions: retain existing AI policy. Do not fabricate B-track commit streaks; show actual stats check date and link to evidence. C4 discovery expansion remains conditional on actual C1 band fill and existing source settings.
+- Remaining: finish UI QA + visual inspection; repair evidence anchor; review table evidence requirements; full test suite; C4 decision/config; C1 30min observation; final code/requirements review; commit PR merge; direct DB migration0030; deploy both web instances and affected singleton workers; verify live screen/health and record exact outcomes.
+- Failed approaches: initial missing-module tests were RED as expected; one test fixture omitted required health.status and was corrected. Artifact HTTP fetch returned shell/Cloudflare, native Chrome CUA successfully read original and mock.
+- Production helper `/tmp/nomorevibe-prod-db.py` reads Dokploy keychain and supplies DB URL to child env only. Never print secrets or app env. Relevant IDs: webM3 oipo2OAnIrtcnILBCRoG2, webMini llv4rlABSJOcFauSxaHdx, crawler AFHDBGCCY4zT9XkkcnzGd, publisher AeTaWnZbZKzzv94h7c8Vw, scheduler uAjLU7MslLIGpORD9h6LQ. Deploy API uses direct curl per prod skill.
+
+Exact continuation commands:
+```sh
+cd /Users/jr/Desktop/projects/nomorevibe
+git status --short
+tail -30 /tmp/nomorevibe-popular-e2e.log
+tail -10 /tmp/nomorevibe-popular-unit.log
+python3 /tmp/nomorevibe-prod-db.py npx tsx .crawl-samples/observe-stars.ts
+npm run test:integration
+npx tsc --noEmit -p .
+```
+
+## C-1 star-band rejudge prepared; production apply awaits review — 2026-09-13
+
+- Current objective: user asked to read and continue the [C-track handoff](https://claude.ai/code/artifact/258acc8e-c763-45cc-9aea-62c360b6ac56).
+  The next PR-sized item is C-1: widen star eligibility and requeue automatic `large_oss` rejections. The linked
+  document explicitly requires a reviewed dry-run before production application. C-2/C-3/C-4 remain subsequent work.
+- Current repository: main at `580c7d1` at start. Production now exists: Dokploy reviewer
+  `4RlA9EeKvtKGdR6c6AV4j` returned name `nomorevibe-reviewer-m3`, status `done`, branch `main`.
+  Earlier deployment-pending entries below are historical and must not override this observed state.
+- Completed: added read-only repeatable-read planning, schema-validated apply/revert, exact candidate/document
+  fingerprints with row locks, settings and DB guards, pre-commit durable receipt persistence and conservative
+  rollback. CLI defaults to dry-run, refuses conflicting flags and existing output files, and suppresses raw DB errors.
+- Modified files: new `lib/crawl/rejudge.ts`, `scripts/rejudge-stars.ts`, `tests/integration/rejudge-stars.test.ts`,
+  `docs/superpowers/plans/2026-09-13-rejudge-stars.md`, `docs/operations/2026-09-13-rejudge-stars.md`, this handoff.
+  Existing `components/product-detail/ProductHero.tsx`, `nomorevibe-final/`, `nomorevibe_final.html`,
+  `nomorevibe_final_source.zip` were not changed. Do not stage/revert them or touch the user's stash.
+- Key decisions: existing maxStars is inclusive (`stars > maxStars` rejects), so the document's 100000 would
+  admit exactly 100000. Proposed setting is **99999**, preserving the user requirement to exclude 100000+.
+  No production setting or rule default changed. An optional user question about stronger evidence at 5000+
+  is pending; preparation retains current AI/second-review policy. Application requires proposed settings to
+  match the plan; it only changes candidate state and updated_at. Human decisions, published rows and changed
+  inputs are preserved. Revert only restores actual applied rows still unchanged/new, including microsecond
+  timestamp precision; it does not undo later reviews/publication or restore the global star setting.
+- Production dry-run actually executed at `2026-09-12T15:48:17.688Z` (2026-09-13 00:48 KST): **318 candidates**,
+  bands 97/84/71/66, personal accounts 35/27/11/20 (93 total). Stored-source rule preview: approved/passed292,
+  needs_review/ambiguous16, rejected/not_a_product10. Preview excludes live AI/second review, latest evidence
+  and URL duplicate/ban lookup; it is not a claim of publication eligibility or eventual outcomes.
+- Artifacts: `.crawl-samples/stars-prod-plan-20260913.json` and human-readable
+  `.crawl-samples/stars-prod-review-20260913.md` (318 rows), both local and gitignored. They contain no credentials.
+  No receipt exists because no production apply was performed.
+- Tests actually run: initial missing-module failure followed by placeholder RED (5/6 expected behavior failures);
+  final focused integration **6/6 PASS**; full unit **115 files/894 PASS**; full integration **63 files/580 PASS**
+  (178.76s); `npx tsc --noEmit -p .`, targeted ESLint and `git diff --check` PASS. Logs are
+  `/tmp/nomorevibe-stars-unit.log` and `/tmp/nomorevibe-stars-integration.log`. CLI help exit0 and conflicting
+  apply/revert exit1 verified. No production changes, live rejudge results, deploy or UI implementation claimed.
+- Failed approaches: web fetch returned an artifact shell; its frame API returned a Cloudflare challenge.
+  CUA browser provider was unavailable, but native Chrome through CUA successfully displayed the full document.
+  No anti-bot bypass or account permission change was performed. `lib/crawl/rejudge.ts` was absent before this work;
+  the existing `scripts/rejudge.ts` only evaluates local samples and is unchanged.
+- Remaining work: obtain review of the concrete 318-row plan and authorization for maxStars2000→99999 plus
+  requeue under existing review policy; then change only that setting, apply with a new receipt path, record
+  applied/skipped counts, and measure actual rule/AI/second-review states after5/30minutes. If the user chooses
+  stricter evidence, define that policy before applying. Code is local, uncommitted; no push or PR was created.
+
+Exact next commands (DB URL must be injected from the secret store, never printed or stored in a file):
+
+```sh
+cd /Users/jr/Desktop/projects/nomorevibe
+git status --short
+# Read reviewed input; production mutation below ONLY after user approval and maxStars=99999 in /admin.
+cat .crawl-samples/stars-prod-review-20260913.md
+DB_POOLER_MODE=pgbouncer npx tsx scripts/rejudge-stars.ts --apply=.crawl-samples/stars-prod-plan-20260913.json --receipt=.crawl-samples/stars-prod-receipt-20260913.json
+# If reverting unprocessed applied rows is authorized:
+DB_POOLER_MODE=pgbouncer npx tsx scripts/rejudge-stars.ts --revert=.crawl-samples/stars-prod-receipt-20260913.json
+```
+
+Production DB access used Python `subprocess.check_output` for macOS keychain account `deploy.brut.bot`,
+service `dokploy-api-key`; GET `https://deploy.brut.bot/api/application.one?applicationId=4RlA9EeKvtKGdR6c6AV4j`
+with the key in `x-api-key`; extracted only DATABASE_URL from the env field into the child process environment,
+with DB_POOLER_MODE=pgbouncer and DB_POOL_MAX=1. Never print the key, app env or raw exception bodies.
+
 ## Production multi-instance hardening complete; deployment pending — 2026-09-09 17:47 KST
 
 - Current objective: deploy NoMoreVibe for the first time with two load-balanced web instances, one M3-only

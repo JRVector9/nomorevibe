@@ -43,6 +43,8 @@ export const JOB_CATALOG: readonly { name: string; role: JobRole | "scheduler"; 
   { name: "news-refresh", role: "maintenance", intervalMs: 60 * 60_000 },
   { name: "product-evidence-refresh", role: "crawler", intervalMs: 60_000 },
   { name: "agent-evidence-refresh", role: "crawler", intervalMs: 60_000 },
+  // 새 스타 값은 하루 한 번. 한 틱 40건·15초 이내로 기존 수집 예산을 보존한다.
+  { name: "product-stars-refresh", role: "crawler", intervalMs: 5 * 60_000 },
 ];
 
 export const JOB_NAMES = JOB_CATALOG.map(job => job.name);

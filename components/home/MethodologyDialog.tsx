@@ -18,7 +18,7 @@ export function MethodologyDialog({ pulse }: { pulse: HomePulseView }) {
   const router = useRouter();
   const pathname = usePathname();
   const metric = params.get("metric") ?? "";
-  const open = pathname === "/" && ["all", "born", "updates", "active", "categories", "tools"].includes(metric);
+  const open = pathname === "/" && ["all", "born", "updates", "active", "categories", "tools", "popular"].includes(metric);
 
   useEffect(() => {
     const node = dialog.current;
@@ -47,7 +47,7 @@ export function MethodologyDialog({ pulse }: { pulse: HomePulseView }) {
     router.replace(closeHref(), { scroll: false });
   }
 
-  const metrics: [string, string][] = [["born", "태어난 프로젝트"], ["updates", "새 버전"], ["active", "활발한 프로젝트"], ["categories", "분야 순위"]];
+  const metrics: [string, string][] = [["popular", "스타 구간"], ["born", "태어난 프로젝트"], ["updates", "새 버전"], ["active", "활발한 프로젝트"], ["categories", "분야 순위"]];
   if (pulse.tools) metrics.push(["tools", "제작 도구"]);
   const nav = (
     <div className="metric-links">
@@ -68,6 +68,12 @@ export function MethodologyDialog({ pulse }: { pulse: HomePulseView }) {
   );
 
   const blocks: Record<string, React.ReactNode> = {
+    popular: (<>
+      <h3>많이 쓰이는 프로젝트 — GitHub 스타 구간.</h3>
+      <p>공개된 제품을 스타 2천–5천 미만, 5천–1만 미만, 1만–3만 미만, 3만–10만 미만으로 나눕니다. 각 구간은 스타 많은 순이고, 같으면 등재 ID 순입니다. 홈에는 구간별 10개, 전체 목록에는 페이지당 15개를 보여줍니다.</p>
+      <p>스타는 저장소에 남긴 관심 표시로, 실제 이용자 수나 제품 품질을 보증하지 않습니다. 개인 계정만 필터는 GitHub의 User 유형만 포함합니다. 조직과 미확인 계정은 포함하지 않습니다.</p>
+      <p>스타는 저장된 GitHub 원본에서 시작해 하루 간격으로 다시 확인합니다. 실패하면 마지막 성공 값과 확인일을 유지하며, 작업 대기로 더 늦어질 수 있습니다. 미공개·차단·접속 불가 제품과 스타 10만 이상은 제외합니다. 제작 근거는 각 제품 상세에서 확인할 수 있습니다.</p>
+    </>),
     born: (
       <>
         <h3>태어난 프로젝트 — 저장소를 처음 만든 날로 셉니다.</h3>

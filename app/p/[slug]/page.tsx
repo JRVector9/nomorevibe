@@ -62,7 +62,7 @@ export default async function ProductPage({ params }: Props) {
           <ProductIntroduction product={detail.product} profile={detail.profile} unclaimed={detail.unclaimed} />
         </div>
 
-        <aside className="space-y-4 lg:col-start-2 lg:row-span-2 lg:row-start-1">
+        <aside id="evidence" className="space-y-4 lg:col-start-2 lg:row-span-2 lg:row-start-1">
           <EvidenceSummary
             links={detail.links}
             freshness={detail.freshness}

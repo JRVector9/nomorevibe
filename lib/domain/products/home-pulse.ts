@@ -18,7 +18,7 @@ const DAY_MS = 86_400_000;
 const LISTED: ProductStatus[] = ["verified", "seeded"];
 export const BORN_CHANGE_MIN = 20;
 export const ACTIVE_LIMIT = 10;
-export const METHOD_VERSION = "2.0";
+export const METHOD_VERSION = "2.1";
 
 /**
  * 홈 윗줄과 리더보드.

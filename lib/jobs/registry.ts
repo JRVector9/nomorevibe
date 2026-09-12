@@ -12,6 +12,7 @@ import { rollupClicks } from "@/lib/jobs/products/click-rollup";
 import { refreshRankings } from "@/lib/jobs/products/ranking-refresh";
 import { refreshAgentEvidenceJob } from "@/lib/jobs/products/agent-evidence-refresh";
 import { refreshProductEvidenceJob } from "@/lib/jobs/products/evidence-refresh";
+import { refreshProductStars } from "@/lib/jobs/products/stars-refresh";
 import { refreshNews } from "@/lib/news/refresh";
 
 /**
@@ -66,6 +67,7 @@ export const JOBS: Record<string, AnyJob> = {
   /** 외부 근거와 내부 미디어를 bounded batch로 갱신한다 */
   "product-evidence-refresh": refreshProductEvidenceJob,
   "agent-evidence-refresh": refreshAgentEvidenceJob,
+  "product-stars-refresh": refreshProductStars,
 
   /** 회사 공식 피드에서 AI 소식을 모은다 — 제품 파이프라인과 따로 돈다 */
   "news-refresh": (ctx) => refreshNews(ctx),
