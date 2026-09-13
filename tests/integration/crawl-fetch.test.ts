@@ -58,7 +58,7 @@ describe("수집 잡", () => {
     fetchPage.mockResolvedValue({
       status: 200,
       finalUrl: "https://my-app.test",
-      html: `<meta property="og:title" content="My App"><meta property="og:description" content="한 줄 소개">`,
+      html: `<meta property="og:title" content="My App"><meta property="og:description" content="한 줄 소개"><link rel="icon" href="/favicon.png">`,
     });
 
     const result = await tick();
@@ -69,6 +69,7 @@ describe("수집 잡", () => {
     // 레포 메타는 가공하지 않고 그대로 둔다 — 기준이 바뀌면 이 원본으로 다시 판정한다
     expect(document?.repoMeta).toMatchObject({ stargazers_count: 3, owner: { type: "User" } });
     expect(document?.pageMeta).toMatchObject({ title: "My App", description: "한 줄 소개" });
+    expect(document?.pageMeta).toMatchObject({ thumbnailHints: { icons: [{ url: "https://my-app.test/favicon.png" }] } });
     expect(await crawl.frontierCounts()).toEqual({ done: 1 });
   });
 
@@ -259,6 +260,26 @@ describe("수집 잡", () => {
 
     expect(await crawl.getCandidate("someone/steady")).toEqual(approved);
     // 판정할 것이 새로 생기지 않았으니 판정도 다시 부르지 않는다 (첫 수집 때의 요청 하나뿐)
+    expect(await judgeJob()).toMatchObject({ requestedVersion: 1 });
+  });
+
+  it("favicon discovery and changes do not invalidate an automatic decision", async () => {
+    await crawl.enqueue([{ repo: "someone/icons", signal: "commit-trailer" }]);
+    getRepo.mockResolvedValue({ ok: true, value: STABLE_META });
+    fetchPage.mockResolvedValue({ status: 200, finalUrl: "https://my-app.test", html: "<title>My App</title>" });
+    await tick();
+    const doc = (await crawl.getDocument("someone/icons"))!;
+    const legacyMeta = { ...(doc.pageMeta as Record<string, unknown>) };
+    delete legacyMeta.thumbnailHints;
+    await db.update(crawlDocuments).set({ pageMeta: legacyMeta }).where(eq(crawlDocuments.repo, "someone/icons"));
+    await crawl.recordJudgement({ repo: "someone/icons", productUrl: "https://my-app.test", state: "approved", reason: "passed", decidedBy: "auto" });
+    const approved = await crawl.getCandidate("someone/icons");
+    for (const icon of ["first", "second"]) {
+      await crawl.requeue(["someone/icons"]);
+      fetchPage.mockResolvedValue({ status: 200, finalUrl: "https://my-app.test", html: `<title>My App</title><link rel="icon" href="/${icon}.png">` });
+      await tick();
+      expect(await crawl.getCandidate("someone/icons")).toEqual(approved);
+    }
     expect(await judgeJob()).toMatchObject({ requestedVersion: 1 });
   });
 

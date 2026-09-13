@@ -109,6 +109,8 @@ describe("발행 잡", () => {
     expect(isUnclaimed(product!)).toBe(true);
     // 프론티어에 발견 기록이 없으면 "만든 AI"를 지어내지 않는다
     expect(product?.builder).toBeNull();
+    expect(await db.query.jobs.findFirst({ where: eq(jobs.name, "product-thumbnail-refresh") }))
+      .toMatchObject({ requestedVersion: 1, processedVersion: 0 });
   });
 
   it("검색 힌트가 있어도 제작 AI를 확정하지 않는다", async () => {

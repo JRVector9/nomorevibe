@@ -1572,3 +1572,10 @@ dialog::backdrop {
 .popular-evidence { min-width: 170px; }
 .popular-evidence span, .popular-evidence small, .popular-evidence a { display: block; font-size: 13px; }
 .popular-evidence small { color: var(--text-3); margin: 3px 0; }
+
+/* Identity assets stay small and are never styled as screenshots. */
+.cover-identity { display: flex; align-items: center; justify-content: center; background: var(--bg-soft, #f5f6fb); }
+.cover-identity img { object-fit: contain; }
+.cover-identity .cover-brand { color: var(--text, #20242d); text-shadow: none; }
+.cover-default { display: flex; height: 100%; align-items: center; justify-content: center; flex-direction: column; gap: 8px; }
+.cover-default small { font-size: 12px; opacity: .65; }

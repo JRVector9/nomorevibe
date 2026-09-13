@@ -13,6 +13,7 @@ import { refreshRankings } from "@/lib/jobs/products/ranking-refresh";
 import { refreshAgentEvidenceJob } from "@/lib/jobs/products/agent-evidence-refresh";
 import { refreshProductEvidenceJob } from "@/lib/jobs/products/evidence-refresh";
 import { refreshProductStars } from "@/lib/jobs/products/stars-refresh";
+import { refreshProductThumbnails } from "@/lib/jobs/products/thumbnail-refresh";
 import { refreshNews } from "@/lib/news/refresh";
 
 /**
@@ -68,6 +69,7 @@ export const JOBS: Record<string, AnyJob> = {
   "product-evidence-refresh": refreshProductEvidenceJob,
   "agent-evidence-refresh": refreshAgentEvidenceJob,
   "product-stars-refresh": refreshProductStars,
+  "product-thumbnail-refresh": refreshProductThumbnails,
 
   /** 회사 공식 피드에서 AI 소식을 모은다 — 제품 파이프라인과 따로 돈다 */
   "news-refresh": (ctx) => refreshNews(ctx),

@@ -2,6 +2,7 @@ import type { JobContext, JobOutcome } from "@/lib/jobs/runner";
 import type { FrontierEntry } from "@/lib/db/schema";
 import { fetchPage } from "@/lib/net/fetch";
 import { normalizeUrl, extractPageMeta, metaRefreshTarget } from "@/lib/net/normalize";
+import { siteHints } from "@/lib/domain/products/thumbnails/candidates";
 import { resolveCanonical } from "@/lib/domain/products/register";
 import * as crawl from "@/lib/crawl/repository";
 import { getSettings } from "@/lib/crawl/settings";
@@ -290,6 +291,7 @@ async function visit(url: string, docsGenerators: readonly string[], oneAtATime:
     productUrl,
     status: page.status,
     meta: { ...extractPageMeta(page.html, page.finalUrl, docsGenerators),
+      thumbnailHints: siteHints(page.html, page.finalUrl),
       repositoryKeys: extractSiteRepositoryKeys(page.html, page.finalUrl),
       finalUrl: page.finalUrl },
   };

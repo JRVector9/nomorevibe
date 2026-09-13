@@ -14,7 +14,7 @@ import type { OperationJob } from './OperationsCenter';
 const PIPELINE_ORDER = [
   'crawl-seed', 'hn-show-seed', 'crawl-fetch', 'agent-evidence-refresh',
   'crawl-judge', 'crawl-agent-review', 'second-review', 'reason-translate', 'crawl-publish',
-  'uptime-ping', 'product-evidence-refresh', 'click-rollup', 'ranking-refresh', 'news-refresh',
+  'product-thumbnail-refresh', 'uptime-ping', 'product-evidence-refresh', 'click-rollup', 'ranking-refresh', 'news-refresh',
 ];
 
 /** 이 작업이 무엇을 읽어 무엇을 남기는지 */
@@ -30,6 +30,7 @@ const FLOW: Record<string, { reads: string; writes: string }> = {
   'crawl-publish': { reads: '승인', writes: '카테고리 · 공개 제품' },
   'uptime-ping': { reads: '공개 제품', writes: '응답 기록' },
   'product-evidence-refresh': { reads: '공개 제품', writes: '외부 근거' },
+  'product-thumbnail-refresh': { reads: '공개 제품 · 이미지 출처', writes: '대표 이미지 · 재시도 일정' },
   'click-rollup': { reads: '클릭 원천', writes: '일별 집계' },
   'ranking-refresh': { reads: '일별 집계', writes: '시즌 스냅샷' },
   'news-refresh': { reads: '공식 피드', writes: 'AI 소식' },

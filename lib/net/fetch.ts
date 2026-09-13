@@ -113,6 +113,7 @@ export async function fetchCapped(
   options: {
     maxBytes: number;
     timeoutMs?: number;
+    signal?: AbortSignal;
     headers?: Record<string, string>;
     /** 테스트 전용 주입점. 프로덕션 기본 요청은 연결 시점 DNS도 재검사한다. */
     request?: CappedRequest;
@@ -136,7 +137,9 @@ export async function fetchCapped(
     try {
       response = await request(current, {
         redirect: "manual",
-        signal: AbortSignal.timeout(options.timeoutMs ?? FETCH_TIMEOUT_MS),
+        signal: options.signal
+          ? AbortSignal.any([options.signal, AbortSignal.timeout(options.timeoutMs ?? FETCH_TIMEOUT_MS)])
+          : AbortSignal.timeout(options.timeoutMs ?? FETCH_TIMEOUT_MS),
         headers,
       });
     } catch (error) {

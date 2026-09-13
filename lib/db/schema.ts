@@ -103,6 +103,19 @@ export const ogImages = pgTable("og_images", {
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
+/** Automatic fallback provenance and retry schedule; maker images remain authoritative. */
+export const productThumbnailState = pgTable("product_thumbnail_state", {
+  slug: varchar("slug", { length: 80 }).primaryKey().references(() => products.slug, { onDelete: "cascade" }),
+  kind: varchar("kind", { length: 24 }).notNull(),
+  sourceUrl: text("source_url"),
+  width: integer("width").notNull(),
+  height: integer("height").notNull(),
+  checkedAt: timestamp("checked_at").notNull().defaultNow(),
+  nextAttemptAt: timestamp("next_attempt_at"),
+  attempts: integer("attempts").notNull().default(1),
+  lastError: varchar("last_error", { length: 120 }),
+}, table => [index("product_thumbnail_retry_idx").on(table.nextAttemptAt)]);
+
 /**
  * 백그라운드 작업 상태.
  *

@@ -339,13 +339,20 @@ export async function saveFetchedDocument(
  *
  * 레포 메타 전체를 비교하지 않는다 — updated_at·watchers 같은 것은 다시 받을 때마다 바뀌어,
  * 모든 재수집이 재판정이 된다. 레포는 규칙이 쓰는 사실(RepoFacts)만 보고, 페이지는 메타를
- * 통째로 본다. 규칙이 쓰는 제목·본문·생성기·도착 주소에 더해, 개발 근거 판정이 쓰는
+ * 이미지 후보 탐색 힌트만 제외하고 본다. 규칙이 쓰는 제목·본문·생성기·도착 주소에 더해, 개발 근거 판정이 쓰는
  * repositoryKeys(agent-evidence.ts)와 발행이 그대로 쓰는 소개·이미지가 모두 거기 있다.
  */
+function judgementPageMeta(meta: CrawlDocument["pageMeta"]) {
+  if (!meta || typeof meta !== "object" || Array.isArray(meta)) return meta;
+  const relevant = { ...meta };
+  delete relevant.thumbnailHints;
+  return relevant;
+}
+
 function judgedSourceChanged(previous: CrawlDocument, next: CrawlDocument): boolean {
   return previous.productUrl !== next.productUrl
     || previous.pageStatus !== next.pageStatus
-    || !isDeepStrictEqual(previous.pageMeta, next.pageMeta)
+    || !isDeepStrictEqual(judgementPageMeta(previous.pageMeta), judgementPageMeta(next.pageMeta))
     || !isDeepStrictEqual(factsFromRepoMeta(previous.repo, previous.repoMeta), factsFromRepoMeta(next.repo, next.repoMeta));
 }
 

@@ -7,6 +7,7 @@ import type { RegisterInput } from "./schema";
 import { type Result, ok, fail } from "./errors";
 import * as repo from "./repository";
 import { cacheOgImage } from "./og";
+import { requestJob } from "@/lib/jobs/control";
 
 export type RegisterOutput = {
   slug: string;
@@ -148,5 +149,6 @@ export async function registerProduct(input: RegisterInput): Promise<Result<Regi
   }
 
   logger.info("register.succeeded", { slug, url: canonical, builder: input.builder ?? null });
+  await requestJob("product-thumbnail-refresh").catch(() => logger.warn("thumbnail.enqueue_failed", { slug }));
   return ok({ slug, editToken, verifyToken });
 }

@@ -1,5 +1,6 @@
 /* eslint-disable @next/next/no-img-element -- 검증 후 내부에 보관한 이미지를 저장 치수 그대로 제공한다. */
 import { ProductIcon } from "@/components/ProductIcon";
+import { thumbnailPresentation } from "@/lib/domain/products/thumbnails/presentation";
 import { StatusBadge } from "@/components/TrustBadges";
 import { Tag } from "@/components/Tag";
 import type { ProductLifecycle } from "@/lib/db/product-evidence-schema";
@@ -34,6 +35,7 @@ export function ProductHero({
 }) {
   const displayUrl = product.url.replace(/^https?:\/\/(www\.)?/, "").replace(/\/$/, "");
   const safeIcon = product.ogImage?.startsWith("/") ? product.ogImage : null;
+  const thumbnail = thumbnailPresentation(safeIcon);
   const representative = media[0] ?? null;
   const current = isHealthCurrent(health.checkedAt);
   const healthLabel = !health.checkedAt ? "가동 상태 확인 전"
@@ -50,14 +52,14 @@ export function ProductHero({
       <div className="grid lg:grid-cols-[minmax(0,1.55fr)_minmax(340px,0.75fr)]">
         <div data-testid="product-hero-media" className="min-w-0 border-b border-line bg-bg-soft lg:border-b-0 lg:border-r">
           <div className="flex min-h-12 flex-wrap items-center justify-between gap-2 border-b border-line bg-bg-card px-4 py-3">
-            <h2 className="text-[13px] font-extrabold text-fg">제품 화면</h2>
+            <h2 className="text-[13px] font-extrabold text-fg">{representative || !safeIcon ? "제품 화면" : "대표 이미지"}</h2>
             {representative && (
               <span className="font-mono text-[13px] text-fg-3">
                 {representative.width} × {representative.height}
               </span>
             )}
             {!representative && safeIcon && (
-              <span className="text-[13px] text-fg-3">공개 페이지 대표 이미지</span>
+              <span className="text-[13px] text-fg-3">{thumbnail.label}</span>
             )}
           </div>
           {representative ? (
@@ -86,16 +88,17 @@ export function ProductHero({
               <div className="flex min-h-[260px] items-center p-3 sm:min-h-[400px] sm:p-5 lg:min-h-[520px]">
                 <img
                   src={safeIcon}
-                  width={1200}
-                  height={630}
-                  alt={`${product.name} 공개 페이지 대표 이미지`}
+                  width={thumbnail.width}
+                  height={thumbnail.height}
+                  style={thumbnail.identity ? { maxWidth: Math.min(thumbnail.width, 112), margin: "auto" } : undefined}
+                  alt={`${product.name} ${thumbnail.label}`}
                   loading="eager"
                   fetchPriority="high"
                   className="h-auto max-h-[560px] w-full object-contain"
                 />
               </div>
               <figcaption className="border-t border-line bg-bg-card px-4 py-3 text-[13px] leading-5 text-fg-3">
-                공개 페이지에서 보관한 대표 이미지
+                {thumbnail.label}
               </figcaption>
             </figure>
           ) : (

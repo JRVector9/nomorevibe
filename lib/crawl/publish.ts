@@ -12,7 +12,7 @@ import { judgeRevision } from "./rules";
 import { guardPublication, publicationSourceChanged, PublicationStateChangedError } from "./publication-guard";
 import { loadAgentJudgeInput } from "./agent-evidence";
 import { summarizeAgentEvidence, type AgentEvidenceSummary } from "@/lib/domain/evidence/agents/summary";
-import type { JobLease } from "@/lib/jobs/control";
+import { requestJob, type JobLease } from "@/lib/jobs/control";
 import { ReviewApprovalChangedError } from "./agent-review-repository";
 import { parseRepositoryStats } from "@/lib/domain/products/stars";
 
@@ -194,6 +194,8 @@ export async function publishCandidate(
   }
 
   logger.info("crawl.published", { repo: candidate.repo, slug, url, category });
+  // The periodic worker also catches a missed request after a process shutdown.
+  await requestJob("product-thumbnail-refresh").catch(() => logger.warn("thumbnail.enqueue_failed", { slug }));
   return { ok: true, slug };
 }
 
