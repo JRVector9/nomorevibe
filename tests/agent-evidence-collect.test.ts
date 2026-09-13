@@ -8,7 +8,7 @@ function mockRequest(options: { truncated?: boolean; limited?: boolean; symlink?
     paths.push(path);
     if (options.limited) return { ok: false, error: { kind: 'rate_limited', resetAt: new Date('2026-09-07') } };
     let value: unknown;
-    if (path === '/repos/acme/app') value = { id: 12, private: false, full_name: 'acme/app', default_branch: 'main' };
+    if (path === '/repos/acme/app') value = { id: 12, private: false, full_name: 'acme/app', fork: false, default_branch: 'main' };
     else if (path.includes('/commits/')) value = { sha: COMMIT, commit: { tree: { sha: TREE } } };
     else if (path.includes('/git/trees/')) value = { truncated: options.truncated ?? false, tree: [
       { path: 'AGENTS.md', sha: BLOB, type: 'blob', mode: options.symlink ? '120000' : '100644', size: 10 },
@@ -89,7 +89,7 @@ describe('bounded GitHub agent collector', () => {
     const discovered = 'e'.repeat(40);
     const request = async <T>(path: string): Promise<GitHubHttpResult<T>> => {
       let value: unknown;
-      if (path.endsWith('/commits/' + discovered)) value = { sha: discovered, commit: { message: 'Fix app\n\nCo-authored-by: Qwen-Coder <qwen@example.com>' }, parents: [{ sha: 'f'.repeat(40) }] };
+      if (path.endsWith('/commits/' + discovered)) value = { sha: discovered, commit: { message: 'Fix app\n\nCo-authored-by: Qwen-Coder <qwen@example.com>' }, parents: [{ sha: 'f'.repeat(40) }], files:[{filename:'src/app.ts',changes:1}] };
       else if (path.includes('/compare/')) value = { status };
       else return mock.request<T>(path);
       return { ok: true, status: 200, value: value as T, etag: null, lastModified: null, link: null };
@@ -100,7 +100,7 @@ describe('bounded GitHub agent collector', () => {
     const result = await collectRepositoryAgentEvidence({ repositoryKey: 'acme/app', request, cursor: first.cursor });
     expect(result.state).toBe('complete');
     expect(result.observations).toHaveLength(['ahead', 'identical'].includes(status) ? 1 : 0);
-    if (result.observations.length) expect(result.observations[0]).toMatchObject({ kind: 'commit_attribution', client: 'qwen-code', declaredModelId: null, commitSha: discovered });
+    if (result.observations.length) expect(result.observations[0]).toMatchObject({ kind: 'commit_attribution', client: 'qwen-code', declaredModelId: null, commitSha: discovered, commitEvidence:{changedPaths:['src/app.ts'],changeKind:'development',headSha:COMMIT} });
   });
   it.each([{ labels: Array.from({ length: 1000 }, (_, i) => `Claude Opus ${i}`), expected: 1, state: 'complete' }, { labels: ['Claude', 'Codex', 'Kimi', 'Grok', 'Cursor', 'Cline', 'Roo Code', 'Aider', 'Goose'], expected: 8, state: 'partial' }])('bounds commit client observations ($expected)', async ({ labels, expected, state }) => {
     const mock = mockRequest();
@@ -108,7 +108,7 @@ describe('bounded GitHub agent collector', () => {
     const message = 'Fix\n\n' + labels.map(label => `Co-authored-by: ${label} <agent@example.com>`).join('\n');
     const request = async <T>(path: string): Promise<GitHubHttpResult<T>> => {
       let value: unknown;
-      if (path.endsWith('/commits/' + discovered)) value = { sha: discovered, commit: { message }, parents: [{}] };
+      if (path.endsWith('/commits/' + discovered)) value = { sha: discovered, commit: { message }, parents: [{}], files:[{filename:'src/app.ts',changes:1}] };
       else if (path.includes('/compare/')) value = { status: 'ahead' };
       else return mock.request<T>(path);
       return { ok: true, status: 200, value: value as T, etag: null, lastModified: null, link: null };
@@ -130,6 +130,25 @@ describe('bounded GitHub agent collector', () => {
     const result = await collectRepositoryAgentEvidence({ repositoryKey: 'acme/app', request, discoveryCommitShas: [discovered], knownComplete: { repositoryId: '12', commitSha: COMMIT } });
     expect(result.observations).toHaveLength(0);
     expect(compared).toBe(false);
+  });
+  it.each(['missing-files','zero-change','wrong-scope','fork','paged-files','committer'] as const)('keeps ambiguous or non-author evidence separate (%s)', async scenario => {
+    const mock = mockRequest(); const discovered = 'e'.repeat(40);
+    const request = async <T>(path:string):Promise<GitHubHttpResult<T>> => {
+      let value:unknown; let link:string|null=null;
+      if(path==='/repos/acme/app' && scenario==='fork') value={id:12,private:false,fork:true,default_branch:'main'};
+      else if(path.endsWith('/commits/'+discovered)) {
+        value={sha:discovered,parents:[{}],commit:{message:scenario==='committer'?'Fix':'Fix\n\nCo-authored-by: Codex <noreply@example.com>',committer:{name:'Dev (aider)'}},
+          ...(scenario==='missing-files'?{}:{files:[{filename:scenario==='wrong-scope'?'other/app.ts':'src/app.ts',changes:scenario==='zero-change'?0:1}]})};
+        if(scenario==='paged-files') link='<https://api.github.com/more>; rel="next"';
+      } else if(path.includes('/compare/')) value={status:'ahead'};
+      else return mock.request<T>(path);
+      return {ok:true,status:200,value:value as T,etag:null,lastModified:null,link};
+    };
+    const result=await collectRepositoryAgentEvidence({repositoryKey:'acme/app',scope:scenario==='wrong-scope'?'src':'',request,discoveryCommitShas:[discovered],knownComplete:{repositoryId:'12',commitSha:COMMIT}});
+    if(scenario==='missing-files') expect(result).toMatchObject({state:'partial',errorCode:'invalid',observations:[]});
+    else if(scenario==='paged-files') expect(result.state).toBe('partial');
+    else if(scenario==='committer') expect(result.observations[0]).toMatchObject({role:'committer',commitEvidence:{basis:'committer'}});
+    else expect(result.observations).toEqual([]);
   });
   it('resumes a pinned cursor without resolving a moving branch again', async () => {
     const mock = mockRequest();

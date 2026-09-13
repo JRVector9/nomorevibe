@@ -17,7 +17,7 @@ describe('agent evidence policy', () => {
     }
   });
   it('accepts a commit contribution claim without claiming execution', () => {
-    expect(summarizeAgentEvidence({scanState:'complete', relationship:'same_product', observations:[{...observation, kind:'commit_attribution', client:'codex'}]}))
+    expect(summarizeAgentEvidence({scanState:'complete', relationship:'same_product', observations:[{...observation, kind:'commit_attribution', client:'codex', commitEvidence:{basis:'coauthor',changedPaths:['src/app.ts'],changeKind:'development',headSha:'a'.repeat(40)}}]}))
       .toMatchObject({eligible:true, reason:'ai_evidence_supported', executionVerified:false});
   });
   it.each(['fixed', 'auto', 'fallback', 'unknown'] as const)('never promotes model configuration (%s)', routing => {
@@ -26,6 +26,11 @@ describe('agent evidence policy', () => {
   });
   it('does not treat committing existing work as authorship', () => {
     expect(summarizeAgentEvidence({scanState:'complete', relationship:'same_product', observations:[{...observation, kind:'commit_attribution', client:'aider', role:'committer'}]}).eligible).toBe(false);
+  });
+  it('does not promote legacy claims without changed-file provenance or docs-only changes', () => {
+    const claim: AgentObservation={...observation,kind:'commit_attribution',client:'codex'};
+    expect(summarizeAgentEvidence({scanState:'complete',relationship:'same_product',observations:[claim]}).eligible).toBe(false);
+    expect(summarizeAgentEvidence({scanState:'complete',relationship:'same_product',observations:[{...claim,commitEvidence:{basis:'coauthor',changedPaths:['README.md'],changeKind:'other',headSha:'a'.repeat(40)}}]}).eligible).toBe(false);
   });
   it.each(['pending', 'partial', 'failed'] as const)('does not complete a %s scan', scanState => {
     expect(summarizeAgentEvidence({scanState, relationship:'same_product', observations:[]})).toMatchObject({eligible:false, reason:'ai_evidence_pending'});

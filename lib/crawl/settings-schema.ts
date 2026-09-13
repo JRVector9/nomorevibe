@@ -217,7 +217,7 @@ const defaultAgentEvidence = {
   enabled: false,
   enforceEligibility: false,
   displayObservedFacts: false,
-  detectorVersion: "2026-09-06.1",
+  detectorVersion: "2026-09-14.1",
   policyVersion: "2026-09-06.1",
 };
 

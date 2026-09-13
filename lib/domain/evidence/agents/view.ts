@@ -18,7 +18,7 @@ export function presentObservedAgentFacts(input: { observations:AgentObservation
       ? /(?:^|\/)CLAUDE\.md$/.test(observation.sourcePath ?? "") ? "Claude 호환 지침 파일 확인" : "에이전트 지침 파일 확인"
       : observation.kind === "model_config" ? observation.routing === "auto" ? "자동 모델 선택 설정" : "모델 설정 확인"
       : observation.kind === "client_config" ? "도구 설정 확인"
-      : observation.kind === "commit_attribution" ? "커밋 기여 표기 확인" : "저장소 작성자 사용 주장",
+      : observation.kind === "commit_attribution" ? observation.role === "committer" ? "커밋 도구 표기 확인" : "커밋 기여 표기 확인" : "저장소 작성자 사용 주장",
     clientLabel: observation.client ? agentClientLabel(observation.client) : "미확인 (공유 형식)",
     modelLabel: observation.declaredModelId ?? "미확인",
     gatewayLabel: observation.gateway ? GATEWAYS[observation.gateway] ?? observation.gateway : "미확인",

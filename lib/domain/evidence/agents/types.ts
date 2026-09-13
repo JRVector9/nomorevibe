@@ -1,7 +1,14 @@
 import { z } from 'zod';
 
-export const AGENT_DETECTOR_VERSION = '2026-09-06.1';
+export const AGENT_DETECTOR_VERSION = '2026-09-14.1';
 export const agentObservationSchema = z.object({
+  commitEvidence: z.object({
+    basis: z.enum(['coauthor','author','committer']),
+    changedPaths: z.array(z.string().min(1).max(1000).refine(path => !/[\x00-\x1f\\]/.test(path)
+      && !path.split('/').some(part => !part || part === '.' || part === '..'))).min(1).max(20),
+    changeKind: z.enum(['development','other']),
+    headSha: z.string().regex(/^[a-f0-9]{40,64}$/),
+  }).strict().optional(),
   kind: z.enum(['instruction_file','client_config','model_config','commit_attribution','declared_usage']),
   client: z.string().max(80).nullable(),
   compatibleClients: z.array(z.string().max(80)).max(30),

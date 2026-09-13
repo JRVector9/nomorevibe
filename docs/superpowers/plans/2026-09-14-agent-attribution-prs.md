@@ -8,9 +8,9 @@ Goal: strengthen inspectable contribution claims without claiming AI execution o
 - [x] Unit89/integration11, typegen+TSC/lint. Read-only independent review before PR.
 
 ## PR 2 — feat/agent-commit-evidence (base PR 1)
-- [ ] Store bounded commit change evidence and attribution basis; accept Aider author vs committer metadata with distinct roles.
-- [ ] Verify actual changed paths in requested scope and branch ancestry; do not promote missing/truncated evidence or copied fork ancestry. Existing discovery budget retained; no full-history expansion.
-- [ ] Version detector, regression fixtures for files absent, unrelated scope, docs-only, Aider roles, fork and malformed response; persistence roundtrip.
+- [x] Store bounded commit change evidence and attribution basis; accept Aider author vs committer metadata with distinct roles.
+- [x] Verify actual changed paths in requested scope and branch ancestry; do not promote missing/truncated evidence or copied fork ancestry. Existing discovery budget retained; no full-history expansion.
+- [x] Version detector, regression fixtures for files absent, unrelated scope, docs-only, Aider roles, fork and malformed response; persistence roundtrip.
 
 ## PR 3 — feat/agent-attribution-audit (base PR 2)
 - [ ] Read-only paginated audit of published products; latest scan, fresh/partial/missing, source-bound claims, separate maker declaration.

@@ -14,6 +14,28 @@ function result(overrides: Partial<CollectResult> = {}): CollectResult { return 
 beforeAll(() => ensureSchema());
 beforeEach(async () => { await resetTables(); });
 describe('repository agent observations', () => {
+  it('persists changed-file provenance and rejects an unrelated proof head', async () => {
+    const claim: AgentObservation = {...observation, kind:'commit_attribution', role:'coauthor', sourcePath:null, blobSha:null,
+      sourceUrl:`https://github.com/acme/app/commit/${SHA}`,
+      commitEvidence:{basis:'coauthor',changedPaths:['src/app.ts'],changeKind:'development',headSha:SHA}};
+    await saveRepositoryAgentScan(result({observations:[claim]}));
+    expect((await getLatestRepositoryAgentEvidence('acme/app'))?.observations).toEqual([claim]);
+    await expect(saveRepositoryAgentScan(result({observations:[{...claim,commitEvidence:{...claim.commitEvidence!,headSha:'f'.repeat(40)}}]}))).rejects.toThrow('invalid agent observation');
+    await expect(saveRepositoryAgentScan(result({observations:[{...claim,scope:'apps/web'}]}))).rejects.toThrow('invalid agent observation');
+  });
+  it('removes prior commit claims when the same repository and head becomes a fork', async () => {
+    const claim: AgentObservation = {...observation,kind:'commit_attribution',role:'coauthor',sourcePath:null,blobSha:null,
+      sourceUrl:`https://github.com/acme/app/commit/${SHA}`,
+      commitEvidence:{basis:'coauthor',changedPaths:['src/app.ts'],changeKind:'development',headSha:SHA}};
+    const original = await saveRepositoryAgentScan(result({observations:[observation,claim]}));
+    const request = async <T>(path:string):Promise<GitHubHttpResult<T>> => ({ok:true,status:200,
+      value:(path==='/repos/acme/app'?{id:12,private:false,fork:true,default_branch:'main'}:
+        {sha:SHA,commit:{tree:{sha:'b'.repeat(40)}}}) as T,etag:null,lastModified:null,link:null});
+    const refreshed=await refreshRepositoryAgentEvidence({repositoryKey:'acme/app',force:true,request});
+    expect(refreshed.scan?.id).toBe(original?.id);
+    expect(refreshed.scan?.coverage).toMatchObject({repositoryFork:true});
+    expect(refreshed.observations).toEqual([observation]);
+  });
   it('deduplicates immutable observations while preserving multiple role models', async () => {
     await saveRepositoryAgentScan(result());
     await saveRepositoryAgentScan(result({ observations: [observation, { ...observation, declaredModelId: 'deepseek-v4-pro', role: 'opus' }] }));
@@ -65,11 +87,11 @@ describe('repository agent observations', () => {
     const request = async <T>(path: string): Promise<GitHubHttpResult<T>> => {
       paths.push(path);
       let value: unknown;
-      if (path === '/repos/acme/app') value = { id: 12, private: false, default_branch: 'main' };
+      if (path === '/repos/acme/app') value = { id: 12, private: false, fork: false, default_branch: 'main' };
       else if (path.endsWith('/commits/main')) value = { sha: SHA, commit: { tree: { sha: 'e'.repeat(40) } } };
       else if (path.includes('/compare/')) value = { status: 'ahead' };
       else if (discovered.some(sha => path.endsWith(`/commits/${sha}`))) value = { sha: path.split('/').at(-1),
-        commit: { message: 'Update\n\nCo-authored-by: Codex <codex@example.com>' }, parents: [{ sha: 'f'.repeat(40) }] };
+        commit: { message: 'Update\n\nCo-authored-by: Codex <codex@example.com>' }, parents: [{ sha: 'f'.repeat(40) }], files:[{filename:'src/app.ts',changes:1}] };
       else throw new Error(`unexpected request: ${path}`);
       return { ok: true, status: 200, value: value as T, etag: null, lastModified: null, link: null };
     };

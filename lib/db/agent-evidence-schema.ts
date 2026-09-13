@@ -7,7 +7,7 @@ export const agentRepositoryScans = pgTable('agent_repository_scans', {
   detectorVersion: varchar('detector_version', { length: 40 }).notNull(), scope: text('scope').notNull().default(''), scopeHash: varchar('scope_hash', { length: 64 }).notNull(),
   state: varchar('state', { length: 16 }).$type<'pending' | 'complete' | 'partial' | 'failed'>().notNull(),
   cursor: jsonb('cursor').$type<CollectCursor>(), requestCount: integer('request_count').notNull().default(0), fileCount: integer('file_count').notNull().default(0),
-  coverage: jsonb('coverage').$type<{ limited: boolean }>().notNull().default({ limited: false }),
+  coverage: jsonb('coverage').$type<{ limited: boolean; repositoryFork?: boolean | null }>().notNull().default({ limited: false }),
   startedAt: timestamp('started_at').notNull().defaultNow(), completedAt: timestamp('completed_at'),
   lastErrorCode: varchar('last_error_code', { length: 60 }), nextAttemptAt: timestamp('next_attempt_at').notNull().defaultNow(),
 }, table => [uniqueIndex('agent_scans_identity_idx').on(table.githubRepositoryId, table.commitSha, table.detectorVersion, table.scopeHash), index('agent_scans_due_idx').on(table.state, table.nextAttemptAt), index('agent_scans_repository_idx').on(table.repositoryKey)]);
