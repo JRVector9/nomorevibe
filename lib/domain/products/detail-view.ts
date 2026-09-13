@@ -1,3 +1,4 @@
+import { displayProjectName } from './display-name';
 import type { StarObservation } from './star-change';
 import "server-only";
 
@@ -187,7 +188,7 @@ export type ProductDetailView = {
 };
 
 async function findPublicProduct(slug: string): Promise<PublicProduct | null> {
-  return await db.query.products.findFirst({
+  const product = await db.query.products.findFirst({
     where: and(eq(products.slug, slug), ne(products.status, "banned")),
     columns: {
       id: true,
@@ -210,7 +211,8 @@ async function findPublicProduct(slug: string): Promise<PublicProduct | null> {
       createdAt: true,
       updatedAt: true,
     },
-  }) ?? null;
+  });
+  return product ? {...product, name: displayProjectName(product.name, product.repoUrl)} : null;
 }
 
 export const getProductIdentity = cache(async (slugInput: string): Promise<PublicProduct | null> => {

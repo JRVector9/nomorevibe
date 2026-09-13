@@ -1,5 +1,17 @@
 # Codex handoff
 
+## Copy cleanup ready to release — 2026-09-13 23:16 KST
+- Independent review CLEAN `/tmp/nomorevibe-copy-review.log`; final isolatedbuild+search/detail4PASS, previouspopular3PASS; unit3/integration11/TSC/lint/diffcheckPASS. InitialE2EfoundmissedFreshnesscollectinglabel fixed; namefixture initiallyoutsidefirst9corrected. AccidentalrootE2E includeduncommitteduserHero andfailed13pxminimum(12pxcoverbrand); isolateddeploymentHeroexcludesuserlayout and4PASS. Do notclaimrootalltests passed.
+- Own21filesstaged inclHeroHEADbasedblob; workingHeroisuserlayout+shortenedpreviewcaption, donotgitaddit. Readycommitpushthenweb2only. Actualprodseason2026-W37 ends2026-09-13T15:00UTC=Sep14Monday00KST. Liveverification script `.crawl-samples/copy-live.mjs` ready; ownhelpers `/tmp/nomorevibe-copy-{release-env,deploy}.py`.
+
+## Project presentation cleanup IN PROGRESS — 2026-09-13 23:11 KST
+
+- User asks: exact GitHub owner/repo fallback names→repo only, remove collection-process narration and list changes, descriptions max2lines, explain saved/↑ counts afterweek. Existing user Hero3hunks/designartifacts preserved. Scope publichome/popular/detail copy; no pipeline/DB migration changes.
+- Implemented display-name.ts at publicview/popular/detail boundaries (DB/search unchanged); StarMetric pendingdelta hidden; actualdelta retained; card/popular2lineCSS. Removed/shortened24groupspubliccopy, inventory `docs/operations/2026-09-13-project-copy.md`. UserHeroroottextalso shortened but owncommitHero prepared fromHEAD in `/tmp/nomorevibe-copy-Hero.tsx`; stageblob, NEVERgitaddfullHero.
+- Unit3/integration11,TSC/lintPASS. Name REDmissingmodule run. Isolated `/tmp/nomorevibe-copy-check` HEAD3ec5a58 contains owncopies only, APFSdepsclone. Build/E2E7 running session78757 log `/tmp/nomorevibe-copy-e2e.log`; independentakCLI sol/high session92773 `/tmp/nomorevibe-copy-review.log` boundedreadonly. No changescommittedyet.
+- Answer evidence: savedlocalStorage nmb-saved-v1 noexpiry; ↑isvalidoutboundvisits notvote/span. Latest/open/unclaimed countsrolling7days (`METRICS_WINDOW_DAYS=7`); weeklyseason Monday00:00KST resetsnewseason notprojects; alltime3650days. Actualprodseason checkscript `.crawl-samples/copy-proof.ts` running.
+- Next: finishE2E/reviewfixes, commitownfileslist `/tmp/nomorevibe-copy-ownfiles.json` plusreport/handoff, specialHeroHEADblobstaging; push; web2only via `/tmp/nomorevibe-copy-{release-env,deploy}.py`; verifyactualuserexamplemetadata-bundle/titlecover/detail, pendingcopyabsent,2linesdesktop/mobile, sourcebadgesstillpresent. Updatecopyinventory/results/handoff/journal, docscommit. No worker deploymentsnecessary.
+
 ## Catalogue task COMPLETE — 2026-09-13 22:53 KST
 
 - Requested personal research/survey exclusion, daily stars+change, nine cards, search fix implemented and shipped `17abf63b3a4bf5555330f61f87997780f558052e`. All7 affected Dokploy apps(web2/crawler/publisher/reviewer/maintenance/scheduler)done samecommit; bothwebapp/dbhealthok;7freshnewrelease/runningheartbeats. connect-agentunchanged.

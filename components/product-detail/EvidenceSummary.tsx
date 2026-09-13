@@ -17,9 +17,6 @@ export function EvidenceSummary({ links, freshness, profileUpdatedAt }: {
     <section className="flex flex-col gap-4 rounded-[12px] border border-line bg-bg-card px-5 py-5">
       <div>
         <h2 className="text-[14px] font-bold text-fg">근거 요약</h2>
-        <p className="mt-1 text-[13px] leading-5 text-fg-3">
-          메이커가 제공한 정보와 외부에서 확인한 정보를 구분해 표시합니다.
-        </p>
       </div>
       <div className="flex flex-wrap items-center gap-2">
         <SourceBadge label={`공식 출처 ${official}`} />

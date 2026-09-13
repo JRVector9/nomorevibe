@@ -24,14 +24,14 @@ export async function PopularTiers({personal=false}:{personal?:boolean}){
     return <li key={p.slug}>
      <div className="popular-project-heading">
       <Link className="popular-project" href={`/p/${p.slug}`} title={p.name}><strong>{p.name}</strong></Link>
-      <StarMetric value={p} compact />
+      <StarMetric value={p} />
      </div>
-     {owner?<a className="popular-owner" href={owner.profileUrl} target="_blank" rel="noopener noreferrer" title={`GitHub @${owner.login}`}>@{owner.login}</a>:<span className="popular-owner">GitHub 아이디 미확인</span>}
-     <p className="popular-description" title={p.tagline}>{p.tagline || '소개가 아직 없습니다.'}</p>
+     {owner?<a className="popular-owner" href={owner.profileUrl} target="_blank" rel="noopener noreferrer" title={`GitHub @${owner.login}`}>@{owner.login}</a>:null}
+     <p className="popular-description" title={p.tagline}>{p.tagline}</p>
     </li>;
    })}</ol>:<p className="popular-empty">아직 없음</p>}
    <Link className="popular-all" href={popularHref(group.key,personal)}>{group.total.toLocaleString('ko-KR')}개 모두 보기 <span aria-hidden="true">→</span></Link>
   </article>)}</div>
-  <p className="popular-note">하루 한 번 갱신 · 증감은 이전 측정 대비 · —는 비교 수집 중. 스타는 실제 이용자 수가 아닙니다. <Link href="/?metric=popular#popular-projects" scroll={false}>집계 기준</Link></p>
+  <p className="popular-note"><Link href="/?metric=popular#popular-projects" scroll={false}>집계 기준</Link></p>
  </section>;
 }

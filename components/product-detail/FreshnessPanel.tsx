@@ -29,10 +29,10 @@ export function FreshnessPanel({ freshness }: { freshness: ProductDetailView["fr
               <div key={`${item.kind}:${item.provider}`} className="rounded-[10px] border border-line px-3.5 py-3">
                 <div className="flex items-center justify-between gap-3">
                   <strong className="text-[13px] text-fg">{KIND_LABELS[item.kind]}</strong>
-                  <span className={`text-[13px] font-bold ${warning ? "text-down" : item.state === "current" ? "text-up" : "text-fg-2"}`}>{item.label}</span>
+                  <span className={`text-[13px] font-bold ${warning ? "text-down" : item.state === "current" ? "text-up" : "text-fg-2"}`}>{item.state === "collecting" ? "—" : item.label}</span>
                 </div>
                 <p className="mt-1.5 text-[13px] text-fg-3">
-                  {item.lastSuccessAt ? `마지막 성공 ${formatDateTime(item.lastSuccessAt)}` : "아직 성공한 수집 없음"}
+                  {item.lastSuccessAt ? `마지막 성공 ${formatDateTime(item.lastSuccessAt)}` : "—"}
                 </p>
               </div>
             );

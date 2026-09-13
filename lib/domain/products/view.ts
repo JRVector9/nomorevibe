@@ -1,3 +1,4 @@
+import { displayProjectName } from './display-name';
 import type { StarObservation } from '@/lib/domain/products/star-change';
 import type { Product, ProductStatus } from "@/lib/db/schema";
 import { listProducts, listRecentlyDiscovered, type ProductSort } from "./repository";
@@ -56,7 +57,7 @@ export function toListItem(p: Product): ProductListItem {
   const builderClaim = builderClaimOf(p);
   return {
     slug: p.slug,
-    name: p.name,
+    name: displayProjectName(p.name, p.repoUrl),
     tagline: p.tagline,
     category: p.category,
     // 수집기가 추정한 값은 공개 뷰모델에서 제거한다. 메이커가 확인한 값만 UI와 검색에 쓴다.

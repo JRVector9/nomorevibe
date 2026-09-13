@@ -67,11 +67,7 @@ export function ProductIntroduction({ product, profile, unclaimed }: {
             </div>
           )}
         </>
-      ) : (
-        <p className="mt-5 rounded-[10px] bg-bg-soft px-4 py-3 text-[13px] leading-6 text-fg-3">
-          메이커가 아직 상세 소개를 제공하지 않았습니다.
-        </p>
-      )}
+      ) : null}
     </section>
   );
 }

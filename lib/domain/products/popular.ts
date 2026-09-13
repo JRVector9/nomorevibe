@@ -1,3 +1,4 @@
+import { displayProjectName } from './display-name';
 import type { StarObservation } from './star-change';
 import {and,asc,desc,eq,inArray,sql} from 'drizzle-orm';
 import {db} from '@/lib/db';
@@ -22,8 +23,9 @@ async function counts(personal:boolean){
 }
 async function items(tier:StarTier,personal:boolean,limit:number,offset=0):Promise<PopularProduct[]>{
  const t=STAR_TIERS.find(t=>t.key===tier)!;
- return db.select(fields).from(products).where(and(publicStars(personal),sql`${products.stars}>=${t.min} and ${products.stars}<${t.max}`))
+ const rows = await db.select(fields).from(products).where(and(publicStars(personal),sql`${products.stars}>=${t.min} and ${products.stars}<${t.max}`))
   .orderBy(desc(products.stars),asc(products.id)).limit(limit).offset(offset);
+ return rows.map(p=>({...p,name:displayProjectName(p.name,p.repoUrl)}));
 }
 export async function getPopularGroups(personal=false){
  const [totals,...lists]=await Promise.all([counts(personal),...STAR_TIERS.map(t=>items(t.key,personal,5))]);

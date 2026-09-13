@@ -66,7 +66,7 @@ export function RepositoryEvidence({ repository, license, dailyStars }: {
       {!repository ? (
         <p className="mt-4 rounded-[10px] bg-bg-soft px-4 py-3 text-[13px] leading-6 text-fg-3">저장소 미제공</p>
       ) : !facts ? (
-        <p className="mt-4 rounded-[10px] bg-bg-soft px-4 py-3 text-[13px] leading-6 text-fg-3">저장소 정보를 수집하고 있습니다.</p>
+        <p className="mt-4 rounded-[10px] bg-bg-soft px-4 py-3 text-[13px] leading-6 text-fg-3">—</p>
       ) : (
         <dl className="mt-3">
           {owner && <RepoRow label="GitHub 소유자"><a href={owner.profileUrl} target="_blank" rel="noopener noreferrer" className="text-accent hover:underline">@{owner.login} ↗</a></RepoRow>}
@@ -86,7 +86,6 @@ export function RepositoryEvidence({ repository, license, dailyStars }: {
       <div className="mt-5 border-t border-line pt-4 text-[13px] leading-6 text-fg-2">
         <p className="mb-2 text-fg-3">라이선스</p>
         <LicenseBlock license={license} />
-        <p className="mt-3 text-fg-3">자동 감지는 법률 자문이나 사용 허가를 보증하지 않습니다.</p>
       </div>
     </section>
   );

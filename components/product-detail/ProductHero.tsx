@@ -105,8 +105,7 @@ export function ProductHero({
             <div className="flex min-h-[320px] flex-col items-center justify-center gap-5 px-6 py-12 text-center lg:min-h-[520px]">
               <ProductIcon name={product.name} ogImage={safeIcon} size={112} />
               <div>
-                <p className="font-bold text-fg">아직 보관된 제품 화면이 없습니다.</p>
-                <p className="mt-2 text-[13px] leading-5 text-fg-3">출처에서 확인한 이미지를 안전하게 보관한 뒤 표시합니다.</p>
+                <p className="font-bold text-fg">이미지 없음</p>
               </div>
             </div>
           )}
@@ -155,11 +154,6 @@ export function ProductHero({
           >
             {displayUrl} ↗
           </a>
-          <p className="mt-auto pt-6 text-[13px] leading-5 text-fg-3">
-            {unclaimed
-              ? "공개 페이지에서 자동 수집한 설명입니다. 제작자가 아직 직접 확인하지 않았습니다."
-              : "메이커가 제공한 정보와 공개 출처에서 확인한 정보를 구분해 표시합니다."}
-          </p>
         </div>
       </div>
     </section>

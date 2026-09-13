@@ -250,9 +250,10 @@ test("collecting, stale-conflict, and unclaimed states remain explicit", async (
 
   await gotoProduct(page, PRODUCT_DETAIL_FIXTURES.collecting);
   await expect(page.getByRole("heading", { name: "Early Signal" })).toBeVisible();
-  await expect(page.getByText("집계 중").first()).toBeVisible();
-  await expect(page.getByText("저장소 정보를 수집하고 있습니다.")).toBeVisible();
-  await expect(page.getByText("아직 보관된 제품 화면이 없습니다.")).toBeVisible();
+  await expect(page.getByText("집계 중", { exact: true })).toHaveCount(0);
+  await expect(page.getByLabel("NoMoreVibe 유입 및 가동 지표")).toContainText("—");
+  await expect(page.getByText("저장소 정보를 수집하고 있습니다.")).toHaveCount(0);
+  await expect(page.getByText("아직 보관된 제품 화면이 없습니다.")).toHaveCount(0);
 
   await gotoProduct(page, PRODUCT_DETAIL_FIXTURES.staleConflict);
   await expect(page.getByRole("heading", { name: "Conflict Lens" })).toBeVisible();
@@ -267,7 +268,7 @@ test("collecting, stale-conflict, and unclaimed states remain explicit", async (
   // 저장소가 없는 미클레임 제품은 운영 주체를 추정해 표시하지 않는다.
   await expect(page.getByRole("heading", { name: "운영 주체와 연락" })).toHaveCount(0);
   await expect(page.getByText("저장소 미제공", { exact: true })).toBeVisible();
-  await expect(page.getByText("메이커가 아직 상세 소개를 제공하지 않았습니다.")).toBeVisible();
+  await expect(page.getByText("메이커가 아직 상세 소개를 제공하지 않았습니다.")).toHaveCount(0);
 
   await expectViewportContract(page);
   expect(observed.externalRequests).toEqual([]);
