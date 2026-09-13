@@ -70,5 +70,7 @@ GitHub의 Verified도 서명 검증이지 AI 사용 검증이 아니다. GitHub 
 - `RepositoryEvidence.tsx`: 실제 `publishedAt`이 있고 유효한 날짜일 때만 최신 release 행을 표시한다. 날짜는 KST, machine-readable datetime은 원래 시점을 유지한다. 릴리스 원문 URL을 안전한 링크로 연결한다. URL이 없거나 안전하지 않아도 확인된 버전·날짜는 표시한다.
 - 날짜 없음, 빈 문자열, 파싱 불가능한 날짜, 릴리스 없음은 행 전체를 숨긴다. 최근 push와 stars 등 다른 저장소 항목은 유지한다.
 - 회귀검증 RED: 수정 전 새 테스트6개 중5실패/1통과. GREEN: `npx vitest run tests/repository-release.test.tsx tests/github-evidence.test.ts` 19개 통과. TSC, targeted ESLint, diffcheck 통과.
-- 격리 프로덕션 빌드 + 기존 상세 E2E 3개 통과, 독립 Codex 리뷰 CLEAN(지적 없음, confidence 미제공). 리뷰 환경의 Vitest는 read-only 임시 디렉터리 EPERM으로 실행되지 않았고, 위 19개 테스트는 주 작업 환경에서 실제 실행한 결과다. 운영 배포 검증은 진행 중.
+- 격리 프로덕션 빌드 + 기존 상세 E2E 3개 통과, 독립 Codex 리뷰 CLEAN(지적 없음, confidence 미제공). 리뷰 환경의 Vitest는 read-only 임시 디렉터리 EPERM으로 실행되지 않았고, 위 19개 테스트는 주 작업 환경에서 실제 실행한 결과다. 운영 웹2대 `4137a9ed0e22f4e92be85b3158298ba614cf65dd` 배포 완료, 양쪽 app/DB health 정상.
 - 원문 검증 자료: `.crawl-samples/release-evidence-audit-20260914.json`, `.crawl-samples/release-evidence-source-check.json`. 재현 스크립트는 같은 이름의 `.ts`.
+
+- 운영 `node .crawl-samples/release-evidence-live.mjs` 통과: 표본6개 × 1440/390px =12화면, 날짜있는3개 버전·원문href·정확한datetime표시, 없는3개 행없음. 문서가로넘침없음, pageerror0. 전체 정보 섹션의 날짜유/무 스크린샷을 직접 열어 확인했다. 증거 `.crawl-samples/release-evidence-live.json`, `release-evidence-section-{yana-ai-desktop,votepredict}.png`.
