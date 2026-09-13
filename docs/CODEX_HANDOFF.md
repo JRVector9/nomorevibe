@@ -1,5 +1,17 @@
 # Codex handoff
 
+## AI attribution merge and deployment COMPLETE — 2026-09-14
+
+- User authorized sequential review/merge/deploy. Previous no-deploy scope is superseded. #110 merged5f49eb9 → #111e743d48 → #1127492cf0887de85c364711d4b8dafb79e8ef1c9e1. Successors retargetedmain, merge ancestry preserved; task-owned remote branches deleted after all merged.
+- Re-reviewed actualdiffs and independent CLEAN outcomes. PR CI957unit613integration/types/lint/build PASS. Merged main run34772638671 allPASS. Tree7492cf0 identical to testedc43f867. No runtime edits during landing. Details docs/operations/2026-09-14-agent-attribution-deployment.md.
+- Deployed Dokploy webM3+mini and5singletonworkers (crawler/publisher/reviewer/maintenance/scheduler). All application done, Swarm completed, workers healthy, RELEASE_TAG7492cf0; five detector/collector/summary/audit/review files' hashes match checkout. Two webdirecthealth release7492cf0/app+DBok/latency1–2ms. No SQLmigration or connect-agent deployment required.
+- First publisher/reviewer attempts automatically rolled back on Docker task No such container. Detected actual RELEASE_TAG mismatch despite Dokploydone. Retried only2 viaAPI; Swarm completed02:56:11/14 and actualcode+release+health verified. Resolved, not an outstanding blocker.
+- At02:57:02 saveSettings changed ONLY agentEvidence.detectorVersion to2026-09-14.1; full before/after comparison passed. enabledtrue/displayfalse/enforcefalse/reviewModeobserve/policyold unchanged. Actual scheduled collection02:57:08 newversion14complete4partial,7commit claims allwithchangeproof,13instructions. Existing data rechecks remain normal scheduled work, not completed wholebackfill.
+- Read-only report02:57:03 completed:6898published,5184outdated1698unscanned12current3incomplete1failed,0qualifiedproducts. New published proof exclusions4partial1relationship; legacy3053excluded. This is not AI absence/accuracy. Evidence .crawl-samples/attribution-audit-deployed-20260914.jsonl and state-after/state-final.
+- Live Playwright1440/390 PASS:home9→18, popularpaging/personalfilter, noAIcolumn/evidencelink, no documentoverflow, pageerrors0. Load2.433s/0.440s. Bothscreenshotsopened. Runtime verification /tmp/nomorevibe-attribution-runtime.py; API status helper /tmp/nomorevibe-attribution-deploy.py; no credentials in outputs.
+- Modified files thisphase: docs/CODEX_HANDOFF.md and newdeploymentreport only. Commit/push docs and fast-forward original main while preserving user ProductHero/design artifacts. Update Obsidian journal with deployment completion. No application work remains.
+- Exact read-only next: `python3 /tmp/nomorevibe-attribution-deploy.py status`; `python3 /tmp/nomorevibe-attribution-runtime.py` (cwd deploymentworktree); `python3 /tmp/nomorevibe-prod-db.py npx tsx .crawl-samples/attribution-rollout-state.ts`. Never run fixture tests against prod. Original /Users/jr/Desktop/projects/nomorevibe userHero/design files must remain uncommitted.
+
 ## AI attribution PR implementation COMPLETE — final CI verification, 2026-09-14
 
 - Objective: three stacked implementation PRs, no merge/deploy or production settings/DB mutations. Original `/Users/jr/Desktop/projects/nomorevibe` user ProductHero and design artifacts remain untouched. Worktree `/tmp/nomorevibe-agent-prs` currently feat/agent-attribution-audit. Additional `/tmp/nomorevibe-pr-baseline` holds PR1 branch for test-only fixture updates.
