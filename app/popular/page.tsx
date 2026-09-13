@@ -1,3 +1,4 @@
+import { StarMetric } from '@/components/StarMetric';
 import {Suspense} from 'react';
 import Link from 'next/link';
 import type {Metadata} from 'next';
@@ -27,7 +28,7 @@ export default async function PopularPage({searchParams}:{searchParams:Promise<R
     <table className="popular-table"><thead><tr><th scope="col">#</th><th scope="col">프로젝트</th><th scope="col">한 줄 소개</th><th scope="col">스타</th><th scope="col">AI 흔적</th><th scope="col">계정</th><th scope="col">스타 확인일</th></tr></thead>
      <tbody>{result.items.length?result.items.map((p,index)=><tr key={p.slug}><td>{(result.page-1)*15+index+1}</td>
       <th scope="row"><Link href={`/p/${p.slug}`}>{p.name}</Link><span>{categoryLabel(p.category)}</span></th><td>{p.tagline}</td>
-      <td className="popular-stars">★ {p.stars.toLocaleString('ko-KR')}</td><td className="popular-evidence">{evidence===null?<span>조회 지연</span>:evidence.get(p.slug)?.length?<><span>{Array.from(new Set(evidence.get(p.slug)!.map(f=>f.clientLabel.startsWith('미확인')?f.label:f.clientLabel))).slice(0,2).join(' · ')}</span><small>공개 저장소에서 관측</small>{Array.from(new Set(evidence.get(p.slug)!.flatMap(f=>[f.coverageLabel,f.relationshipLabel]).filter(Boolean))).map(label=><small key={label}>{label}</small>)}</>:<span>공개된 흔적 없음</span>}<Link href={`/p/${p.slug}#evidence`}>근거 보기 ↗</Link></td>
+      <td className="popular-stars"><StarMetric value={p} /></td><td className="popular-evidence">{evidence===null?<span>조회 지연</span>:evidence.get(p.slug)?.length?<><span>{Array.from(new Set(evidence.get(p.slug)!.map(f=>f.clientLabel.startsWith('미확인')?f.label:f.clientLabel))).slice(0,2).join(' · ')}</span><small>공개 저장소에서 관측</small>{Array.from(new Set(evidence.get(p.slug)!.flatMap(f=>[f.coverageLabel,f.relationshipLabel]).filter(Boolean))).map(label=><small key={label}>{label}</small>)}</>:<span>공개된 흔적 없음</span>}<Link href={`/p/${p.slug}#evidence`}>근거 보기 ↗</Link></td>
       <td>{p.ownerType==='User'?'개인':p.ownerType==='Organization'?'조직':'미확인'}</td><td><time>{p.starsAt?.slice(0,10)??'미확인'}</time></td>
      </tr>):<tr><td colSpan={7} className="popular-empty">아직 없음</td></tr>}</tbody>
     </table>

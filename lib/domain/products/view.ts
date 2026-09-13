@@ -1,3 +1,4 @@
+import type { StarObservation } from '@/lib/domain/products/star-change';
 import type { Product, ProductStatus } from "@/lib/db/schema";
 import { listProducts, listRecentlyDiscovered, type ProductSort } from "./repository";
 import type { Category } from "./schema";
@@ -22,7 +23,7 @@ import { logger } from "@/lib/observability/logger";
  */
 export type BuilderClaim = "reported" | "guessed";
 
-export type ProductListItem = {
+export type ProductListItem = StarObservation & {
   slug: string;
   name: string;
   tagline: string;
@@ -65,6 +66,7 @@ export function toListItem(p: Product): ProductListItem {
     ogImage: p.ogImage,
     makerName: p.makerName,
     repoUrl: p.repoUrl,
+    stars: p.stars, starsAt: p.starsAt, starsPrevious: p.starsPrevious, starsPreviousAt: p.starsPreviousAt,
     listedAt: p.verifiedAt ?? p.createdAt,
     status: p.status,
     unclaimed: isUnclaimed(p),

@@ -1,3 +1,4 @@
+import { nonProductPurpose } from './product-purpose';
 import { createHash } from "node:crypto";
 import type { DecisionReason } from "@/lib/db/schema";
 import type { CrawlSettings } from "./settings-schema";
@@ -32,6 +33,7 @@ export type PageFacts = {
   generator?: string | null;
   /** 페이지 제목(og:title 또는 <title>). 스캐폴드 기본값을 가려내는 데 쓴다 */
   title?: string | null;
+  description?: string | null;
   /** 본문 앞부분. 없으면 이 신호가 없는 것이지, 통과했다는 뜻이 아니다 */
   textSample?: string | null;
   /**
@@ -188,6 +190,8 @@ export function judge(
   // 배포물이 없으면 제품이 아니다 — 가장 값싼 거르기
   if (!page.productUrl) return reject("no_homepage", "배포 URL 있음", "homepage 미설정");
   pass("배포 URL 있음", page.productUrl);
+  const purpose = nonProductPurpose(page);
+  if (purpose) return reject("not_a_product", "독립 제품·서비스", `${purpose.kind}: ${purpose.evidence}`);
   if (isBlockedHost(page.productUrl, rules.blockedHomepageDomains)) {
     return reject("not_a_product", "차단 도메인 아님", `${hostOf(page.productUrl)} 는 차단 목록에 있음`);
   }
@@ -417,13 +421,14 @@ export function pageFactsFromDocument(document: {
   pageMeta: unknown;
 }): PageFacts {
   const meta = (document.pageMeta ?? {}) as {
-    generator?: unknown; title?: unknown; textSample?: unknown; finalUrl?: unknown;
+    generator?: unknown; title?: unknown; description?: unknown; textSample?: unknown; finalUrl?: unknown;
   };
   return {
     productUrl: document.productUrl,
     status: document.pageStatus,
     generator: typeof meta.generator === "string" ? meta.generator : null,
     title: typeof meta.title === "string" ? meta.title : null,
+    description: typeof meta.description === "string" ? meta.description : null,
     textSample: typeof meta.textSample === "string" ? meta.textSample : null,
     finalUrl: typeof meta.finalUrl === "string" ? meta.finalUrl : null,
   };

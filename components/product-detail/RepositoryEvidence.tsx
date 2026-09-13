@@ -1,3 +1,5 @@
+import { StarMetric } from '@/components/StarMetric';
+import type { StarObservation } from '@/lib/domain/products/star-change';
 import type { LicensePresentation, ProductDetailView } from "@/lib/domain/products/detail-view";
 import { formatDate, formatNumber, safeExternalUrl } from "./format";
 import { SourceBadge } from "./SourceBadge";
@@ -38,7 +40,8 @@ function LicenseBlock({ license }: { license: LicensePresentation }) {
   );
 }
 
-export function RepositoryEvidence({ repository, license }: {
+export function RepositoryEvidence({ repository, license, dailyStars }: {
+  dailyStars?: StarObservation;
   repository: ProductDetailView["repository"];
   license: ProductDetailView["license"];
 }) {
@@ -71,7 +74,7 @@ export function RepositoryEvidence({ repository, license }: {
           <RepoRow label="공개 여부">{facts.public === null ? "확인 안 됨" : facts.public ? "공개 저장소" : "비공개 저장소"}</RepoRow>
           <RepoRow label="저장소 생성일">{formatDate(facts.createdAt)}</RepoRow>
           <RepoRow label="최근 push">{formatDate(facts.pushedAt)}</RepoRow>
-          <RepoRow label="GitHub stars">★ {formatNumber(facts.stars)}</RepoRow>
+          <RepoRow label="GitHub stars"><StarMetric value={dailyStars?.stars!=null?dailyStars:{stars:facts.stars}} /></RepoRow>
           <RepoRow label="forks">{formatNumber(facts.forks)}</RepoRow>
           <RepoRow label="contributors">{facts.contributors ? `${formatNumber(facts.contributors.count)}명${facts.contributors.incomplete ? "+" : ""}` : "확인 안 됨"}</RepoRow>
           <RepoRow label="상태">{activityLabel}</RepoRow>

@@ -34,7 +34,7 @@ it('오래된 스타만 갱신하고 신선한 제품은 재조회하지 않는�
  const request=vi.fn(async()=>response(7000));
  await refreshProductStars(context(),{request});
  expect(request).toHaveBeenCalledTimes(1);
- expect((await db.select().from(products).where(eq(products.id,stale.id)))[0]).toMatchObject({stars:7000,ownerType:'Organization'});
+ expect((await db.select().from(products).where(eq(products.id,stale.id)))[0]).toMatchObject({stars:7000,starsPrevious:2500,ownerType:'Organization'});
  expect((await db.select().from(products).where(eq(products.id,fresh.id)))[0].stars).toBe(2600);
 });
 it('실패 시 값과 성공 시각을 보존하고 다음 후보를 계속 본다',async()=>{
@@ -97,4 +97,13 @@ it('목록의 AI 흔적은 공개 설정과 링크 숨김을 지키고 오래된
  expect((await getPublicObservedAgentFacts([p.slug])).get(p.slug)).toMatchObject([{clientLabel:'Claude Code',coverageLabel:'에이전트 정보 재확인 필요',relationshipLabel:'제품과 저장소 관계 미확인'}]);
  await db.update(productLinks).set({visible:false}).where(eq(productLinks.slug,p.slug));
  expect((await getPublicObservedAgentFacts([p.slug])).get(p.slug)).toEqual([]);
+});
+
+it('retains daily baseline on failures and clears it when the repository changes',async()=>{
+ const p=await product(100);const previousAt=new Date('2026-09-10T00:00:00Z');
+ await db.update(products).set({starsPrevious:95,starsPreviousAt:previousAt,starsAt:new Date('2026-09-11T00:00:00Z')}).where(eq(products.id,p.id));
+ await refreshProductStars(context(),{request:async()=>({ok:false,error:{kind:'not_found'}})});
+ expect((await db.select().from(products).where(eq(products.id,p.id)))[0]).toMatchObject({stars:100,starsPrevious:95,starsPreviousAt:previousAt});
+ await update(p.id,{repoUrl:'https://github.com/test/changed'});
+ expect((await db.select().from(products).where(eq(products.id,p.id)))[0]).toMatchObject({stars:null,starsAt:null,starsPrevious:null,starsPreviousAt:null});
 });

@@ -1579,3 +1579,13 @@ dialog::backdrop {
 .cover-identity .cover-brand { color: var(--text, #20242d); text-shadow: none; }
 .cover-default { display: flex; height: 100%; align-items: center; justify-content: center; flex-direction: column; gap: 8px; }
 .cover-default small { font-size: 12px; opacity: .65; }
+
+.search-results-layout { grid-template-columns: minmax(0, 1fr); margin-top: 28px; }
+
+.star-metric { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 6px; font-size: 13px; white-space: nowrap; }
+.star-metric small { font-size: 13px; }
+.star-change-up { color: #087e52; }
+.star-change-down { color: #a84032; }
+.star-change-neutral { color: var(--text-3, #6b7280); }
+.project-body > .star-metric { margin: 8px 0 2px; }
+.popular-project-heading > .star-metric { flex: 0 0 auto; }

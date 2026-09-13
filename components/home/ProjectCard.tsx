@@ -1,3 +1,4 @@
+import { StarMetric } from '@/components/StarMetric';
 import Link from "next/link";
 import { hrefWith, type BrowseState } from "@/components/home/browse-state";
 import { Icon } from "@/components/home/icons";
@@ -78,6 +79,7 @@ export function ProjectCard({
           )}
           {product.health?.down && <span className="pill pill-down">응답 없음</span>}
         </div>
+        <StarMetric value={product} />
         <div className="project-bottom">
           {githubOwner ? (
             <a

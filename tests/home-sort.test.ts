@@ -37,9 +37,9 @@ describe("home sort", () => {
   });
 
   it("keeps the expanded list count in the address and drops it when filters change", () => {
-    expect(parseShown(undefined)).toBe(6);
+    expect(parseShown(undefined)).toBe(9);
     expect(parseShown("18")).toBe(18);
-    expect(parseShown("3")).toBe(6);
+    expect(parseShown("3")).toBe(9);
     expect(parseShown("1000")).toBe(100);
     expect(hrefWith({ sort: "weekly", shown: 18 })).toBe("/?shown=18");
     expect(hrefWith({ sort: "weekly", shown: 18 }, { sort: "recent" })).toBe("/?sort=recent");

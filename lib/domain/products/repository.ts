@@ -1,5 +1,6 @@
+import { productSearchPredicate } from './search';
 import { syncRepositoryLink } from "@/lib/domain/evidence/repository-link-sync";
-import { and, eq, ilike, inArray, isNotNull, like, ne, or, sql } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, like, ne, or, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { lockProductGeneration, type ProductTransaction } from "./generation";
 import { DOWN_THRESHOLD } from "./health";
@@ -72,9 +73,7 @@ export type ListOptions = {
  * 값은 파라미터로 나가므로 주입은 아니지만, %나 _를 그대로 두면 사용자가 친 글자가
  * 패턴 기호로 동작해 엉뚱한 것이 걸린다.
  */
-function likePattern(query: string): string {
-  return `%${query.trim().replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
-}
+
 
 /**
  * 등재 시각 — 검증된 제품은 검증 시점, 우리가 대신 올린 제품은 등록 시점.
@@ -141,14 +140,7 @@ function listConditions({ statuses, category, query, builder, hasRepository, exc
     conditions.push(isNotNull(products.repoUrl));
     conditions.push(sql`btrim(${products.repoUrl}) <> ''`);
   }
-  if (query?.trim()) {
-    const pattern = likePattern(query);
-    conditions.push(or(
-      ilike(products.name, pattern),
-      ilike(products.tagline, pattern),
-      and(builderIsReported, ilike(products.builder, pattern)),
-    )!);
-  }
+  if (query?.trim()) conditions.push(productSearchPredicate(query)!);
   return conditions;
 }
 
@@ -264,7 +256,7 @@ export async function update(id: number, values: Partial<Product>): Promise<void
     if (!current || !(await lockProductGeneration(tx, id, current.slug))) return;
     const [locked] = await tx.select({ repoUrl: products.repoUrl }).from(products).where(eq(products.id, id));
     const resetStats = values.repoUrl !== undefined && values.repoUrl !== locked.repoUrl
-      ? { stars: null, starsAt: null, ownerType: null, starsCheckedAt: null } : {};
+      ? { stars: null, starsAt: null, starsPrevious: null, starsPreviousAt: null, ownerType: null, starsCheckedAt: null } : {};
     const [product] = await tx.update(products).set({ ...values, ...resetStats, updatedAt: new Date() }).where(eq(products.id, id)).returning();
     if (values.repoUrl !== undefined) await syncRepositoryLink({ productId: product.id, slug: product.slug,
       repoUrl: product.repoUrl, declarationSource: "maker", mode: "explicit" }, tx);

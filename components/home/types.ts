@@ -1,3 +1,4 @@
+import type { StarObservation } from '@/lib/domain/products/star-change';
 export type HomePulseView = {
   asOf: string;
   asOfLabel: string;
@@ -11,7 +12,7 @@ export type HomePulseView = {
   total: number;
 };
 
-export type HomeCardProduct = {
+export type HomeCardProduct = StarObservation & {
   slug: string;
   name: string;
   tagline: string;

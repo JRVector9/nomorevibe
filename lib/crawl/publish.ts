@@ -1,3 +1,4 @@
+import { nonProductPurpose } from './product-purpose';
 import type { CrawlCandidate, CrawlDocument } from "@/lib/db/schema";
 import { LIMITS, type Category } from "@/lib/domain/products/schema";
 import * as products from "@/lib/domain/products/repository";
@@ -30,7 +31,7 @@ const MAX_SLUG_ATTEMPTS = 4;
 
 export type PublishResult =
   | { ok: true; slug: string }
-  | { ok: false; reason: "no_document" | "no_url" | "already_listed" | "no_description" | "publication_state_changed" | "review_approval_changed" | "source_changed" | "stale_judgement" | AgentEvidenceSummary["reason"] };
+  | { ok: false; reason: "not_a_product" | "no_document" | "no_url" | "already_listed" | "no_description" | "publication_state_changed" | "review_approval_changed" | "source_changed" | "stale_judgement" | AgentEvidenceSummary["reason"] };
 
 type PublicationSnapshot = {
   document: CrawlDocument;
@@ -60,6 +61,8 @@ async function preparePublication(candidate: CrawlCandidate): Promise<
   const url = candidate.productUrl ?? document.productUrl;
   if (!url) return { ok: false, reason: "no_url" };
 
+  const purpose = nonProductPurpose(document.pageMeta ?? {});
+  if (purpose) return { ok: false, reason: "not_a_product" };
   const settings = await getSettings();
   const checkedEvidence = settings.agentEvidence.enforceEligibility && candidate.decidedBy !== "admin"
     ? await loadAgentJudgeInput(document, settings) : null;
@@ -103,6 +106,7 @@ export async function publishCandidate(
     : await preparePublication(candidate);
   if (!prepared.ok) return prepared;
   const { document, url, settings, checkedEvidence, draft } = prepared.snapshot;
+  if (nonProductPurpose(document.pageMeta ?? {})) return { ok: false, reason: "not_a_product" };
   const repoStats = parseRepositoryStats(document.repoMeta);
 
   /**

@@ -64,9 +64,6 @@ export function SiteHeader() {
           <Link href="/?metric=tools">제작 도구</Link>
         </nav>
         <form className="header-search" action="/" method="get">
-          {home && params.get("sort") && <input type="hidden" name="sort" value={params.get("sort") ?? ""} />}
-          {home && params.get("category") && <input type="hidden" name="category" value={params.get("category") ?? ""} />}
-          {home && params.get("builder") && <input type="hidden" name="builder" value={params.get("builder") ?? ""} />}
           <Icon name="search" />
           <input
             ref={input}
@@ -76,6 +73,7 @@ export function SiteHeader() {
             placeholder="프로젝트, 도구, 아이디어 검색"
             aria-label="프로젝트 검색"
             autoComplete="off"
+            maxLength={200}
             defaultValue={home ? params.get("q") ?? "" : ""}
             key={home ? params.get("q") ?? "" : "away"}
           />

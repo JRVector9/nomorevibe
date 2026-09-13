@@ -1,3 +1,4 @@
+import type { StarObservation } from './star-change';
 import "server-only";
 
 import { cache } from "react";
@@ -140,7 +141,7 @@ export type FreshnessView = {
   nextAttemptAt: Date;
 };
 
-export type PublicProduct = Pick<Product,
+export type PublicProduct = StarObservation & Pick<Product,
   | "id"
   | "slug"
   | "url"
@@ -201,6 +202,7 @@ async function findPublicProduct(slug: string): Promise<PublicProduct | null> {
       ogImage: true,
       makerName: true,
       repoUrl: true,
+      stars: true, starsAt: true, starsPrevious: true, starsPreviousAt: true,
       status: true,
       source: true,
       claimedAt: true,

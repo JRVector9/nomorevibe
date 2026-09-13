@@ -113,6 +113,13 @@ describe("발행 잡", () => {
       .toMatchObject({ requestedVersion: 1, processedVersion: 0 });
   });
 
+  it("blocks already-approved research surveys before publication", async () => {
+    await approved("someone/survey", { pageMeta: { title: "OTT 사용자 경험 연구", description: "석사학위논문 실험 설문" } });
+    await tick();
+    expect(await products.findByUrl("https://my-app.test")).toBeUndefined();
+    expect(await crawl.getCandidate("someone/survey")).toMatchObject({ state: "rejected", reason: "not_a_product" });
+  });
+
   it("검색 힌트가 있어도 제작 AI를 확정하지 않는다", async () => {
     await crawl.enqueue([
       { repo: "someone/my-app", signal: "Claude 커밋 트레일러", builder: "Claude" },

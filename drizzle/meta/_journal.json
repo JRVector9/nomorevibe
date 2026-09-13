@@ -225,6 +225,13 @@
       "when": 1789259072999,
       "tag": "0031_product_thumbnail_state",
       "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1789306084712,
+      "tag": "0032_star_changes",
+      "breakpoints": true
     }
   ]
 }

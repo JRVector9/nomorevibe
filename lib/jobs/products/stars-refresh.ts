@@ -37,7 +37,7 @@ export async function refreshProductStars(ctx:JobContext<StarsCursor>,dependenci
    // 레포나 공개 상태가 요청 중 바뀌면 이전 응답을 적용하지 않는다. 임대도 같은 트랜잭션에서 확인한다.
    const changed=await db.transaction(async tx=>{
     if(ctx.lease)await assertJobLease(tx,ctx.lease);
-    return tx.update(products).set({starsCheckedAt:sql`now()`,...(stats?{...stats,starsAt:sql`now()`}:{})})
+    return tx.update(products).set({starsCheckedAt:sql`now()`,...(stats?{...stats,starsPrevious:products.stars,starsPreviousAt:products.starsAt,starsAt:sql`now()`}:{})})
      .where(and(eq(products.id,row.id),eq(products.repoUrl,row.repoUrl!),sql`${products.updatedAt}=${row.updatedAt}::timestamp`,inArray(products.status,[...PUBLIC])))
      .returning({id:products.id});
    });

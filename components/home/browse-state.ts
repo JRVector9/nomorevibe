@@ -1,6 +1,6 @@
 export type HomeSort = "weekly" | "trending" | "recent" | "all-time" | "open";
-export const HOME_FIRST_PAGE = 6;
-export const HOME_PAGE_SIZE = 12;
+export const HOME_FIRST_PAGE = 9;
+export const HOME_PAGE_SIZE = 9;
 export const HOME_SHOWN_MAX = 100;
 
 export type BrowseState = {

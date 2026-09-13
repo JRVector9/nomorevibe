@@ -67,7 +67,7 @@ test("home discovery, saved projects, search, methodology, and mobile layout wor
   const search = page.getByRole("searchbox", { name: "프로젝트 검색" });
   await search.fill("Evidence Studio");
   await Promise.all([page.waitForURL(/q=Evidence\+Studio/), search.press("Enter")]);
-  await expect(page.getByRole("heading", { name: "Evidence Studio" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Evidence Studio", exact: true })).toBeVisible();
   await expect(page.getByRole("tab", { name: "최신" })).toHaveAttribute("aria-selected", "true");
 
   await page.getByRole("link", { name: "Evidence Studio", exact: true }).click();

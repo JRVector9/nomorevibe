@@ -1,3 +1,4 @@
+import { productSearchPredicate, matchesProductSearch } from '@/lib/domain/products/search';
 import { cache } from "react";
 import {
   and,
@@ -5,7 +6,6 @@ import {
   desc,
   eq,
   getTableColumns,
-  ilike,
   inArray,
   isNotNull,
   lte,
@@ -94,9 +94,7 @@ async function findSeason(key?: string): Promise<RankingSeason | undefined> {
   return season;
 }
 
-function likePattern(query: string): string {
-  return `%${query.trim().replace(/[\\%_]/g, (character) => `\\${character}`)}%`;
-}
+
 
 const builderIsReported = or(ne(products.source, "crawler"), isNotNull(products.claimedAt))!;
 
@@ -138,10 +136,7 @@ export async function getSeasonRanking(options: {
   }
   if (options.category) conditions.push(eq(products.category, options.category));
   if (options.builder) conditions.push(and(eq(products.builder, options.builder), builderIsReported)!);
-  if (options.query?.trim()) {
-    const pattern = likePattern(options.query);
-    conditions.push(or(ilike(products.name, pattern), ilike(products.tagline, pattern))!);
-  }
+  if (options.query?.trim()) conditions.push(productSearchPredicate(options.query)!);
   if (options.order === "trending") {
     conditions.push(isNotNull(rankingEntries.changePercent));
   }
@@ -303,9 +298,7 @@ export async function getAllTimeRanking(options: {
     const hasReportedBuilder = product.source !== "crawler" || product.claimedAt !== null;
     if (options.category && product.category !== options.category) continue;
     if (options.builder && (!hasReportedBuilder || product.builder !== options.builder)) continue;
-    if (query && !product.name.toLocaleLowerCase().includes(query)
-      && !product.tagline.toLocaleLowerCase().includes(query)
-      && !(hasReportedBuilder && (product.builder ?? "").toLocaleLowerCase().includes(query))) continue;
+    if (query && !matchesProductSearch(product, query)) continue;
 
     items.push({
       ...toListItem(product),

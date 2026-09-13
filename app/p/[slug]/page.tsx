@@ -81,7 +81,7 @@ export default async function ProductPage({ params }: Props) {
               </p>
             </section>
           )}
-          <RepositoryEvidence repository={detail.repository} license={detail.license} />
+          <RepositoryEvidence repository={detail.repository} license={detail.license} dailyStars={detail.product} />
           <BuildProvenance
             product={detail.product}
             unclaimed={detail.unclaimed}

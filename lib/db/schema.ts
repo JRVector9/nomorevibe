@@ -58,6 +58,8 @@ export const products = pgTable("products", {
   /** GitHub 저장소 메타. 조회하지 못한 값은 0이나 개인 계정으로 추정하지 않는다. */
   stars: integer("stars"),
   starsAt: timestamp("stars_at"),
+  starsPrevious: integer("stars_previous"),
+  starsPreviousAt: timestamp("stars_previous_at"),
   ownerType: varchar("owner_type", { length: 20 }).$type<"User" | "Organization">(),
   starsCheckedAt: timestamp("stars_checked_at"),
   status: varchar("status", { length: 20 })

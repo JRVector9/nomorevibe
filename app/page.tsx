@@ -160,7 +160,7 @@ function serializePulse(pulse: Pulse) {
 export default async function HomePage({ searchParams }: Props) {
   const params = await searchParams;
   const sortParam = firstValue(params.sort);
-  const query = firstValue(params.q)?.trim() || undefined;
+  const query = firstValue(params.q)?.trim().slice(0, 200) || undefined;
   // A plain header search should cover the public catalogue. Preserve an explicitly
   // selected sort, but do not limit an unqualified search to ranked products.
   const requestedSort = sortParam ? parseHomeSort(sortParam) : query ? "recent" : "weekly";
@@ -259,18 +259,20 @@ export default async function HomePage({ searchParams }: Props) {
 
   return (
     <main className="wrap">
+      {!query && <>
       <HomeHero />
       <HomePulse pulse={pulse} state={state} />
       <Suspense fallback={<section className="popular-section"><h2>많이 쓰이는 프로젝트</h2><p>스타 구간을 불러오는 중입니다.</p></section>}>
         <PopularTiers personal={firstValue(params.personal) === "1"} />
       </Suspense>
+      </>}
 
-      <div className="content-layout">
+      <div className={`content-layout${query ? " search-results-layout" : ""}`}>
         <section id="projects" aria-labelledby="projects-title">
           <div className="feed-head">
             <div>
-              <h2 id="projects-title">발견할 가치가 있는 프로젝트</h2>
-              <p>AI로 만들고, 사람이 다듬은 새로운 서비스들.</p>
+              <h2 id="projects-title">{query ? `“${query}” 검색 결과` : "발견할 가치가 있는 프로젝트"}</h2>
+              <p>{query ? "프로젝트명, 소개, GitHub 아이디·저장소에서 찾았습니다." : "AI로 만들고, 사람이 다듬은 새로운 서비스들."}</p>
             </div>
             <Link className="all-link" href="/">
               전체 보기 <Icon name="arrow-right" size={14} />
@@ -317,16 +319,16 @@ export default async function HomePage({ searchParams }: Props) {
             </section>
           )}
 
-          <div className="principle-box">
+          {!query && <div className="principle-box">
             <Icon name="sparkles" size={24} />
             <div>
               <strong>AI 기능이 없어도, AI로 만들었다면.</strong>
               문서 뷰어, 타이머, 쇼핑몰도 좋습니다. 여기서 중요한 건 무엇으로 만들었는가입니다.
             </div>
-          </div>
+          </div>}
         </section>
 
-        <HomeAside news={news} />
+        {!query && <HomeAside news={news} />}
       </div>
 
       <Suspense>

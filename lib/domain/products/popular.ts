@@ -1,11 +1,13 @@
+import type { StarObservation } from './star-change';
 import {and,asc,desc,eq,inArray,sql} from 'drizzle-orm';
 import {db} from '@/lib/db';
 import {products} from '@/lib/db/schema';
 import {notDown} from './repository';
 import {STAR_TIERS,type StarTier} from './stars';
 
-export type PopularProduct={slug:string;name:string;tagline:string;category:string;repoUrl:string|null;stars:number;ownerType:'User'|'Organization'|null;starsAt:string|null};
+export type PopularProduct=StarObservation&{slug:string;name:string;tagline:string;category:string;repoUrl:string|null;stars:number;ownerType:'User'|'Organization'|null;starsAt:string|null};
 const fields={slug:products.slug,name:products.name,tagline:products.tagline,category:products.category,repoUrl:products.repoUrl,
+ starsPrevious:products.starsPrevious,starsPreviousAt:sql<string|null>`${products.starsPreviousAt}::text`,
  stars:sql<number>`${products.stars}`,ownerType:products.ownerType,starsAt:sql<string|null>`${products.starsAt}::text`};
 function publicStars(personal:boolean){return and(inArray(products.status,['seeded','verified']),notDown,
  sql`${products.stars}>=2000 and ${products.stars}<100000`,personal?eq(products.ownerType,'User'):undefined);}
