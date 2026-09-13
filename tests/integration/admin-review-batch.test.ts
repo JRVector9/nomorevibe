@@ -30,10 +30,10 @@ beforeEach(async () => {
 });
 
 function observation(repo: string, sha: string, overrides: Partial<AgentObservation> = {}): AgentObservation {
-  return { kind: 'model_config', client: 'claude-code', compatibleClients: [], modelDeveloper: 'anthropic',
-    declaredModelId: 'claude-sonnet-4-5', gateway: null, routing: 'fixed', role: 'sonnet', scope: '',
-    keyPath: 'model', ruleId: 'claude.settings.v1', sourcePath: '.claude/settings.json', commitSha: sha,
-    blobSha: 'b'.repeat(40), sourceUrl: `https://github.com/${repo}/blob/${sha}/.claude/settings.json`, ...overrides };
+  return { kind: 'commit_attribution', client: 'claude-code', compatibleClients: [], modelDeveloper: 'anthropic',
+    declaredModelId: null, gateway: null, routing: 'unknown', role: null, scope: '',
+    keyPath: null, ruleId: 'commit.coauthor.v1', sourcePath: null, commitSha: sha,
+    blobSha: null, sourceUrl: `https://github.com/${repo}/commit/${sha}`, ...overrides };
 }
 
 /** 보류 후보 하나와 그 원본. 배포 페이지가 이 저장소를 가리킨다(같은 제품) */

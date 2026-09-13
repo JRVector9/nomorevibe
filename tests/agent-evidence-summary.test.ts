@@ -16,9 +16,16 @@ describe('agent evidence policy', () => {
         .toMatchObject({eligible:false, reason:'ai_evidence_insufficient', executionVerified:false});
     }
   });
-  it.each(['model_config', 'commit_attribution'] as const)('accepts attributable %s without claiming execution', kind => {
-    expect(summarizeAgentEvidence({scanState:'complete', relationship:'same_product', observations:[{...observation, kind, client:'codex', routing:'fixed', declaredModelId:kind === 'model_config' ? 'gpt-5' : null}]}))
+  it('accepts a commit contribution claim without claiming execution', () => {
+    expect(summarizeAgentEvidence({scanState:'complete', relationship:'same_product', observations:[{...observation, kind:'commit_attribution', client:'codex'}]}))
       .toMatchObject({eligible:true, reason:'ai_evidence_supported', executionVerified:false});
+  });
+  it.each(['fixed', 'auto', 'fallback', 'unknown'] as const)('never promotes model configuration (%s)', routing => {
+    expect(summarizeAgentEvidence({scanState:'complete', relationship:'same_product', observations:[{...observation, kind:'model_config', client:'codex', declaredModelId:'gpt-5', routing}]}))
+      .toMatchObject({eligible:false, reason:'ai_evidence_insufficient', executionVerified:false});
+  });
+  it('does not treat committing existing work as authorship', () => {
+    expect(summarizeAgentEvidence({scanState:'complete', relationship:'same_product', observations:[{...observation, kind:'commit_attribution', client:'aider', role:'committer'}]}).eligible).toBe(false);
   });
   it.each(['pending', 'partial', 'failed'] as const)('does not complete a %s scan', scanState => {
     expect(summarizeAgentEvidence({scanState, relationship:'same_product', observations:[]})).toMatchObject({eligible:false, reason:'ai_evidence_pending'});

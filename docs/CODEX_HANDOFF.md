@@ -1,5 +1,12 @@
 # Codex handoff
 
+## AI attribution PR implementation IN PROGRESS — 2026-09-14
+
+- User explicitly requested implement narrowed detection plan in separate PRs. Worktree `/tmp/nomorevibe-agent-prs`, main original userHero/designartifacts untouched. No merges/deploy/settings mutations.
+- Stack plan `docs/superpowers/plans/2026-09-14-agent-attribution-prs.md`: PR1policy, PR2commitverification, PR3readonlyaudit. Branch1feat/agent-evidence-policy based20129d5. Three draftPRs planned, no existingopenPRs.
+- PR1changed summary removes modelconfigsupport and committeronly eligibility, REVIEW_RULES_VERSION2026-09-14.1, unitregressions, integrationpositivefixtures usecommitclaims. Actual89unit/11integrationPASS, lintPASS. FirstTSCmissingNextPageProps until`npx next typegen`, thenTSCpassed. Independent reviewCLEAN `/tmp/nomorevibe-pr1-review.txt`; reviewer tests blocked readonlytemp, parent actual tests passed. PR1ready.
+- Next finishreview; owncommitpush/createPR1; branch2fromPR1andimplementboundedcommitproof+Aidermetadata, thenPR3audit. Updatehandoffeachphase. Commandsfromworktree: `cat /tmp/nomorevibe-pr1-review.txt`; `git diff --check`; `git status --short`.
+
 ## Release visibility + attribution source validation COMPLETE — 2026-09-14 01:23 KST
 
 - User asked whether AI detection proves AI development; clear evidence/drop unnecessary methods; how latest release extracted; hide release row if no date. Completed source verification/narrowed research and shipped date-only release UI. No new detector or automatic policy changes claimed.

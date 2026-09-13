@@ -129,11 +129,13 @@ describe("evidence product detail components", () => {
     expect(html).toContain('height="630"');
   });
 
-  it("gives products without mirrored media an explicit large-screen empty state", () => {
+  it("keeps the product identity visible without inventing a missing screenshot message", () => {
     const html = renderToStaticMarkup(<ProductHero product={product} media={[]} unclaimed={false} lifecycle={null} rank={null}
       health={{ uptime30d: null, latencyMs: null, checkedAt: null, down: false }} />);
     expect(html).toContain("제품 화면");
-    expect(html).toContain("아직 보관된 제품 화면이 없습니다.");
+    expect(html).toContain(product.name);
+    expect(html).toContain("이미지 없음");
+    expect(html).not.toContain("아직 보관된 제품 화면이 없습니다.");
   });
 
   it("uses a safe internal OG copy as the large representative image when media is empty", () => {
@@ -147,6 +149,7 @@ describe("evidence product detail components", () => {
     />);
     expect(html).toContain('src="/api/og-cache/simple-hwp"');
     expect(html).toContain("공개 페이지 대표 이미지");
+    expect(html).not.toContain("이미지 없음");
     expect(html).not.toContain("아직 보관된 제품 화면이 없습니다.");
   });
 
@@ -195,10 +198,11 @@ describe("evidence product detail components", () => {
       }}
       health={{ uptime30d: null, latencyMs: null, checkedAt: null, down: false }}
     />);
-    expect(collecting).toContain("집계 중");
+    expect(collecting).toContain(">—<");
+    expect(collecting).not.toContain("집계 중");
     expect(collecting).toContain("유효 방문 · 최근 7일");
     expect(collecting).toContain(">0<");
-    expect(collecting).toContain("고유 식별자 집계 전에도 측정");
+    expect(collecting).not.toContain("고유 식별자 집계 전에도 측정");
   });
 
   it("uses only internal mirrored gallery URLs and keeps useful missing-source copies", () => {
@@ -239,7 +243,7 @@ describe("evidence product detail components", () => {
     expect(html).toContain('height="600"');
     expect(html).toContain('fetchPriority="high"');
     expect(html).toContain('loading="lazy"');
-    expect(html).toContain("원본 출처는 사라졌지만 마지막 내부 사본을 표시합니다");
+    expect(html).toContain("원본 없음 · 보관 이미지");
   });
 
   it("shows structured introduction and safe markdown without raw scripts", () => {
@@ -317,7 +321,8 @@ describe("evidence product detail components", () => {
     expect(repository).toContain("최신 release");
     expect(repository).toContain("146");
     expect(repository).toContain("정보 충돌");
-    expect(repository).toContain("법률 자문이나 사용 허가를 보증하지 않습니다");
+    expect(repository).toContain("MIT");
+    expect(repository).toContain("GPL-3.0");
 
     const collectingRepository = renderToStaticMarkup(<RepositoryEvidence
       repository={{
@@ -331,7 +336,8 @@ describe("evidence product detail components", () => {
       }}
       license={{ state: "missing", label: "라이선스 확인 안 됨", maker: null, observed: null }}
     />);
-    expect(collectingRepository).toContain("저장소 정보를 수집하고 있습니다");
+    expect(collectingRepository).toContain(">—<");
+    expect(collectingRepository).not.toContain("저장소 정보를 수집하고 있습니다");
     expect(collectingRepository).not.toContain("GitHub에서 확인");
 
     const provenance = renderToStaticMarkup(<BuildProvenance
@@ -402,7 +408,7 @@ describe("evidence product detail components", () => {
     expect(html).toContain("glm-4.7");
     expect(html).toContain("Z.AI");
     expect(html).toContain("일부 미확인");
-    expect(html).toContain("실제 실행 모델이나 전체 제작 과정을 증명하지 않습니다");
+    expect(html).toContain("제품과 저장소 관계 미확인");
     expect(html).toContain(".claude/settings.json");
     expect(html).toContain("aaaaaaa");
   });

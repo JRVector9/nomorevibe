@@ -526,7 +526,7 @@ describe("발행 잡", () => {
     const commitSha = "a".repeat(40);
     const [scan] = await db.insert(agentRepositoryScans).values({githubRepositoryId:BigInt(1),repositoryKey:"someone/my-app",commitSha,detectorVersion:"2026-09-06.1",scope:"",scopeHash:createHash("sha256").update(JSON.stringify("")).digest("hex"),state:"complete",completedAt:new Date()}).returning();
     await db.insert(agentRepositoryObservations).values({scanId:scan.id,observationKey:"b".repeat(64),facts:{
-      kind:"model_config",client:"codex",compatibleClients:["codex"],modelDeveloper:"openai",declaredModelId:"gpt-5",gateway:null,routing:"fixed",role:"main",scope:"",keyPath:"model",ruleId:"codex.config.v1",sourcePath:".codex/config.toml",commitSha,blobSha:"b".repeat(40),sourceUrl:`https://github.com/someone/my-app/blob/${commitSha}/.codex/config.toml`,
+      kind:"commit_attribution",client:"codex",compatibleClients:[],modelDeveloper:null,declaredModelId:null,gateway:null,routing:"unknown",role:"coauthor",scope:"",keyPath:null,ruleId:"commit.coauthor.v1",sourcePath:null,commitSha,blobSha:null,sourceUrl:`https://github.com/someone/my-app/commit/${commitSha}`,
     }});
     classifyCategories.mockImplementationOnce(async () => {
       await db.update(agentRepositoryScans).set({lastErrorCode:"rate_limited"}).where(eq(agentRepositoryScans.id,scan.id));
