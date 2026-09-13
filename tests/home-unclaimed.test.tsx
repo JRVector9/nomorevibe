@@ -216,9 +216,9 @@ describe("빈 화면 문구", () => {
     expect(categoryCounts).toHaveBeenCalledWith({ statuses: ["verified", "seeded"], excludeDown: true });
   });
 
-  it("미클레임 목록이 붙으면 등록부터 하라고 말하지 않는다", async () => {
+  it("공개 목록에 수집 제품이 있으면 등록부터 하라고 말하지 않는다", async () => {
     categoryCounts.mockResolvedValue({});
-    getUnclaimedList.mockResolvedValue([product("seeded-one")]);
+    getPublicList.mockResolvedValue([product("seeded-one")]);
 
     const html = await render({ sort: "recent" });
 
@@ -226,9 +226,9 @@ describe("빈 화면 문구", () => {
     expect(html).toContain("seeded-one");
   });
 
-  it("필터로 걸러진 화면에서도 미클레임이 있으면 없다고 말하지 않는다", async () => {
+  it("필터로 걸러진 화면에서도 수집 제품이 있으면 없다고 말하지 않는다", async () => {
     categoryCounts.mockResolvedValue({});
-    getUnclaimedList.mockResolvedValue([product("seeded-one")]);
+    getPublicList.mockResolvedValue([product("seeded-one")]);
 
     const html = await render({ sort: "recent", category: "Finance" });
 
