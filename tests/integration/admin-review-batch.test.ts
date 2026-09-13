@@ -30,7 +30,7 @@ beforeEach(async () => {
 });
 
 function observation(repo: string, sha: string, overrides: Partial<AgentObservation> = {}): AgentObservation {
-  return { kind: 'commit_attribution', client: 'claude-code', compatibleClients: [], modelDeveloper: 'anthropic',
+  return { commitEvidence:{basis:'coauthor',changedPaths:['src/app.ts'],changeKind:'development',headSha:sha}, kind: 'commit_attribution', client: 'claude-code', compatibleClients: [], modelDeveloper: 'anthropic',
     declaredModelId: null, gateway: null, routing: 'unknown', role: null, scope: '',
     keyPath: null, ruleId: 'commit.coauthor.v1', sourcePath: null, commitSha: sha,
     blobSha: null, sourceUrl: `https://github.com/${repo}/commit/${sha}`, ...overrides };

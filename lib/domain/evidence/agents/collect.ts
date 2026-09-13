@@ -1,7 +1,7 @@
 import { githubRequest, type GitHubFailure, type GitHubHttpResult } from '@/lib/crawl/github';
 import { AGENT_DIRECTORY_PREFIXES, ARTIFACT_RULES, matchAgentArtifact } from './catalog';
 import { parseAgentArtifact } from './parse';
-import { parseCommitAttributions } from './commit-attribution';
+import { commitChangeObservations } from './commit-changes';
 import { AGENT_DETECTOR_VERSION, type AgentObservation } from './types';
 
 export const AGENT_SCAN_LIMITS = { requests: 12, durationMs: 20_000, timeoutMs: 8_000, files: 32, fileBytes: 64 * 1024, totalBytes: 512 * 1024, queuedEntries: 512 } as const;
@@ -12,6 +12,7 @@ export type CollectCursor = {
   pendingBlobs: Array<{ path: string; sha: string; size: number; ruleId: string }>;
   pendingCommits?: Array<{ sha: string; observations?: AgentObservation[] }>;
   coverageLimited?: boolean;
+  repositoryFork?: boolean;
 };
 export type CollectResult = {
   repositoryId: string | null; repositoryKey: string; commitSha: string | null; scope: string;
@@ -19,6 +20,7 @@ export type CollectResult = {
   observations: AgentObservation[]; requestCount: number; fileCount: number;
   errorCode: 'rate_limited' | 'timeout' | 'unavailable' | 'invalid' | 'budget_exhausted' | null;
   retryAt: Date | null;
+  repositoryFork?: boolean;
 };
 const shaPattern = /^[a-f0-9]{40,64}$/;
 export function normalizeAgentRepositoryKey(key: string): string {
@@ -52,23 +54,26 @@ export async function collectRepositoryAgentEvidence(input: {
   if (cursor) {
     if (!budget()) return { ...result, errorCode: 'budget_exhausted' };
     // Visibility can change between ticks; token access is not public publication permission.
-    const repository = await get<{ id: number; private: boolean }>(`/repos/${repositoryKey}`);
+    const repository = await get<{ id: number; private: boolean; fork: boolean }>(`/repos/${repositoryKey}`);
     if (!repository.ok) return fail(repository.error);
     if (repository.status !== 200 || repository.value.private !== false || String(repository.value.id) !== cursor.repositoryId) return fail({ kind: 'invalid_response' });
+    cursor.repositoryFork = repository.value.fork !== false;
+    result.repositoryFork = cursor.repositoryFork;
   }
   if (!cursor) {
     if (!budget()) return { ...result, errorCode: 'budget_exhausted' };
-    const repo = await get<{ id: number; full_name: string; default_branch: string; private: boolean }>(`/repos/${repositoryKey}`);
+    const repo = await get<{ id: number; full_name: string; default_branch: string; private: boolean; fork: boolean }>(`/repos/${repositoryKey}`);
     if (!repo.ok) return fail(repo.error);
     if (repo.status !== 200 || !Number.isSafeInteger(repo.value.id) || repo.value.id <= 0 || repo.value.private !== false || typeof repo.value.default_branch !== 'string') return fail({ kind: 'invalid_response' });
     result.repositoryId = String(repo.value.id);
+    result.repositoryFork = repo.value.fork !== false;
     if (!budget()) return { ...result, errorCode: 'budget_exhausted' };
     const branch = await get<{ sha: string; commit: { tree: { sha: string } } }>(`/repos/${repositoryKey}/commits/${encodeURIComponent(repo.value.default_branch)}`);
     if (!branch.ok) return fail(branch.error);
     if (branch.status !== 200 || !shaPattern.test(branch.value.sha) || !shaPattern.test(branch.value.commit?.tree?.sha)) return fail({ kind: 'invalid_response' });
     result.commitSha = branch.value.sha;
     const unchanged = input.knownComplete?.repositoryId === result.repositoryId && input.knownComplete.commitSha === result.commitSha;
-    cursor = { repositoryId: result.repositoryId, repositoryKey, commitSha: branch.value.sha, detectorVersion: AGENT_DETECTOR_VERSION, scope, pendingTrees: unchanged ? [] : [{ path: '', sha: branch.value.commit.tree.sha }], pendingBlobs: [], pendingCommits: [...new Set(input.discoveryCommitShas ?? [])].filter(sha => shaPattern.test(sha)).slice(0, 5).map(sha => ({ sha })) };
+    cursor = { repositoryId: result.repositoryId, repositoryKey, commitSha: branch.value.sha, detectorVersion: AGENT_DETECTOR_VERSION, scope, repositoryFork: repo.value.fork !== false, pendingTrees: unchanged ? [] : [{ path: '', sha: branch.value.commit.tree.sha }], pendingBlobs: [], pendingCommits: [...new Set(input.discoveryCommitShas ?? [])].filter(sha => shaPattern.test(sha)).slice(0, 5).map(sha => ({ sha })) };
   }
   result.cursor = cursor;
   const traversable = (path: string) => {
@@ -96,15 +101,21 @@ export async function collectRepositoryAgentEvidence(input: {
       cursor.pendingBlobs.shift(); result.fileCount++; bodyBytes += bytes.length;
     } else if (cursor.pendingCommits?.length && !cursor.pendingTrees.length) {
       const item = cursor.pendingCommits[0];
+      // Fork ancestry alone cannot attribute upstream work to this product.
+      if (cursor.repositoryFork !== false) { cursor.pendingCommits.shift(); continue; }
       if (!item.observations) {
-        const commit = await get<{ sha: string; commit: { message: string }; parents: Array<{ sha: string }> }>(`/repos/${repositoryKey}/commits/${item.sha}`);
+        const commit = await get<{ sha: string; commit: { message: string; author?: {name?: string}; committer?: {name?: string} }; parents: Array<{ sha: string }>; files?: Array<{filename:string;changes:number}> }>(`/repos/${repositoryKey}/commits/${item.sha}`);
         if (!commit.ok) return fail(commit.error);
         if (commit.status !== 200 || commit.value.sha !== item.sha || typeof commit.value.commit?.message !== 'string' || !Array.isArray(commit.value.parents)) return fail({ kind: 'invalid_response' });
         // Merge commits may inherit unrelated upstream attribution; only inspect direct commits.
         if (commit.value.parents.length !== 1) { cursor.pendingCommits.shift(); continue; }
-        const clients = [...new Set(parseCommitAttributions(commit.value.commit.message).flatMap(attribution => attribution.client ? [attribution.client] : []))];
-        if (clients.length > 8) cursor.coverageLimited = true;
-        item.observations = clients.slice(0, 8).map(client => ({ kind: 'commit_attribution', client, compatibleClients: [], modelDeveloper: null, declaredModelId: null, gateway: null, routing: 'unknown', role: null, scope, keyPath: null, ruleId: 'commit.coauthor.v1', sourcePath: null, commitSha: item.sha, blobSha: null, sourceUrl: `https://github.com/${repositoryKey}/commit/${item.sha}` }));
+        if (!Array.isArray(commit.value.files) || commit.value.files.some(file => !file || typeof file.filename !== 'string' || !Number.isSafeInteger(file.changes) || file.changes < 0)) return fail({kind:'invalid_response'});
+        if (commit.link?.includes('rel="next"')) cursor.coverageLimited = true;
+        const observations = commitChangeObservations({message:commit.value.commit.message,
+          authorName:commit.value.commit.author?.name, committerName:commit.value.commit.committer?.name,
+          files:commit.value.files}, {repositoryKey,commitSha:item.sha,headSha:cursor.commitSha,scope});
+        if (observations.length > 8) cursor.coverageLimited = true;
+        item.observations = observations.slice(0, 8);
         if (!item.observations.length) { cursor.pendingCommits.shift(); continue; }
       }
       if (!budget()) break;

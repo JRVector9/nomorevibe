@@ -21,7 +21,7 @@ export function summarizeAgentEvidence(input: SummaryInput): AgentEvidenceSummar
   if (input.relationship !== 'same_product') return result('ai_evidence_insufficient');
   // Settings express intent, not activity. Attribution is still only a claim;
   // a committer-only mark does not even claim authorship of the changes.
-  if (input.observations.some(o => o.client && o.kind === 'commit_attribution' && o.role !== 'committer')) {
+  if (input.observations.some(o => o.client && o.kind === 'commit_attribution' && o.role !== 'committer' && o.commitEvidence?.basis !== 'committer' && o.commitEvidence?.changeKind === 'development')) {
     return result('ai_evidence_supported');
   }
   return result(input.observations.length ? 'ai_evidence_insufficient' : 'ai_evidence_not_found');

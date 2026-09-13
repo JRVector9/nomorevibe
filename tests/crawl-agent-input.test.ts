@@ -1,7 +1,7 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { DEFAULT_CRAWL_SETTINGS } from "@/lib/crawl/settings-schema";
 import { loadAgentJudgeInput } from "@/lib/crawl/agent-evidence";
-const scan = vi.hoisted(() => ({id:1,state:"complete",scope:"",detectorVersion:"2026-09-06.1",completedAt:new Date(),lastErrorCode:null as string|null}));
+const scan = vi.hoisted(() => ({id:1,state:"complete",scope:"",detectorVersion:"2026-09-14.1",completedAt:new Date(),lastErrorCode:null as string|null}));
 const missing = vi.hoisted(() => ({ value: false }));
 afterEach(()=>{scan.lastErrorCode=null;missing.value=false;});
 vi.mock("@/lib/domain/evidence/agents/repository", () => ({

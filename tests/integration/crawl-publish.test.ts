@@ -524,9 +524,9 @@ describe("발행 잡", () => {
     await approved("someone/my-app",{pageMeta:{title:"App",description:"Description",repositoryKeys:["github:someone/my-app"]}});
     await saveSettings({agentEvidence:{enabled:true,enforceEligibility:true}},"test");
     const commitSha = "a".repeat(40);
-    const [scan] = await db.insert(agentRepositoryScans).values({githubRepositoryId:BigInt(1),repositoryKey:"someone/my-app",commitSha,detectorVersion:"2026-09-06.1",scope:"",scopeHash:createHash("sha256").update(JSON.stringify("")).digest("hex"),state:"complete",completedAt:new Date()}).returning();
+    const [scan] = await db.insert(agentRepositoryScans).values({githubRepositoryId:BigInt(1),repositoryKey:"someone/my-app",commitSha,detectorVersion:"2026-09-14.1",scope:"",scopeHash:createHash("sha256").update(JSON.stringify("")).digest("hex"),state:"complete",completedAt:new Date()}).returning();
     await db.insert(agentRepositoryObservations).values({scanId:scan.id,observationKey:"b".repeat(64),facts:{
-      kind:"commit_attribution",client:"codex",compatibleClients:[],modelDeveloper:null,declaredModelId:null,gateway:null,routing:"unknown",role:"coauthor",scope:"",keyPath:null,ruleId:"commit.coauthor.v1",sourcePath:null,commitSha,blobSha:null,sourceUrl:`https://github.com/someone/my-app/commit/${commitSha}`,
+      commitEvidence:{basis:"coauthor",changedPaths:["src/app.ts"],changeKind:"development",headSha:commitSha},kind:"commit_attribution",client:"codex",compatibleClients:[],modelDeveloper:null,declaredModelId:null,gateway:null,routing:"unknown",role:"coauthor",scope:"",keyPath:null,ruleId:"commit.coauthor.v1",sourcePath:null,commitSha,blobSha:null,sourceUrl:`https://github.com/someone/my-app/commit/${commitSha}`,
     }});
     classifyCategories.mockImplementationOnce(async () => {
       await db.update(agentRepositoryScans).set({lastErrorCode:"rate_limited"}).where(eq(agentRepositoryScans.id,scan.id));
