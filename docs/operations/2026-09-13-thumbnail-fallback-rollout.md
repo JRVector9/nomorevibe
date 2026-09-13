@@ -34,7 +34,8 @@
 - 격리한 체크아웃에서 프로덕션 빌드 및 Playwright 5개 통과. 1440px/390px, 5종 이미지 출처, 작은 아이콘·저장소 로고 크기, 가로 넘침을 검사했다.
 - 마지막 가로 로고 변경 후 격리 프로덕션 빌드+Playwright 2개 추가 통과. 첫 fixture SSR 시도는 Playwright JSX 변환 때문에 실패했고, 별도 Node/tsx 렌더링으로 실제 컴포넌트 마크업을 생성해 통과했다.
 - 수집/출판 연결 통합 55개, 인코딩 SVG 거부 관련 단위 5개 추가 통과.
-- 운영 화면 확인 및 최종 배포 정보: 완료 후 기록.
+- 운영 4종 출처 × 데스크톱/모바일 8개 상세 화면 HTTP200, 이미지 로딩, 출처 표시, 작은 아이콘112px 상한, 가로 넘침 없음 통과. 홈 화면도 확인했으며 브라우저 오류0건. 운영에 기본 이미지가 사용된 제품은0개라 기본 이미지는 로컬 E2E로 검증했다.
+- 운영 웹2대와 crawler/publisher/scheduler/maintenance가 모두 `1893b15d9d944fdd8e80211eb9391bc42d5c92ba`로 배포 완료. 두 웹 직접 health에서 app/DB 정상,6개 서비스의 새 릴리스 heartbeat를 확인했다.
 
 | 독립 리뷰 발견 | 등급 | 반영 |
 |---|---|---|
@@ -45,6 +46,30 @@
 
 리뷰 도구는 raw confidence 수치를 제공하지 않았다. 지정된 gpt-5.6은 현재 CLI 계정에서 지원되지 않아 기본 Codex 모델로 독립 검토했다. 최종 재검토는 추가 actionable finding 없이 Clean으로 끝났다 (`/tmp/nomorevibe-thumbnail-review-clean.log`). 최초 전체 재검토가 16분간 범위를 넓혀, 동일 세션에서 확인한 근거로 결론을 요청한 뒤 마지막 P2만 고쳐 범위를 한정해 재검토했다.
 
+## 운영 자동 처리 확인
+
+2026-09-13 10:16:16 KST 재확인:
+
+- 전체 공개 제품 6,303개 중 이미지 누락0개.
+- 기존 고정 대상3,128개는 그대로 실제 이미지100%, 기본0, 캐시 누락0.
+- 배포한 자동 잡이 고정 대상 밖의 신규29개를 추가 보충(사이트 아이콘22, GitHub 프로필7). 수동 보충 CLI로 처리한 수와 구분했다.
+- 배포 이후 새로 출판된3개 제품도 이미지 누락0.
+- 새 수집 문서6개에서 thumbnailHints 저장 확인. 이미지 잡은5회 성공 실행했고 마지막 성공10:16:05, last_error/locked_at 없음. 발행/수집 잡도 성공 기록 확인.
+- 브라우저 검증은 운영 실제4종 이미지×1440/390px8페이지; HTTP200, 내부 이미지 로딩, 출처 표시, native-size 상한, 가로 넘침 없음, pageerror0.
+
+실시간 수집이 계속되므로 이후 새 항목은 발행 직후 짧은 대기 시간을 거쳐 이미지 잡이 보충한다. 위 0개는 명시한 시점의 DB 실측값이다.
+
+## 배포 증빙
+
+| 서비스 | 배포 ID | 상태 |
+|---|---|---|
+| web-m3 | aR7VFfouHNgV_eSGw2d0y | done |
+| web-mini | V4Iv9XH7z1IyXXfBqBPJI | done |
+| crawler | DfeHkJVmkoIPpIimhCpqV | done |
+| publisher | 69uaHauXzfnMs0ynppRCY | done |
+| scheduler | FrpOuVfL3PiEquVaSt_Ai | done |
+| maintenance | MorbcjQ3vDctIe2hYqaYq | done |
+
 ## 증빙
 
 - `.crawl-samples/thumbnail-cohort-20260913.json`: 고정 대상 3,128개
@@ -52,6 +77,8 @@
 - `.crawl-samples/thumbnail-apply-20260913.jsonl`: 항목별 적용 영수증
 - `.crawl-samples/thumbnail-final-audit.json`: DB의 실제 이미지·캐시·재시도·잡 상태
 - `.crawl-samples/thumbnail-fallback-live.json`: 운영 브라우저 검증
+- `.crawl-samples/thumbnail-pipeline-proof.json`: 배포 후 수집·발행·자동 보충/서비스 heartbeat
+- `.crawl-samples/thumbnail-release-health.json`, `thumbnail-deploy-final.jsonl`: 웹 health/6개 배포
 - `/tmp/nomorevibe-thumbnail-review-final.log`: 최종 독립 재검토
 
 원래의 비공개/심사 정책은 변경하지 않았다. 이 작업의 '실제 이미지 확보'에는 아이콘과 GitHub 프로필도 포함되며 모두 제품 스크린샷이라는 의미는 아니다.
