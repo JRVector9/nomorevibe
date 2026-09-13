@@ -48,6 +48,9 @@ export function RepositoryEvidence({ repository, license, dailyStars }: {
   const facts = repository?.facts;
   const repositoryUrl = safeExternalUrl(facts?.repositoryUrl ?? repository?.sourceUrl ?? null);
   const owner = githubOwnerFromRepositoryUrl(repositoryUrl);
+  const release = facts?.latestRelease;
+  const releaseDate = release?.publishedAt ? new Date(release.publishedAt) : null;
+  const releaseUrl = safeExternalUrl(release?.url ?? null) ?? safeExternalUrl(release?.notesUrl ?? null);
   const relationshipLabels = {
     bidirectional: "서비스 ↔ 저장소 연결 확인",
     site_link: "서비스 → 저장소 링크 확인",
@@ -80,7 +83,12 @@ export function RepositoryEvidence({ repository, license, dailyStars }: {
           <RepoRow label="상태">{activityLabel}</RepoRow>
           {facts.languages.length > 0 && <RepoRow label="주요 언어">{facts.languages.map((item) => `${item.name} ${item.percent}%`).join(" · ")}</RepoRow>}
           <RepoRow label="서비스 연결">{facts.relationshipState ? relationshipLabels[facts.relationshipState] : "관계 미확인"}</RepoRow>
-          <RepoRow label="최신 release">{facts.latestRelease ? <>{facts.latestRelease.tagName} · {formatDate(facts.latestRelease.publishedAt)}</> : "확인 안 됨"}</RepoRow>
+          {release && releaseDate && Number.isFinite(releaseDate.getTime()) && (
+            <RepoRow label="최신 release">
+              {releaseUrl ? <a href={releaseUrl} target="_blank" rel="noopener noreferrer" className="text-accent hover:underline">{release.tagName} ↗</a> : release.tagName}
+              {" · "}<time dateTime={releaseDate.toISOString()}>{formatDate(releaseDate)}</time>
+            </RepoRow>
+          )}
         </dl>
       )}
       <div className="mt-5 border-t border-line pt-4 text-[13px] leading-6 text-fg-2">

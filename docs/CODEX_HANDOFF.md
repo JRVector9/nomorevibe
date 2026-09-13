@@ -1,5 +1,15 @@
 # Codex handoff
 
+## Release visibility + attribution source validation IN PROGRESS — 2026-09-14
+
+- User challenged AI detection certainty, wants clear evidence/drop unnecessary methods, asked how latest release extracted and hide row when date missing.
+- Scope: actual publishedAt-only UI, source link; narrowed AI research/proof, not new detectors or policy mutation. Explained cannot establish AI authorship from files/trailers/signatures; existing internal summary model_config support remains future redesign, not enabled for public eligibility.
+- Own code `components/product-detail/RepositoryEvidence.tsx`: valid publishedAt required, row absent otherwise, safe release/notes link and ISO time/KST display. New `tests/repository-release.test.tsx`6cases: RED5fail/1pass then GREEN; related github suite13 =>19PASS. TSC/lint/diffcheckPASS. Other userHero/design artifacts untouched.
+- Live source audit01:14/15:6843publishedGitHub/5735facts/2016dated. Date3+missing3 directGitHubAPIallmatch; coauthor3(Aider/Claude/Codex)SHA+trailer+ancestor+actualchangedpaths confirmed but NOT AI execution proof. Allsignaturefalse does not imply falseclaim. `.crawl-samples/release-evidence-{audit-20260914,source-check}.json`.
+- Docs: `docs/operations/2026-09-14-release-evidence.md` detailed original links and supported claims, `2026-09-14-ai-evidence.md` marked superseded by narrowed criteria. Plan `docs/superpowers/plans/2026-09-14-release-evidence.md`.
+- Isolated checkout `/tmp/nomorevibe-release-evidence-check` at32a9ab4, copiedowncomponent/test+deps/env. E2Eproductionbuild/details session51731 log`/tmp/nomorevibe-release-evidence-e2e.log`; independentCodexreview session17598 result`/tmp/nomorevibe-release-evidence-review-result.txt`. No commit/deploy yet.
+- Next: finishchecks/review; liveQA script datedyana-ai-desktop/worldscript-studio/traycer-ai vs undatedvotepredict/timemachine-2/mylesson at1440/390; owncommitpush, web2onlycopyhelpers releaseenv/deploy; health/newSHA andliveQA/screenshots; report/handoff/journal/docscommit. No worker/schema/settings changes. Exact: `cat /tmp/nomorevibe-release-evidence-review-result.txt`; `tail -25 /tmp/nomorevibe-release-evidence-e2e.log`; `git status --short`.
+
 ## AI evidence field removal + research COMPLETE — 2026-09-14 01:01 KST
 
 - Objective fulfilled: remove screenshot's popular-table AI trace/evidence-link fields; investigate stronger tool attribution. UI shipped, research documented; detector improvements are proposals, not implemented.
