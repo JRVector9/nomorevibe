@@ -1,15 +1,18 @@
 # Codex handoff
 
-## AI evidence UI removal and research — 2026-09-14 IN PROGRESS
+## AI evidence field removal + research COMPLETE — 2026-09-14 01:01 KST
 
-- Objective: remove popular-table AI trace/evidence-link fields; investigate stronger tool attribution without enabling display or changing publication policy.
-- Implemented own files: `app/popular/page.tsx` removes seventh column and extra evidence read, empty colspan6; `app/home.css` removes orphan evidence CSS. Tool metrics and internal detector remain.
-- Research report: `docs/operations/2026-09-14-ai-evidence.md`, official sources and prioritized approach; no detector enhancement claimed implemented. Live audit `.crawl-samples/ai-evidence-audit-20260914.json`: enabled true, display/enforce false; published repo6836 / ever scanned5121 / ever observations3841. All latest scan states5103complete/767partial/1failed (different population); fresh1867. Historical observations are NOT validated tool usage.
-- Executed PASS: TSC, targeted ESLint, diffcheck, isolated production build + existing popular E2E3 (1440/390/filter/paging/empty). `/tmp/nomorevibe-ai-evidence-e2e.log`. No new tests for simple field removal; live explicit absence check next.
-- Independent Codex review CLEAN, session33913 completed in `/tmp/nomorevibe-ai-evidence-check`; result `/tmp/nomorevibe-ai-evidence-review-result.txt`, log sameprefix-review.log. Ready to commit/deploy own files.
-- Failed research retrieval: Claude settings-reference oversized/unavailable via web; used accessible official settings page instead, no unverified new trailer rules claimed.
-- Preserve original user `components/product-detail/ProductHero.tsx` changes and untracked nomorevibe-final/HTML/zip. Do not bulk stage. Existing unrelated docs below historical.
-- Next commands: `cat /tmp/nomorevibe-ai-evidence-review-result.txt`; own commit/push; `python3 /tmp/nomorevibe-copy-release-env.py NEW_FULL_SHA`; `python3 /tmp/nomorevibe-copy-deploy.py deploy`; status+both direct health; live popular desktop/mobile absent AI 흔적/근거 보기, six headers, paging/filter, screenshot. Finish report/handoff/journal/docscommit. Web-only release, no worker/schema/settings changes.
+- Objective fulfilled: remove screenshot's popular-table AI trace/evidence-link fields; investigate stronger tool attribution. UI shipped, research documented; detector improvements are proposals, not implemented.
+- Code `f0f9c19d83d21cd93f5d4135b6f9451fb42f1ed9` committed/pushed main, webM3+mini both deployed same SHA, app/DB health ok. Manual deploy done at01:00:22–27KST; M3 oldinstancebrieflyservedthenconvergedby01:00:44. No worker/schema/settings changes.
+- Own code files `app/popular/page.tsx` removes AI column, extra evidence read and adjusts empty colspan6; `app/home.css` removes orphan CSS. Internal collection, separate development-tool info and reported builder filtering retained. Public display/enforce remain false; collection enabled true.
+- Research report `docs/operations/2026-09-14-ai-evidence.md` has official source links, limitations and prioritized implementation/300-item comparison proposal. Current scans miss general nested directories and use max5 search-discovered commit SHAs, only trailer attribution; Aider author metadata and PR/workflow correlation are proposed additions. Shared instruction presence != specific tool use; model != client != gateway. Do not automatically overwrite reported builder or enable eligibility.
+- Live audit00:56KST `.crawl-samples/ai-evidence-audit-20260914.json`: published repo6836 / ever scanned5121 / ever observations3841. All latest scan states5103complete/767partial/1failed (different population), fresh1867. Historical observations are NOT validated tool usage. Unscanned published1715; builderfilled811 includes fields excluded by public reported gate.
+- Executed PASS: TSC, targeted ESLint, diffcheck, isolated production build + existing popular E2E3 (1440/390/filter/paging/empty), `/tmp/nomorevibe-ai-evidence-e2e.log`. Independent Codex CLI review CLEAN, confidence unprovided, `/tmp/nomorevibe-ai-evidence-review-result.txt`. No new tests for simple field removal.
+- Production `node .crawl-samples/ai-evidence-live.mjs` PASS: AI 흔적/공개된 흔적 없음/근거 보기 absent, six headers/rowcells, desktop1440/mobile390, next-page and personal filter work, documentoverflowfalse/browsererrors0. Both live screenshots opened. `.crawl-samples/ai-evidence-live.json` and `ai-evidence-live-{1440,390}.png`. Existing internal table horizontal scroll on mobile preserved.
+- Modified docs thisphase report/handoff; journal `프로젝트 일지/nomorevibe/2026-09-14 AI 흔적 열 제거와 도구 탐지 강화 조사.md`. Final docs-only commit follows; no runtime redeploy needed.
+- Failed research retrieval: Claude settings-reference oversized/unavailable via web; used accessible official settings page instead, no unverified new trailer rules claimed. No failed application checks.
+- Preserve original user `components/product-detail/ProductHero.tsx` changes and untracked nomorevibe-final/HTML/zip. Do not bulk stage. Isolated checkout `/tmp/nomorevibe-ai-evidence-check` retained.
+- Remaining requested work: none. Detector enhancement implementation is a proposed follow-up to user's research request. Next read-only: `git status --short`; `python3 /tmp/nomorevibe-copy-deploy.py status`; optional `node .crawl-samples/ai-evidence-live.mjs`. Do not re-deploy workers or change publication gates for this field removal.
 
 ## Full catalogue task COMPLETE — 2026-09-13 23:53 KST
 

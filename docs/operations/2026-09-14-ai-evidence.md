@@ -72,4 +72,6 @@
 
 - 실행 완료: `npx tsc --noEmit`, `npx eslint app/popular/page.tsx`, `git diff --check` 통과.
 - 격리 체크아웃 `/tmp/nomorevibe-ai-evidence-check`: 프로덕션 빌드 및 기존 `npx playwright test tests/e2e/popular-projects.spec.ts` 3개 통과. 페이지 이동/개인 필터/빈 목록/1440·390px 확인. 로그 `/tmp/nomorevibe-ai-evidence-e2e.log`.
-- 독립 Codex CLI 코드 리뷰 CLEAN(지적 없음, confidence 미제공). 운영 배포 확인은 진행 중. 탐지 수집 방식·공개 설정·발행 정책은 변경하지 않았다.
+- 독립 Codex CLI 코드 리뷰 CLEAN(지적 없음, confidence 미제공). 운영 웹 2대에 `f0f9c19d83d21cd93f5d4135b6f9451fb42f1ed9` 배포 완료, 양쪽 app/DB health 정상. 탐지 수집 방식·공개 설정·발행 정책은 변경하지 않았다.
+
+- 운영 실화면 검증: `node .crawl-samples/ai-evidence-live.mjs` 통과. 1440/390px에서 삭제 문구·링크 없음, 표 6열 일치, 다음 페이지/개인 계정 필터 동작, 문서 가로 넘침 없음, 브라우저 오류 0. 두 스크린샷 직접 확인. `.crawl-samples/ai-evidence-live.json`, `ai-evidence-live-{1440,390}.png`. 모바일 표 내부 가로 스크롤은 기존 동작을 유지한다.
