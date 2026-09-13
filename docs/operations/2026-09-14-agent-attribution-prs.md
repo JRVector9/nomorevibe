@@ -34,7 +34,7 @@
 
 ## PR 3 — 읽기 전용 검증 보고서
 
-Branch `feat/agent-attribution-audit`, base PR 2. PR URL은 생성 후 기록한다.
+[PR #112](https://github.com/JRVector9/nomorevibe/pull/112), branch `feat/agent-attribution-audit`, base PR 2.
 
 - 발행 상태 seeded/verified 전체를 ID 순서로 페이지 조회한다. 100개는 페이지 크기이며 전체 제한이 아니다.
 - DB 트랜잭션은 repeatable read + read only이다. 수집 중 데이터가 바뀌어도 한 보고서의 기준을 유지한다. 제공자 API나 운영 설정 쓰기는 없다.
@@ -49,7 +49,7 @@ Branch `feat/agent-attribution-audit`, base PR 2. PR URL은 생성 후 기록한
 npx tsx scripts/audit-agent-attribution.ts --output /tmp/agent-attribution-new.jsonl
 ```
 
-검증: 단위13/통합7/TSC/대상 lint 통과. 통합 테스트는 페이지 경계, 숨김 링크, 저장소 URL 정규화, 미발행 제외, 중복 제거, 제작자 신고 분리, CLI 완료 마커와 덮어쓰기 거부를 전용 DB에서 확인했다. 독립 리뷰 P1(confidence10/10)에서 저장소 주소 정규화 불일치를 발견했다. SQL regex를 서비스의 normalizeTypedLink로 교체하고 http/www/대문자 .GIT/인코딩/중복 슬래시5개 회귀 통과. 후속 리뷰 진행 중.
+검증: 단위13/통합7/TSC/대상 lint 통과. 통합 테스트는 페이지 경계, 숨김 링크, 저장소 URL 정규화, 미발행 제외, 중복 제거, 제작자 신고 분리, CLI 완료 마커와 덮어쓰기 거부를 전용 DB에서 확인했다. 독립 리뷰 P1(confidence10/10)에서 저장소 주소 정규화 불일치를 발견했다. SQL regex를 서비스의 normalizeTypedLink로 교체하고 http/www/대문자 .GIT/인코딩/중복 슬래시5개 회귀 통과. 후속 독립 리뷰 CLEAN.
 
 운영 읽기 전용 실측: 2026-09-14 02:32:10 KST 최종 재검사, 발행6,877개; 구버전 검사5,184개/미검사1,693개, 새 기준 충족 기여 표기0개, 공개 조건을 충족한 제작자 신고0개. 새 코드로 재수집하지 않은 운영 DB이므로 0개는 AI 미사용이나 탐지 정확도를 뜻하지 않는다. `.crawl-samples/attribution-audit-prod-20260914-final.jsonl`에 완료 마커를 확인했다. 운영 DB/설정 쓰기0회.
 
@@ -59,3 +59,5 @@ PR CI에서 홈/상세 테스트7개가 실패했다. 기준 main 20129d5 별도
 
 
 전체 회귀: 단위957개 통과. 전체 통합608개 통과 후 주소 정규화 변경에 대한 최종 관련 통합7개도 통과했다. 전체 lint는 임시 실측 스크립트의 any2개를 검사한 첫 시도에서 실패했으며, 해당 비추적 스크립트를 /tmp로 옮긴 뒤 오류0(기존 vendor warning1). 프로덕션 빌드도 통과했다. 전체 통합 첫 실행의 scan-lock fixture1개는 fork/files 응답 보완 후 별도3개 및 전체608개 통과했다. 테스트를 생략하거나 기대 동작을 완화하지 않았다.
+
+PR #110/#111 GitHub CI 전체 단계 통과 확인. PR #112 CI는 별도로 최종 확인한다. 세 PR은 구현·검토 단위로 생성했으며 아직 병합·배포하지 않았다.
