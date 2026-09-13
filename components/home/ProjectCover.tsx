@@ -24,9 +24,9 @@ export function ProjectCover({
   const safeImage = ogImage?.startsWith("/") ? ogImage : null;
   if (safeImage) {
     return (
-      <span className={`project-cover cover-photo${presentation.identity ? " cover-identity" : ""}`}>
+      <span className={`project-cover cover-photo${presentation.contain ? " cover-identity" : ""}`}>
         {/* eslint-disable-next-line @next/next/no-img-element -- 목록 커버는 크기를 미리 알 수 없는 동적 이미지 */}
-        <img src={safeImage} alt={presentation.label} style={presentation.identity ? { width: Math.min(presentation.width, 96), height: Math.min(presentation.height, 96) } : undefined} />
+        <img src={safeImage} alt={presentation.label} style={presentation.contain ? { maxWidth: presentation.width, maxHeight: presentation.height, ...(presentation.identity ? { width: Math.min(presentation.width, 96), height: Math.min(presentation.height, 96) } : {}) } : undefined} />
         <span className="cover-brand">{name.toLowerCase()}</span>
       </span>
     );

@@ -21,7 +21,7 @@ export function ProductIcon({
         alt={name}
         width={size}
         height={size}
-        className={`shrink-0 rounded-[10px] border border-line ${thumbnailPresentation(ogImage).identity ? "object-contain bg-bg-soft p-1" : "object-cover"}`}
+        className={`shrink-0 rounded-[10px] border border-line ${thumbnailPresentation(ogImage).contain ? "object-contain bg-bg-soft p-1" : "object-cover"}`}
         style={{ width: size, height: size }}
       />
     );

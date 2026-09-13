@@ -18,3 +18,23 @@ test('source labels and small icons render on desktop and mobile',async({page})=
   if(kind==='site_icon'||kind==='default')await root.screenshot({path:`/tmp/nomorevibe-thumbnail-${kind}-${width}.png`});
  }}expect(errors).toEqual([]);
 });
+test('wide repository wordmarks remain fully visible in covers and icons',async({page})=>{
+ const{execFileSync}=await import('node:child_process');
+ const data=await sharp({create:{width:512,height:128,channels:4,background:'#345678'}}).webp().toBuffer();
+ await db.update(ogImages).set({data}).where(inArray(ogImages.slug,['thumbnail-e2e-repository-image']));
+ const ogImage='/api/og-cache/thumbnail-e2e-repository-image?thumbnail=repository_image&w=512&h=128&v=2';
+ await page.goto('/');
+ // Render outside Playwright's component transform so the real React markup reaches the browser.
+ const html=execFileSync(process.execPath,['--import','tsx','--input-type=module','-e',`
+  import React from 'react';import{renderToStaticMarkup}from'react-dom/server';globalThis.React=React;
+  const{ProjectCover}=await import('./components/home/ProjectCover.tsx');const{ProductIcon}=await import('./components/ProductIcon.tsx');
+  const ogImage=${JSON.stringify(ogImage)};
+  console.log(renderToStaticMarkup(React.createElement('div',{id:'wide-logo-check',style:{width:360}},React.createElement(ProjectCover,{name:'Wide logo',ogImage,art:'paper'}),React.createElement(ProductIcon,{name:'Wide logo',ogImage,size:48}))));
+ `],{encoding:'utf8'});
+
+ await page.evaluate(html=>{const host=document.createElement('div');host.innerHTML=html;document.body.prepend(host)},html);
+ const images=page.locator('#wide-logo-check img');await expect(images).toHaveCount(2);
+ for(const img of await images.all()){await expect(img).toBeVisible();await expect.poll(()=>img.evaluate((e:HTMLImageElement)=>e.complete&&e.naturalWidth===512)).toBe(true);expect(await img.evaluate(e=>getComputedStyle(e).objectFit)).toBe('contain');}
+ expect((await images.first().boundingBox())!.height).toBeLessThanOrEqual(128);
+ await page.locator('#wide-logo-check').screenshot({path:'/tmp/nomorevibe-thumbnail-wide-logo.png'});
+});

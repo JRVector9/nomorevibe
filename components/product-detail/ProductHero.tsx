@@ -90,7 +90,7 @@ export function ProductHero({
                   src={safeIcon}
                   width={thumbnail.width}
                   height={thumbnail.height}
-                  style={thumbnail.identity ? { maxWidth: Math.min(thumbnail.width, 112), margin: "auto" } : undefined}
+                  style={thumbnail.contain ? { maxWidth: thumbnail.identity ? Math.min(thumbnail.width, 112) : thumbnail.width, margin: "auto" } : undefined}
                   alt={`${product.name} ${thumbnail.label}`}
                   loading="eager"
                   fetchPriority="high"

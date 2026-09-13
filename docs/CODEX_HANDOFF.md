@@ -1,5 +1,7 @@
 # Codex handoff
 
+- Release implementation committed locally as `77f6548` at10:07KST; independent review session58318 still checking adjacent cases before push/deploy. Root workingtree contains user Hero/design artifacts plus this handoff update. Hook integration55 and encodedSVG rejection5 tests also passed.
+
 ## Thumbnail backfill COMPLETE, release pending — 2026-09-13 09:57 KST
 
 - Frozen3128 fully applied: site_icon2127/github_avatar734/repository_image125/og142/default0; DB audit09:56:35KST confirms3128real,0missing,0brokencache. FullCLI session23638 done3116 afterinitial12. Evidence `.crawl-samples/thumbnail-final-audit.json` andreceipt. No further cohort mutationneeded.
