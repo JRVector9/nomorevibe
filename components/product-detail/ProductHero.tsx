@@ -79,7 +79,7 @@ export function ProductHero({
                 <span>{representative.altText || `${product.name} 제품 화면`}</span>
                 <span>사본 갱신 {formatDate(representative.lastSuccessAt)}</span>
                 {representative.sourceMissing && (
-                  <span className="w-full text-down">원본 출처는 사라졌지만 마지막 내부 사본을 표시합니다.</span>
+                  <span className="w-full text-down">원본 없음 · 보관 이미지</span>
                 )}
               </figcaption>
             </figure>

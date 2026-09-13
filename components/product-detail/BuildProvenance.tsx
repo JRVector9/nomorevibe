@@ -20,9 +20,6 @@ export function BuildProvenance({ product, unclaimed, agents, skills, observedAg
   return (
     <section className="rounded-[12px] border border-line bg-bg-card p-5">
       <h2 className="text-[16px] font-extrabold text-fg">개발 근거</h2>
-      <p className="mt-1.5 text-[13px] leading-6 text-fg-3">
-        확인된 신고와 공개 저장소에서 발견한 지침·설정만 표시합니다. 랭킹에는 반영하지 않습니다.
-      </p>
 
       <div className="mt-4 space-y-3">
         {reportedBuilder && (
@@ -75,11 +72,6 @@ export function BuildProvenance({ product, unclaimed, agents, skills, observedAg
         ))}
       </div>
 
-      {observedAgentFacts.length > 0 && (
-        <p className="mt-3 text-[13px] leading-5 text-fg-3">
-          지침·설정 파일은 발견 사실만 뜻하며 실제 실행 모델이나 전체 제작 과정을 증명하지 않습니다.
-        </p>
-      )}
     </section>
   );
 }

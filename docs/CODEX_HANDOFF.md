@@ -1,5 +1,10 @@
 # Codex handoff
 
+## Copy final omission pass — 2026-09-13 23:20 KST
+- Main implementation committed/pushed4c1fb2f; webreleaseenvset4c1but NO deployqueued yet. Additional5copyitems found: search result narration, popularSuspenseloadingsentence,2BuildProvenanceparagraphs, Herosourcemissinglongsentence. Now29inventoryrowsinreport; directfunctionaluserworkflows/provenancebadges retained.
+- Follow-up changes app/page.tsx, BuildProvenance.tsx, HeroHEADblob(`/tmp/nomorevibe-copy-Hero.tsx`) +report. FinalisolatedbuildE2E4PASS `/tmp/nomorevibe-copy-e2e-last.log`; TSC/lintPASS. Focusedreview session36113 `/tmp/nomorevibe-copy-review-final.log` running. StageHeroindependentblobagain, neverwholeuserHero.
+- Next commit/pushfollowup, updateweb2releaseenvtoNEW SHA (not4c1), deploy2, liveQA `.crawl-samples/copy-live.mjs`, screenshotinspection, report/handoff/journal finaldocscommit.
+
 ## Copy cleanup ready to release — 2026-09-13 23:16 KST
 - Independent review CLEAN `/tmp/nomorevibe-copy-review.log`; final isolatedbuild+search/detail4PASS, previouspopular3PASS; unit3/integration11/TSC/lint/diffcheckPASS. InitialE2EfoundmissedFreshnesscollectinglabel fixed; namefixture initiallyoutsidefirst9corrected. AccidentalrootE2E includeduncommitteduserHero andfailed13pxminimum(12pxcoverbrand); isolateddeploymentHeroexcludesuserlayout and4PASS. Do notclaimrootalltests passed.
 - Own21filesstaged inclHeroHEADbasedblob; workingHeroisuserlayout+shortenedpreviewcaption, donotgitaddit. Readycommitpushthenweb2only. Actualprodseason2026-W37 ends2026-09-13T15:00UTC=Sep14Monday00KST. Liveverification script `.crawl-samples/copy-live.mjs` ready; ownhelpers `/tmp/nomorevibe-copy-{release-env,deploy}.py`.

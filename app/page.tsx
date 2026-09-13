@@ -262,7 +262,7 @@ export default async function HomePage({ searchParams }: Props) {
       {!query && <>
       <HomeHero />
       <HomePulse pulse={pulse} state={state} />
-      <Suspense fallback={<section className="popular-section"><h2>많이 쓰이는 프로젝트</h2><p>스타 구간을 불러오는 중입니다.</p></section>}>
+      <Suspense fallback={<section className="popular-section"><h2>많이 쓰이는 프로젝트</h2></section>}>
         <PopularTiers personal={firstValue(params.personal) === "1"} />
       </Suspense>
       </>}
@@ -272,7 +272,7 @@ export default async function HomePage({ searchParams }: Props) {
           <div className="feed-head">
             <div>
               <h2 id="projects-title">{query ? `“${query}” 검색 결과` : "발견할 가치가 있는 프로젝트"}</h2>
-              <p>{query ? "프로젝트명, 소개, GitHub 아이디·저장소에서 찾았습니다." : "AI로 만들고, 사람이 다듬은 새로운 서비스들."}</p>
+              {!query && <p>AI로 만들고, 사람이 다듬은 새로운 서비스들.</p>}
             </div>
             <Link className="all-link" href="/">
               전체 보기 <Icon name="arrow-right" size={14} />
