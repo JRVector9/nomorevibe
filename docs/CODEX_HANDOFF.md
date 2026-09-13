@@ -1,5 +1,18 @@
 # Codex handoff
 
+## Full catalogue task COMPLETE — 2026-09-13 23:53 KST
+
+- Userrequested100limitremovalimplemented/shipped8007168c47753a88a27d4fa725ff075029f16761. Mainpushed; webM3+mini samecommitdeploydone, app/dbhealthok. Worker/schemaunchanged.
+- Production23:50KSTproof `.crawl-samples/full-catalog-live.json`:initial9/6753,truefilteredcounts,99→108,all6753rendered withnolinksremaining,noduplicates,lastpi-coding-agent.390mobile108nooverflow/pageerrors0. Hugeviewimagefetchesabortedonlyforverification; normalimagesseparatelyloadedandscreenshotopened.
+- Changes app/page.tsx matchingcounts+visiblelimits/unclaimedfulltotal/wholecataloguelink, ProjectGridtotalCount, browse-state safeintegernocap, stable repository slugorder, BrowseFiltersweeklyquerysortpreservation, tests/plan/report. Allpublishedaccessiblethroughlatest/search/open; rankingeligibilitystilldistinct; existingstatus/downexclusionsretained. Savedmodeold100candidatepoolremains(knownpreviouslyreportedlimitation), notshrunkto9; notclaimedsavedbugfixed.
+- Testsunit5/integration15/TSC/lint/diffcheckPASS; isolatedproductionbuild/E2E4PASS. InitialE2Erevealedweeklyqmorehrefomittedsort→recent; fixedhrefWith+hiddeninput,finalgreen. IndependentreviewplusfocusedURLreviewbothCLEAN; confidenceunprovided. No unresolvednewcodefailures. Source-treeuserHero/designartifactsremainuncommittedanduntouched.
+- Previousquestiontopbaranswered/read-onlyverified: completed7daysendingtoday00KST, daterangechangesdaily;DBaggregatesrecalconrequestwith1minprocesscache,nofixedsnapshot,noclientpoll. Today-bornnewlylistedproductswaitnextdate; latepastreleasescanaltertodaycounts.23:34values337/-7.9%/1221/5189, laterUI1223/5201sameasOfobserved. No topbarcodechanges.
+- Report `docs/operations/2026-09-13-full-catalog.md`; plancomplete; journalrecordedunder프로젝트일지/nomorevibe/2026-09-13 공개 프로젝트 전체 탐색.md. Finaldocscommitfollows,noredeployneeded. Remainingrequestedwork:none. Nextread-only `git status --short`; `python3 /tmp/nomorevibe-copy-deploy.py status`; optional `python3 /tmp/nomorevibe-prod-db.py npx tsx .crawl-samples/full-catalog-audit.ts`. Avoidrerunning6753-rowbrowsercheckwithoutneed.
+
+## Full catalogue release queued — 2026-09-13 23:50 KST
+- Code8007168c47753a88a27d4fa725ff075029f16761 committed/pushed. Web2envupdated anddeployqueued via copyhelpers. Both independentreviewsCLEAN. Finalunit5/integration15/TSC/lint/isolatedbuildE2E4PASS. No production schema/workerchanges.
+- Next poll `.crawl-samples/full-catalog-deploy-status.jsonl` or `python3 /tmp/nomorevibe-copy-deploy.py status`, directweb2healthnewSHA, `node .crawl-samples/full-catalog-live.mjs` (imageaborts onlyhugeview), inspectinitialscreenshot andactualall6753+lastitem. Report/handoff/journal/docscommit. UserHero/designartifactsstillonlyunrelateddirtyfiles.
+
 ## Full published catalogue IN PROGRESS — 2026-09-13 23:47 KST
 - Latestuserasked100capremoval toviewallpublished. Previousquestiontopbaranswered: KSTcompleted7daywindowrollsdaily00;loadHomePulsequeryDBonrequestwith1minprocesscache,nofrozendailysnapshot/noautopoll. Prodread23:34born337/prev366/-7.9%,updatedprojects1221/releases5189. No topbarcodechangesrequested.
 - Implemented: parseShown safeinteger no100cap; publiclistcountsamefilters andlimitmin(shown,actualcount),9initial; ProjectGridtotalCount enablesmorebeyondloadedrows; unclaimedfillindependenttotal; rankeligibilityretained; stableSlugtie; wholecataloguelink/?sort=recent. Savedmodeoldcandidatepool100preservedexplicitly, oldsavedUIlimitationNOTfixed.
