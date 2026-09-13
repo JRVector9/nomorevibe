@@ -1571,9 +1571,6 @@ dialog::backdrop {
  .popular-tabs a { padding: 13px 10px; }
 }
 
-.popular-evidence { min-width: 170px; }
-.popular-evidence span, .popular-evidence small, .popular-evidence a { display: block; font-size: 13px; }
-.popular-evidence small { color: var(--text-3); margin: 3px 0; }
 
 /* Identity assets stay small and are never styled as screenshots. */
 .cover-identity { display: flex; align-items: center; justify-content: center; background: var(--bg-soft, #f5f6fb); }
