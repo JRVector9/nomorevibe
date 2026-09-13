@@ -40,7 +40,7 @@ export function HomeAside({ news }: { news: HomeNewsItem[] }) {
               </div>
             </a>
           ))}
-          {news.length === 0 && <p className="news-item">공식 피드에서 소식을 모으는 중입니다.</p>}
+          {news.length === 0 && <p className="news-item">소식 없음</p>}
         </div>
         <div className="brief-bottom">
           회사 공식 피드에서 자동으로 모읍니다 · 회사마다 최신 1건

@@ -312,7 +312,6 @@ export default async function HomePage({ searchParams }: Props) {
           {!savedOnly && unclaimed.length > 0 && (
             <section className="unclaimed-block">
               <h2>주인을 기다리는 제품</h2>
-              <p>우리가 찾아서 올렸고 아직 주인이 나타나지 않은 제품입니다. 랭킹에는 들어가지 않습니다.</p>
               <div className="mt-3">
                 <ProjectGrid products={unclaimed} browseState={state} />
               </div>
