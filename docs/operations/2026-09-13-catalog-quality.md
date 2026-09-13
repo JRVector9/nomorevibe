@@ -39,6 +39,14 @@
 
 ## 운영 상태
 
-마이그레이션0032와 공개 제외3건 적용 완료. 코드 배포와 실제 화면 검증 진행 중.
+마이그레이션0032와 공개 제외3건 적용 완료. 코드 `17abf63b3a4bf5555330f61f87997780f558052e`를 main에 반영하고 웹2·수집·출판·심사·유지보수·스케줄러 총7개를 배포했다. 모두 같은 커밋 배포 완료, 해당7개 서비스의 최신 heartbeat가 새 release/running이며 두 웹 서버의 app/db health가 정상이다.
+
+운영 브라우저 검증(22:51 KST): @opencovibe와 FastGPT 각1개 정확히 검색, AI 검색 첫9개·더 보기18개, 검색 영역 상단137px(기존1431px), 모바일390px에서9개와 화면 넘침 없음, pageerror0. 제외3개 상세404, Formbricks와 JabRef 상세200. 실제 데스크톱·모바일 스크린샷을 열어 확인했다.
+
+22:52:29 KST DB 실측: 공개 저장소 제품6757개, 24시간 이내 성공 관측6695개, 두 관측값이 있는 제품0개. 새 유지보수 워커에 스타 작업을1회 요청해255번째 실행 성공(22:52:19), 오류·잔여 잠금 없음. 항목별24시간 조건은 그대로 적용했으며 추가 값을 만들기 위한 강제 갱신은 하지 않았다. 다음 실제 일일 수집부터 증감이 채워진다.
+
+운영 스모크 첫 실행은 링크 전환 완료 전에 카드 수를 읽어 실패했고, URL과 카드 수를 기다리도록 진단 스크립트를 수정했다. 두 번째는 Formbricks의 표시 이름으로 경로를 추측해404가 발생했다. DB의 실제 slug를 사용한 최종 전체 스모크는 통과했다. 앱 수정이 필요한 실패는 아니었다.
 
 증빙: `.crawl-samples/non-product-{plan,apply}-20260913.*`, `non-product-live-check.json`, `non-product-postreview-plan-20260913.json`, `catalog-audit-20260913.json`, `/tmp/nomorevibe-catalog-*.log`.
+
+최종 운영 증빙: `.crawl-samples/catalog-{live,release-proof,release-health}.json`, `catalog-deploy-status.jsonl`, `catalog-live-{desktop,mobile}.png`.

@@ -1,6 +1,16 @@
 # Codex handoff
 
-## Catalogue ready to release — 2026-09-13 22:51 KST
+## Catalogue task COMPLETE — 2026-09-13 22:53 KST
+
+- Requested personal research/survey exclusion, daily stars+change, nine cards, search fix implemented and shipped `17abf63b3a4bf5555330f61f87997780f558052e`. All7 affected Dokploy apps(web2/crawler/publisher/reviewer/maintenance/scheduler)done samecommit; bothwebapp/dbhealthok;7freshnewrelease/runningheartbeats. connect-agentunchanged.
+- Production0032applied;3definite nonproducts banned/reversible/audited, skipped0. Latent Coffee Research, research publications, OTT thesis survey; actuallatestmetadatarechecked. Latest purpose preview0. Shared rules+publishguards and reviewpromptversion updated; observepolicyunchanged. Conservative detector does not promise universal semantic classification.
+- Searchactual @opencovibe/FastGPT1each, AI9/more18; resultstop137px vs1431before;390mobile nooverflow andpageerrors0. Removed3detail404, Formbricksactualslugthe-open-source-experience-data-hub andJabRef200. Actualdesktop/mobile screenshotsopened. Final `.crawl-samples/catalog-live.json` passed.
+- Daily starworkeralreadyexisted; nowprevioussuccessfulsample+timestamp storedatomically, failureretains/sourcechangeresets. Live6757repo products,6695fresh<24h,comparable0 at13:52:29UTC. Onerequestedactualnewworkerstarjob succeededrun255 at13:52:19; errors/locknull. Do not fabricate priorvalues orforce24hinterval. Pending UIuntilnextactualdailymeasurement is expected.
+- Finalreview CLEAN after3findingsfixed(P1reusabletool falsepositive,P1latestmetadata+fullinputhashCAS,P2term13+ignored); confidenceunprovided. Fullunit914/integration603beforefinalfix; finalrelatedunit69/integration38,timezone2,TSC/lint/diffcheckPASS; isolatedbuildE2E8 thenfinalsearchbuild/E2E1PASS. Firstnewcleanupfixture missingrepoMeta corrected; liveQA earlyread+wrongslugdiagnostic failurescorrected, not appdefects.
+- Ownfilesincommit43, see `git show --stat 17abf63`. OriginaluserHero3hunks/designartifactsremainuncommitted and untouched. Operationsreport `docs/operations/2026-09-13-catalog-quality.md`, plan/spec complete. Obsidianjournal saved `프로젝트 일지/nomorevibe/2026-09-13 비제품 제외와 검색 및 스타 증감.md`; finaldocscommit follows; no runtime redeployneeded fordocs.
+- Remaining implementation: none foractive4requests. Existingquerycap100retained; broadsemanticfalse-negativepossibility documented. Latest requestwas search; prior survey-featurequestion not partofthisphase. Nextread-onlycommands: `git status --short`; `python3 /tmp/nomorevibe-catalog-deploy.py status`; `python3 /tmp/nomorevibe-prod-db.py npx tsx .crawl-samples/catalog-release-proof.ts`. Do NOT reruncompletedcleanup; oldplanslacknewinputhashandareintentionallyrejected. Noadditionalapprovalneeded forauthorizedverification.
+
+## Catalogue ready to release — 2026-09-13 22:48 KST
 
 - Independent review found P1 reusable research tool false positives, P1 current metadata/input freeze gaps in cleanup, P2 ignored terms after12. All fixed; focused re-review CLEAN (`/tmp/nomorevibe-catalog-review-clean.log`). Review confidence unprovided. Related unit69/integration38, TSC/lint PASS; final isolated production build/search E2E1PASS after previous8PASS.
 - Existing3 exclusions rechecked against latest page identity and remain definite; updated public cleanup preview0. Migration0032 already applied. Do not reapply old plans (new evidenceHash required).
