@@ -19,10 +19,10 @@ export function summarizeAgentEvidence(input: SummaryInput): AgentEvidenceSummar
   if (input.relationship === 'conflict') return result('repository_relationship_conflict');
   if (input.scanState !== 'complete') return result('ai_evidence_pending');
   if (input.relationship !== 'same_product') return result('ai_evidence_insufficient');
-  // File presence (including empty or MCP-only config) does not prove development use.
-  if (input.observations.some(o => o.client && (
-    (o.kind === 'model_config' && o.declaredModelId !== null && o.routing !== 'unknown') ||
-    o.kind === 'commit_attribution'
-  ))) return result('ai_evidence_supported');
+  // Settings express intent, not activity. Attribution is still only a claim;
+  // a committer-only mark does not even claim authorship of the changes.
+  if (input.observations.some(o => o.client && o.kind === 'commit_attribution' && o.role !== 'committer')) {
+    return result('ai_evidence_supported');
+  }
   return result(input.observations.length ? 'ai_evidence_insufficient' : 'ai_evidence_not_found');
 }

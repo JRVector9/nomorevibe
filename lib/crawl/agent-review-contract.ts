@@ -17,7 +17,7 @@ import { README_SAMPLE_LIMIT } from "./readme";
  * review_approval_changed로 매 틱 멈춘다. 올리면 옛 기록이 대조에서 빠져 후보가 심사로 돌아간다.
  */
 export const REVIEW_PROMPT_VERSION = "2026-09-13.1";
-export const REVIEW_RULES_VERSION = "2026-09-13.1";
+export const REVIEW_RULES_VERSION = "2026-09-14.1";
 export const MAX_REVIEW_INPUT_BYTES = 64 * 1024;
 export const MAX_REVIEW_ATTEMPTS = 3;
 export const REVIEW_FRESH_MS = 24 * 3600_000;
