@@ -149,7 +149,7 @@ describe("evidence product detail components", () => {
     />);
     expect(html).toContain('src="/api/og-cache/simple-hwp"');
     expect(html).toContain("공개 페이지 대표 이미지");
-    expect(html).toContain("이미지 없음");
+    expect(html).not.toContain("이미지 없음");
     expect(html).not.toContain("아직 보관된 제품 화면이 없습니다.");
   });
 
