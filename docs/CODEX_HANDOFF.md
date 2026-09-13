@@ -1,5 +1,14 @@
 # Codex handoff
 
+## Full published catalogue IN PROGRESS — 2026-09-13 23:47 KST
+- Latestuserasked100capremoval toviewallpublished. Previousquestiontopbaranswered: KSTcompleted7daywindowrollsdaily00;loadHomePulsequeryDBonrequestwith1minprocesscache,nofrozendailysnapshot/noautopoll. Prodread23:34born337/prev366/-7.9%,updatedprojects1221/releases5189. No topbarcodechangesrequested.
+- Implemented: parseShown safeinteger no100cap; publiclistcountsamefilters andlimitmin(shown,actualcount),9initial; ProjectGridtotalCount enablesmorebeyondloadedrows; unclaimedfillindependenttotal; rankeligibilityretained; stableSlugtie; wholecataloguelink/?sort=recent. Savedmodeoldcandidatepool100preservedexplicitly, oldsavedUIlimitationNOTfixed.
+- Ownfiles app/page.tsx,components/BrowseFilters.tsx,home/ProjectGrid.tsx,home/browse-state.ts,products/repository.ts,tests/home-sort,tests/e2e/full-catalog.spec.ts,plan2026-09-13-full-catalog. UserHero/designartifactsuntouched. No committhisphaseyet.
+- Tests unit5/integration15/TSC/lintPASS. Isolatednewworktree/tmp/nomorevibe-full-catalog-check HEAD51cdb20 owncopies+depsclone. Build/E2E4PASS `/tmp/nomorevibe-full-catalog-e2e-final.log`:117fixture9/99→108→117end, hugeinputclampedactualcount, no duplicates, filters, mobile, savedregression. InitialE2Efoundweekly+qsortlostonmore: hrefWithmustexplicitweeklyifquery;formhiddeninputsamefix. Finalgreenafterfix. Serverstreamclosedearlylogonclientnavigation observed,butallbrowserassertions/pageerrorspassed.
+- IndepakreviewCLEAN `/tmp/nomorevibe-full-catalog-review.log`; finaltwoURLconditionsfocusedreviewrunning session53113; log `/tmp/nomorevibe-full-catalog-review-final.log`, CLIresume01a09b38-8087-7671-9868-48c2f1787389. No modeloverrideexceptskill-supportedsol/high.
+- Prodaudit `.crawl-samples/full-catalog-audit.json`:visible6753,lastslugpi-coding-agent at14:45:06UTC. LiveQAready `.crawl-samples/full-catalog-live.mjs`:initial9 truecount,99→108,allactualcount/lastslug/noMore/noduplicates,390px108. Abortsimagefetchonlyduringhugeviewtoavoid6753mediarequests.
+- Next: finalreviewclean, owncommit/push; web2onlyusingexisting/tmp/nomorevibe-copy-{release-env,deploy}.py withNEW SHA; verifyhealth/deploythenrunliveQAandviewinitialscreenshot; operationsreport includes topbaranswer and fullcataloguecounts; updatehandoff/Obsidianjournal/docscommit. No DB/workerdeploynecessary.
+
 ## Project presentation task COMPLETE — 2026-09-13 23:27 KST
 
 - Userrequest fulfilled: exactGitHubowner/repo fallback titles→repo inpubliclist/popular/detail, descriptions2lines,31processcopyitems removed/shortened/reportlisted, weeklysave/visitbehavior explainedwithactualpolicy. Main commits4c1fb2f/724029b/b2cf859 pushed; webM3+mini deployed finalb2cf859282093b94975f4d00d236697b95b257b9; bothapp/dbhealthok exactrelease. No worker/DBmigration.

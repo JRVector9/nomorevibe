@@ -71,7 +71,7 @@ export function BrowseFilters({
           })}
         </div>
         <form action="/" method="get" className="selects">
-          {state.sort !== "weekly" && <input type="hidden" name="sort" value={state.sort} />}
+          {(state.sort !== "weekly" || state.query) && <input type="hidden" name="sort" value={state.sort} />}
           {state.query && <input type="hidden" name="q" value={state.query} />}
           <label className="sr-only" htmlFor="home-category">카테고리</label>
           <AutoSubmitSelect id="home-category" name="category" defaultValue={state.category ?? ""}>

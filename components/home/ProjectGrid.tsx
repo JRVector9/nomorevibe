@@ -17,10 +17,12 @@ export function ProjectGrid({
   products,
   browseState,
   initialOnlySaved = false,
+  totalCount,
 }: {
   products: HomeCardProduct[];
   browseState: BrowseState;
   initialOnlySaved?: boolean;
+  totalCount?: number;
 }) {
   const raw = useSyncExternalStore(subscribeSaved, savedSnapshot, () => "[]");
   const saved = useMemo(() => parseSaved(raw), [raw]);
@@ -37,6 +39,7 @@ export function ProjectGrid({
 
   const rows = onlySaved ? products.filter((product) => saved.has(product.slug)) : products;
   const visible = rows.slice(0, limit);
+  const total = onlySaved ? rows.length : Math.max(rows.length, totalCount ?? rows.length);
 
   if (rows.length === 0) {
     return (
@@ -74,18 +77,18 @@ export function ProjectGrid({
           />
         ))}
       </div>
-      {limit < rows.length && (
+      {limit < total && (
         onlySaved ? (
           <button type="button" className="more-btn" onClick={() => setLocalLimit((current) => current + HOME_PAGE_SIZE)}>
-            프로젝트 더 보기 ({Math.min(limit, rows.length)} / {rows.length})
+            프로젝트 더 보기 ({visible.length} / {total})
           </button>
         ) : (
           <Link
             className="more-btn"
-            href={hrefWith(browseState, { shown: Math.min(limit + HOME_PAGE_SIZE, rows.length) })}
+            href={hrefWith(browseState, { shown: Math.min(limit + HOME_PAGE_SIZE, total) })}
             scroll={false}
           >
-            프로젝트 더 보기 ({Math.min(limit, rows.length)} / {rows.length})
+            프로젝트 더 보기 ({visible.length} / {total})
           </Link>
         )
       )}

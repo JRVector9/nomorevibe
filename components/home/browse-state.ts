@@ -1,7 +1,6 @@
 export type HomeSort = "weekly" | "trending" | "recent" | "all-time" | "open";
 export const HOME_FIRST_PAGE = 9;
 export const HOME_PAGE_SIZE = 9;
-export const HOME_SHOWN_MAX = 100;
 
 export type BrowseState = {
   sort: HomeSort;
@@ -13,8 +12,8 @@ export type BrowseState = {
 
 export function parseShown(value: string | undefined): number {
   const count = Number(value);
-  if (!Number.isInteger(count) || count <= HOME_FIRST_PAGE) return HOME_FIRST_PAGE;
-  return Math.min(count, HOME_SHOWN_MAX);
+  if (!Number.isSafeInteger(count) || count <= HOME_FIRST_PAGE) return HOME_FIRST_PAGE;
+  return count;
 }
 
 export function parseHomeSort(value: string | undefined): HomeSort {
@@ -32,7 +31,7 @@ export function hrefWith(state: BrowseState, patch: Partial<BrowseState> = {}): 
   const filterChanged = ["sort", "category", "builder", "query"].some((key) => key in patch);
   if (filterChanged && patch.shown === undefined) next.shown = undefined;
   const params = new URLSearchParams();
-  if (next.sort !== "weekly") params.set("sort", next.sort);
+  if (next.sort !== "weekly" || next.query) params.set("sort", next.sort);
   if (next.category) params.set("category", next.category);
   if (next.builder) params.set("builder", next.builder);
   if (next.query) params.set("q", next.query);

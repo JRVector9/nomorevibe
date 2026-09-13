@@ -19,7 +19,7 @@ describe("home sort", () => {
     expect(parseHomeSort("unknown")).toBe("weekly");
   });
 
-  it("preserves category and query while omitting only the weekly sort", () => {
+  it("preserves category and query with an explicit weekly sort when searching", () => {
     const html = renderToStaticMarkup(createElement(BrowseFilters, {
       state: { sort: "recent", category: "Dev", query: "ai tool" },
       counts: { Dev: 1 },
@@ -28,7 +28,7 @@ describe("home sort", () => {
       resultCount: 1,
     }));
 
-    expect(html).toContain('href="/?category=Dev&amp;q=ai+tool"');
+    expect(html).toContain('href="/?sort=weekly&amp;category=Dev&amp;q=ai+tool"');
     expect(html).toContain('href="/?sort=all-time&amp;category=Dev&amp;q=ai+tool"');
     expect(html).toContain('href="/?sort=open&amp;category=Dev&amp;q=ai+tool"');
     expect(html).toContain("추천");
@@ -40,8 +40,12 @@ describe("home sort", () => {
     expect(parseShown(undefined)).toBe(9);
     expect(parseShown("18")).toBe(18);
     expect(parseShown("3")).toBe(9);
-    expect(parseShown("1000")).toBe(100);
+    expect(parseShown("1000")).toBe(1000);
+    expect(parseShown("108")).toBe(108);
+    expect(parseShown("Infinity")).toBe(9);
+    expect(parseShown("9007199254740992")).toBe(9);
     expect(hrefWith({ sort: "weekly", shown: 18 })).toBe("/?shown=18");
+    expect(hrefWith({ sort: "weekly", query: "directory", shown: 99 }, { shown: 108 })).toBe("/?sort=weekly&q=directory&shown=108");
     expect(hrefWith({ sort: "weekly", shown: 18 }, { sort: "recent" })).toBe("/?sort=recent");
     expect(hrefWith({ sort: "recent", shown: 18 }, { shown: 30 })).toBe("/?sort=recent&shown=30");
   });

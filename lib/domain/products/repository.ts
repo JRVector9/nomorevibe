@@ -148,7 +148,7 @@ export async function listProducts({ sort = "recent", limit, offset, ...options 
   const conditions = listConditions(options);
   return db.query.products.findMany({
     where: and(...conditions),
-    orderBy: [...SORTS[sort]],
+    orderBy: [...SORTS[sort], products.slug],
     limit,
     offset,
   });

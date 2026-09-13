@@ -35,7 +35,8 @@ import { logger } from "@/lib/observability/logger";
 
 export const dynamic = "force-dynamic";
 
-const HOME_LIST_LIMIT = 100;
+// Saved IDs are filtered in the browser; preserve the existing candidate pool.
+const SAVED_INITIAL_CANDIDATES = 100;
 
 type SearchValue = string | string[] | undefined;
 type Props = {
@@ -60,10 +61,11 @@ function listFor(
   category: (typeof CATEGORIES)[number] | undefined,
   query: string | undefined,
   builder: string | undefined,
+  limit: number,
 ): Promise<ProductListItem[] | RankingListItem[]> {
-  const options = { category, query, builder, limit: HOME_LIST_LIMIT };
+  const options = { category, query, builder, limit };
   if (sort === "open") {
-    return getPublicList(HOME_LIST_LIMIT, { sort: "recent", category, query, builder, hasRepository: true });
+    return getPublicList(limit, { sort: "recent", category, query, builder, hasRepository: true });
   }
   if (sort === "weekly") {
     return getSeasonRanking({ ...options, seasonKey: active.key, order: "rank" })
@@ -74,7 +76,7 @@ function listFor(
       .then((result) => result.items);
   }
   if (sort === "all-time") return getAllTimeRanking(options);
-  return getPublicList(HOME_LIST_LIMIT, { sort: "recent", category, query, builder });
+  return getPublicList(limit, { sort: "recent", category, query, builder });
 }
 
 /**
@@ -180,6 +182,8 @@ export default async function HomePage({ searchParams }: Props) {
   let builders: string[] = [];
   let pulse = emptyHomePulse(now);
   let total = 0;
+  let resultCount = 0;
+  let unclaimedTotal = 0;
   let dbDown = false;
 
   /**
@@ -198,47 +202,28 @@ export default async function HomePage({ searchParams }: Props) {
       effectiveSort = requestedSort === "weekly" || requestedSort === "trending" ? "recent" : requestedSort;
     }
     const publicCatalogue = effectiveSort === "recent" || effectiveSort === "open";
-    const listPromise = active
-      ? listFor(effectiveSort, active, category, query, builder)
-      : publicCatalogue
-        ? getPublicList(HOME_LIST_LIMIT, {
-            sort: "recent",
-            category,
-            query,
-            builder,
-            hasRepository: effectiveSort === "open" ? true : undefined,
-          })
-        : getVerifiedList(HOME_LIST_LIMIT, { sort: "recent", category, query, builder });
-
-    /**
-     * 카테고리 개수는 어느 탭이든 화면에 실제로 오를 수 있는 것을 센다.
-     *
-     * 순위 탭에서 검증된 것만 세던 때는 검증 제품이 0이라 개수가 전부 0이 됐고, 필터가
-     * 개수 0인 카테고리를 지우므로 드롭다운에 "모든 카테고리"만 남았다. 순위 탭도 그 아래
-     * 미클레임 구획으로 시드 제품을 보여주므로, 고를 수 있는 것은 처음부터 둘 다였다.
-     */
-    const [loadedCounts, loadedList, verifiedTotal] = await Promise.all([
+    const options = { category, query, builder, excludeDown: true };
+    const [loadedCounts, matchingTotal, verifiedTotal] = await Promise.all([
       categoryCounts({ statuses: ["verified", "seeded"], excludeDown: true }),
-      listPromise,
-      // 미클레임 구획을 붙일지는 이 탭이 긷는 우물의 크기로 정한다 — 위 개수와 다른 질문이다.
-      // 공개 목록 탭은 시드까지 긷으므로 위 합이 그대로 우물이고, 순위 탭은 검증분만 긷는다
-      publicCatalogue ? null : countProducts({ statuses: ["verified"], excludeDown: true }),
+      countProducts({ statuses: ["verified", "seeded"], ...options, hasRepository: effectiveSort === "open" ? true : undefined }),
+      countProducts({ statuses: ["verified"], excludeDown: true }),
     ]);
     counts = loadedCounts;
-    list = loadedList;
     total = Object.values(counts).reduce((sum, count) => sum + count, 0);
+    const requestedLimit = savedOnly ? Math.max(shown, SAVED_INITIAL_CANDIDATES) : shown;
+    // Public lists load only what is visible. Rankings retain their separate eligibility.
+    const limit = publicCatalogue ? Math.min(requestedLimit, matchingTotal) : verifiedTotal;
+    list = active
+      ? await listFor(effectiveSort, active, category, query, builder, limit)
+      : publicCatalogue
+        ? await getPublicList(limit, { ...options, sort: "recent", hasRepository: effectiveSort === "open" ? true : undefined })
+        : await getVerifiedList(limit, { ...options, sort: "recent" });
+    resultCount = publicCatalogue ? matchingTotal : list.length;
 
-    /**
-     * 검증된 제품이 시즌을 채울 만큼 없으면 첫 화면이 두어 개로 끝난다.
-     *
-     * 그 아래에 우리가 대신 올린 제품을 따로 이어 붙인다. 랭킹에 섞지 않고 구획을 나누므로
-     * "검증된 것만 겨룬다"는 원칙은 그대로다. 검증된 제품이 차오르면 이 구획은 저절로 빠진다.
-     */
     const minimumProducts = (active?.policy ?? DEFAULT_RANKING_POLICY).eligibility.minimumProducts;
-    if (needsUnclaimedFill(verifiedTotal ?? total, minimumProducts)) {
-      unclaimed = await getUnclaimedList(HOME_LIST_LIMIT - list.length, { category, query, builder });
-      const seen = new Set(list.map((item) => item.slug));
-      unclaimed = unclaimed.filter((item) => !seen.has(item.slug));
+    if (!publicCatalogue && needsUnclaimedFill(verifiedTotal, minimumProducts)) {
+      unclaimedTotal = await countProducts({ statuses: ["seeded"], ...options });
+      unclaimed = await getUnclaimedList(Math.min(requestedLimit, unclaimedTotal), options);
     }
   } catch (error) {
     logger.error("home.list_failed", { error });
@@ -274,7 +259,7 @@ export default async function HomePage({ searchParams }: Props) {
               <h2 id="projects-title">{query ? `“${query}” 검색 결과` : "발견할 가치가 있는 프로젝트"}</h2>
               {!query && <p>AI로 만들고, 사람이 다듬은 새로운 서비스들.</p>}
             </div>
-            <Link className="all-link" href="/">
+            <Link className="all-link" href="/?sort=recent">
               전체 보기 <Icon name="arrow-right" size={14} />
             </Link>
           </div>
@@ -284,7 +269,7 @@ export default async function HomePage({ searchParams }: Props) {
             counts={counts}
             total={total}
             builders={builders}
-            resultCount={list.length}
+            resultCount={resultCount}
           />
 
           {dbDown ? (
@@ -297,6 +282,7 @@ export default async function HomePage({ searchParams }: Props) {
           ) : savedOnly || list.length > 0 ? (
             <ProjectGrid
               key={`${effectiveSort}-${category ?? ""}-${builder ?? ""}-${query ?? ""}-${savedOnly ? "saved" : "all"}`}
+              totalCount={resultCount}
               products={savedCandidates}
               browseState={state}
               initialOnlySaved={savedOnly}
@@ -313,7 +299,7 @@ export default async function HomePage({ searchParams }: Props) {
             <section className="unclaimed-block">
               <h2>주인을 기다리는 제품</h2>
               <div className="mt-3">
-                <ProjectGrid products={unclaimed} browseState={state} />
+                <ProjectGrid products={unclaimed} browseState={state} totalCount={unclaimedTotal} />
               </div>
             </section>
           )}
