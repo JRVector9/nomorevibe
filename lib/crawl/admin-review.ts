@@ -1,3 +1,4 @@
+import { sameReviewModel } from "./review-model-identity";
 import { and, asc, desc, eq, inArray, or, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { db } from '@/lib/db';
@@ -408,7 +409,7 @@ export async function listAdminReviewEntries(settings: CrawlSettings, options: {
       seconds: seconds.filter(item => item.candidateId === candidate.id).map(row => ({ decision: row.secondDecision,
         confidence: row.secondConfidence, reason: row.secondReason, reasonKo: null, model: row.model, provider: row.provider,
         status: row.status, trigger: row.trigger, errorCode: row.errorCode,
-        echo: Boolean(row.firstModel && row.model && row.firstModel === row.model) })),
+        echo: sameReviewModel(row.firstModel, row.model) })),
       verdict: recomputed ? {
         trace: recomputed.trace, signals: recomputed.signals, cause: recomputed.cause ?? null,
         state: recomputed.state, reason: recomputed.reason,

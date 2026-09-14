@@ -9,7 +9,7 @@ import { pgTable, serial, integer, varchar, text, timestamp, doublePrecision, in
  * - trigger: ai_decided(규칙이 못 가른 것을 AI 1차가 가름) · ai_held(1차도 못 가름) · risk(위험 신호) · sample(무작위 표본)
  * - status: pending(2차 대기) · agreed(일치 — 확정 대기) · needs_human(엇갈림·확신 낮음) · failed · resolved
  */
-/** ai_held: 1차 AI 도 못 가른 것 — 1차는 표를 내지 않고 2차들끼리 견준다 */
+/** ai_held: 1차 AI 도 못 가른 것 — 2차 의견을 모으되 명시적 보류는 사람 확인으로 남긴다 */
 export type SecondReviewTrigger = "ai_decided" | "ai_held" | "risk" | "sample";
 export type SecondReviewStatus = "pending" | "agreed" | "needs_human" | "failed" | "resolved";
 export type SecondReviewProvider = "claude-cli" | "abcllm";
@@ -28,6 +28,10 @@ export const secondReviews = pgTable("second_reviews", {
   firstConfidence: doublePrecision("first_confidence"),
   /** 1차를 본 모델 — 2차에 같은 모델이 서면 그 표는 메아리라 셈에서 뺀다 */
   firstModel: varchar("first_model", { length: 160 }),
+  /** Exact first verdict; null for published rule-only sampling. */
+  firstAttemptId: integer("first_attempt_id"),
+  /** Binds the verdict generation to both semantic evidence and source revision. */
+  generationKey: varchar("generation_key", { length: 64 }).notNull().default("legacy"),
   /** 이 입력으로 본 것 — 입력이 바뀌면 다시 본다 */
   inputHash: varchar("input_hash", { length: 64 }).notNull(),
   /** 누가 모델을 돌렸나 — claude-cli(로컬 CLI) 또는 abcllm(사내 게이트웨이) */
@@ -50,7 +54,7 @@ export const secondReviews = pgTable("second_reviews", {
    * 모델을 여럿 세울 수 있어야 표가 쌓인다. model 은 올릴 때(enqueue) 설정값으로 채운다 —
    * 비워 두면 Postgres 가 NULL 을 서로 다른 값으로 보아 같은 후보가 매 틱 다시 올라온다.
    */
-  uniqueIndex("second_reviews_candidate_input_model_idx").on(table.candidateId, table.inputHash, table.model),
+  uniqueIndex("second_reviews_candidate_input_model_idx").on(table.candidateId, table.inputHash, table.model, table.generationKey),
   index("second_reviews_status_idx").on(table.status, table.createdAt.desc()),
 ]);
 

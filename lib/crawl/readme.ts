@@ -10,20 +10,35 @@ import { fetchCapped, type CappedFetchResult } from "@/lib/net/fetch";
  * 사용량을 쓰지 않는다. 기본 브랜치(HEAD)의 흔한 이름만 차례로 본다.
  */
 export const README_SAMPLE_LIMIT = 3_000;
+export const README_SAMPLE_VERSION = "2026-09-14.1";
 const README_NAMES = ["README.md", "readme.md", "README", "README.rst"];
 const MAX_README_BYTES = 256 * 1024;
 
 type Request = (url: string, options: { maxBytes: number; timeoutMs?: number }) => Promise<CappedFetchResult>;
 
-/** 마크다운을 읽을 수 있는 글자로. 배지·이미지·링크 주소·HTML 은 버리고 코드(설치 명령)는 남긴다 */
+/** Keep destinations as evidence, never fetch them or treat repository text as instructions. */
 export function readmeText(markdown: string, limit = README_SAMPLE_LIMIT): string {
-  return markdown
+  const references = new Map<string, string>();
+  const destination = (label: string, raw: string) => {
+    try {
+      const url = new URL(raw);
+      return ["http:", "https:"].includes(url.protocol) && !url.username && !url.password && raw.length <= 500
+        ? `${label} (${url.href})` : label;
+    } catch { return label; }
+  };
+  const source = markdown.replaceAll("\0", "").replace(/<!--[\s\S]*?-->/g, " ")
+    .replace(/^ {0,3}\[([^\]]+)\]:\s*<?(\S+?)>?(?:\s+["'][^\n]*)?\s*$/gm, (_, label: string, url: string) => {
+      references.set(label.toLowerCase(), url); return "";
+    });
+  return source
     // Public READMEs can contain NUL (including mixed-encoding fragments).
     // PostgreSQL text/JSONB cannot store it; one such repo stalled the review queue.
     .replaceAll("\0", "")
     .replace(/<!--[\s\S]*?-->/g, " ")
     .replace(/!\[[^\]]*\]\([^)]*\)/g, " ")
-    .replace(/\[([^\]]*)\]\([^)]*\)/g, "$1")
+    .replace(/\[([^\]]*)\]\(<?([^\s)>]+)>?(?:\s+["'][^)]*)?\)/g, (_, label: string, url: string) => destination(label, url))
+    .replace(/\[([^\]]+)\]\[([^\]]*)\]/g, (_, label: string, ref: string) => destination(label, references.get((ref || label).toLowerCase()) ?? ""))
+    .replace(/<(https?:\/\/[^>]+)>/g, (_, url: string) => destination("", url).trim())
     .replace(/<[^>]+>/g, " ")
     .replace(/^#{1,6}\s*/gm, "")
     .replace(/[ \t]+/g, " ")

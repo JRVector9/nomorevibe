@@ -1,7 +1,7 @@
 import { beforeAll, beforeEach, expect, it } from 'vitest';
-import { eq } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import { db } from '@/lib/db';
-import { crawlCandidates, crawlDocuments, crawlFrontier, crawlReviewAttempts, crawlSettings, secondReviews } from '@/lib/db/schema';
+import { crawlCandidates, crawlDocuments, crawlFrontier, crawlReviewAttempts, crawlSettings, secondReviews, jobs, agentRepositoryScans } from '@/lib/db/schema';
 import * as crawl from '@/lib/crawl/repository';
 import { getSettings, saveSettings } from '@/lib/crawl/settings';
 import { loadReviewInput } from '@/lib/crawl/agent-review-repository';
@@ -12,6 +12,7 @@ import { ensureSchema } from './setup';
 beforeAll(() => ensureSchema());
 beforeEach(async () => {
   await db.delete(secondReviews);
+  await db.delete(jobs);
   await db.delete(crawlReviewAttempts);
   await db.delete(crawlCandidates);
   await db.delete(crawlDocuments);
@@ -412,13 +413,14 @@ it('1차가 보류한 것은 설정을 켤 때만 올라가고, 확신이 없다
   const rows = await pendingSecondReviews(10);
   expect(rows.map((row) => row.trigger)).toEqual(['ai_held', 'ai_held']);
 
-  // 1차가 표를 내지 않으므로 두 모델이 같아야 일치가 된다
+  // 1차의 명시적 보류는 다른 두 모델이 같아도 사람 확인으로 남긴다
   for (const row of rows) {
     await recordSecondReview(row.id, { ok: true, decision: 'reject', confidence: 0.9, reason: '문서 사이트',
       model: row.model!, provider: 'abcllm', status: 'needs_human' });
   }
   const { ids } = await secondReviewSummary(0.85);
-  expect(ids.agreed_reject).toEqual([candidate.id]);
+  expect(ids.needs_human).toEqual([candidate.id]);
+  expect(ids.agreed_reject).toEqual([]);
 });
 
 it('잠깐 막힌 실패는 5분 뒤 다시 보고, 그렇지 않은 실패는 한 시간을 기다린다', async () => {
@@ -501,4 +503,114 @@ it('1차를 본 모델을 적어 두고, 2차에 같은 모델이 서면 그 표
   const { ids } = await secondReviewSummary(0.85);
   expect(ids.agreed_reject).toEqual([candidate.id]);
   expect(ids.unanimous_reject).toEqual([]);
+});
+
+it('binds a new first attempt even when the semantic input is unchanged', async () => {
+  await held('acme/new-attempt'); await firstReview('acme/new-attempt', 'reject');
+  await enqueueSecondReviews(await getSettings());
+  const [old] = await pendingSecondReviews(1);
+  await firstReview('acme/new-attempt', 'approve');
+  expect(await enqueueSecondReviews(await getSettings())).toBe(1);
+  const rows = await db.select().from(secondReviews).where(eq(secondReviews.repo, 'acme/new-attempt')).orderBy(secondReviews.id);
+  expect(rows).toHaveLength(2);
+  expect(rows[0]).toMatchObject({id: old.id, status: 'resolved', resolution: 'superseded'});
+  expect(rows[1]).toMatchObject({status: 'pending', firstDecision: 'approve'});
+});
+it('does not overwrite a resolved row with a late model response', async () => {
+  await held('acme/late'); await firstReview('acme/late', 'reject'); await enqueueSecondReviews(await getSettings());
+  const [row] = await pendingSecondReviews(1);
+  await db.update(secondReviews).set({status: 'resolved', resolution: 'kept'}).where(eq(secondReviews.id, row.id));
+  await recordSecondReview(row.id, {ok: true, decision: 'approve', confidence: 1, reason: 'late', model: 'opus', provider: 'claude-cli', status: 'agreed'});
+  expect((await db.select().from(secondReviews).where(eq(secondReviews.id, row.id)))[0]).toMatchObject({status: 'resolved', resolution: 'kept', secondDecision: null});
+});
+it('discards results if the underlying document changed while the model was running', async () => {
+  await held('acme/source-change'); await firstReview('acme/source-change', 'reject'); await enqueueSecondReviews(await getSettings());
+  const [row] = await pendingSecondReviews(1);
+  await db.update(crawlDocuments).set({pageMeta: {title: 'changed'}}).where(eq(crawlDocuments.repo, row.repo));
+  await recordSecondReview(row.id, {ok: true, decision: 'reject', confidence: 1, reason: 'old source', model: 'opus', provider: 'claude-cli', status: 'agreed'});
+  expect((await db.select().from(secondReviews).where(eq(secondReviews.id, row.id)))[0]).toMatchObject({status: 'resolved', resolution: 'superseded', secondDecision: null});
+});
+it('does not enqueue an alias of the first model as an independent second voter', async () => {
+  await held('acme/alias'); await firstReview('acme/alias', 'approve');
+  await db.update(crawlReviewAttempts).set({provider: 'abcllm', model: '[MLX] gpt-oss-120b'});
+  await saveSettings({secondReview: {enabled: true, sampleRate: 0, voters: [{provider: 'abcllm', model: 'gpt-oss-120b'}, {provider: 'abcllm', model: '[MLX] gemma4-31b'}]}}, 'fixture');
+  expect(await enqueueSecondReviews(await getSettings())).toBe(1);
+  expect((await pendingSecondReviews(10)).map(row => row.model)).toEqual(['[MLX] gemma4-31b']);
+});
+
+it('rejects stale input before starting a second model call', async () => {
+  const {loadSecondReviewInput} = await import('@/lib/crawl/second-review-input');
+  await held('acme/before-call'); await firstReview('acme/before-call', 'reject'); await enqueueSecondReviews(await getSettings());
+  const [row] = await pendingSecondReviews(1);
+  expect(await loadSecondReviewInput(row)).not.toBeNull();
+  await db.update(crawlDocuments).set({pageMeta: {title: 'another source'}}).where(eq(crawlDocuments.repo, row.repo));
+  expect(await loadSecondReviewInput(row)).toBeNull();
+});
+
+it('keeps legacy published reviews out of unpublished approval chips', async () => {
+  await published('acme/legacy-published', 'the quick way to plan all of your week with friends');
+  await enqueueSecondReviews(await getSettings());
+  await db.update(secondReviews).set({generationKey: 'legacy'});
+  const summary = await secondReviewSummary(0.85);
+  expect(summary.counts.published).toBe(1);
+  expect(summary.ids.needs_human).toEqual([]);
+});
+it('rejects a late response after the first verdict changes without another enqueue', async () => {
+  await held('acme/late-first'); await firstReview('acme/late-first', 'reject');
+  await enqueueSecondReviews(await getSettings()); const [row] = await pendingSecondReviews(1);
+  await firstReview(row.repo, 'approve');
+  await recordSecondReview(row.id, {ok: true, decision: 'reject', confidence: 1, reason: 'stale', model: 'opus', provider: 'claude-cli', status: 'agreed'});
+  expect((await secondReviewsFor([row.candidateId]))).toEqual([]);
+});
+it('does not let first-model-only candidates consume the enqueue limit', async () => {
+  await saveSettings({secondReview: {voters: [{provider: 'abcllm', model: '[MLX] sonnet'}]}}, 'fixture');
+  for (let i = 0; i < 55; i++) {await held(`acme/echo-${i}`); await firstReview(`acme/echo-${i}`, 'reject');}
+  const eligible = await held('acme/independent'); await firstReview(eligible.repo, 'reject');
+  await db.update(crawlReviewAttempts).set({model: 'another'}).where(eq(crawlReviewAttempts.candidateId, eligible.id));
+  expect(await enqueueSecondReviews(await getSettings())).toBe(1);
+  expect((await pendingSecondReviews(10)).map(row => row.repo)).toEqual([eligible.repo]);
+});
+it('does not starve published samples beyond the first batch', async () => {
+  for (let i = 0; i < 27; i++) await published(`acme/public-${i}`, 'the quick way to plan all of your week with friends');
+  expect(await enqueueSecondReviews(await getSettings())).toBe(25);
+  expect(await enqueueSecondReviews(await getSettings())).toBe(2);
+  expect(await enqueueSecondReviews(await getSettings())).toBe(0);
+});
+
+it('rejects a second-review result after the worker lease is replaced', async () => {
+  await held('acme/lost-lease'); await firstReview('acme/lost-lease', 'reject'); await enqueueSecondReviews(await getSettings());
+  const [row] = await pendingSecondReviews(1);
+  await db.insert(jobs).values({name: 'crawl-second-review', leaseToken: 'new-owner', lockedAt: new Date()});
+  await expect(recordSecondReview(row.id, {ok: true, decision: 'reject', confidence: 1, reason: 'old worker', model: 'opus', provider: 'claude-cli', status: 'agreed'},
+    new Date(), {name: 'crawl-second-review', token: 'old-owner', requestedVersion: 1})).rejects.toThrow('job_lease_lost');
+  expect((await pendingSecondReviews(1))[0]).toMatchObject({id: row.id, secondDecision: null});
+});
+it('waits for a concurrent evidence writer then discards the stale second verdict', async () => {
+  const {lockRepositoryAgentEvidence} = await import('@/lib/domain/evidence/agents/lock');
+  const {saveRepositoryAgentScan} = await import('@/lib/domain/evidence/agents/repository');
+  const repo = 'acme/second-scan-race';
+  const scan = (await saveRepositoryAgentScan({repositoryKey: repo, repositoryId: '987654322', commitSha: 'a'.repeat(40),
+    scope: '', state: 'complete', cursor: null, observations: [], requestCount: 1, fileCount: 0, errorCode: null, retryAt: null}))!;
+  await held(repo); await firstReview(repo, 'reject'); await enqueueSecondReviews(await getSettings());
+  const [row] = await pendingSecondReviews(1);
+  let entered!: () => void, release!: () => void;
+  const ready = new Promise<void>(resolve => {entered = resolve;});
+  const gate = new Promise<void>(resolve => {release = resolve;});
+  const writer = db.transaction(async tx => {
+    await lockRepositoryAgentEvidence(tx, repo); entered(); await gate;
+    await tx.update(agentRepositoryScans).set({startedAt: new Date(Date.now()+1)}).where(eq(agentRepositoryScans.id, scan.id));
+  });
+  await ready;
+  const recording = recordSecondReview(row.id, {ok: true, decision: 'reject', confidence: 1, reason: 'old scan', model: 'opus', provider: 'claude-cli', status: 'agreed'});
+  try {
+    let waiting = false;
+    for (let i = 0; i < 100; i++) {
+      const result = await db.execute(sql`select exists(select 1 from pg_locks where locktype='advisory' and not granted) as waiting`);
+      if (result[0].waiting) {waiting = true; break;}
+      await new Promise(resolve => setTimeout(resolve, 10));
+    }
+    expect(waiting).toBe(true);
+  } finally {release(); await writer; await recording;}
+  const [saved] = await db.select().from(secondReviews).where(eq(secondReviews.id, row.id));
+  expect(saved).toMatchObject({status: 'resolved', resolution: 'superseded', secondDecision: null});
 });

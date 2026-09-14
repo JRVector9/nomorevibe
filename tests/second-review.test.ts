@@ -148,3 +148,21 @@ describe("1차와 같은 모델의 표", () => {
     expect(combineVerdicts({ decision: "reject", confidence: 0.9, model: "opus" }, echo, 0.85, false)).toBe("agreed");
   });
 });
+
+describe("review integrity regressions", () => {
+  const vote = (decision: string, model: string, confidence = 1) => ({decision, model, confidence, provider: "abcllm" as const});
+  const options = {agreeAt: .7, published: false, pending: 0, firstModel: "sonnet"};
+  it("keeps low-confidence dissent instead of approving from the remaining votes", () => {
+    expect(combineVotes({decision: "reject", confidence: .68}, [vote("approve", "gemma4-26b"), vote("approve", "gpt-oss-120b")], options).status).toBe("needs_human");
+    expect(combineVotes({decision: "approve", confidence: .9}, [{...vote("reject", "opus", .4), provider: "claude-cli"}, vote("approve", "gpt-oss-120b")], options).status).toBe("needs_human");
+  });
+  it("keeps explicit abstentions from either stage for human review", () => {
+    expect(combineVotes({decision: "needs_review", confidence: .9}, [vote("approve", "gemma4-26b"), vote("approve", "gpt-oss-120b")], options).status).toBe("needs_human");
+    expect(combineVotes({decision: "approve", confidence: .9}, [vote("needs_review", "gemma4-31b"), vote("approve", "gpt-oss-120b")], options).status).toBe("needs_human");
+  });
+  it("excludes an alias of the first model and deduplicates second model aliases", () => {
+    expect(combineVotes({decision: "approve", confidence: .9}, [vote("approve", "gpt-oss-120b")], {...options, firstModel: "[MLX] gpt-oss-120b"}).votes).toBe(1);
+    expect(combineVotes({decision: "approve", confidence: .4}, [vote("approve", "[MLX] gpt-oss-120b"), vote("approve", "gpt-oss-120b")], options).status).toBe("needs_human");
+    expect(combineVerdicts({decision: "approve", confidence: .9, model: "[MLX] gpt-oss-120b"}, vote("approve", "gpt-oss-120b"), .7, false)).toBe("needs_human");
+  });
+});

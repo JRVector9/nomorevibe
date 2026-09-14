@@ -9,7 +9,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock("@/lib/crawl/settings", () => ({ getSettings: async () => mocks.settings }));
 vi.mock("@/lib/db", () => ({ db: { select: () => ({ from: () => ({ where: () => ({ limit: mocks.candidate }) }) }) } }));
 vi.mock("@/lib/crawl/jobs/review-document", () => ({ loadReviewDocument: mocks.document }));
-vi.mock("@/lib/crawl/agent-review-repository", () => ({ loadReviewInput: mocks.input }));
+vi.mock("@/lib/crawl/second-review-input", () => ({ loadSecondReviewInput: mocks.input }));
 vi.mock("@/lib/crawl/agent-review", () => ({ reviewWithAgent: mocks.review, REVIEW_CLI_TIMEOUT_MS: 20_000 }));
 vi.mock("@/lib/crawl/agent-review-gateway", () => ({ reviewWithGateway: mocks.gateway, REVIEW_GATEWAY_TIMEOUT_MS: 30_000 }));
 vi.mock("@/lib/crawl/second-review", async (importOriginal) => ({
@@ -45,32 +45,32 @@ it("꺼져 있으면 아무것도 올리지도 부르지도 않는다", async ()
 it("1차와 다른 모델로 보고, 두 판단이 같고 확신이 높으면 일치로 적는다", async () => {
   await secondReviewCandidates(context());
   expect(mocks.review).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ model: "opus" }));
-  expect(mocks.record).toHaveBeenCalledWith(7, expect.objectContaining({ ok: true, decision: "reject", confidence: 0.95, status: "agreed", model: "opus" }));
+  expect(mocks.record).toHaveBeenCalledWith(7, expect.objectContaining({ ok: true, decision: "reject", confidence: 0.95, status: "agreed", model: "opus" }), expect.any(Date), context().lease);
 });
 
 it("엇갈리면 사람에게 넘긴다", async () => {
   mocks.review.mockResolvedValue({ ok: true, outcome: { decision: "approve", reason: "쓸 수 있는 앱", evidenceIds: ["product"], confidence: 0.9 } });
   await secondReviewCandidates(context());
-  expect(mocks.record).toHaveBeenCalledWith(7, expect.objectContaining({ status: "needs_human" }));
+  expect(mocks.record).toHaveBeenCalledWith(7, expect.objectContaining({ status: "needs_human" }), expect.any(Date), context().lease);
 });
 
 it("공개된 제품을 2차가 제품이 아니라고 보면 사람에게 — 내리지는 않는다", async () => {
   mocks.pending.mockResolvedValue([row({ publishedSlug: "demo", firstDecision: "approve", firstConfidence: null })]);
   await secondReviewCandidates(context());
-  expect(mocks.record).toHaveBeenCalledWith(7, expect.objectContaining({ status: "needs_human" }));
+  expect(mocks.record).toHaveBeenCalledWith(7, expect.objectContaining({ status: "needs_human" }), expect.any(Date), context().lease);
 });
 
 it("호출이 실패하면 판단을 지어내지 않고 실패로 적는다", async () => {
   mocks.review.mockResolvedValue({ ok: false, error: "rate_limited" });
   await secondReviewCandidates(context());
-  expect(mocks.record).toHaveBeenCalledWith(7, { ok: false, error: "rate_limited", model: "opus", provider: "claude-cli" });
+  expect(mocks.record).toHaveBeenCalledWith(7, { ok: false, error: "rate_limited", model: "opus", provider: "claude-cli" }, expect.any(Date), context().lease);
 });
 
 it("원본이 없으면 모델을 부르지 않는다", async () => {
-  mocks.document.mockResolvedValue(undefined);
+  mocks.input.mockResolvedValue(null);
   await secondReviewCandidates(context());
   expect(mocks.review).not.toHaveBeenCalled();
-  expect(mocks.record).toHaveBeenCalledWith(7, { ok: false, error: "missing_source", model: "opus", provider: "claude-cli" });
+  expect(mocks.record).toHaveBeenCalledWith(7, { ok: false, error: "input_changed", model: "opus", provider: "claude-cli" }, expect.any(Date), context().lease);
 });
 
 it("한 틱에 일감을 넉넉히 집어 끝나는 대로 이어 본다", async () => {
@@ -101,7 +101,7 @@ it("사내 게이트웨이로 설정하면 CLI 대신 그쪽으로 묻고, 누�
   // 게이트웨이는 꼬리가 길어 CLI(20초)보다 넉넉히 준다
   expect(mocks.gateway).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ model: "[MLX] gemma4-26b", timeoutMs: expect.any(Number) }));
   expect(mocks.gateway.mock.calls[0][1].timeoutMs).toBeGreaterThan(20_000);
-  expect(mocks.record).toHaveBeenCalledWith(7, expect.objectContaining({ provider: "abcllm", model: "[MLX] gemma4-26b", status: "agreed" }));
+  expect(mocks.record).toHaveBeenCalledWith(7, expect.objectContaining({ provider: "abcllm", model: "[MLX] gemma4-26b", status: "agreed" }), expect.any(Date), context().lease);
 });
 
 it("게이트웨이에 모델이 없으면 판단을 지어내지 않고 그 까닭으로 적는다", async () => {
@@ -110,7 +110,7 @@ it("게이트웨이에 모델이 없으면 판단을 지어내지 않고 그 까
   mocks.gateway.mockResolvedValue({ ok: false, error: "model_unavailable" });
   await secondReviewCandidates(context());
 
-  expect(mocks.record).toHaveBeenCalledWith(7, { ok: false, error: "model_unavailable", model: "[MLX] 사라진모델", provider: "abcllm" });
+  expect(mocks.record).toHaveBeenCalledWith(7, { ok: false, error: "model_unavailable", model: "[MLX] 사라진모델", provider: "abcllm" }, expect.any(Date), context().lease);
 });
 
 it("멈추라는 신호를 모델 호출에 그대로 넘기고, 끊긴 것은 실패로 적지 않는다", async () => {
