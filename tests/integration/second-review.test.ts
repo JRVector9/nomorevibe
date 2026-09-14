@@ -7,6 +7,7 @@ import { getSettings, saveSettings } from '@/lib/crawl/settings';
 import { loadReviewInput } from '@/lib/crawl/agent-review-repository';
 import { closeSettledSecondReviews, enqueueSecondReviews, pendingSecondReviews, publishedInputHash, publishedSecondReviews, recentSecondReviewFailures,
   recordSecondReview, resolveSecondReviews, retryFailedSecondReviews, secondReviewSummary, secondReviewsFor, TRANSIENT_RETRY_MS } from '@/lib/crawl/second-review';
+import { REVIEW_PROMPT_VERSION, REVIEW_RULES_VERSION } from '@/lib/crawl/agent-review-contract';
 import { ensureSchema } from './setup';
 
 beforeAll(() => ensureSchema());
@@ -41,7 +42,7 @@ async function firstReview(repo: string, decision: 'approve' | 'reject' | 'needs
   await db.insert(crawlReviewAttempts).values({
     candidateId: candidate.id, kind: 'automatic', state: 'succeeded', attemptNumber: 1,
     inputHash: inputHash ?? input.inputHash, policyHash: input.policyHash, sourceRevisionHash: input.sourceRevisionHash,
-    snapshot: input.snapshot, source: input.source, promptVersion: 'v', rulesVersion: 'v',
+    snapshot: input.snapshot, source: input.source, promptVersion: REVIEW_PROMPT_VERSION, rulesVersion: REVIEW_RULES_VERSION,
     provider: 'claude-cli', model: 'sonnet', startedAt: new Date(), completedAt: new Date(), validUntil: input.validUntil,
     outcome: confidence === null ? { decision, reason: '사유', evidenceIds: ['product'] } : { decision, reason: '사유', evidenceIds: ['product'], confidence },
   });
@@ -613,4 +614,21 @@ it('waits for a concurrent evidence writer then discards the stale second verdic
   } finally {release(); await writer; await recording;}
   const [saved] = await db.select().from(secondReviews).where(eq(secondReviews.id, row.id));
   expect(saved).toMatchObject({status: 'resolved', resolution: 'superseded', secondDecision: null});
+});
+
+it('does not enqueue retired first-review prompts after an upgrade', async () => {
+  const candidate = await held('acme/retired-prompt'); await firstReview(candidate.repo, 'approve');
+  await db.update(crawlReviewAttempts).set({promptVersion: 'retired'}).where(eq(crawlReviewAttempts.candidateId,candidate.id));
+  expect(await enqueueSecondReviews(await getSettings())).toBe(0);
+});
+it('closes unbound and retired pending generations before they block new work', async () => {
+  await held('acme/retired-queue'); await firstReview('acme/retired-queue', 'approve'); await enqueueSecondReviews(await getSettings());
+  await held('acme/legacy-queue'); await firstReview('acme/legacy-queue', 'approve'); await enqueueSecondReviews(await getSettings());
+  const rows=await pendingSecondReviews(10);
+  const retired=rows.find(row=>row.repo==='acme/retired-queue')!,legacy=rows.find(row=>row.repo==='acme/legacy-queue')!;
+  await db.update(crawlReviewAttempts).set({promptVersion:'retired'}).where(eq(crawlReviewAttempts.candidateId,retired.candidateId));
+  await db.update(secondReviews).set({generationKey:'legacy',firstAttemptId:null}).where(eq(secondReviews.id,legacy.id));
+  expect(await closeSettledSecondReviews()).toBe(2);
+  expect(await pendingSecondReviews(10)).toEqual([]);
+  expect((await db.select().from(secondReviews)).every(row=>row.resolution==='superseded')).toBe(true);
 });

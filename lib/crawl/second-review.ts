@@ -1,10 +1,11 @@
 import { createHash } from "node:crypto";
-import { and, desc, eq, gte, inArray, isNotNull, isNull, lt, notInArray, or, sql } from "drizzle-orm";
+import { and, desc, eq, gt, gte, inArray, isNotNull, isNull, lt, notInArray, or, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { crawlCandidates, crawlDocuments, crawlReviewAttempts, crawlSettings, secondReviews, type SecondReviewProvider, type SecondReviewStatus, type SecondReviewTrigger } from "@/lib/db/schema";
 import { pageFactsFromDocument } from "./rules";
 import type { CrawlSettings } from "./settings-schema";
 import { mergeWithDefaults } from "./settings";
+import { REVIEW_PROMPT_VERSION, REVIEW_RULES_VERSION } from "./agent-review-contract";
 import { loadReviewInput } from "./agent-review-repository";
 import { loadSecondReviewInput, secondReviewGeneration } from "./second-review-input";
 import { assertJobLease, type JobLease } from "@/lib/jobs/control";
@@ -176,6 +177,7 @@ export async function enqueueSecondReviews(settings: CrawlSettings, now = new Da
    */
   const latest = db.selectDistinctOn([crawlReviewAttempts.candidateId], {
     candidateId: crawlReviewAttempts.candidateId, repo: crawlCandidates.repo, inputHash: crawlReviewAttempts.inputHash,
+    promptVersion: crawlReviewAttempts.promptVersion, rulesVersion: crawlReviewAttempts.rulesVersion, validUntil: crawlReviewAttempts.validUntil,
     firstModel: crawlReviewAttempts.model, firstAttemptId: crawlReviewAttempts.id, sourceRevisionHash: crawlReviewAttempts.sourceRevisionHash,
     decision: sql<string>`${crawlReviewAttempts.outcome}->>'decision'`.as("decision"),
     confidence: sql<number | null>`(${crawlReviewAttempts.outcome}->>'confidence')::float`.as("confidence"),
@@ -196,7 +198,7 @@ export async function enqueueSecondReviews(settings: CrawlSettings, now = new Da
   const required = sql`(select count(*) from jsonb_array_elements_text(${JSON.stringify(voters.map(voter => canonicalReviewModel(voter.model)))}::jsonb) as v(model)
     where v.model <> regexp_replace(lower(trim(coalesce(${latest.firstModel}, ''))), '^\\[mlx\\][[:space:]]*', '', 'i'))`;
   const decided = await db.select().from(latest)
-    .where(and(sql`${required} > 0`, sql`(select count(*) from ${secondReviews} s
+    .where(and(eq(latest.promptVersion, REVIEW_PROMPT_VERSION), eq(latest.rulesVersion, REVIEW_RULES_VERSION), gt(latest.validUntil, now), sql`${required} > 0`, sql`(select count(*) from ${secondReviews} s
       where s.candidate_id = ${latest.candidateId} and s.input_hash = ${latest.inputHash}
         and s.first_attempt_id = ${latest.firstAttemptId}) < ${required}`))
     .limit(ENQUEUE_LIMIT * 4);
@@ -283,12 +285,18 @@ export async function enqueueSecondReviews(settings: CrawlSettings, now = new Da
  * 지우지 않는다. 몇 건을 누가 어떻게 끝냈는지가 2차 심사의 정확도다.
  */
 export async function closeSettledSecondReviews(now = new Date()): Promise<number> {
+  // A prompt upgrade invalidates these inputs before any model call. Retain completed historical opinions.
+  const obsolete = await db.update(secondReviews).set({status: "resolved", resolution: "superseded", resolvedAt: now})
+    .where(and(inArray(secondReviews.status, ["pending", "failed"]), or(eq(secondReviews.generationKey, "legacy"),
+      sql`exists(select 1 from ${crawlReviewAttempts} a where a.id=${secondReviews.firstAttemptId}
+        and (a.prompt_version<>${REVIEW_PROMPT_VERSION} or a.rules_version<>${REVIEW_RULES_VERSION} or a.valid_until<=${now.toISOString()}::timestamp))`)))
+    .returning({id: secondReviews.id});
   // 확신 없는 옛 1차로 올린 것 — 일치할 수 없으니 닫는다. 2차 의견은 남아 심사 상세에 그대로 보인다
   const legacy = await db.update(secondReviews).set({ status: "resolved", resolution: "no_first_confidence", resolvedAt: now })
     .where(and(eq(secondReviews.trigger, "ai_decided"), isNull(secondReviews.firstConfidence),
       inArray(secondReviews.status, ["pending", "agreed", "needs_human", "failed"])))
     .returning({ id: secondReviews.id });
-  return legacy.length + await closeDecidedSecondReviews(now);
+  return obsolete.length + legacy.length + await closeDecidedSecondReviews(now);
 }
 
 async function closeDecidedSecondReviews(now: Date): Promise<number> {

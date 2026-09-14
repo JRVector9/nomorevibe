@@ -7,6 +7,7 @@ import { getSettings, saveSettings } from '@/lib/crawl/settings';
 import { loadReviewInput } from '@/lib/crawl/agent-review-repository';
 import { secondReviewCandidates } from '@/lib/crawl/jobs/second-review';
 import { getJobState, runJob } from '@/lib/jobs/runner';
+import { REVIEW_PROMPT_VERSION, REVIEW_RULES_VERSION } from '@/lib/crawl/agent-review-contract';
 import { ensureSchema } from './setup';
 
 beforeAll(() => ensureSchema());
@@ -39,7 +40,7 @@ it('배포로 멈출 때 진행 중인 호출을 끊고, 잠금을 놓아 다음
   const input = await loadReviewInput(candidate, (await crawl.getDocument('acme/stopping'))!, settings);
   await db.insert(crawlReviewAttempts).values({ candidateId: candidate.id, kind: 'automatic', state: 'succeeded', attemptNumber: 1,
     inputHash: input.inputHash, policyHash: input.policyHash, sourceRevisionHash: input.sourceRevisionHash,
-    snapshot: input.snapshot, source: input.source, promptVersion: 'v', rulesVersion: 'v',
+    snapshot: input.snapshot, source: input.source, promptVersion: REVIEW_PROMPT_VERSION, rulesVersion: REVIEW_RULES_VERSION,
     provider: 'claude-cli', model: 'sonnet', startedAt: new Date(), completedAt: new Date(), validUntil: input.validUntil,
     outcome: { decision: 'reject', reason: '문서 사이트', evidenceIds: ['product'], confidence: 0.9 } });
 
