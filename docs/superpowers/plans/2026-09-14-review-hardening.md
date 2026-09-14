@@ -32,8 +32,13 @@
 - [x] Exclude first-model echoes before enqueue/call and from outstanding pending counts.
 
 ## Task 5: Operational audit and completion
-- [ ] Read-only snapshots of jobs/heartbeats/queues/recent success and failure counts before and after changes; compare progression across elapsed time.
-- [ ] Inspect collection, first/second review, classification, publish, AI evidence scans, media, daily stars and news jobs. Distinguish human backlog, upstream failure and stopped worker.
-- [ ] Run related unit and integration suites, typecheck/lint, isolated build and review the final diff. Never run reset fixtures against production.
-- [ ] Ship only task files through the existing release workflow once checks pass; verify actual worker release and live job progression. Preserve unrelated Hero/design/news prototype changes.
-- [ ] Save report and update `docs/CODEX_HANDOFF.md` with executed tests, exact deployment state and any remaining operational limitations.
+- [x] Read-only snapshots of jobs/heartbeats/queues/recent success and failure counts before and after changes; compare progression across elapsed time.
+- [x] Inspect collection, first/second review, classification, publish, AI evidence scans, media, daily stars and news jobs. Distinguish human backlog, upstream failure and stopped worker.
+- [x] Run related unit and integration suites, typecheck/lint, isolated build and review the final diff. Never run reset fixtures against production.
+- [x] Ship only task files through the existing release workflow once checks pass; verify actual worker release and live job progression. Preserve unrelated Hero/design/news prototype changes.
+- [x] Save report and update `docs/CODEX_HANDOFF.md` with executed tests, exact deployment state and any remaining operational limitations.
+
+## Operational follow-ups
+- [x] PR114: reproduce 12 GitHub301 failures; bounded trusted redirects; 969unit+CI; verify12realHTTP200.
+- [x] PR115: exclude retired prompt/rules/expired first attempts before queue limit and close obsolete pending inputs; RED2/39relatedDBtests/CI passed.
+- [x] Deploy combined aa07228 to7apps, verify6source hashes on5healthy workers and2webhealth responses; all12 normal crawl entries done; newsecondreview responses recorded.

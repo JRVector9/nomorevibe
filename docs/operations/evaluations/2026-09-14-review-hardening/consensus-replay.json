@@ -1,0 +1,359 @@
+{
+  "cases": [
+    {
+      "repo": "codeiakofficial/cocktailmaker",
+      "label": "reject",
+      "status": "needs_human",
+      "decision": null,
+      "votes": 4
+    },
+    {
+      "repo": "thevibeworks/claude-reads-hn",
+      "label": "approve",
+      "status": "needs_human",
+      "decision": null,
+      "votes": 4
+    },
+    {
+      "repo": "jantman/robot-army",
+      "label": "reject",
+      "status": "agreed",
+      "decision": "reject",
+      "votes": 4
+    },
+    {
+      "repo": "CarpseDeam/Aura-IDE",
+      "label": "reject",
+      "status": "needs_human",
+      "decision": null,
+      "votes": 4
+    },
+    {
+      "repo": "riskninja2026/research-reports",
+      "label": "approve",
+      "status": "needs_human",
+      "decision": null,
+      "votes": 4
+    },
+    {
+      "repo": "0-co/company",
+      "label": "reject",
+      "status": "needs_human",
+      "decision": null,
+      "votes": 4
+    },
+    {
+      "repo": "madeye/https_proxy",
+      "label": "reject",
+      "status": "agreed",
+      "decision": "reject",
+      "votes": 4
+    },
+    {
+      "repo": "adamzhang1987/kingdee-k3cloud-skill",
+      "label": "reject",
+      "status": "agreed",
+      "decision": "reject",
+      "votes": 4
+    },
+    {
+      "repo": "777genius/universal-agent-plugins-registry",
+      "label": "reject",
+      "status": "needs_human",
+      "decision": null,
+      "votes": 4
+    },
+    {
+      "repo": "jazzyalex/agent-sessions",
+      "label": "reject",
+      "status": "needs_human",
+      "decision": null,
+      "votes": 4
+    },
+    {
+      "repo": "ota-meshi/postcss-html",
+      "label": "reject",
+      "status": "agreed",
+      "decision": "reject",
+      "votes": 4
+    },
+    {
+      "repo": "danielscholl/keelson",
+      "label": "reject",
+      "status": "agreed",
+      "decision": "reject",
+      "votes": 3
+    },
+    {
+      "repo": "rcarmo/swift-smart-prompter",
+      "label": "reject",
+      "status": "needs_human",
+      "decision": null,
+      "votes": 4
+    },
+    {
+      "repo": "Big-Yellow-Solutions/optimistic-labs-redesign",
+      "label": "reject",
+      "status": "needs_human",
+      "decision": null,
+      "votes": 3
+    },
+    {
+      "repo": "yidasanqian/ai-agent-radar",
+      "label": "approve",
+      "status": "agreed",
+      "decision": "approve",
+      "votes": 3
+    },
+    {
+      "repo": "LexaurinTheDog/esbirka-skill",
+      "label": "reject",
+      "status": "pending",
+      "decision": null,
+      "votes": 0
+    },
+    {
+      "repo": "thomas-powers-jr/cadence",
+      "label": "reject",
+      "status": "pending",
+      "decision": null,
+      "votes": 0
+    },
+    {
+      "repo": "legobele/nivelato",
+      "label": "approve",
+      "status": "pending",
+      "decision": null,
+      "votes": 0
+    },
+    {
+      "repo": "EpiForeSITE/insightnet-explorer",
+      "status": "first_failed",
+      "label": "approve"
+    },
+    {
+      "repo": "starter-series/mcp-server-starter",
+      "label": "reject",
+      "status": "pending",
+      "decision": null,
+      "votes": 0
+    },
+    {
+      "repo": "sjdodge123/Raid-Ledger",
+      "label": "reject",
+      "status": "needs_human",
+      "decision": null,
+      "votes": 4
+    },
+    {
+      "repo": "Atypical-Consulting/Koine",
+      "label": "reject",
+      "status": "needs_human",
+      "decision": null,
+      "votes": 3
+    },
+    {
+      "repo": "synabreu/arxiv-wiki",
+      "label": "approve",
+      "status": "needs_human",
+      "decision": null,
+      "votes": 4
+    },
+    {
+      "repo": "brnyxx/xout",
+      "label": "reject",
+      "status": "pending",
+      "decision": null,
+      "votes": 0
+    },
+    {
+      "repo": "skillberry-ai/skillberry-store",
+      "label": "reject",
+      "status": "needs_human",
+      "decision": null,
+      "votes": 2
+    },
+    {
+      "repo": "elias-leslie/a-term",
+      "label": "reject",
+      "status": "pending",
+      "decision": null,
+      "votes": 0
+    },
+    {
+      "repo": "a-novel/service-authentication",
+      "label": "reject",
+      "status": "agreed",
+      "decision": "reject",
+      "votes": 4
+    },
+    {
+      "repo": "OrangePeachPink/sprout",
+      "label": "approve",
+      "status": "needs_human",
+      "decision": null,
+      "votes": 4
+    },
+    {
+      "repo": "starter-series/cloudflare-pages-starter",
+      "label": "reject",
+      "status": "agreed",
+      "decision": "reject",
+      "votes": 4
+    },
+    {
+      "repo": "pjt222/agent-almanac",
+      "label": "approve",
+      "status": "needs_human",
+      "decision": null,
+      "votes": 4
+    },
+    {
+      "repo": "ArcadeAI/safeword",
+      "label": "reject",
+      "status": "pending",
+      "decision": null,
+      "votes": 0
+    },
+    {
+      "repo": "dmlguq456/hearting",
+      "label": "reject",
+      "status": "pending",
+      "decision": null,
+      "votes": 0
+    },
+    {
+      "repo": "edriso/claude-goat",
+      "label": "reject",
+      "status": "pending",
+      "decision": null,
+      "votes": 0
+    },
+    {
+      "repo": "Socialpranker/token-history",
+      "label": "approve",
+      "status": "pending",
+      "decision": null,
+      "votes": 0
+    },
+    {
+      "repo": "hyan1985/bank-scan",
+      "label": "approve",
+      "status": "agreed",
+      "decision": "approve",
+      "votes": 4
+    },
+    {
+      "repo": "yinjialu/ai-frontier-daily",
+      "label": "approve",
+      "status": "pending",
+      "decision": null,
+      "votes": 0
+    },
+    {
+      "repo": "Paraso42/Qbao",
+      "label": "approve",
+      "status": "needs_human",
+      "decision": null,
+      "votes": 2
+    },
+    {
+      "repo": "axel-rock/models",
+      "label": "approve",
+      "status": "needs_human",
+      "decision": null,
+      "votes": 3
+    },
+    {
+      "repo": "Liao-Ke/everyday",
+      "label": "approve",
+      "status": "pending",
+      "decision": null,
+      "votes": 0
+    },
+    {
+      "repo": "planbnet/guitartabs",
+      "label": "approve",
+      "status": "agreed",
+      "decision": "approve",
+      "votes": 4
+    },
+    {
+      "repo": "astrapi69/adaptive-learner",
+      "label": "approve",
+      "status": "needs_human",
+      "decision": null,
+      "votes": 3
+    },
+    {
+      "repo": "t29mato/world-express",
+      "label": "approve",
+      "status": "pending",
+      "decision": null,
+      "votes": 0
+    },
+    {
+      "repo": "BOSSincrypto/news-minimalist",
+      "label": "approve",
+      "status": "pending",
+      "decision": null,
+      "votes": 0
+    },
+    {
+      "repo": "veryardorer-source/JM",
+      "label": "approve",
+      "status": "agreed",
+      "decision": "approve",
+      "votes": 3
+    },
+    {
+      "repo": "liujontw-create/absolutelymysong",
+      "label": "approve",
+      "status": "pending",
+      "decision": null,
+      "votes": 0
+    },
+    {
+      "repo": "altkriz/htmleditor",
+      "label": "approve",
+      "status": "pending",
+      "decision": null,
+      "votes": 0
+    },
+    {
+      "repo": "QuantStrategyLab/QuantAdvisorResearch",
+      "label": "approve",
+      "status": "pending",
+      "decision": null,
+      "votes": 0
+    },
+    {
+      "repo": "shishir-dey/ngspiceX",
+      "label": "approve",
+      "status": "pending",
+      "decision": null,
+      "votes": 0
+    },
+    {
+      "repo": "victorsodre/remotion-agent-catalog",
+      "label": "approve",
+      "status": "pending",
+      "decision": null,
+      "votes": 0
+    },
+    {
+      "repo": "GabrielGLevine/wandering-inn-rpg",
+      "label": "approve",
+      "status": "pending",
+      "decision": null,
+      "votes": 0
+    }
+  ],
+  "counts": {
+    "agreed": 11,
+    "needs_human": 18,
+    "pending": 20,
+    "first_failed": 1
+  },
+  "agreedWrong": []
+}
