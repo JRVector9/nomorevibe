@@ -77,12 +77,31 @@ export async function githubRequest<T>(
   if (conditional.lastModified) headers["If-Modified-Since"] = conditional.lastModified;
 
   let res: Response;
+  const signal = AbortSignal.timeout(Math.max(1, Math.min(options.timeoutMs ?? 10_000, 10_000)));
+  let url = `${API_ORIGIN}${path}`;
+  const visited = new Set([url]);
   try {
-    res = await fetch(`${API_ORIGIN}${path}`, {
-      headers,
-      redirect: "error",
-      signal: AbortSignal.timeout(Math.max(1, Math.min(options.timeoutMs ?? 10_000, 10_000))),
-    });
+    for (let redirects = 0; ; redirects++) {
+      res = await fetch(url, { headers, redirect: "manual", signal });
+      if (![301, 302, 303, 307, 308].includes(res.status)) break;
+      const location = res.headers.get("location");
+      await res.body?.cancel().catch(() => {});
+      if (!location || redirects >= 3) return { ok: false, error: { kind: "invalid_response" } };
+      let next: URL;
+      try { next = new URL(location, url); }
+      catch { return { ok: false, error: { kind: "invalid_response" } }; }
+      // Repository renames legitimately redirect to /repositories/:id. Never send the token outside this API origin.
+      if (next.origin !== API_ORIGIN || next.username || next.password || next.hash || visited.has(next.href)) {
+        return { ok: false, error: { kind: "invalid_response" } };
+      }
+      const redirectCooldown = githubCooldown(res.status, res.headers);
+      if (redirectCooldown) {
+        const resetAt = await recordGitHubCooldown(token, resource, redirectCooldown);
+        return { ok: false, error: { kind: "rate_limited", resetAt } };
+      }
+      visited.add(next.href);
+      url = next.href;
+    }
   } catch {
     return { ok: false, error: { kind: "transport" } };
   }
