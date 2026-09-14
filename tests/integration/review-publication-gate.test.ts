@@ -27,6 +27,7 @@ beforeEach(async () => {
   classify.mockReset().mockResolvedValue(null);
   await saveSettings({ enabled: true }, "test");
   vi.stubEnv("CRAWL_REVIEW_READY", "true");
+  vi.stubEnv("CRAWL_REVIEW_MODEL", "test-model");
   expect(await changeReviewMode({ mode: "enforce", expectedMode: "off", actor: "test", reason: "verified gate" })).toMatchObject({ ok: true });
 });
 
@@ -45,7 +46,7 @@ async function candidate(index: number, approve = false) {
     kind: "automatic", state: "succeeded", inputHash: input.inputHash, policyHash: input.policyHash,
     sourceRevisionHash: input.sourceRevisionHash, snapshot: input.snapshot, source: input.source,
     promptVersion: REVIEW_PROMPT_VERSION, rulesVersion: REVIEW_RULES_VERSION,
-    provider: "test", model: "test-model", attemptNumber: 1,
+    provider: "claude-cli", model: "test-model", attemptNumber: 1,
     outcome: { decision: "approve", reason: "Product description confirmed", evidenceIds: ["product"] },
     validUntil: input.validUntil, startedAt: now, completedAt: now }).returning() : [];
   return { row, document, attempt };

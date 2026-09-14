@@ -1,6 +1,6 @@
 import type { CrawlDocument } from "@/lib/db/schema";
 import { getDocument, setReadmeSample } from "@/lib/crawl/repository";
-import { fetchReadmeSample } from "@/lib/crawl/readme";
+import { fetchReadmeSample, README_SAMPLE_VERSION } from "@/lib/crawl/readme";
 
 /**
  * 심사에 넘길 원본. README 는 처음 심사할 때 한 번 받아 원본 옆에 둔다("" = 없음).
@@ -8,9 +8,9 @@ import { fetchReadmeSample } from "@/lib/crawl/readme";
  */
 export async function loadReviewDocument(repo: string): Promise<CrawlDocument | undefined> {
   const document = await getDocument(repo);
-  if (!document || typeof document.pageMeta?.readmeSample === "string") return document;
+  if (!document || (typeof document.pageMeta?.readmeSample === "string"
+    && document.pageMeta.readmeSampleVersion === README_SAMPLE_VERSION)) return document;
   const readme = await fetchReadmeSample(repo);
   if (typeof readme !== "string") return document;
-  await setReadmeSample(repo, readme);
-  return { ...document, pageMeta: { ...(document.pageMeta ?? {}), readmeSample: readme } };
+  return await setReadmeSample(repo, readme, document) ?? await getDocument(repo);
 }

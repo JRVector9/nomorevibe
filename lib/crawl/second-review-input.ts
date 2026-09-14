@@ -1,0 +1,44 @@
+import { createHash } from "node:crypto";
+import { and, desc, eq, inArray } from "drizzle-orm";
+import { db } from "@/lib/db";
+import { crawlCandidates, crawlDocuments, crawlReviewAttempts, crawlSettings, type SecondReview } from "@/lib/db/schema";
+import type { ProductTransaction } from "@/lib/domain/products/generation";
+import { lockRepositoryAgentEvidence } from "@/lib/domain/evidence/agents/lock";
+import { loadReviewInput } from "./agent-review-repository";
+import type { ReviewInput } from "./agent-review-contract";
+import { mergeWithDefaults } from "./settings";
+import { sameReviewModel } from "./review-model-identity";
+
+export function secondReviewGeneration(firstAttemptId: number | null, input: Pick<ReviewInput, "inputHash" | "sourceRevisionHash">): string {
+  return createHash("sha256").update(JSON.stringify([firstAttemptId, input.inputHash, input.sourceRevisionHash])).digest("hex");
+}
+
+/** No network or mutation. With a transaction, lock in the same order as first-review recording. */
+export async function loadSecondReviewInput(row: SecondReview, tx?: ProductTransaction): Promise<ReviewInput | null> {
+  const executor = tx ?? db;
+  const candidateQuery = executor.select().from(crawlCandidates).where(eq(crawlCandidates.id, row.candidateId)).limit(1);
+  const [candidate] = await (tx ? candidateQuery.for("update") : candidateQuery);
+  if (!candidate || candidate.repo !== row.repo || (row.publishedSlug
+    ? candidate.state !== "published" || candidate.publishedSlug !== row.publishedSlug
+    : candidate.state !== "needs_review" || candidate.decidedBy !== "auto")) return null;
+  const documentQuery = executor.select().from(crawlDocuments).where(eq(crawlDocuments.repo, row.repo)).limit(1);
+  const [document] = await (tx ? documentQuery.for("share") : documentQuery);
+  const settingsQuery = executor.select().from(crawlSettings).limit(1);
+  const [saved] = await (tx ? settingsQuery.for("share") : settingsQuery);
+  if (!document || candidate.productUrl !== document.productUrl) return null;
+  if (tx) await lockRepositoryAgentEvidence(tx, row.repo);
+  const settings = mergeWithDefaults(saved?.values);
+  if (!settings.enabled || !settings.secondReview.enabled) return null;
+  const input = await loadReviewInput(candidate, document, settings, executor);
+  if (secondReviewGeneration(row.firstAttemptId, input) !== row.generationKey || sameReviewModel(row.firstModel, row.model)) return null;
+  if (!row.publishedSlug) {
+    const [first] = await executor.select().from(crawlReviewAttempts).where(and(
+      eq(crawlReviewAttempts.candidateId, row.candidateId), eq(crawlReviewAttempts.kind, "automatic"),
+      eq(crawlReviewAttempts.state, "succeeded"), inArray(crawlReviewAttempts.provider, ["claude-cli", "abcllm"]),
+    )).orderBy(desc(crawlReviewAttempts.id)).limit(1);
+    if (!first || first.id !== row.firstAttemptId || first.inputHash !== input.inputHash
+      || first.sourceRevisionHash !== input.sourceRevisionHash || first.outcome?.decision !== row.firstDecision
+      || first.model !== row.firstModel || input.validUntil <= new Date()) return null;
+  }
+  return input;
+}

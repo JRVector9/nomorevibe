@@ -1,9 +1,14 @@
 import { createHash } from "node:crypto";
 import { and, desc, eq, gte, inArray, isNotNull, isNull, lt, notInArray, or, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { crawlCandidates, crawlDocuments, crawlReviewAttempts, secondReviews, type SecondReviewProvider, type SecondReviewStatus, type SecondReviewTrigger } from "@/lib/db/schema";
+import { crawlCandidates, crawlDocuments, crawlReviewAttempts, crawlSettings, secondReviews, type SecondReviewProvider, type SecondReviewStatus, type SecondReviewTrigger } from "@/lib/db/schema";
 import { pageFactsFromDocument } from "./rules";
 import type { CrawlSettings } from "./settings-schema";
+import { mergeWithDefaults } from "./settings";
+import { loadReviewInput } from "./agent-review-repository";
+import { loadSecondReviewInput, secondReviewGeneration } from "./second-review-input";
+import { assertJobLease, type JobLease } from "@/lib/jobs/control";
+import { canonicalReviewModel, sameReviewModel } from "./review-model-identity";
 
 /**
  * 2차 심사 — 무엇을 다시 보고, 두 판단을 어떻게 합치나.
@@ -50,7 +55,7 @@ type Verdict = { decision: string; confidence: number | null };
  */
 export function combineVerdicts(first: Verdict & { model?: string | null }, second: Vote, agreeAt: number, published: boolean):
   Exclude<SecondReviewStatus, "pending" | "failed" | "resolved"> {
-  const echo = Boolean(first.model && second.model && first.model === second.model);
+  const echo = sameReviewModel(first.model, second.model);
   if (published) return !echo && second.decision === "approve" ? "agreed" : "needs_human";
   const agreed = !echo && first.decision === second.decision && first.decision !== "needs_review" && counts(second, agreeAt)
     && (first.confidence ?? 0) >= agreeAt;
@@ -84,8 +89,8 @@ export type CandidateVerdict = {
  * 한 후보에 모인 표를 합친다.
  *
  * 대기 후보: 1차와 2차들의 표 중 셈에 드는 것이 둘 이상이고 하나도 엇갈리지 않으면 일치다.
- * 표가 많을수록 안전하므로 몇 표가 모였는지를 함께 돌려준다 — 사람은 표 수를 보고 확정 범위를
- * 고른다(2026-09-12 평가: 성향이 반대인 두 모델이 일치하면 사람 판정과 거의 어긋나지 않았다).
+ * 낮은 확신의 반대 의견이나 명시적 보류도 사람 확인으로 보낸다. 표 수는 독립 모델 수이며
+ * 정확도 보장이 아니다.
  *
  * 공개된 제품: 2차가 하나라도 제품이 아니라고 하면 사람에게. 자동으로 내리지 않는다.
  */
@@ -94,17 +99,23 @@ export function combineVotes(first: Verdict, second: Vote[], options: {
   /** 1차를 본 모델. 2차에 같은 모델이 서면 그 표는 같은 답을 되풀이할 뿐이라 셈에서 뺀다 */
   firstModel?: string | null;
 }): CandidateVerdict {
-  /*
-   * 1차와 같은 모델의 표는 검증이 아니라 메아리다.
-   *
-   * 온도 0으로 같은 글·같은 입력을 보내므로 같은 답이 돌아온다. 그것을 표로 세면 "둘이 일치"가
-   * 되어 한 번에 확정하는 묶음에 올라가는데, 실제로는 1차 판단을 그대로 승인하는 것이다.
-   * 사람이 판정한 80건에서 모델 하나의 정확도는 87%, 성향이 다른 둘이 일치한 것은 98%였다.
-   * 기록으로는 남기고 셈에서만 뺀다 — 화면에는 그 모델이 무엇이라 했는지 그대로 보인다.
-   */
-  const votes = options.firstModel
-    ? second.filter((vote) => !vote.model || vote.model !== options.firstModel)
-    : second;
+  // Known model aliases and repeated model results are not independent votes.
+  const votes: Vote[] = [];
+  const known = new Map<string, Vote>();
+  for (const vote of second) {
+    if (sameReviewModel(options.firstModel, vote.model)) continue;
+    if (!vote.model) { votes.push(vote); continue; }
+    const key = canonicalReviewModel(vote.model);
+    const prior = known.get(key);
+    if (prior) {
+      // Conflicting duplicate results cannot silently become an agreeing vote.
+      if (prior.decision !== vote.decision) prior.decision = "needs_review";
+      prior.confidence = Math.min(prior.confidence ?? 0, vote.confidence ?? 0);
+    } else {
+      const copy = { ...vote };
+      known.set(key, copy); votes.push(copy);
+    }
+  }
   /*
    * 표가 다 모이기 전에는 칩에 올리지 않는다.
    *
@@ -121,6 +132,11 @@ export function combineVotes(first: Verdict, second: Vote[], options: {
     return { status: "agreed", decision: "approve", votes: votes.length };
   }
   const all = [...(counts(first, options.agreeAt) ? [first.decision] : []), ...votes.filter((vote) => counts(vote, options.agreeAt)).map((vote) => vote.decision)];
+  // Confidence controls whether support counts, never whether dissent disappears.
+  const expressed = [first, ...votes].map(vote => vote.decision);
+  if (expressed.some(decision => decision !== "approve" && decision !== "reject") || new Set(expressed).size > 1) {
+    return { status: "needs_human", decision: null, votes: all.length };
+  }
   const decision = all[0] === "approve" || all[0] === "reject" ? all[0] : null;
   if (new Set(all).size > 1) return { status: "needs_human", decision: null, votes: all.length };
   if (all.length >= 2) return { status: "agreed", decision, votes: all.length };
@@ -148,6 +164,8 @@ const PUBLISHED_LIMIT = 25;
  */
 export async function enqueueSecondReviews(settings: CrawlSettings, now = new Date()): Promise<number> {
   const held = settings.secondReview.includeAiHeld;
+  const voters = [...new Map(settings.secondReview.voters.map(voter => [canonicalReviewModel(voter.model), voter])).values()];
+
   /**
    * 후보마다 마지막 1차 판단 하나 — 그것이 지금 물어야 할 입력이다.
    *
@@ -158,12 +176,12 @@ export async function enqueueSecondReviews(settings: CrawlSettings, now = new Da
    */
   const latest = db.selectDistinctOn([crawlReviewAttempts.candidateId], {
     candidateId: crawlReviewAttempts.candidateId, repo: crawlCandidates.repo, inputHash: crawlReviewAttempts.inputHash,
-    firstModel: crawlReviewAttempts.model,
+    firstModel: crawlReviewAttempts.model, firstAttemptId: crawlReviewAttempts.id, sourceRevisionHash: crawlReviewAttempts.sourceRevisionHash,
     decision: sql<string>`${crawlReviewAttempts.outcome}->>'decision'`.as("decision"),
     confidence: sql<number | null>`(${crawlReviewAttempts.outcome}->>'confidence')::float`.as("confidence"),
   }).from(crawlReviewAttempts).innerJoin(crawlCandidates, eq(crawlCandidates.id, crawlReviewAttempts.candidateId))
     .where(and(eq(crawlCandidates.state, "needs_review"), eq(crawlCandidates.decidedBy, "auto"),
-      eq(crawlReviewAttempts.kind, "automatic"), eq(crawlReviewAttempts.state, "succeeded"), eq(crawlReviewAttempts.provider, "claude-cli"),
+      eq(crawlReviewAttempts.kind, "automatic"), eq(crawlReviewAttempts.state, "succeeded"), inArray(crawlReviewAttempts.provider, ["claude-cli", "abcllm"]),
       // 가른 판단은 확신을 낸 것만 — 1차가 보류한 것은 애초에 확신을 재지 않는다
       or(sql`${crawlReviewAttempts.outcome}->>'confidence' is not null`,
         held ? sql`${crawlReviewAttempts.outcome}->>'decision' = 'needs_review'` : undefined)!))
@@ -175,16 +193,17 @@ export async function enqueueSecondReviews(settings: CrawlSettings, now = new Da
    * 올라간 후보에도 그 모델의 표를 더해야 하기 때문이다. 이 조건이 없으면 후보 id 가 작은
    * 것들만 매 틱 다시 집혀 뒤가 영영 올라가지 않는다(대상 738건 중 654건이 그렇게 밀렸다).
    */
+  const required = sql`(select count(*) from jsonb_array_elements_text(${JSON.stringify(voters.map(voter => canonicalReviewModel(voter.model)))}::jsonb) as v(model)
+    where v.model <> regexp_replace(lower(trim(coalesce(${latest.firstModel}, ''))), '^\\[mlx\\][[:space:]]*', '', 'i'))`;
   const decided = await db.select().from(latest)
-    .where(sql`(select count(*) from ${secondReviews} s
-      where s.candidate_id = ${latest.candidateId} and s.input_hash = ${latest.inputHash})
-      < ${settings.secondReview.voters.length}`)
+    .where(and(sql`${required} > 0`, sql`(select count(*) from ${secondReviews} s
+      where s.candidate_id = ${latest.candidateId} and s.input_hash = ${latest.inputHash}
+        and s.first_attempt_id = ${latest.firstAttemptId}) < ${required}`))
     .limit(ENQUEUE_LIMIT * 4);
   /**
    * 세워 둔 모델마다 한 행. 누가 볼지를 올릴 때 적는다 — 유일 색인이 (후보, 입력, 모델)이라
    * 모델을 비워 두면 Postgres 가 NULL 을 서로 다른 값으로 보아 같은 후보가 매 틱 다시 올라온다.
    */
-  const voters = settings.secondReview.voters;
   /**
    * 한 후보가 모델 수만큼 행을 쓰므로, 후보 수로 상한을 잡는다 — 행 수로 자르면 모델을 셋
    * 세웠을 때 한 후보의 표가 반만 올라가 영영 짝이 맞지 않는다.
@@ -192,9 +211,9 @@ export async function enqueueSecondReviews(settings: CrawlSettings, now = new Da
   const rows: (typeof secondReviews.$inferInsert)[] = decided
     .filter((row) => row.decision === "approve" || row.decision === "reject" || (held && row.decision === "needs_review"))
     .slice(0, ENQUEUE_LIMIT)
-    .flatMap((row) => voters.map((voter) => ({ ...voter, candidateId: row.candidateId, repo: row.repo,
+    .flatMap((row) => voters.filter(voter => !sameReviewModel(row.firstModel, voter.model)).map((voter) => ({ ...voter, candidateId: row.candidateId, repo: row.repo,
       trigger: (row.decision === "needs_review" ? "ai_held" : "ai_decided") as SecondReviewTrigger,
-      firstDecision: row.decision, firstConfidence: row.confidence, firstModel: row.firstModel, inputHash: row.inputHash })));
+      firstDecision: row.decision, firstConfidence: row.confidence, firstModel: row.firstModel, firstAttemptId: row.firstAttemptId, generationKey: secondReviewGeneration(row.firstAttemptId, row), inputHash: row.inputHash })));
 
   const published = await db.select({ id: crawlCandidates.id, repo: crawlCandidates.repo, slug: crawlCandidates.publishedSlug,
     productUrl: crawlCandidates.productUrl, pageMeta: crawlDocuments.pageMeta, pageStatus: crawlDocuments.pageStatus, documentUrl: crawlDocuments.productUrl })
@@ -202,6 +221,9 @@ export async function enqueueSecondReviews(settings: CrawlSettings, now = new Da
     .where(and(eq(crawlCandidates.state, "published"), eq(crawlCandidates.decidedBy, "auto"), isNotNull(crawlCandidates.publishedSlug),
       gte(crawlCandidates.decidedAt, new Date(now.getTime() - PUBLISHED_LOOKBACK_MS))))
     .limit(2_000);
+  const previousPublished = published.length ? await db.select({ candidateId: secondReviews.candidateId, generationKey: secondReviews.generationKey, model: secondReviews.model })
+    .from(secondReviews).where(inArray(secondReviews.candidateId, published.map(row => row.id))) : [];
+  const publishedModels = new Set(previousPublished.map(row => `${row.candidateId}:${row.generationKey}:${canonicalReviewModel(row.model ?? "")}`));
   const publishedRows: (typeof secondReviews.$inferInsert)[] = [];
   let publishedCount = 0;
   for (const row of published) {
@@ -211,30 +233,49 @@ export async function enqueueSecondReviews(settings: CrawlSettings, now = new Da
       textSample: facts.textSample ?? null, readme: typeof meta.readmeSample === "string" ? meta.readmeSample : null });
     const sampled = inSample(row.repo, settings.secondReview.sampleRate);
     if (!signals.length && !sampled) continue;
-    publishedRows.push(...voters.map((voter) => ({ ...voter, candidateId: row.id, repo: row.repo, publishedSlug: row.slug,
+    const [candidate] = await db.select().from(crawlCandidates).where(eq(crawlCandidates.id, row.id));
+    const [document] = await db.select().from(crawlDocuments).where(eq(crawlDocuments.repo, row.repo)).limit(1);
+    if (!candidate || !document) continue;
+    const input = await loadReviewInput(candidate, document, settings);
+    const generationKey = secondReviewGeneration(null, input);
+    const missingVoters = voters.filter(voter => !publishedModels.has(`${row.id}:${generationKey}:${canonicalReviewModel(voter.model)}`));
+    if (!missingVoters.length) continue;
+    publishedRows.push(...missingVoters.map((voter) => ({ ...voter, candidateId: row.id, repo: row.repo, publishedSlug: row.slug,
       trigger: (signals.length ? "risk" : "sample") as SecondReviewTrigger, signals,
-      firstDecision: "approve", firstConfidence: null, inputHash: publishedInputHash(row.slug!) })));
+      firstDecision: "approve", firstConfidence: null, firstAttemptId: null, generationKey, inputHash: publishedInputHash(row.slug!) })));
     if (++publishedCount >= PUBLISHED_LIMIT) break;
   }
   rows.push(...publishedRows);
   if (!rows.length) return 0;
-  const inserted = await db.insert(secondReviews).values(rows).onConflictDoNothing()
-    .returning({ id: secondReviews.id, candidateId: secondReviews.candidateId, trigger: secondReviews.trigger, inputHash: secondReviews.inputHash });
-  const renewed = inserted.filter((row) => row.trigger === "ai_decided" || row.trigger === "ai_held");
-  if (renewed.length) {
-    /**
-     * 앞선 것을 닫는 기준은 "입력이 바뀌었다"이지 "새 행이 들어왔다"가 아니다.
-     *
-     * 모델을 하나 더 세우면 같은 입력에 새 행이 생기는데, 그때 후보 id 로만 닫으면 먼저 세운
-     * 모델의 표(아직 안 본 것까지)가 함께 닫힌다. 같은 입력은 이미 낸 유일 색인 때문에 다시
-     * 올릴 수도 없어 그 표는 영영 사라진다. 입력 해시가 다른 것만 닫는다.
-     */
-    await db.update(secondReviews).set({ status: "resolved", resolution: "superseded", resolvedAt: now })
-      .where(and(inArray(secondReviews.trigger, ["ai_decided", "ai_held"]), inArray(secondReviews.candidateId, renewed.map((row) => row.candidateId)),
-        notInArray(secondReviews.inputHash, [...new Set(renewed.map((row) => row.inputHash))]),
-        inArray(secondReviews.status, ["pending", "agreed", "needs_human", "failed"])));
-  }
-  return inserted.length;
+  return db.transaction(async tx => {
+    const candidateIds = [...new Set(rows.map(row => row.candidateId))].sort((a, b) => a - b);
+    const locked = await tx.select().from(crawlCandidates).where(inArray(crawlCandidates.id, candidateIds))
+      .orderBy(crawlCandidates.id).for("update");
+    const currentFirst = await tx.selectDistinctOn([crawlReviewAttempts.candidateId], {
+      candidateId: crawlReviewAttempts.candidateId, id: crawlReviewAttempts.id,
+    }).from(crawlReviewAttempts).where(and(inArray(crawlReviewAttempts.candidateId, candidateIds),
+      eq(crawlReviewAttempts.kind, "automatic"), eq(crawlReviewAttempts.state, "succeeded"),
+      inArray(crawlReviewAttempts.provider, ["claude-cli", "abcllm"])))
+      .orderBy(crawlReviewAttempts.candidateId, desc(crawlReviewAttempts.id));
+    const latestIds = new Map(currentFirst.map(row => [row.candidateId, row.id]));
+    const candidates = new Map(locked.map(row => [row.id, row]));
+    const valid = rows.filter(row => {
+      const candidate = candidates.get(row.candidateId);
+      return row.publishedSlug ? candidate?.state === "published" && candidate.publishedSlug === row.publishedSlug
+        : candidate?.state === "needs_review" && candidate.decidedBy === "auto" && latestIds.get(row.candidateId) === row.firstAttemptId;
+    });
+    if (!valid.length) return 0;
+    const inserted = await tx.insert(secondReviews).values(valid).onConflictDoNothing()
+      .returning({ id: secondReviews.id, candidateId: secondReviews.candidateId, generationKey: secondReviews.generationKey });
+    const renewed = [...new Map(inserted.map(row => [row.candidateId, row])).values()];
+    if (renewed.length) {
+      await tx.update(secondReviews).set({ status: "resolved", resolution: "superseded", resolvedAt: now })
+        .where(and(or(...renewed.map(row => and(eq(secondReviews.candidateId, row.candidateId),
+          sql`${secondReviews.generationKey} <> ${row.generationKey}`))),
+          inArray(secondReviews.status, ["pending", "agreed", "needs_human", "failed"])));
+    }
+    return inserted.length;
+  });
 }
 
 /**
@@ -273,12 +314,31 @@ export async function pendingSecondReviews(limit: number) {
 
 export async function recordSecondReview(id: number, result:
   | { ok: true; decision: string; confidence: number | null; reason: string; model: string; provider: SecondReviewProvider; status: "agreed" | "needs_human" }
-  | { ok: false; error: string; model: string; provider: SecondReviewProvider }, now = new Date()): Promise<void> {
-  await db.update(secondReviews).set(result.ok
-    ? { status: result.status, model: result.model, provider: result.provider, secondDecision: result.decision, secondConfidence: result.confidence,
-        secondReason: result.reason.slice(0, 2000), errorCode: null, reviewedAt: now }
-    : { status: "failed", model: result.model, provider: result.provider, errorCode: result.error.slice(0, 60), reviewedAt: now })
-    .where(eq(secondReviews.id, id));
+  | { ok: false; error: string; model: string; provider: SecondReviewProvider }, now = new Date(), lease?: JobLease): Promise<void> {
+  await db.transaction(async tx => {
+    const [original] = await tx.select().from(secondReviews).where(eq(secondReviews.id, id));
+    if (!original || original.status !== "pending") return;
+    const input = await loadSecondReviewInput(original, tx);
+    const [row] = await tx.select().from(secondReviews).where(eq(secondReviews.id, id)).for("update");
+    if (!row || row.status !== "pending" || row.generationKey !== original.generationKey) return;
+    if (lease) await assertJobLease(tx, lease);
+    if (!input || row.model !== result.model || row.provider !== result.provider) {
+      await tx.update(secondReviews).set({status: "resolved", resolution: "superseded", resolvedAt: now})
+        .where(eq(secondReviews.id, id));
+      return;
+    }
+    const [saved] = await tx.select().from(crawlSettings).limit(1);
+    const agreeAt = mergeWithDefaults(saved?.values).secondReview.agreeAt;
+    await tx.update(secondReviews).set(result.ok
+      ? { status: combineVerdicts({decision: row.firstDecision, confidence: row.firstConfidence, model: row.firstModel},
+          {decision: result.decision, confidence: result.confidence, provider: result.provider, model: result.model},
+          // Consensus summary independently applies the current configured threshold.
+          agreeAt,
+          Boolean(row.publishedSlug)), secondDecision: result.decision, secondConfidence: result.confidence,
+          secondReason: result.reason.slice(0, 2000), errorCode: null, reviewedAt: now }
+      : { status: "failed", errorCode: result.error.slice(0, 60), reviewedAt: now })
+      .where(eq(secondReviews.id, id));
+  });
 }
 
 export type SecondReviewFailure = { provider: string | null; model: string | null; errorCode: string; count: number };
@@ -334,7 +394,7 @@ export type SecondChipKey = "unanimous_reject" | "unanimous_approve" | "agreed_r
 export async function secondReviewSummary(agreeAt: number): Promise<{ counts: SecondReviewCounts; ids: Record<SecondChipKey, number[]> }> {
   const rows = await db.select({ candidateId: secondReviews.candidateId, status: secondReviews.status, decision: secondReviews.secondDecision,
     confidence: secondReviews.secondConfidence, provider: secondReviews.provider, model: secondReviews.model,
-    published: secondReviews.publishedSlug, firstDecision: secondReviews.firstDecision,
+    generationKey: secondReviews.generationKey, inputHash: secondReviews.inputHash, published: secondReviews.publishedSlug, firstDecision: secondReviews.firstDecision,
     firstConfidence: secondReviews.firstConfidence, firstModel: secondReviews.firstModel }).from(secondReviews)
     // 실패한 표도 읽는다 — 한 시간 뒤 다시 보므로 아직 끝나지 않은 표이고, 모두 실패한 후보가
     // 집계에서 통째로 사라지면 멈춘 줄 모른다
@@ -346,8 +406,13 @@ export async function secondReviewSummary(agreeAt: number): Promise<{ counts: Se
   const ids: Record<SecondChipKey, number[]> = { unanimous_reject: [], unanimous_approve: [], agreed_reject: [], agreed_approve: [], needs_human: [] };
   let published = 0, pending = 0;
   for (const [candidateId, group] of byCandidate) {
+    if (new Set(group.map(row => `${row.inputHash}:${row.generationKey}`)).size > 1 || group.some(row => row.generationKey === "legacy")) {
+      if (group.some(row => row.published)) published += 1;
+      else ids.needs_human.push(candidateId);
+      continue;
+    }
     const first = { decision: group[0].firstDecision, confidence: group[0].firstConfidence };
-    const outstanding = group.filter((row) => row.status === "pending" || row.status === "failed").length;
+    const outstanding = group.filter((row) => !sameReviewModel(row.firstModel, row.model) && (row.status === "pending" || row.status === "failed")).length;
     const votes = group.filter((row) => row.status === "agreed" || row.status === "needs_human")
       .map((row) => ({ decision: row.decision ?? "", confidence: row.confidence, provider: row.provider, model: row.model }));
     const verdict = combineVotes(first, votes, { agreeAt, published: Boolean(group[0].published),

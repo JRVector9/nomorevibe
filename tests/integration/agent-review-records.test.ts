@@ -1,11 +1,11 @@
-import { beforeAll, beforeEach, expect, it } from "vitest";
+import { beforeAll, beforeEach, expect, it, vi } from "vitest";
 import { eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { jobs, crawlCandidates, crawlDocuments, crawlFrontier, crawlSettings, crawlReviewAttempts } from "@/lib/db/schema";
 import * as crawl from "@/lib/crawl/repository";
 import { saveSettings, changeReviewMode, getSettings, resetSettings } from "@/lib/crawl/settings";
 import { loadReviewInput, claimAgentReview, recordAgentReview,
-  requeueStaleReviewSources } from "@/lib/crawl/agent-review-repository";
+  requeueStaleReviewSources, listReviewCandidates, reviewApprovalPredicate, assertReviewApproval } from "@/lib/crawl/agent-review-repository";
 import { ensureSchema } from "./setup";
 
 beforeAll(() => ensureSchema());
@@ -130,4 +130,31 @@ it("preserves enforce across a stale settings form and reset; mode changes use C
   expect(await getSettings()).toMatchObject({ reviewMode: "enforce" });
   expect(await changeReviewMode({ mode: "off", expectedMode: "observe", actor: "test", reason: "stale request" })).toMatchObject({ ok: false });
   expect(await getSettings()).toMatchObject({ reviewMode: "enforce" });
+});
+
+it("does not reuse another model's success on the same or a refreshed source", async () => {
+  const context = await fixture(); const first = await claimAgentReview(context);
+  if (first.kind === "skipped") throw new Error(first.reason);
+  await recordAgentReview({...context, attempt: first.attempt, outcome});
+  expect(await claimAgentReview({...context, model: "other-model"})).toMatchObject({kind: "claimed", attempt: {reusedFromAttemptId: null, outcome: null}});
+});
+it("does not exhaust a new model from the old model's failures", async () => {
+  const context = await fixture();
+  for (let i = 0; i < 3; i++) {
+    const attempt = await claimAgentReview(context); if (attempt.kind === "skipped") throw new Error(attempt.reason);
+    await recordAgentReview({...context, attempt: attempt.attempt, error: "timeout", retryAfter: new Date(0)});
+  }
+  expect(await claimAgentReview({...context, model: "other-model"})).toMatchObject({kind: "claimed", attempt: {attemptNumber: 1}});
+});
+it("does not let an old model approval suppress review or satisfy enforce publication", async () => {
+  const context = await fixture("enforce"); const first = await claimAgentReview(context);
+  if (first.kind === "skipped") throw new Error(first.reason);
+  await recordAgentReview({...context, attempt: first.attempt, outcome});
+  vi.stubEnv("CRAWL_REVIEW_MODEL", "other-model");
+  try {
+    expect((await listReviewCandidates(context.settings)).map(row => row.id)).toContain(context.candidate.id);
+    expect(await db.select().from(crawlCandidates).where(reviewApprovalPredicate(context.settings))).toEqual([]);
+    const candidate = (await crawl.getCandidate(context.candidate.repo))!;
+    await expect(db.transaction(tx => assertReviewApproval(tx, {...context, candidate}))).rejects.toThrow("review_approval_changed");
+  } finally {vi.unstubAllEnvs();}
 });

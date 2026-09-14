@@ -1,14 +1,10 @@
-import { eq } from "drizzle-orm";
 import type { JobContext, JobOutcome } from "@/lib/jobs/runner";
-import { db } from "@/lib/db";
-import { crawlCandidates } from "@/lib/db/schema";
 import { getSettings } from "@/lib/crawl/settings";
-import { loadReviewInput } from "@/lib/crawl/agent-review-repository";
 import { reviewWithAgent, REVIEW_CLI_TIMEOUT_MS } from "@/lib/crawl/agent-review";
 import { reviewWithGateway, REVIEW_GATEWAY_TIMEOUT_MS } from "@/lib/crawl/agent-review-gateway";
 import { closeSettledSecondReviews, combineVerdicts, enqueueSecondReviews, pendingSecondReviews, recordSecondReview,
   retryFailedSecondReviews } from "@/lib/crawl/second-review";
-import { loadReviewDocument } from "./review-document";
+import { loadSecondReviewInput } from "@/lib/crawl/second-review-input";
 
 /**
  * 한 틱에 함께 부르는 수와 틱의 길이.
@@ -56,14 +52,12 @@ export async function secondReviewCandidates(ctx: JobContext<null>): Promise<Job
        * 온전한 시간으로 부르는 편이 빠르다.
        */
       if (!ctx.hasBudget() || remaining() < limit + 2_000) { deferred += 1; continue; }
-      const [candidate] = await db.select().from(crawlCandidates).where(eq(crawlCandidates.id, row.candidateId)).limit(1);
-      const document = candidate ? await loadReviewDocument(candidate.repo) : undefined;
-      if (!candidate || !document) {
-        failed += 1;
-        await recordSecondReview(row.id, { ok: false, error: "missing_source", model, provider });
+      const input = await loadSecondReviewInput(row);
+      if (!input) {
+        deferred += 1;
+        await recordSecondReview(row.id, { ok: false, error: "input_changed", model, provider }, new Date(), ctx.lease);
         continue;
       }
-      const input = await loadReviewInput(candidate, document, settings);
       // 멈추라는 신호를 그대로 넘긴다 — 배포 때 진행 중인 호출이 바로 끊겨야 잠금을 놓고 나갈 수 있다
       const result = provider === "abcllm"
         ? await reviewWithGateway(input, { model, timeoutMs: limit, signal: ctx.signal })
@@ -72,14 +66,14 @@ export async function secondReviewCandidates(ctx: JobContext<null>): Promise<Job
         // 멈추라고 해서 끊긴 것은 실패가 아니다 — 그대로 두면 다음 회차가 처음부터 본다
         if (result.error === "cancelled" || ctx.signal?.aborted) { deferred += 1; continue; }
         failed += 1;
-        await recordSecondReview(row.id, { ok: false, error: result.error, model, provider });
+        await recordSecondReview(row.id, { ok: false, error: result.error, model, provider }, new Date(), ctx.lease);
         continue;
       }
       reviewed += 1;
       const second = { decision: result.outcome.decision, confidence: result.outcome.confidence ?? null, provider, model };
       await recordSecondReview(row.id, { ok: true, ...second, reason: result.outcome.reason,
         status: combineVerdicts({ decision: row.firstDecision, confidence: row.firstConfidence, model: row.firstModel },
-          second, settings.secondReview.agreeAt, Boolean(row.publishedSlug)) });
+          second, settings.secondReview.agreeAt, Boolean(row.publishedSlug)) }, new Date(), ctx.lease);
     }
   }));
 

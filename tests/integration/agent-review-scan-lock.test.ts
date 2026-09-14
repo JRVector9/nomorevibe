@@ -39,6 +39,7 @@ async function fixture() {
   vi.stubEnv("CRAWL_REVIEW_READY","true");
   expect(await changeReviewMode({mode:"enforce",expectedMode:"off",actor:"test",reason:"scan lock test"})).toMatchObject({ok:true});
   vi.unstubAllEnvs();
+  vi.stubEnv("CRAWL_REVIEW_MODEL", "test");
   const now = new Date(Date.now()-2000), productUrl="https://scan-lock.example";
   const scan = (await saveRepositoryAgentScan(scanned("a".repeat(40)),now))!;
   const [document] = await db.insert(crawlDocuments).values({repo,productUrl,pageStatus:200,fetchedAt:now,

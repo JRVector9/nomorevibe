@@ -9,6 +9,7 @@ import { lockRepositoryAgentEvidence } from "@/lib/domain/evidence/agents/lock";
 import { assertJobLease, requestJob, type JobLease } from "@/lib/jobs/control";
 import { mergeWithDefaults } from "./settings";
 import type { CrawlSettings } from "./settings-schema";
+import { reviewModel } from "./agent-review";
 import {
   createReviewInput, isReviewCandidate, MAX_REVIEW_ATTEMPTS,
   REVIEW_PROMPT_VERSION, REVIEW_RULES_VERSION, reviewPolicyHash, reviewHash,
@@ -54,9 +55,15 @@ async function currentReviewInput(tx: ProductTransaction, expected: {
 }
 
 /** Cheap current revision comparison used before LIMIT; final transactions also recompute inputHash. */
+function activeReviewIdentity(): SQL {
+  return or(and(eq(crawlReviewAttempts.provider, "rules"), eq(crawlReviewAttempts.model, REVIEW_RULES_VERSION)),
+    and(eq(crawlReviewAttempts.provider, "claude-cli"), eq(crawlReviewAttempts.model, reviewModel() ?? "")))!;
+}
+
 function matchingSource(settings: CrawlSettings): SQL {
   return sql`${crawlReviewAttempts.candidateId} = ${crawlCandidates.id}
     AND ${crawlReviewAttempts.kind} = 'automatic'
+    AND ${activeReviewIdentity()}
     AND ${crawlReviewAttempts.policyHash} = ${reviewPolicyHash(settings)}
     AND ${crawlReviewAttempts.promptVersion} = ${REVIEW_PROMPT_VERSION}
     AND ${crawlReviewAttempts.rulesVersion} = ${REVIEW_RULES_VERSION}
@@ -180,7 +187,8 @@ export async function claimAgentReview(input: ReviewContext & {
     const now = input.now ?? new Date();
     const rows = await tx.select().from(crawlReviewAttempts).where(and(
       eq(crawlReviewAttempts.candidateId, input.candidate.id), eq(crawlReviewAttempts.kind, "automatic"),
-      or(eq(crawlReviewAttempts.inputHash, current.inputHash), eq(crawlReviewAttempts.state, "running")),
+      or(and(eq(crawlReviewAttempts.inputHash, current.inputHash), eq(crawlReviewAttempts.provider, input.provider),
+        eq(crawlReviewAttempts.model, input.model)), eq(crawlReviewAttempts.state, "running")),
     )).orderBy(desc(crawlReviewAttempts.id)).limit(16).for("update");
     const running = rows.find(row => row.state === "running");
     if (running) {
@@ -189,7 +197,8 @@ export async function claimAgentReview(input: ReviewContext & {
         .where(eq(crawlReviewAttempts.id, running.id));
       running.state = "superseded";
     }
-    const same = rows.filter(row => row.inputHash === current.inputHash && row.sourceRevisionHash === current.sourceRevisionHash);
+    const same = rows.filter(row => row.inputHash === current.inputHash && row.sourceRevisionHash === current.sourceRevisionHash
+      && row.provider === input.provider && row.model === input.model);
     const success = same.find(row => row.state === "succeeded" && row.validUntil > now && row.outcome
       && row.provider === input.provider);
     if (success) return { kind: "reused", attempt: success };
@@ -198,7 +207,7 @@ export async function claimAgentReview(input: ReviewContext & {
       return { kind: "skipped", reason: "retry_wait" };
     }
     const reusable = rows.find(row => row.inputHash === current.inputHash && row.state === "succeeded"
-      && row.provider === input.provider
+      && row.provider === input.provider && row.model === input.model
       && row.promptVersion === REVIEW_PROMPT_VERSION && row.rulesVersion === REVIEW_RULES_VERSION && row.outcome);
     // Observation database IDs can change on a fresh scan with the same semantic evidence.
     const copiedOutcome = reusable?.outcome ? { ...reusable.outcome,
@@ -278,6 +287,7 @@ export async function assertReviewApproval(tx: ProductTransaction, input: {
     .where(eq(agentRepositoryObservations.scanId, scan.id)).for("share");
   const current = await loadReviewInput(input.candidate, input.document, input.settings, tx);
   const [approval] = await tx.select().from(crawlReviewAttempts).where(and(
+    activeReviewIdentity(),
     eq(crawlReviewAttempts.candidateId, input.candidate.id), eq(crawlReviewAttempts.kind, "automatic"),
     eq(crawlReviewAttempts.state, "succeeded"), eq(crawlReviewAttempts.inputHash, current.inputHash),
     eq(crawlReviewAttempts.sourceRevisionHash, current.sourceRevisionHash),

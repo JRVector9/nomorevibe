@@ -11,12 +11,12 @@ describe("README 앞부분", () => {
       .toBe("App\nUseful product");
   });
 
-  it("배지·이미지·링크 주소·HTML 은 버리고 글과 설치 명령은 남긴다", () => {
+  it("배지·이미지·HTML은 버리고 링크 목적지와 설치 명령은 남긴다", () => {
     const text = readmeText([
       "# Oigo", "![build](https://img.shields.io/badge.svg) <img src=x>", "",
       "Dictation for macOS. [Download](https://example.com/oigo.dmg)", "", "", "```", "brew install oigo", "```",
     ].join("\n"));
-    expect(text).toBe("Oigo\n\nDictation for macOS. Download\n\n```\nbrew install oigo\n```");
+    expect(text).toBe("Oigo\n\nDictation for macOS. Download (https://example.com/oigo.dmg)\n\n```\nbrew install oigo\n```");
     expect(readmeText("a".repeat(README_SAMPLE_LIMIT + 50))).toHaveLength(README_SAMPLE_LIMIT);
   });
 
@@ -38,4 +38,16 @@ describe("README 앞부분", () => {
     expect(await fetchReadmeSample("../../etc", async () => { called = true; return missing; })).toBe("");
     expect(called).toBe(false);
   });
+});
+
+it("preserves distinct demo/docs destinations including reference links and autolinks", () => {
+  const text = readmeText('[Live demo](https://demo.example/app) [Docs][docs] <https://status.example>\n\n[docs]: https://docs.example/guide');
+  expect(text).toContain('Live demo (https://demo.example/app)');
+  expect(text).toContain('Docs (https://docs.example/guide)');
+  expect(text).toContain('https://status.example');
+});
+it("does not retain executable or credential-bearing destinations", () => {
+  const text = readmeText('[run](javascript:alert) [secret](https://user:pass@example.com)');
+  expect(text).not.toContain('javascript:');
+  expect(text).not.toContain('user:pass');
 });

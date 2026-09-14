@@ -17,6 +17,7 @@ import { mergeWithDefaults } from "./settings";
 import type { CrawlSettings } from "./settings-schema";
 import { factsFromRepoMeta } from "./rules";
 import { assertJobLease, type JobLease } from "@/lib/jobs/control";
+import { README_SAMPLE_VERSION } from "./readme";
 
 /** 크롤 파이프라인 데이터 접근 — 파이프라인 바깥에서 이 테이블들을 직접 만지지 않는다 */
 
@@ -210,12 +211,12 @@ export async function markFailed(repo: string, error: string, now?: Date, claim?
  * 본문만 덮는다 — 제목·소개는 발행 시점의 것이 남아야 한다.
  */
 /** AI 심사 입력용 README 앞부분을 원본 옆에 둔다. "" 은 없음 표시 — 다시 찾지 않는다 */
-export async function setReadmeSample(repo: string, readmeSample: string): Promise<void> {
-  await db.execute(sql`
-    update crawl_documents
-       set page_meta = coalesce(page_meta, '{}'::jsonb) || jsonb_build_object('readmeSample', ${readmeSample}::text)
-     where repo = ${repo}
-  `);
+export async function setReadmeSample(repo: string, readmeSample: string, expected: CrawlDocument): Promise<CrawlDocument | undefined> {
+  const [updated] = await db.update(crawlDocuments).set({
+    pageMeta: sql`coalesce(${crawlDocuments.pageMeta}, '{}'::jsonb) || ${JSON.stringify({ readmeSample, readmeSampleVersion: README_SAMPLE_VERSION })}::jsonb`,
+  }).where(and(eq(crawlDocuments.repo, repo), eq(crawlDocuments.id, expected.id), eq(crawlDocuments.fetchedAt, expected.fetchedAt),
+    sql`${crawlDocuments.pageMeta} IS NOT DISTINCT FROM ${JSON.stringify(expected.pageMeta)}::jsonb`)).returning();
+  return updated;
 }
 
 export async function refreshTextSample(slug: string, textSample: string): Promise<void> {
