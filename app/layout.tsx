@@ -1,3 +1,4 @@
+import { LegacyChrome } from "@/components/LegacyChrome";
 import type { Metadata } from "next";
 import { Suspense } from "react";
 import { Inter, JetBrains_Mono } from "next/font/google";
@@ -8,7 +9,10 @@ import { siteOrigin } from "@/lib/site";
 import "./globals.css";
 
 const inter = Inter({ subsets: ["latin"], variable: "--font-inter" });
-const jetbrains = JetBrains_Mono({ subsets: ["latin"], variable: "--font-jetbrains" });
+const jetbrains = JetBrains_Mono({
+  subsets: ["latin"],
+  variable: "--font-jetbrains",
+});
 
 export const metadata: Metadata = {
   title: "nomorevibe — AI로 만든 것들, 세상에 나오다.",
@@ -53,15 +57,25 @@ export default function RootLayout({
   return (
     <html lang="ko" suppressHydrationWarning>
       {/* min-h-screen flex — 짧은 페이지에서도 푸터를 하단에 고정 */}
-      <body className={`${inter.variable} ${jetbrains.variable} flex min-h-screen flex-col font-sans`}>
-        <a className="skip" href="#main">본문으로 건너뛰기</a>
-        {topbar}
-        <Suspense fallback={<header className="nmb-header" />}>
-          <SiteHeader />
-        </Suspense>
-        <div className="flex-1" id="main" tabIndex={-1}>{children}</div>
-        <SiteFooter>{seasonfooter}</SiteFooter>
-        <MobileNav />
+      <body
+        className={`${inter.variable} ${jetbrains.variable} flex min-h-screen flex-col font-sans`}
+      >
+        <a className="skip" href="#main">
+          본문으로 건너뛰기
+        </a>
+        <LegacyChrome>
+          {topbar}
+          <Suspense fallback={<header className="nmb-header" />}>
+            <SiteHeader />
+          </Suspense>
+        </LegacyChrome>
+        <div className="flex-1" id="main" tabIndex={-1}>
+          {children}
+        </div>
+        <LegacyChrome>
+          <SiteFooter>{seasonfooter}</SiteFooter>
+          <MobileNav />
+        </LegacyChrome>
       </body>
     </html>
   );

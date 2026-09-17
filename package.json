@@ -4,6 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
+    "dev:design": "next dev --hostname 127.0.0.1 --port 4321",
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
@@ -11,6 +12,7 @@
     "test:watch": "vitest",
     "test:integration": "vitest run --config vitest.integration.config.ts",
     "test:e2e": "playwright test",
+    "test:design": "playwright test --config playwright.design.config.ts",
     "test:e2e:product": "playwright test tests/e2e/product-detail.spec.ts",
     "job": "tsx --env-file=.env.local scripts/run-job.ts",
     "crawl:sample": "tsx scripts/crawl-sample.ts",
