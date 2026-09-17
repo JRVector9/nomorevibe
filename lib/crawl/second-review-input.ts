@@ -38,7 +38,7 @@ export async function loadSecondReviewInput(row: SecondReview, tx?: ProductTrans
       || !settings.secondReview.voters.some(voter => voter.provider === root.provider && sameReviewModel(voter.model, root.model))) return null;
   }
   const input = await loadReviewInput(candidate, document, settings, executor);
-  if (secondReviewGeneration(row.firstAttemptId, input) !== row.generationKey || sameReviewModel(row.firstModel, row.model)) return null;
+  if (secondReviewGeneration(row.firstAttemptId, input) !== row.generationKey || (!row.fallbackForId && sameReviewModel(row.firstModel, row.model))) return null;
   if (!row.publishedSlug) {
     const [first] = await executor.select().from(crawlReviewAttempts).where(and(
       eq(crawlReviewAttempts.candidateId, row.candidateId), eq(crawlReviewAttempts.kind, "automatic"),
