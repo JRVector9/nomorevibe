@@ -1,0 +1,418 @@
+{
+  "at": "2026-09-17T02:32:17.378Z",
+  "settings": [
+    {
+      "review_mode": "observe",
+      "second_review": {
+        "voters": [
+          {
+            "model": "[MLX] qwen3.8-27b-uncensored",
+            "provider": "abcllm"
+          },
+          {
+            "model": "[MLX] gpt-oss-120b",
+            "provider": "abcllm"
+          }
+        ],
+        "agreeAt": 0.7,
+        "enabled": true,
+        "fallbacks": [
+          {
+            "model": "sonnet",
+            "provider": "claude-cli"
+          }
+        ],
+        "sampleRate": 0.05,
+        "includeAiHeld": true
+      }
+    }
+  ],
+  "replacements": [
+    {
+      "model": "opus",
+      "provider": "claude-cli",
+      "status": "resolved",
+      "error_code": null,
+      "second_decision": "approve",
+      "n": 2,
+      "earliest": "2026-09-17 01:44:43.200268",
+      "latest": "2026-09-17 01:46:31.258",
+      "max_failures": 1
+    },
+    {
+      "model": "opus",
+      "provider": "claude-cli",
+      "status": "resolved",
+      "error_code": null,
+      "second_decision": null,
+      "n": 1,
+      "earliest": "2026-09-17 01:48:35.687985",
+      "latest": null,
+      "max_failures": 2
+    },
+    {
+      "model": "sonnet",
+      "provider": "claude-cli",
+      "status": "needs_human",
+      "error_code": null,
+      "second_decision": "approve",
+      "n": 7,
+      "earliest": "2026-09-17 02:25:17.876203",
+      "latest": "2026-09-17 02:30:28.873",
+      "max_failures": 1
+    },
+    {
+      "model": "sonnet",
+      "provider": "claude-cli",
+      "status": "needs_human",
+      "error_code": null,
+      "second_decision": "needs_review",
+      "n": 1,
+      "earliest": "2026-09-17 02:26:46.676867",
+      "latest": "2026-09-17 02:27:41.492",
+      "max_failures": 1
+    },
+    {
+      "model": "sonnet",
+      "provider": "claude-cli",
+      "status": "needs_human",
+      "error_code": null,
+      "second_decision": "reject",
+      "n": 5,
+      "earliest": "2026-09-17 02:25:37.46003",
+      "latest": "2026-09-17 02:27:46.905",
+      "max_failures": 1
+    },
+    {
+      "model": "sonnet",
+      "provider": "claude-cli",
+      "status": "resolved",
+      "error_code": null,
+      "second_decision": "approve",
+      "n": 27,
+      "earliest": "2026-09-17 02:17:20.025849",
+      "latest": "2026-09-17 02:23:03.069",
+      "max_failures": 1
+    },
+    {
+      "model": "sonnet",
+      "provider": "claude-cli",
+      "status": "resolved",
+      "error_code": null,
+      "second_decision": "needs_review",
+      "n": 12,
+      "earliest": "2026-09-17 02:17:20.299818",
+      "latest": "2026-09-17 02:22:46.202",
+      "max_failures": 1
+    },
+    {
+      "model": "sonnet",
+      "provider": "claude-cli",
+      "status": "resolved",
+      "error_code": null,
+      "second_decision": "reject",
+      "n": 35,
+      "earliest": "2026-09-17 02:17:20.267233",
+      "latest": "2026-09-17 02:24:31.586",
+      "max_failures": 1
+    },
+    {
+      "model": "sonnet",
+      "provider": "claude-cli",
+      "status": "resolved",
+      "error_code": null,
+      "second_decision": null,
+      "n": 22,
+      "earliest": "2026-09-17 02:23:35.504171",
+      "latest": null,
+      "max_failures": 1
+    }
+  ],
+  "examples": [
+    {
+      "id": 63173,
+      "repo": "Diavel78/kahla-house",
+      "model": "sonnet",
+      "first_model": "sonnet",
+      "status": "needs_human",
+      "second_decision": "approve",
+      "error_code": null,
+      "failure_count": 1,
+      "reviewed_at": "2026-09-17 02:30:28.873",
+      "original_id": 62626,
+      "original_model": "[MLX] gpt-oss-120b",
+      "original_error": "gateway_error",
+      "original_status": "resolved",
+      "resolution": "fallback"
+    },
+    {
+      "id": 63076,
+      "repo": "mikeleany/hexagonal",
+      "model": "sonnet",
+      "first_model": "sonnet",
+      "status": "needs_human",
+      "second_decision": "approve",
+      "error_code": null,
+      "failure_count": 1,
+      "reviewed_at": "2026-09-17 02:29:32.853",
+      "original_id": 62610,
+      "original_model": "[MLX] gpt-oss-120b",
+      "original_error": "gateway_error",
+      "original_status": "resolved",
+      "resolution": "fallback"
+    },
+    {
+      "id": 63075,
+      "repo": "DaFum/neurotoxic-game",
+      "model": "sonnet",
+      "first_model": "sonnet",
+      "status": "needs_human",
+      "second_decision": "approve",
+      "error_code": null,
+      "failure_count": 1,
+      "reviewed_at": "2026-09-17 02:29:38.341",
+      "original_id": 62602,
+      "original_model": "[MLX] gpt-oss-120b",
+      "original_error": "gateway_error",
+      "original_status": "resolved",
+      "resolution": "fallback"
+    },
+    {
+      "id": 63074,
+      "repo": "dgc-groundworks/dgc-ballasalla",
+      "model": "sonnet",
+      "first_model": "sonnet",
+      "status": "needs_human",
+      "second_decision": "approve",
+      "error_code": null,
+      "failure_count": 1,
+      "reviewed_at": "2026-09-17 02:29:29.962",
+      "original_id": 62578,
+      "original_model": "[MLX] gpt-oss-120b",
+      "original_error": "invalid_output",
+      "original_status": "resolved",
+      "resolution": "fallback"
+    },
+    {
+      "id": 62975,
+      "repo": "kellylimdesign/portfolio-2026",
+      "model": "sonnet",
+      "first_model": "sonnet",
+      "status": "needs_human",
+      "second_decision": "reject",
+      "error_code": null,
+      "failure_count": 1,
+      "reviewed_at": "2026-09-17 02:27:46.905",
+      "original_id": 62190,
+      "original_model": "[MLX] gpt-oss-120b",
+      "original_error": "gateway_error",
+      "original_status": "resolved",
+      "resolution": "fallback"
+    },
+    {
+      "id": 62974,
+      "repo": "Zee7280/ciel_backend",
+      "model": "sonnet",
+      "first_model": "sonnet",
+      "status": "needs_human",
+      "second_decision": "reject",
+      "error_code": null,
+      "failure_count": 1,
+      "reviewed_at": "2026-09-17 02:27:40.849",
+      "original_id": 62180,
+      "original_model": "[MLX] gpt-oss-120b",
+      "original_error": "gateway_error",
+      "original_status": "resolved",
+      "resolution": "fallback"
+    },
+    {
+      "id": 62973,
+      "repo": "iray-tno/hozo",
+      "model": "sonnet",
+      "first_model": "sonnet",
+      "status": "needs_human",
+      "second_decision": "reject",
+      "error_code": null,
+      "failure_count": 1,
+      "reviewed_at": "2026-09-17 02:27:43.202",
+      "original_id": 61821,
+      "original_model": "[MLX] gpt-oss-120b",
+      "original_error": "invalid_output",
+      "original_status": "resolved",
+      "resolution": "fallback"
+    },
+    {
+      "id": 62972,
+      "repo": "MenYUorg/MenYU",
+      "model": "sonnet",
+      "first_model": "sonnet",
+      "status": "needs_human",
+      "second_decision": "needs_review",
+      "error_code": null,
+      "failure_count": 1,
+      "reviewed_at": "2026-09-17 02:27:41.492",
+      "original_id": 62033,
+      "original_model": "[MLX] gpt-oss-120b",
+      "original_error": "gateway_error",
+      "original_status": "resolved",
+      "resolution": "fallback"
+    },
+    {
+      "id": 62971,
+      "repo": "mholzi/quizify",
+      "model": "sonnet",
+      "first_model": "sonnet",
+      "status": "needs_human",
+      "second_decision": "reject",
+      "error_code": null,
+      "failure_count": 1,
+      "reviewed_at": "2026-09-17 02:27:42.337",
+      "original_id": 61935,
+      "original_model": "[MLX] gpt-oss-120b",
+      "original_error": "gateway_error",
+      "original_status": "resolved",
+      "resolution": "fallback"
+    },
+    {
+      "id": 62872,
+      "repo": "fukofukohnishi-crypto/sensei-quiz",
+      "model": "sonnet",
+      "first_model": "sonnet",
+      "status": "needs_human",
+      "second_decision": "approve",
+      "error_code": null,
+      "failure_count": 1,
+      "reviewed_at": "2026-09-17 02:26:29.963",
+      "original_id": 61815,
+      "original_model": "[MLX] gpt-oss-120b",
+      "original_error": "gateway_error",
+      "original_status": "resolved",
+      "resolution": "fallback"
+    },
+    {
+      "id": 62871,
+      "repo": "devos-ing/Roc",
+      "model": "sonnet",
+      "first_model": "sonnet",
+      "status": "needs_human",
+      "second_decision": "reject",
+      "error_code": null,
+      "failure_count": 1,
+      "reviewed_at": "2026-09-17 02:26:29.462",
+      "original_id": 61805,
+      "original_model": "[MLX] gpt-oss-120b",
+      "original_error": "gateway_error",
+      "original_status": "resolved",
+      "resolution": "fallback"
+    },
+    {
+      "id": 62870,
+      "repo": "Delwing/arkadia-web-client-extension",
+      "model": "sonnet",
+      "first_model": "sonnet",
+      "status": "needs_human",
+      "second_decision": "approve",
+      "error_code": null,
+      "failure_count": 1,
+      "reviewed_at": "2026-09-17 02:26:31.096",
+      "original_id": 61633,
+      "original_model": "[MLX] gpt-oss-120b",
+      "original_error": "gateway_error",
+      "original_status": "resolved",
+      "resolution": "fallback"
+    }
+  ],
+  "active": [
+    {
+      "model": "[MLX] gpt-oss-120b",
+      "status": "failed",
+      "error_code": "invalid_output",
+      "n": 2
+    },
+    {
+      "model": "[MLX] gpt-oss-120b",
+      "status": "pending",
+      "error_code": null,
+      "n": 2
+    },
+    {
+      "model": "[MLX] qwen3.8-27b-uncensored",
+      "status": "pending",
+      "error_code": null,
+      "n": 284
+    }
+  ],
+  "recent": [
+    {
+      "model": "[MLX] gpt-oss-120b",
+      "status": "agreed",
+      "error_code": null,
+      "n": 41
+    },
+    {
+      "model": "[MLX] gpt-oss-120b",
+      "status": "needs_human",
+      "error_code": null,
+      "n": 31
+    },
+    {
+      "model": "[MLX] qwen3.8-27b-uncensored",
+      "status": "agreed",
+      "error_code": null,
+      "n": 2
+    },
+    {
+      "model": "[MLX] qwen3.8-27b-uncensored",
+      "status": "needs_human",
+      "error_code": null,
+      "n": 1
+    },
+    {
+      "model": "sonnet",
+      "status": "needs_human",
+      "error_code": null,
+      "n": 13
+    }
+  ],
+  "jobs": [
+    {
+      "name": "crawl-agent-review",
+      "last_run_at": "2026-09-17 02:31:47.95962",
+      "last_success_at": "2026-09-17 02:31:48.077948",
+      "last_error": null,
+      "worker_seen_at": "2026-09-17 02:32:14.226065"
+    },
+    {
+      "name": "crawl-fetch",
+      "last_run_at": "2026-09-17 02:31:52.740384",
+      "last_success_at": "2026-09-17 02:32:11.786622",
+      "last_error": null,
+      "worker_seen_at": "2026-09-17 02:32:07.744572"
+    },
+    {
+      "name": "crawl-publish",
+      "last_run_at": "2026-09-17 02:27:41.808436",
+      "last_success_at": "2026-09-17 02:27:41.819597",
+      "last_error": null,
+      "worker_seen_at": "2026-09-17 02:31:57.359222"
+    },
+    {
+      "name": "second-review",
+      "last_run_at": "2026-09-17 02:32:14.232427",
+      "last_success_at": "2026-09-17 02:31:17.740273",
+      "last_error": null,
+      "worker_seen_at": "2026-09-17 02:32:14.226065"
+    }
+  ],
+  "integrity": [
+    {
+      "broken_lineage": 0,
+      "over_budget": 0
+    }
+  ],
+  "migrations": [
+    {
+      "n": 36
+    }
+  ]
+}

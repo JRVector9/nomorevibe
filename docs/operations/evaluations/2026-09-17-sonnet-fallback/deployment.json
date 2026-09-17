@@ -1,0 +1,438 @@
+{
+  "deployment": [
+    {
+      "app": "web-m3",
+      "id": "oipo2OAnIrtcnILBCRoG2",
+      "appName": "app-compress-1080p-array-qb6d3v",
+      "applicationStatus": "done",
+      "serverId": "KenKHh2MQuS7blLN_NSem",
+      "sourceType": "github",
+      "repository": "nomorevibe",
+      "branch": "main",
+      "customGitBranch": null,
+      "buildType": "dockerfile",
+      "dockerfile": "Dockerfile",
+      "dockerContextPath": "",
+      "dockerBuildStage": "runner",
+      "autoDeploy": true,
+      "healthCheck": null,
+      "revision": "2839ec5d7578493a8f34bb475f48f32cbc50104b",
+      "nextDeploymentId": "2839ec5d7578493a8f34bb475f48f32cbc50104b",
+      "role": null,
+      "domains": [
+        {
+          "host": "nomorevibe.brut.bot",
+          "port": 3000,
+          "https": false
+        }
+      ],
+      "deployments": [
+        {
+          "deploymentId": "6T-cLEiIj7ZRS4AI5dvFy",
+          "status": "done",
+          "createdAt": "2026-09-17T02:15:31.840Z",
+          "finishedAt": "2026-09-17T02:15:49.276Z"
+        }
+      ]
+    },
+    {
+      "app": "web-mini",
+      "id": "llv4rlABSJOcFauSxaHdx",
+      "appName": "app-navigate-auxiliary-hard-drive-5vk3yc",
+      "applicationStatus": "done",
+      "serverId": "uHWg5--LEJ2lnVcgDm-NB",
+      "sourceType": "github",
+      "repository": "nomorevibe",
+      "branch": "main",
+      "customGitBranch": null,
+      "buildType": "dockerfile",
+      "dockerfile": "Dockerfile",
+      "dockerContextPath": "",
+      "dockerBuildStage": "runner",
+      "autoDeploy": true,
+      "healthCheck": null,
+      "revision": "2839ec5d7578493a8f34bb475f48f32cbc50104b",
+      "nextDeploymentId": "2839ec5d7578493a8f34bb475f48f32cbc50104b",
+      "role": null,
+      "domains": [
+        {
+          "host": "nomorevibe.brut.bot",
+          "port": 3000,
+          "https": false
+        }
+      ],
+      "deployments": [
+        {
+          "deploymentId": "woBLoveHV0vimg42LvZ0x",
+          "status": "done",
+          "createdAt": "2026-09-17T02:15:32.117Z",
+          "finishedAt": "2026-09-17T02:15:47.083Z"
+        }
+      ]
+    },
+    {
+      "app": "crawler",
+      "id": "AFHDBGCCY4zT9XkkcnzGd",
+      "appName": "app-generate-haptic-card-vjqgv4",
+      "applicationStatus": "done",
+      "serverId": "KenKHh2MQuS7blLN_NSem",
+      "sourceType": "github",
+      "repository": "nomorevibe",
+      "branch": "main",
+      "customGitBranch": null,
+      "buildType": "dockerfile",
+      "dockerfile": "Dockerfile",
+      "dockerContextPath": "",
+      "dockerBuildStage": "worker",
+      "autoDeploy": true,
+      "healthCheck": null,
+      "revision": "2839ec5d7578493a8f34bb475f48f32cbc50104b",
+      "nextDeploymentId": null,
+      "role": "crawler",
+      "domains": [],
+      "deployments": [
+        {
+          "deploymentId": "c2cjegMOIUhrqvFVeon-k",
+          "status": "done",
+          "createdAt": "2026-09-17T02:15:49.693Z",
+          "finishedAt": "2026-09-17T02:15:59.034Z"
+        }
+      ]
+    },
+    {
+      "app": "publisher",
+      "id": "AeTaWnZbZKzzv94h7c8Vw",
+      "appName": "app-program-multi-byte-pixel-bypleq",
+      "applicationStatus": "done",
+      "serverId": "KenKHh2MQuS7blLN_NSem",
+      "sourceType": "github",
+      "repository": "nomorevibe",
+      "branch": "main",
+      "customGitBranch": null,
+      "buildType": "dockerfile",
+      "dockerfile": "Dockerfile",
+      "dockerContextPath": "",
+      "dockerBuildStage": "worker",
+      "autoDeploy": true,
+      "healthCheck": null,
+      "revision": "2839ec5d7578493a8f34bb475f48f32cbc50104b",
+      "nextDeploymentId": null,
+      "role": "publisher",
+      "domains": [],
+      "deployments": [
+        {
+          "deploymentId": "msiCBAR7FMk9dd_YbJbYF",
+          "status": "done",
+          "createdAt": "2026-09-17T02:15:59.425Z",
+          "finishedAt": "2026-09-17T02:16:02.275Z"
+        }
+      ]
+    },
+    {
+      "app": "reviewer",
+      "id": "4RlA9EeKvtKGdR6c6AV4j",
+      "appName": "app-copy-primary-hard-drive-b5fhzd",
+      "applicationStatus": "done",
+      "serverId": "KenKHh2MQuS7blLN_NSem",
+      "sourceType": "github",
+      "repository": "nomorevibe",
+      "branch": "main",
+      "customGitBranch": null,
+      "buildType": "dockerfile",
+      "dockerfile": "Dockerfile",
+      "dockerContextPath": "",
+      "dockerBuildStage": "worker",
+      "autoDeploy": true,
+      "healthCheck": null,
+      "revision": "2839ec5d7578493a8f34bb475f48f32cbc50104b",
+      "nextDeploymentId": null,
+      "role": "reviewer",
+      "domains": [],
+      "deployments": [
+        {
+          "deploymentId": "_YEzZJM6L-0jcdU9KEayO",
+          "status": "done",
+          "createdAt": "2026-09-17T02:16:02.671Z",
+          "finishedAt": "2026-09-17T02:16:05.264Z"
+        }
+      ]
+    },
+    {
+      "app": "maintenance",
+      "id": "7OlFqQdacbyQseQM72E7b",
+      "appName": "app-navigate-neural-system-yf43c7",
+      "applicationStatus": "done",
+      "serverId": "KenKHh2MQuS7blLN_NSem",
+      "sourceType": "github",
+      "repository": "nomorevibe",
+      "branch": "main",
+      "customGitBranch": null,
+      "buildType": "dockerfile",
+      "dockerfile": "Dockerfile",
+      "dockerContextPath": "",
+      "dockerBuildStage": "worker",
+      "autoDeploy": true,
+      "healthCheck": null,
+      "revision": "2839ec5d7578493a8f34bb475f48f32cbc50104b",
+      "nextDeploymentId": null,
+      "role": "maintenance",
+      "domains": [],
+      "deployments": [
+        {
+          "deploymentId": "21e5F40e3cI9YBdHAb6Ah",
+          "status": "done",
+          "createdAt": "2026-09-17T02:16:05.687Z",
+          "finishedAt": "2026-09-17T02:16:08.200Z"
+        }
+      ]
+    },
+    {
+      "app": "scheduler",
+      "id": "uAjLU7MslLIGpORD9h6LQ",
+      "appName": "app-connect-solid-state-sensor-g4swwd",
+      "applicationStatus": "done",
+      "serverId": "KenKHh2MQuS7blLN_NSem",
+      "sourceType": "github",
+      "repository": "nomorevibe",
+      "branch": "main",
+      "customGitBranch": null,
+      "buildType": "dockerfile",
+      "dockerfile": "Dockerfile",
+      "dockerContextPath": "",
+      "dockerBuildStage": "worker",
+      "autoDeploy": true,
+      "healthCheck": null,
+      "revision": "2839ec5d7578493a8f34bb475f48f32cbc50104b",
+      "nextDeploymentId": null,
+      "role": "scheduler",
+      "domains": [],
+      "deployments": [
+        {
+          "deploymentId": "rkOczFW1S1fk-cTY9hbFF",
+          "status": "done",
+          "createdAt": "2026-09-17T02:16:08.650Z",
+          "finishedAt": "2026-09-17T02:16:11.325Z"
+        }
+      ]
+    }
+  ],
+  "workers": [
+    {
+      "app": "crawler",
+      "container": "b50078aa047b",
+      "dockerHealth": "healthy",
+      "release": "2839ec5d7578493a8f34bb475f48f32cbc50104b",
+      "detector": "2026-09-14.1",
+      "sourceFilesMatch": true,
+      "runtime": {
+        "role": "crawler",
+        "pid": 1,
+        "childPid": 35,
+        "updatedAt": 1789611418311,
+        "lastHeartbeatAt": 1789611418311,
+        "lastProgressAt": 1789611403909,
+        "state": "running",
+        "currentJob": "product-evidence-refresh",
+        "jobStartedAt": 1789611403909,
+        "status": "running"
+      }
+    },
+    {
+      "app": "publisher",
+      "container": "46b97acc6c3e",
+      "dockerHealth": "healthy",
+      "release": "2839ec5d7578493a8f34bb475f48f32cbc50104b",
+      "detector": "2026-09-14.1",
+      "sourceFilesMatch": true,
+      "runtime": {
+        "role": "publisher",
+        "pid": 1,
+        "childPid": 34,
+        "updatedAt": 1789611417499,
+        "lastHeartbeatAt": 1789611417499,
+        "lastProgressAt": 1789611417499,
+        "state": "running",
+        "currentJob": "reason-translate",
+        "jobStartedAt": 1789611417499,
+        "status": "running"
+      }
+    },
+    {
+      "app": "reviewer",
+      "container": "65afdf183a0e",
+      "dockerHealth": "healthy",
+      "release": "2839ec5d7578493a8f34bb475f48f32cbc50104b",
+      "detector": "2026-09-14.1",
+      "sourceFilesMatch": true,
+      "runtime": {
+        "role": "reviewer",
+        "pid": 1,
+        "childPid": 34,
+        "updatedAt": 1789611418305,
+        "lastHeartbeatAt": 1789611418305,
+        "lastProgressAt": 1789611418305,
+        "state": "idle",
+        "currentJob": null,
+        "jobStartedAt": null,
+        "status": "running"
+      }
+    },
+    {
+      "app": "maintenance",
+      "container": "f72b5248e049",
+      "dockerHealth": "healthy",
+      "release": "2839ec5d7578493a8f34bb475f48f32cbc50104b",
+      "detector": "2026-09-14.1",
+      "sourceFilesMatch": true,
+      "runtime": {
+        "role": "maintenance",
+        "pid": 1,
+        "childPid": 33,
+        "updatedAt": 1789611417416,
+        "lastHeartbeatAt": 1789611417416,
+        "lastProgressAt": 1789611415472,
+        "state": "idle",
+        "currentJob": null,
+        "jobStartedAt": null,
+        "status": "running"
+      }
+    },
+    {
+      "app": "scheduler",
+      "container": "f7c3e373ca4c",
+      "dockerHealth": "healthy",
+      "release": "2839ec5d7578493a8f34bb475f48f32cbc50104b",
+      "detector": "2026-09-14.1",
+      "sourceFilesMatch": true,
+      "runtime": {
+        "role": "scheduler",
+        "pid": 1,
+        "childPid": 35,
+        "updatedAt": 1789611417053,
+        "lastHeartbeatAt": 1789611417053,
+        "lastProgressAt": 1789611413533,
+        "state": "idle",
+        "currentJob": null,
+        "jobStartedAt": null,
+        "status": "running"
+      }
+    }
+  ],
+  "web": [
+    {
+      "app": "web-m3",
+      "status": 200,
+      "body": {
+        "status": "ok",
+        "db": "ok",
+        "instanceId": "m3-web",
+        "release": "2839ec5d7578493a8f34bb475f48f32cbc50104b",
+        "dbLatencyMs": 2
+      }
+    },
+    {
+      "app": "web-mini",
+      "status": 200,
+      "body": {
+        "status": "ok",
+        "db": "ok",
+        "instanceId": "mini-web",
+        "release": "2839ec5d7578493a8f34bb475f48f32cbc50104b",
+        "dbLatencyMs": 1
+      }
+    }
+  ],
+  "settings": {
+    "at": "2026-09-17T02:17:18.354Z",
+    "auditId": 28,
+    "before": {
+      "enabled": true,
+      "voters": [
+        {
+          "provider": "abcllm",
+          "model": "[MLX] qwen3.8-27b"
+        },
+        {
+          "provider": "abcllm",
+          "model": "[MLX] gpt-oss-120b"
+        }
+      ],
+      "fallbacks": [],
+      "includeAiHeld": true,
+      "sampleRate": 0.05,
+      "agreeAt": 0.7
+    },
+    "after": {
+      "enabled": true,
+      "voters": [
+        {
+          "provider": "abcllm",
+          "model": "[MLX] qwen3.8-27b"
+        },
+        {
+          "provider": "abcllm",
+          "model": "[MLX] gpt-oss-120b"
+        }
+      ],
+      "fallbacks": [
+        {
+          "provider": "claude-cli",
+          "model": "sonnet"
+        }
+      ],
+      "includeAiHeld": true,
+      "sampleRate": 0.05,
+      "agreeAt": 0.7
+    },
+    "reviewMode": "observe"
+  },
+  "finalSettingsChange": {
+    "at": "2026-09-17T02:24:32.435Z",
+    "auditId": 29,
+    "before": {
+      "enabled": true,
+      "voters": [
+        {
+          "provider": "abcllm",
+          "model": "[MLX] qwen3.8-27b"
+        },
+        {
+          "provider": "abcllm",
+          "model": "[MLX] gpt-oss-120b"
+        }
+      ],
+      "fallbacks": [
+        {
+          "provider": "claude-cli",
+          "model": "sonnet"
+        }
+      ],
+      "includeAiHeld": true,
+      "sampleRate": 0.05,
+      "agreeAt": 0.7
+    },
+    "after": {
+      "enabled": true,
+      "voters": [
+        {
+          "provider": "abcllm",
+          "model": "[MLX] qwen3.8-27b-uncensored"
+        },
+        {
+          "provider": "abcllm",
+          "model": "[MLX] gpt-oss-120b"
+        }
+      ],
+      "fallbacks": [
+        {
+          "provider": "claude-cli",
+          "model": "sonnet"
+        }
+      ],
+      "includeAiHeld": true,
+      "sampleRate": 0.05,
+      "agreeAt": 0.7
+    },
+    "reviewMode": "observe"
+  }
+}

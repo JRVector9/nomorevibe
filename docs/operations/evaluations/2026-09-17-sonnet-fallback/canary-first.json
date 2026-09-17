@@ -1,0 +1,380 @@
+{
+  "at": "2026-09-17T02:19:15.789Z",
+  "settings": [
+    {
+      "review_mode": "observe",
+      "second_review": {
+        "voters": [
+          {
+            "model": "[MLX] qwen3.8-27b",
+            "provider": "abcllm"
+          },
+          {
+            "model": "[MLX] gpt-oss-120b",
+            "provider": "abcllm"
+          }
+        ],
+        "agreeAt": 0.7,
+        "enabled": true,
+        "fallbacks": [
+          {
+            "model": "sonnet",
+            "provider": "claude-cli"
+          }
+        ],
+        "sampleRate": 0.05,
+        "includeAiHeld": true
+      }
+    }
+  ],
+  "replacements": [
+    {
+      "model": "opus",
+      "provider": "claude-cli",
+      "status": "resolved",
+      "error_code": null,
+      "second_decision": "approve",
+      "n": 2,
+      "earliest": "2026-09-17 01:44:43.200268",
+      "latest": "2026-09-17 01:46:31.258",
+      "max_failures": 1
+    },
+    {
+      "model": "opus",
+      "provider": "claude-cli",
+      "status": "resolved",
+      "error_code": null,
+      "second_decision": null,
+      "n": 1,
+      "earliest": "2026-09-17 01:48:35.687985",
+      "latest": null,
+      "max_failures": 2
+    },
+    {
+      "model": "sonnet",
+      "provider": "claude-cli",
+      "status": "needs_human",
+      "error_code": null,
+      "second_decision": "reject",
+      "n": 13,
+      "earliest": "2026-09-17 02:17:20.267233",
+      "latest": "2026-09-17 02:18:10.319",
+      "max_failures": 1
+    },
+    {
+      "model": "sonnet",
+      "provider": "claude-cli",
+      "status": "needs_human",
+      "error_code": null,
+      "second_decision": "approve",
+      "n": 7,
+      "earliest": "2026-09-17 02:17:20.025849",
+      "latest": "2026-09-17 02:18:14.912",
+      "max_failures": 1
+    },
+    {
+      "model": "sonnet",
+      "provider": "claude-cli",
+      "status": "needs_human",
+      "error_code": null,
+      "second_decision": "needs_review",
+      "n": 4,
+      "earliest": "2026-09-17 02:17:20.299818",
+      "latest": "2026-09-17 02:18:00.878",
+      "max_failures": 1
+    }
+  ],
+  "examples": [
+    {
+      "id": 62684,
+      "repo": "marianoguerra/tutuca-moonbit",
+      "model": "sonnet",
+      "first_model": "sonnet",
+      "status": "needs_human",
+      "second_decision": "approve",
+      "error_code": null,
+      "failure_count": 1,
+      "reviewed_at": "2026-09-17 02:18:14.912",
+      "original_id": 60966,
+      "original_model": "[MLX] qwen3.8-27b",
+      "original_error": "model_unavailable",
+      "original_status": "resolved",
+      "resolution": "fallback"
+    },
+    {
+      "id": 62683,
+      "repo": "antoncl/local-writing-app",
+      "model": "sonnet",
+      "first_model": "sonnet",
+      "status": "needs_human",
+      "second_decision": "reject",
+      "error_code": null,
+      "failure_count": 1,
+      "reviewed_at": "2026-09-17 02:18:10.319",
+      "original_id": 60964,
+      "original_model": "[MLX] qwen3.8-27b",
+      "original_error": "model_unavailable",
+      "original_status": "resolved",
+      "resolution": "fallback"
+    },
+    {
+      "id": 62682,
+      "repo": "AleksandarBisevac/claude-plugins",
+      "model": "sonnet",
+      "first_model": "sonnet",
+      "status": "needs_human",
+      "second_decision": "approve",
+      "error_code": null,
+      "failure_count": 1,
+      "reviewed_at": "2026-09-17 02:18:10.567",
+      "original_id": 60960,
+      "original_model": "[MLX] qwen3.8-27b",
+      "original_error": "model_unavailable",
+      "original_status": "resolved",
+      "resolution": "fallback"
+    },
+    {
+      "id": 62681,
+      "repo": "MartinForReal/ghc-proxy",
+      "model": "sonnet",
+      "first_model": "sonnet",
+      "status": "needs_human",
+      "second_decision": "reject",
+      "error_code": null,
+      "failure_count": 1,
+      "reviewed_at": "2026-09-17 02:18:05.517",
+      "original_id": 60958,
+      "original_model": "[MLX] qwen3.8-27b",
+      "original_error": "model_unavailable",
+      "original_status": "resolved",
+      "resolution": "fallback"
+    },
+    {
+      "id": 62680,
+      "repo": "LorenzoVicino/repo-control",
+      "model": "sonnet",
+      "first_model": "sonnet",
+      "status": "needs_human",
+      "second_decision": "reject",
+      "error_code": null,
+      "failure_count": 1,
+      "reviewed_at": "2026-09-17 02:18:05.621",
+      "original_id": 60956,
+      "original_model": "[MLX] qwen3.8-27b",
+      "original_error": "model_unavailable",
+      "original_status": "resolved",
+      "resolution": "fallback"
+    },
+    {
+      "id": 62679,
+      "repo": "erict16/huaming-order-sheet",
+      "model": "sonnet",
+      "first_model": "sonnet",
+      "status": "needs_human",
+      "second_decision": "approve",
+      "error_code": null,
+      "failure_count": 1,
+      "reviewed_at": "2026-09-17 02:18:04.377",
+      "original_id": 60954,
+      "original_model": "[MLX] qwen3.8-27b",
+      "original_error": "model_unavailable",
+      "original_status": "resolved",
+      "resolution": "fallback"
+    },
+    {
+      "id": 62678,
+      "repo": "hansolovkarlsson/Metaxis",
+      "model": "sonnet",
+      "first_model": "sonnet",
+      "status": "needs_human",
+      "second_decision": "reject",
+      "error_code": null,
+      "failure_count": 1,
+      "reviewed_at": "2026-09-17 02:18:02.5",
+      "original_id": 60952,
+      "original_model": "[MLX] qwen3.8-27b",
+      "original_error": "model_unavailable",
+      "original_status": "resolved",
+      "resolution": "fallback"
+    },
+    {
+      "id": 62677,
+      "repo": "georgettebadourra7788-cloud/studypulse",
+      "model": "sonnet",
+      "first_model": "sonnet",
+      "status": "needs_human",
+      "second_decision": "needs_review",
+      "error_code": null,
+      "failure_count": 1,
+      "reviewed_at": "2026-09-17 02:18:00.878",
+      "original_id": 60950,
+      "original_model": "[MLX] qwen3.8-27b",
+      "original_error": "model_unavailable",
+      "original_status": "resolved",
+      "resolution": "fallback"
+    },
+    {
+      "id": 62676,
+      "repo": "hongnoul/gwae",
+      "model": "sonnet",
+      "first_model": "sonnet",
+      "status": "needs_human",
+      "second_decision": "reject",
+      "error_code": null,
+      "failure_count": 1,
+      "reviewed_at": "2026-09-17 02:17:57.526",
+      "original_id": 60946,
+      "original_model": "[MLX] qwen3.8-27b",
+      "original_error": "model_unavailable",
+      "original_status": "resolved",
+      "resolution": "fallback"
+    },
+    {
+      "id": 62675,
+      "repo": "dean0x/devflow",
+      "model": "sonnet",
+      "first_model": "sonnet",
+      "status": "needs_human",
+      "second_decision": "reject",
+      "error_code": null,
+      "failure_count": 1,
+      "reviewed_at": "2026-09-17 02:17:57.894",
+      "original_id": 60944,
+      "original_model": "[MLX] qwen3.8-27b",
+      "original_error": "model_unavailable",
+      "original_status": "resolved",
+      "resolution": "fallback"
+    },
+    {
+      "id": 62674,
+      "repo": "hudev0922-hue/onlineApp",
+      "model": "sonnet",
+      "first_model": "sonnet",
+      "status": "needs_human",
+      "second_decision": "needs_review",
+      "error_code": null,
+      "failure_count": 1,
+      "reviewed_at": "2026-09-17 02:17:53.875",
+      "original_id": 60940,
+      "original_model": "[MLX] qwen3.8-27b",
+      "original_error": "model_unavailable",
+      "original_status": "resolved",
+      "resolution": "fallback"
+    },
+    {
+      "id": 62673,
+      "repo": "LucaDominici/forma",
+      "model": "sonnet",
+      "first_model": "sonnet",
+      "status": "needs_human",
+      "second_decision": "approve",
+      "error_code": null,
+      "failure_count": 1,
+      "reviewed_at": "2026-09-17 02:17:53.444",
+      "original_id": 60942,
+      "original_model": "[MLX] qwen3.8-27b",
+      "original_error": "model_unavailable",
+      "original_status": "resolved",
+      "resolution": "fallback"
+    }
+  ],
+  "active": [
+    {
+      "model": "[MLX] gpt-oss-120b",
+      "status": "failed",
+      "error_code": "invalid_output",
+      "n": 2
+    },
+    {
+      "model": "[MLX] gpt-oss-120b",
+      "status": "pending",
+      "error_code": null,
+      "n": 79
+    },
+    {
+      "model": "[MLX] qwen3.8-27b",
+      "status": "failed",
+      "error_code": "model_unavailable",
+      "n": 94
+    },
+    {
+      "model": "[MLX] qwen3.8-27b",
+      "status": "pending",
+      "error_code": null,
+      "n": 811
+    }
+  ],
+  "recent": [
+    {
+      "model": "[MLX] gpt-oss-120b",
+      "status": "agreed",
+      "error_code": null,
+      "n": 1
+    },
+    {
+      "model": "[MLX] gpt-oss-120b",
+      "status": "needs_human",
+      "error_code": null,
+      "n": 1
+    },
+    {
+      "model": "[MLX] qwen3.8-27b",
+      "status": "agreed",
+      "error_code": null,
+      "n": 10
+    },
+    {
+      "model": "[MLX] qwen3.8-27b",
+      "status": "failed",
+      "error_code": "model_unavailable",
+      "n": 94
+    },
+    {
+      "model": "sonnet",
+      "status": "needs_human",
+      "error_code": null,
+      "n": 24
+    }
+  ],
+  "jobs": [
+    {
+      "name": "crawl-agent-review",
+      "last_run_at": "2026-09-17 02:18:46.163095",
+      "last_success_at": "2026-09-17 02:18:46.23396",
+      "last_error": null,
+      "worker_seen_at": "2026-09-17 02:19:11.448461"
+    },
+    {
+      "name": "crawl-fetch",
+      "last_run_at": "2026-09-17 02:18:45.602404",
+      "last_success_at": "2026-09-17 02:18:47.882146",
+      "last_error": null,
+      "worker_seen_at": "2026-09-17 02:19:15.823719"
+    },
+    {
+      "name": "crawl-publish",
+      "last_run_at": "2026-09-17 02:18:53.129057",
+      "last_success_at": "2026-09-17 02:19:03.95833",
+      "last_error": null,
+      "worker_seen_at": "2026-09-17 02:19:08.969065"
+    },
+    {
+      "name": "second-review",
+      "last_run_at": "2026-09-17 02:17:29.617446",
+      "last_success_at": "2026-09-17 02:18:14.947104",
+      "last_error": null,
+      "worker_seen_at": "2026-09-17 02:19:11.448461"
+    }
+  ],
+  "integrity": [
+    {
+      "broken_lineage": 0,
+      "over_budget": 0
+    }
+  ],
+  "migrations": [
+    {
+      "n": 36
+    }
+  ]
+}

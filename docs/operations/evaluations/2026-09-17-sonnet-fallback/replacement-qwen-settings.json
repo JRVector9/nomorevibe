@@ -1,0 +1,49 @@
+{
+  "at": "2026-09-17T02:24:32.435Z",
+  "auditId": 29,
+  "before": {
+    "enabled": true,
+    "voters": [
+      {
+        "provider": "abcllm",
+        "model": "[MLX] qwen3.8-27b"
+      },
+      {
+        "provider": "abcllm",
+        "model": "[MLX] gpt-oss-120b"
+      }
+    ],
+    "fallbacks": [
+      {
+        "provider": "claude-cli",
+        "model": "sonnet"
+      }
+    ],
+    "includeAiHeld": true,
+    "sampleRate": 0.05,
+    "agreeAt": 0.7
+  },
+  "after": {
+    "enabled": true,
+    "voters": [
+      {
+        "provider": "abcllm",
+        "model": "[MLX] qwen3.8-27b-uncensored"
+      },
+      {
+        "provider": "abcllm",
+        "model": "[MLX] gpt-oss-120b"
+      }
+    ],
+    "fallbacks": [
+      {
+        "provider": "claude-cli",
+        "model": "sonnet"
+      }
+    ],
+    "includeAiHeld": true,
+    "sampleRate": 0.05,
+    "agreeAt": 0.7
+  },
+  "reviewMode": "observe"
+}

@@ -1,0 +1,700 @@
+{
+  "time": [
+    {
+      "now": "2026-09-17 00:48:55.683554+00"
+    }
+  ],
+  "backlog": [
+    {
+      "status": "failed",
+      "n": 52,
+      "projects": 48,
+      "oldest": "2026-09-16 06:39:22.866459",
+      "latest": "2026-09-17 00:48:34.697"
+    },
+    {
+      "status": "pending",
+      "n": 388,
+      "projects": 130,
+      "oldest": "2026-09-16 23:21:15.100768",
+      "latest": null
+    }
+  ],
+  "failures": [
+    {
+      "model": "[MLX] gemma4-26b",
+      "error_code": "invalid_output",
+      "n": 28,
+      "oldest": "2026-09-16 06:39:22.866459",
+      "oldest_review": "2026-09-16 23:52:04.55",
+      "latest": "2026-09-17 00:45:36.884"
+    },
+    {
+      "model": "[MLX] gemma4-31b",
+      "error_code": "timeout",
+      "n": 11,
+      "oldest": "2026-09-16 22:37:20.231849",
+      "oldest_review": "2026-09-17 00:42:22.634",
+      "latest": "2026-09-17 00:48:18.39"
+    },
+    {
+      "model": "[MLX] gemma4-26b",
+      "error_code": "output_too_large",
+      "n": 2,
+      "oldest": "2026-09-16 17:11:24.546948",
+      "oldest_review": "2026-09-16 23:57:55.628",
+      "latest": "2026-09-17 00:04:01.326"
+    },
+    {
+      "model": "[MLX] gemma4-31b",
+      "error_code": "invalid_output",
+      "n": 2,
+      "oldest": "2026-09-16 07:21:17.936981",
+      "oldest_review": "2026-09-17 00:33:47.28",
+      "latest": "2026-09-17 00:38:13.402"
+    },
+    {
+      "model": "[MLX] gemma4-26b",
+      "error_code": "timeout",
+      "n": 9,
+      "oldest": "2026-09-16 13:47:21.077948",
+      "oldest_review": "2026-09-17 00:42:22.629",
+      "latest": "2026-09-17 00:48:34.697"
+    }
+  ],
+  "recentErrorRowsIncludingSuperseded": [
+    {
+      "status": "failed",
+      "resolution": null,
+      "error_code": "invalid_output",
+      "n": 30
+    },
+    {
+      "status": "failed",
+      "resolution": null,
+      "error_code": "output_too_large",
+      "n": 2
+    },
+    {
+      "status": "failed",
+      "resolution": null,
+      "error_code": "timeout",
+      "n": 20
+    },
+    {
+      "status": "resolved",
+      "resolution": "superseded",
+      "error_code": "gateway_error",
+      "n": 1
+    },
+    {
+      "status": "resolved",
+      "resolution": "superseded",
+      "error_code": "invalid_output",
+      "n": 50
+    },
+    {
+      "status": "resolved",
+      "resolution": "superseded",
+      "error_code": "output_too_large",
+      "n": 5
+    },
+    {
+      "status": "resolved",
+      "resolution": "superseded",
+      "error_code": "timeout",
+      "n": 9
+    }
+  ],
+  "gatewayModels": {
+    "status": 200,
+    "ids": [
+      "bge-m3:latest",
+      "qwen3-coder:30b",
+      "qwen3:8b",
+      "[MLX] qwen3.8-27b",
+      "[MLX] qwen3-8b",
+      "[MLX] gemma4-26b",
+      "[MLX] gpt-oss-120b",
+      "[MLX] qwen3.6-35b-heretic",
+      "[MLX] gemma4-e2b-heretic",
+      "[MLX] gemma4-31b",
+      "[MLX] gpt-oss-120b-heretic",
+      "[MLX] qwen3.8-27b-uncensored",
+      "[MLX] qwen3-vl-30b",
+      "[MLX] whisper-large-v3-turbo"
+    ]
+  },
+  "runtime": {
+    "release": "aa07228688ce4eb6445e60fdd6f26c0604aeeada",
+    "baseUrl": "https://abcllm-api.brut.bot",
+    "keyPresent": true,
+    "hashes": {
+      "lib/crawl/agent-review-gateway.ts": "5f3417d0ba0acbf1d99c87fe80e3d9d2969e5fb413f4da6b3a83fb2589d79a6f",
+      "lib/crawl/jobs/second-review.ts": "85612d19b6f67c8af054107f9dd53d98e0429df99027177cc6df323d7c52c97e"
+    },
+    "matches": true
+  },
+  "productionTicks": {
+    "start": "2026-09-16T23:45:00Z",
+    "end": "2026-09-17T00:45:00Z",
+    "count": 30,
+    "enqueued": 273,
+    "closed": 36,
+    "reviewed": 146,
+    "failed": 198,
+    "deferred": 1096,
+    "rows": [
+      {
+        "ts": "2026-09-16T23:46:44.857Z",
+        "level": "info",
+        "event": "crawl.second_reviewed",
+        "job": "second-review",
+        "enqueued": 15,
+        "closed": 0,
+        "reviewed": 5,
+        "failed": 8,
+        "deferred": 35
+      },
+      {
+        "ts": "2026-09-16T23:48:21.644Z",
+        "level": "info",
+        "event": "crawl.second_reviewed",
+        "job": "second-review",
+        "enqueued": 6,
+        "closed": 4,
+        "reviewed": 1,
+        "failed": 7,
+        "deferred": 40
+      },
+      {
+        "ts": "2026-09-16T23:50:30.149Z",
+        "level": "info",
+        "event": "crawl.second_reviewed",
+        "job": "second-review",
+        "enqueued": 15,
+        "closed": 0,
+        "reviewed": 8,
+        "failed": 5,
+        "deferred": 35
+      },
+      {
+        "ts": "2026-09-16T23:53:04.353Z",
+        "level": "info",
+        "event": "crawl.second_reviewed",
+        "job": "second-review",
+        "enqueued": 6,
+        "closed": 0,
+        "reviewed": 6,
+        "failed": 6,
+        "deferred": 36
+      },
+      {
+        "ts": "2026-09-16T23:54:38.453Z",
+        "level": "info",
+        "event": "crawl.second_reviewed",
+        "job": "second-review",
+        "enqueued": 15,
+        "closed": 0,
+        "reviewed": 4,
+        "failed": 6,
+        "deferred": 38
+      },
+      {
+        "ts": "2026-09-16T23:56:51.374Z",
+        "level": "info",
+        "event": "crawl.second_reviewed",
+        "job": "second-review",
+        "enqueued": 9,
+        "closed": 1,
+        "reviewed": 9,
+        "failed": 7,
+        "deferred": 32
+      },
+      {
+        "ts": "2026-09-16T23:58:38.800Z",
+        "level": "info",
+        "event": "crawl.second_reviewed",
+        "job": "second-review",
+        "enqueued": 9,
+        "closed": 6,
+        "reviewed": 3,
+        "failed": 7,
+        "deferred": 38
+      },
+      {
+        "ts": "2026-09-17T00:00:57.962Z",
+        "level": "info",
+        "event": "crawl.second_reviewed",
+        "job": "second-review",
+        "enqueued": 15,
+        "closed": 0,
+        "reviewed": 4,
+        "failed": 8,
+        "deferred": 36
+      },
+      {
+        "ts": "2026-09-17T00:03:00.689Z",
+        "level": "info",
+        "event": "crawl.second_reviewed",
+        "job": "second-review",
+        "enqueued": 6,
+        "closed": 0,
+        "reviewed": 7,
+        "failed": 7,
+        "deferred": 34
+      },
+      {
+        "ts": "2026-09-17T00:05:01.424Z",
+        "level": "info",
+        "event": "crawl.second_reviewed",
+        "job": "second-review",
+        "enqueued": 3,
+        "closed": 1,
+        "reviewed": 3,
+        "failed": 8,
+        "deferred": 37
+      },
+      {
+        "ts": "2026-09-17T00:07:00.404Z",
+        "level": "info",
+        "event": "crawl.second_reviewed",
+        "job": "second-review",
+        "enqueued": 6,
+        "closed": 6,
+        "reviewed": 7,
+        "failed": 6,
+        "deferred": 35
+      },
+      {
+        "ts": "2026-09-17T00:08:50.792Z",
+        "level": "info",
+        "event": "crawl.second_reviewed",
+        "job": "second-review",
+        "enqueued": 6,
+        "closed": 0,
+        "reviewed": 5,
+        "failed": 6,
+        "deferred": 37
+      },
+      {
+        "ts": "2026-09-17T00:10:57.966Z",
+        "level": "info",
+        "event": "crawl.second_reviewed",
+        "job": "second-review",
+        "enqueued": 0,
+        "closed": 0,
+        "reviewed": 7,
+        "failed": 5,
+        "deferred": 36
+      },
+      {
+        "ts": "2026-09-17T00:12:59.433Z",
+        "level": "info",
+        "event": "crawl.second_reviewed",
+        "job": "second-review",
+        "enqueued": 21,
+        "closed": 0,
+        "reviewed": 9,
+        "failed": 6,
+        "deferred": 33
+      },
+      {
+        "ts": "2026-09-17T00:14:41.552Z",
+        "level": "info",
+        "event": "crawl.second_reviewed",
+        "job": "second-review",
+        "enqueued": 3,
+        "closed": 3,
+        "reviewed": 4,
+        "failed": 7,
+        "deferred": 37
+      },
+      {
+        "ts": "2026-09-17T00:16:42.155Z",
+        "level": "info",
+        "event": "crawl.second_reviewed",
+        "job": "second-review",
+        "enqueued": 6,
+        "closed": 3,
+        "reviewed": 3,
+        "failed": 7,
+        "deferred": 38
+      },
+      {
+        "ts": "2026-09-17T00:18:43.472Z",
+        "level": "info",
+        "event": "crawl.second_reviewed",
+        "job": "second-review",
+        "enqueued": 6,
+        "closed": 0,
+        "reviewed": 1,
+        "failed": 8,
+        "deferred": 39
+      },
+      {
+        "ts": "2026-09-17T00:20:49.169Z",
+        "level": "info",
+        "event": "crawl.second_reviewed",
+        "job": "second-review",
+        "enqueued": 6,
+        "closed": 0,
+        "reviewed": 6,
+        "failed": 7,
+        "deferred": 35
+      },
+      {
+        "ts": "2026-09-17T00:22:49.071Z",
+        "level": "info",
+        "event": "crawl.second_reviewed",
+        "job": "second-review",
+        "enqueued": 3,
+        "closed": 0,
+        "reviewed": 7,
+        "failed": 5,
+        "deferred": 36
+      },
+      {
+        "ts": "2026-09-17T00:24:37.189Z",
+        "level": "info",
+        "event": "crawl.second_reviewed",
+        "job": "second-review",
+        "enqueued": 6,
+        "closed": 0,
+        "reviewed": 4,
+        "failed": 5,
+        "deferred": 39
+      },
+      {
+        "ts": "2026-09-17T00:26:26.970Z",
+        "level": "info",
+        "event": "crawl.second_reviewed",
+        "job": "second-review",
+        "enqueued": 15,
+        "closed": 1,
+        "reviewed": 1,
+        "failed": 7,
+        "deferred": 40
+      },
+      {
+        "ts": "2026-09-17T00:28:47.937Z",
+        "level": "info",
+        "event": "crawl.second_reviewed",
+        "job": "second-review",
+        "enqueued": 15,
+        "closed": 1,
+        "reviewed": 4,
+        "failed": 9,
+        "deferred": 35
+      },
+      {
+        "ts": "2026-09-17T00:30:39.056Z",
+        "level": "info",
+        "event": "crawl.second_reviewed",
+        "job": "second-review",
+        "enqueued": 12,
+        "closed": 0,
+        "reviewed": 7,
+        "failed": 5,
+        "deferred": 36
+      },
+      {
+        "ts": "2026-09-17T00:33:02.977Z",
+        "level": "info",
+        "event": "crawl.second_reviewed",
+        "job": "second-review",
+        "enqueued": 39,
+        "closed": 0,
+        "reviewed": 6,
+        "failed": 8,
+        "deferred": 34
+      },
+      {
+        "ts": "2026-09-17T00:34:47.376Z",
+        "level": "info",
+        "event": "crawl.second_reviewed",
+        "job": "second-review",
+        "enqueued": 3,
+        "closed": 6,
+        "reviewed": 2,
+        "failed": 8,
+        "deferred": 38
+      },
+      {
+        "ts": "2026-09-17T00:36:27.227Z",
+        "level": "info",
+        "event": "crawl.second_reviewed",
+        "job": "second-review",
+        "enqueued": 9,
+        "closed": 0,
+        "reviewed": 3,
+        "failed": 6,
+        "deferred": 39
+      },
+      {
+        "ts": "2026-09-17T00:38:48.672Z",
+        "level": "info",
+        "event": "crawl.second_reviewed",
+        "job": "second-review",
+        "enqueued": 9,
+        "closed": 1,
+        "reviewed": 3,
+        "failed": 7,
+        "deferred": 38
+      },
+      {
+        "ts": "2026-09-17T00:40:26.282Z",
+        "level": "info",
+        "event": "crawl.second_reviewed",
+        "job": "second-review",
+        "enqueued": 0,
+        "closed": 0,
+        "reviewed": 5,
+        "failed": 5,
+        "deferred": 38
+      },
+      {
+        "ts": "2026-09-17T00:42:50.006Z",
+        "level": "info",
+        "event": "crawl.second_reviewed",
+        "job": "second-review",
+        "enqueued": 6,
+        "closed": 0,
+        "reviewed": 3,
+        "failed": 8,
+        "deferred": 37
+      },
+      {
+        "ts": "2026-09-17T00:44:42.104Z",
+        "level": "info",
+        "event": "crawl.second_reviewed",
+        "job": "second-review",
+        "enqueued": 3,
+        "closed": 3,
+        "reviewed": 9,
+        "failed": 4,
+        "deferred": 35
+      }
+    ]
+  },
+  "diagnosticCalls": [
+    {
+      "id": 59654,
+      "repo": "imshiwen/SitemapWatch",
+      "model": "[MLX] gemma4-26b",
+      "previousError": "invalid_output",
+      "inputBytes": 4862,
+      "durationMs": 16135,
+      "http": 200,
+      "result": {
+        "ok": false,
+        "error": "invalid_output",
+        "usage": {
+          "inputTokens": 5468,
+          "outputTokens": 542
+        }
+      },
+      "validation": "[\n  {\n    \"expected\": \"object\",\n    \"code\": \"invalid_type\",\n    \"path\": [],\n    \"message\": \"Invalid input: expected object, received null\"\n  }\n]",
+      "contentChars": 3,
+      "jsonFences": 0,
+      "bareYes": true,
+      "finishReason": "stop"
+    },
+    {
+      "id": 56165,
+      "repo": "EndersGamesDev/EmberEngine",
+      "model": "[MLX] gemma4-26b",
+      "previousError": "invalid_output",
+      "inputBytes": 6724,
+      "durationMs": 11050,
+      "http": 200,
+      "result": {
+        "ok": false,
+        "error": "invalid_output",
+        "usage": {
+          "inputTokens": 4383,
+          "outputTokens": 778
+        }
+      },
+      "validation": "[\n  {\n    \"expected\": \"object\",\n    \"code\": \"invalid_type\",\n    \"path\": [],\n    \"message\": \"Invalid input: expected object, received null\"\n  }\n]",
+      "contentChars": 2321,
+      "jsonFences": 2,
+      "bareYes": false,
+      "finishReason": "stop"
+    },
+    {
+      "id": 58994,
+      "repo": "JupiterianSoul/Wikster",
+      "model": "[MLX] gemma4-26b",
+      "previousError": "output_too_large",
+      "inputBytes": 5689,
+      "durationMs": 15787,
+      "http": 200,
+      "result": {
+        "ok": false,
+        "error": "invalid_output",
+        "usage": {
+          "inputTokens": 4473,
+          "outputTokens": 741
+        }
+      },
+      "validation": "[\n  {\n    \"expected\": \"object\",\n    \"code\": \"invalid_type\",\n    \"path\": [],\n    \"message\": \"Invalid input: expected object, received null\"\n  }\n]",
+      "contentChars": 2110,
+      "jsonFences": 2,
+      "bareYes": false,
+      "finishReason": "stop"
+    },
+    {
+      "id": 58589,
+      "repo": "cammo22/DaProdSuite",
+      "model": "[MLX] gemma4-26b",
+      "previousError": "output_too_large",
+      "inputBytes": 12667,
+      "durationMs": 60005,
+      "http": null,
+      "result": {
+        "ok": false,
+        "error": "timeout"
+      },
+      "validation": null,
+      "contentChars": 0,
+      "jsonFences": 0,
+      "bareYes": false,
+      "finishReason": null
+    },
+    {
+      "id": 59909,
+      "repo": "lvlrSajjad/agent-ready-monorepo",
+      "model": "[MLX] gemma4-26b",
+      "previousError": "timeout",
+      "inputBytes": 11575,
+      "durationMs": 25095,
+      "http": 200,
+      "result": {
+        "ok": false,
+        "error": "invalid_output",
+        "usage": {
+          "inputTokens": 3470,
+          "outputTokens": 764
+        }
+      },
+      "validation": "[\n  {\n    \"expected\": \"object\",\n    \"code\": \"invalid_type\",\n    \"path\": [],\n    \"message\": \"Invalid input: expected object, received null\"\n  }\n]",
+      "contentChars": 1534,
+      "jsonFences": 2,
+      "bareYes": false,
+      "finishReason": "stop"
+    },
+    {
+      "id": 59474,
+      "repo": "lena0611/harness-seed",
+      "model": "[MLX] gemma4-26b",
+      "previousError": "timeout",
+      "inputBytes": 10007,
+      "durationMs": 12588,
+      "http": 200,
+      "result": {
+        "ok": false,
+        "error": "invalid_output",
+        "usage": {
+          "inputTokens": 5401,
+          "outputTokens": 800
+        }
+      },
+      "validation": "[\n  {\n    \"expected\": \"object\",\n    \"code\": \"invalid_type\",\n    \"path\": [],\n    \"message\": \"Invalid input: expected object, received null\"\n  }\n]",
+      "contentChars": 2245,
+      "jsonFences": 2,
+      "bareYes": false,
+      "finishReason": "stop"
+    },
+    {
+      "id": 59655,
+      "repo": "imshiwen/SitemapWatch",
+      "model": "[MLX] gemma4-31b",
+      "previousError": "invalid_output",
+      "inputBytes": 4862,
+      "durationMs": 14516,
+      "http": 200,
+      "result": {
+        "ok": false,
+        "error": "invalid_output",
+        "usage": {
+          "inputTokens": 5504,
+          "outputTokens": 542
+        }
+      },
+      "validation": "[\n  {\n    \"expected\": \"object\",\n    \"code\": \"invalid_type\",\n    \"path\": [],\n    \"message\": \"Invalid input: expected object, received null\"\n  }\n]",
+      "contentChars": 3,
+      "jsonFences": 0,
+      "bareYes": false,
+      "finishReason": "stop"
+    },
+    {
+      "id": 59868,
+      "repo": "lugworth/DD",
+      "model": "[MLX] gemma4-31b",
+      "previousError": "timeout",
+      "inputBytes": 4942,
+      "durationMs": 15001,
+      "http": 200,
+      "result": {
+        "ok": true,
+        "outcome": {
+          "decision": "needs_review",
+          "reason": "The provided evidence contains commit history and file paths (e.g., HTML files in a 'tools' directory), but there is no pageText or README content provided to determine what the product.url actually serves or if it is a usable deployed product.",
+          "evidenceIds": [
+            "product"
+          ],
+          "confidence": 1
+        },
+        "usage": {
+          "inputTokens": 4098,
+          "outputTokens": 292
+        }
+      },
+      "validation": "valid",
+      "contentChars": 361,
+      "jsonFences": 1,
+      "bareYes": false,
+      "finishReason": "stop"
+    },
+    {
+      "id": 59820,
+      "repo": "Cherylruei/coffee-map-game",
+      "model": "[MLX] gemma4-31b",
+      "previousError": "timeout",
+      "inputBytes": 4929,
+      "durationMs": 60001,
+      "http": null,
+      "result": {
+        "ok": false,
+        "error": "timeout"
+      },
+      "validation": null,
+      "contentChars": 0,
+      "jsonFences": 0,
+      "bareYes": false,
+      "finishReason": null
+    }
+  ],
+  "control": {
+    "at": "2026-09-17T00:50:42.219Z",
+    "sourceRow": 56165,
+    "model": "[MLX] gpt-oss-120b",
+    "durationMs": 6662,
+    "result": {
+      "ok": true,
+      "outcome": {
+        "decision": "approve",
+        "reason": "The URL https://endersgamesdev.github.io/EmberEngine hosts live browser‑playable games built with the Ember engine (e.g., Killshot, Fire Racer). The page text describes an interactive launcher, and the README lists direct links to playable WebAssembly games, indicating the site is a functional, publicly accessible product rather than documentation or a placeholder.",
+        "evidenceIds": [
+          "product"
+        ],
+        "confidence": 0.96
+      },
+      "usage": {
+        "inputTokens": 2308,
+        "outputTokens": 166
+      }
+    }
+  }
+}

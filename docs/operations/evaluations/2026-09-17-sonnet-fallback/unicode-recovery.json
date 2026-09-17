@@ -1,0 +1,53 @@
+{
+  "before": {
+    "at": "2026-09-17T02:11:48.975Z",
+    "frontier": [
+      {
+        "repo": "Zee7280/ciel_frontend",
+        "state": "fetching",
+        "attempts": 143,
+        "last_error": null,
+        "next_attempt_at": "2026-09-17 02:18:06.556449",
+        "updated_at": "2026-09-17 02:08:06.556449"
+      }
+    ],
+    "documents": [],
+    "jobs": [
+      {
+        "name": "crawl-fetch",
+        "last_run_at": "2026-09-17 02:11:46.953033",
+        "last_success_at": "2026-09-17 02:10:40.714613",
+        "last_error": null
+      }
+    ]
+  },
+  "after": {
+    "at": "2026-09-17T02:19:16.582Z",
+    "frontier": [
+      {
+        "repo": "Zee7280/ciel_frontend",
+        "state": "done",
+        "attempts": 144,
+        "last_error": null,
+        "next_attempt_at": "2026-09-17 02:28:45.611604",
+        "updated_at": "2026-09-17 02:18:47.864"
+      }
+    ],
+    "documents": [
+      {
+        "repo": "Zee7280/ciel_frontend",
+        "fetched_at": "2026-09-17 02:18:47.869",
+        "text_length": 5995,
+        "text_end": "IS ⭐ COULD BE YOURS "
+      }
+    ],
+    "jobs": [
+      {
+        "name": "crawl-fetch",
+        "last_run_at": "2026-09-17 02:18:45.602404",
+        "last_success_at": "2026-09-17 02:18:47.882146",
+        "last_error": null
+      }
+    ]
+  }
+}

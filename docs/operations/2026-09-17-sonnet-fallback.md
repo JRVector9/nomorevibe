@@ -1,6 +1,6 @@
 # 최종 fallback: Sonnet — 2026-09-17
 
-사용자가 Opus 사용을 금지하고 Sonnet 또는 Codex Spark를 지정했다. Opus는 **10:48:36 KST 감사 기록 27**로 즉시 해제했다. 최종 구성은 **Qwen3.8-27b / GPT-OSS-120b 기술적 실패 → Claude Sonnet**이다. 정상 거부·보류는 다른 답을 얻기 위해 재심사하지 않는다.
+사용자가 Opus 사용을 금지하고 Sonnet 또는 Codex Spark를 지정했다. Opus는 **10:48:36 KST 감사 기록 27**로 즉시 해제했다. 최종 구성은 **Qwen3.8-27b-uncensored / GPT-OSS-120b 기술적 실패 → Claude Sonnet**이다. 정상 거부·보류는 다른 답을 얻기 위해 재심사하지 않는다.
 
 ## 같은 모델의 판단을 독립 표로 세지 않는다
 
@@ -18,9 +18,29 @@ Spark RPC 어댑터 시도는 별도 로컬 브랜치 `fix/spark-review-fallback
 
 앞선 비교와 동일한 실제 입력 14개(과거 관리자 판정 12개 + 직접 확인한 현재 사례 2개)에 읽기 전용 호출을 수행했다. **유효 응답 14/14, 기준 판정 일치 14/14, 중앙 5.96초·최대 6.61초**였다. 작은 의도 표본이므로 일반 정확도 100%를 의미하지 않는다. [응답 기록](evaluations/2026-09-17-sonnet-fallback/evaluation.jsonl)을 보존했다.
 
-Sonnet 참고 의견·동시 독립 표가 있는 경우의 강제 사람 확인·모델 해제 후 빈 심사 단계 보존을 회귀 테스트한다. 전체 검증, PR/배포 및 실제 자동 대체 결과는 아래에 완료 후 기록한다.
+Sonnet 참고 의견·동시 독립 표가 있는 경우의 강제 사람 확인·모델 해제 후 빈 심사 단계 보존을 회귀 테스트한다. 전체 검증, PR/배포 및 실제 자동 대체 결과를 아래에 기록했다.
 
 ## 로컬 검증
 
 - 단위 974개, 타입 검사, production build, lint 오류 0(기존 vendor 경고 1개), 관리자 Playwright 저장/새로고침 1개 통과.
-- 첫 전체 DB 검사에서 신규 Sonnet 회귀는 통과했으나 기존 evidence-refresh 테스트 1개가 완료 시각 경계에서 간헐 실패했다(651/652). 단독 재실행 11개 통과 후 해당 fixture의 완료 시각을 명시적으로 1초 전으로 고정했다. 전체 DB 재검증 결과는 완료 후 기록한다.
+- 첫 전체 DB 검사에서 신규 Sonnet 회귀는 통과했으나 기존 evidence-refresh 테스트 1개가 완료 시각 경계에서 간헐 실패했다(651/652). 단독 재실행 11개 통과 후 해당 fixture의 완료 시각을 명시적으로 1초 전으로 고정했다. 전체 DB 재검증 652개가 모두 통과했다.
+
+
+## 배포 및 실제 자동 전환
+
+PR [#119](https://github.com/JRVector9/nomorevibe/pull/119) 및 main CI 통과. 수집 이모지 수정 [#118](https://github.com/JRVector9/nomorevibe/pull/118)을 포함한 `2839ec5d7578493a8f34bb475f48f32cbc50104b`를 7개 앱에 배포했다. 워커 5개 healthy/변경 파일 10개 해시 일치, 웹 2대 health 200 및 DB 정상(1~2ms)을 확인했다.
+
+**11:17:18 KST 감사 기록 28**로 Sonnet만 fallback에 활성화했다. **11:19:15 관측에서는 실제 기본 모델 실패 24건을 Sonnet이 자동 대체 완료**했다(거부 13, 승인 7, 보류 4). 모두 유효 응답이고, 1차도 Sonnet이므로 독립 표를 만들지 않고 `needs_human`으로 남겼다. 원래 오류와 연결된 이력 0건 손상, 누적 실패 상한 초과 0건이었다. 이전 Opus 이력은 종료됐으며 현재 호출 대상이 아니다. [첫 운영 확인](evaluations/2026-09-17-sonnet-fallback/canary-first.json), [배포 확인](evaluations/2026-09-17-sonnet-fallback/deployment.json).
+
+이 24건의 오류는 게이트웨이에서 기존 `[MLX] qwen3.8-27b` ID가 사라진 `model_unavailable`이었다. 실시간 목록에는 `[MLX] qwen3.8-27b-uncensored`가 있어, 같은 모델이라고 가정하지 않고 동일 14개 사례로 별도 평가했다. 유효 14, 기준 일치 13, 보류 1, 오승인 0이었다. **11:24:32 KST 감사 기록 29**로 기본 voter의 Qwen ID만 갱신했고 OSS·Sonnet fallback·1차 및 합의 정책은 유지했다. [평가](evaluations/2026-09-17-sonnet-fallback/replacement-qwen-summary.json), [설정 감사 기록](evaluations/2026-09-17-sonnet-fallback/replacement-qwen-settings.json).
+
+수집에서 발견한 이모지 경계 오류도 복구했다. 해당 항목은 기존 143회 시도/fetching 상태에서, 횟수 초기화 없이 정상 스케줄의 144번째 시도(11:18:47)에 문서 저장을 완료했다. [상세](2026-09-17-crawl-unicode-boundary.md).
+
+
+## 최종 확인 — 11:32:17 KST
+
+새 Qwen ID로 **운영 워커의 유효 응답 3건**을 확인했다(합의 2, 사람 확인 1). 읽기 전용 평가 호출과 구분되는 실제 심사 기록이다. 모델 설정 교체 뒤 OSS의 기술적 오류를 대체한 Sonnet 응답도 **13건 완료**, 모두 사람 확인으로 남았다. Sonnet 대기 0, 연결 이력 손상 0, 누적 실패 상한 초과 0, 활성 Opus 0이다.
+
+전체 대기열이 비었다는 뜻은 아니다. 이 시점 Qwen 284행·OSS 2행이 대기 중이고, OSS 형식 오류 2행은 재시도 대상으로 남았다. 수집·1차 검수·2차 심사·발행 작업의 최신 오류는 모두 null이었다. 외부 모델의 실패 가능성은 남지만, 실제 실패가 자동 대체와 사람 확인으로 이어지는 것을 확인했다. [최종 운영 기록](evaluations/2026-09-17-sonnet-fallback/canary-final.json).
+
+운영 공개 화면을 1440px·390px에서 확인했다. 프로젝트 9개→더 보기 18개, 인기 목록 15행, 가로 넘침·페이지 오류 0이었다. 모바일 캡처도 직접 확인했다. 관리자 fallback 저장/새로고침 테스트와 함께 변경 반영을 검증했다. [공개 화면 검사](evaluations/2026-09-17-sonnet-fallback/public-ui.json).
