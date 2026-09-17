@@ -217,7 +217,7 @@ export function extractTextSample(html: string, limit = TEXT_SAMPLE_LIMIT): stri
     .replace(/<svg[\s\S]*?<\/svg>/gi, " ")
     .replace(/<!--[\s\S]*?-->/g, " ");
   const text = stripUnsafeText(decodeEntities(body.replace(/<[^>]+>/g, " "))).replace(/\s+/g, " ").trim();
-  return text ? text.slice(0, limit) : null;
+  return text ? stripUnsafeText(text.slice(0, limit)) || null : null;
 }
 
 /**
@@ -267,12 +267,8 @@ export function extractPageMeta(
 
   return {
     // 저장 상한을 넘기지 않게 자른다. 이름은 120자, 소개는 200자가 상한이다
-    title: title ? title.slice(0, 300) : null,
-    description:
-      (metaContent(html, "property", "og:description") ?? metaContent(html, "name", "description"))?.slice(
-        0,
-        500,
-      ) ?? null,
+    title: title ? stripUnsafeText(title.slice(0, 300)) || null : null,
+    description: stripUnsafeText((metaContent(html, "property", "og:description") ?? metaContent(html, "name", "description") ?? "").slice(0, 500)) || null,
     ogImage: extractOgImage(html, baseUrl),
     generator: detectSiteGenerator(html, docsGenerators),
     textSample: extractTextSample(html),

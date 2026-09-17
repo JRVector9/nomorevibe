@@ -285,3 +285,10 @@ describe("extractPageMeta — 수집한 제품의 이름·소개 재료", () => 
     expect(meta.description).toHaveLength(500);
   });
 });
+
+it("UTF-16 경계에서 잘린 이모지는 JSONB에 저장 가능한 문자열로 남긴다", () => {
+  expect(extractPageMeta(`<title>${"a".repeat(299)}🚀end</title>`, "https://a.test").title).toBe("a".repeat(299));
+  expect(extractPageMeta(`<meta name="description" content="${"b".repeat(499)}🚀end">`, "https://a.test").description).toBe("b".repeat(499));
+  expect(extractTextSample("abc🚀end", 4)).toBe("abc");
+  expect(extractTextSample("ab🚀end", 4)).toBe("ab🚀");
+});
