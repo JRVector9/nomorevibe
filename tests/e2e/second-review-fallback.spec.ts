@@ -18,13 +18,13 @@ test('관리자가 대체 모델을 저장하고 다시 열어도 공급자와 �
   const errors:string[]=[];page.on('pageerror',e=>errors.push(e.message));
   await page.goto('/admin');
   await page.locator('[name="fallbackProvider0"]').selectOption('claude-cli');
-  await page.locator('[name="fallbackModel0"]').fill('opus');
+  await page.locator('[name="fallbackModel0"]').fill('sonnet');
   await page.getByRole('button',{name:'저장',exact:true}).click();
   await expect(page.getByText('저장했습니다. 다음 틱부터 적용됩니다.')).toBeVisible();
   const [saved]=await db.select().from(crawlSettings).where(eq(crawlSettings.id,1));
-  expect((saved.values as typeof DEFAULT_CRAWL_SETTINGS).secondReview.fallbacks).toEqual([{provider:'claude-cli',model:'opus'}]);
+  expect((saved.values as typeof DEFAULT_CRAWL_SETTINGS).secondReview.fallbacks).toEqual([{provider:'claude-cli',model:'sonnet'}]);
   await page.reload();
-  await expect(page.locator('[name="fallbackModel0"]')).toHaveValue('opus');
+  await expect(page.locator('[name="fallbackModel0"]')).toHaveValue('sonnet');
   await expect(page.locator('[name="fallbackProvider0"]')).toHaveValue('claude-cli');
   await expect(page.locator('[name="fallbackModel1"]')).toHaveValue('');
   const fieldset=page.locator('fieldset').filter({hasText:'실패 시 대체 모델'});

@@ -742,8 +742,8 @@ it('첫 모델·다른 기본 표·이미 배정된 대체 모델을 중복 투�
   await Promise.all(roots.map(row => recordSecondReview(row.id, { ok:false,error:'timeout',provider:'abcllm',model:row.model! })));
   const rows = await db.select().from(secondReviews);
   expect(rows.filter(r=>r.model==='backup')).toHaveLength(1);
-  expect(rows.filter(r=>r.model==='sonnet')).toHaveLength(0);
-  expect(rows.filter(r=>r.status==='failed')).toHaveLength(1);
+  expect(rows.filter(r=>r.model==='sonnet')).toHaveLength(1);
+  expect(rows.filter(r=>r.model==='backup')[0].fallbackForId).not.toBe(rows.filter(r=>r.model==='sonnet')[0].fallbackForId);
 });
 
 it.each(['reject', 'needs_review'])('정상 %s 판단은 대체 모델로 다시 묻지 않는다', async decision => {
@@ -766,7 +766,8 @@ it.each(['primary','fallback'])('%s 모델을 제거하면 완료된 대체 의�
   await saveSettings({secondReview: removed==='primary' ? {voters:[{provider:'abcllm',model:'replacement'}]} : {fallbacks:[]}}, 'fixture');
   await closeSettledSecondReviews();
   expect((await db.select().from(secondReviews).where(eq(secondReviews.id,row.id)))[0]).toMatchObject({status:'resolved',resolution:'model_removed',secondDecision:'approve'});
-  expect(await secondReviewsFor([row.candidateId])).toHaveLength(0);
+  expect(await secondReviewsFor([row.candidateId])).toHaveLength(removed==='primary'?0:1);
+  if(removed==='fallback') expect((await secondReviewSummary(.85)).counts.needsHuman).toBe(1);
 });
 
 it.each(['settings','source'])('대체 심사 도중 %s 변경은 늦은 결과와 추가 대체 배정을 막는다', async changed => {
@@ -800,4 +801,29 @@ it('다른 기본 모델의 MLX 별칭을 fallback 표로 배정하지 않는다
   await recordSecondReview(root.id,{ok:false,error:'timeout',provider:'claude-cli',model:'opus'});
   const [row]=await pendingSecondReviews(1);
   expect(row).toMatchObject({model:'backup',fallbackForId:root.id});
+});
+
+it('Sonnet 대체가 1차와 같으면 참고 의견만 남기고 독립 합의 대신 사람 확인으로 보낸다', async () => {
+  await saveSettings({secondReview:{fallbacks:[{provider:'claude-cli',model:'sonnet'}]}},'fixture');
+  await held('acme/sonnet-fallback');await firstReview('acme/sonnet-fallback','approve');await enqueueSecondReviews(await getSettings());
+  const [root]=await pendingSecondReviews(1);
+  await recordSecondReview(root.id,{ok:false,error:'timeout',provider:'claude-cli',model:'opus'});
+  const [backup]=await pendingSecondReviews(1);
+  expect(backup).toMatchObject({provider:'claude-cli',model:'sonnet',fallbackForId:root.id});
+  expect((await secondReviewSummary(.85)).counts.pending).toBe(1);
+  await recordSecondReview(backup.id,{ok:true,decision:'approve',confidence:.99,reason:'usable',provider:'claude-cli',model:'sonnet',status:'agreed'});
+  expect((await secondReviewSummary(.85)).counts).toMatchObject({needsHuman:1,agreedApprove:0,pending:0});
+  expect((await secondReviewsFor([root.candidateId]))[0]).toMatchObject({model:'sonnet',status:'needs_human',secondDecision:'approve'});
+});
+
+it('다른 독립 표가 일치해도 Sonnet 중복 대체를 완료한 후보는 사람 확인을 생략하지 않는다', async () => {
+  await saveSettings({secondReview:{voters:[{provider:'abcllm',model:'a'},{provider:'abcllm',model:'b'}],fallbacks:[{provider:'claude-cli',model:'sonnet'}]}},'fixture');
+  await held('acme/reference-only');await firstReview('acme/reference-only','approve');await enqueueSecondReviews(await getSettings());
+  const [a,b]=await pendingSecondReviews(2);
+  await recordSecondReview(a.id,{ok:true,decision:'approve',confidence:1,reason:'usable',provider:'abcllm',model:'a',status:'agreed'});
+  await recordSecondReview(b.id,{ok:false,error:'timeout',provider:'abcllm',model:'b'});
+  const [backup]=await pendingSecondReviews(1);
+  expect((await secondReviewSummary(.85)).counts).toMatchObject({pending:1,agreedApprove:0});
+  await recordSecondReview(backup.id,{ok:true,decision:'approve',confidence:1,reason:'usable',provider:'claude-cli',model:'sonnet',status:'agreed'});
+  expect((await secondReviewSummary(.85)).counts).toMatchObject({needsHuman:1,agreedApprove:0,unanimousApprove:0,pending:0});
 });

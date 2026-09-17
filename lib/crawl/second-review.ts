@@ -306,6 +306,18 @@ export async function closeSettledSecondReviews(now = new Date()): Promise<numbe
                   and regexp_replace(lower(trim(primary_v->>'model')), '^\\[mlx\\][[:space:]]*', '', 'i')
                     = regexp_replace(lower(trim(root.model)), '^\\[mlx\\][[:space:]]*', '', 'i')))))`))
     .returning({ id: secondReviews.id });
+  const orphaned = await db.update(secondReviews).set({status: "needs_human", resolution: null, resolvedAt: null,
+    secondDecision: null, secondConfidence: null,
+    secondReason: "대체 모델 설정이 변경되어 해당 의견을 제외했습니다. 직접 확인해주세요.",
+    failureCount: sql`greatest(${secondReviews.failureCount}, coalesce((select max(child.failure_count) from second_reviews child where child.fallback_for_id=${secondReviews.id}), 0))`})
+    .where(and(eq(secondReviews.status, "resolved"), eq(secondReviews.resolution, "fallback"), isNull(secondReviews.fallbackForId),
+      sql`exists(select 1 from second_reviews child where child.fallback_for_id=${secondReviews.id} and child.resolution='model_removed')`,
+      sql`not exists(select 1 from second_reviews child where child.fallback_for_id=${secondReviews.id} and child.status in ('pending','failed','agreed','needs_human'))`,
+      sql`exists(select 1 from jsonb_array_elements(${JSON.stringify(voters)}::jsonb) v
+        where v->>'provider'=${secondReviews.provider}
+          and regexp_replace(lower(trim(v->>'model')), '^\\[mlx\\][[:space:]]*', '', 'i')
+            = regexp_replace(lower(trim(${secondReviews.model})), '^\\[mlx\\][[:space:]]*', '', 'i'))`))
+    .returning({id: secondReviews.id});
   // A prompt upgrade invalidates these inputs before any model call. Retain completed historical opinions.
   const obsolete = await db.update(secondReviews).set({status: "resolved", resolution: "superseded", resolvedAt: now})
     .where(and(inArray(secondReviews.status, ["pending", "failed"]), or(eq(secondReviews.generationKey, "legacy"),
@@ -317,7 +329,7 @@ export async function closeSettledSecondReviews(now = new Date()): Promise<numbe
     .where(and(eq(secondReviews.trigger, "ai_decided"), isNull(secondReviews.firstConfidence),
       inArray(secondReviews.status, ["pending", "agreed", "needs_human", "failed"])))
     .returning({ id: secondReviews.id });
-  return removed.length + obsolete.length + legacy.length + await closeDecidedSecondReviews(now);
+  return removed.length + orphaned.length + obsolete.length + legacy.length + await closeDecidedSecondReviews(now);
 }
 
 async function closeDecidedSecondReviews(now: Date): Promise<number> {
@@ -364,8 +376,10 @@ export async function recordSecondReview(id: number, result:
       // The candidate lock from loadSecondReviewInput serializes allocation across primary slots.
       const attempted = await tx.select({model: secondReviews.model}).from(secondReviews).where(and(
         eq(secondReviews.candidateId, row.candidateId), eq(secondReviews.generationKey, row.generationKey)));
-      const excluded = [row.firstModel, ...settings.secondReview.voters.map(v => v.model), ...attempted.map(v => v.model)];
-      const backup = (settings.secondReview.fallbacks ?? []).find(v => !excluded.some(model => sameReviewModel(model, v.model)));
+      const excluded = [...settings.secondReview.voters.map(v => v.model), ...attempted.map(v => v.model)];
+      const eligible = (settings.secondReview.fallbacks ?? []).filter(v => !excluded.some(model => sameReviewModel(model, v.model)));
+      // Prefer an independent model. A same-first fallback is reference-only and must end in human review.
+      const backup = eligible.find(v => !sameReviewModel(row.firstModel, v.model)) ?? eligible[0];
       if (backup) {
         await tx.insert(secondReviews).values({ ...backup, candidateId: row.candidateId, repo: row.repo,
           publishedSlug: row.publishedSlug, trigger: row.trigger, signals: row.signals,
@@ -449,7 +463,7 @@ export type SecondChipKey = "unanimous_reject" | "unanimous_approve" | "agreed_r
 export async function secondReviewSummary(agreeAt: number): Promise<{ counts: SecondReviewCounts; ids: Record<SecondChipKey, number[]> }> {
   const rows = await db.select({ candidateId: secondReviews.candidateId, status: secondReviews.status, decision: secondReviews.secondDecision,
     confidence: secondReviews.secondConfidence, provider: secondReviews.provider, model: secondReviews.model,
-    generationKey: secondReviews.generationKey, inputHash: secondReviews.inputHash, published: secondReviews.publishedSlug, firstDecision: secondReviews.firstDecision,
+    fallbackForId: secondReviews.fallbackForId, generationKey: secondReviews.generationKey, inputHash: secondReviews.inputHash, published: secondReviews.publishedSlug, firstDecision: secondReviews.firstDecision,
     firstConfidence: secondReviews.firstConfidence, firstModel: secondReviews.firstModel }).from(secondReviews)
     // 실패한 표도 읽는다 — 한 시간 뒤 다시 보므로 아직 끝나지 않은 표이고, 모두 실패한 후보가
     // 집계에서 통째로 사라지면 멈춘 줄 모른다
@@ -467,12 +481,18 @@ export async function secondReviewSummary(agreeAt: number): Promise<{ counts: Se
       continue;
     }
     const first = { decision: group[0].firstDecision, confidence: group[0].firstConfidence };
-    const outstanding = group.filter((row) => !sameReviewModel(row.firstModel, row.model) && (row.status === "pending" || row.status === "failed")).length;
+    const outstanding = group.filter((row) => (row.fallbackForId || !sameReviewModel(row.firstModel, row.model)) && (row.status === "pending" || row.status === "failed")).length;
     const votes = group.filter((row) => row.status === "agreed" || row.status === "needs_human")
       .map((row) => ({ decision: row.decision ?? "", confidence: row.confidence, provider: row.provider, model: row.model }));
     const verdict = combineVotes(first, votes, { agreeAt, published: Boolean(group[0].published),
       pending: outstanding, firstModel: group[0].firstModel });
     if (verdict.status === "pending") { pending += 1; continue; }
+    const referenceOnly = group.some(row => row.fallbackForId && sameReviewModel(row.firstModel, row.model));
+    if (referenceOnly) {
+      if (group[0].published) published += 1;
+      else ids.needs_human.push(candidateId);
+      continue;
+    }
     if (group[0].published) { if (verdict.status === "needs_human") published += 1; continue; }
     if (verdict.status === "needs_human" || !verdict.decision) { ids.needs_human.push(candidateId); continue; }
     const key = `${verdict.votes >= 3 ? "unanimous" : "agreed"}_${verdict.decision}` as SecondChipKey;

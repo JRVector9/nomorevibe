@@ -18,9 +18,9 @@ vi.mock('@/lib/domain/evidence/agents/repository', async importOriginal => {
 });
 beforeAll(() => ensureSchema());
 beforeEach(async () => { await resetTables(); await db.delete(crawlCandidates); await db.delete(crawlSettings); spies.refresh.mockClear(); });
-/** 방금 끝나 하루 뒤에야 다시 볼 스캔 */
+/** 막 완료된 과거 시각을 명시한다. 앱/DB의 now() 경계에서 테스트가 간헐적으로 보류되지 않게 한다. */
 const completeScan = (repositoryKey: string, repositoryId: string) => saveRepositoryAgentScan({ repositoryId, repositoryKey,
-  commitSha: 'c'.repeat(40), scope: '', state: 'complete', observations: [], requestCount: 1, fileCount: 0, errorCode: null, retryAt: null, cursor: null });
+  commitSha: 'c'.repeat(40), scope: '', state: 'complete', observations: [], requestCount: 1, fileCount: 0, errorCode: null, retryAt: null, cursor: null }, new Date(Date.now() - 1000));
 /** 파일이 없는 공개 레포 하나를 그리는 GitHub. 불린 경로를 남긴다 */
 const emptyRepository = (paths: string[]) => async <T>(path: string): Promise<GitHubHttpResult<T>> => {
   paths.push(path);

@@ -271,7 +271,7 @@ export function SettingsForm({ settings }: { settings: CrawlSettings }) {
 
         <fieldset className="mb-4">
           <legend className={label}>실패 시 대체 모델 (순서대로 최대 2)</legend>
-          <p className={hint}>시간 초과나 응답 오류에만 사용합니다. 이미 심사한 모델은 제외하며, 대체 시도를 포함해 3회 실패하면 사람 확인으로 넘깁니다.</p>
+          <p className={hint}>시간 초과나 응답 오류에만 사용합니다. 대체 시도를 포함해 3회 실패하면 사람 확인으로 넘깁니다. 1차와 같은 모델의 대체 결과는 참고 의견이며, 독립 표로 세지 않고 사람 확인이 필요합니다.</p>
           <div className="mt-2 grid gap-2">
             {[0, 1].map(index => {
               const fallback = settings.secondReview.fallbacks?.[index];
