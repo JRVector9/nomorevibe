@@ -228,6 +228,17 @@ const defaultAgentEvidence = {
  */
 const defaultSecondReview = { enabled: true, voters: [{ provider: "claude-cli" as const, model: "opus" }], includeAiHeld: false, sampleRate: 0.05, agreeAt: 0.85 };
 
+const reviewVoterSchema = z.object({
+  provider: z.enum(["claude-cli", "abcllm"]),
+  model: z.string().trim().min(1).max(160)
+    // 게이트웨이 이름은 "[MLX] gpt-oss-120b" 처럼 대괄호·공백이 들어간다. 제어 문자와
+    // 셸·따옴표 문자는 막는다 — 지금은 JSON 본문으로만 나가지만, 이름은 좁게 받는 편이 낫다
+    .regex(/^[^\p{Cc}"'`\\;$]+$/u),
+})
+  // CLI 쪽 이름은 명령 인자로 나가므로 예전 규칙 그대로 좁게 받는다
+  .refine((value) => value.provider !== "claude-cli" || /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,159}$/.test(value.model),
+    { path: ["model"], message: "claude-cli 모델 이름은 영숫자와 . _ : / - 만 쓸 수 있다" });
+
 export const crawlSettingsSchema = z.object({
   /** 수집 자체를 멈추는 스위치. 무언가 잘못 돌 때 배포 없이 끊을 수 있어야 한다 */
   enabled: z.boolean(),
@@ -251,16 +262,7 @@ export const crawlSettingsSchema = z.object({
      * 예고 없이 바뀐다. 그래서 배포 없이 갈아 끼울 수 있어야 한다. 성향이 서로 다른 모델을
      * 세울수록 좋다 — 관대한 모델과 엄격한 모델이 같은 결론을 내면 실수가 상쇄된다(2026-09-12 평가).
      */
-    voters: z.array(z.object({
-      provider: z.enum(["claude-cli", "abcllm"]),
-      model: z.string().trim().min(1).max(160)
-        // 게이트웨이 이름은 "[MLX] gpt-oss-120b" 처럼 대괄호·공백이 들어간다. 제어 문자와
-        // 셸·따옴표 문자는 막는다 — 지금은 JSON 본문으로만 나가지만, 이름은 좁게 받는 편이 낫다
-        .regex(/^[^\p{Cc}"'`\\;$]+$/u),
-    })
-      // CLI 쪽 이름은 명령 인자로 나가므로 예전 규칙 그대로 좁게 받는다
-      .refine((value) => value.provider !== "claude-cli" || /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,159}$/.test(value.model),
-        { path: ["model"], message: "claude-cli 모델 이름은 영숫자와 . _ : / - 만 쓸 수 있다" }))
+    voters: z.array(reviewVoterSchema)
       .min(1).max(3)
       /*
        * 같은 모델을 두 번 세우면 표가 아니라 메아리다. 제공자가 달라도 막는다 —
@@ -275,6 +277,7 @@ export const crawlSettingsSchema = z.object({
      * 사람이 판정한 80건(전부 1차가 보류했던 것)에서 성향이 반대인 두 모델이 일치한 56건 중
      * 55건이 사람과 같았다. 지금 그 건들은 통째로 사람 몫이라, 켜면 사람이 볼 양이 줄어든다.
      */
+    fallbacks: z.array(reviewVoterSchema).max(2).optional(),
     includeAiHeld: z.boolean().default(false),
     /** 규칙만 통과한 공개분 중 무작위로 다시 볼 비율 — 자동 공개의 실제 정확도를 잰다 */
     sampleRate: z.number().min(0).max(0.5),

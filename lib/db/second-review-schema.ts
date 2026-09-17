@@ -42,7 +42,9 @@ export const secondReviews = pgTable("second_reviews", {
   secondReason: text("second_reason"),
   errorCode: varchar("error_code", { length: 60 }),
   errorDetail: varchar("error_detail", { length: 80 }),
-  /** Failed completed calls in this input/model generation; shutdown cancellation does not count. */
+  /** Original primary slot replaced by this actual model. Historical failures stay linked. */
+  fallbackForId: integer("fallback_for_id"),
+  /** Failed calls across this primary/fallback chain; shutdown cancellation does not count. */
   failureCount: integer("failure_count").notNull().default(0),
   status: varchar("status", { length: 20 }).$type<SecondReviewStatus>().notNull().default("pending"),
   resolvedBy: varchar("resolved_by", { length: 120 }),

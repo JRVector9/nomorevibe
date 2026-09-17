@@ -326,7 +326,7 @@ export type AdminReviewEntry = {
   seconds: { decision: string | null; confidence: number | null; reason: string | null; reasonKo: string | null; model: string | null;
     provider: string | null; status: string; trigger: string; errorCode: string | null;
     /** 1차와 같은 모델이라 셈에서 뺀 표 */
-    echo: boolean }[];
+    echo: boolean; isFallback?: boolean }[];
 };
 
 /**
@@ -408,7 +408,7 @@ export async function listAdminReviewEntries(settings: CrawlSettings, options: {
       latest: summarizeAttempt(last), review: summarizeAttempt(review),
       seconds: seconds.filter(item => item.candidateId === candidate.id).map(row => ({ decision: row.secondDecision,
         confidence: row.secondConfidence, reason: row.secondReason, reasonKo: null, model: row.model, provider: row.provider,
-        status: row.status, trigger: row.trigger, errorCode: row.errorCode,
+        status: row.status, trigger: row.trigger, errorCode: row.errorCode, isFallback: Boolean(row.fallbackForId),
         echo: sameReviewModel(row.firstModel, row.model) })),
       verdict: recomputed ? {
         trace: recomputed.trace, signals: recomputed.signals, cause: recomputed.cause ?? null,

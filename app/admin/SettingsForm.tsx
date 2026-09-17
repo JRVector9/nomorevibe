@@ -269,6 +269,23 @@ export function SettingsForm({ settings }: { settings: CrawlSettings }) {
           </div>
         </fieldset>
 
+        <fieldset className="mb-4">
+          <legend className={label}>실패 시 대체 모델 (순서대로 최대 2)</legend>
+          <p className={hint}>시간 초과나 응답 오류에만 사용합니다. 이미 심사한 모델은 제외하며, 대체 시도를 포함해 3회 실패하면 사람 확인으로 넘깁니다.</p>
+          <div className="mt-2 grid gap-2">
+            {[0, 1].map(index => {
+              const fallback = settings.secondReview.fallbacks?.[index];
+              return <div key={`${index}:${fallback?.provider ?? ""}:${fallback?.model ?? ""}`} className="flex flex-wrap items-center gap-2">
+                <select name={`fallbackProvider${index}`} aria-label={`${index + 1}번째 대체 제공자`} defaultValue={fallback?.provider ?? "claude-cli"} className={`${field} w-auto`}>
+                  <option value="claude-cli">Claude CLI</option><option value="abcllm">사내 게이트웨이</option>
+                </select>
+                <input name={`fallbackModel${index}`} aria-label={`${index + 1}번째 대체 모델`} defaultValue={fallback?.model ?? ""}
+                  placeholder="비우면 사용하지 않습니다" className={`${field} min-w-[220px] flex-1 font-mono`} />
+              </div>;
+            })}
+          </div>
+        </fieldset>
+
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <div>
             <label className={label} htmlFor="secondReviewSamplePercent">공개분 표본 (%)</label>

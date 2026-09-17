@@ -700,3 +700,104 @@ it('제거한 모델의 완료된 표도 현행 합의와 상세에서 제외하
   expect((await secondReviewSummary(.85)).counts).toMatchObject({ pending: 1, agreedApprove: 0 });
   expect(await secondReviewsFor([old.candidateId])).toHaveLength(1);
 });
+
+it('실패한 기본 표를 실제 대체 모델의 새 표로 연결하고 먼저 처리한다', async () => {
+  await saveSettings({ secondReview: { fallbacks: [{ provider: 'abcllm', model: 'backup-a' }] } }, 'fixture');
+  await held('acme/fallback'); await firstReview('acme/fallback', 'approve');
+  await held('acme/other'); await firstReview('acme/other', 'approve');
+  await enqueueSecondReviews(await getSettings());
+  const [primary] = await pendingSecondReviews(10);
+  await recordSecondReview(primary.id, { ok: false, error: 'gateway_error', provider: 'claude-cli', model: 'opus' });
+  const [fallback] = await pendingSecondReviews(1);
+  expect(fallback).toMatchObject({ model: 'backup-a', fallbackForId: primary.id, failureCount: 1, status: 'pending' });
+  expect((await db.select().from(secondReviews).where(eq(secondReviews.id, primary.id)))[0])
+    .toMatchObject({ status: 'resolved', resolution: 'fallback', errorCode: 'gateway_error' });
+  await recordSecondReview(fallback.id, { ok: true, decision: 'approve', confidence: .9, reason: 'usable', model: 'backup-a', provider: 'abcllm', status: 'agreed' });
+  expect((await secondReviewSummary(.85)).counts.agreedApprove).toBe(1);
+  expect(await enqueueSecondReviews(await getSettings())).toBe(0);
+});
+
+it('대체 모델에도 실패 횟수를 이어받아 세 번째 실패에서 사람 확인으로 끝낸다', async () => {
+  await saveSettings({ secondReview: { fallbacks: [{ provider: 'abcllm', model: 'backup-a' }, { provider: 'abcllm', model: 'backup-b' }] } }, 'fixture');
+  await held('acme/chain'); await firstReview('acme/chain', 'approve'); await enqueueSecondReviews(await getSettings());
+  const [root] = await pendingSecondReviews(1);
+  for (let i = 0; i < 3; i++) {
+    const [row] = await pendingSecondReviews(1);
+    expect(row).toBeDefined();
+    await recordSecondReview(row.id, { ok: false, error: 'timeout', model: row.model!, provider: row.provider! });
+  }
+  const rows = await db.select().from(secondReviews).orderBy(secondReviews.id);
+  expect(rows.map(r => r.model)).toEqual(['opus','backup-a','backup-b']);
+  expect(rows[2]).toMatchObject({ status: 'needs_human', failureCount: 3, fallbackForId: root.id, secondDecision: null });
+  await retryFailedSecondReviews(new Date(Date.now()+3600_001));
+  expect(await pendingSecondReviews(10)).toHaveLength(0);
+  expect((await secondReviewSummary(.85)).counts).toMatchObject({ needsHuman: 1, pending: 0, agreedApprove: 0 });
+});
+
+it('첫 모델·다른 기본 표·이미 배정된 대체 모델을 중복 투표에 쓰지 않는다', async () => {
+  await saveSettings({ secondReview: { voters: [{ provider: 'abcllm', model: 'primary-a' },{ provider: 'abcllm', model: 'primary-b' }],
+    fallbacks: [{ provider: 'claude-cli', model: 'sonnet' },{ provider: 'abcllm', model: 'backup' }] } }, 'fixture');
+  await held('acme/independent'); await firstReview('acme/independent', 'approve'); await enqueueSecondReviews(await getSettings());
+  const roots = await pendingSecondReviews(10);
+  await Promise.all(roots.map(row => recordSecondReview(row.id, { ok:false,error:'timeout',provider:'abcllm',model:row.model! })));
+  const rows = await db.select().from(secondReviews);
+  expect(rows.filter(r=>r.model==='backup')).toHaveLength(1);
+  expect(rows.filter(r=>r.model==='sonnet')).toHaveLength(0);
+  expect(rows.filter(r=>r.status==='failed')).toHaveLength(1);
+});
+
+it.each(['reject', 'needs_review'])('정상 %s 판단은 대체 모델로 다시 묻지 않는다', async decision => {
+  await saveSettings({ secondReview: { fallbacks: [{ provider: 'abcllm', model: 'backup' }] } }, 'fixture');
+  await held('acme/no-answer-shopping'); await firstReview('acme/no-answer-shopping', 'approve'); await enqueueSecondReviews(await getSettings());
+  const [row] = await pendingSecondReviews(1);
+  await recordSecondReview(row.id, {ok:true,decision,confidence:.9,reason:'observed',provider:'claude-cli',model:'opus',status:'needs_human'});
+  expect(await db.select().from(secondReviews)).toHaveLength(1);
+  expect((await secondReviewSummary(.85)).counts.needsHuman).toBe(1);
+});
+
+it.each(['primary','fallback'])('%s 모델을 제거하면 완료된 대체 의견도 합의에서 제외한다', async removed => {
+  await saveSettings({ secondReview: { fallbacks: [{ provider: 'abcllm', model: 'backup' }] } }, 'fixture');
+  await held('acme/retired-fallback'); await firstReview('acme/retired-fallback', 'approve'); await enqueueSecondReviews(await getSettings());
+  const [root] = await pendingSecondReviews(1);
+  await recordSecondReview(root.id, {ok:false,error:'timeout',provider:'claude-cli',model:'opus'});
+  const [row] = await pendingSecondReviews(1);
+  await recordSecondReview(row.id, {ok:true,decision:'approve',confidence:.9,reason:'observed',provider:'abcllm',model:'backup',status:'agreed'});
+  expect(await closeSettledSecondReviews()).toBe(0);
+  await saveSettings({secondReview: removed==='primary' ? {voters:[{provider:'abcllm',model:'replacement'}]} : {fallbacks:[]}}, 'fixture');
+  await closeSettledSecondReviews();
+  expect((await db.select().from(secondReviews).where(eq(secondReviews.id,row.id)))[0]).toMatchObject({status:'resolved',resolution:'model_removed',secondDecision:'approve'});
+  expect(await secondReviewsFor([row.candidateId])).toHaveLength(0);
+});
+
+it.each(['settings','source'])('대체 심사 도중 %s 변경은 늦은 결과와 추가 대체 배정을 막는다', async changed => {
+  await saveSettings({ secondReview: { fallbacks: [{ provider: 'abcllm', model: 'backup' },{provider:'abcllm',model:'backup2'}] } }, 'fixture');
+  await held('acme/stale-backup'); await firstReview('acme/stale-backup', 'approve'); await enqueueSecondReviews(await getSettings());
+  const [root] = await pendingSecondReviews(1);
+  await recordSecondReview(root.id, {ok:false,error:'timeout',provider:'claude-cli',model:'opus'});
+  const [row] = await pendingSecondReviews(1);
+  if (changed==='settings') await saveSettings({secondReview:{voters:[{provider:'abcllm',model:'replacement'}]}},'fixture');
+  else await db.update(crawlDocuments).set({pageMeta:{title:'changed'}}).where(eq(crawlDocuments.repo,row.repo));
+  await recordSecondReview(row.id, {ok:false,error:'timeout',provider:'abcllm',model:'backup'});
+  expect(await db.select().from(secondReviews)).toHaveLength(2);
+  expect((await db.select().from(secondReviews).where(eq(secondReviews.id,row.id)))[0]).toMatchObject({status:'resolved',resolution:'superseded',failureCount:1});
+});
+
+it.each(['cancelled','input_too_large'])('%s 는 다른 모델을 소비하지 않는다', async error => {
+  await saveSettings({secondReview:{fallbacks:[{provider:'abcllm',model:'backup'}]}},'fixture');
+  await held('acme/no-fallback'); await firstReview('acme/no-fallback','approve'); await enqueueSecondReviews(await getSettings());
+  const [row] = await pendingSecondReviews(1);
+  await recordSecondReview(row.id,{ok:false,error,provider:'claude-cli',model:'opus'});
+  const rows = await db.select().from(secondReviews);
+  expect(rows).toHaveLength(1);
+  expect(rows[0].failureCount).toBe(error==='cancelled'?0:1);
+});
+
+it('다른 기본 모델의 MLX 별칭을 fallback 표로 배정하지 않는다', async () => {
+  await saveSettings({secondReview:{voters:[{provider:'claude-cli',model:'opus'},{provider:'abcllm',model:'[MLX] primary'}],
+    fallbacks:[{provider:'abcllm',model:'primary'},{provider:'abcllm',model:'backup'}]}},'fixture');
+  await held('acme/alias-backup'); await firstReview('acme/alias-backup','approve'); await enqueueSecondReviews(await getSettings());
+  const root=(await pendingSecondReviews(10)).find(r=>r.model==='opus')!;
+  await recordSecondReview(root.id,{ok:false,error:'timeout',provider:'claude-cli',model:'opus'});
+  const [row]=await pendingSecondReviews(1);
+  expect(row).toMatchObject({model:'backup',fallbackForId:root.id});
+});

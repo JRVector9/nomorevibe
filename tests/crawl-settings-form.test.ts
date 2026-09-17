@@ -122,3 +122,12 @@ describe("검색 신호 편집", () => {
     });
   });
 });
+
+it('대체 모델 두 칸을 표시하고 입력 순서대로 저장한다', async () => {
+  expect(render(twoSignals)).toContain('name="fallbackModel0"');
+  const form = submitted({ fallbackProvider0: 'claude-cli', fallbackModel0: 'opus', fallbackProvider1: 'abcllm', fallbackModel1: 'qwen3-coder:30b' });
+  await saveCrawlSettings(null, form);
+  expect(saveSettings.mock.calls.at(-1)?.[0].secondReview.fallbacks).toEqual([
+    { provider: 'claude-cli', model: 'opus' },{ provider: 'abcllm', model: 'qwen3-coder:30b' },
+  ]);
+});

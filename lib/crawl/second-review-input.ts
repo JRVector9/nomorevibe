@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { and, desc, eq, inArray } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { crawlCandidates, crawlDocuments, crawlReviewAttempts, crawlSettings, type SecondReview } from "@/lib/db/schema";
+import { crawlCandidates, crawlDocuments, crawlReviewAttempts, crawlSettings, secondReviews, type SecondReview } from "@/lib/db/schema";
 import type { ProductTransaction } from "@/lib/domain/products/generation";
 import { lockRepositoryAgentEvidence } from "@/lib/domain/evidence/agents/lock";
 import { loadReviewInput } from "./agent-review-repository";
@@ -28,8 +28,15 @@ export async function loadSecondReviewInput(row: SecondReview, tx?: ProductTrans
   if (!document || candidate.productUrl !== document.productUrl) return null;
   if (tx) await lockRepositoryAgentEvidence(tx, row.repo);
   const settings = mergeWithDefaults(saved?.values);
-  if (!settings.enabled || !settings.secondReview.enabled
-    || !settings.secondReview.voters.some(voter => voter.provider === row.provider && sameReviewModel(voter.model, row.model))) return null;
+  if (!settings.enabled || !settings.secondReview.enabled) return null;
+  const pool = row.fallbackForId ? settings.secondReview.fallbacks ?? [] : settings.secondReview.voters;
+  if (!pool.some(voter => voter.provider === row.provider && sameReviewModel(voter.model, row.model))) return null;
+  if (row.fallbackForId) {
+    const [root] = await executor.select().from(secondReviews).where(eq(secondReviews.id, row.fallbackForId));
+    if (!root || root.fallbackForId || root.candidateId !== row.candidateId || root.generationKey !== row.generationKey
+      || root.inputHash !== row.inputHash || root.status !== "resolved" || root.resolution !== "fallback"
+      || !settings.secondReview.voters.some(voter => voter.provider === root.provider && sameReviewModel(voter.model, root.model))) return null;
+  }
   const input = await loadReviewInput(candidate, document, settings, executor);
   if (secondReviewGeneration(row.firstAttemptId, input) !== row.generationKey || sameReviewModel(row.firstModel, row.model)) return null;
   if (!row.publishedSlug) {
