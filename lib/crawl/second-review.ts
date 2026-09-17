@@ -290,13 +290,21 @@ export async function enqueueSecondReviews(settings: CrawlSettings, now = new Da
 export async function closeSettledSecondReviews(now = new Date()): Promise<number> {
   // Removed voters must not keep consuming retries or influence current consensus.
   const [saved] = await db.select().from(crawlSettings).limit(1);
-  const voters = mergeWithDefaults(saved?.values).secondReview.voters;
+  const {voters, fallbacks = []} = mergeWithDefaults(saved?.values).secondReview;
   const removed = await db.update(secondReviews).set({ status: "resolved", resolution: "model_removed", resolvedAt: now })
     .where(and(inArray(secondReviews.status, ["pending", "failed", "agreed", "needs_human"]),
-      sql`not exists(select 1 from jsonb_array_elements(${JSON.stringify(voters)}::jsonb) v
+      sql`not exists(select 1 from jsonb_array_elements(case when ${secondReviews.fallbackForId} is null then ${JSON.stringify(voters)}::jsonb else ${JSON.stringify(fallbacks)}::jsonb end) v
         where v->>'provider'=coalesce(${secondReviews.provider}, 'claude-cli')
           and regexp_replace(lower(trim(v->>'model')), '^\\[mlx\\][[:space:]]*', '', 'i')
-            = regexp_replace(lower(trim(${secondReviews.model})), '^\\[mlx\\][[:space:]]*', '', 'i'))`))
+            = regexp_replace(lower(trim(${secondReviews.model})), '^\\[mlx\\][[:space:]]*', '', 'i')
+          and (${secondReviews.fallbackForId} is null or exists(select 1 from second_reviews root
+            where root.id=${secondReviews.fallbackForId} and root.fallback_for_id is null
+              and root.candidate_id=${secondReviews.candidateId} and root.generation_key=${secondReviews.generationKey}
+              and root.input_hash=${secondReviews.inputHash} and root.status='resolved' and root.resolution='fallback'
+              and exists(select 1 from jsonb_array_elements(${JSON.stringify(voters)}::jsonb) primary_v
+                where primary_v->>'provider'=root.provider
+                  and regexp_replace(lower(trim(primary_v->>'model')), '^\\[mlx\\][[:space:]]*', '', 'i')
+                    = regexp_replace(lower(trim(root.model)), '^\\[mlx\\][[:space:]]*', '', 'i')))))`))
     .returning({ id: secondReviews.id });
   // A prompt upgrade invalidates these inputs before any model call. Retain completed historical opinions.
   const obsolete = await db.update(secondReviews).set({status: "resolved", resolution: "superseded", resolvedAt: now})
@@ -330,12 +338,13 @@ async function closeDecidedSecondReviews(now: Date): Promise<number> {
 }
 
 export async function pendingSecondReviews(limit: number) {
-  return db.select().from(secondReviews).where(eq(secondReviews.status, "pending")).orderBy(secondReviews.id).limit(limit);
+  return db.select().from(secondReviews).where(eq(secondReviews.status, "pending")).orderBy(desc(sql`${secondReviews.fallbackForId} is not null`), secondReviews.id).limit(limit);
 }
 
 export async function recordSecondReview(id: number, result:
   | { ok: true; decision: string; confidence: number | null; reason: string; model: string; provider: SecondReviewProvider; status: "agreed" | "needs_human" }
   | { ok: false; error: string; detail?: string; model: string; provider: SecondReviewProvider }, now = new Date(), lease?: JobLease): Promise<void> {
+  if (!result.ok && result.error === "cancelled") return;
   await db.transaction(async tx => {
     const [original] = await tx.select().from(secondReviews).where(eq(secondReviews.id, id));
     if (!original || original.status !== "pending") return;
@@ -349,7 +358,26 @@ export async function recordSecondReview(id: number, result:
       return;
     }
     const [saved] = await tx.select().from(crawlSettings).limit(1);
-    const agreeAt = mergeWithDefaults(saved?.values).secondReview.agreeAt;
+    const settings = mergeWithDefaults(saved?.values);
+    const agreeAt = settings.secondReview.agreeAt;
+    if (!result.ok && result.error !== "input_too_large" && row.failureCount + 1 < MAX_SECOND_REVIEW_FAILURES) {
+      // The candidate lock from loadSecondReviewInput serializes allocation across primary slots.
+      const attempted = await tx.select({model: secondReviews.model}).from(secondReviews).where(and(
+        eq(secondReviews.candidateId, row.candidateId), eq(secondReviews.generationKey, row.generationKey)));
+      const excluded = [row.firstModel, ...settings.secondReview.voters.map(v => v.model), ...attempted.map(v => v.model)];
+      const backup = (settings.secondReview.fallbacks ?? []).find(v => !excluded.some(model => sameReviewModel(model, v.model)));
+      if (backup) {
+        await tx.insert(secondReviews).values({ ...backup, candidateId: row.candidateId, repo: row.repo,
+          publishedSlug: row.publishedSlug, trigger: row.trigger, signals: row.signals,
+          firstDecision: row.firstDecision, firstConfidence: row.firstConfidence, firstModel: row.firstModel,
+          firstAttemptId: row.firstAttemptId, inputHash: row.inputHash, generationKey: row.generationKey,
+          fallbackForId: row.fallbackForId ?? row.id, failureCount: row.failureCount + 1 });
+        await tx.update(secondReviews).set({ status: "resolved", resolution: "fallback", resolvedAt: now,
+          reviewedAt: now, failureCount: row.failureCount + 1, errorCode: result.error.slice(0, 60),
+          errorDetail: result.detail?.slice(0, 80) ?? null }).where(eq(secondReviews.id, id));
+        return;
+      }
+    }
     await tx.update(secondReviews).set(result.ok
       ? { status: combineVerdicts({decision: row.firstDecision, confidence: row.firstConfidence, model: row.firstModel},
           {decision: result.decision, confidence: result.confidence, provider: result.provider, model: result.model},
@@ -470,7 +498,7 @@ export async function secondReviewsFor(candidateIds: number[]) {
     .where(and(inArray(secondReviews.candidateId, candidateIds),
       // 새 입력이나 제거된 모델의 표는 뺀다. 사람이 먼저 결정해 닫힌 표나 확신 없는 1차로 닫힌 표는
       // 그 입력에 대한 지금 의견이라 그대로 보여 준다
-      or(isNull(secondReviews.resolution), notInArray(secondReviews.resolution, ["superseded", "model_removed"]))!))
+      or(isNull(secondReviews.resolution), notInArray(secondReviews.resolution, ["superseded", "model_removed", "fallback"]))!))
     .orderBy(secondReviews.candidateId, secondReviews.id);
 }
 

@@ -1,0 +1,23 @@
+{
+  "opus-evaluation.jsonl": {
+    "completed": 14,
+    "valid": 14,
+    "referenceAgreement": 14,
+    "disagreementIds": [],
+    "errors": {},
+    "medianMs": 4607.5,
+    "maxMs": 9930
+  },
+  "fallback-evaluation.jsonl": {
+    "completed": 12,
+    "valid": 4,
+    "referenceAgreement": 4,
+    "disagreementIds": [],
+    "errors": {
+      "timeout": 8
+    },
+    "medianMs": 60003.0,
+    "maxMs": 60007
+  },
+  "limitations": "Purposively selected 14 cases, 12 historical admin labels plus 2 manually inspected current failures. Not general accuracy. Coder stopped after 12 completed calls (2 uncompleted excluded). No production judgments changed by probes."
+}

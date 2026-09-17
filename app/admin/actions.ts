@@ -72,6 +72,10 @@ export async function saveCrawlSettings(_prev: SaveState, form: FormData): Promi
         const model = String(form.get(`voterModel${index}`) ?? "").trim();
         return model ? [{ provider: String(form.get(`voterProvider${index}`) ?? "claude-cli"), model }] : [];
       }),
+      fallbacks: [0, 1].flatMap((index) => {
+        const model = String(form.get(`fallbackModel${index}`) ?? "").trim();
+        return model ? [{ provider: String(form.get(`fallbackProvider${index}`) ?? "claude-cli"), model }] : [];
+      }),
       includeAiHeld: form.get("secondReviewIncludeAiHeld") === "on",
       sampleRate: num(form.get("secondReviewSamplePercent")) / 100,
       agreeAt: num(form.get("secondReviewAgreeAt")),

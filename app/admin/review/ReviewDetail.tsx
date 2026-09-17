@@ -90,7 +90,7 @@ export function ReviewDetail({ entry, reasons }: { entry: AdminReviewEntry; reas
         <p key={`${vote.model ?? 'model'}-${index}`}
           className={`rounded-lg border px-2.5 py-2 text-[13px] leading-[1.6] text-fg-2 ${
             vote.status === 'agreed' ? 'border-up/40 bg-up/5' : vote.status === 'pending' ? 'border-line bg-bg-soft' : 'border-warn/40 bg-warn/5'}`}>
-          <b className="font-semibold">2차 {
+          <b className="font-semibold">2차 {vote.isFallback ? "대체 심사 · " : ""}{
             vote.status === 'pending' ? '아직 안 봄'
               : vote.status === 'failed' ? `실패 · ${vote.errorCode ?? '알 수 없음'}`
               : vote.status === 'needs_human' && vote.errorCode ? '재시도 종료 · 직접 확인 필요'
