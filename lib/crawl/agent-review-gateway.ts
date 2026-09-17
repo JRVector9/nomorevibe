@@ -106,6 +106,9 @@ export async function reviewWithGateway(input: ReviewInput, options: {
       method: "POST",
       headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
       body: JSON.stringify({
+        // The gateway's default Gemma adapter summarizes and clips evidence/policy.
+        // Review decisions must use the exact snapshot whose hash we record.
+        context_strategy: "raw",
         model, stream: false, temperature: 0, max_tokens: MAX_OUTPUT_TOKENS, reasoning_effort: "low",
         chat_template_kwargs: { enable_thinking: false },
         response_format: { type: "json_schema", json_schema: { name: "review", schema: GATEWAY_SCHEMA } },
@@ -132,7 +135,7 @@ export async function reviewWithGateway(input: ReviewInput, options: {
     const parsed: unknown = JSON.parse(body);
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("invalid_envelope");
     envelope = parsed as Record<string, unknown>;
-  } catch { return { ok: false, error: "invalid_output" }; }
+  } catch { return { ok: false, error: "invalid_output", detail: "invalid_envelope" }; }
   const usage = usageFrom(envelope);
   const choices = Array.isArray(envelope.choices) ? envelope.choices : [];
   const choice = choices[0] && typeof choices[0] === "object" ? choices[0] as Record<string, unknown> : null;
@@ -140,10 +143,16 @@ export async function reviewWithGateway(input: ReviewInput, options: {
   if (choice?.finish_reason === "length") return { ok: false, error: "output_too_large", usage };
   const message = choice ? choice.message : null;
   const content = message && typeof message === "object" ? (message as Record<string, unknown>).content : null;
-  if (typeof content !== "string") return { ok: false, error: "invalid_output", usage };
+  if (typeof content !== "string") return { ok: false, error: "invalid_output", detail: "missing_content", usage };
   const value = parseGatewayContent(content);
-  if (!value) return { ok: false, error: "invalid_output", usage };
+  if (!value) return { ok: false, error: "invalid_output", detail: "invalid_json", usage };
   try {
     return { ok: true, outcome: validateReviewOutcome(input, value), usage };
-  } catch { return { ok: false, error: "invalid_output", usage }; }
+  } catch (error) {
+    // Only fixed diagnostic codes leave this boundary, never model/source text.
+    const code = error instanceof Error ? error.message : "";
+    const detail = ["review_unknown_evidence", "review_missing_evidence", "review_evidence_policy_failed"].includes(code)
+      ? code : "schema_validation";
+    return { ok: false, error: "invalid_output", detail, usage };
+  }
 }

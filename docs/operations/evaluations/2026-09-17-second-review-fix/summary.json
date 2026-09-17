@@ -1,0 +1,31 @@
+{
+  "[MLX] gemma4-26b": {
+    "calls": 14,
+    "valid": 14,
+    "referenceAgreement": 12,
+    "falseApprove": 2,
+    "medianMs": 10853.5,
+    "maxMs": 30209,
+    "failures": []
+  },
+  "[MLX] qwen3.8-27b": {
+    "calls": 14,
+    "valid": 14,
+    "referenceAgreement": 14,
+    "falseApprove": 0,
+    "medianMs": 26109.5,
+    "maxMs": 56199,
+    "failures": []
+  },
+  "[MLX] gpt-oss-120b": {
+    "calls": 14,
+    "valid": 13,
+    "referenceAgreement": 11,
+    "falseApprove": 1,
+    "medianMs": 15439.5,
+    "maxMs": 28435,
+    "failures": [
+      "gateway_error"
+    ]
+  }
+}

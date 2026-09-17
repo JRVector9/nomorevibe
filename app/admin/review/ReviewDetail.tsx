@@ -93,6 +93,7 @@ export function ReviewDetail({ entry, reasons }: { entry: AdminReviewEntry; reas
           <b className="font-semibold">2차 {
             vote.status === 'pending' ? '아직 안 봄'
               : vote.status === 'failed' ? `실패 · ${vote.errorCode ?? '알 수 없음'}`
+              : vote.status === 'needs_human' && vote.errorCode ? '재시도 종료 · 직접 확인 필요'
               : vote.decision === 'approve' ? '승인' : vote.decision === 'reject' ? '거부' : vote.decision === 'needs_review' ? '보류' : vote.status}</b>
           {vote.model ? <span className="ml-1.5 font-mono text-fg-3">{vote.model}</span> : null}
           {typeof vote.confidence === 'number' ? <span className="ml-1.5 font-mono text-fg-3">확신 {vote.confidence.toFixed(2)}</span> : null}

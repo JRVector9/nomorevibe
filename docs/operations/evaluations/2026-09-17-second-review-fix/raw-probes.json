@@ -1,0 +1,135 @@
+[
+  {
+    "id": 56165,
+    "model": "[MLX] gemma4-26b",
+    "mode": "raw",
+    "at": "2026-09-17T00:57:56.956Z",
+    "durationMs": 13507,
+    "result": {
+      "ok": true,
+      "outcome": {
+        "decision": "approve",
+        "reason": "The product URL (https://endersgamesdev.github.io/EmberEngine) hosts a collection of playable browser games and labs built with the Ember Engine. The page text and README confirm that these are live, interactive web-based games (e.g., Killshot, End Game, Fire Racer) that a person can open and play immediately in their browser. While the repository contains engine source code, the URL itself serves as the deployment target for the playable products.",
+        "evidenceIds": [
+          "product"
+        ],
+        "confidence": 1
+      },
+      "usage": {
+        "inputTokens": 2444,
+        "outputTokens": 141
+      }
+    }
+  },
+  {
+    "id": 56165,
+    "model": "[MLX] gemma4-31b",
+    "mode": "raw",
+    "at": "2026-09-17T00:58:08.493Z",
+    "durationMs": 25041,
+    "result": {
+      "ok": true,
+      "outcome": {
+        "decision": "approve",
+        "reason": "The URL leads to a functional game launcher/portal where users can play several browser-based games (e.g., Killshot, Fire Racer, Four Kings) built with the Ember Engine. The page text and README explicitly describe it as a place to 'play the latest builds' of these games in the browser.",
+        "evidenceIds": [
+          "product"
+        ],
+        "confidence": 1
+      },
+      "usage": {
+        "inputTokens": 2444,
+        "outputTokens": 109
+      }
+    }
+  },
+  {
+    "id": 59654,
+    "model": "[MLX] gemma4-26b",
+    "mode": "raw",
+    "at": "2026-09-17T00:58:17.844Z",
+    "durationMs": 9351,
+    "result": {
+      "ok": true,
+      "outcome": {
+        "decision": "approve",
+        "reason": "The product URL (https://sitemap-watch.vercel.app) is a deployed application for monitoring sitemaps to discover new content on gaming sites. The page text shows a login screen ('登录 · Sitemap Watch'), and the README describes a functional web application with features like a dashboard, monitoring, and scan history. The deployment on Vercel indicates it is a live, usable service.",
+        "evidenceIds": [
+          "product"
+        ],
+        "confidence": 1
+      },
+      "usage": {
+        "inputTokens": 1998,
+        "outputTokens": 125
+      }
+    }
+  },
+  {
+    "id": 56165,
+    "model": "[MLX] qwen3.8-27b",
+    "mode": "raw",
+    "at": "2026-09-17T00:58:30.349Z",
+    "durationMs": 33392,
+    "result": {
+      "ok": true,
+      "outcome": {
+        "decision": "approve",
+        "reason": "The product URL (https://endersgamesdev.github.io/EmberEngine) serves a functional web-based game launcher and playable browser games (e.g., Killshot, Fire Racer) built with a Rust/wgpu engine. The page text confirms users can 'Pick a game, play its newest release' and lists specific interactive games and labs. Although the rule stopped at a host exclusion pattern for *.github.io, the evidence shows this is a deployed, usable product (a game platform) rather than just documentation or a repository listing. The presence of CLAUDE.md is development evidence and does not affect the usability of the deployed site.",
+        "evidenceIds": [
+          "product",
+          "observation:56884"
+        ],
+        "confidence": 0.95
+      },
+      "usage": {
+        "inputTokens": 2324,
+        "outputTokens": 184
+      }
+    }
+  },
+  {
+    "id": 59654,
+    "model": "[MLX] qwen3.8-27b",
+    "mode": "raw",
+    "at": "2026-09-17T00:58:53.518Z",
+    "durationMs": 23168,
+    "result": {
+      "ok": true,
+      "outcome": {
+        "decision": "reject",
+        "reason": "The page text indicates the URL is a login wall ('登录 · Sitemap Watch', '访问口令', '进入工作台'), which is explicitly excluded from being a usable product. The README describes a functional tool, but the deployed URL requires authentication to access the actual application.",
+        "evidenceIds": [
+          "product"
+        ],
+        "confidence": 0.95
+      },
+      "usage": {
+        "inputTokens": 1883,
+        "outputTokens": 98
+      }
+    }
+  },
+  {
+    "id": 59654,
+    "model": "[MLX] gemma4-31b",
+    "mode": "raw",
+    "at": "2026-09-17T00:59:04.419Z",
+    "durationMs": 46575,
+    "result": {
+      "ok": true,
+      "outcome": {
+        "decision": "approve",
+        "reason": "The product is a deployed game discovery workbench ('Sitemap Watch') that allows users to monitor game site sitemaps for new and removed content. The URL leads to a functional login/entry page ('登录 · Sitemap Watch'), and the README describes a fully implemented service with features like a change list, site monitoring, and scan history, deployed on Vercel.",
+        "evidenceIds": [
+          "product"
+        ],
+        "confidence": 1
+      },
+      "usage": {
+        "inputTokens": 1998,
+        "outputTokens": 118
+      }
+    }
+  }
+]

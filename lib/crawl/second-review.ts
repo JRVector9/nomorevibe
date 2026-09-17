@@ -200,7 +200,10 @@ export async function enqueueSecondReviews(settings: CrawlSettings, now = new Da
   const decided = await db.select().from(latest)
     .where(and(eq(latest.promptVersion, REVIEW_PROMPT_VERSION), eq(latest.rulesVersion, REVIEW_RULES_VERSION), gt(latest.validUntil, now), sql`${required} > 0`, sql`(select count(*) from ${secondReviews} s
       where s.candidate_id = ${latest.candidateId} and s.input_hash = ${latest.inputHash}
-        and s.first_attempt_id = ${latest.firstAttemptId}) < ${required}`))
+        and s.first_attempt_id = ${latest.firstAttemptId}
+        and exists(select 1 from jsonb_array_elements(${JSON.stringify(voters)}::jsonb) v
+          where v->>'provider'=s.provider and regexp_replace(lower(trim(v->>'model')), '^\\[mlx\\][[:space:]]*', '', 'i')
+            = regexp_replace(lower(trim(s.model)), '^\\[mlx\\][[:space:]]*', '', 'i'))) < ${required}`))
     .limit(ENQUEUE_LIMIT * 4);
   /**
    * 세워 둔 모델마다 한 행. 누가 볼지를 올릴 때 적는다 — 유일 색인이 (후보, 입력, 모델)이라
@@ -285,6 +288,16 @@ export async function enqueueSecondReviews(settings: CrawlSettings, now = new Da
  * 지우지 않는다. 몇 건을 누가 어떻게 끝냈는지가 2차 심사의 정확도다.
  */
 export async function closeSettledSecondReviews(now = new Date()): Promise<number> {
+  // Removed voters must not keep consuming retries or influence current consensus.
+  const [saved] = await db.select().from(crawlSettings).limit(1);
+  const voters = mergeWithDefaults(saved?.values).secondReview.voters;
+  const removed = await db.update(secondReviews).set({ status: "resolved", resolution: "model_removed", resolvedAt: now })
+    .where(and(inArray(secondReviews.status, ["pending", "failed", "agreed", "needs_human"]),
+      sql`not exists(select 1 from jsonb_array_elements(${JSON.stringify(voters)}::jsonb) v
+        where v->>'provider'=coalesce(${secondReviews.provider}, 'claude-cli')
+          and regexp_replace(lower(trim(v->>'model')), '^\\[mlx\\][[:space:]]*', '', 'i')
+            = regexp_replace(lower(trim(${secondReviews.model})), '^\\[mlx\\][[:space:]]*', '', 'i'))`))
+    .returning({ id: secondReviews.id });
   // A prompt upgrade invalidates these inputs before any model call. Retain completed historical opinions.
   const obsolete = await db.update(secondReviews).set({status: "resolved", resolution: "superseded", resolvedAt: now})
     .where(and(inArray(secondReviews.status, ["pending", "failed"]), or(eq(secondReviews.generationKey, "legacy"),
@@ -296,13 +309,13 @@ export async function closeSettledSecondReviews(now = new Date()): Promise<numbe
     .where(and(eq(secondReviews.trigger, "ai_decided"), isNull(secondReviews.firstConfidence),
       inArray(secondReviews.status, ["pending", "agreed", "needs_human", "failed"])))
     .returning({ id: secondReviews.id });
-  return obsolete.length + legacy.length + await closeDecidedSecondReviews(now);
+  return removed.length + obsolete.length + legacy.length + await closeDecidedSecondReviews(now);
 }
 
 async function closeDecidedSecondReviews(now: Date): Promise<number> {
   // 공개분의 일치는 끝난 기록이다(그대로 둔다) — 훑는 대상에 넣으면 날마다 쌓여 한도를 잡아먹는다
   const open = await db.select({ id: secondReviews.id, candidateId: secondReviews.candidateId, published: secondReviews.publishedSlug })
-    .from(secondReviews).where(or(inArray(secondReviews.status, ["pending", "needs_human"]),
+    .from(secondReviews).where(or(inArray(secondReviews.status, ["pending", "failed", "needs_human"]),
       and(eq(secondReviews.status, "agreed"), isNull(secondReviews.publishedSlug))))
     .orderBy(secondReviews.id).limit(1_000);
   if (!open.length) return 0;
@@ -322,7 +335,7 @@ export async function pendingSecondReviews(limit: number) {
 
 export async function recordSecondReview(id: number, result:
   | { ok: true; decision: string; confidence: number | null; reason: string; model: string; provider: SecondReviewProvider; status: "agreed" | "needs_human" }
-  | { ok: false; error: string; model: string; provider: SecondReviewProvider }, now = new Date(), lease?: JobLease): Promise<void> {
+  | { ok: false; error: string; detail?: string; model: string; provider: SecondReviewProvider }, now = new Date(), lease?: JobLease): Promise<void> {
   await db.transaction(async tx => {
     const [original] = await tx.select().from(secondReviews).where(eq(secondReviews.id, id));
     if (!original || original.status !== "pending") return;
@@ -343,8 +356,13 @@ export async function recordSecondReview(id: number, result:
           // Consensus summary independently applies the current configured threshold.
           agreeAt,
           Boolean(row.publishedSlug)), secondDecision: result.decision, secondConfidence: result.confidence,
-          secondReason: result.reason.slice(0, 2000), errorCode: null, reviewedAt: now }
-      : { status: "failed", errorCode: result.error.slice(0, 60), reviewedAt: now })
+          secondReason: result.reason.slice(0, 2000), errorCode: null, errorDetail: null, reviewedAt: now }
+      : { status: row.failureCount + 1 >= MAX_SECOND_REVIEW_FAILURES ? "needs_human" : "failed",
+          failureCount: row.failureCount + 1, errorCode: result.error.slice(0, 60),
+          errorDetail: result.detail?.slice(0, 80) ?? null, reviewedAt: now,
+          secondDecision: null, secondConfidence: null,
+          secondReason: row.failureCount + 1 >= MAX_SECOND_REVIEW_FAILURES
+            ? "모델 심사가 3회 실패했습니다. 자동 재시도를 종료했으므로 직접 확인해주세요." : null })
       .where(eq(secondReviews.id, id));
   });
 }
@@ -360,13 +378,14 @@ export type SecondReviewFailure = { provider: string | null; model: string | nul
 export async function recentSecondReviewFailures(now = new Date()): Promise<SecondReviewFailure[]> {
   const rows = await db.select({ provider: secondReviews.provider, model: secondReviews.model, errorCode: secondReviews.errorCode,
     count: sql<number>`count(*)::int` }).from(secondReviews)
-    .where(and(isNotNull(secondReviews.errorCode), gte(secondReviews.reviewedAt, new Date(now.getTime() - 24 * 3600_000))))
+    .where(and(inArray(secondReviews.status, ["pending", "failed", "needs_human"]), isNotNull(secondReviews.errorCode), gte(secondReviews.reviewedAt, new Date(now.getTime() - 24 * 3600_000))))
     .groupBy(secondReviews.provider, secondReviews.model, secondReviews.errorCode)
     .orderBy(desc(sql`count(*)`));
   return rows.map((row) => ({ ...row, errorCode: row.errorCode ?? "unknown", count: Number(row.count) }));
 }
 
 /** 잠깐 막힌 것과 그렇지 않은 것 — 다시 보는 때가 다르다 */
+export const MAX_SECOND_REVIEW_FAILURES = 3;
 const TRANSIENT = ["timeout", "gateway_error", "rate_limited", "budget"];
 export const TRANSIENT_RETRY_MS = 5 * 60_000;
 const RETRY_MS = 60 * 60_000;
@@ -383,7 +402,7 @@ const RETRY_MS = 60 * 60_000;
  */
 export async function retryFailedSecondReviews(now = new Date()): Promise<void> {
   await db.update(secondReviews).set({ status: "pending" })
-    .where(and(eq(secondReviews.status, "failed"),
+    .where(and(eq(secondReviews.status, "failed"), lt(secondReviews.failureCount, MAX_SECOND_REVIEW_FAILURES),
       or(
         and(inArray(secondReviews.errorCode, TRANSIENT), lt(secondReviews.reviewedAt, new Date(now.getTime() - TRANSIENT_RETRY_MS))),
         lt(secondReviews.reviewedAt, new Date(now.getTime() - RETRY_MS)),
@@ -449,9 +468,9 @@ export async function secondReviewsFor(candidateIds: number[]) {
   if (!candidateIds.length) return [];
   return db.select().from(secondReviews)
     .where(and(inArray(secondReviews.candidateId, candidateIds),
-      // 새 입력이 대신한 표만 뺀다. 사람이 먼저 결정해 닫힌 표나 확신 없는 1차로 닫힌 표는
+      // 새 입력이나 제거된 모델의 표는 뺀다. 사람이 먼저 결정해 닫힌 표나 확신 없는 1차로 닫힌 표는
       // 그 입력에 대한 지금 의견이라 그대로 보여 준다
-      or(isNull(secondReviews.resolution), notInArray(secondReviews.resolution, ["superseded"]))!))
+      or(isNull(secondReviews.resolution), notInArray(secondReviews.resolution, ["superseded", "model_removed"]))!))
     .orderBy(secondReviews.candidateId, secondReviews.id);
 }
 

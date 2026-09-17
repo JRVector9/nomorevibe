@@ -174,7 +174,7 @@ export default async function StatusPage() {
     actions.push({
       key: "second-failed", tone: gone ? "critical" : "hold", count: total, title: "2차 심사가 실패하고 있습니다",
       detail: <>
-        최근 24시간 · {secondFailures.slice(0, 3).map((row) => `${row.model ?? "모델 미상"} ${row.errorCode} ${row.count}건`).join(" · ")}
+        최근 24시간 미해결 오류 · {secondFailures.slice(0, 3).map((row) => `${row.model ?? "모델 미상"} ${row.errorCode} ${row.count}건`).join(" · ")}
         {gone && <> — 설정한 모델을 게이트웨이가 더 이상 갖고 있지 않습니다.</>}
       </>,
       action: { label: "2차 심사 설정", href: "/admin#second-review" },

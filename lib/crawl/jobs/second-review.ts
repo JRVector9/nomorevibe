@@ -12,11 +12,10 @@ import { loadSecondReviewInput } from "@/lib/crawl/second-review-input";
  * 예산 110초(scripts/worker.ts) 안에서 돈다. 잠금이 있어 틱이 겹치지 않으므로 긴 틱은 곧 쉬지
  * 않고 도는 것과 같다.
  *
- * 여덟을 함께 부르는 근거: 게이트웨이는 같은 모델 4개 동시 호출을 7.1초에 함께 끝냈다(배치가
- * 된다). 넷으로는 분당 5.5건이라 밀린 1,778행에 다섯 시간이 걸렸다. DB 연결 풀이 3이지만
- * 한 건의 대부분은 모델을 기다리는 시간이라 짧은 쿼리들은 줄을 서도 손해가 적다.
+ * 공유 게이트웨이에 여덟 요청을 한꺼번에 보내지 않는다. 모델을 바꿔도 제한을 유지하고,
+ * 실패는 개별 호출의 시간·오류 코드로 기록해 작업 성공과 구분한다.
  */
-const CONCURRENT = 8;
+const CONCURRENT = 4;
 const TICK_MS = 108_000;
 /** 한 틱에 집어 둘 일감 — 워커가 굶지 않을 만큼만 */
 const FETCH = CONCURRENT * 6;
@@ -59,6 +58,7 @@ export async function secondReviewCandidates(ctx: JobContext<null>): Promise<Job
         continue;
       }
       // 멈추라는 신호를 그대로 넘긴다 — 배포 때 진행 중인 호출이 바로 끊겨야 잠금을 놓고 나갈 수 있다
+      const callStartedAt = Date.now();
       const result = provider === "abcllm"
         ? await reviewWithGateway(input, { model, timeoutMs: limit, signal: ctx.signal })
         : await reviewWithAgent(input, { model, timeoutMs: limit, signal: ctx.signal });
@@ -66,7 +66,9 @@ export async function secondReviewCandidates(ctx: JobContext<null>): Promise<Job
         // 멈추라고 해서 끊긴 것은 실패가 아니다 — 그대로 두면 다음 회차가 처음부터 본다
         if (result.error === "cancelled" || ctx.signal?.aborted) { deferred += 1; continue; }
         failed += 1;
-        await recordSecondReview(row.id, { ok: false, error: result.error, model, provider }, new Date(), ctx.lease);
+        ctx.log("crawl.second_review_failed", { id: row.id, model, error: result.error,
+          detail: result.detail ?? null, durationMs: Date.now() - callStartedAt });
+        await recordSecondReview(row.id, { ok: false, error: result.error, detail: result.detail, model, provider }, new Date(), ctx.lease);
         continue;
       }
       reviewed += 1;
