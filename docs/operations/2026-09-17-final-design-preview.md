@@ -79,3 +79,12 @@ npm run dev:design
 후속 PR은 개발 계획의 M1(제품 상태) → M2(계정·Claim) → M3/M4(미션·장부) → M5(심사) → M6(개선·알림) 순서다. 증거 연동·유료 Sprint·Agent 실행은 이후 별도 단계다. 기존 시스템과 데이터 이관, 트랜잭션, 권한·감사 및 실제 운영 검증을 각 PR 완료 기준으로 명시했다.
 
 이번 브랜치는 **main에 병합하거나 운영 서버에 배포하지 않았다**. 기존 작업 디렉터리의 ProductHero 변경, PT 자료, 기존 프로토타입과 이전 작업 문서를 보존했다.
+
+## 외부 임시 링크 — 2026-09-17 17:57 KST 추가
+
+- 링크: https://regarding-develops-conjunction-thoroughly.trycloudflare.com/design
+- 별도 빌드 서버와 디자인 경로 전용 프록시를 Cloudflare Quick Tunnel에 연결했다. 루트 접속은 `/design`으로 이동한다. 운영 서비스의 배포·도메인·DB 설정은 바꾸지 않았다.
+- 이 맥과 네트워크, 서버·터널 프로세스가 유지되는 동안 사용할 수 있다. 터널을 재시작하면 URL이 달라진다.
+- 공개 주소에서 홈/상세/대시보드/크레딧/등록을 1440px·390px로 확인(10회), 모바일 검색·저장 통과, 콘솔 오류·가로 넘침 0. 일반 API/관리자 경로404, POST405 확인.
+- 초기 프록시의 Next-Url 헤더 누락으로 발생한 사전 로드 반복 요청을 수정했고 재검증했다. 애플리케이션 소스 변경은 없다.
+- 로컬 검증 기록: `.design-review/share/verification.json`. 재검증: `node .design-review/share/verify.mjs`. 상세 프로세스/재시작 정보는 CODEX_HANDOFF 참고.
