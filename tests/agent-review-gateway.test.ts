@@ -107,3 +107,19 @@ it("바깥 신호를 받아도 제한 시간은 살아 있다", async () => {
   expect(await reviewWithGateway(input(), { model: "m", timeoutMs: 5_000, signal: cancelled.signal, request: hanging }))
     .toEqual({ ok: false, error: "cancelled" });
 });
+
+it('심사 스냅샷은 게이트웨이 요약 없이 원문으로 전달한다', async () => {
+  vi.stubEnv('ABCLLM_API_KEY', 'k');
+  const request = answer(outcome);
+  await reviewWithGateway(input(), { model: '[MLX] gemma4-26b', request });
+  const [, init] = (request as unknown as { mock: { calls: [string, RequestInit][] } }).mock.calls[0];
+  expect(JSON.parse(String(init.body)).context_strategy).toBe('raw');
+});
+
+it('잘못된 JSON과 존재하지 않는 근거를 세부 오류로 구분하고 원문은 남기지 않는다', async () => {
+  vi.stubEnv('ABCLLM_API_KEY', 'k');
+  expect(await reviewWithGateway(input(), { model: 'm', request: answer('yes') }))
+    .toMatchObject({ ok: false, error: 'invalid_output', detail: 'invalid_json' });
+  expect(await reviewWithGateway(input(), { model: 'm', request: answer({ ...outcome, evidenceIds: ['invented'] }) }))
+    .toMatchObject({ ok: false, error: 'invalid_output', detail: 'review_unknown_evidence' });
+});

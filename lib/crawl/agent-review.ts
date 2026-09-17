@@ -17,7 +17,7 @@ export type ReviewFailure = "not_configured" | "input_too_large" | "timeout" | "
   /** 게이트웨이에 그 모델이 없다(404) — 목록이 예고 없이 바뀐다 */
   | "model_unavailable" | "gateway_error";
 export type AgentReviewResult = { ok: true; outcome: ReviewOutcome; usage: ReviewUsage }
-  | { ok: false; error: ReviewFailure; usage?: ReviewUsage };
+  | { ok: false; error: ReviewFailure; detail?: string; usage?: ReviewUsage };
 export type ReviewCliResult = { kind: "exit"; code: number | null; stdout: string; stderr: string }
   | { kind: "timeout" | "cancelled" | "output_too_large" | "missing_cli" | "cli_error" };
 export type ReviewCliRun = (args: string[], stdin: string, options: { timeoutMs: number; signal?: AbortSignal }) => Promise<ReviewCliResult>;

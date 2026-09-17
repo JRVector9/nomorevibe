@@ -28,7 +28,8 @@ export async function loadSecondReviewInput(row: SecondReview, tx?: ProductTrans
   if (!document || candidate.productUrl !== document.productUrl) return null;
   if (tx) await lockRepositoryAgentEvidence(tx, row.repo);
   const settings = mergeWithDefaults(saved?.values);
-  if (!settings.enabled || !settings.secondReview.enabled) return null;
+  if (!settings.enabled || !settings.secondReview.enabled
+    || !settings.secondReview.voters.some(voter => voter.provider === row.provider && sameReviewModel(voter.model, row.model))) return null;
   const input = await loadReviewInput(candidate, document, settings, executor);
   if (secondReviewGeneration(row.firstAttemptId, input) !== row.generationKey || sameReviewModel(row.firstModel, row.model)) return null;
   if (!row.publishedSlug) {

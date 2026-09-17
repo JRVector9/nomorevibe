@@ -41,6 +41,9 @@ export const secondReviews = pgTable("second_reviews", {
   secondConfidence: doublePrecision("second_confidence"),
   secondReason: text("second_reason"),
   errorCode: varchar("error_code", { length: 60 }),
+  errorDetail: varchar("error_detail", { length: 80 }),
+  /** Failed completed calls in this input/model generation; shutdown cancellation does not count. */
+  failureCount: integer("failure_count").notNull().default(0),
   status: varchar("status", { length: 20 }).$type<SecondReviewStatus>().notNull().default("pending"),
   resolvedBy: varchar("resolved_by", { length: 120 }),
   resolution: varchar("resolution", { length: 40 }),

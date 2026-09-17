@@ -77,7 +77,7 @@ it("한 틱에 일감을 넉넉히 집어 끝나는 대로 이어 본다", async
   mocks.pending.mockResolvedValue([row({ id: 7 }), row({ id: 8 }), row({ id: 9 })]);
   await secondReviewCandidates(context());
 
-  expect(mocks.pending).toHaveBeenCalledWith(48);
+  expect(mocks.pending).toHaveBeenCalledWith(24);
   expect(mocks.record).toHaveBeenCalledTimes(3);
 });
 
@@ -125,4 +125,19 @@ it("멈추라는 신호를 모델 호출에 그대로 넘기고, 끊긴 것은 �
   expect(mocks.gateway).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ signal: stopping.signal }));
   // 끊긴 표는 그대로 대기로 남는다 — 실패로 적으면 다시 볼 때까지 기다린다
   expect(mocks.record).not.toHaveBeenCalled();
+});
+
+
+it('모델 호출은 동시에 네 개까지만 진행한다', async () => {
+  let active = 0, peak = 0;
+  mocks.pending.mockResolvedValue(Array.from({ length: 12 }, (_, id) => row({ id })));
+  mocks.review.mockImplementation(async () => {
+    peak = Math.max(peak, ++active);
+    await new Promise(resolve => setTimeout(resolve, 1));
+    active--;
+    return { ok: false, error: 'timeout' };
+  });
+  await secondReviewCandidates(context());
+  expect(peak).toBe(4);
+  expect(mocks.record).toHaveBeenCalledTimes(12);
 });

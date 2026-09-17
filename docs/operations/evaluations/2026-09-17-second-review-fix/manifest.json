@@ -1,0 +1,12 @@
+{
+  "at": "2026-09-17T00:59:56.196Z",
+  "casesHash": "873a8e46fa189730ee1e0cd0af6dd3b8b988ebe00a18394a5659990db8b8d7ee",
+  "models": [
+    "[MLX] gemma4-26b",
+    "[MLX] qwen3.8-27b",
+    "[MLX] gpt-oss-120b"
+  ],
+  "concurrency": 2,
+  "mode": "raw",
+  "prompt": "2026-09-14.2"
+}

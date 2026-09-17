@@ -241,7 +241,7 @@ it('누가 볼지를 올릴 때 적고, 같은 모델로는 다시 올리지 않
   expect(await pendingSecondReviews(10)).toMatchObject([{ provider: 'abcllm', model: '[MLX] gemma4-26b' }]);
 });
 
-it('모델을 바꾸면 그다음 후보부터 새 모델이 본다 — 이미 받은 표를 다시 받지는 않는다', async () => {
+it('모델을 바꾸면 기존 후보와 새 후보 모두 새 모델의 표를 받는다', async () => {
   await saveSettings({ secondReview: { enabled: true, sampleRate: 0, agreeAt: 0.85,
     voters: [{ provider: 'abcllm', model: '[MLX] gemma4-26b' }] } }, 'fixture');
   await held('acme/before-swap');
@@ -253,11 +253,11 @@ it('모델을 바꾸면 그다음 후보부터 새 모델이 본다 — 이미 �
     voters: [{ provider: 'abcllm', model: '[MLX] gpt-oss-120b' }] } }, 'fixture');
   await held('acme/after-swap');
   await firstReview('acme/after-swap', 'reject');
-  expect(await enqueueSecondReviews(await getSettings())).toBe(1);
+  expect(await enqueueSecondReviews(await getSettings())).toBe(2);
 
   const rows = await db.select().from(secondReviews);
   expect(rows.map((row) => [row.repo, row.model]).sort())
-    .toEqual([['acme/after-swap', '[MLX] gpt-oss-120b'], ['acme/before-swap', '[MLX] gemma4-26b']]);
+    .toEqual([['acme/after-swap', '[MLX] gpt-oss-120b'], ['acme/before-swap', '[MLX] gemma4-26b'], ['acme/before-swap', '[MLX] gpt-oss-120b']]);
 });
 
 it('실패는 모델·까닭별로 세어 운영 화면에 드러난다', async () => {
@@ -631,4 +631,72 @@ it('closes unbound and retired pending generations before they block new work', 
   expect(await closeSettledSecondReviews()).toBe(2);
   expect(await pendingSecondReviews(10)).toEqual([]);
   expect((await db.select().from(secondReviews)).every(row=>row.resolution==='superseded')).toBe(true);
+});
+
+it('세 번 실패한 표는 사람 확인으로 끝내고 다시 호출하거나 찬성표로 세지 않는다', async () => {
+  await held('acme/exhausted');
+  await firstReview('acme/exhausted', 'approve');
+  await enqueueSecondReviews(await getSettings());
+  const [row] = await pendingSecondReviews(10);
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    const at = new Date(Date.now() + attempt * 3600_000);
+    await recordSecondReview(row.id, { ok: false, error: 'invalid_output', model: 'opus', provider: 'claude-cli' }, at);
+    await retryFailedSecondReviews(new Date(at.getTime() + 3600_001));
+  }
+  const [saved] = await db.select().from(secondReviews);
+  expect(saved).toMatchObject({ status: 'needs_human', failureCount: 3, secondDecision: null, errorCode: 'invalid_output' });
+  expect(await pendingSecondReviews(10)).toHaveLength(0);
+  expect((await secondReviewSummary(.85)).counts).toMatchObject({ pending: 0, needsHuman: 1, agreedApprove: 0 });
+});
+
+it('종료된 과거 실패는 현재 실패 경고에서 제외한다', async () => {
+  await held('acme/history');
+  await firstReview('acme/history', 'reject');
+  await enqueueSecondReviews(await getSettings());
+  const [row] = await pendingSecondReviews(10);
+  await recordSecondReview(row.id, { ok: false, error: 'timeout', model: 'opus', provider: 'claude-cli' });
+  await db.update(secondReviews).set({ status: 'resolved', resolution: 'superseded' }).where(eq(secondReviews.id, row.id));
+  expect(await recentSecondReviewFailures()).toEqual([]);
+});
+
+it('모델을 바꾼 기존 후보에도 새 모델을 올리고 제거한 모델의 미완료 표는 닫는다', async () => {
+  await held('acme/swap-existing');
+  await firstReview('acme/swap-existing', 'approve');
+  await enqueueSecondReviews(await getSettings());
+  const [old] = await pendingSecondReviews(10);
+  await saveSettings({ secondReview: { voters: [{ provider: 'abcllm', model: '[MLX] qwen3.8-27b' }] } }, 'fixture');
+  await closeSettledSecondReviews();
+  expect(await enqueueSecondReviews(await getSettings())).toBe(1);
+  const rows = await db.select().from(secondReviews).orderBy(secondReviews.id);
+  expect(rows[0]).toMatchObject({ id: old.id, status: 'resolved', resolution: 'model_removed' });
+  expect(rows[1]).toMatchObject({ model: '[MLX] qwen3.8-27b', status: 'pending' });
+  // In-flight results from the removed model cannot rejoin consensus.
+  await recordSecondReview(old.id, { ok: true, decision: 'approve', confidence: 1, reason: 'late', provider: 'claude-cli', model: 'opus', status: 'agreed' });
+  expect((await db.select().from(secondReviews).where(eq(secondReviews.id, old.id)))[0].status).toBe('resolved');
+});
+
+it('설정에서 제거한 모델은 정리 회차 전에도 늦은 응답을 기록할 수 없다', async () => {
+  await held('acme/removed-flight');
+  await firstReview('acme/removed-flight', 'approve');
+  await enqueueSecondReviews(await getSettings());
+  const [old] = await pendingSecondReviews(10);
+  await saveSettings({ secondReview: { voters: [{ provider: 'abcllm', model: '[MLX] qwen3.8-27b' }] } }, 'fixture');
+  await recordSecondReview(old.id, { ok: true, decision: 'approve', confidence: 1, reason: 'late', model: 'opus', provider: 'claude-cli', status: 'agreed' });
+  expect((await db.select().from(secondReviews).where(eq(secondReviews.id, old.id)))[0])
+    .toMatchObject({ status: 'resolved', resolution: 'superseded', secondDecision: null });
+});
+
+it('제거한 모델의 완료된 표도 현행 합의와 상세에서 제외하되 이력은 보존한다', async () => {
+  await held('acme/removed-opinion');
+  await firstReview('acme/removed-opinion', 'approve');
+  await enqueueSecondReviews(await getSettings());
+  const [old] = await pendingSecondReviews(10);
+  await recordSecondReview(old.id, { ok: true, decision: 'approve', confidence: 1, reason: 'old', model: 'opus', provider: 'claude-cli', status: 'agreed' });
+  await saveSettings({ secondReview: { voters: [{ provider: 'abcllm', model: '[MLX] qwen3.8-27b' }] } }, 'fixture');
+  await closeSettledSecondReviews();
+  await enqueueSecondReviews(await getSettings());
+  expect((await db.select().from(secondReviews).where(eq(secondReviews.id, old.id)))[0])
+    .toMatchObject({ status: 'resolved', resolution: 'model_removed', secondDecision: 'approve' });
+  expect((await secondReviewSummary(.85)).counts).toMatchObject({ pending: 1, agreedApprove: 0 });
+  expect(await secondReviewsFor([old.candidateId])).toHaveLength(1);
 });
