@@ -285,6 +285,58 @@ export function SettingsForm({ settings }: { settings: CrawlSettings }) {
         </div>
       </Panel>
 
+      {/*
+        1차 심사자와 동시 실행 수는 데이터로 뺐는데(2026-09-18) 한동안 이 화면에 없어 스크립트로만
+        바꿀 수 있었다. 배포 없이 조정하려고 뺀 값이라 화면이 없으면 그 이유가 반쪽이 된다.
+        발행을 막을지(reviewMode)는 여기서 못 바꾼다 — 심사 화면의 전용 폼에서만 바꾼다.
+      */}
+      <Panel
+        title="1차 심사"
+        note="규칙이 통과시킨 후보를 AI가 한 번 더 봅니다. 여기서는 누가 보는지와 한 번에 몇 건을 보는지를 정합니다. 발행을 막을지(enforce)는 심사 화면에서 따로 정합니다."
+      >
+        <fieldset>
+          <legend className={label}>1차 심사자</legend>
+          <p className={hint}>
+            어느 모델이 후보를 볼지. 비우면 서버의 <code className="mx-1 font-mono">CRAWL_REVIEW_MODEL</code>
+            (Claude CLI)로 돌아갑니다.
+            <br />
+            실측(2026-09-18, 정답을 가려놓고 매긴 40건): Claude sonnet 84% · 사내 gpt-oss-120b 85%로 정확도는
+            사실상 같습니다. 차이는 한도입니다 — Claude 는 구독 한도가 있고 사내 게이트웨이는 없습니다.
+          </p>
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <select name="firstReviewProvider" aria-label="1차 심사를 부르는 곳"
+              defaultValue={settings.firstReview?.provider ?? "abcllm"} className={`${field} w-auto`}>
+              <option value="claude-cli">Claude CLI (한도 있음)</option>
+              <option value="abcllm">사내 게이트웨이 (한도 없음)</option>
+            </select>
+            <input name="firstReviewModel" aria-label="1차 심사 모델" defaultValue={settings.firstReview?.model ?? ""}
+              placeholder="[MLX] gpt-oss-120b — 비우면 서버 기본값"
+              className={`${field} min-w-[220px] flex-1 font-mono`} />
+          </div>
+        </fieldset>
+
+        <div className="max-w-[260px]">
+          <label className={label} htmlFor="reviewConcurrency">동시 실행 수</label>
+          <input id="reviewConcurrency" name="reviewConcurrency" type="number" min={1} max={16}
+            defaultValue={settings.reviewConcurrency} className={`${field} mt-1.5`} />
+        </div>
+        <p className={hint}>
+          1분마다 한 번에 몇 건을 동시에 볼지. 올리면 빨리 끝나지만 사내 게이트웨이는 여럿이 같이 쓰는 서버라
+          너무 올리면 실패가 늘어 오히려 느려집니다. 실측(사내 게이트웨이, 2026-09-18):
+        </p>
+        <table className="mt-1.5 text-[13px] text-fg-2">
+          <tbody>
+            <tr><td className="pr-4">2</td><td className="pr-4">성공 99%</td><td>시간당 약 119건</td></tr>
+            <tr className="font-semibold text-fg"><td className="pr-4">4</td><td className="pr-4">성공 94%</td><td>시간당 약 225건 — 발행 속도(213건)를 넘는 첫 값</td></tr>
+            <tr><td className="pr-4">6</td><td className="pr-4">성공 87%</td><td>시간당 약 156건 — 실패가 늘어 4보다 느림</td></tr>
+          </tbody>
+        </table>
+        <p className={hint}>
+          실패한 건은 사라지지 않고 몇 분 뒤 다시 봅니다(4에서 재시도를 다 쓴 후보 0건). 그래도 실패율이
+          오르면 한 단계 내리세요.
+        </p>
+      </Panel>
+
       <Panel
         title="2차 심사"
         note="1차 AI가 확정한 것·위험 신호가 있는 것·규칙만 통과한 공개분 일부를 다른 모델이 다시 봅니다. 결과는 제안일 뿐 판정을 바꾸지 않습니다."

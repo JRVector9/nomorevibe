@@ -80,6 +80,16 @@ export async function saveCrawlSettings(_prev: SaveState, form: FormData): Promi
       sampleRate: num(form.get("secondReviewSamplePercent")) / 100,
       agreeAt: num(form.get("secondReviewAgreeAt")),
     },
+    /*
+     * 모델 칸을 비우면 설정을 지운다(서버의 CRAWL_REVIEW_MODEL 로 돌아간다).
+     * 키를 빼 버리면 저장이 기존 값에 덮여 한 번 넣은 심사자를 화면에서 되돌릴 길이 없다 —
+     * saveSettings 가 {...지금, ...바꾼 것} 으로 합치기 때문이다. 그래서 undefined 를 명시한다.
+     */
+    firstReview: (() => {
+      const model = String(form.get("firstReviewModel") ?? "").trim();
+      return model ? { provider: String(form.get("firstReviewProvider") ?? "abcllm"), model } : undefined;
+    })(),
+    reviewConcurrency: num(form.get("reviewConcurrency")),
     // 수집을 켜는 것과 그것을 발행 조건으로 삼는 것은 다른 결정이다 — 따로 둔다
     agentEvidence: {
       enabled: form.get("agentEvidenceEnabled") === "on",
