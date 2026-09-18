@@ -66,13 +66,18 @@ export function SettingsForm({ settings }: { settings: CrawlSettings }) {
 
       <Panel
         title="검색 기준"
-        note="GitHub이 검색 시점에 걸러주는 것들입니다. 커밋 검색에는 스타·언어 수식어가 없어 날짜만 쓸 수 있습니다."
+        note="여기는 “무엇을 찾아올지”를 정합니다. GitHub 검색으로 후보 레포를 주워 오는 단계라, 여기서 안 주운 것은 뒤에서 아무리 기준을 고쳐도 목록에 오르지 않습니다."
       >
         <div>
           <span className={label}>검색 신호</span>
           <p className={hint}>
-            신호별 수율을 비교하려면 개별로 끌 수 있어야 합니다. 마지막 빈 행에 적으면 신호가
-            늘고, 이름이나 검색어를 지우면 그 신호가 빠집니다.
+            “신호”는 AI로 만든 것을 찾아내는 단서 하나입니다. 예를 들어 커밋 메시지의
+            <code className="mx-1 font-mono">Co-authored-by: Claude</code>나 레포에 달린
+            <code className="mx-1 font-mono">topic:vibe-coding</code>이 그렇습니다. 신호마다 건지는
+            양과 質이 달라서 하나씩 끄고 켜며 비교할 수 있게 해 뒀습니다.
+            <br />
+            마지막 빈 행에 적으면 신호가 늘고, 이름이나 검색어를 지우면 그 신호가 빠집니다.
+            우선순위는 먼저 조사할 순서입니다(높을수록 먼저).
           </p>
           <input type="hidden" name="queryCount" value={queryRows.length} />
           <div className="mt-3 flex flex-col gap-2">
@@ -124,6 +129,10 @@ export function SettingsForm({ settings }: { settings: CrawlSettings }) {
           <div>
             <label className={label} htmlFor="windowDays">최근 며칠</label>
             <input id="windowDays" name="windowDays" type="number" min={1} max={3650} defaultValue={discover.windowDays} className={`${field} mt-1.5`} />
+            <p className={hint}>
+              며칠 안에 손댄 레포까지 볼지. 3이면 최근 3일 안에 커밋된 것만 찾습니다.
+              늘리면 한 번에 더 넓게 훑지만 이미 본 것을 다시 만나고, 줄이면 갓 만들어진 것만 봅니다.
+            </p>
           </div>
           <div>
             <label className={label} htmlFor="sort">정렬</label>
@@ -131,35 +140,57 @@ export function SettingsForm({ settings }: { settings: CrawlSettings }) {
               <option value="relevance">관련도</option>
               <option value="recent">최신순</option>
             </select>
-            <p className={hint}>실측: 같은 100건에서 고유 레포가 관련도 63개 vs 최신순 2개</p>
+            <p className={hint}>
+              검색 결과를 어떤 순서로 받을지. <b>관련도</b>는 여러 레포에 고루 퍼지고,
+              <b>최신순</b>은 방금 활발히 커밋한 몇몇 레포에 몰립니다.
+              실측: 같은 100건에서 서로 다른 레포가 관련도 63개 vs 최신순 2개.
+            </p>
           </div>
           <div>
             <label className={label} htmlFor="pagesPerTick">틱당 페이지</label>
             <input id="pagesPerTick" name="pagesPerTick" type="number" min={1} max={10} defaultValue={discover.pagesPerTick} className={`${field} mt-1.5`} />
-            <p className={hint}>검색 한도가 30회/분입니다</p>
+            <p className={hint}>
+              한 번 돌 때 검색 결과를 몇 페이지까지 넘길지. <b>한 페이지가 검색 1회</b>이고
+              수집은 10분마다 돕니다. 올리면 새 레포를 그만큼 빨리 찾습니다.
+              <br />
+              GitHub 검색 한도는 분당 30회인데, 2로 두면 10분에 2회라 한도의 1%도 안 씁니다
+              (실측: 한도에 걸린 기록 0건). 10으로 올려도 3% 수준입니다.
+            </p>
           </div>
         </div>
       </Panel>
 
       <Panel
         title="판정 기준"
-        note="수집한 레포 메타로 우리가 거르는 것들입니다. 원본을 보관하므로 이 값을 바꾸면 GitHub을 다시 긁지 않고 재판정됩니다."
+        note="여기는 “주워 온 것 중 무엇을 올릴지”를 정합니다. 원본을 보관하므로 이 값을 바꾸면 GitHub을 다시 긁지 않고 곧바로 다시 판정합니다 — 기준을 바꿔 보는 비용이 거의 없습니다. 이미 발행된 것은 건드리지 않습니다(재검수 화면에서 따로 봅니다)."
       >
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
           <div>
             <label className={label} htmlFor="maxStars">스타 상한</label>
             <input id="maxStars" name="maxStars" type="number" min={0} defaultValue={judge.maxStars} className={`${field} mt-1.5`} />
-            <p className={hint}>넘으면 개인이 AI로 만든 제품이 아니라고 봅니다</p>
+            <p className={hint}>
+              별이 이 수를 넘는 레포는 거릅니다. 우리가 찾는 것은 개인이 AI로 만든 것이라,
+              별이 수천 개인 대형 오픈소스는 대상이 아닙니다.
+              <br />
+              올리면 큰 프로젝트까지 들어오고(사실상 끄는 것), 내리면 입소문 난 개인 제품이 빠집니다.
+            </p>
           </div>
           <div>
             <label className={label} htmlFor="minStars">스타 하한</label>
             <input id="minStars" name="minStars" type="number" min={0} defaultValue={judge.minStars} className={`${field} mt-1.5`} />
-            <p className={hint}>갓 배포한 제품은 0개입니다. 올리면 찾으려는 것부터 걸러집니다</p>
+            <p className={hint}>
+              별이 이 수보다 적으면 거릅니다. <b>0을 권합니다</b> — 갓 배포한 제품은 정당하게
+              별이 0개라서, 올리는 순간 우리가 가장 찾고 싶은 것부터 사라집니다.
+            </p>
           </div>
           <div>
             <label className={label} htmlFor="maxPushAgeDays">방치 기준(일)</label>
             <input id="maxPushAgeDays" name="maxPushAgeDays" type="number" min={1} max={3650} defaultValue={judge.maxPushAgeDays} className={`${field} mt-1.5`} />
-            <p className={hint}>마지막 푸시가 이보다 오래되면 죽은 프로젝트로 봅니다</p>
+            <p className={hint}>
+              마지막 커밋이 이보다 오래되면 죽은 프로젝트로 봅니다.
+              다만 실측에서 여기 걸린 31건의 주소가 <b>전부 살아 있었습니다</b> — 다 만들고 손을
+              뗀 것도 있어서, 너무 짧게 잡으면 멀쩡한 제품이 빠집니다.
+            </p>
           </div>
         </div>
 
@@ -190,7 +221,11 @@ export function SettingsForm({ settings }: { settings: CrawlSettings }) {
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <div>
             <label className={label} htmlFor="blockedHomepageDomains">차단 도메인</label>
-            <p className={hint}>homepage가 이 도메인이면 배포물이 아닙니다. 한 줄에 하나.</p>
+            <p className={hint}>
+              레포의 배포 주소가 이 도메인이면 <b>제품이 아니라 제품의 소개·등록 페이지</b>로 봅니다.
+              npm 패키지 페이지나 GitHub 저장소 주소를 제품으로 올리지 않기 위한 것입니다.
+              한 줄에 하나, 하위 도메인도 함께 걸립니다.
+            </p>
             <textarea
               id="blockedHomepageDomains"
               name="blockedHomepageDomains"
@@ -201,7 +236,11 @@ export function SettingsForm({ settings }: { settings: CrawlSettings }) {
           </div>
           <div>
             <label className={label} htmlFor="thirdPartyHosts">남의 사이트 주소</label>
-            <p className={hint}>제작자의 사이트가 아닌 곳(글·초대·양식·패키지 목록). 뒤쪽 일치, 한 줄에 하나.</p>
+            <p className={hint}>
+              제작자가 만든 곳이 아니라 <b>남의 서비스에 올려 둔 글·초대·양식</b>인 주소입니다
+              (Substack 글, Discord 초대, Google 양식 등). 그 주소는 제품이 아니라 제품 이야기입니다.
+              주소 뒤쪽이 일치하면 걸립니다. 한 줄에 하나.
+            </p>
             <textarea
               id="thirdPartyHosts"
               name="thirdPartyHosts"
@@ -212,7 +251,11 @@ export function SettingsForm({ settings }: { settings: CrawlSettings }) {
           </div>
           <div>
             <label className={label} htmlFor="stubPageTitles">빈 페이지·대기 화면 제목</label>
-            <p className={hint}>로그인 벽·기본 페이지·공사 중 화면의 제목. * 와일드카드, 한 줄에 하나.</p>
+            <p className={hint}>
+              열어 봤더니 제품이 아니라 <b>로그인 화면·공사 중 안내·404</b>인 경우를 제목으로 걸러냅니다.
+              배포 주소는 살아 있어도 쓸 수 있는 것이 없는 경우입니다.
+              <code className="mx-1 font-mono">*</code>를 쓸 수 있고, 한 줄에 하나.
+            </p>
             <textarea
               id="stubPageTitles"
               name="stubPageTitles"
@@ -223,7 +266,14 @@ export function SettingsForm({ settings }: { settings: CrawlSettings }) {
           </div>
           <div>
             <label className={label} htmlFor="excludedRepoPatterns">레포명 제외 패턴</label>
-            <p className={hint}>* 와일드카드를 씁니다. 한 줄에 하나.</p>
+            <p className={hint}>
+              레포 이름이 이 모양이면 제품이 아니라고 봅니다 — 링크 모음(<code className="mx-1 font-mono">awesome-*</code>),
+              설정 파일 저장소(<code className="mx-1 font-mono">dotfiles</code>), 회사 소개 사이트
+              (<code className="mx-1 font-mono">*-website</code>) 같은 것들입니다.
+              <br />
+              이력·포트폴리오·개인 홈페이지는 여기 걸려도 거부되지 않고 <b>개인프로필</b>로 발행됩니다.
+              <code className="mx-1 font-mono">*</code>를 쓸 수 있고, 한 줄에 하나.
+            </p>
             <textarea
               id="excludedRepoPatterns"
               name="excludedRepoPatterns"
