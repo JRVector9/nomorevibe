@@ -2,6 +2,7 @@ import { displayProjectName } from './display-name';
 import type { StarObservation } from '@/lib/domain/products/star-change';
 import type { Product, ProductStatus } from "@/lib/db/schema";
 import { listProducts, listRecentlyDiscovered, type ProductSort } from "./repository";
+import type { SearchQuery } from "./search";
 import type { Category } from "./schema";
 import { clickMetrics, type ClickMetrics } from "./clicks";
 import { healthFor, type HealthSignal } from "./health";
@@ -88,7 +89,7 @@ export function toListItem(p: Product): ProductListItem {
 export type BrowseOptions = {
   sort?: ProductSort;
   category?: Category;
-  query?: string;
+  query?: SearchQuery;
   builder?: string;
   hasRepository?: boolean;
 };

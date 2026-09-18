@@ -47,7 +47,17 @@ export function parseTranslations(content: string, sources: string[]): Translate
   }) };
 }
 
-export async function translateToKorean(texts: string[], timeoutMs: number, request: typeof fetch = fetch): Promise<TranslateResult> {
+/**
+ * 게이트웨이에 한 번 묻는다. 부르는 곳이 둘(사유 번역·검색어 번역)이라 여기 한 곳에만 둔다 —
+ * 스트리밍 끄기·키 읽기·실패 이름이 갈라지면 한쪽만 고쳐진다.
+ */
+type ChatResult = { ok: true; content: string } | { ok: false; error: string };
+
+async function chat(
+  body: { system: string; user: string; maxTokens: number; temperature: number },
+  timeoutMs: number,
+  request: typeof fetch,
+): Promise<ChatResult> {
   const key = process.env.ABCLLM_API_KEY?.trim();
   if (!key) return { ok: false, error: "no_key" };
   try {
@@ -55,16 +65,56 @@ export async function translateToKorean(texts: string[], timeoutMs: number, requ
       method: "POST",
       headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
       body: JSON.stringify({
-        model: TRANSLATE_MODEL, stream: false, temperature: 0.1, reasoning_effort: "low",
-        max_tokens: Math.min(6_000, 400 + Math.ceil(texts.join("").length * 1.2)),
-        messages: [{ role: "system", content: SYSTEM }, { role: "user", content: JSON.stringify(texts) }],
+        model: TRANSLATE_MODEL, stream: false, temperature: body.temperature, reasoning_effort: "low",
+        max_tokens: body.maxTokens,
+        messages: [{ role: "system", content: body.system }, { role: "user", content: body.user }],
       }),
       signal: AbortSignal.timeout(timeoutMs),
     });
     if (!response.ok) return { ok: false, error: response.status === 429 ? "rate_limit" : `http_${response.status}` };
     const data = await response.json() as { choices?: { message?: { content?: string | null } }[] };
-    return parseTranslations(data.choices?.[0]?.message?.content ?? "", texts);
+    return { ok: true, content: data.choices?.[0]?.message?.content ?? "" };
   } catch (error) {
     return { ok: false, error: error instanceof Error && error.name === "TimeoutError" ? "timeout" : "network" };
   }
+}
+
+export async function translateToKorean(texts: string[], timeoutMs: number, request: typeof fetch = fetch): Promise<TranslateResult> {
+  const result = await chat({
+    system: SYSTEM, user: JSON.stringify(texts), temperature: 0.1,
+    maxTokens: Math.min(6_000, 400 + Math.ceil(texts.join("").length * 1.2)),
+  }, timeoutMs, request);
+  return result.ok ? parseTranslations(result.content, texts) : result;
+}
+
+/**
+ * 검색어를 영어 낱말로 옮긴다 — 목록이 영어라서다.
+ *
+ * 발행분 소개의 62%가 ASCII 뿐이고 한글이 든 것은 3%다(2026-09-18 프로드). 한국어로 목적을 치면
+ * 색인이 아무리 좋아도 닿지 않는다 — "PDF 합치는 도구" 0건, "코드 리뷰 자동화" 0건.
+ *
+ * 문장이 아니라 낱말을 받는다. websearch_to_tsquery 는 낱말을 전부 AND 로 묶으므로 한 낱말만
+ * 빗나가도 결과가 0이 된다. "a tool that merges pdf files into one" 같은 답은 쓸 수 없다.
+ */
+const QUERY_SYSTEM = [
+  "You rewrite a product search query into English keywords for a full-text search over product names and descriptions.",
+  "Output only the keywords: lowercase, space separated, two to four words, no punctuation, no quotes, no explanation.",
+  "The search requires every word to be present, so emit only words that would appear in almost any description of what the user wants.",
+  "Examples — 'PDF 합치는 도구' -> merge pdf; '회의록 요약' -> meeting summary; '사진 배경 제거' -> remove background; '가계부' -> expense tracker.",
+].join(" ");
+
+/** 받은 답을 그대로 믿지 않는다 — 낱말 넷까지, 영문자만, 한글이 남아 있으면 버린다 */
+export function parseQueryTranslation(content: string): string | null {
+  const body = content.replace(/<think>[\s\S]*?<\/think>/g, "").trim();
+  const line = body.split("\n").map((text) => text.trim()).find(Boolean) ?? "";
+  const words = line.toLowerCase().replace(/[^a-z0-9+#. ]+/g, " ").split(/\s+/).filter(Boolean).slice(0, 4);
+  const keywords = words.join(" ");
+  return keywords.length >= 2 && /[a-z]/.test(keywords) ? keywords : null;
+}
+
+export async function translateQueryToEnglish(query: string, timeoutMs: number, request: typeof fetch = fetch): Promise<{ ok: true; keywords: string } | { ok: false; error: string }> {
+  const result = await chat({ system: QUERY_SYSTEM, user: query, temperature: 0, maxTokens: 200 }, timeoutMs, request);
+  if (!result.ok) return result;
+  const keywords = parseQueryTranslation(result.content);
+  return keywords ? { ok: true, keywords } : { ok: false, error: "invalid_output" };
 }

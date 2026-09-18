@@ -10,6 +10,8 @@ import { Icon } from "@/components/home/icons";
 import { MethodologyDialog } from "@/components/home/MethodologyDialog";
 import { ProjectGrid } from "@/components/home/ProjectGrid";
 import { categoryCounts, countProducts, listBuilders } from "@/lib/domain/products/repository";
+import { resolveSearchQuery } from "@/lib/domain/products/search-translation";
+import type { SearchQuery } from "@/lib/domain/products/search";
 import { CATEGORIES } from "@/lib/domain/products/schema";
 import {
   getPublicList,
@@ -59,7 +61,7 @@ function listFor(
   sort: HomeSort,
   active: SeasonSummary,
   category: (typeof CATEGORIES)[number] | undefined,
-  query: string | undefined,
+  query: SearchQuery | undefined,
   builder: string | undefined,
   limit: number,
 ): Promise<ProductListItem[] | RankingListItem[]> {
@@ -76,7 +78,7 @@ function listFor(
       .then((result) => result.items);
   }
   if (sort === "all-time") return getAllTimeRanking(options);
-  return getPublicList(limit, { sort: "recent", category, query, builder });
+  return getPublicList(limit, { sort: sort === "relevance" ? "relevance" : "recent", category, query, builder });
 }
 
 /**
@@ -165,7 +167,7 @@ export default async function HomePage({ searchParams }: Props) {
   const query = firstValue(params.q)?.trim().slice(0, 200) || undefined;
   // A plain header search should cover the public catalogue. Preserve an explicitly
   // selected sort, but do not limit an unqualified search to ranked products.
-  const requestedSort = sortParam ? parseHomeSort(sortParam) : query ? "recent" : "weekly";
+  const requestedSort = sortParam ? parseHomeSort(sortParam) : query ? "relevance" : "weekly";
   const categoryParam = firstValue(params.category);
   const category = CATEGORIES.find((item) => item === categoryParam);
   const builder = firstValue(params.builder)?.trim() || undefined;
@@ -185,6 +187,7 @@ export default async function HomePage({ searchParams }: Props) {
   let resultCount = 0;
   let unclaimedTotal = 0;
   let dbDown = false;
+  let translatedQuery: string | null = null;
 
   /**
    * 상단 집계·도구 목록은 제품 목록과 서로의 결과를 쓰지 않는다 — 먼저 띄워 두고 목록 조회와 겹친다.
@@ -201,8 +204,14 @@ export default async function HomePage({ searchParams }: Props) {
       logger.warn("home.ranking_unavailable");
       effectiveSort = requestedSort === "weekly" || requestedSort === "trending" ? "recent" : requestedSort;
     }
-    const publicCatalogue = effectiveSort === "recent" || effectiveSort === "open";
-    const options = { category, query, builder, excludeDown: true };
+    const publicCatalogue = effectiveSort === "recent" || effectiveSort === "open" || effectiveSort === "relevance";
+    /**
+     * 한국어로 목적을 치면 영어 목록에 닿지 않는다. 그대로 찾아 보고 몇 건 안 되면 영어 낱말로
+     * 옮겨 한 번 더 찾는다 — 옮긴 말은 결과 위에 밝힌다(search-translation.ts).
+     */
+    const search = await resolveSearchQuery(query);
+    translatedQuery = search.translated;
+    const options = { category, query: search.queries, builder, excludeDown: true };
     const [loadedCounts, matchingTotal, verifiedTotal] = await Promise.all([
       categoryCounts({ statuses: ["verified", "seeded"], excludeDown: true }),
       countProducts({ statuses: ["verified", "seeded"], ...options, hasRepository: effectiveSort === "open" ? true : undefined }),
@@ -214,9 +223,9 @@ export default async function HomePage({ searchParams }: Props) {
     // Public lists load only what is visible. Rankings retain their separate eligibility.
     const limit = publicCatalogue ? Math.min(requestedLimit, matchingTotal) : verifiedTotal;
     list = active
-      ? await listFor(effectiveSort, active, category, query, builder, limit)
+      ? await listFor(effectiveSort, active, category, search.queries, builder, limit)
       : publicCatalogue
-        ? await getPublicList(limit, { ...options, sort: "recent", hasRepository: effectiveSort === "open" ? true : undefined })
+        ? await getPublicList(limit, { ...options, sort: effectiveSort === "relevance" ? "relevance" : "recent", hasRepository: effectiveSort === "open" ? true : undefined })
         : await getVerifiedList(limit, { ...options, sort: "recent" });
     resultCount = publicCatalogue ? matchingTotal : list.length;
 
@@ -257,6 +266,8 @@ export default async function HomePage({ searchParams }: Props) {
           <div className="feed-head">
             <div>
               <h2 id="projects-title">{query ? `“${query}” 검색 결과` : "발견할 가치가 있는 프로젝트"}</h2>
+              {/* 목록이 영어라 한국어 검색어는 영어 낱말로 한 번 더 찾는다. 무엇으로 찾았는지 밝힌다 */}
+              {translatedQuery && <p>영어로 “{translatedQuery}”도 함께 찾았습니다.</p>}
               {!query && <p>AI로 만들고, 사람이 다듬은 새로운 서비스들.</p>}
             </div>
             <Link className="all-link" href="/?sort=recent">

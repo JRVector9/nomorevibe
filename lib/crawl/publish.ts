@@ -16,6 +16,7 @@ import { summarizeAgentEvidence, type AgentEvidenceSummary } from "@/lib/domain/
 import { requestJob, type JobLease } from "@/lib/jobs/control";
 import { ReviewApprovalChangedError } from "./agent-review-repository";
 import { parseRepositoryStats } from "@/lib/domain/products/stars";
+import { SEARCH_PAGE_TEXT_CHARS } from "@/lib/domain/products/search";
 
 /**
  * 발행 — 통과한 후보를 목록에 올린다.
@@ -157,6 +158,13 @@ export async function publishCandidate(
         // Search hints are not maker or model assertions; observed facts have a separate view.
         builder,
         stack: draft.stack,
+        /**
+         * 검색이 읽을 값(schema.ts search_vector). 토픽과 본문은 crawl_documents 에만 있어
+         * 생성 컬럼이 닿지 못하므로 발행할 때 같이 적어 둔다 — product-search-refresh 잡이
+         * 1분 뒤에 채워 주기는 하지만, 그동안 새 제품이 제 토픽으로 검색되지 않는다.
+         */
+        searchTopics: draft.topics.join(" ") || null,
+        searchPageText: draft.pageText,
         ogImage: null,
         makerName: null,
         repoUrl: `https://github.com/${candidate.repo}`,
@@ -227,7 +235,7 @@ export async function prepareCandidateClassification(
 
 /** 원본에서 목록에 올릴 값을 만든다 */
 function draftFrom(repo: string, document: CrawlDocument) {
-  const page = (document.pageMeta ?? {}) as { title?: unknown; description?: unknown; ogImage?: unknown };
+  const page = (document.pageMeta ?? {}) as { title?: unknown; description?: unknown; ogImage?: unknown; textSample?: unknown };
   const meta = document.repoMeta;
   const repoDescription = typeof meta.description === "string" ? meta.description.trim() : "";
   const pageTitle = typeof page.title === "string" ? page.title.trim() : "";
@@ -252,6 +260,8 @@ function draftFrom(repo: string, document: CrawlDocument) {
     // 분류가 함께 볼 것들 — 규칙도 이것으로 고르고, LLM도 같은 사실을 본다
     language,
     topics: Array.isArray(meta.topics) ? meta.topics.map((t) => String(t)) : [],
+    /** 검색이 쓸 배포 페이지 본문. 발행분의 74%가 이 값을 갖고 있다(2026-09-18 프로드) */
+    pageText: typeof page.textSample === "string" ? page.textSample.slice(0, SEARCH_PAGE_TEXT_CHARS) || null : null,
     ogImage: typeof page.ogImage === "string" ? page.ogImage : null,
   };
 }
