@@ -296,6 +296,15 @@ export const crawlSettingsSchema = z.object({
    * 게이트웨이는 한도가 없어 enforce 로 올릴 때 발행이 심사 속도에 묶이지 않는다.
    */
   firstReview: reviewVoterSchema.optional(),
+  /**
+   * 한 틱에 동시에 띄우는 1차 심사 수.
+   *
+   * 2로 박혀 있던 때는 주기가 60초라 시간당 120건이 상한이었다. 발행이 시간당 213건이라
+   * enforce 를 켜면 심사가 병목이 된다 — 모델이 느려서가 아니라 이 숫자 때문이었다.
+   * 실측(2026-09-18, 게이트웨이 40건): 한 건 평균 7.7초, 틱 예산은 24초.
+   * 데이터로 둔 이유는 사내 게이트웨이가 공용이라서다. 부하를 보며 배포 없이 올리고 내려야 한다.
+   */
+  reviewConcurrency: z.number().int().min(1).max(16).default(2),
   discover: discoverSchema,
   judge: judgeSchema,
   classify: z.object({ definitions: categoryDefinitionsSchema }).strict().default(defaultClassify),
@@ -385,6 +394,7 @@ export function mergeAdditionalAgentDiscoveryQueries(existing: readonly AgentDis
 export const DEFAULT_CRAWL_SETTINGS: CrawlSettings = {
   enabled: false, // 켜는 것은 명시적 행위여야 한다
   reviewMode: "off",
+  reviewConcurrency: 2,
   agentEvidence: defaultAgentEvidence,
   news: defaultNews,
   secondReview: defaultSecondReview,

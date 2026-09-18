@@ -16,8 +16,12 @@ import { reviewWithGateway, REVIEW_GATEWAY_TIMEOUT_MS } from "@/lib/crawl/agent-
  * 한 건씩이면 1분 주기에 시간당 60회가 상한이었다. CLI 제한 20초짜리 둘을 이어 붙이면 잡 예산
  * 25초를 넘으므로, 늘리려면 동시에 띄워야 한다. 후보마다 claim·입력 hash·lease를 따로 검증하고
  * 같은 lease로 이미 도는 claim은 건너뛰므로 둘이 같은 후보를 잡지 않는다.
+ *
+ * 수는 이제 설정에서 온다(crawlSettings.reviewConcurrency). 2로 박혀 있던 때는 시간당 120건이
+ * 상한이라 발행(시간당 213건)을 따라가지 못해 enforce 를 켤 수 없었다 — 모델이 느려서가 아니라
+ * 이 숫자 때문이었다. 이 상수는 설정이 없을 때의 값이자 상한을 넘지 않게 하는 안전망으로 남긴다.
  */
-const MAX_CONCURRENT_REVIEWS = 2;
+const MAX_CONCURRENT_REVIEWS = 16;
 
 /** 틱마다 외부 심사를 최대 두 건 동시에 돌린다. 기존 규칙·후보 상태·발행 조건은 그대로 둔다. */
 export async function reviewCrawlCandidates(ctx: JobContext<null>): Promise<JobOutcome<null>> {
@@ -32,9 +36,10 @@ export async function reviewCrawlCandidates(ctx: JobContext<null>): Promise<JobO
   const reviewer = firstReviewer(settings);
   if (!reviewer) throw new Error("1차 심사자를 설정하거나 CRAWL_REVIEW_MODEL 을 넣어야 AI 심사를 켤 수 있습니다");
   const { provider: reviewProvider, model } = reviewer;
+  const concurrency = Math.min(settings.reviewConcurrency || 2, MAX_CONCURRENT_REVIEWS);
   const requeued = await requeueStaleReviewSources(settings, lease, 20);
   if (requeued) ctx.log("crawl.agent_review_sources_queued", { count: requeued });
-  const candidates = await listReviewCandidates(settings, 20);
+  const candidates = await listReviewCandidates(settings, Math.max(20, concurrency * 2));
   if (!candidates.length) return { done: true };
   const remaining = () => 24_000 - (Date.now() - startedAt);
   /** 외부 심사마다 enforce에서 승인을 후보에 반영했는지 */
@@ -44,7 +49,7 @@ export async function reviewCrawlCandidates(ctx: JobContext<null>): Promise<JobO
 
   try {
     for (const candidate of candidates) {
-      if (reviews.length >= MAX_CONCURRENT_REVIEWS || !ctx.hasBudget() || remaining() < 1_000) break;
+      if (reviews.length >= concurrency || !ctx.hasBudget() || remaining() < 1_000) break;
       if (!isReviewCandidate(candidate)) continue;
       const document = await loadReviewDocument(candidate.repo);
       if (!document) continue;
