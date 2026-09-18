@@ -24,6 +24,13 @@ const bytea = customType<{ data: Buffer }>({
   },
 });
 
+// tsvector도 내장이 없다. 값은 DB가 만들고(생성 컬럼) JS는 읽지도 쓰지도 않는다
+const tsvector = customType<{ data: string }>({
+  dataType() {
+    return "tsvector";
+  },
+});
+
 /**
  * 제품 상태.
  *
@@ -78,6 +85,47 @@ export const products = pgTable("products", {
   verifyMethod: varchar("verify_method", { length: 10 }), // 'file' | 'meta'
   verifiedAt: timestamp("verified_at"),
   editTokenHash: varchar("edit_token_hash", { length: 64 }).notNull(),
+  /**
+   * 검색이 읽을 값만 여기로 옮겨 적는다 — 원본은 crawl_documents다.
+   *
+   * 토픽(repo_meta->'topics')과 본문(page_meta->>'textSample')은 products에 없다. 생성 컬럼은
+   * 같은 행만 볼 수 있으므로 저 둘을 products로 가져오지 않으면 search_vector를 만들 수 없다.
+   * 별도 표(product_search_documents)로 두는 길도 있었지만, 목록 조회가 이미 products 한 장을
+   * 훑고 정렬까지 거기서 하므로 조인이 한 번 더 붙는다. 여기 두면 GIN 하나로 끝난다.
+   *
+   * 값을 적는 곳은 둘: 발행(publish.ts)이 넣을 때 한 번, 그 뒤로는 product-search-refresh 잡이
+   * 원본과 달라진 행만 다시 적는다. 이름·소개는 여기 옮기지 않는다 — 이미 이 표의 컬럼이라
+   * 메이커가 고치면 생성 컬럼이 알아서 다시 계산된다.
+   */
+  searchTopics: text("search_topics"),
+  searchPageText: text("search_page_text"),
+  /**
+   * 검색 문서. 무게는 프로드 10,751건으로 확인한 것(2026-09-18):
+   *   A 이름·토픽 · B 태그라인·소개 · C 식별자(슬러그·레포·신고된 제작 도구) · D 본문 앞 2,000자
+   *
+   * 무게를 주지 않으면 긴 본문이 이름·토픽 신호를 덮는다. 소개가 태그라인과 바이트까지 같은
+   * 행이 4,395건(41%)이라 그대로 이어 붙이면 그 행들만 같은 말을 두 번 세어 위로 올라온다 —
+   * 같으면 소개 쪽을 비운다.
+   *
+   * 제작 도구는 신고된 제품(수집분이 아니거나 클레임된 것)에서만 찾힌다. 그 조건이 이 행의
+   * 컬럼(source·claimed_at)이라 생성 컬럼 안에서 그대로 지킬 수 있다 — 조건을 쿼리 쪽 OR로
+   * 빼면 GIN 인덱스를 못 쓰고 전체를 훑는다.
+   *
+   * 레포는 두 벌 넣는다. 'https://github.com/TeamOwner/DeepWork'를 그대로 색인하면 URL 토큰
+   * 하나('github.com/teamowner/deepwork')가 되어 'TeamOwner/DeepWork'로도 '@TeamOwner'로도
+   * 찾히지 않는다. 호스트를 떼면 'teamowner/deepwork'가, 빗금을 띄우면 'teamown' 'deepwork'가
+   * 나와 두 질의가 모두 맞는다.
+   */
+  searchVector: tsvector("search_vector").generatedAlwaysAs(sql`
+    setweight(to_tsvector('english', name), 'A') ||
+    setweight(to_tsvector('english', coalesce(search_topics, '')), 'A') ||
+    setweight(to_tsvector('english', tagline), 'B') ||
+    setweight(to_tsvector('english', case when description = tagline then '' else description end), 'B') ||
+    setweight(to_tsvector('english', slug || ' ' ||
+      coalesce(regexp_replace(repo_url, '^https?://[^/]+/', ''), '') || ' ' ||
+      coalesce(replace(regexp_replace(repo_url, '^https?://[^/]+/', ''), '/', ' '), '') || ' ' ||
+      case when source <> 'crawler' or claimed_at is not null then coalesce(builder, '') else '' end), 'C') ||
+    setweight(to_tsvector('english', left(coalesce(search_page_text, ''), 2000)), 'D')`),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 }, (table) => [
@@ -95,6 +143,8 @@ export const products = pgTable("products", {
     table.status,
     sql`coalesce(${table.verifiedAt}, ${table.createdAt}) desc`,
   ),
+  /** 검색. 이 표에는 전문 인덱스가 하나도 없었다 — 검색어가 붙으면 10,751행을 매번 훑었다 */
+  index("products_search_idx").using("gin", table.searchVector),
 ]);
 
 // OG 이미지 사본 — 로컬 디스크는 재배포/다중 인스턴스에서 유실되므로 DB에 저장

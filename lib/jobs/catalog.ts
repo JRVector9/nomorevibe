@@ -42,6 +42,11 @@ export const JOB_CATALOG: readonly { name: string; role: JobRole | "scheduler"; 
    */
   { name: "news-refresh", role: "maintenance", intervalMs: 60 * 60_000 },
   { name: "product-thumbnail-refresh", role: "maintenance", intervalMs: 60_000 },
+  /**
+   * 검색 문서 채우기. 낡은 행만 골라 고치므로 다 채운 뒤에는 매 틱이 조인 한 번(수십 ms)이다.
+   * 한가한 maintenance 에 둔다 — crawler 는 이미 시간을 넘겨 쓰고 있다(위 uptime-ping 설명).
+   */
+  { name: "product-search-refresh", role: "maintenance", intervalMs: 60_000 },
   { name: "product-evidence-refresh", role: "crawler", intervalMs: 60_000 },
   { name: "agent-evidence-refresh", role: "crawler", intervalMs: 60_000 },
   // 새 스타 값은 하루 한 번. 한 틱 40건·15초 이내로 기존 수집 예산을 보존한다.

@@ -1,6 +1,6 @@
-import { productSearchPredicate } from './search';
+import { hasSearchQuery, productSearchPredicate, productSearchRank, type SearchQuery } from './search';
 import { syncRepositoryLink } from "@/lib/domain/evidence/repository-link-sync";
-import { and, eq, inArray, isNotNull, like, ne, or, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNotNull, like, ne, or, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { lockProductGeneration, type ProductTransaction } from "./generation";
 import { DOWN_THRESHOLD } from "./health";
@@ -47,7 +47,7 @@ export async function findByUrl(url: string): Promise<Product | undefined> {
  * 정렬 기준. 지금은 최신 검증순 하나뿐이지만, 랭킹(NMR 점수·CTR)이 붙으면
  * 이 유니온에 값을 추가하고 아래 map에 한 줄만 넣으면 된다 — 호출부는 그대로다.
  */
-export type ProductSort = "recent" | "popular";
+export type ProductSort = "relevance" | "recent" | "popular";
 
 export type ListOptions = {
   statuses: ProductStatus[];
@@ -55,8 +55,8 @@ export type ListOptions = {
   limit: number;
   /** 카테고리 하나로 좁힌다 */
   category?: Category;
-  /** 이름·소개에서 찾는다 */
-  query?: string;
+  /** 이름·토픽·소개·본문에서 찾는다 (search.ts) */
+  query?: SearchQuery;
   /** 제작자가 등록한 도구 이름 */
   builder?: string;
   /** 저장소 URL이 등록된 제품만. 공개 여부나 라이선스를 뜻하지 않는다. */
@@ -66,14 +66,6 @@ export type ListOptions = {
   /** 연속 실패로 닿지 않는 제품을 뺀다. 공개 목록만 켠다 — 어드민은 그것을 봐야 처리한다 */
   excludeDown?: boolean;
 };
-
-/**
- * 검색어의 와일드카드를 죽인다.
- *
- * 값은 파라미터로 나가므로 주입은 아니지만, %나 _를 그대로 두면 사용자가 친 글자가
- * 패턴 기호로 동작해 엉뚱한 것이 걸린다.
- */
-
 
 /**
  * 등재 시각 — 검증된 제품은 검증 시점, 우리가 대신 올린 제품은 등록 시점.
@@ -140,15 +132,26 @@ function listConditions({ statuses, category, query, builder, hasRepository, exc
     conditions.push(isNotNull(products.repoUrl));
     conditions.push(sql`btrim(${products.repoUrl}) <> ''`);
   }
-  if (query?.trim()) conditions.push(productSearchPredicate(query)!);
+  if (hasSearchQuery(query)) conditions.push(productSearchPredicate(query!)!);
   return conditions;
 }
 
 export async function listProducts({ sort = "recent", limit, offset, ...options }: ListOptions): Promise<Product[]> {
   const conditions = listConditions(options);
+  /**
+   * 관련도순은 검색어가 있을 때만 있다 — 없으면 모든 행의 점수가 0이라 정렬이 아니다.
+   * 그 아래는 최신순 그대로 둔다. ts_rank 는 같은 점수가 많이 나오고(무게가 네 단계뿐),
+   * 동점끼리는 "검증된 것 먼저, 그 안에서 최신"이라는 목록의 기존 약속을 지켜야 한다.
+   */
+  const ranked = sort === "relevance" && hasSearchQuery(options.query);
+  const orderBy = [
+    ...(ranked ? [desc(productSearchRank(options.query!))] : []),
+    ...SORTS[sort === "relevance" ? "recent" : sort],
+    products.slug,
+  ];
   return db.query.products.findMany({
     where: and(...conditions),
-    orderBy: [...SORTS[sort], products.slug],
+    orderBy,
     limit,
     offset,
   });

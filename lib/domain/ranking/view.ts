@@ -1,4 +1,4 @@
-import { productSearchPredicate, matchesProductSearch } from '@/lib/domain/products/search';
+import { hasSearchQuery, productSearchPredicate, type SearchQuery } from '@/lib/domain/products/search';
 import { cache } from "react";
 import {
   and,
@@ -117,7 +117,7 @@ export async function getSeasonRanking(options: {
   seasonKey?: string;
   order?: "rank" | "trending";
   category?: Category;
-  query?: string;
+  query?: SearchQuery;
   builder?: string;
   limit: number;
 }): Promise<{ season: SeasonSummary | null; items: RankingListItem[] }> {
@@ -136,7 +136,7 @@ export async function getSeasonRanking(options: {
   }
   if (options.category) conditions.push(eq(products.category, options.category));
   if (options.builder) conditions.push(and(eq(products.builder, options.builder), builderIsReported)!);
-  if (options.query?.trim()) conditions.push(productSearchPredicate(options.query)!);
+  if (hasSearchQuery(options.query)) conditions.push(productSearchPredicate(options.query!)!);
   if (options.order === "trending") {
     conditions.push(isNotNull(rankingEntries.changePercent));
   }
@@ -270,7 +270,7 @@ export async function getSeasonByKey(
 
 export async function getAllTimeRanking(options: {
   category?: Category;
-  query?: string;
+  query?: SearchQuery;
   builder?: string;
   limit: number;
 }): Promise<RankingListItem[]> {
@@ -287,7 +287,26 @@ export async function getAllTimeRanking(options: {
       slugArrayPredicate(products.slug, totals.map((row) => row.slug)),
     ));
   const bySlug = new Map(rows.map((row) => [row.slug, row]));
-  const query = options.query?.trim().toLocaleLowerCase();
+  /**
+   * 검색은 DB 가 한다 — 색인(products.search_vector)과 같은 기준이어야 목록과 순위가 어긋나지 않는다.
+   *
+   * 전에는 여기서 JS 로 부분문자열을 맞춰 봤다. 목록이 형태소·불용어까지 보는 전문 검색으로
+   * 옮겨 간 뒤로는 같은 검색어에 순위 화면만 다른 결과를 냈다.
+   *
+   * 맞는 슬러그를 따로 받아 오는 이유: 순위(rank)는 필터와 무관하게 "검증·생존 제품 중 몇 번째로
+   * 많이 눌렸나"다. 아래 조회에 검색 조건을 합치면 걸러진 제품이 rank 를 세기 전에 빠져 번호가 밀린다.
+   */
+  const matching = hasSearchQuery(options.query)
+    ? new Set((await db
+      .select({ slug: products.slug })
+      .from(products)
+      .where(and(
+        eq(products.status, "verified"),
+        notDown,
+        slugArrayPredicate(products.slug, totals.map((row) => row.slug)),
+        productSearchPredicate(options.query!)!,
+      ))).map((row) => row.slug))
+    : null;
   const items: RankingListItem[] = [];
   let rank = 0;
 
@@ -298,7 +317,7 @@ export async function getAllTimeRanking(options: {
     const hasReportedBuilder = product.source !== "crawler" || product.claimedAt !== null;
     if (options.category && product.category !== options.category) continue;
     if (options.builder && (!hasReportedBuilder || product.builder !== options.builder)) continue;
-    if (query && !matchesProductSearch(product, query)) continue;
+    if (matching && !matching.has(product.slug)) continue;
 
     items.push({
       ...toListItem(product),

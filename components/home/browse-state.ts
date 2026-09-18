@@ -1,4 +1,5 @@
-export type HomeSort = "weekly" | "trending" | "recent" | "all-time" | "open";
+/** relevance 는 검색어가 있을 때만 쓰는 순서다 — 탭에는 없고, 검색 결과의 기본값이다 */
+export type HomeSort = "weekly" | "trending" | "recent" | "all-time" | "open" | "relevance";
 export const HOME_FIRST_PAGE = 9;
 export const HOME_PAGE_SIZE = 9;
 
@@ -19,7 +20,7 @@ export function parseShown(value: string | undefined): number {
 export function parseHomeSort(value: string | undefined): HomeSort {
   if (value === "popular" || value === "featured") return "weekly";
   if (value === "newest") return "recent";
-  if (value === "trending" || value === "recent" || value === "all-time" || value === "open") {
+  if (value === "trending" || value === "recent" || value === "all-time" || value === "open" || value === "relevance") {
     return value;
   }
   return "weekly";

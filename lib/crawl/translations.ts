@@ -68,12 +68,15 @@ export async function retryableTranslations(limit: number): Promise<PendingTrans
 /**
  * 결과를 남긴다. 실패는 5분·10분·20분… 뒤에 다시(최대 하루) — 느려도 끝까지 이어 가되
  * 늘 실패하는 한 건이 매 틱을 잡아먹지 않게.
+ *
+ * targetLang 은 표의 기본키 한쪽이다. 사유는 'ko'(영어 → 한국어), 검색어는 'en'(한국어 → 영어)로
+ * 같은 표를 쓴다 — 해시가 같아도 방향이 다르면 다른 행이다.
  */
-export async function recordTranslations(results: { hash: string; translated: string | null; error?: string }[], model: string): Promise<void> {
+export async function recordTranslations(results: { hash: string; translated: string | null; error?: string }[], model: string, targetLang = "ko"): Promise<void> {
   for (const result of results) {
     const done = result.translated !== null;
     await db.insert(textTranslations).values({
-      sourceHash: result.hash, targetLang: "ko", status: done ? "done" : "failed", translated: result.translated, model,
+      sourceHash: result.hash, targetLang, status: done ? "done" : "failed", translated: result.translated, model,
       attempts: 1, errorCode: done ? null : (result.error ?? "invalid_output").slice(0, 60),
       retryAt: done ? null : sql`now() + interval '5 minutes'`, updatedAt: sql`now()`,
     }).onConflictDoUpdate({
@@ -132,8 +135,9 @@ export async function translationProgress(): Promise<TranslationProgress> {
     select count(*)::int as total,
            (count(*) filter (where t.status = 'done'))::int as done,
            (count(*) filter (where t.status = 'failed'))::int as failed,
-           (select count(*)::int from ${textTranslations} where status = 'done' and updated_at > now() - interval '1 hour') as last_hour,
-           (select extract(epoch from now() - max(updated_at))::int from ${textTranslations} where status = 'done') as last_ago
+           -- 검색어 번역이 같은 표에 'en' 으로 들어온다. 이 화면은 사유 번역만 센다
+           (select count(*)::int from ${textTranslations} where status = 'done' and target_lang = 'ko' and updated_at > now() - interval '1 hour') as last_hour,
+           (select extract(epoch from now() - max(updated_at))::int from ${textTranslations} where status = 'done' and target_lang = 'ko') as last_ago
       from (${UNIQUE_SOURCES}) u
       left join ${textTranslations} t on t.source_hash = u.hash and t.target_lang = 'ko'`)];
   const total = Number(row?.total ?? 0), done = Number(row?.done ?? 0);
