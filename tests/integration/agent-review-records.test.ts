@@ -158,3 +158,35 @@ it("does not let an old model approval suppress review or satisfy enforce public
     await expect(db.transaction(tx => assertReviewApproval(tx, {...context, candidate}))).rejects.toThrow("review_approval_changed");
   } finally {vi.unstubAllEnvs();}
 });
+
+/**
+ * 새 후보가 재심사 뒤에 굶지 않는다.
+ *
+ * observe 에서는 재심사 결과가 후보에 기록되지 않아(applied=false) 재심사 대상의 updatedAt 이
+ * 영영 옛날로 남는다. 오래된 순으로만 뽑던 때는 그것이 늘 줄 맨 앞을 차지해, 2026-09-18 프로드에서
+ * 한 번도 심사받지 못한 후보 55건이 평균 9시간(가장 오래 194시간) 기다렸다.
+ */
+it("한 번도 심사받지 않은 후보가 유효기간 지난 재심사보다 먼저 나온다", async () => {
+  const old = await fixture();
+  const first = await claimAgentReview(old);
+  if (first.kind === "skipped") throw new Error(first.reason);
+  await recordAgentReview({ ...old, attempt: first.attempt, outcome });
+  // 유효기간이 지나 다시 보게 된 재심사 — 그리고 줄에서 더 오래된 쪽
+  await db.update(crawlReviewAttempts).set({ validUntil: new Date(Date.now() - 60_000) });
+  await db.update(crawlCandidates).set({ updatedAt: new Date(Date.now() - 7 * 86_400_000) })
+    .where(eq(crawlCandidates.id, old.candidate.id));
+
+  await crawl.putDocument({ repo: "owner/fresh-app", productUrl: "https://fresh.example", pageStatus: 200,
+    repoMeta: { description: "A new deployed service" }, pageMeta: { title: "Fresh App", description: "A new deployed service" } });
+  await db.update(crawlDocuments).set({ fetchedAt: new Date(Date.now() - 2000) });
+  await crawl.recordJudgement({ repo: "owner/fresh-app", productUrl: "https://fresh.example", state: "approved", reason: "passed", decidedBy: "auto" });
+  const fresh = (await crawl.getCandidate("owner/fresh-app"))!;
+
+  const settings = await getSettings();
+  const order = (await listReviewCandidates(settings, 10)).map((row) => row.id);
+  // 둘 다 심사 대상이지만 새 것이 먼저다 — updatedAt 은 재심사 쪽이 일주일 더 오래됐는데도
+  expect(order).toEqual([fresh.id, old.candidate.id]);
+
+  // 감사의 양보 조건은 새 것만 본다 — 재심사에는 양보하지 않는다
+  expect((await listReviewCandidates(settings, 10, { unreviewedOnly: true })).map((row) => row.id)).toEqual([fresh.id]);
+});

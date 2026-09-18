@@ -47,14 +47,17 @@ export async function auditPublishedProducts(ctx: JobContext<null>): Promise<Job
     return { done: true };
   }
   /*
-   * 먼저 양보한다. 발행 문(crawl-agent-review)에 기다리는 후보가 하나라도 있으면 이 틱은 쉰다.
+   * 먼저 양보한다. 발행 문에 한 번도 심사받지 않은 새 후보가 하나라도 있으면 이 틱은 쉰다.
    *
    * 새 후보는 심사를 받아야 공개되고, 공개분은 이미 떠 있다 — 기다려서 잃는 쪽이 새 후보다.
-   * 평소 새 후보 수요는 시간당 약 100건(2026-09-18 실측)이라 문은 대부분의 분에 비어 있고,
-   * 감사는 그 남는 차례만 쓴다. 같은 워커에서 차례로 돌므로 둘이 게이트웨이에 겹쳐 보내는 일은
-   * 없다 — 동시 호출은 늘 settings.reviewConcurrency 이하다(4 → 성공 94%, 6 → 87% 실측).
+   * 같은 워커에서 차례로 돌므로 둘이 게이트웨이에 겹쳐 보내는 일은 없다 — 동시 호출은 늘
+   * settings.reviewConcurrency 이하다(4 → 성공 94%, 6 → 87% 실측).
+   *
+   * "기다리는 후보가 하나라도 있으면"으로 두었을 때는 감사가 영영 돌지 않았다. 2026-09-18 프로드에서
+   * 문은 여덟 번 모두 100건으로 찼고, 전부 이미 심사받은 보류 건이 24시간마다 다시 도는 것이었다
+   * (새 후보 0건). 그 재심사에 양보할 이유는 없다 — observe 에서는 결과가 반영되지도 않는다.
    */
-  if ((await listReviewCandidates(settings, 1)).length) {
+  if ((await listReviewCandidates(settings, 1, { unreviewedOnly: true })).length) {
     ctx.log("product_audit.yielded", { campaign: campaign.id });
     return { done: true };
   }
