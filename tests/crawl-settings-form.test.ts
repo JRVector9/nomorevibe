@@ -131,3 +131,39 @@ it('대체 모델 두 칸을 표시하고 입력 순서대로 저장한다', asy
     { provider: 'claude-cli', model: 'opus' },{ provider: 'abcllm', model: 'qwen3-coder:30b' },
   ]);
 });
+
+/**
+ * 1차 심사자·동시 실행 수는 데이터로 뺐는데 한동안 화면에 없어 스크립트로만 바꿀 수 있었다.
+ * 배포 없이 조정하려고 뺀 값이라 화면이 그것을 그리고, 저장이 그것을 되돌려 보내야 한다.
+ */
+describe("1차 심사 설정", () => {
+  const withReviewer: CrawlSettings = {
+    ...DEFAULT_CRAWL_SETTINGS,
+    firstReview: { provider: "abcllm", model: "[MLX] gpt-oss-120b" },
+    reviewConcurrency: 4,
+  };
+
+  it("지금 값을 그대로 그린다 — 손대지 않고 저장해도 바뀌면 안 된다", () => {
+    const html = render(withReviewer);
+    expect(html).toContain('name="firstReviewModel"');
+    expect(html).toContain('value="[MLX] gpt-oss-120b"');
+    expect(html).toMatch(/name="reviewConcurrency"[^>]*value="4"/);
+  });
+
+  it("저장하면 두 값을 보낸다", async () => {
+    await saveCrawlSettings(null, submitted({
+      firstReviewProvider: "abcllm", firstReviewModel: "[MLX] gpt-oss-120b", reviewConcurrency: "4",
+    }));
+    const patch = saveSettings.mock.calls[0][0];
+    expect(patch.firstReview).toEqual({ provider: "abcllm", model: "[MLX] gpt-oss-120b" });
+    expect(patch.reviewConcurrency).toBe(4);
+  });
+
+  it("모델 칸을 비우면 설정을 지운다 — 키를 빼면 기존 값에 덮여 되돌릴 길이 없다", async () => {
+    await saveCrawlSettings(null, submitted({ firstReviewProvider: "abcllm", firstReviewModel: "  ", reviewConcurrency: "2" }));
+    const patch = saveSettings.mock.calls[0][0];
+    // 키가 있고 값이 undefined 여야 {...지금, ...바꾼 것} 에서 지금 값을 덮는다
+    expect("firstReview" in patch).toBe(true);
+    expect(patch.firstReview).toBeUndefined();
+  });
+});
