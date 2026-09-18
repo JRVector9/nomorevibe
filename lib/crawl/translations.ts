@@ -34,17 +34,33 @@ const UNIQUE_SOURCES = sql`select encode(sha256(convert_to(body, 'UTF8')), 'hex'
 export type PendingTranslation = { hash: string; body: string; attempts: number };
 
 /**
- * 아직 번역이 없는 글 — 최근 것부터. 실패한 것은 다시 볼 때가 된 것만(5분부터 두 배씩).
- * 실패한 것을 뒤로 미루면 몇 시간씩 "실패"로 남는다 — 첫 배포 때 시간 제한 탓에 실패한 39건이
- * 처음 보는 2,300건 뒤에 줄을 섰다. 최근 순서만 따르고, 실패한 글은 작업이 한 건씩 따로 옮긴다.
+ * 아직 한 번도 옮기지 않은 글 — 최근 것부터. 심사 화면이 보는 것이 최근 사유라서다.
  */
-export async function pendingTranslations(limit: number): Promise<PendingTranslation[]> {
+export async function untriedTranslations(limit: number): Promise<PendingTranslation[]> {
   const rows = await db.execute<{ hash: string; body: string; attempts: number }>(sql`
-    select u.hash, u.body, coalesce(t.attempts, 0)::int as attempts
+    select u.hash, u.body, 0::int as attempts
       from (${UNIQUE_SOURCES}) u
       left join ${textTranslations} t on t.source_hash = u.hash and t.target_lang = 'ko'
-     where t.source_hash is null or (t.status = 'failed' and (t.retry_at is null or t.retry_at <= now()))
+     where t.source_hash is null
      order by u.at desc nulls last
+     limit ${limit}`);
+  return [...rows].map((row) => ({ hash: row.hash, body: row.body, attempts: Number(row.attempts) }));
+}
+
+/**
+ * 다시 볼 때가 된 실패 — 오래 기다린 것부터.
+ *
+ * 한 대기열에 섞어 원문 최신순으로 세웠더니 실패가 영영 차례를 얻지 못했다. 프로드에서
+ * 실패 1,871건 중 1,854건이 시도 1회에 멈춘 채 엿새를 기다렸다 — 재시도 시각은 진작 지났는데
+ * 새로 들어오는 글이 늘 앞에 섰기 때문이다. 줄을 나눠 세우고 잡이 번갈아 가져간다.
+ */
+export async function retryableTranslations(limit: number): Promise<PendingTranslation[]> {
+  const rows = await db.execute<{ hash: string; body: string; attempts: number }>(sql`
+    select u.hash, u.body, t.attempts::int as attempts
+      from (${UNIQUE_SOURCES}) u
+      join ${textTranslations} t on t.source_hash = u.hash and t.target_lang = 'ko'
+     where t.status = 'failed' and (t.retry_at is null or t.retry_at <= now())
+     order by t.retry_at asc nulls first, t.attempts asc
      limit ${limit}`);
   return [...rows].map((row) => ({ hash: row.hash, body: row.body, attempts: Number(row.attempts) }));
 }

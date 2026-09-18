@@ -11,6 +11,7 @@ import { ManualClassification } from './ManualClassification';
 import './operations.css';
 import { OperationsDialog } from './OperationsDialog';
 import { JobTimeline } from './JobTimeline';
+import { LiveRefresh } from './LiveRefresh';
 import { staleServiceInstanceCount } from '@/lib/operations/instance';
 export type OperationJob = { name:string; status:string; lastRunAt:string|null; lastSuccessAt:string|null; nextScheduledAt:string|null; notBefore:string|null; workerSeenAt:string|null; requestedVersion:number; processedVersion:number; runs:number; lastError:string|null; cursor:string };
 const time=(value:unknown)=>typeof value==='string'||typeof value==='number'?new Date(value).toLocaleString('ko-KR',{timeZone:'Asia/Seoul'}):'기록 없음';
@@ -36,7 +37,7 @@ export function OperationsCenter({jobs,data,candidates,reviewMode,enabled,oauthC
   }
   function request(name:string){start(async()=>{const result=await requestOperation(name);setMessage(result.error??result.message??'');router.refresh();});}
   return <div className="ops-center">
-    <header className="ops-header compact"><div><h1>운영센터</h1><span className="ops-snapshot-inline">{time(data.fetchedAt)} KST · 수집 {enabled?'켜짐':'꺼짐'} · 워커 관측 15초 간격</span></div><div className="ops-actions"><button disabled={pending} onClick={()=>start(()=>router.refresh())}>새로고침</button><button className="primary" onClick={()=>setTab('ai')}>AI 연결·설정</button></div></header>
+    <header className="ops-header compact"><div><h1>운영센터</h1><span className="ops-snapshot-inline">{time(data.fetchedAt)} KST · 수집 {enabled?'켜짐':'꺼짐'} · 워커 관측 15초 간격</span></div><div className="ops-actions"><LiveRefresh /><button disabled={pending} onClick={()=>start(()=>router.refresh())}>새로고침</button><button className="primary" onClick={()=>setTab('ai')}>AI 연결·설정</button></div></header>
     {tab!=='ai'&&(!agent?.configReady||agent.lastAttempt?.result&&agent.lastAttempt.result!=='success')&&<div className="ops-alert"><div><strong>AI 연결·분류 상태를 확인해주세요</strong><p>분류 실패 후보는 보류됩니다. 계정을 연결하거나 수동으로 카테고리를 지정할 수 있습니다.</p></div><button onClick={()=>setTab('ai')}>연결 상태 확인 →</button></div>}
     <nav className="ops-tabs" aria-label="운영센터 화면">{[['overview','전체 현황'],['jobs','작업 흐름'],['ai','AI 연결'],['manual','수동 분류']].map(([key,label])=><button key={key} aria-current={tab===key?'page':undefined} onClick={()=>setTab(key)}>{label}{key==='manual'&&data.held>0&&<span>{data.held}</span>}</button>)}</nav>
     {message&&<p className="ops-message" role="status">{message}</p>}

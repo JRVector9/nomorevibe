@@ -64,3 +64,13 @@
 .ops-mini ul{list-style:none;margin:0;padding:0;display:grid;gap:4px;font-size:13px}
 .ops-center .ops-mini li small{display:block;margin:0}.ops-center .ops-mini p{margin:0}
 @media(max-width:1100px){.ops-console{grid-template-columns:1fr}.ops-console-side{grid-template-columns:repeat(auto-fit,minmax(260px,1fr))}}
+/* 실시간 갱신 표시 — 켜져 있으면 초록 점이 숨 쉬듯 깜박인다 */
+.ops-live-dot{display:inline-block;width:7px;height:7px;margin-right:6px;border-radius:50%;background:#c3ccd9;vertical-align:middle}
+.ops-live-dot.on{background:#23835a;animation:ops-live-pulse 2s ease-in-out infinite}
+@keyframes ops-live-pulse{0%,100%{opacity:1}50%{opacity:.25}}
+@media(prefers-reduced-motion:reduce){.ops-live-dot.on{animation:none}}
+
+/* 옮기는 중인 진행 막대 — 줄무늬가 흘러 멈춘 것과 구분된다 */
+.ops-progress-live{background-image:linear-gradient(90deg,transparent 0 25%,rgba(255,255,255,.45) 25% 50%,transparent 50% 100%);background-size:28px 100%;animation:ops-progress-flow 1.1s linear infinite}
+@keyframes ops-progress-flow{to{background-position:28px 0}}
+@media(prefers-reduced-motion:reduce){.ops-progress-live{animation:none;background-image:none}}

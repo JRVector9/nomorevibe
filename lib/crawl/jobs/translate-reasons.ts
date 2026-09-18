@@ -1,6 +1,6 @@
 import type { JobContext, JobOutcome } from "@/lib/jobs/runner";
 import { TRANSLATE_MODEL, translateToKorean } from "@/lib/crawl/translate";
-import { pendingTranslations, recordTranslations } from "@/lib/crawl/translations";
+import { recordTranslations, retryableTranslations, untriedTranslations } from "@/lib/crawl/translations";
 
 /**
  * 한 번에 옮기는 양 — 최대 4건, 1,600자까지.
@@ -20,6 +20,15 @@ const TICK_MS = 54_000;
  * 16초로 줄어 거의 늘 시간 초과였다 — 프로드에서 틱마다 3건씩 헛실패가 났다(2026-09-11).
  */
 const MIN_CALL_MS = 30_000;
+
+/**
+ * 이만큼 실패한 글은 묶지 않고 혼자 보낸다.
+ *
+ * 밀린 실패는 대부분 묶음이 통째로 시간 초과된 것이라(프로드 1,871건 중 1,854건이 시도 1회)
+ * 다시 묶어 보내는 것이 맞다. 여러 번 되풀이해 실패한 글만 따로 떼어, 그것 하나가 옆의
+ * 멀쩡한 글까지 끌고 실패하지 않게 한다.
+ */
+const SOLO_ATTEMPTS = 3;
 
 /** 앞에서부터 글자 수 한도까지 — 순서(최근 것부터)를 지킨다 */
 export function packBatch<T extends { body: string }>(items: T[]): T[] {
@@ -48,14 +57,25 @@ export async function translateReasons(ctx: JobContext<null>): Promise<JobOutcom
   const remaining = () => TICK_MS - (Date.now() - startedAt);
   let translated = 0, failed = 0;
 
+  /**
+   * 밀린 실패와 처음 보는 글을 번갈아 가져간다.
+   *
+   * 한쪽만 보면 다른 쪽이 굶는다 — 최근 것만 보면 실패가 엿새를 기다리고, 실패만 보면
+   * 심사 화면의 새 사유가 그동안 영어로 남는다.
+   */
+  let takeRetry = true;
+
   while (ctx.hasBudget() && remaining() >= MIN_CALL_MS) {
-    const pending = await pendingTranslations(BATCH * 2);
+    const preferred = takeRetry ? await retryableTranslations(BATCH) : await untriedTranslations(BATCH * 2);
+    const pending = preferred.length
+      ? preferred
+      : takeRetry ? await untriedTranslations(BATCH * 2) : await retryableTranslations(BATCH);
+    takeRetry = !takeRetry;
     if (!pending.length) {
       ctx.log("translate.done", { translated, failed, drained: true });
       return { done: true };
     }
-    // 한 번 실패한 글은 따로 — 묶음 하나가 다른 글까지 끌고 실패하지 않게
-    const batch = pending[0].attempts > 0 ? [pending[0]] : packBatch(pending.filter((item) => item.attempts === 0));
+    const batch = pending[0].attempts >= SOLO_ATTEMPTS ? [pending[0]] : packBatch(pending);
     const result = await translateToKorean(batch.map((item) => item.body), Math.max(1_000, Math.min(CALL_MS, remaining() - 1_000)));
     const rows = batch.map((item, index) => ({
       hash: item.hash,
