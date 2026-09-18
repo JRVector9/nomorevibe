@@ -35,7 +35,7 @@ it("does not select or call AI when review mode is off", async () => {
   expect(await reviewCrawlCandidates(context())).toEqual({done:true});
   expect(mocks.requeue).not.toHaveBeenCalled();expect(mocks.list).not.toHaveBeenCalled();expect(mocks.review).not.toHaveBeenCalled();
 });
-it("runs at most two external reviews and records through the transactional repository", async () => {
+it("설정한 수만큼만 동시에 띄운다 — 기본은 둘", async () => {
   mocks.list.mockResolvedValue([candidate(),{...candidate(),id:2},{...candidate(),id:3}]);
   expect(await reviewCrawlCandidates(context())).toEqual({done:false});
   expect(mocks.review).toHaveBeenCalledTimes(2);
@@ -48,6 +48,25 @@ it("runs at most two external reviews and records through the transactional repo
  * 제공자를 코드에 박아 두던 때는 모델을 바꾸려면 재배포가 필요했고, 그래서 비교 실험을
  * 못 했다. 기록에 남는 provider 도 함께 바뀌어야 옛 모델의 승인이 계속 맞아떨어지지 않는다.
  */
+/**
+ * 동시 실행 수를 설정으로 뺀 이유.
+ *
+ * 2로 박혀 있던 때는 주기가 60초라 시간당 120건이 상한이었고, 발행(시간당 213건)을 따라가지
+ * 못해 enforce 를 켤 수 없었다 — 모델이 느려서가 아니라 이 숫자 때문이었다. 사내 게이트웨이는
+ * 공용이라 부하를 보며 배포 없이 올리고 내려야 한다.
+ */
+it("동시 실행 수는 설정에서 오고, 코드 상한을 넘지 못한다", async () => {
+  mocks.list.mockResolvedValue(Array.from({length:12},(_,i)=>({...candidate(),id:i+1})));
+  mocks.settings = {...mocks.settings!, reviewConcurrency:6};
+  await reviewCrawlCandidates(context());
+  expect(mocks.review).toHaveBeenCalledTimes(6);
+
+  mocks.review.mockClear();
+  // 설정이 상한(16)을 넘겨도 코드가 막는다 — 스키마가 먼저 막지만 잡도 스스로 지킨다
+  mocks.settings = {...mocks.settings!, reviewConcurrency:999};
+  await reviewCrawlCandidates(context());
+  expect(mocks.review.mock.calls.length).toBeLessThanOrEqual(16);
+});
 it("설정이 게이트웨이를 가리키면 CLI 대신 게이트웨이를 부르고 그 이름으로 기록한다", async () => {
   mocks.gateway.mockResolvedValue({ok:true,outcome:{decision:"approve",reason:"게이트웨이가 봤다",evidenceIds:["product"]},usage:{}});
   mocks.settings = {...mocks.settings!, firstReview:{provider:"abcllm",model:"[MLX] gpt-oss-120b"}};
@@ -91,7 +110,7 @@ it("applies the page-body rule before a model call, like the rule judge", async 
   expect(mocks.claim).toHaveBeenCalledWith(expect.objectContaining({provider:"rules"}));
   expect(mocks.record).toHaveBeenCalledWith(expect.objectContaining({outcome:expect.objectContaining({decision:"reject"})}));
 });
-it("runs two external reviews at once so two 20-second calls fit one 25-second tick", async () => {
+it("둘을 동시에 띄워 20초짜리 두 건이 25초 틱에 들어간다", async () => {
   mocks.list.mockResolvedValue([candidate(),{...candidate(),id:2},{...candidate(),id:3}]);
   let started = 0, release!: () => void, timer: NodeJS.Timeout | undefined;
   const bothStarted = new Promise<void>(resolve => { release = resolve; });
