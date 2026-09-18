@@ -164,7 +164,30 @@ export async function getSettingsMeta(): Promise<{ updatedBy: string | null; upd
  *
  * 조용히 어긋나는 것이 문제이므로 어긋난 것을 보여준다. 되돌릴지는 사람이 정한다.
  */
-export type SettingsDrift = { label: string; stored: string; standard: string }[];
+/**
+ * 어긋난 항목 하나.
+ *
+ * 값 둘을 나란히 두는 것만으로는 사람이 못 고른다 — 차단 도메인처럼 스물넷과 열다섯을 나란히
+ * 놓으면 무엇이 빠졌는지 눈으로 빼야 한다. 그래서 목록은 차이를 미리 계산해 둔다.
+ */
+export type SettingsDriftItem = {
+  label: string;
+  /**
+   * 왜 갈라 두나 — 사람이 할 판단이 다르다.
+   *
+   * "absent"는 기본값에만 있는 것이 있고 저장값에만 있는 것은 없는 경우다. 코드에 새 항목이
+   * 생겼는데 저장된 행이 덮고 있어 닿지 못한 것이라, 거의 언제나 의도가 아니다.
+   * "changed"는 값을 바꿔 둔 것이라 일부러 그랬을 수 있다.
+   */
+  kind: "absent" | "changed";
+  /** 기본값에 있는데 저장값에 없는 것 (목록일 때만) */
+  absent: string[];
+  /** 저장값에만 있는 것 (목록일 때만) */
+  extra: string[];
+  stored: string;
+  standard: string;
+};
+export type SettingsDrift = SettingsDriftItem[];
 
 const TRACKED: { label: string; read: (s: CrawlSettings) => unknown }[] = [
   { label: "검색 신호", read: (s) => s.discover.queries.filter((q) => q.enabled).map((q) => q.label) },
@@ -199,7 +222,17 @@ export function settingsDrift(current: CrawlSettings): SettingsDrift {
     const stored = read(current);
     const standard = read(DEFAULT_CRAWL_SETTINGS);
     if (JSON.stringify(stored) === JSON.stringify(standard)) return [];
-    return [{ label, stored: show(stored), standard: show(standard) }];
+    const bothLists = Array.isArray(stored) && Array.isArray(standard);
+    const text = (items: unknown[]) => items.map(String);
+    const absent = bothLists ? text(standard).filter((v) => !text(stored).includes(v)) : [];
+    const extra = bothLists ? text(stored).filter((v) => !text(standard).includes(v)) : [];
+    return [{
+      label,
+      // 빠지기만 한 목록은 사람이 고른 것이 아니라 새 기본값이 닿지 못한 것이다
+      kind: absent.length > 0 && extra.length === 0 ? "absent" as const : "changed" as const,
+      absent, extra,
+      stored: show(stored), standard: show(standard),
+    }];
   });
 }
 
