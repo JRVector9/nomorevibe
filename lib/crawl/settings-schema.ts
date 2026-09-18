@@ -83,11 +83,15 @@ const judgeSchema = z.object({
    */
   excludeOrganizations: z.boolean(),
   /**
-   * 레포 설명에 이 문구가 있으면 개인 사이트로 본다.
+   * 레포 설명에 이 문구가 있으면 개인 프로필로 본다.
    *
    * 이름과 URL에는 단서가 없는데 설명에만 있는 경우가 있다 — evansstepanov("My very simple
    * personal landing page app"), villoro.com("Personal blog build with Astro")이 그렇게 통과했다.
    * 한 단어짜리는 넣지 않는다. "personal"만 보면 personal-finance-tracker가 걸린다.
+   *
+   * 2026-09-18부터 하는 일이 반대다. 찾는 일은 그대로지만, 찾으면 거부가 아니라 통과이고
+   * 이름 패턴까지 이긴다. 그래서 틀렸을 때의 방향도 반대다 — 예전에는 붙잡아 두는 쪽으로
+   * 틀렸고 지금은 내보내는 쪽으로 틀린다. 넓은 문구를 더하기 전에 그것을 생각해야 한다.
    */
   personalSiteKeywords: z.array(z.string().min(3).max(60)).max(100),
   /**
@@ -98,6 +102,18 @@ const judgeSchema = z.object({
    * 됐다: 문구를 찾는 일은 그대로고, 찾았을 때 하는 일만 거부에서 통과로 바뀌었다.
    */
   profileRepoPatterns: z.array(z.string().min(1).max(120)).max(100),
+  /**
+   * 개인 것이 아니면 제품도 아닌 프로필 패턴 — 분류기가 Profile 이라고 해야 발행한다.
+   *
+   * 블로그가 그렇다. 개인 블로그면 Profile 이고, 아니면 회사·주제 블로그라 읽을거리지 제품이
+   * 아니다. 제3의 경우가 없다. 반면 `*.github.io` 는 내용이 아니라 자리라서 진짜 제품이 올라온다
+   * (AIRaML, Mathematical Art) — 그래서 여기 넣지 않는다.
+   *
+   * 규칙은 이것을 가릴 수 없다. 실측(2026-09-18, `*-blog` 로 통과한 30건): 분류기가 개인 블로그
+   * 22건을 Profile 로, 회사·브랜드 블로그 7건(제품 공식 블로그·마케팅 코치·병원·여행 브랜드)을
+   * 전부 다른 카테고리로 갈랐다 — 30건에서 어긋난 것이 없었다. 그 답을 버리지 않고 쓴다.
+   */
+  profileOnlyPatterns: z.array(z.string().min(1).max(120)).max(100),
   /** homepage가 이 도메인이면 배포물이 아니다 */
   blockedHomepageDomains: z.array(z.string().min(1).max(120)).max(200),
   /** 레포 이름이 이 패턴이면 제외 (* 와일드카드) */
@@ -411,6 +427,7 @@ export const DEFAULT_CRAWL_SETTINGS: CrawlSettings = {
       "*-personal-site",
       "*-personal-website",
     ],
+    profileOnlyPatterns: ["*-blog"],
     blockedHomepageDomains: [
       "github.com",
       "instagram.com",

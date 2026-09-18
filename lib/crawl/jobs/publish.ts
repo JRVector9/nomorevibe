@@ -9,6 +9,7 @@ import { prepareCandidateClassification, publishCandidate } from "@/lib/crawl/pu
 import { classifyCategories } from "@/lib/crawl/classify";
 import { recordPublicationFailure } from "@/lib/crawl/publication-guard";
 import { reviewApprovalPredicate } from "@/lib/crawl/agent-review-repository";
+import { requiresProfileCategory } from "@/lib/crawl/rules";
 import { requestJob } from "@/lib/jobs/control";
 
 /**
@@ -68,6 +69,22 @@ export async function publishCandidates(ctx: JobContext<null>): Promise<JobOutco
         const snapshot = snapshotByRepo.get(candidate.repo);
         if (process.env.CONNECT_AGENT_URL && snapshot && category === null) {
           await holdClassification(candidate, snapshot.document); skipped++; continue;
+        }
+        /**
+         * 이름만으로 개인 것인지 못 가르는 패턴은 분류기의 답을 조건으로 쓴다.
+         *
+         * `*-blog` 로 통과한 것이 Profile 이 아니면 회사·주제 블로그다 — 읽을거리지 제품이
+         * 아니므로 판정 때 통과시킨 것을 여기서 되돌린다. 사람이 이미 본 것(admin)과 사람이
+         * 직접 고른 카테고리는 건드리지 않는다.
+         */
+        if (!manual?.category && candidate.decidedBy !== "admin"
+          && requiresProfileCategory(candidate.signals, settings) && category !== "Profile") {
+          if (!await recordPublicationFailure(candidate, { state: "rejected", reason: "personal_site" }, ctx.lease)) {
+            ctx.log("crawl.publication_changed", { repo: candidate.repo });
+            return { done: false };
+          }
+          ctx.log("crawl.publish_not_a_personal_profile", { repo: candidate.repo, category });
+          skipped++; continue;
         }
         const result = await publishCandidate(candidate, ctx.lease, {
           category,

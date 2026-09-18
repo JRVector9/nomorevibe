@@ -181,7 +181,10 @@ const TRACKED: { label: string; read: (s: CrawlSettings) => unknown }[] = [
   { label: "조직 계정 제외", read: (s) => s.judge.excludeOrganizations },
   { label: "차단 도메인", read: (s) => s.judge.blockedHomepageDomains },
   { label: "제외 패턴", read: (s) => s.judge.excludedRepoPatterns },
-  { label: "개인 사이트 키워드", read: (s) => s.judge.personalSiteKeywords },
+  // 새 정책을 여는 두 목록. 여기가 어긋나면 개인 프로필이 조용히 다시 막힌다
+  { label: "개인 프로필 패턴", read: (s) => s.judge.profileRepoPatterns },
+  { label: "분류 확인이 필요한 패턴", read: (s) => s.judge.profileOnlyPatterns },
+  { label: "개인 프로필 키워드", read: (s) => s.judge.personalSiteKeywords },
   { label: "문서 생성기", read: (s) => s.judge.docsGenerators },
   { label: "스캐폴드 제목", read: (s) => s.judge.placeholderTitles },
   { label: "문서 제목 패턴", read: (s) => s.judge.docsTitlePatterns },

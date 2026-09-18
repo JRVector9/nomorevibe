@@ -36,7 +36,7 @@ const REASON_LABELS: Record<string, string> = {
   unreachable: "배포 URL 접속 불가",
   not_a_product: "배포물이 아님",
   large_oss: "대형 오픈소스·조직",
-  personal_site: "개인 사이트·블로그",
+  personal_site: "회사 소개·링크 모음·설정 저장소",
   fork: "포크",
   already_listed: "이미 등록됨",
   banned: "차단된 URL",
