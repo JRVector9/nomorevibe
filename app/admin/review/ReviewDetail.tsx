@@ -4,6 +4,7 @@ import { useActionState } from 'react';
 import { decideCrawlCandidate, type ReviewState } from '../actions';
 import { collectCandidateEvidence } from './actions';
 import type { AdminReviewEntry } from '@/lib/crawl/admin-review';
+import type { StoppedAt } from '@/lib/crawl/rules';
 import { RuleTrace } from './RuleTrace';
 import { causeLabel } from './causes';
 import { ReasonText } from './ReasonText';
@@ -17,6 +18,12 @@ const VERDICT = {
   approve: { label: 'AI 승인', className: 'border-up/40 bg-up/10', text: 'text-up' },
   needs_review: { label: 'AI 보류', className: 'border-line bg-bg-soft', text: 'text-fg-2' },
 } as const;
+
+/** 거부·보류할 때 남긴 사유(rules.ts 의 StoppedAt). 이 값을 남기기 전의 기록에는 없다 */
+export function stoppedAt(signals: Record<string, unknown> | null | undefined): StoppedAt | null {
+  const value = signals?.stoppedAt as Partial<StoppedAt> | undefined;
+  return typeof value?.rule === 'string' && typeof value.detail === 'string' ? { rule: value.rule, detail: value.detail } : null;
+}
 
 export function safeUrl(value: string | null) {
   try { const url = new URL(value ?? ''); return ['http:', 'https:'].includes(url.protocol) && !url.username && !url.password ? url.href : null; }
@@ -47,6 +54,7 @@ export function ReviewDetail({ entry, reasons }: { entry: AdminReviewEntry; reas
   const canDecide = !!entry.inputHash && !!entry.sourceRevisionHash && candidate.state !== 'published' && !candidate.publishedSlug;
   const canCollect = canDecide && candidate.decidedBy === 'auto' && candidate.state === 'needs_review' && entry.refreshCount < 2;
   const productUrl = safeUrl(candidate.productUrl);
+  const stop = stoppedAt(candidate.signals);
   const facts = entryFacts(entry);
   const verdict = entry.review?.decision && entry.review.decision in VERDICT ? VERDICT[entry.review.decision as keyof typeof VERDICT] : null;
 
@@ -110,6 +118,12 @@ export function ReviewDetail({ entry, reasons }: { entry: AdminReviewEntry; reas
           : <>{STATES[candidate.state]} · {candidate.reason ?? '사유 없음'}</>}
         {' · '}{candidate.decidedBy === 'admin' ? '관리자 결정' : STATUS[entry.status]}
       </p>
+      {/* 판정 당시 기록된 사유. 아래 규칙 흔적은 지금 규칙으로 다시 계산한 것이라 기준이 바뀌면 달라진다 */}
+      {stop && <p className="text-[13px] text-fg-2">
+        <span className="text-fg-3">판정 당시 멈춘 곳 · </span>
+        <b className="font-semibold">{stop.rule}</b>
+        <span className="ml-1.5 break-all font-mono text-fg-3">{stop.detail}</span>
+      </p>}
 
       {canDecide && <form action={action} className="rounded-lg border border-line bg-bg-soft p-3">
         {identity}

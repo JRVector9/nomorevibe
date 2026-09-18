@@ -102,9 +102,9 @@ it("holds incomplete AI evidence deterministically instead of asking a model to 
 });
 
 it("applies the page-body rule before a model call, like the rule judge", async () => {
-  // codex 재현: needs_review 후보를 재수집하자 본문에 설치 명령이 생겼는데, 규칙 재호출에 본문이 없어 모델이 승인했다
+  // codex 재현: needs_review 후보를 재수집하자 본문이 문서로 바뀌었는데, 규칙 재호출에 본문이 없어 모델이 승인했다
   mocks.list.mockResolvedValue([{...candidate(),state:"needs_review",reason:"ambiguous"}]);
-  const document = await mocks.document();document.pageMeta = {...document.pageMeta,textSample:"Demo CLI. Install: npm install -g demo"};
+  const document = await mocks.document();document.pageMeta = {...document.pageMeta,textSample:"Introduction - demo Keyboard shortcuts Press S or / to search in the book"};
   await reviewCrawlCandidates(context());
   expect(mocks.review).not.toHaveBeenCalled();
   expect(mocks.claim).toHaveBeenCalledWith(expect.objectContaining({provider:"rules"}));

@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import type { DecisionReason } from "@/lib/db/schema";
 import type { CrawlSettings } from "./settings-schema";
 import { summarizeAgentEvidence, type SummaryInput } from "@/lib/domain/evidence/agents/summary";
+import { linksOwnGithub } from "./github-links";
 
 /**
  * 판정 규칙.
@@ -45,7 +46,23 @@ export type PageFacts = {
    * 문구가 없는 문서가 그대로 승인됐다. 없으면(이 값을 남기기 전 원본) productUrl만 본다.
    */
   finalUrl?: string | null;
+  /**
+   * 페이지가 건 GitHub 링크(owner 또는 owner/repo, lib/crawl/github-links.ts).
+   *
+   * 링크가 있을 때만 채운다. 빈 값도 키로 남기면 judgeRevision 해시가 모든 원본에서 바뀌어,
+   * 발행을 기다리던 승인이 한꺼번에 재판정으로 돌아간다.
+   */
+  githubLinks?: string[];
 };
+
+/**
+ * 판정이 멈춘 규칙 — 거부·보류 기록에 남긴다(signals.stoppedAt).
+ *
+ * 전에는 사유 갈래(reason)만 남아 "not_a_product 3,350건"이 어느 규칙에서 왜 멈췄는지 알 수 없었다.
+ * 심사 화면은 지금 규칙으로 다시 계산한 것을 보여 주므로, 규칙이 바뀌면 당시 사유는 사라진다.
+ */
+export type StoppedAt = { rule: string; detail: string };
+const STOPPED_DETAIL_MAX = 300;
 
 /**
  * 판정이 지나온 규칙 하나.
@@ -178,12 +195,16 @@ export function judge(
   const trace: RuleStep[] = [];
   /** 통과한 규칙 — 측정값과 기준을 함께 남긴다 */
   const pass = (rule: string, detail: string) => { trace.push({ rule, detail, passed: true }); };
-  const reject = (reason: DecisionReason, rule: string, detail: string): Verdict => {
+  const stop = (rule: string, detail: string) => {
     trace.push({ rule, detail, passed: false });
+    signals.stoppedAt = { rule, detail: detail.slice(0, STOPPED_DETAIL_MAX) } satisfies StoppedAt;
+  };
+  const reject = (reason: DecisionReason, rule: string, detail: string): Verdict => {
+    stop(rule, detail);
     return { state: "rejected", reason, signals, trace };
   };
   const hold = (reason: DecisionReason, cause: AmbiguityCause, rule: string, detail: string): Verdict => {
-    trace.push({ rule, detail, passed: false });
+    stop(rule, detail);
     return { state: "needs_review", reason, signals, trace, cause };
   };
 
@@ -389,7 +410,12 @@ export function judge(
    * 곧 제품이고 설치 문구는 개발자용 곁다리다. 이 확인이 없을 때 실측 오탐이 27%였다.
    */
   const usable = sample ? rules.usableSignals.find((p) => sample.includes(p.toLowerCase())) : undefined;
-  const landing = sample && !usable
+  /**
+   * 제작자가 자기 GitHub 를 페이지에 걸어 두었으면 그 페이지는 프로젝트의 집이다(2026-09-19 결정).
+   * "데모 데이터"·넘김 문구보다 이긴다. 문서 목차는 이기지 못한다 — 문서도 GitHub 를 건다.
+   */
+  const ownGithub = linksOwnGithub(repo.repo, page.githubLinks);
+  const landing = sample && !usable && !ownGithub
     ? rules.landingPhrases.find((p) => sample.includes(p.toLowerCase()))
     : undefined;
   if (landing) {
@@ -406,7 +432,9 @@ export function judge(
     ? "본문 없음 (신호 없음)"
     : usable
       ? `본문에 “${usable}” — 이 페이지에서 쓸 수 있다`
-      : `본문 ${sample.length}자 · 설치 문구 0개 · 목차 낱말 ${navs.length}개 < ${rules.docsNavThreshold}`);
+      : ownGithub
+        ? `제작자의 GitHub 링크가 있다 — 프로젝트의 집`
+        : `본문 ${sample.length}자 · 걸리는 문구 0개 · 목차 낱말 ${navs.length}개 < ${rules.docsNavThreshold}`);
 
   // 푸시 시각을 모르면 살아있는지 확신할 수 없다
   if (!repo.pushedAt && rules.holdAmbiguous) {
@@ -457,8 +485,10 @@ export function pageFactsFromDocument(document: {
   pageMeta: unknown;
 }): PageFacts {
   const meta = (document.pageMeta ?? {}) as {
-    generator?: unknown; title?: unknown; description?: unknown; textSample?: unknown; finalUrl?: unknown;
+    generator?: unknown; title?: unknown; description?: unknown; textSample?: unknown; finalUrl?: unknown; githubLinks?: unknown;
   };
+  const githubLinks = Array.isArray(meta.githubLinks)
+    ? meta.githubLinks.filter((key): key is string => typeof key === "string") : [];
   return {
     productUrl: document.productUrl,
     status: document.pageStatus,
@@ -467,6 +497,7 @@ export function pageFactsFromDocument(document: {
     description: typeof meta.description === "string" ? meta.description : null,
     textSample: typeof meta.textSample === "string" ? meta.textSample : null,
     finalUrl: typeof meta.finalUrl === "string" ? meta.finalUrl : null,
+    ...(githubLinks.length ? { githubLinks } : {}),
   };
 }
 

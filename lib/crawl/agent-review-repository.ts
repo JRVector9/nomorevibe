@@ -291,11 +291,14 @@ export async function recordAgentReview(input: ReviewContext & {
       inputTokens: input.usage?.inputTokens ?? null, outputTokens: input.usage?.outputTokens ?? null,
       costUsd: input.usage?.costUsd ?? null }).where(eq(crawlReviewAttempts.id, attempt.id));
     const applied = input.settings.reviewMode === "enforce";
+    // 멈춘 곳은 이제 규칙이 아니라 AI 심사다. 승인이면 규칙이 보류하며 남긴 사유를 지운다
+    const kept = Object.fromEntries(Object.entries(input.candidate.signals ?? {}).filter(([key]) => key !== "stoppedAt"));
     if (applied) await tx.update(crawlCandidates).set({
       state: outcome.decision === "approve" ? "approved" : outcome.decision === "reject" ? "rejected" : "needs_review",
       reason: outcome.decision === "approve" ? "passed" : outcome.decision === "reject" ? "not_a_product" : "ambiguous",
       decidedBy: "auto", updatedAt: now,
-      signals: { ...input.candidate.signals, agentReviewAttemptId: attempt.id },
+      signals: { ...kept, agentReviewAttemptId: attempt.id,
+        ...(outcome.decision === "approve" ? {} : { stoppedAt: { rule: "AI 심사", detail: outcome.reason.slice(0, 300) } }) },
     }).where(eq(crawlCandidates.id, input.candidate.id));
     return { applied, state: "succeeded" };
   });

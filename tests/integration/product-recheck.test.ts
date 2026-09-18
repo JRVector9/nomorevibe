@@ -84,8 +84,8 @@ describe("발행분 재검수", () => {
    * 2차 검수. 규칙이 본문을 보게 됐지만 이미 발행된 것들은 그 값이 없던 시절에 수집됐다.
    * 못 태운 몫을 세지 않으면 "걸린 게 없다"가 거짓말이 된다.
    */
-  it("본문이 채워지면 설치 유도 페이지를 다시 짚는다", async () => {
-    await published("someone/cli-landing", { textSample: "Loom · orchestrate agents. Install: npm install -g loom" });
+  it("본문이 채워지면 문서 껍데기를 다시 짚는다", async () => {
+    await published("someone/cli-landing", { textSample: "Loom · orchestrate agents. Keyboard shortcuts Press S or / to search in the book" });
 
     const result = await recheckPublishedProducts(await getSettings());
 
@@ -112,7 +112,7 @@ describe("발행분 재검수", () => {
     const settings = await getSettings();
     await published("someone/old-cli", {
       pushedAt: daysAgo(settings.judge.maxPushAgeDays + 30),
-      textSample: "old-cli — install with npm install -g old-cli",
+      textSample: "old-cli — Keyboard shortcuts Press S or / to search in the book",
     });
 
     const result = await recheckPublishedProducts(settings);

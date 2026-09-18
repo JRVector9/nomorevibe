@@ -133,18 +133,50 @@ describe("judge — 거르기", () => {
    * 359건이 배포물이 아니라 소개 페이지였다. 제목·주소·생성기는 하나도 못 걸렀고,
    * 본문 첫머리에는 그대로 적혀 있었다.
    */
-  it("본문이 설치를 시키면 그 페이지는 배포물이 아니다", () => {
+  /**
+   * 설치해서 쓰는 도구와 내려받는 앱도 올린다(2026-09-19 사용자 결정). 전에는 이 본문들이
+   * "설치 유도 아님"에서 거부됐다 — 재판정 실측으로 563건이 이 문구들 때문에 AI 가 보기도 전에 막혔다.
+   */
+  it("설치 명령·내려받기가 있는 페이지도 통과시킨다", () => {
     const cases = [
       "VibeTree Features FAQ Docs Install GitHub — npm install -g vibetree", // 실측: sahithvibudhi/vibe-tree
       "Zephyr 안전 특성 아키텍처 성능 안 装 winget install Juwan.Zephyr",
       "Palm — understand code, remember what you learn. Download for Mac ↓",
-      "Introduction - brink Keyboard shortcuts Press S or / to search in the book",
+      "Toki — brew install aashutoshrathi/tap/toki",
     ];
     for (const textSample of cases) {
-      const v = judge(goodRepo(), { ...livePage, textSample }, settings, NOW);
-      expect(v, textSample).toMatchObject({ state: "rejected", reason: "not_a_product" });
-      expect(v.trace.at(-1)?.rule).toBe("설치 유도 아님");
+      expect(judge(goodRepo(), { ...livePage, textSample }, settings, NOW).state, textSample).toBe("approved");
     }
+  });
+
+  it("문서·넘김 껍데기 문구는 여전히 거부한다", () => {
+    const v = judge(goodRepo(), { ...livePage, textSample: "Introduction - brink Keyboard shortcuts Press S or / to search in the book" }, settings, NOW);
+    expect(v).toMatchObject({ state: "rejected", reason: "not_a_product" });
+    expect(v.trace.at(-1)?.rule).toBe("설치 유도 아님");
+  });
+
+  /** 제작자가 자기 GitHub 를 걸어 둔 페이지는 프로젝트의 집이다(2026-09-19 사용자 결정) */
+  it("제작자의 GitHub 링크가 있으면 데모 데이터 문구로 거부하지 않는다", () => {
+    const textSample = "Fleet tracker — this is a demo with sample trucks";
+    expect(judge(goodRepo(), { ...livePage, textSample }, settings, NOW).state).toBe("rejected");
+    expect(judge(goodRepo(), { ...livePage, textSample, githubLinks: ["someone/my-app"] }, settings, NOW).state).toBe("approved");
+    // 남의 GitHub 는 신호가 아니다 — "Built with X" 링크는 흔하다
+    expect(judge(goodRepo(), { ...livePage, textSample, githubLinks: ["vercel/next.js"] }, settings, NOW).state).toBe("rejected");
+  });
+
+  it("문서 목차는 제작자의 GitHub 링크가 있어도 문서다", () => {
+    const textSample = "karasu Getting Started Installation API Reference Configuration Changelog";
+    expect(judge(goodRepo(), { ...livePage, textSample, githubLinks: ["someone/my-app"] }, settings, NOW).state).toBe("rejected");
+  });
+
+  /** 거부 사유 갈래(reason)만으로는 어느 규칙에서 왜 멈췄는지 알 수 없었다 — 기록에 남긴다 */
+  it("거부·보류하면 멈춘 규칙과 이유를 signals.stoppedAt 에 남기고, 통과하면 남기지 않는다", () => {
+    const rejected = judge(goodRepo(), { ...livePage, title: "Scut Docs" }, settings, NOW);
+    expect(rejected.signals.stoppedAt).toEqual({ rule: "문서 제목 아님", detail: "제목 “Scut Docs” 이 * docs 에 걸림" });
+    const held = judge(goodRepo(), { productUrl: "https://my-app.vercel.app", status: null }, settings, NOW);
+    expect(held.state).toBe("needs_review");
+    expect(held.signals.stoppedAt).toMatchObject({ rule: "배포 URL 응답 확인" });
+    expect(judge(goodRepo(), livePage, settings, NOW).signals.stoppedAt).toBeUndefined();
   });
 
   /**

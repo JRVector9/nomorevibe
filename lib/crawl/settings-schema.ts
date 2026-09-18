@@ -163,6 +163,9 @@ const judgeSchema = z.object({
    * 아니라 소개 페이지였다. 제목·주소·생성기로는 하나도 못 걸렀는데, 본문 첫머리에는
    * 그대로 적혀 있었다 — `npm install`, `Download for macOS`, 문서 목차.
    *
+   * 2026-09-19 부터 설치·내려받기 문구는 넣지 않는다 — 설치해서 쓰는 도구와 내려받는 앱도 올린다.
+   * 남은 것은 문서·넘김 껍데기와 "진짜 데이터가 아니다"라고 스스로 밝힌 문구다.
+   *
    * 소문자로 맞춘 본문에서 찾는다. 정규식이 아니라 그냥 들어 있는지만 본다.
    */
   landingPhrases: z.array(z.string().min(2).max(60)).max(120),
@@ -549,12 +552,11 @@ export const DEFAULT_CRAWL_SETTINGS: CrawlSettings = {
      * 이 목록으로 509건 중 136건이 갈렸고 그중 3건이 오탐이었다(2.2%).
      */
     landingPhrases: [
-      // 설치 명령 — 실물은 CLI·플러그인·라이브러리다
-      "npm install", "npm i -g", "npm i @", "npx ", "pnpm add", "yarn add",
-      "pip install", "pipx install", "cargo install", "go install", "brew install",
-      "winget install", "scoop install", "choco install", "docker run", "uvx ", "curl -fsSL",
-      // 내려받기 — 실물은 데스크톱·모바일 앱이다
-      "download for mac", "download for windows", "download for linux",
+      /**
+       * 설치 명령("npm install"·"brew install"·"curl -fsSL" …)과 내려받기("download for mac" …)는
+       * 2026-09-19 에 뺐다. CLI·플러그인·라이브러리·데스크톱 앱의 소개·설치·다운로드 페이지도 올린다고
+       * 사용자가 정했다. 이 문구들로 AI 가 보기도 전에 거부된 것이 563건이었다(재판정 실측).
+       */
       /**
        * 문서·넘김 껍데기.
        *
