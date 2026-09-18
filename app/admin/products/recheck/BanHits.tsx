@@ -71,7 +71,7 @@ export function BanHits({ formId, total }: { formId: string; total: number }) {
         ref={dialog}
         aria-labelledby={`${formId}-confirm-title`}
         onClick={(event) => { if (event.target === dialog.current) dialog.current?.close(); }}
-        className="w-[min(560px,calc(100vw-32px))] rounded-[14px] border border-line bg-bg-card p-0 text-fg backdrop:bg-black/50"
+        className="w-[min(560px,calc(100vw-32px))] rounded-[12px] border border-line bg-bg-card p-0 text-fg backdrop:bg-black/50"
       >
         <div className="p-5">
           <h3 id={`${formId}-confirm-title`} className="text-[16px] font-extrabold">
