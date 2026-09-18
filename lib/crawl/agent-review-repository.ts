@@ -9,7 +9,7 @@ import { lockRepositoryAgentEvidence } from "@/lib/domain/evidence/agents/lock";
 import { assertJobLease, requestJob, type JobLease } from "@/lib/jobs/control";
 import { mergeWithDefaults } from "./settings";
 import type { CrawlSettings } from "./settings-schema";
-import { reviewModel } from "./agent-review";
+import { firstReviewer } from "./agent-review";
 import {
   createReviewInput, isReviewCandidate, MAX_REVIEW_ATTEMPTS,
   REVIEW_PROMPT_VERSION, REVIEW_RULES_VERSION, reviewPolicyHash, reviewHash,
@@ -55,15 +55,23 @@ async function currentReviewInput(tx: ProductTransaction, expected: {
 }
 
 /** Cheap current revision comparison used before LIMIT; final transactions also recompute inputHash. */
-function activeReviewIdentity(): SQL {
+/**
+ * 지금 설정으로 낸 기록만 재사용한다.
+ *
+ * 제공자·모델을 박아 두던 때는 1차 심사자를 바꿔도 옛 모델의 승인이 계속 맞아떨어졌다.
+ * 갈아 끼운 뒤 첫 회차부터 새 심사자의 답으로만 발행되게 한다.
+ */
+function activeReviewIdentity(settings: CrawlSettings): SQL {
+  const reviewer = firstReviewer(settings);
   return or(and(eq(crawlReviewAttempts.provider, "rules"), eq(crawlReviewAttempts.model, REVIEW_RULES_VERSION)),
-    and(eq(crawlReviewAttempts.provider, "claude-cli"), eq(crawlReviewAttempts.model, reviewModel() ?? "")))!;
+    and(eq(crawlReviewAttempts.provider, reviewer?.provider ?? "claude-cli"),
+      eq(crawlReviewAttempts.model, reviewer?.model ?? "")))!;
 }
 
 function matchingSource(settings: CrawlSettings): SQL {
   return sql`${crawlReviewAttempts.candidateId} = ${crawlCandidates.id}
     AND ${crawlReviewAttempts.kind} = 'automatic'
-    AND ${activeReviewIdentity()}
+    AND ${activeReviewIdentity(settings)}
     AND ${crawlReviewAttempts.policyHash} = ${reviewPolicyHash(settings)}
     AND ${crawlReviewAttempts.promptVersion} = ${REVIEW_PROMPT_VERSION}
     AND ${crawlReviewAttempts.rulesVersion} = ${REVIEW_RULES_VERSION}
@@ -287,7 +295,7 @@ export async function assertReviewApproval(tx: ProductTransaction, input: {
     .where(eq(agentRepositoryObservations.scanId, scan.id)).for("share");
   const current = await loadReviewInput(input.candidate, input.document, input.settings, tx);
   const [approval] = await tx.select().from(crawlReviewAttempts).where(and(
-    activeReviewIdentity(),
+    activeReviewIdentity(input.settings),
     eq(crawlReviewAttempts.candidateId, input.candidate.id), eq(crawlReviewAttempts.kind, "automatic"),
     eq(crawlReviewAttempts.state, "succeeded"), eq(crawlReviewAttempts.inputHash, current.inputHash),
     eq(crawlReviewAttempts.sourceRevisionHash, current.sourceRevisionHash),

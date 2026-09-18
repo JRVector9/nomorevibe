@@ -84,6 +84,19 @@ export function reviewModel(env: Readonly<Record<string, string | undefined>> = 
   const model = env.CRAWL_REVIEW_MODEL?.trim();
   return model && /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,159}$/.test(model) ? model : null;
 }
+
+export type FirstReviewer = { provider: "claude-cli" | "abcllm"; model: string };
+/**
+ * 1차 심사를 누가 볼지 — 설정이 있으면 그것, 없으면 예전대로 환경변수.
+ *
+ * 환경변수 쪽을 지우지 않는 이유는 저장된 설정에 이 칸이 없는 배포 환경이 그대로 돌아야 해서다.
+ * 설정을 채우는 순간 그것이 이긴다 — 재배포 없이 모델을 갈아 끼울 수 있어야 비교가 된다.
+ */
+export function firstReviewer(settings: { firstReview?: FirstReviewer }): FirstReviewer | null {
+  if (settings.firstReview) return settings.firstReview;
+  const model = reviewModel();
+  return model ? { provider: "claude-cli", model } : null;
+}
 export function reviewCliArgs(model: string): string[] {
   return ["-p", "--output-format", "json", "--json-schema", JSON.stringify(OUTPUT_SCHEMA),
     // 형식이 한 번 어긋나면 고쳐 쓸 한 턴을 준다. 비용은 --max-budget-usd, 시간은 제한 시간이 막는다
