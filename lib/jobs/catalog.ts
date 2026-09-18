@@ -18,6 +18,12 @@ export const JOB_CATALOG: readonly { name: string; role: JobRole | "scheduler"; 
   { name: "crawl-agent-review", role: "reviewer", intervalMs: 60_000 },
   // 2차 심사 — 1차와 다른 모델. 하루 수십~백여 건이라 5분이면 밀리지 않는다
   { name: "second-review", role: "reviewer", intervalMs: 60_000 },
+  /**
+   * 발행분 감사 — 사람이 연 감사가 있을 때만 일한다. reviewer 에 둔 까닭은 잡이 역할 안에서
+   * 차례로 돌기 때문이다(scripts/worker.ts). 1차 심사와 번갈아 돌 뿐 겹치지 않아, 공유 게이트웨이의
+   * 동시 호출이 늘지 않는다. 새 후보가 기다리면 틱마다 먼저 양보한다(lib/crawl/jobs/product-audit.ts).
+   */
+  { name: "product-audit", role: "reviewer", intervalMs: 60_000 },
   { name: "crawl-publish", role: "publisher", intervalMs: 5 * 60_000 },
   // 사유 번역 — 발행 워커가 대부분 비어 있어 여기서 1분마다 옮긴다(틱 55초, 한 번에 4건·1,600자까지)
   { name: "reason-translate", role: "publisher", intervalMs: 60_000 },

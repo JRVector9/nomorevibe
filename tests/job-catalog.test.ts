@@ -40,6 +40,17 @@ it('maintenance 워커가 생존 확인 요청을 소비하고 crawler 워커는
   expect(ran).toEqual(['uptime-ping']);
 });
 
+/**
+ * 감사는 1차 심사와 같은 reviewer 워커에서 차례로 돈다 — 둘이 게이트웨이에 겹쳐 보내지 않는다.
+ * 다른 역할에 두면 따로 도는 프로세스라 1차 심사와 겹쳐 동시 호출이 는다(실측 4 → 성공 94%, 6 → 87%).
+ */
+it('발행분 감사는 1차 심사와 같은 reviewer 역할에서 돈다', () => {
+  expect(JOB_CATALOG.find(job => job.name === 'product-audit')).toEqual({
+    name: 'product-audit', role: 'reviewer', intervalMs: 60_000,
+  });
+  expect(jobsForRole('reviewer')).toEqual(expect.arrayContaining(['crawl-agent-review', 'product-audit']));
+});
+
 it('maintenance 풀이 생존 확인이 동시에 쥐는 연결을 담는다', () => {
   // HTTP는 3곳을 동시에 열지만 기록은 한 번에 하나다 — 기록 1 + 러너 임대 갱신 1
   expect(dbPoolConfig({ WORKER_ROLE: 'maintenance' }).max).toBeGreaterThanOrEqual(2);
