@@ -24,6 +24,17 @@ import { requestJob } from "@/lib/jobs/control";
 /** 한 번에 발행하는 수. 후보마다 insert와 OG 이미지 복사가 붙으므로 작게 잡는다 */
 const BATCH = 10;
 
+/** 발행에서 멈춘 이유 — 거부·보류 기록(signals.stoppedAt)에 사람이 읽을 말로 남긴다. 없는 것은 코드 그대로 */
+const PUBLISH_STOPS: Record<string, string> = {
+  no_description: "페이지 설명도 레포 설명도 없어 목록에 쓸 소개를 만들 수 없다",
+  not_a_product: "설문·연구 문서처럼 제품이 아닌 목적의 페이지",
+  already_listed: "같은 URL 이 이미 목록에 있다",
+  no_document: "수집한 원본이 없다",
+  no_url: "배포 URL 이 없다",
+  source_changed: "판정 뒤 배포 URL 이 바뀌었다",
+  repository_relationship_conflict: "페이지가 가리키는 저장소가 이 레포가 아니다",
+};
+
 export async function publishCandidates(ctx: JobContext<null>): Promise<JobOutcome<null>> {
   const settings = await getSettings();
   if (!settings.enabled) {
@@ -79,7 +90,10 @@ export async function publishCandidates(ctx: JobContext<null>): Promise<JobOutco
          */
         if (!manual?.category && candidate.decidedBy !== "admin"
           && requiresProfileCategory(candidate.signals, settings) && category !== "Profile") {
-          if (!await recordPublicationFailure(candidate, { state: "rejected", reason: "personal_site" }, ctx.lease)) {
+          if (!await recordPublicationFailure(candidate, { state: "rejected", reason: "personal_site", stoppedAt: {
+            rule: "발행 조건 — 개인 프로필",
+            detail: `${String(candidate.signals?.profilePattern)} 패턴으로 통과했지만 분류가 ${category ?? "없음"} — 개인 것이 아니면 읽을거리다`,
+          } }, ctx.lease)) {
             ctx.log("crawl.publication_changed", { repo: candidate.repo });
             return { done: false };
           }
@@ -119,6 +133,7 @@ export async function publishCandidates(ctx: JobContext<null>): Promise<JobOutco
           const recorded = await recordPublicationFailure(candidate, {
             state: held ? "needs_review" : "rejected",
             reason: evidenceHeld ? result.reason as import("@/lib/db/schema").DecisionReason : held ? "ambiguous" : result.reason === "already_listed" ? "already_listed" : "not_a_product",
+            stoppedAt: { rule: "발행 조건", detail: PUBLISH_STOPS[result.reason] ?? result.reason },
           }, ctx.lease);
           if (!recorded) {
             ctx.log("crawl.publication_changed", {repo:candidate.repo});

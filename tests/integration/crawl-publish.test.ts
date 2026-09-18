@@ -191,6 +191,8 @@ describe("발행 잡", () => {
     expect(await crawl.getCandidate("someone/mystery")).toMatchObject({
       state: "needs_review",
       reason: "ambiguous",
+      // 보류 기록만 보고도 왜 멈췄는지 알 수 있어야 한다
+      signals: { stoppedAt: { rule: "발행 조건", detail: "페이지 설명도 레포 설명도 없어 목록에 쓸 소개를 만들 수 없다" } },
     });
   });
 
