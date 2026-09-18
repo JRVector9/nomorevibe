@@ -1,5 +1,5 @@
 import { sameReviewModel } from "./review-model-identity";
-import { and, asc, desc, eq, inArray, or, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, gt, inArray, or, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { db } from '@/lib/db';
 import { agentRepositoryObservations, agentRepositoryScans, crawlCandidates, crawlDocuments, crawlFrontier,
@@ -190,12 +190,15 @@ export type AdminReviewVerdict = {
 };
 
 /**
- * 한 번에 갈래를 셀 후보 수. 넘으면 세다 만 것을 화면이 밝힌다.
+ * 갈래를 셀 후보 수의 상한. 넘으면 세다 만 것을 화면이 밝힌다.
  *
- * 갈래는 원본을 다시 태워 얻으므로 문서를 읽어야 한다 — 실측 평균 2KB라 2,000건이 4MB
- * 남짓이다. 500이면 큐가 그보다 커진 순간 칩 합계가 큐 크기와 어긋나 오히려 헷갈린다.
+ * 갈래는 원본을 다시 태워 얻으므로 문서를 읽어야 한다. 2,000 이던 때 큐가 2,229건이 되자
+ * 칩 합계가 큐 크기보다 작아졌다(2026-09-19). 그때 보류 전체의 원본이 9.6MB 였다 — 한 번에
+ * 다 읽지 않고 REVIEW_QUEUE_SCAN_CHUNK 씩 나눠 읽으므로 상한을 넉넉히 둔다.
  */
-export const REVIEW_QUEUE_SCAN_LIMIT = 2_000;
+export const REVIEW_QUEUE_SCAN_LIMIT = 20_000;
+/** 원본을 한 번에 읽는 수 — 메모리를 이만큼씩만 쓴다 */
+const REVIEW_QUEUE_SCAN_CHUNK = 1_000;
 /**
  * 갈래 버킷.
  *
@@ -222,31 +225,54 @@ export type ReviewQueueCauses = {
  * 갈래를 알면 같은 판단을 한 번에 처리할 수 있다.
  */
 export async function reviewQueueCauses(settings: CrawlSettings): Promise<ReviewQueueCauses> {
-  const candidates = await db.select().from(crawlCandidates)
-    .where(eq(crawlCandidates.state, 'needs_review'))
-    .orderBy(asc(crawlCandidates.id)).limit(REVIEW_QUEUE_SCAN_LIMIT + 1);
-  const page = candidates.slice(0, REVIEW_QUEUE_SCAN_LIMIT);
-  const [documents, aiAttempts] = page.length ? await Promise.all([
-    db.select().from(crawlDocuments).where(inArray(crawlDocuments.repo, page.map(row => row.repo))),
-    db.selectDistinctOn([crawlReviewAttempts.candidateId]).from(crawlReviewAttempts).where(and(
-      inArray(crawlReviewAttempts.candidateId, page.map(row => row.id)), eq(crawlReviewAttempts.kind, 'automatic'),
-    )).orderBy(crawlReviewAttempts.candidateId, desc(crawlReviewAttempts.id)),
-  ]) : [[], []];
   const ids = new Map<ReviewQueueBucket, number[]>();
-  for (const candidate of page) {
-    const document = documents.find(row => row.repo === candidate.repo);
-    const verdict = document
-      ? judge(factsFromRepoMeta(candidate.repo, document.repoMeta), pageFactsFromDocument(document), settings)
-      : null;
-    const aiRejected = aiAttempts.find(row => row.candidateId === candidate.id)?.outcome?.decision === 'reject';
-    const key: ReviewQueueBucket = !verdict ? 'unknown'
-      : verdict.cause ? (aiRejected ? 'ai_reject' : verdict.cause) : 'resolved';
-    ids.set(key, [...(ids.get(key) ?? []), candidate.id]);
+  let total = 0, truncated = false, after = 0;
+  // id 순으로 나눠 읽는다. 한 번에 다 읽으면 큐가 클 때 원본이 통째로 메모리에 올라온다
+  while (total < REVIEW_QUEUE_SCAN_LIMIT) {
+    const candidates = await db.select().from(crawlCandidates)
+      .where(and(eq(crawlCandidates.state, 'needs_review'), gt(crawlCandidates.id, after)))
+      .orderBy(asc(crawlCandidates.id)).limit(Math.min(REVIEW_QUEUE_SCAN_CHUNK, REVIEW_QUEUE_SCAN_LIMIT - total + 1));
+    const page = candidates.slice(0, REVIEW_QUEUE_SCAN_LIMIT - total);
+    if (candidates.length > page.length) truncated = true;
+    if (!page.length) break;
+    const [documents, aiAttempts] = await Promise.all([
+      db.select().from(crawlDocuments).where(inArray(crawlDocuments.repo, page.map(row => row.repo))),
+      db.selectDistinctOn([crawlReviewAttempts.candidateId]).from(crawlReviewAttempts).where(and(
+        inArray(crawlReviewAttempts.candidateId, page.map(row => row.id)), eq(crawlReviewAttempts.kind, 'automatic'),
+      )).orderBy(crawlReviewAttempts.candidateId, desc(crawlReviewAttempts.id)),
+    ]);
+    const documentByRepo = new Map(documents.map(row => [row.repo, row]));
+    const aiByCandidate = new Map(aiAttempts.map(row => [row.candidateId, row]));
+    for (const candidate of page) {
+      const document = documentByRepo.get(candidate.repo);
+      const verdict = document
+        ? judge(factsFromRepoMeta(candidate.repo, document.repoMeta), pageFactsFromDocument(document), settings)
+        : null;
+      const aiRejected = aiByCandidate.get(candidate.id)?.outcome?.decision === 'reject';
+      const key: ReviewQueueBucket = !verdict ? 'unknown'
+        : verdict.cause ? (aiRejected ? 'ai_reject' : verdict.cause) : 'resolved';
+      ids.set(key, [...(ids.get(key) ?? []), candidate.id]);
+    }
+    total += page.length;
+    after = page.at(-1)!.id;
+    if (candidates.length < REVIEW_QUEUE_SCAN_CHUNK) break;
   }
   return {
     counts: [...ids].map(([cause, list]) => ({ cause, count: list.length })).sort((a, b) => b.count - a.count),
-    ids, total: page.length, truncated: candidates.length > REVIEW_QUEUE_SCAN_LIMIT,
+    ids, total, truncated,
   };
+}
+
+/**
+ * 상태별 후보 수 — 상태 칩에 붙인다. "진행 중"은 목록과 같이 판정 대기·발행 대기·보류를 합친 것이다.
+ * group by 한 번이라 싸다(후보 6만 건, 상태 색인).
+ */
+export async function candidateStateCounts(): Promise<Record<'pending' | 'needs_review' | 'rejected' | 'published', number>> {
+  const rows = await db.select({ state: crawlCandidates.state, count: sql<number>`count(*)::int` })
+    .from(crawlCandidates).groupBy(crawlCandidates.state);
+  const of = (state: string) => rows.find(row => row.state === state)?.count ?? 0;
+  return { pending: of('new') + of('approved') + of('needs_review'), needs_review: of('needs_review'),
+    rejected: of('rejected'), published: of('published') };
 }
 
 /**
@@ -435,10 +461,11 @@ export type ReviewAiDecision = 'reject' | 'approve' | 'needs_review' | 'none';
 export async function reviewQueueAiDecisions(): Promise<{ counts: Record<ReviewAiDecision, number>; ids: Map<ReviewAiDecision, number[]> }> {
   const candidates = await db.select({ id: crawlCandidates.id }).from(crawlCandidates)
     .where(eq(crawlCandidates.state, 'needs_review')).orderBy(asc(crawlCandidates.id)).limit(REVIEW_QUEUE_SCAN_LIMIT);
+  // 후보 id 를 IN 목록으로 넘기지 않고 조인으로 고른다 — 큐가 수천 건이면 목록이 그만큼 길어진다
   const latest = candidates.length ? await db.selectDistinctOn([crawlReviewAttempts.candidateId], {
     candidateId: crawlReviewAttempts.candidateId, decision: sql<string | null>`${crawlReviewAttempts.outcome}->>'decision'`,
-  }).from(crawlReviewAttempts).where(and(
-    inArray(crawlReviewAttempts.candidateId, candidates.map(row => row.id)),
+  }).from(crawlReviewAttempts).innerJoin(crawlCandidates, eq(crawlCandidates.id, crawlReviewAttempts.candidateId)).where(and(
+    eq(crawlCandidates.state, 'needs_review'),
     eq(crawlReviewAttempts.kind, 'automatic'), eq(crawlReviewAttempts.state, 'succeeded'),
   )).orderBy(crawlReviewAttempts.candidateId, desc(crawlReviewAttempts.id)) : [];
   const decided = new Map(latest.map(row => [row.candidateId, row.decision]));

@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { currentAdmin } from "@/lib/auth/admin";
-import { listAdminReviewEntries, reviewQueueAiDecisions, reviewQueueCauses, REVIEW_QUEUE_SCAN_LIMIT, type ReviewAiDecision } from "@/lib/crawl/admin-review";
+import { candidateStateCounts, listAdminReviewEntries, reviewQueueAiDecisions, reviewQueueCauses, REVIEW_QUEUE_SCAN_LIMIT, type ReviewAiDecision } from "@/lib/crawl/admin-review";
 import { getSettings } from "@/lib/crawl/settings";
 import { REVIEW_REJECT_REASONS } from "@/lib/crawl/review";
 import { pendingTakedowns } from "@/lib/domain/products/takedown";
@@ -31,10 +31,10 @@ export const metadata: Metadata = { title: "심사 큐 — NoMoreVibe", robots: 
 const PAGE_SIZE = 50;
 const BULK_FORM = "review-bulk";
 const STATES = [['pending', '진행 중'], ['needs_review', '보류'], ['rejected', '거부'], ['published', '발행 완료']] as const;
-const AI_FILTERS: [ReviewAiDecision, string][] = [['reject', 'AI 거부'], ['approve', 'AI 승인'], ['needs_review', 'AI 보류'], ['none', '판단 없음']];
+const AI_FILTERS: [ReviewAiDecision, string][] = [['reject', '거부'], ['approve', '승인'], ['needs_review', '보류'], ['none', '판단 없음']];
 /** 2차 심사 거르기 — 같은 결론끼리 모아 한 번에 확정한다 */
 const SECOND_FILTERS = [['unanimous_reject', '만장일치·거부'], ['unanimous_approve', '만장일치·승인'],
-  ['agreed_reject', '2표 일치·거부'], ['agreed_approve', '2표 일치·승인'], ['needs_human', '2차 사람 확인']] as const;
+  ['agreed_reject', '2표 일치·거부'], ['agreed_approve', '2표 일치·승인'], ['needs_human', '사람 확인']] as const;
 type SecondFilter = typeof SECOND_FILTERS[number][0] | 'published';
 
 type Search = { state?: string | string[]; page?: string | string[]; cause?: string | string[]; ai?: string | string[]; second?: string | string[]; focus?: string | string[] };
@@ -56,7 +56,7 @@ export default async function ReviewPage({ searchParams }: { searchParams: Promi
   const second = ([...SECOND_FILTERS.map(([key]) => key), 'published'] as string[]).includes(one(params.second)) ? one(params.second) as SecondFilter : '';
 
   const settings = await getSettings();
-  const [takedowns, causes, decisions, seconds, translation] = await Promise.all([pendingTakedowns(), reviewQueueCauses(settings), reviewQueueAiDecisions(), secondReviewSummary(settings.secondReview.agreeAt), translationProgress()]);
+  const [takedowns, causes, decisions, seconds, translation, stateCounts] = await Promise.all([pendingTakedowns(), reviewQueueCauses(settings), reviewQueueAiDecisions(), secondReviewSummary(settings.secondReview.agreeAt), translationProgress(), candidateStateCounts()]);
 
   // 갈래·AI 판단은 계산으로 얻은 값이라 SQL로 거를 수 없다 — 해당하는 id 만 넘긴다. 둘 다 고르면 겹치는 것만
   const causeIds = cause ? (causes.ids.get(cause) ?? []) : undefined;
@@ -75,7 +75,9 @@ export default async function ReviewPage({ searchParams }: { searchParams: Promi
     for (const [key, value] of Object.entries(merged)) if (value !== undefined && value !== '' && !(key === 'page' && value === 1)) search.set(key, String(value));
     return `/admin/review${search.size ? `?${search}` : ''}`;
   };
-  const chip = (active: boolean) => `rounded-full border px-2.5 py-1 text-[13px] ${active ? 'border-accent bg-accent-soft font-semibold text-accent' : 'border-line bg-bg-card text-fg-2 hover:bg-bg-hover'}`;
+  // 0건인 칩은 흐리게 — 자리는 그대로 두어 칩이 날마다 옮겨 다니지 않게 하고, 볼 것이 있는 칩만 눈에 띄게 한다
+  const chip = (active: boolean, count?: number) => `rounded-full border px-2.5 py-1 text-[13px] ${active ? 'border-accent bg-accent-soft font-semibold text-accent'
+    : count === 0 ? 'border-line bg-bg-card text-fg-3 hover:bg-bg-hover' : 'border-line bg-bg-card text-fg-2 hover:bg-bg-hover'}`;
   const resolved = causes.counts.find((row) => row.cause === "resolved");
 
   return (
@@ -83,7 +85,7 @@ export default async function ReviewPage({ searchParams }: { searchParams: Promi
       <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
         <h1 className="text-[22px] font-extrabold tracking-tight">심사 큐</h1>
         <span className="text-[13px] text-fg-3">
-          보류 {causes.total}건{causes.truncated && ` 이상 (${REVIEW_QUEUE_SCAN_LIMIT}건까지 셈)`} · 이 조건 {total.toLocaleString("ko-KR")}건 · {page}/{pages}쪽
+          보류 {causes.total.toLocaleString("ko-KR")}건{causes.truncated && ` 이상 (${REVIEW_QUEUE_SCAN_LIMIT.toLocaleString("ko-KR")}건까지 셈)`} · 이 조건 {total.toLocaleString("ko-KR")}건 · {page}/{pages}쪽
         </span>
         <div className="ml-auto flex flex-wrap items-center gap-3">
           <ReasonLanguageToggle done={translation.done} total={translation.total} />
@@ -103,41 +105,54 @@ export default async function ReviewPage({ searchParams }: { searchParams: Promi
         </section>
       )}
 
-      <nav aria-label="심사 거르기" className="flex flex-wrap items-center gap-1.5">
-        {STATES.map(([value, label]) => (
-          <Link key={value} href={query({ state: value, cause: undefined, ai: undefined, page: 1 })}
-            aria-current={!filtered && state === value ? 'page' : undefined} className={chip(!filtered && state === value)}>{label}</Link>
-        ))}
-        <span className="mx-1 h-4 w-px bg-line" aria-hidden />
-        {AI_FILTERS.map(([key, label]) => (
-          <Link key={key} href={query({ ai: ai === key ? undefined : key, state: undefined, page: 1 })}
-            aria-current={ai === key ? 'page' : undefined} className={chip(ai === key)}>
-            {label} <span className="font-mono">{decisions.counts[key]}</span>
-          </Link>
-        ))}
-        <span className="mx-1 h-4 w-px bg-line" aria-hidden />
-        {SECOND_FILTERS.map(([key, label]) => {
-          const count = key === 'unanimous_reject' ? seconds.counts.unanimousReject : key === 'unanimous_approve' ? seconds.counts.unanimousApprove
-            : key === 'agreed_reject' ? seconds.counts.agreedReject : key === 'agreed_approve' ? seconds.counts.agreedApprove : seconds.counts.needsHuman;
-          return (
-            <Link key={key} href={query({ second: second === key ? undefined : key, state: undefined, page: 1 })}
-              aria-current={second === key ? 'page' : undefined} className={chip(second === key)}>
-              {label} <span className="font-mono">{count}</span>
+      {/*
+        거르기는 네 갈래다. 한 줄로 늘어놓았을 때는 무엇이 무엇을 거르는지 칩 이름으로만 짐작해야 했다.
+        상태는 목록 자체를 바꾸고, 아래 셋은 보류 안에서만 거른다 — 그래서 줄마다 이름을 붙인다.
+        같은 줄 안에서는 하나만, 다른 줄끼리는 겹쳐 고를 수 있다(겹치는 것만 남는다).
+      */}
+      <nav aria-label="심사 거르기" className="flex flex-col gap-2 rounded-[12px] border border-line bg-bg-card px-3 py-2.5">
+        <FilterRow label="상태">
+          {STATES.map(([value, label]) => (
+            <Link key={value} href={query({ state: value, cause: undefined, ai: undefined, second: undefined, page: 1 })}
+              aria-current={!filtered && state === value ? 'page' : undefined} className={chip(!filtered && state === value, stateCounts[value])}>
+              {label} <span className="font-mono">{stateCounts[value].toLocaleString("ko-KR")}</span>
             </Link>
-          );
-        })}
-        <Link href={query({ second: second === 'published' ? undefined : 'published', cause: undefined, ai: undefined, state: undefined, page: 1 })}
-          aria-current={second === 'published' ? 'page' : undefined} className={chip(second === 'published')}>
-          2차 공개분 확인 <span className="font-mono">{seconds.counts.published}</span>
-        </Link>
-        <span className="mx-1 h-4 w-px bg-line" aria-hidden />
-        {causes.counts.map(({ cause: key, count }) => (
-          <Link key={key} href={query({ cause: cause === key ? undefined : key, state: undefined, page: 1 })}
-            title={CAUSE_GUIDE[key].summary} aria-current={cause === key ? 'page' : undefined} className={chip(cause === key)}>
-            {CAUSE_GUIDE[key].label} <span className="font-mono">{count}</span>
+          ))}
+          {filtered && <Link href="/admin/review" className="ml-auto text-[13px] text-fg-2 hover:text-fg">거르기 지우기</Link>}
+        </FilterRow>
+        <FilterRow label="보류 이유" hint="규칙이 멈춘 곳">
+          {causes.counts.map(({ cause: key, count }) => (
+            <Link key={key} href={query({ cause: cause === key ? undefined : key, state: undefined, page: 1 })}
+              title={CAUSE_GUIDE[key].summary} aria-current={cause === key ? 'page' : undefined} className={chip(cause === key, count)}>
+              {CAUSE_GUIDE[key].label} <span className="font-mono">{count.toLocaleString("ko-KR")}</span>
+            </Link>
+          ))}
+        </FilterRow>
+        <FilterRow label="1차 AI" hint="마지막 심사의 결론">
+          {AI_FILTERS.map(([key, label]) => (
+            <Link key={key} href={query({ ai: ai === key ? undefined : key, state: undefined, page: 1 })}
+              aria-current={ai === key ? 'page' : undefined} className={chip(ai === key, decisions.counts[key])}>
+              {label} <span className="font-mono">{decisions.counts[key].toLocaleString("ko-KR")}</span>
+            </Link>
+          ))}
+        </FilterRow>
+        <FilterRow label="2차 심사" hint="다른 모델의 표">
+          {SECOND_FILTERS.map(([key, label]) => {
+            const count = key === 'unanimous_reject' ? seconds.counts.unanimousReject : key === 'unanimous_approve' ? seconds.counts.unanimousApprove
+              : key === 'agreed_reject' ? seconds.counts.agreedReject : key === 'agreed_approve' ? seconds.counts.agreedApprove : seconds.counts.needsHuman;
+            return (
+              <Link key={key} href={query({ second: second === key ? undefined : key, state: undefined, page: 1 })}
+                aria-current={second === key ? 'page' : undefined} className={chip(second === key, count)}>
+                {label} <span className="font-mono">{count.toLocaleString("ko-KR")}</span>
+              </Link>
+            );
+          })}
+          <span className="mx-1 h-4 w-px bg-line" aria-hidden />
+          <Link href={query({ second: second === 'published' ? undefined : 'published', cause: undefined, ai: undefined, state: undefined, page: 1 })}
+            aria-current={second === 'published' ? 'page' : undefined} className={chip(second === 'published', seconds.counts.published)}>
+            공개분 확인 <span className="font-mono">{seconds.counts.published.toLocaleString("ko-KR")}</span>
           </Link>
-        ))}
-        {filtered && <Link href="/admin/review" className="ml-auto text-[13px] text-fg-2">거르기 지우기</Link>}
+        </FilterRow>
       </nav>
 
       {resolved && (!cause || cause === "resolved") ? <RequeueResolved count={resolved.count} /> : null}
@@ -172,5 +187,18 @@ export default async function ReviewPage({ searchParams }: { searchParams: Promi
         </nav>
       )}
     </main>
+  );
+}
+
+/** 거르기 한 줄 — 왼쪽에 무엇을 거르는지 이름을 붙인다. 좁은 화면에서는 이름이 위로 올라간다 */
+function FilterRow({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
+  return (
+    <div className="flex flex-col gap-1.5 sm:flex-row sm:items-center sm:gap-3">
+      <p className="shrink-0 text-[13px] sm:w-[128px]">
+        <b className="font-semibold text-fg-2">{label}</b>
+        {hint ? <span className="ml-1.5 text-fg-3 sm:ml-0 sm:block">{hint}</span> : null}
+      </p>
+      <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">{children}</div>
+    </div>
   );
 }

@@ -201,3 +201,22 @@ it('보류 후보를 마지막으로 성공한 AI 판단으로 나눈다 — 실
   const { entries } = await listAdminReviewEntries(await getSettings(), { state: 'needs_review', ids: ids.get('none') });
   expect(entries.map((e) => e.candidate.repo).sort()).toEqual(['acme/failed', 'acme/untouched']);
 });
+
+/**
+ * 2,000 건에서 끊던 때 큐가 2,229건이 되자 칩 합계가 큐보다 작아졌다(2026-09-19).
+ * 이제 1,000건씩 나눠 끝까지 센다 — 나눈 경계에서 빠지거나 겹치는 것이 없어야 한다.
+ */
+it('보류가 한 번에 읽는 수(1,000)를 넘어도 빠짐없이 센다', async () => {
+  const repos = Array.from({ length: 1_005 }, (_, i) => `bulk/app-${i}`);
+  await db.insert(crawlDocuments).values(repos.map((repo) => ({ repo, productUrl: `https://${repo.replace('/', '-')}.test`, pageStatus: null,
+    repoMeta: { description: '배포한 서비스', stargazers_count: 3, pushed_at: new Date().toISOString(), owner: { type: 'User' } },
+    pageMeta: { title: '제품' } })));
+  await db.insert(crawlCandidates).values(repos.map((repo) => ({ repo, productUrl: `https://${repo.replace('/', '-')}.test`,
+    state: 'needs_review' as const, reason: 'ambiguous' as const, decidedBy: 'auto' as const })));
+
+  const causes = await reviewQueueCauses(await getSettings());
+  expect(causes).toMatchObject({ total: 1_005, truncated: false });
+  expect(causes.counts).toEqual([{ cause: 'page_status_unknown', count: 1_005 }]);
+  expect(new Set(causes.ids.get('page_status_unknown')).size).toBe(1_005);
+  expect((await reviewQueueAiDecisions()).counts.none).toBe(1_005);
+});
