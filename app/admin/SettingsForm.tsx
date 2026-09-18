@@ -326,14 +326,23 @@ export function SettingsForm({ settings }: { settings: CrawlSettings }) {
         </p>
         <table className="mt-1.5 text-[13px] text-fg-2">
           <tbody>
-            <tr><td className="pr-4">2</td><td className="pr-4">성공 99%</td><td>시간당 약 119건</td></tr>
-            <tr className="font-semibold text-fg"><td className="pr-4">4</td><td className="pr-4">성공 94%</td><td>시간당 약 225건 — 발행 속도(213건)를 넘는 첫 값</td></tr>
+            <tr><td className="pr-4">2</td><td className="pr-4">성공 99%</td><td>시간당 약 119건 — 평소 새 후보(시간당 약 100건)는 이것으로 충분</td></tr>
+            <tr className="font-semibold text-fg"><td className="pr-4">4</td><td className="pr-4">성공 94%</td><td>시간당 약 225건 — 남는 몫(약 130건)으로 발행분 감사를 돌릴 수 있음</td></tr>
             <tr><td className="pr-4">6</td><td className="pr-4">성공 87%</td><td>시간당 약 156건 — 실패가 늘어 4보다 느림</td></tr>
           </tbody>
         </table>
+        {/*
+          처음 이 표를 올렸을 때 4의 설명을 "발행 속도(213건)를 넘는 첫 값"이라고 적었다. 213건은
+          404건을 한꺼번에 되돌린 날의 순간치였고 평소 발행은 시간당 30~40건이다(2026-09-18 실측,
+          이틀 전 하루 776건). 평소 수요는 2로도 채워지고, 4의 몫은 발행분 감사를 도는 데 쓰인다.
+
+          2차 심사와 동시 실행이 겹쳐 게이트웨이에 여덟 건이 몰린다는 지적도 있었지만 틀렸다 —
+          워커는 한 역할의 잡을 하나씩 차례로 돌린다(scripts/worker.ts 의 await). 1차와 2차는
+          같은 reviewer 워커라 동시에 돌지 않는다.
+        */}
         <p className={hint}>
           실패한 건은 사라지지 않고 몇 분 뒤 다시 봅니다(4에서 재시도를 다 쓴 후보 0건). 그래도 실패율이
-          오르면 한 단계 내리세요.
+          오르면 한 단계 내리세요. 1차와 2차 심사는 같은 워커가 차례로 돌려서 서로 겹치지 않습니다.
         </p>
       </Panel>
 
