@@ -268,7 +268,7 @@ const defaultAgentEvidence = {
  */
 const defaultSecondReview = { enabled: true, voters: [{ provider: "claude-cli" as const, model: "opus" }], includeAiHeld: false, sampleRate: 0.05, agreeAt: 0.85 };
 
-const reviewVoterSchema = z.object({
+export const reviewVoterSchema = z.object({
   provider: z.enum(["claude-cli", "abcllm"]),
   model: z.string().trim().min(1).max(160)
     // 게이트웨이 이름은 "[MLX] gpt-oss-120b" 처럼 대괄호·공백이 들어간다. 제어 문자와
@@ -283,6 +283,19 @@ export const crawlSettingsSchema = z.object({
   /** 수집 자체를 멈추는 스위치. 무언가 잘못 돌 때 배포 없이 끊을 수 있어야 한다 */
   enabled: z.boolean(),
   reviewMode: z.enum(["off", "observe", "enforce"]).default("off"),
+  /**
+   * 1차 심사를 누가 보나. 2차와 같은 모양이라 같은 스키마를 쓴다.
+   *
+   * 비어 있으면 예전대로 claude-cli 와 CRAWL_REVIEW_MODEL 환경변수를 쓴다 — 저장된 설정에
+   * 이 칸이 없는 배포 환경이 그대로 돌아야 해서다. 데이터로 둔 이유는 나머지 기준과 같다:
+   * 모델을 갈아 끼우는 데 재배포가 필요하면 비교 실험을 못 한다.
+   *
+   * 실측(2026-09-18, 정답을 가려놓고 매긴 홀드아웃 40건, 보류는 빼고 결정분만):
+   *   claude-cli sonnet      21/25 (84%) · 잘못 승인 1 · 실패 0
+   *   abcllm gpt-oss-120b    22/26 (85%) · 잘못 승인 3 · 실패 0 · 무료·무제한
+   * 게이트웨이는 한도가 없어 enforce 로 올릴 때 발행이 심사 속도에 묶이지 않는다.
+   */
+  firstReview: reviewVoterSchema.optional(),
   discover: discoverSchema,
   judge: judgeSchema,
   classify: z.object({ definitions: categoryDefinitionsSchema }).strict().default(defaultClassify),

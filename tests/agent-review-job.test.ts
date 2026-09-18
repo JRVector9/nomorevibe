@@ -3,14 +3,16 @@ import { reviewCrawlCandidates } from "@/lib/crawl/jobs/agent-review";
 import { createReviewInput } from "@/lib/crawl/agent-review-contract";
 import { DEFAULT_CRAWL_SETTINGS, type CrawlSettings } from "@/lib/crawl/settings-schema";
 import type { CrawlCandidate, CrawlDocument } from "@/lib/db/schema";
-const mocks = vi.hoisted(() => ({settings:null as CrawlSettings|null,readme:vi.fn(),saveReadme:vi.fn(),requeue:vi.fn(),list:vi.fn(),document:vi.fn(),input:vi.fn(),claim:vi.fn(),record:vi.fn(),review:vi.fn(),existing:vi.fn(),requestJob:vi.fn()}));
+const mocks = vi.hoisted(() => ({settings:null as CrawlSettings|null,readme:vi.fn(),saveReadme:vi.fn(),requeue:vi.fn(),list:vi.fn(),document:vi.fn(),input:vi.fn(),claim:vi.fn(),record:vi.fn(),review:vi.fn(),gateway:vi.fn(),existing:vi.fn(),requestJob:vi.fn()}));
 vi.mock("@/lib/crawl/settings", () => ({getSettings:async () => mocks.settings}));
 vi.mock("@/lib/crawl/repository", () => ({getDocument:mocks.document,setReadmeSample:mocks.saveReadme}));
 // 단위 테스트가 README 를 받으러 밖으로 나가지 않게 한다
 vi.mock("@/lib/crawl/readme", () => ({fetchReadmeSample:mocks.readme,README_SAMPLE_LIMIT:3000,README_SAMPLE_VERSION:"2026-09-14.1"}));
 vi.mock("@/lib/domain/products/repository", () => ({findByUrl:mocks.existing}));
 vi.mock("@/lib/crawl/agent-review-repository", () => ({requeueStaleReviewSources:mocks.requeue,listReviewCandidates:mocks.list,loadReviewInput:mocks.input,claimAgentReview:mocks.claim,recordAgentReview:mocks.record}));
-vi.mock("@/lib/crawl/agent-review", () => ({reviewModel:()=>"tested-model",reviewWithAgent:mocks.review,REVIEW_CLI_TIMEOUT_MS:20_000}));
+vi.mock("@/lib/crawl/agent-review", () => ({reviewModel:()=>"tested-model",reviewWithAgent:mocks.review,REVIEW_CLI_TIMEOUT_MS:20_000,
+  firstReviewer:(s:{firstReview?:{provider:string;model:string}})=>s.firstReview ?? {provider:"claude-cli",model:"tested-model"}}));
+vi.mock("@/lib/crawl/agent-review-gateway", () => ({reviewWithGateway:mocks.gateway,REVIEW_GATEWAY_TIMEOUT_MS:60_000}));
 vi.mock("@/lib/jobs/control", () => ({requestJob:mocks.requestJob}));
 const context = () => ({cursor:null,hasBudget:()=>true,save:vi.fn(),log:vi.fn(),lease:{name:"crawl-agent-review",token:"token",requestedVersion:1}});
 const candidate = () => ({id:1,repo:"acme/demo",productUrl:"https://demo.example",state:"approved",decidedBy:"auto",judgedAt:new Date()} as CrawlCandidate);
@@ -39,6 +41,21 @@ it("runs at most two external reviews and records through the transactional repo
   expect(mocks.review).toHaveBeenCalledTimes(2);
   expect(mocks.claim.mock.calls.map(call => call[0].candidate.id)).toEqual([1,2]);
   expect(mocks.record).toHaveBeenCalledWith(expect.objectContaining({settings:expect.objectContaining({reviewMode:"observe"}),outcome:expect.objectContaining({decision:"approve"}),lease:context().lease}));
+});
+/**
+ * 1차 심사자를 설정으로 갈아 끼울 수 있어야 한다.
+ *
+ * 제공자를 코드에 박아 두던 때는 모델을 바꾸려면 재배포가 필요했고, 그래서 비교 실험을
+ * 못 했다. 기록에 남는 provider 도 함께 바뀌어야 옛 모델의 승인이 계속 맞아떨어지지 않는다.
+ */
+it("설정이 게이트웨이를 가리키면 CLI 대신 게이트웨이를 부르고 그 이름으로 기록한다", async () => {
+  mocks.gateway.mockResolvedValue({ok:true,outcome:{decision:"approve",reason:"게이트웨이가 봤다",evidenceIds:["product"]},usage:{}});
+  mocks.settings = {...mocks.settings!, firstReview:{provider:"abcllm",model:"[MLX] gpt-oss-120b"}};
+  await reviewCrawlCandidates(context());
+  expect(mocks.gateway).toHaveBeenCalledTimes(1);
+  expect(mocks.review).not.toHaveBeenCalled();
+  expect(mocks.claim).toHaveBeenCalledWith(expect.objectContaining({provider:"abcllm",model:"[MLX] gpt-oss-120b"}));
+  expect(mocks.record).toHaveBeenCalledWith(expect.objectContaining({outcome:expect.objectContaining({decision:"approve"})}));
 });
 it("does not call AI for administrator decisions or hard rule rejection", async () => {
   mocks.list.mockResolvedValue([{...candidate(),decidedBy:"admin"}]);

@@ -7,7 +7,8 @@ import { judge, factsFromRepoMeta, pageFactsFromDocument } from "@/lib/crawl/rul
 import { isReviewCandidate, REVIEW_RULES_VERSION, type ReviewOutcome } from "@/lib/crawl/agent-review-contract";
 import { listReviewCandidates, loadReviewInput, claimAgentReview, recordAgentReview,
   requeueStaleReviewSources } from "@/lib/crawl/agent-review-repository";
-import { reviewModel, reviewWithAgent, REVIEW_CLI_TIMEOUT_MS } from "@/lib/crawl/agent-review";
+import { firstReviewer, reviewWithAgent, REVIEW_CLI_TIMEOUT_MS } from "@/lib/crawl/agent-review";
+import { reviewWithGateway, REVIEW_GATEWAY_TIMEOUT_MS } from "@/lib/crawl/agent-review-gateway";
 
 /**
  * 한 틱에 동시에 띄우는 외부 심사 수.
@@ -28,8 +29,9 @@ export async function reviewCrawlCandidates(ctx: JobContext<null>): Promise<JobO
   }
   const lease = ctx.lease;
   if (!lease) throw new Error("AI review requires a valid worker job lease");
-  const model = reviewModel();
-  if (!model) throw new Error("CRAWL_REVIEW_MODEL must be configured before enabling AI review");
+  const reviewer = firstReviewer(settings);
+  if (!reviewer) throw new Error("1차 심사자를 설정하거나 CRAWL_REVIEW_MODEL 을 넣어야 AI 심사를 켤 수 있습니다");
+  const { provider: reviewProvider, model } = reviewer;
   const requeued = await requeueStaleReviewSources(settings, lease, 20);
   if (requeued) ctx.log("crawl.agent_review_sources_queued", { count: requeued });
   const candidates = await listReviewCandidates(settings, 20);
@@ -63,7 +65,7 @@ export async function reviewCrawlCandidates(ctx: JobContext<null>): Promise<JobO
       // Enforce this before a model call: real-source review showed the model conflating the two.
       const evidenceHold = !hardReason && settings.agentEvidence.enforceEligibility
         && !input.snapshot.evidenceSummary.eligible ? input.snapshot.evidenceSummary.reason : null;
-      const provider = hardReason || evidenceHold ? "rules" : "claude-cli";
+      const provider = hardReason || evidenceHold ? "rules" : reviewProvider;
       if (!ctx.hasBudget() || remaining() < 1_000) break;
       const context = { candidate, document, settings, input, lease };
       const claim = await claimAgentReview({ ...context, provider, model: provider === "rules" ? REVIEW_RULES_VERSION : model });
@@ -89,9 +91,16 @@ export async function reviewCrawlCandidates(ctx: JobContext<null>): Promise<JobO
         // A lost heartbeat/lease must also stop a running CLI, not only prevent its final DB write.
         const ownershipPoll = setInterval(() => { if (!ctx.hasBudget()) controller.abort(); }, 250);
         ownershipPoll.unref?.();
-        const result = await reviewWithAgent(input, {
-          model, timeoutMs: Math.max(1, Math.min(REVIEW_CLI_TIMEOUT_MS, remaining())), signal: controller.signal,
-        }).finally(() => clearInterval(ownershipPoll));
+        /*
+         * 제공자마다 자기 상한을 쓰되, 실제로 자르는 것은 틱 예산(24초)이다.
+         * 실측(2026-09-18, 게이트웨이 100건): 중앙값 5초 · p90 15초 · 24초 초과 2건.
+         * 그 둘은 시간 초과로 남아 물러나기 간격을 두고 다시 온다 — 예산을 늘릴 이유가 못 된다.
+         */
+        const ceiling = reviewProvider === "abcllm" ? REVIEW_GATEWAY_TIMEOUT_MS : REVIEW_CLI_TIMEOUT_MS;
+        const options = { model, timeoutMs: Math.max(1, Math.min(ceiling, remaining())), signal: controller.signal };
+        const result = await (reviewProvider === "abcllm"
+          ? reviewWithGateway(input, options)
+          : reviewWithAgent(input, options)).finally(() => clearInterval(ownershipPoll));
         const recorded = await recordAgentReview({
           ...context, attempt: claim.attempt,
           ...(result.ok ? { outcome: result.outcome, usage: result.usage } : {
