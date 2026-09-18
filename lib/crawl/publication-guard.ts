@@ -8,6 +8,7 @@ import type { CrawlSettings } from "./settings-schema";
 import { assertJobLease, type JobLease } from "@/lib/jobs/control";
 import { assertReviewApproval, ReviewApprovalChangedError } from "./agent-review-repository";
 import { lockRepositoryAgentEvidence } from "@/lib/domain/evidence/agents/lock";
+import type { StoppedAt } from "./rules";
 
 export class PublicationStateChangedError extends Error {
   constructor() { super("publication_state_changed"); }
@@ -31,6 +32,8 @@ export function assertPublicationSnapshot(expected: Snapshot, current: Snapshot)
  */
 export async function recordPublicationFailure(candidate: CrawlCandidate, failure: {
   state:"needs_review"|"rejected"|"new"; reason:DecisionReason;
+  /** 발행에서 멈춘 이유. 판정이 남기는 것과 같은 자리(signals.stoppedAt)에 남긴다 */
+  stoppedAt?: StoppedAt;
 }, lease?: JobLease):Promise<boolean> {
   return db.transaction(async tx => {
     const [current] = await tx.select().from(crawlCandidates).where(eq(crawlCandidates.id,candidate.id)).for("update");
@@ -40,6 +43,8 @@ export async function recordPublicationFailure(candidate: CrawlCandidate, failur
     await tx.update(crawlCandidates).set({
       state:failure.state,reason:failure.reason,judgedAt:now,updatedAt:now,
       // Retain the original reviewer and signals; an unsuccessful publish is not a new review.
+      // 멈춘 이유만 얹는다 — 없으면 "보류 207건"이 왜 보류인지 기록으로 알 수 없었다(2026-09-19)
+      ...(failure.stoppedAt ? { signals: { ...(current.signals ?? {}), stoppedAt: failure.stoppedAt } } : {}),
     }).where(eq(crawlCandidates.id,current.id));
     return true;
   });
