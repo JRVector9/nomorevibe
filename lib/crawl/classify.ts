@@ -90,6 +90,7 @@ export function renderCategoryDefinitions(definitions: CategoryDefinitions): str
 const systemPrompt = (definitions: CategoryDefinitions) => `배포된 웹 제품을 주 사용 목적에 따라 정확히 하나의 카테고리로 분류한다.
 프로그래밍 언어, AI 제공자, 저장소 이름만으로 분류하지 않는다. 결제 기능이 있는 쇼핑몰은 Commerce이며 Finance가 아니다.
 game이라는 단어가 있어도 실제 게임이나 게임 제작·커뮤니티가 아니면 Games로 분류하지 않는다.
+특정 개인을 소개하는 것 자체가 목적인 사이트(이력, 포트폴리오, 개인 홈페이지, 개인 블로그)는 다루는 소재와 무관하게 Profile이다 — 디자이너의 포트폴리오는 Design이 아니고, 기술 블로그는 Media가 아니다.
 애매하거나 설명이 부족하면 Other를 고른다. 각 근거는 확인 가능한 내용만 18단어 이내로 쓴다.
 
 ${renderCategoryDefinitions(definitions)}

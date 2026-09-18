@@ -208,7 +208,7 @@ Compose `scheduler`가 10초마다 `lib/jobs/catalog.ts`의 주기를 확인해 
 `2.1.263`이 함께 고정돼 있다. Spark는 `CODEX_ACCESS_TOKEN`, Terra는 `OPENAI_API_KEY`로 로그인하며
 시작 스크립트가 인증 뒤 원문 비밀값을 환경에서 지운다. 사용자 설정·저장소 지침·플러그인·셸·웹을
 격리하고 구조화 출력의 제품 ID 전체 집합과 카테고리를 검증한다. 실행 파일은 `CODEX_CLI`로 바꿀 수
-있다(기본 `codex`). 카테고리는 게임을 포함한 17개다.
+있다(기본 `codex`). 카테고리는 게임과 개인프로필을 포함한 18개다.
 
 AI 심사는 별도 `claude` CLI와 명시한 `CRAWL_REVIEW_MODEL`을 사용하며 기본 모델은 없다. 리뷰 실패는
 보류·재시도로 남고, `enforce`에서 유효 승인 없이 카테고리 폴백만으로 발행할 수 없다.

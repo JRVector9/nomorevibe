@@ -16,8 +16,12 @@ import { README_SAMPLE_LIMIT } from "./readme";
  * 옛 승인이 SQL 대조(matchingSource)에는 그대로 맞는데 inputHash만 어긋나, 발행 잡이 그 후보에서
  * review_approval_changed로 매 틱 멈춘다. 올리면 옛 기록이 대조에서 빠져 후보가 심사로 돌아간다.
  */
-export const REVIEW_PROMPT_VERSION = "2026-09-14.2";
-export const REVIEW_RULES_VERSION = "2026-09-14.2";
+/**
+ * 2026-09-18.1: 개인 프로필(이력·포트폴리오·개인 홈페이지·개인 블로그)을 거부 목록에서 빼고
+ * Profile 카테고리로 승인하게 했다. 프롬프트와 판정 규칙(excludedRepoPatterns)이 함께 바뀌었다.
+ */
+export const REVIEW_PROMPT_VERSION = "2026-09-18.1";
+export const REVIEW_RULES_VERSION = "2026-09-18.1";
 export const MAX_REVIEW_INPUT_BYTES = 64 * 1024;
 export const MAX_REVIEW_ATTEMPTS = 3;
 export const REVIEW_FRESH_MS = 24 * 3600_000;

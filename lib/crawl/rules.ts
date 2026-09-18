@@ -281,28 +281,46 @@ export function judge(
     /* 위에서 이미 걸러졌다 */
   }
   const hostIsWholeSite = productPath === "";
-  const nameOrRootPattern = rules.excludedRepoPatterns.find(
-    (p) => matchesPattern(repoName, p) || (hostIsWholeSite && matchesPattern(productHost, p)),
-  );
-  if (nameOrRootPattern) {
-    return reject("personal_site", "제외 패턴 아님",
-      matchesPattern(repoName, nameOrRootPattern)
-        ? `레포 이름 ${repoName} 이 ${nameOrRootPattern} 에 걸림`
-        : `루트 배포 호스트 ${productHost} 가 ${nameOrRootPattern} 에 걸림`);
-  }
-  pass("제외 패턴 아님", repoName);
+  const matchesNameOrRoot = (p: string) =>
+    matchesPattern(repoName, p) || (hostIsWholeSite && matchesPattern(productHost, p));
+  const whereMatched = (p: string) => matchesPattern(repoName, p)
+    ? `레포 이름 ${repoName} 이 ${p} 에 걸림`
+    : `루트 배포 호스트 ${productHost} 가 ${p} 에 걸림`;
 
   /**
-   * 설명에만 단서가 있는 개인 사이트.
+   * 설명에만 단서가 있는 개인 프로필.
    *
    * "My very simple personal landing page app"처럼 이름도 URL도 평범한데 설명이 스스로
-   * 밝히는 경우가 있다. 그것까지 통과시키면 사람이 심사에서 걸러야 한다.
+   * 밝히는 경우가 있다. 이름·호스트 패턴과 같은 편이라 함께 본다.
    */
   const description = repo.description.toLowerCase();
-  const keyword = description
-    ? rules.personalSiteKeywords.find((k) => description.includes(k.toLowerCase())) : undefined;
-  if (keyword) return reject("personal_site", "개인 사이트 키워드 없음", `설명에 “${keyword}”`);
-  pass("개인 사이트 키워드 없음", `${rules.personalSiteKeywords.length}개 중 0개 일치`);
+  const profileSignal = rules.profileRepoPatterns.filter(matchesNameOrRoot).map(whereMatched)[0]
+    ?? (description
+      ? rules.personalSiteKeywords.filter((k) => description.includes(k.toLowerCase()))
+          .map((k) => `설명에 “${k}”`)[0]
+      : undefined);
+
+  /**
+   * 개인 프로필은 거부가 아니라 통과다(2026-09-18).
+   *
+   * 이력·포트폴리오·개인 홈페이지·개인 블로그는 Profile 카테고리로 발행한다. 그래서 제외
+   * 패턴과 키워드는 여기서 멈추는 대신 지나간 자국만 남긴다 — 어느 신호로 프로필이라 봤는지는
+   * 나중에 "왜 이게 Profile로 올라갔지"에 답할 유일한 근거라 signals에 넣는다.
+   *
+   * 제외 패턴을 아예 지우지 않은 것은 아래 "호스트 제외 패턴" 보류 때문이다. 호스트만 걸리고
+   * 루트가 아닌 `owner.github.io/repo` 는 여전히 사람이 갈라야 한다.
+   */
+  if (profileSignal) signals.profile = profileSignal;
+  /**
+   * 두 목록에 같이 있는 패턴만 무력해진다. 한쪽에만 있는 것은 그대로 거른다 —
+   * `awesome-blog` 는 `*-blog` 로 프로필처럼 보이지만 `awesome-*` 는 프로필 목록에 없으므로
+   * 링크 모음으로 거부된다. 새 정책이 열어 주는 것은 개인 프로필뿐이어야 한다.
+   */
+  const profilePatterns = new Set(rules.profileRepoPatterns);
+  const nameOrRootPattern = rules.excludedRepoPatterns
+    .find((p) => !profilePatterns.has(p) && matchesNameOrRoot(p));
+  if (nameOrRootPattern) return reject("personal_site", "제외 패턴 아님", whereMatched(nameOrRootPattern));
+  pass("제외 패턴 아님", profileSignal ? `개인 프로필 — ${profileSignal}` : repoName);
 
   // 스타 상한이 대형 오픈소스를 거른다. 하한이 아니라 상한인 것이 요지다 —
   // 갓 배포한 제품은 정당하게 스타가 0개다.

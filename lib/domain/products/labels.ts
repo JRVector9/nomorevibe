@@ -18,6 +18,7 @@ export const CATEGORY_LABELS = {
   Security: "보안",
   Lifestyle: "라이프스타일",
   Sports: "스포츠·피트니스",
+  Profile: "개인프로필",
   Other: "기타",
 } as const satisfies Record<Category, string>;
 

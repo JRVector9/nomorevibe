@@ -26,8 +26,21 @@ const PROMPT_BEFORE_THE_MOVE = [
   "Other: 정보가 부족하거나 어느 분류에도 명확히 맞지 않음",
 ].join("\n");
 
-it('기본값이면 프롬프트가 상수로 두었던 때와 한 글자도 다르지 않다', () => {
-  expect(renderCategoryDefinitions(DEFAULT_CATEGORY_DEFINITIONS)).toBe(PROMPT_BEFORE_THE_MOVE);
+/**
+ * 2026-09-18 에 새로 만든 갈래. 옮겨 온 것이 아니라 없던 것이라 비교 대상이 없고,
+ * 유일하게 포함·제외를 달고 온다 — 경계를 적지 않으면 소재를 따라 새기 때문이다.
+ */
+const PROFILE_BLOCK = [
+  "Profile: 특정 개인을 소개하는 것 자체가 목적인 사이트 — 이력, 포트폴리오, 개인 홈페이지, 개인 블로그",
+  "  포함: 이력서·CV / 작업물을 모아 보이는 개인 포트폴리오 / 이름을 내건 개인 홈페이지 / 개인이 혼자 쓰는 블로그",
+  "  제외: 회사·단체·행사 소개 사이트 → Business / 남이 자기 이력서·포트폴리오를 만드는 도구 → Productivity / 여러 사람이 글을 올리는 매체·뉴스 → Media",
+].join("\n");
+
+it('옮겨 온 열일곱 줄은 상수로 두었던 때와 한 글자도 다르지 않다 — Profile 만 끼어든다', () => {
+  const lines = PROMPT_BEFORE_THE_MOVE.split("\n");
+  // Profile 은 CATEGORIES 에서 Other 바로 앞에 있다
+  const expected = [...lines.slice(0, -1), PROFILE_BLOCK, lines.at(-1)!].join("\n");
+  expect(renderCategoryDefinitions(DEFAULT_CATEGORY_DEFINITIONS)).toBe(expected);
 });
 
 it('포함·제외 예시는 해당 카테고리 줄 아래에만 붙는다', () => {
@@ -40,13 +53,13 @@ it('포함·제외 예시는 해당 카테고리 줄 아래에만 붙는다', ()
   expect(rendered).toContain('Dev: 코딩, API, SDK, 테스트, 인프라 및 개발자 도구\nDesign:');
 });
 
-it('한 카테고리만 저장돼 있어도 나머지 16개는 기본값으로 채운다', () => {
+it('한 카테고리만 저장돼 있어도 나머지 17개는 기본값으로 채운다', () => {
   const merged = mergeWithDefaults({
     ...DEFAULT_CRAWL_SETTINGS,
     classify: { definitions: { Dev: { summary: '개발자가 직접 쓰는 도구', include: [], exclude: ['일반 자동화 → Productivity'] } } },
   });
   expect(merged.classify.definitions.Dev.exclude).toEqual(['일반 자동화 → Productivity']);
-  expect(Object.keys(merged.classify.definitions)).toHaveLength(17);
+  expect(Object.keys(merged.classify.definitions)).toHaveLength(18);
   expect(merged.classify.definitions.Games).toEqual(DEFAULT_CATEGORY_DEFINITIONS.Games);
 });
 
