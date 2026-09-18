@@ -19,8 +19,10 @@ import { README_SAMPLE_LIMIT } from "./readme";
 /**
  * 2026-09-18.1: 개인 프로필(이력·포트폴리오·개인 홈페이지·개인 블로그)을 거부 목록에서 빼고
  * Profile 카테고리로 승인하게 했다. 프롬프트와 판정 규칙(excludedRepoPatterns)이 함께 바뀌었다.
+ * 2026-09-18.2: "주장과 실물을 가르라"를 앞에 세웠다. 규칙은 그대로라 rulesVersion 은 올리지 않는다
+ *   — 근거는 agent-review.ts 의 REVIEW_SYSTEM_PROMPT 주석에 있다.
  */
-export const REVIEW_PROMPT_VERSION = "2026-09-18.1";
+export const REVIEW_PROMPT_VERSION = "2026-09-18.2";
 export const REVIEW_RULES_VERSION = "2026-09-18.1";
 export const MAX_REVIEW_INPUT_BYTES = 64 * 1024;
 export const MAX_REVIEW_ATTEMPTS = 3;
