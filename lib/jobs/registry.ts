@@ -5,6 +5,7 @@ import { fetchCrawlDocuments } from "@/lib/crawl/jobs/fetch";
 import { judgeCrawlDocuments } from "@/lib/crawl/jobs/judge";
 import { reviewCrawlCandidates } from "@/lib/crawl/jobs/agent-review";
 import { secondReviewCandidates } from "@/lib/crawl/jobs/second-review";
+import { auditPublishedProducts } from "@/lib/crawl/jobs/product-audit";
 import { translateReasons } from "@/lib/crawl/jobs/translate-reasons";
 import { publishCandidates } from "@/lib/crawl/jobs/publish";
 import { pingProducts } from "@/lib/jobs/products/uptime";
@@ -51,6 +52,8 @@ export const JOBS: Record<string, AnyJob> = {
   "crawl-agent-review": reviewCrawlCandidates,
   /** 1차와 다른 모델이 같은 입력을 따로 본다 — 엇갈리면 사람에게 */
   "second-review": secondReviewCandidates,
+  /** 공개된 제품을 1차 심사 글로 다시 본다 — 찾아 적기만 하고, 내리는 것은 사람이다 */
+  "product-audit": auditPublishedProducts,
 
   /** 통과한 후보를 seeded 제품으로 목록에 올린다 */
   "crawl-publish": publishCandidates,

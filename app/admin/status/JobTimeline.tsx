@@ -26,6 +26,7 @@ const FLOW: Record<string, { reads: string; writes: string }> = {
   'crawl-judge': { reads: '후보(new)', writes: '승인 · 보류 · 거부' },
   'crawl-agent-review': { reads: '보류', writes: 'AI 심사 기록' },
   'second-review': { reads: 'AI 판단 · 공개분 표본', writes: '2차 판단' },
+  'product-audit': { reads: '진행 중인 감사 · 공개 제품', writes: '내릴 후보' },
   'reason-translate': { reads: '영어 심사 사유', writes: '한국어 번역' },
   'crawl-publish': { reads: '승인', writes: '카테고리 · 공개 제품' },
   'uptime-ping': { reads: '공개 제품', writes: '응답 기록' },

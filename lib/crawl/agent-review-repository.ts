@@ -153,9 +153,21 @@ export async function requeueStaleReviewSources(
   });
 }
 
-export async function listReviewCandidates(settings: CrawlSettings, limit = 20): Promise<CrawlCandidate[]> {
+/**
+ * unreviewedOnly — 한 번도 심사를 통과한 적이 없는 후보만. 발행분 감사가 양보할지 가를 때 쓴다.
+ *
+ * 없으면 감사가 영영 돌지 않았다. 2026-09-18 프로드에서 이 목록은 여덟 번 모두 상한 100건으로 찼는데,
+ * 100건 전부가 이미 심사받은 보류 건이 24시간 유효기간이 지나 다시 도는 것이었고 새 후보는 0건이었다.
+ * observe 에서는 그 재심사 결과가 반영되지도 않는다. "새 후보에 양보한다"는 뜻을 지키려면 이 조건을
+ * SQL 안(LIMIT 앞)에 넣어야 한다 — 목록을 받아 거르면 오래된 것부터 100건이라 새 후보가 뒤에 가려진다.
+ * 기본값은 꺼져 있어 1차 심사 게이트의 동작은 그대로다.
+ */
+export async function listReviewCandidates(settings: CrawlSettings, limit = 20,
+  options: { unreviewedOnly?: boolean } = {}): Promise<CrawlCandidate[]> {
   if (!settings.enabled || settings.reviewMode === "off") return [];
   return db.select().from(crawlCandidates).where(and(
+    options.unreviewedOnly ? sql`NOT EXISTS (SELECT 1 FROM ${crawlReviewAttempts} ever
+      WHERE ever.candidate_id = ${crawlCandidates.id} AND ever.state = 'succeeded')` : undefined,
     eq(crawlCandidates.decidedBy, "auto"),
     sql`EXISTS (SELECT 1 FROM crawl_documents fd
       LEFT JOIN LATERAL (SELECT fs.completed_at FROM agent_repository_scans fs
@@ -176,7 +188,20 @@ export async function listReviewCandidates(settings: CrawlSettings, limit = 20):
       AND ${crawlReviewAttempts.state} = 'failed' AND ${crawlReviewAttempts.retryAfter} > now())`,
     sql`(SELECT count(*) FROM ${crawlReviewAttempts} WHERE ${matchingSource(settings)}
       AND ${crawlReviewAttempts.state} IN ('failed','superseded')) < ${MAX_REVIEW_ATTEMPTS}`,
-  )).orderBy(asc(crawlCandidates.updatedAt), asc(crawlCandidates.id)).limit(Math.max(1, Math.min(100, limit)));
+  )).orderBy(
+    /*
+     * 한 번도 심사를 통과한 적이 없는 후보가 먼저다. 그다음이 유효기간이 지나 다시 보는 것.
+     *
+     * 오래된 순으로만 뽑던 때는 새 후보가 굶었다. observe 에서는 재심사 결과가 후보에 기록되지 않아
+     * (recordAgentReview 의 applied=false) 재심사 대상의 updatedAt 이 영영 옛날로 남고, 그래서 늘
+     * 줄 맨 앞을 차지한다. 2026-09-18 프로드에서 한 번도 심사받지 못한 후보 55건이 평균 9시간,
+     * 가장 오래된 것은 194시간째 기다렸고, 그동안 문은 결과가 반영되지도 않는 재심사만 돌았다.
+     * false 가 true 보다 앞에 온다 — 한 번도 안 본 것(false)이 먼저다.
+     */
+    sql`EXISTS (SELECT 1 FROM ${crawlReviewAttempts} seen
+      WHERE seen.candidate_id = ${crawlCandidates.id} AND seen.state = 'succeeded')`,
+    asc(crawlCandidates.updatedAt), asc(crawlCandidates.id),
+  ).limit(Math.max(1, Math.min(100, limit)));
 }
 
 type ReviewContext = {

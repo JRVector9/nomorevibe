@@ -4,6 +4,8 @@ const PAGES = [
   { href: "/admin/status", label: "운영센터", hint: "서비스·작업 현황" },
   { href: "/admin/review", label: "심사 큐", hint: "후보 검토·승인" },
   { href: "/admin/products", label: "제품 관리", hint: "목록·제품 근거" },
+  // /admin/products 아래에 두지 않는다 — 아래에 두면 제품 관리와 함께 선택된 것으로 보인다
+  { href: "/admin/audit", label: "내릴 후보", hint: "AI가 걸러낸 발행분" },
   { href: "/admin", label: "크롤 설정", hint: "수집 규칙·검색 신호" },
   { href: "/admin/categories", label: "카테고리 기준", hint: "분류 정의·예시" },
   { href: "/admin/evidence", label: "근거 설정", hint: "출처·갱신 정책" },
