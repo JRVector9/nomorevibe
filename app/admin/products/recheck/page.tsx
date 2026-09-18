@@ -78,7 +78,8 @@ export default async function RecheckPage({ searchParams }: {
             <li key={hit.slug} className="rounded-xl border border-line bg-bg-card p-4">
               <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
                 <label className="flex items-center gap-2 text-[14.5px] font-bold">
-                  <input type="checkbox" form={BAN_FORM} name="slug" value={hit.slug} className="size-4 accent-[var(--down)]" />
+                  {/* data-name 은 확인 창이 "무엇을" 내리는지 이름으로 보여주려고 싣는다 — slug 만으로는 알아볼 수 없다 */}
+                  <input type="checkbox" form={BAN_FORM} name="slug" value={hit.slug} data-name={hit.name} className="size-4 accent-[var(--down)]" />
                   {hit.name}
                 </label>
                 <a href={`https://github.com/${hit.repo}`} target="_blank" rel="noreferrer noopener"
