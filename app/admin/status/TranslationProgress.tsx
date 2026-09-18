@@ -27,6 +27,17 @@ export function TranslationProgress({ progress }: { progress: Progress }) {
         {progress.done.toLocaleString("ko-KR")}/{progress.total.toLocaleString("ko-KR")} ({percent}%)
         <span className="text-fg-3"> · 남음 {progress.pending.toLocaleString("ko-KR")} · 실패 {progress.failed.toLocaleString("ko-KR")} · 최근 1시간 {progress.lastHour.toLocaleString("ko-KR")}건 · 마지막 {ago(progress.lastSecondsAgo)}</span>
       </p>
+      {progress.failures.length > 0 && (
+        <p className="flex w-full flex-wrap items-center gap-x-3 gap-y-1 text-fg-3">
+          <span className="font-semibold">실패 사유</span>
+          {progress.failures.map((failure) => (
+            <span key={failure.code} className="font-mono">
+              {failure.code} <span className="font-sans tabular-nums">{failure.count.toLocaleString("ko-KR")}건</span>
+              <span className="font-sans"> · 시도 {failure.maxAttempts}회까지 · {failure.dueNow > 0 ? `${failure.dueNow.toLocaleString("ko-KR")}건 재시도 대기` : "다음 차례 기다림"}</span>
+            </span>
+          ))}
+        </p>
+      )}
       {stalled && <p className="w-full text-warn">30분 넘게 옮긴 것이 없습니다 — <span className="font-mono">reason-translate</span> 작업과 ABCLLM_API_KEY 를 확인하세요.</p>}
     </section>
   );

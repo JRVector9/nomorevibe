@@ -106,6 +106,36 @@ it('진행을 센다 — 옮길 글 중 몇 개를 옮겼고 몇 개가 실패�
   expect((await translationProgress()).lastSecondsAgo).toBeLessThan(60);
 });
 
+it('실패는 사유별로 보인다 — 무엇이 막혔는지 알아야 게이트웨이를 볼지 글을 볼지 안다', async () => {
+  await attempt('acme/a', EN_A);
+  await attempt('acme/b', EN_B);
+  await recordTranslations([{ hash: textHash(EN_A), translated: null, error: 'timeout' },
+    { hash: textHash(EN_B), translated: null, error: 'http_502' }], 'gpt-oss');
+  // 같은 글을 한 번 더 실패시켜 시도 횟수가 쌓이는 것까지
+  await recordTranslations([{ hash: textHash(EN_A), translated: null, error: 'timeout' }], 'gpt-oss');
+
+  const progress = await translationProgress();
+  expect(progress.failed).toBe(2);
+  expect(progress.failures.map((f) => f.code).sort()).toEqual(['http_502', 'timeout']);
+  expect(progress.failures.find((f) => f.code === 'timeout')).toMatchObject({ count: 1, maxAttempts: 2 });
+});
+
+it('실패가 없으면 사유도 비어 있다 — 없는 줄을 그리지 않는다', async () => {
+  await attempt('acme/a', EN_A);
+  await recordTranslations([{ hash: textHash(EN_A), translated: '문서 사이트다' }], 'gpt-oss');
+  expect((await translationProgress()).failures).toEqual([]);
+});
+
+it('한글이 섞인 글도 30% 미만이면 옮길 대상이다 — 값싼 사전 확인이 결과를 바꾸지 않는다', async () => {
+  // 한글이 하나도 없으면 비율을 건너뛰지만, 조금 있는 글은 여전히 비율로 가른다
+  const MIXED = 'The repository has no deployed homepage 배포 없음';
+  await attempt('acme/mixed', MIXED);
+  await attempt('acme/ko', KO);
+  const pending = await pendingTranslations(10);
+  expect(pending.map((row) => row.body)).toContain(MIXED);
+  expect(pending.map((row) => row.body)).not.toContain(KO);
+});
+
 it('다시 볼 때가 된 실패는 처음 보는 글 뒤로 밀리지 않는다 — 최근 순서대로다', async () => {
   await attempt('acme/old', EN_B, new Date(Date.now() - 3600_000));
   await attempt('acme/new', EN_A);

@@ -16,9 +16,17 @@ const SOURCES = sql`
   union all
   select s.second_reason, coalesce(s.reviewed_at, s.created_at) from second_reviews s where s.second_reason is not null`;
 
-/** translate.ts needsKorean 과 같은 기준 — 글자 중 한글이 30% 미만 */
-const NEEDS_KOREAN = sql`length(btrim(body)) > 0 and length(regexp_replace(body, '[^가-힣]', '', 'g'))
-  < 0.3 * greatest(1, length(regexp_replace(body, '[^A-Za-z가-힣]', '', 'g')))`;
+/**
+ * translate.ts needsKorean 과 같은 기준 — 글자 중 한글이 30% 미만.
+ *
+ * 한글이 하나도 없으면 비율을 잴 것도 없이 참이다(0 < 0.3 × 1 이상). 그 값싼 확인을 먼저 해서
+ * 대부분의 행에서 regexp_replace 두 번을 건너뛴다 — 그 둘이 행마다 새 문자열을 만든다.
+ * 프로드 실측(2026-09-18, 46,237행 중 한글이 조금이라도 있는 행은 1,222행): 9,652ms → 360ms.
+ * 같은 스냅샷에서 두 식의 결과가 완전히 같은 것을 확인했다.
+ */
+const NEEDS_KOREAN = sql`length(btrim(body)) > 0 and (body !~ '[가-힣]'
+  or length(regexp_replace(body, '[^가-힣]', '', 'g'))
+     < 0.3 * greatest(1, length(regexp_replace(body, '[^A-Za-z가-힣]', '', 'g'))))`;
 
 const UNIQUE_SOURCES = sql`select encode(sha256(convert_to(body, 'UTF8')), 'hex') as hash, body, max(at) as at
   from (${SOURCES}) src where ${NEEDS_KOREAN} group by 1, 2`;
@@ -76,7 +84,31 @@ export async function translationsFor(texts: readonly (string | null | undefined
   return new Map(rows.flatMap((row) => row.translated ? [[wanted.get(row.hash)!, row.translated] as const] : []));
 }
 
-export type TranslationProgress = { total: number; done: number; failed: number; pending: number; lastHour: number; lastSecondsAgo: number | null };
+/** 실패 사유 한 줄 — 무엇이 몇 건 막혔고 언제 다시 보는지 */
+export type TranslationFailure = { code: string; count: number; dueNow: number; maxAttempts: number };
+
+export type TranslationProgress = { total: number; done: number; failed: number; pending: number; lastHour: number; lastSecondsAgo: number | null; failures: TranslationFailure[] };
+
+/**
+ * 실패 사유별 집계.
+ *
+ * 실패는 errorCode 로 남는데 화면 어디에도 나오지 않아 "1,876건 실패"라는 숫자만 보였다.
+ * 무엇이 막혔는지 알아야 게이트웨이를 볼지 글을 볼지 판단한다.
+ */
+async function failureBreakdown(): Promise<TranslationFailure[]> {
+  const rows = await db.execute<{ code: string | null; count: number; due_now: number; max_attempts: number }>(sql`
+    select error_code as code, count(*)::int as count,
+           (count(*) filter (where retry_at is null or retry_at <= now()))::int as due_now,
+           max(attempts)::int as max_attempts
+      from ${textTranslations} where status = 'failed' and target_lang = 'ko'
+     group by 1 order by count(*) desc limit 8`);
+  return [...rows].map((row) => ({
+    code: row.code ?? "(사유 없음)",
+    count: Number(row.count),
+    dueNow: Number(row.due_now),
+    maxAttempts: Number(row.max_attempts),
+  }));
+}
 
 /** 운영센터가 보여 주는 진행 — 옮길 글(같은 글은 하나) 중 몇 개를 옮겼나 */
 export async function translationProgress(): Promise<TranslationProgress> {
@@ -89,6 +121,8 @@ export async function translationProgress(): Promise<TranslationProgress> {
       from (${UNIQUE_SOURCES}) u
       left join ${textTranslations} t on t.source_hash = u.hash and t.target_lang = 'ko'`)];
   const total = Number(row?.total ?? 0), done = Number(row?.done ?? 0);
-  return { total, done, failed: Number(row?.failed ?? 0), pending: total - done, lastHour: Number(row?.last_hour ?? 0),
-    lastSecondsAgo: row?.last_ago === null || row?.last_ago === undefined ? null : Number(row.last_ago) };
+  const failed = Number(row?.failed ?? 0);
+  return { total, done, failed, pending: total - done, lastHour: Number(row?.last_hour ?? 0),
+    lastSecondsAgo: row?.last_ago === null || row?.last_ago === undefined ? null : Number(row.last_ago),
+    failures: failed > 0 ? await failureBreakdown() : [] };
 }
