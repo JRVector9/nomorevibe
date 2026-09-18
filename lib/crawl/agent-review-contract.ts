@@ -7,6 +7,7 @@ import { summarizeAgentEvidence } from "@/lib/domain/evidence/agents/summary";
 import { TEXT_SAMPLE_LIMIT } from "@/lib/net/normalize";
 import type { CrawlSettings } from "./settings-schema";
 import { factsFromRepoMeta, judge, pageFactsFromDocument } from "./rules";
+import { linksOwnGithub } from "./github-links";
 import { README_SAMPLE_LIMIT } from "./readme";
 
 /**
@@ -24,8 +25,14 @@ import { README_SAMPLE_LIMIT } from "./readme";
  * 2026-09-19.1: "기능 이름도 주장이다"와 "주제 뉴스레터는 발행물이다"를 더했다. 규칙은 그대로다.
  *   1차·2차·발행분 감사가 모두 이 글로 묻는다 — 한 번 올리면 셋이 함께 바뀐다.
  */
-export const REVIEW_PROMPT_VERSION = "2026-09-19.1";
-export const REVIEW_RULES_VERSION = "2026-09-18.1";
+/**
+ * 2026-09-19.2 / 규칙 2026-09-19.1: 기준을 넓혔다(사용자 결정). 가입해서 쓰는 서비스, 내려받는 앱,
+ *   CLI·플러그인·확장·AI 스킬, 라이브러리·SDK 의 소개·설치·다운로드 페이지도 올린다. 제작자의 GitHub
+ *   링크를 건 페이지는 프로젝트의 집으로 본다. 거부는 문서·글·강의·대행사·남의 플랫폼 페이지·빈 화면만.
+ *   규칙에서는 설치·내려받기 문구(landingPhrases)를 뺐다.
+ */
+export const REVIEW_PROMPT_VERSION = "2026-09-19.2";
+export const REVIEW_RULES_VERSION = "2026-09-19.1";
 export const MAX_REVIEW_INPUT_BYTES = 64 * 1024;
 export const MAX_REVIEW_ATTEMPTS = 3;
 export const REVIEW_FRESH_MS = 24 * 3600_000;
@@ -56,7 +63,9 @@ export type ReviewSource = {
 export type ReviewSnapshot = {
   product: { repo: string; name: string; description: string; pageText: string; url: string | null; topics: string[]; language: string | null;
     /** README 앞부분(lib/crawl/readme.ts). 아직 못 받았으면 "" */
-    readme: string };
+    readme: string;
+    /** 페이지가 제작자(레포 주인)의 GitHub 로 가는 링크를 걸었는가 — 걸었으면 프로젝트의 집이다 */
+    linksOwnGithub: boolean };
   /** 저장소의 바뀌지 않는 사실. 스타·마지막 푸시·생성일 */
   repoFacts: { stars: number | null; pushedAt: string | null; createdAt: string | null };
   /** 규칙이 어디서 멈췄는지 — 모델이 무엇을 대신 가르는지 알게 한다 */
@@ -140,6 +149,7 @@ export function createReviewInput(
       topics: Array.isArray(document.repoMeta.topics) ? document.repoMeta.topics.slice(0, 30).map(item => limitedText(item, 100)) : [],
       language: limitedText(document.repoMeta.language, 100) || null,
       readme: limitedText(page.readmeSample, README_SAMPLE_LIMIT),
+      linksOwnGithub: linksOwnGithub(candidate.repo, pageFactsFromDocument(document).githubLinks),
     },
     repoFacts: {
       stars: typeof document.repoMeta.stargazers_count === "number" ? document.repoMeta.stargazers_count : null,

@@ -3,7 +3,7 @@ import type { CrawlDocument } from "@/lib/db/schema";
 import { findByUrl } from "@/lib/domain/products/repository";
 import * as crawl from "@/lib/crawl/repository";
 import { getSettings } from "@/lib/crawl/settings";
-import { judge, factsFromRepoMeta, pageFactsFromDocument, judgeRevision, type Verdict } from "@/lib/crawl/rules";
+import { judge, factsFromRepoMeta, pageFactsFromDocument, judgeRevision, type StoppedAt, type Verdict } from "@/lib/crawl/rules";
 import type { CrawlSettings } from "@/lib/crawl/settings-schema";
 import { loadAgentJudgeInput } from "@/lib/crawl/agent-evidence";
 import { requestJob } from "@/lib/jobs/control";
@@ -93,14 +93,14 @@ async function judgeDocument(document: CrawlDocument, settings: CrawlSettings): 
 
   // 차단한 URL이 수집기를 통해 되돌아오는 것을 막는다. 차단은 재등록까지 막는 조치다.
   // 규칙이 아니라 DB가 아는 사실이라 규칙 발자국 뒤에 따로 붙인다.
+  const stoppedAt: StoppedAt = {
+    rule: existing.status === "banned" ? "차단된 URL 아님" : "이미 등록된 URL 아님",
+    detail: `같은 URL이 /p/${existing.slug} 로 ${existing.status === "banned" ? "차단" : "등재"}되어 있음`,
+  };
   return {
     state: "rejected",
     reason: existing.status === "banned" ? "banned" : "already_listed",
-    signals: { ...verdict.signals, existingSlug: existing.slug, existingStatus: existing.status },
-    trace: [...verdict.trace, {
-      rule: existing.status === "banned" ? "차단된 URL 아님" : "이미 등록된 URL 아님",
-      detail: `같은 URL이 /p/${existing.slug} 로 ${existing.status === "banned" ? "차단" : "등재"}되어 있음`,
-      passed: false,
-    }],
+    signals: { ...verdict.signals, existingSlug: existing.slug, existingStatus: existing.status, stoppedAt },
+    trace: [...verdict.trace, { ...stoppedAt, passed: false }],
   };
 }

@@ -144,20 +144,23 @@ it("CLI 오류는 종류를 남긴다 — 전에는 모두 cli_error 라 530건�
   expect(await reviewWithAgent(input(), {model:"tested-model",run})).toMatchObject({ok:false,error:"max_turns"});
 });
 
-it("지시문은 쓸 수 있는 제품인가 하나만 묻고, 개발 근거로 보류하지 말라고 한다", () => {
+it("지시문은 누가 만든 소프트웨어의 집인가 하나만 묻고, 개발 근거로 보류하지 말라고 한다", () => {
   const args = reviewCliArgs("tested-model");
   const system = args[args.indexOf("--system-prompt") + 1];
-  expect(system).toContain("Answer one question: is product.url something a person can open and get value from NOW");
+  expect(system).toContain("Answer one question: is product.url the page of a real piece of software someone made");
   /*
-   * 이 두 줄이 정확도를 올린 것이다 — 모델은 README 의 소개를 읽고 "서비스가 있다니까 승인"으로
-   * 기운다. 주장과 실물을 가르라는 지시가 빠지면 잘못 승인이 다시 는다(홀드아웃 실측 3 → 4건).
+   * 2026-09-19 사용자 결정 — 가입해서 쓰는 서비스, 내려받는 앱, 설치하는 도구, 라이브러리·SDK 도 올린다.
+   * 이 줄들이 빠지면 모델은 옛 기준("지금 이 주소에서 바로 쓸 수 있나")으로 돌아가 소개 페이지를 거부한다.
    */
-  expect(system).toContain("DECIDE FROM product.pageText");
-  expect(system).toContain("A claim that a product exists is NOT evidence that product.url serves it");
-  // 개인 프로필은 유일한 예외다 — 거부 목록이 아니라 Profile 로 승인한다
+  expect(system).toContain("even when the visitor must sign up or pay first");
+  expect(system).toContain("download buttons are fine");
+  expect(system).toContain("libraries, SDKs, frameworks and UI component kits");
+  expect(system).toContain("If product.linksOwnGithub is true");
+  // 거부는 이 목록뿐이다 — 문서·글·강의·대행사·남의 플랫폼 페이지·빈 화면
+  expect(system).toContain("REJECT only these:");
+  expect(system).toContain("code package registries");
+  // 개인 프로필은 거부 목록이 아니라 Profile 로 승인한다
   expect(system).toContain('set category to "Profile"');
-  // 근거가 없으면 지어내지 말고 사람에게 넘기라는 지시 — 없으면 빈 본문에서 추측이 는다
-  expect(system).toContain('Do not guess "approve" to be generous');
   expect(system).toContain("missing development evidence is never a reason for needs_review");
   const schema = JSON.parse(args[args.indexOf("--json-schema") + 1]);
   expect(schema.properties.confidence).toEqual({ type: "number", minimum: 0, maximum: 1 });

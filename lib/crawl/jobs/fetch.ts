@@ -8,6 +8,7 @@ import * as crawl from "@/lib/crawl/repository";
 import { getSettings } from "@/lib/crawl/settings";
 import { getRepo } from "@/lib/crawl/github";
 import { extractSiteRepositoryKeys } from "@/lib/domain/evidence/providers/site-fingerprint";
+import { extractGithubLinks } from "@/lib/crawl/github-links";
 import { requeueAfterAdminEvidenceRefresh } from "@/lib/crawl/admin-review";
 import { requestJob } from "@/lib/jobs/control";
 
@@ -293,6 +294,7 @@ async function visit(url: string, docsGenerators: readonly string[], oneAtATime:
     meta: { ...extractPageMeta(page.html, page.finalUrl, docsGenerators),
       thumbnailHints: siteHints(page.html, page.finalUrl),
       repositoryKeys: extractSiteRepositoryKeys(page.html, page.finalUrl),
+      githubLinks: extractGithubLinks(page.html, page.finalUrl),
       finalUrl: page.finalUrl },
   };
 }

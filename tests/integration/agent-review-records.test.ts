@@ -93,6 +93,17 @@ it("protects an administrator decision and refuses a stale worker token", async 
   await expect(recordAgentReview({ ...context, attempt: claim.attempt, outcome })).rejects.toThrow("job_lease_lost");
 });
 
+/** 거부 기록만 보고도 왜 거부됐는지 알 수 있어야 한다 — 규칙이 아니라 AI 가 멈췄으면 AI 의 이유를 남긴다 */
+it("enforce 에서 AI 가 거부하면 그 이유를 거부 기록에 남긴다", async () => {
+  const context = await fixture("enforce");
+  const claim = await claimAgentReview(context);
+  if (claim.kind === "skipped") throw new Error(claim.reason);
+  await recordAgentReview({ ...context, attempt: claim.attempt, outcome: { ...outcome, decision: "reject", reason: "A docs site for a CLI" } });
+  expect(await crawl.getCandidate(context.candidate.repo)).toMatchObject({
+    state: "rejected", signals: { stoppedAt: { rule: "AI 심사", detail: "A docs site for a CLI" } },
+  });
+});
+
 it("stops after three infrastructure failures without rejecting the product", async () => {
   const context = await fixture("enforce");
   for (let number = 1; number <= 3; number++) {

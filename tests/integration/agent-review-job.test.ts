@@ -39,11 +39,11 @@ async function source(repo: string, productUrl: string, candidate: { state: "app
 }
 const tick = () => runJob("crawl-agent-review", reviewCrawlCandidates);
 
-it("rejects a held candidate whose refetched body is an install page even when the model would approve", async () => {
+it("rejects a held candidate whose refetched body is a docs shell even when the model would approve", async () => {
   // codex 재현 그대로: owner.github.io 하위 경로라 사람 심사에 보류된 후보를 재수집했더니 본문이 설치 안내였다.
   // 같은 문서에 pageFactsFromDocument()를 적용하면 거부인데, AI 경로에서는 모델 승인으로 approved가 됐다.
   await source("someone/loom", "https://someone.github.io/loom", { state: "needs_review", reason: "ambiguous" },
-    { title: "Loom", description: "Orchestrate coding agents", textSample: "Loom · orchestrate agents. Install: npm install -g loom" });
+    { title: "Loom", description: "Orchestrate coding agents", textSample: "Loom · orchestrate agents. Keyboard shortcuts Press S or / to search in the book" });
   expect(await tick()).toMatchObject({ status: "completed" });
   expect(await db.select().from(crawlCandidates)).toMatchObject([{ state: "rejected", reason: "not_a_product", decidedBy: "auto" }]);
   expect(review).not.toHaveBeenCalled();
