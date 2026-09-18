@@ -101,7 +101,12 @@ export type DecisionReason =
   | "unreachable" // 배포 URL 접속 불가
   | "not_a_product" // homepage가 GitHub·SNS 링크 등 배포물이 아님
   | "large_oss" // 대형 오픈소스 — AI가 커밋 일부에 참여했을 뿐
-  | "personal_site" // 개인 홈페이지·블로그·문서 사이트
+  /**
+   * 이름이 남았을 뿐, 개인 사이트는 더 이상 이것으로 거부되지 않는다(2026-09-18, Profile 카테고리).
+   * 지금 여기로 오는 것: 회사·단체 소개 사이트, 링크 모음, 설정 파일 저장소, 학술 패키지,
+   * 보관된 레포, 그리고 개인 블로그가 아니라고 분류된 `*-blog`. 값을 바꾸면 옛 행과 끊긴다.
+   */
+  | "personal_site"
   | "fork" // 포크된 레포
   | "already_listed" // 같은 URL이 이미 products에 있음
   | "banned" // 차단된 URL

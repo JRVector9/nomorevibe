@@ -3,7 +3,8 @@ import { logger } from '@/lib/observability/logger';
 import { overrideCandidate } from './admin-review';
 
 export const REVIEW_REJECT_REASONS = [
-  { value: 'personal_site', label: '개인 사이트·블로그' },
+  // 개인 프로필은 2026-09-18부터 Profile 로 발행한다. 남은 것은 사람도 제품도 아닌 쪽이다
+  { value: 'personal_site', label: '회사 소개·링크 모음·설정 저장소' },
   { value: 'not_a_product', label: '배포된 서비스가 아님' },
   { value: 'large_oss', label: '대형 오픈소스' },
 ] as const satisfies readonly { value: DecisionReason; label: string }[];

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { judge, matchesPattern, isBlockedHost, factsFromRepoMeta, pageFactsFromDocument, type RepoFacts } from "@/lib/crawl/rules";
+import { judge, matchesPattern, isBlockedHost, factsFromRepoMeta, pageFactsFromDocument, requiresProfileCategory, type RepoFacts } from "@/lib/crawl/rules";
 import { DEFAULT_CRAWL_SETTINGS, crawlSettingsSchema } from "@/lib/crawl/settings-schema";
 import { resolveCanonical } from "@/lib/domain/products/register";
 
@@ -225,6 +225,21 @@ describe("judge — 거르기", () => {
     expect(judge(goodRepo({ ownerType: "Organization" }), livePage, strict, NOW).reason).toBe("large_oss");
   });
 
+  it("설명이 스스로 개인 프로필이라 말하면 이름 패턴을 이긴다", () => {
+    /*
+     * 이름은 어림짐작이고 설명은 만든 사람이 직접 쓴 말이다. 실측(2026-09-18)에서 이 완화로
+     * 새로 통과한 8건이 전부 *-website 에 걸려 있던 개인 포트폴리오였다.
+     */
+    const v = judge(goodRepo({ repo: "someone/portfolio-website", description: "My portfolio website" }),
+      livePage, settings, NOW);
+    expect(v.state).toBe("approved");
+    expect(v.signals.profile).toBe("설명에 “my portfolio”");
+
+    // 설명이 아무 말도 안 하면 이름 패턴이 그대로 거른다
+    const plain = judge(goodRepo({ repo: "someone/acme-website", description: "Acme 소개" }), livePage, settings, NOW);
+    expect(plain.reason).toBe("personal_site");
+  });
+
   it("설명에만 단서가 있는 개인 프로필도 통과시킨다 — 어느 문구로 봤는지 남긴다", () => {
     // 이름도 URL도 평범한데 설명이 스스로 밝히는 경우다. 이제 거부가 아니라 Profile 이다
     for (const [description, keyword] of [
@@ -332,11 +347,29 @@ describe("judge — 거르기", () => {
     }
   });
 
-  it("두 목록에 겹쳐 걸리면 거부가 이긴다 — 새 정책이 여는 것은 개인 프로필뿐이다", () => {
-    // *-blog 로 프로필처럼 보이지만 awesome-* 는 프로필 목록에 없다
+  it("두 목록에 겹쳐 걸리면 더 좁은 쪽이 이긴다", () => {
+    // awesome-* 는 *-blog 를 삼키지 못한다 — 서로 다른 갈래라 거부가 이긴다
+    const list = judge(goodRepo({ repo: "someone/awesome-blog" }), livePage, settings, NOW);
+    expect(list.reason).toBe("personal_site");
+    expect(list.trace.at(-1)!.detail).toContain("awesome-*");
+
+    /*
+     * *-website 는 *-personal-website 를 삼킨다 — 같은 모양을 더 좁게 쓴 것이라 프로필이 이긴다.
+     * 집합 동일성으로 가리던 때는 이 패턴이 한 번도 발화하지 못했다.
+     */
+    for (const repo of ["someone/my-personal-website", "someone/personal-website", "someone/jane-personal-site"]) {
+      const v = judge(goodRepo({ repo }), livePage, settings, NOW);
+      expect(v.state, repo).toBe("approved");
+      expect(v.signals.profile, repo).toContain("personal");
+    }
+  });
+
+  it("거부된 판정에는 개인 프로필 자국을 남기지 않는다", () => {
+    // 자국이 붙어 있으면 "왜 이게 Profile 로 올라갔지"에 답할 근거가 아니라 잡음이다
     const v = judge(goodRepo({ repo: "someone/awesome-blog" }), livePage, settings, NOW);
-    expect(v.reason).toBe("personal_site");
-    expect(v.trace.at(-1)!.detail).toContain("awesome-*");
+    expect(v.state).toBe("rejected");
+    expect(v.signals.profile).toBeUndefined();
+    expect(v.signals.profilePattern).toBeUndefined();
   });
 
   it("오래 방치된 프로젝트를 거른다", () => {
@@ -379,6 +412,40 @@ describe("judge — 보류", () => {
     // 보류를 끄면 거부 쪽으로 떨어진다
     const strict = { ...settings, judge: { ...settings.judge, holdAmbiguous: false } };
     expect(judge(goodRepo({ repo: "someone/coolapp" }), page, strict, NOW).reason).toBe("personal_site");
+  });
+
+  it("프로필로 통과한 것도 하위 경로면 여전히 사람에게 간다", () => {
+    /*
+     * 이 보류가 509건 전수 조사(70%가 배포물이 아님)의 근거다. 프로필 패턴이 이것을 비켜 가면
+     * 안 된다 — "호스트 제외 패턴"은 excludedRepoPatterns 를 거르지 않고 그대로 읽어야 한다.
+     */
+    for (const repo of ["someone/my-portfolio", "someone/dev-blog", "someone/someone.github.io"]) {
+      const v = judge(goodRepo({ repo }), { productUrl: `https://someone.github.io/${repo.split("/")[1]}`, status: 200 }, settings, NOW);
+      expect(v, repo).toMatchObject({ state: "needs_review", reason: "ambiguous", cause: "host_excluded_subpath" });
+    }
+  });
+});
+
+describe("이름만으로 개인 것인지 못 가르는 패턴", () => {
+  it("블로그는 분류기가 Profile 이라 해야 발행한다 — 나머지 프로필 패턴은 그렇지 않다", () => {
+    /*
+     * 개인 블로그면 Profile 이고 아니면 회사·주제 블로그라 제품이 아니다 — 제3의 경우가 없다.
+     * 반면 *.github.io 는 내용이 아니라 자리라서 진짜 제품이 올라온다.
+     */
+    const blog = judge(goodRepo({ repo: "someone/dev-blog" }), livePage, settings, NOW);
+    expect(requiresProfileCategory(blog.signals, settings)).toBe(true);
+
+    const root = judge(goodRepo({ repo: "someone/coolapp" }),
+      { productUrl: "https://someone.github.io", status: 200 }, settings, NOW);
+    expect(requiresProfileCategory(root.signals, settings)).toBe(false);
+
+    // 설명 키워드로 통과한 것은 패턴이 없으므로 조건이 붙지 않는다
+    const byWords = judge(goodRepo({ description: "My personal website" }), livePage, settings, NOW);
+    expect(byWords.signals.profile).toBeTruthy();
+    expect(requiresProfileCategory(byWords.signals, settings)).toBe(false);
+
+    // 프로필이 아닌 보통 후보에도 붙지 않는다
+    expect(requiresProfileCategory(judge(goodRepo(), livePage, settings, NOW).signals, settings)).toBe(false);
   });
 });
 

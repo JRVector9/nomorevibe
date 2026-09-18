@@ -294,11 +294,11 @@ export function judge(
    * 밝히는 경우가 있다. 이름·호스트 패턴과 같은 편이라 함께 본다.
    */
   const description = repo.description.toLowerCase();
-  const profileSignal = rules.profileRepoPatterns.filter(matchesNameOrRoot).map(whereMatched)[0]
-    ?? (description
-      ? rules.personalSiteKeywords.filter((k) => description.includes(k.toLowerCase()))
-          .map((k) => `설명에 “${k}”`)[0]
-      : undefined);
+  const profilePattern = rules.profileRepoPatterns.find(matchesNameOrRoot);
+  const profileKeyword = description
+    ? rules.personalSiteKeywords.find((k) => description.includes(k.toLowerCase())) : undefined;
+  const profileSignal = profilePattern ? whereMatched(profilePattern)
+    : profileKeyword ? `설명에 “${profileKeyword}”` : undefined;
 
   /**
    * 개인 프로필은 거부가 아니라 통과다(2026-09-18).
@@ -310,16 +310,34 @@ export function judge(
    * 제외 패턴을 아예 지우지 않은 것은 아래 "호스트 제외 패턴" 보류 때문이다. 호스트만 걸리고
    * 루트가 아닌 `owner.github.io/repo` 는 여전히 사람이 갈라야 한다.
    */
-  if (profileSignal) signals.profile = profileSignal;
   /**
-   * 두 목록에 같이 있는 패턴만 무력해진다. 한쪽에만 있는 것은 그대로 거른다 —
-   * `awesome-blog` 는 `*-blog` 로 프로필처럼 보이지만 `awesome-*` 는 프로필 목록에 없으므로
-   * 링크 모음으로 거부된다. 새 정책이 열어 주는 것은 개인 프로필뿐이어야 한다.
+   * 프로필 패턴이 제외 패턴을 언제 이기는가 — 더 좁을 때만.
+   *
+   * 패턴 글을 이름처럼 대 본다. `*-website` 는 `*-personal-website` 를 삼키므로
+   * `*-personal-website` 는 같은 모양을 더 좁게 쓴 것이고, 그때는 프로필이 이긴다.
+   * `awesome-*` 는 `*-blog` 를 삼키지 못하니 둘은 서로 다른 갈래고, 그때는 거부가 이긴다 —
+   * `awesome-blog` 는 링크 모음이지 개인 블로그가 아니다.
+   *
+   * 집합 동일성으로 가리던 때는 두 목록에 글자가 똑같이 있는 것만 무력해져
+   * `*-personal-website` 가 한 번도 발화하지 못했다(2026-09-18 감사에서 발견).
    */
-  const profilePatterns = new Set(rules.profileRepoPatterns);
-  const nameOrRootPattern = rules.excludedRepoPatterns
-    .find((p) => !profilePatterns.has(p) && matchesNameOrRoot(p));
+  const narrowerThan = (excluded: string) => Boolean(profilePattern) && matchesPattern(profilePattern!, excluded);
+  /**
+   * 설명이 스스로 개인 프로필이라 말하면 이름 패턴 전체를 이긴다 — 이름은 어림짐작이고
+   * 설명은 만든 사람이 직접 쓴 말이라서다. 실측(2026-09-18, personal_site 거부 641건): 이 완화로
+   * 새로 통과하는 것은 8건이고 전부 `*-website` 에 걸려 있던 개인 포트폴리오였다("My portfolio
+   * website", "Personal site – Astro"). 링크 모음·설정 파일·문서·학술 패키지는 0건 새어 나왔다.
+   */
+  const nameOrRootPattern = profileKeyword ? undefined : rules.excludedRepoPatterns
+    .find((p) => matchesNameOrRoot(p) && !narrowerThan(p));
   if (nameOrRootPattern) return reject("personal_site", "제외 패턴 아님", whereMatched(nameOrRootPattern));
+  /**
+   * 통과한 뒤에만 자국을 남긴다. 거부된 행에 "개인 프로필" 자국이 붙어 있으면
+   * "왜 이게 Profile로 올라갔지"에 답할 근거가 아니라 잡음이다.
+   */
+  if (profileSignal) signals.profile = profileSignal;
+  // 어느 패턴으로 통과했는지. 발행 단계가 이것으로 가른다 — 글자를 되파싱하지 않게
+  if (profilePattern) signals.profilePattern = profilePattern;
   pass("제외 패턴 아님", profileSignal ? `개인 프로필 — ${profileSignal}` : repoName);
 
   // 스타 상한이 대형 오픈소스를 거른다. 하한이 아니라 상한인 것이 요지다 —
@@ -500,4 +518,20 @@ export function factsFromRepoMeta(repo: string, meta: Record<string, unknown>): 
     archived: meta.archived === true,
     description: typeof meta.description === "string" ? meta.description : "",
   };
+}
+
+/**
+ * 이 후보는 Profile 로 분류돼야만 발행할 수 있는가.
+ *
+ * 판정은 "개인 프로필처럼 보인다"까지만 말할 수 있고, 개인 것인지 회사 것인지는 문장을 읽어야
+ * 안다. `*-blog` 가 그런 패턴이다 — 개인 블로그면 Profile 이고 아니면 제품이 아닌데, 이름만으로는
+ * 갈리지 않는다. 그래서 규칙은 통과시키고 분류기의 답을 발행 조건으로 쓴다
+ * (profileOnlyPatterns 주석에 30건 실측이 있다).
+ */
+export function requiresProfileCategory(
+  signals: Record<string, unknown> | null | undefined,
+  settings: CrawlSettings,
+): boolean {
+  const pattern = signals?.profilePattern;
+  return typeof pattern === "string" && settings.judge.profileOnlyPatterns.includes(pattern);
 }

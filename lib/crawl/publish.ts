@@ -267,10 +267,20 @@ const CATEGORY_KEYWORDS: { category: Category; topics: string[]; text: string[] 
    * 가장 앞에 둔다. 사람 자신이 내용인 것은 소재를 따라 어디로든 갈 수 있어서다.
    * 실측(2026-09-18): 발행분에서 topic:portfolio 를 단 12건이 Other 5 · Security 2 · Design 2 ·
    * Dev·Business·Marketing 1 로 흩어져 있었다 — SOC 분석가의 포트폴리오가 Security 로,
-   * "Interactive CV" 가 Dev 로 갔다. 같은 표본에 Finance 는 없어 topic:portfolio 를 그대로 둔다.
-   * "cv" 는 넣지 않았다: GitHub 에서는 computer vision 을 뜻하는 쪽이 훨씬 많다.
+   * "Interactive CV" 가 Dev 로 갔다.
+   *
+   * 앞에 두는 만큼 좁게 적는다. 두 번(토픽·글자) 다 첫 일치가 이기므로 넓은 말을 넣으면 뒤쪽
+   * 갈래의 것을 가로챈다. 빼기로 한 것들:
+   *   "cv"              — GitHub 에서는 computer vision 을 뜻하는 쪽이 훨씬 많다
+   *   topic:resume      — 이력서를 *만드는 도구*가 같은 토픽을 단다. 그것은 Productivity 다
+   *   "my portfolio"    — "Track my portfolio of stocks" 를 삼켜 Finance 의 "investment portfolio" 가
+   *                       한 번도 이기지 못했다
+   *   "portfolio website" — 포트폴리오 *생성기*의 소개문("Create your portfolio website in minutes")과
+   *                       구분되지 않는다. 사람 자신을 가리키는 말만 남긴다
+   * topic:portfolio 는 남겼다 — 실측 12건에서 가장 강한 신호였고 Finance 와 겹친 것이 없었다.
+   * 겹치는 경우(자산 포트폴리오)는 아래 classify 에서 따로 막는다.
    */
-  { category: "Profile", topics: ["portfolio", "portfolio-website", "personal-website", "personal-site", "personal-blog", "resume"], text: ["personal portfolio", "my portfolio", "portfolio website", "personal website", "personal site", "personal blog", "personal homepage"] },
+  { category: "Profile", topics: ["portfolio", "portfolio-website", "personal-website", "personal-site", "personal-blog"], text: ["personal portfolio", "personal website", "personal site", "personal blog", "personal homepage"] },
   { category: "Security", topics: ["security", "cybersecurity", "privacy", "phishing", "fraud"], text: ["cybersecurity", "phishing detection", "fraud prevention"] },
   { category: "Games", topics: ["game", "games", "gaming", "video-game", "game-development", "indie-game", "godot", "unity"], text: ["playable game", "video game", "puzzle game", "battle game", "game editor", "game creation", "game information"] },
   { category: "Sports", topics: ["sports", "fitness", "workout", "football", "soccer", "basketball", "running"], text: ["fitness training", "workout", "football team", "sports league"] },
@@ -297,6 +307,9 @@ function classify(meta: Record<string, unknown>): Category {
   if (/\bgame servers?\b/.test(text) && /\b(?:self-host|hosting|docker|kubernetes|infrastructure)\b/.test(text)) {
     return "Dev";
   }
+  // 투자 포트폴리오는 사람이 아니라 자산이다. Profile 이 앞에 있어 금융 토픽이 함께 있을 때만 비켜 준다
+  const finance = CATEGORY_KEYWORDS.find((rule) => rule.category === "Finance")!;
+  if (topics.includes("portfolio") && finance.topics.some((topic) => topics.includes(topic))) return "Finance";
   for (const rule of CATEGORY_KEYWORDS) {
     if (rule.topics.some((keyword) => topics.includes(keyword))) return rule.category;
   }
