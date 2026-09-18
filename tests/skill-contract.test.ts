@@ -20,7 +20,7 @@ describe("distributed /nomorevibe evidence skill", () => {
     for (const category of [
       "Productivity", "Dev", "Design", "Business", "Marketing", "Finance", "Commerce",
       "Education", "Health", "Media", "Games", "Social", "Data", "Security", "Lifestyle",
-      "Sports", "Other",
+      "Sports", "Profile", "Other",
     ]) {
       expect(source, category).toContain(`\`${category}\``);
     }

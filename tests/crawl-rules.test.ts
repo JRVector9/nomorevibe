@@ -225,14 +225,16 @@ describe("judge — 거르기", () => {
     expect(judge(goodRepo({ ownerType: "Organization" }), livePage, strict, NOW).reason).toBe("large_oss");
   });
 
-  it("설명에만 단서가 있는 개인 사이트를 거른다", () => {
-    // 이름도 URL도 평범한데 설명이 스스로 밝히는 경우다
-    for (const description of [
-      "My very simple personal landing page app",
-      "Personal blog build with Astro",
-      "개인 블로그입니다",
+  it("설명에만 단서가 있는 개인 프로필도 통과시킨다 — 어느 문구로 봤는지 남긴다", () => {
+    // 이름도 URL도 평범한데 설명이 스스로 밝히는 경우다. 이제 거부가 아니라 Profile 이다
+    for (const [description, keyword] of [
+      ["My very simple personal landing page app", "personal landing"],
+      ["Personal blog build with Astro", "personal blog"],
+      ["개인 블로그입니다", "개인 블로그"],
     ]) {
-      expect(judge(goodRepo({ description }), livePage, settings, NOW).reason, description).toBe("personal_site");
+      const v = judge(goodRepo({ description }), livePage, settings, NOW);
+      expect(v, description).toMatchObject({ state: "approved", reason: "passed" });
+      expect(v.signals.profile, description).toBe(`설명에 “${keyword}”`);
     }
   });
 
@@ -268,14 +270,15 @@ describe("judge — 거르기", () => {
   });
 
   it("배포 호스트도 패턴에 걸되 사이트 루트일 때만 본다", () => {
-    // owner.github.io 루트는 개인 홈페이지다
+    // owner.github.io 루트는 개인 홈페이지다 — 이제 Profile 로 통과시킨다
     const root = judge(
       goodRepo({ repo: "someone/coolapp" }),
       { productUrl: "https://someone.github.io", status: 200 },
       settings,
       NOW,
     );
-    expect(root.reason).toBe("personal_site");
+    expect(root.state).toBe("approved");
+    expect(root.signals.profile).toBe("루트 배포 호스트 someone.github.io 가 *.github.io 에 걸림");
 
     // 개인 홈페이지 레포는 배포 URL이 어디든 이름으로 잡힌다
     const byName = judge(
@@ -284,13 +287,16 @@ describe("judge — 거르기", () => {
       settings,
       NOW,
     );
-    expect(byName.reason).toBe("personal_site");
+    expect(byName.state).toBe("approved");
+    expect(byName.signals.profile).toBe("레포 이름 someone.github.io 이 *.github.io 에 걸림");
   });
 
-  it("이름에 구분자가 없어도 개인 사이트 패턴에 걸린다", () => {
+  it("이름에 구분자가 없어도 개인 프로필 패턴에 걸린다", () => {
     // 실데이터: 이름이 그냥 blog / personal-site 인 것들이 *-blog 를 통과했다
     for (const repo of ["someone/blog", "someone/portfolio", "someone/personal-site"]) {
-      expect(judge(goodRepo({ repo }), livePage, settings, NOW).reason, repo).toBe("personal_site");
+      const v = judge(goodRepo({ repo }), livePage, settings, NOW);
+      expect(v.state, repo).toBe("approved");
+      expect(v.signals.profile, repo).toContain(repo.split("/")[1]);
     }
   });
 
@@ -308,23 +314,29 @@ describe("judge — 거르기", () => {
   });
 
   it("밑줄 변형도 같은 것으로 본다", () => {
-    // my-portfolio는 걸리는데 my_portfolio는 통과하면 안 된다
-    for (const repo of ["someone/my_portfolio", "someone/dev_blog"]) {
+    // my-portfolio가 프로필이면 my_portfolio도 프로필이어야 한다
+    for (const [repo, pattern] of [["someone/my_portfolio", "*-portfolio"], ["someone/dev_blog", "*-blog"]]) {
+      const v = judge(goodRepo({ repo }), livePage, settings, NOW);
+      expect(v.state, repo).toBe("approved");
+      expect(v.signals.profile, repo).toContain(pattern);
+    }
+  });
+
+  it("개인 프로필 패턴은 통과시키고, 사람도 제품도 아닌 것은 그대로 거른다", () => {
+    for (const repo of ["someone/someone.github.io", "someone/my-portfolio", "someone/dev-blog", "someone/my-resume"]) {
+      expect(judge(goodRepo({ repo }), livePage, settings, NOW).state, repo).toBe("approved");
+    }
+    // 링크 모음·설정 파일·회사 소개·학술 패키지는 프로필 목록에 없다
+    for (const repo of ["someone/dotfiles", "someone/awesome-ai-tools", "someone/acme-website", "someone/Pathfinder.jl"]) {
       expect(judge(goodRepo({ repo }), livePage, settings, NOW).reason, repo).toBe("personal_site");
     }
   });
 
-  it("개인 홈페이지 패턴을 거른다", () => {
-    for (const repo of [
-      "someone/someone.github.io",
-      "someone/dotfiles",
-      "someone/awesome-ai-tools",
-      "someone/my-portfolio",
-      "someone/dev-blog",
-    ]) {
-      const v = judge(goodRepo({ repo }), livePage, settings, NOW);
-      expect(v.reason, repo).toBe("personal_site");
-    }
+  it("두 목록에 겹쳐 걸리면 거부가 이긴다 — 새 정책이 여는 것은 개인 프로필뿐이다", () => {
+    // *-blog 로 프로필처럼 보이지만 awesome-* 는 프로필 목록에 없다
+    const v = judge(goodRepo({ repo: "someone/awesome-blog" }), livePage, settings, NOW);
+    expect(v.reason).toBe("personal_site");
+    expect(v.trace.at(-1)!.detail).toContain("awesome-*");
   });
 
   it("오래 방치된 프로젝트를 거른다", () => {

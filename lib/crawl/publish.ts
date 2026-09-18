@@ -263,6 +263,14 @@ function draftFrom(repo: string, document: CrawlDocument) {
  * 먼저 보고, 없으면 설명을 본다. 단어가 여러 뜻인 경우를 줄이기 위해 좁은 표현만 둔다.
  */
 const CATEGORY_KEYWORDS: { category: Category; topics: string[]; text: string[] }[] = [
+  /**
+   * 가장 앞에 둔다. 사람 자신이 내용인 것은 소재를 따라 어디로든 갈 수 있어서다.
+   * 실측(2026-09-18): 발행분에서 topic:portfolio 를 단 12건이 Other 5 · Security 2 · Design 2 ·
+   * Dev·Business·Marketing 1 로 흩어져 있었다 — SOC 분석가의 포트폴리오가 Security 로,
+   * "Interactive CV" 가 Dev 로 갔다. 같은 표본에 Finance 는 없어 topic:portfolio 를 그대로 둔다.
+   * "cv" 는 넣지 않았다: GitHub 에서는 computer vision 을 뜻하는 쪽이 훨씬 많다.
+   */
+  { category: "Profile", topics: ["portfolio", "portfolio-website", "personal-website", "personal-site", "personal-blog", "resume"], text: ["personal portfolio", "my portfolio", "portfolio website", "personal website", "personal site", "personal blog", "personal homepage"] },
   { category: "Security", topics: ["security", "cybersecurity", "privacy", "phishing", "fraud"], text: ["cybersecurity", "phishing detection", "fraud prevention"] },
   { category: "Games", topics: ["game", "games", "gaming", "video-game", "game-development", "indie-game", "godot", "unity"], text: ["playable game", "video game", "puzzle game", "battle game", "game editor", "game creation", "game information"] },
   { category: "Sports", topics: ["sports", "fitness", "workout", "football", "soccer", "basketball", "running"], text: ["fitness training", "workout", "football team", "sports league"] },

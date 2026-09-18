@@ -12,7 +12,7 @@ const ROW_ID = 1;
 
 /**
  * 카테고리 정의는 한 단계 더 깊다. 얕게 병합하면 카테고리를 하나만 고쳐 저장한 행에서
- * 나머지 16개가 통째로 사라지고, 열거형 키가 전부 필요한 스키마라 검증이 실패한다.
+ * 나머지 17개가 통째로 사라지고, 열거형 키가 전부 필요한 스키마라 검증이 실패한다.
  */
 function mergeClassify(current: CrawlSettings["classify"], raw: unknown): CrawlSettings["classify"] {
   const patch = (raw ?? {}) as { definitions?: Record<string, unknown> };

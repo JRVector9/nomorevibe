@@ -90,6 +90,14 @@ const judgeSchema = z.object({
    * 한 단어짜리는 넣지 않는다. "personal"만 보면 personal-finance-tracker가 걸린다.
    */
   personalSiteKeywords: z.array(z.string().min(3).max(60)).max(100),
+  /**
+   * 개인 프로필로 보는 레포 이름·루트 배포 호스트 패턴.
+   *
+   * excludedRepoPatterns 보다 먼저 본다. 걸리면 거부가 아니라 통과다 — 이력·포트폴리오·개인
+   * 홈페이지는 Profile 카테고리로 발행하기로 했다(2026-09-18). personalSiteKeywords 도 같은 편이
+   * 됐다: 문구를 찾는 일은 그대로고, 찾았을 때 하는 일만 거부에서 통과로 바뀌었다.
+   */
+  profileRepoPatterns: z.array(z.string().min(1).max(120)).max(100),
   /** homepage가 이 도메인이면 배포물이 아니다 */
   blockedHomepageDomains: z.array(z.string().min(1).max(120)).max(200),
   /** 레포 이름이 이 패턴이면 제외 (* 와일드카드) */
@@ -181,7 +189,7 @@ export const categoryDefinitionSchema = z.object({
   exclude: z.array(z.string().min(1).max(120)).max(12),
 }).strict();
 
-/** 열거형 키라 17개가 모두 있어야 하고 모르는 카테고리는 거부된다 */
+/** 열거형 키라 18개가 모두 있어야 하고 모르는 카테고리는 거부된다 */
 export const categoryDefinitionsSchema = z.record(z.enum(CATEGORIES), categoryDefinitionSchema);
 export type CategoryDefinition = z.infer<typeof categoryDefinitionSchema>;
 export type CategoryDefinitions = Record<Category, CategoryDefinition>;
@@ -205,6 +213,22 @@ export const DEFAULT_CATEGORY_DEFINITIONS: CategoryDefinitions = {
   Security: definition("개인정보, 인증, 사이버보안 및 사기 방지"),
   Lifestyle: definition("여행, 음식, 집, 취미 및 개인 생활 서비스"),
   Sports: definition("운동, 스포츠 경기, 팀 운영 및 피트니스"),
+  /**
+   * 유일하게 include/exclude를 비워 두지 않은 항목이다.
+   *
+   * 나머지 열일곱은 프롬프트에 있던 문장을 그대로 옮긴 것이라 비워야 결과가 같지만, 이것은
+   * 새로 만든 갈래라 옮길 문장이 없다. 경계를 적지 않으면 소재를 따라 샌다 — 이 갈래가 없던
+   * 동안 wendyliga.com("A blog about technology, programming, and life")이 Media로 발행됐다.
+   */
+  Profile: {
+    summary: "특정 개인을 소개하는 것 자체가 목적인 사이트 — 이력, 포트폴리오, 개인 홈페이지, 개인 블로그",
+    include: ["이력서·CV", "작업물을 모아 보이는 개인 포트폴리오", "이름을 내건 개인 홈페이지", "개인이 혼자 쓰는 블로그"],
+    exclude: [
+      "회사·단체·행사 소개 사이트 → Business",
+      "남이 자기 이력서·포트폴리오를 만드는 도구 → Productivity",
+      "여러 사람이 글을 올리는 매체·뉴스 → Media",
+    ],
+  },
   Other: definition("정보가 부족하거나 어느 분류에도 명확히 맞지 않음"),
 };
 
@@ -370,6 +394,23 @@ export const DEFAULT_CRAWL_SETTINGS: CrawlSettings = {
       "개인 블로그",
       "개인 홈페이지",
     ],
+    /**
+     * 개인 프로필로 보는 이름·루트 호스트 패턴.
+     *
+     * excludedRepoPatterns 와 같은 글자가 겹치지만 하는 일이 반대다 — 여기 걸리면 거부가 아니라
+     * 통과하고 Profile 로 분류된다. 같은 목록을 재활용하지 않고 따로 둔 이유는 `*.github.io` 다:
+     * 루트(`owner.github.io`)는 개인 홈페이지지만 하위 경로(`owner.github.io/repo`)는 그 위에
+     * 얹힌 배포물이라 여전히 사람이 갈라야 한다(심사 큐 대부분이 이것이다). 제외 목록에서 빼면
+     * 그 보류가 통째로 사라져 실측 70%가 배포물이 아닌 것들이 자동 승인된다.
+     */
+    profileRepoPatterns: [
+      "*.github.io",
+      "*-portfolio",
+      "*-blog",
+      "*-resume",
+      "*-personal-site",
+      "*-personal-website",
+    ],
     blockedHomepageDomains: [
       "github.com",
       "instagram.com",
@@ -399,6 +440,11 @@ export const DEFAULT_CRAWL_SETTINGS: CrawlSettings = {
       // 문서 호스팅. docs 라벨 규칙에 안 걸리는 형태다 (suews.readthedocs.io를 봤다)
       "readthedocs.io",
     ],
+    /**
+     * 목록은 그대로지만 이 중 여섯은 더 이상 여기서 거부되지 않는다 — profileRepoPatterns 가
+     * 먼저 걸러 통과시킨다. 그래도 빼지 않는 이유는 아래 "호스트 제외 패턴" 보류 때문이다:
+     * `owner.github.io/repo` 처럼 호스트만 걸리고 루트가 아닌 것은 여전히 사람이 갈라야 한다.
+     */
     excludedRepoPatterns: [
       "*.github.io",
       "documentation",
