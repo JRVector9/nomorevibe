@@ -21,8 +21,10 @@ import { README_SAMPLE_LIMIT } from "./readme";
  * Profile 카테고리로 승인하게 했다. 프롬프트와 판정 규칙(excludedRepoPatterns)이 함께 바뀌었다.
  * 2026-09-18.2: "주장과 실물을 가르라"를 앞에 세웠다. 규칙은 그대로라 rulesVersion 은 올리지 않는다
  *   — 근거는 agent-review.ts 의 REVIEW_SYSTEM_PROMPT 주석에 있다.
+ * 2026-09-19.1: "기능 이름도 주장이다"와 "주제 뉴스레터는 발행물이다"를 더했다. 규칙은 그대로다.
+ *   1차·2차·발행분 감사가 모두 이 글로 묻는다 — 한 번 올리면 셋이 함께 바뀐다.
  */
-export const REVIEW_PROMPT_VERSION = "2026-09-18.2";
+export const REVIEW_PROMPT_VERSION = "2026-09-19.1";
 export const REVIEW_RULES_VERSION = "2026-09-18.1";
 export const MAX_REVIEW_INPUT_BYTES = 64 * 1024;
 export const MAX_REVIEW_ATTEMPTS = 3;
