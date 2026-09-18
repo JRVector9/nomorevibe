@@ -21,8 +21,14 @@ import { translationProgress, translationsFor } from "@/lib/crawl/translations";
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "심사 큐 — NoMoreVibe", robots: { index: false } };
 
-/** 한 쪽. 줄 높이 34px로 한 화면(약 1,150px)에 머리·필터와 함께 들어가는 수 */
-const PAGE_SIZE = 25;
+/**
+ * 한 쪽에 보이는 수.
+ *
+ * 25는 1,150px 화면을 기준으로 잡은 값이라, 더 큰 화면에서는 목록이 끝난 뒤 쪽 번호까지
+ * 빈 자리가 남았다. 목록이 화면을 채우도록 늘린다 — 작은 화면에서는 스크롤이 생기지만
+ * 그쪽은 어차피 25로도 스크롤이었다.
+ */
+const PAGE_SIZE = 50;
 const BULK_FORM = "review-bulk";
 const STATES = [['pending', '진행 중'], ['needs_review', '보류'], ['rejected', '거부'], ['published', '발행 완료']] as const;
 const AI_FILTERS: [ReviewAiDecision, string][] = [['reject', 'AI 거부'], ['approve', 'AI 승인'], ['needs_review', 'AI 보류'], ['none', '판단 없음']];

@@ -5,7 +5,7 @@ import { crawlCandidates, crawlDocuments, crawlFrontier, crawlReviewAttempts, cr
 import * as crawl from '@/lib/crawl/repository';
 import { getSettings, saveSettings } from '@/lib/crawl/settings';
 import { loadReviewInput } from '@/lib/crawl/agent-review-repository';
-import { pendingTranslations, recordTranslations, translationProgress, translationsFor } from '@/lib/crawl/translations';
+import { recordTranslations, retryableTranslations, translationProgress, translationsFor, untriedTranslations } from '@/lib/crawl/translations';
 import { textHash } from '@/lib/crawl/translate';
 import { ensureSchema } from './setup';
 
@@ -51,7 +51,7 @@ it('영어 사유만 옮길 대상이고, 같은 글은 한 번이며, 최근 �
   await attempt('acme/dup', EN_A, new Date(Date.now() - 2 * 3600_000)); // 같은 글이 다른 후보에서도 나온다 — 가장 최근에 본 때로 줄 선다
   await attempt('acme/korean', KO);
 
-  const pending = await pendingTranslations(10);
+  const pending = await untriedTranslations(10);
   expect(pending.map((row) => row.body)).toEqual([EN_B, EN_A]);
   // DB 의 해시와 JS 의 해시가 같다 — 화면은 JS 로 찾는다
   expect(pending.map((row) => row.hash)).toEqual([textHash(EN_B), textHash(EN_A)]);
@@ -61,7 +61,7 @@ it('2차 판단 사유도 옮긴다', async () => {
   const candidate = await attempt('acme/x', KO);
   await db.insert(secondReviews).values({ candidateId: candidate.id, repo: 'acme/x', trigger: 'ai_decided', firstDecision: 'reject',
     firstConfidence: 0.9, inputHash: 'h', status: 'needs_human', secondDecision: 'reject', secondReason: EN_B, model: 'opus' });
-  expect((await pendingTranslations(10)).map((row) => row.body)).toEqual([EN_B]);
+  expect((await untriedTranslations(10)).map((row) => row.body)).toEqual([EN_B]);
 });
 
 it('옮긴 글은 같은 글이면 다시 쓰고, 한 글자라도 다르면 새로 옮긴다', async () => {
@@ -70,13 +70,13 @@ it('옮긴 글은 같은 글이면 다시 쓰고, 한 글자라도 다르면 새
 
   // 같은 글이 새 심사에서 또 나와도 옮길 대상이 아니다
   await attempt('acme/b', EN_A);
-  expect(await pendingTranslations(10)).toEqual([]);
+  expect(await untriedTranslations(10)).toEqual([]);
   expect((await translationsFor([EN_A])).get(EN_A)).toBe('URL 은 Ruby gem 의 문서 사이트다.');
 
   // 마침표 하나 다른 글은 다른 글이다
   const changed = EN_A.replace('Not a usable app.', 'Not a usable app!');
   await attempt('acme/c', changed);
-  expect((await pendingTranslations(10)).map((row) => row.body)).toEqual([changed]);
+  expect((await untriedTranslations(10)).map((row) => row.body)).toEqual([changed]);
   expect((await translationsFor([changed])).size).toBe(0);
 });
 
@@ -84,11 +84,11 @@ it('실패한 글은 기다렸다가 다시 보고, 이미 옮긴 번역은 실�
   await attempt('acme/a', EN_A);
   await attempt('acme/b', EN_B);
   await recordTranslations([{ hash: textHash(EN_A), translated: null, error: 'timeout' }], 'gpt-oss');
-  expect((await pendingTranslations(10)).map((row) => row.body)).toEqual([EN_B]);
+  expect((await untriedTranslations(10)).map((row) => row.body)).toEqual([EN_B]);
 
   // 다시 볼 때가 되면 다시 올라온다 — 한 번 실패한 표시와 함께
   await db.update(textTranslations).set({ retryAt: sql`now() - interval '1 minute'` });
-  expect((await pendingTranslations(10)).find((row) => row.body === EN_A)).toMatchObject({ attempts: 1 });
+  expect((await retryableTranslations(10)).find((row) => row.body === EN_A)).toMatchObject({ attempts: 1 });
 
   await recordTranslations([{ hash: textHash(EN_A), translated: '문서 사이트다' }], 'gpt-oss');
   await recordTranslations([{ hash: textHash(EN_A), translated: null, error: 'timeout' }], 'gpt-oss');
@@ -131,16 +131,40 @@ it('한글이 섞인 글도 30% 미만이면 옮길 대상이다 — 값싼 사�
   const MIXED = 'The repository has no deployed homepage 배포 없음';
   await attempt('acme/mixed', MIXED);
   await attempt('acme/ko', KO);
-  const pending = await pendingTranslations(10);
+  const pending = await untriedTranslations(10);
   expect(pending.map((row) => row.body)).toContain(MIXED);
   expect(pending.map((row) => row.body)).not.toContain(KO);
 });
 
-it('다시 볼 때가 된 실패는 처음 보는 글 뒤로 밀리지 않는다 — 최근 순서대로다', async () => {
+it('실패와 처음 보는 글은 줄이 따로다 — 한 줄에 섞으면 실패가 영영 차례를 얻지 못한다', async () => {
+  // 실패한 글의 원문이 더 오래됐다. 한 줄이었다면 최신순에 밀려 뒤로 갔을 상황
   await attempt('acme/old', EN_B, new Date(Date.now() - 3600_000));
   await attempt('acme/new', EN_A);
-  await recordTranslations([{ hash: textHash(EN_A), translated: null, error: 'timeout' }], 'gpt-oss');
+  await recordTranslations([{ hash: textHash(EN_B), translated: null, error: 'timeout' }], 'gpt-oss');
   await db.update(textTranslations).set({ retryAt: sql`now() - interval '1 minute'` });
 
-  expect((await pendingTranslations(10)).map((row) => [row.body, row.attempts])).toEqual([[EN_A, 1], [EN_B, 0]]);
+  expect((await retryableTranslations(10)).map((row) => row.body)).toEqual([EN_B]);
+  expect((await untriedTranslations(10)).map((row) => row.body)).toEqual([EN_A]);
+});
+
+it('아직 때가 안 된 실패는 다시 보지 않는다', async () => {
+  await attempt('acme/a', EN_A);
+  await recordTranslations([{ hash: textHash(EN_A), translated: null, error: 'timeout' }], 'gpt-oss');
+
+  expect(await retryableTranslations(10)).toEqual([]);
+  // 한 번 손댄 글은 처음 보는 줄에도 없다
+  expect(await untriedTranslations(10)).toEqual([]);
+});
+
+it('오래 기다린 실패가 먼저다 — 시도 횟수가 아니라 기다린 순서로', async () => {
+  await attempt('acme/a', EN_A);
+  await attempt('acme/b', EN_B);
+  await recordTranslations([{ hash: textHash(EN_A), translated: null, error: 'timeout' },
+    { hash: textHash(EN_B), translated: null, error: 'timeout' }], 'gpt-oss');
+  await db.update(textTranslations).set({ retryAt: sql`now() - interval '10 minutes'` })
+    .where(eq(textTranslations.sourceHash, textHash(EN_B)));
+  await db.update(textTranslations).set({ retryAt: sql`now() - interval '1 minute'` })
+    .where(eq(textTranslations.sourceHash, textHash(EN_A)));
+
+  expect((await retryableTranslations(10)).map((row) => row.body)).toEqual([EN_B, EN_A]);
 });
