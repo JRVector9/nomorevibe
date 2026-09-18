@@ -147,7 +147,7 @@ it("CLI 오류는 종류를 남긴다 — 전에는 모두 cli_error 라 530건�
 it("지시문은 누가 만든 소프트웨어의 집인가 하나만 묻고, 개발 근거로 보류하지 말라고 한다", () => {
   const args = reviewCliArgs("tested-model");
   const system = args[args.indexOf("--system-prompt") + 1];
-  expect(system).toContain("Answer one question: is product.url the page of a real piece of software someone made");
+  expect(system).toContain("Answer one question: does product.url belong on a directory of things people built?");
   /*
    * 2026-09-19 사용자 결정 — 가입해서 쓰는 서비스, 내려받는 앱, 설치하는 도구, 라이브러리·SDK 도 올린다.
    * 이 줄들이 빠지면 모델은 옛 기준("지금 이 주소에서 바로 쓸 수 있나")으로 돌아가 소개 페이지를 거부한다.
@@ -159,8 +159,12 @@ it("지시문은 누가 만든 소프트웨어의 집인가 하나만 묻고, �
   // 거부는 이 목록뿐이다 — 문서·글·강의·대행사·남의 플랫폼 페이지·빈 화면
   expect(system).toContain("REJECT only these:");
   expect(system).toContain("code package registries");
-  // 개인 프로필은 거부 목록이 아니라 Profile 로 승인한다
+  /*
+   * 개인 프로필은 거부 목록이 아니라 Profile 로 승인한다. 질문을 "소프트웨어인가"로만 두었을 때
+   * gpt-oss 가 "개인 포트폴리오다"라고 적고도 소프트웨어가 아니라며 거부했다(90건 중 2건 모두).
+   */
   expect(system).toContain('set category to "Profile"');
+  expect(system).toContain("never reject one for not being software");
   expect(system).toContain("missing development evidence is never a reason for needs_review");
   const schema = JSON.parse(args[args.indexOf("--json-schema") + 1]);
   expect(schema.properties.confidence).toEqual({ type: "number", minimum: 0, maximum: 1 });
