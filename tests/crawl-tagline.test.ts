@@ -13,15 +13,27 @@ describe("한 줄 소개 다듬기", () => {
     expect(tidyTagline("  바를 등록하면   손님이 찾습니다.  ")).toBe("바를 등록하면 손님이 찾습니다");
   });
 
-  it("100자를 넘으면 낱말 경계에서 자른다 — 모델은 길이 규칙을 지키지 않는다", () => {
-    const line = tidyTagline(`${"list your venue so people can find it ".repeat(5)}end`);
-    expect(line.length).toBeLessThanOrEqual(100);
-    // 낱말 한가운데("peopl")가 아니라 낱말 끝에서 잘린다
-    expect(line.endsWith("so")).toBe(true);
+  it("100자를 넘으면 끊을 자리(쉼표)에서 끊는다 — 모델은 길이 규칙을 지키지 않는다", () => {
+    const line = tidyTagline("Track your vinyl collection and wishlist, searching by artist or genre and adding records via the music player");
+    expect(line).toBe("Track your vinyl collection and wishlist");
   });
 
-  it("띄어쓰기가 없는 글은 100자에서 자르고 꼬리 부호를 뗀다", () => {
-    expect(tidyTagline(`${"가".repeat(99)},${"나".repeat(10)}`)).toBe("가".repeat(99));
+  it("끊을 자리가 없으면 문장을 그대로 둔다 — 뜻이 중간에 끊긴 글보다 낫다", () => {
+    const long = `${"list your venue so people can find it ".repeat(3)}today`;
+    expect(long.length).toBeGreaterThan(100);
+    expect(tidyTagline(long)).toBe(long);
+  });
+
+  it("칸에 넣지 못할 만큼 길면 마지막 수단으로 낱말 경계에서 자른다", () => {
+    const source = `${"list your venue so people can find it ".repeat(8)}end`;
+    const line = tidyTagline(source);
+    expect(line.length).toBeLessThanOrEqual(200);
+    // 낱말 한가운데가 아니다 — 자른 자리 다음 글자가 공백이다
+    expect(source[line.length]).toBe(" ");
+  });
+
+  it("띄어쓰기가 없는 글도 끊을 자리가 있으면 거기서 끊는다", () => {
+    expect(tidyTagline(`${"가".repeat(99)}, ${"나".repeat(10)}`)).toBe("가".repeat(99));
   });
 });
 
