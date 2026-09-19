@@ -10,7 +10,10 @@ import { pgTable, serial, integer, varchar, text, timestamp, doublePrecision, in
  * - status: pending(2차 대기) · agreed(일치 — 확정 대기) · needs_human(엇갈림·확신 낮음) · failed · resolved
  */
 /** ai_held: 1차 AI 도 못 가른 것 — 2차 의견을 모으되 명시적 보류는 사람 확인으로 남긴다 */
-export type SecondReviewTrigger = "ai_decided" | "ai_held" | "risk" | "sample";
+/**
+ * ai_approved: enforce 에서 1차 AI 가 승인한 후보 — 2차 모델도 승인해야 발행된다(2026-09-19, 두 모델 승인 관문).
+ */
+export type SecondReviewTrigger = "ai_decided" | "ai_held" | "ai_approved" | "risk" | "sample";
 export type SecondReviewStatus = "pending" | "agreed" | "needs_human" | "failed" | "resolved";
 export type SecondReviewProvider = "claude-cli" | "abcllm";
 

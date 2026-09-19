@@ -1,7 +1,7 @@
 import { isDeepStrictEqual } from "node:util";
 import { and, asc, desc, eq, inArray, or, sql, type SQL } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { crawlCandidates, crawlDocuments, crawlFrontier, crawlSettings, crawlReviewAttempts,
+import { crawlCandidates, crawlDocuments, crawlFrontier, crawlSettings, crawlReviewAttempts, secondReviews,
   agentRepositoryScans, agentRepositoryObservations,
   type CrawlCandidate, type CrawlDocument, type CrawlReviewAttempt } from "@/lib/db/schema";
 import type { ProductTransaction } from "@/lib/domain/products/generation";
@@ -94,12 +94,32 @@ function matchingSource(settings: CrawlSettings): SQL {
         AND rs.last_error_code IS NOT DISTINCT FROM ${crawlReviewAttempts.source}->>'scanError')`;
 }
 
+/**
+ * 두 모델 승인 관문이 걸리는가(2026-09-19, 사용자 결정).
+ *
+ * enforce 에서 1차 AI 승인만으로는 발행하지 않는다 — 2차 모델도 같은 입력을 승인해야 한다(second-review.ts 의
+ * ai_approved 행). 실측(블라인드 159건): 1차 혼자 승인하면 124건 중 오답 9, 둘 다 승인하면 116건 중 5.
+ * 2차 심사를 끄면 관문도 꺼진다 — 켜 둔 채 표를 낼 모델이 없으면 발행이 멈추므로, 끌 때는 이 둘을 함께 생각한다.
+ */
+export function secondGateRequired(settings: CrawlSettings): boolean {
+  return settings.reviewMode === "enforce" && settings.secondReview.enabled;
+}
+
+/** 이 1차 승인에 대한 2차 표가 모두 승인으로 끝났는가 — 아직 볼 표·실패·반대가 하나라도 있으면 아니다 */
+function secondApproved(attemptId: SQL): SQL {
+  return sql`(EXISTS (SELECT 1 FROM ${secondReviews} g WHERE g.first_attempt_id = ${attemptId} AND g.trigger = 'ai_approved'
+      AND g.status = 'agreed' AND g.second_decision = 'approve')
+    AND NOT EXISTS (SELECT 1 FROM ${secondReviews} g WHERE g.first_attempt_id = ${attemptId} AND g.trigger = 'ai_approved'
+      AND g.status IN ('pending', 'failed', 'needs_human')))`;
+}
+
 export function reviewApprovalPredicate(settings: CrawlSettings): SQL {
   if (settings.reviewMode !== "enforce") return sql`true`;
   return sql`(${crawlCandidates.decidedBy} = 'admin' OR EXISTS (
     SELECT 1 FROM ${crawlReviewAttempts} WHERE ${matchingSource(settings)}
     AND ${crawlReviewAttempts.state} = 'succeeded' AND ${crawlReviewAttempts.outcome}->>'decision' = 'approve'
-    AND ${crawlReviewAttempts.validUntil} > now()))`;
+    AND ${crawlReviewAttempts.validUntil} > now()
+    AND ${secondGateRequired(settings) ? secondApproved(sql`${crawlReviewAttempts.id}`) : sql`true`}))`;
 }
 
 /**
@@ -336,5 +356,12 @@ export async function assertReviewApproval(tx: ProductTransaction, input: {
   if (!approval || current.validUntil <= new Date() || input.document.fetchedAt > new Date()
     || input.input && input.input.inputHash !== current.inputHash) throw new ReviewApprovalChangedError();
   validateReviewOutcome(current, approval.outcome);
+  // 발행 직전에 한 번 더 — 목록을 고른 뒤 2차 표가 반대로 바뀌었을 수 있다
+  if (secondGateRequired(input.settings)) {
+    const votes = await tx.select({ status: secondReviews.status, decision: secondReviews.secondDecision }).from(secondReviews)
+      .where(and(eq(secondReviews.firstAttemptId, approval.id), eq(secondReviews.trigger, "ai_approved"))).for("share");
+    const open = votes.some((vote) => vote.status === "pending" || vote.status === "failed" || vote.status === "needs_human");
+    if (open || !votes.some((vote) => vote.status === "agreed" && vote.decision === "approve")) throw new ReviewApprovalChangedError();
+  }
   return approval;
 }

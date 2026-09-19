@@ -48,6 +48,8 @@ const REASON_LABELS: Record<string, string> = {
   repository_relationship_conflict: "제품과 저장소 관계 충돌",
   source_changed: "발행 대상 URL 변경 — 재검토 필요",
   ai_evidence_supported: "개발 설정·기여 표기 확인",
+  second_review_split: "2차 심사 갈림 — 사람 확인",
+  no_description: "소개 문구 없음 — 사람 확인",
 };
 
 const STATE_LABELS: Record<string, string> = {

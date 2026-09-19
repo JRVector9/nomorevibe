@@ -132,7 +132,8 @@ export async function publishCandidates(ctx: JobContext<null>): Promise<JobOutco
           const held = result.reason === "no_description" || evidenceHeld;
           const recorded = await recordPublicationFailure(candidate, {
             state: held ? "needs_review" : "rejected",
-            reason: evidenceHeld ? result.reason as import("@/lib/db/schema").DecisionReason : held ? "ambiguous" : result.reason === "already_listed" ? "already_listed" : "not_a_product",
+            // 소개 없음은 AI 가 다시 집지 않는 사유로 둔다 — ambiguous 면 enforce 에서 보류·승인·발행 실패가 AI 호출마다 되풀이된다
+            reason: evidenceHeld ? result.reason as import("@/lib/db/schema").DecisionReason : held ? "no_description" : result.reason === "already_listed" ? "already_listed" : "not_a_product",
             stoppedAt: { rule: "발행 조건", detail: PUBLISH_STOPS[result.reason] ?? result.reason },
           }, ctx.lease);
           if (!recorded) {

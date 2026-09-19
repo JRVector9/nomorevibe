@@ -18,9 +18,11 @@ export async function loadSecondReviewInput(row: SecondReview, tx?: ProductTrans
   const executor = tx ?? db;
   const candidateQuery = executor.select().from(crawlCandidates).where(eq(crawlCandidates.id, row.candidateId)).limit(1);
   const [candidate] = await (tx ? candidateQuery.for("update") : candidateQuery);
+  // 관문 행(ai_approved)은 1차가 승인해 발행을 기다리는 후보에, 나머지는 보류 후보에 붙는다
+  const expected = row.trigger === "ai_approved" ? "approved" : "needs_review";
   if (!candidate || candidate.repo !== row.repo || (row.publishedSlug
     ? candidate.state !== "published" || candidate.publishedSlug !== row.publishedSlug
-    : candidate.state !== "needs_review" || candidate.decidedBy !== "auto")) return null;
+    : candidate.state !== expected || candidate.decidedBy !== "auto")) return null;
   const documentQuery = executor.select().from(crawlDocuments).where(eq(crawlDocuments.repo, row.repo)).limit(1);
   const [document] = await (tx ? documentQuery.for("share") : documentQuery);
   const settingsQuery = executor.select().from(crawlSettings).limit(1);
