@@ -270,3 +270,24 @@ it("대체 모델을 빼서 관문 표가 사람 확인이 되면 후보를 사�
   expect(await db.select().from(products)).toHaveLength(0);
 });
 
+
+/** 대체 모델의 승인은 그 모델이 지금도 대체 모델일 때만 칸을 채운다 — 설정에서 뺀 직후, 정리 전에도(codex 2차 P1) */
+it("대체 모델이 승인해도 설정에서 빠졌으면 발행하지 않는다", async () => {
+  await saveSettings({ secondReview: { enabled: true, voters: [{ provider: "abcllm", model: "[MLX] second-test" }],
+    fallbacks: [{ provider: "claude-cli", model: "sonnet" }] } }, "test");
+  await candidate(0, true, 0.95);
+  await enqueueSecondReviews(await getSettings());
+  const [primary] = await db.select().from(secondReviews);
+  await recordSecondReview(primary.id, { ok: false, error: "timeout", model: primary.model!, provider: "abcllm" });
+  const [fallback] = await db.select().from(secondReviews).where(eq(secondReviews.model, "sonnet"));
+  await recordSecondReview(fallback.id, { ok: true, decision: "approve", confidence: 0.95, reason: "Product", model: "sonnet", provider: "claude-cli", status: "agreed" });
+
+  await saveSettings({ secondReview: { enabled: true, voters: [{ provider: "abcllm", model: "[MLX] second-test" }], fallbacks: [] } }, "test");
+  await tick();
+  expect(await db.select().from(products)).toHaveLength(0);
+
+  await saveSettings({ secondReview: { enabled: true, voters: [{ provider: "abcllm", model: "[MLX] second-test" }],
+    fallbacks: [{ provider: "claude-cli", model: "sonnet" }] } }, "test");
+  await tick();
+  expect(await db.select().from(products)).toHaveLength(1);
+});

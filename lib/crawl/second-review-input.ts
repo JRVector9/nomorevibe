@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { and, desc, eq, inArray } from "drizzle-orm";
+import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { crawlCandidates, crawlDocuments, crawlReviewAttempts, crawlSettings, secondReviews, type SecondReview } from "@/lib/db/schema";
 import type { ProductTransaction } from "@/lib/domain/products/generation";
@@ -51,11 +51,14 @@ export async function loadSecondReviewInput(row: SecondReview, tx?: ProductTrans
   const input = await loadReviewInput(candidate, document, settings, executor);
   if (secondReviewGeneration(row.firstAttemptId, input, row.trigger) !== row.generationKey || (!row.fallbackForId && sameReviewModel(row.firstModel, row.model))) return null;
   if (!row.publishedSlug) {
+    // 관문은 그 1차 심사자(제공자·모델)의 최신 판단에 붙는다 — 다른 심사자의 더 새 판단과 견주지 않는다(codex 2차)
+    const [gateFirst] = row.trigger === "ai_approved" && row.firstAttemptId
+      ? await executor.select({ provider: crawlReviewAttempts.provider, model: crawlReviewAttempts.model }).from(crawlReviewAttempts)
+        .where(eq(crawlReviewAttempts.id, row.firstAttemptId)) : [];
     const [first] = await executor.select().from(crawlReviewAttempts).where(and(
       eq(crawlReviewAttempts.candidateId, row.candidateId), eq(crawlReviewAttempts.kind, "automatic"),
       eq(crawlReviewAttempts.state, "succeeded"), inArray(crawlReviewAttempts.provider, ["claude-cli", "abcllm"]),
-      // 관문은 그 1차 심사자의 최신 판단에 붙는다 — 다른 심사자의 더 새 판단이 있어도 그것과 견주지 않는다
-      row.trigger === "ai_approved" && row.firstModel ? eq(crawlReviewAttempts.model, row.firstModel) : undefined,
+      gateFirst ? sql`${crawlReviewAttempts.provider} IS NOT DISTINCT FROM ${gateFirst.provider} AND ${crawlReviewAttempts.model} IS NOT DISTINCT FROM ${gateFirst.model}` : undefined,
     )).orderBy(desc(crawlReviewAttempts.id)).limit(1);
     if (!first || first.id !== row.firstAttemptId || first.inputHash !== input.inputHash
       || first.sourceRevisionHash !== input.sourceRevisionHash || first.outcome?.decision !== row.firstDecision

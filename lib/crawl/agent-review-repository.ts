@@ -117,15 +117,19 @@ const sameModelName = (name: SQL) => sql`regexp_replace(lower(trim(${name})), '^
  * 두 모델 승인을 할 수 없으므로 통과시키지 않는다(그런 후보는 enqueueSecondReviews 가 사람에게 넘긴다).
  * 볼 표·실패·반대가 하나라도 열려 있으면 역시 통과시키지 않는다.
  */
-function secondApproved(attempt: { id: SQL; model: SQL }, voters: { provider: string; model: string }[]): SQL {
+function secondApproved(attempt: { id: SQL; model: SQL }, voters: { provider: string; model: string }[],
+  fallbacks: { provider: string; model: string }[] = []): SQL {
   const slots = sql`jsonb_array_elements(${JSON.stringify(voters)}::jsonb) v`;
+  // 대체 모델의 표는 그 모델이 지금도 대체 모델일 때만 칸을 채운다 — 설정에서 뺀 직후 정리 전에 옛 승인으로 발행되지 않게(codex 2차 P1)
+  const currentFallback = sql`(g.fallback_for_id IS NULL OR EXISTS (SELECT 1 FROM jsonb_array_elements(${JSON.stringify(fallbacks)}::jsonb) f
+    WHERE f->>'provider' = g.provider AND ${sameModelName(sql`f->>'model'`)} = ${sameModelName(sql`g.model`)}))`;
   const independent = sql`${sameModelName(sql`v->>'model'`)} <> ${sameModelName(sql`coalesce(${attempt.model}, '')`)}`;
   return sql`(EXISTS (SELECT 1 FROM ${slots} WHERE ${independent})
     AND NOT EXISTS (SELECT 1 FROM ${slots} WHERE ${independent}
       AND NOT EXISTS (SELECT 1 FROM ${secondReviews} g LEFT JOIN ${secondReviews} root ON root.id = g.fallback_for_id
         WHERE g.first_attempt_id = ${attempt.id} AND g.trigger = 'ai_approved' AND g.status = 'agreed' AND g.second_decision = 'approve'
           AND coalesce(root.provider, g.provider) = v->>'provider'
-          AND ${sameModelName(sql`coalesce(root.model, g.model)`)} = ${sameModelName(sql`v->>'model'`)}))
+          AND ${sameModelName(sql`coalesce(root.model, g.model)`)} = ${sameModelName(sql`v->>'model'`)} AND ${currentFallback}))
     AND NOT EXISTS (SELECT 1 FROM ${secondReviews} g WHERE g.first_attempt_id = ${attempt.id} AND g.trigger = 'ai_approved'
       AND g.status IN ('pending', 'failed', 'needs_human')))`;
 }
@@ -136,7 +140,8 @@ export function reviewApprovalPredicate(settings: CrawlSettings): SQL {
     SELECT 1 FROM ${crawlReviewAttempts} WHERE ${matchingSource(settings)}
     AND ${crawlReviewAttempts.state} = 'succeeded' AND ${crawlReviewAttempts.outcome}->>'decision' = 'approve'
     AND ${crawlReviewAttempts.validUntil} > now()
-    AND ${secondGateRequired(settings) ? secondApproved({ id: sql`${crawlReviewAttempts.id}`, model: sql`${crawlReviewAttempts.model}` }, settings.secondReview.voters) : sql`true`}))`;
+    AND ${secondGateRequired(settings) ? secondApproved({ id: sql`${crawlReviewAttempts.id}`, model: sql`${crawlReviewAttempts.model}` },
+      settings.secondReview.voters, settings.secondReview.fallbacks ?? []) : sql`true`}))`;
 }
 
 /**
@@ -378,7 +383,7 @@ export async function assertReviewApproval(tx: ProductTransaction, input: {
     // 표를 잠근 뒤 같은 조건으로 다시 잰다 — 목록을 고른 뒤 표가 바뀌었을 수 있다
     await tx.select({ id: secondReviews.id }).from(secondReviews).where(eq(secondReviews.firstAttemptId, approval.id)).for("share");
     const [gate] = await tx.execute<{ ok: boolean }>(sql`select ${secondApproved({ id: sql`${approval.id}`, model: sql`${approval.model}` },
-      input.settings.secondReview.voters)} as ok`);
+      input.settings.secondReview.voters, input.settings.secondReview.fallbacks ?? [])} as ok`);
     if (!gate?.ok) throw new ReviewApprovalChangedError();
   }
   return approval;
