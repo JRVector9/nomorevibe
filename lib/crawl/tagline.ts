@@ -18,8 +18,14 @@ import type { CrawlDocument } from "@/lib/db/schema";
 export const TAGLINE_MODEL = process.env.ABCLLM_TAGLINE_MODEL?.trim() || "[MLX] qwen3.6-35b-heretic";
 const BASE_URL = process.env.ABCLLM_BASE_URL?.trim() || "https://abcllm-api.brut.bot";
 
-/** 목록에서 이름 밑에 한 줄로 서는 길이. 제품 칸(LIMITS.tagline=200)보다 짧게 잡는다 */
+/** 목록에서 이름 밑에 한 줄로 서는 길이 — 여기까지는 짧게 끊을 자리를 찾는다 */
 export const TAGLINE_LIMIT = 100;
+/** 제품 칸(products.tagline)이 받는 길이. 끊을 자리가 없으면 문장을 여기까지 그대로 둔다 */
+const TAGLINE_MAX = 200;
+/** 짧게 끊어도 뜻이 남는 자리 — 쉼표·세미콜론·중점 */
+const CLAUSE = [", ", "; ", " — ", " · ", "，", "、", "；"];
+/** 끊고 나서 이만큼은 남아야 뜻이 산다 */
+const TAGLINE_MIN = 30;
 
 export type TaglineEvidenceSource = "page" | "readme" | "both";
 
@@ -46,14 +52,23 @@ const SCHEMA = {
 
 /**
  * 규칙을 글로만 시키면 지키지 않는다 — 표본 30건 중 14건이 100자를 넘겼고 13건이 마침표로 끝났다.
- * 길이와 마침표는 받는 쪽에서 정리한다. 자를 때는 낱말 경계에서 자른다.
+ * 길이와 마침표는 받는 쪽에서 정리한다.
+ *
+ * 100자에서 낱말 단위로 자르던 때는 문장이 중간에 끊겼다(프로드 "…adding records via music").
+ * 끊을 자리(쉼표 같은 것)가 100자 안에 있으면 거기서 끊고, 없으면 문장을 그대로 둔다 —
+ * 목록은 CSS 로 줄여 보여 주고 상세는 전부 보여 주므로, 뜻이 끊긴 글보다 긴 글이 낫다.
  */
 export function tidyTagline(line: string): string {
   const once = line.replace(/\s+/g, " ").trim().replace(/[.。]+$/, "");
   if (once.length <= TAGLINE_LIMIT) return once;
-  const cut = once.slice(0, TAGLINE_LIMIT);
+  // 100자 자리에서 시작하는 구분자까지 센다 — slice(0,100) 안에서만 찾으면 경계에 걸친 ", " 를 놓친다
+  const clause = Math.max(...CLAUSE.map((mark) => once.lastIndexOf(mark, TAGLINE_LIMIT - 1)));
+  if (clause >= TAGLINE_MIN) return once.slice(0, clause).trim();
+  if (once.length <= TAGLINE_MAX) return once;
+  // 칸에 넣지 못할 만큼 긴 글만 마지막 수단으로 낱말 경계에서 자른다
+  const cut = once.slice(0, TAGLINE_MAX);
   const space = cut.lastIndexOf(" ");
-  return (space > TAGLINE_LIMIT * 0.6 ? cut.slice(0, space) : cut).replace(/[,;:·\-—]$/, "").trim();
+  return (space > TAGLINE_MAX * 0.6 ? cut.slice(0, space) : cut).replace(/[,;:·\-—]$/, "").trim();
 }
 
 const SYSTEM = `You write the one-line summary shown under a product's name in a directory of things people built.
