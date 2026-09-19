@@ -10,6 +10,7 @@ import { loadReviewInput } from "./agent-review-repository";
 import { loadSecondReviewInput, secondReviewGeneration } from "./second-review-input";
 import { assertJobLease, type JobLease } from "@/lib/jobs/control";
 import { canonicalReviewModel, sameReviewModel } from "./review-model-identity";
+import { firstReviewer } from "./agent-review";
 
 /**
  * 2차 심사 — 무엇을 다시 보고, 두 판단을 어떻게 합치나.
@@ -227,7 +228,9 @@ export async function enqueueSecondReviews(settings: CrawlSettings, now = new Da
    * 발행된다 — reviewApprovalPredicate·assertReviewApproval 이 이 행들을 본다. 1차와 같은 모델의 표는 되풀이라
    * 올리지 않는다. 실측(블라인드 159건): 1차 혼자 승인하면 124건 중 오답 9, 둘 다 승인하면 116건 중 5.
    */
-  if (settings.reviewMode === "enforce") {
+  const reviewer = firstReviewer(settings);
+  if (settings.reviewMode === "enforce" && reviewer) {
+    // 지금 1차 심사자의 판단만 본다 — 발행 조건(activeReviewIdentity)과 같은 기준이어야 관문이 엉뚱한 판단에 붙지 않는다
     const approved = db.selectDistinctOn([crawlReviewAttempts.candidateId], {
       candidateId: crawlReviewAttempts.candidateId, repo: crawlCandidates.repo, inputHash: crawlReviewAttempts.inputHash,
       promptVersion: crawlReviewAttempts.promptVersion, rulesVersion: crawlReviewAttempts.rulesVersion, validUntil: crawlReviewAttempts.validUntil,
@@ -236,7 +239,8 @@ export async function enqueueSecondReviews(settings: CrawlSettings, now = new Da
       confidence: sql<number | null>`(${crawlReviewAttempts.outcome}->>'confidence')::float`.as("confidence"),
     }).from(crawlReviewAttempts).innerJoin(crawlCandidates, eq(crawlCandidates.id, crawlReviewAttempts.candidateId))
       .where(and(eq(crawlCandidates.state, "approved"), eq(crawlCandidates.decidedBy, "auto"), isNull(crawlCandidates.publishedSlug),
-        eq(crawlReviewAttempts.kind, "automatic"), eq(crawlReviewAttempts.state, "succeeded"), inArray(crawlReviewAttempts.provider, ["claude-cli", "abcllm"])))
+        eq(crawlReviewAttempts.kind, "automatic"), eq(crawlReviewAttempts.state, "succeeded"),
+        eq(crawlReviewAttempts.provider, reviewer.provider), eq(crawlReviewAttempts.model, reviewer.model)))
       .orderBy(crawlReviewAttempts.candidateId, desc(crawlReviewAttempts.id))
       .as("approved_latest");
     const gateRequired = sql`(select count(*) from jsonb_array_elements_text(${JSON.stringify(voters.map(voter => canonicalReviewModel(voter.model)))}::jsonb) as v(model)
@@ -250,6 +254,14 @@ export async function enqueueSecondReviews(settings: CrawlSettings, now = new Da
               where v->>'provider'=s.provider and regexp_replace(lower(trim(v->>'model')), '^\\[mlx\\][[:space:]]*', '', 'i')
                 = regexp_replace(lower(trim(s.model)), '^\\[mlx\\][[:space:]]*', '', 'i'))) < ${gateRequired}`))
       .limit(ENQUEUE_LIMIT);
+    /*
+     * 2차에 1차와 다른 모델이 하나도 없으면 두 모델 승인을 할 수 없다 — 발행도 재심사도 안 되는 채로 멈추지 않게
+     * 사람에게 넘긴다(codex 교차 검토). 설정을 고치면 다음 후보부터 다시 관문을 탄다.
+     */
+    const lone = await db.select({ candidateId: approved.candidateId }).from(approved)
+      .where(and(sql`${approved.decision} = 'approve'`, eq(approved.promptVersion, REVIEW_PROMPT_VERSION), eq(approved.rulesVersion, REVIEW_RULES_VERSION),
+        gt(approved.validUntil, now), sql`${gateRequired} = 0`)).limit(ENQUEUE_LIMIT);
+    await holdGateForHuman(lone.map((row) => row.candidateId), "2차에 1차와 다른 모델이 없어 두 모델 승인을 할 수 없다 — 2차 모델 설정을 확인", now);
     rows.push(...gate.flatMap((row) => voters.filter(voter => !sameReviewModel(row.firstModel, voter.model)).map((voter) => ({ ...voter,
       candidateId: row.candidateId, repo: row.repo, trigger: "ai_approved" as SecondReviewTrigger,
       firstDecision: "approve", firstConfidence: row.confidence, firstModel: row.firstModel, firstAttemptId: row.firstAttemptId,
@@ -302,10 +314,11 @@ export async function enqueueSecondReviews(settings: CrawlSettings, now = new Da
     const candidates = new Map(locked.map(row => [row.id, row]));
     const valid = rows.filter(row => {
       const candidate = candidates.get(row.candidateId);
-      // 관문 행은 승인 상태의 후보에, 나머지는 보류 후보에 붙는다 — 그 사이에 상태가 바뀌었으면 올리지 않는다
-      const expected = row.trigger === "ai_approved" ? "approved" : "needs_review";
+      // 관문 행은 승인 상태의 후보에, 나머지는 보류 후보에 붙는다 — 그 사이에 상태가 바뀌었으면 올리지 않는다.
+      // 관문의 1차 판단은 "지금 1차 심사자의 최신"이라 모든 심사자 중 최신과 다를 수 있다 — loadSecondReviewInput 이 다시 잰다
+      if (row.trigger === "ai_approved") return candidate?.state === "approved" && candidate.decidedBy === "auto";
       return row.publishedSlug ? candidate?.state === "published" && candidate.publishedSlug === row.publishedSlug
-        : candidate?.state === expected && candidate.decidedBy === "auto" && latestIds.get(row.candidateId) === row.firstAttemptId;
+        : candidate?.state === "needs_review" && candidate.decidedBy === "auto" && latestIds.get(row.candidateId) === row.firstAttemptId;
     });
     if (!valid.length) return 0;
     const inserted = await tx.insert(secondReviews).values(valid).onConflictDoNothing()
@@ -355,7 +368,10 @@ export async function closeSettledSecondReviews(now = new Date()): Promise<numbe
         where v->>'provider'=${secondReviews.provider}
           and regexp_replace(lower(trim(v->>'model')), '^\\[mlx\\][[:space:]]*', '', 'i')
             = regexp_replace(lower(trim(${secondReviews.model})), '^\\[mlx\\][[:space:]]*', '', 'i'))`))
-    .returning({id: secondReviews.id});
+    .returning({id: secondReviews.id, candidateId: secondReviews.candidateId, trigger: secondReviews.trigger});
+  // 관문 행이 사람 확인이 됐으면 후보도 사람에게 — 승인 상태로 두면 발행도 재심사도 안 된다(codex 교차 검토)
+  await holdGateForHuman(orphaned.filter((row) => row.trigger === "ai_approved").map((row) => row.candidateId),
+    "대체 모델 설정이 바뀌어 2차 의견을 제외했다 — 직접 확인", now);
   // A prompt upgrade invalidates these inputs before any model call. Retain completed historical opinions.
   const obsolete = await db.update(secondReviews).set({status: "resolved", resolution: "superseded", resolvedAt: now})
     .where(and(inArray(secondReviews.status, ["pending", "failed"]), or(eq(secondReviews.generationKey, "legacy"),
@@ -391,6 +407,17 @@ async function closeDecidedSecondReviews(now: Date): Promise<number> {
   await db.update(secondReviews).set({ status: "resolved", resolution: "decided_elsewhere", resolvedAt: now })
     .where(inArray(secondReviews.id, settled.map((row) => row.id)));
   return settled.length;
+}
+
+/**
+ * 두 모델 승인 관문에서 멈춘 승인 후보를 사람에게 넘긴다 — 보류, 사유 second_review_split(AI 심사가 다시 집지 않는다).
+ * 사람이 이미 결정했거나 이미 발행·거부된 후보는 건드리지 않는다.
+ */
+async function holdGateForHuman(candidateIds: number[], detail: string, now: Date): Promise<void> {
+  if (!candidateIds.length) return;
+  await db.update(crawlCandidates).set({ state: "needs_review", reason: "second_review_split", updatedAt: now,
+    signals: sql`coalesce(${crawlCandidates.signals}, '{}'::jsonb) || ${JSON.stringify({ stoppedAt: { rule: "2차 심사", detail } })}::jsonb` })
+    .where(and(inArray(crawlCandidates.id, [...new Set(candidateIds)]), eq(crawlCandidates.state, "approved"), eq(crawlCandidates.decidedBy, "auto")));
 }
 
 export async function pendingSecondReviews(limit: number) {

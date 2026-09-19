@@ -185,12 +185,14 @@ it("1차 확신이 기준에 못 미치면 2차가 승인해도 사람에게 넘
   expect((await db.select().from(crawlCandidates).where(eq(crawlCandidates.id, row.id)))[0]).toMatchObject({ state: "needs_review", reason: "second_review_split" });
 });
 
-it("2차 모델이 1차와 같으면 표가 되풀이라 올리지 않고, 관문도 열리지 않는다", async () => {
+it("2차 모델이 1차와 같으면 두 모델 승인을 할 수 없다 — 멈추지 않고 사람에게 넘긴다", async () => {
   await saveSettings({ secondReview: { enabled: true, voters: [{ provider: "claude-cli", model: "test-model" }] } }, "test");
-  await candidate(0, true, 0.95);
+  const { row } = await candidate(0, true, 0.95);
   expect(await enqueueSecondReviews(await getSettings())).toBe(0);
   await tick();
   expect(await db.select().from(products)).toHaveLength(0);
+  expect((await db.select().from(crawlCandidates).where(eq(crawlCandidates.id, row.id)))[0]).toMatchObject({
+    state: "needs_review", reason: "second_review_split", signals: { stoppedAt: { rule: "2차 심사" } } });
 });
 
 
@@ -233,3 +235,38 @@ it("2차 모델을 바꾸면 새 모델의 표가 올라가고, 새 모델도 �
   await tick();
   expect(await db.select().from(products)).toHaveLength(1);
 });
+
+/** 모델을 더한 직후 — 옛 모델의 승인만으로는 발행하지 않는다(codex 교차 검토 P1) */
+it("2차 모델을 더하면 더한 모델도 승인해야 발행한다", async () => {
+  const settings = await withGate();
+  await candidate(0, true, 0.95);
+  await enqueueSecondReviews(settings);
+  await vote((await db.select().from(secondReviews))[0], "approve");
+  await saveSettings({ secondReview: { enabled: true, voters: [{ provider: "abcllm", model: "[MLX] second-test" }, { provider: "abcllm", model: "[MLX] third-test" }] } }, "test");
+  await tick();
+  expect(await db.select().from(products)).toHaveLength(0);
+  expect(await enqueueSecondReviews(await getSettings())).toBe(1);
+  await vote((await db.select().from(secondReviews).where(eq(secondReviews.model, "[MLX] third-test")))[0], "approve");
+  await tick();
+  expect(await db.select().from(products)).toHaveLength(1);
+});
+
+/** 대체 모델 설정이 바뀌어 관문 표가 "사람 확인"이 되면 후보도 사람에게 — 승인 상태로 갇히지 않는다(codex 교차 검토) */
+it("대체 모델을 빼서 관문 표가 사람 확인이 되면 후보를 사람에게 넘긴다", async () => {
+  await saveSettings({ secondReview: { enabled: true, voters: [{ provider: "abcllm", model: "[MLX] second-test" }],
+    fallbacks: [{ provider: "claude-cli", model: "sonnet" }] } }, "test");
+  const { row } = await candidate(0, true, 0.95);
+  await enqueueSecondReviews(await getSettings());
+  const [primary] = await db.select().from(secondReviews);
+  await recordSecondReview(primary.id, { ok: false, error: "timeout", model: primary.model!, provider: "abcllm" });
+  expect(await db.select().from(secondReviews).where(eq(secondReviews.model, "sonnet"))).toHaveLength(1);
+
+  await saveSettings({ secondReview: { enabled: true, voters: [{ provider: "abcllm", model: "[MLX] second-test" }], fallbacks: [] } }, "test");
+  const { closeSettledSecondReviews } = await import("@/lib/crawl/second-review");
+  await closeSettledSecondReviews();
+  expect((await db.select().from(crawlCandidates).where(eq(crawlCandidates.id, row.id)))[0]).toMatchObject({
+    state: "needs_review", reason: "second_review_split" });
+  await tick();
+  expect(await db.select().from(products)).toHaveLength(0);
+});
+

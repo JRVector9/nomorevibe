@@ -54,6 +54,8 @@ export async function loadSecondReviewInput(row: SecondReview, tx?: ProductTrans
     const [first] = await executor.select().from(crawlReviewAttempts).where(and(
       eq(crawlReviewAttempts.candidateId, row.candidateId), eq(crawlReviewAttempts.kind, "automatic"),
       eq(crawlReviewAttempts.state, "succeeded"), inArray(crawlReviewAttempts.provider, ["claude-cli", "abcllm"]),
+      // 관문은 그 1차 심사자의 최신 판단에 붙는다 — 다른 심사자의 더 새 판단이 있어도 그것과 견주지 않는다
+      row.trigger === "ai_approved" && row.firstModel ? eq(crawlReviewAttempts.model, row.firstModel) : undefined,
     )).orderBy(desc(crawlReviewAttempts.id)).limit(1);
     if (!first || first.id !== row.firstAttemptId || first.inputHash !== input.inputHash
       || first.sourceRevisionHash !== input.sourceRevisionHash || first.outcome?.decision !== row.firstDecision
