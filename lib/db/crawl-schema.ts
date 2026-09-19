@@ -216,3 +216,38 @@ export const crawlReviewAttempts = pgTable("crawl_review_attempts", {
     .where(sql`${table.state} = 'succeeded' AND ${table.kind} = 'automatic'`),
 ]);
 export type CrawlReviewAttempt = typeof crawlReviewAttempts.$inferSelect;
+
+/**
+ * AI가 지은 한 줄 소개.
+ *
+ * 페이지에도 레포에도 소개가 없어 발행이 멈춘 후보(reason=no_description)가 2026-09-20 프로드에
+ * 466건 쌓였다. 사람이 466건을 읽는 대신 모델이 페이지 글에서 한 줄을 뽑는다 — 목록에는 지은
+ * 것임을 밝히고 올린다(products.tagline_source).
+ *
+ * 제품 행이 아니라 여기에 따로 둔다. 원본(crawl_documents)은 다시 긁을 때 통째로 덮어쓰이므로
+ * 지은 글을 거기 얹으면 사라지고, 후보(signals)는 재판정이 갈아 끼운다.
+ *
+ * tagline 이 빈 문자열이면 "증거로는 무엇인지 알 수 없다"는 모델의 답이다 — 다시 묻지 않고
+ * 사람에게 남긴다. sourceHash 는 그 답을 지을 때 본 원본이라, 페이지가 바뀌면 다시 짓는다.
+ */
+export const crawlTaglines = pgTable("crawl_taglines", {
+  repo: varchar("repo", { length: 200 }).primaryKey(),
+  tagline: varchar("tagline", { length: 200 }).notNull().default(""),
+  /** 어디에서 왔는지 — page(페이지 글) · readme(레포 README) · both */
+  source: varchar("source", { length: 8 }).$type<"page" | "readme" | "both">().notNull(),
+  model: varchar("model", { length: 160 }).notNull(),
+  sourceHash: varchar("source_hash", { length: 64 }).notNull(),
+  /**
+   * 어느 판의 원본을 보고 지었는지 — crawl_documents.fetched_at 을 그대로 옮겨 적는다.
+   *
+   * "다시 긁혔는가"를 시각으로 재는데, 우리 시각(now())과 수집기의 시각(노드 Date)은 다른
+   * 시계다. 원본이 스스로 적은 값을 복사해 두고 그 값끼리 비교한다.
+   */
+  documentAt: timestamp("document_at").notNull(),
+  attempts: integer("attempts").notNull().default(0),
+  errorCode: varchar("error_code", { length: 60 }),
+  retryAt: timestamp("retry_at"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+export type CrawlTagline = typeof crawlTaglines.$inferSelect;

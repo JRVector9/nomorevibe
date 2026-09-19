@@ -148,6 +148,7 @@ export type PublicProduct = StarObservation & Pick<Product,
   | "url"
   | "name"
   | "tagline"
+  | "taglineSource"
   | "description"
   | "category"
   | "builder"
@@ -196,6 +197,7 @@ async function findPublicProduct(slug: string): Promise<PublicProduct | null> {
       url: true,
       name: true,
       tagline: true,
+      taglineSource: true,
       description: true,
       category: true,
       builder: true,

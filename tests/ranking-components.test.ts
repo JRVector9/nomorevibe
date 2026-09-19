@@ -18,6 +18,7 @@ function product(slug: string, overrides: Partial<ProductListItem> = {}): Produc
     slug,
     name: `제품 ${slug}`,
     tagline: "소개",
+    taglineSource: "maker" as const,
     category: "Dev",
     builder: null,
     builderClaim: "reported",

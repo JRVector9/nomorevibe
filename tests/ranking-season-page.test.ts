@@ -35,6 +35,7 @@ const item: RankingListItem = {
   slug: "history-one",
   name: "History One",
   tagline: "역사 제품",
+  taglineSource: "maker" as const,
   category: "Dev",
   builder: null,
   builderClaim: "reported",

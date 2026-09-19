@@ -61,6 +61,7 @@ function product(slug: string): ProductListItem {
     slug,
     name: slug,
     tagline: `${slug} 태그라인`,
+    taglineSource: "maker" as const,
     category: "Dev",
     builder: null,
     builderClaim: "guessed",

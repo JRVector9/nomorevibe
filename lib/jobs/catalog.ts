@@ -28,6 +28,11 @@ export const JOB_CATALOG: readonly { name: string; role: JobRole | "scheduler"; 
   // 사유 번역 — 발행 워커가 대부분 비어 있어 여기서 1분마다 옮긴다(틱 55초, 한 번에 4건·1,600자까지)
   { name: "reason-translate", role: "publisher", intervalMs: 60_000 },
   /**
+   * 소개 짓기 — 소개가 없어 멈춘 후보의 한 줄을 모델이 짓는다. 번역과 같은 자리(발행 워커)에서
+   * 1분마다 조금씩. 대기가 비면 곧 끝나고, 다 지으면 후보가 발행 대기로 돌아간다.
+   */
+  { name: "crawl-tagline", role: "publisher", intervalMs: 60_000 },
+  /**
    * 1분마다 15건 = 시간당 900건. 발행분 3,147건을 재확인 간격 6시간마다 보려면 시간당 525건이
    * 필요한데, 10분 주기(시간당 90건)로는 6시간 안에 17%만 볼 수 있었다.
    *

@@ -42,7 +42,13 @@ export function ProductCard({ product, rank }: { product: ProductListItem; rank?
             </span>
           )}
         </div>
-        <div className="mt-0.5 truncate text-[13px] text-fg-3">{product.tagline}</div>
+        <div className="mt-0.5 truncate text-[13px] text-fg-3">
+          {/* 메이커가 쓴 소개가 없어 모델이 지은 줄 — 밝히지 않으면 메이커의 말처럼 읽힌다 */}
+          {product.taglineSource !== "maker" && (
+            <span className="mr-1.5 rounded border border-line px-1.5 py-px text-[13px] font-semibold text-fg-3">AI 요약</span>
+          )}
+          {product.tagline}
+        </div>
         <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
           <Tag>{product.category}</Tag>
           {product.builder && <BuilderBadge builder={product.builder} claim={product.builderClaim} />}

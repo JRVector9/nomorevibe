@@ -1,6 +1,6 @@
 import { displayProjectName } from './display-name';
 import type { StarObservation } from '@/lib/domain/products/star-change';
-import type { Product, ProductStatus } from "@/lib/db/schema";
+import type { Product, ProductStatus, TaglineSource } from "@/lib/db/schema";
 import { listProducts, listRecentlyDiscovered, type ProductSort } from "./repository";
 import type { SearchQuery } from "./search";
 import type { Category } from "./schema";
@@ -29,6 +29,8 @@ export type ProductListItem = StarObservation & {
   slug: string;
   name: string;
   tagline: string;
+  /** 소개를 누가 썼는지 — ai_* 면 목록에서 "AI 요약"이라고 밝힌다 */
+  taglineSource: TaglineSource;
   category: string;
   builder: string | null;
   builderClaim: BuilderClaim;
@@ -60,6 +62,7 @@ export function toListItem(p: Product): ProductListItem {
     slug: p.slug,
     name: displayProjectName(p.name, p.repoUrl),
     tagline: p.tagline,
+    taglineSource: p.taglineSource,
     category: p.category,
     // 수집기가 추정한 값은 공개 뷰모델에서 제거한다. 메이커가 확인한 값만 UI와 검색에 쓴다.
     builder: builderClaim === "reported" ? p.builder : null,

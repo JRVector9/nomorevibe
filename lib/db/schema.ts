@@ -47,6 +47,9 @@ export type ProductStatus = "unverified" | "seeded" | "verified" | "banned";
 /** 어떤 경로로 들어왔는지 — 클레임 후에도 남는다 */
 export type ProductSource = "skill" | "crawler";
 
+/** 소개의 출처. ai_* 는 뒤에 무엇을 보고 지었는지가 붙는다 */
+export type TaglineSource = "maker" | "ai_page" | "ai_readme" | "ai_both";
+
 export const products = pgTable("products", {
   id: serial("id").primaryKey(),
   slug: varchar("slug", { length: 80 }).notNull().unique(),
@@ -54,6 +57,15 @@ export const products = pgTable("products", {
   url: text("url").notNull().unique(),
   name: varchar("name", { length: 120 }).notNull(),
   tagline: varchar("tagline", { length: 200 }).notNull(),
+  /**
+   * 소개를 누가 썼는지. maker 는 페이지나 레포에 적혀 있던 말 그대로고, ai_* 는 둘 다 없어
+   * 모델이 페이지 글에서 뽑아 지은 것이다(ai_page·ai_readme·ai_both = 무엇을 보고 지었는지).
+   * 화면에 "AI가 요약"으로 밝힌다 — 지은 글을 메이커가 쓴 소개처럼 보이게 두지 않는다.
+   */
+  taglineSource: varchar("tagline_source", { length: 12 })
+    .$type<TaglineSource>()
+    .notNull()
+    .default("maker"),
   description: text("description").notNull(),
   category: varchar("category", { length: 40 }).notNull(),
   // 만든 AI. 수집 발행은 우리 추정으로 채우고 클레임 때 비워 메이커 신고값만 남긴다 — 랭킹에 반영하지 않음
