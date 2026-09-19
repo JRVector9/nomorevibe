@@ -220,3 +220,29 @@ it('보류가 한 번에 읽는 수(1,000)를 넘어도 빠짐없이 센다', as
   expect(new Set(causes.ids.get('page_status_unknown')).size).toBe(1_005);
   expect((await reviewQueueAiDecisions()).counts.none).toBe(1_005);
 });
+
+/** 목록 위 필터 — 검색, 그리고 오래 업데이트되지 않은 것을 화면에서만 빼기(2026-09-19) */
+it('목록 필터: 이름·레포·주소로 찾고, 마지막 푸시가 오래된 것은 화면에서만 뺀다', async () => {
+  const days = (n: number) => new Date(Date.now() - n * 86_400_000).toISOString();
+  const put = async (repo: string, title: string, pushedAt: string | null) => {
+    await crawl.putDocument({ repo, productUrl: `https://${repo.replace('/', '-')}.test`, pageStatus: 200,
+      repoMeta: { description: '배포한 서비스', stargazers_count: 3, ...(pushedAt ? { pushed_at: pushedAt } : {}), owner: { type: 'User' } },
+      pageMeta: { title } });
+    await crawl.recordJudgement({ repo, productUrl: `https://${repo.replace('/', '-')}.test`, state: 'needs_review', reason: 'ambiguous', decidedBy: 'auto' });
+  };
+  await put('fresh/timer', 'Pomodoro Timer', days(10));
+  await put('old/ledger', '100%_Ledger', days(400));
+  await put('nopush/app', 'Unknown Push', null);
+  const settings = await getSettings();
+
+  expect((await listAdminReviewEntries(settings, { state: 'needs_review', search: 'pomodoro' })).entries.map(e => e.candidate.repo)).toEqual(['fresh/timer']);
+  expect((await listAdminReviewEntries(settings, { state: 'needs_review', search: 'old/led' })).total).toBe(1);
+  // %·_ 는 글자 그대로 찾는다 — 와일드카드로 풀리면 셋 다 걸린다
+  expect((await listAdminReviewEntries(settings, { state: 'needs_review', search: '100%_' })).entries.map(e => e.candidate.repo)).toEqual(['old/ledger']);
+
+  const recent = await listAdminReviewEntries(settings, { state: 'needs_review', pushedWithinDays: 180 });
+  expect(recent.entries.map(e => e.candidate.repo).sort()).toEqual(['fresh/timer', 'nopush/app']);
+  expect(recent).toMatchObject({ total: 2, hiddenByAge: 1 });
+  // 화면에서만 뺐다 — 후보는 그대로 보류다
+  expect(await crawl.getCandidate('old/ledger')).toMatchObject({ state: 'needs_review' });
+});
