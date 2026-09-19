@@ -22,6 +22,7 @@ const product: ProductDetailView["product"] = {
   url: "https://simplehwp.example",
   name: "simpleHWP",
   tagline: "별도 뷰어 없이 HWP 문서를 브라우저에서 엽니다.",
+  taglineSource: "maker" as const,
   description: "파일 분석은 WebAssembly로 사용자 기기에서 처리됩니다.",
   category: "Productivity",
   builder: "Codex",

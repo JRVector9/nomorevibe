@@ -225,8 +225,9 @@ export function judge(
   const defer = (cause: AmbiguityCause, rule: string, detail: string) => { deferred ??= { cause, rule, detail }; };
 
   // 배포물이 없으면 제품이 아니다 — 가장 값싼 거르기
-  if (!page.productUrl) return reject("no_homepage", "배포 URL 있음", "homepage 미설정");
-  pass("배포 URL 있음", page.productUrl);
+  // 규칙 이름은 통과·거부 두 줄에 같이 쓴다 — "배포 URL 있음 / homepage 미설정"은 읽는 사람을 헷갈리게 했다
+  if (!page.productUrl) return reject("no_homepage", "배포 URL", "homepage 미설정");
+  pass("배포 URL", page.productUrl);
   const purpose = nonProductPurpose(page);
   if (purpose) return reject("not_a_product", "독립 제품·서비스", `${purpose.kind}: ${purpose.evidence}`);
   if (isBlockedHost(page.productUrl, rules.blockedHomepageDomains)) {

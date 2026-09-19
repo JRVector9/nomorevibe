@@ -7,6 +7,7 @@ import { reviewCrawlCandidates } from "@/lib/crawl/jobs/agent-review";
 import { secondReviewCandidates } from "@/lib/crawl/jobs/second-review";
 import { auditPublishedProducts } from "@/lib/crawl/jobs/product-audit";
 import { translateReasons } from "@/lib/crawl/jobs/translate-reasons";
+import { writeTaglines } from "@/lib/crawl/jobs/tagline";
 import { publishCandidates } from "@/lib/crawl/jobs/publish";
 import { pingProducts } from "@/lib/jobs/products/uptime";
 import { rollupClicks } from "@/lib/jobs/products/click-rollup";
@@ -59,6 +60,8 @@ export const JOBS: Record<string, AnyJob> = {
   "crawl-publish": publishCandidates,
   /** 심사 화면의 영어 사유를 미리 한국어로 옮겨 둔다 */
   "reason-translate": translateReasons,
+  /** 소개가 없어 멈춘 후보의 한 줄 소개를 짓는다 — 목록에는 지은 것이라고 밝히고 올린다 */
+  "crawl-tagline": writeTaglines,
 
   /** 등재된 제품이 아직 떠 있는지 확인한다 (기록만 하고 목록은 건드리지 않는다) */
   "uptime-ping": pingProducts,

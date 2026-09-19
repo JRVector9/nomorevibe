@@ -14,10 +14,12 @@ vi.mock("@/lib/crawl/classify", () => ({
 }));
 
 const { db } = await import("@/lib/db");
-const { crawlFrontier, crawlDocuments, crawlCandidates, crawlSettings, jobs, agentRepositoryScans, agentRepositoryObservations } = await import(
+const { crawlFrontier, crawlDocuments, crawlCandidates, crawlSettings, crawlTaglines, jobs, agentRepositoryScans, agentRepositoryObservations } = await import(
   "@/lib/db/schema"
 );
 const crawl = await import("@/lib/crawl/repository");
+const { taglineEvidence, taglineHash } = await import("@/lib/crawl/tagline");
+const { recordTagline } = await import("@/lib/crawl/taglines");
 const { judgeRevision } = await import("@/lib/crawl/rules");
 const products = await import("@/lib/domain/products/repository");
 const { saveSettings } = await import("@/lib/crawl/settings");
@@ -76,6 +78,7 @@ async function refetched(repo: string, pageStatus: number) {
 
 beforeAll(() => ensureSchema());
 beforeEach(async () => {
+  await db.delete(crawlTaglines);
   await db.delete(crawlCandidates);
   await db.delete(crawlDocuments);
   await db.delete(crawlFrontier);
@@ -195,6 +198,43 @@ describe("발행 잡", () => {
       // 보류 기록만 보고도 왜 멈췄는지 알 수 있어야 한다
       signals: { stoppedAt: { rule: "발행 조건", detail: "페이지 설명도 레포 설명도 없어 목록에 쓸 소개를 만들 수 없다" } },
     });
+  });
+
+  it("모델이 지어 둔 소개가 있으면 그것으로 올리고 AI가 쓴 것이라고 남긴다", async () => {
+    await approved("someone/mystery", {
+      meta: { description: null, language: null },
+      pageMeta: { title: "Sho't Right", description: null, ogImage: null, textSample: "바를 등록하면 손님이 찾을 수 있습니다" },
+    });
+    const document = await crawl.getDocument("someone/mystery");
+    await recordTagline({
+      repo: "someone/mystery", tagline: "바를 등록하면 손님이 찾습니다", source: "page", model: "[MLX] qwen",
+      sourceHash: taglineHash(taglineEvidence("someone/mystery", document!)), documentAt: document!.fetchedAt,
+    });
+
+    await tick();
+
+    // 화면이 "AI가 요약"이라고 밝힐 수 있어야 한다 — 출처를 함께 적는다
+    expect(await products.findByUrl("https://my-app.test")).toMatchObject({
+      tagline: "바를 등록하면 손님이 찾습니다", taglineSource: "ai_page",
+    });
+  });
+
+  it("지은 뒤에 페이지가 바뀌었으면 그 줄을 쓰지 않는다", async () => {
+    await approved("someone/mystery", {
+      meta: { description: null, language: null },
+      pageMeta: { title: "Sho't Right", description: null, ogImage: null, textSample: "바를 등록하면 손님이 찾을 수 있습니다" },
+    });
+    const document = await crawl.getDocument("someone/mystery");
+    await recordTagline({
+      repo: "someone/mystery", tagline: "옛 페이지를 보고 지은 줄", source: "page", model: "[MLX] qwen",
+      sourceHash: taglineHash(taglineEvidence("someone/mystery", { ...document!, pageMeta: { textSample: "옛 글" } })),
+      documentAt: document!.fetchedAt,
+    });
+
+    await tick();
+
+    expect(await products.findByUrl("https://my-app.test")).toBeUndefined();
+    expect(await crawl.getCandidate("someone/mystery")).toMatchObject({ state: "needs_review", reason: "no_description" });
   });
 
   it("사람이 승인한 것은 소개가 없어도 올린다 — 심사로 되돌아오면 끝나지 않는다", async () => {

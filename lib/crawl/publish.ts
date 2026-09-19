@@ -1,5 +1,5 @@
 import { nonProductPurpose } from './product-purpose';
-import type { CrawlCandidate, CrawlDocument } from "@/lib/db/schema";
+import type { CrawlCandidate, CrawlDocument, TaglineSource } from "@/lib/db/schema";
 import { LIMITS, type Category } from "@/lib/domain/products/schema";
 import * as products from "@/lib/domain/products/repository";
 import { cacheOgImage } from "@/lib/domain/products/og";
@@ -10,6 +10,8 @@ import { classifyCategory, type ClassifyInput } from "./classify";
 import { productName } from "./product-name";
 import { getSettings } from "./settings";
 import { judgeRevision } from "./rules";
+import { taglineEvidence, taglineHash, type TaglineEvidenceSource } from "./tagline";
+import { writtenTagline } from "./taglines";
 import { guardPublication, publicationSourceChanged, PublicationStateChangedError } from "./publication-guard";
 import { loadAgentJudgeInput } from "./agent-evidence";
 import { summarizeAgentEvidence, type AgentEvidenceSummary } from "@/lib/domain/evidence/agents/summary";
@@ -90,7 +92,19 @@ async function preparePublication(candidate: CrawlCandidate): Promise<
     const judged = (candidate.signals as { judgedRevision?: unknown } | null)?.judgedRevision;
     if (judged !== judgeRevision(document)) return { ok: false, reason: "stale_judgement" };
   }
-  const draft = draftFrom(candidate.repo, document);
+  let draft = draftFrom(candidate.repo, document);
+  /**
+   * 소개가 아무 데도 없으면 모델이 지어 둔 줄을 쓴다(crawl-tagline 잡).
+   *
+   * 지을 때 본 원본과 지금 원본이 같을 때만이다 — 페이지가 바뀌었으면 그 줄은 지금 페이지의
+   * 소개가 아니다. 다시 지을 때까지 소개 없음으로 남는다.
+   */
+  if (!draft.hasDescription && candidate.decidedBy !== "admin") {
+    const written = await writtenTagline(candidate.repo);
+    if (written?.tagline && written.sourceHash === taglineHash(taglineEvidence(candidate.repo, document))) {
+      draft = draftFrom(candidate.repo, document, { text: written.tagline, source: written.source });
+    }
+  }
   if (!draft.hasDescription && candidate.decidedBy !== "admin") {
     return { ok: false, reason: "no_description" };
   }
@@ -153,6 +167,7 @@ export async function publishCandidate(
         url,
         name: draft.name,
         tagline: draft.tagline,
+        taglineSource: draft.taglineSource,
         description: draft.description,
         category,
         // Search hints are not maker or model assertions; observed facts have a separate view.
@@ -233,8 +248,13 @@ export async function prepareCandidateClassification(
   }, snapshot: prepared.snapshot };
 }
 
-/** 원본에서 목록에 올릴 값을 만든다 */
-function draftFrom(repo: string, document: CrawlDocument) {
+/**
+ * 원본에서 목록에 올릴 값을 만든다.
+ *
+ * written 은 모델이 지어 둔 한 줄이다(crawl-tagline). 메이커가 쓴 소개가 하나라도 있으면
+ * 그것이 먼저다 — 지은 줄은 아무것도 없을 때만 쓰고, 쓴 경우 출처를 남겨 화면에 밝힌다.
+ */
+function draftFrom(repo: string, document: CrawlDocument, written?: { text: string; source: TaglineEvidenceSource }) {
   const page = (document.pageMeta ?? {}) as { title?: unknown; description?: unknown; ogImage?: unknown; textSample?: unknown };
   const meta = document.repoMeta;
   const repoDescription = typeof meta.description === "string" ? meta.description.trim() : "";
@@ -243,14 +263,17 @@ function draftFrom(repo: string, document: CrawlDocument) {
   const language = typeof meta.language === "string" ? meta.language : null;
 
   /**
-   * 소개가 아무 데도 없으면 레포 이름을 쓴다.
-   * 그럴듯한 문장을 만들어 넣으면 그것이 메이커가 쓴 소개와 구분되지 않는다.
+   * 소개가 아무 데도 없으면 지어 둔 줄을, 그것도 없으면 레포 이름을 쓴다.
+   * 지은 줄을 쓸 때는 출처를 함께 남긴다 — 밝히지 않으면 메이커가 쓴 소개와 구분되지 않는다.
    */
-  const tagline = pageDescription || repoDescription || repo;
+  const generated = (written?.text ?? "").trim();
+  const tagline = pageDescription || repoDescription || generated || repo;
 
   return {
     /** 소개를 어디서도 못 찾았다는 표시 — 발행할지 말지를 이걸로 가른다 */
-    hasDescription: Boolean(pageDescription || repoDescription),
+    hasDescription: Boolean(pageDescription || repoDescription || generated),
+    taglineSource: (pageDescription || repoDescription ? "maker"
+      : generated ? `ai_${written!.source}` : "maker") as TaglineSource,
     name: productName(pageTitle, repo, document.productUrl).slice(0, LIMITS.name),
     tagline: tagline.slice(0, LIMITS.tagline),
     description: (repoDescription || pageDescription || tagline).slice(0, LIMITS.description),

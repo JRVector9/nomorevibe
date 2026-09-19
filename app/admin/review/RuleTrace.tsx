@@ -1,5 +1,14 @@
 import type { AdminReviewVerdict } from "@/lib/crawl/admin-review";
 import { CAUSE_GUIDE } from "./causes";
+import { REASON_LABELS } from "../reasons";
+
+/** 규칙이 적어 둔 값이 주소면 눌러서 열 수 있어야 한다 — 거부를 확인하려면 그 페이지를 봐야 한다 */
+function linkable(detail: string): string | null {
+  try {
+    const url = new URL(detail);
+    return ["http:", "https:"].includes(url.protocol) && !url.username && !url.password ? url.href : null;
+  } catch { return null; }
+}
 
 /**
  * 판정이 지나온 규칙.
@@ -34,7 +43,10 @@ export function RuleTrace({ verdict }: { verdict: AdminReviewVerdict }) {
               {step.passed ? "✓" : "■"}
             </span>
             <span className={`min-w-[150px] ${step.passed ? "text-fg-2" : "font-bold text-fg"}`}>{step.rule}</span>
-            <span className="min-w-0 flex-1 font-mono text-[13px] text-fg-3">{step.detail}</span>
+            {linkable(step.detail)
+              ? <a href={step.detail} target="_blank" rel="noreferrer noopener"
+                  className="min-w-0 flex-1 break-all font-mono text-[13px] text-accent hover:underline">{step.detail}</a>
+              : <span className="min-w-0 flex-1 font-mono text-[13px] text-fg-3">{step.detail}</span>}
           </li>
         ))}
       </ul>
@@ -42,7 +54,8 @@ export function RuleTrace({ verdict }: { verdict: AdminReviewVerdict }) {
       {stopped && !stopped.passed && (
         <p className="mt-2 text-[13px] leading-[1.7] text-fg-2">
           <b className="font-semibold text-fg">여기서 멈췄습니다.</b>{" "}
-          {guide?.summary ?? "규칙이 이 지점에서 판단을 내렸습니다."}
+          {/* 갈래 안내가 없는 거부(규칙이 바로 가른 것)는 사유를 사람 말로 적어 준다 */}
+          {guide?.summary ?? `${REASON_LABELS[verdict.reason] ?? verdict.reason} — ${stopped.detail}`}
         </p>
       )}
 

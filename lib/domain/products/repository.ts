@@ -260,7 +260,9 @@ export async function update(id: number, values: Partial<Product>): Promise<void
     const [locked] = await tx.select({ repoUrl: products.repoUrl }).from(products).where(eq(products.id, id));
     const resetStats = values.repoUrl !== undefined && values.repoUrl !== locked.repoUrl
       ? { stars: null, starsAt: null, starsPrevious: null, starsPreviousAt: null, ownerType: null, starsCheckedAt: null } : {};
-    const [product] = await tx.update(products).set({ ...values, ...resetStats, updatedAt: new Date() }).where(eq(products.id, id)).returning();
+    // 소개를 고쳐 쓰면 그 소개는 쓴 사람의 것이다 — "AI가 요약" 표시를 뗀다
+    const wroteTagline = values.tagline !== undefined && values.taglineSource === undefined ? { taglineSource: "maker" as const } : {};
+    const [product] = await tx.update(products).set({ ...values, ...resetStats, ...wroteTagline, updatedAt: new Date() }).where(eq(products.id, id)).returning();
     if (values.repoUrl !== undefined) await syncRepositoryLink({ productId: product.id, slug: product.slug,
       repoUrl: product.repoUrl, declarationSource: "maker", mode: "explicit" }, tx);
   });

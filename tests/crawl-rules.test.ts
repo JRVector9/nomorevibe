@@ -672,7 +672,7 @@ describe("판정 근거 — 심사 화면이 보여줄 발자국", () => {
 
   it("배포 URL이 없으면 첫 규칙에서 멈춘다", () => {
     const v = judge(goodRepo(), { productUrl: null, status: null }, settings, NOW);
-    expect(v.trace).toEqual([{ rule: "배포 URL 있음", detail: "homepage 미설정", passed: false }]);
+    expect(v.trace).toEqual([{ rule: "배포 URL", detail: "homepage 미설정", passed: false }]);
   });
 
   it("기준을 바꾸면 근거의 숫자도 함께 바뀐다 — 화면이 규칙을 따로 구현하지 않는다는 뜻이다", () => {
