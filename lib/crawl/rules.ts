@@ -80,7 +80,13 @@ export type AmbiguityCause =
   | "page_status_unknown"
   | "push_time_unknown"
   | "host_excluded_subpath"
-  | "agent_evidence";
+  | "agent_evidence"
+  /** 문서 도구로 만든 페이지 — 문서 자체인지 프로젝트 홈인지 본문을 읽어야 안다(2026-09-19) */
+  | "docs_generator"
+  /** 본문에 문서 목차 낱말이 여럿 — 위와 같다 */
+  | "docs_nav"
+  /** 이름만으로는 회사 소개·링크 모음인지 제품 사이트인지 못 가르는 레포 이름(heldRepoPatterns) */
+  | "name_pattern";
 
 export type Verdict = {
   state: "approved" | "rejected" | "needs_review";
@@ -207,6 +213,16 @@ export function judge(
     stop(rule, detail);
     return { state: "needs_review", reason, signals, trace, cause };
   };
+  /**
+   * 보류하되 맨 끝으로 미룬다(2026-09-19).
+   *
+   * 문서 생성기·문서 목차·이름 패턴은 확실한 거부가 아니라 "사람이나 AI 가 봐야 할 것"이다. 여기서 곧바로
+   * 보류하면 뒤의 확실한 거부(보관됨·HTTP 오류·방치 기준·스타 상한)를 건너뛰어, 죽은 페이지까지 사람에게 간다.
+   * 그래서 표시만 해 두고 나머지 규칙을 끝까지 태운다. 거부가 하나라도 걸리면 그쪽이 이긴다.
+   * 첫 번째 것만 남긴다 — 멈춘 곳은 하나다.
+   */
+  let deferred: { cause: AmbiguityCause; rule: string; detail: string } | null = null;
+  const defer = (cause: AmbiguityCause, rule: string, detail: string) => { deferred ??= { cause, rule, detail }; };
 
   // 배포물이 없으면 제품이 아니다 — 가장 값싼 거르기
   if (!page.productUrl) return reject("no_homepage", "배포 URL 있음", "homepage 미설정");
@@ -233,11 +249,16 @@ export function judge(
    *
    * 주소만으로는 못 가른다 — owner.github.io/repo 아래에 문서와 웹앱이 섞여 있어 심사 큐의
    * 92%가 그 모양이었다. 페이지가 mkdocs·pkgdown 같은 것으로 만들어졌다면 읽을거리다.
+   *
+   * 2026-09-19 부터 거부하지 않고 보류한다. 라이브러리·CLI 의 소개 페이지도 올리게 되자, 이 규칙이 거부한
+   * 것의 79%(블라인드 표본 24건 중 19건)가 문서 도구로 만든 *프로젝트 홈페이지*였다(deck.gl·duckdb-r·atlantis).
+   * 문서 자체인지 홈페이지인지는 본문을 읽어야 안다 — AI 가 가른다.
    */
   if (page.generator && rules.docsGenerators.includes(page.generator.toLowerCase())) {
-    return reject("not_a_product", "문서 생성기 아님", `${page.generator} 로 만들어짐`);
+    defer("docs_generator", "문서 생성기 아님", `${page.generator} 로 만들어짐 — 문서 자체인지 프로젝트 홈인지 가려야 한다`);
+  } else {
+    pass("문서 생성기 아님", page.generator ? `${page.generator} (문서 생성기 아님)` : "generator 표기 없음");
   }
-  pass("문서 생성기 아님", page.generator ? `${page.generator} (문서 생성기 아님)` : "generator 표기 없음");
 
   /**
    * 프레임워크가 만들어 준 제목을 그대로 배포한 것.
@@ -353,13 +374,24 @@ export function judge(
     .find((p) => matchesNameOrRoot(p) && !narrowerThan(p));
   if (nameOrRootPattern) return reject("personal_site", "제외 패턴 아님", whereMatched(nameOrRootPattern));
   /**
+   * 이름만으로는 못 가르는 패턴 — 거부하지 않고 보류한다(2026-09-19).
+   *
+   * `*-website` 는 회사·대행사 소개 사이트를 잘 거르지만 앱 사이트도 섞인다(블라인드 표본 18건 중 6건이 올릴 것).
+   * `awesome-*` 는 링크 모음이 많지만 검색·필터가 되는 디렉터리도 있다(8건 중 5건). 제외 패턴과 같은 자리에서
+   * 보고, 개인 프로필은 똑같이 먼저 통과한다.
+   */
+  const heldPattern = profileKeyword ? undefined : rules.heldRepoPatterns
+    .find((p) => matchesNameOrRoot(p) && !narrowerThan(p));
+  if (heldPattern) defer("name_pattern", "제외 패턴 아님", `${whereMatched(heldPattern)} — 회사 소개·링크 모음인지 제품 사이트인지 가려야 한다`);
+  /**
    * 통과한 뒤에만 자국을 남긴다. 거부된 행에 "개인 프로필" 자국이 붙어 있으면
    * "왜 이게 Profile로 올라갔지"에 답할 근거가 아니라 잡음이다.
    */
-  if (profileSignal) signals.profile = profileSignal;
+  // 보류 패턴에 걸린 것도 자국을 남기지 않는다 — awesome-blog 가 AI 승인 뒤 "*-blog 는 Profile 이어야" 조건에 걸리면 안 된다
+  if (profileSignal && !heldPattern) signals.profile = profileSignal;
   // 어느 패턴으로 통과했는지. 발행 단계가 이것으로 가른다 — 글자를 되파싱하지 않게
-  if (profilePattern) signals.profilePattern = profilePattern;
-  pass("제외 패턴 아님", profileSignal ? `개인 프로필 — ${profileSignal}` : repoName);
+  if (profilePattern && !heldPattern) signals.profilePattern = profilePattern;
+  if (!heldPattern) pass("제외 패턴 아님", profileSignal ? `개인 프로필 — ${profileSignal}` : repoName);
 
   // 스타 상한이 대형 오픈소스를 거른다. 하한이 아니라 상한인 것이 요지다 —
   // 갓 배포한 제품은 정당하게 스타가 0개다.
@@ -425,8 +457,9 @@ export function judge(
   const navs = sample && !usable
     ? [...new Set(rules.docsNavPhrases.filter((p) => sample.includes(p.toLowerCase())))]
     : [];
+  // 2026-09-19 부터 보류 — 이 규칙이 거부한 것의 95%(20건 중 19건)가 라이브러리·CLI 의 홈페이지였다
   if (navs.length >= rules.docsNavThreshold) {
-    return reject("not_a_product", "설치 유도 아님", `본문이 문서 목차 — ${navs.slice(0, 4).join(", ")}`);
+    defer("docs_nav", "문서 목차 아님", `본문에 목차 낱말 — ${navs.slice(0, 4).join(", ")} — 문서 자체인지 프로젝트 홈인지 가려야 한다`);
   }
   pass("설치 유도 아님", !sample
     ? "본문 없음 (신호 없음)"
@@ -441,6 +474,17 @@ export function judge(
     return hold("ambiguous", "push_time_unknown", "마지막 푸시 시각 확인", "레포 메타에 pushed_at 없음");
   }
   pass(PUSH_AGE_RULE, pushAge === null ? "푸시 시각 미상 (보류 꺼짐)" : `${pushAge}일 ≤ ${rules.maxPushAgeDays}일`);
+
+  /**
+   * 미뤄 둔 보류. 여기까지 왔다는 것은 확실한 거부가 하나도 걸리지 않았다는 뜻이다.
+   * 아래 호스트 하위 경로 보류보다 먼저 본다 — 둘 다 보류지만 이쪽이 무엇을 가려야 하는지 더 좁게 말한다.
+   */
+  const held = deferred as { cause: AmbiguityCause; rule: string; detail: string } | null;
+  if (held) {
+    return rules.holdAmbiguous
+      ? hold("ambiguous", held.cause, held.rule, held.detail)
+      : reject(held.cause === "name_pattern" ? "personal_site" : "not_a_product", held.rule, held.detail);
+  }
 
   /**
    * 호스트는 제외 패턴에 걸리는데 루트 배포가 아닌 것 — 규칙으로 가를 수 없다.
@@ -458,6 +502,7 @@ export function judge(
       : reject("personal_site", "호스트 제외 패턴", detail);
   }
   pass("호스트 제외 패턴 아님", hostIsWholeSite ? `${productHost} (루트 배포)` : `${productHost}${productPath}`);
+
 
   if (settings.agentEvidence.enforceEligibility) {
     const summary = summarizeAgentEvidence(agentEvidence ?? {

@@ -164,9 +164,10 @@ describe("judge — 거르기", () => {
     expect(judge(goodRepo(), { ...livePage, textSample, githubLinks: ["vercel/next.js"] }, settings, NOW).state).toBe("rejected");
   });
 
-  it("문서 목차는 제작자의 GitHub 링크가 있어도 문서다", () => {
+  it("문서 목차는 제작자의 GitHub 링크가 있어도 통과시키지 않는다 — 보류해 AI 가 가른다", () => {
     const textSample = "karasu Getting Started Installation API Reference Configuration Changelog";
-    expect(judge(goodRepo(), { ...livePage, textSample, githubLinks: ["someone/my-app"] }, settings, NOW).state).toBe("rejected");
+    expect(judge(goodRepo(), { ...livePage, textSample, githubLinks: ["someone/my-app"] }, settings, NOW))
+      .toMatchObject({ state: "needs_review", cause: "docs_nav" });
   });
 
   /** 거부 사유 갈래(reason)만으로는 어느 규칙에서 왜 멈췄는지 알 수 없었다 — 기록에 남긴다 */
@@ -208,9 +209,10 @@ describe("judge — 거르기", () => {
     const one = "Nivelato — measure glass offsets. Getting Started";
     expect(judge(goodRepo(), { ...livePage, textSample: one }, settings, NOW).state).toBe("approved");
 
+    // 여럿이면 목차일 수 있다 — 2026-09-19 부터 거부하지 않고 보류한다(라이브러리 홈에도 흔했다, 표본 20건 중 19건)
     const many = "karasu Getting Started Installation API Reference Configuration Changelog";
     expect(judge(goodRepo(), { ...livePage, textSample: many }, settings, NOW)).toMatchObject({
-      state: "rejected", reason: "not_a_product",
+      state: "needs_review", reason: "ambiguous", cause: "docs_nav",
     });
   });
 
@@ -267,9 +269,9 @@ describe("judge — 거르기", () => {
     expect(v.state).toBe("approved");
     expect(v.signals.profile).toBe("설명에 “my portfolio”");
 
-    // 설명이 아무 말도 안 하면 이름 패턴이 그대로 거른다
+    // 설명이 아무 말도 안 하면 이름 패턴이 그대로 걸린다 — 2026-09-19 부터 거부가 아니라 보류다
     const plain = judge(goodRepo({ repo: "someone/acme-website", description: "Acme 소개" }), livePage, settings, NOW);
-    expect(plain.reason).toBe("personal_site");
+    expect(plain).toMatchObject({ state: "needs_review", cause: "name_pattern" });
   });
 
   it("설명에만 단서가 있는 개인 프로필도 통과시킨다 — 어느 문구로 봤는지 남긴다", () => {
@@ -291,10 +293,11 @@ describe("judge — 거르기", () => {
     expect(v.state).toBe("approved");
   });
 
-  it("페이지가 문서 생성기로 만들어졌으면 거른다", () => {
+  it("페이지가 문서 생성기로 만들어졌으면 보류한다 — 문서인지 프로젝트 홈인지 AI 가 가른다", () => {
     // 주소만으로는 못 가른다 — owner.github.io/repo 아래에 문서와 웹앱이 섞여 있다
     const page = { productUrl: "https://someone.github.io/thing", status: 200, generator: "pkgdown" };
-    expect(judge(goodRepo({ repo: "someone/thing" }), page, settings, NOW).reason).toBe("not_a_product");
+    expect(judge(goodRepo({ repo: "someone/thing" }), page, settings, NOW))
+      .toMatchObject({ state: "needs_review", cause: "docs_generator" });
 
     // 목록에 없는 생성기는 신호가 아니다
     const other = { ...page, generator: "wordpress" };
@@ -373,16 +376,20 @@ describe("judge — 거르기", () => {
     for (const repo of ["someone/someone.github.io", "someone/my-portfolio", "someone/dev-blog", "someone/my-resume"]) {
       expect(judge(goodRepo({ repo }), livePage, settings, NOW).state, repo).toBe("approved");
     }
-    // 링크 모음·설정 파일·회사 소개·학술 패키지는 프로필 목록에 없다
-    for (const repo of ["someone/dotfiles", "someone/awesome-ai-tools", "someone/acme-website", "someone/Pathfinder.jl"]) {
+    // 설정 파일·학술 패키지는 그대로 거른다
+    for (const repo of ["someone/dotfiles", "someone/Pathfinder.jl"]) {
       expect(judge(goodRepo({ repo }), livePage, settings, NOW).reason, repo).toBe("personal_site");
+    }
+    // 링크 모음·회사 소개는 이름만으로 못 가른다 — 보류해 AI 가 가른다(2026-09-19)
+    for (const repo of ["someone/awesome-ai-tools", "someone/acme-website"]) {
+      expect(judge(goodRepo({ repo }), livePage, settings, NOW), repo).toMatchObject({ state: "needs_review", cause: "name_pattern" });
     }
   });
 
   it("두 목록에 겹쳐 걸리면 더 좁은 쪽이 이긴다", () => {
-    // awesome-* 는 *-blog 를 삼키지 못한다 — 서로 다른 갈래라 거부가 이긴다
+    // awesome-* 는 *-blog 를 삼키지 못한다 — 서로 다른 갈래라 프로필로 통과시키지 않고 보류한다
     const list = judge(goodRepo({ repo: "someone/awesome-blog" }), livePage, settings, NOW);
-    expect(list.reason).toBe("personal_site");
+    expect(list).toMatchObject({ state: "needs_review", cause: "name_pattern" });
     expect(list.trace.at(-1)!.detail).toContain("awesome-*");
 
     /*
@@ -396,12 +403,34 @@ describe("judge — 거르기", () => {
     }
   });
 
-  it("거부된 판정에는 개인 프로필 자국을 남기지 않는다", () => {
-    // 자국이 붙어 있으면 "왜 이게 Profile 로 올라갔지"에 답할 근거가 아니라 잡음이다
+  it("거부·보류 패턴에 걸린 판정에는 개인 프로필 자국을 남기지 않는다", () => {
+    // 자국이 붙어 있으면 "왜 이게 Profile 로 올라갔지"에 답할 근거가 아니라 잡음이다. 보류된 awesome-blog 가 AI 승인 뒤
+    // "*-blog 는 Profile 이어야 발행" 조건에 걸려 거부되는 것도 막는다
     const v = judge(goodRepo({ repo: "someone/awesome-blog" }), livePage, settings, NOW);
-    expect(v.state).toBe("rejected");
+    expect(v.state).toBe("needs_review");
     expect(v.signals.profile).toBeUndefined();
     expect(v.signals.profilePattern).toBeUndefined();
+  });
+
+  /**
+   * 미룬 보류는 확실한 거부를 이기지 못한다(2026-09-19). 곧바로 보류하면 뒤의 거부를 건너뛰어
+   * 보관된 레포·죽은 페이지까지 사람에게 간다.
+   */
+  it("문서 생성기·목차·이름 패턴의 보류는 뒤의 확실한 거부에 진다", () => {
+    const docs = { ...livePage, generator: "docusaurus" };
+    expect(judge(goodRepo({ archived: true }), docs, settings, NOW)).toMatchObject({ state: "rejected", reason: "personal_site" });
+    expect(judge(goodRepo(), { ...docs, status: 404 }, settings, NOW)).toMatchObject({ state: "rejected", reason: "unreachable" });
+    expect(judge(goodRepo({ repo: "someone/acme-website", stars: 500_000 }), livePage, settings, NOW)).toMatchObject({ state: "rejected", reason: "large_oss" });
+    // 거부가 없으면 보류로 끝나고, 멈춘 곳이 기록에 남는다
+    const held = judge(goodRepo(), docs, settings, NOW);
+    expect(held).toMatchObject({ state: "needs_review", cause: "docs_generator" });
+    expect(held.signals.stoppedAt).toMatchObject({ rule: "문서 생성기 아님" });
+  });
+
+  it("애매하면 보류가 꺼져 있으면 미룬 보류도 거부로 끝난다", () => {
+    const strict = { ...settings, judge: { ...settings.judge, holdAmbiguous: false } };
+    expect(judge(goodRepo(), { ...livePage, generator: "docusaurus" }, strict, NOW)).toMatchObject({ state: "rejected", reason: "not_a_product" });
+    expect(judge(goodRepo({ repo: "someone/acme-website" }), livePage, strict, NOW)).toMatchObject({ state: "rejected", reason: "personal_site" });
   });
 
   it("오래 방치된 프로젝트를 거른다", () => {

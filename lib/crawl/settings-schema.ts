@@ -119,10 +119,18 @@ const judgeSchema = z.object({
   /** 레포 이름이 이 패턴이면 제외 (* 와일드카드) */
   excludedRepoPatterns: z.array(z.string().min(1).max(120)).max(200),
   /**
-   * 이 생성기로 만들어진 페이지는 문서 사이트로 본다.
+   * 레포 이름이 이 패턴이면 거부하지 않고 보류한다 — AI 가 가른다(2026-09-19).
+   *
+   * 이름만으로는 회사 소개 사이트·링크 모음인지 제품 사이트인지 못 가른다. 제외 패턴과 같은 자리에서 보고,
+   * 개인 프로필 패턴·키워드가 똑같이 먼저 이긴다. 뒤의 확실한 거부(스타·방치·HTTP)가 걸리면 그쪽이 이긴다.
+   */
+  heldRepoPatterns: z.array(z.string().min(1).max(120)).max(100),
+  /**
+   * 이 생성기로 만들어진 페이지는 문서일 수 있다 — 2026-09-19 부터 거부하지 않고 보류해 AI 가 가른다.
    *
    * 실측에서 심사 큐의 GitHub Pages 23건 중 10건이 문서 생성기 흔적을 남겼고, 그중 범용
-   * 생성기(jekyll·hugo)를 뺀 8건이 실제 문서였다. 사람이 같은 판단을 반복할 이유가 없다.
+   * 생성기(jekyll·hugo)를 뺀 8건이 실제 문서였다. 그러나 라이브러리·CLI 도 올리게 되자 이 규칙이 거부한 것의
+   * 79%가 문서 도구로 만든 프로젝트 홈페이지였다(rules.ts 참고).
    */
   docsGenerators: z.array(z.string().min(2).max(40)).max(50),
   /**
@@ -173,7 +181,7 @@ const judgeSchema = z.object({
    * 문서 사이트의 목차 낱말.
    *
    * 한 낱말은 진짜 제품 페이지에도 흔하다("Getting Started" 버튼). 여러 개가 함께 있으면
-   * 그것은 목차이고, 목차가 있는 페이지는 읽는 곳이지 쓰는 곳이 아니다.
+   * 목차일 수 있다 — 2026-09-19 부터 거부하지 않고 보류한다. 라이브러리 홈페이지에도 흔했다(표본 20건 중 19건).
    */
   docsNavPhrases: z.array(z.string().min(2).max(60)).max(60),
   /** 이 수 이상 함께 나오면 문서 사이트로 본다. 실측에서 3이 오탐 없이 68건을 갈랐다 */
@@ -492,16 +500,20 @@ export const DEFAULT_CRAWL_SETTINGS: CrawlSettings = {
       "*.github.io",
       "documentation",
       "dotfiles",
-      "awesome-*",
       "*-portfolio",
       "*-blog",
       "*-resume",
-      // 회사·단체 소개 사이트와 학술 패키지 (juxt/astro-website, Pathfinder.jl을 실제로 봤다)
-      "*-website",
+      // 학술 패키지 (Pathfinder.jl을 실제로 봤다)
       "*.jl",
       "*-personal-site",
       "*-personal-website",
     ],
+    /**
+     * 2026-09-19 에 제외 패턴에서 옮겼다. 블라인드 표본(새 기준): `*-website` 거부 18건 중 6건,
+     * `awesome-*` 거부 8건 중 5건이 올려야 할 것이었다 — 앱 사이트, 검색되는 디렉터리.
+     * 나머지는 회사·대행사·행사 사이트와 단순 링크 모음이라 AI 가 거부한다.
+     */
+    heldRepoPatterns: ["*-website", "awesome-*"],
     /**
      * 실측(2026-08-30, 원본 1445건): 정확히 이 제목으로 배포된 것이 5건 있었고 전부 발행돼
      * 목록에 "Create Next App"이 셋, "Document"와 "Svelte app"이 하나씩 올라 있었다.

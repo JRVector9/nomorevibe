@@ -158,6 +158,12 @@ it("지시문은 누가 만든 소프트웨어의 집인가 하나만 묻고, �
   expect(system).toContain("If product.linksOwnGithub is true");
   // 거부는 이 목록뿐이다 — 문서·글·강의·대행사·남의 플랫폼 페이지·빈 화면
   expect(system).toContain("REJECT only these:");
+  /*
+   * 규칙이 문서 생성기·문서 목차를 보류로 넘긴다(2026-09-19). 이 두 문장이 없으면 모델은 "Docusaurus 로 만들었다 = 문서"로
+   * 읽고 라이브러리 홈페이지를 거부했다(표본 19건 중 9건), 검색되는 플러그인 디렉터리도 "목록"이라며 거부했다.
+   */
+  expect(system).toContain("A project's homepage is still its homepage when it is built with a documentation framework");
+  expect(system).toContain("when the visitor can search, filter, sort or browse it by category");
   expect(system).toContain("code package registries");
   /*
    * 개인 프로필은 거부 목록이 아니라 Profile 로 승인한다. 질문을 "소프트웨어인가"로만 두었을 때

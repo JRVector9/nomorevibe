@@ -27,6 +27,33 @@ export const CAUSE_GUIDE: Record<CauseKey, {
       { decision: "거부 · 제품이 아님", when: "문서·글·강의·발표 자료가 본문이다" },
     ],
   },
+  docs_generator: {
+    label: "문서 도구로 만든 페이지",
+    summary: "Docusaurus·VitePress·MkDocs 같은 문서 도구로 만든 페이지입니다. 라이브러리·CLI 의 홈페이지가 흔히 이렇게 만들어집니다.",
+    question: "프로젝트의 홈페이지입니까, 문서 자체입니까?",
+    hints: [
+      { decision: "승인", when: "소프트웨어를 소개하고 설치·사용법을 안내하는 홈이다" },
+      { decision: "거부 · 제품이 아님", when: "API 레퍼런스·매뉴얼의 한 장처럼 문서 본문이다" },
+    ],
+  },
+  docs_nav: {
+    label: "문서 목차 낱말이 많은 페이지",
+    summary: "본문에 Getting started·Installation·API reference 같은 목차 낱말이 여럿입니다. 라이브러리 홈페이지에도 흔합니다.",
+    question: "프로젝트의 홈페이지입니까, 문서 자체입니까?",
+    hints: [
+      { decision: "승인", when: "소프트웨어를 소개하고 설치·사용법을 안내하는 홈이다" },
+      { decision: "거부 · 제품이 아님", when: "README 를 옮겨 놓은 페이지나 문서 본문이다" },
+    ],
+  },
+  name_pattern: {
+    label: "이름으로는 못 가름 (*-website · awesome-*)",
+    summary: "회사 소개 사이트나 링크 모음일 때가 많지만, 앱 사이트나 검색되는 디렉터리도 섞여 있습니다.",
+    question: "누가 만든 제품의 사이트입니까, 회사·행사 소개나 단순 링크 모음입니까?",
+    hints: [
+      { decision: "승인", when: "앱·서비스의 사이트이거나, 검색·필터가 되는 디렉터리다" },
+      { decision: "거부 · 회사 소개·링크 모음", when: "대행사·회사·행사 소개이거나, 남의 도구를 늘어놓은 목록이다" },
+    ],
+  },
   page_status_unknown: {
     label: "배포 URL 응답 미확인",
     summary: "수집기가 아직 이 URL을 열어보지 못했습니다. 수집이 끝나면 자동으로 다시 판정됩니다.",
