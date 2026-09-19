@@ -1,4 +1,5 @@
 import type { AmbiguityCause } from "@/lib/crawl/rules";
+import type { HumanOnlyReason } from "@/lib/crawl/admin-review";
 
 
 /**
@@ -8,7 +9,7 @@ import type { AmbiguityCause } from "@/lib/crawl/rules";
  * 여기에 갈래별로 "무엇을 묻는 것인지"와 "어느 쪽이면 어느 결정인지"를 적어 둔다.
  * 같은 갈래는 판단도 같으므로 묶어서 처리할 수 있다.
  */
-export type CauseKey = AmbiguityCause | "ai_reject" | "resolved" | "unknown";
+export type CauseKey = AmbiguityCause | "ai_reject" | "resolved" | "unknown" | HumanOnlyReason;
 
 export const CAUSE_GUIDE: Record<CauseKey, {
   label: string;
@@ -52,6 +53,24 @@ export const CAUSE_GUIDE: Record<CauseKey, {
     hints: [
       { decision: "승인", when: "앱·서비스의 사이트이거나, 검색·필터가 되는 디렉터리다" },
       { decision: "거부 · 회사 소개·링크 모음", when: "대행사·회사·행사 소개이거나, 남의 도구를 늘어놓은 목록이다" },
+    ],
+  },
+  second_review_split: {
+    label: "2차 심사가 갈림",
+    summary: "1차 AI 는 승인했는데 2차 모델이 승인하지 않았습니다. 두 모델이 모두 승인해야 공개하므로 사람이 가릅니다.",
+    question: "두 모델 중 어느 쪽이 맞습니까?",
+    hints: [
+      { decision: "승인", when: "1차가 맞다 — 누가 만든 소프트웨어의 페이지이거나 한 사람의 프로필이다" },
+      { decision: "거부", when: "2차가 맞다 — 2차의 사유(판정 당시 멈춘 곳)를 확인" },
+    ],
+  },
+  no_description: {
+    label: "소개 문구 없음",
+    summary: "페이지 설명도 레포 설명도 없어 목록에 쓸 소개를 만들 수 없습니다. 사람이 승인하면 소개 없이도 올라갑니다.",
+    question: "소개 없이 올려도 무엇인지 알 수 있습니까?",
+    hints: [
+      { decision: "승인", when: "페이지를 열어 보니 제품이다 — 이름과 페이지만으로 알 수 있다" },
+      { decision: "거부", when: "무엇인지 알 수 없다" },
     ],
   },
   page_status_unknown: {

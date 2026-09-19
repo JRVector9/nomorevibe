@@ -1,7 +1,7 @@
 import { isDeepStrictEqual } from "node:util";
 import { and, asc, desc, eq, inArray, or, sql, type SQL } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { crawlCandidates, crawlDocuments, crawlFrontier, crawlSettings, crawlReviewAttempts,
+import { crawlCandidates, crawlDocuments, crawlFrontier, crawlSettings, crawlReviewAttempts, secondReviews,
   agentRepositoryScans, agentRepositoryObservations,
   type CrawlCandidate, type CrawlDocument, type CrawlReviewAttempt } from "@/lib/db/schema";
 import type { ProductTransaction } from "@/lib/domain/products/generation";
@@ -94,12 +94,54 @@ function matchingSource(settings: CrawlSettings): SQL {
         AND rs.last_error_code IS NOT DISTINCT FROM ${crawlReviewAttempts.source}->>'scanError')`;
 }
 
+/**
+ * 두 모델 승인 관문이 걸리는가(2026-09-19, 사용자 결정).
+ *
+ * enforce 에서 1차 AI 승인만으로는 발행하지 않는다 — 2차 모델도 같은 입력을 승인해야 한다(second-review.ts 의
+ * ai_approved 행). 실측(블라인드 159건): 1차 혼자 승인하면 124건 중 오답 9, 둘 다 승인하면 116건 중 5.
+ * 2차 심사를 끄면 관문도 꺼진다 — 켜 둔 채 표를 낼 모델이 없으면 발행이 멈추므로, 끌 때는 이 둘을 함께 생각한다.
+ */
+export function secondGateRequired(settings: CrawlSettings): boolean {
+  return settings.reviewMode === "enforce" && settings.secondReview.enabled;
+}
+
+/** 모델 이름을 같은 모델로 본다 — "[MLX] x" 와 "x" 는 같다(review-model-identity.ts 와 같은 규칙) */
+const sameModelName = (name: SQL) => sql`regexp_replace(lower(trim(${name})), '^\\[mlx\\][[:space:]]*', '', 'i')`;
+
+/**
+ * 이 1차 승인에 대해, 지금 세운 2차 모델마다 승인 표가 있는가.
+ *
+ * 표가 "하나라도" 승인이면 되는 것이 아니다 — 모델을 바꾸거나 더한 직후에는 빠진 모델의 옛 승인만 남아 있어,
+ * 새 모델이 한 번도 보지 않은 것이 발행됐다(codex 교차 검토 P1). 지금 설정의 모델 칸마다, 그 모델이나 그 칸을
+ * 대신한 대체 모델(fallback_for_id)의 승인을 찾는다. 1차와 같은 모델의 칸은 되풀이라 뺀다. 칸이 하나도 없으면
+ * 두 모델 승인을 할 수 없으므로 통과시키지 않는다(그런 후보는 enqueueSecondReviews 가 사람에게 넘긴다).
+ * 볼 표·실패·반대가 하나라도 열려 있으면 역시 통과시키지 않는다.
+ */
+function secondApproved(attempt: { id: SQL; model: SQL }, voters: { provider: string; model: string }[],
+  fallbacks: { provider: string; model: string }[] = []): SQL {
+  const slots = sql`jsonb_array_elements(${JSON.stringify(voters)}::jsonb) v`;
+  // 대체 모델의 표는 그 모델이 지금도 대체 모델일 때만 칸을 채운다 — 설정에서 뺀 직후 정리 전에 옛 승인으로 발행되지 않게(codex 2차 P1)
+  const currentFallback = sql`(g.fallback_for_id IS NULL OR EXISTS (SELECT 1 FROM jsonb_array_elements(${JSON.stringify(fallbacks)}::jsonb) f
+    WHERE f->>'provider' = g.provider AND ${sameModelName(sql`f->>'model'`)} = ${sameModelName(sql`g.model`)}))`;
+  const independent = sql`${sameModelName(sql`v->>'model'`)} <> ${sameModelName(sql`coalesce(${attempt.model}, '')`)}`;
+  return sql`(EXISTS (SELECT 1 FROM ${slots} WHERE ${independent})
+    AND NOT EXISTS (SELECT 1 FROM ${slots} WHERE ${independent}
+      AND NOT EXISTS (SELECT 1 FROM ${secondReviews} g LEFT JOIN ${secondReviews} root ON root.id = g.fallback_for_id
+        WHERE g.first_attempt_id = ${attempt.id} AND g.trigger = 'ai_approved' AND g.status = 'agreed' AND g.second_decision = 'approve'
+          AND coalesce(root.provider, g.provider) = v->>'provider'
+          AND ${sameModelName(sql`coalesce(root.model, g.model)`)} = ${sameModelName(sql`v->>'model'`)} AND ${currentFallback}))
+    AND NOT EXISTS (SELECT 1 FROM ${secondReviews} g WHERE g.first_attempt_id = ${attempt.id} AND g.trigger = 'ai_approved'
+      AND g.status IN ('pending', 'failed', 'needs_human')))`;
+}
+
 export function reviewApprovalPredicate(settings: CrawlSettings): SQL {
   if (settings.reviewMode !== "enforce") return sql`true`;
   return sql`(${crawlCandidates.decidedBy} = 'admin' OR EXISTS (
     SELECT 1 FROM ${crawlReviewAttempts} WHERE ${matchingSource(settings)}
     AND ${crawlReviewAttempts.state} = 'succeeded' AND ${crawlReviewAttempts.outcome}->>'decision' = 'approve'
-    AND ${crawlReviewAttempts.validUntil} > now()))`;
+    AND ${crawlReviewAttempts.validUntil} > now()
+    AND ${secondGateRequired(settings) ? secondApproved({ id: sql`${crawlReviewAttempts.id}`, model: sql`${crawlReviewAttempts.model}` },
+      settings.secondReview.voters, settings.secondReview.fallbacks ?? []) : sql`true`}))`;
 }
 
 /**
@@ -336,5 +378,13 @@ export async function assertReviewApproval(tx: ProductTransaction, input: {
   if (!approval || current.validUntil <= new Date() || input.document.fetchedAt > new Date()
     || input.input && input.input.inputHash !== current.inputHash) throw new ReviewApprovalChangedError();
   validateReviewOutcome(current, approval.outcome);
+  // 발행 직전에 한 번 더 — 목록을 고른 뒤 2차 표가 반대로 바뀌었을 수 있다
+  if (secondGateRequired(input.settings)) {
+    // 표를 잠근 뒤 같은 조건으로 다시 잰다 — 목록을 고른 뒤 표가 바뀌었을 수 있다
+    await tx.select({ id: secondReviews.id }).from(secondReviews).where(eq(secondReviews.firstAttemptId, approval.id)).for("share");
+    const [gate] = await tx.execute<{ ok: boolean }>(sql`select ${secondApproved({ id: sql`${approval.id}`, model: sql`${approval.model}` },
+      input.settings.secondReview.voters, input.settings.secondReview.fallbacks ?? [])} as ok`);
+    if (!gate?.ok) throw new ReviewApprovalChangedError();
+  }
   return approval;
 }

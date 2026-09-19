@@ -1,5 +1,5 @@
 import { sameReviewModel } from "./review-model-identity";
-import { and, asc, desc, eq, gt, inArray, not, or, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, gt, inArray, not, notInArray, or, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { db } from '@/lib/db';
 import { agentRepositoryObservations, agentRepositoryScans, crawlCandidates, crawlDocuments, crawlFrontier,
@@ -210,7 +210,11 @@ const REVIEW_QUEUE_SCAN_CHUNK = 1_000;
  * 사람은 사유만 확인하면 된다 — 목록을 손으로 옮기지 않고 갈래로 묶어 한 번에 처리한다.
  * 규칙이 지금 스스로 가르는 것('resolved')이 더 싸므로 그쪽을 먼저 본다.
  */
-export type ReviewQueueBucket = AmbiguityCause | 'ai_reject' | 'resolved' | 'unknown';
+export type ReviewQueueBucket = AmbiguityCause | 'ai_reject' | 'resolved' | 'unknown' | HumanOnlyReason;
+/** AI 심사가 다시 집지 않고 사람만 가르는 보류 사유(2026-09-19) — 규칙으로 되돌려도 같은 곳에 다시 선다 */
+export const HUMAN_ONLY_REASONS = ['second_review_split', 'no_description'] as const;
+export type HumanOnlyReason = typeof HUMAN_ONLY_REASONS[number];
+const isHumanOnly = (reason: string | null): reason is HumanOnlyReason => HUMAN_ONLY_REASONS.some((value) => value === reason);
 export type ReviewQueueCauses = {
   counts: { cause: ReviewQueueBucket; count: number }[];
   ids: Map<ReviewQueueBucket, number[]>;
@@ -249,7 +253,8 @@ export async function reviewQueueCauses(settings: CrawlSettings): Promise<Review
         ? judge(factsFromRepoMeta(candidate.repo, document.repoMeta), pageFactsFromDocument(document), settings)
         : null;
       const aiRejected = aiByCandidate.get(candidate.id)?.outcome?.decision === 'reject';
-      const key: ReviewQueueBucket = !verdict ? 'unknown'
+      // 사람만 가르는 사유는 규칙을 다시 태우면 통과로 나와 "보류가 아님"에 섞인다 — 사유 그대로 묶는다
+      const key: ReviewQueueBucket = isHumanOnly(candidate.reason) ? candidate.reason : !verdict ? 'unknown'
         : verdict.cause ? (aiRejected ? 'ai_reject' : verdict.cause) : 'resolved';
       ids.set(key, [...(ids.get(key) ?? []), candidate.id]);
     }
@@ -291,6 +296,8 @@ export async function requeueResolvedCandidates(actor: string, limit = REVIEW_QU
   const settings = await getSettings();
   const candidates = await db.select().from(crawlCandidates).where(and(
     eq(crawlCandidates.state, 'needs_review'), eq(crawlCandidates.decidedBy, 'auto'),
+    // 2차가 반대했거나 소개가 없어 사람에게 넘어온 것은 규칙으로 되돌리면 같은 자리로 돌아온다
+    notInArray(crawlCandidates.reason, [...HUMAN_ONLY_REASONS]),
   )).orderBy(asc(crawlCandidates.id)).limit(limit);
   if (!candidates.length) return { scanned: 0, requeued: 0, byReason: [] };
 

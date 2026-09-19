@@ -117,7 +117,17 @@ export type DecisionReason =
   | "ai_evidence_not_found"
   | "repository_relationship_conflict"
   | "source_changed"
-  | "ai_evidence_supported";
+  | "ai_evidence_supported"
+  /**
+   * enforce 에서 1차 AI 는 승인했는데 2차 모델이 반대했다(2026-09-19). 사람이 가른다 — AI 심사가 다시 집지 않는
+   * 사유다(REVIEW_RETRIABLE_REASONS 에 없다). 다시 집으면 같은 승인이 되풀이돼 "승인됐지만 발행은 막힌" 상태에 갇힌다.
+   */
+  | "second_review_split"
+  /**
+   * 발행하려는데 페이지 설명도 레포 설명도 없어 소개를 만들 수 없다. 사람이 소개를 보고 가른다 — AI 심사가 다시
+   * 집지 않는다. "ambiguous" 로 두었을 때 enforce 에서 보류 → AI 승인 → 발행 실패 → 보류가 AI 호출마다 되풀이됐다.
+   */
+  | "no_description";
 
 export const crawlCandidates = pgTable(
   "crawl_candidates",

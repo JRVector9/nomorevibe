@@ -36,6 +36,8 @@ beforeEach(async () => {
 });
 async function fixture() {
   await saveSettings({enabled:true},"test");
+  // 이 파일은 스캔 잠금을 본다 — 두 모델 승인 관문(2차 심사)은 review-publication-gate 가 따로 본다
+  await saveSettings({secondReview:{enabled:false}},"test");
   vi.stubEnv("CRAWL_REVIEW_READY","true");
   expect(await changeReviewMode({mode:"enforce",expectedMode:"off",actor:"test",reason:"scan lock test"})).toMatchObject({ok:true});
   vi.unstubAllEnvs();

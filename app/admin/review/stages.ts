@@ -48,14 +48,16 @@ export const STAGE_KEYS = STAGE_GROUPS.flatMap((group) => group.stages.map((stag
  * 후보가 섞일 수 있어(2차 행은 후보가 다시 판정돼도 남는다) 보류 집합과 겹치는 것만 센다.
  * 2차가 끝난 것이 먼저다 — AI 결론이 없는데 2차 결론이 있을 수는 없지만, 있다면 사람 쪽으로 보낸다.
  */
-export function heldStages(aiIds: Map<ReviewAiDecision, number[]>, secondIds: Record<SecondChipKey, number[]>): {
+export function heldStages(aiIds: Map<ReviewAiDecision, number[]>, secondIds: Record<SecondChipKey, number[]>,
+  /** 사람만 가르는 사유(2차 갈림·소개 없음) — 2차 표가 없어도 "직접 판단"에 선다 */
+  humanOnly: number[] = []): {
   ids: Record<HeldStage, number[]>; agreedReject: number; agreedApprove: number;
 } {
   const held = new Set([...aiIds.values()].flat());
   const within = (list: number[]) => list.filter((id) => held.has(id));
   const agreedReject = within([...secondIds.unanimous_reject, ...secondIds.agreed_reject]);
   const agreedApprove = within([...secondIds.unanimous_approve, ...secondIds.agreed_approve]);
-  const human = within(secondIds.needs_human);
+  const human = within([...secondIds.needs_human, ...humanOnly]);
   const concluded = new Set([...agreedReject, ...agreedApprove, ...human]);
   const none = new Set(aiIds.get("none") ?? []);
   const ai = [...none].filter((id) => !concluded.has(id));
