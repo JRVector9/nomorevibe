@@ -267,11 +267,11 @@ export async function reviewQueueCauses(settings: CrawlSettings): Promise<Review
  * 상태별 후보 수 — 상태 칩에 붙인다. "진행 중"은 목록과 같이 판정 대기·발행 대기·보류를 합친 것이다.
  * group by 한 번이라 싸다(후보 6만 건, 상태 색인).
  */
-export async function candidateStateCounts(): Promise<Record<'pending' | 'needs_review' | 'rejected' | 'published', number>> {
+export async function candidateStateCounts(): Promise<Record<'pending' | 'new' | 'approved' | 'needs_review' | 'rejected' | 'published', number>> {
   const rows = await db.select({ state: crawlCandidates.state, count: sql<number>`count(*)::int` })
     .from(crawlCandidates).groupBy(crawlCandidates.state);
   const of = (state: string) => rows.find(row => row.state === state)?.count ?? 0;
-  return { pending: of('new') + of('approved') + of('needs_review'), needs_review: of('needs_review'),
+  return { pending: of('new') + of('approved') + of('needs_review'), new: of('new'), approved: of('approved'), needs_review: of('needs_review'),
     rejected: of('rejected'), published: of('published') };
 }
 
@@ -361,13 +361,14 @@ export type AdminReviewEntry = {
  * 전체 수(total)를 쓴다.
  */
 export async function listAdminReviewEntries(settings: CrawlSettings, options: {
-  state?: 'pending' | 'needs_review' | 'rejected' | 'published'; after?: number; offset?: number; limit?: number;
+  state?: 'pending' | 'new' | 'approved' | 'needs_review' | 'rejected' | 'published'; after?: number; offset?: number; limit?: number;
   /** 갈래로 걸러 볼 때. 계산으로 얻은 값이라 SQL로 거를 수 없어 id 를 받는다 */
   ids?: number[];
 } = {}) {
   const limit = Math.max(1, Math.min(options.limit ?? 50, 50));
   const states = options.state === 'rejected' ? ['rejected'] as const : options.state === 'published' ? ['published'] as const :
-    options.state === 'needs_review' ? ['needs_review'] as const : ['new', 'approved', 'needs_review'] as const;
+    options.state === 'needs_review' ? ['needs_review'] as const : options.state === 'new' ? ['new'] as const
+      : options.state === 'approved' ? ['approved'] as const : ['new', 'approved', 'needs_review'] as const;
   if (options.ids?.length === 0) return { entries: [] as AdminReviewEntry[], nextAfter: null, total: 0 };
   const where = and(inArray(crawlCandidates.state, [...states]),
     options.ids ? inArray(crawlCandidates.id, options.ids) : undefined,
