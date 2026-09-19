@@ -34,7 +34,7 @@ export const metadata: Metadata = { title: "운영센터 — NoMoreVibe", robots
 const REASON_LABELS: Record<string, string> = {
   no_homepage: "배포 URL 없음",
   unreachable: "배포 URL 접속 불가",
-  not_a_product: "배포물이 아님",
+  not_a_product: "제품이 아님",
   large_oss: "대형 오픈소스·조직",
   personal_site: "회사 소개·링크 모음·설정 저장소",
   fork: "포크",

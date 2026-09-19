@@ -19,11 +19,12 @@ export const CAUSE_GUIDE: Record<CauseKey, {
   host_excluded_subpath: {
     label: "호스트는 제외 대상, 배포물은 하위 경로",
     summary: "owner.github.io 루트면 개인 홈페이지지만, 그 아래 경로는 올려둔 제품일 수 있습니다.",
-    question: "이 페이지는 바로 쓸 수 있는 서비스입니까, 다른 것을 소개하는 페이지입니까?",
+    // 2026-09-19 기준: 가입·설치·다운로드 페이지와 라이브러리·SDK 도 승인, 개인 프로필도 승인(2026-09-18)
+    question: "이 페이지는 누가 만든 소프트웨어의 페이지이거나, 한 사람의 프로필입니까?",
     hints: [
-      { decision: "승인", when: "페이지에서 곧바로 입력·조작·확인이 된다 — 계산기, 대시보드, 에디터, 게임" },
-      { decision: "거부 · 배포물이 아님", when: "설치 방법·문서·발표 자료가 본문이다. 실제 물건은 CLI나 라이브러리다" },
-      { decision: "거부 · 개인 사이트", when: "이력·포트폴리오·블로그다" },
+      { decision: "승인", when: "제품·도구의 페이지다 — 웹앱·게임은 물론 설치·다운로드 안내, 라이브러리·SDK 소개도 승인" },
+      { decision: "승인 · 개인 프로필", when: "한 사람의 이력·포트폴리오·개인 블로그다" },
+      { decision: "거부 · 제품이 아님", when: "문서·글·강의·발표 자료가 본문이다" },
     ],
   },
   page_status_unknown: {
@@ -41,7 +42,7 @@ export const CAUSE_GUIDE: Record<CauseKey, {
     question: "이 저장소가 아직 살아 있습니까?",
     hints: [
       { decision: "승인", when: "저장소를 열어보니 최근 활동이 있다" },
-      { decision: "거부 · 배포물이 아님", when: "비어 있거나 오래 방치돼 있다" },
+      { decision: "거부 · 제품이 아님", when: "비어 있거나 오래 방치돼 있다" },
     ],
   },
   agent_evidence: {
@@ -58,8 +59,8 @@ export const CAUSE_GUIDE: Record<CauseKey, {
     summary: "규칙이 못 가른 것을 AI 심사가 갈랐습니다. 사유를 확인하고 묶어서 처리할 수 있습니다.",
     question: "AI가 든 사유가 맞습니까?",
     hints: [
-      { decision: "선택 거부", when: "사유가 맞다 — 스타터 템플릿, 라이브러리, 강의 자료, 문서 사이트 같은 것" },
-      { decision: "개별 승인", when: "AI가 틀렸다 — 사유를 남기면 AI 판정과 별개로 기록됩니다" },
+      { decision: "선택 거부", when: "사유가 맞다 — 문서 사이트, 글·강의, 대행사·회사 소개, 남의 플랫폼 페이지, 빈 화면" },
+      { decision: "개별 승인", when: "AI가 틀렸다 — 가입·설치·다운로드 페이지, 라이브러리·SDK 는 승인 대상이다. 사유를 남기면 AI 판정과 별개로 기록됩니다" },
     ],
   },
   resolved: {
