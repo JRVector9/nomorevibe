@@ -13,9 +13,14 @@ describe("한 줄 소개 다듬기", () => {
     expect(tidyTagline("  바를 등록하면   손님이 찾습니다.  ")).toBe("바를 등록하면 손님이 찾습니다");
   });
 
-  it("100자를 넘으면 끊을 자리(쉼표)에서 끊는다 — 모델은 길이 규칙을 지키지 않는다", () => {
-    const line = tidyTagline("Track your vinyl collection and wishlist, searching by artist or genre and adding records via the music player");
-    expect(line).toBe("Track your vinyl collection and wishlist");
+  it("100자를 넘으면 끝에 가까운 끊을 자리에서 끊는다 — 모델은 길이 규칙을 지키지 않는다", () => {
+    const line = tidyTagline("Track your vinyl collection and wishlist by artist, genre or year of release, adding records from the shop");
+    expect(line).toBe("Track your vinyl collection and wishlist by artist, genre or year of release");
+  });
+
+  it("끊을 자리가 앞쪽뿐이면 문장을 그대로 둔다 — 쉼표 하나에 뜻의 대부분을 잃지 않는다", () => {
+    const early = "Track daily expenses, set budgets and sync everything to a Google Sheet so every device shows the same numbers";
+    expect(tidyTagline(early)).toBe(early);
   });
 
   it("끊을 자리가 없으면 문장을 그대로 둔다 — 뜻이 중간에 끊긴 글보다 낫다", () => {

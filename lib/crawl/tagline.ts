@@ -24,8 +24,14 @@ export const TAGLINE_LIMIT = 100;
 const TAGLINE_MAX = 200;
 /** 짧게 끊어도 뜻이 남는 자리 — 쉼표·세미콜론·중점 */
 const CLAUSE = [", ", "; ", " — ", " · ", "，", "、", "；"];
-/** 끊고 나서 이만큼은 남아야 뜻이 산다 */
-const TAGLINE_MIN = 30;
+/**
+ * 끊을 자리가 이보다 앞이면 끊지 않는다.
+ *
+ * 30자로 두었더니 앞쪽 쉼표 하나에 문장의 대부분이 날아갔다 — "Track daily expenses, set budgets,
+ * and sync data to a Google Sheet…" 가 "Track daily expenses, set budgets" 가 됐다.
+ * 끝에 가까운 자리에서만 끊는다. 그런 자리가 없으면 문장을 그대로 둔다.
+ */
+const TAGLINE_MIN = 70;
 
 export type TaglineEvidenceSource = "page" | "readme" | "both";
 
