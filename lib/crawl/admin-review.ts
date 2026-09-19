@@ -1,5 +1,5 @@
 import { sameReviewModel } from "./review-model-identity";
-import { and, asc, desc, eq, gt, inArray, or, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, gt, inArray, not, or, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { db } from '@/lib/db';
 import { agentRepositoryObservations, agentRepositoryScans, crawlCandidates, crawlDocuments, crawlFrontier,
@@ -364,22 +364,40 @@ export async function listAdminReviewEntries(settings: CrawlSettings, options: {
   state?: 'pending' | 'new' | 'approved' | 'needs_review' | 'rejected' | 'published'; after?: number; offset?: number; limit?: number;
   /** 갈래로 걸러 볼 때. 계산으로 얻은 값이라 SQL로 거를 수 없어 id 를 받는다 */
   ids?: number[];
+  /** 이름(페이지 제목)·레포·주소에 이 글자가 들어간 것만 */
+  search?: string;
+  /**
+   * 마지막 푸시가 이 일수보다 오래된 것을 목록에서 뺀다 — 화면에서만 빼고 후보는 그대로 둔다(2026-09-19 사용자 결정).
+   * 푸시 시각을 모르는 것은 오래됐다고 볼 근거가 없어 남긴다. 뺀 수는 hiddenByAge 로 돌려준다.
+   */
+  pushedWithinDays?: number;
 } = {}) {
   const limit = Math.max(1, Math.min(options.limit ?? 50, 50));
   const states = options.state === 'rejected' ? ['rejected'] as const : options.state === 'published' ? ['published'] as const :
     options.state === 'needs_review' ? ['needs_review'] as const : options.state === 'new' ? ['new'] as const
       : options.state === 'approved' ? ['approved'] as const : ['new', 'approved', 'needs_review'] as const;
-  if (options.ids?.length === 0) return { entries: [] as AdminReviewEntry[], nextAfter: null, total: 0 };
-  const where = and(inArray(crawlCandidates.state, [...states]),
+  if (options.ids?.length === 0) return { entries: [] as AdminReviewEntry[], nextAfter: null, total: 0, hiddenByAge: 0 };
+  const term = options.search?.trim().slice(0, 100);
+  // ILIKE 의 % _ \ 는 글자 그대로 찾는다
+  const like = term ? `%${term.replace(/[\\%_]/g, (char) => `\\${char}`)}%` : null;
+  const matches = like ? sql`(${crawlCandidates.repo} ilike ${like} or coalesce(${crawlCandidates.productUrl}, '') ilike ${like}
+    or exists (select 1 from ${crawlDocuments} d where d.repo = ${crawlCandidates.repo} and coalesce(d.page_meta->>'title', '') ilike ${like}))` : undefined;
+  const days = options.pushedWithinDays && Number.isSafeInteger(options.pushedWithinDays) && options.pushedWithinDays > 0 ? options.pushedWithinDays : null;
+  const stale = days ? sql`exists (select 1 from ${crawlDocuments} d where d.repo = ${crawlCandidates.repo}
+    and d.repo_meta->>'pushed_at' ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T'
+    and (d.repo_meta->>'pushed_at')::timestamptz <= now() - make_interval(days => ${days}))` : undefined;
+  const base = and(inArray(crawlCandidates.state, [...states]),
     options.ids ? inArray(crawlCandidates.id, options.ids) : undefined,
-    sql`${crawlCandidates.id} > ${Math.max(0, options.after ?? 0)}`);
-  const [candidates, [{ total }]] = await Promise.all([
+    sql`${crawlCandidates.id} > ${Math.max(0, options.after ?? 0)}`, matches);
+  const where = stale ? and(base, not(stale)) : base;
+  const [candidates, [{ total }], [{ hidden: hiddenByAge }]] = await Promise.all([
     db.select().from(crawlCandidates).where(where).orderBy(asc(crawlCandidates.id))
       .limit(limit + 1).offset(Math.max(0, options.offset ?? 0)),
     db.select({ total: sql<number>`count(*)::int` }).from(crawlCandidates).where(where),
+    stale ? db.select({ hidden: sql<number>`count(*)::int` }).from(crawlCandidates).where(and(base, stale)) : Promise.resolve([{ hidden: 0 }]),
   ]);
   const page = candidates.slice(0, limit);
-  if (!page.length) return { entries: [] as AdminReviewEntry[], nextAfter: null, total };
+  if (!page.length) return { entries: [] as AdminReviewEntry[], nextAfter: null, total, hiddenByAge };
   const ids = page.map(row => row.id), repos = page.map(row => row.repo);
   const [documents, scans, latest, latestAutomatic] = await Promise.all([
     db.select().from(crawlDocuments).where(inArray(crawlDocuments.repo, repos)),
@@ -448,7 +466,7 @@ export async function listAdminReviewEntries(settings: CrawlSettings, options: {
   for (const entry of entries) {
     for (const part of [entry.review, entry.latest, ...entry.seconds]) if (part?.reason) part.reasonKo = korean.get(part.reason) ?? null;
   }
-  return { entries, nextAfter: candidates.length > limit ? page.at(-1)!.id : null, total };
+  return { entries, nextAfter: candidates.length > limit ? page.at(-1)!.id : null, total, hiddenByAge };
 }
 
 export type ReviewAiDecision = 'reject' | 'approve' | 'needs_review' | 'none';
