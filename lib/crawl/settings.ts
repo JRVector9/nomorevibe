@@ -204,6 +204,8 @@ const TRACKED: { label: string; read: (s: CrawlSettings) => unknown }[] = [
   { label: "조직 계정 제외", read: (s) => s.judge.excludeOrganizations },
   { label: "차단 도메인", read: (s) => s.judge.blockedHomepageDomains },
   { label: "제외 패턴", read: (s) => s.judge.excludedRepoPatterns },
+  // 2026-09-19 에 제외 패턴에서 옮긴 둘. 저장값에 남아 있으면 여전히 곧바로 거부된다
+  { label: "보류 패턴", read: (s) => s.judge.heldRepoPatterns },
   // 새 정책을 여는 두 목록. 여기가 어긋나면 개인 프로필이 조용히 다시 막힌다
   { label: "개인 프로필 패턴", read: (s) => s.judge.profileRepoPatterns },
   { label: "분류 확인이 필요한 패턴", read: (s) => s.judge.profileOnlyPatterns },

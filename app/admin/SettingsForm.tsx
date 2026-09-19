@@ -267,9 +267,8 @@ export function SettingsForm({ settings }: { settings: CrawlSettings }) {
           <div>
             <label className={label} htmlFor="excludedRepoPatterns">레포명 제외 패턴</label>
             <p className={hint}>
-              레포 이름이 이 모양이면 제품이 아니라고 봅니다 — 링크 모음(<code className="mx-1 font-mono">awesome-*</code>),
-              설정 파일 저장소(<code className="mx-1 font-mono">dotfiles</code>), 회사 소개 사이트
-              (<code className="mx-1 font-mono">*-website</code>) 같은 것들입니다.
+              레포 이름이 이 모양이면 제품이 아니라고 봅니다 — 설정 파일 저장소(<code className="mx-1 font-mono">dotfiles</code>),
+              문서 저장소(<code className="mx-1 font-mono">documentation</code>) 같은 것들입니다.
               <br />
               이력·포트폴리오·개인 홈페이지는 여기 걸려도 거부되지 않고 <b>개인프로필</b>로 발행됩니다.
               <code className="mx-1 font-mono">*</code>를 쓸 수 있고, 한 줄에 하나.
@@ -279,6 +278,21 @@ export function SettingsForm({ settings }: { settings: CrawlSettings }) {
               name="excludedRepoPatterns"
               rows={8}
               defaultValue={judge.excludedRepoPatterns.join("\n")}
+              className={`${field} mt-1.5 font-mono`}
+            />
+          </div>
+          <div>
+            <label className={label} htmlFor="heldRepoPatterns">레포명 보류 패턴</label>
+            <p className={hint}>
+              이름만으로는 못 가르는 모양입니다 — 거부하지 않고 <b>보류</b>해 AI·사람이 가릅니다. 회사 소개 사이트인지 앱 사이트인지
+              (<code className="mx-1 font-mono">*-website</code>), 단순 링크 모음인지 검색되는 디렉터리인지
+              (<code className="mx-1 font-mono">awesome-*</code>)는 페이지를 읽어야 압니다. 한 줄에 하나.
+            </p>
+            <textarea
+              id="heldRepoPatterns"
+              name="heldRepoPatterns"
+              rows={4}
+              defaultValue={judge.heldRepoPatterns.join("\n")}
               className={`${field} mt-1.5 font-mono`}
             />
           </div>

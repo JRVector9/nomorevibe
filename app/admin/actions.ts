@@ -63,6 +63,7 @@ export async function saveCrawlSettings(_prev: SaveState, form: FormData): Promi
       thirdPartyHosts: lines(form.get("thirdPartyHosts")),
       stubPageTitles: lines(form.get("stubPageTitles")),
       excludedRepoPatterns: lines(form.get("excludedRepoPatterns")),
+      heldRepoPatterns: lines(form.get("heldRepoPatterns")),
       holdAmbiguous: form.get("holdAmbiguous") === "on",
     },
     secondReview: {

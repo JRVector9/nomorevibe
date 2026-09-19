@@ -32,7 +32,11 @@ import { README_SAMPLE_LIMIT } from "./readme";
  *   규칙에서는 설치·내려받기 문구(landingPhrases)를 뺐다.
  */
 export const REVIEW_PROMPT_VERSION = "2026-09-19.2";
-export const REVIEW_RULES_VERSION = "2026-09-19.1";
+/**
+ * 규칙 2026-09-19.2: 문서 생성기·문서 목차·이름 패턴(*-website·awesome-*)을 거부에서 보류로 바꿨다. 새 기준에서
+ *   이 셋이 거부한 것의 79%·95%·1/3~5/8 이 올려야 할 프로젝트 홈이었다(블라인드 표본). AI 가 가른다.
+ */
+export const REVIEW_RULES_VERSION = "2026-09-19.2";
 export const MAX_REVIEW_INPUT_BYTES = 64 * 1024;
 export const MAX_REVIEW_ATTEMPTS = 3;
 export const REVIEW_FRESH_MS = 24 * 3600_000;
