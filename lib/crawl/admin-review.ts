@@ -1,5 +1,5 @@
 import { sameReviewModel } from "./review-model-identity";
-import { and, asc, desc, eq, gt, inArray, not, notInArray, or, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, gt, inArray, not, notInArray, or, sql, type SQL } from 'drizzle-orm';
 import { z } from 'zod';
 import { db } from '@/lib/db';
 import { agentRepositoryObservations, agentRepositoryScans, crawlCandidates, crawlDocuments, crawlFrontier,
@@ -367,6 +367,37 @@ export type AdminReviewEntry = {
  * offset(쪽 번호). 심사 화면은 한 화면에 들어오는 만큼만 보여 주고 쪽을 넘기므로 offset 과
  * 전체 수(total)를 쓴다.
  */
+/**
+ * 목록 정렬.
+ *
+ * 기본은 들어온 차례(id)다. 나머지는 사람이 표 머리를 눌러 고른다 — 별이 많은 것부터 보거나,
+ * 오래 기다린 것부터 끝내거나, 죽은 지 오래인 것을 몰아 보기 위해서다. 쪽 넘김이 서버에 있으므로
+ * 정렬도 서버에서 한다(화면에서만 정렬하면 이 쪽 50건 안에서만 섞인다).
+ */
+export const REVIEW_SORTS = ["", "stars", "push", "push_old", "wait", "wait_short"] as const;
+export type ReviewSort = typeof REVIEW_SORTS[number];
+
+/** 원본의 값을 후보 한 줄마다 꺼낸다. repo 는 crawl_documents 의 고유 키라 한 건만 나온다 */
+const repoNumber = (key: string) => sql`(select case when d.repo_meta->>${key} ~ '^[0-9]+$'
+  then (d.repo_meta->>${key})::bigint end from ${crawlDocuments} d where d.repo = ${crawlCandidates.repo})`;
+const pushedAt = sql`(select case when d.repo_meta->>'pushed_at' ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T'
+  then (d.repo_meta->>'pushed_at')::timestamptz end from ${crawlDocuments} d where d.repo = ${crawlCandidates.repo})`;
+/** 기다린 시각 — 화면의 "대기"와 같은 값(판정 시각, 없으면 마지막 변경) */
+const waitingSince = sql`coalesce(${crawlCandidates.judgedAt}, ${crawlCandidates.updatedAt})`;
+
+function orderBy(sort: ReviewSort): SQL {
+  const tail = sql`, ${crawlCandidates.id} asc`;
+  switch (sort) {
+    case "stars": return sql`${repoNumber("stargazers_count")} desc nulls last${tail}`;
+    // 푸시 칸은 "마지막 푸시로부터 며칠"이다 — 최근에 손댄 것이 먼저, 뒤집으면 오래 멈춘 것이 먼저
+    case "push": return sql`${pushedAt} desc nulls last${tail}`;
+    case "push_old": return sql`${pushedAt} asc nulls last${tail}`;
+    case "wait": return sql`${waitingSince} asc nulls last${tail}`;
+    case "wait_short": return sql`${waitingSince} desc nulls last${tail}`;
+    default: return sql`${crawlCandidates.id} asc`;
+  }
+}
+
 export async function listAdminReviewEntries(settings: CrawlSettings, options: {
   state?: 'pending' | 'new' | 'approved' | 'needs_review' | 'rejected' | 'published'; after?: number; offset?: number; limit?: number;
   /** 갈래로 걸러 볼 때. 계산으로 얻은 값이라 SQL로 거를 수 없어 id 를 받는다 */
@@ -378,6 +409,8 @@ export async function listAdminReviewEntries(settings: CrawlSettings, options: {
    * 푸시 시각을 모르는 것은 오래됐다고 볼 근거가 없어 남긴다. 뺀 수는 hiddenByAge 로 돌려준다.
    */
   pushedWithinDays?: number;
+  /** 표 머리에서 고른 정렬. 기본은 들어온 차례다 */
+  sort?: ReviewSort;
 } = {}) {
   const limit = Math.max(1, Math.min(options.limit ?? 50, 50));
   const states = options.state === 'rejected' ? ['rejected'] as const : options.state === 'published' ? ['published'] as const :
@@ -398,7 +431,7 @@ export async function listAdminReviewEntries(settings: CrawlSettings, options: {
     sql`${crawlCandidates.id} > ${Math.max(0, options.after ?? 0)}`, matches);
   const where = stale ? and(base, not(stale)) : base;
   const [candidates, [{ total }], [{ hidden: hiddenByAge }]] = await Promise.all([
-    db.select().from(crawlCandidates).where(where).orderBy(asc(crawlCandidates.id))
+    db.select().from(crawlCandidates).where(where).orderBy(orderBy(options.sort ?? ""))
       .limit(limit + 1).offset(Math.max(0, options.offset ?? 0)),
     db.select({ total: sql<number>`count(*)::int` }).from(crawlCandidates).where(where),
     stale ? db.select({ hidden: sql<number>`count(*)::int` }).from(crawlCandidates).where(and(base, stale)) : Promise.resolve([{ hidden: 0 }]),

@@ -26,31 +26,11 @@ import { QueuePreview } from "./QueuePreview";
 import { recentSecondReviewFailures, secondReviewSummary } from "@/lib/crawl/second-review";
 import { translationProgress } from "@/lib/crawl/translations";
 import { TranslationProgress } from "./TranslationProgress";
+import { REASON_LABELS } from "../reasons";
 
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "운영센터 — NoMoreVibe", robots: { index: false } };
 
-/** 사유 코드를 사람 말로. 코드 그대로 두면 무엇이 얼마나 거르는지 읽는 데 시간이 걸린다 */
-const REASON_LABELS: Record<string, string> = {
-  no_homepage: "배포 URL 없음",
-  unreachable: "배포 URL 접속 불가",
-  not_a_product: "제품이 아님",
-  large_oss: "대형 오픈소스·조직",
-  personal_site: "회사 소개·링크 모음·설정 저장소",
-  fork: "포크",
-  already_listed: "이미 등록됨",
-  banned: "차단된 URL",
-  ambiguous: "규칙으로 못 가름",
-  passed: "통과",
-  ai_evidence_pending: "AI 개발 근거 수집 대기",
-  ai_evidence_insufficient: "AI 개발 근거 추가 검토",
-  ai_evidence_not_found: "공개 개발 근거 미확인",
-  repository_relationship_conflict: "제품과 저장소 관계 충돌",
-  source_changed: "발행 대상 URL 변경 — 재검토 필요",
-  ai_evidence_supported: "개발 설정·기여 표기 확인",
-  second_review_split: "2차 심사 갈림 — 사람 확인",
-  no_description: "소개 문구 없음 — 사람 확인",
-};
 
 const STATE_LABELS: Record<string, string> = {
   pending: "조사 대기",

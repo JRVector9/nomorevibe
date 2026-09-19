@@ -7,6 +7,7 @@ import type { AdminReviewEntry } from '@/lib/crawl/admin-review';
 import type { StoppedAt } from '@/lib/crawl/rules';
 import { RuleTrace } from './RuleTrace';
 import { causeLabel } from './causes';
+import { REASON_LABELS } from '../reasons';
 import { ReasonText } from './ReasonText';
 
 type Reason = { value: string; label: string };
@@ -76,7 +77,7 @@ export function ReviewDetail({ entry, reasons }: { entry: AdminReviewEntry; reas
             className="mt-1 block break-all font-mono text-[13px] text-accent">{productUrl}</a>
         )}
         <p className="mt-1 flex flex-wrap gap-x-3 font-mono text-[13px] text-fg-3">
-          <span>★ {facts.stars ?? '—'}</span><span>푸시 {facts.pushDays ?? '—'}일</span>
+          <span>★ {facts.stars ?? '—'}</span><span>{facts.pushDays === null ? '푸시 —' : `푸시 ${facts.pushDays}일 전`}</span>
           <span>{facts.status === null ? '응답 —' : `HTTP ${facts.status}`}</span><span>{facts.owner ?? '—'}</span>
         </p>
       </div>
@@ -115,7 +116,7 @@ export function ReviewDetail({ entry, reasons }: { entry: AdminReviewEntry; reas
       <p className="text-[13px] text-fg-2">
         {entry.verdict?.cause
           ? <b className="font-semibold text-down">{causeLabel(entry.verdict.cause)}</b>
-          : <>{STATES[candidate.state]} · {candidate.reason ?? '사유 없음'}</>}
+          : <>{STATES[candidate.state]} · {candidate.reason ? REASON_LABELS[candidate.reason] ?? candidate.reason : '사유 없음'}</>}
         {' · '}{candidate.decidedBy === 'admin' ? '관리자 결정' : STATUS[entry.status]}
       </p>
       {/* 판정 당시 기록된 사유. 아래 규칙 흔적은 지금 규칙으로 다시 계산한 것이라 기준이 바뀌면 달라진다 */}

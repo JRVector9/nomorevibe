@@ -1,8 +1,11 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import type { AdminReviewEntry } from '@/lib/crawl/admin-review';
+import { useRouter } from 'next/navigation';
+import Link from 'next/link';
+import type { AdminReviewEntry, ReviewSort } from '@/lib/crawl/admin-review';
 import { causeLabel } from './causes';
+import { REASON_LABELS } from '../reasons';
 import { packSelection } from './contract';
 import { ReviewDetail, entryFacts, waitingDays } from './ReviewDetail';
 
@@ -13,16 +16,23 @@ const AI_CHIP: Record<string, { label: string; className: string }> = {
   needs_review: { label: 'AI 보류', className: 'bg-bg-soft text-fg-2' },
 };
 
+export type CauseOption = { value: string; label: string; count: number; href: string };
+
 /**
  * 심사 표와 오른쪽 상세.
  *
  * 한 후보를 카드 한 장으로 펼치면 50건이 화면 9개가 됐다. 표 한 줄에는 판단의 절반을
  * 끝내는 값(갈래·AI 판단·스타·푸시·대기)만 두고, 근거와 결정은 고른 한 건만 옆에 연다.
  * J/K 로 줄을 옮긴다. 체크박스는 form 속성으로 일괄 처리 폼에 실린다 — 폼은 겹칠 수 없다.
+ *
+ * 표 머리가 곧 거르기·정렬이다. 갈래는 드롭다운으로 고르고, 숫자 칸은 눌러 정렬을 바꾼다.
+ * 정렬은 서버가 한다(쪽 넘김이 서버에 있어, 화면에서 섞으면 이 쪽 50건 안에서만 섞인다).
  */
-export function ReviewConsole({ entries, reasons, bulkFormId, focus }: {
+export function ReviewConsole({ entries, reasons, bulkFormId, focus, sort, sortHref, cause, causes }: {
   entries: AdminReviewEntry[]; reasons: readonly Reason[]; bulkFormId: string; focus?: number;
+  sort: ReviewSort; sortHref: Record<ReviewSort, string>; cause: string; causes: CauseOption[];
 }) {
+  const router = useRouter();
   const initial = entries.findIndex((entry) => entry.candidate.id === focus);
   const [index, setIndex] = useState(initial >= 0 ? initial : 0);
   const [checked, setChecked] = useState<Set<number>>(new Set());
@@ -48,12 +58,25 @@ export function ReviewConsole({ entries, reasons, bulkFormId, focus }: {
   });
   const allChecked = selectable.length > 0 && selectable.every((entry) => checked.has(entry.candidate.id));
 
+  /** 누를 때마다 내림차순 → 오름차순 → 기본(들어온 차례)으로 돈다 */
+  const sortHead = (label: string, cycle: readonly [ReviewSort, ReviewSort?], hint: string) => {
+    const [first, second] = cycle;
+    const next: ReviewSort = sort === first ? (second ?? '') : sort === second ? '' : first;
+    const mark = sort === first ? '↓' : sort === second ? '↑' : '';
+    return (
+      <Link href={sortHref[next]} scroll={false} title={hint}
+        className={`inline-flex w-full items-baseline justify-end gap-1 hover:text-fg ${mark ? 'font-bold text-accent' : ''}`}>
+        {label}<span className="w-2 font-mono">{mark}</span>
+      </Link>
+    );
+  };
+
   return (
     <div className="grid items-start gap-3 lg:grid-cols-[minmax(0,1fr)_380px]">
       <div className="overflow-x-auto rounded-[12px] border border-line bg-bg-card">
         {/* 칸 폭을 고정한다 — 자동 배치는 남는 폭을 숫자 칸에 나눠 줘 이름이 몇 글자로 잘렸다 */}
-        <table className="w-full min-w-[640px] table-fixed text-[13px] tabular-nums">
-          <colgroup><col className="w-9" /><col /><col className="w-[150px]" /><col className="w-[76px]" /><col className="w-12" /><col className="w-14" /><col className="w-14" /></colgroup>
+        <table className="w-full min-w-[700px] table-fixed text-[13px] tabular-nums">
+          <colgroup><col className="w-9" /><col /><col className="w-[160px]" /><col className="w-[76px]" /><col className="w-[56px]" /><col className="w-[96px]" /><col className="w-[84px]" /></colgroup>
           <thead className="bg-bg-soft text-left text-fg-3">
             <tr>
               <th className="w-9 px-3 py-2">
@@ -61,11 +84,23 @@ export function ReviewConsole({ entries, reasons, bulkFormId, focus }: {
                   onChange={() => setChecked(allChecked ? new Set() : new Set(selectable.map((entry) => entry.candidate.id)))} />
               </th>
               <th className="px-2 py-2 font-semibold">후보</th>
-              <th className="px-2 py-2 font-semibold">갈래</th>
+              <th className="px-2 py-1 font-semibold">
+                {/* 갈래는 정렬이 아니라 거르기다 — 같은 갈래는 같은 판단이라 몰아서 본다 */}
+                <select aria-label="갈래로 거르기" value={cause} onChange={(event) => {
+                  const picked = causes.find((option) => option.value === event.target.value);
+                  if (picked) router.push(picked.href, { scroll: false });
+                }} className="w-full rounded-lg border border-line bg-bg-soft px-1.5 py-1 text-[13px] font-semibold">
+                  {causes.map((option) => (
+                    <option key={option.value || 'all'} value={option.value}>
+                      {option.label}{option.value ? ` (${option.count.toLocaleString('ko-KR')})` : ''}
+                    </option>
+                  ))}
+                </select>
+              </th>
               <th className="px-2 py-2 font-semibold">AI 1차</th>
-              <th className="px-2 py-2 text-right font-semibold">★</th>
-              <th className="px-2 py-2 text-right font-semibold">푸시</th>
-              <th className="px-3 py-2 text-right font-semibold">대기</th>
+              <th className="px-2 py-2 text-right font-semibold">{sortHead('★', ['stars'], '별이 많은 것부터')}</th>
+              <th className="px-2 py-2 text-right font-semibold">{sortHead('마지막 푸시', ['push', 'push_old'], '↓ 최근에 손댄 것부터 · ↑ 오래 멈춘 것부터')}</th>
+              <th className="px-3 py-2 text-right font-semibold">{sortHead('대기', ['wait', 'wait_short'], '↓ 오래 기다린 것부터 · ↑ 막 들어온 것부터')}</th>
             </tr>
           </thead>
           <tbody>
@@ -92,16 +127,18 @@ export function ReviewConsole({ entries, reasons, bulkFormId, focus }: {
                       <span className="truncate font-mono text-fg-3">{candidate.repo}</span>
                     </div>
                   </td>
+                  {/* 갈래가 없는 줄(거부·통과)은 사유 코드를 사람 말로 적는다 — 거부 목록이 영어 코드로 보였다 */}
                   <td className="truncate px-2 py-1.5">
                     {entry.verdict?.cause
                       ? <span className="rounded bg-warn/10 px-1.5 py-0.5 font-semibold text-warn">{causeLabel(entry.verdict.cause).slice(0, 14)}</span>
-                      : <span className="text-fg-3">{candidate.reason ?? '—'}</span>}
+                      : <span className="text-fg-3">{candidate.reason ? REASON_LABELS[candidate.reason] ?? candidate.reason : '—'}</span>}
                   </td>
                   <td className="whitespace-nowrap px-2 py-1.5">
                     {chip ? <span title={typeof entry.review?.confidence === 'number' ? `확신 ${entry.review.confidence.toFixed(2)}` : undefined} className={`rounded px-1.5 py-0.5 font-semibold ${chip.className}`}>{chip.label}</span> : <span className="text-fg-3">—</span>}
                   </td>
                   <td className="px-2 py-1.5 text-right">{facts.stars ?? '—'}</td>
-                  <td className="px-2 py-1.5 text-right">{facts.pushDays === null ? '—' : `${facts.pushDays}일`}</td>
+                  {/* 푸시 칸의 숫자는 "마지막 푸시로부터 지난 날"이다 — 머리와 꼬리를 맞춰 적는다 */}
+                  <td className="px-2 py-1.5 text-right">{facts.pushDays === null ? '—' : `${facts.pushDays}일 전`}</td>
                   <td className="px-3 py-1.5 text-right text-fg-3">{days === null ? '—' : `${days}일`}</td>
                 </tr>
               );

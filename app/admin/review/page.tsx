@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { currentAdmin } from "@/lib/auth/admin";
-import { candidateStateCounts, listAdminReviewEntries, reviewQueueAiDecisions, reviewQueueCauses, REVIEW_QUEUE_SCAN_LIMIT, type ReviewAiDecision } from "@/lib/crawl/admin-review";
+import { candidateStateCounts, listAdminReviewEntries, reviewQueueAiDecisions, reviewQueueCauses, REVIEW_QUEUE_SCAN_LIMIT, REVIEW_SORTS, type ReviewAiDecision, type ReviewSort } from "@/lib/crawl/admin-review";
 import { getSettings } from "@/lib/crawl/settings";
 import { REVIEW_REJECT_REASONS } from "@/lib/crawl/review";
 import { pendingTakedowns } from "@/lib/domain/products/takedown";
@@ -38,7 +38,7 @@ const SECOND_FILTERS = [['unanimous_reject', '만장일치·거부'], ['unanimou
   ['agreed_reject', '2표 일치·거부'], ['agreed_approve', '2표 일치·승인'], ['needs_human', '사람 확인']] as const;
 type SecondFilter = typeof SECOND_FILTERS[number][0] | 'published';
 
-type Search = { state?: string | string[]; stage?: string | string[]; q?: string | string[]; updated?: string | string[]; page?: string | string[]; cause?: string | string[]; ai?: string | string[]; second?: string | string[]; focus?: string | string[] };
+type Search = { state?: string | string[]; stage?: string | string[]; q?: string | string[]; updated?: string | string[]; page?: string | string[]; cause?: string | string[]; ai?: string | string[]; second?: string | string[]; focus?: string | string[]; sort?: string | string[] };
 const one = (value: string | string[] | undefined) => (typeof value === 'string' ? value : '');
 
 export default async function ReviewPage({ searchParams }: { searchParams: Promise<Search> }) {
@@ -59,6 +59,7 @@ export default async function ReviewPage({ searchParams }: { searchParams: Promi
   const second = ([...SECOND_FILTERS.map(([key]) => key), 'published'] as string[]).includes(one(params.second)) ? one(params.second) as SecondFilter : '';
   const q = one(params.q).trim().slice(0, 100);
   const updated = (UPDATED_WINDOWS.some(([value]) => value === one(params.updated)) ? one(params.updated) : '') as UpdatedWindow;
+  const sort = ((REVIEW_SORTS as readonly string[]).includes(one(params.sort)) ? one(params.sort) : '') as ReviewSort;
 
   const settings = await getSettings();
   const [takedowns, causes, decisions, seconds, translation, stateCounts] = await Promise.all([pendingTakedowns(), reviewQueueCauses(settings), reviewQueueAiDecisions(), secondReviewSummary(settings.secondReview.agreeAt), translationProgress(), candidateStateCounts()]);
@@ -84,12 +85,13 @@ export default async function ReviewPage({ searchParams }: { searchParams: Promi
   const filtered = Boolean(stage) || detailed;
   const { entries, total, hiddenByAge } = await listAdminReviewEntries(settings, {
     state: stage ? STAGE_STATE[stage] : detailed ? 'needs_review' : state, offset: (page - 1) * PAGE_SIZE, limit: PAGE_SIZE, ids,
-    search: q || undefined, pushedWithinDays: updated ? UPDATED_DAYS[updated] : undefined,
+    search: q || undefined, pushedWithinDays: updated ? UPDATED_DAYS[updated] : undefined, sort,
   });
   const pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
-  const query = (next: Partial<Record<'state' | 'stage' | 'cause' | 'ai' | 'second' | 'q' | 'updated' | 'page', string | number | undefined>>) => {
+  const query = (next: Partial<Record<'state' | 'stage' | 'cause' | 'ai' | 'second' | 'q' | 'updated' | 'sort' | 'page', string | number | undefined>>) => {
     const merged = { state: filtered || state === 'pending' ? undefined : state, stage: stage || undefined,
-      cause: cause || undefined, ai: ai || undefined, second: second || undefined, q: q || undefined, updated: updated || undefined, ...next };
+      cause: cause || undefined, ai: ai || undefined, second: second || undefined, q: q || undefined,
+      updated: updated || undefined, sort: sort || undefined, ...next };
     const search = new URLSearchParams();
     for (const [key, value] of Object.entries(merged)) if (value !== undefined && value !== '' && !(key === 'page' && value === 1)) search.set(key, String(value));
     return `/admin/review${search.size ? `?${search}` : ''}`;
@@ -205,7 +207,7 @@ export default async function ReviewPage({ searchParams }: { searchParams: Promi
       {second !== 'published' && (
         <ListToolbar q={q} updated={updated} total={total} hiddenByAge={hiddenByAge}
           keep={{ state: filtered || state === 'pending' ? undefined : state, stage: stage || undefined, cause: cause || undefined, ai: ai || undefined, second: second || undefined }}
-          clearHref={query({ q: undefined, updated: undefined, page: 1 })} />
+          clearHref={query({ q: undefined, updated: undefined, sort: undefined, page: 1 })} />
       )}
 
       {second === 'published' ? (
@@ -223,7 +225,12 @@ export default async function ReviewPage({ searchParams }: { searchParams: Promi
       ) : (
         <>
           <BulkDecision formId={BULK_FORM} reasons={REVIEW_REJECT_REASONS} total={entries.length} />
-          <ReviewConsole key={`${page}:${state}:${stage}:${cause}:${ai}:${second}:${q}:${updated}`} entries={entries} reasons={REVIEW_REJECT_REASONS} bulkFormId={BULK_FORM} focus={focus} />
+          <ReviewConsole key={`${page}:${state}:${stage}:${cause}:${ai}:${second}:${q}:${updated}:${sort}`}
+            entries={entries} reasons={REVIEW_REJECT_REASONS} bulkFormId={BULK_FORM} focus={focus}
+            sort={sort} sortHref={Object.fromEntries(REVIEW_SORTS.map((key) => [key, query({ sort: key || undefined, page: 1 })])) as Record<ReviewSort, string>}
+            cause={cause} causes={[{ value: '', label: '갈래 전체', count: causes.total, href: query({ cause: undefined, state: undefined, page: 1 }) },
+              ...causes.counts.map(({ cause: key, count }) => ({ value: key, label: CAUSE_GUIDE[key].label, count,
+                href: query({ cause: key, state: undefined, page: 1 }) }))]} />
         </>
       )}
 
