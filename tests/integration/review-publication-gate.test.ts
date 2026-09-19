@@ -193,3 +193,43 @@ it("2차 모델이 1차와 같으면 표가 되풀이라 올리지 않고, 관�
   expect(await db.select().from(products)).toHaveLength(0);
 });
 
+
+/**
+ * observe 때 같은 1차 판단에 만든 2차 표(ai_decided)가 이미 있어도 관문 행이 들어가야 한다. 같은 세대를 쓰면 유일 색인에
+ * 걸려 조용히 안 들어가고, enforce 로 승인된 후보가 발행되지도 다시 심사되지도 않고 갇혔다(전환 직전 발견, 1,844건 해당).
+ */
+it("observe 때 만든 2차 표가 같은 1차 판단에 있어도 관문 행이 따로 들어간다", async () => {
+  const settings = await withGate();
+  const { row } = await candidate(0, true, 0.95);
+  await db.update(crawlCandidates).set({ state: "needs_review", reason: "ambiguous" }).where(eq(crawlCandidates.id, row.id));
+  expect(await enqueueSecondReviews(settings)).toBe(1);
+  expect(await db.select().from(secondReviews)).toMatchObject([{ trigger: "ai_decided" }]);
+
+  // enforce 가 1차 승인을 반영해 승인 상태가 됐다
+  await db.update(crawlCandidates).set({ state: "approved", reason: "passed" }).where(eq(crawlCandidates.id, row.id));
+  expect(await enqueueSecondReviews(settings)).toBe(1);
+  const [gate] = await db.select().from(secondReviews).where(eq(secondReviews.trigger, "ai_approved"));
+  expect(gate).toBeDefined();
+  await vote(gate, "approve");
+  await tick();
+  expect(await db.select().from(products)).toHaveLength(1);
+});
+
+it("2차 모델을 바꾸면 새 모델의 표가 올라가고, 새 모델도 승인해야 발행한다", async () => {
+  const settings = await withGate();
+  await candidate(0, true, 0.95);
+  await enqueueSecondReviews(settings);
+  const [first] = await db.select().from(secondReviews);
+  await vote(first, "approve");
+
+  await saveSettings({ secondReview: { enabled: true, voters: [{ provider: "abcllm", model: "[MLX] replacement-test" }] } }, "test");
+  const { closeSettledSecondReviews } = await import("@/lib/crawl/second-review");
+  await closeSettledSecondReviews();
+  await tick();
+  expect(await db.select().from(products)).toHaveLength(0);
+  expect(await enqueueSecondReviews(await getSettings())).toBe(1);
+  const [next] = await db.select().from(secondReviews).where(eq(secondReviews.model, "[MLX] replacement-test"));
+  await vote(next, "approve");
+  await tick();
+  expect(await db.select().from(products)).toHaveLength(1);
+});

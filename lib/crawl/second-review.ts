@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { and, desc, eq, gt, gte, inArray, isNotNull, isNull, lt, notInArray, or, sql } from "drizzle-orm";
+import { and, desc, eq, gt, gte, inArray, isNotNull, isNull, lt, ne, notInArray, or, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { crawlCandidates, crawlDocuments, crawlReviewAttempts, crawlSettings, secondReviews, type SecondReviewProvider, type SecondReviewStatus, type SecondReviewTrigger } from "@/lib/db/schema";
 import { pageFactsFromDocument } from "./rules";
@@ -183,6 +183,8 @@ export async function enqueueSecondReviews(settings: CrawlSettings, now = new Da
     confidence: sql<number | null>`(${crawlReviewAttempts.outcome}->>'confidence')::float`.as("confidence"),
   }).from(crawlReviewAttempts).innerJoin(crawlCandidates, eq(crawlCandidates.id, crawlReviewAttempts.candidateId))
     .where(and(eq(crawlCandidates.state, "needs_review"), eq(crawlCandidates.decidedBy, "auto"),
+      // 관문에서 2차가 반대해 보류된 것은 이미 두 모델의 표가 있다 — 다시 올리면 같은 표를 또 부르고 관문 행을 덮는다
+      ne(crawlCandidates.reason, "second_review_split"),
       eq(crawlReviewAttempts.kind, "automatic"), eq(crawlReviewAttempts.state, "succeeded"), inArray(crawlReviewAttempts.provider, ["claude-cli", "abcllm"]),
       // 가른 판단은 확신을 낸 것만 — 1차가 보류한 것은 애초에 확신을 재지 않는다
       or(sql`${crawlReviewAttempts.outcome}->>'confidence' is not null`,
@@ -241,13 +243,17 @@ export async function enqueueSecondReviews(settings: CrawlSettings, now = new Da
       where v.model <> regexp_replace(lower(trim(coalesce(${approved.firstModel}, ''))), '^\\[mlx\\][[:space:]]*', '', 'i'))`;
     const gate = await db.select().from(approved)
       .where(and(sql`${approved.decision} = 'approve'`, eq(approved.promptVersion, REVIEW_PROMPT_VERSION), eq(approved.rulesVersion, REVIEW_RULES_VERSION),
+        // 지금 세운 모델의 행만 센다 — 모델을 바꾸면 옛 모델의 행이 수를 채워 새 모델의 표가 영영 안 올라간다
         gt(approved.validUntil, now), sql`${gateRequired} > 0`, sql`(select count(*) from ${secondReviews} s
-          where s.candidate_id = ${approved.candidateId} and s.first_attempt_id = ${approved.firstAttemptId} and s.trigger = 'ai_approved') < ${gateRequired}`))
+          where s.candidate_id = ${approved.candidateId} and s.first_attempt_id = ${approved.firstAttemptId} and s.trigger = 'ai_approved'
+            and exists(select 1 from jsonb_array_elements(${JSON.stringify(voters)}::jsonb) v
+              where v->>'provider'=s.provider and regexp_replace(lower(trim(v->>'model')), '^\\[mlx\\][[:space:]]*', '', 'i')
+                = regexp_replace(lower(trim(s.model)), '^\\[mlx\\][[:space:]]*', '', 'i'))) < ${gateRequired}`))
       .limit(ENQUEUE_LIMIT);
     rows.push(...gate.flatMap((row) => voters.filter(voter => !sameReviewModel(row.firstModel, voter.model)).map((voter) => ({ ...voter,
       candidateId: row.candidateId, repo: row.repo, trigger: "ai_approved" as SecondReviewTrigger,
       firstDecision: "approve", firstConfidence: row.confidence, firstModel: row.firstModel, firstAttemptId: row.firstAttemptId,
-      generationKey: secondReviewGeneration(row.firstAttemptId, row), inputHash: row.inputHash }))));
+      generationKey: secondReviewGeneration(row.firstAttemptId, row, "ai_approved"), inputHash: row.inputHash }))));
   }
 
   const published = await db.select({ id: crawlCandidates.id, repo: crawlCandidates.repo, slug: crawlCandidates.publishedSlug,

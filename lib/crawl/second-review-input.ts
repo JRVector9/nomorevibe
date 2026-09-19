@@ -9,8 +9,17 @@ import type { ReviewInput } from "./agent-review-contract";
 import { mergeWithDefaults } from "./settings";
 import { sameReviewModel } from "./review-model-identity";
 
-export function secondReviewGeneration(firstAttemptId: number | null, input: Pick<ReviewInput, "inputHash" | "sourceRevisionHash">): string {
-  return createHash("sha256").update(JSON.stringify([firstAttemptId, input.inputHash, input.sourceRevisionHash])).digest("hex");
+/**
+ * 한 1차 판단·한 입력의 2차 세대.
+ *
+ * 관문 행(ai_approved)은 세대를 따로 쓴다(2026-09-19). 같은 1차 판단에 observe 때 만든 ai_decided 행이 이미 있으면
+ * (후보·입력·모델·세대) 유일 색인에 걸려 관문 행이 조용히 안 들어가고, 후보가 "승인됐지만 발행 불가"로 갇힌다.
+ */
+export function secondReviewGeneration(firstAttemptId: number | null, input: Pick<ReviewInput, "inputHash" | "sourceRevisionHash">,
+  trigger?: string | null): string {
+  const parts: unknown[] = [firstAttemptId, input.inputHash, input.sourceRevisionHash];
+  if (trigger === "ai_approved") parts.push("gate");
+  return createHash("sha256").update(JSON.stringify(parts)).digest("hex");
 }
 
 /** No network or mutation. With a transaction, lock in the same order as first-review recording. */
@@ -40,7 +49,7 @@ export async function loadSecondReviewInput(row: SecondReview, tx?: ProductTrans
       || !settings.secondReview.voters.some(voter => voter.provider === root.provider && sameReviewModel(voter.model, root.model))) return null;
   }
   const input = await loadReviewInput(candidate, document, settings, executor);
-  if (secondReviewGeneration(row.firstAttemptId, input) !== row.generationKey || (!row.fallbackForId && sameReviewModel(row.firstModel, row.model))) return null;
+  if (secondReviewGeneration(row.firstAttemptId, input, row.trigger) !== row.generationKey || (!row.fallbackForId && sameReviewModel(row.firstModel, row.model))) return null;
   if (!row.publishedSlug) {
     const [first] = await executor.select().from(crawlReviewAttempts).where(and(
       eq(crawlReviewAttempts.candidateId, row.candidateId), eq(crawlReviewAttempts.kind, "automatic"),
