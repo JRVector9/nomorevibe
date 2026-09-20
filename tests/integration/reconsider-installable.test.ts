@@ -42,3 +42,13 @@ it("does not mistake PostgreSQL microseconds for a fresh collection", async () =
   await applyReconsideration(await planReconsideration(), "test-policy-change");
   expect(await judgementQueue(10)).toHaveLength(0);
 });
+
+it("reconsiders human rejections only with explicit scope and keeps their previous decision in the audit", async () => {
+  await rejected("maker/manual", "admin");
+  const plan = await planReconsideration(1000, { includeAdmin: true });
+  expect(plan.entries.map(row => row.repo)).toEqual(["maker/manual"]);
+  expect((await applyReconsideration(plan, "explicit-reconsideration")).queued).toEqual(["maker/manual"]);
+  expect((await db.select().from(crawlCandidates))[0]).toMatchObject({ state: "new", decidedBy: "auto" });
+  expect((await db.select().from(operationsAudit).where(eq(operationsAudit.actor, "explicit-reconsideration")))[0].detail)
+    .toMatchObject({ previousDecidedBy: "admin", previousState: "rejected", includeAdmin: true });
+});

@@ -181,6 +181,37 @@ function daysSince(at: Date, now: Date): number {
  * 섞이지 않게 한다. 애매한 것만 needs_review로 남는다.
  */
 export function judge(
+  repo: RepoFacts, page: PageFacts, settings: CrawlSettings, now = new Date(), agentEvidence?: SummaryInput,
+): Verdict {
+  const verdict = judgeWebsite(repo, page, settings, now, agentEvidence);
+  // A failed homepage is not proof that an established repository has no usable software.
+  // Retry via README evidence; the model must still reject documents, surveys and data-only lists.
+  const installationCandidate = Number.isSafeInteger(repo.stars) && repo.stars >= INSTALLABLE_MIN_STARS
+    && !repo.archived && !(repo.isFork && settings.judge.excludeForks)
+    && (verdict.state === "rejected" || ["docs_generator", "docs_nav", "page_status_unknown"].includes(verdict.cause ?? ""));
+  if (installationCandidate && page.productUrl && verdict.signals.accessMode !== "installable") {
+    const fallback = judgeWebsite(repo, { ...page, productUrl: null }, settings, now, agentEvidence);
+    if (fallback.state === "needs_review" && fallback.cause === "installable_product") {
+      fallback.signals.productUrl = page.productUrl;
+      fallback.signals.websiteFallbackReason = verdict.trace.at(-1)?.detail;
+      return fallback;
+    }
+  }
+  return verdict;
+}
+
+/** All review, classification and publication stages must resolve the same entry point. */
+export function accessFromDocument(document: {
+  repo: string; repoMeta: Record<string, unknown>; productUrl: string | null;
+  pageStatus: number | null; pageMeta: Record<string, unknown> | null;
+}, settings: CrawlSettings) {
+  const repo = factsFromRepoMeta(document.repo, document.repoMeta);
+  const verdict = judge(repo, pageFactsFromDocument(document), settings);
+  return productAccess({ repo: document.repo, stars: repo.stars,
+    productUrl: verdict.signals.accessMode === "installable" ? null : document.productUrl });
+}
+
+function judgeWebsite(
   repo: RepoFacts,
   page: PageFacts,
   settings: CrawlSettings,

@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { currentAdmin } from "@/lib/auth/admin";
-import { candidateStateCounts, listAdminReviewEntries, reviewQueueAiDecisions, reviewQueueCauses, REVIEW_QUEUE_SCAN_LIMIT, REVIEW_SORTS, type ReviewAiDecision, type ReviewSort } from "@/lib/crawl/admin-review";
+import { candidateStateCounts, publicationChange24h, listAdminReviewEntries, reviewQueueAiDecisions, reviewQueueCauses, REVIEW_QUEUE_SCAN_LIMIT, REVIEW_SORTS, type ReviewAiDecision, type ReviewSort } from "@/lib/crawl/admin-review";
 import { getSettings } from "@/lib/crawl/settings";
 import { REVIEW_REJECT_REASONS } from "@/lib/crawl/review";
 import { pendingTakedowns } from "@/lib/domain/products/takedown";
@@ -62,7 +62,7 @@ export default async function ReviewPage({ searchParams }: { searchParams: Promi
   const sort = ((REVIEW_SORTS as readonly string[]).includes(one(params.sort)) ? one(params.sort) : '') as ReviewSort;
 
   const settings = await getSettings();
-  const [takedowns, causes, decisions, seconds, translation, stateCounts] = await Promise.all([pendingTakedowns(), reviewQueueCauses(settings), reviewQueueAiDecisions(), secondReviewSummary(settings.secondReview.agreeAt), translationProgress(), candidateStateCounts()]);
+  const [takedowns, causes, decisions, seconds, translation, stateCounts, publicationChange] = await Promise.all([pendingTakedowns(), reviewQueueCauses(settings), reviewQueueAiDecisions(), secondReviewSummary(settings.secondReview.agreeAt), translationProgress(), candidateStateCounts(), publicationChange24h()]);
   const held = heldStages(decisions.ids, seconds.ids, [...(causes.ids.get('second_review_split') ?? []), ...(causes.ids.get('no_description') ?? [])]);
   const stageCount: Record<StageKey, number> = {
     judge: stateCounts.new, ai: held.ids.ai.length, second: held.ids.second.length, agreed: held.ids.agreed.length,
@@ -147,11 +147,19 @@ export default async function ReviewPage({ searchParams }: { searchParams: Promi
                   className={`flex flex-col gap-0.5 rounded-lg border px-2.5 py-1.5 ${active ? 'border-accent bg-accent-soft' : 'border-line hover:bg-bg-hover'}`}>
                   <span className="flex items-baseline justify-between gap-2 text-[13px]">
                     <b className={`font-semibold ${active ? 'text-accent' : count === 0 ? 'text-fg-3' : 'text-fg'}`}>{item.label}</b>
-                    <span className={`font-mono ${count === 0 ? 'text-fg-3' : active ? 'text-accent' : 'text-fg'}`}>{count.toLocaleString("ko-KR")}</span>
+                    <span className={`font-mono ${count === 0 ? 'text-fg-3' : active ? 'text-accent' : 'text-fg'}`}>
+                      {count.toLocaleString("ko-KR")}
+                      {item.key === 'published' && <span
+                        className={`ml-1 ${publicationChange.net < 0 ? 'text-down' : publicationChange.net > 0 ? 'text-up' : 'text-fg-3'}`}
+                        title={`최근 24시간: 발행 완료로 ${publicationChange.added}건 이동, ${publicationChange.removed}건 이탈`}
+                        aria-label={`최근 24시간 발행 완료 ${publicationChange.net >= 0 ? '+' : ''}${publicationChange.net}건`}>
+                        ({publicationChange.net >= 0 ? '+' : ''}{publicationChange.net.toLocaleString("ko-KR")})
+                      </span>}
+                    </span>
                   </span>
                   {/* 좁은 화면에서는 설명을 접는다 — 칸이 세로로 쌓여 한 화면을 넘긴다. 일치 건의 거부·승인 내역은 남긴다 */}
                   <span className={`text-[13px] leading-[1.4] text-fg-3 ${item.key === 'agreed' ? '' : 'hidden sm:block'}`}>
-                    {item.key === 'agreed' ? `거부 ${held.agreedReject.toLocaleString("ko-KR")} · 승인 ${held.agreedApprove.toLocaleString("ko-KR")}` : item.hint}
+                    {item.key === 'agreed' ? `거부 ${held.agreedReject.toLocaleString("ko-KR")} · 승인 ${held.agreedApprove.toLocaleString("ko-KR")}` : item.key === 'published' ? '괄호는 최근 24시간 순증감' : item.hint}
                   </span>
                 </Link>
               );

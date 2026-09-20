@@ -7,7 +7,7 @@ import { judge, factsFromRepoMeta, pageFactsFromDocument, judgeRevision, type St
 import type { CrawlSettings } from "@/lib/crawl/settings-schema";
 import { loadAgentJudgeInput } from "@/lib/crawl/agent-evidence";
 import { requestJob } from "@/lib/jobs/control";
-import { productAccess } from "@/lib/domain/products/access";
+import { accessFromDocument } from "../rules";
 
 /**
  * 판정 잡 — 수집한 원본에 현재 기준을 적용해 후보로 남긴다.
@@ -87,10 +87,10 @@ async function judgeDocument(document: CrawlDocument, settings: CrawlSettings): 
   if (agentEvidence) verdict.signals.agentScanId = agentEvidence.scanId;
   // 발행 직전에 "이것이 판정받은 그 원본인가"를 이 값으로 가린다 (judgeRevision 참고)
   verdict.signals.judgedRevision = judgeRevision(document);
-  const access = productAccess({ repo: document.repo, stars: Number(document.repoMeta.stargazers_count), productUrl: document.productUrl });
+  const access = accessFromDocument(document, settings);
   if (verdict.state === "rejected" || !access) return verdict;
 
-  const existing = await (access.mode === "installable" ? findInstallationSource(access.url) : findByUrl(access.url));
+  const existing = await (access.mode === "installable" ? findInstallationSource(access.url, document.productUrl) : findByUrl(access.url));
   if (!existing) return verdict;
 
   // 차단한 URL이 수집기를 통해 되돌아오는 것을 막는다. 차단은 재등록까지 막는 조치다.

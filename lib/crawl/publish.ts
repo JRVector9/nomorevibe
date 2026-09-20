@@ -1,5 +1,5 @@
 import { nonProductPurpose } from './product-purpose';
-import { productAccess } from "@/lib/domain/products/access";
+import { accessFromDocument } from "./rules";
 import type { CrawlCandidate, CrawlDocument, TaglineSource } from "@/lib/db/schema";
 import { LIMITS, type Category } from "@/lib/domain/products/schema";
 import * as products from "@/lib/domain/products/repository";
@@ -62,14 +62,14 @@ async function preparePublication(candidate: CrawlCandidate): Promise<
   const document = await crawl.getDocument(candidate.repo);
   if (!document) return { ok: false, reason: "no_document" };
   if (publicationSourceChanged(candidate, document)) return { ok: false, reason: "source_changed" };
-  const access = productAccess({ repo: document.repo, stars: Number(document.repoMeta.stargazers_count), productUrl: document.productUrl });
+  const settings = await getSettings();
+  const access = accessFromDocument(document, settings);
   const url = access?.url;
   if (!url) return { ok: false, reason: "no_url" };
-  if (access.mode === "installable" && await products.findInstallationSource(url)) return { ok: false, reason: "already_listed" };
+  if (access.mode === "installable" && await products.findInstallationSource(url, document.productUrl)) return { ok: false, reason: "already_listed" };
 
   const purpose = nonProductPurpose({ ...document.pageMeta, description: [document.repoMeta.description, document.pageMeta?.description].filter(v => typeof v === "string").join(" ") });
   if (purpose) return { ok: false, reason: "not_a_product" };
-  const settings = await getSettings();
   if (access?.mode === "installable" && candidate.decidedBy !== "admin" && settings.reviewMode !== "enforce") {
     return { ok: false, reason: "installation_review_required" };
   }
@@ -98,7 +98,7 @@ async function preparePublication(candidate: CrawlCandidate): Promise<
     const judged = (candidate.signals as { judgedRevision?: unknown } | null)?.judgedRevision;
     if (judged !== judgeRevision(document)) return { ok: false, reason: "stale_judgement" };
   }
-  let draft = draftFrom(candidate.repo, document);
+  let draft = draftFrom(candidate.repo, document, access.mode === "installable");
   /**
    * 소개가 아무 데도 없으면 모델이 지어 둔 줄을 쓴다(crawl-tagline 잡).
    *
@@ -111,7 +111,7 @@ async function preparePublication(candidate: CrawlCandidate): Promise<
     const usable = written?.tagline
       && (written.writtenBy !== null || written.sourceHash === taglineHash(taglineEvidence(candidate.repo, document)));
     if (usable && written) {
-      draft = draftFrom(candidate.repo, document, { text: written.tagline, source: written.source, by: written.writtenBy });
+      draft = draftFrom(candidate.repo, document, access.mode === "installable", { text: written.tagline, source: written.source, by: written.writtenBy });
     }
   }
   if (!draft.hasDescription && candidate.decidedBy !== "admin") {
@@ -175,7 +175,7 @@ export async function publishCandidate(
       await products.insert({
         slug,
         url,
-        accessMode: productAccess({ repo: document.repo, stars: Number(document.repoMeta.stargazers_count), productUrl: document.productUrl })?.mode ?? "website",
+        accessMode: accessFromDocument(document, settings)?.mode ?? "website",
         name: draft.name,
         tagline: draft.tagline,
         taglineSource: draft.taglineSource,
@@ -267,10 +267,9 @@ export async function prepareCandidateClassification(
  * written 은 모델이 지어 둔 한 줄이다(crawl-tagline). 메이커가 쓴 소개가 하나라도 있으면
  * 그것이 먼저다 — 지은 줄은 아무것도 없을 때만 쓰고, 쓴 경우 출처를 남겨 화면에 밝힌다.
  */
-function draftFrom(repo: string, document: CrawlDocument, written?: { text: string; source: TaglineEvidenceSource; by?: string | null }) {
+function draftFrom(repo: string, document: CrawlDocument, installable: boolean, written?: { text: string; source: TaglineEvidenceSource; by?: string | null }) {
   const page = (document.pageMeta ?? {}) as { title?: unknown; description?: unknown; ogImage?: unknown; textSample?: unknown };
   const meta = document.repoMeta;
-  const installable = productAccess({ repo, stars: Number(meta.stargazers_count), productUrl: document.productUrl })?.mode === "installable";
   const repoDescription = typeof meta.description === "string" ? meta.description.trim() : "";
   const pageTitle = typeof page.title === "string" ? page.title.trim() : "";
   // Repository/documentation wrapper metadata describes the host page, not the installed software.

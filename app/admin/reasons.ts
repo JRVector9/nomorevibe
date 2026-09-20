@@ -6,7 +6,7 @@ export const REASON_LABELS: Record<string, string> = {
   large_oss: "대형 오픈소스·조직",
   personal_site: "회사 소개·링크 모음·설정 저장소",
   fork: "포크",
-  already_listed: "이미 등록됨",
+  already_listed: "기존 제품 있음 · 중복",
   banned: "차단된 URL",
   ambiguous: "규칙으로 못 가름",
   passed: "통과",

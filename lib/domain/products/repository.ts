@@ -44,9 +44,9 @@ export async function findByUrl(url: string): Promise<Product | undefined> {
 }
 
 /** An installation entry must not resurrect a banned product or duplicate its website entry. */
-export async function findInstallationSource(url: string): Promise<Product | undefined> {
+export async function findInstallationSource(url: string, homepage?: string | null): Promise<Product | undefined> {
   return db.query.products.findFirst({
-    where: or(eq(products.url, url), sql`lower(rtrim(${products.repoUrl}, '/')) = lower(${url})`),
+    where: or(eq(products.url, url), homepage ? eq(products.url, homepage) : undefined, sql`lower(rtrim(${products.repoUrl}, '/')) = lower(${url})`),
     orderBy: [sql`case when ${products.status} = 'banned' then 0 else 1 end`, products.id],
   });
 }
