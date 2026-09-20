@@ -270,9 +270,11 @@ export async function prepareCandidateClassification(
 function draftFrom(repo: string, document: CrawlDocument, written?: { text: string; source: TaglineEvidenceSource; by?: string | null }) {
   const page = (document.pageMeta ?? {}) as { title?: unknown; description?: unknown; ogImage?: unknown; textSample?: unknown };
   const meta = document.repoMeta;
+  const installable = productAccess({ repo, stars: Number(meta.stargazers_count), productUrl: document.productUrl })?.mode === "installable";
   const repoDescription = typeof meta.description === "string" ? meta.description.trim() : "";
   const pageTitle = typeof page.title === "string" ? page.title.trim() : "";
-  const pageDescription = typeof page.description === "string" ? page.description.trim() : "";
+  // Repository/documentation wrapper metadata describes the host page, not the installed software.
+  const pageDescription = !installable && typeof page.description === "string" ? page.description.trim() : "";
   const language = typeof meta.language === "string" ? meta.language : null;
 
   /**
@@ -289,7 +291,7 @@ function draftFrom(repo: string, document: CrawlDocument, written?: { text: stri
       : !generated ? "maker"
       : written?.by ? "editor"
       : `ai_${written!.source}`) as TaglineSource,
-    name: productName(pageTitle, repo, document.productUrl).slice(0, LIMITS.name),
+    name: (installable ? repo.split("/").at(-1)! : productName(pageTitle, repo, document.productUrl)).slice(0, LIMITS.name),
     tagline: tagline.slice(0, LIMITS.tagline),
     description: (repoDescription || pageDescription || tagline).slice(0, LIMITS.description),
     category: classify(meta),
