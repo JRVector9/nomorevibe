@@ -1,0 +1,61 @@
+{
+  "at": "2026-09-20T23:40:36.779Z",
+  "states": [
+    {
+      "state": "approved",
+      "reason": "passed",
+      "count": 8
+    },
+    {
+      "state": "needs_review",
+      "reason": "ambiguous",
+      "count": 52
+    },
+    {
+      "state": "new",
+      "reason": "source_changed",
+      "count": 100
+    }
+  ],
+  "fresh": [
+    {
+      "total": 160,
+      "fresh": 60
+    }
+  ],
+  "products": [],
+  "jobs": [
+    {
+      "name": "crawl-judge",
+      "last_error": null,
+      "seen_seconds": 13
+    },
+    {
+      "name": "crawl-agent-review",
+      "last_error": null,
+      "seen_seconds": 36
+    },
+    {
+      "name": "second-review",
+      "last_error": null,
+      "seen_seconds": 13
+    },
+    {
+      "name": "crawl-publish",
+      "last_error": null,
+      "seen_seconds": 28
+    },
+    {
+      "name": "crawl-fetch",
+      "last_error": null,
+      "seen_seconds": 30
+    }
+  ],
+  "change": [
+    {
+      "added": 1894,
+      "removed": 0,
+      "net": 1894
+    }
+  ]
+}

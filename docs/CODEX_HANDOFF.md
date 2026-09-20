@@ -1,34 +1,35 @@
-# Active handoff — rejected high-star queue and 24-hour publication change (2026-09-21 08:29 KST)
+# Active handoff — rejected high-star queue and 24-hour publication change (2026-09-21 08:42 KST)
 
-## Objective and current status
+## Objective and completed work
 
-User says >=500-star products still appear in rejected queue; investigate/correct omissions and show rolling24h (+/-) next to Published. User explicitly prohibited systematic-debugging; do not use that skill. No subagents. Working branch fix/review-rejected-high-stars in root repository. Production not changed yet this phase.
+User says >=500-star products remain rejected; correct missing review paths and display rolling24h (+/-) next to Published. User explicitly prohibited systematic-debugging; do not use it. No subagents used. PR157 merged and deployed, functional commit `b9428376a7d3b2da782be282c7dff27f7d9dffbf`. Root main synced. Original unrelated untracked/design files preserved.
 
-- Read-only production audit:234 rejected>=500;70 already_listed matched existing product URLs (repo_url alone missed these). Old rules still rejected release/package/social/docs homepages and unreachable sites before installation review. Fifteen prior admin rejects deliberately preserved last phase are now explicitly included in user-requested re-review, with previous decision retained in audit.
-- Implemented shared accessFromDocument via judge: eligible popular repository whose homepage rules fail falls back to substantive installation review; no automatic software approval. Archive/fork/research/survey exclusions and source/review/second-review gates remain. All judge/review/contract/classification/publication access paths use same resolver. Check duplicate/ban by original homepage as well as canonical repository. Rules version2026-09-21.2; prompt version2026-09-21.3 (original third-party/unreachable homepage is not the software).
-- Added optional --include-admin reconsideration; default preserves human decisions. Read-only plan /tmp/nmv-queue-reconsider-plan.json:161examined160eligible, including15admin. NOT APPLIED. Run only after fixed workers deployed.
-- Migration0042 records publication enter/leave/delete events with DB trigger; bootstrap terminal published updated_at. Short write lock prevents backfill race. UI signed24h net + tooltip counts. DB clock used because local app/DB ~100ms skew initially made new events appear future.
-- Duplicate rejection UI clarifies existing product and link when existingSlug available (63/70 legacy rows).
+- Production audit:234 rejected>=500;70 already_listed matched existing product URLs. Repo_url-only comparison falsely looked unlisted. Remaining omissions: release/package/social/docs URLs and unreachable homepages were rejected before installable exception. Shared accessFromDocument now consistently routes >=500 eligible repository fallback through substantive README review in judge, first/second input, classifier and publication. No automatic star-only approval; fork/archive/research/survey, duplicate/ban, source-generation and independent second-review gates stay. Original source URL retained. Prompt2026-09-21.3, rules2026-09-21.2.
+- Explicit --include-admin reconsideration option (default preserves human decisions). Current user request includes previously excluded15admin rejections; prior decisions and reasons retained in audit. SnapshotCAS plan161examined160eligible; APPLY COMPLETED160queued0conflicts. Actor `codex-2026-09-21-rejected-queue`; receipt `/tmp/nmv-queue-reconsider-receipt.json`. DO NOT rerun apply.
+- Migration0042 APPLIED production: publication enter/leave/delete event trigger, existing published transitions backfilled; short write lock closes bootstrap race. Signed24h change uses DB clock and actual state transitions, not arbitrary updates. Duplicate UI label + existingSlug links (63/70legacyduplicates have stored slug).
+- All8Dokployapps done on b942837; sixworker/connectcontainers healthy and12/12sourcehashes match. BothwebhealthHTTP200/db2ms. Live authenticated admin desktop/mobile screenshot shows16941(+1894) at08:39, no browser errors or horizontal overflow. RELEASE_TAG healthenv stillhistorical2839ec; deployment descriptions and hashes prove actualsource.
 
-## Files, checks and failures
+## Tests, files, failures
 
-Modified rules/access consumers, reconsideration+CLI, admin review UI/count query, crawl-schema, migration0042/journal, tests. git diff --stat gives full list. Unrelated original untracked design files preserved.
-Executed:7new eligibility regressions failed before fix;95focusedunit thenfull1066unitPASS; delta3DBtests initially missing-table failed, then default app-clock tests exposed skew; DB-clock corrected all3PASS. Explicitmanualreconsider test RED then focused7DBPASS. Types/scopedlint/diffcheck passed before final fixture additions. Fullintegration730PASS (75files), browser2PASS desktop/mobile positive+negative, buildPASS. Logs /tmp/nmv-queue-integration.log and /tmp/nmv-queue-e2e.log. No tests on production.
+Executed unit1066PASS, integration730PASS/75files, browser2PASS (positive/negative24h, desktop/390px), types/scopedlint/build/diffcheckPASS. PRCI35544904190PASS including clean migrations. MainCI35545174640PASS. Live public search finds Transformers; /p/transformers and /p/salesforcedx-vscode return200 and show Copy Prompt, browsererrors0. Sevenneweligibility regressions RED beforefix; explicitadminscope REDthenPASS; deltaDB tests REDmissingtable then clock-skew failure corrected by DBclock,3PASS.
 
-## Remaining and exact next commands
+Files: rules.ts/access consumers; reconsider.ts/CLI; review page/count query/duplicateUI; crawl-schema; migration0042/journal; unit/integration/E2Etests. Report `docs/operations/2026-09-21-rejected-queue-and-publication-change.md`; publicresultartifacts `docs/operations/evaluations/2026-09-21-rejected-queue/`.
 
-1. Finish integration, types, newbrowser2tests, review diff. Build via Playwright. Update report and this handoff.
-2. Commit/push/PR; wait CI; merge. Apply0042 via direct5432 migration using explicit private env parse, never echo credentials. Both web servers/all workers deploy via prod skill; verify hashes, health, live admin24hchip.
-3. After newworkers verified: npx tsx .crawl-samples/queue-reconsider.ts --apply (one-shot snapshotCAS, audit actor codex-2026-09-21-rejected-queue). Save receipt; do not rerun applied snapshot blindly. Observe counts and report in-progress vs actualpublished truthfully.
+Failed diagnostics: nonexistent readme_excerpt column / github_api_cooldowns table queried read-only; actual README ispage_meta and cooldowns are rate_limits. No data changed by failedreads. No secrets printed. Model/runtime settings unchanged; Sonnet fallback retained, noOpus.
 
-Private0600 /tmp/nmv-installable-web.env and prod.env remain; NEVERcat/echo/commit. Envfile must explicitly override inherited testDB. Helpers .crawl-samples/rejected-500-inspect.ts, queue-reconsider.ts are ignored. /tmp/nmv-rejected-500-audit.json, /tmp/nmv-rejected-500-current-rules.json evidence. Existing prior392cohort is separate; don't rerun previous repair/apply helpers.
+## Remaining work and exact next commands
+
+The implementation/deploy/re-review enrollment is done. Normal asynchronous pipeline continues160cases; do not claim all160published.08:40:60freshfetch,100waitingcollection,52needs_review,8rule-approved,0published.08:41firstattempts7approve1reject, no errors.08:42:118fresh;7published(transformers/gutenberg/salesforcedx-vscode/etc),2notproduct,151stillprocessing. Worker last_errornull. Independentsecondreview/publication proven working; remainingitems continue normally. Prior392cohort is separate; do not reapply its plan or repair scripts.
 
 ```sh
 cd /Users/jr/Desktop/projects/nomorevibe
-npx playwright test tests/e2e/review-publication-change.spec.ts
-npx tsc --noEmit
-git diff --check
+node .crawl-samples/queue-status.mjs /tmp/nmv-queue-next.json
+gh run view 35545174640 --json status,conclusion
+python3 /tmp/nmv-queue-runtime.py
+npx tsx .crawl-samples/queue-live-ui.ts
 ```
+
+Ignored helpers root `.crawl-samples/queue-status.mjs`, `queue-live-ui.ts`, `queue-reconsider.ts`, `rejected-500-inspect.ts`. The reconsider plan is ALREADY APPLIED; only status/UI helpers are safe to repeat. Explicit private0600 `/tmp/nmv-installable-web.env` and prod.env; neverecho/commit. Envfile must explicitly override inheritedtestDB. Migrationusesdirect5432, runtime6432. DokployAPIKeychain perprodskill. Bothwebapps oipo2OAnIrtcnILBCRoG2 / llv4rlABSJOcFauSxaHdx, main. No localserver left running after E2E; design preview/tunnel untouched.
 
 ---
 

@@ -1,0 +1,121 @@
+{
+  "at": "2026-09-20T23:42:04.263Z",
+  "states": [
+    {
+      "state": "approved",
+      "reason": "passed",
+      "count": 9
+    },
+    {
+      "state": "needs_review",
+      "reason": "ambiguous",
+      "count": 100
+    },
+    {
+      "state": "new",
+      "reason": "source_changed",
+      "count": 42
+    },
+    {
+      "state": "published",
+      "reason": "passed",
+      "count": 7
+    },
+    {
+      "state": "rejected",
+      "reason": "not_a_product",
+      "count": 2
+    }
+  ],
+  "fresh": [
+    {
+      "total": 160,
+      "fresh": 118
+    }
+  ],
+  "products": [
+    {
+      "repo": "mvel/mvel",
+      "slug": "mvel",
+      "name": "mvel",
+      "access_mode": "installable",
+      "category": "Dev"
+    },
+    {
+      "repo": "forcedotcom/salesforcedx-vscode",
+      "slug": "salesforcedx-vscode",
+      "name": "salesforcedx-vscode",
+      "access_mode": "installable",
+      "category": "Plugin"
+    },
+    {
+      "repo": "wordpress-mobile/WordPress-iOS",
+      "slug": "wordpress-ios",
+      "name": "WordPress-iOS",
+      "access_mode": "installable",
+      "category": "Media"
+    },
+    {
+      "repo": "WordPress/gutenberg",
+      "slug": "gutenberg",
+      "name": "gutenberg",
+      "access_mode": "installable",
+      "category": "Plugin"
+    },
+    {
+      "repo": "EnzymeAD/Enzyme.jl",
+      "slug": "enzymejl",
+      "name": "Enzyme.jl",
+      "access_mode": "installable",
+      "category": "Dev"
+    },
+    {
+      "repo": "huggingface/transformers",
+      "slug": "transformers",
+      "name": "transformers",
+      "access_mode": "installable",
+      "category": "Dev"
+    },
+    {
+      "repo": "iorate/ublacklist",
+      "slug": "ublacklist",
+      "name": "ublacklist",
+      "access_mode": "installable",
+      "category": "Plugin"
+    }
+  ],
+  "jobs": [
+    {
+      "name": "crawl-publish",
+      "last_error": null,
+      "seen_seconds": 4
+    },
+    {
+      "name": "crawl-agent-review",
+      "last_error": null,
+      "seen_seconds": 4
+    },
+    {
+      "name": "crawl-judge",
+      "last_error": null,
+      "seen_seconds": 39
+    },
+    {
+      "name": "second-review",
+      "last_error": null,
+      "seen_seconds": 40
+    },
+    {
+      "name": "crawl-fetch",
+      "last_error": null,
+      "seen_seconds": 20
+    }
+  ],
+  "change": [
+    {
+      "added": 1900,
+      "removed": 0,
+      "net": 1900
+    }
+  ]
+}
