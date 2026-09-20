@@ -54,7 +54,7 @@ export default async function ProductPage({ params }: Props) {
           rank={detail.rank}
           health={detail.health}
         />
-        <ProductMetrics visits={detail.visits} health={detail.health} />
+        <ProductMetrics visits={detail.visits} health={detail.health} installable={detail.product.accessMode === "installable"} />
       </div>
 
       <div className="mt-8 grid gap-6 lg:grid-cols-[minmax(0,1fr)_340px] lg:items-start lg:gap-8">
@@ -69,7 +69,7 @@ export default async function ProductPage({ params }: Props) {
             profileUpdatedAt={detail.profile?.updatedAt ?? null}
           />
           {detail.unclaimed && (
-            <UnclaimedOwnerContact repoUrl={detail.product.repoUrl} slug={detail.product.slug} />
+            <UnclaimedOwnerContact repoUrl={detail.product.repoUrl} slug={detail.product.slug} installable={detail.product.accessMode === "installable"} />
           )}
           <ProductFacts product={detail.product} profile={detail.profile} links={detail.links} unclaimed={detail.unclaimed} />
           {detail.product.status === "unverified" && (

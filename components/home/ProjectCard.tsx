@@ -61,6 +61,7 @@ export function ProjectCard({
             <Link href={`/p/${product.slug}`} className="title-open">{product.name}</Link>
           </h3>
           {hasRepository && <span className="tiny-tag">저장소</span>}
+          {product.accessMode === "installable" && <span className="tiny-tag">직접 설치</span>}
           {product.unclaimed && <span className="tiny-tag tiny-tag-muted">미클레임</span>}
         </div>
         <p className="project-tagline" title={product.tagline}>{product.tagline}</p>

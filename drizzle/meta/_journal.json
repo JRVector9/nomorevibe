@@ -288,6 +288,13 @@
       "when": 1789913262237,
       "tag": "0040_tagline_written_by",
       "breakpoints": true
+    },
+    {
+      "idx": 41,
+      "version": "7",
+      "when": 1789921719561,
+      "tag": "0041_installable_products",
+      "breakpoints": true
     }
   ]
 }

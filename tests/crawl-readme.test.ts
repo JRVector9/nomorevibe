@@ -6,6 +6,12 @@ const ok = (text: string): CappedFetchResult => ({ ok: true, status: 200, finalU
 const missing: CappedFetchResult = { ok: false, reason: "http", status: 404 };
 
 describe("README 앞부분", () => {
+  it("retains installation evidence after a long introduction within the same size bound", () => {
+    const sample = readmeText("# Editor Skill\n" + "Background and features. ".repeat(400) + "\n## Installation\nCopy SKILL.md to your agent skills directory.\n");
+    expect(sample).toContain("Editor Skill");
+    expect(sample).toContain("Copy SKILL.md");
+    expect(sample.length).toBeLessThanOrEqual(README_SAMPLE_LIMIT);
+  });
   it("removes embedded NUL before README text reaches PostgreSQL review storage", async () => {
     expect(await fetchReadmeSample("acme/app", async () => ok("# App\0\nUseful\0 product")))
       .toBe("App\nUseful product");

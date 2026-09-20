@@ -58,6 +58,8 @@ export const products = pgTable("products", {
   slug: varchar("slug", { length: 80 }).notNull().unique(),
   // 정규화된 URL (https 강제, www/후행슬래시 제거)
   url: text("url").notNull().unique(),
+  /** For installable products url identifies the repository, not a deployed website. */
+  accessMode: varchar("access_mode", { length: 16 }).$type<"website" | "installable">().notNull().default("website"),
   name: varchar("name", { length: 120 }).notNull(),
   tagline: varchar("tagline", { length: 200 }).notNull(),
   /**

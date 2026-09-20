@@ -32,6 +32,7 @@ export type ProductListItem = StarObservation & {
   /** 소개를 누가 썼는지 — ai_* 면 목록에서 "AI 요약"이라고 밝힌다 */
   taglineSource: TaglineSource;
   category: string;
+  accessMode?: Product["accessMode"];
   builder: string | null;
   builderClaim: BuilderClaim;
   stack: string[];
@@ -64,6 +65,7 @@ export function toListItem(p: Product): ProductListItem {
     tagline: p.tagline,
     taglineSource: p.taglineSource,
     category: p.category,
+    accessMode: p.accessMode,
     // 수집기가 추정한 값은 공개 뷰모델에서 제거한다. 메이커가 확인한 값만 UI와 검색에 쓴다.
     builder: builderClaim === "reported" ? p.builder : null,
     builderClaim,

@@ -28,6 +28,7 @@ export const PRODUCT_DETAIL_FIXTURES = {
   collecting: "e2e-collecting",
   staleConflict: "e2e-stale-conflict",
   unclaimed: "e2e-unclaimed",
+  installable: "e2e-installable",
 } as const;
 
 const EDIT_TOKEN = "nmv_edit_e2e_product_detail";
@@ -68,6 +69,13 @@ export async function seedProductDetailFixtures(): Promise<void> {
   await insertProduct(PRODUCT_DETAIL_FIXTURES.collecting, "verified", "Early Signal");
   await insertProduct(PRODUCT_DETAIL_FIXTURES.staleConflict, "verified", "Conflict Lens");
   await insertProduct(PRODUCT_DETAIL_FIXTURES.unclaimed, "seeded", "Open Seed");
+  await db.insert(products).values({ slug: PRODUCT_DETAIL_FIXTURES.installable,
+    url: "https://github.com/example/editor-plugin", repoUrl: "https://github.com/example/editor-plugin",
+    accessMode: "installable", name: "Editor Plugin", tagline: "반복 작업을 줄이는 에디터 플러그인",
+    description: "에디터에 직접 설치해 반복 작업을 자동화하는 확장 프로그램입니다.", category: "Plugin",
+    stars: 500, starsAt: new Date(), status: "seeded", source: "crawler",
+    verifyToken: "installable-fixture-token", editTokenHash: hashToken(EDIT_TOKEN),
+  });
 
   await db.insert(productProfiles).values([
     {

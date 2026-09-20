@@ -43,6 +43,14 @@ export async function findByUrl(url: string): Promise<Product | undefined> {
   return db.query.products.findFirst({ where: eq(products.url, url) });
 }
 
+/** An installation entry must not resurrect a banned product or duplicate its website entry. */
+export async function findInstallationSource(url: string): Promise<Product | undefined> {
+  return db.query.products.findFirst({
+    where: or(eq(products.url, url), sql`lower(rtrim(${products.repoUrl}, '/')) = lower(${url})`),
+    orderBy: [sql`case when ${products.status} = 'banned' then 0 else 1 end`, products.id],
+  });
+}
+
 /**
  * 정렬 기준. 지금은 최신 검증순 하나뿐이지만, 랭킹(NMR 점수·CTR)이 붙으면
  * 이 유니온에 값을 추가하고 아래 map에 한 줄만 넣으면 된다 — 호출부는 그대로다.

@@ -9,6 +9,7 @@ export const DEFAULT_CONFIG: ModelConfig = { primary: { model: MODEL_IDS[0], eff
 export const classifyInputsSchema = z.array(z.object({
   repo: z.string().max(200), url: z.string().max(2000), name: z.string().max(300),
   tagline: z.string().max(2000), topics: z.array(z.string().max(200)).max(100), language: z.string().max(100).nullable(),
+  readme: z.string().max(6000).optional(),
 }).strict()).min(1).max(10);
 /**
  * 분류 요청 본문.

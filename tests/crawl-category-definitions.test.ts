@@ -40,7 +40,10 @@ it('옮겨 온 열일곱 줄은 상수로 두었던 때와 한 글자도 다르�
   const lines = PROMPT_BEFORE_THE_MOVE.split("\n");
   // Profile 은 CATEGORIES 에서 Other 바로 앞에 있다
   const expected = [...lines.slice(0, -1), PROFILE_BLOCK, lines.at(-1)!].join("\n");
-  expect(renderCategoryDefinitions(DEFAULT_CATEGORY_DEFINITIONS)).toBe(expected);
+  const rendered = renderCategoryDefinitions(DEFAULT_CATEGORY_DEFINITIONS);
+  expect(rendered.replace(/Plugin:[\s\S]*?(?=Other:)/, "")).toBe(expected);
+  expect(rendered).toContain("Plugin: 기존 앱");
+  expect(rendered).toContain("Skill: AI 에이전트");
 });
 
 it('포함·제외 예시는 해당 카테고리 줄 아래에만 붙는다', () => {
@@ -59,7 +62,7 @@ it('한 카테고리만 저장돼 있어도 나머지 17개는 기본값으로 �
     classify: { definitions: { Dev: { summary: '개발자가 직접 쓰는 도구', include: [], exclude: ['일반 자동화 → Productivity'] } } },
   });
   expect(merged.classify.definitions.Dev.exclude).toEqual(['일반 자동화 → Productivity']);
-  expect(Object.keys(merged.classify.definitions)).toHaveLength(18);
+  expect(Object.keys(merged.classify.definitions)).toHaveLength(20);
   expect(merged.classify.definitions.Games).toEqual(DEFAULT_CATEGORY_DEFINITIONS.Games);
 });
 

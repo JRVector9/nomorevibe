@@ -1,4 +1,11 @@
 import{it,expect}from'vitest';import sharp from'sharp';import{resolveThumbnail}from'@/lib/domain/products/thumbnails/resolver';
+it('never uses GitHub platform icons as an installable project thumbnail', async () => {
+ const seen:string[]=[];
+ await resolveThumbnail({name:'Plugin',url:'https://github.com/acme/plugin',repoUrl:'https://github.com/acme/plugin',accessMode:'installable'}, {request:async url=>{seen.push(url);return {ok:false,reason:'http',status:404};}});
+ expect(seen).not.toContain('https://github.com/acme/plugin');
+ expect(seen).not.toContain('https://github.com/favicon.ico');
+ expect(seen).toContain('https://github.com/acme.png?size=256');
+});
 it('prefers app icons over repository and avatar and uses a default when every source fails',async()=>{
  const png=await sharp({create:{width:64,height:64,channels:4,background:'#123456'}}).png().toBuffer();const seen:string[]=[];
  const input={name:'Demo',url:'https://demo.example',repoUrl:'https://github.com/acme/demo'};

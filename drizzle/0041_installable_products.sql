@@ -1,0 +1,1 @@
+ALTER TABLE "products" ADD COLUMN "access_mode" varchar(16) DEFAULT 'website' NOT NULL;

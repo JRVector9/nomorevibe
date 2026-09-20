@@ -383,7 +383,9 @@ export async function judgementQueue(
     .select()
     .from(crawlDocuments)
     .leftJoin(crawlCandidates, eq(crawlDocuments.repo, crawlCandidates.repo))
-    .where(sql`${crawlCandidates.id} IS NULL OR ${crawlCandidates.state} = 'new'`)
+    .where(sql`${crawlCandidates.id} IS NULL OR (${crawlCandidates.state} = 'new'
+      AND (${crawlCandidates.signals}->>'reconsiderAfter' IS NULL
+        OR ${crawlDocuments.fetchedAt} > (${crawlCandidates.signals}->>'reconsiderAfter')::timestamp))`)
     .limit(limit);
   // 후보가 없으면 null이 아니라 undefined다 — 저장 쪽이 잠근 행(없으면 undefined)과 그대로 비교한다
   return rows.map((row) => ({ document: row.crawl_documents, candidate: row.crawl_candidates ?? undefined }));

@@ -224,6 +224,16 @@ export type CategoryDefinitions = Record<Category, CategoryDefinition>;
 const definition = (summary: string): CategoryDefinition => ({ summary, include: [], exclude: [] });
 
 export const DEFAULT_CATEGORY_DEFINITIONS: CategoryDefinitions = {
+  Plugin: {
+    summary: "기존 앱·에디터·브라우저·AI 도구에 설치해 기능을 확장하는 플러그인·확장 프로그램",
+    include: ["브라우저 확장", "IDE·에디터 플러그인", "설치 가능한 호스트 앱 확장"],
+    exclude: ["에이전트가 읽는 설치 가능한 SKILL.md 패키지 → Skill", "독립 CLI·라이브러리·MCP 서버 → Dev", "플러그인 소개 글·링크 모음은 제품 아님"],
+  },
+  Skill: {
+    summary: "AI 에이전트에 설치·연결하여 반복 사용하도록 패키징된 스킬",
+    include: ["SKILL.md와 사용법·호스트가 명시된 에이전트 스킬", "직접 설치 가능한 스킬 묶음"],
+    exclude: ["일반 프롬프트 모음·연구 문서·튜토리얼은 제품 아님", "스킬을 개발·관리하는 독립 도구 → Dev", "기능 확장 코드 플러그인 → Plugin"],
+  },
   Productivity: definition("개인·팀의 일정, 문서, 메모, 작업 및 워크플로 도구"),
   Dev: definition("코딩, API, SDK, 테스트, 인프라 및 개발자 도구"),
   Design: definition("UI/UX, 그래픽, 3D 및 시각 디자인 도구"),

@@ -17,6 +17,16 @@ export const CAUSE_GUIDE: Record<CauseKey, {
   question: string;
   hints: { decision: string; when: string }[];
 }> = {
+  installable_product: {
+    label: "직접 설치하는 프로젝트",
+    summary: "GitHub 별 500개 이상으로 배포 URL 대신 저장소의 실제 설치·사용 대상을 심사합니다.",
+    question: "문서 모음이 아니라 설치해 반복 사용할 수 있는 제품입니까?",
+    hints: [
+      { decision: "승인", when: "README에 기능과 설치·사용 방법이 있는 앱·CLI·플러그인·스킬 패키지" },
+      { decision: "거부 · 제품이 아님", when: "책·논문·개인 연구문서·일회성 설문·일반 프롬프트나 링크 모음" },
+      { decision: "보류", when: "실제 기능이나 설치 대상·호스트를 확인할 근거가 없음" },
+    ],
+  },
   host_excluded_subpath: {
     label: "호스트는 제외 대상, 배포물은 하위 경로",
     summary: "owner.github.io 루트면 개인 홈페이지지만, 그 아래 경로는 올려둔 제품일 수 있습니다.",

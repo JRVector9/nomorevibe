@@ -1,0 +1,161 @@
+{
+  "at": "2026-09-20T16:26:59.702Z",
+  "settings": [
+    {
+      "mode": "enforce",
+      "second_review": {
+        "voters": [
+          {
+            "model": "[MLX] qwen3.6-35b-heretic",
+            "provider": "abcllm"
+          },
+          {
+            "model": "[MLX] gpt-oss-120b",
+            "provider": "abcllm"
+          }
+        ],
+        "agreeAt": 0.7,
+        "enabled": true,
+        "fallbacks": [
+          {
+            "model": "sonnet",
+            "provider": "claude-cli"
+          }
+        ],
+        "sampleRate": 0.05,
+        "includeAiHeld": true
+      },
+      "max_stars": "99999"
+    }
+  ],
+  "counts": [
+    {
+      "reason": "not_a_product",
+      "decided_by": "auto",
+      "total": 205,
+      "no_url": 0
+    },
+    {
+      "reason": "no_homepage",
+      "decided_by": "auto",
+      "total": 191,
+      "no_url": 191
+    },
+    {
+      "reason": "large_oss",
+      "decided_by": "auto",
+      "total": 80,
+      "no_url": 0
+    },
+    {
+      "reason": "already_listed",
+      "decided_by": "auto",
+      "total": 57,
+      "no_url": 0
+    },
+    {
+      "reason": "not_a_product",
+      "decided_by": "admin",
+      "total": 15,
+      "no_url": 0
+    },
+    {
+      "reason": "unreachable",
+      "decided_by": "auto",
+      "total": 14,
+      "no_url": 0
+    },
+    {
+      "reason": "personal_site",
+      "decided_by": "auto",
+      "total": 7,
+      "no_url": 0
+    }
+  ],
+  "sample": [
+    {
+      "repo": "garrytan/gstack",
+      "reason": "no_homepage",
+      "stars": "132236",
+      "description": "Use Garry Tan's exact Claude Code setup: 23 opinionated tools that serve as CEO, Designer, Eng Manager, Release Manager, Doc Engineer, and QA",
+      "product_url": null
+    },
+    {
+      "repo": "mvanhorn/last30days-skill",
+      "reason": "no_homepage",
+      "stars": "61829",
+      "description": "AI agent skill that researches any topic across Reddit, X, YouTube, HN, Polymarket, and the web - then synthesizes a grounded summary",
+      "product_url": null
+    },
+    {
+      "repo": "bmad-code-org/BMAD-METHOD",
+      "reason": "no_homepage",
+      "stars": "52477",
+      "description": "Breakthrough Method for Agile Ai Driven Development",
+      "product_url": null
+    },
+    {
+      "repo": "DefinitelyTyped/DefinitelyTyped",
+      "reason": "no_homepage",
+      "stars": "51437",
+      "description": "The repository for high quality TypeScript type definitions.",
+      "product_url": null
+    },
+    {
+      "repo": "bojieli/ai-agent-book",
+      "reason": "no_homepage",
+      "stars": "48533",
+      "description": "《深入理解 AI Agent：设计原理与工程实践》（李博杰 著）开源主仓库：全书正文、编译版 PDF 与按章配套代码",
+      "product_url": null
+    },
+    {
+      "repo": "heygen-com/hyperframes",
+      "reason": "no_homepage",
+      "stars": "44012",
+      "description": "Write HTML. Render video. Built for agents.",
+      "product_url": null
+    },
+    {
+      "repo": "Wei-Shaw/sub2api",
+      "reason": "no_homepage",
+      "stars": "42004",
+      "description": "Sub2API 一站式开源中转服务，让 Claude、Openai 、Gemini、Grok订阅统一接入，支持拼车共享，更高效分摊成本，原生工具无缝使用。",
+      "product_url": null
+    },
+    {
+      "repo": "MadsLorentzen/ai-job-search",
+      "reason": "no_homepage",
+      "stars": "37758",
+      "description": "The job search that runs on your machine. AI job application framework built on Claude Code: evaluate postings, tailor CVs, write cover letters, prep interviews. Fork it and own it.",
+      "product_url": null
+    },
+    {
+      "repo": "THU-MAIC/OpenMAIC",
+      "reason": "no_homepage",
+      "stars": "33464",
+      "description": "Open Multi-Agent Interactive Classroom — Get an immersive, multi-agent learning experience in just one click",
+      "product_url": null
+    },
+    {
+      "repo": "block/buzz",
+      "reason": "no_homepage",
+      "stars": "32642",
+      "description": "A hive mind communication platform",
+      "product_url": null
+    },
+    {
+      "repo": "garrytan/gbrain",
+      "reason": "no_homepage",
+      "stars": "29256",
+      "description": "Garry's Opinionated OpenClaw/Hermes Agent Brain",
+      "product_url": null
+    },
+    {
+      "repo": "NixOS/nixpkgs",
+      "reason": "no_homepage",
+      "stars": "26186",
+      "description": "Nix Packages collection & NixOS",
+      "product_url": null
+    }
+  ]
+}

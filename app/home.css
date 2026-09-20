@@ -1577,7 +1577,7 @@ dialog::backdrop {
 .cover-identity img { object-fit: contain; }
 .cover-identity .cover-brand { color: var(--text, #20242d); text-shadow: none; }
 .cover-default { display: flex; height: 100%; align-items: center; justify-content: center; flex-direction: column; gap: 8px; }
-.cover-default small { font-size: 12px; opacity: .65; }
+.cover-default small { font-size: 13px; opacity: .65; }
 
 .search-results-layout { grid-template-columns: minmax(0, 1fr); margin-top: 28px; }
 

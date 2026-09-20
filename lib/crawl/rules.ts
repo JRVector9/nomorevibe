@@ -4,6 +4,7 @@ import type { DecisionReason } from "@/lib/db/schema";
 import type { CrawlSettings } from "./settings-schema";
 import { summarizeAgentEvidence, type SummaryInput } from "@/lib/domain/evidence/agents/summary";
 import { linksOwnGithub } from "./github-links";
+import { productAccess, INSTALLABLE_MIN_STARS } from "@/lib/domain/products/access";
 
 /**
  * 판정 규칙.
@@ -77,6 +78,7 @@ export type RuleStep = { rule: string; detail: string; passed: boolean };
  * 사람이 할 판단은 갈래마다 다르다 — 묶어서 처리하려면 갈래를 알아야 한다.
  */
 export type AmbiguityCause =
+  | "installable_product"
   | "page_status_unknown"
   | "push_time_unknown"
   | "host_excluded_subpath"
@@ -224,7 +226,18 @@ export function judge(
   let deferred: { cause: AmbiguityCause; rule: string; detail: string } | null = null;
   const defer = (cause: AmbiguityCause, rule: string, detail: string) => { deferred ??= { cause, rule, detail }; };
 
-  // 배포물이 없으면 제품이 아니다 — 가장 값싼 거르기
+  const access = productAccess({ repo: repo.repo, stars: repo.stars, productUrl: page.productUrl });
+  if (access?.mode === "installable") {
+    signals.accessMode = access.mode;
+    const purpose = nonProductPurpose({ ...page, description: [repo.description, page.description].filter(Boolean).join(" ") });
+    if (purpose) return reject("not_a_product", "독립 제품·서비스", `${purpose.kind}: ${purpose.evidence}`);
+    if (repo.isFork && rules.excludeForks) return reject("fork", "포크 아님", "포크 저장소");
+    if (repo.archived) return reject("personal_site", "보관됨 아님", "archived=true");
+    pass("설치형 제품 스타 기준", `${repo.stars} ≥ ${INSTALLABLE_MIN_STARS}`);
+    return hold("ambiguous", "installable_product", "설치형 제품 확인",
+      "배포 URL 대신 공식 저장소를 사용합니다. README에서 실제 소프트웨어·플러그인·스킬인지 심사해야 합니다");
+  }
+  // 500스타 미만은 기존 배포 URL 기준을 적용한다.
   // 규칙 이름은 통과·거부 두 줄에 같이 쓴다 — "배포 URL 있음 / homepage 미설정"은 읽는 사람을 헷갈리게 했다
   if (!page.productUrl) return reject("no_homepage", "배포 URL", "homepage 미설정");
   pass("배포 URL", page.productUrl);
@@ -397,13 +410,15 @@ export function judge(
   // 스타 상한이 대형 오픈소스를 거른다. 하한이 아니라 상한인 것이 요지다 —
   // 갓 배포한 제품은 정당하게 스타가 0개다.
   const n = (value: number) => value.toLocaleString("en-US");
-  if (repo.stars > rules.maxStars) {
+  if (repo.stars > rules.maxStars && repo.stars < INSTALLABLE_MIN_STARS) {
     return reject("large_oss", "스타 상한 이하", `${n(repo.stars)} > ${n(rules.maxStars)}`);
   }
   if (repo.stars < rules.minStars) {
     return reject("large_oss", "스타 하한 이상", `${n(repo.stars)} < ${n(rules.minStars)}`);
   }
-  pass("스타 상한 이하", `${n(repo.stars)} ≤ ${n(rules.maxStars)}`);
+  pass("스타 상한 이하", repo.stars > rules.maxStars
+    ? `${n(repo.stars)} ≥ ${INSTALLABLE_MIN_STARS} — 인기 제품은 상한 예외`
+    : `${n(repo.stars)} ≤ ${n(rules.maxStars)}`);
   if (rules.excludeOrganizations && repo.ownerType === "Organization") {
     return reject("large_oss", "조직 계정 아님", "조직 계정 제외가 켜져 있음");
   }

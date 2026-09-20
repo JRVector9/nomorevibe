@@ -53,6 +53,7 @@ export function ProductCard({ product, rank }: { product: ProductListItem; rank?
         </div>
         <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
           <Tag>{product.category}</Tag>
+          {product.accessMode === "installable" && <Tag>직접 설치</Tag>}
           {product.builder && <BuilderBadge builder={product.builder} claim={product.builderClaim} />}
           {product.stack.slice(0, 4).map((item) => (
             <Tag key={item}>{item}</Tag>

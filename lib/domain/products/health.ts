@@ -51,6 +51,7 @@ export async function nextToCheck(limit: number): Promise<PingTarget[]> {
     .where(
       and(
         inArray(products.status, ["verified", "seeded"]),
+        eq(products.accessMode, "website"),
         // 한 번도 안 본 것과, 본 지 충분히 오래된 것만
         sql`(${productHealth.checkedAt} is null or ${productHealth.checkedAt} < now() - ${sql.raw(`interval '${RECHECK_AFTER_MINUTES} minutes'`)})`,
       ),
