@@ -39,7 +39,7 @@ export async function writeTaglines(ctx: JobContext<null>): Promise<JobOutcome<n
 
   const startedAt = Date.now();
   const remaining = () => TICK_MS - (Date.now() - startedAt);
-  let written = 0, empty = 0, failed = 0, released = 0, blocked = "";
+  let written = 0, empty = 0, failed = 0, released = 0, blocked = "", inARow = 0;
 
   while (ctx.hasBudget() && remaining() >= MIN_CALL_MS) {
     const tasks = await pendingTaglines(BATCH);
@@ -56,8 +56,14 @@ export async function writeTaglines(ctx: JobContext<null>): Promise<JobOutcome<n
         const evidence = taglineEvidence(candidate.repo, document);
         const sourceHash = taglineHash(evidence);
 
-        // 다시 긁혔지만 내용은 그대로다 — 본 판만 새로 적고 넘어간다
-        if (stored && stored.sourceHash === sourceHash) {
+        /**
+         * 다시 긁혔지만 내용은 그대로다 — 본 판만 새로 적고 넘어간다.
+         *
+         * 실패한 줄은 여기서 넘기면 안 된다. 실패도 그때 본 원본의 해시를 남기므로, 해시만 보고
+         * 건너뛰면 다시 볼 시각이 지나도 영영 다시 묻지 않는다 — 프로드에서 게이트웨이 502 를 만난
+         * 7건이 90분 동안 시도 1회에 멈춘 채 대기열을 차지했다(2026-09-20).
+         */
+        if (stored && stored.sourceHash === sourceHash && !stored.errorCode) {
           await touchTagline(candidate.repo, document.fetchedAt);
           if (stored.tagline && await releaseForPublish(candidate.id)) released++;
           continue;
@@ -80,9 +86,16 @@ export async function writeTaglines(ctx: JobContext<null>): Promise<JobOutcome<n
         if (!result.ok) {
           await recordTaglineFailure({ repo: candidate.repo, sourceHash, documentAt: document.fetchedAt, error: result.error });
           failed++;
-          if (GATEWAY_DOWN.has(result.error) || result.error.startsWith("http_5")) blocked = result.error;
+          /**
+           * 한 건의 실패로 틱을 접지 않는다 — 같은 증거에만 502 를 돌려주는 후보가 있어
+           * (긴 페이지 글) 그 한 건이 나머지의 차례까지 막았다. 잇따라 둘이 실패하면 그때 접는다.
+           */
+          if (GATEWAY_DOWN.has(result.error) || result.error.startsWith("http_5")) {
+            if (++inARow >= 2) blocked = result.error;
+          }
           continue;
         }
+        inARow = 0;
         await recordTagline({ repo: candidate.repo, tagline: result.tagline, source: result.source, model: TAGLINE_MODEL, sourceHash, documentAt: document.fetchedAt });
         if (!result.tagline) { empty++; continue; }
         written++;

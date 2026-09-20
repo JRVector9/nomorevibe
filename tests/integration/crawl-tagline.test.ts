@@ -98,16 +98,36 @@ describe("소개 짓기 잡", () => {
     expect(await db.select().from(crawlTaglines)).toHaveLength(0);
   });
 
-  it("실패는 다시 볼 시각을 달고 남는다 — 게이트웨이가 막히면 이번 틱은 접는다", async () => {
+  it("실패는 다시 볼 시각을 달고 남는다 — 잇따라 둘이 막히면 이번 틱은 접는다", async () => {
     await held("someone/my-app");
+    await held("someone/other-app");
     gateway.mockResolvedValue({ ok: false, status: 429 } as Response);
 
     await tick();
 
+    // 한 건의 실패로 접지 않는다 — 둘 다 물어보고 나서 접는다
+    expect(gateway).toHaveBeenCalledTimes(2);
     const [written] = await db.select().from(crawlTaglines);
     expect(written).toMatchObject({ errorCode: "rate_limit", attempts: 1, tagline: "" });
     expect(written.retryAt).not.toBeNull();
     expect(await crawl.getCandidate("someone/my-app")).toMatchObject({ state: "needs_review", reason: "no_description" });
+    expect(await crawl.getCandidate("someone/other-app")).toMatchObject({ state: "needs_review", reason: "no_description" });
+  });
+
+  it("실패한 줄은 다시 볼 때가 되면 같은 원본이라도 다시 묻는다", async () => {
+    await held("someone/flaky");
+    gateway.mockResolvedValue({ ok: false, status: 502 } as Response);
+    await tick();
+    // 다시 볼 시각을 앞당긴다 — 운영에서는 5분 뒤다
+    await db.update(crawlTaglines).set({ retryAt: new Date(Date.now() - 1_000) }).where(eq(crawlTaglines.repo, "someone/flaky"));
+    gateway.mockClear();
+    gateway.mockResolvedValue(answer("바를 등록하면 손님이 찾습니다"));
+
+    await tick();
+
+    expect(gateway).toHaveBeenCalled();
+    expect((await db.select().from(crawlTaglines))[0]).toMatchObject({ tagline: "바를 등록하면 손님이 찾습니다", errorCode: null });
+    expect(await crawl.getCandidate("someone/flaky")).toMatchObject({ state: "approved" });
   });
 
   it("원본을 다시 긁었지만 내용이 그대로면 또 부르지 않는다", async () => {
