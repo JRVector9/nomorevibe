@@ -82,6 +82,35 @@ export function ReviewDetail({ entry, reasons }: { entry: AdminReviewEntry; reas
         </p>
       </div>
 
+      {/*
+        소개가 없어 멈춘 후보는 "AI 가 해봤는가"가 판단의 절반이다. 지어 둔 줄이 있으면 발행이
+        그 줄로 올리고, 빈 줄이면 모델이 증거를 보고도 못 쓴 것이다 — 그때 사람이 페이지를 연다.
+      */}
+      {candidate.reason === 'no_description' && (
+        <div className="rounded-lg border border-line bg-bg-soft px-2.5 py-2 text-[13px] leading-[1.6] text-fg-2">
+          <b className="font-semibold text-fg">AI 한 줄 소개</b>
+          {!entry.tagline ? <span className="ml-1.5">아직 짓지 않았습니다 — 다음 틱에 시도합니다</span>
+            : entry.tagline.errorCode ? <span className="ml-1.5">게이트웨이 실패 · <span className="font-mono">{entry.tagline.errorCode}</span> · 시도 {entry.tagline.attempts}회 — 다시 볼 때가 되면 자동으로 재시도합니다</span>
+            : entry.tagline.text ? <span className="ml-1.5">지어 두었습니다 — 발행할 때 이 줄로 올라갑니다</span>
+            : <span className="ml-1.5">증거로는 무엇인지 알 수 없다고 했습니다</span>}
+          {entry.tagline?.text && <p className="mt-1 font-semibold text-fg">{entry.tagline.text}</p>}
+          {entry.tagline && (
+            <p className="mt-1 font-mono text-[13px] text-fg-3">
+              페이지 글 {entry.tagline.pageChars.toLocaleString('ko-KR')}자 · README {entry.tagline.readmeChars.toLocaleString('ko-KR')}자
+              {/* 실패한 줄에는 모델 이름이 없다(물었지만 답을 못 받았다) — "묻지 않음"은 읽을 글이 없던 경우다 */}
+              {entry.tagline.model ? ` · ${entry.tagline.model}` : entry.tagline.errorCode ? '' : ' · 모델에게 묻지 않음'}
+            </p>
+          )}
+          {/* 승인하면 어떻게 되는지 — 모르고 누르면 목록에 레포 이름이 소개로 올라간다 */}
+          {!entry.tagline?.text && (
+            <p className="mt-1.5 text-[13px] text-warn">
+              지금 승인하면 소개 자리에 레포 이름(<span className="font-mono">{candidate.repo}</span>)이 들어갑니다.
+              페이지를 열어 무엇인지 확인하고, 쓸 만한 소개가 없으면 거부하는 편이 낫습니다.
+            </p>
+          )}
+        </div>
+      )}
+
       {verdict && (
         <p className={`rounded-lg border px-2.5 py-2 text-[13px] leading-[1.6] text-fg-2 ${verdict.className}`}>
           <b className={`font-semibold ${verdict.text}`}>{verdict.label}</b>
