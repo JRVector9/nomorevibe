@@ -1,5 +1,27 @@
 # Codex handoff
 
+## Design temporary public link active — 2026-09-17 17:57 KST
+
+- User-requested public preview: https://regarding-develops-conjunction-thoroughly.trycloudflare.com/design. Source branch `feat/final-plan-design` at f854d64; no production/main deployment. Mac/network/server/tunnel must remain running; restart changes URL.
+- Worktree `/Users/jr/Desktop/projects/nomorevibe-final-design`; ignored runtime helper `.design-review/share/`; server4322 PID44458, path-limited proxy4323 PID70421, cloudflared PID47260. Read that worktree's handoff for exact restart/check commands. Do not kill reviewing processes.
+- Public Chromium smoke passed: five screens×1440/390, mobile search/save, zero console/page errors/overflow; API/admin/env404, POST405. Initial Next-Url relay omission fixed and proven by RSC200 instead of307. Report and handoff updated; app source unchanged.
+
+## Active handoff: final business plan design completed on separate branch — 2026-09-17
+
+- User asked for the final business document's development plan and design implementation on a separate branch; explicitly prohibited brainstorming/writing-plans skills. Source PT files were read; original main source and unrelated ProductHero changes were preserved.
+- Completed and pushed `feat/final-plan-design` at `f854d64` in `/Users/jr/Desktop/projects/nomorevibe-final-design`. 21 screen specifications /24 representative routes at `http://127.0.0.1:4321/design`; browser result tab opened. No main merge or production deployment.
+- Full objective, modified file list, decisions, failures, remaining work and exact commands are in that worktree's `docs/CODEX_HANDOFF.md`; deliverables `docs/plans/2026-09-17-final-business-development.md` and `docs/operations/2026-09-17-final-design-preview.md`, three committed UI captures under `docs/design-preview/final-plan/`.
+- Actual final checks: 979 unit tests, 10 browser tests, types, scoped lint, build and diff check PASS. All24 routes tested at1440/390; no console/page errors, API requests or overflow. Production DB integration not run. This is local sample-data design; actual Claim/auth, uploads, payments, transactional credits, Agent execution remain planned backend PRs.
+- Key boundaries: free registration, User/Agent separation, owner/Agent reward exclusion, maker/reviewer separation, shipped ≠ reconfirmed; localStorage key `nomorevibe-design-v1` only. Review fixed mobile search, dashboard filter/detail and owned-product scope, Agent submission guard, release-link persistence. Initial symlink+webpack and Playwright caret-hydration issues resolved in the separate worktree; see detailed handoff.
+- Next exact: `cd /Users/jr/Desktop/projects/nomorevibe-final-design`; `git status --short`; `npm run dev:design` if port4321 is not already serving this tree; `npm run test:design`; `npm test`. Continue M1 product lifecycle then M2 Claim from the plan when requested. Do not run historical production mutation scripts. Root's earlier Spark investigation edits and PT/prototype files remain uncommitted as before; this pointer is appended without replacing them.
+
+## Follow-up: Spark authentication diagnosis — 2026-09-17 11:48 KST
+
+- User asked why Spark returns access_denied and whether Codex is logged in. Both local CLI 0.154.0 and connect-agent owner CLI 0.153.4 report `Logged in using ChatGPT`. Stored owner ID-token plan is pro; not a live billing check. Reviewer default home being unauthenticated does NOT imply the owner is logged out.
+- Actual local Spark minimal call (tools disabled) returns HTTP400 invalid_request_error: model not supported when using Codex with a ChatGPT account. Owner cached model list lacks Spark; current classification reports access_denied. failureReason groups `not supported` with403, so previous status never proved actual403 or missinglogin. Exact server-side entitlement/rollout cause remains unknown; don't claim account-wide denial or forced re-login needed.
+- Read official https://learn.chatgpt.com/docs/models and /docs/auth: Spark listed for Pro, availability depends on rollout/auth/client. No authentication copied, no model settings changed, no Spark adapter deployed. Sonnet fallback remains. No source edits/tests in this diagnostic phase.
+- Helpers: `python3 /tmp/nmv-spark-auth-audit.py` reads sanitized owner login/status/cache (never outputs token values). Fresh owner probe result `/tmp/nmv-spark-probe-20260917.json`; probe invokes only built-in synthetic classification check. It updates diagnostic account status, not production candidate decisions/configuration.
+
 ## Sonnet fallback implemented and deployed — 2026-09-17
 
 - Objective: automatically recover technical second-review failures, using **Sonnet or Codex Spark; never Opus**. Implemented and deployed Sonnet. Spark returned actual `access_denied`; its adapter remains only on local branch `fix/spark-review-fallback` at `beaeb42`, NOT shipped. Never copy connect-agent-owned authentication files.

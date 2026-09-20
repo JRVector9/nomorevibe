@@ -44,3 +44,12 @@ PR [#119](https://github.com/JRVector9/nomorevibe/pull/119) 및 main CI 통과. 
 전체 대기열이 비었다는 뜻은 아니다. 이 시점 Qwen 284행·OSS 2행이 대기 중이고, OSS 형식 오류 2행은 재시도 대상으로 남았다. 수집·1차 검수·2차 심사·발행 작업의 최신 오류는 모두 null이었다. 외부 모델의 실패 가능성은 남지만, 실제 실패가 자동 대체와 사람 확인으로 이어지는 것을 확인했다. [최종 운영 기록](evaluations/2026-09-17-sonnet-fallback/canary-final.json).
 
 운영 공개 화면을 1440px·390px에서 확인했다. 프로젝트 9개→더 보기 18개, 인기 목록 15행, 가로 넘침·페이지 오류 0이었다. 모바일 캡처도 직접 확인했다. 관리자 fallback 저장/새로고침 테스트와 함께 변경 반영을 검증했다. [공개 화면 검사](evaluations/2026-09-17-sonnet-fallback/public-ui.json).
+
+
+## Spark 로그인 상태 추가 확인 — 2026-09-17 11:48 KST
+
+사용자의 후속 질문에 따라 로그인과 모델 접근을 구분해서 재확인했다. 로컬 CLI 0.154.0 및 운영 connect-agent가 실제 사용하는 인증 디렉터리의 CLI 0.153.4 모두 `Logged in using ChatGPT`였다. 운영에 저장된 ID 토큰의 플랜 정보는 `pro`였다(실시간 결제 상태 조회는 아님). reviewer 컨테이너의 기본 인증 디렉터리가 비어 있다는 사실은 **인증을 소유하는 connect-agent의 로그아웃을 뜻하지 않는다**.
+
+로컬에서 도구를 끈 단순 Spark 호출은 HTTP 400 / `invalid_request_error`와 다음 메시지를 반환했다: `The 'gpt-5.3-codex-spark' model is not supported when using Codex with a ChatGPT account.` 운영 connect-agent의 모델 캐시에도 Spark가 없고, 현재 자동 호출은 `access_denied`로 기록된다. `lib/crawl/classify.ts`의 `failureReason`은 403뿐 아니라 `not supported`도 같은 코드로 분류하므로, 그 표시는 OpenAI가 HTTP 403을 반환했다거나 로그인 자체가 실패했다는 증거가 아니다.
+
+[공식 모델 문서](https://learn.chatgpt.com/docs/models)는 Spark를 Pro용 연구 프리뷰로 설명하면서 계정·클라이언트·배포에 따른 가용성 차이를 명시한다. 현재 관측으로는 **로그인은 존재하지만 Spark 모델을 사용할 수 없는 상태**이며, 플랫폼 내부에서 해당 접근을 허용하지 않는 세부 사유까지 확정하지 않았다. 인증 파일 복제·재로그인·모델 설정 변경은 하지 않았으며 Sonnet fallback을 유지했다. 이번 검사는 진단용 호출과 읽기 전용 인증/상태 확인이며 소스 수정이나 신규 테스트 통과를 주장하지 않는다.
