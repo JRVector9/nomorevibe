@@ -3,12 +3,50 @@
 import { revalidatePath } from 'next/cache';
 import { currentAdmin } from '@/lib/auth/admin';
 import { requestCandidateEvidence, requeueResolvedCandidates } from '@/lib/crawl/admin-review';
+import { writeTaglineByHand } from '@/lib/crawl/taglines';
+import { getDocument } from '@/lib/crawl/repository';
+import { decideCandidate } from '@/lib/crawl/review';
 import { changeReviewMode } from '@/lib/crawl/settings';
 import { resolveSecondReviews } from '@/lib/crawl/second-review';
 import { banProduct } from '@/lib/domain/products/manage';
 import type { RequeueState } from './contract';
 
 export type ReviewActionState = { error?: string; message?: string } | null;
+
+/** 사람이 적을 수 있는 소개의 길이. 목록 한 줄에 서는 글이라 짧게 */
+const TAGLINE_MIN = 5;
+const TAGLINE_MAX = 200;
+
+/**
+ * 소개를 직접 적고 승인한다 — 소개가 없어 멈춘 후보(no_description)를 사람이 푸는 길이다.
+ *
+ * 승인만 하면 소개 자리에 레포 이름이 들어간다. 페이지를 열어 본 사람이 한 줄 적어 두면
+ * 발행이 그 줄로 올린다(products.tagline_source = editor, 화면에 "직접 요약"으로 밝힌다).
+ * 적은 줄은 모델이 다시 짓지 않는다.
+ */
+export async function approveWithTagline(_previous: ReviewActionState, form: FormData): Promise<ReviewActionState> {
+  const admin = await currentAdmin();
+  if (!admin) return { error: '권한이 없습니다. 다시 로그인해주세요.' };
+  const repo = String(form.get('repo') ?? '');
+  const tagline = String(form.get('tagline') ?? '').replace(/\s+/g, ' ').trim();
+  if (tagline.length < TAGLINE_MIN) return { error: `소개를 ${TAGLINE_MIN}자 이상 적어주세요.` };
+  if (tagline.length > TAGLINE_MAX) return { error: `소개는 ${TAGLINE_MAX}자까지입니다.` };
+
+  const document = await getDocument(repo);
+  if (!document) return { error: '이 후보의 원본을 찾지 못했습니다.' };
+  await writeTaglineByHand({ repo, tagline, by: admin.login, documentAt: document.fetchedAt });
+
+  const result = await decideCandidate({
+    repo, decision: 'approve', admin: admin.login,
+    note: `소개를 직접 적었습니다: ${tagline}`,
+    inputHash: String(form.get('inputHash') ?? ''), sourceRevisionHash: String(form.get('sourceRevisionHash') ?? ''),
+    candidateRevisionHash: String(form.get('candidateRevisionHash') ?? ''),
+  });
+  // 적어 둔 줄은 남는다 — 승인이 경합으로 막혀도 다음에 그대로 쓰인다
+  if (!result.ok) return { error: result.message };
+  revalidatePath('/admin/review');
+  return { message: `소개를 적고 승인했습니다. 발행 잡이 이 줄로 올립니다.` };
+}
 export async function collectCandidateEvidence(_previous: ReviewActionState, form: FormData): Promise<ReviewActionState> {
   const admin = await currentAdmin();
   if (!admin) return { error: '권한이 없습니다. 다시 로그인해주세요.' };

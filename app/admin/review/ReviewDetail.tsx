@@ -2,7 +2,7 @@
 
 import { useActionState } from 'react';
 import { decideCrawlCandidate, type ReviewState } from '../actions';
-import { collectCandidateEvidence } from './actions';
+import { approveWithTagline, collectCandidateEvidence } from './actions';
 import type { AdminReviewEntry } from '@/lib/crawl/admin-review';
 import type { StoppedAt } from '@/lib/crawl/rules';
 import { RuleTrace } from './RuleTrace';
@@ -52,6 +52,7 @@ export function ReviewDetail({ entry, reasons }: { entry: AdminReviewEntry; reas
   const { candidate } = entry;
   const [state, action, pending] = useActionState<ReviewState, FormData>(decideCrawlCandidate, null);
   const [refresh, refreshAction, refreshing] = useActionState(collectCandidateEvidence, null);
+  const [written, writeAction, writing] = useActionState(approveWithTagline, null);
   const canDecide = !!entry.inputHash && !!entry.sourceRevisionHash && candidate.state !== 'published' && !candidate.publishedSlug;
   const canCollect = canDecide && candidate.decidedBy === 'auto' && candidate.state === 'needs_review' && entry.refreshCount < 2;
   const productUrl = safeUrl(candidate.productUrl);
@@ -104,10 +105,33 @@ export function ReviewDetail({ entry, reasons }: { entry: AdminReviewEntry; reas
           {/* 승인하면 어떻게 되는지 — 모르고 누르면 목록에 레포 이름이 소개로 올라간다 */}
           {!entry.tagline?.text && (
             <p className="mt-1.5 text-[13px] text-warn">
-              지금 승인하면 소개 자리에 레포 이름(<span className="font-mono">{candidate.repo}</span>)이 들어갑니다.
-              페이지를 열어 무엇인지 확인하고, 쓸 만한 소개가 없으면 거부하는 편이 낫습니다.
+              그냥 승인하면 소개 자리에 레포 이름(<span className="font-mono">{candidate.repo}</span>)이 들어갑니다.
+              페이지를 열어 보고 한 줄로 적을 수 있으면 아래에 적어 주세요.
             </p>
           )}
+          {/*
+            사람이 직접 적는 길. 페이지를 이미 열어 본 사람이 한 줄 적는 것이 가장 싸다 —
+            적은 줄은 모델이 다시 짓지 않고, 목록에 "직접 요약"으로 밝힌다.
+          */}
+          {canDecide && (
+            <form action={writeAction} className="mt-2 flex flex-wrap items-center gap-2">
+              {identity}
+              <input
+                name="tagline" required minLength={5} maxLength={200} defaultValue={entry.tagline?.text || ''}
+                aria-label="직접 적는 한 줄 소개"
+                placeholder="이 페이지로 무엇을 할 수 있는지 한 줄로"
+                className="min-w-[200px] flex-1 rounded-lg border border-line bg-bg-card px-2.5 py-1.5 text-[13px]"
+              />
+              <button type="submit" disabled={writing}
+                className={`${button} border-up/40 bg-up/10 text-up`}>
+                {writing ? '올리는 중…' : '이 소개로 승인'}
+              </button>
+            </form>
+          )}
+          <div aria-live="polite">
+            {written?.error && <p className="mt-1.5 text-[13px] text-down">{written.error}</p>}
+            {written?.message && <p className="mt-1.5 text-[13px] text-up">{written.message}</p>}
+          </div>
         </div>
       )}
 

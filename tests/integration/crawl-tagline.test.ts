@@ -88,6 +88,18 @@ describe("소개 짓기 잡", () => {
     expect((await db.select().from(crawlTaglines))[0]).toMatchObject({ tagline: "", model: "" });
   });
 
+  it("사람이 적은 줄은 다시 짓지 않는다", async () => {
+    await held("someone/by-hand");
+    const { writeTaglineByHand } = await import("@/lib/crawl/taglines");
+    const document = await crawl.getDocument("someone/by-hand");
+    await writeTaglineByHand({ repo: "someone/by-hand", tagline: "사람이 적은 한 줄", by: "admin", documentAt: document!.fetchedAt });
+
+    await tick();
+
+    expect(gateway).not.toHaveBeenCalled();
+    expect((await db.select().from(crawlTaglines))[0]).toMatchObject({ tagline: "사람이 적은 한 줄", writtenBy: "admin" });
+  });
+
   it("사람이 이미 결정한 후보는 건드리지 않는다", async () => {
     await held("someone/mine");
     await db.update(crawlCandidates).set({ decidedBy: "admin" }).where(eq(crawlCandidates.repo, "someone/mine"));

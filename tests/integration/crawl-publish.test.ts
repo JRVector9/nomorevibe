@@ -19,7 +19,7 @@ const { crawlFrontier, crawlDocuments, crawlCandidates, crawlSettings, crawlTagl
 );
 const crawl = await import("@/lib/crawl/repository");
 const { taglineEvidence, taglineHash } = await import("@/lib/crawl/tagline");
-const { recordTagline } = await import("@/lib/crawl/taglines");
+const { recordTagline, writeTaglineByHand } = await import("@/lib/crawl/taglines");
 const { judgeRevision } = await import("@/lib/crawl/rules");
 const products = await import("@/lib/domain/products/repository");
 const { saveSettings } = await import("@/lib/crawl/settings");
@@ -216,6 +216,22 @@ describe("발행 잡", () => {
     // 화면이 "AI가 요약"이라고 밝힐 수 있어야 한다 — 출처를 함께 적는다
     expect(await products.findByUrl("https://my-app.test")).toMatchObject({
       tagline: "바를 등록하면 손님이 찾습니다", taglineSource: "ai_page",
+    });
+  });
+
+  it("사람이 적은 줄은 페이지가 바뀌어도 그대로 쓰고 '직접 요약'으로 남긴다", async () => {
+    await approved("someone/mystery", {
+      meta: { description: null, language: null },
+      pageMeta: { title: "Sho't Right", description: null, ogImage: null, textSample: "지금은 로딩 화면" },
+    });
+    const document = await crawl.getDocument("someone/mystery");
+    // 원본과 상관없이(해시를 비워 두고) 사람이 적은 줄
+    await writeTaglineByHand({ repo: "someone/mystery", tagline: "바를 등록하면 손님이 찾습니다", by: "admin", documentAt: document!.fetchedAt });
+
+    await tick();
+
+    expect(await products.findByUrl("https://my-app.test")).toMatchObject({
+      tagline: "바를 등록하면 손님이 찾습니다", taglineSource: "editor",
     });
   });
 

@@ -281,6 +281,13 @@
       "when": 1789911207008,
       "tag": "0039_search_queries",
       "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "7",
+      "when": 1789913262237,
+      "tag": "0040_tagline_written_by",
+      "breakpoints": true
     }
   ]
 }

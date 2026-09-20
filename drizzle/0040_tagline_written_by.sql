@@ -1,0 +1,1 @@
+ALTER TABLE "crawl_taglines" ADD COLUMN "written_by" varchar(120);
