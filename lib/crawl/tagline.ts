@@ -12,6 +12,9 @@ import type { CrawlDocument } from "@/lib/db/schema";
  * 2차 심사와 같은 모델을 쓴다. 표본 30건 실측: 29건을 지었고 1건은 증거에 할 수 있는 일이 없어
  * 빈 문자열을 돌려줬다(프런트엔드 스택만 적힌 레포) — 그 1건은 사람에게 남는다.
  *
+ * "사람이 무엇을 할 수 있는가"만 물었더니 개인 포트폴리오·블로그에서 빈 줄이 돌아왔다(프로드 15건).
+ * 프로필도 페이지다 — 누구의 무엇인지 쓰라는 문장을 넣어 두었다.
+ *
  * 게이트웨이는 스트리밍이 기본이라 stream:false 를, 기본 어댑터가 증거를 요약해 버리므로
  * context_strategy:"raw" 를 꼭 보낸다(agent-review-gateway.ts 와 같은 이유).
  */
@@ -87,6 +90,7 @@ Write ONE sentence saying what this thing is and what a person can do with it, f
 - 100 characters or fewer. No trailing period. No marketing words ("revolutionary", "the best"), no hype, no emoji.
 - Do not start with the product name — the name is shown right next to it.
 - Say only what the evidence shows. Never invent features, prices, platforms or numbers.
+- A personal site, portfolio, profile or blog is a page like any other: say whose it is and what they do or write about ("Product designer in Lagos showing case studies and contact details"). Do not return an empty string just because a person is not a tool.
 - If the evidence does not say what it is, return an empty string.
 
 Also say where the line came from: "page" if the page text alone shows it, "readme" if you needed the repository README, "both" if you used both.
