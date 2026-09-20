@@ -1,5 +1,5 @@
 import { beforeAll, beforeEach, expect, it } from "vitest";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { crawlCandidates, crawlDocuments, crawlFrontier, crawlSettings, operationsAudit } from "@/lib/db/schema";
 import { ensureSchema, resetTables } from "./setup";
@@ -35,4 +35,10 @@ it("preserves a decision or source changed after the dry run", async () => {
   await db.update(crawlCandidates).set({ decidedBy: "admin" }).where(eq(crawlCandidates.repo, "maker/changed"));
   expect((await applyReconsideration(plan, "test-policy-change")).queued).toEqual([]);
   expect((await db.select().from(crawlCandidates))[0].decidedBy).toBe("admin");
+});
+it("does not mistake PostgreSQL microseconds for a fresh collection", async () => {
+  await rejected("maker/precision");
+  await db.update(crawlDocuments).set({ fetchedAt: sql`'2026-09-20 00:00:00.123456'::timestamp` }).where(eq(crawlDocuments.repo, "maker/precision"));
+  await applyReconsideration(await planReconsideration(), "test-policy-change");
+  expect(await judgementQueue(10)).toHaveLength(0);
 });
