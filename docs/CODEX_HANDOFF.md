@@ -1,5 +1,11 @@
 # Active task — 2026-09-21 installable GitHub products
 
+## Live README fix — 02:21 KST
+
+- PR155 CI35525146703 PASS and merged77561c41c052a19263ea3c62b6bf2436ab530765; all8deployed. GitHubquota recovered02:17. By02:18,49/392freshsources,4firstreviewsholdfornoREADME.
+- Real bug: setReadmeSample compared SQLNULL page_meta with JSONnull, CASalwaysfailed forhomepage-lessproducts; localmodelprobehadmanuallyprovidedREADMEsoitdidnotexposepersistence. New integration testreproduced1failure/5passbeforefix. Null-awareSQLparameterfixplusracecase: review-document6,review-job2,reconsider3 =11PASS;TSCpass. Branchfix/installable-readme-null-sourcebased77561c4.
+- Nextcommit/pushPR156thenCImerge/deploy. Afterwards auditedrequeue onlyaffectedautomaticcohortneeds_review/ambiguouswithlatestmissing-READMEattempt; keepmanualandsecondsplitcases. Normalfirst/secondreviewmustdecide. NeedactualCopyPromptpublishedUIbeforefinal.
+
 ## Follow-up boundary correction in progress — 02:11 KST
 
 - PR154 deployed all8 apps,6 worker/connect containers healthy,9source hashes eachmatch. Bothwebhealth200. Applied fresh audited plan392queued/0changed. Prod GitHub core cooldown until02:15:51KST; as02:09 all392waiting freshfetch. Actorcodex-2026-09-21-installable-policy.

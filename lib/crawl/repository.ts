@@ -215,7 +215,7 @@ export async function setReadmeSample(repo: string, readmeSample: string, expect
   const [updated] = await db.update(crawlDocuments).set({
     pageMeta: sql`coalesce(${crawlDocuments.pageMeta}, '{}'::jsonb) || ${JSON.stringify({ readmeSample, readmeSampleVersion: README_SAMPLE_VERSION })}::jsonb`,
   }).where(and(eq(crawlDocuments.repo, repo), eq(crawlDocuments.id, expected.id), eq(crawlDocuments.fetchedAt, expected.fetchedAt),
-    sql`${crawlDocuments.pageMeta} IS NOT DISTINCT FROM ${JSON.stringify(expected.pageMeta)}::jsonb`)).returning();
+    sql`${crawlDocuments.pageMeta} IS NOT DISTINCT FROM ${expected.pageMeta === null ? null : JSON.stringify(expected.pageMeta)}::jsonb`)).returning();
   return updated;
 }
 

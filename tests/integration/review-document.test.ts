@@ -36,3 +36,16 @@ it('does not attach a fetched README to a document that changed during the reque
   expect(result?.pageMeta).toEqual({title: 'new source'});
   expect((await getDocument('acme/readme'))?.pageMeta).toEqual({title: 'new source'});
 });
+it('persists README evidence when an installable repository has no webpage metadata', async () => {
+  await putDocument({repo: 'acme/readme', productUrl: null, pageStatus: null, pageMeta: null, repoMeta: {stargazers_count: 500}});
+  mocks.fetch.mockResolvedValue('Install with npm install acme-tool. Run acme-tool to organize tasks.');
+  const result = await loadReviewDocument('acme/readme');
+  expect(result?.pageMeta).toMatchObject({readmeSample: 'Install with npm install acme-tool. Run acme-tool to organize tasks.', readmeSampleVersion: README_SAMPLE_VERSION});
+  expect((await getDocument('acme/readme'))?.pageMeta).toEqual(result?.pageMeta);
+});
+it('does not overwrite metadata collected while a missing-page README is in flight', async () => {
+  await putDocument({repo: 'acme/readme', productUrl: null, pageStatus: null, pageMeta: null, repoMeta: {stargazers_count: 500}});
+  mocks.fetch.mockImplementation(async () => {await document({title: 'new website'}); return 'stale install instructions';});
+  const result = await loadReviewDocument('acme/readme');
+  expect(result?.pageMeta).toEqual({title: 'new website'});
+});
