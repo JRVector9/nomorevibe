@@ -1,5 +1,27 @@
 # 설치형 GitHub 프로젝트 등록 기준 — 2026-09-21
 
+## 최종 배포 및 재심사 현황 — 2026-09-21 02:35 KST
+
+기능 구현과 배포는 완료했다. 기존 거절 건의 자동 재심사는 진행 중이며 전부 완료한 상태는 아니다.
+
+| 항목 | 실측 |
+| --- | ---: |
+| 자동 거절 검토 | 497건 |
+| 새 기준 재심사 요청 / 재수집 완료 | 392건 / 392건 |
+| 새 등록 | 21건 (설치형14, 웹7) |
+| 재검토 후 제외 | 18건 (중복13, 제품 아님4, 기존 기타 제외1) |
+| 심사·보류 | 353건 (승인 상태55, 일반 심사296, 설명 부족1, 2차 불일치1) |
+| 기존 관리자 거절 유지 | 15건 |
+
+- PR [154](https://github.com/JRVector9/nomorevibe/pull/154), [155](https://github.com/JRVector9/nomorevibe/pull/155), [156](https://github.com/JRVector9/nomorevibe/pull/156) 병합. 최종 기능 커밋 `0db0b2d15f553cc8670df3765840686d8720e908`을8개 서비스에 배포했다.6개 작업 컨테이너 healthy 및 주요 소스9개씩 SHA256 일치, 웹2대 HTTP200/DB 정상. 로컬 main도 fast-forward했다.
+- 최종 CI35525705682: 단위1,058개 / 통합724개 / 타입·린트·프로덕션 빌드 통과. 로컬 제품 상세 E2E4개 통과. 배포 뒤 실제 제품2개에서 저장소별 프롬프트 클립보드 복사·제목·소개, 모바일390px 가로 넘침 없음, pageerror0 확인.
+- [실제 설치형 상세 페이지](https://nomorevibe.brut.bot/p/elevenlabs-python): 배포 방문 버튼 대신 Copy Prompt, 직접 설치 안내, 공식 저장소 링크. 안내 문구는 설치 방법을 도와준다고 설명하며 자동 설치 성공을 약속하지 않는다.
+- README 저장 결함으로 영향받은 자동 보류33건을 새 근거로 재판정하도록 감사 기록과 함께 요청했다.1건(tksuoran/erhe)은 README 본문을 확보하지 못해 보류 유지. 초기 등록5건의 이름·소개를 원본 저장소에 맞춰 보정했다. 수정 뒤 실제 심사 입력에 README1,407~3,000자가 포함되고 승인·발행까지 진행되는 것을 확인했다.
+- 플러그인·스킬은 분류기·설정·필터에 반영했다.02:35의 재심사 발행분에는 두 카테고리의 최종 발행이 아직 없으므로 숫자를 임의로 채우지 않았다. 기본 필터는 제품이 있는 분류를 표시하는 기존 방식이며, 직접 [플러그인](https://nomorevibe.brut.bot/?category=Plugin)·[스킬](https://nomorevibe.brut.bot/?category=Skill) URL로도 선택할 수 있다.
+- 경계 사례 실측에서는 모델 간 불일치가 남았다. 문서/데이터/패키지 구분이100% 정확하다는 주장은 하지 않는다. 새 수집→1차→독립2차→분류→발행 관문을 유지하고, 확정하지 못한 것은 사람 확인 대상으로 남긴다.
+
+실행 증거: `docs/operations/evaluations/2026-09-21-installable/`의 `cohort-final.json`, `deployment-final.json`, `runtime-final.json`, `repair-receipt.json`, `live-product-ui-final.json`. 모두02:35 전후 스냅샷이다.
+
 ## 변경 내용
 
 - GitHub 별 500개 이상인 실제 소프트웨어는 배포 URL이 없어도 심사한다. 기존 스타 상한은 500개 이상에 적용하지 않는다. 웹 제품은 기존대로 별 500개 미만도 심사한다.
@@ -31,7 +53,7 @@
 1. `stars:>=500 archived:false fork:false`에 `topic:agent-skills`, `topic:browser-extension`, `topic:vscode-extension`, `topic:cli`, `topic:self-hosted` 등을 조합한 탐색 경로를 추가한다. AI 개발 흔적과 제품 유형은 별개 신호로 저장한다. GitHub의 [저장소 검색 조건](https://docs.github.com/en/search-github/searching-on-github/searching-for-repositories)을 사용한다.
 2. README뿐 아니라 패키지 매니페스트·플러그인 manifest·SKILL.md의 호스트 및 진입점과 릴리스 자산을 함께 수집한다. 설치 명령은 실행하지 않고 출처와 커밋을 저장해 제품 유형 판단에 쓴다.
 3. 최근 스타 증가·최근 실제 릴리스·명확한 설치 경로를 재수집 우선순위에 함께 반영한다. 마지막 커밋이 오래됐다는 이유만으로 완성된 작은 도구를 버리지 않는다. 릴리스가 없는 저장소는 날짜를 만들어 넣지 않는다. [GitHub 릴리스 API](https://docs.github.com/en/rest/releases/releases).
-4. API 사용량을 신규 탐색·재심사·일일 별 갱신별로 나누어 관측한다. 안정된 URL에 인증된 ETag/Last-Modified 조건부 요청을 써서 변경 없는 응답의 비용을 줄인다. GitHub는 인증된 304 응답을 기본 한도에 계산하지 않는다. 이번 운영에서도 core 한도 소진으로 재수집이 대기했다. [GitHub 권장 요청 방식](https://docs.github.com/en/rest/using-the-rest-api/best-practices-for-using-the-rest-api#use-conditional-requests).
+4. API 사용량을 신규 탐색·재심사·일일 별 갱신별로 나누어 관측한다. 기존 ETag/Last-Modified 조건부 요청의 적용 범위를 실측하고, 수집·별 갱신·근거 조사 간 중복 요청을 합쳐 변경 없는 응답의 비용을 줄인다. GitHub는 인증된 304 응답을 기본 한도에 계산하지 않는다. 이번 운영에서도 core 한도 소진으로 재수집이 대기했다. [GitHub 권장 요청 방식](https://docs.github.com/en/rest/using-the-rest-api/best-practices-for-using-the-rest-api#use-conditional-requests).
 5. 저장소 검색은 한 질의당 최대 1,000건이므로 날짜·별 구간을 나눈 탐색과 저장소 ID 기준 중복 제거를 함께 쓴다. 기존 검색 윈도 분할을 새 Plugin/Skill 쿼리에도 적용한다. [GitHub 검색 API](https://docs.github.com/en/rest/search/search#about-search).
 6. 수집 경로별 승인율·문서 오탐률·1차/2차 불일치율을 측정하고, 경계 사례에 사람의 정답을 붙여 모델·프롬프트 회귀 평가 세트로 유지한다.
 

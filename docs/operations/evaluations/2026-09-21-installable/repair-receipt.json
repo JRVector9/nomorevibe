@@ -1,0 +1,48 @@
+{
+  "at": "2026-09-20T17:30:21.911Z",
+  "retried": [
+    "stepchowfun/toast",
+    "DefiLlama/DefiLlama-Adapters",
+    "sibson/vncdotool",
+    "Giammarco-Ferranti/deja",
+    "wanshuiyin/Auto-claude-code-research-in-sleep",
+    "Stack-Cairn/LiveAgent",
+    "mruby/mruby",
+    "anthropics/buffa",
+    "bnb-chain/BEPs",
+    "akitaonrails/ai-memory",
+    "chenhg5/cc-connect",
+    "themartiano/try-omarchy",
+    "mvanhorn/cli-printing-press",
+    "abrignoni/iLEAPP",
+    "heygen-com/hyperframes",
+    "deeplethe/utopia",
+    "zts212653/cat-cafe-tutorials",
+    "cryptoadvance/specter-diy",
+    "tsirysndr/music-player",
+    "Keruspe/GPaste",
+    "bmad-code-org/BMAD-METHOD",
+    "WiringPi/WiringPi",
+    "chatfire-AI/huobao-drama",
+    "stanuwu/Sunrise",
+    "tursodatabase/turso",
+    "intel/llvm",
+    "graphistry/pygraphistry",
+    "BrianPugh/cyclopts",
+    "zts212653/clowder-ai",
+    "juliye2025/evil-read-arxiv",
+    "TimothyYe/godns",
+    "chatfire-AI/huobao-canvas",
+    "lemmingDev/ESP32-BLE-Gamepad"
+  ],
+  "unchanged": [
+    "tksuoran/erhe"
+  ],
+  "identity": [
+    "BerriAI/litellm",
+    "crocodilestick/Calibre-Web-Automated",
+    "elevenlabs/elevenlabs-python",
+    "pydantic/monty",
+    "huggingface/huggingface.js"
+  ]
+}

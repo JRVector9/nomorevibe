@@ -1,0 +1,317 @@
+{
+  "at": "2026-09-20T17:35:00.953Z",
+  "states": [
+    {
+      "state": "approved",
+      "reason": "passed",
+      "count": 55
+    },
+    {
+      "state": "needs_review",
+      "reason": "ambiguous",
+      "count": 296
+    },
+    {
+      "state": "needs_review",
+      "reason": "no_description",
+      "count": 1
+    },
+    {
+      "state": "needs_review",
+      "reason": "second_review_split",
+      "count": 1
+    },
+    {
+      "state": "published",
+      "reason": "passed",
+      "count": 21
+    },
+    {
+      "state": "rejected",
+      "reason": "already_listed",
+      "count": 13
+    },
+    {
+      "state": "rejected",
+      "reason": "not_a_product",
+      "count": 4
+    },
+    {
+      "state": "rejected",
+      "reason": "personal_site",
+      "count": 1
+    }
+  ],
+  "source": [
+    {
+      "total": 392,
+      "fresh": 392
+    }
+  ],
+  "frontier": [
+    {
+      "state": "done",
+      "count": 392,
+      "last_error": null,
+      "earliest_retry": "2026-09-20 17:27:39.183085"
+    }
+  ],
+  "first": [
+    {
+      "state": "failed",
+      "decision": null,
+      "error_code": "gateway_error",
+      "count": 1,
+      "candidates": 1
+    },
+    {
+      "state": "failed",
+      "decision": null,
+      "error_code": "invalid_output",
+      "count": 3,
+      "candidates": 3
+    },
+    {
+      "state": "succeeded",
+      "decision": "approve",
+      "error_code": null,
+      "count": 37,
+      "candidates": 37
+    },
+    {
+      "state": "succeeded",
+      "decision": "needs_review",
+      "error_code": null,
+      "count": 27,
+      "candidates": 27
+    },
+    {
+      "state": "succeeded",
+      "decision": "reject",
+      "error_code": null,
+      "count": 3,
+      "candidates": 3
+    }
+  ],
+  "second": [
+    {
+      "status": "agreed",
+      "second_decision": "approve",
+      "error_code": null,
+      "count": 6,
+      "candidates": 6
+    },
+    {
+      "status": "needs_human",
+      "second_decision": "needs_review",
+      "error_code": null,
+      "count": 32,
+      "candidates": 32
+    },
+    {
+      "status": "resolved",
+      "second_decision": "approve",
+      "error_code": null,
+      "count": 21,
+      "candidates": 21
+    }
+  ],
+  "products": [
+    {
+      "slug": "scriptable",
+      "name": "Scriptable",
+      "category": "Other",
+      "access_mode": "installable",
+      "repo": "gideonsenku/Scriptable",
+      "tagline": "A iOS app named Scriptable's scripts"
+    },
+    {
+      "slug": "seed-design-system",
+      "name": "SEED Design System",
+      "category": "Design",
+      "access_mode": "website",
+      "repo": "daangn/seed-design",
+      "tagline": "SEED는 당근 제품을 위해 통합된 디자인 언어입니다."
+    },
+    {
+      "slug": "atom",
+      "name": "atom",
+      "category": "Business",
+      "access_mode": "installable",
+      "repo": "rush86999/atom",
+      "tagline": "Atom Agent, Open-Source Governed AI Agent Platform for Self-Hosted Automation"
+    },
+    {
+      "slug": "posthog-foss",
+      "name": "posthog-foss",
+      "category": "Data",
+      "access_mode": "installable",
+      "repo": "PostHog/posthog-foss",
+      "tagline": "PostHog FOSS is a read-only mirror of PostHog, with all proprietary code removed. NOTE: This repo is synced automatically from the main PostHog repo. Please raise any issues and PRs there."
+    },
+    {
+      "slug": "lunatik",
+      "name": "lunatik",
+      "category": "Dev",
+      "access_mode": "installable",
+      "repo": "luainkernel/lunatik",
+      "tagline": "Lunatik is a framework for scripting the Linux kernel with Lua."
+    },
+    {
+      "slug": "beadsrust",
+      "name": "beads_rust",
+      "category": "Dev",
+      "access_mode": "installable",
+      "repo": "Dicklesworthstone/beads_rust",
+      "tagline": "Fast Rust port of Steve Yegge's beads: local-first, non-invasive issue tracker storing tasks in SQLite with JSONL export for git collaboration"
+    },
+    {
+      "slug": "dalaran",
+      "name": "Dalaran",
+      "category": "Dev",
+      "access_mode": "installable",
+      "repo": "Flaminis/Dalaran",
+      "tagline": "Dalaran — Apache-2.0, robotics-first visualization and data infrastructure for multimodal time-series. ROS 2 native, reads existing .rrd recordings. A hard fork of Rerun."
+    },
+    {
+      "slug": "wundergraph-cosmo",
+      "name": "WunderGraph Cosmo",
+      "category": "Dev",
+      "access_mode": "website",
+      "repo": "wundergraph/cosmo",
+      "tagline": "WunderGraph Cosmo is the Full Lifecycle GraphQL API Management Solution to manage Federated Graphs at scale. Composition checks, routing, analytics, and distributed tracing all in one platform."
+    },
+    {
+      "slug": "seccomp-tools",
+      "name": "seccomp-tools",
+      "category": "Security",
+      "access_mode": "installable",
+      "repo": "david942j/seccomp-tools",
+      "tagline": "Provide powerful tools for seccomp analysis"
+    },
+    {
+      "slug": "pyvista",
+      "name": "pyvista",
+      "category": "Data",
+      "access_mode": "installable",
+      "repo": "pyvista/pyvista",
+      "tagline": "3D visualization and mesh analysis for science and engineering"
+    },
+    {
+      "slug": "onegadget",
+      "name": "one_gadget",
+      "category": "Security",
+      "access_mode": "installable",
+      "repo": "david942j/one_gadget",
+      "tagline": "The best tool for finding one gadget RCE in libc.so.6"
+    },
+    {
+      "slug": "agentconnect",
+      "name": "AgentConnect",
+      "category": "Dev",
+      "access_mode": "website",
+      "repo": "agentconnect-md/agentconnect",
+      "tagline": "The open-source, multi-agent alternative to Claude Tag. @ any agent, wherever work happens. Agents work alongside your team and each other, learning as they go."
+    },
+    {
+      "slug": "hugging-face-js-libraries",
+      "name": "huggingface.js",
+      "category": "Dev",
+      "access_mode": "installable",
+      "repo": "huggingface/huggingface.js",
+      "tagline": "Use Hugging Face with JavaScript"
+    },
+    {
+      "slug": "pgschema",
+      "name": "pgschema",
+      "category": "Dev",
+      "access_mode": "website",
+      "repo": "pgplex/pgschema",
+      "tagline": "Declarative schema migration for Postgres"
+    },
+    {
+      "slug": "fess",
+      "name": "Fess",
+      "category": "Dev",
+      "access_mode": "website",
+      "repo": "codelibs/fess",
+      "tagline": "Fess is a free, open source enterprise search server — crawler, admin console, and search UI built in. Set up in minutes."
+    },
+    {
+      "slug": "monty",
+      "name": "monty",
+      "category": "Dev",
+      "access_mode": "installable",
+      "repo": "pydantic/monty",
+      "tagline": "A minimal, secure Python interpreter written in Rust for use by AI"
+    },
+    {
+      "slug": "u-claw",
+      "name": "U-Claw 虾盘",
+      "category": "Productivity",
+      "access_mode": "website",
+      "repo": "dongsheng123132/u-claw",
+      "tagline": "Like YuLinMuFeng for AI. Plug in USB, double-click, done. 插上U盘，双击运行，搞定。"
+    },
+    {
+      "slug": "concat",
+      "name": "Concat",
+      "category": "Media",
+      "access_mode": "website",
+      "repo": "jub0t/Concat",
+      "tagline": "The free, open-source CapCut replacement. Runs entirely on your machine. No watermarks, no account, no subscription."
+    },
+    {
+      "slug": "getting-started-6",
+      "name": "litellm",
+      "category": "Dev",
+      "access_mode": "installable",
+      "repo": "BerriAI/litellm",
+      "tagline": "The fastest, litest AI Gateway. Rust core with Python SDK. Call 100+ LLM APIs in OpenAI (or native) format with cost tracking, guardrails, load balancing, and logging [Bedrock, Azure, OpenAI, Anthropi"
+    },
+    {
+      "slug": "elevenlabs-python",
+      "name": "elevenlabs-python",
+      "category": "Dev",
+      "access_mode": "installable",
+      "repo": "elevenlabs/elevenlabs-python",
+      "tagline": "The official Python SDK for the ElevenLabs API."
+    },
+    {
+      "slug": "github",
+      "name": "Calibre-Web-Automated",
+      "category": "Media",
+      "access_mode": "installable",
+      "repo": "crocodilestick/Calibre-Web-Automated",
+      "tagline": "Calibre-Web but Automated and with tons of New Features! Fully automate and simplify your eBook set up!"
+    }
+  ],
+  "jobs": [
+    {
+      "name": "crawl-agent-review",
+      "last_error": null,
+      "seen_seconds": 0
+    },
+    {
+      "name": "crawl-fetch",
+      "last_error": null,
+      "seen_seconds": 14
+    },
+    {
+      "name": "crawl-judge",
+      "last_error": null,
+      "seen_seconds": 0
+    },
+    {
+      "name": "crawl-publish",
+      "last_error": null,
+      "seen_seconds": 40
+    },
+    {
+      "name": "second-review",
+      "last_error": null,
+      "seen_seconds": 0
+    }
+  ],
+  "cooldowns": []
+}
