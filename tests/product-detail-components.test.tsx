@@ -130,12 +130,15 @@ describe("evidence product detail components", () => {
     expect(html).toContain('height="630"');
   });
 
-  it("keeps the product identity visible without inventing a missing screenshot message", () => {
+  it("stands a named cover where a screenshot would be, instead of an empty-state line", () => {
     const html = renderToStaticMarkup(<ProductHero product={product} media={[]} unclaimed={false} lifecycle={null} rank={null}
       health={{ uptime30d: null, latencyMs: null, checkedAt: null, down: false }} />);
     expect(html).toContain("제품 화면");
     expect(html).toContain(product.name);
-    expect(html).toContain("이미지 없음");
+    // 커버가 제품 이름을 보여준다 — 무엇이 없다고 적는 문구를 그 자리에 두지 않는다
+    expect(html).toContain("project-cover");
+    expect(html).toContain(product.name.toLowerCase());
+    expect(html).not.toContain("이미지 없음");
     expect(html).not.toContain("아직 보관된 제품 화면이 없습니다.");
   });
 
