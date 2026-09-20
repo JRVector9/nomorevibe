@@ -1,5 +1,14 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+
+/**
+ * 검색 기록은 응답 뒤에 적는다(next/server after). 여기는 요청 바깥이라 그 예약이 던진다 —
+ * 삼켜 두고, 무엇이 적히는지는 통합 테스트(tests/integration/search-log.test.ts)가 본다.
+ */
+vi.mock("next/server", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  after: () => {},
+}));
 import { DEFAULT_RANKING_POLICY } from "@/lib/domain/ranking/policy";
 import type { ProductListItem } from "@/lib/domain/products/view";
 import type { RankingListItem, SeasonSummary } from "@/lib/domain/ranking/view";

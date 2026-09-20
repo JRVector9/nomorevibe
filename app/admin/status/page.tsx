@@ -27,6 +27,7 @@ import { recentSecondReviewFailures, secondReviewSummary } from "@/lib/crawl/sec
 import { translationProgress } from "@/lib/crawl/translations";
 import { TranslationProgress } from "./TranslationProgress";
 import { REASON_LABELS } from "../reasons";
+import { searchLogSummary } from "@/lib/domain/products/search-log";
 
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "운영센터 — NoMoreVibe", robots: { index: false } };
@@ -191,6 +192,8 @@ export default async function StatusPage() {
     if (row.state === "approved" || row.state === "published") entry.kept += row.count;
     signals.set(row.signal, entry);
   }
+
+  const search = await searchLogSummary(7).catch(() => null);
 
   return (
     <main className="pb-10">
@@ -368,6 +371,54 @@ export default async function StatusPage() {
                   ))}
               </tbody>
               </table>
+            </div>
+          )}
+        </Panel>
+
+        <Panel
+          title="검색"
+          note="지난 7일 동안 사람들이 무엇을 찾았고 무엇을 못 찾았는지입니다. 못 찾은 말이 다음에 고칠 곳입니다."
+        >
+          {!search || search.searches === 0 ? (
+            <p className="text-[13px] text-fg-3">아직 기록된 검색이 없습니다.</p>
+          ) : (
+            <div className="flex flex-col gap-3">
+              <p className="flex flex-wrap gap-x-4 gap-y-1 text-[13px] text-fg-2">
+                <span>검색 <b className="font-semibold">{search.searches.toLocaleString("ko-KR")}</b>회</span>
+                <span>0건 <b className={`font-semibold ${search.zero > 0 ? "text-down" : ""}`}>{search.zero.toLocaleString("ko-KR")}</b>회
+                  ({Math.round((search.zero / search.searches) * 100)}%)</span>
+                <span>한국어 번역 <b className="font-semibold">{search.translated.toLocaleString("ko-KR")}</b>회</span>
+                <span>p95 <b className="font-semibold">{search.p95Ms === null ? "—" : `${search.p95Ms.toLocaleString("ko-KR")}ms`}</b></span>
+              </p>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div>
+                  <h4 className="text-[13px] font-semibold text-down">못 찾은 말</h4>
+                  {search.misses.length === 0 ? <p className="mt-1 text-[13px] text-fg-3">없습니다.</p> : (
+                    <ul className="mt-1 flex flex-col gap-1 text-[13px]">
+                      {search.misses.map((row) => (
+                        <li key={row.query} className="flex items-baseline justify-between gap-2">
+                          <span className="truncate text-fg-2">{row.query}
+                            {row.keywords && <span className="ml-1.5 font-mono text-fg-3">→ {row.keywords}</span>}</span>
+                          <span className="shrink-0 font-mono text-fg-3">{row.count}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+                <div>
+                  <h4 className="text-[13px] font-semibold text-fg-2">찾은 말</h4>
+                  {search.hits.length === 0 ? <p className="mt-1 text-[13px] text-fg-3">없습니다.</p> : (
+                    <ul className="mt-1 flex flex-col gap-1 text-[13px]">
+                      {search.hits.map((row) => (
+                        <li key={row.query} className="flex items-baseline justify-between gap-2">
+                          <span className="truncate text-fg-2">{row.query}</span>
+                          <span className="shrink-0 font-mono text-fg-3">{row.count}회 · {row.results}건</span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              </div>
             </div>
           )}
         </Panel>
