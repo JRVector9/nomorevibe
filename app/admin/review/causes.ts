@@ -66,11 +66,11 @@ export const CAUSE_GUIDE: Record<CauseKey, {
   },
   no_description: {
     label: "소개 문구 없음",
-    summary: "페이지 설명도 레포 설명도 없어 목록에 쓸 소개를 만들 수 없습니다. 사람이 승인하면 소개 없이도 올라갑니다.",
-    question: "소개 없이 올려도 무엇인지 알 수 있습니까?",
+    summary: "페이지 설명도 레포 설명도 없고, AI 도 페이지 글에서 한 줄을 뽑지 못했습니다(대부분 글이 아예 없는 화면입니다). 여기 남은 것은 사람이 페이지를 열어 봐야 합니다.",
+    question: "페이지를 열어 보면 무엇인지 알 수 있습니까?",
     hints: [
-      { decision: "승인", when: "페이지를 열어 보니 제품이다 — 이름과 페이지만으로 알 수 있다" },
-      { decision: "거부", when: "무엇인지 알 수 없다" },
+      { decision: "승인", when: "제품이 맞다 — 다만 소개 자리에 레포 이름이 들어간다는 것을 알고 누른다" },
+      { decision: "거부", when: "빈 화면이거나 무엇인지 알 수 없다" },
     ],
   },
   page_status_unknown: {

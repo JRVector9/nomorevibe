@@ -2,6 +2,7 @@ import { sameReviewModel } from "./review-model-identity";
 import { and, asc, desc, eq, gt, inArray, not, notInArray, or, sql, type SQL } from 'drizzle-orm';
 import { z } from 'zod';
 import { db } from '@/lib/db';
+import { crawlTaglines, type CrawlDocument, type CrawlTagline } from '@/lib/db/schema';
 import { agentRepositoryObservations, agentRepositoryScans, crawlCandidates, crawlDocuments, crawlFrontier,
   crawlReviewAttempts, crawlSettings, type CrawlCandidate, type CrawlReviewAttempt } from '@/lib/db/schema';
 import type { ProductTransaction } from '@/lib/domain/products/generation';
@@ -355,6 +356,15 @@ export type AdminReviewEntry = {
   evidence: { id: string; label: string; url: string }[]; status: AdminReviewStatus; refreshCount: number;
   latest: AdminReviewAttempt | null; review: AdminReviewAttempt | null;
   verdict: AdminReviewVerdict | null;
+  /**
+   * AI 가 지은 한 줄 소개의 상태. 소개가 없어 멈춘 후보(no_description)를 사람이 볼 때,
+   * "AI 가 해봤는가, 무엇을 보고 못 했는가"를 알아야 판단이 된다.
+   */
+  tagline: {
+    text: string; source: string; model: string; errorCode: string | null; attempts: number; at: string | null;
+    /** 모델에게 준 증거의 크기 — 페이지 글과 README 의 글자 수 */
+    pageChars: number; readmeChars: number;
+  } | null;
   /** 2차 심사의 표 — 모델마다 하나. 1차와 나란히 본다 */
   seconds: { decision: string | null; confidence: number | null; reason: string | null; reasonKo: string | null; model: string | null;
     provider: string | null; status: string; trigger: string; errorCode: string | null;
@@ -451,6 +461,8 @@ export async function listAdminReviewEntries(settings: CrawlSettings, options: {
       .orderBy(crawlReviewAttempts.candidateId, desc(crawlReviewAttempts.id)),
   ]);
   const seconds = await secondReviewsFor(ids);
+  // 지은 한 줄 소개 — 소개 없음으로 멈춘 후보의 상세가 쓴다
+  const taglines = await db.select().from(crawlTaglines).where(inArray(crawlTaglines.repo, repos));
   const observations = scans.length ? await db.select().from(agentRepositoryObservations)
     .where(inArray(agentRepositoryObservations.scanId, scans.map(row => row.id))) : [];
   const inputs = page.map(candidate => {
@@ -490,6 +502,7 @@ export async function listAdminReviewEntries(settings: CrawlSettings, options: {
         label: [item.observation.kind, item.observation.sourcePath, item.observation.declaredModelId].filter(Boolean).join(' · '),
         url: item.observation.sourceUrl })) ?? [],
       refreshCount: attempts.filter(row => row.kind === 'evidence_refresh').length,
+      tagline: taglineOf(taglines.find(row => row.repo === candidate.repo), document),
       latest: summarizeAttempt(last), review: summarizeAttempt(review),
       seconds: seconds.filter(item => item.candidateId === candidate.id).map(row => ({ decision: row.secondDecision,
         confidence: row.secondConfidence, reason: row.secondReason, reasonKo: null, model: row.model, provider: row.provider,
@@ -507,6 +520,18 @@ export async function listAdminReviewEntries(settings: CrawlSettings, options: {
     for (const part of [entry.review, entry.latest, ...entry.seconds]) if (part?.reason) part.reasonKo = korean.get(part.reason) ?? null;
   }
   return { entries, nextAfter: candidates.length > limit ? page.at(-1)!.id : null, total, hiddenByAge };
+}
+
+/** 지은 줄과 그때 모델이 본 증거의 크기를 한 덩이로 — 화면이 이 값만 보고 말한다 */
+function taglineOf(row: CrawlTagline | undefined, document: CrawlDocument | undefined): AdminReviewEntry['tagline'] {
+  if (!row) return null;
+  const page = (document?.pageMeta ?? {}) as { textSample?: unknown; readmeSample?: unknown };
+  const size = (value: unknown) => (typeof value === 'string' ? value.length : 0);
+  return {
+    text: row.tagline, source: row.source, model: row.model, errorCode: row.errorCode, attempts: row.attempts,
+    at: row.updatedAt ? row.updatedAt.toISOString() : null,
+    pageChars: size(page.textSample), readmeChars: size(page.readmeSample),
+  };
 }
 
 export type ReviewAiDecision = 'reject' | 'approve' | 'needs_review' | 'none';
