@@ -69,7 +69,14 @@ export async function writeTaglines(ctx: JobContext<null>): Promise<JobOutcome<n
           continue;
         }
 
-        const result = await writeTagline(evidence, { timeoutMs: Math.max(1_000, Math.min(CALL_MS, remaining() - 1_000)) });
+        const ask = () => writeTagline(evidence, { timeoutMs: Math.max(1_000, Math.min(CALL_MS, remaining() - 1_000)) });
+        let result = await ask();
+        /**
+         * 빈 줄("증거로는 무엇인지 알 수 없다")은 흔들리는 답이다 — 같은 증거로 다시 물으면 멀쩡한
+         * 줄이 오는 때가 14건 중 3~4건이었다(2026-09-20 프로드 실측, 온도 0인데도 그렇다).
+         * 한 번만 더 묻는다. 두 번 다 빈 줄이면 그 후보는 사람이 본다.
+         */
+        if (result.ok && !result.tagline && remaining() >= MIN_CALL_MS) result = await ask();
         if (!result.ok) {
           await recordTaglineFailure({ repo: candidate.repo, sourceHash, documentAt: document.fetchedAt, error: result.error });
           failed++;
