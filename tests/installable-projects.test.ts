@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { judge, type RepoFacts } from "@/lib/crawl/rules";
+import { judge, accessFromDocument, type RepoFacts } from "@/lib/crawl/rules";
 import { DEFAULT_CRAWL_SETTINGS } from "@/lib/crawl/settings-schema";
 import { installationPrompt } from "@/lib/domain/products/access";
 import { classifyPayloadSchema } from "@/lib/operations/contracts";
@@ -56,5 +56,33 @@ describe("repository installation eligibility", () => {
   });
   it("does not reject a real popular web product just for exceeding the old star ceiling", () => {
     expect(judge({ ...repo, stars: 150_000 }, { productUrl: "https://my-app.test", status: 200 }, DEFAULT_CRAWL_SETTINGS, now).state).toBe("approved");
+  });
+});
+
+
+describe("popular repositories with unusable homepages", () => {
+  it.each([
+    ["https://github.com/maker/editor-plugin/releases/latest", 200, "GitHub"],
+    ["https://www.npmjs.com/package/editor-plugin", 200, "npm"],
+    ["https://editor-plugin.readthedocs.io", 200, "Plugin Documentation"],
+    ["https://x.com/plugin-maker", 200, "Profile"],
+    ["https://plugin.test", 403, "Forbidden"],
+    ["https://plugin.test", 0, null],
+    ["https://plugin.test", 200, "Plugin Docs"],
+  ])("reviews %s through installation evidence instead of rejecting the homepage", (productUrl, status, title) => {
+    const document = { repo: repo.repo, repoMeta: { stargazers_count: 500, description: repo.description,
+      pushed_at: now.toISOString() }, productUrl, pageStatus: status, pageMeta: { title } };
+    expect(judge(repo, { productUrl, status, title }, DEFAULT_CRAWL_SETTINGS, now)).toMatchObject({
+      state: "needs_review", cause: "installable_product", signals: { accessMode: "installable", productUrl },
+    });
+    expect(accessFromDocument(document, DEFAULT_CRAWL_SETTINGS)).toEqual({ mode: "installable", url: "https://github.com/maker/editor-plugin" });
+  });
+  it("keeps real live web products on their website, and never auto-approves document-only candidates", () => {
+    const page = { productUrl: "https://plugin.test", status: 200 };
+    expect(judge(repo, page, DEFAULT_CRAWL_SETTINGS, now).state).toBe("approved");
+    expect(judge({ ...repo, description: "My personal research notes" }, { ...page, status: 403 }, DEFAULT_CRAWL_SETTINGS, now).state).toBe("rejected");
+    expect(judge({ ...repo, archived: true }, { ...page, status: 403 }, DEFAULT_CRAWL_SETTINGS, now).state).toBe("rejected");
+    expect(judge({ ...repo, isFork: true }, { ...page, status: 403 }, DEFAULT_CRAWL_SETTINGS, now).state).toBe("rejected");
+    expect(judge({ ...repo, stars: 499 }, { ...page, status: 403 }, DEFAULT_CRAWL_SETTINGS, now).reason).toBe("unreachable");
   });
 });

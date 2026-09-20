@@ -158,6 +158,14 @@ export const crawlCandidates = pgTable(
   ],
 );
 
+/** Publication transitions, retained even if the candidate is deleted. Written by the DB trigger. */
+export const crawlPublicationChanges = pgTable("crawl_publication_changes", {
+  id: serial("id").primaryKey(),
+  repo: varchar("repo", { length: 200 }).notNull(),
+  delta: integer("delta").notNull(),
+  occurredAt: timestamp("occurred_at").notNull().defaultNow(),
+}, (t) => [index("crawl_publication_changes_time_idx").on(t.occurredAt)]);
+
 // ─────────────────────────── 설정 ───────────────────────────
 
 /**

@@ -1,3 +1,37 @@
+# Active handoff — rejected high-star queue and 24-hour publication change (2026-09-21 08:29 KST)
+
+## Objective and current status
+
+User says >=500-star products still appear in rejected queue; investigate/correct omissions and show rolling24h (+/-) next to Published. User explicitly prohibited systematic-debugging; do not use that skill. No subagents. Working branch fix/review-rejected-high-stars in root repository. Production not changed yet this phase.
+
+- Read-only production audit:234 rejected>=500;70 already_listed matched existing product URLs (repo_url alone missed these). Old rules still rejected release/package/social/docs homepages and unreachable sites before installation review. Fifteen prior admin rejects deliberately preserved last phase are now explicitly included in user-requested re-review, with previous decision retained in audit.
+- Implemented shared accessFromDocument via judge: eligible popular repository whose homepage rules fail falls back to substantive installation review; no automatic software approval. Archive/fork/research/survey exclusions and source/review/second-review gates remain. All judge/review/contract/classification/publication access paths use same resolver. Check duplicate/ban by original homepage as well as canonical repository. Rules version2026-09-21.2; prompt version2026-09-21.3 (original third-party/unreachable homepage is not the software).
+- Added optional --include-admin reconsideration; default preserves human decisions. Read-only plan /tmp/nmv-queue-reconsider-plan.json:161examined160eligible, including15admin. NOT APPLIED. Run only after fixed workers deployed.
+- Migration0042 records publication enter/leave/delete events with DB trigger; bootstrap terminal published updated_at. Short write lock prevents backfill race. UI signed24h net + tooltip counts. DB clock used because local app/DB ~100ms skew initially made new events appear future.
+- Duplicate rejection UI clarifies existing product and link when existingSlug available (63/70 legacy rows).
+
+## Files, checks and failures
+
+Modified rules/access consumers, reconsideration+CLI, admin review UI/count query, crawl-schema, migration0042/journal, tests. git diff --stat gives full list. Unrelated original untracked design files preserved.
+Executed:7new eligibility regressions failed before fix;95focusedunit thenfull1066unitPASS; delta3DBtests initially missing-table failed, then default app-clock tests exposed skew; DB-clock corrected all3PASS. Explicitmanualreconsider test RED then focused7DBPASS. Types/scopedlint/diffcheck passed before final fixture additions. Fullintegration730PASS (75files), browser2PASS desktop/mobile positive+negative, buildPASS. Logs /tmp/nmv-queue-integration.log and /tmp/nmv-queue-e2e.log. No tests on production.
+
+## Remaining and exact next commands
+
+1. Finish integration, types, newbrowser2tests, review diff. Build via Playwright. Update report and this handoff.
+2. Commit/push/PR; wait CI; merge. Apply0042 via direct5432 migration using explicit private env parse, never echo credentials. Both web servers/all workers deploy via prod skill; verify hashes, health, live admin24hchip.
+3. After newworkers verified: npx tsx .crawl-samples/queue-reconsider.ts --apply (one-shot snapshotCAS, audit actor codex-2026-09-21-rejected-queue). Save receipt; do not rerun applied snapshot blindly. Observe counts and report in-progress vs actualpublished truthfully.
+
+Private0600 /tmp/nmv-installable-web.env and prod.env remain; NEVERcat/echo/commit. Envfile must explicitly override inherited testDB. Helpers .crawl-samples/rejected-500-inspect.ts, queue-reconsider.ts are ignored. /tmp/nmv-rejected-500-audit.json, /tmp/nmv-rejected-500-current-rules.json evidence. Existing prior392cohort is separate; don't rerun previous repair/apply helpers.
+
+```sh
+cd /Users/jr/Desktop/projects/nomorevibe
+npx playwright test tests/e2e/review-publication-change.spec.ts
+npx tsc --noEmit
+git diff --check
+```
+
+---
+
 # Active handoff — installable GitHub products (2026-09-21 02:35 KST)
 
 ## Objective and completed work

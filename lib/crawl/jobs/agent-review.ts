@@ -1,7 +1,7 @@
 import type { JobContext, JobOutcome } from "@/lib/jobs/runner";
 import { requestJob } from "@/lib/jobs/control";
 import { findByUrl, findInstallationSource } from "@/lib/domain/products/repository";
-import { productAccess } from "@/lib/domain/products/access";
+import { accessFromDocument } from "../rules";
 import { loadReviewDocument } from "./review-document";
 import { getSettings } from "@/lib/crawl/settings";
 import { judge, factsFromRepoMeta, pageFactsFromDocument } from "@/lib/crawl/rules";
@@ -64,9 +64,9 @@ export async function reviewCrawlCandidates(ctx: JobContext<null>): Promise<JobO
           relationship: input.snapshot.relationship, scanState: input.snapshot.scanState,
           observations: input.snapshot.evidence.map(evidence => evidence.observation),
         } : undefined);
-      const access = productAccess({ repo: document.repo, stars: Number(document.repoMeta.stargazers_count), productUrl: document.productUrl });
+      const access = accessFromDocument(document, settings);
       const existing = access && verdict.state !== "rejected"
-        ? await (access.mode === "installable" ? findInstallationSource(access.url) : findByUrl(access.url)) : null;
+        ? await (access.mode === "installable" ? findInstallationSource(access.url, document.productUrl) : findByUrl(access.url)) : null;
       const hardReason = verdict.state === "rejected" ? verdict.reason
         : existing ? existing.status === "banned" ? "banned" : "already_listed" : null;
       // Missing development evidence is a hold, never proof the product is ineligible.

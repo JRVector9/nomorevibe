@@ -269,6 +269,20 @@ export async function reviewQueueCauses(settings: CrawlSettings): Promise<Review
   };
 }
 
+/** Rolling publication-state change, using the same DB clock as the transition trigger. */
+export async function publicationChange24h(now?: Date): Promise<{ added: number; removed: number; net: number }> {
+  const end = now ? sql`${now.toISOString()}::timestamp` : sql`(current_timestamp at time zone 'UTC')`;
+  const rows = await db.execute<{ added: number; removed: number; net: number }>(sql`
+    select count(*) filter(where delta = 1)::int as added,
+           count(*) filter(where delta = -1)::int as removed,
+           coalesce(sum(delta), 0)::int as net
+    from crawl_publication_changes
+    where occurred_at >= ${end} - interval '24 hours'
+      and occurred_at <= ${end}
+  `);
+  return rows[0];
+}
+
 /**
  * 상태별 후보 수 — 상태 칩에 붙인다. "진행 중"은 목록과 같이 판정 대기·발행 대기·보류를 합친 것이다.
  * group by 한 번이라 싸다(후보 6만 건, 상태 색인).

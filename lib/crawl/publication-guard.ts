@@ -2,7 +2,7 @@ import { isDeepStrictEqual } from "node:util";
 import { and, desc, eq, ne, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { categoryDecisions, crawlCandidates, crawlDocuments, crawlSettings, agentRepositoryScans, products, type CrawlCandidate, type CrawlDocument, type DecisionReason } from "@/lib/db/schema";
-import { productAccess } from "@/lib/domain/products/access";
+import { accessFromDocument } from "./rules";
 import type { ProductTransaction } from "@/lib/domain/products/generation";
 import { mergeWithDefaults } from "./settings";
 import type { CrawlSettings } from "./settings-schema";
@@ -59,10 +59,10 @@ export async function guardPublication(tx: ProductTransaction, input: {
   decision?: { revision: number | null; sourceHash: string | null };
   candidate:CrawlCandidate; document:CrawlDocument; settings:CrawlSettings; slug:string; scanId:number|null; lease?: JobLease;
 }) {
-  const access = productAccess({ repo: input.document.repo, stars: Number(input.document.repoMeta.stargazers_count), productUrl: input.document.productUrl });
+  const access = accessFromDocument(input.document, input.settings);
   if (access?.mode === "installable") {
     const [existing] = await tx.select({ id: products.id }).from(products)
-      .where(and(ne(products.slug, input.slug), sql`lower(rtrim(${products.repoUrl}, '/')) = lower(${access.url})`)).limit(1).for("share");
+      .where(and(ne(products.slug, input.slug), sql`(lower(rtrim(${products.repoUrl}, '/')) = lower(${access.url}) or ${products.url} = ${input.document.productUrl})`)).limit(1).for("share");
     if (existing) throw new DuplicateInstallationSourceError();
   }
   const [candidate] = await tx.select().from(crawlCandidates).where(eq(crawlCandidates.repo,input.candidate.repo)).for("update");

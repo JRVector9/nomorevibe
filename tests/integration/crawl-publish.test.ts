@@ -110,6 +110,22 @@ describe("발행 잡", () => {
     const { nextToCheck } = await import("@/lib/domain/products/health");
     expect(await nextToCheck(10)).toEqual([]);
   });
+  it("publishes a release-page fallback as an installable product while preserving source URL", async () => {
+    const source = "https://github.com/maker/release-plugin/releases/latest";
+    await approved("maker/release-plugin", { productUrl: source, meta: { stargazers_count: 500, description: "Editor plugin" } });
+    await db.update(crawlCandidates).set({ decidedBy: "admin" }).where(eq(crawlCandidates.repo, "maker/release-plugin"));
+    await tick();
+    expect(await products.findByUrl("https://github.com/maker/release-plugin")).toMatchObject({ accessMode: "installable", name: "release-plugin" });
+    expect(await crawl.getCandidate("maker/release-plugin")).toMatchObject({ state: "published", productUrl: source });
+  });
+  it("does not bypass a banned homepage when falling back to the repository", async () => {
+    const source = "https://www.npmjs.com/package/banned-plugin";
+    await approved("maker/banned-plugin", { productUrl: source, meta: { stargazers_count: 500 } });
+    await db.update(crawlCandidates).set({ decidedBy: "admin" }).where(eq(crawlCandidates.repo, "maker/banned-plugin"));
+    await products.insert({ slug: "banned-homepage", url: source, name: "Banned", tagline: "Banned", description: "Banned", category: "Plugin", status: "banned", verifyToken: "verify", editTokenHash: "x".repeat(64) });
+    await tick();
+    expect(await products.findByUrl("https://github.com/maker/banned-plugin")).toBeUndefined();
+  });
   it("does not publish missing-url products below 500 even from an old approved queue", async () => {
     await approved("maker/too-small", { productUrl: null, meta: { stargazers_count: 499 } });
     await tick();
