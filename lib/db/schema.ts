@@ -257,6 +257,38 @@ export const productClickDaily = pgTable(
 
 export type ProductClickDaily = typeof productClickDaily.$inferSelect;
 
+/**
+ * 검색 질의 기록.
+ *
+ * "무엇을 찾다가 못 찾았는가"를 답하려면 질의가 남아야 한다. 무엇이 여전히 0건인지 모르면
+ * 다음 수(벡터 검색이 필요한지, 색인을 고칠지)를 근거 없이 고르게 된다.
+ *
+ * 사용자를 가리키는 값은 남기지 않는다 — 친 글과 결과 수, 걸린 시간뿐이다.
+ * 같은 말을 공백·대소문자만 다르게 친 것을 묶어 세려고 normalized 를 함께 적는다.
+ */
+export const searchQueries = pgTable(
+  "search_queries",
+  {
+    id: serial("id").primaryKey(),
+    query: varchar("query", { length: 200 }).notNull(),
+    normalized: varchar("normalized", { length: 200 }).notNull(),
+    /** 한국어를 영어 낱말로 옮겨 다시 찾았으면 그 낱말. 옮기지 않았으면 null */
+    keywords: varchar("keywords", { length: 200 }),
+    results: integer("results").notNull(),
+    /** 갈래·제작 도구 같은 거르기가 걸려 있었는가 — 0건이 말 때문인지 거르기 때문인지 가른다 */
+    filtered: boolean("filtered").notNull().default(false),
+    durationMs: integer("duration_ms"),
+    searchedAt: timestamp("searched_at").notNull().defaultNow(),
+  },
+  (t) => [
+    index("search_queries_recent_idx").on(t.searchedAt.desc()),
+    // 0건 질의를 모아 세는 것이 이 표의 쓰임새다
+    index("search_queries_zero_idx").on(t.normalized).where(sql`${t.results} = 0`),
+  ],
+);
+
+export type SearchQueryLog = typeof searchQueries.$inferSelect;
+
 export const visitCollectionState = pgTable("visit_collection_state", {
   id: integer("id").primaryKey().default(1),
   uniqueVisitorStartedAt: timestamp("unique_visitor_started_at"),

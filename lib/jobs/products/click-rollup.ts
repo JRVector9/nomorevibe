@@ -1,6 +1,7 @@
 import type { JobContext, JobOutcome } from "@/lib/jobs/runner";
 import { rollupDaily, pruneEvents } from "@/lib/domain/products/clicks";
 import { pruneExpiredRateLimits } from "@/lib/rate-limit";
+import { pruneSearchQueries } from "@/lib/domain/products/search-log";
 
 /**
  * 클릭 집계 잡.
@@ -10,6 +11,7 @@ import { pruneExpiredRateLimits } from "@/lib/rate-limit";
  * 방문자도 남기지만 여러 날의 값을 더해 기간 고유 방문자로 쓰지는 않는다.
  *
  * 지난 창이 지난 rate limit 행도 함께 지운다 — 클릭 중복 제거가 그 표를 제일 빨리 키운다.
+ * 오래된 검색 질의 기록도 여기서 지운다. 한 시간에 한 번 도는 청소가 여기뿐이다.
  *
  * 최근 며칠을 매번 다시 계산해 덮어쓰므로 멱등이다 — 커서가 없고, 몇 틱 걸러 돌아도 빈 날이
  * 생기지 않는다.
@@ -19,6 +21,7 @@ export async function rollupClicks(ctx: JobContext<null>): Promise<JobOutcome<nu
   await pruneEvents();
   // 클릭 중복 제거가 rate_limits에 (제품 × 방문자)마다 키를 남긴다. 같이 지운다.
   const prunedLimits = await pruneExpiredRateLimits();
-  ctx.log("clicks.rolled", { rows: rolled, prunedRateLimits: prunedLimits });
+  const prunedSearches = await pruneSearchQueries();
+  ctx.log("clicks.rolled", { rows: rolled, prunedRateLimits: prunedLimits, prunedSearches });
   return { done: true };
 }

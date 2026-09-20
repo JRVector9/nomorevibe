@@ -1,3 +1,4 @@
+import { after } from "next/server";
 import { Suspense } from "react";
 import Link from "next/link";
 import { BrowseFilters, parseHomeSort, parseShown, type HomeSort } from "@/components/BrowseFilters";
@@ -19,6 +20,7 @@ import {
   getVerifiedList,
   type ProductListItem,
 } from "@/lib/domain/products/view";
+import { recordSearch } from "@/lib/domain/products/search-log";
 import {
   emptyHomePulse,
   formatAsOfKst,
@@ -237,6 +239,21 @@ export default async function HomePage({ searchParams }: Props) {
   } catch (error) {
     logger.error("home.list_failed", { error });
     dbDown = true;
+  }
+
+  /**
+   * 검색 기록은 응답을 보낸 뒤에 남긴다(after) — 기록이 화면을 늦추지 않는다.
+   * DB 가 죽어 목록을 못 불러온 때(dbDown)는 결과 0건이 아니라 "재지 못한 것"이라 남기지 않는다.
+   */
+  if (query && !dbDown) {
+    const found = resultCount;
+    const keywords = translatedQuery;
+    const narrowed = Boolean(category || builder);
+    /**
+     * 걸린 시간은 이 화면이 만들어지기 시작한 때(now)부터 기록하는 때까지다 — 검색 쿼리만이
+     * 아니라 사람이 기다린 시간이다. 시계는 기록하는 쪽이 읽는다(렌더는 시계를 읽지 않는다).
+     */
+    after(() => recordSearch({ query, keywords, results: found, filtered: narrowed, startedAt: now }));
   }
 
   const [pulseResult, buildersResult, newsResult] = await asideLoad;
