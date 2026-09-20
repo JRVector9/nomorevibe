@@ -31,6 +31,8 @@ export async function pendingTaglines(limit: number): Promise<TaglineTask[]> {
       eq(crawlCandidates.state, "needs_review"),
       eq(crawlCandidates.reason, "no_description"),
       eq(crawlCandidates.decidedBy, "auto"),
+      // 사람이 적은 줄은 다시 짓지 않는다 — 그 사람이 페이지를 보고 적었다
+      sql`${crawlTaglines.writtenBy} is null`,
       sql`(${crawlTaglines.repo} is null
         or (${crawlTaglines.errorCode} is not null and ${crawlTaglines.attempts} < ${MAX_ATTEMPTS}
             and (${crawlTaglines.retryAt} is null or ${crawlTaglines.retryAt} <= now()))
@@ -84,7 +86,24 @@ export async function touchTagline(repo: string, documentAt: Date): Promise<void
   await db.update(crawlTaglines).set({ documentAt, updatedAt: sql`now()` }).where(eq(crawlTaglines.repo, repo));
 }
 
-/** 발행이 쓸 줄. 지을 때 본 원본이 지금 원본과 같을 때만 준다 */
+/**
+ * 사람이 적은 한 줄을 남긴다. 심사에서 페이지를 열어 본 사람이 적는다.
+ *
+ * 모델이 지은 줄을 덮어써도 된다 — 사람이 그 줄을 보고도 직접 적기로 한 것이다.
+ */
+export async function writeTaglineByHand(row: { repo: string; tagline: string; by: string; documentAt: Date }): Promise<void> {
+  const line = row.tagline.trim().slice(0, 200);
+  await db.insert(crawlTaglines).values({
+    repo: row.repo, tagline: line, source: "page", model: "", sourceHash: "",
+    documentAt: row.documentAt, attempts: 0, errorCode: null, retryAt: null, writtenBy: row.by, updatedAt: sql`now()`,
+  }).onConflictDoUpdate({
+    target: crawlTaglines.repo,
+    set: { tagline: line, source: "page", model: "", sourceHash: "", documentAt: row.documentAt,
+      errorCode: null, retryAt: null, writtenBy: row.by, updatedAt: sql`now()` },
+  });
+}
+
+/** 발행이 쓸 줄. 지을 때 본 원본이 지금 원본과 같을 때만 준다(사람이 적은 줄은 원본이 바뀌어도 쓴다) */
 export async function writtenTagline(repo: string): Promise<CrawlTagline | undefined> {
   const [row] = await db.select().from(crawlTaglines).where(eq(crawlTaglines.repo, repo));
   return row;

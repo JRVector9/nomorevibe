@@ -244,6 +244,12 @@ export const crawlTaglines = pgTable("crawl_taglines", {
    * 시계다. 원본이 스스로 적은 값을 복사해 두고 그 값끼리 비교한다.
    */
   documentAt: timestamp("document_at").notNull(),
+  /**
+   * 사람이 적은 줄이면 그 사람. 비어 있으면 모델이 지은 것이다.
+   *
+   * 사람이 적은 줄은 원본이 바뀌어도 그대로 쓰고(그 사람이 페이지를 보고 적었다), 잡이 다시 짓지 않는다.
+   */
+  writtenBy: varchar("written_by", { length: 120 }),
   attempts: integer("attempts").notNull().default(0),
   errorCode: varchar("error_code", { length: 60 }),
   retryAt: timestamp("retry_at"),

@@ -99,10 +99,13 @@ async function preparePublication(candidate: CrawlCandidate): Promise<
    * 지을 때 본 원본과 지금 원본이 같을 때만이다 — 페이지가 바뀌었으면 그 줄은 지금 페이지의
    * 소개가 아니다. 다시 지을 때까지 소개 없음으로 남는다.
    */
-  if (!draft.hasDescription && candidate.decidedBy !== "admin") {
+  if (!draft.hasDescription) {
     const written = await writtenTagline(candidate.repo);
-    if (written?.tagline && written.sourceHash === taglineHash(taglineEvidence(candidate.repo, document))) {
-      draft = draftFrom(candidate.repo, document, { text: written.tagline, source: written.source });
+    // 사람이 적은 줄은 원본이 바뀌어도 그대로 쓴다 — 그 사람이 페이지를 보고 적었다
+    const usable = written?.tagline
+      && (written.writtenBy !== null || written.sourceHash === taglineHash(taglineEvidence(candidate.repo, document)));
+    if (usable && written) {
+      draft = draftFrom(candidate.repo, document, { text: written.tagline, source: written.source, by: written.writtenBy });
     }
   }
   if (!draft.hasDescription && candidate.decidedBy !== "admin") {
@@ -254,7 +257,7 @@ export async function prepareCandidateClassification(
  * written 은 모델이 지어 둔 한 줄이다(crawl-tagline). 메이커가 쓴 소개가 하나라도 있으면
  * 그것이 먼저다 — 지은 줄은 아무것도 없을 때만 쓰고, 쓴 경우 출처를 남겨 화면에 밝힌다.
  */
-function draftFrom(repo: string, document: CrawlDocument, written?: { text: string; source: TaglineEvidenceSource }) {
+function draftFrom(repo: string, document: CrawlDocument, written?: { text: string; source: TaglineEvidenceSource; by?: string | null }) {
   const page = (document.pageMeta ?? {}) as { title?: unknown; description?: unknown; ogImage?: unknown; textSample?: unknown };
   const meta = document.repoMeta;
   const repoDescription = typeof meta.description === "string" ? meta.description.trim() : "";
@@ -273,7 +276,9 @@ function draftFrom(repo: string, document: CrawlDocument, written?: { text: stri
     /** 소개를 어디서도 못 찾았다는 표시 — 발행할지 말지를 이걸로 가른다 */
     hasDescription: Boolean(pageDescription || repoDescription || generated),
     taglineSource: (pageDescription || repoDescription ? "maker"
-      : generated ? `ai_${written!.source}` : "maker") as TaglineSource,
+      : !generated ? "maker"
+      : written?.by ? "editor"
+      : `ai_${written!.source}`) as TaglineSource,
     name: productName(pageTitle, repo, document.productUrl).slice(0, LIMITS.name),
     tagline: tagline.slice(0, LIMITS.tagline),
     description: (repoDescription || pageDescription || tagline).slice(0, LIMITS.description),

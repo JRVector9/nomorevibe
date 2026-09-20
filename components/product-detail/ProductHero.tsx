@@ -5,15 +5,17 @@ import { StatusBadge } from "@/components/TrustBadges";
 import { Tag } from "@/components/Tag";
 import type { ProductLifecycle } from "@/lib/db/product-evidence-schema";
 import type { ProductDetailView } from "@/lib/domain/products/detail-view";
+import type { TaglineSource } from "@/lib/db/schema";
 import { isHealthCurrent } from "@/lib/domain/products/health-freshness";
 import { formatDate } from "./format";
 import { ShareButton } from "./ShareButton";
 
-/** 메이커가 쓴 소개가 없어 모델이 지은 줄 — 무엇을 보고 지었는지 */
-const TAGLINE_SOURCE_LABELS: Record<"ai_page" | "ai_readme" | "ai_both", string> = {
-  ai_page: "페이지 글에서",
-  ai_readme: "README에서",
-  ai_both: "페이지와 README에서",
+/** 메이커가 쓴 소개가 없어 우리가 채운 줄 — 누가 무엇을 보고 적었는지 */
+const TAGLINE_SOURCE_LABELS: Record<Exclude<TaglineSource, "maker">, string> = {
+  ai_page: "AI가 요약 · 페이지 글에서",
+  ai_readme: "AI가 요약 · README에서",
+  ai_both: "AI가 요약 · 페이지와 README에서",
+  editor: "직접 요약 · 페이지를 보고 적었습니다",
 };
 
 const LIFECYCLE_LABELS: Record<ProductLifecycle, string> = {
@@ -133,7 +135,7 @@ export function ProductHero({
           {/* 지은 줄은 무엇을 보고 지었는지까지 밝힌다 — 메이커가 소개를 쓰면 이 표시는 사라진다 */}
           {product.taglineSource !== "maker" && (
             <p className="mt-2 inline-flex items-center gap-1.5 rounded-full border border-line bg-bg-soft px-2.5 py-1 text-[13px] font-semibold text-fg-3">
-              AI가 요약 · {TAGLINE_SOURCE_LABELS[product.taglineSource]}
+              {TAGLINE_SOURCE_LABELS[product.taglineSource]}
             </p>
           )}
           <p className="mt-4 whitespace-pre-line text-[15px] leading-7 text-fg-2">{product.description}</p>
