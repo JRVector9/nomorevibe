@@ -64,7 +64,19 @@ describe("소개 짓기 잡", () => {
 
     expect(await crawl.getCandidate("someone/mystery")).toMatchObject({ state: "needs_review", reason: "no_description" });
     expect((await db.select().from(crawlTaglines))[0]).toMatchObject({ tagline: "" });
-    expect(gateway).toHaveBeenCalledTimes(1);
+    // 첫 틱에 두 번 묻고(빈 줄 재시도), 두 번째 틱은 이미 답이 있어 묻지 않는다
+    expect(gateway).toHaveBeenCalledTimes(2);
+  });
+
+  it("빈 줄이 오면 한 번만 더 묻는다 — 두 번째에 줄이 오면 그것을 쓴다", async () => {
+    await held("someone/second-try");
+    gateway.mockResolvedValueOnce(answer("")).mockResolvedValue(answer("바를 등록하면 손님이 찾습니다"));
+
+    await tick();
+
+    expect(gateway).toHaveBeenCalledTimes(2);
+    expect((await db.select().from(crawlTaglines))[0]).toMatchObject({ tagline: "바를 등록하면 손님이 찾습니다" });
+    expect(await crawl.getCandidate("someone/second-try")).toMatchObject({ state: "approved" });
   });
 
   it("읽을 글이 아무 데도 없으면 모델을 부르지 않는다", async () => {
@@ -102,6 +114,7 @@ describe("소개 짓기 잡", () => {
     await held("someone/steady");
     gateway.mockResolvedValue(answer(""));
     await tick();
+    gateway.mockClear();
     // 재수집 — 같은 페이지를 다시 받아 왔다
     await crawl.putDocument({
       repo: "someone/steady", repoMeta: { description: null, language: "TypeScript" },
@@ -111,13 +124,14 @@ describe("소개 짓기 잡", () => {
 
     await tick();
 
-    expect(gateway).toHaveBeenCalledTimes(1);
+    expect(gateway).not.toHaveBeenCalled();
   });
 
   it("페이지가 바뀌면 다시 짓는다", async () => {
     await held("someone/changed");
     gateway.mockResolvedValue(answer(""));
     await tick();
+    gateway.mockClear();
     await crawl.putDocument({
       repo: "someone/changed", repoMeta: { description: null, language: "TypeScript" },
       productUrl: "https://my-app.test", pageStatus: 200,
@@ -127,7 +141,7 @@ describe("소개 짓기 잡", () => {
 
     await tick();
 
-    expect(gateway).toHaveBeenCalledTimes(2);
+    expect(gateway).toHaveBeenCalledTimes(1);
     expect((await db.select().from(crawlTaglines))[0]).toMatchObject({ tagline: "이제 무엇을 하는지 알 수 있다" });
     expect(await crawl.getCandidate("someone/changed")).toMatchObject({ state: "approved" });
   });
