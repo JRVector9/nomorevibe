@@ -130,6 +130,21 @@ describe("evidence product detail components", () => {
     expect(html).toContain('height="630"');
   });
 
+  it("drops the description line when it repeats the tagline word for word", () => {
+    const same = { ...product, description: `  ${product.tagline}  ` };
+    const html = renderToStaticMarkup(<ProductHero product={same} media={[]} unclaimed={false} lifecycle={null} rank={null}
+      health={{ uptime30d: null, latencyMs: null, checkedAt: null, down: false }} />);
+    // 소개는 한 번만 — 수집 발행분은 설명이 없으면 소개를 그대로 쓴다
+    expect(html.split(product.tagline).length - 1).toBe(1);
+  });
+
+  it("keeps the description when it says something the tagline does not", () => {
+    const html = renderToStaticMarkup(<ProductHero product={product} media={[]} unclaimed={false} lifecycle={null} rank={null}
+      health={{ uptime30d: null, latencyMs: null, checkedAt: null, down: false }} />);
+    expect(html).toContain(product.description);
+    expect(html).toContain(product.tagline);
+  });
+
   it("stands a named cover where a screenshot would be, instead of an empty-state line", () => {
     const html = renderToStaticMarkup(<ProductHero product={product} media={[]} unclaimed={false} lifecycle={null} rank={null}
       health={{ uptime30d: null, latencyMs: null, checkedAt: null, down: false }} />);

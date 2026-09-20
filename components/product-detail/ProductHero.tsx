@@ -148,7 +148,13 @@ export function ProductHero({
               {TAGLINE_SOURCE_LABELS[product.taglineSource]}
             </p>
           )}
-          <p className="mt-4 whitespace-pre-line text-[15px] leading-7 text-fg-2">{product.description}</p>
+          {/*
+            소개와 설명이 같으면 아래 줄을 두지 않는다 — 같은 문장을 두 번 읽히지 않게.
+            수집 발행분은 설명이 없을 때 소개를 그대로 쓰므로(publish.ts draftFrom) 자주 같아진다.
+          */}
+          {product.description.trim() !== product.tagline.trim() && (
+            <p className="mt-4 whitespace-pre-line text-[15px] leading-7 text-fg-2">{product.description}</p>
+          )}
 
           <div className="mt-6 flex flex-wrap items-center gap-2">
             <Tag>{product.category}</Tag>
