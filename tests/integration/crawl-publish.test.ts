@@ -93,6 +93,12 @@ beforeEach(async () => {
 });
 
 describe("발행 잡", () => {
+  it("uses repository identity and description instead of the GitHub/docs wrapper for installables", async () => {
+    await approved("acme/editor-plugin", {productUrl: "https://github.com/acme/editor-plugin", meta: {stargazers_count: 900, description: "Add keyboard shortcuts to your editor"}, pageMeta: {title: "GitHub - acme/editor-plugin: Add shortcuts", description: "GitHub is where people build software"}});
+    await db.update(crawlCandidates).set({decidedBy: "admin"}).where(eq(crawlCandidates.repo, "acme/editor-plugin"));
+    await tick();
+    expect(await products.findByUrl("https://github.com/acme/editor-plugin")).toMatchObject({name: "editor-plugin", tagline: "Add keyboard shortcuts to your editor", description: "Add keyboard shortcuts to your editor"});
+  });
   it("publishes an approved 500-star repository with explicit installation access and its description", async () => {
     await approved("maker/editor-plugin", { productUrl: null, meta: { stargazers_count: 500, description: "An editor plugin", topics: ["vscode-extension"] } });
     await db.update(crawlCandidates).set({ decidedBy: "admin" }).where(eq(crawlCandidates.repo, "maker/editor-plugin"));

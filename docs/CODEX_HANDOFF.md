@@ -4,7 +4,7 @@
 
 - PR155 CI35525146703 PASS and merged77561c41c052a19263ea3c62b6bf2436ab530765; all8deployed. GitHubquota recovered02:17. By02:18,49/392freshsources,4firstreviewsholdfornoREADME.
 - Real bug: setReadmeSample compared SQLNULL page_meta with JSONnull, CASalwaysfailed forhomepage-lessproducts; localmodelprobehadmanuallyprovidedREADMEsoitdidnotexposepersistence. New integration testreproduced1failure/5passbeforefix. Null-awareSQLparameterfixplusracecase: review-document6,review-job2,reconsider3 =11PASS;TSCpass. Branchfix/installable-readme-null-sourcebased77561c4.
-- Nextcommit/pushPR156thenCImerge/deploy. Afterwards auditedrequeue onlyaffectedautomaticcohortneeds_review/ambiguouswithlatestmissing-READMEattempt; keepmanualandsecondsplitcases. Normalfirst/secondreviewmustdecide. NeedactualCopyPromptpublishedUIbeforefinal.
+- PR156 opened(headca0a605). LivefirstproductsrevealedGitHubwrappertitleanddocsdescriptionusedasproductidentity; installabledraftnowusesreponameandrepodescription(READMEgeneratedfallbackifmissing). AddedpublishregressionREDthen64integrationPASSandTSCpass. NeedpushupdatedPR156scopeandlatestCIthenmerge/deploy. Afterwards auditedrequeue onlyaffectedautomaticcohortneeds_review/ambiguouswithlatestmissing-READMEattempt; keepmanualandsecondsplitcases. Normalfirst/secondreviewmustdecide. NeedactualCopyPromptpublishedUIbeforefinal.
 
 ## Follow-up boundary correction in progress — 02:11 KST
 
