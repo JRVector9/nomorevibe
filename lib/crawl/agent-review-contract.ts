@@ -36,7 +36,8 @@ import { productAccess, repositoryUrl, type ProductAccessMode } from "@/lib/doma
  * 2026-09-19.3: 문서 도구로 만든 프로젝트 홈페이지는 홈이다(문서 자체만 거부), 검색·필터되는 디렉터리는 제품이다.
  *   규칙이 이 둘을 보류로 넘기게 되면서(규칙 2026-09-19.2) 모델이 "Docusaurus 로 만들었다 = 문서"로 읽고 거부했다.
  */
-export const REVIEW_PROMPT_VERSION = "2026-09-21.1";
+// 2026-09-21.2: separate website URL exclusions from installable packages; distinguish data-only lists.
+export const REVIEW_PROMPT_VERSION = "2026-09-21.2";
 /**
  * 규칙 2026-09-19.2: 문서 생성기·문서 목차·이름 패턴(*-website·awesome-*)을 거부에서 보류로 바꿨다. 새 기준에서
  *   이 셋이 거부한 것의 79%·95%·1/3~5/8 이 올려야 할 프로젝트 홈이었다(블라인드 표본). AI 가 가른다.

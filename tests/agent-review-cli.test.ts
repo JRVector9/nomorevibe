@@ -156,8 +156,9 @@ it("지시문은 누가 만든 소프트웨어의 집인가 하나만 묻고, �
   expect(system).toContain("download buttons are fine");
   expect(system).toContain("libraries, SDKs, frameworks and UI component kits");
   expect(system).toContain("If product.linksOwnGithub is true");
-  // 거부는 이 목록뿐이다 — 문서·글·강의·대행사·남의 플랫폼 페이지·빈 화면
-  expect(system).toContain("REJECT only these:");
+  // 웹 페이지 거부 조건은 설치형 저장소의 URL에 적용하지 않는다.
+  expect(system).toContain("For website-mode candidates, REJECT");
+  expect(system).toContain("a GitHub URL, source code, README or installation documentation is never by itself a rejection reason");
   /*
    * 규칙이 문서 생성기·문서 목차를 보류로 넘긴다(2026-09-19). 이 두 문장이 없으면 모델은 "Docusaurus 로 만들었다 = 문서"로
    * 읽고 라이브러리 홈페이지를 거부했다(표본 19건 중 9건), 검색되는 플러그인 디렉터리도 "목록"이라며 거부했다.

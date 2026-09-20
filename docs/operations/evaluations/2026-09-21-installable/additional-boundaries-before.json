@@ -1,0 +1,254 @@
+[
+  {
+    "repo": "DefinitelyTyped/DefinitelyTyped",
+    "model": "[MLX] qwen3.6-35b-heretic",
+    "readmeChars": 3000,
+    "milliseconds": 4668,
+    "result": {
+      "ok": true,
+      "outcome": {
+        "decision": "reject",
+        "reason": "The product is a package registry listing (DefinitelyTyped on GitHub/npm context) rather than the software's own home page. The repository is a collection of type definition files (.d.ts) for other npm packages, not a standalone installable application, CLI, or library itself. The README describes it as 'The repository for high quality TypeScript type definitions' and details contribution guidelines for adding definitions to other packages. It falls under the rejection category: 'code package registries (npm, PyPI, ...)' and 'A page about the project on someone else's platform... GitHub itself'.",
+        "evidenceIds": [
+          "product"
+        ],
+        "confidence": 0.95
+      },
+      "usage": {
+        "inputTokens": 2617,
+        "outputTokens": 158
+      }
+    }
+  },
+  {
+    "repo": "DefinitelyTyped/DefinitelyTyped",
+    "model": "[MLX] gpt-oss-120b",
+    "readmeChars": 3000,
+    "milliseconds": 6445,
+    "result": {
+      "ok": true,
+      "outcome": {
+        "decision": "reject",
+        "reason": "The repository DefinitelyTyped provides a large collection of TypeScript type definition files, not a standalone installable application, library, SDK, or other software product. It is documentation-like content (type definitions) rather than a usable tool, and does not constitute a personal profile. Therefore it does not belong on a directory of things people built.",
+        "evidenceIds": [
+          "product"
+        ],
+        "confidence": 0.97
+      },
+      "usage": {
+        "inputTokens": 2594,
+        "outputTokens": 233
+      }
+    }
+  },
+  {
+    "repo": "Free-TV/IPTV",
+    "model": "[MLX] qwen3.6-35b-heretic",
+    "readmeChars": 3000,
+    "milliseconds": 3784,
+    "result": {
+      "ok": true,
+      "outcome": {
+        "decision": "approve",
+        "reason": "The product is an installable repository (M3U playlist for free TV channels) with 20,617 stars, exceeding the 500-star threshold. The README clearly describes the software's function (providing a curated list of free TV channels) and installation/usage method (pointing an IPTV player to the playlist URL). It is a real, usable tool/package, not a document-only repository.",
+        "evidenceIds": [
+          "product"
+        ],
+        "confidence": 0.95
+      },
+      "usage": {
+        "inputTokens": 2669,
+        "outputTokens": 132
+      }
+    }
+  },
+  {
+    "repo": "Free-TV/IPTV",
+    "model": "[MLX] gpt-oss-120b",
+    "readmeChars": 3000,
+    "milliseconds": 5849,
+    "result": {
+      "ok": true,
+      "outcome": {
+        "decision": "reject",
+        "reason": "The repository provides an M3U playlist and scripts to generate it, but it is essentially a collection of data (free TV channel list) rather than an installable application, library, or tool. It does not constitute a software product that can be installed or used as a tool, nor is it a personal profile. Therefore it should be rejected.",
+        "evidenceIds": [
+          "product"
+        ],
+        "confidence": 0.93
+      },
+      "usage": {
+        "inputTokens": 2648,
+        "outputTokens": 237
+      }
+    }
+  },
+  {
+    "repo": "wanshuiyin/Auto-claude-code-research-in-sleep",
+    "model": "[MLX] qwen3.6-35b-heretic",
+    "readmeChars": 3000,
+    "milliseconds": 3988,
+    "result": {
+      "ok": true,
+      "outcome": {
+        "decision": "approve",
+        "reason": "The product is an installable repository (accessMode: installable) with 15,883 stars, exceeding the 500-star threshold. The README describes 'ARIS' as a set of 'Lightweight Markdown-only skills for autonomous ML research' that can be installed via CLI commands (e.g., `install_aris.sh`) or used as plugins for agents like Claude Code and Codex. It details specific installation methods, skill groups, and usage workflows, constituting a real installable software package/skill. The pageText is empty, but the README provides sufficient evidence of what the software is and how it is installed/used.",
+        "evidenceIds": [
+          "product"
+        ],
+        "confidence": 0.95
+      },
+      "usage": {
+        "inputTokens": 2885,
+        "outputTokens": 178
+      }
+    }
+  },
+  {
+    "repo": "wanshuiyin/Auto-claude-code-research-in-sleep",
+    "model": "[MLX] gpt-oss-120b",
+    "readmeChars": 3000,
+    "milliseconds": 6251,
+    "result": {
+      "ok": true,
+      "outcome": {
+        "decision": "approve",
+        "reason": "The repository has 15883 stars and the README describes an installable software product (ARIS) with installation scripts, CLI, and skill plugins. The accessMode is \"installable\" and the repository provides clear usage instructions, satisfying the installable repository exception. Therefore it qualifies as a product.",
+        "evidenceIds": [
+          "product"
+        ],
+        "confidence": 0.96
+      },
+      "usage": {
+        "inputTokens": 2870,
+        "outputTokens": 207
+      }
+    }
+  },
+  {
+    "repo": "NixOS/nixpkgs",
+    "model": "[MLX] qwen3.6-35b-heretic",
+    "readmeChars": 3000,
+    "milliseconds": 4345,
+    "result": {
+      "ok": true,
+      "outcome": {
+        "decision": "approve",
+        "reason": "The product is an installable repository (NixOS/nixpkgs) with 26,186 stars, satisfying the star threshold for installable products. The README clearly describes it as a collection of software packages and the implementation of the NixOS Linux distribution, which are real, installable software artifacts. The pageText is empty, but the README provides sufficient evidence of what the software is and how it is used (via the Nix package manager).",
+        "evidenceIds": [
+          "product"
+        ],
+        "confidence": 0.95
+      },
+      "usage": {
+        "inputTokens": 2710,
+        "outputTokens": 141
+      }
+    }
+  },
+  {
+    "repo": "NixOS/nixpkgs",
+    "model": "[MLX] gpt-oss-120b",
+    "readmeChars": 3000,
+    "milliseconds": 5383,
+    "result": {
+      "ok": true,
+      "outcome": {
+        "decision": "approve",
+        "reason": "The repository NixOS/nixpkgs is a large, actively maintained collection of software packages and the NixOS Linux distribution. It is an installable product (accessMode \"installable\") with over 26k stars, and the README describes concrete software that can be installed via the Nix package manager. Although product.url is null, the installable repository exception applies, and the repository provides clear evidence of a real software product.",
+        "evidenceIds": [
+          "product"
+        ],
+        "confidence": 0.97
+      },
+      "usage": {
+        "inputTokens": 2682,
+        "outputTokens": 236
+      }
+    }
+  },
+  {
+    "repo": "MadsLorentzen/ai-job-search",
+    "model": "[MLX] qwen3.6-35b-heretic",
+    "readmeChars": 3000,
+    "milliseconds": 3410,
+    "result": {
+      "ok": true,
+      "outcome": {
+        "decision": "approve",
+        "reason": "The product is an installable repository (accessMode: installable) with 37,758 stars, exceeding the 500-star threshold. The README describes a real, functional AI job application framework built on Claude Code that allows users to evaluate job postings, tailor CVs, and write cover letters. It provides clear installation and usage instructions (forking, cloning, and installing tools). This qualifies as a real piece of software someone made.",
+        "evidenceIds": [
+          "product"
+        ],
+        "confidence": 0.95
+      },
+      "usage": {
+        "inputTokens": 2737,
+        "outputTokens": 137
+      }
+    }
+  },
+  {
+    "repo": "MadsLorentzen/ai-job-search",
+    "model": "[MLX] gpt-oss-120b",
+    "readmeChars": 3000,
+    "milliseconds": 8025,
+    "result": {
+      "ok": true,
+      "outcome": {
+        "decision": "approve",
+        "reason": "The repository https://github.com/MadsLorentzen/ai-job-search has 37,758 stars and its README describes an installable AI-powered job application framework with clear setup instructions (fork, clone, install tools, run workflow). This qualifies as an installable software product under the policy.",
+        "evidenceIds": [
+          "product"
+        ],
+        "confidence": 0.96
+      },
+      "usage": {
+        "inputTokens": 2710,
+        "outputTokens": 177
+      }
+    }
+  },
+  {
+    "repo": "langchain-ai/openwiki",
+    "model": "[MLX] qwen3.6-35b-heretic",
+    "readmeChars": 3000,
+    "milliseconds": 4257,
+    "result": {
+      "ok": true,
+      "outcome": {
+        "decision": "approve",
+        "reason": "The product is an installable CLI tool named 'openwiki'. The README clearly describes it as a CLI that writes and maintains agent documentation for a codebase or personal knowledge, providing specific installation instructions (npm install -g openwiki) and usage commands (openwiki --init). It meets the installable repository exception criteria with 15,797 stars (>= 500) and provides evidence of what the software does and how it is installed.",
+        "evidenceIds": [
+          "product"
+        ],
+        "confidence": 0.95
+      },
+      "usage": {
+        "inputTokens": 2612,
+        "outputTokens": 138
+      }
+    }
+  },
+  {
+    "repo": "langchain-ai/openwiki",
+    "model": "[MLX] gpt-oss-120b",
+    "readmeChars": 3000,
+    "milliseconds": 4911,
+    "result": {
+      "ok": true,
+      "outcome": {
+        "decision": "approve",
+        "reason": "The repository https://github.com/langchain-ai/openwiki is an installable CLI tool (OpenWiki) with clear installation instructions (npm install -g openwiki) and usage details. It meets the installable repository exception (stars 15797) and provides evidence of software functionality, so it belongs as a product.",
+        "evidenceIds": [
+          "product"
+        ],
+        "confidence": 0.97
+      },
+      "usage": {
+        "inputTokens": 2601,
+        "outputTokens": 165
+      }
+    }
+  }
+]
