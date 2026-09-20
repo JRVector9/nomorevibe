@@ -9,6 +9,7 @@ import type { CrawlSettings } from "./settings-schema";
 import { factsFromRepoMeta, judge, pageFactsFromDocument } from "./rules";
 import { linksOwnGithub } from "./github-links";
 import { README_SAMPLE_LIMIT } from "./readme";
+import { productAccess, repositoryUrl, type ProductAccessMode } from "@/lib/domain/products/access";
 
 /**
  * 심사 입력이 바뀌면 둘 다 올린다.
@@ -35,12 +36,12 @@ import { README_SAMPLE_LIMIT } from "./readme";
  * 2026-09-19.3: 문서 도구로 만든 프로젝트 홈페이지는 홈이다(문서 자체만 거부), 검색·필터되는 디렉터리는 제품이다.
  *   규칙이 이 둘을 보류로 넘기게 되면서(규칙 2026-09-19.2) 모델이 "Docusaurus 로 만들었다 = 문서"로 읽고 거부했다.
  */
-export const REVIEW_PROMPT_VERSION = "2026-09-19.3";
+export const REVIEW_PROMPT_VERSION = "2026-09-21.1";
 /**
  * 규칙 2026-09-19.2: 문서 생성기·문서 목차·이름 패턴(*-website·awesome-*)을 거부에서 보류로 바꿨다. 새 기준에서
  *   이 셋이 거부한 것의 79%·95%·1/3~5/8 이 올려야 할 프로젝트 홈이었다(블라인드 표본). AI 가 가른다.
  */
-export const REVIEW_RULES_VERSION = "2026-09-19.2";
+export const REVIEW_RULES_VERSION = "2026-09-21.1";
 export const MAX_REVIEW_INPUT_BYTES = 64 * 1024;
 export const MAX_REVIEW_ATTEMPTS = 3;
 export const REVIEW_FRESH_MS = 24 * 3600_000;
@@ -70,6 +71,8 @@ export type ReviewSource = {
 };
 export type ReviewSnapshot = {
   product: { repo: string; name: string; description: string; pageText: string; url: string | null; topics: string[]; language: string | null;
+    accessMode: ProductAccessMode;
+    repositoryUrl: string | null;
     /** README 앞부분(lib/crawl/readme.ts). 아직 못 받았으면 "" */
     readme: string;
     /** 페이지가 제작자(레포 주인)의 GitHub 로 가는 링크를 걸었는가 — 걸었으면 프로젝트의 집이다 */
@@ -154,6 +157,8 @@ export function createReviewInput(
        */
       pageText: limitedText(pageFactsFromDocument(document).textSample, TEXT_SAMPLE_LIMIT),
       url: candidate.productUrl,
+      accessMode: productAccess({ repo: candidate.repo, stars: typeof document.repoMeta.stargazers_count === "number" ? document.repoMeta.stargazers_count : 0, productUrl: candidate.productUrl })?.mode ?? "website",
+      repositoryUrl: repositoryUrl(candidate.repo),
       topics: Array.isArray(document.repoMeta.topics) ? document.repoMeta.topics.slice(0, 30).map(item => limitedText(item, 100)) : [],
       language: limitedText(document.repoMeta.language, 100) || null,
       readme: limitedText(page.readmeSample, README_SAMPLE_LIMIT),

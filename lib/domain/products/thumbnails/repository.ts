@@ -12,7 +12,7 @@ export async function listDueThumbnails(limit:number):Promise<string[]>{
  return rows.map(r=>r.slug);
 }
 export async function loadThumbnailProduct(slug:string):Promise<ThumbnailProduct|null>{
- const [p]=await db.select({id:products.id,slug:products.slug,name:products.name,url:products.url,repoUrl:products.repoUrl,ogImage:products.ogImage,updatedAt:sql<string>`${products.updatedAt}::text`}).from(products).where(and(eq(products.slug,slug),inArray(products.status,[...PUBLIC]),noMedia)).limit(1);
+ const [p]=await db.select({id:products.id,slug:products.slug,name:products.name,accessMode:products.accessMode,url:products.url,repoUrl:products.repoUrl,ogImage:products.ogImage,updatedAt:sql<string>`${products.updatedAt}::text`}).from(products).where(and(eq(products.slug,slug),inArray(products.status,[...PUBLIC]),noMedia)).limit(1);
  if(!p)return null;
  const key=p.repoUrl?.match(/^https?:\/\/(?:www\.)?github\.com\/([^/]+\/[^/?#]+)\/?$/i)?.[1]?.replace(/\.git$/,'');
  const d=key?await db.query.crawlDocuments.findFirst({where:eq(crawlDocuments.repo,key),columns:{pageMeta:true,repoMeta:true}}):null;

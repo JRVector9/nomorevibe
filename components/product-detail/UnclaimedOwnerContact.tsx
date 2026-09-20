@@ -3,7 +3,7 @@ import { githubOwnerFromRepositoryUrl } from "@/lib/domain/products/github-owner
 import { SourceBadge } from "./SourceBadge";
 import { TakedownForm } from "@/app/p/[slug]/TakedownForm";
 
-export function UnclaimedOwnerContact({ repoUrl, slug }: { repoUrl: string | null; slug: string }) {
+export function UnclaimedOwnerContact({ repoUrl, slug, installable = false }: { repoUrl: string | null; slug: string; installable?: boolean }) {
   const owner = githubOwnerFromRepositoryUrl(repoUrl);
   if (!owner) return null;
 
@@ -65,8 +65,10 @@ export function UnclaimedOwnerContact({ repoUrl, slug }: { repoUrl: string | nul
       <div className="mt-5 border-t border-line pt-4">
         <p className="text-[13px] font-extrabold text-fg">이 프로젝트의 운영자인가요?</p>
         <p className="mt-1 text-[13px] leading-5 text-fg-3">
+          {installable ? "저장소 소유권 확인이 필요한 설치형 프로젝트입니다. 소개 수정은 관리자에게 요청해주세요." : <>
           프로젝트 폴더에서 <code className="font-mono font-semibold text-accent">/nomorevibe</code>를 실행하면
           소유권을 확인하고 소개를 직접 관리할 수 있습니다.
+          </>}
         </p>
         <TakedownForm slug={slug} />
       </div>

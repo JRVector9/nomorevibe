@@ -4,7 +4,7 @@ import{siteHints,manifestIcons,repositoryImages,imageUrl,type SiteImageHints}fro
 import{normalizeThumbnail,defaultThumbnail,type ThumbnailImage}from'./images';
 export type ThumbnailKind='og'|'site_icon'|'repository_image'|'github_avatar'|'default';
 export const THUMBNAIL_RANK:Record<ThumbnailKind,number>={og:0,site_icon:1,repository_image:2,github_avatar:3,default:4};
-export type ThumbnailInput={name:string;url:string;repoUrl:string|null;pageMeta?:Record<string,unknown>|null;repoMeta?:Record<string,unknown>|null};
+export type ThumbnailInput={accessMode?:"website"|"installable";name:string;url:string;repoUrl:string|null;pageMeta?:Record<string,unknown>|null;repoMeta?:Record<string,unknown>|null};
 export type ThumbnailResult=ThumbnailImage&{kind:ThumbnailKind;sourceUrl:string|null;errors:string[]};
 type Request=(url:string,options:{maxBytes:number;timeoutMs:number;signal:AbortSignal})=>Promise<CappedFetchResult>;
 export async function resolveThumbnail(input:ThumbnailInput,options:{request?:Request;signal?:AbortSignal}={}):Promise<ThumbnailResult>{
@@ -17,6 +17,7 @@ export async function resolveThumbnail(input:ThumbnailInput,options:{request?:Re
   if(!url||tried.has(url))return null;tried.add(url);const r=await get(url,5*1024*1024);if(!r)return null;
   try{return {...await normalizeThumbnail(r.body),kind,sourceUrl:r.finalUrl,errors};}catch{if(errors.length<12)errors.push('invalid_image');return null;}
  };
+ if(input.accessMode!=="installable"){
  stage=Math.min(total-14_000,Date.now()+7000);
  const savedOg=imageUrl(input.pageMeta?.ogImage,input.url);const saved=await tryImage(savedOg,'og');if(saved)return saved;
  const page=await get(input.url,512*1024);let hints:SiteImageHints={icons:[],manifest:null,ogImage:null};let pageUrl=input.url;
@@ -28,6 +29,7 @@ export async function resolveThumbnail(input:ThumbnailInput,options:{request?:Re
  let appIcons:string[]=[];if(hints.manifest){const m=await get(hints.manifest,64*1024);if(m)try{appIcons=manifestIcons(JSON.parse(m.body.toString('utf8')),m.finalUrl);}catch{errors.push('invalid_manifest');}}
  const icons=[...appIcons,...hints.icons.map(i=>i.url),new URL('/apple-touch-icon.png',pageUrl).href,new URL('/favicon.ico',pageUrl).href];
  for(const url of [...new Set(icons)].slice(0,7)){const image=await tryImage(url,'site_icon');if(image)return image;}
+ }
  stage=Math.min(total-3500,Date.now()+6500);
  const owner=githubOwnerFromRepositoryUrl(input.repoUrl),repo=owner?.repositoryUrl.slice('https://github.com/'.length);
  if(repo){const branch=typeof input.repoMeta?.default_branch==='string'?input.repoMeta.default_branch:'HEAD';

@@ -31,9 +31,9 @@ const { ensureSchema, resetTables } = await import("./setup");
 /** 발행 대기 상태의 후보 하나 (원본 + approved 판정) */
 async function approved(
   repo: string,
-  over: { productUrl?: string; meta?: Record<string, unknown>; pageMeta?: Record<string, unknown> } = {},
+  over: { productUrl?: string | null; meta?: Record<string, unknown>; pageMeta?: Record<string, unknown> } = {},
 ) {
-  const productUrl = over.productUrl ?? "https://my-app.test";
+  const productUrl = over.productUrl === undefined ? "https://my-app.test" : over.productUrl;
   await crawl.putDocument({
     repo,
     repoMeta: { description: "레포 설명", language: "TypeScript", ...over.meta },
@@ -93,6 +93,34 @@ beforeEach(async () => {
 });
 
 describe("발행 잡", () => {
+  it("publishes an approved 500-star repository with explicit installation access and its description", async () => {
+    await approved("maker/editor-plugin", { productUrl: null, meta: { stargazers_count: 500, description: "An editor plugin", topics: ["vscode-extension"] } });
+    await db.update(crawlCandidates).set({ decidedBy: "admin" }).where(eq(crawlCandidates.repo, "maker/editor-plugin"));
+    await tick();
+    expect(await products.findByUrl("https://github.com/maker/editor-plugin")).toMatchObject({
+      accessMode: "installable", description: "An editor plugin", category: "Plugin", status: "seeded",
+    });
+    expect((await crawl.getCandidate("maker/editor-plugin"))?.productUrl).toBeNull();
+    const { nextToCheck } = await import("@/lib/domain/products/health");
+    expect(await nextToCheck(10)).toEqual([]);
+  });
+  it("does not publish missing-url products below 500 even from an old approved queue", async () => {
+    await approved("maker/too-small", { productUrl: null, meta: { stargazers_count: 499 } });
+    await tick();
+    expect(await products.findByUrl("https://github.com/maker/too-small")).toBeUndefined();
+  });
+  it("rechecks a banned repository inserted while category classification was running", async () => {
+    await approved("maker/raced-plugin", { productUrl: null, meta: { stargazers_count: 500, description: "Editor plugin" } });
+    await db.update(crawlCandidates).set({ decidedBy: "admin" }).where(eq(crawlCandidates.repo, "maker/raced-plugin"));
+    classifyCategories.mockImplementationOnce(async () => {
+      await products.insert({ slug: "banned-existing", url: "https://old-plugin.test", repoUrl: "https://github.com/maker/raced-plugin",
+        name: "Old Plugin", tagline: "Old", description: "Old", category: "Plugin", status: "banned", verifyToken: "verify", editTokenHash: "x".repeat(64) });
+      return ["Plugin"];
+    });
+    await tick();
+    expect(await products.findByUrl("https://github.com/maker/raced-plugin")).toBeUndefined();
+    expect(await crawl.getCandidate("maker/raced-plugin")).toMatchObject({ state: "rejected", reason: "already_listed" });
+  });
   it("통과한 후보를 seeded 제품으로 올린다", async () => {
     await approved("someone/my-app");
 

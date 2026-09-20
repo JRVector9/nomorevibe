@@ -17,6 +17,7 @@ export type HomeCardProduct = StarObservation & {
   name: string;
   tagline: string;
   category: string;
+  accessMode?: "website" | "installable";
   builder: string | null;
   builderClaim: "reported" | "guessed";
   ogImage: string | null;

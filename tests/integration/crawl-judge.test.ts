@@ -46,6 +46,14 @@ beforeEach(async () => {
 });
 
 describe("판정 잡", () => {
+  it("does not resurrect a banned website through its installation repository", async () => {
+    await products.insert({ slug: "banned-repository", url: "https://former-site.test", repoUrl: "https://github.com/maker/plugin",
+      name: "Plugin", tagline: "A plugin", description: "A plugin", category: "Plugin", status: "banned",
+      verifyToken: "verify", editTokenHash: "x".repeat(64) });
+    await putDocument({ repo: "maker/plugin", productUrl: null, meta: { stargazers_count: 500, description: "An editor plugin" } });
+    await tick();
+    expect(await crawl.getCandidate("maker/plugin")).toMatchObject({ state: "rejected", reason: "banned" });
+  });
   it("원본을 판정해 후보로 남긴다", async () => {
     await putDocument({ repo: "someone/my-app" });
 
@@ -65,7 +73,8 @@ describe("판정 잡", () => {
 
   it("거른 것도 사유와 함께 남긴다", async () => {
     await putDocument({ repo: "someone/no-deploy", productUrl: null, pageStatus: null });
-    await putDocument({ repo: "someone/huge", meta: { stargazers_count: 50_000 } });
+    await saveSettings({ judge: { maxStars: 100 } }, "test");
+    await putDocument({ repo: "someone/huge", meta: { stargazers_count: 400 } });
 
     await tick();
 
@@ -139,7 +148,8 @@ describe("판정 잡", () => {
   });
 
   it("후보를 new로 되돌리면 다시 판정한다 — 기준을 바꾼 뒤의 재판정 경로다", async () => {
-    await putDocument({ repo: "someone/my-app", meta: { stargazers_count: 5_000 } });
+    await saveSettings({ judge: { maxStars: 100 } }, "test");
+    await putDocument({ repo: "someone/my-app", meta: { stargazers_count: 400 } });
     await tick();
     expect(await crawl.getCandidate("someone/my-app")).toMatchObject({ reason: "large_oss" });
 

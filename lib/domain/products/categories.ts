@@ -22,6 +22,8 @@ export const CATEGORIES = [
    * wendyliga.com("A blog about technology, programming, and life")이 Media 로 발행됐다.
    */
   "Profile",
+  "Plugin",
+  "Skill",
   "Other",
 ] as const;
 export type Category = (typeof CATEGORIES)[number];

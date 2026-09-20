@@ -1,7 +1,8 @@
 import { isDeepStrictEqual } from "node:util";
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, ne, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { categoryDecisions, crawlCandidates, crawlDocuments, crawlSettings, agentRepositoryScans, type CrawlCandidate, type CrawlDocument, type DecisionReason } from "@/lib/db/schema";
+import { categoryDecisions, crawlCandidates, crawlDocuments, crawlSettings, agentRepositoryScans, products, type CrawlCandidate, type CrawlDocument, type DecisionReason } from "@/lib/db/schema";
+import { productAccess } from "@/lib/domain/products/access";
 import type { ProductTransaction } from "@/lib/domain/products/generation";
 import { mergeWithDefaults } from "./settings";
 import type { CrawlSettings } from "./settings-schema";
@@ -12,6 +13,9 @@ import type { StoppedAt } from "./rules";
 
 export class PublicationStateChangedError extends Error {
   constructor() { super("publication_state_changed"); }
+}
+export class DuplicateInstallationSourceError extends Error {
+  constructor() { super("duplicate_installation_source"); }
 }
 type Snapshot = {candidate:unknown;document:unknown;settings:unknown};
 export function publicationSourceChanged(candidate:Pick<CrawlCandidate,"productUrl">,document:Pick<CrawlDocument,"productUrl">):boolean {
@@ -55,6 +59,12 @@ export async function guardPublication(tx: ProductTransaction, input: {
   decision?: { revision: number | null; sourceHash: string | null };
   candidate:CrawlCandidate; document:CrawlDocument; settings:CrawlSettings; slug:string; scanId:number|null; lease?: JobLease;
 }) {
+  const access = productAccess({ repo: input.document.repo, stars: Number(input.document.repoMeta.stargazers_count), productUrl: input.document.productUrl });
+  if (access?.mode === "installable") {
+    const [existing] = await tx.select({ id: products.id }).from(products)
+      .where(and(ne(products.slug, input.slug), sql`lower(rtrim(${products.repoUrl}, '/')) = lower(${access.url})`)).limit(1).for("share");
+    if (existing) throw new DuplicateInstallationSourceError();
+  }
   const [candidate] = await tx.select().from(crawlCandidates).where(eq(crawlCandidates.repo,input.candidate.repo)).for("update");
   const [document] = await tx.select().from(crawlDocuments).where(eq(crawlDocuments.repo,input.document.repo)).for("share");
   const [settingsRow] = await tx.select().from(crawlSettings).where(eq(crawlSettings.id,1)).for("share");

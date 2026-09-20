@@ -1,4 +1,5 @@
 import { nonProductPurpose } from './product-purpose';
+import { productAccess } from "@/lib/domain/products/access";
 import type { CrawlCandidate, CrawlDocument, TaglineSource } from "@/lib/db/schema";
 import { LIMITS, type Category } from "@/lib/domain/products/schema";
 import * as products from "@/lib/domain/products/repository";
@@ -12,7 +13,7 @@ import { getSettings } from "./settings";
 import { judgeRevision } from "./rules";
 import { taglineEvidence, taglineHash, type TaglineEvidenceSource } from "./tagline";
 import { writtenTagline } from "./taglines";
-import { guardPublication, publicationSourceChanged, PublicationStateChangedError } from "./publication-guard";
+import { guardPublication, publicationSourceChanged, PublicationStateChangedError, DuplicateInstallationSourceError } from "./publication-guard";
 import { loadAgentJudgeInput } from "./agent-evidence";
 import { summarizeAgentEvidence, type AgentEvidenceSummary } from "@/lib/domain/evidence/agents/summary";
 import { requestJob, type JobLease } from "@/lib/jobs/control";
@@ -34,7 +35,7 @@ const MAX_SLUG_ATTEMPTS = 4;
 
 export type PublishResult =
   | { ok: true; slug: string }
-  | { ok: false; reason: "not_a_product" | "no_document" | "no_url" | "already_listed" | "no_description" | "publication_state_changed" | "review_approval_changed" | "source_changed" | "stale_judgement" | AgentEvidenceSummary["reason"] };
+  | { ok: false; reason: "installation_review_required" | "not_a_product" | "no_document" | "no_url" | "already_listed" | "no_description" | "publication_state_changed" | "review_approval_changed" | "source_changed" | "stale_judgement" | AgentEvidenceSummary["reason"] };
 
 type PublicationSnapshot = {
   document: CrawlDocument;
@@ -61,12 +62,17 @@ async function preparePublication(candidate: CrawlCandidate): Promise<
   const document = await crawl.getDocument(candidate.repo);
   if (!document) return { ok: false, reason: "no_document" };
   if (publicationSourceChanged(candidate, document)) return { ok: false, reason: "source_changed" };
-  const url = candidate.productUrl ?? document.productUrl;
+  const access = productAccess({ repo: document.repo, stars: Number(document.repoMeta.stargazers_count), productUrl: document.productUrl });
+  const url = access?.url;
   if (!url) return { ok: false, reason: "no_url" };
+  if (access.mode === "installable" && await products.findInstallationSource(url)) return { ok: false, reason: "already_listed" };
 
-  const purpose = nonProductPurpose(document.pageMeta ?? {});
+  const purpose = nonProductPurpose({ ...document.pageMeta, description: [document.repoMeta.description, document.pageMeta?.description].filter(v => typeof v === "string").join(" ") });
   if (purpose) return { ok: false, reason: "not_a_product" };
   const settings = await getSettings();
+  if (access?.mode === "installable" && candidate.decidedBy !== "admin" && settings.reviewMode !== "enforce") {
+    return { ok: false, reason: "installation_review_required" };
+  }
   const checkedEvidence = settings.agentEvidence.enforceEligibility && candidate.decidedBy !== "admin"
     ? await loadAgentJudgeInput(document, settings) : null;
   if (checkedEvidence) {
@@ -151,6 +157,7 @@ export async function publishCandidate(
       tagline: draft.tagline,
       topics: draft.topics,
       language: draft.language,
+      readme: typeof document.pageMeta?.readmeSample === "string" ? document.pageMeta.readmeSample : "",
     };
   const category = (
     preclassification === undefined
@@ -168,6 +175,7 @@ export async function publishCandidate(
       await products.insert({
         slug,
         url,
+        accessMode: productAccess({ repo: document.repo, stars: Number(document.repoMeta.stargazers_count), productUrl: document.productUrl })?.mode ?? "website",
         name: draft.name,
         tagline: draft.tagline,
         taglineSource: draft.taglineSource,
@@ -199,6 +207,7 @@ export async function publishCandidate(
       }, tx => guardPublication(tx, {candidate,document,settings,slug,scanId:checkedEvidence?.scanId ?? null,lease,decision:preclassification?.decision}));
       break;
     } catch (e) {
+      if (e instanceof DuplicateInstallationSourceError) return { ok: false, reason: "already_listed" };
       if (e instanceof PublicationStateChangedError) return {ok:false,reason:"publication_state_changed"};
       if (e instanceof ReviewApprovalChangedError) return {ok:false,reason:"review_approval_changed"};
       const constraint = products.uniqueViolation(e);
@@ -240,7 +249,7 @@ export async function prepareCandidateClassification(
 ): Promise<PreparedClassification | null> {
   const prepared = await preparePublication(candidate);
   if (!prepared.ok) return null;
-  const { url, draft } = prepared.snapshot;
+  const { url, draft, document } = prepared.snapshot;
   return { input: {
     repo: candidate.repo,
     url,
@@ -248,6 +257,7 @@ export async function prepareCandidateClassification(
     tagline: draft.tagline,
     topics: draft.topics,
     language: draft.language,
+    readme: typeof document.pageMeta?.readmeSample === "string" ? document.pageMeta.readmeSample : "",
   }, snapshot: prepared.snapshot };
 }
 
@@ -301,6 +311,8 @@ function draftFrom(repo: string, document: CrawlDocument, written?: { text: stri
  * 먼저 보고, 없으면 설명을 본다. 단어가 여러 뜻인 경우를 줄이기 위해 좁은 표현만 둔다.
  */
 const CATEGORY_KEYWORDS: { category: Category; topics: string[]; text: string[] }[] = [
+  { category: "Skill", topics: ["agent-skill", "agent-skills", "claude-skill", "claude-skills", "codex-skill"], text: ["installable agent skill", "ai agent skill"] },
+  { category: "Plugin", topics: ["vscode-extension", "browser-extension", "chrome-extension", "neovim-plugin", "obsidian-plugin", "claude-code-plugin"], text: ["editor plugin", "browser extension", "vscode extension"] },
   /**
    * 가장 앞에 둔다. 사람 자신이 내용인 것은 소재를 따라 어디로든 갈 수 있어서다.
    * 실측(2026-09-18): 발행분에서 topic:portfolio 를 단 12건이 Other 5 · Security 2 · Design 2 ·

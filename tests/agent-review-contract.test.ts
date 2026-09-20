@@ -18,6 +18,15 @@ const scan = { id: 1, startedAt: now, completedAt: now, state: "complete", detec
   lastErrorCode: null, commitSha: observation.commitSha } as AgentRepositoryScan;
 const evidence = { scan, observations: [{ id: "observation:1", observation }] };
 
+it("reviews a popular installation repository while preserving the original null source URL", () => {
+  const input = createReviewInput({ ...candidate, productUrl: null }, { ...document, productUrl: null,
+    repoMeta: { stargazers_count: 500, description: "An editor plugin" },
+    pageMeta: { readmeSample: "Install this extension in VS Code." } }, DEFAULT_CRAWL_SETTINGS, evidence, now);
+  expect(input.snapshot.product).toMatchObject({ accessMode: "installable", url: null,
+    repositoryUrl: "https://github.com/owner/app", readme: "Install this extension in VS Code." });
+  expect(input.source.productUrl).toBeNull();
+});
+
 it("hashes semantic inputs stably while tracking operational source revisions separately", () => {
   const first = createReviewInput(candidate, document, DEFAULT_CRAWL_SETTINGS, evidence, now);
   const operational = createReviewInput({ ...candidate, state: "needs_review", updatedAt: new Date(0) }, document,

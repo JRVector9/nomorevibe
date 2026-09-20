@@ -20,6 +20,7 @@ const product: ProductDetailView["product"] = {
   id: 1,
   slug: "simple-hwp",
   url: "https://simplehwp.example",
+  accessMode: "website",
   name: "simpleHWP",
   tagline: "별도 뷰어 없이 HWP 문서를 브라우저에서 엽니다.",
   taglineSource: "maker" as const,
@@ -546,4 +547,20 @@ describe("evidence product detail components", () => {
     expect(order.every((index) => index >= 0)).toBe(true);
     expect(order).toEqual([...order].sort((left, right) => left - right));
   });
+});
+
+
+it("offers an installation prompt instead of a visit CTA or a website uptime claim", () => {
+  const installable = { ...product, accessMode: "installable" as const, url: product.repoUrl! };
+  const health = { uptime30d: null, latencyMs: null, checkedAt: null, down: false };
+  const html = renderToStaticMarkup(<ProductHero product={installable} media={[]} unclaimed={true} lifecycle={null} rank={null} health={health} />);
+  expect(html).toContain("직접 설치");
+  expect(html).toContain("Copy Prompt");
+  expect(html).toContain("Claude·ChatGPT");
+  expect(html).toContain(product.repoUrl);
+  expect(html).not.toContain("제품 방문하기");
+  expect(html).not.toContain("가동 상태 확인 전");
+  const metrics = renderToStaticMarkup(<ProductMetrics installable health={health} visits={{ collecting: true, uniqueVisitors: null, uniqueChangePercent: null, validVisits: 0, periodDays: 7 } as ProductDetailView["visits"]} />);
+  expect(metrics).not.toContain("30일 가동률");
+  expect(metrics).toContain("사용자 환경에서 실행");
 });

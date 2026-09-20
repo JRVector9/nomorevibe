@@ -169,10 +169,8 @@ export function SettingsForm({ settings }: { settings: CrawlSettings }) {
             <label className={label} htmlFor="maxStars">스타 상한</label>
             <input id="maxStars" name="maxStars" type="number" min={0} defaultValue={judge.maxStars} className={`${field} mt-1.5`} />
             <p className={hint}>
-              별이 이 수를 넘는 레포는 거릅니다. 우리가 찾는 것은 개인이 AI로 만든 것이라,
-              별이 수천 개인 대형 오픈소스는 대상이 아닙니다.
-              <br />
-              올리면 큰 프로젝트까지 들어오고(사실상 끄는 것), 내리면 입소문 난 개인 제품이 빠집니다.
+              별 500개 이상인 제품에는 상한을 적용하지 않습니다. 배포 URL이 없는 경우에도
+              실제로 설치 가능한 제품·플러그인·스킬인지 심사합니다. 문서·설문·단순 자료 모음은 제외합니다.
             </p>
           </div>
           <div>

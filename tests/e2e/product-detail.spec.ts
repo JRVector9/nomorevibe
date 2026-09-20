@@ -10,6 +10,23 @@ test.beforeAll(async () => {
   await seedProductDetailFixtures();
 });
 
+test("installable product copies a repository-specific prompt and supports manual copy", async ({ page, context }) => {
+  await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+  await page.goto(`/p/${PRODUCT_DETAIL_FIXTURES.installable}`);
+  await expect(page.getByRole("button", { name: "Copy Prompt · 설치 도움받기" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "제품 방문하기 ↗" })).toHaveCount(0);
+  await page.getByRole("button", { name: "Copy Prompt · 설치 도움받기" }).click();
+  await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toContain("https://github.com/example/editor-plugin");
+  await page.screenshot({ path: "test-results/installable-desktop.png", fullPage: true });
+  await page.evaluate(() => Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText: async () => { throw new Error("denied"); } } }));
+  await page.getByRole("button", { name: "프롬프트 복사됨 ✓" }).click();
+  await expect(page.getByLabel("설치 프롬프트", { exact: true })).toBeVisible();
+  await expect(page.getByLabel("설치 프롬프트", { exact: true })).toHaveValue(/github.com\/example\/editor-plugin/);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expectViewportContract(page);
+  await page.screenshot({ path: "test-results/installable-mobile.png", fullPage: true });
+});
+
 function observePage(page: Page) {
   const consoleErrors: string[] = [];
   const pageErrors: string[] = [];

@@ -31,6 +31,7 @@ export type VerifyOutput = {
 export async function verifyProduct(slug: string): Promise<Result<VerifyOutput>> {
   const product = await repo.findBySlug(slug);
   if (!product || product.status === "banned") return fail({ kind: "not_found" });
+  if (product.accessMode === "installable") return fail({ kind: "invalid", message: "설치형 프로젝트는 배포 도메인으로 소유권을 확인할 수 없습니다. 관리자에게 저장소 소유 확인을 요청해주세요." });
 
   if (product.status === "verified") {
     return ok({ slug, status: "verified", method: (product.verifyMethod as "file" | "meta") ?? "file", already: true });

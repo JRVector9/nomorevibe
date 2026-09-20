@@ -240,9 +240,8 @@ describe("judge — 거르기", () => {
     expect(judge(goodRepo(), { ...livePage, title: "  " }, settings, NOW).state).toBe("approved");
   });
 
-  it("대형 오픈소스를 스타 상한으로 거른다", () => {
-    // windmill-labs/windmill 처럼 AI가 커밋 일부에 참여했을 뿐인 것
-    const v = judge(goodRepo({ stars: 15_000 }), livePage, settings, NOW);
+  it("500 미만 후보에는 운영자가 정한 스타 상한을 적용한다", () => {
+    const v = judge(goodRepo({ stars: 400 }), livePage, { ...settings, judge: { ...settings.judge, maxStars: 100 } }, NOW);
     expect(v).toMatchObject({ state: "rejected", reason: "large_oss" });
   });
 
@@ -420,7 +419,7 @@ describe("judge — 거르기", () => {
     const docs = { ...livePage, generator: "docusaurus" };
     expect(judge(goodRepo({ archived: true }), docs, settings, NOW)).toMatchObject({ state: "rejected", reason: "personal_site" });
     expect(judge(goodRepo(), { ...docs, status: 404 }, settings, NOW)).toMatchObject({ state: "rejected", reason: "unreachable" });
-    expect(judge(goodRepo({ repo: "someone/acme-website", stars: 500_000 }), livePage, settings, NOW)).toMatchObject({ state: "rejected", reason: "large_oss" });
+    expect(judge(goodRepo({ repo: "someone/acme-website", stars: 500_000 }), livePage, settings, NOW)).toMatchObject({ state: "needs_review", reason: "ambiguous" });
     // 거부가 없으면 보류로 끝나고, 멈춘 곳이 기록에 남는다
     const held = judge(goodRepo(), docs, settings, NOW);
     expect(held).toMatchObject({ state: "needs_review", cause: "docs_generator" });
@@ -649,9 +648,9 @@ describe("판정 근거 — 심사 화면이 보여줄 발자국", () => {
   });
 
   it("멈춘 지점이 마지막 항목이고, 측정값과 기준을 함께 남긴다", () => {
-    const v = judge(goodRepo({ stars: 5000 }), livePage, settings, NOW);
+    const v = judge(goodRepo({ stars: 400 }), livePage, { ...settings, judge: { ...settings.judge, maxStars: 100 } }, NOW);
     expect(v).toMatchObject({ state: "rejected", reason: "large_oss" });
-    expect(stopped(v)).toEqual({ rule: "스타 상한 이하", detail: "5,000 > 1,000", passed: false });
+    expect(stopped(v)).toEqual({ rule: "스타 상한 이하", detail: "400 > 100", passed: false });
     // 멈추기 전까지는 전부 통과다
     expect(v.trace.slice(0, -1).every((s) => s.passed)).toBe(true);
   });

@@ -37,11 +37,11 @@ beforeEach(async () => {
   expect(await changeReviewMode({ mode: "enforce", expectedMode: "off", actor: "test", reason: "verified gate" })).toMatchObject({ ok: true });
 });
 
-async function candidate(index: number, approve = false, confidence?: number) {
-  const repo = `gate/product-${index}`, productUrl = `https://gate-${index}.example`;
+async function candidate(index: number, approve = false, confidence?: number, installable = false) {
+  const repo = `gate/product-${index}`, productUrl = installable ? null : `https://gate-${index}.example`;
   const now = new Date(Date.now() - 1000);
   const [document] = await db.insert(crawlDocuments).values({ repo, productUrl, fetchedAt: now,
-    repoMeta: { description: "A useful application" }, pageStatus: 200,
+    repoMeta: { description: "A useful application", ...(installable ? { stargazers_count: 500 } : {}) }, pageStatus: 200,
     pageMeta: { title: `Gate ${index}`, description: "An application for daily work" } }).returning();
   // 운영의 판정 잡처럼 판정이 본 원본의 리비전을 남긴다
   const [row] = await db.insert(crawlCandidates).values({ repo, productUrl, state: "approved", reason: "passed",
@@ -58,6 +58,17 @@ async function candidate(index: number, approve = false, confidence?: number) {
   return { row, document, attempt };
 }
 const tick = () => runJob("crawl-publish", publishCandidates);
+
+it("keeps the two-stage publication gate for installation-only repositories", async () => {
+  const settings = await withGate();
+  await candidate(41, true, 0.95, true);
+  await tick();
+  expect(await db.select().from(products)).toHaveLength(0);
+  expect(await enqueueSecondReviews(settings)).toBe(1);
+  await vote((await db.select().from(secondReviews))[0], "approve");
+  await tick();
+  expect(await db.select().from(products)).toMatchObject([{ accessMode: "installable", url: "https://github.com/gate/product-41" }]);
+});
 
 it("filters pending reviews before LIMIT without changing their existing state", async () => {
   await candidate(0, true);

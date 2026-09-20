@@ -1,0 +1,170 @@
+[
+  {
+    "repo": "garrytan/gstack",
+    "model": "[MLX] qwen3.6-35b-heretic",
+    "readmeChars": 3000,
+    "milliseconds": 4262,
+    "result": {
+      "ok": true,
+      "outcome": {
+        "decision": "approve",
+        "reason": "The product is an installable repository (garrytan/gstack) with 132,236 stars, satisfying the star threshold for installable products. The README clearly describes a reusable software package: a collection of 23 opinionated tools (skills) for Claude Code, designed to assist with roles like CEO, Designer, and QA. It provides specific installation instructions (requiring Claude Code, Git, Bun) and usage commands (e.g., /office-hours, /plan-ceo-review). This fits the definition of an installable skill package/agent skill.",
+        "evidenceIds": [
+          "product"
+        ],
+        "confidence": 0.95
+      },
+      "usage": {
+        "inputTokens": 2729,
+        "outputTokens": 157
+      }
+    }
+  },
+  {
+    "repo": "garrytan/gstack",
+    "model": "[MLX] gpt-oss-120b",
+    "readmeChars": 3000,
+    "milliseconds": 4473,
+    "result": {
+      "ok": true,
+      "outcome": {
+        "decision": "approve",
+        "reason": "The repository has 132,236 stars and the README provides clear installation instructions (e.g., \"Install gstack (30 seconds)\" and required runtime setup), indicating it is an installable software product. The page URL is null, but per the installable repository exception, the repository itself serves as the product entry.",
+        "evidenceIds": [
+          "product"
+        ],
+        "confidence": 0.96
+      },
+      "usage": {
+        "inputTokens": 2673,
+        "outputTokens": 179
+      }
+    }
+  },
+  {
+    "repo": "mvanhorn/last30days-skill",
+    "model": "[MLX] qwen3.6-35b-heretic",
+    "readmeChars": 3000,
+    "milliseconds": 3549,
+    "result": {
+      "ok": true,
+      "outcome": {
+        "decision": "approve",
+        "reason": "The product is an installable AI agent skill package (last30days-skill) with 61,829 stars, exceeding the 500-star threshold for installable repositories. The README provides clear evidence of what the software does (researches topics across Reddit, X, YouTube, etc., and synthesizes summaries) and how to install it (via CLI commands like `npx skills add` or marketplace plugins for various AI hosts). It fits the exception for installable skill packages.",
+        "evidenceIds": [
+          "product"
+        ],
+        "confidence": 0.95
+      },
+      "usage": {
+        "inputTokens": 2818,
+        "outputTokens": 147
+      }
+    }
+  },
+  {
+    "repo": "mvanhorn/last30days-skill",
+    "model": "[MLX] gpt-oss-120b",
+    "readmeChars": 3000,
+    "milliseconds": 8597,
+    "result": {
+      "ok": true,
+      "outcome": {
+        "decision": "approve",
+        "reason": "The repository mvanhorn/last30days-skill provides an installable AI agent skill (Skill) with clear installation instructions for Claude Code, Grok, npx, etc., and has >500 stars, meeting the installable repository exception. The README describes the software and how to install/use it, satisfying the requirement for evidence of what it does.",
+        "evidenceIds": [
+          "product"
+        ],
+        "confidence": 0.97
+      },
+      "usage": {
+        "inputTokens": 2786,
+        "outputTokens": 176
+      }
+    }
+  },
+  {
+    "repo": "bojieli/ai-agent-book",
+    "model": "[MLX] qwen3.6-35b-heretic",
+    "readmeChars": 3000,
+    "milliseconds": 5062,
+    "result": {
+      "ok": true,
+      "outcome": {
+        "decision": "reject",
+        "reason": "The repository is a book ('《深入理解 AI Agent：设计原理与工程实践》') with 10 chapters and 109 experiments, primarily delivering reading material (PDF/EPUB) and code examples. Per the INSTALLABLE REPOSITORY EXCEPTION, document-only repositories such as books, papers, and tutorials are rejected even if they contain code snippets. The pageText is empty, and the README describes a book structure rather than an installable software package, CLI, or service.",
+        "evidenceIds": [
+          "product"
+        ],
+        "confidence": 0.95
+      },
+      "usage": {
+        "inputTokens": 3214,
+        "outputTokens": 143
+      }
+    }
+  },
+  {
+    "repo": "bojieli/ai-agent-book",
+    "model": "[MLX] gpt-oss-120b",
+    "readmeChars": 3000,
+    "milliseconds": 4916,
+    "result": {
+      "ok": true,
+      "outcome": {
+        "decision": "reject",
+        "reason": "The repository is a book (《深入理解 AI Agent》) providing PDF/EPUB downloads and experimental code, not an installable software product. It is documentation/book content rather than a real software tool, library, or service, so it does not belong as a product page. It also lacks a deployment URL, and the content is clearly a publication, not a software application.",
+        "evidenceIds": [
+          "product"
+        ],
+        "confidence": 0.97
+      },
+      "usage": {
+        "inputTokens": 3212,
+        "outputTokens": 202
+      }
+    }
+  },
+  {
+    "repo": "heygen-com/hyperframes",
+    "model": "[MLX] qwen3.6-35b-heretic",
+    "readmeChars": 3000,
+    "milliseconds": 3337,
+    "result": {
+      "ok": true,
+      "outcome": {
+        "decision": "approve",
+        "reason": "The product is an installable repository (accessMode: installable) with 44,012 stars, exceeding the 500-star threshold. The README describes 'HyperFrames' as an open-source framework for turning HTML into deterministic MP4 videos, usable via CLI, AI agent skills, or hosted workflows. It provides clear installation instructions (e.g., `npx skills add`, `npx hyperframes add`) and describes a functional software package. The pageText is empty, but the README and repository metadata clearly define the software's purpose and installability.",
+        "evidenceIds": [
+          "product"
+        ],
+        "confidence": 0.95
+      },
+      "usage": {
+        "inputTokens": 2630,
+        "outputTokens": 161
+      }
+    }
+  },
+  {
+    "repo": "heygen-com/hyperframes",
+    "model": "[MLX] gpt-oss-120b",
+    "readmeChars": 3000,
+    "milliseconds": 4334,
+    "result": {
+      "ok": true,
+      "outcome": {
+        "decision": "approve",
+        "reason": "The repository https://github.com/heygen-com/hyperframes has 44,012 stars and its README describes an installable framework (CLI, skills, library) for rendering deterministic MP4 videos from HTML. It provides installation commands (e.g., `npx hyperframes add …`) and usage instructions, satisfying the installable product criteria. No deployment URL is required for installable products.",
+        "evidenceIds": [
+          "product"
+        ],
+        "confidence": 0.97
+      },
+      "usage": {
+        "inputTokens": 2616,
+        "outputTokens": 184
+      }
+    }
+  }
+]

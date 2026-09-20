@@ -9,6 +9,7 @@ import type { TaglineSource } from "@/lib/db/schema";
 import { isHealthCurrent } from "@/lib/domain/products/health-freshness";
 import { formatDate } from "./format";
 import { ShareButton } from "./ShareButton";
+import { InstallPrompt } from "./InstallPrompt";
 
 /** 메이커가 쓴 소개가 없어 우리가 채운 줄 — 누가 무엇을 보고 적었는지 */
 const TAGLINE_SOURCE_LABELS: Record<Exclude<TaglineSource, "maker">, string> = {
@@ -162,11 +163,14 @@ export function ProductHero({
             <span className={`inline-flex rounded-full border px-2.5 py-1 text-[13px] font-semibold ${
               !current ? "border-line bg-bg-soft text-fg-3" : health.down || health.lastCheckSucceeded === false ? "border-down/30 bg-down/5 text-down" : "border-up/30 bg-up/10 text-up"
             }`}>
-              {healthLabel}
+              {product.accessMode === "installable" ? "직접 설치" : healthLabel}
             </span>
           </div>
 
           <div className="mt-7 flex flex-wrap gap-2">
+            {product.accessMode === "installable" ? (
+              <InstallPrompt repoUrl={product.repoUrl ?? product.url} />
+            ) : (
             <a
               href={`/go/${product.slug}`}
               target="_blank"
@@ -175,6 +179,7 @@ export function ProductHero({
             >
               제품 방문하기 ↗
             </a>
+            )}
             <ShareButton title={product.name} path={`/p/${product.slug}`} />
           </div>
           <a
@@ -183,7 +188,7 @@ export function ProductHero({
             rel="nofollow noopener noreferrer"
             className="mt-5 inline-flex max-w-full items-center gap-1 truncate text-[13px] font-semibold text-accent hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
           >
-            {displayUrl} ↗
+            {product.accessMode === "installable" ? "GitHub 저장소 보기" : displayUrl} ↗
           </a>
         </div>
       </div>

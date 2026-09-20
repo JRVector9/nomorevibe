@@ -17,9 +17,10 @@ function MetricCard({ label, value, note, tone = "default" }: {
   );
 }
 
-export function ProductMetrics({ visits, health }: {
+export function ProductMetrics({ visits, health, installable = false }: {
   visits: ProductDetailView["visits"];
   health: ProductDetailView["health"];
+  installable?: boolean;
 }) {
   const unique = visits.collecting || visits.uniqueVisitors === null
     ? "—"
@@ -54,10 +55,10 @@ export function ProductMetrics({ visits, health }: {
           tone={changeTone}
         />
         <MetricCard
-          label="30일 가동률"
-          value={uptime}
+          label={installable ? "이용 방식" : "30일 가동률"}
+          value={installable ? "직접 설치" : uptime}
           tone={health.down ? "down" : "default"}
-          note={healthNote}
+          note={installable ? "사용자 환경에서 실행" : healthNote}
         />
       </div>
     </section>

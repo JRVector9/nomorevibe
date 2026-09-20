@@ -10,7 +10,7 @@ import { fetchCapped, type CappedFetchResult } from "@/lib/net/fetch";
  * 사용량을 쓰지 않는다. 기본 브랜치(HEAD)의 흔한 이름만 차례로 본다.
  */
 export const README_SAMPLE_LIMIT = 3_000;
-export const README_SAMPLE_VERSION = "2026-09-14.1";
+export const README_SAMPLE_VERSION = "2026-09-21.1";
 const README_NAMES = ["README.md", "readme.md", "README", "README.rst"];
 const MAX_README_BYTES = 256 * 1024;
 
@@ -30,7 +30,7 @@ export function readmeText(markdown: string, limit = README_SAMPLE_LIMIT): strin
     .replace(/^ {0,3}\[([^\]]+)\]:\s*<?(\S+?)>?(?:\s+["'][^\n]*)?\s*$/gm, (_, label: string, url: string) => {
       references.set(label.toLowerCase(), url); return "";
     });
-  return source
+  const text = source
     // Public READMEs can contain NUL (including mixed-encoding fragments).
     // PostgreSQL text/JSONB cannot store it; one such repo stalled the review queue.
     .replaceAll("\0", "")
@@ -43,8 +43,17 @@ export function readmeText(markdown: string, limit = README_SAMPLE_LIMIT): strin
     .replace(/^#{1,6}\s*/gm, "")
     .replace(/[ \t]+/g, " ")
     .replace(/\n[ \t]*\n(?:[ \t]*\n)+/g, "\n\n")
-    .trim()
-    .slice(0, limit);
+    .trim();
+  // Long introductions must not hide the install/usage evidence. Preserve the
+  // identity at the start plus a clearly marked excerpt, within the same budget.
+  const heading = [...text.matchAll(/^(?:installation|install|quick ?start|getting started|setup|usage|설치|빠른 시작|사용법)\b[^\n]*\n/gim)]
+    .find(match => match.index > Math.floor(limit * 0.6));
+  if (text.length > limit && heading && limit >= 200) {
+    const marker = "\n\n[README 설치·사용 부분 발췌]\n";
+    const tailSize = Math.floor(limit * 0.4);
+    return text.slice(0, limit - tailSize - marker.length) + marker + text.slice(heading.index, heading.index + tailSize);
+  }
+  return text.slice(0, limit);
 }
 
 /**
