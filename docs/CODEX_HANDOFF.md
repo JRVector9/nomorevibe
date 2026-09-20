@@ -1,5 +1,20 @@
 # Active task — 2026-09-21 installable GitHub products
 
+## Follow-up boundary correction in progress — 02:11 KST
+
+- PR154 deployed all8 apps,6 worker/connect containers healthy,9source hashes eachmatch. Bothwebhealth200. Applied fresh audited plan392queued/0changed. Prod GitHub core cooldown until02:15:51KST; as02:09 all392waiting freshfetch. Actorcodex-2026-09-21-installable-policy.
+- Additional6repo×2model read-only boundary evaluation found DefinitelyTyped bothfalse-rejectedasdocumentation andFreeTVplaylist modeldisagreement. Branchfix/installable-review-boundaries basedorigin/main7b30ecf separates websitepageexclusions frominstallables, explicitlysupports compiler-consumedtypepackages andexcludesdata-onlyplaylists. Prompt version2026-09-21.2, rulesunchanged. Live corrected evaluation running `/tmp/nmv-installable-boundary-corrected.log` session6098. TSC and3targetedunitfiles(32tests)passed; nofreshGitHubCIyet.
+- Needfinish correctionevaluation, commit/push/openPR, verifyCI thenmerge/deployallconsumers. Corecooldownispreserved; no forcedapprovals. Cohortreadonlymonitor `node .crawl-samples/installable-cohort-status.mjs /tmp/nmv-installable-cohort-status.json`.
+
+## Deployment checkpoint — 2026-09-21 02:01 KST
+
+- PR154 merged after CI success; merge commit7b30ecf1d6c3574f4213cea13235f8141c860fe4. Feature commits36f1e52+d0ec325 include final millisecond fresh-source guard. All CI type/lint/unit/integration/build steps passed. Local full unit1058, integration719 plus final publish57/reconsider18 focused checks, E2E4 passed.
+- Production migration0041 APPLIED before merge, access_mode defaultwebsite verified. All8 Dokploy apps manually queued together at02:00 after confirming main/current states; status is not yet proof of runtime completion. Follow `/tmp/nmv-installable-deploy-status.py`.
+- Reconsideration NOT applied yet. Fresh plan/apply only after all8 runnewsource. Use explicit parseEnv overrides from private `/tmp/nmv-installable-web.env`; inherited DATABASE_URL is TEST. No secrets in receipts.
+- Prod timestamp_without_timezone display via rawpostgres has local offset; use SQL age/::text for monitoring; Drizzle UTC mapping handles plan CAS. Fresh-source gate uses date_trunc(milliseconds) to prevent false freshness from Pg microseconds.
+- GitHub REST rate limited at17:00UTC after checks/merge; do notpoll needlessly. CI35524198751 confirmed PASS before merge. No force overrides used.
+- Next: verify deployment logs + actual worker source hashes/health, generate new plan, apply actorcodex-2026-09-21-installable-policy, monitor audit cohort, verify actual installed product screen, update operation reportwith actualcounts. Preserve root/design worktrees.
+
 - Objective: Admit real software with >=500 GitHub stars without deployment URLs; keep documents/surveys out; Plugin/Skill categories, installation Copy Prompt; both review stages; re-review rejected projects; collection recommendations.
 - Worktree: `/Users/jr/Desktop/projects/nomorevibe-installable`, branch `feat/installable-projects`, base `c42b266`. No commit/push/deploy or production mutations yet.
 - Completed implementation: `products.access_mode` additive migration 0041; shared eligibility and safe prompt builder; null homepage/own GitHub/docs landing >=500 routed to substantive review; 500+ exempt from legacy star ceiling; existing fork/archive guards retained. Original candidate/document URLs remain unchanged. Shared 1st/2nd/audit prompt versions 2026-09-21.1. Plugin/Skill definitions/labels; classifier receives README; bounded README sample preserves later installation sections. Publisher resolves canonical repository entry while keeping CAS and two-stage gate; non-enforce auto-installation publication held. Detail/list installation UI, clipboard fallback, no website uptime checks or GitHub platform thumbnails; domain verification rejects installable claims rather than checking github.com ownership.

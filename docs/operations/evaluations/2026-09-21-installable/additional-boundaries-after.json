@@ -1,0 +1,254 @@
+[
+  {
+    "repo": "DefinitelyTyped/DefinitelyTyped",
+    "model": "[MLX] qwen3.6-35b-heretic",
+    "readmeChars": 3000,
+    "milliseconds": 6632,
+    "result": {
+      "ok": true,
+      "outcome": {
+        "decision": "reject",
+        "reason": "The product is a monorepo containing TypeScript type definitions (d.ts files) for third-party npm packages, not a standalone installable software product, CLI, library, or skill. The README explicitly states the goal is to include definitions for packages 'actually in use today' and that PRs are motivated by consuming types in one's own project. It serves as a collection of reusable dependency definitions rather than a single piece of software people build or install as an application. Per the installable repository exception, 'A reusable dependency or package monorepo is software even without a standalone application: compiler-consumed type definitions, libraries and SDK packages are not prose documentation.' However, DefinitelyTyped is a meta-repository for definitions, not a single installable tool or library itself. It fits the rejection criteria for 'Data-only deliverables... without a reusable software tool' or simply being a collection of definitions rather than a product. More importantly, the pageText is empty and the URL is null, so we rely on the README. The README describes a collection of type definitions for other packages, which is not a 'real piece of software someone made' in the sense of a product users install and use directly, but rather a supporting resource for developers. It is a directory of definitions, not a software product itself.",
+        "evidenceIds": [
+          "product"
+        ],
+        "confidence": 0.9
+      },
+      "usage": {
+        "inputTokens": 2776,
+        "outputTokens": 302
+      }
+    }
+  },
+  {
+    "repo": "DefinitelyTyped/DefinitelyTyped",
+    "model": "[MLX] gpt-oss-120b",
+    "readmeChars": 3000,
+    "milliseconds": 6632,
+    "result": {
+      "ok": true,
+      "outcome": {
+        "decision": "approve",
+        "reason": "The repository DefinitelyTyped is a monorepo of high-quality TypeScript type definitions, which constitutes a reusable software library. It meets the installable repository exception (stars > 500) and provides clear evidence of its purpose and usage in the README. Therefore it belongs on the directory as a product.",
+        "evidenceIds": [
+          "product"
+        ],
+        "confidence": 0.93
+      },
+      "usage": {
+        "inputTokens": 2751,
+        "outputTokens": 262
+      }
+    }
+  },
+  {
+    "repo": "Free-TV/IPTV",
+    "model": "[MLX] qwen3.6-35b-heretic",
+    "readmeChars": 3000,
+    "milliseconds": 3679,
+    "result": {
+      "ok": true,
+      "outcome": {
+        "decision": "reject",
+        "reason": "The repository is a static M3U playlist of free TV channels. According to the policy, 'Data-only deliverables (playlists, channel/URL lists, static datasets or asset collections) without a reusable software tool are not software products'. While the repository contains a script (`make_playlist.py`) to generate the playlist, the primary deliverable is the list of channels itself, not the tool. The policy explicitly states that 'Importing a list into somebody else's player is not installing a plugin or skill' and 'Incidental scripts that maintain such a list do not change its primary deliverable.' Therefore, it does not qualify as installable software.",
+        "evidenceIds": [
+          "product"
+        ],
+        "confidence": 0.95
+      },
+      "usage": {
+        "inputTokens": 2828,
+        "outputTokens": 176
+      }
+    }
+  },
+  {
+    "repo": "Free-TV/IPTV",
+    "model": "[MLX] gpt-oss-120b",
+    "readmeChars": 3000,
+    "milliseconds": 10583,
+    "result": {
+      "ok": true,
+      "outcome": {
+        "decision": "approve",
+        "reason": "The repository https://github.com/Free-TV/IPTV contains a Python script (make_playlist.py) that generates an M3U playlist for free TV channels. The README provides clear usage instructions (point your IPTV player to the raw playlist URL) and the repo has 20617 stars, meeting the installable repository exception. This constitutes real software (a playlist generator) that can be installed/used, so the product URL belongs on the directory as a product.",
+        "evidenceIds": [
+          "product"
+        ],
+        "confidence": 0.96
+      },
+      "usage": {
+        "inputTokens": 2805,
+        "outputTokens": 228
+      }
+    }
+  },
+  {
+    "repo": "wanshuiyin/Auto-claude-code-research-in-sleep",
+    "model": "[MLX] qwen3.6-35b-heretic",
+    "readmeChars": 3000,
+    "milliseconds": 4271,
+    "result": {
+      "ok": true,
+      "outcome": {
+        "decision": "approve",
+        "reason": "The product is an installable repository (accessMode: installable) with 15,883 stars, exceeding the 500-star threshold. The README describes 'ARIS' as a set of 'Lightweight Markdown-only skills for autonomous ML research' that integrates with CLI tools like Claude Code, Codex, and others. It provides specific installation instructions (bash scripts, PowerShell scripts) and describes a functional workflow (skill-based workflow, cross-model review loops). This qualifies as a reusable skill package/CLI tool under the Installable Repository Exception.",
+        "evidenceIds": [
+          "product"
+        ],
+        "confidence": 0.95
+      },
+      "usage": {
+        "inputTokens": 3044,
+        "outputTokens": 158
+      }
+    }
+  },
+  {
+    "repo": "wanshuiyin/Auto-claude-code-research-in-sleep",
+    "model": "[MLX] gpt-oss-120b",
+    "readmeChars": 3000,
+    "milliseconds": 4581,
+    "result": {
+      "ok": true,
+      "outcome": {
+        "decision": "approve",
+        "reason": "The repository wanshuiyin/Auto-claude-code-research-in-sleep has 15883 stars and the README describes installable software: a set of skills, a CLI, and plugins for autonomous ML research. It provides installation scripts and usage instructions, meeting the installable product criteria.",
+        "evidenceIds": [
+          "product"
+        ],
+        "confidence": 0.96
+      },
+      "usage": {
+        "inputTokens": 3027,
+        "outputTokens": 203
+      }
+    }
+  },
+  {
+    "repo": "NixOS/nixpkgs",
+    "model": "[MLX] qwen3.6-35b-heretic",
+    "readmeChars": 3000,
+    "milliseconds": 3456,
+    "result": {
+      "ok": true,
+      "outcome": {
+        "decision": "approve",
+        "reason": "The product is an installable repository (NixOS/nixpkgs) with 26,186 stars, satisfying the star threshold. The README describes it as a collection of over 140,000 software packages installable via the Nix package manager, and the implementation of the NixOS Linux distribution. This constitutes a real, installable software tool/package collection. The pageText is empty, but the README and repository name clearly identify the software's function and installability.",
+        "evidenceIds": [
+          "product"
+        ],
+        "confidence": 0.95
+      },
+      "usage": {
+        "inputTokens": 2869,
+        "outputTokens": 148
+      }
+    }
+  },
+  {
+    "repo": "NixOS/nixpkgs",
+    "model": "[MLX] gpt-oss-120b",
+    "readmeChars": 3000,
+    "milliseconds": 5496,
+    "result": {
+      "ok": true,
+      "outcome": {
+        "decision": "approve",
+        "reason": "The repository NixOS/nixpkgs is a real installable software collection (over 140,000 packages) used with the Nix package manager. It meets the installable repository exception (accessMode installable, stars >500) and the README provides clear evidence of its purpose and installation method.",
+        "evidenceIds": [
+          "product"
+        ],
+        "confidence": 0.97
+      },
+      "usage": {
+        "inputTokens": 2839,
+        "outputTokens": 213
+      }
+    }
+  },
+  {
+    "repo": "MadsLorentzen/ai-job-search",
+    "model": "[MLX] qwen3.6-35b-heretic",
+    "readmeChars": 3000,
+    "milliseconds": 3394,
+    "result": {
+      "ok": true,
+      "outcome": {
+        "decision": "approve",
+        "reason": "The product is an installable repository (accessMode: installable) with 37,758 stars, exceeding the 500-star threshold. The README describes a real, reusable software tool: an AI-powered job application framework built on Claude Code. It provides clear installation and usage instructions (forking, cloning, installing tools via bun/npm) and describes specific functionality (evaluating postings, tailoring CVs, writing cover letters). It is not a document-only repository, nor a personal profile site, but a functional CLI/framework tool.",
+        "evidenceIds": [
+          "product"
+        ],
+        "confidence": 0.95
+      },
+      "usage": {
+        "inputTokens": 2896,
+        "outputTokens": 156
+      }
+    }
+  },
+  {
+    "repo": "MadsLorentzen/ai-job-search",
+    "model": "[MLX] gpt-oss-120b",
+    "readmeChars": 3000,
+    "milliseconds": 4584,
+    "result": {
+      "ok": true,
+      "outcome": {
+        "decision": "approve",
+        "reason": "The repository https://github.com/MadsLorentzen/ai-job-search contains a README describing an installable AI‑powered job‑application framework (Python code, setup steps, fork/clone instructions). The repo has 37,758 stars, meeting the installable repository exception threshold. The evidence shows clear installation/use instructions, indicating it is real software, not just documentation or a profile.",
+        "evidenceIds": [
+          "product"
+        ],
+        "confidence": 0.96
+      },
+      "usage": {
+        "inputTokens": 2867,
+        "outputTokens": 194
+      }
+    }
+  },
+  {
+    "repo": "langchain-ai/openwiki",
+    "model": "[MLX] qwen3.6-35b-heretic",
+    "readmeChars": 3000,
+    "milliseconds": 2955,
+    "result": {
+      "ok": true,
+      "outcome": {
+        "decision": "approve",
+        "reason": "The product is an installable CLI tool named 'openwiki'. The README clearly describes it as a CLI that writes and maintains agent documentation for codebases or personal knowledge. It provides explicit installation instructions via 'npm install -g openwiki' and usage commands ('openwiki --init'). The repository has 15,797 stars, satisfying the installable repository exception threshold. It is a real, reusable software tool.",
+        "evidenceIds": [
+          "product"
+        ],
+        "confidence": 0.95
+      },
+      "usage": {
+        "inputTokens": 2771,
+        "outputTokens": 130
+      }
+    }
+  },
+  {
+    "repo": "langchain-ai/openwiki",
+    "model": "[MLX] gpt-oss-120b",
+    "readmeChars": 3000,
+    "milliseconds": 4044,
+    "result": {
+      "ok": true,
+      "outcome": {
+        "decision": "approve",
+        "reason": "The repository https://github.com/langchain-ai/openwiki has a README describing a CLI tool that writes and maintains a wiki for codebases, with installation instructions (npm install -g openwiki) and usage commands. Repo stars are 15797 (>500), satisfying the installable repository exception. This qualifies as an installable software product.",
+        "evidenceIds": [
+          "product"
+        ],
+        "confidence": 0.97
+      },
+      "usage": {
+        "inputTokens": 2758,
+        "outputTokens": 166
+      }
+    }
+  }
+]
