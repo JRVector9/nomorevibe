@@ -6,7 +6,7 @@ User explicitly requested LAYA implementation in PR units, initially only the mo
 
 ## Completed / modified files / decisions
 
-- Branch `feat/laya-speculation-evaluation` from af50608; origin fetched, repository JRVector9/nomorevibe. Added 3-PR plan index + docs under `docs/plans/2026-09-21-laya-speculation/`. PR01 client/evaluation implemented; PR02 speculative storage/safe adoption and PR03 canary are **not implemented**, depend on real effect/headroom evidence. Existing six mechanical PR plans remain unimplemented; index now links latest plan.
+- Branch `feat/laya-speculation-evaluation` from af50608; origin fetched, repository JRVector9/nomorevibe. Code/docs commit `d08f25f` PUSHED. Draft PR **159** https://github.com/JRVector9/nomorevibe/pull/159 CREATED. Added 3-PR plan index + docs under `docs/plans/2026-09-21-laya-speculation/`. PR01 client/evaluation implemented; PR02 speculative storage/safe adoption and PR03 canary are **not implemented**, depend on real effect/headroom evidence. Existing six mechanical PR plans remain unimplemented; index now links latest plan.
 - `lib/crawl/laya-preview.ts`: one yes/no software question, installable>=500 only; explicitly non-authoritative result distinct from ReviewOutcome. Max500ms headers+body,16KiB response, no retries/redirects, credentials only server env, sanitized diagnostics. Bounded excerpts only in hint request, original review unchanged. Probability>=.9 only cost-control, entropy confidence unused.
 - `lib/crawl/laya-evaluation.ts`: JSON validation<=100samples, duplicate ID/subject detection, sequential evaluation55sec max, prior-model agreement/waste and ideal spare-slot overlap upper bound. Unknown model-only timing remains null. measuredSpeedup/humanAccuracy always null, productionEffect none. No DB access or worker imports.
 - `scripts/evaluate-laya-speculation.ts`: dry-run by default; --live explicit, requires LAYA_URL/API_KEY env. Input<=2MiB, output exclusive0600, no raw source/secret/errors in logs/report. Signal handling and unsuccessful/incomplete report exits nonzero.
@@ -19,14 +19,16 @@ User explicitly requested LAYA implementation in PR units, initially only the mo
 - Focused3files42PASS, actual local HTTP fixture CLI exercised; user LAYA server not called.
 - Whole unit suite139files **1108 PASS**; existing expected mock-failure logs/Vite future native-loader warning. `npx tsc --noEmit` PASS; scoped ESLint PASS. Unrestricted npm run lint FAILED because it traversed unrelated untracked .claude/worktrees generated .next output, old .crawl-samples and nomorevibe-final. Did not edit those. ESLint over all603 Git-tracked/staged source files PASS (one pre-existing vendor unused-variable warning). Plan links/fences/whitespace and dry-run counts PASS. First staged diff-check exposed old CSV CRLF lines; normalized twoCSV files to LF and verified all329/94 data rows unchanged; staged diff-check then PASS. No integration/build executed locally for this isolated CLI; CI workflow includes both.
 - User was asked asynchronously for environment-file path because LAYA_URL/API_KEY absent in process and two known private prod env files. No answer received yet. Do not ask them to paste key publicly or put it in args. Earlier temporary LAYA key was deleted. No private config content printed. No production API/DB calls, writes, settings changes or deployment.
+- Final committed-diff credential-pattern scan PASS after excluding the exact dummy test credential (initial broad pattern flagged that fixture). No real credential found. Git diff against origin/main whitespace check PASS. Unrelated untracked work/design files preserved. GitHub CI was started by PR creation; check the current head before claiming it passed.
 
 ## Remaining / exact commands
 
-Complete final review, commit/push PR01 and create draftPR. Scope only this work and previous related LAYA/check reports/plans; preserve unrelated .claude/docsPT/Sept14reports/design/prototype files. Await safe LAYA env path for actual bounded evaluation, then assess PR02 entry conditions; do not claim deployment/speed gain or continue into operational speculation without that evidence. Earlier Dokploy key rotation follow-up remains unrelated/open.
+PR01 implementation/review/commit/push/draftPR creation complete; documentation receipt follows in a small final commit. Await safe LAYA env path for actual bounded evaluation, then assess PR02 entry conditions; do not claim deployment/speed gain or continue into operational speculation without that evidence. Preserve unrelated .claude/docsPT/Sept14reports/design/prototype files. Earlier Dokploy key rotation follow-up remains unrelated/open.
 
 ```sh
 cd /Users/jr/Desktop/projects/nomorevibe
 git status --short
+gh pr view 159 --json url,isDraft,headRefOid,statusCheckRollup
 cat docs/plans/2026-09-21-laya-speculation/README.md
 npx vitest run tests/laya-preview.test.ts tests/laya-evaluation.test.ts tests/laya-evaluation-cli.test.ts
 npx tsc --noEmit
