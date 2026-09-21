@@ -1,6 +1,6 @@
 /** Role-specific consumer. Scheduling belongs to scheduler.ts, never this poll loop. */
 import { basename } from 'node:path';
-import type { JobRole } from '@/lib/jobs/catalog';
+import { JOB_ROLES, type JobRole } from '@/lib/jobs/catalog';
 
 export type RuntimeState = 'idle' | 'polling' | 'running' | 'stopping';
 export type RuntimeHeartbeat = {
@@ -149,9 +149,9 @@ export async function withRuntimeProcess<T>(
 export function parseWorkerArgs(args: string[]) {
   const roleArg = args.find(arg => arg.startsWith('--role='));
   const role = roleArg?.slice('--role='.length);
-  const roles: readonly string[] = ['crawler', 'reviewer', 'publisher', 'maintenance'];
+  const roles: readonly string[] = JOB_ROLES;
   if (!role || !roles.includes(role) || args.filter(arg => arg.startsWith('--role=')).length !== 1) {
-    throw new Error('Usage: worker.ts --role=crawler|reviewer|publisher|maintenance [--once] [--interval-seconds=1..60]');
+    throw new Error('Usage: worker.ts --role=crawler|reviewer|publisher|text|maintenance [--once] [--interval-seconds=1..60]');
   }
   return { ...parseLoopArgs(args.filter(arg => arg !== roleArg), 5), role: role as JobRole };
 }

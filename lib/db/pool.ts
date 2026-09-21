@@ -1,6 +1,6 @@
 import postgres from "postgres";
 
-const ROLE_POOL_MAX = { web: 8, crawler: 4, reviewer: 3, publisher: 3, maintenance: 3, scheduler: 2, "connect-agent": 1 } as const;
+const ROLE_POOL_MAX = { web: 8, crawler: 4, reviewer: 3, publisher: 3, text: 3, maintenance: 3, scheduler: 2, "connect-agent": 1 } as const;
 export type DbRole = keyof typeof ROLE_POOL_MAX;
 export type DbPoolConfig = {
   role: DbRole;

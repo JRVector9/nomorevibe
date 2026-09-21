@@ -6,7 +6,8 @@ import { randomUUID } from 'node:crypto';
 import { observeService } from '../lib/operations/observations';
 import type { RuntimeHeartbeat } from './worker';
 
-export type RuntimeRole = 'scheduler' | 'crawler' | 'reviewer' | 'publisher' | 'maintenance';
+import type { JobRole } from '../lib/jobs/catalog';
+export type RuntimeRole = 'scheduler' | JobRole;
 export type SupervisorLimits = { heartbeatMs: number; progressMs: number; jobMs: number; drainMs: number };
 export type WorkerHealth = {
   role: RuntimeRole; pid: number; childPid: number | null;
@@ -16,7 +17,7 @@ export type WorkerHealth = {
 };
 export const DEFAULT_HEALTH_PATH = '/tmp/nomorevibe-worker-health.json';
 const JOB_LIMIT_MS: Record<RuntimeRole, number> = {
-  scheduler: 120_000, crawler: 180_000, reviewer: 180_000, publisher: 180_000, maintenance: 600_000,
+  scheduler: 120_000, crawler: 180_000, reviewer: 180_000, publisher: 180_000, text: 180_000, maintenance: 600_000,
 };
 
 export function supervisorLimits(role: RuntimeRole, env: Readonly<Record<string, string | undefined>> = process.env): SupervisorLimits {
@@ -178,7 +179,7 @@ async function main() {
   if (!Object.hasOwn(JOB_LIMIT_MS, role) ||
       args.filter(arg => arg.startsWith('--role=')).length !== 1 ||
       args.some(arg => arg !== '--once' && arg !== `--role=${role}`)) {
-    throw new Error('Usage: worker-supervisor.ts --role=scheduler|crawler|reviewer|publisher|maintenance [--once]');
+    throw new Error('Usage: worker-supervisor.ts --role=scheduler|crawler|reviewer|publisher|text|maintenance [--once]');
   }
   process.exitCode = await superviseWorker(role, { once: args.includes('--once') });
 }

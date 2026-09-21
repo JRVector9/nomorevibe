@@ -125,4 +125,3 @@ export async function writtenTagline(repo: string): Promise<CrawlTagline | undef
   const [row] = await db.select().from(crawlTaglines).where(eq(crawlTaglines.repo, repo));
   return row;
 }
-

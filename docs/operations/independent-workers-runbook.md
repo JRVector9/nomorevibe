@@ -9,7 +9,7 @@ A/B 통합 검증 기록은 `docs/CODEX_HANDOFF.md`와 해당 릴리스 보고�
 
 - 웹 `runner` target, 수집·리뷰·발행·집계·스케줄러는 동일한 `worker` target을 사용한다.
 - `node --import tsx scripts/worker-supervisor.ts --role=crawler`가 상시 실행 명령이다.
-  다른 역할은 `scheduler`, `reviewer`, `publisher`, `maintenance`다. 역할당 활성 프로세스는 1개다.
+  다른 역할은 `scheduler`, `reviewer`, `publisher`, `text`, `maintenance`다. 역할당 활성 프로세스는 1개다.
 - 워커는 DB 요청만 소비한다. 스케줄러는 10초마다 주기가 도래한 요청을 기록한다.
   웹/어드민 종료와 무관하게 동작하며 스케줄러 중단 시 이미 접수한 요청까지만 처리한다.
 - 일반 잡은 25초 협력 예산을 유지하고, publisher는 최대 20초 모델 폴백 뒤 10건 발행을 마치도록
@@ -52,7 +52,7 @@ docker compose up -d db
    아래는 현재 Compose 서비스 이름 기준이다. Compose 밖에서 실행 중인 프로세스도 별도로 종료 확인한다.
 
 ```sh
-docker compose stop scheduler crawler reviewer publisher maintenance app
+docker compose stop scheduler crawler reviewer publisher text maintenance app
 docker compose ps -a
 ```
 
@@ -67,9 +67,9 @@ docker compose up --no-deps --force-recreate --abort-on-container-exit --exit-co
    app/worker entrypoint에는 마이그레이션을 넣지 않는다.
 
 ```sh
-docker compose up -d --no-deps --no-build app scheduler crawler reviewer publisher maintenance
+docker compose up -d --no-deps --no-build app scheduler crawler reviewer publisher text maintenance
 docker compose ps
-docker compose logs --since=5m scheduler crawler reviewer publisher maintenance
+docker compose logs --since=5m scheduler crawler reviewer publisher text maintenance
 ```
 
 역할 모두 DB와 성공한 migration에만 의존한다. 웹 healthcheck는 사용자 요청 준비 상태를 확인하며
@@ -168,7 +168,7 @@ Compose `init: true`를 사용한다. 초기 자원 초과가 보이면 탐색/�
 |---|---:|---|
 | IPC 생존 신호 없음 | 30초 | 자식 event loop 중단/프로세스 장애 |
 | 잡 밖에서 진행 없음 | 90초 | poll/DB 요청/초기화가 끝나지 않음 |
-| crawler/reviewer/publisher 잡 | 180초 | 정상 HTTP/CLI 한도를 크게 넘긴 tick |
+| crawler/reviewer/publisher/text 잡 | 180초 | 정상 HTTP/CLI 한도를 크게 넘긴 tick |
 | scheduler 잡 | 120초 | 스케줄 기록의 장시간 정지 |
 | maintenance 잡 | 600초 | 현재 분할 전 집계 작업을 위한 초기 여유 |
 | SIGTERM drain | 45초 | 새 잡 중지, 현재 호출·pool 종료 유예 |
@@ -240,3 +240,13 @@ Docker VM은 4 CPU·7.737 GiB, 웹 컨테이너 상한은 2 CPU·1.5 GiB였다. 
 롤백할 때도 새 소비자를 먼저 stop/drain하고 이전 **요청 버전/소유권 호환 릴리스** 이미지를 시작한다.
 가산 DB 컬럼·cursor·pending force 요청·심사 이력은 보존한다. 볼륨 삭제와 down --volumes를 사용하지 않는다.
 B 심사 장애는 신규 자동 발행을 보류하며 조용히 AI 심사를 끄고 우회하지 않는다. 정책 rollback은 별도 명시한다.
+
+## 2026-09-21 text 역할 분리
+
+`publisher`는 `crawl-publish`만, `text`는 `reason-translate`와 `crawl-tagline`을 직렬로 실행한다. 기존 job 이름과 요청·lease 행을 그대로 사용한다. 번역 동시성1/예산55초, 소개 동시성2/worker 예산25초를 유지한다. 1차 심사는 별도 변경으로40초/호출24초(gateway)·20초(CLI)다.
+
+배포 준비: 기존 publisher를 정상 drain→새 publisher 교체 및 소유 잡 확인→새 text 컨테이너 시작. 신규 text는 worker target/위 명령, memory512MiB·DB pool3·hard timeout180초, 별도 instance ID/health를 사용한다. 실제 서버 여유는 배포 전에 확인한다. 구형 publisher와 새 text를 함께 유지하지 않는다. rollback은 text drain/중지 후 구형 publisher 복구이며 DB 요청·결과를 삭제하지 않는다.
+
+DB 기본 상한은 web8+crawler4+reviewer3+publisher3+text3+maintenance3+scheduler2+connect-agent1=27이다. 웹2개 기본8이면35, 운영 웹 각각6이면31이다. migration/관리/다른 앱/교체 여유를 별도로 확보한다. 이 계산은 설정상 최대이며 실제 연결 수 실측이 아니다. 문서 앞의23/32/28은 분리 전 기준이다.
+
+관리자 상태 화면에 소개·사유 번역(text) 카드를 추가했다. 표시만으로 배포 성공을 판단하지 않는다. 해당 release의 컨테이너 healthy, publisher의 텍스트 실행0, text의 처리 및 backlog 감소를 확인한다. 공유 모델 서버 경합은 분리 후에도 계측한다.
