@@ -1,0 +1,23 @@
+import {parseEnv} from 'node:util';
+import {readFileSync,writeFileSync} from 'node:fs';
+import postgres from 'postgres';
+const db=postgres(parseEnv(readFileSync('/tmp/nmv-installable-web.env','utf8')).DATABASE_URL,{max:1,prepare:false});
+try {
+ const result=await db.begin('read only',async s=>{
+  await s`set local statement_timeout='15s'`;
+  const [clock]=await s`select now() as observed_at`;
+  const repositories=await s`select distinct on(repository_key) id,repository_key,github_repository_id::text,commit_sha,state,last_error_code,started_at,completed_at,next_attempt_at,cursor->>'repositoryKey' as cursor_repository_key,request_count,file_count,
+    jsonb_array_length(coalesce(cursor->'pendingTrees','[]'::jsonb)) as pending_trees,
+    jsonb_array_length(coalesce(cursor->'pendingBlobs','[]'::jsonb)) as pending_blobs,
+    jsonb_array_length(coalesce(cursor->'pendingCommits','[]'::jsonb)) as pending_commits
+    from agent_repository_scans where repository_key in ('hraness/hra','hraness/atet','hraness/message-like-me','hraness/oompa','hraness/slopcamera','hraness/textbutler') and scope='' and detector_version='2026-09-14.1' order by repository_key,started_at desc,id desc`;
+  const [invariants]=await s`select count(*) filter(where cursor is not null and cursor->>'repositoryKey' is distinct from repository_key)::int as mismatched_cursor_rows,
+    count(*) filter(where last_error_code='alias_recheck_required')::int as aliases_waiting
+    from agent_repository_scans where scope='' and detector_version='2026-09-14.1'`;
+  const [latestInvariants]=await s`select count(*) filter(where cursor is not null and cursor->>'repositoryKey' is distinct from repository_key)::int as latest_mismatched_cursor_rows from (select distinct on(repository_key) repository_key,cursor from agent_repository_scans where scope='' and detector_version='2026-09-14.1' order by repository_key,started_at desc,id desc) latest`;
+  const jobs=await s`select name,runs,last_run_at,last_success_at,last_error is not null as has_error,worker_seen_at,requested_version,processed_version from jobs where name in ('agent-evidence-refresh','crawl-fetch','crawl-agent-review','second-review','crawl-publish','uptime-ping') order by name`;
+  return {observedAt:clock.observed_at,repositories,invariants:{...invariants,...latestInvariants},jobs};
+ });
+ if(process.argv[2])writeFileSync(process.argv[2],JSON.stringify(result,null,2));
+ console.log(JSON.stringify(result,null,2));
+} finally {await db.end({timeout:5});}

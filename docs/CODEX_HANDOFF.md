@@ -1,4 +1,35 @@
+# 근거 수집 복구 배포·운영 검증 완료 — 2026-09-22 01:08 KST
+
+## 완료 결과
+- 사용자 명시 지시에 따라 `d29b7156ac256f7b7f7730899da8c02ab87d2abf` main 커밋·푸시, Dokploy 웹 M3/mini 2개+M3 워커7개 배포 완료. 9앱 모두 새 deployment done, 컨테이너 release 일치/restarts0, 두 웹 health HTTP200+DBok 각2ms, 7워커 healthy+14/14소스해시 일치. 외부 홈페이지/health HTTP200.
+- 문제3레포 hraness/{hra,atet,message-like-me}는 새scan65733/65734/65735로자연재수집. cursor이름일치/lastError없음/관측4·2·5개. 아직partial이며후속수집대기. 다음다른레포2건complete로그까지확인. 새컨테이너시작후16:05:39–16:07:59UTC로그203개:job.failed0/agent_evidence.failed0/scanned5.
+- 기존불일치행6개는이력보존,latest불일치3개남음(문제3레포latest는모두해소). 전체적체정리·생존확인배치확대는이번범위아님.
+- GitHub CI35622606975는결제/사용한도로steps=[]미실행. 같은커밋clean checkout Node24.18.0에서npmci/typegen/tsc/전체lint(기존warning1,error0)/unit1094/integration784/productionbuildPASS. 작업폴더전체통합784도별도PASS. 이전간헐실패원인확정은아님.
+
+## 변경 파일·증거·판단
+코드커밋19파일은바로아래진행기록참조. 후속문서커밋은이handoff,remediation배포링크,`docs/operations/evaluations/2026-09-22-evidence-cursor-deployment/`의README/release.json/db-before.json/db-after.json/events.json/읽기전용감사소스다. 키/환경변수값은출력·커밋하지않음. DB원본은read-only,마이그레이션/큐리셋없음. standalone빌드와실제운영코드hash로CI실행불가를보완했다.
+
+before DB timestamp는로컬KST해석으로9시간어긋났던필드만UTC정규화해설명을남겼다. after는TZ=UTC로실행. 순서/ID/상태비교와DB내계산은유지된다. 총행수와latest불일치수를혼동하지말것.
+
+## 마지막 후처리·다음 에이전트
+이기록을커밋·push한뒤 **9앱autoDeploy를원래true로restore하고status확인**한다. 현재커밋시점의증거파일autoDeploy=false는문서push중중복배포방지상태다. 최종사용자보고는restore성공확인뒤에만할것. API/receipt는`/tmp/nmv-cursor-release.py`, `/tmp/nmv-cursor-release-state.json`. 아래명령은상태확인/마지막복원이며코드재배포는필요없다.
+```sh
+cd /Users/jr/Desktop/projects/nomorevibe
+python3 /tmp/nmv-cursor-release.py restore
+python3 /tmp/nmv-cursor-release.py status
+python3 /tmp/nmv-cursor-runtime.py /tmp/nmv-cursor-runtime-final.json
+TZ=UTC node .crawl-samples/review-speed/cursor-release-audit.mjs /tmp/nmv-cursor-db-final.json
+git status --short
+```
+
+---
+
 # 근거 수집 복구 커밋·운영 배포 진행 — 2026-09-22
+
+### 최신 진행 체크포인트
+코드/보고19파일 **d29b7156ac256f7b7f7730899da8c02ab87d2abf** main 커밋·push 완료. GitHub CI35622606975는 결제/사용 한도 때문에 job steps=[]로 시작되지 않음(테스트 실패 아님), annotations `/tmp/nmv-cursor-ci-{run,annotations}.json`. 대신 clean detached `/tmp/nmv-cursor-release-check`에서 npm ci→next typegen→tsc→전체lint(기존vendor unused경고1/오류0)→unit1094PASS→integration784PASS(87.46s)→productionbuildPASS, Node24.18.0. 로그 `/tmp/nmv-cursor-clean-{install,types,lint,unit,integration,build}.log`.
+
+9앱 autoDeploy=false 및 RELEASE_TAG=d29b715 설정 완료, 웹NEXT_DEPLOYMENT_ID 일치/공유Actions키동일 확인. 9앱동시deploy 요청 진행. 최신receipt `/tmp/nmv-cursor-release-state.json`의 deploymentTriggeredAt 확인. **마지막에 restore 필수**. 검증helper `/tmp/nmv-cursor-runtime.py`는실제컨테이너health/7워커변경3+기존11파일=14파일hash 확인; `/tmp/nmv-cursor-deploy-logs.py <UTC시작>`은배포이후안전필드로그수집. `.crawl-samples/review-speed/cursor-release-audit.mjs`는전체및latest cursor불일치도구분조회. 배포전원본3은Sept16불일치partial,별칭3은같은GitHubID/더새로운Sept19HEADpartial이며서로다른scan행이다. 운영after로실제진행확인할것.
 
 ## 목표·현재 상태
 사용자가 “커밋하고 푸시하고 배포해”를 명시 지시했다. 앞선 미배포 상태를 종료하고 현재 근거 수집 수정/검증 문서를 커밋·푸시한 뒤 Dokploy 웹2대(M3/mini)+워커7개를 동일 SHA로 배포한다. 생존 확인 배치 확대는 미구현 제안이므로 이번 배포에 포함되지 않는다.

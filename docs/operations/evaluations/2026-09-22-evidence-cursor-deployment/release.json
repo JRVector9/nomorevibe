@@ -1,0 +1,462 @@
+{
+  "sourceCommit": "d29b7156ac256f7b7f7730899da8c02ab87d2abf",
+  "deploymentTriggeredAt": "2026-09-21T16:04:38Z",
+  "targets": [
+    {
+      "id": "oipo2OAnIrtcnILBCRoG2",
+      "name": "nomorevibe-web-m3",
+      "appName": "app-compress-1080p-array-qb6d3v",
+      "serverId": "KenKHh2MQuS7blLN_NSem",
+      "status": "done",
+      "autoDeploy": false,
+      "runtime": {
+        "WORKER_ROLE": null,
+        "SERVICE_INSTANCE_ID": "m3-web",
+        "DATABASE_POOL_MAX": null,
+        "DB_POOL_MAX": "6",
+        "DB_POOLER_MODE": "pgbouncer",
+        "RELEASE_TAG": "d29b7156ac256f7b7f7730899da8c02ab87d2abf",
+        "NEXT_DEPLOYMENT_ID": "d29b7156ac256f7b7f7730899da8c02ab87d2abf"
+      },
+      "deployment": {
+        "deploymentId": "PsPaiJkeNO5dbVCAJxUoF",
+        "status": "done",
+        "createdAt": "2026-09-21T16:04:42.384Z",
+        "description": "Commit: d29b7156ac256f7b7f7730899da8c02ab87d2abf"
+      }
+    },
+    {
+      "id": "llv4rlABSJOcFauSxaHdx",
+      "name": "nomorevibe-web-mini",
+      "appName": "app-navigate-auxiliary-hard-drive-5vk3yc",
+      "serverId": "uHWg5--LEJ2lnVcgDm-NB",
+      "status": "done",
+      "autoDeploy": false,
+      "runtime": {
+        "WORKER_ROLE": null,
+        "SERVICE_INSTANCE_ID": "mini-web",
+        "DATABASE_POOL_MAX": null,
+        "DB_POOL_MAX": "6",
+        "DB_POOLER_MODE": "pgbouncer",
+        "RELEASE_TAG": "d29b7156ac256f7b7f7730899da8c02ab87d2abf",
+        "NEXT_DEPLOYMENT_ID": "d29b7156ac256f7b7f7730899da8c02ab87d2abf"
+      },
+      "deployment": {
+        "deploymentId": "xAbXXgZos7cY7pHmRjEIj",
+        "status": "done",
+        "createdAt": "2026-09-21T16:04:42.339Z",
+        "description": "Commit: d29b7156ac256f7b7f7730899da8c02ab87d2abf"
+      }
+    },
+    {
+      "id": "AFHDBGCCY4zT9XkkcnzGd",
+      "name": "nomorevibe-crawler-m3",
+      "appName": "app-generate-haptic-card-vjqgv4",
+      "serverId": "KenKHh2MQuS7blLN_NSem",
+      "status": "done",
+      "autoDeploy": false,
+      "runtime": {
+        "WORKER_ROLE": "crawler",
+        "SERVICE_INSTANCE_ID": "m3-crawler",
+        "DATABASE_POOL_MAX": null,
+        "DB_POOL_MAX": "4",
+        "DB_POOLER_MODE": "pgbouncer",
+        "RELEASE_TAG": "d29b7156ac256f7b7f7730899da8c02ab87d2abf",
+        "NEXT_DEPLOYMENT_ID": null
+      },
+      "deployment": {
+        "deploymentId": "2ZrBjwUHOrpSQq972Wums",
+        "status": "done",
+        "createdAt": "2026-09-21T16:05:04.699Z",
+        "description": "Commit: d29b7156ac256f7b7f7730899da8c02ab87d2abf"
+      }
+    },
+    {
+      "id": "4RlA9EeKvtKGdR6c6AV4j",
+      "name": "nomorevibe-reviewer-m3",
+      "appName": "app-copy-primary-hard-drive-b5fhzd",
+      "serverId": "KenKHh2MQuS7blLN_NSem",
+      "status": "done",
+      "autoDeploy": false,
+      "runtime": {
+        "WORKER_ROLE": "reviewer",
+        "SERVICE_INSTANCE_ID": "m3-reviewer",
+        "DATABASE_POOL_MAX": null,
+        "DB_POOL_MAX": "12",
+        "DB_POOLER_MODE": "pgbouncer",
+        "RELEASE_TAG": "d29b7156ac256f7b7f7730899da8c02ab87d2abf",
+        "NEXT_DEPLOYMENT_ID": null
+      },
+      "deployment": {
+        "deploymentId": "-hUsqGhcKdJw_LO4BMFwi",
+        "status": "done",
+        "createdAt": "2026-09-21T16:05:14.861Z",
+        "description": "Commit: d29b7156ac256f7b7f7730899da8c02ab87d2abf"
+      }
+    },
+    {
+      "id": "AeTaWnZbZKzzv94h7c8Vw",
+      "name": "nomorevibe-publisher-m3",
+      "appName": "app-program-multi-byte-pixel-bypleq",
+      "serverId": "KenKHh2MQuS7blLN_NSem",
+      "status": "done",
+      "autoDeploy": false,
+      "runtime": {
+        "WORKER_ROLE": "publisher",
+        "SERVICE_INSTANCE_ID": "m3-publisher",
+        "DATABASE_POOL_MAX": null,
+        "DB_POOL_MAX": "3",
+        "DB_POOLER_MODE": "pgbouncer",
+        "RELEASE_TAG": "d29b7156ac256f7b7f7730899da8c02ab87d2abf",
+        "NEXT_DEPLOYMENT_ID": null
+      },
+      "deployment": {
+        "deploymentId": "Sp1AbqBeLQX8CdYTnurYj",
+        "status": "done",
+        "createdAt": "2026-09-21T16:05:33.037Z",
+        "description": "Commit: d29b7156ac256f7b7f7730899da8c02ab87d2abf"
+      }
+    },
+    {
+      "id": "7OlFqQdacbyQseQM72E7b",
+      "name": "nomorevibe-maintenance-m3",
+      "appName": "app-navigate-neural-system-yf43c7",
+      "serverId": "KenKHh2MQuS7blLN_NSem",
+      "status": "done",
+      "autoDeploy": false,
+      "runtime": {
+        "WORKER_ROLE": "maintenance",
+        "SERVICE_INSTANCE_ID": "m3-maintenance",
+        "DATABASE_POOL_MAX": null,
+        "DB_POOL_MAX": "3",
+        "DB_POOLER_MODE": "pgbouncer",
+        "RELEASE_TAG": "d29b7156ac256f7b7f7730899da8c02ab87d2abf",
+        "NEXT_DEPLOYMENT_ID": null
+      },
+      "deployment": {
+        "deploymentId": "UGH8JsocuYXBIsqr_11f0",
+        "status": "done",
+        "createdAt": "2026-09-21T16:05:22.467Z",
+        "description": "Commit: d29b7156ac256f7b7f7730899da8c02ab87d2abf"
+      }
+    },
+    {
+      "id": "uAjLU7MslLIGpORD9h6LQ",
+      "name": "nomorevibe-scheduler-m3",
+      "appName": "app-connect-solid-state-sensor-g4swwd",
+      "serverId": "KenKHh2MQuS7blLN_NSem",
+      "status": "done",
+      "autoDeploy": false,
+      "runtime": {
+        "WORKER_ROLE": "scheduler",
+        "SERVICE_INSTANCE_ID": "m3-scheduler",
+        "DATABASE_POOL_MAX": null,
+        "DB_POOL_MAX": "2",
+        "DB_POOLER_MODE": "pgbouncer",
+        "RELEASE_TAG": "d29b7156ac256f7b7f7730899da8c02ab87d2abf",
+        "NEXT_DEPLOYMENT_ID": null
+      },
+      "deployment": {
+        "deploymentId": "Q-Ie3gs1WlxxAzdN2-fjg",
+        "status": "done",
+        "createdAt": "2026-09-21T16:05:29.425Z",
+        "description": "Commit: d29b7156ac256f7b7f7730899da8c02ab87d2abf"
+      }
+    },
+    {
+      "id": "xJK6CoRUOs_bpVVNmJDBF",
+      "name": "nomorevibe-connect-agent-m3",
+      "appName": "app-compress-wireless-panel-rtlr7b",
+      "serverId": "KenKHh2MQuS7blLN_NSem",
+      "status": "done",
+      "autoDeploy": false,
+      "runtime": {
+        "WORKER_ROLE": "connect-agent",
+        "SERVICE_INSTANCE_ID": "m3-connect-agent",
+        "DATABASE_POOL_MAX": null,
+        "DB_POOL_MAX": "1",
+        "DB_POOLER_MODE": "pgbouncer",
+        "RELEASE_TAG": "d29b7156ac256f7b7f7730899da8c02ab87d2abf",
+        "NEXT_DEPLOYMENT_ID": null
+      },
+      "deployment": {
+        "deploymentId": "HJxgsHlBPuHftCcEfde0k",
+        "status": "done",
+        "createdAt": "2026-09-21T16:05:18.432Z",
+        "description": "Commit: d29b7156ac256f7b7f7730899da8c02ab87d2abf"
+      }
+    },
+    {
+      "id": "Pi0loosJrKsse_UQ0mln9",
+      "name": "nomorevibe-text-m3",
+      "appName": "nomorevibe-text-m3-ebmybu",
+      "serverId": "KenKHh2MQuS7blLN_NSem",
+      "status": "done",
+      "autoDeploy": false,
+      "runtime": {
+        "WORKER_ROLE": "text",
+        "SERVICE_INSTANCE_ID": "m3-text",
+        "DATABASE_POOL_MAX": null,
+        "DB_POOL_MAX": "3",
+        "DB_POOLER_MODE": "pgbouncer",
+        "RELEASE_TAG": "d29b7156ac256f7b7f7730899da8c02ab87d2abf",
+        "NEXT_DEPLOYMENT_ID": null
+      },
+      "deployment": {
+        "deploymentId": "NwiUBLqP9VAYuQLjJ2zFH",
+        "status": "done",
+        "createdAt": "2026-09-21T16:05:26.002Z",
+        "description": "Commit: d29b7156ac256f7b7f7730899da8c02ab87d2abf"
+      }
+    }
+  ],
+  "runtime": [
+    {
+      "name": "nomorevibe-web-m3",
+      "container": "1bc5c415f782",
+      "status": "running",
+      "health": {
+        "status": "ok",
+        "db": "ok",
+        "instanceId": "m3-web",
+        "release": "d29b7156ac256f7b7f7730899da8c02ab87d2abf",
+        "dbLatencyMs": 2
+      },
+      "restarts": 0,
+      "startedAt": "2026-09-21T16:05:06.210761012Z",
+      "path": "docker-entrypoint.sh",
+      "release": "d29b7156ac256f7b7f7730899da8c02ab87d2abf",
+      "pool": "6",
+      "pid1": "next-server (v",
+      "httpStatus": 200
+    },
+    {
+      "name": "nomorevibe-web-mini",
+      "container": "4019ec8e9910",
+      "status": "running",
+      "health": {
+        "status": "ok",
+        "db": "ok",
+        "instanceId": "mini-web",
+        "release": "d29b7156ac256f7b7f7730899da8c02ab87d2abf",
+        "dbLatencyMs": 2
+      },
+      "restarts": 0,
+      "startedAt": "2026-09-21T16:04:59.63723577Z",
+      "path": "docker-entrypoint.sh",
+      "release": "d29b7156ac256f7b7f7730899da8c02ab87d2abf",
+      "pool": "6",
+      "pid1": "next-server (v",
+      "httpStatus": 200
+    },
+    {
+      "name": "nomorevibe-crawler-m3",
+      "container": "e8561ee4f4dd",
+      "status": "running",
+      "health": "healthy",
+      "restarts": 0,
+      "startedAt": "2026-09-21T16:05:19.62643978Z",
+      "path": "/sbin/tini",
+      "release": "d29b7156ac256f7b7f7730899da8c02ab87d2abf",
+      "role": "crawler",
+      "pool": "4",
+      "pid1": "tini",
+      "worker": {
+        "role": "crawler",
+        "status": "running",
+        "currentJob": "agent-evidence-refresh",
+        "heartbeatAgeMs": 2979
+      },
+      "matched": 14,
+      "total": 14
+    },
+    {
+      "name": "nomorevibe-reviewer-m3",
+      "container": "34b2bc96624c",
+      "status": "running",
+      "health": "healthy",
+      "restarts": 0,
+      "startedAt": "2026-09-21T16:05:21.705839519Z",
+      "path": "/sbin/tini",
+      "release": "d29b7156ac256f7b7f7730899da8c02ab87d2abf",
+      "role": "reviewer",
+      "pool": "12",
+      "pid1": "tini",
+      "worker": {
+        "role": "reviewer",
+        "status": "running",
+        "currentJob": null,
+        "heartbeatAgeMs": 885
+      },
+      "matched": 14,
+      "total": 14
+    },
+    {
+      "name": "nomorevibe-publisher-m3",
+      "container": "26ca6b9e1e7c",
+      "status": "running",
+      "health": "healthy",
+      "restarts": 0,
+      "startedAt": "2026-09-21T16:05:39.562937291Z",
+      "path": "/sbin/tini",
+      "release": "d29b7156ac256f7b7f7730899da8c02ab87d2abf",
+      "role": "publisher",
+      "pool": "3",
+      "pid1": "tini",
+      "worker": {
+        "role": "publisher",
+        "status": "running",
+        "currentJob": null,
+        "heartbeatAgeMs": 2878
+      },
+      "matched": 14,
+      "total": 14
+    },
+    {
+      "name": "nomorevibe-maintenance-m3",
+      "container": "0e3542c9d5eb",
+      "status": "running",
+      "health": "healthy",
+      "restarts": 0,
+      "startedAt": "2026-09-21T16:05:29.214612576Z",
+      "path": "/sbin/tini",
+      "release": "d29b7156ac256f7b7f7730899da8c02ab87d2abf",
+      "role": "maintenance",
+      "pool": "3",
+      "pid1": "tini",
+      "worker": {
+        "role": "maintenance",
+        "status": "running",
+        "currentJob": null,
+        "heartbeatAgeMs": 1509
+      },
+      "matched": 14,
+      "total": 14
+    },
+    {
+      "name": "nomorevibe-scheduler-m3",
+      "container": "21c72cbf7ce8",
+      "status": "running",
+      "health": "healthy",
+      "restarts": 0,
+      "startedAt": "2026-09-21T16:05:36.211517908Z",
+      "path": "/sbin/tini",
+      "release": "d29b7156ac256f7b7f7730899da8c02ab87d2abf",
+      "role": "scheduler",
+      "pool": "2",
+      "pid1": "tini",
+      "worker": {
+        "role": "scheduler",
+        "status": "running",
+        "currentJob": null,
+        "heartbeatAgeMs": 312
+      },
+      "matched": 14,
+      "total": 14
+    },
+    {
+      "name": "nomorevibe-connect-agent-m3",
+      "container": "0ccaf2ea1b4d",
+      "status": "running",
+      "health": "healthy",
+      "restarts": 0,
+      "startedAt": "2026-09-21T16:05:27.234647618Z",
+      "path": "/sbin/tini",
+      "release": "d29b7156ac256f7b7f7730899da8c02ab87d2abf",
+      "role": "connect-agent",
+      "pool": "1",
+      "pid1": "tini",
+      "matched": 14,
+      "total": 14
+    },
+    {
+      "name": "nomorevibe-text-m3",
+      "container": "dc50c5544421",
+      "status": "running",
+      "health": "healthy",
+      "restarts": 0,
+      "startedAt": "2026-09-21T16:05:32.831149261Z",
+      "path": "/sbin/tini",
+      "release": "d29b7156ac256f7b7f7730899da8c02ab87d2abf",
+      "role": "text",
+      "pool": "3",
+      "pid1": "tini",
+      "worker": {
+        "role": "text",
+        "status": "running",
+        "currentJob": "reason-translate",
+        "heartbeatAgeMs": 1162
+      },
+      "matched": 14,
+      "total": 14
+    }
+  ],
+  "verificationWindow": {
+    "start": "2026-09-21T16:05:39Z",
+    "end": "2026-09-21T16:07:59Z",
+    "eventCount": 203,
+    "jobFailed": 0,
+    "agentEvidenceFailed": 0,
+    "agentEvidenceScanned": 5
+  },
+  "ci": {
+    "conclusion": "failure",
+    "headSha": "d29b7156ac256f7b7f7730899da8c02ab87d2abf",
+    "jobs": [
+      {
+        "completedAt": "2026-09-21T15:59:08Z",
+        "conclusion": "failure",
+        "databaseId": 106409098374,
+        "name": "check",
+        "startedAt": "2026-09-21T15:59:05Z",
+        "status": "completed",
+        "steps": [],
+        "url": "https://github.com/JRVector9/nomorevibe/actions/runs/35622606975/job/106409098374"
+      }
+    ],
+    "url": "https://github.com/JRVector9/nomorevibe/actions/runs/35622606975"
+  },
+  "ciAnnotations": [
+    {
+      "annotation_level": "failure",
+      "message": "The job was not started because recent account payments have failed or your spending limit needs to be increased. Please check the 'Billing & plans' section in your settings",
+      "title": ""
+    },
+    {
+      "annotation_level": "notice",
+      "message": "\"The ubuntu-latest label will migrate to Ubuntu 26 beginning October 19, 2026. For more information, see https://github.com/actions/runner-images/issues/14748\"",
+      "title": ""
+    }
+  ],
+  "cleanChecks": {
+    "node": "24.18.0",
+    "sourceCommit": "d29b7156ac256f7b7f7730899da8c02ab87d2abf",
+    "typegen": "passed",
+    "types": "passed",
+    "lint": {
+      "errors": 0,
+      "existingWarnings": 1
+    },
+    "unit": {
+      "files": 141,
+      "passed": 1094
+    },
+    "integration": {
+      "files": 80,
+      "passed": 784,
+      "durationSeconds": 87.46
+    },
+    "productionBuild": "passed"
+  },
+  "publicHttp": {
+    "home": 200,
+    "health": {
+      "status": "ok",
+      "db": "ok",
+      "instanceId": "m3-web",
+      "release": "d29b7156ac256f7b7f7730899da8c02ab87d2abf",
+      "dbLatencyMs": 2
+    }
+  },
+  "autoDeployNote": "All nine originally true. Held false through the deployment record push; restore is the final operation."
+}

@@ -1,0 +1,2002 @@
+[
+  {
+    "at": "2026-09-21T16:05:40.191Z",
+    "event": "scheduler.tick",
+    "requested": 5,
+    "role": "scheduler"
+  },
+  {
+    "ts": "2026-09-21T16:05:41.213Z",
+    "event": "crawl.fetched",
+    "job": "crawl-fetch",
+    "fetched": 0,
+    "skipped": 0,
+    "failed": 0,
+    "drained": true,
+    "role": "crawler"
+  },
+  {
+    "ts": "2026-09-21T16:05:41.220Z",
+    "event": "job.completed",
+    "job": "crawl-fetch",
+    "durationMs": 28,
+    "done": true,
+    "role": "crawler"
+  },
+  {
+    "at": "2026-09-21T16:05:41.220Z",
+    "event": "worker.job",
+    "status": "completed",
+    "role": "crawler"
+  },
+  {
+    "ts": "2026-09-21T16:05:42.763Z",
+    "event": "evidence.github_refresh",
+    "job": "product-evidence-refresh",
+    "sourceKind": "repository",
+    "outcome": "not_modified",
+    "httpClass": "304",
+    "count": 0,
+    "role": "crawler"
+  },
+  {
+    "ts": "2026-09-21T16:05:42.775Z",
+    "event": "evidence.source_refresh",
+    "job": "product-evidence-refresh",
+    "durationMs": 1476,
+    "sourceKind": "repository",
+    "outcome": "succeeded",
+    "httpClass": "not_modified",
+    "factsChanged": 0,
+    "eventsInserted": 0,
+    "mediaInserted": 0,
+    "role": "crawler"
+  },
+  {
+    "ts": "2026-09-21T16:05:43.437Z",
+    "event": "job.completed",
+    "job": "crawl-agent-review",
+    "durationMs": 86,
+    "done": true,
+    "role": "reviewer"
+  },
+  {
+    "at": "2026-09-21T16:05:43.438Z",
+    "event": "worker.job",
+    "status": "completed",
+    "role": "reviewer"
+  },
+  {
+    "ts": "2026-09-21T16:05:44.118Z",
+    "event": "evidence.github_refresh",
+    "job": "product-evidence-refresh",
+    "sourceKind": "repository",
+    "outcome": "not_modified",
+    "httpClass": "304",
+    "count": 0,
+    "role": "crawler"
+  },
+  {
+    "ts": "2026-09-21T16:05:44.131Z",
+    "event": "evidence.source_refresh",
+    "job": "product-evidence-refresh",
+    "durationMs": 1346,
+    "sourceKind": "repository",
+    "outcome": "succeeded",
+    "httpClass": "not_modified",
+    "factsChanged": 0,
+    "eventsInserted": 0,
+    "mediaInserted": 0,
+    "role": "crawler"
+  },
+  {
+    "ts": "2026-09-21T16:05:45.212Z",
+    "event": "evidence.github_refresh",
+    "job": "product-evidence-refresh",
+    "sourceKind": "repository",
+    "outcome": "not_modified",
+    "httpClass": "304",
+    "count": 0,
+    "role": "crawler"
+  },
+  {
+    "ts": "2026-09-21T16:05:45.225Z",
+    "event": "evidence.source_refresh",
+    "job": "product-evidence-refresh",
+    "durationMs": 1084,
+    "sourceKind": "repository",
+    "outcome": "succeeded",
+    "httpClass": "not_modified",
+    "factsChanged": 0,
+    "eventsInserted": 0,
+    "mediaInserted": 0,
+    "role": "crawler"
+  },
+  {
+    "ts": "2026-09-21T16:05:47.111Z",
+    "event": "evidence.github_refresh",
+    "job": "product-evidence-refresh",
+    "sourceKind": "repository",
+    "outcome": "not_modified",
+    "httpClass": "304",
+    "count": 0,
+    "role": "crawler"
+  },
+  {
+    "ts": "2026-09-21T16:05:47.123Z",
+    "event": "evidence.source_refresh",
+    "job": "product-evidence-refresh",
+    "durationMs": 1889,
+    "sourceKind": "repository",
+    "outcome": "succeeded",
+    "httpClass": "not_modified",
+    "factsChanged": 0,
+    "eventsInserted": 0,
+    "mediaInserted": 0,
+    "role": "crawler"
+  },
+  {
+    "ts": "2026-09-21T16:05:48.284Z",
+    "event": "uptime.checked",
+    "job": "uptime-ping",
+    "alive": 15,
+    "down": 0,
+    "role": "maintenance"
+  },
+  {
+    "ts": "2026-09-21T16:05:48.293Z",
+    "event": "job.completed",
+    "job": "uptime-ping",
+    "durationMs": 7411,
+    "done": false,
+    "role": "maintenance"
+  },
+  {
+    "at": "2026-09-21T16:05:48.293Z",
+    "event": "worker.job",
+    "status": "completed",
+    "role": "maintenance"
+  },
+  {
+    "at": "2026-09-21T16:05:50.292Z",
+    "event": "scheduler.tick",
+    "requested": 1,
+    "role": "scheduler"
+  },
+  {
+    "ts": "2026-09-21T16:05:50.682Z",
+    "event": "evidence.github_refresh",
+    "job": "product-evidence-refresh",
+    "sourceKind": "repository",
+    "outcome": "updated",
+    "httpClass": "200",
+    "count": 0,
+    "role": "crawler"
+  },
+  {
+    "ts": "2026-09-21T16:05:50.694Z",
+    "event": "evidence.source_refresh",
+    "job": "product-evidence-refresh",
+    "durationMs": 3563,
+    "sourceKind": "repository",
+    "outcome": "succeeded",
+    "httpClass": "ok",
+    "factsChanged": 1,
+    "eventsInserted": 0,
+    "mediaInserted": 0,
+    "role": "crawler"
+  },
+  {
+    "ts": "2026-09-21T16:05:52.004Z",
+    "event": "evidence.github_refresh",
+    "job": "product-evidence-refresh",
+    "sourceKind": "repository",
+    "outcome": "not_modified",
+    "httpClass": "304",
+    "count": 0,
+    "role": "crawler"
+  },
+  {
+    "ts": "2026-09-21T16:05:52.020Z",
+    "event": "evidence.source_refresh",
+    "job": "product-evidence-refresh",
+    "durationMs": 1315,
+    "sourceKind": "repository",
+    "outcome": "succeeded",
+    "httpClass": "not_modified",
+    "factsChanged": 0,
+    "eventsInserted": 0,
+    "mediaInserted": 0,
+    "role": "crawler"
+  },
+  {
+    "ts": "2026-09-21T16:05:53.345Z",
+    "event": "evidence.github_refresh",
+    "job": "product-evidence-refresh",
+    "sourceKind": "repository",
+    "outcome": "not_modified",
+    "httpClass": "304",
+    "count": 0,
+    "role": "crawler"
+  },
+  {
+    "ts": "2026-09-21T16:05:53.358Z",
+    "event": "evidence.source_refresh",
+    "job": "product-evidence-refresh",
+    "durationMs": 1325,
+    "sourceKind": "repository",
+    "outcome": "succeeded",
+    "httpClass": "not_modified",
+    "factsChanged": 0,
+    "eventsInserted": 0,
+    "mediaInserted": 0,
+    "role": "crawler"
+  },
+  {
+    "ts": "2026-09-21T16:05:53.467Z",
+    "event": "product_audit.skipped",
+    "job": "product-audit",
+    "reason": "policy_changed",
+    "campaign": 3,
+    "role": "reviewer"
+  },
+  {
+    "ts": "2026-09-21T16:05:53.475Z",
+    "event": "job.completed",
+    "job": "product-audit",
+    "durationMs": 21,
+    "done": true,
+    "role": "reviewer"
+  },
+  {
+    "at": "2026-09-21T16:05:53.475Z",
+    "event": "worker.job",
+    "status": "completed",
+    "role": "reviewer"
+  },
+  {
+    "ts": "2026-09-21T16:05:54.425Z",
+    "event": "evidence.github_refresh",
+    "job": "product-evidence-refresh",
+    "sourceKind": "repository",
+    "outcome": "updated",
+    "httpClass": "200",
+    "count": 0,
+    "role": "crawler"
+  },
+  {
+    "ts": "2026-09-21T16:05:54.440Z",
+    "event": "evidence.source_refresh",
+    "job": "product-evidence-refresh",
+    "durationMs": 1072,
+    "sourceKind": "repository",
+    "outcome": "succeeded",
+    "httpClass": "ok",
+    "factsChanged": 1,
+    "eventsInserted": 0,
+    "mediaInserted": 0,
+    "role": "crawler"
+  },
+  {
+    "ts": "2026-09-21T16:05:55.324Z",
+    "event": "evidence.github_refresh",
+    "job": "product-evidence-refresh",
+    "sourceKind": "repository",
+    "outcome": "not_modified",
+    "httpClass": "304",
+    "count": 0,
+    "role": "crawler"
+  },
+  {
+    "ts": "2026-09-21T16:05:55.339Z",
+    "event": "evidence.source_refresh",
+    "job": "product-evidence-refresh",
+    "durationMs": 886,
+    "sourceKind": "repository",
+    "outcome": "succeeded",
+    "httpClass": "not_modified",
+    "factsChanged": 0,
+    "eventsInserted": 0,
+    "mediaInserted": 0,
+    "role": "crawler"
+  },
+  {
+    "ts": "2026-09-21T16:05:56.755Z",
+    "event": "evidence.github_refresh",
+    "job": "product-evidence-refresh",
+    "sourceKind": "repository",
+    "outcome": "not_modified",
+    "httpClass": "304",
+    "count": 0,
+    "role": "crawler"
+  },
+  {
+    "ts": "2026-09-21T16:05:56.768Z",
+    "event": "evidence.source_refresh",
+    "job": "product-evidence-refresh",
+    "durationMs": 1420,
+    "sourceKind": "repository",
+    "outcome": "succeeded",
+    "httpClass": "not_modified",
+    "factsChanged": 0,
+    "eventsInserted": 0,
+    "mediaInserted": 0,
+    "role": "crawler"
+  },
+  {
+    "ts": "2026-09-21T16:05:57.902Z",
+    "event": "evidence.github_refresh",
+    "job": "product-evidence-refresh",
+    "sourceKind": "repository",
+    "outcome": "not_modified",
+    "httpClass": "304",
+    "count": 0,
+    "role": "crawler"
+  },
+  {
+    "ts": "2026-09-21T16:05:57.913Z",
+    "event": "evidence.source_refresh",
+    "job": "product-evidence-refresh",
+    "durationMs": 1135,
+    "sourceKind": "repository",
+    "outcome": "succeeded",
+    "httpClass": "not_modified",
+    "factsChanged": 0,
+    "eventsInserted": 0,
+    "mediaInserted": 0,
+    "role": "crawler"
+  },
+  {
+    "ts": "2026-09-21T16:05:59.360Z",
+    "event": "evidence.github_refresh",
+    "job": "product-evidence-refresh",
+    "sourceKind": "repository",
+    "outcome": "not_modified",
+    "httpClass": "304",
+    "count": 0,
+    "role": "crawler"
+  },
+  {
+    "ts": "2026-09-21T16:05:59.374Z",
+    "event": "evidence.source_refresh",
+    "job": "product-evidence-refresh",
+    "durationMs": 1452,
+    "sourceKind": "repository",
+    "outcome": "succeeded",
+    "httpClass": "not_modified",
+    "factsChanged": 0,
+    "eventsInserted": 0,
+    "mediaInserted": 0,
+    "role": "crawler"
+  },
+  {
+    "at": "2026-09-21T16:06:00.383Z",
+    "event": "scheduler.tick",
+    "requested": 3,
+    "role": "scheduler"
+  },
+  {
+    "ts": "2026-09-21T16:06:00.529Z",
+    "event": "evidence.github_refresh",
+    "job": "product-evidence-refresh",
+    "sourceKind": "repository",
+    "outcome": "updated",
+    "httpClass": "200",
+    "count": 0,
+    "role": "crawler"
+  },
+  {
+    "ts": "2026-09-21T16:06:00.543Z",
+    "event": "evidence.source_refresh",
+    "job": "product-evidence-refresh",
+    "durationMs": 1155,
+    "sourceKind": "repository",
+    "outcome": "succeeded",
+    "httpClass": "ok",
+    "factsChanged": 1,
+    "eventsInserted": 0,
+    "mediaInserted": 0,
+    "role": "crawler"
+  },
+  {
+    "ts": "2026-09-21T16:06:00.929Z",
+    "event": "evidence.github_refresh",
+    "job": "product-evidence-refresh",
+    "sourceKind": "repository",
+    "outcome": "disconnected",
+    "httpClass": "not_found",
+    "count": 0,
+    "role": "crawler"
+  },
+  {
+    "ts": "2026-09-21T16:06:00.940Z",
+    "event": "evidence.source_refresh",
+    "job": "product-evidence-refresh",
+    "durationMs": 388,
+    "sourceKind": "repository",
+    "outcome": "failed",
+    "httpClass": "error",
+    "factsChanged": 0,
+    "eventsInserted": 0,
+    "mediaInserted": 0,
+    "role": "crawler"
+  },
+  {
+    "ts": "2026-09-21T16:06:03.424Z",
+    "event": "evidence.github_refresh",
+    "job": "product-evidence-refresh",
+    "sourceKind": "repository",
+    "outcome": "updated",
+    "httpClass": "200",
+    "count": 10,
+    "role": "crawler"
+  },
+  {
+    "ts": "2026-09-21T16:06:03.436Z",
+    "event": "evidence.source_refresh",
+    "job": "product-evidence-refresh",
+    "durationMs": 2487,
+    "sourceKind": "repository",
+    "outcome": "succeeded",
+    "httpClass": "ok",
+    "factsChanged": 1,
+    "eventsInserted": 10,
+    "mediaInserted": 0,
+    "role": "crawler"
+  },
+  {
+    "ts": "2026-09-21T16:06:04.365Z",
+    "event": "evidence.github_refresh",
+    "job": "product-evidence-refresh",
+    "sourceKind": "repository",
+    "outcome": "updated",
+    "httpClass": "200",
+    "count": 0,
+    "role": "crawler"
+  },
+  {
+    "ts": "2026-09-21T16:06:04.378Z",
+    "event": "evidence.source_refresh",
+    "job": "product-evidence-refresh",
+    "durationMs": 932,
+    "sourceKind": "repository",
+    "outcome": "succeeded",
+    "httpClass": "ok",
+    "factsChanged": 1,
+    "eventsInserted": 0,
+    "mediaInserted": 0,
+    "role": "crawler"
+  },
+  {
+    "ts": "2026-09-21T16:06:06.193Z",
+    "event": "evidence.github_refresh",
+    "job": "product-evidence-refresh",
+    "sourceKind": "repository",
+    "outcome": "not_modified",
+    "httpClass": "304",
+    "count": 0,
+    "role": "crawler"
+  },
+  {
+    "ts": "2026-09-21T16:06:06.204Z",
+    "event": "evidence.source_refresh",
+    "job": "product-evidence-refresh",
+    "durationMs": 1815,
+    "sourceKind": "repository",
+    "outcome": "succeeded",
+    "httpClass": "not_modified",
+    "factsChanged": 0,
+    "eventsInserted": 0,
+    "mediaInserted": 0,
+    "role": "crawler"
+  },
+  {
+    "ts": "2026-09-21T16:06:06.440Z",
+    "event": "thumbnail.refreshed",
+    "job": "product-thumbnail-refresh",
+    "examined": 6,
+    "filled": 6,
+    "defaults": 0,
+    "skipped": 0,
+    "failed": 0,
+    "role": "maintenance"
+  },
+  {
+    "ts": "2026-09-21T16:06:06.450Z",
+    "event": "job.completed",
+    "job": "product-thumbnail-refresh",
+    "durationMs": 3128,
+    "done": false,
+    "role": "maintenance"
+  },
+  {
+    "at": "2026-09-21T16:06:06.450Z",
+    "event": "worker.job",
+    "status": "completed",
+    "role": "maintenance"
+  },
+  {
+    "ts": "2026-09-21T16:06:06.486Z",
+    "event": "evidence.source_refresh",
+    "job": "product-evidence-refresh",
+    "durationMs": 272,
+    "sourceKind": "repository",
+    "outcome": "deferred",
+    "httpClass": "budget",
+    "factsChanged": 0,
+    "eventsInserted": 0,
+    "mediaInserted": 0,
+    "role": "crawler"
+  },
+  {
+    "ts": "2026-09-21T16:06:06.486Z",
+    "event": "evidence.refresh_batch",
+    "job": "product-evidence-refresh",
+    "attempted": 18,
+    "succeeded": 16,
+    "failed": 1,
+    "factsChanged": 5,
+    "eventsInserted": 10,
+    "mediaInserted": 0,
+    "role": "crawler"
+  },
+  {
+    "ts": "2026-09-21T16:06:06.492Z",
+    "event": "job.completed",
+    "job": "product-evidence-refresh",
+    "durationMs": 25272,
+    "done": false,
+    "role": "crawler"
+  },
+  {
+    "at": "2026-09-21T16:06:06.492Z",
+    "event": "worker.job",
+    "status": "completed",
+    "role": "crawler"
+  },
+  {
+    "ts": "2026-09-21T16:06:07.463Z",
+    "event": "product_search.refreshed",
+    "job": "product-search-refresh",
+    "updated": 1,
+    "role": "maintenance"
+  },
+  {
+    "ts": "2026-09-21T16:06:07.470Z",
+    "event": "job.completed",
+    "job": "product-search-refresh",
+    "durationMs": 1020,
+    "done": true,
+    "role": "maintenance"
+  },
+  {
+    "at": "2026-09-21T16:06:07.470Z",
+    "event": "worker.job",
+    "status": "completed",
+    "role": "maintenance"
+  },
+  {
+    "at": "2026-09-21T16:06:10.459Z",
+    "event": "scheduler.tick",
+    "requested": 0,
+    "role": "scheduler"
+  },
+  {
+    "ts": "2026-09-21T16:06:15.147Z",
+    "event": "agent_evidence.scanned",
+    "job": "agent-evidence-refresh",
+    "state": "partial",
+    "repositoryKey": "hraness/hra",
+    "scanId": 65733,
+    "observations": 4,
+    "cached": false,
+    "role": "crawler"
+  },
+  {
+    "ts": "2026-09-21T16:06:18.851Z",
+    "event": "agent_evidence.scanned",
+    "job": "agent-evidence-refresh",
+    "state": "partial",
+    "repositoryKey": "hraness/atet",
+    "scanId": 65734,
+    "observations": 2,
+    "cached": false,
+    "role": "crawler"
+  },
+  {
+    "ts": "2026-09-21T16:06:19.560Z",
+    "event": "job.completed",
+    "job": "agent-evidence-refresh",
+    "durationMs": 13068,
+    "done": false,
+    "role": "crawler"
+  },
+  {
+    "at": "2026-09-21T16:06:19.560Z",
+    "event": "worker.job",
+    "status": "completed",
+    "role": "crawler"
+  },
+  {
+    "at": "2026-09-21T16:06:20.625Z",
+    "event": "scheduler.tick",
+    "requested": 1,
+    "role": "scheduler"
+  },
+  {
+    "ts": "2026-09-21T16:06:23.804Z",
+    "at": "2026-09-21T16:06:23.804Z",
+    "event": "review.pipeline",
+    "kind": "queue",
+    "stage": "second",
+    "candidateId": 29338,
+    "firstAttemptId": 30431,
+    "secondReviewId": 82831,
+    "job": "second-review",
+    "runId": "11838",
+    "waitMs": 73543,
+    "provider": "claude-cli",
+    "model": "sonnet",
+    "version": 1,
+    "role": "reviewer"
+  },
+  {
+    "ts": "2026-09-21T16:06:23.804Z",
+    "at": "2026-09-21T16:06:23.804Z",
+    "event": "review.pipeline",
+    "kind": "model_start",
+    "stage": "second",
+    "candidateId": 29338,
+    "firstAttemptId": 30431,
+    "secondReviewId": 82831,
+    "job": "second-review",
+    "runId": "11838",
+    "callId": "66f83dc3-a41a-4d30-90db-6c5222b1b7a0",
+    "provider": "claude-cli",
+    "model": "sonnet",
+    "version": 1,
+    "role": "reviewer"
+  },
+  {
+    "at": "2026-09-21T16:06:30.721Z",
+    "event": "scheduler.tick",
+    "requested": 0,
+    "role": "scheduler"
+  },
+  {
+    "ts": "2026-09-21T16:06:34.379Z",
+    "at": "2026-09-21T16:06:34.379Z",
+    "event": "review.pipeline",
+    "kind": "model_end",
+    "stage": "second",
+    "candidateId": 29338,
+    "firstAttemptId": 30431,
+    "secondReviewId": 82831,
+    "job": "second-review",
+    "runId": "11838",
+    "callId": "66f83dc3-a41a-4d30-90db-6c5222b1b7a0",
+    "durationMs": 10575.176459999995,
+    "ok": true,
+    "provider": "claude-cli",
+    "model": "sonnet",
+    "version": 1,
+    "role": "reviewer"
+  },
+  {
+    "ts": "2026-09-21T16:06:34.424Z",
+    "at": "2026-09-21T16:06:34.424Z",
+    "event": "review.pipeline",
+    "kind": "committed",
+    "stage": "second",
+    "secondReviewId": 82831,
+    "ok": true,
+    "version": 1,
+    "role": "reviewer"
+  },
+  {
+    "ts": "2026-09-21T16:06:34.425Z",
+    "at": "2026-09-21T16:06:34.425Z",
+    "event": "review.pipeline",
+    "kind": "requested",
+    "stage": "second",
+    "secondReviewId": 82831,
+    "nextJob": "crawl-publish",
+    "requestedVersion": 10158,
+    "version": 1,
+    "role": "reviewer"
+  },
+  {
+    "ts": "2026-09-21T16:06:34.425Z",
+    "event": "crawl.second_reviewed",
+    "job": "second-review",
+    "enqueued": 0,
+    "closed": 0,
+    "reviewed": 1,
+    "failed": 0,
+    "deferred": 0,
+    "role": "reviewer"
+  },
+  {
+    "ts": "2026-09-21T16:06:34.433Z",
+    "event": "job.completed",
+    "job": "second-review",
+    "durationMs": 10901,
+    "done": false,
+    "role": "reviewer"
+  },
+  {
+    "at": "2026-09-21T16:06:34.433Z",
+    "event": "worker.job",
+    "status": "completed",
+    "role": "reviewer"
+  },
+  {
+    "ts": "2026-09-21T16:06:34.697Z",
+    "event": "translate.done",
+    "job": "reason-translate",
+    "translated": 8,
+    "failed": 0,
+    "drained": false,
+    "role": "text"
+  },
+  {
+    "ts": "2026-09-21T16:06:34.708Z",
+    "event": "job.completed",
+    "job": "reason-translate",
+    "durationMs": 29886,
+    "done": false,
+    "role": "text"
+  },
+  {
+    "at": "2026-09-21T16:06:34.709Z",
+    "event": "worker.job",
+    "status": "completed",
+    "role": "text"
+  },
+  {
+    "ts": "2026-09-21T16:06:37.577Z",
+    "event": "crawl.publish_skipped_candidate",
+    "job": "crawl-publish",
+    "reason": "no_description",
+    "role": "publisher"
+  },
+  {
+    "ts": "2026-09-21T16:06:38.881Z",
+    "event": "crawl.publish_done",
+    "job": "crawl-publish",
+    "published": 0,
+    "skipped": 1,
+    "drained": true,
+    "role": "publisher"
+  },
+  {
+    "ts": "2026-09-21T16:06:38.892Z",
+    "event": "job.completed",
+    "job": "crawl-publish",
+    "durationMs": 2760,
+    "done": true,
+    "role": "publisher"
+  },
+  {
+    "at": "2026-09-21T16:06:38.892Z",
+    "event": "worker.job",
+    "status": "completed",
+    "role": "publisher"
+  },
+  {
+    "at": "2026-09-21T16:06:40.818Z",
+    "event": "scheduler.tick",
+    "requested": 6,
+    "role": "scheduler"
+  },
+  {
+    "ts": "2026-09-21T16:06:44.521Z",
+    "event": "job.completed",
+    "job": "crawl-agent-review",
+    "durationMs": 69,
+    "done": true,
+    "role": "reviewer"
+  },
+  {
+    "at": "2026-09-21T16:06:44.521Z",
+    "event": "worker.job",
+    "status": "completed",
+    "role": "reviewer"
+  },
+  {
+    "ts": "2026-09-21T16:06:44.633Z",
+    "event": "crawl.fetched",
+    "job": "crawl-fetch",
+    "fetched": 0,
+    "skipped": 0,
+    "failed": 0,
+    "drained": true,
+    "role": "crawler"
+  },
+  {
+    "ts": "2026-09-21T16:06:44.642Z",
+    "event": "job.completed",
+    "job": "crawl-fetch",
+    "durationMs": 24,
+    "done": true,
+    "role": "crawler"
+  },
+  {
+    "at": "2026-09-21T16:06:44.642Z",
+    "event": "worker.job",
+    "status": "completed",
+    "role": "crawler"
+  },
+  {
+    "ts": "2026-09-21T16:06:45.631Z",
+    "event": "evidence.github_refresh",
+    "job": "product-evidence-refresh",
+    "sourceKind": "repository",
+    "outcome": "not_modified",
+    "httpClass": "304",
+    "count": 0,
+    "role": "crawler"
+  },
+  {
+    "ts": "2026-09-21T16:06:45.643Z",
+    "event": "evidence.source_refresh",
+    "job": "product-evidence-refresh",
+    "durationMs": 937,
+    "sourceKind": "repository",
+    "outcome": "succeeded",
+    "httpClass": "not_modified",
+    "factsChanged": 0,
+    "eventsInserted": 0,
+    "mediaInserted": 0,
+    "role": "crawler"
+  },
+  {
+    "ts": "2026-09-21T16:06:46.565Z",
+    "at": "2026-09-21T16:06:46.565Z",
+    "event": "review.pipeline",
+    "kind": "committed",
+    "stage": "text",
+    "candidateId": 29338,
+    "job": "crawl-tagline",
+    "state": "success",
+    "version": 1,
+    "role": "text"
+  },
+  {
+    "ts": "2026-09-21T16:06:46.565Z",
+    "at": "2026-09-21T16:06:46.565Z",
+    "event": "review.pipeline",
+    "kind": "requested",
+    "stage": "text",
+    "candidateId": 29338,
+    "nextJob": "crawl-publish",
+    "requestedVersion": 10159,
+    "version": 1,
+    "role": "text"
+  },
+  {
+    "ts": "2026-09-21T16:06:46.573Z",
+    "event": "tagline.done",
+    "job": "crawl-tagline",
+    "written": 1,
+    "empty": 0,
+    "failed": 0,
+    "released": 1,
+    "drained": true,
+    "role": "text"
+  },
+  {
+    "ts": "2026-09-21T16:06:46.581Z",
+    "event": "job.completed",
+    "job": "crawl-tagline",
+    "durationMs": 1857,
+    "done": true,
+    "role": "text"
+  },
+  {
+    "at": "2026-09-21T16:06:46.581Z",
+    "event": "worker.job",
+    "status": "completed",
+    "role": "text"
+  },
+  {
+    "ts": "2026-09-21T16:06:47.306Z",
+    "event": "evidence.github_refresh",
+    "job": "product-evidence-refresh",
+    "sourceKind": "repository",
+    "outcome": "updated",
+    "httpClass": "200",
+    "count": 2,
+    "role": "crawler"
+  },
+  {
+    "ts": "2026-09-21T16:06:47.318Z",
+    "event": "evidence.source_refresh",
+    "job": "product-evidence-refresh",
+    "durationMs": 1664,
+    "sourceKind": "repository",
+    "outcome": "succeeded",
+    "httpClass": "ok",
+    "factsChanged": 1,
+    "eventsInserted": 2,
+    "mediaInserted": 0,
+    "role": "crawler"
+  },
+  {
+    "ts": "2026-09-21T16:06:49.496Z",
+    "event": "uptime.checked",
+    "job": "uptime-ping",
+    "alive": 15,
+    "down": 0,
+    "role": "maintenance"
+  },
+  {
+    "ts": "2026-09-21T16:06:49.503Z",
+    "event": "job.completed",
+    "job": "uptime-ping",
+    "durationMs": 6956,
+    "done": false,
+    "role": "maintenance"
+  },
+  {
+    "at": "2026-09-21T16:06:49.503Z",
+    "event": "worker.job",
+    "status": "completed",
+    "role": "maintenance"
+  },
+  {
+    "ts": "2026-09-21T16:06:50.120Z",
+    "event": "evidence.github_refresh",
+    "job": "product-evidence-refresh",
+    "sourceKind": "repository",
+    "outcome": "not_modified",
+    "httpClass": "304",
+    "count": 0,
+    "role": "crawler"
+  },
+  {
+    "ts": "2026-09-21T16:06:50.133Z",
+    "event": "evidence.source_refresh",
+    "job": "product-evidence-refresh",
+    "durationMs": 2805,
+    "sourceKind": "repository",
+    "outcome": "succeeded",
+    "httpClass": "not_modified",
+    "factsChanged": 0,
+    "eventsInserted": 0,
+    "mediaInserted": 0,
+    "role": "crawler"
+  },
+  {
+    "ts": "2026-09-21T16:06:50.298Z",
+    "event": "crawl.publish_done",
+    "job": "crawl-publish",
+    "published": 0,
+    "skipped": 0,
+    "drained": true,
+    "role": "publisher"
+  },
+  {
+    "ts": "2026-09-21T16:06:50.307Z",
+    "event": "job.completed",
+    "job": "crawl-publish",
+    "durationMs": 1390,
+    "done": true,
+    "role": "publisher"
+  },
+  {
+    "at": "2026-09-21T16:06:50.307Z",
+    "event": "worker.job",
+    "status": "completed",
+    "role": "publisher"
+  },
+  {
+    "at": "2026-09-21T16:06:50.902Z",
+    "event": "scheduler.tick",
+    "requested": 1,
+    "role": "scheduler"
+  },
+  {
+    "ts": "2026-09-21T16:06:51.434Z",
+    "event": "evidence.github_refresh",
+    "job": "product-evidence-refresh",
+    "sourceKind": "repository",
+    "outcome": "updated",
+    "httpClass": "200",
+    "count": 0,
+    "role": "crawler"
+  },
+  {
+    "ts": "2026-09-21T16:06:51.445Z",
+    "event": "evidence.source_refresh",
+    "job": "product-evidence-refresh",
+    "durationMs": 1304,
+    "sourceKind": "repository",
+    "outcome": "succeeded",
+    "httpClass": "ok",
+    "factsChanged": 1,
+    "eventsInserted": 0,
+    "mediaInserted": 0,
+    "role": "crawler"
+  },
+  {
+    "ts": "2026-09-21T16:06:52.836Z",
+    "event": "evidence.github_refresh",
+    "job": "product-evidence-refresh",
+    "sourceKind": "repository",
+    "outcome": "updated",
+    "httpClass": "200",
+    "count": 0,
+    "role": "crawler"
+  },
+  {
+    "ts": "2026-09-21T16:06:52.850Z",
+    "event": "evidence.source_refresh",
+    "job": "product-evidence-refresh",
+    "durationMs": 1395,
+    "sourceKind": "repository",
+    "outcome": "succeeded",
+    "httpClass": "ok",
+    "factsChanged": 1,
+    "eventsInserted": 0,
+    "mediaInserted": 0,
+    "role": "crawler"
+  },
+  {
+    "ts": "2026-09-21T16:06:54.367Z",
+    "event": "evidence.github_refresh",
+    "job": "product-evidence-refresh",
+    "sourceKind": "repository",
+    "outcome": "updated",
+    "httpClass": "200",
+    "count": 0,
+    "role": "crawler"
+  },
+  {
+    "ts": "2026-09-21T16:06:54.378Z",
+    "event": "evidence.source_refresh",
+    "job": "product-evidence-refresh",
+    "durationMs": 1518,
+    "sourceKind": "repository",
+    "outcome": "succeeded",
+    "httpClass": "ok",
+    "factsChanged": 1,
+    "eventsInserted": 0,
+    "mediaInserted": 0,
+    "role": "crawler"
+  },
+  {
+    "ts": "2026-09-21T16:06:54.555Z",
+    "event": "product_audit.skipped",
+    "job": "product-audit",
+    "reason": "policy_changed",
+    "campaign": 3,
+    "role": "reviewer"
+  },
+  {
+    "ts": "2026-09-21T16:06:54.563Z",
+    "event": "job.completed",
+    "job": "product-audit",
+    "durationMs": 23,
+    "done": true,
+    "role": "reviewer"
+  },
+  {
+    "at": "2026-09-21T16:06:54.563Z",
+    "event": "worker.job",
+    "status": "completed",
+    "role": "reviewer"
+  },
+  {
+    "ts": "2026-09-21T16:06:56.615Z",
+    "event": "evidence.github_refresh",
+    "job": "product-evidence-refresh",
+    "sourceKind": "repository",
+    "outcome": "not_modified",
+    "httpClass": "304",
+    "count": 0,
+    "role": "crawler"
+  },
+  {
+    "ts": "2026-09-21T16:06:56.628Z",
+    "event": "evidence.source_refresh",
+    "job": "product-evidence-refresh",
+    "durationMs": 2240,
+    "sourceKind": "repository",
+    "outcome": "succeeded",
+    "httpClass": "not_modified",
+    "factsChanged": 0,
+    "eventsInserted": 0,
+    "mediaInserted": 0,
+    "role": "crawler"
+  },
+  {
+    "ts": "2026-09-21T16:06:57.617Z",
+    "event": "evidence.github_refresh",
+    "job": "product-evidence-refresh",
+    "sourceKind": "repository",
+    "outcome": "not_modified",
+    "httpClass": "304",
+    "count": 0,
+    "role": "crawler"
+  },
+  {
+    "ts": "2026-09-21T16:06:57.629Z",
+    "event": "evidence.source_refresh",
+    "job": "product-evidence-refresh",
+    "durationMs": 990,
+    "sourceKind": "repository",
+    "outcome": "succeeded",
+    "httpClass": "not_modified",
+    "factsChanged": 0,
+    "eventsInserted": 0,
+    "mediaInserted": 0,
+    "role": "crawler"
+  },
+  {
+    "ts": "2026-09-21T16:06:59.725Z",
+    "event": "evidence.github_refresh",
+    "job": "product-evidence-refresh",
+    "sourceKind": "repository",
+    "outcome": "updated",
+    "httpClass": "200",
+    "count": 0,
+    "role": "crawler"
+  },
+  {
+    "ts": "2026-09-21T16:06:59.738Z",
+    "event": "evidence.source_refresh",
+    "job": "product-evidence-refresh",
+    "durationMs": 2100,
+    "sourceKind": "repository",
+    "outcome": "succeeded",
+    "httpClass": "ok",
+    "factsChanged": 1,
+    "eventsInserted": 0,
+    "mediaInserted": 0,
+    "role": "crawler"
+  },
+  {
+    "ts": "2026-09-21T16:07:00.880Z",
+    "event": "evidence.github_refresh",
+    "job": "product-evidence-refresh",
+    "sourceKind": "repository",
+    "outcome": "not_modified",
+    "httpClass": "304",
+    "count": 0,
+    "role": "crawler"
+  },
+  {
+    "ts": "2026-09-21T16:07:00.891Z",
+    "event": "evidence.source_refresh",
+    "job": "product-evidence-refresh",
+    "durationMs": 1143,
+    "sourceKind": "repository",
+    "outcome": "succeeded",
+    "httpClass": "not_modified",
+    "factsChanged": 0,
+    "eventsInserted": 0,
+    "mediaInserted": 0,
+    "role": "crawler"
+  },
+  {
+    "at": "2026-09-21T16:07:00.994Z",
+    "event": "scheduler.tick",
+    "requested": 3,
+    "role": "scheduler"
+  },
+  {
+    "ts": "2026-09-21T16:07:03.590Z",
+    "event": "evidence.github_refresh",
+    "job": "product-evidence-refresh",
+    "sourceKind": "repository",
+    "outcome": "updated",
+    "httpClass": "200",
+    "count": 5,
+    "role": "crawler"
+  },
+  {
+    "ts": "2026-09-21T16:07:03.602Z",
+    "event": "evidence.source_refresh",
+    "job": "product-evidence-refresh",
+    "durationMs": 2701,
+    "sourceKind": "repository",
+    "outcome": "succeeded",
+    "httpClass": "ok",
+    "factsChanged": 1,
+    "eventsInserted": 5,
+    "mediaInserted": 0,
+    "role": "crawler"
+  },
+  {
+    "ts": "2026-09-21T16:07:05.439Z",
+    "event": "evidence.github_refresh",
+    "job": "product-evidence-refresh",
+    "sourceKind": "repository",
+    "outcome": "not_modified",
+    "httpClass": "304",
+    "count": 0,
+    "role": "crawler"
+  },
+  {
+    "ts": "2026-09-21T16:07:05.449Z",
+    "event": "evidence.source_refresh",
+    "job": "product-evidence-refresh",
+    "durationMs": 1838,
+    "sourceKind": "repository",
+    "outcome": "succeeded",
+    "httpClass": "not_modified",
+    "factsChanged": 0,
+    "eventsInserted": 0,
+    "mediaInserted": 0,
+    "role": "crawler"
+  },
+  {
+    "ts": "2026-09-21T16:07:06.274Z",
+    "event": "thumbnail.refreshed",
+    "job": "product-thumbnail-refresh",
+    "examined": 6,
+    "filled": 6,
+    "defaults": 0,
+    "skipped": 0,
+    "failed": 0,
+    "role": "maintenance"
+  },
+  {
+    "ts": "2026-09-21T16:07:06.280Z",
+    "event": "job.completed",
+    "job": "product-thumbnail-refresh",
+    "durationMs": 1737,
+    "done": false,
+    "role": "maintenance"
+  },
+  {
+    "at": "2026-09-21T16:07:06.281Z",
+    "event": "worker.job",
+    "status": "completed",
+    "role": "maintenance"
+  },
+  {
+    "ts": "2026-09-21T16:07:07.295Z",
+    "event": "product_search.refreshed",
+    "job": "product-search-refresh",
+    "updated": 1,
+    "role": "maintenance"
+  },
+  {
+    "ts": "2026-09-21T16:07:07.300Z",
+    "event": "job.completed",
+    "job": "product-search-refresh",
+    "durationMs": 1019,
+    "done": true,
+    "role": "maintenance"
+  },
+  {
+    "at": "2026-09-21T16:07:07.300Z",
+    "event": "worker.job",
+    "status": "completed",
+    "role": "maintenance"
+  },
+  {
+    "ts": "2026-09-21T16:07:07.478Z",
+    "event": "evidence.github_refresh",
+    "job": "product-evidence-refresh",
+    "sourceKind": "repository",
+    "outcome": "not_modified",
+    "httpClass": "304",
+    "count": 0,
+    "role": "crawler"
+  },
+  {
+    "ts": "2026-09-21T16:07:07.489Z",
+    "event": "evidence.source_refresh",
+    "job": "product-evidence-refresh",
+    "durationMs": 2031,
+    "sourceKind": "repository",
+    "outcome": "succeeded",
+    "httpClass": "not_modified",
+    "factsChanged": 0,
+    "eventsInserted": 0,
+    "mediaInserted": 0,
+    "role": "crawler"
+  },
+  {
+    "ts": "2026-09-21T16:07:09.639Z",
+    "event": "evidence.github_refresh",
+    "job": "product-evidence-refresh",
+    "sourceKind": "repository",
+    "outcome": "not_modified",
+    "httpClass": "304",
+    "count": 0,
+    "role": "crawler"
+  },
+  {
+    "ts": "2026-09-21T16:07:09.649Z",
+    "event": "evidence.source_refresh",
+    "job": "product-evidence-refresh",
+    "durationMs": 2152,
+    "sourceKind": "repository",
+    "outcome": "succeeded",
+    "httpClass": "not_modified",
+    "factsChanged": 0,
+    "eventsInserted": 0,
+    "mediaInserted": 0,
+    "role": "crawler"
+  },
+  {
+    "ts": "2026-09-21T16:07:09.651Z",
+    "event": "evidence.refresh_batch",
+    "job": "product-evidence-refresh",
+    "attempted": 14,
+    "succeeded": 14,
+    "failed": 0,
+    "factsChanged": 6,
+    "eventsInserted": 7,
+    "mediaInserted": 0,
+    "role": "crawler"
+  },
+  {
+    "ts": "2026-09-21T16:07:09.658Z",
+    "event": "job.completed",
+    "job": "product-evidence-refresh",
+    "durationMs": 25016,
+    "done": false,
+    "role": "crawler"
+  },
+  {
+    "at": "2026-09-21T16:07:09.658Z",
+    "event": "worker.job",
+    "status": "completed",
+    "role": "crawler"
+  },
+  {
+    "at": "2026-09-21T16:07:11.069Z",
+    "event": "scheduler.tick",
+    "requested": 0,
+    "role": "scheduler"
+  },
+  {
+    "ts": "2026-09-21T16:07:13.143Z",
+    "event": "translate.done",
+    "job": "reason-translate",
+    "translated": 1,
+    "failed": 0,
+    "drained": true,
+    "role": "text"
+  },
+  {
+    "ts": "2026-09-21T16:07:13.150Z",
+    "event": "job.completed",
+    "job": "reason-translate",
+    "durationMs": 11535,
+    "done": true,
+    "role": "text"
+  },
+  {
+    "at": "2026-09-21T16:07:13.150Z",
+    "event": "worker.job",
+    "status": "completed",
+    "role": "text"
+  },
+  {
+    "ts": "2026-09-21T16:07:18.091Z",
+    "event": "agent_evidence.scanned",
+    "job": "agent-evidence-refresh",
+    "state": "partial",
+    "repositoryKey": "hraness/message-like-me",
+    "scanId": 65735,
+    "observations": 5,
+    "cached": false,
+    "role": "crawler"
+  },
+  {
+    "ts": "2026-09-21T16:07:20.736Z",
+    "event": "agent_evidence.scanned",
+    "job": "agent-evidence-refresh",
+    "state": "complete",
+    "repositoryKey": "akshaydighegithub/emotion",
+    "scanId": 50967,
+    "observations": 1,
+    "cached": false,
+    "role": "crawler"
+  },
+  {
+    "at": "2026-09-21T16:07:21.167Z",
+    "event": "scheduler.tick",
+    "requested": 1,
+    "role": "scheduler"
+  },
+  {
+    "ts": "2026-09-21T16:07:22.697Z",
+    "event": "agent_evidence.scanned",
+    "job": "agent-evidence-refresh",
+    "state": "complete",
+    "repositoryKey": "alan20111/evalua-facil",
+    "scanId": 48824,
+    "observations": 5,
+    "cached": false,
+    "role": "crawler"
+  },
+  {
+    "ts": "2026-09-21T16:07:23.444Z",
+    "event": "job.completed",
+    "job": "agent-evidence-refresh",
+    "durationMs": 13785,
+    "done": false,
+    "role": "crawler"
+  },
+  {
+    "at": "2026-09-21T16:07:23.444Z",
+    "event": "worker.job",
+    "status": "completed",
+    "role": "crawler"
+  },
+  {
+    "ts": "2026-09-21T16:07:24.843Z",
+    "event": "crawl.second_reviewed",
+    "job": "second-review",
+    "enqueued": 0,
+    "closed": 0,
+    "reviewed": 0,
+    "failed": 0,
+    "deferred": 0,
+    "role": "reviewer"
+  },
+  {
+    "ts": "2026-09-21T16:07:24.850Z",
+    "event": "job.completed",
+    "job": "second-review",
+    "durationMs": 226,
+    "done": true,
+    "role": "reviewer"
+  },
+  {
+    "at": "2026-09-21T16:07:24.850Z",
+    "event": "worker.job",
+    "status": "completed",
+    "role": "reviewer"
+  },
+  {
+    "at": "2026-09-21T16:07:31.259Z",
+    "event": "scheduler.tick",
+    "requested": 0,
+    "role": "scheduler"
+  },
+  {
+    "at": "2026-09-21T16:07:41.369Z",
+    "event": "scheduler.tick",
+    "requested": 8,
+    "role": "scheduler"
+  },
+  {
+    "ts": "2026-09-21T16:07:43.254Z",
+    "event": "tagline.done",
+    "job": "crawl-tagline",
+    "written": 0,
+    "empty": 0,
+    "failed": 0,
+    "released": 0,
+    "drained": true,
+    "role": "text"
+  },
+  {
+    "ts": "2026-09-21T16:07:43.265Z",
+    "event": "job.completed",
+    "job": "crawl-tagline",
+    "durationMs": 31,
+    "done": true,
+    "role": "text"
+  },
+  {
+    "at": "2026-09-21T16:07:43.266Z",
+    "event": "worker.job",
+    "status": "completed",
+    "role": "text"
+  },
+  {
+    "ts": "2026-09-21T16:07:43.521Z",
+    "event": "crawl.fetched",
+    "job": "crawl-fetch",
+    "fetched": 0,
+    "skipped": 0,
+    "failed": 0,
+    "drained": true,
+    "role": "crawler"
+  },
+  {
+    "ts": "2026-09-21T16:07:43.533Z",
+    "event": "job.completed",
+    "job": "crawl-fetch",
+    "durationMs": 36,
+    "done": true,
+    "role": "crawler"
+  },
+  {
+    "at": "2026-09-21T16:07:43.533Z",
+    "event": "worker.job",
+    "status": "completed",
+    "role": "crawler"
+  },
+  {
+    "ts": "2026-09-21T16:07:45.059Z",
+    "event": "crawl.judged",
+    "job": "crawl-judge",
+    "judged": 0,
+    "drained": true,
+    "role": "reviewer"
+  },
+  {
+    "ts": "2026-09-21T16:07:45.075Z",
+    "event": "job.completed",
+    "job": "crawl-judge",
+    "durationMs": 166,
+    "done": true,
+    "role": "reviewer"
+  },
+  {
+    "at": "2026-09-21T16:07:45.075Z",
+    "event": "worker.job",
+    "status": "completed",
+    "role": "reviewer"
+  },
+  {
+    "ts": "2026-09-21T16:07:45.197Z",
+    "at": "2026-09-21T16:07:45.197Z",
+    "event": "review.pipeline",
+    "kind": "queue",
+    "stage": "first",
+    "candidateId": 31546,
+    "firstAttemptId": 30434,
+    "job": "crawl-agent-review",
+    "runId": "17197",
+    "waitMs": 243578693,
+    "provider": "abcllm",
+    "model": "[MLX] gpt-oss-120b",
+    "version": 1,
+    "role": "reviewer"
+  },
+  {
+    "ts": "2026-09-21T16:07:45.197Z",
+    "at": "2026-09-21T16:07:45.197Z",
+    "event": "review.pipeline",
+    "kind": "model_start",
+    "stage": "first",
+    "candidateId": 31546,
+    "firstAttemptId": 30434,
+    "job": "crawl-agent-review",
+    "runId": "17197",
+    "callId": "1caaac98-140f-4648-a623-d40656f4c645",
+    "provider": "abcllm",
+    "model": "[MLX] gpt-oss-120b",
+    "version": 1,
+    "role": "reviewer"
+  },
+  {
+    "ts": "2026-09-21T16:07:45.224Z",
+    "at": "2026-09-21T16:07:45.224Z",
+    "event": "review.pipeline",
+    "kind": "reused",
+    "stage": "first",
+    "candidateId": 29338,
+    "firstAttemptId": 30435,
+    "job": "crawl-agent-review",
+    "runId": "17197",
+    "provider": "abcllm",
+    "model": "[MLX] gpt-oss-120b",
+    "version": 1,
+    "role": "reviewer"
+  },
+  {
+    "ts": "2026-09-21T16:07:45.268Z",
+    "at": "2026-09-21T16:07:45.268Z",
+    "event": "review.pipeline",
+    "kind": "requested",
+    "stage": "first",
+    "candidateId": 29338,
+    "firstAttemptId": 30435,
+    "nextJob": "second-review",
+    "requestedVersion": 11840,
+    "version": 1,
+    "role": "reviewer"
+  },
+  {
+    "ts": "2026-09-21T16:07:45.269Z",
+    "at": "2026-09-21T16:07:45.269Z",
+    "event": "review.pipeline",
+    "kind": "committed",
+    "stage": "first",
+    "candidateId": 29338,
+    "firstAttemptId": 30435,
+    "job": "crawl-agent-review",
+    "runId": "17197",
+    "state": "succeeded",
+    "provider": "abcllm",
+    "model": "[MLX] gpt-oss-120b",
+    "version": 1,
+    "role": "reviewer"
+  },
+  {
+    "ts": "2026-09-21T16:07:45.269Z",
+    "event": "crawl.agent_reviewed",
+    "job": "crawl-agent-review",
+    "state": "succeeded",
+    "provider": "abcllm",
+    "reused": true,
+    "applied": true,
+    "role": "reviewer"
+  },
+  {
+    "ts": "2026-09-21T16:07:45.923Z",
+    "event": "evidence.github_refresh",
+    "job": "product-evidence-refresh",
+    "sourceKind": "repository",
+    "outcome": "not_modified",
+    "httpClass": "304",
+    "count": 0,
+    "role": "crawler"
+  },
+  {
+    "ts": "2026-09-21T16:07:45.937Z",
+    "event": "evidence.source_refresh",
+    "job": "product-evidence-refresh",
+    "durationMs": 2332,
+    "sourceKind": "repository",
+    "outcome": "succeeded",
+    "httpClass": "not_modified",
+    "factsChanged": 0,
+    "eventsInserted": 0,
+    "mediaInserted": 0,
+    "role": "crawler"
+  },
+  {
+    "ts": "2026-09-21T16:07:46.755Z",
+    "event": "crawl.publish_done",
+    "job": "crawl-publish",
+    "published": 0,
+    "skipped": 0,
+    "drained": true,
+    "role": "publisher"
+  },
+  {
+    "ts": "2026-09-21T16:07:46.763Z",
+    "event": "job.completed",
+    "job": "crawl-publish",
+    "durationMs": 1360,
+    "done": true,
+    "role": "publisher"
+  },
+  {
+    "at": "2026-09-21T16:07:46.763Z",
+    "event": "worker.job",
+    "status": "completed",
+    "role": "publisher"
+  },
+  {
+    "ts": "2026-09-21T16:07:48.180Z",
+    "event": "evidence.github_refresh",
+    "job": "product-evidence-refresh",
+    "sourceKind": "repository",
+    "outcome": "not_modified",
+    "httpClass": "304",
+    "count": 0,
+    "role": "crawler"
+  },
+  {
+    "ts": "2026-09-21T16:07:48.191Z",
+    "event": "evidence.source_refresh",
+    "job": "product-evidence-refresh",
+    "durationMs": 2244,
+    "sourceKind": "repository",
+    "outcome": "succeeded",
+    "httpClass": "not_modified",
+    "factsChanged": 0,
+    "eventsInserted": 0,
+    "mediaInserted": 0,
+    "role": "crawler"
+  },
+  {
+    "ts": "2026-09-21T16:07:48.200Z",
+    "event": "uptime.checked",
+    "job": "uptime-ping",
+    "alive": 15,
+    "down": 0,
+    "role": "maintenance"
+  },
+  {
+    "ts": "2026-09-21T16:07:48.208Z",
+    "event": "job.completed",
+    "job": "uptime-ping",
+    "durationMs": 5825,
+    "done": false,
+    "role": "maintenance"
+  },
+  {
+    "at": "2026-09-21T16:07:48.208Z",
+    "event": "worker.job",
+    "status": "completed",
+    "role": "maintenance"
+  },
+  {
+    "ts": "2026-09-21T16:07:49.996Z",
+    "event": "evidence.github_refresh",
+    "job": "product-evidence-refresh",
+    "sourceKind": "repository",
+    "outcome": "updated",
+    "httpClass": "200",
+    "count": 1,
+    "role": "crawler"
+  },
+  {
+    "ts": "2026-09-21T16:07:50.005Z",
+    "event": "evidence.source_refresh",
+    "job": "product-evidence-refresh",
+    "durationMs": 1806,
+    "sourceKind": "repository",
+    "outcome": "succeeded",
+    "httpClass": "ok",
+    "factsChanged": 1,
+    "eventsInserted": 1,
+    "mediaInserted": 0,
+    "role": "crawler"
+  },
+  {
+    "ts": "2026-09-21T16:07:51.259Z",
+    "event": "evidence.github_refresh",
+    "job": "product-evidence-refresh",
+    "sourceKind": "repository",
+    "outcome": "updated",
+    "httpClass": "200",
+    "count": 0,
+    "role": "crawler"
+  },
+  {
+    "ts": "2026-09-21T16:07:51.272Z",
+    "event": "evidence.source_refresh",
+    "job": "product-evidence-refresh",
+    "durationMs": 1258,
+    "sourceKind": "repository",
+    "outcome": "succeeded",
+    "httpClass": "ok",
+    "factsChanged": 1,
+    "eventsInserted": 0,
+    "mediaInserted": 0,
+    "role": "crawler"
+  },
+  {
+    "ts": "2026-09-21T16:07:51.300Z",
+    "at": "2026-09-21T16:07:51.300Z",
+    "event": "review.pipeline",
+    "kind": "model_end",
+    "stage": "first",
+    "candidateId": 31546,
+    "firstAttemptId": 30434,
+    "job": "crawl-agent-review",
+    "runId": "17197",
+    "callId": "1caaac98-140f-4648-a623-d40656f4c645",
+    "durationMs": 6102.645347999991,
+    "ok": false,
+    "provider": "abcllm",
+    "model": "[MLX] gpt-oss-120b",
+    "error": "invalid_output",
+    "version": 1,
+    "role": "reviewer"
+  },
+  {
+    "ts": "2026-09-21T16:07:51.332Z",
+    "at": "2026-09-21T16:07:51.332Z",
+    "event": "review.pipeline",
+    "kind": "committed",
+    "stage": "first",
+    "candidateId": 31546,
+    "firstAttemptId": 30434,
+    "job": "crawl-agent-review",
+    "runId": "17197",
+    "state": "failed",
+    "provider": "abcllm",
+    "model": "[MLX] gpt-oss-120b",
+    "version": 1,
+    "role": "reviewer"
+  },
+  {
+    "ts": "2026-09-21T16:07:51.332Z",
+    "event": "crawl.agent_reviewed",
+    "job": "crawl-agent-review",
+    "state": "failed",
+    "provider": "abcllm",
+    "error": "invalid_output",
+    "applied": false,
+    "role": "reviewer"
+  },
+  {
+    "ts": "2026-09-21T16:07:51.339Z",
+    "event": "job.completed",
+    "job": "crawl-agent-review",
+    "durationMs": 6264,
+    "done": false,
+    "role": "reviewer"
+  },
+  {
+    "at": "2026-09-21T16:07:51.339Z",
+    "event": "worker.job",
+    "status": "completed",
+    "role": "reviewer"
+  },
+  {
+    "at": "2026-09-21T16:07:51.473Z",
+    "event": "scheduler.tick",
+    "requested": 1,
+    "role": "scheduler"
+  },
+  {
+    "ts": "2026-09-21T16:07:52.507Z",
+    "event": "evidence.github_refresh",
+    "job": "product-evidence-refresh",
+    "sourceKind": "repository",
+    "outcome": "updated",
+    "httpClass": "200",
+    "count": 0,
+    "role": "crawler"
+  },
+  {
+    "ts": "2026-09-21T16:07:52.519Z",
+    "event": "evidence.source_refresh",
+    "job": "product-evidence-refresh",
+    "durationMs": 1237,
+    "sourceKind": "repository",
+    "outcome": "succeeded",
+    "httpClass": "ok",
+    "factsChanged": 1,
+    "eventsInserted": 0,
+    "mediaInserted": 0,
+    "role": "crawler"
+  },
+  {
+    "ts": "2026-09-21T16:07:53.733Z",
+    "event": "evidence.github_refresh",
+    "job": "product-evidence-refresh",
+    "sourceKind": "repository",
+    "outcome": "updated",
+    "httpClass": "200",
+    "count": 0,
+    "role": "crawler"
+  },
+  {
+    "ts": "2026-09-21T16:07:53.753Z",
+    "event": "evidence.source_refresh",
+    "job": "product-evidence-refresh",
+    "durationMs": 1224,
+    "sourceKind": "repository",
+    "outcome": "succeeded",
+    "httpClass": "ok",
+    "factsChanged": 1,
+    "eventsInserted": 0,
+    "mediaInserted": 0,
+    "role": "crawler"
+  },
+  {
+    "ts": "2026-09-21T16:07:54.915Z",
+    "event": "evidence.github_refresh",
+    "job": "product-evidence-refresh",
+    "sourceKind": "repository",
+    "outcome": "updated",
+    "httpClass": "200",
+    "count": 0,
+    "role": "crawler"
+  },
+  {
+    "ts": "2026-09-21T16:07:54.932Z",
+    "event": "evidence.source_refresh",
+    "job": "product-evidence-refresh",
+    "durationMs": 1165,
+    "sourceKind": "repository",
+    "outcome": "succeeded",
+    "httpClass": "ok",
+    "factsChanged": 1,
+    "eventsInserted": 0,
+    "mediaInserted": 0,
+    "role": "crawler"
+  },
+  {
+    "ts": "2026-09-21T16:07:56.322Z",
+    "event": "evidence.github_refresh",
+    "job": "product-evidence-refresh",
+    "sourceKind": "repository",
+    "outcome": "not_modified",
+    "httpClass": "304",
+    "count": 0,
+    "role": "crawler"
+  },
+  {
+    "ts": "2026-09-21T16:07:56.339Z",
+    "event": "evidence.source_refresh",
+    "job": "product-evidence-refresh",
+    "durationMs": 1392,
+    "sourceKind": "repository",
+    "outcome": "succeeded",
+    "httpClass": "not_modified",
+    "factsChanged": 0,
+    "eventsInserted": 0,
+    "mediaInserted": 0,
+    "role": "crawler"
+  },
+  {
+    "ts": "2026-09-21T16:07:56.615Z",
+    "at": "2026-09-21T16:07:56.615Z",
+    "event": "review.pipeline",
+    "kind": "queue",
+    "stage": "second",
+    "candidateId": 29338,
+    "firstAttemptId": 30435,
+    "secondReviewId": 82832,
+    "job": "second-review",
+    "runId": "11840",
+    "waitMs": 190,
+    "provider": "abcllm",
+    "model": "[MLX] qwen3.6-35b-heretic",
+    "version": 1,
+    "role": "reviewer"
+  },
+  {
+    "ts": "2026-09-21T16:07:56.615Z",
+    "at": "2026-09-21T16:07:56.615Z",
+    "event": "review.pipeline",
+    "kind": "model_start",
+    "stage": "second",
+    "candidateId": 29338,
+    "firstAttemptId": 30435,
+    "secondReviewId": 82832,
+    "job": "second-review",
+    "runId": "11840",
+    "callId": "cfe62923-5bec-4d4e-8554-49665d874455",
+    "provider": "abcllm",
+    "model": "[MLX] qwen3.6-35b-heretic",
+    "version": 1,
+    "role": "reviewer"
+  },
+  {
+    "ts": "2026-09-21T16:07:58.476Z",
+    "event": "evidence.github_refresh",
+    "job": "product-evidence-refresh",
+    "sourceKind": "repository",
+    "outcome": "updated",
+    "httpClass": "200",
+    "count": 0,
+    "role": "crawler"
+  },
+  {
+    "ts": "2026-09-21T16:07:58.488Z",
+    "event": "evidence.source_refresh",
+    "job": "product-evidence-refresh",
+    "durationMs": 2139,
+    "sourceKind": "repository",
+    "outcome": "succeeded",
+    "httpClass": "ok",
+    "factsChanged": 1,
+    "eventsInserted": 0,
+    "mediaInserted": 0,
+    "role": "crawler"
+  },
+  {
+    "ts": "2026-09-21T16:07:59.763Z",
+    "event": "evidence.github_refresh",
+    "job": "product-evidence-refresh",
+    "sourceKind": "repository",
+    "outcome": "updated",
+    "httpClass": "200",
+    "count": 0,
+    "role": "crawler"
+  },
+  {
+    "ts": "2026-09-21T16:07:59.772Z",
+    "event": "evidence.source_refresh",
+    "job": "product-evidence-refresh",
+    "durationMs": 1273,
+    "sourceKind": "repository",
+    "outcome": "succeeded",
+    "httpClass": "ok",
+    "factsChanged": 1,
+    "eventsInserted": 0,
+    "mediaInserted": 0,
+    "role": "crawler"
+  }
+]
