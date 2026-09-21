@@ -57,3 +57,24 @@ it("does not retain executable or credential-bearing destinations", () => {
   expect(text).not.toContain('javascript:');
   expect(text).not.toContain('user:pass');
 });
+
+// A split emoji in the 3,000-code-unit sample made PostgreSQL JSONB reject an entire review tick.
+it("keeps a truncated README valid Unicode without removing complete emoji", () => {
+  const text = "🐍" + "a".repeat(README_SAMPLE_LIMIT - 3) + "😀";
+  const sampled = readmeText(text);
+  expect(sampled).toBe("🐍" + "a".repeat(README_SAMPLE_LIMIT - 3));
+  expect(sampled).not.toMatch(/\p{Cs}/u);
+});
+it("also protects both boundaries of an installation excerpt", () => {
+  const marker = "\n\n[README 설치·사용 부분 발췌]\n";
+  const tailSize = Math.floor(README_SAMPLE_LIMIT * 0.4);
+  const headSize = README_SAMPLE_LIMIT - tailSize - marker.length;
+  const heading = "Installation\n";
+  const text = "a".repeat(headSize - 1) + "😀" + "b".repeat(500) + "\n## " + heading
+    + "c".repeat(tailSize - heading.length - 1) + "😀" + "tail";
+  const sampled = readmeText(text);
+  expect(sampled).toContain(marker);
+  expect(sampled).toContain(heading);
+  expect(sampled).not.toMatch(/\p{Cs}/u);
+  expect(sampled.length).toBeLessThanOrEqual(README_SAMPLE_LIMIT);
+});

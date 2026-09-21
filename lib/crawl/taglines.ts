@@ -24,7 +24,7 @@ export type TaglineTask = { candidate: CrawlCandidate; document: CrawlDocument; 
  * 소개가 없어 발행이 멈춘 자동 후보만이다(사람이 본 것은 사람의 결정이다). 다시 집는 경우는 셋 —
  * 아직 한 번도 안 지었거나, 실패가 다시 볼 때가 됐거나, **지은 뒤에 원본이 바뀌었거나**.
  * 세 번째가 있어야 "증거로는 알 수 없다"(빈 줄)로 남은 후보가 페이지가 바뀌었을 때 다시 불린다.
- * 원본이 그대로면 잡이 해시를 보고 부르지 않고 넘어간다(touchTagline).
+ * 원본이 그대로면 잡이 해시를 보고 부르지 않고 넘어간다(recordTaglineResult의 reuse).
  */
 export async function pendingTaglines(limit: number): Promise<TaglineTask[]> {
   const rows = await db.select({ candidate: crawlCandidates, document: crawlDocuments, written: crawlTaglines })

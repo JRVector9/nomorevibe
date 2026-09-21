@@ -1,3 +1,78 @@
+# 운영 배포 진행 — 2026-09-21 15:15 KST
+
+사용자가 배포를 명시 승인했다. prod/land-and-deploy 적용, 추가 확인 불필요. 기존 운영8앱의 autoDeploy를 일시 false로 변경(모두 원래true); 반드시 완료 후 복원. 원래 상태는 /tmp/nmv-speed-app-configs.json, 배포 전 상태 /tmp/nmv-speed-predeploy-status.json. API키는 Keychain에서 읽고 curl --config stdin으로만 전달; payload/env도 stdin. 새 도구 /tmp/nmv-speed-dokploy.py. 기존 /tmp/nmv-installable-web.env는 private, 절대 출력 금지.
+
+- PR161/162 병합 완료,163 병합 요청(session51861). merge commit 방식으로 ancestry 보존하며 다음 PR base를main으로 순차 변경. PR164/165/166남음. 자동 배포는 아직 꺼져 있으므로 운영은이전678380c.
+- 발견/보완1: 운영Swarm ContainerSpec.Init=null. Dockerfile worker에 tini 추가 +ENTRYPOINT. 기존 Dokploy custom command는 image ENTRYPOINT를 덮으므로 deployment config에서도 /sbin/tini -- prefix 필요. tini 이미지 로컬 buildPASS, --init 없이 text 컨테이너 healthy/restart0/SIGTERM exit0/PID자식정리PASS. 이미지 nomorevibe-worker:review-speed-init-20260921.
+- 발견/보완2: 현재1차 job README저장오류로 막힘. 실제 Starlitnightly/omicverse README3000자 끝d83d/ill-formed, local JSONB22P02 재현. readme.ts의 두 truncation 뒤 lone surrogate만제거; 완전이모지/길이/정책/표본버전유지. 새2회귀RED→GREEN, 관련40PASS, 타입/lintPASS. 실제문서2999/wellformed/localJSONB성공.
+- 수정중: Dockerfile,lib/crawl/readme.ts,tests/crawl-readme.test.ts,문서. PR166에추가커밋후CI완료기다릴것. fullunit session12291,새text앱설정 session27999. 다른영역 앱코드변경없음.
+- 새text는source publisher의DB/API키만전달,role=text,instance=m3-text,pool3,512MiB/CPU1,stop-first,grace60초,autoDeployfalse. /tmp/nmv-speed-text-app.json에id; 아직deploy하지않음. create-text는idempotent.
+- 운영자원: M3호스트여유; DB max150현재총103/app6. reviewer실제pool12(문서기본3과다름), 유지. 새text pool3추가. 기존runbook31합계는실제운영40→43으로수정필요.
+- 기준선: .crawl-samples/review-speed/production-metrics.mjs read-only transaction. 최초timestamp withouttimezone 파싱으로9시간어긋난측정폐기; DB에서UTC문자열로반환하도록수정. 정상최근30분1차/2차/발행0,1차오류있음. /tmp/nmv-speed-baseline-metrics.json. 오류원문대신 boolean+prefix만출력.
+- 다음: unit결과확인,code/docs커밋push→PR166 CI. 순차merge164/165/166→mainCI/트리동일확인. 새commitRELEASE_TAG+webNEXT_DEPLOYMENT_ID를올바르게설정하고workercommand initprefix. 기존publisher drain/교체종료확인후text시작. 두web동일창배포,다른M3역할도교체. Health/sourcehash/jobs/실제모델완료/중복과관문 검증. autoDeploy원복. 아직배포완료라고보고하지말것.
+
+---
+
+# 속도 확인 — 2026-09-21 14:57 KST
+
+- 사용자 요청: 속도 개선되는지 확인. 운영 미배포 사실을 읽기 전용으로 재검증하고 이전/개선 실제 코드 비교 실험 수행.
+- 운영 증거: 6개 worker/container에서 catalog·1차job·판정repository·1차repository·taglinejob 해시 모두 baseline af50608과5/5 일치, 개선 bd4b36d와0/5. PR166 OPEN/미병합. 따라서 운영 단축률 확인 불가. 배포/운영DB/모델API/큐 수정 없음.
+- 비교: 같은 Vitest harness, baseline af50608와 current bd4b36d에 각각3개 테스트 실행하여 모두PASS. 가상 시계·모의 DB·고정 모델 응답. 1차8건/동시성4/10초 응답70→20초; 24초 응답84→53초. 두 버전8건·peak4·모의오류0·timeout24초 동일. 번역30초 중 요청한 발행의 시작 대기34→4초.
+- 한계: 첫 심사는 다른 reviewer 작업 없다고 가정; catalog60초 schedule과5초 poll을 harness에서 재현. 발행은 실제 worker loop로 비교. 네트워크/DB/분류/이미지 지연 미포함. 운영 처리량/오류율/모델 성능 주장 금지.
+- 변경 파일: docs/operations/evaluations/2026-09-21-review-speed/{README.md,before.json,after.json,production-code-check.json,*.txt}, runbook, 이 인계문서. 앱 코드 변경 없음. `.crawl-samples/review-speed/`의 harness는 ignored; .txt 원본으로 재현 가능.
+- 실패한 접근 없음. 전체 CI는 이전 최종 bd4b36d도35565616984에서PASS 확인. 이번 추가 작업은 비교실험3+3개만 실행했다.
+- 남은 일: 161→166 병합/운영 배포 후 신규100건/30분 이상 전후 표본으로 실제 개선 확인. 이번 요청에서 배포하지 않았다.
+- 다음 명령: `gh pr view 166 --json state,mergedAt`; 위 evaluations README의 두 비교 명령. 운영 rollout은 review-pipeline-speed-runbook.md. 기존 unrelated untracked 유지.
+
+---
+
+# CI 완료 기록 — 2026-09-21 14:42 KST
+
+6개 구현 PR161~166 모두 CI 성공. 최종 검증 코드 `5df9bceab7c8a9791b9c144669db2fc96a05a10f`: GitHub 전체 단위141파일1091 PASS, 통합79파일767 PASS, 타입/lint/Next build PASS. 이 기록 후 커밋은 문서만 수정한다. 로컬에서 남았던 단일 구형 기대값 실패도 최종 전체 CI에서 해결 확인.
+
+[#161 CI](https://github.com/JRVector9/nomorevibe/actions/runs/35565100321), [#162 CI](https://github.com/JRVector9/nomorevibe/actions/runs/35565095414), [#163 CI](https://github.com/JRVector9/nomorevibe/actions/runs/35565087150), [#164 CI](https://github.com/JRVector9/nomorevibe/actions/runs/35565091983), [#165 CI](https://github.com/JRVector9/nomorevibe/actions/runs/35565212113), [#166 CI](https://github.com/JRVector9/nomorevibe/actions/runs/35565195009)
+
+현재 구현·재검토·검증·커밋/push·PR 작성 완료. 운영 배포와 운영 전후 지연 실측은 미실시. 다음 작업은 161→166 순서의 검토/병합 및 runbook에 따른 단계 배포다. 추가 모델 호출·재심사·데이터 수정은 수행하지 않았다. `gh pr checks 166` 및 `docs/operations/review-pipeline-speed-runbook.md`로 이어간다.
+
+---
+
+# 최종 구현 인계 — 2026-09-21 심사 대기·텍스트 워커 분리
+
+요청한 코드 구현과 로컬 검증, 커밋/push, 6개 stacked PR 작성 완료. 현재 브랜치 `test/review-speed-release-verification`. 운영 미배포이며 새 text 운영 앱도 아직 만들지 않았다. 아래 이전 단계의 커밋 hash는 unpublished stack 정리 전의 기록이다.
+
+| 단계 | PR | 브랜치 | 현재 커밋 |
+|---|---|---|---|
+| 1 | [#161](https://github.com/JRVector9/nomorevibe/pull/161) | `perf/review-stage-observability` | `107bbb4` |
+| 2 | [#162](https://github.com/JRVector9/nomorevibe/pull/162) | `perf/review-transactional-handoffs` | `4f769c6` |
+| 3 | [#163](https://github.com/JRVector9/nomorevibe/pull/163) | `perf/review-bounded-draining` | `18cfb70` |
+| 4 | [#164](https://github.com/JRVector9/nomorevibe/pull/164) | `fix/fence-text-job-results` | `b248040` |
+| 5 | [#165](https://github.com/JRVector9/nomorevibe/pull/165) | `perf/isolate-text-worker` | `ad5f33b` |
+| 6 | [#166](https://github.com/JRVector9/nomorevibe/pull/166) | `test/review-speed-release-verification` | `76ea50e` |
+
+- 보완: 오프라인 CLI 실행 테스트에서 발견한 CJS top-level await를 async main으로 수정해 PR01에 포함. handoff 동작에 대한 기존 통합 기대값 수정은 PR02로 이동. 이후 스택 rebase 후 최종 트리와 검증한 원래 트리 차이0 확인.
+- 실제 검증: 전체 단위140파일1090 통과 + 추가 CLI 회귀1개/관련5개 통과(고유1091). 통합79파일767 중766 통과, 구형 기대1개 수정 후 해당17 통과; 최종 종료 경계 DB5 통과. 타입/추적+신규lint/Next build/Compose/Docker worker build 통과. text/publisher --init smoke healthy/restart0, 각 소유 잡 실행, SIGTERM supervisor·container exit0.
+- 보호: 원문·정책·모델·fallback·500별 기준·최종 발행 관문 유지. LAYA 운영 호출 없음. 관리자/원본 변경 경합, lease 교체, 종료 이후 응답 쓰기 차단.
+- 문서: `docs/operations/review-pipeline-speed-runbook.md`, 계획 디렉터리 README에 구현/검증/배포 순서. 운영100건/30분 이상 같은 조건 전후 비교가 남아 있으므로 실제 단축률 주장 금지.
+- 환경: 운영키/DB 미사용. 전용 local nomorevibe_test만 사용. 테스트용 stopped smoke 컨테이너4개 및 image는 재현 자료로 남김. unrelated untracked 유지.
+- 남은 일: 각 PR CI 확인, 순서대로 코드 검토/병합, 구형 publisher drain 후 publisher/text 분리 배포, 운영 비교. 현재 자동 병합/배포하지 않음.
+- 다음 명령: `gh pr checks 161`부터 `gh pr checks 166`; `gh pr diff 161`; `git status --short --branch`. 재현 테스트는 운영 문서의 loopback TEST_DATABASE_URL 명령을 사용. 운영 env를 통합 테스트에 넣지 말 것.
+
+---
+
+# 진행 인계 — 2026-09-21 심사 속도 PR06 최종 검증
+
+- 목표: 다음 심사 대기 단축, 제한된 슬롯 재사용, 번역·소개 전용 text 워커, 판정·발행 기준 유지.
+- 현재 브랜치: `test/review-speed-release-verification`; PR01~05 로컬 커밋 완료, 아직 push/PR/운영 배포 없음.
+- PR06: 기준 `af50608` 실제 checkout에서 만든 10개 입력/규칙 fixture, 전용 테스트 DB 주소 guard, 오프라인 검증 CLI, 추가 DB 경합/종료 안전성, 운영 보고서 작성.
+- 최종 리뷰 수정: 1차 claim 중 종료하면 호출하지 않고 취소로 정리; 1·2차 모델 성공 응답이 종료 신호 이후 도착하면 승인 저장 금지.
+- 수정 파일: `lib/crawl/jobs/{agent-review,second-review,tagline,translate-reasons}.ts`, `lib/observability/review-pipeline.ts`, 관련 unit/integration tests, `scripts/{test-database,verify-review-pipeline-speed}.ts`, fixture와 계획/운영 문서. 상세 목록은 git status로 확인.
+- 검증: 최종 전체 단위 140파일/1090 통과(14:27 KST), 1·2차 단위33 통과. 통합 전체79파일/767 중766 통과·옛 batch 요청 기대1개 실패→해당 파일17 통과. 최종 1·2차 DB 통합5 통과. tsc, 추적+신규 소스 lint(기존 경고1), Next build, Compose config, 최종 worker Docker build 통과.
+- 실패 접근: fixture 출력 폴더 누락 수정; raw Date SQL 인자 오류를 ISO timestamp 비교로 수정. 첫 Docker smoke에서 Compose의 init:true 누락으로 종료 exit1; 올바른 --init 실행에서 두 컨테이너 healthy/restart0, worker failures0, supervisor/container exit0 확인.
+- 비밀/운영: 운영 DB/API/env 사용하지 않음. 테스트는 loopback nomorevibe_test만 사용. LAYA 운영 호출 미추가. 사용자 무관 untracked 파일 유지.
+- 최종 CLI 확인: CJS top-level await 오류 재현→async main으로 수정, 실제 subprocess 회귀1개와 계측4개 통과. 고유 단위1091개. 오프라인 CLI 수정/회귀는 PR01로 이동할 것.
+- 남은 일: PR06 커밋. PR02에 agent-review-job/crawl-judge 통합 기대 수정이 포함되도록 미공개 스택 정리 후 6개 브랜치 push 및 stacked PR 작성. 운영 배포·100건/30분 비교는 아직 안 함.
+- 다음 명령: `npm test`; `DATABASE_URL=postgres://nomorevibe:nomorevibe@127.0.0.1:55435/nomorevibe_test node --import tsx .crawl-samples/review-speed/smoke-setup.mts`; text/publisher를 `docker run --init ... nomorevibe-worker:review-speed-20260921 node --import tsx scripts/worker-supervisor.ts --role=text` 방식으로 실행. 상세 배포/검증 명령은 `docs/operations/review-pipeline-speed-runbook.md`.
+
 # Phase 05 update — dedicated text worker implemented
 
 Branch perf/isolate-text-worker; phase04 commit4d79a0f. text owns reason-translate+crawl-tagline serially; publisher only crawl-publish. Catalog/worker parser/supervisor180s/pool3/operations role+UI label/Compose/environment template/runbook wired. Existing translation55s, tagline default25s unchanged. 2new tests RED→GREEN, related7files36PASS, tscPASS. Phase04 final type passed; whitespace EOF warning fixed here. No Dokploy or production environment changed. Phase06 remains full regression, isolated worker container health, safety review, docs and stacked PRs.

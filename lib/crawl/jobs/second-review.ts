@@ -43,51 +43,52 @@ export async function secondReviewCandidates(ctx: JobContext<null>): Promise<Job
 
   const settled = await Promise.allSettled(Array.from({ length: CONCURRENT }, async () => {
     try {
-    for (let row = queue.shift(); row; row = queue.shift()) {
-      if (stopped || ctx.signal?.aborted || visited.has(row.id)) continue;
-      // 누가 볼지는 행에 적혀 있다 — 도중에 설정이 바뀌어도 올릴 때 정한 모델이 그 표를 낸다
-      const provider = row.provider ?? "claude-cli";
-      const model = row.model ?? settings.secondReview.voters[0].model;
-      const limit = provider === "abcllm" ? REVIEW_GATEWAY_TIMEOUT_MS : REVIEW_CLI_TIMEOUT_MS;
-      /*
-       * 남은 시간에 끝낼 수 없는 호출은 시작하지 않는다.
-       *
-       * 잘린 호출은 timeout 으로 적히고 한 시간 뒤에야 다시 본다 — 그냥 다음 틱(1분 뒤)에
-       * 온전한 시간으로 부르는 편이 빠르다.
-       */
-      if (!ctx.hasBudget() || remaining() < limit + 2_000) { deferred += 1; continue; }
-      visited.add(row.id);
-      const input = await loadSecondReviewInput(row);
-      if (!input) {
-        deferred += 1;
-        await recordSecondReview(row.id, { ok: false, error: "input_changed", model, provider }, new Date(), ctx.lease);
-        continue;
+      for (let row = queue.shift(); row; row = queue.shift()) {
+        if (stopped || ctx.signal?.aborted || visited.has(row.id)) continue;
+        // 누가 볼지는 행에 적혀 있다 — 도중에 설정이 바뀌어도 올릴 때 정한 모델이 그 표를 낸다
+        const provider = row.provider ?? "claude-cli";
+        const model = row.model ?? settings.secondReview.voters[0].model;
+        const limit = provider === "abcllm" ? REVIEW_GATEWAY_TIMEOUT_MS : REVIEW_CLI_TIMEOUT_MS;
+        /*
+         * 남은 시간에 끝낼 수 없는 호출은 시작하지 않는다.
+         *
+         * 잘린 호출은 timeout 으로 적히고 한 시간 뒤에야 다시 본다 — 그냥 다음 온전한 틱에
+         * 온전한 시간으로 부르는 편이 빠르다.
+         */
+        if (!ctx.hasBudget() || remaining() < limit + 2_000) { deferred += 1; continue; }
+        visited.add(row.id);
+        const input = await loadSecondReviewInput(row);
+        if (!input) {
+          deferred += 1;
+          await recordSecondReview(row.id, { ok: false, error: "input_changed", model, provider }, new Date(), ctx.lease);
+          continue;
+        }
+        if (stopped || ctx.signal?.aborted || !ctx.hasBudget() || remaining() < limit + 2_000) { deferred++; visited.delete(row.id); continue; }
+        // 멈추라는 신호를 그대로 넘긴다 — 배포 때 진행 중인 호출이 바로 끊겨야 잠금을 놓고 나갈 수 있다
+        const callStartedAt = Date.now();
+        const telemetry = { stage: "second" as const, candidateId: row.candidateId, secondReviewId: row.id,
+          firstAttemptId: row.firstAttemptId ?? undefined, generationKey: row.generationKey,
+          provider, model, job: ctx.lease?.name, runId: String(ctx.lease?.requestedVersion) };
+        if (row.createdAt) emitPipelineEvent("queue", { ...telemetry, waitMs: Date.now() - row.createdAt.getTime() }, ctx.log);
+        const result = await measureReviewCall(telemetry, () => provider === "abcllm"
+          ? reviewWithGateway(input, { model, timeoutMs: limit, signal: ctx.signal })
+          : reviewWithAgent(input, { model, timeoutMs: limit, signal: ctx.signal }), ctx.log);
+        if (ctx.signal?.aborted) { deferred++; continue; }
+        if (!result.ok) {
+          // 멈추라고 해서 끊긴 것은 실패가 아니다 — 그대로 두면 다음 회차가 처음부터 본다
+          if (result.error === "cancelled" || ctx.signal?.aborted) { deferred += 1; continue; }
+          failed += 1;
+          ctx.log("crawl.second_review_failed", { id: row.id, model, error: result.error,
+            detail: result.detail ?? null, durationMs: Date.now() - callStartedAt });
+          await recordSecondReview(row.id, { ok: false, error: result.error, detail: result.detail, model, provider }, new Date(), ctx.lease);
+          continue;
+        }
+        reviewed += 1;
+        const second = { decision: result.outcome.decision, confidence: result.outcome.confidence ?? null, provider, model };
+        await recordSecondReview(row.id, { ok: true, ...second, reason: result.outcome.reason,
+          status: combineVerdicts({ decision: row.firstDecision, confidence: row.firstConfidence, model: row.firstModel },
+            second, settings.secondReview.agreeAt, Boolean(row.publishedSlug)) }, new Date(), ctx.lease);
       }
-      if (stopped || ctx.signal?.aborted || !ctx.hasBudget() || remaining() < limit + 2_000) { deferred++; visited.delete(row.id); continue; }
-      // 멈추라는 신호를 그대로 넘긴다 — 배포 때 진행 중인 호출이 바로 끊겨야 잠금을 놓고 나갈 수 있다
-      const callStartedAt = Date.now();
-      const telemetry = { stage: "second" as const, candidateId: row.candidateId, secondReviewId: row.id,
-        firstAttemptId: row.firstAttemptId ?? undefined, generationKey: row.generationKey,
-        provider, model, job: ctx.lease?.name, runId: String(ctx.lease?.requestedVersion) };
-      if (row.createdAt) emitPipelineEvent("queue", { ...telemetry, waitMs: Date.now() - row.createdAt.getTime() }, ctx.log);
-      const result = await measureReviewCall(telemetry, () => provider === "abcllm"
-        ? reviewWithGateway(input, { model, timeoutMs: limit, signal: ctx.signal })
-        : reviewWithAgent(input, { model, timeoutMs: limit, signal: ctx.signal }), ctx.log);
-      if (!result.ok) {
-        // 멈추라고 해서 끊긴 것은 실패가 아니다 — 그대로 두면 다음 회차가 처음부터 본다
-        if (result.error === "cancelled" || ctx.signal?.aborted) { deferred += 1; continue; }
-        failed += 1;
-        ctx.log("crawl.second_review_failed", { id: row.id, model, error: result.error,
-          detail: result.detail ?? null, durationMs: Date.now() - callStartedAt });
-        await recordSecondReview(row.id, { ok: false, error: result.error, detail: result.detail, model, provider }, new Date(), ctx.lease);
-        continue;
-      }
-      reviewed += 1;
-      const second = { decision: result.outcome.decision, confidence: result.outcome.confidence ?? null, provider, model };
-      await recordSecondReview(row.id, { ok: true, ...second, reason: result.outcome.reason,
-        status: combineVerdicts({ decision: row.firstDecision, confidence: row.firstConfidence, model: row.firstModel },
-          second, settings.secondReview.agreeAt, Boolean(row.publishedSlug)) }, new Date(), ctx.lease);
-    }
     } catch (error) { stopped = true; throw error; }
   }));
   const failure = settled.find(result => result.status === "rejected");

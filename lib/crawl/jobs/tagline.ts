@@ -43,88 +43,88 @@ export async function writeTaglines(ctx: JobContext<null>): Promise<JobOutcome<n
   const ownershipPoll = setInterval(() => { if (!ctx.hasBudget()) controller.abort(); }, 250);
   ownershipPoll.unref?.();
   try {
-  const startedAt = Date.now();
-  const remaining = () => TICK_MS - (Date.now() - startedAt);
-  let written = 0, empty = 0, failed = 0, released = 0, blocked = "", inARow = 0;
+    const startedAt = Date.now();
+    const remaining = () => TICK_MS - (Date.now() - startedAt);
+    let written = 0, empty = 0, failed = 0, released = 0, blocked = "", inARow = 0;
 
-  while (!signal.aborted && ctx.hasBudget() && remaining() >= MIN_CALL_MS) {
-    const tasks = await pendingTaglines(BATCH);
-    if (tasks.length === 0) {
-      ctx.log("tagline.done", { written, empty, failed, released, drained: true });
-      return { done: true };
-    }
-
-    let next = 0;
-    const settled = await Promise.allSettled(Array.from({ length: CONCURRENCY }, async () => {
-      try {
-      for (let index = next++; index < tasks.length; index = next++) {
-        if (blocked || signal.aborted || !ctx.hasBudget() || remaining() < MIN_CALL_MS) return;
-        const task = tasks[index];
-        const { candidate, document, written: stored } = task;
-        const evidence = taglineEvidence(candidate.repo, document);
-        const sourceHash = taglineHash(evidence);
-
-        /**
-         * 다시 긁혔지만 내용은 그대로다 — 본 판만 새로 적고 넘어간다.
-         *
-         * 실패한 줄은 여기서 넘기면 안 된다. 실패도 그때 본 원본의 해시를 남기므로, 해시만 보고
-         * 건너뛰면 다시 볼 시각이 지나도 영영 다시 묻지 않는다 — 프로드에서 게이트웨이 502 를 만난
-         * 7건이 90분 동안 시도 1회에 멈춘 채 대기열을 차지했다(2026-09-20).
-         */
-        if (stored && stored.sourceHash === sourceHash && !stored.errorCode) {
-          const saved = await recordTaglineResult(task, lease, { kind: "reuse" });
-          if (saved.released) released++;
-          if (!saved.stored) return;
-          continue;
-        }
-        // 읽을 글이 아무 데도 없다. 모델을 불러도 지을 수 없으므로 사람에게 남긴다
-        if (!evidence.pageText && !evidence.readme && !evidence.pageTitle) {
-          const saved = await recordTaglineResult(task, lease, { kind: "success", tagline: "", source: "page", model: "" });
-          if (!saved.stored) return;
-          empty++;
-          continue;
-        }
-
-        const ask = () => writeTagline(evidence, { signal, timeoutMs: Math.max(1_000, Math.min(CALL_MS, remaining() - 1_000)) });
-        let result = await ask();
-        /**
-         * 빈 줄("증거로는 무엇인지 알 수 없다")은 흔들리는 답이다 — 같은 증거로 다시 물으면 멀쩡한
-         * 줄이 오는 때가 14건 중 3~4건이었다(2026-09-20 프로드 실측, 온도 0인데도 그렇다).
-         * 한 번만 더 묻는다. 두 번 다 빈 줄이면 그 후보는 사람이 본다.
-         */
-        if (result.ok && !result.tagline && !signal.aborted && ctx.hasBudget() && remaining() >= MIN_CALL_MS) result = await ask();
-        if (signal.aborted) return;
-        if (!result.ok) {
-          const saved = await recordTaglineResult(task, lease, { kind: "failure", error: result.error });
-          if (!saved.stored) return;
-          failed++;
-          /**
-           * 한 건의 실패로 틱을 접지 않는다 — 같은 증거에만 502 를 돌려주는 후보가 있어
-           * (긴 페이지 글) 그 한 건이 나머지의 차례까지 막았다. 잇따라 둘이 실패하면 그때 접는다.
-           */
-          if (GATEWAY_DOWN.has(result.error) || result.error.startsWith("http_5")) {
-            if (++inARow >= 2) blocked = result.error;
-          }
-          continue;
-        }
-        inARow = 0;
-        const saved = await recordTaglineResult(task, lease, { kind: "success", tagline: result.tagline, source: result.source, model: TAGLINE_MODEL });
-        if (!saved.stored) return;
-        if (!result.tagline) { empty++; continue; }
-        written++;
-        if (saved.released) released++;
+    while (!signal.aborted && ctx.hasBudget() && remaining() >= MIN_CALL_MS) {
+      const tasks = await pendingTaglines(BATCH);
+      if (tasks.length === 0) {
+        ctx.log("tagline.done", { written, empty, failed, released, drained: true });
+        return { done: true };
       }
-      } catch (error) { blocked = "result_write_failed"; controller.abort(); throw error; }
-    }));
-    const failure = settled.find(result => result.status === "rejected");
-    if (failure) throw failure.reason;
-    if (blocked) {
-      ctx.log("tagline.gateway_blocked", { error: blocked, written, empty, failed, released });
-      return { done: true };
-    }
-  }
 
-  ctx.log("tagline.done", { written, empty, failed, released, drained: false });
-  return { done: false };
+      let next = 0;
+      const settled = await Promise.allSettled(Array.from({ length: CONCURRENCY }, async () => {
+        try {
+          for (let index = next++; index < tasks.length; index = next++) {
+            if (blocked || signal.aborted || !ctx.hasBudget() || remaining() < MIN_CALL_MS) return;
+            const task = tasks[index];
+            const { candidate, document, written: stored } = task;
+            const evidence = taglineEvidence(candidate.repo, document);
+            const sourceHash = taglineHash(evidence);
+
+            /**
+             * 다시 긁혔지만 내용은 그대로다 — 본 판만 새로 적고 넘어간다.
+             *
+             * 실패한 줄은 여기서 넘기면 안 된다. 실패도 그때 본 원본의 해시를 남기므로, 해시만 보고
+             * 건너뛰면 다시 볼 시각이 지나도 영영 다시 묻지 않는다 — 프로드에서 게이트웨이 502 를 만난
+             * 7건이 90분 동안 시도 1회에 멈춘 채 대기열을 차지했다(2026-09-20).
+             */
+            if (stored && stored.sourceHash === sourceHash && !stored.errorCode) {
+              const saved = await recordTaglineResult(task, lease, { kind: "reuse" });
+              if (saved.released) released++;
+              if (!saved.stored) return;
+              continue;
+            }
+            // 읽을 글이 아무 데도 없다. 모델을 불러도 지을 수 없으므로 사람에게 남긴다
+            if (!evidence.pageText && !evidence.readme && !evidence.pageTitle) {
+              const saved = await recordTaglineResult(task, lease, { kind: "success", tagline: "", source: "page", model: "" });
+              if (!saved.stored) return;
+              empty++;
+              continue;
+            }
+
+            const ask = () => writeTagline(evidence, { signal, timeoutMs: Math.max(1_000, Math.min(CALL_MS, remaining() - 1_000)) });
+            let result = await ask();
+            /**
+             * 빈 줄("증거로는 무엇인지 알 수 없다")은 흔들리는 답이다 — 같은 증거로 다시 물으면 멀쩡한
+             * 줄이 오는 때가 14건 중 3~4건이었다(2026-09-20 프로드 실측, 온도 0인데도 그렇다).
+             * 한 번만 더 묻는다. 두 번 다 빈 줄이면 그 후보는 사람이 본다.
+             */
+            if (result.ok && !result.tagline && !signal.aborted && ctx.hasBudget() && remaining() >= MIN_CALL_MS) result = await ask();
+            if (signal.aborted) return;
+            if (!result.ok) {
+              const saved = await recordTaglineResult(task, lease, { kind: "failure", error: result.error });
+              if (!saved.stored) return;
+              failed++;
+              /**
+               * 한 건의 실패로 틱을 접지 않는다 — 같은 증거에만 502 를 돌려주는 후보가 있어
+               * (긴 페이지 글) 그 한 건이 나머지의 차례까지 막았다. 잇따라 둘이 실패하면 그때 접는다.
+               */
+              if (GATEWAY_DOWN.has(result.error) || result.error.startsWith("http_5")) {
+                if (++inARow >= 2) blocked = result.error;
+              }
+              continue;
+            }
+            inARow = 0;
+            const saved = await recordTaglineResult(task, lease, { kind: "success", tagline: result.tagline, source: result.source, model: TAGLINE_MODEL });
+            if (!saved.stored) return;
+            if (!result.tagline) { empty++; continue; }
+            written++;
+            if (saved.released) released++;
+          }
+        } catch (error) { blocked = "result_write_failed"; controller.abort(); throw error; }
+      }));
+      const failure = settled.find(result => result.status === "rejected");
+      if (failure) throw failure.reason;
+      if (blocked) {
+        ctx.log("tagline.gateway_blocked", { error: blocked, written, empty, failed, released });
+        return { done: true };
+      }
+    }
+
+    ctx.log("tagline.done", { written, empty, failed, released, drained: false });
+    return { done: false };
   } finally { clearInterval(ownershipPoll); }
 }

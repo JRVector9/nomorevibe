@@ -61,5 +61,21 @@ export function summarizePipelineEvents(events: Record<string, unknown>[]) {
       incomplete: [...started].filter(id => !ends.has(id)).length,
       modelMs: distribution([...ends.values()].map(row => row.durationMs as number)), queueMs: distribution(waits) }];
   })) as Record<Stage, { calls: number; failed: number; reused: number; committed: number; incomplete: number; modelMs: ReturnType<typeof distribution>; queueMs: ReturnType<typeof distribution> }>;
-  return { ...stages, clockAnomalies, clock: "application_utc; queue timestamps originate in DB; host skew not corrected", unobserved: "unknown" };
+  const firstCommits = new Map<number, number>();
+  const handoffs: number[] = [];
+  for (const row of events) {
+    if (row.version === 1 && row.stage === "first" && row.kind === "committed" && row.state === "succeeded"
+      && typeof row.firstAttemptId === "number" && typeof row.at === "string") {
+      const at = Date.parse(row.at);
+      if (Number.isFinite(at)) firstCommits.set(row.firstAttemptId, at);
+    }
+  }
+  for (const row of events) {
+    if (row.version !== 1 || row.stage !== "second" || row.kind !== "model_start"
+      || typeof row.firstAttemptId !== "number" || typeof row.at !== "string") continue;
+    const from = firstCommits.get(row.firstAttemptId), to = Date.parse(row.at);
+    if (from === undefined || !Number.isFinite(to)) continue;
+    if (to < from) clockAnomalies++; else handoffs.push(to - from);
+  }
+  return { ...stages, firstToSecondMs: distribution(handoffs), clockAnomalies, clock: "application_utc; queue timestamps originate in DB; host skew not corrected", unobserved: "unknown" };
 }

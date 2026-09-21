@@ -51,9 +51,11 @@ export function readmeText(markdown: string, limit = README_SAMPLE_LIMIT): strin
   if (text.length > limit && heading && limit >= 200) {
     const marker = "\n\n[README 설치·사용 부분 발췌]\n";
     const tailSize = Math.floor(limit * 0.4);
-    return text.slice(0, limit - tailSize - marker.length) + marker + text.slice(heading.index, heading.index + tailSize);
+    // UTF-16 slicing can split an emoji at either excerpt boundary. JSONB rejects lone surrogates.
+    return (text.slice(0, limit - tailSize - marker.length) + marker + text.slice(heading.index, heading.index + tailSize))
+      .replace(/\p{Cs}/gu, "");
   }
-  return text.slice(0, limit);
+  return text.slice(0, limit).replace(/\p{Cs}/gu, "");
 }
 
 /**

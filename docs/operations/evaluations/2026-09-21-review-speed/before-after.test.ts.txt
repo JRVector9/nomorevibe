@@ -1,0 +1,83 @@
+import { afterAll, afterEach, expect, it, vi } from "vitest";
+import { writeFileSync } from "node:fs";
+import { reviewCrawlCandidates } from "@/lib/crawl/jobs/agent-review";
+import { createReviewInput } from "@/lib/crawl/agent-review-contract";
+import { DEFAULT_CRAWL_SETTINGS } from "@/lib/crawl/settings-schema";
+import { JOB_CATALOG, JOB_ROLES, jobsForRole } from "@/lib/jobs/catalog";
+import { runWorker, jobRunOptions } from "@/scripts/worker";
+
+const mocks = vi.hoisted(() => ({ settings: null as any, list: vi.fn(), document: vi.fn(), input: vi.fn(), claim: vi.fn(), record: vi.fn(), gateway: vi.fn() }));
+vi.mock("@/lib/crawl/settings", () => ({ getSettings: async () => mocks.settings }));
+vi.mock("@/lib/crawl/repository", () => ({ getDocument: mocks.document, setReadmeSample: vi.fn() }));
+vi.mock("@/lib/crawl/readme", () => ({ fetchReadmeSample: vi.fn(async () => ""), README_SAMPLE_LIMIT: 3000, README_SAMPLE_VERSION: "2026-09-14.1" }));
+vi.mock("@/lib/domain/products/repository", () => ({ findRepositoryProduct: vi.fn(async () => null) }));
+vi.mock("@/lib/crawl/agent-review-repository", () => ({ requeueStaleReviewSources: vi.fn(async () => 0), listReviewCandidates: mocks.list, loadReviewInput: mocks.input, claimAgentReview: mocks.claim, recordAgentReview: mocks.record }));
+vi.mock("@/lib/crawl/agent-review", () => ({ firstReviewer: (s: any) => s.firstReview, reviewWithAgent: vi.fn(() => { throw Error("unexpected CLI"); }), REVIEW_CLI_TIMEOUT_MS: 20000 }));
+vi.mock("@/lib/crawl/agent-review-gateway", () => ({ reviewWithGateway: mocks.gateway, REVIEW_GATEWAY_TIMEOUT_MS: 60000 }));
+vi.mock("@/lib/jobs/control", () => ({ requestJob: vi.fn(async () => ({})) }));
+
+const rows: any[] = [];
+afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
+afterAll(() => { if (process.env.NMV_SPEED_OUTPUT) writeFileSync(process.env.NMV_SPEED_OUTPUT, JSON.stringify({ variant: process.env.NMV_SPEED_VARIANT, clock: "virtual", db: "mocked", model: "fixed delayed response", rows }, null, 2)); });
+
+it.each([10000, 24000])("compares eight first reviews with %i ms model responses", async delay => {
+  vi.resetAllMocks(); vi.useFakeTimers(); vi.setSystemTime(new Date("2026-09-21T00:00:00Z"));
+  vi.stubGlobal("fetch", vi.fn(() => { throw Error("outbound network forbidden"); }));
+  const epoch = Date.now(); const now = new Date();
+  mocks.settings = { ...DEFAULT_CRAWL_SETTINGS, enabled: true, reviewMode: "observe", reviewConcurrency: 4, firstReview: { provider: "abcllm", model: "fixed-fixture" } };
+  const candidates = Array.from({ length: 8 }, (_, i) => ({ id: i + 1, repo: `fixture/app${i + 1}`, productUrl: `https://app${i + 1}.example`, state: "approved", decidedBy: "auto", judgedAt: now, updatedAt: now }));
+  const complete = new Set<number>(); const starts: number[] = [], ends: number[] = [], calls: number[] = [], ticks: number[] = [];
+  let active = 0, peak = 0, errors = 0;
+  mocks.list.mockImplementation(async (_s, limit, options) => candidates.filter(c => !complete.has(c.id) && !options?.excludeCandidateIds?.includes(c.id)).slice(0, limit));
+  mocks.document.mockImplementation(async repo => {
+    const c = candidates.find(c => c.repo === repo)!;
+    return { id: c.id, repo, productUrl: c.productUrl, repoMeta: { description: "Task tracking application", homepage: c.productUrl, pushed_at: now.toISOString(), stargazers_count: 1000, owner: { type: "User" } }, pageMeta: { title: "Task tracker", readmeSample: "", readmeSampleVersion: "2026-09-14.1" }, pageStatus: 200, fetchedAt: now };
+  });
+  mocks.input.mockImplementation(async (c, d, s) => createReviewInput(c, d, s, { scan: null, observations: [] }));
+  mocks.claim.mockImplementation(async ({ candidate }) => ({ kind: "claimed", attempt: { id: candidate.id, attemptNumber: 1 } }));
+  mocks.record.mockImplementation(async ({ candidate, error }) => {
+    if (error) errors++; else { complete.add(candidate.id); ends.push(Date.now() - epoch); }
+    return { applied: false, state: error ? "failed" : "succeeded" };
+  });
+  mocks.gateway.mockImplementation(async (_input, options) => {
+    starts.push(Date.now() - epoch); calls.push(options.timeoutMs); peak = Math.max(peak, ++active);
+    await new Promise(resolve => setTimeout(resolve, delay)); active--;
+    return { ok: true, outcome: { decision: "approve", reason: "Fixed task tracker response", evidenceIds: ["product"] } };
+  });
+  const interval = JOB_CATALOG.find(j => j.name === "crawl-agent-review")!.intervalMs!;
+  while (complete.size < candidates.length && ticks.length < 5) {
+    const tickStart = Date.now(); ticks.push(tickStart - epoch);
+    const budget = jobRunOptions("crawl-agent-review", { requestedOnly: true }).budgetMs ?? 25000;
+    let settled = false;
+    const running = reviewCrawlCandidates({ cursor: null, hasBudget: () => Date.now() - tickStart < budget, save: vi.fn(), log: vi.fn(), lease: { name: "crawl-agent-review", token: "fixture", requestedVersion: ticks.length } });
+    running.finally(() => { settled = true; });
+    while (!settled) await vi.advanceTimersByTimeAsync(1000);
+    const outcome = await running;
+    if (complete.size < candidates.length) {
+      // Idle reviewer, existing scheduler's 60s cadence; ready continuation uses worker's default 5s poll.
+      const next = outcome.continuation === "ready" ? Date.now() + 5000 : epoch + (Math.floor((Date.now() - epoch) / interval) + 1) * interval;
+      await vi.advanceTimersByTimeAsync(next - Date.now());
+    }
+  }
+  expect(complete.size).toBe(8); expect(peak).toBe(4); expect(errors).toBe(0); expect(starts).toHaveLength(8);
+  rows.push({ scenario: "first_review_eight", responseMs: delay, elapsedMs: Math.max(...ends), starts, ends, ticks, peak, errors, completed: complete.size, timeoutMs: calls });
+});
+
+it("compares publication requested during a thirty-second translation", async () => {
+  vi.useFakeTimers(); vi.setSystemTime(new Date("2026-09-21T00:00:00Z"));
+  vi.stubGlobal("fetch", vi.fn(() => { throw Error("outbound network forbidden"); }));
+  const epoch = Date.now(), controller = new AbortController(), pending = new Set(["reason-translate"]);
+  let publishedAt: number | undefined, translatedAt: number | undefined;
+  setTimeout(() => pending.add("crawl-publish"), 1000);
+  const run = async (name: string) => {
+    pending.delete(name);
+    if (name === "reason-translate") { await new Promise(resolve => setTimeout(resolve, 30000)); translatedAt = Date.now() - epoch; }
+    if (name === "crawl-publish") publishedAt = Date.now() - epoch;
+    return { status: "completed" };
+  };
+  const roles = (JOB_ROLES as readonly string[]).includes("text") ? ["text", "publisher"] : ["publisher"];
+  const workers = roles.map(role => runWorker({ role: role as any, signal: controller.signal }, { names: jobsForRole(role as any), pending: async () => [...pending], seen: async () => {}, run }));
+  await vi.advanceTimersByTimeAsync(40000); controller.abort(); await Promise.all(workers);
+  expect(publishedAt).toBeDefined(); expect(translatedAt).toBe(30000);
+  rows.push({ scenario: "publication_during_translation", translationMs: 30000, requestedAtMs: 1000, publishedAtMs: publishedAt, waitMs: publishedAt! - 1000, translatedAtMs: translatedAt, roles });
+});

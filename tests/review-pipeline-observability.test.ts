@@ -30,3 +30,12 @@ it("missing end events and negative cross-host wait are unknown, not zero", () =
   expect(report.second).toMatchObject({ calls: 0, incomplete: 1, modelMs: { samples: 0, p50: null, p95: null } });
   expect(report.clockAnomalies).toBe(1);
 });
+
+it("correlates first commit to second start by attempt, without confusing other candidates", () => {
+  const report = summarizePipelineEvents([
+    { version: 1, kind: "committed", stage: "first", state: "succeeded", firstAttemptId: 10, at: "2026-09-21T00:00:00Z" },
+    { version: 1, kind: "committed", stage: "first", state: "succeeded", firstAttemptId: 20, at: "2026-09-21T00:00:05Z" },
+    { version: 1, kind: "model_start", stage: "second", firstAttemptId: 10, at: "2026-09-21T00:00:02Z" },
+  ]);
+  expect(report.firstToSecondMs).toEqual({ samples: 1, p50: 2000, p95: 2000 });
+});
