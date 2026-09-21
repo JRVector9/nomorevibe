@@ -1,0 +1,38 @@
+[
+  {
+    "name": "nomorevibe-crawler-m3",
+    "baselineMatched": 5,
+    "improvedMatched": 0,
+    "files": 5
+  },
+  {
+    "name": "nomorevibe-reviewer-m3",
+    "baselineMatched": 5,
+    "improvedMatched": 0,
+    "files": 5
+  },
+  {
+    "name": "nomorevibe-publisher-m3",
+    "baselineMatched": 5,
+    "improvedMatched": 0,
+    "files": 5
+  },
+  {
+    "name": "nomorevibe-maintenance-m3",
+    "baselineMatched": 5,
+    "improvedMatched": 0,
+    "files": 5
+  },
+  {
+    "name": "nomorevibe-scheduler-m3",
+    "baselineMatched": 5,
+    "improvedMatched": 0,
+    "files": 5
+  },
+  {
+    "name": "nomorevibe-connect-agent-m3",
+    "baselineMatched": 5,
+    "improvedMatched": 0,
+    "files": 5
+  }
+]

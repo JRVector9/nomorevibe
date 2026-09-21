@@ -1,0 +1,103 @@
+{
+  "variant": "af50608",
+  "clock": "virtual",
+  "db": "mocked",
+  "model": "fixed delayed response",
+  "rows": [
+    {
+      "scenario": "first_review_eight",
+      "responseMs": 10000,
+      "elapsedMs": 70000,
+      "starts": [
+        0,
+        0,
+        0,
+        0,
+        60000,
+        60000,
+        60000,
+        60000
+      ],
+      "ends": [
+        10000,
+        10000,
+        10000,
+        10000,
+        70000,
+        70000,
+        70000,
+        70000
+      ],
+      "ticks": [
+        0,
+        60000
+      ],
+      "peak": 4,
+      "errors": 0,
+      "completed": 8,
+      "timeoutMs": [
+        24000,
+        24000,
+        24000,
+        24000,
+        24000,
+        24000,
+        24000,
+        24000
+      ]
+    },
+    {
+      "scenario": "first_review_eight",
+      "responseMs": 24000,
+      "elapsedMs": 84000,
+      "starts": [
+        0,
+        0,
+        0,
+        0,
+        60000,
+        60000,
+        60000,
+        60000
+      ],
+      "ends": [
+        24000,
+        24000,
+        24000,
+        24000,
+        84000,
+        84000,
+        84000,
+        84000
+      ],
+      "ticks": [
+        0,
+        60000
+      ],
+      "peak": 4,
+      "errors": 0,
+      "completed": 8,
+      "timeoutMs": [
+        24000,
+        24000,
+        24000,
+        24000,
+        24000,
+        24000,
+        24000,
+        24000
+      ]
+    },
+    {
+      "scenario": "publication_during_translation",
+      "translationMs": 30000,
+      "requestedAtMs": 1000,
+      "publishedAtMs": 35000,
+      "waitMs": 34000,
+      "translatedAtMs": 30000,
+      "roles": [
+        "publisher"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,5 @@
+import { defineConfig } from "vitest/config";
+import path from "node:path";
+const root = process.env.NMV_SPEED_ROOT;
+if (!root) throw new Error("NMV_SPEED_ROOT required");
+export default defineConfig({ test: { environment: "node", include: [".crawl-samples/review-speed/before-after.test.ts"], setupFiles: ["tests/setup-env.ts"] }, resolve: { alias: { "@": path.resolve(root) } } });

@@ -1,3 +1,16 @@
+# 속도 확인 — 2026-09-21 14:57 KST
+
+- 사용자 요청: 속도 개선되는지 확인. 운영 미배포 사실을 읽기 전용으로 재검증하고 이전/개선 실제 코드 비교 실험 수행.
+- 운영 증거: 6개 worker/container에서 catalog·1차job·판정repository·1차repository·taglinejob 해시 모두 baseline af50608과5/5 일치, 개선 bd4b36d와0/5. PR166 OPEN/미병합. 따라서 운영 단축률 확인 불가. 배포/운영DB/모델API/큐 수정 없음.
+- 비교: 같은 Vitest harness, baseline af50608와 current bd4b36d에 각각3개 테스트 실행하여 모두PASS. 가상 시계·모의 DB·고정 모델 응답. 1차8건/동시성4/10초 응답70→20초; 24초 응답84→53초. 두 버전8건·peak4·모의오류0·timeout24초 동일. 번역30초 중 요청한 발행의 시작 대기34→4초.
+- 한계: 첫 심사는 다른 reviewer 작업 없다고 가정; catalog60초 schedule과5초 poll을 harness에서 재현. 발행은 실제 worker loop로 비교. 네트워크/DB/분류/이미지 지연 미포함. 운영 처리량/오류율/모델 성능 주장 금지.
+- 변경 파일: docs/operations/evaluations/2026-09-21-review-speed/{README.md,before.json,after.json,production-code-check.json,*.txt}, runbook, 이 인계문서. 앱 코드 변경 없음. `.crawl-samples/review-speed/`의 harness는 ignored; .txt 원본으로 재현 가능.
+- 실패한 접근 없음. 전체 CI는 이전 최종 bd4b36d도35565616984에서PASS 확인. 이번 추가 작업은 비교실험3+3개만 실행했다.
+- 남은 일: 161→166 병합/운영 배포 후 신규100건/30분 이상 전후 표본으로 실제 개선 확인. 이번 요청에서 배포하지 않았다.
+- 다음 명령: `gh pr view 166 --json state,mergedAt`; 위 evaluations README의 두 비교 명령. 운영 rollout은 review-pipeline-speed-runbook.md. 기존 unrelated untracked 유지.
+
+---
+
 # CI 완료 기록 — 2026-09-21 14:42 KST
 
 6개 구현 PR161~166 모두 CI 성공. 최종 검증 코드 `5df9bceab7c8a9791b9c144669db2fc96a05a10f`: GitHub 전체 단위141파일1091 PASS, 통합79파일767 PASS, 타입/lint/Next build PASS. 이 기록 후 커밋은 문서만 수정한다. 로컬에서 남았던 단일 구형 기대값 실패도 최종 전체 CI에서 해결 확인.
