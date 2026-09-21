@@ -3,7 +3,7 @@ import { eq, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { crawlCandidates, crawlDocuments, crawlFrontier, crawlSettings, operationsAudit } from "@/lib/db/schema";
 import { ensureSchema, resetTables } from "./setup";
-import { judgementQueue } from "@/lib/crawl/repository";
+import { enqueue, judgementQueue } from "@/lib/crawl/repository";
 import { planReconsideration, applyReconsideration } from "@/lib/crawl/reconsider";
 
 beforeAll(ensureSchema);
@@ -35,6 +35,25 @@ it("preserves a decision or source changed after the dry run", async () => {
   await db.update(crawlCandidates).set({ decidedBy: "admin" }).where(eq(crawlCandidates.repo, "maker/changed"));
   expect((await applyReconsideration(plan, "test-policy-change")).queued).toEqual([]);
   expect((await db.select().from(crawlCandidates))[0].decidedBy).toBe("admin");
+});
+
+it("does not recreate a frontier case alias during reconsideration", async () => {
+  await rejected("Maker/Plugin");
+  const plan = await planReconsideration();
+  await enqueue([{ repo: "maker/plugin", signal: "existing" }]);
+  expect(await applyReconsideration(plan, "test-policy-change")).toEqual({ queued: [], changed: ["Maker/Plugin"] });
+  expect(await db.select().from(crawlFrontier)).toHaveLength(1);
+});
+
+it("rechecks products registered after the reconsideration preview", async () => {
+  await rejected("maker/plugin");
+  const plan = await planReconsideration();
+  const { insert } = await import("@/lib/domain/products/repository");
+  await insert({ slug: "already-added", url: "https://plugin.example", repoUrl: "https://github.com/Maker/Plugin",
+    name: "Plugin", tagline: "Plugin", description: "Plugin", category: "Plugin", status: "seeded",
+    verifyToken: "verify", editTokenHash: "x".repeat(64) });
+  expect(await applyReconsideration(plan, "test-policy-change")).toEqual({ queued: [], changed: ["maker/plugin"] });
+  expect(await db.select().from(crawlFrontier)).toHaveLength(0);
 });
 it("does not mistake PostgreSQL microseconds for a fresh collection", async () => {
   await rejected("maker/precision");

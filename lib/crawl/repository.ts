@@ -18,6 +18,7 @@ import type { CrawlSettings } from "./settings-schema";
 import { factsFromRepoMeta } from "./rules";
 import { assertJobLease, type JobLease } from "@/lib/jobs/control";
 import { README_SAMPLE_VERSION } from "./readme";
+import type { ProductTransaction } from "@/lib/domain/products/generation";
 
 /** 크롤 파이프라인 데이터 접근 — 파이프라인 바깥에서 이 테이블들을 직접 만지지 않는다 */
 
@@ -52,19 +53,24 @@ export async function enqueue(
   entries: { repo: string; signal: string; builder?: string | null; priority?: number }[],
 ): Promise<number> {
   if (entries.length === 0) return 0;
-  const inserted = await db
-    .insert(crawlFrontier)
-    .values(
-      entries.map((e) => ({
-        repo: e.repo,
-        signal: e.signal,
-        builder: e.builder ?? null,
-        priority: e.priority ?? 0,
-      })),
-    )
-    .onConflictDoNothing({ target: crawlFrontier.repo })
-    .returning({ id: crawlFrontier.id });
-  return inserted.length;
+  const first = new Map<string, (typeof entries)[number]>();
+  for (const entry of entries) if (!first.has(entry.repo.toLowerCase())) first.set(entry.repo.toLowerCase(), entry);
+  return db.transaction(async tx => {
+    // Stable lock order prevents overlapping search batches from deadlocking.
+    for (const key of [...first.keys()].sort()) await lockFrontierIdentity(tx, key);
+    const existing = await tx.select({ repo: crawlFrontier.repo }).from(crawlFrontier)
+      .where(inArray(sql`lower(${crawlFrontier.repo})`, [...first.keys()]));
+    for (const row of existing) first.delete(row.repo.toLowerCase());
+    if (!first.size) return 0;
+    const inserted = await tx.insert(crawlFrontier).values([...first.values()].map(e => ({
+      repo: e.repo, signal: e.signal, builder: e.builder ?? null, priority: e.priority ?? 0,
+    }))).onConflictDoNothing({ target: crawlFrontier.repo }).returning({ id: crawlFrontier.id });
+    return inserted.length;
+  });
+}
+
+export async function lockFrontierIdentity(tx: ProductTransaction, repo: string) {
+  await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`crawl-frontier:${repo.toLowerCase()}`}))`);
 }
 
 /**

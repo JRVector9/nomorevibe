@@ -28,7 +28,7 @@ const BATCH = 10;
 const PUBLISH_STOPS: Record<string, string> = {
   no_description: "페이지 설명도 레포 설명도 없어 목록에 쓸 소개를 만들 수 없다",
   not_a_product: "설문·연구 문서처럼 제품이 아닌 목적의 페이지",
-  already_listed: "같은 URL 이 이미 목록에 있다",
+  already_listed: "같은 저장소 또는 URL의 제품이 이미 목록에 있다",
   no_document: "수집한 원본이 없다",
   no_url: "배포 URL 이 없다",
   installation_review_required: "설치형 제품은 AI 심사 적용 모드 또는 관리자 승인이 필요합니다",
@@ -131,10 +131,12 @@ export async function publishCandidates(ctx: JobContext<null>): Promise<JobOutco
            */
           const evidenceHeld = result.reason.startsWith("ai_evidence_") || result.reason === "repository_relationship_conflict" || result.reason === "source_changed";
           const held = result.reason === "no_description" || evidenceHeld || result.reason === "installation_review_required";
+          const duplicateReason = result.existing?.status === "banned" ? "banned" : "already_listed";
           const recorded = await recordPublicationFailure(candidate, {
             state: held ? "needs_review" : "rejected",
             // 소개 없음은 AI 가 다시 집지 않는 사유로 둔다 — ambiguous 면 enforce 에서 보류·승인·발행 실패가 AI 호출마다 되풀이된다
-            reason: result.reason === "installation_review_required" ? "ambiguous" : evidenceHeld ? result.reason as import("@/lib/db/schema").DecisionReason : held ? "no_description" : result.reason === "already_listed" ? "already_listed" : "not_a_product",
+            reason: result.reason === "installation_review_required" ? "ambiguous" : evidenceHeld ? result.reason as import("@/lib/db/schema").DecisionReason : held ? "no_description" : result.reason === "already_listed" ? duplicateReason : "not_a_product",
+            existing: result.existing,
             stoppedAt: { rule: "발행 조건", detail: PUBLISH_STOPS[result.reason] ?? result.reason },
           }, ctx.lease);
           if (!recorded) {

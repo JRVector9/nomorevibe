@@ -1,3 +1,42 @@
+# Active handoff — crawl identity and review criteria audit (2026-09-21 09:15 KST)
+
+## Objective / current state
+
+User requests existing ingestion/review paths audited against duplicates and new >=500 criteria. Branch `fix/crawl-identity-review-consistency`, base main0ce71f3. Work is NOT committed/deployed yet. No subagents. Do not use systematic-debugging/brainstorming/writing-plans. TDD and prod skills read and announced. Unrelated untracked/design files untouched.
+
+## Completed and decisions
+
+- Production read audit: zero duplicate product repo identities; five historical case-alias groups in frontier/document/candidate (terminal history retained). At09:05,71of160reconsidered published (69installable,2website); all71have exact latest1st approve/prompt2026-09-21.3/rules2026-09-21.2 + independent2nd approve before publication. No missing approval gates. Eight Plugin products. Not a claim of100%semantic accuracy.
+- Found+fixed case-sensitive discovery, asymmetric website/installable duplicate checks, absent-row concurrent publication race, lost1st hard-rule reason, publication duplicate references, reconsideration preview/apply races. Shared repo+URL lookup and identity locks; retain audit rows; duplicates never count as new publications.
+- Additional ingress fixed: stale-review source refresh and admin evidence refresh use shared identity locks/case checks. Two regression tests RED then targeted49PASS. Final fullintegration744PASS/76files, unit1066PASS, types/full lint/buildPASS. All14newregressions observedRED beforefix.
+- New audited idempotent historical metadata reconciliation module/CLI: only auto rejected already_listed or hard rules proven duplicate, current actual product match, snapshotCAS; no product creation/historydeletion/publishedstate change. Production27lostreasons+93missingrefs observed; NOT APPLIED. Scripts/reconcile-crawl-duplicates.ts default explicit--preview actor. Test2PASS afterRED.
+- Migration0043 adds expression indexes for lower(frontier.repo) and normalized products.repo_url. NOT APPLIED PRODUCTION. Lookup measured113ms scan withoutindex; verify aftermigration. Keeps historicalduplicates without destructiveuniqueconstraint.
+
+## Files / executed tests
+
+`git diff --stat` + untracked newfiles: lib/domain/products/repository-identity.ts, lib/crawl/duplicate-reconciliation.ts, scripts/reconcile-crawl-duplicates.ts, drizzle/0043_crawl_repository_identity.sql, tests/integration/crawl-duplicate-reconciliation.test.ts. Existingchanges: crawl ingress/judge/firstreview/publish/guard/reconsider, products repository, DBschema/journal,ReviewDetail wording, unitmocksandintegrationtests.
+
+Actually executed: initial8regressionsRED then92PASS; reconsider2RED thenfixed; fullintegration740PASS beforemetadata module; metadata2REDthenfocused96PASS; unit1066PASS afteroldmockexportsfixed; types/scopedlint/buildPASS beforelast2refresh fixes. Latestfullsuite failed expected newadmin-refresh regression; do notclaimfinalfullpass. `/tmp/nmv-dedupe-*.log`. No runtime settings/model changes.
+
+## Remaining / exact next actions
+
+1. Code implementation/review/localchecks complete. GitHub core5000quota exhausted until09:17:47KST; gh auth status misleadingly says invalidtoken, ghAPI actualerror is quota. Do notswitchaccounts/tokens to bypass. GitpushnotcoreAPI canproceed; createPRafterreset.
+2. Operation report `docs/operations/2026-09-21-crawl-identity-review-audit.md` added with predeployresults. Commit/pushPR, waitCI, merge/deploy (persisteduserauthorization), bothwebsand6workers together via prodskillcurlAPI. Currentall8doneb942837.
+3. Apply additive0043 using explicitprivateenvdirect5432; do NOT use inheritedDATABASE_URL(testDB). Preview+apply auditedduplicate metadatarepair; verifyzerochanges onrepeatpreview. DO NOT rerun previous160/392reconsider apply.
+4. Verify deployedsourcehashes, bothhealth, admin UI existinglink/newwording/24hdelta; finalreadonlycohort+gateaudit andreport. Refreshcounts rather thanusing71asfinal.
+
+```sh
+cd /Users/jr/Desktop/projects/nomorevibe
+cat /tmp/nmv-dedupe-refresh-red.log
+npx vitest run --config vitest.integration.config.ts tests/integration/admin-review-evidence.test.ts tests/integration/agent-review-records.test.ts
+node .crawl-samples/queue-status.mjs /tmp/nmv-dedupe-final-cohort.json
+node .crawl-samples/dedupe-gates-audit.mjs /tmp/nmv-dedupe-gates-final.json
+python3 /tmp/nmv-installable-deploy-status.py
+```
+Private0600 `/tmp/nmv-installable-web.env` andprod.env neverprint/commit. Rootignoredhelpers .crawl-samples/dedupe-audit.mjs writes/tmp/nmv-dedupe-audit.json; dedupe-gates-audit.mjs expensive687lateralregexbeforeindex butreadonly; queue-live-ui.ts. /tmp/nmv-installable-deploy-final.py triggersall8; /tmp/nmv-queue-runtime.py mustupdatefilelistfornewsourcehashes. DokploykeyKeychain. No productionchanges this turn yet.
+
+---
+
 # Active handoff — rejected high-star queue and 24-hour publication change (2026-09-21 08:42 KST)
 
 ## Objective and completed work

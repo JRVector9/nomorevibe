@@ -85,7 +85,7 @@ export function ReviewDetail({ entry, reasons }: { entry: AdminReviewEntry; reas
 
       {candidate.reason === 'already_listed' && typeof candidate.signals?.existingSlug === 'string' && (
         <p className="rounded-lg border border-line bg-bg-soft px-3 py-2 text-[13px]">
-          같은 URL의 제품이 이미 등록되어 중복 발행하지 않았습니다.{' '}
+          같은 저장소 또는 URL의 제품이 이미 등록되어 중복 발행하지 않았습니다.{' '}
           <a href={`/p/${encodeURIComponent(candidate.signals.existingSlug)}`} target="_blank" rel="noreferrer noopener" className="font-semibold text-accent">기존 제품 보기 ↗</a>
         </p>
       )}

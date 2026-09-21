@@ -52,6 +52,15 @@ it("stores observed reviews without mutating the candidate and reuses immutable 
   expect(rows[0]).toMatchObject({ outcome, inputTokens: null, outputTokens: null, costUsd: null });
 });
 
+it("does not create another case variant while refreshing stale review sources", async () => {
+  const context = await fixture();
+  const stale = new Date(Date.now() - 25 * 60 * 60_000);
+  await db.update(crawlDocuments).set({ fetchedAt: stale });
+  await db.insert(crawlFrontier).values({ repo: context.candidate.repo.toUpperCase(), signal: "original", state: "done", updatedAt: stale });
+  expect(await requeueStaleReviewSources(context.settings, context.lease)).toBe(0);
+  expect(await db.select().from(crawlFrontier)).toHaveLength(1);
+});
+
 it("copies reusable success to a new source revision without rewriting history", async () => {
   const context = await fixture();
   const first = await claimAgentReview(context);

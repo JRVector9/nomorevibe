@@ -3,13 +3,14 @@ import { and, asc, desc, eq, inArray, or, sql, type SQL } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { crawlCandidates, crawlDocuments, crawlFrontier, crawlSettings, crawlReviewAttempts, secondReviews,
   agentRepositoryScans, agentRepositoryObservations,
-  type CrawlCandidate, type CrawlDocument, type CrawlReviewAttempt } from "@/lib/db/schema";
+  type CrawlCandidate, type CrawlDocument, type CrawlReviewAttempt, type DecisionReason, type ProductStatus } from "@/lib/db/schema";
 import type { ProductTransaction } from "@/lib/domain/products/generation";
 import { lockRepositoryAgentEvidence } from "@/lib/domain/evidence/agents/lock";
 import { assertJobLease, requestJob, type JobLease } from "@/lib/jobs/control";
 import { mergeWithDefaults } from "./settings";
 import type { CrawlSettings } from "./settings-schema";
 import { firstReviewer } from "./agent-review";
+import { lockFrontierIdentity } from "./repository";
 import {
   createReviewInput, isReviewCandidate, MAX_REVIEW_ATTEMPTS,
   REVIEW_PROMPT_VERSION, REVIEW_RULES_VERSION, reviewPolicyHash, reviewHash,
@@ -168,13 +169,18 @@ export async function requeueStaleReviewSources(
           AND review_document.fetched_at <= now()
           AND review_document.fetched_at > now() - interval '24 hours')`,
       sql`NOT EXISTS (SELECT 1 FROM crawl_frontier blocked_frontier
-        WHERE blocked_frontier.repo = ${crawlCandidates.repo}
-          AND (blocked_frontier.state IN ('pending', 'fetching')
+        WHERE lower(blocked_frontier.repo) = lower(${crawlCandidates.repo})
+          AND (blocked_frontier.repo <> ${crawlCandidates.repo} OR blocked_frontier.state IN ('pending', 'fetching')
             OR blocked_frontier.updated_at > now() - interval '24 hours'))`,
     )).orderBy(asc(crawlCandidates.updatedAt), asc(crawlCandidates.id))
       .limit(Math.max(1, Math.min(100, limit))).for("update", { skipLocked: true });
     let queued = 0;
+    for (const repo of [...new Set(candidates.map(row => row.repo.toLowerCase()))].sort()) await lockFrontierIdentity(tx, repo);
     for (const candidate of candidates) {
+      // Discovery may have added an alias after the initial selection.
+      const aliases = await tx.select({ repo: crawlFrontier.repo }).from(crawlFrontier)
+        .where(sql`lower(${crawlFrontier.repo}) = ${candidate.repo.toLowerCase()} and ${crawlFrontier.repo} <> ${candidate.repo}`).limit(1);
+      if (aliases.length) continue;
       const [row] = await tx.insert(crawlFrontier).values({
         repo: candidate.repo, signal: "review-source-refresh", priority: 100,
       }).onConflictDoUpdate({
@@ -309,6 +315,8 @@ export async function claimAgentReview(input: ReviewContext & {
 export async function recordAgentReview(input: ReviewContext & {
   attempt: CrawlReviewAttempt; outcome?: ReviewOutcome; error?: string; retryAfter?: Date; now?: Date;
   usage?: { inputTokens?: number | null; outputTokens?: number | null; costUsd?: number | null };
+  /** Server-side rules only; never populated from the model response. */
+  ruleRejection?: { reason: DecisionReason; existingSlug?: string; existingStatus?: ProductStatus };
 }): Promise<{ applied: boolean; state: "succeeded" | "failed" | "superseded" }> {
   return db.transaction(async tx => {
     const current = await currentReviewInput(tx, input);
@@ -329,6 +337,7 @@ export async function recordAgentReview(input: ReviewContext & {
       return { applied: false, state: reusable ? "succeeded" : "failed" };
     }
     const outcome = validateReviewOutcome(current, reusable ? attempt.outcome : input.outcome ?? attempt.outcome);
+    const ruleRejection = attempt.provider === "rules" && outcome.decision === "reject" ? input.ruleRejection : undefined;
     if (owns) await tx.update(crawlReviewAttempts).set({ state: "succeeded", outcome, completedAt: now, errorCode: null,
       inputTokens: input.usage?.inputTokens ?? null, outputTokens: input.usage?.outputTokens ?? null,
       costUsd: input.usage?.costUsd ?? null }).where(eq(crawlReviewAttempts.id, attempt.id));
@@ -337,9 +346,10 @@ export async function recordAgentReview(input: ReviewContext & {
     const kept = Object.fromEntries(Object.entries(input.candidate.signals ?? {}).filter(([key]) => key !== "stoppedAt"));
     if (applied) await tx.update(crawlCandidates).set({
       state: outcome.decision === "approve" ? "approved" : outcome.decision === "reject" ? "rejected" : "needs_review",
-      reason: outcome.decision === "approve" ? "passed" : outcome.decision === "reject" ? "not_a_product" : "ambiguous",
+      reason: ruleRejection?.reason ?? (outcome.decision === "approve" ? "passed" : outcome.decision === "reject" ? "not_a_product" : "ambiguous"),
       decidedBy: "auto", updatedAt: now,
       signals: { ...kept, agentReviewAttemptId: attempt.id,
+        ...(ruleRejection?.existingSlug ? { existingSlug: ruleRejection.existingSlug, existingStatus: ruleRejection.existingStatus } : {}),
         ...(outcome.decision === "approve" ? {} : { stoppedAt: { rule: "AI 심사", detail: outcome.reason.slice(0, 300) } }) },
     }).where(eq(crawlCandidates.id, input.candidate.id));
     return { applied, state: "succeeded" };

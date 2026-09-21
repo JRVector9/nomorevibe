@@ -5,7 +5,7 @@ const state = vi.hoisted(() => ({enforce:false,insert:vi.fn(),published:vi.fn(),
   document:{repo:"acme/app",productUrl:"https://app.example",pageStatus:200,repoMeta:{description:"Useful project"},pageMeta:{title:"Sample",description:"A useful service"}}}));
 vi.mock("@/lib/crawl/settings",()=>({getSettings:async()=>({...DEFAULT_CRAWL_SETTINGS,agentEvidence:{...DEFAULT_CRAWL_SETTINGS.agentEvidence,enforceEligibility:state.enforce}})}));
 vi.mock("@/lib/crawl/agent-evidence",()=>({loadAgentJudgeInput:async()=>({scanState:"pending",relationship:"unknown",observations:[],scanId:null})}));
-vi.mock("@/lib/domain/products/repository",()=>({nextAvailableSlug:async()=>"sample",insert:state.insert}));
+vi.mock("@/lib/domain/products/repository",()=>({nextAvailableSlug:async()=>"sample",insert:state.insert,findRepositoryProduct:async()=>undefined}));
 vi.mock("@/lib/domain/products/og",()=>({cacheOgImage:async()=>null}));
 vi.mock("@/lib/crawl/classify",()=>({classifyCategory:async()=>null}));
 vi.mock("@/lib/crawl/repository",()=>({

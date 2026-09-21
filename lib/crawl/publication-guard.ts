@@ -1,8 +1,8 @@
 import { isDeepStrictEqual } from "node:util";
-import { and, desc, eq, ne, sql } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { categoryDecisions, crawlCandidates, crawlDocuments, crawlSettings, agentRepositoryScans, products, type CrawlCandidate, type CrawlDocument, type DecisionReason } from "@/lib/db/schema";
-import { accessFromDocument } from "./rules";
+import { categoryDecisions, crawlCandidates, crawlDocuments, crawlSettings, agentRepositoryScans, type Product, type CrawlCandidate, type CrawlDocument, type DecisionReason } from "@/lib/db/schema";
+import { findRepositoryProduct, lockProductRepository } from "@/lib/domain/products/repository-identity";
 import type { ProductTransaction } from "@/lib/domain/products/generation";
 import { mergeWithDefaults } from "./settings";
 import type { CrawlSettings } from "./settings-schema";
@@ -14,8 +14,8 @@ import type { StoppedAt } from "./rules";
 export class PublicationStateChangedError extends Error {
   constructor() { super("publication_state_changed"); }
 }
-export class DuplicateInstallationSourceError extends Error {
-  constructor() { super("duplicate_installation_source"); }
+export class DuplicateRepositoryProductError extends Error {
+  constructor(readonly existing: Product) { super("duplicate_repository_product"); }
 }
 type Snapshot = {candidate:unknown;document:unknown;settings:unknown};
 export function publicationSourceChanged(candidate:Pick<CrawlCandidate,"productUrl">,document:Pick<CrawlDocument,"productUrl">):boolean {
@@ -38,6 +38,7 @@ export async function recordPublicationFailure(candidate: CrawlCandidate, failur
   state:"needs_review"|"rejected"|"new"; reason:DecisionReason;
   /** 발행에서 멈춘 이유. 판정이 남기는 것과 같은 자리(signals.stoppedAt)에 남긴다 */
   stoppedAt?: StoppedAt;
+  existing?: { slug: string; status: Product["status"] };
 }, lease?: JobLease):Promise<boolean> {
   return db.transaction(async tx => {
     const [current] = await tx.select().from(crawlCandidates).where(eq(crawlCandidates.id,candidate.id)).for("update");
@@ -48,7 +49,10 @@ export async function recordPublicationFailure(candidate: CrawlCandidate, failur
       state:failure.state,reason:failure.reason,judgedAt:now,updatedAt:now,
       // Retain the original reviewer and signals; an unsuccessful publish is not a new review.
       // 멈춘 이유만 얹는다 — 없으면 "보류 207건"이 왜 보류인지 기록으로 알 수 없었다(2026-09-19)
-      ...(failure.stoppedAt ? { signals: { ...(current.signals ?? {}), stoppedAt: failure.stoppedAt } } : {}),
+      ...(failure.stoppedAt || failure.existing ? { signals: { ...(current.signals ?? {}),
+        ...(failure.stoppedAt ? { stoppedAt: failure.stoppedAt } : {}),
+        ...(failure.existing ? { existingSlug: failure.existing.slug, existingStatus: failure.existing.status } : {}),
+      } } : {}),
     }).where(eq(crawlCandidates.id,current.id));
     return true;
   });
@@ -59,12 +63,9 @@ export async function guardPublication(tx: ProductTransaction, input: {
   decision?: { revision: number | null; sourceHash: string | null };
   candidate:CrawlCandidate; document:CrawlDocument; settings:CrawlSettings; slug:string; scanId:number|null; lease?: JobLease;
 }) {
-  const access = accessFromDocument(input.document, input.settings);
-  if (access?.mode === "installable") {
-    const [existing] = await tx.select({ id: products.id }).from(products)
-      .where(and(ne(products.slug, input.slug), sql`(lower(rtrim(${products.repoUrl}, '/')) = lower(${access.url}) or ${products.url} = ${input.document.productUrl})`)).limit(1).for("share");
-    if (existing) throw new DuplicateInstallationSourceError();
-  }
+  await lockProductRepository(tx, `https://github.com/${input.document.repo}`);
+  const existing = await findRepositoryProduct(input.document.repo, input.document.productUrl, tx);
+  if (existing) throw new DuplicateRepositoryProductError(existing);
   const [candidate] = await tx.select().from(crawlCandidates).where(eq(crawlCandidates.repo,input.candidate.repo)).for("update");
   const [document] = await tx.select().from(crawlDocuments).where(eq(crawlDocuments.repo,input.document.repo)).for("share");
   const [settingsRow] = await tx.select().from(crawlSettings).where(eq(crawlSettings.id,1)).for("share");

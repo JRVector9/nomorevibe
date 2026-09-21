@@ -39,6 +39,19 @@ async function source(repo: string, productUrl: string, candidate: { state: "app
 }
 const tick = () => runJob("crawl-agent-review", reviewCrawlCandidates);
 
+it.each(["seeded", "banned"] as const)("retains the %s duplicate decision and product reference in first review", async status => {
+  const { insert } = await import("@/lib/domain/products/repository");
+  await insert({ slug: "listed", url: "https://old-site.example", repoUrl: "https://github.com/Maker/Plugin",
+    name: "Plugin", tagline: "Plugin", description: "Plugin", category: "Plugin", status,
+    verifyToken: "verify", editTokenHash: "x".repeat(64) });
+  await source("maker/plugin", "https://new-site.example", { state: "needs_review", reason: "ambiguous" },
+    { title: "Plugin", description: "An editor plugin" });
+  await tick();
+  expect(await db.select().from(crawlCandidates)).toMatchObject([{ state: "rejected",
+    reason: status === "banned" ? "banned" : "already_listed", signals: { existingSlug: "listed", existingStatus: status } }]);
+  expect(review).not.toHaveBeenCalled();
+});
+
 it("rejects a held candidate whose refetched body is a docs shell even when the model would approve", async () => {
   // codex 재현 그대로: owner.github.io 하위 경로라 사람 심사에 보류된 후보를 재수집했더니 본문이 설치 안내였다.
   // 같은 문서에 pageFactsFromDocument()를 적용하면 거부인데, AI 경로에서는 모델 승인으로 approved가 됐다.

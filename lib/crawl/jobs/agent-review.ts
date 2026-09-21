@@ -1,6 +1,6 @@
 import type { JobContext, JobOutcome } from "@/lib/jobs/runner";
 import { requestJob } from "@/lib/jobs/control";
-import { findByUrl, findInstallationSource } from "@/lib/domain/products/repository";
+import { findRepositoryProduct } from "@/lib/domain/products/repository";
 import { accessFromDocument } from "../rules";
 import { loadReviewDocument } from "./review-document";
 import { getSettings } from "@/lib/crawl/settings";
@@ -66,7 +66,7 @@ export async function reviewCrawlCandidates(ctx: JobContext<null>): Promise<JobO
         } : undefined);
       const access = accessFromDocument(document, settings);
       const existing = access && verdict.state !== "rejected"
-        ? await (access.mode === "installable" ? findInstallationSource(access.url, document.productUrl) : findByUrl(access.url)) : null;
+        ? await findRepositoryProduct(document.repo, document.productUrl) : null;
       const hardReason = verdict.state === "rejected" ? verdict.reason
         : existing ? existing.status === "banned" ? "banned" : "already_listed" : null;
       // Missing development evidence is a hold, never proof the product is ineligible.
@@ -88,7 +88,8 @@ export async function reviewCrawlCandidates(ctx: JobContext<null>): Promise<JobO
           decision: "needs_review", reason: `개발 근거 확인이 필요합니다 (${evidenceHold}). 현재 수집 내용만으로 승인하거나 부적격으로 확정하지 않습니다.`,
           evidenceIds: ["product", ...input.snapshot.evidence.slice(0, 8).map(item => item.id)],
         } : claim.attempt.outcome ?? undefined;
-        const recorded = await recordAgentReview({ ...context, attempt: claim.attempt, outcome });
+        const recorded = await recordAgentReview({ ...context, attempt: claim.attempt, outcome,
+          ruleRejection: hardReason ? { reason: hardReason, ...(existing ? { existingSlug: existing.slug, existingStatus: existing.status } : {}) } : undefined });
         if (recorded.applied && outcome?.decision === "approve") approved++;
         ctx.log("crawl.agent_reviewed", { repo: candidate.repo, provider, reused: claim.kind === "reused", ...recorded });
         continue;

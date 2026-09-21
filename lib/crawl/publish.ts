@@ -13,7 +13,7 @@ import { getSettings } from "./settings";
 import { judgeRevision } from "./rules";
 import { taglineEvidence, taglineHash, type TaglineEvidenceSource } from "./tagline";
 import { writtenTagline } from "./taglines";
-import { guardPublication, publicationSourceChanged, PublicationStateChangedError, DuplicateInstallationSourceError } from "./publication-guard";
+import { guardPublication, publicationSourceChanged, PublicationStateChangedError, DuplicateRepositoryProductError } from "./publication-guard";
 import { loadAgentJudgeInput } from "./agent-evidence";
 import { summarizeAgentEvidence, type AgentEvidenceSummary } from "@/lib/domain/evidence/agents/summary";
 import { requestJob, type JobLease } from "@/lib/jobs/control";
@@ -35,7 +35,7 @@ const MAX_SLUG_ATTEMPTS = 4;
 
 export type PublishResult =
   | { ok: true; slug: string }
-  | { ok: false; reason: "installation_review_required" | "not_a_product" | "no_document" | "no_url" | "already_listed" | "no_description" | "publication_state_changed" | "review_approval_changed" | "source_changed" | "stale_judgement" | AgentEvidenceSummary["reason"] };
+  | { ok: false; existing?: { slug: string; status: import("@/lib/db/schema").ProductStatus }; reason: "installation_review_required" | "not_a_product" | "no_document" | "no_url" | "already_listed" | "no_description" | "publication_state_changed" | "review_approval_changed" | "source_changed" | "stale_judgement" | AgentEvidenceSummary["reason"] };
 
 type PublicationSnapshot = {
   document: CrawlDocument;
@@ -66,7 +66,8 @@ async function preparePublication(candidate: CrawlCandidate): Promise<
   const access = accessFromDocument(document, settings);
   const url = access?.url;
   if (!url) return { ok: false, reason: "no_url" };
-  if (access.mode === "installable" && await products.findInstallationSource(url, document.productUrl)) return { ok: false, reason: "already_listed" };
+  const existing = await products.findRepositoryProduct(document.repo, document.productUrl);
+  if (existing) return { ok: false, reason: "already_listed", existing: { slug: existing.slug, status: existing.status } };
 
   const purpose = nonProductPurpose({ ...document.pageMeta, description: [document.repoMeta.description, document.pageMeta?.description].filter(v => typeof v === "string").join(" ") });
   if (purpose) return { ok: false, reason: "not_a_product" };
@@ -207,13 +208,14 @@ export async function publishCandidate(
       }, tx => guardPublication(tx, {candidate,document,settings,slug,scanId:checkedEvidence?.scanId ?? null,lease,decision:preclassification?.decision}));
       break;
     } catch (e) {
-      if (e instanceof DuplicateInstallationSourceError) return { ok: false, reason: "already_listed" };
+      if (e instanceof DuplicateRepositoryProductError) return { ok: false, reason: "already_listed", existing: { slug: e.existing.slug, status: e.existing.status } };
       if (e instanceof PublicationStateChangedError) return {ok:false,reason:"publication_state_changed"};
       if (e instanceof ReviewApprovalChangedError) return {ok:false,reason:"review_approval_changed"};
       const constraint = products.uniqueViolation(e);
       if (constraint === "products_url_unique") {
         // 판정 뒤 메이커가 먼저 등록했다 — 우리가 늦은 것이지 오류가 아니다
-        return { ok: false, reason: "already_listed" };
+        const existing = await products.findRepositoryProduct(document.repo, document.productUrl);
+        return { ok: false, reason: "already_listed", ...(existing ? { existing: { slug: existing.slug, status: existing.status } } : {}) };
       }
       if (constraint !== null && attempt < MAX_SLUG_ATTEMPTS) {
         logger.warn("crawl.publish_slug_conflict", { repo: candidate.repo, slug, attempt });

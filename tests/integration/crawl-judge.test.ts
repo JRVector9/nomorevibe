@@ -46,6 +46,16 @@ beforeEach(async () => {
 });
 
 describe("판정 잡", () => {
+  it.each(["seeded", "banned"] as const)("recognizes a %s repository after its website changes", async status => {
+    await products.insert({ slug: "previous-site", url: "https://old-site.test", repoUrl: "https://github.com/Maker/Plugin",
+      name: "Plugin", tagline: "Plugin", description: "Plugin", category: "Plugin", status,
+      verifyToken: "verify", editTokenHash: "x".repeat(64) });
+    await putDocument({ repo: "maker/plugin", productUrl: "https://new-site.test", meta: { stargazers_count: 500 } });
+    await tick();
+    expect(await crawl.getCandidate("maker/plugin")).toMatchObject({ state: "rejected",
+      reason: status === "banned" ? "banned" : "already_listed", signals: { existingSlug: "previous-site" } });
+  });
+
   it("does not resurrect a banned website through its installation repository", async () => {
     await products.insert({ slug: "banned-repository", url: "https://former-site.test", repoUrl: "https://github.com/maker/plugin",
       name: "Plugin", tagline: "A plugin", description: "A plugin", category: "Plugin", status: "banned",
@@ -220,10 +230,10 @@ describe("판정 잡", () => {
   it.each([false,true])("비동기 판정 중 관리자 거부가 도착하면 보존한다 (기존 new 후보 %s)", async existing => {
     await putDocument({repo:"someone/my-app"});
     if (existing) await crawl.recordJudgement({repo:"someone/my-app",productUrl:"https://my-app.test",state:"new",reason:"passed",decidedBy:"auto"});
-    const findByUrl = products.findByUrl;
-    const spy = vi.spyOn(products,"findByUrl").mockImplementationOnce(async url => {
-      await crawl.recordJudgement({repo:"someone/my-app",productUrl:url,state:"rejected",reason:"banned",decidedBy:"admin",signals:{review:"newer admin"}});
-      return findByUrl(url);
+    const findRepositoryProduct = products.findRepositoryProduct;
+    const spy = vi.spyOn(products,"findRepositoryProduct").mockImplementationOnce(async (repo, url) => {
+      await crawl.recordJudgement({repo:"someone/my-app",productUrl:url ?? null,state:"rejected",reason:"banned",decidedBy:"admin",signals:{review:"newer admin"}});
+      return findRepositoryProduct(repo, url);
     });
     try {
       expect(await tick()).toMatchObject({status:"completed",done:false});
@@ -233,10 +243,10 @@ describe("판정 잡", () => {
 
   it("비동기 판정 중 문서 URL이 바뀌면 과거 결과를 저장하지 않는다", async () => {
     await putDocument({repo:"someone/my-app"});
-    const findByUrl = products.findByUrl;
-    const spy = vi.spyOn(products,"findByUrl").mockImplementationOnce(async url => {
+    const findRepositoryProduct = products.findRepositoryProduct;
+    const spy = vi.spyOn(products,"findRepositoryProduct").mockImplementationOnce(async (repo, url) => {
       await putDocument({repo:"someone/my-app",productUrl:"https://changed.test"});
-      return findByUrl(url);
+      return findRepositoryProduct(repo, url);
     });
     try {
       expect(await tick()).toMatchObject({status:"completed",done:false});
@@ -247,10 +257,10 @@ describe("판정 잡", () => {
 
   it("비동기 판정 중 설정이 바뀌면 최신 설정으로 다시 판단한다", async () => {
     await putDocument({repo:"someone/my-app"});
-    const findByUrl = products.findByUrl;
-    const spy = vi.spyOn(products,"findByUrl").mockImplementationOnce(async url => {
+    const findRepositoryProduct = products.findRepositoryProduct;
+    const spy = vi.spyOn(products,"findRepositoryProduct").mockImplementationOnce(async (repo, url) => {
       await saveSettings({judge:{maxStars:1}},"concurrent admin");
-      return findByUrl(url);
+      return findRepositoryProduct(repo, url);
     });
     try {
       expect(await tick()).toMatchObject({status:"completed",done:false});

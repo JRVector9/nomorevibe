@@ -1,6 +1,6 @@
 import type { JobContext, JobOutcome } from "@/lib/jobs/runner";
 import type { CrawlDocument } from "@/lib/db/schema";
-import { findByUrl, findInstallationSource } from "@/lib/domain/products/repository";
+import { findRepositoryProduct } from "@/lib/domain/products/repository";
 import * as crawl from "@/lib/crawl/repository";
 import { getSettings } from "@/lib/crawl/settings";
 import { judge, factsFromRepoMeta, pageFactsFromDocument, judgeRevision, type StoppedAt, type Verdict } from "@/lib/crawl/rules";
@@ -90,14 +90,14 @@ async function judgeDocument(document: CrawlDocument, settings: CrawlSettings): 
   const access = accessFromDocument(document, settings);
   if (verdict.state === "rejected" || !access) return verdict;
 
-  const existing = await (access.mode === "installable" ? findInstallationSource(access.url, document.productUrl) : findByUrl(access.url));
+  const existing = await findRepositoryProduct(document.repo, document.productUrl);
   if (!existing) return verdict;
 
   // 차단한 URL이 수집기를 통해 되돌아오는 것을 막는다. 차단은 재등록까지 막는 조치다.
   // 규칙이 아니라 DB가 아는 사실이라 규칙 발자국 뒤에 따로 붙인다.
   const stoppedAt: StoppedAt = {
     rule: existing.status === "banned" ? "차단된 URL 아님" : "이미 등록된 URL 아님",
-    detail: `같은 URL이 /p/${existing.slug} 로 ${existing.status === "banned" ? "차단" : "등재"}되어 있음`,
+    detail: `같은 저장소 또는 URL이 /p/${existing.slug} 로 ${existing.status === "banned" ? "차단" : "등재"}되어 있음`,
   };
   return {
     state: "rejected",

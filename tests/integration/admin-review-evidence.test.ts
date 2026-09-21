@@ -64,3 +64,11 @@ it('preserves a newer administrator decision when requested evidence finishes', 
   expect(await requeueAfterAdminEvidenceRefresh(repo)).toBe(false);
   expect((await crawl.getCandidate(repo))?.state).toBe('rejected');
 });
+
+it('does not create another case variant from an administrator refresh', async () => {
+  await crawl.enqueue([{ repo: repo.toUpperCase(), signal: 'original' }]);
+  await crawl.markFrontier(repo.toUpperCase(), 'done');
+  expect(await requestCandidateEvidence(await requestInput())).toMatchObject({ ok: false });
+  expect(await db.select().from(crawlFrontier)).toHaveLength(1);
+  expect(await db.select().from(crawlReviewAttempts)).toHaveLength(0);
+});
