@@ -64,10 +64,10 @@ export async function pendingJobNames(role: JobRole): Promise<string[]> {
 }
 
 /** Call inside the transaction that writes the result; never hold this across external work. */
-export async function assertJobLease(tx: ProductTransaction, lease: JobLease): Promise<void> {
+export async function assertJobLease(tx: ProductTransaction, lease: JobLease, mode: "share" | "update" = "share"): Promise<void> {
   const [owned] = await tx.select({ name: jobs.name }).from(jobs).where(and(
     eq(jobs.name, lease.name), eq(jobs.leaseToken, lease.token),
     sql`${jobs.lockedAt} >= now() - ${STALE_LOCK_MS} * interval '1 millisecond'`,
-  )).for("share");
+  )).for(mode);
   if (!owned) throw new JobLeaseLostError();
 }

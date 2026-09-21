@@ -1,3 +1,4 @@
+import { emitPipelineEvent } from "@/lib/observability/review-pipeline";
 import { createHash } from "node:crypto";
 import { and, desc, eq, gt, gte, inArray, isNotNull, isNull, lt, ne, notInArray, or, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
@@ -8,7 +9,7 @@ import { mergeWithDefaults } from "./settings";
 import { REVIEW_PROMPT_VERSION, REVIEW_RULES_VERSION } from "./agent-review-contract";
 import { loadReviewInput } from "./agent-review-repository";
 import { loadSecondReviewInput, secondReviewGeneration } from "./second-review-input";
-import { assertJobLease, type JobLease } from "@/lib/jobs/control";
+import { assertJobLease, requestJob, type JobLease } from "@/lib/jobs/control";
 import { canonicalReviewModel, sameReviewModel } from "./review-model-identity";
 import { firstReviewer } from "./agent-review";
 
@@ -428,13 +429,15 @@ export async function recordSecondReview(id: number, result:
   | { ok: true; decision: string; confidence: number | null; reason: string; model: string; provider: SecondReviewProvider; status: "agreed" | "needs_human" }
   | { ok: false; error: string; detail?: string; model: string; provider: SecondReviewProvider }, now = new Date(), lease?: JobLease): Promise<void> {
   if (!result.ok && result.error === "cancelled") return;
+  const requests: Awaited<ReturnType<typeof requestJob>>[] = [];
+  let committed = false;
   await db.transaction(async tx => {
     const [original] = await tx.select().from(secondReviews).where(eq(secondReviews.id, id));
     if (!original || original.status !== "pending") return;
     const input = await loadSecondReviewInput(original, tx);
     const [row] = await tx.select().from(secondReviews).where(eq(secondReviews.id, id)).for("update");
     if (!row || row.status !== "pending" || row.generationKey !== original.generationKey) return;
-    if (lease) await assertJobLease(tx, lease);
+    if (lease) await assertJobLease(tx, lease, "update");
     if (!input || row.model !== result.model || row.provider !== result.provider) {
       await tx.update(secondReviews).set({status: "resolved", resolution: "superseded", resolvedAt: now})
         .where(eq(secondReviews.id, id));
@@ -460,6 +463,8 @@ export async function recordSecondReview(id: number, result:
         await tx.update(secondReviews).set({ status: "resolved", resolution: "fallback", resolvedAt: now,
           reviewedAt: now, failureCount: row.failureCount + 1, errorCode: result.error.slice(0, 60),
           errorDetail: result.detail?.slice(0, 80) ?? null }).where(eq(secondReviews.id, id));
+        requests.push(await requestJob("second-review", tx));
+        committed = true;
         return;
       }
     }
@@ -480,6 +485,9 @@ export async function recordSecondReview(id: number, result:
           secondReason: row.failureCount + 1 >= MAX_SECOND_REVIEW_FAILURES
             ? "모델 심사가 3회 실패했습니다. 자동 재시도를 종료했으므로 직접 확인해주세요." : null })
       .where(eq(secondReviews.id, id));
+    committed = true;
+    if (row.trigger === "ai_approved" && result.ok && result.decision === "approve" && status === "agreed")
+      requests.push(await requestJob("crawl-publish", tx));
     /*
      * 두 모델 승인 관문에서 2차가 승인하지 않았다 — 발행을 멈추고 사람에게 넘긴다(2026-09-19).
      * 후보는 loadSecondReviewInput 이 이 트랜잭션에서 잠갔다. 사유는 AI 심사가 다시 집지 않는 것으로 둔다 —
@@ -495,6 +503,9 @@ export async function recordSecondReview(id: number, result:
       }
     }
   });
+  if (committed) emitPipelineEvent("committed", { stage: "second", secondReviewId: id, ok: result.ok });
+  for (const request of requests) emitPipelineEvent("requested", { stage: "second", secondReviewId: id,
+    nextJob: request.job, requestedVersion: request.requestedVersion });
 }
 
 export type SecondReviewFailure = { provider: string | null; model: string | null; errorCode: string; count: number };

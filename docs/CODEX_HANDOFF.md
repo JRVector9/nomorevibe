@@ -1,3 +1,11 @@
+# Phase 02 update — transactional review handoffs implemented
+
+Rules→first/publish, first→second/publish, second approved→publish and fallback→second now commit with state changes. Duplicate batch signals removed. Source/policy/approval predicates unchanged. Lease update lock on second results avoids concurrent self-signal lock upgrades. New integration test RED8/PASS1 -> PASS9; related integration5files103PASS; type PASS. Unit old batch-signal expectation deliberately updated to transactional contract, next command reruns 51 tests. No deployment.
+
+Next: bounded draining (PR03), text fencing (PR04), isolated text role (PR05), full verification (PR06). Commands use explicit TEST_DATABASE_URL=postgres://nomorevibe:nomorevibe@127.0.0.1:55435/nomorevibe_test only. No production environment loaded.
+
+---
+
 # Active handoff — review pipeline speed implementation (2026-09-21)
 
 Objective: implement six PR phases in docs/plans/2026-09-21-review-pipeline-speed. User explicitly approved proceeding. No model/prompt/approval-policy changes, no LAYA runtime integration. No prohibited skills/subagents. execute-plan and TDD applied; Next Vitest/env guides read.
