@@ -1,6 +1,6 @@
 import { emitPipelineEvent } from "@/lib/observability/review-pipeline";
 import { isDeepStrictEqual } from "node:util";
-import { and, asc, desc, eq, inArray, or, sql, type SQL } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, notInArray, or, sql, type SQL } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { crawlCandidates, crawlDocuments, crawlFrontier, crawlSettings, crawlReviewAttempts, secondReviews,
   agentRepositoryScans, agentRepositoryObservations,
@@ -212,9 +212,14 @@ export async function requeueStaleReviewSources(
  * 기본값은 꺼져 있어 1차 심사 게이트의 동작은 그대로다.
  */
 export async function listReviewCandidates(settings: CrawlSettings, limit = 20,
-  options: { unreviewedOnly?: boolean } = {}): Promise<CrawlCandidate[]> {
+  options: { unreviewedOnly?: boolean; excludeCandidateIds?: number[]; readyOnly?: boolean } = {}): Promise<CrawlCandidate[]> {
   if (!settings.enabled || settings.reviewMode === "off") return [];
   return db.select().from(crawlCandidates).where(and(
+    options.excludeCandidateIds?.length ? notInArray(crawlCandidates.id, options.excludeCandidateIds) : undefined,
+    options.readyOnly ? sql`NOT EXISTS (SELECT 1 FROM ${crawlReviewAttempts} WHERE ${matchingSource(settings)}
+      AND ${crawlReviewAttempts.state} = 'running' AND EXISTS (SELECT 1 FROM jobs j
+        WHERE j.name = 'crawl-agent-review' AND j.lease_token = ${crawlReviewAttempts.leaseToken}
+          AND j.locked_at >= now() - interval '90 seconds'))` : undefined,
     options.unreviewedOnly ? sql`NOT EXISTS (SELECT 1 FROM ${crawlReviewAttempts} ever
       WHERE ever.candidate_id = ${crawlCandidates.id} AND ever.state = 'succeeded')` : undefined,
     eq(crawlCandidates.decidedBy, "auto"),

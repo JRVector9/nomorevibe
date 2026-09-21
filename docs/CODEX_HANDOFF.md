@@ -1,3 +1,11 @@
+# Phase 03 update — bounded review draining implemented
+
+Branch perf/review-bounded-draining. Phase01 commit1dd580d, phase02 0fec460. First review 40s budget, fixed24s gateway/20s CLI, 2s save margin, configured active concurrency unchanged, max16 admitted candidates, preparation inside slots, dedup candidate IDs. Stop refilling on provider/record errors; await all lanes before lease release. Ready continuation allowed only first/second, progress+fresh eligible queue required, excludes seen/running candidates. Runner preserves incoming requestedVersion and only leaves one own continuation. Existing role serial poll fairness unchanged.
+
+Tests: new refill/dedup RED2 -> GREEN; runner continuation RED1 -> GREEN3. Unit4files45PASS; integration4files39tests initial38PASS1old batch signal assertion failed; adapted that assertion to second request (new gate contract), targeted2files7PASS. Other32 alreadypassed. Type and scopedlintPASS. No production calls/deployment. Next implement text CAS/lease fencing before role separation.
+
+---
+
 # Phase 02 update — transactional review handoffs implemented
 
 Rules→first/publish, first→second/publish, second approved→publish and fallback→second now commit with state changes. Duplicate batch signals removed. Source/policy/approval predicates unchanged. Lease update lock on second results avoids concurrent self-signal lock upgrades. New integration test RED8/PASS1 -> PASS9; related integration5files103PASS; type PASS. Unit old batch-signal expectation deliberately updated to transactional contract, next command reruns 51 tests. No deployment.

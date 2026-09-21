@@ -113,7 +113,7 @@ it("게이트웨이에 모델이 없으면 판단을 지어내지 않고 그 까
   expect(mocks.record).toHaveBeenCalledWith(7, { ok: false, error: "model_unavailable", model: "[MLX] 사라진모델", provider: "abcllm" }, expect.any(Date), context().lease);
 });
 
-it("멈추라는 신호를 모델 호출에 그대로 넘기고, 끊긴 것은 실패로 적지 않는다", async () => {
+it("이미 중지된 워커는 모델을 새로 부르거나 실패로 기록하지 않는다", async () => {
   mocks.settings!.secondReview = { ...mocks.settings!.secondReview, voters: [{ provider: "abcllm", model: "[MLX] gemma4-26b" }] };
   mocks.pending.mockResolvedValue([row({ provider: "abcllm", model: "[MLX] gemma4-26b" })]);
   mocks.gateway.mockResolvedValue({ ok: false, error: "cancelled" });
@@ -122,7 +122,7 @@ it("멈추라는 신호를 모델 호출에 그대로 넘기고, 끊긴 것은 �
 
   await secondReviewCandidates({ ...context(), signal: stopping.signal });
 
-  expect(mocks.gateway).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ signal: stopping.signal }));
+  expect(mocks.gateway).not.toHaveBeenCalled();
   // 끊긴 표는 그대로 대기로 남는다 — 실패로 적으면 다시 볼 때까지 기다린다
   expect(mocks.record).not.toHaveBeenCalled();
 });

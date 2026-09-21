@@ -21,7 +21,7 @@ export type JobContext<C> = {
    */
   signal?: AbortSignal;
 };
-export type JobOutcome<C> = { done: boolean; cursor?: C | null };
+export type JobOutcome<C> = { done: boolean; cursor?: C | null; continuation?: "ready" };
 export type RunResult =
   | { status: "completed"; done: boolean; durationMs: number }
   | { status: "skipped"; reason: "locked" | "not_requested" | "backoff" | "stopping" }
@@ -115,6 +115,11 @@ export async function runJob<C>(
         // 말이 없으면 종전대로 done에서 비운다.
         cursor: (outcome.cursor !== undefined ? outcome.cursor : (outcome.done ? null : cursor)) as never,
         processedVersion: lease.requestedVersion,
+        ...(outcome.continuation === "ready" && ["crawl-agent-review", "second-review"].includes(name) && !options.signal?.aborted ? {
+          requestedVersion: sql`case when ${jobs.requestedVersion} = ${lease.requestedVersion}
+            and ${jobs.requestedVersion} < 9007199254740991 then ${jobs.requestedVersion} + 1
+            else ${jobs.requestedVersion} end`,
+        } : {}),
         lockedAt: null, leaseToken: null, notBefore: null,
         lastSuccessAt: sql`now()`, lastError: null, updatedAt: sql`now()`,
       }).where(owned).returning({ name: jobs.name });
