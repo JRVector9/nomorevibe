@@ -1,0 +1,1236 @@
+{
+  "checkedAt": "2026-09-21T07:47:00Z",
+  "localCommit": "5146d13",
+  "runtimeRelease": "8ec1adc90709b813297e6a63686deb8d2fff6626",
+  "audit": {
+    "at": "2026-09-21T07:44:54.215Z",
+    "start": "2026-09-21T07:10:00Z",
+    "end": "2026-09-21T07:40:00Z",
+    "collection": [
+      {
+        "newly_discovered": 136,
+        "documents_fetched": 150
+      }
+    ],
+    "frontier": [
+      {
+        "state": "done",
+        "n": 76302,
+        "due": 76246
+      },
+      {
+        "state": "failed",
+        "n": 2,
+        "due": 2
+      },
+      {
+        "state": "skipped",
+        "n": 46,
+        "due": 46
+      }
+    ],
+    "first": [
+      {
+        "provider": "abcllm",
+        "model": "[MLX] gpt-oss-120b",
+        "state": "failed",
+        "error_code": "invalid_output",
+        "n": 2,
+        "p50_seconds": 7.089,
+        "p95_seconds": 7.3464
+      },
+      {
+        "provider": "abcllm",
+        "model": "[MLX] gpt-oss-120b",
+        "state": "succeeded",
+        "error_code": null,
+        "n": 36,
+        "p50_seconds": 9.6645,
+        "p95_seconds": 16.878
+      }
+    ],
+    "second": [
+      {
+        "provider": "abcllm",
+        "model": "[MLX] qwen3.6-35b-heretic",
+        "status": "needs_human",
+        "error_code": null,
+        "n": 6
+      },
+      {
+        "provider": "abcllm",
+        "model": "[MLX] qwen3.6-35b-heretic",
+        "status": "resolved",
+        "error_code": "invalid_output",
+        "n": 3
+      },
+      {
+        "provider": "abcllm",
+        "model": "[MLX] qwen3.6-35b-heretic",
+        "status": "resolved",
+        "error_code": null,
+        "n": 13
+      },
+      {
+        "provider": "claude-cli",
+        "model": "sonnet",
+        "status": "resolved",
+        "error_code": null,
+        "n": 3
+      }
+    ],
+    "cohort": [
+      {
+        "stage": "fetch_to_first",
+        "repeat_review": null,
+        "is_total": 1,
+        "n": 16,
+        "repeat_review_n": 3,
+        "negative": 0,
+        "p50_seconds": 21.8355,
+        "p95_seconds": 28899.7445
+      },
+      {
+        "stage": "fetch_to_first",
+        "repeat_review": false,
+        "is_total": 0,
+        "n": 13,
+        "repeat_review_n": 0,
+        "negative": 0,
+        "p50_seconds": 20.214,
+        "p95_seconds": 24.827799999999996
+      },
+      {
+        "stage": "fetch_to_first",
+        "repeat_review": true,
+        "is_total": 0,
+        "n": 3,
+        "repeat_review_n": 3,
+        "negative": 0,
+        "p50_seconds": 25328.29,
+        "p95_seconds": 38185.5262
+      },
+      {
+        "stage": "fetch_to_publish",
+        "repeat_review": null,
+        "is_total": 1,
+        "n": 16,
+        "repeat_review_n": 3,
+        "negative": 0,
+        "p50_seconds": 73.691425,
+        "p95_seconds": 28927.705775000002
+      },
+      {
+        "stage": "fetch_to_publish",
+        "repeat_review": false,
+        "is_total": 0,
+        "n": 13,
+        "repeat_review_n": 0,
+        "negative": 0,
+        "p50_seconds": 71.719245,
+        "p95_seconds": 92.62798179999997
+      },
+      {
+        "stage": "fetch_to_publish",
+        "repeat_review": true,
+        "is_total": 0,
+        "n": 3,
+        "repeat_review_n": 3,
+        "negative": 0,
+        "p50_seconds": 25353.804757,
+        "p95_seconds": 38219.8484218
+      },
+      {
+        "stage": "first_run",
+        "repeat_review": null,
+        "is_total": 1,
+        "n": 16,
+        "repeat_review_n": 3,
+        "negative": 0,
+        "p50_seconds": 9.661,
+        "p95_seconds": 15.33125
+      },
+      {
+        "stage": "first_run",
+        "repeat_review": false,
+        "is_total": 0,
+        "n": 13,
+        "repeat_review_n": 0,
+        "negative": 0,
+        "p50_seconds": 9.649,
+        "p95_seconds": 15.436399999999999
+      },
+      {
+        "stage": "first_run",
+        "repeat_review": true,
+        "is_total": 0,
+        "n": 3,
+        "repeat_review_n": 3,
+        "negative": 0,
+        "p50_seconds": 10.471,
+        "p95_seconds": 10.926400000000001
+      },
+      {
+        "stage": "first_to_second_enqueue",
+        "repeat_review": null,
+        "is_total": 1,
+        "n": 16,
+        "repeat_review_n": 3,
+        "negative": 0,
+        "p50_seconds": 14.902198,
+        "p95_seconds": 35.56574725
+      },
+      {
+        "stage": "first_to_second_enqueue",
+        "repeat_review": false,
+        "is_total": 0,
+        "n": 13,
+        "repeat_review_n": 0,
+        "negative": 0,
+        "p50_seconds": 24.23623,
+        "p95_seconds": 35.9603584
+      },
+      {
+        "stage": "first_to_second_enqueue",
+        "repeat_review": true,
+        "is_total": 0,
+        "n": 3,
+        "repeat_review_n": 3,
+        "negative": 0,
+        "p50_seconds": 5.83624,
+        "p95_seconds": 12.467757699999998
+      },
+      {
+        "stage": "second_queue_plus_run",
+        "repeat_review": null,
+        "is_total": 1,
+        "n": 16,
+        "repeat_review_n": 3,
+        "negative": 0,
+        "p50_seconds": 10.090483500000001,
+        "p95_seconds": 18.6857975
+      },
+      {
+        "stage": "second_queue_plus_run",
+        "repeat_review": false,
+        "is_total": 0,
+        "n": 13,
+        "repeat_review_n": 0,
+        "negative": 0,
+        "p50_seconds": 10.858197,
+        "p95_seconds": 19.864025599999987
+      },
+      {
+        "stage": "second_queue_plus_run",
+        "repeat_review": true,
+        "is_total": 0,
+        "n": 3,
+        "repeat_review_n": 3,
+        "negative": 0,
+        "p50_seconds": 7.943243,
+        "p95_seconds": 12.8042906
+      },
+      {
+        "stage": "second_to_publish",
+        "repeat_review": null,
+        "is_total": 1,
+        "n": 16,
+        "repeat_review_n": 3,
+        "negative": 0,
+        "p50_seconds": 11.344763,
+        "p95_seconds": 16.54642875
+      },
+      {
+        "stage": "second_to_publish",
+        "repeat_review": false,
+        "is_total": 0,
+        "n": 13,
+        "repeat_review_n": 0,
+        "negative": 0,
+        "p50_seconds": 12.663766,
+        "p95_seconds": 16.960324799999995
+      },
+      {
+        "stage": "second_to_publish",
+        "repeat_review": true,
+        "is_total": 0,
+        "n": 3,
+        "repeat_review_n": 3,
+        "negative": 0,
+        "p50_seconds": 10.315315,
+        "p95_seconds": 11.137477599999999
+      }
+    ],
+    "firstFailures": [
+      {
+        "error_code": "invalid_output",
+        "candidate_state": "needs_review",
+        "reason": "ambiguous",
+        "latest_attempt_state": "failed",
+        "latest_error": "invalid_output",
+        "latest_decision": null,
+        "n": 2
+      }
+    ],
+    "fallbacks": [
+      {
+        "error_code": "invalid_output",
+        "original_status": "resolved",
+        "provider": "claude-cli",
+        "model": "sonnet",
+        "status": "resolved",
+        "second_decision": "approve",
+        "n": 3
+      }
+    ],
+    "jobs": [
+      {
+        "name": "agent-evidence-refresh",
+        "has_error": false,
+        "last_success_at": "2026-09-21T07:43:57.134Z",
+        "requested_version": "18244",
+        "processed_version": "18243"
+      },
+      {
+        "name": "click-rollup",
+        "has_error": false,
+        "last_success_at": "2026-09-21T07:37:44.254Z",
+        "requested_version": "310",
+        "processed_version": "310"
+      },
+      {
+        "name": "crawl-agent-review",
+        "has_error": false,
+        "last_success_at": "2026-09-21T07:44:44.303Z",
+        "requested_version": "16304",
+        "processed_version": "16304"
+      },
+      {
+        "name": "crawl-fetch",
+        "has_error": false,
+        "last_success_at": "2026-09-21T07:44:47.847Z",
+        "requested_version": "22474",
+        "processed_version": "22474"
+      },
+      {
+        "name": "crawl-judge",
+        "has_error": false,
+        "last_success_at": "2026-09-21T07:43:15.962Z",
+        "requested_version": "13562",
+        "processed_version": "13562"
+      },
+      {
+        "name": "crawl-publish",
+        "has_error": false,
+        "last_success_at": "2026-09-21T07:43:48.499Z",
+        "requested_version": "9840",
+        "processed_version": "9840"
+      },
+      {
+        "name": "crawl-seed",
+        "has_error": false,
+        "last_success_at": "2026-09-21T07:41:48.718Z",
+        "requested_version": "1640",
+        "processed_version": "1640"
+      },
+      {
+        "name": "crawl-tagline",
+        "has_error": false,
+        "last_success_at": "2026-09-21T07:44:36.193Z",
+        "requested_version": "1881",
+        "processed_version": "1881"
+      },
+      {
+        "name": "heartbeat",
+        "has_error": false,
+        "last_success_at": "2026-08-29T02:24:02.614Z",
+        "requested_version": "0",
+        "processed_version": "0"
+      },
+      {
+        "name": "hn-show-seed",
+        "has_error": false,
+        "last_success_at": "2026-09-21T07:39:32.263Z",
+        "requested_version": "564",
+        "processed_version": "564"
+      },
+      {
+        "name": "news-refresh",
+        "has_error": false,
+        "last_success_at": "2026-09-21T06:54:24.031Z",
+        "requested_version": "249",
+        "processed_version": "249"
+      },
+      {
+        "name": "product-audit",
+        "has_error": false,
+        "last_success_at": "2026-09-21T07:43:53.939Z",
+        "requested_version": "3618",
+        "processed_version": "3617"
+      },
+      {
+        "name": "product-evidence-refresh",
+        "has_error": false,
+        "last_success_at": "2026-09-21T07:44:01.842Z",
+        "requested_version": "18409",
+        "processed_version": "18408"
+      },
+      {
+        "name": "product-search-refresh",
+        "has_error": false,
+        "last_success_at": "2026-09-21T07:44:08.975Z",
+        "requested_version": "4001",
+        "processed_version": "4001"
+      },
+      {
+        "name": "product-stars-refresh",
+        "has_error": false,
+        "last_success_at": "2026-09-21T07:44:32.714Z",
+        "requested_version": "2486",
+        "processed_version": "2486"
+      },
+      {
+        "name": "product-thumbnail-refresh",
+        "has_error": false,
+        "last_success_at": "2026-09-21T07:44:12.480Z",
+        "requested_version": "22361",
+        "processed_version": "22361"
+      },
+      {
+        "name": "ranking-refresh",
+        "has_error": false,
+        "last_success_at": "2026-09-21T07:37:49.299Z",
+        "requested_version": "310",
+        "processed_version": "310"
+      },
+      {
+        "name": "reason-translate",
+        "has_error": false,
+        "last_success_at": "2026-09-21T07:44:31.145Z",
+        "requested_version": "13653",
+        "processed_version": "13652"
+      },
+      {
+        "name": "second-review",
+        "has_error": false,
+        "last_success_at": "2026-09-21T07:44:14.191Z",
+        "requested_version": "10832",
+        "processed_version": "10832"
+      },
+      {
+        "name": "uptime-ping",
+        "has_error": false,
+        "last_success_at": "2026-09-21T07:44:51.041Z",
+        "requested_version": "13169",
+        "processed_version": "13169"
+      }
+    ],
+    "statuses": [
+      {
+        "status": "needs_human",
+        "n": 470
+      }
+    ]
+  },
+  "crawlerLogs": {
+    "start": "2026-09-21T07:10:00Z",
+    "end": "2026-09-21T07:40:00Z",
+    "counts": {
+      "crawl.fetched": 24,
+      "crawl.seeded": 3,
+      "crawl.fetch_rate_limited": 7,
+      "crawl.show_hn_seeded": 1
+    },
+    "totals": {
+      "fetched": 150,
+      "skipped": 2,
+      "failed": 0,
+      "discovered": 136
+    },
+    "errors": [
+      {
+        "ts": "2026-09-21T07:11:46.606Z",
+        "event": "crawl.fetch_rate_limited",
+        "fetched": 0
+      },
+      {
+        "ts": "2026-09-21T07:12:43.658Z",
+        "event": "crawl.fetch_rate_limited",
+        "fetched": 0
+      },
+      {
+        "ts": "2026-09-21T07:13:43.909Z",
+        "event": "crawl.fetch_rate_limited",
+        "fetched": 0
+      },
+      {
+        "ts": "2026-09-21T07:14:45.298Z",
+        "event": "crawl.fetch_rate_limited",
+        "fetched": 0
+      },
+      {
+        "ts": "2026-09-21T07:15:45.556Z",
+        "event": "crawl.fetch_rate_limited",
+        "fetched": 0
+      },
+      {
+        "ts": "2026-09-21T07:18:48.637Z",
+        "event": "crawl.fetch_rate_limited",
+        "fetched": 0
+      },
+      {
+        "ts": "2026-09-21T07:19:40.667Z",
+        "event": "crawl.fetch_rate_limited",
+        "fetched": 0
+      }
+    ]
+  },
+  "runtime": [
+    {
+      "name": "nomorevibe-web-m3",
+      "container": "859e5551c3ec",
+      "status": "running",
+      "health": {
+        "status": "ok",
+        "db": "ok",
+        "instanceId": "m3-web",
+        "release": "8ec1adc90709b813297e6a63686deb8d2fff6626",
+        "dbLatencyMs": 1
+      },
+      "restarts": 0,
+      "startedAt": "2026-09-21T06:45:46.353377453Z",
+      "path": "docker-entrypoint.sh",
+      "release": "8ec1adc90709b813297e6a63686deb8d2fff6626",
+      "pool": "6",
+      "pid1": "next-server (v",
+      "httpStatus": 200
+    },
+    {
+      "name": "nomorevibe-web-mini",
+      "container": "128cf9a7419a",
+      "status": "running",
+      "health": {
+        "status": "ok",
+        "db": "ok",
+        "instanceId": "mini-web",
+        "release": "8ec1adc90709b813297e6a63686deb8d2fff6626",
+        "dbLatencyMs": 1
+      },
+      "restarts": 0,
+      "startedAt": "2026-09-21T06:45:29.051840373Z",
+      "path": "docker-entrypoint.sh",
+      "release": "8ec1adc90709b813297e6a63686deb8d2fff6626",
+      "pool": "6",
+      "pid1": "next-server (v",
+      "httpStatus": 200
+    },
+    {
+      "name": "nomorevibe-crawler-m3",
+      "container": "5469493bd53f",
+      "status": "running",
+      "health": "healthy",
+      "restarts": 0,
+      "startedAt": "2026-09-21T06:46:04.451590434Z",
+      "path": "/sbin/tini",
+      "release": "8ec1adc90709b813297e6a63686deb8d2fff6626",
+      "role": "crawler",
+      "pool": "4",
+      "pid1": "tini",
+      "worker": {
+        "role": "crawler",
+        "status": "running",
+        "currentJob": "crawl-fetch",
+        "heartbeatAgeMs": 2083
+      },
+      "matched": 11,
+      "total": 11
+    },
+    {
+      "name": "nomorevibe-reviewer-m3",
+      "container": "237954b01e5a",
+      "status": "running",
+      "health": "healthy",
+      "restarts": 0,
+      "startedAt": "2026-09-21T06:45:50.974950114Z",
+      "path": "/sbin/tini",
+      "release": "8ec1adc90709b813297e6a63686deb8d2fff6626",
+      "role": "reviewer",
+      "pool": "12",
+      "pid1": "tini",
+      "worker": {
+        "role": "reviewer",
+        "status": "running",
+        "currentJob": null,
+        "heartbeatAgeMs": 3392
+      },
+      "matched": 11,
+      "total": 11
+    },
+    {
+      "name": "nomorevibe-publisher-m3",
+      "container": "b1e153fc69d6",
+      "status": "running",
+      "health": "healthy",
+      "restarts": 0,
+      "startedAt": "2026-09-21T06:46:00.618002128Z",
+      "path": "/sbin/tini",
+      "release": "8ec1adc90709b813297e6a63686deb8d2fff6626",
+      "role": "publisher",
+      "pool": "3",
+      "pid1": "tini",
+      "worker": {
+        "role": "publisher",
+        "status": "running",
+        "currentJob": null,
+        "heartbeatAgeMs": 703
+      },
+      "matched": 11,
+      "total": 11
+    },
+    {
+      "name": "nomorevibe-maintenance-m3",
+      "container": "59a9bbf0ff24",
+      "status": "running",
+      "health": "healthy",
+      "restarts": 0,
+      "startedAt": "2026-09-21T06:45:57.22109979Z",
+      "path": "/sbin/tini",
+      "release": "8ec1adc90709b813297e6a63686deb8d2fff6626",
+      "role": "maintenance",
+      "pool": "3",
+      "pid1": "tini",
+      "worker": {
+        "role": "maintenance",
+        "status": "running",
+        "currentJob": null,
+        "heartbeatAgeMs": 3282
+      },
+      "matched": 11,
+      "total": 11
+    },
+    {
+      "name": "nomorevibe-scheduler-m3",
+      "container": "92c82a24948c",
+      "status": "running",
+      "health": "healthy",
+      "restarts": 0,
+      "startedAt": "2026-09-21T06:45:28.596279296Z",
+      "path": "/sbin/tini",
+      "release": "8ec1adc90709b813297e6a63686deb8d2fff6626",
+      "role": "scheduler",
+      "pool": "2",
+      "pid1": "tini",
+      "worker": {
+        "role": "scheduler",
+        "status": "running",
+        "currentJob": null,
+        "heartbeatAgeMs": 2474
+      },
+      "matched": 11,
+      "total": 11
+    },
+    {
+      "name": "nomorevibe-connect-agent-m3",
+      "container": "4622730d393e",
+      "status": "running",
+      "health": "healthy",
+      "restarts": 0,
+      "startedAt": "2026-09-21T06:45:55.803912549Z",
+      "path": "/sbin/tini",
+      "release": "8ec1adc90709b813297e6a63686deb8d2fff6626",
+      "role": "connect-agent",
+      "pool": "1",
+      "pid1": "tini",
+      "matched": 11,
+      "total": 11
+    },
+    {
+      "name": "nomorevibe-text-m3",
+      "container": "9efb64bb997a",
+      "status": "running",
+      "health": "healthy",
+      "restarts": 0,
+      "startedAt": "2026-09-21T06:46:07.073580642Z",
+      "path": "/sbin/tini",
+      "release": "8ec1adc90709b813297e6a63686deb8d2fff6626",
+      "role": "text",
+      "pool": "3",
+      "pid1": "tini",
+      "worker": {
+        "role": "text",
+        "status": "running",
+        "currentJob": "reason-translate",
+        "heartbeatAgeMs": 161
+      },
+      "matched": 11,
+      "total": 11
+    }
+  ],
+  "publicationGates": {
+    "at": "2026-09-21T07:42:02.715Z",
+    "since": "2026-09-21T06:47:00Z",
+    "duplicates": [
+      {
+        "duplicate_repository_groups": 0
+      }
+    ],
+    "recent": [
+      {
+        "published": 29,
+        "admin": 0,
+        "missing_first": 0,
+        "missing_independent_second": 0
+      }
+    ],
+    "roles": [
+      {
+        "key": "service:app:m3-web",
+        "release": "8ec1adc90709b813297e6a63686deb8d2fff6626",
+        "role": null,
+        "observed_at_utc": "2026-09-21T07:41:48.082Z"
+      },
+      {
+        "key": "service:app:mini-web",
+        "release": "8ec1adc90709b813297e6a63686deb8d2fff6626",
+        "role": null,
+        "observed_at_utc": "2026-09-21T07:42:00.869Z"
+      },
+      {
+        "key": "service:connect-agent:m3-connect-agent",
+        "release": "8ec1adc90709b813297e6a63686deb8d2fff6626",
+        "role": null,
+        "observed_at_utc": "2026-09-21T07:41:59.204Z"
+      },
+      {
+        "key": "service:crawler:m3-crawler",
+        "release": "8ec1adc90709b813297e6a63686deb8d2fff6626",
+        "role": "crawler",
+        "observed_at_utc": "2026-09-21T07:41:51.216Z"
+      },
+      {
+        "key": "service:maintenance:m3-maintenance",
+        "release": "8ec1adc90709b813297e6a63686deb8d2fff6626",
+        "role": "maintenance",
+        "observed_at_utc": "2026-09-21T07:41:59.514Z"
+      },
+      {
+        "key": "service:publisher:m3-publisher",
+        "release": "8ec1adc90709b813297e6a63686deb8d2fff6626",
+        "role": "publisher",
+        "observed_at_utc": "2026-09-21T07:41:48.337Z"
+      },
+      {
+        "key": "service:reviewer:m3-reviewer",
+        "release": "8ec1adc90709b813297e6a63686deb8d2fff6626",
+        "role": "reviewer",
+        "observed_at_utc": "2026-09-21T07:41:53.479Z"
+      },
+      {
+        "key": "service:scheduler:m3-scheduler",
+        "release": "8ec1adc90709b813297e6a63686deb8d2fff6626",
+        "role": "scheduler",
+        "observed_at_utc": "2026-09-21T07:41:48.728Z"
+      },
+      {
+        "key": "service:text:m3-text",
+        "release": "8ec1adc90709b813297e6a63686deb8d2fff6626",
+        "role": "text",
+        "observed_at_utc": "2026-09-21T07:41:54.495Z"
+      }
+    ]
+  },
+  "pipelineLatency": {
+    "first": {
+      "calls": 38,
+      "failed": 2,
+      "reused": 0,
+      "committed": 38,
+      "incomplete": 0,
+      "modelMs": {
+        "samples": 38,
+        "p50": 9605.664896999951,
+        "p95": 16929.28525400022
+      },
+      "queueMs": {
+        "samples": 38,
+        "p50": 6010,
+        "p95": 198184087
+      }
+    },
+    "second": {
+      "calls": 25,
+      "failed": 3,
+      "reused": 0,
+      "committed": 25,
+      "incomplete": 0,
+      "modelMs": {
+        "samples": 25,
+        "p50": 6022.850389000028,
+        "p95": 9611.422422999982
+      },
+      "queueMs": {
+        "samples": 25,
+        "p50": 182,
+        "p95": 11460
+      }
+    },
+    "publish": {
+      "calls": 0,
+      "failed": 0,
+      "reused": 0,
+      "committed": 16,
+      "incomplete": 0,
+      "modelMs": {
+        "samples": 0,
+        "p50": null,
+        "p95": null
+      },
+      "queueMs": {
+        "samples": 0,
+        "p50": null,
+        "p95": null
+      }
+    },
+    "judge": {
+      "calls": 0,
+      "failed": 0,
+      "reused": 0,
+      "committed": 142,
+      "incomplete": 0,
+      "modelMs": {
+        "samples": 0,
+        "p50": null,
+        "p95": null
+      },
+      "queueMs": {
+        "samples": 0,
+        "p50": null,
+        "p95": null
+      }
+    },
+    "text": {
+      "calls": 0,
+      "failed": 0,
+      "reused": 0,
+      "committed": 0,
+      "incomplete": 0,
+      "modelMs": {
+        "samples": 0,
+        "p50": null,
+        "p95": null
+      },
+      "queueMs": {
+        "samples": 0,
+        "p50": null,
+        "p95": null
+      }
+    },
+    "firstToSecondMs": {
+      "samples": 25,
+      "p50": 17856,
+      "p95": 45881
+    },
+    "clockAnomalies": 0,
+    "clock": "application_utc; queue timestamps originate in DB; host skew not corrected",
+    "unobserved": "unknown",
+    "invalidLines": 0
+  },
+  "workerOverlap": {
+    "start": "2026-09-21T07:10:00Z",
+    "end": "2026-09-21T07:40:00Z",
+    "publisherJobsCompleted": 14,
+    "textJobsCompleted": 60,
+    "publisherJobsCompletedWhileTextRunning": 6,
+    "failedJobs": 0,
+    "publisherTextJobs": 0
+  },
+  "browser": {
+    "at": "2026-09-21T07:41:58.212Z",
+    "results": [
+      {
+        "path": "/",
+        "status": 200,
+        "finalPath": "/",
+        "title": "nomorevibe — AI로 만든 것들, 세상에 나오다.",
+        "bodyLength": 6994,
+        "elapsedMs": 2609,
+        "navigation": {
+          "domContentLoadedMs": 824,
+          "loadMs": 1323
+        }
+      },
+      {
+        "path": "/p/posthog",
+        "status": 200,
+        "title": "PostHog — NoMoreVibe",
+        "bodyLength": 5229
+      },
+      {
+        "path": "/popular",
+        "status": 200,
+        "finalPath": "/popular",
+        "title": "많이 쓰이는 프로젝트 — NoMoreVibe",
+        "bodyLength": 2922,
+        "elapsedMs": 1445,
+        "navigation": {
+          "domContentLoadedMs": 237,
+          "loadMs": 296
+        }
+      },
+      {
+        "path": "/admin/status",
+        "status": 200,
+        "finalPath": "/admin/status",
+        "title": "운영센터 — NoMoreVibe",
+        "bodyLength": 3091,
+        "elapsedMs": 2219,
+        "navigation": {
+          "domContentLoadedMs": 1297,
+          "loadMs": 1298
+        }
+      }
+    ],
+    "errors": [],
+    "failed": [],
+    "mobileOverflow": false,
+    "adminStatusChecked": true
+  },
+  "adminInteractions": {
+    "at": "2026-09-21T07:46:42.898Z",
+    "errors": [],
+    "consoleErrors": [],
+    "serverErrors": [],
+    "checks": [
+      {
+        "check": "jobDetailDialog",
+        "visible": true,
+        "hasSeed": true
+      },
+      {
+        "check": "jobDetailClosed",
+        "ok": true
+      },
+      {
+        "check": "translationFailureDialog",
+        "visible": true
+      },
+      {
+        "check": "page",
+        "path": "/admin/review",
+        "status": 200,
+        "bodyLength": 7739
+      },
+      {
+        "check": "page",
+        "path": "/admin/review?second=needs_human",
+        "status": 200,
+        "bodyLength": 9031
+      },
+      {
+        "check": "page",
+        "path": "/admin/products",
+        "status": 200,
+        "bodyLength": 2255
+      },
+      {
+        "check": "page",
+        "path": "/admin",
+        "status": 200,
+        "bodyLength": 4580
+      }
+    ]
+  },
+  "before": {
+    "variant": "af50608",
+    "clock": "virtual",
+    "db": "mocked",
+    "model": "fixed delayed response",
+    "rows": [
+      {
+        "scenario": "first_review_eight",
+        "responseMs": 10000,
+        "elapsedMs": 70000,
+        "starts": [
+          0,
+          0,
+          0,
+          0,
+          60000,
+          60000,
+          60000,
+          60000
+        ],
+        "ends": [
+          10000,
+          10000,
+          10000,
+          10000,
+          70000,
+          70000,
+          70000,
+          70000
+        ],
+        "ticks": [
+          0,
+          60000
+        ],
+        "peak": 4,
+        "errors": 0,
+        "completed": 8,
+        "timeoutMs": [
+          24000,
+          24000,
+          24000,
+          24000,
+          24000,
+          24000,
+          24000,
+          24000
+        ]
+      },
+      {
+        "scenario": "first_review_eight",
+        "responseMs": 24000,
+        "elapsedMs": 84000,
+        "starts": [
+          0,
+          0,
+          0,
+          0,
+          60000,
+          60000,
+          60000,
+          60000
+        ],
+        "ends": [
+          24000,
+          24000,
+          24000,
+          24000,
+          84000,
+          84000,
+          84000,
+          84000
+        ],
+        "ticks": [
+          0,
+          60000
+        ],
+        "peak": 4,
+        "errors": 0,
+        "completed": 8,
+        "timeoutMs": [
+          24000,
+          24000,
+          24000,
+          24000,
+          24000,
+          24000,
+          24000,
+          24000
+        ]
+      },
+      {
+        "scenario": "publication_during_translation",
+        "translationMs": 30000,
+        "requestedAtMs": 1000,
+        "publishedAtMs": 35000,
+        "waitMs": 34000,
+        "translatedAtMs": 30000,
+        "roles": [
+          "publisher"
+        ]
+      }
+    ]
+  },
+  "after": {
+    "variant": "5146d13",
+    "clock": "virtual",
+    "db": "mocked",
+    "model": "fixed delayed response",
+    "rows": [
+      {
+        "scenario": "first_review_eight",
+        "responseMs": 10000,
+        "elapsedMs": 20000,
+        "starts": [
+          0,
+          0,
+          0,
+          0,
+          10000,
+          10000,
+          10000,
+          10000
+        ],
+        "ends": [
+          10000,
+          10000,
+          10000,
+          10000,
+          20000,
+          20000,
+          20000,
+          20000
+        ],
+        "ticks": [
+          0
+        ],
+        "peak": 4,
+        "errors": 0,
+        "completed": 8,
+        "timeoutMs": [
+          24000,
+          24000,
+          24000,
+          24000,
+          24000,
+          24000,
+          24000,
+          24000
+        ]
+      },
+      {
+        "scenario": "first_review_eight",
+        "responseMs": 24000,
+        "elapsedMs": 53000,
+        "starts": [
+          0,
+          0,
+          0,
+          0,
+          29000,
+          29000,
+          29000,
+          29000
+        ],
+        "ends": [
+          24000,
+          24000,
+          24000,
+          24000,
+          53000,
+          53000,
+          53000,
+          53000
+        ],
+        "ticks": [
+          0,
+          29000
+        ],
+        "peak": 4,
+        "errors": 0,
+        "completed": 8,
+        "timeoutMs": [
+          24000,
+          24000,
+          24000,
+          24000,
+          24000,
+          24000,
+          24000,
+          24000
+        ]
+      },
+      {
+        "scenario": "publication_during_translation",
+        "translationMs": 30000,
+        "requestedAtMs": 1000,
+        "publishedAtMs": 5000,
+        "waitMs": 4000,
+        "translatedAtMs": 30000,
+        "roles": [
+          "text",
+          "publisher"
+        ]
+      }
+    ]
+  },
+  "historicalReference": {
+    "at": "2026-09-21T02:10:13.362Z",
+    "cohortStageTimes": [
+      {
+        "stage": "fetch_to_first_start",
+        "n": 109,
+        "p50_seconds": "947.884",
+        "p95_seconds": "3329.457",
+        "negative": 0
+      },
+      {
+        "stage": "first_end_to_second_enqueue",
+        "n": 109,
+        "p50_seconds": "25.301",
+        "p95_seconds": "34.338",
+        "negative": 0
+      },
+      {
+        "stage": "first_run",
+        "n": 109,
+        "p50_seconds": "11.446",
+        "p95_seconds": "15.138",
+        "negative": 0
+      },
+      {
+        "stage": "reconsider_to_fetch",
+        "n": 109,
+        "p50_seconds": "65.088",
+        "p95_seconds": "165.721",
+        "negative": 0
+      },
+      {
+        "stage": "reconsider_to_published",
+        "n": 109,
+        "p50_seconds": "1094.269",
+        "p95_seconds": "3489.599",
+        "negative": 0
+      },
+      {
+        "stage": "second_end_to_published",
+        "n": 109,
+        "p50_seconds": "35.229",
+        "p95_seconds": "102.486",
+        "negative": 0
+      },
+      {
+        "stage": "second_queue_plus_run",
+        "n": 109,
+        "p50_seconds": "8.381",
+        "p95_seconds": "38.850",
+        "negative": 0
+      }
+    ],
+    "comparable": false
+  },
+  "tests": {
+    "unit": {
+      "files": 141,
+      "passed": 1094,
+      "exitCode": 0
+    },
+    "integration": {
+      "files": 79,
+      "passed": 767,
+      "exitCode": 0,
+      "database": "127.0.0.1:55435/nomorevibe_test"
+    },
+    "beforeComparison": {
+      "passed": 3,
+      "exitCode": 0
+    },
+    "afterComparison": {
+      "passed": 3,
+      "exitCode": 0
+    },
+    "typecheck": {
+      "exitCode": 0
+    }
+  },
+  "limits": [
+    "Read-only natural production traffic; no synthetic production candidates or deliberate provider faults.",
+    "First-review output correctness was not human-labelled in this check.",
+    "Historical cohort differs in backlog and input; production causal speedup percentage unavailable.",
+    "Publication cohort is successful publications only; not an all-candidate latency SLA.",
+    "crawl_documents.fetched_at is current document timestamp, not immutable ingestion history.",
+    "Live status snapshots were captured at different times; main throughput cohort is fixed 07:10–07:40 UTC."
+  ]
+}

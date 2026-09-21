@@ -1,0 +1,35 @@
+import json,statistics,collections
+from pathlib import Path
+from datetime import datetime
+rows=json.loads(Path('/tmp/nmv-bottleneck-logs.json').read_text())
+ts=lambda r:datetime.fromisoformat(r.get('ts',r.get('at')).replace('Z','+00:00')).timestamp()
+def dist(v):
+ v=sorted(v)
+ return {'n':len(v),'p50':round(statistics.median(v),3) if v else None,'p95':round(v[min(len(v)-1,__import__('math').ceil(len(v)*.95)-1)],3) if v else None,'max':round(max(v),3) if v else None}
+jobs=collections.defaultdict(list)
+for r in rows:
+ if r['event']=='job.completed':jobs[(r['role'],r['job'])].append(r)
+jobStats=[];roles=collections.defaultdict(float)
+for (role,job),rs in jobs.items():
+ dur=[r['durationMs']/1000 for r in rs];total=sum(dur);roles[role]+=total
+ jobStats.append({'role':role,'job':job,'runs':len(rs),'seconds':round(total,2),'busyPct':round(total/36,2),'duration':dist(dur),'doneFalse':sum(not r['done'] for r in rs)})
+events=collections.defaultdict(list)
+for r in rows:
+ if r['event'] not in ['job.completed','review.pipeline','worker.job','scheduler.tick']:events[r['event']].append(r)
+eventStats=[]
+for name,rs in events.items():
+ totals=collections.Counter()
+ for r in rs:
+  for k,v in r.items():
+   if isinstance(v,(int,float)) and not isinstance(v,bool) and k not in ['durationMs','id','scanId','productId','requestedVersion']:totals[k]+=v
+ eventStats.append({'event':name,'count':len(rs),'sums':dict(totals),'errors':dict(collections.Counter(r.get('error',r.get('errorCode',''))for r in rs))})
+# Model successes finish before the first-review job yields its role: measure tail of same run.
+first=[]
+for r in rows:
+ if r['event']=='review.pipeline' and r.get('stage')=='first' and r.get('kind')=='committed' and r.get('state')=='succeeded':
+  subsequent=next((j for j in jobs[('reviewer','crawl-agent-review')] if ts(j)>=ts(r) and ts(j)-j['durationMs']/1000<=ts(r)),None)
+  second=next((s for s in rows if s['event']=='review.pipeline' and s.get('stage')=='second' and s.get('kind')=='model_start' and s.get('firstAttemptId')==r.get('firstAttemptId') and ts(s)>=ts(r)),None)
+  if subsequent and second:first.append({'firstAttemptId':r.get('firstAttemptId'),'sameJobTailSeconds':round(ts(subsequent)-ts(r),3),'firstToSecondSeconds':round(ts(second)-ts(r),3),'afterJobSeconds':round(ts(second)-ts(subsequent),3)})
+result={'windowSeconds':3600,'roleBusyPct':{k:round(v/36,2)for k,v in roles.items()},'jobs':jobStats,'events':eventStats,'firstHandoff':{'matched':len(first),'sameJobTail':dist([r['sameJobTailSeconds']for r in first]),'afterJob':dist([r['afterJobSeconds']for r in first]),'total':dist([r['firstToSecondSeconds']for r in first]),'rows':first}}
+Path('/tmp/nmv-bottleneck-summary.json').write_text(json.dumps(result,indent=2))
+result['firstHandoff'].pop('rows');print(json.dumps(result,indent=2))

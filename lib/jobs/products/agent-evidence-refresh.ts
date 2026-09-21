@@ -30,12 +30,13 @@ export async function refreshAgentEvidenceJob(ctx: JobContext<AgentEvidenceRefre
   `;
   const partial = await db.execute<{ repository_key: string }>(sql`
     SELECT latest.repository_key FROM (
-      SELECT DISTINCT ON (repository_key) repository_key, state, next_attempt_at, cursor
+      SELECT DISTINCT ON (repository_key) repository_key, state, next_attempt_at, cursor, last_error_code
       FROM agent_repository_scans WHERE scope = '' AND detector_version = ${AGENT_DETECTOR_VERSION}
       ORDER BY repository_key, started_at DESC, id DESC
     ) latest JOIN (${demand}) demand USING (repository_key)
     WHERE latest.state IN ('partial', 'complete') AND latest.next_attempt_at <= now()
-      AND (jsonb_array_length(coalesce(latest.cursor->'pendingTrees', '[]'::jsonb)) > 0
+      AND (latest.last_error_code = 'alias_recheck_required'
+        OR jsonb_array_length(coalesce(latest.cursor->'pendingTrees', '[]'::jsonb)) > 0
         OR jsonb_array_length(coalesce(latest.cursor->'pendingBlobs', '[]'::jsonb)) > 0
         OR jsonb_array_length(coalesce(latest.cursor->'pendingCommits', '[]'::jsonb)) > 0)
     ORDER BY latest.next_attempt_at, latest.repository_key LIMIT 3

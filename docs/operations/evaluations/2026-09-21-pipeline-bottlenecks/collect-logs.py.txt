@@ -1,0 +1,31 @@
+import json,subprocess,shlex
+from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor
+apps=json.loads(Path('/tmp/nmv-speed-deploy-progress.json').read_text())
+start='2026-09-21T06:50:00Z';end='2026-09-21T07:50:00Z'
+def read(a):
+ if any(s in a['name'] for s in ['web-','connect-agent']):return []
+ role=a['name'].removeprefix('nomorevibe-').removesuffix('-m3')
+ script='''import json,subprocess,sys
+r=subprocess.run(['docker','service','logs','--raw','--since',sys.argv[2],sys.argv[1]],capture_output=True,text=True)
+if r.returncode:raise RuntimeError('docker_log_failed')
+rows=[]
+for line in (r.stdout+'\\n'+r.stderr).splitlines():
+ try:v=json.loads(line)
+ except:continue
+ at=v.get('ts',v.get('at',''))
+ if not(sys.argv[2]<=at<sys.argv[3]):continue
+ keys='ts at event kind stage candidateId firstAttemptId secondReviewId job runId callId durationMs waitMs ok state nextJob requestedVersion done provider model error errorCode reason resetAt resource status repositoryKey sourceKind outcome httpClass'.split()
+ row={k:v[k] for k in keys if k in v and isinstance(v[k],(str,int,float,bool))}
+ for k,value in v.items():
+  if isinstance(value,(int,float,bool)) and k not in ['pid']:row[k]=value
+ rows.append(row)
+print(json.dumps(rows))'''
+ cmd='python3 -c '+shlex.quote(script)+' '+shlex.quote(a['appName'])+' '+shlex.quote(start)+' '+shlex.quote(end)
+ r=subprocess.run(['ssh','-o','BatchMode=yes','-o','ConnectTimeout=10','jr@100.92.77.66',cmd],capture_output=True,text=True,timeout=55)
+ if r.returncode:raise RuntimeError('remote_log_failed')
+ return [{**v,'role':role}for v in json.loads(r.stdout)]
+with ThreadPoolExecutor(max_workers=4)as p:rows=[v for vs in p.map(read,apps)for v in vs]
+rows.sort(key=lambda r:r.get('ts',r.get('at','')))
+Path('/tmp/nmv-bottleneck-logs.json').write_text(json.dumps(rows,indent=2))
+print(json.dumps({'start':start,'end':end,'rows':len(rows),'events':sorted(set(r.get('event','') for r in rows))},indent=2))

@@ -1,0 +1,32 @@
+import {chromium} from 'playwright';
+import {writeFileSync} from 'node:fs';
+const browser=await chromium.launch({headless:true});
+const out={at:new Date().toISOString(),errors:[],consoleErrors:[],serverErrors:[],checks:[]};
+try {
+ const p=await browser.newPage({viewport:{width:1440,height:1000}});
+ p.on('pageerror',e=>out.errors.push(e.message.slice(0,300)));
+ p.on('console',m=>{if(m.type()==='error')out.consoleErrors.push(m.text().slice(0,300));});
+ p.on('response',r=>{if(r.status()>=500&&r.url().startsWith('https://nomorevibe.brut.bot'))out.serverErrors.push({status:r.status(),path:new URL(r.url()).pathname});});
+ await p.goto('https://nomorevibe.brut.bot/admin/status',{waitUntil:'networkidle'});
+ await p.getByRole('button',{name:'작업 흐름',exact:true}).click();
+ await p.getByRole('button',{name:'상세',exact:true}).first().click();
+ await p.getByRole('dialog').waitFor({state:'visible'});
+ out.checks.push({check:'jobDetailDialog',visible:true,hasSeed:(await p.getByRole('dialog').innerText()).includes('수집 대상 탐색')});
+ await p.screenshot({path:'/tmp/nmv-check-job-dialog.png',fullPage:true});
+ const close=p.getByRole('dialog').getByRole('button',{name:'닫기',exact:true});
+ if(await close.count())await close.click();else await p.keyboard.press('Escape');
+ await p.getByRole('dialog').waitFor({state:'hidden'});out.checks.push({check:'jobDetailClosed',ok:true});
+ await p.getByRole('button',{name:'전체 현황',exact:true}).click();
+ const failure=p.getByRole('button',{name:'1',exact:true});
+ if(await failure.count()){
+  await failure.click();await p.getByRole('dialog').waitFor({state:'visible'});
+  out.checks.push({check:'translationFailureDialog',visible:true});
+  const c=p.getByRole('dialog').getByRole('button',{name:'닫기',exact:true});if(await c.count())await c.click();else await p.keyboard.press('Escape');
+  await p.getByRole('dialog').waitFor({state:'hidden'});
+ }
+ for(const path of ['/admin/review','/admin/review?second=needs_human','/admin/products','/admin']){
+  const r=await p.goto('https://nomorevibe.brut.bot'+path,{waitUntil:'networkidle',timeout:30000});
+  out.checks.push({check:'page',path,status:r.status(),bodyLength:(await p.locator('body').innerText()).length});
+ }
+ writeFileSync('/tmp/nmv-check-ui.json',JSON.stringify(out,null,2));console.log(JSON.stringify(out,null,2));
+}finally{await browser.close();}

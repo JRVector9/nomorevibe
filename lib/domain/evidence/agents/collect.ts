@@ -23,6 +23,12 @@ export type CollectResult = {
   repositoryFork?: boolean;
 };
 const shaPattern = /^[a-f0-9]{40,64}$/;
+export class InvalidAgentScanCursorError extends Error {
+  constructor() {
+    super('invalid agent scan cursor');
+    this.name = 'InvalidAgentScanCursorError';
+  }
+}
 export function normalizeAgentRepositoryKey(key: string): string {
   if (!/^[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+$/.test(key) || key.split('/').some(p => p === '.' || p === '..') || key.length > 200) throw new Error('invalid repository key');
   return key.toLowerCase();
@@ -46,7 +52,7 @@ export async function collectRepositoryAgentEvidence(input: {
   const request: AgentGitHubRequest = input.request ?? (path => githubRequest(path, {}, { timeoutMs: Math.max(1, Math.min(AGENT_SCAN_LIMITS.timeoutMs, deadlineAt - Date.now())) }));
   const maxRequests = Math.max(3, Math.min(input.maxRequests ?? AGENT_SCAN_LIMITS.requests, AGENT_SCAN_LIMITS.requests));
   let cursor = input.cursor ? structuredClone(input.cursor) : null;
-  if (cursor && (cursor.repositoryKey !== repositoryKey || cursor.scope !== scope || cursor.detectorVersion !== AGENT_DETECTOR_VERSION || !shaPattern.test(cursor.commitSha) || !/^\d+$/.test(cursor.repositoryId) || [...cursor.pendingTrees, ...cursor.pendingBlobs].some(item => !shaPattern.test(item.sha) || item.path.split('/').some(p => p === '..')))) throw new Error('invalid agent scan cursor');
+  if (cursor && (cursor.repositoryKey !== repositoryKey || cursor.scope !== scope || cursor.detectorVersion !== AGENT_DETECTOR_VERSION || !shaPattern.test(cursor.commitSha) || !/^\d+$/.test(cursor.repositoryId) || [...cursor.pendingTrees, ...cursor.pendingBlobs].some(item => !shaPattern.test(item.sha) || item.path.split('/').some(p => p === '..')))) throw new InvalidAgentScanCursorError();
   const result: CollectResult = { repositoryId: cursor?.repositoryId ?? null, repositoryKey, commitSha: cursor?.commitSha ?? null, scope, state: 'partial', cursor, observations: [], requestCount: 0, fileCount: 0, errorCode: null, retryAt: null };
   const budget = () => result.requestCount < maxRequests && Date.now() <= deadlineAt - AGENT_SCAN_LIMITS.timeoutMs && (input.hasBudget?.() ?? true);
   const get = async <T>(path: string) => { result.requestCount++; return request<T>(path); };

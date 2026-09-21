@@ -1,0 +1,20 @@
+import{parseEnv}from'node:util';import{readFileSync,writeFileSync}from'node:fs';import postgres from'postgres';
+const db=postgres(parseEnv(readFileSync('/tmp/nmv-installable-web.env','utf8')).DATABASE_URL,{max:1,prepare:false});
+try{const result=await db.begin('read only',async s=>{
+await s`set local statement_timeout='20s'`;
+const approved=await s`select count(*)::int as approved,
+ count(*)filter(where d.fetched_at<now()-interval '24 hours')::int as stale_document,
+ count(*)filter(where scan.completed_at<now()-interval '24 hours')::int as stale_scan,
+ count(*)filter(where d.fetched_at>=now()-interval '24 hours' and scan.completed_at<now()-interval '24 hours')::int as fresh_doc_stale_scan,
+ count(*)filter(where r.state='failed')::int as latest_failed,
+ count(*)filter(where r.valid_until<=now())::int as latest_expired,
+ count(*)filter(where r.id is null)::int as never_reviewed
+ from crawl_candidates c join crawl_documents d using(repo)
+ left join lateral(select * from agent_repository_scans x where x.repository_key=lower(c.repo)and x.scope='' order by started_at desc,id desc limit 1)scan on true
+ left join lateral(select * from crawl_review_attempts x where x.candidate_id=c.id order by id desc limit 1)r on true where c.state='approved'`;
+const campaigns=await s`select c.id,c.status,c.prompt_version,c.rules_version,count(i.id)::int as items,count(*)filter(where i.ai_decision is null)::int as no_ai_decision,count(*)filter(where i.ai_decision is not null and i.human_decision is null)::int as ai_decided_human_pending from product_audit_campaigns c left join product_audit_items i on i.campaign_id=c.id where c.status='running'group by c.id`;
+const demand=await s`with demand as(select lower(regexp_replace(repo_url,'^https://github.com/([^/]+/[^/#?]+?)([.]git)?/?$','\\1')) as repository_key from products where status<>'banned' and repo_url~'^https://github.com/[^/]+/[^/#?]+/?$' union select lower(repo)from crawl_candidates where state in ('new','needs_review','approved')), joined as(select d.repository_key,x.* from demand d left join lateral(select id,state,completed_at,next_attempt_at from agent_repository_scans x where x.repository_key=d.repository_key and x.scope=''and x.detector_version='2026-09-14.1' order by started_at desc,id desc limit 1)x on true)select count(*)::int as demanded,count(*)filter(where id is null)::int as never_scanned,count(*)filter(where id is null or next_attempt_at<=now())::int as due,count(*)filter(where state='complete' and completed_at>now()-interval '24 hours')::int as fresh_complete,count(*)filter(where completed_at<now()-interval '24 hours')::int as completed_stale,count(*)filter(where state='partial')::int as partial from joined`;
+const invalidCursors=await s`select repository_key,state,last_error_code,detector_version,cursor->>'repositoryKey' as cursor_repo,cursor->>'detectorVersion' as cursor_version,cursor->>'scope' as cursor_scope,scope,cursor->>'repositoryId' as cursor_repository_id,cursor->>'commitSha' as cursor_sha,coalesce(jsonb_array_length(cursor->'pendingTrees'),0) as pending_trees,coalesce(jsonb_array_length(cursor->'pendingBlobs'),0) as pending_blobs,coalesce(jsonb_array_length(cursor->'pendingCommits'),0) as pending_commits from (select distinct on(repository_key)* from agent_repository_scans where repository_key in ('hraness/hra','hraness/atet','hraness/message-like-me') and scope='' and detector_version='2026-09-14.1' order by repository_key,started_at desc,id desc)x`;
+return{at:new Date().toISOString(),approved,campaigns,demand,invalidCursors};});
+writeFileSync('/tmp/nmv-bottleneck-detail.json',JSON.stringify(result,null,2));console.log(JSON.stringify(result,null,2));
+}catch(e){console.error(JSON.stringify({error:e.code??e.name,message:e.message,position:e.position}));process.exitCode=1;}finally{await db.end({timeout:5});}

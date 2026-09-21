@@ -6,7 +6,7 @@ import { agentRepositoryScans, agentRepositoryObservations, crawlDiscoveryEviden
 import { withProductGeneration } from '@/lib/domain/products/generation';
 import { assertJobLease, type JobLease } from '@/lib/jobs/control';
 import { agentObservationSchema, AGENT_DETECTOR_VERSION, type AgentObservation } from './types';
-import { collectRepositoryAgentEvidence, normalizeAgentRepositoryKey, type CollectResult, type AgentGitHubRequest } from './collect';
+import { collectRepositoryAgentEvidence, InvalidAgentScanCursorError, normalizeAgentRepositoryKey, type CollectResult, type AgentGitHubRequest } from './collect';
 import { lockRepositoryAgentEvidence } from './lock';
 const DAY = 24 * 60 * 60 * 1000;
 const digest = (input: unknown) => createHash('sha256').update(JSON.stringify(input)).digest('hex');
@@ -65,10 +65,45 @@ export async function saveRepositoryAgentScan(result: CollectResult, now = new D
     return value.commitSha !== result.commitSha || value.sourcePath === null || value.sourceUrl !== `https://github.com/${result.repositoryKey}/blob/${result.commitSha}/${value.sourcePath.split('/').map(encodeURIComponent).join('/')}`;
   })) throw new Error('invalid agent observation');
   const nextAttemptAt = result.retryAt && result.retryAt > now ? result.retryAt : new Date(now.getTime() + (result.state === 'complete' || result.cursor?.coverageLimited && !result.cursor.pendingTrees.length && !result.cursor.pendingBlobs.length && !result.cursor.pendingCommits?.length ? DAY : result.errorCode ? 15 * 60_000 : 60_000));
+  // A rename shares GitHub ID/head, but existing products still look up the original name.
+  // Keep that name and bind the queue to it atomically on conflict. The collector rechecks
+  // public visibility and GitHub ID before resuming. Cached commit claims contain alias URLs,
+  // so reread those commits instead of carrying their unverified provenance across names.
+  const renamedCursor = result.cursor && { ...result.cursor,
+    pendingCommits: result.cursor.pendingCommits?.map(({ sha }) => ({ sha })) };
+  const conflictCursor = result.cursor === null ? null : sql`CASE
+    WHEN ${agentRepositoryScans.repositoryKey} = ${result.repositoryKey} THEN ${JSON.stringify(result.cursor)}::jsonb
+    ELSE jsonb_set(${JSON.stringify(renamedCursor)}::jsonb, '{repositoryKey}', to_jsonb(${agentRepositoryScans.repositoryKey})) END`;
+  const sameName = sql`${agentRepositoryScans.repositoryKey} = ${result.repositoryKey}`;
   return db.transaction(async tx => {
     await lockRepositoryAgentEvidence(tx, result.repositoryKey, result.scope);
     // Complete immutable evidence can coexist with unfinished later discovery work.
-    const [scan] = await tx.insert(agentRepositoryScans).values({ githubRepositoryId: BigInt(result.repositoryId!), repositoryKey: result.repositoryKey, commitSha: result.commitSha!, detectorVersion: AGENT_DETECTOR_VERSION, scope: result.scope, scopeHash: digest(result.scope), state: result.state, cursor: result.cursor, requestCount: result.requestCount, fileCount: result.fileCount, coverage: { limited: result.cursor?.coverageLimited ?? false, repositoryFork: result.repositoryFork ?? null }, startedAt: now, completedAt: result.state === 'complete' ? now : null, lastErrorCode: result.errorCode, nextAttemptAt }).onConflictDoUpdate({ target: [agentRepositoryScans.githubRepositoryId, agentRepositoryScans.commitSha, agentRepositoryScans.detectorVersion, agentRepositoryScans.scopeHash], set: { coverage: sql`${agentRepositoryScans.coverage} || ${JSON.stringify({...(result.repositoryFork === undefined ? {} : {repositoryFork:result.repositoryFork})})}::jsonb`, state: sql`CASE WHEN ${agentRepositoryScans.state} = 'complete' THEN 'complete' ELSE ${result.state} END`, cursor: result.cursor, requestCount: sql`${agentRepositoryScans.requestCount} + ${result.requestCount}`, fileCount: sql`${agentRepositoryScans.fileCount} + ${result.fileCount}`, startedAt: now, completedAt: result.state === 'complete' ? now : sql`${agentRepositoryScans.completedAt}`, lastErrorCode: result.errorCode, nextAttemptAt } }).returning();
+    const [scan] = await tx.insert(agentRepositoryScans).values({
+      githubRepositoryId: BigInt(result.repositoryId!), repositoryKey: result.repositoryKey,
+      commitSha: result.commitSha!, detectorVersion: AGENT_DETECTOR_VERSION,
+      scope: result.scope, scopeHash: digest(result.scope), state: result.state, cursor: result.cursor,
+      requestCount: result.requestCount, fileCount: result.fileCount,
+      coverage: { limited: result.cursor?.coverageLimited ?? false, repositoryFork: result.repositoryFork ?? null },
+      startedAt: now, completedAt: result.state === 'complete' ? now : null,
+      lastErrorCode: result.errorCode, nextAttemptAt,
+    }).onConflictDoUpdate({
+      target: [agentRepositoryScans.githubRepositoryId, agentRepositoryScans.commitSha, agentRepositoryScans.detectorVersion, agentRepositoryScans.scopeHash],
+      set: {
+        coverage: sql`${agentRepositoryScans.coverage} || ${JSON.stringify({...(result.repositoryFork === undefined ? {} : {repositoryFork:result.repositoryFork})})}::jsonb`,
+        state: sql`CASE WHEN ${agentRepositoryScans.state} = 'complete' THEN 'complete' WHEN NOT (${sameName}) THEN 'partial' ELSE ${result.state} END`,
+        cursor: conflictCursor,
+        requestCount: sql`${agentRepositoryScans.requestCount} + ${result.requestCount}`,
+        fileCount: sql`${agentRepositoryScans.fileCount} + ${result.fileCount}`,
+        startedAt: now,
+        // Checking an alias does not confirm that the original URL still identifies this repo.
+        completedAt: result.state === 'complete'
+          ? sql`CASE WHEN ${sameName} THEN excluded.completed_at ELSE ${agentRepositoryScans.completedAt} END`
+          : sql`${agentRepositoryScans.completedAt}`,
+        lastErrorCode: sql`CASE WHEN ${sameName} THEN ${result.errorCode} ELSE 'alias_recheck_required' END`,
+        // Recheck promptly, but never bypass an upstream failure's retry deadline.
+        nextAttemptAt: sql`CASE WHEN ${sameName} OR ${result.errorCode !== null} THEN excluded.next_attempt_at ELSE excluded.started_at END`,
+      },
+    }).returning();
     // Repository metadata can change at an unchanged head. Do not retain upstream claims after a fork recheck.
     if (result.repositoryFork === true) await tx.delete(agentRepositoryObservations).where(and(
       eq(agentRepositoryObservations.scanId, scan.id), sql`${agentRepositoryObservations.facts}->>'kind' = 'commit_attribution'`));
@@ -102,7 +137,17 @@ export async function refreshRepositoryAgentEvidence(input: { repositoryKey: str
   const resume = latest && ['partial', 'complete'].includes(latest.state) && latest.cursor && (latest.cursor.pendingTrees.length || latest.cursor.pendingBlobs.length || latest.cursor.pendingCommits?.length) ? latest.cursor : null;
   const discovery = await listDiscoveryEvidence(input.repositoryKey);
   const discoveryCommitShas = discovery.flatMap(row => row.commitSha ? [row.commitSha] : []);
-  const result = await collectRepositoryAgentEvidence({ ...input, discoveryCommitShas, cursor: resume, knownComplete: latest?.state === 'complete' ? { repositoryId: String(latest.githubRepositoryId), commitSha: latest.commitSha } : undefined });
+  const collectionInput = { ...input, discoveryCommitShas, knownComplete: latest?.state === 'complete' ? { repositoryId: String(latest.githubRepositoryId), commitSha: latest.commitSha } : undefined };
+  let result: CollectResult;
+  try {
+    result = await collectRepositoryAgentEvidence({ ...collectionInput, cursor: resume });
+  } catch (error) {
+    if (!(error instanceof InvalidAgentScanCursorError) || !resume) throw error;
+    // Legacy rename conflicts can leave an unusable cursor. Re-pin public metadata/head
+    // once, within the original budget; never relabel and trust another repository's work.
+    // A failed recheck follows the usual persisted error/backoff path below.
+    result = await collectRepositoryAgentEvidence({ ...collectionInput, cursor: null });
+  }
   // An unfinished public recheck must preserve the existing confirmation and any failed-recheck hold.
   if (result.errorCode === 'budget_exhausted') return {
     ...(latest ? (await getRepositoryAgentEvidence(latest.id))! : { scan: null, observations: [] }),
@@ -117,5 +162,5 @@ export async function refreshRepositoryAgentEvidence(input: { repositoryKey: str
   const scan = await saveRepositoryAgentScan(persistedResult, now);
   if (!scan) return { scan: null, observations: result.observations, cached: false, errorCode: result.errorCode, retryAt: result.retryAt };
   if (scan.state === 'complete' && input.productSlug && input.productId) await attachRepositoryAgentScan({ productSlug: input.productSlug, productId: input.productId, scanId: scan.id });
-  return { ...(await getRepositoryAgentEvidence(scan.id))!, cached: false, errorCode: result.errorCode, retryAt: result.retryAt };
+  return { ...(await getRepositoryAgentEvidence(scan.id))!, cached: false, errorCode: result.errorCode ?? scan.lastErrorCode, retryAt: result.retryAt };
 }

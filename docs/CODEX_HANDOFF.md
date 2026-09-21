@@ -1,3 +1,197 @@
+# 근거 수집 복구 커밋·운영 배포 진행 — 2026-09-22
+
+## 목표·현재 상태
+사용자가 “커밋하고 푸시하고 배포해”를 명시 지시했다. 앞선 미배포 상태를 종료하고 현재 근거 수집 수정/검증 문서를 커밋·푸시한 뒤 Dokploy 웹2대(M3/mini)+워커7개를 동일 SHA로 배포한다. 생존 확인 배치 확대는 미구현 제안이므로 이번 배포에 포함되지 않는다.
+
+## 배포 전 검증
+- `npm test`: 141파일 1094PASS, `/tmp/nmv-cursor-release-unit.log`.
+- 전용 local DB 통합 전체: **80파일784PASS(90.89초)**, `/tmp/nmv-cursor-release-integration.log`. 이전 seed/dequeue 간헐 실패는 이번 실행에서 재현되지 않았으며 이전 실패 기록은 아래에 보존한다.
+- `npx tsc --noEmit`, 변경6파일 ESLint, `git diff --check` PASS.
+- origin/main과 로컬main 5146d13 차이0 확인. 운영9앱 모두 done, main/JRVector9/nomorevibe, 원래 autoDeploy=true. 운영 릴리스는 8ec1adc. 키는 Keychain→curl stdin, 출력·커밋 안 함.
+- 커밋 범위: 근거 코드3파일, 테스트3파일, CODEX_HANDOFF, 9/21 pipeline-bottlenecks 및 runtime-verification 보고서/증거. 무관 사용자 파일은 포함하지 않는다.
+
+## 운영 절차·남은 작업
+`prod` 스킬 적용. `/tmp/nmv-cursor-release.py`는 기존 Keychain/curl API 함수를 재사용하며 preflight/pause/release/deploy/status/restore 지원. pause에서 **9앱 모두** 자동배포를 잠시 끄고 마지막 restore로 원래 true 복구해야 한다. API HTTP200은 큐 등록일 뿐이며 최종 컨테이너 health·코드 해시·DB 확인이 필요하다. 일반 스키마 변경/수동 운영 큐 수정은 없다.
+
+증거: `/tmp/nmv-cursor-{predeploy-status,preflight,release-state,release-status,db-before}.json`. 읽기전용 DB 점검 `.crawl-samples/review-speed/cursor-release-audit.mjs`는 문제3저장소/별칭, cursor불일치 수, 주요 jobs 진척을 기록한다. 운영 URL은 기존 private `/tmp/nmv-installable-web.env`에서 메모리로만 읽음.
+
+다음: 선택 파일 커밋·push→CI→release SHA 설정→9앱 동시deploy→두웹health/7workerhealth와변경3파일hash→문제3레포복구/배포이후로그→배포기록커밋push→restore autoDeploy. 정확한 명령:
+```sh
+cd /Users/jr/Desktop/projects/nomorevibe
+python3 /tmp/nmv-cursor-release.py status
+python3 /tmp/nmv-cursor-release.py release <40자리 검증된 커밋 SHA>
+python3 /tmp/nmv-cursor-release.py deploy
+node .crawl-samples/review-speed/cursor-release-audit.mjs /tmp/nmv-cursor-db-after.json
+python3 /tmp/nmv-cursor-release.py restore
+git status --short
+```
+
+---
+
+# 근거 수집 수정 재검토 — 2026-09-22 00:48 KST
+
+## 현재 목표·완료
+사용자 “한번 더 검토하고 문제없는지 확인” 요청 수행. 중간 “마지막 커밋, 개발 사항 배포했어?”에는 **미커밋·미푸시·미배포, 로컬 수정만 있음**이라고 답했다. 이 질문만으로 배포하지 않았다. 생존 확인 배치 확대 역시 제안만 있고 미구현.
+
+## 발견·최종 설계 (아래 9/21 설계보다 우선)
+- 최초 수정의 repositoryKey 덮어쓰기는 기존 이름으로 제품/심사가 근거를 찾지 못하게 했다. 로컬 회귀 테스트로 실패를 확인하고 보완했다.
+- 불변 GitHub ID/head/detector/scope 충돌 시 **기존 repositoryKey와 스캔 ID 유지**, cursor만 저장된 이름에 원자적으로 맞춘다. 커밋 cursor 안의 별칭 URL을 가진 임시 observations는 제거해 재조회·도달 가능성 검증을 다시 한다.
+- 별칭을 확인했다고 원래 이름도 확인됐다고 확정하지 않음. 기존 completedAt 보존, alias_recheck_required로 보류, 원래 이름의 공개 여부/ID 재확인 후 해제. 빈 cursor도 이 보류 상태면 우선 재개 대상에 넣는다. 오류 반환에 이 상태를 노출해 조기 재심사/제품 연결 방지.
+- upstream rate_limited/timeout 등과 겹치면 upstream 오류 반환 및 retry deadline을 우선 보존한다. 별칭 복구 때문에 재시도 제한을 우회하지 않는다.
+- 이미 DB에 있는 이름 불일치 cursor는 앞선 typed error 1회 복구(폐기→공개 metadata/head 새 조회)를 유지. 비공개/ID 변경 시 후속 근거 수집 금지. 별칭 조회 캐시 통합·별칭 레지스트리는 범위 밖이라 중복 조회 가능성 남음.
+- 이번 전체 테스트 중 operations-center 분류 보류 테스트 실패 원인: 테스트 DB 시계가 앱 시계보다 약 **2021ms 앞섬**(read-only SELECT clock_timestamp 실측). 테스트의 앱시각+1초가 DB의 보류보다 과거가 됨. 테스트만 DB clock_timestamp()+1초로 통일. 운영 분류 로직 변경 없음.
+
+## 변경 파일
+- `lib/domain/evidence/agents/collect.ts`: 앞선 typed cursor 오류 유지.
+- `lib/domain/evidence/agents/repository.ts`: 이름 보존/원자적 cursor 조정/캐시된 커밋 claim 제거/원래 이름 재확인 보류/오류 우선순위.
+- `lib/jobs/products/agent-evidence-refresh.ts`: alias_recheck_required도 우선 재개.
+- `tests/integration/agent-evidence-cursor-recovery.test.ts`: 총16개, 최초10개 중 이름 갱신 기대를 원래 연결 보존으로 변경하고 검증 추가.
+- `tests/integration/agent-evidence-refresh.test.ts`: 빈 cursor의 별칭 확인 보류도 커서 뒤에서 재개하는 테스트 추가.
+- `tests/integration/operations-center.test.ts`: DB 기준 시간으로 테스트 수정.
+- `docs/operations/evaluations/2026-09-21-pipeline-bottlenecks/remediation.md`, 이 handoff 최신화. 무관 파일 보존.
+
+## 테스트·실패 접근
+- 시작 관련4파일56PASS. 최초 이름/커밋 회귀3RED→4파일39PASS. 이름 재확정/작업 우선순위2RED→4파일43PASS. rate-limit 우선순위1RED→2파일28PASS.
+- 단위141파일1094PASS. tsc/변경6파일ESLint/diff검사PASS.
+- 중간 전체781중780PASS/운영센터1FAIL→DB시계차 원인 규명, 테스트 수정 후 운영센터6PASS.
+- 전체 재실행80파일783PASS(89.36s). 이후 rate-limit 회귀1건 추가 및 실패재현/수정 후 최종784건 중 **783PASS/1FAIL**(86.38s). 실패는 기존 crawl-seed `어떤 AI인지 말하지 않는 신호는 추정을 비운 채 넣는다`: dequeue 결과 undefined. 해당 파일 단독15PASS, 같은 사례를 임시 진단 테스트로50회 반복해50PASS. 정확한 원인은 미확정이며 수정 영향/무관 여부를 확정하지 않았다. 전체 무실패라고 보고하지 말 것. 진단 임시 파일은 제거했고 `/tmp/nmv-cursor-review-seed-{recheck,diagnostic}.log` 보존.
+- SQL CASE의 JS Date 직접 바인딩은 postgres 드라이버 TypeError를 냈다. typed `excluded.completed_at/next_attempt_at/started_at`을 사용해 수정 후 관련 테스트 PASS. 실패 구현은 남아 있지 않다.
+- 로그 `/tmp/nmv-cursor-review-{initial,red,green,alias-red,alias-green,unit-final,operations-green,integration,integration-final,rate-red,rate-green,integration-final2}.log`.
+- 전용 로컬 DB만 사용: `127.0.0.1:55435/nomorevibe_test`. 운영 DB를 테스트에 넣지 말 것. Next 설치 use-server 문서 확인, systematic-debugging/TDD 절차 적용. 서브에이전트 없음.
+
+## 남은 일·다음 명령
+재검토·보완·검증 보고까지 수행. 남은 것은 전체 실행에서 한 번만 관측된 seed/dequeue 실패의 원인 규명 및 운영 배포 후 회복 검증이다. 단독·50회 반복으로 재현되지 않아 추정 수정은 하지 않았다. 배포/운영 회복 실측은 수행하지 않았고, 생존 확인 처리량 제안도 미적용. 이번 수정이 운영에서 동작한다고 주장하지 말 것. 로컬 HEAD는 여전히 `5146d13`(docs: record verified review speed production rollout).
+```sh
+cd /Users/jr/Desktop/projects/nomorevibe
+tail -n 12 /tmp/nmv-cursor-review-integration-final2.log
+git diff -- lib/domain/evidence/agents/repository.ts lib/jobs/products/agent-evidence-refresh.ts
+TEST_DATABASE_URL=postgres://nomorevibe:nomorevibe@127.0.0.1:55435/nomorevibe_test npm run test:integration -- tests/integration/agent-evidence-cursor-recovery.test.ts tests/integration/agent-evidence-refresh.test.ts tests/integration/agent-evidence-repository.test.ts tests/integration/agent-review-scan-lock.test.ts tests/integration/operations-center.test.ts
+npx tsc --noEmit
+git diff --check
+git status --short
+```
+
+---
+
+# 근거 수집 반복 실패 수정·생존 확인 개선안 — 2026-09-21 17:25 KST
+
+## 현재 목표·완료
+사용자 “개선 대안 제시, 근거 수집 반복 실패 해결, 생존 확인 처리량 확대 방안” 요청. 기존 보고 후 명시적으로 요청한 근거 오류를 로컬 코드에서 수정하고 검증했다. 생존 확인은 대안과 실행·측정 기준을 제안했으며 코드는 미변경. 운영 배포·운영 DB 쓰기·설정 변경·커밋·푸시 없음.
+
+## 수정 파일·설계 판단
+- `lib/domain/evidence/agents/collect.ts`: 기존 cursor 검사 유지, `InvalidAgentScanCursorError`로 구분.
+- `lib/domain/evidence/agents/repository.ts`: immutable ID/head 충돌 upsert에서 repositoryKey도 cursor와 함께 갱신. legacy 부적합 cursor만 1회 버리고 공개 metadata/head를 새로 확인. 원래 예산 유지, 다른 예외는 그대로 전파. 복구 조회 실패는 기존 저장 경로의 lastErrorCode/nextAttemptAt 사용, 기존 완료 근거 보존. 일회성 운영 SQL 삭제나 검증 완화 없음. 여러 별칭의 캐시 통합은 이번 범위 밖.
+- `tests/integration/agent-evidence-cursor-recovery.test.ts`: 새 10회귀 테스트. 이름 변경 충돌, 운영 3개 이름 조합, transport/private/rate limit 재시도, 같은 이름의 다른 GitHub ID, 예산 없음, 직접 collector 거부 검증.
+- `docs/operations/evaluations/2026-09-21-pipeline-bottlenecks/remediation.md`: 수정·테스트와 생존 확인 대안/제약/측정 기준. 기존 보고서와 이 handoff 갱신. 무관 untracked 보존.
+- Next 설치 문서 use-server를 확인, TDD로 RED→GREEN 수행. 서브에이전트·사용자 승인 질문 없음.
+
+## 실제 테스트·실패 접근
+- RED: 새 테스트 10건 중 9실패/1통과, upsert 불일치 및 invalid cursor 재현. `/tmp/nmv-cursor-red.log`.
+- 관련 통합 3파일 34PASS, `/tmp/nmv-cursor-green.log`.
+- 단위 전체 141파일 1094PASS, `/tmp/nmv-cursor-unit.log`.
+- 전체 통합 1차 776PASS/1FAIL(80파일): 기존 crawl-fetch의 임대권 교체 테스트 expected failed/received completed. 단독 22PASS 후 전체 2차 **80파일777PASS(99.30s)**. `/tmp/nmv-cursor-{integration,fetch-recheck,integration-recheck}.log`. 실패했던 테스트는 수정하지 않았고, 정확한 원인은 미확정. 첫 실패 기록을 성공으로 덮어쓰지 말 것.
+- tsc 최초 테스트의 99n 타깃 오류→BigInt(99) 수정 후 `npx tsc --noEmit` PASS. 변경 파일 ESLint PASS, git diff --check PASS.
+- 통합 DB는 loopback `127.0.0.1:55435/nomorevibe_test` 전용. 운영 DB 절대 테스트 투입 금지.
+
+## 생존 확인 권장안·남은 일
+현 16,845웹/900건h, 필요2,808건h. 우선 1분당 BATCH15→60(이론상3600h/전수4.68h), HTTP3/origin직렬/DB쓰기1/제품6시간 유지. 25초 시작 예산이 총 완료 시간을 강제하지 않는 점 보완, origin라운드로빈·실제 처리량 및 다른 maintenance 대기 측정 권장. 대안30초×30 또는전용워커. 이것은 제안이며 미구현·미측정 성능. 적체 있는 동안 시간당 고유완료3000이상/6시간 초과 수 감소를 검증. 다른 병목(승인대기90 근거우선갱신,감사정책전환,GitHub쿼터공유)도 보고서에 제안.
+
+운영에서 반복 실패가 사라졌다고 아직 주장할 수 없음. 배포 후 문제3레포 예외 소멸·완료 또는 오류/미래재시도·다음partial 전진을 확인해야 함. 전체 통합 첫 실패가 재발하면 별도 원인 조사.
+
+## 다음 에이전트의 정확한 명령
+```sh
+cd /Users/jr/Desktop/projects/nomorevibe
+git diff -- lib/domain/evidence/agents/collect.ts lib/domain/evidence/agents/repository.ts
+cat docs/operations/evaluations/2026-09-21-pipeline-bottlenecks/remediation.md
+TEST_DATABASE_URL=postgres://nomorevibe:nomorevibe@127.0.0.1:55435/nomorevibe_test npm run test:integration -- tests/integration/agent-evidence-cursor-recovery.test.ts tests/integration/agent-evidence-repository.test.ts tests/integration/agent-evidence-refresh.test.ts
+npx tsc --noEmit
+git diff --check
+git status --short
+# 아래는 기존 읽기 전용 운영 스냅샷 도구(로컬 private env 파일 필요)
+node .crawl-samples/review-speed/bottleneck-audit.mjs
+node .crawl-samples/review-speed/bottleneck-detail.mjs
+```
+
+---
+
+# 전체 과정 병목 검토 — 2026-09-21 17:08 KST
+
+## 목표·완료
+사용자 “전체 과정 검토하고 병목구간 있으면 체크하고 보고” 요청. 보고 전용으로 운영DB read-only 조회/15:50–16:50KST고정1시간 로그6,180개/코드 실행구조/읽기전용재현 완료. 코드·운영데이터·설정·작업요청·배포변경없음. 상세: `docs/operations/evaluations/2026-09-21-pipeline-bottlenecks/README.md`, 원본 `evidence.json`.
+
+## 핵심 발견·설계 판단
+- P1 개발AI근거 132예외 = hraness/{hra,atet,message-like-me} 각44회. 저장scan.repository_key와cursor.repositoryKey가각각oompa/slopcamera/textbutler로불일치. 실제collector에운영cursor만넣고request금지stub으로3/3 `invalid agent scan cursor` 재현,외부호출0/DB쓰기0. partial우선재개3슬롯을반복소비. catch가Error이름만로그/재시도시각미저장. upsert는GitHubID/head충돌시cursor교체하지만repositoryKey안바꿔별칭불일치가능;최초운영쓰기는재현안함.
+- P1 승인92건최신평가만료,91건스캔24h초과,그중90건문서는신선. listReviewCandidates는stale스캔으로제외하지만requeueStaleReviewSources는문서만복구. agentEvidence.enforceEligibility=false여도freshness조건유효. 근거수요18,223/갱신대상14,490/스캔없음3,065/partial4,108(중복가능). 분류실패보류0.
+- P1 기존발행감사캠페인3 running이나59회모두policy_changed. 캠페인2026-09-19.3/19.2,현재21.3/21.2. 11,558항목중AI미판단5,176. 명시적구캠페인종료/새정책감사필요,이번변경안함.
+- P1 생존확인웹16,845개중6h초과13,102(77.8%),p50나이12.71h/max38.83h. 실제/상한900/h vs필요2,808/h. BATCH15×1분고정이라한바퀴18.7h. maintenance작업시간16.5%,CPU병목아님. 설치형377never_checked는정상제외.
+- P2 stars대상17,222,24h초과6,773,실제328/h/상한480/h vs필요718/h. 공유Githubprimary한도발생,원본8회/스타2회대기. 제품근거342개별실패(작업실패아님),rate_limited근거329스냅샷. 먼저요청공유/쿼터배분,동시성만높이지말것.
+- P2 1차저장→2차호출57쌍p50=7.8s/p95=39.737s,max50.703s. reviewer직렬실행+pending스냅샷으로후속요청대기. reviewer작업16.7%/publisher6.9%,분류처리량이주병목아님.
+- 번역미처리2,515+실패1,시간당451성공/최장미처리211h. 소개61보류는전부빈결과/자동대상0,1시간6성공. 잠재결함:tagline자체54s대runner기본25s(jobRunOptions분기누락)실제함수확인. 이번느린호출실패재현안함.
+- 사람큐902(ambiguous436/split405/no_description61),2차needs_human472/agreed213과중복가능. 단순합산금지.
+- 정상진행:발견252/수집272/규칙260/발행36,이미지461채움. DB106/150,앱6,Lock대기0;CPU순간최고3.04%,메모리최고38.03%. 순간값으로피크안정성보장금지.
+
+## 변경 파일·검증·실패 접근
+- 위보고서폴더 README/evidence 및재현소스5개.txt,이handoff. ignored실행본 `.crawl-samples/review-speed/bottleneck-{audit,detail}.mjs`, `bottleneck-cursor-check.mts`; `/tmp/nmv-bottleneck-{logs,summary}.py`.
+- 전체테스트이번재실행안함. 직전turn단위1094/통합767/tscPASS는앞절기록. 이번검증은productionread-onlySQL/로그/3cursor재현/예산함수실행이며앱수정없음.
+- 상세SQL정규식역참조한번이스케이프때tagged template cooked undefined→42601;두번이스케이프로복구후성공. 기존코드실패와구분. source경로일부추측실패후rg로실제경로확인.
+- 스킬systematic-debugging이전turn적용을이어사용. 사용자승인요청/서브에이전트없음.
+
+## 남은 일·다음 명령
+이번보고요청은완료. 수정은아직요청받지않았으므로적용하지않음. 권장순서는근거cursor복구→승인후보근거우선갱신→감사정책전환→uptime/stars용량→후속대기/텍스트예산. 기존관리자익명접근별도정책결정도미변경. 무관untracked보존,운영키출력금지.
+```sh
+cd /Users/jr/Desktop/projects/nomorevibe
+cat docs/operations/evaluations/2026-09-21-pipeline-bottlenecks/README.md
+node .crawl-samples/review-speed/bottleneck-audit.mjs
+node .crawl-samples/review-speed/bottleneck-detail.mjs
+node --import tsx .crawl-samples/review-speed/bottleneck-cursor-check.mts
+python3 /tmp/nmv-bottleneck-logs.py
+python3 /tmp/nmv-bottleneck-summary.py
+git diff --check
+git status --short
+```
+
+---
+
+# 수집·평가·속도 재검증 — 2026-09-21 16:47 KST
+
+## 목표·완료
+사용자 “수집, 평가등 기능 정상동작하는지 체크하고, 속도 개선 여부 확인” 요청. 운영 릴리스8ec1adc/로컬5146d13에서 자연 실행과 read-only DB, 브라우저, 로컬 테스트 확인 완료. 코드·설정·운영 큐·배포 변경 없음.
+
+- 고정16:10–16:40KST: 신규발견136/수집150/수집실패0,GitHub한도대기7회후진행. 1차38호출(성공36/invalid_output2),2차기본22(정상19/invalid_output3),연결된Sonnet fallback3승인,신규발행16. 1차실패2는사람보류로남음.
+- 웹2/워커7정상,restart0,11파일해시일치,9앱autoDeploy=true. job.failed0. 배포안정화후발행29건승인누락0,repo중복그룹0. Publisher완료14회중text실행중완료6,Publisher에서text잡0.
+- 속도: 신규발행13건(재심사3제외)수집→발행p50=71.719s/p95=92.628s. 1차완료→2차등록p50=24.236s,2차완료→발행12.664s. 전체발행16건후자는11.345s. 과거35.229s보다짧지만과거는일괄재심사적체로인과적개선율주장불가. 30분신규1차38건으로100건기준미충족.
+- 통제비교재실행af50608→5146d13:8건/10초응답70→20s,24초응답84→53s,번역중발행대기34→4s.가상시계/모의DB/고정모델이며각3PASS. 운영처리량수치아님.
+- 화면홈/상세/인기/운영센터/심사/2차보류/제품/크롤설정200. 상세·번역실패팝업열기닫기PASS. pageerror/추가관리자consoleerror/5xx0,모바일overflow없음.
+
+## 수정 파일·판단
+- `docs/operations/evaluations/2026-09-21-runtime-verification/{README.md,evidence.json,verification-audit.mjs.txt,verification-browser.mjs.txt}` 및 이handoff. 재현helper는ignored `.crawl-samples/review-speed/verification-{audit,browser}.mjs`. 앱코드수정없음/커밋안함.
+- 과거AGENTS/PENDING의미배포표기보다실제운영상태우선. 모델성공과job성공구분. 신규와재심사분리. queueMs는candidate.updatedAt기준이라55시간p95를신규대기SLA로해석하지않음. 발행표본만의속도로전체후보SLA/판별정확도주장금지.
+- 스킬:webapp-testing,systematic-debugging. qa-only는검토했으나소스·백엔드분석요청에부적합하여적용하지않음.
+
+## 실제 실행 테스트
+- `npm test`:141파일1094PASS(4.58s),log `/tmp/nmv-check-unit.log`.
+- `TEST_DATABASE_URL=postgres://nomorevibe:nomorevibe@127.0.0.1:55435/nomorevibe_test npm run test:integration`:79파일767PASS(93.23s),log `/tmp/nmv-check-integration.log`. 전용local DB만사용.
+- `npx tsc --noEmit`:exit0.
+- 위비교harness각3PASS,production browser두script exit0.
+- 실패접근:과거laya문서가현브랜치에없어보존된`.crawl-samples/laya-eval/production-audit.json`확인. Docker service logs --until시도JSON없음→--since와파싱후UTC상한필터로성공. 구현실패아님.
+
+## 남은 사항·다음 명령
+- 동일조건충분한전후운영표본없으므로확정개선율은아직없음. 모델형식오류/한도대기/사람보류469건(16:44)남음. AI판별의미정확도는이번검증대상아님.
+- 기존익명관리자접근재확인,정책변경없음. 운영센터번역실패1/응답하지않는제품50표시. 기존사용자정책결정필요사항유지.
+- 관련없는untracked파일보존. 운영키출력/테스트투입금지.
+```sh
+cd /Users/jr/Desktop/projects/nomorevibe
+cat docs/operations/evaluations/2026-09-21-runtime-verification/README.md
+python3 /tmp/nmv-speed-dokploy.py status
+python3 /tmp/nmv-speed-runtime.py /tmp/nmv-check-runtime-next.json
+node .crawl-samples/review-speed/verification-audit.mjs
+node .crawl-samples/review-speed/verification-browser.mjs
+git diff --check
+git status --short
+```
+
+---
+
 # 최종 운영 배포 — 2026-09-21 15:49 KST
 
 ## 목표 및 완료

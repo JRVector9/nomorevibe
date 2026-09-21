@@ -1,0 +1,39 @@
+import {parseEnv} from 'node:util';
+import {readFileSync,writeFileSync} from 'node:fs';
+import postgres from 'postgres';
+const env=parseEnv(readFileSync('/tmp/nmv-installable-web.env','utf8'));
+const db=postgres(env.DATABASE_URL,{max:1,prepare:false,connect_timeout:10});
+const start='2026-09-21T07:10:00Z', end='2026-09-21T07:40:00Z';
+try {
+const result=await db.begin('read only',async s=>{
+ await s`set local statement_timeout='20s'`;
+ const collection=await s`select
+ (select count(*)::int from crawl_frontier where discovered_at>=${start}::timestamp and discovered_at<${end}::timestamp) as newly_discovered,
+ (select count(*)::int from crawl_documents where fetched_at>=${start}::timestamp and fetched_at<${end}::timestamp) as documents_fetched`;
+ const frontier=await s`select state,count(*)::int as n,count(*) filter(where next_attempt_at<=(current_timestamp at time zone 'UTC'))::int as due from crawl_frontier group by state order by state`;
+ const first=await s`select provider,model,state,error_code,count(*)::int as n,percentile_cont(.5) within group(order by extract(epoch from completed_at-started_at)) as p50_seconds,percentile_cont(.95) within group(order by extract(epoch from completed_at-started_at)) as p95_seconds from crawl_review_attempts where started_at>=${start}::timestamp and started_at<${end}::timestamp and reused_from_attempt_id is null group by 1,2,3,4`;
+ const second=await s`select provider,model,status,error_code,count(*)::int as n from second_reviews where created_at>=${start}::timestamp and created_at<${end}::timestamp group by 1,2,3,4`;
+ const cohort=await s`with stamps as (
+ select e.id,d.fetched_at,r.started_at,r.completed_at,b.created_at,b.reviewed_at,e.occurred_at,
+ exists(select 1 from crawl_review_attempts prev where prev.candidate_id=c.id and prev.id<r.id) as repeat_review
+ from crawl_publication_changes e join crawl_candidates c on c.repo=e.repo join crawl_documents d on d.repo=c.repo
+ join lateral(select * from crawl_review_attempts r where r.candidate_id=c.id and r.state='succeeded' and r.outcome->>'decision'='approve' and r.reused_from_attempt_id is null and r.completed_at<=e.occurred_at and r.valid_until>e.occurred_at order by r.completed_at desc limit 1)r on true
+ join lateral(select min(created_at) as created_at,max(reviewed_at) as reviewed_at from second_reviews b where b.first_attempt_id=r.id and b.trigger='ai_approved' and b.second_decision='approve' and b.reviewed_at<=e.occurred_at)b on b.reviewed_at is not null
+ where e.delta=1 and e.occurred_at>=${start}::timestamp and e.occurred_at<${end}::timestamp and c.decided_by='auto'
+ ), durations as (
+ select id,repeat_review,'fetch_to_first' as stage,extract(epoch from started_at-fetched_at) as seconds from stamps union all
+ select id,repeat_review,'first_run',extract(epoch from completed_at-started_at) from stamps union all
+ select id,repeat_review,'first_to_second_enqueue',extract(epoch from created_at-completed_at) from stamps union all
+ select id,repeat_review,'second_queue_plus_run',extract(epoch from reviewed_at-created_at) from stamps union all
+ select id,repeat_review,'second_to_publish',extract(epoch from occurred_at-reviewed_at) from stamps union all
+ select id,repeat_review,'fetch_to_publish',extract(epoch from occurred_at-fetched_at) from stamps)
+ select stage,repeat_review,grouping(repeat_review)::int as is_total,count(*)::int as n,count(*) filter(where repeat_review)::int as repeat_review_n,count(*) filter(where seconds<0)::int as negative,
+ percentile_cont(.5) within group(order by seconds) filter(where seconds>=0) as p50_seconds,percentile_cont(.95) within group(order by seconds) filter(where seconds>=0) as p95_seconds from durations group by grouping sets ((stage),(stage,repeat_review)) order by stage,repeat_review nulls first`;
+ const firstFailures=await s`select r.error_code,c.state as candidate_state,c.reason,latest.state as latest_attempt_state,latest.error_code as latest_error,latest.outcome->>'decision' as latest_decision,count(*)::int as n from crawl_review_attempts r join crawl_candidates c on c.id=r.candidate_id join lateral(select * from crawl_review_attempts n where n.candidate_id=c.id order by id desc limit 1)latest on true where r.started_at>=${start}::timestamp and r.started_at<${end}::timestamp and r.state='failed' group by 1,2,3,4,5,6`;
+ const fallbacks=await s`select a.error_code,a.status as original_status,f.provider,f.model,f.status,f.second_decision,count(*)::int as n from second_reviews a left join second_reviews f on f.fallback_for_id=a.id where a.created_at>=${start}::timestamp and a.created_at<${end}::timestamp and a.error_code is not null group by 1,2,3,4,5,6`;
+ const jobs=await s`select name,last_error is not null as has_error,to_char(last_success_at,'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') as last_success_at,requested_version,processed_version from jobs order by name`;
+ const statuses=await s`select status,count(*)::int as n from second_reviews where status in ('pending','failed','needs_human') group by status`;
+ return {at:new Date().toISOString(),start,end,collection,frontier,first,second,cohort,firstFailures,fallbacks,jobs,statuses};
+});
+writeFileSync('/tmp/nmv-check-audit.json',JSON.stringify(result,null,2));console.log(JSON.stringify(result,null,2));
+}catch(e){console.error(JSON.stringify({error:e.code??e.name}));process.exitCode=1;}finally{await db.end({timeout:5});}

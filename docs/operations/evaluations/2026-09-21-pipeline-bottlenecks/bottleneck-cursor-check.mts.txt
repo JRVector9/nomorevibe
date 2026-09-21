@@ -1,0 +1,10 @@
+import {parseEnv} from 'node:util';import{readFileSync,writeFileSync}from'node:fs';import postgres from'postgres';
+import{collectRepositoryAgentEvidence}from'../../lib/domain/evidence/agents/collect';
+const db=postgres(parseEnv(readFileSync('/tmp/nmv-installable-web.env','utf8')).DATABASE_URL,{max:1,prepare:false});
+try{
+ const rows=await db.begin('read only',async s=>{await s`set local statement_timeout='10s'`;return s`select distinct on(repository_key) repository_key,cursor,state,detector_version from agent_repository_scans where repository_key in ('hraness/hra','hraness/atet','hraness/message-like-me') and scope='' and detector_version='2026-09-14.1' order by repository_key,started_at desc,id desc`;});
+ const result=[];
+ for(const r of rows){let networkCalls=0;let error='';try{await collectRepositoryAgentEvidence({repositoryKey:r.repository_key,cursor:r.cursor,request:async()=>{networkCalls++;throw Error('network_forbidden_in_read_only_repro');}});}catch(e){error=e instanceof Error?e.message:'unknown';}
+ result.push({repositoryKey:r.repository_key,state:r.state,cursorRepository:r.cursor?.repositoryKey,cursorDetectorVersion:r.cursor?.detectorVersion,networkCalls,error});}
+ writeFileSync('/tmp/nmv-bottleneck-cursor.json',JSON.stringify(result,null,2));console.log(JSON.stringify(result,null,2));
+}finally{await db.end({timeout:5});}

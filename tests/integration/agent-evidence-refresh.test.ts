@@ -34,6 +34,20 @@ const listProduct = async (slug: string, repositoryKey: string) => {
 };
 const context = () => ({ cursor: null, save: async () => {}, hasBudget: () => true, log: () => {} });
 
+it('rechecks an alias conflict behind the normal cursor even when no queued files remain', async () => {
+  await saveSettings({ agentEvidence: { enabled: true } }, 'test');
+  await db.insert(crawlCandidates).values({ repo: 'acme/early', state: 'needs_review', reason: 'ai_evidence_pending', decidedBy: 'auto' });
+  const scan = (await completeScan('acme/early', '999'))!;
+  await db.update(agentRepositoryScans).set({ lastErrorCode: 'alias_recheck_required', nextAttemptAt: new Date('2026-09-01') })
+    .where(eq(agentRepositoryScans.id, scan.id));
+  const paths: string[] = [];
+  await refreshAgentEvidenceJob({ ...context(), cursor: { afterRepository: 'zzz/last' } }, { request: emptyRepository(paths) });
+  expect(spies.refresh.mock.calls.map(([input]) => input.repositoryKey)).toEqual(['acme/early']);
+  expect(paths[0]).toBe('/repos/acme/early');
+  expect((await getLatestRepositoryAgentScan('acme/early'))?.lastErrorCode).toBeNull();
+  expect((await db.select().from(crawlCandidates))[0].state).toBe('new');
+});
+
 it('spends no general slot on fresh repositories and reaches a due one behind them in the same tick', async () => {
   await saveSettings({ agentEvidence: { enabled: true } }, 'test');
   const fresh = Array.from({ length: 10 }, (_, i) => `aaa/r${i}`);
