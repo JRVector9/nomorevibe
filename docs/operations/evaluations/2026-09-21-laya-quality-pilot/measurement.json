@@ -1,0 +1,66 @@
+{
+  "version": 1,
+  "sourceMeasuredAt": "2026-09-21T04:06:41.121Z",
+  "apiMeasuredAt": "2026-09-21T04:09:55.541Z",
+  "questionVersion": "installable-software-2026-09-21.1",
+  "scope": "Currently listed seeded/verified, installable and >=500 stars, with recent successful current-model/prompt snapshot; prior evaluation repositories excluded",
+  "eligiblePopulation": 20,
+  "sampleCount": 20,
+  "excludedPreviousRepos": 147,
+  "samplingSeed": "quality-audit-20260921-v1",
+  "api": {
+    "responses": 20,
+    "errors": 0,
+    "p50Ms": 21.971750000000014,
+    "p95Ms": 84.44124999999997,
+    "excerptTruncated": 20
+  },
+  "comparison": {
+    "selected": 5,
+    "randomControl": 5,
+    "overlap": 1,
+    "uniqueReviews": 9,
+    "method": "Lowest softwareProbability for attention vs seeded control drawn from full pool independently; overlapping items shown once in blinded order."
+  },
+  "humanReview": {
+    "version": 1,
+    "auditId": "2a5d00831b0155af55218ed9",
+    "status": "awaiting_review",
+    "productionEffect": "none",
+    "labelSource": "reviewer_supplied_not_verified_by_code",
+    "statisticalSignificance": "not_tested",
+    "uniqueReviewed": 0,
+    "uniqueRequired": 9,
+    "overlap": 1,
+    "selected": {
+      "size": 5,
+      "reviewed": 0,
+      "findings": 0,
+      "uncertain": 0,
+      "yield": null,
+      "selfReportedSeconds": null,
+      "secondsPerFinding": null
+    },
+    "control": {
+      "size": 5,
+      "reviewed": 0,
+      "findings": 0,
+      "uncertain": 0,
+      "yield": null,
+      "selfReportedSeconds": null,
+      "secondsPerFinding": null
+    },
+    "yieldDifference": null,
+    "secondsPerFindingDifference": null
+  },
+  "productionEffect": "none",
+  "operationalDeployment": false,
+  "note": "Not an accuracy/speedup benchmark until source-reviewed annotations exist. Twenty eligible products and five per arm are a small exploratory pilot, not statistical proof.",
+  "existingHumanAudit": {
+    "measuredAt": "2026-09-21T04:23:42.400Z",
+    "readOnly": true,
+    "sampleProducts": 20,
+    "existingHumanDecisions": 0,
+    "productsWithHumanDecisions": 0
+  }
+}

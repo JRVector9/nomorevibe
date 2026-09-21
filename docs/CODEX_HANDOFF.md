@@ -1,4 +1,53 @@
-# Active handoff — LAYA fresh 100-project evaluation COMPLETE; operational use deferred (2026-09-21)
+# Active handoff — published-product LAYA quality pilot implemented; key saved (2026-09-21)
+
+## Objective and current state
+
+User approved the recommended administrator quality-check pilot, then explicitly requested saving the clipboard key as actual environment configuration for future reuse. Both implementation and real API run are complete; **human source review is still required to measure usefulness**. No automatic candidate/product decisions, operational queue changes, product-audit campaign or production deployment. No subagents or prohibited skills. TDD and webapp-testing workflows used; installed Next Vitest/environment guides read before coding.
+
+## Credentials — do not request clipboard again
+
+**Private config exists at `/Users/jr/.config/nomorevibe/laya.env`, mode0600, outside Git.** Contains LAYA_URL and LAYA_API_KEY. Saved per explicit user authorization via in-memory clipboard read, atomic file replacement; key never printed or included in argv/report. Tested env-file loading with boolean presence/mode only. For future calls use `node --env-file=/Users/jr/.config/nomorevibe/laya.env --import tsx ...`. Do not cat this file or log exceptions/body/env. This is local config; no production secret/config changed.
+
+## Completed / modified files / design
+
+- New branch `feat/laya-quality-audit-pilot` based on `feat/laya-speculation-evaluation` head61f3dac/PR159. New PR should target that branch so only this phase is reviewed. Existing unrelated untracked files preserved.
+- `lib/crawl/laya-quality-audit.ts`: complete matching API response+subject hash checks, installable>=500 scope, unique repos, immutable deterministic seed/take allocation. Lowest software scores select attention candidates; random control sampled independently from entire pool, overlap retained but human sees each item once. Separate source-only blinded HTML: no groups/model scores/first outcomes in DOM/payload. Escaped untrusted source, strict CSP/script hash, no network/write actions, local browser drafts, JSON download with source-review attestation and evidence notes. Source-bound auditId prevents mixing revisions. Annotation summary preserves unknown times, keeps uncertain cases in denominator, reports overlap, no significance/accuracy/speed claims.
+- `scripts/prepare-laya-quality-audit.ts`: offline CLI, input<=2MiB each, requires fresh output directory, outputs0600 index.html/assignment.json/summary.json, sanitized logs. Can re-create exact plan with --annotations to calculate reviewer-supplied outcomes. No DB/API access.
+- Tests2files18new, operations report and measurement.json; plan README updated. Local raw/helper/generated artifacts remain ignored `.crawl-samples/laya-quality-pilot/`.
+- Read-only production export used current listed seeded/verified installable>=500, current first model/prompt successful non-reused snapshot within7days, excludes147previousrepos. Only20eligible; all20 sampled. API20/20 success, p5021.972ms/p9584.441ms. Original question unchanged.5attention/5random,1overlap ->9unique blinded cards. AuditId `2a5d00831b0155af55218ed9`. Human answers0, findings/time effects null. Existing prefetch field from reused API evaluation tool is NOT used by this pilot.
+- No human labels manufactured. Read-only product_audit_items lookup confirms0existing human decisions for all20sample products. QA fixture verdicts only in disposable isolated browser context; source-review summary still awaiting_review.
+
+## Running local preview
+
+**http://127.0.0.1:8896/** serves `.crawl-samples/laya-quality-pilot/review-final/` via Python HTTP server, unified exec session70048. Keep running for user. Earlier session51953 served outdated copy and was cleanly stopped. Actual CUA had no browser available, so no visible user tab was opened. Headless browser QA/view_image confirmed real board. Screenshots `/tmp/nmv-quality-audit-1440.png` and `...-390.png`.
+
+## Tests executed / failures
+
+- TDD core6fail/8negative-pass ->14PASS; CLI2fail/2negative-pass ->4PASS. All5LAYA testfiles60PASS. Entire unit suite141files **1126PASS**. Existing Vite future-native-loader warning and expected mock-failure logs remain.
+- `npx tsc --noEmit` PASS; scoped ESLint4newfiles PASS. No local DB integration/build required or run for this isolated offline CLI. Staged diff whitespace, exact-key exclusion from staged diff/HTML, 0600env permissions, report counts/unknown metrics, Markdown links, HTTP200 and absence of group/score payload in board all PASS.
+- Browser QA `.crawl-samples/laya-quality-pilot/browser-qa.mjs` PASS twice (latest finalcopy):9cards, source expansion, notes validation, reload persistence, JSON download, desktop1440/mobile390, no overflow, zero console errors/external requests. Dummy answers cleared from isolated context; never attached to real results. Python Playwright missing; reused installed Node Playwright instead.
+- First read-only SQL export failed42601 because `limit100`; fixed `limit 100`, succeeded. Initial clipboard read was unrelated content and made no calls; user then requested durable config and key was successfully saved. CUA getBrowser returned no browser available; local HTTP link and headless QA work.
+
+## Remaining / exact commands
+
+Finish scoped docs/secret/diff review and commit/push new branch, create draft PR based on feat/laya-speculation-evaluation. Human must inspect9cards and download annotations to finish the efficacy comparison. Do not call the pilot accurate or faster before that. Operational integration and earlier speculative second review remain deferred. Existing prior PR159 remains separate.
+
+```sh
+cd /Users/jr/Desktop/projects/nomorevibe
+git status --short
+git diff --check
+npx vitest run tests/laya-quality-audit.test.ts tests/laya-quality-audit-cli.test.ts
+# If local preview stopped:
+python3 -m http.server 8896 --bind 127.0.0.1 --directory .crawl-samples/laya-quality-pilot/review-final
+# After the user downloads real annotations, use a NEW output directory:
+node --import tsx scripts/prepare-laya-quality-audit.ts --input .crawl-samples/laya-quality-pilot/input.json --responses .crawl-samples/laya-quality-pilot/laya-responses.json --out-dir /tmp/nmv-quality-reviewed-new --seed quality-audit-20260921-v1 --take 5 --annotations /absolute/path/to/downloaded-review.json
+# New API evaluations load persisted config; output path must be new:
+node --env-file=/Users/jr/.config/nomorevibe/laya.env --import tsx scripts/evaluate-laya-speculation.ts --input /absolute/path/to/new-samples.json --output /absolute/path/to/new-responses.json --live
+```
+
+---
+
+# Prior handoff — LAYA fresh 100-project evaluation COMPLETE; operational use deferred (2026-09-21)
 
 ## Current objective / result
 
