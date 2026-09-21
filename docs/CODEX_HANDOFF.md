@@ -1,40 +1,37 @@
-# Active handoff — LAYA real API verified; fresh evaluation awaiting clipboard key (2026-09-21)
+# Active handoff — LAYA fresh 100-project evaluation COMPLETE; operational use deferred (2026-09-21)
 
-## Objective / completed work
+## Current objective / result
 
-User said the LAYA_API_KEY is in the clipboard and asked whether checks were ongoing. Continue PR-01 real evaluation toward the earlier request: only a useful narrow LAYA application, no error-prone authority over approval/denial/classification. Existing speculative second-review proposal remains conditional, **not wired to workers or deployed**.
+User confirmed the API key was copied again. Completed the pending 100-project actual LAYA evaluation, preserving the earlier request to use only an effective narrow scope and never delegate error-prone publication judgments. **PR-01 evaluation implementation is complete. PR-02/03 remain unimplemented and not deployed**: actual shared capacity and net end-to-end benefit have not been established.
 
-- Branch `feat/laya-speculation-evaluation`, pushed head `9bc53de`, draft PR159. Client/evaluator/CLI code unchanged this phase. That head's GitHub CI and GitGuardian SUCCESS verified; CI includes unit/integration/type/lint/build.
-- Read clipboard key directly into a Python subprocess environment; no key file, argv value, HTTP body, or exception text printed. Actual evaluation at12:35KST succeeded: existing47samples,14eligible/14responses/0unavailable, latency p50 22.734ms/p95 102.682ms,5suggestions all prior-first approvals,0prior-nonapproval suggestions. These are reused samples/model labels, NOT human accuracy or speedup. Timing fields remain null.
-- Read-only production audit at12:43KST using actual `listReviewCandidates` SQL: first gpt-oss120b/concurrency4,5eligiblefirst(limit100),0runningfirst,0pendingsecond, latest first/secondjobs successful/no recordedjoberror. This is a point-in-time observation, not shared-gateway capacity proof or all individual review success.
-- Prepared100 new eligible snapshots from last7days/currentmodel/currentprompt, excluding prior47repos and reused attempts. Labels81approve/19reject, no model-only timings. CLI dry-run PASS. Rawinput `.crawl-samples/laya-eval/fresh-speculation-input.json`0600/ignored.
-- **Fresh authenticated run NOT executed**: clipboard had changed to unrelated content; strict local validation stopped before any HTTP. Asked user asynchronously to copy the key again and reply “복사 완료”; do not ask them to paste a secret in chat. Do not continually reread unrelated clipboard data.
+## Completed / modified files / decisions
 
-## Modified files / decisions
+- Branch `feat/laya-speculation-evaluation`, PR159 draft. Starting pushed head this turn `ca64c1e`; code still `d08f25f`. No application source changes this phase.
+- Read user-authorized clipboard key into Python process memory and child environment only. Actual CLI completed exit0 at12:50KST:100/100 eligible responses,0errors, p50 20.311ms/p95 33.608ms. Key not persisted to file, argv, report, or output.
+- Kept question `installable-software-2026-09-21.1` and probability threshold0.9 unchanged.54hints:46prior-first approvals,8prior-first rejections;46normal-path items:35prior approvals,11prior rejections. Suggestion agreement85.2%, prior-reject share14.8%; full sample approval share81%. These are prior model outcomes, **NOT human accuracy**, and no actual speedup was measured.
+- Verified100unique repositories with zero overlap with previous47. Sampling: latest successful non-reused automatic attempts in last7days/currentmodel/currentprompt, installable>=500. Not randomized.99client-excerpt truncations, routing94English/6Multilingual; did not establish causal effects from either.
+- Read-only lookup of8prior reasons: code-analysis docs, course, personal Nix/dotfiles, handbook, curated list, playlist data, documentation site. No database changes. Even a probability>.9 does not justify skipping either reviewer. Potential wasted speculative calls8/54; actual second speculative calls0.
+- Added `fresh-live-20260921.json` and `fresh-analysis-20260921.json` under `docs/operations/evaluations/2026-09-21-laya-speculation/`. Updated `docs/operations/2026-09-21-laya-speculation-live-check.md`, plan README/PR01/PR02, this handoff. Original raw100snapshot file remains ignored0600 `.crawl-samples/laya-eval/fresh-speculation-input.json`; readonly helper/rawreasonfile also ignored.
+- Earlier actual14sample run passed p5022.7ms and5of5suggestions matched firstapproval; fresh run shows why this reused tiny sample was insufficient. Earlier12:43KST queue audit showed firsteligible5,firstactive0,secondpending0 and latestjobsuccess, **not** shared-gateway capacity evidence. Those artifacts remain unchanged.
 
-Added `docs/operations/2026-09-21-laya-speculation-live-check.md`, evaluation artifacts `live-20260921.json`, `headroom-20260921.json`, `fresh-dry-run.json` under existing laya-speculation evaluation directory. Updated plan README/PR01 and this handoff. No application source/DB/settings/deploy changes. PR02/03 remain unimplemented: positive agreement alone does not establish benefit, and no shared spare-capacity controller is verified.
+## Tests / failures
 
-Ignored readonly helper `.crawl-samples/laya-eval/fresh-speculation-audit.ts`: reads private existing `/tmp/nmv-installable-web.env` WITHOUT printing it; DB read-only transaction/20s statement timeout; injects Drizzle tx into lazy global db solely for existing readonly app selectors; outputs count/model/job status only. Do not rerun unchanged because outputs use exclusive creation. Preserve all other user files.
+Executed this turn:100actual HTTP calls through evaluationCLI exit0; readonly8reasonquery PASS; input uniqueness/nonoverlap and summary/confusion-matrix reconciliation PASS. Source unchanged, so did not rerun application tests. Prior implementation42new/1108unit plus type/lint passed; GitHub9bc53deCI integration/build also passed. Head ca64c1e CI/GitGuardian SUCCESS also verified this turn. Latest-head CI must be checked separately after the new documentation push. No model prompt tuning or discarded API failures this phase;100responses retained. JSON counts/IDs/matrix/authority/unknown-speedup, credential-field scan, Markdown links/current status and git diff --check PASS.
 
-## Tests / failed approaches
+Last turn's clipboard-format failure happened before HTTP; this turn succeeded after user confirmation. No key file was created. No production settings, reviewer paths, candidate states, or deployments changed.
 
-Actually executed this phase: live CLI14real requests PASS; readonly audit PASS; new100sample CLI dry-run PASS; GitHub previous-headCI SUCCESS read. No app tests rerun because source unchanged; prior phase42new/1108wholeunit PASS remains prior evidence.
+## Remaining / exact commands
 
-Readonly helper initially failed TypeError constructing Drizzle from a postgres transaction without client options. Added client options to transaction wrapper, rerun succeeded. Safe diagnostic phase/code only. A fresh authenticated CLI attempt stopped at clipboard-format validation (no request). No speed improvement measured. Missing model-only duration and shared capacity evidence remain explicit.
-
-## Remaining / exact next commands
-
-1. On user confirmation only, read the new clipboard key into memory, validate a single token, pass as child env with LAYA_URL=http://100.78.219.124:8010 to command below. Never use literal key in argv/files/output; safe Python subprocess wrapper from prior tool calls. Child stdout sanitized, stderr suppressed.
-2. Inspect fresh report without changing question/threshold to fit labels. Complete effectiveness/headroom assessment before PR02 operational work.
-3. This phase’s measured results are documented for commit/push to PR159; update the same scoped reports and PR after the fresh run. If key remains pending, report first API success and remaining new-sample test clearly. JSON counts/credential-field checks, Markdown links and git diff --check passed before this phase’s commit.
+Commit/push these scoped evaluation docs to existingPR159, update description with fresh results and deferred operational-use decision. PR02 needs measured model-only timing, an enforceable shared-capacity/normal-queue priority design, and evidence of net latency benefit. Do not imply a plan document or quick LAYA response is deployed acceleration. If modifying the question/threshold later, this100sample set becomes development data; use genuinely fresh validation data.
 
 ```sh
 cd /Users/jr/Desktop/projects/nomorevibe
 git status --short
-gh pr view 159 --json url,isDraft,headRefOid,statusCheckRollup
-# Only inside the secure child env; no credentials in the following argv:
-node --import tsx scripts/evaluate-laya-speculation.ts --input .crawl-samples/laya-eval/fresh-speculation-input.json --output docs/operations/evaluations/2026-09-21-laya-speculation/fresh-live-20260921.json --live
 git diff --check
+gh pr view 159 --json url,isDraft,headRefOid,statusCheckRollup
+cat docs/operations/2026-09-21-laya-speculation-live-check.md
+# Reports are credential-free; do not print clipboard or private env files.
+node --input-type=module -e 'import {readFileSync} from "node:fs"; const r=JSON.parse(readFileSync("docs/operations/evaluations/2026-09-21-laya-speculation/fresh-live-20260921.json","utf8")); console.log(r.summary)'
 ```
 
 ---

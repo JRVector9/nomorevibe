@@ -1,0 +1,1729 @@
+{
+  "version": 1,
+  "questionVersion": "installable-software-2026-09-21.1",
+  "generatedAt": "2026-09-21T03:50:25.956Z",
+  "mode": "live",
+  "complete": true,
+  "productionEffect": "none",
+  "measuredSpeedup": null,
+  "humanAccuracy": null,
+  "interpretation": "Agreement with prior model decisions is not human accuracy. Overlap is an ideal spare-slot upper bound, excluding queue/preparation/DB/contention; not an observed speedup. No production decisions or work were changed.",
+  "summary": {
+    "samples": 100,
+    "processed": 100,
+    "eligible": 100,
+    "hintResponses": 100,
+    "unavailable": 0,
+    "skipped": 0,
+    "suggestedPrefetch": 54,
+    "firstApproved": 46,
+    "potentialWaste": 8,
+    "normalPath": 46,
+    "apiP50Ms": 20.31070899999986,
+    "apiP95Ms": 33.60845899999998,
+    "overlapTimedSamples": 0,
+    "overlapUpperBoundP50Ms": null
+  },
+  "rows": [
+    {
+      "id": "29492",
+      "subjectHash": "a725cd338f3ab99d99a899bf1c0cb41cbba3f962dc2f216970cc239d51feac00",
+      "firstDecision": "approve",
+      "hint": {
+        "authority": "none",
+        "questionVersion": "installable-software-2026-09-21.1",
+        "durationMs": 155.80849999999998,
+        "kind": "hint",
+        "prefetch": true,
+        "softwareProbability": 0.9074,
+        "routingModel": "english",
+        "requestHash": "d698e053b7a642c62e3f631ad7ebd1deb4517ec6f3f2010f315c4084e953f687",
+        "truncated": true
+      },
+      "overlapUpperBoundMs": null
+    },
+    {
+      "id": "29345",
+      "subjectHash": "033c84dd7ce970ff4b045140bc30cddbd77a9af6391753b651dda0fb5e0e6afa",
+      "firstDecision": "approve",
+      "hint": {
+        "authority": "none",
+        "questionVersion": "installable-software-2026-09-21.1",
+        "durationMs": 33.60845899999998,
+        "kind": "hint",
+        "prefetch": false,
+        "softwareProbability": 0.8751,
+        "routingModel": "english",
+        "requestHash": "d17b369e7aae5dfe4996fbe0430353116f241f09d08fde33c648ff2221a80841",
+        "truncated": true
+      },
+      "overlapUpperBoundMs": null
+    },
+    {
+      "id": "29344",
+      "subjectHash": "b09660a4aa586cb84b6dff7423f4e7b9e9ded67453a965254d6f37ea0f0df127",
+      "firstDecision": "reject",
+      "hint": {
+        "authority": "none",
+        "questionVersion": "installable-software-2026-09-21.1",
+        "durationMs": 24.174709000000007,
+        "kind": "hint",
+        "prefetch": true,
+        "softwareProbability": 0.9315,
+        "routingModel": "english",
+        "requestHash": "f828358c620199a2871e5c7d0ef1f43ff7192f521d87d32c9a932ea2d26f8067",
+        "truncated": true
+      },
+      "overlapUpperBoundMs": null
+    },
+    {
+      "id": "29343",
+      "subjectHash": "30db36eb40f5eaa0228d7f2f7094f3553c89a4a4c2122d2adccd6745f5c448ec",
+      "firstDecision": "reject",
+      "hint": {
+        "authority": "none",
+        "questionVersion": "installable-software-2026-09-21.1",
+        "durationMs": 20.242957999999987,
+        "kind": "hint",
+        "prefetch": false,
+        "softwareProbability": 0.876,
+        "routingModel": "english",
+        "requestHash": "57004b82ce8e593ad1ffb0f47a4c7bf981a89c35f7a5d75ba57445c03893ae61",
+        "truncated": true
+      },
+      "overlapUpperBoundMs": null
+    },
+    {
+      "id": "29340",
+      "subjectHash": "d6fbc52adac3f56bb835a3efae5c56fbe14098d79a671cd12b3e7048957ff4d1",
+      "firstDecision": "approve",
+      "hint": {
+        "authority": "none",
+        "questionVersion": "installable-software-2026-09-21.1",
+        "durationMs": 20.265584000000047,
+        "kind": "hint",
+        "prefetch": false,
+        "softwareProbability": 0.881,
+        "routingModel": "english",
+        "requestHash": "e808dd6b6a3d1f1e5d373c2f72604fd72fa420f1ba1d196c6d428333c40a5474",
+        "truncated": true
+      },
+      "overlapUpperBoundMs": null
+    },
+    {
+      "id": "29335",
+      "subjectHash": "5436dd6e38aa3db3307e10a55465d07354ea521140a5c970b9baa7c3ae441717",
+      "firstDecision": "reject",
+      "hint": {
+        "authority": "none",
+        "questionVersion": "installable-software-2026-09-21.1",
+        "durationMs": 25.512625000000014,
+        "kind": "hint",
+        "prefetch": false,
+        "softwareProbability": 0.3609,
+        "routingModel": "multilingual",
+        "requestHash": "09828562fe19f6f297bfe62bcb88b50f334c06f0c19a8fa2d5c2b16d82e8033c",
+        "truncated": true
+      },
+      "overlapUpperBoundMs": null
+    },
+    {
+      "id": "29334",
+      "subjectHash": "634baf5eaf54406be4bbc48b377f7620752030cfc69e2872a54b79aebf19b355",
+      "firstDecision": "reject",
+      "hint": {
+        "authority": "none",
+        "questionVersion": "installable-software-2026-09-21.1",
+        "durationMs": 26.18954199999996,
+        "kind": "hint",
+        "prefetch": true,
+        "softwareProbability": 0.9291,
+        "routingModel": "english",
+        "requestHash": "de3a9c0e14c42df4567a012abe7cd43b23c9869be1cc5ef4b2c3ec4dae5bf31e",
+        "truncated": true
+      },
+      "overlapUpperBoundMs": null
+    },
+    {
+      "id": "29333",
+      "subjectHash": "ef19f8215a4dfce8d48a2ad419ec7cedf2a304d7bb0f60a07c0ff1ee5b545c63",
+      "firstDecision": "reject",
+      "hint": {
+        "authority": "none",
+        "questionVersion": "installable-software-2026-09-21.1",
+        "durationMs": 21.132333000000017,
+        "kind": "hint",
+        "prefetch": true,
+        "softwareProbability": 0.9346,
+        "routingModel": "english",
+        "requestHash": "25a5694ecbbdbe82919a2d6d636a9893e086f472c51056fd6c19188a7f4bdce6",
+        "truncated": true
+      },
+      "overlapUpperBoundMs": null
+    },
+    {
+      "id": "29331",
+      "subjectHash": "8ef6a102bbf1eabd9f538bd06950ce0e8a06cc377d563e9e4cc4ad9f4d17f6ec",
+      "firstDecision": "reject",
+      "hint": {
+        "authority": "none",
+        "questionVersion": "installable-software-2026-09-21.1",
+        "durationMs": 25.382665999999972,
+        "kind": "hint",
+        "prefetch": true,
+        "softwareProbability": 0.9091,
+        "routingModel": "english",
+        "requestHash": "12f3c18bf74cfee2ba3d423e7fdee009780fba46269c80804d69fd5ff9521e11",
+        "truncated": true
+      },
+      "overlapUpperBoundMs": null
+    },
+    {
+      "id": "29330",
+      "subjectHash": "f3aab08a163771cf4511413e274a5ca72fdd9c7112d4b244bed5628dbe0ac31e",
+      "firstDecision": "reject",
+      "hint": {
+        "authority": "none",
+        "questionVersion": "installable-software-2026-09-21.1",
+        "durationMs": 26.346959000000027,
+        "kind": "hint",
+        "prefetch": false,
+        "softwareProbability": 0.8833,
+        "routingModel": "english",
+        "requestHash": "979a74c46702dc6acb8a4e5861bb7b9dccc9bc2d642b86299ed879d5dd71e0c9",
+        "truncated": true
+      },
+      "overlapUpperBoundMs": null
+    },
+    {
+      "id": "29329",
+      "subjectHash": "2dd259a7b33b38aa5dee617dd99902ad6cad863c3b4e6e4cd72a6b396ae7dcc6",
+      "firstDecision": "reject",
+      "hint": {
+        "authority": "none",
+        "questionVersion": "installable-software-2026-09-21.1",
+        "durationMs": 21.15270800000002,
+        "kind": "hint",
+        "prefetch": false,
+        "softwareProbability": 0.7739,
+        "routingModel": "english",
+        "requestHash": "6131aca98fae9cd815aef837de156336201074992a01ffc87087ca0904e74383",
+        "truncated": true
+      },
+      "overlapUpperBoundMs": null
+    },
+    {
+      "id": "29328",
+      "subjectHash": "e19881b8c8116788a780f45494dfa5b30e5e190764e5b99b44dc921f2cbb4dd1",
+      "firstDecision": "reject",
+      "hint": {
+        "authority": "none",
+        "questionVersion": "installable-software-2026-09-21.1",
+        "durationMs": 27.259834000000012,
+        "kind": "hint",
+        "prefetch": true,
+        "softwareProbability": 0.9105,
+        "routingModel": "english",
+        "requestHash": "83e6a710e52625dc6cd4d532ffd6edf90cc098cb60091a0d0f0fab274b8440c1",
+        "truncated": true
+      },
+      "overlapUpperBoundMs": null
+    },
+    {
+      "id": "29325",
+      "subjectHash": "db13b5cb10371dbd7ac55d7592c05fa1b1f98ebd51f805390e2e24a66600fc2d",
+      "firstDecision": "reject",
+      "hint": {
+        "authority": "none",
+        "questionVersion": "installable-software-2026-09-21.1",
+        "durationMs": 20.308750000000032,
+        "kind": "hint",
+        "prefetch": false,
+        "softwareProbability": 0.7891,
+        "routingModel": "english",
+        "requestHash": "9ce31d42e1640a53c19e53ba2eb58938fca84843108d09dc9ac9f30a9813d9d2",
+        "truncated": false
+      },
+      "overlapUpperBoundMs": null
+    },
+    {
+      "id": "29322",
+      "subjectHash": "03b31cdb252009ac0e5c3634500dab4e3456e27b9d6f9e94f6dc6cd53bc91482",
+      "firstDecision": "reject",
+      "hint": {
+        "authority": "none",
+        "questionVersion": "installable-software-2026-09-21.1",
+        "durationMs": 19.876500000000078,
+        "kind": "hint",
+        "prefetch": false,
+        "softwareProbability": 0.8915,
+        "routingModel": "english",
+        "requestHash": "e12d2a3550bb5c81c121c51fc0636873120da85901227af59e81a1a24725b5eb",
+        "truncated": true
+      },
+      "overlapUpperBoundMs": null
+    },
+    {
+      "id": "29321",
+      "subjectHash": "06d4aeb53a6290fd61c5880f8f29bd14633f395c466b89a02d44336f5f2d1bb0",
+      "firstDecision": "reject",
+      "hint": {
+        "authority": "none",
+        "questionVersion": "installable-software-2026-09-21.1",
+        "durationMs": 19.907542000000035,
+        "kind": "hint",
+        "prefetch": true,
+        "softwareProbability": 0.9397,
+        "routingModel": "english",
+        "requestHash": "f5a4daef851a5d210d90c13f6dfea9d97fac2353e176bab32dd4266861396347",
+        "truncated": true
+      },
+      "overlapUpperBoundMs": null
+    },
+    {
+      "id": "29320",
+      "subjectHash": "4f21e3336d3bcb6e8881fa522fee10df1933804cd28d7acfe5fe2e747f15bc67",
+      "firstDecision": "reject",
+      "hint": {
+        "authority": "none",
+        "questionVersion": "installable-software-2026-09-21.1",
+        "durationMs": 20.747959000000037,
+        "kind": "hint",
+        "prefetch": false,
+        "softwareProbability": 0.7337,
+        "routingModel": "english",
+        "requestHash": "86f15f42e54a19bb25c0cde6822f78537d0f937a620c078b873ab443574f4ebc",
+        "truncated": true
+      },
+      "overlapUpperBoundMs": null
+    },
+    {
+      "id": "29319",
+      "subjectHash": "7b81d5eba2975dc5697f8f3c905da1cb7a2671b9aa32bcc6426bf0dfbbb9f63a",
+      "firstDecision": "reject",
+      "hint": {
+        "authority": "none",
+        "questionVersion": "installable-software-2026-09-21.1",
+        "durationMs": 21.328499999999963,
+        "kind": "hint",
+        "prefetch": false,
+        "softwareProbability": 0.7959,
+        "routingModel": "english",
+        "requestHash": "7e683d64333666bfcf1efbb0cd6a92d15eef58ae431b6e782e15187d5812d09a",
+        "truncated": true
+      },
+      "overlapUpperBoundMs": null
+    },
+    {
+      "id": "29317",
+      "subjectHash": "cee8d2d7a04bb94ad70a3e1d375405d9929bb323cf6df4fc3779d6e046b8213b",
+      "firstDecision": "reject",
+      "hint": {
+        "authority": "none",
+        "questionVersion": "installable-software-2026-09-21.1",
+        "durationMs": 20.025792000000024,
+        "kind": "hint",
+        "prefetch": false,
+        "softwareProbability": 0.8701,
+        "routingModel": "english",
+        "requestHash": "26560a83156603669701701c9f3bec487c126344cbc94976e4cfdf3b8f3433b9",
+        "truncated": true
+      },
+      "overlapUpperBoundMs": null
+    },
+    {
+      "id": "29315",
+      "subjectHash": "35627bf87af21d63f4c3f5811abb477091eefbcd18219ae45300c76697421d9d",
+      "firstDecision": "reject",
+      "hint": {
+        "authority": "none",
+        "questionVersion": "installable-software-2026-09-21.1",
+        "durationMs": 82.21112499999992,
+        "kind": "hint",
+        "prefetch": true,
+        "softwareProbability": 0.9158,
+        "routingModel": "english",
+        "requestHash": "7bedf74af567cdaab5debe1afd8a509108d0812c0db25ecb13d02bc62c17e018",
+        "truncated": true
+      },
+      "overlapUpperBoundMs": null
+    },
+    {
+      "id": "29314",
+      "subjectHash": "cb339e300548087c3739f1b16f81df1497b89bbacfdaa458c5591745b7a6c818",
+      "firstDecision": "approve",
+      "hint": {
+        "authority": "none",
+        "questionVersion": "installable-software-2026-09-21.1",
+        "durationMs": 19.969625000000065,
+        "kind": "hint",
+        "prefetch": true,
+        "softwareProbability": 0.9053,
+        "routingModel": "english",
+        "requestHash": "d8406102c24361dfb381f49dea488de59697fa0b9b4a41de4becfba4520ab110",
+        "truncated": true
+      },
+      "overlapUpperBoundMs": null
+    },
+    {
+      "id": "29310",
+      "subjectHash": "df9545a4c6308a784c3fbf60c3370ef2ab84a1e30a569d50474410aaa34dc7bd",
+      "firstDecision": "reject",
+      "hint": {
+        "authority": "none",
+        "questionVersion": "installable-software-2026-09-21.1",
+        "durationMs": 20.479375000000005,
+        "kind": "hint",
+        "prefetch": false,
+        "softwareProbability": 0.8999,
+        "routingModel": "english",
+        "requestHash": "e58441d6170cc51f8080638186df11eaff684ea8504ff77fd079d994e3761e80",
+        "truncated": true
+      },
+      "overlapUpperBoundMs": null
+    },
+    {
+      "id": "29309",
+      "subjectHash": "b6ffe9e9f1a3cf04a811221b3506cda7aefb024860788370698f5ed2fd075db0",
+      "firstDecision": "reject",
+      "hint": {
+        "authority": "none",
+        "questionVersion": "installable-software-2026-09-21.1",
+        "durationMs": 19.2013750000001,
+        "kind": "hint",
+        "prefetch": true,
+        "softwareProbability": 0.9215,
+        "routingModel": "english",
+        "requestHash": "4211a7d600128b48d44a747cd879a813ed1aa8c9d54741d4beddae328bf4547a",
+        "truncated": true
+      },
+      "overlapUpperBoundMs": null
+    },
+    {
+      "id": "29262",
+      "subjectHash": "fad68563ce16425416dc8c6101ac29118121bd96411f664be696ed77021d432b",
+      "firstDecision": "approve",
+      "hint": {
+        "authority": "none",
+        "questionVersion": "installable-software-2026-09-21.1",
+        "durationMs": 21.865042000000017,
+        "kind": "hint",
+        "prefetch": true,
+        "softwareProbability": 0.9625,
+        "routingModel": "english",
+        "requestHash": "6a3cae9c057f4cb0ea507b14a5313a46279c668e9edd5bbb96951f8ae43ce8e1",
+        "truncated": true
+      },
+      "overlapUpperBoundMs": null
+    },
+    {
+      "id": "29256",
+      "subjectHash": "730a6eb51c024aed1ff7781c9dec78f271254b9d9cc72f263027c0204c568442",
+      "firstDecision": "approve",
+      "hint": {
+        "authority": "none",
+        "questionVersion": "installable-software-2026-09-21.1",
+        "durationMs": 20.149124999999913,
+        "kind": "hint",
+        "prefetch": true,
+        "softwareProbability": 0.9318,
+        "routingModel": "english",
+        "requestHash": "93e5cd22cd1a4f413e576a0037a5c87ce8ed46736822037af79c491735626d82",
+        "truncated": true
+      },
+      "overlapUpperBoundMs": null
+    },
+    {
+      "id": "29252",
+      "subjectHash": "40683d80bc0e38d3bab6622de85880f9dd5feb9254bcdbf707ddeae066016ae6",
+      "firstDecision": "approve",
+      "hint": {
+        "authority": "none",
+        "questionVersion": "installable-software-2026-09-21.1",
+        "durationMs": 22.487167,
+        "kind": "hint",
+        "prefetch": true,
+        "softwareProbability": 0.9278,
+        "routingModel": "english",
+        "requestHash": "d2c26239403e19c8226034817152d723ce2dd119aba83eb8d238c148f300434e",
+        "truncated": true
+      },
+      "overlapUpperBoundMs": null
+    },
+    {
+      "id": "29250",
+      "subjectHash": "3b249042228e8bcd84aa0ef51931081b7ae302172e49cdc59e84918b4d35837d",
+      "firstDecision": "approve",
+      "hint": {
+        "authority": "none",
+        "questionVersion": "installable-software-2026-09-21.1",
+        "durationMs": 22.477416999999946,
+        "kind": "hint",
+        "prefetch": false,
+        "softwareProbability": 0.8764,
+        "routingModel": "english",
+        "requestHash": "ff45e41698a5bf12ada01a64abe0e89fe0902fb1cb222cefb499449d750c64d3",
+        "truncated": true
+      },
+      "overlapUpperBoundMs": null
+    },
+    {
+      "id": "29249",
+      "subjectHash": "d255db78cb3d0db2c3109d0fcf4bc0cfd4ec91872cfe569c0f2cdd13156dd0b1",
+      "firstDecision": "approve",
+      "hint": {
+        "authority": "none",
+        "questionVersion": "installable-software-2026-09-21.1",
+        "durationMs": 20.724583999999936,
+        "kind": "hint",
+        "prefetch": false,
+        "softwareProbability": 0.8757,
+        "routingModel": "english",
+        "requestHash": "6ad266cfe4874d71eb63a19831d4643387ad3edc2cbf0af7b4e26396a8e2fd40",
+        "truncated": true
+      },
+      "overlapUpperBoundMs": null
+    },
+    {
+      "id": "29247",
+      "subjectHash": "ab76dd3ccfb62d5fe81ed1881291e8b2933ed061a64c1688f94a014fade9beb3",
+      "firstDecision": "approve",
+      "hint": {
+        "authority": "none",
+        "questionVersion": "installable-software-2026-09-21.1",
+        "durationMs": 24.029083000000014,
+        "kind": "hint",
+        "prefetch": true,
+        "softwareProbability": 0.9588,
+        "routingModel": "english",
+        "requestHash": "d099f49db755211d959c77e4dc11cb2e46aa8f79eba67fb4de9a6cbb122f1f25",
+        "truncated": true
+      },
+      "overlapUpperBoundMs": null
+    },
+    {
+      "id": "29246",
+      "subjectHash": "cb2e3e0d3df16537f3e56e8f13c27387668c8ca2dbd000387f0f84ef2066ff48",
+      "firstDecision": "approve",
+      "hint": {
+        "authority": "none",
+        "questionVersion": "installable-software-2026-09-21.1",
+        "durationMs": 24.068667000000005,
+        "kind": "hint",
+        "prefetch": true,
+        "softwareProbability": 0.9524,
+        "routingModel": "english",
+        "requestHash": "5299d2c94448ebad8b71526bb8b95e348d8a04dd306e4d0c73ae29fd3bb2b16e",
+        "truncated": true
+      },
+      "overlapUpperBoundMs": null
+    },
+    {
+      "id": "29245",
+      "subjectHash": "0d43605c5777e8e1aa200c6a05ffac60e509050c105bb81fbcc9e9c3ab8c83f2",
+      "firstDecision": "approve",
+      "hint": {
+        "authority": "none",
+        "questionVersion": "installable-software-2026-09-21.1",
+        "durationMs": 22.23762499999998,
+        "kind": "hint",
+        "prefetch": false,
+        "softwareProbability": 0.8911,
+        "routingModel": "english",
+        "requestHash": "07f4625797c66bcd3d95bda34a795dedc24d04e15f3a26cdb90cdc1d5c7c0c77",
+        "truncated": true
+      },
+      "overlapUpperBoundMs": null
+    },
+    {
+      "id": "29242",
+      "subjectHash": "3fbf397eaba6691f879da08bec3ba6a1fb3087249453fbbe253deedf9d5f984e",
+      "firstDecision": "approve",
+      "hint": {
+        "authority": "none",
+        "questionVersion": "installable-software-2026-09-21.1",
+        "durationMs": 22.31112500000006,
+        "kind": "hint",
+        "prefetch": true,
+        "softwareProbability": 0.9179,
+        "routingModel": "english",
+        "requestHash": "b0583389766dbf9716b82469ce00011b7b99249837f26ee50319b65126a3de7d",
+        "truncated": true
+      },
+      "overlapUpperBoundMs": null
+    },
+    {
+      "id": "29241",
+      "subjectHash": "2b721bd5b0c7b024538a0d3fd2403e17144f29c0a07232773dbe7c8129138136",
+      "firstDecision": "approve",
+      "hint": {
+        "authority": "none",
+        "questionVersion": "installable-software-2026-09-21.1",
+        "durationMs": 23.741625,
+        "kind": "hint",
+        "prefetch": true,
+        "softwareProbability": 0.9518,
+        "routingModel": "english",
+        "requestHash": "2261a55f0ab2ecd9ed8b3fe27513bfc0439726cf9acffc45f8c0b482ca3ada25",
+        "truncated": true
+      },
+      "overlapUpperBoundMs": null
+    },
+    {
+      "id": "29239",
+      "subjectHash": "443c9af2e6d12547105b65f90ffde802be2a3b9aff7ddc5a72264a0b03f6f843",
+      "firstDecision": "approve",
+      "hint": {
+        "authority": "none",
+        "questionVersion": "installable-software-2026-09-21.1",
+        "durationMs": 24.080625000000055,
+        "kind": "hint",
+        "prefetch": false,
+        "softwareProbability": 0.8846,
+        "routingModel": "english",
+        "requestHash": "138bedcc5b847a053995e8b06db48bfecee6e2498edab8e56bca533019495772",
+        "truncated": true
+      },
+      "overlapUpperBoundMs": null
+    },
+    {
+      "id": "29238",
+      "subjectHash": "3b76d53f4741b956002280a95700562e3e4831c3d609bf455a82b38cfd9867dc",
+      "firstDecision": "approve",
+      "hint": {
+        "authority": "none",
+        "questionVersion": "installable-software-2026-09-21.1",
+        "durationMs": 18.759084000000144,
+        "kind": "hint",
+        "prefetch": true,
+        "softwareProbability": 0.9378,
+        "routingModel": "english",
+        "requestHash": "231e755460c2db46eb844dcee8c44efa111995fd7afaab84d9a93a0485efbc99",
+        "truncated": true
+      },
+      "overlapUpperBoundMs": null
+    },
+    {
+      "id": "29236",
+      "subjectHash": "e26926cacf75a7b6a4da5af943253cb77f3acdb37ec3b1c3b6dba65e0ece8bc3",
+      "firstDecision": "approve",
+      "hint": {
+        "authority": "none",
+        "questionVersion": "installable-software-2026-09-21.1",
+        "durationMs": 17.803957999999966,
+        "kind": "hint",
+        "prefetch": true,
+        "softwareProbability": 0.9516,
+        "routingModel": "english",
+        "requestHash": "4900ba3f4b70d448dae163bef17ce0facfad9393bf26b908638e414a7360418f",
+        "truncated": true
+      },
+      "overlapUpperBoundMs": null
+    },
+    {
+      "id": "29234",
+      "subjectHash": "f35004464083e7e65488b320cf962b4241168d2a1bc5682509d4cdea22bd4d2c",
+      "firstDecision": "approve",
+      "hint": {
+        "authority": "none",
+        "questionVersion": "installable-software-2026-09-21.1",
+        "durationMs": 19.44058400000017,
+        "kind": "hint",
+        "prefetch": false,
+        "softwareProbability": 0.7299,
+        "routingModel": "multilingual",
+        "requestHash": "34ce1ab47b2bf7e323cf0e1fbc9de61b40bc3ade07c17b85d294d6f4858be908",
+        "truncated": true
+      },
+      "overlapUpperBoundMs": null
+    },
+    {
+      "id": "29233",
+      "subjectHash": "457a950351b17f4183c2e976580c0bd34a17abb6631fe034d134495d2fc412ec",
+      "firstDecision": "approve",
+      "hint": {
+        "authority": "none",
+        "questionVersion": "installable-software-2026-09-21.1",
+        "durationMs": 16.821249999999964,
+        "kind": "hint",
+        "prefetch": true,
+        "softwareProbability": 0.9043,
+        "routingModel": "english",
+        "requestHash": "e4d4e582cb1861b252ecf1d1aee3f70750545ac465eb65d536a253d0f2533976",
+        "truncated": true
+      },
+      "overlapUpperBoundMs": null
+    },
+    {
+      "id": "29232",
+      "subjectHash": "98e81318b2cbda8ce95c82f3c752e717665ed575dabe98c4fff66f4b7b45f60d",
+      "firstDecision": "approve",
+      "hint": {
+        "authority": "none",
+        "questionVersion": "installable-software-2026-09-21.1",
+        "durationMs": 18.147457999999915,
+        "kind": "hint",
+        "prefetch": false,
+        "softwareProbability": 0.897,
+        "routingModel": "english",
+        "requestHash": "203a3ac74afb7823de7be3ca4ba641a9e94cdc747231ad3a71febb88940a0f77",
+        "truncated": true
+      },
+      "overlapUpperBoundMs": null
+    },
+    {
+      "id": "29231",
+      "subjectHash": "8caecd3c5360312512770ac1f2cffcc0714496ffe5c50c71ce672465cdeeb13b",
+      "firstDecision": "approve",
+      "hint": {
+        "authority": "none",
+        "questionVersion": "installable-software-2026-09-21.1",
+        "durationMs": 18.567415999999866,
+        "kind": "hint",
+        "prefetch": false,
+        "softwareProbability": 0.8555,
+        "routingModel": "multilingual",
+        "requestHash": "d6365ceaee133808f726427fedd84c0e426c338e1a695d93f4381afcf6f191e0",
+        "truncated": true
+      },
+      "overlapUpperBoundMs": null
+    },
+    {
+      "id": "29229",
+      "subjectHash": "14d0024cba83e476ab924f36582cdcfcc602b0bd01e4e589e9b94eeca7b40b85",
+      "firstDecision": "approve",
+      "hint": {
+        "authority": "none",
+        "questionVersion": "installable-software-2026-09-21.1",
+        "durationMs": 18.983083999999963,
+        "kind": "hint",
+        "prefetch": true,
+        "softwareProbability": 0.9487,
+        "routingModel": "english",
+        "requestHash": "7b7569859ed09af8fcab9ef8586b75e39b2b83a2589931740802647c97ac2b36",
+        "truncated": true
+      },
+      "overlapUpperBoundMs": null
+    },
+    {
+      "id": "29228",
+      "subjectHash": "34b4944af29e77ac21b4913d6586794029d9002a7125d013bf3b63026557c627",
+      "firstDecision": "approve",
+      "hint": {
+        "authority": "none",
+        "questionVersion": "installable-software-2026-09-21.1",
+        "durationMs": 84.16416600000002,
+        "kind": "hint",
+        "prefetch": true,
+        "softwareProbability": 0.9378,
+        "routingModel": "english",
+        "requestHash": "33f68bba9e024b9b631a10ccb6ac5f2436db69d1258bc36cd558337bdf4ce034",
+        "truncated": true
+      },
+      "overlapUpperBoundMs": null
+    },
+    {
+      "id": "29227",
+      "subjectHash": "ab86dc13a7b8fcce76594c70b30ea3eb529ed0b203106d554ec6d2cd0d36310d",
+      "firstDecision": "approve",
+      "hint": {
+        "authority": "none",
+        "questionVersion": "installable-software-2026-09-21.1",
+        "durationMs": 22.03741600000012,
+        "kind": "hint",
+        "prefetch": false,
+        "softwareProbability": 0.8977,
+        "routingModel": "english",
+        "requestHash": "067abd2b4a678ddb6008fbb926f318fce1691681ea44cbdec132d7af9cfb9db2",
+        "truncated": true
+      },
+      "overlapUpperBoundMs": null
+    },
+    {
+      "id": "29226",
+      "subjectHash": "1d0bb098b5529f836e1bd2831fbe02aee2acd27be5a9d1e2c39e169b2690af00",
+      "firstDecision": "approve",
+      "hint": {
+        "authority": "none",
+        "questionVersion": "installable-software-2026-09-21.1",
+        "durationMs": 18.77304099999992,
+        "kind": "hint",
+        "prefetch": true,
+        "softwareProbability": 0.9516,
+        "routingModel": "english",
+        "requestHash": "e04f5be2c5f8ed4471c3b22008879984534c0a389aa027da4ed0a04bbfa784e1",
+        "truncated": true
+      },
+      "overlapUpperBoundMs": null
+    },
+    {
+      "id": "29225",
+      "subjectHash": "c0ca603b79870972557ef0735a0833b208750d3fe3fa30b6db6cbfb25dd84b84",
+      "firstDecision": "approve",
+      "hint": {
+        "authority": "none",
+        "questionVersion": "installable-software-2026-09-21.1",
+        "durationMs": 22.39641699999993,
+        "kind": "hint",
+        "prefetch": true,
+        "softwareProbability": 0.9513,
+        "routingModel": "english",
+        "requestHash": "847222761318e76b1f8ba7ab3db172b818ca1164d601fe6b4a095720bda20761",
+        "truncated": true
+      },
+      "overlapUpperBoundMs": null
+    },
+    {
+      "id": "29224",
+      "subjectHash": "d48fa4b30b4040da55018ce41d8b47e19f3ebc4d1dd4bf5c9f70f2d9d8807b9a",
+      "firstDecision": "approve",
+      "hint": {
+        "authority": "none",
+        "questionVersion": "installable-software-2026-09-21.1",
+        "durationMs": 17.976625000000013,
+        "kind": "hint",
+        "prefetch": false,
+        "softwareProbability": 0.8001,
+        "routingModel": "multilingual",
+        "requestHash": "095aa9b0be9014c9ec3cada4e2de3f0b84c7e27d60a3f0c87b0fc5113a66ce24",
+        "truncated": true
+      },
+      "overlapUpperBoundMs": null
+    },
+    {
+      "id": "29223",
+      "subjectHash": "3a3fbcd00319840e65aae4d3b4b51c2c07cb24c92bbcc09a11a42c43dca9c6e0",
+      "firstDecision": "approve",
+      "hint": {
+        "authority": "none",
+        "questionVersion": "installable-software-2026-09-21.1",
+        "durationMs": 20.008624999999938,
+        "kind": "hint",
+        "prefetch": false,
+        "softwareProbability": 0.8784,
+        "routingModel": "english",
+        "requestHash": "a2ac9373b6178c56516ceb01042142a4bdea47d5be6b49ef7e24ff293f2ad780",
+        "truncated": true
+      },
+      "overlapUpperBoundMs": null
+    },
+    {
+      "id": "29221",
+      "subjectHash": "07b8aa1af2edf9bda9bb1db8e9e5704e83240996f2e7a982cfca3050c66f4469",
+      "firstDecision": "approve",
+      "hint": {
+        "authority": "none",
+        "questionVersion": "installable-software-2026-09-21.1",
+        "durationMs": 20.211708000000044,
+        "kind": "hint",
+        "prefetch": false,
+        "softwareProbability": 0.3309,
+        "routingModel": "multilingual",
+        "requestHash": "48f218dae63349f0efec14ffab02ceda7709039ef1e78cabc342909f2e73c6cb",
+        "truncated": true
+      },
+      "overlapUpperBoundMs": null
+    },
+    {
+      "id": "29219",
+      "subjectHash": "ba2e84f590eacc0a398dc2d1e160f07fc09dc1438183edab4f9ea03e3acdb1ce",
+      "firstDecision": "approve",
+      "hint": {
+        "authority": "none",
+        "questionVersion": "installable-software-2026-09-21.1",
+        "durationMs": 19.139083000000028,
+        "kind": "hint",
+        "prefetch": false,
+        "softwareProbability": 0.8945,
+        "routingModel": "english",
+        "requestHash": "66f5dae9b936f82358b27bea8611782aff1418683ab5ea50fb039792cd16bb7a",
+        "truncated": true
+      },
+      "overlapUpperBoundMs": null
+    },
+    {
+      "id": "29214",
+      "subjectHash": "d8ffbb6e2b6d49da5e01c8d3c1c774a20879f5392bc153ebfdb7c175d949f1ca",
+      "firstDecision": "approve",
+      "hint": {
+        "authority": "none",
+        "questionVersion": "installable-software-2026-09-21.1",
+        "durationMs": 18.92274999999995,
+        "kind": "hint",
+        "prefetch": false,
+        "softwareProbability": 0.8705,
+        "routingModel": "english",
+        "requestHash": "4b942ccea65a95f28f0a7a41eebed818222660b9e44c62cf4dc35ea2692e0774",
+        "truncated": true
+      },
+      "overlapUpperBoundMs": null
+    },
+    {
+      "id": "29213",
+      "subjectHash": "955c946c235adb36391644b32967f9f210f0459adb3ce497c3d8ae61b751cccf",
+      "firstDecision": "approve",
+      "hint": {
+        "authority": "none",
+        "questionVersion": "installable-software-2026-09-21.1",
+        "durationMs": 18.280416999999943,
+        "kind": "hint",
+        "prefetch": true,
+        "softwareProbability": 0.9387,
+        "routingModel": "english",
+        "requestHash": "84097a7b29fb2ac35e5bd8588866686fef6a889c1f4bf676a6c3fca94b11b2f4",
+        "truncated": true
+      },
+      "overlapUpperBoundMs": null
+    },
+    {
+      "id": "29212",
+      "subjectHash": "46d4401185ae547be907bc47525b7566556f9d0e5a77f903c39c0a8412a1ab85",
+      "firstDecision": "approve",
+      "hint": {
+        "authority": "none",
+        "questionVersion": "installable-software-2026-09-21.1",
+        "durationMs": 15.4301660000001,
+        "kind": "hint",
+        "prefetch": false,
+        "softwareProbability": 0.8703,
+        "routingModel": "english",
+        "requestHash": "865c0f16f202411f3fb2a73c5a043ef704465347779346c08cd052483b1f6849",
+        "truncated": true
+      },
+      "overlapUpperBoundMs": null
+    },
+    {
+      "id": "29211",
+      "subjectHash": "fe7a278322c281524edf83829e88076b0a77d9efb9b9407443e6d5458778b421",
+      "firstDecision": "approve",
+      "hint": {
+        "authority": "none",
+        "questionVersion": "installable-software-2026-09-21.1",
+        "durationMs": 18.93679199999997,
+        "kind": "hint",
+        "prefetch": false,
+        "softwareProbability": 0.5917,
+        "routingModel": "multilingual",
+        "requestHash": "da397ed73c1044350546642150560023ae9fc89fc2cab575910ec5df1c72b7df",
+        "truncated": true
+      },
+      "overlapUpperBoundMs": null
+    },
+    {
+      "id": "29210",
+      "subjectHash": "f85349814e0c7303d0ceea5101c8d2af45d95c6ba2ffe76ec75a4cbd1b6a166d",
+      "firstDecision": "approve",
+      "hint": {
+        "authority": "none",
+        "questionVersion": "installable-software-2026-09-21.1",
+        "durationMs": 22.837332999999944,
+        "kind": "hint",
+        "prefetch": false,
+        "softwareProbability": 0.8363,
+        "routingModel": "english",
+        "requestHash": "0b2057d68cc9e75a05987cac4f2ed44e9ddf6a4a13398265d705c888ba166297",
+        "truncated": true
+      },
+      "overlapUpperBoundMs": null
+    },
+    {
+      "id": "29209",
+      "subjectHash": "6c4ff976018f13e92f8bd36a91797c3ac8764fd8a16fbacbf2b29165db126e2c",
+      "firstDecision": "approve",
+      "hint": {
+        "authority": "none",
+        "questionVersion": "installable-software-2026-09-21.1",
+        "durationMs": 18.96575000000007,
+        "kind": "hint",
+        "prefetch": false,
+        "softwareProbability": 0.8856,
+        "routingModel": "english",
+        "requestHash": "f1b8d8bdab6fce2bc50f53215b233268d2214a66f92c84639cc9158680c898f8",
+        "truncated": true
+      },
+      "overlapUpperBoundMs": null
+    },
+    {
+      "id": "29206",
+      "subjectHash": "953af02b2c6ba1bcf306c108963db2ad3d20f9f60a1fc2462aabd69d9b4229e5",
+      "firstDecision": "approve",
+      "hint": {
+        "authority": "none",
+        "questionVersion": "installable-software-2026-09-21.1",
+        "durationMs": 21.25779200000011,
+        "kind": "hint",
+        "prefetch": true,
+        "softwareProbability": 0.9663,
+        "routingModel": "english",
+        "requestHash": "ca1a29a94dd7fe718661305e42b668443cbd5fc84b5b0bb407ab2108415af9c1",
+        "truncated": true
+      },
+      "overlapUpperBoundMs": null
+    },
+    {
+      "id": "29205",
+      "subjectHash": "08de9a4766f62fef8897d1144a6ace7aced9698657a61e26f6da64c0cb1f94f3",
+      "firstDecision": "approve",
+      "hint": {
+        "authority": "none",
+        "questionVersion": "installable-software-2026-09-21.1",
+        "durationMs": 21.039874999999938,
+        "kind": "hint",
+        "prefetch": true,
+        "softwareProbability": 0.9236,
+        "routingModel": "english",
+        "requestHash": "63ceb6fd20f45730880ff249279252c59c97f15af355badd719fc4bbee56a84d",
+        "truncated": true
+      },
+      "overlapUpperBoundMs": null
+    },
+    {
+      "id": "29204",
+      "subjectHash": "e9b8036a1ba0aa53791dfcbb877e4cdf508d43a328f46832bbe17f34423f4aad",
+      "firstDecision": "approve",
+      "hint": {
+        "authority": "none",
+        "questionVersion": "installable-software-2026-09-21.1",
+        "durationMs": 19.96787499999982,
+        "kind": "hint",
+        "prefetch": true,
+        "softwareProbability": 0.9128,
+        "routingModel": "english",
+        "requestHash": "7a0d3240a77dbe761a352258b35bedcce452d86ffbd6a74212fca2a3b7a7e6d1",
+        "truncated": true
+      },
+      "overlapUpperBoundMs": null
+    },
+    {
+      "id": "29203",
+      "subjectHash": "58e7c19138856a4247201c110448eec9ec12b1c81a2c9c2b3cf2c7f1bfa0d8b6",
+      "firstDecision": "approve",
+      "hint": {
+        "authority": "none",
+        "questionVersion": "installable-software-2026-09-21.1",
+        "durationMs": 22.830541999999923,
+        "kind": "hint",
+        "prefetch": true,
+        "softwareProbability": 0.9176,
+        "routingModel": "english",
+        "requestHash": "5eb8f41e8bffa214f35389dac3f7c17c2c344f13817d5dc1d0111bbe3ba78ac3",
+        "truncated": true
+      },
+      "overlapUpperBoundMs": null
+    },
+    {
+      "id": "29202",
+      "subjectHash": "380f3dee9113703cac8521534ae5e9987e3b52a14fa70dab120f9075ef6fb580",
+      "firstDecision": "approve",
+      "hint": {
+        "authority": "none",
+        "questionVersion": "installable-software-2026-09-21.1",
+        "durationMs": 20.879249999999956,
+        "kind": "hint",
+        "prefetch": false,
+        "softwareProbability": 0.7893,
+        "routingModel": "english",
+        "requestHash": "8a8a6e0d002768f988d78445ee603cf3f397e7eb2c6927c8fbbe4e2d1be8f026",
+        "truncated": true
+      },
+      "overlapUpperBoundMs": null
+    },
+    {
+      "id": "29201",
+      "subjectHash": "5035976e827da2112b3d3c3ea3c415189b8b2a52fa6c82e771e3b01f82b26c1c",
+      "firstDecision": "approve",
+      "hint": {
+        "authority": "none",
+        "questionVersion": "installable-software-2026-09-21.1",
+        "durationMs": 19.59441599999991,
+        "kind": "hint",
+        "prefetch": false,
+        "softwareProbability": 0.786,
+        "routingModel": "english",
+        "requestHash": "8c5abbeb91cc6cbe78af142c4b08677de338bb96a42127d86cf08303ffe903c9",
+        "truncated": true
+      },
+      "overlapUpperBoundMs": null
+    },
+    {
+      "id": "29200",
+      "subjectHash": "e18bf79ab3a8cd30aa9279d5786640a4db66ca53e6d619b405a7937d431d066c",
+      "firstDecision": "approve",
+      "hint": {
+        "authority": "none",
+        "questionVersion": "installable-software-2026-09-21.1",
+        "durationMs": 20.847125000000005,
+        "kind": "hint",
+        "prefetch": true,
+        "softwareProbability": 0.9176,
+        "routingModel": "english",
+        "requestHash": "5949f2a00bc3a0238b00cf1d5dc5f38651595892bd01476580ed466e3b87d277",
+        "truncated": true
+      },
+      "overlapUpperBoundMs": null
+    },
+    {
+      "id": "29199",
+      "subjectHash": "ed46248c288ab435703003a8ad1e93f4780264d4b4a7bdf977333ed3c7c3a2a3",
+      "firstDecision": "approve",
+      "hint": {
+        "authority": "none",
+        "questionVersion": "installable-software-2026-09-21.1",
+        "durationMs": 19.655958000000055,
+        "kind": "hint",
+        "prefetch": true,
+        "softwareProbability": 0.9591,
+        "routingModel": "english",
+        "requestHash": "d65151c2a071d559684f24647287a6e5959f6ab38365d4376be9f81a39da8712",
+        "truncated": true
+      },
+      "overlapUpperBoundMs": null
+    },
+    {
+      "id": "29194",
+      "subjectHash": "88c23eca3c3e91f77a0563f9909b25e3c27f158bc0d5928b6cd7fffb22363d0a",
+      "firstDecision": "approve",
+      "hint": {
+        "authority": "none",
+        "questionVersion": "installable-software-2026-09-21.1",
+        "durationMs": 18.397083000000066,
+        "kind": "hint",
+        "prefetch": true,
+        "softwareProbability": 0.9281,
+        "routingModel": "english",
+        "requestHash": "180fe42cd14bcf892e8faed542400597dabd7197fd371d4da1f29240553c420d",
+        "truncated": true
+      },
+      "overlapUpperBoundMs": null
+    },
+    {
+      "id": "29193",
+      "subjectHash": "bff1f61cc5643022d81ffda52a848b0f74086a0ce9e23aaca6ba757bbcf8c462",
+      "firstDecision": "approve",
+      "hint": {
+        "authority": "none",
+        "questionVersion": "installable-software-2026-09-21.1",
+        "durationMs": 83.82945799999993,
+        "kind": "hint",
+        "prefetch": false,
+        "softwareProbability": 0.8356,
+        "routingModel": "english",
+        "requestHash": "605280cea7dbf7ff4a12db5a0bb1bd07be312594d70df9c296f534786b902e5e",
+        "truncated": true
+      },
+      "overlapUpperBoundMs": null
+    },
+    {
+      "id": "29192",
+      "subjectHash": "f04f5a5da53e31b9bd78040b2281259b5dc3eabf17c51b7582c8bbe9209cf54d",
+      "firstDecision": "approve",
+      "hint": {
+        "authority": "none",
+        "questionVersion": "installable-software-2026-09-21.1",
+        "durationMs": 20.029166999999916,
+        "kind": "hint",
+        "prefetch": true,
+        "softwareProbability": 0.9182,
+        "routingModel": "english",
+        "requestHash": "e0fabbcdf265a45b00f62642ef3435cc6d94b818673e7ffdff5002fc8fecd997",
+        "truncated": true
+      },
+      "overlapUpperBoundMs": null
+    },
+    {
+      "id": "29189",
+      "subjectHash": "b8acd9478748b503d68aa851ba17aacf13d2ad9299536be23da446a1a1aeedd4",
+      "firstDecision": "approve",
+      "hint": {
+        "authority": "none",
+        "questionVersion": "installable-software-2026-09-21.1",
+        "durationMs": 18.52320799999984,
+        "kind": "hint",
+        "prefetch": false,
+        "softwareProbability": 0.8632,
+        "routingModel": "english",
+        "requestHash": "33b2389c7ee14f6f1c48898615b4131a9cbd157a7b8aa3a9d8b381b352dcd791",
+        "truncated": true
+      },
+      "overlapUpperBoundMs": null
+    },
+    {
+      "id": "29188",
+      "subjectHash": "18a44a527615d21a0b83780672a7f4fa8da1994086313cd39255a5028b99d45d",
+      "firstDecision": "approve",
+      "hint": {
+        "authority": "none",
+        "questionVersion": "installable-software-2026-09-21.1",
+        "durationMs": 19.41079200000013,
+        "kind": "hint",
+        "prefetch": false,
+        "softwareProbability": 0.3894,
+        "routingModel": "english",
+        "requestHash": "f7d122559a16e47458dc587c7fb6a4aab02cf4323e4513e771a28f1ab7cff9bc",
+        "truncated": true
+      },
+      "overlapUpperBoundMs": null
+    },
+    {
+      "id": "29187",
+      "subjectHash": "65e0e89b41edfd6670ba56bee9f6e86b2d975d8c2294e6b46c98048e7fe8e4b7",
+      "firstDecision": "approve",
+      "hint": {
+        "authority": "none",
+        "questionVersion": "installable-software-2026-09-21.1",
+        "durationMs": 18.74108299999989,
+        "kind": "hint",
+        "prefetch": false,
+        "softwareProbability": 0.8467,
+        "routingModel": "english",
+        "requestHash": "91c26eac795d3891bf955e3ff1b3edc664922f8c074dc55b612da31121d8e85d",
+        "truncated": true
+      },
+      "overlapUpperBoundMs": null
+    },
+    {
+      "id": "29186",
+      "subjectHash": "786cfc222cf852532c7146368c3c28a63c92d7760960eaf29bd1ed51db94e7b0",
+      "firstDecision": "approve",
+      "hint": {
+        "authority": "none",
+        "questionVersion": "installable-software-2026-09-21.1",
+        "durationMs": 21.1706250000002,
+        "kind": "hint",
+        "prefetch": false,
+        "softwareProbability": 0.847,
+        "routingModel": "english",
+        "requestHash": "4d13f959c13f6851d3f830cfdbfc394555bec3582a6b8e6b88e87cb16006f9cd",
+        "truncated": true
+      },
+      "overlapUpperBoundMs": null
+    },
+    {
+      "id": "29185",
+      "subjectHash": "ec9c983d35421f927b745597795eb27d3468cf9ea3b8f552950b04a9c41cdac7",
+      "firstDecision": "approve",
+      "hint": {
+        "authority": "none",
+        "questionVersion": "installable-software-2026-09-21.1",
+        "durationMs": 18.363792000000103,
+        "kind": "hint",
+        "prefetch": false,
+        "softwareProbability": 0.8691,
+        "routingModel": "english",
+        "requestHash": "a8f919c7e8965da54223df362d0379fa72477a2c8c97a28c6d6e663ecf988c54",
+        "truncated": true
+      },
+      "overlapUpperBoundMs": null
+    },
+    {
+      "id": "29184",
+      "subjectHash": "40d6adb3c8924bce3e0ab54dc26d9b1b4fc8dc7bc88a19d254705f504a28c14f",
+      "firstDecision": "approve",
+      "hint": {
+        "authority": "none",
+        "questionVersion": "installable-software-2026-09-21.1",
+        "durationMs": 19.784000000000106,
+        "kind": "hint",
+        "prefetch": false,
+        "softwareProbability": 0.8406,
+        "routingModel": "english",
+        "requestHash": "62a8c8f82ae1a9b54a82bc8d34916e81bb3e4cb68a2a8fe022ffe33dfc419d15",
+        "truncated": true
+      },
+      "overlapUpperBoundMs": null
+    },
+    {
+      "id": "29183",
+      "subjectHash": "784bc8ee48210edc7aee7a456d5e29211543b356261f75fa965f6f64d42b6c58",
+      "firstDecision": "reject",
+      "hint": {
+        "authority": "none",
+        "questionVersion": "installable-software-2026-09-21.1",
+        "durationMs": 22.818874999999935,
+        "kind": "hint",
+        "prefetch": false,
+        "softwareProbability": 0.8251,
+        "routingModel": "english",
+        "requestHash": "a46b7f64249eba55c63eb3be9cd388297bc344c627f075f0a4f94a57b0d84a98",
+        "truncated": true
+      },
+      "overlapUpperBoundMs": null
+    },
+    {
+      "id": "29182",
+      "subjectHash": "2f8ee6c1e16780f55a3a8398036eb214d65e606e64185baecf3bf9f160493662",
+      "firstDecision": "approve",
+      "hint": {
+        "authority": "none",
+        "questionVersion": "installable-software-2026-09-21.1",
+        "durationMs": 24.736457999999857,
+        "kind": "hint",
+        "prefetch": true,
+        "softwareProbability": 0.9489,
+        "routingModel": "english",
+        "requestHash": "073718ce415f9afd17016837eb6f7bfcaa5743f82f7c231a957e336aa9690ffa",
+        "truncated": true
+      },
+      "overlapUpperBoundMs": null
+    },
+    {
+      "id": "29181",
+      "subjectHash": "795beca5b04f1940dcf2e901aef8dad22a0ed1d9defb95463530c0afcf5af9c9",
+      "firstDecision": "approve",
+      "hint": {
+        "authority": "none",
+        "questionVersion": "installable-software-2026-09-21.1",
+        "durationMs": 23.41274999999996,
+        "kind": "hint",
+        "prefetch": false,
+        "softwareProbability": 0.8797,
+        "routingModel": "english",
+        "requestHash": "a8a89d8e842c915a4ff33cc859a153889b7c7f73862ebe9f09268745bc3805f4",
+        "truncated": true
+      },
+      "overlapUpperBoundMs": null
+    },
+    {
+      "id": "29180",
+      "subjectHash": "624ac3e7e918b8a129ba2ba80fe8d9ed9e68e1c5f590ecc773ac4a549b5942ef",
+      "firstDecision": "approve",
+      "hint": {
+        "authority": "none",
+        "questionVersion": "installable-software-2026-09-21.1",
+        "durationMs": 23.81908300000009,
+        "kind": "hint",
+        "prefetch": true,
+        "softwareProbability": 0.9437,
+        "routingModel": "english",
+        "requestHash": "d14d0f01b262662c82f5dfb43fef5dd185b7d3789e6771a616af0c38a9e59458",
+        "truncated": true
+      },
+      "overlapUpperBoundMs": null
+    },
+    {
+      "id": "29179",
+      "subjectHash": "0ae9da84379b935d1ececf5dd79d97f36c9e8f9de41b82596c63943403ce4600",
+      "firstDecision": "approve",
+      "hint": {
+        "authority": "none",
+        "questionVersion": "installable-software-2026-09-21.1",
+        "durationMs": 18.55320800000004,
+        "kind": "hint",
+        "prefetch": false,
+        "softwareProbability": 0.8509,
+        "routingModel": "english",
+        "requestHash": "07063a29682c5efc54799f3b861547c6206268e410de6aedf6a6dcaf6f3115b7",
+        "truncated": true
+      },
+      "overlapUpperBoundMs": null
+    },
+    {
+      "id": "29178",
+      "subjectHash": "50e99881f92ec090e6bbfaf9b5a821fc0782ee64df412a450032ebbd9d733070",
+      "firstDecision": "approve",
+      "hint": {
+        "authority": "none",
+        "questionVersion": "installable-software-2026-09-21.1",
+        "durationMs": 17.741375000000062,
+        "kind": "hint",
+        "prefetch": true,
+        "softwareProbability": 0.9408,
+        "routingModel": "english",
+        "requestHash": "44f93456b33e5b0622a3451e2517e03954c0d8c248eec6db497671dcf3ca746f",
+        "truncated": true
+      },
+      "overlapUpperBoundMs": null
+    },
+    {
+      "id": "29177",
+      "subjectHash": "e66fdc1d3834aa6fb767eafafc780856d656ba7a5c3d35dc7af86c99cdbed470",
+      "firstDecision": "approve",
+      "hint": {
+        "authority": "none",
+        "questionVersion": "installable-software-2026-09-21.1",
+        "durationMs": 20.788459000000103,
+        "kind": "hint",
+        "prefetch": true,
+        "softwareProbability": 0.9233,
+        "routingModel": "english",
+        "requestHash": "a412501d039fed84099d13387f571d97f5a518d61dec8f9639ba3e233f638e65",
+        "truncated": true
+      },
+      "overlapUpperBoundMs": null
+    },
+    {
+      "id": "29176",
+      "subjectHash": "aa5988caea7307c7c688a6ecb27b60d8f16105df40f5e8e758c64ee9f47c04c9",
+      "firstDecision": "approve",
+      "hint": {
+        "authority": "none",
+        "questionVersion": "installable-software-2026-09-21.1",
+        "durationMs": 20.008749999999736,
+        "kind": "hint",
+        "prefetch": false,
+        "softwareProbability": 0.8992,
+        "routingModel": "english",
+        "requestHash": "68e925a0755c4cee07ffe57fe8a60438021d820fc49cff83a43437f3f32e4119",
+        "truncated": true
+      },
+      "overlapUpperBoundMs": null
+    },
+    {
+      "id": "29174",
+      "subjectHash": "8e813fb3fd2c0f6bd87b11d4356d2dd6c23f1ccaa7293290deb024620b4c08f5",
+      "firstDecision": "approve",
+      "hint": {
+        "authority": "none",
+        "questionVersion": "installable-software-2026-09-21.1",
+        "durationMs": 25.59570799999983,
+        "kind": "hint",
+        "prefetch": true,
+        "softwareProbability": 0.9477,
+        "routingModel": "english",
+        "requestHash": "25d63d2fce50a7992b8424fa74447ffccd301393b49ddef5e930574de1687ae0",
+        "truncated": true
+      },
+      "overlapUpperBoundMs": null
+    },
+    {
+      "id": "29173",
+      "subjectHash": "9b216e709a41c2738587f31aa0e9ddbecadbb5cf956370c671c3a828b9d2cbfe",
+      "firstDecision": "approve",
+      "hint": {
+        "authority": "none",
+        "questionVersion": "installable-software-2026-09-21.1",
+        "durationMs": 19.137374999999793,
+        "kind": "hint",
+        "prefetch": false,
+        "softwareProbability": 0.847,
+        "routingModel": "english",
+        "requestHash": "9c5ac722286c6b6e3031a66bf67e3f0dc8a16c51ab2a39d97b2bdedf06bbd4e6",
+        "truncated": true
+      },
+      "overlapUpperBoundMs": null
+    },
+    {
+      "id": "29172",
+      "subjectHash": "4b8a96478889f51c42aaa228ff746f9287e8ca7eab1a8ea660e0ac4aa2db2f1a",
+      "firstDecision": "approve",
+      "hint": {
+        "authority": "none",
+        "questionVersion": "installable-software-2026-09-21.1",
+        "durationMs": 20.14395800000011,
+        "kind": "hint",
+        "prefetch": true,
+        "softwareProbability": 0.925,
+        "routingModel": "english",
+        "requestHash": "d72aa9a7c155c27def123c05718c842498389e715f615e678c773c804a43a417",
+        "truncated": true
+      },
+      "overlapUpperBoundMs": null
+    },
+    {
+      "id": "29171",
+      "subjectHash": "9522a5a198059045966e370c84ef6b3f58475257b2ef40611cf1becda5133c2e",
+      "firstDecision": "approve",
+      "hint": {
+        "authority": "none",
+        "questionVersion": "installable-software-2026-09-21.1",
+        "durationMs": 18.691459000000123,
+        "kind": "hint",
+        "prefetch": false,
+        "softwareProbability": 0.7624,
+        "routingModel": "english",
+        "requestHash": "5a404ca106ce3b80e46c146427c24567fb34ce6f668171e6fd830f4655141b3a",
+        "truncated": true
+      },
+      "overlapUpperBoundMs": null
+    },
+    {
+      "id": "29170",
+      "subjectHash": "7b848f3786ea1d514124c4542b0604a919c10ee75f40932b14bfd34cd72e1dc4",
+      "firstDecision": "approve",
+      "hint": {
+        "authority": "none",
+        "questionVersion": "installable-software-2026-09-21.1",
+        "durationMs": 19.279417000000194,
+        "kind": "hint",
+        "prefetch": true,
+        "softwareProbability": 0.9537,
+        "routingModel": "english",
+        "requestHash": "1517da5fcc0e305ded1cdc424140285e2e967407b99465e7d02a04da1a71d430",
+        "truncated": true
+      },
+      "overlapUpperBoundMs": null
+    },
+    {
+      "id": "29169",
+      "subjectHash": "4b83539e0a2e0dd674b59264eaa6ec9d0fbcd95fe430012061b054b2603d2832",
+      "firstDecision": "approve",
+      "hint": {
+        "authority": "none",
+        "questionVersion": "installable-software-2026-09-21.1",
+        "durationMs": 19.91341700000021,
+        "kind": "hint",
+        "prefetch": true,
+        "softwareProbability": 0.927,
+        "routingModel": "english",
+        "requestHash": "6ccd238909ac591611e51e4bb654a1040d1bea3bd10bc89362d229a750bb871b",
+        "truncated": true
+      },
+      "overlapUpperBoundMs": null
+    },
+    {
+      "id": "29168",
+      "subjectHash": "b82ca844d05ebb1e5f5da2bbdec837fa068fdea30a4acf8f6d17865ae42381d0",
+      "firstDecision": "approve",
+      "hint": {
+        "authority": "none",
+        "questionVersion": "installable-software-2026-09-21.1",
+        "durationMs": 19.3637090000002,
+        "kind": "hint",
+        "prefetch": true,
+        "softwareProbability": 0.9125,
+        "routingModel": "english",
+        "requestHash": "09b6c78ed31a860eaf36e2ca98243a8e41c32a5fd5be41a0473509c9b4fac5f4",
+        "truncated": true
+      },
+      "overlapUpperBoundMs": null
+    },
+    {
+      "id": "29167",
+      "subjectHash": "0e8d3674f05c59993bb48ae09d4afb69eb62e018c60cdc30d8b7432f32dc9acd",
+      "firstDecision": "approve",
+      "hint": {
+        "authority": "none",
+        "questionVersion": "installable-software-2026-09-21.1",
+        "durationMs": 89.04504199999974,
+        "kind": "hint",
+        "prefetch": true,
+        "softwareProbability": 0.9426,
+        "routingModel": "english",
+        "requestHash": "a99e7d24b47f0d6da28e91e6f5739aaa81ecc347b2bbe0e8dcd15695477a2352",
+        "truncated": true
+      },
+      "overlapUpperBoundMs": null
+    },
+    {
+      "id": "29166",
+      "subjectHash": "0b4ca00b822c0414568b201c4e57bf3fc2b79882ecff740a0b79f2e4046936a2",
+      "firstDecision": "approve",
+      "hint": {
+        "authority": "none",
+        "questionVersion": "installable-software-2026-09-21.1",
+        "durationMs": 22.14533399999982,
+        "kind": "hint",
+        "prefetch": true,
+        "softwareProbability": 0.9157,
+        "routingModel": "english",
+        "requestHash": "815538e00c3ad622c31f52f6d9b18674ee66f871800d70a79030b43fa5ed6619",
+        "truncated": true
+      },
+      "overlapUpperBoundMs": null
+    },
+    {
+      "id": "29165",
+      "subjectHash": "47d8874a67f370f696a119617a56bccdb58b91885649e4bc7b590af1c3d22539",
+      "firstDecision": "approve",
+      "hint": {
+        "authority": "none",
+        "questionVersion": "installable-software-2026-09-21.1",
+        "durationMs": 24.14679100000012,
+        "kind": "hint",
+        "prefetch": true,
+        "softwareProbability": 0.9406,
+        "routingModel": "english",
+        "requestHash": "6a2f47ca2c5ddf83314e6c795e0307a6ea984ae8778e2aae1211dfbd128cd4aa",
+        "truncated": true
+      },
+      "overlapUpperBoundMs": null
+    },
+    {
+      "id": "29164",
+      "subjectHash": "fb349ff7a70482137c0ce79d47be091cbb49a31605d480535d596aa8418fed58",
+      "firstDecision": "approve",
+      "hint": {
+        "authority": "none",
+        "questionVersion": "installable-software-2026-09-21.1",
+        "durationMs": 21.550459000000046,
+        "kind": "hint",
+        "prefetch": true,
+        "softwareProbability": 0.9463,
+        "routingModel": "english",
+        "requestHash": "81f668682e2548a6eb1b89422444b90b27130782595320883619f19b515ef460",
+        "truncated": true
+      },
+      "overlapUpperBoundMs": null
+    },
+    {
+      "id": "29163",
+      "subjectHash": "6b7f4902b66f12f4cda741e517e42914f847e772617d78cee7c397a6ba694937",
+      "firstDecision": "approve",
+      "hint": {
+        "authority": "none",
+        "questionVersion": "installable-software-2026-09-21.1",
+        "durationMs": 20.061249999999745,
+        "kind": "hint",
+        "prefetch": true,
+        "softwareProbability": 0.9057,
+        "routingModel": "english",
+        "requestHash": "26324fe7abf2047239c4c658f285a1568e30ae40b58362d6f0319d2cfaf36343",
+        "truncated": true
+      },
+      "overlapUpperBoundMs": null
+    },
+    {
+      "id": "29162",
+      "subjectHash": "a3684598271bc83d10ebf9f2a4bfb13a83880b44417f8224586d43cb8909fe58",
+      "firstDecision": "approve",
+      "hint": {
+        "authority": "none",
+        "questionVersion": "installable-software-2026-09-21.1",
+        "durationMs": 20.31070899999986,
+        "kind": "hint",
+        "prefetch": true,
+        "softwareProbability": 0.931,
+        "routingModel": "english",
+        "requestHash": "b67f848294531f3541f92bc943cf60bcf75ca121cf8aba2cdc7a343951b881da",
+        "truncated": true
+      },
+      "overlapUpperBoundMs": null
+    },
+    {
+      "id": "29159",
+      "subjectHash": "250210b83989b897a7ed486b93db66b080d4ea92a65ce34dfeff9a3bc18b13b4",
+      "firstDecision": "approve",
+      "hint": {
+        "authority": "none",
+        "questionVersion": "installable-software-2026-09-21.1",
+        "durationMs": 21.392125000000306,
+        "kind": "hint",
+        "prefetch": true,
+        "softwareProbability": 0.9088,
+        "routingModel": "english",
+        "requestHash": "78a1a859c607e2267f358b9a6f1c25eee5516d5ea1b296f16089de13ae5cf3b2",
+        "truncated": true
+      },
+      "overlapUpperBoundMs": null
+    },
+    {
+      "id": "29158",
+      "subjectHash": "c647c76144c1d1544a0a3bfc2acc8d7b71f32c5a9ec009f7438267dd6d92ae76",
+      "firstDecision": "approve",
+      "hint": {
+        "authority": "none",
+        "questionVersion": "installable-software-2026-09-21.1",
+        "durationMs": 19.7895410000001,
+        "kind": "hint",
+        "prefetch": true,
+        "softwareProbability": 0.9604,
+        "routingModel": "english",
+        "requestHash": "ee1deedcb946219b4f9e35c377161b403f7b2943712d1db05ff2ead4ddf13b69",
+        "truncated": true
+      },
+      "overlapUpperBoundMs": null
+    },
+    {
+      "id": "29157",
+      "subjectHash": "71074bd427610a75042834e8e8aea34d021bb0be28382ea964538c05c9cfdc4b",
+      "firstDecision": "approve",
+      "hint": {
+        "authority": "none",
+        "questionVersion": "installable-software-2026-09-21.1",
+        "durationMs": 20.95987500000001,
+        "kind": "hint",
+        "prefetch": true,
+        "softwareProbability": 0.9016,
+        "routingModel": "english",
+        "requestHash": "2a11f967ed6da9183fd62ebe9cbad3a830fd55a267f811afa1705c9c766469b7",
+        "truncated": true
+      },
+      "overlapUpperBoundMs": null
+    },
+    {
+      "id": "29155",
+      "subjectHash": "7433d25ec60ee8923c82fef14667b000a26c4ffa8d7f4d723c2e8756fe7ccf83",
+      "firstDecision": "approve",
+      "hint": {
+        "authority": "none",
+        "questionVersion": "installable-software-2026-09-21.1",
+        "durationMs": 20.356916000000183,
+        "kind": "hint",
+        "prefetch": true,
+        "softwareProbability": 0.9471,
+        "routingModel": "english",
+        "requestHash": "3b1a89665f8cb9c3665870dc69f7ebf350cb492b0dc9c470ded1294662d5eff7",
+        "truncated": true
+      },
+      "overlapUpperBoundMs": null
+    },
+    {
+      "id": "29154",
+      "subjectHash": "b926730f42cb29eed2902da03c890d17be7624f568494da2fe36a4e6d51364ea",
+      "firstDecision": "approve",
+      "hint": {
+        "authority": "none",
+        "questionVersion": "installable-software-2026-09-21.1",
+        "durationMs": 21.956041999999798,
+        "kind": "hint",
+        "prefetch": false,
+        "softwareProbability": 0.8513,
+        "routingModel": "english",
+        "requestHash": "07a188af47818f157be5c2cbb47c92a9deb68499707108acf48605130b4ec882",
+        "truncated": true
+      },
+      "overlapUpperBoundMs": null
+    },
+    {
+      "id": "29153",
+      "subjectHash": "d4c3b17dbc80977bb57a10cb3af6b8f0104ff41cdc1a1df6d27437d1108bb1b0",
+      "firstDecision": "approve",
+      "hint": {
+        "authority": "none",
+        "questionVersion": "installable-software-2026-09-21.1",
+        "durationMs": 20.86470799999961,
+        "kind": "hint",
+        "prefetch": true,
+        "softwareProbability": 0.9197,
+        "routingModel": "english",
+        "requestHash": "a7cc212a1d8c4979610ba9d45519a6c63e504a0b70bbeac8faf433e9ff73e9c9",
+        "truncated": true
+      },
+      "overlapUpperBoundMs": null
+    },
+    {
+      "id": "29152",
+      "subjectHash": "5dd1b7d12b496aabf7ec6cd4733daadd1c20d2f7f0a2eebe6e516670541453fc",
+      "firstDecision": "approve",
+      "hint": {
+        "authority": "none",
+        "questionVersion": "installable-software-2026-09-21.1",
+        "durationMs": 19.645332999999937,
+        "kind": "hint",
+        "prefetch": true,
+        "softwareProbability": 0.9558,
+        "routingModel": "english",
+        "requestHash": "5280db2dd6c393de74f8a145d5ae6ef71e2990efa337887e269743f914554e23",
+        "truncated": true
+      },
+      "overlapUpperBoundMs": null
+    },
+    {
+      "id": "29151",
+      "subjectHash": "b268938d197c80a8958d3519886a5a60250ae8801cfb2fd0a40a59680efb73ee",
+      "firstDecision": "approve",
+      "hint": {
+        "authority": "none",
+        "questionVersion": "installable-software-2026-09-21.1",
+        "durationMs": 19.653915999999754,
+        "kind": "hint",
+        "prefetch": false,
+        "softwareProbability": 0.7784,
+        "routingModel": "english",
+        "requestHash": "75b23d42a7651fd5ee130e12d10d4e5423396a518b360e60546de236569b5a59",
+        "truncated": true
+      },
+      "overlapUpperBoundMs": null
+    }
+  ]
+}

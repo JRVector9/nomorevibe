@@ -1,6 +1,6 @@
 # PR-02 — 독립 2차 심사 선행 결과의 안전한 재사용
 
-상태: 미구현, PR-01 실측·여유 용량 확인 후 착수. 제안 브랜치 `feat/laya-speculative-second-review`.
+상태: 미구현·보류. PR-01 새 표본 100개 실측 완료(제안 54개 중 기존 1차 거절 8개). 공유 용량 제어와 비용 대비 전체 지연 개선 확인 후 착수. 제안 브랜치 `feat/laya-speculative-second-review`.
 
 ## 실행·저장
 
