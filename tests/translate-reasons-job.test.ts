@@ -3,7 +3,7 @@ import { packBatch, translateReasons } from "@/lib/crawl/jobs/translate-reasons"
 
 const mocks = vi.hoisted(() => ({ untried: vi.fn(), retry: vi.fn(), record: vi.fn(), translate: vi.fn() }));
 vi.mock("@/lib/crawl/translations", () => ({
-  untriedTranslations: mocks.untried, retryableTranslations: mocks.retry, recordTranslations: mocks.record,
+  untriedTranslations: mocks.untried, retryableTranslations: mocks.retry, recordWorkerTranslations: mocks.record,
 }));
 vi.mock("@/lib/crawl/translate", () => ({ TRANSLATE_MODEL: "[MLX] gpt-oss-120b", translateToKorean: mocks.translate }));
 
@@ -40,7 +40,7 @@ it("처음 보는 글을 묶어 옮기고, 남은 것이 없으면 끝낸다", a
   // 한 항목이 비면 그것만 실패로 — 나머지는 남긴다
   expect(mocks.record).toHaveBeenCalledWith([
     { hash: "a", translated: "가", error: undefined }, { hash: "b", translated: "나", error: undefined }, { hash: "c", translated: null, error: undefined },
-  ], "[MLX] gpt-oss-120b");
+  ], "[MLX] gpt-oss-120b", context().lease);
 });
 
 it("여러 번 실패한 글은 묶지 않고 혼자 옮긴다 — 옆의 멀쩡한 글까지 끌고 실패하지 않게", async () => {
@@ -55,7 +55,7 @@ it("게이트웨이가 막히면 실패로 남기고 이번 틱을 멈춘다 —
   mocks.translate.mockResolvedValue({ ok: false, error: "timeout" });
   expect(await translateReasons(context())).toEqual({ done: false });
   expect(mocks.translate).toHaveBeenCalledTimes(1);
-  expect(mocks.record).toHaveBeenCalledWith([{ hash: "a", translated: null, error: "timeout" }, { hash: "b", translated: null, error: "timeout" }], "[MLX] gpt-oss-120b");
+  expect(mocks.record).toHaveBeenCalledWith([{ hash: "a", translated: null, error: "timeout" }, { hash: "b", translated: null, error: "timeout" }], "[MLX] gpt-oss-120b", context().lease);
 });
 
 it("시간이 모자라면 다음 틱으로 넘긴다", async () => {
@@ -85,4 +85,12 @@ it("틱 끝에 시간이 모자라면 새로 부르지 않는다 — 줄어든 �
     expect(mocks.translate).toHaveBeenCalledTimes(1);
     expect(mocks.translate.mock.calls[0][1]).toBe(45_000);
   } finally { vi.useRealTimers(); }
+});
+
+it("shutdown during translation must not write a successful late response", async () => {
+  const stopping = new AbortController();
+  mocks.untried.mockResolvedValueOnce([item("a")]).mockResolvedValue([]);
+  mocks.translate.mockImplementation(async () => { stopping.abort(); return { ok: true, translations: ["가"] }; });
+  await translateReasons({ ...context(), signal: stopping.signal });
+  expect(mocks.record).not.toHaveBeenCalled();
 });

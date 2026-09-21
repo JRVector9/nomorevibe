@@ -1,6 +1,6 @@
 import type { JobContext, JobOutcome } from "@/lib/jobs/runner";
 import { TRANSLATE_MODEL, translateToKorean } from "@/lib/crawl/translate";
-import { recordTranslations, retryableTranslations, untriedTranslations } from "@/lib/crawl/translations";
+import { recordWorkerTranslations, retryableTranslations, untriedTranslations } from "@/lib/crawl/translations";
 
 /**
  * 한 번에 옮기는 양 — 최대 4건, 1,600자까지.
@@ -53,6 +53,13 @@ export async function translateReasons(ctx: JobContext<null>): Promise<JobOutcom
     ctx.log("translate.skipped", { reason: "no_key" });
     return { done: true };
   }
+  const lease = ctx.lease;
+  if (!lease) throw new Error("Translation worker requires a job lease");
+  const controller = new AbortController();
+  const signal = ctx.signal ? AbortSignal.any([ctx.signal, controller.signal]) : controller.signal;
+  const ownershipPoll = setInterval(() => { if (!ctx.hasBudget()) controller.abort(); }, 250);
+  ownershipPoll.unref?.();
+  try {
   const startedAt = Date.now();
   const remaining = () => TICK_MS - (Date.now() - startedAt);
   let translated = 0, failed = 0;
@@ -65,7 +72,7 @@ export async function translateReasons(ctx: JobContext<null>): Promise<JobOutcom
    */
   let takeRetry = true;
 
-  while (ctx.hasBudget() && remaining() >= MIN_CALL_MS) {
+  while (!signal.aborted && ctx.hasBudget() && remaining() >= MIN_CALL_MS) {
     const preferred = takeRetry ? await retryableTranslations(BATCH) : await untriedTranslations(BATCH * 2);
     const pending = preferred.length
       ? preferred
@@ -76,13 +83,14 @@ export async function translateReasons(ctx: JobContext<null>): Promise<JobOutcom
       return { done: true };
     }
     const batch = pending[0].attempts >= SOLO_ATTEMPTS ? [pending[0]] : packBatch(pending);
-    const result = await translateToKorean(batch.map((item) => item.body), Math.max(1_000, Math.min(CALL_MS, remaining() - 1_000)));
+    const result = await translateToKorean(batch.map((item) => item.body), Math.max(1_000, Math.min(CALL_MS, remaining() - 1_000)), undefined, signal);
+    if (signal.aborted) return { done: false };
     const rows = batch.map((item, index) => ({
       hash: item.hash,
       translated: result.ok ? result.translations[index] : null,
       error: result.ok ? undefined : result.error,
     }));
-    await recordTranslations(rows, TRANSLATE_MODEL);
+    await recordWorkerTranslations(rows, TRANSLATE_MODEL, lease);
     translated += rows.filter((row) => row.translated !== null).length;
     failed += rows.filter((row) => row.translated === null).length;
     // 게이트웨이가 막혔으면 이번 틱은 여기서 — 같은 실패를 되풀이하지 않는다
@@ -91,4 +99,5 @@ export async function translateReasons(ctx: JobContext<null>): Promise<JobOutcom
 
   ctx.log("translate.done", { translated, failed, drained: false });
   return { done: false };
+  } finally { clearInterval(ownershipPoll); }
 }
