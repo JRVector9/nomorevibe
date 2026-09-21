@@ -1,3 +1,18 @@
+# 운영 배포 진행 — 2026-09-21 15:15 KST
+
+사용자가 배포를 명시 승인했다. prod/land-and-deploy 적용, 추가 확인 불필요. 기존 운영8앱의 autoDeploy를 일시 false로 변경(모두 원래true); 반드시 완료 후 복원. 원래 상태는 /tmp/nmv-speed-app-configs.json, 배포 전 상태 /tmp/nmv-speed-predeploy-status.json. API키는 Keychain에서 읽고 curl --config stdin으로만 전달; payload/env도 stdin. 새 도구 /tmp/nmv-speed-dokploy.py. 기존 /tmp/nmv-installable-web.env는 private, 절대 출력 금지.
+
+- PR161/162 병합 완료,163 병합 요청(session51861). merge commit 방식으로 ancestry 보존하며 다음 PR base를main으로 순차 변경. PR164/165/166남음. 자동 배포는 아직 꺼져 있으므로 운영은이전678380c.
+- 발견/보완1: 운영Swarm ContainerSpec.Init=null. Dockerfile worker에 tini 추가 +ENTRYPOINT. 기존 Dokploy custom command는 image ENTRYPOINT를 덮으므로 deployment config에서도 /sbin/tini -- prefix 필요. tini 이미지 로컬 buildPASS, --init 없이 text 컨테이너 healthy/restart0/SIGTERM exit0/PID자식정리PASS. 이미지 nomorevibe-worker:review-speed-init-20260921.
+- 발견/보완2: 현재1차 job README저장오류로 막힘. 실제 Starlitnightly/omicverse README3000자 끝d83d/ill-formed, local JSONB22P02 재현. readme.ts의 두 truncation 뒤 lone surrogate만제거; 완전이모지/길이/정책/표본버전유지. 새2회귀RED→GREEN, 관련40PASS, 타입/lintPASS. 실제문서2999/wellformed/localJSONB성공.
+- 수정중: Dockerfile,lib/crawl/readme.ts,tests/crawl-readme.test.ts,문서. PR166에추가커밋후CI완료기다릴것. fullunit session12291,새text앱설정 session27999. 다른영역 앱코드변경없음.
+- 새text는source publisher의DB/API키만전달,role=text,instance=m3-text,pool3,512MiB/CPU1,stop-first,grace60초,autoDeployfalse. /tmp/nmv-speed-text-app.json에id; 아직deploy하지않음. create-text는idempotent.
+- 운영자원: M3호스트여유; DB max150현재총103/app6. reviewer실제pool12(문서기본3과다름), 유지. 새text pool3추가. 기존runbook31합계는실제운영40→43으로수정필요.
+- 기준선: .crawl-samples/review-speed/production-metrics.mjs read-only transaction. 최초timestamp withouttimezone 파싱으로9시간어긋난측정폐기; DB에서UTC문자열로반환하도록수정. 정상최근30분1차/2차/발행0,1차오류있음. /tmp/nmv-speed-baseline-metrics.json. 오류원문대신 boolean+prefix만출력.
+- 다음: unit결과확인,code/docs커밋push→PR166 CI. 순차merge164/165/166→mainCI/트리동일확인. 새commitRELEASE_TAG+webNEXT_DEPLOYMENT_ID를올바르게설정하고workercommand initprefix. 기존publisher drain/교체종료확인후text시작. 두web동일창배포,다른M3역할도교체. Health/sourcehash/jobs/실제모델완료/중복과관문 검증. autoDeploy원복. 아직배포완료라고보고하지말것.
+
+---
+
 # 속도 확인 — 2026-09-21 14:57 KST
 
 - 사용자 요청: 속도 개선되는지 확인. 운영 미배포 사실을 읽기 전용으로 재검증하고 이전/개선 실제 코드 비교 실험 수행.

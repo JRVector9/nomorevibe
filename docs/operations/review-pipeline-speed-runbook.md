@@ -65,3 +65,9 @@ node --import tsx scripts/report-review-latency.ts /absolute/path/to/worker.json
 ## 추가 전후 비교 — 2026-09-21 14:57 KST
 
 동일 harness로 실제 이전/개선 코드를 실행한 모의 비교에서 1차8건(10초 응답)은70→20초, 24초 응답은84→53초였다. 번역30초 중 발행 요청 대기는34→4초였다. 모델/DB/가상 시계 조건을 고정한 결과이며 운영 단축률이 아니다. 운영6개 워커의 관련5개 파일은 모두 이전 코드와 일치했다. [원본 결과·조건·재현](evaluations/2026-09-21-review-speed/README.md).
+
+## 운영 배포 전 보완 — 2026-09-21
+
+운영의 Docker Swarm에는 init이 설정되지 않아 worker 이미지에 tini를 추가했다. custom command를 쓰는 Dokploy 앱에도 `/sbin/tini --`를 앞에 붙여야 한다. --init 없는 로컬 컨테이너로 healthy/restart0/종료 exit0을 검증했다.
+
+배포 전 1차 심사는 README의 잘린 이모지 때문에 JSONB 저장이 실패하고 있었다. 실제 Starlitnightly/omicverse README에서 길이3000·끝d83d와22P02를 재현했고, 잘린 surrogate만 제거한2999문자는 저장에 성공했다. 일반 표본과 설치 부분 발췌의 양쪽 경계를 회귀 테스트로 보호한다. 표본 길이 제한·심사 정책·유효한 문자 내용은 유지한다. 이 기존 장애가 있는 전후 구간을 순수 슬롯 최적화의 단축률로 보고해서는 안 된다.
