@@ -1,0 +1,16 @@
+{
+  "api": "Laya System One API 0.3.4",
+  "operation": "POST /v1/systemone",
+  "auth": "HTTP Bearer; credential omitted",
+  "model": "auto; english and multilingual preloaded on CUDA RTX 5090",
+  "client": "Python urllib from developer Mac over private network, monotonic wall latency including HTTP/network",
+  "warmModel": true,
+  "coldLoadNotMeasured": true,
+  "productionProbe": "Reviewer/publisher containers GET /healthz HTTP200; authenticated inference measured from developer Mac only",
+  "sampling": "Latest successful abcllm prompt 2026-09-21.3 per candidate, latest up to12 per decision (34), plus 13 distinct installable >=500 cases spanning Dev/Plugin/Skill/rejects. Total47. Not random or representative.",
+  "inputPreparation": "Deterministic excerpts. Preserve description plus beginning and installation/usage passage. Strip links for fast signals. No previous decision/reason/category included in fast-signal inputs.",
+  "sdkVersion": "0.3.4 from PyPI wheel",
+  "sdkWheelSha256": "8bf1c5cc5cbf6abebf63a6346b4babedd5692f88a75aa9e0cc01ed4145a9a14b",
+  "sourceCommit": "af50608",
+  "deploymentSourceCommit": "678380cba2e268916504d99c3ef2421d8d6e4c08"
+}

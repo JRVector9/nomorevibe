@@ -1,0 +1,197 @@
+{
+  "measuredAt": "2026-09-21T03:00:24.407Z",
+  "node": "v24.18.0",
+  "platform": "darwin",
+  "arch": "arm64",
+  "scope": "10 constructed fixtures, repository default settings, fixed clock, warm local CPU. Not a production workload or an accuracy benchmark. No DB/HTTP/model/HTML parsing included.",
+  "method": "100 warmup passes; 5 rounds x 500 passes x 10 fixtures per mode; nearest-rank p50/p95 per-call ms",
+  "fixtures": [
+    {
+      "name": "live_website",
+      "state": "approved",
+      "reason": "passed",
+      "cause": null,
+      "checks": 17
+    },
+    {
+      "name": "missing_url_499",
+      "state": "rejected",
+      "reason": "no_homepage",
+      "cause": null,
+      "checks": 1
+    },
+    {
+      "name": "installable_500",
+      "state": "needs_review",
+      "reason": "ambiguous",
+      "cause": "installable_product",
+      "checks": 2
+    },
+    {
+      "name": "fork",
+      "state": "rejected",
+      "reason": "fork",
+      "cause": null,
+      "checks": 9
+    },
+    {
+      "name": "archived",
+      "state": "rejected",
+      "reason": "personal_site",
+      "cause": null,
+      "checks": 10
+    },
+    {
+      "name": "docs_framework",
+      "state": "needs_review",
+      "reason": "ambiguous",
+      "cause": "docs_generator",
+      "checks": 16
+    },
+    {
+      "name": "unknown_http",
+      "state": "needs_review",
+      "reason": "ambiguous",
+      "cause": "page_status_unknown",
+      "checks": 14
+    },
+    {
+      "name": "failed_homepage_500",
+      "state": "needs_review",
+      "reason": "ambiguous",
+      "cause": "installable_product",
+      "checks": 2
+    },
+    {
+      "name": "research_note",
+      "state": "rejected",
+      "reason": "not_a_product",
+      "cause": null,
+      "checks": 2
+    },
+    {
+      "name": "long_page",
+      "state": "approved",
+      "reason": "passed",
+      "cause": null,
+      "checks": 17
+    }
+  ],
+  "rulesOnly": {
+    "calls": 25000,
+    "totalMs": 661.869417,
+    "p50Ms": 0.031791999999995824,
+    "p95Ms": 0.06829199999998536,
+    "perCase": [
+      {
+        "name": "live_website",
+        "p50Ms": 0.033999999999991815,
+        "p95Ms": 0.05870799999996734
+      },
+      {
+        "name": "missing_url_499",
+        "p50Ms": 0.0009999999999763531,
+        "p95Ms": 0.0016249999999899956
+      },
+      {
+        "name": "installable_500",
+        "p50Ms": 0.001458000000013726,
+        "p95Ms": 0.002292000000011285
+      },
+      {
+        "name": "fork",
+        "p50Ms": 0.016833000000019638,
+        "p95Ms": 0.02408299999990504
+      },
+      {
+        "name": "archived",
+        "p50Ms": 0.016541999999986956,
+        "p95Ms": 0.023083000000042375
+      },
+      {
+        "name": "docs_framework",
+        "p50Ms": 0.033790999999951055,
+        "p95Ms": 0.0548750000000382
+      },
+      {
+        "name": "unknown_http",
+        "p50Ms": 0.032833999999979824,
+        "p95Ms": 0.05512500000003229
+      },
+      {
+        "name": "failed_homepage_500",
+        "p50Ms": 0.03416700000002493,
+        "p95Ms": 0.05520799999999326
+      },
+      {
+        "name": "research_note",
+        "p50Ms": 0.0018339999999170686,
+        "p95Ms": 0.003291999999987638
+      },
+      {
+        "name": "long_page",
+        "p50Ms": 0.06762499999990723,
+        "p95Ms": 0.09783399999997755
+      }
+    ]
+  },
+  "rulesPlusRevisionAndAccess": {
+    "calls": 25000,
+    "totalMs": 1467.7934169999999,
+    "p50Ms": 0.0677499999999327,
+    "p95Ms": 0.14845799999966403,
+    "perCase": [
+      {
+        "name": "live_website",
+        "p50Ms": 0.07233400000006895,
+        "p95Ms": 0.12645799999995688
+      },
+      {
+        "name": "missing_url_499",
+        "p50Ms": 0.005791000000044733,
+        "p95Ms": 0.009834000000182641
+      },
+      {
+        "name": "installable_500",
+        "p50Ms": 0.006415999999944688,
+        "p95Ms": 0.009749999999939973
+      },
+      {
+        "name": "fork",
+        "p50Ms": 0.038000000000010914,
+        "p95Ms": 0.0649590000000444
+      },
+      {
+        "name": "archived",
+        "p50Ms": 0.03729199999997945,
+        "p95Ms": 0.06516600000009021
+      },
+      {
+        "name": "docs_framework",
+        "p50Ms": 0.07262500000001637,
+        "p95Ms": 0.12662500000033106
+      },
+      {
+        "name": "unknown_http",
+        "p50Ms": 0.06999999999993634,
+        "p95Ms": 0.11312500000008185
+      },
+      {
+        "name": "failed_homepage_500",
+        "p50Ms": 0.0723329999998441,
+        "p95Ms": 0.11987500000009277
+      },
+      {
+        "name": "research_note",
+        "p50Ms": 0.007790999999997439,
+        "p95Ms": 0.014042000000017651
+      },
+      {
+        "name": "long_page",
+        "p50Ms": 0.146541999999954,
+        "p95Ms": 0.22012500000005275
+      }
+    ]
+  },
+  "consumed": 2155490
+}

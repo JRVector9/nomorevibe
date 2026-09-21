@@ -1,3 +1,147 @@
+# Active handoff — LAYA PR-01 implemented; live evaluation awaiting configuration (2026-09-21)
+
+## Current objective / latest direction
+
+User explicitly requested LAYA implementation in PR units, initially only the most effective area. This supersedes the previous blanket exclusion of LAYA experimentation but not the user's no-error-prone-decision requirement. Selected **>=500-star installable candidates: LAYA hints for speculative independent second-review computation**. No approval/denial/category/evidence authority. Potential benefit is overlap, not eliminating either reviewer. Production benefit not yet proven. No prohibited skills/subagents; TDD skill used. execute-plan skill inspected but not applied (old plan does not cover new request).
+
+## Completed / modified files / decisions
+
+- Branch `feat/laya-speculation-evaluation` from af50608; origin fetched, repository JRVector9/nomorevibe. Added 3-PR plan index + docs under `docs/plans/2026-09-21-laya-speculation/`. PR01 client/evaluation implemented; PR02 speculative storage/safe adoption and PR03 canary are **not implemented**, depend on real effect/headroom evidence. Existing six mechanical PR plans remain unimplemented; index now links latest plan.
+- `lib/crawl/laya-preview.ts`: one yes/no software question, installable>=500 only; explicitly non-authoritative result distinct from ReviewOutcome. Max500ms headers+body,16KiB response, no retries/redirects, credentials only server env, sanitized diagnostics. Bounded excerpts only in hint request, original review unchanged. Probability>=.9 only cost-control, entropy confidence unused.
+- `lib/crawl/laya-evaluation.ts`: JSON validation<=100samples, duplicate ID/subject detection, sequential evaluation55sec max, prior-model agreement/waste and ideal spare-slot overlap upper bound. Unknown model-only timing remains null. measuredSpeedup/humanAccuracy always null, productionEffect none. No DB access or worker imports.
+- `scripts/evaluate-laya-speculation.ts`: dry-run by default; --live explicit, requires LAYA_URL/API_KEY env. Input<=2MiB, output exclusive0600, no raw source/secret/errors in logs/report. Signal handling and unsuccessful/incomplete report exits nonzero.
+- New tests3files and public example+47sampledryrun at `docs/operations/evaluations/2026-09-21-laya-speculation/`. Private input `.crawl-samples/laya-eval/speculation-input.json`0600 from previous47publicsnapshots; timingsnull because old first_seconds includes preparation/storage and second model-only unavailable. Scope14(previous labels7approve/6reject/1needs_review), noAPIcalls.
+- Static feasibility check: second job sends the same full ReviewInput to same reviewWithGateway/Agent prompt; first outcome only used AFTER independent model returns in combineVerdicts. Normal first record updates state/reason/signals/updatedAt but not judgedAt, so future speculation must preserve exactsourcehash; any otherchange discards. PR02 global capacity and DB gate proof still required; do not wire untested hints to live reviewers.
+
+## Executed tests / failures
+
+- TDD RED: client27 assertions failed against stub, then27PASS; evaluation11failed then11PASS; CLI3failed then4PASS (existing-file-protection case already passed against failurestub).
+- Focused3files42PASS, actual local HTTP fixture CLI exercised; user LAYA server not called.
+- Whole unit suite139files **1108 PASS**; existing expected mock-failure logs/Vite future native-loader warning. `npx tsc --noEmit` PASS; scoped ESLint PASS. Unrestricted npm run lint FAILED because it traversed unrelated untracked .claude/worktrees generated .next output, old .crawl-samples and nomorevibe-final. Did not edit those. ESLint over all603 Git-tracked/staged source files PASS (one pre-existing vendor unused-variable warning). Plan links/fences/whitespace and dry-run counts PASS. First staged diff-check exposed old CSV CRLF lines; normalized twoCSV files to LF and verified all329/94 data rows unchanged; staged diff-check then PASS. No integration/build executed locally for this isolated CLI; CI workflow includes both.
+- User was asked asynchronously for environment-file path because LAYA_URL/API_KEY absent in process and two known private prod env files. No answer received yet. Do not ask them to paste key publicly or put it in args. Earlier temporary LAYA key was deleted. No private config content printed. No production API/DB calls, writes, settings changes or deployment.
+
+## Remaining / exact commands
+
+Complete final review, commit/push PR01 and create draftPR. Scope only this work and previous related LAYA/check reports/plans; preserve unrelated .claude/docsPT/Sept14reports/design/prototype files. Await safe LAYA env path for actual bounded evaluation, then assess PR02 entry conditions; do not claim deployment/speed gain or continue into operational speculation without that evidence. Earlier Dokploy key rotation follow-up remains unrelated/open.
+
+```sh
+cd /Users/jr/Desktop/projects/nomorevibe
+git status --short
+cat docs/plans/2026-09-21-laya-speculation/README.md
+npx vitest run tests/laya-preview.test.ts tests/laya-evaluation.test.ts tests/laya-evaluation-cli.test.ts
+npx tsc --noEmit
+npx eslint lib/crawl/laya-preview.ts lib/crawl/laya-evaluation.ts scripts/evaluate-laya-speculation.ts tests/laya-preview.test.ts tests/laya-evaluation.test.ts tests/laya-evaluation-cli.test.ts
+# With an explicitly supplied private env path, no secret values in argv:
+node --env-file=/absolute/path/to/laya.env --import tsx scripts/evaluate-laya-speculation.ts --input .crawl-samples/laya-eval/speculation-input.json --output /tmp/nmv-laya-speculation-live-new.json --live
+git diff --check
+```
+
+---
+
+# Prior handoff — crawl yes/no checks review COMPLETE (2026-09-21 12:00 KST)
+
+## Objective / completed / decisions
+
+User asked whether simple yes/no checks during crawling can be accelerated, in the context of LAYA. Reviewed the actual admin RuleTrace, deterministic rules, HTTP fetch, README preparation, first-review input/claim, DB duplicate checks, and evidence scanner. No prohibited skills or subagents. No application/production changes.
+
+- Report: `docs/operations/2026-09-21-crawl-yes-no-check-review.md`. Admin checkmarks are code-rule traces, not per-field LLM calls. Model receives a whole review once; yes/no meaning does not make product/installation/plugin classification error-free. Unknown/partial/hold must not become false/rejected.
+- New reproducible offline benchmark: `docs/operations/evaluations/2026-09-21-crawl-checks/benchmark.ts` and `benchmark.json`. 10 constructed cases, default settings, fixed clock, 25,000 measured calls/mode. Rules p50 0.031792ms / p95 0.068292ms; rules+revision+access p50 0.067750ms / p95 0.148458ms. Warm Mac arm64 Node24.18; no DB/network/HTML parsing/model time, not production workload or accuracy evidence. First run overlapped tests, repeated alone and kept final run.
+- Prior LAYA binary3questions p50 32ms and 20/24 installation,11/24plugin,19/24skill sanity agreements rechecked from existing artifacts. Different workloads, not a valid same-function speedup ratio. No new API call. No operational LAYA use recommended.
+- Concrete improvement candidate: candidate preparation (README/DB) is sequential before each first model starts; earlier model can already overlap next candidate prep. Bounded concurrent preparation is already within planned PR03, contingent on same inputs/claims/budgets/limits. Measure prep/DB/claim vs inference under PR01; atomic handoffs PR02. Existing fetch3lanes, README version reuse, samecommit scan reuse already implemented, not new gains. No production speedup claimed. DB locks/rechecks and all policy remain. Early HTTP skips based on metadata not recommended without proving unchanged outcomes/evidence/audit.
+
+## Modified files / executed validation / failures
+
+Added report and 2 benchmark artifacts; updated this handoff. Prior six-PR documents stay unimplemented and authoritative below. Actual unit command: 6files **135 PASS** (rules, fetch concurrency/backpressure, evidence collect/summary, firstreviewjob). Vite future native-loader warning only. No integration/build/deploy. One search referenced nonexistent lib/github; actual module is lib/crawl/github.ts. Broad early searches produced truncated output; targeted reads corrected scope. No production environment loaded by the benchmark, no credentials used.
+
+## Remaining / exact next commands
+
+Requested review complete. Implementation needs a subsequent user request; follow existing PR01→06 plan without adding LAYA. Root main unchanged, docs uncommitted; preserve unrelated untracked files. Prior key-rotation follow-up below remains open.
+
+```sh
+cd /Users/jr/Desktop/projects/nomorevibe
+cat docs/operations/2026-09-21-crawl-yes-no-check-review.md
+npx tsx docs/operations/evaluations/2026-09-21-crawl-checks/benchmark.ts
+npx vitest run tests/crawl-rules.test.ts tests/crawl-fetch-concurrency.test.ts tests/crawl-fetch-backpressure.test.ts tests/agent-evidence-collect.test.ts tests/agent-evidence-summary.test.ts tests/agent-review-job.test.ts
+cat docs/plans/2026-09-21-review-pipeline-speed/README.md
+git status --short
+git diff --check
+```
+
+---
+
+# Prior handoff — strict no-new-misclassification PR documents COMPLETE (2026-09-21)
+
+## Objective / final user constraint
+
+User requested one more review, no delegation of any error-prone judgments, and final implementation documents divided by PR. This supersedes the earlier suggestion to use LAYA hints operationally. **No LAYA runtime decisions, hints, evidence selection, summarization, collection routing, queue priority, retries, early categories or approval shortcuts.** Keep API results offline only. Cannot prove zero model errors with small samples/confidence; preserve existing first/independent-second policy and improve mechanical handoffs/queue work. No subagents, brainstorming/writing-plans/systematic-debugging skills.
+
+## Completed / modified files / decisions
+
+- Wrote index + six detailed PR documents under `docs/plans/2026-09-21-review-pipeline-speed/`: 01observability/invariants,02transactional handoffs,03bounded draining,04text result fencing,05text-worker isolation,06whole-pipeline equivalence/release verification. Each includes source files, contracts, tests to write/run, dependencies, deployment/rollback. All are **unimplemented proposed PRs**, no GitHub PR/branch created.
+- Updated `docs/operations/2026-09-21-laya-fast-precheck.md` to explicitly withdraw the earlier operational hint recommendation and link the final six-PR plan. Historical measurement artifacts unchanged. Updated this handoff.
+- Reviewed current source: firstreview caps starts per tick; done:false ACKs request; no judge→first/first→second/second→publish atomic signals; publisher serializes translation with publication. Proposed explicit ready continuation limited to first/second, retain5s role rotation/retry policy/leases. Proposed first40s budget with full24s gateway/20sCLI call allowance+2s margin,concurrency unchanged,max16starts; must test new behavior before implementation approval claims.
+- Newly found STATIC protection gap: `lib/crawl/taglines.ts` recordTagline upsert can overwrite a manual tagline written AFTER pending selection (no writtenBy CAS); failure/touch lack equivalent guards; releaseForPublish only checks candidate state, not source snapshot; worker translations/taglines don't fence result writes with lease. No production incident established, no race reproduction run yet. Added prerequisite PR04 to reproduce/fix these before role separation. Existing normal-flow equivalence does not mean preserving this unsafe race.
+- Proposed PR05 moves BOTH reason-translate and crawl-tagline into newtextrole, kept serial, avoids new overlap; role parser/supervisor/service metadata/DB pool/compose/Dokploy must change together. Preserve actual tagline worker25s budget despite stale internal54s comment; translation55s. Drain oldpublisher before newtextworker starts; safe rollback reverse. No cache/model/prompt/policy changes.
+
+## Executed verification / failures
+
+Existing unit baseline command1:9files91PASS. Command2:5files41PASS. Total14files132PASS. Vite future-native-loader config warning only. No new regression tests/integration/build executed; these are future per-PR acceptance requirements, not completed implementation. Local Markdown links, fenced blocks, whitespace/stale filenames/credential-pattern checks passed; git diff --check passed. One combined apply_patch initially failed matching a full paragraph; atomic no partial edits, corrected then applied. Several guessed read-only source paths absent, actualpaths found via rg. No app edits, runtime calls, DB writes, settings changes, commit/push/deploy in this phase.
+
+## Remaining / exact next commands
+
+Requested review/documents complete. Implementation remains future work in six plannedPRs. Current root mainaf50608 with docs uncommitted; preserve unrelated untracked files. Prior LAYA key/tmp file was removed in preceding phase. Earlier Dokploy keyrotation follow-up remainsopen below; do not expose/repeat credentials.
+
+```sh
+cd /Users/jr/Desktop/projects/nomorevibe
+cat docs/plans/2026-09-21-review-pipeline-speed/README.md
+cat docs/plans/2026-09-21-review-pipeline-speed/PR-01-observability-and-invariants.md
+git status --short
+git diff --check
+# Already executed baseline commands; new implementation requires new tests:
+npx vitest run tests/agent-review-contract.test.ts tests/second-review.test.ts tests/worker-runtime.test.ts tests/worker-supervisor.test.ts tests/agent-review-job.test.ts tests/second-review-job.test.ts tests/crawl-publish-evidence.test.ts tests/job-catalog.test.ts tests/translate-reasons-job.test.ts
+npx vitest run tests/crawl-tagline.test.ts tests/translate.test.ts tests/operations-instance.test.ts tests/db-pool-config.test.ts tests/db-pool-options.test.ts
+```
+
+---
+
+# Archived handoff — LAYA investigation (initial hint recommendation SUPERSEDED above)
+
+## Current objective / user direction
+
+User provided a private LAYA API endpoint and bearer credential, requested an investigation/report on accelerating the review pipeline. Latest clarification: use fast simple judgments to hand results to the next process sooner, not replace the whole review. Scope was investigation and proposed integration; no application implementation or production rollout authorized by this request. No subagents or prohibited skills used.
+
+## Completed work / modified files
+
+- Authenticated LAYA System One 0.3.4 GET metadata and actual POST /v1/systemone calls. English+multilingual resident on RTX5090 CUDA. No chat-completions interface. Official model card and exact PyPI SDK0.3.4 inspected.
+- Read-only production audit at11:10KST: firstreview enforce/gpt-oss120b/concurrency4; secondQwen35b, Sonnetfallback unchanged. Last24h firstsuccess2589 includes190reused; fresh2399p50 10.600s/p95 14.525s.109published re-review cohort: fetch→firststart p50 947.884s, firstrun11.446s, firstend→secondenqueue25.301s, secondqueue+run8.381s, secondend→publish35.229s, total1094.269s. Cohort backlog, not all current traffic. Second timestamps do not isolate model inference.
+- Actual47project samples: simple4questions p50 33ms/p95 84ms, binary3questions32ms/101ms, all200.16requests/concurrency4 completed289ms; short warm-server test only.12constructed examples ×English/Korean: contentkind18/24, installmention20/24, plugin11/24, skill19/24. Reused during prompt exploration; not held-out/general accuracy. Strong false positives mean hints should only trigger preparation, not bypass review. Existing production labels are not human gold.
+- User-aligned recommendation: collect→deterministic rules→LAYA hints→prepare relevant original evidence immediately→existing first/second→publish; add transactional job signals judge→first→second→publish, bounded queue draining, precomputed inputs, separate publisher translation contention. No confirmed end-to-end speedup until implemented. LAYA timeout fallback continues existing path; never becomes a new hold. Cache by candidate+source revision+question/model version; preserve existing uniqueness/approval gates.
+- Runtime readonly reviewer/publisher /healthz reachability30/29ms; 10/10 source hashes match. Recent translation80ticks p50 30.3s can delay publisher. SDK choice.confidence is normalized entropy, not existing review-confidence probability; do not reuse0.7 threshold.
+- Report `docs/operations/2026-09-21-laya-fast-precheck.md`,11public/credential-free result files under `docs/operations/evaluations/2026-09-21-laya-fast-precheck/`. This handoff updated. No app/config/DB writes or deployment. Root main remains af50608; docs changes uncommitted. Preserve unrelated untracked files.
+
+## Verification / failed approaches / remaining
+
+Actual API calls, readonly SQL, container probes/hashes, JSON/CSV consistency and secret scan were executed (see final tool output). App unit/integration tests not run because no app code changed. Initial readonly audit guessed nonexistent published_at/candidate_id columns; corrected to publication changes repo/occurred_at, then succeeded. Initial whole-review replacement control agreed only19/47 or21/47 with existingmodel labels; not recommended and latest user direction is narrower. Naive noul flags and plugin binary question also inaccurate; do not describe them as production-ready. Input excerpts are lossy and only suitable for hints; full original evidence remains required in final review.
+
+Remaining proposed implementation is not yet done. No final outcome changes or performance gain should be claimed. Reviewer API auth was exercised from developer Mac; container probe was unauthenticated health only. Private bearer used via getpass and0600/tmp file; never in report or subprocess argv. Temporary LAYA key is removed at end of evaluation. Do not repeat user credential. Earlier Dokploy key-rotation follow-up below remains unrelated/open.
+
+## Exact next commands
+
+```sh
+cd /Users/jr/Desktop/projects/nomorevibe
+git status --short
+cat docs/operations/2026-09-21-laya-fast-precheck.md
+python3 -m json.tool docs/operations/evaluations/2026-09-21-laya-fast-precheck/summary.json
+git diff --check
+# Ignored readonly audit helpers (explicit private prod env; never print it):
+node .crawl-samples/laya-eval/audit.mjs
+python3 .crawl-samples/laya-eval/runtime.py
+# New inference requires securely supplying the LAYA key again; probe.py uses getpass.
+python3 .crawl-samples/laya-eval/probe.py
+```
+
+---
+
 # Active handoff — crawl identity and review criteria audit COMPLETE (2026-09-21 09:57 KST)
 
 ## Objective / completed work

@@ -1,0 +1,25 @@
+{
+  "contentKind": {
+    "type": "choice",
+    "instructions": "What is the primary content being offered? Classify the content, not whether to approve it.",
+    "criteria": {
+      "software": "Runnable tool, application, library, plugin or agent skill",
+      "reading": "Book, tutorial, research paper, questionnaire or plain list",
+      "profile": "An individual personal homepage or portfolio",
+      "business": "Company services, consulting or physical shop",
+      "unclear": "Not enough information"
+    }
+  },
+  "installationMention": {
+    "type": "noul",
+    "instructions": "Does the text explicitly include software installation or usage instructions, such as a command, installation path, or host installation menu?"
+  },
+  "pluginMention": {
+    "type": "noul",
+    "instructions": "Does the text explicitly describe the offered package as an extension or plugin for a named host application?"
+  },
+  "skillMention": {
+    "type": "noul",
+    "instructions": "Does the text explicitly describe the offered package as a reusable AI agent skill with SKILL.md or a skills installation directory?"
+  }
+}

@@ -1,0 +1,97 @@
+[
+  {
+    "role": "reviewer",
+    "at": "2026-09-21T02:15:17.584942+00:00",
+    "layaHealth": {
+      "status": 200,
+      "elapsedMs": 30,
+      "model": "convaiinnovations/laya",
+      "device": "cuda"
+    },
+    "sourceFilesMatched": 5,
+    "sourceFilesChecked": 5,
+    "logsLines": 868,
+    "jobDurationsIncludingIdle": {
+      "product-audit": {
+        "n": 81,
+        "p50Ms": 21,
+        "p95Ms": 26,
+        "maxMs": 35
+      },
+      "second-review": {
+        "n": 80,
+        "p50Ms": 224.0,
+        "p95Ms": 10268,
+        "maxMs": 20995
+      },
+      "crawl-agent-review": {
+        "n": 80,
+        "p50Ms": 86.5,
+        "p95Ms": 13906,
+        "maxMs": 16021
+      },
+      "crawl-judge": {
+        "n": 39,
+        "p50Ms": 359,
+        "p95Ms": 935,
+        "maxMs": 938
+      }
+    },
+    "secondErrors": {
+      "invalid_output": 6
+    },
+    "processed": {
+      "crawl.second_reviewed": {
+        "enqueued": 62,
+        "closed": 34,
+        "reviewed": 62,
+        "failed": 6,
+        "deferred": 0
+      }
+    }
+  },
+  {
+    "role": "publisher",
+    "at": "2026-09-21T02:15:18.611157+00:00",
+    "layaHealth": {
+      "status": 200,
+      "elapsedMs": 29,
+      "model": "convaiinnovations/laya",
+      "device": "cuda"
+    },
+    "sourceFilesMatched": 5,
+    "sourceFilesChecked": 5,
+    "logsLines": 679,
+    "jobDurationsIncludingIdle": {
+      "crawl-tagline": {
+        "n": 81,
+        "p50Ms": 25,
+        "p95Ms": 1778,
+        "maxMs": 2632
+      },
+      "reason-translate": {
+        "n": 80,
+        "p50Ms": 30255.5,
+        "p95Ms": 38703,
+        "maxMs": 41314
+      },
+      "crawl-publish": {
+        "n": 54,
+        "p50Ms": 1357.0,
+        "p95Ms": 16635,
+        "maxMs": 17453
+      }
+    },
+    "secondErrors": {},
+    "processed": {
+      "translate.done": {
+        "translated": 537,
+        "failed": 18
+      },
+      "crawl.publish_done": {
+        "published": 30,
+        "skipped": 4
+      }
+    }
+  }
+]

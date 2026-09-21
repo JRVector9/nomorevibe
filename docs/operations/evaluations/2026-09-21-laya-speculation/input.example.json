@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "samples": [
+    {
+      "id": "example-only",
+      "snapshot": {
+        "product": {
+          "repo": "example/imagecli",
+          "accessMode": "installable",
+          "name": "ImageCLI",
+          "description": "A fictional CLI that compresses PNG images.",
+          "readme": "Install: npm install -g imagecli. Usage: imagecli input.png.",
+          "pageText": ""
+        },
+        "repoFacts": { "stars": 500 }
+      },
+      "first": { "decision": "approve", "durationMs": null },
+      "secondDurationMs": null
+    }
+  ]
+}

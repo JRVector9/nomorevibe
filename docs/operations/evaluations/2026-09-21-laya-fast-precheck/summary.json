@@ -1,0 +1,60 @@
+{
+  "measuredAt": "2026-09-21T02:10:13.362Z",
+  "quantiles": "p50 median; p95 nearest-rank for API benchmarks, PostgreSQL percentile_cont for production",
+  "realProjects": 47,
+  "originalLabels": "19 approve / 18 reject / 10 needs_review; model decisions, not human ground truth",
+  "latency": {
+    "coarseKindAndThreeBooleans": {
+      "requests": 47,
+      "http200": 47,
+      "p50Ms": 33,
+      "p95Ms": 84,
+      "maxMs": 103
+    },
+    "threeBinaryChoices": {
+      "requests": 47,
+      "http200": 47,
+      "p50Ms": 32,
+      "p95Ms": 101,
+      "maxMs": 103
+    }
+  },
+  "simpleSanity": {
+    "cases": 24,
+    "description": "12 constructed cases each in English and Korean, reused during prompt exploration; not a held-out test set",
+    "kindCorrect": 18,
+    "binaryChoiceCorrect": {
+      "installationMention": 20,
+      "pluginMention": 11,
+      "skillMention": 19
+    }
+  },
+  "replacementControl": {
+    "full_auto": {
+      "requests": 47,
+      "http200": 47,
+      "p50Ms": 39,
+      "p95Ms": 102,
+      "maxMs": 113,
+      "agreement": 19
+    },
+    "compact_auto": {
+      "requests": 47,
+      "http200": 47,
+      "p50Ms": 32,
+      "p95Ms": 84,
+      "maxMs": 101,
+      "agreement": 21
+    }
+  },
+  "concurrency": {
+    "workers": 4,
+    "wallMs": 289,
+    "requests": 16,
+    "http200": 16,
+    "p50Ms": 55.5,
+    "p95Ms": 123,
+    "maxMs": 123
+  },
+  "scope": "Public snapshots to LAYA only. Read-only production queries and runtime probes. No candidate writes, production settings, app code or deployment changed."
+}
