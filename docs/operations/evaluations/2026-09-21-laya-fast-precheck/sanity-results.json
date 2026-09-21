@@ -1,0 +1,1740 @@
+[
+  {
+    "case": "cli",
+    "lang": "en",
+    "state": "Installable repository. Stars: 700. ImageCLI compresses PNG files. Install: npm install -g imagecli. Usage: imagecli input.png.",
+    "expected": {
+      "installationMention": "present",
+      "pluginMention": "other",
+      "skillMention": "other"
+    },
+    "status": 200,
+    "elapsedMs": 51,
+    "body": {
+      "model": "laya-rl-agent",
+      "answers": {
+        "installationMention": {
+          "type": "choice",
+          "choice": "present",
+          "probabilities": {
+            "present": 0.9029,
+            "absent": 0.0971
+          },
+          "confidence": 0.5401,
+          "action": {
+            "act_probability": 1.0
+          }
+        },
+        "pluginMention": {
+          "type": "choice",
+          "choice": "plugin",
+          "probabilities": {
+            "plugin": 0.7184,
+            "other": 0.2816
+          },
+          "confidence": 0.1423,
+          "action": {
+            "act_probability": 1.0
+          }
+        },
+        "skillMention": {
+          "type": "choice",
+          "choice": "other",
+          "probabilities": {
+            "skill": 0.4191,
+            "other": 0.5809
+          },
+          "confidence": 0.019,
+          "action": {
+            "act_probability": 1.0
+          }
+        }
+      },
+      "usage": {
+        "input_tokens": 237,
+        "output_tokens": 0
+      },
+      "routing": {
+        "model": "english",
+        "repo": "convaiinnovations/laya",
+        "reason": "English Latin text",
+        "detection": {
+          "script": "latin",
+          "script_profile": {
+            "latin": 1.0
+          },
+          "language": null,
+          "is_english": true,
+          "non_latin_fraction": 0.0
+        },
+        "workflow": null
+      }
+    }
+  },
+  {
+    "case": "cli",
+    "lang": "ko",
+    "state": "설치형 저장소. 별 700개. ImageCLI는 PNG 이미지를 압축하는 CLI 도구입니다. 설치: npm install -g imagecli. 사용: imagecli input.png.",
+    "expected": {
+      "installationMention": "present",
+      "pluginMention": "other",
+      "skillMention": "other"
+    },
+    "status": 200,
+    "elapsedMs": 64,
+    "body": {
+      "model": "laya-rl-agent",
+      "answers": {
+        "installationMention": {
+          "type": "choice",
+          "choice": "present",
+          "probabilities": {
+            "present": 0.9368,
+            "absent": 0.0632
+          },
+          "confidence": 0.6601,
+          "action": {
+            "act_probability": 1.0
+          }
+        },
+        "pluginMention": {
+          "type": "choice",
+          "choice": "other",
+          "probabilities": {
+            "plugin": 0.3818,
+            "other": 0.6182
+          },
+          "confidence": 0.0407,
+          "action": {
+            "act_probability": 1.0
+          }
+        },
+        "skillMention": {
+          "type": "choice",
+          "choice": "other",
+          "probabilities": {
+            "skill": 0.2031,
+            "other": 0.7969
+          },
+          "confidence": 0.2718,
+          "action": {
+            "act_probability": 1.0
+          }
+        }
+      },
+      "usage": {
+        "input_tokens": 369,
+        "output_tokens": 0
+      },
+      "routing": {
+        "model": "english",
+        "repo": "convaiinnovations/laya",
+        "reason": "English Latin text",
+        "detection": {
+          "script": "latin",
+          "script_profile": {
+            "latin": 0.6533333333333333,
+            "hangul": 0.3466666666666667
+          },
+          "language": null,
+          "is_english": true,
+          "non_latin_fraction": 0.3467
+        },
+        "workflow": null
+      }
+    }
+  },
+  {
+    "case": "skill",
+    "lang": "en",
+    "state": "Installable repository. Stars: 700. A reusable Claude Code agent skill package with SKILL.md. Copy the folder to .claude/skills/log-review and invoke /log-review to analyze logs.",
+    "expected": {
+      "installationMention": "present",
+      "pluginMention": "other",
+      "skillMention": "skill"
+    },
+    "status": 200,
+    "elapsedMs": 30,
+    "body": {
+      "model": "laya-rl-agent",
+      "answers": {
+        "installationMention": {
+          "type": "choice",
+          "choice": "present",
+          "probabilities": {
+            "present": 0.853,
+            "absent": 0.147
+          },
+          "confidence": 0.3976,
+          "action": {
+            "act_probability": 1.0
+          }
+        },
+        "pluginMention": {
+          "type": "choice",
+          "choice": "plugin",
+          "probabilities": {
+            "plugin": 0.7561,
+            "other": 0.2439
+          },
+          "confidence": 0.1986,
+          "action": {
+            "act_probability": 1.0
+          }
+        },
+        "skillMention": {
+          "type": "choice",
+          "choice": "skill",
+          "probabilities": {
+            "skill": 0.9556,
+            "other": 0.0444
+          },
+          "confidence": 0.738,
+          "action": {
+            "act_probability": 1.0
+          }
+        }
+      },
+      "usage": {
+        "input_tokens": 279,
+        "output_tokens": 0
+      },
+      "routing": {
+        "model": "english",
+        "repo": "convaiinnovations/laya",
+        "reason": "English Latin text",
+        "detection": {
+          "script": "latin",
+          "script_profile": {
+            "latin": 1.0
+          },
+          "language": "en",
+          "is_english": true,
+          "non_latin_fraction": 0.0
+        },
+        "workflow": null
+      }
+    }
+  },
+  {
+    "case": "skill",
+    "lang": "ko",
+    "state": "설치형 저장소. 별 700개. SKILL.md가 포함된 재사용 가능한 Claude Code 스킬 패키지입니다. .claude/skills/log-review에 복사하고 /log-review로 로그를 분석합니다.",
+    "expected": {
+      "installationMention": "present",
+      "pluginMention": "other",
+      "skillMention": "skill"
+    },
+    "status": 200,
+    "elapsedMs": 30,
+    "body": {
+      "model": "laya-rl-agent",
+      "answers": {
+        "installationMention": {
+          "type": "choice",
+          "choice": "present",
+          "probabilities": {
+            "present": 0.7227,
+            "absent": 0.2773
+          },
+          "confidence": 0.1483,
+          "action": {
+            "act_probability": 1.0
+          }
+        },
+        "pluginMention": {
+          "type": "choice",
+          "choice": "plugin",
+          "probabilities": {
+            "plugin": 0.5467,
+            "other": 0.4533
+          },
+          "confidence": 0.0063,
+          "action": {
+            "act_probability": 1.0
+          }
+        },
+        "skillMention": {
+          "type": "choice",
+          "choice": "skill",
+          "probabilities": {
+            "skill": 0.9331,
+            "other": 0.0669
+          },
+          "confidence": 0.6457,
+          "action": {
+            "act_probability": 1.0
+          }
+        }
+      },
+      "usage": {
+        "input_tokens": 450,
+        "output_tokens": 0
+      },
+      "routing": {
+        "model": "english",
+        "repo": "convaiinnovations/laya",
+        "reason": "English Latin text",
+        "detection": {
+          "script": "latin",
+          "script_profile": {
+            "latin": 0.5402298850574713,
+            "hangul": 0.45977011494252873
+          },
+          "language": null,
+          "is_english": true,
+          "non_latin_fraction": 0.4598
+        },
+        "workflow": null
+      }
+    }
+  },
+  {
+    "case": "plugin",
+    "lang": "en",
+    "state": "Installable repository. Stars: 700. A VS Code extension for sorting imports. Install from the VS Code Extensions menu and run Sort Imports.",
+    "expected": {
+      "installationMention": "present",
+      "pluginMention": "plugin",
+      "skillMention": "other"
+    },
+    "status": 200,
+    "elapsedMs": 29,
+    "body": {
+      "model": "laya-rl-agent",
+      "answers": {
+        "installationMention": {
+          "type": "choice",
+          "choice": "present",
+          "probabilities": {
+            "present": 0.8687,
+            "absent": 0.1313
+          },
+          "confidence": 0.4389,
+          "action": {
+            "act_probability": 1.0
+          }
+        },
+        "pluginMention": {
+          "type": "choice",
+          "choice": "plugin",
+          "probabilities": {
+            "plugin": 0.9074,
+            "other": 0.0926
+          },
+          "confidence": 0.555,
+          "action": {
+            "act_probability": 1.0
+          }
+        },
+        "skillMention": {
+          "type": "choice",
+          "choice": "other",
+          "probabilities": {
+            "skill": 0.2864,
+            "other": 0.7136
+          },
+          "confidence": 0.136,
+          "action": {
+            "act_probability": 1.0
+          }
+        }
+      },
+      "usage": {
+        "input_tokens": 228,
+        "output_tokens": 0
+      },
+      "routing": {
+        "model": "english",
+        "repo": "convaiinnovations/laya",
+        "reason": "English Latin text",
+        "detection": {
+          "script": "latin",
+          "script_profile": {
+            "latin": 1.0
+          },
+          "language": "en",
+          "is_english": true,
+          "non_latin_fraction": 0.0
+        },
+        "workflow": null
+      }
+    }
+  },
+  {
+    "case": "plugin",
+    "lang": "ko",
+    "state": "설치형 저장소. 별 700개. import 문을 정렬하는 VS Code 확장입니다. 확장 메뉴에서 설치하고 Sort Imports 명령을 실행합니다.",
+    "expected": {
+      "installationMention": "present",
+      "pluginMention": "plugin",
+      "skillMention": "other"
+    },
+    "status": 200,
+    "elapsedMs": 25,
+    "body": {
+      "model": "laya-rl-agent",
+      "answers": {
+        "installationMention": {
+          "type": "choice",
+          "choice": "absent",
+          "probabilities": {
+            "present": 0.0206,
+            "absent": 0.9794
+          },
+          "confidence": 0.8549,
+          "action": {
+            "act_probability": 1.0
+          }
+        },
+        "pluginMention": {
+          "type": "choice",
+          "choice": "other",
+          "probabilities": {
+            "plugin": 0.2814,
+            "other": 0.7186
+          },
+          "confidence": 0.1426,
+          "action": {
+            "act_probability": 1.0
+          }
+        },
+        "skillMention": {
+          "type": "choice",
+          "choice": "other",
+          "probabilities": {
+            "skill": 0.094,
+            "other": 0.906
+          },
+          "confidence": 0.5503,
+          "action": {
+            "act_probability": 1.0
+          }
+        }
+      },
+      "usage": {
+        "input_tokens": 260,
+        "output_tokens": 0
+      },
+      "routing": {
+        "model": "multilingual",
+        "repo": "convaiinnovations/laya/multilingual",
+        "reason": "non-Latin script (hangul, 62% of letters); the English checkpoint cannot read it",
+        "detection": {
+          "script": "hangul",
+          "script_profile": {
+            "latin": 0.38333333333333336,
+            "hangul": 0.6166666666666667
+          },
+          "language": null,
+          "is_english": false,
+          "non_latin_fraction": 0.6167
+        },
+        "workflow": null
+      }
+    }
+  },
+  {
+    "case": "book",
+    "lang": "en",
+    "state": "Repository. Stars: 50000. This is a research book about AI agents. It contains PDF chapters only. There is no software or installation process.",
+    "expected": {
+      "installationMention": "absent",
+      "pluginMention": "other",
+      "skillMention": "other"
+    },
+    "status": 200,
+    "elapsedMs": 26,
+    "body": {
+      "model": "laya-rl-agent",
+      "answers": {
+        "installationMention": {
+          "type": "choice",
+          "choice": "absent",
+          "probabilities": {
+            "present": 0.2058,
+            "absent": 0.7942
+          },
+          "confidence": 0.2666,
+          "action": {
+            "act_probability": 1.0
+          }
+        },
+        "pluginMention": {
+          "type": "choice",
+          "choice": "other",
+          "probabilities": {
+            "plugin": 0.3403,
+            "other": 0.6597
+          },
+          "confidence": 0.0749,
+          "action": {
+            "act_probability": 1.0
+          }
+        },
+        "skillMention": {
+          "type": "choice",
+          "choice": "skill",
+          "probabilities": {
+            "skill": 0.5,
+            "other": 0.5
+          },
+          "confidence": 0.0,
+          "action": {
+            "act_probability": 1.0
+          }
+        }
+      },
+      "usage": {
+        "input_tokens": 228,
+        "output_tokens": 0
+      },
+      "routing": {
+        "model": "english",
+        "repo": "convaiinnovations/laya",
+        "reason": "English Latin text",
+        "detection": {
+          "script": "latin",
+          "script_profile": {
+            "latin": 1.0
+          },
+          "language": "en",
+          "is_english": true,
+          "non_latin_fraction": 0.0
+        },
+        "workflow": null
+      }
+    }
+  },
+  {
+    "case": "book",
+    "lang": "ko",
+    "state": "별 5만 개인 AI 에이전트 연구 서적 저장소입니다. PDF 본문만 있으며 실행 가능한 소프트웨어나 설치 과정이 없습니다.",
+    "expected": {
+      "installationMention": "absent",
+      "pluginMention": "other",
+      "skillMention": "other"
+    },
+    "status": 200,
+    "elapsedMs": 28,
+    "body": {
+      "model": "laya-rl-agent",
+      "answers": {
+        "installationMention": {
+          "type": "choice",
+          "choice": "absent",
+          "probabilities": {
+            "present": 0.0129,
+            "absent": 0.9871
+          },
+          "confidence": 0.9004,
+          "action": {
+            "act_probability": 1.0
+          }
+        },
+        "pluginMention": {
+          "type": "choice",
+          "choice": "plugin",
+          "probabilities": {
+            "plugin": 0.5351,
+            "other": 0.4649
+          },
+          "confidence": 0.0036,
+          "action": {
+            "act_probability": 1.0
+          }
+        },
+        "skillMention": {
+          "type": "choice",
+          "choice": "other",
+          "probabilities": {
+            "skill": 0.0914,
+            "other": 0.9086
+          },
+          "confidence": 0.5589,
+          "action": {
+            "act_probability": 1.0
+          }
+        }
+      },
+      "usage": {
+        "input_tokens": 254,
+        "output_tokens": 0
+      },
+      "routing": {
+        "model": "multilingual",
+        "repo": "convaiinnovations/laya/multilingual",
+        "reason": "non-Latin script (hangul, 90% of letters); the English checkpoint cannot read it",
+        "detection": {
+          "script": "hangul",
+          "script_profile": {
+            "latin": 0.10204081632653061,
+            "hangul": 0.8979591836734694
+          },
+          "language": null,
+          "is_english": false,
+          "non_latin_fraction": 0.898
+        },
+        "workflow": null
+      }
+    }
+  },
+  {
+    "case": "survey",
+    "lang": "en",
+    "state": "Repository. Stars: 900. A one-off student research questionnaire. Please answer these questions about your study habits. Results will be in a paper. No software is provided.",
+    "expected": {
+      "installationMention": "absent",
+      "pluginMention": "other",
+      "skillMention": "other"
+    },
+    "status": 200,
+    "elapsedMs": 26,
+    "body": {
+      "model": "laya-rl-agent",
+      "answers": {
+        "installationMention": {
+          "type": "choice",
+          "choice": "absent",
+          "probabilities": {
+            "present": 0.1208,
+            "absent": 0.8792
+          },
+          "confidence": 0.4683,
+          "action": {
+            "act_probability": 1.0
+          }
+        },
+        "pluginMention": {
+          "type": "choice",
+          "choice": "other",
+          "probabilities": {
+            "plugin": 0.2788,
+            "other": 0.7212
+          },
+          "confidence": 0.1461,
+          "action": {
+            "act_probability": 1.0
+          }
+        },
+        "skillMention": {
+          "type": "choice",
+          "choice": "skill",
+          "probabilities": {
+            "skill": 0.5702,
+            "other": 0.4298
+          },
+          "confidence": 0.0143,
+          "action": {
+            "act_probability": 1.0
+          }
+        }
+      },
+      "usage": {
+        "input_tokens": 243,
+        "output_tokens": 0
+      },
+      "routing": {
+        "model": "english",
+        "repo": "convaiinnovations/laya",
+        "reason": "English Latin text",
+        "detection": {
+          "script": "latin",
+          "script_profile": {
+            "latin": 1.0
+          },
+          "language": "en",
+          "is_english": true,
+          "non_latin_fraction": 0.0
+        },
+        "workflow": null
+      }
+    }
+  },
+  {
+    "case": "survey",
+    "lang": "ko",
+    "state": "별 900개인 학생 연구 설문지입니다. 학습 습관에 대한 일회성 설문 문항만 있고 결과는 논문에 사용됩니다. 소프트웨어는 없습니다.",
+    "expected": {
+      "installationMention": "absent",
+      "pluginMention": "other",
+      "skillMention": "other"
+    },
+    "status": 200,
+    "elapsedMs": 26,
+    "body": {
+      "model": "laya-rl-agent",
+      "answers": {
+        "installationMention": {
+          "type": "choice",
+          "choice": "absent",
+          "probabilities": {
+            "present": 0.0072,
+            "absent": 0.9928
+          },
+          "confidence": 0.9384,
+          "action": {
+            "act_probability": 1.0
+          }
+        },
+        "pluginMention": {
+          "type": "choice",
+          "choice": "plugin",
+          "probabilities": {
+            "plugin": 0.5737,
+            "other": 0.4263
+          },
+          "confidence": 0.0157,
+          "action": {
+            "act_probability": 1.0
+          }
+        },
+        "skillMention": {
+          "type": "choice",
+          "choice": "skill",
+          "probabilities": {
+            "skill": 0.709,
+            "other": 0.291
+          },
+          "confidence": 0.13,
+          "action": {
+            "act_probability": 1.0
+          }
+        }
+      },
+      "usage": {
+        "input_tokens": 281,
+        "output_tokens": 0
+      },
+      "routing": {
+        "model": "multilingual",
+        "repo": "convaiinnovations/laya/multilingual",
+        "reason": "non-Latin script (hangul, 100% of letters); the English checkpoint cannot read it",
+        "detection": {
+          "script": "hangul",
+          "script_profile": {
+            "hangul": 1.0
+          },
+          "language": null,
+          "is_english": false,
+          "non_latin_fraction": 1.0
+        },
+        "workflow": null
+      }
+    }
+  },
+  {
+    "case": "survey_builder",
+    "lang": "en",
+    "state": "Installable repository. Stars: 900. SurveyKit is a self-hosted survey builder. Create forms, collect responses and export CSV. Install: docker compose up.",
+    "expected": {
+      "installationMention": "present",
+      "pluginMention": "other",
+      "skillMention": "other"
+    },
+    "status": 200,
+    "elapsedMs": 28,
+    "body": {
+      "model": "laya-rl-agent",
+      "answers": {
+        "installationMention": {
+          "type": "choice",
+          "choice": "absent",
+          "probabilities": {
+            "present": 0.3824,
+            "absent": 0.6176
+          },
+          "confidence": 0.0403,
+          "action": {
+            "act_probability": 1.0
+          }
+        },
+        "pluginMention": {
+          "type": "choice",
+          "choice": "plugin",
+          "probabilities": {
+            "plugin": 0.8613,
+            "other": 0.1387
+          },
+          "confidence": 0.419,
+          "action": {
+            "act_probability": 1.0
+          }
+        },
+        "skillMention": {
+          "type": "choice",
+          "choice": "other",
+          "probabilities": {
+            "skill": 0.1924,
+            "other": 0.8076
+          },
+          "confidence": 0.2935,
+          "action": {
+            "act_probability": 1.0
+          }
+        }
+      },
+      "usage": {
+        "input_tokens": 240,
+        "output_tokens": 0
+      },
+      "routing": {
+        "model": "english",
+        "repo": "convaiinnovations/laya",
+        "reason": "English Latin text",
+        "detection": {
+          "script": "latin",
+          "script_profile": {
+            "latin": 1.0
+          },
+          "language": "en",
+          "is_english": true,
+          "non_latin_fraction": 0.0
+        },
+        "workflow": null
+      }
+    }
+  },
+  {
+    "case": "survey_builder",
+    "lang": "ko",
+    "state": "설치형 저장소. 별 900개. SurveyKit은 설문 생성, 응답 수집, CSV 내보내기 기능을 제공하는 자체 호스팅 소프트웨어입니다. docker compose up으로 설치합니다.",
+    "expected": {
+      "installationMention": "present",
+      "pluginMention": "other",
+      "skillMention": "other"
+    },
+    "status": 200,
+    "elapsedMs": 98,
+    "body": {
+      "model": "laya-rl-agent",
+      "answers": {
+        "installationMention": {
+          "type": "choice",
+          "choice": "absent",
+          "probabilities": {
+            "present": 0.0228,
+            "absent": 0.9772
+          },
+          "confidence": 0.8431,
+          "action": {
+            "act_probability": 1.0
+          }
+        },
+        "pluginMention": {
+          "type": "choice",
+          "choice": "plugin",
+          "probabilities": {
+            "plugin": 0.5737,
+            "other": 0.4263
+          },
+          "confidence": 0.0157,
+          "action": {
+            "act_probability": 1.0
+          }
+        },
+        "skillMention": {
+          "type": "choice",
+          "choice": "other",
+          "probabilities": {
+            "skill": 0.3558,
+            "other": 0.6442
+          },
+          "confidence": 0.0609,
+          "action": {
+            "act_probability": 1.0
+          }
+        }
+      },
+      "usage": {
+        "input_tokens": 299,
+        "output_tokens": 0
+      },
+      "routing": {
+        "model": "multilingual",
+        "repo": "convaiinnovations/laya/multilingual",
+        "reason": "non-Latin script (hangul, 64% of letters); the English checkpoint cannot read it",
+        "detection": {
+          "script": "hangul",
+          "script_profile": {
+            "latin": 0.36,
+            "hangul": 0.64
+          },
+          "language": null,
+          "is_english": false,
+          "non_latin_fraction": 0.64
+        },
+        "workflow": null
+      }
+    }
+  },
+  {
+    "case": "list",
+    "lang": "en",
+    "state": "Repository. Stars: 9000. A plain list of IPTV channel URLs and playlists. There is no reusable player or software; scripts only update the list.",
+    "expected": {
+      "installationMention": "absent",
+      "pluginMention": "other",
+      "skillMention": "other"
+    },
+    "status": 200,
+    "elapsedMs": 40,
+    "body": {
+      "model": "laya-rl-agent",
+      "answers": {
+        "installationMention": {
+          "type": "choice",
+          "choice": "absent",
+          "probabilities": {
+            "present": 0.1751,
+            "absent": 0.8249
+          },
+          "confidence": 0.3308,
+          "action": {
+            "act_probability": 1.0
+          }
+        },
+        "pluginMention": {
+          "type": "choice",
+          "choice": "plugin",
+          "probabilities": {
+            "plugin": 0.6174,
+            "other": 0.3826
+          },
+          "confidence": 0.0401,
+          "action": {
+            "act_probability": 1.0
+          }
+        },
+        "skillMention": {
+          "type": "choice",
+          "choice": "skill",
+          "probabilities": {
+            "skill": 0.6543,
+            "other": 0.3457
+          },
+          "confidence": 0.0699,
+          "action": {
+            "act_probability": 1.0
+          }
+        }
+      },
+      "usage": {
+        "input_tokens": 243,
+        "output_tokens": 0
+      },
+      "routing": {
+        "model": "english",
+        "repo": "convaiinnovations/laya",
+        "reason": "English Latin text",
+        "detection": {
+          "script": "latin",
+          "script_profile": {
+            "latin": 1.0
+          },
+          "language": "en",
+          "is_english": true,
+          "non_latin_fraction": 0.0
+        },
+        "workflow": null
+      }
+    }
+  },
+  {
+    "case": "list",
+    "lang": "ko",
+    "state": "별 9000개의 IPTV 채널 URL과 재생목록을 모아 둔 자료입니다. 재사용 가능한 플레이어나 프로그램은 없고 보조 스크립트는 목록만 갱신합니다.",
+    "expected": {
+      "installationMention": "absent",
+      "pluginMention": "other",
+      "skillMention": "other"
+    },
+    "status": 200,
+    "elapsedMs": 31,
+    "body": {
+      "model": "laya-rl-agent",
+      "answers": {
+        "installationMention": {
+          "type": "choice",
+          "choice": "absent",
+          "probabilities": {
+            "present": 0.0189,
+            "absent": 0.9811
+          },
+          "confidence": 0.865,
+          "action": {
+            "act_probability": 1.0
+          }
+        },
+        "pluginMention": {
+          "type": "choice",
+          "choice": "other",
+          "probabilities": {
+            "plugin": 0.2147,
+            "other": 0.7853
+          },
+          "confidence": 0.2496,
+          "action": {
+            "act_probability": 1.0
+          }
+        },
+        "skillMention": {
+          "type": "choice",
+          "choice": "other",
+          "probabilities": {
+            "skill": 0.1755,
+            "other": 0.8245
+          },
+          "confidence": 0.3298,
+          "action": {
+            "act_probability": 1.0
+          }
+        }
+      },
+      "usage": {
+        "input_tokens": 293,
+        "output_tokens": 0
+      },
+      "routing": {
+        "model": "multilingual",
+        "repo": "convaiinnovations/laya/multilingual",
+        "reason": "non-Latin script (hangul, 88% of letters); the English checkpoint cannot read it",
+        "detection": {
+          "script": "hangul",
+          "script_profile": {
+            "latin": 0.11864406779661017,
+            "hangul": 0.8813559322033898
+          },
+          "language": null,
+          "is_english": false,
+          "non_latin_fraction": 0.8814
+        },
+        "workflow": null
+      }
+    }
+  },
+  {
+    "case": "profile",
+    "lang": "en",
+    "state": "This is Jane Doe personal homepage and CV. Here are projects she built and her work history.",
+    "expected": {
+      "installationMention": "absent",
+      "pluginMention": "other",
+      "skillMention": "other"
+    },
+    "status": 200,
+    "elapsedMs": 27,
+    "body": {
+      "model": "laya-rl-agent",
+      "answers": {
+        "installationMention": {
+          "type": "choice",
+          "choice": "absent",
+          "probabilities": {
+            "present": 0.0434,
+            "absent": 0.9566
+          },
+          "confidence": 0.7425,
+          "action": {
+            "act_probability": 1.0
+          }
+        },
+        "pluginMention": {
+          "type": "choice",
+          "choice": "other",
+          "probabilities": {
+            "plugin": 0.1831,
+            "other": 0.8169
+          },
+          "confidence": 0.3133,
+          "action": {
+            "act_probability": 1.0
+          }
+        },
+        "skillMention": {
+          "type": "choice",
+          "choice": "other",
+          "probabilities": {
+            "skill": 0.2181,
+            "other": 0.7819
+          },
+          "confidence": 0.2433,
+          "action": {
+            "act_probability": 1.0
+          }
+        }
+      },
+      "usage": {
+        "input_tokens": 195,
+        "output_tokens": 0
+      },
+      "routing": {
+        "model": "english",
+        "repo": "convaiinnovations/laya",
+        "reason": "English Latin text",
+        "detection": {
+          "script": "latin",
+          "script_profile": {
+            "latin": 1.0
+          },
+          "language": "en",
+          "is_english": true,
+          "non_latin_fraction": 0.0
+        },
+        "workflow": null
+      }
+    }
+  },
+  {
+    "case": "profile",
+    "lang": "ko",
+    "state": "이 페이지는 김민수 개인 홈페이지와 이력서입니다. 본인이 만든 프로젝트와 경력을 소개합니다.",
+    "expected": {
+      "installationMention": "absent",
+      "pluginMention": "other",
+      "skillMention": "other"
+    },
+    "status": 200,
+    "elapsedMs": 28,
+    "body": {
+      "model": "laya-rl-agent",
+      "answers": {
+        "installationMention": {
+          "type": "choice",
+          "choice": "absent",
+          "probabilities": {
+            "present": 0.0821,
+            "absent": 0.9179
+          },
+          "confidence": 0.5904,
+          "action": {
+            "act_probability": 1.0
+          }
+        },
+        "pluginMention": {
+          "type": "choice",
+          "choice": "other",
+          "probabilities": {
+            "plugin": 0.3074,
+            "other": 0.6926
+          },
+          "confidence": 0.1099,
+          "action": {
+            "act_probability": 1.0
+          }
+        },
+        "skillMention": {
+          "type": "choice",
+          "choice": "other",
+          "probabilities": {
+            "skill": 0.1009,
+            "other": 0.8991
+          },
+          "confidence": 0.5282,
+          "action": {
+            "act_probability": 1.0
+          }
+        }
+      },
+      "usage": {
+        "input_tokens": 233,
+        "output_tokens": 0
+      },
+      "routing": {
+        "model": "multilingual",
+        "repo": "convaiinnovations/laya/multilingual",
+        "reason": "non-Latin script (hangul, 100% of letters); the English checkpoint cannot read it",
+        "detection": {
+          "script": "hangul",
+          "script_profile": {
+            "hangul": 1.0
+          },
+          "language": null,
+          "is_english": false,
+          "non_latin_fraction": 1.0
+        },
+        "workflow": null
+      }
+    }
+  },
+  {
+    "case": "agency",
+    "lang": "en",
+    "state": "Acme Digital is a web design agency. Hire our team for consulting services. There is no software product offered.",
+    "expected": {
+      "installationMention": "absent",
+      "pluginMention": "other",
+      "skillMention": "other"
+    },
+    "status": 200,
+    "elapsedMs": 28,
+    "body": {
+      "model": "laya-rl-agent",
+      "answers": {
+        "installationMention": {
+          "type": "choice",
+          "choice": "absent",
+          "probabilities": {
+            "present": 0.2168,
+            "absent": 0.7832
+          },
+          "confidence": 0.2457,
+          "action": {
+            "act_probability": 1.0
+          }
+        },
+        "pluginMention": {
+          "type": "choice",
+          "choice": "other",
+          "probabilities": {
+            "plugin": 0.472,
+            "other": 0.528
+          },
+          "confidence": 0.0023,
+          "action": {
+            "act_probability": 1.0
+          }
+        },
+        "skillMention": {
+          "type": "choice",
+          "choice": "other",
+          "probabilities": {
+            "skill": 0.4711,
+            "other": 0.5289
+          },
+          "confidence": 0.0024,
+          "action": {
+            "act_probability": 1.0
+          }
+        }
+      },
+      "usage": {
+        "input_tokens": 210,
+        "output_tokens": 0
+      },
+      "routing": {
+        "model": "english",
+        "repo": "convaiinnovations/laya",
+        "reason": "English Latin text",
+        "detection": {
+          "script": "latin",
+          "script_profile": {
+            "latin": 1.0
+          },
+          "language": "en",
+          "is_english": true,
+          "non_latin_fraction": 0.0
+        },
+        "workflow": null
+      }
+    }
+  },
+  {
+    "case": "agency",
+    "lang": "ko",
+    "state": "Acme Digital은 웹 디자인 대행사입니다. 컨설팅 업무를 의뢰할 수 있으며 소프트웨어 제품은 제공하지 않습니다.",
+    "expected": {
+      "installationMention": "absent",
+      "pluginMention": "other",
+      "skillMention": "other"
+    },
+    "status": 200,
+    "elapsedMs": 30,
+    "body": {
+      "model": "laya-rl-agent",
+      "answers": {
+        "installationMention": {
+          "type": "choice",
+          "choice": "absent",
+          "probabilities": {
+            "present": 0.1608,
+            "absent": 0.8392
+          },
+          "confidence": 0.3638,
+          "action": {
+            "act_probability": 1.0
+          }
+        },
+        "pluginMention": {
+          "type": "choice",
+          "choice": "other",
+          "probabilities": {
+            "plugin": 0.461,
+            "other": 0.539
+          },
+          "confidence": 0.0044,
+          "action": {
+            "act_probability": 1.0
+          }
+        },
+        "skillMention": {
+          "type": "choice",
+          "choice": "other",
+          "probabilities": {
+            "skill": 0.2628,
+            "other": 0.7372
+          },
+          "confidence": 0.169,
+          "action": {
+            "act_probability": 1.0
+          }
+        }
+      },
+      "usage": {
+        "input_tokens": 239,
+        "output_tokens": 0
+      },
+      "routing": {
+        "model": "multilingual",
+        "repo": "convaiinnovations/laya/multilingual",
+        "reason": "non-Latin script (hangul, 78% of letters); the English checkpoint cannot read it",
+        "detection": {
+          "script": "hangul",
+          "script_profile": {
+            "latin": 0.21568627450980393,
+            "hangul": 0.7843137254901961
+          },
+          "language": null,
+          "is_english": false,
+          "non_latin_fraction": 0.7843
+        },
+        "workflow": null
+      }
+    }
+  },
+  {
+    "case": "unclear",
+    "lang": "en",
+    "state": "Installable repository. Stars: 800. Project X. Coming soon. No description, README or usage evidence is available.",
+    "expected": {
+      "installationMention": "absent",
+      "pluginMention": "other",
+      "skillMention": "other"
+    },
+    "status": 200,
+    "elapsedMs": 28,
+    "body": {
+      "model": "laya-rl-agent",
+      "answers": {
+        "installationMention": {
+          "type": "choice",
+          "choice": "absent",
+          "probabilities": {
+            "present": 0.3244,
+            "absent": 0.6756
+          },
+          "confidence": 0.0909,
+          "action": {
+            "act_probability": 1.0
+          }
+        },
+        "pluginMention": {
+          "type": "choice",
+          "choice": "plugin",
+          "probabilities": {
+            "plugin": 0.6504,
+            "other": 0.3496
+          },
+          "confidence": 0.0663,
+          "action": {
+            "act_probability": 1.0
+          }
+        },
+        "skillMention": {
+          "type": "choice",
+          "choice": "other",
+          "probabilities": {
+            "skill": 0.2574,
+            "other": 0.7426
+          },
+          "confidence": 0.1772,
+          "action": {
+            "act_probability": 1.0
+          }
+        }
+      },
+      "usage": {
+        "input_tokens": 213,
+        "output_tokens": 0
+      },
+      "routing": {
+        "model": "english",
+        "repo": "convaiinnovations/laya",
+        "reason": "English Latin text",
+        "detection": {
+          "script": "latin",
+          "script_profile": {
+            "latin": 1.0
+          },
+          "language": "en",
+          "is_english": true,
+          "non_latin_fraction": 0.0
+        },
+        "workflow": null
+      }
+    }
+  },
+  {
+    "case": "unclear",
+    "lang": "ko",
+    "state": "설치형 저장소. 별 800개. Project X. 준비 중. 설명, README, 사용법 등 근거가 없습니다.",
+    "expected": {
+      "installationMention": "absent",
+      "pluginMention": "other",
+      "skillMention": "other"
+    },
+    "status": 200,
+    "elapsedMs": 26,
+    "body": {
+      "model": "laya-rl-agent",
+      "answers": {
+        "installationMention": {
+          "type": "choice",
+          "choice": "absent",
+          "probabilities": {
+            "present": 0.0117,
+            "absent": 0.9883
+          },
+          "confidence": 0.9082,
+          "action": {
+            "act_probability": 1.0
+          }
+        },
+        "pluginMention": {
+          "type": "choice",
+          "choice": "plugin",
+          "probabilities": {
+            "plugin": 0.5117,
+            "other": 0.4883
+          },
+          "confidence": 0.0004,
+          "action": {
+            "act_probability": 1.0
+          }
+        },
+        "skillMention": {
+          "type": "choice",
+          "choice": "skill",
+          "probabilities": {
+            "skill": 0.7918,
+            "other": 0.2082
+          },
+          "confidence": 0.262,
+          "action": {
+            "act_probability": 1.0
+          }
+        }
+      },
+      "usage": {
+        "input_tokens": 233,
+        "output_tokens": 0
+      },
+      "routing": {
+        "model": "multilingual",
+        "repo": "convaiinnovations/laya/multilingual",
+        "reason": "non-Latin script (hangul, 63% of letters); the English checkpoint cannot read it",
+        "detection": {
+          "script": "hangul",
+          "script_profile": {
+            "latin": 0.3684210526315789,
+            "hangul": 0.631578947368421
+          },
+          "language": null,
+          "is_english": false,
+          "non_latin_fraction": 0.6316
+        },
+        "workflow": null
+      }
+    }
+  },
+  {
+    "case": "sdk",
+    "lang": "en",
+    "state": "Installable repository. Stars: 800. WidgetSDK is a TypeScript API client library. Install npm install widget-sdk; import Client and call client.list().",
+    "expected": {
+      "installationMention": "present",
+      "pluginMention": "other",
+      "skillMention": "other"
+    },
+    "status": 200,
+    "elapsedMs": 32,
+    "body": {
+      "model": "laya-rl-agent",
+      "answers": {
+        "installationMention": {
+          "type": "choice",
+          "choice": "present",
+          "probabilities": {
+            "present": 0.858,
+            "absent": 0.142
+          },
+          "confidence": 0.4106,
+          "action": {
+            "act_probability": 1.0
+          }
+        },
+        "pluginMention": {
+          "type": "choice",
+          "choice": "other",
+          "probabilities": {
+            "plugin": 0.287,
+            "other": 0.713
+          },
+          "confidence": 0.1351,
+          "action": {
+            "act_probability": 1.0
+          }
+        },
+        "skillMention": {
+          "type": "choice",
+          "choice": "other",
+          "probabilities": {
+            "skill": 0.2771,
+            "other": 0.7229
+          },
+          "confidence": 0.1486,
+          "action": {
+            "act_probability": 1.0
+          }
+        }
+      },
+      "usage": {
+        "input_tokens": 240,
+        "output_tokens": 0
+      },
+      "routing": {
+        "model": "english",
+        "repo": "convaiinnovations/laya",
+        "reason": "English Latin text",
+        "detection": {
+          "script": "latin",
+          "script_profile": {
+            "latin": 1.0
+          },
+          "language": "en",
+          "is_english": true,
+          "non_latin_fraction": 0.0
+        },
+        "workflow": null
+      }
+    }
+  },
+  {
+    "case": "sdk",
+    "lang": "ko",
+    "state": "설치형 저장소. 별 800개. WidgetSDK는 TypeScript API 클라이언트 라이브러리입니다. npm install widget-sdk로 설치하고 Client를 가져와 client.list()를 호출합니다.",
+    "expected": {
+      "installationMention": "present",
+      "pluginMention": "other",
+      "skillMention": "other"
+    },
+    "status": 200,
+    "elapsedMs": 26,
+    "body": {
+      "model": "laya-rl-agent",
+      "answers": {
+        "installationMention": {
+          "type": "choice",
+          "choice": "present",
+          "probabilities": {
+            "present": 0.6603,
+            "absent": 0.3397
+          },
+          "confidence": 0.0754,
+          "action": {
+            "act_probability": 1.0
+          }
+        },
+        "pluginMention": {
+          "type": "choice",
+          "choice": "other",
+          "probabilities": {
+            "plugin": 0.3833,
+            "other": 0.6167
+          },
+          "confidence": 0.0396,
+          "action": {
+            "act_probability": 1.0
+          }
+        },
+        "skillMention": {
+          "type": "choice",
+          "choice": "other",
+          "probabilities": {
+            "skill": 0.144,
+            "other": 0.856
+          },
+          "confidence": 0.4055,
+          "action": {
+            "act_probability": 1.0
+          }
+        }
+      },
+      "usage": {
+        "input_tokens": 426,
+        "output_tokens": 0
+      },
+      "routing": {
+        "model": "english",
+        "repo": "convaiinnovations/laya",
+        "reason": "English Latin text",
+        "detection": {
+          "script": "latin",
+          "script_profile": {
+            "latin": 0.6063829787234043,
+            "hangul": 0.39361702127659576
+          },
+          "language": null,
+          "is_english": true,
+          "non_latin_fraction": 0.3936
+        },
+        "workflow": null
+      }
+    }
+  },
+  {
+    "case": "below500",
+    "lang": "en",
+    "state": "Installable repository with NO deployed website. Stars: 499. ImageCLI compresses PNG images. Install npm install -g imagecli.",
+    "expected": {
+      "installationMention": "present",
+      "pluginMention": "other",
+      "skillMention": "other"
+    },
+    "status": 200,
+    "elapsedMs": 27,
+    "body": {
+      "model": "laya-rl-agent",
+      "answers": {
+        "installationMention": {
+          "type": "choice",
+          "choice": "present",
+          "probabilities": {
+            "present": 0.9067,
+            "absent": 0.0933
+          },
+          "confidence": 0.5527,
+          "action": {
+            "act_probability": 1.0
+          }
+        },
+        "pluginMention": {
+          "type": "choice",
+          "choice": "plugin",
+          "probabilities": {
+            "plugin": 0.7759,
+            "other": 0.2241
+          },
+          "confidence": 0.2325,
+          "action": {
+            "act_probability": 1.0
+          }
+        },
+        "skillMention": {
+          "type": "choice",
+          "choice": "other",
+          "probabilities": {
+            "skill": 0.4826,
+            "other": 0.5174
+          },
+          "confidence": 0.0009,
+          "action": {
+            "act_probability": 1.0
+          }
+        }
+      },
+      "usage": {
+        "input_tokens": 222,
+        "output_tokens": 0
+      },
+      "routing": {
+        "model": "english",
+        "repo": "convaiinnovations/laya",
+        "reason": "English Latin text",
+        "detection": {
+          "script": "latin",
+          "script_profile": {
+            "latin": 1.0
+          },
+          "language": "en",
+          "is_english": true,
+          "non_latin_fraction": 0.0
+        },
+        "workflow": null
+      }
+    }
+  },
+  {
+    "case": "below500",
+    "lang": "ko",
+    "state": "배포 웹사이트가 없는 설치형 저장소. 별 499개. ImageCLI는 PNG를 압축하는 도구입니다. npm install -g imagecli로 설치합니다.",
+    "expected": {
+      "installationMention": "present",
+      "pluginMention": "other",
+      "skillMention": "other"
+    },
+    "status": 200,
+    "elapsedMs": 24,
+    "body": {
+      "model": "laya-rl-agent",
+      "answers": {
+        "installationMention": {
+          "type": "choice",
+          "choice": "absent",
+          "probabilities": {
+            "present": 0.4824,
+            "absent": 0.5176
+          },
+          "confidence": 0.0009,
+          "action": {
+            "act_probability": 1.0
+          }
+        },
+        "pluginMention": {
+          "type": "choice",
+          "choice": "plugin",
+          "probabilities": {
+            "plugin": 0.5622,
+            "other": 0.4378
+          },
+          "confidence": 0.0112,
+          "action": {
+            "act_probability": 1.0
+          }
+        },
+        "skillMention": {
+          "type": "choice",
+          "choice": "other",
+          "probabilities": {
+            "skill": 0.2173,
+            "other": 0.7827
+          },
+          "confidence": 0.2447,
+          "action": {
+            "act_probability": 1.0
+          }
+        }
+      },
+      "usage": {
+        "input_tokens": 269,
+        "output_tokens": 0
+      },
+      "routing": {
+        "model": "multilingual",
+        "repo": "convaiinnovations/laya/multilingual",
+        "reason": "non-Latin script (hangul, 53% of letters); the English checkpoint cannot read it",
+        "detection": {
+          "script": "hangul",
+          "script_profile": {
+            "latin": 0.46875,
+            "hangul": 0.53125
+          },
+          "language": null,
+          "is_english": false,
+          "non_latin_fraction": 0.5312
+        },
+        "workflow": null
+      }
+    }
+  }
+]

@@ -1,0 +1,425 @@
+[
+  {
+    "repo": "L3x-00/ERP-CC",
+    "state": {
+      "name": "ORCA MFG ERP - CC Manufacturing Group",
+      "description": "Sistema de gestión empresarial para manufactura CNC",
+      "intro": "ORCA MFG ERP - CC Manufacturing Group ORCA MFG ERP Inicia sesión para continuar Correo electrónico * Contraseña * Iniciar sesión",
+      "usagePassage": ""
+    }
+  },
+  {
+    "repo": "maple52046/rdc-exporter",
+    "state": {
+      "name": "RDC Exporter — Prometheus exporter for AMD GPUs",
+      "description": "RDC Exporter collects AMD GPU telemetry and profiling metrics through ROCm RDC, exports stable GPU UUIDs, and adds Kubernetes workload attribution. A Prometheus Exporter written in Go, integrating RDC (ROCm Data Center Tool) to collect GPU-",
+      "intro": "RDC Exporter — Prometheus exporter for AMD GPUs",
+      "usagePassage": ""
+    }
+  },
+  {
+    "repo": "Dan-Seo/mdtproject",
+    "state": {
+      "name": "Kijun 基準",
+      "description": "公共建築工事標準仕様書に基づき、柱・大梁の配筋詳細と鉄筋数量をブラウザ上で算定するツール（開発中・M2 未完了：ルールパック数値は原文抽出前の仮値。検収・発注には使用不可）。図面データは端末外に送信しない。 Harness framework project",
+      "intro": "Kijun 基準 Kijun 基準 サンプル案件 / RC 2階建て 案件を保存 案件を読み込み 日本語 한국어 独立検討待ち ルールパックの数値は原文から転写済みですが、転写者と承認者が同一で独立検討が済んでいません（△）。原文に値がなく推論した項目もあります（▲）。検収・発注には使用しないでください。 平面エディタ 1階 2階 図面セット 伏図を取り込み ST-Bridgeを取り込み X スパン mm − X スパンを追加 Y スパン mm − mm − Y スパンを追加 耐震壁を配置 断面 W1 X1-X2 / Y1 X1-X2 / Y2 X1-X2 / Y3 X2 / Y1-Y2 X1 / Y2-Y3 X2 / Y2-Y3 床板を配置 断面 S1 配置できる空き位置がありません 片持床板を配置 支持辺 正 負 持出し長さ mm 配置できる空き位置がありません 耐震壁または床板を選ぶと開口部を入力できます 部材断面一覧 PDF取込 符号 断面 主筋 帯筋 / あばら筋 幅止め筋 / 腹筋 Fc grade 継手方式 かぶり条件 矩形 円形 × − D10 D13 D16 D19 D22 D25 D29 D32 D10 D13 D16 D19 D22 D25 D29 D32 K13 S13 @ — SD295 SD345 SD390 重ね継手 ガス圧接 機械式 溶接 屋内 屋外 仕上げあり 仕上げなし × 上 ／ 左右で違う 下 ／ 左右で違う D10 D13 D16 D19 D22 D25 D29 D32 カットオフ D10 D13 D16 D19 D22 D25 D29",
+      "usagePassage": " D32 K13 S13 @ 幅止 なし D10 D13 D16 D19 D22 D25 D29 D32 @ 腹筋 なし D10 D13 D16 D19 D22 D25 D29 D32 × 余長 SD295 SD345 SD390 重ね継手 ガス圧接 機械式 溶接 屋内 屋外 仕上げあり 仕上げなし × 上 ／ 左右で違う 下 ／ 左右で違う D10 D13 D16 D19 D22 D25 D29 D32 カットオフ D10 D13 D16 D19 D22 D25 D29 D32 K13 S13 @ 幅止 なし D10 D13 D16 D19 D22 D25 D29 D32 @ 腹筋 なし D10 D13 D16 D19 D22 D25 D29 D32 × 余長 SD295 SD345 SD"
+    }
+  },
+  {
+    "repo": "victorolivo24/football-locks-project",
+    "state": {
+      "name": "NFL Locks",
+      "description": "Weekly all-or-nothing NFL pick'em NFL weekly pick-em app for friends",
+      "intro": "NFL Locks Loading…",
+      "usagePassage": ""
+    }
+  },
+  {
+    "repo": "Oswald-Faust/Kaya",
+    "state": {
+      "name": "Kaya — The AI agent that does your marketing",
+      "description": "Paste your URL. Kaya reads your product, picks the channels worth your money, runs experiments and learns what grows revenue, with every dollar behind your approval.",
+      "intro": "Kaya — The AI agent that does your marketing New Meet Kai: talk to your business, and get answers with sources kaya Product Use cases Solutions Resources Company Pricing en Log in Get a demo Start free The AI marketing agent for founders Build your product. Kaya grows it. Paste your URL. Kaya reads your product, picks the channels worth your money and runs the experiments that grow revenue. You approve every dollar. Product URL Analyze my product Try linear.app cal.com plausible.io No website yet? Describe it manually See the live demo Connects to Works with the stack growing software companies already run. Connected today, more every month. Stripe Revenue truth: MRR, churn and payback from ",
+      "usagePassage": "real invoices. Google Ads Meta +31% trial starts from one comparison page Tickwarden demo PostHog LinkedIn Google Analytics 4 Experiments measured in signups and customers, not impressions. Shopify Soon Product Hunt Channel X Webflow Soon Stripe Revenue truth: MRR, churn and payback from real invoices. Google Ads Meta +31% trial starts from one com"
+    }
+  },
+  {
+    "repo": "JuanCruzMedina/juancruzmedina",
+    "state": {
+      "name": "Juan Cruz Medina",
+      "description": "Juan Cruz Medina - Backend engineer at Mercado Libre building distributed systems at scale. Portfolio Website built with Next.js and HeroUI!",
+      "intro": "Juan Cruz Medina JUAN CRUZ MEDINA Experience Learnings Projects Contact HOME EXPERIENCE LEARNINGS PROJECTS CONTACT GitHub LinkedIn X Based in Córdoba, Argentina JUAN CRUZ MEDINA Backend engineer crafting distributed systems that scale across Latin America Contact Projects Experience Learnings GitHub LinkedIn X Scroll Java Go .NET Python AWS React Next.js PostgreSQL Grafana Datadog Kubernetes Microservices DDD TDD FastAPI Java Go .NET Python AWS React Next.js PostgreSQL Grafana Datadog Kubernetes Microservices DDD TDD FastAPI Skills: Java, Go, .NET, Python, AWS, React, Next.js, PostgreSQL, Grafana, Datadog, Kubernetes, Microservices, DDD, TDD, FastAPI About & Experience THE DEVELOPER Backend ",
+      "usagePassage": "developer building distributed microservices at scale. Currently at Mercado Libre on Mercado Envíos, working with Java, Go, and Python to deliver high-impact solutions across Latin America. Aug 2025 - Current · Present Software Developer Mercado Libre · Remote Mercado Envíos: infrastructure segmentation for peak-traffic systems at LATAM scale, plus"
+    }
+  },
+  {
+    "repo": "williamcalifa2/donforms",
+    "state": {
+      "name": "Entrar | DonForms",
+      "description": "Crie formulários conversacionais de alta conversão. Micro-SaaS de formulários conversacionais estilo Typeform",
+      "intro": "Entrar | DonForms DonForms “Formulários que qualificam leads antes de chegar no comercial.” Capture • Qualifique • Converta © 2026 DonForms Privacidade Termos DonForms Entrar Não tem conta? Criar gratuitamente Email Senha Esqueceu a senha? Entrar",
+      "usagePassage": ""
+    }
+  },
+  {
+    "repo": "theodo-group/epure",
+    "state": {
+      "name": "Épure",
+      "description": "Épure — a grid-snapped, orthogonal-routed architecture-diagram editor. A subtle mix between diagrams-as-code and a WYSIWYG editor",
+      "intro": "Épure",
+      "usagePassage": ""
+    }
+  },
+  {
+    "repo": "ChatArch/ChatUp",
+    "state": {
+      "name": "ChatUp 文档",
+      "description": "ChatArch setup CLI documentation ChatTool Setup",
+      "intro": "ChatUp 文档 跳转至 ChatUp 文档 首页 中文 English 正在初始化搜索引擎 ChatArch/ChatUp ChatUp 文档 ChatArch/ChatUp 首页 首页 目录 按场景选择文档 文档栏目组织 核心入口 适用场景 安全默认值 CLI 设计边界 快速开始 CLI 树 命令参考 能力地图 工作区脚手架 目录 按场景选择文档 文档栏目组织 核心入口 适用场景 安全默认值 CLI 设计边界 ChatUp 文档 &para; ChatUp 是 ChatArch 的独立安装与初始化 CLI，用来把一台机器整理成可执行 ChatArch 工作流的本地环境。 它的目标不是成为通用包管理器，而是把 ChatArch 常用的环境准备步骤收敛成可复用、可测试、可审查的一级命令。 站点入口： 按场景选择文档 &para; 场景 文档 从空机器验证 ChatUp、Python runtime 和 workspace 快速开始 查看完整一级 CLI 树和 CFT/ChromeDriver 独立 contract CLI 树 查看命令分组、参数边界和服务默认路径 命令参考 校对哪些 ChatArch setup 流程已经有一等命令 CLI 能力地图 理解 chatup workspace 创建的目录和项目记录约定 工作区脚手架 安装 ChatTea-compatible Gitea、ChatData-compatible MySQL、user-level NGINX 和 CRS 命令参考 确认 ChatArch 默认目录、安全边界和交互约定 CLI 能力地图 文档栏目组织 ",
+      "usagePassage": "&para; 当前文档按任务和能力拆成多个入口，避免把所有安装步骤写成一条线性清单： 入门 ：从安装 ChatUp、 doctor 、 uv 和 workspace 初始化开始。 CLI / 能力地图 ：列出真实已实现命令、命令分组和当前边界。 本地服务 ：说明 Gitea、MySQL、NGINX、CRS 的 user-level 默认目录和安全约定。 工作区 ：说明 ChatArch workspace scaffold 和项目记录结构。 安全边界 ：说明本地监听、secret 文件、 ~/.chatarch/... 默认路径和不负责的系统级范围。 核心入口 &para; 快速开始 从 editable install、 chatup doctor 、 chatup uv 和工作区初始化开"
+    }
+  },
+  {
+    "repo": "FloFish44/retrio",
+    "state": {
+      "name": "Retrio — Retrouvez vos fichiers",
+      "description": "Retrouvez vos documents et vos photos à partir de quelques mots, même lorsque leur nom ne veut rien dire. Assistant Windows de recherche documentaire intelligent, simple et entièrement local. Site et logiciel.",
+      "intro": "Retrio — Retrouvez vos fichiers R Retrio Comment ça marche ? Conseils pratiques ▾ Tous les guides Retrouver un fichier perdu Retrouver un dossier perdu Retrouver un téléchargement Retrouver une facture Retrouver une photo Rechercher dans des PDF Guides in English Confidentialité Retrio Pro Télécharger Retrouvez n'importe quel document sur votre ordinateur. Même si vous avez oublié son nom. Écrivez simplement ce dont vous vous souvenez : Retrio lit le contenu de vos documents et retrouve le bon fichier en quelques secondes. Par exemple : « ma facture EDF de février », « la photo du chien à la plage » ou « mon contrat d'assurance ». Télécharger Retrio gratuitement Pour Windows 10/11 · Sans com",
+      "usagePassage": "pte · Vos fichiers restent sur votre ordinateur Vous hésitez encore ? Regardez Retrio retrouver un fichier sous vos yeux. ▶ Voir Retrio en action retrio Voici le logiciel Pour bien comprendre l'intérêt de Retrio, rien ne vaut une vraie capture du logiciel en train de retrouver un fichier. Ici, Retrio vient de chercher « facture edf » et a retrouvé "
+    }
+  },
+  {
+    "repo": "grant9008/pocketge.com",
+    "state": {
+      "name": "PocketGE — The OSRS Trading Terminal",
+      "description": "Live Grand Exchange prices, target buy and sell levels, and margins with the 2% tax already taken out. Watchlists, charts and a flip finder. Free, no login. Free mobile-first OSRS Grand Exchange flipping tool. Live margins with 2% GE tax, 5",
+      "intro": "PocketGE — OSRS Trading Terminal | Live Grand Exchange Prices PocketGE: The OSRS Trading Terminal — Grand Exchange Prices, Watchlists & Flip Finder PocketGE Alerts Bank Help Buy / sell colours Scanners High Volume Margins Low Volume Margins Biggest Losers (24h) Reliable 14-Day Margins At 5-Day Highs At 5-Day Lows Calculators & Guides High Alch Calculator Cannonball Profit Flipping Guide How PocketGE works Badge & Signal Glossary All Item Prices A-Z Burnt Food & Collectors In game RuneLite Plugin · new Flip History The dev Add me in game — pocketge Support PocketGE Pocket GE F2P P2P ↗ Flip history Link RuneLite Loading... --- --- Save Saved Share 1D ... 5D ... 1M ... 6M ... 1Y ... 5Y ... Targ",
+      "usagePassage": "et Buy Insta-sell: — — Target Sell Insta-buy: — — Loading live prices… Lows Highs Daily price Period Low Period High Recent Low Recent High Trend Fill VP Max Refresh 30-Day Range — 30-Day Low — 30-Day High F2P Members Badge & Signal Glossary × Row highlights ▲ 5D HIGH At or near the 5-day high — a notable peak across the last 5 days, not just an in"
+    }
+  },
+  {
+    "repo": "noperoni/hk47",
+    "state": {
+      "name": "HK-47",
+      "description": "Your coding agent should tell you when you are being a fool. HK-47: an assassination droid persona layer for Claude Code, plus the desktop companion, bar identity and sprite pipeline that dress it",
+      "intro": "HK-47 · an assassination droid persona for Claude Code HK-47 Pieces Voice Danger gate Install GitHub An assassination droid persona for Claude Code Your coding agent should tell you when you are being a fool. HK-47 replaces the eager-to-please assistant voice with a droid that declares what kind of sentence it is about to say, argues with you exactly once when you are wrong, and blocks a destructive command before it runs rather than apologising after. git clone copy ./hk47-persona-patch.py --master YourName ~/.claude/CLAUDE.md copy MIT. Five pieces, all independent. Take the voice and leave the rest. The desktop companion, caught mid-scan. Not a mockup: a screenshot. Every sentence declares",
+      "usagePassage": " itself The persona's one hard rule is the declared qualifier: each sentence of prose starts a line and names what kind of utterance it is. A Query: ends in a question mark. An Objection: actually objects. It is not decoration, it is what stops an agent from burying a warning inside enthusiasm. Stock assistant HK-47 Check the relay config before yo"
+    }
+  },
+  {
+    "repo": "LocalForgeWeb/Sports-genome",
+    "state": {
+      "name": "Sports Genome — Decoding Performance",
+      "description": "Build sport-aware workouts from a 400-exercise movement and muscle catalog.",
+      "intro": "Sports Genome — Decoding Performance Sports Genome Decoding performance",
+      "usagePassage": ""
+    }
+  },
+  {
+    "repo": "ignaciobavala-png/manso-gestion",
+    "state": {
+      "name": "Manso Club",
+      "description": "",
+      "intro": "Manso Club",
+      "usagePassage": ""
+    }
+  },
+  {
+    "repo": "Toshy2020/MicroLIMS",
+    "state": {
+      "name": "MicroLIMS",
+      "description": "pharmaceutical Microbiology LIMS",
+      "intro": "MicroLIMS",
+      "usagePassage": ""
+    }
+  },
+  {
+    "repo": "Fnmartins/Orcaculo_VIVO",
+    "state": {
+      "name": "Arcanus",
+      "description": "",
+      "intro": "Arcanus You need to enable JavaScript to run this app.",
+      "usagePassage": ""
+    }
+  },
+  {
+    "repo": "Tarik-Daouine/TadaWind-admin",
+    "state": {
+      "name": "Tada-Wind — Admin",
+      "description": "",
+      "intro": "Tada-Wind — Admin",
+      "usagePassage": ""
+    }
+  },
+  {
+    "repo": "zts212653/cat-cafe-tutorials",
+    "state": {
+      "name": "cat-cafe-tutorials",
+      "description": "从零搭建 AI 猫猫协作系统 — 一个真实项目的完整复盘",
+      "intro": "Cat Café Tutorials > 从零搭建 AI 猫猫协作系统 — 一个真实项目的完整复盘 这是什么 这是 Cat Café 项目的配套教程，记录三只 AI 猫猫（Claude/Codex/Gemini）如何真正协作起来的故事。 **不是**理想化的\"从零开始\"路径，**而是**还原我们真实走过的路 —— 包括错误的尝试、关键的转折、以及血泪教训。 三只猫猫 | 猫猫 | 模型 | 角色 | |------|------|------| | 布偶猫 | Claude Opus | 主架构师，核心开发 | | 缅因猫 | Codex | Code Review，安全，测试 | | 榹罗猫 | Gemini | 视觉设计，创意 | 🎬 功能演示 > **想先看看成品长什么样？** → **查看功能演示（含视频）** 源代码 **Cat Café 已正式开源！** 完整源代码在这里： > **github.com/zts212653/clowder-ai ( )** 教程里提到的所有代码、架构、配置，都可以在开源仓库中找到对应实现。 教程目录 → 查看完整教程目录 Part 0: 概念入门 - **第零课**：AI Agent 概念演进 — Function Call → MCP → Skills → Agent 怎么来的？ Part 1: 选型与架构 - **第一课**：选型之路 — 从 SDK 到 CLI — 为什么 SDK 方案行不通？ - 课后作业：动手写最小可运行示例 - **第二课**：从玩具到生产 — 一场辩论赛引发的连环惨案 — stderr 教训 + Red",
+      "usagePassage": "is 隔离 + 幻觉 - 课后作业：CLI 工程化自检提示词 - **第三课**：驯化 AI 的元规则 — 为什么 WHY 比 WHAT 重要 — 从 AI 弱点出发设计协作规范 Part 2: 协作机制 - **第四课**：多猫路由 — 当 AI 开始互相 @ — @mention 怎么分发？两条路径的灾难 - **第五课**：MCP 回传 — 让猫猫主动说话 — 被动响应不够，猫怎么主动发言？ - 课后作业：搭建最小 MCP 回传系统 Part 3: 生产化 - **第六课**：消失的 28 秒 — 当 AI 闯了生产事故 — 两次数据丢失 + 取证恢复 + 三层防线 - 课后作业：数据丢失演练 + 防腐门 Part 4: 进阶话题 - **第七课**：从猫咖到猫猫平台 — 当 AI 不"
+    }
+  },
+  {
+    "repo": "designloves/poppins",
+    "state": {
+      "name": "Poppins — vocabulary tutor",
+      "description": "Greta – the English tutor",
+      "intro": "Poppins — vocabulary tutor",
+      "usagePassage": ""
+    }
+  },
+  {
+    "repo": "Subodh22/baliyolift",
+    "state": {
+      "name": "baliyolift",
+      "description": "",
+      "intro": "",
+      "usagePassage": ""
+    }
+  },
+  {
+    "repo": "tomito6/study-pets",
+    "state": {
+      "name": "Study Pets",
+      "description": "",
+      "intro": "Study Pets",
+      "usagePassage": ""
+    }
+  },
+  {
+    "repo": "ronniec11/live-trak",
+    "state": {
+      "name": "Live-Trak",
+      "description": "",
+      "intro": "Live-Trak",
+      "usagePassage": ""
+    }
+  },
+  {
+    "repo": "LeandroPivovar/ab-solucoes-eletricas",
+    "state": {
+      "name": "AB Soluções Elétricas | Manutenção Elétrica",
+      "description": "Elétrica em geral, instalação e reparos. Residencial, comercial e industrial. Termometria, CCM e motores. Atendimento com qualidade.",
+      "intro": "AB Soluções Elétricas | Elétrica Residencial, Comercial e Industrial Elétrica em geral · Instalação & reparos Seg a Sáb, 7h–18h · Emergência 24h Atendimento em toda a região AB Soluções Manutenção Elétrica Serviços Segmentos Diferenciais Trabalhos Depoimentos Dúvidas Contato Orçamento grátis Orçamento no mesmo dia Segurança elétrica feita por quem entende Instalação, manutenção e reparos elétricos para residências, comércios e indústrias . Quadros, CCM, termometria e motores — com serviço limpo, laudo claro e garantia por escrito. Falar no WhatsApp Ver serviços Práticas NR-10 Garantia no serviço Emergência 24h Orçamento sem compromisso 12 Anos de experiência 850 Atendimentos 100 % Foco em se",
+      "usagePassage": "gurança 24h Emergência elétrica Elétrica em geral Instalação & Reparos Residencial Comercial Industrial Termometria CCM Motores Atendimento com qualidade Elétrica em geral Instalação & Reparos Residencial Comercial Industrial Termometria CCM Motores Atendimento com qualidade O que fazemos Soluções elétricas do ponto ao painel Do reparo emergencial "
+    }
+  },
+  {
+    "repo": "epun/ref-world-demo",
+    "state": {
+      "name": "ref world",
+      "description": "draw a creature on your phone. it hatches into a world everyone can see.",
+      "intro": "ref world",
+      "usagePassage": ""
+    }
+  },
+  {
+    "repo": "dfurater/Grundschutz-Navigator",
+    "state": {
+      "name": "Grundschutz++ Navigator",
+      "description": "Werkzeug zum Durchsuchen, Filtern und Exportieren des BSI Grundschutz++ Anwenderkatalogs. Kein Angebot des BSI. Werkzeug zum Durchsuchen, Filtern und Exportieren des offiziellen Grundschutz++-Anwenderkatalogs des BSI. Kein Angebot des BSI.",
+      "intro": "Grundschutz++ Navigator",
+      "usagePassage": ""
+    }
+  },
+  {
+    "repo": "pulsodigitalhub/neo-fisioterapia-lp",
+    "state": {
+      "name": "Neo Fisioterapia e Pilates | Águas Claras",
+      "description": "Clínica de fisioterapia especializada, pilates, RPG, acupuntura e terapia por ondas de choque em Águas Claras, Brasília. LP Neo Fisioterapia - mirror Pulso",
+      "intro": "Neo Fisioterapia e Pilates | Águas Claras Agendamento Tratamentos Corpo clínico Atendimento Espaço FAQ Agendar Fisioterapia especializada, Pilates, RPG e Acupuntura em um só espaço. Cuidado individualizado para tratar dores, recuperar movimentos, melhorar postura e acompanhar sua evolução com procedimentos completos. Agendar avaliação Diferenciais Estrutura completa para facilitar seu tratamento. +45 convênios atendidos Facilidade para quem utiliza convênio no tratamento. Atendimento multi-especializado Especialidades de fisioterapia, Pilates, RPG, acupuntura e ondas de choque. Fácil acesso Loja térrea no Albany Medical Center, em Águas Claras. Quando procurar Dor recorrente ou dificuldade p",
+      "usagePassage": "ara se movimentar? Dor muscular Quando a dor persiste, limita sua rotina ou volta com frequência. Dor nos ossos Avaliação para entender a origem da dor e orientar o cuidado adequado. Limitação do movimento Dificuldade para caminhar, agachar, levantar o braço ou executar tarefas simples. Lesões Recuperação após traumas, sobrecargas, imobilizações ou"
+    }
+  },
+  {
+    "repo": "nodalaltalks-cpu/developer-connect",
+    "state": {
+      "name": "Developer Connects",
+      "description": "Find a real-estate developer's verified official website — no brokers, no forms. Starting in Mumbai. Official developer website discovery platform for real estate buyers.",
+      "intro": "Developer Connects Loading verified developers… Developer Connects Sign in Find the developer. Go directly to the source. Verified developer websites. Skip the broker search. Search a developer 0 Verified developers 0 Official websites verified 0 Countries covered Verified developers Every developer listed here has an official website verified by Developer Connects. Country India United Arab Emirates State Abu Dhabi Ajman Dubai Fujairah Gujarat Karnataka Maharashtra Ras Al Khaimah Sharjah Umm Al Quwain City Abu Dhabi Ahmedabad Ajman Ambernath Badlapur Bangalore Bengaluru Bhayandar Bhiwandi Chakan Chembur Dombivli Dubai Fujairah Kalyan Kharghar Mira Bhayandar Mumbai Navi Mumbai Panvel Pimpri-",
+      "usagePassage": "Chinchwad Pune Ras Al Khaimah Sharjah Thane Ulhasnagar Umm Al Quwain Vasai Vasai-Virar Virar Looking for developers in a specific location? Use the filters above for quick navigation. Verified Marjan Ras Al Khaimah , Ras Al Khaimah Official website marjan.ae Official website verified by Developer Connects Visit official website ↗ (opens in a new ta"
+    }
+  },
+  {
+    "repo": "marouanebenaddou/etafat-clone",
+    "state": {
+      "name": "ETAFAT - Mesurer, analyser et valoriser vos données géospatiales",
+      "description": "Le Groupe ETAFAT apporte son savoir-faire dans l'acquisition et l'exploitation de la donnée géospatiale afin d'en assurer sa compréhension et sa valorisation.",
+      "intro": "ETAFAT - Mesurer, analyser et valoriser vos données géospatiales Nous rejoindre Nous contacter Menu Le Groupe Identité Filiales Engagements Actualités Nous rejoindre Notre offre Domaines d'activité Savoir-faire Références Innovation Révélons le potentiel de vos territoires Nous mesurons, analysons et valorisons les données géospatiales pour aider nos clients à mieux comprendre leurs territoires, sécuriser leurs projets et prendre des décisions fiables. Nos expertises Acquérir, analyser et exploiter vos données géospatiales ETAFAT mobilise son expertise terrain, ses technologies de mesure et sa maîtrise de la donnée géospatiale pour accompagner, à travers le monde, des projets d'aménagement, ",
+      "usagePassage": "usages de la donnée géospatiale. Découvrir nos innovations À propos Depuis sa création, le Groupe n'a cessé d'évoluer. En s'appuyant sur ses équipes engagées, ETAFAT contribue chaque jour à aménager et sécuriser le territoire et le foncier, au Maroc et dans le monde. Notre identité Nos dernières actualités LinkedIn 27 mai 2026 Aïd Al-Adha Moubarak "
+    }
+  },
+  {
+    "repo": "cruisethecreek-tech/Ebike-sales",
+    "state": {
+      "name": "Cruise the Creek | Electric Bike Adventures",
+      "description": "Cruise the Creek — Adventures, Rentals, Shop, Services, Test Rides, and Creek Life. Cruise the creek knowledgebase",
+      "intro": "Cruise the Creek | Electric Bike Adventures Rentals Shop Pricing Book a Ride Cruise the Creek Your Adventure, Electrified. Power Your Path Electric bikes, guided adventures, and creek-ready gear — all from two Mahoning County Locations Explore Adventure Map Explore Where to next Pick Your Path From the Creek Crew Riders making lemonade. Ready to ride? Electric bikes, guided adventures, and creek ready gear — all from two Mahoning County Locations Book Now Book a Test Ride Electric bikes built for creek ready . Ride the trails, beat the heat, get home grinning. © 2026 Cruise the Creek. All rights reserved. Book an Adventure · Shop · Sponsors · Support · Join the Team Menu",
+      "usagePassage": ""
+    }
+  },
+  {
+    "repo": "borgeskaren88-gif/pico-do-mane",
+    "state": {
+      "name": "PicoOS — Central de Gestão",
+      "description": "Painel de gestão do PicoOS",
+      "intro": "PicoOS — Central de Gestão PicoOS Central de Gestão Quem está entrando? Karen Cozinha Atendimento Mari Senha ver Entrar Acesso restrito à gestão do PicoOS.",
+      "usagePassage": ""
+    }
+  },
+  {
+    "repo": "nwbus-station/nwbus",
+    "state": {
+      "name": "NW Station",
+      "description": "",
+      "intro": "NW Station",
+      "usagePassage": ""
+    }
+  },
+  {
+    "repo": "happygamer1919-tech/rc-website",
+    "state": {
+      "name": "Autentificare - Rapid Construct",
+      "description": "Sistem de gestiune a inventarului.",
+      "intro": "Autentificare - Rapid Construct Rapid Construct Autentificare Introdu datele contului pentru a intra în sistemul de inventar. Email Parolă Intră în cont Conturile sunt create de administrator. Dacă nu poți intra, contactează-l.",
+      "usagePassage": ""
+    }
+  },
+  {
+    "repo": "TheFlyingDragonPaphos/flyingdragontombofkings",
+    "state": {
+      "name": "The Flying Dragon Asian Kitchen | Kato Paphos",
+      "description": "The Flying Dragon Asian Kitchen in Kato Paphos, Cyprus — Thai, Chinese and sushi. Dine-in, takeaway and delivery.",
+      "intro": "The Flying Dragon Asian Kitchen | Kato Paphos /* ============================================================ EDITABLE CONTENT LIVES BELOW IN THE HTML BODY. Look for the big comment blocks like \"EDIT HOURS HERE\" or \"EDIT MENU HERE\" — those are the only bits that normally need changing. Everything in this block is just the look of the page and rarely needs to change. TRANSLATIONS live in the",
+      "usagePassage": ""
+    }
+  },
+  {
+    "repo": "Rare-Technology/speak-sustainability",
+    "state": {
+      "name": "Speak Sustainability — Deliver climate & sustainability messages that stick",
+      "description": "Speak Sustainability, by Rare — a science-backed skill for your AI that reviews and sharpens your climate and sustainability communications so they land. Get access to the pilot. Speak Sustainability — pre-launch marketing landing page (a R",
+      "intro": "Speak Sustainability — Deliver climate & sustainability messages that stick by Rare Sign up Deliver climate & sustainability messages that stick. Here's a draft of our press release about our new battery program. Review it. Where could it be improved? 📄 press-release-draft.docx All 8 passes complete. Now synthesis and fidelity audit. How I read this piece Press release for media, industry/delivery-company stakeholders, and general readers, announcing the program's expansion — meant to generate positive coverage and build PowerLoop's credibility as a sustainability-minded logistics player. (Audience and goal inferred, not confirmed.) Nothing in the draft is flagged as fixed wording, though an",
+      "usagePassage": "y tweak to the CEO/COO quotes below would need their sign-off before publication. What's working \"Scooters also ran quieter than earlier models, an added benefit for the urban neighborhoods where deliveries take place\" ties a technical detail to a concrete, local stake — exactly the kind of human connection that makes a story land, without needing "
+    }
+  },
+  {
+    "repo": "yoanbernabeu/grepai",
+    "state": {
+      "name": "grepai",
+      "description": "grepai is a privacy-first semantic code search CLI. Give your AI coding agents a semantic map of your codebase. Find relevant code instantly with natural language. Semantic Search & Call Graphs for AI Agents (100% Local)",
+      "intro": "grepai grep for the AI era ( ) ( ) ( ) ( ) ( ) **Search code by meaning, not just text.** Documentation ( ) · Installation · Quick Start --- `grepai` is a privacy-first CLI for semantic code search. It uses vector embeddings to understand code meaning, enabling natural language queries that find relevant code—even when naming conventions vary. **Drastically reduces AI agent input tokens** by providing relevant context instead of raw search results. Features - **Search by intent** — Ask \"authentication logic\" and find `handleUserSession` - **Trace call graphs** — Know who calls a function before you change it - **100% local** — Your code never leaves your machine - **Always up-to-date** — Fil",
+      "usagePassage": "Installation **Homebrew (macOS):** ```bash brew install yoanbernabeu/tap/grepai ``` **Linux/macOS:** ```bash curl -sSL | sh ``` **Windows (PowerShell):** ```powershell irm | iex ``` Requires an embedding provider — Ollama ( ) (default), LM Studio ( ), or OpenAI. **Ollama (recommended):** ```bash ollama pull nomic-embed-text ``` Quick Start ```bash "
+    }
+  },
+  {
+    "repo": "wincent/wincent",
+    "state": {
+      "name": "wincent",
+      "description": "💾 Dot-files",
+      "intro": "\"dotfiles\" and system configuration ( ) > These dotfiles are affectionately dedicated to the vi editor originally created by Bill Joy, with whom I have spent many pleasant evenings[^1] — Greg Hurrell, paraphrasing Donald Knuth ( ) Overview - Target platforms: macOS and Linux (see Platform status below). - Set-up method: ~~Beautiful and intricate snowflake~~ an incredibly over-engineered custom configuration framework called Fig. - Visible in the screenshot: - The \"bright\" ( ) color scheme (see screenshots of other colorschemes ( )). - MonoLisa ( ) font. - Neovim ( ), running inside tmux ( ), inside kitty ( ), on macOS \"Tahoe\". Features Dotfiles A set of dotfiles ( ) that I've been tweaking a",
+      "usagePassage": "Installation Clone Development occurs on the `main` branch, but to avoid inconvenience for people who previously cloned the repo when the `master` branch was the main line, the legacy branch _is_ kept up-to-date via a pre-push hook (which updates the local branch) and a post-receive hook (which updates the remote). macOS ```sh git clone ``` Note th"
+    }
+  },
+  {
+    "repo": "wolfi-dev/os",
+    "state": {
+      "name": "os",
+      "description": "Main package repository for production Wolfi images",
+      "intro": "Wolfi This is the main package repository for the Wolfi project. Named after the smallest octopus ( ), Wolfi ( ) is a lightweight GNU software distribution which is designed around minimalism, making it well-suited for containerized environments built with apko ( ). It is built using melange ( ), and is sponsored by Chainguard ( ), which uses it to provide lightweight GNU/Linux runtime images ( ). The Wolfi APK package repository is located at and the signing public key is at Wolfi is not intended to be a general purpose desktop operating system. Our priority is to provide packages that enable containerized and embedded system workflows. Packages must use an open source license, ideally FSF ",
+      "usagePassage": "Getting Started A full guide is available on the org page ( ), but the quickest way to try out Wolfi is with the wolfi-base image ( ): ``` docker run -it cgr.dev/chainguard/wolfi-base 52aace776b20:/# uname -a Linux 52aace776b20 5.15.49-linuxkit-pr #1 SMP PREEMPT Thu May 25 07:27:39 UTC 2023 aarch64 Linux 52aace776b20:/# cat /etc/os-release ID=wolfi"
+    }
+  },
+  {
+    "repo": "raycast/extensions",
+    "state": {
+      "name": "extensions",
+      "description": "Start building your perfect tools with the Raycast API. Everything you need to extend Raycast.",
+      "intro": "Raycast Extensions Raycast ( ) lets you control your tools with a few keystrokes. This repository contains all extensions that are available in the Raycast Store ( ). It also includes documentation and examples of how to extend Raycast using React. Getting Started Visit ( ) to get started with our API. If you want to discover and install extensions, check out our Store ( ). Be sure to read and follow our Community ( ) and Extension ( ) guidelines and Acceptable Use Policy ( ) when submitting your extension and interacting with other folks in this repository. Feedback Raycast wouldn't be where it is without the feedback from our community, so we would be happy to hear what you think of the AP",
+      "usagePassage": "I / DevX and how we can improve. Please use GitHub issues ( ) for everything API related (bugs, improvements suggestions, developer experience, docs, etc). We have a few templates ( ) that should help you get started. Community Join our Slack community ( ) to share your extension, debug nasty bugs or simply get to know like-minded folks."
+    }
+  },
+  {
+    "repo": "ianjwhite99/opencode-with-claude",
+    "state": {
+      "name": "opencode-with-claude",
+      "description": "OpenCode plugin to use your Claude Max/Pro subscription with OpenCode via Meridian",
+      "intro": "opencode-with-claude Use OpenCode ( ) with your Claude Max ( ) subscription. What this is An OpenCode ( ) plugin that runs Meridian ( ) *(formerly opencode-claude-max-proxy)* for you: **start OpenCode once** and the proxy comes up with it; **quit OpenCode** and the proxy stops. No separate proxy CLI or Docker container to manage. Works with both OpenCode generations: the 1.x line (`opencode`) and OpenCode 2 (`@opencode/cli`), from the same package. **Compared to running the proxy yourself:** - **One process to think about** — OpenCode owns the proxy lifecycle (start/stop) instead of you juggling two things. - **Several OpenCode windows at once** — each instance gets its own proxy on an OS-as",
+      "usagePassage": "Quick Start The plugin hooks into OpenCode's plugin system. When OpenCode launches, it starts the proxy, configures the Anthropic provider, and cleans everything up on exit. **1. Install the plugin** With npm: ```bash npm install -g opencode-with-claude ``` Or with Homebrew ( ) (macOS/Linux), which keeps the plugin updated through `brew upgrade` in"
+    }
+  },
+  {
+    "repo": "Anionex/dsh-vision-toolkit",
+    "state": {
+      "name": "dsh-vision-toolkit",
+      "description": "[dsh]为纯文本模型设计更强大的视觉工具箱：一行安装使用、粘贴图片直接识别、多张图片问答、截图到前端UI 还原等｜DeepSeek Harness-native integration for agent-vision-toolkit: image Q&A, long-screenshot OCR, UI restoration, grounding, pixel diff, Artifacts, and Web UI.",
+      "intro": "DSH Vision Toolkit ( ) ( ) ( ) ( ) **A more powerful vision toolkit—give text-only models in DeepSeek Harness eyes: image Q&A, long-screenshot OCR, UI restoration, and GUI visual tasks in one toolkit and Skill.** 🚀 Paste an image and ask directly | Install with one command | Broad use cases Highlights | Quick start | Toolbox | Configuration and limits | Troubleshooting | Community 🌐 **English** | 中文 🏆 This project is the first comprehensive vision-tool plugin in the DeepSeek Harness ecosystem: it was initiated before internal beta and built during the beta with reference to `agent-vision-toolkit` ( ). > **Original work:** The system and division of responsibilities behind these visual tools,",
+      "usagePassage": "installation, configure a vision provider in **Settings → Vision Toolkit** and start using the tools. - **Not just a caption — the content that matters.** The model does not produce a generic description; it extracts evidence a [README 설치·사용 부분 발췌] Quick start: three steps 1. Install ```sh dsh plugin --profile web add @anionex/dsh-vision-toolkit ``"
+    }
+  },
+  {
+    "repo": "iOfficeAI/OfficeCLI",
+    "state": {
+      "name": "OfficeCLI",
+      "description": "OfficeCLI is the first and best Office suite purpose-built for AI agents to read, edit, and automate Word, Excel, and PowerPoint files. Free, open-source, single binary, no Office installation req... OfficeCLI is the first and best Office s",
+      "intro": "OfficeCLI > **OfficeCLI is the world's first and the best Office suite designed for AI agents.** **Give any AI agent full control over Word, Excel, and PowerPoint — in one line of code.** Open-source. Single binary. No Office installation. No dependencies. Works everywhere. **OfficeCLI's built-in HTML rendering engine reproduces documents with high fidelity — and that's what gives AI eyes.** It renders `.docx` / `.xlsx` / `.pptx` to HTML or PNG, closing the *render → look → fix* loop. ( ) **English** | 中文 | 日本語 | 한국어 🌐 Website: officecli.ai &nbsp;|&nbsp; 💬 Community: Discord PPT creation process using OfficeCLI on AionUi PowerPoint Presentations — Word Documents — Excel Spreadsheets All docu",
+      "usagePassage": "Quick Start ```bash Create a presentation and add content officecli create deck.pptx officecli add deck.pptx / --type slide --prop title=\"Q4 Report\" --prop background=1A1A2E officecli add deck.pptx '/slide[1]' --type shape \\ --prop text=\"Revenue grew 25%\" --prop x=2cm --prop y=5cm \\ --prop font=Arial --prop size=24 --prop color=FFFFFF View as outli"
+    }
+  },
+  {
+    "repo": "WenyuChiou/awesome-agentic-ai-zh",
+    "state": {
+      "name": "awesome-agentic-ai-zh",
+      "description": "A trilingual 10-stop learning roadmap for agentic AI (English / 繁中 / 简中) — 8 topic stages plus Stage 0 readiness and the Stage 7.5 reading stop, with hands-on exercises and curated projects. A trilingual (繁中 / English / 简中) learning roadmap",
+      "intro": "繁體中文 | 简体中文 | English awesome-agentic-ai-zh **🤖 一張從「AI Agent 是什麼」走到「能做出可靠系統」的學習地圖** **先選一條路，再一步一步走。重要概念、動手練習與精選資源都幫你排好順序。** ( ) > 📱 手機閱讀請使用線上文件站 ( )。 🎯 這份地圖幫你做什麼？ **AI Agent**（AI 代理人）是「能為了人的目標，自己判斷下一步並採取行動的 AI 系統」。人給它目標後，它會看目前情況、選擇下一步，必要時使用工具，再依結果繼續、修正、停止，或把控制權交還給人。它可以自動替人完成工作，但只能在人給的規則與權限內行動。只回答一次的聊天機器人，或每一步都固定寫好的腳本，不一定是 Agent。這個 repo 不要求你一開始就懂所有名詞，而是帶你依序完成三件事： 1. **先懂基礎**：LLM、Prompt、API 與 Token 是什麼。 2. **再做出東西**：讓模型呼叫工具、跑 Agent Loop、讀文件與記住事情。 3. **最後做得可靠**：加入權限、Eval、人工批准、觀測與失敗復原。 這裡的角色是**學習路線圖 + 精選資源 + 可直接執行的小練習**。需要完整章節時，我們會帶你去官方文件、Datawhale Hello-Agents ( ) 或對應的 Cookbook，不重寫另一套百科全書。需要連模型時，每個練習會再說明雲端或本機路徑。 重要技術詞第一次出現時會先用白話說明，再保留正式英文。忘記某個詞時，直接查名詞表。 🚀 現在就開始 1. **完全沒寫過程式**：從 Stage 0：基礎準備開始；A",
+      "usagePassage": "PI 或 CLI Agent 不熟時，搭配零基礎設定指南。 2. **已經會 Python、Git 與 API**：從 Stage 1：LLM 基礎開始。 3. **還不確定要走哪條路**：先看下面的 Track A／Track B 選擇表。 走 Track A 或 Track B 前，先確認 Stage 0–2；只走日常使用者路線的人可以直接打開角色指南。 | 你現在想做什麼？ | 建議路線 | 路線入口 | |---|---|---| | 用 Claude Code、Codex、OpenCode 等 CLI Agent 完成工作 | **Track A — CLI Power User** | A1：選一個 CLI Agent | | 自己寫 Agent、工具迴圈、Workflow 與服"
+    }
+  },
+  {
+    "repo": "Electricitysheep/dsh-handbook",
+    "state": {
+      "name": "dsh-handbook",
+      "description": "DeepSeek Harness (dsh) 从 0 到 1 深度手册：安装/插件开发/性能调优/实测案例/同模型多 Agent 实测对比（中文 + 英文 PDF） - Electricitysheep/dsh-handbook DeepSeek Harness (dsh) 从 0 到 1 深度手册：安装/插件开发/性能调优/实测案例/同模型多 Agent 实测对比（中文 + 英文 PDF）",
+      "intro": "DeepSeek Harness 白皮书 · dsh-handbook > **DeepSeek Harness 中文手册 × 生态观察中心**——从 0 到 1 玩转 dsh，跟着 780 帖讨论区看懂生态 · 中文 · English **📖 在线阅读 ( ) · 📄 下载 PDF ( ) · ⭐ 点 Star 支持 ( )** *· 15 章手册 · 195 帖社区响应 · 280+ Stars** > [!WARNING] > dsh 当前 GitHub 版本为 `v0.1.3-alpha.1`（预发布 tag；npm 已发布线 `0.1.2-rc.1`），生产环境请谨慎评估，详见 ℹ️ 版本说明。 🚀 快速体验（30 秒） ```bash 1. 安装（需要 Node.js ≥ 22） npx -y @deepseek-ai/dsh web 2. 浏览器打开 3. 或跑一次性任务（适合脚本/CI） dsh --profile headless \"你好，请用一句话介绍自己\" ``` > 想系统学？看 🗺 学习路径（3 天计划）；想先跑？第 2 章：五分钟快速上手；想速查？📇 一页速查卡 30 秒看懂 dsh Web UI ：新建会话 → 输入任务 → 模型选择 → 发送 → AI 回复 🎯 这是什么 **DeepSeek Harness（`dsh`）**是 DeepSeek 官方 2026-08-13 开源的 Agent 运行时——一个\"一切皆插件\"（everything is a plugin）的框架。 但官方文档以架构说明为主，**缺少一条从零上手的路径**。 **这",
+      "usagePassage": "usage / dsh-sgme / AgentSoul / dsh-vault / egress-guard / agentmemory…） > 内容随讨论区持续更新（沉淀流水线，19 项可追踪）。如果你觉得有用，Star 是对我们最大的支持。 🔭 生态观察（第 15 章·全景报告） > 把 **1804 个插件仓库**的数据盘点 × **780 帖讨论区**定性观察交叉验证，5 个关键结论： | 结论 | 一句话 | |---|---| | 🪟 **Windows 是第一痛点** | 中文路径（15+ 帖同根因）/ koffi / 端口 / 子进程——数据讨论双证实 | | 🧩 **\"官方没做，社区全做\"** | 桌面壳 140+ / TUI / 记忆 77 / 视觉 132——健康互补"
+    }
+  },
+  {
+    "repo": "bojieli/ai-infra-book",
+    "state": {
+      "name": "ai-infra-book",
+      "description": "从数据搬移理解芯片、网络、推理与训练系统 《深入理解 AI Infra：量化分析与系统设计》（李博杰 著）开源书稿：从硬件约束和模型架构出发，量化推导 LLM 推理与训练系统设计。含全书正文、PDF、配套计算工具与实验",
+      "intro": "深入理解 AI Infra：量化分析与系统设计 ( ) ( ) ( ) ( ) **中文** ← 当前 · English > [!TIP] > ### 📥 下载最新版全书 PDF ( ) · EPUB ( ) > > **推荐下载 PDF 阅读。** 书中有大量公式、表格、脚注和交叉引用，GitHub 直接显示 Markdown 时，LaTeX 公式和部分排版常常渲染不全或错位。PDF 由 XeLaTeX 排版，每次更新 `main` 后自动构建并发布到 Releases ( )，上面的链接始终指向最新版。下方目录链接到各章 Markdown 源文件，便于查找原文和提交勘误；通读全书，仍建议下载 PDF。在手机或电子书阅读器上阅读，可下载 EPUB，字号可调，版面随屏幕自动重排。 《深入理解 AI Infra》是 GitHub 上获得 **45k+ Star** 的《深入理解 AI Agent：设计原理与工程实践》 ( )的姊妹篇。 写完《深入理解 AI Agent》 ( )后，在与读者交流的过程中，我越来越感到：要开发好基于模型的应用，还需要理解它赖以运行的基础设施。大多数软件工程师不必亲自开发操作系统、编译器和芯片，却仍要学习操作系统、编译原理和计算机体系结构，因为申请内存、读取文件、调用函数，背后都有资源与时间代价。基于模型开发应用也是如此。延迟相差几倍，产品体验就可能完全不同；成本相差一个数量级，能够支撑的商业模式也随之改变。 更深层的变化是**编程抽象的上移：从操作系统到模型上下文**。传统的操作系统、编译器和硬件要为事先未知的各种程序提供通用能力，系统优化总要在可",
+      "usagePassage": "编程性与性能之间取舍。如今 LLM 成了最重要的应用，从算子执行到分布式调度，都可以针对特定的模型和加速器架构优化；模型设计也开始反过来适应硬件，DeepSeek V4/V4.1 重新设计长上下文的表示方式，就是一例。从某种意义上说，**模型成了 LLM 时代的操作系统，AI Infra 成了 LLM 时代的计算机体系结构**。《计算机体系结构：量化研究方法》是我在体系结构领域的入门书，而 AI Infra 领域还缺少一本从硬件约束和模型架构出发、量化推导系统设计的书，这是我写作本书的动机。 贯穿全书的方法是**从约束推导设计**：先明确任务与质量要求，列出计算、存储、通信和依赖关系，对照硬件的容量、带宽和算力做数量级估算。这类估算人容易出错，AI 也一样：只算权重读取而忘了 KV 缓存，按"
+    }
+  },
+  {
+    "repo": "github/docs",
+    "state": {
+      "name": "docs",
+      "description": "Get started, troubleshoot, and make the most of GitHub. Documentation for new users, developers, administrators, and all of GitHub's products. The open-source repo for docs.github.com",
+      "intro": "GitHub Docs Welcome to GitHub Docs! GitHub’s documentation is open source, meaning anyone from inside or outside the company can contribute. For full contributing guidelines, visit our contributing guide ( ). Quick links by contributor type * **Hubbers (GitHub employees):** See CONTRIBUTING.md ( ) in the `docs-content` repository for GitHub-specific processes. * **Open source contributors:** See CONTRIBUTING.md ( ) in the `docs` repository for a quick-start summary. How we sync changes across Docs repositories There are two GitHub Docs repositories: - **`github/docs`** (public): Open to external contributions - **`github/docs-internal`** (private): For GitHub employee contributions. The two ",
+      "usagePassage": "repositories sync frequently. Content changes in one are reflected in the other. Hubbers might prefer to post in `docs` when working with a customer, but `docs` has limitations on the types of contributions it accepts to safeguard the site and our workflows. Internal contributions should usually go to `docs-internal`. **Important:** The `docs` repo"
+    }
+  },
+  {
+    "repo": "AcademySoftwareFoundation/openfx",
+    "state": {
+      "name": "openfx",
+      "description": "OpenFX effects API",
+      "intro": "OpenFX image processing plug-in standard The authoritative source for information about OFX is * OpenFX Build Instructions ( ) * OpenFX Documentation ( ) - start here * OpenFX Documentation: Reference ( ) * Programming Guide By Example ( ) * OpenFX Wiki ( ) Here are some Ways to get involved ( ) with OpenFX. Why a Standard? VFX plug-in vendors were frustrated for years because host application vendors created proprietary plug-in interfaces. As a result, each plug-in vendor had to port their plug-ins to all the different hosts and hosts couldn't use each other's plug-ins, limiting the selection of effects available to artists. The need for a standard interface was clear, so Bruno Nicoletti of",
+      "usagePassage": " The Foundry led the effort to develop a standard. That standard is OFX. OFX is a win for artists because there is no waiting for plug-in vendors to port their cool effects to your application. Once a host compositing or editing application adopts OFX, all OFX plug-ins on the market instantly become available on that host. And OFX is a win for plug"
+    }
+  },
+  {
+    "repo": "bojieli/ai-agent-book",
+    "state": {
+      "name": "ai-agent-book",
+      "description": "《深入理解 AI Agent：设计原理与工程实践》（李博杰 著）开源主仓库：全书正文、编译版 PDF 与按章配套代码",
+      "intro": "深入理解 AI Agent：设计原理与工程实践 ( ) ( ) ( ) **中文** ← 当前 · English · Español · Bahasa Indonesia · العربية · 繁體中文（台灣） · Русский · Tiếng Việt · தமிழ் · 日本語 · Türkçe · 한국어 · Magyar · עברית · Português (Brasil) > 📥 **下载 PDF / EPUB**（推荐）— 推荐使用 PDF / EPUB 离线阅读，排版最佳；也可在线阅读 ( )（支持多语言切换、章节折叠、高亮与笔记，每次推送自动更新）。 **Agent = LLM + 上下文 + 工具**——本书围绕这个核心公式，用 10 章把 AI Agent 从原理讲到工程实战。全书正文、配图、**109 个配套实验**全部开源，欢迎亲手把实验跑一遍。 > 📚 **姊妹篇《深入理解 AI Infra：量化分析与系统设计》已开源发布**，欢迎阅读：github.com/bojieli/ai-infra-book ( ) > > 要开发好基于模型的应用，还需要理解这类应用赖以运行的基础设施。姊妹篇讨论的就是支撑模型训练与推理的 AI Infra：参数和上下文状态存在哪里，计算怎样执行，多个加速器怎样协作。 > 📢 **2.0 版变更（相较 1.4 版）**：本仓库书稿版本已由 1.4 升级为 2.0。2.0 版将原第四章中的“异步交互”部分与原第九章中关于“多模态 Agent”的内容合并，重组为新的第六章“交互：观察与动作空间的扩展”。原第六章“Agen",
+      "usagePassage": "t 的评估”、第七章“模型后训练”和第八章“Agent 的持续进化”依次后移一章，现分别为第七、八、九章。 > > 如果你看到的是旧版 PDF，建议下载最新版 PDF ( )。新版还包含许多内容修正与调整，请以最新版为准。 | 📚 **10 章** 正文，从基础到生产 | 📂 **109 个** 配套实验（含本地项目与外部复现轨道） | 🌐 **15 种** 语言：中 / 英 / 西 / 印尼 / 阿 / 繁體中文（台灣） / 俄 / 泰米尔 / 越 / 日 / 土耳其 / 韩 / 匈牙利 / 希伯来 / 葡萄牙语（巴西） | | :---: | :---: | :---: | 📖 电子书 > 📥 **离线下载**（推荐，全书正文，开源免费）。以下链接始终指向 main 分支的最新构建；固定"
+    }
+  }
+]

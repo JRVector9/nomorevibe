@@ -1,0 +1,26 @@
+{
+  "installationMention": {
+    "type": "choice",
+    "instructions": "Are installation or usage steps shown in this text?",
+    "criteria": {
+      "present": "Software installation command, invocation, setup path or install menu is shown",
+      "absent": "No software installation or usage steps are shown"
+    }
+  },
+  "pluginMention": {
+    "type": "choice",
+    "instructions": "What kind of package is being offered?",
+    "criteria": {
+      "plugin": "An installable extension or plugin for another named application",
+      "other": "Standalone application, library, book, website, list or other content"
+    }
+  },
+  "skillMention": {
+    "type": "choice",
+    "instructions": "What is the main deliverable?",
+    "criteria": {
+      "skill": "Reusable agent skill package with SKILL.md or a skills installation directory",
+      "other": "Application, library, plugin, article, tutorial, book or other content"
+    }
+  }
+}

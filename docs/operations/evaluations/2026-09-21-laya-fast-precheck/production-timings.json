@@ -1,0 +1,251 @@
+{
+  "at": "2026-09-21T02:10:13.362Z",
+  "first": [
+    {
+      "provider": "abcllm",
+      "model": "[MLX] gpt-oss-120b",
+      "state": "succeeded",
+      "error_code": null,
+      "n": 2589,
+      "p50_seconds": "10.372",
+      "p95_seconds": "14.467",
+      "avg_input_tokens": 3075,
+      "avg_output_tokens": 190
+    },
+    {
+      "provider": "abcllm",
+      "model": "[MLX] gpt-oss-120b",
+      "state": "failed",
+      "error_code": "gateway_error",
+      "n": 43,
+      "p50_seconds": "4.202",
+      "p95_seconds": "4.661",
+      "avg_input_tokens": null,
+      "avg_output_tokens": null
+    },
+    {
+      "provider": "abcllm",
+      "model": "[MLX] gpt-oss-120b",
+      "state": "failed",
+      "error_code": "invalid_output",
+      "n": 27,
+      "p50_seconds": "11.388",
+      "p95_seconds": "14.154",
+      "avg_input_tokens": null,
+      "avg_output_tokens": null
+    },
+    {
+      "provider": "abcllm",
+      "model": "[MLX] gpt-oss-120b",
+      "state": "failed",
+      "error_code": "cancelled",
+      "n": 4,
+      "p50_seconds": "2.421",
+      "p95_seconds": "2.963",
+      "avg_input_tokens": null,
+      "avg_output_tokens": null
+    },
+    {
+      "provider": "rules",
+      "model": "2026-09-19.2",
+      "state": "succeeded",
+      "error_code": null,
+      "n": 2,
+      "p50_seconds": "0.040",
+      "p95_seconds": "0.045",
+      "avg_input_tokens": null,
+      "avg_output_tokens": null
+    },
+    {
+      "provider": "rules",
+      "model": "2026-09-21.1",
+      "state": "succeeded",
+      "error_code": null,
+      "n": 2,
+      "p50_seconds": "0.037",
+      "p95_seconds": "0.046",
+      "avg_input_tokens": null,
+      "avg_output_tokens": null
+    },
+    {
+      "provider": "rules",
+      "model": "2026-09-21.2",
+      "state": "succeeded",
+      "error_code": null,
+      "n": 1,
+      "p50_seconds": "0.035",
+      "p95_seconds": "0.035",
+      "avg_input_tokens": null,
+      "avg_output_tokens": null
+    }
+  ],
+  "firstReusedBreakdown": [
+    {
+      "reused": false,
+      "n": 2399,
+      "p50_seconds": "10.600",
+      "p95_seconds": "14.525"
+    },
+    {
+      "reused": true,
+      "n": 190,
+      "p50_seconds": "0.036",
+      "p95_seconds": "0.047"
+    }
+  ],
+  "firstHour": [
+    {
+      "provider": "abcllm",
+      "model": "[MLX] gpt-oss-120b",
+      "state": "succeeded",
+      "error_code": null,
+      "n": 74,
+      "p50_seconds": "10.876",
+      "p95_seconds": "14.266"
+    },
+    {
+      "provider": "abcllm",
+      "model": "[MLX] gpt-oss-120b",
+      "state": "failed",
+      "error_code": "gateway_error",
+      "n": 1,
+      "p50_seconds": "4.038",
+      "p95_seconds": "4.038"
+    },
+    {
+      "provider": "abcllm",
+      "model": "[MLX] gpt-oss-120b",
+      "state": "failed",
+      "error_code": "invalid_output",
+      "n": 1,
+      "p50_seconds": "12.645",
+      "p95_seconds": "12.645"
+    }
+  ],
+  "second": [
+    {
+      "provider": "abcllm",
+      "model": "[MLX] qwen3.6-35b-heretic",
+      "status": "resolved",
+      "error_code": null,
+      "n": 1789,
+      "queue_plus_review_p50_seconds": "7.534",
+      "queue_plus_review_p95_seconds": "10.841"
+    },
+    {
+      "provider": "abcllm",
+      "model": "[MLX] qwen3.6-35b-heretic",
+      "status": "needs_human",
+      "error_code": null,
+      "n": 198,
+      "queue_plus_review_p50_seconds": "7.957",
+      "queue_plus_review_p95_seconds": "11.313"
+    },
+    {
+      "provider": "abcllm",
+      "model": "[MLX] qwen3.6-35b-heretic",
+      "status": "resolved",
+      "error_code": "invalid_output",
+      "n": 49,
+      "queue_plus_review_p50_seconds": "9.435",
+      "queue_plus_review_p95_seconds": "19.486"
+    },
+    {
+      "provider": "claude-cli",
+      "model": "sonnet",
+      "status": "resolved",
+      "error_code": null,
+      "n": 42,
+      "queue_plus_review_p50_seconds": "57.780",
+      "queue_plus_review_p95_seconds": "67.298"
+    },
+    {
+      "provider": "abcllm",
+      "model": "[MLX] qwen3.6-35b-heretic",
+      "status": "agreed",
+      "error_code": null,
+      "n": 14,
+      "queue_plus_review_p50_seconds": "6.916",
+      "queue_plus_review_p95_seconds": "8.404"
+    },
+    {
+      "provider": "claude-cli",
+      "model": "sonnet",
+      "status": "needs_human",
+      "error_code": null,
+      "n": 10,
+      "queue_plus_review_p50_seconds": "60.481",
+      "queue_plus_review_p95_seconds": "65.430"
+    },
+    {
+      "provider": "abcllm",
+      "model": "[MLX] qwen3.6-35b-heretic",
+      "status": "resolved",
+      "error_code": "output_too_large",
+      "n": 2,
+      "queue_plus_review_p50_seconds": "53.560",
+      "queue_plus_review_p95_seconds": "57.021"
+    },
+    {
+      "provider": "abcllm",
+      "model": "[MLX] qwen3.6-35b-heretic",
+      "status": "resolved",
+      "error_code": "gateway_error",
+      "n": 1,
+      "queue_plus_review_p50_seconds": "4.303",
+      "queue_plus_review_p95_seconds": "4.303"
+    }
+  ],
+  "cohortStageTimes": [
+    {
+      "stage": "fetch_to_first_start",
+      "n": 109,
+      "p50_seconds": "947.884",
+      "p95_seconds": "3329.457",
+      "negative": 0
+    },
+    {
+      "stage": "first_end_to_second_enqueue",
+      "n": 109,
+      "p50_seconds": "25.301",
+      "p95_seconds": "34.338",
+      "negative": 0
+    },
+    {
+      "stage": "first_run",
+      "n": 109,
+      "p50_seconds": "11.446",
+      "p95_seconds": "15.138",
+      "negative": 0
+    },
+    {
+      "stage": "reconsider_to_fetch",
+      "n": 109,
+      "p50_seconds": "65.088",
+      "p95_seconds": "165.721",
+      "negative": 0
+    },
+    {
+      "stage": "reconsider_to_published",
+      "n": 109,
+      "p50_seconds": "1094.269",
+      "p95_seconds": "3489.599",
+      "negative": 0
+    },
+    {
+      "stage": "second_end_to_published",
+      "n": 109,
+      "p50_seconds": "35.229",
+      "p95_seconds": "102.486",
+      "negative": 0
+    },
+    {
+      "stage": "second_queue_plus_run",
+      "n": 109,
+      "p50_seconds": "8.381",
+      "p95_seconds": "38.850",
+      "negative": 0
+    }
+  ],
+  "reviewConcurrency": "4"
+}

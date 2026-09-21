@@ -1,0 +1,87 @@
+{
+  "generatedAt": "2026-09-21T03:50:25.956Z",
+  "questionVersion": "installable-software-2026-09-21.1",
+  "threshold": 0.9,
+  "uniqueRepositories": 100,
+  "overlapWithPreviousRepositories": 0,
+  "sampling": "Latest 100 distinct repositories in last 7 days, current first model/prompt, successful non-reused automatic attempts, installable and >=500 stars; excludes prior 47 repositories. Not randomized or human-adjudicated.",
+  "matrix": {
+    "firstApprove": {
+      "prefetch": 46,
+      "normalPath": 35
+    },
+    "firstReject": {
+      "prefetch": 8,
+      "normalPath": 11
+    }
+  },
+  "agreementAmongSuggestionsPct": 85.18518518518519,
+  "priorApprovalSharePct": 81,
+  "potentialWasteAmongSuggestionsPct": 14.814814814814813,
+  "excerptTruncatedSamples": 99,
+  "routing": {
+    "english": 94,
+    "multilingual": 6
+  },
+  "disagreements": [
+    {
+      "attemptId": "29344",
+      "repo": "openedclaude/claude-reviews-claude",
+      "priorFirstDecision": "reject",
+      "priorReasonSummary": "source-code analysis / reading material",
+      "softwareProbability": 0.9315
+    },
+    {
+      "attemptId": "29334",
+      "repo": "datawhalechina/easy-vibe",
+      "priorFirstDecision": "reject",
+      "priorReasonSummary": "tutorial / course",
+      "softwareProbability": 0.9291
+    },
+    {
+      "attemptId": "29333",
+      "repo": "joshsymonds/nix-config",
+      "priorFirstDecision": "reject",
+      "priorReasonSummary": "personal system configuration",
+      "softwareProbability": 0.9346
+    },
+    {
+      "attemptId": "29331",
+      "repo": "citypaul/.dotfiles",
+      "priorFirstDecision": "reject",
+      "priorReasonSummary": "personal dotfiles",
+      "softwareProbability": 0.9091
+    },
+    {
+      "attemptId": "29328",
+      "repo": "xirong/my-git",
+      "priorFirstDecision": "reject",
+      "priorReasonSummary": "handbook / documentation",
+      "softwareProbability": 0.9105
+    },
+    {
+      "attemptId": "29321",
+      "repo": "TeleAI-UAGI/Awesome-Agent-Memory",
+      "priorFirstDecision": "reject",
+      "priorReasonSummary": "curated resource list",
+      "softwareProbability": 0.9397
+    },
+    {
+      "attemptId": "29315",
+      "repo": "Free-TV/IPTV",
+      "priorFirstDecision": "reject",
+      "priorReasonSummary": "playlist / data collection",
+      "softwareProbability": 0.9158
+    },
+    {
+      "attemptId": "29309",
+      "repo": "DataDog/documentation",
+      "priorFirstDecision": "reject",
+      "priorReasonSummary": "documentation site",
+      "softwareProbability": 0.9215
+    }
+  ],
+  "measuredSpeedup": null,
+  "humanAccuracy": null,
+  "decision": "Do not connect to production yet: inference is fast, but spare shared capacity and net end-to-end benefit remain unproven. Existing approvals are unchanged."
+}
