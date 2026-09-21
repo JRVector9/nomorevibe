@@ -147,6 +147,7 @@ export const products = pgTable("products", {
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 }, (table) => [
+  index("products_repository_identity_idx").on(sql`regexp_replace(regexp_replace(lower(rtrim(${table.repoUrl}, '/')), '^https?://(www[.])?', 'https://'), '[.]git$', '')`),
   index("products_public_stars_idx").on(table.stars.desc(), table.id)
     .where(sql`${table.status} in ('seeded', 'verified') and ${table.stars} >= 2000 and ${table.stars} < 100000`),
   index("products_stars_refresh_idx").on(table.id)

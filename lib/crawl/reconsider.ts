@@ -7,6 +7,8 @@ import { requestJob } from "@/lib/jobs/control";
 import { reviewHash, reviewPolicyHash } from "./agent-review-contract";
 import { factsFromRepoMeta, judge, pageFactsFromDocument } from "./rules";
 import { getSettings, mergeWithDefaults } from "./settings";
+import { lockFrontierIdentity } from "./repository";
+import { findRepositoryProduct, lockProductRepository } from "@/lib/domain/products/repository-identity";
 
 type Entry = { repo: string; id: number; revision: string; stars: number; previousReason: string };
 export type ReconsiderationPlan = { includeAdmin?: boolean; policyHash: string; createdAt: string; entries: Entry[]; examined: number };
@@ -37,13 +39,19 @@ export async function applyReconsideration(plan: ReconsiderationPlan, actor: str
   const queued: string[] = [], changed: string[] = [];
   for (const entry of plan.entries) {
     const applied = await db.transaction(async tx => {
+      await lockProductRepository(tx, `https://github.com/${entry.repo}`);
       const [candidate] = await tx.select().from(crawlCandidates).where(eq(crawlCandidates.id, entry.id)).for("update");
       const [document] = await tx.select().from(crawlDocuments).where(eq(crawlDocuments.repo, entry.repo)).for("update");
       if (!candidate || !document || candidate.repo !== entry.repo || candidate.state !== "rejected"
         || (candidate.decidedBy !== "auto" && !(plan.includeAdmin === true && candidate.decidedBy === "admin")) || candidate.publishedSlug || revision(candidate, document) !== entry.revision) return false;
       const [saved] = await tx.select().from(crawlSettings).where(eq(crawlSettings.id, 1)).for("share");
       if (reviewPolicyHash(mergeWithDefaults(saved?.values)) !== plan.policyHash) throw new Error("reconsideration_policy_changed");
-      const [frontier] = await tx.select().from(crawlFrontier).where(eq(crawlFrontier.repo, entry.repo)).for("update");
+      if (await findRepositoryProduct(entry.repo, document.productUrl, tx)) return false;
+      await lockFrontierIdentity(tx, entry.repo);
+      const frontiers = await tx.select().from(crawlFrontier).where(sql`lower(${crawlFrontier.repo}) = ${entry.repo.toLowerCase()}`).for("update");
+      // Legacy aliases retain their history; never create or restart a second pipeline for them.
+      if (frontiers.some(row => row.repo !== entry.repo)) return false;
+      const [frontier] = frontiers;
       // Preserve active fetch leases and provider cooldowns.
       if (frontier && frontier.state !== "fetching") await tx.update(crawlFrontier).set({ state: "pending", attempts: 0,
         nextAttemptAt: frontier.lastError ? sql`greatest(now(), ${crawlFrontier.nextAttemptAt})` : sql`now()`, updatedAt: sql`now()` })

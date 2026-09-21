@@ -8,7 +8,7 @@ vi.mock("@/lib/crawl/settings", () => ({getSettings:async () => mocks.settings})
 vi.mock("@/lib/crawl/repository", () => ({getDocument:mocks.document,setReadmeSample:mocks.saveReadme}));
 // 단위 테스트가 README 를 받으러 밖으로 나가지 않게 한다
 vi.mock("@/lib/crawl/readme", () => ({fetchReadmeSample:mocks.readme,README_SAMPLE_LIMIT:3000,README_SAMPLE_VERSION:"2026-09-14.1"}));
-vi.mock("@/lib/domain/products/repository", () => ({findByUrl:mocks.existing}));
+vi.mock("@/lib/domain/products/repository", () => ({findRepositoryProduct:mocks.existing}));
 vi.mock("@/lib/crawl/agent-review-repository", () => ({requeueStaleReviewSources:mocks.requeue,listReviewCandidates:mocks.list,loadReviewInput:mocks.input,claimAgentReview:mocks.claim,recordAgentReview:mocks.record}));
 vi.mock("@/lib/crawl/agent-review", () => ({reviewModel:()=>"tested-model",reviewWithAgent:mocks.review,REVIEW_CLI_TIMEOUT_MS:20_000,
   firstReviewer:(s:{firstReview?:{provider:string;model:string}})=>s.firstReview ?? {provider:"claude-cli",model:"tested-model"}}));

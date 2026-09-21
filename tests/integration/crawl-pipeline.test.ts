@@ -13,6 +13,21 @@ beforeEach(async () => {
 });
 
 describe("프론티어 — 큐 채우기", () => {
+  it("keeps the original discovery when GitHub casing differs", async () => {
+    await crawl.enqueue([{ repo: "Maker/Plugin", signal: "first", builder: "Claude" }]);
+    expect(await crawl.enqueue([{ repo: "maker/plugin", signal: "second" }])).toBe(0);
+    expect(await db.select().from(crawlFrontier)).toMatchObject([{ repo: "Maker/Plugin", signal: "first", builder: "Claude" }]);
+  });
+
+  it("deduplicates overlapping concurrent batches case-insensitively", async () => {
+    const counts = await Promise.all([
+      crawl.enqueue([{ repo: "Maker/One", signal: "a" }, { repo: "Maker/Two", signal: "a" }, { repo: "maker/one", signal: "b" }]),
+      crawl.enqueue([{ repo: "maker/two", signal: "b" }, { repo: "maker/one", signal: "b" }]),
+    ]);
+    expect(counts.reduce((a, b) => a + b, 0)).toBe(2);
+    expect(await db.select().from(crawlFrontier)).toHaveLength(2);
+  });
+
   it("발견한 레포를 넣고 중복은 무시한다", async () => {
     const first = await crawl.enqueue([
       { repo: "a/one", signal: "commit-trailer" },

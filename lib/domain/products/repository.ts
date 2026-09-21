@@ -32,6 +32,8 @@ import {
 import { slugifyName } from "@/lib/net/normalize";
 import type { Category } from "./schema";
 import { METRICS_WINDOW_DAYS } from "./clicks";
+import { lockProductRepository } from "./repository-identity";
+export { findRepositoryProduct } from "./repository-identity";
 
 /** 제품 데이터 접근 — 도메인 바깥에서 DB를 직접 만지지 않도록 여기로 모은다 */
 
@@ -41,14 +43,6 @@ export async function findBySlug(slug: string): Promise<Product | undefined> {
 
 export async function findByUrl(url: string): Promise<Product | undefined> {
   return db.query.products.findFirst({ where: eq(products.url, url) });
-}
-
-/** An installation entry must not resurrect a banned product or duplicate its website entry. */
-export async function findInstallationSource(url: string, homepage?: string | null): Promise<Product | undefined> {
-  return db.query.products.findFirst({
-    where: or(eq(products.url, url), homepage ? eq(products.url, homepage) : undefined, sql`lower(rtrim(${products.repoUrl}, '/')) = lower(${url})`),
-    orderBy: [sql`case when ${products.status} = 'banned' then 0 else 1 end`, products.id],
-  });
 }
 
 /**
@@ -254,6 +248,7 @@ export async function nextAvailableSlug(name: string): Promise<string> {
 
 export async function insert(values: NewProduct, beforeInsert?: (tx: ProductTransaction) => Promise<void>): Promise<void> {
   await db.transaction(async (tx) => {
+    await lockProductRepository(tx, values.repoUrl);
     await beforeInsert?.(tx);
     const [product] = await tx.insert(products).values(values).returning();
     await syncRepositoryLink({ productId: product.id, slug: product.slug, repoUrl: product.repoUrl,
@@ -263,6 +258,7 @@ export async function insert(values: NewProduct, beforeInsert?: (tx: ProductTran
 
 export async function update(id: number, values: Partial<Product>): Promise<void> {
   await db.transaction(async (tx) => {
+    await lockProductRepository(tx, values.repoUrl);
     const [current] = await tx.select({ slug: products.slug }).from(products).where(eq(products.id, id));
     if (!current || !(await lockProductGeneration(tx, id, current.slug))) return;
     const [locked] = await tx.select({ repoUrl: products.repoUrl }).from(products).where(eq(products.id, id));

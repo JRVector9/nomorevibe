@@ -52,6 +52,7 @@ export const crawlFrontier = pgTable(
     updatedAt: timestamp("updated_at").notNull().defaultNow(),
   },
   (t) => [
+    index("crawl_frontier_identity_idx").on(sql`lower(${t.repo})`),
     // 큐에서 꺼내는 쿼리 전용: WHERE state=? AND next_attempt_at<=now() ORDER BY priority DESC
     index("crawl_frontier_dequeue_idx").on(t.state, t.nextAttemptAt, t.priority.desc()),
   ],

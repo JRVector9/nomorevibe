@@ -55,6 +55,32 @@ async function approved(
 
 const tick = () => runJob("crawl-publish", publishCandidates);
 
+it("rechecks website repository duplicates inside the final transaction", async () => {
+  await approved("maker/website-race", { productUrl: "https://new-site.test" });
+  classifyCategories.mockImplementationOnce(async () => {
+    await products.insert({ slug: "previous-website", url: "https://old-site.test", repoUrl: "https://github.com/Maker/website-race",
+      name: "Previous", tagline: "Previous", description: "Previous", category: "Dev", status: "seeded",
+      verifyToken: "verify", editTokenHash: "x".repeat(64) });
+    return ["Dev"];
+  });
+  await tick();
+  expect(await products.findByUrl("https://new-site.test")).toBeUndefined();
+  expect(await crawl.getCandidate("maker/website-race")).toMatchObject({ state: "rejected", reason: "already_listed",
+    signals: { existingSlug: "previous-website" } });
+});
+
+it("serializes concurrent publication of case variants with different homepages", async () => {
+  const { publishCandidate } = await import("@/lib/crawl/publish");
+  await approved("Maker/Same", { productUrl: "https://one-site.test" });
+  await approved("maker/same", { productUrl: "https://two-site.test" });
+  const results = await Promise.all([
+    publishCandidate((await crawl.getCandidate("Maker/Same"))!),
+    publishCandidate((await crawl.getCandidate("maker/same"))!),
+  ]);
+  expect(results.filter(result => result.ok)).toHaveLength(1);
+  expect(results.filter(result => !result.ok)).toMatchObject([{ ok: false, reason: "already_listed" }]);
+});
+
 /** 지금 규칙을 그대로 통과하는 레포 사실 — 발행 직전 재판정을 태우는 테스트가 쓴다 */
 const LIVE_REPO = {
   stargazers_count: 3, fork: false, archived: false, owner: { type: "User" }, pushed_at: new Date().toISOString(),
@@ -141,7 +167,7 @@ describe("발행 잡", () => {
     });
     await tick();
     expect(await products.findByUrl("https://github.com/maker/raced-plugin")).toBeUndefined();
-    expect(await crawl.getCandidate("maker/raced-plugin")).toMatchObject({ state: "rejected", reason: "already_listed" });
+    expect(await crawl.getCandidate("maker/raced-plugin")).toMatchObject({ state: "rejected", reason: "banned" });
   });
   it("통과한 후보를 seeded 제품으로 올린다", async () => {
     await approved("someone/my-app");

@@ -18,6 +18,7 @@ import { DEFAULT_CRAWL_SETTINGS, type CrawlSettings } from './settings-schema';
 import { mergeWithDefaults, getSettings } from './settings';
 import { judge, factsFromRepoMeta, pageFactsFromDocument, type AmbiguityCause, type RuleStep } from './rules';
 import { loadAgentJudgeInputs } from './admin-review-batch';
+import { lockFrontierIdentity } from './repository';
 
 export const MAX_EVIDENCE_REFRESHES = 2;
 export const EVIDENCE_REFRESH_COOLDOWN_MS = 15 * 60_000;
@@ -121,7 +122,12 @@ export async function requestCandidateEvidence(request: AdminReviewRequest): Pro
         previous[0].startedAt.getTime() + EVIDENCE_REFRESH_COOLDOWN_MS > now.getTime())) {
       return { ok: false, message: '이전 수집 이후 원본이 갱신되고 15분이 지나야 다시 요청할 수 있습니다.' };
     }
-    const [frontier] = await tx.select().from(crawlFrontier).where(eq(crawlFrontier.repo, current.candidate.repo)).for('update');
+    await lockFrontierIdentity(tx, current.candidate.repo);
+    const frontiers = await tx.select().from(crawlFrontier).where(sql`lower(${crawlFrontier.repo}) = ${current.candidate.repo.toLowerCase()}`).for('update');
+    if (frontiers.some(row => row.repo !== current.candidate.repo)) {
+      return { ok: false, message: '같은 GitHub 저장소의 기존 수집 기록이 있습니다. 기존 후보에서 확인해주세요.' };
+    }
+    const [frontier] = frontiers;
     if (frontier && (frontier.state === 'pending' || frontier.state === 'fetching')) {
       return { ok: false, message: '이미 수집 대기 또는 진행 중입니다. 완료 후 다시 확인해주세요.' };
     }
