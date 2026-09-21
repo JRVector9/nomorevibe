@@ -1,3 +1,4 @@
+import { emitPipelineEvent } from "@/lib/observability/review-pipeline";
 import { and } from 'drizzle-orm';
 import { agentRequest } from '@/lib/operations/agent-client';
 import { classificationReadyPredicate, decisionFor, holdClassification } from '@/lib/operations/categories';
@@ -148,6 +149,8 @@ export async function publishCandidates(ctx: JobContext<null>): Promise<JobOutco
           continue;
         }
 
+        emitPipelineEvent("committed", { stage: "publish", candidateId: candidate.id, job: ctx.lease?.name,
+          runId: String(ctx.lease?.requestedVersion), state: "published" }, ctx.log);
         published++;
         if (!ctx.hasBudget()) break;
       }
