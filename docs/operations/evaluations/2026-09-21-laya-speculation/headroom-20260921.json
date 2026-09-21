@@ -1,0 +1,38 @@
+{
+  "measuredAt": "2026-09-21T03:43:13.292Z",
+  "access": "read_only",
+  "firstReview": {
+    "provider": "abcllm",
+    "model": "[MLX] gpt-oss-120b"
+  },
+  "concurrency": 4,
+  "eligibleFirstQueue": 5,
+  "firstQueueLimit": 100,
+  "runningFirst": 0,
+  "secondPending": 0,
+  "jobs": [
+    {
+      "name": "crawl-agent-review",
+      "requested": false,
+      "locked_at": null,
+      "last_run_at": "2026-09-21 03:42:36.887083",
+      "last_success_at": "2026-09-21 03:42:53.172338",
+      "last_error": null
+    },
+    {
+      "name": "second-review",
+      "requested": false,
+      "locked_at": null,
+      "last_run_at": "2026-09-21 03:42:21.479922",
+      "last_success_at": "2026-09-21 03:42:21.693692",
+      "last_error": null
+    }
+  ],
+  "freshSamples": 100,
+  "previouslyEvaluatedReposExcluded": 47,
+  "labels": {
+    "approve": 81,
+    "reject": 19
+  },
+  "caveat": "First queue uses actual application eligibility SQL with limit100. Running attempts/pending second rows are not instantaneous gateway utilization; other gateway clients and exact model-only time are not measured."
+}
