@@ -1,3 +1,29 @@
+# 관리자·처리 속도 운영 배포 및 검증 완료 — 2026-09-22 07:24 KST
+
+## 완료 결과
+- 사용자 “배포해” 지시에 따라 구현57파일 `611820d63096f54700e1254634987046d25cbe01` main commit/push, Dokploy 웹M3·mini2개 + M3워커7개에동일커밋배포완료. 9앱새deployment done/description동일SHA.
+- 실제9컨테이너release일치/restarts0, 웹2개직접healthHTTP200/DBok(1·2ms), 7워커healthy/수정lib소스12개모두hash일치. 외부health도HTTP200/동일release.
+- 운영status/ranking 브라우저8PASS,console/JS오류0. 5단계실제집계/AI2표단위/10초갱신/중지/필터/랭킹/375px가로넘침검증. 운영PNG직접검토. 상태화면ready4031ms,랭킹2130ms는1회브라우저표본.
+- 배포요청22:19:44UTC~22:22:27UTC워커로그222건에서job.failed0/실패event0. GitHub수집한도재시도reset22:22:30UTC관측(임의우회/토큰변경안함). 새발견22건및기타워커완료확인. 끝난서비스/모든후보문제해소라고확장하지말것.
+
+## 검증·제약
+정확한커밋clean checkout `/tmp/nmv-admin-release-check`,Node24.18.0,npmci/typegen/tsc/전체lint(기존vendor경고1,error0)/unit144파일1118/통합83파일809/productionbuildPASS. GitHub CI상태조회는403API한도로불가. 최초통합seed1FAIL(808PASS)은단독seed100회/queue200회재현안되고,원커밋전체재실행809PASS. 원인미확정/런타임수정없음. 상세validation.json에첫실패보존. 이전운영익명관리자접근정책은여전히미결이며변경안함.
+
+## 변경·증거
+소스변경목록은아래구현기록/611820d참조. 배포문서커밋은이handoff,기존보고2개후속링크,`docs/operations/2026-09-22-admin-deployment.md`, `docs/operations/evaluations/2026-09-22-admin-deployment/`(release/runtime/검증/이벤트집계/브라우저/실운영PNG)만포함한다. 무관사용자untracked보존. 마이그레이션/DB수동큐수정없음.
+
+## 마지막 복구 단계와 재개 명령
+이문서스냅샷은후속문서push전이다. 원래9앱autoDeploy=true를새receipt에저장했고중복배포방지를위해일시false로두었다. **문서commit/push직후아래restore와status를실행하고9개true인경우에만최종완료보고한다.** 다음에이handoff를읽을때복구를무조건재실행하지말고status부터확인한다. `/tmp/nmv-admin-release-state.json`와원격상태가최신근거다. 코드재배포불필요.
+```sh
+cd /Users/jr/Desktop/projects/nomorevibe
+python3 /tmp/nmv-admin-release.py restore
+python3 /tmp/nmv-admin-release.py status
+python3 /tmp/nmv-admin-runtime.py /tmp/nmv-admin-runtime-postrestore.json
+git status --short
+```
+
+---
+
 # 관리자·처리 속도 기능 운영 배포 진행 — 2026-09-22
 
 사용자가 “배포해”를 명시 지시했다. 아래 검증 완료 변경 전체(관리자 로직 수정/랭킹/헤더 필터/처리 속도)를 선택 커밋·main push 후 M3·mini 웹2개와 M3 singleton 워커7개에 동일 SHA로 배포한다. 무관 사용자 untracked는 제외한다. 시작 HEAD d6ed3c7, origin/main과 차이0. prod 스킬과 기존 Dokploy curl API 절차 적용.
@@ -5,6 +31,13 @@
 새 helper `/tmp/nmv-admin-release.py`는 preflight/pause/release/deploy/status/restore. receipt `/tmp/nmv-admin-release-state.json`에 현재9앱 원래 autoDeploy값을 저장했다. **push 전에 autoDeploy를 일시 pause하고, 운영 검증·배포 문서 push 후 restore해서 전부 원래 상태임을 확인할 것.** 이전 cursor helper의 receipt는 건드리지 않는다.
 
 구현 검증은 아래에 기록. 배포 도중 Next shared server-action key 유지와 RELEASE_TAG/NEXT_DEPLOYMENT_ID 동일 SHA 주입,9앱새 deployment done 및 실제runtime확인,외부status/ranking/health QA가 남았다. GitHub CI가 과거 결제/한도와 같은 이유로 실행되지 않으면 정확한 커밋의 clean checkout에서 동일 검사 전부 실행한다. API 키/환경 변수 원문을 출력·저장·커밋하지 않는다. 운영 데이터 변경이나 새 마이그레이션은 없다.
+
+## 배포 중간 체크포인트 — 07:20 KST
+
+- 구현57파일 `611820d63096f54700e1254634987046d25cbe01` main 커밋·push 완료. 9앱autoDeploy=false, 원래true는새receipt에보존. RELEASE_TAG9앱/NEXT_DEPLOYMENT_ID웹2앱일치 및공유Actions키동일확인. 9앱동시deploy요청중. helper/receipt는위경로.
+- GitHub CI조회는HTTP403 APIrate-limit으로불가(결제실패라고단정하지말것). `/tmp/nmv-admin-release-check` clean detached611820d에서npmci/typegen/tsc/전체lint(0오류,기존vendor경고1)/unit1118/productionbuildPASS.
+- 전체통합첫실행808PASS/seed1FAIL(기록된pending2인데즉시dequeue가빈값). 별도queue200회·동일seed100회포함114tests재현안됨. 진단파일은복원했고원커밋clean tree에서전체통합83파일809PASS(94.68s). 원인은확정하지않았으며임의prod코드수정없음. `/tmp/nmv-admin-release-clean-integration{,-recheck}.log`, `/tmp/nmv-admin-{frontier-clock-probe.json,seed-reproduction.log}`.
+- 남음: 모든새deployment done(이전deploymentID와구분),runtime웹health/워커12개변경lib소스hash+release검증,운영status/ranking브라우저QA,배포문서commitpush,autoDeploy9개restore후확인.
 
 ---
 

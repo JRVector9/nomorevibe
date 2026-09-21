@@ -48,3 +48,7 @@
 - 최종 화면: [랭킹 데스크톱](evaluations/2026-09-22-admin-review/ranking-desktop.png), [랭킹 모바일](evaluations/2026-09-22-admin-review/ranking-390.png), [운영센터 헤더 필터](evaluations/2026-09-22-admin-review/status-1440.png).
 
 중간 실패와 보완: 병렬 CSS 생성 중 첫 단위 테스트는 모듈 미존재로 실패했지만 완성 후 최종 전체 통과했다. 브라우저에서 실제 CSS 우선순위 때문에 필터 적용 버튼 글자가 흰 배경에 묻히고, 순위 숫자 폭이 좁은 문제를 발견해 수정·재빌드·재검증했다. QA 도구의 Python 표준 모듈 이름 충돌, Next SPA URL 대기 및 중복 검색 입력 선택은 도구 쪽에서 고쳤다. 최초 성능 도구는 PgBouncer startup 옵션과 reserved client 설정 누락으로 실패했으며, 읽기 전용 트랜잭션 연결로 수정 후 측정했다. 더 자세한 명령과 로그는 `docs/CODEX_HANDOFF.md`에 기록했다.
+
+## 운영 배포 후속 기록
+
+`611820d` 커밋으로 M3·mini 웹과 7개 워커에 배포 완료. 실제 컨테이너·운영 화면 검증은 [배포 기록](2026-09-22-admin-deployment.md)을 따른다. 위 미배포 표시는 구현 완료 당시의 상태다.

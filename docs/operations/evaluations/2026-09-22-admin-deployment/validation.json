@@ -1,0 +1,65 @@
+{
+  "commit": "611820d63096f54700e1254634987046d25cbe01",
+  "node": "24.18.0",
+  "dependencyInstall": "npm ci succeeded",
+  "checks": [
+    {
+      "check": "typegen",
+      "exitCode": 0,
+      "seconds": 1.22
+    },
+    {
+      "check": "types",
+      "exitCode": 0,
+      "seconds": 4.46
+    },
+    {
+      "check": "lint",
+      "exitCode": 0,
+      "seconds": 5.36
+    },
+    {
+      "check": "unit",
+      "exitCode": 0,
+      "seconds": 5.71
+    },
+    {
+      "check": "integration",
+      "exitCode": 1,
+      "seconds": 87.63
+    },
+    {
+      "check": "integration recheck",
+      "exitCode": 0,
+      "seconds": 94.68,
+      "files": 83,
+      "tests": 809
+    },
+    {
+      "check": "clean production build",
+      "exitCode": 0
+    }
+  ],
+  "unit": {
+    "files": 144,
+    "tests": 1118
+  },
+  "lint": {
+    "errors": 0,
+    "warnings": 1,
+    "warning": "pre-existing unused _ctx in lib/vendor/deppy-aibox/claude.ts"
+  },
+  "ci": "GitHub API status query blocked by HTTP 403 rate limit; hosted CI conclusion unverified.",
+  "initialIntegrationFailure": {
+    "file": "tests/integration/crawl-seed.test.ts",
+    "test": "검색 결과를 프론티어에 넣는다",
+    "symptom": "dequeue returned no row after pending count of two; intermittent, root cause unconfirmed",
+    "reproduction": {
+      "queueIterations": 200,
+      "queueFailures": 0,
+      "seedRepetitions": 100,
+      "suiteTestsPassed": 114
+    },
+    "resolution": "No application changes made. Diagnostic edits removed; complete clean-commit integration rerun passed."
+  }
+}

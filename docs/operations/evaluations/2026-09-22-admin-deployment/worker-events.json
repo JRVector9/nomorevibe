@@ -1,0 +1,33 @@
+{
+  "from": "2026-09-21T22:19:44.110313+00:00",
+  "through": "2026-09-21T22:22:27Z",
+  "rows": 222,
+  "events": {
+    "scheduler.tick": 17,
+    "crawl.fetched": 2,
+    "job.completed": 34,
+    "worker.job": 34,
+    "evidence.github_refresh": 45,
+    "evidence.source_refresh": 45,
+    "uptime.checked": 3,
+    "product_audit.skipped": 3,
+    "evidence.refresh_batch": 3,
+    "product_search.refreshed": 3,
+    "translate.done": 3,
+    "supervisor.stopping": 6,
+    "worker.stopped": 5,
+    "supervisor.stopped": 6,
+    "scheduler.stopped": 1,
+    "thumbnail.refreshed": 3,
+    "crawl.second_reviewed": 3,
+    "tagline.done": 2,
+    "crawl.agent_review_sources_queued": 1,
+    "crawl.fetch_rate_limited": 2,
+    "crawl.seeded": 1
+  },
+  "jobFailures": 0,
+  "failedEvents": 0,
+  "fetchRateLimitResets": [
+    "2026-09-21T22:22:30.000Z"
+  ]
+}
