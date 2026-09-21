@@ -47,16 +47,16 @@ LAYA 측정치는 빠르지만 오탐이 있었다. 속도나 confidence 임계�
 
 ## 구현 PR
 
-| 단계 | PR | 브랜치 | 현재 커밋 |
+| 단계 | PR | 브랜치 | 검증한 커밋 |
 |---|---|---|---|
 | 1 | [#161](https://github.com/JRVector9/nomorevibe/pull/161) | `perf/review-stage-observability` | `107bbb4` |
 | 2 | [#162](https://github.com/JRVector9/nomorevibe/pull/162) | `perf/review-transactional-handoffs` | `4f769c6` |
 | 3 | [#163](https://github.com/JRVector9/nomorevibe/pull/163) | `perf/review-bounded-draining` | `18cfb70` |
 | 4 | [#164](https://github.com/JRVector9/nomorevibe/pull/164) | `fix/fence-text-job-results` | `b248040` |
 | 5 | [#165](https://github.com/JRVector9/nomorevibe/pull/165) | `perf/isolate-text-worker` | `ad5f33b` |
-| 6 | [#166](https://github.com/JRVector9/nomorevibe/pull/166) | `test/review-speed-release-verification` | `76ea50e` |
+| 6 | [#166](https://github.com/JRVector9/nomorevibe/pull/166) | `test/review-speed-release-verification` | `5df9bce` |
 
-모두 push 완료. 후속 PR은 직전 브랜치를 base로 사용한다. 병합은 161→166 순서이며, 앞 PR 병합 후 다음 PR의 base/변경 범위를 확인한다. 운영 배포·전후 성능 관측은 별도 단계다.
+모두 push 완료, 6개 구현 PR CI 통과(최종 단위1,091/통합767). 후속 PR은 직전 브랜치를 base로 사용한다. 병합은 161→166 순서이며, 앞 PR 병합 후 다음 PR의 base/변경 범위를 확인한다. 운영 배포·전후 성능 관측은 별도 단계다.
 
 ## 변경하지 않는 계약
 

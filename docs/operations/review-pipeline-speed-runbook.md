@@ -20,6 +20,8 @@ LAYA 운영 호출을 추가하지 않았다. 수집은 기존3개 병렬·READM
 
 ## 실제 검증
 
+최종 GitHub CI: **검증 코드 `5df9bce`, 단위141파일/1,091개·통합79파일/767개 전부 통과**, 타입·lint·Next build도 통과. 6개 구현 PR CI 모두 성공: [#161 CI](https://github.com/JRVector9/nomorevibe/actions/runs/35565100321), [#162 CI](https://github.com/JRVector9/nomorevibe/actions/runs/35565095414), [#163 CI](https://github.com/JRVector9/nomorevibe/actions/runs/35565087150), [#164 CI](https://github.com/JRVector9/nomorevibe/actions/runs/35565091983), [#165 CI](https://github.com/JRVector9/nomorevibe/actions/runs/35565212113), [#166 CI](https://github.com/JRVector9/nomorevibe/actions/runs/35565195009). 이후 변경은 이 검증 기록 문서뿐이다. 아래는 로컬 검증 및 수정 경과다.
+
 - 최종 단위 전체140파일1,090개 통과(14:27 KST). 종료 중 claim/성공 응답 경계도 포함한다. 이후 실제 오프라인 CLI 실행 회귀1개를 추가해 관련5개 통과(고유 단위1,091개).
 - 통합 전체79파일767개 중766개 통과, 옛 batch 요청 횟수 기대1개 실패. 결과별 원자적 요청 기대값으로 수정한 해당 파일17개 재실행 통과. 다른 실패 없음.
 - 고정 시계 실험: 응답10초×8건, 동시성4 → 0초에4건, 10초에4건 시작,20초 완료. peak4. 응답24초 뒤 추가 호출0. **실제 서비스의 처리시간 측정은 아니다.**
