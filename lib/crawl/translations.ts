@@ -1,3 +1,5 @@
+import { assertJobLease, type JobLease } from "@/lib/jobs/control";
+import type { ProductTransaction } from "@/lib/domain/products/generation";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { textTranslations } from "@/lib/db/schema";
@@ -72,10 +74,23 @@ export async function retryableTranslations(limit: number): Promise<PendingTrans
  * targetLang 은 표의 기본키 한쪽이다. 사유는 'ko'(영어 → 한국어), 검색어는 'en'(한국어 → 영어)로
  * 같은 표를 쓴다 — 해시가 같아도 방향이 다르면 다른 행이다.
  */
-export async function recordTranslations(results: { hash: string; translated: string | null; error?: string }[], model: string, targetLang = "ko"): Promise<void> {
+type TranslationResult = { hash: string; translated: string | null; error?: string };
+/** Non-worker HTTP/search path retains its independent lifecycle. */
+export async function recordTranslations(results: TranslationResult[], model: string, targetLang = "ko") {
+  await writeTranslations(db, results, model, targetLang);
+}
+/** Worker callers cannot omit their lease. */
+export async function recordWorkerTranslations(results: TranslationResult[], model: string, lease: JobLease) {
+  await db.transaction(async tx => {
+    await writeTranslations(tx, results, model, "ko");
+    await assertJobLease(tx, lease);
+  });
+}
+
+async function writeTranslations(executor: ProductTransaction | typeof db, results: { hash: string; translated: string | null; error?: string }[], model: string, targetLang = "ko"): Promise<void> {
   for (const result of results) {
     const done = result.translated !== null;
-    await db.insert(textTranslations).values({
+    await executor.insert(textTranslations).values({
       sourceHash: result.hash, targetLang, status: done ? "done" : "failed", translated: result.translated, model,
       attempts: 1, errorCode: done ? null : (result.error ?? "invalid_output").slice(0, 60),
       retryAt: done ? null : sql`now() + interval '5 minutes'`, updatedAt: sql`now()`,

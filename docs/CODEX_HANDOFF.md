@@ -1,3 +1,11 @@
+# Phase 04 update — text result fencing implemented
+
+Branch fix/fence-text-job-results, prior phase03 commit927fd03. Automatic tagline writes now ONLY through recordTaglineResult(task,lease,result): exact candidate/document/written snapshot compare under locks, absent-row conditional upsert cannot overwrite manual insert, success/failure/reuse protected, result+release+publish request+lease assert atomic. Removed unsafe automatic functions; two publication tests now seed rows directly. Worker translation wrapper mandatorylease, HTTP/search API unchanged. Both text workers pass AbortSignal, suppress writes after shutdown, wait for started lanes before throwing.
+
+Tests: original6 new race cases all RED→GREEN. Added3 source CAS and1 translation lease/HTTP case ->10newPASS; existing10taglinePASS (20combined). Original related4files72tests70PASS2failed due SQL raw Date serialization; corrected ISO+millisecond compare, affected20 nowPASS. Translation/publication remaining56 alreadyPASS. Unit3files35PASS. Type check initially found obsolete test import; removed, rerun pending. No deployment. Next role isolation PR05 then complete verification/real local supervisor smoke/PR creation.
+
+---
+
 # Phase 03 update — bounded review draining implemented
 
 Branch perf/review-bounded-draining. Phase01 commit1dd580d, phase02 0fec460. First review 40s budget, fixed24s gateway/20s CLI, 2s save margin, configured active concurrency unchanged, max16 admitted candidates, preparation inside slots, dedup candidate IDs. Stop refilling on provider/record errors; await all lanes before lease release. Ready continuation allowed only first/second, progress+fresh eligible queue required, excludes seen/running candidates. Runner preserves incoming requestedVersion and only leaves one own continuation. Existing role serial poll fairness unchanged.

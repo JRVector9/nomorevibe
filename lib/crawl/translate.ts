@@ -57,6 +57,7 @@ async function chat(
   body: { system: string; user: string; maxTokens: number; temperature: number },
   timeoutMs: number,
   request: typeof fetch,
+  signal?: AbortSignal,
 ): Promise<ChatResult> {
   const key = process.env.ABCLLM_API_KEY?.trim();
   if (!key) return { ok: false, error: "no_key" };
@@ -69,7 +70,7 @@ async function chat(
         max_tokens: body.maxTokens,
         messages: [{ role: "system", content: body.system }, { role: "user", content: body.user }],
       }),
-      signal: AbortSignal.timeout(timeoutMs),
+      signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)]) : AbortSignal.timeout(timeoutMs),
     });
     if (!response.ok) return { ok: false, error: response.status === 429 ? "rate_limit" : `http_${response.status}` };
     const data = await response.json() as { choices?: { message?: { content?: string | null } }[] };
@@ -79,11 +80,11 @@ async function chat(
   }
 }
 
-export async function translateToKorean(texts: string[], timeoutMs: number, request: typeof fetch = fetch): Promise<TranslateResult> {
+export async function translateToKorean(texts: string[], timeoutMs: number, request: typeof fetch = fetch, signal?: AbortSignal): Promise<TranslateResult> {
   const result = await chat({
     system: SYSTEM, user: JSON.stringify(texts), temperature: 0.1,
     maxTokens: Math.min(6_000, 400 + Math.ceil(texts.join("").length * 1.2)),
-  }, timeoutMs, request);
+  }, timeoutMs, request, signal);
   return result.ok ? parseTranslations(result.content, texts) : result;
 }
 

@@ -1,3 +1,7 @@
+import { isDeepStrictEqual } from "node:util";
+import { assertJobLease, requestJob, type JobLease } from "@/lib/jobs/control";
+import { emitPipelineEvent } from "@/lib/observability/review-pipeline";
+import { taglineEvidence, taglineHash } from "./tagline";
 import { and, eq, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { crawlCandidates, crawlDocuments, crawlTaglines, type CrawlCandidate, type CrawlDocument, type CrawlTagline } from "@/lib/db/schema";
@@ -44,46 +48,59 @@ export async function pendingTaglines(limit: number): Promise<TaglineTask[]> {
   return rows.map((row) => ({ candidate: row.candidate, document: row.document, written: row.written ?? null }));
 }
 
-/** 지은 줄을 남긴다. 빈 줄도 남긴다 — "증거로는 알 수 없다"는 답도 답이라 다시 묻지 않는다 */
-export async function recordTagline(row: {
-  repo: string; tagline: string; source: TaglineEvidenceSource; model: string; sourceHash: string; documentAt: Date;
-}): Promise<void> {
-  const line = row.tagline.slice(0, 200);
-  await db.insert(crawlTaglines).values({
-    repo: row.repo, tagline: line, source: row.source, model: row.model,
-    sourceHash: row.sourceHash, documentAt: row.documentAt, attempts: 1, errorCode: null, retryAt: null, updatedAt: sql`now()`,
-  }).onConflictDoUpdate({
-    target: crawlTaglines.repo,
-    set: {
-      tagline: line, source: row.source, model: row.model, sourceHash: row.sourceHash, documentAt: row.documentAt,
-      errorCode: null, retryAt: null, updatedAt: sql`now()`, attempts: sql`${crawlTaglines.attempts} + 1`,
-    },
-  });
-}
+type AutomaticTaglineResult =
+  | { kind: "success"; tagline: string; source: TaglineEvidenceSource; model: string }
+  | { kind: "failure"; error: string }
+  | { kind: "reuse" };
 
-/** 실패는 5분·10분·20분… 뒤에 다시(최대 하루). 원본 해시는 그 실패가 무엇을 보다 났는지다 */
-export async function recordTaglineFailure(row: { repo: string; sourceHash: string; documentAt: Date; error: string }): Promise<void> {
-  const code = row.error.slice(0, 60);
-  await db.insert(crawlTaglines).values({
-    repo: row.repo, tagline: "", source: "page", model: "", sourceHash: row.sourceHash, documentAt: row.documentAt,
-    attempts: 1, errorCode: code, retryAt: sql`now() + interval '5 minutes'`, updatedAt: sql`now()`,
-  }).onConflictDoUpdate({
-    target: crawlTaglines.repo,
-    set: {
-      sourceHash: row.sourceHash, documentAt: row.documentAt, errorCode: code, updatedAt: sql`now()`,
-      attempts: sql`${crawlTaglines.attempts} + 1`,
-      retryAt: sql`now() + least(interval '24 hours', interval '5 minutes' * power(2, ${crawlTaglines.attempts}))`,
-    },
+/** A worker result, source CAS, release and wake-up are a single fenced transaction. */
+export async function recordTaglineResult(task: TaglineTask, lease: JobLease, result: AutomaticTaglineResult) {
+  let request: Awaited<ReturnType<typeof requestJob>> | undefined;
+  const recorded = await db.transaction(async tx => {
+    const [candidate] = await tx.select().from(crawlCandidates).where(eq(crawlCandidates.id, task.candidate.id)).for("update");
+    const [document] = await tx.select().from(crawlDocuments).where(eq(crawlDocuments.id, task.document.id)).for("share");
+    const [written] = await tx.select().from(crawlTaglines).where(eq(crawlTaglines.repo, task.candidate.repo)).for("update");
+    if (!candidate || candidate.state !== "needs_review" || candidate.reason !== "no_description" || candidate.decidedBy !== "auto"
+      || written?.writtenBy || !isDeepStrictEqual(candidate, task.candidate) || !isDeepStrictEqual(document, task.document)
+      || !isDeepStrictEqual(written ?? null, task.written)) return { stored: false, released: false };
+    const sourceHash = taglineHash(taglineEvidence(candidate.repo, document!));
+    let line = "";
+    if (result.kind === "reuse") {
+      if (!written || written.errorCode || written.sourceHash !== sourceHash) return { stored: false, released: false };
+      line = written.tagline;
+      await tx.update(crawlTaglines).set({ documentAt: document!.fetchedAt, updatedAt: sql`now()` })
+        .where(eq(crawlTaglines.repo, candidate.repo));
+    } else {
+      line = result.kind === "success" ? result.tagline.slice(0, 200) : "";
+      const common = { sourceHash, documentAt: document!.fetchedAt, updatedAt: sql`now()`,
+        errorCode: result.kind === "failure" ? result.error.slice(0, 60) : null };
+      const [saved] = await tx.insert(crawlTaglines).values({ repo: candidate.repo, ...common, tagline: line,
+        source: result.kind === "success" ? result.source : "page", model: result.kind === "success" ? result.model : "",
+        attempts: 1, retryAt: result.kind === "failure" ? sql`now() + interval '5 minutes'` : null,
+      }).onConflictDoUpdate({ target: crawlTaglines.repo,
+        set: { ...common, attempts: sql`${crawlTaglines.attempts} + 1`,
+          ...(result.kind === "success" ? { tagline: line, source: result.source, model: result.model, retryAt: null }
+            : { retryAt: sql`now() + least(interval '24 hours', interval '5 minutes' * power(2, ${crawlTaglines.attempts}))` }),
+        },
+        // An absent row can be inserted by an administrator after our SELECT. It always wins.
+        setWhere: task.written ? sql`${crawlTaglines.writtenBy} is null AND date_trunc('milliseconds', ${crawlTaglines.updatedAt}) = ${task.written.updatedAt.toISOString()}::timestamp` : sql`false`,
+      }).returning({ repo: crawlTaglines.repo });
+      if (!saved) return { stored: false, released: false };
+    }
+    const released = Boolean(line);
+    if (released) {
+      await tx.update(crawlCandidates).set({ state: "approved", reason: "passed", updatedAt: new Date() })
+        .where(eq(crawlCandidates.id, candidate.id));
+      request = await requestJob("crawl-publish", tx);
+    }
+    // Scheduler locks publish before tagline. Check ownership last, rolling everything back on loss.
+    await assertJobLease(tx, lease);
+    return { stored: true, released };
   });
-}
-
-/**
- * 원본을 다시 긁었지만 내용이 그대로일 때 — 본 판만 새 판으로 적는다.
- *
- * 이게 없으면 다시 긁을 때마다 같은 증거로 모델을 또 부른다(재수집은 하루에 한 번씩 돈다).
- */
-export async function touchTagline(repo: string, documentAt: Date): Promise<void> {
-  await db.update(crawlTaglines).set({ documentAt, updatedAt: sql`now()` }).where(eq(crawlTaglines.repo, repo));
+  if (recorded.stored) emitPipelineEvent("committed", { stage: "text", candidateId: task.candidate.id, job: lease.name, state: result.kind });
+  if (request) emitPipelineEvent("requested", { stage: "text", candidateId: task.candidate.id,
+    nextJob: request.job, requestedVersion: request.requestedVersion });
+  return recorded;
 }
 
 /**
@@ -109,24 +126,3 @@ export async function writtenTagline(repo: string): Promise<CrawlTagline | undef
   return row;
 }
 
-/**
- * 소개를 지었으니 발행 대기로 되돌린다.
- *
- * 되돌리는 곳은 "승인됨"이다 — 심사를 다시 받는 자리이기도 하다. 승인이 유효기간을 넘겼으면
- * 1차 심사가 이 후보를 다시 집고(listReviewCandidates 가 approved 를 본다), 유효하면 발행 잡이
- * 곧바로 집는다. 판정 기록(signals·decidedBy)은 건드리지 않는다 — 소개를 지었을 뿐 다시 판정한 것이 아니다.
- *
- * 사람이 그 사이 손댔으면(decidedBy·state 가 바뀌었으면) 아무것도 하지 않는다.
- */
-export async function releaseForPublish(candidateId: number): Promise<boolean> {
-  const done = await db.update(crawlCandidates)
-    .set({ state: "approved", reason: "passed", updatedAt: new Date() })
-    .where(and(
-      eq(crawlCandidates.id, candidateId),
-      eq(crawlCandidates.state, "needs_review"),
-      eq(crawlCandidates.reason, "no_description"),
-      eq(crawlCandidates.decidedBy, "auto"),
-    ))
-    .returning({ id: crawlCandidates.id });
-  return done.length > 0;
-}

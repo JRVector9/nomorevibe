@@ -157,7 +157,7 @@ export function parseTagline(content: string, evidence: TaglineEvidence): Taglin
 }
 
 export async function writeTagline(evidence: TaglineEvidence, options: {
-  timeoutMs: number; model?: string; request?: typeof fetch;
+  timeoutMs: number; model?: string; request?: typeof fetch; signal?: AbortSignal;
 }): Promise<TaglineResult> {
   const key = process.env.ABCLLM_API_KEY?.trim();
   if (!key) return { ok: false, error: "no_key" };
@@ -177,7 +177,7 @@ export async function writeTagline(evidence: TaglineEvidence, options: {
           { role: "user", content: `<untrusted_evidence_json>\n${prompt}\n</untrusted_evidence_json>` },
         ],
       }),
-      signal: AbortSignal.timeout(Math.max(1, options.timeoutMs)),
+      signal: options.signal ? AbortSignal.any([options.signal, AbortSignal.timeout(Math.max(1, options.timeoutMs))]) : AbortSignal.timeout(Math.max(1, options.timeoutMs)),
     });
     if (!response.ok) {
       return { ok: false, error: response.status === 404 ? "model_unavailable" : response.status === 429 ? "rate_limit" : `http_${response.status}` };

@@ -19,7 +19,7 @@ const { crawlFrontier, crawlDocuments, crawlCandidates, crawlSettings, crawlTagl
 );
 const crawl = await import("@/lib/crawl/repository");
 const { taglineEvidence, taglineHash } = await import("@/lib/crawl/tagline");
-const { recordTagline, writeTaglineByHand } = await import("@/lib/crawl/taglines");
+const { writeTaglineByHand } = await import("@/lib/crawl/taglines");
 const { judgeRevision } = await import("@/lib/crawl/rules");
 const products = await import("@/lib/domain/products/repository");
 const { saveSettings } = await import("@/lib/crawl/settings");
@@ -282,7 +282,7 @@ describe("발행 잡", () => {
       pageMeta: { title: "Sho't Right", description: null, ogImage: null, textSample: "바를 등록하면 손님이 찾을 수 있습니다" },
     });
     const document = await crawl.getDocument("someone/mystery");
-    await recordTagline({
+    await db.insert(crawlTaglines).values({
       repo: "someone/mystery", tagline: "바를 등록하면 손님이 찾습니다", source: "page", model: "[MLX] qwen",
       sourceHash: taglineHash(taglineEvidence("someone/mystery", document!)), documentAt: document!.fetchedAt,
     });
@@ -317,7 +317,7 @@ describe("발행 잡", () => {
       pageMeta: { title: "Sho't Right", description: null, ogImage: null, textSample: "바를 등록하면 손님이 찾을 수 있습니다" },
     });
     const document = await crawl.getDocument("someone/mystery");
-    await recordTagline({
+    await db.insert(crawlTaglines).values({
       repo: "someone/mystery", tagline: "옛 페이지를 보고 지은 줄", source: "page", model: "[MLX] qwen",
       sourceHash: taglineHash(taglineEvidence("someone/mystery", { ...document!, pageMeta: { textSample: "옛 글" } })),
       documentAt: document!.fetchedAt,
