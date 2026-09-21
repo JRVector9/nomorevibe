@@ -1,0 +1,62 @@
+{
+  "at": "2026-09-21T00:57:04.692Z",
+  "repair": [
+    {
+      "audited": 120,
+      "still_rejected": 120,
+      "incorrectly_published": 0,
+      "publication_events_after_repair": 0
+    }
+  ],
+  "products": [],
+  "aliases": [
+    {
+      "repo": "fiv0/triplox",
+      "states": [
+        "published",
+        "rejected"
+      ]
+    },
+    {
+      "repo": "samchon/automovie",
+      "states": [
+        "rejected",
+        "published"
+      ]
+    },
+    {
+      "repo": "uipath/coder_eval",
+      "states": [
+        "published",
+        "rejected"
+      ]
+    },
+    {
+      "repo": "ucsandman/legcli",
+      "states": [
+        "published",
+        "rejected"
+      ]
+    },
+    {
+      "repo": "jeffreymooiweer/emcargo",
+      "states": [
+        "rejected",
+        "rejected"
+      ]
+    }
+  ],
+  "indexes": [
+    {
+      "indexname": "crawl_frontier_identity_idx"
+    },
+    {
+      "indexname": "products_repository_identity_idx"
+    }
+  ],
+  "migration": [
+    {
+      "count": 44
+    }
+  ]
+}

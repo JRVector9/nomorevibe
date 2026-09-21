@@ -1,0 +1,840 @@
+{
+  "at": "2026-09-21T00:57:04.423Z",
+  "states": [
+    {
+      "state": "needs_review",
+      "reason": "ambiguous",
+      "count": 7
+    },
+    {
+      "state": "needs_review",
+      "reason": "no_description",
+      "count": 2
+    },
+    {
+      "state": "needs_review",
+      "reason": "second_review_split",
+      "count": 6
+    },
+    {
+      "state": "published",
+      "reason": "passed",
+      "count": 109
+    },
+    {
+      "state": "rejected",
+      "reason": "not_a_product",
+      "count": 35
+    },
+    {
+      "state": "rejected",
+      "reason": "personal_site",
+      "count": 1
+    }
+  ],
+  "fresh": [
+    {
+      "total": 160,
+      "fresh": 160
+    }
+  ],
+  "products": [
+    {
+      "repo": "shanraisshan/claude-code-best-practice",
+      "slug": "claude-code-best-practice",
+      "name": "claude-code-best-practice",
+      "access_mode": "installable",
+      "category": "Dev"
+    },
+    {
+      "repo": "oraios/serena",
+      "slug": "serena",
+      "name": "serena",
+      "access_mode": "installable",
+      "category": "Dev"
+    },
+    {
+      "repo": "Egonex-AI/Understand-Anything",
+      "slug": "understand-anything",
+      "name": "Understand Anything",
+      "access_mode": "website",
+      "category": "Plugin"
+    },
+    {
+      "repo": "zilliztech/claude-context",
+      "slug": "claude-context",
+      "name": "claude-context",
+      "access_mode": "installable",
+      "category": "Dev"
+    },
+    {
+      "repo": "MiniMax-AI/OpenRoom",
+      "slug": "openroom",
+      "name": "OpenRoom",
+      "access_mode": "installable",
+      "category": "Productivity"
+    },
+    {
+      "repo": "ChristopherKahler/paul",
+      "slug": "paul",
+      "name": "paul",
+      "access_mode": "installable",
+      "category": "Plugin"
+    },
+    {
+      "repo": "shanraisshan/codex-cli-best-practice",
+      "slug": "codex-cli-best-practice",
+      "name": "codex-cli-best-practice",
+      "access_mode": "installable",
+      "category": "Dev"
+    },
+    {
+      "repo": "chrishutchinson/claude-receipts",
+      "slug": "claude-receipts",
+      "name": "claude-receipts",
+      "access_mode": "installable",
+      "category": "Plugin"
+    },
+    {
+      "repo": "FullAgent/fulling",
+      "slug": "fulling",
+      "name": "fulling",
+      "access_mode": "installable",
+      "category": "Dev"
+    },
+    {
+      "repo": "Juwan-Hwang/Zephyr",
+      "slug": "zephyr",
+      "name": "Zephyr",
+      "access_mode": "website",
+      "category": "Security"
+    },
+    {
+      "repo": "MioMioOS/MioIsland",
+      "slug": "mioisland",
+      "name": "MioIsland",
+      "access_mode": "website",
+      "category": "Dev"
+    },
+    {
+      "repo": "shanraisshan/claude-code-hooks",
+      "slug": "claude-code-hooks",
+      "name": "claude-code-hooks",
+      "access_mode": "installable",
+      "category": "Plugin"
+    },
+    {
+      "repo": "mvel/mvel",
+      "slug": "mvel",
+      "name": "mvel",
+      "access_mode": "installable",
+      "category": "Dev"
+    },
+    {
+      "repo": "alchaincyf/fanbox",
+      "slug": "fanbox",
+      "name": "fanbox",
+      "access_mode": "installable",
+      "category": "Dev"
+    },
+    {
+      "repo": "forcedotcom/salesforcedx-vscode",
+      "slug": "salesforcedx-vscode",
+      "name": "salesforcedx-vscode",
+      "access_mode": "installable",
+      "category": "Plugin"
+    },
+    {
+      "repo": "wordpress-mobile/WordPress-iOS",
+      "slug": "wordpress-ios",
+      "name": "WordPress-iOS",
+      "access_mode": "installable",
+      "category": "Media"
+    },
+    {
+      "repo": "verl-project/verl-omni",
+      "slug": "verl-omni",
+      "name": "verl-omni",
+      "access_mode": "installable",
+      "category": "Dev"
+    },
+    {
+      "repo": "WordPress/gutenberg",
+      "slug": "gutenberg",
+      "name": "gutenberg",
+      "access_mode": "installable",
+      "category": "Plugin"
+    },
+    {
+      "repo": "EnzymeAD/Enzyme.jl",
+      "slug": "enzymejl",
+      "name": "Enzyme.jl",
+      "access_mode": "installable",
+      "category": "Dev"
+    },
+    {
+      "repo": "huggingface/transformers",
+      "slug": "transformers",
+      "name": "transformers",
+      "access_mode": "installable",
+      "category": "Dev"
+    },
+    {
+      "repo": "iorate/ublacklist",
+      "slug": "ublacklist",
+      "name": "ublacklist",
+      "access_mode": "installable",
+      "category": "Plugin"
+    },
+    {
+      "repo": "oscar-system/Oscar.jl",
+      "slug": "oscarjl",
+      "name": "Oscar.jl",
+      "access_mode": "installable",
+      "category": "Dev"
+    },
+    {
+      "repo": "Smaug6739/Alexandrie",
+      "slug": "alexandrie",
+      "name": "Alexandrie",
+      "access_mode": "installable",
+      "category": "Productivity"
+    },
+    {
+      "repo": "RDFLib/rdflib",
+      "slug": "rdflib",
+      "name": "rdflib",
+      "access_mode": "installable",
+      "category": "Dev"
+    },
+    {
+      "repo": "github/gh-aw",
+      "slug": "gh-aw",
+      "name": "gh-aw",
+      "access_mode": "installable",
+      "category": "Dev"
+    },
+    {
+      "repo": "raycast/extensions",
+      "slug": "extensions",
+      "name": "extensions",
+      "access_mode": "installable",
+      "category": "Plugin"
+    },
+    {
+      "repo": "LuxDL/Lux.jl",
+      "slug": "luxjl",
+      "name": "Lux.jl",
+      "access_mode": "installable",
+      "category": "Dev"
+    },
+    {
+      "repo": "mattpocock/course-video-manager",
+      "slug": "course-video-manager",
+      "name": "course-video-manager",
+      "access_mode": "installable",
+      "category": "Media"
+    },
+    {
+      "repo": "CliMA/Oceananigans.jl",
+      "slug": "oceananigansjl",
+      "name": "Oceananigans.jl",
+      "access_mode": "installable",
+      "category": "Dev"
+    },
+    {
+      "repo": "pymeasure/pymeasure",
+      "slug": "pymeasure",
+      "name": "pymeasure",
+      "access_mode": "installable",
+      "category": "Dev"
+    },
+    {
+      "repo": "Olen/lovelace-flower-card",
+      "slug": "lovelace-flower-card",
+      "name": "lovelace-flower-card",
+      "access_mode": "installable",
+      "category": "Plugin"
+    },
+    {
+      "repo": "roboflow/supervision",
+      "slug": "supervision",
+      "name": "supervision",
+      "access_mode": "installable",
+      "category": "Dev"
+    },
+    {
+      "repo": "securingsincity/react-ace",
+      "slug": "react-ace",
+      "name": "react-ace",
+      "access_mode": "installable",
+      "category": "Dev"
+    },
+    {
+      "repo": "EvolvingLMMs-Lab/LLaVA-OneVision-2",
+      "slug": "llava-onevision-projects",
+      "name": "LLaVA-OneVision Projects",
+      "access_mode": "website",
+      "category": "Dev"
+    },
+    {
+      "repo": "ag-grid/ag-grid",
+      "slug": "ag-grid",
+      "name": "ag-grid",
+      "access_mode": "installable",
+      "category": "Dev"
+    },
+    {
+      "repo": "tobymao/sqlglot",
+      "slug": "sqlglot",
+      "name": "sqlglot",
+      "access_mode": "installable",
+      "category": "Dev"
+    },
+    {
+      "repo": "modelcontextprotocol/registry",
+      "slug": "registry",
+      "name": "registry",
+      "access_mode": "installable",
+      "category": "Dev"
+    },
+    {
+      "repo": "apify/mcpc",
+      "slug": "mcpc",
+      "name": "mcpc",
+      "access_mode": "installable",
+      "category": "Dev"
+    },
+    {
+      "repo": "instructure/canvas-lms",
+      "slug": "canvas-lms",
+      "name": "canvas-lms",
+      "access_mode": "installable",
+      "category": "Education"
+    },
+    {
+      "repo": "shotgun-sh/shotgun",
+      "slug": "shotgun-2",
+      "name": "shotgun",
+      "access_mode": "installable",
+      "category": "Dev"
+    },
+    {
+      "repo": "xorbitsai/inference",
+      "slug": "inference",
+      "name": "inference",
+      "access_mode": "installable",
+      "category": "Dev"
+    },
+    {
+      "repo": "Wei-Shaw/claude-relay-service",
+      "slug": "claude-relay-service",
+      "name": "claude-relay-service",
+      "access_mode": "installable",
+      "category": "Dev"
+    },
+    {
+      "repo": "jazzyalex/agent-sessions",
+      "slug": "find-the-agent-session-you-need",
+      "name": "Find the agent session you need.",
+      "access_mode": "website",
+      "category": "Dev"
+    },
+    {
+      "repo": "zarr-developers/zarr-python",
+      "slug": "zarr-python",
+      "name": "zarr-python",
+      "access_mode": "installable",
+      "category": "Data"
+    },
+    {
+      "repo": "deepcoldy/botmux",
+      "slug": "botmux",
+      "name": "botmux",
+      "access_mode": "website",
+      "category": "Dev"
+    },
+    {
+      "repo": "JoshuaC215/agent-service-toolkit",
+      "slug": "agent-service-toolkit",
+      "name": "agent-service-toolkit",
+      "access_mode": "installable",
+      "category": "Dev"
+    },
+    {
+      "repo": "raullenchai/Rapid-MLX",
+      "slug": "rapid-mlx",
+      "name": "Rapid-MLX",
+      "access_mode": "installable",
+      "category": "Dev"
+    },
+    {
+      "repo": "AI-Hypercomputer/maxtext",
+      "slug": "maxtext",
+      "name": "maxtext",
+      "access_mode": "installable",
+      "category": "Dev"
+    },
+    {
+      "repo": "he-yufeng/CoreCoder",
+      "slug": "corecoder",
+      "name": "CoreCoder",
+      "access_mode": "installable",
+      "category": "Dev"
+    },
+    {
+      "repo": "zouyuxuan122/DSH-Desktop-EAC",
+      "slug": "dsh-desktop-eac",
+      "name": "DSH-Desktop-EAC",
+      "access_mode": "installable",
+      "category": "Dev"
+    },
+    {
+      "repo": "tigicion/dao-code",
+      "slug": "dao-code",
+      "name": "dao-code",
+      "access_mode": "installable",
+      "category": "Dev"
+    },
+    {
+      "repo": "beizhu-1209/AIHelms",
+      "slug": "aihelms",
+      "name": "AIHelms",
+      "access_mode": "installable",
+      "category": "Business"
+    },
+    {
+      "repo": "Anionex/dsh-vision-toolkit",
+      "slug": "dsh-vision-toolkit",
+      "name": "dsh-vision-toolkit",
+      "access_mode": "installable",
+      "category": "Plugin"
+    },
+    {
+      "repo": "ome-projects/ome",
+      "slug": "ome",
+      "name": "OME",
+      "access_mode": "website",
+      "category": "Dev"
+    },
+    {
+      "repo": "ArvinLovegood/go-stock",
+      "slug": "go-stock",
+      "name": "go-stock",
+      "access_mode": "installable",
+      "category": "Finance"
+    },
+    {
+      "repo": "BlockRunAI/ClawRouter",
+      "slug": "clawrouter-2",
+      "name": "ClawRouter",
+      "access_mode": "installable",
+      "category": "Dev"
+    },
+    {
+      "repo": "iOfficeAI/OfficeCLI",
+      "slug": "officecli",
+      "name": "OfficeCLI",
+      "access_mode": "installable",
+      "category": "Skill"
+    },
+    {
+      "repo": "nicedreamzapp/claude-code-local",
+      "slug": "claude-code-local",
+      "name": "claude-code-local",
+      "access_mode": "installable",
+      "category": "Dev"
+    },
+    {
+      "repo": "wanghuan9/skilldock",
+      "slug": "skilldock",
+      "name": "skilldock",
+      "access_mode": "installable",
+      "category": "Dev"
+    },
+    {
+      "repo": "openai/openai-node",
+      "slug": "openai-node",
+      "name": "openai-node",
+      "access_mode": "installable",
+      "category": "Dev"
+    },
+    {
+      "repo": "ovexro/dockpanel",
+      "slug": "dockpanel",
+      "name": "dockpanel",
+      "access_mode": "installable",
+      "category": "Dev"
+    },
+    {
+      "repo": "AltanS/collie",
+      "slug": "colliepwa",
+      "name": "ColliePWA",
+      "access_mode": "website",
+      "category": "Dev"
+    },
+    {
+      "repo": "HoangNguyen0403/agent-skills-standard",
+      "slug": "agent-skills-standard",
+      "name": "agent-skills-standard",
+      "access_mode": "installable",
+      "category": "Dev"
+    },
+    {
+      "repo": "gijzelaerr/python-snap7",
+      "slug": "python-snap7",
+      "name": "python-snap7",
+      "access_mode": "installable",
+      "category": "Dev"
+    },
+    {
+      "repo": "milvus-io/milvus",
+      "slug": "milvus",
+      "name": "milvus",
+      "access_mode": "installable",
+      "category": "Data"
+    },
+    {
+      "repo": "fy-agent/fyagent",
+      "slug": "fyagent",
+      "name": "fyagent",
+      "access_mode": "installable",
+      "category": "Dev"
+    },
+    {
+      "repo": "kornia/kornia",
+      "slug": "kornia",
+      "name": "kornia",
+      "access_mode": "installable",
+      "category": "Dev"
+    },
+    {
+      "repo": "rockowitz/ddcutil",
+      "slug": "ddcutil",
+      "name": "ddcutil",
+      "access_mode": "installable",
+      "category": "Dev"
+    },
+    {
+      "repo": "myYangyunfan/dsh_desktop",
+      "slug": "dshdesktop",
+      "name": "dsh_desktop",
+      "access_mode": "installable",
+      "category": "Dev"
+    },
+    {
+      "repo": "xtekky/gpt4free",
+      "slug": "gpt4free",
+      "name": "gpt4free",
+      "access_mode": "installable",
+      "category": "Dev"
+    },
+    {
+      "repo": "hiyouga/LlamaFactory",
+      "slug": "llamafactory",
+      "name": "LlamaFactory",
+      "access_mode": "installable",
+      "category": "Dev"
+    },
+    {
+      "repo": "bit-team/backintime",
+      "slug": "backintime",
+      "name": "backintime",
+      "access_mode": "installable",
+      "category": "Productivity"
+    },
+    {
+      "repo": "askalf/dario",
+      "slug": "dario",
+      "name": "dario",
+      "access_mode": "installable",
+      "category": "Dev"
+    },
+    {
+      "repo": "gastownhall/beads",
+      "slug": "beads-2",
+      "name": "beads",
+      "access_mode": "installable",
+      "category": "Dev"
+    },
+    {
+      "repo": "Kuddev/pebrel",
+      "slug": "pebrel",
+      "name": "pebrel",
+      "access_mode": "installable",
+      "category": "Dev"
+    },
+    {
+      "repo": "jau123/MeiGen-AI-Design-MCP",
+      "slug": "meigen-ai-design-mcp",
+      "name": "MeiGen-AI-Design-MCP",
+      "access_mode": "installable",
+      "category": "Design"
+    },
+    {
+      "repo": "catlog22/maestro-flow",
+      "slug": "maestro-flow",
+      "name": "maestro-flow",
+      "access_mode": "installable",
+      "category": "Dev"
+    },
+    {
+      "repo": "openfrontio/OpenFrontIO",
+      "slug": "openfrontio",
+      "name": "OpenFrontIO",
+      "access_mode": "installable",
+      "category": "Games"
+    },
+    {
+      "repo": "wincent/wincent",
+      "slug": "wincent",
+      "name": "wincent",
+      "access_mode": "installable",
+      "category": "Dev"
+    },
+    {
+      "repo": "HearthSim/HSTracker",
+      "slug": "hstracker",
+      "name": "HSTracker",
+      "access_mode": "installable",
+      "category": "Games"
+    },
+    {
+      "repo": "RLinf/RLinf",
+      "slug": "rlinf",
+      "name": "RLinf",
+      "access_mode": "installable",
+      "category": "Dev"
+    },
+    {
+      "repo": "yoanbernabeu/grepai",
+      "slug": "grepai",
+      "name": "grepai",
+      "access_mode": "installable",
+      "category": "Dev"
+    },
+    {
+      "repo": "hyhmrright/brooks-lint",
+      "slug": "brooks-lint",
+      "name": "brooks-lint",
+      "access_mode": "website",
+      "category": "Skill"
+    },
+    {
+      "repo": "mohitagw15856/pm-claude-skills",
+      "slug": "pm-skills",
+      "name": "PM Skills",
+      "access_mode": "website",
+      "category": "Skill"
+    },
+    {
+      "repo": "Spielewoy/autoprompt-skill",
+      "slug": "autoprompt-skill",
+      "name": "autoprompt-skill",
+      "access_mode": "installable",
+      "category": "Dev"
+    },
+    {
+      "repo": "ianjwhite99/opencode-with-claude",
+      "slug": "opencode-with-claude",
+      "name": "opencode-with-claude",
+      "access_mode": "installable",
+      "category": "Plugin"
+    },
+    {
+      "repo": "LeyckerS/moondownloader",
+      "slug": "moondownloader",
+      "name": "moondownloader",
+      "access_mode": "installable",
+      "category": "Productivity"
+    },
+    {
+      "repo": "meizhong986/WhisperJAV",
+      "slug": "whisperjav",
+      "name": "WhisperJAV",
+      "access_mode": "installable",
+      "category": "Media"
+    },
+    {
+      "repo": "rynfar/meridian",
+      "slug": "meridian-5",
+      "name": "meridian",
+      "access_mode": "installable",
+      "category": "Dev"
+    },
+    {
+      "repo": "github/spec-kit",
+      "slug": "spec-kit",
+      "name": "spec-kit",
+      "access_mode": "installable",
+      "category": "Dev"
+    },
+    {
+      "repo": "yc-software/qm",
+      "slug": "qm",
+      "name": "qm",
+      "access_mode": "installable",
+      "category": "Productivity"
+    },
+    {
+      "repo": "Aethersailor/SubConverter-Extended",
+      "slug": "subconverter-extended",
+      "name": "SubConverter-Extended",
+      "access_mode": "installable",
+      "category": "Security"
+    },
+    {
+      "repo": "ggml-org/ggml",
+      "slug": "ggml",
+      "name": "ggml",
+      "access_mode": "installable",
+      "category": "Dev"
+    },
+    {
+      "repo": "testng-team/testng",
+      "slug": "testng",
+      "name": "testng",
+      "access_mode": "installable",
+      "category": "Dev"
+    },
+    {
+      "repo": "ethanplusai/jarvis",
+      "slug": "jarvis-4",
+      "name": "jarvis",
+      "access_mode": "installable",
+      "category": "Dev"
+    },
+    {
+      "repo": "Open-Less/openless",
+      "slug": "openless",
+      "name": "openless",
+      "access_mode": "installable",
+      "category": "Productivity"
+    },
+    {
+      "repo": "SWI-Prolog/swipl-devel",
+      "slug": "swipl-devel",
+      "name": "swipl-devel",
+      "access_mode": "installable",
+      "category": "Dev"
+    },
+    {
+      "repo": "sromku/memory-game",
+      "slug": "memory-game",
+      "name": "memory-game",
+      "access_mode": "installable",
+      "category": "Games"
+    },
+    {
+      "repo": "themactep/thingino-firmware",
+      "slug": "thingino-firmware",
+      "name": "thingino-firmware",
+      "access_mode": "installable",
+      "category": "Dev"
+    },
+    {
+      "repo": "thejaustin/ShizukuPlus",
+      "slug": "shizukuplus",
+      "name": "ShizukuPlus",
+      "access_mode": "installable",
+      "category": "Dev"
+    },
+    {
+      "repo": "DSH-EAC/DSH-Desktop-EAC",
+      "slug": "dsh-desktop-eac-2",
+      "name": "DSH-Desktop-EAC",
+      "access_mode": "installable",
+      "category": "Dev"
+    },
+    {
+      "repo": "Jia-Ethan/codex-keysmith",
+      "slug": "codex-keysmith",
+      "name": "codex-keysmith",
+      "access_mode": "installable",
+      "category": "Dev"
+    },
+    {
+      "repo": "JCodesMore/ai-website-cloner-template",
+      "slug": "ai-website-cloner-template",
+      "name": "ai-website-cloner-template",
+      "access_mode": "installable",
+      "category": "Dev"
+    },
+    {
+      "repo": "sky-map-team/stardroid",
+      "slug": "stardroid",
+      "name": "stardroid",
+      "access_mode": "installable",
+      "category": "Education"
+    },
+    {
+      "repo": "Tracer-Cloud/opensre",
+      "slug": "opensre",
+      "name": "opensre",
+      "access_mode": "installable",
+      "category": "Dev"
+    },
+    {
+      "repo": "web-platform-tests/wpt",
+      "slug": "wpt",
+      "name": "wpt",
+      "access_mode": "installable",
+      "category": "Dev"
+    },
+    {
+      "repo": "armbian/build",
+      "slug": "build-2",
+      "name": "build",
+      "access_mode": "installable",
+      "category": "Dev"
+    },
+    {
+      "repo": "wolfi-dev/os",
+      "slug": "os-3",
+      "name": "os",
+      "access_mode": "installable",
+      "category": "Dev"
+    },
+    {
+      "repo": "Mininglamp-OSS/octo-web",
+      "slug": "octo-web",
+      "name": "octo-web",
+      "access_mode": "installable",
+      "category": "Social"
+    }
+  ],
+  "jobs": [
+    {
+      "name": "crawl-fetch",
+      "last_error": null,
+      "seen_seconds": 20
+    },
+    {
+      "name": "crawl-publish",
+      "last_error": null,
+      "seen_seconds": 5
+    },
+    {
+      "name": "crawl-judge",
+      "last_error": null,
+      "seen_seconds": 243
+    },
+    {
+      "name": "crawl-agent-review",
+      "last_error": null,
+      "seen_seconds": 9
+    },
+    {
+      "name": "second-review",
+      "last_error": null,
+      "seen_seconds": 37
+    }
+  ],
+  "change": [
+    {
+      "added": 1596,
+      "removed": 0,
+      "net": 1596
+    }
+  ]
+}

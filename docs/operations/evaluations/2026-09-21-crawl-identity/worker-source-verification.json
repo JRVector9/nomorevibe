@@ -1,0 +1,44 @@
+[
+  {
+    "name": "nomorevibe-crawler-m3",
+    "container": "ecc5b7182340",
+    "health": "running healthy",
+    "matched": 16,
+    "total": 16
+  },
+  {
+    "name": "nomorevibe-reviewer-m3",
+    "container": "f7a6f658ec19",
+    "health": "running healthy",
+    "matched": 16,
+    "total": 16
+  },
+  {
+    "name": "nomorevibe-publisher-m3",
+    "container": "296ab47db6d4",
+    "health": "running healthy",
+    "matched": 16,
+    "total": 16
+  },
+  {
+    "name": "nomorevibe-maintenance-m3",
+    "container": "3f2ddf335146",
+    "health": "running healthy",
+    "matched": 16,
+    "total": 16
+  },
+  {
+    "name": "nomorevibe-scheduler-m3",
+    "container": "19c8495ad0f6",
+    "health": "running healthy",
+    "matched": 16,
+    "total": 16
+  },
+  {
+    "name": "nomorevibe-connect-agent-m3",
+    "container": "74c57d399bbf",
+    "health": "running healthy",
+    "matched": 16,
+    "total": 16
+  }
+]

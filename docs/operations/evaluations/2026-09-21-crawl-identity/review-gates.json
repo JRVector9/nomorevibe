@@ -1,0 +1,50 @@
+{
+  "at": "2026-09-21T00:54:31.158Z",
+  "published": 109,
+  "missingGate": [],
+  "invalidInstallation": [],
+  "access": {
+    "installable": 99,
+    "website": 10
+  },
+  "categories": {
+    "Dev": 73,
+    "Plugin": 11,
+    "Productivity": 6,
+    "Security": 2,
+    "Media": 3,
+    "Education": 2,
+    "Data": 2,
+    "Business": 1,
+    "Finance": 1,
+    "Skill": 3,
+    "Design": 1,
+    "Games": 3,
+    "Social": 1
+  },
+  "lostReasons": [],
+  "duplicateRefs": [
+    {
+      "total": 720,
+      "matched": 720,
+      "missing_reference": 0
+    }
+  ],
+  "lookupPlan": [
+    {
+      "QUERY PLAN": "Limit  (cost=0.41..2.63 rows=1 width=4) (actual time=0.009..0.009 rows=0 loops=1)"
+    },
+    {
+      "QUERY PLAN": "  ->  Index Scan using products_repository_identity_idx on products  (cost=0.41..2.63 rows=1 width=4) (actual time=0.008..0.009 rows=0 loops=1)"
+    },
+    {
+      "QUERY PLAN": "        Index Cond: (regexp_replace(regexp_replace(lower(rtrim(repo_url, '/'::text)), '^https?://(www[.])?'::text, 'https://'::text), '[.]git$'::text, ''::text) = 'https://github.com/absent/no-match'::text)"
+    },
+    {
+      "QUERY PLAN": "Planning Time: 0.061 ms"
+    },
+    {
+      "QUERY PLAN": "Execution Time: 0.017 ms"
+    }
+  ]
+}
