@@ -195,3 +195,14 @@ it("줄에서 기다리다 기한이 끝나면 곧장 끊기고, 앞 요청의 �
   (await next)();
   expect(third).toBe(true);
 });
+
+it("비표준 HTTP 상태도 원래 상태를 유지하고 본문과 origin 자리를 정리한다", async () => {
+  const cancel = vi.fn().mockResolvedValue(undefined);
+  const unusual = response(999, undefined, new ReadableStream({ cancel }));
+  fetchMock.mockResolvedValueOnce(unusual).mockResolvedValueOnce(response(200));
+  const fetched = await safeFetch("https://unusual.test/", "background");
+  expect(fetched?.response.status).toBe(999);
+  expect(fetched?.response.ok).toBe(false);
+  expect(cancel).toHaveBeenCalledOnce();
+  expect((await safeFetch("https://unusual.test/again", "background"))?.response.status).toBe(200);
+});

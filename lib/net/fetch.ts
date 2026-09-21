@@ -295,6 +295,14 @@ export async function safeFetch(url: string, mode: FetchMode = "interactive"): P
       return null;
     }
 
+    // Some origins return nonstandard codes (e.g. 999). Preserve that failure
+    // status without passing it to the stricter Response constructor below.
+    if (res.status < 200 || res.status > 599) {
+      await res.body?.cancel().catch(() => {});
+      release?.();
+      return { finalUrl: current, response: res };
+    }
+
     if (res.status >= 300 && res.status < 400) {
       const location = res.headers.get("location");
       if (location) {

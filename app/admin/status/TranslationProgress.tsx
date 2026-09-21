@@ -26,10 +26,10 @@ export function TranslationProgress({ progress }: { progress: Progress }) {
       <div className="h-1.5 min-w-[120px] flex-1 overflow-hidden rounded-full bg-bg-soft" role="progressbar" aria-valuenow={percent} aria-valuemin={0} aria-valuemax={100}>
         <div className={`h-full rounded-full ${stalled ? "bg-warn" : "bg-accent"}${moving ? " ops-progress-live" : ""}`} style={{ width: `${percent}%` }} />
       </div>
-      <p className="font-mono tabular-nums text-fg-2">
+      <div className="font-mono tabular-nums text-fg-2">
         {progress.done.toLocaleString("ko-KR")}/{progress.total.toLocaleString("ko-KR")} ({percent}%)
-        <span className="text-fg-3"> · 남음 {progress.pending.toLocaleString("ko-KR")} · <TranslationFailures failed={progress.failed} failures={progress.failures} /> · 최근 1시간 {progress.lastHour.toLocaleString("ko-KR")}건 · 마지막 {ago(progress.lastSecondsAgo)}</span>
-      </p>
+        <div className="inline text-fg-3"> · 남음 {progress.pending.toLocaleString("ko-KR")} · <TranslationFailures failed={progress.failed} failures={progress.failures} /> · 최근 1시간 {progress.lastHour.toLocaleString("ko-KR")}건 · 마지막 {ago(progress.lastSecondsAgo)}</div>
+      </div>
       {stalled && <p className="w-full text-warn">30분 넘게 옮긴 것이 없습니다 — <span className="font-mono">reason-translate</span> 작업과 ABCLLM_API_KEY 를 확인하세요.</p>}
     </section>
   );

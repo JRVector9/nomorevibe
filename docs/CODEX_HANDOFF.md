@@ -1,3 +1,26 @@
+# 운영 배포 후 보완 — 2026-09-21 15:39 KST
+
+- a982c1a 운영9앱 배포 완료. M3/mini 웹 각각 health200 DBok,7worker healthy/restart0/PID1tini/10sourcehash일치. 새 text는06:31:55UTC시작, 구형publisher06:28:44종료/새publisher06:29:54시작이라 겹침없음. 구형stop API25초 timeout이었으나 별도 runtime/API에서 실제종료 확인후 진행했다.
+- 실제 첫2분 1차성공9, 신규발행3. 이후4분 첫모델20호출/4실패(2invalid_output+2timeout); 두번째10호출/1실패,Sonnet fallback성공 관측. 기존 README JSONB오류 해소, 수집/심사/발행job last_error없음. 발행3건 1차/독립2차승인 누락0, repo중복0. 모델오류율0/운영단축률 주장 금지.
+- 브라우저 홈/상세/인기200, 모바일overflow0. 관리자도200이며 text역할 표시확인. 다만 기존 TranslationProgress의 p/span 안 dialog가 browser parser에 의해 section아래로 이동하여 hydration418 재현.
+- 추가 문제: uptime-ping에 RangeError(status200..599)반복. safeFetch background가 비표준999응답을 새Response로 감싸다실패. 원본실패status보존+bodycancel+originrelease 추가. 회귀RED1→GREEN, SSRF포함19 PASS/tsc/lint PASS. TranslationProgress flow container를div로 수정; 실제SSR+Reacthydrate 브라우저fixture는 초기fixturecharset누락 수정뒤 재검증했다.
+- 현재 fix/deploy-runtime-checks 브랜치, 수정 lib/net/fetch.ts,TranslationProgress.tsx,net-fetch-deadline.test.ts,이문서. 추가PR/CI/merge/9앱재배포 남음. 기존9앱autoDeploy=false는 마지막에반드시true복구. 보완이후README+catalog+fetch 해시를모두검증할것.
+- 별도확인필요: 기존운영웹2대 ADMIN_LOCAL_LOGIN=1이고 OAuth키없음(allowlist/authsecret은있음). 실제익명관리자접근가능. 접근차단시사용자도로그인불가라 async질문으로확인요청했고 아직답없음. 사용자명시응답없이접근정책변경하지않음. 키값출력금지.
+- 다음: 변경PR CI완료후merge/deploy. `python3 /tmp/nmv-speed-dokploy.py status`; `python3 /tmp/nmv-speed-runtime.py /tmp/nmv-speed-after-runtime.json`; `python3 /tmp/nmv-speed-logs.py 2026-09-21T06:29:30Z`; `node .crawl-samples/review-speed/deploy-audit.mjs 2026-09-21T06:29:30Z`. 실측표본100/30분은충족전이다.
+
+---
+
+# 운영 배포 진행 — 2026-09-21 15:25 KST
+
+- PR161–166 모두 검토/CI 성공 후 merge commit으로 main 병합. 최종 main `a982c1ae034e89a125de553fd0824c6e58213de7`, 검증된 PR166 `6dcfb34`와 tree 차이0. 로컬 main ff-only 완료. 최종 PR CI35567722915: 단위1093/통합767/타입/lint/build PASS. main CI35568200091 대기.
+- 기존8앱 autoDeploy=false 유지. 배포 태그9앱 모두 a982c1a로 준비, 웹2대 NEXT_DEPLOYMENT_ID도 동일, Server Actions 빌드 키 일치 확인. 아직 새 배포 요청 전.
+- text 앱 `Pi0loosJrKsse_UQ0mln9`, `nomorevibe-text-m3-ebmybu` 생성·설정 완료/미시작. 원래5개 supervised worker command에 `/sbin/tini --` 준비 완료. connect-agent는 custom command=null이라 새 이미지 ENTRYPOINT를 그대로 사용한다. 처음 init 준비 assertion은 null command를 구분하지 못해서 발생했고, 변경 전에 중단했으며 skip 처리 후 정상 적용했다.
+- 운영 웹 health의 loopback 직접 호출은 기존 HOSTNAME bind 때문에 실패. runtime helper를 컨테이너 HOSTNAME/PORT로 호출하도록 수정; 서비스 장애로 오인하지 말 것. 배포 전 worker10파일 중9개는 이전 코드, 최종 source 검증 필요.
+- 다음: main CI PASS 확인→구형 publisher stop/drain 확인→기존8앱 동시 deploy(두 웹 함께)→new publisher healthy/catalog 역할 확인→text deploy→실제 source hashes/health/jobs/readonly gates/telemetry 확인→문서 커밋·push→9앱 autoDeploy=true 복구.
+- 도구: `/tmp/nmv-speed-dokploy.py` (API/env는 stdin만), `/tmp/nmv-speed-runtime.py`, `.crawl-samples/review-speed/production-metrics.mjs`. 명령: `gh run view 35568200091 --json status,conclusion`; `python3 /tmp/nmv-speed-dokploy.py stop-publisher`; `python3 /tmp/nmv-speed-dokploy.py deploy-existing`; `python3 /tmp/nmv-speed-dokploy.py status`. 큐/심사 DB 수정 없이 자연 실행 검증할 것.
+
+---
+
 # 운영 배포 진행 — 2026-09-21 15:15 KST
 
 사용자가 배포를 명시 승인했다. prod/land-and-deploy 적용, 추가 확인 불필요. 기존 운영8앱의 autoDeploy를 일시 false로 변경(모두 원래true); 반드시 완료 후 복원. 원래 상태는 /tmp/nmv-speed-app-configs.json, 배포 전 상태 /tmp/nmv-speed-predeploy-status.json. API키는 Keychain에서 읽고 curl --config stdin으로만 전달; payload/env도 stdin. 새 도구 /tmp/nmv-speed-dokploy.py. 기존 /tmp/nmv-installable-web.env는 private, 절대 출력 금지.
