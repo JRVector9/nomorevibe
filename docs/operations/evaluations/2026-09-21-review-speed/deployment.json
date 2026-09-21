@@ -1,0 +1,507 @@
+{
+  "release": "8ec1adc90709b813297e6a63686deb8d2fff6626",
+  "prs": [
+    161,
+    162,
+    163,
+    164,
+    165,
+    166,
+    167
+  ],
+  "runtime": [
+    {
+      "name": "nomorevibe-web-m3",
+      "container": "859e5551c3ec",
+      "status": "running",
+      "health": {
+        "status": "ok",
+        "db": "ok",
+        "instanceId": "m3-web",
+        "release": "8ec1adc90709b813297e6a63686deb8d2fff6626",
+        "dbLatencyMs": 1
+      },
+      "restarts": 0,
+      "startedAt": "2026-09-21T06:45:46.353377453Z",
+      "path": "docker-entrypoint.sh",
+      "release": "8ec1adc90709b813297e6a63686deb8d2fff6626",
+      "pool": "6",
+      "pid1": "next-server (v",
+      "httpStatus": 200
+    },
+    {
+      "name": "nomorevibe-web-mini",
+      "container": "128cf9a7419a",
+      "status": "running",
+      "health": {
+        "status": "ok",
+        "db": "ok",
+        "instanceId": "mini-web",
+        "release": "8ec1adc90709b813297e6a63686deb8d2fff6626",
+        "dbLatencyMs": 2
+      },
+      "restarts": 0,
+      "startedAt": "2026-09-21T06:45:29.051840373Z",
+      "path": "docker-entrypoint.sh",
+      "release": "8ec1adc90709b813297e6a63686deb8d2fff6626",
+      "pool": "6",
+      "pid1": "next-server (v",
+      "httpStatus": 200
+    },
+    {
+      "name": "nomorevibe-crawler-m3",
+      "container": "5469493bd53f",
+      "status": "running",
+      "health": "healthy",
+      "restarts": 0,
+      "startedAt": "2026-09-21T06:46:04.451590434Z",
+      "path": "/sbin/tini",
+      "release": "8ec1adc90709b813297e6a63686deb8d2fff6626",
+      "role": "crawler",
+      "pool": "4",
+      "pid1": "tini",
+      "worker": {
+        "role": "crawler",
+        "status": "running",
+        "currentJob": null,
+        "heartbeatAgeMs": 685
+      },
+      "matched": 11,
+      "total": 11
+    },
+    {
+      "name": "nomorevibe-reviewer-m3",
+      "container": "237954b01e5a",
+      "status": "running",
+      "health": "healthy",
+      "restarts": 0,
+      "startedAt": "2026-09-21T06:45:50.974950114Z",
+      "path": "/sbin/tini",
+      "release": "8ec1adc90709b813297e6a63686deb8d2fff6626",
+      "role": "reviewer",
+      "pool": "12",
+      "pid1": "tini",
+      "worker": {
+        "role": "reviewer",
+        "status": "running",
+        "currentJob": null,
+        "heartbeatAgeMs": 1668
+      },
+      "matched": 11,
+      "total": 11
+    },
+    {
+      "name": "nomorevibe-publisher-m3",
+      "container": "b1e153fc69d6",
+      "status": "running",
+      "health": "healthy",
+      "restarts": 0,
+      "startedAt": "2026-09-21T06:46:00.618002128Z",
+      "path": "/sbin/tini",
+      "release": "8ec1adc90709b813297e6a63686deb8d2fff6626",
+      "role": "publisher",
+      "pool": "3",
+      "pid1": "tini",
+      "worker": {
+        "role": "publisher",
+        "status": "running",
+        "currentJob": null,
+        "heartbeatAgeMs": 266
+      },
+      "matched": 11,
+      "total": 11
+    },
+    {
+      "name": "nomorevibe-maintenance-m3",
+      "container": "59a9bbf0ff24",
+      "status": "running",
+      "health": "healthy",
+      "restarts": 0,
+      "startedAt": "2026-09-21T06:45:57.22109979Z",
+      "path": "/sbin/tini",
+      "release": "8ec1adc90709b813297e6a63686deb8d2fff6626",
+      "role": "maintenance",
+      "pool": "3",
+      "pid1": "tini",
+      "worker": {
+        "role": "maintenance",
+        "status": "running",
+        "currentJob": null,
+        "heartbeatAgeMs": 3692
+      },
+      "matched": 11,
+      "total": 11
+    },
+    {
+      "name": "nomorevibe-scheduler-m3",
+      "container": "92c82a24948c",
+      "status": "running",
+      "health": "healthy",
+      "restarts": 0,
+      "startedAt": "2026-09-21T06:45:28.596279296Z",
+      "path": "/sbin/tini",
+      "release": "8ec1adc90709b813297e6a63686deb8d2fff6626",
+      "role": "scheduler",
+      "pool": "2",
+      "pid1": "tini",
+      "worker": {
+        "role": "scheduler",
+        "status": "running",
+        "currentJob": null,
+        "heartbeatAgeMs": 332
+      },
+      "matched": 11,
+      "total": 11
+    },
+    {
+      "name": "nomorevibe-connect-agent-m3",
+      "container": "4622730d393e",
+      "status": "running",
+      "health": "healthy",
+      "restarts": 0,
+      "startedAt": "2026-09-21T06:45:55.803912549Z",
+      "path": "/sbin/tini",
+      "release": "8ec1adc90709b813297e6a63686deb8d2fff6626",
+      "role": "connect-agent",
+      "pool": "1",
+      "pid1": "tini",
+      "matched": 11,
+      "total": 11
+    },
+    {
+      "name": "nomorevibe-text-m3",
+      "container": "9efb64bb997a",
+      "status": "running",
+      "health": "healthy",
+      "restarts": 0,
+      "startedAt": "2026-09-21T06:46:07.073580642Z",
+      "path": "/sbin/tini",
+      "release": "8ec1adc90709b813297e6a63686deb8d2fff6626",
+      "role": "text",
+      "pool": "3",
+      "pid1": "tini",
+      "worker": {
+        "role": "text",
+        "status": "running",
+        "currentJob": null,
+        "heartbeatAgeMs": 4354
+      },
+      "matched": 11,
+      "total": 11
+    }
+  ],
+  "metrics": {
+    "at": "2026-09-21T06:46:57.655Z",
+    "start": "2026-09-21T06:29:45Z",
+    "end": "2026-09-21T06:46:57.422Z",
+    "first": [
+      {
+        "provider": "abcllm",
+        "model": "[MLX] gpt-oss-120b",
+        "state": "failed",
+        "count": 8,
+        "p50_seconds": 24.03,
+        "p95_seconds": 24.0356
+      },
+      {
+        "provider": "abcllm",
+        "model": "[MLX] gpt-oss-120b",
+        "state": "succeeded",
+        "count": 103,
+        "p50_seconds": 12.989,
+        "p95_seconds": 20.984
+      }
+    ],
+    "second": [
+      {
+        "provider": "abcllm",
+        "model": "[MLX] qwen3.6-35b-heretic",
+        "status": "needs_human",
+        "count": 28,
+        "error_count": 0,
+        "queue_plus_run_p50_seconds": 8.900176
+      },
+      {
+        "provider": "abcllm",
+        "model": "[MLX] qwen3.6-35b-heretic",
+        "status": "resolved",
+        "count": 44,
+        "error_count": 4,
+        "queue_plus_run_p50_seconds": 8.078168
+      },
+      {
+        "provider": "claude-cli",
+        "model": "sonnet",
+        "status": "resolved",
+        "count": 4,
+        "error_count": 0,
+        "queue_plus_run_p50_seconds": 36.2963355
+      }
+    ],
+    "firstToSecondRegistration": [
+      {
+        "count": 76,
+        "p50_seconds": 13.697522,
+        "p95_seconds": 37.80506
+      }
+    ],
+    "publications": [
+      {
+        "added": 39,
+        "removed": 0
+      }
+    ],
+    "jobs": [
+      {
+        "name": "crawl-agent-review",
+        "has_error": false,
+        "error_summary": null,
+        "locked": false,
+        "requested_version": "16179",
+        "processed_version": "16179",
+        "seen_seconds": 14
+      },
+      {
+        "name": "crawl-fetch",
+        "has_error": false,
+        "error_summary": null,
+        "locked": false,
+        "requested_version": "22403",
+        "processed_version": "22403",
+        "seen_seconds": 12
+      },
+      {
+        "name": "crawl-judge",
+        "has_error": false,
+        "error_summary": null,
+        "locked": false,
+        "requested_version": "13517",
+        "processed_version": "13517",
+        "seen_seconds": 204
+      },
+      {
+        "name": "crawl-publish",
+        "has_error": false,
+        "error_summary": null,
+        "locked": false,
+        "requested_version": "9782",
+        "processed_version": "9782",
+        "seen_seconds": 105
+      },
+      {
+        "name": "crawl-tagline",
+        "has_error": false,
+        "error_summary": null,
+        "locked": false,
+        "requested_version": "1823",
+        "processed_version": "1823",
+        "seen_seconds": 23
+      },
+      {
+        "name": "reason-translate",
+        "has_error": false,
+        "error_summary": null,
+        "locked": true,
+        "requested_version": "13595",
+        "processed_version": "13594",
+        "seen_seconds": 3
+      },
+      {
+        "name": "second-review",
+        "has_error": false,
+        "error_summary": null,
+        "locked": false,
+        "requested_version": "10700",
+        "processed_version": "10700",
+        "seen_seconds": 44
+      }
+    ],
+    "connections": [
+      {
+        "max_connections": 150,
+        "total": 110,
+        "app_database": 8
+      }
+    ],
+    "pending": [
+      {
+        "status": "needs_human",
+        "count": 459
+      }
+    ]
+  },
+  "gates": {
+    "at": "2026-09-21T06:46:58.053Z",
+    "since": "2026-09-21T06:29:45Z",
+    "duplicates": [
+      {
+        "duplicate_repository_groups": 0
+      }
+    ],
+    "recent": [
+      {
+        "published": 39,
+        "admin": 0,
+        "missing_first": 0,
+        "missing_independent_second": 0
+      }
+    ],
+    "roles": [
+      {
+        "key": "service:app:m3-web",
+        "release": "8ec1adc90709b813297e6a63686deb8d2fff6626",
+        "role": null,
+        "observed_at_utc": "2026-09-21T06:46:46.923Z"
+      },
+      {
+        "key": "service:app:mini-web",
+        "release": "8ec1adc90709b813297e6a63686deb8d2fff6626",
+        "role": null,
+        "observed_at_utc": "2026-09-21T06:46:44.469Z"
+      },
+      {
+        "key": "service:connect-agent:m3-connect-agent",
+        "release": "8ec1adc90709b813297e6a63686deb8d2fff6626",
+        "role": null,
+        "observed_at_utc": "2026-09-21T06:46:56.531Z"
+      },
+      {
+        "key": "service:crawler:m3-crawler",
+        "release": "8ec1adc90709b813297e6a63686deb8d2fff6626",
+        "role": "crawler",
+        "observed_at_utc": "2026-09-21T06:46:49.907Z"
+      },
+      {
+        "key": "service:maintenance:m3-maintenance",
+        "release": "8ec1adc90709b813297e6a63686deb8d2fff6626",
+        "role": "maintenance",
+        "observed_at_utc": "2026-09-21T06:46:57.745Z"
+      },
+      {
+        "key": "service:publisher:m3-publisher",
+        "release": "8ec1adc90709b813297e6a63686deb8d2fff6626",
+        "role": "publisher",
+        "observed_at_utc": "2026-09-21T06:46:46.123Z"
+      },
+      {
+        "key": "service:reviewer:m3-reviewer",
+        "release": "8ec1adc90709b813297e6a63686deb8d2fff6626",
+        "role": "reviewer",
+        "observed_at_utc": "2026-09-21T06:46:51.457Z"
+      },
+      {
+        "key": "service:scheduler:m3-scheduler",
+        "release": "8ec1adc90709b813297e6a63686deb8d2fff6626",
+        "role": "scheduler",
+        "observed_at_utc": "2026-09-21T06:46:45.430Z"
+      },
+      {
+        "key": "service:text:m3-text",
+        "release": "8ec1adc90709b813297e6a63686deb8d2fff6626",
+        "role": "text",
+        "observed_at_utc": "2026-09-21T06:46:52.666Z"
+      }
+    ]
+  },
+  "browser": {
+    "at": "2026-09-21T06:46:21.443Z",
+    "results": [
+      {
+        "path": "/",
+        "status": 200,
+        "finalPath": "/",
+        "title": "nomorevibe — AI로 만든 것들, 세상에 나오다.",
+        "bodyLength": 6903,
+        "elapsedMs": 3609,
+        "navigation": {
+          "domContentLoadedMs": 1784,
+          "loadMs": 1859
+        }
+      },
+      {
+        "path": "/p/posthog",
+        "status": 200,
+        "title": "PostHog — NoMoreVibe",
+        "bodyLength": 5229
+      },
+      {
+        "path": "/popular",
+        "status": 200,
+        "finalPath": "/popular",
+        "title": "많이 쓰이는 프로젝트 — NoMoreVibe",
+        "bodyLength": 2922,
+        "elapsedMs": 1438,
+        "navigation": {
+          "domContentLoadedMs": 201,
+          "loadMs": 309
+        }
+      },
+      {
+        "path": "/admin/status",
+        "status": 200,
+        "finalPath": "/admin/status",
+        "title": "운영센터 — NoMoreVibe",
+        "bodyLength": 3154,
+        "elapsedMs": 2096,
+        "navigation": {
+          "domContentLoadedMs": 1279,
+          "loadMs": 1281
+        }
+      }
+    ],
+    "errors": [],
+    "failed": [],
+    "mobileOverflow": false,
+    "adminStatusChecked": true
+  },
+  "adminCanary": {
+    "at": "2026-09-21T06:46:58.576Z",
+    "translationDialogOpened": true,
+    "translationDialogClosed": true,
+    "textOwnsBoth": true,
+    "textReleaseShown": true,
+    "errors": []
+  },
+  "jobErrors": {
+    "at": "2026-09-21T06:47:57.971Z",
+    "jobs": [
+      {
+        "name": "uptime-ping",
+        "has_error": false,
+        "last_success_at_utc": "2026-09-21T06:47:50.885Z"
+      }
+    ],
+    "uptime": [
+      {
+        "duration_ms": "3105",
+        "events": [
+          {
+            "event": "uptime.checked",
+            "counts": {
+              "down": 0,
+              "alive": 15
+            }
+          }
+        ]
+      }
+    ]
+  },
+  "overlapSample": {
+    "textRuns": 18,
+    "publishRuns": 17,
+    "publisherCompletedWhileTextRunning": 7,
+    "publisherTextJobs": 0
+  },
+  "ci": {
+    "pr167": "https://github.com/JRVector9/nomorevibe/actions/runs/35569369508",
+    "unitPassed": 1094,
+    "integrationPassed": 767,
+    "main": "https://github.com/JRVector9/nomorevibe/actions/runs/35569795611",
+    "mainResult": "success"
+  },
+  "limits": [
+    "Existing baseline stalled on malformed README; no comparable production speed percentage.",
+    "17-minute live sample includes two rollouts; not the planned 30-minute comparable cohort.",
+    "Existing anonymous admin access awaits user decision; OAuth credentials absent."
+  ]
+}

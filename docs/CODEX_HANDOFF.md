@@ -1,3 +1,37 @@
+# 최종 운영 배포 — 2026-09-21 15:49 KST
+
+## 목표 및 완료
+사용자 “배포해”에 따라 PR161–166 순차merge 및 운영9앱 배포, 현장에서 발견한2문제PR167보완/merge/재배포 완료. 최종 앱 코드 `8ec1adc90709b813297e6a63686deb8d2fff6626`. 로컬main과remote동기화. 이 이후 변경은 배포 문서뿐이다.
+
+- M3/mini웹 health200/DBok/동일release. 모든7worker healthy/restart0/PID1tini/중요11파일hash일치. text앱id Pi0loosJrKsse_UQ0mln9,appName nomorevibe-text-m3-ebmybu,512MiB/pool3,역할2잡. publisher발행만1잡. 구형publisher종료→신형publisher→text순으로 첫분리완료.
+- 약17분 자연실행: 첫심사성공103/실패8, 발행39/회수0, 발행승인누락0/중복repo0. 기본2차오류4건,Sonnet fallback4건성공. 기존README오류없어짐. 모델오류를승인으로처리하지않음.
+- 추가수정: Dockerfile tini와Dokploy supervised5개명령prefix,readme.ts lone surrogate제거,lib/net/fetch.ts 비표준status보존/bodycancel/originrelease,TranslationProgress.tsx dialog포함flow HTML수정. 승인·모델·timeout·동시성기준 변경없음. DB마이그레이션없음.
+- 최종브라우저홈/상세/인기/관리자200,hydration/pageerror0,서버5xx0,모바일overflow0. 관리자text상세release와두잡확인,번역실패팝업열기닫기성공. uptime-ping15사이트/3.105초성공,last_error있는job0(06:47:57UTC).
+- 최종PR167 CI35569369508 단위141파일1094/통합79파일767/타입/lint/build PASS. 로컬fetch/SSRF19,tsc,lint,SSR+hydrate browser fixture PASS. Dockerworker init이미지build/종료smoke PASS는이전단계기록참고. main CI35569795611도전체PASS확인. 이후문서만push.
+- 자동배포는중간스택차단을위해일시off; 문서push후기존8+newtext=9앱모두true로복구하는순서로마무리한다. 최종재확인은 아래 status명령으로한다. release env와web NEXT_DEPLOYMENT_ID는8ec1adc,두웹Server Actions빌드키일치확인. 키내용은출력금지.
+
+## 기록·실패 접근·남은 일
+- 상세검증/원본: docs/operations/evaluations/2026-09-21-review-speed/{README.md,deployment.json},runbook. 수정문서: 위3개와이handoff.
+- 초기init준비는connect-agent command=null때문에assertion중단→이미지ENTRYPOINT사용분리후완료. 구형stop API timeout은실제종료/runtime/API로확인했고중복요청하지않음. 웹loopbackhealth는HOSTNAMEbind라실패→컨테이너HOSTNAME사용. datetime없는PG타임스탬프의9시간오해는UTC문자열SQL로수정. HTMLfixture첫실패는charset누락→UTF8후PASS. 모두현재코드실패와구분.
+- 실제추가문제(답변대기): 기존웹2대 ADMIN_LOCAL_LOGIN=1로익명관리자접근가능,OAuth키없음. allowlist/authsecret은있다. 차단시운영자도잠겨서 async질문요청했으나아직응답없음. 접근정책은사용자답변후변경. 이문제가해결됐다고말하지말것.
+- 성능: 이전30분은README오류로진행0. 정상동일조건기준선부재/최종관측17분이므로운영단축률주장금지. 모델timeout/invalid_output은계속실측대상. 100건/30분같은조건전후비교는남음.
+- unrelated untracked(.claude,docs/PT,Sep14운영문서,디자인산출물,prototypes)는그대로보존. 운영env를테스트에넣지말것.
+
+## 정확한 재확인 명령
+```
+cd /Users/jr/Desktop/projects/nomorevibe
+git status --short --branch
+python3 /tmp/nmv-speed-dokploy.py status
+python3 /tmp/nmv-speed-runtime.py /tmp/nmv-speed-final-runtime.json
+node .crawl-samples/review-speed/production-metrics.mjs /tmp/nmv-speed-next-metrics.json 2026-09-21T06:29:45Z
+node .crawl-samples/review-speed/deploy-audit.mjs 2026-09-21T06:29:45Z
+python3 /tmp/nmv-speed-logs.py 2026-09-21T06:46:10Z
+node --import tsx scripts/report-review-latency.ts /tmp/nmv-speed-production-pipeline.jsonl
+```
+모든DB도구는read-only SQL. /tmp/nmv-speed-dokploy.py는Keychain→curl stdin으로키와payload처리,비밀출력없음. 다음진행은사용자접근정책답변및정상성능표본검토다.
+
+---
+
 # 운영 배포 후 보완 — 2026-09-21 15:39 KST
 
 - a982c1a 운영9앱 배포 완료. M3/mini 웹 각각 health200 DBok,7worker healthy/restart0/PID1tini/10sourcehash일치. 새 text는06:31:55UTC시작, 구형publisher06:28:44종료/새publisher06:29:54시작이라 겹침없음. 구형stop API25초 timeout이었으나 별도 runtime/API에서 실제종료 확인후 진행했다.

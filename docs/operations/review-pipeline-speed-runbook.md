@@ -57,10 +57,10 @@ node --import tsx scripts/report-review-latency.ts /absolute/path/to/worker.json
 3. 다음 단계 신호와 슬롯 재사용을 순차 적용한다. 2차 대기 p95·시간당 처리 건수·timeout/429를 함께 본다.
 4. 텍스트 저장 보호 이후 구형 publisher를 drain/중지하고 새 publisher를 교체한다. 소유 작업이 crawl-publish 하나인지 확인한다.
 5. 새 text 앱을 별도 컨테이너로 시작한다. `npm run worker:supervised -- --role=text`, worker target, pool3, hard timeout180초, 별도 SERVICE_INSTANCE_ID, 승인된 ABCLLM 키를 비밀 저장소에서 주입한다. Compose와 동일하게 init을 사용한다.
-6. 실제 host CPU/RAM/DB 여유, text health, backlog 감소와 publisher 텍스트 실행0을 확인한다. 기본 연결 상한은 웹1개+connect-agent 포함27, 웹2개 각8이면35, 각6이면31이다.
+6. 실제 host CPU/RAM/DB 여유, text health, backlog 감소와 publisher 텍스트 실행0을 확인한다. 기본 연결 상한은 웹1개+connect-agent 포함27, 웹2개 각8이면35, 각6이면31이다. 2026-09-21 실제 운영은 reviewer가12(기본3과 다름)라 text 추가 전40→추가 후43이다. reviewer 설정은 유지했다. DB max150, 관측 시 총111/app8 연결이며 text RSS 약115MiB/512MiB였다.
 7. 각 단계마다 새 심사100건/30분 이상 관측한다. 오류율+2%p 또는2차 대기 p95+20%면 원인을 확인하고 슬롯 재사용을 우선 되돌린다. 중복 발행·승인 우회·관리자 덮어쓰기는 진행 중단 조건이다.
 
-롤백은 text 중지→이전 publisher 복구→필요한 코드 역순으로 진행한다. 결과/잡 요청 행을 지우거나 일괄 재심사를 강제로 실행하지 않는다. 현재 운영 배포·Dokploy 앱 추가·운영100건 전후 비교는 미실시다.
+롤백은 text 중지→이전 publisher 복구→필요한 코드 역순으로 진행한다. 결과/잡 요청 행을 지우거나 일괄 재심사를 강제로 실행하지 않는다. 2026-09-21 운영9앱 배포와 text 앱 추가를 완료했다. 운영 기준선이 기존 README 저장 오류로 멈춘 상태였으므로 동일 조건100건/30분 전후 비교는 아직 성립하지 않는다. 아래 배포 검증 기록을 참고한다.
 
 ## 추가 전후 비교 — 2026-09-21 14:57 KST
 
@@ -71,3 +71,17 @@ node --import tsx scripts/report-review-latency.ts /absolute/path/to/worker.json
 운영의 Docker Swarm에는 init이 설정되지 않아 worker 이미지에 tini를 추가했다. custom command를 쓰는 Dokploy 앱에도 `/sbin/tini --`를 앞에 붙여야 한다. --init 없는 로컬 컨테이너로 healthy/restart0/종료 exit0을 검증했다.
 
 배포 전 1차 심사는 README의 잘린 이모지 때문에 JSONB 저장이 실패하고 있었다. 실제 Starlitnightly/omicverse README에서 길이3000·끝d83d와22P02를 재현했고, 잘린 surrogate만 제거한2999문자는 저장에 성공했다. 일반 표본과 설치 부분 발췌의 양쪽 경계를 회귀 테스트로 보호한다. 표본 길이 제한·심사 정책·유효한 문자 내용은 유지한다. 이 기존 장애가 있는 전후 구간을 순수 슬롯 최적화의 단축률로 보고해서는 안 된다.
+
+
+## 운영 적용 검증 — 2026-09-21
+
+PR161–166을 순서대로 병합하고 main `a982c1a`를 M3/mini 웹2대와7개 워커에 배포했다. 원래 publisher 종료06:28:44UTC, 새 publisher 시작06:29:54UTC, text 시작06:31:55UTC로 구형 텍스트 소비와 겹치지 않았다. 두 웹 health200/DBok,7개 worker healthy/restart0/PID1tini 및 실제 코드 hash 일치를 확인했다.
+
+- 06:29:45–06:38:59UTC: 1차 성공63/실패7/진행4, 발행23/회수0. 실패는 모델 timeout/invalid_output이며 DB README 오류는 해소됐다. 모델·정책·동시성 설정은 변경하지 않았다.
+- 위 발행23건 모두 1차 승인과 독립된2차 승인 존재, repository중복0. 읽기 전용 감사이며 큐 수정·강제 재심사 없이 자연 실행으로 확인했다.
+- text18회·publisher17회 관측 중 text가 실행되는 동안 publisher7회 완료. publisher의 번역/소개 작업 실행0. 이는 역할 분리의 동작 증거이며 처리량 개선율은 아니다.
+- 공개 웹 홈·상세·인기 HTTP200, 모바일 가로 넘침0. 운영센터에서 소개·사유 번역 역할1대 표시 확인.
+- 운영 점검 중 발견한 uptime의 비표준 HTTP 상태 예외와 관리자 번역 팝업의 잘못된 HTML 구조는 PR167로 보완했다. 최종8ec1adc 재배포에서 화면오류0, uptime15건/3.105초 성공을 확인했다. [전체 배포 검증](evaluations/2026-09-21-review-speed/README.md).
+- 별도 관리자 접근 이슈: 기존 ADMIN_LOCAL_LOGIN=1, OAuth키 미설정으로 익명 접근 가능. 차단하면 운영자도 로그인할 수 없어 사용자에게 접근 정책 선택을 요청했다. 승인 없는 정책 변경은 하지 않았다.
+
+원래8개 앱의 자동배포는 PR 스택 병합 중 중간 코드를 내보내지 않도록 일시 중지했고, 최종 확인 후 신규 text 포함9개 앱에서 복구한다. DB 마이그레이션 없음. 같은 조건의 정상 기준선이 없어 순수 속도 개선율을 계산하지 않는다.

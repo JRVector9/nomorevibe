@@ -35,3 +35,16 @@ NMV_SPEED_ROOT=/Users/jr/Desktop/projects/nomorevibe NMV_SPEED_VARIANT=bd4b36d N
 ```
 
 현재 개선 checkout 이후 앱 코드가 바뀌면 비교 대상 commit과 artifact 표기를 함께 갱신해야 한다. 운영 검증은 병합·단계 배포 후 같은 조건의 신규 심사100건/30분 이상으로 대기 p50/p95, 시간당 처리량, timeout/429를 비교한다.
+
+
+## 운영 배포 결과 (2026-09-21)
+
+최종 코드 `8ec1adc90709b813297e6a63686deb8d2fff6626`, PR161–167 병합. M3/mini 웹2대 HTTP200/DBok와 워커7개 healthy/restart0, worker별11파일 hash 일치. 새 text 역할이 번역·소개를 소유하고 publisher는 발행만 처리한다. 실제 운영센터에서도 역할·릴리스·팝업 동작 확인.
+
+[읽기 전용 검증 원본](deployment.json): 06:29:45–06:46:57UTC 약17분간1차 성공103/실패8, 신규발행39/회수0. 발행39건 승인 누락0, 저장소 중복0. 2차 기본모델 오류4건 뒤 Sonnet fallback4건 성공 관측. 모델 오류는 검수 승인으로 바꾸지 않았다.
+
+기존 README JSONB오류, 비표준HTTP 상태의 uptime 예외, 관리자 번역 팝업 hydration 오류를 보완했다. 최종 브라우저 홈/상세/인기/운영센터200, page error0/서버5xx0/모바일overflow0, 실패 팝업 열기·닫기와 text역할 상세 성공. uptime는15사이트 확인/3.105초로 성공해 마지막오류가 해소됐다. 최종PR CI 단위1094/통합767/타입/lint/build 통과.
+
+17분 표본에는 롤링 교체가 포함돼 있고 이전 기준선은 장애상태였다. 따라서 이것을 순수한 속도 개선율로 해석하지 않는다. text실행 중publisher완료7회는 실제 병행 실행 증거다. 운영100건/30분 같은 조건 비교는 별도로 필요하다.
+
+별도 운영자 결정: 기존 관리자 무로그인 접근(ADMIN_LOCAL_LOGIN=1)과 OAuth키 미설정. 접근 차단은 운영자 로그인도 막으므로 사용자에게 선택을 요청했으며 아직 정책을 변경하지 않았다.
