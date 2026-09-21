@@ -1,3 +1,115 @@
+# 관리자·처리 속도 기능 운영 배포 진행 — 2026-09-22
+
+사용자가 “배포해”를 명시 지시했다. 아래 검증 완료 변경 전체(관리자 로직 수정/랭킹/헤더 필터/처리 속도)를 선택 커밋·main push 후 M3·mini 웹2개와 M3 singleton 워커7개에 동일 SHA로 배포한다. 무관 사용자 untracked는 제외한다. 시작 HEAD d6ed3c7, origin/main과 차이0. prod 스킬과 기존 Dokploy curl API 절차 적용.
+
+새 helper `/tmp/nmv-admin-release.py`는 preflight/pause/release/deploy/status/restore. receipt `/tmp/nmv-admin-release-state.json`에 현재9앱 원래 autoDeploy값을 저장했다. **push 전에 autoDeploy를 일시 pause하고, 운영 검증·배포 문서 push 후 restore해서 전부 원래 상태임을 확인할 것.** 이전 cursor helper의 receipt는 건드리지 않는다.
+
+구현 검증은 아래에 기록. 배포 도중 Next shared server-action key 유지와 RELEASE_TAG/NEXT_DEPLOYMENT_ID 동일 SHA 주입,9앱새 deployment done 및 실제runtime확인,외부status/ranking/health QA가 남았다. GitHub CI가 과거 결제/한도와 같은 이유로 실행되지 않으면 정확한 커밋의 clean checkout에서 동일 검사 전부 실행한다. API 키/환경 변수 원문을 출력·저장·커밋하지 않는다. 운영 데이터 변경이나 새 마이그레이션은 없다.
+
+---
+
+# 운영센터 처리 속도·병목 표시 완료 — 2026-09-22 06:35 KST
+
+## 현재 목표와 상태
+최신 사용자 요청은 `/admin/status` 상단의 실시간 대신 `10건/1분` 같은 수집·심사 처리량과 병목을 보는 것이다. 이전 관리자 검토/랭킹/헤더 필터 변경을 보존하고 후속 구현했다. HEAD `d6ed3c7`, 기존 및 이번 변경 모두 미커밋·미푸시·미배포. main push는 운영 9앱 자동배포를 유발한다. 이전 배포 autoDeploy 복구는 완료됐으므로 아래 과거 restore 명령을 재실행하지 말 것.
+
+## 완료
+- 상단 5단계 수집/규칙/AI1/AI2/발행: 최근1분,5분평균,대기,경과,오류기록,재시도·조건대기 별도표시. AI2단위는표. 모든탭공통,375/768/1440px 대응.
+- worker의 rules/firstAI 큐 predicate를 공통화하여 count/oldest에 재사용. AI1 LIMIT100 없이 실제 준비된 전체큐 집계. 발행은 현재 심사/분류조건과 동일한 filter.
+- 최근 저장 항목 기반이며 호출횟수로 과장하지 않음. AI1모델속도는rules/reuse제외하되 상태용progress에는 포함. 자동꺼짐·빈큐·정체의심·대기많음 구분. 2차retry경과 공통상수로보정;first/publish경과는갱신시각추정임을명시.
+- 운영readonly측정 최초7183ms, JIT컴파일7340ms가원인. 읽기전용transaction 내 SETLOCALjitoff + publishReady materialized1회계산→최종281ms 한표본. 전역DB변경없음,마이그레이션없음. statementtimeout3s,조회실패면속도불가표시+기존화면유지.
+- 기존실시간→자동갱신,10초visible-tab refresh/중지유지. 기존24h지표의'멈춘곳없음'단정제거.
+- 서브에이전트domain:큐predicate/회귀+리뷰,ranking:속도UI. 최종domain재검토에서추가critical/확정오류없음(읽기전용검토). 상세 `docs/operations/2026-09-22-throughput.md`.
+
+## 이번 추가/수정 파일
+추가 `lib/operations/{throughput,throughput-model}.ts`, `app/admin/status/{ThroughputStrip.tsx,throughput.module.css}`, `tests/{operations-throughput,operations-throughput-display}.test.ts`, `tests/integration/operations-throughput.test.ts`, 보고서/증거 `docs/operations/2026-09-22-throughput.md`, `docs/operations/evaluations/2026-09-22-throughput/`.
+수정 `lib/crawl/{agent-review-repository,repository,second-review}.ts`, `tests/integration/agent-review-records.test.ts`, `app/admin/status/{page,OperationsCenter,LiveRefresh,PipelineRail}.tsx`, 이handoff. 이전태스크파일/사용자untracked는아래목록대로보존.
+
+## 실제 검증
+- 전체단위144파일1118PASS `/tmp/nmv-throughput-full-unit.log`; 관련단위14PASS `/tmp/nmv-throughput-unit.log`.
+- 최종관련통합3파일80PASS `/tmp/nmv-throughput-final-integration.log` (throughput8+secondreview57+firstrecords15). worker관련3파일88PASS `/tmp/nmv-throughput-worker-regression.log`. 이전전체통합799PASS와구별. DB는전용localhost55435/nomorevibe_test만사용.
+- 최종Next build PASS `/tmp/nmv-throughput-build-final.log`; tsc PASS `/tmp/nmv-throughput-types-final.log`; 이번14개TS파일ESLint PASS `/tmp/nmv-throughput-lint.log`; gitdiffcheck PASS. 저장소전체lint는아래기록의무관untracked복사본문제로실패하므로전체lintPASS라고말하지말것.
+- production standalone localhost43129 브라우저10PASS `/tmp/nmv-throughput-browser-final.log`, console/JS오류0. 새DBfixture로처리10건/분/규칙정체/2차대기과다/첫AI중지,단위,10초갱신·중지·탭·375/768/1440px가로넘침없음. 화면PNG직접열어검토완료.
+- 운영읽기전용집계측정결과및수치한계는증거폴더query-performance.json. 워커속도개선율이아니라새조회쿼리최적화표본이다.
+
+## 실패 접근·주의
+- 첫통합fixture에frontier.signal누락→fixture필수값추가. retryinterval CASE 파라미터가text로추론되어text*interval오류→integer명시후8개신규통합모두PASS.
+- 단일복잡쿼리그대로는JIT컴파일로7초이상걸려버림→local transaction jitoff로해결. 백오프/재사용을무시한초기정체기준도리뷰로고쳤다.
+- 정확한ready시각이없는first/publish의경과는추정이며경고는의심단계다. 문서/판정/2차는마지막시각을덮으므로전체시도이력이아니다. 10초마다기존페이지전체refresh하는구조유지.
+- 별도사용자Next서버3000/PID93803손대지않음. 로컬QA43129는검증종료후중지완료(exec3134 exit130). 운영익명관리자접근미결정책은이번에변경안함.
+
+## 다음 명령
+구현/검증완료. 추후릴리스시이전관리자작업변경도포함하여범위검토하고명시적파일만stage할것. 사용자무관untracked(`.claude/`, `docs/PT/`, 기존9월14일자료, `nomorevibe-final/`,html/zip,`prototypes/`)보존.
+```sh
+cd /Users/jr/Desktop/projects/nomorevibe
+git status --short
+git diff --check
+npm test
+TEST_DATABASE_URL=postgres://nomorevibe:nomorevibe@127.0.0.1:55435/nomorevibe_test npm run test:integration -- tests/integration/operations-throughput.test.ts tests/integration/second-review.test.ts tests/integration/agent-review-records.test.ts
+# 브라우저QA는위통합과동시에돌리지않는다. fixture가전용DB를리셋한다.
+DATABASE_URL=postgres://nomorevibe:nomorevibe@127.0.0.1:55435/nomorevibe_test TEST_DATABASE_URL=postgres://nomorevibe:nomorevibe@127.0.0.1:55435/nomorevibe_test npx tsx .crawl-samples/admin-ui-review/seed.ts
+DATABASE_URL=postgres://nomorevibe:nomorevibe@127.0.0.1:55435/nomorevibe_test npx tsx .crawl-samples/admin-ui-review/seed-throughput.ts
+# 최신standalone서버43129구동법은아래인수인계참조. seed후60초안에시작(최근1분assert).
+/tmp/nmv-admin-qa-venv/bin/python .crawl-samples/admin-ui-review/verify_throughput.py
+cat docs/operations/evaluations/2026-09-22-throughput/browser-checks.json
+```
+
+---
+
+# 관리자 전반 검토·랭킹 재설계·운영센터 헤더 필터 완료 — 2026-09-22 06:00 KST
+
+## 현재 목표와 상태
+사용자는 관리자 로직 전체 검토, `/admin/ranking` 가독성 개선을 서브에이전트 병렬로 지시했다. 앞선 `/admin/status` 헤더 필터 요청도 함께 수행한다. 액션/API/auth, 도메인 집계/정책, 랭킹 UI를 3개 에이전트로 나눴고 부모가 필터 및 통합검증을 담당했다. 기준 HEAD `d6ed3c7`, 이번 작업은 미커밋·미푸시·미배포다. 기존 무관 untracked는 보존했다. 이전 배포의 autoDeploy 복구는 이미 완료돼 있으므로 아래 옛 기록의 restore 명령을 다시 실행하지 않는다.
+
+## 완료 구현
+- 잘못된 slug/오래된 폼 및 동시결정으로 제품 차단과 기록이 달라지는 2차 심사·발행분 감사·내림 요청 3경로를 transaction+제품 세대/관련행 잠금으로 수정.
+- 수집 기본값 복원의 동시 중지 덮어쓰기, 무제한 queryCount 배열 생성, 수동·미검증 등록의 publisher 처리량 오집계 수정.
+- 근거 누락 갈래 판정/재판정, 재판정의 관리자 결정 덮어쓰기/처리 건수 과장, AI 마지막 성공 판단과 최신 실패 상태 표시 불일치 수정.
+- 랭킹 현재 시즌/예약/설정6그룹/미리보기/이력 재설계. 고유 유입자 설정3개 비교 누락, 쉼표/소수 쿨다운 편집, 숫자 입력 폭 보완.
+- status 후보검색/갈래/AI/최소별/푸시 헤더 필터. 서버에서 전체 대기→필터→14건 pagination, URL 조건 유지·변경시1쪽, 범위밖 마지막쪽 redirect. 탭 URL `?tab=ai` 초기선택 복구, 별 줄바꿈 방지, 수집지표 문구 구체화.
+- Next 설치 page/searchParams/Form/server-client docs 읽음. webapp-testing, TDD, 도메인/액션 systematic-debugging 사용. 별도 운영 변경 없음.
+
+## 변경 파일
+`app/admin/{actions.ts,review/actions.ts}`; `app/admin/status/{page,OperationsCenter,QueuePreview}.tsx`, 신규 `queue-filters.ts`; `app/admin/ranking/{page,RankingPolicyForm}.tsx`, 신규 `ranking.module.css`;
+`lib/crawl/{admin-review,product-audit,settings}.ts`, 신규 `published-second-review.ts`; `lib/domain/products/{repository,takedown}.ts`; `lib/operations/pipeline.ts`;
+단위 `tests/{admin-ranking,crawl-settings-form,operations-queue-filters}.test.ts`; 통합 `tests/integration/{admin-review-batch,admin-review-causes,product-audit,takedown,admin-domain-review,admin-published-second-review}.test.ts`;
+보고서 `docs/operations/2026-09-22-admin-{review,domain-review}.md`, 증거 `docs/operations/evaluations/2026-09-22-admin-review/`, 이 handoff.
+
+## 실제 검증
+- 최종 단위 **142파일1109PASS**, `/tmp/nmv-admin-unit-complete.log`.
+- 전체 통합 **82파일799PASS(88.43s)**, `/tmp/nmv-admin-integration-full.log`. 전용 localhost55435/nomorevibe_test만 사용. 운영DB를 테스트에 넣지 말 것.
+- 최종 Next production build PASS `/tmp/nmv-admin-build-verified.log`, `npx tsc --noEmit --incremental false` PASS `/tmp/nmv-admin-types-verified.log`, diff검사PASS.
+- `npm run lint`는 기존 사용자 untracked `nomorevibe-final/` 복사본을 스캔해3424오류/57948경고로 실패. 이 파일들은 수정하지 않았다. 대신 **모든 git tracked 소스+이번 신규TS**를 명시한 ESLint는0오류/기존vendor unused경고1로 완료(`/tmp/nmv-admin-lint-source.log`). 전체 lint 무오류라고 말하지 말 것.
+- 운영 갈래 필터 비용: 새 코드로 읽기전용 BEGIN READ ONLY에서999후보/9갈래 **533ms** 한 표본, truncated=false. `/tmp/nmv-admin-cause-performance.json`. 일반 규모 성능 보증/확정 개선율 아님.
+- 로컬 production standalone+fixture36후보/3랭킹제품으로 **브라우저14항목PASS, JS/console오류0**. `.crawl-samples/admin-ui-review/verify_ui.py` 최종실행10680 exit0. 390/768/1440px 두화면 가로넘침없음, 필터/페이지/탭/쿨다운편집/예약/취소확인. 실제CSS충돌(필터버튼흰글자/랭킹순위폭)수정후재빌드·재검증. 결과와7스크린샷은 `docs/operations/evaluations/2026-09-22-admin-review/`. QA서버43129는검증후중지완료(exec59830 exit130).
+
+## 실패 접근과 남은 위험
+- 기능이 없는 첫 unit은 missingmodule RED; 별수 실제 DB 회귀 expected2/received4 RED후13PASS. 다른 경합/불일치도 각 담당이 실패재현후 회귀통과(도메인 상세보고서).
+- 병렬 CSS파일 작성중 첫 전체단위는 CSS module미존재1suiteFAIL; 완성후 최종1109PASS.
+- 성능 도구 첫연결 startup파라미터는 PgBouncer08P01, reserved연결의Drizzle options누락TypeError→prepare:false+명시read-only transaction+원client.options전달후성공. 운영 변경없음.
+- Python QA 파일명inspect.py가표준모듈을가려실패→capture_ui.py로변경. 최초상호작용검사는Next SPA URL반영을기다리지않은assert,전역[name=q]중복선택으로실패→URL predicatewait와큐영역selector로고침. 이들은앱실패가아님.
+- **운영 익명 관리자 접근은 그대로 남음**. 새 브라우저로status진입확인. 과거 handoff의ADMIN_LOCAL_LOGIN=1/OAuth미구성,접근정책질문미응답상태. 현재끄면운영자도잠기므로운영설정변경안함.
+- 공개 requestTakedown의새요청vs관리자처리경합은별도미재현검토가능성. 큰큐갈래재판정은최대2만상한/화면표시,현재표본외성능보증없음.
+
+## 남은 작업과 정확한 다음 명령
+구현·전체단위/통합·브라우저검증·스크린샷시각검토·보고서작성완료. 남은작업은미해결운영접근정책및추후릴리스다. **커밋/푸시/배포를이번작업에서수행하지않았다.** main push는9앱자동배포를일으킬수있음. 아래QA재실행은먼저서버를시작해야한다.
+```sh
+cd /Users/jr/Desktop/projects/nomorevibe
+HOSTNAME=127.0.0.1 PORT=43129 DATABASE_URL=postgres://nomorevibe:nomorevibe@127.0.0.1:55435/nomorevibe_test ADMIN_LOCAL_LOGIN=1 NEXT_PUBLIC_SITE_URL=http://127.0.0.1:43129 CONNECT_AGENT_URL= GITHUB_TOKEN= node .next/standalone/server.js
+# 별도 터미널에서 실행 (fixture가 다른 테스트로 바뀌었다면 아래 seed명령 먼저):
+/tmp/nmv-admin-qa-venv/bin/python .crawl-samples/admin-ui-review/verify_ui.py
+cat docs/operations/evaluations/2026-09-22-admin-review/browser-checks.json
+tail -n 6 /tmp/nmv-admin-integration-full.log
+git diff --check
+git status --short
+```
+QA fixture는 `.crawl-samples/admin-ui-review/seed.ts`이며DB를비우므로다른통합테스트와동시실행금지. 필요시명시로컬환경으로만실행:
+```sh
+DATABASE_URL=postgres://nomorevibe:nomorevibe@127.0.0.1:55435/nomorevibe_test TEST_DATABASE_URL=postgres://nomorevibe:nomorevibe@127.0.0.1:55435/nomorevibe_test npx tsx .crawl-samples/admin-ui-review/seed.ts
+```
+
+---
+
 # 근거 수집 복구 배포·운영 검증 완료 — 2026-09-22 01:08 KST
 
 ## 완료 결과

@@ -211,10 +211,14 @@ export async function requeueStaleReviewSources(
  * SQL 안(LIMIT 앞)에 넣어야 한다 — 목록을 받아 거르면 오래된 것부터 100건이라 새 후보가 뒤에 가려진다.
  * 기본값은 꺼져 있어 1차 심사 게이트의 동작은 그대로다.
  */
-export async function listReviewCandidates(settings: CrawlSettings, limit = 20,
-  options: { unreviewedOnly?: boolean; excludeCandidateIds?: number[]; readyOnly?: boolean } = {}): Promise<CrawlCandidate[]> {
-  if (!settings.enabled || settings.reviewMode === "off") return [];
-  return db.select().from(crawlCandidates).where(and(
+export type ReviewCandidateOptions = {
+  unreviewedOnly?: boolean; excludeCandidateIds?: number[]; readyOnly?: boolean;
+};
+
+/** Shared by worker selection and uncapped operations queue counts. */
+export function reviewCandidatePredicate(settings: CrawlSettings, options: ReviewCandidateOptions = {}): SQL {
+  if (!settings.enabled || settings.reviewMode === "off") return sql`false`;
+  return and(
     options.excludeCandidateIds?.length ? notInArray(crawlCandidates.id, options.excludeCandidateIds) : undefined,
     options.readyOnly ? sql`NOT EXISTS (SELECT 1 FROM ${crawlReviewAttempts} WHERE ${matchingSource(settings)}
       AND ${crawlReviewAttempts.state} = 'running' AND EXISTS (SELECT 1 FROM jobs j
@@ -242,7 +246,13 @@ export async function listReviewCandidates(settings: CrawlSettings, limit = 20,
       AND ${crawlReviewAttempts.state} = 'failed' AND ${crawlReviewAttempts.retryAfter} > now())`,
     sql`(SELECT count(*) FROM ${crawlReviewAttempts} WHERE ${matchingSource(settings)}
       AND ${crawlReviewAttempts.state} IN ('failed','superseded')) < ${MAX_REVIEW_ATTEMPTS}`,
-  )).orderBy(
+  )!;
+}
+
+export async function listReviewCandidates(settings: CrawlSettings, limit = 20,
+  options: ReviewCandidateOptions = {}): Promise<CrawlCandidate[]> {
+  if (!settings.enabled || settings.reviewMode === "off") return [];
+  return db.select().from(crawlCandidates).where(reviewCandidatePredicate(settings, options)).orderBy(
     /*
      * 한 번도 심사를 통과한 적이 없는 후보가 먼저다. 그다음이 유효기간이 지나 다시 보는 것.
      *

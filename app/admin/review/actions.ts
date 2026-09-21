@@ -7,8 +7,7 @@ import { writeTaglineByHand } from '@/lib/crawl/taglines';
 import { getDocument } from '@/lib/crawl/repository';
 import { decideCandidate } from '@/lib/crawl/review';
 import { changeReviewMode } from '@/lib/crawl/settings';
-import { resolveSecondReviews } from '@/lib/crawl/second-review';
-import { banProduct } from '@/lib/domain/products/manage';
+import { decidePublishedSecondReview } from '@/lib/crawl/published-second-review';
 import type { RequeueState } from './contract';
 
 export type ReviewActionState = { error?: string; message?: string } | null;
@@ -102,12 +101,8 @@ export async function resolvePublishedSecondReview(_previous: ReviewActionState,
   const slug = String(form.get('slug') ?? '');
   const decision = form.get('decision');
   if (!Number.isSafeInteger(id) || id <= 0 || !slug || (decision !== 'ban' && decision !== 'keep')) return { error: '요청을 읽을 수 없습니다.' };
-  if (decision === 'ban') {
-    const banned = await banProduct(slug);
-    if (!banned.ok) return { error: '제품을 찾지 못했습니다.' };
-  }
-  const changed = await resolveSecondReviews([id], decision === 'ban' ? 'banned' : 'kept', admin.login);
+  const changed = await decidePublishedSecondReview({ id, slug, decision, actor: admin.login });
   revalidatePath('/admin/review');
   revalidatePath('/admin/products');
-  return changed ? { message: decision === 'ban' ? '내렸습니다.' : '그대로 둡니다.' } : { error: '이미 처리된 항목입니다.' };
+  return changed ? { message: decision === 'ban' ? '내렸습니다.' : '그대로 둡니다.' } : { error: '이미 처리됐거나 화면이 오래됐습니다. 새로고침해주세요.' };
 }

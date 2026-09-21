@@ -55,7 +55,10 @@ export async function pipelineFlow(): Promise<PipelineFlow> {
     db.select({ count }).from(crawlDocuments).where(gte(crawlDocuments.fetchedAt, from)),
     db.select({ count }).from(crawlCandidates).where(gte(crawlCandidates.judgedAt, from)),
     db.select({ count }).from(crawlCandidates).where(and(gte(crawlCandidates.decidedAt, from), isNotNull(crawlCandidates.decidedAt))),
-    db.select({ count }).from(products).where(gte(products.createdAt, from)),
+    db.select({
+      crawler: sql<number>`count(*) filter (where ${products.source} = 'crawler')::int`,
+      public: sql<number>`count(*) filter (where ${products.status} in ('verified', 'seeded'))::int`,
+    }).from(products).where(gte(products.createdAt, from)),
   ]);
 
   const byState = (rows: { state: string; count: number }[], ...states: string[]) =>
@@ -74,9 +77,9 @@ export async function pipelineFlow(): Promise<PipelineFlow> {
     { key: "review", label: "사람 심사", waiting: byState(candidates, "needs_review"),
       entered: null, left: reviewed, job: null },
     { key: "publish", label: "분류·발행", waiting: byState(candidates, "approved"),
-      entered: null, left: listed[0].count, job: "crawl-publish" },
+      entered: null, left: listed[0].crawler, job: "crawl-publish" },
     { key: "public", label: "공개", waiting: published[0].count,
-      entered: listed[0].count, left: null, job: null },
+      entered: listed[0].public, left: null, job: null },
   ];
 
   return { stages, bottleneck: findBottleneck(stages), published: published[0].count };

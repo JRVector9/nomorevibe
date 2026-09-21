@@ -59,6 +59,11 @@ beforeEach(() => {
 });
 
 describe("검색 신호 편집", () => {
+  it.each(["-1", "1.5", "NaN", "Infinity", "1000"])("유효하지 않은 행 수 %s 는 설정을 만들기 전에 거절한다", async (queryCount) => {
+    expect(await saveCrawlSettings(null, submitted({ queryCount }))).toMatchObject({ issues: expect.any(Array) });
+    expect(saveSettings).not.toHaveBeenCalled();
+  });
+
   it("저장된 신호 뒤에 빈 행을 하나 더 그린다 — 이것이 신호를 추가하는 유일한 길이다", () => {
     const html = render(twoSignals);
 

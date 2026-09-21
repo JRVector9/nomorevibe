@@ -250,14 +250,19 @@ export async function reviewQueueCauses(settings: CrawlSettings): Promise<Review
       db.select().from(crawlDocuments).where(inArray(crawlDocuments.repo, page.map(row => row.repo))),
       db.selectDistinctOn([crawlReviewAttempts.candidateId]).from(crawlReviewAttempts).where(and(
         inArray(crawlReviewAttempts.candidateId, page.map(row => row.id)), eq(crawlReviewAttempts.kind, 'automatic'),
+        eq(crawlReviewAttempts.state, 'succeeded'),
       )).orderBy(crawlReviewAttempts.candidateId, desc(crawlReviewAttempts.id)),
     ]);
     const documentByRepo = new Map(documents.map(row => [row.repo, row]));
     const aiByCandidate = new Map(aiAttempts.map(row => [row.candidateId, row]));
+    const agentInputs = settings.agentEvidence.enforceEligibility
+      ? await loadAgentJudgeInputs(documents, settings)
+      : null;
     for (const candidate of page) {
       const document = documentByRepo.get(candidate.repo);
       const verdict = document
-        ? judge(factsFromRepoMeta(candidate.repo, document.repoMeta), pageFactsFromDocument(document), settings)
+        ? judge(factsFromRepoMeta(candidate.repo, document.repoMeta), pageFactsFromDocument(document),
+            settings, new Date(), agentInputs?.get(candidate.repo))
         : null;
       const aiRejected = aiByCandidate.get(candidate.id)?.outcome?.decision === 'reject';
       // 사람만 가르는 사유는 규칙을 다시 태우면 통과로 나와 "보류가 아님"에 섞인다 — 사유 그대로 묶는다
@@ -324,28 +329,38 @@ export async function requeueResolvedCandidates(actor: string, limit = REVIEW_QU
 
   const documents = await db.select().from(crawlDocuments)
     .where(inArray(crawlDocuments.repo, candidates.map(row => row.repo)));
+  const agentInputs = settings.agentEvidence.enforceEligibility
+    ? await loadAgentJudgeInputs(documents, settings)
+    : null;
   const resolved: { id: number; reason: string }[] = [];
   for (const candidate of candidates) {
     const document = documents.find(row => row.repo === candidate.repo);
     if (!document) continue;
     const verdict = judge(factsFromRepoMeta(candidate.repo, document.repoMeta),
-      pageFactsFromDocument(document), settings);
+      pageFactsFromDocument(document), settings, new Date(), agentInputs?.get(candidate.repo));
     if (verdict.state !== 'needs_review') resolved.push({ id: candidate.id, reason: `${verdict.state}:${verdict.reason}` });
   }
   if (!resolved.length) return { scanned: candidates.length, requeued: 0, byReason: [] };
 
-  await db.transaction(async tx => {
+  const updated = await db.transaction(async tx => {
     // 판정 큐로만 되돌린다. 결과는 규칙이 정한다 — 여기서 승인·거부를 대신 쓰지 않는다.
-    await tx.update(crawlCandidates).set({ state: 'new', updatedAt: new Date() })
-      .where(and(inArray(crawlCandidates.id, resolved.map(row => row.id)), eq(crawlCandidates.state, 'needs_review')));
+    // 읽은 뒤 사람이 결정했을 수 있으므로 쓰는 순간에도 보호 조건을 확인한다.
+    const rows = await tx.update(crawlCandidates).set({ state: 'new', updatedAt: new Date() })
+      .where(and(inArray(crawlCandidates.id, resolved.map(row => row.id)), eq(crawlCandidates.state, 'needs_review'),
+        eq(crawlCandidates.decidedBy, 'auto'), notInArray(crawlCandidates.reason, [...HUMAN_ONLY_REASONS])))
+      .returning({ id: crawlCandidates.id });
+    if (!rows.length) return rows;
     await tx.insert(operationsAudit).values({ actor, action: 'requeue-resolved', target: 'crawl_candidates',
-      detail: { requeued: resolved.length, scanned: candidates.length } });
+      detail: { requeued: rows.length, scanned: candidates.length } });
     await requestJob('crawl-judge', tx);
+    return rows;
   });
 
-  const byReason = [...resolved.reduce((map, row) => map.set(row.reason, (map.get(row.reason) ?? 0) + 1), new Map<string, number>())]
+  const updatedIds = new Set(updated.map(row => row.id));
+  const byReason = [...resolved.filter(row => updatedIds.has(row.id))
+    .reduce((map, row) => map.set(row.reason, (map.get(row.reason) ?? 0) + 1), new Map<string, number>())]
     .map(([reason, count]) => ({ reason, count })).sort((a, b) => b.count - a.count);
-  return { scanned: candidates.length, requeued: resolved.length, byReason };
+  return { scanned: candidates.length, requeued: updated.length, byReason };
 }
 
 export type AdminReviewStatus = 'unreviewed' | 'running' | 'succeeded' | 'failed' | 'exhausted' | 'outdated';
@@ -434,6 +449,8 @@ export async function listAdminReviewEntries(settings: CrawlSettings, options: {
   ids?: number[];
   /** 이름(페이지 제목)·레포·주소에 이 글자가 들어간 것만 */
   search?: string;
+  /** Minimum GitHub stars, applied before pagination. Unknown counts do not match. */
+  minStars?: number;
   /**
    * 마지막 푸시가 이 일수보다 오래된 것을 목록에서 뺀다 — 화면에서만 빼고 후보는 그대로 둔다(2026-09-19 사용자 결정).
    * 푸시 시각을 모르는 것은 오래됐다고 볼 근거가 없어 남긴다. 뺀 수는 hiddenByAge 로 돌려준다.
@@ -458,7 +475,9 @@ export async function listAdminReviewEntries(settings: CrawlSettings, options: {
     and (d.repo_meta->>'pushed_at')::timestamptz <= now() - make_interval(days => ${days}))` : undefined;
   const base = and(inArray(crawlCandidates.state, [...states]),
     options.ids ? inArray(crawlCandidates.id, options.ids) : undefined,
-    sql`${crawlCandidates.id} > ${Math.max(0, options.after ?? 0)}`, matches);
+    sql`${crawlCandidates.id} > ${Math.max(0, options.after ?? 0)}`, matches,
+    Number.isSafeInteger(options.minStars) && options.minStars! >= 0
+      ? sql`${repoNumber('stargazers_count')} >= ${options.minStars}` : undefined);
   const where = stale ? and(base, not(stale)) : base;
   const [candidates, [{ total }], [{ hidden: hiddenByAge }]] = await Promise.all([
     db.select().from(crawlCandidates).where(where).orderBy(orderBy(options.sort ?? ""))
@@ -469,7 +488,7 @@ export async function listAdminReviewEntries(settings: CrawlSettings, options: {
   const page = candidates.slice(0, limit);
   if (!page.length) return { entries: [] as AdminReviewEntry[], nextAfter: null, total, hiddenByAge };
   const ids = page.map(row => row.id), repos = page.map(row => row.repo);
-  const [documents, scans, latest, latestAutomatic] = await Promise.all([
+  const [documents, scans, latest, latestAutomatic, latestSuccessfulAutomatic] = await Promise.all([
     db.select().from(crawlDocuments).where(inArray(crawlDocuments.repo, repos)),
     db.selectDistinctOn([agentRepositoryScans.repositoryKey]).from(agentRepositoryScans).where(and(
       inArray(agentRepositoryScans.repositoryKey, repos.map(repo => repo.toLowerCase())), eq(agentRepositoryScans.scope, ''),
@@ -478,6 +497,11 @@ export async function listAdminReviewEntries(settings: CrawlSettings, options: {
       .orderBy(crawlReviewAttempts.candidateId, desc(crawlReviewAttempts.id)),
     db.selectDistinctOn([crawlReviewAttempts.candidateId]).from(crawlReviewAttempts).where(and(
       inArray(crawlReviewAttempts.candidateId, ids), eq(crawlReviewAttempts.kind, 'automatic')))
+      .orderBy(crawlReviewAttempts.candidateId, desc(crawlReviewAttempts.id)),
+    // 필터와 같은 마지막 성공 판단. 재시도 실패는 판단을 지우지 않고 latest/status에 남긴다.
+    db.selectDistinctOn([crawlReviewAttempts.candidateId]).from(crawlReviewAttempts).where(and(
+      inArray(crawlReviewAttempts.candidateId, ids), eq(crawlReviewAttempts.kind, 'automatic'),
+      eq(crawlReviewAttempts.state, 'succeeded')))
       .orderBy(crawlReviewAttempts.candidateId, desc(crawlReviewAttempts.id)),
   ]);
   const seconds = await secondReviewsFor(ids);
@@ -523,7 +547,7 @@ export async function listAdminReviewEntries(settings: CrawlSettings, options: {
         url: item.observation.sourceUrl })) ?? [],
       refreshCount: attempts.filter(row => row.kind === 'evidence_refresh').length,
       tagline: taglineOf(taglines.find(row => row.repo === candidate.repo), document),
-      latest: summarizeAttempt(last), review: summarizeAttempt(review),
+      latest: summarizeAttempt(last), review: summarizeAttempt(latestSuccessfulAutomatic.find(row => row.candidateId === candidate.id)),
       seconds: seconds.filter(item => item.candidateId === candidate.id).map(row => ({ decision: row.secondDecision,
         confidence: row.secondConfidence, reason: row.secondReason, reasonKo: null, model: row.model, provider: row.provider,
         status: row.status, trigger: row.trigger, errorCode: row.errorCode, isFallback: Boolean(row.fallbackForId),

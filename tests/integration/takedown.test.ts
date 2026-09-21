@@ -114,4 +114,16 @@ describe("내려달라는 요청", () => {
 
     expect(await resolveTakedown("found-app", "remove", "jr")).toMatchObject({ ok: false });
   });
+
+  it("동시에 기각과 내리기를 눌러도 한 처리만 성공하고 제품 상태와 일치한다", async () => {
+    await seeded();
+    await requestTakedown("found-app");
+    const results = await Promise.all([
+      resolveTakedown("found-app", "remove", "remove-admin"),
+      resolveTakedown("found-app", "dismiss", "dismiss-admin"),
+    ]);
+    expect(results.filter((result) => result.ok)).toHaveLength(1);
+    const [request] = await db.select().from(takedownRequests);
+    expect((await repo.findBySlug("found-app"))?.status).toBe(request.outcome === "removed" ? "banned" : "seeded");
+  });
 });

@@ -377,6 +377,13 @@ export async function documentsAwaitingJudgement(limit: number): Promise<CrawlDo
   return (await judgementQueue(limit)).map((row) => row.document);
 }
 
+/** Shared by the worker and operations queue counts. */
+export function judgementQueuePredicate() {
+  return sql`${crawlCandidates.id} IS NULL OR (${crawlCandidates.state} = 'new'
+    AND (${crawlCandidates.signals}->>'reconsiderAfter' IS NULL
+      OR date_trunc('milliseconds', ${crawlDocuments.fetchedAt}) > (${crawlCandidates.signals}->>'reconsiderAfter')::timestamp))`;
+}
+
 /**
  * 판정 대기 원본과, 같은 조회로 읽은 후보.
  *
@@ -391,9 +398,7 @@ export async function judgementQueue(
     .select()
     .from(crawlDocuments)
     .leftJoin(crawlCandidates, eq(crawlDocuments.repo, crawlCandidates.repo))
-    .where(sql`${crawlCandidates.id} IS NULL OR (${crawlCandidates.state} = 'new'
-      AND (${crawlCandidates.signals}->>'reconsiderAfter' IS NULL
-        OR date_trunc('milliseconds', ${crawlDocuments.fetchedAt}) > (${crawlCandidates.signals}->>'reconsiderAfter')::timestamp))`)
+    .where(judgementQueuePredicate())
     .limit(limit);
   // 후보가 없으면 null이 아니라 undefined다 — 저장 쪽이 잠근 행(없으면 undefined)과 그대로 비교한다
   return rows.map((row) => ({ document: row.crawl_documents, candidate: row.crawl_candidates ?? undefined }));

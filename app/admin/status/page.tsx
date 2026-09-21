@@ -18,11 +18,14 @@ import { latestServiceInstance } from "@/lib/operations/instance";
 import { pipelineFlow, oldestReviewWaitDays, stalledReviewCount } from "@/lib/operations/pipeline";
 import { ActionQueue, type ActionItem } from "./ActionQueue";
 import { PipelineRail } from "./PipelineRail";
+import { pipelineThroughput } from "@/lib/operations/throughput";
+import { ThroughputStrip } from "./ThroughputStrip";
 import type { AgentStatus } from "@/lib/operations/contracts";
 import { manualCandidates } from "@/lib/operations/categories";
-import { redact } from "@/lib/observability/logger";
-import { listAdminReviewEntries, reviewQueueAiDecisions } from "@/lib/crawl/admin-review";
+import { logger, redact } from "@/lib/observability/logger";
+import { listAdminReviewEntries, reviewQueueAiDecisions, reviewQueueCauses } from "@/lib/crawl/admin-review";
 import { QueuePreview } from "./QueuePreview";
+import { intersectQueueIds, parseQueueFilters, queueFilterHref, QUEUE_PAGE_SIZE, type QueueSearch } from './queue-filters';
 import { recentSecondReviewFailures, secondReviewSummary } from "@/lib/crawl/second-review";
 import { translationProgress } from "@/lib/crawl/translations";
 import { TranslationProgress } from "./TranslationProgress";
@@ -74,9 +77,12 @@ function Counts({ counts, empty }: { counts: Record<string, number>; empty: stri
   );
 }
 
-export default async function StatusPage() {
+export default async function StatusPage({ searchParams }: { searchParams: Promise<QueueSearch> }) {
   const admin = await currentAdmin();
   if (!admin) redirect("/admin/login");
+  const params = await searchParams;
+  const filters = parseQueueFilters(params);
+  const initialTab = params.tab === 'ai' || params.tab === 'jobs' || params.tab === 'manual' ? params.tab : 'overview';
 
   const [settings, frontier, candidates, rejections, jobStates, signalRows, rankingSeason, evidenceSummary] = await Promise.all([
     getSettings(),
@@ -89,10 +95,23 @@ export default async function StatusPage() {
     getEvidenceStatusSummary(new Date()),
   ]);
   const [down, topClicked, ops, manual] = await Promise.all([downProducts(), topClickedSince(30), operationsData(), manualCandidates()]);
-  const [flow, oldestWait, stalled, queue, decisions, seconds, translation, secondFailures] = await Promise.all([pipelineFlow(), oldestReviewWaitDays(), stalledReviewCount(),
-    // 운영센터 가운데 표 — 한 화면에 들어오는 만큼만. 처리는 심사 큐에서 한다
-    listAdminReviewEntries(settings, { state: "needs_review", limit: 14 }), reviewQueueAiDecisions(), secondReviewSummary(settings.secondReview.agreeAt), translationProgress(),
-    recentSecondReviewFailures()]);
+  const [flow, oldestWait, stalled, decisions, causes, seconds, translation, secondFailures, throughput] = await Promise.all([pipelineFlow(), oldestReviewWaitDays(), stalledReviewCount(),
+    reviewQueueAiDecisions(), filters.cause ? reviewQueueCauses(settings) : Promise.resolve(null),
+    secondReviewSummary(settings.secondReview.agreeAt), translationProgress(), recentSecondReviewFailures(), pipelineThroughput(settings).catch(error => {
+      logger.warn("operations.throughput_unavailable", { errorName: error instanceof Error ? error.name : "unknown" });
+      return null;
+    })]);
+  // Filter the whole queue before pagination, not the fourteen rows already on screen.
+  const queue = await listAdminReviewEntries(settings, {
+    state: 'needs_review', limit: QUEUE_PAGE_SIZE, offset: (filters.page - 1) * QUEUE_PAGE_SIZE,
+    ids: intersectQueueIds(filters.cause ? causes?.ids.get(filters.cause) ?? [] : undefined,
+      filters.ai ? decisions.ids.get(filters.ai) ?? [] : undefined),
+    search: filters.q || undefined,
+    minStars: filters.minStars ? Number(filters.minStars) : undefined,
+    pushedWithinDays: filters.updated ? Number(filters.updated) : undefined,
+  });
+  const lastQueuePage = Math.max(1, Math.ceil(queue.total / QUEUE_PAGE_SIZE));
+  if (filters.page > lastQueuePage) redirect(queueFilterHref(filters, { page: lastQueuePage }));
 
   const states = new Map(jobStates.map((job) => [job.name, job]));
   const rejectedTotal = rejections.reduce((sum, r) => sum + r.count, 0);
@@ -197,7 +216,7 @@ export default async function StatusPage() {
 
   return (
     <main className="pb-10">
-      <OperationsCenter queue={<QueuePreview entries={queue.entries} total={queue.total} counts={decisions.counts} />} data={ops} candidates={manual} reviewMode={settings.reviewMode} enabled={settings.enabled} localCodexAllowed={localCodexEnabled()} actionQueue={<ActionQueue items={actions}/>} pipeline={<div className="flex flex-col gap-2"><PipelineRail flow={flow}/><TranslationProgress progress={translation}/></div>} oauthConfigured={Boolean(process.env.GITHUB_OAUTH_CLIENT_ID && process.env.GITHUB_OAUTH_CLIENT_SECRET)}
+      <OperationsCenter throughput={<ThroughputStrip snapshot={throughput} />} key={initialTab} initialTab={initialTab} queue={<QueuePreview entries={queue.entries} total={queue.total} counts={decisions.counts} filters={filters} totalWaiting={needsReview} filterScanTruncated={causes?.truncated || Object.values(decisions.counts).reduce((sum, count) => sum + count, 0) < needsReview} />} data={ops} candidates={manual} reviewMode={settings.reviewMode} enabled={settings.enabled} localCodexAllowed={localCodexEnabled()} actionQueue={<ActionQueue items={actions}/>} pipeline={<div className="flex flex-col gap-2"><PipelineRail flow={flow}/><TranslationProgress progress={translation}/></div>} oauthConfigured={Boolean(process.env.GITHUB_OAUTH_CLIENT_ID && process.env.GITHUB_OAUTH_CLIENT_SECRET)}
         jobs={JOB_NAMES.map(name => {
           const job = states.get(name);
           return { name, status: jobStatusLabel(job), lastRunAt: job?.lastRunAt?.toISOString() ?? null,
@@ -256,7 +275,7 @@ export default async function StatusPage() {
           note="오류 원문은 위 작업 표 한 곳에서만 보고, 여기서는 처리해야 할 출처 수와 마지막 성공 시각만 봅니다."
         >
           <dl className="flex flex-wrap gap-x-8 gap-y-3 text-[13px]">
-            <div><dt className="text-fg-3">지금 처리 대상</dt><dd className="mt-1 font-mono font-bold">{evidenceSummary.due}</dd></div>
+            <div><dt className="text-fg-3">수집 기한 지난 출처</dt><dd className="mt-1 font-mono font-bold">{evidenceSummary.due}</dd></div>
             <div><dt className="text-fg-3">오래됨</dt><dd className="mt-1 font-mono font-bold">{evidenceSummary.stale}</dd></div>
             <div><dt className="text-fg-3">실패·연결 끊김</dt><dd className="mt-1 font-mono font-bold">{evidenceSummary.failed}</dd></div>
             <div><dt className="text-fg-3">마지막 성공</dt><dd className="mt-1 font-semibold">{evidenceJob ? when(evidenceJob.lastSuccessAt) : "실행 기록 없음"}</dd></div>

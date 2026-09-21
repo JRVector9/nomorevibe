@@ -527,9 +527,9 @@ export async function recentSecondReviewFailures(now = new Date()): Promise<Seco
 
 /** 잠깐 막힌 것과 그렇지 않은 것 — 다시 보는 때가 다르다 */
 export const MAX_SECOND_REVIEW_FAILURES = 3;
-const TRANSIENT = ["timeout", "gateway_error", "rate_limited", "budget"];
+export const SECOND_REVIEW_TRANSIENT_ERRORS = ["timeout", "gateway_error", "rate_limited", "budget"];
 export const TRANSIENT_RETRY_MS = 5 * 60_000;
-const RETRY_MS = 60 * 60_000;
+export const SECOND_REVIEW_RETRY_MS = 60 * 60_000;
 
 /**
  * 실패한 것을 다시 대기로.
@@ -545,8 +545,8 @@ export async function retryFailedSecondReviews(now = new Date()): Promise<void> 
   await db.update(secondReviews).set({ status: "pending" })
     .where(and(eq(secondReviews.status, "failed"), lt(secondReviews.failureCount, MAX_SECOND_REVIEW_FAILURES),
       or(
-        and(inArray(secondReviews.errorCode, TRANSIENT), lt(secondReviews.reviewedAt, new Date(now.getTime() - TRANSIENT_RETRY_MS))),
-        lt(secondReviews.reviewedAt, new Date(now.getTime() - RETRY_MS)),
+        and(inArray(secondReviews.errorCode, SECOND_REVIEW_TRANSIENT_ERRORS), lt(secondReviews.reviewedAt, new Date(now.getTime() - TRANSIENT_RETRY_MS))),
+        lt(secondReviews.reviewedAt, new Date(now.getTime() - SECOND_REVIEW_RETRY_MS)),
       )));
 }
 

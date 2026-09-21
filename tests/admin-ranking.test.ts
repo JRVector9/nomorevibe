@@ -31,12 +31,14 @@ import {
 import {
   numberOrPrevious,
   percentList,
+  policyWithCooldownDrafts,
   policyForScoringMode,
   RankingPolicyForm,
 } from "@/app/admin/ranking/RankingPolicyForm";
 import {
   DEFAULT_RANKING_POLICY,
   UNIQUE_FIRST_RANKING_POLICY,
+  rankingPolicySchema,
 } from "@/lib/domain/ranking/policy";
 
 describe("ranking administrator authorization", () => {
@@ -118,6 +120,22 @@ describe("ranking policy form parsing", () => {
     expect(percentList("35, 55.5, 100")).toEqual([3500, 5550, 10_000]);
   });
 
+  it("serializes the edited cooldown draft, including decimal percentages", () => {
+    const policy = policyWithCooldownDrafts(DEFAULT_RANKING_POLICY, ["35, 55.5, 100", "65, 80, 90, 100"]);
+
+    expect(policy.cooldown.tiers[0].factorsBasisPoints).toEqual([3500, 5550, 10_000]);
+    expect(rankingPolicySchema.safeParse(policy).success).toBe(true);
+    expect(DEFAULT_RANKING_POLICY.cooldown.tiers[0].factorsBasisPoints).toEqual([3500, 5500, 7500, 9000]);
+  });
+
+  it.each(["", "35,", "35, invalid", "35, 101"])("does not save stale percentages when the current draft is invalid: %s", (draft) => {
+    const policy = policyWithCooldownDrafts(DEFAULT_RANKING_POLICY, [draft, "65, 80, 90, 100"]);
+    const posted = JSON.parse(JSON.stringify(policy));
+
+    expect(rankingPolicySchema.safeParse(posted).success).toBe(false);
+    expect(posted.cooldown.tiers[0].factorsBasisPoints).not.toEqual(DEFAULT_RANKING_POLICY.cooldown.tiers[0].factorsBasisPoints);
+  });
+
   it("keeps the previous number when an edit is not finite", () => {
     expect(numberOrPrevious("12", 7)).toBe(12);
     expect(numberOrPrevious("not-a-number", 7)).toBe(7);
@@ -156,6 +174,40 @@ describe("ranking policy form parsing", () => {
 });
 
 describe("ranking transition preview", () => {
+  it("shows changes to unique scoring weights in the scheduled policy comparison", async () => {
+    const activePolicy = structuredClone(UNIQUE_FIRST_RANKING_POLICY);
+    const scheduledPolicy = {
+      ...activePolicy,
+      scoring: {
+        mode: "unique_visitors",
+        version: "unique-visitors-v1",
+        repeatVisitWeightBasisPoints: 5_000,
+        maxExtraVisitsPerUnique: 2,
+        minimumUniqueVisitors: 7,
+      },
+    };
+    mocks.currentAdmin.mockResolvedValue({ login: "admin" });
+    mocks.getRankingAdminState.mockResolvedValue({
+      active: {
+        key: "2026-W34", cadence: "weekly", policy: activePolicy,
+        startsAt: new Date("2026-08-17T15:00:00.000Z"),
+        endsAt: new Date("2026-08-24T15:00:00.000Z"),
+        refreshedAt: null, isTransition: false, effectiveLaunchWindowDays: 28,
+      },
+      activeMetrics: { eligibleProducts: 0, validClicks: 0 },
+      scheduled: { id: 2, values: scheduledPolicy, createdBy: "admin", createdAt: new Date("2026-08-20T00:00:00Z") },
+      revisions: [], preview: [], currentPreview: [], proposedUniquePreview: [],
+      collectionReadiness: { startedAt: null, readyAt: null, ready: false },
+    });
+
+    const html = renderToStaticMarkup(await AdminRankingPage());
+
+    expect(html).not.toContain("현재 정책과 값이 같습니다.");
+    expect(html).toContain("50%");
+    expect(html).toContain("2회");
+    expect(html).toContain("7명");
+  });
+
   it("shows readiness and both legacy and proposed unique ranks", async () => {
     mocks.currentAdmin.mockResolvedValue({ login: "admin" });
     mocks.getRankingAdminState.mockResolvedValue({

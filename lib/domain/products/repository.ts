@@ -393,8 +393,8 @@ export async function setStatusWithAudit(input: {
   slug: string;
   status: ProductStatus;
   action: "admin.product.ban" | "admin.product.unban";
-}): Promise<boolean> {
-  return db.transaction(async (tx) => {
+}, transaction?: ProductTransaction): Promise<boolean> {
+  const apply = async (tx: ProductTransaction) => {
     if (!(await lockProductGeneration(tx, input.id, input.slug))) return false;
     const [current] = await tx.select({ status: products.status })
       .from(products)
@@ -413,7 +413,8 @@ export async function setStatusWithAudit(input: {
       metadata: { status: input.status },
     });
     return true;
-  });
+  };
+  return transaction ? apply(transaction) : db.transaction(apply);
 }
 
 export async function setOgImage(slug: string, path: string): Promise<void> {

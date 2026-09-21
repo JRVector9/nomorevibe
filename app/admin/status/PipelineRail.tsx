@@ -36,7 +36,7 @@ export function PipelineRail({ flow }: { flow: PipelineFlow }) {
         {bottleneck ? (
           <>병목 <b className="font-semibold text-down">{bottleneck.label}</b> — {bottleneck.waiting.toLocaleString("ko-KR")}건이 쌓였는데 24시간 동안 한 건도 빠지지 않았습니다{bottleneck.job ? <> · <span className="font-mono">{bottleneck.job}</span> 확인</> : " · 사람이 처리하는 단계"}.</>
         ) : (
-          <>모든 단계에서 지난 24시간 동안 처리가 있었습니다. 멈춘 곳은 없습니다.</>
+          <>최근 24시간의 누적 흐름입니다. 단기 지연은 상단의 단계별 처리 속도와 함께 확인하세요.</>
         )}
       </p>
     </section>

@@ -1,11 +1,11 @@
 import { beforeAll, beforeEach, expect, it, vi } from "vitest";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { jobs, crawlCandidates, crawlDocuments, crawlFrontier, crawlSettings, crawlReviewAttempts } from "@/lib/db/schema";
 import * as crawl from "@/lib/crawl/repository";
 import { saveSettings, changeReviewMode, getSettings, resetSettings } from "@/lib/crawl/settings";
 import { loadReviewInput, claimAgentReview, recordAgentReview,
-  requeueStaleReviewSources, listReviewCandidates, reviewApprovalPredicate, assertReviewApproval } from "@/lib/crawl/agent-review-repository";
+  requeueStaleReviewSources, listReviewCandidates, reviewCandidatePredicate, reviewApprovalPredicate, assertReviewApproval } from "@/lib/crawl/agent-review-repository";
 import { ensureSchema } from "./setup";
 
 beforeAll(() => ensureSchema());
@@ -209,4 +209,52 @@ it("한 번도 심사받지 않은 후보가 유효기간 지난 재심사보다
 
   // 감사의 양보 조건은 새 것만 본다 — 재심사에는 양보하지 않는다
   expect((await listReviewCandidates(settings, 10, { unreviewedOnly: true })).map((row) => row.id)).toEqual([fresh.id]);
+});
+
+it("counts the complete ready review queue without the worker's 100-candidate page cap", async () => {
+  expect(reviewCandidatePredicate).toBeTypeOf("function");
+  const context = await fixture();
+  const repos = Array.from({ length: 104 }, (_, index) => `ready/app-${index}`);
+  await db.insert(crawlDocuments).values(repos.map(repo => ({ repo, repoMeta: {},
+    productUrl: `https://${repo.replace('/', '-')}.example`, fetchedAt: new Date(Date.now() - 5_000) })));
+  await db.insert(crawlCandidates).values(repos.map(repo => ({ repo,
+    productUrl: `https://${repo.replace('/', '-')}.example`, state: 'approved' as const,
+    reason: 'passed' as const, decidedBy: 'auto' as const })));
+  const settings = context.settings;
+  const aggregate = async (candidateSettings = settings, excludeCandidateIds: number[] = []) => {
+    const [row] = await db.select({ count: sql<number>`count(*)::int`, oldest: sql<Date | null>`min(${crawlCandidates.updatedAt})` })
+      .from(crawlCandidates).where(reviewCandidatePredicate(candidateSettings, { readyOnly: true, excludeCandidateIds }));
+    return row;
+  };
+  expect(await aggregate()).toMatchObject({ count: 105, oldest: expect.anything() });
+  expect(await listReviewCandidates(settings, 500, { readyOnly: true })).toHaveLength(100);
+  expect((await aggregate(settings, [context.candidate.id])).count).toBe(104);
+  for (const disabled of [{ ...settings, enabled: false }, { ...settings, reviewMode: 'off' as const }]) {
+    expect(await aggregate(disabled)).toEqual({ count: 0, oldest: null });
+    expect(await listReviewCandidates(disabled, 500, { readyOnly: true })).toEqual([]);
+  }
+});
+
+it("uses worker eligibility for live review claims, stale leases, retry backoff and unreviewed filters", async () => {
+  expect(reviewCandidatePredicate).toBeTypeOf("function");
+  const base = await fixture();
+  await saveSettings({ firstReview: { provider: base.provider, model: base.model } }, 'test');
+  const settings = await getSettings();
+  const context = { ...base, settings, input: await loadReviewInput(base.candidate, base.document, settings) };
+  const claim = await claimAgentReview(context);
+  if (claim.kind === 'skipped') throw new Error(claim.reason);
+  const ids = async (options: Parameters<typeof reviewCandidatePredicate>[1] = {}) =>
+    (await db.select({ id: crawlCandidates.id }).from(crawlCandidates).where(reviewCandidatePredicate(settings, options))).map(row => row.id);
+  expect(await ids()).toEqual([context.candidate.id]);
+  expect(await ids({ readyOnly: true })).toEqual([]);
+  expect(await listReviewCandidates(settings, 100, { readyOnly: true })).toEqual([]);
+  await db.update(jobs).set({ lockedAt: sql`now() - interval '2 minutes'` }).where(eq(jobs.name, context.lease.name));
+  expect(await ids({ readyOnly: true })).toEqual([context.candidate.id]);
+  await db.update(jobs).set({ lockedAt: sql`now()` }).where(eq(jobs.name, context.lease.name));
+  await recordAgentReview({ ...context, attempt: claim.attempt, error: 'timeout', retryAfter: new Date(Date.now() + 60_000) });
+  expect(await ids({ readyOnly: true })).toEqual([]);
+  await db.update(crawlReviewAttempts).set({ state: 'succeeded', validUntil: new Date(0) });
+  expect(await ids()).toEqual([context.candidate.id]);
+  expect(await ids({ unreviewedOnly: true })).toEqual([]);
+  expect(await listReviewCandidates(settings, 100, { unreviewedOnly: true })).toEqual([]);
 });

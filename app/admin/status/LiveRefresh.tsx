@@ -41,7 +41,7 @@ export function LiveRefresh() {
     <button type="button" onClick={() => setLive(!live)} aria-pressed={live}
       title={live ? `${INTERVAL_MS / 1000}초마다 다시 읽습니다. 눌러서 멈춥니다.` : '멈춰 있습니다. 눌러서 다시 읽습니다.'}>
       <span aria-hidden className={live ? 'ops-live-dot on' : 'ops-live-dot'} />
-      {live ? (pending ? '읽는 중' : '실시간') : '멈춤'}
+      {live ? (pending ? '갱신 중' : '자동 갱신') : '갱신 멈춤'}
     </button>
   );
 }

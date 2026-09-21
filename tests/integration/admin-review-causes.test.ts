@@ -141,6 +141,8 @@ it('AI가 거부로 판정한 것은 따로 센다 — 규칙이 못 가른 것�
     provider: 'claude-cli', model: 'sonnet', startedAt: new Date(), completedAt: new Date(),
     validUntil: input.validUntil, outcome: { decision: 'reject', reason: '라이브러리 문서 사이트', evidenceIds: [] },
   });
+  // 뒤의 재시도 실패는 마지막 성공 판단을 지우지 않는다.
+  await attempt('acme/lib', 'failed');
 
   const causes = await reviewQueueCauses(settings);
   expect(causes.counts).toEqual([
@@ -200,6 +202,10 @@ it('보류 후보를 마지막으로 성공한 AI 판단으로 나눈다 — 실
   expect(counts).toEqual({ reject: 1, approve: 1, needs_review: 0, none: 2 });
   const { entries } = await listAdminReviewEntries(await getSettings(), { state: 'needs_review', ids: ids.get('none') });
   expect(entries.map((e) => e.candidate.repo).sort()).toEqual(['acme/failed', 'acme/untouched']);
+  const approved = await listAdminReviewEntries(await getSettings(), { state: 'needs_review', ids: ids.get('approve') });
+  expect(approved.entries).toHaveLength(1);
+  expect(approved.entries[0]).toMatchObject({ review: { state: 'succeeded', decision: 'approve' }, latest: { state: 'failed' }, status: 'succeeded' });
+  expect(entries.find(e => e.candidate.repo === 'acme/failed')).toMatchObject({ review: null, latest: { state: 'failed' }, status: 'failed' });
 });
 
 /**
@@ -245,4 +251,21 @@ it('목록 필터: 이름·레포·주소로 찾고, 마지막 푸시가 오래�
   expect(recent).toMatchObject({ total: 2, hiddenByAge: 1 });
   // 화면에서만 뺐다 — 후보는 그대로 보류다
   expect(await crawl.getCandidate('old/ledger')).toMatchObject({ state: 'needs_review' });
+});
+
+it('별 수 필터는 페이지 제한 전에 적용하고 다른 조건과 함께 전체 건수를 센다', async () => {
+  await held('stars/small', 'https://small.test', null, 3);
+  await held('stars/boundary', 'https://boundary.test', null, 500);
+  await held('stars/large', 'https://large.test', null, 1000);
+  await held('stars/unknown', 'https://unknown.test', null);
+  await db.update(crawlDocuments).set({ repoMeta: { stargazers_count: 'unknown' } }).where(eq(crawlDocuments.repo, 'stars/unknown'));
+  const settings = await getSettings();
+  const first = await listAdminReviewEntries(settings, { state: 'needs_review', minStars: 500, limit: 1 });
+  expect(first.total).toBe(2);
+  expect(first.entries.map(entry => entry.candidate.repo)).toEqual(['stars/boundary']);
+  const next = await listAdminReviewEntries(settings, { state: 'needs_review', minStars: 500, limit: 1, offset: 1 });
+  expect(next.entries.map(entry => entry.candidate.repo)).toEqual(['stars/large']);
+  expect((await listAdminReviewEntries(settings, { state: 'needs_review', minStars: 500, search: 'large' })).total).toBe(1);
+  expect((await listAdminReviewEntries(settings, { state: 'needs_review', minStars: 500, ids: [first.entries[0].candidate.id] })).total).toBe(1);
+  expect((await listAdminReviewEntries(settings, { state: 'needs_review', minStars: Number.NaN })).total).toBe(4);
 });

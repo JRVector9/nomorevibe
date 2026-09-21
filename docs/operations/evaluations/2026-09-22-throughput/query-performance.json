@@ -1,0 +1,59 @@
+{
+  "mode": "production-read-only",
+  "baseline": {
+    "measuredAt": "2026-09-21T21:24:34.267Z",
+    "elapsedMs": 7183,
+    "jitCompilationMs": 7340.484,
+    "executionMs": 6930.414
+  },
+  "jitOffProbe": {
+    "executionMs": 155.639
+  },
+  "final": {
+    "measuredAt": "2026-09-21T21:29:49.016Z",
+    "elapsedMs": 281,
+    "stages": [
+      {
+        "key": "fetch",
+        "unit": "건",
+        "completed1m": 0,
+        "completed5m": 0,
+        "waiting": 0,
+        "status": "idle"
+      },
+      {
+        "key": "judge",
+        "unit": "건",
+        "completed1m": 0,
+        "completed5m": 0,
+        "waiting": 0,
+        "status": "idle"
+      },
+      {
+        "key": "first",
+        "unit": "건",
+        "completed1m": 0,
+        "completed5m": 3,
+        "waiting": 0,
+        "status": "processing"
+      },
+      {
+        "key": "second",
+        "unit": "표",
+        "completed1m": 0,
+        "completed5m": 5,
+        "waiting": 0,
+        "status": "processing"
+      },
+      {
+        "key": "publish",
+        "unit": "건",
+        "completed1m": 0,
+        "completed5m": 7,
+        "waiting": 0,
+        "status": "processing"
+      }
+    ]
+  },
+  "limitations": "Each is one read-only sample at a different time. This measures the new dashboard aggregation only, not crawler or AI worker throughput improvement."
+}

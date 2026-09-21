@@ -36,7 +36,12 @@ export async function saveCrawlSettings(_prev: SaveState, form: FormData): Promi
 
   // 검색 신호는 행 단위로 들어온다
   const queryCount = num(form.get("queryCount"));
-  const queries = Array.from({ length: Number.isFinite(queryCount) ? queryCount : 0 }, (_, i) => ({
+  // Allocate only after validating the client-supplied count against the actual request.
+  // Each row contains form entries; a tiny request must not allocate an arbitrarily large array.
+  if (!Number.isSafeInteger(queryCount) || queryCount < 1 || queryCount > [...form.keys()].length) {
+    return { issues: ["검색 신호 행 수를 확인해주세요. 새로고침한 뒤 다시 저장해주세요."] };
+  }
+  const queries = Array.from({ length: queryCount }, (_, i) => ({
     label: String(form.get(`query.${i}.label`) ?? ""),
     kind: form.get(`query.${i}.kind`) === "repositories" ? "repositories" : "commits",
     query: String(form.get(`query.${i}.query`) ?? ""),

@@ -1,10 +1,10 @@
 import { and, desc, eq, isNull } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { takedownRequests, type TakedownRequest } from "@/lib/db/schema";
+import { ogImages, products, takedownRequests, type TakedownRequest } from "@/lib/db/schema";
 import { logger } from "@/lib/observability/logger";
 import { type Result, ok, fail } from "./errors";
 import { isUnclaimed } from "./view";
-import { banProduct } from "./manage";
+import { lockProductGeneration } from "./generation";
 import * as repo from "./repository";
 
 /**
@@ -75,23 +75,27 @@ export async function resolveTakedown(
   action: TakedownAction,
   admin: string,
 ): Promise<Result<{ slug: string; action: TakedownAction }>> {
-  const [request] = await db
-    .select()
-    .from(takedownRequests)
-    .where(and(eq(takedownRequests.slug, slug), isNull(takedownRequests.handledAt)));
-  if (!request) return fail({ kind: "not_found" });
+  const result = await db.transaction(async (tx): Promise<Result<{ slug: string; action: TakedownAction }>> => {
+    const [product] = await tx.select({ id: products.id }).from(products).where(eq(products.slug, slug));
+    // Lifecycle writers lock the product before its related rows. Keep that order here too.
+    if (product && !(await lockProductGeneration(tx, product.id, slug))) return fail({ kind: "not_found" });
+    if (!product && action === "remove") return fail({ kind: "not_found" });
+    const [request] = await tx.select().from(takedownRequests)
+      .where(and(eq(takedownRequests.slug, slug), isNull(takedownRequests.handledAt))).for("update");
+    if (!request) return fail({ kind: "not_found" });
 
-  if (action === "remove") {
-    const banned = await banProduct(slug);
-    if (!banned.ok) return banned;
-    await repo.deleteOgImage(slug);
-  }
+    if (action === "remove" && product) {
+      const banned = await repo.setStatusWithAudit({ id: product.id, slug, status: "banned", action: "admin.product.ban" }, tx);
+      if (!banned) return fail({ kind: "not_found" });
+      await tx.delete(ogImages).where(eq(ogImages.slug, slug));
+    }
 
-  await db
-    .update(takedownRequests)
-    .set({ handledAt: new Date(), handledBy: admin, outcome: action === "remove" ? "removed" : "dismissed" })
-    .where(eq(takedownRequests.slug, slug));
+    await tx.update(takedownRequests)
+      .set({ handledAt: new Date(), handledBy: admin, outcome: action === "remove" ? "removed" : "dismissed" })
+      .where(eq(takedownRequests.slug, slug));
+    return ok({ slug, action });
+  });
 
-  logger.info("takedown.resolved", { slug, action, admin });
-  return ok({ slug, action });
+  if (result.ok) logger.info("takedown.resolved", { slug, action, admin });
+  return result;
 }

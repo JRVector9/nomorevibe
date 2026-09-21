@@ -2,9 +2,8 @@ import { and, asc, desc, eq, inArray, isNull, lt, sql, type SQL } from "drizzle-
 import { db } from "@/lib/db";
 import { crawlCandidates, crawlDocuments, products, productAuditAttempts, productAuditCampaigns, productAuditItems,
   type ProductAuditCampaign } from "@/lib/db/schema";
-import type { ProductTransaction } from "@/lib/domain/products/generation";
-import { banProduct } from "@/lib/domain/products/manage";
-import { uniqueViolation } from "@/lib/domain/products/repository";
+import { lockProductGeneration, type ProductTransaction } from "@/lib/domain/products/generation";
+import { setStatusWithAudit, uniqueViolation } from "@/lib/domain/products/repository";
 import { assertJobLease, type JobLease } from "@/lib/jobs/control";
 import { getSettings } from "./settings";
 import type { CrawlSettings } from "./settings-schema";
@@ -16,7 +15,7 @@ import { createReviewInput, MAX_REVIEW_ATTEMPTS, REVIEW_PROMPT_VERSION, REVIEW_R
 /**
  * 발행분 감사 — 올리고, 묻고, 적고, 사람이 정한다.
  *
- * 여기서 쓰는 표는 product_audit_* 셋뿐이다. 사람이 "내리기"를 누를 때만 banProduct 를 부른다.
+ * 감사 기록은 product_audit_* 셋에 남긴다. 사람이 "내리기"를 누를 때만 제품 차단도 함께 기록한다.
  * 모델의 답으로는 아무것도 바뀌지 않는다 — 스키마 주석(lib/db/product-audit-schema.ts)에 까닭이 있다.
  */
 
@@ -309,18 +308,25 @@ const STALE = "이미 처리됐거나 화면이 오래됐습니다. 새로고침
  * 한 제품을 내린다 — 차단(행은 남아 같은 URL의 재수집·재등록을 막고, 제품 화면에서 되돌릴 수 있다).
  *
  * 폼이 싣고 온 slug 가 이 항목의 제품과 지금도 같은지 먼저 본다. 다르면 아무것도 하지 않는다.
- * 차단을 먼저 하고 기록을 나중에 한다 — 거꾸로면 기록만 남고 제품은 떠 있는 상태가 생길 수 있다.
+ * 제품 세대와 항목을 잠그고 차단·기록을 함께 커밋한다. 유지와 동시에 눌러도 먼저 정한 한 결정만 남긴다.
  */
 export async function removeAuditedProduct(input: { itemId: number; slug: string; by: string }): Promise<AuditDecisionResult> {
-  const [row] = await db.select({ humanDecision: productAuditItems.humanDecision, slug: products.slug })
-    .from(productAuditItems).innerJoin(products, eq(products.id, productAuditItems.productId))
-    .where(eq(productAuditItems.id, input.itemId));
-  if (!row || row.slug !== input.slug || row.humanDecision) return { ok: false, error: STALE };
-  const banned = await banProduct(input.slug);
-  if (!banned.ok) return { ok: false, error: "제품을 찾지 못했습니다." };
-  await db.update(productAuditItems).set({ humanDecision: "removed", humanBy: input.by.slice(0, 120), humanAt: sql`now()` })
-    .where(and(eq(productAuditItems.id, input.itemId), isNull(productAuditItems.humanDecision)));
-  return { ok: true };
+  return db.transaction(async (tx) => {
+    const [item] = await tx.select({ productId: productAuditItems.productId }).from(productAuditItems)
+      .where(eq(productAuditItems.id, input.itemId));
+    if (!item || !(await lockProductGeneration(tx, item.productId, input.slug))) return { ok: false, error: STALE };
+    const [current] = await tx.select({ id: productAuditItems.id }).from(productAuditItems).where(and(
+      eq(productAuditItems.id, input.itemId), eq(productAuditItems.productId, item.productId),
+      isNull(productAuditItems.humanDecision),
+    )).for("update");
+    if (!current) return { ok: false, error: STALE };
+    const banned = await setStatusWithAudit({ id: item.productId, slug: input.slug,
+      status: "banned", action: "admin.product.ban" }, tx);
+    if (!banned) return { ok: false, error: STALE };
+    await tx.update(productAuditItems).set({ humanDecision: "removed", humanBy: input.by.slice(0, 120), humanAt: sql`now()` })
+      .where(eq(productAuditItems.id, current.id));
+    return { ok: true };
+  });
 }
 
 /** 그대로 둔다. KEEP_DAYS 동안, 페이지가 그대로인 한 다음 감사에서 빠진다 */

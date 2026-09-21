@@ -321,6 +321,19 @@ describe("사람의 결정", () => {
     expect((await db.select().from(products)).every((row) => row.status === "seeded")).toBe(true);
   });
 
+  it("동시에 유지와 내리기를 눌러도 성공한 한 결정과 제품 상태가 일치한다", async () => {
+    const campaignId = await flagged();
+    const [high] = await listAuditFindings(campaignId, "reject", { limit: 1, offset: 0 });
+    const results = await Promise.all([
+      removeAuditedProduct({ itemId: high.id, slug: "high", by: "remove-admin" }),
+      keepAuditedProduct({ itemId: high.id, slug: "high", by: "keep-admin", note: "유지" }),
+    ]);
+    expect(results.filter((result) => result.ok)).toHaveLength(1);
+    const [item] = await db.select().from(productAuditItems).where(eq(productAuditItems.id, high.id));
+    const [product] = await db.select().from(products).where(eq(products.slug, "high"));
+    expect(product.status).toBe(item.humanDecision === "kept" ? "seeded" : "banned");
+  });
+
   it("유지는 90일짜리 판정과 메모를 남기고 목록에서 뺀다 — 제품은 건드리지 않는다", async () => {
     const campaignId = await flagged();
     const [high] = await listAuditFindings(campaignId, "reject", { limit: 1, offset: 0 });

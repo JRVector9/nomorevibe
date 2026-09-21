@@ -244,8 +244,11 @@ export function settingsDrift(current: CrawlSettings): SettingsDrift {
  * 수집 스위치(enabled)는 그대로 둔다 — 기준을 맞추려다 수집이 켜지거나 꺼지면 그게 더 큰 사고다.
  */
 export async function resetSettings(updatedBy: string): Promise<SaveResult> {
-  const current = await getSettings();
-  return saveSettings({ ...DEFAULT_CRAWL_SETTINGS, enabled: current.enabled }, updatedBy);
+  const defaults: Partial<CrawlSettings> = { ...DEFAULT_CRAWL_SETTINGS };
+  // saveSettings의 행 잠금 안에서 읽은 스위치를 유지한다. 잠금 전 값을 다시 쓰면
+  // 동시에 들어온 비상 정지를 되돌려 수집이 다시 켜질 수 있다.
+  delete defaults.enabled;
+  return saveSettings(defaults, updatedBy);
 }
 
 /** 켜져 있는 검색 신호만 (discover 작업이 쓴다) */

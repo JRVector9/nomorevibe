@@ -2,12 +2,12 @@ import { createHash } from 'node:crypto';
 import { desc, eq, inArray } from 'drizzle-orm';
 import { beforeAll, beforeEach, expect, it, vi } from 'vitest';
 import { db } from '@/lib/db';
-import { agentRepositoryObservations, agentRepositoryScans, crawlCandidates, crawlDocuments } from '@/lib/db/schema';
-import { listAdminReviewEntries, type AdminReviewVerdict } from '@/lib/crawl/admin-review';
+import { agentRepositoryObservations, agentRepositoryScans, crawlCandidates, crawlDocuments, crawlSettings } from '@/lib/db/schema';
+import { listAdminReviewEntries, requeueResolvedCandidates, reviewQueueCauses, type AdminReviewVerdict } from '@/lib/crawl/admin-review';
 import { loadAgentJudgeInputs } from '@/lib/crawl/admin-review-batch';
 import { loadAgentJudgeInput } from '@/lib/crawl/agent-evidence';
 import { factsFromRepoMeta, judge, pageFactsFromDocument } from '@/lib/crawl/rules';
-import { mergeWithDefaults } from '@/lib/crawl/settings';
+import { mergeWithDefaults, saveSettings } from '@/lib/crawl/settings';
 import { AGENT_DETECTOR_VERSION, type AgentObservation } from '@/lib/domain/evidence/agents/types';
 import { ensureSchema, resetTables } from './setup';
 
@@ -27,6 +27,7 @@ beforeEach(async () => {
   await resetTables();
   await db.delete(crawlCandidates);
   await db.delete(crawlDocuments);
+  await db.delete(crawlSettings);
 });
 
 function observation(repo: string, sha: string, overrides: Partial<AgentObservation> = {}): AgentObservation {
@@ -68,6 +69,26 @@ async function selectCount(run: () => Promise<unknown>): Promise<number> {
     spy.mockRestore();
   }
 }
+
+it('근거 완료 후보의 갈래와 재판정 대상이 목록 판정과 같다', async () => {
+  await saveSettings(enforced, 'test');
+  await held('case/evidence-ready');
+  await scan('case/evidence-ready', {}, [(sha: string) => observation('case/evidence-ready', sha)]);
+  await held('case/evidence-pending');
+
+  const { entries } = await listAdminReviewEntries(enforced, { state: 'needs_review' });
+  const ready = entries.find(row => row.candidate.repo === 'case/evidence-ready')!;
+  const pending = entries.find(row => row.candidate.repo === 'case/evidence-pending')!;
+  expect(ready.verdict?.state).toBe('approved');
+  expect(pending.verdict?.cause).toBe('agent_evidence');
+  const causes = await reviewQueueCauses(enforced);
+  expect(causes.ids.get('resolved')).toEqual([ready.candidate.id]);
+  expect(causes.ids.get('agent_evidence')).toEqual([pending.candidate.id]);
+  expect(await requeueResolvedCandidates('test')).toMatchObject({ scanned: 2, requeued: 1 });
+  const rows = await db.select().from(crawlCandidates);
+  expect(rows.find(row => row.id === ready.candidate.id)?.state).toBe('new');
+  expect(rows.find(row => row.id === pending.candidate.id)?.state).toBe('needs_review');
+});
 
 it('근거 강제 화면의 SELECT 수가 후보 수에 비례하지 않는다', async () => {
   const measure = async (count: number) => {
