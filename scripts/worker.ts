@@ -43,7 +43,7 @@ export function runtimeLog(event: string, fields: Record<string, unknown>) {
 /**
  * A classification batch can use 20 seconds before inserts and image copies begin.
  * 사유 번역은 한 번 부르는 데 15~25초라 기본 25초 틱에는 한 번도 빠듯하다(프로드 첫 4틱이 모두 20초 제한에 걸렸다).
- * 발행 워커는 5분에 한 번만 발행하므로 나머지 시간을 번역이 쓴다.
+ * 번역은 별도 text 워커에서 실행하며 발행 잡의 실행 시간을 차지하지 않는다.
  */
 export function jobRunOptions(name: string, options: RequestedRunOptions): JobRunOptions {
   if (name === 'crawl-agent-review') return { ...options, budgetMs: 40_000 };

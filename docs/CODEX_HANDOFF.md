@@ -1,3 +1,26 @@
+# 최종 구현 인계 — 2026-09-21 심사 대기·텍스트 워커 분리
+
+요청한 코드 구현과 로컬 검증, 커밋/push, 6개 stacked PR 작성 완료. 현재 브랜치 `test/review-speed-release-verification`. 운영 미배포이며 새 text 운영 앱도 아직 만들지 않았다. 아래 이전 단계의 커밋 hash는 unpublished stack 정리 전의 기록이다.
+
+| 단계 | PR | 브랜치 | 현재 커밋 |
+|---|---|---|---|
+| 1 | [#161](https://github.com/JRVector9/nomorevibe/pull/161) | `perf/review-stage-observability` | `107bbb4` |
+| 2 | [#162](https://github.com/JRVector9/nomorevibe/pull/162) | `perf/review-transactional-handoffs` | `4f769c6` |
+| 3 | [#163](https://github.com/JRVector9/nomorevibe/pull/163) | `perf/review-bounded-draining` | `18cfb70` |
+| 4 | [#164](https://github.com/JRVector9/nomorevibe/pull/164) | `fix/fence-text-job-results` | `b248040` |
+| 5 | [#165](https://github.com/JRVector9/nomorevibe/pull/165) | `perf/isolate-text-worker` | `ad5f33b` |
+| 6 | [#166](https://github.com/JRVector9/nomorevibe/pull/166) | `test/review-speed-release-verification` | `76ea50e` |
+
+- 보완: 오프라인 CLI 실행 테스트에서 발견한 CJS top-level await를 async main으로 수정해 PR01에 포함. handoff 동작에 대한 기존 통합 기대값 수정은 PR02로 이동. 이후 스택 rebase 후 최종 트리와 검증한 원래 트리 차이0 확인.
+- 실제 검증: 전체 단위140파일1090 통과 + 추가 CLI 회귀1개/관련5개 통과(고유1091). 통합79파일767 중766 통과, 구형 기대1개 수정 후 해당17 통과; 최종 종료 경계 DB5 통과. 타입/추적+신규lint/Next build/Compose/Docker worker build 통과. text/publisher --init smoke healthy/restart0, 각 소유 잡 실행, SIGTERM supervisor·container exit0.
+- 보호: 원문·정책·모델·fallback·500별 기준·최종 발행 관문 유지. LAYA 운영 호출 없음. 관리자/원본 변경 경합, lease 교체, 종료 이후 응답 쓰기 차단.
+- 문서: `docs/operations/review-pipeline-speed-runbook.md`, 계획 디렉터리 README에 구현/검증/배포 순서. 운영100건/30분 이상 같은 조건 전후 비교가 남아 있으므로 실제 단축률 주장 금지.
+- 환경: 운영키/DB 미사용. 전용 local nomorevibe_test만 사용. 테스트용 stopped smoke 컨테이너4개 및 image는 재현 자료로 남김. unrelated untracked 유지.
+- 남은 일: 각 PR CI 확인, 순서대로 코드 검토/병합, 구형 publisher drain 후 publisher/text 분리 배포, 운영 비교. 현재 자동 병합/배포하지 않음.
+- 다음 명령: `gh pr checks 161`부터 `gh pr checks 166`; `gh pr diff 161`; `git status --short --branch`. 재현 테스트는 운영 문서의 loopback TEST_DATABASE_URL 명령을 사용. 운영 env를 통합 테스트에 넣지 말 것.
+
+---
+
 # 진행 인계 — 2026-09-21 심사 속도 PR06 최종 검증
 
 - 목표: 다음 심사 대기 단축, 제한된 슬롯 재사용, 번역·소개 전용 text 워커, 판정·발행 기준 유지.
