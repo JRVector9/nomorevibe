@@ -240,3 +240,19 @@ it("does not call the same candidate twice or request continuation after no prog
   expect(await reviewCrawlCandidates(context())).not.toHaveProperty("continuation");
   expect(mocks.claim).toHaveBeenCalledTimes(1);
 });
+
+it("a shutdown received during claim never enters a provider adapter", async () => {
+  const stopping = new AbortController();
+  mocks.claim.mockImplementation(async () => { stopping.abort(); return { kind: "claimed", attempt: { id: 1, attemptNumber: 1 } }; });
+  await reviewCrawlCandidates({ ...context(), signal: stopping.signal });
+  expect(mocks.review).not.toHaveBeenCalled();
+  expect(mocks.record).toHaveBeenCalledWith(expect.objectContaining({ error: "cancelled" }));
+});
+
+it("cleans a claim instead of applying success received after shutdown", async () => {
+  const stopping = new AbortController();
+  mocks.review.mockImplementation(async () => { stopping.abort(); return { ok: true, outcome: { decision: "approve" }, usage: {} }; });
+  await reviewCrawlCandidates({ ...context(), signal: stopping.signal });
+  expect(mocks.record).toHaveBeenCalledWith(expect.objectContaining({ error: "cancelled" }));
+  expect(mocks.record.mock.calls[0][0].outcome).toBeUndefined();
+});

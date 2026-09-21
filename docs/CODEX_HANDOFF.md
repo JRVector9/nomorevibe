@@ -1,3 +1,17 @@
+# 진행 인계 — 2026-09-21 심사 속도 PR06 최종 검증
+
+- 목표: 다음 심사 대기 단축, 제한된 슬롯 재사용, 번역·소개 전용 text 워커, 판정·발행 기준 유지.
+- 현재 브랜치: `test/review-speed-release-verification`; PR01~05 로컬 커밋 완료, 아직 push/PR/운영 배포 없음.
+- PR06: 기준 `af50608` 실제 checkout에서 만든 10개 입력/규칙 fixture, 전용 테스트 DB 주소 guard, 오프라인 검증 CLI, 추가 DB 경합/종료 안전성, 운영 보고서 작성.
+- 최종 리뷰 수정: 1차 claim 중 종료하면 호출하지 않고 취소로 정리; 1·2차 모델 성공 응답이 종료 신호 이후 도착하면 승인 저장 금지.
+- 수정 파일: `lib/crawl/jobs/{agent-review,second-review,tagline,translate-reasons}.ts`, `lib/observability/review-pipeline.ts`, 관련 unit/integration tests, `scripts/{test-database,verify-review-pipeline-speed}.ts`, fixture와 계획/운영 문서. 상세 목록은 git status로 확인.
+- 검증: 최종 전체 단위 140파일/1090 통과(14:27 KST), 1·2차 단위33 통과. 통합 전체79파일/767 중766 통과·옛 batch 요청 기대1개 실패→해당 파일17 통과. 최종 1·2차 DB 통합5 통과. tsc, 추적+신규 소스 lint(기존 경고1), Next build, Compose config, 최종 worker Docker build 통과.
+- 실패 접근: fixture 출력 폴더 누락 수정; raw Date SQL 인자 오류를 ISO timestamp 비교로 수정. 첫 Docker smoke에서 Compose의 init:true 누락으로 종료 exit1; 올바른 --init 실행에서 두 컨테이너 healthy/restart0, worker failures0, supervisor/container exit0 확인.
+- 비밀/운영: 운영 DB/API/env 사용하지 않음. 테스트는 loopback nomorevibe_test만 사용. LAYA 운영 호출 미추가. 사용자 무관 untracked 파일 유지.
+- 최종 CLI 확인: CJS top-level await 오류 재현→async main으로 수정, 실제 subprocess 회귀1개와 계측4개 통과. 고유 단위1091개. 오프라인 CLI 수정/회귀는 PR01로 이동할 것.
+- 남은 일: PR06 커밋. PR02에 agent-review-job/crawl-judge 통합 기대 수정이 포함되도록 미공개 스택 정리 후 6개 브랜치 push 및 stacked PR 작성. 운영 배포·100건/30분 비교는 아직 안 함.
+- 다음 명령: `npm test`; `DATABASE_URL=postgres://nomorevibe:nomorevibe@127.0.0.1:55435/nomorevibe_test node --import tsx .crawl-samples/review-speed/smoke-setup.mts`; text/publisher를 `docker run --init ... nomorevibe-worker:review-speed-20260921 node --import tsx scripts/worker-supervisor.ts --role=text` 방식으로 실행. 상세 배포/검증 명령은 `docs/operations/review-pipeline-speed-runbook.md`.
+
 # Phase 05 update — dedicated text worker implemented
 
 Branch perf/isolate-text-worker; phase04 commit4d79a0f. text owns reason-translate+crawl-tagline serially; publisher only crawl-publish. Catalog/worker parser/supervisor180s/pool3/operations role+UI label/Compose/environment template/runbook wired. Existing translation55s, tagline default25s unchanged. 2new tests RED→GREEN, related7files36PASS, tscPASS. Phase04 final type passed; whitespace EOF warning fixed here. No Dokploy or production environment changed. Phase06 remains full regression, isolated worker container health, safety review, docs and stacked PRs.

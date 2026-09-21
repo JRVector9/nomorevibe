@@ -59,44 +59,44 @@ export async function translateReasons(ctx: JobContext<null>): Promise<JobOutcom
   const ownershipPoll = setInterval(() => { if (!ctx.hasBudget()) controller.abort(); }, 250);
   ownershipPoll.unref?.();
   try {
-  const startedAt = Date.now();
-  const remaining = () => TICK_MS - (Date.now() - startedAt);
-  let translated = 0, failed = 0;
+    const startedAt = Date.now();
+    const remaining = () => TICK_MS - (Date.now() - startedAt);
+    let translated = 0, failed = 0;
 
-  /**
-   * 밀린 실패와 처음 보는 글을 번갈아 가져간다.
-   *
-   * 한쪽만 보면 다른 쪽이 굶는다 — 최근 것만 보면 실패가 엿새를 기다리고, 실패만 보면
-   * 심사 화면의 새 사유가 그동안 영어로 남는다.
-   */
-  let takeRetry = true;
+    /**
+     * 밀린 실패와 처음 보는 글을 번갈아 가져간다.
+     *
+     * 한쪽만 보면 다른 쪽이 굶는다 — 최근 것만 보면 실패가 엿새를 기다리고, 실패만 보면
+     * 심사 화면의 새 사유가 그동안 영어로 남는다.
+     */
+    let takeRetry = true;
 
-  while (!signal.aborted && ctx.hasBudget() && remaining() >= MIN_CALL_MS) {
-    const preferred = takeRetry ? await retryableTranslations(BATCH) : await untriedTranslations(BATCH * 2);
-    const pending = preferred.length
-      ? preferred
-      : takeRetry ? await untriedTranslations(BATCH * 2) : await retryableTranslations(BATCH);
-    takeRetry = !takeRetry;
-    if (!pending.length) {
-      ctx.log("translate.done", { translated, failed, drained: true });
-      return { done: true };
+    while (!signal.aborted && ctx.hasBudget() && remaining() >= MIN_CALL_MS) {
+      const preferred = takeRetry ? await retryableTranslations(BATCH) : await untriedTranslations(BATCH * 2);
+      const pending = preferred.length
+        ? preferred
+        : takeRetry ? await untriedTranslations(BATCH * 2) : await retryableTranslations(BATCH);
+      takeRetry = !takeRetry;
+      if (!pending.length) {
+        ctx.log("translate.done", { translated, failed, drained: true });
+        return { done: true };
+      }
+      const batch = pending[0].attempts >= SOLO_ATTEMPTS ? [pending[0]] : packBatch(pending);
+      const result = await translateToKorean(batch.map((item) => item.body), Math.max(1_000, Math.min(CALL_MS, remaining() - 1_000)), undefined, signal);
+      if (signal.aborted) return { done: false };
+      const rows = batch.map((item, index) => ({
+        hash: item.hash,
+        translated: result.ok ? result.translations[index] : null,
+        error: result.ok ? undefined : result.error,
+      }));
+      await recordWorkerTranslations(rows, TRANSLATE_MODEL, lease);
+      translated += rows.filter((row) => row.translated !== null).length;
+      failed += rows.filter((row) => row.translated === null).length;
+      // 게이트웨이가 막혔으면 이번 틱은 여기서 — 같은 실패를 되풀이하지 않는다
+      if (!result.ok) break;
     }
-    const batch = pending[0].attempts >= SOLO_ATTEMPTS ? [pending[0]] : packBatch(pending);
-    const result = await translateToKorean(batch.map((item) => item.body), Math.max(1_000, Math.min(CALL_MS, remaining() - 1_000)), undefined, signal);
-    if (signal.aborted) return { done: false };
-    const rows = batch.map((item, index) => ({
-      hash: item.hash,
-      translated: result.ok ? result.translations[index] : null,
-      error: result.ok ? undefined : result.error,
-    }));
-    await recordWorkerTranslations(rows, TRANSLATE_MODEL, lease);
-    translated += rows.filter((row) => row.translated !== null).length;
-    failed += rows.filter((row) => row.translated === null).length;
-    // 게이트웨이가 막혔으면 이번 틱은 여기서 — 같은 실패를 되풀이하지 않는다
-    if (!result.ok) break;
-  }
 
-  ctx.log("translate.done", { translated, failed, drained: false });
-  return { done: false };
+    ctx.log("translate.done", { translated, failed, drained: false });
+    return { done: false };
   } finally { clearInterval(ownershipPoll); }
 }

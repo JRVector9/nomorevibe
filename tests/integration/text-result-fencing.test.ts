@@ -1,5 +1,5 @@
 import { beforeAll, beforeEach, afterEach, expect, it, vi } from "vitest";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { crawlCandidates, crawlDocuments, crawlTaglines, crawlSettings, jobs, textTranslations } from "@/lib/db/schema";
 import * as crawl from "@/lib/crawl/repository";
@@ -87,4 +87,36 @@ it("worker translation writes roll back on a lost lease, while HTTP translations
   expect(await db.select().from(textTranslations)).toHaveLength(0);
   await recordTranslations(rows, "fixture", "en");
   expect(await db.select().from(textTranslations)).toMatchObject([{ targetLang: "en", status: "done" }]);
+});
+
+it("a manual insert wins even after the automatic transaction selected an absent row", async () => {
+  const [task] = await pendingTaglines(1);
+  const lease = { name: "crawl-tagline", token: "owner", requestedVersion: 1 };
+  await db.insert(jobs).values({ name: lease.name, leaseToken: lease.token, lockedAt: new Date() });
+  await db.execute(sql`CREATE FUNCTION nmv_test_pause_tagline() RETURNS trigger LANGUAGE plpgsql AS $$
+    BEGIN IF NEW.written_by IS NULL THEN PERFORM pg_advisory_xact_lock(741120); END IF; RETURN NEW; END $$`);
+  await db.execute(sql`CREATE TRIGGER nmv_test_pause_tagline BEFORE INSERT ON crawl_taglines FOR EACH ROW EXECUTE FUNCTION nmv_test_pause_tagline()`);
+  let automatic: ReturnType<typeof recordTaglineResult> | undefined;
+  try {
+    await db.transaction(async blocker => {
+      await blocker.execute(sql`select pg_advisory_xact_lock(741120)`);
+      automatic = recordTaglineResult(task, lease, { kind: "success", tagline: "늦은 자동 문구", source: "page", model: "fixture" });
+      automatic.catch(() => {});
+      let waiting = false;
+      for (let i = 0; i < 40; i++) {
+        const rows = await db.execute(sql`select 1 from pg_locks where locktype = 'advisory' and objid = 741120 and not granted`);
+        if (rows.length) { waiting = true; break; }
+        await new Promise(resolve => setTimeout(resolve, 10));
+      }
+      expect(waiting).toBe(true);
+      await writeTaglineByHand({ repo: task.candidate.repo, tagline: "사람이 먼저 저장", by: "admin", documentAt: task.document.fetchedAt });
+    });
+    expect(await automatic).toEqual({ stored: false, released: false });
+    expect((await db.select().from(crawlTaglines))[0]).toMatchObject({ tagline: "사람이 먼저 저장", writtenBy: "admin", attempts: 0 });
+    expect(await getJobState("crawl-publish")).toBeUndefined();
+  } finally {
+    await automatic?.catch(() => {});
+    await db.execute(sql`DROP TRIGGER IF EXISTS nmv_test_pause_tagline ON crawl_taglines`);
+    await db.execute(sql`DROP FUNCTION IF EXISTS nmv_test_pause_tagline()`);
+  }
 });

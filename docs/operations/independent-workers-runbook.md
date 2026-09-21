@@ -145,13 +145,14 @@ CLI smoke는 통과했으나 운영 장기 Codex/Claude 인증 설정과 24시�
 | 크롤러 | 4 | 1536 MiB | 1 | GitHub token |
 | 리뷰 | 3 | 2 GiB | 1 | 리뷰용 Claude CLI token |
 | 발행 | 3 | 1536 MiB | 1 | Codex access token 또는 OpenAI API key |
+| 소개·사유 번역 | 3 | 512 MiB | 1 | ABCLLM API key |
 | 집계 | 3 | 1 GiB | 1 | 없음 |
 | 스케줄러 | 2 | 256 MiB | 0.25 | 없음 |
 | 로컬 DB | 별도 | 4 GiB | 2 | 로컬 DB 계정 |
 
-웹 1개와 5역할의 pool 상한 합계는 23이다. 웹 복제본과 connect-agent pool 1개를 더하면 32이며
+웹 1개와 6역할의 pool 상한 합계는 26이다. 웹 복제본과 connect-agent pool 1개를 더하면 35이며
 migration/관리/다른 앱/교체 중 연결을 추가 계산한다. 운영 초기 웹 pool을 각각 6으로 설정하면 합계는
-28이다. RAM은 singleton 역할을 배치한 M3에 OS·파일 캐시 여유가 필요하다.
+31이다. RAM은 singleton 역할을 배치한 M3에 OS·파일 캐시 여유가 필요하다.
 CPU 상한은 예약량이 아니므로 모든 역할의 동시 peak를 보장하지 않는다. 8 vCPU/16 GiB 예시는
 측정을 시작할 동거형 예산이며 호스트 장애까지 견디는 무중단 구성은 아니다.
 
@@ -247,6 +248,6 @@ B 심사 장애는 신규 자동 발행을 보류하며 조용히 AI 심사를 �
 
 배포 준비: 기존 publisher를 정상 drain→새 publisher 교체 및 소유 잡 확인→새 text 컨테이너 시작. 신규 text는 worker target/위 명령, memory512MiB·DB pool3·hard timeout180초, 별도 instance ID/health를 사용한다. 실제 서버 여유는 배포 전에 확인한다. 구형 publisher와 새 text를 함께 유지하지 않는다. rollback은 text drain/중지 후 구형 publisher 복구이며 DB 요청·결과를 삭제하지 않는다.
 
-DB 기본 상한은 web8+crawler4+reviewer3+publisher3+text3+maintenance3+scheduler2+connect-agent1=27이다. 웹2개 기본8이면35, 운영 웹 각각6이면31이다. migration/관리/다른 앱/교체 여유를 별도로 확보한다. 이 계산은 설정상 최대이며 실제 연결 수 실측이 아니다. 문서 앞의23/32/28은 분리 전 기준이다.
+DB 기본 상한은 web8+crawler4+reviewer3+publisher3+text3+maintenance3+scheduler2+connect-agent1=27이다. 웹2개 기본8이면35, 운영 웹 각각6이면31이다. migration/관리/다른 앱/교체 여유를 별도로 확보한다. 이 계산은 설정상 최대이며 실제 연결 수 실측이 아니다.
 
 관리자 상태 화면에 소개·사유 번역(text) 카드를 추가했다. 표시만으로 배포 성공을 판단하지 않는다. 해당 release의 컨테이너 healthy, publisher의 텍스트 실행0, text의 처리 및 backlog 감소를 확인한다. 공유 모델 서버 경합은 분리 후에도 계측한다.

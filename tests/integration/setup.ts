@@ -1,3 +1,4 @@
+import { assertLocalTestDatabase } from "../../scripts/test-database";
 import { execSync } from "node:child_process";
 import { sql } from "drizzle-orm";
 import { db } from "@/lib/db";
@@ -10,6 +11,8 @@ import { db } from "@/lib/db";
  */
 export const TEST_DATABASE_URL =
   process.env.TEST_DATABASE_URL ?? "postgres://nomorevibe:nomorevibe@localhost:55435/nomorevibe_test";
+
+assertLocalTestDatabase(TEST_DATABASE_URL);
 
 let migrated = false;
 

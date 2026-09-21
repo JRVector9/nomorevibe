@@ -141,3 +141,10 @@ it('모델 호출은 동시에 네 개까지만 진행한다', async () => {
   expect(peak).toBe(4);
   expect(mocks.record).toHaveBeenCalledTimes(12);
 });
+
+it("does not save a successful response arriving after shutdown", async () => {
+  const stopping = new AbortController();
+  mocks.review.mockImplementation(async () => { stopping.abort(); return { ok: true, outcome: { decision: "approve", confidence: .95 } }; });
+  await secondReviewCandidates({ ...context(), signal: stopping.signal });
+  expect(mocks.record).not.toHaveBeenCalled();
+});

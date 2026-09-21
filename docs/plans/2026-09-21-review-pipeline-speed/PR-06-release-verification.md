@@ -1,6 +1,6 @@
 # PR-06 — 전체 경로 회귀 검증과 배포 판정
 
-제안 브랜치: `test/review-speed-release-verification` · 선행: PR-01~05 · 상태: 미구현.
+제안 브랜치: `test/review-speed-release-verification` · 선행: PR-01~05 · 상태: 구현·로컬 검증 완료, 운영 배포 판정 전.
 
 ## 목적과 수정 범위
 
@@ -72,3 +72,7 @@ npx tsx scripts/verify-review-pipeline-speed.ts --mode=fixtures
 ## 롤백·최종 보고
 
 변경의 역순으로 코드/역할을 되돌리고 DB의 심사·발행 이력은 보존한다. 전체 잡 요청을 삭제하거나 규칙 버전을 올려 재심사를 강제로 발생시키지 않는다. 최종 보고에는 실제 커밋, 배포 대상별 상태, 실행한 테스트, 전후 표본 수/지연/오류율, LAYA 운영 호출 0, 중복/잘못된 관문 통과 검사 결과와 미해결 항목을 기록한다. `docs/CODEX_HANDOFF.md`도 갱신한다.
+
+## 구현 결과
+
+[실제 결과와 미실시 운영 검증](../../operations/review-pipeline-speed-runbook.md)을 따른다. 기존 실제 DB의 발행/원본변경/2차/중복 테스트를 재사용하며 별도 유사 테스트를 복제하지 않았다. baseline fixture는 af50608 코드를 별도 checkout에서 실행해 생성했다. verify CLI는 loopback nomorevibe_test만 허용하며 입력 동등성·모의 처리량·원자적 전이·실제 DB 경합을 실행한다. CI 및 운영 관측은 로컬 테스트와 별도로 기록한다.

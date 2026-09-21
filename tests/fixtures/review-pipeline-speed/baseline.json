@@ -1,0 +1,1425 @@
+{
+  "commit": "af50608",
+  "at": "2026-09-21T00:00:00.000Z",
+  "cases": [
+    {
+      "id": "below",
+      "candidate": {
+        "id": 1,
+        "repo": "fixture/below",
+        "productUrl": null,
+        "state": "approved",
+        "reason": "passed",
+        "decidedBy": "auto",
+        "judgedAt": "2026-09-21T00:00:00.000Z",
+        "updatedAt": "2026-09-21T00:00:00.000Z"
+      },
+      "document": {
+        "id": 1,
+        "repo": "fixture/below",
+        "productUrl": null,
+        "pageStatus": null,
+        "fetchedAt": "2026-09-21T00:00:00.000Z",
+        "repoMeta": {
+          "stargazers_count": 499,
+          "description": "An editor plugin",
+          "pushed_at": "2026-09-21T00:00:00.000Z",
+          "owner": {
+            "type": "User"
+          }
+        },
+        "pageMeta": {
+          "title": "below",
+          "description": "An editor plugin",
+          "readmeSample": "Install the plugin in your editor.",
+          "repositoryKeys": [
+            "fixture/below"
+          ],
+          "textSample": ""
+        }
+      },
+      "input": {
+        "snapshot": {
+          "product": {
+            "repo": "fixture/below",
+            "name": "below",
+            "description": "An editor plugin\nAn editor plugin",
+            "pageText": "",
+            "url": null,
+            "accessMode": "website",
+            "repositoryUrl": "https://github.com/fixture/below",
+            "topics": [],
+            "language": null,
+            "readme": "Install the plugin in your editor.",
+            "linksOwnGithub": false
+          },
+          "repoFacts": {
+            "stars": 499,
+            "pushedAt": "2026-09-21T00:00:00.000Z",
+            "createdAt": null
+          },
+          "rules": {
+            "stoppedAt": "배포 URL",
+            "detail": "homepage 미설정",
+            "cause": null
+          },
+          "policy": {
+            "rulesVersion": "2026-09-21.2",
+            "promptVersion": "2026-09-21.3",
+            "detectorVersion": "2026-09-14.1",
+            "policyVersion": "2026-09-06.1",
+            "enforceEligibility": false
+          },
+          "evidence": [],
+          "evidenceSummary": {
+            "eligible": false,
+            "reason": "ai_evidence_pending",
+            "executionVerified": false
+          },
+          "relationship": "same_product",
+          "scanState": "pending",
+          "evidenceTruncated": false
+        },
+        "source": {
+          "candidateJudgedAt": "2026-09-21T00:00:00.000Z",
+          "documentId": 1,
+          "documentFetchedAt": "2026-09-21T00:00:00.000Z",
+          "productUrl": null,
+          "scanId": null,
+          "scanSha": null,
+          "scanStartedAt": null,
+          "scanCompletedAt": null,
+          "scanState": null,
+          "scanError": null,
+          "detectorVersion": "2026-09-14.1"
+        },
+        "policyHash": "113b6e6e919165503f78d6482af8fafeac07b1dac0a6c3bbbb442bd4b67301a4",
+        "inputHash": "82fb8fc0743bd788454ac619000ca8f6ab4ed361a8e8f0ca00193c5700ac0b9e",
+        "sourceRevisionHash": "c3e4d413225625e9388c2155a73cbbf5df75293d222f0e48f430647c80a99175",
+        "validUntil": "2026-09-22T00:00:00.000Z"
+      },
+      "verdict": {
+        "state": "rejected",
+        "reason": "no_homepage",
+        "signals": {
+          "stars": 499,
+          "isFork": false,
+          "ownerType": "User",
+          "pushAgeDays": 0,
+          "archived": false,
+          "productUrl": null,
+          "pageStatus": null,
+          "generator": null,
+          "pageTitle": "below",
+          "stoppedAt": {
+            "rule": "배포 URL",
+            "detail": "homepage 미설정"
+          }
+        },
+        "trace": [
+          {
+            "rule": "배포 URL",
+            "detail": "homepage 미설정",
+            "passed": false
+          }
+        ]
+      }
+    },
+    {
+      "id": "boundary",
+      "candidate": {
+        "id": 2,
+        "repo": "fixture/boundary",
+        "productUrl": null,
+        "state": "approved",
+        "reason": "passed",
+        "decidedBy": "auto",
+        "judgedAt": "2026-09-21T00:00:00.000Z",
+        "updatedAt": "2026-09-21T00:00:00.000Z"
+      },
+      "document": {
+        "id": 2,
+        "repo": "fixture/boundary",
+        "productUrl": null,
+        "pageStatus": null,
+        "fetchedAt": "2026-09-21T00:00:00.000Z",
+        "repoMeta": {
+          "stargazers_count": 500,
+          "description": "An editor plugin",
+          "pushed_at": "2026-09-21T00:00:00.000Z",
+          "owner": {
+            "type": "User"
+          }
+        },
+        "pageMeta": {
+          "title": "boundary",
+          "description": "An editor plugin",
+          "readmeSample": "Install the plugin in your editor.",
+          "repositoryKeys": [
+            "fixture/boundary"
+          ],
+          "textSample": ""
+        }
+      },
+      "input": {
+        "snapshot": {
+          "product": {
+            "repo": "fixture/boundary",
+            "name": "boundary",
+            "description": "An editor plugin\nAn editor plugin",
+            "pageText": "",
+            "url": null,
+            "accessMode": "installable",
+            "repositoryUrl": "https://github.com/fixture/boundary",
+            "topics": [],
+            "language": null,
+            "readme": "Install the plugin in your editor.",
+            "linksOwnGithub": false
+          },
+          "repoFacts": {
+            "stars": 500,
+            "pushedAt": "2026-09-21T00:00:00.000Z",
+            "createdAt": null
+          },
+          "rules": {
+            "stoppedAt": "설치형 제품 확인",
+            "detail": "배포 URL 대신 공식 저장소를 사용합니다. README에서 실제 소프트웨어·플러그인·스킬인지 심사해야 합니다",
+            "cause": "installable_product"
+          },
+          "policy": {
+            "rulesVersion": "2026-09-21.2",
+            "promptVersion": "2026-09-21.3",
+            "detectorVersion": "2026-09-14.1",
+            "policyVersion": "2026-09-06.1",
+            "enforceEligibility": false
+          },
+          "evidence": [],
+          "evidenceSummary": {
+            "eligible": false,
+            "reason": "ai_evidence_pending",
+            "executionVerified": false
+          },
+          "relationship": "same_product",
+          "scanState": "pending",
+          "evidenceTruncated": false
+        },
+        "source": {
+          "candidateJudgedAt": "2026-09-21T00:00:00.000Z",
+          "documentId": 2,
+          "documentFetchedAt": "2026-09-21T00:00:00.000Z",
+          "productUrl": null,
+          "scanId": null,
+          "scanSha": null,
+          "scanStartedAt": null,
+          "scanCompletedAt": null,
+          "scanState": null,
+          "scanError": null,
+          "detectorVersion": "2026-09-14.1"
+        },
+        "policyHash": "113b6e6e919165503f78d6482af8fafeac07b1dac0a6c3bbbb442bd4b67301a4",
+        "inputHash": "a1b0e88a39d23010412b40197f5669cad5e2db439c1826f9d7d5427c4d351f23",
+        "sourceRevisionHash": "f1b8c7533e439a9591c0d91975d075b02ebf50149a0506ef6bd40ee72972c831",
+        "validUntil": "2026-09-22T00:00:00.000Z"
+      },
+      "verdict": {
+        "state": "needs_review",
+        "reason": "ambiguous",
+        "signals": {
+          "stars": 500,
+          "isFork": false,
+          "ownerType": "User",
+          "pushAgeDays": 0,
+          "archived": false,
+          "productUrl": null,
+          "pageStatus": null,
+          "generator": null,
+          "pageTitle": "boundary",
+          "accessMode": "installable",
+          "stoppedAt": {
+            "rule": "설치형 제품 확인",
+            "detail": "배포 URL 대신 공식 저장소를 사용합니다. README에서 실제 소프트웨어·플러그인·스킬인지 심사해야 합니다"
+          }
+        },
+        "trace": [
+          {
+            "rule": "설치형 제품 스타 기준",
+            "detail": "500 ≥ 500",
+            "passed": true
+          },
+          {
+            "rule": "설치형 제품 확인",
+            "detail": "배포 URL 대신 공식 저장소를 사용합니다. README에서 실제 소프트웨어·플러그인·스킬인지 심사해야 합니다",
+            "passed": false
+          }
+        ],
+        "cause": "installable_product"
+      }
+    },
+    {
+      "id": "above",
+      "candidate": {
+        "id": 3,
+        "repo": "fixture/above",
+        "productUrl": null,
+        "state": "approved",
+        "reason": "passed",
+        "decidedBy": "auto",
+        "judgedAt": "2026-09-21T00:00:00.000Z",
+        "updatedAt": "2026-09-21T00:00:00.000Z"
+      },
+      "document": {
+        "id": 3,
+        "repo": "fixture/above",
+        "productUrl": null,
+        "pageStatus": null,
+        "fetchedAt": "2026-09-21T00:00:00.000Z",
+        "repoMeta": {
+          "stargazers_count": 501,
+          "description": "An editor plugin",
+          "pushed_at": "2026-09-21T00:00:00.000Z",
+          "owner": {
+            "type": "User"
+          }
+        },
+        "pageMeta": {
+          "title": "above",
+          "description": "An editor plugin",
+          "readmeSample": "Install the plugin in your editor.",
+          "repositoryKeys": [
+            "fixture/above"
+          ],
+          "textSample": ""
+        }
+      },
+      "input": {
+        "snapshot": {
+          "product": {
+            "repo": "fixture/above",
+            "name": "above",
+            "description": "An editor plugin\nAn editor plugin",
+            "pageText": "",
+            "url": null,
+            "accessMode": "installable",
+            "repositoryUrl": "https://github.com/fixture/above",
+            "topics": [],
+            "language": null,
+            "readme": "Install the plugin in your editor.",
+            "linksOwnGithub": false
+          },
+          "repoFacts": {
+            "stars": 501,
+            "pushedAt": "2026-09-21T00:00:00.000Z",
+            "createdAt": null
+          },
+          "rules": {
+            "stoppedAt": "설치형 제품 확인",
+            "detail": "배포 URL 대신 공식 저장소를 사용합니다. README에서 실제 소프트웨어·플러그인·스킬인지 심사해야 합니다",
+            "cause": "installable_product"
+          },
+          "policy": {
+            "rulesVersion": "2026-09-21.2",
+            "promptVersion": "2026-09-21.3",
+            "detectorVersion": "2026-09-14.1",
+            "policyVersion": "2026-09-06.1",
+            "enforceEligibility": false
+          },
+          "evidence": [],
+          "evidenceSummary": {
+            "eligible": false,
+            "reason": "ai_evidence_pending",
+            "executionVerified": false
+          },
+          "relationship": "same_product",
+          "scanState": "pending",
+          "evidenceTruncated": false
+        },
+        "source": {
+          "candidateJudgedAt": "2026-09-21T00:00:00.000Z",
+          "documentId": 3,
+          "documentFetchedAt": "2026-09-21T00:00:00.000Z",
+          "productUrl": null,
+          "scanId": null,
+          "scanSha": null,
+          "scanStartedAt": null,
+          "scanCompletedAt": null,
+          "scanState": null,
+          "scanError": null,
+          "detectorVersion": "2026-09-14.1"
+        },
+        "policyHash": "113b6e6e919165503f78d6482af8fafeac07b1dac0a6c3bbbb442bd4b67301a4",
+        "inputHash": "271190109c36a65888f8aaa3fe16f6e7ff4f4ceb842d21ca305e544d2243af4b",
+        "sourceRevisionHash": "e0dc91f400a1a7d85051930dd58e59b7f9f3b0a4ce519de1e74c704783399ba0",
+        "validUntil": "2026-09-22T00:00:00.000Z"
+      },
+      "verdict": {
+        "state": "needs_review",
+        "reason": "ambiguous",
+        "signals": {
+          "stars": 501,
+          "isFork": false,
+          "ownerType": "User",
+          "pushAgeDays": 0,
+          "archived": false,
+          "productUrl": null,
+          "pageStatus": null,
+          "generator": null,
+          "pageTitle": "above",
+          "accessMode": "installable",
+          "stoppedAt": {
+            "rule": "설치형 제품 확인",
+            "detail": "배포 URL 대신 공식 저장소를 사용합니다. README에서 실제 소프트웨어·플러그인·스킬인지 심사해야 합니다"
+          }
+        },
+        "trace": [
+          {
+            "rule": "설치형 제품 스타 기준",
+            "detail": "501 ≥ 500",
+            "passed": true
+          },
+          {
+            "rule": "설치형 제품 확인",
+            "detail": "배포 URL 대신 공식 저장소를 사용합니다. README에서 실제 소프트웨어·플러그인·스킬인지 심사해야 합니다",
+            "passed": false
+          }
+        ],
+        "cause": "installable_product"
+      }
+    },
+    {
+      "id": "notes",
+      "candidate": {
+        "id": 4,
+        "repo": "fixture/notes",
+        "productUrl": null,
+        "state": "approved",
+        "reason": "passed",
+        "decidedBy": "auto",
+        "judgedAt": "2026-09-21T00:00:00.000Z",
+        "updatedAt": "2026-09-21T00:00:00.000Z"
+      },
+      "document": {
+        "id": 4,
+        "repo": "fixture/notes",
+        "productUrl": null,
+        "pageStatus": null,
+        "fetchedAt": "2026-09-21T00:00:00.000Z",
+        "repoMeta": {
+          "stargazers_count": 9000,
+          "description": "My personal research notes",
+          "pushed_at": "2026-09-21T00:00:00.000Z",
+          "owner": {
+            "type": "User"
+          }
+        },
+        "pageMeta": {
+          "title": "notes",
+          "description": "My personal research notes",
+          "readmeSample": "npm install analysis; research observations",
+          "repositoryKeys": [
+            "fixture/notes"
+          ],
+          "textSample": ""
+        }
+      },
+      "input": {
+        "snapshot": {
+          "product": {
+            "repo": "fixture/notes",
+            "name": "notes",
+            "description": "My personal research notes\nMy personal research notes",
+            "pageText": "",
+            "url": null,
+            "accessMode": "installable",
+            "repositoryUrl": "https://github.com/fixture/notes",
+            "topics": [],
+            "language": null,
+            "readme": "npm install analysis; research observations",
+            "linksOwnGithub": false
+          },
+          "repoFacts": {
+            "stars": 9000,
+            "pushedAt": "2026-09-21T00:00:00.000Z",
+            "createdAt": null
+          },
+          "rules": {
+            "stoppedAt": "독립 제품·서비스",
+            "detail": "research_document: my personal research notes my personal research notes",
+            "cause": null
+          },
+          "policy": {
+            "rulesVersion": "2026-09-21.2",
+            "promptVersion": "2026-09-21.3",
+            "detectorVersion": "2026-09-14.1",
+            "policyVersion": "2026-09-06.1",
+            "enforceEligibility": false
+          },
+          "evidence": [],
+          "evidenceSummary": {
+            "eligible": false,
+            "reason": "ai_evidence_pending",
+            "executionVerified": false
+          },
+          "relationship": "same_product",
+          "scanState": "pending",
+          "evidenceTruncated": false
+        },
+        "source": {
+          "candidateJudgedAt": "2026-09-21T00:00:00.000Z",
+          "documentId": 4,
+          "documentFetchedAt": "2026-09-21T00:00:00.000Z",
+          "productUrl": null,
+          "scanId": null,
+          "scanSha": null,
+          "scanStartedAt": null,
+          "scanCompletedAt": null,
+          "scanState": null,
+          "scanError": null,
+          "detectorVersion": "2026-09-14.1"
+        },
+        "policyHash": "113b6e6e919165503f78d6482af8fafeac07b1dac0a6c3bbbb442bd4b67301a4",
+        "inputHash": "7cb0b2b65e26ab69849f3906b5b120c3c71cd45e4ce0e01b990d59b85baa7027",
+        "sourceRevisionHash": "4f78709bdbde86ca88bc2184944e2b4efd4793349b3cef9e431db339aaf1c588",
+        "validUntil": "2026-09-22T00:00:00.000Z"
+      },
+      "verdict": {
+        "state": "rejected",
+        "reason": "not_a_product",
+        "signals": {
+          "stars": 9000,
+          "isFork": false,
+          "ownerType": "User",
+          "pushAgeDays": 0,
+          "archived": false,
+          "productUrl": null,
+          "pageStatus": null,
+          "generator": null,
+          "pageTitle": "notes",
+          "accessMode": "installable",
+          "stoppedAt": {
+            "rule": "독립 제품·서비스",
+            "detail": "research_document: my personal research notes my personal research notes"
+          }
+        },
+        "trace": [
+          {
+            "rule": "독립 제품·서비스",
+            "detail": "research_document: my personal research notes my personal research notes",
+            "passed": false
+          }
+        ]
+      }
+    },
+    {
+      "id": "survey",
+      "candidate": {
+        "id": 5,
+        "repo": "fixture/survey",
+        "productUrl": null,
+        "state": "approved",
+        "reason": "passed",
+        "decidedBy": "auto",
+        "judgedAt": "2026-09-21T00:00:00.000Z",
+        "updatedAt": "2026-09-21T00:00:00.000Z"
+      },
+      "document": {
+        "id": 5,
+        "repo": "fixture/survey",
+        "productUrl": null,
+        "pageStatus": null,
+        "fetchedAt": "2026-09-21T00:00:00.000Z",
+        "repoMeta": {
+          "stargazers_count": 1000,
+          "description": "석사학위논문 실험 설문",
+          "pushed_at": "2026-09-21T00:00:00.000Z",
+          "owner": {
+            "type": "User"
+          }
+        },
+        "pageMeta": {
+          "title": "survey",
+          "description": "석사학위논문 실험 설문",
+          "readmeSample": "This survey collects research responses.",
+          "repositoryKeys": [
+            "fixture/survey"
+          ],
+          "textSample": ""
+        }
+      },
+      "input": {
+        "snapshot": {
+          "product": {
+            "repo": "fixture/survey",
+            "name": "survey",
+            "description": "석사학위논문 실험 설문\n석사학위논문 실험 설문",
+            "pageText": "",
+            "url": null,
+            "accessMode": "installable",
+            "repositoryUrl": "https://github.com/fixture/survey",
+            "topics": [],
+            "language": null,
+            "readme": "This survey collects research responses.",
+            "linksOwnGithub": false
+          },
+          "repoFacts": {
+            "stars": 1000,
+            "pushedAt": "2026-09-21T00:00:00.000Z",
+            "createdAt": null
+          },
+          "rules": {
+            "stoppedAt": "독립 제품·서비스",
+            "detail": "one_off_survey: 석사학위논문 실험 설문 석사학위논문 실험 설문",
+            "cause": null
+          },
+          "policy": {
+            "rulesVersion": "2026-09-21.2",
+            "promptVersion": "2026-09-21.3",
+            "detectorVersion": "2026-09-14.1",
+            "policyVersion": "2026-09-06.1",
+            "enforceEligibility": false
+          },
+          "evidence": [],
+          "evidenceSummary": {
+            "eligible": false,
+            "reason": "ai_evidence_pending",
+            "executionVerified": false
+          },
+          "relationship": "same_product",
+          "scanState": "pending",
+          "evidenceTruncated": false
+        },
+        "source": {
+          "candidateJudgedAt": "2026-09-21T00:00:00.000Z",
+          "documentId": 5,
+          "documentFetchedAt": "2026-09-21T00:00:00.000Z",
+          "productUrl": null,
+          "scanId": null,
+          "scanSha": null,
+          "scanStartedAt": null,
+          "scanCompletedAt": null,
+          "scanState": null,
+          "scanError": null,
+          "detectorVersion": "2026-09-14.1"
+        },
+        "policyHash": "113b6e6e919165503f78d6482af8fafeac07b1dac0a6c3bbbb442bd4b67301a4",
+        "inputHash": "b6b566a0134fadd1aa9a7c22752be834e65ee8d029c0f0404de07c8d3b4f527b",
+        "sourceRevisionHash": "52a9987a0be6509b1531ce728665bd0145194c96619c4d5f04e208103c1df612",
+        "validUntil": "2026-09-22T00:00:00.000Z"
+      },
+      "verdict": {
+        "state": "rejected",
+        "reason": "not_a_product",
+        "signals": {
+          "stars": 1000,
+          "isFork": false,
+          "ownerType": "User",
+          "pushAgeDays": 0,
+          "archived": false,
+          "productUrl": null,
+          "pageStatus": null,
+          "generator": null,
+          "pageTitle": "survey",
+          "accessMode": "installable",
+          "stoppedAt": {
+            "rule": "독립 제품·서비스",
+            "detail": "one_off_survey: 석사학위논문 실험 설문 석사학위논문 실험 설문"
+          }
+        },
+        "trace": [
+          {
+            "rule": "독립 제품·서비스",
+            "detail": "one_off_survey: 석사학위논문 실험 설문 석사학위논문 실험 설문",
+            "passed": false
+          }
+        ]
+      }
+    },
+    {
+      "id": "survey-tool",
+      "candidate": {
+        "id": 6,
+        "repo": "fixture/survey-tool",
+        "productUrl": "https://tool.example",
+        "state": "approved",
+        "reason": "passed",
+        "decidedBy": "auto",
+        "judgedAt": "2026-09-21T00:00:00.000Z",
+        "updatedAt": "2026-09-21T00:00:00.000Z"
+      },
+      "document": {
+        "id": 6,
+        "repo": "fixture/survey-tool",
+        "productUrl": "https://tool.example",
+        "pageStatus": 200,
+        "fetchedAt": "2026-09-21T00:00:00.000Z",
+        "repoMeta": {
+          "stargazers_count": 1000,
+          "description": "A survey creation application",
+          "pushed_at": "2026-09-21T00:00:00.000Z",
+          "owner": {
+            "type": "User"
+          }
+        },
+        "pageMeta": {
+          "title": "survey-tool",
+          "description": "A survey creation application",
+          "readmeSample": "Build and publish your surveys.",
+          "repositoryKeys": [
+            "fixture/survey-tool"
+          ],
+          "textSample": "Build and publish your surveys."
+        }
+      },
+      "input": {
+        "snapshot": {
+          "product": {
+            "repo": "fixture/survey-tool",
+            "name": "survey-tool",
+            "description": "A survey creation application\nA survey creation application",
+            "pageText": "Build and publish your surveys.",
+            "url": "https://tool.example",
+            "accessMode": "website",
+            "repositoryUrl": "https://github.com/fixture/survey-tool",
+            "topics": [],
+            "language": null,
+            "readme": "Build and publish your surveys.",
+            "linksOwnGithub": false
+          },
+          "repoFacts": {
+            "stars": 1000,
+            "pushedAt": "2026-09-21T00:00:00.000Z",
+            "createdAt": null
+          },
+          "rules": {
+            "stoppedAt": null,
+            "detail": null,
+            "cause": null
+          },
+          "policy": {
+            "rulesVersion": "2026-09-21.2",
+            "promptVersion": "2026-09-21.3",
+            "detectorVersion": "2026-09-14.1",
+            "policyVersion": "2026-09-06.1",
+            "enforceEligibility": false
+          },
+          "evidence": [],
+          "evidenceSummary": {
+            "eligible": false,
+            "reason": "ai_evidence_pending",
+            "executionVerified": false
+          },
+          "relationship": "same_product",
+          "scanState": "pending",
+          "evidenceTruncated": false
+        },
+        "source": {
+          "candidateJudgedAt": "2026-09-21T00:00:00.000Z",
+          "documentId": 6,
+          "documentFetchedAt": "2026-09-21T00:00:00.000Z",
+          "productUrl": "https://tool.example",
+          "scanId": null,
+          "scanSha": null,
+          "scanStartedAt": null,
+          "scanCompletedAt": null,
+          "scanState": null,
+          "scanError": null,
+          "detectorVersion": "2026-09-14.1"
+        },
+        "policyHash": "113b6e6e919165503f78d6482af8fafeac07b1dac0a6c3bbbb442bd4b67301a4",
+        "inputHash": "db3920ba91effe96fe50beba3e1fb88ecbb41f4e0f4ae43a6f411d0e249068a2",
+        "sourceRevisionHash": "c77fe3583af87237e20a7f7f686b53370b35433b26d5ff4b72d91e033c5d229c",
+        "validUntil": "2026-09-22T00:00:00.000Z"
+      },
+      "verdict": {
+        "state": "approved",
+        "reason": "passed",
+        "signals": {
+          "stars": 1000,
+          "isFork": false,
+          "ownerType": "User",
+          "pushAgeDays": 0,
+          "archived": false,
+          "productUrl": "https://tool.example",
+          "pageStatus": 200,
+          "generator": null,
+          "pageTitle": "survey-tool"
+        },
+        "trace": [
+          {
+            "rule": "배포 URL",
+            "detail": "https://tool.example",
+            "passed": true
+          },
+          {
+            "rule": "차단 도메인 아님",
+            "detail": "tool.example 미등록",
+            "passed": true
+          },
+          {
+            "rule": "남의 사이트 아님",
+            "detail": "tool.example",
+            "passed": true
+          },
+          {
+            "rule": "문서 URL 아님",
+            "detail": "docs 라벨·경로 아님",
+            "passed": true
+          },
+          {
+            "rule": "문서 생성기 아님",
+            "detail": "generator 표기 없음",
+            "passed": true
+          },
+          {
+            "rule": "스캐폴드 제목 아님",
+            "detail": "“survey-tool”",
+            "passed": true
+          },
+          {
+            "rule": "빈 페이지·대기 화면 아님",
+            "detail": "“survey-tool”",
+            "passed": true
+          },
+          {
+            "rule": "문서 제목 아님",
+            "detail": "“survey-tool”",
+            "passed": true
+          },
+          {
+            "rule": "포크 아님",
+            "detail": "isFork=false",
+            "passed": true
+          },
+          {
+            "rule": "보관됨 아님",
+            "detail": "archived=false",
+            "passed": true
+          },
+          {
+            "rule": "제외 패턴 아님",
+            "detail": "survey-tool",
+            "passed": true
+          },
+          {
+            "rule": "스타 상한 이하",
+            "detail": "1,000 ≤ 1,000",
+            "passed": true
+          },
+          {
+            "rule": "조직 계정 제외",
+            "detail": "꺼짐 (User)",
+            "passed": true
+          },
+          {
+            "rule": "배포 URL 응답 정상",
+            "detail": "HTTP 200",
+            "passed": true
+          },
+          {
+            "rule": "설치 유도 아님",
+            "detail": "본문 31자 · 걸리는 문구 0개 · 목차 낱말 0개 < 3",
+            "passed": true
+          },
+          {
+            "rule": "방치 기준 이내",
+            "detail": "0일 ≤ 180일",
+            "passed": true
+          },
+          {
+            "rule": "호스트 제외 패턴 아님",
+            "detail": "tool.example (루트 배포)",
+            "passed": true
+          }
+        ]
+      }
+    },
+    {
+      "id": "skill",
+      "candidate": {
+        "id": 7,
+        "repo": "fixture/skill",
+        "productUrl": null,
+        "state": "approved",
+        "reason": "passed",
+        "decidedBy": "auto",
+        "judgedAt": "2026-09-21T00:00:00.000Z",
+        "updatedAt": "2026-09-21T00:00:00.000Z"
+      },
+      "document": {
+        "id": 7,
+        "repo": "fixture/skill",
+        "productUrl": null,
+        "pageStatus": null,
+        "fetchedAt": "2026-09-21T00:00:00.000Z",
+        "repoMeta": {
+          "stargazers_count": 500,
+          "description": "An AI skill for generating reports",
+          "pushed_at": "2026-09-21T00:00:00.000Z",
+          "owner": {
+            "type": "User"
+          }
+        },
+        "pageMeta": {
+          "title": "skill",
+          "description": "An AI skill for generating reports",
+          "readmeSample": "Copy this SKILL.md to your assistant.",
+          "repositoryKeys": [
+            "fixture/skill"
+          ],
+          "textSample": ""
+        }
+      },
+      "input": {
+        "snapshot": {
+          "product": {
+            "repo": "fixture/skill",
+            "name": "skill",
+            "description": "An AI skill for generating reports\nAn AI skill for generating reports",
+            "pageText": "",
+            "url": null,
+            "accessMode": "installable",
+            "repositoryUrl": "https://github.com/fixture/skill",
+            "topics": [],
+            "language": null,
+            "readme": "Copy this SKILL.md to your assistant.",
+            "linksOwnGithub": false
+          },
+          "repoFacts": {
+            "stars": 500,
+            "pushedAt": "2026-09-21T00:00:00.000Z",
+            "createdAt": null
+          },
+          "rules": {
+            "stoppedAt": "설치형 제품 확인",
+            "detail": "배포 URL 대신 공식 저장소를 사용합니다. README에서 실제 소프트웨어·플러그인·스킬인지 심사해야 합니다",
+            "cause": "installable_product"
+          },
+          "policy": {
+            "rulesVersion": "2026-09-21.2",
+            "promptVersion": "2026-09-21.3",
+            "detectorVersion": "2026-09-14.1",
+            "policyVersion": "2026-09-06.1",
+            "enforceEligibility": false
+          },
+          "evidence": [],
+          "evidenceSummary": {
+            "eligible": false,
+            "reason": "ai_evidence_pending",
+            "executionVerified": false
+          },
+          "relationship": "same_product",
+          "scanState": "pending",
+          "evidenceTruncated": false
+        },
+        "source": {
+          "candidateJudgedAt": "2026-09-21T00:00:00.000Z",
+          "documentId": 7,
+          "documentFetchedAt": "2026-09-21T00:00:00.000Z",
+          "productUrl": null,
+          "scanId": null,
+          "scanSha": null,
+          "scanStartedAt": null,
+          "scanCompletedAt": null,
+          "scanState": null,
+          "scanError": null,
+          "detectorVersion": "2026-09-14.1"
+        },
+        "policyHash": "113b6e6e919165503f78d6482af8fafeac07b1dac0a6c3bbbb442bd4b67301a4",
+        "inputHash": "e75caf26023f0b97acb7f0454c0a194f8228c38a3285d2659a0a7b87dbb8c679",
+        "sourceRevisionHash": "6ef3e3d8da75d26c4b7fe2dc6ecb1cf8e0976a6c022eccca3421c1030b463b4f",
+        "validUntil": "2026-09-22T00:00:00.000Z"
+      },
+      "verdict": {
+        "state": "needs_review",
+        "reason": "ambiguous",
+        "signals": {
+          "stars": 500,
+          "isFork": false,
+          "ownerType": "User",
+          "pushAgeDays": 0,
+          "archived": false,
+          "productUrl": null,
+          "pageStatus": null,
+          "generator": null,
+          "pageTitle": "skill",
+          "accessMode": "installable",
+          "stoppedAt": {
+            "rule": "설치형 제품 확인",
+            "detail": "배포 URL 대신 공식 저장소를 사용합니다. README에서 실제 소프트웨어·플러그인·스킬인지 심사해야 합니다"
+          }
+        },
+        "trace": [
+          {
+            "rule": "설치형 제품 스타 기준",
+            "detail": "500 ≥ 500",
+            "passed": true
+          },
+          {
+            "rule": "설치형 제품 확인",
+            "detail": "배포 URL 대신 공식 저장소를 사용합니다. README에서 실제 소프트웨어·플러그인·스킬인지 심사해야 합니다",
+            "passed": false
+          }
+        ],
+        "cause": "installable_product"
+      }
+    },
+    {
+      "id": "tutorial",
+      "candidate": {
+        "id": 8,
+        "repo": "fixture/tutorial",
+        "productUrl": null,
+        "state": "approved",
+        "reason": "passed",
+        "decidedBy": "auto",
+        "judgedAt": "2026-09-21T00:00:00.000Z",
+        "updatedAt": "2026-09-21T00:00:00.000Z"
+      },
+      "document": {
+        "id": 8,
+        "repo": "fixture/tutorial",
+        "productUrl": null,
+        "pageStatus": null,
+        "fetchedAt": "2026-09-21T00:00:00.000Z",
+        "repoMeta": {
+          "stargazers_count": 600,
+          "description": "Tutorial course for making a skill",
+          "pushed_at": "2026-09-21T00:00:00.000Z",
+          "owner": {
+            "type": "User"
+          }
+        },
+        "pageMeta": {
+          "title": "tutorial",
+          "description": "Tutorial course for making a skill",
+          "readmeSample": "Step by step lessons; npm install examples",
+          "repositoryKeys": [
+            "fixture/tutorial"
+          ],
+          "textSample": ""
+        }
+      },
+      "input": {
+        "snapshot": {
+          "product": {
+            "repo": "fixture/tutorial",
+            "name": "tutorial",
+            "description": "Tutorial course for making a skill\nTutorial course for making a skill",
+            "pageText": "",
+            "url": null,
+            "accessMode": "installable",
+            "repositoryUrl": "https://github.com/fixture/tutorial",
+            "topics": [],
+            "language": null,
+            "readme": "Step by step lessons; npm install examples",
+            "linksOwnGithub": false
+          },
+          "repoFacts": {
+            "stars": 600,
+            "pushedAt": "2026-09-21T00:00:00.000Z",
+            "createdAt": null
+          },
+          "rules": {
+            "stoppedAt": "설치형 제품 확인",
+            "detail": "배포 URL 대신 공식 저장소를 사용합니다. README에서 실제 소프트웨어·플러그인·스킬인지 심사해야 합니다",
+            "cause": "installable_product"
+          },
+          "policy": {
+            "rulesVersion": "2026-09-21.2",
+            "promptVersion": "2026-09-21.3",
+            "detectorVersion": "2026-09-14.1",
+            "policyVersion": "2026-09-06.1",
+            "enforceEligibility": false
+          },
+          "evidence": [],
+          "evidenceSummary": {
+            "eligible": false,
+            "reason": "ai_evidence_pending",
+            "executionVerified": false
+          },
+          "relationship": "same_product",
+          "scanState": "pending",
+          "evidenceTruncated": false
+        },
+        "source": {
+          "candidateJudgedAt": "2026-09-21T00:00:00.000Z",
+          "documentId": 8,
+          "documentFetchedAt": "2026-09-21T00:00:00.000Z",
+          "productUrl": null,
+          "scanId": null,
+          "scanSha": null,
+          "scanStartedAt": null,
+          "scanCompletedAt": null,
+          "scanState": null,
+          "scanError": null,
+          "detectorVersion": "2026-09-14.1"
+        },
+        "policyHash": "113b6e6e919165503f78d6482af8fafeac07b1dac0a6c3bbbb442bd4b67301a4",
+        "inputHash": "9e051893e7091fdc97ca0af3b94a6b16ff93d2b3be05eb6e2f0fd753a44a2041",
+        "sourceRevisionHash": "61f309076b54651bd75ff40c3ae84a4a6b646cf71e1ffa3624dec0dc137f9af7",
+        "validUntil": "2026-09-22T00:00:00.000Z"
+      },
+      "verdict": {
+        "state": "needs_review",
+        "reason": "ambiguous",
+        "signals": {
+          "stars": 600,
+          "isFork": false,
+          "ownerType": "User",
+          "pushAgeDays": 0,
+          "archived": false,
+          "productUrl": null,
+          "pageStatus": null,
+          "generator": null,
+          "pageTitle": "tutorial",
+          "accessMode": "installable",
+          "stoppedAt": {
+            "rule": "설치형 제품 확인",
+            "detail": "배포 URL 대신 공식 저장소를 사용합니다. README에서 실제 소프트웨어·플러그인·스킬인지 심사해야 합니다"
+          }
+        },
+        "trace": [
+          {
+            "rule": "설치형 제품 스타 기준",
+            "detail": "600 ≥ 500",
+            "passed": true
+          },
+          {
+            "rule": "설치형 제품 확인",
+            "detail": "배포 URL 대신 공식 저장소를 사용합니다. README에서 실제 소프트웨어·플러그인·스킬인지 심사해야 합니다",
+            "passed": false
+          }
+        ],
+        "cause": "installable_product"
+      }
+    },
+    {
+      "id": "list",
+      "candidate": {
+        "id": 9,
+        "repo": "fixture/list",
+        "productUrl": null,
+        "state": "approved",
+        "reason": "passed",
+        "decidedBy": "auto",
+        "judgedAt": "2026-09-21T00:00:00.000Z",
+        "updatedAt": "2026-09-21T00:00:00.000Z"
+      },
+      "document": {
+        "id": 9,
+        "repo": "fixture/list",
+        "productUrl": null,
+        "pageStatus": null,
+        "fetchedAt": "2026-09-21T00:00:00.000Z",
+        "repoMeta": {
+          "stargazers_count": 3000,
+          "description": "A curated list of links",
+          "pushed_at": "2026-09-21T00:00:00.000Z",
+          "owner": {
+            "type": "User"
+          }
+        },
+        "pageMeta": {
+          "title": "list",
+          "description": "A curated list of links",
+          "readmeSample": "A reading list and collection of bookmarks.",
+          "repositoryKeys": [
+            "fixture/list"
+          ],
+          "textSample": ""
+        }
+      },
+      "input": {
+        "snapshot": {
+          "product": {
+            "repo": "fixture/list",
+            "name": "list",
+            "description": "A curated list of links\nA curated list of links",
+            "pageText": "",
+            "url": null,
+            "accessMode": "installable",
+            "repositoryUrl": "https://github.com/fixture/list",
+            "topics": [],
+            "language": null,
+            "readme": "A reading list and collection of bookmarks.",
+            "linksOwnGithub": false
+          },
+          "repoFacts": {
+            "stars": 3000,
+            "pushedAt": "2026-09-21T00:00:00.000Z",
+            "createdAt": null
+          },
+          "rules": {
+            "stoppedAt": "설치형 제품 확인",
+            "detail": "배포 URL 대신 공식 저장소를 사용합니다. README에서 실제 소프트웨어·플러그인·스킬인지 심사해야 합니다",
+            "cause": "installable_product"
+          },
+          "policy": {
+            "rulesVersion": "2026-09-21.2",
+            "promptVersion": "2026-09-21.3",
+            "detectorVersion": "2026-09-14.1",
+            "policyVersion": "2026-09-06.1",
+            "enforceEligibility": false
+          },
+          "evidence": [],
+          "evidenceSummary": {
+            "eligible": false,
+            "reason": "ai_evidence_pending",
+            "executionVerified": false
+          },
+          "relationship": "same_product",
+          "scanState": "pending",
+          "evidenceTruncated": false
+        },
+        "source": {
+          "candidateJudgedAt": "2026-09-21T00:00:00.000Z",
+          "documentId": 9,
+          "documentFetchedAt": "2026-09-21T00:00:00.000Z",
+          "productUrl": null,
+          "scanId": null,
+          "scanSha": null,
+          "scanStartedAt": null,
+          "scanCompletedAt": null,
+          "scanState": null,
+          "scanError": null,
+          "detectorVersion": "2026-09-14.1"
+        },
+        "policyHash": "113b6e6e919165503f78d6482af8fafeac07b1dac0a6c3bbbb442bd4b67301a4",
+        "inputHash": "c78c36fcc432555b97fb09742cf766f30e639999cc04bfb7890200ed7830e3e5",
+        "sourceRevisionHash": "41e0dcf822ce7ace0ac279522ab90c25fd03b5e4cd8c7209c914ce3b99ca7de4",
+        "validUntil": "2026-09-22T00:00:00.000Z"
+      },
+      "verdict": {
+        "state": "needs_review",
+        "reason": "ambiguous",
+        "signals": {
+          "stars": 3000,
+          "isFork": false,
+          "ownerType": "User",
+          "pushAgeDays": 0,
+          "archived": false,
+          "productUrl": null,
+          "pageStatus": null,
+          "generator": null,
+          "pageTitle": "list",
+          "accessMode": "installable",
+          "stoppedAt": {
+            "rule": "설치형 제품 확인",
+            "detail": "배포 URL 대신 공식 저장소를 사용합니다. README에서 실제 소프트웨어·플러그인·스킬인지 심사해야 합니다"
+          }
+        },
+        "trace": [
+          {
+            "rule": "설치형 제품 스타 기준",
+            "detail": "3000 ≥ 500",
+            "passed": true
+          },
+          {
+            "rule": "설치형 제품 확인",
+            "detail": "배포 URL 대신 공식 저장소를 사용합니다. README에서 실제 소프트웨어·플러그인·스킬인지 심사해야 합니다",
+            "passed": false
+          }
+        ],
+        "cause": "installable_product"
+      }
+    },
+    {
+      "id": "web",
+      "candidate": {
+        "id": 10,
+        "repo": "fixture/web",
+        "productUrl": "https://app.example",
+        "state": "approved",
+        "reason": "passed",
+        "decidedBy": "auto",
+        "judgedAt": "2026-09-21T00:00:00.000Z",
+        "updatedAt": "2026-09-21T00:00:00.000Z"
+      },
+      "document": {
+        "id": 10,
+        "repo": "fixture/web",
+        "productUrl": "https://app.example",
+        "pageStatus": 200,
+        "fetchedAt": "2026-09-21T00:00:00.000Z",
+        "repoMeta": {
+          "stargazers_count": 1,
+          "description": "할 일을 관리하는 서비스",
+          "pushed_at": "2026-09-21T00:00:00.000Z",
+          "owner": {
+            "type": "User"
+          }
+        },
+        "pageMeta": {
+          "title": "web",
+          "description": "할 일을 관리하는 서비스",
+          "readmeSample": "Sign in to manage your tasks.",
+          "repositoryKeys": [
+            "fixture/web"
+          ],
+          "textSample": "Sign in to manage your tasks."
+        }
+      },
+      "input": {
+        "snapshot": {
+          "product": {
+            "repo": "fixture/web",
+            "name": "web",
+            "description": "할 일을 관리하는 서비스\n할 일을 관리하는 서비스",
+            "pageText": "Sign in to manage your tasks.",
+            "url": "https://app.example",
+            "accessMode": "website",
+            "repositoryUrl": "https://github.com/fixture/web",
+            "topics": [],
+            "language": null,
+            "readme": "Sign in to manage your tasks.",
+            "linksOwnGithub": false
+          },
+          "repoFacts": {
+            "stars": 1,
+            "pushedAt": "2026-09-21T00:00:00.000Z",
+            "createdAt": null
+          },
+          "rules": {
+            "stoppedAt": null,
+            "detail": null,
+            "cause": null
+          },
+          "policy": {
+            "rulesVersion": "2026-09-21.2",
+            "promptVersion": "2026-09-21.3",
+            "detectorVersion": "2026-09-14.1",
+            "policyVersion": "2026-09-06.1",
+            "enforceEligibility": false
+          },
+          "evidence": [],
+          "evidenceSummary": {
+            "eligible": false,
+            "reason": "ai_evidence_pending",
+            "executionVerified": false
+          },
+          "relationship": "same_product",
+          "scanState": "pending",
+          "evidenceTruncated": false
+        },
+        "source": {
+          "candidateJudgedAt": "2026-09-21T00:00:00.000Z",
+          "documentId": 10,
+          "documentFetchedAt": "2026-09-21T00:00:00.000Z",
+          "productUrl": "https://app.example",
+          "scanId": null,
+          "scanSha": null,
+          "scanStartedAt": null,
+          "scanCompletedAt": null,
+          "scanState": null,
+          "scanError": null,
+          "detectorVersion": "2026-09-14.1"
+        },
+        "policyHash": "113b6e6e919165503f78d6482af8fafeac07b1dac0a6c3bbbb442bd4b67301a4",
+        "inputHash": "c78a7ed272b3ce858d9bbf97ebcd0e32533939ec61145efbb63853e1465f80e9",
+        "sourceRevisionHash": "14bb74901269ec081c20cd1890cbf8f13a53e375b2f4e331c2b185a071a09f7a",
+        "validUntil": "2026-09-22T00:00:00.000Z"
+      },
+      "verdict": {
+        "state": "approved",
+        "reason": "passed",
+        "signals": {
+          "stars": 1,
+          "isFork": false,
+          "ownerType": "User",
+          "pushAgeDays": 0,
+          "archived": false,
+          "productUrl": "https://app.example",
+          "pageStatus": 200,
+          "generator": null,
+          "pageTitle": "web"
+        },
+        "trace": [
+          {
+            "rule": "배포 URL",
+            "detail": "https://app.example",
+            "passed": true
+          },
+          {
+            "rule": "차단 도메인 아님",
+            "detail": "app.example 미등록",
+            "passed": true
+          },
+          {
+            "rule": "남의 사이트 아님",
+            "detail": "app.example",
+            "passed": true
+          },
+          {
+            "rule": "문서 URL 아님",
+            "detail": "docs 라벨·경로 아님",
+            "passed": true
+          },
+          {
+            "rule": "문서 생성기 아님",
+            "detail": "generator 표기 없음",
+            "passed": true
+          },
+          {
+            "rule": "스캐폴드 제목 아님",
+            "detail": "“web”",
+            "passed": true
+          },
+          {
+            "rule": "빈 페이지·대기 화면 아님",
+            "detail": "“web”",
+            "passed": true
+          },
+          {
+            "rule": "문서 제목 아님",
+            "detail": "“web”",
+            "passed": true
+          },
+          {
+            "rule": "포크 아님",
+            "detail": "isFork=false",
+            "passed": true
+          },
+          {
+            "rule": "보관됨 아님",
+            "detail": "archived=false",
+            "passed": true
+          },
+          {
+            "rule": "제외 패턴 아님",
+            "detail": "web",
+            "passed": true
+          },
+          {
+            "rule": "스타 상한 이하",
+            "detail": "1 ≤ 1,000",
+            "passed": true
+          },
+          {
+            "rule": "조직 계정 제외",
+            "detail": "꺼짐 (User)",
+            "passed": true
+          },
+          {
+            "rule": "배포 URL 응답 정상",
+            "detail": "HTTP 200",
+            "passed": true
+          },
+          {
+            "rule": "설치 유도 아님",
+            "detail": "본문에 “sign in” — 이 페이지에서 쓸 수 있다",
+            "passed": true
+          },
+          {
+            "rule": "방치 기준 이내",
+            "detail": "0일 ≤ 180일",
+            "passed": true
+          },
+          {
+            "rule": "호스트 제외 패턴 아님",
+            "detail": "app.example (루트 배포)",
+            "passed": true
+          }
+        ]
+      }
+    }
+  ]
+}
