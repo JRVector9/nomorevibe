@@ -46,6 +46,7 @@ export function runtimeLog(event: string, fields: Record<string, unknown>) {
  * 발행 워커는 5분에 한 번만 발행하므로 나머지 시간을 번역이 쓴다.
  */
 export function jobRunOptions(name: string, options: RequestedRunOptions): JobRunOptions {
+  if (name === 'crawl-agent-review') return { ...options, budgetMs: 40_000 };
   if (name === 'crawl-publish') return { ...options, budgetMs: 120_000 };
   if (name === 'reason-translate') return { ...options, budgetMs: 55_000 };
   // 게이트웨이가 붐비면 한 건이 45초까지 간다. 틱이 짧으면 그 호출을 아예 시작하지 못한다

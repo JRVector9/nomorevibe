@@ -38,9 +38,13 @@ export async function secondReviewCandidates(ctx: JobContext<null>): Promise<Job
   const queue = [...await pendingSecondReviews(FETCH)];
   const remaining = () => TICK_MS - (Date.now() - startedAt);
   let reviewed = 0, failed = 0, deferred = 0;
+  const visited = new Set<number>();
+  let stopped = false;
 
-  await Promise.all(Array.from({ length: CONCURRENT }, async () => {
+  const settled = await Promise.allSettled(Array.from({ length: CONCURRENT }, async () => {
+    try {
     for (let row = queue.shift(); row; row = queue.shift()) {
+      if (stopped || ctx.signal?.aborted || visited.has(row.id)) continue;
       // 누가 볼지는 행에 적혀 있다 — 도중에 설정이 바뀌어도 올릴 때 정한 모델이 그 표를 낸다
       const provider = row.provider ?? "claude-cli";
       const model = row.model ?? settings.secondReview.voters[0].model;
@@ -52,12 +56,14 @@ export async function secondReviewCandidates(ctx: JobContext<null>): Promise<Job
        * 온전한 시간으로 부르는 편이 빠르다.
        */
       if (!ctx.hasBudget() || remaining() < limit + 2_000) { deferred += 1; continue; }
+      visited.add(row.id);
       const input = await loadSecondReviewInput(row);
       if (!input) {
         deferred += 1;
         await recordSecondReview(row.id, { ok: false, error: "input_changed", model, provider }, new Date(), ctx.lease);
         continue;
       }
+      if (stopped || ctx.signal?.aborted || !ctx.hasBudget() || remaining() < limit + 2_000) { deferred++; visited.delete(row.id); continue; }
       // 멈추라는 신호를 그대로 넘긴다 — 배포 때 진행 중인 호출이 바로 끊겨야 잠금을 놓고 나갈 수 있다
       const callStartedAt = Date.now();
       const telemetry = { stage: "second" as const, candidateId: row.candidateId, secondReviewId: row.id,
@@ -82,8 +88,15 @@ export async function secondReviewCandidates(ctx: JobContext<null>): Promise<Job
         status: combineVerdicts({ decision: row.firstDecision, confidence: row.firstConfidence, model: row.firstModel },
           second, settings.secondReview.agreeAt, Boolean(row.publishedSlug)) }, new Date(), ctx.lease);
     }
+    } catch (error) { stopped = true; throw error; }
   }));
+  const failure = settled.find(result => result.status === "rejected");
+  if (failure) throw failure.reason;
 
   ctx.log("crawl.second_reviewed", { enqueued, closed, reviewed, failed, deferred });
+  if (reviewed && !failed && !ctx.signal?.aborted && ctx.hasBudget()) {
+    const ready = await pendingSecondReviews(1);
+    if (ready.some(row => !visited.has(row.id))) return { done: false, continuation: "ready" };
+  }
   return { done: reviewed + failed === 0 };
 }

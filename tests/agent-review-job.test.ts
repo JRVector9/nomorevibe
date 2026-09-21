@@ -35,11 +35,11 @@ it("does not select or call AI when review mode is off", async () => {
   expect(await reviewCrawlCandidates(context())).toEqual({done:true});
   expect(mocks.requeue).not.toHaveBeenCalled();expect(mocks.list).not.toHaveBeenCalled();expect(mocks.review).not.toHaveBeenCalled();
 });
-it("설정한 수만큼만 동시에 띄운다 — 기본은 둘", async () => {
+it("기본 동시성 둘의 슬롯을 완료 후 다시 사용한다", async () => {
   mocks.list.mockResolvedValue([candidate(),{...candidate(),id:2},{...candidate(),id:3}]);
   expect(await reviewCrawlCandidates(context())).toEqual({done:false});
-  expect(mocks.review).toHaveBeenCalledTimes(2);
-  expect(mocks.claim.mock.calls.map(call => call[0].candidate.id)).toEqual([1,2]);
+  expect(mocks.review).toHaveBeenCalledTimes(3);
+  expect(mocks.claim.mock.calls.map(call => call[0].candidate.id)).toEqual([1,2,3]);
   expect(mocks.record).toHaveBeenCalledWith(expect.objectContaining({settings:expect.objectContaining({reviewMode:"observe"}),outcome:expect.objectContaining({decision:"approve"}),lease:context().lease}));
 });
 /**
@@ -57,9 +57,16 @@ it("설정한 수만큼만 동시에 띄운다 — 기본은 둘", async () => {
  */
 it("동시 실행 수는 설정에서 오고, 코드 상한을 넘지 못한다", async () => {
   mocks.list.mockResolvedValue(Array.from({length:12},(_,i)=>({...candidate(),id:i+1})));
+  let active = 0, peak = 0;
+  mocks.review.mockImplementation(async () => {
+    peak = Math.max(peak, ++active);
+    await new Promise(resolve => setTimeout(resolve, 1)); active--;
+    return { ok:true, outcome:{decision:"approve"}, usage:{} };
+  });
   mocks.settings = {...mocks.settings!, reviewConcurrency:6};
   await reviewCrawlCandidates(context());
-  expect(mocks.review).toHaveBeenCalledTimes(6);
+  expect(mocks.review).toHaveBeenCalledTimes(12);
+  expect(peak).toBe(6);
 
   mocks.review.mockClear();
   // 설정이 상한(16)을 넘겨도 코드가 막는다 — 스키마가 먼저 막지만 잡도 스스로 지킨다
@@ -110,7 +117,7 @@ it("applies the page-body rule before a model call, like the rule judge", async 
   expect(mocks.claim).toHaveBeenCalledWith(expect.objectContaining({provider:"rules"}));
   expect(mocks.record).toHaveBeenCalledWith(expect.objectContaining({outcome:expect.objectContaining({decision:"reject"})}));
 });
-it("둘을 동시에 띄워 20초짜리 두 건이 25초 틱에 들어간다", async () => {
+it("두 호출을 동시에 진행하고 다음 후보를 이어 처리한다", async () => {
   mocks.list.mockResolvedValue([candidate(),{...candidate(),id:2},{...candidate(),id:3}]);
   let started = 0, release!: () => void, timer: NodeJS.Timeout | undefined;
   const bothStarted = new Promise<void>(resolve => { release = resolve; });
@@ -122,8 +129,8 @@ it("둘을 동시에 띄워 20초짜리 두 건이 25초 틱에 들어간다", a
     return {ok:true,outcome:{decision:"approve",reason:"Deployed task tracker",evidenceIds:["product"]},usage:{}};
   });
   expect(await reviewCrawlCandidates(context())).toEqual({done:false});
-  expect(mocks.review).toHaveBeenCalledTimes(2);
-  expect(mocks.record.mock.calls.map(call => call[0].candidate.id).sort()).toEqual([1,2]);
+  expect(mocks.review).toHaveBeenCalledTimes(3);
+  expect(mocks.record.mock.calls.map(call => call[0].candidate.id).sort()).toEqual([1,2,3]);
 });
 it("records every concurrent review even when one model call fails", async () => {
   mocks.list.mockResolvedValue([candidate(),{...candidate(),id:2}]);
@@ -134,10 +141,12 @@ it("records every concurrent review even when one model call fails", async () =>
 });
 it("waits for the other review before failing the tick when one record throws", async () => {
   mocks.list.mockResolvedValue([candidate(),{...candidate(),id:2}]);
-  const document = await mocks.document();
-  // 두 번째 후보의 DB 조회가 실제 I/O처럼 한 틱을 넘긴다. 그 사이 첫 기록이 실패해도 워커가 죽으면 안 된다
-  mocks.document.mockImplementationOnce(async () => document)
-    .mockImplementationOnce(async () => { await new Promise(resolve => setTimeout(resolve, 20)); return document; });
+  let call = 0;
+  mocks.review.mockImplementation(async () => {
+    const n = ++call;
+    await new Promise(resolve => setTimeout(resolve, n === 1 ? 1 : 20));
+    return { ok:true, outcome:{decision:"approve"}, usage:{} };
+  });
   mocks.record.mockImplementation(async ({candidate}) => {
     if (candidate.id === 1) throw new Error("record failed");
     return {applied:false,state:"succeeded"};
@@ -190,4 +199,44 @@ it("README 를 잠깐 못 받으면 저장하지 않고 이번엔 없이 심사�
   await reviewCrawlCandidates(context());
   expect(mocks.saveReadme).not.toHaveBeenCalled();
   expect(mocks.review).toHaveBeenCalled();
+});
+
+it("refills four active slots: eight ten-second calls finish at twenty seconds", async () => {
+  vi.useFakeTimers();
+  try {
+    mocks.settings = { ...mocks.settings!, reviewConcurrency: 4, firstReview: { provider: "abcllm", model: "fixture" } };
+    mocks.list.mockResolvedValueOnce(Array.from({ length: 8 }, (_, i) => ({ ...candidate(), id: i + 1 }))).mockResolvedValue([]);
+    let active = 0, peak = 0;
+    const starts: number[] = []; const started = Date.now();
+    mocks.gateway.mockImplementation(async () => {
+      peak = Math.max(peak, ++active); starts.push(Date.now() - started);
+      await new Promise(resolve => setTimeout(resolve, 10_000)); active--;
+      return { ok: true, outcome: { decision: "approve" }, usage: {} };
+    });
+    const run = reviewCrawlCandidates(context());
+    await vi.advanceTimersByTimeAsync(20_001); await run;
+    expect(starts).toEqual([0,0,0,0,10000,10000,10000,10000]);
+    expect(peak).toBe(4);
+  } finally { vi.useRealTimers(); }
+});
+it("never starts a new gateway call with a shortened timeout after a 24-second wave", async () => {
+  vi.useFakeTimers();
+  try {
+    mocks.settings = { ...mocks.settings!, reviewConcurrency: 4, firstReview: { provider: "abcllm", model: "fixture" } };
+    mocks.list.mockResolvedValue(Array.from({ length: 8 }, (_, i) => ({ ...candidate(), id: i + 1 })));
+    mocks.gateway.mockImplementation(async () => {
+      await new Promise(resolve => setTimeout(resolve, 24_000));
+      return { ok: true, outcome: { decision: "approve" }, usage: {} };
+    });
+    const run = reviewCrawlCandidates(context()); await vi.advanceTimersByTimeAsync(24_001);
+    await run;
+    expect(mocks.gateway).toHaveBeenCalledTimes(4);
+    expect(mocks.gateway.mock.calls.every(call => call[1].timeoutMs === 24_000)).toBe(true);
+  } finally { vi.useRealTimers(); }
+});
+it("does not call the same candidate twice or request continuation after no progress", async () => {
+  mocks.list.mockResolvedValue([candidate(), candidate()]);
+  mocks.claim.mockResolvedValue({ kind: "skipped", reason: "running" });
+  expect(await reviewCrawlCandidates(context())).not.toHaveProperty("continuation");
+  expect(mocks.claim).toHaveBeenCalledTimes(1);
 });

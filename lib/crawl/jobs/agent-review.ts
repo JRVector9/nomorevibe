@@ -11,20 +11,12 @@ import { listReviewCandidates, loadReviewInput, claimAgentReview, recordAgentRev
 import { firstReviewer, reviewWithAgent, REVIEW_CLI_TIMEOUT_MS } from "@/lib/crawl/agent-review";
 import { reviewWithGateway, REVIEW_GATEWAY_TIMEOUT_MS } from "@/lib/crawl/agent-review-gateway";
 
-/**
- * 한 틱에 동시에 띄우는 외부 심사 수.
- *
- * 한 건씩이면 1분 주기에 시간당 60회가 상한이었다. CLI 제한 20초짜리 둘을 이어 붙이면 잡 예산
- * 25초를 넘으므로, 늘리려면 동시에 띄워야 한다. 후보마다 claim·입력 hash·lease를 따로 검증하고
- * 같은 lease로 이미 도는 claim은 건너뛰므로 둘이 같은 후보를 잡지 않는다.
- *
- * 수는 이제 설정에서 온다(crawlSettings.reviewConcurrency). 2로 박혀 있던 때는 시간당 120건이
- * 상한이라 발행(시간당 213건)을 따라가지 못해 enforce 를 켤 수 없었다 — 모델이 느려서가 아니라
- * 이 숫자 때문이었다. 이 상수는 설정이 없을 때의 값이자 상한을 넘지 않게 하는 안전망으로 남긴다.
- */
 const MAX_CONCURRENT_REVIEWS = 16;
+const TICK_MS = 40_000;
+const MAX_STARTS = 16;
+const FIRST_GATEWAY_MS = 24_000;
 
-/** 틱마다 외부 심사를 최대 두 건 동시에 돌린다. 기존 규칙·후보 상태·발행 조건은 그대로 둔다. */
+/** Refill bounded slots without changing the full input, reviewers or admission rules. */
 export async function reviewCrawlCandidates(ctx: JobContext<null>): Promise<JobOutcome<null>> {
   const startedAt = Date.now();
   const settings = await getSettings();
@@ -42,19 +34,18 @@ export async function reviewCrawlCandidates(ctx: JobContext<null>): Promise<JobO
   if (requeued) ctx.log("crawl.agent_review_sources_queued", { count: requeued });
   const candidates = await listReviewCandidates(settings, Math.max(20, concurrency * 2));
   if (!candidates.length) return { done: true };
-  const remaining = () => 24_000 - (Date.now() - startedAt);
-  /** 외부 심사마다 enforce에서 승인을 후보에 반영했는지 */
-  const reviews: Promise<boolean>[] = [];
-  let settled: PromiseSettledResult<boolean>[] = [];
-
-  try {
-    for (const candidate of candidates) {
-      if (reviews.length >= concurrency || !ctx.hasBudget() || remaining() < 1_000) break;
-      if (!isReviewCandidate(candidate)) continue;
+  const remaining = () => TICK_MS - (Date.now() - startedAt);
+  const ceiling = reviewProvider === "abcllm" ? Math.min(FIRST_GATEWAY_MS, REVIEW_GATEWAY_TIMEOUT_MS) : REVIEW_CLI_TIMEOUT_MS;
+  const visited = new Set<number>();
+  const controllers = new Set<AbortController>();
+  let next = 0, admitted = 0, progress = 0, stopped = false;
+  const canStart = () => !stopped && !ctx.signal?.aborted && ctx.hasBudget() && remaining() >= ceiling + 2_000;
+  const processCandidate = async (candidate: typeof candidates[number]) => {
+      if (!isReviewCandidate(candidate)) return;
       const document = await loadReviewDocument(candidate.repo);
-      if (!document) continue;
+      if (!document) return;
       const input = await loadReviewInput(candidate, document, settings);
-      if (input.validUntil.getTime() <= Date.now()) continue;
+      if (input.validUntil.getTime() <= Date.now()) return;
       // 판정 잡과 같은 추출기로 규칙을 태운다. 여기서 PageFacts를 손으로 조립했을 때 본문이 빠져
       // "설치 유도 아님"을 지나쳤고, 재수집으로 본문에 npm install이 생긴 needs_review 후보를 모델이
       // 메타데이터만 보고 승인했다(codex 재현). 규칙이 거부하는 것은 모델에게 보내지 않는다.
@@ -73,12 +64,12 @@ export async function reviewCrawlCandidates(ctx: JobContext<null>): Promise<JobO
       const evidenceHold = !hardReason && settings.agentEvidence.enforceEligibility
         && !input.snapshot.evidenceSummary.eligible ? input.snapshot.evidenceSummary.reason : null;
       const provider = hardReason || evidenceHold ? "rules" : reviewProvider;
-      if (!ctx.hasBudget() || remaining() < 1_000) break;
+      if (!canStart()) return;
       const context = { candidate, document, settings, input, lease };
       const claim = await claimAgentReview({ ...context, provider, model: provider === "rules" ? REVIEW_RULES_VERSION : model });
       if (claim.kind === "skipped") {
         ctx.log("crawl.agent_review_skipped", { repo: candidate.repo, reason: claim.reason });
-        continue;
+        return;
       }
       const telemetry = { stage: "first" as const, candidateId: candidate.id, firstAttemptId: claim.attempt.id,
         sourceRevisionHash: input.sourceRevisionHash, provider, model, job: lease.name, runId: String(lease.requestedVersion) };
@@ -93,26 +84,26 @@ export async function reviewCrawlCandidates(ctx: JobContext<null>): Promise<JobO
         } : claim.attempt.outcome ?? undefined;
         const recorded = await recordAgentReview({ ...context, attempt: claim.attempt, outcome,
           ruleRejection: hardReason ? { reason: hardReason, ...(existing ? { existingSlug: existing.slug, existingStatus: existing.status } : {}) } : undefined });
+        if (recorded.state === "succeeded") progress++;
         if (recorded.state !== "superseded") emitPipelineEvent("committed", { ...telemetry, state: recorded.state }, ctx.log);
         ctx.log("crawl.agent_reviewed", { repo: candidate.repo, provider, reused: claim.kind === "reused", ...recorded });
-        continue;
+        return;
       }
 
-      const review = (async () => {
-        const controller = new AbortController();
-        // A lost heartbeat/lease must also stop a running CLI, not only prevent its final DB write.
-        const ownershipPoll = setInterval(() => { if (!ctx.hasBudget()) controller.abort(); }, 250);
-        ownershipPoll.unref?.();
-        /*
-         * 제공자마다 자기 상한을 쓰되, 실제로 자르는 것은 틱 예산(24초)이다.
-         * 실측(2026-09-18, 게이트웨이 100건): 중앙값 5초 · p90 15초 · 24초 초과 2건.
-         * 그 둘은 시간 초과로 남아 물러나기 간격을 두고 다시 온다 — 예산을 늘릴 이유가 못 된다.
-         */
-        const ceiling = reviewProvider === "abcllm" ? REVIEW_GATEWAY_TIMEOUT_MS : REVIEW_CLI_TIMEOUT_MS;
-        const options = { model, timeoutMs: Math.max(1, Math.min(ceiling, remaining())), signal: controller.signal };
+      const controller = new AbortController();
+      controllers.add(controller);
+      const abort = () => controller.abort();
+      ctx.signal?.addEventListener("abort", abort, { once: true });
+      const ownershipPoll = setInterval(() => { if (!ctx.hasBudget()) controller.abort(); }, 250);
+      ownershipPoll.unref?.();
+      try {
+        // Claim may have waited on a lock. Cancel and record it instead of leaving a running row.
+        if (!canStart()) controller.abort();
+        const options = { model, timeoutMs: ceiling, signal: controller.signal };
         const result = await measureReviewCall(telemetry, () => (reviewProvider === "abcllm"
           ? reviewWithGateway(input, options)
-          : reviewWithAgent(input, options)), ctx.log).finally(() => clearInterval(ownershipPoll));
+          : reviewWithAgent(input, options)), ctx.log);
+        if (!result.ok) stopped = true;
         const recorded = await recordAgentReview({
           ...context, attempt: claim.attempt,
           ...(result.ok ? { outcome: result.outcome, usage: result.usage } : {
@@ -120,24 +111,39 @@ export async function reviewCrawlCandidates(ctx: JobContext<null>): Promise<JobO
             retryAfter: new Date(Date.now() + Math.min(30 * 60_000, 60_000 * 2 ** Math.max(0, claim.attempt.attemptNumber - 1))),
           }),
         });
+        if (recorded.state === "succeeded") progress++;
         if (recorded.state !== "superseded") emitPipelineEvent("committed", { ...telemetry, state: recorded.state }, ctx.log);
         ctx.log("crawl.agent_reviewed", {
           repo: candidate.repo, provider, mode: settings.reviewMode, ...recorded,
           ...(result.ok ? { decision: result.outcome.decision } : { error: result.error }),
         });
-        return recorded.applied && result.ok && result.outcome.decision === "approve";
-      })();
-      // 이 호출이 도는 동안 다음 후보의 DB 작업을 기다린다. 그 사이 먼저 실패하면 아직 아무도 받지 않은
-      // 거부가 되어 워커 프로세스가 죽는다. 결과는 아래 allSettled가 받으므로 여기서는 받았다고만 표시한다.
-      review.catch(() => {});
-      reviews.push(review);
+      } finally {
+        clearInterval(ownershipPoll);
+        ctx.signal?.removeEventListener("abort", abort);
+        controllers.delete(controller);
+      }
+  };
+  const lanes = Array.from({ length: concurrency }, async () => {
+    try {
+      while (next < candidates.length && admitted < MAX_STARTS && canStart()) {
+        const candidate = candidates[next++];
+        if (visited.has(candidate.id)) continue;
+        visited.add(candidate.id);
+        admitted++;
+        await processCandidate(candidate);
+      }
+    } catch (error) {
+      stopped = true;
+      for (const controller of controllers) controller.abort();
+      throw error;
     }
-  } finally {
-    // 앞에서 예외가 나도 떠 있는 호출은 끝까지 기다린다. 두고 나가면 lease를 놓은 뒤에 기록을 시도한다.
-    // 한 호출이 실패해도 다른 호출의 기록은 그대로 끝난다.
-    settled = await Promise.allSettled(reviews);
-  }
+  });
+  const settled = await Promise.allSettled(lanes);
   const failure = settled.find(result => result.status === "rejected");
   if (failure) throw failure.reason;
+  if (progress && !stopped && !ctx.signal?.aborted && ctx.hasBudget()) {
+    const ready = await listReviewCandidates(settings, 1, { excludeCandidateIds: [...visited], readyOnly: true });
+    if (ready.some(candidate => !visited.has(candidate.id))) return { done: false, continuation: "ready" };
+  }
   return { done: false };
 }
