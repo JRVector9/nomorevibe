@@ -182,10 +182,9 @@ describe("판정 잡", () => {
   });
 
   /**
-   * 승인에서 발행까지 스케줄(5분)을 기다리지 않는다. 다만 후보마다가 아니라 묶음이 끝날 때
-   * 한 번이다 — 후보마다 부르면 잡 행 하나를 두고 경합한다.
+   * 승인에서 발행까지 스케줄(5분)을 기다리지 않는다. 후보 결과와 다음 작업 요청은 같은 트랜잭션이다.
    */
-  it("승인한 묶음은 발행을 한 번만 요청한다", async () => {
+  it("각 승인과 발행 요청을 함께 저장한다", async () => {
     await putDocument({ repo: "someone/one", productUrl: "https://one.test" });
     await putDocument({ repo: "someone/two", productUrl: "https://two.test" });
 
@@ -193,7 +192,7 @@ describe("판정 잡", () => {
 
     expect(await crawl.candidateCounts()).toEqual({ approved: 2 });
     expect(await db.query.jobs.findFirst({ where: eq(jobs.name, "crawl-publish") }))
-      .toMatchObject({ requestedVersion: 1, processedVersion: 0 });
+      .toMatchObject({ requestedVersion: 2, processedVersion: 0 });
   });
 
   it("승인한 것이 없으면 발행을 요청하지 않는다", async () => {
