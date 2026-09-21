@@ -10,7 +10,7 @@ User approved the recommended administrator quality-check pilot, then explicitly
 
 ## Completed / modified files / design
 
-- New branch `feat/laya-quality-audit-pilot` based on `feat/laya-speculation-evaluation` head61f3dac/PR159. New PR should target that branch so only this phase is reviewed. Existing unrelated untracked files preserved.
+- New branch `feat/laya-quality-audit-pilot` based on `feat/laya-speculation-evaluation` head61f3dac/PR159. Code commit `f56046b` PUSHED; draft PR **160** https://github.com/JRVector9/nomorevibe/pull/160 CREATED targeting that branch so only this phase is reviewed. Existing unrelated untracked files preserved.
 - `lib/crawl/laya-quality-audit.ts`: complete matching API response+subject hash checks, installable>=500 scope, unique repos, immutable deterministic seed/take allocation. Lowest software scores select attention candidates; random control sampled independently from entire pool, overlap retained but human sees each item once. Separate source-only blinded HTML: no groups/model scores/first outcomes in DOM/payload. Escaped untrusted source, strict CSP/script hash, no network/write actions, local browser drafts, JSON download with source-review attestation and evidence notes. Source-bound auditId prevents mixing revisions. Annotation summary preserves unknown times, keeps uncertain cases in denominator, reports overlap, no significance/accuracy/speed claims.
 - `scripts/prepare-laya-quality-audit.ts`: offline CLI, input<=2MiB each, requires fresh output directory, outputs0600 index.html/assignment.json/summary.json, sanitized logs. Can re-create exact plan with --annotations to calculate reviewer-supplied outcomes. No DB/API access.
 - Tests2files18new, operations report and measurement.json; plan README updated. Local raw/helper/generated artifacts remain ignored `.crawl-samples/laya-quality-pilot/`.
@@ -30,7 +30,7 @@ User approved the recommended administrator quality-check pilot, then explicitly
 
 ## Remaining / exact commands
 
-Finish scoped docs/secret/diff review and commit/push new branch, create draft PR based on feat/laya-speculation-evaluation. Human must inspect9cards and download annotations to finish the efficacy comparison. Do not call the pilot accurate or faster before that. Operational integration and earlier speculative second review remain deferred. Existing prior PR159 remains separate.
+Scoped docs/secret/diff review, implementation commit/push and draftPR160 creation complete. Check latest GitHub CI separately; no CI pass claimed yet for this new PR. Human must inspect9cards and download annotations to finish the efficacy comparison. Do not call the pilot accurate or faster before that. Operational integration and earlier speculative second review remain deferred. Existing prior PR159 remains separate.
 
 ```sh
 cd /Users/jr/Desktop/projects/nomorevibe
