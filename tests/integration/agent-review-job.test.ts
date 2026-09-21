@@ -64,7 +64,7 @@ it("rejects a held candidate whose refetched body is a docs shell even when the 
   expect(await db.query.jobs.findFirst({ where: eq(jobs.name, "crawl-publish") })).toBeUndefined();
 });
 
-it("records two concurrent model approvals and requests publication once", async () => {
+it("records two concurrent model approvals and transactionally requests second review", async () => {
   await source("maker/one", "https://one.example", { state: "approved", reason: "passed" }, { title: "One", description: "A deployed product" });
   await source("maker/two", "https://two.example", { state: "approved", reason: "passed" }, { title: "Two", description: "A deployed product" });
   let started = 0, release!: () => void;
@@ -83,5 +83,6 @@ it("records two concurrent model approvals and requests publication once", async
   expect(attempts.map(attempt => [attempt.provider, attempt.state])).toEqual([["claude-cli", "succeeded"], ["claude-cli", "succeeded"]]);
   expect(new Set(attempts.map(attempt => attempt.candidateId)).size).toBe(2);
   expect(await db.select().from(crawlCandidates)).toMatchObject([{ state: "approved" }, { state: "approved" }]);
-  expect(await db.query.jobs.findFirst({ where: eq(jobs.name, "crawl-publish") })).toMatchObject({ requestedVersion: 1 });
+  expect(await db.query.jobs.findFirst({ where: eq(jobs.name, "second-review") })).toMatchObject({ requestedVersion: 2 });
+  expect(await db.query.jobs.findFirst({ where: eq(jobs.name, "crawl-publish") })).toBeUndefined();
 });

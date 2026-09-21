@@ -1,6 +1,6 @@
 # PR-02 — 확정 결과의 원자적 다음 단계 요청
 
-제안 브랜치: `perf/review-transactional-handoffs` · 선행: PR-01 · 상태: 미구현.
+제안 브랜치: `perf/review-transactional-handoffs` · 선행: PR-01 · 상태: 구현·로컬 검증 완료, 미배포.
 
 ## 문제와 결과
 
@@ -61,3 +61,7 @@ git diff --check
 ## 배포·롤백
 
 단순 작업 요청만 추가하므로 신구 소비자의 기존 큐/lease 계약과 호환되어야 한다. 각 쓰기 경로의 rollback 테스트와 DB 경합 검증 후 배포한다. 처리 대상·승인 결과·모델 설정이 달라지면 병합하지 않는다. 롤백 시 요청 생산 변경만 되돌리고 남은 요청은 기존 소비자가 재검증 후 처리하게 둔다. 결과 행이나 큐 이력을 삭제하지 않는다.
+
+## 실행 결과
+
+신규 통합 9개(8 RED→9 GREEN), 관련 통합 합계 103개 통과. 1차의 재전달, 요청 실패 시 원자적 롤백, off/observe/enforce, 2차 승인/거절 및 fallback 신호 검증. 기존 발행 관문 17개 포함. 2차 self-request는 lease 행 update lock을 사용하여 병렬 결과 저장의 share→update 교착을 피한다. 스케줄러의 job 순서(first→second→publish)를 유지한다.

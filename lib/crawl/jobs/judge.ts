@@ -6,7 +6,6 @@ import { getSettings } from "@/lib/crawl/settings";
 import { judge, factsFromRepoMeta, pageFactsFromDocument, judgeRevision, type StoppedAt, type Verdict } from "@/lib/crawl/rules";
 import type { CrawlSettings } from "@/lib/crawl/settings-schema";
 import { loadAgentJudgeInput } from "@/lib/crawl/agent-evidence";
-import { requestJob } from "@/lib/jobs/control";
 import { accessFromDocument } from "../rules";
 
 /**
@@ -41,26 +40,17 @@ export async function judgeCrawlDocuments(ctx: JobContext<null>): Promise<JobOut
       return { done: true };
     }
 
-    let approved = 0;
-    try {
-      for (const { document, candidate } of queue) {
-        const verdict = await judgeDocument(document, settings);
-        if (!await crawl.recordAutomaticJudgement({document,settings,candidate,verdict})) {
-          ctx.log("crawl.judgement_changed", {repo:document.repo});
-          return {done:false};
-        }
-        counts[verdict.reason] = (counts[verdict.reason] ?? 0) + 1;
-        judged++;
-        if (verdict.state === "approved") approved++;
-        if (!ctx.hasBudget()) break;
+    for (const { document, candidate } of queue) {
+      const verdict = await judgeDocument(document, settings);
+      if (!await crawl.recordAutomaticJudgement({document,settings,candidate,verdict})) {
+        ctx.log("crawl.judgement_changed", {repo:document.repo});
+        return {done:false};
       }
-    } finally {
-      /**
-       * 승인이 발행까지 스케줄(5분)을 기다리지 않게 한다. 묶음이 끝날 때 한 번만 부른다 —
-       * 후보마다 부르면 잡 행 하나를 두고 경합한다. 승인이 없으면 부르지 않는다.
-       */
-      if (approved > 0) await requestJob("crawl-publish");
+      counts[verdict.reason] = (counts[verdict.reason] ?? 0) + 1;
+      judged++;
+      if (!ctx.hasBudget()) break;
     }
+
   }
 
   // 예산이 끝났을 뿐 큐는 남아 있다 — 다음 틱이 이어받는다

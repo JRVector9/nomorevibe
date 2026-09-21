@@ -1,3 +1,5 @@
+import { emitPipelineEvent } from "@/lib/observability/review-pipeline";
+import { isReviewCandidate } from "./agent-review-contract";
 import { and, asc, desc, eq, inArray, lte, sql } from "drizzle-orm";
 import { isDeepStrictEqual } from "node:util";
 import { db } from "@/lib/db";
@@ -16,7 +18,7 @@ import {
 import { mergeWithDefaults } from "./settings";
 import type { CrawlSettings } from "./settings-schema";
 import { factsFromRepoMeta } from "./rules";
-import { assertJobLease, type JobLease } from "@/lib/jobs/control";
+import { assertJobLease, requestJob, type JobLease } from "@/lib/jobs/control";
 import { README_SAMPLE_VERSION } from "./readme";
 import type { ProductTransaction } from "@/lib/domain/products/generation";
 
@@ -430,7 +432,9 @@ export async function recordAutomaticJudgement(input: {
   document:CrawlDocument; settings:CrawlSettings; candidate:CrawlCandidate|undefined;
   verdict:{state:"approved"|"rejected"|"needs_review";reason:DecisionReason;signals:Record<string,unknown>};
 }):Promise<boolean> {
-  return db.transaction(async tx => {
+  const requests: Awaited<ReturnType<typeof requestJob>>[] = [];
+  let candidateId: number | undefined;
+  const committed = await db.transaction(async tx => {
     const [candidate] = await tx.select().from(crawlCandidates).where(eq(crawlCandidates.repo,input.document.repo)).for("update");
     const [document] = await tx.select().from(crawlDocuments).where(eq(crawlDocuments.id,input.document.id)).for("share");
     const [settingsRow] = await tx.select().from(crawlSettings).where(eq(crawlSettings.id,1)).for("share");
@@ -446,12 +450,25 @@ export async function recordAutomaticJudgement(input: {
       judgedAt:now,updatedAt:now,decidedAt:null};
     if (candidate) {
       await tx.update(crawlCandidates).set(values).where(eq(crawlCandidates.id,candidate.id));
-      return true;
+      candidateId = candidate.id;
+    } else {
+      // A concurrent manual insert wins the absent-row race.
+      const [inserted] = await tx.insert(crawlCandidates).values(values).onConflictDoNothing().returning({id:crawlCandidates.id});
+      if (!inserted) return false;
+      candidateId = inserted.id;
     }
-    // A missing row cannot be locked. A concurrent manual insert wins its unique-key race.
-    const inserted = await tx.insert(crawlCandidates).values(values).onConflictDoNothing().returning({id:crawlCandidates.id});
-    return inserted.length === 1;
+    if (input.settings.enabled && input.settings.reviewMode !== "off" && isReviewCandidate(values as CrawlCandidate))
+      requests.push(await requestJob("crawl-agent-review", tx));
+    if (input.settings.enabled && input.settings.reviewMode !== "enforce" && values.state === "approved")
+      requests.push(await requestJob("crawl-publish", tx));
+    return true;
   });
+  if (committed) {
+    emitPipelineEvent("committed", { stage: "judge", candidateId, state: input.verdict.state });
+    for (const request of requests) emitPipelineEvent("requested", { stage: "judge", candidateId,
+      nextJob: request.job, requestedVersion: request.requestedVersion });
+  }
+  return committed;
 }
 
 export async function listCandidates(

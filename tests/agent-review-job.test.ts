@@ -146,7 +146,7 @@ it("waits for the other review before failing the tick when one record throws", 
   expect(mocks.review).toHaveBeenCalledTimes(2);
   expect(mocks.record.mock.calls.map(call => call[0].candidate.id)).toEqual([1,2]);
 });
-it("requests publication once at the end of a batch with applied approvals", async () => {
+it("leaves handoff to each result transaction without a duplicate batch request", async () => {
   mocks.settings!.reviewMode = "enforce";
   mocks.list.mockResolvedValue([candidate(),{...candidate(),id:2}]);
   const approval = {decision:"approve",reason:"Deployed task tracker",evidenceIds:["product"]};
@@ -155,7 +155,7 @@ it("requests publication once at the end of a batch with applied approvals", asy
   mocks.record.mockResolvedValue({applied:true,state:"succeeded"});
   await reviewCrawlCandidates(context());
   expect(mocks.record).toHaveBeenCalledTimes(2);
-  expect(mocks.requestJob.mock.calls).toEqual([["crawl-publish"]]);
+  expect(mocks.requestJob).not.toHaveBeenCalled();
 });
 it("does not request publication without an applied approval", async () => {
   await reviewCrawlCandidates(context());

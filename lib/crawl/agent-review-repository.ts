@@ -1,3 +1,4 @@
+import { emitPipelineEvent } from "@/lib/observability/review-pipeline";
 import { isDeepStrictEqual } from "node:util";
 import { and, asc, desc, eq, inArray, or, sql, type SQL } from "drizzle-orm";
 import { db } from "@/lib/db";
@@ -318,23 +319,24 @@ export async function recordAgentReview(input: ReviewContext & {
   /** Server-side rules only; never populated from the model response. */
   ruleRejection?: { reason: DecisionReason; existingSlug?: string; existingStatus?: ProductStatus };
 }): Promise<{ applied: boolean; state: "succeeded" | "failed" | "superseded" }> {
-  return db.transaction(async tx => {
+  const requests: Awaited<ReturnType<typeof requestJob>>[] = [];
+  const result = await db.transaction(async tx => {
     const current = await currentReviewInput(tx, input);
     const [attempt] = await tx.select().from(crawlReviewAttempts).where(eq(crawlReviewAttempts.id, input.attempt.id)).for("update");
     const now = input.now ?? new Date();
     const owns = attempt?.state === "running" && attempt.leaseToken === input.lease.token;
     const reusable = attempt?.state === "succeeded";
-    if (!attempt || attempt.candidateId !== input.candidate.id || (!owns && !reusable)) return { applied: false, state: "superseded" };
+    if (!attempt || attempt.candidateId !== input.candidate.id || (!owns && !reusable)) return { applied: false, state: "superseded" as const };
     if (!current || attempt.inputHash !== current.inputHash || attempt.sourceRevisionHash !== current.sourceRevisionHash) {
       if (owns) await tx.update(crawlReviewAttempts).set({ state: "superseded", errorCode: "input_changed", completedAt: now })
         .where(eq(crawlReviewAttempts.id, attempt.id));
-      return { applied: false, state: "superseded" };
+      return { applied: false, state: "superseded" as const };
     }
     if (input.error) {
       if (owns) await tx.update(crawlReviewAttempts).set({ state: "failed", errorCode: input.error.slice(0, 120),
         retryAfter: input.retryAfter ?? new Date(now.getTime() + 60_000), completedAt: now })
         .where(eq(crawlReviewAttempts.id, attempt.id));
-      return { applied: false, state: reusable ? "succeeded" : "failed" };
+      return { applied: false, state: reusable ? "succeeded" as const : "failed" as const };
     }
     const outcome = validateReviewOutcome(current, reusable ? attempt.outcome : input.outcome ?? attempt.outcome);
     const ruleRejection = attempt.provider === "rules" && outcome.decision === "reject" ? input.ruleRejection : undefined;
@@ -352,8 +354,18 @@ export async function recordAgentReview(input: ReviewContext & {
         ...(ruleRejection?.existingSlug ? { existingSlug: ruleRejection.existingSlug, existingStatus: ruleRejection.existingStatus } : {}),
         ...(outcome.decision === "approve" ? {} : { stoppedAt: { rule: "AI 심사", detail: outcome.reason.slice(0, 300) } }) },
     }).where(eq(crawlCandidates.id, input.candidate.id));
-    return { applied, state: "succeeded" };
+    // A replay of an already-applied success must not fan out another request.
+    if (owns || applied && input.candidate.signals?.agentReviewAttemptId !== attempt.id) {
+      if (input.settings.secondReview.enabled && attempt.provider !== "rules")
+        requests.push(await requestJob("second-review", tx));
+      if (outcome.decision === "approve" && !secondGateRequired(input.settings))
+        requests.push(await requestJob("crawl-publish", tx));
+    }
+    return { applied, state: "succeeded" as const };
   });
+  for (const request of requests) emitPipelineEvent("requested", { stage: "first", candidateId: input.candidate.id,
+    firstAttemptId: input.attempt.id, nextJob: request.job, requestedVersion: request.requestedVersion });
+  return result;
 }
 
 export class ReviewApprovalChangedError extends Error {

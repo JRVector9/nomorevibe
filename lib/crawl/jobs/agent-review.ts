@@ -1,6 +1,5 @@
 import { emitPipelineEvent, measureReviewCall } from "@/lib/observability/review-pipeline";
 import type { JobContext, JobOutcome } from "@/lib/jobs/runner";
-import { requestJob } from "@/lib/jobs/control";
 import { findRepositoryProduct } from "@/lib/domain/products/repository";
 import { accessFromDocument } from "../rules";
 import { loadReviewDocument } from "./review-document";
@@ -47,7 +46,6 @@ export async function reviewCrawlCandidates(ctx: JobContext<null>): Promise<JobO
   /** 외부 심사마다 enforce에서 승인을 후보에 반영했는지 */
   const reviews: Promise<boolean>[] = [];
   let settled: PromiseSettledResult<boolean>[] = [];
-  let approved = 0;
 
   try {
     for (const candidate of candidates) {
@@ -96,7 +94,6 @@ export async function reviewCrawlCandidates(ctx: JobContext<null>): Promise<JobO
         const recorded = await recordAgentReview({ ...context, attempt: claim.attempt, outcome,
           ruleRejection: hardReason ? { reason: hardReason, ...(existing ? { existingSlug: existing.slug, existingStatus: existing.status } : {}) } : undefined });
         if (recorded.state !== "superseded") emitPipelineEvent("committed", { ...telemetry, state: recorded.state }, ctx.log);
-        if (recorded.applied && outcome?.decision === "approve") approved++;
         ctx.log("crawl.agent_reviewed", { repo: candidate.repo, provider, reused: claim.kind === "reused", ...recorded });
         continue;
       }
@@ -140,10 +137,6 @@ export async function reviewCrawlCandidates(ctx: JobContext<null>): Promise<JobO
     // 한 호출이 실패해도 다른 호출의 기록은 그대로 끝난다.
     settled = await Promise.allSettled(reviews);
   }
-  approved += settled.filter(result => result.status === "fulfilled" && result.value).length;
-  // 승인된 후보가 발행 잡의 5분 주기를 기다리지 않게 배치 끝에 한 번 알린다. 요청은 신호일 뿐이라
-  // 한 번이면 이번 배치의 승인이 모두 실린다. observe는 발행 조건을 바꾸지 않으므로 후보에 반영된 승인만 센다.
-  if (approved) await requestJob("crawl-publish");
   const failure = settled.find(result => result.status === "rejected");
   if (failure) throw failure.reason;
   return { done: false };
