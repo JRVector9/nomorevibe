@@ -1,3 +1,9 @@
+# Phase 05 update — dedicated text worker implemented
+
+Branch perf/isolate-text-worker; phase04 commit4d79a0f. text owns reason-translate+crawl-tagline serially; publisher only crawl-publish. Catalog/worker parser/supervisor180s/pool3/operations role+UI label/Compose/environment template/runbook wired. Existing translation55s, tagline default25s unchanged. 2new tests RED→GREEN, related7files36PASS, tscPASS. Phase04 final type passed; whitespace EOF warning fixed here. No Dokploy or production environment changed. Phase06 remains full regression, isolated worker container health, safety review, docs and stacked PRs.
+
+---
+
 # Phase 04 update — text result fencing implemented
 
 Branch fix/fence-text-job-results, prior phase03 commit927fd03. Automatic tagline writes now ONLY through recordTaglineResult(task,lease,result): exact candidate/document/written snapshot compare under locks, absent-row conditional upsert cannot overwrite manual insert, success/failure/reuse protected, result+release+publish request+lease assert atomic. Removed unsafe automatic functions; two publication tests now seed rows directly. Worker translation wrapper mandatorylease, HTTP/search API unchanged. Both text workers pass AbortSignal, suppress writes after shutdown, wait for started lanes before throwing.

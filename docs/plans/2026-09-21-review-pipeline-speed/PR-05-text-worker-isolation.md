@@ -1,6 +1,6 @@
 # PR-05 — 발행과 번역·소개 작업 분리
 
-제안 브랜치: `perf/isolate-text-worker` · 선행: PR-04 · 상태: 미구현.
+제안 브랜치: `perf/isolate-text-worker` · 선행: PR-04 · 상태: 코드·Compose·운영 설정 예제 구현, 로컬 검증 완료. 운영 배포 전.
 
 ## 문제와 결과
 
@@ -60,3 +60,7 @@ npm run build
 ## 롤백
 
 text worker를 drain/중지하고 기존 publisher 역할 구성을 복구한다. 기존 이름의 잡 요청·번역·소개 이력은 그대로 이어받는다. 건강한 publisher를 두 개 띄워 소유권 혼합 상태로 롤백하지 않는다. 새 worker를 만들 수 없는 환경이면 이 PR은 배포 준비 미완료로 표시하고 다른 역할에 임의로 작업을 밀어 넣지 않는다.
+
+## 실행 결과
+
+text 전용 소유권·파서·pool3·supervisor180초·instance/health·운영 화면 라벨을 연결했다. 소유권/실행 차단 테스트2 RED→GREEN, 관련7파일36개와 타입 검사 통과. 번역 대기 중 publisher가 먼저 발행 작업을 시작하고 text의 두 작업은 직렬임을 확인. Compose 및 운영 overlay 예제/배포 순서/합산 pool27(웹1),35(웹2 기본8),31(웹2 각6) 문서화. 실제 Dokploy 구성 변경·배포는 하지 않았으며 컨테이너 기동 검증은 PR06에서 실시한다.

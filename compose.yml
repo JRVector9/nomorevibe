@@ -180,6 +180,18 @@ services:
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
     mem_limit: 1536m
 
+  text:
+    <<: *worker
+    command: ["node", "--import", "tsx", "scripts/worker-supervisor.ts", "--role=text"]
+    environment:
+      <<: *worker-environment
+      WORKER_ROLE: text
+      SERVICE_INSTANCE_ID: local-text
+      DB_POOL_MAX: "3"
+      WORKER_JOB_TIMEOUT_SECONDS: "180"
+      ABCLLM_API_KEY: ${ABCLLM_API_KEY:-}
+    mem_limit: 512m
+
   connect-agent:
     <<: *worker
     image: nomorevibe-connect-agent:${RELEASE_TAG:-local}

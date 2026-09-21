@@ -45,8 +45,7 @@ export function packBatch<T extends { body: string }>(items: T[]): T[] {
 /**
  * 사유 번역. 심사 화면의 영어 사유를 미리 한국어로 옮겨 둔다 — 느려도 매 틱 조금씩 이어 간다.
  *
- * 발행 워커에서 돈다. 발행은 5분에 한 번이라 워커가 대부분 비어 있고, 심사 워커에 두면
- * AI 심사·2차 심사와 차례를 나눠 쓰느라 둘 다 느려진다(워커는 잡을 하나씩 돈다).
+ * 전용 text 워커에서 번역·소개 생성이 차례로 돈다. 발행 워커는 이 호출을 기다리지 않는다.
  */
 export async function translateReasons(ctx: JobContext<null>): Promise<JobOutcome<null>> {
   if (!process.env.ABCLLM_API_KEY?.trim()) {

@@ -4,6 +4,7 @@ export const SERVICE_ROLES = [
   "crawler",
   "reviewer",
   "publisher",
+  "text",
   "maintenance",
   "connect-agent",
 ] as const;
