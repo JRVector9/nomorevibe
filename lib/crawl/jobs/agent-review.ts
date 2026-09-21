@@ -1,3 +1,4 @@
+import { emitPipelineEvent, measureReviewCall } from "@/lib/observability/review-pipeline";
 import type { JobContext, JobOutcome } from "@/lib/jobs/runner";
 import { requestJob } from "@/lib/jobs/control";
 import { findRepositoryProduct } from "@/lib/domain/products/repository";
@@ -81,6 +82,10 @@ export async function reviewCrawlCandidates(ctx: JobContext<null>): Promise<JobO
         ctx.log("crawl.agent_review_skipped", { repo: candidate.repo, reason: claim.reason });
         continue;
       }
+      const telemetry = { stage: "first" as const, candidateId: candidate.id, firstAttemptId: claim.attempt.id,
+        sourceRevisionHash: input.sourceRevisionHash, provider, model, job: lease.name, runId: String(lease.requestedVersion) };
+      if (claim.kind === "reused") emitPipelineEvent("reused", telemetry, ctx.log);
+      if (claim.kind === "claimed") emitPipelineEvent("queue", { ...telemetry, waitMs: Date.now() - (candidate.updatedAt ?? candidate.judgedAt).getTime() }, ctx.log);
       if (hardReason || evidenceHold || claim.kind === "reused") {
         const outcome: ReviewOutcome | undefined = hardReason ? {
           decision: "reject", reason: `기존 등재 규칙에 해당합니다: ${hardReason}`, evidenceIds: ["product"],
@@ -90,6 +95,7 @@ export async function reviewCrawlCandidates(ctx: JobContext<null>): Promise<JobO
         } : claim.attempt.outcome ?? undefined;
         const recorded = await recordAgentReview({ ...context, attempt: claim.attempt, outcome,
           ruleRejection: hardReason ? { reason: hardReason, ...(existing ? { existingSlug: existing.slug, existingStatus: existing.status } : {}) } : undefined });
+        if (recorded.state !== "superseded") emitPipelineEvent("committed", { ...telemetry, state: recorded.state }, ctx.log);
         if (recorded.applied && outcome?.decision === "approve") approved++;
         ctx.log("crawl.agent_reviewed", { repo: candidate.repo, provider, reused: claim.kind === "reused", ...recorded });
         continue;
@@ -107,9 +113,9 @@ export async function reviewCrawlCandidates(ctx: JobContext<null>): Promise<JobO
          */
         const ceiling = reviewProvider === "abcllm" ? REVIEW_GATEWAY_TIMEOUT_MS : REVIEW_CLI_TIMEOUT_MS;
         const options = { model, timeoutMs: Math.max(1, Math.min(ceiling, remaining())), signal: controller.signal };
-        const result = await (reviewProvider === "abcllm"
+        const result = await measureReviewCall(telemetry, () => (reviewProvider === "abcllm"
           ? reviewWithGateway(input, options)
-          : reviewWithAgent(input, options)).finally(() => clearInterval(ownershipPoll));
+          : reviewWithAgent(input, options)), ctx.log).finally(() => clearInterval(ownershipPoll));
         const recorded = await recordAgentReview({
           ...context, attempt: claim.attempt,
           ...(result.ok ? { outcome: result.outcome, usage: result.usage } : {
@@ -117,6 +123,7 @@ export async function reviewCrawlCandidates(ctx: JobContext<null>): Promise<JobO
             retryAfter: new Date(Date.now() + Math.min(30 * 60_000, 60_000 * 2 ** Math.max(0, claim.attempt.attemptNumber - 1))),
           }),
         });
+        if (recorded.state !== "superseded") emitPipelineEvent("committed", { ...telemetry, state: recorded.state }, ctx.log);
         ctx.log("crawl.agent_reviewed", {
           repo: candidate.repo, provider, mode: settings.reviewMode, ...recorded,
           ...(result.ok ? { decision: result.outcome.decision } : { error: result.error }),

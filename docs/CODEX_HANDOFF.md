@@ -1,3 +1,25 @@
+# Active handoff — review pipeline speed implementation (2026-09-21)
+
+Objective: implement six PR phases in docs/plans/2026-09-21-review-pipeline-speed. User explicitly approved proceeding. No model/prompt/approval-policy changes, no LAYA runtime integration. No prohibited skills/subagents. execute-plan and TDD applied; Next Vitest/env guides read.
+
+Phase 01: added safe allowlisted structured model/reuse/commit/queue telemetry, monotonic adapter timing, offline JSONL report. Adapter timing includes HTTP/CLI response parsing, excludes preparation/save; clock is application UTC against DB queue timestamps, negative waits excluded. No production speed claim. Branch perf/review-stage-observability from origin/main af50608, separate from LAYA draft PR159/160. Copied six existing plan documents from experimental branch. Prior private LAYA config remains /Users/jr/.config/nomorevibe/laya.env mode0600; never print key or load it for tests.
+
+Modified: lib/observability/review-pipeline.ts, scripts/report-review-latency.ts, first/second/publish handlers, tests/review-pipeline-observability.test.ts, plan docs, handoff.
+
+Executed: telemetry TDD 3 expected assertion failures against stub -> 3 PASS; focused 4 files 41 PASS; dedicated loopback nomorevibe_test publication gate 17 PASS; npx tsc --noEmit PASS. Initial missing-module failure replaced with stub for proper assertion RED. Existing expected lease-loss logs and Vite warning only.
+
+Remaining: transactional handoffs; slot refill/ready continuation; text result CAS/lease fencing; separate text role/config; comprehensive regression and local worker smoke. No production settings/deployment changed. PR01 telemetry receives additional transactional commit/request events in PR02/04. Offline report intentionally does not accept live DB credentials; DB cohort comparisons remain explicit read-only operations work.
+
+Next commands:
+```sh
+npx vitest run tests/review-pipeline-observability.test.ts tests/agent-review-job.test.ts tests/second-review-job.test.ts
+TEST_DATABASE_URL=postgres://nomorevibe:nomorevibe@127.0.0.1:55435/nomorevibe_test npm run test:integration -- tests/integration/review-publication-gate.test.ts
+npx tsc --noEmit
+git diff --check
+```
+
+---
+
 # Active handoff — crawl identity and review criteria audit COMPLETE (2026-09-21 09:57 KST)
 
 ## Objective / completed work

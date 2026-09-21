@@ -1,3 +1,4 @@
+import { emitPipelineEvent, measureReviewCall } from "@/lib/observability/review-pipeline";
 import type { JobContext, JobOutcome } from "@/lib/jobs/runner";
 import { getSettings } from "@/lib/crawl/settings";
 import { reviewWithAgent, REVIEW_CLI_TIMEOUT_MS } from "@/lib/crawl/agent-review";
@@ -59,9 +60,13 @@ export async function secondReviewCandidates(ctx: JobContext<null>): Promise<Job
       }
       // 멈추라는 신호를 그대로 넘긴다 — 배포 때 진행 중인 호출이 바로 끊겨야 잠금을 놓고 나갈 수 있다
       const callStartedAt = Date.now();
-      const result = provider === "abcllm"
-        ? await reviewWithGateway(input, { model, timeoutMs: limit, signal: ctx.signal })
-        : await reviewWithAgent(input, { model, timeoutMs: limit, signal: ctx.signal });
+      const telemetry = { stage: "second" as const, candidateId: row.candidateId, secondReviewId: row.id,
+        firstAttemptId: row.firstAttemptId ?? undefined, generationKey: row.generationKey,
+        provider, model, job: ctx.lease?.name, runId: String(ctx.lease?.requestedVersion) };
+      if (row.createdAt) emitPipelineEvent("queue", { ...telemetry, waitMs: Date.now() - row.createdAt.getTime() }, ctx.log);
+      const result = await measureReviewCall(telemetry, () => provider === "abcllm"
+        ? reviewWithGateway(input, { model, timeoutMs: limit, signal: ctx.signal })
+        : reviewWithAgent(input, { model, timeoutMs: limit, signal: ctx.signal }), ctx.log);
       if (!result.ok) {
         // 멈추라고 해서 끊긴 것은 실패가 아니다 — 그대로 두면 다음 회차가 처음부터 본다
         if (result.error === "cancelled" || ctx.signal?.aborted) { deferred += 1; continue; }
