@@ -8,15 +8,22 @@ import { pendingProfiles, recordProfileResult } from "@/lib/domain/products/sear
  * text 워커에서 돈다. 사유 번역·소개 짓기와 같은 자리다 — 셋 다 게이트웨이에 글을 짓게 하는 일이고,
  * 발행·심사 워커의 차례를 뺏지 않게 따로 뒀다(2026-09-21 text 역할 분리).
  *
- * 공개분 1만8천 건을 처음 채우는 데 오래 걸린다(한 건 7초 안팎, 동시 셋). 소개가 한 줄뿐인 제품부터 짓는다.
+ * 공개분 1만8천 건을 처음 채우는 데 오래 걸린다(한 건 7초 안팎, 한 번에 하나). 소개가 한 줄뿐인 제품부터 짓는다.
+ *
+ * 이 잡은 1차 심사에 게이트웨이를 양보한다. 둘 다 같은 gpt-oss 를 쓰고, 심사는 24초에 끊기며 세 번 끊기면
+ * 자동 심사에서 빠진다. 2026-09-23 게이트웨이가 밀렸을 때(한 줄 응답 30~90초) 동시 셋으로 돌던 이 잡이
+ * 심사 호출 앞에 줄을 세웠고, 그날 심사 후보 11건이 그렇게 빠졌다. 정체 자체는 이 잡을 멈춘 뒤에도 이어졌다 —
+ * 원인이 아니라 보태는 쪽이었다.
  */
 
 /** 한 번에 집는 수 */
 const BATCH = 12;
-/** 게이트웨이를 1·2차 심사와 같이 쓴다 — 셋을 넘기면 심사가 밀린다(심사 동시 4가 천장이었다) */
-const CONCURRENCY = 3;
+/** 심사 호출 앞에 이 잡의 호출이 하나를 넘게 서지 않게 */
+const CONCURRENCY = 1;
 /** 한 번 부르는 데 둘 시간 */
 const CALL_MS = 45_000;
+/** 한 건이 이보다 오래 걸리면 게이트웨이가 밀린 것이다(평소 7초 안팎) — 이번 틱을 접고 심사에 자리를 준다 */
+export const SLOW_CALL_MS = 20_000;
 /** 틱 예산(worker.ts jobRunOptions 55초)보다 조금 짧게 */
 const TICK_MS = 54_000;
 /** 이만큼 남아 있을 때만 새로 부른다 */
@@ -60,8 +67,10 @@ export async function writeSearchProfiles(ctx: JobContext<null>): Promise<JobOut
               reused++;
               continue;
             }
+            const calledAt = Date.now();
             const result = await writeKeywords(evidence, { signal, timeoutMs: Math.max(1_000, Math.min(CALL_MS, remaining() - 1_000)) });
             if (signal.aborted) return;
+            if (Date.now() - calledAt >= SLOW_CALL_MS) blocked = "slow";
             if (!result.ok) {
               if (!await recordProfileResult(task, lease, { kind: "failure", error: result.error })) return;
               failed++;

@@ -3,7 +3,7 @@ import { eq, sql } from "drizzle-orm";
 
 const { db } = await import("@/lib/db");
 const { jobs, products, productSearchProfiles, textTranslations } = await import("@/lib/db/schema");
-const { writeSearchProfiles } = await import("@/lib/jobs/products/search-profile");
+const { SLOW_CALL_MS, writeSearchProfiles } = await import("@/lib/jobs/products/search-profile");
 const { refreshProductSearchDocuments } = await import("@/lib/jobs/products/search-refresh");
 const { runJob } = await import("@/lib/jobs/runner");
 const { listProducts } = await import("@/lib/domain/products/repository");
@@ -41,7 +41,7 @@ beforeEach(async () => {
   gateway.mockReset();
   vi.stubGlobal("fetch", gateway);
 });
-afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
+afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
 
 describe("검색 키워드 잡", () => {
   it("키워드를 지어 원본과 색인용 사본을 같이 적는다", async () => {
@@ -95,6 +95,22 @@ describe("검색 키워드 잡", () => {
     expect(profile.retryAt).not.toBeNull();
     const [row] = await db.select({ keywords: products.searchKeywords }).from(products).where(eq(products.id, id));
     expect(row.keywords).toBeNull();
+  });
+
+  it("한 건이 오래 걸리면 그 틱을 접는다 — 게이트웨이가 밀릴 때 1차 심사에 자리를 준다", async () => {
+    await seed("first");
+    await seed("second");
+    vi.useFakeTimers({ toFake: ["Date"] });
+    gateway.mockImplementation(async () => {
+      vi.setSystemTime(Date.now() + SLOW_CALL_MS);
+      return answer(["grocery list"], ["장보기"]);
+    });
+
+    expect(await tick()).toMatchObject({ status: "completed", done: true });
+
+    // 받은 답은 버리지 않고, 다음 것은 다음 틱으로 미룬다
+    expect(gateway).toHaveBeenCalledTimes(1);
+    expect(await db.select().from(productSearchProfiles)).toHaveLength(1);
   });
 
   it("공개되지 않은 제품은 짓지 않는다", async () => {
