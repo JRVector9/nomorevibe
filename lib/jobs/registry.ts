@@ -8,6 +8,7 @@ import { secondReviewCandidates } from "@/lib/crawl/jobs/second-review";
 import { auditPublishedProducts } from "@/lib/crawl/jobs/product-audit";
 import { translateReasons } from "@/lib/crawl/jobs/translate-reasons";
 import { writeTaglines } from "@/lib/crawl/jobs/tagline";
+import { writeSearchProfiles } from "@/lib/jobs/products/search-profile";
 import { publishCandidates } from "@/lib/crawl/jobs/publish";
 import { pingProducts } from "@/lib/jobs/products/uptime";
 import { rollupClicks } from "@/lib/jobs/products/click-rollup";
@@ -62,6 +63,8 @@ export const JOBS: Record<string, AnyJob> = {
   "reason-translate": translateReasons,
   /** 소개가 없어 멈춘 후보의 한 줄 소개를 짓는다 — 목록에는 지은 것이라고 밝히고 올린다 */
   "crawl-tagline": writeTaglines,
+  /** 공개 제품마다 한·영 검색 키워드를 적는다 */
+  "product-search-profile": writeSearchProfiles,
 
   /** 등재된 제품이 아직 떠 있는지 확인한다 (기록만 하고 목록은 건드리지 않는다) */
   "uptime-ping": pingProducts,
