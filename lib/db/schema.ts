@@ -124,6 +124,15 @@ export const products = pgTable("products", {
    */
   searchReadme: text("search_readme"),
   /**
+   * 검색 키워드 — 모델이 제품의 글(이름·소개·페이지·README)을 읽고 사람들이 칠 말로 적은 것, 한·영 둘 다.
+   * product_search_profiles 가 원본이고 이것은 색인용 사본이다. 메이커가 쓰지 않은 말("가계부" ↔
+   * "expense tracker")과 영어로 한국어 제품·한국어로 영어 제품을 잇는다. 모델이 쓴 말이라 이름·소개(A·B)보다
+   * 낮은 무게(C)로 넣는다 — 잘못 들어간 키워드가 메이커의 말을 앞지르지 못하게.
+   */
+  searchKeywords: text("search_keywords"),
+  /** 카테고리의 영문 키와 한국어 이름("Games 게임") — "체스 게임"의 "게임"이 제품 글에 없어도 잇는다 */
+  searchCategory: text("search_category"),
+  /**
    * 검색 문서. 무게는 프로드 10,751건으로 확인한 것(2026-09-18):
    *   A 이름·토픽 · B 태그라인·소개 · C 식별자(슬러그·레포·신고된 제작 도구) · D 본문 앞 2,000자
    *
@@ -150,7 +159,9 @@ export const products = pgTable("products", {
       coalesce(replace(regexp_replace(repo_url, '^https?://[^/]+/', ''), '/', ' '), '') || ' ' ||
       case when source <> 'crawler' or claimed_at is not null then coalesce(builder, '') else '' end), 'C') ||
     setweight(to_tsvector('english', left(coalesce(search_page_text, ''), 2000)), 'D') ||
-    setweight(to_tsvector('english', left(coalesce(search_readme, ''), 2000)), 'D')`),
+    setweight(to_tsvector('english', left(coalesce(search_readme, ''), 2000)), 'D') ||
+    setweight(to_tsvector('english', coalesce(search_keywords, '')), 'C') ||
+    setweight(to_tsvector('english', coalesce(search_category, '')), 'C')`),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 }, (table) => [
@@ -302,6 +313,29 @@ export const searchQueries = pgTable(
 );
 
 export type SearchQueryLog = typeof searchQueries.$inferSelect;
+
+/**
+ * 검색 키워드의 원본 — 제품마다 모델이 적은 한·영 키워드와, 그때 본 글의 해시.
+ *
+ * 2026-09-23 표본 50건으로 고른 방식: 키워드만(요약·할 일 문장 없이), 모델은 gpt-oss-120b. 요약까지 쓰면
+ * 한 건 12초, 키워드만이면 7초이고 검색에 필요한 말은 다 들어 있었다. qwen 은 짧은 판에서 한글을 망쳤다
+ * ("블라보어"·"에이저"). 키워드는 products.search_keywords 로 옮겨 색인한다.
+ */
+export const productSearchProfiles = pgTable("product_search_profiles", {
+  productId: integer("product_id").primaryKey().references(() => products.id, { onDelete: "cascade" }),
+  keywordsEn: jsonb("keywords_en").$type<string[]>().notNull().default([]),
+  keywordsKo: jsonb("keywords_ko").$type<string[]>().notNull().default([]),
+  model: varchar("model", { length: 160 }).notNull().default(""),
+  /** 지을 때 본 글의 해시 — 글이 바뀌어도 30일은 다시 짓지 않는다(동적 페이지가 매번 바뀌어 헛돌지 않게) */
+  sourceHash: varchar("source_hash", { length: 64 }).notNull(),
+  attempts: integer("attempts").notNull().default(0),
+  errorCode: varchar("error_code", { length: 60 }),
+  retryAt: timestamp("retry_at"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+export type ProductSearchProfile = typeof productSearchProfiles.$inferSelect;
 
 export const visitCollectionState = pgTable("visit_collection_state", {
   id: integer("id").primaryKey().default(1),
