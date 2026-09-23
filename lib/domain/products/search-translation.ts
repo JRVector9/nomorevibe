@@ -4,7 +4,7 @@ import { products, textTranslations } from "@/lib/db/schema";
 import { textHash, TRANSLATE_MODEL, translateQueryToEnglish } from "@/lib/crawl/translate";
 import { recordTranslations } from "@/lib/crawl/translations";
 import { logger } from "@/lib/observability/logger";
-import { planTerms, productSearchPredicate, type SearchPlan, type SearchQuery } from "./search";
+import { planTerms, productSearchPredicate, RELAX_MIN_TERMS, type SearchPlan, type SearchQuery } from "./search";
 
 /**
  * 한국어 검색어를 영어 낱말로 바꿔 한 번 더 찾는다.
@@ -64,7 +64,7 @@ async function cachedTranslation(hash: string): Promise<string | null> {
   return row?.translated ?? null;
 }
 
-/** 모든 낱말로 이만큼도 안 나오면 넓힌다(절반 이상 맞는 것까지) */
+/** 모든 낱말로 이만큼도 안 나오면 넓힌다(하나만 빠진 것까지) */
 const FEW_HITS = 5;
 
 /** 질의문의 어간 — 색인과 같은 영어 분석기로 뽑는다. 불용어·구두점은 여기서 빠진다 */
@@ -82,7 +82,7 @@ async function lexemesOf(text: string): Promise<string[]> {
 export async function planSearch(texts: readonly string[]): Promise<SearchPlan> {
   const terms = await Promise.all(texts.map(async (text) => planTerms(await lexemesOf(text))));
   const strict: SearchPlan = { kind: "plan", texts, terms, mode: "all" };
-  if (!terms.some((list) => list.length >= 2)) return strict;
+  if (!terms.some((list) => list.length >= RELAX_MIN_TERMS)) return strict;
   return await publicHits(strict) >= FEW_HITS ? strict : { ...strict, mode: "most" };
 }
 
