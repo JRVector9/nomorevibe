@@ -100,7 +100,8 @@ export async function translateToKorean(texts: string[], timeoutMs: number, requ
  * 첫 판은 검색이 낱말을 전부 AND 로 묶던 때라 "어느 설명에나 나올 말만" 적게 했더니 "코딩 에이전트 비용 추적"→
  * coding cost tracker 처럼 정답을 가르는 말을 버렸다. 개념을 다 담게만 하면 이번엔 글자 그대로 옮겨 흔한 말을
  * 잃었다("어린이집 관리"→childcare management, daycare 를 놓침). 둘을 한 줄로 다 맞출 수 없어 둘 다 받아
- * 원문과 함께 세 질의문으로 찾는다 — 검색은 질의문을 OR 로 묶고 점수를 더하니 둘 다 맞는 제품이 앞이다.
+ * 원문과 함께 세 질의문으로 찾는다. 두 표현은 같은 뜻이라 한 묶음이다 — 순위는 그중 잘 맞는 하나만 센다
+ * (productSearchRank).
  * 질의만 받으면 동음이의를 틀린다("식물 병"→bottle) — 무엇을 모은 목록인지 알려 준다.
  * 예시는 평가 질의(scripts/search-judged.ts)와 겹치지 않게 둔다.
  */

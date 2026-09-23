@@ -52,9 +52,9 @@ export type SearchPlan = {
 };
 
 /**
- * 찾을 말 — 사용자가 친 것 하나, 한국어 번역이 붙었으면 둘. 짜 둔 계획이면 그것.
+ * 찾을 말 — 사용자가 친 것 하나, 한국어 번역이 붙었으면 그 표현들까지. 짜 둔 계획이면 그것.
  *
- * 둘일 때는 OR 다. 번역한 말로 갈아 끼우지 않고 더한다 — 원문으로 이미 맞은 몇 건
+ * 여럿일 때는 OR 다. 번역한 말로 갈아 끼우지 않고 더한다 — 원문으로 이미 맞은 몇 건
  * (소개에 한글이 있는 행이 3%)을 번역 결과가 밀어내면 그만큼 잃는 것이다.
  */
 export type SearchQuery = string | readonly string[] | SearchPlan;
@@ -187,7 +187,8 @@ export function productSearchRank(query: SearchQuery): SQL<number> {
     if (!terms.length) return [];
     const exact = tsq(terms.map((t) => t.exact), " & ");
     const name = text.trim().toLowerCase();
-    return [{ group: query.groups?.[index] ?? index, score: sql`(
+    // 묶음 번호가 없는 질의문은 저만의 묶음 — 음수라 주어진 번호(0 이상)와 겹치지 않는다
+    return [{ group: query.groups?.[index] ?? -1 - index, score: sql`(
       coalesce(ts_rank_cd(${products.searchVector}, ${tsq(terms.map((t) => t.loose), " | ")}, 1), 0)
       + case when ${products.searchVector} @@ ${exact} then coalesce(ts_rank(${products.searchVector}, ${exact}), 0) else 0 end
       + ${query.mode === "most" ? sql`10 * ${coverage(terms)}::float4 / ${terms.length}` : sql`0`}
