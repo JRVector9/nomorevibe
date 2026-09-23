@@ -83,6 +83,11 @@ async function lexemesOf(text: string): Promise<string[]> {
  *
  * 넓히는 것은 좁을 때만이다. "merge pdf" 처럼 넉넉히 맞는 검색까지 넓히면 "merge"만 맞는 것이 섞여
  * 흐려진다. 낱말이 하나뿐이면 넓힐 것이 없다.
+ *
+ * 좁은지는 계획 전체의 결과로 본다. 그래서 번역의 짧은 표현("interior estimate")이 몇 건을 채우면 원문과 긴
+ * 표현도 넓히지 않는다(한국어 평가 질의 26개 중 3개). 원문·번역 묶음마다 따로 넓혀 봤더니(2026-09-24) 넓힌
+ * 묶음만 맞은 비율 가산(×10)을 받아, 원문 낱말 몇 개만 걸린 한국어 페이지가 영어로 다 맞은 정답을 눌렀다
+ * ("코딩 에이전트 비용 추적" 1위가 취업 준비 도구). 가산을 모두에 주면 더 나빴다. 넓히기와 가산은 함께 다시 짠다.
  */
 export async function planSearch(texts: readonly string[]): Promise<SearchPlan> {
   const terms = await Promise.all(texts.map(async (text) => planTerms(await lexemesOf(text))));
