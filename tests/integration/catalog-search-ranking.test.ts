@@ -4,6 +4,7 @@ import { db } from "@/lib/db";
 import { crawlCandidates, crawlDocuments, products, textTranslations } from "@/lib/db/schema";
 import { listProducts } from "@/lib/domain/products/repository";
 import { normalizeQuery, resolveSearchQuery } from "@/lib/domain/products/search-translation";
+import { searchQueries } from "@/lib/domain/products/search";
 import { refreshProductSearchDocuments } from "@/lib/jobs/products/search-refresh";
 import { textHash } from "@/lib/crawl/translate";
 import { ensureSchema, resetTables } from "./setup";
@@ -106,7 +107,8 @@ it("번역이 안 되면 친 그대로 찾는다 — 오류 화면이 되지 않
 
   const resolved = await resolveSearchQuery("PDF 합치는 도구");
   expect(resolved.translated).toBe(null);
-  expect(resolved.queries).toEqual(["PDF 합치는 도구"]);
+  // 친 그대로 한 줄만 찾는다(번역한 말이 붙지 않는다)
+  expect(searchQueries(resolved.queries)).toEqual(["PDF 합치는 도구"]);
   // 실패도 남겨 둔다 — 같은 말로 매번 다시 부르지 않게
   const [row] = await db.select().from(textTranslations)
     .where(and(eq(textTranslations.sourceHash, textHash(normalizeQuery("PDF 합치는 도구"))), eq(textTranslations.targetLang, "en")));

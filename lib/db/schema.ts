@@ -118,6 +118,12 @@ export const products = pgTable("products", {
   searchTopics: text("search_topics"),
   searchPageText: text("search_page_text"),
   /**
+   * 저장소 README 앞부분 — 심사용으로 받아 둔 것(crawl_documents.page_meta->>'readmeSample')을 옮겨 적는다.
+   * 공개분의 31%가 200자 넘게 갖고 있고, 페이지가 JS 로만 그려져 본문이 비어 있는 제품은 이것만이
+   * "무엇인지"를 말한다(2026-09-23 프로드). 설치 명령·코드가 섞여 있어 가장 낮은 무게(D)로 넣는다.
+   */
+  searchReadme: text("search_readme"),
+  /**
    * 검색 문서. 무게는 프로드 10,751건으로 확인한 것(2026-09-18):
    *   A 이름·토픽 · B 태그라인·소개 · C 식별자(슬러그·레포·신고된 제작 도구) · D 본문 앞 2,000자
    *
@@ -143,7 +149,8 @@ export const products = pgTable("products", {
       coalesce(regexp_replace(repo_url, '^https?://[^/]+/', ''), '') || ' ' ||
       coalesce(replace(regexp_replace(repo_url, '^https?://[^/]+/', ''), '/', ' '), '') || ' ' ||
       case when source <> 'crawler' or claimed_at is not null then coalesce(builder, '') else '' end), 'C') ||
-    setweight(to_tsvector('english', left(coalesce(search_page_text, ''), 2000)), 'D')`),
+    setweight(to_tsvector('english', left(coalesce(search_page_text, ''), 2000)), 'D') ||
+    setweight(to_tsvector('english', left(coalesce(search_readme, ''), 2000)), 'D')`),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 }, (table) => [

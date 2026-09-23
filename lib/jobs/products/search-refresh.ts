@@ -4,7 +4,7 @@ import { SEARCH_PAGE_TEXT_CHARS } from "@/lib/domain/products/search";
 import type { JobContext, JobOutcome } from "@/lib/jobs/runner";
 
 /**
- * 검색 문서 채우기 — products.search_topics · search_page_text 를 원본과 맞춘다.
+ * 검색 문서 채우기 — products.search_topics · search_page_text · search_readme 를 원본과 맞춘다.
  *
  * 토픽(crawl_documents.repo_meta->'topics')과 배포 페이지 본문(page_meta->>'textSample')은
  * products 에 없다. 생성 컬럼 search_vector 는 같은 행만 볼 수 있어 저 둘을 옮겨 적어야 하고,
@@ -28,21 +28,24 @@ const TOPICS = sql`case when jsonb_typeof(d.repo_meta -> 'topics') = 'array'
   else null end`;
 
 const PAGE_TEXT = sql`left(d.page_meta ->> 'textSample', ${SEARCH_PAGE_TEXT_CHARS})`;
+/** README 앞부분 — 심사용으로 받아 둔 것. 본문과 같은 길이만 적는다 */
+const README = sql`nullif(left(d.page_meta ->> 'readmeSample', ${SEARCH_PAGE_TEXT_CHARS}), '')`;
 
 export async function refreshProductSearchDocuments(ctx: JobContext<null>): Promise<JobOutcome<null>> {
   const rows = await db.execute<{ slug: string }>(sql`
     with stale as (
-      select p.id, ${TOPICS} as topics, ${PAGE_TEXT} as page_text
+      select p.id, ${TOPICS} as topics, ${PAGE_TEXT} as page_text, ${README} as readme
         from products p
         join crawl_candidates c on c.published_slug = p.slug
         join crawl_documents d on d.repo = c.repo
        where p.search_topics is distinct from ${TOPICS}
           or p.search_page_text is distinct from ${PAGE_TEXT}
+          or p.search_readme is distinct from ${README}
        order by p.id
        limit ${BATCH}
     )
     update products p
-       set search_topics = stale.topics, search_page_text = stale.page_text
+       set search_topics = stale.topics, search_page_text = stale.page_text, search_readme = stale.readme
       from stale
      where p.id = stale.id
     returning p.slug`);

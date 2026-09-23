@@ -147,7 +147,11 @@ export async function listProducts({ sort = "recent", limit, offset, ...options 
    */
   const ranked = sort === "relevance" && hasSearchQuery(options.query);
   const orderBy = [
-    ...(ranked ? [desc(productSearchRank(options.query!))] : []),
+    /**
+     * 관련도가 거의 같으면(소수 둘째 자리까지 같으면) 별이 많은 것이 앞이다 — 같은 말을 하는 제품
+     * 사이에서는 사람들이 더 많이 고른 쪽이 나은 답일 가능성이 높다. 관련도를 이기지는 않는다.
+     */
+    ...(ranked ? [desc(sql`round((${productSearchRank(options.query!)})::numeric, 2)`), sql`${products.stars} desc nulls last`] : []),
     ...SORTS[sort === "relevance" ? "recent" : sort],
     products.slug,
   ];
