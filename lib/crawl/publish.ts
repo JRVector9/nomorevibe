@@ -192,6 +192,7 @@ export async function publishCandidate(
          */
         searchTopics: draft.topics.join(" ") || null,
         searchPageText: draft.pageText,
+        searchReadme: draft.readme,
         ogImage: null,
         makerName: null,
         repoUrl: `https://github.com/${candidate.repo}`,
@@ -270,7 +271,7 @@ export async function prepareCandidateClassification(
  * 그것이 먼저다 — 지은 줄은 아무것도 없을 때만 쓰고, 쓴 경우 출처를 남겨 화면에 밝힌다.
  */
 function draftFrom(repo: string, document: CrawlDocument, installable: boolean, written?: { text: string; source: TaglineEvidenceSource; by?: string | null }) {
-  const page = (document.pageMeta ?? {}) as { title?: unknown; description?: unknown; ogImage?: unknown; textSample?: unknown };
+  const page = (document.pageMeta ?? {}) as { title?: unknown; description?: unknown; ogImage?: unknown; textSample?: unknown; readmeSample?: unknown };
   const meta = document.repoMeta;
   const repoDescription = typeof meta.description === "string" ? meta.description.trim() : "";
   const pageTitle = typeof page.title === "string" ? page.title.trim() : "";
@@ -303,6 +304,8 @@ function draftFrom(repo: string, document: CrawlDocument, installable: boolean, 
     topics: Array.isArray(meta.topics) ? meta.topics.map((t) => String(t)) : [],
     /** 검색이 쓸 배포 페이지 본문. 발행분의 74%가 이 값을 갖고 있다(2026-09-18 프로드) */
     pageText: typeof page.textSample === "string" ? page.textSample.slice(0, SEARCH_PAGE_TEXT_CHARS) || null : null,
+    /** 검색이 쓸 README 앞부분 — 페이지가 JS 로만 그려지는 제품은 이것만이 무엇인지 말한다 */
+    readme: typeof page.readmeSample === "string" ? page.readmeSample.slice(0, SEARCH_PAGE_TEXT_CHARS) || null : null,
     ogImage: typeof page.ogImage === "string" ? page.ogImage : null,
   };
 }

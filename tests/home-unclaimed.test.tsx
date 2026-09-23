@@ -38,6 +38,11 @@ const {
 }));
 
 vi.mock("@/lib/domain/products/repository", () => ({ categoryCounts, countProducts, listBuilders }));
+// 검색어 해석은 DB 로 어간을 뽑고 넓힐지 센다 — 이 화면 테스트는 목록 조합만 보므로 친 그대로 넘긴다
+vi.mock("@/lib/domain/products/search-translation", () => ({
+  resolveSearchQuery: async (query?: string) => ({ queries: query ? [query] : [], translated: null }),
+  normalizeQuery: (query: string) => query.trim().toLowerCase(),
+}));
 vi.mock("@/lib/domain/products/view", () => ({ getUnclaimedList, getVerifiedList, getPublicList }));
 vi.mock("@/lib/domain/products/home-pulse", async () => {
   const actual = await vi.importActual<typeof import("@/lib/domain/products/home-pulse")>(
