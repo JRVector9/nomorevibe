@@ -40,11 +40,16 @@ export const SEARCH_PAGE_TEXT_CHARS = 2_000;
 export type SearchTerm = { loose: string; exact: string };
 
 /**
- * 짜 둔 검색 — 질의문(원문, 번역이 붙었으면 둘)마다 낱말 목록과, 몇 개가 맞아야 하는지.
+ * 짜 둔 검색 — 질의문(원문, 번역이 붙었으면 그 표현들)마다 낱말 목록과, 몇 개가 맞아야 하는지.
  *
- * all: 낱말이 전부 있어야 한다(기본). most: 절반 이상 — 전부로는 몇 건 안 나올 때만 넓힌다.
+ * all: 낱말이 전부 있어야 한다(기본). most: 하나 빠진 것까지 — 전부로는 몇 건 안 나올 때만 넓힌다.
+ * groups: 질의문마다의 묶음 번호. 같은 번호는 같은 뜻을 달리 적은 것이라 점수는 그중 가장 잘 맞는 하나만 센다.
+ * 없으면 질의문마다 따로 센다.
  */
-export type SearchPlan = { kind: "plan"; texts: readonly string[]; terms: readonly (readonly SearchTerm[])[]; mode: "all" | "most" };
+export type SearchPlan = {
+  kind: "plan"; texts: readonly string[]; terms: readonly (readonly SearchTerm[])[]; mode: "all" | "most";
+  groups?: readonly number[];
+};
 
 /**
  * 찾을 말 — 사용자가 친 것 하나, 한국어 번역이 붙었으면 둘. 짜 둔 계획이면 그것.
@@ -155,7 +160,9 @@ export function productSearchPredicate(query: SearchQuery): SQL | undefined {
 }
 
 /**
- * 관련도. 질의문이 둘이면 더한다 — 원문과 번역 양쪽에 맞는 제품이 가장 앞이다.
+ * 관련도. 질의문이 여럿이면 더한다 — 원문과 번역 양쪽에 맞는 제품이 가장 앞이다.
+ * 같은 묶음(groups)의 질의문은 가장 높은 하나만 더한다. 번역을 두 표현으로 받으면서 둘을 다 더했더니
+ * 거의 같은 영어 표현이 두 번 세어져 한국어 원문으로 맞은 정답을 눌렀다("숫돌 호환 확인" 1위→16위, 2026-09-23).
  *
  * - ts_rank_cd: 낱말이 붙어 있을수록 높다("code review"가 붙어 있는 소개가 떨어져 있는 것보다 앞).
  *   무게는 {D,C,B,A} = {0.1, 0.2, 0.4, 1.0} — 이름·토픽(A)이 본문(D)의 열 배라 본문에 한 번 스친 것이
@@ -175,17 +182,21 @@ export function productSearchRank(query: SearchQuery): SQL<number> {
       sql` + `,
     )})`;
   }
-  const parts = query.texts.flatMap((text, index) => {
+  const scored = query.texts.flatMap((text, index) => {
     const terms = query.terms[index] ?? [];
     if (!terms.length) return [];
     const exact = tsq(terms.map((t) => t.exact), " & ");
     const name = text.trim().toLowerCase();
-    return [sql`(
+    return [{ group: query.groups?.[index] ?? index, score: sql`(
       coalesce(ts_rank_cd(${products.searchVector}, ${tsq(terms.map((t) => t.loose), " | ")}, 1), 0)
       + case when ${products.searchVector} @@ ${exact} then coalesce(ts_rank(${products.searchVector}, ${exact}), 0) else 0 end
       + ${query.mode === "most" ? sql`10 * ${coverage(terms)}::float4 / ${terms.length}` : sql`0`}
       + case when lower(${products.name}) = ${name} then 2 when lower(${products.name}) like ${`${name.replace(/[\\%_]/g, (c) => `\\${c}`)}%`} then 0.5 else 0 end
-    )`];
+    )` }];
+  });
+  const parts = [...new Set(scored.map((item) => item.group))].map((group) => {
+    const members = scored.filter((item) => item.group === group).map((item) => item.score);
+    return members.length === 1 ? members[0] : sql`greatest(${sql.join(members, sql`, `)})`;
   });
   return parts.length ? sql<number>`(${sql.join(parts, sql` + `)})` : sql<number>`0::float4`;
 }

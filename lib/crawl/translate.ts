@@ -94,23 +94,51 @@ export async function translateToKorean(texts: string[], timeoutMs: number, requ
  * 발행분 소개의 62%가 ASCII 뿐이고 한글이 든 것은 3%다(2026-09-18 프로드). 한국어로 목적을 치면
  * 색인이 아무리 좋아도 닿지 않는다 — "PDF 합치는 도구" 0건, "코드 리뷰 자동화" 0건.
  *
- * 문장이 아니라 낱말을 받는다. websearch_to_tsquery 는 낱말을 전부 AND 로 묶으므로 한 낱말만
- * 빗나가도 결과가 0이 된다. "a tool that merges pdf files into one" 같은 답은 쓸 수 없다.
+ * 문장이 아니라 낱말을 받는다. "a tool that merges pdf files into one" 같은 답은 쓸 수 없다.
+ *
+ * 두 가지로 받는다(2026-09-23 둘째 판) — 제품 설명이 흔히 쓰는 말, 그리고 질의의 개념을 하나도 버리지 않은 말.
+ * 첫 판은 검색이 낱말을 전부 AND 로 묶던 때라 "어느 설명에나 나올 말만" 적게 했더니 "코딩 에이전트 비용 추적"→
+ * coding cost tracker 처럼 정답을 가르는 말을 버렸다. 개념을 다 담게만 하면 이번엔 글자 그대로 옮겨 흔한 말을
+ * 잃었다("어린이집 관리"→childcare management, daycare 를 놓침). 둘을 한 줄로 다 맞출 수 없어 둘 다 받아
+ * 원문과 함께 세 질의문으로 찾는다 — 검색은 질의문을 OR 로 묶고 점수를 더하니 둘 다 맞는 제품이 앞이다.
+ * 질의만 받으면 동음이의를 틀린다("식물 병"→bottle) — 무엇을 모은 목록인지 알려 준다.
+ * 예시는 평가 질의(scripts/search-judged.ts)와 겹치지 않게 둔다.
  */
 const QUERY_SYSTEM = [
-  "You rewrite a product search query into English keywords for a full-text search over product names and descriptions.",
-  "Output only the keywords: lowercase, space separated, two to four words, no punctuation, no quotes, no explanation.",
-  "The search requires every word to be present, so emit only words that would appear in almost any description of what the user wants.",
-  "Examples — 'PDF 합치는 도구' -> merge pdf; '회의록 요약' -> meeting summary; '사진 배경 제거' -> remove background; '가계부' -> expense tracker.",
+  "You translate a Korean search query into English search keywords for a directory of software products —",
+  "apps, tools, services, libraries and personal sites people built with AI.",
+  "Answer with one line: two keyword phrases separated by ' | ', lowercase English words only, no other punctuation, no quotes, no explanation.",
+  "First phrase: the two to four common words most product descriptions would use for what the user wants.",
+  "Second phrase: two to five words that keep every concept of the query — the task, what it acts on, and any qualifier such as platform,",
+  "audience or field. It may repeat the first phrase when nothing was left out.",
+  "Read ambiguous Korean words in this software-product sense. If you do not know what a word means, leave it out — never transliterate or guess.",
+  "Keep product, company and technology names in their usual English spelling.",
+  "Examples — 'PDF 합치는 도구' -> merge pdf | merge pdf; '가계부' -> expense tracker | household budget tracker;",
+  "'맛집 추천' -> restaurant recommendations | restaurant recommendations; '온라인 요가 수업 예약' -> yoga class booking | online yoga class booking;",
+  "'반려견 산책 대행 매칭' -> dog walker | dog walking service matching.",
 ].join(" ");
 
-/** 받은 답을 그대로 믿지 않는다 — 낱말 넷까지, 영문자만, 한글이 남아 있으면 버린다 */
+/** 지시문을 바꾸면 올린다 — 캐시 열쇠에 들어가 옛 지시문의 번역을 다시 쓰지 않는다 */
+export const QUERY_PROMPT_VERSION = 2;
+/** 넓힌 검색은 하나만 빠져도 되므로 낱말이 많을수록 결과가 준다 — 개념을 다 담을 만큼만 */
+const QUERY_MAX_WORDS = 5;
+/** 두 표현을 한 칸(text_translations.translated)에 담을 때의 구분자 */
+const PHRASE_SEPARATOR = " | ";
+
+/** 받은 답을 그대로 믿지 않는다 — 표현 둘까지, 표현마다 낱말 다섯까지, 영문자만, 한글이 남아 있으면 버린다 */
 export function parseQueryTranslation(content: string): string | null {
   const body = content.replace(/<think>[\s\S]*?<\/think>/g, "").trim();
   const line = body.split("\n").map((text) => text.trim()).find(Boolean) ?? "";
-  const words = line.toLowerCase().replace(/[^a-z0-9+#. ]+/g, " ").split(/\s+/).filter(Boolean).slice(0, 4);
-  const keywords = words.join(" ");
-  return keywords.length >= 2 && /[a-z]/.test(keywords) ? keywords : null;
+  const parts = line.split("|");
+  const phrases = [...new Set(parts.map((part) =>
+    part.toLowerCase().replace(/[^a-z0-9+#. ]+/g, " ").split(/\s+/).filter(Boolean).slice(0, QUERY_MAX_WORDS).join(" "),
+  ).filter((phrase) => phrase.length >= 2 && /[a-z]/.test(phrase)))].slice(0, 2);
+  return phrases.length ? phrases.join(PHRASE_SEPARATOR) : null;
+}
+
+/** 저장해 둔 번역을 표현들로 — 첫 판의 한 줄짜리 번역도 그대로 읽힌다 */
+export function queryTranslationPhrases(translated: string): string[] {
+  return translated.split("|").map((phrase) => phrase.trim()).filter(Boolean);
 }
 
 export async function translateQueryToEnglish(query: string, timeoutMs: number, request: typeof fetch = fetch): Promise<{ ok: true; keywords: string } | { ok: false; error: string }> {

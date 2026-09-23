@@ -1,7 +1,7 @@
 import { and, eq, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { products, textTranslations } from "@/lib/db/schema";
-import { textHash, TRANSLATE_MODEL, translateQueryToEnglish } from "@/lib/crawl/translate";
+import { QUERY_PROMPT_VERSION, queryTranslationPhrases, textHash, TRANSLATE_MODEL, translateQueryToEnglish } from "@/lib/crawl/translate";
 import { recordTranslations } from "@/lib/crawl/translations";
 import { logger } from "@/lib/observability/logger";
 import { planTerms, productSearchPredicate, RELAX_MIN_TERMS, type SearchPlan, type SearchQuery } from "./search";
@@ -15,7 +15,7 @@ import { planTerms, productSearchPredicate, RELAX_MIN_TERMS, type SearchPlan, ty
  *
  * 세 가지를 지킨다:
  *  - 먼저 친 그대로 찾는다. 번역은 한 번에 6~7초라(2026-09-11 게이트웨이 실측) 글자마다 부를 수 없다.
- *  - 한 번 옮긴 말은 다시 옮기지 않는다(text_translations, target_lang='en').
+ *  - 한 번 옮긴 말은 다시 옮기지 않는다(text_translations, target_lang='en'). 지시문 판이 바뀌면 다시 옮긴다.
  *  - 실패하면 번역 없이 찾은 결과를 그대로 준다. 검색이 오류 화면이 되지는 않는다.
  */
 
@@ -29,15 +29,20 @@ const ENOUGH_HITS = 20;
 const TIMEOUT_MS = 8_000;
 
 export type ResolvedSearch = {
-  /** 색인에 물어볼 말 — 원문 하나, 번역이 붙었으면 둘 */
+  /** 색인에 물어볼 말 — 원문 하나, 번역이 붙었으면 그 표현(한둘)까지 */
   queries: SearchQuery;
-  /** 화면에 "이 말로도 찾았다"고 밝힐 영어 낱말. 옮기지 않았으면 null */
+  /** 화면에 "이 말로도 찾았다"고 밝힐 영어 낱말 — 표현이 둘이면 " / "로 잇는다. 옮기지 않았으면 null */
   translated: string | null;
 };
 
 /** 같은 뜻인데 공백·대소문자만 다른 말을 따로 옮기지 않는다 */
 export function normalizeQuery(query: string): string {
   return query.trim().replace(/\s+/g, " ").toLocaleLowerCase("ko");
+}
+
+/** 번역 캐시의 열쇠 — 지시문 판이 들어 있어, 판을 올리면 옛 지시문으로 옮긴 말을 다시 쓰지 않는다 */
+export function queryTranslationKey(query: string): string {
+  return textHash(`q${QUERY_PROMPT_VERSION}:${normalizeQuery(query)}`);
 }
 
 const hasHangul = (text: string) => /[가-힣]/.test(text);
@@ -92,7 +97,7 @@ async function translateIfFew(raw: string): Promise<string | null> {
     const own = await planSearch([raw]);
     if (await publicHits({ ...own, mode: "all" }) >= ENOUGH_HITS) return null;
 
-    const hash = textHash(normalizeQuery(raw));
+    const hash = queryTranslationKey(raw);
     const cached = await cachedTranslation(hash);
     if (cached) return cached;
 
@@ -118,10 +123,13 @@ async function translateIfFew(raw: string): Promise<string | null> {
 export async function resolveSearchQuery(query: string | undefined): Promise<ResolvedSearch> {
   const raw = query?.trim() ?? "";
   if (!raw) return { queries: [], translated: null };
-  const translated = hasHangul(raw) ? await translateIfFew(raw) : null;
-  const texts = translated ? [raw, translated] : [raw];
+  const stored = hasHangul(raw) ? await translateIfFew(raw) : null;
+  const phrases = stored ? queryTranslationPhrases(stored) : [];
+  const translated = phrases.length ? phrases.join(" / ") : null;
+  const texts = [raw, ...phrases];
   try {
-    return { queries: await planSearch(texts), translated };
+    // 번역 표현들은 같은 뜻이라 한 묶음이다 — 원문(0)과 번역(1)
+    return { queries: { ...await planSearch(texts), groups: texts.map((_, index) => (index === 0 ? 0 : 1)) }, translated };
   } catch (error) {
     // 짜지 못해도 검색은 돈다 — 예전처럼 모든 낱말로 찾는다
     logger.warn("search.plan_failed", { error });

@@ -3,7 +3,7 @@ import { eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { crawlCandidates, crawlDocuments, products, textTranslations } from "@/lib/db/schema";
 import { listProducts } from "@/lib/domain/products/repository";
-import { resolveSearchQuery } from "@/lib/domain/products/search-translation";
+import { queryTranslationKey, resolveSearchQuery } from "@/lib/domain/products/search-translation";
 import { ensureSchema, resetTables } from "./setup";
 
 /**
@@ -133,9 +133,19 @@ describe("한국어와 영어", () => {
 
   it("영어 제품을 한국어로 찾는다(번역한 말로)", async () => {
     await seed("meetingly", { name: "Meetingly", tagline: "Summarize your meetings", description: "Summarize your meetings" });
-    const { textHash } = await import("@/lib/crawl/translate");
-    const { normalizeQuery } = await import("@/lib/domain/products/search-translation");
-    await db.insert(textTranslations).values({ sourceHash: textHash(normalizeQuery("회의록 요약")), targetLang: "en", status: "done", translated: "meeting summary" });
+    await db.insert(textTranslations).values({ sourceHash: queryTranslationKey("회의록 요약"), targetLang: "en", status: "done", translated: "meeting summary" });
     expect(await find("회의록 요약")).toContain("meetingly");
+  });
+
+  it("번역한 두 표현은 한 번만 센다 — 한국어로 정확히 맞은 제품을 영어 표현 둘이 겹쳐 누르지 않게", async () => {
+    await seed("wheel-check", { name: "Wheel Check", tagline: "그라인더 숫돌 호환 확인", description: "그라인더 숫돌 호환 확인" });
+    await seed("api-gateway", { name: "API Gateway", tagline: "compatibility check and software compatibility verification for model APIs",
+      description: "compatibility check and software compatibility verification for model APIs" });
+    await db.insert(textTranslations).values({ sourceHash: queryTranslationKey("숫돌 호환 확인"), targetLang: "en", status: "done",
+      translated: "compatibility check | software compatibility verification" });
+
+    const resolved = await resolveSearchQuery("숫돌 호환 확인");
+    expect(resolved.translated).toBe("compatibility check / software compatibility verification");
+    expect((await find("숫돌 호환 확인"))[0]).toBe("wheel-check");
   });
 });
