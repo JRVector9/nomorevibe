@@ -67,6 +67,23 @@ describe("정확도", () => {
     expect(results[0]).toBe("full-match");
   });
 
+  it("넓혀도 다 맞는 것이 이름에 두 낱말이 든 것보다 앞이다", async () => {
+    // 2026-09-23 프로드: "soccer manager game" 에서 이름에 manager·game 이 든 제품들이 세 낱말이 다 맞는
+    // 축구 매니저 게임을 20위 밖으로 밀었다
+    await seed("club-season", { name: "Club Season", tagline: "Build a squad and climb the league", description: "Build a squad and climb the league",
+      searchPageText: "A soccer club manager game played over a shared season." });
+    for (let i = 0; i < 5; i++) await seed(`manager-${i}`, { name: `Game Manager ${i}`, tagline: "Manage your game library", description: "Manage your game library" });
+    expect((await find("soccer manager game"))[0]).toBe("club-season");
+  });
+
+  it("넓힐 때도 하나만 빠진 것까지다 — 한 낱말만 맞는 것은 들이지 않는다", async () => {
+    await seed("restroom-map", { name: "Restroom Map", tagline: "Accessible public restrooms on a map", description: "Accessible public restrooms on a map" });
+    await seed("just-map", { name: "Mapper", tagline: "Draw a map", description: "Draw a map" });
+    const results = await find("accessible public toilet map");
+    expect(results).toContain("restroom-map");
+    expect(results).not.toContain("just-map");
+  });
+
   it("넉넉히 맞으면 넓히지 않는다 — 좁은 검색이 흐려지지 않게", async () => {
     for (let i = 0; i < 6; i++) await seed(`pdf-${i}`, { name: `Pdf ${i}`, tagline: "Merge PDF files", description: "Merge PDF files" });
     await seed("merge-only", { name: "Merger", tagline: "Merge spreadsheets", description: "Merge spreadsheets" });

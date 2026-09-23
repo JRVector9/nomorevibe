@@ -120,8 +120,14 @@ const QUOTED_PREFIX = sql.raw(`'''' || replace(replace(lexeme, '\\', ''), '''', 
 const rawTsquery = (text: string) =>
   sql`to_tsquery('english', (select string_agg(${QUOTED_PREFIX}, ' & ') from unnest(to_tsvector('english', ${text}))))`;
 
-/** 절반 이상 맞아야 하는 수 */
-const needed = (terms: readonly SearchTerm[]) => Math.ceil(terms.length / 2);
+/**
+ * 넓힌 검색에서 맞아야 하는 낱말 수 — 하나만 빠져도 된다.
+ *
+ * 처음엔 절반으로 두었더니 "check"·"map" 하나로 1,000건 넘게 걸렸다(2026-09-23 프로드, 결과 수 중앙이
+ * 3건에서 48건으로). 낱말이 둘 이하면 넓히지 않는다 — 하나만 맞아도 되면 그건 OR 이다.
+ */
+export const RELAX_MIN_TERMS = 3;
+const needed = (terms: readonly SearchTerm[]) => terms.length >= RELAX_MIN_TERMS ? terms.length - 1 : terms.length;
 
 /** 이 행에 맞는 낱말 수 — 낱말 몇 개짜리라 행마다 몇 번의 @@ 뿐이다 */
 const coverage = (terms: readonly SearchTerm[]) =>
@@ -155,7 +161,9 @@ export function productSearchPredicate(query: SearchQuery): SQL | undefined {
  *   무게는 {D,C,B,A} = {0.1, 0.2, 0.4, 1.0} — 이름·토픽(A)이 본문(D)의 열 배라 본문에 한 번 스친 것이
  *   이름에 든 것을 이기지 못한다. 정규화 1(길이의 로그로 나눔)로 긴 본문이 양으로 이기지 못하게 한다.
  * - 어간이 그대로 맞으면 더한다 — 느슨하게 넓힌 잡음이 정확히 맞은 것을 앞지르지 못하게.
- * - 넓힌 검색에서는 맞은 낱말의 비율을 더한다 — 넷 중 넷이 맞은 것이 넷 중 둘보다 앞.
+ * - 넓힌 검색에서는 맞은 낱말의 비율에 10을 곱해 더한다 — 다 맞은 것이 하나 빠진 것보다 늘 앞이다.
+ *   1로 두었을 때 "soccer manager game"에서 이름에 manager·game 이 든 제품들이 세 낱말이 다 맞는
+ *   축구 매니저 게임을 20위 밖으로 밀었다(2026-09-23 프로드).
  * - 이름이 검색어와 같으면 크게, 검색어로 시작하면 조금 더한다 — 이름으로 찾는 사람도 있다.
  */
 export function productSearchRank(query: SearchQuery): SQL<number> {
@@ -175,7 +183,7 @@ export function productSearchRank(query: SearchQuery): SQL<number> {
     return [sql`(
       coalesce(ts_rank_cd(${products.searchVector}, ${tsq(terms.map((t) => t.loose), " | ")}, 1), 0)
       + case when ${products.searchVector} @@ ${exact} then coalesce(ts_rank(${products.searchVector}, ${exact}), 0) else 0 end
-      + ${query.mode === "most" ? sql`${coverage(terms)}::float4 / ${terms.length}` : sql`0`}
+      + ${query.mode === "most" ? sql`10 * ${coverage(terms)}::float4 / ${terms.length}` : sql`0`}
       + case when lower(${products.name}) = ${name} then 2 when lower(${products.name}) like ${`${name.replace(/[\\%_]/g, (c) => `\\${c}`)}%`} then 0.5 else 0 end
     )`];
   });
