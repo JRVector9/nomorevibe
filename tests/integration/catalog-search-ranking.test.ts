@@ -3,10 +3,9 @@ import { and, eq, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { crawlCandidates, crawlDocuments, products, textTranslations } from "@/lib/db/schema";
 import { listProducts } from "@/lib/domain/products/repository";
-import { normalizeQuery, resolveSearchQuery } from "@/lib/domain/products/search-translation";
+import { queryTranslationKey, resolveSearchQuery } from "@/lib/domain/products/search-translation";
 import { searchQueries } from "@/lib/domain/products/search";
 import { refreshProductSearchDocuments } from "@/lib/jobs/products/search-refresh";
-import { textHash } from "@/lib/crawl/translate";
 import { ensureSchema, resetTables } from "./setup";
 
 beforeAll(() => ensureSchema());
@@ -90,7 +89,7 @@ it("잡이 crawl_documents 의 토픽·본문을 옮겨 적고, 같은 값이면
 
 it("옮겨 둔 번역이 있으면 게이트웨이를 부르지 않는다", async () => {
   await seed("pdfree", { name: "PDFree", tagline: "merge pdf files", description: "merge pdf files" });
-  const hash = textHash(normalizeQuery("PDF 합치는 도구"));
+  const hash = queryTranslationKey("PDF 합치는 도구");
   await db.insert(textTranslations).values({ sourceHash: hash, targetLang: "en", status: "done", translated: "merge pdf" });
 
   const resolved = await resolveSearchQuery("PDF 합치는 도구");
@@ -111,7 +110,7 @@ it("번역이 안 되면 친 그대로 찾는다 — 오류 화면이 되지 않
   expect(searchQueries(resolved.queries)).toEqual(["PDF 합치는 도구"]);
   // 실패도 남겨 둔다 — 같은 말로 매번 다시 부르지 않게
   const [row] = await db.select().from(textTranslations)
-    .where(and(eq(textTranslations.sourceHash, textHash(normalizeQuery("PDF 합치는 도구"))), eq(textTranslations.targetLang, "en")));
+    .where(and(eq(textTranslations.sourceHash, queryTranslationKey("PDF 합치는 도구")), eq(textTranslations.targetLang, "en")));
   expect(row.status).toBe("failed");
   expect(row.errorCode).toBe("no_key");
 });
