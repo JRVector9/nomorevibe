@@ -13,6 +13,12 @@ import type { IntroOutcome, IntroVerdict } from "@/lib/db/schema";
  *  - AI 40건 중 5건을 틀렸다고 했고 5건 모두 타당했다. 고친 줄은 페이지 언어·100자·근거만 지켰다. 놓친 것 1건.
  *  - 메이커 30건: 쓸모없음 22(15건은 잘 고쳐 씀, 7건은 근거가 기본 페이지·오류뿐이라 빈 줄), 맞음 5,
  *    틀림 3 — 셋 다 메이커 자신의 주장("10초 만에 확인")이라 바꾸면 안 되는 것이었다.
+ *  - 같은 입력으로 codex gpt-6-luna(xhigh)와 견줬다: 10건에 평균 45초, 고쳐 쓴 글 둘을 페이지와 다른 언어로
+ *    썼고, 페이지 제목의 이름을 본문의 다른 이름으로 바꿨다. Sonnet 이 놓친 것은 둘 — 스페인어 페이지의 영어
+ *    소개, 개인 포트폴리오를 "당신의 프로젝트를 보여 주세요"라는 도구처럼 쓴 소개.
+ *  - 그 둘을 "틀림"에 적었더니(페이지와 다른 언어, 개인 사이트를 도구처럼) AI 소개 40건 중 고침이 6 → 13건,
+ *    새로 잡은 7건이 모두 근거와 맞았다. 메이커 소개는 "쓸모없음"이 언어보다 먼저라고 적어 두었다 — 모델은
+ *    누가 쓴 소개인지 모르고, "틀림"이 된 메이커 소개는 바꾸지 않으므로 쓸모없는 소개가 남게 된다.
  *
  * 구독 토큰(claude-cli)으로 돈다 — API 키가 아니다. 2차 심사·키워드 검수와 한도를 같이 쓴다.
  */
@@ -31,7 +37,10 @@ const SYSTEM = [
   "For each item decide the verdict:",
   "ok — the intro correctly says what the product is and what a person can do with it, as the evidence shows. A short intro is ok if it says what the thing is.",
   "wrong — it names a different product, game or kind of thing, claims features, platforms, audiences or numbers the evidence does not state, or mistranslates.",
+  "It is also wrong when it is written in a different language than the page,",
+  "or when it presents a personal site, portfolio or blog as a tool for the reader (\"Showcase your projects\") instead of saying whose site it is.",
   "uninformative — it does not say what the product is: a repository path, a placeholder such as Loading or Redirecting, just the product's name, or too vague to tell.",
+  "An intro that is uninformative is uninformative even when it is also in another language.",
   "Judge only against the evidence.",
   "When the verdict is wrong or uninformative, write a corrected intro: one sentence saying what it is and what a person can do with it;",
   "in the same language the page is written in; 100 characters or fewer; no trailing period; do not start with the product name;",
