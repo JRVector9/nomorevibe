@@ -292,3 +292,27 @@ it("UTF-16 경계에서 잘린 이모지는 JSONB에 저장 가능한 문자열�
   expect(extractTextSample("abc🚀end", 4)).toBe("abc");
   expect(extractTextSample("ab🚀end", 4)).toBe("ab🚀");
 });
+
+describe("메타 속성 값 — 여는 따옴표와 같은 따옴표까지 읽는다", () => {
+  it("큰따옴표 안의 아포스트로피에서 끊지 않는다 — 소개가 'Gamified Qur'로 잘렸다", () => {
+    const html = `<head><meta property="og:description" content="Gamified Qur'an learning for kids"><meta property="og:title" content="Smith's Clinic"></head>`;
+    expect(extractPageMeta(html, "https://a.test")).toMatchObject({ description: "Gamified Qur'an learning for kids", title: "Smith's Clinic" });
+  });
+
+  it("속성 순서가 반대여도, 작은따옴표 안의 큰따옴표도 그대로 읽는다", () => {
+    expect(extractPageMeta(`<meta content="Guides d'équitation" name="description">`, "https://a.test").description)
+      .toBe("Guides d'équitation");
+    expect(extractPageMeta(`<meta name='description' content='The "best" planner'>`, "https://a.test").description)
+      .toBe('The "best" planner');
+  });
+
+  it("새로고침 주소를 작은따옴표로 감싸도 목적지를 따라간다", () => {
+    expect(metaRefreshTarget(`<meta http-equiv="refresh" content="0; url='https://b.test/app'">`, "https://a.test"))
+      .toBe("https://b.test/app");
+  });
+
+  it("빈 값은 없는 것으로 본다", () => {
+    expect(extractOgImage(`<meta property="og:image" content="">`, "https://a.test")).toBeNull();
+    expect(extractVerifyMeta(`<meta name="nomorevibe-verify" content="">`, "nomorevibe-verify")).toBeNull();
+  });
+});

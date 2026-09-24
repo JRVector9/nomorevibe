@@ -84,14 +84,23 @@ export function slugifyName(name: string): string {
   );
 }
 
+/**
+ * 따옴표로 감싼 속성 값 — 여는 따옴표와 같은 따옴표에서 끝난다.
+ * 두 따옴표를 한데 묶어 첫 따옴표에서 끊던 때는 content="Gamified Qur'an …" 이 "Gamified Qur"로,
+ * "Guides d'équitation" 이 "Guides d"로 잘려 그대로 제품 소개가 됐다(2026-09-24 공개분 73건 확인).
+ */
+const QUOTED = `(?:"([^"]*)"|'([^']*)')`;
+const quoted = (match: RegExpMatchArray | null): string | null => match ? match[1] ?? match[2] ?? null : null;
+
 /** HTML에서 og:image 추출 (상대경로면 절대경로로 변환) */
 export function extractOgImage(html: string, baseUrl: string): string | null {
   const m =
-    html.match(/<meta[^>]+property=["']og:image["'][^>]+content=["']([^"']+)["']/i) ??
-    html.match(/<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:image["']/i);
-  if (!m) return null;
+    html.match(new RegExp(`<meta[^>]+property=["']og:image["'][^>]+content=${QUOTED}`, "i")) ??
+    html.match(new RegExp(`<meta[^>]+content=${QUOTED}[^>]+property=["']og:image["']`, "i"));
+  const src = quoted(m);
+  if (!src) return null;
   try {
-    return new URL(m[1], baseUrl).toString();
+    return new URL(src, baseUrl).toString();
   } catch {
     return null;
   }
@@ -151,10 +160,11 @@ function fromCodePoint(code: number, whole: string): string {
 function metaContent(html: string, attribute: "property" | "name", key: string): string | null {
   const escaped = key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const found =
-    html.match(new RegExp(`<meta[^>]+${attribute}=["']${escaped}["'][^>]+content=["']([^"']*)["']`, "i")) ??
-    html.match(new RegExp(`<meta[^>]+content=["']([^"']*)["'][^>]+${attribute}=["']${escaped}["']`, "i"));
-  if (!found) return null;
-  const value = stripUnsafeText(decodeEntities(found[1])).replace(/\s+/g, " ").trim();
+    html.match(new RegExp(`<meta[^>]+${attribute}=["']${escaped}["'][^>]+content=${QUOTED}`, "i")) ??
+    html.match(new RegExp(`<meta[^>]+content=${QUOTED}[^>]+${attribute}=["']${escaped}["']`, "i"));
+  const raw = quoted(found);
+  if (raw === null) return null;
+  const value = stripUnsafeText(decodeEntities(raw)).replace(/\s+/g, " ").trim();
   return value || null;
 }
 
@@ -196,10 +206,11 @@ export const TEXT_SAMPLE_LIMIT = 6_000;
  * 잠깐 스친다. 따라가서 목적지를 판정하고 목적지를 저장한다.
  */
 export function metaRefreshTarget(html: string, baseUrl: string): string | null {
-  const m = html.match(/<meta[^>]+http-equiv=["']?refresh["']?[^>]*content=["']([^"']*)["']/i)
-    ?? html.match(/<meta[^>]+content=["']([^"']*)["'][^>]+http-equiv=["']?refresh["']?/i);
-  if (!m) return null;
-  const url = m[1].match(/url\s*=\s*["']?([^"';]+)/i)?.[1]?.trim();
+  // content="0; url='https://…'" 처럼 안쪽 따옴표가 달라도 끝까지 읽는다
+  const content = quoted(html.match(new RegExp(`<meta[^>]+http-equiv=["']?refresh["']?[^>]*content=${QUOTED}`, "i"))
+    ?? html.match(new RegExp(`<meta[^>]+content=${QUOTED}[^>]+http-equiv=["']?refresh["']?`, "i")));
+  if (content === null) return null;
+  const url = content.match(/url\s*=\s*["']?([^"';]+)/i)?.[1]?.trim();
   if (!url) return null;
   try {
     const resolved = new URL(url, baseUrl).toString();
@@ -278,8 +289,7 @@ export function extractPageMeta(
 /** HTML에서 검증 메타태그 값 추출 */
 export function extractVerifyMeta(html: string, metaName: string): string | null {
   const pattern = metaName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const m =
-    html.match(new RegExp(`<meta[^>]+name=["']${pattern}["'][^>]+content=["']([^"']+)["']`, "i")) ??
-    html.match(new RegExp(`<meta[^>]+content=["']([^"']+)["'][^>]+name=["']${pattern}["']`, "i"));
-  return m ? m[1] : null;
+  return quoted(
+    html.match(new RegExp(`<meta[^>]+name=["']${pattern}["'][^>]+content=${QUOTED}`, "i")) ??
+    html.match(new RegExp(`<meta[^>]+content=${QUOTED}[^>]+name=["']${pattern}["']`, "i"))) || null;
 }
