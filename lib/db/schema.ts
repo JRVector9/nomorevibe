@@ -333,6 +333,16 @@ export const productSearchProfiles = pgTable("product_search_profiles", {
   retryAt: timestamp("retry_at"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  /**
+   * 검수 — 다른 모델(Sonnet)이 근거와 대조해 뒷받침되지 않는 키워드를 고른다(product-search-verify).
+   * 원본(keywords_en/ko)은 두고 색인용 사본(products.search_keywords)에서만 뺀다. 키워드를 다시 지으면 비워 다시 검수한다.
+   */
+  verifiedAt: timestamp("verified_at"),
+  removedKeywords: jsonb("removed_keywords").$type<string[]>().notNull().default([]),
+  verifyModel: varchar("verify_model", { length: 160 }),
+  verifyAttempts: integer("verify_attempts").notNull().default(0),
+  verifyError: varchar("verify_error", { length: 60 }),
+  verifyRetryAt: timestamp("verify_retry_at"),
 });
 
 export type ProductSearchProfile = typeof productSearchProfiles.$inferSelect;

@@ -20,7 +20,11 @@ export type AgentReviewResult = { ok: true; outcome: ReviewOutcome; usage: Revie
   | { ok: false; error: ReviewFailure; detail?: string; usage?: ReviewUsage };
 export type ReviewCliResult = { kind: "exit"; code: number | null; stdout: string; stderr: string }
   | { kind: "timeout" | "cancelled" | "output_too_large" | "missing_cli" | "cli_error" };
-export type ReviewCliRun = (args: string[], stdin: string, options: { timeoutMs: number; signal?: AbortSignal }) => Promise<ReviewCliResult>;
+export type ReviewCliRun = (args: string[], stdin: string, options: {
+  timeoutMs: number; signal?: AbortSignal;
+  /** 생각을 길게 하는 호출(검색 키워드 검수, effort high)은 2천 토큰으로 모자란다 */
+  maxOutputTokens?: number;
+}) => Promise<ReviewCliResult>;
 
 const OUTPUT_SCHEMA = {
   type: "object", additionalProperties: false,
@@ -156,7 +160,7 @@ export const runReviewCli: ReviewCliRun = async (args, stdin, options) => {
   const directory = await mkdtemp(path.join(os.tmpdir(), "nomorevibe-review-"));
   try {
     return await new Promise<ReviewCliResult>((resolve) => {
-      const env = { ...process.env, CLAUDE_CODE_MAX_OUTPUT_TOKENS: String(MAX_OUTPUT_TOKENS) };
+      const env = { ...process.env, CLAUDE_CODE_MAX_OUTPUT_TOKENS: String(options.maxOutputTokens ?? MAX_OUTPUT_TOKENS) };
       delete (env as NodeJS.ProcessEnv).CLAUDECODE;
       const child = spawn(process.env.CLAUDE_CLI ?? "claude", args, {
         // Inherit the worker process group so supervisor shutdown also reaches this child.
@@ -200,7 +204,7 @@ export const runReviewCli: ReviewCliRun = async (args, stdin, options) => {
   } finally { await rm(directory, { recursive: true, force: true }); }
 };
 
-function usageFrom(value: Record<string, unknown>): ReviewUsage {
+export function usageFrom(value: Record<string, unknown>): ReviewUsage {
   const usage = value.usage && typeof value.usage === "object" ? value.usage as Record<string, unknown> : {};
   const tokens = (n: unknown) => typeof n === "number" && Number.isSafeInteger(n) && n >= 0 ? n : undefined;
   const cost = value.total_cost_usd;
