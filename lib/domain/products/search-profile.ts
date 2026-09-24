@@ -124,7 +124,10 @@ export function parseKeywords(content: string, productName: string): KeywordResu
     ko = arrays.find(korean);
     en = arrays.find((list) => list !== ko);
   }
-  return { ok: true, en: cleanKeywords(en, productName), ko: cleanKeywords(ko, productName) };
+  const english = cleanKeywords(en, productName);
+  // 한국어 칸에 영어 칸과 같은 말을 적는 일이 있다("AI CRM · … · AI CRM", 2026-09-24 6,890건 중 113건) — 한 번만 둔다
+  const seen = new Set(english.map((keyword) => keyword.toLowerCase()));
+  return { ok: true, en: english, ko: cleanKeywords(ko, productName).filter((keyword) => !seen.has(keyword.toLowerCase())) };
 }
 
 /** 색인에 넣을 글 — 영어와 한국어 키워드를 한 줄로 */
