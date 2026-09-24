@@ -95,6 +95,23 @@ describe("검색 키워드 검수 잡", () => {
     expect(await keywordsOf(id)).toBe("class pass management · 수강권 관리");
   });
 
+  it("한 번에 두 묶음을 동시에 부른다 — 같은 제품을 두 번 부르지 않는다", async () => {
+    for (let i = 0; i < 20; i++) await seed(`p${i}`, [`keyword ${i}`], []);
+    const seen: string[] = [];
+    let inFlight = 0, peak = 0;
+    const run = cli((slug) => { seen.push(slug); return []; });
+    const slow: ReviewCliRun = async (args, stdin, options) => {
+      peak = Math.max(peak, ++inFlight);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      try { return await run(args, stdin, options); } finally { inFlight--; }
+    };
+    await tick(slow);
+    expect(run.calls).toBe(2);
+    expect(peak).toBe(2);
+    expect(new Set(seen).size).toBe(20);
+    expect(seen).toHaveLength(20);
+  });
+
   it("공개되지 않은 제품·키워드가 없는 것은 부르지 않는다", async () => {
     await seed("hidden", ["x keyword"], [], { status: "banned" });
     await seed("empty", [], []);
