@@ -33,6 +33,11 @@ describe("답 읽기", () => {
       .toEqual({ ok: true, en: ["grocery list"], ko: ["장보기"] });
   });
 
+  it("한국어 칸에 영어 칸과 같은 말이 있으면 한 번만 둔다", () => {
+    expect(parseKeywords('{"keywords_en":["AI CRM","sales pipeline"],"keywords_ko":["영업 관리","ai crm","MCP 앱"]}', "Coche"))
+      .toEqual({ ok: true, en: ["AI CRM", "sales pipeline"], ko: ["영업 관리", "MCP 앱"] });
+  });
+
   it("JSON 이 아니면 실패다", () => {
     expect(parseKeywords("잘 모르겠습니다", "Coche")).toEqual({ ok: false, error: "invalid_output" });
   });
