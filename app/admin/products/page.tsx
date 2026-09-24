@@ -23,6 +23,8 @@ const FILTERS = {
   미클레임: ["seeded"],
   "검증 대기": ["unverified"],
   차단됨: ["banned"],
+  /** 소개 검수가 근거로는 무엇인지 알 수 없다고 한 것 — 페이지를 열어 보고 내릴지 정한다 */
+  "소개 확인 필요": ["seeded", "verified"],
 } as const satisfies Record<string, ProductStatus[]>;
 
 type Props = { searchParams: Promise<{ filter?: string; page?: string }> };
@@ -37,9 +39,10 @@ export default async function AdminProductsPage({ searchParams }: Props) {
   const parsedPage = Number(rawPage ?? 1);
   const page = Number.isSafeInteger(parsedPage) && parsedPage > 0 ? parsedPage : 1;
   const statuses = [...FILTERS[active]];
+  const introNeedsEditor = active === "소개 확인 필요";
   const [products, total] = await Promise.all([
-    listProducts({ statuses, limit: PAGE_SIZE, offset: (page - 1) * PAGE_SIZE }),
-    countProducts({ statuses }),
+    listProducts({ statuses, introNeedsEditor, limit: PAGE_SIZE, offset: (page - 1) * PAGE_SIZE }),
+    countProducts({ statuses, introNeedsEditor }),
   ]);
   const pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
   const href = (next: number) => {

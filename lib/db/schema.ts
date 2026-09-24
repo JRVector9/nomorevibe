@@ -49,9 +49,10 @@ export type ProductSource = "skill" | "crawler";
 
 /**
  * 소개의 출처. ai_* 는 뒤에 무엇을 보고 지었는지가 붙고, editor 는 우리 쪽 사람이 페이지를 보고 적은 것이다.
- * maker 는 페이지나 레포에 메이커가 적어 둔 말 그대로다.
+ * maker 는 페이지나 레포에 메이커가 적어 둔 말 그대로다. ai_fixed 는 소개 검수(product_intro_checks)가
+ * 틀리거나 쓸모없는 소개를 근거를 보고 고쳐 쓴 것이다.
  */
-export type TaglineSource = "maker" | "ai_page" | "ai_readme" | "ai_both" | "editor";
+export type TaglineSource = "maker" | "ai_page" | "ai_readme" | "ai_both" | "ai_fixed" | "editor";
 
 export const products = pgTable("products", {
   id: serial("id").primaryKey(),
@@ -346,6 +347,42 @@ export const productSearchProfiles = pgTable("product_search_profiles", {
 });
 
 export type ProductSearchProfile = typeof productSearchProfiles.$inferSelect;
+
+export type IntroVerdict = "ok" | "wrong" | "uninformative";
+/** kept: 그대로 둠 · replaced: 고쳐 쓴 소개로 바꿈 · needs_editor: 근거로는 알 수 없어 사람이 본다 */
+export type IntroOutcome = "kept" | "replaced" | "needs_editor";
+
+/**
+ * 소개 검수 — Sonnet 이 목록의 한 줄 소개를 근거(페이지 글·README·토픽)와 대조한다(product-intro-check).
+ *
+ * 주인 없는 수집 제품만 본다: AI 가 지은 소개 전부와, 쓸모없어 보이는 메이커 소개(레포 경로·이름 그대로·
+ * "Loading" 같은 자리표시). 틀리거나 쓸모없는 AI 소개와 쓸모없는 메이커 소개는 고쳐 쓴 줄로 바꾸고
+ * (tagline_source = ai_fixed), 원래 값을 여기 남긴다. 메이커가 한 주장("10초 만에 확인")은 근거에 없어도
+ * 바꾸지 않는다. 근거로는 무엇인지 알 수 없는 것은 관리자 제품 목록의 "소개 확인 필요"로 보낸다.
+ * 소개가 바뀌면(checked_tagline 과 다르면) 다시 본다.
+ */
+export const productIntroChecks = pgTable("product_intro_checks", {
+  productId: integer("product_id").primaryKey().references(() => products.id, { onDelete: "cascade" }),
+  /** 검수한 소개. 제품 소개가 이것과 다르면 다시 본다 */
+  checkedTagline: varchar("checked_tagline", { length: 200 }).notNull(),
+  verdict: varchar("verdict", { length: 16 }).$type<IntroVerdict>(),
+  problem: text("problem").notNull().default(""),
+  /** 모델이 고쳐 쓴 줄(다듬은 뒤). 알 수 없으면 빈 줄 */
+  corrected: varchar("corrected", { length: 200 }).notNull().default(""),
+  outcome: varchar("outcome", { length: 16 }).$type<IntroOutcome>(),
+  /** 바꾸기 전 값 — 되돌릴 때 쓴다(replaced 일 때만) */
+  originalTagline: varchar("original_tagline", { length: 200 }),
+  originalSource: varchar("original_source", { length: 12 }).$type<TaglineSource>(),
+  originalDescription: text("original_description"),
+  model: varchar("model", { length: 160 }).notNull().default(""),
+  attempts: integer("attempts").notNull().default(0),
+  errorCode: varchar("error_code", { length: 60 }),
+  retryAt: timestamp("retry_at"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+export type ProductIntroCheck = typeof productIntroChecks.$inferSelect;
 
 export const visitCollectionState = pgTable("visit_collection_state", {
   id: integer("id").primaryKey().default(1),

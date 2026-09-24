@@ -67,6 +67,8 @@ export type ListOptions = {
   offset?: number;
   /** 연속 실패로 닿지 않는 제품을 뺀다. 공개 목록만 켠다 — 어드민은 그것을 봐야 처리한다 */
   excludeDown?: boolean;
+  /** 소개 검수가 근거로는 무엇인지 알 수 없다고 한 제품만(intro-checks.ts) — 어드민이 본다 */
+  introNeedsEditor?: boolean;
 };
 
 /**
@@ -124,10 +126,17 @@ export const notDown = sql`not exists (
   where h.slug = ${products.slug} and h.failures >= ${DOWN_THRESHOLD}
 )`;
 
+/** 소개 검수가 근거로는 무엇인지 알 수 없다고 한 지금 소개(product_intro_checks) — 소개가 바뀌면 빠진다 */
+const introNeedsEditor = sql`exists (
+  select 1 from product_intro_checks c
+  where c.product_id = ${products.id} and c.outcome = 'needs_editor' and c.checked_tagline = ${products.tagline}
+)`;
+
 /** 목록과 개수가 같은 조건을 쓰도록 한 곳에서 만든다 */
-function listConditions({ statuses, category, query, builder, hasRepository, excludeDown }: Omit<ListOptions, "limit" | "sort" | "offset">) {
+function listConditions({ statuses, category, query, builder, hasRepository, excludeDown, introNeedsEditor: needsEditor }: Omit<ListOptions, "limit" | "sort" | "offset">) {
   const conditions = [inArray(products.status, statuses)];
   if (excludeDown) conditions.push(notDown);
+  if (needsEditor) conditions.push(introNeedsEditor);
   if (category) conditions.push(eq(products.category, category));
   if (builder) conditions.push(and(eq(products.builder, builder), builderIsReported)!);
   if (hasRepository) {
