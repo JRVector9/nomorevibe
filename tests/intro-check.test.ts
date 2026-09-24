@@ -51,6 +51,15 @@ describe("판정으로 할 일", () => {
     expect(decideIntro("ai", judged("wrong", "Demo"), product).outcome).toBe("needs_editor");
   });
 
+  it("소문자로 시작하면 첫 글자를 올린다 — 첫 낱말에 대문자가 섞여 있으면 둔다", () => {
+    expect(decideIntro("maker", judged("uninformative", "a tycoon game about running a joinery workshop"), product).line)
+      .toBe("A tycoon game about running a joinery workshop");
+    expect(decideIntro("maker", judged("uninformative", "copia atributos de una publicación de MercadoLibre"), product).line)
+      .toBe("Copia atributos de una publicación de MercadoLibre");
+    expect(decideIntro("ai", judged("wrong", "iPhone app to log gym sessions"), product).line).toBe("iPhone app to log gym sessions");
+    expect(decideIntro("ai", judged("wrong", "사이클 훈련용 앱으로 스마트 롤러를 연결한다"), product).line).toBe("사이클 훈련용 앱으로 스마트 롤러를 연결한다");
+  });
+
   it("고쳐 쓴 줄이 지금 소개와 같으면 둔다", () => {
     expect(decideIntro("ai", judged("wrong", product.tagline), product).outcome).toBe("kept");
   });
