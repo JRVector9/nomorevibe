@@ -51,6 +51,7 @@ export function jobRunOptions(name: string, options: RequestedRunOptions): JobRu
   if (name === 'reason-translate') return { ...options, budgetMs: 55_000 };
   // 검색 키워드 한 건이 7초 안팎이다 — 기본 틱이면 동시 셋이 두 바퀴도 못 돈다
   if (name === 'product-search-profile') return { ...options, budgetMs: 55_000 };
+  if (name === 'product-search-verify') return { ...options, budgetMs: 110_000 };
   // 게이트웨이가 붐비면 한 건이 45초까지 간다. 틱이 짧으면 그 호출을 아예 시작하지 못한다
   if (name === 'second-review') return { ...options, budgetMs: 110_000 };
   if (name === 'product-thumbnail-refresh') return { ...options, budgetMs: 40_000 };

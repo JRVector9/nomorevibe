@@ -37,6 +37,7 @@ export const JOB_CATALOG: readonly { name: string; role: JobRole | "scheduler"; 
    * 처음 1만8천 건을 채우는 데 하루쯤 걸리고, 그 뒤로는 새 제품과 30일 지난 것만 본다.
    */
   { name: "product-search-profile", role: "text", intervalMs: 60_000 },
+  { name: "product-search-verify", role: "reviewer", intervalMs: 60_000 },
   /**
    * 1분마다 15건 = 시간당 900건. 발행분 3,147건을 재확인 간격 6시간마다 보려면 시간당 525건이
    * 필요한데, 10분 주기(시간당 90건)로는 6시간 안에 17%만 볼 수 있었다.

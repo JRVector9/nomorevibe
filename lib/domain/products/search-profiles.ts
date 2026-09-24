@@ -79,8 +79,10 @@ export async function recordProfileResult(task: ProfileTask, lease: JobLease, re
       if (!current || current.errorCode || current.sourceHash !== sourceHash) return false;
       await tx.update(productSearchProfiles).set({ updatedAt: sql`now()` }).where(eq(productSearchProfiles.productId, product.id));
     } else if (result.kind === "success") {
+      // 새로 지은 키워드는 다시 검수한다(product-search-verify)
       const values = { keywordsEn: result.en, keywordsKo: result.ko, model: result.model, sourceHash,
-        errorCode: null, retryAt: null, updatedAt: sql`now()` };
+        errorCode: null, retryAt: null, updatedAt: sql`now()`,
+        verifiedAt: null, removedKeywords: [], verifyModel: null, verifyAttempts: 0, verifyError: null, verifyRetryAt: null };
       await tx.insert(productSearchProfiles).values({ productId: product.id, ...values, attempts: 1 })
         .onConflictDoUpdate({ target: productSearchProfiles.productId, set: { ...values, attempts: sql`${productSearchProfiles.attempts} + 1` } });
       await tx.update(products).set({ searchKeywords: keywordText(result.en, result.ko) }).where(eq(products.id, product.id));
@@ -91,6 +93,72 @@ export async function recordProfileResult(task: ProfileTask, lease: JobLease, re
         .onConflictDoUpdate({ target: productSearchProfiles.productId, set: { sourceHash, errorCode: code, updatedAt: sql`now()`,
           attempts: sql`${productSearchProfiles.attempts} + 1`,
           retryAt: sql`now() + least(interval '24 hours', interval '5 minutes' * power(2, ${productSearchProfiles.attempts}))` } });
+    }
+    await assertJobLease(tx, lease);
+    return true;
+  });
+}
+
+/** 이만큼 검수에 실패하면 손을 뗀다 — 한도에 걸린 것은 세지 않는다 */
+const MAX_VERIFY_ATTEMPTS = 5;
+
+/**
+ * 검수할 키워드 — 지은 뒤 아직 검수하지 않은 공개 제품. 최신 것부터.
+ * 키워드가 하나도 없는 것은 검수할 것이 없다.
+ */
+export async function pendingVerifications(limit: number): Promise<ProfileTask[]> {
+  const rows = await db.select({ product: FIELDS, profile: productSearchProfiles, reviewerNote: REVIEWER_NOTE })
+    .from(products)
+    .innerJoin(productSearchProfiles, eq(productSearchProfiles.productId, products.id))
+    .where(and(
+      inArray(products.status, ["seeded", "verified"]),
+      sql`${productSearchProfiles.errorCode} is null and ${productSearchProfiles.verifiedAt} is null
+        and jsonb_array_length(${productSearchProfiles.keywordsEn}) + jsonb_array_length(${productSearchProfiles.keywordsKo}) > 0
+        and ${productSearchProfiles.verifyAttempts} < ${MAX_VERIFY_ATTEMPTS}
+        and (${productSearchProfiles.verifyRetryAt} is null or ${productSearchProfiles.verifyRetryAt} <= now())`,
+    ))
+    .orderBy(sql`${products.id} desc`)
+    .limit(limit);
+  return rows.map((row) => ({ product: row.product, profile: row.profile, reviewerNote: row.reviewerNote }));
+}
+
+export type VerificationResult =
+  | { kind: "success"; removed: string[]; model: string }
+  | { kind: "failure"; error: string };
+
+/**
+ * 검수 결과를 남긴다 — 원본 키워드는 두고, 뺀 키워드를 적고, 색인용 사본(products.search_keywords)에서 뺀다.
+ *
+ * 그사이 키워드를 다시 지었거나(원본이 바뀌어 옛 키워드에 대한 검수다), 다른 워커가 먼저 적었거나,
+ * 이 잡의 리스를 잃었으면 아무것도 적지 않는다. 리스 확인은 맨 마지막이다.
+ */
+export async function recordVerificationResult(task: ProfileTask, lease: JobLease, result: VerificationResult): Promise<boolean> {
+  return db.transaction(async (tx) => {
+    const [product] = await tx.select(FIELDS).from(products).where(eq(products.id, task.product.id)).for("update");
+    if (!product || (product.status !== "seeded" && product.status !== "verified")) return false;
+    const [current] = await tx.select().from(productSearchProfiles)
+      .where(eq(productSearchProfiles.productId, product.id)).for("update");
+    if (!current || !task.profile || !sameProfile(current, task.profile) || current.errorCode || current.verifiedAt) return false;
+
+    if (result.kind === "success") {
+      const removed = new Set(result.removed);
+      await tx.update(productSearchProfiles).set({
+        verifiedAt: sql`now()`, removedKeywords: [...removed], verifyModel: result.model,
+        verifyError: null, verifyRetryAt: null, verifyAttempts: sql`${productSearchProfiles.verifyAttempts} + 1`,
+      }).where(eq(productSearchProfiles.productId, product.id));
+      await tx.update(products).set({
+        searchKeywords: keywordText(current.keywordsEn.filter((k) => !removed.has(k)), current.keywordsKo.filter((k) => !removed.has(k))),
+      }).where(eq(products.id, product.id));
+    } else {
+      const code = result.error.slice(0, 60);
+      // 한도에 걸린 것은 이 제품 탓이 아니다 — 세지 않고 오래 쉰다(2차 심사와 한도를 같이 쓴다)
+      const limited = code === "rate_limited";
+      await tx.update(productSearchProfiles).set({
+        verifyError: code,
+        verifyAttempts: limited ? productSearchProfiles.verifyAttempts : sql`${productSearchProfiles.verifyAttempts} + 1`,
+        verifyRetryAt: limited ? sql`now() + interval '30 minutes'`
+          : sql`now() + least(interval '24 hours', interval '5 minutes' * power(2, ${productSearchProfiles.verifyAttempts}))`,
+      }).where(eq(productSearchProfiles.productId, product.id));
     }
     await assertJobLease(tx, lease);
     return true;
