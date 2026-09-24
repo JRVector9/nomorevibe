@@ -109,6 +109,14 @@ export function parseIntroCheck(items: readonly IntroItem[], structured: unknown
 }
 
 /**
+ * 이름을 떼고 쓰라고 해서인지 "a tycoon game about…"·"copia atributos…"처럼 소문자로 시작하는 줄이 온다
+ * (프로드 첫 11건 중 4건). 첫 낱말이 전부 소문자일 때만 첫 글자를 올린다 — "iPhone"·"eBay"는 그대로 둔다.
+ */
+function capitalize(line: string): string {
+  return /^\p{Ll}+(?=[\s,:;.-]|$)/u.test(line) ? line.charAt(0).toLocaleUpperCase() + line.slice(1) : line;
+}
+
+/**
  * 판정으로 무엇을 할지 정한다.
  *
  * - 맞으면 둔다.
@@ -118,7 +126,7 @@ export function parseIntroCheck(items: readonly IntroItem[], structured: unknown
  */
 export function decideIntro(origin: "ai" | "maker", judgement: IntroJudgement, product: { name: string; tagline: string }):
   { outcome: IntroOutcome; line: string } {
-  const line = tidyTagline(judgement.corrected);
+  const line = capitalize(tidyTagline(judgement.corrected));
   if (judgement.verdict === "ok" || (origin === "maker" && judgement.verdict === "wrong")) return { outcome: "kept", line };
   const usable = line.length >= MIN_LINE && line.toLowerCase() !== product.name.trim().toLowerCase();
   if (!usable) return { outcome: "needs_editor", line: "" };
