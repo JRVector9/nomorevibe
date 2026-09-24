@@ -98,19 +98,20 @@ describe("검색 키워드 잡", () => {
   });
 
   it("한 건이 오래 걸리면 그 틱을 접는다 — 게이트웨이가 밀릴 때 1차 심사에 자리를 준다", async () => {
-    await seed("first");
-    await seed("second");
+    for (const slug of ["first", "second", "third", "fourth"]) await seed(slug);
     vi.useFakeTimers({ toFake: ["Date"] });
+    // 첫 호출만 느리다 — 동시에 나간 둘은 답을 받고, 그다음은 부르지 않는다
+    let calls = 0;
     gateway.mockImplementation(async () => {
-      vi.setSystemTime(Date.now() + SLOW_CALL_MS);
+      if (calls++ === 0) vi.setSystemTime(Date.now() + SLOW_CALL_MS);
       return answer(["grocery list"], ["장보기"]);
     });
 
     expect(await tick()).toMatchObject({ status: "completed", done: true });
 
-    // 받은 답은 버리지 않고, 다음 것은 다음 틱으로 미룬다
-    expect(gateway).toHaveBeenCalledTimes(1);
-    expect(await db.select().from(productSearchProfiles)).toHaveLength(1);
+    // 받은 답은 버리지 않고, 남은 것은 다음 틱으로 미룬다
+    expect(gateway).toHaveBeenCalledTimes(2);
+    expect(await db.select().from(productSearchProfiles)).toHaveLength(2);
   });
 
   it("공개되지 않은 제품은 짓지 않는다", async () => {
