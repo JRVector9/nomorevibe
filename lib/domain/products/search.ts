@@ -112,7 +112,7 @@ export function planTerms(lexemes: readonly string[]): SearchTerm[] {
 }
 
 /** tsquery 에 넣을 낱말 하나 — 따옴표는 겹치고 역슬래시는 버린다(둘 다 tsquery 문법 글자) */
-const quote = (term: string, prefix = true) => `'${term.replace(/\\/g, "").replace(/'/g, "''")}'${prefix ? ":*" : ""}`;
+const quote = (term: string, prefix = true, weights = "") => `'${term.replace(/\\/g, "").replace(/'/g, "''")}'${prefix ? `:*${weights}` : ""}`;
 const tsq = (terms: readonly string[], join: " & " | " | ") => sql`to_tsquery('simple', ${terms.map((t) => quote(t)).join(join)})`;
 
 /**
@@ -137,6 +137,19 @@ const needed = (terms: readonly SearchTerm[]) => terms.length >= RELAX_MIN_TERMS
 /** 이 행에 맞는 낱말 수 — 낱말 몇 개짜리라 행마다 몇 번의 @@ 뿐이다 */
 const coverage = (terms: readonly SearchTerm[]) =>
   sql`(${sql.join(terms.map((term) => sql`(${products.searchVector} @@ ${tsq([term.loose], " & ")})::int`), sql` + `)})`;
+
+/**
+ * 이름·토픽·소개·키워드·식별자(무게 A·B·C)에서만 센 맞은 낱말 수 — 본문·README(D)에서 맞은 것은 세지 않는다.
+ *
+ * 다중 정답 평가(scripts/search-judged.ts, 2026-09-26)에서 상위 10의 부적합 제품이 가장 많이 걸린 칸이 본문(227)과
+ * README(125)였다 — 적합한 것보다 많았다(194·88). 이름·소개·키워드에 하나도 안 맞고 본문·README 로만 걸린 것이
+ * 부적합 49개, 적합 2개. 본문은 순위 무게로는 0.1 이지만, 넓힌 검색의 "맞은 비율×10" 가산에서는 이름과 같이 셌다.
+ *
+ * 검색 키워드가 없는 제품(빈 키워드 261개, 막 발행돼 아직 안 지은 것)은 예전처럼 본문·README 까지 센다 — 소개가 무엇인지
+ * 말하지 않는 제품은 그것만이 설명이다("Build a squad and climb the league" 인 축구 매니저 게임).
+ */
+const namedCoverage = (terms: readonly SearchTerm[]) => sql`(case when ${products.searchKeywords} is null then ${coverage(terms)} else
+  (${sql.join(terms.map((term) => sql`(${products.searchVector} @@ to_tsquery('simple', ${quote(term.loose, true, "ABC")}))::int`), sql` + `)}) end)`;
 
 /**
  * 어느 질의문이든 맞으면 결과다. 불용어뿐인 검색어는 낱말이 없어 아무것도 맞지 않는다.
@@ -170,7 +183,10 @@ export function productSearchPredicate(query: SearchQuery): SQL | undefined {
  * - 어간이 그대로 맞으면 더한다 — 느슨하게 넓힌 잡음이 정확히 맞은 것을 앞지르지 못하게.
  * - 넓힌 검색에서는 맞은 낱말의 비율에 10을 곱해 더한다 — 다 맞은 것이 하나 빠진 것보다 늘 앞이다.
  *   1로 두었을 때 "soccer manager game"에서 이름에 manager·game 이 든 제품들이 세 낱말이 다 맞는
- *   축구 매니저 게임을 20위 밖으로 밀었다(2026-09-23 프로드).
+ *   축구 매니저 게임을 20위 밖으로 밀었다(2026-09-23 프로드). 비율은 이름·소개·키워드(A·B·C)에서만 센다.
+ * - 이름·소개·키워드에 낱말이 하나도 안 맞고 본문·README 로만 걸렸으면 1을 뺀다(키워드가 있는 제품만). 둘을 함께 바꾸자 다중 정답 평가가
+ *   nDCG@10 0.829→0.843, 1위가 딱 맞는 질의 42→44(일본어 단어장 0.33→0.81, 휠체어 화장실 지도 정답 2→1위).
+ *   내린 것은 번역이 이미 틀린 "드라마 평점 차트"(정답이 본문으로만 걸려 18위→20위 밖)와 소폭 여섯. 3을 빼도 같았다.
  * - 이름이 검색어와 같으면 크게, 검색어로 시작하면 조금 더한다 — 이름으로 찾는 사람도 있다.
  */
 export function productSearchRank(query: SearchQuery): SQL<number> {
@@ -191,7 +207,8 @@ export function productSearchRank(query: SearchQuery): SQL<number> {
     return [{ group: query.groups?.[index] ?? -1 - index, score: sql`(
       coalesce(ts_rank_cd(${products.searchVector}, ${tsq(terms.map((t) => t.loose), " | ")}, 1), 0)
       + case when ${products.searchVector} @@ ${exact} then coalesce(ts_rank(${products.searchVector}, ${exact}), 0) else 0 end
-      + ${query.mode === "most" ? sql`10 * ${coverage(terms)}::float4 / ${terms.length}` : sql`0`}
+      + ${query.mode === "most" ? sql`10 * ${namedCoverage(terms)}::float4 / ${terms.length}` : sql`0`}
+      + case when ${namedCoverage(terms)} = 0 then -1 else 0 end
       + case when lower(${products.name}) = ${name} then 2 when lower(${products.name}) like ${`${name.replace(/[\\%_]/g, (c) => `\\${c}`)}%`} then 0.5 else 0 end
     )` }];
   });

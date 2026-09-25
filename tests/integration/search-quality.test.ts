@@ -114,6 +114,24 @@ describe("정확도", () => {
   });
 });
 
+describe("본문·README 로만 걸린 것", () => {
+  it("넓힌 검색에서 이름·소개에 맞은 제품이 README 에만 다 맞은 제품보다 앞이다", async () => {
+    // 세 낱말 중 둘이 소개에 있는 것과, 셋 다 README 에만 있는 것 — 결과가 적어 넓힌 검색(most)이 된다
+    // 둘 다 검색 키워드가 있다(공개분 거의 전부가 그렇다)
+    await seed("mood-journal", { name: "Mood Journal", tagline: "Daily mood journal", description: "Daily mood journal", searchKeywords: "mood tracker · 기분 일기" });
+    await seed("sdk-kit", { name: "SDK Kit", tagline: "Build faster", description: "Build faster", searchKeywords: "developer sdk · 개발 도구",
+      searchReadme: "example app: a daily mood journal with voice notes" });
+    expect((await find("mood journal voice"))[0]).toBe("mood-journal");
+  });
+
+  it("검색 키워드가 없는 제품은 예전처럼 본문까지 센다 — 소개가 무엇인지 말하지 않으면 본문이 유일한 설명이다", async () => {
+    await seed("club-season", { name: "Club Season", tagline: "Build a squad and climb the league", description: "Build a squad and climb the league",
+      searchPageText: "A soccer club manager game played over a shared season." });
+    for (let i = 0; i < 5; i++) await seed(`manager-${i}`, { name: `Game Manager ${i}`, tagline: "Manage your game library", description: "Manage your game library", searchKeywords: "game library" });
+    expect((await find("soccer manager game"))[0]).toBe("club-season");
+  });
+});
+
 describe("한국어와 영어", () => {
   // 2단계(검색 프로필) 몫 — 한국어 제품에 영어로 쓴 검색용 글이 생겨야 풀린다
   it.todo("한국어 제품을 영어로 찾는다");
