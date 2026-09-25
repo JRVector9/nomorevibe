@@ -8,10 +8,18 @@
  * 정답은 2026-09-23 프로드 공개분에서 내용을 직접 확인한 제품이다. 질의에는 제품 이름을 쓰지 않는다 —
  * 사람들은 이름이 아니라 하려는 일로 찾는다. 한국어 질의는 화면처럼 번역을 거친다(캐시 → 게이트웨이).
  *
+ * 정답 하나만 세면 "정답만큼 맞는 다른 제품"이 위에 와도 실패가 된다(도메인 조회 → domainstack, gym workout log →
+ * 운동 기록 앱 16개). 그래서 질의마다 후보 제품에 적합도를 매겨 둔 것(search-judgments.json — 2 찾는 바로 그것,
+ * 1 받아들일 만함, 0 아님)으로 nDCG@10·5위 안 적합 비율·1위 적합도 함께 잰다. 매기지 않은 제품이 상위 10에 들면
+ * 그 수를 따로 보인다 — 새 검색 방식이 처음 보는 제품을 올리면 채점을 보태야 한다는 뜻이다.
+ *
+ * 정답이 20위 밖이면 200위까지 더 보아 "후보에는 있는데 순위가 낮음"과 "아예 안 걸림"을 가른다.
+ *
  *   tsx scripts/search-judged.ts [--out=결과.json]
  */
 import { parseArgs } from "node:util";
-import { writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import path from "node:path";
 import type { ProductStatus } from "@/lib/db/schema";
 import { countProducts, listProducts } from "@/lib/domain/products/repository";
 import { resolveSearchQuery } from "@/lib/domain/products/search-translation";
@@ -58,32 +66,74 @@ const JUDGED: [query: string, slug: string][] = [
 
 const PUBLIC: ProductStatus[] = ["seeded", "verified"];
 const DEPTH = 20;
+/** 정답이 20위 밖일 때 어디까지 더 보나 — 후보에 있는지 가른다 */
+const DIAGNOSE_DEPTH = 200;
+const JUDGMENTS_FILE = path.join(__dirname, "search-judgments.json");
+
+/** 질의 → 제품 → 적합도(0·1·2) */
+type Judgments = Record<string, Record<string, number>>;
+const gain = (grade: number) => 2 ** grade - 1;
+/** nDCG@k — 매기지 않은 제품은 0 으로 센다(그래서 unjudged 를 따로 보인다) */
+function ndcg(grades: readonly number[], ideal: readonly number[], k: number): number {
+  const dcg = (list: readonly number[]) => list.slice(0, k).reduce((sum, g, i) => sum + gain(g) / Math.log2(i + 2), 0);
+  const best = dcg([...ideal].sort((a, b) => b - a));
+  return best ? dcg(grades) / best : 0;
+}
 
 async function main() {
   const { values } = parseArgs({ options: { out: { type: "string" } } });
-  const results: { query: string; slug: string; rank: number | null; hits: number; translated: string | null; ms: number }[] = [];
+  const judgments: Judgments = existsSync(JUDGMENTS_FILE) ? JSON.parse(readFileSync(JUDGMENTS_FILE, "utf8")) : {};
+  const results: {
+    query: string; slug: string; rank: number | null; deepRank: number | null; hits: number; translated: string | null; ms: number;
+    ndcg10?: number; relevantTop5?: number; top1Grade?: number | null; unjudgedTop10?: number;
+  }[] = [];
   for (const [query, slug] of JUDGED) {
     const started = Date.now();
     const resolved = await resolveSearchQuery(query);
     const options = { statuses: PUBLIC, query: resolved.queries, excludeDown: true };
     const [hits, rows] = await Promise.all([countProducts(options), listProducts({ ...options, sort: "relevance", limit: DEPTH })]);
+    const ms = Date.now() - started;
     const index = rows.findIndex((row) => row.slug === slug);
-    results.push({ query, slug, rank: index >= 0 ? index + 1 : null, hits, translated: resolved.translated, ms: Date.now() - started });
+    // 20위 밖이면 더 깊이 — 시간에는 넣지 않는다(화면은 이만큼 보지 않는다)
+    const deep = index >= 0 ? index : (await listProducts({ ...options, sort: "relevance", limit: DIAGNOSE_DEPTH })).findIndex((row) => row.slug === slug);
+    const judged = judgments[query];
+    const graded = judged ? {
+      ndcg10: ndcg(rows.map((row) => judged[row.slug] ?? 0), Object.values(judged), 10),
+      relevantTop5: rows.slice(0, 5).filter((row) => (judged[row.slug] ?? 0) >= 1).length,
+      top1Grade: rows[0] ? judged[rows[0].slug] ?? null : null,
+      unjudgedTop10: rows.slice(0, 10).filter((row) => !(row.slug in judged)).length,
+    } : {};
+    results.push({ query, slug, rank: index >= 0 ? index + 1 : null, deepRank: deep >= 0 ? deep + 1 : null, hits, translated: resolved.translated, ms, ...graded });
     const r = results.at(-1)!;
-    console.log(`${String(r.rank ?? "-").padStart(3)}위  ${String(hits).padStart(5)}건  ${String(r.ms).padStart(5)}ms  ${query}${r.translated ? `  → ${r.translated}` : ""}`);
+    const where = r.rank ? `${r.rank}위` : r.deepRank ? `(${r.deepRank}위)` : "후보 없음";
+    console.log(`${where.padStart(8)}  ${String(hits).padStart(5)}건  ${String(ms).padStart(5)}ms  ${r.ndcg10 !== undefined ? `nDCG ${r.ndcg10.toFixed(2)}  ` : ""}${query}${r.translated ? `  → ${r.translated}` : ""}`);
   }
   const n = results.length;
   const within = (k: number) => results.filter((r) => r.rank !== null && r.rank <= k).length;
   const mrr = results.reduce((sum, r) => sum + (r.rank ? 1 / r.rank : 0), 0) / n;
   const ms = results.map((r) => r.ms).sort((a, b) => a - b);
+  const gradedRows = results.filter((r) => r.ndcg10 !== undefined);
+  const avg = (pick: (r: (typeof results)[number]) => number) => gradedRows.length ? gradedRows.reduce((sum, r) => sum + pick(r), 0) / gradedRows.length : 0;
   const summary = {
     queries: n, top1: within(1), top5: within(5), top10: within(10), top20: within(20),
     mrr: Number(mrr.toFixed(3)), zero: results.filter((r) => r.hits === 0).length,
     medianHits: results.map((r) => r.hits).sort((a, b) => a - b)[Math.floor(n / 2)],
     p50Ms: ms[Math.floor(n / 2)], p95Ms: ms[Math.floor(n * 0.95)],
+    // 정답이 20위 밖인 것 중 후보(200위 안)에는 있는 것과 아예 안 걸린 것
+    outside20InPool: results.filter((r) => r.rank === null && r.deepRank !== null).length,
+    notMatched: results.filter((r) => r.deepRank === null).length,
+    graded: gradedRows.length,
+    ndcg10: Number(avg((r) => r.ndcg10!).toFixed(3)),
+    relevantTop5: Number(avg((r) => r.relevantTop5! / 5).toFixed(3)),
+    top1Relevant: gradedRows.filter((r) => (r.top1Grade ?? 0) >= 1).length,
+    top1Exact: gradedRows.filter((r) => r.top1Grade === 2).length,
+    unjudgedTop10: gradedRows.reduce((sum, r) => sum + r.unjudgedTop10!, 0),
   };
   console.log(`\n1위 ${summary.top1}/${n} · 5위 안 ${summary.top5} · 10위 안 ${summary.top10} · 20위 안 ${summary.top20} · MRR ${summary.mrr}`
     + ` · 0건 ${summary.zero} · 결과 수 중앙 ${summary.medianHits} · p50 ${summary.p50Ms}ms · p95 ${summary.p95Ms}ms`);
+  console.log(`정답이 20위 밖: 후보에는 있음 ${summary.outside20InPool} · 아예 안 걸림 ${summary.notMatched}`);
+  if (summary.graded) console.log(`다중 정답(${summary.graded}개 질의): nDCG@10 ${summary.ndcg10} · 5위 안 적합 비율 ${summary.relevantTop5}`
+    + ` · 1위가 적합 ${summary.top1Relevant} (딱 맞음 ${summary.top1Exact}) · 상위 10의 미채점 ${summary.unjudgedTop10}`);
   if (values.out) writeFileSync(values.out, JSON.stringify({ summary, results }, null, 1));
   process.exit(0);
 }
