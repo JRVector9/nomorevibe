@@ -99,6 +99,18 @@ it("옮겨 둔 번역이 있으면 게이트웨이를 부르지 않는다", asyn
     .toEqual(["pdfree"]);
 });
 
+it("한국어로 친 말이 원문으로 많이 맞아도 번역을 붙인다 — 한국어 키워드만 맞은 결과가 영어 정답을 가리지 않게", async () => {
+  // 한국어 키워드로만 맞는 제품 20개와, 소개가 영어라 번역으로만 맞는 정답
+  for (let i = 0; i < 20; i++) await seed(`kw-${i}`, { name: `Tracker ${i}`, tagline: "Something", description: "Something", searchKeywords: "비용 추적" });
+  await seed("agentacct", { name: "AgentAcct", tagline: "Track what your coding agents cost", description: "Track what your coding agents cost" });
+  await db.insert(textTranslations).values({ sourceHash: queryTranslationKey("비용 추적"), targetLang: "en", status: "done", translated: "cost tracking | agent cost tracking" });
+
+  const resolved = await resolveSearchQuery("비용 추적");
+  expect(resolved.translated).toBe("cost tracking / agent cost tracking");
+  const found = (await listProducts({ statuses: ["seeded"], sort: "relevance", limit: 30, query: resolved.queries })).map((r) => r.slug);
+  expect(found).toContain("agentacct");
+});
+
 it("번역이 안 되면 친 그대로 찾는다 — 오류 화면이 되지 않는다", async () => {
   // 키가 없으면 게이트웨이를 부르지 못한다. 그래도 검색은 돌아야 한다
   delete process.env.ABCLLM_API_KEY;

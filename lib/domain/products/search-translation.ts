@@ -14,13 +14,11 @@ import { planTerms, productSearchPredicate, RELAX_MIN_TERMS, type SearchPlan, ty
  * 모델에게 낱말을 받아 같은 색인으로 다시 찾으면 제자리를 찾는다.
  *
  * 세 가지를 지킨다:
- *  - 먼저 친 그대로 찾는다. 번역은 한 번에 6~7초라(2026-09-11 게이트웨이 실측) 글자마다 부를 수 없다.
+ *  - 한국어면 늘 옮기되, 친 그대로도 함께 찾는다 — 번역으로 갈아 끼우지 않는다. 번역은 캐시가 없으면 한 번에
+ *    1.5~8초라(게이트웨이 상태에 따라) 글자마다 부를 수 없다 — 검색을 누를 때만 부른다.
  *  - 한 번 옮긴 말은 다시 옮기지 않는다(text_translations, target_lang='en'). 지시문 판이 바뀌면 다시 옮긴다.
  *  - 실패하면 번역 없이 찾은 결과를 그대로 준다. 검색이 오류 화면이 되지는 않는다.
  */
-
-/** 이만큼도 안 나오면 옮겨 본다. 홈 한 페이지가 9줄(HOME_FIRST_PAGE)이라 두 페이지가 채 안 되는 수 */
-const ENOUGH_HITS = 20;
 
 /**
  * 게이트웨이에 줄 시간. 낱말 서넛짜리 답이라 고정비(약 6초)가 거의 전부다.
@@ -96,12 +94,17 @@ export async function planSearch(texts: readonly string[]): Promise<SearchPlan> 
   return await publicHits(strict) >= FEW_HITS ? strict : { ...strict, mode: "most" };
 }
 
-/** 한국어로 쳤는데 몇 건 안 나오면 영어 낱말로 옮긴다. 옮기지 못하면 null — 친 그대로 찾는다 */
-async function translateIfFew(raw: string): Promise<string | null> {
+/**
+ * 한국어로 치면 영어 낱말로 옮긴다. 옮기지 못하면 null — 친 그대로 찾는다.
+ *
+ * 전에는 원문으로 20건 넘게 나오면 옮기지 않았다. 목록이 거의 영어라 한국어가 20건씩 맞는 일이 드물었는데,
+ * 한·영 검색 키워드가 채워지자(2026-09-25) 한국어 키워드만으로 20건을 넘기는 질의가 생겼다 — 그러면 소개·본문이
+ * 영어인 정답을 영어 낱말로 찾지 못한다. "코딩 에이전트 비용 추적"이 원문 26건으로 번역을 건너뛰어 13위였고,
+ * 번역을 붙이자 3위였다. 한국어 정답 질의 26개 중 나머지는 순위가 같았다. 옮긴 말은 캐시에 남아 처음 한 번만
+ * 게이트웨이를 부른다(지금 1.4~1.7초).
+ */
+async function translateKorean(raw: string): Promise<string | null> {
   try {
-    const own = await planSearch([raw]);
-    if (await publicHits({ ...own, mode: "all" }) >= ENOUGH_HITS) return null;
-
     const hash = queryTranslationKey(raw);
     const cached = await cachedTranslation(hash);
     if (cached) return cached;
@@ -128,7 +131,7 @@ async function translateIfFew(raw: string): Promise<string | null> {
 export async function resolveSearchQuery(query: string | undefined): Promise<ResolvedSearch> {
   const raw = query?.trim() ?? "";
   if (!raw) return { queries: [], translated: null };
-  const stored = hasHangul(raw) ? await translateIfFew(raw) : null;
+  const stored = hasHangul(raw) ? await translateKorean(raw) : null;
   const phrases = stored ? queryTranslationPhrases(stored) : [];
   const translated = phrases.length ? phrases.join(" / ") : null;
   const texts = [raw, ...phrases];
