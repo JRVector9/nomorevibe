@@ -13,13 +13,16 @@
   "cobi-alpha": 0,
   "compass-2": 0,
   "connor-ulrich-blandford": 0,
+  "crawlora-web-data-api-for-ai-agents": 0,
   "dynamic-drought-module": 0,
+  "heatshield-26": 0,
   "how-to-buy-dasha": 0,
   "lantunnel": 0,
   "open-wine-map": 0,
   "opentransit": 0,
   "outloud": 0,
   "publicai": 0,
+  "pueblo-food-map": 0,
   "refined-x": 0,
   "restroom-map": 2,
   "screen-to-street": 0,
@@ -575,6 +578,7 @@
   "lavorai": 1,
   "opinio": 1,
   "pegas-devschile": 1,
+  "pinloop": 1,
   "recruitment-platform": 1,
   "schulermatch": 0,
   "specialist-fe": 0,
@@ -804,6 +808,7 @@
   "ultros": 0
  },
  "provision grafana cloud stacks": {
+  "accredited-wsq-and-ibf-funded-courses-for-industrial-40-skil": 0,
   "agentic-ai-to-accelerate-devops-infrastructure-teams": 0,
   "atmos": 0,
   "cloudflare-os": 0,
@@ -812,6 +817,7 @@
   "fleet-management-operator": 1,
   "full-stack-observability-for-the-agentic-era": 1,
   "grafana-cloud-vending-machine": 2,
+  "home-page-3": 0,
   "hosting-control-panel": 0,
   "local-ai-stack": 0,
   "mcp-grafana": 0,
@@ -823,6 +829,7 @@
   "synccloud-for-macos": 0,
   "synthkit": 0,
   "up2cloud": 0,
+  "wsq-funded-wsq": 0,
   "your-build-was-green-the-site-was-wrong": 0
  },
  "short form video trends": {
@@ -898,6 +905,7 @@
   "bandy-manager": 1,
   "calculadora-biwenger-jaimefgdev": 1,
   "club-season": 2,
+  "college-football-27-dynasty-tracker": 1,
   "ege-football": 0,
   "escuadra": 0,
   "fantasy-bench": 1,
@@ -981,13 +989,15 @@
   "nyu-macro-reading-group": 0,
   "open-data-capture": 0,
   "paper-deep-reading-skill": 0,
+  "ranked-lobby": 1,
   "spgrep": 0,
   "ssafy-16-4": 2,
   "study-mondo": 0,
   "svgrid": 0,
   "synapsehq": 1,
   "usaco-guide": 1,
-  "voxa-studios": 0
+  "voxa-studios": 0,
+  "wearable-generative-art": 0
  },
  "약 부작용 확인": {
   "agentproto": 0,
@@ -1101,6 +1111,7 @@
   "product-289": 0,
   "product-81": 0,
   "skilldock": 0,
+  "sweetstrail": 0,
   "vibectl": 0
  },
  "focus app task world": {
