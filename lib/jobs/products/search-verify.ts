@@ -1,71 +1,84 @@
-import type { ReviewCliRun } from "@/lib/crawl/agent-review";
 import type { JobContext, JobOutcome } from "@/lib/jobs/runner";
 import { profileEvidence } from "@/lib/domain/products/search-profile";
-import { pendingVerifications, recordVerificationResult, type VerificationResult } from "@/lib/domain/products/search-profiles";
-import { VERIFY_BATCH, VERIFY_MODEL, verifyKeywords } from "@/lib/domain/products/search-verify";
+import { pendingVerifications, recordVerificationResult } from "@/lib/domain/products/search-profiles";
+import { VERIFY_MODEL, verifyKeywords } from "@/lib/domain/products/search-verify";
 
 /**
- * 검색 키워드 검수 — 지은 키워드를 Sonnet 이 근거와 대조해 뒷받침되지 않는 것을 뺀다(search-verify.ts).
+ * 검색 키워드 검수 — 지은 키워드를 게이트웨이의 Qwen3.8 이 근거와 대조해 뒷받침되지 않는 것을 뺀다(search-verify.ts).
  *
- * reviewer 워커에서 돈다 — 구독 토큰(claude-cli)이 거기에만 있다. 2차 심사의 Sonnet 표와 한도를 같이 쓴다.
- * 한 번에 둘(10건 묶음 둘)을 부른다 — 하나일 때 시간당 약 500건이라 키워드 짓기(약 750건)를 따라가지 못했다
- * (2026-09-24). 대기열은 한 번에 읽어 나눈다 — 따로 읽으면 같은 제품을 두 번 부른다.
+ * text 워커에서 돈다 — 게이트웨이 키가 있고, 키워드 짓기가 끝나 자리가 비었다. 심사 워커의 차례를 뺏지 않는다.
+ * supa 서버는 동시 넷과 여덟의 처리량이 같았다(시간당 650~700건, 2026-09-25) — 넷으로 부른다.
  */
 
-/** 동시에 부르는 묶음 수 */
-const CONCURRENCY = 2;
+/** 한 번에 집는 수. 대기열은 한 번에 읽어 나눈다 — 따로 읽으면 같은 제품을 두 번 부른다 */
+const BATCH = 16;
+const CONCURRENCY = 4;
+/** 한 건(키워드 16개)에 둘 시간 — 시험에서 동시 넷일 때 5~25초 */
+const CALL_MS = 60_000;
 /** 틱 예산(worker.ts jobRunOptions 110초)보다 조금 짧게 */
 const TICK_MS = 105_000;
-/** 한 번(10건)에 둘 시간 — 시범에서 평소 11~21초 */
-const CALL_MS = 90_000;
 /** 이만큼 남아 있을 때만 새로 부른다 */
-const MIN_CALL_MS = 40_000;
-/** 제품 탓이 아닌 실패 — 이번 틱을 접는다. 한도에 걸린 것은 30분 쉬게 적힌다(recordVerificationResult) */
-const STOP = new Set(["rate_limited", "auth", "missing_cli", "not_configured", "timeout", "cli_error", "budget", "cancelled"]);
+const MIN_CALL_MS = 20_000;
+/** 게이트웨이가 막힌 것은 이 제품의 문제가 아니다 — 잇따라 둘이 막히면 이번 틱을 접는다 */
+const GATEWAY_DOWN = new Set(["no_key", "model_unavailable", "rate_limit", "timeout", "network"]);
 
-export async function verifySearchKeywords(ctx: JobContext<null>, run?: ReviewCliRun): Promise<JobOutcome<null>> {
+export async function verifySearchKeywords(ctx: JobContext<null>, request?: typeof fetch): Promise<JobOutcome<null>> {
+  if (!process.env.ABCLLM_API_KEY?.trim()) {
+    ctx.log("search_verify.skipped", { reason: "no_key" });
+    return { done: true };
+  }
   const lease = ctx.lease;
   if (!lease) throw new Error("Search keyword verification requires a job lease");
-  const startedAt = Date.now();
-  const remaining = () => TICK_MS - (Date.now() - startedAt);
-  let verified = 0, removed = 0, failed = 0;
+  const controller = new AbortController();
+  const signal = ctx.signal ? AbortSignal.any([ctx.signal, controller.signal]) : controller.signal;
+  const ownershipPoll = setInterval(() => { if (!ctx.hasBudget()) controller.abort(); }, 250);
+  ownershipPoll.unref?.();
+  try {
+    const startedAt = Date.now();
+    const remaining = () => TICK_MS - (Date.now() - startedAt);
+    let verified = 0, removed = 0, failed = 0, blocked = "", inARow = 0;
 
-  while (ctx.hasBudget() && !ctx.signal?.aborted && remaining() >= MIN_CALL_MS) {
-    const pending = await pendingVerifications(VERIFY_BATCH * CONCURRENCY);
-    if (pending.length === 0) {
-      ctx.log("search_verify.done", { verified, removed, failed, drained: true });
-      return { done: true };
-    }
-    const batches = Array.from({ length: Math.ceil(pending.length / VERIFY_BATCH) }, (_, i) => pending.slice(i * VERIFY_BATCH, (i + 1) * VERIFY_BATCH));
-    const timeoutMs = Math.max(1_000, Math.min(CALL_MS, remaining() - 1_000));
-    const results = await Promise.all(batches.map((tasks) => verifyKeywords(tasks.map((task) => ({
-      slug: task.product.slug,
-      evidence: profileEvidence(task.product, task.reviewerNote),
-      keywords: [...task.profile!.keywordsEn, ...task.profile!.keywordsKo],
-    })), { timeoutMs, run, signal: ctx.signal })));
-    let blocked = false;
-    for (const [index, result] of results.entries()) {
-      const tasks = batches[index];
-      if (!result.ok) {
-        for (const task of tasks) if (await recordVerificationResult(task, lease, { kind: "failure", error: result.error })) failed++;
-        blocked ||= STOP.has(result.error);
-        continue;
+    while (!signal.aborted && ctx.hasBudget() && remaining() >= MIN_CALL_MS) {
+      const tasks = await pendingVerifications(BATCH);
+      if (tasks.length === 0) {
+        ctx.log("search_verify.done", { verified, removed, failed, drained: true });
+        return { done: true };
       }
-      for (const task of tasks) {
-        const unsupported = result.unsupported.get(task.product.slug);
-        // 답이 빠진 제품은 검수하지 않은 것으로 남긴다 — 다음에 다시 본다
-        const outcome: VerificationResult = unsupported
-          ? { kind: "success", removed: unsupported, model: VERIFY_MODEL }
-          : { kind: "failure", error: "missing_result" };
-        if (!await recordVerificationResult(task, lease, outcome)) continue;
-        if (unsupported) { verified++; removed += unsupported.length; } else failed++;
+      let next = 0;
+      const settled = await Promise.allSettled(Array.from({ length: CONCURRENCY }, async () => {
+        try {
+          for (let index = next++; index < tasks.length; index = next++) {
+            if (blocked || signal.aborted || !ctx.hasBudget() || remaining() < MIN_CALL_MS) return;
+            const task = tasks[index];
+            const result = await verifyKeywords({
+              evidence: profileEvidence(task.product, task.reviewerNote),
+              keywords: [...task.profile!.keywordsEn, ...task.profile!.keywordsKo],
+            }, { request, signal, timeoutMs: Math.max(1_000, Math.min(CALL_MS, remaining() - 1_000)) });
+            if (signal.aborted) return;
+            if (!result.ok) {
+              if (await recordVerificationResult(task, lease, { kind: "failure", error: result.error })) failed++;
+              if (GATEWAY_DOWN.has(result.error) || result.error.startsWith("http_5")) {
+                if (++inARow >= 2) blocked = result.error;
+              }
+              continue;
+            }
+            inARow = 0;
+            if (!await recordVerificationResult(task, lease, { kind: "success", removed: result.unsupported, model: VERIFY_MODEL })) continue;
+            verified++;
+            removed += result.unsupported.length;
+          }
+        } catch (error) { blocked = "result_write_failed"; controller.abort(); throw error; }
+      }));
+      const failure = settled.find((item) => item.status === "rejected");
+      if (failure) throw failure.reason;
+      if (blocked) {
+        ctx.log("search_verify.blocked", { error: blocked, verified, removed, failed });
+        return { done: true };
       }
     }
-    if (blocked) {
-      ctx.log("search_verify.blocked", { verified, removed, failed });
-      return { done: true };
-    }
+    ctx.log("search_verify.done", { verified, removed, failed, drained: false });
+    return { done: false };
+  } finally {
+    clearInterval(ownershipPoll);
   }
-  ctx.log("search_verify.done", { verified, removed, failed, drained: false });
-  return { done: false };
 }

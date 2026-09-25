@@ -99,8 +99,10 @@ export async function recordProfileResult(task: ProfileTask, lease: JobLease, re
   });
 }
 
-/** 이만큼 검수에 실패하면 손을 뗀다 — 한도에 걸린 것은 세지 않는다 */
+/** 이만큼 검수에 실패하면 손을 뗀다 — 게이트웨이가 막힌 것은 세지 않는다 */
 const MAX_VERIFY_ATTEMPTS = 5;
+/** 이 제품 탓이 아닌 실패 — 한도, 모델이 내려감(supa 는 한 번에 한 모델만 띄운다), 연결, 키 없음 */
+const NOT_PRODUCT_FAULT = new Set(["rate_limited", "rate_limit", "model_unavailable", "network", "no_key"]);
 
 /**
  * 검수할 키워드 — 지은 뒤 아직 검수하지 않은 공개 제품. 최신 것부터.
@@ -151,8 +153,8 @@ export async function recordVerificationResult(task: ProfileTask, lease: JobLeas
       }).where(eq(products.id, product.id));
     } else {
       const code = result.error.slice(0, 60);
-      // 한도에 걸린 것은 이 제품 탓이 아니다 — 세지 않고 오래 쉰다(2차 심사와 한도를 같이 쓴다)
-      const limited = code === "rate_limited";
+      // 게이트웨이가 막힌 것은 이 제품 탓이 아니다 — 세지 않고 오래 쉰다
+      const limited = NOT_PRODUCT_FAULT.has(code);
       await tx.update(productSearchProfiles).set({
         verifyError: code,
         verifyAttempts: limited ? productSearchProfiles.verifyAttempts : sql`${productSearchProfiles.verifyAttempts} + 1`,

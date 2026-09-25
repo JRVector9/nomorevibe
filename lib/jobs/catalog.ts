@@ -37,7 +37,8 @@ export const JOB_CATALOG: readonly { name: string; role: JobRole | "scheduler"; 
    * 처음 1만8천 건을 채우는 데 하루쯤 걸리고, 그 뒤로는 새 제품과 30일 지난 것만 본다.
    */
   { name: "product-search-profile", role: "text", intervalMs: 60_000 },
-  { name: "product-search-verify", role: "reviewer", intervalMs: 60_000 },
+  /** 검색 키워드 검수 — 게이트웨이의 Qwen3.8. 키워드 짓기와 같은 text 워커(2026-09-25 reviewer·Sonnet 에서 옮김) */
+  { name: "product-search-verify", role: "text", intervalMs: 60_000 },
   /** 소개 검수 — AI 소개와 쓸모없어 보이는 메이커 소개를 Sonnet 이 근거와 대조한다. 새로 발행된 것부터 */
   { name: "product-intro-check", role: "reviewer", intervalMs: 60_000 },
   /**

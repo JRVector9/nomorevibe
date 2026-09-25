@@ -335,7 +335,8 @@ export const productSearchProfiles = pgTable("product_search_profiles", {
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
   /**
-   * 검수 — 다른 모델(Sonnet)이 근거와 대조해 뒷받침되지 않는 키워드를 고른다(product-search-verify).
+   * 검수 — 다른 모델이 근거와 대조해 뒷받침되지 않는 키워드를 고른다(product-search-verify). 처음 9,109건은 Sonnet,
+   * 그 뒤로는 게이트웨이의 Qwen3.8 — 어느 모델이 봤는지는 verify_model 에 남는다.
    * 원본(keywords_en/ko)은 두고 색인용 사본(products.search_keywords)에서만 뺀다. 키워드를 다시 지으면 비워 다시 검수한다.
    */
   verifiedAt: timestamp("verified_at"),
