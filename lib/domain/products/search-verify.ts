@@ -12,8 +12,8 @@ import type { ProfileEvidence } from "./search-profile";
  *  - Qwen3.8 · "찾는 사람이 원하는 것" 지침(v5): 13/26, 잘못 뺀 것 1(애매한 것), 실패 0 — 절반쯤 잡고 해는 없다.
  *  - Qwen3.8 · 뒷받침 안 되는 것만 묻던 옛 지침: 오역 1/3, 맞는 것 7개 뺌.
  *  - gemma4-26B(vLLM, 추론·온도 1.0, 더 엄격한 지침): 11/26, 맞는 것 11개 뺌, 빈 답 6/100.
- * 이 엔드포인트는 추론을 켤 수 없다. 그래서 생각을 출력에 적게 한다(아래 SYSTEM). 모델을 다시 띄운 뒤 같은 지침이 조금 덜
- * 잡았다(9/25) — 지금 지침으로 11/26·잘못 뺀 것 1(+애매 2), 시험 20건 1/1·0. 여전히 못 잡는 것은 bonos→"membership bonuses"다.
+ * 이 엔드포인트는 추론을 켤 수 없다. 그래서 생각을 출력에 적게 한다(아래 SYSTEM). 표본 점수보다 운영에서 맞는 키워드를 빼지
+ * 않는 것을 먼저 본다 — 표본에는 뜻이 여럿인 한국어 낱말이 드물어 v9 의 문제가 운영에서야 드러났다.
  */
 export const VERIFY_MODEL = process.env.SEARCH_VERIFY_MODEL?.trim() || "[supa] Qwen3.8-27B-NVFP4";
 const BASE_URL = process.env.ABCLLM_BASE_URL?.trim() || "https://abcllm-api.brut.bot";
@@ -23,9 +23,13 @@ const MAX_TOKENS = 3_000;
 /**
  * 예시는 표본에 없는 것만 넣었다 — 표본의 답을 알려 주면 잰 값이 부푼다.
  *
- * 키워드의 직역과, 그 키워드가 온 근거 낱말의 제 언어 속 뜻을 둘 다 영어로 적게 해 견준다. 이렇게 하기 전에는(v5) 모델이
- * 거짓 짝을 스스로 같은 말로 읽고 통과시켰다 — 포르투갈어 associados(회원)를 "association", tom de voz(글의 어조)를 "voice tone".
- * "근거가 없으면 틀림"을 더한 판(v8)은 "distraction-free writing" 같은 맞는 말을 빼서 버렸다.
+ * 키워드를 검색어로 읽히는 뜻과, 그 키워드가 온 근거 낱말의 제 언어 속 뜻을 둘 다 영어로 적게 해 견준다.
+ *  - 이렇게 하기 전(v5)에는 모델이 거짓 짝을 스스로 같은 말로 읽고 통과시켰다 — associados(회원)→"association".
+ *  - "한국어는 낱말마다 직역"하게 한 판(v9)은 운영 첫 84건에서 뺀 17개 중 7개가 맞는 키워드였다 — "대학 지원 추적"의
+ *    지원을 support 로 읽었고, "spec-driven coding"을 development 와 다르다며, "기니 쇼핑몰"을 뺐다. 되돌렸다(9/25).
+ *  - 그래서 뜻이 여럿인 낱말은 평범한 검색어가 되는 뜻으로, 같은 것을 다른 말로 한 것은 맞다고 적는다(v11).
+ *    운영 표본 100건(처음 보는 것)에서 키워드 1,446개 중 7개(0.5%)를 뺐고 7개 모두 근거와 맞았다 — "AI 이메일 복사"(copy→복사),
+ *    "no-code site setup"(npx 로 설치). 시험 20건 1/1·0, 개발 80건 잘못 뺀 것 0. 대신 Sonnet 이 빼던 것의 3분의 1쯤만 뺀다.
  */
 const SYSTEM = [
   "You check search keywords that another model wrote for one product in a directory of software, apps and services people built with AI.",
@@ -33,13 +37,15 @@ const SYSTEM = [
   "Most keywords are fine: usually none or one or two of about sixteen are wrong. Your job is to catch the few wrong ones, not to prune.",
   "Step 1 — product: in one short English sentence, say what the product is and does according to the evidence.",
   "Step 2 — checks: for every keyword, in the given order, write:",
-  "literal — what the keyword's words literally mean in English. Translate Korean word by word (e.g. '가격 잠금' is 'price lock'). Do not write what the writer probably meant.",
+  "reading — in English, what an ordinary person means when they type this keyword into a search box. Read Korean phrases as a Korean speaker would; when a word has several everyday meanings, take the one that makes the phrase an ordinary search ('배 예약' is 'boat booking', not pear or belly).",
+  "But do not repair real mistakes: a phrase whose plain meaning is something else keeps that plain meaning ('가격 잠금' is 'price lock', not 'price unlock').",
   "source — the evidence words, in their original language, that the keyword was most likely written from, or 'none'.",
   "source_means — what those source words mean in English in their own language and context. Watch words that look alike across languages but mean different things (French 'librairie' is a bookstore, not a library; Spanish 'éxito' is success, not exit; German 'Gift' is poison).",
-  "fits — false when literal and source_means are different things (not just broader or narrower wording of the same thing), or when the keyword names a different kind of product, activity, sport, place or audience than the product.",
-  "Broader categories and plain synonyms fit: a budget app fits 'expense tracker', a recipe site fits 'cooking'. When source is 'none' and the keyword is an ordinary description of the product, it fits.",
+  "fits — false only when reading and source_means clearly name different things, or when the keyword names a different kind of product, activity, sport, place or audience than the product.",
+  "The same thing in other words fits: 'app development' and 'building apps', 'online shop' and 'web store', 'workout log' and 'training diary'. A country, city or language named in the evidence fits. Broader categories and plain synonyms fit. If you would have to argue that two things differ, they fit.",
+  "When source is 'none' and the keyword is an ordinary description of the product, it fits.",
   "The reviewerNote is another model's opinion about whether the page is software; it is not a reason to mark keywords.",
-  'Return JSON: {"product": "...", "checks": [{"keyword": "<exact keyword>", "literal": "...", "source": "...", "source_means": "...", "fits": true | false}]}',
+  'Return JSON: {"product": "...", "checks": [{"keyword": "<exact keyword>", "reading": "...", "source": "...", "source_means": "...", "fits": true | false}]}',
 ].join(" ");
 
 export type VerifyItem = { evidence: ProfileEvidence; keywords: string[] };
