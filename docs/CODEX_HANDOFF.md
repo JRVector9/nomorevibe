@@ -1,3 +1,12 @@
+# 2026-09-27 검색 작업 틱 시간 초과 보완
+
+- Objective: 복구 과정에서 작업 틱이 호출 제한 시간을 줄인 timeout을 제품 실패로 누적하는 문제 방지. 원본/hash/LLMparser/동시성/lease는 그대로 유지.
+- Changed: lib/jobs/products/search-profile.ts, lib/jobs/products/search-verify.ts, tests/search-job-budget.test.ts. CALL_MS보다 짧아진 caller deadline의 timeout은 저장/실패 횟수 증가 없이 다음 틱으로 넘김(done:false). 전체CALL_MS를 사용한 timeout은 종전 실패 처리.
+- Regression proof: 새4개 unit 중2개 RED로 실제 재현 후4개 GREEN. fullunit1173, fullintegration867+기존TODO1(PG17/localhost55438), tsc/lint(errors0기존warning1)/build 실제PASS. logs /tmp/nmv-search-budget-{red,green,unit,integration,typecheck,lint,build}.log.
+- Failed approach: 신규 unit JobContext fake에 save가 빠져 첫 typecheck/build 실패. save mock 보완 후 typecheck, 전체unit/lint/build 재실행PASS.
+- Remaining: 별도PR 생성/리뷰/배포 후 기존 실제hash복구 계속. 이전PR189/190/191/193/194은main병합·운영배포됨. 기존6개실패실제생성+검수복구확인, 공개프로필약19k 중약2350개재생성대기(완료라고하지않을것).
+- Next: git diff --check; git status --short; PR 생성 후 frozen head 로컬검증증거+GitGuardian+hostedCI billing/runner0/steps0 확인. 최신main 배포, helper다시올려실제hashmismatch0확인. 운영helper /tmp/nmv-repair-ops-20260926.py, monitorcell184/shell93289; 배포시text임시helper소멸하므로 새cid에복사후재실행. intro검수2100pause유지.
+
 # 2026-09-26 프로필 해시 갱신 수정
 
 - 현재 목표: 감사 2/3/4 각각 독립 PR, 프로필 해시 재발 방지 및 기존 데이터 실제 재생성.

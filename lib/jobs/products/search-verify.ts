@@ -50,12 +50,19 @@ export async function verifySearchKeywords(ctx: JobContext<null>, request?: type
           for (let index = next++; index < tasks.length; index = next++) {
             if (blocked || signal.aborted || !ctx.hasBudget() || remaining() < MIN_CALL_MS) return;
             const task = tasks[index];
+            const timeoutMs = Math.max(1_000, Math.min(CALL_MS, remaining() - 1_000));
             const result = await verifyKeywords({
               evidence: profileEvidence(task.product, task.reviewerNote),
               keywords: [...task.profile!.keywordsEn, ...task.profile!.keywordsKo],
-            }, { request, signal, timeoutMs: Math.max(1_000, Math.min(CALL_MS, remaining() - 1_000)) });
+            }, { request, signal, timeoutMs });
             if (signal.aborted) return;
             if (!result.ok) {
+              // A shorter deadline comes from this tick's remaining time, not the product.
+              // Keep it eligible for the next tick instead of consuming a retry.
+              if (result.error === "timeout" && timeoutMs < CALL_MS) {
+                blocked = "tick_budget";
+                return;
+              }
               if (await recordVerificationResult(task, lease, { kind: "failure", error: result.error })) failed++;
               if (GATEWAY_DOWN.has(result.error) || result.error.startsWith("http_5")) {
                 if (++inARow >= 2) blocked = result.error;
@@ -71,6 +78,10 @@ export async function verifySearchKeywords(ctx: JobContext<null>, request?: type
       }));
       const failure = settled.find((item) => item.status === "rejected");
       if (failure) throw failure.reason;
+      if (blocked === "tick_budget") {
+        ctx.log("search_verify.budget_deferred", { verified, removed, failed });
+        return { done: false };
+      }
       if (blocked) {
         ctx.log("search_verify.blocked", { error: blocked, verified, removed, failed });
         return { done: true };
