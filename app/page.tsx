@@ -163,8 +163,46 @@ function serializePulse(pulse: Pulse) {
   };
 }
 
+type HomeParams = Awaited<Props["searchParams"]>;
+
+/**
+ * 검색어가 있으면 결과를 기다리지 않고 틀부터 보낸다(스트리밍).
+ *
+ * 한국어 검색어는 처음 한 번 영어로 옮기느라(게이트웨이) 결과가 늦다 — 옮기는 동안 검색창까지 빈 화면이었다.
+ * 2026-09-26 운영 실측: 처음 치는 한국어 질의는 첫 바이트까지 2.4~3.5초, 같은 질의 두 번째(캐시)는 0.7~1.6초,
+ * 영어는 0.8~1.0초. 검색창(SiteHeader)은 레이아웃이라 이 틀과 함께 먼저 나가고, 결과는 다 찾으면 이어서 온다.
+ * 검색어가 없으면 예전처럼 다 그린 뒤에 보낸다 — 번역이 없어 기다릴 것이 짧다.
+ */
 export default async function HomePage({ searchParams }: Props) {
   const params = await searchParams;
+  const query = firstValue(params.q)?.trim().slice(0, 200) || undefined;
+  if (!query) return HomeContent({ params });
+  return (
+    <Suspense fallback={<SearchPending query={query} />}>
+      <HomeContent params={params} />
+    </Suspense>
+  );
+}
+
+/** 검색 결과를 찾는 동안 — 결과 화면과 같은 머리를 두어 다 찾았을 때 자리가 튀지 않게 */
+function SearchPending({ query }: { query: string }) {
+  return (
+    <main className="wrap">
+      <div className="content-layout search-results-layout">
+        <section id="projects" aria-labelledby="projects-title" aria-busy="true">
+          <div className="feed-head">
+            <div>
+              <h2 id="projects-title">“{query}” 검색 결과</h2>
+              <p>찾는 중입니다…</p>
+            </div>
+          </div>
+        </section>
+      </div>
+    </main>
+  );
+}
+
+export async function HomeContent({ params }: { params: HomeParams }) {
   const sortParam = firstValue(params.sort);
   const query = firstValue(params.q)?.trim().slice(0, 200) || undefined;
   // A plain header search should cover the public catalogue. Preserve an explicitly
