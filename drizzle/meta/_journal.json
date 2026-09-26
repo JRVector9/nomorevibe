@@ -337,6 +337,13 @@
       "when": 1790232649795,
       "tag": "0047_intro_check",
       "breakpoints": true
+    },
+    {
+      "idx": 48,
+      "version": "7",
+      "when": 1790428676151,
+      "tag": "0048_search_profile_freshness",
+      "breakpoints": true
     }
   ]
 }

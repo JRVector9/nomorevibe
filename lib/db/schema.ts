@@ -327,8 +327,14 @@ export const productSearchProfiles = pgTable("product_search_profiles", {
   keywordsEn: jsonb("keywords_en").$type<string[]>().notNull().default([]),
   keywordsKo: jsonb("keywords_ko").$type<string[]>().notNull().default([]),
   model: varchar("model", { length: 160 }).notNull().default(""),
-  /** 지을 때 본 글의 해시 — 글이 바뀌어도 30일은 다시 짓지 않는다(동적 페이지가 매번 바뀌어 헛돌지 않게) */
+  /** 실제 키워드를 지을 때 본 글의 해시. 재생성 실패 시 이전 키워드와 함께 보존한다 */
   sourceHash: varchar("source_hash", { length: 64 }).notNull(),
+  /** 원본 또는 심사 메모가 바뀌면 자동으로 재생성한다 */
+  needsRefresh: boolean("needs_refresh").notNull().default(false),
+  /** 같은 밀리초에 원본이 다시 바뀌어도 진행 중 결과를 구분한다 */
+  sourceRevision: integer("source_revision").notNull().default(0),
+  /** 복구 캠페인 1을 이미 적용한 경우 같은 빈 응답/실패를 무한 재개하지 않는다 */
+  repairVersion: integer("repair_version").notNull().default(0),
   attempts: integer("attempts").notNull().default(0),
   errorCode: varchar("error_code", { length: 60 }),
   retryAt: timestamp("retry_at"),
