@@ -37,6 +37,9 @@ const {
   getHomePulse: vi.fn(),
 }));
 
+// HomeContent starts these independent loads too; never reach a database from a unit test.
+vi.mock("@/lib/news/repository", () => ({ listHomeNews: vi.fn().mockResolvedValue([]) }));
+vi.mock("@/lib/domain/products/popular", () => ({ getPopularGroups: vi.fn().mockResolvedValue([]) }));
 vi.mock("@/lib/domain/products/repository", () => ({ categoryCounts, countProducts, listBuilders }));
 // 검색어 해석은 DB 로 어간을 뽑고 넓힐지 센다 — 이 화면 테스트는 목록 조합만 보므로 친 그대로 넘긴다
 vi.mock("@/lib/domain/products/search-translation", () => ({
