@@ -9,18 +9,28 @@ const reply = (content: string, status = 200) => vi.fn().mockResolvedValue({ ok:
 afterEach(() => vi.unstubAllEnvs());
 
 describe("검수 답 읽기", () => {
-  it("fits 가 false 로 분명하고 보낸 키워드와 글자까지 같은 것만 뺀다 — 지어낸 말·빠뜨린 키워드는 둔다", () => {
+  it("fits 가 false 로 분명하고 보낸 키워드와 글자까지 같은 것만 뺀다", () => {
     expect(parseVerification(item.keywords, answer([
       { keyword: "sports academy management", searcher_wants: "academy software", fits: true },
       { keyword: "membership bonuses", searcher_wants: "bonus rewards for members", fits: false },
-      { keyword: "made up", fits: false },
-      { keyword: "보너스 관리", fits: "false" },
+      { keyword: "보너스 관리", fits: true },
     ]))).toEqual(["membership bonuses"]);
   });
 
   it("객체 뒤에 덧붙인 글과 생각 태그는 버린다", () => {
-    const content = `<think>hmm {not json}</think>${answer([{ keyword: "보너스 관리", fits: false }])}\n{"extra": 1} trailing`;
+    const content = `<think>hmm {not json}</think>${answer(item.keywords.map(keyword => ({ keyword, fits: keyword !== "보너스 관리" })))}\n{"extra": 1} trailing`;
     expect(parseVerification(item.keywords, content)).toEqual(["보너스 관리"]);
+  });
+
+  it.each([
+    [],
+    [{ keyword: "membership bonuses", fits: false }],
+    item.keywords.map(keyword => ({ keyword, fits: "false" })),
+    item.keywords.map(keyword => ({ keyword })),
+    [...item.keywords.map(keyword => ({ keyword, fits: true })), { keyword: "made up", fits: false }],
+    [...item.keywords.map(keyword => ({ keyword, fits: true })), { keyword: item.keywords[0], fits: false }],
+  ])("누락·중복·알 수 없는 키워드·boolean 아닌 판정은 검수 실패다: %j", (...checks) => {
+    expect(() => parseVerification(item.keywords, answer(checks))).toThrow("invalid_output");
   });
 
   it("모양이 다르면 실패다", () => {
@@ -43,7 +53,7 @@ describe("검수 부르기", () => {
 
   it("성공하면 뺄 키워드를 준다", async () => {
     vi.stubEnv("ABCLLM_API_KEY", "test-key");
-    expect(await verifyKeywords(item, { timeoutMs: 1_000, request: reply(answer([{ keyword: "membership bonuses", fits: false }])) }))
+    expect(await verifyKeywords(item, { timeoutMs: 1_000, request: reply(answer(item.keywords.map(keyword => ({ keyword, fits: keyword !== "membership bonuses" })))) }))
       .toEqual({ ok: true, unsupported: ["membership bonuses"] });
   });
 

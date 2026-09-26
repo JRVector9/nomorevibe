@@ -70,18 +70,26 @@ function firstObject(text: string): string {
 
 /**
  * 받은 답을 그대로 믿지 않는다 — 보낸 키워드와 글자까지 같은 것만, fits 가 false 로 분명한 것만 뺀다.
- * 모델이 빠뜨린 키워드는 뒷받침되는 것으로 둔다. 모양이 다르면 실패다(검수하지 않은 것으로 남아 다음에 다시 본다).
+ * 모든 키워드에 boolean 판정이 하나씩 있어야 한다. 누락·중복·알 수 없는 키워드는 실패로 다시 검수한다.
  */
 export function parseVerification(keywords: readonly string[], content: string): string[] {
   const body = content.replace(/<think>[\s\S]*?<\/think>/g, "");
   const parsed = JSON.parse(firstObject(body)) as { checks?: unknown };
   if (!parsed || !Array.isArray(parsed.checks)) throw new Error("invalid_output");
   const own = new Set(keywords);
-  const unsupported = parsed.checks.filter((check): check is { keyword: string } =>
-    typeof check === "object" && check !== null && (check as { fits?: unknown }).fits === false
-      && typeof (check as { keyword?: unknown }).keyword === "string" && own.has((check as { keyword: string }).keyword))
-    .map((check) => check.keyword);
-  return [...new Set(unsupported)];
+  const seen = new Set<string>();
+  const unsupported: string[] = [];
+  for (const check of parsed.checks) {
+    if (!check || typeof check !== "object") throw new Error("invalid_output");
+    const { keyword, fits } = check as { keyword?: unknown; fits?: unknown };
+    if (typeof keyword !== "string" || typeof fits !== "boolean" || !own.has(keyword) || seen.has(keyword)) {
+      throw new Error("invalid_output");
+    }
+    seen.add(keyword);
+    if (!fits) unsupported.push(keyword);
+  }
+  if (seen.size !== own.size) throw new Error("invalid_output");
+  return unsupported;
 }
 
 export async function verifyKeywords(item: VerifyItem, options: {

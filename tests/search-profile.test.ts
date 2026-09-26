@@ -42,6 +42,17 @@ describe("답 읽기", () => {
     expect(parseKeywords("잘 모르겠습니다", "Coche")).toEqual({ ok: false, error: "invalid_output" });
   });
 
+  it.each(['{}', '{"keywords_en":[]}', '{"keywords_en":"oops","keywords_ko":[]}',
+    '{"keywords_en":[null],"keywords_ko":[]}', '{"first":[],"second":[],"third":[]}'])
+    ("언어 배열이 없거나 잘못된 응답은 성공으로 저장하지 않는다: %s", (content) => {
+      expect(parseKeywords(content, "Coche")).toEqual({ ok: false, error: "invalid_output" });
+    });
+
+  it("명시적으로 빈 두 언어 배열은 유효하다", () => {
+    expect(parseKeywords('{"keywords_en":[],"keywords_ko":[]}', "Coche"))
+      .toEqual({ ok: true, en: [], ko: [] });
+  });
+
   it("색인 글은 영어와 한국어를 한 줄로, 없으면 null", () => {
     expect(keywordText(["grocery list"], ["장보기"])).toBe("grocery list · 장보기");
     expect(keywordText([], [])).toBeNull();
