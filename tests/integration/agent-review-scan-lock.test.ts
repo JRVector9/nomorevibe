@@ -108,7 +108,7 @@ it("returns a same-SHA partial discovery to review before LIMIT and removes the 
     else if(path===`/repos/${repo}/commits/main`) value={sha:input.scan.commitSha,commit:{tree:{sha:"e".repeat(40)}}};
     else if(path===`/repos/${repo}/commits/${discovered}`) value={sha:discovered,
       commit:{message:"Update\n\nCo-authored-by: Codex <codex@example.com>"},parents:[{sha:"f".repeat(40)}],files:[{filename:"src/app.ts",changes:1}]};
-    else if(path===`/repos/${repo}/compare/${discovered}...${input.scan.commitSha}`) value={status:"ahead"};
+    else if(path===`/repos/${repo}/compare/${discovered}...${input.scan.commitSha}?per_page=1&page=2`) value={status:"ahead"};
     else throw new Error(`unexpected request: ${path}`);
     return {ok:true,status:200,value:value as T,etag:null,lastModified:null,link:null};
   };

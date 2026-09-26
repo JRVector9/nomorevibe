@@ -125,9 +125,12 @@ export async function collectRepositoryAgentEvidence(input: {
         if (!item.observations.length) { cursor.pendingCommits.shift(); continue; }
       }
       if (!budget()) break;
-      const comparison = await get<{ status: string }>(`/repos/${repositoryKey}/compare/${item.sha}...${cursor.commitSha}`);
+      // Only the relationship summary is needed. GitHub includes up to 300 file
+      // patches on page 1; those can exceed our shared 2MiB JSON cap. Page 2
+      // retains the comparison summary even when it has no commit entries.
+      const comparison = await get<{ status: string }>(`/repos/${repositoryKey}/compare/${item.sha}...${cursor.commitSha}?per_page=1&page=2`);
       if (!comparison.ok) return fail(comparison.error);
-      if (comparison.status !== 200 || typeof comparison.value.status !== 'string') return fail({ kind: 'invalid_response' });
+      if (comparison.status !== 200 || !['ahead', 'identical', 'behind', 'diverged'].includes(comparison.value.status)) return fail({ kind: 'invalid_response' });
       if (['ahead', 'identical'].includes(comparison.value.status)) result.observations.push(...item.observations);
       cursor.pendingCommits.shift();
     } else {
