@@ -19,8 +19,10 @@ const FIELDS = {
 type ProductFields = Pick<Product, keyof typeof FIELDS>;
 
 /** 감사가 남긴 AI 설명 — 제품이 무엇인지 모델이 읽고 적은 글이라 증거로 함께 준다(공개분 6천여 건에 있다) */
+// Keep the outer table qualified: Drizzle unqualifies Column references in single-table selects,
+// which would make the subquery compare a.product_id with a.id instead of products.id.
 const REVIEWER_NOTE = sql<string | null>`(select a.ai_reason from product_audit_items a
-  where a.product_id = ${products.id} and a.ai_reason is not null order by a.id desc limit 1)`;
+  where a.product_id = products.id and a.ai_reason is not null order by a.id desc limit 1)`;
 
 export type ProfileTask = { product: ProductFields; profile: ProductSearchProfile | null; reviewerNote: string | null };
 
