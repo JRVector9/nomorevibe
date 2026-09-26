@@ -84,6 +84,15 @@ describe("검색 키워드 잡", () => {
     expect(Date.now() - profile.updatedAt.getTime()).toBeLessThan(24 * 3600_000);
   });
 
+  it("빈 객체를 받은 경우 성공 프로필이나 검색 사본을 만들지 않는다", async () => {
+    const id = await seed("empty-object");
+    gateway.mockResolvedValue({ ok: true, json: async () => ({ choices: [{ message: { content: "{}" } }] }) } as Response);
+    await tick();
+    const [profile] = await db.select().from(productSearchProfiles).where(eq(productSearchProfiles.productId, id));
+    expect(profile).toMatchObject({ errorCode: "invalid_output", attempts: 1 });
+    expect((await db.select().from(products).where(eq(products.id, id)))[0].searchKeywords).toBeNull();
+  });
+
   it("실패는 다시 볼 시각을 달고 남는다 — 색인용 사본은 비운 채로", async () => {
     const id = await seed("coche");
     gateway.mockResolvedValue({ ok: false, status: 502 } as Response);

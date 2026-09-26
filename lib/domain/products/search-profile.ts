@@ -118,11 +118,16 @@ export function parseKeywords(content: string, productName: string): KeywordResu
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return { ok: false, error: "invalid_output" };
   let en: unknown = parsed.keywords_en;
   let ko: unknown = parsed.keywords_ko;
-  if (!Array.isArray(en) && !Array.isArray(ko)) {
+  if (!("keywords_en" in parsed) && !("keywords_ko" in parsed)) {
     const arrays = Object.values(parsed).filter(Array.isArray) as unknown[][];
+    if (arrays.length !== 2) return { ok: false, error: "invalid_output" };
     const korean = (list: unknown[]) => list.some((item) => typeof item === "string" && /[가-힣]/.test(item));
-    ko = arrays.find(korean);
+    ko = arrays.find(korean) ?? arrays[1];
     en = arrays.find((list) => list !== ko);
+  }
+  if (!Array.isArray(en) || !Array.isArray(ko)
+    || ![...en, ...ko].every((keyword) => typeof keyword === "string")) {
+    return { ok: false, error: "invalid_output" };
   }
   const english = cleanKeywords(en, productName);
   // 한국어 칸에 영어 칸과 같은 말을 적는 일이 있다("AI CRM · … · AI CRM", 2026-09-24 6,890건 중 113건) — 한 번만 둔다

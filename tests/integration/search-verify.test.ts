@@ -83,6 +83,16 @@ describe("검색 키워드 검수 잡", () => {
     expect(await profile(id)).toMatchObject({ verifiedAt: null, verifyError: "invalid_output", verifyAttempts: 1 });
   });
 
+  it("일부만 판정하거나 빈 checks를 받으면 키워드를 지우지 않고 재시도한다", async () => {
+    for (const checks of [[], [{ keyword: "coffee shop", fits: false }]]) {
+      const id = await seed(`partial-${checks.length}`, ["coffee shop"], ["카페"]);
+      const request = vi.fn().mockResolvedValue({ ok: true, status: 200, json: async () => ({ choices: [{ message: { content: JSON.stringify({ checks }) } }] }) });
+      await tick(request as unknown as typeof fetch);
+      expect(await profile(id)).toMatchObject({ verifiedAt: null, verifyError: "invalid_output", verifyAttempts: 1, removedKeywords: [] });
+      expect(await keywordsOf(id)).toBe("coffee shop · 카페");
+    }
+  });
+
   it("키워드를 다시 지으면 검수를 비워 다시 본다", async () => {
     const id = await seed("academy", ["sports academy management", "membership bonuses"], ["보너스 관리"], { tagline: "Bonos de clases" });
     await tick(gateway(() => ({ unsupported: ["membership bonuses"] })));
