@@ -56,7 +56,7 @@ vi.mock("@/lib/domain/ranking/view", () => ({
   getSeasonRanking,
 }));
 
-import HomePage, { needsUnclaimedFill } from "@/app/page";
+import HomePage, { HomeContent, needsUnclaimedFill } from "@/app/page";
 
 const season: SeasonSummary = {
   key: "2026-W34",
@@ -201,10 +201,21 @@ describe("빈 화면 문구", () => {
     expect(getSeasonRanking).toHaveBeenCalledWith(expect.objectContaining({ builder: "Codex" }));
   });
 
-  it("정렬을 명시하지 않은 검색은 순위가 아니라 공개 목록 전체에서 찾는다", async () => {
+  it("검색어가 있으면 결과를 기다리지 않고 틀과 '찾는 중'부터 보낸다", async () => {
     getPublicList.mockResolvedValue([product("searched-project")]);
 
     const html = await render({ q: "searched" });
+
+    expect(html).toContain("“searched” 검색 결과");
+    expect(html).toContain("찾는 중입니다");
+    expect(html).not.toContain("searched-project");
+  });
+
+  it("정렬을 명시하지 않은 검색은 순위가 아니라 공개 목록 전체에서 찾는다", async () => {
+    getPublicList.mockResolvedValue([product("searched-project")]);
+
+    // 결과는 스트리밍되는 쪽(HomeContent)에서 그린다
+    const html = renderToStaticMarkup(await HomeContent({ params: { q: "searched" } }));
 
     expect(getPublicList).toHaveBeenCalled();
     expect(getVerifiedList).not.toHaveBeenCalled();
