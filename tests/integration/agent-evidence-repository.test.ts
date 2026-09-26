@@ -112,7 +112,7 @@ describe('repository agent observations', () => {
       DEFAULT_CRAWL_SETTINGS)).scanState).toBe('pending');
     paths.length = 0;
     const resumed = await refreshRepositoryAgentEvidence({ repositoryKey: 'acme/app', force: true, request });
-    expect(paths).toEqual(['/repos/acme/app', `/repos/acme/app/commits/${pending}`, `/repos/acme/app/compare/${pending}...${SHA}`]);
+    expect(paths).toEqual(['/repos/acme/app', `/repos/acme/app/commits/${pending}`, `/repos/acme/app/compare/${pending}...${SHA}?per_page=1&page=2`]);
     expect(resumed.scan).toMatchObject({ id: original.id, state: 'complete', cursor: null, lastErrorCode: null });
     expect(resumed.scan!.completedAt!.getTime()).toBeGreaterThan(original.completedAt!.getTime());
     expect(resumed.observations).toHaveLength(3);

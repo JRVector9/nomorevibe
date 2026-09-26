@@ -107,14 +107,14 @@ describe('repository rename cursor recovery', () => {
       if (path === `/repos/${OLD}/commits/${discovered}`) value = { sha: discovered,
         commit: { message: 'Update\n\nCo-authored-by: Codex <codex@example.com>' },
         parents: [{ sha: 'd'.repeat(40) }], files: [{ filename: 'src/app.ts', changes: 1 }] };
-      else if (path === `/repos/${OLD}/compare/${discovered}...${SHA}`) value = { status: 'ahead' };
+      else if (path === `/repos/${OLD}/compare/${discovered}...${SHA}?per_page=1&page=2`) value = { status: 'ahead' };
       else return mock.request<T>(path);
       mock.paths.push(path);
       return { ok: true, status: 200, value: value as T, etag: null, lastModified: null, link: null };
     };
     const refreshed = await refreshRepositoryAgentEvidence({ repositoryKey: OLD, force: true, request });
     expect(refreshed.scan).toMatchObject({ id: original!.id, state: 'complete', cursor: null, lastErrorCode: null });
-    expect(mock.paths).toEqual([`/repos/${OLD}`, `/repos/${OLD}/commits/${discovered}`, `/repos/${OLD}/compare/${discovered}...${SHA}`]);
+    expect(mock.paths).toEqual([`/repos/${OLD}`, `/repos/${OLD}/commits/${discovered}`, `/repos/${OLD}/compare/${discovered}...${SHA}?per_page=1&page=2`]);
     expect(refreshed.observations).toMatchObject([{ kind: 'commit_attribution', sourceUrl: `https://github.com/${OLD}/commit/${discovered}` }]);
   });
 

@@ -84,6 +84,32 @@ describe('bounded GitHub agent collector', () => {
     expect(mock.paths).toHaveLength(2);
     expect(result.fileCount).toBe(0);
   });
+  it('resumes commit attribution with a bounded comparison page that omits file patches', async () => {
+    const mock = mockRequest();
+    const discovered = 'e'.repeat(40);
+    const paths: string[] = [];
+    const request = async <T>(path: string): Promise<GitHubHttpResult<T>> => {
+      paths.push(path);
+      if (path.includes('/compare/')) {
+        // The default/first page exceeds the shared 2MiB JSON body cap.
+        if (!path.endsWith('?per_page=1&page=2')) return { ok: false, error: { kind: 'invalid_response' } };
+        return { ok: true, status: 200, value: { status: 'ahead', commits: [], files: [] } as T, etag: null, lastModified: null, link: null };
+      }
+      if (path.endsWith('/commits/' + discovered)) return { ok: true, status: 200,
+        value: { sha: discovered, commit: { message: 'Fix app\n\nCo-authored-by: Qwen-Coder <qwen@example.com>' },
+          parents: [{ sha: 'f'.repeat(40) }], files: [{ filename: 'src/app.ts', changes: 1 }] } as T,
+        etag: null, lastModified: null, link: null };
+      return mock.request<T>(path);
+    };
+    const first = await collectRepositoryAgentEvidence({ repositoryKey: 'acme/app', request,
+      discoveryCommitShas: [discovered], knownComplete: { repositoryId: '12', commitSha: COMMIT }, maxRequests: 3 });
+    expect(first.state).toBe('partial');
+    expect(first.cursor?.pendingCommits?.[0].observations).toHaveLength(1);
+    const result = await collectRepositoryAgentEvidence({ repositoryKey: 'acme/app', request, cursor: first.cursor });
+    expect(result).toMatchObject({ state: 'complete', errorCode: null });
+    expect(result.observations).toHaveLength(1);
+    expect(paths).toContain(`/repos/acme/app/compare/${discovered}...${COMMIT}?per_page=1&page=2`);
+  });
   it.each(['ahead', 'identical', 'diverged', 'behind'])('requires default-branch reachability for a commit attribution (%s)', async status => {
     const mock = mockRequest();
     const discovered = 'e'.repeat(40);
