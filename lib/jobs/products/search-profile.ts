@@ -73,10 +73,17 @@ export async function writeSearchProfiles(ctx: JobContext<null>): Promise<JobOut
               continue;
             }
             const calledAt = Date.now();
-            const result = await writeKeywords(evidence, { signal, timeoutMs: Math.max(1_000, Math.min(CALL_MS, remaining() - 1_000)) });
+            const timeoutMs = Math.max(1_000, Math.min(CALL_MS, remaining() - 1_000));
+            const result = await writeKeywords(evidence, { signal, timeoutMs });
             if (signal.aborted) return;
             if (Date.now() - calledAt >= SLOW_CALL_MS) blocked = "slow";
             if (!result.ok) {
+              // A shorter deadline comes from this tick's remaining time, not the product.
+              // Keep it eligible for the next tick instead of consuming a retry.
+              if (result.error === "timeout" && timeoutMs < CALL_MS) {
+                blocked = "tick_budget";
+                return;
+              }
               if (!await recordProfileResult(task, lease, { kind: "failure", error: result.error })) return;
               failed++;
               if (GATEWAY_DOWN.has(result.error) || result.error.startsWith("http_5")) {
@@ -92,6 +99,10 @@ export async function writeSearchProfiles(ctx: JobContext<null>): Promise<JobOut
       }));
       const failure = settled.find((item) => item.status === "rejected");
       if (failure) throw failure.reason;
+      if (blocked === "tick_budget") {
+        ctx.log("search_profile.budget_deferred", { written, reused, failed });
+        return { done: false };
+      }
       if (blocked) {
         ctx.log("search_profile.gateway_blocked", { error: blocked, written, reused, failed });
         return { done: true };
