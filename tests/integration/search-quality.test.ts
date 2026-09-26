@@ -84,6 +84,15 @@ describe("정확도", () => {
     expect(results).not.toContain("just-map");
   });
 
+  it("결과가 넉넉해도 낱말 셋 이상이면 하나 빠진 것까지 들인다 — 다 맞은 것이 앞이다", async () => {
+    // 2026-09-26 프로드: "japanese vocabulary trainer" 는 36건이 다 맞아 넓히지 않았고, 정답에는 "trainer"가 없었다
+    for (let i = 0; i < 6; i++) await seed(`trainer-${i}`, { name: `Trainer ${i}`, tagline: "Japanese vocabulary trainer", description: "Japanese vocabulary trainer" });
+    await seed("vocab-notebook", { name: "Vocab Notebook", tagline: "Record and review Japanese vocabulary", description: "Record and review Japanese vocabulary" });
+    const results = await find("japanese vocabulary trainer", 20);
+    expect(results).toContain("vocab-notebook");
+    expect(results.indexOf("vocab-notebook")).toBeGreaterThan(Math.max(...[0, 1, 2, 3, 4, 5].map((i) => results.indexOf(`trainer-${i}`))));
+  });
+
   it("넉넉히 맞으면 넓히지 않는다 — 좁은 검색이 흐려지지 않게", async () => {
     for (let i = 0; i < 6; i++) await seed(`pdf-${i}`, { name: `Pdf ${i}`, tagline: "Merge PDF files", description: "Merge PDF files" });
     await seed("merge-only", { name: "Merger", tagline: "Merge spreadsheets", description: "Merge spreadsheets" });
@@ -111,6 +120,16 @@ describe("정확도", () => {
   it("앞부분만 쳐도 찾는다", async () => {
     await seed("ledger", { name: "Ledger", tagline: "Bookkeeping", description: "Bookkeeping" });
     expect(await find("ledg")).toEqual(["ledger"]);
+  });
+});
+
+describe("한국식 영어", () => {
+  it("드라마는 번역(drama)과 함께 tv series 로도 찾는다", async () => {
+    await seed("show-picks", { name: "Show Picks", tagline: "Pick your next TV series", description: "Pick your next TV series" });
+    await db.insert(textTranslations).values({ sourceHash: queryTranslationKey("드라마 추천"), targetLang: "en", status: "done", translated: "drama recommendation" });
+    const resolved = await resolveSearchQuery("드라마 추천");
+    expect(resolved.translated).toBe("drama recommendation / tv series");
+    expect(await find("드라마 추천")).toContain("show-picks");
   });
 });
 

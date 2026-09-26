@@ -119,6 +119,57 @@ const QUERY_SYSTEM = [
   "'반려견 산책 대행 매칭' -> dog walker | dog walking service matching.",
 ].join(" ");
 
+/**
+ * 한국어에서 뜻이 영어와 다르거나 여러 뜻인 낱말(콩글리시·동음이의어) — 질의에 든 것만 번역 요청에 한 줄 덧붙인다.
+ *
+ * 지시문에 "영어에서 온 한국어 낱말은 한국어 뜻으로"라고만 적어서는 못 고쳤다(2026-09-26): gpt-oss 는 헬스→health,
+ * 미팅→meeting, 아이쇼핑→shopping, 노트북→notebook 으로 옮겼고, Qwen3.8 은 아이쇼핑을 "baby shopping"으로 틀렸다.
+ * 모델이 어느 낱말이 그런지 모른다 — 알려 주면 옮긴다(헬스장 출석 체크 → gym attendance, 노트북 가격 비교 → laptop price).
+ * 평가를 보고 고른 것이 아니라 흔히 알려진 것을 미리 적었다. 낱말을 더하면 GLOSSARY_VERSION 을 올린다.
+ */
+export const QUERY_GLOSSARY: Record<string, string> = {
+  "드라마": "a TV series or TV show (not theater)", "헬스장": "a gym", "헬스": "gym workouts and fitness, not general health",
+  "미팅": "a group blind date, not a work meeting", "소개팅": "a blind date", "아이쇼핑": "window shopping", "원룸": "a studio apartment",
+  "오피스텔": "a studio apartment (officetel)", "노트북": "a laptop computer, not a notebook", "핸드폰": "a mobile phone", "휴대폰": "a mobile phone",
+  "알바": "a part-time job", "셀카": "a selfie", "개그": "comedy", "멘탈": "mental health or mindset", "스킨": "facial toner (skincare)",
+  "컨닝": "cheating on a test", "리모컨": "a remote control", "에어컨": "an air conditioner", "콘센트": "a power outlet", "오토바이": "a motorcycle",
+  "카톡": "KakaoTalk messenger", "맛집": "a popular restaurant", "핫플": "a trendy place", "단어장": "a vocabulary list or flashcards",
+  "가계부": "a household budget book", "학원": "a private academy or cram school", "과외": "private tutoring", "수능": "the Korean college entrance exam",
+  "전세": "a jeonse lump-sum deposit lease", "월세": "monthly rent", "청약": "a housing subscription lottery", "중고": "second-hand",
+  "배민": "the Baemin food delivery app", "택배": "parcel delivery", "편의점": "a convenience store", "장보기": "grocery shopping",
+  "쇼핑몰": "an online store", "웹툰": "webtoons (Korean web comics)", "이모티콘": "emoji or chat stickers", "짤": "a meme image",
+  "굿즈": "fan merchandise", "덕질": "fandom activity",
+};
+/** 용어표를 바꾸면 올린다 — 용어가 붙는 질의만 캐시 열쇠가 바뀐다(search-translation.ts) */
+export const GLOSSARY_VERSION = 1;
+
+/** 질의에 든 낱말만 골라 적는다. 긴 말이 먼저다 — "헬스장"이 있으면 "헬스"는 따로 적지 않는다 */
+function glossaryWords(query: string, table: Record<string, string>): string[] {
+  const hits = Object.keys(table).filter((word) => query.includes(word));
+  return hits.filter((word) => !hits.some((other) => other !== word && other.includes(word)));
+}
+
+export function glossaryHints(query: string): string {
+  const words = glossaryWords(query, QUERY_GLOSSARY);
+  return words.length ? `\nIn Korean: ${words.map((word) => `'${word}' means ${QUERY_GLOSSARY[word]}`).join("; ")}.` : "";
+}
+
+/**
+ * 영어로 옮기면 엉뚱한 것이 걸리는 한국식 영어 — 번역과 함께 이 영어 말로도 찾는다(모델을 거치지 않는다).
+ *
+ * 드라마는 뜻을 알려 줘도 모델이 "drama"로 옮기고(틀린 번역은 아니다), 영어 "drama"는 연극 평점까지 건다.
+ * "tv series"를 함께 찾자 드라마 추천 0.38→0.49, 드라마 평점 차트 0.09→0.25, 헬스장 출석 체크 0.52→0.68(nDCG@10).
+ */
+export const QUERY_EXPANSIONS: Record<string, string> = {
+  "드라마": "tv series", "헬스장": "gym", "헬스": "gym workout", "노트북": "laptop", "미팅": "blind date", "아이쇼핑": "window shopping",
+  "원룸": "studio apartment", "오피스텔": "studio apartment", "핸드폰": "mobile phone", "휴대폰": "mobile phone", "개그": "comedy",
+  "멘탈": "mental health", "셀카": "selfie", "알바": "part time job", "스킨": "toner", "짤": "meme", "컨닝": "cheating",
+};
+
+export function queryExpansions(query: string): string[] {
+  return [...new Set(glossaryWords(query, QUERY_EXPANSIONS).map((word) => QUERY_EXPANSIONS[word]))];
+}
+
 /** 지시문을 바꾸면 올린다 — 캐시 열쇠에 들어가 옛 지시문의 번역을 다시 쓰지 않는다 */
 export const QUERY_PROMPT_VERSION = 2;
 /** 넓힌 검색은 하나만 빠져도 되므로 낱말이 많을수록 결과가 준다 — 개념을 다 담을 만큼만 */
@@ -143,7 +194,7 @@ export function queryTranslationPhrases(translated: string): string[] {
 }
 
 export async function translateQueryToEnglish(query: string, timeoutMs: number, request: typeof fetch = fetch): Promise<{ ok: true; keywords: string } | { ok: false; error: string }> {
-  const result = await chat({ system: QUERY_SYSTEM, user: query, temperature: 0, maxTokens: 200 }, timeoutMs, request);
+  const result = await chat({ system: QUERY_SYSTEM, user: `${query}${glossaryHints(query)}`, temperature: 0, maxTokens: 200 }, timeoutMs, request);
   if (!result.ok) return result;
   const keywords = parseQueryTranslation(result.content);
   return keywords ? { ok: true, keywords } : { ok: false, error: "invalid_output" };
