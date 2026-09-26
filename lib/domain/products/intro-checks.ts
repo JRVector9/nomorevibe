@@ -112,7 +112,7 @@ export async function recordIntroCheck(task: IntroTask, lease: JobLease, result:
       .onConflictDoUpdate({ target: productIntroChecks.productId, set: values });
     if (replaced) {
       const sameText = product.description.trim() === product.tagline.trim();
-      await tx.update(products).set({ tagline: line, taglineSource: "ai_fixed", ...(sameText ? { description: line } : {}),
+      await tx.update(products).set({ tagline: line, taglineSource: "ai_fixed", searchKeywords: null, ...(sameText ? { description: line } : {}),
         updatedAt: sql`now()` }).where(eq(products.id, product.id));
       await tx.delete(productSearchProfiles).where(eq(productSearchProfiles.productId, product.id));
     }

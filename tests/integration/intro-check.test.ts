@@ -39,14 +39,14 @@ beforeEach(async () => { await resetTables(); await db.delete(jobs); });
 
 describe("소개 검수 잡", () => {
   it("틀린 AI 소개를 고쳐 쓴 줄로 바꾸고 원래 값을 남긴다 — 키워드는 다시 짓게 지운다", async () => {
-    const id = await seed("margo", "Create custom items for World of Warcraft");
+    const id = await seed("margo", "Create custom items for World of Warcraft", { searchKeywords: "wow items" });
     await db.insert(productSearchProfiles).values({ productId: id, keywordsEn: ["wow items"], keywordsKo: [], sourceHash: "h", model: "m" });
     const run = cli(() => ({ verdict: "wrong", problem: "Margonem, not WoW", corrected: "Margonem 아이템을 만들어 보는 편집기." }));
 
     expect(await tick(run)).toMatchObject({ status: "completed", done: true });
 
     expect(await product(id)).toMatchObject({ tagline: "Margonem 아이템을 만들어 보는 편집기", taglineSource: "ai_fixed",
-      description: "Margonem 아이템을 만들어 보는 편집기" });
+      description: "Margonem 아이템을 만들어 보는 편집기", searchKeywords: null });
     expect(await check(id)).toMatchObject({ verdict: "wrong", outcome: "replaced", problem: "Margonem, not WoW",
       originalTagline: "Create custom items for World of Warcraft", originalSource: "ai_page",
       originalDescription: "Create custom items for World of Warcraft", errorCode: null });
