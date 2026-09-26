@@ -66,7 +66,8 @@ export async function writeSearchProfiles(ctx: JobContext<null>): Promise<JobOut
             const task = tasks[index];
             const evidence = profileEvidence(task.product, task.reviewerNote);
             // 지은 지 30일이 지나 다시 집었는데 글이 그대로다 — 본 시각만 새로 적는다
-            if (task.profile && !task.profile.errorCode && task.profile.sourceHash === profileHash(evidence)) {
+            if (task.profile && !task.profile.errorCode && task.profile.sourceHash === profileHash(evidence)
+              && (!task.profile.needsRefresh || task.profile.keywordsEn.length + task.profile.keywordsKo.length > 0)) {
               if (!await recordProfileResult(task, lease, { kind: "reuse" })) return;
               reused++;
               continue;

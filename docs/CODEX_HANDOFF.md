@@ -1,3 +1,15 @@
+# 2026-09-26 프로필 해시 갱신 수정
+
+- 현재 목표: 감사 2/3/4 각각 독립 PR, 프로필 해시 재발 방지 및 기존 데이터 실제 재생성.
+- 완료: PR189 소개 교정 시 키워드 초기화; PR190 compare 응답 page2로 제한; PR191 불완전한 생성/검수 응답 거부. 각각 독립 Codex 리뷰 및 관련 테스트 완료. 아직 병합/배포 전.
+- 이 PR 수정: schema 및 migration0048(원본/메모 변경 트리거, needs_refresh/source_revision), search-profiles 결과 저장·갱신/검수 큐, search-profile worker, reconcile-search-profiles CLI, 통합 테스트, 운영 문서.
+- 핵심 결정: 실제 생성 입력 해시 보존. 실패해도 해시만 최신으로 바꾸지 않는다. 최신 심사 메모는 제품 lock 후 다시 읽으며 변경 revision도 대조. 기존 불일치는 CLI로 대기열에 등록 후 worker가 실제 재생성.
+- 테스트: /tmp/nmv-freshness-red.log 3개 회귀 실패/7개 기존 통과; /tmp/nmv-freshness-green3.log 통합22개 통과. ESLint, next typegen, tsc 통과. 전체 통합 및 독립 리뷰 진행 중.
+- 실패 접근: 처음 테스트 fixture 삭제가 audit attempts FK 때문에 실패, truncate 테스트 데이터 전체로 수정. 기존 검수 fixture가 가짜 source_hash="h"여서 신선도 검사에서 걸림, 실제 입력 해시로 수정. 운영 데이터 변경 없음.
+- 다음: 전체 CI 대체 검증 결과 확인, 독립 리뷰 반영, 이 PR 커밋/푸시. PR별 정확한 head의 원격 CI non-execution(결제 사유 runner_id0/steps0) 확인 후 병합. migration 먼저 적용 후 모든 관련 worker와 양쪽 web 배포. 복구 CLI --apply --retry-invalid-output --retry-empty 실행, mismatch와 검수 대기열 소진 확인.
+- 명령: TEST_DATABASE_URL=postgres://nomorevibe:nomorevibe@localhost:55436/nomorevibe_test npm run test:integration; node scripts/migrate.mjs; node --import tsx scripts/reconcile-search-profiles.ts; node --import tsx scripts/reconcile-search-profiles.ts --apply --retry-invalid-output --retry-empty.
+- 루트 사용자 변경 scripts/search-judgments.json 보존. 소개 검수 job은 사용자 중단에 따라2100까지 대기 중이며 재개 금지. 운영 DB로 통합 테스트 금지. Dokploy/DB 비밀값 출력 및 저장 금지.
+
 # 관리자·처리 속도 운영 배포 및 검증 완료 — 2026-09-22 07:24 KST
 
 ## 완료 결과

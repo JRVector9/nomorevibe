@@ -5,6 +5,7 @@ const { db } = await import("@/lib/db");
 const { jobs, products, productSearchProfiles } = await import("@/lib/db/schema");
 const { verifySearchKeywords } = await import("@/lib/jobs/products/search-verify");
 const { writeSearchProfiles } = await import("@/lib/jobs/products/search-profile");
+const { profileEvidence, profileHash } = await import("@/lib/domain/products/search-profile");
 const { runJob } = await import("@/lib/jobs/runner");
 const { ensureSchema, resetTables } = await import("./setup");
 
@@ -12,8 +13,8 @@ async function seed(slug: string, en: string[], ko: string[], values: Partial<ty
   const [row] = await db.insert(products).values({
     slug, name: slug, url: `https://${slug}.test`, tagline: slug, description: slug, category: "Sports",
     status: "seeded", source: "crawler", verifyToken: "v", editTokenHash: "e", searchKeywords: [...en, ...ko].join(" · "), ...values,
-  }).returning({ id: products.id });
-  await db.insert(productSearchProfiles).values({ productId: row.id, keywordsEn: en, keywordsKo: ko, sourceHash: "h", model: "m", attempts: 1 });
+  }).returning();
+  await db.insert(productSearchProfiles).values({ productId: row.id, keywordsEn: en, keywordsKo: ko, sourceHash: profileHash(profileEvidence(row, null)), model: "m", attempts: 1 });
   return row.id;
 }
 
@@ -122,6 +123,27 @@ describe("검색 키워드 검수 잡", () => {
     expect(peak).toBe(4);
     expect(inner.calls).toHaveLength(16);
     expect(new Set(inner.calls).size).toBe(16);
+  });
+
+  it("검수 도중 원본이 바뀌면 이전 응답을 저장하거나 키워드를 삭제하지 않는다", async () => {
+    const id = await seed("changed-during-check", ["coffee shop"], ["카페"]);
+    const inner = gateway(() => ({ unsupported: ["coffee shop"] }));
+    const request = (async (...args: Parameters<typeof fetch>) => {
+      await db.update(products).set({ tagline: "Workout diary" }).where(eq(products.id, id));
+      return inner(...args);
+    }) as typeof fetch;
+    await tick(request);
+    expect(await profile(id)).toMatchObject({ verifiedAt: null, removedKeywords: [], needsRefresh: true });
+    expect(await keywordsOf(id)).toBe("coffee shop · 카페");
+  });
+
+  it("이전 데이터의 해시 불일치를 검수에서 만나면 재생성으로 넘겨 반복 호출하지 않는다", async () => {
+    const id = await seed("old-hash", ["coffee shop"], []);
+    await db.update(productSearchProfiles).set({ sourceHash: "old" }).where(eq(productSearchProfiles.productId, id));
+    const request = gateway(() => ({}));
+    await tick(request);
+    expect(request.calls).toHaveLength(1);
+    expect(await profile(id)).toMatchObject({ needsRefresh: true, verifiedAt: null });
   });
 
   it("공개되지 않은 제품·키워드가 없는 것은 부르지 않는다", async () => {

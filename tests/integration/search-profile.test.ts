@@ -5,6 +5,9 @@ const { db } = await import("@/lib/db");
 const { jobs, products, productSearchProfiles, textTranslations } = await import("@/lib/db/schema");
 const { SLOW_CALL_MS, writeSearchProfiles } = await import("@/lib/jobs/products/search-profile");
 const { refreshProductSearchDocuments } = await import("@/lib/jobs/products/search-refresh");
+const { productAuditCampaigns, productAuditItems } = await import("@/lib/db/product-audit-schema");
+const { profileEvidence, profileHash } = await import("@/lib/domain/products/search-profile");
+const { pendingProfiles, pendingVerifications, reconcileSearchProfileBatch } = await import("@/lib/domain/products/search-profiles");
 const { runJob } = await import("@/lib/jobs/runner");
 const { listProducts } = await import("@/lib/domain/products/repository");
 const { resolveSearchQuery } = await import("@/lib/domain/products/search-translation");
@@ -36,6 +39,7 @@ beforeEach(async () => {
   await resetTables();
   await db.delete(productSearchProfiles);
   await db.delete(jobs);
+  await db.execute(sql`truncate product_audit_campaigns, product_audit_items, product_audit_attempts restart identity cascade`);
   await db.delete(textTranslations).where(eq(textTranslations.targetLang, "en"));
   vi.stubEnv("ABCLLM_API_KEY", "test-key");
   gateway.mockReset();
@@ -54,6 +58,160 @@ describe("검색 키워드 잡", () => {
     expect(profile).toMatchObject({ keywordsEn: ["grocery list", "shopping list"], keywordsKo: ["장보기 목록", "쇼핑 리스트"], errorCode: null });
     const [row] = await db.select({ keywords: products.searchKeywords }).from(products).where(eq(products.id, id));
     expect(row.keywords).toBe("grocery list · shopping list · 장보기 목록 · 쇼핑 리스트");
+  });
+
+  it("원본 변경은 30일을 기다리지 않고 재생성한다", async () => {
+    const id = await seed("fresh");
+    gateway.mockResolvedValue(answer(["grocery list"], ["장보기"]));
+    await tick();
+    await db.update(products).set({ tagline: "Workout diary", searchReadme: "Training logs" }).where(eq(products.id, id));
+    gateway.mockClear();
+    gateway.mockResolvedValue(answer(["workout diary"], ["운동 일지"]));
+    await tick();
+    expect(gateway).toHaveBeenCalledTimes(1);
+    const [product] = await db.select().from(products).where(eq(products.id, id));
+    const [profile] = await db.select().from(productSearchProfiles).where(eq(productSearchProfiles.productId, id));
+    expect(profile).toMatchObject({ keywordsEn: ["workout diary"], sourceHash: profileHash(profileEvidence(product, null)) });
+  });
+
+  it("재생성이 실패해도 이전 키워드의 생성 해시를 덮어쓰지 않는다", async () => {
+    const id = await seed("failure-provenance");
+    gateway.mockResolvedValue(answer(["grocery list"], ["장보기"]));
+    await tick();
+    const [before] = await db.select().from(productSearchProfiles).where(eq(productSearchProfiles.productId, id));
+    await db.update(products).set({ tagline: "Workout diary" }).where(eq(products.id, id));
+    await db.update(productSearchProfiles).set({ updatedAt: sql`now() - interval '31 days'` }).where(eq(productSearchProfiles.productId, id));
+    gateway.mockResolvedValue({ ok: false, status: 502 } as Response);
+    await tick();
+    const [after] = await db.select().from(productSearchProfiles).where(eq(productSearchProfiles.productId, id));
+    expect(after).toMatchObject({ keywordsEn: before.keywordsEn, sourceHash: before.sourceHash, errorCode: "http_502" });
+  });
+
+  it("심사 메모도 자동 갱신하며 생성 도중 바뀐 메모의 응답은 저장하지 않는다", async () => {
+    const id = await seed("notes");
+    const [campaign] = await db.insert(productAuditCampaigns).values({ startedBy: "test", reason: "test", promptVersion: "v1", rulesVersion: "v1", provider: "test", model: "test" }).returning();
+    const [note] = await db.insert(productAuditItems).values({ campaignId: campaign.id, productId: id, slug: "notes", aiReason: "Shopping software" }).returning();
+    gateway.mockResolvedValue(answer(["grocery list"], ["장보기"]));
+    await tick();
+    await db.update(productAuditItems).set({ aiReason: "Workout software" }).where(eq(productAuditItems.id, note.id));
+    expect(await pendingProfiles(10)).toHaveLength(1);
+    expect(await pendingVerifications(10)).toHaveLength(0);
+    let calls = 0;
+    gateway.mockImplementation(async () => {
+      if (calls++ === 0) {
+        await db.update(productAuditItems).set({ aiReason: "Calendar software" }).where(eq(productAuditItems.id, note.id));
+        return answer(["workout diary"], ["운동 일지"]);
+      }
+      return answer(["calendar"], ["달력"]);
+    });
+    await tick();
+    const [saved] = await db.select().from(productSearchProfiles).where(eq(productSearchProfiles.productId, id));
+    expect(saved.keywordsEn).not.toContain("workout diary");
+    expect(saved.sourceHash).not.toBe(profileHash(profileEvidence((await db.select().from(products).where(eq(products.id, id)))[0], "Workout software")));
+  });
+
+  it("복구는 기본 읽기 전용이며 해시만 바꾸지 않고 실제 재생성을 대기시킨다", async () => {
+    const id = await seed("legacy-mismatch");
+    gateway.mockResolvedValue(answer(["grocery list"], ["장보기"]));
+    await tick();
+    await db.update(productSearchProfiles).set({ sourceHash: "legacy-hash", needsRefresh: false }).where(eq(productSearchProfiles.productId, id));
+    expect(await reconcileSearchProfileBatch({})).toMatchObject({ mismatched: 1, queued: 1 });
+    expect((await db.select().from(productSearchProfiles).where(eq(productSearchProfiles.productId, id)))[0].needsRefresh).toBe(false);
+    expect(await reconcileSearchProfileBatch({ apply: true })).toMatchObject({ mismatched: 1, queued: 1 });
+    expect((await db.select().from(productSearchProfiles).where(eq(productSearchProfiles.productId, id)))[0])
+      .toMatchObject({ sourceHash: "legacy-hash", needsRefresh: true });
+    expect(await reconcileSearchProfileBatch({ apply: true })).toMatchObject({ queued: 0, alreadyPending: 1 });
+    await tick();
+    expect(await reconcileSearchProfileBatch({})).toMatchObject({ mismatched: 0 });
+  });
+
+  it("이전 빈 성공 응답은 명시적인 복구 시 같은 해시여도 다시 생성한다", async () => {
+    const id = await seed("old-empty");
+    gateway.mockResolvedValue(answer([], []));
+    await tick();
+    expect(await reconcileSearchProfileBatch({ apply: true, retryEmpty: true })).toMatchObject({ queued: 1 });
+    gateway.mockClear();
+    gateway.mockResolvedValue(answer(["grocery list"], ["장보기"]));
+    await tick();
+    expect(gateway).toHaveBeenCalledTimes(1);
+    expect((await db.select().from(productSearchProfiles).where(eq(productSearchProfiles.productId, id)))[0].keywordsEn).toEqual(["grocery list"]);
+  });
+
+  it("이전 invalid_output 한도 초과를 생성/검수 각각 한 번 재개한다", async () => {
+    const first = await seed("invalid-generation");
+    const second = await seed("invalid-verification");
+    gateway.mockResolvedValue(answer(["grocery list"], ["장보기"]));
+    await tick();
+    await db.update(productSearchProfiles).set({ errorCode: "invalid_output", attempts: 5 }).where(eq(productSearchProfiles.productId, first));
+    await db.update(productSearchProfiles).set({ verifyError: "invalid_output", verifyAttempts: 5 }).where(eq(productSearchProfiles.productId, second));
+    expect(await reconcileSearchProfileBatch({ apply: true, retryInvalidOutput: true })).toMatchObject({ queued: 1, verificationRetried: 1 });
+    expect(await pendingProfiles(10)).toHaveLength(1);
+    expect(await pendingVerifications(10)).toHaveLength(1);
+  });
+
+  it("본문 뒷부분만 바뀌어 생성 입력은 같으면 모델 호출 없이 갱신 표시를 지운다", async () => {
+    const id = await seed("unchanged-prefix", { searchPageText: "a".repeat(1500) + "old" });
+    gateway.mockResolvedValue(answer(["grocery list"], ["장보기"]));
+    await tick();
+    await db.update(products).set({ searchPageText: "a".repeat(1500) + "new" }).where(eq(products.id, id));
+    gateway.mockClear();
+    await tick();
+    expect(gateway).not.toHaveBeenCalled();
+    expect((await db.select().from(productSearchProfiles).where(eq(productSearchProfiles.productId, id)))[0].needsRefresh).toBe(false);
+  });
+
+  it("이미 갱신 대기 중인 한도 초과도 복구 캠페인에서 한 번만 재개한다", async () => {
+    const id = await seed("capped-dirty");
+    gateway.mockResolvedValue(answer([], []));
+    await tick();
+    await db.update(productSearchProfiles).set({ needsRefresh: true, errorCode: "invalid_output", attempts: 5 }).where(eq(productSearchProfiles.productId, id));
+    expect(await reconcileSearchProfileBatch({ apply: true, retryInvalidOutput: true })).toMatchObject({ queued: 1 });
+    await db.update(productSearchProfiles).set({ errorCode: "invalid_output", attempts: 5 }).where(eq(productSearchProfiles.productId, id));
+    expect(await reconcileSearchProfileBatch({ apply: true, retryInvalidOutput: true })).toMatchObject({ queued: 0 });
+  });
+
+  it("재생성 결과가 정상 빈 배열이면 다음 복구 실행에서 다시 넣지 않는다", async () => {
+    const id = await seed("valid-empty");
+    gateway.mockResolvedValue(answer([], []));
+    await tick();
+    await reconcileSearchProfileBatch({ apply: true, retryEmpty: true });
+    await tick();
+    expect((await db.select().from(productSearchProfiles).where(eq(productSearchProfiles.productId, id)))[0]).toMatchObject({ needsRefresh: false, repairVersion: 1 });
+    expect(await reconcileSearchProfileBatch({ apply: true, retryEmpty: true })).toMatchObject({ queued: 0 });
+  });
+
+  it("UTF-16 입력 범위 밖 변화는 실패 재시도 한도를 초기화하지 않는다", async () => {
+    const prefix = "a".repeat(1498) + "😀";
+    const id = await seed("capped-prefix", { searchPageText: prefix + "old" });
+    gateway.mockResolvedValue({ ok: false, status: 502 } as Response);
+    await tick();
+    await db.update(productSearchProfiles).set({ attempts: 5 }).where(eq(productSearchProfiles.productId, id));
+    await db.update(products).set({ searchPageText: prefix + "new" }).where(eq(products.id, id));
+    expect((await db.select().from(productSearchProfiles).where(eq(productSearchProfiles.productId, id)))[0]).toMatchObject({ attempts: 5, needsRefresh: false });
+    expect(await pendingProfiles(10)).toHaveLength(0);
+    // A split surrogate has the same JS input if only the low surrogate differs.
+    const split = "a".repeat(1499);
+    const [{ equal }] = await db.execute(sql`select search_profile_prefix(${split + "😀"}, 1500) = search_profile_prefix(${split + "😁"}, 1500) as equal`) as unknown as { equal: boolean }[];
+    expect(equal).toBe(true);
+    const [{ different }] = await db.execute(sql`select search_profile_prefix(${split + "𰀀"}, 1500) <> search_profile_prefix(${split + "؀"}, 1500) as different`) as unknown as { different: boolean }[];
+    expect(different).toBe(true);
+  });
+
+  it("관리자가 제품을 잠근 상태에서도 심사 메모 변경은 반대 잠금 순서로 막히지 않는다", async () => {
+    const id = await seed("lock-order");
+    gateway.mockResolvedValue(answer(["grocery list"], ["장보기"]));
+    await tick();
+    const [campaign] = await db.insert(productAuditCampaigns).values({ startedBy: "test", reason: "test", promptVersion: "v1", rulesVersion: "v1", provider: "test", model: "test" }).returning();
+    const [note] = await db.insert(productAuditItems).values({ campaignId: campaign.id, productId: id, slug: "lock-order", aiReason: "Shopping software" }).returning();
+    await db.transaction(async (admin) => {
+      await admin.select().from(products).where(eq(products.id, id)).for("update");
+      await db.transaction(async (reviewer) => {
+        await reviewer.execute(sql`set local statement_timeout = '1s'`);
+        await reviewer.update(productAuditItems).set({ aiReason: "Calendar software" }).where(eq(productAuditItems.id, note.id));
+      });
+      await admin.update(productAuditItems).set({ humanDecision: "removed" }).where(eq(productAuditItems.id, note.id));
+    });
+    expect((await db.select().from(productSearchProfiles).where(eq(productSearchProfiles.productId, id)))[0].needsRefresh).toBe(true);
   });
 
   it("한국어로 영어 제품을, 영어로 한국어 제품을 찾는다 — 번역 없이", async () => {

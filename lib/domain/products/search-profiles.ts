@@ -1,4 +1,4 @@
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, eq, gt, inArray, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { products, productSearchProfiles, type Product, type ProductSearchProfile } from "@/lib/db/schema";
 import { assertJobLease, type JobLease } from "@/lib/jobs/control";
@@ -27,9 +27,8 @@ export type ProfileTask = { product: ProductFields; profile: ProductSearchProfil
 /**
  * 키워드를 지어야 하는 공개 제품.
  *
- * 아직 안 지은 것, 실패가 다시 볼 때가 된 것, 지은 지 30일이 지난 것(글이 바뀌었는지 해시로 본다).
- * 30일을 두는 것은 동적 페이지 때문이다 — 날짜·숫자가 매번 바뀌는 페이지를 바뀔 때마다 다시 지으면
- * 게이트웨이를 헛돌린다.
+ * 아직 안 지은 것, 원본이 바뀐 것, 실패 후 재시도할 때가 된 것, 30일 주기 점검 대상.
+ * 원본 변경은 DB 트리거로 표시하고 실제 생성 입력 해시가 같으면 모델을 부르지 않는다.
  *
  * 안 지은 것이 먼저이고, 그중에서도 소개가 한 줄뿐인 제품(설명=소개, 공개분의 40%)이 먼저다 —
  * 키워드가 가장 크게 보태는 쪽이다.
@@ -43,7 +42,8 @@ export async function pendingProfiles(limit: number): Promise<ProfileTask[]> {
       sql`(${productSearchProfiles.productId} is null
         or (${productSearchProfiles.errorCode} is not null and ${productSearchProfiles.attempts} < ${MAX_ATTEMPTS}
             and (${productSearchProfiles.retryAt} is null or ${productSearchProfiles.retryAt} <= now()))
-        or (${productSearchProfiles.errorCode} is null and ${productSearchProfiles.updatedAt} < now() - interval '30 days'))`,
+        or (${productSearchProfiles.errorCode} is null and (${productSearchProfiles.needsRefresh}
+            or ${productSearchProfiles.updatedAt} < now() - interval '30 days')))`,
     ))
     .orderBy(sql`(${productSearchProfiles.productId} is null) desc,
       (btrim(${products.description}) = btrim(${products.tagline})) desc, ${products.id} desc`)
@@ -57,7 +57,7 @@ export type ProfileResult =
   | { kind: "failure"; error: string };
 
 const sameProfile = (a: ProductSearchProfile | null | undefined, b: ProductSearchProfile | null) =>
-  (a ?? null) === null ? b === null : b !== null && a!.updatedAt.getTime() === b.updatedAt.getTime();
+  (a ?? null) === null ? b === null : b !== null && a!.updatedAt.getTime() === b.updatedAt.getTime() && a!.sourceRevision === b.sourceRevision;
 
 /**
  * 결과를 남긴다 — 한 트랜잭션에서 원본 키워드와 색인용 사본(products.search_keywords)을 같이 적는다.
@@ -69,7 +69,8 @@ export async function recordProfileResult(task: ProfileTask, lease: JobLease, re
   return db.transaction(async (tx) => {
     const [product] = await tx.select(FIELDS).from(products).where(eq(products.id, task.product.id)).for("update");
     if (!product || (product.status !== "seeded" && product.status !== "verified")) return false;
-    const sourceHash = profileHash(profileEvidence(product, task.reviewerNote));
+    const [{ reviewerNote }] = await tx.select({ reviewerNote: REVIEWER_NOTE }).from(products).where(eq(products.id, product.id));
+    const sourceHash = profileHash(profileEvidence(product, reviewerNote));
     if (sourceHash !== profileHash(profileEvidence(task.product, task.reviewerNote))) return false;
     const [current] = await tx.select().from(productSearchProfiles)
       .where(eq(productSearchProfiles.productId, product.id)).for("update");
@@ -77,11 +78,11 @@ export async function recordProfileResult(task: ProfileTask, lease: JobLease, re
 
     if (result.kind === "reuse") {
       if (!current || current.errorCode || current.sourceHash !== sourceHash) return false;
-      await tx.update(productSearchProfiles).set({ updatedAt: sql`now()` }).where(eq(productSearchProfiles.productId, product.id));
+      await tx.update(productSearchProfiles).set({ needsRefresh: false, updatedAt: sql`now()` }).where(eq(productSearchProfiles.productId, product.id));
     } else if (result.kind === "success") {
       // 새로 지은 키워드는 다시 검수한다(product-search-verify)
       const values = { keywordsEn: result.en, keywordsKo: result.ko, model: result.model, sourceHash,
-        errorCode: null, retryAt: null, updatedAt: sql`now()`,
+        needsRefresh: false, errorCode: null, retryAt: null, updatedAt: sql`now()`,
         verifiedAt: null, removedKeywords: [], verifyModel: null, verifyAttempts: 0, verifyError: null, verifyRetryAt: null };
       await tx.insert(productSearchProfiles).values({ productId: product.id, ...values, attempts: 1 })
         .onConflictDoUpdate({ target: productSearchProfiles.productId, set: { ...values, attempts: sql`${productSearchProfiles.attempts} + 1` } });
@@ -90,7 +91,7 @@ export async function recordProfileResult(task: ProfileTask, lease: JobLease, re
       const code = result.error.slice(0, 60);
       await tx.insert(productSearchProfiles).values({ productId: product.id, sourceHash, errorCode: code, attempts: 1,
         retryAt: sql`now() + interval '5 minutes'`, updatedAt: sql`now()` })
-        .onConflictDoUpdate({ target: productSearchProfiles.productId, set: { sourceHash, errorCode: code, updatedAt: sql`now()`,
+        .onConflictDoUpdate({ target: productSearchProfiles.productId, set: { errorCode: code, updatedAt: sql`now()`,
           attempts: sql`${productSearchProfiles.attempts} + 1`,
           retryAt: sql`now() + least(interval '24 hours', interval '5 minutes' * power(2, ${productSearchProfiles.attempts}))` } });
     }
@@ -114,7 +115,7 @@ export async function pendingVerifications(limit: number): Promise<ProfileTask[]
     .innerJoin(productSearchProfiles, eq(productSearchProfiles.productId, products.id))
     .where(and(
       inArray(products.status, ["seeded", "verified"]),
-      sql`${productSearchProfiles.errorCode} is null and ${productSearchProfiles.verifiedAt} is null
+      sql`not ${productSearchProfiles.needsRefresh} and ${productSearchProfiles.errorCode} is null and ${productSearchProfiles.verifiedAt} is null
         and jsonb_array_length(${productSearchProfiles.keywordsEn}) + jsonb_array_length(${productSearchProfiles.keywordsKo}) > 0
         and ${productSearchProfiles.verifyAttempts} < ${MAX_VERIFY_ATTEMPTS}
         and (${productSearchProfiles.verifyRetryAt} is null or ${productSearchProfiles.verifyRetryAt} <= now())`,
@@ -140,7 +141,17 @@ export async function recordVerificationResult(task: ProfileTask, lease: JobLeas
     if (!product || (product.status !== "seeded" && product.status !== "verified")) return false;
     const [current] = await tx.select().from(productSearchProfiles)
       .where(eq(productSearchProfiles.productId, product.id)).for("update");
-    if (!current || !task.profile || !sameProfile(current, task.profile) || current.errorCode || current.verifiedAt) return false;
+    if (!current || !task.profile || !sameProfile(current, task.profile) || current.needsRefresh || current.errorCode || current.verifiedAt) return false;
+    const [{ reviewerNote }] = await tx.select({ reviewerNote: REVIEWER_NOTE }).from(products).where(eq(products.id, product.id));
+    const sourceHash = profileHash(profileEvidence(product, reviewerNote));
+    if (sourceHash !== current.sourceHash) {
+      await tx.update(productSearchProfiles).set({ needsRefresh: true,
+        sourceRevision: sql`${productSearchProfiles.sourceRevision} + 1`, attempts: 0, errorCode: null, retryAt: null,
+      }).where(eq(productSearchProfiles.productId, product.id));
+      await assertJobLease(tx, lease);
+      return false;
+    }
+    if (sourceHash !== profileHash(profileEvidence(task.product, task.reviewerNote))) return false;
 
     if (result.kind === "success") {
       const removed = new Set(result.removed);
@@ -165,4 +176,57 @@ export async function recordVerificationResult(task: ProfileTask, lease: JobLeas
     await assertJobLease(tx, lease);
     return true;
   });
+}
+
+/** 기존 데이터 복구. 해시를 덮지 않고 실제 생성/검수 대기열에 넣는다. 기본은 읽기 전용. */
+export async function reconcileSearchProfileBatch(options: {
+  afterId?: number; limit?: number; apply?: boolean; retryInvalidOutput?: boolean; retryEmpty?: boolean;
+}) {
+  const rows = await db.select({ product: FIELDS, profile: productSearchProfiles, reviewerNote: REVIEWER_NOTE })
+    .from(products).innerJoin(productSearchProfiles, eq(productSearchProfiles.productId, products.id))
+    .where(and(inArray(products.status, ["seeded", "verified"]), gt(products.id, options.afterId ?? 0)))
+    .orderBy(products.id).limit(Math.max(1, Math.min(500, options.limit ?? 250)));
+  const counts = { scanned: rows.length, mismatched: 0, alreadyPending: 0, queued: 0, verificationRetried: 0 };
+  const classify = (product: ProductFields, profile: ProductSearchProfile, reviewerNote: string | null) => {
+    const mismatch = profile.sourceHash !== profileHash(profileEvidence(product, reviewerNote));
+    const retryGeneration = profile.repairVersion < 1 && options.retryInvalidOutput && profile.errorCode === "invalid_output" && profile.attempts >= MAX_ATTEMPTS;
+    const retryEmpty = profile.repairVersion < 1 && options.retryEmpty && !profile.errorCode && profile.keywordsEn.length + profile.keywordsKo.length === 0;
+    const refresh = mismatch || retryGeneration || retryEmpty;
+    const retryVerification = profile.repairVersion < 1 && !refresh && !profile.needsRefresh && options.retryInvalidOutput
+      && profile.verifyError === "invalid_output" && profile.verifyAttempts >= MAX_VERIFY_ATTEMPTS;
+    return { mismatch, refresh, retryGeneration, retryEmpty, retryVerification };
+  };
+  for (const row of rows) {
+    const reason = classify(row.product, row.profile, row.reviewerNote);
+    if (reason.mismatch) counts.mismatched++;
+    if (row.profile.needsRefresh && !reason.retryGeneration) { counts.alreadyPending++; continue; }
+    if (!reason.refresh && !reason.retryVerification) continue;
+    if (!options.apply) {
+      if (reason.refresh) counts.queued++;
+      if (reason.retryVerification) counts.verificationRetried++;
+      continue;
+    }
+    await db.transaction(async (tx) => {
+      const [product] = await tx.select(FIELDS).from(products).where(eq(products.id, row.product.id)).for("update");
+      if (!product || !["seeded", "verified"].includes(product.status)) return;
+      const [profile] = await tx.select().from(productSearchProfiles).where(eq(productSearchProfiles.productId, product.id)).for("update");
+      if (!profile) return;
+      const [{ reviewerNote }] = await tx.select({ reviewerNote: REVIEWER_NOTE }).from(products).where(eq(products.id, product.id));
+      const latest = classify(product, profile, reviewerNote);
+      if (profile.needsRefresh && !latest.retryGeneration) return;
+      if (latest.refresh) {
+        await tx.update(productSearchProfiles).set({ needsRefresh: true,
+          sourceRevision: sql`${productSearchProfiles.sourceRevision} + 1`, attempts: 0, errorCode: null, retryAt: null,
+          ...(latest.retryGeneration || latest.retryEmpty ? { repairVersion: 1 } : {}),
+        }).where(eq(productSearchProfiles.productId, product.id));
+        counts.queued++;
+      } else if (latest.retryVerification) {
+        await tx.update(productSearchProfiles).set({ verifyAttempts: 0, verifyError: null, verifyRetryAt: null, repairVersion: 1,
+          sourceRevision: sql`${productSearchProfiles.sourceRevision} + 1`,
+        }).where(eq(productSearchProfiles.productId, product.id));
+        counts.verificationRetried++;
+      }
+    });
+  }
+  return { ...counts, afterId: rows.at(-1)?.product.id ?? options.afterId ?? 0 };
 }
