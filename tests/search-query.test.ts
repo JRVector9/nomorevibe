@@ -1,7 +1,7 @@
 import { expect, it } from "vitest";
 import { hasSearchQuery, searchQueries } from "@/lib/domain/products/search";
 import { normalizeQuery, queryTranslationKey } from "@/lib/domain/products/search-translation";
-import { parseQueryTranslation, queryTranslationPhrases, textHash } from "@/lib/crawl/translate";
+import { glossaryHints, parseQueryTranslation, queryExpansions, queryTranslationPhrases, textHash } from "@/lib/crawl/translate";
 
 it("질의문은 다듬고 빈 것은 버린다", () => {
   expect(searchQueries("  회의록 요약  ")).toEqual(["회의록 요약"]);
@@ -43,4 +43,21 @@ it("번역은 두 표현까지 받는다 — 흔한 말과 개념을 다 담은 
 it("번역 캐시 열쇠에는 지시문 판이 들어 있다 — 옛 지시문으로 옮긴 말을 다시 쓰지 않는다", () => {
   expect(queryTranslationKey("  PDF   합치는 도구")).toBe(queryTranslationKey("pdf 합치는 도구"));
   expect(queryTranslationKey("pdf 합치는 도구")).not.toBe(textHash(normalizeQuery("pdf 합치는 도구")));
+});
+
+it("한국식 영어 낱말은 질의에 든 것만 뜻을 덧붙인다 — 긴 말이 먼저", () => {
+  expect(glossaryHints("헬스장 출석 체크")).toBe("\nIn Korean: '헬스장' means a gym.");
+  expect(glossaryHints("노트북 가격 비교")).toContain("'노트북' means a laptop computer");
+  expect(glossaryHints("회의록 요약")).toBe("");
+});
+
+it("영어로 옮기면 엉뚱한 것이 걸리는 말은 정해 둔 영어로도 찾는다", () => {
+  expect(queryExpansions("드라마 추천")).toEqual(["tv series"]);
+  expect(queryExpansions("헬스장 출석 체크")).toEqual(["gym"]);
+  expect(queryExpansions("회의록 요약")).toEqual([]);
+});
+
+it("용어표 낱말이 든 질의만 번역 캐시 열쇠가 바뀐다 — 다른 질의의 번역은 그대로 쓴다", () => {
+  expect(queryTranslationKey("회의록 요약")).toBe(textHash("q2:회의록 요약"));
+  expect(queryTranslationKey("드라마 추천")).toBe(textHash("q2g1:드라마 추천"));
 });

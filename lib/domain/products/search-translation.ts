@@ -1,10 +1,11 @@
 import { and, eq, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { products, textTranslations } from "@/lib/db/schema";
-import { QUERY_PROMPT_VERSION, queryTranslationPhrases, textHash, TRANSLATE_MODEL, translateQueryToEnglish } from "@/lib/crawl/translate";
+import { textTranslations } from "@/lib/db/schema";
+import { GLOSSARY_VERSION, glossaryHints, QUERY_PROMPT_VERSION, queryExpansions, queryTranslationPhrases, textHash, TRANSLATE_MODEL,
+  translateQueryToEnglish } from "@/lib/crawl/translate";
 import { recordTranslations } from "@/lib/crawl/translations";
 import { logger } from "@/lib/observability/logger";
-import { planTerms, productSearchPredicate, RELAX_MIN_TERMS, type SearchPlan, type SearchQuery } from "./search";
+import { planTerms, RELAX_MIN_TERMS, type SearchPlan, type SearchQuery } from "./search";
 
 /**
  * 한국어 검색어를 영어 낱말로 바꿔 한 번 더 찾는다.
@@ -38,22 +39,16 @@ export function normalizeQuery(query: string): string {
   return query.trim().replace(/\s+/g, " ").toLocaleLowerCase("ko");
 }
 
-/** 번역 캐시의 열쇠 — 지시문 판이 들어 있어, 판을 올리면 옛 지시문으로 옮긴 말을 다시 쓰지 않는다 */
+/**
+ * 번역 캐시의 열쇠 — 지시문 판이 들어 있어, 판을 올리면 옛 지시문으로 옮긴 말을 다시 쓰지 않는다.
+ * 용어표 낱말이 든 질의만 용어표 판도 넣는다 — 용어표를 바꿔도 다른 질의의 번역은 그대로 쓴다.
+ */
 export function queryTranslationKey(query: string): string {
-  return textHash(`q${QUERY_PROMPT_VERSION}:${normalizeQuery(query)}`);
+  const glossary = glossaryHints(normalizeQuery(query)) ? `g${GLOSSARY_VERSION}` : "";
+  return textHash(`q${QUERY_PROMPT_VERSION}${glossary}:${normalizeQuery(query)}`);
 }
 
 const hasHangul = (text: string) => /[가-힣]/.test(text);
-
-/** 공개 목록에서 이 말이 몇 건이나 맞나 — 카테고리·제작 도구 같은 필터는 보지 않는다.
- *  필터 때문에 0건인 것은 말이 안 통한 것이 아니라 필터가 좁힌 것이다. */
-async function publicHits(query: SearchQuery): Promise<number> {
-  const [row] = await db
-    .select({ count: sql<number>`count(*)::int` })
-    .from(products)
-    .where(and(sql`${products.status} in ('seeded', 'verified')`, productSearchPredicate(query)!));
-  return Number(row?.count ?? 0);
-}
 
 async function cachedTranslation(hash: string): Promise<string | null> {
   const [row] = await db
@@ -67,9 +62,6 @@ async function cachedTranslation(hash: string): Promise<string | null> {
   return row?.translated ?? null;
 }
 
-/** 모든 낱말로 이만큼도 안 나오면 넓힌다(하나만 빠진 것까지) */
-const FEW_HITS = 5;
-
 /** 질의문의 어간 — 색인과 같은 영어 분석기로 뽑는다. 불용어·구두점은 여기서 빠진다 */
 async function lexemesOf(text: string): Promise<string[]> {
   const rows = await db.execute<{ lexeme: string }>(sql`select lexeme from unnest(to_tsvector('english', ${text}))`);
@@ -77,21 +69,20 @@ async function lexemesOf(text: string): Promise<string[]> {
 }
 
 /**
- * 검색을 짠다 — 질의문마다 찾을 낱말을 뽑고, 모든 낱말로 몇 건 안 나오면 넓힌다.
+ * 검색을 짠다 — 질의문마다 찾을 낱말을 뽑고, 낱말이 셋 이상이면 하나 빠진 것까지 들인다(넓힌 검색).
  *
- * 넓히는 것은 좁을 때만이다. "merge pdf" 처럼 넉넉히 맞는 검색까지 넓히면 "merge"만 맞는 것이 섞여
- * 흐려진다. 낱말이 하나뿐이면 넓힐 것이 없다.
+ * 전에는 모든 낱말로 5건도 안 나올 때만 넓혔다. 그러면 결과가 넉넉한 질의에서 낱말 하나 없는 정답이 아예
+ * 걸리지 않았다 — "japanese vocabulary trainer"는 36건이 다 맞아 넓히지 않았고, 정답(語彙庭)에는 "trainer"가
+ * 없었다. "short form video trends"의 정답(숏폼 트렌드 가이드)에는 "video"가 없었다. 순위는 넓혀도 괜찮다 —
+ * 다 맞은 것이 맞은 비율 가산(×10, 이름·소개·키워드에서만 센다)으로 하나 빠진 것보다 앞이다.
+ * 늘 넓히자(2026-09-26 다중 정답 평가) nDCG@10 0.773→0.846, 1위가 딱 맞는 질의 44→52, 따로 둔 보류 질의 20개에서도
+ * 0.648→0.705. 대신 결과 수 중앙이 25→88, 검색 p50 124→163ms·p95 270→380ms.
  *
- * 좁은지는 계획 전체의 결과로 본다. 그래서 번역의 짧은 표현("interior estimate")이 몇 건을 채우면 원문과 긴
- * 표현도 넓히지 않는다(한국어 평가 질의 26개 중 3개). 원문·번역 묶음마다 따로 넓혀 봤더니(2026-09-24) 넓힌
- * 묶음만 맞은 비율 가산(×10)을 받아, 원문 낱말 몇 개만 걸린 한국어 페이지가 영어로 다 맞은 정답을 눌렀다
- * ("코딩 에이전트 비용 추적" 1위가 취업 준비 도구). 가산을 모두에 주면 더 나빴다. 넓히기와 가산은 함께 다시 짠다.
+ * 낱말이 둘 이하면 넓히지 않는다 — "merge pdf"를 넓히면 "merge"만 맞는 것이 섞인다(하나만 맞아도 되면 OR 이다).
  */
 export async function planSearch(texts: readonly string[]): Promise<SearchPlan> {
   const terms = await Promise.all(texts.map(async (text) => planTerms(await lexemesOf(text))));
-  const strict: SearchPlan = { kind: "plan", texts, terms, mode: "all" };
-  if (!terms.some((list) => list.length >= RELAX_MIN_TERMS)) return strict;
-  return await publicHits(strict) >= FEW_HITS ? strict : { ...strict, mode: "most" };
+  return { kind: "plan", texts, terms, mode: terms.some((list) => list.length >= RELAX_MIN_TERMS) ? "most" : "all" };
 }
 
 /**
@@ -132,7 +123,8 @@ export async function resolveSearchQuery(query: string | undefined): Promise<Res
   const raw = query?.trim() ?? "";
   if (!raw) return { queries: [], translated: null };
   const stored = hasHangul(raw) ? await translateKorean(raw) : null;
-  const phrases = stored ? queryTranslationPhrases(stored) : [];
+  // 영어로 옮기면 엉뚱한 것이 걸리는 한국식 영어는 정해 둔 영어 말로도 찾는다(translate.ts QUERY_EXPANSIONS)
+  const phrases = [...new Set([...(stored ? queryTranslationPhrases(stored) : []), ...queryExpansions(raw)])];
   const translated = phrases.length ? phrases.join(" / ") : null;
   const texts = [raw, ...phrases];
   try {
