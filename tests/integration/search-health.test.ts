@@ -43,6 +43,23 @@ describe("read only consistent search audit", () => {
     await seed("stop");
     await expect(collectSearchHealth(() => false)).rejects.toThrow("search_health_budget_exhausted");
   });
+  it("gives newly verified old registrations a missing-profile grace period", async () => {
+    const p = await seed("just-verified", false);
+    await db.update(products).set({ createdAt: sql`now() - interval '2 days'`, status: "verified", verifiedAt: new Date() })
+      .where(eq(products.id, p.id));
+    expect(await collectSearchHealth()).toMatchObject({ missing: 1, oldMissing: 0 });
+  });
+  it("checks the preserved search copy during dirty-source regeneration and backoff", async () => {
+    const p = await seed("dirty-copy");
+    await db.update(products).set({ tagline: "New source", searchKeywords: "corrupt" }).where(eq(products.id, p.id));
+    await db.update(productSearchProfiles).set({ errorCode: "timeout", attempts: 2, retryAt: sql`now() + interval '1 hour'` })
+      .where(eq(productSearchProfiles.productId, p.id));
+    expect(await collectSearchHealth()).toMatchObject({ copiesMismatched: 1, pendingGeneration: 1, unmarked: 0 });
+  });
+  it("does not count a periodic profile reuse as generation progress", async () => {
+    await seed("periodic-reuse");
+    expect(await collectSearchHealth()).toMatchObject({ generatedRecent: 0 });
+  });
   it("persists owned audit counts and a continuous stalled-generation warning", async () => {
     await seed("waiting", false);
     const name = "product-search-health";

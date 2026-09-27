@@ -24,7 +24,7 @@ export async function collectSearchHealth(hasBudget = () => true) {
         id: products.id, name: products.name, url: products.url, category: products.category,
         tagline: products.tagline, description: products.description, searchTopics: products.searchTopics,
         searchPageText: products.searchPageText, searchReadme: products.searchReadme,
-        searchKeywords: products.searchKeywords, createdAt: products.createdAt,
+        searchKeywords: products.searchKeywords, createdAt: products.createdAt, verifiedAt: products.verifiedAt,
       }, profile: productSearchProfiles,
       reviewerNote: sql<string | null>`(select a.ai_reason from product_audit_items a
         where a.product_id = products.id and a.ai_reason is not null order by a.id desc limit 1)` })
@@ -37,7 +37,7 @@ export async function collectSearchHealth(hasBudget = () => true) {
         const p = row.profile;
         if (!p) {
           c.missing++; c.pendingGeneration++;
-          if (now - row.product.createdAt.getTime() >= 30 * 60_000) c.oldMissing++;
+          if (now - (row.product.verifiedAt ?? row.product.createdAt).getTime() >= 30 * 60_000) c.oldMissing++;
           continue;
         }
         if (p.sourceHash !== profileHash(profileEvidence(row.product, row.reviewerNote))) {
@@ -47,15 +47,15 @@ export async function collectSearchHealth(hasBudget = () => true) {
         if (p.needsRefresh || p.errorCode) c.pendingGeneration++;
         if (p.errorCode && p.attempts >= 5 || p.verifyError && p.verifyAttempts >= 5) c.exhausted++;
         if (p.errorCode && p.attempts >= 3 || p.verifyError && p.verifyAttempts >= 3) c.repeatedFailures++;
+        const removed = new Set(p.removedKeywords);
+        const expected = keywordText(p.keywordsEn.filter(k => !removed.has(k)), p.keywordsKo.filter(k => !removed.has(k)));
+        if (row.product.searchKeywords !== expected) c.copiesMismatched++;
+        if (p.generatedAt && now - p.generatedAt.getTime() < 15 * 60_000) c.generatedRecent++;
         if (!p.needsRefresh && !p.errorCode) {
-          const removed = new Set(p.removedKeywords);
-          const expected = keywordText(p.keywordsEn.filter(k => !removed.has(k)), p.keywordsKo.filter(k => !removed.has(k)));
-          if (row.product.searchKeywords !== expected) c.copiesMismatched++;
           if (!p.verifiedAt && p.keywordsEn.length + p.keywordsKo.length > 0) {
             c.pendingVerification++;
             c.oldestVerificationMinutes = Math.max(c.oldestVerificationMinutes, (now - p.updatedAt.getTime()) / 60_000);
           }
-          if (now - p.updatedAt.getTime() < 15 * 60_000) c.generatedRecent++;
           if (p.verifiedAt && now - p.verifiedAt.getTime() < 15 * 60_000) c.verifiedRecent++;
         }
       }
