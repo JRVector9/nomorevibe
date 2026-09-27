@@ -1,5 +1,9 @@
 # NoMoreVibe
 
+[![CI](https://github.com/JRVector9/nomorevibe/actions/workflows/ci.yml/badge.svg)](https://github.com/JRVector9/nomorevibe/actions/workflows/ci.yml)
+
+운영 서비스: [nomorevibe.brut.bot](https://nomorevibe.brut.bot) · [공개 GitHub 저장소](https://github.com/JRVector9/nomorevibe)
+
 AI로 만든 제품의 마켓 데이터베이스. 메이커가 AI 코딩 툴에서 `/nomorevibe` 한 번을 실행하면
 배포한 서비스가 등록된다.
 
@@ -31,6 +35,8 @@ AI로 만든 제품의 마켓 데이터베이스. 메이커가 AI 코딩 툴에�
 
 ## 개발 환경
 
+Node.js 24와 PostgreSQL 17을 사용한다. 의존성은 lockfile과 맞춰 `npm ci`로 설치한다.
+
 ```bash
 # DB (전용 컨테이너)
 docker run -d --name nomorevibe-local-db \
@@ -39,8 +45,8 @@ docker run -d --name nomorevibe-local-db \
 
 cp .env.example .env.local     # ALLOW_PRIVATE_URLS=1 주석 해제 (로컬 테스트용)
 # openssl rand -hex 32 결과를 VISITOR_HASH_SECRET에 넣는다
-npm install
-npx drizzle-kit migrate
+npm ci
+node --env-file=.env.local scripts/migrate.mjs
 npm run dev
 ```
 
@@ -66,6 +72,40 @@ docker run -d --name nomorevibe-test-db \
   -p 55435:5432 postgres:17
 npm run test:integration
 ```
+
+## GitHub CI와 변경 절차
+
+main push와 PR에서 `check`가 타입 생성·TypeScript·lint·단위 테스트·PostgreSQL 통합 테스트·빌드를
+실행한다. Actions 화면에서 수동 실행도 가능하다. 같은 PR의 새 커밋은 이전 실행을 취소하며,
+서로 다른 PR은 별도로 실행한다. 잡 제한은 20분이다. Actions는 Node 24 런타임의 고정 SHA를 사용한다.
+
+main은 관리자에게도 PR과 최신 base의 `check` 성공을 요구한다. 강제 푸시·브랜치 삭제를 막고,
+리뷰 대화 해결을 요구한다. 공개 저장소의 secret scanning·push protection·Dependabot 보안 업데이트도
+활성화했다. `.env*`, 인증 파일, 운영 DB 덤프와 토큰을 커밋하지 않는다. 로컬 재현 순서는 다음과 같다.
+
+```bash
+npm ci
+npx next typegen
+npx tsc --noEmit
+npm run lint
+npm test
+npm run test:integration    # localhost:55435의 nomorevibe_test 전용 DB
+npm run build
+```
+
+## 운영 배포와 상태 확인
+
+운영은 Dokploy의 main 소스를 사용한다. M3에는 웹·scheduler·crawler·reviewer·publisher·text·maintenance,
+mini에는 두 번째 웹을 둬 총 8개 앱을 배포한다. 웹은 로드밸런서 뒤에서 동작하고 역할 워커는 M3에서만
+실행한다. 런타임 DB는 PgBouncer(6432), 별도 migration은 PostgreSQL 직접 연결(5432)을 사용한다.
+
+PR의 GitHub CI 성공은 배포 완료를 뜻하지 않는다. [독립 워커 운영 절차](docs/operations/independent-workers-runbook.md)에
+따라 migration 종료 코드 0과 각 앱의 배포 소스 커밋·완료 상태를 확인하고 공개 페이지와 관리자 상태를 검증한다.
+`RELEASE_TAG`만 보고 최신 소스라고 판단하지 않는다. 실제 남은 운영 검증은 [PENDING.md](PENDING.md)에 기록한다.
+
+[관리자 상태](https://nomorevibe.brut.bot/admin/status)는 최근 구간의 수집·심사·발행·생존 확인 처리 속도와
+단계별 대기량, worker 생존, GitHub 대기, 마지막 실패를 함께 보여준다. 요청 접수·heartbeat 증가만으로
+수집 성공을 판단하지 않는다. 관리자 인증이 필요하다.
 
 ## 구조
 
@@ -141,7 +181,7 @@ docker compose exec crawler node --import tsx scripts/run-job.ts crawl-fetch
 ```
 
 새 작업은 `lib/jobs/catalog.ts`에 이름·역할·주기를, `lib/jobs/registry.ts`에 핸들러를 추가한다.
-요청 버전과 실행 소유권으로 중복 실행과 실행 중 재요청 유실을 막는다. 초기 배포는 역할당 워커 1개다.
+요청 버전과 실행 소유권으로 중복 실행과 실행 중 재요청 유실을 막는다. 운영은 역할당 워커 1개다.
 
 ## 수집 파이프라인
 
@@ -160,6 +200,10 @@ docker compose exec crawler node --import tsx scripts/run-job.ts crawl-fetch
 | `ranking-refresh` | 시즌 경계·쿨다운을 계산하고 공개 순위 스냅샷 갱신 | `ranking_seasons`, `ranking_entries` |
 | `product-evidence-refresh` | 공식 링크·저장소·업데이트·내부 보관 미디어 갱신 | `product_evidence_*`, `product_updates`, `product_media` |
 | `agent-evidence-refresh` | 공개 저장소의 지침·설정·기여 근거 갱신 | `agent_repository_scans`, `agent_repository_observations` |
+| `product-readme-refresh` | 재수집으로 무효화된 README 확인, crawler 5분/최대 2개 | `crawl_documents.page_meta` |
+| `product-search-refresh` | 원본 발췌·토픽·README 검색 입력 복사 | `products.search_*`, 프로필 갱신 표시 |
+| `product-search-profile` / `product-search-verify` | 변경 원본의 키워드 생성·엄격 검수 | 검색 프로필·키워드 사본 |
+| `product-search-health` | 원본 해시·프로필·사본·실패/정체 읽기 전용 대조 | 관리자 완료 관측 |
 
 ```bash
 GITHUB_TOKEN=... npm run job crawl-seed      # 로컬에서 한 틱씩
@@ -189,14 +233,18 @@ Compose `scheduler`가 10초마다 `lib/jobs/catalog.ts`의 주기를 확인해 
 |---|---|---|
 | `crawl-fetch` | 1분 | 실제 API quota·쿨다운과 frontier due 시각을 준수 |
 | `crawl-judge` | 5분 | 계산만 한다. 원본 쌓이는 속도만 따라가면 된다 |
-| `crawl-agent-review` | 1분 | 모드·입력 유효성·시도 한도에 따라 한 틱 AI 호출 최대 1개 |
+| `crawl-agent-review` | 1분 | 모드·입력 유효성·설정 병렬도에 따라 한 틱 시작 최대 16개 |
 | `crawl-publish` | 5분 | 판정 직후에 돌아야 통과한 것이 바로 목록에 오른다 |
-| `crawl-seed` | 15분 | 공유 API 대기와 frontier 적체 시 탐색 양보 |
-| `uptime-ping` | 10분 | 제품이 죽는 것은 분 단위로 급한 일이 아니다. 같은 제품은 6시간에 한 번만 본다 |
+| `crawl-seed` | 10분 | 공유 API 대기와 frontier 적체 시 탐색 양보 |
+| `uptime-ping` | 1분 | 제품이 죽는 것은 분 단위로 급한 일이 아니다. 같은 제품은 6시간에 한 번만 본다 |
 | `click-rollup` | 1시간 | 집계는 하루 단위라 자주 돌 이유가 없다 |
 | `ranking-refresh` | 독립 주기 없음 | `click-rollup`의 done=true 성공 완료 트랜잭션이 요청 |
 | `product-evidence-refresh` | 1분 | 출처별 due 시각으로 실제 요청을 제한한다 |
 | `agent-evidence-refresh` | 1분 | 공개 저장소 문서·설정 수집, partial 재개, 완료 후 기본 24시간 캐시 |
+| `product-search-refresh` | 1분 | 저장한 페이지·README·토픽을 검색 입력으로 반영 |
+| `product-search-profile` | 1분 | text 워커가 한·영 키워드 생성 |
+| `product-search-verify` | 1분 | text 워커가 키워드를 근거와 대조 |
+| `product-search-health` | 15분 | maintenance에서 해시·검색 사본·재시도·정체 감시 |
 
 기존 Dokploy/GitHub Actions의 HTTP 스케줄과 evidence wrapper는 전환 때 중지한다.
 호환 cron API는 요청만 접수하므로 소비 워커를 대신하지 않는다. `ranking-refresh`를 별도 정기
@@ -268,7 +316,7 @@ App Store·Play Store·npm·PyPI·crates.io·일반 링크·RSS 수집은 각 �
 실제 스트림을 각각 2 MiB로 제한한다.
 
 DB 스케줄러는 두 evidence 잡을 매분 요청하며 crawler가 소비한다. due 시각 이전에는 외부 요청을 생략한다.
-운영 서버·도메인은 아직 확정되지 않았고 생산 배포는 수행하지 않았다. 전환 절차와 남은 환경 설정은
+운영 서비스와 역할 워커는 배포되어 있다. 추가 배포는 위 운영 절차를, 남은 검증은
 `PENDING.md`를 따른다. 저장소·일반 링크의 기본 갱신 간격은 24시간,
 release feed는 6시간이며, 성공한 출처만 다음 시각으로 전진한다. 일반 출처 실패 재시도는 6시간에서 시작해 12·24·48시간으로 늘고 기본 최대 재시도 설정에서는 48시간이 상한이다
 (설정을 늘려도 절대 상한은 7일). 마지막 성공 이후 `출처 간격 × staleAfterIntervals`가 지나면
@@ -307,6 +355,38 @@ seed·fetch·judge·AI 리뷰·publish는 크롤 설정의 `enabled`가 꺼져 �
 돌고 있는 환경은 옛 값으로 돈다. `/admin`이 어긋난 항목을 짚어 보여주고, 되돌리는 버튼을 둔다
 (수집 스위치는 건드리지 않는다). 없는 필드는 기본값으로 채우므로 필터를 새로 추가할 때는
 마이그레이션이 필요 없다.
+
+## 검색 입력과 프로필 복구
+
+검색은 제품 소개·페이지 발췌·토픽·저장소 README·최신 심사 사유를 입력으로 삼는다. README는
+`crawl_documents.page_meta`에 정제된 최대 3,000자 발췌를 보관하고 `products.search_readme`에는
+최대 2,000자를 반영한다. 큰 README는 최대 256 KiB만 읽고 나머지 스트림을 취소한다.
+SSRF 검사와 시간 제한은 유지한다. 배포 페이지만 다시 수집할 때는 마지막 README 발췌를 보존하고
+최신 확인 캐시를 무효화한다. crawler의 `product-readme-refresh`가 5분마다 최대 2개를 다시 확인한다.
+확인 성공 시 교체하고, 공개 저장소의 README 미발견이 확인되면 빈 값으로 반영한다. 일시적 오류·접근 제한은
+이전 발췌를 보존하고 15분부터 최대 24시간까지 재시도를 늦춘다. GitHub가 지정한 대기 시각은 우선한다.
+README의 링크·문장은 근거이며 모델에 내리는 지시가 아니다.
+
+검색 원본이 바뀌면 프로필을 갱신 대상으로 표시하고 text 워커가 다시 생성·검수한다.
+원본 해시를 강제로 맞춰 예전 키워드를 최신 결과로 꾸미지 않는다. 새 결과를 쓸 때 현재 원본·버전·잡 소유권을
+확인하고 프로필과 검색 사본을 같은 트랜잭션에서 저장한다. 새 입력을 대량 보충하면 잠시 생성 대기가 늘 수 있다.
+
+`product-search-health`는 전체 공개 제품을 읽기 전용으로 대조하고 관리자 상태에 마지막 완료 관측을 표시한다.
+해시 불일치 중 갱신 표시가 없는 항목, 사본 불일치, 오래된 프로필 누락, 반복 실패·재시도 소진,
+실행 가능한 생성 작업의 30분 정체를 구분한다. 관측이 오래됐거나 감시 잡이 실패하면 정상이라고 표시하지 않는다.
+
+`invalid_output` 또는 timeout이 반복된 키워드 검수는 다음 재시도에서 5개씩 나눠 엄격히 검증한다.
+모든 묶음이 성공해야 결과를 한 번 저장하며 부분 성공으로 키워드를 지우지 않는다. 기존 backoff와 재시도 한도는 유지한다.
+아래 복구 명령은 기본 읽기 전용이며 `--apply`가 있을 때만 기존 워커에 재생성·재검수를 요청한다.
+
+```bash
+npx tsx --env-file=.env.local scripts/reconcile-search-profiles.ts
+npx tsx --env-file=.env.local scripts/reconcile-search-profiles.ts --apply --retry-invalid-output --retry-empty
+```
+
+프로필 복구 명령은 외부 README를 다시 받지 않는다. README 재수집 결과에서는 저장 성공·실제 미발견·사용 가능한 텍스트 없음·
+일시적 오류를 구분해야 한다. 네트워크 오류를 없는 README로 캐시하지 않고, 원본 문서가 그사이 바뀌면
+다음 시도에서 다시 읽는다. 이번 재수집 결과와 검증은 [2026-09-27 운영 보고서](docs/operations/2026-09-27-public-ci-readme-recovery.md)에 기록했다.
 
 ## 판정 기준 시험
 
