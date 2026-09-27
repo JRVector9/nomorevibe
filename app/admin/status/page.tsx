@@ -31,6 +31,8 @@ import { translationProgress } from "@/lib/crawl/translations";
 import { TranslationProgress } from "./TranslationProgress";
 import { REASON_LABELS } from "../reasons";
 import { searchLogSummary } from "@/lib/domain/products/search-log";
+import { readSearchHealth, searchHealthAlerts } from "@/lib/operations/search-health-model";
+import { SearchHealthPanel } from "./SearchHealthPanel";
 
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "운영센터 — NoMoreVibe", robots: { index: false } };
@@ -127,6 +129,12 @@ export default async function StatusPage({ searchParams }: { searchParams: Promi
   const agent = latestServiceInstance(ops.serviceInstances, "connect-agent")?.value as AgentStatus | undefined;
   const failedJobs = jobStates.filter(job => job.lastError);
   const actions: ActionItem[] = [];
+  const healthObservation = ops.observations.find(row => row.key === "job:product-search-health");
+  const health = states.get("product-search-health")?.lastError ? null : readSearchHealth(healthObservation);
+  if (health) {
+    actions.push(...searchHealthAlerts(health).map(alert => ({ ...alert, key: `search-${alert.key}`,
+      action: { label: "점검 작업", href: "/admin/status?tab=jobs" } })));
+  }
 
   if (!agent?.configReady) {
     actions.push({
@@ -216,7 +224,7 @@ export default async function StatusPage({ searchParams }: { searchParams: Promi
 
   return (
     <main className="pb-10">
-      <OperationsCenter throughput={<ThroughputStrip snapshot={throughput} />} key={initialTab} initialTab={initialTab} queue={<QueuePreview entries={queue.entries} total={queue.total} counts={decisions.counts} filters={filters} totalWaiting={needsReview} filterScanTruncated={causes?.truncated || Object.values(decisions.counts).reduce((sum, count) => sum + count, 0) < needsReview} />} data={ops} candidates={manual} reviewMode={settings.reviewMode} enabled={settings.enabled} localCodexAllowed={localCodexEnabled()} actionQueue={<ActionQueue items={actions}/>} pipeline={<div className="flex flex-col gap-2"><PipelineRail flow={flow}/><TranslationProgress progress={translation}/></div>} oauthConfigured={Boolean(process.env.GITHUB_OAUTH_CLIENT_ID && process.env.GITHUB_OAUTH_CLIENT_SECRET)}
+      <OperationsCenter throughput={<><ThroughputStrip snapshot={throughput} /><SearchHealthPanel health={health} observedAt={healthObservation?.observedAt} /></>} key={initialTab} initialTab={initialTab} queue={<QueuePreview entries={queue.entries} total={queue.total} counts={decisions.counts} filters={filters} totalWaiting={needsReview} filterScanTruncated={causes?.truncated || Object.values(decisions.counts).reduce((sum, count) => sum + count, 0) < needsReview} />} data={ops} candidates={manual} reviewMode={settings.reviewMode} enabled={settings.enabled} localCodexAllowed={localCodexEnabled()} actionQueue={<ActionQueue items={actions}/>} pipeline={<div className="flex flex-col gap-2"><PipelineRail flow={flow}/><TranslationProgress progress={translation}/></div>} oauthConfigured={Boolean(process.env.GITHUB_OAUTH_CLIENT_ID && process.env.GITHUB_OAUTH_CLIENT_SECRET)}
         jobs={JOB_NAMES.map(name => {
           const job = states.get(name);
           return { name, status: jobStatusLabel(job), lastRunAt: job?.lastRunAt?.toISOString() ?? null,

@@ -7,6 +7,7 @@ const { verifySearchKeywords } = await import("@/lib/jobs/products/search-verify
 const { writeSearchProfiles } = await import("@/lib/jobs/products/search-profile");
 const { profileEvidence, profileHash } = await import("@/lib/domain/products/search-profile");
 const { runJob } = await import("@/lib/jobs/runner");
+const { reconcileSearchProfileBatch } = await import("@/lib/domain/products/search-profiles");
 const { ensureSchema, resetTables } = await import("./setup");
 
 async function seed(slug: string, en: string[], ko: string[], values: Partial<typeof products.$inferInsert> = {}) {
@@ -18,7 +19,7 @@ async function seed(slug: string, en: string[], ko: string[], values: Partial<ty
   return row.id;
 }
 
-type Answer = { status?: number; unsupported?: string[] };
+type Answer = { status?: number; unsupported?: string[]; invalid?: boolean };
 /** 가짜 게이트웨이 — 받은 제품의 키워드마다 fits 를 돌려준다 */
 function gateway(pick: (name: string, keywords: string[]) => Answer): typeof fetch & { calls: string[] } {
   const calls: string[] = [];
@@ -29,7 +30,7 @@ function gateway(pick: (name: string, keywords: string[]) => Answer): typeof fet
     calls.push(input.evidence.name);
     const answer = pick(input.evidence.name, input.keywords);
     const status = answer.status ?? 200;
-    const checks = input.keywords.map((keyword) => ({ keyword, searcher_wants: keyword, fits: !(answer.unsupported ?? []).includes(keyword) }));
+    const checks = answer.invalid ? [] : input.keywords.map((keyword) => ({ keyword, searcher_wants: keyword, fits: !(answer.unsupported ?? []).includes(keyword) }));
     return { ok: status === 200, status, json: async () => ({ choices: [{ message: { content: JSON.stringify({ product: "p", checks }) } }] }) };
   });
   return Object.assign(request as unknown as typeof fetch, { calls });
@@ -44,6 +45,45 @@ beforeEach(async () => { await resetTables(); await db.delete(productSearchProfi
 afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
 
 describe("검색 키워드 검수 잡", () => {
+  it("preserves the failure cause so explicitly requeued exhausted checks use chunks", async () => {
+    const keys = Array.from({ length: 12 }, (_, i) => `key-${i}`);
+    const id = await seed("reconciled-chunks", keys, []);
+    await db.update(productSearchProfiles).set({ verifyError: "invalid_output", verifyAttempts: 5 })
+      .where(eq(productSearchProfiles.productId, id));
+    await reconcileSearchProfileBatch({ apply: true, retryInvalidOutput: true });
+    expect(await profile(id)).toMatchObject({ verifyError: "invalid_output", verifyAttempts: 0 });
+    const request = gateway(() => ({}));
+    await tick(request);
+    expect(request.calls).toHaveLength(3);
+    expect((await profile(id)).verifiedAt).not.toBeNull();
+  });
+  it("respects retry backoff then commits only all completed chunks", async () => {
+    const keys = Array.from({ length: 12 }, (_, i) => `key-${i}`);
+    const id = await seed("chunk-retry", keys, []);
+    await db.update(productSearchProfiles).set({ verifyError: "invalid_output", verifyAttempts: 1,
+      verifyRetryAt: sql`now() + interval '1 hour'` }).where(eq(productSearchProfiles.productId, id));
+    const request = gateway(() => ({ unsupported: [keys[7], keys[11]] }));
+    await tick(request);
+    expect(request.calls).toHaveLength(0);
+    await db.update(productSearchProfiles).set({ verifyRetryAt: null }).where(eq(productSearchProfiles.productId, id));
+    await tick(request);
+    expect(request.calls).toHaveLength(3);
+    expect(await profile(id)).toMatchObject({ verifyAttempts: 2, verifyError: null, removedKeywords: [keys[7], keys[11]] });
+    expect((await profile(id)).verifiedAt).not.toBeNull();
+    expect(await keywordsOf(id)).toBe(keys.filter(k => k !== keys[7] && k !== keys[11]).join(" · "));
+  });
+  it("does not save prior chunk removals when a later chunk fails", async () => {
+    const keys = Array.from({ length: 12 }, (_, i) => `key-${i}`);
+    const id = await seed("chunk-failure", keys, []);
+    await db.update(productSearchProfiles).set({ verifyError: "invalid_output", verifyAttempts: 1 })
+      .where(eq(productSearchProfiles.productId, id));
+    let calls = 0;
+    const request = gateway(() => ++calls === 1 ? { unsupported: [keys[0]] } : { invalid: true });
+    await tick(request);
+    expect(request.calls).toHaveLength(2);
+    expect(await profile(id)).toMatchObject({ verifyAttempts: 2, verifyError: "invalid_output", verifiedAt: null, removedKeywords: [] });
+    expect(await keywordsOf(id)).toBe(keys.join(" · "));
+  });
   it("뒷받침되지 않는 키워드를 색인용 사본에서 빼고, 원본은 두고, 어느 모델이 봤는지 남긴다", async () => {
     const id = await seed("academy", ["sports academy management", "membership bonuses"], ["스포츠 학원 관리", "보너스 관리"]);
     const request = gateway(() => ({ unsupported: ["membership bonuses", "보너스 관리"] }));

@@ -3,14 +3,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const domain = vi.hoisted(() => ({
   pendingProfiles: vi.fn(), pendingVerifications: vi.fn(),
   recordProfileResult: vi.fn(), recordVerificationResult: vi.fn(),
-  writeKeywords: vi.fn(), verifyKeywords: vi.fn(),
+  writeKeywords: vi.fn(), verifyKeywords: vi.fn(), verifyKeywordsInChunks: vi.fn(),
 }));
 vi.mock("@/lib/domain/products/search-profiles", () => domain);
 vi.mock("@/lib/domain/products/search-profile", () => ({
   PROFILE_MODEL: "generator", profileEvidence: () => ({}), profileHash: () => "hash",
   writeKeywords: domain.writeKeywords,
 }));
-vi.mock("@/lib/domain/products/search-verify", () => ({ VERIFY_MODEL: "verifier", verifyKeywords: domain.verifyKeywords }));
+vi.mock("@/lib/domain/products/search-verify", () => ({ VERIFY_MODEL: "verifier", verifyKeywords: domain.verifyKeywords,
+  verifyKeywordsInChunks: domain.verifyKeywordsInChunks }));
 import { writeSearchProfiles } from "@/lib/jobs/products/search-profile";
 import { verifySearchKeywords } from "@/lib/jobs/products/search-verify";
 import type { JobContext } from "@/lib/jobs/runner";
@@ -32,6 +33,15 @@ beforeEach(() => {
 afterEach(() => { vi.useRealTimers(); vi.unstubAllEnvs(); });
 
 describe("search job time budget", () => {
+  it.each(["invalid_output", "timeout"])("uses chunk verification only on a later %s retry", async (verifyError) => {
+    const task = { ...tasks(1)[0], profile: { ...tasks(1)[0].profile, verifyError } };
+    domain.pendingVerifications.mockResolvedValueOnce([task]).mockResolvedValue([]);
+    domain.verifyKeywordsInChunks.mockResolvedValue({ ok: true, unsupported: [] });
+    await verifySearchKeywords(ctx());
+    expect(domain.verifyKeywordsInChunks).toHaveBeenCalledTimes(1);
+    expect(domain.verifyKeywords).not.toHaveBeenCalled();
+    expect(domain.recordVerificationResult).toHaveBeenCalledTimes(1);
+  });
   it("does not count a shortened generation deadline as a product failure", async () => {
     domain.pendingProfiles.mockResolvedValue(tasks(8));
     let calls = 0;

@@ -84,7 +84,7 @@ export async function recordProfileResult(task: ProfileTask, lease: JobLease, re
     } else if (result.kind === "success") {
       // 새로 지은 키워드는 다시 검수한다(product-search-verify)
       const values = { keywordsEn: result.en, keywordsKo: result.ko, model: result.model, sourceHash,
-        needsRefresh: false, errorCode: null, retryAt: null, updatedAt: sql`now()`,
+        needsRefresh: false, errorCode: null, retryAt: null, updatedAt: sql`now()`, generatedAt: sql`now()`,
         verifiedAt: null, removedKeywords: [], verifyModel: null, verifyAttempts: 0, verifyError: null, verifyRetryAt: null };
       await tx.insert(productSearchProfiles).values({ productId: product.id, ...values, attempts: 1 })
         .onConflictDoUpdate({ target: productSearchProfiles.productId, set: { ...values, attempts: sql`${productSearchProfiles.attempts} + 1` } });
@@ -223,7 +223,8 @@ export async function reconcileSearchProfileBatch(options: {
         }).where(eq(productSearchProfiles.productId, product.id));
         counts.queued++;
       } else if (latest.retryVerification) {
-        await tx.update(productSearchProfiles).set({ verifyAttempts: 0, verifyError: null, verifyRetryAt: null, repairVersion: 1,
+        // Keep the failure cause so the next attempt can select chunked verification.
+        await tx.update(productSearchProfiles).set({ verifyAttempts: 0, verifyRetryAt: null, repairVersion: 1,
           sourceRevision: sql`${productSearchProfiles.sourceRevision} + 1`,
         }).where(eq(productSearchProfiles.productId, product.id));
         counts.verificationRetried++;

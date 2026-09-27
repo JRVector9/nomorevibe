@@ -340,6 +340,8 @@ export const productSearchProfiles = pgTable("product_search_profiles", {
   retryAt: timestamp("retry_at"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  /** Actual model generation time; unchanged by hash reuse and failed retries. Legacy unknown stays null. */
+  generatedAt: timestamp("generated_at"),
   /**
    * 검수 — 다른 모델이 근거와 대조해 뒷받침되지 않는 키워드를 고른다(product-search-verify). 처음 9,109건은 Sonnet,
    * 그 뒤로는 게이트웨이의 Qwen3.8 — 어느 모델이 봤는지는 verify_model 에 남는다.

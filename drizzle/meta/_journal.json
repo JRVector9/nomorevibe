@@ -344,6 +344,20 @@
       "when": 1790428676151,
       "tag": "0048_search_profile_freshness",
       "breakpoints": true
+    },
+    {
+      "idx": 49,
+      "version": "7",
+      "when": 1790468418460,
+      "tag": "0049_search_profile_generated_at",
+      "breakpoints": true
+    },
+    {
+      "idx": 50,
+      "version": "7",
+      "when": 1790470102973,
+      "tag": "0050_search_health_latest_reason",
+      "breakpoints": true
     }
   ]
 }
