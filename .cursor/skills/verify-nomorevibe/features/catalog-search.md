@@ -2,6 +2,8 @@
 
 Catalog search finds listed products from the header search box. The query lives in `?q=` and the result heading repeats the query.
 
+Verification (2026-09-27 local drive): `/?q=Verify Fixture` and the empty-query heading were proven over HTTP. Header submit and Control+K were not headed-browser proven.
+
 ## Sub-features
 
 - `search-submit` runs a header search and lands on the result heading.

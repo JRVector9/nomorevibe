@@ -2,6 +2,8 @@
 
 Health is the liveness document used by operators and this skill's doctor. It checks the database with `select 1` and returns process identity.
 
+Verification (2026-09-27 local drive): doctor + `GET /api/health` returned `status=ok`, `db=ok`, `instanceId=local-web`. The optional 503 path was not driven on the shared Postgres cluster.
+
 ## Sub-features
 
 - `health-ok` returns 200 when the database answers.

@@ -2,6 +2,8 @@
 
 Maker register creates an unverified product from a live URL. The same edit token later PATCHes fields or DELETEs the product.
 
+Verification (2026-09-27 local drive): 201 create, public GET, 409 duplicate, 422 unreachable, and PATCH were proven against `bin/fixture-site`. DELETE was left unrun so later features could keep the fixture.
+
 ## Sub-features
 
 - `register-create` accepts `POST /api/products` and returns slug plus tokens.

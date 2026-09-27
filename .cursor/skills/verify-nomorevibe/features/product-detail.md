@@ -2,6 +2,8 @@
 
 Product detail is the public profile at `/p/<slug>`. It shows identity, visit metrics, maker vs observed evidence, and (for unverified maker listings) a notice that the product is not on the public list.
 
+Verification (2026-09-27 local drive): unverified notice, verified visit control, 404, public JSON, and post-profile/update copy were proven over HTTP.
+
 ## Sub-features
 
 - `detail-unverified` renders a registered product that is not yet on the home list.
@@ -22,7 +24,7 @@ Preconditions:
 - Doctor reports `$SITE` healthy.
 - `detail-unverified` needs a registered-but-unverified slug. `detail-verified` needs a verified slug.
 
-- **Unverified page.** Open `/p/<slug>` immediately after register. The breadcrumb includes `제품`. The heading is the product name. A section heading `아직 공개 목록에 없습니다` is visible. `GET "$SITE/p/<slug>"` is HTTP 200.
+- **Unverified page.** Open `/p/<slug>` immediately after register. The breadcrumb includes `제품`. The heading is the product name. A section heading `아직 공개 목록에 없습니다` is visible. `제품 방문하기 ↗` may already be present. `GET "$SITE/p/<slug>"` is HTTP 200.
 - **Verified page.** After verify, reload `/p/<slug>`. The unverified section is gone. A control `제품 방문하기 ↗` has `href="/go/<slug>"`.
 - **Metrics.** The region `NoMoreVibe 유입 및 가동 지표` is present on a listed product.
 - **Missing slug.** Run `curl -sS -o /tmp/nomorevibe-verify-$RUN_ID/evidence/product-detail/missing.html -w "%{http_code}" "$SITE/p/does-not-exist-slug"`. Expect HTTP 404.

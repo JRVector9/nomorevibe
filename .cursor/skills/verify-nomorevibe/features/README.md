@@ -58,6 +58,10 @@ Keep implementation details out of the map. Name only user paths, stable handles
 - [Admin console](./admin-console.md) covers local-login admin pages.
 - [Jobs and cron](./jobs-and-cron.md) covers one-tick jobs and the cron enqueue API.
 
+## 2026-09-27 generator drive
+
+Each feature file's opening paragraph records what this run actually proved. HTTP/job recipes were executed against a local Next.js 16 + PostgreSQL 17 instance. Headed click paths (save toggle, methodology dialog, Control+K) were not completed because the computer-use agent could not start. GitHub crawl growth and Claude/Codex jobs stayed unverified (no tokens).
+
 ## Known gaps (not mapped as working features)
 
 - GitHub OAuth admin (`/api/auth/github`) needs `GITHUB_OAUTH_*` and is not driven here.

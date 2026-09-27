@@ -2,6 +2,8 @@
 
 Outbound click is the `/go/<slug>` door from NoMoreVibe to the product URL. The browser is redirected. Qualified visits are recorded when the visitor is not a bot and `VISITOR_HASH_SECRET` is set.
 
+Verification (2026-09-27 local drive): 302 to the fixture origin, `nmv_visitor` cookie, missing-slug 302 to the site origin, and `click-rollup` consuming 1 row were proven. Do not paste raw cookie values into evidence.
+
 ## Sub-features
 
 - `go-redirect` 302s a listed product to its `url`.

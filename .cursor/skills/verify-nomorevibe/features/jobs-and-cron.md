@@ -2,6 +2,8 @@
 
 Jobs are one-tick workers driven from the repo root. The HTTP cron route only enqueues a request; a worker or `npm run job` consumes it.
 
+Verification (2026-09-27 local drive): heartbeat count 1→2, ranking-refresh created `2026-W40`, click-rollup, product-search-health, cron 403/202 were proven. crawl-seed exited 0 with no frontier growth (no `GITHUB_TOKEN`). AI reviewer/publisher/text jobs were not driven.
+
 ## Sub-features
 
 - `job-heartbeat` increments the heartbeat cursor.
@@ -33,7 +35,7 @@ Preconditions:
 - **Search health.** Run `npm run job -- product-search-health`. Exit 0. Admin search-health copy may still say there is no observation on a tiny catalogue; the tick itself is the proof.
 - **Cron unauthorized.** Run `curl -sS -o /dev/null -w "%{http_code}" -X POST "$SITE/api/cron/heartbeat"`. Expect 403 (heartbeat is also not a requestable cron job). Then `curl -sS -o /dev/null -w "%{http_code}" -X POST "$SITE/api/cron/click-rollup"`. Expect 403.
 - **Cron enqueue.** Run `curl -sS -X POST "$SITE/api/cron/click-rollup" -H "Authorization: Bearer $CRON_SECRET"`. HTTP 202. JSON is an enqueue receipt, not a completed rollup. Consume with `npm run job -- click-rollup` if you need completion.
-- **GitHub crawl (unverified without token).** If `GITHUB_TOKEN` is empty, run `npm run job -- crawl-seed` only to capture a failed or skipped tick. Record unverified for actual frontier growth. Do not invent seed rows.
+- **GitHub crawl (unverified without token).** `npm run job -- crawl-seed` may exit 0 in tens of milliseconds with an empty cursor when collection is off or no token/signals are usable. That is runner proof only. Actual frontier growth is unverified without `GITHUB_TOKEN` and crawl enabled. Do not invent seed rows.
 - **AI jobs (unverified without CLIs).** `crawl-agent-review`, `second-review`, `crawl-tagline`, `product-search-profile`, `product-search-verify`, and publisher category classification need Claude/Codex. Mark unverified when those env vars are empty. Do not stub model output.
 - **Proof.** Save each job's stdout to `/tmp/nomorevibe-verify-$RUN_ID/evidence/jobs-and-cron/<name>.log` including the exit code line.
 

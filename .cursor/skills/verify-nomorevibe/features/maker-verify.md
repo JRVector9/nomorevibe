@@ -2,6 +2,8 @@
 
 Maker verify proves the maker can publish a token on the product origin. Success flips `status` to `verified`, lists the product, and enables `/badge/<slug>`.
 
+Verification (2026-09-27 local drive): failed verify, file verify, idempotent `already`, listing, sitemap, and SVG badge were proven. Meta-tag verify was not separately driven (file path wins first).
+
 ## Sub-features
 
 - `verify-file` succeeds when `/.well-known/nomorevibe.txt` equals `verify_token`.
@@ -31,7 +33,7 @@ Preconditions:
 - **Idempotent verify.** Repeat POST. JSON includes `already: true`.
 - **Listed.** Open `/?sort=recent`. The product name appears. `/sitemap.xml` contains `/p/<slug>`.
 - **Badge.** Run `curl -sS -D - "$SITE/badge/<slug>.svg" -o /tmp/nomorevibe-verify-$RUN_ID/evidence/maker-verify/badge.svg`. HTTP 200, `content-type` includes `image/svg+xml`, body starts with `<svg`.
-- **Proof.** Save the verify JSON (no secrets beyond the already-public token) and a home screenshot showing the listed card.
+- **Proof.** Save the verify JSON with token fields stripped and a home screenshot showing the listed card. Do not keep `verify.meta.tag` in evidence; it embeds the token.
 
 ## Gotchas
 

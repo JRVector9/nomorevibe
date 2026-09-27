@@ -2,6 +2,8 @@
 
 Home discovery is the public catalogue: hero, weekly pulse, popular tiers, sort tabs, project cards, in-browser save, and the methodology dialog. Unverified maker registrations do not appear here.
 
+Verification (2026-09-27 local drive): HTTP/HTML proved for hero, empty catalogue, recent list, and post-verify listing. Browser save and methodology dialog need a headed session.
+
 ## Sub-features
 
 - `home-hero` shows the public heading and the `/nomorevibe` launch control.
@@ -28,7 +30,7 @@ Preconditions:
 
 - **Open home.** Go to `/`. Run `curl -sS "$SITE/"`. The HTML contains `AI로 만든 것들, 세상에 나오다.` and `발견할 가치가 있는 프로젝트`.
 - **Hero launch control.** Choose `/nomorevibe launch`. In the browser, activate the link whose accessible name or text includes `/nomorevibe`. The location becomes `$SITE/launch`.
-- **Empty weekly board.** On a catalogue with no verified ranking entries, the empty heading is `아직 순위에 오른 제품이 없습니다`. Choose `최신순으로 보기` (`/?sort=recent`).
+- **Empty catalogue.** On a database with no listed products, `/` shows `아직 등록된 제품이 없습니다` once ranking has fallen back to recent (no active season) or you open `/?sort=recent`. After a season exists but has no ranked rows, `/?sort=weekly` shows `아직 순위에 오른 제품이 없습니다`.
 - **Recent list.** Open `/?sort=recent`. A region `프로젝트 목록` contains a heading with the verified product name and a link `{name} 상세 보기` whose `href` is `/p/{slug}`.
 - **Save card.** Choose `{name} 저장`. The same card's button accessible name becomes `{name} 저장 취소` and `aria-pressed` is `true`.
 - **Saved filter.** Choose `저장한 프로젝트`. The URL contains `saved=1` and the page shows `이 브라우저에 저장한 프로젝트`.
@@ -37,7 +39,7 @@ Preconditions:
 
 ## Gotchas
 
-- Default sort is `추천` (weekly ranking). A verified product with no ranking snapshot appears under `최신`, not on the default tab.
+- Default sort is `추천` only when an active season exists. With no season, home falls back to recent and the empty copy is `아직 등록된 제품이 없습니다`, not the ranking empty state.
 - Search results hide the hero and popular block. Re-open `/` before proving pulse or methodology.
 - Save state is localStorage, not the server. A new browser profile starts unsaved.
 - `주인을 기다리는 제품` is the seeded/unclaimed board. Do not treat it as maker-verified.

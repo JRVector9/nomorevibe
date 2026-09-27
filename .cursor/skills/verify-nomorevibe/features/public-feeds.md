@@ -2,6 +2,8 @@
 
 Feeds and crawler files tell subscribers and search engines what is listed. The sitemap carries verified products only. The RSS feed lists recently discovered verified and seeded products.
 
+Verification (2026-09-27 local drive): robots, empty-then-populated sitemap/feed, and the `2026-W40` sitemap entry were proven.
+
 ## Sub-features
 
 - `feed-xml` returns RSS 2.0 from `/feed.xml`.

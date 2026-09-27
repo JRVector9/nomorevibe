@@ -2,6 +2,8 @@
 
 Launch is the public maker onboarding page. `/skill.md` and `/install.sh` are the installable skill and installer the page tells the maker to fetch.
 
+Verification (2026-09-27 local drive): `/launch` heading, `/skill.md` frontmatter, and `/install.sh` skill fetch lines were proven. The installer was not piped to `sh`.
+
 ## Sub-features
 
 - `launch-page` renders the `/nomorevibe` install story.

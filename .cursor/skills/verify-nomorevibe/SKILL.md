@@ -102,7 +102,7 @@ Proof standards:
 - Exercise the real user path. Do not insert rows with ad-hoc SQL and call the UI verified.
 - Capture the action and the resulting state (request + response, or before/after screenshot).
 - For mutations, add a second read-only view (`GET /api/products/<slug>`, reopen `/p/<slug>`, or a DB `SELECT` of public columns only).
-- UI proof includes a screenshot that shows the NoMoreVibe chrome (brand or heading) and an HTML or ARIA excerpt.
+- UI proof includes a screenshot that shows the NoMoreVibe chrome (brand or heading) and an HTML or ARIA excerpt. Headless Chrome on a font-poor VM will tofu Hangul; install `fonts-noto-cjk` or keep the HTML excerpt as the string proof.
 - HTTP proof includes the command (redact `X-Edit-Token` and tokens), status code, and a redacted body.
 - Job proof includes stdout, exit code, and a follow-up `GET /api/health` or admin status observation when the job claims a side effect.
 - Never write edit tokens, `AUTH_SECRET`, `CRON_SECRET`, `ADMIN_TOKEN`, or `VISITOR_HASH_SECRET` into evidence files.

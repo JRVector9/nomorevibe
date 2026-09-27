@@ -2,6 +2,8 @@
 
 Season rankings show verified-product competition for a season key. Popular is a GitHub-star tier table that is independent of weekly ranking.
 
+Verification (2026-09-27 local drive): `/popular` empty table, unknown season 404, `ranking-refresh` creating `2026-W40`, and `/rankings/2026-W40` listing the fixture were proven. Popular tiers stay empty without 2,000+ star rows.
+
 ## Sub-features
 
 - `ranking-current` opens the active season page when a season snapshot exists.

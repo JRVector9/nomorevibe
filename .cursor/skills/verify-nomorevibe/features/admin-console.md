@@ -2,6 +2,8 @@
 
 The admin console is the operator workspace: operations center, review queue, products, crawl settings, ranking policy, and related pages. Local verification uses `ADMIN_LOCAL_LOGIN=1` instead of GitHub OAuth.
 
+Verification (2026-09-27 local drive): `/admin`, `/admin/status`, `/admin/review`, `/admin/products`, `/admin/ranking`, `/admin/audit`, `/admin/categories`, `/admin/evidence`, and `/admin/news` returned 200 with local login. GitHub OAuth was not driven (no `GITHUB_OAUTH_*`). Settings were not submitted.
+
 ## Sub-features
 
 - `admin-status` renders `/admin/status` (운영센터).
@@ -32,7 +34,7 @@ Preconditions:
 - **Settings.** Open `/admin`. Heading `크롤 설정`. Shows `수집 켜짐` or `수집 꺼짐`. Do not submit the form unless that is the change under test.
 - **Ranking admin.** Open `/admin/ranking`. Heading related to 랭킹 설정. Read-only proof is the page rendering with current/next policy copy.
 - **Secondary pages.** Open `/admin/audit`, `/admin/categories`, `/admin/evidence`, `/admin/news`. Each returns HTTP 200 (not `/admin/login`).
-- **Login redirect.** `curl -sS -o /dev/null -w "%{http_code} %{redirect_url}" "$SITE/admin/login"` redirects to `/admin` when local login is on.
+- **Login gate.** With `ADMIN_LOCAL_LOGIN=1`, `/admin/status` is HTTP 200 and shows `운영센터` without a GitHub button. `GET /admin/login` may still render the `어드민` login chrome to a raw curl; prove access on `/admin/status`, not a 307 from `/admin/login`.
 - **OAuth (unverified by default).** If `ADMIN_LOCAL_LOGIN` is unset, `/admin` redirects to `/admin/login` and the GitHub link is `/api/auth/github`. Do not complete OAuth without app credentials. Mark `admin-oauth` unverified.
 - **Proof.** Screenshot `/admin/status` to `/tmp/nomorevibe-verify-$RUN_ID/evidence/admin-console/status.png` showing `운영센터` and the sidebar.
 
