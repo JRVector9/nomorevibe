@@ -23,6 +23,14 @@ describe("public README fallback", () => {
     expect(await fetchPublicReadme("someone/repo")).toMatchObject({ ok: false, error: "not_public" });
     expect(mocks.api).toHaveBeenCalledTimes(1);
   });
+  it("does not erase evidence when repository visibility cannot be confirmed", async () => {
+    mocks.api.mockResolvedValueOnce({ ok: false, error: { kind: "not_found" } });
+    expect(await fetchPublicReadme("someone/repo")).toEqual({ ok: false, error: "not_found", retryAfter: null });
+  });
+  it("accepts README absence only after confirming current public visibility", async () => {
+    mocks.api.mockResolvedValueOnce(publicRepo).mockResolvedValueOnce({ ok: false, error: { kind: "not_found" } });
+    expect(await fetchPublicReadme("someone/repo")).toEqual({ ok: true, sample: "" });
+  });
   it("preserves the provider retry time and does not mislabel quota exhaustion as absence", async () => {
     const resetAt = new Date(Date.now() + 60_000);
     mocks.api.mockResolvedValueOnce({ ok: false, error: { kind: "rate_limited", resetAt } });

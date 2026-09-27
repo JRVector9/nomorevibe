@@ -5,8 +5,8 @@ import { fetchCapped } from "@/lib/net/fetch";
 export type ReadmeRefreshResult = { ok: true; sample: string }
   | { ok: false; error: string; retryAfter: number | null };
 const failed = (error = "temporary", retryAfter: number | null = null): ReadmeRefreshResult => ({ ok: false, error, retryAfter });
-function apiFailure(error: GitHubFailure): ReadmeRefreshResult {
-  return error.kind === "not_found" ? { ok: true, sample: "" }
+function apiFailure(error: GitHubFailure, confirmedPublic = false): ReadmeRefreshResult {
+  return error.kind === "not_found" && confirmedPublic ? { ok: true, sample: "" }
     : failed(error.kind === "http" ? `http_${error.status}` : error.kind,
       error.kind === "rate_limited" ? error.resetAt?.getTime() ?? null : null);
 }
@@ -30,7 +30,7 @@ export async function fetchPublicReadme(repo: string, signal?: AbortSignal): Pro
   if (expired()) return failed();
   const result = await githubRequest<{ encoding?: string; content?: string; download_url?: string }>(
     `/repos/${repo}/readme`, {}, { timeoutMs: remaining() });
-  if (!result.ok) return apiFailure(result.error);
+  if (!result.ok) return apiFailure(result.error, true);
   if (expired() || result.status !== 200) return failed();
   if (result.value.encoding === "base64" && typeof result.value.content === "string") {
     const prefix = result.value.content.replace(/\s/g, "").slice(0, Math.ceil(256 * 1024 / 3) * 4);
