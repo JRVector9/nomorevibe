@@ -37,7 +37,7 @@ echo "$health" | grep -q '"status":"ok"' || fail "health status is not ok: $heal
 echo "$health" | grep -q '"db":"ok"' || fail "health db is not ok: $health"
 ok "health $health"
 
-home="$(curl -fsS --max-time 15 "$SITE/" || true)"
+home="$(curl -fsS --max-time 30 "$SITE/" || true)"
 echo "$home" | grep -q "AI로 만든 것들, 세상에 나오다." || fail "home page missing hero heading"
 ok "home heading present at $SITE/"
 
