@@ -1,3 +1,48 @@
+# 2026-09-27 11:04 KST — README 복구와 우선순위 후속 완료
+
+## 현재 목적 / 완료 상태
+
+README가 없던 제품 재수집·입력, 공개 저장소 보안/main 보호, 검색 감시, 엄격 묶음 검수,
+CI 강화·README/운영 문서 보충과 기능 배포를 완료했다. 아래10시대 기록의 pending PR205는 과거 상태다.
+
+- PR205 latest281c144 required CI36286825146 PASS 후 병합, main `a826947449512e501b7a19e9ca419e713d0bf387`.
+  해당 커밋8앱 전부 source/done 확인. 실제 main workflow_dispatch36287149956도02:04:23 UTC PASS.
+  같은 ref의 push36287139921은 concurrency에 따라 취소됐으며 통과로 주장하지 않는다.
+- README12,418 전체 확인: 저장10,630/README미발견1,766/정제 텍스트 없음21/HTTP451제한1/
+  일시 오류·API 대기 잔여0. 배포 후 readonly audit 문서누락0/제품입력누락0/사본불일치0/추가누락대상0.
+- 검색 입력 변경의 생성 대기10,174와 검수33은 정상 자동 처리 중이다(11:03 KST).
+  전체19,356, unmarked0/copy0, 최근 생성84/검수90, idle0분; 신규제품2개의 프로필은 grace 내 생성대기.
+- GitHub 공용 core 제한 대기1건,11:30:02 KST reset. 원본조회는 공유 backoff를 존중하며,
+  완료된 README 복구 미처리 항목으로 집계하지 않는다. 소개검수 user pause2100 유지.
+- root npm ci 실행 exit0/취약점0, Next16.3.3/sharp0.35.4/Vitest4.1.11 직접 확인.
+- 변경파일/설계/RED·GREEN/과거 테스트는 아래와 운영 보고서에 기록. 최종 PR206 hosted unit1197/
+  integration886+todo1/type/lint/build PASS, PR205 required/main manual CI PASS를 실제 확인했다.
+- 수정한 실패: exact cap tail stall, recrawl README삭제, published 제품 refresh경로 누락,
+  비공개/접근불가404 README삭제 오인, shared quota 재시도. 원본 해시를 위조해 맞추지 않는다.
+
+## 남은 자동 작업 / 미검증 범위 / 다음 명령
+
+요청한 데이터 입력과 기능 수정은 끝났다. 자동 키워드 생성/검수 진행은 관리자 상태에서 관찰한다.
+운영 백업 복원/24h 관측/랭킹 시즌 정책 전환/이번 관리자 visualQA는 실행하지 않았고 PENDING에 보존했다.
+사용자 `scripts/search-judgments.json`과 기존 untracked 자료는 변경/커밋하지 않는다.
+최종 검증 기록은 report/plan/handoff 문서3개만 별도 커밋한다. 일반 CI와 배포 상태는 실제 최신 커밋으로 확인한다.
+
+```sh
+cd /Users/jr/Desktop/projects/nomorevibe
+git status --short
+git rev-parse HEAD
+python3 /tmp/nmv-priority-ops-20260927.py health-check
+python3 /tmp/nmv-priority-ops-20260927.py readme-audit
+python3 /tmp/nmv-repair-ops-20260926.py status
+```
+
+완료된 일회성 README helper는 다시 실행할 필요가 없다. 정상 job runner/소유권/공유 quota를 우회하지 않는다.
+마이그레이션49/50는 완료했으므로 불필요한 재실행 없이 조회한다. 마지막 검증 파일:
+`/private/tmp/nmv-readme-audit-final-runtime.json`, `/private/tmp/nmv-priority-health-final-20260927.log`,
+`/private/tmp/nmv-priority-final-status-20260927.json`. 인증값·README원문을 공개 문서에 넣지 않는다.
+
+---
+
 # 2026-09-27 README 실수집 완료 / 최종 CI·문서 인계
 
 ## 현재 목적
@@ -16,7 +61,7 @@
   `801039a58e4b0944c124a61609073332152082db`이다. 10:46 요청한 8개 앱 모두 해당 소스 커밋/done 실제 확인.
   PR205 CI·문서는 최종 내용을 추가한 뒤 아직 CI/병합/수동 실행 확인이 남아 있다.
 - PR202의 실제 양쪽 웹 런타임 Next16.3.3/sharp0.35.4 확인. npm audit0/npm ls0.
-  root node_modules는 아직 이전16.3.1/4.1.10이므로 로컬 검증 버전을 혼동하지 않는다.
+  root npm ci exit0 후 Next16.3.3/sharp0.35.4/Vitest4.1.11도 직접 확인했다.
 - 운영 migration0049(generated_at),0050(최신 심사 사유 partial index) 실행 exit0. 재실행 필요 없음.
   maintenance의 정상 소유 감시 잡 실행·완료 관측 확인, 웹은 캐시만 읽는다.
 - **README original cohort12,418 전부 확인 완료**: 저장10,630 / 공개 README 미발견1,766 /
