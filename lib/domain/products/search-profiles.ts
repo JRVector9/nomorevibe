@@ -223,7 +223,8 @@ export async function reconcileSearchProfileBatch(options: {
         }).where(eq(productSearchProfiles.productId, product.id));
         counts.queued++;
       } else if (latest.retryVerification) {
-        await tx.update(productSearchProfiles).set({ verifyAttempts: 0, verifyError: null, verifyRetryAt: null, repairVersion: 1,
+        // Keep the failure cause so the next attempt can select chunked verification.
+        await tx.update(productSearchProfiles).set({ verifyAttempts: 0, verifyRetryAt: null, repairVersion: 1,
           sourceRevision: sql`${productSearchProfiles.sourceRevision} + 1`,
         }).where(eq(productSearchProfiles.productId, product.id));
         counts.verificationRetried++;

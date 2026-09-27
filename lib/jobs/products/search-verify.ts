@@ -1,7 +1,7 @@
 import type { JobContext, JobOutcome } from "@/lib/jobs/runner";
 import { profileEvidence } from "@/lib/domain/products/search-profile";
 import { pendingVerifications, recordVerificationResult } from "@/lib/domain/products/search-profiles";
-import { VERIFY_MODEL, verifyKeywords } from "@/lib/domain/products/search-verify";
+import { VERIFY_MODEL, verifyKeywords, verifyKeywordsInChunks } from "@/lib/domain/products/search-verify";
 
 /**
  * 검색 키워드 검수 — 지은 키워드를 게이트웨이의 Qwen3.8 이 근거와 대조해 뒷받침되지 않는 것을 뺀다(search-verify.ts).
@@ -51,7 +51,9 @@ export async function verifySearchKeywords(ctx: JobContext<null>, request?: type
             if (blocked || signal.aborted || !ctx.hasBudget() || remaining() < MIN_CALL_MS) return;
             const task = tasks[index];
             const timeoutMs = Math.max(1_000, Math.min(CALL_MS, remaining() - 1_000));
-            const result = await verifyKeywords({
+            const verify = ["invalid_output", "timeout"].includes(task.profile!.verifyError ?? "")
+              ? verifyKeywordsInChunks : verifyKeywords;
+            const result = await verify({
               evidence: profileEvidence(task.product, task.reviewerNote),
               keywords: [...task.profile!.keywordsEn, ...task.profile!.keywordsKo],
             }, { request, signal, timeoutMs });

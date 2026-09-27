@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { parseVerification, verifyKeywords, type VerifyItem } from "@/lib/domain/products/search-verify";
+import { parseVerification, verifyKeywords, verifyKeywordsInChunks, type VerifyItem } from "@/lib/domain/products/search-verify";
 
 const evidence = { name: "Academy", url: "https://a.test", category: "Sports", topics: "", tagline: "Bonos de clases", pageText: "", readme: "", evidenceLevel: "thin" as const };
 const item: VerifyItem = { evidence, keywords: ["sports academy management", "membership bonuses", "보너스 관리"] };
@@ -36,6 +36,55 @@ describe("검수 답 읽기", () => {
   it("모양이 다르면 실패다", () => {
     expect(() => parseVerification(item.keywords, JSON.stringify({ unsupported: [] }))).toThrow();
     expect(() => parseVerification(item.keywords, "")).toThrow();
+  });
+});
+
+describe("bounded chunk retry", () => {
+  it("deduplicates keywords and validates all sequential five-keyword chunks", async () => {
+    vi.stubEnv("ABCLLM_API_KEY", "test-key");
+    const keywords = Array.from({ length: 12 }, (_, i) => `keyword-${i}`);
+    const sizes: number[] = [];
+    const request = vi.fn(async (_url, options) => {
+      const body = JSON.parse(options.body as string);
+      const supplied = JSON.parse(body.messages[1].content.split("\n")[1]).keywords as string[];
+      sizes.push(supplied.length);
+      return new Response(JSON.stringify({ choices: [{ message: { content: answer(supplied.map(keyword => ({ keyword, fits: keyword !== "keyword-7" }))) } }] }));
+    }) as typeof fetch;
+    expect(await verifyKeywordsInChunks({ evidence, keywords: [...keywords, keywords[0]] }, { request, timeoutMs: 60_000 }))
+      .toEqual({ ok: true, unsupported: ["keyword-7"] });
+    expect(sizes).toEqual([5, 5, 2]);
+  });
+  it("discards prior successful chunks if any later chunk is incomplete", async () => {
+    vi.stubEnv("ABCLLM_API_KEY", "test-key");
+    const keywords = Array.from({ length: 12 }, (_, i) => `keyword-${i}`);
+    const request = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({ choices: [{ message: { content:
+      answer(keywords.slice(0, 5).map(keyword => ({ keyword, fits: false }))) } }] })))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ choices: [{ message: { content: answer([]) } }] })));
+    expect(await verifyKeywordsInChunks({ evidence, keywords }, { request, timeoutMs: 60_000 }))
+      .toEqual({ ok: false, error: "invalid_output" });
+    expect(request).toHaveBeenCalledTimes(2);
+  });
+  it("uses one total deadline across chunks and makes no request after it expires", async () => {
+    vi.stubEnv("ABCLLM_API_KEY", "test-key");
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const keywords = Array.from({ length: 10 }, (_, i) => `keyword-${i}`);
+    const request = vi.fn(async () => {
+      vi.setSystemTime(Date.now() + 61_000);
+      return new Response(JSON.stringify({ choices: [{ message: { content: answer(keywords.slice(0, 5).map(keyword => ({ keyword, fits: true }))) } }] }));
+    });
+    try {
+      expect(await verifyKeywordsInChunks({ evidence, keywords }, { request, timeoutMs: 60_000 }))
+        .toEqual({ ok: false, error: "timeout" });
+      expect(request).toHaveBeenCalledTimes(1);
+    } finally { vi.useRealTimers(); }
+  });
+  it("does not start another chunk after cancellation", async () => {
+    vi.stubEnv("ABCLLM_API_KEY", "test-key");
+    const controller = new AbortController(); controller.abort();
+    const request = vi.fn();
+    expect(await verifyKeywordsInChunks(item, { request, signal: controller.signal, timeoutMs: 60_000 }))
+      .toEqual({ ok: false, error: "cancelled" });
+    expect(request).not.toHaveBeenCalled();
   });
 });
 
