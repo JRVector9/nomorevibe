@@ -52,6 +52,40 @@ beforeEach(async () => {
 });
 
 describe("수집 잡", () => {
+  it("replaces the old excerpt when a fresh README observation confirms absence", async () => {
+    const repo = "someone/removed-readme";
+    await crawl.putDocument({ repo, repoMeta: STABLE_META,
+      pageMeta: { readmeSample: "Old README", readmeSampleVersion: "previous" } });
+    await crawl.enqueue([{ repo, signal: "commit-trailer" }]);
+    const [claim] = await crawl.dequeue(1);
+    expect(await crawl.saveFetchedDocument(claim, { repo, repoMeta: STABLE_META,
+      productUrl: "https://my-app.test", pageStatus: 200,
+      pageMeta: { readmeSample: "", readmeSampleVersion: "fresh" } })).not.toBeNull();
+    expect((await crawl.getDocument(repo))?.pageMeta)
+      .toEqual({ readmeSample: "", readmeSampleVersion: "fresh" });
+  });
+  it("keeps the last README on page recrawl but invalidates its freshness cache", async () => {
+    await crawl.putDocument({ repo: "someone/my-app", repoMeta: STABLE_META,
+      pageMeta: { readmeSample: "Last known README", readmeSampleVersion: "previous", title: "Old title" } });
+    await crawl.enqueue([{ repo: "someone/my-app", signal: "commit-trailer" }]);
+    getRepo.mockResolvedValue({ ok: true, value: STABLE_META });
+    fetchPage.mockResolvedValue({ status: 200, finalUrl: "https://my-app.test",
+      html: '<title>New title</title><p>Current page</p>' });
+    expect(await tick()).toMatchObject({ status: "completed", done: true });
+    expect((await crawl.getDocument("someone/my-app"))?.pageMeta)
+      .toMatchObject({ title: "New title", readmeSample: "Last known README", readmeSampleVersion: null });
+  });
+  it("does not erase repository README evidence when the deployment page cannot be fetched", async () => {
+    await crawl.putDocument({ repo: "someone/no-page", repoMeta: STABLE_META,
+      pageMeta: { readmeSample: "Repository instructions", readmeSampleVersion: "previous", textSample: "Old web page" } });
+    await crawl.enqueue([{ repo: "someone/no-page", signal: "commit-trailer" }]);
+    getRepo.mockResolvedValue({ ok: true, value: STABLE_META });
+    fetchPage.mockResolvedValue(null);
+    expect(await tick()).toMatchObject({ status: "completed", done: true });
+    const document = await crawl.getDocument("someone/no-page");
+    expect(document?.pageStatus).toBe(0);
+    expect(document?.pageMeta).toEqual({ readmeSample: "Repository instructions", readmeSampleVersion: null });
+  });
   it("레포 메타와 배포 페이지를 원본으로 남긴다", async () => {
     await crawl.enqueue([{ repo: "someone/my-app", signal: "commit-trailer" }]);
     getRepo.mockResolvedValue({ ok: true, value: repoMeta() });
