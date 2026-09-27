@@ -16,6 +16,26 @@ const ok = (body: unknown, finalUrl = "https://example.com"): CappedFetchResult 
 });
 
 describe("capped external fetch", () => {
+  it("can explicitly read a bounded prefix and cancel a large stream", async () => {
+    const cancelled = vi.fn();
+    const stream = new ReadableStream<Uint8Array>({
+      start(c) { c.enqueue(Buffer.from("123456789")); }, cancel: cancelled,
+    });
+    const result = await fetchCapped("https://example.com/readme", { maxBytes: 4, allowTruncatedBody: true,
+      request: async () => new Response(stream, { headers: { "content-length": "99999999" } }) });
+    expect(result).toMatchObject({ ok: true, body: Buffer.from("1234"), truncated: true });
+    expect(cancelled).toHaveBeenCalledTimes(1);
+  });
+  it("does not label a fully read short prefix as truncated", async () => {
+    expect(await fetchCapped("https://example.com/readme", { maxBytes: 4, allowTruncatedBody: true,
+      request: async () => new Response("123") }))
+      .toMatchObject({ ok: true, body: Buffer.from("123"), truncated: false });
+  });
+  it("preserves private redirect protection in explicit prefix mode", async () => {
+    expect(await fetchCapped("https://example.com/readme", { maxBytes: 4, allowTruncatedBody: true,
+      request: async () => new Response(null, { status: 302, headers: { location: "http://127.0.0.1/secret" } }) }))
+      .toEqual({ ok: false, reason: "unsafe_url" });
+  });
   it("rejects a declared Content-Length above the cap before reading the body", async () => {
     const result = await fetchCapped("https://example.com/large", {
       maxBytes: 5,

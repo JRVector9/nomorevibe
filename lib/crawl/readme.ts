@@ -10,11 +10,13 @@ import { fetchCapped, type CappedFetchResult } from "@/lib/net/fetch";
  * 사용량을 쓰지 않는다. 기본 브랜치(HEAD)의 흔한 이름만 차례로 본다.
  */
 export const README_SAMPLE_LIMIT = 3_000;
-export const README_SAMPLE_VERSION = "2026-09-21.1";
+export const README_SAMPLE_VERSION = "2026-09-27.1";
 const README_NAMES = ["README.md", "readme.md", "README", "README.rst"];
 const MAX_README_BYTES = 256 * 1024;
 
 type Request = (url: string, options: { maxBytes: number; timeoutMs?: number }) => Promise<CappedFetchResult>;
+
+const requestReadme: Request = (url, options) => fetchCapped(url, { ...options, allowTruncatedBody: true });
 
 /** Keep destinations as evidence, never fetch them or treat repository text as instructions. */
 export function readmeText(markdown: string, limit = README_SAMPLE_LIMIT): string {
@@ -61,13 +63,13 @@ export function readmeText(markdown: string, limit = README_SAMPLE_LIMIT): strin
 /**
  * README 앞부분. 없으면 "" (다시 찾지 않도록 표시), 잠깐의 실패면 null (다음에 다시 시도).
  */
-export async function fetchReadmeSample(repo: string, request: Request = fetchCapped): Promise<string | null> {
+export async function fetchReadmeSample(repo: string, request: Request = requestReadme): Promise<string | null> {
   if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo)) return "";
   for (const name of README_NAMES) {
     const response = await request(`https://raw.githubusercontent.com/${repo}/HEAD/${name}`, { maxBytes: MAX_README_BYTES, timeoutMs: 8_000 });
     if (response.ok && response.status === 200) return readmeText(response.body.toString("utf8"));
     if (!response.ok && response.reason === "http" && response.status === 404) continue;
-    // 너무 큰 README 는 다시 받아도 크다 — 없는 것으로 친다. 그 밖(시간 초과·5xx)은 다음에 다시
+    // Default requests retain a bounded prefix. Strict injected requests may still reject size.
     return !response.ok && response.reason === "too_large" ? "" : null;
   }
   return "";
