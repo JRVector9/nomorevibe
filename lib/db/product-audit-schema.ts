@@ -92,6 +92,8 @@ export const productAuditItems = pgTable("product_audit_items", {
   index("product_audit_items_open_idx").on(table.campaignId, table.aiDecision).where(sql`${table.humanDecision} is null`),
   // 새 감사를 올릴 때 살아 있는 유지 판정을 찾는다
   index("product_audit_items_kept_idx").on(table.productId, table.keepUntil).where(sql`${table.humanDecision} = 'kept'`),
+  // Search generation and health audits look up the latest available reviewer note.
+  index("product_audit_items_latest_reason_idx").on(table.productId, table.id.desc()).where(sql`${table.aiReason} is not null`),
 ]);
 
 /**

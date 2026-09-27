@@ -1,0 +1,1 @@
+ALTER TABLE "product_search_profiles" ADD COLUMN "generated_at" timestamp;
