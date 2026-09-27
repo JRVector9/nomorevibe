@@ -1,0 +1,1 @@
+CREATE INDEX "product_audit_items_latest_reason_idx" ON "product_audit_items" USING btree ("product_id","id" DESC NULLS LAST) WHERE "product_audit_items"."ai_reason" is not null;
