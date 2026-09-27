@@ -17,6 +17,12 @@ it('생존 확인은 maintenance 역할에서 1분마다 돈다', () => {
   expect(jobsForRole('crawler')).not.toContain('uptime-ping');
 });
 
+it('재수집된 README만 기존 GitHub 인증이 있는 crawler에서 제한적으로 갱신한다', () => {
+  expect(JOB_CATALOG.find(job => job.name === 'product-readme-refresh')).toEqual({
+    name: 'product-readme-refresh', role: 'crawler', intervalMs: 5 * 60_000,
+  });
+});
+
 /** 회사 발표는 하루 몇 건이다. 이미 시간을 넘겨 쓰는 crawler에 얹지 않는다 */
 it('AI 소식 수집은 maintenance 역할에서 한 시간마다 돈다', () => {
   expect(JOB_CATALOG.find(job => job.name === 'news-refresh')).toEqual({

@@ -20,6 +20,7 @@ import type { CrawlSettings } from "./settings-schema";
 import { factsFromRepoMeta } from "./rules";
 import { assertJobLease, requestJob, type JobLease } from "@/lib/jobs/control";
 import { README_SAMPLE_VERSION } from "./readme";
+import type { ReadmeRefreshResult } from "./readme-refresh";
 import type { ProductTransaction } from "@/lib/domain/products/generation";
 
 /** 크롤 파이프라인 데이터 접근 — 파이프라인 바깥에서 이 테이블들을 직접 만지지 않는다 */
@@ -225,6 +226,35 @@ export async function setReadmeSample(repo: string, readmeSample: string, expect
   }).where(and(eq(crawlDocuments.repo, repo), eq(crawlDocuments.id, expected.id), eq(crawlDocuments.fetchedAt, expected.fetchedAt),
     sql`${crawlDocuments.pageMeta} IS NOT DISTINCT FROM ${expected.pageMeta === null ? null : JSON.stringify(expected.pageMeta)}::jsonb`)).returning();
   return updated;
+}
+
+/** Only recrawl-invalidated excerpts; ordinary cached or legacy missing READMEs are not queued. */
+export async function pendingPublishedReadmes(limit: number): Promise<CrawlDocument[]> {
+  return db.select().from(crawlDocuments).where(sql`
+    ${crawlDocuments.pageMeta}->'readmeSampleVersion' = 'null'::jsonb
+    and jsonb_typeof(${crawlDocuments.pageMeta}->'readmeSample') = 'string'
+    and (case when jsonb_typeof(${crawlDocuments.pageMeta}->'readmeRetryAfter') = 'number'
+      then (${crawlDocuments.pageMeta}->>'readmeRetryAfter')::numeric else 0 end) <= extract(epoch from now()) * 1000
+    and exists(select 1 from crawl_candidates c join products p on p.slug = c.published_slug
+      where c.repo = ${crawlDocuments.repo} and p.status in ('seeded', 'verified'))
+  `).orderBy(asc(crawlDocuments.id)).limit(limit);
+}
+
+export async function recordPublishedReadme(expected: CrawlDocument, lease: JobLease, result: ReadmeRefreshResult): Promise<boolean> {
+  const prior = expected.pageMeta?.readmeRefreshAttempts;
+  const attempts = typeof prior === "number" && Number.isSafeInteger(prior) && prior >= 0 ? Math.min(prior + 1, 12) : 1;
+  const metadata = result.ok ? { readmeSample: result.sample, readmeSampleVersion: README_SAMPLE_VERSION,
+    readmeRetryAfter: null, readmeRefreshAttempts: 0, readmeRefreshError: null }
+    : { readmeRefreshAttempts: attempts, readmeRefreshError: result.error,
+      readmeRetryAfter: result.retryAfter ?? Date.now() + Math.min(24 * 60, 15 * 2 ** (attempts - 1)) * 60_000 };
+  return db.transaction(async tx => {
+    const rows = await tx.update(crawlDocuments).set({
+      pageMeta: sql`coalesce(${crawlDocuments.pageMeta}, '{}'::jsonb) || ${JSON.stringify(metadata)}::jsonb`,
+    }).where(and(eq(crawlDocuments.id, expected.id), eq(crawlDocuments.repo, expected.repo), eq(crawlDocuments.fetchedAt, expected.fetchedAt),
+      sql`${crawlDocuments.pageMeta} IS NOT DISTINCT FROM ${JSON.stringify(expected.pageMeta)}::jsonb`)).returning({ id: crawlDocuments.id });
+    await assertJobLease(tx, lease);
+    return rows.length > 0;
+  });
 }
 
 export async function refreshTextSample(slug: string, textSample: string): Promise<void> {

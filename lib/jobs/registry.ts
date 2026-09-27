@@ -11,6 +11,7 @@ import { writeTaglines } from "@/lib/crawl/jobs/tagline";
 import { writeSearchProfiles } from "@/lib/jobs/products/search-profile";
 import { verifySearchKeywords } from "@/lib/jobs/products/search-verify";
 import { auditSearchHealth } from "@/lib/jobs/products/search-health";
+import { refreshPublishedReadmes } from "@/lib/jobs/products/readme-refresh";
 import { checkProductIntros } from "@/lib/jobs/products/intro-check";
 import { publishCandidates } from "@/lib/crawl/jobs/publish";
 import { pingProducts } from "@/lib/jobs/products/uptime";
@@ -70,6 +71,7 @@ export const JOBS: Record<string, AnyJob> = {
   "product-search-profile": writeSearchProfiles,
   "product-search-verify": (ctx) => verifySearchKeywords(ctx),
   "product-search-health": auditSearchHealth,
+  "product-readme-refresh": refreshPublishedReadmes,
   "product-intro-check": (ctx) => checkProductIntros(ctx),
 
   /** 등재된 제품이 아직 떠 있는지 확인한다 (기록만 하고 목록은 건드리지 않는다) */
