@@ -10,12 +10,13 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 
 <!-- 아래는 이 저장소가 직접 관리한다 (next dev가 재작성하는 블록 밖) -->
 
-## 멈춰 있는 작업
+## 운영 상태와 남은 검증
 
-`PENDING.md`에 코드로 끝낼 수 없어 대기 중인 작업이 있다. 맨 앞의 P0가 나머지를 막고 있다 —
-**아직 어디에도 배포돼 있지 않다**(2026-08-29 실측). 형태·서버·도메인·DB를 정해야 첫 배포가
-되고, 그 뒤에 스케줄러(B1)·고유 유입자 시작(B2)·CLI 토큰(D1)이 붙는다.
-그 파일에 막고 있는 것과 풀렸을 때 할 일이 그대로 실행할 수 있게 적혀 있다.
+운영 서비스는 `https://nomorevibe.brut.bot`에 배포되어 있다. Dokploy는 main을 사용하며
+M3의 웹·scheduler·crawler·reviewer·publisher·text·maintenance와 mini의 웹, 총 8개 앱으로 운영한다.
+공개 GitHub 저장소의 main은 PR 및 최신 base의 CI `check` 성공을 요구한다.
 
-
-
+배포·테스트 절차는 `README.md`와 `docs/operations/independent-workers-runbook.md`를 읽는다.
+`PENDING.md`에는 백업 복구·장기 관측 등 아직 직접 확인하지 않은 운영 검증을 기록한다.
+첫 배포가 아직 안 됐다는 과거 기록을 현재 상태로 해석하지 않는다.
+사용자가 중단한 소개 검수는 별도 지시 없이 재개하지 않는다.

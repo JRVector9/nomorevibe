@@ -5,34 +5,35 @@
 
 ---
 
-## P0. 첫 프로덕션 배포 — 연결·데이터 컷오버
+## 현재 남은 운영 검증 — 2026-09-27
 
-**현재 상태(2026-09-09)**: M3와 mini에 웹을 하나씩 두고 기존 로드밸런서로 묶는다. M3에는
-scheduler·crawler·reviewer·publisher·maintenance와 영구 볼륨을 가진 connect-agent를 각 1개 둔다.
-운영 PostgreSQL 17에 전용 `nomorevibe` DB·계정을 만들고 마이그레이션을 적용했다. DB는 아직
-스키마만 있고 Dokploy에는 NoMoreVibe 앱이 없으므로 생산 서비스가 시작된 상태는 아니다.
+첫 배포·운영 DB 연결·역할 워커 시작은 완료됐다. 서비스는 `https://nomorevibe.brut.bot`에서 운영하며,
+Dokploy의 M3 7개 앱과 mini 웹 1개 앱이 main 소스를 배포한다. 공개 GitHub main은 최신 base의 CI
+`check` 성공과 PR을 요구한다. 2026-09-27 보안 패치 릴리스의 8개 앱 배포 완료도 확인했다.
 
-**막고 있는 것**: PgBouncer 호환 릴리스 배포, 공통 Next.js build key와 운영 비밀값 주입,
-로드밸런서의 실제 proxy hop 확인, 기존 데이터 컷오버, DB/PgBouncer 백업·용량 확인이다.
-운영 런타임은 6432, 일회성 migration은 5432를 사용한다. 역할별 워커를 두 서버에 중복 배포하지 않는다.
+남은 항목은 배포 준비가 아니라 아래 직접 검증이다. 실행하지 않은 검증을 완료로 표시하지 않는다.
 
-**실행 순서**: 환경별 비밀값 생성 → GitHub OAuth/수집 자격 정보·장기 CLI OAuth 토큰 설정
-→ 동일 release/build key로 이미지 빌드 → 기존 소비자 stop/drain → 기존 데이터의 일관된 dump/restore
-→ migration 종료 코드 0 확인 → M3 singleton 역할과 두 웹 시작 → 직접 health 확인 → 로드밸런서 연결
-→ B1(독립 운영 확인) → B2(고유 유입자 시작) → D1(운영 CLI 확인).
-정확한 명령은 [독립 워커 운영 절차](docs/operations/independent-workers-runbook.md)를 따른다.
-`AUTH_SECRET`·`VISITOR_HASH_SECRET`·`OPERATIONS_AGENT_SECRET`·`CRON_SECRET`·`ADMIN_TOKEN`은 서로 다른 값을 사용한다.
+- **백업 복구·용량**: 격리 DB에 실제 운영 백업을 복원하고 `media_assets` 바이트·주요 행·마이그레이션을
+  대조한다. 운영 DB 볼륨·WAL·보존 기간과 PgBouncer 용량도 확인한다. 이 세션에서 복원 시험은 실행하지 않았다.
+- **24시간 연속 관측**: 각 앱의 소스 커밋·재시작·job 성공/대기·API quota·DB 연결·RSS를 기록한다.
+  개별 점검과 짧은 로컬 관측으로 24시간 안정성을 보장하지 않는다.
+- **랭킹 정책 전환**: 운영 `unique_visitor_started_at`은 2026-08-29 03:56:49 UTC이며,
+  2026-09-27 읽기 전용 점검에서 해시가 있는 방문 이벤트 43건을 확인했다. 고유 유입자 수집은 시작됐다.
+  실제 정책 예약과 다음 자연 시즌 경계 적용은 아래 B2 절차로 별도 확인해야 한다.
+- **소개 검수 중단 유지**: 사용자가 중단한 `product-intro-check`는 허가 없이 재개하지 않는다.
+  검색 프로필 생성·키워드 검수·README 재수집과 다른 작업이다.
 
-Codex CLI `0.153.4`와 Claude Code CLI `2.1.263`은 Dockerfile **worker target**에 들어 있으며 웹
-runner에는 없다. Codex는 publisher 카테고리 분류, Claude는 reviewer 심사에 사용하므로 한쪽 장애를
-다른 역할의 인증 문제로 해석하지 않는다.
+정확한 배포 명령은 [독립 워커 운영 절차](docs/operations/independent-workers-runbook.md),
+최근 실행 결과는 `docs/operations/`의 릴리스 기록과 `docs/CODEX_HANDOFF.md`를 따른다.
+과거 준비·로컬 실측과 운영 확인 절차는 아래에 보존한다.
 
 ---
 
 ## D1. 카테고리·AI 리뷰 — 운영용 Codex·Claude CLI 인증과 모델 확인
 
-**막고 있는 것**: publisher용 `CODEX_ACCESS_TOKEN` 또는 `OPENAI_API_KEY`, reviewer용
-장기 `CLAUDE_CODE_OAUTH_TOKEN`과 `CRAWL_REVIEW_MODEL`이 아직 설정되지 않았다.
+**현재 상태(2026-09-27)**: publisher와 reviewer는 실제 운영 중이다. 아래 2026-09-08의 모델·인증 준비 기록은
+과거 실측이다. 새 릴리스의 인증 만료·모델 변경은 역할별 로그와 실제 구조화 응답으로 다시 확인한다.
+현재 자격 정보가 없다는 과거 상태를 배포 장애로 해석하지 않는다.
 
 **현재 상태(2026-09-08)**: 로컬 로그인으로 실제 Spark 구조화 카테고리 응답과 worker 이미지의
 Codex CLI 실행을 확인했다. 앞선 단기 OAuth 시험으로 Claude 구조화 리뷰 응답도 확인했다. 이 결과는
@@ -103,7 +104,8 @@ Codex 연구 프리뷰이므로 서버 access token과 계정 제공 여부를 �
 
 ## B1. 프로덕션 독립 스케줄러·워커 전환과 운영 확인
 
-**막고 있는 것**: P0의 연결·데이터 컷오버와 운영 비밀값 적용. 로컬 구현과 검증은 생산 배포 완료가 아니다.
+**현재 상태(2026-09-27)**: 독립 scheduler와 5개 역할 워커(crawler·reviewer·publisher·text·maintenance)가
+운영 중이다. 남은 것은 상단의 24시간 연속 관측과 백업 복원 검증이다.
 격리 환경의 웹 없는 5역할 관측을 1,800.307초 동안 완료했다(31표본 모두 healthy, 재시작0). 외부 수집 비활성·빈 DB 조건이며 24시간 관측은 수행하지 않았다.
 완료 기록은 [운영 절차](docs/operations/independent-workers-runbook.md)와 릴리스 보고서에 별도로 남긴다.
 
@@ -167,9 +169,9 @@ Codex 연구 프리뷰이므로 서버 access token과 계정 제공 여부를 �
 
 ## B2. 프로덕션 고유 유입자 수집 시작 및 전환 확인
 
-**막고 있는 것**: P0의 데이터 컷오버·비밀값 적용. 이 작업에서는
-코드와 로컬 검증만 했으며, **프로덕션 마이그레이션 적용·비밀키 설정·수집 시작·7일 경과·정책
-예약을 확인하지 않았다.**
+**현재 상태(2026-09-27)**: 운영에서 고유 유입자 수집 시작 시각과 해시가 있는 이벤트를 확인했다.
+7일 준비 기간은 경과했지만, 현재 정책 예약·자연 시즌 경계 적용은 이 세션에서 확인하지 않았다.
+아래 절차는 새 환경 전환이나 정책 변경 시 사용할 검증 절차다.
 
 **지금 상태**: `0013_unique_visits.sql`은 기존 이벤트와 시즌을 유지하는 가산 마이그레이션이다.
 `visit_collection_state.unique_visitor_started_at`은 마이그레이션 때 `NULL`로 두고, 유효한
