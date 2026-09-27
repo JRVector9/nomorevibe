@@ -60,6 +60,18 @@ describe("read only consistent search audit", () => {
     await seed("periodic-reuse");
     expect(await collectSearchHealth()).toMatchObject({ generatedRecent: 0 });
   });
+  it("reports exhausted generation separately without a worker-stall warning", async () => {
+    const p = await seed("exhausted-generation");
+    await db.update(productSearchProfiles).set({ needsRefresh: true, errorCode: "timeout", attempts: 5 })
+      .where(eq(productSearchProfiles.productId, p.id));
+    expect(await collectSearchHealth()).toMatchObject({ pendingGeneration: 0, exhausted: 1, repeatedFailures: 1 });
+    const name = "product-search-health";
+    await db.delete(jobs).where(eq(jobs.name, name));
+    await db.insert(jobs).values({ name, cursor: { generationIdleSince: Date.now() - 31 * 60_000 } });
+    expect(await runJob(name, auditSearchHealth)).toMatchObject({ status: "completed", done: true });
+    const [job] = await db.select().from(jobs).where(eq(jobs.name, name));
+    expect(job.cursor).toEqual({ generationIdleSince: null });
+  });
   it("does not report old verification failures after the source was invalidated", async () => {
     const p = await seed("obsolete-verification");
     await db.update(productSearchProfiles).set({ verifyError: "invalid_output", verifyAttempts: 5 })

@@ -351,6 +351,13 @@
       "when": 1790468418460,
       "tag": "0049_search_profile_generated_at",
       "breakpoints": true
+    },
+    {
+      "idx": 50,
+      "version": "7",
+      "when": 1790470102973,
+      "tag": "0050_search_health_latest_reason",
+      "breakpoints": true
     }
   ]
 }

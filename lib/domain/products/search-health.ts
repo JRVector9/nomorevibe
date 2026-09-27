@@ -44,7 +44,8 @@ export async function collectSearchHealth(hasBudget = () => true) {
           c.mismatched++;
           if (!p.needsRefresh) c.unmarked++;
         }
-        if (p.needsRefresh || p.errorCode) c.pendingGeneration++;
+        // Match the generation selector's retry cap; exhausted work has its own alert.
+        if (p.errorCode ? p.attempts < 5 : p.needsRefresh) c.pendingGeneration++;
         const activeVerification = !p.needsRefresh && !p.errorCode && !p.verifiedAt;
         if (p.errorCode && p.attempts >= 5 || activeVerification && p.verifyError && p.verifyAttempts >= 5) c.exhausted++;
         if (p.errorCode && p.attempts >= 3 || activeVerification && p.verifyError && p.verifyAttempts >= 3) c.repeatedFailures++;
