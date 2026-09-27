@@ -10,6 +10,7 @@ import { translateReasons } from "@/lib/crawl/jobs/translate-reasons";
 import { writeTaglines } from "@/lib/crawl/jobs/tagline";
 import { writeSearchProfiles } from "@/lib/jobs/products/search-profile";
 import { verifySearchKeywords } from "@/lib/jobs/products/search-verify";
+import { auditSearchHealth } from "@/lib/jobs/products/search-health";
 import { checkProductIntros } from "@/lib/jobs/products/intro-check";
 import { publishCandidates } from "@/lib/crawl/jobs/publish";
 import { pingProducts } from "@/lib/jobs/products/uptime";
@@ -68,6 +69,7 @@ export const JOBS: Record<string, AnyJob> = {
   /** 공개 제품마다 한·영 검색 키워드를 적는다 */
   "product-search-profile": writeSearchProfiles,
   "product-search-verify": (ctx) => verifySearchKeywords(ctx),
+  "product-search-health": auditSearchHealth,
   "product-intro-check": (ctx) => checkProductIntros(ctx),
 
   /** 등재된 제품이 아직 떠 있는지 확인한다 (기록만 하고 목록은 건드리지 않는다) */
