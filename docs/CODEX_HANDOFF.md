@@ -1,23 +1,474 @@
-# 2026-09-27 검색 작업 틱 시간 초과 보완
+# 2026-09-27 README 실수집 완료 / 최종 CI·문서 인계
 
-- Objective: 복구 과정에서 작업 틱이 호출 제한 시간을 줄인 timeout을 제품 실패로 누적하는 문제 방지. 원본/hash/LLMparser/동시성/lease는 그대로 유지.
-- Changed: lib/jobs/products/search-profile.ts, lib/jobs/products/search-verify.ts, tests/search-job-budget.test.ts. CALL_MS보다 짧아진 caller deadline의 timeout은 저장/실패 횟수 증가 없이 다음 틱으로 넘김(done:false). 전체CALL_MS를 사용한 timeout은 종전 실패 처리.
-- Regression proof: 새4개 unit 중2개 RED로 실제 재현 후4개 GREEN. fullunit1173, fullintegration867+기존TODO1(PG17/localhost55438), tsc/lint(errors0기존warning1)/build 실제PASS. logs /tmp/nmv-search-budget-{red,green,unit,integration,typecheck,lint,build}.log.
-- Failed approach: 신규 unit JobContext fake에 save가 빠져 첫 typecheck/build 실패. save mock 보완 후 typecheck, 전체unit/lint/build 재실행PASS.
-- Remaining: 별도PR 생성/리뷰/배포 후 기존 실제hash복구 계속. 이전PR189/190/191/193/194은main병합·운영배포됨. 기존6개실패실제생성+검수복구확인, 공개프로필약19k 중약2350개재생성대기(완료라고하지않을것).
-- Next: git diff --check; git status --short; PR 생성 후 frozen head 로컬검증증거+GitGuardian+hostedCI billing/runner0/steps0 확인. 최신main 배포, helper다시올려실제hashmismatch0확인. 운영helper /tmp/nmv-repair-ops-20260926.py, monitorcell184/shell93289; 배포시text임시helper소멸하므로 새cid에복사후재실행. intro검수2100pause유지.
+## 현재 목적
 
-# 2026-09-26 프로필 해시 갱신 수정
+승인된 우선순위 후속 1·2→4·5→3·6(공개 저장소 보안/main 보호, 검색 감시, 엄격 묶음 검수, CI/문서, 배포)과
+추가 요청 **README 없는 제품 재수집·입력**을 완료한다. 아래 날짜가 더 오래된 기록은 과거 상태다.
+사용자 수정 `scripts/search-judgments.json`과 기존 untracked 자료는 보호한다. 소개 검수 `product-intro-check`는
+사용자 중단 상태(`not_before=2100-01-01`)를 유지한다. 외부 이메일/Slack 발송 권한은 없다.
 
-- 현재 목표: 감사 2/3/4 각각 독립 PR, 프로필 해시 재발 방지 및 기존 데이터 실제 재생성.
-- 완료: PR189 소개 교정 시 키워드 초기화; PR190 compare 응답 page2로 제한; PR191 불완전한 생성/검수 응답 거부. 각각 독립 Codex 리뷰 및 관련 테스트 완료. 아직 병합/배포 전.
-- 이 PR 수정: schema 및 migration0048(원본/메모 변경 트리거, needs_refresh/source_revision), search-profiles 결과 저장·갱신/검수 큐, search-profile worker, reconcile-search-profiles CLI, 통합 테스트, 운영 문서.
-- 핵심 결정: 실제 생성 입력 해시 보존. 실패해도 해시만 최신으로 바꾸지 않는다. 최신 심사 메모는 제품 lock 후 다시 읽으며 변경 revision도 대조. 기존 불일치는 CLI로 대기열에 등록 후 worker가 실제 재생성.
-- 테스트: /tmp/nmv-freshness-red.log 3개 회귀 실패/7개 기존 통과; /tmp/nmv-freshness-green3.log 통합22개 통과. ESLint, next typegen, tsc 통과. 전체 통합 및 독립 리뷰 진행 중.
-- 실패 접근: 처음 테스트 fixture 삭제가 audit attempts FK 때문에 실패, truncate 테스트 데이터 전체로 수정. 기존 검수 fixture가 가짜 source_hash="h"여서 신선도 검사에서 걸림, 실제 입력 해시로 수정. 운영 데이터 변경 없음.
-- 다음: 전체 CI 대체 검증 결과 확인, 독립 리뷰 반영, 이 PR 커밋/푸시. PR별 정확한 head의 원격 CI non-execution(결제 사유 runner_id0/steps0) 확인 후 병합. migration 먼저 적용 후 모든 관련 worker와 양쪽 web 배포. 복구 CLI --apply --retry-invalid-output --retry-empty 실행, mismatch와 검수 대기열 소진 확인.
-- 명령: TEST_DATABASE_URL=postgres://nomorevibe:nomorevibe@localhost:55436/nomorevibe_test npm run test:integration; node scripts/migrate.mjs; node --import tsx scripts/reconcile-search-profiles.ts; node --import tsx scripts/reconcile-search-profiles.ts --apply --retry-invalid-output --retry-empty.
-- 루트 사용자 변경 scripts/search-judgments.json 보존. 소개 검수 job은 사용자 중단에 따라2100까지 대기 중이며 재개 금지. 운영 DB로 통합 테스트 금지. Dokploy/DB 비밀값 출력 및 저장 금지.
+## 완료한 작업 / 실제 운영 결과
+
+- PUBLIC `JRVector9/nomorevibe`, main 관리자 포함 PR/최신 base 필수 check(app15368)/리뷰 대화 해결,
+  force/delete 차단. Secret scanning·push protection·Dependabot 보안 업데이트 활성화. 09:50 KST 열린 경고 각각0.
+- PR202 보안, PR201 검색 감시, PR203 엄격 5키워드 묶음 재검수, PR204 bounded README prefix,
+  PR206 README 보존/재확인 **모두 hosted CI 통과 후 병합**. 현재 main 코드 커밋은
+  `801039a58e4b0944c124a61609073332152082db`이다. 10:46 요청한 8개 앱 모두 해당 소스 커밋/done 실제 확인.
+  PR205 CI·문서는 최종 내용을 추가한 뒤 아직 CI/병합/수동 실행 확인이 남아 있다.
+- PR202의 실제 양쪽 웹 런타임 Next16.3.3/sharp0.35.4 확인. npm audit0/npm ls0.
+  root node_modules는 아직 이전16.3.1/4.1.10이므로 로컬 검증 버전을 혼동하지 않는다.
+- 운영 migration0049(generated_at),0050(최신 심사 사유 partial index) 실행 exit0. 재실행 필요 없음.
+  maintenance의 정상 소유 감시 잡 실행·완료 관측 확인, 웹은 캐시만 읽는다.
+- **README original cohort12,418 전부 확인 완료**: 저장10,630 / 공개 README 미발견1,766 /
+  정제 텍스트 없음21 / GitHub HTTP451 접근 제한1 / 일시적 오류·quota 대기0.
+  마지막 DB audit: 획득10,630 모두 공개, 문서 누락0/제품 입력 누락0/SQL left2000 사본 불일치0,
+  원본 cohort 밖의 추가 누락 대상0. HTTP451 저장소는 `nomaan5541/motionsites-prompt-collection`.
+  원문 전체가 아닌 기존 정책의 정제 발췌(문서3000자/제품2000자)를 저장했다.
+- README recovery helper 전부 종료 exit0. 최종 retry session90780 완료. 운영 수집 워커는 중단하지 않았다.
+  `/private/tmp/nmv-readme-recovery-20260927.json` 상태와 `.jsonl` journal에는 대상/결과 metadata만 보관.
+- 10:46 KST readonly search audit19,354제품/2703ms: missing0/unmarked0/copy0,
+  marked generation10,265/verify25/repeated0/exhausted0/recentgenerated86/recentverified77/idle0분.
+  입력이 바뀌었으므로 정상적인 자동 재생성 대기다. 예전 키워드에 해시만 덮어쓰지 않았다.
+  수집·심사·생존 확인 성공 시각이 실제 진행 중이며 소개 검수 중단은 유지.
+
+## 변경 파일 / 설계 결정
+
+- PR202: package.json/package-lock.json. 버전 패치와 검증된 global esbuild/js-yaml override.
+- PR201: search-health model/domain/job, cached status 표시, generated_at 및 최신 사유 lookup migration/tests.
+- PR203: search verifier/job/reconcile 및 회귀 테스트. prior invalid_output/timeout만 5개 순차 묶음,
+  전체 한 deadline, 모든 묶음 성공 전 쓰기 없음, 소스/버전/lease/backoff 유지.
+- PR204: lib/net/fetch.ts, lib/crawl/readme.ts와 tests. README에만 최대256KiB prefix opt-in,
+  정확히 cap에 도달하면 끝나지 않는 tail을 기다리지 않고 취소. 일반 근거 strict 크기 정책은 유지.
+- PR206: lib/crawl/{repository,readme-refresh}.ts, lib/jobs/products/readme-refresh.ts,
+  catalog/registry/contracts, crawl-fetch/readme-refresh/job-catalog unit/integration.
+  홈페이지 recrawl은 마지막 README만 보존하고 version=null로 표시한다. crawler가5분마다 최대2문서,
+  저장소당8초/전체20초 예산으로 갱신. explicit null version+sample만 선택하며 과거 전체 cohort 자동 스캔 아님.
+  source CAS+owned lease 같은 transaction; 실패는 기존 sample 유지/15분→24h backoff 또는 provider reset.
+  raw 긍정 결과는 public retrieval; API fallback은 private===false 확인 후 README endpoint를 읽는다.
+  repo404는 visibility 불명 실패, 공개 repo README404만 confirmed absence이다.
+- PR205: .github/workflows/ci.yml, README.md, AGENTS.md, PENDING.md,
+  docs/superpowers/plans/2026-09-27-priority-followups.md,
+  docs/operations/2026-09-27-public-ci-readme-recovery.md, docs/CODEX_HANDOFF.md.
+  Node24 공식 고정 action SHA, contents read, concurrency/20분/manual dispatch, 과거 미배포 문서 교정.
+
+## 실제 테스트 / 수정한 실패
+
+- PR206 final CI36286197257(head a2e188d...) 단위1197/150파일, 통합886/90파일+todo1,
+  typegen/tsc/lint/build 성공. lint 기존 경고1. 최종 focused independent review 추가 지적 없음.
+- README retention 이전 구현 실제 RED2→crawl-fetch GREEN25, refresh guards GREEN5통합,
+  visibility404 실제 RED1→GREEN8단위. PR201 health8+profile19=27통합,
+  PR203 verify12+profile19=31통합, PR204 capped-network/readme25표적 테스트 실제 실행.
+- PR202 unit1173/integration28/audit0, PR201unit1178, PR203unit1184는 각각 그 시점 base의 결과이며
+  최종 PR206 전체 테스트가 최신 코드의 통합 근거다.
+- 실패 접근: scoped esbuild override는 Vite optional peer invalid→검증된 global override;
+  처음 retention-only는 발행 제품 리뷰 제외로 stale README 영구 보존→독립 refresh job 추가;
+  repo404를 absence로 취급→현재 공개 여부 확인 실패 시 기존 sample 보존;
+  정확한 cap 뒤 미종료tail wait→즉시 streamcancel;
+  migration doc에 env-file 빠짐→정확한 local command 수정/격리 testDB에서 실행 확인.
+- 실제 DB audit `/private/tmp/nmv-readme-audit-final.json`, 마지막 retry `/private/tmp/nmv-readme-recovery-retry.log`,
+  hosted CI `/private/tmp/nmv-readme-refresh-hosted-ci.log`, quota/451 구분 로그는 private tmp에 있다.
+
+## 아직 실행해야 하는 것 / 정확한 다음 명령
+
+PR205 워크트리 `/private/tmp/nmv-ci-docs-20260927`에 최종 README/report/plan/handoff를 특정 파일만 commit/push.
+최신 head의 hosted CI 성공 후 full SHA match로 병합한다(`--delete-branch`는 worktree 때문에 사용하지 않는다).
+main push CI와 실제 workflow_dispatch를 확인하고 최종 소스8앱 배포/status 커밋·done/HTTP/worker progress를 확인한다.
+README 입력은 끝났지만 키워드 자동 재생성은 pending; 진행 수치를 보고한다. root user dirty를 일괄 stage하지 않는다.
+
+```sh
+cd /private/tmp/nmv-ci-docs-20260927
+git status --short
+git diff --check
+gh pr view 205 --json headRefOid,statusCheckRollup,state
+# frozen head CI 성공 뒤 full SHA를 --match-head-commit으로 지정:
+# gh pr merge 205 --squash --match-head-commit <fullSHA>
+cd /Users/jr/Desktop/projects/nomorevibe
+git fetch origin
+git merge --ff-only origin/main
+gh workflow run ci.yml --ref main
+python3 /tmp/nmv-repair-ops-20260926.py deploy
+python3 /tmp/nmv-repair-ops-20260926.py status
+python3 /tmp/nmv-priority-ops-20260927.py health-check
+python3 /tmp/nmv-priority-ops-20260927.py readme-audit
+```
+
+safe bridge는 Dokploy/Keychain env를 메모리로만 전달하며 값은 출력하지 않는다. DB 통합 테스트는
+local55435/nomorevibe_test만 사용한다. API quota는 공유 제한을 존중한다. 복구 helper는 완료되어
+불필요하게 다시 실행하지 않는다. 미검증: 운영 백업 복원/24h 연속 관측/랭킹 시즌 정책전환/이번 관리자 visualQA.
+CUA available browser0와 native Chrome cgWindowNotFound로 실제 시각 QA는 수행하지 못했다.
+
+---
+
+# 2026-09-27 GitHub 저장소 공개 및 CI 전환 완료
+
+## 현재 목적
+
+사용자의 명시 요청에 따라 `JRVector9/nomorevibe`를 public으로 전환하고 실제 GitHub Actions CI를 실행한다.
+
+## 완료 및 검증
+
+- `git fetch origin` 후 Gitleaks v8.30.1로 `git --log-opts=--all --redact=100` 검사: 459커밋/13.16MB. 탐지6건은 tests/operations-agent의 합성 테스트 암호1건과 ranking fixture key5건으로 검토했다. 실제 인증정보 발견 없음. 일반 패턴 검사 결과이며 모든 비밀의 부재를 보증하는 것은 아니다. 보고서 `/private/tmp/nmv-public-audit-20260927/history.json`은 redacted다.
+- `gh repo edit JRVector9/nomorevibe --visibility public --accept-visibility-change-consequences` 실행, `gh repo view`로 PUBLIC 확인했다.
+- Actions enabled=true. 기존 `.github/workflows/ci.yml`은 push main 및 pull_request에서 Node24/PG17, 타입·린트·단위·통합·빌드를 실행하도록 구성돼 있어 변경하지 않았다.
+- 기존 main0836bd77 CI run36250632287을 rerun했다. attempt2/job108508971991에서 runner_id1000015485, Set up job SUCCESS, Initialize containers 실행을 실제 확인했다. 과거 billing 때문에 runner0/steps0으로 실패하던 상태를 벗어났다. 최종 attempt2는 2026-09-27 08:36 KST completed/success. 타입·린트·단위·통합·빌드와 cleanup 전 단계 SUCCESS를 실제 확인했다.
+
+## 파일·설계·실패 접근·남은 작업
+
+이번 단계 저장소 소스/워크플로 수정 없음. 인계 문서만 갱신. 사용자 `scripts/search-judgments.json`과 untracked 자료는 변경·커밋하지 않았다. 공개 전환은 사용자 명시 승인 범위다. 최신 main 재실행을 선택해 불필요한 커밋이나 배포를 만들지 않았다. 실패한 접근은 없음; 요청 범위의 남은 작업 없음. GitHub hosted CI 전체 PASS. 기존 린트 경고1/빌드 경고1은 유지되며 실패가 아니다.
+
+```sh
+gh run view 36250632287 --json status,conclusion,attempt,jobs,url
+gh run view 36250632287 --log-failed
+gh repo view JRVector9/nomorevibe --json visibility,url
+git status --short
+```
+
+CI watch session12643은 exit0으로 완료했다. 실제 run JSON은 `/private/tmp/nmv-public-audit-20260927/ci-result.json`, 로그는 `ci.log`와 `ci-watch.log`에 있다. 저장소 https://github.com/JRVector9/nomorevibe (PUBLIC), CI https://github.com/JRVector9/nomorevibe/actions/runs/36250632287/attempts/2 (SUCCESS). 앞으로 push main 및 pull_request는 기존 CI가 자동 실행된다. 이번 작업은 GitHub 설정 변경과 기존 run 재실행이므로 새 소스 커밋/배포 없음.
+
+---
+
+# 2026-09-27 수집·검색 프로필 수정 및 복구 완료
+
+## 현재 목적과 완료 상태
+
+사용자가 요청한 검토 항목2·3·4의 독립 PR 수정, 생성 입력 해시 재발 방지, 기존 불일치 프로필 복구와 배포를 완료했다. 운영 소스와 origin/main은 `0836bd77db8eadebc15d644c668c93d184119d64`다. 요청 범위에서 남은 수동 작업은 없다.
+
+- 항목2 PR190, 항목3 PR189, 항목4 PR191, 해시 재발 방지 PR193, 운영에서 확인한 메모 쿼리 결함 PR194, 틱 예산 시간 초과 회계 PR195 모두 병합·배포했다. 기존 홈 테스트 격리 PR192도 병합했다.
+- 2026-09-27 07:38:40 KST **동일한 REPEATABLE READ / READ ONLY 스냅샷**에서 공개 프로필 **19,306개** 전수 대조: 입력 해시 불일치0, 큐 미등록0, 검색 키워드 사본 불일치0, 프로필 누락0, 생성·검수 오류0, 갱신·검수 대기0. `repair-final-consistent.json`의 complete=true와 모든 카운터를 실제 확인했다.
+- 이전 실패6건은 실제 생성·검수까지 복구했다. 마지막 추가 실패609는 정상JSON이어도 키워드1개가 바뀌어 검수가 거부됐다. 동일 모델에15개를5개씩3묶음으로 실제 검수해 모두 strict 응답 검증을 통과한 뒤, 기존 current-input/profile-version/lease 저장 경로로 한번에 저장했다. 부분 성공이나 새 해시만 덮어쓰는 처리는 하지 않았다. 검수 기준을 완화하지 않았다.
+- 운영8앱이 동일 커밋으로 deployment done, 워커6개 healthy, 핵심8파일 SHA-256 대조48개 일치. 양쪽 웹HTTP200/DB정상2ms. RELEASE_TAG는 예전 환경값이므로 실제 커밋 판단에는 deployment description과 소스 대조를 사용했다.
+- 임시 실행기 모두 종료(07:41 activeOwnedTemporaryPids=[]), 로컬 감시 프로세스도 종료했다. 함수bridge249 terminated, watcher62325은 의도적으로 SIGTERM 종료(exit143). 정상 생성·검수·근거 수집 작업은 최신 성공 기록과 last_error=null을 확인했다. 종료 후07:41 집계도 pending0/older0/unverified0/errors0이었다. 사용자 중단한 소개 검수(not_before2100)는 유지했다.
+
+## 수정 파일과 설계 결정
+
+주요 소스: `lib/domain/evidence/agents/collect.ts`, `lib/domain/products/{intro-checks,search-profile,search-verify,search-profiles}.ts`, `lib/jobs/products/{search-profile,search-verify}.ts`, `lib/db/schema.ts`, `drizzle/0048_search_profile_freshness.sql` 및 migration metadata, `scripts/reconcile-search-profiles.ts`. 회귀 테스트는 `tests/agent-evidence-collect.test.ts`, `tests/search-profile.test.ts`, `tests/search-verify.test.ts`, `tests/search-job-budget.test.ts`, 해당 integration 테스트와 `tests/integration/search-profile-note-correlation.test.ts` 등에 추가했다.
+
+- GitHub compare의 파일 패치를 제외하는 요약 조회로 전역2MiB 제한을 유지하며 반복 수집 실패를 해결했다.
+- 소개 교정 시 기존 키워드·프로필 무효화를 한 트랜잭션에서 처리했다.
+- 잘못된 생성 구조와 불완전/중복/알 수 없는 키워드 검수는 성공으로 저장하지 않는다. 명시적으로 두 키워드 배열이 빈 경우는 유효한 결과다.
+- 생성 입력과 최신 메모 변경을 DB 트리거로 감지하고, 실제 생성 입력 해시와 프로필 버전을 저장 직전 재확인한다. JS UTF16 slicing/trim 의미를 DB 감지와 맞췄다. 생성 실패 시 기존 키워드와 기존 생성 해시를 함께 보존한다.
+- 메모의 외부제품 ID는 `products.id`로 SQL에서 명시했다. 틱 잔여 시간으로 줄어든 호출의 timeout은 제품 실패 횟수를 소비하지 않는다. 실제 전체 호출 제한을 넘긴 실패는 재시도한다.
+
+## 실제 실행한 검증
+
+최종 소스 PR195의 frozen head에서 `npx tsc --noEmit`, `npm test`, `npm run test:integration`(PostgreSQL17/localhost55438), `npm run lint`, `npm run build`를 실행했다. 단위 **1,173개**, 통합 **867개 + 기존 TODO1**, 타입·린트(오류0/기존 경고1)·빌드 PASS. 독립 Codex CLI 리뷰도 추가 지적 없음. `/tmp/nmv-search-budget-{typecheck,unit,integration,lint,build,review}.log`와 운영 검증 자료 참조.
+
+GitHub Actions는 결제로 러너 실행 전 실패했다. run36250595448/job108427767520의 runner_id0·steps0·billing annotation을 확인했으며 exact head의 GitGuardian은 SUCCESS였다. 호스팅 CI가 성공했다고 주장하지 않는다.
+
+## 실패했던 접근과 해결
+
+- 기존 메모 테스트는 제품과 감사행 ID가 모두1이라 SQL 상관관계 결함을 놓쳤다. ID가 다른 회귀3개로 RED를 재현하고 수정했다.
+- 작업 트리의 node_modules symlink는 Turbopack 빌드를 깨뜨렸다. 독립 APFS 복사로 해결했다.
+- 예비 실험 마이그레이션이 남은 localhost55435 fixture는 최종0048로 복구하고 회귀3개를 실제 통과시켰다. 임시 PG55436/55437/55438은 종료했다. 기존 사용자 테스트 DB는 보존했다.
+- 새 budget 테스트의 fake ctx.save 누락으로 첫 타입·빌드 검사가 실패했다. mock을 보완하고 관련 검사와 전체 단위·린트·빌드를 다시 실행해 통과했다.
+- 모델 지연/키워드 크기만 추측해 제한을 늘리지 않았다. 609에서는 실제 응답 구조를 계측해15개 판정 중 unknown1/missing1을 확인하고 소량 묶음의 실제 검수로 복구했다.
+- 페이지별 전수 순회는 조회 중 새 수집으로 순간적인 불일치를 포함할 수 있다. 최종 판정은 동일한 DB 스냅샷에서 전수 대조했다.
+
+## 보고서·남은 파일·다음 명령
+
+완료 보고서는 `docs/operations/2026-09-26-search-pipeline-fixes.md`, 증거는 `docs/operations/evaluations/2026-09-26-search-pipeline-fixes/`다. 실제 read-only 검사 코드는 `audit-readonly.ts.txt`에 보관했다. 문서와 운영 증거는 현재 워크스페이스에 남아 있다. 소스 변경은 모두 커밋·푸시·병합·배포됐다.
+
+사용자 `scripts/search-judgments.json` 및 기타 untracked 사용자 자료는 변경·커밋하지 않았다. 현재 root의 소스 수정은 없고, 우리 handoff/운영 보고서 외 사용자 변경은 그대로 보존했다. 이전의 draft PR159/160(LAYA)은 이번 작업 범위 밖이다.
+
+추가 상태 확인이 필요할 때만 아래 read-only 명령을 사용한다. `apply`, 마이그레이션, 배포나 임시 실행기를 다시 실행할 필요는 없다.
+
+```sh
+git status --short
+git rev-parse HEAD origin/main
+python3 /tmp/nmv-repair-ops-20260926.py quick
+python3 /tmp/nmv-repair-ops-20260926.py snapshot
+```
+
+새 수집이나 원본 변경은 이후 정상 갱신 큐에 들어갈 수 있다. 이는 과거 복구 잔여가 아니며 정상 워커가 자동 처리한다. 아래는 복구 과정의 시점별 기록이며, 현재 완료 상태는 이 상단 요약과 최종 스냅샷을 기준으로 판단한다.
+
+---
+
+# 2026-09-27 07:34 最後1건 작은묶음으로실제검수복구
+
+- Actual diagnostic609응답07:29:57: status200,finishReasonlength,completionTokens2723,prompt1322,contentChars10893,validJSONtrue/checks15,missing1/unknown1/duplicate0/nonBoolean0. 즉단순큰키워드배열아니며정상JSON에서도label하나가달라strict검수저장거절. 원문/키/근거내용출력않음. 현재invalid4/정상fullretry08:09:57,cap0. 성공으로강제않음.
+- diagnosticownedPID29245 SIGTERM후(같은joblease) /tmp/nmv-verify-tail-chunks.ts 임시실행(현재28d96ed337e1/log同stem.log). ID60915키워드를5개씩3호출, 기존모델/strictparse/call60/동시1. 모든chunk가유효해야만removed합집합을recordVerificationResult기존currenthash/profileversion/leaseguard로한번저장. 불완전chunk는저장않고원본retry/attempt그대로(진단시도), fakekeyword/hash 없음. 정상전체15재시도반복과다른요청형태로복구하는 bounded수리이지검수기준완화아님. 최대5분, 실패면현재제품미검수유지하고root분석필요.
+- 次: ssh jr@100.92.77.66 'docker exec 28d96ed337e1 tail -n 8 /tmp/nmv-verify-tail-chunks.log'; chunks3ok/savedtrue 확인→fullhash/keywordCopies0검증→ownedPIDcleanup추가path/tmp/nmv-verify-tail-chunks.ts 포함. 기존gen/verify긴helper는drained종료확인, diagnosticはSIGTERM. monitor249/watch62325계속.
+- Repositorysource는변경않음; PR source모두배포끝, 사용자파일보존. 이singletonrepair로실제검수완료한뒤완료보고할것.
+
+# 2026-09-27 07:16 마지막 검수 응답 구조 계측
+
+- ID18 재시도검수완료,609만 invalid→timeout→invalid3 반복. keyword_count15/JSONchars274/max21, cross-langduplicates0이어서큰keyword배열가설은근거없음. 다음정상retry07:28:51KST. 지금강제성공/조기재시도않음.
+- /tmp/nmv-verification-tail-diagnostic.ts 현재text28d96ed337e1에서실행,log同stem.log. 기존verify4/call60/105s틱/backoff/model 그대로, runJob기존lease사용;609가미검수이면futurebackoff에서도idlewait해서다른정상새verifications계속처리. Fetchwrapper는609 이름+URL의응답에만 finishReason/completionTokens/contentChars/JSON검사횟수/누락·중복·unknown·nonBoolean count를출력,원문·키·근거내용은출력하지않음. 실제parser/record결과는변경하지않음. 다음609응답형식원인확인후필요하면근거로별도fix;지금은추측코드변경없음.
+- 기존gen4helper는06:56drained/verify2helper07:00drained 종료. 새diagnostichelper도최대4h 또는609검수완료&큐소진후종료. 최종ownedcleanup exactpath목록에 /tmp/nmv-verification-tail-diagnostic.ts 추가필수.
+- Legacy gen대기0, 새source변경0→2→0정상worker처리. monitor249 /watchshell62325활성. 전체hash0최종대조는609완료후정식확인필요. 최종healthy/source0836/48SHA/bothweb200재검증자료alreadyfinalfiles。
+
+# 2026-09-27 07:00 과거 재생성 완료 / 검수 재시도 대기
+
+- 최초 복구 cohort 재생성은 끝났음: latest06:59 pending0/older0/missing0/generror0, 공개19301. 정상새수집으로pending0→1→0은발생하며기존워커가처리중. full06:59:34 mismatch1/unmarked0은동시새source갱신(legacy대기0); 후속현재hash0확인필요. keywordCopies checked19301/mismatch0. repair-generation-complete.json은과거cohort완료시점검사이며전체0완료증거아님.
+- 검수609: invalid1다음진짜full60timeout2→retry07:07:06KST; ID18 timeout1→retry07:03:50KST. Cap0. backoff준수해서정상재시도기다릴것. 무조건성공/forcedhash/조기retry금지. 현재unverified3 (newsource1+failed2). verifierhelper는eligible없으면3idle후drained종료해도정상worker catalog interval60s로재시도계속. 최종두건실제검수/metadata clear확인필수.
+- genhelper4.log drained06:56:33 종료확인. verifier2.log계속(07:55deadline). 원본실패6은이미모두복구. 운영 apps8 deploymentdone0836,gitfetch후HEAD=origin/main0836, worker6healthy/48SHA재검증 PASS, 양쪽web200/DBok2ms. latest증거 runtime-proof-final/deployment-status-final/web-health-final.json 저장.
+- Watcher62325 / bridgecell249활성. 다음 functions.wait cell249<=60000; errorsretry정상wait, hash/keywordCopies0/missing0/unmarked0전체inspect→ownedtemporaryPIDs없음확인/SIGTERM필요시→normaljob/health/report cleanup. 아직검수2건이남아최종완료보고않음.
+
+# 2026-09-27 05:50 생성 실행기 갱신
+
+- pending375/unverified14/generror0/verifyerror0 at05:49. genhelper4h만료전 소유한 /tmp/nmv-generation-repair-lease.ts exact /proc cmdline 대상으로만 SIGTERM 후 동일코드 재시작. newlog /tmp/nmv-generation-repair-lease-4.log,4hdeadline09:50KST. 동시2/기존lease/게이트웨이backoff 유지. verifier log-2.log ~07:55deadline 그대로.
+- monitorcell249활성; watcher shell62325(11:23deadline) healthy계속, final fullcheck조건이될때hash/keywordCopies/미등록/누락0 확인 및helper종료 필요.
+- 보고서/하andoff외 source추가변경 없음. main0836bd77/모든소스 PR배포 완료. 남은 실제복구375건 및최종검증/cleanup/보고.
+
+# 2026-09-27 05:23 모니터 갱신
+
+- 이전 watcher shell93289가 예정된6h한도(exit4)로 종료. 오류/정체 때문이 아님. 동일 /tmp/nmv-watch-profile-repair.py 재실행, 새 shellsession62325, 6h한도11:23KST. repair-latest.json과repair-progress.jsonl 계속갱신, completed 시 repair-full-check.json 자동검증생성. functions.exec cell249 출력bridge는그대로활성.
+- 마지막05:21pending541/unverified6/generror0/verifyerror0/cap0. 서버generation/verifierhelper정상계속. gen06:02만료전05:50잔여큐확인후renew; verifier07:55만료. 최종hash·검색사본0/미등록0/누락0 확인전완료보고않음.
+- Next: functions.wait cell249<=60000, completion/stall 시 새watch session62325 write_stdin으로exit 확인. ownedhelpers cleanup/bothweb/workerhealth/report remaining.
+
+# 2026-09-27 04:38 현재 작업 인계
+
+- 목적: 항목2·3·4 분리 PR 수정 + 해시 재발방지 배포는 완료. 남은 기존 프로필 실제 재생성/검수와 최종 전수 해시 확인, 임시 실행기 종료, 최종 보고.
+- 최신 full 검사04:22KST: 공개19276,pending849,hashMismatch757,unmarked0,검색 키워드 사본18429/mismatch0,missing0,generror0,verifytimeout2(cap0). repair-midpoint-0422.json 증거. 최신 quick04:37pending758/검수3/errors0. 원본 실패6건은 실제생성·검수완료.
+- 운영 main0836bd77, source8apps배포/worker6healthy/핵심파일SHA48일치, 최종 실제검증 unit1173,PG17integration867+TODO1,type/lint/build PASS. CI billing으로 runner 미실행; GitGuardian exacthead PASS. PR189/190/191/193/194/195/192 모두 병합. 보고서 docs/operations/2026-09-26-search-pipeline-fixes.md를 최신 소스/검증/전수검사 중심으로 다시 정리했다.
+- 활성 monitor functions.exec cell249: local repair-latest를55초마다표시, functions.wait cell249<=60000. shell93289의watcher실행은05:22KST 6h만료 예정이므로 미완이면 종료코드/실패사유확인후재시작(사용자요청pause아님).
+- 임시 실행기는 text28d96ed337e1(jr@100.92.77.66): gen /tmp/nmv-generation-repair-lease.ts log-3.log 만료06:02KST; verify同pathverification log-2.log03:55재시작→07:55KST. 05:50 잔여가있으면 gen만 /proc cmdline exactpath 확인후SIGTERM/재시작, lease/concurrency2/4유지. 정상서비스전체중단금지.
+- 다음명령: python3 /tmp/nmv-repair-ops-20260926.py quick; python3 /tmp/nmv-repair-ops-20260926.py inspect. 최종 full hash0/미등록0/검색사본0/누락0 및원본6복구확인→ownedhelper종료→6worker/bothwebhealth→보고서/인계갱신. 함수bridge249만 종료해도serverhelper/watch는계속이므로최종cleanup따로필요.
+- 수정한 저장소파일은 docs/CODEX_HANDOFF.md, 우리untracked운영보고서/증거. 사용자 scripts/search-judgments.json 및기타untracked자료변경/커밋금지. 소스커밋은전부origin main과일치. 새코드나추가PR현재필요없음.
+
+# 2026-09-27 03:55 verifier期限更新
+
+- 03:54pending1009/unverified7/generror0/verifyerror0/cap0。既存owned verifier /proc cmdline正確path(/tmp/nmv-verification-repair-lease.ts)でSIGTERM後再実行, newlog /tmp/nmv-verification-repair-lease-2.log,4h deadline→07:55KST。Only ownhelper renewed; leases/concurrency4/defaultworkers intact. Generation3.log remains06:02deadline;05:50残れば同様更新必要。
+- functions.exec monitorcell249 continues55s snapshotyield; shell93289 originalwatch6h期限05:22なら未完再起動。最終keywordCopies+mismatched/unmarked/legacy6/fullhealth/helperstop required。User artifacts preserved.
+
+# 2026-09-27 03:11 실제 해시·검색색인 사본 대조
+
+- /tmp/nmv-repair-inspect-20260926.ts read-only full inspector에 keywordCopies 추가. JSON 배열 en||ko 순서 유지, removed_keywords 제거 후 string_agg(' · ') 결과와 products.search_keywords IS DISTINCT FROM 비교. 최종 inspect/watch 자동fullcheck도 이 검증 포함한다. quick은 비용추가없이null.
+- Actual full at2026-09-26T18:10:48Z: total19265,pending1223,older1221,hashMismatch1127,unmarked0,keywordCopies checked18044/mismatched0; generror0/verifyerror1/cap0/unverified7. evidence docs/operations/evaluations/2026-09-26-search-pipeline-fixes/repair-midpoint-keyword-copies.json 저장. 동시 수집/갱신 때문에 각 별도 SELECT count는 미세 snapshot차이 가능.
+- 이전 monitorbridge184 terminated(JS bridge만중단,watch shell93289 계속운영). New functions.exec cell249 local repair-latest JSON을55초마다 text+yield_control 표시: functions.wait cell249<=60000사용. watcher 자체 shell93289는 여전히05:22까지, stdoutpoll은필요할때만. Final watcher fullcheck파일 여부도확인할것. 아직실제재생성완료아님.
+
+# 2026-09-27 03:00 복구 진행 상태
+
+- 현재 main0836bd77: PR190/189/191(각 항목2/3/4),193(hash재발방지),194(note상관쿼리),195(tick예산 실패회계),192(test격리) 모두 병합/8앱 배포 완료. 소스48 SHA확인, 마지막 실제 검증 unit1173/integration867+TODO1/type/lint/build PASS. HostedCI는 billing으로 runner실행전 실패, green아님.
+- 최신 운영 quick at2026-09-26T17:59:26Z: public19263,pending1288,older1288,generror0,verifyerror2(cap0),unverified8,missing0. 원본 실패6건은 실제생성/검수 모두완료. 새 transient timeout/invalid은 기존 backoff로 재시도하며 성공으로 강제하지않음. 중간전체대조01:24KST mismatch1676/unmarked0, 최종전체대조는 아직 필요.
+- Active monitor functions.exec cell184가shell93289를소유: functions.wait cell184 yield_time_ms60000 사용(동일shell 직접poll금지). report repair-latest.json / repair-progress.jsonl 계속저장. 모니터6h한도05:22KST 미완료면새로재시작할것.
+- Active owned text28d96ed337e1 onjr@100.92.77.66: /tmp/nmv-generation-repair-lease.ts log*-3.log ~06:02KST expiry; /tmp/nmv-verification-repair-lease.ts log*.log ~04:07KST expiry. 03:55KST 잔여큐있으면 verifier만 exact /proc cmdline ownpath 확인후SIGTERM/restart. 동시2/4 및기존lease유지. 완료후ownedhelper모두종료/정상job확인필수.
+- 다음: python3 /tmp/nmv-repair-ops-20260926.py quick; 최종 inspect 실제hash0/미등록0 확인, 원본6상태/누락0/양쪽웹health 확인, helpercleanup/report갱신. 사용자 scripts/search-judgments.json 및untracked자료보존. user 진행중질문답변: 현재1288건 실제재생성중, 완료라고하지않음.
+
+# 2026-09-27 02:02 MLX 지연 조사/계속 처리
+
+- 01:53 thin우선큐끝나고rich묶음선택됨(ids15k). MLXactualfulldeadline45초timeout5건연속발견(generror5/cap0), callerbudgetfalsefailure아님. metadata sizes: topics37~106/descriptions130~198chars,page/readmefull2000→실제모델각1500slice. oversizedtopics가설검증했지만문제없음, 불필요한inputhash변경/새PR않음.
+- owngenhelperPID1943 SIGTERM후/tmp/nmv-probe-rich-profile-repair.ts(oneoff같은profilejoblease,목표15062/15053,최대동시2/timeout90)으로정상실제재생성시도. 15062는이미normalworker재생성돼큐에서빠짐. 15053actual같은근거 응답9481ms oktrue/savedtrue로그확인,45초내응답이라고정timeout변경의증거없음(이전2호출/이번1호출+시간대부하confound). defaultCALL45/SLOW20/concurrency2그대로. 단지upstream지연관측이며모델응답을성공으로속이거나hash덮지않음.
+- genlonghelper재실행02:02 MAX4h→06:02,newlog /tmp/nmv-generation-repair-lease-3.log. 본script추가logging아직beforeIDs/revision/date만. Currenttext28d96ed337e1. verifier기존log/max4h→04:07,03:55쯤남은큐확인후필요하면재시작. 기존6문제 actualgeneration+verify복구상태유지.
+- Currentpending1613at01:58/生成errors5(재시도대기)/verify0. root외부모델지연이라고해도기존hash잔여0확인전종료않음. monitorcell184shell93289(source6hr→05:22까지),그때미완이면normalbackoff/stall분석후monitor재실행.
+
+# 2026-09-27 01:25 中간 전체 해시 재검증
+
+- Actual full inspector /tmp/nmv-profile-repair-midpoint-0123.json at01:23:59: public19251,pending1769,older_generation_pending1769,hashMismatch1676,unmarked0,generationErrors0,verifyErrors0,unverified1. 모든잔여mismatchqueued, source현재hash과어긋난healthy/미등록0. 빈응답campaign때문에pending와hashMismatch갯수차이는정상.
+- 원본6실패모두actualLLM재생성+검수완료및metadata확인. 이후간헐invalid/timeout재시도들도clear현재0. PR195 budget_deferred로그에서shortcallerDeadline타임아웃failed0유지 확인.
+- Current main0836bd77, sourcefixes모두병합배포/검증끝. 남은실제backfill1769(+새수집source자동 갱신)/final全hash0/helpercleanup/report. Monitorcell184shell93289 (<=60wait),deadline현재6hr~05:22KST. genhelperrestart00:31(MAX4h→04:31), verifierhelper00:07(MAX4h→04:07). 04시쯤잔여가있으면ownhelperSIGTERM후재시작해기존2/4동시성병렬을유지할것(정상worker전체중단않음).
+- Exact read commands: python3 /tmp/nmv-repair-ops-20260926.py quick; ssh jr@100.92.77.66 'docker exec 28d96ed337e1 tail -n 10 /tmp/nmv-generation-repair-lease-2.log'; ssh jr@100.92.77.66 'docker exec 28d96ed337e1 tail -n 8 /tmp/nmv-verification-repair-lease.log'. 원본fullfields출력금지/secretconfig keychainmemoryonly. 新規예외메타데이터localreportlatestJSONgenerationFailures/verificationFailures확인.
+- User latest “진행중이야?” 답변commentary진행중1916대기/코드배포끝, 계속진행. 요청을취소하거나pause하지않았음. 기존합의대로최종mismatch0전완료라고하지말것.
+
+# 2026-09-27 00:34 복구 진행·정체 검증
+
+- Currentmain0836bd7,8deploydone/6workershealthy/source48matched/양쪽webDBok2ms.
+- actualpastfailure6profile생성+검수완료메타데이터 /tmp/nmv-profile-cohort-progress-0018.json. latest00:31 generrors0/verifyerrors0. 기존genhash복구pending2168(아직전체미완료), fullsourcecheck마지막필요.
+- modeldelay때문에genrate변동(<20sec정상tick/~20sec넘으면기존SLOW_CALL backoff유지). 같은id반복의심만으로추가코드변경않고generationbeforebatchIDs/revision/updatedAt만로깅. observed첫batch5169...다음5050...으로10개처리후정상앞으로진행, sourceRevision1(기존복구표시), 새sourceRevision반복변경아님. noadditionalFIFOchange.
+- owngenerationhelperPID168SIGTERM후debuglogginghelper재시작, 새log /tmp/nmv-generation-repair-lease-2.log,newMAX4h시작00:31. 현재text28d96ed337e1. verifier기존/tmp/nmv-verification-repair-lease.log MAX4h시작00:07계속. modelCONCURRENCY2/4및gatewaybackoff그대로. 종료cleanup두path프로세스IDs확인후필요시SIGTERM.
+- inspectorquick에older_generation_pending 추가(s.needs_refresh&&updated_at<2026-09-26T13:43:00Z), 과거generation기준이지정확cohortID스냅샷은아님.00:18 older2257=전체pending2257. report최종allhash0외에도olderpending/generationerror/검수legacy6확인해야함.
+- monitorexec cell184(shell93289)동작중: report/evaluations/2026-09-26-search-pipeline-fixes/repair-latest.json &repair-progress.jsonl. 60초조회중, gen/verifycap 또는20분samecounts면exit3/6hr끝exit4. 그경우정상retry_at/backoff와실제정체구분해필요시재시작. strict완료조건pending0+errors0+unverified0+missing0에서전체hash0자동대조. 새externalinvalid출력을성공으로강제하지않을것.
+- Next: functions.wait cell184<=60초; script최신source검증/로그원격조회명령은앞section참조. 몇시간모델호출이걸리더라도실제hash정렬완료전완료라고하지말것. PR195까지코드작업끝, 남은건backfill+최종검증+helpercleanup+보고서/compacthandoff마무리.
+
+# 2026-09-27 00:09 PR195 운영 배포 완료 / 계속 복구
+
+- 8 apps actual0836bd77done 확인. newtext28d96ed337e1, worker6healthy+핵심8파일SHA48개일치 /tmp/nmv-profile-runtime-proof-195.json. Rootreport evaluationdir에latestproof복사. 웹새cid는status명령output참조후health재검증.
+- newtext에/tmp/nmv-generation-repair-lease.ts & /tmp/nmv-verification-repair-lease.ts 복사/재시작. 둘다기존lease/concurrency2/4/MAX4h/tick예산유지. logs /tmp/*-repair-lease.log. 이전cidba808e94ee7c helpers종료(oldcontainer replaced).
+- fullsourcePR190/189/191/193/194/195병합/배포됨. code수정끝. 기존profile실제hash정렬진행: 00:07pending2334/verify9/generrors0/verifyerrors2. monitorcell184shell93289 계속notify; cap또는20분정체면중단해 root분석해야함. finalpending0/mismatch0 확인전완료라고하지말것.
+- localtemporaryPG55438stopped(유일해당phaseactive였다), 기존사용자fixture55435canonical48/test3PASS상태유지. rootourhandoff/opsreport만uncommitted, 사용자scripts/search-judgments.json그대로M, 기타untracked사용자자료보존.
+
+# 2026-09-27 00:05 後속 PR195 병합·배포 진행
+
+- 추가발견: CALL_MS보다짧게틱남은시간때문에timeoutMs를줄여부른호출이끝나면productfailureattempt를누적함. 실제운영timeout도재시도중이라회귀로영향확인. 별도PR195https://github.com/JRVector9/nomorevibe/pull/195병합, main0836bd77db8eadebc15d644c668c93d184119d64.
+- code: lib/jobs/products/search-profile.ts/search-verify.ts shorteneddeadline(timeoutMs<CALL_MS)의timeout은recordResult하지않고donefalse로다음틱에넘김. genuinefulldeadline실패는유지. tests/search-job-budget.test.ts fakeDate다중성공후shorteneddeadline만료를재현; RED2실패/2PASS->GREEN4PASS.
+- fullunit1173 / fullintegration867+기존TODO1(PG17/55438) / type/lint(errors0warning1)/build 실제PASS. /tmp/nmv-search-budget-*.log. 처음testctx.save 누락type/buildfail수정후모두재실행PASS. independentCLIreview noactionable+4unit별도PASS.
+- frozenhead c271e35b41a225281eaad2f594e54933453a317d GitGuardianSUCCESS, CIrun36250595448job108427767520 failure billedrunnernotstarted: runner_id0/steps0/annotationpaymentfailed확인. /tmp/nmv-search-budget-hosted-ci-{jobs,annotations}.json. PR195bodylocalreplacement증거기재, hostedCI성공이라고하지않음.
+- rootmainff0836bd7+user scripts/search-judgments.json SHA보존. PR195deployment8appqueue중 /tmp/nmv-repair-ops-20260926.py deploy shell2814. Migration없음. runtimeproof8파일로늘려48개비교준비(추가jobverify). 배포후newtextcid찾고기존3helper파일복사, generation/verifylease둘만재실행. priority원본6이미모두actualverify완료이므로재실행필요없음.
+- Last00:03 pending2347/verify22/generrors0/verifyerrors2. actualhash복구ongoing. monitorcell184shell93289 quick매60초+reportrepairprogress, baseline3kbackfillnonzero진행. 최종fullhash0와임시helperstop, 보고서갱신필요.
+
+# 2026-09-26 23:30 過거 실패 전부 실제 복구 확인
+
+- originalFailures6 중 generationfail18759재생성+verify이미success. 과거verifyfail5는 /tmp/nmv-prioritize-failed-verifications.ts의actual기존Qwen모델호출+recordVerificationResult로5건oktrue/savedtrue확인(ID1271,1829,4760,5366,5829). 해시만덮은것아님.
+- 기존longverifyhelperPID278SIGTERM(소유helperfilepatharg일치로만중단), 동일lease해제확인후priorityverify가잡음. 임시priority는oldinvalidid8687도있어6번째재시도진행중. 로그docker exec ba808e94ee7c tail /tmp/nmv-prioritize-failed-verifications.log.
+- fullverifyhelper재실행23:30 새로그 /tmp/nmv-verification-repair-lease-2.log (기존*.log는종료신호reason signal확인). generationleasehelper동시2변경없음. temporaryhelperscleanup최종필요.
+- 현verifyfaildebug 대부분timeout(6개)과oldinvalid8687(1개),cross_language_duplicates모두0; 중복키워드관련추정으로코드변경하지않음. 정상backoff재시도중, cap0.
+- 재생성대기2545,검수대기129at23:29. monitorcell184계속작동. 아직전체hash정렬미완료.
+
+# 2026-09-26 23:25 보완 후 복구 대상 재대조
+
+- 최신 PR194 code로 apply 재실행: scanned19240,mismatched2389,alreadyPending2613,queued1,verificationRetried0 (/tmp/nmv-profile-repair-apply-after194.json). 새로운조회상관관계로전체대조하여미등록추가1건queued; 기존복구중profile중복요청없음.
+- 양쪽actual새웹container 8c4ab7540cba(M3),f781397c361b(mini) direct /api/health DBok1ms둘다확인. source proof42개일치/latest8deploy4d24c1b.
+- 실행중monitor functions.exec cell184가shell93289출력을60초마다계속받아notify중. root다른tool과독립조회가능. pending2621/verify104at23:23. actualgeneration+verifyhelper동시정상처리, verify는strictparserinvalid출력2개재시도(backoff정상), cap0.
+
+# 2026-09-26 23:24 실제 실패6건 복구·추가 처리량 보완
+
+- 과거verify실패5 ID1271/5829/5366/4760/1829 PR194배포후actualLLM생성5개saved=true. 과거gen실패18759도이미saved=true. 검수cap5 ->0, 원본6개actual검수는아직확인전. /tmp/nmv-profile-repair-after194-2.json metadata참조.
+- 기본55435fixture실험migration깨짐복구완료+actualfinal48migratePASS+ID분리회귀3PASS.
+- APIquota23:21:54풀린후CIrun36247631966 job108419662771 runner_id0/steps0/conclusionfailure증거확보 /tmp/nmv-note-correlation-hosted-ci-jobs.json. billingannotation/GitGuardianSUCCESS과함께CI실행전실패확인완료.
+- 생성도 /tmp/nmv-generation-repair-lease.ts 기존동시2/54초틱그대로 하나의profilejoblease로반복, 최대4시간orqueue3회빈경우stop. jobdone gatewayblocked이면30초backoff. 기존textworker는locked두잡을넘기고translate/tagline등실행, LLM동시제한늘리지않음. verifyhelper기존동시4 유지. 모두textcontainerba808e94ee7c에서/tmp/*-repair-lease.log.
+- /tmp/nmv-watch-profile-repair.py 운영quick60초마다6시간내 자동모니터. shellsession93289. 보고폴더repair-latest.json+repair-progress.jsonl, 종료전에fullhashinspect. generationcap/verificationcap/20분정체면exit3으로분석요청. 아직완료아님.
+
+# 2026-09-26 23:21 보완 PR194 병합·배포 완료 / 데이터 복구 진행
+
+- Objective: 항목2/3/4 각각 PR 및 실제hash불일치 복구. PR190/189/191/193 모두 병합·배포; 추가 심사 메모 상관쿼리 PR194도 병합 main4d24c1b70f4301c38ecd5d58cf95c7177ec02527.
+- PR194 실제검증: RED3 실패 -> GREEN관련31, 전체unit1169/integration867+기존TODO1/type/lint(build기존경고1)/build 모두 PASS. independentCodexreview코드문제없음. /tmp/nmv-note-correlation-*.log. GitHubCI billingannotation, exactheadGitGuardianSUCCESS; RESTquota로runner_id/steps 추가조회는 아직못했으므로 새head에대해3증거완료라고하지말것.
+- 관련8apps deploydone4d24c1b 확인. worker6 healthy, source7개SHA42일치 /tmp/nmv-profile-runtime-proof-194.json. rootff동기화, 사용자scripts/search-judgments.json hash보존.
+- text새container ba808e94ee7c. /tmp/nmv-prioritize-failed-profiles.ts + /tmp/nmv-verification-repair-lease.ts 원격복사 및실행. /tmp/...log로진행확인. priorcap5의saved=true와검수복구를확인해야함. helper최대4시간후stop또는queue소진stop.
+- Latest23:17:55 pending2682, generationerrors0, verificationerrors9/exhausted5, unverified68. 실제재생성완료아님. 운영helperROOT와inspectorimports/proofexpected 모두최신root로변경.
+- DedicateddefaultlocaltestDB55435 experimentalpartialmigration48: 마지막journaltimestamp1790428559333/needs_refreshonly/notrigger를확인, 자신이만든실험column+row만guardedtransaction으로제거후actualfinal48migrator실행PASS. 기본fixture에서새회귀3개PASS(/tmp/nmv-note-correlation-default-fixture.log). 55438finalfixture도유지.
+- modifiedsource(committedPR194): lib/domain/products/search-profiles.ts, tests/integration/search-profile-note-correlation.test.ts. root Mhandoff(ours), Mscripts/search-judgments.json(user); 기존untracked사용자파일보존. 운영보고draft docs/operations/2026-09-26-search-pipeline-fixes.md 추가보완배포반영필요.
+- Next commands: python3 /tmp/nmv-repair-ops-20260926.py quick; ssh jr@100.92.77.66 'docker exec ba808e94ee7c tail -n 20 /tmp/nmv-prioritize-failed-profiles.log'; ssh jr@100.92.77.66 'docker exec ba808e94ee7c tail -n 15 /tmp/nmv-verification-repair-lease.log'. 全hashinspector는종료근처 python3 /tmp/nmv-repair-ops-20260926.py inspect. actualhashmismatch0/legacyfailuresresolved까지진행, helpercleanup+양쪽health+최종문서필요.
+
+# 2026-09-26 23:08 運영검증 추가발견/보완중
+
+- CRITICAL: 과거verifycap5원본재생성 직접시도 정상LLM응답에도 saved=false, generationfailed1은 saved=true. /tmp/nmv-profile-failed-save-debug.json 원인 differentKeys reviewerNote뿐, taskNoteLength254~315, 저장직전 currentNote null, date/revision일치.
+- 원인 Drizzle single-table select가 SQL템플릿 ${products.id}를 unqualified "id"로 변환. REVIEWER_NOTE 하위쿼리에서 a.product_id=a.id가 되어 products.id 상관관계가 깨짐. joined큐조회에서는정상. 기존테스트productId=auditItemId=1이라못잡음.
+- 보완 worktree /private/tmp/nmv-note-correlation-20260926 branch fix/search-reviewer-note-correlation (base224525c). lib/domain/products/search-profiles.ts NOTE문자열에 products.id를명시적으로qualified. 새로운 tests/integration/search-profile-note-correlation.test.ts는 productid2/auditid1을강제, 메모있음/메모없음/검수3회귀.
+- RED /tmp/nmv-note-correlation-red.log 3개모두saved=false실패실제재현. GREEN등검증 /tmp/nmv-note-correlation-*.log 진행중, 별도후속PR 필요. 이전4PR병합완료배포224인현재운영은이추가문제남아있음. 완료라고보고하지말것.
+- 배포후우선 failedProfile5(ID1271,5829,5366,4760,1829) 재생성재시도. ID18759Hyperswitch 생성실패는새엄격파서성공/saved=true. 임시우선재생성script /tmp/nmv-prioritize-failed-profiles.ts 운영컨테이너 /tmp동일파일; log5false1true보존. 동일profilejoblease로중복MLX호출없음.
+- 새text배포시 임시helpers삭제/프로세스정지됨. 새containerid확인후 /tmp/nmv-verification-repair-lease.ts 재복사/재실행해필요한기간Qwen검수병렬유지. helper관련root path를최신release코드로갱신. 양쪽web에도보완배포. migration변경없음.
+- 루트 main을224525c로ff동기화완료, 사용자 scripts/search-judgments.json 해시보존확인. livehandoff는저장했다가다시복원해서M상태. 임시PG55438 docker nomorevibe-freshness-reviewed-test-db 재시작하여검증중.
+
+# 2026-09-26 22:58 임시검수 실행기 보완
+
+- 임시verification helper가 normaltextworker와 매틱 lease를 다투며 직렬대기가 재발할 수 있어서 /tmp/nmv-verification-repair-lease.ts로 교체. 기존 helperPID597SIGTERM, 새 helper는 하나의 product-search-verify lease(기존 heartbeat갱신) 아래 내부110초틱반복. Qwen동시4/MLX동시2는불변. 원래textworker는 lockedverify를건너뛰고 profile처리함.
+- 새helper 최대4시간/eligible생성·검수queue3회빈경우정지. 새로그 docker exec f547adc9406c tail /tmp/nmv-verification-repair-lease.log. 요청한운영복구임시프로세스이며저장소서비스설정변경없음. 종료PID확인후 필요시SIGTERM.
+- 22:54 pending2933, generationerrors0, oldverifycaps5(재생성대기), generated5m58/verified5m45. quick통계 계속수집, 아직hash복구완료아님.
+- 다음: python3 /tmp/nmv-repair-ops-20260926.py quick 반복, full inspect는종료전만. 수집원본이계속바뀌므로 pending신규건과기존cohort는분리하여실제완료판정. helper종료후서비스정상/최신hash/검색사본재검증하고보고.
+
+# 복구 모니터링 최종 상태/도구 (2026-09-26 22:52)
+
+- 운영 큐 등록 완료3006. 22:50 full inspector pending2989, mismatch2756, unmarked0, 생성5m34/검수5m21, generation errors0, old verification capped5는 재생성 대기하여 아직reset전. 모든불일치가대기열에등록됨, 실제재생성끝나지않음.
+- 임시 검수runnerPID597 textcontainerf547adc9406c, 정상첫틱11완료/0실패. 앞 phase 설명 참조.
+- 모니터링 비용 축소: python3 /tmp/nmv-repair-ops-20260926.py quick 로 집계만(해시전체읽기없음). mismatch/unmarked null은 오류가 아니라quick에서생략. full inspect는전체원본을읽으므로 자주반복금지, pending0가까울때/final에서실행.
+- 최신 파일들 /tmp/nmv-profile-repair-quick-1.json, /tmp/nmv-profile-repair-progress-4.json, /tmp/nmv-profile-repair-apply.json. 앞으로타임스탬프별quick파일과최종검증파일저장. 배포/검증모두완료(actualhash정렬만현재진행중).
+- 완료기준: 기존cohort actualgeneration해시대조0, generationerrors/exhausted0, 과거검수실패5복구완료 및remaining정상검수상태보고. 임시helper종료확인. 메인모든수정PR189/190/191/193+fixture192병합완료.
+
+# 2026-09-26 22:50 복구 대기열 등록 완료
+
+- /tmp/nmv-profile-repair-apply.json: scanned19239, mismatched2783, alreadyPending13, queued3006, verificationRetried0. 과거 검수실패5도 근거해시가 바뀌어 생성부터 재개하므로 verificationRetried0은 정상.
+- 요청한 수정 PR 모두 병합/최신224525c 배포 완료. 기존hash실제맞추기는 worker재생성/검수 계속 진행 중. root handoff 마지막 갱신만 로컬 미커밋, root 사용자변경 scripts/search-judgments.json 보존.
+- 메인 검증종료. 생성한 임시PG테스트 컨테이너3개 stop진행(기존55435 nomorevibe-test-db 유지). sourceworktrees는 보존.
+- 다음명령: python3 /tmp/nmv-repair-ops-20260926.py inspect > /tmp/nmv-profile-repair-progress-N.json ; ssh jr@100.92.77.66 'docker exec f547adc9406c tail -n 20 /tmp/nmv-verification-repair.log'. 매번 통계파일 at과pending/mismatch/오류/생성·검수5m율 확인. 임시검수helper max4h 및drained자동정지. 실제완료후 보고/문서 갱신.
+
+# 2026-09-26 22:50 복구 처리량 보완
+
+- 기존 text 워커에서 profile55초+verify110초를 직렬 실행하여 생성이 검수 기다림. 복구 기간 임시 verification helper를 text container f547adc9406c에 /tmp/nmv-verification-repair.ts로 넣고 docker exec -d 실행. 기존 product-search-verify job lease+동시4개 유지, profile 기존동시2개 유지. 정상서비스 설정/intro pause 변경 없음.
+- helper stop: 최대4시간 또는 생성/검수 eligible 큐가3번 연속빈 경우 자동정지. 로그 docker exec f547adc9406c tail /tmp/nmv-verification-repair.log. 수동 중단 필요 시 그 파일명의 node PID를 ps로 확인 후 SIGTERM (코드signal보존). 재배포 시 임시파일/프로세스 사라짐.
+- 22:48 mismatch2769, pending2255, 아직CLI미등록651. profile18 실제재생성, verify18 실제검수. apply 프로세스실행중 /tmp/nmv-profile-repair-apply.json.
+- 절대 완료라고 보고하지 말 것: 실제 mismatch0/current profile provenance 대조와 검수큐/오류 확인까지 계속. /tmp/nmv-repair-ops-20260926.py inspect 로 전체통계출력. 원본변경 새데이터 정상pending은 따로실제완료 구분.
+
+# 2026-09-26 22:47 실제 복구 모니터링
+
+- 최종 배포 main224525c: M3 workers6 모두 running healthy, collector/parser/profile/intro/job/migration7개 파일 hash42개 일치. 양쪽 web done 동일커밋, /api/health 양쪽 DBok2ms. /tmp/nmv-profile-runtime-proof.json, /tmp/nmv-profile-mini-health.json.
+- 통합 main 최종 type/lint(기존 경고1)/단위1169/통합864(TODO1)/build 통과 /tmp/nmv-pipeline-release-*.log.
+- 운영 repair apply 실행 중(pid94348 당시): /tmp/nmv-profile-repair-apply.json 최종요약미출력, 약19k스캔+3000트랜잭션으로 수분 걸림. 최초baseline mismatch2780. 22:46 pending1050, 남은 미등록1894, 과거 빈응답 등 repair_version1 211.
+- 새 text worker 22:47:08 프로필 실제18건 성공/0실패. 초반3건성공후 두틱0건이라 검증: pendingProfiles query248ms, 최신입력/작업해시/updatedAt/revision 모두 같음 /tmp/nmv-profile-save-debug.json. 새처리는 정상 시작됨, 아직 완료 아님.
+- 근거 partial-invalid1195→1187 감소, complete27634→27643. 반복compare실패 일부 실제복구확인. 전체완료아님.
+- 다음: apply 종료 확인 후 inspect 통계 반복(복구완료까지 actual mismatch 제거/검수확인), 느린 serialtext profile/verify 스케줄 검토. 소개 검수2100중단 유지. DB비밀출력금지.
+- Dokploy deploy는 HTTP200 빈 body를 반환하므로 helper JSON parse만 실패했으나 실제8배포done 확인. helper는 빈응답처리로 수정했으며 불필요재배포 금지.
+
+# 2026-09-26 22:42 검색 수정 배포/복구 진행
+
+- 완료: 독립 PR189(소개 키워드 초기화),190(compare 작은 응답),191(엄격한 생성/검수 응답),193(자동 갱신/해시 복구) 모두 병합. PR192는 기존 홈 단위 테스트 DB 접근 격리. 최종 main 224525c(verify/pipeline-release-20260926 HEAD).
+- 전체 CI 로컬 대체: 각각 타입/린트 오류0(기존 경고1), 단위1156~1168, 통합849/851/862 통과(기존 TODO1), 각 프로덕션 빌드 통과. 원격 CI runner_id0/steps0+결제 사유 확인, GitGuardian 성공. 정확한 PR head/CI증거 /tmp/nmv-pr-release-checks.json. 독립 리뷰4건 반영 후 D 재리뷰 추가 문제 없음.
+- 운영 migration0048 적용 완료 /tmp/nmv-profile-production-migration.log. 운영 프로필19239, 해시 불일치2780, 자동갱신 대기4. 아직 수동 repair --apply 실행 전.
+- 배포: /tmp/nmv-repair-ops-20260926.py deploy로 관련 M3 worker6+M3/mini web2 동시 배포 요청. 진행 /tmp/nmv-profile-deployment-status.json. API200은 완료가 아니라 대기열 등록. 실제 소스 hash 및 컨테이너 건강 확인 후 apply.
+- 새 통합 검증 트리: /private/tmp/nmv-pipeline-release-20260926, 모든 변경 포함 최종 main. node_modules 사본으로 typegen/tsc/lint/unit/integration/build 실행 중 /tmp/nmv-pipeline-release-*.log. 운영DB로 테스트 금지.
+- 다음 명령: python3 /tmp/nmv-repair-ops-20260926.py status; python3 /tmp/nmv-repair-ops-20260926.py inspect; 새 text code 및 8서비스 done 확인 후 python3 /tmp/nmv-repair-ops-20260926.py apply; 이후 inspect로 실제 mismatch 소진/검수 완료 확인. hash만 overwrite 금지. 복구 CLI repair_version1로 한 번만 재개.
+- 운영 helper는 keychain 및 child env에만 비밀 유지, 출력/파일 저장 금지. 소개 검수 job not_before2100 유지. 기존 scripts/search-judgments.json 사용자 변경 보존. 모든 소스 수정은 독립 worktree에서 완료, 루트 소스에 변경 없음.
+- 실패 접근: worktree symlink node_modules가 Turbopack filesystem root 밖이라 빌드 실패; cp -cR 로컬 사본으로 해결. 복사 중 실행 중인 통합 3~4 suite의 dependency 조회 실패가 발생하여 다시 전체 실행했고 모두 통과. 기본 main 홈 단위 2개 timeout 재현 후 PR192로 해결.
+
+# 2026-09-26 검색 파이프라인 수정 진행
+
+- 목표: 감사 항목 2/3/4를 각각 PR로 수정하고, 프로필 source hash 불일치 재발 방지와 기존 데이터 실제 재생성(해시만 덮어쓰기 금지).
+- 독립 작업 트리: /private/tmp/nmv-evidence-compare-20260926 (fix/evidence-compare-response), /private/tmp/nmv-intro-keywords-20260926 (fix/intro-search-keyword-invalidation). 둘 다 origin/main 410c991 기반. 루트 scripts/search-judgments.json 사용자 변경 보존.
+- 완료: A compare 관계 조회 page=2&per_page=1로 파일 패치 응답 제한 회피. 단위 27개 통과 /tmp/nmv-compare-green-final.log, 통합 29개 통과 /tmp/nmv-compare-integration-final.log. B 소개 교정 트랜잭션에서 searchKeywords 초기화. 통합 14개 통과 /tmp/nmv-intro-green.log. 각각 실제 RED 확인 후 GREEN.
+- 수정 파일 A: lib/domain/evidence/agents/collect.ts, tests/agent-evidence-collect.test.ts, tests/integration/agent-evidence-repository.test.ts, tests/integration/agent-evidence-cursor-recovery.test.ts. B: lib/domain/products/intro-checks.ts, tests/integration/intro-check.test.ts.
+- 미완료: 각 독립 리뷰/커밋/푸시/PR, C 응답 스키마와 키워드 전체 검수 강제, D 원본 변경 자동 갱신 + 최신 reviewerNote/입력 해시 저장 시 재검증 + 기존 2747개 불일치 실제 재생성, 배포/운영 검증.
+- 설계: source_hash는 실제 생성 근거 해시로 보존. 원본 변경 시 needs_refresh 표시하여 worker가 실제 재생성, 저장 시 최신 근거 검사. 실패 시 이전 키워드 해시 덮어쓰기 금지. 별도 reconciliation dry-run/apply 스크립트.
+- 실패 접근: 첫 A 통합 테스트의 이전 compare URL mock 2개가 실패, 새 query로 갱신 후 29개 통과. 동시 통합 테스트는 같은 로컬 DB를 사용하므로 앞으로 순차 실행.
+- 다음 명령: cd /private/tmp/nmv-evidence-compare-20260926; git diff --check; codex review --uncommitted (모델 설정은 -c). B도 별도 리뷰. C 작업 트리 생성 후 tests/search-profile.test.ts, tests/search-verify.test.ts RED부터 진행.
+- 운영: /tmp/nmv-health-20260925.py 및 /tmp/nmv-health-20260925-apps.json로 안전한 Dokploy 접근. 비밀 환경 출력/파일 저장 금지. 운영 DB에 통합 테스트 절대 실행 금지. 소개 검수는 2100까지 명시 중단 상태 유지.
+
+# 수집·검수 및 검색 저장 감사 완료 — 2026-09-26 21:40 KST
+
+## 목표 / 완료
+사용자 “수집,검수과정문제및검색개선추가저장요소누락검토보고”. 코드·운영READ ONLY DB·원본대조·관련단위/통합·로컬재현·운영워커hash검증완료. 보고서 `docs/operations/2026-09-26-search-pipeline-review.md`.
+
+## 핵심 발견 / 남음
+- 검색공개19,217개후보/문서/프로필연결누락0,색인빈값0,category전부/값일치. 토픽/README사본차이0,본문차이초기1→재조회0. 성공키워드사본19,216개불일치0.
+- README미확인12,089개(9월19일이전제품).표본8모두실제README있음.원본보충수집경로부재.신규공개9월20일이후버전미기록0.
+- 활성근거partial/invalid883개;전체최신invalid908개전부커밋compare단계.공개API4개HTTP200/ahead이나본문2MiB초과재현.현공통클라이언트invalid로막고15분재시도.원인확인4개를전체로확대단정금지.작은페이지표본1은1.17MB로성공.
+- 소개수정후profile만삭제/search_keywords잔존,생성HTTP502실패후잘못된키워드유지로컬재현.운영orphankeywords0.수정필요latent버그.
+- `{}`생성답ok빈배열,checks[]검수성공허점재현.성공빈프로필261개중허점때문인지원문미저장이라확정불가.생성실패1/검수실패5는한도5로자동대상제외.
+- 현재증거해시와불일치2,747/19,216개;30일재생성정책은의도적,내용변경인지본문숫자인지미분류.프롬프트판/검사범위메타부족.
+- 소개검수보류2100년그대로,선택함수대상43개;임의재개안함.근거enforceEligibility/displayObservedFacts=false는기존설정.
+
+## 변경 파일 / 결정 / 검증
+보고서와 `docs/operations/evaluations/2026-09-26-search-pipeline-review/` JSON6개+로그2개+읽기전용스크립트.txt3개,이handoff.소스수정·운영변경·커밋·push·배포없음.사용자scripts/search-judgments.json변경및기존untracked보존.
+단위7파일69PASS,통합7파일101PASS+1TODO(전용localhost55435/nomorevibe_test).로컬proof소개수정/생성실패잔존재현.운영소스관련9파일현재코드와hash일치.공개GitHub비교4/README8GET성공.전체build/lint/test미실행.집계1차regexp역참조템플릿이스케이프→SQLundefined오류,split_part로고쳐READ ONLY조회완료;최초rollback.테스트는운영DB에절대실행하지말것.
+
+## 다음 명령
+```sh
+cd /Users/jr/Desktop/projects/nomorevibe
+cat docs/operations/2026-09-26-search-pipeline-review.md
+git status --short
+python3 /tmp/nmv-health-20260925.py search
+python3 /tmp/nmv-health-20260925.py search-detail
+npx tsx .crawl-samples/admin-ui-review/search-proofs-20260926.ts
+```
+/tmp helper존재시만사용.읽기전용audit출력/tmp/nmv-search-{audit,detail}-20260926.json,proof는고정전용로컬DB만사용.다음수정우선순위는보고서끝참조.운영재처리/재배포요청은이번감사와별개로검증후진행.
+
+---
+
+# 수집 중단 의심 점검 완료 — 2026-09-26 21:12 KST
+
+## 목표 / 완료
+사용자 “수집이 멈춘거같아” 확인. 운영DB/워커/스케줄러/실행로그 조사 후 다음 예약 배치 직접 관찰. 실제21:11:47 신규41건 발견 →21:12:03 원본41건 수집, 실패0. 수집 중단 아님. 21:09스냅샷1시간원본170/AI1성공38회/AI2성공26표/발행15. 큐0,워커healthy,스케줄러heartbeat정상. 신규발견10분주기 vs UI최근1분·5분집계라중간0으로보임. 코드·운영설정·배포수정없음.
+
+## 변경 / 검증 / 결정
+`docs/operations/2026-09-26-crawl-check.md`, `docs/operations/evaluations/2026-09-26-crawl-check/`집계4개,이handoff. 사용자변경scripts/search-judgments.json및기존untracked보존. READ ONLY SQL/DokployGET/healthHTTP200/SSH상태·로그조회성공. 단위·통합테스트미실행. 잘못된lib/jobs/crawl/seed.ts경로조회실패,실제주기는catalog에서확인. 정상예약진행을확인해강제실행·재시작하지않음.
+
+## 남음 / 다음 명령
+현재중단문제없음. 후속UI개선권장: 마지막수집/다음발견예정/10분또는1시간처리량표시. 이전근거오류·생존확인용량·사람대기문제는해결되지않음. HEAD410c991. 9앱autoDeploytrue확인;아래과거restore명령재실행금지.
+```sh
+cd /Users/jr/Desktop/projects/nomorevibe
+cat docs/operations/2026-09-26-crawl-check.md
+git status --short
+python3 /tmp/nmv-health-20260925.py audit
+python3 /tmp/nmv-health-20260925.py status
+```
+helper가남아있을때만사용. 기존helper출력은/tmp/nmv-health-20260925-{db,apps}.json으로덮어쓰므로당일증거로복사할것. 운영DB테스트금지.
+
+---
+
+# 수집·평가 운영 상태 점검 완료 — 2026-09-25 09:43 KST
+
+## 현재 목표 / 완료
+사용자 “크롤링등은 잘하고있어? 수집 평가등”에 대한 읽기전용 운영 감사. 수집·AI1/2·발행 진행 확인. 1시간 수집174, AI1성공46회, AI2성공31표, 발행16. 핵심 준비 큐0, 최근5분 진행 있음. 9앱done/autoDeploytrue, 핵심7워커healthy. 운영 변경·재배포·커밋·push 없음. HEAD c7937d1이며 아래9월22일 기록보다 이후 코드가 배포됨. **아래 과거 autoDeploy restore 명령을 재실행하지 말 것. 현재9개 모두true를 확인했다.**
+
+## 주요 문제 / 남은 작업
+- 근거 partial/invalid841개는 전부 커밋 대기. 1시간 invalid39회(서로 다른39repo), 원인 미확정. upsert라 DB행 수로 반복 횟수 판단 불가. 실패 사유 세분화 후 영구 오류 재시도 정책 검토 필요.
+- 생존 확인 공개18,730개, 6시간 초과13,330개. 코드BATCH15/동시3/매분, 로그900건/시간으로 상한. 목표52건/분 이상, 배치와HTTP동시성 함께 개선 필요.
+- 사람 판단 대기1,694개 중 split1,528. 소개문 검수는 not_before2100년으로 보류; 사유 미확인, 임의 재개 금지.
+- GitHub호출제한 재시도 존재. RELEASE_TAG는611820d로 오래됐고 실제배포description과 다름.
+
+## 변경 파일 / 판단 / 검증
+`docs/operations/2026-09-25-pipeline-health.md`, `docs/operations/evaluations/2026-09-25-pipeline-health/` 집계5개, 이handoff. 무관untracked보존. 작업은 감사이므로 운영 설정/큐 수정하지 않음. curlhealth200/DBok2ms, DokployGET, READ ONLY DB집계, SSH docker상태·1시간로그 성공. 단위/통합테스트는 미실행. 실패 접근: 잘못된 uptime-ping.ts 경로와 GitHub glob경로를 rg로 바로잡음; pause감사target조회0건; 동일스캔 upsert 때문에 repeated행조회는 반복실패 증거로 사용불가.
+
+## 다음 명령
+```sh
+cd /Users/jr/Desktop/projects/nomorevibe
+cat docs/operations/2026-09-25-pipeline-health.md
+git status --short
+python3 /tmp/nmv-health-20260925.py status
+python3 /tmp/nmv-health-20260925.py audit
+python3 /tmp/nmv-health-20260925.py detail
+```
+도구가 남아 있을 때만 사용. `/tmp/nmv-health-20260925.py`는Keychain키/DATABASE_URL을메모리로전달하는읽기전용launcher; 실제SQL은ignored `.crawl-samples/admin-ui-review/health-20260925{,-detail}.ts`. 운영DB에테스트금지. 후속수정은원인확인후별도검증할것.
+
+---
 
 # 관리자·처리 속도 운영 배포 및 검증 완료 — 2026-09-22 07:24 KST
 

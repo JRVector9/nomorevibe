@@ -200,6 +200,10 @@ docker compose exec crawler node --import tsx scripts/run-job.ts crawl-fetch
 | `ranking-refresh` | 시즌 경계·쿨다운을 계산하고 공개 순위 스냅샷 갱신 | `ranking_seasons`, `ranking_entries` |
 | `product-evidence-refresh` | 공식 링크·저장소·업데이트·내부 보관 미디어 갱신 | `product_evidence_*`, `product_updates`, `product_media` |
 | `agent-evidence-refresh` | 공개 저장소의 지침·설정·기여 근거 갱신 | `agent_repository_scans`, `agent_repository_observations` |
+| `product-readme-refresh` | 재수집으로 무효화된 README 확인, crawler 5분/최대 2개 | `crawl_documents.page_meta` |
+| `product-search-refresh` | 원본 발췌·토픽·README 검색 입력 복사 | `products.search_*`, 프로필 갱신 표시 |
+| `product-search-profile` / `product-search-verify` | 변경 원본의 키워드 생성·엄격 검수 | 검색 프로필·키워드 사본 |
+| `product-search-health` | 원본 해시·프로필·사본·실패/정체 읽기 전용 대조 | 관리자 완료 관측 |
 
 ```bash
 GITHUB_TOKEN=... npm run job crawl-seed      # 로컬에서 한 틱씩
@@ -357,7 +361,11 @@ seed·fetch·judge·AI 리뷰·publish는 크롤 설정의 `enabled`가 꺼져 �
 검색은 제품 소개·페이지 발췌·토픽·저장소 README·최신 심사 사유를 입력으로 삼는다. README는
 `crawl_documents.page_meta`에 정제된 최대 3,000자 발췌를 보관하고 `products.search_readme`에는
 최대 2,000자를 반영한다. 큰 README는 최대 256 KiB만 읽고 나머지 스트림을 취소한다.
-SSRF 검사와 시간 제한은 유지한다. README의 링크·문장은 근거이며 모델에 내리는 지시가 아니다.
+SSRF 검사와 시간 제한은 유지한다. 배포 페이지만 다시 수집할 때는 마지막 README 발췌를 보존하고
+최신 확인 캐시를 무효화한다. crawler의 `product-readme-refresh`가 5분마다 최대 2개를 다시 확인한다.
+확인 성공 시 교체하고, 공개 저장소의 README 미발견이 확인되면 빈 값으로 반영한다. 일시적 오류·접근 제한은
+이전 발췌를 보존하고 15분부터 최대 24시간까지 재시도를 늦춘다. GitHub가 지정한 대기 시각은 우선한다.
+README의 링크·문장은 근거이며 모델에 내리는 지시가 아니다.
 
 검색 원본이 바뀌면 프로필을 갱신 대상으로 표시하고 text 워커가 다시 생성·검수한다.
 원본 해시를 강제로 맞춰 예전 키워드를 최신 결과로 꾸미지 않는다. 새 결과를 쓸 때 현재 원본·버전·잡 소유권을
@@ -376,9 +384,9 @@ npx tsx --env-file=.env.local scripts/reconcile-search-profiles.ts
 npx tsx --env-file=.env.local scripts/reconcile-search-profiles.ts --apply --retry-invalid-output --retry-empty
 ```
 
-프로필 복구 명령은 외부 README를 다시 받지 않는다. README 재수집 결과에서는 저장 성공·실제 미발견·빈 파일·
+프로필 복구 명령은 외부 README를 다시 받지 않는다. README 재수집 결과에서는 저장 성공·실제 미발견·사용 가능한 텍스트 없음·
 일시적 오류를 구분해야 한다. 네트워크 오류를 없는 README로 캐시하지 않고, 원본 문서가 그사이 바뀌면
-다음 시도에서 다시 읽는다. 운영 복구 기록과 잔여 건수는 `docs/operations/`의 해당 릴리스 보고서에 남긴다.
+다음 시도에서 다시 읽는다. 이번 재수집 결과와 검증은 [2026-09-27 운영 보고서](docs/operations/2026-09-27-public-ci-readme-recovery.md)에 기록했다.
 
 ## 판정 기준 시험
 
