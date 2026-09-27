@@ -54,6 +54,8 @@ export type CappedFetchResult =
       finalUrl: string;
       headers: Headers;
       body: Buffer;
+      /** Present only when the caller explicitly requests a bounded prefix. */
+      truncated?: boolean;
     }
   | CappedFetchFailure;
 
@@ -104,6 +106,35 @@ export async function readBodyStrictlyCapped(
   return Buffer.concat(chunks);
 }
 
+async function readBodyPrefix(response: Response, maxBytes: number): Promise<{ body: Buffer; truncated: boolean }> {
+  const reader = response.body?.getReader();
+  if (!reader) return { body: Buffer.alloc(0), truncated: false };
+  if (maxBytes === 0) {
+    await reader.cancel();
+    return { body: Buffer.alloc(0), truncated: true };
+  }
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) return { body: Buffer.concat(chunks), truncated: false };
+    const remaining = maxBytes - total;
+    if (value.length > remaining) {
+      // Copy only the retained prefix, without holding the oversized chunk's buffer.
+      if (remaining > 0) chunks.push(Buffer.from(value.subarray(0, remaining)));
+      await reader.cancel();
+      return { body: Buffer.concat(chunks), truncated: true };
+    }
+    chunks.push(value);
+    total += value.length;
+    if (total === maxBytes) {
+      // The retained excerpt is complete; do not wait for an unread response tail.
+      await reader.cancel();
+      return { body: Buffer.concat(chunks), truncated: true };
+    }
+  }
+}
+
 /**
  * 외부 증거 수집용 fetch. 모든 redirect hop과 실제 연결에서 SSRF 정책을 적용하고,
  * 선언된 Content-Length와 실제 stream 양쪽을 같은 상한으로 검증한다.
@@ -115,6 +146,8 @@ export async function fetchCapped(
     timeoutMs?: number;
     signal?: AbortSignal;
     headers?: Record<string, string>;
+    /** Read a bounded excerpt instead of rejecting an oversized body. */
+    allowTruncatedBody?: boolean;
     /** 테스트 전용 주입점. 프로덕션 기본 요청은 연결 시점 DNS도 재검사한다. */
     request?: CappedRequest;
   },
@@ -160,8 +193,15 @@ export async function fetchCapped(
     if (!response.ok) return { ok: false, reason: "http", status: response.status };
 
     let body: Buffer | null;
+    let truncated: boolean | undefined;
     try {
-      body = await readBodyStrictlyCapped(response, options.maxBytes);
+      if (options.allowTruncatedBody) {
+        const prefix = await readBodyPrefix(response, options.maxBytes);
+        body = prefix.body;
+        truncated = prefix.truncated;
+      } else {
+        body = await readBodyStrictlyCapped(response, options.maxBytes);
+      }
     } catch (error) {
       if (timedOut(error)) return { ok: false, reason: "timeout" };
       return { ok: false, reason: "http", status: 0 };
@@ -173,6 +213,7 @@ export async function fetchCapped(
       finalUrl: current,
       headers: response.headers,
       body,
+      ...(truncated === undefined ? {} : { truncated }),
     };
   }
   return { ok: false, reason: "http", status: 310 };
