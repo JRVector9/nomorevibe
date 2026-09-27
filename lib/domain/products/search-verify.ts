@@ -50,6 +50,27 @@ const SYSTEM = [
 
 export type VerifyItem = { evidence: ProfileEvidence; keywords: string[] };
 export type VerifyResult = { ok: true; unsupported: string[] } | { ok: false; error: string };
+/** Retry only: same strict parser and model, sequential chunks, one shared deadline, no partial success. */
+export async function verifyKeywordsInChunks(item: VerifyItem, options: {
+  timeoutMs: number; model?: string; request?: typeof fetch; signal?: AbortSignal;
+}): Promise<VerifyResult> {
+  const deadline = Date.now() + Math.max(1, options.timeoutMs);
+  const timer = AbortSignal.timeout(Math.max(1, options.timeoutMs));
+  const signal = options.signal ? AbortSignal.any([options.signal, timer]) : timer;
+  const stopped = (): VerifyResult | null => options.signal?.aborted ? { ok: false, error: "cancelled" }
+    : timer.aborted || Date.now() >= deadline ? { ok: false, error: "timeout" } : null;
+  const keywords = [...new Set(item.keywords)];
+  const unsupported: string[] = [];
+  for (let offset = 0; offset < keywords.length; offset += 5) {
+    const before = stopped(); if (before) return before;
+    const result = await verifyKeywords({ evidence: item.evidence, keywords: keywords.slice(offset, offset + 5) },
+      { ...options, signal, timeoutMs: Math.max(1, deadline - Date.now()) });
+    const after = stopped(); if (after) return after;
+    if (!result.ok) return result;
+    unsupported.push(...result.unsupported);
+  }
+  return { ok: true, unsupported };
+}
 
 /** 첫 번째로 닫히는 JSON 객체 — 모델이 객체 뒤에 글이나 두 번째 객체를 덧붙이는 때가 있다(시험에서 80건 중 6건) */
 function firstObject(text: string): string {
