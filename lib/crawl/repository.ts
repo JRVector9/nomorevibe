@@ -326,7 +326,14 @@ export async function saveFetchedDocument(
     if (lease) await assertJobLease(tx, lease);
     if (!owned) return null;
 
-    const values = { ...doc, fetchedAt: new Date() };
+    // Deployment-page collection does not fetch repository README. Keep the last
+    // observation until README collection succeeds, but require a fresh cache check.
+    const readmeSample = previous?.pageMeta?.readmeSample;
+    const carryReadme = typeof readmeSample === "string"
+      && typeof doc.pageMeta?.readmeSample !== "string";
+    const values = { ...doc, pageMeta: carryReadme
+      ? { ...doc.pageMeta, readmeSample, readmeSampleVersion: null }
+      : doc.pageMeta, fetchedAt: new Date() };
     const [saved] = await tx.insert(crawlDocuments).values(values)
       .onConflictDoUpdate({ target: crawlDocuments.repo, set: values })
       .returning();
