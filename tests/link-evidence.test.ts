@@ -16,6 +16,21 @@ const ok = (body: unknown, finalUrl = "https://example.com"): CappedFetchResult 
 });
 
 describe("capped external fetch", () => {
+  it("returns the complete prefix without waiting for the oversized response tail", async () => {
+    let pulls = 0;
+    const cancelled = vi.fn();
+    const stream = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        if (++pulls === 1) controller.enqueue(Buffer.from("1234"));
+        else controller.error(new DOMException("timed out", "TimeoutError"));
+      }, cancel: cancelled,
+    }, { highWaterMark: 0 });
+    expect(await fetchCapped("https://example.com/readme", { maxBytes: 4, allowTruncatedBody: true,
+      request: async () => new Response(stream, { headers: { "content-length": "100" } }) }))
+      .toMatchObject({ ok: true, body: Buffer.from("1234"), truncated: true });
+    expect(pulls).toBe(1);
+    expect(cancelled).toHaveBeenCalledTimes(1);
+  });
   it("can explicitly read a bounded prefix and cancel a large stream", async () => {
     const cancelled = vi.fn();
     const stream = new ReadableStream<Uint8Array>({

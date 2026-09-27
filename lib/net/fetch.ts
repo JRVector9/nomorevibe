@@ -109,6 +109,10 @@ export async function readBodyStrictlyCapped(
 async function readBodyPrefix(response: Response, maxBytes: number): Promise<{ body: Buffer; truncated: boolean }> {
   const reader = response.body?.getReader();
   if (!reader) return { body: Buffer.alloc(0), truncated: false };
+  if (maxBytes === 0) {
+    await reader.cancel();
+    return { body: Buffer.alloc(0), truncated: true };
+  }
   const chunks: Uint8Array[] = [];
   let total = 0;
   for (;;) {
@@ -123,6 +127,11 @@ async function readBodyPrefix(response: Response, maxBytes: number): Promise<{ b
     }
     chunks.push(value);
     total += value.length;
+    if (total === maxBytes) {
+      // The retained excerpt is complete; do not wait for an unread response tail.
+      await reader.cancel();
+      return { body: Buffer.concat(chunks), truncated: true };
+    }
   }
 }
 
