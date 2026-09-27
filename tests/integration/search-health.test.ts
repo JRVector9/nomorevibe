@@ -60,6 +60,13 @@ describe("read only consistent search audit", () => {
     await seed("periodic-reuse");
     expect(await collectSearchHealth()).toMatchObject({ generatedRecent: 0 });
   });
+  it("does not report old verification failures after the source was invalidated", async () => {
+    const p = await seed("obsolete-verification");
+    await db.update(productSearchProfiles).set({ verifyError: "invalid_output", verifyAttempts: 5 })
+      .where(eq(productSearchProfiles.productId, p.id));
+    await db.update(products).set({ tagline: "New source" }).where(eq(products.id, p.id));
+    expect(await collectSearchHealth()).toMatchObject({ pendingGeneration: 1, repeatedFailures: 0, exhausted: 0 });
+  });
   it("persists owned audit counts and a continuous stalled-generation warning", async () => {
     await seed("waiting", false);
     const name = "product-search-health";

@@ -45,8 +45,9 @@ export async function collectSearchHealth(hasBudget = () => true) {
           if (!p.needsRefresh) c.unmarked++;
         }
         if (p.needsRefresh || p.errorCode) c.pendingGeneration++;
-        if (p.errorCode && p.attempts >= 5 || p.verifyError && p.verifyAttempts >= 5) c.exhausted++;
-        if (p.errorCode && p.attempts >= 3 || p.verifyError && p.verifyAttempts >= 3) c.repeatedFailures++;
+        const activeVerification = !p.needsRefresh && !p.errorCode && !p.verifiedAt;
+        if (p.errorCode && p.attempts >= 5 || activeVerification && p.verifyError && p.verifyAttempts >= 5) c.exhausted++;
+        if (p.errorCode && p.attempts >= 3 || activeVerification && p.verifyError && p.verifyAttempts >= 3) c.repeatedFailures++;
         const removed = new Set(p.removedKeywords);
         const expected = keywordText(p.keywordsEn.filter(k => !removed.has(k)), p.keywordsKo.filter(k => !removed.has(k)));
         if (row.product.searchKeywords !== expected) c.copiesMismatched++;
