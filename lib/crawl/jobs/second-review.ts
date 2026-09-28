@@ -32,9 +32,9 @@ export async function secondReviewCandidates(ctx: JobContext<null>): Promise<Job
     ctx.log("crawl.second_review_skipped", { reason: !settings.enabled ? "disabled" : "second_review_off" });
     return { done: true };
   }
-  const enqueued = await enqueueSecondReviews(settings);
-  const closed = await closeSettledSecondReviews();
-  await retryFailedSecondReviews();
+  const enqueued = await enqueueSecondReviews(settings, undefined, ctx.lease);
+  const closed = await closeSettledSecondReviews(undefined, ctx.lease);
+  await retryFailedSecondReviews(undefined, ctx.lease);
   const queue = [...await pendingSecondReviews(FETCH)];
   const remaining = () => TICK_MS - (Date.now() - startedAt);
   let reviewed = 0, failed = 0, deferred = 0;

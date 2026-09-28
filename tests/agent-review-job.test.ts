@@ -184,7 +184,7 @@ it("README 가 없으면 한 번 받아 저장하고, 있으면 다시 받지 �
   mocks.readme.mockResolvedValue("Oigo — dictation for macOS");
   await reviewCrawlCandidates(context());
   expect(mocks.readme).toHaveBeenCalledWith("acme/demo");
-  expect(mocks.saveReadme).toHaveBeenCalledWith("acme/demo", "Oigo — dictation for macOS", expect.objectContaining({id: 1}));
+  expect(mocks.saveReadme).toHaveBeenCalledWith("acme/demo", "Oigo — dictation for macOS", expect.objectContaining({id: 1}), expect.objectContaining({name: "crawl-agent-review", token: "token"}));
 
   mocks.readme.mockClear(); mocks.saveReadme.mockClear();
   const stored = await mocks.document();

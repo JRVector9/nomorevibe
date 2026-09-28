@@ -176,14 +176,16 @@ export function parseLoopArgs(args: string[], defaultSeconds: number) {
 async function main() {
   const options = parseWorkerArgs(process.argv.slice(2));
   await withRuntimeProcess(options.role, async (signal, report) => {
-    const [{ jobsForRole }, { pendingJobNames, markWorkerSeen }, { JOBS }, { runJob }] = await Promise.all([
-      import('@/lib/jobs/catalog'), import('@/lib/jobs/control'), import('@/lib/jobs/registry'), import('@/lib/jobs/runner'),
+    const [{ jobsForRole }, { pendingJobNames, markWorkerSeen }, { JOBS }, { runJob }, { roleLeaseFromEnv }] = await Promise.all([
+      import('@/lib/jobs/catalog'), import('@/lib/jobs/control'), import('@/lib/jobs/registry'),
+      import('@/lib/jobs/runner'), import('@/lib/jobs/role-leader'),
     ]);
+    const roleLease = roleLeaseFromEnv(options.role, process.env);
     const result = await runWorker({ ...options, signal }, {
       names: jobsForRole(options.role),
       pending: () => pendingJobNames(options.role),
       seen: markWorkerSeen,
-      run: (name, runOptions) => runJob(name, JOBS[name], jobRunOptions(name, runOptions)),
+      run: (name, runOptions) => runJob(name, JOBS[name], { ...jobRunOptions(name, runOptions), roleLease }),
       report, log: runtimeLog,
     });
     runtimeLog('worker.stopped', { role: options.role, ...result });

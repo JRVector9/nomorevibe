@@ -71,3 +71,12 @@ export async function assertJobLease(tx: ProductTransaction, lease: JobLease, mo
   )).for(mode);
   if (!owned) throw new JobLeaseLostError();
 }
+
+/** Keep a worker side effect and its job-token check in one commit. */
+export function withJobLeaseWrite<T>(lease: JobLease | undefined, write: (tx: ProductTransaction) => Promise<T>): Promise<T> {
+  return db.transaction(async tx => {
+    const result = await write(tx);
+    if (lease) await assertJobLease(tx, lease);
+    return result;
+  });
+}

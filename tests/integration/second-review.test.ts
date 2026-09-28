@@ -100,6 +100,18 @@ it('사람이 이미 결정했거나 공개분이 내려가면 닫는다 — 지
   ]);
 });
 
+it('does not reopen failed votes after the reviewer job token is revoked', async () => {
+  await held('acme/late-vote');
+  await firstReview('acme/late-vote', 'approve');
+  await enqueueSecondReviews(await getSettings());
+  await db.update(secondReviews).set({ status: 'failed', reviewedAt: new Date('2026-01-01'),
+    errorCode: 'timeout', failureCount: 1 });
+  const lease = { name: 'second-review', token: 'old-reviewer', requestedVersion: 1 };
+  await db.insert(jobs).values({ name: lease.name, lockedAt: sql`now()`, requestedVersion: 1 });
+  await expect(retryFailedSecondReviews(new Date(), lease)).rejects.toThrow('job_lease_lost');
+  expect((await db.select().from(secondReviews))[0].status).toBe('failed');
+});
+
 it('일치·엇갈림·공개분을 따로 세고, 심사 화면이 후보 id 로 거른다', async () => {
   const agreedReject = await held('acme/agreed-reject');
   const agreedApprove = await held('acme/agreed-approve');

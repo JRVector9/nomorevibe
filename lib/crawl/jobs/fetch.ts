@@ -11,6 +11,8 @@ import { extractSiteRepositoryKeys } from "@/lib/domain/evidence/providers/site-
 import { extractGithubLinks } from "@/lib/crawl/github-links";
 import { requeueAfterAdminEvidenceRefresh } from "@/lib/crawl/admin-review";
 import { requestJob } from "@/lib/jobs/control";
+import { assertJobLease } from "@/lib/jobs/control";
+import { db } from "@/lib/db";
 
 /**
  * 수집 잡 — 프론티어에서 꺼낸 레포의 원본을 확보한다.
@@ -50,12 +52,16 @@ export async function fetchCrawlDocuments(ctx: JobContext<null>): Promise<JobOut
     ctx.log("crawl.fetch_skipped", { reason: "disabled" });
     return { done: true };
   }
+  if (ctx.lease && ctx.hasBudget()) {
+    const recovered = await crawl.recoverAbandonedFrontier(ctx.lease);
+    if (recovered) ctx.log("crawl.fetch_recovered", { recovered });
+  }
 
   const tally: Tally = { fetched: 0, skipped: 0, failed: 0 };
   const oneAtATime = originQueue();
 
   while (ctx.hasBudget()) {
-    const entries = await crawl.dequeue(BATCH);
+    const entries = ctx.lease ? await crawl.dequeue(BATCH, undefined, ctx.lease) : await crawl.dequeue(BATCH);
     if (entries.length === 0) {
       ctx.log("crawl.fetched", { ...tally, drained: true });
       return { done: true };
@@ -144,10 +150,20 @@ async function fetchBatch(
 
   const unfinished = entries.filter((entry, index) => index >= batch.next || batch.giveBack.has(entry));
   if (unfinished.length > 0) {
-    if (batch.retryAt) await crawl.deferFrontier(unfinished, batch.retryAt);
+    if (batch.retryAt) {
+      if (ctx.lease) await crawl.deferFrontier(unfinished, batch.retryAt, ctx.lease);
+      else await crawl.deferFrontier(unfinished, batch.retryAt);
+    } else if (ctx.lease) await crawl.deferFrontier(unfinished, undefined, ctx.lease);
     else await crawl.deferFrontier(unfinished);
   }
-  if (batch.needsJudgement > 0) await requestJob("crawl-judge");
+  if (batch.needsJudgement > 0) {
+    const lease = ctx.lease;
+    if (lease) await db.transaction(async tx => {
+      await assertJobLease(tx, lease);
+      await requestJob("crawl-judge", tx);
+    });
+    else await requestJob("crawl-judge");
+  }
 
   const failure = lanes.find((settled): settled is PromiseRejectedResult => settled.status === "rejected");
   if (failure) throw failure.reason;
@@ -173,13 +189,15 @@ async function fetchEntry(
     }
     if (result.error.kind === "not_found") {
       // 지워졌거나 비공개로 바뀌었다 — 다시 시도할 이유가 없다
-      await crawl.markFrontier(entry.repo, "skipped", entry);
+      if (ctx.lease) await crawl.markFrontier(entry.repo, "skipped", entry, ctx.lease);
+      else await crawl.markFrontier(entry.repo, "skipped", entry);
       return { kind: "skipped" };
     }
     const reason = result.error.kind === "http"
       ? `GitHub ${result.error.status}`
       : `GitHub ${result.error.kind}`;
-    await crawl.markFailed(entry.repo, reason, undefined, entry);
+    if (ctx.lease) await crawl.markFailed(entry.repo, reason, undefined, entry, ctx.lease);
+    else await crawl.markFailed(entry.repo, reason, undefined, entry);
     return { kind: "failed" };
   }
 
@@ -196,7 +214,8 @@ async function fetchEntry(
        * 번지던 때는 markFailed가 불리지 않아, 항목이 fetching으로 남았다 10분 뒤 회수되기를
        * 반복했고 최대 시도 횟수가 영영 걸리지 않았다(codex 재현).
        */
-      await crawl.markFailed(entry.repo, `페이지 본문 수신 실패 — ${describeError(error)}`, undefined, entry);
+      if (ctx.lease) await crawl.markFailed(entry.repo, `페이지 본문 수신 실패 — ${describeError(error)}`, undefined, entry, ctx.lease);
+      else await crawl.markFailed(entry.repo, `페이지 본문 수신 실패 — ${describeError(error)}`, undefined, entry);
       return { kind: "failed" };
     }
   }
@@ -213,7 +232,7 @@ async function fetchEntry(
     ctx.log("crawl.fetch_claim_lost", { repo: entry.repo });
     return { kind: "lost" };
   }
-  await requeueAfterAdminEvidenceRefresh(entry.repo);
+  await requeueAfterAdminEvidenceRefresh(entry.repo, ctx.lease);
   return { kind: "fetched", needsJudgement: saved.needsJudgement };
 }
 

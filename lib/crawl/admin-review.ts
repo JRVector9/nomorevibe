@@ -6,7 +6,7 @@ import { crawlTaglines, type CrawlDocument, type CrawlTagline } from '@/lib/db/s
 import { agentRepositoryObservations, agentRepositoryScans, crawlCandidates, crawlDocuments, crawlFrontier,
   crawlReviewAttempts, crawlSettings, type CrawlCandidate, type CrawlReviewAttempt } from '@/lib/db/schema';
 import type { ProductTransaction } from '@/lib/domain/products/generation';
-import { requestJob } from '@/lib/jobs/control';
+import { assertJobLease, requestJob, type JobLease } from '@/lib/jobs/control';
 import { operationsAudit } from '@/lib/db/operations-schema';
 import { lockRepositoryAgentEvidence } from '@/lib/domain/evidence/agents/lock';
 import { secondReviewsFor } from './second-review';
@@ -151,7 +151,7 @@ export async function requestCandidateEvidence(request: AdminReviewRequest): Pro
 }
 
 /** Called only after a fresh collector result; one accepted request permits one rule rejudge. */
-export async function requeueAfterAdminEvidenceRefresh(repo: string): Promise<boolean> {
+export async function requeueAfterAdminEvidenceRefresh(repo: string, lease?: JobLease): Promise<boolean> {
   const [pending] = await db.select({ id: crawlReviewAttempts.id }).from(crawlReviewAttempts)
     .innerJoin(crawlCandidates, eq(crawlCandidates.id, crawlReviewAttempts.candidateId)).where(and(
       eq(crawlCandidates.repo, repo), eq(crawlCandidates.decidedBy, 'auto'), eq(crawlCandidates.state, 'needs_review'),
@@ -160,6 +160,7 @@ export async function requeueAfterAdminEvidenceRefresh(repo: string): Promise<bo
   if (!pending) return false;
   return db.transaction(async tx => {
     const current = await lockedInput(tx, repo);
+    if (lease) await assertJobLease(tx, lease);
     if (!current || current.candidate.decidedBy !== 'auto' || current.candidate.state !== 'needs_review') return false;
     const [request] = await tx.select().from(crawlReviewAttempts).where(and(
       eq(crawlReviewAttempts.candidateId, current.candidate.id), eq(crawlReviewAttempts.kind, 'evidence_refresh'),

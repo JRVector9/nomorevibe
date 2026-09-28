@@ -76,9 +76,19 @@ function groupExists(child: ChildProcess) {
   catch (error) { return (error as NodeJS.ErrnoException).code !== 'ESRCH'; }
 }
 
+export function childExitCode(current: number, code: number | null, state: {
+  stopping: boolean; requested: boolean; everHeartbeat: boolean; once: boolean;
+}): number {
+  if (!state.stopping) return state.once && code === 0 ? 0 : 1;
+  if (current !== 0) return current;
+  if (code === 0 || (state.requested && !state.everHeartbeat)) return 0;
+  return 1;
+}
+
 /** No internal respawn: exiting lets the container restart policy recreate the whole process tree. */
 export async function superviseWorker(role: RuntimeRole, options: {
   once?: boolean; healthPath?: string; limits?: SupervisorLimits;
+  signal?: AbortSignal; closeDbOnExit?: boolean;
 } = {}): Promise<number> {
   const limits = options.limits ?? supervisorLimits(role);
   const healthPath = options.healthPath ?? process.env.WORKER_HEALTH_PATH ?? DEFAULT_HEALTH_PATH;
@@ -97,7 +107,7 @@ export async function superviseWorker(role: RuntimeRole, options: {
     jobStartedAt: null, status: 'starting',
   };
   return await new Promise<number>(resolveResult => {
-    let exitCode = 1, stopping = false, finishing = false;
+    let exitCode = 1, stopping = false, finishing = false, requestedStop = false, everHeartbeat = false;
     let drainTimer: ReturnType<typeof setTimeout> | undefined;
     const log = (event: string, fields: Record<string, unknown> = {}) =>
       console.log(JSON.stringify({ event, role, at: new Date().toISOString(), ...fields }));
@@ -114,6 +124,7 @@ export async function superviseWorker(role: RuntimeRole, options: {
     const stop = (reason: string, requested: boolean) => {
       if (stopping || finishing) return;
       stopping = true;
+      requestedStop = requested;
       exitCode = requested ? 0 : 1;
       health = { ...health, status: 'stopping', reason };
       log('supervisor.stopping', { reason });
@@ -128,6 +139,10 @@ export async function superviseWorker(role: RuntimeRole, options: {
       }, limits.drainMs);
     };
     const onSignal = () => stop('shutdown_requested', true);
+    const onAbort = () => stop(options.signal?.reason === 'shutdown_requested'
+      ? 'shutdown_requested' : 'role_lease_lost', true);
+    options.signal?.addEventListener('abort', onAbort, { once: true });
+    if (options.signal?.aborted) onAbort();
     const monitor = setInterval(() => {
       const reason = stalledReason(health, Date.now(), limits);
       if (reason) stop(reason, false);
@@ -147,15 +162,17 @@ export async function superviseWorker(role: RuntimeRole, options: {
       try { writeHealth(healthPath, health); } catch { exitCode = 1; }
       process.removeListener('SIGINT', onSignal);
       process.removeListener('SIGTERM', onSignal);
+      options.signal?.removeEventListener('abort', onAbort);
       log('supervisor.stopped', { exitCode });
       const client=(globalThis as unknown as {pgClient?:{end:(options:{timeout:number})=>Promise<void>}}).pgClient;
-      if(client)await client.end({timeout:1}).catch(()=>{});
+      if(options.closeDbOnExit !== false && client)await client.end({timeout:1}).catch(()=>{});
       resolveResult(exitCode);
     };
     process.on('SIGINT', onSignal);
     process.on('SIGTERM', onSignal);
     child.on('message', value => {
       if (!child.pid || !isRuntimeHeartbeat(value, role, child.pid)) return;
+      everHeartbeat = true;
       health = {
         ...health, lastHeartbeatAt: Date.now(), lastProgressAt: value.lastProgressAt,
         state: value.state, currentJob: value.currentJob, jobStartedAt: value.startedAt,
@@ -165,8 +182,9 @@ export async function superviseWorker(role: RuntimeRole, options: {
     });
     child.once('error', () => { exitCode = 1; health.reason = 'child_spawn_failed'; void finish(); });
     child.once('exit', code => {
-      if (!stopping) exitCode = options.once && code === 0 ? 0 : 1;
-      else if (code !== 0) exitCode = 1;
+      exitCode = childExitCode(exitCode, code, {
+        stopping, requested: requestedStop, everHeartbeat, once: options.once ?? false,
+      });
       void finish();
     });
     publish();

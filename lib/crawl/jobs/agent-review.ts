@@ -42,7 +42,7 @@ export async function reviewCrawlCandidates(ctx: JobContext<null>): Promise<JobO
   const canStart = () => !stopped && !ctx.signal?.aborted && ctx.hasBudget() && remaining() >= ceiling + 2_000;
   const processCandidate = async (candidate: typeof candidates[number]) => {
     if (!isReviewCandidate(candidate)) return;
-    const document = await loadReviewDocument(candidate.repo);
+    const document = await loadReviewDocument(candidate.repo, lease);
     if (!document) return;
     const input = await loadReviewInput(candidate, document, settings);
     if (input.validUntil.getTime() <= Date.now()) return;

@@ -214,7 +214,7 @@ export async function seedFrontier(ctx:JobContext<SeedCursor>):Promise<JobOutcom
         searchWindowFrom:new Date(window.from),searchWindowTo:new Date(window.to),
         incomplete:page.incomplete || page.saturated || page.capped || item.attributionLimited,
       }))),ctx.lease);
-      const added = await crawl.enqueue(batch.map(item => ({repo:item.repo,signal:signal.label,builder:null,priority:signal.priority})));
+      const added = await crawl.enqueue(batch.map(item => ({repo:item.repo,signal:signal.label,builder:null,priority:signal.priority})),ctx.lease);
       discovered += added;
       backlog += added;
       page.itemIndex += batch.length;
