@@ -63,9 +63,22 @@ export async function verifyKeywordsInChunks(item: VerifyItem, options: {
   const unsupported: string[] = [];
   for (let offset = 0; offset < keywords.length; offset += 5) {
     const before = stopped(); if (before) return before;
-    const result = await verifyKeywords({ evidence: item.evidence, keywords: keywords.slice(offset, offset + 5) },
+    const chunk = keywords.slice(offset, offset + 5);
+    const result = await verifyKeywords({ evidence: item.evidence, keywords: chunk },
       { ...options, signal, timeoutMs: Math.max(1, deadline - Date.now()) });
     const after = stopped(); if (after) return after;
+    if (!result.ok && result.error === "invalid_output" && chunk.length > 1) {
+      // Some models rewrite spacing while copying a list. Keep exact matching and retry each entry alone.
+      for (const keyword of chunk) {
+        const beforeOne = stopped(); if (beforeOne) return beforeOne;
+        const one = await verifyKeywords({ evidence: item.evidence, keywords: [keyword] },
+          { ...options, signal, timeoutMs: Math.max(1, deadline - Date.now()) });
+        const afterOne = stopped(); if (afterOne) return afterOne;
+        if (!one.ok) return one;
+        unsupported.push(...one.unsupported);
+      }
+      continue;
+    }
     if (!result.ok) return result;
     unsupported.push(...result.unsupported);
   }
