@@ -32,7 +32,8 @@ export async function readMaintenanceUptimeProgress(): Promise<Omit<MaintenanceU
       extract(epoch from (now() - (select min(since) from due))) / 60 as oldest_minutes,
       exists(select 1 from product_health where checked_at > now() - interval '5 minutes') as persisted_within_5m,
       coalesce((select not_before > now() from jobs where name = 'uptime-ping'), false) as in_backoff,
-      coalesce((select last_error is not null from jobs where name = 'uptime-ping'), false) as job_error
+      coalesce((select last_error is not null and last_run_at > now() - interval '5 minutes'
+        from jobs where name = 'uptime-ping'), false) as job_error
   `);
   const row = rows[0];
   return { waiting: row.waiting, oldestMinutes: row.oldest_minutes === null ? null : Number(row.oldest_minutes),

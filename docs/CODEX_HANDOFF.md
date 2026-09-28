@@ -4616,3 +4616,18 @@ git diff --stat
 ```
 
 ---
+
+### 2026-09-28 23:19 KST — PR #217 후속 경계 수정
+
+maintenance `uptime-ping`의 과거 `last_error`가 영구적으로 정체 재시작을 막던 조건을 발견했다. 전용 통합 시험을 red 확인 후 최근 5분 내 실행 오류만 보호하도록 `lib/operations/maintenance-progress.ts`, `tests/integration/maintenance-fencing.test.ts`를 수정했다. 표적 통합 1파일/9, `npx tsc --noEmit`, 운영 DB 읽기 전용 쿼리(maintenance 222ms, text 1131ms, 전체 337ms, overall=ok) 통과. 이 수정 뒤 전체 통합과 GitHub 필수 CI는 **다시 받아야 한다**. PR #217은 첫 커밋 `0c1d91e`로 생성됐고 CI가 진행 중이다. 정확한 다음 명령:
+
+```sh
+cd /private/tmp/nmv-worker-failover-p3
+git add lib/operations/maintenance-progress.ts tests/integration/maintenance-fencing.test.ts docs/CODEX_HANDOFF.md
+git diff --cached --check
+git commit -m 'fix: ignore stale uptime job errors in failover probe'
+git push
+gh pr checks 217 --watch
+```
+
+---

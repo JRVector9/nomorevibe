@@ -104,3 +104,9 @@ it('does not suppress a text stall forever because of an old provider error', as
     expect((await readTextProgress()).providerError).toBe(false);
   } finally { vi.unstubAllEnvs(); }
 });
+
+it('does not suppress an uptime stall forever because of an old job error', async () => {
+  await db.insert(jobs).values({ name: 'uptime-ping', lastError: 'old request failure',
+    lastRunAt: sql`now() - interval '1 hour'` });
+  expect((await readMaintenanceUptimeProgress()).jobError).toBe(false);
+});
