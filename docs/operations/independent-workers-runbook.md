@@ -269,6 +269,34 @@ scheduler 및 다섯 역할의 생존, 예정 시각과 최근 부팅을 읽기 
 현재 CLI 자체의 주기 실행과 외부 알림은 배치되지 않았으므로 관리자 화면 또는 수동 호출만으로
 자동 경보가 준비됐다고 보고하지 않는다.
 
+### 독립 failover 감시
+
+`check-worker-progress.ts`는 역할별 최신 서비스 하나를 읽는다. 주가 계속 실행되면 mini 예비가
+사라져도 정상으로 보일 수 있다. `node --import tsx scripts/check-failover-readiness.ts`는
+`m3-<role>` 주 후보·`mini-<role>-standby` 예비 후보의 최근 60초 관측, 같은 릴리스,
+유효한 lease의 owner/boot/epoch 일치와 scheduler의 서로 다른 최근 복제본 2개를 별도로 판정한다.
+DB 시계로 관측과 lease 나이를 계산하고 기존 진행 판정도 JSON에 포함한다. 종료 코드는
+0 정상, 1 판별 불가, 2 경보다. 인계 중 예비가 활성인 상태는 용량 여유가 사라진 경보로 표시한다.
+
+`docker build --target monitor -t nomorevibe-monitor:<commit> .`로 CLI 없는 경량 감시 이미지를
+만든다. 웹·scheduler와 별도 M3 Dokploy 앱, `autoDeploy=false`, `WORKER_ROLE=monitor`,
+DB pool1, 30초 Push 루프를 사용한다. 환경에 `DATABASE_URL`(읽기 전용 계정),
+`MONITOR_PUSH_URL`(mini Uptime Kuma의 전용 Push monitor URL)을 설정한다. URL은 로그에
+출력하지 않는다. `CONNECT_AGENT_URL`의 설정 여부는 publisher와 일치시킨다. 진행 판정의
+발행 적격 큐가 이 변수의 존재에 따라 분류 완료 조건을 적용하므로, 서로 다르면 거짓 경보가
+될 수 있다. 감시자는 이 URL에 직접 접속하지 않는다. Push monitor의 heartbeat timeout은
+최소 90초 이상으로 맞춰 일시적
+전환 1표본을 허용한다. 연속 2회 이상에서 `down`, 정상 회복 때 바로 `up`을 보낸다.
+Push 실패가 나면 URL·응답 본문 없이 오류만 기록하며 전송을 재시도한다. 컨테이너 healthcheck는
+최근 검사 완료만 보며 DB 장애를 숨기지 않도록 JSON은 `unknown`으로 남긴다.
+
+운영 연결 순서는 감시자 계정 SELECT 범위 확인 → Kuma Push monitor 생성 → `MONITOR_PUSH_URL`
+주입 → 앱 배포/이미지 commit 확인 → CLI 정상·Push 최근 UP 확인 → mini 예비 하나 일시 중지로
+DOWN/회복 확인 → monitor 중지로 Push heartbeat timeout 확인 → 모두 원복이다. 알림
+수신 경로는 실제 수신으로 확인한다. mini 호스트 자체가 사라지면 Kuma도 멈추므로 독립된
+외부 deadman 또는 두 번째 감시 위치가 추가로 필요하다. 이 절차는 아직 운영 검증으로
+기록하지 않는다.
+
 DB 드라이버는 `postgres` 3.4.9로 고정했다. `lib/db/pool.ts`는 대기 중인 정확한 요청을 취소하기 위해
 해당 버전의 내부 연결 경계를 사용한다. 업그레이드 시 단순 타입 검사만으로 호환성을 판단하지 말고
 `tests/integration/db-pool-budget.test.ts`를 전용 DB에서 실행해 만료된 쓰기/BEGIN 미실행,

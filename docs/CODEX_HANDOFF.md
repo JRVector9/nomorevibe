@@ -1,3 +1,63 @@
+# 2026-09-29 00:43 KST — 독립 failover 감시 구현·기존 운영 재검토
+
+## 현재 목적 / 완료 작업 / 수정 파일
+
+사용자가 남은 failover 작업 진행과 이전 구현 재검토를 요청했다. 루트의 사용자 변경을
+보존하고 `origin/main` `77612eb`에서 별도 worktree
+`/private/tmp/nmv-worker-failover-followup` (`feat/worker-failover-followup`)를 만들었다.
+기존 진행 CLI가 최신 주 서비스 하나만 보아 예비 소실을 놓치는 공백을 찾았다.
+`lib/operations/failover-readiness.ts`, `failover-monitor.ts`,
+`scripts/check-failover-readiness.ts`, `watch-failover-readiness.ts`, `monitor-healthcheck.ts`,
+`lib/db/pool.ts`, `Dockerfile`, 관련 단위·통합 시험, README/PENDING/runbook,
+설계·계획 및 `docs/operations/2026-09-29-independent-worker-monitor-preflight.md`를 추가/수정했다.
+이 시점에 아직 커밋·PR·운영 배포는 하지 않았다.
+
+## 설계 판단 / 테스트 / 실패 접근
+
+DB `localtimestamp`로 후보 관측·lease 나이를 계산하고 M3/mini 5역할 쌍과 scheduler
+서로 다른 2복제본을 각각 판정한다. 30초 별도 monitor가 연속 2회 이상일 때 Kuma Push
+DOWN, 정상 복귀 때 UP을 전송한다. URL·응답 본문은 오류 로그에 남기지 않는다.
+mini 호스트 전체 장애 때 mini Kuma도 죽는 공백과 실제 경보 수신 미검증은 남는다.
+운영 monitor의 `CONNECT_AGENT_URL` 설정 여부는 publisher와 같아야 발행 적격 큐가
+같이 계산된다. monitor는 해당 URL에 요청하지 않으며 존재 여부만 사용한다.
+
+- 처음 단위 시험은 구현 파일이 없어 실패했고 구현 후 통과. 전용 DB의 정상/예비 70초 지연,
+  CLI 경보 종료 코드 2 통과. `npm test`: 156파일/1,235 통과.
+  `npm run test:integration`: 97파일/924 통과·TODO1.
+- `npx tsc --noEmit` 첫 실행은 새 worktree의 Next `PageProps` 생성물이 없고 시험 fixture
+  타입이 부족해 실패했다. `npx next typegen`과 fixture 교정 뒤 타입 검사 통과.
+  lint 오류0/기존 vendor 경고1, 웹 build, monitor Docker build, diff-check 통과.
+  DB 미설정 이미지의 CLI `unknown`/exit1, healthcheck exit1 확인.
+- 운영 읽기 전용에서 다섯 역할 M3 primary/mini standby 모두 신선하고 같은 릴리스,
+  lease owner M3였다. 진행 CLI `overall=ok`; crawler 문서·publisher 발행·maintenance
+  ping·text 프로필 결과 저장이 최근에도 있었다. 적격 발행 큐는 0이라 예비 새 제품 저장은
+  미검증. maintenance는 19,365 웹사이트 중 13,976곳 6시간 초과, 최근 905건/시간이다.
+- 운영 scheduler 컨테이너에서 `rg`가 없어 `grep`으로 바꿨다. 관측 JSON 확인에는 영향 없다.
+  임시 Node SQL 한 줄은 원격 shell 인용 오류로 실행되지 않았고 어떠한 DB 변경도 없었다.
+
+## 남은 작업 / 정확한 다음 명령
+
+diff와 문서를 다시 확인하고 커밋·PR·필수 CI `check`를 통과시킨다. 운영 알림 수신
+경로가 정해지면 전용 읽기 계정/Kuma Push monitor를 연결하고 monitor 앱의 실제 DOWN/UP,
+monitor heartbeat timeout을 검증한다. mini 전체 장애에 독립된 deadman, publisher 예비의
+적격 새 제품 저장, 실제 진행 정체/반복 부팅 격리, maintenance 용량 개선, 백업 복구와
+24시간 관측이 남았다. 중단된 `product-intro-check`는 재개하지 않는다.
+
+```sh
+cd /private/tmp/nmv-worker-failover-followup
+git status --short
+git diff --check
+npx next typegen
+npx tsc --noEmit
+npm test
+npm run test:integration
+git add Dockerfile README.md PENDING.md lib/db/pool.ts lib/operations/failover-readiness.ts lib/operations/failover-monitor.ts scripts/check-failover-readiness.ts scripts/watch-failover-readiness.ts scripts/monitor-healthcheck.ts tests/failover-readiness.test.ts tests/failover-monitor.test.ts tests/integration/failover-readiness-query.test.ts docs/CODEX_HANDOFF.md docs/operations/independent-workers-runbook.md docs/operations/2026-09-29-independent-worker-monitor-preflight.md docs/superpowers/specs/2026-09-29-independent-worker-monitor-design.md docs/superpowers/plans/2026-09-29-independent-worker-monitor.md
+git commit -m 'feat: independently monitor worker failover readiness'
+git push -u origin feat/worker-failover-followup
+```
+
+---
+
 # 2026-09-28 21:00 KST — P2 병합·운영 장애 복구 시험 완료
 
 ## 현재 목적 / 완료 작업 / 수정 파일
