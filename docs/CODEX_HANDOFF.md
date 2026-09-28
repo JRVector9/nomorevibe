@@ -1,3 +1,64 @@
+# 2026-09-29 01:22 KST — maintenance 60/6 단계적 운영 배포
+
+## 현재 목적 / 완료 작업 / 수정 파일
+
+남은 failover 운영 작업과 기존 구현 재검토를 계속한다. 독립 감시 PR #219는 main
+`a92e490`, 용량 PR #220는 필수 CI 후 main `ce64737edfc0bfc586fc428c082d060d08e0376e`로
+병합했다. monitor 코드는 main에 있지만 별도 앱과 실제 경보는 미배포다. mini Uptime Kuma는
+로그인이 필요하고 Keychain의 흔한 이름에서 자격을 찾지 못했다. 사용자에게 로그인 경로와
+알림 대상을 비동기로 요청했다.
+
+maintenance는 Dokploy의 mini 예비 앱 `T6ATm-paaE03hfSsQX8-S`, M3 주 앱
+`7OlFqQdacbyQseQM72E7b`를 순서대로 SHA `ce64737`에 배포하고 설정을 30/4→60/6으로
+증량했다. 현재 두 앱 배포 `done`, 같은 SHA와 60/6, lease epoch 7의 M3 active·mini
+standby다. 다른 역할 앱은 옛 SHA `20208d3`이며 각 주·예비가 같은 릴리스로 동작한다.
+
+운영 기록과 현재 미검증 경계를 반영하려고 새 브랜치 `docs/uptime-capacity-rollout`의
+`README.md`, `PENDING.md`, `docs/operations/independent-workers-runbook.md`,
+`docs/operations/2026-09-29-uptime-capacity-rollout.md`, 이 handoff를 수정했다.
+아직 커밋·문서 PR 전이다. 루트 checkout과 중단된 `product-intro-check`는 보존했다.
+
+## 핵심 판단 / 실제 테스트 / 실패 접근
+
+- 30/4에서 tick 30건/6.698초·9.351초·8.819초, 5분 저장 150건,
+  `jobs.last_error=null`; M3 컨테이너 healthy, CPU 0.89%, RSS 197.5MiB/1GiB.
+- 60/6 배포 전환 중 mini가 epoch 6으로 정상 인계해 60건/15.238초를 저장했다.
+  mini를 정상 drain해 M3가 epoch 7로 재획득하고 mini 1복제본을 복원했다.
+  M3 tick 60건/10.840초·13.092초·9.274초, 5분 저장 300건, 오류 없음.
+  6시간 초과 건수는 13,976→13,628로 줄었다. 수시간의 전체 회복은 미검증이다.
+- 기존 다섯 역할은 모두 M3 active·mini standby 신선한 관측과 lease/릴리스 일치.
+  publisher 승인 행 17은 적격 발행 큐가 아니며 예비 신규 제품 저장은 미검증.
+- 실제 DB 호스트는 V9-Primary `100.99.209.55`, 복제본 V9-Replica
+  `100.85.113.10`. 읽기 전용 확인에서 primary `pg_stat_replication`은
+  `streaming`/async/lag 0바이트, replica WAL receiver `streaming`이었다.
+  `archive_mode=on`, 아카이브 실패0. 백업 복원 시험은 하지 않았다.
+- Dokploy API 첫 읽기 명령은 셸 환경변수를 같은 명령에 할당하면서 헤더 확장이 먼저 돼
+  401이었다. 다음 호출에서 키를 별도 줄에 읽고 성공했으며 원문 키는 출력하지 않았다.
+  M3 컨테이너를 찾을 때 이전 컨테이너 ID로 `docker stats`를 호출해 0B가 나왔고
+  현재 컨테이너 ID로 재측정했다. mini scale 0/1은 성공하고 최종 standby를 확인했다.
+
+## 남은 작업 / 정확한 다음 명령
+
+문서 diff-check·커밋·PR·CI를 끝낸다. 60/6을 수시간 관측해 6시간 초과 건수가
+실제로 충분히 줄고 tick 예산, DB 연결, CPU/RSS가 유지되는지 확인한다.
+Kuma 로그인/알림 대상이 확인되면 read-only DB 자격과 Push monitor를 만들고 별도 M3
+monitor 앱, 예비 중단 DOWN/회복과 감시자 자체 timeout을 검증한다. mini 호스트 장애의
+독립 deadman, publisher 예비 신규 발행, 실제 저장 정체/반복 부팅 격리,
+백업 복원, 24시간 관측이 남았다.
+
+```sh
+cd /private/tmp/nmv-uptime-capacity
+git status --short --branch
+git diff --check
+git add README.md PENDING.md docs/CODEX_HANDOFF.md docs/operations/independent-workers-runbook.md docs/operations/2026-09-29-uptime-capacity-rollout.md
+git commit -m 'docs: record maintenance capacity rollout'
+git push -u origin docs/uptime-capacity-rollout
+python3 /tmp/nmv-p3-db-audit.py
+python3 /tmp/nmv-p3-db-status.py maintenance
+```
+
+---
+
 # 2026-09-29 00:59 KST — 독립 감시 병합·maintenance 용량 증량 준비
 
 ## 현재 목적 / 완료 작업 / 수정 파일
