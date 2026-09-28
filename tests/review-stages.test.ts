@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ReviewAiDecision } from "@/lib/crawl/admin-review";
-import { heldStages, STAGE_GROUPS, STAGE_KEYS } from "@/app/admin/review/stages";
+import { heldStages, stageHref, STAGE_GROUPS, STAGE_KEYS } from "@/app/admin/review/stages";
 
 const noSecond = { unanimous_reject: [], unanimous_approve: [], agreed_reject: [], agreed_approve: [], needs_human: [] };
 
@@ -25,4 +25,9 @@ describe("heldStages — 보류 후보를 심사 구간으로 나눈다", () => 
     expect(STAGE_GROUPS.map((group) => group.title)).toEqual(["규칙 판정", "1차 AI 심사", "2차 심사", "사람 확인", "결과"]);
     expect(STAGE_KEYS).toEqual(["judge", "ai", "second", "agreed", "human", "publish", "published", "rejected"]);
   });
+});
+
+it("stage cards open only the selected stage and scroll to its projects", () => {
+  expect(stageHref("human", "ai")).toBe("/admin/review?stage=ai#review-list");
+  expect(stageHref("ai", "ai")).toBe("/admin/review#review-list");
 });

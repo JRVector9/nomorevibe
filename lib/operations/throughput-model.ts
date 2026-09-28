@@ -9,6 +9,8 @@ export type ThroughputStage = {
   /** Queue progress can include rule decisions or reused AI results. */
   progress5m?: number;
   waiting: number;
+  /** Fetch items whose next retry time has not arrived. */
+  deferred?: number;
   oldestMinutes: number | null;
   ageLabel?: string;
   enabled: boolean;

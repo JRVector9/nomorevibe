@@ -1,3 +1,62 @@
+# 2026-09-29 08:00 KST — 수집 한도 장애 확인 및 관리자 화면 개선
+
+## 현재 목적 / 완료 작업 / 수정 파일
+
+수집 정체 원인을 운영에서 확인하고, 심사 구간 클릭이 해당 구간의 후보만 표시하도록
+고쳤다. 처리 속도가 0이어도 각 카드에 워커 관측·실행 가능 일감·재시도 예약·오류
+상태가 직접 나오도록 했다. 별도 기술 검토는
+`docs/operations/2026-09-29-github-collector-accounts.md`에 기록했다.
+수정 파일은 `app/admin/review/{page.tsx,stages.ts}`,
+`app/admin/status/{ThroughputStrip.tsx,throughput.module.css}`,
+`lib/operations/{throughput-model.ts,throughput.ts}`,
+`tests/{review-stages.test.ts,operations-throughput-display.test.ts}`와 위 문서, 이 handoff다.
+깨끗한 작업 공간 `/private/tmp/nmv-stage-runtime-ui`의
+`feat/review-stage-runtime-status`에서 작업했다. 루트 checkout의 사용자 변경은 보존했다.
+
+## 핵심 설계 / 실제 테스트 / 실패 접근
+
+구간 링크는 과거 검색·상세·기간·정렬을 모두 버리고 `stage`만 남기며 목록 앵커로
+이동한다. 목록 자체의 기존 구간 SQL 조건은 유지했다. 수집 재시도 예약 건수는
+기존 집계 `extra`를 fetch 구간에만 전달하고, 워커 생존 이상은 대기 0보다 우선해
+보여준다. 0건 저장이 워커 중단을 뜻하지 않도록 상태를 분리했다.
+
+운영 읽기 전용 관측에서 22:39:57 UTC GitHub `core` primary 한도 소진,
+22:53:40 UTC 초기화, 22:54:45 UTC 원본 저장 재개를 확인했다. 원본 총수는
+22:54:46 UTC 108,189건에서 22:59:53 UTC 108,248건으로 증가했다.
+22:59:53 UTC 현재 수집 계정 `JRVector9`의 `/rate_limit`은 core 609/5,000 사용,
+4,391 잔여였다. OAuth 관리자 로그인 토큰은 현재 저장되지 않고 운영 수집은
+환경 `GITHUB_TOKEN` 하나를 사용한다.
+
+`vitest run tests/review-stages.test.ts tests/operations-throughput-display.test.ts`는
+새 테스트 4건의 red를 확인한 뒤 16/16 통과했다. 해당 파일 ESLint와
+`next typegen` 후 `tsc --noEmit`은 통과했다. `npm run build`는 정상 의존성을
+설치한 뒤 통과했으며 기존 `agent-review.ts` 동적 파일 접근 경고 1건이 있었다.
+첫 build는 임시 작업 공간에서 다른 작업 공간의 `node_modules`를 가리킨
+심볼릭 링크가 Turbopack 파일시스템 경계 밖이라 실패했다. 링크를 풀고
+`npm ci --ignore-scripts --no-audit --no-fund`로 해당 공간에 설치해 해결했다.
+
+## 남은 작업 / 정확한 다음 명령
+
+diff 검토와 PR, 최신 base CI `check`, 병합·운영 웹 배포 확인이 남았다.
+수집 계정 연결/암호화 저장/토큰 풀/계정별 한도 및 저장 성과 지표는 구현되지 않았다.
+위 설계 문서를 따라 별도 작업으로 구현하고 실제 두 번째 계정 연결 후 운영 전환을
+시험해야 한다. DB 서버·복제 설정은 변경하지 않는다. 사용자가 중지한
+`product-intro-check`도 재개하지 않는다.
+
+```sh
+cd /private/tmp/nmv-stage-runtime-ui
+git diff --check
+node_modules/.bin/vitest run tests/review-stages.test.ts tests/operations-throughput-display.test.ts
+node_modules/.bin/next typegen && node_modules/.bin/tsc --noEmit
+npm run build
+git status --short
+git add app/admin/review/page.tsx app/admin/review/stages.ts app/admin/status/ThroughputStrip.tsx app/admin/status/throughput.module.css lib/operations/throughput-model.ts lib/operations/throughput.ts tests/review-stages.test.ts tests/operations-throughput-display.test.ts docs/operations/2026-09-29-github-collector-accounts.md docs/CODEX_HANDOFF.md
+git commit -m 'feat: clarify review stage and worker runtime status'
+git push -u origin feat/review-stage-runtime-status
+```
+
+---
+
 # 2026-09-29 01:43 KST — 이번 단계 종료 상태
 
 ## 현재 목적 / 완료 작업 / 수정 파일
