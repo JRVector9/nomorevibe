@@ -89,3 +89,14 @@ describe("service instance observations", () => {
     expect(staleServiceInstanceCount(rows, now)).toBe(1);
   });
 });
+
+it('gives two scheduler replicas distinct observation keys when replica identity is enabled', () => {
+  const env = { SERVICE_INSTANCE_ID: 'm3-scheduler', SCHEDULER_REPLICA_IDENTITY: '1' };
+  expect(serviceObservationKey('scheduler', { ...env, HOSTNAME: 'task-a' }))
+    .toBe('service:scheduler:m3-scheduler-task-a');
+  expect(serviceObservationKey('scheduler', { ...env, HOSTNAME: 'task-b' }))
+    .toBe('service:scheduler:m3-scheduler-task-b');
+  expect(serviceObservationKey('crawler', { ...env, HOSTNAME: 'task-a' }))
+    .toBe('service:crawler:m3-scheduler');
+  expect(() => serviceObservationKey('scheduler', env)).toThrow('HOSTNAME');
+});

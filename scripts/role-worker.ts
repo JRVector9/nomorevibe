@@ -7,6 +7,7 @@ import { superviseWorker } from './worker-supervisor';
 import { releaseRole, renewRole, tryAcquireRole, type RoleCandidate, type RoleLease } from '@/lib/jobs/role-leader';
 import { observe } from '@/lib/operations/observations';
 import { serviceInstanceId } from '@/lib/operations/instance';
+import { readWorkerProgress } from '@/lib/operations/worker-progress-query';
 import { DEFAULT_ROLE_HEALTH_PATH } from './role-health';
 
 type Dependencies = {
@@ -15,8 +16,19 @@ type Dependencies = {
   release?: typeof releaseRole;
   supervise: (lease: RoleLease, signal: AbortSignal) => Promise<number>;
   sleep?: typeof interruptibleSleep;
+  checkProgress?: (role: RoleCandidate['role']) => Promise<boolean>;
   report?: (phase: 'standby' | 'active' | 'stopping', epoch: number | null) => void;
 };
+
+export function roleHasUnexplainedStall(report: {
+  scheduler: { reason: string };
+  stages: Array<{ role: string; reason: string }>;
+}, role: RoleCandidate['role']): boolean {
+  if (report.scheduler.reason !== 'scheduled') return false;
+  const stages = report.stages.filter(stage => stage.role === role);
+  return stages.some(stage => stage.reason === 'no_progress') &&
+    !stages.some(stage => stage.reason === 'progressing' || stage.reason === 'upstream_or_job_error');
+}
 
 export function parseRoleWorkerArgs(args: string[], env: Readonly<Record<string, string | undefined>> = process.env): RoleCandidate {
   const role = args.find(arg => arg.startsWith('--role='))?.slice(7);
@@ -51,7 +63,7 @@ export async function runRoleCandidate(candidate: RoleCandidate, signal: AbortSi
     const active = new AbortController();
     const onStop = () => active.abort('shutdown_requested');
     signal.addEventListener('abort', onStop, { once: true });
-    let renewing = false, lost = false;
+    let renewing = false, lost = false, checkingProgress = false, stalledSamples = 0, progressRestart = false;
     const timer = setInterval(() => {
       if (renewing || lost) return;
       renewing = true;
@@ -61,13 +73,28 @@ export async function runRoleCandidate(candidate: RoleCandidate, signal: AbortSi
         .finally(() => { renewing = false; });
     }, 10_000);
     timer.unref();
+    const progressTimer = candidate.kind === 'primary' && deps.checkProgress ? setInterval(() => {
+      if (checkingProgress || lost || progressRestart || signal.aborted) return;
+      checkingProgress = true;
+      void deps.checkProgress!(candidate.role).then(stalled => {
+        stalledSamples = stalled ? stalledSamples + 1 : 0;
+        if (stalledSamples >= 2) {
+          progressRestart = true;
+          runtimeLog('role.progress_stalled', { role: candidate.role, epoch: lease.epoch });
+          active.abort('progress_stalled');
+        }
+      }).catch(() => { stalledSamples = 0; runtimeLog('role.progress_unknown', { role: candidate.role }); })
+        .finally(() => { checkingProgress = false; });
+    }, 15_000) : null;
+    progressTimer?.unref();
     let exitCode = 1;
     try { exitCode = await deps.supervise(lease, active.signal); }
     finally {
       clearInterval(timer);
+      if (progressTimer) clearInterval(progressTimer);
       signal.removeEventListener('abort', onStop);
     }
-    runtimeLog('role.supervisor_stopped', { role: candidate.role, epoch: lease.epoch, exitCode, lost });
+    runtimeLog('role.supervisor_stopped', { role: candidate.role, epoch: lease.epoch, exitCode, lost, progressRestart });
     deps.report?.(signal.aborted ? 'stopping' : 'standby', null);
     if (signal.aborted) {
       if (exitCode === 0) await deps.release?.(lease).catch(() => false);
@@ -108,6 +135,7 @@ async function main() {
   try {
     process.exitCode = await runRoleCandidate(candidate, controller.signal, {
       acquire: tryAcquireRole, renew: renewRole, release: releaseRole,
+      checkProgress: async role => roleHasUnexplainedStall(await readWorkerProgress(), role),
       report: (next, currentEpoch) => { phase = next; epoch = currentEpoch; record(); },
       supervise: (lease, signal) => {
         process.env.ROLE_LEASE_ROLE = lease.role;

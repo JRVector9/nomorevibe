@@ -1,5 +1,5 @@
 import { expect, it, vi } from 'vitest';
-import { parseRoleWorkerArgs, roleCandidateObservationKey, runRoleCandidate } from '@/scripts/role-worker';
+import { parseRoleWorkerArgs, roleCandidateObservationKey, roleHasUnexplainedStall, runRoleCandidate } from '@/scripts/role-worker';
 import type { RoleCandidate, RoleLease } from '@/lib/jobs/role-leader';
 
 const candidate: RoleCandidate = {
@@ -84,4 +84,87 @@ it('requires an explicit stable instance, release and role kind', () => {
     SERVICE_INSTANCE_ID: 'publisher-b', RELEASE_TAG: 'r1',
   })).toThrow();
   expect(roleCandidateObservationKey(candidate)).toBe('candidate:crawler:crawler-a');
+});
+
+it('restarts only for unexplained demand with a healthy scheduler', () => {
+  const report = { scheduler: { reason: 'scheduled' }, stages: [
+    { role: 'crawler', reason: 'no_progress' }, { role: 'reviewer', reason: 'no_work' },
+  ] };
+  expect(roleHasUnexplainedStall(report, 'crawler')).toBe(true);
+  expect(roleHasUnexplainedStall(report, 'reviewer')).toBe(false);
+  expect(roleHasUnexplainedStall({ ...report, scheduler: { reason: 'scheduler_missed' } }, 'crawler')).toBe(false);
+  expect(roleHasUnexplainedStall({ ...report, stages: [
+    { role: 'crawler', reason: 'no_progress' }, { role: 'crawler', reason: 'progressing' },
+  ] }, 'crawler')).toBe(false);
+  expect(roleHasUnexplainedStall({ ...report, stages: [
+    { role: 'crawler', reason: 'no_progress' }, { role: 'crawler', reason: 'upstream_or_job_error' },
+  ] }, 'crawler')).toBe(false);
+});
+
+it('exits the primary after two consecutive stalled samples for Swarm restart', async () => {
+  vi.useFakeTimers();
+  try {
+    let reason: unknown;
+    const checkProgress = vi.fn(async () => true);
+    const running = runRoleCandidate(candidate, new AbortController().signal, {
+      acquire: async () => lease, renew: async () => true, checkProgress,
+      supervise: async (_owned, signal) => {
+        await new Promise<void>(resolve => signal.addEventListener('abort', () => resolve(), { once: true }));
+        reason = signal.reason;
+        return 0;
+      },
+    });
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(await running).toBe(1);
+    expect(checkProgress).toHaveBeenCalledTimes(2);
+    expect(reason).toBe('progress_stalled');
+  } finally { vi.useRealTimers(); }
+});
+
+it('clears a pending stall after progress resumes or the DB observation is unknown', async () => {
+  vi.useFakeTimers();
+  try {
+    let sample = 0;
+    let stopped = false;
+    const running = runRoleCandidate(candidate, new AbortController().signal, {
+      acquire: async () => lease, renew: async () => true,
+      checkProgress: async () => {
+        sample++;
+        if (sample === 2) return false;
+        if (sample === 4) throw new Error('db_unreachable');
+        return true;
+      },
+      supervise: async (_owned, signal) => {
+        await new Promise<void>(resolve => signal.addEventListener('abort', () => resolve(), { once: true }));
+        stopped = true;
+        return 0;
+      },
+    });
+    await vi.advanceTimersByTimeAsync(75_000);
+    expect(stopped).toBe(false);
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect(await running).toBe(1);
+    expect(sample).toBe(6);
+  } finally { vi.useRealTimers(); }
+});
+
+it('does not restart an active standby from the primary progress policy', async () => {
+  vi.useFakeTimers();
+  try {
+    const controller = new AbortController();
+    const checkProgress = vi.fn(async () => true);
+    const standby = { ...candidate, kind: 'standby' as const, instanceId: 'crawler-b' };
+    const running = runRoleCandidate(standby, controller.signal, {
+      acquire: async () => ({ ...standby, epoch: 2 }), renew: async () => true,
+      checkProgress,
+      supervise: async () => {
+        await new Promise<void>(resolve => controller.signal.addEventListener('abort', () => resolve(), { once: true }));
+        return 0;
+      },
+    });
+    await vi.advanceTimersByTimeAsync(45_000);
+    expect(checkProgress).not.toHaveBeenCalled();
+    controller.abort();
+    expect(await running).toBe(0);
+  } finally { vi.useRealTimers(); }
 });
