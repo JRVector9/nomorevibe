@@ -96,9 +96,10 @@ npm run build
 
 ## 운영 배포와 상태 확인
 
-운영은 Dokploy의 main 소스를 사용한다. M3에는 웹·scheduler·crawler·reviewer·publisher·text·maintenance,
-mini에는 두 번째 웹을 둬 총 8개 앱을 배포한다. 웹은 로드밸런서 뒤에서 동작하고 역할 워커는 M3에서만
-실행한다. 런타임 DB는 PgBouncer(6432), 별도 migration은 PostgreSQL 직접 연결(5432)을 사용한다.
+운영은 Dokploy의 main 소스를 사용한다. M3에는 웹·scheduler(2복제본)·crawler·reviewer·publisher·text·maintenance,
+mini에는 두 번째 웹과 crawler·reviewer 예비를 둬 총 10개 앱을 운영한다. 두 웹은 로드밸런서 뒤에서
+동작한다. crawler·reviewer는 M3 주 후보가 작업하고 mini 예비는 같은 릴리스로 대기한다.
+런타임 DB는 PgBouncer(6432), 별도 migration은 PostgreSQL 직접 연결(5432)을 사용한다.
 
 PR의 GitHub CI 성공은 배포 완료를 뜻하지 않는다. [독립 워커 운영 절차](docs/operations/independent-workers-runbook.md)에
 따라 migration 종료 코드 0과 각 앱의 배포 소스 커밋·완료 상태를 확인하고 공개 페이지와 관리자 상태를 검증한다.
@@ -184,7 +185,8 @@ docker compose exec crawler node --import tsx scripts/run-job.ts crawl-fetch
 ```
 
 새 작업은 `lib/jobs/catalog.ts`에 이름·역할·주기를, `lib/jobs/registry.ts`에 핸들러를 추가한다.
-요청 버전과 실행 소유권으로 중복 실행과 실행 중 재요청 유실을 막는다. 운영은 역할당 워커 1개다.
+요청 버전과 실행 소유권으로 중복 실행과 실행 중 재요청 유실을 막는다. crawler·reviewer는
+각각 주·예비 후보 중 역할 lease를 가진 1개만 작업하며, 다른 역할은 단일 워커다.
 
 ## 수집 파이프라인
 

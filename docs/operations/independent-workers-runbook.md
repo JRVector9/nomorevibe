@@ -1,7 +1,7 @@
 # 독립 워커 운영 절차
 
 이 문서는 로컬 Compose의 실제 실행 명령과 운영 전환 시 지켜야 하는 순서를 정리한다.
-운영은 M3 singleton 역할과 M3·mini 웹 2개가 외부 `nomorevibe` DB를 공유한다. 이 파일 자체는
+운영은 M3 역할·scheduler 2복제본, mini의 crawler·reviewer 예비와 M3·mini 웹 2개가 외부 `nomorevibe` DB를 공유한다. 이 파일 자체는
 실제 배포 완료 증거가 아니며 완료 여부는 Dokploy 상태·DB 결과·health 응답으로 확인한다.
 A/B 통합 검증 기록은 `docs/CODEX_HANDOFF.md`와 해당 릴리스 보고서를 따른다.
 
@@ -161,10 +161,12 @@ Compose `init: true`를 사용한다. 초기 자원 초과가 보이면 탐색/�
 
 ## 생존·진행·장애 복구
 
-### 역할 후보 배포 준비 (crawler/reviewer)
+### 역할 후보 운영·교체 (crawler/reviewer)
 
-`role-worker.ts`는 P1 코드가 검증됐어도 운영 명령을 바꾸기 전까지 기존 단일 워커에
-영향을 주지 않는다. 예비 후보를 추가하는 P2에서는 아래 순서를 지킨다.
+2026-09-28 운영에서는 M3의 crawler·reviewer가 `role-worker.ts --kind=primary`, mini의
+`nomorevibe-crawler-standby-mini`·`nomorevibe-reviewer-standby-mini`가 `--kind=standby`로
+실행된다. 실제 앱 10개와 scheduler 2복제본의 검증은
+[장애 복구 배포 기록](2026-09-28-worker-failover-rollout.md)에 있다. 다음 릴리스 교체에는 아래 순서를 지킨다.
 
 1. `0051_role_leases.sql`과 `0052_role_failover_history.sql`을 한 번 적용하고 종료 코드 0을
    확인한다. 기존 워커를 먼저 정상 drain한다. 기존 `worker-supervisor.ts`와 새 역할 후보가
@@ -179,18 +181,18 @@ Compose `init: true`를 사용한다. 초기 자원 초과가 보이면 탐색/�
    수집/심사 외부 호출을 실행하지 않는다. `worker-healthcheck.ts`는 로컬 후보 상태가
    신선한 대기를 healthy로 판단하고, 활성 후보는 supervisor 상태도 요구한다.
 4. 롤링 교체에서는 **옛 예비를 먼저 drain**하고, 옛 주를 drain한 뒤 새 주 후보를 시작해
-   주인이 된 것을 확인한다. 마지막에 새 릴리스 예비를 시작한다. 다른 릴리스 예비는
-   정상 종료 직후에도 인계가 거절된다. 현재 운영 `RELEASE_TAG`가 과거 SHA로 남아
-   있으므로 환경값·실제 이미지 commit·두 후보의 release를 배포 전에 반드시 일치시킨다.
+   주인이 된 것을 확인한다. 마지막에 새 릴리스 예비를 시작한다. 예비 앱은 `autoDeploy=false`라
+   다음 main 릴리스 때 환경의 `RELEASE_TAG`와 이미지 commit을 수동으로 맞춰 재배포해야 한다.
+   다른 릴리스 예비는 정상 종료 직후에도 인계가 거절된다.
 5. 역할 후보의 비정상 종료는 Swarm의 기존 restart 정책이 1차 복구한다. 역할 lease는
    45초, 예비 확인은 5초, 기존 주인 만료 뒤 유예는 20초다. 반복 주 후보 부팅 3회/5분은
    15분 격리한다. DB 연결이 불명확하면 새 작업을 중단하며, 이전 job token은 새 주인의
-   선출 트랜잭션에서 무효화된다. 실제 운영 장애 주입·저장 재개 측정 전에는 예비 서비스를
-   활성화하지 않는다.
+   선출 트랜잭션에서 무효화된다. 실제 운영에서는 자식 SIGKILL 뒤 주 후보 재획득과
+   주 서비스 중단 뒤 mini 예비 선출 및 복귀를 확인했다. 예비의 새 결과 저장 재개와
+   반복 부팅 격리의 운영 주입은 별도 검증이 필요하다.
 
-P0 `check-worker-progress.ts`의 주기 실행·외부 알림 연결과 데이터 정체에 따른 자동
-재시작 제어는 아직 배치되지 않았다. 역할 후보는 프로세스 종료·lease 만료를 처리하지만
-결과 0건만 보고 무조건 인계하지 않는다.
+P0 `check-worker-progress.ts`의 독립 주기 실행·외부 알림 연결은 아직 배치되지 않았다.
+역할 후보는 프로세스 종료·lease 만료를 처리하고, 아래 조건일 때만 저장 정체로 재시작한다.
 
 P2 역할 후보 명령으로 전환하면 **주 후보만** 15초 간격으로 구조화된 진행 상태를 확인한다.
 scheduler가 정상 예약 중이고 해당 역할에 `no_progress`가 연속 2회이며 같은 역할의
@@ -201,8 +203,8 @@ scheduler가 정상 예약 중이고 해당 역할에 `no_progress`가 연속 2�
 DB 판정 오류는 이 재시작 조건에서 제외하고 역할 lease 갱신 실패가 별도로 중단시킨다.
 외부 알림은 여전히 별도 연결이 필요하다.
 
-scheduler를 2복제본으로 올리기 전에는 두 poller의 DB 요청 합치기 통합 테스트와
-`SCHEDULER_REPLICA_IDENTITY=1` 설정을 확인한다. 이 옵션에서 각 컨테이너의
+scheduler 2복제본의 DB 요청 합치기 통합 테스트와
+`SCHEDULER_REPLICA_IDENTITY=1` 설정을 확인했다. 이 옵션에서 각 컨테이너의
 `HOSTNAME`이 관측 키에 포함되므로 고정 `SERVICE_INSTANCE_ID`를 공유하더라도 서로의
 생존 기록을 덮어쓰지 않는다. 두 관측 키와 각 컨테이너 상태, 예약 시각 전진을
 확인한 뒤 수집 예비 배치로 넘어간다.
