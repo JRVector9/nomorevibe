@@ -1,3 +1,45 @@
+# 2026-09-29 01:43 KST — 이번 단계 종료 상태
+
+## 현재 목적 / 완료 작업 / 수정 파일
+
+워커 장애 시 주·예비 감시와 maintenance 실제 처리량을 보강하고 기존 역할 인계를
+재검토했다. 코드 PR #219, #220과 운영 기록 PR #221, DB 격리 복원 기록 PR #222는
+모두 main에 병합됐다. #222는 최신 base의 CI `check`와 GitGuardian 성공 후
+merge SHA `1229c2597235a6a6c528fc3a827e9c7e3aab329c`가 됐다. 운영 DB는 이미
+별도로 구성돼 있으며 이번 워커 failover 작업에서 설정·역할·운영 데이터를 바꾸지 않았다.
+이번 후속 변경 파일은 `docs/CODEX_HANDOFF.md`뿐이다. 루트 checkout의 사용자 변경과
+중단된 `product-intro-check`는 보존했다.
+
+## 핵심 판단 / 테스트 / 실패 접근
+
+운영 DB의 주·복제 스트리밍과 WAL 아카이브를 읽기 전용으로 확인했고, 운영 primary에서
+새 논리 백업을 로컬 격리 DB에 복원해 주요 행·마이그레이션과 실제 OG 이미지 바이트를
+대조했다. replica dump 첫 시도는 hot standby recovery conflict로 실패했고 primary
+재시도는 `pg_restore --exit-on-error` 종료 코드 0이었다. 로컬 시험 DB는 삭제했다.
+기존 보관 백업의 복원 성공이나 DB 자동 승격은 이 시험으로 주장하지 않는다.
+PR #222의 CI `check`와 GitGuardian은 실제 통과했다. 이번 후속 문서의
+`git diff --check`는 커밋 전에 실행한다.
+
+## 남은 작업 / 정확한 다음 명령
+
+운영 monitor는 코드만 main에 있고 Kuma Push/알림 수신자 및 별도 앱이 아직 없다.
+Kuma 로그인 경로와 알림 대상이 확인되면 기존 접속 설정으로 monitor를 연결해
+예비 중단 DOWN/복귀 UP과 감시자 자체 timeout을 실제 확인한다. 이어 mini 전체 장애의
+독립 deadman, publisher 예비 신규 발행, 실제 저장 정체·반복 부팅 격리,
+maintenance 6시간 backlog 장기 회복과 24시간 관측을 진행한다. DB 설정 작업은
+여기서 수행하지 않는다. DB 관련 미검증 경계는 `PENDING.md`와
+`docs/operations/2026-09-29-db-restore-verification.md`를 따른다.
+
+```sh
+cd /private/tmp/nmv-uptime-capacity
+git status --short --branch
+git diff --check
+gh pr view 222 --json state,mergeCommit,statusCheckRollup
+rg -n 'monitor|Kuma|deadman' PENDING.md docs/operations/independent-workers-runbook.md
+```
+
+---
+
 # 2026-09-29 01:35 KST — 기존 DB 구성 확인·격리 복원 기록
 
 ## 현재 목적 / 완료 작업 / 수정 파일
