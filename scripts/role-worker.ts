@@ -8,6 +8,9 @@ import { releaseRole, renewRole, tryAcquireRole, type RoleCandidate, type RoleLe
 import { observe } from '@/lib/operations/observations';
 import { serviceInstanceId } from '@/lib/operations/instance';
 import { readWorkerProgress } from '@/lib/operations/worker-progress-query';
+import { maintenanceUptimeStalled, readMaintenanceUptimeProgress } from '@/lib/operations/maintenance-progress';
+import { readTextProgress, textProgressStalled } from '@/lib/operations/text-progress';
+import { hasActiveRoleJob } from '@/lib/jobs/control';
 import { DEFAULT_ROLE_HEALTH_PATH } from './role-health';
 
 type Dependencies = {
@@ -34,9 +37,9 @@ export function parseRoleWorkerArgs(args: string[], env: Readonly<Record<string,
   const role = args.find(arg => arg.startsWith('--role='))?.slice(7);
   const kind = args.find(arg => arg.startsWith('--kind='))?.slice(7);
   const instanceId = serviceInstanceId(env);
-  if ((role !== 'crawler' && role !== 'reviewer') || (kind !== 'primary' && kind !== 'standby') ||
+  if ((role !== 'crawler' && role !== 'reviewer' && role !== 'publisher' && role !== 'maintenance' && role !== 'text') || (kind !== 'primary' && kind !== 'standby') ||
       args.length !== 2 || !instanceId || !env.RELEASE_TAG || env.RELEASE_TAG.length > 120) {
-    throw new Error('Usage: role-worker.ts --role=crawler|reviewer --kind=primary|standby; SERVICE_INSTANCE_ID and RELEASE_TAG required');
+    throw new Error('Usage: role-worker.ts --role=crawler|reviewer|publisher|maintenance|text --kind=primary|standby; SERVICE_INSTANCE_ID and RELEASE_TAG required');
   }
   return { role, kind, instanceId, release: env.RELEASE_TAG, bootId: randomUUID() };
 }
@@ -135,7 +138,17 @@ async function main() {
   try {
     process.exitCode = await runRoleCandidate(candidate, controller.signal, {
       acquire: tryAcquireRole, renew: renewRole, release: releaseRole,
-      checkProgress: async role => roleHasUnexplainedStall(await readWorkerProgress(), role),
+      checkProgress: async role => {
+        if (await hasActiveRoleJob(role)) return false;
+        const report = await readWorkerProgress();
+        if (role === 'maintenance') return maintenanceUptimeStalled({
+          ...await readMaintenanceUptimeProgress(), schedulerScheduled: report.scheduler.reason === 'scheduled',
+        });
+        if (role === 'text') return textProgressStalled({
+          ...await readTextProgress(), schedulerScheduled: report.scheduler.reason === 'scheduled',
+        });
+        return roleHasUnexplainedStall(report, role);
+      },
       report: (next, currentEpoch) => { phase = next; epoch = currentEpoch; record(); },
       supervise: (lease, signal) => {
         process.env.ROLE_LEASE_ROLE = lease.role;

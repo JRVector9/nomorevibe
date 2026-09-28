@@ -14,22 +14,21 @@ export function buildWorkerProgress(
   now: Date,
 ) {
   const instances = serviceInstancesFromObservations(observations);
-  const liveness = (["scheduler", "crawler", "reviewer"] as const).map(role => {
+  const liveness = (["scheduler", "crawler", "reviewer", "publisher", "maintenance", "text"] as const).map(role => {
     const instance = latestServiceInstance(instances, role);
     const observedAt = instance && (instance.value.status === "running" || instance.value.status === "starting")
       ? instance.observedAt instanceof Date ? instance.observedAt : new Date(instance.observedAt) : null;
     return classifyLiveness(role, observedAt, now,
       typeof instance?.value.restartCount5m === "number" ? instance.value.restartCount5m : 0);
   });
-  const isObserved = (role: "scheduler" | "crawler" | "reviewer") =>
+  const isObserved = (role: "scheduler" | "crawler" | "reviewer" | "publisher") =>
     liveness.some(row => row.role === role && !row.alarm);
   const states = new Map(jobs.map(job => [job.name, job]));
   const jobForStage = { fetch: "crawl-fetch", judge: "crawl-judge", first: "crawl-agent-review",
-    second: "second-review" } as const;
+    second: "second-review", publish: "crawl-publish" } as const;
   const stages: StageProgress[] = throughput.stages.flatMap(stage => {
-    if (stage.key === "publish") return [];
     const job = states.get(jobForStage[stage.key]);
-    const role = stage.key === "fetch" ? "crawler" : "reviewer";
+    const role = stage.key === "fetch" ? "crawler" : stage.key === "publish" ? "publisher" : "reviewer";
     return [classifyStage(stage, job ?? null, isObserved(role), now)];
   });
   const scheduler = classifyScheduler(jobs, isObserved("scheduler"), now);

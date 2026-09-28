@@ -2,6 +2,7 @@ import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { jobs, newsItems, type NewsState } from "@/lib/db/schema";
 import type { NewsCandidate } from "./normalize";
+import { withJobLeaseWrite, type JobLease } from "@/lib/jobs/control";
 import { HOME_NEWS_SOURCE_KEYS, newsSource } from "./sources";
 
 export const NEWS_JOB = "news-refresh";
@@ -12,14 +13,14 @@ export const NEWS_JOB = "news-refresh";
  *
  * 자동 승인이 켜져 있으면 곧바로 공개, 꺼져 있으면 승인 대기로 들어간다.
  */
-export async function insertNewsItems(candidates: NewsCandidate[], autoApprove: boolean): Promise<number> {
+export async function insertNewsItems(candidates: NewsCandidate[], autoApprove: boolean, lease?: JobLease): Promise<number> {
   const unique = [...new Map(candidates.map((candidate) => [candidate.url, candidate])).values()];
   if (!unique.length) return 0;
-  const inserted = await db
+  const inserted = await withJobLeaseWrite(lease, tx => tx
     .insert(newsItems)
     .values(unique.map((candidate) => ({ ...candidate, state: autoApprove ? "approved" : "pending", decidedBy: "auto" }) as const))
     .onConflictDoNothing({ target: newsItems.url })
-    .returning({ id: newsItems.id });
+    .returning({ id: newsItems.id }));
   return inserted.length;
 }
 

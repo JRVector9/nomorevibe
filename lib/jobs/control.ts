@@ -63,6 +63,16 @@ export async function pendingJobNames(role: JobRole): Promise<string[]> {
   return rows.map(row => row.name);
 }
 
+/** A healthy in-flight job may take longer than the progress sample interval. */
+export async function hasActiveRoleJob(role: JobRole): Promise<boolean> {
+  const [row] = await db.select({ name: jobs.name }).from(jobs).where(and(
+    inArray(jobs.name, jobsForRole(role)),
+    sql`${jobs.leaseToken} is not null`,
+    sql`${jobs.lockedAt} >= now() - ${STALE_LOCK_MS} * interval '1 millisecond'`,
+  )).limit(1);
+  return Boolean(row);
+}
+
 /** Call inside the transaction that writes the result; never hold this across external work. */
 export async function assertJobLease(tx: ProductTransaction, lease: JobLease, mode: "share" | "update" = "share"): Promise<void> {
   const [owned] = await tx.select({ name: jobs.name }).from(jobs).where(and(

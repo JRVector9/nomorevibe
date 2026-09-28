@@ -3,7 +3,7 @@ import { JOB_CATALOG } from "@/lib/jobs/catalog";
 
 export type ProgressReason = "paused" | "no_work" | "progressing" | "backoff" |
   "upstream_or_job_error" | "unknown_age" | "warming_up" | "worker_missing" | "no_progress";
-export type StageProgress = { role: "crawler" | "reviewer"; stage: ThroughputStage["key"];
+export type StageProgress = { role: "crawler" | "reviewer" | "publisher"; stage: ThroughputStage["key"];
   reason: ProgressReason; alarm: boolean };
 
 export function classifyStage(
@@ -19,16 +19,16 @@ export function classifyStage(
   else if (job?.notBefore && job.notBefore > now) reason = "backoff";
   else if (stage.errors5m !== null && stage.errors5m > 0) reason = "upstream_or_job_error";
   else if (stage.oldestMinutes === null) reason = "unknown_age";
-  else if (stage.oldestMinutes < (stage.key === "judge" ? 15 : 5)) reason = "warming_up";
+  else if (stage.oldestMinutes < (stage.key === "judge" ? 15 : stage.key === "publish" ? 10 : 5)) reason = "warming_up";
   else reason = observed ? "no_progress" : "worker_missing";
-  return { role: stage.key === "fetch" ? "crawler" : "reviewer", stage: stage.key,
+  return { role: stage.key === "fetch" ? "crawler" : stage.key === "publish" ? "publisher" : "reviewer", stage: stage.key,
     reason, alarm: reason === "no_progress" || reason === "worker_missing" };
 }
 
 export type SchedulerReason = "scheduled" | "unknown_schedule" | "worker_missing" | "scheduler_missed";
 export type SchedulerProgress = { role: "scheduler"; reason: SchedulerReason; alarm: boolean; overdueJobs: string[] };
 
-export function classifyLiveness(role: "scheduler" | "crawler" | "reviewer", observedAt: Date | null, now: Date,
+export function classifyLiveness(role: "scheduler" | "crawler" | "reviewer" | "publisher" | "maintenance" | "text", observedAt: Date | null, now: Date,
   restartCount5m = 0) {
   const missing = !observedAt || now.getTime() - observedAt.getTime() > 45_000;
   const reason = missing ? "worker_missing" as const : restartCount5m >= 3 ? "restart_loop" as const : "present" as const;

@@ -63,19 +63,21 @@ it('starts the real supervisor only after election and releases the role after S
   }
 }, 35_000);
 
-it('keeps the standby passive until the primary drains, then starts its own supervisor', async () => {
+it.each(['crawler', 'publisher', 'maintenance', 'text'] as const)(
+  '%s keeps the standby passive until the primary drains, then starts its own supervisor', async role => {
   await db.delete(jobs);
   await db.delete(roleLeases);
-  const primaryHealth = join('/tmp', `nomorevibe-role-primary-${process.pid}.json`);
-  const standbyHealth = join('/tmp', `nomorevibe-role-standby-${process.pid}.json`);
-  const primaryRoleHealth = join('/tmp', `nomorevibe-role-candidate-primary-${process.pid}.json`);
-  const standbyRoleHealth = join('/tmp', `nomorevibe-role-candidate-${process.pid}.json`);
+  await db.delete(operationsObservations);
+  const primaryHealth = join('/tmp', `nomorevibe-role-${role}-primary-${process.pid}.json`);
+  const standbyHealth = join('/tmp', `nomorevibe-role-${role}-standby-${process.pid}.json`);
+  const primaryRoleHealth = join('/tmp', `nomorevibe-role-candidate-${role}-primary-${process.pid}.json`);
+  const standbyRoleHealth = join('/tmp', `nomorevibe-role-candidate-${role}-standby-${process.pid}.json`);
   const start = (kind: 'primary' | 'standby', path: string) => {
     const child = spawn(process.execPath, ['--import', 'tsx', 'scripts/role-worker.ts',
-      '--role=crawler', `--kind=${kind}`], {
+      `--role=${role}`, `--kind=${kind}`], {
       cwd: process.cwd(),
       env: { ...process.env, DATABASE_URL: TEST_DATABASE_URL, DB_POOL_MAX: '2',
-        SERVICE_INSTANCE_ID: `test-crawler-${kind}`, RELEASE_TAG: 'process-test',
+        SERVICE_INSTANCE_ID: `test-${role}-${kind}`, RELEASE_TAG: 'process-test',
         WORKER_HEALTH_PATH: path, ROLE_HEALTH_PATH: kind === 'primary' ? primaryRoleHealth : standbyRoleHealth },
       stdio: ['ignore', 'pipe', 'pipe'],
     });
@@ -88,8 +90,8 @@ it('keeps the standby passive until the primary drains, then starts its own supe
   let standby: ReturnType<typeof start> | null = null;
   try {
     await until(async () => {
-      const [row] = await db.select().from(roleLeases).where(eq(roleLeases.role, 'crawler'));
-      return row?.ownerInstanceId === 'test-crawler-primary' ? row : null;
+      const [row] = await db.select().from(roleLeases).where(eq(roleLeases.role, role));
+      return row?.ownerInstanceId === `test-${role}-primary` ? row : null;
     }, 30_000);
     await until(async () => {
       try {
@@ -99,15 +101,16 @@ it('keeps the standby passive until the primary drains, then starts its own supe
     }, 30_000);
     standby = start('standby', standbyHealth);
     await until(async () => {
-      const [row] = await db.select().from(operationsObservations)
-        .where(eq(operationsObservations.key, 'candidate:crawler:test-crawler-standby'));
-      return row?.value.phase === 'standby' ? row : null;
+      try {
+        const health = JSON.parse(await readFile(standbyRoleHealth, 'utf8')) as { phase: string };
+        return health.phase === 'standby' ? health : null;
+      } catch { return null; }
     }, 30_000);
-    const [stillPrimary] = await db.select().from(roleLeases).where(eq(roleLeases.role, 'crawler'));
-    expect(stillPrimary.ownerInstanceId).toBe('test-crawler-primary');
+    const [stillPrimary] = await db.select().from(roleLeases).where(eq(roleLeases.role, role));
+    expect(stillPrimary.ownerInstanceId).toBe(`test-${role}-primary`);
     expect(await readFile(standbyHealth, 'utf8').catch(() => null)).toBeNull();
     const checkStandby = () => spawnSync(process.execPath, ['--import', 'tsx', 'scripts/worker-healthcheck.ts'], {
-      cwd: process.cwd(), env: { ...process.env, WORKER_ROLE: 'crawler',
+      cwd: process.cwd(), env: { ...process.env, WORKER_ROLE: role,
         WORKER_HEALTH_PATH: standbyHealth, ROLE_HEALTH_PATH: standbyRoleHealth },
     });
     expect(checkStandby().status).toBe(0);
@@ -115,8 +118,8 @@ it('keeps the standby passive until the primary drains, then starts its own supe
     primary.child.kill('SIGTERM');
     expect(await primaryExit, primary.output()).toBe(0);
     await until(async () => {
-      const [row] = await db.select().from(roleLeases).where(eq(roleLeases.role, 'crawler'));
-      return row?.ownerInstanceId === 'test-crawler-standby' ? row : null;
+      const [row] = await db.select().from(roleLeases).where(eq(roleLeases.role, role));
+      return row?.ownerInstanceId === `test-${role}-standby` ? row : null;
     }, 30_000);
     expect(checkStandby().status).toBe(0);
     await until(async () => {

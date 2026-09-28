@@ -67,6 +67,17 @@ export async function retryableTranslations(limit: number): Promise<PendingTrans
   return [...rows].map((row) => ({ hash: row.hash, body: row.body, attempts: Number(row.attempts) }));
 }
 
+/** Oldest currently selectable translation, using the same source and retry predicates as the worker. */
+export async function oldestPendingTranslationMinutes(): Promise<number | null> {
+  const [row] = await db.execute<{ minutes: number | null }>(sql`
+    select extract(epoch from (now() - min(u.at))) / 60 as minutes
+      from (${UNIQUE_SOURCES}) u
+      left join ${textTranslations} t on t.source_hash = u.hash and t.target_lang = 'ko'
+     where t.source_hash is null or (t.status = 'failed' and (t.retry_at is null or t.retry_at <= now()))
+  `);
+  return row?.minutes === null || row?.minutes === undefined ? null : Number(row.minutes);
+}
+
 /**
  * 결과를 남긴다. 실패는 5분·10분·20분… 뒤에 다시(최대 하루) — 느려도 끝까지 이어 가되
  * 늘 실패하는 한 건이 매 틱을 잡아먹지 않게.

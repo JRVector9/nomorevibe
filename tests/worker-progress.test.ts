@@ -20,6 +20,16 @@ it("keeps provider errors, missing queue ages, and the longer rule interval out 
   expect(classifyStage({ ...stage, oldestMinutes: null }, null, true, now).reason).toBe("unknown_age");
 });
 
+it("classifies eligible publisher work without restarting for held or newly approved candidates", () => {
+  const publish = { ...stage, key: "publish" as const, oldestMinutes: 11 };
+  expect(classifyStage(publish, null, true, now)).toMatchObject({
+    role: "publisher", stage: "publish", reason: "no_progress", alarm: true,
+  });
+  expect(classifyStage({ ...publish, oldestMinutes: 8 }, null, true, now).reason).toBe("warming_up");
+  expect(classifyStage({ ...publish, waiting: 0 }, null, true, now).reason).toBe("no_work");
+  expect(classifyStage({ ...publish, completed5m: 1, progress5m: 1 }, null, true, now).reason).toBe("progressing");
+});
+
 it("uses overdue scheduled requests rather than zero new records to detect scheduler failure", () => {
   const overdue = { name: "crawl-fetch", nextScheduledAt: new Date(now.getTime() - 2 * 60_000 - 1_000), notBefore: null };
   expect(classifyScheduler([overdue], true, now).reason).toBe("scheduler_missed");

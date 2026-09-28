@@ -1,6 +1,7 @@
 import { sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { rateLimits } from "@/lib/db/schema";
+import { withJobLeaseWrite, type JobLease } from "@/lib/jobs/control";
 
 /**
  * rate limit — 인스턴스가 늘어도 한도가 하나로 유지되도록 DB에 둔다.
@@ -40,11 +41,11 @@ export async function rateLimit(key: string, limit: number, windowMs: number): P
  * 한 번은 사용자가 기다리는 동안 DELETE가 돌고, 트래픽이 없으면 아예 청소가 안 된다.
  * 시간마다 도는 click-rollup이 부른다.
  */
-export async function pruneExpiredRateLimits(): Promise<number> {
-  const deleted = await db
+export async function pruneExpiredRateLimits(lease?: JobLease): Promise<number> {
+  const deleted = await withJobLeaseWrite(lease, tx => tx
     .delete(rateLimits)
     .where(sql`${rateLimits.resetAt} < now() - interval '1 day'`)
-    .returning({ key: rateLimits.key });
+    .returning({ key: rateLimits.key }));
   return deleted.length;
 }
 

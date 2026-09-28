@@ -616,7 +616,8 @@ describe("발행 잡", () => {
 
     await tick();
 
-    expect(og.cacheOgImage).toHaveBeenCalledWith("https://my-app.test/og.png", expect.any(String), "background");
+    expect(og.cacheOgImage).toHaveBeenCalledWith("https://my-app.test/og.png", expect.any(String), "background",
+      expect.objectContaining({ name: "crawl-publish", token: expect.any(String) }));
   });
 
   it("판정 쪽 시계가 빨라도 원본이 바뀌었으면 발행하지 않는다", async () => {

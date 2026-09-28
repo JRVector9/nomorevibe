@@ -1,8 +1,8 @@
 import { sql } from "drizzle-orm";
-import { db } from "@/lib/db";
 import { SEARCH_PAGE_TEXT_CHARS } from "@/lib/domain/products/search";
 import { CATEGORY_LABELS } from "@/lib/domain/products/labels";
 import type { JobContext, JobOutcome } from "@/lib/jobs/runner";
+import { withJobLeaseWrite } from "@/lib/jobs/control";
 
 /**
  * 검색 문서 채우기 — products.search_topics · search_page_text · search_readme 를 원본과 맞춘다.
@@ -33,7 +33,8 @@ const PAGE_TEXT = sql`left(d.page_meta ->> 'textSample', ${SEARCH_PAGE_TEXT_CHAR
 const README = sql`nullif(left(d.page_meta ->> 'readmeSample', ${SEARCH_PAGE_TEXT_CHARS}), '')`;
 
 export async function refreshProductSearchDocuments(ctx: JobContext<null>): Promise<JobOutcome<null>> {
-  const rows = await db.execute<{ slug: string }>(sql`
+  const { updated, categorized } = await withJobLeaseWrite(ctx.lease, async tx => {
+    const rows = await tx.execute<{ slug: string }>(sql`
     with stale as (
       select p.id, ${TOPICS} as topics, ${PAGE_TEXT} as page_text, ${README} as readme
         from products p
@@ -51,13 +52,13 @@ export async function refreshProductSearchDocuments(ctx: JobContext<null>): Prom
      where p.id = stale.id
     returning p.slug`);
 
-  /**
-   * 카테고리 — 영문 키와 화면의 한국어 이름을 함께 적는다("Games 게임"). 수집분만이 아니라 모든 제품이
-   * 대상이라 원본 조인 없이 따로 맞춘다. 한국어 이름은 화면이 쓰는 표(CATEGORY_LABELS) 하나에서만 온다 —
-   * 이름을 바꾸면 이 잡이 1분 안에 색인도 맞춘다.
-   */
-  const labels = sql.join(Object.entries(CATEGORY_LABELS).map(([key, label]) => sql`(${key}, ${label})`), sql`, `);
-  const categories = await db.execute<{ slug: string }>(sql`
+    /**
+     * 카테고리 — 영문 키와 화면의 한국어 이름을 함께 적는다("Games 게임"). 수집분만이 아니라 모든 제품이
+     * 대상이라 원본 조인 없이 따로 맞춘다. 한국어 이름은 화면이 쓰는 표(CATEGORY_LABELS) 하나에서만 온다 —
+     * 이름을 바꾸면 이 잡이 1분 안에 색인도 맞춘다.
+     */
+    const labels = sql.join(Object.entries(CATEGORY_LABELS).map(([key, label]) => sql`(${key}, ${label})`), sql`, `);
+    const categories = await tx.execute<{ slug: string }>(sql`
     with stale as (
       select p.id, trim(p.category || ' ' || coalesce(l.label, '')) as text
         from products p left join (values ${labels}) as l(category, label) on l.category = p.category
@@ -68,8 +69,8 @@ export async function refreshProductSearchDocuments(ctx: JobContext<null>): Prom
     update products p set search_category = stale.text from stale where p.id = stale.id
     returning p.slug`);
 
-  const updated = [...rows].length;
-  const categorized = [...categories].length;
+    return { updated: [...rows].length, categorized: [...categories].length };
+  });
   ctx.log("product_search.refreshed", { updated, categorized });
   return { done: updated < BATCH && categorized < BATCH };
 }

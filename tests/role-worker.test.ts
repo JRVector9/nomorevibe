@@ -80,9 +80,15 @@ it('requires an explicit stable instance, release and role kind', () => {
     SERVICE_INSTANCE_ID: 'reviewer-b', RELEASE_TAG: 'r1',
   })).toMatchObject({ role: 'reviewer', kind: 'standby', instanceId: 'reviewer-b', release: 'r1' });
   expect(() => parseRoleWorkerArgs(['--role=reviewer', '--kind=standby'], {})).toThrow();
-  expect(() => parseRoleWorkerArgs(['--role=publisher', '--kind=standby'], {
+  expect(parseRoleWorkerArgs(['--role=publisher', '--kind=standby'], {
     SERVICE_INSTANCE_ID: 'publisher-b', RELEASE_TAG: 'r1',
-  })).toThrow();
+  })).toMatchObject({ role: 'publisher', kind: 'standby', instanceId: 'publisher-b', release: 'r1' });
+  expect(parseRoleWorkerArgs(['--role=maintenance', '--kind=standby'], {
+    SERVICE_INSTANCE_ID: 'maintenance-b', RELEASE_TAG: 'r1',
+  })).toMatchObject({ role: 'maintenance', kind: 'standby', instanceId: 'maintenance-b', release: 'r1' });
+  expect(parseRoleWorkerArgs(['--role=text', '--kind=standby'], {
+    SERVICE_INSTANCE_ID: 'text-b', RELEASE_TAG: 'r1',
+  })).toMatchObject({ role: 'text', kind: 'standby', instanceId: 'text-b', release: 'r1' });
   expect(roleCandidateObservationKey(candidate)).toBe('candidate:crawler:crawler-a');
 });
 

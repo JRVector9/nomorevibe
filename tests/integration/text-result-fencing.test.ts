@@ -55,6 +55,12 @@ it("a replacement lease blocks a late write", async () => {
   expect(await db.select().from(crawlTaglines)).toHaveLength(0);
   expect((await crawl.getCandidate("fence/app"))?.state).toBe("needs_review");
 });
+it("measures tagline wait with the database clock", async () => {
+  await db.update(crawlCandidates).set({ updatedAt: sql`localtimestamp - interval '5 minutes'` });
+  const [task] = await pendingTaglines(1);
+  expect(task.readyAgeMinutes).toBeGreaterThan(4);
+  expect(task.readyAgeMinutes).toBeLessThan(6);
+});
 it("tagline, release and publication request roll back together", async () => {
   await db.insert(jobs).values({ name: "crawl-publish", requestedVersion: Number.MAX_SAFE_INTEGER });
   vi.stubGlobal("fetch", vi.fn(async () => answer()));

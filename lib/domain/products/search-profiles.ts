@@ -170,6 +170,7 @@ export async function recordVerificationResult(task: ProfileTask, lease: JobLeas
       const limited = NOT_PRODUCT_FAULT.has(code);
       await tx.update(productSearchProfiles).set({
         verifyError: code,
+        updatedAt: sql`now()`,
         verifyAttempts: limited ? productSearchProfiles.verifyAttempts : sql`${productSearchProfiles.verifyAttempts} + 1`,
         verifyRetryAt: limited ? sql`now() + interval '30 minutes'`
           : sql`now() + least(interval '24 hours', interval '5 minutes' * power(2, ${productSearchProfiles.verifyAttempts}))`,
