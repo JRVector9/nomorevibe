@@ -51,3 +51,15 @@ it("uses the next account when the first has an existing primary cooldown", asyn
   expect(await githubRequest("/repos/acme/app")).toMatchObject({ ok: true, status: 200 });
   expect(fetcher).toHaveBeenCalledTimes(1);
 });
+
+it("keeps one timeout budget across account fallback", async () => {
+  accounts.tokens.mockResolvedValue([{ token: "account-a", userId: 1, login: "a" }, { token: "account-b", userId: 2, login: "b" }]);
+  const reset = Math.floor(Date.now() / 1000) + 120;
+  const fetcher = vi.fn().mockImplementation(async () => {
+    await new Promise(resolve => setTimeout(resolve, 35));
+    return new Response("{}", { status: 403, headers: { "x-ratelimit-remaining": "0", "x-ratelimit-reset": String(reset) } });
+  });
+  vi.stubGlobal("fetch", fetcher);
+  expect(await githubRequest("/repos/acme/app", {}, { timeoutMs: 20 })).toEqual({ ok: false, error: { kind: "transport" } });
+  expect(fetcher).toHaveBeenCalledTimes(1);
+});

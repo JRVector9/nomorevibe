@@ -65,11 +65,14 @@ export async function githubRequest<T>(
   const resource = githubResource(path);
   const start = (rotation[resource] ?? 0) % accounts.length;
   rotation[resource] = start + 1;
+  const deadline = Date.now() + Math.max(1, Math.min(options.timeoutMs ?? 10_000, 10_000));
   let earliestReset: Date | null = null;
   for (let offset = 0; offset < accounts.length; offset++) {
+    const remainingMs = deadline - Date.now();
+    if (remainingMs <= 0) return { ok: false, error: { kind: "transport" } };
     const account = accounts[(start + offset) % accounts.length];
     let secondary = false;
-    const result = await githubRequestWithToken<T>(path, conditional, options, account, () => { secondary = true; });
+    const result = await githubRequestWithToken<T>(path, conditional, { timeoutMs: remainingMs }, account, () => { secondary = true; });
     if (!result.ok && result.error.kind === "rate_limited" && !secondary) {
       if (result.error.resetAt && (!earliestReset || result.error.resetAt < earliestReset)) earliestReset = result.error.resetAt;
       continue;
