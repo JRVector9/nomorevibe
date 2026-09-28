@@ -101,6 +101,7 @@ function inFlight() {
 
 beforeAll(() => ensureSchema());
 beforeEach(async () => {
+  vi.unstubAllEnvs();
   await db.delete(productHealth);
   await db.delete(jobs);
   await resetTables();
@@ -369,6 +370,25 @@ describe("생존 확인 — 동시에 연다", () => {
     expect(http.peak).toBe(3);
     expect(safeFetch).toHaveBeenCalledTimes(5);
     expect(await db.select().from(productHealth)).toHaveLength(5);
+  });
+
+  it("용량 상향에서도 서로 다른 6개 origin만 병렬로 열고 기록은 직렬화한다", async () => {
+    vi.stubEnv("UPTIME_BATCH_SIZE", "60");
+    vi.stubEnv("UPTIME_CONCURRENCY", "6");
+    for (const name of ["a", "b", "c", "d", "e", "f", "g"]) {
+      await product(name, `https://${name}.test`);
+    }
+    await product("same-a", "https://a.test/second");
+    const http = inFlight();
+    safeFetch.mockImplementation((url: string) => http.during(url, () => reply(url, 200)));
+    readBodyCapped.mockResolvedValue(Buffer.from("<body>checked</body>"));
+
+    await runJob("uptime-ping", pingProducts);
+
+    expect(http.peak).toBe(6);
+    expect(http.peakOf("https://a.test")).toBe(1);
+    expect(dbWrites.peak).toBe(1);
+    expect(await db.select().from(productHealth)).toHaveLength(8);
   });
 
   it("같은 서버는 한 번에 하나만 연다 — 다른 서버와는 동시에", async () => {

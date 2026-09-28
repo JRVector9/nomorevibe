@@ -17,17 +17,17 @@ import { nextToCheck, recordPing, type PingTarget } from "@/lib/domain/products/
  * 이미 발행된 것들은 그 값이 없던 시절에 수집됐다. 같은 주소를 어차피 여기서 여니
  * 새 요청 없이 채워진다 — 그래야 발행분 재검수가 지금 기준으로 다시 태운다.
  *
- * 한 바퀴가 재확인 간격(6시간)을 따라가야 한다. 발행분 3,147건을 6시간마다 보려면 시간당
- * 525건이 든다. 10분마다 15건(시간당 90건)일 때는 6시간 안에 17%만 볼 수 있었고 한 바퀴에
- * 35시간이 걸렸다. 1분마다 15건이면 시간당 900건 — 전부 밀려 있어도 한 바퀴 3.5시간이다.
+ * 한 바퀴가 재확인 간격(6시간)을 따라가야 한다. 약 19,365개 공개 웹사이트에는
+ * 분당 54건 이상이 필요하다. 기본 15건/분은 기존 작은 규모에 맞고 현재 규모에는 부족하다.
+ * 용량 상향은 환경 설정으로 한 역할씩 측정하며 진행한다.
  *
  * 주기를 당긴 만큼 한 틱이 늘어지면 안 된다. 순차로 열면 응답 없는 서버 하나가 10초를 먹어
  * 25초 예산에 두세 건밖에 못 본다. 그래서 서로 다른 서버를 CONCURRENCY곳까지 동시에 연다.
- * 전부 10초 타임아웃이어도 0·10·20초에 세 건씩 한 틱 9건, 시간당 540건이라 6시간은 지킨다.
+ * 응답이 느리면 25초 예산이 먼저 끝나므로 설정값이 곧 실제 처리량이라는 뜻은 아니다.
  *
  * 남의 서버를 두드리지 않는다는 원칙은 동시에 열어도 그대로다. 같은 서버(origin)는 한 번에
  * 하나씩만 열고, 제품마다 6시간에 한 번이라는 제한(nextToCheck)도 그대로라 한 서버가 받는
- * 요청은 늘지 않는다 — 밀린 몫을 빨리 따라잡을 뿐이다. 배치도 키우지 않는다.
+ * 요청은 늘지 않는다 — 밀린 몫을 빨리 따라잡을 뿐이다.
  *
  * 커서가 없다. 확인한 지 오래된 것부터 가져오므로 확인 시각 자체가 진행 지점이다.
  */
@@ -36,7 +36,7 @@ import { nextToCheck, recordPing, type PingTarget } from "@/lib/domain/products/
  * 한 틱에 확인하는 수의 상한. 예산(25초)이 먼저 끝나면 거기서 멈추고, 남은 것은 가장
  * 오래된 채로 남아 다음 틱이 먼저 가져간다.
  */
-const BATCH = 15;
+const DEFAULT_BATCH = 15;
 
 /**
  * 한 틱 안에서 동시에 여는 서버 수.
@@ -45,18 +45,35 @@ const BATCH = 15;
  * 않고, 그래야 이 잡이 동시에 쥐는 DB 연결이 기록 1 + 러너 임대 갱신 1 = 2로 묶여
  * maintenance 풀(3) 안에 든다. 기록까지 동시에 하면 3 + 1 = 4로 풀을 넘는다.
  */
-const CONCURRENCY = 3;
+const DEFAULT_CONCURRENCY = 3;
+
+function capacitySetting(env: Readonly<Record<string, string | undefined>>, key: string, fallback: number, max: number) {
+  const raw = env[key];
+  if (raw === undefined) return fallback;
+  const value = /^\d+$/.test(raw) ? Number(raw) : Number.NaN;
+  if (!Number.isSafeInteger(value) || value < 1 || value > max) {
+    throw new Error(`Invalid ${key}: expected integer 1..${max}`);
+  }
+  return value;
+}
+
+/** Bounded maintenance-only ramp; defaults preserve the existing request rate. */
+export function uptimeCapacityConfig(env: Readonly<Record<string, string | undefined>> = process.env) {
+  return { batch: capacitySetting(env, "UPTIME_BATCH_SIZE", DEFAULT_BATCH, 60),
+    concurrency: capacitySetting(env, "UPTIME_CONCURRENCY", DEFAULT_CONCURRENCY, 6) };
+}
 
 /**
  * 본문에서 받아 볼 바이트 상한.
  *
  * 판정에 쓰는 것은 앞부분 1,500자뿐이다. 수집 때 쓰는 2MB를 그대로 쓰면 1분마다
- * 15건씩 쓰지도 않을 바이트를 받는다. 256KB면 어떤 페이지든 첫 화면 글자는 다 들어온다.
+ * 여러 건에서 쓰지도 않을 바이트를 받는다. 256KB면 첫 화면 글자를 담기에 충분하다.
  */
 const BODY_BYTES = 256 * 1024;
 
 export async function pingProducts(ctx: JobContext<null>): Promise<JobOutcome<null>> {
-  const targets = await nextToCheck(BATCH);
+  const capacity = uptimeCapacityConfig();
+  const targets = await nextToCheck(capacity.batch);
   if (targets.length === 0) {
     ctx.log("uptime.idle", { checked: 0 });
     return { done: true };
@@ -72,7 +89,7 @@ export async function pingProducts(ctx: JobContext<null>): Promise<JobOutcome<nu
    * 한 건이 실패하면 새로 열지 않는다. 다만 이미 연 것은 끝까지 읽거나 끊고 기록한 뒤에
    * 실패를 알린다 — 먼저 던지면 남은 확인이 러너가 임대를 푼 뒤에 뒤늦게 기록된다.
    */
-  await Promise.all(Array.from({ length: Math.min(CONCURRENCY, lanes.length) }, async () => {
+  await Promise.all(Array.from({ length: Math.min(capacity.concurrency, lanes.length) }, async () => {
     for (let lane = lanes.shift(); lane; lane = lanes.shift()) {
       for (const target of lane) {
         if (errors.length > 0 || !ctx.hasBudget()) return;

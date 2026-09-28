@@ -65,6 +65,11 @@ npm run dev
 | `npm run crawl:rejudge` | 떠 놓은 표본으로 현재 판정 규칙 재판정 |
 | `npx drizzle-kit generate` / `migrate` | 마이그레이션 생성 / 적용 |
 
+maintenance의 `uptime-ping`은 기본 15건/분·서로 다른 origin 3곳 동시 확인이다.
+운영 처리량을 올릴 때는 `UPTIME_BATCH_SIZE=30`, `UPTIME_CONCURRENCY=4`부터 계측하고
+검증 뒤 상한 60/6까지 올린다. 같은 origin은 여전히 한 번에 하나만 열고 DB 기록은 직렬이다.
+자세한 단계와 6시간 backlog 확인은 운영 runbook을 따른다.
+
 통합 테스트는 **개발 DB가 아닌 전용 DB**를 쓴다. 테이블을 비우므로 개발 DB를 가리키면
 작업 중인 데이터가 날아간다.
 
