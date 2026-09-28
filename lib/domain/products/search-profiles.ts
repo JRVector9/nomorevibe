@@ -108,7 +108,7 @@ const MAX_VERIFY_ATTEMPTS = 5;
 const NOT_PRODUCT_FAULT = new Set(["rate_limited", "rate_limit", "model_unavailable", "network", "no_key"]);
 
 /**
- * 검수할 키워드 — 지은 뒤 아직 검수하지 않은 공개 제품. 최신 것부터.
+ * 검수할 키워드 — 지은 뒤 아직 검수하지 않은 공개 제품. 오래 기다린 것부터.
  * 키워드가 하나도 없는 것은 검수할 것이 없다.
  */
 export async function pendingVerifications(limit: number): Promise<ProfileTask[]> {
@@ -122,7 +122,7 @@ export async function pendingVerifications(limit: number): Promise<ProfileTask[]
         and ${productSearchProfiles.verifyAttempts} < ${MAX_VERIFY_ATTEMPTS}
         and (${productSearchProfiles.verifyRetryAt} is null or ${productSearchProfiles.verifyRetryAt} <= now())`,
     ))
-    .orderBy(sql`${products.id} desc`)
+    .orderBy(productSearchProfiles.updatedAt, products.id)
     .limit(limit);
   return rows.map((row) => ({ product: row.product, profile: row.profile, reviewerNote: row.reviewerNote }));
 }
