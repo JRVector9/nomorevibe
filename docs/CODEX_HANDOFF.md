@@ -1,3 +1,61 @@
+# 2026-09-29 01:35 KST — 기존 DB 구성 확인·격리 복원 기록
+
+## 현재 목적 / 완료 작업 / 수정 파일
+
+사용자는 남은 워커 failover 작업과 기존 구현 재검토를 요청했고, DB는 이미 별도로
+구성됐으므로 DB 서버 설정은 건드리지 말라고 명확히 했다. 이 방향을 따른다.
+독립 감시 PR #219와 maintenance 용량 PR #220, 용량 운영 기록 PR #221은 각각
+필수 CI 후 main에 병합됐다. maintenance M3 주·mini 예비는 같은 SHA `ce64737`와
+60/6 설정으로 운영 중이며 마지막 직접 확인에서 M3 active/mini standby였다.
+기존 다섯 역할은 모두 주·예비 후보와 lease가 일치했다.
+
+이번 문서 단계는 `PENDING.md`, 신규
+`docs/operations/2026-09-29-db-restore-verification.md`, 이 handoff를 수정한다.
+별도 worktree `/private/tmp/nmv-uptime-capacity`의
+`docs/db-restore-verification-20260929` 브랜치에서 진행하고 루트 checkout의 사용자
+변경과 중단된 `product-intro-check`는 보존한다.
+
+## 핵심 판단 / 실제 테스트 / 실패 접근
+
+- 운영 DB primary/replica는 이미 Patroni 스트리밍이다. 읽기 전용 당시 복제 lag
+  0바이트, WAL 아카이브 on/실패 0건을 확인했다. 서버 설정·운영 데이터 변경은 없다.
+- replica의 새 논리 dump를 로컬 격리 DB로 스트리밍한 첫 시도는
+  `crawl_review_attempts`의 hot standby recovery conflict로 실패했다. 로컬 부분
+  복원 DB를 버리고 primary에서 다시 `pg_dump -Fc --no-acl --no-owner`를 스트리밍해
+  `pg_restore --exit-on-error` 종료 코드 0으로 복원했다.
+- 원본/복원은 products 19,894, crawl_documents 107,220, jobs 25,
+  migration 53/최대 ID53/hash 집계 일치, `og_images` 19,865행/데이터 총
+  2,009,099,011바이트/한 표본 38,948바이트·MD5 일치였다. `media_assets`는
+  양쪽 0행이라 그 테이블의 bytea 복원은 검증하지 못했다. 로컬 시험 DB는 대조 후
+  `dropdb` 종료 코드 0으로 삭제했다. 기존 보관 백업본 복원·보존 기간·시점 복구는
+  시험하지 않았다.
+- PR #220의 단위 1,229건·통합 923건, 타입·lint(기존 vendor 경고1)·build와
+  Docker monitor build를 이전 단계에서 실제 실행했다. 이번 단계는 문서만 변경하며
+  문서 diff-check를 실행한다. 운영 monitor/Kuma 알림 실전 배포는 여전히 미완료다.
+
+## 남은 작업 / 정확한 다음 명령
+
+이 문서 diff를 검토·커밋하고 PR의 최신 main CI `check` 뒤 병합한다. 별도 DB
+설정 작업은 하지 않는다. mini Kuma 로그인 경로와 알림 수신자가 확인되면 기존
+DB 접속 설정으로 독립 monitor를 연결하고 예비 중단 DOWN/복귀 UP, 감시자 자체
+timeout을 검증한다. mini 호스트 장애의 독립 deadman, publisher 예비 신규 발행,
+실제 저장 정체/반복 부팅 격리, maintenance 6시간 backlog 장기 회복,
+24시간 연속 관측은 남았다. 별도로 관리하는 기존 보관 백업의 복구 가능성은
+이번 새 논리 백업 시험으로 증명되지 않는다.
+
+```sh
+cd /private/tmp/nmv-uptime-capacity
+git status --short --branch
+git diff --check
+git diff -- PENDING.md docs/CODEX_HANDOFF.md
+git add PENDING.md docs/CODEX_HANDOFF.md docs/operations/2026-09-29-db-restore-verification.md
+git commit -m 'docs: record isolated database restore verification'
+git push -u origin docs/db-restore-verification-20260929
+gh pr checks <new-pr-number>
+```
+
+---
+
 # 2026-09-29 01:22 KST — maintenance 60/6 단계적 운영 배포
 
 ## 현재 목적 / 완료 작업 / 수정 파일

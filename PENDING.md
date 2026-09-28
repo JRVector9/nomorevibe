@@ -37,8 +37,13 @@ scheduler는 M3에서 2복제본이다. 공개 GitHub main은 최신 base의 CI 
   확인했다. 전체 backlog가 수시간에 걸쳐 6시간 안으로 회복되는지와 장기 CPU·DB 부하 검증은
   아직 남았다([운영 기록](docs/operations/2026-09-29-uptime-capacity-rollout.md)).
 
-- **백업 복구·용량**: 격리 DB에 실제 운영 백업을 복원하고 `media_assets` 바이트·주요 행·마이그레이션을
-  대조한다. 운영 DB 볼륨·WAL·보존 기간과 PgBouncer 용량도 확인한다. 이 세션에서 복원 시험은 실행하지 않았다.
+- **기존 보관 백업의 복구 가능성**: 운영 DB의 Patroni 주·복제 스트리밍과 WAL 아카이브가
+  설정된 것은 읽기 전용으로 확인했다. 2026-09-29 운영 primary에서 새로 생성한 논리 백업을
+  로컬 격리 DB에 복원해 주요 행·마이그레이션과 비어 있지 않은 `og_images.data` 바이트를
+  대조했다. 운영 DB 설정은 바꾸지 않았고 시험 DB는 삭제했다. 당시 `media_assets`가 0행이어서
+  그 테이블의 `web_data`·`thumbnail_data` 복구는 검증할 수 없었다. **이미 보관 중인 과거 백업의
+  복원, 보존 기간·볼륨/WAL 여유 및 PgBouncer 용량은 별도 운영 관리 영역의 미검증 항목**이다.
+  워커 failover 작업에서 DB 구성을 변경하지 않는다([복원 기록](docs/operations/2026-09-29-db-restore-verification.md)).
 - **24시간 연속 관측**: 각 앱의 소스 커밋·재시작·job 성공/대기·API quota·DB 연결·RSS를 기록한다.
   개별 점검과 짧은 로컬 관측으로 24시간 안정성을 보장하지 않는다.
 - **랭킹 정책 전환**: 운영 `unique_visitor_started_at`은 2026-08-29 03:56:49 UTC이며,
@@ -129,7 +134,7 @@ Codex 연구 프리뷰이므로 서버 access token과 계정 제공 여부를 �
 ## B1. 프로덕션 독립 스케줄러·워커 전환과 운영 확인
 
 **현재 상태(2026-09-27)**: 독립 scheduler와 5개 역할 워커(crawler·reviewer·publisher·text·maintenance)가
-운영 중이다. 남은 것은 상단의 24시간 연속 관측과 백업 복원 검증이다.
+운영 중이다. 남은 것은 상단의 24시간 연속 관측과 기존 보관 백업의 복구 검증이다.
 격리 환경의 웹 없는 5역할 관측을 1,800.307초 동안 완료했다(31표본 모두 healthy, 재시작0). 외부 수집 비활성·빈 DB 조건이며 24시간 관측은 수행하지 않았다.
 완료 기록은 [운영 절차](docs/operations/independent-workers-runbook.md)와 릴리스 보고서에 별도로 남긴다.
 
@@ -175,8 +180,9 @@ Codex 연구 프리뷰이므로 서버 access token과 계정 제공 여부를 �
    실제 수집 성공으로 세지 않는다. 웹 중지와 scheduler 중지를 별도로 관측한다.
 4. 인증 실패는 별도 시험 환경에서 확인한다. 마지막 정상 facts가 보존되고 오류/재시도 시각만
    바뀌는지 확인하며, 운영 토큰을 의도적으로 폐기하지 않는다.
-5. DB 백업·복구 표본에 `media_assets.web_data`·`thumbnail_data`가 포함되고 볼륨·WAL·보존 기간에
-   여유가 있는지 확인한다.
+5. 새 논리 백업의 격리 복원은 [2026-09-29 기록](docs/operations/2026-09-29-db-restore-verification.md)을 따른다.
+   기존 보관 백업 복구·보존 기간·용량은 별도 운영 관리에서 확인한다. `media_assets`에 실제 행이
+   생기면 `web_data`·`thumbnail_data` 바이트 포함 여부를 그 표본으로 확인한다.
 6. 24시간 동안 모드·모델·재시작·잡 진행·API 대기·RSS·DB 연결을 기록한다. 운영 관측을 완료하기 전
    24시간 안정성이 검증됐다고 보고하지 않는다.
 
