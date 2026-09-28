@@ -1,4 +1,5 @@
 import type { ThroughputSnapshot, ThroughputStatus } from "@/lib/operations/throughput-model";
+import type { ProgressReason, SchedulerProgress, StageProgress, classifyLiveness } from "@/lib/operations/worker-progress";
 import { LiveRefresh } from "./LiveRefresh";
 import styles from "./throughput.module.css";
 
@@ -8,6 +9,12 @@ const STATUS_LABEL: Record<ThroughputStatus, string> = {
   backlog: "대기 많음",
   processing: "처리 기록 있음",
   idle: "처리 대기",
+};
+const REASON_LABEL: Record<ProgressReason, string> = {
+  paused: "설정상 중지", no_work: "실행 가능 일감 없음", progressing: "최근 저장 진행 있음",
+  backoff: "재시도 시각 대기", upstream_or_job_error: "최근 오류 기록 확인 필요",
+  unknown_age: "대기 시각 확인 필요", warming_up: "판별 대기 중",
+  worker_missing: "워커 관측 끊김", no_progress: "저장 진행 없음",
 };
 
 const count = (value: number) => value.toLocaleString("ko-KR");
@@ -21,7 +28,10 @@ function waitingTime(minutes: number | null, waiting: number): string {
   return `${Math.floor(hours / 24)}일 ${hours % 24}시간`;
 }
 
-export function ThroughputStrip({ snapshot }: { snapshot: ThroughputSnapshot | null }) {
+export function ThroughputStrip({ snapshot, signals, scheduler, liveness }: {
+  snapshot: ThroughputSnapshot | null; signals?: StageProgress[]; scheduler?: SchedulerProgress;
+  liveness?: ReturnType<typeof classifyLiveness>[];
+}) {
   if (!snapshot) return <section className={styles.strip} aria-labelledby="throughput-title">
     <div className={styles.heading}><h2 id="throughput-title">단계별 처리 속도</h2><LiveRefresh /></div>
     <p role="status">처리 속도를 불러오지 못했습니다. 다음 갱신에서 다시 확인합니다.</p>
@@ -47,6 +57,24 @@ export function ThroughputStrip({ snapshot }: { snapshot: ThroughputSnapshot | n
           {attention.map((stage) => <span key={stage.key}>{stage.label} · {STATUS_LABEL[stage.status]}</span>)}
         </p>
       )}
+      {signals?.some(signal => signal.alarm) && <p className={styles.attention}>
+        <strong>확인할 워커</strong>
+        {signals.filter(signal => signal.alarm).map(signal => <span key={signal.stage}>
+          {signal.role === "crawler" ? "수집" : "심사"} · {REASON_LABEL[signal.reason]}
+        </span>)}
+      </p>}
+      {scheduler?.reason === "scheduler_missed" && <p className={styles.attention}>
+        <strong>스케줄러 예약 지연</strong><span>{scheduler.overdueJobs.join(", ")}</span>
+      </p>}
+      {scheduler?.reason === "unknown_schedule" && <p className={styles.attention}>
+        <strong>스케줄러 예약 상태 미확인</strong>
+      </p>}
+      {liveness?.some(row => row.alarm) && <p className={styles.attention}>
+        <strong>워커 생존 확인</strong>
+        {liveness.filter(row => row.alarm).map(row => <span key={row.role}>
+          {row.role === "crawler" ? "수집" : row.role === "reviewer" ? "심사" : "스케줄러"} 워커 {row.reason === "restart_loop" ? "5분 내 반복 재시작" : "관측 끊김"}
+        </span>)}
+      </p>}
 
       <ol className={styles.stages}>
         {snapshot.stages.map((stage, index) => (
@@ -65,6 +93,9 @@ export function ThroughputStrip({ snapshot }: { snapshot: ThroughputSnapshot | n
               {stage.errors5m !== null && <div><dt>5분 내 오류 기록</dt><dd data-error={stage.errors5m > 0 ? "true" : undefined}>{count(stage.errors5m)}<span>{stage.unit}</span></dd></div>}
             </dl>
             {stage.queueNote && <p className={styles.queueNote}>{stage.queueNote}</p>}
+            {signals?.find(signal => signal.stage === stage.key) && <p className={styles.queueNote}>
+              워커 판별: {REASON_LABEL[signals.find(signal => signal.stage === stage.key)!.reason]}
+            </p>}
           </li>
         ))}
       </ol>

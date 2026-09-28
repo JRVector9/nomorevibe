@@ -19,6 +19,7 @@ import { pipelineFlow, oldestReviewWaitDays, stalledReviewCount } from "@/lib/op
 import { ActionQueue, type ActionItem } from "./ActionQueue";
 import { PipelineRail } from "./PipelineRail";
 import { pipelineThroughput } from "@/lib/operations/throughput";
+import { buildWorkerProgress } from "@/lib/operations/worker-progress-query";
 import { ThroughputStrip } from "./ThroughputStrip";
 import type { AgentStatus } from "@/lib/operations/contracts";
 import { manualCandidates } from "@/lib/operations/categories";
@@ -116,6 +117,7 @@ export default async function StatusPage({ searchParams }: { searchParams: Promi
   if (filters.page > lastQueuePage) redirect(queueFilterHref(filters, { page: lastQueuePage }));
 
   const states = new Map(jobStates.map((job) => [job.name, job]));
+  const workerProgress = throughput ? buildWorkerProgress(throughput, jobStates, ops.observations, new Date(ops.fetchedAt)) : null;
   const rejectedTotal = rejections.reduce((sum, r) => sum + r.count, 0);
   const rankingStale = rankingSnapshotIsStale(rankingSeason?.refreshedAt ?? null);
   const evidenceJob = states.get("product-evidence-refresh");
@@ -224,7 +226,7 @@ export default async function StatusPage({ searchParams }: { searchParams: Promi
 
   return (
     <main className="pb-10">
-      <OperationsCenter throughput={<><ThroughputStrip snapshot={throughput} /><SearchHealthPanel health={health} observedAt={healthObservation?.observedAt} /></>} key={initialTab} initialTab={initialTab} queue={<QueuePreview entries={queue.entries} total={queue.total} counts={decisions.counts} filters={filters} totalWaiting={needsReview} filterScanTruncated={causes?.truncated || Object.values(decisions.counts).reduce((sum, count) => sum + count, 0) < needsReview} />} data={ops} candidates={manual} reviewMode={settings.reviewMode} enabled={settings.enabled} localCodexAllowed={localCodexEnabled()} actionQueue={<ActionQueue items={actions}/>} pipeline={<div className="flex flex-col gap-2"><PipelineRail flow={flow}/><TranslationProgress progress={translation}/></div>} oauthConfigured={Boolean(process.env.GITHUB_OAUTH_CLIENT_ID && process.env.GITHUB_OAUTH_CLIENT_SECRET)}
+      <OperationsCenter throughput={<><ThroughputStrip snapshot={throughput} signals={workerProgress?.stages} scheduler={workerProgress?.scheduler} liveness={workerProgress?.liveness} /><SearchHealthPanel health={health} observedAt={healthObservation?.observedAt} /></>} key={initialTab} initialTab={initialTab} queue={<QueuePreview entries={queue.entries} total={queue.total} counts={decisions.counts} filters={filters} totalWaiting={needsReview} filterScanTruncated={causes?.truncated || Object.values(decisions.counts).reduce((sum, count) => sum + count, 0) < needsReview} />} data={ops} candidates={manual} reviewMode={settings.reviewMode} enabled={settings.enabled} localCodexAllowed={localCodexEnabled()} actionQueue={<ActionQueue items={actions}/>} pipeline={<div className="flex flex-col gap-2"><PipelineRail flow={flow}/><TranslationProgress progress={translation}/></div>} oauthConfigured={Boolean(process.env.GITHUB_OAUTH_CLIENT_ID && process.env.GITHUB_OAUTH_CLIENT_SECRET)}
         jobs={JOB_NAMES.map(name => {
           const job = states.get(name);
           return { name, status: jobStatusLabel(job), lastRunAt: job?.lastRunAt?.toISOString() ?? null,

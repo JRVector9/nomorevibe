@@ -4029,3 +4029,45 @@ Real browser scripts initiate login/model probes and must not be rerun during th
 - Existing unrelated ProductHero/product-detail test edits and `nomorevibe-final/`, `nomorevibe_final.html`, `nomorevibe_final_source.zip` remain outside this commit.
 - Most recent verification: full unit suite657 passed; Claude-focused15 passed; TypeScript, targeted ESLint, Docker builds and browser checks recorded above. No application code changed after those checks; commit preparation uses staged diff validation.
 - No runtime restart, authentication cancellation, model application, push or deployment requested/performed as part of commit preparation. Preserve any active Claude user approval.
+# 2026-09-28 19:06 KST — 워커 failover P0 별도 출고 준비
+
+## 현재 목적 / 완료 작업 / 수정 파일
+
+수집·심사 워커 장애 복구를 우선순위대로 진행한다. P0만 분리한 작업트리
+`/private/tmp/nmv-worker-failover-p0`, 브랜치 `feat/worker-failover-p0-20260928`에
+심사 `owner_changed` 반복을 모델 실패 한도와 분리한 커밋 `580f48e`, 일감·저장 진행·
+scheduler 지연·반복 부팅 판별과 읽기 전용 JSON CLI를 만든 커밋 `d0539d9`를 적용했다.
+`README.md`, `docs/operations/independent-workers-runbook.md`, `PENDING.md`에 명령·종료 코드·
+90초 잡 stale와 남은 외부 감시 배치를 기록했다. P1 역할 lease/예비 워커 코드는 별도 작업트리
+`/private/tmp/nmv-worker-failover-20260928`에서 개발 중이며 이 P0 브랜치에는 없다.
+
+## 설계 결정 / 테스트 / 실패 접근
+
+CLI 종료 코드는 0=정상·유휴, 1=DB/판별 불가, 2=경보다. 유휴·사용자 중단 소개 검수·
+backoff는 정체로 처리하지 않는다. 아직 독립 주기 실행과 외부 알림을 배치하지 않았다.
+기존 워커 supervisor·Swarm 재시작 설정을 변경하지 않는다. 이 브랜치에서 `npm ci`,
+`npx next typegen`, `npx tsc --noEmit`, `npm run lint`(기존 vendor 경고1·오류0),
+`npm test`(151파일 1206/1206), `npm run build`, `git diff --check`를 실제 실행해 통과했다.
+PostgreSQL 통합 전체는 이 브랜치에서 아직 실행하지 않았고, PR의 hosted CI에서 확인한다.
+원래 작업트리의 `node_modules` symlink는 Next/Turbopack 빌드에 실패하므로 여기에는 `npm ci`로
+직접 설치한다. 사용자 루트 작업트리의 수정은 보존한다.
+
+## 남은 작업 / 정확한 다음 명령
+
+P0 브랜치에서 CI 명령 실행, PR·hosted check·main 병합·운영 배포와 실제 상태 확인이 남았다.
+외부 감시 주기 실행·알림과 장애 주입은 별도 P1/P2 작업이다. 사용자가 중단한
+`product-intro-check`는 재개하지 않는다.
+
+```sh
+cd /private/tmp/nmv-worker-failover-p0
+npm ci
+npx next typegen
+npx tsc --noEmit
+npm run lint
+npm test
+npm run test:integration
+npm run build
+git status --short --branch
+```
+
+---
