@@ -60,6 +60,7 @@ npm run dev
 | `npm run worker -- --role=crawler --once` | 주입된 환경변수로 크롤러 요청을 한 회차 소비 |
 | `npm run scheduler -- --once` | 주입된 환경변수로 주기가 도래한 DB 요청을 한 회차 접수 |
 | `node --import tsx scripts/check-worker-progress.ts` | 수집·심사·scheduler의 일감·저장 진행·생존 상태를 읽기 전용 JSON으로 확인 |
+| `node --import tsx scripts/check-failover-readiness.ts` | 다섯 역할의 주·예비/lease와 scheduler 2복제본 준비 상태를 진행 상태와 함께 확인 |
 | `npm run crawl:sample` | 판정 시험용 표본 수집 (GitHub 토큰 필요 — 아래 참조) |
 | `npm run crawl:rejudge` | 떠 놓은 표본으로 현재 판정 규칙 재판정 |
 | `npx drizzle-kit generate` / `migrate` | 마이그레이션 생성 / 적용 |
@@ -113,6 +114,9 @@ PR의 GitHub CI 성공은 배포 완료를 뜻하지 않는다. [독립 워커 �
 수집 성공을 판단하지 않는다. 관리자 인증이 필요하다.
 독립 감시용 CLI는 같은 DB 관측을 JSON으로 내며 종료 코드 0은 정상·유휴·정책 중단, 1은 판별 불가,
 2는 작업 또는 워커 정체 경보다. 운영 주기 실행·외부 알림 연결은 별도 배포 검증 항목이다.
+새 failover CLI는 주 워커가 정상이어도 mini 예비의 관측이 60초 넘게 끊기면 경보로 기록한다.
+별도 `monitor` 이미지의 30초 감시와 Uptime Kuma Push 연동 절차는 운영 runbook에 있다.
+코드·이미지 검증과 운영 알림 수신 확인은 별개다.
 
 ## 구조
 

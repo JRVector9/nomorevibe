@@ -46,6 +46,22 @@ HEALTHCHECK --interval=15s --timeout=5s --start-period=30s --retries=3 \
   CMD node -e "fetch('http://127.0.0.1:3020/rpc').then(r=>process.exit(r.status===401?0:1)).catch(()=>process.exit(1))"
 CMD ["node", "--import", "tsx", "scripts/connect-agent.ts"]
 
+FROM node:24-alpine AS monitor
+WORKDIR /app
+ENV NODE_ENV=production
+ENV NEXT_TELEMETRY_DISABLED=1
+ENV WORKER_ROLE=monitor
+RUN addgroup -g 1001 -S nodejs && adduser -S worker -u 1001 -G nodejs && apk add --no-cache tini
+COPY --from=worker-deps --chown=worker:nodejs /app/node_modules ./node_modules
+COPY --chown=worker:nodejs package.json package-lock.json tsconfig.json ./
+COPY --chown=worker:nodejs lib ./lib
+COPY --chown=worker:nodejs scripts ./scripts
+USER worker
+HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
+  CMD node --import tsx scripts/monitor-healthcheck.ts
+ENTRYPOINT ["/sbin/tini", "--"]
+CMD ["node", "--import", "tsx", "scripts/watch-failover-readiness.ts"]
+
 # Keep the default final target as the web image for existing docker build callers.
 FROM node:24-alpine AS runner
 WORKDIR /app

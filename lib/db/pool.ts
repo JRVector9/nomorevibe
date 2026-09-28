@@ -1,6 +1,6 @@
 import postgres from "postgres";
 
-const ROLE_POOL_MAX = { web: 8, crawler: 4, reviewer: 3, publisher: 3, text: 3, maintenance: 3, scheduler: 2, "connect-agent": 1 } as const;
+const ROLE_POOL_MAX = { web: 8, crawler: 4, reviewer: 3, publisher: 3, text: 3, maintenance: 3, scheduler: 2, monitor: 1, "connect-agent": 1 } as const;
 export type DbRole = keyof typeof ROLE_POOL_MAX;
 export type DbPoolConfig = {
   role: DbRole;
@@ -31,7 +31,7 @@ export function dbPoolConfig(env: PoolEnvironment = process.env): DbPoolConfig {
   if (poolerMode !== "direct" && poolerMode !== "pgbouncer") {
     throw new Error("Invalid DB_POOLER_MODE: expected direct or pgbouncer");
   }
-  const statementDefault = selected === "maintenance" ? 120_000 : selected === "web" ? 15_000 : selected === "scheduler" ? 10_000 : 60_000;
+  const statementDefault = selected === "maintenance" ? 120_000 : selected === "web" ? 15_000 : selected === "scheduler" || selected === "monitor" ? 10_000 : 60_000;
   const statementMs = integerSetting(env, "DB_STATEMENT_TIMEOUT_MS", statementDefault, 100, 600_000);
   const lockMs = integerSetting(env, "DB_LOCK_TIMEOUT_MS", Math.min(5_000, statementMs), 100, 60_000);
   if (lockMs > statementMs) throw new Error("DB_LOCK_TIMEOUT_MS must not exceed DB_STATEMENT_TIMEOUT_MS");
