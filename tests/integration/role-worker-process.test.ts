@@ -2,7 +2,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { beforeAll, expect, it } from 'vitest';
-import { eq } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import { db } from '@/lib/db';
 import { jobs, operationsObservations, roleLeases } from '@/lib/db/schema';
 import { ensureSchema, TEST_DATABASE_URL } from './setup';
@@ -124,6 +124,60 @@ it('keeps the standby passive until the primary drains, then starts its own supe
         const health = JSON.parse(await readFile(standbyHealth, 'utf8')) as { status: string };
         return health.status === 'running' ? health : null;
       } catch { return null; }
+    }, 30_000);
+    const standbyExit = new Promise<number | null>(resolve => standby!.child.once('exit', resolve));
+    standby.child.kill('SIGTERM');
+    expect(await standbyExit, standby.output()).toBe(0);
+  } finally {
+    if (primary.child.exitCode === null) primary.child.kill('SIGTERM');
+    if (standby?.child.exitCode === null) standby.child.kill('SIGTERM');
+  }
+}, 90_000);
+
+it('promotes standby after the primary supervisor crashes and its DB lease expires', async () => {
+  await db.delete(jobs);
+  await db.delete(roleLeases);
+  const start = (kind: 'primary' | 'standby') => {
+    const healthPath = join('/tmp', `nomorevibe-role-crash-${kind}-${process.pid}.json`);
+    const child = spawn(process.execPath, ['--import', 'tsx', 'scripts/role-worker.ts',
+      '--role=crawler', `--kind=${kind}`], {
+      cwd: process.cwd(),
+      env: { ...process.env, DATABASE_URL: TEST_DATABASE_URL, DB_POOL_MAX: '2',
+        SERVICE_INSTANCE_ID: `test-crash-${kind}`, RELEASE_TAG: 'process-test',
+        WORKER_HEALTH_PATH: healthPath,
+        ROLE_HEALTH_PATH: join('/tmp', `nomorevibe-role-crash-candidate-${kind}-${process.pid}.json`) },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let output = '';
+    child.stdout.on('data', data => { output += String(data); });
+    child.stderr.on('data', data => { output += String(data); });
+    return { child, healthPath, output: () => output };
+  };
+  const primary = start('primary');
+  let standby: ReturnType<typeof start> | null = null;
+  try {
+    const primaryHealth = await until(async () => {
+      try {
+        const health = JSON.parse(await readFile(primary.healthPath, 'utf8')) as { status: string; childPid: number };
+        return health.status === 'running' && health.childPid ? health : null;
+      } catch { return null; }
+    }, 30_000);
+    standby = start('standby');
+    await until(async () => {
+      const [row] = await db.select().from(operationsObservations)
+        .where(eq(operationsObservations.key, 'candidate:crawler:test-crash-standby'));
+      return row?.value.phase === 'standby' ? row : null;
+    }, 30_000);
+    const crashed = new Promise<number | null>(resolve => primary.child.once('exit', resolve));
+    process.kill(-primaryHealth.childPid, 'SIGKILL');
+    expect(await crashed, primary.output()).toBe(1);
+    const [old] = await db.select().from(roleLeases).where(eq(roleLeases.role, 'crawler'));
+    expect(old.ownerInstanceId).toBe('test-crash-primary');
+    await db.update(roleLeases).set({ leaseUntil: sql`now() - interval '21 seconds'` })
+      .where(eq(roleLeases.role, 'crawler'));
+    await until(async () => {
+      const [row] = await db.select().from(roleLeases).where(eq(roleLeases.role, 'crawler'));
+      return row?.ownerInstanceId === 'test-crash-standby' ? row : null;
     }, 30_000);
     const standbyExit = new Promise<number | null>(resolve => standby!.child.once('exit', resolve));
     standby.child.kill('SIGTERM');

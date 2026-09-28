@@ -1,3 +1,44 @@
+# 2026-09-28 20:00 KST — P1 PR과 강제 종료 추가 검증
+
+## 현재 목적 / 완료 작업 / 수정 파일
+
+P1 변경을 P0 squash main 위로 재기반해 브랜치 `feat/worker-failover-20260928`에
+커밋 `50c9fc7`(수집 조기 회수), `e050496`(역할 후보/lease/fencing)으로 만들고
+PR #214를 열었다. 필수 CI `check`는 아직 진행 중이다. P1 코드는 운영에 배포되지 않았고
+예비 워커도 없다. PR 뒤 `tests/role-worker.test.ts`에 DB 갱신 예외 시 중단 시험,
+`tests/integration/role-worker-process.test.ts`에 실제 supervisor SIGKILL 뒤 역할 lease
+만료를 시험 DB에서 앞당겨 standby가 인계하는 시험을 추가했다. 두 파일과 이 문서는
+아직 후속 커밋 전이다.
+
+## 설계 판단 / 실제 테스트 / 실패 접근
+
+SIGKILL 시험은 Swarm이 재시작에 실패한 상황의 lease 만료를 모사한다. 실제 65초를
+기다리는 대신 DB `lease_until`을 21초 과거로 바꿨으므로 운영 복구 시간 측정은 아니다.
+실제 primary supervisor 프로세스 그룹을 SIGKILL했을 때 후보 프로세스가 종료 코드1로
+끝났고 owner가 남았다. DB 만료 뒤 standby가 새 owner가 되고 정상 drain에서 종료 코드0을
+반환했다. 해당 프로세스 통합 1파일/3 통과, 갱신 예외 단위 1파일/4 통과,
+`npx tsc --noEmit`, 대상 ESLint, `git diff --check` 통과했다. 초기 graceful drain 시험의
+간헐 실패 원인은 여전히 불명확하다.
+
+## 남은 작업 / 정확한 다음 명령
+
+추가 테스트를 커밋·푸시하고 PR #214의 **최신 head** CI를 확인한다. 통과하면 병합 후
+기존 단일 워커 명령 그대로 앱 8개에 배포하고 migration 0051/0052를 확인한다.
+P1 후보 실제 운영 활성화는 릴리스 태그 교정과 추가 장애 주입·쓰기 경로 감사 전까지
+금지한다. P0 정기 감시/알림·정체 제어, P2 scheduler 두 poller·crawler/reviewer standby,
+P3 후속 역할은 남았다. 사용자 중단 소개 검수와 루트 변경은 보존한다.
+
+```sh
+cd /private/tmp/nmv-worker-failover-20260928
+git status --short --branch
+git add tests/role-worker.test.ts tests/integration/role-worker-process.test.ts docs/CODEX_HANDOFF.md
+git commit -m 'test: verify DB renewal failure and crashed primary handoff'
+git push
+gh pr checks 214
+```
+
+---
+
 # 2026-09-28 19:54 KST — P0 운영 배포 완료, P1 코드 후보 검증
 
 ## 현재 목적 / 완료 작업 / 수정 파일

@@ -53,6 +53,28 @@ it('stops the active supervisor when renewal loses ownership', async () => {
   } finally { vi.useRealTimers(); }
 });
 
+it('stops the active supervisor when the DB renewal result is unknown', async () => {
+  vi.useFakeTimers();
+  try {
+    const controller = new AbortController();
+    let reason: unknown;
+    const running = runRoleCandidate(candidate, controller.signal, {
+      acquire: async () => lease,
+      renew: async () => { throw new Error('db_unreachable'); },
+      supervise: async (_owned, signal) => {
+        await new Promise<void>(resolve => signal.addEventListener('abort', () => resolve(), { once: true }));
+        reason = signal.reason;
+        controller.abort();
+        return 0;
+      },
+      sleep: async () => {},
+    });
+    await vi.advanceTimersByTimeAsync(10_000);
+    await running;
+    expect(reason).toBe('role_lease_lost');
+  } finally { vi.useRealTimers(); }
+});
+
 it('requires an explicit stable instance, release and role kind', () => {
   expect(parseRoleWorkerArgs(['--role=reviewer', '--kind=standby'], {
     SERVICE_INSTANCE_ID: 'reviewer-b', RELEASE_TAG: 'r1',
