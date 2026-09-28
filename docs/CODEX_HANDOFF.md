@@ -1,3 +1,54 @@
+# 2026-09-28 15:18 KST — 검색 키워드 검수 운영 적용 결과
+
+## 현재 목적 / 완료 작업 / 변경 파일
+
+README 입력 변경 뒤 검색 키워드를 정상 text 워커로 재생성·검수하는 중이다. PR209의 오래된
+검수 우선 순서와 PR211의 형식 오류 묶음별 개별 재시도를 main에 병합하고 운영 M3 7개 앱·
+mini 웹 1개 모두 `1e1119034624acae74dca825b590f5f125623a97` 소스, `done`을 확인했다.
+수정 파일은 각 PR의 `lib/domain/products/search-profiles.ts`, `lib/domain/products/search-verify.ts`,
+`tests/integration/search-verify.test.ts`, `tests/search-verify.test.ts`, `docs/CODEX_HANDOFF.md`다.
+이 절은 배포 관측을 반영하는 문서 수정이며 기능 코드는 바꾸지 않는다.
+
+- PR211 필수 CI [36384611587](https://github.com/JRVector9/nomorevibe/actions/runs/36384611587)의
+  타입·lint·단위·PostgreSQL 통합·빌드 PASS 뒤 병합했다. 로컬 TDD RED→GREEN 및 표적 단위17,
+  잡 예산6, 통합13 통과는 아래 절에 기록했다. 공개 `/api/health` 8회에서 M3 7회·mini 1회 모두
+  `status=ok`, `db=ok`였다.
+- 기존 재시도 소진5건 중 `authelia`, `product-491`, `ozo-calendar`는 이전 코드에서,
+  `linkfinder-ai`는 새 개별 재시도 코드로 06:14:22 UTC에 실제 `verified_at`을 확인했다.
+  총4/5 성공. `k-pop-wars`는 새 코드 검수에서 timeout으로 `verify_attempts=4`,
+  `verify_retry_at=2026-09-28 06:57:02 UTC`이며 아직 성공이 아니다. backoff는 존중한다.
+- 06:18 UTC 읽기 전용 운영 대조: 공개19,744개, 생성 대기2,435, 검수 대기302,
+  미표시 원본 해시·검색 사본 불일치0, 재시도 소진0, 최근15분 생성85·검수82.
+  가장 오래된 검수 대기는 `linkfinder-ai` 성공 뒤 약1,039분으로 내려갔다.
+  소개 검수 `product-intro-check`의 사용자 중단(`2100-01-01`)은 유지한다.
+
+## 설계 판단 / 실패 접근 / 남은 작업
+
+모델이 5개 묶음에서 원문 공백을 바꿔 적는 실제 오류를 확인했지만, 판정 파서를 느슨하게 하지 않았다.
+오류 난 묶음만 개별 검수하고 같은 전체 deadline과 원본·리스 검사를 유지한다. 한 응답이라도 실패하면
+부분 결과를 저장하지 않는다. 첫 격리 작업트리 타입 검사는 Next `PageProps` 생성 전이라 실패했고
+`npx next typegen` 뒤 통과했다. 테스트 모의 `Response` 재사용 실패는 매 호출 새 응답으로 교정했다.
+Dokploy의 자동 배포 플래그만으로 실제 배포를 추정하지 않고 8앱의 소스 커밋과 완료 상태를 확인했다.
+
+남은 작업은 정상 워커가 생성2,435건과 검수302건을 계속 처리하도록 관측하고,
+`k-pop-wars`의 06:57 UTC 이후 재시도가 성공하는지 확인하는 것이다. 다시 실패해 소진되면
+모델 응답·시간 제한을 새 근거로 조사한다. 원본 키워드·해시·재시도 시각을 임의로 덮어쓰지 않는다.
+
+```sh
+cd /Users/jr/Desktop/projects/nomorevibe
+git status --short --branch
+python3 /tmp/nmv-priority-ops-20260927.py health-check
+python3 /tmp/nmv-keyword-status-20260928.py
+python3 /tmp/nmv-repair-ops-20260926.py status
+gh pr view 211 --json state,mergeCommit,statusCheckRollup
+curl -fsS --max-time 15 https://nomorevibe.brut.bot/api/health
+```
+
+위 조회 명령은 읽기 전용이다. 기존 사용자 `scripts/search-judgments.json` 수정과 untracked
+자료는 건드리지 않았다. 아래 15:02 기록의 PR/배포 대기는 당시 상태로, 이 절의 완료 확인이 최신이다.
+
+---
+
 # 2026-09-28 15:02 KST — 반복 형식 오류의 개별 키워드 재시도
 
 ## 현재 목적 / 완료 작업 / 수정 파일
