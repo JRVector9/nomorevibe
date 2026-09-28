@@ -16,6 +16,9 @@ it("shares secondary waits across resources but keeps primary credentials isolat
   await recordGitHubCooldown("test-a", "search", {primary:false,secondary:true,retryAt:later});
   expect(await readGitHubCooldown("test-a", "core")).toEqual(later);
   expect(await readGitHubCooldown("test-b", "search")).toEqual(later);
+  const oldKey = githubQuotaKeys("test-c", "core").legacySecondary;
+  await db.insert(rateLimits).values({ key: oldKey, count: 0, resetAt: later });
+  expect(await readGitHubCooldown("test-c", "search")).toEqual(later);
 });
 it("does not shorten a persisted wait with a concurrent older response or affect visit limits", async () => {
   const later = new Date(Date.now()+300_000), earlier = new Date(Date.now()+60_000);
