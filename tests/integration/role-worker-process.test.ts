@@ -179,6 +179,12 @@ it('promotes standby after the primary supervisor crashes and its DB lease expir
       const [row] = await db.select().from(roleLeases).where(eq(roleLeases.role, 'crawler'));
       return row?.ownerInstanceId === 'test-crash-standby' ? row : null;
     }, 30_000);
+    await until(async () => {
+      try {
+        const health = JSON.parse(await readFile(standby!.healthPath, 'utf8')) as { status: string; childPid: number };
+        return health.status === 'running' && health.childPid ? health : null;
+      } catch { return null; }
+    }, 30_000);
     const standbyExit = new Promise<number | null>(resolve => standby!.child.once('exit', resolve));
     standby.child.kill('SIGTERM');
     expect(await standbyExit, standby.output()).toBe(0);

@@ -1,3 +1,49 @@
+# 2026-09-28 20:09 KST — P1 CI 시작 중 종료 경계 수정
+
+## 현재 목적 / 완료 작업 / 수정 파일
+
+PR #214 최신 head `7117b31`의 CI `check`가 통합 테스트에서 1건 실패했다. 실패 파일은
+`tests/integration/role-worker-process.test.ts`의 강제 종료 후 standby 승격 시험이다.
+DB owner가 standby로 바뀐 직후 자식 supervisor의 heartbeat 전에 SIGTERM을 보냈고,
+자식이 시작 도중 종료 코드1로 끝났다. `tests/integration/role-worker-process.test.ts`에서
+standby `status=running`/childPid까지 기다린 뒤 정상 drain을 검증하도록 고쳤다.
+동시에 `scripts/worker-supervisor.ts`에서 요청된 종료가 **첫 heartbeat 이전**인 경우
+자식의 signal/비정상 startup exit를 깨끗한 drain으로 인정한다. 실행 중 자식의 비정상
+종료와 45초 강제 종료는 계속 실패 처리한다. `tests/worker-supervisor.test.ts`에
+이 분기를 RED→GREEN 시험으로 추가했다. 이 3파일과 인계 문서는 아직 미커밋이다.
+
+## 실제 테스트 / 실패 접근
+
+- CI의 최신 검사: 타입·lint·단위 통과, 통합 92파일 통과·1파일 1테스트 실패.
+  `gh run view 36413096655 --log-failed`에서 시작 중 SIGTERM, `supervisor.stopped`
+  `exitCode=1`, 테스트의 종료 코드0 기대 실패를 확인했다. 전체 로그가 매우 길므로
+  다음에는 특정 실패 줄만 추출한다.
+- 수정 뒤 대상 단위 1파일/9, 실제 프로세스 통합 1파일/3 통과.
+  첫 타입 검사는 테스트 closure의 nullable `standby` 때문에 실패했고 non-null 접근으로
+  교정했다. 교정 뒤 타입 검사는 아직 다시 실행하지 않았다.
+- 운영 migration은 적용하지 않았다. `/tmp/nmv-p1-migrate-20260928.py preflight`로
+  직접 DB `nomorevibe`와 migration table 존재, `role_leases` 부재를 읽기 전용 확인했다.
+  `/tmp/nmv-p1-release-env-20260928.py preflight bc21ed3d27c624c4930cadbeee3e562cd9d89120`
+  으로 현 main SHA의 8개 앱 환경 교정 대상도 확인했다. 이 스크립트는 비밀값을 출력하지 않는다.
+
+## 남은 작업 / 정확한 다음 명령
+
+타입·lint·diff·대상 테스트를 다시 실행하고 수정 커밋을 PR #214에 푸시해 최신 CI를
+기다린다. 통과 전에는 migration·병합·배포하지 않는다. 이후 기존 단일 워커 명령 유지,
+P2 예비 배치 전까지 이중 실행 금지. P0 감시 주기/알림, 데이터 정체 자동 제어도 남았다.
+
+```sh
+cd /private/tmp/nmv-worker-failover-20260928
+npx tsc --noEmit
+npx eslint scripts/worker-supervisor.ts tests/worker-supervisor.test.ts tests/integration/role-worker-process.test.ts
+npm run test:integration -- tests/integration/role-worker-process.test.ts
+git diff --check
+git status --short
+gh pr checks 214
+```
+
+---
+
 # 2026-09-28 20:00 KST — P1 PR과 강제 종료 추가 검증
 
 ## 현재 목적 / 완료 작업 / 수정 파일

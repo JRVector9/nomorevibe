@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest';
-import { isRuntimeHeartbeat, stalledReason, supervisorLimits, type WorkerHealth } from '@/scripts/worker-supervisor';
+import { childExitCode, isRuntimeHeartbeat, stalledReason, supervisorLimits, type WorkerHealth } from '@/scripts/worker-supervisor';
 import { roleCandidateIsHealthy, workerIsHealthy } from '@/scripts/worker-healthcheck';
 import { parseCapacityArgs } from '@/scripts/measure-worker-capacity';
 
@@ -32,6 +32,12 @@ it('does not treat the cooperative 25-second budget as a hard timeout', () => {
 });
 it('uses a separate drain path once stopping has started', () => {
   expect(stalledReason({ ...health, status: 'stopping' }, 1_000_000, limits)).toBeNull();
+});
+it('treats a requested shutdown during child startup as a clean drain', () => {
+  expect(childExitCode(0, null, { stopping: true, requested: true, everHeartbeat: false, once: false })).toBe(0);
+  expect(childExitCode(0, 1, { stopping: true, requested: true, everHeartbeat: true, once: false })).toBe(1);
+  expect(childExitCode(1, null, { stopping: true, requested: true, everHeartbeat: false, once: false })).toBe(1);
+  expect(childExitCode(0, null, { stopping: false, requested: false, everHeartbeat: false, once: false })).toBe(1);
 });
 it('accepts only structurally valid IPC from the expected child and role', () => {
   const message = { type: 'runtime.heartbeat', role: 'crawler', pid: 2, at: 1_000, state: 'running', currentJob: 'crawl-fetch', startedAt: 1_000, lastProgressAt: 1_000 };
