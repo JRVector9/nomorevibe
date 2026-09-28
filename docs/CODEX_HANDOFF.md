@@ -1,3 +1,283 @@
+# 2026-09-28 19:54 KST — P0 운영 배포 완료, P1 코드 후보 검증
+
+## 현재 목적 / 완료 작업 / 수정 파일
+
+P0 PR #213의 병합 SHA `bc21ed3d27c624c4930cadbeee3e562cd9d89120`를 Dokploy의
+웹 M3·mini와 scheduler/crawler/reviewer/publisher/text/maintenance 총 8개 앱에 배포했다.
+8개 모두 해당 SHA deployment `done`이며 공개 `/api/health` 12회에서 M3·mini 양쪽이
+HTTP200, app/db ok였다. 실제 runtime `RELEASE_TAG`는 과거 `611820d` 값이라 P1 후보
+운영 전 실제 코드 SHA와 일치시켜야 한다. connect-agent는 이번 8개 배포 범위가 아니다.
+
+P1 worktree `/private/tmp/nmv-worker-failover-20260928`의 미커밋 변경은 역할 lease/epoch,
+동일 릴리스 standby 선출, 이전 job token 무효화와 쓰기 경로 fencing, 후보 로컬 health,
+후보 관측, crawler/reviewer 저장 경로 및 테스트다. 변경 파일은 `git status --short` 참조.
+정상 primary drain 뒤 owner가 null일 때 다른 릴리스 standby가 선출되던 결함을 RED→GREEN
+테스트로 수정했다. 두 standby 동시 경쟁에서 한 후보만 선출됐다. 실제 두 프로세스의
+primary drain→standby 활성화와 대기/활성 healthcheck를 확인했다. 정상 종료와 lease 상실의
+진단 사유를 구분한다. 운영 runbook과 설계 문서에 코드/미구현 경계를 반영했다.
+
+## 실제 테스트 / 실패 접근
+
+- P1 최종 전체 재실행: 단위 152파일/1210 통과
+  (`/tmp/nmv-failover-unit-p1-final.log`), 통합 93파일/905 통과·TODO1
+  (`/tmp/nmv-failover-integration-p1-final.log`), 타입 검사·lint(오류0,
+  기존 vendor 경고1)·build·diff-check 통과. 후보 healthcheck와 두 예비 경쟁을
+  포함한 결과다.
+- 프로세스 SIGTERM 테스트 최초 1회 15초 시간 초과 후 약47초에 강제 drain 실패가 있었다.
+  당시 로그 미수집이라 원인 미확정이다. 이후 동일 테스트 단독12회와 두 후보 테스트를
+  반복해 통과했지만 간헐 실패가 완전히 제거됐다고 주장하지 않는다.
+- 정상 drain 직후 다른 릴리스 예비 선출 테스트는 실패로 재현해 role-leader에서 owner
+  유무와 관계없이 마지막 owner release를 비교하도록 수정했다. 대기 healthcheck 테스트도
+  기존 함수 부재로 실패 확인 뒤 로컬 후보 상태/활성 supervisor 확인을 구현했다.
+
+## 남은 작업 / 정확한 다음 명령
+
+P1 변경을 커밋하고, P0 squash main 위로 재기반해 PR을 연다.
+역할 후보는 현재 Dokploy에 배치하지 않았다. P0 외부 감시 CLI의 정기 실행/경보와
+데이터 정체 자동 재시작 제어는 미구현이다. P1 추가 장애 주입(실제 SIGKILL,
+DB 단절, 느린 결과)과 crawler/reviewer 쓰기 경로 감사 후 P2 scheduler 두 poller,
+crawler standby, reviewer standby를 순서대로 활성화한다. P1 운영 시
+`RELEASE_TAG`·실제 이미지 SHA 일치를 먼저 교정하고 old standby→old primary drain→
+new primary→new standby 순서로 진행한다. 사용자 중단 `product-intro-check`와 루트
+작업트리 사용자 변경은 보존한다.
+
+```sh
+cd /private/tmp/nmv-worker-failover-20260928
+git status --short --branch
+npm test
+npm run test:integration
+npx tsc --noEmit
+npm run lint
+npm run build
+git diff --check
+python3 /tmp/nmv-health-20260925.py status
+```
+
+---
+
+# 2026-09-28 19:15 KST — P0 병합, P1 역할 임대 검증 중
+
+## 현재 목적 / 완료 작업 / 수정 파일
+
+수집·심사 워커의 장애를 판별하고 재시작 실패 시 같은 릴리스의 예비 워커로 안전하게
+인계하는 기능을 P0→P3 순서로 진행한다. P0를 별도 worktree
+`/private/tmp/nmv-worker-failover-p0`의 PR #213으로 분리했고 필수 CI `check`와
+GitGuardian 통과를 확인한 뒤 10:15 UTC에 squash 병합했다. main SHA는
+`bc21ed3d27c624c4930cadbeee3e562cd9d89120`이다. `gh pr merge`는 원격 병합 뒤 로컬
+`main`이 다른 worktree에서 사용 중이라 종료 코드 1을 냈지만 PR 상태 `MERGED`와 main SHA로
+원격 병합을 확인했다. 병합 직후 Dokploy 앱 8개는 아직 이전 `1e11190` deployment `done`이고
+connect-agent는 별도 앱이다. 새 SHA의 운영 배포는 아직 확인하지 않았다.
+
+P1 worktree `/private/tmp/nmv-worker-failover-20260928`에는 frontier 조기 회수 커밋
+`6f4aaf2` 뒤 미커밋 변경이 있다. `role_leases`/history migration, `lib/jobs/role-leader.ts`,
+`scripts/role-worker.ts`, `scripts/worker-supervisor.ts`, `scripts/worker.ts`,
+`lib/jobs/runner.ts`, `lib/jobs/control.ts`와 crawler/reviewer 저장 경로의 lease 검증,
+관련 통합·단위 테스트 및 설계 문서가 변경됐다. 정확한 전체 목록은 `git status --short`.
+역할 선출은 DB 락과 epoch를 사용하고 이전 잡 token을 무효화한다. 같은 릴리스의 standby만
+인계하며, 5분 내 primary 부팅 3회는 15분 격리한다. 후보 관측을 15초마다 기록한다.
+Compose/Dokploy의 예비 워커는 아직 만들거나 켜지 않았다.
+
+## 실제 테스트 / 실패 접근
+
+- P0 분리 worktree: `npm ci`, `npx next typegen`, `npx tsc --noEmit`, lint(오류0,
+  기존 vendor 경고1), 단위151파일/1206테스트, `npm run build`, `git diff --check` 통과.
+  호스팅 필수 CI `check` 통과. 통합 테스트는 호스팅 CI에서 실행됐다.
+- P1 기존 전체 실행: 단위152파일/1209 통과, 통합92파일/900 통과·TODO1,
+  타입 검사, lint(오류0·기존 경고1), build 통과. 통합 로그는
+  `/tmp/nmv-failover-integration-20260928.log`. 다만 그 뒤 리뷰 늦은 결과 테스트,
+  후보 관측, 프로세스 테스트를 추가했으므로 최종 전체 재실행은 남았다.
+- 실제 프로세스 SIGTERM drain 통합 테스트 `tests/integration/role-worker-process.test.ts`는
+  첫 실행에서 15초 대기 제한을 넘고 약47초 뒤 `role_lease_lost` 상태로 실패했다.
+  진단 출력 추가 뒤 4회 재실행은 각 1초 이내 통과했다. 원인 미확정이므로 간헐 실패가
+  해결됐다고 보지 않는다. 시스템 디버깅 절차로 재현·시그널·DB 경계를 조사한다.
+- 처음 P1 build는 외부 worktree `node_modules` symlink 때문에 Turbopack이 실패했다.
+  해당 worktree에서 `npm ci`로 실제 의존성 디렉터리를 만들고 build 통과했다.
+- 루트 worktree의 사용자 `scripts/search-judgments.json` 및 기타 미커밋 자료는 건드리지 않는다.
+  사용자가 중단한 `product-intro-check`도 재개하지 않는다.
+
+## 남은 작업 / 정확한 다음 명령
+
+P0의 운영 자동 배포가 main SHA로 완료되는지 확인한다. P0 CLI의 주기 실행과 외부 알림은
+아직 미연결이다. P1 프로세스 테스트 간헐 실패의 원인을 찾고 수집·심사 늦은 쓰기 경로를
+감사한다. 여러 후보의 강제 종료/DB 단절/지연 완료 시험과 전체 CI를 통과하기 전에는
+standby를 배치하지 않는다. 이후 scheduler 두 poller→crawler standby→reviewer standby→
+publisher/text/maintenance 순서로 진행한다. DB streaming/서버 자체 설정은 범위 밖이다.
+
+```sh
+cd /private/tmp/nmv-worker-failover-20260928
+git status --short --branch
+npm run test:integration -- tests/integration/role-worker-process.test.ts
+npm run test:integration -- tests/integration/role-leader.test.ts tests/integration/review-handoffs.test.ts
+python3 /tmp/nmv-health-20260925.py status
+gh pr view 213 --json state,mergeCommit
+```
+
+---
+
+# 2026-09-28 18:43 KST — P1 수집 선점 조기 회수 완료
+
+## 현재 목적 / 완료 작업 / 수정 파일
+
+P0 커밋 `1aab591`, `b0375e8`에 이어 P1 첫 코드 커밋 `6f4aaf2`를 만들었다.
+`lib/crawl/repository.ts`의 `recoverAbandonedFrontier`가 새 `crawl-fetch` 잡 token이
+유효할 때만 현재 잡의 DB `last_run_at`보다 오래된 `fetching` 항목을 `pending`으로 돌린다.
+오류 시도 횟수를 하나 되돌리고, `lib/crawl/jobs/fetch.ts`가 새 잡 첫 선점 전 한 번 호출한다.
+`tests/integration/crawl-fetch.test.ts`에 회수·토큰 검증·현재 선점 보호·옛 결과 거부·
+실제 다음 잡 틱 재개 테스트를 추가했다. frontier 컬럼 migration은 필요하지 않았다.
+설계 문서와 작업 계획에 이 선택을 반영했으나 문서는 아직 미커밋이다.
+
+## 설계 판단 / 테스트 / 실패 접근
+
+- 새 통합 테스트는 처음 10분 미래 `next_attempt_at` 때문에 원본이 저장되지 않아 RED였다.
+  다른 역할의 유효한 token도 잘못 회수하던 반례를 추가로 RED 확인한 뒤 `crawl-fetch`로 한정했다.
+- `npm run test:integration -- tests/integration/crawl-fetch.test.ts tests/integration/crawl-pipeline.test.ts tests/integration/job-control.test.ts`: 3파일 60/60 통과.
+  `npx vitest run tests/crawl-fetch-concurrency.test.ts tests/crawl-fetch-backpressure.test.ts`: 2파일 7/7 통과.
+  `npx tsc --noEmit`, 대상 ESLint, `git diff --check` 통과.
+- 첫 테스트에서 앱 시계 `Date.now()`와 DB `now()`가 약 12ms 달라 시각 단정이 실패했다.
+  DB에서 실제 `dequeue`가 가능한지 검증하도록 교정했다. 운영 결함으로 해석하지 않는다.
+- 이 조기 회수는 단일 `crawl-fetch` 잡의 선점을 처리한다. 예비 역할 인계/epoch 쓰기 차단은
+  아직 없다. 옛 워커의 모든 DB 쓰기를 막는 기능으로 보고하지 않는다.
+
+## 남은 작업 / 정확한 다음 명령
+
+P1 역할 lease/epoch, 늦은 쓰기 경로 감사와 예비 선출 시험을 수행한다. P2 운영 배치 전
+이 안전 조건이 통과해야 한다. P0 감시 CLI는 아직 운영 주기 실행/외부 경보 라우팅이 없다.
+사용자 중단 `product-intro-check`는 유지하고 루트 작업트리 사용자 변경은 건드리지 않는다.
+
+```sh
+cd /private/tmp/nmv-worker-failover-20260928
+git status --short --branch
+git log -3 --oneline
+sed -n '1,210p' scripts/worker.ts
+sed -n '1,150p' lib/jobs/control.ts
+rg -n 'assertJobLease|ctx.lease|recordAutomaticJudgement' lib/crawl
+```
+
+---
+
+# 2026-09-28 18:38 KST — 워커 failover P0 구현 결과
+
+## 현재 목적 / 완료 작업 / 수정 파일
+
+사용자 지시대로 P0→P3 순서로 계속 구현한다. 작업트리
+`/private/tmp/nmv-worker-failover-20260928`, 브랜치 `feat/worker-failover-20260928`.
+P0 코드 커밋 `1aab591`(심사 owner 변경 한도)과 `b0375e8`(수집·심사·scheduler 진행 판별,
+최근 5분 부팅 이력, 관리자 표시, JSON 감시 CLI)을 만들었다. 새 감시 CLI는
+`node --import tsx scripts/check-worker-progress.ts`이며 읽기 전용으로 DB를 조회한다.
+종료 코드 0=정상/유휴, 1=조회·판정 불가, 2=경보 대상이다. **운영에서 CLI를 주기 실행하거나
+외부 호출로 연결하지는 않았다.** 감시 서비스 배치는 P2 대상이다. 수정 파일은 두 커밋에 있고,
+설계·계획·이 인계 문서는 아직 별도 미커밋 상태다.
+
+## 판단 / 실제 테스트 / 실패 접근
+
+- 심사 회귀 통합 16/16, 연관 심사·발행 통합 30/30 통과(`1aab591` 단계).
+- P0 진행 판별 단계: `npm run test:integration -- tests/integration/worker-progress-query.test.ts tests/integration/operations-throughput.test.ts tests/integration/job-control.test.ts tests/integration/agent-review-records.test.ts` 4파일 34/34 통과.
+  `npx vitest run tests/worker-progress.test.ts tests/operations-throughput.test.ts tests/operations-throughput-display.test.ts tests/worker-supervisor.test.ts tests/scheduler-runtime.test.ts` 5파일 28/28 통과. 대상 ESLint, `npx tsc --noEmit`, `git diff --check` 통과.
+- `DATABASE_URL='' node --import tsx scripts/check-worker-progress.ts`는 JSON `overall=unknown`, 종료 코드1을 반환했다(예상 동작). 전용 DB에서는 경보 JSON과 종료 코드2를 통합 테스트로 확인했다.
+- TDD에서 누락 모듈, `unknown` 스텁, 이전 부팅 관측 덮어쓰기, scheduler heartbeat만 있는 상태의 잘못된 `scheduled` 판정, 관리자 라벨 누락을 각각 RED로 보고 교정했다. 첫 관측 구현은 `value.bootedAt`이 closure에서 unknown으로 추론되어 타입 검사에 실패했고 좁혀진 지역 변수로 교정했다.
+- `job.failed` 로그는 기존 테스트의 의도된 실패 주입이며 전체 테스트 결과는 통과다.
+
+## 남은 작업 / 정확한 다음 명령
+
+P0 관리자 화면은 최근 5분 저장량과 판별 사유를 표시하지만 마지막 저장의 전체 이력 시각은
+아직 제공하지 않는다. 외부 감시 주기 실행/경보 라우팅도 미배치다. P1에서는 수집 frontier의
+10분 선점 대기 조기 회수, 역할 lease/epoch와 이전 주인 쓰기 차단, 반복 정체 시 1회 재시작
+제어를 구현한다. 예비 활성화는 모든 쓰기 경로를 검증하기 전에는 켜지 않는다.
+P2는 scheduler 두 poller, crawler 예비, reviewer 예비 순서이며 P3는 후속 역할이다.
+사용자 중단 `product-intro-check`는 재개하지 않는다. 루트 사용자 변경은 보존한다.
+
+```sh
+cd /private/tmp/nmv-worker-failover-20260928
+git status --short --branch
+git log -2 --oneline
+sed -n '1,155p' docs/superpowers/specs/2026-09-28-worker-failover-design.md
+sed -n '90,175p' lib/crawl/repository.ts
+npm run test:integration -- tests/integration/worker-progress-query.test.ts tests/integration/agent-review-records.test.ts
+```
+
+---
+
+# 2026-09-28 18:22 KST — 워커 failover P0 심사 중단 한도 수정
+
+## 현재 목적 / 완료 작업 / 수정 파일
+
+사용자 지시대로 워커 장애 복구 설계의 P0→P3를 순서대로 구현 중이다. 별도 작업트리
+`/private/tmp/nmv-worker-failover-20260928`, 브랜치 `feat/worker-failover-20260928`에서 작업한다.
+P0 첫 수정으로 심사 `owner_changed`를 모델 실패 한도와 분리하고, 동일 입력의 최근 24시간
+소유권 변경 3회는 `infrastructure_interruptions_exhausted`로 별도 중단하도록 했다. 영구 회귀
+테스트에서 25시간이 지나면 다시 준비 큐에 들어와 다음 시도를 할 수 있음을 확인했다.
+코드·테스트 커밋 `1aab591`이며 수정 파일은 `lib/crawl/agent-review-repository.ts`,
+`tests/integration/agent-review-records.test.ts`다. 구현 계획은
+`docs/superpowers/plans/2026-09-28-worker-review-recovery.md`, 설계는
+`docs/superpowers/specs/2026-09-28-worker-failover-design.md`다.
+
+## 설계 결정 / 실제 테스트 / 실패 접근
+
+- 회귀 테스트 RED: 기존 코드는 `attempts_exhausted`를 반환했다. GREEN: 심사 기록 통합 16/16,
+  연관 심사 잡·발행 게이트·인계 통합 30/30 통과. `git diff --check` 통과.
+- 첫 작업트리 테스트는 `node_modules`가 없어 실행되지 않았다. 루트 의존성에 symlink해 해결했다.
+- 첫 타입 검사는 생성된 Next `PageProps`가 없어 실패했다. `npx next typegen` 성공 뒤
+  `npx tsc --noEmit` 통과했다. 이 오류는 변경 코드의 타입 오류가 아니었다.
+- 첫 GREEN 시도는 DB 행을 supersede한 뒤 메모리 행의 `errorCode`·`completedAt`을 갱신하지 않아
+  세 번째 변경을 세지 못했다. 같은 행을 갱신해 16/16 통과했다.
+- 테스트 로그의 `job_lease_lost`는 늦은 발행을 막는 기존 실패 주입 fixture이며 테스트 실패는 아니다.
+
+## 남은 작업 / 정확한 다음 명령
+
+P0 준비 큐·저장 결과·scheduler 예약 지연·반복 부팅 판별과 외부 감시용 구조화된 상태를
+구현한다. 이어서 P1 frontier 조기 회수/역할 lease·epoch, P2 scheduler 두 poller와
+crawler/reviewer 예비 배치, P3 후속 역할 순서다. 운영 강제 종료·예비 인계는 아직 미시험이다.
+사용자가 중단한 `product-intro-check`는 재개하지 않는다. 루트 작업트리의 사용자 변경은 보존한다.
+
+```sh
+cd /private/tmp/nmv-worker-failover-20260928
+git status --short --branch
+npm run test:integration -- tests/integration/agent-review-records.test.ts
+npx next typegen
+npx tsc --noEmit
+sed -n '1,260p' lib/operations/throughput.ts
+sed -n '1,180p' lib/operations/admin.ts
+```
+
+---
+
+# 2026-09-28 18:13 KST — 워커 장애 복구 설계 검증 완료
+
+## 현재 목적 / 완료 작업 / 변경 파일
+
+수집·심사 워커 장애 복구의 **현 구현을 실제 시험**하고 서버 설정 변경 전 우선순위를 검증했다.
+`docs/superpowers/specs/2026-09-28-worker-failover-design.md`를 새로 작성했다(아직 구현·배포하지 않음).
+운영 6개 역할 서비스는 각각 1복제본, Swarm `restart=any`, 지연 5초임을 읽기 전용으로 확인했다.
+2026-09-28 09:08:35 UTC 운영 DB 읽기 전용 표본에서 최근 1시간 발견155·원본159·규칙159·
+1차 AI38·2차 AI30·발행11건이 저장됐다. 5분 원본/규칙 대기0·진행0은 정상 유휴였다.
+첫 AI 준비 큐0이며 `needs_review` 전체2399건을 준비 큐로 해석하면 안 된다.
+
+## 설계 판단 / 테스트 / 실패 접근
+
+- `npx vitest run tests/worker-supervisor.test.ts tests/worker-runtime.test.ts tests/scheduler-runtime.test.ts tests/operations-throughput.test.ts`: 4파일 23테스트 통과.
+- `npm run test:integration -- tests/integration/job-runner.test.ts tests/integration/job-control.test.ts tests/integration/crawl-fetch.test.ts tests/integration/agent-review-records.test.ts tests/integration/operations-throughput.test.ts`: 전용 localhost:55435 PostgreSQL에서 5파일 70테스트 통과. 예상된 실패 주입 로그가 있으나 테스트 실패는 0건.
+- 일회성 통합 테스트 `tests/integration/worker-failover-audit-20260928.test.ts`에서 2테스트 통과 후 해당 임시 파일을 삭제했다. 모델 결과 0건인 채 owner가 세 번 바뀌면 네 번째 심사 claim은 `attempts_exhausted`이고 준비 큐에서도 제외됐다. `fetching` 항목은 9분에는 선택되지 않고 10분 경과 뒤 다시 선택됐다.
+- 현재 supervisor가 종료/응답 정지를 감시하고 Swarm이 재시작한다. 잡 lease는 90초 회수다. `crawl_frontier`의 개별 `fetching` 항목은 10분 재선택 시각을 갖고, `owner_changed` 심사 시도는 현 코드상 시도 한도에 포함된다.
+- 첫 일회성 시험은 설정 모델 불일치와 앱/DB 시계 차이 때문에 2개 실패했다. 시험 조건을 현재 모델과 DB의 예약 시각에 맞춰 교정한 뒤 2개 통과했다. 운영 코드의 새 실패로 해석하지 않는다.
+- scheduler는 모든 정기 요청의 의존성이고 동시 poll을 합치는 통합 테스트가 통과했다. 설계 순서를 바로잡아 P0 판별·경보와 심사 owner 변경 결함, P1 수집 조기 회수·역할 fencing, P2 scheduler 두 poller 배치→crawler 예비→reviewer 예비, P3 후속 역할로 정했다.
+- 운영 강제 종료 및 예비 인계는 시험하지 않았다. 예비 역할 서비스와 역할 lease는 미구현이다. 복구 시간의 실제 측정값을 주장하지 않는다.
+
+## 남은 작업 / 정확한 다음 명령
+
+구현은 아직 시작하지 않았다. 다음은 P0의 실제 일감·저장 진행·scheduler 예약 지연·반복 부팅 판별 및 경보, 심사 owner 변경 시도 한도 수정이다. 이어서 P1 수집 token/조기 회수·역할 lease/epoch를 플래그 off로 검증한다. 운영 배치는 P2까지 보류한다. 기존 사용자 `scripts/search-judgments.json` 수정과 다른 untracked 자료는 보존했다. 사용자 중단 `product-intro-check`는 재개하지 않았다.
+
+```sh
+cd /Users/jr/Desktop/projects/nomorevibe
+git status --short
+sed -n '1,150p' docs/superpowers/specs/2026-09-28-worker-failover-design.md
+sed -n '225,330p' lib/crawl/agent-review-repository.ts
+sed -n '100,145p' lib/crawl/repository.ts
+npm run test:integration -- tests/integration/job-control.test.ts tests/integration/agent-review-records.test.ts tests/integration/crawl-fetch.test.ts
+python3 /tmp/nmv-health-20260925.py audit
+```
+
+---
+
 # 2026-09-28 15:18 KST — 검색 키워드 검수 운영 적용 결과
 
 ## 현재 목적 / 완료 작업 / 변경 파일

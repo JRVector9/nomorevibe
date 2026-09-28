@@ -1,4 +1,18 @@
-import { pgTable, varchar, jsonb, timestamp, serial, integer, text } from 'drizzle-orm/pg-core';
+import { pgTable, varchar, jsonb, timestamp, serial, integer, text, bigint } from 'drizzle-orm/pg-core';
+
+/** One active process per job role. Database time is the authority for expiry. */
+export const roleLeases = pgTable('role_leases', {
+  role: varchar('role', { length: 30 }).primaryKey(),
+  ownerInstanceId: varchar('owner_instance_id', { length: 120 }),
+  ownerBootId: varchar('owner_boot_id', { length: 36 }),
+  ownerKind: varchar('owner_kind', { length: 10 }),
+  ownerRelease: varchar('owner_release', { length: 120 }),
+  epoch: bigint('epoch', { mode: 'number' }).notNull().default(0),
+  primaryBoots: jsonb('primary_boots').$type<{ id: string; at: number }[]>().notNull().default([]),
+  quarantineUntil: timestamp('quarantine_until'),
+  leaseUntil: timestamp('lease_until').notNull().defaultNow(),
+  updatedAt: timestamp('updated_at').notNull().defaultNow(),
+});
 
 export const operationsObservations = pgTable('operations_observations', {
   key: varchar('key', { length: 80 }).primaryKey(),

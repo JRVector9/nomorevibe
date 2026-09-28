@@ -79,6 +79,7 @@ function groupExists(child: ChildProcess) {
 /** No internal respawn: exiting lets the container restart policy recreate the whole process tree. */
 export async function superviseWorker(role: RuntimeRole, options: {
   once?: boolean; healthPath?: string; limits?: SupervisorLimits;
+  signal?: AbortSignal; closeDbOnExit?: boolean;
 } = {}): Promise<number> {
   const limits = options.limits ?? supervisorLimits(role);
   const healthPath = options.healthPath ?? process.env.WORKER_HEALTH_PATH ?? DEFAULT_HEALTH_PATH;
@@ -128,6 +129,10 @@ export async function superviseWorker(role: RuntimeRole, options: {
       }, limits.drainMs);
     };
     const onSignal = () => stop('shutdown_requested', true);
+    const onAbort = () => stop(options.signal?.reason === 'shutdown_requested'
+      ? 'shutdown_requested' : 'role_lease_lost', true);
+    options.signal?.addEventListener('abort', onAbort, { once: true });
+    if (options.signal?.aborted) onAbort();
     const monitor = setInterval(() => {
       const reason = stalledReason(health, Date.now(), limits);
       if (reason) stop(reason, false);
@@ -147,9 +152,10 @@ export async function superviseWorker(role: RuntimeRole, options: {
       try { writeHealth(healthPath, health); } catch { exitCode = 1; }
       process.removeListener('SIGINT', onSignal);
       process.removeListener('SIGTERM', onSignal);
+      options.signal?.removeEventListener('abort', onAbort);
       log('supervisor.stopped', { exitCode });
       const client=(globalThis as unknown as {pgClient?:{end:(options:{timeout:number})=>Promise<void>}}).pgClient;
-      if(client)await client.end({timeout:1}).catch(()=>{});
+      if(options.closeDbOnExit !== false && client)await client.end({timeout:1}).catch(()=>{});
       resolveResult(exitCode);
     };
     process.on('SIGINT', onSignal);

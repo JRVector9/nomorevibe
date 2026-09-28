@@ -34,13 +34,13 @@ it('pauses within a saved page at 10000 and resumes below 5000 without refetchin
 it('does not turn a search hint into a project builder', async () => {
   mocks.search.mockResolvedValue(page([commit('acme/app')]));
   await seedFrontier(context());
-  expect(mocks.enqueue).toHaveBeenCalledWith([expect.objectContaining({repo:'acme/app',builder:null})]);
+  expect(mocks.enqueue).toHaveBeenCalledWith([expect.objectContaining({repo:'acme/app',builder:null})], undefined);
 });
 it.each(ADDITIONAL_AGENT_DISCOVERY_QUERIES)('$label finds candidates without assigning a builder', async query => {
   mocks.settings!.discover.queries = [{...query}];
   mocks.search.mockResolvedValue(page(query.kind === 'commits' ? [commit('acme/app')] : [{full_name:'acme/app',homepage:'https://app.example'}]));
   await seedFrontier(context());
-  expect(mocks.enqueue).toHaveBeenCalledWith([{repo:'acme/app',signal:query.label,priority:query.priority,builder:null}]);
+  expect(mocks.enqueue).toHaveBeenCalledWith([{repo:'acme/app',signal:query.label,priority:query.priority,builder:null}], undefined);
 });
 it('persists normalized pending items and resumes the saved page after budget expiry', async () => {
   let budget = true;

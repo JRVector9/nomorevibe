@@ -56,7 +56,7 @@ export async function getLatestRepositoryAgentEvidence(repositoryKey: string, sc
   const selected = scan ?? await getLatestRepositoryAgentScan(repositoryKey, scope);
   return selected ? getRepositoryAgentEvidence(selected.id) : null;
 }
-export async function saveRepositoryAgentScan(result: CollectResult, now = new Date()) {
+export async function saveRepositoryAgentScan(result: CollectResult, now = new Date(), lease?: JobLease) {
   if (!result.repositoryId || !result.commitSha) return null;
   const observations = result.observations.map(value => agentObservationSchema.parse(value));
   if (observations.some(value => {
@@ -108,11 +108,12 @@ export async function saveRepositoryAgentScan(result: CollectResult, now = new D
     if (result.repositoryFork === true) await tx.delete(agentRepositoryObservations).where(and(
       eq(agentRepositoryObservations.scanId, scan.id), sql`${agentRepositoryObservations.facts}->>'kind' = 'commit_attribution'`));
     for (const facts of observations) await tx.insert(agentRepositoryObservations).values({ scanId: scan.id, observationKey: observationKey(facts), facts }).onConflictDoNothing();
+    if (lease) await assertJobLease(tx, lease);
     return scan;
   });
 }
 /** Attach only to an existing visible repository source, under the product generation lock. */
-export async function attachRepositoryAgentScan(input: { productSlug: string; productId: number; scanId: number }) {
+export async function attachRepositoryAgentScan(input: { productSlug: string; productId: number; scanId: number }, lease?: JobLease) {
   return withProductGeneration(input.productSlug, input.productId, async tx => {
     const scan = await tx.query.agentRepositoryScans.findFirst({ where: eq(agentRepositoryScans.id, input.scanId) });
     if (!scan || scan.state !== 'complete' || scan.lastErrorCode || scan.scope !== '') return false;
@@ -124,14 +125,15 @@ export async function attachRepositoryAgentScan(input: { productSlug: string; pr
     const normalizedFacts = { ...sources[0].normalizedFacts, agentScanId: scan.id, agentDetectorVersion: scan.detectorVersion };
     if (Buffer.byteLength(JSON.stringify(normalizedFacts)) > 64 * 1024) return false;
     await tx.update(productEvidenceSources).set({ normalizedFacts, updatedAt: new Date() }).where(eq(productEvidenceSources.id, sources[0].id));
+    if (lease) await assertJobLease(tx, lease);
     return true;
   });
 }
-export async function refreshRepositoryAgentEvidence(input: { repositoryKey: string; scope?: string; productSlug?: string; productId?: number; force?: boolean; hasBudget?: () => boolean; request?: AgentGitHubRequest; deadlineAt?: number }) {
+export async function refreshRepositoryAgentEvidence(input: { repositoryKey: string; scope?: string; productSlug?: string; productId?: number; force?: boolean; hasBudget?: () => boolean; request?: AgentGitHubRequest; deadlineAt?: number; lease?: JobLease }) {
   const latest = await getLatestRepositoryAgentScan(input.repositoryKey, input.scope);
   const now = new Date();
   if (latest && !input.force && latest.nextAttemptAt > now) {
-    if (latest.state === 'complete' && input.productSlug && input.productId) await attachRepositoryAgentScan({ productSlug: input.productSlug, productId: input.productId, scanId: latest.id });
+    if (latest.state === 'complete' && input.productSlug && input.productId) await attachRepositoryAgentScan({ productSlug: input.productSlug, productId: input.productId, scanId: latest.id }, input.lease);
     return { ...(await getRepositoryAgentEvidence(latest.id))!, cached: true, errorCode: latest.lastErrorCode, retryAt: latest.nextAttemptAt };
   }
   const resume = latest && ['partial', 'complete'].includes(latest.state) && latest.cursor && (latest.cursor.pendingTrees.length || latest.cursor.pendingBlobs.length || latest.cursor.pendingCommits?.length) ? latest.cursor : null;
@@ -159,8 +161,8 @@ export async function refreshRepositoryAgentEvidence(input: { repositoryKey: str
   const persistedResult: CollectResult = !result.commitSha && result.errorCode && latest
     ? { ...result, repositoryId: String(latest.githubRepositoryId), commitSha: latest.commitSha, scope: latest.scope, state: 'failed', cursor: null }
     : result;
-  const scan = await saveRepositoryAgentScan(persistedResult, now);
+  const scan = await saveRepositoryAgentScan(persistedResult, now, input.lease);
   if (!scan) return { scan: null, observations: result.observations, cached: false, errorCode: result.errorCode, retryAt: result.retryAt };
-  if (scan.state === 'complete' && input.productSlug && input.productId) await attachRepositoryAgentScan({ productSlug: input.productSlug, productId: input.productId, scanId: scan.id });
+  if (scan.state === 'complete' && input.productSlug && input.productId) await attachRepositoryAgentScan({ productSlug: input.productSlug, productId: input.productId, scanId: scan.id }, input.lease);
   return { ...(await getRepositoryAgentEvidence(scan.id))!, cached: false, errorCode: result.errorCode ?? scan.lastErrorCode, retryAt: result.retryAt };
 }

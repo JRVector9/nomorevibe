@@ -9,7 +9,7 @@ import { mergeWithDefaults } from "./settings";
 import { REVIEW_PROMPT_VERSION, REVIEW_RULES_VERSION } from "./agent-review-contract";
 import { loadReviewInput } from "./agent-review-repository";
 import { loadSecondReviewInput, secondReviewGeneration } from "./second-review-input";
-import { assertJobLease, requestJob, type JobLease } from "@/lib/jobs/control";
+import { assertJobLease, requestJob, withJobLeaseWrite, type JobLease } from "@/lib/jobs/control";
 import { canonicalReviewModel, sameReviewModel } from "./review-model-identity";
 import { firstReviewer } from "./agent-review";
 
@@ -165,7 +165,7 @@ const PUBLISHED_LIMIT = 25;
  *  - risk / sample: 규칙만 통과해 최근 공개된 것 중 위험 신호가 있거나 표본에 든 것
  * 같은 후보에 새 1차 판단이 오면 앞의 것은 superseded 로 닫는다 — 한 후보가 두 칩에 겹쳐 세어지지 않게.
  */
-export async function enqueueSecondReviews(settings: CrawlSettings, now = new Date()): Promise<number> {
+export async function enqueueSecondReviews(settings: CrawlSettings, now = new Date(), lease?: JobLease): Promise<number> {
   const held = settings.secondReview.includeAiHeld;
   const voters = [...new Map(settings.secondReview.voters.map(voter => [canonicalReviewModel(voter.model), voter])).values()];
 
@@ -262,7 +262,7 @@ export async function enqueueSecondReviews(settings: CrawlSettings, now = new Da
     const lone = await db.select({ candidateId: approved.candidateId }).from(approved)
       .where(and(sql`${approved.decision} = 'approve'`, eq(approved.promptVersion, REVIEW_PROMPT_VERSION), eq(approved.rulesVersion, REVIEW_RULES_VERSION),
         gt(approved.validUntil, now), sql`${gateRequired} = 0`)).limit(ENQUEUE_LIMIT);
-    await holdGateForHuman(lone.map((row) => row.candidateId), "2차에 1차와 다른 모델이 없어 두 모델 승인을 할 수 없다 — 2차 모델 설정을 확인", now);
+    await holdGateForHuman(lone.map((row) => row.candidateId), "2차에 1차와 다른 모델이 없어 두 모델 승인을 할 수 없다 — 2차 모델 설정을 확인", now, lease);
     rows.push(...gate.flatMap((row) => voters.filter(voter => !sameReviewModel(row.firstModel, voter.model)).map((voter) => ({ ...voter,
       candidateId: row.candidateId, repo: row.repo, trigger: "ai_approved" as SecondReviewTrigger,
       firstDecision: "approve", firstConfidence: row.confidence, firstModel: row.firstModel, firstAttemptId: row.firstAttemptId,
@@ -331,6 +331,7 @@ export async function enqueueSecondReviews(settings: CrawlSettings, now = new Da
           sql`${secondReviews.generationKey} <> ${row.generationKey}`))),
           inArray(secondReviews.status, ["pending", "agreed", "needs_human", "failed"])));
     }
+    if (lease) await assertJobLease(tx, lease);
     return inserted.length;
   });
 }
@@ -339,11 +340,11 @@ export async function enqueueSecondReviews(settings: CrawlSettings, now = new Da
  * 더 볼 필요가 없어진 것을 닫는다 — 사람이 이미 결정했거나(보류가 아님) 공개분이 내려갔다.
  * 지우지 않는다. 몇 건을 누가 어떻게 끝냈는지가 2차 심사의 정확도다.
  */
-export async function closeSettledSecondReviews(now = new Date()): Promise<number> {
+export async function closeSettledSecondReviews(now = new Date(), lease?: JobLease): Promise<number> {
   // Removed voters must not keep consuming retries or influence current consensus.
   const [saved] = await db.select().from(crawlSettings).limit(1);
   const {voters, fallbacks = []} = mergeWithDefaults(saved?.values).secondReview;
-  const removed = await db.update(secondReviews).set({ status: "resolved", resolution: "model_removed", resolvedAt: now })
+  const removed = await withJobLeaseWrite(lease, tx => tx.update(secondReviews).set({ status: "resolved", resolution: "model_removed", resolvedAt: now })
     .where(and(inArray(secondReviews.status, ["pending", "failed", "agreed", "needs_human"]),
       sql`not exists(select 1 from jsonb_array_elements(case when ${secondReviews.fallbackForId} is null then ${JSON.stringify(voters)}::jsonb else ${JSON.stringify(fallbacks)}::jsonb end) v
         where v->>'provider'=coalesce(${secondReviews.provider}, 'claude-cli')
@@ -357,8 +358,8 @@ export async function closeSettledSecondReviews(now = new Date()): Promise<numbe
                 where primary_v->>'provider'=root.provider
                   and regexp_replace(lower(trim(primary_v->>'model')), '^\\[mlx\\][[:space:]]*', '', 'i')
                     = regexp_replace(lower(trim(root.model)), '^\\[mlx\\][[:space:]]*', '', 'i')))))`))
-    .returning({ id: secondReviews.id });
-  const orphaned = await db.update(secondReviews).set({status: "needs_human", resolution: null, resolvedAt: null,
+    .returning({ id: secondReviews.id }));
+  const orphaned = await withJobLeaseWrite(lease, tx => tx.update(secondReviews).set({status: "needs_human", resolution: null, resolvedAt: null,
     secondDecision: null, secondConfidence: null,
     secondReason: "대체 모델 설정이 변경되어 해당 의견을 제외했습니다. 직접 확인해주세요.",
     failureCount: sql`greatest(${secondReviews.failureCount}, coalesce((select max(child.failure_count) from second_reviews child where child.fallback_for_id=${secondReviews.id}), 0))`})
@@ -369,25 +370,25 @@ export async function closeSettledSecondReviews(now = new Date()): Promise<numbe
         where v->>'provider'=${secondReviews.provider}
           and regexp_replace(lower(trim(v->>'model')), '^\\[mlx\\][[:space:]]*', '', 'i')
             = regexp_replace(lower(trim(${secondReviews.model})), '^\\[mlx\\][[:space:]]*', '', 'i'))`))
-    .returning({id: secondReviews.id, candidateId: secondReviews.candidateId, trigger: secondReviews.trigger});
+    .returning({id: secondReviews.id, candidateId: secondReviews.candidateId, trigger: secondReviews.trigger}));
   // 관문 행이 사람 확인이 됐으면 후보도 사람에게 — 승인 상태로 두면 발행도 재심사도 안 된다(codex 교차 검토)
   await holdGateForHuman(orphaned.filter((row) => row.trigger === "ai_approved").map((row) => row.candidateId),
-    "대체 모델 설정이 바뀌어 2차 의견을 제외했다 — 직접 확인", now);
+    "대체 모델 설정이 바뀌어 2차 의견을 제외했다 — 직접 확인", now, lease);
   // A prompt upgrade invalidates these inputs before any model call. Retain completed historical opinions.
-  const obsolete = await db.update(secondReviews).set({status: "resolved", resolution: "superseded", resolvedAt: now})
+  const obsolete = await withJobLeaseWrite(lease, tx => tx.update(secondReviews).set({status: "resolved", resolution: "superseded", resolvedAt: now})
     .where(and(inArray(secondReviews.status, ["pending", "failed"]), or(eq(secondReviews.generationKey, "legacy"),
       sql`exists(select 1 from ${crawlReviewAttempts} a where a.id=${secondReviews.firstAttemptId}
         and (a.prompt_version<>${REVIEW_PROMPT_VERSION} or a.rules_version<>${REVIEW_RULES_VERSION} or a.valid_until<=${now.toISOString()}::timestamp))`)))
-    .returning({id: secondReviews.id});
+    .returning({id: secondReviews.id}));
   // 확신 없는 옛 1차로 올린 것 — 일치할 수 없으니 닫는다. 2차 의견은 남아 심사 상세에 그대로 보인다
-  const legacy = await db.update(secondReviews).set({ status: "resolved", resolution: "no_first_confidence", resolvedAt: now })
+  const legacy = await withJobLeaseWrite(lease, tx => tx.update(secondReviews).set({ status: "resolved", resolution: "no_first_confidence", resolvedAt: now })
     .where(and(eq(secondReviews.trigger, "ai_decided"), isNull(secondReviews.firstConfidence),
       inArray(secondReviews.status, ["pending", "agreed", "needs_human", "failed"])))
-    .returning({ id: secondReviews.id });
-  return removed.length + orphaned.length + obsolete.length + legacy.length + await closeDecidedSecondReviews(now);
+    .returning({ id: secondReviews.id }));
+  return removed.length + orphaned.length + obsolete.length + legacy.length + await closeDecidedSecondReviews(now, lease);
 }
 
-async function closeDecidedSecondReviews(now: Date): Promise<number> {
+async function closeDecidedSecondReviews(now: Date, lease?: JobLease): Promise<number> {
   // 공개분의 일치는 끝난 기록이다(그대로 둔다) — 훑는 대상에 넣으면 날마다 쌓여 한도를 잡아먹는다
   const open = await db.select({ id: secondReviews.id, candidateId: secondReviews.candidateId, published: secondReviews.publishedSlug, trigger: secondReviews.trigger })
     .from(secondReviews).where(or(inArray(secondReviews.status, ["pending", "failed", "needs_human"]),
@@ -405,8 +406,8 @@ async function closeDecidedSecondReviews(now: Date): Promise<number> {
     : row.trigger === "ai_approved" ? !["approved", "needs_review"].includes(state.get(row.candidateId) ?? "")
       : state.get(row.candidateId) !== "needs_review");
   if (!settled.length) return 0;
-  await db.update(secondReviews).set({ status: "resolved", resolution: "decided_elsewhere", resolvedAt: now })
-    .where(inArray(secondReviews.id, settled.map((row) => row.id)));
+  await withJobLeaseWrite(lease, tx => tx.update(secondReviews).set({ status: "resolved", resolution: "decided_elsewhere", resolvedAt: now })
+    .where(inArray(secondReviews.id, settled.map((row) => row.id))));
   return settled.length;
 }
 
@@ -414,11 +415,11 @@ async function closeDecidedSecondReviews(now: Date): Promise<number> {
  * 두 모델 승인 관문에서 멈춘 승인 후보를 사람에게 넘긴다 — 보류, 사유 second_review_split(AI 심사가 다시 집지 않는다).
  * 사람이 이미 결정했거나 이미 발행·거부된 후보는 건드리지 않는다.
  */
-async function holdGateForHuman(candidateIds: number[], detail: string, now: Date): Promise<void> {
+async function holdGateForHuman(candidateIds: number[], detail: string, now: Date, lease?: JobLease): Promise<void> {
   if (!candidateIds.length) return;
-  await db.update(crawlCandidates).set({ state: "needs_review", reason: "second_review_split", updatedAt: now,
+  await withJobLeaseWrite(lease, tx => tx.update(crawlCandidates).set({ state: "needs_review", reason: "second_review_split", updatedAt: now,
     signals: sql`coalesce(${crawlCandidates.signals}, '{}'::jsonb) || ${JSON.stringify({ stoppedAt: { rule: "2차 심사", detail } })}::jsonb` })
-    .where(and(inArray(crawlCandidates.id, [...new Set(candidateIds)]), eq(crawlCandidates.state, "approved"), eq(crawlCandidates.decidedBy, "auto")));
+    .where(and(inArray(crawlCandidates.id, [...new Set(candidateIds)]), eq(crawlCandidates.state, "approved"), eq(crawlCandidates.decidedBy, "auto"))));
 }
 
 export async function pendingSecondReviews(limit: number) {
@@ -541,13 +542,13 @@ export const SECOND_REVIEW_RETRY_MS = 60 * 60_000;
  * 비교는 lt() 로 한다. sql`` 안에 Date 를 그대로 넣으면 "Fri Sep 11 2026 …" 문자열로 넘어가
  * 프로드에서 매 틱 실패했다(2026-09-11) — 컬럼 타입을 거쳐야 시각으로 바뀐다.
  */
-export async function retryFailedSecondReviews(now = new Date()): Promise<void> {
-  await db.update(secondReviews).set({ status: "pending" })
+export async function retryFailedSecondReviews(now = new Date(), lease?: JobLease): Promise<void> {
+  await withJobLeaseWrite(lease, tx => tx.update(secondReviews).set({ status: "pending" })
     .where(and(eq(secondReviews.status, "failed"), lt(secondReviews.failureCount, MAX_SECOND_REVIEW_FAILURES),
       or(
         and(inArray(secondReviews.errorCode, SECOND_REVIEW_TRANSIENT_ERRORS), lt(secondReviews.reviewedAt, new Date(now.getTime() - TRANSIENT_RETRY_MS))),
         lt(secondReviews.reviewedAt, new Date(now.getTime() - SECOND_REVIEW_RETRY_MS)),
-      )));
+      ))));
 }
 
 export type SecondReviewCounts = { unanimousReject: number; unanimousApprove: number; agreedReject: number; agreedApprove: number; needsHuman: number; published: number; pending: number };

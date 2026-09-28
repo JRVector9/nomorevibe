@@ -1,18 +1,34 @@
 import { beforeAll, beforeEach, expect, it, vi } from "vitest";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { jobs, crawlCandidates, crawlDocuments, crawlSettings, crawlReviewAttempts, secondReviews } from "@/lib/db/schema";
+import { jobs, crawlCandidates, crawlDocuments, crawlSettings, crawlReviewAttempts, secondReviews, roleLeases } from "@/lib/db/schema";
 import * as crawl from "@/lib/crawl/repository";
 import { getSettings, saveSettings, changeReviewMode } from "@/lib/crawl/settings";
 import { claimAgentReview, loadReviewInput, recordAgentReview } from "@/lib/crawl/agent-review-repository";
 import { enqueueSecondReviews, recordSecondReview } from "@/lib/crawl/second-review";
 import { getJobState } from "@/lib/jobs/runner";
 import { ensureSchema } from "./setup";
+import { tryAcquireRole } from "@/lib/jobs/role-leader";
 beforeAll(ensureSchema);
 beforeEach(async () => {
   for (const table of [secondReviews, crawlReviewAttempts, crawlCandidates, crawlDocuments, crawlSettings, jobs]) await db.delete(table);
+  await db.delete(roleLeases);
   vi.stubEnv("CRAWL_REVIEW_READY", "true");
   vi.stubEnv("CRAWL_REVIEW_MODEL", "first-fixture");
+});
+it("rejects an old reviewer rule verdict after role ownership changes", async () => {
+  const primary = { role: "reviewer" as const, kind: "primary" as const,
+    instanceId: "reviewer-a", bootId: "boot-1", release: "r1" };
+  await tryAcquireRole(primary);
+  const f = await fixture();
+  const lease = { name: "crawl-judge", token: "old-judge", requestedVersion: 1 };
+  await db.insert(jobs).values({ name: lease.name, requestedVersion: 1,
+    lockedAt: sql`now()`, leaseToken: lease.token });
+  await db.update(roleLeases).set({ leaseUntil: sql`now() - interval '1 second'` })
+    .where(eq(roleLeases.role, "reviewer"));
+  expect(await tryAcquireRole({ ...primary, bootId: "boot-2" })).toMatchObject({ epoch: 2 });
+  await expect(crawl.recordAutomaticJudgement({ ...f, verdict, lease })).rejects.toThrow("job_lease_lost");
+  expect(await crawl.getCandidate(f.document.repo)).toBeUndefined();
 });
 async function fixture(mode: "off"|"observe"|"enforce" = "enforce", second = true) {
   await saveSettings({ enabled: true, firstReview: { provider: "claude-cli", model: "first-fixture" }, secondReview: {

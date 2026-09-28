@@ -66,7 +66,7 @@ export async function auditPublishedProducts(ctx: JobContext<null>): Promise<Job
   const concurrency = Math.min(settings.reviewConcurrency || 2, MAX_CONCURRENT_REVIEWS);
   const queue = await pendingAuditItems(campaign.id, concurrency * 4);
   if (!queue.length) {
-    if (await finishAuditCampaign(campaign.id)) ctx.log("product_audit.finished", { campaign: campaign.id });
+    if (await finishAuditCampaign(campaign.id, ctx.lease)) ctx.log("product_audit.finished", { campaign: campaign.id });
     return { done: true };
   }
   const remaining = () => TICK_MS - (Date.now() - startedAt);

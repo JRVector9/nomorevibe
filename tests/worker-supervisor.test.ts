@@ -1,6 +1,6 @@
 import { expect, it } from 'vitest';
 import { isRuntimeHeartbeat, stalledReason, supervisorLimits, type WorkerHealth } from '@/scripts/worker-supervisor';
-import { workerIsHealthy } from '@/scripts/worker-healthcheck';
+import { roleCandidateIsHealthy, workerIsHealthy } from '@/scripts/worker-healthcheck';
 import { parseCapacityArgs } from '@/scripts/measure-worker-capacity';
 
 const limits = supervisorLimits('crawler', {});
@@ -13,6 +13,18 @@ it('distinguishes idle observation, event-loop failure, and a stalled running jo
   expect(stalledReason(health, 32_000, limits)).toBe('heartbeat_timeout');
   expect(stalledReason({ ...health, lastHeartbeatAt: 100_000 }, 100_000, limits)).toBe('progress_timeout');
   expect(stalledReason({ ...health, lastHeartbeatAt: 200_000, state: 'running', currentJob: 'crawl-fetch', jobStartedAt: 1_000 }, 200_000, limits)).toBe('job_timeout');
+});
+
+it('reports a fresh passive role candidate healthy without a supervisor, but requires the active child', () => {
+  const standby = { role: 'crawler', kind: 'standby', instanceId: 'crawler-b', bootId: 'boot-b',
+    phase: 'standby', epoch: null, pid: 123, updatedAt: 1_000 };
+  const worker = { role: 'crawler', status: 'running', updatedAt: 1_000, lastHeartbeatAt: 1_000 };
+  expect(roleCandidateIsHealthy(standby, null, 2_000, 'crawler')).toBe(true);
+  expect(roleCandidateIsHealthy(standby, null, 22_000, 'crawler')).toBe(false);
+  expect(roleCandidateIsHealthy({ ...standby, phase: 'active', epoch: 2 }, null, 2_000, 'crawler')).toBe(false);
+  expect(roleCandidateIsHealthy({ ...standby, phase: 'active', epoch: 2 }, worker, 2_000, 'crawler')).toBe(true);
+  expect(roleCandidateIsHealthy({ ...standby, phase: 'stopping' }, worker, 2_000, 'crawler')).toBe(false);
+  expect(roleCandidateIsHealthy(standby, null, 2_000, 'reviewer')).toBe(false);
 });
 it('does not treat the cooperative 25-second budget as a hard timeout', () => {
   expect(stalledReason({ ...health, state: 'running', currentJob: 'crawl-fetch', jobStartedAt: 1_000, lastHeartbeatAt: 40_000 }, 40_000, limits)).toBeNull();

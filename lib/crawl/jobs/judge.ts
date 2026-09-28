@@ -42,7 +42,7 @@ export async function judgeCrawlDocuments(ctx: JobContext<null>): Promise<JobOut
 
     for (const { document, candidate } of queue) {
       const verdict = await judgeDocument(document, settings);
-      if (!await crawl.recordAutomaticJudgement({document,settings,candidate,verdict})) {
+      if (!await crawl.recordAutomaticJudgement({document,settings,candidate,verdict,lease:ctx.lease})) {
         ctx.log("crawl.judgement_changed", {repo:document.repo});
         return {done:false};
       }

@@ -161,6 +161,37 @@ Compose `init: true`를 사용한다. 초기 자원 초과가 보이면 탐색/�
 
 ## 생존·진행·장애 복구
 
+### 역할 후보 배포 준비 (crawler/reviewer)
+
+`role-worker.ts`는 P1 코드가 검증됐어도 운영 명령을 바꾸기 전까지 기존 단일 워커에
+영향을 주지 않는다. 예비 후보를 추가하는 P2에서는 아래 순서를 지킨다.
+
+1. `0051_role_leases.sql`과 `0052_role_failover_history.sql`을 한 번 적용하고 종료 코드 0을
+   확인한다. 기존 워커를 먼저 정상 drain한다. 기존 `worker-supervisor.ts`와 새 역할 후보가
+   동시에 쓰지 않도록 한다.
+2. 주 후보의 명령을 `node --import tsx scripts/role-worker.ts --role=crawler --kind=primary`
+   (심사는 `reviewer`)로 바꾼다. 고유한 `SERVICE_INSTANCE_ID`, 실제 이미지 commit의
+   `RELEASE_TAG`, 기존 역할 자격 정보와 pool 상한을 설정한다. 이 명령은 주인 선출에
+   성공한 뒤에만 기존 supervisor를 실행한다.
+3. DB `role_leases`의 owner/epoch와 로컬 worker health, 후보 관측이 일치하고 실제 저장이
+   진행되는지 확인한다. 그 뒤 같은 commit과 `RELEASE_TAG`의 예비 서비스를 **별도
+   instance ID**로 시작한다. 예비 명령은 `--kind=standby`다. 대기 중에는 supervisor나
+   수집/심사 외부 호출을 실행하지 않는다. `worker-healthcheck.ts`는 로컬 후보 상태가
+   신선한 대기를 healthy로 판단하고, 활성 후보는 supervisor 상태도 요구한다.
+4. 롤링 교체에서는 **옛 예비를 먼저 drain**하고, 옛 주를 drain한 뒤 새 주 후보를 시작해
+   주인이 된 것을 확인한다. 마지막에 새 릴리스 예비를 시작한다. 다른 릴리스 예비는
+   정상 종료 직후에도 인계가 거절된다. 현재 운영 `RELEASE_TAG`가 과거 SHA로 남아
+   있으므로 환경값·실제 이미지 commit·두 후보의 release를 배포 전에 반드시 일치시킨다.
+5. 역할 후보의 비정상 종료는 Swarm의 기존 restart 정책이 1차 복구한다. 역할 lease는
+   45초, 예비 확인은 5초, 기존 주인 만료 뒤 유예는 20초다. 반복 주 후보 부팅 3회/5분은
+   15분 격리한다. DB 연결이 불명확하면 새 작업을 중단하며, 이전 job token은 새 주인의
+   선출 트랜잭션에서 무효화된다. 실제 운영 장애 주입·저장 재개 측정 전에는 예비 서비스를
+   활성화하지 않는다.
+
+P0 `check-worker-progress.ts`의 주기 실행·외부 알림 연결과 데이터 정체에 따른 자동
+재시작 제어는 아직 배치되지 않았다. 역할 후보는 프로세스 종료·lease 만료를 처리하지만
+결과 0건만 보고 무조건 인계하지 않는다.
+
 워커 자식은 IPC로 5초마다 생존 신호를 보내고 현재 잡·시작 시각·최근 진행 시각을 보고한다.
 감시기는 아래 초기 상한을 넘으면 워커 leader에 SIGTERM을 보내 먼저 drain한다.
 단순 유휴/쿼터 대기 자체는 장애가 아니다.
