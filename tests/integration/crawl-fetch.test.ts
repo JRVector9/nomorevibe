@@ -52,6 +52,46 @@ beforeEach(async () => {
 });
 
 describe("수집 잡", () => {
+  it("recovers a prior fetch claim without touching the current job or accepting the old result", async () => {
+    const lease = { name: "crawl-fetch", token: "current-owner", requestedVersion: 1 };
+    await db.insert(jobs).values({ name: lease.name, requestedVersion: 1,
+      leaseToken: lease.token, lockedAt: sql`now()`, lastRunAt: sql`now() - interval '30 seconds'` });
+    const future = new Date(Date.now() + 8 * 60_000);
+    await db.insert(crawlFrontier).values([
+      { repo: "audit/abandoned", signal: "test", state: "fetching", attempts: 2,
+        updatedAt: new Date(Date.now() - 60_000), nextAttemptAt: future },
+      { repo: "audit/current", signal: "test", state: "fetching", attempts: 1,
+        updatedAt: new Date(Date.now() + 10_000), nextAttemptAt: future },
+    ]);
+    const [oldClaim] = await db.select().from(crawlFrontier).where(eq(crawlFrontier.repo, "audit/abandoned"));
+    expect(await crawl.recoverAbandonedFrontier({ ...lease, token: "wrong-owner" })).toBe(0);
+    await db.insert(jobs).values({ name: "crawl-judge", requestedVersion: 1,
+      leaseToken: "judge-owner", lockedAt: sql`now()`, lastRunAt: sql`now()` });
+    expect(await crawl.recoverAbandonedFrontier({ name: "crawl-judge", token: "judge-owner", requestedVersion: 1 })).toBe(0);
+    expect(await crawl.recoverAbandonedFrontier(lease)).toBe(1);
+    const [abandoned, current] = await db.select().from(crawlFrontier).orderBy(crawlFrontier.repo);
+    expect(abandoned).toMatchObject({ repo: "audit/abandoned", state: "pending", attempts: 1 });
+    expect(abandoned.nextAttemptAt.getTime()).toBeLessThan(future.getTime());
+    expect(current).toMatchObject({ repo: "audit/current", state: "fetching", attempts: 1 });
+    expect((await crawl.dequeue(1)).map(row => row.repo)).toEqual(["audit/abandoned"]);
+    expect(await crawl.recoverAbandonedFrontier(lease)).toBe(0);
+    await crawl.markFrontier(oldClaim.repo, "skipped", oldClaim);
+    expect(await db.query.crawlFrontier.findFirst({ where: eq(crawlFrontier.repo, oldClaim.repo) }))
+      .toMatchObject({ state: "fetching", attempts: 2 });
+  });
+
+  it("restarts a dead fetch batch on the next job tick without a ten minute wait", async () => {
+    await db.insert(crawlFrontier).values({ repo: "audit/restarted", signal: "test", state: "fetching",
+      attempts: 1, updatedAt: new Date(Date.now() - 60_000),
+      nextAttemptAt: new Date(Date.now() + 8 * 60_000) });
+    getRepo.mockResolvedValue({ ok: true, value: STABLE_META });
+    fetchPage.mockResolvedValue({ status: 200, finalUrl: "https://my-app.test", html: "<title>Recovered</title>" });
+    expect(await tick()).toMatchObject({ status: "completed" });
+    expect(await crawl.getDocument("audit/restarted")).toMatchObject({ repo: "audit/restarted" });
+    expect(await db.query.crawlFrontier.findFirst({ where: eq(crawlFrontier.repo, "audit/restarted") }))
+      .toMatchObject({ state: "done", attempts: 1 });
+  });
+
   it("replaces the old excerpt when a fresh README observation confirms absence", async () => {
     const repo = "someone/removed-readme";
     await crawl.putDocument({ repo, repoMeta: STABLE_META,

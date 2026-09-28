@@ -50,6 +50,10 @@ export async function fetchCrawlDocuments(ctx: JobContext<null>): Promise<JobOut
     ctx.log("crawl.fetch_skipped", { reason: "disabled" });
     return { done: true };
   }
+  if (ctx.lease && ctx.hasBudget()) {
+    const recovered = await crawl.recoverAbandonedFrontier(ctx.lease);
+    if (recovered) ctx.log("crawl.fetch_recovered", { recovered });
+  }
 
   const tally: Tally = { fetched: 0, skipped: 0, failed: 0 };
   const oneAtATime = originQueue();

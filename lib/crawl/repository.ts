@@ -1,6 +1,6 @@
 import { emitPipelineEvent } from "@/lib/observability/review-pipeline";
 import { isReviewCandidate } from "./agent-review-contract";
-import { and, asc, desc, eq, inArray, lte, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, lt, lte, sql } from "drizzle-orm";
 import { isDeepStrictEqual } from "node:util";
 import { db } from "@/lib/db";
 import {
@@ -8,6 +8,7 @@ import {
   crawlDocuments,
   crawlCandidates,
   crawlSettings,
+  jobs,
   type FrontierEntry,
   type FrontierState,
   type CrawlDocument,
@@ -19,6 +20,7 @@ import { mergeWithDefaults } from "./settings";
 import type { CrawlSettings } from "./settings-schema";
 import { factsFromRepoMeta } from "./rules";
 import { assertJobLease, requestJob, type JobLease } from "@/lib/jobs/control";
+import { STALE_LOCK_MS } from "@/lib/jobs/lease";
 import { README_SAMPLE_VERSION } from "./readme";
 import type { ReadmeRefreshResult } from "./readme-refresh";
 import type { ProductTransaction } from "@/lib/domain/products/generation";
@@ -97,6 +99,20 @@ export async function getFrontierBuilder(repo: string): Promise<string | null> {
  * 죽은 프로세스의 잠금을 회수하는 순간에는 두 프로세스가 겹칠 수 있다.
  * 그때 같은 항목을 둘이 가져가면 GitHub 호출이 낭비된다.
  */
+export async function recoverAbandonedFrontier(lease: JobLease): Promise<number> {
+  if (lease.name !== "crawl-fetch") return 0;
+  const currentRun = db.select({ startedAt: jobs.lastRunAt }).from(jobs).where(and(
+    eq(jobs.name, "crawl-fetch"), eq(jobs.leaseToken, lease.token),
+    sql`${jobs.lockedAt} >= now() - ${STALE_LOCK_MS} * interval '1 millisecond'`,
+  ));
+  const rows = await db.update(crawlFrontier).set({
+    state: "pending", attempts: sql`greatest(0, ${crawlFrontier.attempts} - 1)`,
+    nextAttemptAt: sql`now()`, updatedAt: sql`now()`,
+  }).where(and(eq(crawlFrontier.state, "fetching"),
+    lt(crawlFrontier.updatedAt, sql`(${currentRun})`))).returning({ id: crawlFrontier.id });
+  return rows.length;
+}
+
 export async function dequeue(limit: number, now?: Date): Promise<FrontierEntry[]> {
   const at = nowExpr(now);
 
