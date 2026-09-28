@@ -1,3 +1,51 @@
+# 2026-09-28 14:22 KST — 검색 키워드 재생성·검수 진행
+
+## 현재 목적과 완료 작업
+
+사용자 요청은 README 입력 변경 뒤 남은 검색 키워드 재생성·검수를 진행하는 것이다. 소개 검수
+`product-intro-check`는 사용자 중단 상태(`not_before=2100-01-01`)를 유지한다.
+운영 읽기 전용 대조에서 공개 19,732개, 생성 대기 2,716→2,691, 검수 대기 299,
+미표시 해시 불일치·검색 사본 불일치 0을 확인했다. text 워커의 두 잡은 실제 성공 시각이 진행 중이다.
+
+- 재시도 소진 5건을 원인별로 확인했다. `invalid_output` 4건은 기존
+  `scripts/reconcile-search-profiles.ts --apply --retry-invalid-output`로 1회 묶음 재검수에 넣었다.
+  `timeout` 1건(`product_id=11606`)은 기존 묶음 검수 코드가 처리할 수 있도록 조건부 DB 갱신으로
+  `verify_attempts=0, verify_retry_at=null, repair_version=1`로 되돌리고 오류 원인은 보존했다.
+  직후 읽기 전용 대조에서 `repeatedFailures=0`, `exhausted=0`이었다. 성공 검수 완료를 뜻하지는 않는다.
+- 검수 대기열이 제품 ID 역순이라 새 제품이 들어오면 오래된 검수가 밀리는 원인을 확인했다.
+  `pendingVerifications`를 프로필 `updated_at` 오름차순, 제품 ID 오름차순으로 바꿨다.
+  기존 재시도 시각·소유권·원본 해시·엄격 검수는 그대로 사용한다.
+
+## 변경 파일·테스트·실패 접근
+
+- 변경: `lib/domain/products/search-profiles.ts`, `tests/integration/search-verify.test.ts`, 이 문서.
+  분리된 작업트리 `/private/tmp/nmv-search-verification-20260928`, 브랜치
+  `fix/search-verification-fairness`. 루트의 기존 사용자 변경과 untracked 자료는 건드리지 않는다.
+- 회귀 테스트를 먼저 추가해 실제 실패(기대 ID 1, 결과 ID 2)를 확인했다. 순서 변경 후
+  `npx vitest run --config vitest.integration.config.ts tests/integration/search-verify.test.ts`:
+  13/13 PASS. `npx tsc --noEmit`, 대상 ESLint, `git diff --check`도 PASS.
+- 첫 임시 상태 스크립트가 CJS의 top-level await로 컴파일 실패했다. async `main()`으로 고친 뒤
+  읽기 전용 조회 성공. 키워드 생성·검수 우회 저장이나 해시 덮어쓰기는 하지 않았다.
+
+## 남은 작업과 정확한 다음 명령
+
+이 변경의 PR/hosted CI/병합/운영 text 앱 배포가 남았다. 배포 후 오래된 검수 5건의
+실제 성공 여부와 대기량 감소를 확인한다. 새 제품이 계속 들어오므로 단일 시점의 대기량 0을
+완료 조건으로 과장하지 않는다. README 일회성 12,418건 복구는 이전 절에서 완료했다.
+
+```sh
+cd /private/tmp/nmv-search-verification-20260928
+git status --short
+npx vitest run --config vitest.integration.config.ts tests/integration/search-verify.test.ts
+npx tsc --noEmit
+npx eslint lib/domain/products/search-profiles.ts tests/integration/search-verify.test.ts
+git diff --check
+cd /Users/jr/Desktop/projects/nomorevibe
+python3 /tmp/nmv-priority-ops-20260927.py health-check
+```
+
+---
+
 # 2026-09-27 11:04 KST — README 복구와 우선순위 후속 완료
 
 ## 현재 목적 / 완료 상태
