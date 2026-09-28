@@ -1,3 +1,61 @@
+# 2026-09-28 21:00 KST — P2 병합·운영 장애 복구 시험 완료
+
+## 현재 목적 / 완료 작업 / 수정 파일
+
+사용자의 우선순위에 따라 P0 진행 판정/owner-change 재시도(#213), P1 역할 lease·fencing·
+frontier 조기 회수(#214), P2 scheduler 2복제본·crawler/reviewer 주/예비(#215)를 진행했다.
+P2 main SHA `2f8a6bb607e622b18ba512415b4004d19f5557e5`. PR #215의 필수 CI
+`check`를 통과하고 기존 8개 앱에 배포했다. scheduler는 M3 2복제본, M3
+crawler/reviewer는 역할 후보 primary 명령, mini에는 같은 SHA의 별도 standby 앱
+2개를 배포해 총 10개 앱이 운영 중이다. 두 standby는 `autoDeploy=false`라 다음
+릴리스에 수동 교체가 필요하다. 운영 DB streaming·서버 설정은 수정하지 않았다.
+
+이 단계의 문서 브랜치 `/private/tmp/nmv-worker-failover-ops`에서 `AGENTS.md`,
+`README.md`, `PENDING.md`, `docs/operations/independent-workers-runbook.md`,
+`docs/operations/2026-09-28-worker-failover-rollout.md`, 이 handoff를 수정했다.
+루트 main의 사용자 미커밋 변경과 중단된 `product-intro-check`는 건드리지 않았다.
+
+## 설계 판단 / 실제 테스트 / 실패 접근
+
+- P2 로컬 단위 152파일/1217, PostgreSQL 통합 93파일/906 통과·TODO1, 타입·lint·
+  build·diff-check 통과. GitHub Actions `check`도 타입·lint·단위·통합·build 전부 통과.
+- 운영 10개 앱 최신 배포 `done`/source SHA 일치. M3·mini 웹 각각 public health
+  HTTP200/app+DB ok. scheduler 컨테이너 2개 healthy, 별도 신선한 DB 관측 2개,
+  `crawl-fetch` 요청 버전과 next schedule 전진, 최종 진행 판정 `overall=ok`.
+- crawler 자식 SIGKILL→Swarm 실패 감지/재시작→M3 주 epoch 1→2, M3 서비스
+  0 복제본→mini 예비 epoch 3, M3 재기동·예비 drain→M3 epoch 4. reviewer도 같은
+  순서로 epoch 1→2→3→4. 최종 두 주·두 예비 healthy, 주 active·예비 standby.
+  reviewer 예비 활성 중 `second-review` requested/processed version 전진.
+  자세한 명령·증거·검증 한계는
+  `docs/operations/2026-09-28-worker-failover-rollout.md`.
+- `gh pr merge 215 --squash --delete-branch`는 원격 merge 뒤 로컬 main이 다른 worktree에서
+  사용 중이라 종료1이었다. `gh pr view`와 `git ls-remote`로 원격 병합 SHA를 확인했다.
+  후반 GitHub REST API는 사용자 core quota 403으로 실패해 정상 git transport의
+  `git ls-remote origin refs/heads/main`으로 소스 SHA를 검증했다. 자격 증명 교체는 안 했다.
+- 운영에서 반복 부팅 격리·진행 정체 자동 재시작은 주입하지 않았다. 예비 활성 구간에
+  새 적격 결과가 없어 문서/심사 결과 저장 재개도 확인하지 못했다. 로컬 통합은 강제 종료
+  뒤 lease 만료를 DB에서 앞당겨 인계했으므로 운영 비정상 재시작 실패의 시간 실측이 아니다.
+
+## 남은 작업 / 정확한 다음 명령
+
+이 문서 변경을 diff-check 후 커밋·PR·CI로 main에 병합한다. 운영 완료 내용은
+`PENDING.md`에 미검증 경계와 함께 남긴다. 다음 우선순위는 독립 진행 감시의 주기 실행·
+외부 알림(메시지 전송 경로는 별도 승인 필요), 적격 backlog가 있을 때 예비의 결과 저장,
+반복 부팅 격리/정체 자동 재시작의 운영 시험이다. publisher/text/maintenance는
+supervisor·Swarm 1차 재시작만 있고 별도 예비/쓰기 fencing은 아직 없다. 이 역할까지
+확대하려면 P1의 역할 lease와 각 쓰기 경로를 동일하게 감사·구현해야 한다.
+
+```sh
+cd /private/tmp/nmv-worker-failover-ops
+git diff --check
+git status --short
+git add AGENTS.md README.md PENDING.md docs/CODEX_HANDOFF.md docs/operations/independent-workers-runbook.md docs/operations/2026-09-28-worker-failover-rollout.md
+git commit -m 'docs: record live worker failover rollout'
+git push -u origin feat/worker-failover-ops-20260928
+```
+
+---
+
 # 2026-09-28 20:24 KST — P1 운영 반영, P2 scheduler·정체 재시작 코드 검증
 
 ## 현재 목적 / 완료 작업 / 수정 파일
