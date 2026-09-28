@@ -1,3 +1,83 @@
+# 2026-09-29 08:34 KST — 관리자 GitHub PAT 등록·교체 구현
+
+## 현재 목적 / 완료 작업 / 수정 파일
+
+관리자에서 수집용 GitHub PAT를 등록·교체하고 실제 서로 다른 계정의 수집 한도
+전환을 지원하는 작업이다. 별도 worktree `/private/tmp/nmv-github-token-pool`, 브랜치
+`feat/github-collector-token-pool`에서 구현했다. 관리자 `/admin/github-accounts`에
+계정 등록/교체/활성·중지, core 한도, 최근 1시간 원본·신규 수집 제품 수를 추가했다.
+GitHub `/user` 숫자 ID로 계정을 식별하고 PAT를 전용 비밀키로 AES-GCM 암호화해
+새 앱 테이블에 저장한다. `githubRequest`는 기존 환경 토큰과 등록 토큰을 회전하며
+primary 한도 소진 시 다음 계정으로 전환하고 secondary cooldown은 공유한다.
+DB 서버·복제 설정과 중지된 `product-intro-check`는 건드리지 않았다.
+
+수정 파일: `app/admin/AdminNav.tsx`, `app/admin/github-accounts/*`,
+`lib/crawl/{github.ts,github-accounts.ts,github-quota.ts,readme-refresh.ts}`,
+`lib/db/operations-schema.ts`, `drizzle/0053_github_collector_accounts.sql`,
+`drizzle/meta/_journal.json`, `tests/{github-collector-accounts.test.ts,github-token-pool.test.ts,github-quota.test.ts,admin-navigation.test.tsx}`,
+`tests/integration/github-quota.test.ts`, `README.md`,
+`docs/operations/{independent-workers-runbook.md,production-multi-instance.env.example,2026-09-29-github-collector-accounts.md}`,
+`docs/superpowers/plans/2026-09-29-github-pat-pool.md`, 이 handoff.
+
+## 핵심 설계 / 실제 시험 / 실패 접근
+
+기존 `GITHUB_TOKEN`은 운영 이행용으로 유지한다. 등록 계정이 없으면 기존 토큰만
+사용한다. 같은 GitHub 숫자 ID를 등록하면 암호문을 교체하고, 명시한 교체 계정과
+새 PAT 계정이 다르면 저장을 거절한다. 토큰·암호문을 HTML, 감사 기록, 로그에
+표시하지 않는다. 토큰 만료 시 교체는 관리자 화면에서 다시 한다. 등록 계정의
+core 한도 헤더를 최대 30초 간격으로 저장한다. 다른 앱이 소비한 API 사용량도
+포함되므로 원본 저장 건수와 비율 계산은 하지 않는다.
+
+사용자가 클립보드에 둔 새 PAT는 토큰 값을 출력·파일 저장하지 않고 GitHub에
+읽기 요청으로 시험했다. `/user` HTTP 200: `lollol-jr`, 사용자 ID `227736397`로
+기존 `JRVector9`와 다르다. `/rate_limit` HTTP 200: core 5,000/시간,
+search 30/분. 공개 `octocat/Hello-World` 조회, 저장소 검색, 커밋 검색도 모두
+HTTP 200이었다. 같은 클립보드 PAT를 애플리케이션의
+`inspectGitHubCollectorToken`으로도 확인해 ID·login·core 5,000을 반환했다.
+이 시점 실제 PAT를 운영 또는 시험 DB에 등록하지는 않았다.
+
+TDD에서 새 모듈 import 실패와 풀 테스트의 기존 단일 토큰 강제 오류를 red로
+확인했다. 새/기존 GitHub 집중 테스트 45/45 통과, `next typegen`, `tsc --noEmit`,
+수정 파일 ESLint, `npm run build` 통과했다. build에는 기존
+`agent-review.ts` 동적 파일 접근 경고만 있었다. 첫 전체 `npm test`는 새 화면의
+12px 텍스트와 관리자 메뉴 9개 고정 기대 때문에 3건 실패했다. 텍스트를 13px로
+고치고 메뉴 테스트를 10개로 갱신한 뒤 전체 159파일 1255/1255 통과했다.
+전용 로컬 시험 DB의 마이그레이션 0053과 계정 암호화 저장·교체·비활성화
+통합 테스트는 2파일 3/3 통과했다. 시험 계정 행/감사 행은 테스트 후 삭제했다.
+`next start`로 전용 시험 DB에 연결한 관리자 페이지를 HTTP 200으로 읽어 제목,
+등록 폼, 빈 계정 안내가 렌더링됨을 확인한 뒤 서버를 중지했다.
+후속 검토에서 기존 secondary cooldown 행도 새 전역 제한에 포함하고, 여러 계정
+전환이 호출자의 단일 timeout 예산을 넘지 않게 고쳤다. 해당 단위 16/16,
+secondary 통합 2/2, 타입·ESLint가 통과했다. 운영 앱 DB에는 0053 가산
+마이그레이션을 직접 연결로 한 번 적용하고 8개 컬럼·빈 계정 행을 확인했다.
+M3·mini 웹과 crawler 주·예비 네 앱에는 동일한 전용 암호화 키를 설정했다.
+이 시점 새 PAT는 아직 운영 DB에 등록하지 않았고 앱 새 릴리스도 배포 전이다.
+
+## 남은 작업 / 정확한 다음 명령
+
+PR #225를 만들었고 최신 커밋의 CI `check`가 남았다. 기존 `gh` 로그인 계정의
+GitHub core 5,000회 한도가 2026-09-28 23:54:42 UTC까지 소진돼 `gh run watch`는
+403이었다. 새 PAT로 읽기 전용 CI 상태 조회는 HTTP 200이며 latest run의 `check`가
+진행 중인 것을 확인했다. 운영 전환의 DB 마이그레이션과 네 앱 전용 키 설정은
+완료했다. CI 통과 후 PR을 병합하고 같은 릴리스를 웹·crawler 주·예비에 배포한다.
+그 다음 관리자에서
+새 PAT를 등록하고 계정별 quota 및 원본 증가를 확인한다. 이 전에는 두 계정의
+실제 운영 처리량을 검증했다고 주장하지 않는다. 루트 checkout의 사용자 변경은
+보존한다.
+
+```sh
+cd /private/tmp/nmv-github-token-pool
+git status --short --branch
+git diff --check
+npm test
+npx next typegen && npx tsc --noEmit
+npx eslint app/admin/github-accounts app/admin/AdminNav.tsx lib/crawl/github.ts lib/crawl/github-accounts.ts lib/crawl/github-quota.ts lib/crawl/readme-refresh.ts lib/db/operations-schema.ts tests/github-collector-accounts.test.ts tests/github-token-pool.test.ts tests/github-quota.test.ts
+npm run build
+git diff --stat
+```
+
+---
+
 # 2026-09-29 08:00 KST — 수집 한도 장애 확인 및 관리자 화면 개선
 
 ## 현재 목적 / 완료 작업 / 수정 파일

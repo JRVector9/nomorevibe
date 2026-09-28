@@ -1,27 +1,38 @@
-# GitHub 수집 계정 2개 연결 가능성 및 운영 지표
+# GitHub 수집 계정 PAT 관리
 
-## 확인 결과 (2026-09-29 KST)
+## 현재 구현
 
-서로 다른 GitHub 사용자 두 명이 같은 OAuth 앱에 각각 권한을 주면, 두 사용자 토큰으로 공개 REST API 요청을 보낼 수 있다. GitHub의 primary REST `core` 한도는 토큰 수가 아닌 **인증 사용자별**로 계산된다. 같은 계정의 OAuth/PAT 토큰을 추가해도 합산 한도는 늘지 않는다. 두 계정의 사용 가능한 예산도 각 계정의 다른 앱·토큰 사용량에 따라 달라진다. 동시 요청에는 별도 secondary 제한이 있으므로 처리량이 정확히 두 배가 되지는 않는다.
+운영 수집은 기존 `GITHUB_TOKEN` 하나가 GitHub `core` 한도에 닿으면서 잠시 멈췄다.
+2026-09-28 22:39:57 UTC 한도 소진, 22:53:40 UTC 초기화, 22:54:45 UTC 원본
+저장 재개를 읽기 전용으로 확인했다. 22:59:53 UTC의 기존 계정은 `JRVector9`,
+core 사용 609/5,000이었다. 계정의 다른 클라이언트 사용도 이 숫자에 포함된다.
 
-현재 구현은 이 방식을 지원하지 않는다. `/api/auth/github/callback`은 관리자 신원을 확인한 뒤 OAuth 토큰을 버리고 관리자 세션만 발급한다. 모든 운영 GitHub REST 요청은 `lib/crawl/github.ts`의 단일 `GITHUB_TOKEN`을 사용한다. `github-quota.ts`는 토큰 해시별 cooldown을 저장하지만 토큰 선택, 사용량 기록, 다른 계정으로 전환하는 경로가 없다. `readme-refresh.ts`는 환경 토큰 존재 여부도 직접 검사한다. 관리자 웹 앱에는 수집 토큰이 없다.
+관리자 `/admin/github-accounts`에서 공개 저장소 읽기용 fine-grained PAT를 입력한다.
+서버는 `/user`와 `/rate_limit`로 계정과 한도를 확인하고 숫자 사용자 ID로
+등록 또는 교체한다. 별도 `GITHUB_COLLECTOR_SECRET`으로 암호화된 값만 DB에
+저장하며 원문은 화면·감사 로그에 반환하지 않는다. 관리자는 계정을 수집에서
+제외하거나 다시 활성화할 수 있다. 기존 환경 토큰은 이행 중 유지한다.
 
-운영에서 2026-09-28 22:39:57 UTC에 core primary 한도 소진(secondary 아님, reset 22:53:40 UTC)을 확인했다. 다운로드가 쉬는 동안 큐에는 예약 항목이 남았고, 워커·스케줄러는 살아 있었다. 초기화 후 22:54:45 UTC에 원본 7건이 새로 저장됐고 22:59:53 UTC에는 총 108,248건으로 22:54:46 UTC의 108,189건보다 59건 늘었다. 현재 수집 토큰은 `JRVector9` 사용자이며, 22:59:53 UTC의 `GET /rate_limit` 응답은 core `609/5,000` 사용, `4,391` 잔여, 다음 초기화 23:54:42 UTC였다. 이 수치는 토큰을 드러내지 않은 읽기 전용 관측이며, 59건을 만든 요청이 정확히 몇 회였는지는 현 코드가 기록하지 않는다.
+GitHub 요청은 계정을 자원별로 회전한다. 한 계정의 primary quota가 소진되면
+다른 계정으로 같은 요청을 한 번씩 시도하고, 모두 대기 중이면 가장 이른 reset을
+반환한다. 일반 권한 403, 404, 네트워크 오류는 다른 계정으로 숨기지 않는다.
+secondary 제한은 전체 계정에 공유해 추가 요청을 중단한다. 등록 계정의 core
+한도 헤더는 최대 30초 간격으로 DB에 관측한다. 화면의 최근 1시간 원본
+저장·신규 수집 제품은 전체 결과이며 계정별 요청 효율로 계산하지 않는다.
 
-## 구현 설계
+## 운영 전환
 
-1. **연결과 저장**: 기존 관리자 로그인 세션과 별도의 `수집용 GitHub 계정 연결` 흐름을 만든다. 현재 OAuth 앱의 등록된 콜백을 재사용하면서 `state`에 연결 목적을 서버 측으로 묶고, 콜백에서는 관리자 세션을 다시 검사한다. GitHub `/user`의 안정적인 숫자 ID로 중복 계정을 거부하거나 재연결한다. 사용자에게 토큰 원문을 다시 표시하지 않는다. 액세스·갱신 토큰은 웹과 워커가 공유하는 전용 암호화 키로 인증 암호화해 DB에 보관한다. 만료형 OAuth 토큰을 사용하면 refresh token 갱신을 한 계정당 한 워커만 실행하도록 직렬화한다. 연결 해제·실패·재인증 상태를 관리자에 표시한다.
-2. **요청 선택**: 기존 `githubRequest`를 수집 계정 풀의 단일 진입점으로 바꾼다. `core`, `search`, `code_search`를 각각 따로 보고, 유효한 잔여 예산이 있는 계정을 공정하게 선택한다. 여러 워커의 동시 선택은 DB 예약이나 계정별 lease로 조율한다. 한 계정이 primary 한도에 닿으면 즉시 다른 활성 계정으로 다음 요청을 보내고, 둘 다 막혔을 때만 작업 전체를 reset 시각까지 미룬다. 하나의 응답 뒤 같은 저장소의 나머지 요청을 어느 계정으로 할지는 공개 데이터·조건부 요청 캐시를 고려해 명시적으로 정한다. secondary 제한·인증 실패·권한 실패는 primary 소진과 구분하고 무제한 전환·재시도를 막는다. 기존 환경 `GITHUB_TOKEN`은 연결 계정이 없을 때만 쓰는 이행 경로로 유지한다.
-3. **관리자 지표**: 각 계정의 GitHub 사용자명, 활성/만료/한도 대기 상태, `core` 사용/한도/잔여/초기화 시각 및 검색 자원을 표시한다. 우선 GitHub 응답의 `x-ratelimit-*` 헤더를 저장하고, 저빈도 `GET /rate_limit`로 보완한다. 별도 카운터로 최근 1시간 요청 수(계정·작업·응답 종류)와 전체 원본 저장 수(`crawl_documents`), 신규 발행 수(`products`)를 나란히 표시한다. **API 요청 1회와 원본 저장 1건은 같은 단위가 아니다.** 계정별 저장 기여를 표시하려면 마지막 성공 요청의 계정 ID를 원본 저장 이벤트에 남겨야 한다. 수집이 0이면 `워커 생존`, `실행 가능 큐`, `예약 큐`, `한도 reset`, `최근 저장`을 함께 보여 원인을 분리한다.
-4. **검증**: 서로 다른 두 계정 연결과 동일 사용자 중복 거부, 한 계정 한도 소진 시 다른 계정으로 전환, 양쪽 소진 시 큐 보존·자동 재개, 토큰 만료·갱신, secondary 제한, 연결 해제, 로그·응답의 비밀값 비노출을 시험한다. 운영에서 실제 두 번째 계정 연결 전에는 두 계정의 실제 합산 처리량을 검증했다고 주장하지 않는다.
+앱 테이블 마이그레이션 0053 → 웹·crawler 주/예비 네 앱의 동일한 전용 암호화 키 →
+같은 릴리스 배포 → 관리자에서 두 번째 실제 계정 PAT 등록 → 계정별 quota 관측과
+원본 증가 확인 순서다. DB 서버·복제 설정은 변경하지 않는다. 두 번째 토큰이
+등록되기 전에는 2계정 운영 효과를 검증했다고 주장하지 않는다.
 
-DB 서버/복제 설정 변경은 필요 없다. 암호화 키의 웹·워커 배포와 애플리케이션 테이블 마이그레이션은 필요하다. 현재 PR은 심사 구간 링크와 단계별 상태 표시만 구현한다. 계정 연결·선택·계정별 지표는 별도 구현 범위다.
-
-## 공식 문서
+GitHub는 primary REST quota를 인증 사용자별로 계산한다. 같은 사용자 PAT를
+여러 개 발급해도 총량은 늘지 않는다. 공개 저장소 읽기용 fine-grained PAT는
+GitHub의 Public repositories 선택과 최소 권한으로 만든다. 서로 다른 실제
+관리 계정의 PAT라도 GitHub의 [API 약관](https://docs.github.com/en/site-policy/github-terms/github-terms-of-service)을
+준수해 사용한다.
 
 - [GitHub REST API 한도](https://docs.github.com/en/rest/using-the-rest-api/rate-limits-for-the-rest-api)
-- [GitHub OAuth 앱 승인·토큰 만료/갱신](https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/authorizing-oauth-apps)
-- [GitHub REST API 권장 사항](https://docs.github.com/en/rest/using-the-rest-api/best-practices-for-using-the-rest-api)
-- [GitHub API 이용 약관](https://docs.github.com/en/site-policy/github-terms/github-terms-of-service)
-
-약관은 한도를 넘기기 위한 API 토큰 공유를 금지한다. 이 문서는 두 실제 사용자 각각의 승인과 계정별 한도를 기술적으로 설명하며, 다중 계정 이용에 대한 GitHub의 개별 정책 판단을 대신하지 않는다.
+- [Fine-grained PAT 생성·관리](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens)
+- [REST API 권장 사항](https://docs.github.com/en/rest/using-the-rest-api/best-practices-for-using-the-rest-api)

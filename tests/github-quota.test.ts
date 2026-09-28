@@ -6,7 +6,7 @@ it("isolates primary resources and credentials while sharing secondary waits", (
   const search = githubQuotaKeys("secret-token-a", "search");
   expect(core.primary).not.toBe(search.primary);
   expect(core.secondary).toBe(search.secondary);
-  expect(core.secondary).not.toBe(githubQuotaKeys("secret-token-b", "core").secondary);
+  expect(core.secondary).toBe(githubQuotaKeys("secret-token-b", "core").secondary);
   expect(JSON.stringify(core)).not.toContain("secret-token-a");
 });
 it("records exhausted primary quota even on a successful conditional response", () => {

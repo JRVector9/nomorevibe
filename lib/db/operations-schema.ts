@@ -1,4 +1,4 @@
-import { pgTable, varchar, jsonb, timestamp, serial, integer, text, bigint } from 'drizzle-orm/pg-core';
+import { pgTable, varchar, jsonb, timestamp, serial, integer, text, bigint, boolean } from 'drizzle-orm/pg-core';
 
 /** One active process per job role. Database time is the authority for expiry. */
 export const roleLeases = pgTable('role_leases', {
@@ -34,4 +34,16 @@ export const operationsAudit = pgTable('operations_audit', {
   action: varchar('action', { length: 80 }).notNull(), target: varchar('target', { length: 200 }).notNull(),
   detail: jsonb('detail').$type<Record<string, unknown>>().notNull(),
   createdAt: timestamp('created_at').notNull().defaultNow(),
+});
+
+/** Collector PATs are encrypted with a dedicated secret shared by web and crawler instances. */
+export const githubCollectorAccounts = pgTable('github_collector_accounts', {
+  userId: bigint('user_id', { mode: 'number' }).primaryKey(),
+  login: varchar('login', { length: 100 }).notNull(),
+  encryptedToken: text('encrypted_token').notNull(),
+  enabled: boolean('enabled').notNull().default(true),
+  coreQuota: jsonb('core_quota').$type<{ limit: number; used: number; remaining: number; reset: number }>(),
+  quotaObservedAt: timestamp('quota_observed_at'),
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+  updatedAt: timestamp('updated_at').notNull().defaultNow(),
 });

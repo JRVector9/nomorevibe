@@ -1,6 +1,7 @@
 import { logger } from "@/lib/observability/logger";
 import { readBodyStrictlyCapped } from "@/lib/net/fetch";
 import { githubCooldown, githubResource, readGitHubCooldown, recordGitHubCooldown } from "./github-quota";
+import { collectorTokens, observeCollectorQuota, type CollectorToken } from "./github-accounts";
 
 /**
  * GitHub API — 수집기가 쓰는 만큼만.
@@ -44,12 +45,7 @@ export type GitHubHttpResult<T> =
     }
   | { ok: false; error: GitHubFailure };
 
-/** 토큰이 없으면 시간당 60회라 수집이 성립하지 않는다 — 조용히 도는 것보다 멈추는 게 낫다 */
-function requireToken(): string {
-  const token = process.env.GITHUB_TOKEN;
-  if (!token) throw new Error("GITHUB_TOKEN이 없습니다 — 수집기는 인증된 토큰이 필요합니다");
-  return token;
-}
+const rotation: Record<string, number> = {};
 
 export async function githubRequest<T>(
   path: string,
@@ -64,7 +60,33 @@ export async function githubRequest<T>(
     || decoded.split("/").some((part) => part === "." || part === "..")) {
     return { ok: false, error: { kind: "invalid_response" } };
   }
-  const token = requireToken();
+  const accounts = await collectorTokens();
+  if (accounts.length === 0) throw new Error("GitHub 수집 토큰이 없습니다 — 인증된 토큰이 필요합니다");
+  const resource = githubResource(path);
+  const start = (rotation[resource] ?? 0) % accounts.length;
+  rotation[resource] = start + 1;
+  const deadline = Date.now() + Math.max(1, Math.min(options.timeoutMs ?? 10_000, 10_000));
+  let earliestReset: Date | null = null;
+  for (let offset = 0; offset < accounts.length; offset++) {
+    const remainingMs = deadline - Date.now();
+    if (remainingMs <= 0) return { ok: false, error: { kind: "transport" } };
+    const account = accounts[(start + offset) % accounts.length];
+    let secondary = false;
+    const result = await githubRequestWithToken<T>(path, conditional, { timeoutMs: remainingMs }, account, () => { secondary = true; });
+    if (!result.ok && result.error.kind === "rate_limited" && !secondary) {
+      if (result.error.resetAt && (!earliestReset || result.error.resetAt < earliestReset)) earliestReset = result.error.resetAt;
+      continue;
+    }
+    return result;
+  }
+  return { ok: false, error: { kind: "rate_limited", resetAt: earliestReset } };
+}
+
+async function githubRequestWithToken<T>(
+  path: string, conditional: ConditionalRequest, options: { timeoutMs?: number },
+  account: CollectorToken, onSecondary: () => void,
+): Promise<GitHubHttpResult<T>> {
+  const token = account.token;
   const resource = githubResource(path);
   const waitingUntil = await readGitHubCooldown(token, resource);
   if (waitingUntil) return { ok: false, error: { kind: "rate_limited", resetAt: waitingUntil } };
@@ -97,6 +119,7 @@ export async function githubRequest<T>(
       const redirectCooldown = githubCooldown(res.status, res.headers);
       if (redirectCooldown) {
         const resetAt = await recordGitHubCooldown(token, resource, redirectCooldown);
+        if (redirectCooldown.secondary) onSecondary();
         return { ok: false, error: { kind: "rate_limited", resetAt } };
       }
       visited.add(next.href);
@@ -106,6 +129,8 @@ export async function githubRequest<T>(
     return { ok: false, error: { kind: "transport" } };
   }
 
+  try { await observeCollectorQuota(account.userId, res.headers); }
+  catch { logger.warn("github.quota_observation_failed", { accountId: account.userId }); }
   // A successful response can consume the last primary request. Persist it while retaining its body.
   let cooldown = githubCooldown(res.status, res.headers);
   if (res.status === 403 && !cooldown?.secondary) {
@@ -119,6 +144,7 @@ export async function githubRequest<T>(
   }
   const resetAt = cooldown ? await recordGitHubCooldown(token, resource, cooldown) : null;
   if (cooldown && (res.status === 403 || res.status === 429)) {
+    if (cooldown.secondary) onSecondary();
     await res.body?.cancel().catch(() => {});
     logger.warn("github.rate_limited", { path, resetAt: resetAt?.toISOString(), secondary: cooldown.secondary });
     return { ok: false, error: { kind: "rate_limited", resetAt } };

@@ -280,8 +280,11 @@ Compose `scheduler`가 10초마다 `lib/jobs/catalog.ts`의 주기를 확인해 
 AI 심사는 별도 `claude` CLI와 명시한 `CRAWL_REVIEW_MODEL`을 사용하며 기본 모델은 없다. 리뷰 실패는
 보류·재시도로 남고, `enforce`에서 유효 승인 없이 카테고리 폴백만으로 발행할 수 없다.
 
-수집기는 `GITHUB_TOKEN`이 있어야 돈다. 없으면 시간당 60회라 성립하지 않으므로 작업이 실패로
-남는다(`jobs.last_error`).
+수집기는 인증된 GitHub 토큰이 있어야 돈다. 기존 환경 `GITHUB_TOKEN` 또는
+`/admin/github-accounts`에 등록한 PAT를 사용한다. 관리자가 등록한 PAT는
+`GITHUB_COLLECTOR_SECRET`으로 암호화해 DB에 저장하며 이 키는 웹 2개와 수집 워커
+주·예비에 동일하게 설정한다. 등록 계정이 없어도 기존 환경 토큰은 계속 동작한다.
+토큰이 전혀 없으면 작업이 실패로 남는다(`jobs.last_error`).
 
 검색 신호는 두 종류다. **커밋 검색**(`Co-authored-by: Claude` 같은 트레일러)은 결과에 레포
 메타가 없어 배포 여부를 모른 채 프론티어에 넣고, 그중 상당수가 `no_homepage`로 거부된다(실측
@@ -425,7 +428,8 @@ npm run crawl:rejudge -- --out=.crawl-samples/after.json
 봐야 한다 — 실제로 이 방식으로 GitHub Pages 프로젝트 페이지가 통째로 거부되던 것과,
 이름이 `blog`인 개인 블로그가 `*-blog`를 통과하던 것을 잡았다.
 
-토큰은 `GITHUB_TOKEN` 환경변수만 쓴다. 로컬 `gh auth` 상태를 자동으로 읽지 않는다.
+토큰은 `GITHUB_TOKEN` 또는 관리자에 등록한 수집용 PAT만 쓴다. 로컬 `gh auth` 상태를
+자동으로 읽지 않는다. 같은 GitHub 사용자에게 발급한 PAT 여러 개는 한도를 공유한다.
 
 ## 클릭과 랭킹
 
