@@ -1,3 +1,59 @@
+# 2026-09-29 00:59 KST — 독립 감시 병합·maintenance 용량 증량 준비
+
+## 현재 목적 / 완료 작업 / 수정 파일
+
+남은 워커 failover 작업과 기존 구현 재검토를 진행 중이다. 독립 감시 PR #219는 필수 CI
+`check`와 GitGuardian 통과 후 main SHA `a92e490937068ebbce79d5106dcfd5ced140670c`로
+병합됐다. 운영 monitor 앱·Kuma Push는 아직 만들지 않았다. mini Kuma의 로그인 화면을
+확인했고 접근 경로와 경보 대상에 대한 사용자 응답을 기다리면서 독립 작업을 계속한다.
+
+maintenance 용량은 별도 worktree `/private/tmp/nmv-uptime-capacity`, 브랜치
+`feat/uptime-capacity`에서 구현했다. 변경 파일은 `lib/jobs/products/uptime.ts`,
+`tests/uptime-config.test.ts`, `tests/integration/uptime.test.ts`, `README.md`, `PENDING.md`,
+`docs/operations/independent-workers-runbook.md`,
+`docs/operations/2026-09-29-uptime-capacity-preflight.md`,
+`docs/superpowers/plans/2026-09-29-uptime-capacity.md` 및 이 handoff다.
+루트 사용자의 미커밋 변경과 중단된 `product-intro-check`는 건드리지 않았다.
+
+## 설계 판단 / 실제 테스트 / 실패 접근
+
+운영 읽기 전용 표본에서 웹사이트 19,365곳·6시간 초과 13,976곳·점검 905건/시간.
+최근 900건 응답 지연 p50 717ms/p95 2,471ms/최대 6,091ms, 15건 tick 5,626ms다.
+6시간 목표는 분당 약 54건이 필요하다. 기본 15건/HTTP 동시3개는 유지하고
+환경 상한 60건/동시6개를 추가해 30/4→60/6으로 단계적 측정을 가능하게 했다.
+한 origin의 요청과 DB 기록은 각각 직렬, 25초 tick 예산도 유지한다. 설정값만으로
+실제 처리량이나 6시간 목표가 달성됐다고 보지 않는다.
+
+- `tests/uptime-config.test.ts` 구현 전 7건 실패→구현 후 7건 통과.
+  기존 통합의 증량 시험은 동시3개만 열려 실패→수정 후 24건 통과.
+- `npx next typegen`, `npx tsc --noEmit`, `npm test`(155파일/1,229건),
+  `npm run test:integration`(96파일/923건·TODO1), `npm run lint`(오류0·기존 vendor
+  경고1), `npm run build`, `git diff --check` 통과. 첫 capacity 커밋 `bd874d6`은
+  monitor 병합 이전 base였고, `git rebase origin/main`이 충돌 없이 완료됐다.
+- mini Kuma는 `http://100.116.119.93:3001/dashboard`의 로그인 화면까지 확인했다.
+  비밀번호가 없어 Push monitor 생성이나 실제 경보 발송은 하지 않았다.
+
+## 남은 작업 / 정확한 다음 명령
+
+capacity handoff 변경을 커밋하고 브랜치 푸시→별도 PR의 최신 CI `check`를 통과시킨다.
+그 뒤 maintenance 주·예비 같은 이미지 배포와 30/4→60/6 설정 증량, tick/DB/백로그
+실측이 필요하다. 독립 monitor는 mini Kuma 로그인/알림 대상과 읽기 전용 DB 자격을
+확정한 뒤 운영 앱을 연결해야 한다. publisher 예비 신규 발행, 실제 저장 정체/반복 부팅
+격리 주입, 백업 복구, 24시간 연속 관측, mini 장애에서 독립된 deadman도 남았다.
+
+```sh
+cd /private/tmp/nmv-uptime-capacity
+git status --short --branch
+git diff --check
+git add docs/CODEX_HANDOFF.md
+git commit -m 'docs: hand off uptime capacity rollout'
+git push -u origin feat/uptime-capacity
+gh pr create --base main --head feat/uptime-capacity --title 'Allow measured uptime check capacity ramp' --body-file /tmp/nmv-uptime-pr-body.md
+gh pr checks <new-pr-number>
+```
+
+---
+
 # 2026-09-29 00:43 KST — 독립 failover 감시 구현·기존 운영 재검토
 
 ## 현재 목적 / 완료 작업 / 수정 파일
