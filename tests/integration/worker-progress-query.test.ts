@@ -4,7 +4,7 @@ import { eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { crawlCandidates, crawlDocuments, crawlFrontier, crawlSettings, operationsObservations } from "@/lib/db/schema";
 import { saveSettings } from "@/lib/crawl/settings";
-import { readWorkerProgress } from "@/lib/operations/worker-progress-query";
+import { buildWorkerProgress, readWorkerProgress } from "@/lib/operations/worker-progress-query";
 import { observeService } from "@/lib/operations/observations";
 import { ensureSchema, TEST_DATABASE_URL } from "./setup";
 
@@ -17,6 +17,18 @@ beforeEach(async () => {
   await db.delete(crawlSettings);
   await db.delete(operationsObservations);
   await saveSettings({ enabled: true }, "test");
+});
+
+it("reports publisher, text, and maintenance liveness separately", () => {
+  const now = new Date();
+  const report = buildWorkerProgress({ measuredAt: now.toISOString(), stages: [] }, [], [
+    { key: 'service:publisher:pub', value: { status: 'running' }, observedAt: now },
+    { key: 'service:text:txt', value: { status: 'running' }, observedAt: now },
+    { key: 'service:maintenance:mt', value: { status: 'running' }, observedAt: now },
+  ], now);
+  expect(report.liveness.filter(row => ['publisher', 'text', 'maintenance'].includes(row.role)))
+    .toMatchObject([{ role: 'publisher', reason: 'present' }, { role: 'maintenance', reason: 'present' },
+      { role: 'text', reason: 'present' }]);
 });
 
 it("counts recent boots and ignores a late observation from an older process", async () => {

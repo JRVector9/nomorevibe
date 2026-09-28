@@ -16,7 +16,8 @@ import type { TaglineEvidenceSource } from "./tagline";
 /** 이만큼 실패하면 손을 뗀다. 남은 건 사람이 본다 */
 const MAX_ATTEMPTS = 5;
 
-export type TaglineTask = { candidate: CrawlCandidate; document: CrawlDocument; written: CrawlTagline | null };
+export type TaglineTask = { candidate: CrawlCandidate; document: CrawlDocument; written: CrawlTagline | null;
+  readyAgeMinutes: number };
 
 /**
  * 소개를 지어 줘야 하는 후보.
@@ -27,7 +28,8 @@ export type TaglineTask = { candidate: CrawlCandidate; document: CrawlDocument; 
  * 원본이 그대로면 잡이 해시를 보고 부르지 않고 넘어간다(recordTaglineResult의 reuse).
  */
 export async function pendingTaglines(limit: number): Promise<TaglineTask[]> {
-  const rows = await db.select({ candidate: crawlCandidates, document: crawlDocuments, written: crawlTaglines })
+  const rows = await db.select({ candidate: crawlCandidates, document: crawlDocuments, written: crawlTaglines,
+    readyAgeMinutes: sql<number>`extract(epoch from (localtimestamp - ${crawlCandidates.updatedAt})) / 60` })
     .from(crawlCandidates)
     .innerJoin(crawlDocuments, eq(crawlDocuments.repo, crawlCandidates.repo))
     .leftJoin(crawlTaglines, eq(crawlTaglines.repo, crawlCandidates.repo))
@@ -45,7 +47,8 @@ export async function pendingTaglines(limit: number): Promise<TaglineTask[]> {
     // 오래 기다린 것부터. 실패한 것이 새 후보를 밀어내지 않도록 시도 적은 순이 먼저다
     .orderBy(sql`coalesce(${crawlTaglines.attempts}, 0) asc, ${crawlCandidates.updatedAt} asc`)
     .limit(limit);
-  return rows.map((row) => ({ candidate: row.candidate, document: row.document, written: row.written ?? null }));
+  return rows.map((row) => ({ candidate: row.candidate, document: row.document,
+    written: row.written ?? null, readyAgeMinutes: Number(row.readyAgeMinutes) }));
 }
 
 type AutomaticTaglineResult =

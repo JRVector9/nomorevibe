@@ -17,11 +17,11 @@ import { pruneSearchQueries } from "@/lib/domain/products/search-log";
  * 생기지 않는다.
  */
 export async function rollupClicks(ctx: JobContext<null>): Promise<JobOutcome<null>> {
-  const rolled = await rollupDaily();
-  await pruneEvents();
+  const rolled = await rollupDaily(3, ctx.lease);
+  await pruneEvents(35, ctx.lease);
   // 클릭 중복 제거가 rate_limits에 (제품 × 방문자)마다 키를 남긴다. 같이 지운다.
-  const prunedLimits = await pruneExpiredRateLimits();
-  const prunedSearches = await pruneSearchQueries();
+  const prunedLimits = await pruneExpiredRateLimits(ctx.lease);
+  const prunedSearches = await pruneSearchQueries(90, ctx.lease);
   ctx.log("clicks.rolled", { rows: rolled, prunedRateLimits: prunedLimits, prunedSearches });
   return { done: true };
 }

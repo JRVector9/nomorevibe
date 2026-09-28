@@ -124,7 +124,7 @@ export async function refreshNews(
       const now = new Date();
       const result = await collect(source, previous, request, now)
         .catch((error: unknown): Collected => ({ ok: false, error: error instanceof Error ? error.message : "collect_failed", seen: previous?.seen }));
-      const inserted = result.ok ? await insertNewsItems(result.candidates, settings.news.autoApprove) : 0;
+      const inserted = result.ok ? await insertNewsItems(result.candidates, settings.news.autoApprove, ctx.lease) : 0;
       added += inserted;
       if (!result.ok) failed += 1;
       cursor.sources[source.key] = {

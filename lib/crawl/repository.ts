@@ -19,7 +19,7 @@ import {
 import { mergeWithDefaults } from "./settings";
 import type { CrawlSettings } from "./settings-schema";
 import { factsFromRepoMeta } from "./rules";
-import { assertJobLease, requestJob, type JobLease } from "@/lib/jobs/control";
+import { assertJobLease, requestJob, withJobLeaseWrite, type JobLease } from "@/lib/jobs/control";
 import { STALE_LOCK_MS } from "@/lib/jobs/lease";
 import { README_SAMPLE_VERSION } from "./readme";
 import type { ReadmeRefreshResult } from "./readme-refresh";
@@ -292,12 +292,12 @@ export async function recordPublishedReadme(expected: CrawlDocument, lease: JobL
   });
 }
 
-export async function refreshTextSample(slug: string, textSample: string): Promise<void> {
-  await db.execute(sql`
+export async function refreshTextSample(slug: string, textSample: string, lease?: JobLease): Promise<void> {
+  await withJobLeaseWrite(lease, tx => tx.execute(sql`
     update crawl_documents
        set page_meta = coalesce(page_meta, '{}'::jsonb) || jsonb_build_object('textSample', ${textSample}::text)
      where repo in (select repo from crawl_candidates where published_slug = ${slug})
-  `);
+  `));
 }
 
 /**

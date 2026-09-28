@@ -16,7 +16,7 @@ export function workerIsHealthy(value: unknown, now = Date.now(), role?: string)
 export function roleCandidateIsHealthy(candidate: unknown, worker: unknown, now = Date.now(), role?: string): boolean {
   if (!candidate || typeof candidate !== 'object') return false;
   const value = candidate as Record<string, unknown>;
-  if ((role && value.role !== role) || !['crawler', 'reviewer'].includes(String(value.role)) ||
+  if ((role && value.role !== role) || !['crawler', 'reviewer', 'publisher', 'maintenance', 'text'].includes(String(value.role)) ||
       !['primary', 'standby'].includes(String(value.kind)) ||
       typeof value.instanceId !== 'string' || typeof value.bootId !== 'string' ||
       typeof value.pid !== 'number' || !Number.isSafeInteger(value.pid) || value.pid < 1 ||

@@ -4557,3 +4557,62 @@ git status --short --branch
 ```
 
 ---
+# 2026-09-28 — P3 publisher → maintenance → text failover 진행 중
+
+## 현재 목적 / 완료 작업 / 수정 파일
+
+사용자 지시대로 publisher, maintenance, text 순서로 P1/P2의 역할 lease·주/예비 선출을 확장하고 이전 crawler/reviewer 배포도 재검토한다. 루트 체크아웃은 사용자 변경이 많아 건드리지 않고 `/private/tmp/nmv-worker-failover-p3` (`feat/worker-failover-p3`, `origin/main` 1f5c2df 기반)에서 작업한다. 운영은 아직 P2 코드 SHA `2f8a6bb`다. 새 코드 배포·PR·커밋은 아직 없다.
+
+`scripts/role-worker.ts`가 세 역할을 후보로 받아 진행 정체를 판별하도록 바꿨다. publisher 진행 신호와 OG 늦은 쓰기 fencing을 `lib/operations/worker-progress*`, `lib/crawl/publish.ts`, `lib/domain/products/{og,repository}.ts`에 추가했다. maintenance의 ping·검색 텍스트·뉴스·클릭 정리·랭킹 쓰기를 job lease로 fence하고 `lib/operations/maintenance-progress.ts`를 추가했다. text의 기존 번역·tagline·profile·verification 결과 쓰기는 이미 job lease+source CAS가 있음을 확인했고 `lib/operations/text-progress.ts`, `lib/crawl/translations.ts`에 정체 판별을 추가했다. 새 표적 테스트는 `tests/integration/{publisher-og-fencing,maintenance-fencing}.test.ts`, `tests/{maintenance-progress,text-progress}.test.ts`; 기존 parser/progress 테스트와 P3 계획 문서도 수정했다. 정확한 파일 목록은 `git status --short`를 본다.
+
+## 설계 판단 / 실제 테스트 / 실패 접근
+
+주 후보만 저장 가능한 일감이 오래 있고 실제 저장이 멎었으며 scheduler 정상·backoff/provider 오류가 아닐 때 15초 2회 후 자식 재시작을 요청한다. 예비는 진행 정체로 스스로 재시작하지 않는다. late write는 같은 DB 트랜잭션에서 현재 job lease를 확인한다. 운영 읽기 전용 검토에서 P2 crawler/reviewer 주·예비는 같은 SHA, 예비 autoDeploy=false, 진행 CLI `overall=ok`였다. 기존 역할 단위 3파일/21, 통합 3파일/14 통과. 새 maintenance 회귀 6파일/102, 새 fencing 6, publisher OG/진행 4, text/parser 단위 10 통과. `npx next typegen`, `npx tsc --noEmit` 통과. 전체 단위/통합, lint, build, CI와 운영 장애 주입은 이 단계에서 아직 실행하지 않았다.
+
+의도한 red→green 테스트를 실행했다. maintenance 신규 제품은 건강 기록이 없어도 실제 점검 대상임을 확인하여 잘못된 테스트 기대를 고쳤다. **남은 결함:** text tagline 경과 시간을 JS `Date`로 계산하면 운영 `timestamp without timezone`의 KST 해석으로 9시간 오판할 수 있어 DB 시계로 고쳐야 한다. 새로 추가한 P3 liveness 통합 테스트는 아직 실행 전이며 text/maintenance liveness 구현이 빠져 있어 red가 예상된다. 운영 maintenance backlog 약 19,328곳 중 13,939곳이 6시간 경과, 현재 처리 약 900건/시간이라 6시간 SLA 필요 약 3,222건/시간에 미달한다. 예비 배치는 용량 증가가 아니다.
+
+## 남은 작업 / 정확한 다음 명령
+
+P3 liveness 테스트를 red 확인 후 구현, tagline 시간 보정, 실제 후보 프로세스 선출/인계 테스트, 쓰기 경로 재감사, 전체 gate, 코드 리뷰, 문서 갱신을 끝낸다. 이후 최신 main CI를 통과한 PR과 운영 순차 배포·장애 주입을 진행한다. mini 예비의 구 SHA/autodeploy false와 P2 예비의 동일 릴리스 조건을 지킨다. 기존 P2의 반복 부팅 격리/정체 자동 재시작 운영 주입과 예비의 적격 결과 저장은 여전히 미검증이다. 사용자 중단 `product-intro-check`는 재개하지 않는다.
+
+```sh
+cd /private/tmp/nmv-worker-failover-p3
+npm run test:integration -- tests/integration/worker-progress-query.test.ts
+npm test -- tests/text-progress.test.ts tests/role-worker.test.ts
+npx next typegen
+npx tsc --noEmit
+git status --short
+```
+
+---
+
+## 2026-09-28 23:11 KST — P3 코드·검증 완료, PR/운영 전환 대기
+
+### 현재 목적 / 완료 작업 / 수정 파일
+
+publisher → maintenance → text 순으로 role lease 주/예비·진행 정체 감시·late-write fencing을 구현했다. 이전 P2의 crawler/reviewer 정체 감시도 실행 중 job lease가 있으면 재시작을 보류하도록 고쳤다. `worker-healthcheck.ts`가 P3 후보 3역할을 수락하도록 보완했고 P3 liveness를 읽기 전용 JSON에 추가했다. 마지막 수정 파일은 `git status --short`를 따른다. 주요 신규 파일은 `lib/operations/{maintenance-progress,text-progress}.ts`, `tests/integration/{maintenance-fencing,publisher-og-fencing,role-active-job}.test.ts`, `tests/{maintenance-progress,text-progress}.test.ts`, P3 계획 문서다. README·runbook·PENDING에 **아직 운영 배포 전**임을 기록했다.
+
+### 설계 판단 / 실행한 테스트 / 실패 접근
+
+- 발행 적격 대기 10분, maintenance 적격 점검과 최근 5분 ping 없음, text 적격 번역·소개·프로필·검수와 최근 10분 결과 없음이 2표본 지속될 때만 주 후보의 Swarm 재시작을 요청한다. scheduler 지연, backoff, 최근 제공자 오류, 실행 중인 job lease는 정체로 보지 않는다. job hard timeout은 기존 supervisor가 담당한다. job 결과 쓰기와 현재 token 확인은 같은 DB 트랜잭션이다.
+- 기존 P2 역할 단위 21·통합 14, 새 실제 프로세스 인계 포함 표적 11 통과. 전체 `npm test` 154파일/1222 통과. 전체 `npm run test:integration` **최종 재실행** 96파일/921 통과·TODO1. `npx tsc --noEmit`, `npm run lint`(기존 vendor 경고1), `npm run build`(기존 Claude CLI 추적 경고), `git diff --check` 통과. 빌드 첫 시도는 작업트리 `node_modules`가 외부 symlink라 Turbopack panic; 이 symlink를 제거하고 `npm ci`로 독립 설치 후 성공했다.
+- TDD 첫 실패로 P3 liveness, timezone 기준 tagline, 실행 중 job lease, 오래된 text provider 오류, 늦은 maintenance/OG 쓰기 경로를 확인·수정했다. 전체 통합 첫 실행 2건 실패는 OG mock 인자(lease 추가)와 오래된 text 오류 테스트였고 수정 후 관련 55 통과, 전체 최종 921 통과. 추가 cleanup 테스트 첫 기대는 기존 rate-limit 행을 무시해 실패했고 고유 키 범위로 고친 뒤 8 통과했다.
+- 운영 DB **읽기 전용** 새 쿼리 측정: maintenance 약106~291ms, text 약1.1~1.2s, 전체 약300~353ms. 최종 `overall=ok`, 6역할 liveness `present`, publisher `no_work`, text `providerError=false`. mini 32GiB/도커 17.61GiB, 기존 P2 예비 대기 RSS 약67~70MiB. P2 운영 진행 CLI도 `overall=ok`. 운영은 아직 구 SHA `2f8a6bb`이며 이 P3 코드는 배포하지 않았다.
+
+### 남은 작업 / 정확한 다음 명령
+
+코드 diff와 stage 범위를 최종 검토하고 커밋·PR을 만든다. 최신 main의 필수 CI `check` 성공 후에만 merge한다. 운영 autoDeploy=true 앱이 main merge 직후 P2 예비와 다른 이미지가 될 수 있으므로 **병합 전** 기존 앱의 자동 배포 설정을 확인·잠시 끄거나 동등하게 안전한 순차 릴리스 계획을 적용한다. P2 예비는 autoDeploy=false이고 구 이미지/RELEASE_TAG다. 각 역할 M3 주 명령과 같은 SHA의 mini 예비를 publisher, maintenance, text 순서로 배포하고 자식 강제 종료, 주 중단, 예비 저장, 복귀, 최종 주 active/예비 standby를 검증한다. 남은 P2 예비도 같은 릴리스로 교체하고 웹/스케줄러를 확인한다. 외부 독립 감시·24시간 관측·실제 P2 예비 저장, maintenance 용량 부족은 아직 해결되지 않았다. 사용자 중단 소개 검수는 재개하지 않는다.
+
+```sh
+cd /private/tmp/nmv-worker-failover-p3
+git status --short --branch
+git diff --check
+npm test
+npm run test:integration
+npx tsc --noEmit
+npm run lint
+npm run build
+git diff --stat
+```
+
+---

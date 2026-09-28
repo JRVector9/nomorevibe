@@ -77,7 +77,7 @@ export async function pingProducts(ctx: JobContext<null>): Promise<JobOutcome<nu
       for (const target of lane) {
         if (errors.length > 0 || !ctx.hasBudget()) return;
         try {
-          if (await ping(target, write)) alive++;
+          if (await ping(target, write, ctx.lease)) alive++;
           else down++;
         } catch (error) {
           errors.push(error);
@@ -94,7 +94,7 @@ export async function pingProducts(ctx: JobContext<null>): Promise<JobOutcome<nu
 }
 
 /** 한 제품을 열어 보고 기록한다. 살아 있으면 true */
-async function ping(target: PingTarget, write: ReturnType<typeof oneAtATime>): Promise<boolean> {
+async function ping(target: PingTarget, write: ReturnType<typeof oneAtATime>, lease?: JobContext<null>["lease"]): Promise<boolean> {
   // GET이라 본문 스트림이 열린 채로 온다. 안 읽고 취소하지 않으면 연결이 풀로 돌아가지
   // 않고 버퍼가 남는다 — 어느 쪽이든 스트림을 반드시 닫는다.
   const startedAt = performance.now();
@@ -123,8 +123,8 @@ async function ping(target: PingTarget, write: ReturnType<typeof oneAtATime>): P
 
   const observedAt = new Date();
   await write(async () => {
-    await recordPing(target.slug, status, fetched ? latencyMs : null, observedAt, target.id);
-    if (sample) await refreshTextSample(target.slug, sample).catch(() => {});
+    await recordPing(target.slug, status, fetched ? latencyMs : null, observedAt, target.id, lease);
+    if (sample) await refreshTextSample(target.slug, sample, lease).catch(() => {});
   });
   return up;
 }

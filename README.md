@@ -99,6 +99,8 @@ npm run build
 운영은 Dokploy의 main 소스를 사용한다. M3에는 웹·scheduler(2복제본)·crawler·reviewer·publisher·text·maintenance,
 mini에는 두 번째 웹과 crawler·reviewer 예비를 둬 총 10개 앱을 운영한다. 두 웹은 로드밸런서 뒤에서
 동작한다. crawler·reviewer는 M3 주 후보가 작업하고 mini 예비는 같은 릴리스로 대기한다.
+publisher·maintenance·text의 주/예비 후보 확장은 코드와 전용 DB에서 검증 중이며, 각 역할의
+M3 명령 전환·mini 예비 배포가 끝나기 전에는 운영 이중화로 계산하지 않는다.
 런타임 DB는 PgBouncer(6432), 별도 migration은 PostgreSQL 직접 연결(5432)을 사용한다.
 
 PR의 GitHub CI 성공은 배포 완료를 뜻하지 않는다. [독립 워커 운영 절차](docs/operations/independent-workers-runbook.md)에

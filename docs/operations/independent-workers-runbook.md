@@ -161,7 +161,7 @@ Compose `init: true`를 사용한다. 초기 자원 초과가 보이면 탐색/�
 
 ## 생존·진행·장애 복구
 
-### 역할 후보 운영·교체 (crawler/reviewer)
+### 역할 후보 운영·교체
 
 2026-09-28 운영에서는 M3의 crawler·reviewer가 `role-worker.ts --kind=primary`, mini의
 `nomorevibe-crawler-standby-mini`·`nomorevibe-reviewer-standby-mini`가 `--kind=standby`로
@@ -194,14 +194,33 @@ Compose `init: true`를 사용한다. 초기 자원 초과가 보이면 탐색/�
 P0 `check-worker-progress.ts`의 독립 주기 실행·외부 알림 연결은 아직 배치되지 않았다.
 역할 후보는 프로세스 종료·lease 만료를 처리하고, 아래 조건일 때만 저장 정체로 재시작한다.
 
-P2 역할 후보 명령으로 전환하면 **주 후보만** 15초 간격으로 구조화된 진행 상태를 확인한다.
+역할 후보 명령으로 전환하면 **주 후보만** 15초 간격으로 구조화된 진행 상태를 확인한다.
 scheduler가 정상 예약 중이고 해당 역할에 `no_progress`가 연속 2회이며 같은 역할의
 다른 단계가 저장 진행 또는 제공자 오류를 보이지 않을 때 supervisor를 drain하고
 비정상 종료해 Swarm 재시작을 먼저 시도한다. 기존 역할 lease의 45초 만료·20초
 예비 유예 후 새 주 후보가 재획득한다. 반복 부팅 3회/5분으로 격리되면 같은 릴리스
 예비가 선출될 수 있다. 예비 후보는 같은 진행 정체를 이유로 무한 재시작하지 않는다.
+역할의 유효한 실행 중 job lease가 있으면 저장 간격만으로 재시작하지 않는다. 실제로 오래
+멈춘 잡은 위 supervisor의 역할별 job timeout이 종료한다.
 DB 판정 오류는 이 재시작 조건에서 제외하고 역할 lease 갱신 실패가 별도로 중단시킨다.
 외부 알림은 여전히 별도 연결이 필요하다.
+
+publisher·maintenance·text 코드도 같은 주/예비 후보와 healthcheck를 지원한다. 이 역할은
+**운영 명령과 mini 예비 배포를 별도로 검증한 뒤에만** 활성화한다. publisher는 적격 승인
+후보가 10분 넘게 대기하고 발행 저장이 멎었을 때만 정체를 잡는다. maintenance는 점검
+대상과 최근 5분의 실제 ping 저장을 비교한다. text는 번역·소개·검색 프로필·검수의
+적격 대기와 최근 10분 결과를 비교한다. DB 시간으로 대기 시간을 계산하고, scheduler
+중단·잡 backoff·최근 제공자 오류와 실행 중 job lease는 정체 재시작에서 제외한다.
+publisher의 OG 저장과 maintenance의 ping·뉴스·검색 사본·클릭 정리·랭킹은 이전 job
+token으로 커밋할 수 없게 같은 트랜잭션에서 검사한다. text의 결과 쓰기는 기존 job
+token과 원본 변경 검사를 유지한다.
+
+운영 전환 순서는 역할마다 M3 기존 워커 drain → 새 릴리스 주 후보 선출·health·실제
+저장 확인 → 동일 이미지 commit·`RELEASE_TAG`·필요한 인증을 가진 mini 예비 배포 →
+자식 종료/주 서비스 중단/예비 저장/복귀 시험이다. publisher, maintenance, text 순서로
+진행한다. 기존 crawler·reviewer 예비는 `autoDeploy=false`이므로 릴리스 교체 때 이전
+예비부터 drain하고 동일 릴리스로 재배포한다. 작업 중 역할당 활성 소비자는 하나만
+허용하고 DB streaming·서버 설정은 변경하지 않는다.
 
 scheduler 2복제본의 DB 요청 합치기 통합 테스트와
 `SCHEDULER_REPLICA_IDENTITY=1` 설정을 확인했다. 이 옵션에서 각 컨테이너의

@@ -231,8 +231,8 @@ export async function publishCandidate(
   // 상대 서버가 죽으면 목록이 깨지고, 이미지가 사후에 바뀔 수 있다.
   if (draft.ogImage) {
     // 발행 잡은 백그라운드다 — 전체 10초로 묶어 워커를 오래 붙잡지 않는다
-    const path = await cacheOgImage(draft.ogImage, slug, "background");
-    if (path) await products.setOgImage(slug, path);
+    const path = await cacheOgImage(draft.ogImage, slug, "background", lease);
+    if (path) await products.setOgImage(slug, path, lease);
   }
 
   logger.info("crawl.published", { repo: candidate.repo, slug, url, category });

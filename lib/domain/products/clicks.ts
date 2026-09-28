@@ -14,6 +14,7 @@ import { clickChangePercent } from "@/lib/domain/ranking/math";
 import { productVisitorHash } from "@/lib/domain/products/visitors";
 import { rateLimit } from "@/lib/rate-limit";
 import { logger } from "@/lib/observability/logger";
+import { assertJobLease, withJobLeaseWrite, type JobLease } from "@/lib/jobs/control";
 
 /**
  * 아웃바운드 클릭.
@@ -322,7 +323,7 @@ export async function visitMetrics(
  * 최근 며칠을 매번 다시 계산해 덮어쓴다. 멱등이라 커서가 필요 없고, 잡이 몇 틱 걸러 돌아도
  * 빈 날이 생기지 않는다.
  */
-export async function rollupDaily(days = 3): Promise<number> {
+export async function rollupDaily(days = 3, lease?: JobLease): Promise<number> {
   const rows = await db
     .select({
       slug: clickEvents.slug,
@@ -340,7 +341,7 @@ export async function rollupDaily(days = 3): Promise<number> {
     .groupBy(clickEvents.slug, sql`2`);
 
   if (rows.length === 0) return 0;
-  await upsertDailyRollups(db, rows);
+  await withJobLeaseWrite(lease, tx => upsertDailyRollups(tx, rows));
   return rows.length;
 }
 
@@ -372,7 +373,7 @@ export async function topClickedSince(
 }
 
 /** 오래된 원천을 일별 값으로 보존한 뒤 같은 트랜잭션에서 정리한다. */
-export async function pruneEvents(olderThanDays = 35): Promise<void> {
+export async function pruneEvents(olderThanDays = 35, lease?: JobLease): Promise<void> {
   await db.transaction(async (tx) => {
     const [clock] = await tx
       .select({
@@ -401,5 +402,6 @@ export async function pruneEvents(olderThanDays = 35): Promise<void> {
     await tx
       .delete(clickEvents)
       .where(lt(clickEvents.occurredAt, clock.cutoff));
+    if (lease) await assertJobLease(tx, lease);
   });
 }

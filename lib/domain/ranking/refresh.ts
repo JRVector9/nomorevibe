@@ -23,6 +23,7 @@ import {
   type RankingSeason,
 } from "@/lib/db/schema";
 import { logger } from "@/lib/observability/logger";
+import { assertJobLease, type JobLease } from "@/lib/jobs/control";
 import { clickChangePercent, cooldownFactor, rankRows } from "./math";
 import { nextSeasonPeriod, periodContaining, type SeasonPeriod } from "./period";
 import {
@@ -546,7 +547,7 @@ async function nextRevisionPolicy(
   return { revision: applied, policy: parsed.data };
 }
 
-export async function refreshRanking(now = new Date()): Promise<RankingRefreshResult> {
+export async function refreshRanking(now = new Date(), lease?: JobLease): Promise<RankingRefreshResult> {
   return db.transaction(async (tx) => {
     await tx.execute(policyLock);
     await tx.execute(refreshLock);
@@ -597,6 +598,7 @@ export async function refreshRanking(now = new Date()): Promise<RankingRefreshRe
       .set({ refreshedAt: now })
       .where(eq(rankingSeasons.id, active.id));
 
+    if (lease) await assertJobLease(tx, lease);
     return {
       createdSeason,
       closedSeasons,

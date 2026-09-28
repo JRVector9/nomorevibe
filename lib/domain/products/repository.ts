@@ -33,6 +33,7 @@ import { slugifyName } from "@/lib/net/normalize";
 import type { Category } from "./schema";
 import { METRICS_WINDOW_DAYS } from "./clicks";
 import { lockProductRepository } from "./repository-identity";
+import { withJobLeaseWrite, type JobLease } from "@/lib/jobs/control";
 export { findRepositoryProduct } from "./repository-identity";
 
 /** 제품 데이터 접근 — 도메인 바깥에서 DB를 직접 만지지 않도록 여기로 모은다 */
@@ -430,15 +431,15 @@ export async function setStatusWithAudit(input: {
   return transaction ? apply(transaction) : db.transaction(apply);
 }
 
-export async function setOgImage(slug: string, path: string): Promise<void> {
-  await db.update(products).set({ ogImage: path }).where(eq(products.slug, slug));
+export async function setOgImage(slug: string, path: string, lease?: JobLease): Promise<void> {
+  await withJobLeaseWrite(lease, tx => tx.update(products).set({ ogImage: path }).where(eq(products.slug, slug)));
 }
 
-export async function putOgImage(slug: string, contentType: string, data: Buffer): Promise<void> {
-  await db
+export async function putOgImage(slug: string, contentType: string, data: Buffer, lease?: JobLease): Promise<void> {
+  await withJobLeaseWrite(lease, tx => tx
     .insert(ogImages)
     .values({ slug, contentType, data })
-    .onConflictDoUpdate({ target: ogImages.slug, set: { contentType, data } });
+    .onConflictDoUpdate({ target: ogImages.slug, set: { contentType, data } }));
 }
 
 export async function getOgImage(slug: string): Promise<{ data: Buffer; contentType: string } | null> {
