@@ -1,15 +1,17 @@
 # 독립 워커 운영 절차
 
 이 문서는 로컬 Compose의 실제 실행 명령과 운영 전환 시 지켜야 하는 순서를 정리한다.
-운영은 M3 역할·scheduler 2복제본, mini의 crawler·reviewer 예비와 M3·mini 웹 2개가 외부 `nomorevibe` DB를 공유한다. 이 파일 자체는
+운영은 M3 다섯 역할·scheduler 2복제본, mini의 다섯 역할 예비와 M3·mini 웹 2개가 외부 `nomorevibe` DB를 공유한다. 이 파일 자체는
 실제 배포 완료 증거가 아니며 완료 여부는 Dokploy 상태·DB 결과·health 응답으로 확인한다.
 A/B 통합 검증 기록은 `docs/CODEX_HANDOFF.md`와 해당 릴리스 보고서를 따른다.
 
 ## 구성과 실행 계약
 
 - 웹 `runner` target, 수집·리뷰·발행·집계·스케줄러는 동일한 `worker` target을 사용한다.
-- `node --import tsx scripts/worker-supervisor.ts --role=crawler`가 상시 실행 명령이다.
-  다른 역할은 `scheduler`, `reviewer`, `publisher`, `text`, `maintenance`다. 역할당 활성 프로세스는 1개다.
+- 로컬 Compose는 `node --import tsx scripts/worker-supervisor.ts --role=crawler`를 사용한다.
+  운영 Dokploy의 다섯 역할은 `scripts/role-worker.ts --role=<role> --kind=primary|standby`를
+  실행하며, scheduler는 `worker-supervisor.ts --role=scheduler` 2복제본이다.
+  역할당 활성 프로세스는 1개다.
 - 워커는 DB 요청만 소비한다. 스케줄러는 10초마다 주기가 도래한 요청을 기록한다.
   웹/어드민 종료와 무관하게 동작하며 스케줄러 중단 시 이미 접수한 요청까지만 처리한다.
 - 일반 잡은 25초 협력 예산을 유지하고, publisher는 최대 20초 모델 폴백 뒤 10건 발행을 마치도록
@@ -163,10 +165,10 @@ Compose `init: true`를 사용한다. 초기 자원 초과가 보이면 탐색/�
 
 ### 역할 후보 운영·교체
 
-2026-09-28 운영에서는 M3의 crawler·reviewer가 `role-worker.ts --kind=primary`, mini의
-`nomorevibe-crawler-standby-mini`·`nomorevibe-reviewer-standby-mini`가 `--kind=standby`로
-실행된다. 실제 앱 10개와 scheduler 2복제본의 검증은
-[장애 복구 배포 기록](2026-09-28-worker-failover-rollout.md)에 있다. 다음 릴리스 교체에는 아래 순서를 지킨다.
+2026-09-29 운영에서는 M3의 crawler·reviewer·publisher·maintenance·text가
+`role-worker.ts --kind=primary`, mini의 같은 다섯 역할이 `--kind=standby`로 실행된다.
+실제 앱 13개와 scheduler 2복제본의 검증은 [P3 배포 기록](2026-09-29-worker-failover-p3-rollout.md)에 있다.
+다음 릴리스 교체에는 아래 순서를 지킨다.
 
 1. `0051_role_leases.sql`과 `0052_role_failover_history.sql`을 한 번 적용하고 종료 코드 0을
    확인한다. 기존 워커를 먼저 정상 drain한다. 기존 `worker-supervisor.ts`와 새 역할 후보가
@@ -180,16 +182,20 @@ Compose `init: true`를 사용한다. 초기 자원 초과가 보이면 탐색/�
    instance ID**로 시작한다. 예비 명령은 `--kind=standby`다. 대기 중에는 supervisor나
    수집/심사 외부 호출을 실행하지 않는다. `worker-healthcheck.ts`는 로컬 후보 상태가
    신선한 대기를 healthy로 판단하고, 활성 후보는 supervisor 상태도 요구한다.
-4. 롤링 교체에서는 **옛 예비를 먼저 drain**하고, 옛 주를 drain한 뒤 새 주 후보를 시작해
-   주인이 된 것을 확인한다. 마지막에 새 릴리스 예비를 시작한다. 예비 앱은 `autoDeploy=false`라
-   다음 main 릴리스 때 환경의 `RELEASE_TAG`와 이미지 commit을 수동으로 맞춰 재배포해야 한다.
-   다른 릴리스 예비는 정상 종료 직후에도 인계가 거절된다.
+4. 롤링 교체에서는 역할 주·예비 앱의 `autoDeploy=false`를 유지한다. 현재 주가 살아 있는 동안
+   예비의 `RELEASE_TAG`를 새 commit으로 바꾸고 새 이미지를 먼저 배포한다. 이 잠깐의 릴리스
+   불일치 동안 새 예비는 옛 주의 lease를 승계하지 않는다. 예비 배포 완료와 대기를 확인한 뒤
+   주의 환경·이미지를 같은 commit으로 배포하고 새 주의 active·예비 standby를 확인한다.
+   두 역할을 동시에 교체하지 않고 역할별로 마친다. 이후 main 변경에도 역할 앱은 수동으로
+   함께 교체해야 한다. 옛 주가 이미 장애 상태라면 릴리스 불일치 예비를 즉시 승격시키려 하지
+   말고 같은 릴리스로 맞춘 후보를 먼저 확보한다.
 5. 역할 후보의 비정상 종료는 Swarm의 기존 restart 정책이 1차 복구한다. 역할 lease는
    45초, 예비 확인은 5초, 기존 주인 만료 뒤 유예는 20초다. 반복 주 후보 부팅 3회/5분은
    15분 격리한다. DB 연결이 불명확하면 새 작업을 중단하며, 이전 job token은 새 주인의
    선출 트랜잭션에서 무효화된다. 실제 운영에서는 자식 SIGKILL 뒤 주 후보 재획득과
-   주 서비스 중단 뒤 mini 예비 선출 및 복귀를 확인했다. 예비의 새 결과 저장 재개와
-   반복 부팅 격리의 운영 주입은 별도 검증이 필요하다.
+   주 서비스 중단 뒤 mini 예비 선출 및 복귀를 확인했다. crawler 문서·reviewer 1차 심사·
+   maintenance ping·text 검수의 새 결과 저장도 확인했다. publisher는 당시 적격 승인 후보가
+   없어 새 제품 저장을 확인하지 못했다. 반복 부팅 격리의 운영 주입은 별도 검증이 필요하다.
 
 P0 `check-worker-progress.ts`의 독립 주기 실행·외부 알림 연결은 아직 배치되지 않았다.
 역할 후보는 프로세스 종료·lease 만료를 처리하고, 아래 조건일 때만 저장 정체로 재시작한다.
@@ -205,8 +211,7 @@ scheduler가 정상 예약 중이고 해당 역할에 `no_progress`가 연속 2�
 DB 판정 오류는 이 재시작 조건에서 제외하고 역할 lease 갱신 실패가 별도로 중단시킨다.
 외부 알림은 여전히 별도 연결이 필요하다.
 
-publisher·maintenance·text 코드도 같은 주/예비 후보와 healthcheck를 지원한다. 이 역할은
-**운영 명령과 mini 예비 배포를 별도로 검증한 뒤에만** 활성화한다. publisher는 적격 승인
+publisher·maintenance·text도 같은 주/예비 후보와 healthcheck로 운영한다. publisher는 적격 승인
 후보가 10분 넘게 대기하고 발행 저장이 멎었을 때만 정체를 잡는다. maintenance는 점검
 대상과 최근 5분의 실제 ping 저장을 비교한다. text는 번역·소개·검색 프로필·검수의
 적격 대기와 최근 10분 결과를 비교한다. DB 시간으로 대기 시간을 계산하고, scheduler
@@ -215,11 +220,11 @@ publisher의 OG 저장과 maintenance의 ping·뉴스·검색 사본·클릭 정
 token으로 커밋할 수 없게 같은 트랜잭션에서 검사한다. text의 결과 쓰기는 기존 job
 token과 원본 변경 검사를 유지한다.
 
-운영 전환 순서는 역할마다 M3 기존 워커 drain → 새 릴리스 주 후보 선출·health·실제
-저장 확인 → 동일 이미지 commit·`RELEASE_TAG`·필요한 인증을 가진 mini 예비 배포 →
-자식 종료/주 서비스 중단/예비 저장/복귀 시험이다. publisher, maintenance, text 순서로
-진행한다. 기존 crawler·reviewer 예비는 `autoDeploy=false`이므로 릴리스 교체 때 이전
-예비부터 drain하고 동일 릴리스로 재배포한다. 작업 중 역할당 활성 소비자는 하나만
+2026-09-29에는 publisher→maintenance→text 순서로 M3 기존 워커를 새 이미지에 배포하고
+주 후보 명령으로 전환한 뒤 동일 commit·`RELEASE_TAG`·필요한 인증의 mini 예비를 배포했다.
+자식 종료→주 재시작, 주 서비스 중단→mini 인계와 확인 가능한 결과 저장, M3 복귀를
+순차 시험했다. publisher의 신규 발행 저장은 위의 미검증 항목으로 남는다.
+다음 교체는 위 4번의 주·예비 릴리스 절차를 따른다. 작업 중 역할당 활성 소비자는 하나만
 허용하고 DB streaming·서버 설정은 변경하지 않는다.
 
 scheduler 2복제본의 DB 요청 합치기 통합 테스트와
@@ -258,8 +263,8 @@ DB 작업 잠금은 15초마다 갱신되고 현재 stale 유예는 90초다. �
 프론티어 개별 `fetching` 항목의 재선택 시각은 별도 10분이다. 이 상한 때문에 장애 복구를
 항상 2분 이하라고 보고하지 않는다.
 
-`node --import tsx scripts/check-worker-progress.ts`는 수집·심사·scheduler의 준비된 일감,
-실제 저장 진행, 예정 시각과 최근 부팅을 읽기 전용 JSON으로 출력한다. 종료 코드 0은 정상·유휴,
+`node --import tsx scripts/check-worker-progress.ts`는 수집·심사·발행의 준비된 일감·저장 진행과
+scheduler 및 다섯 역할의 생존, 예정 시각과 최근 부팅을 읽기 전용 JSON으로 출력한다. 종료 코드 0은 정상·유휴,
 1은 DB 조회 실패 등 판별 불가, 2는 경보다. 유휴·정책상 중단·backoff를 장애로 다루지 않는다.
 현재 CLI 자체의 주기 실행과 외부 알림은 배치되지 않았으므로 관리자 화면 또는 수동 호출만으로
 자동 경보가 준비됐다고 보고하지 않는다.

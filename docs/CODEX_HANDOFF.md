@@ -4631,3 +4631,36 @@ gh pr checks 217 --watch
 ```
 
 ---
+
+## 2026-09-29 00:08 KST — 5역할 장애 복구 전환·P2 재검토 완료
+
+### 현재 목적 / 완료 작업 / 수정 파일
+
+사용자의 publisher→maintenance→text 순차 확대와 기존 crawler/reviewer 작업 재검토를 완료했다. PR #217은 CI `check` 성공 후 main `20208d3c96ed92e4e931f1c91c40f6561ab12ad9`로 병합·운영 배포했다. M3 7개 앱과 mini 웹·다섯 역할 예비 6개 앱, 총 13개다. 이 문서 작업 브랜치는 `/private/tmp/nmv-worker-failover-docs`의 `docs/worker-failover-p3-rollout`이며 수정 파일은 `README.md`, `PENDING.md`, `docs/operations/independent-workers-runbook.md`, `docs/operations/2026-09-29-worker-failover-p3-rollout.md`, 이 handoff다. 사용자 루트 체크아웃의 변경은 건드리지 않았다. 코드 수정은 이미 PR #217에 있고 이 브랜치에는 문서만 있다.
+
+### 설계 판단 / 실제 시험 / 실패 접근
+
+역할 앱은 주·예비가 한 이미지여야 하므로 5역할 주·예비 모두 `autoDeploy=false`로 두었다. 웹 M3·mini와 scheduler만 새 이미지 후 `autoDeploy=true`로 복원했다. P3 세 역할은 새 이미지 기존 명령→주 후보 명령→mini 예비 순으로 배포했다. 각 역할에서 M3 자식 SIGKILL 뒤 M3 재획득(epoch2), 주 서비스 0 뒤 mini 인계(epoch3), M3 복귀(epoch4)를 확인했다. maintenance mini의 실제 ping/검색 갱신, text mini의 검수 저장이 전진했다. publisher mini는 job 요청·처리와 성공은 전진했지만 적격 승인 후보가 없어 새 제품 저장은 미검증이다.
+
+P2 crawler/reviewer는 기존 주가 활성인 동안 mini 예비를 새 이미지/RELEASE_TAG로 먼저 교체했다. 릴리스 불일치 예비는 옛 주 lease를 승계할 수 없음을 코드와 DB에서 확인하고 주도 새 이미지로 배포했다. 새 쌍의 주 중단/mini 인계 후 crawler 새 문서 저장과 reviewer 1차 심사 저장을 확인했다. 둘 다 M3 epoch7 active/mini standby로 복귀했다. 이전 P2의 유효한 실행 중 job lease를 정체로 오인하는 결함은 PR #217 코드에서 수정돼 두 운영 이미지에도 반영됐다. 실제 정체 2회 자동 재시작과 반복 부팅 격리의 운영 주입은 하지 않았다.
+
+웹 2개는 Dokploy source `20208d3`/done, 공개 `/api/health`·`/admin/status`는 각각 HTTP 200. scheduler 2개 컨테이너 healthy, 새 RELEASE_TAG와 maintenance liveness 코드 표식, 그 컨테이너의 `check-worker-progress.ts` 종료 0·`overall=ok`·6역할 present를 확인했다. **scheduler Dokploy 최신 배포 description은 빈 문자열**이라 단순 source 필드 성공으로 보고하지 않았다. 실제 런타임 확인으로 보완했다. 첫 자동 배포 복원 스크립트가 이 빈 description 때문에 종료1했고, scheduler 런타임 두 컨테이너/코드 표식/RELEASE_TAG를 강제 검증하도록 임시 도구를 수정한 뒤 웹·scheduler만 복원했다. Docker service ps의 의도한 SIGKILL 과거 실패 task는 현재 task와 구분했다.
+
+코드 gate: `npm test` 154파일/1222 통과, `npm run test:integration` 96파일/921 통과·기존 TODO1, `npx tsc --noEmit`, lint(기존 vendor 경고), build(기존 Claude CLI 추적 경고), diff check, PR #217 최신 head CI `check` 성공. 이번 문서 수정 후 문서 정합성과 `git diff --check`를 다시 확인한다. DB streaming/서버 설정/사용자 중단 `product-intro-check`는 변경하지 않았다.
+
+### 남은 작업 / 정확한 다음 명령
+
+이 문서 브랜치의 diff를 검토·커밋해 PR을 만들고 최신 main CI `check` 성공 뒤 병합한다. 운영 재확인에서 13개 앱과 5개 역할의 주 active/예비 standby, 공개 health와 scheduler 두 컨테이너를 확인한다. publisher 예비의 새 제품 발행, 외부 감시/알림, 24시간 관측, 실제 정체 및 반복 부팅 격리, 백업 복구와 maintenance 용량 부족은 `PENDING.md`에 남겼다.
+
+```sh
+cd /private/tmp/nmv-worker-failover-docs
+git status --short --branch
+git diff --check
+git diff -- README.md PENDING.md docs/operations/independent-workers-runbook.md docs/operations/2026-09-29-worker-failover-p3-rollout.md docs/CODEX_HANDOFF.md
+git add README.md PENDING.md docs/operations/independent-workers-runbook.md docs/operations/2026-09-29-worker-failover-p3-rollout.md docs/CODEX_HANDOFF.md
+git commit -m 'docs: record five-role failover production rollout'
+git push -u origin docs/worker-failover-p3-rollout
+gh pr create --base main --head docs/worker-failover-p3-rollout --title 'docs: record five-role failover rollout' --body-file /tmp/nmv-worker-failover-docs-pr-body.md
+```
+
+---
