@@ -1,3 +1,52 @@
+# 2026-09-28 14:43 KST — 검색 검수 순서 운영 배포와 대기열 인계
+
+## 현재 목적 / 완료 작업 / 변경 파일
+
+README 입력 변경 뒤 검색 키워드 재생성·검수를 정상 워커로 계속 진행한다. PR209의
+`pendingVerifications` 대기 시각 우선 순서와 회귀 테스트를 main `b332457723cacaec78593d90ec4ecea8d8525088`에
+병합했다. 수정 파일은 `lib/domain/products/search-profiles.ts`,
+`tests/integration/search-verify.test.ts`, `docs/CODEX_HANDOFF.md`다. 이 절은 배포 후
+운영 관측을 추가한 문서 수정이며 기능 코드는 바꾸지 않는다.
+
+- PR209 필수 CI [36381746877](https://github.com/JRVector9/nomorevibe/actions/runs/36381746877)의
+  타입, lint, 단위·PostgreSQL 통합 테스트, 빌드가 모두 통과한 것을 확인한 뒤 병합했다.
+  테스트 RED→GREEN, 표적 통합13/13, 로컬 타입·lint·diff 검증은 바로 아래 절에 있다.
+- 자동 배포가 바로 시작되지 않아 Dokploy `application.one`에서 8개 앱 모두 이전 커밋인 것을 확인한 뒤
+  기존 `application.deploy` 절차로 M3 7개·mini 웹 1개를 함께 요청했다. 요청 수락과 완료를 분리해
+  8개 전부 `done`/소스 커밋 `b332457`을 확인했다. 공개 `/api/health` 8회에서 M3 6회,
+  mini 2회 모두 `status=ok`, `db=ok`였다.
+- 운영 읽기 전용 대조(05:41 UTC): 공개 19,735개, 생성 대기 2,600, 검수 대기 292,
+  미표시 원본 해시·검색 사본 불일치 각각0, 재시도 소진0. 생성·검수 성공 시각이 실제 진행 중이다.
+  재시도한 5건 중 `authelia`, `product-491`, `ozo-calendar` 3건의 `verified_at`을 확인했다.
+  `linkfinder-ai`는 이번 재검수에서 timeout으로 05:48:52 UTC 이후 다시 시도하며,
+  `k-pop-wars`는 형식 오류 뒤 대기 시각이 지났으나 앞선 검수 약72건을 순서대로 기다린다.
+  이 2건을 성공으로 세지 않는다. 소개 검수는 `2100-01-01` 중단 상태를 유지한다.
+
+## 판단 / 실패 접근 / 남은 작업
+
+검수 처리량과 새 키워드 생성량이 비슷해 대기량은 단기간에 0이 되지 않는다. 오래된 건을
+먼저 고르는 변경은 처리량 증가를 주장하기 위한 것이 아니라 무기한 뒤로 밀림을 막기 위한 것이다.
+실패한 첫 진단용 TypeScript의 CJS top-level await는 async `main()`으로 고쳤고,
+Dokploy의 `autoDeploy=true`만으로 새 소스가 배포됐다고 간주하지 않고 실제 source/status를 조회했다.
+남은 작업은 정상 워커가 2,600건 생성·292건 검수를 계속 처리하는 것을 관측하고,
+재시도 2건의 성공 또는 재소진 여부를 확인하는 것이다. 키워드나 원본 해시를 수동으로 덮어쓰지 않는다.
+
+```sh
+cd /Users/jr/Desktop/projects/nomorevibe
+git status --short --branch
+python3 /tmp/nmv-priority-ops-20260927.py health-check
+python3 /tmp/nmv-keyword-status-20260928.py
+python3 /tmp/nmv-repair-ops-20260926.py status
+gh pr view 209 --json state,mergeCommit,statusCheckRollup
+curl -fsS --max-time 15 https://nomorevibe.brut.bot/api/health
+```
+
+위 상태 도구는 읽기 전용이며 원문 키워드·자격 정보를 출력하지 않는다. 루트의 기존 사용자
+`scripts/search-judgments.json` 변경과 untracked 자료는 보호한다. 아래 14:22 기록의 PR/배포
+대기는 당시 상태이며 이 절의 완료 확인으로 대체한다.
+
+---
+
 # 2026-09-28 14:22 KST — 검색 키워드 재생성·검수 진행
 
 ## 현재 목적과 완료 작업
