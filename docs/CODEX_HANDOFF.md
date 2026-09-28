@@ -1,3 +1,64 @@
+# 2026-09-28 20:24 KST — P1 운영 반영, P2 scheduler·정체 재시작 코드 검증
+
+## 현재 목적 / 완료 작업 / 수정 파일
+
+P1 PR #214 최신 CI(단위·PostgreSQL 통합·타입·lint·build)를 통과시킨 뒤 운영 DB에
+가산 migration 0051/0052를 직접 연결로 적용했다. `role_leases`와
+`primary_boots`·`quarantine_until` 컬럼 존재를 읽기 전용 확인했다. PR 병합 main SHA는
+`8401edfb31c9ecbcff351e61e6ec86949e9bbf2b`. 웹 M3·mini와 M3의
+scheduler/crawler/reviewer/publisher/text/maintenance 8개 앱을 해당 SHA로 배포했고,
+Dokploy 모두 `done`, `RELEASE_TAG`도 해당 SHA로 교정했다. 두 웹의
+`NEXT_DEPLOYMENT_ID` 환경/빌드 인자도 함께 교정했다. M3 6개 역할 컨테이너는 모두
+healthy, mini 웹은 컨테이너 내부 HTTP200/app+DB ok·동일 SHA, 공개 M3 웹도
+HTTP200/app+DB ok·동일 SHA다. P0 감시 CLI의 운영 읽기 전용 결과는 `overall=ok`,
+수집 저장 진행, scheduler 정상 예약, 심사 유휴/준비 중이다.
+
+P2는 별도 worktree `/private/tmp/nmv-worker-failover-p2`, 브랜치
+`feat/worker-failover-p2-20260928`에서 코드 작성 중이다. 변경 파일은
+`lib/operations/instance.ts`, `scripts/role-worker.ts`, `scripts/worker-supervisor.ts`,
+`tests/operations-instance.test.ts`, `tests/role-worker.test.ts`,
+`docs/operations/independent-workers-runbook.md`,
+`docs/superpowers/plans/2026-09-28-progress-restart-and-scheduler.md` 및 이 문서다.
+`SCHEDULER_REPLICA_IDENTITY=1`이면 HOSTNAME을 관측 키에 넣어 두 poller가 덮어쓰지 않는다.
+주 역할 후보만 수요가 있는데 저장이 없는 상태를 15초 간격 2회 확인하고,
+scheduler 정상·다른 단계 진행/제공자 오류 없음일 때 supervisor를 drain 후 종료 코드1로
+Swarm 재시작을 요청한다. 기존 반복 부팅 격리로 예비 승격이 이어진다. 운영 옵션·복제 수와
+예비 서비스는 아직 변경하지 않았다.
+
+## 실제 테스트 / 실패 접근
+
+- P2 표적 단위: 관측 키 9/9, 역할 후보 8/8 통과. 실제 프로세스/동시 scheduler 요청
+  PostgreSQL 통합 2파일/10 통과. 최신 `npm test`, 타입 검사, lint(기존 vendor 경고1),
+  `git diff --check` 통과. 전체 단위 152파일/1217, 전체 PostgreSQL 통합
+  93파일/906 통과·TODO1 (`/tmp/nmv-p2-integration.log`). `npm run build`도
+  종료 코드 0으로 통과했다. 빌드의 기존 Claude CLI 동적 경로 추적 경고는 남는다.
+- 새 worktree 첫 타입 검사는 Next `PageProps` 생성물이 없어 실패했고 `npx next typegen`
+  실행 뒤 통과했다. 진행 정체 기능의 첫 단위 실행은 함수 부재/타이머 대기로 실패한 뒤
+  구현하여 통과했다. 운영 mini 직접 Traefik 경로는404였지만 컨테이너 내부의
+  `HOSTNAME:3000/api/health`는 HTTP200이므로 앱 장애로 판정하지 않았다.
+- P1 CI는 강제 종료 테스트가 standby DB 선출 직후 heartbeat 전에 SIGTERM해 1회 실패했다.
+  테스트가 실제 실행 준비를 기다리게 하고 supervisor가 startup 정상 종료 요청을
+  깨끗한 drain으로 처리하도록 수정한 최신 CI는 통과했다.
+
+## 남은 작업 / 정확한 다음 명령
+
+P2 변경을 커밋한다. P1 병합 main으로 재기반해 새 PR의
+최신 CI를 통과시킨 뒤 scheduler 2복제본을 **먼저** 운영 검증한다. 그 뒤 crawler 주 후보
+명령 전환→같은 릴리스 예비 배치→실제 장애 주입/자료 저장 확인, 이어 reviewer 순서다.
+예비 배치 전 현재 운영 crawler/reviewer는 여전히 legacy 단일 supervisor 명령이다.
+P0 외부 알림 경로는 미연결, 사용자 중단 `product-intro-check`와 루트 사용자 변경은 보존.
+
+```sh
+cd /private/tmp/nmv-worker-failover-p2
+git status --short --branch
+tail -n 5 /tmp/nmv-p2-integration.log
+git diff --check
+git fetch origin main
+git log -3 --oneline
+```
+
+---
+
 # 2026-09-28 20:09 KST — P1 CI 시작 중 종료 경계 수정
 
 ## 현재 목적 / 완료 작업 / 수정 파일

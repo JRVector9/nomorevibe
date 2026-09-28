@@ -140,7 +140,8 @@ export async function superviseWorker(role: RuntimeRole, options: {
     };
     const onSignal = () => stop('shutdown_requested', true);
     const onAbort = () => stop(options.signal?.reason === 'shutdown_requested'
-      ? 'shutdown_requested' : 'role_lease_lost', true);
+      ? 'shutdown_requested' : options.signal?.reason === 'progress_stalled'
+        ? 'progress_stalled' : 'role_lease_lost', true);
     options.signal?.addEventListener('abort', onAbort, { once: true });
     if (options.signal?.aborted) onAbort();
     const monitor = setInterval(() => {
