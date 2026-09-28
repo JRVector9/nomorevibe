@@ -40,6 +40,26 @@ describe("검수 답 읽기", () => {
 });
 
 describe("bounded chunk retry", () => {
+  it("retries a malformed five-keyword answer one keyword at a time without changing the submitted text", async () => {
+    vi.stubEnv("ABCLLM_API_KEY", "test-key");
+    const keywords = ["lead enrichment", "sales prospecting", "contact enrichment", "LinkedIn 프로필 찾기", "이메일 찾기"];
+    const sizes: number[] = [];
+    const request = vi.fn(async (_url, options) => {
+      const body = JSON.parse(options.body as string);
+      const supplied = JSON.parse(body.messages[1].content.split("\n")[1]).keywords as string[];
+      sizes.push(supplied.length);
+      const checks = supplied.map(keyword => ({
+        keyword: supplied.length > 1 ? keyword.replace("프로필 찾기", "프로필찾기") : keyword,
+        fits: keyword !== "contact enrichment",
+      }));
+      return new Response(JSON.stringify({ choices: [{ message: { content: answer(checks) } }] }));
+    }) as typeof fetch;
+
+    expect(await verifyKeywordsInChunks({ evidence, keywords }, { request, timeoutMs: 60_000 }))
+      .toEqual({ ok: true, unsupported: ["contact enrichment"] });
+    expect(sizes).toEqual([5, 1, 1, 1, 1, 1]);
+  });
+
   it("deduplicates keywords and validates all sequential five-keyword chunks", async () => {
     vi.stubEnv("ABCLLM_API_KEY", "test-key");
     const keywords = Array.from({ length: 12 }, (_, i) => `keyword-${i}`);
@@ -59,10 +79,10 @@ describe("bounded chunk retry", () => {
     const keywords = Array.from({ length: 12 }, (_, i) => `keyword-${i}`);
     const request = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({ choices: [{ message: { content:
       answer(keywords.slice(0, 5).map(keyword => ({ keyword, fits: false }))) } }] })))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ choices: [{ message: { content: answer([]) } }] })));
+      .mockImplementation(async () => new Response(JSON.stringify({ choices: [{ message: { content: answer([]) } }] })));
     expect(await verifyKeywordsInChunks({ evidence, keywords }, { request, timeoutMs: 60_000 }))
       .toEqual({ ok: false, error: "invalid_output" });
-    expect(request).toHaveBeenCalledTimes(2);
+    expect(request).toHaveBeenCalledTimes(3);
   });
   it("uses one total deadline across chunks and makes no request after it expires", async () => {
     vi.stubEnv("ABCLLM_API_KEY", "test-key");

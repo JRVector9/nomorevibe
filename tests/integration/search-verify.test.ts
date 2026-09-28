@@ -91,7 +91,7 @@ describe("검색 키워드 검수 잡", () => {
     let calls = 0;
     const request = gateway(() => ++calls === 1 ? { unsupported: [keys[0]] } : { invalid: true });
     await tick(request);
-    expect(request.calls).toHaveLength(2);
+    expect(request.calls).toHaveLength(3);
     expect(await profile(id)).toMatchObject({ verifyAttempts: 2, verifyError: "invalid_output", verifiedAt: null, removedKeywords: [] });
     expect(await keywordsOf(id)).toBe(keys.join(" · "));
   });

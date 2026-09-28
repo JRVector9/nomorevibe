@@ -1,3 +1,58 @@
+# 2026-09-28 15:02 KST — 반복 형식 오류의 개별 키워드 재시도
+
+## 현재 목적 / 완료 작업 / 수정 파일
+
+사용자 요청인 검색 키워드 재생성·검수를 계속 진행한다. PR209의 오래된 검수 우선 순서는
+운영 8개 앱에서 `b332457`로 적용됐고, 재시도 소진 5건 중 3건은 실제 검수가 끝났다.
+남은 `linkfinder-ai`와 `k-pop-wars`는 `invalid_output`이 반복되지만 소진은 0이다.
+읽기 전용 모델 진단에서 `linkfinder-ai`의 5개 묶음은 판정 수가 모두 맞아도
+`LinkedIn 프로필 찾기`를 `LinkedIn 프로필찾기`로 다시 써 엄격 일치 검사에 실패했다.
+같은 한 키워드만 요청한 진단은 정확한 원문과 유효 판정을 반환했다. `k-pop-wars`의
+동일 설정 4묶음 진단은 모두 유효해 일시적 응답 실패로 판단한다.
+
+`lib/domain/products/search-verify.ts`에 한정된 복구를 추가했다. 5개 묶음의 형식이 틀리면
+같은 전체 deadline 안에서 그 묶음의 키워드를 하나씩 재검수한다. 매 응답의 정확한 키워드와
+boolean 판정을 그대로 요구하고, 하나라도 실패하면 이전 묶음 결과까지 버린다.
+`tests/search-verify.test.ts`에 원문 공백 변화 회귀를, `tests/integration/search-verify.test.ts`에
+추가 호출을 반영했다. 이 문서까지 수정 파일 4개다. 루트 사용자 변경은 건드리지 않았다.
+
+## 설계 결정 / 실제 테스트 / 실패 접근
+
+- 새 단위 테스트 RED(`invalid_output`)→GREEN. `npx vitest run tests/search-verify.test.ts` 17/17,
+  `npx vitest run --config vitest.integration.config.ts tests/integration/search-verify.test.ts` 13/13.
+  `npx vitest run tests/search-job-budget.test.ts` 6/6.
+  `npx next typegen` 뒤 `npx tsc --noEmit`, 대상 ESLint, `git diff --check` PASS.
+- 독립 작업트리에서 첫 타입 검사에 `PageProps` 생성 파일이 없어 실패했고 `npx next typegen` 후 통과했다.
+  단위 테스트 모의 `Response`를 재사용해 두 번째 `.json()`이 `network`로 보인 오류는 매 호출에 새
+  응답을 만들도록 테스트 도구를 바로잡았다. 제품 코드의 네트워크 실패로 해석하지 않는다.
+- 원문 일치 규칙을 느슨하게 하지 않는다. `invalid_output`에만 개별 재시도를 적용하고
+  rate limit·timeout·취소 및 전체 deadline은 기존대로 처리한다. 검수 부분 결과는 DB에 저장하지 않는다.
+
+## 남은 작업 / 정확한 다음 명령
+
+브랜치 `fix/search-verify-singleton-retry`, 작업트리
+`/private/tmp/nmv-search-verify-singleton-20260928`의 PR, hosted CI, main 병합, 8개 앱 배포와
+운영 재시도 결과 확인이 남았다. 현재 운영(06:02 UTC) 공개19,743개, 생성 대기2,516,
+검수 대기300, 미표시 해시·검색 사본 불일치0, 재시도 소진0. 두 문제 제품은 각각
+06:11:33·06:15:38 UTC 이후 자동 재시도 대상이며 새 코드 배포 전에는 성공을 주장하지 않는다.
+소개 검수 `product-intro-check`의 사용자 중단(`2100-01-01`)은 유지한다.
+
+```sh
+cd /private/tmp/nmv-search-verify-singleton-20260928
+git status --short --branch
+npx vitest run tests/search-verify.test.ts
+npx vitest run --config vitest.integration.config.ts tests/integration/search-verify.test.ts
+npx next typegen
+npx tsc --noEmit
+npx eslint lib/domain/products/search-verify.ts tests/search-verify.test.ts tests/integration/search-verify.test.ts
+git diff --check
+cd /Users/jr/Desktop/projects/nomorevibe
+python3 /tmp/nmv-priority-ops-20260927.py health-check
+python3 /tmp/nmv-keyword-status-20260928.py
+```
+
+---
+
 # 2026-09-28 14:43 KST — 검색 검수 순서 운영 배포와 대기열 인계
 
 ## 현재 목적 / 완료 작업 / 변경 파일
