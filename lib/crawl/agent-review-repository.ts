@@ -245,7 +245,12 @@ export function reviewCandidatePredicate(settings: CrawlSettings, options: Revie
     sql`NOT EXISTS (SELECT 1 FROM ${crawlReviewAttempts} WHERE ${matchingSource(settings)}
       AND ${crawlReviewAttempts.state} = 'failed' AND ${crawlReviewAttempts.retryAfter} > now())`,
     sql`(SELECT count(*) FROM ${crawlReviewAttempts} WHERE ${matchingSource(settings)}
-      AND ${crawlReviewAttempts.state} IN ('failed','superseded')) < ${MAX_REVIEW_ATTEMPTS}`,
+      AND ${crawlReviewAttempts.state} IN ('failed','superseded')
+      AND ${crawlReviewAttempts.errorCode} IS DISTINCT FROM 'owner_changed') < ${MAX_REVIEW_ATTEMPTS}`,
+    sql`(SELECT count(*) FROM ${crawlReviewAttempts} WHERE ${matchingSource(settings)}
+      AND ${crawlReviewAttempts.state} = 'superseded'
+      AND ${crawlReviewAttempts.errorCode} = 'owner_changed'
+      AND ${crawlReviewAttempts.completedAt} > now() - interval '24 hours') < 3`,
   )!;
 }
 
@@ -293,13 +298,21 @@ export async function claimAgentReview(input: ReviewContext & {
       await tx.update(crawlReviewAttempts).set({ state: "superseded", errorCode: "owner_changed", completedAt: now })
         .where(eq(crawlReviewAttempts.id, running.id));
       running.state = "superseded";
+      running.errorCode = "owner_changed";
+      running.completedAt = now;
     }
     const same = rows.filter(row => row.inputHash === current.inputHash && row.sourceRevisionHash === current.sourceRevisionHash
       && row.provider === input.provider && row.model === input.model);
     const success = same.find(row => row.state === "succeeded" && row.validUntil > now && row.outcome
       && row.provider === input.provider);
     if (success) return { kind: "reused", attempt: success };
-    if (input.provider !== "rules" && same.length >= MAX_REVIEW_ATTEMPTS) return { kind: "skipped", reason: "attempts_exhausted" };
+    const modelFailures = same.filter(row => (row.state === "failed" || row.state === "superseded")
+      && row.errorCode !== "owner_changed").length;
+    const ownerChanges = same.filter(row => row.state === "superseded" && row.errorCode === "owner_changed"
+      && row.completedAt !== null && row.completedAt.getTime() > now.getTime() - 24 * 60 * 60_000).length;
+    if (ownerChanges >= 3) return { kind: "skipped", reason: "infrastructure_interruptions_exhausted" };
+    if (input.provider !== "rules" && modelFailures >= MAX_REVIEW_ATTEMPTS)
+      return { kind: "skipped", reason: "attempts_exhausted" };
     if (same.some(row => row.state === "failed" && row.retryAfter && row.retryAfter > now)) {
       return { kind: "skipped", reason: "retry_wait" };
     }
