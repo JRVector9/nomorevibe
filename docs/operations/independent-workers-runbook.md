@@ -80,6 +80,24 @@ docker compose logs --since=5m scheduler crawler reviewer publisher text mainten
 
 ## 운영 M3·mini 배포와 데이터 컷오버
 
+### GitHub 수집 PAT 관리자 등록
+
+관리자 `/admin/github-accounts`에서 공개 저장소 읽기용 PAT를 등록·교체한다. 등록 시
+GitHub `/user`의 숫자 ID로 동일 계정을 식별하므로 같은 계정의 새 PAT는 교체된다.
+토큰 원문은 저장 후 볼 수 없다. 계정 카드는 core 잔여/사용/초기화 시각과 관측 시각을
+표시한다. 최근 1시간 원본 저장·신규 제품 수는 전체 수집 결과이며 계정별 기여로
+해석하지 않는다. GitHub quota 사용량에는 다른 앱의 요청도 포함된다.
+
+배포 순서: (1) 가산 마이그레이션 `0053_github_collector_accounts`를 기존 DB에 한 번
+적용하고 성공 확인, (2) 동일한 32자 이상 `GITHUB_COLLECTOR_SECRET`을 M3·mini 웹과
+M3·mini crawler 런타임에 비밀값으로 설정, (3) 같은 release의 웹과 crawler 주·예비
+배포 후 관리자 페이지 확인, (4) 관리자에서 두 번째 계정 PAT 등록, (5) 두 계정의
+관측 시각·core 잔여와 원본 증가를 확인한다. DB 서버·복제 설정은 변경하지 않는다.
+기존 crawler의 `GITHUB_TOKEN`은 이행 중 유지한다. 같은 계정의 환경 토큰과 관리자 PAT를
+함께 쓰면 GitHub 사용자별 한도는 합산되므로, 별도 계정을 등록했는지 `/user` 결과로
+확인한다. 웹 또는 crawler의 암호화 키가 다르면 복호화가 실패하므로 키를 임의로
+회전하지 않는다. 앱 롤백은 가산 테이블을 보존한 채 수행한다.
+
 운영 환경 계약은 `docs/operations/production-multi-instance.env.example`을 사용한다. 실제 비밀값은
 Dokploy와 Keychain에만 저장하고 렌더링된 환경을 로그나 문서에 출력하지 않는다.
 

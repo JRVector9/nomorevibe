@@ -1,5 +1,6 @@
 import { fetchReadmeSample, readmeText } from "./readme";
 import { githubRequest, type GitHubFailure } from "./github";
+import { collectorTokens } from "./github-accounts";
 import { fetchCapped } from "@/lib/net/fetch";
 
 export type ReadmeRefreshResult = { ok: true; sample: string }
@@ -23,7 +24,7 @@ export async function fetchPublicReadme(repo: string, signal?: AbortSignal): Pro
   if (expired() || sample === null) return failed();
   if (sample) return { ok: true, sample };
   // GitHub supports README locations and casing beyond the common raw filenames.
-  if (!process.env.GITHUB_TOKEN?.trim()) return failed("no_token");
+  if ((await collectorTokens()).length === 0) return failed("no_token");
   const repository = await githubRequest<{ private?: boolean }>(`/repos/${repo}`, {}, { timeoutMs: remaining() });
   if (!repository.ok) return apiFailure(repository.error);
   if (repository.status !== 200 || repository.value.private !== false) return failed("not_public");

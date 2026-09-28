@@ -12,7 +12,8 @@ export function githubResource(path: string): GitHubResource {
 export function githubQuotaKeys(token: string, resource: GitHubResource) {
   const credential = createHash("sha256").update(token).digest("hex");
   const prefix = `github:quota:${credential}`;
-  return { primary: `${prefix}:primary:${resource}`, secondary: `${prefix}:secondary` };
+  // GitHub secondary limits can apply across authenticated users and the source IP.
+  return { primary: `${prefix}:primary:${resource}`, secondary: "github:quota:secondary:global" };
 }
 
 export type GitHubCooldown = { retryAt: Date; primary: boolean; secondary: boolean };
