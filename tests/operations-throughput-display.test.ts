@@ -98,3 +98,35 @@ it("distinguishes an empty idle stage from a stage waiting for its next run", ()
   expect(empty).not.toContain("처리 대기");
   expect(waiting).toContain("처리 대기");
 });
+
+it("shows live worker and no eligible work beside a zero rate", () => {
+  const html = renderToStaticMarkup(createElement(ThroughputStrip, {
+    snapshot: { measuredAt: "2026-09-22T01:02:03.000Z", stages: [{ ...stage, completed1m: 0,
+      completed5m: 0, waiting: 0, oldestMinutes: null, status: "idle" }] },
+    signals: [{ role: "reviewer", stage: "second", reason: "no_work", alarm: false }],
+    liveness: [{ role: "reviewer", reason: "present", alarm: false }],
+  }));
+  expect(html).toContain("워커 정상 · 실행 가능 일감 없음");
+});
+
+it("shows deferred collection when no fetch is currently eligible", () => {
+  const html = renderToStaticMarkup(createElement(ThroughputStrip, {
+    snapshot: { measuredAt: "2026-09-22T01:02:03.000Z", stages: [{ ...stage, key: "fetch",
+      label: "원본 수집", unit: "건", completed1m: 0, completed5m: 0,
+      waiting: 0, deferred: 27, oldestMinutes: null, status: "idle" }] },
+    signals: [{ role: "crawler", stage: "fetch", reason: "no_work", alarm: false }],
+    liveness: [{ role: "crawler", reason: "present", alarm: false }],
+  }));
+  expect(html).toContain("워커 정상 · 재시도 예약 27건");
+  expect(html).not.toContain("워커 정상 · 실행 가능 일감 없음");
+});
+
+it("prioritizes a missing worker over an empty queue", () => {
+  const html = renderToStaticMarkup(createElement(ThroughputStrip, {
+    snapshot: { measuredAt: "2026-09-22T01:02:03.000Z", stages: [{ ...stage, completed1m: 0,
+      completed5m: 0, waiting: 0, oldestMinutes: null, status: "idle" }] },
+    signals: [{ role: "reviewer", stage: "second", reason: "no_work", alarm: false }],
+    liveness: [{ role: "reviewer", reason: "worker_missing", alarm: true }],
+  }));
+  expect(html).toContain("심사 워커 관측 끊김 · 확인 필요");
+});

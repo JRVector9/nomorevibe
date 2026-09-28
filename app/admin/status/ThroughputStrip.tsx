@@ -1,4 +1,4 @@
-import type { ThroughputSnapshot, ThroughputStatus } from "@/lib/operations/throughput-model";
+import type { ThroughputSnapshot, ThroughputStage, ThroughputStatus } from "@/lib/operations/throughput-model";
 import type { ProgressReason, SchedulerProgress, StageProgress, classifyLiveness } from "@/lib/operations/worker-progress";
 import { LiveRefresh } from "./LiveRefresh";
 import styles from "./throughput.module.css";
@@ -18,6 +18,22 @@ const REASON_LABEL: Record<ProgressReason, string> = {
 };
 
 const count = (value: number) => value.toLocaleString("ko-KR");
+
+function runtimeState(stage: ThroughputStage, signal: StageProgress | undefined,
+  liveness: ReturnType<typeof classifyLiveness>[] | undefined): { text: string; alert: boolean } {
+  if (!stage.enabled) return { text: "자동 처리 일시 중지", alert: false };
+  const role = stage.key === "fetch" ? "crawler" : stage.key === "publish" ? "publisher" : "reviewer";
+  const worker = liveness?.find(row => row.role === role);
+  const roleName = role === "crawler" ? "수집" : role === "publisher" ? "발행" : "심사";
+  if (worker?.reason === "worker_missing") return { text: `${roleName} 워커 관측 끊김 · 확인 필요`, alert: true };
+  if (worker?.reason === "restart_loop") return { text: `${roleName} 워커 반복 재시작 · 확인 필요`, alert: true };
+  const prefix = worker?.reason === "present" ? "워커 정상" : "워커 상태 미확인";
+  if (stage.key === "fetch" && stage.waiting === 0 && stage.deferred) {
+    return { text: `${prefix} · 재시도 예약 ${count(stage.deferred)}건`, alert: false };
+  }
+  if (signal) return { text: `${prefix} · ${REASON_LABEL[signal.reason]}`, alert: signal.alarm };
+  return { text: `${prefix} · 단계 판별 자료 없음`, alert: false };
+}
 
 function waitingTime(minutes: number | null, waiting: number): string {
   if (minutes === null) return waiting === 0 ? "대기 없음" : "시각 미확인";
@@ -77,7 +93,9 @@ export function ThroughputStrip({ snapshot, signals, scheduler, liveness }: {
       </p>}
 
       <ol className={styles.stages}>
-        {snapshot.stages.map((stage, index) => (
+        {snapshot.stages.map((stage, index) => {
+          const state = runtimeState(stage, signals?.find(signal => signal.stage === stage.key), liveness);
+          return (
           <li key={stage.key} className={styles.stage} data-status={stage.status} aria-labelledby={`throughput-${stage.key}`}>
             <div className={styles.stageHeading}>
               <h3 id={`throughput-${stage.key}`}><span className={styles.step} aria-hidden="true">{index + 1}</span>{stage.label}</h3>
@@ -87,17 +105,15 @@ export function ThroughputStrip({ snapshot, signals, scheduler, liveness }: {
               <div className={styles.current}><strong>{count(stage.completed1m)}</strong><span>{stage.unit}/1분</span></div>
               <p className={styles.average}>5분 평균 <b>{(stage.completed5m / 5).toLocaleString("ko-KR", { maximumFractionDigits: 1 })}</b> {stage.unit}/분</p>
             </div>
+            <p className={styles.runtimeState} data-alert={state.alert ? "true" : undefined}>{state.text}</p>
             <dl className={styles.stats}>
               <div><dt>대기</dt><dd>{count(stage.waiting)}<span>{stage.unit}</span></dd></div>
               <div><dt>{stage.ageLabel ?? "가장 오래된 대기"}</dt><dd>{waitingTime(stage.oldestMinutes, stage.waiting)}</dd></div>
               {stage.errors5m !== null && <div><dt>5분 내 오류 기록</dt><dd data-error={stage.errors5m > 0 ? "true" : undefined}>{count(stage.errors5m)}<span>{stage.unit}</span></dd></div>}
             </dl>
             {stage.queueNote && <p className={styles.queueNote}>{stage.queueNote}</p>}
-            {signals?.find(signal => signal.stage === stage.key) && <p className={styles.queueNote}>
-              워커 판별: {REASON_LABEL[signals.find(signal => signal.stage === stage.key)!.reason]}
-            </p>}
           </li>
-        ))}
+        ); })}
       </ol>
 
       <details className={styles.details}>

@@ -36,6 +36,8 @@
 .current > span { font-size: 13px; color: var(--text-2); white-space: nowrap; }
 .strip .average { margin: 7px 0 0; color: var(--text-3); font-size: 13px; line-height: 1.5; }
 .average b { color: var(--text-2); font-weight: 650; font-variant-numeric: tabular-nums; }
+.strip .runtimeState { margin: 12px 0 0; padding: 7px 9px; border-radius: 6px; background: var(--bg-soft); color: var(--text-2); font-size: 13px; font-weight: 650; line-height: 1.45; }
+.strip .runtimeState[data-alert="true"] { color: var(--down); background: color-mix(in srgb, var(--down) 8%, var(--bg-card)); }
 .stats { display: grid; gap: 8px; margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--border); font-size: 13px; line-height: 1.5; }
 .stats > div { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 10px; }
 .stats dt { color: var(--text-3); }
@@ -71,6 +73,7 @@
   .rate { margin-top: 2px; align-self: center; }
   .current strong { font-size: 28px; }
   .stats { margin-top: 0; padding: 0 0 0 12px; border-top: 0; border-left: 1px solid var(--border); gap: 6px; }
+  .strip .runtimeState { grid-column: 1 / -1; margin-top: 0; }
   .stats > div { display: block; }
   .stats dd { text-align: left; }
   .strip .queueNote { grid-column: 1 / -1; margin-top: 0; }

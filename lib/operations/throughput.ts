@@ -120,6 +120,7 @@ export async function pipelineThroughput(settings: CrawlSettings, now = new Date
     const stage = {
       key: row.key, label: labels[row.key], unit: row.key === "second" ? "표" as const : "건" as const,
       completed1m: Number(row.one), completed5m: Number(row.five), progress5m: Number(row.progress), waiting: Number(row.waiting),
+      deferred: row.key === "fetch" ? extra : undefined,
       ageLabel: row.key === "first" ? "후보·원본 갱신 후" : row.key === "publish" ? "승인·심사 갱신 후" : "가장 오래된 대기",
       oldestMinutes: row.oldest === null ? null : Math.max(0, Number(row.oldest)),
       enabled: settings.enabled && (row.key !== "first" || settings.reviewMode !== "off")
