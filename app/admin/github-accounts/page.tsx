@@ -40,8 +40,9 @@ export default async function GitHubAccountsPage() {
           const quota = account.coreQuota;
           const observed = account.quotaObservedAt;
           const stale = account.quotaStale;
+          const state = !account.enabled ? "수집 중지" : stale ? "한도 확인 필요" : quota?.remaining === 0 ? "한도 소진" : "수집에 사용";
           return <article key={account.userId} className="rounded-xl border border-line bg-bg-card p-4">
-            <div className="flex items-center justify-between gap-3"><h3 className="font-bold">{account.login}</h3><span className="text-[13px] text-fg-2">{account.enabled ? "활성" : "중지"}</span></div>
+            <div className="flex items-center justify-between gap-3"><h3 className="font-bold">{account.login}</h3><span className="text-[13px] text-fg-2">{state}</span></div>
             <p className="mt-1 font-mono text-[13px] text-fg-3">GitHub 사용자 ID {account.userId}</p>
             {quota ? <p className="mt-4 text-[14px]">core 잔여 <strong>{quota.remaining.toLocaleString("ko-KR")}</strong> / {quota.limit.toLocaleString("ko-KR")} · 사용 {quota.used.toLocaleString("ko-KR")}</p>
               : <p className="mt-4 text-[13px] text-fg-2">한도 관측 없음</p>}

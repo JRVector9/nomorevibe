@@ -84,7 +84,8 @@ export async function listGitHubCollectorAccounts() {
   return db.select({ userId: githubCollectorAccounts.userId, login: githubCollectorAccounts.login,
     enabled: githubCollectorAccounts.enabled, coreQuota: githubCollectorAccounts.coreQuota,
     quotaObservedAt: githubCollectorAccounts.quotaObservedAt, updatedAt: githubCollectorAccounts.updatedAt,
-    quotaStale: sql<boolean>`${githubCollectorAccounts.quotaObservedAt} is null or ${githubCollectorAccounts.quotaObservedAt} < now() - interval '1 hour'`,
+    quotaStale: sql<boolean>`${githubCollectorAccounts.coreQuota} is null or ${githubCollectorAccounts.quotaObservedAt} is null or ${githubCollectorAccounts.quotaObservedAt} < now() - interval '1 hour'
+      or (${githubCollectorAccounts.coreQuota}->>'reset')::bigint <= extract(epoch from now())`,
   }).from(githubCollectorAccounts).orderBy(githubCollectorAccounts.userId);
 }
 
