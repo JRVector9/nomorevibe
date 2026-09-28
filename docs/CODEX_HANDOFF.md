@@ -18,6 +18,8 @@ DB `localtimestamp`로 후보 관측·lease 나이를 계산하고 M3/mini 5역�
 서로 다른 2복제본을 각각 판정한다. 30초 별도 monitor가 연속 2회 이상일 때 Kuma Push
 DOWN, 정상 복귀 때 UP을 전송한다. URL·응답 본문은 오류 로그에 남기지 않는다.
 mini 호스트 전체 장애 때 mini Kuma도 죽는 공백과 실제 경보 수신 미검증은 남는다.
+운영 monitor의 `CONNECT_AGENT_URL` 설정 여부는 publisher와 같아야 발행 적격 큐가
+같이 계산된다. monitor는 해당 URL에 요청하지 않으며 존재 여부만 사용한다.
 
 - 처음 단위 시험은 구현 파일이 없어 실패했고 구현 후 통과. 전용 DB의 정상/예비 70초 지연,
   CLI 경보 종료 코드 2 통과. `npm test`: 156파일/1,235 통과.

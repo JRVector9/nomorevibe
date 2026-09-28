@@ -282,7 +282,10 @@ DB 시계로 관측과 lease 나이를 계산하고 기존 진행 판정도 JSON
 만든다. 웹·scheduler와 별도 M3 Dokploy 앱, `autoDeploy=false`, `WORKER_ROLE=monitor`,
 DB pool1, 30초 Push 루프를 사용한다. 환경에 `DATABASE_URL`(읽기 전용 계정),
 `MONITOR_PUSH_URL`(mini Uptime Kuma의 전용 Push monitor URL)을 설정한다. URL은 로그에
-출력하지 않는다. Push monitor의 heartbeat timeout은 최소 90초 이상으로 맞춰 일시적
+출력하지 않는다. `CONNECT_AGENT_URL`의 설정 여부는 publisher와 일치시킨다. 진행 판정의
+발행 적격 큐가 이 변수의 존재에 따라 분류 완료 조건을 적용하므로, 서로 다르면 거짓 경보가
+될 수 있다. 감시자는 이 URL에 직접 접속하지 않는다. Push monitor의 heartbeat timeout은
+최소 90초 이상으로 맞춰 일시적
 전환 1표본을 허용한다. 연속 2회 이상에서 `down`, 정상 회복 때 바로 `up`을 보낸다.
 Push 실패가 나면 URL·응답 본문 없이 오류만 기록하며 전송을 재시도한다. 컨테이너 healthcheck는
 최근 검사 완료만 보며 DB 장애를 숨기지 않도록 JSON은 `unknown`으로 남긴다.

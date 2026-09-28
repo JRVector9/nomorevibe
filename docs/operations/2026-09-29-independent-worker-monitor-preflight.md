@@ -40,7 +40,8 @@ publisher 승인 행 17건은 발행 정책을 통과한 적격 큐가 아니며
 ## 운영 연결 전 남은 것
 
 전용 읽기 권한 DB 자격, mini Kuma의 전용 Push monitor URL, 경보 수신 대상을 확정한 뒤
-M3에 monitor 앱을 배포한다. 정상 Push와 예비 한 개 중단의 DOWN/회복,
+publisher와 같은 `CONNECT_AGENT_URL` 설정 여부로 M3에 monitor 앱을 배포한다.
+정상 Push와 예비 한 개 중단의 DOWN/회복,
 monitor 자체 중단의 heartbeat timeout을 관측한다. mini 호스트 장애와 동시에 Kuma도
 중단되는 경우는 별도 외부 deadman이 필요하다. 24시간 관측·백업 복구·실제 저장 정체와
 반복 부팅 격리 주입은 이 검증에 포함하지 않았다.
