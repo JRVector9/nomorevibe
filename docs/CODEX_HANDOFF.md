@@ -1,3 +1,74 @@
+# 2026-09-29 21:35 KST — 자동 확인 릴리스 운영 적용 완료, 실측 기록 PR 대기
+
+## Current objective / completed work
+
+사용자가 요청한 배포 확인 자동화를 PR #238로 main
+`5d67b23466659e943e51d5110ce5f2fd2ef8eab1`에 병합하고 새 worker/web
+이미지를 운영 8개 앱에 실제 배포했다. `plan`은 기존 릴리스·두 서버 pull·웹
+빌드 키·failover를 확인했고 `run`은 publisher→reviewer→crawler 각각
+mini→M3, 웹 mini→M3를 사람의 단계별 대기 없이 처리했다. 8개 앱의 배포·
+실행 이미지·건강 상태, 세 역할 쌍의 failover/progress, 양쪽 공개 웹 응답이
+모두 정상이다. 운영 기록을 문서 전용 후속 PR로 병합할 일이 남았다.
+
+## Modified files / key design decisions
+
+PR #238은 `scripts/ops/deploy_shared_images.py`,
+`tests/test_deploy_shared_images.py`, `.github/workflows/ci.yml`,
+`.gitignore`, `.dockerignore`, `README.md`,
+`docs/operations/independent-workers-runbook.md`, 이 파일을 변경했다.
+현재 `docs/release-verification-rollout` 브랜치는 `PENDING.md`,
+`docs/operations/2026-09-29-deployment-speed-rollout.md`, 새
+`docs/operations/2026-09-29-deployment-verification-automation-rollout.md`, 이 파일을
+기록용으로 변경한다. 배포 실패 시 뒤 앱을 멈추고 권한 0600 스냅샷에서
+개별 앱을 복구한다. 웹 키 회전은 자동화하지 않으며 DB 서버·스트리밍·migration을
+변경하지 않았다. 루트 checkout의 사용자 변경은 건드리지 않았다.
+
+새 worker digest는
+`ghcr.io/jrvector9/nomorevibe-worker@sha256:89e32f9fb18179424310a96aaf23867507ac936327aaaf7f41451f28db8cb19f`,
+private web digest는
+`ghcr.io/jrvector9/nomorevibe-runtime-web@sha256:3c5b760860b53265c4db2fbe316f584260c6b7c10b4bc23d6913dc8a5ccdbe65`다.
+이전 운영 설정 스냅샷은
+`/private/tmp/nomorevibe-release-5d67b23.json`(0600)에 있으며 비밀값을
+포함하므로 내용은 로그·문서에 출력하지 않는다.
+
+## Test commands and results / failed approaches
+
+로컬 `python3 -m unittest tests/test_deploy_shared_images.py -v` 8/8,
+`python3 -m py_compile scripts/ops/deploy_shared_images.py`,
+`actionlint .github/workflows/ci.yml`, `git diff --check` 종료 코드 0.
+PR #238 최신 hosted quality·통합 3분할·필수 `check`·GitGuardian 성공,
+main run `36567972623`의 quality·통합 3분할·필수 `check`·web/worker 이미지
+빌드 모두 성공. 실제 `plan`은 20.27초·종료 0, `run`은 사전 검사를 포함해
+118.45초·종료 0. Dokploy 기록의 첫 시작 `12:31:16.253 UTC`부터 마지막
+완료 `12:32:45.706 UTC`까지 89.45초이며 앞 수동 릴리스 252.8초보다
+163.35초(64.6%) 짧다. 배포 후 별도 조회도 8개 앱의 새 digest·복제본·
+health와 전체 failover/progress `ok`, 공개 M3·mini health `ok/db:ok`였다.
+웹 GHCR 패키지는 private이다.
+
+실제 배포에서는 게이트 실패나 롤백이 없었다. 오류 후 중단·스냅샷 복원은
+Python 안전 테스트로 확인했으나 운영 장애 주입은 하지 않았다. 구현 중 웹
+Docker healthcheck 부재, failover 보고서의 중첩 구조를 발견해 직접 health·
+올바른 필드로 고쳤다. 기존 임시 점검의 논리 이름으로 Docker service를 찾던
+오류는 실제 `appName` 사용으로 해결했다.
+
+## Remaining work / exact commands for the next agent
+
+이번 운영 기록 문서만 commit/push·PR을 열고 docs-only 필수 `check`와
+GitGuardian 성공 뒤 병합한다. main 문서 push가 이미지를 다시 만들지
+않는지 확인한다. 24시간 처리/헬스 관측, 최소 권한 GHCR pull 토큰 교체,
+실제 장애·복구 주입은 `PENDING.md`에 남는다.
+
+```sh
+cd /private/tmp/nmv-deploy-verify-auto-20260929
+git status --short --branch
+git diff --check
+gh run view 36567972623 --repo JRVector9/nomorevibe --json conclusion,jobs
+gh api user/packages/container/nomorevibe-runtime-web --jq '{name,visibility}'
+curl -fsS https://nomorevibe.brut.bot/api/health
+```
+
+---
+
 # 2026-09-29 20:37 KST — 공통 이미지 배포의 단계별 확인 자동화 구현, PR 최신 검사 대기
 
 ## Current objective / completed work
