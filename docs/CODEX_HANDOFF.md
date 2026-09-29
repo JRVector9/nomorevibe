@@ -102,22 +102,28 @@ GitHub ID 누락/불안전 응답은 원본 수집 실패로 분류한다. 새 �
 - 첫 빌드는 작업 트리 밖 `node_modules` 심볼릭 링크를 Turbopack이 거부해 실패했다.
   링크를 해제하고 `npm ci --ignore-scripts`로 작업 트리 안에 설치한 뒤 빌드 성공했다.
 
-### Remaining work / exact next commands
+### 운영 적용 / 남은 작업
+
+PR #227의 GitGuardian·CI `check`가 모두 통과했고 main `f305a6b21d575c53af515ec0debd3e9f491460c7`로
+병합됐다. 0054 앱 마이그레이션을 운영 DB 직접 연결로 한 번 적용했고 `alias_of` 컬럼과
+ID 조회 인덱스를 읽기 전용으로 확인했다. crawler mini 예비 → M3 주, web mini → M3 순서로
+네 앱을 같은 SHA로 배포했다. 두 웹의 공개 `/api/health`는 `ok/db:ok`, crawler role lease는
+M3 주/new SHA였고 `crawl-fetch` 최근 성공·오류 없음·대기열 0을 확인했다.
+01:33 UTC 운영 기준 기존 중복은 300그룹·초과 행 305개였다. 직전 추가된 1개는 새 코드 배포
+이전 01:12 UTC에 저장됐다. 자연 유입되는 새 이름 변경 별칭이 아직 없어 운영 분기(`alias_of`)
+자체는 직접 관측하지 못했다. [운영 기록](operations/2026-09-29-github-id-dedup-rollout.md)을 따른다.
 
 사용자의 기존 발행 제품 병합 범위 답변을 확인한다. 답변 없이 공개 제품을 자동 병합·삭제하지 않는다.
-현재 변경의 코드 리뷰, diff 점검, 필요 시 PR/CI, 운영 적용 뒤 새 별칭과 중복 증가 여부 관측이 남았다.
 운영 DB 서버·스트리밍 설정과 중단된 `product-intro-check`는 건드리지 않는다.
 
 ```sh
 cd /private/tmp/nmv-github-identity-dedup
 git status --short --branch
 git diff --check
-npx drizzle-kit check
-npx tsc --noEmit
-npm test
-npm run test:integration -- tests/integration/crawl-github-identity.test.ts tests/integration/crawl-fetch.test.ts tests/integration/crawl-pipeline.test.ts tests/integration/crawl-seed.test.ts
-npm run build
-git diff -- lib/crawl/github.ts lib/crawl/repository.ts lib/crawl/jobs/fetch.ts lib/db/crawl-schema.ts
+gh pr view 227 --json state,mergeCommit,statusCheckRollup
+python3 /tmp/nmv-github-pat-deploy.py status f305a6b21d575c53af515ec0debd3e9f491460c7 crawler-m3
+python3 /tmp/nmv-github-pat-deploy.py status f305a6b21d575c53af515ec0debd3e9f491460c7 crawler-mini
+curl -fsS https://nomorevibe.brut.bot/api/health
 ```
 
 ---
