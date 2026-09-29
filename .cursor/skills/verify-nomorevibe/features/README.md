@@ -4,7 +4,7 @@ This directory is the maintained source for verifying user-facing behavior. Read
 
 ## Baseline preconditions
 
-- Launch from `.cursor/skills/verify-nomorevibe/SKILL.md` so PostgreSQL 17 is on `127.0.0.1:55434` and the web app answers at `http://127.0.0.1:3000`.
+- Launch from `.cursor/skills/verify-nomorevibe/SKILL.md` so PostgreSQL 17 is on `127.0.0.1:55434` and the web app answers at `http://localhost:3000`.
 - Load `.env.local` with `ALLOW_PRIVATE_URLS=1` when registering loopback fixture URLs.
 - Set `ADMIN_LOCAL_LOGIN=1` before driving admin pages. GitHub OAuth admin is a separate, usually unverified path.
 - Run `.cursor/skills/verify-nomorevibe/bin/doctor` and require `status=ok`, `db=ok`, and the home heading.
@@ -55,8 +55,8 @@ Keep implementation details out of the map. Name only user paths, stable handles
 - [Takedown](./takedown.md) covers the public takedown request.
 - [Outbound click](./outbound-click.md) covers `/go/<slug>` redirects and visit recording.
 - [Health](./health.md) covers `GET /api/health`.
-- [Admin console](./admin-console.md) covers local-login admin pages.
-- [Jobs and cron](./jobs-and-cron.md) covers one-tick jobs and the cron enqueue API.
+- [Admin console](./admin-console.md) covers local-login pages, GitHub collector accounts, review stages, and worker status.
+- [Jobs and cron](./jobs-and-cron.md) covers one-tick jobs, crawl handoffs, worker progress, and the cron enqueue API.
 
 ## 2026-09-27 generator drive
 
@@ -65,7 +65,7 @@ Each feature file's opening paragraph records what this run actually proved. HTT
 ## Known gaps (not mapped as working features)
 
 - GitHub OAuth admin (`/api/auth/github`) needs `GITHUB_OAUTH_*` and is not driven here.
-- Crawl seed/fetch and evidence refresh against GitHub need `GITHUB_TOKEN`.
-- AI review, intro check, search-profile generation, and publisher category classification need Claude/Codex credentials.
+- Crawl seed/fetch and evidence refresh against GitHub need `GITHUB_TOKEN` or a registered collector PAT with `GITHUB_COLLECTOR_SECRET`.
+- AI review and intro check need their configured reviewer credentials; text jobs need `ABCLLM_API_KEY`, and publisher classification needs its Codex connection or CLI credentials.
 - `product-intro-check` stays off unless an operator explicitly resumes it (`PENDING.md`).
 - Compose production topology (`localhost:3200`) is an operations path, not this skill's default launch.

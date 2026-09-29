@@ -5923,3 +5923,63 @@ gh pr create --base main --head docs/worker-failover-p3-rollout --title 'docs: r
 ```
 
 ---
+
+---
+
+## 2026-09-29 — verification Feature Map refresh after main through #241
+
+### Current objective
+
+On `cursor/verification-skill-feature-map-8f9a`, align the verification skill with merged source through #241, drive changed entry points on a disposable local database, and commit documentation/helper changes without changing product code or pushing.
+
+### Completed work and modified files
+
+Read the verification skill, every feature file, both helpers, relevant public routes and admin pages, crawl/job/worker paths, `compose.yml`, `.github/workflows/ci.yml`, README, and the independent worker runbook. Updated:
+
+- `.cursor/skills/verify-nomorevibe/SKILL.md` — disposable database launch, local dev origin, process identity, progress probe, PostgreSQL version fallback, CI/Compose boundaries.
+- `.cursor/skills/verify-nomorevibe/bin/doctor` — default dev origin is `localhost`.
+- `.cursor/skills/verify-nomorevibe/features/README.md` — current admin/jobs scope and collector/model credential gaps.
+- `.cursor/skills/verify-nomorevibe/features/admin-console.md` — PAT accounts, review stages, worker runtime, 500-star setting.
+- `.cursor/skills/verify-nomorevibe/features/catalog-search.md` — relevance search has no selected sort tab, with a fresh browser drive.
+- `.cursor/skills/verify-nomorevibe/features/jobs-and-cron.md` — role readiness/progress, star approval, repository-ID duplicates, exhausted handoffs, current provider credentials.
+- `docs/CODEX_HANDOFF.md` — this handoff.
+
+### Key design decisions and direct evidence
+
+Kept new admin and crawl behavior in the existing feature files; no new user-facing feature file was needed. Next dev blocked client assets at `127.0.0.1:3000` while serving them at `localhost:3000`, so the skill now uses `localhost` and requires a hydrated browser drive. The local disposable PostgreSQL container reported version `17.10`; doctor returned health `status=ok`, `db=ok`, `instanceId=verify-pr208-web`, `release=verify-pr208-20260929`, and the home heading. Evidence is retained at `/tmp/nomorevibe-verify-pr208-20260929/evidence/`; generated `.env.local`, fixture product, local web/fixture processes, and both disposable containers were removed or stopped.
+
+Browser proof: admin GitHub accounts was HTTP 200, empty account state was visible, the PAT button was disabled without `GITHUB_COLLECTOR_SECRET` and enabled after a disposable local key; no PAT was submitted. Review `직접 판단` selected `/admin/review?stage=human#review-list` with `aria-current=page`. Operations center showed stage throughput and a crawler detail with no observed instance. Crawl settings showed `자동 승인 최소 스타` value/minimum 500. All mapped local admin page GETs returned 200, including `/admin/products` listing the fixture. Search Control+K focused the searchbox; a verified fixture appeared for `?q=Verify+Fixture`, all four sort tabs had `aria-selected=false`, its detail link opened, a fresh header search cleared category/sort, and a no-match query showed the empty state. Fixture deletion returned 200, then GET 404.
+
+Job proof: heartbeat cursor 1→2; crawl fetch/judge/first-review/publish/seed each completed a no-work tick with collection off. Worker progress and failover readiness returned exit 2 with missing local role observations and no scheduler replicas; this is expected alarm evidence, not failover success. Cron returned 403 without authorization, 400 for authenticated heartbeat, 202 for click-rollup enqueue; `npm run job -- click-rollup` completed. `ranking-refresh` completed and sitemap exposed `/rankings/2026-W40`; `product-search-health` completed.
+
+### Test commands and results
+
+- `npx next typegen`: exit 0, types generated.
+- `npm run lint`: exit 0, one existing warning in `lib/vendor/deppy-aibox/claude.ts:158`.
+- `npx tsc --noEmit`: exit 0.
+- `npm test`: exit 0, 160 files / 1,276 tests passed.
+- `TEST_DATABASE_URL=postgres://nomorevibe:nomorevibe@127.0.0.1:55436/nomorevibe_test npm run test:integration -- --shard=1/3` (then 2/3 and 3/3): all exit 0; 34/324, 33/273, 33/353 passed with one TODO in shard 3. The shards ran sequentially on one disposable local test database; CI uses separate runners and databases.
+- `node --test scripts/ci-scope.node-test.mjs`: exit 0, 4 passed.
+- `python3 -m unittest tests/test_deploy_shared_images.py`: exit 0, 8 passed.
+- `.cursor/skills/verify-nomorevibe/bin/doctor`: exit 0, before and after the drive.
+- `git diff --check`: exit 0 before this handoff entry.
+
+### Failed approaches
+
+The initial `127.0.0.1` browser screenshot captured only a loading skeleton because Next dev blocked client assets; using `localhost` and waiting for the hydrated heading fixed it. Test port 55435 was already owned by an unrelated container, so a new isolated test database used 55436. A first search filter reset submitted an empty query before header hydration; waiting for the hydrated navigation fixed it. An admin-page shell loop used zsh's special `path` variable and hid commands from `PATH`; rerunning with `route_path` produced HTTP 200 evidence. No production database or credentials were used.
+
+### Remaining work and exact next commands
+
+Real PAT registration/replacement/toggle and GitHub OAuth need their own credentials. GitHub frontier growth, 500-star publication, numeric repository-ID alias skip, and exhausted source/first-review handoffs need real candidate/failed-attempt state plus collector or model credentials; the no-work ticks did not prove them. Actual primary/standby failover and scheduler replicas need the isolated topology in the runbook. Remote CI image publishing was not attempted locally. The user-paused `product-intro-check` remains off.
+
+```sh
+cd /Users/jr/Desktop/projects/nomorevibe-pr208
+git status --short --branch
+git log -1 --oneline
+git show --stat --oneline HEAD
+git diff --check
+cat /tmp/nomorevibe-verify-pr208-20260929/evidence/admin-console/drive.json
+cat /tmp/nomorevibe-verify-pr208-20260929/evidence/catalog-search/drive.json
+cat /tmp/nomorevibe-verify-pr208-20260929/evidence/jobs-and-cron/worker-progress.json
+cat /tmp/nomorevibe-verify-pr208-20260929/evidence/jobs-and-cron/failover-readiness.json
+```

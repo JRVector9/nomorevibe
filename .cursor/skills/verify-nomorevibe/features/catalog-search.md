@@ -2,7 +2,7 @@
 
 Catalog search finds listed products from the header search box. The query lives in `?q=` and the result heading repeats the query.
 
-Verification (2026-09-27 local drive): `/?q=Verify Fixture` and the empty-query heading were proven over HTTP. Header submit and Control+K were not headed-browser proven.
+Verification (2026-09-29 local drive): a hydrated browser used Control+K and the header form, found a verified fixture by name, opened its detail page, cleared category/sort on a new search, and showed the empty state. The unqualified match had no selected sort tab.
 
 ## Sub-features
 
@@ -25,7 +25,7 @@ Preconditions:
 - A verified product named `Verify Fixture` exists (maker-register + maker-verify).
 
 - **Focus search.** Open `/`. The searchbox name is `프로젝트 검색`.
-- **Name match.** Fill `Verify Fixture` and press Enter. The location contains `q=Verify+Fixture` (or equivalent encoding). The heading is `“Verify Fixture” 검색 결과` and a card heading `Verify Fixture` is visible. The `최신` tab is selected for an unqualified search.
+- **Name match.** Fill `Verify Fixture` and press Enter. The location contains `q=Verify+Fixture` (or equivalent encoding). The heading is `“Verify Fixture” 검색 결과` and a card heading `Verify Fixture` is visible. An unqualified search uses relevance order; none of the four sort tabs has `aria-selected="true"` until a sort is chosen.
 - **Open result.** Choose the `Verify Fixture` link. The location is `/p/<slug>`.
 - **Empty state.** Open `/?q=volcano-no-such-product`. After the result heading appears, the empty copy is `조건에 맞는 제품이 없습니다`.
 - **Filter reset.** Open `/?sort=all-time&category=Finance`, submit `@nomatch-owner`. The new URL has `q=` and does not keep `category`.
