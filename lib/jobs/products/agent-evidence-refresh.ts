@@ -76,7 +76,7 @@ export async function refreshAgentEvidenceJob(ctx: JobContext<AgentEvidenceRefre
             if (ctx.lease) await assertJobLease(tx, ctx.lease);
           });
         }
-        if (result.errorCode === 'rate_limited') {
+        if (result.errorCode === 'rate_limited' || (result.errorCode === 'unavailable' && result.retryAt)) {
           const retryAfter = result.retryAt ?? result.scan?.nextAttemptAt ?? new Date(Date.now() + 15 * 60_000);
           const cursor = { afterRepository, retryAfter: retryAfter.toISOString() };
           await ctx.save(cursor); return { done: false, cursor };

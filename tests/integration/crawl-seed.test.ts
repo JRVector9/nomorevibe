@@ -244,6 +244,15 @@ describe("검색 잡", () => {
     expect((await getJobState("crawl-seed"))?.cursor).toMatchObject({ page: 1 });
   });
 
+  it("all rejected credentials retain the search page until the auth cooldown ends", async () => {
+    const resetAt = new Date(Date.now() + 15 * 60_000);
+    searchCommits.mockResolvedValue({ ok: false, error: { kind: "auth_unavailable", reason: "expired", resetAt } });
+
+    expect(await tick()).toMatchObject({ status: "completed", done: false });
+    expect((await getJobState("crawl-seed"))?.cursor).toMatchObject({ page: 1, retryAt: resetAt.toISOString() });
+    expect(searchCommits).toHaveBeenCalledTimes(1);
+  });
+
   it("커서가 가리키던 신호가 꺼지면 처음부터 본다", async () => {
     searchCommits.mockResolvedValue(searchPage(["a/one"], true));
     await tick();

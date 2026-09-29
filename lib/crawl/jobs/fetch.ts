@@ -67,9 +67,10 @@ export async function fetchCrawlDocuments(ctx: JobContext<null>): Promise<JobOut
       return { done: true };
     }
 
-    const { retryAt } = await fetchBatch(entries, ctx, settings.judge.docsGenerators, oneAtATime, tally);
+    const { retryAt, pauseReason } = await fetchBatch(entries, ctx, settings.judge.docsGenerators, oneAtATime, tally);
     if (retryAt) {
-      ctx.log("crawl.fetch_rate_limited", { fetched: tally.fetched, resetAt: retryAt.toISOString() });
+      ctx.log(pauseReason === "auth_unavailable" ? "crawl.fetch_auth_unavailable" : "crawl.fetch_rate_limited",
+        { fetched: tally.fetched, resetAt: retryAt.toISOString() });
       return { done: false };
     }
   }
@@ -94,12 +95,13 @@ async function fetchBatch(
   docsGenerators: readonly string[],
   oneAtATime: OneAtATime,
   tally: Tally,
-): Promise<{ retryAt: Date | null }> {
+): Promise<{ retryAt: Date | null; pauseReason: "rate_limited" | "auth_unavailable" | null }> {
   // 여러 칸이 함께 고치는 상태라 한 객체에 둔다
   const batch = {
     next: 0,
     stopped: false,
     retryAt: null as Date | null,
+    pauseReason: null as "rate_limited" | "auth_unavailable" | null,
     needsJudgement: 0,
     /** 시작은 했지만 끝내지 못해 그대로 돌려줄 것 — 한도·예산 대기는 실패한 시도가 아니다 */
     giveBack: new Set<FrontierEntry>(),
@@ -117,15 +119,16 @@ async function fetchBatch(
           const entry = entries[batch.next++];
           const result = await getRepo(entry.repo);
           // 한도는 줄을 놓기 전에 알린다 — 뒤에 선 칸이 같은 한도에 요청을 또 쓰지 않도록
-          if (!result.ok && result.error.kind === "rate_limited") batch.stopped = true;
+          if (!result.ok && (result.error.kind === "rate_limited" || result.error.kind === "auth_unavailable")) batch.stopped = true;
           return { entry, result };
         });
         if (!started) return;
 
         const outcome = await fetchEntry(started.entry, started.result, ctx, docsGenerators, oneAtATime);
-        if (outcome.kind === "rate_limited") {
+        if (outcome.kind === "paused") {
           batch.stopped = true;
           if (!batch.retryAt || outcome.retryAt > batch.retryAt) batch.retryAt = outcome.retryAt;
+          batch.pauseReason = outcome.reason;
           batch.giveBack.add(started.entry);
         } else if (outcome.kind === "deferred") {
           batch.stopped = true;
@@ -167,13 +170,13 @@ async function fetchBatch(
 
   const failure = lanes.find((settled): settled is PromiseRejectedResult => settled.status === "rejected");
   if (failure) throw failure.reason;
-  return { retryAt: batch.retryAt };
+  return { retryAt: batch.retryAt, pauseReason: batch.pauseReason };
 }
 
 type EntryOutcome =
   | { kind: "fetched"; needsJudgement: boolean }
   | { kind: "skipped" | "failed" | "lost" | "deferred" }
-  | { kind: "rate_limited"; retryAt: Date };
+  | { kind: "paused"; reason: "rate_limited" | "auth_unavailable"; retryAt: Date };
 
 /** GitHub 응답을 받은 항목 하나를 끝낸다. 실패는 여기서 항목별로 남긴다 */
 async function fetchEntry(
@@ -184,8 +187,9 @@ async function fetchEntry(
   oneAtATime: OneAtATime,
 ): Promise<EntryOutcome> {
   if (!result.ok) {
-    if (result.error.kind === "rate_limited") {
-      return { kind: "rate_limited", retryAt: result.error.resetAt ?? new Date(Date.now() + 60_000) };
+    if (result.error.kind === "rate_limited" || result.error.kind === "auth_unavailable") {
+      return { kind: "paused", reason: result.error.kind,
+        retryAt: result.error.resetAt ?? new Date(Date.now() + (result.error.kind === "auth_unavailable" ? 15 * 60_000 : 60_000)) };
     }
     if (result.error.kind === "not_found") {
       // 지워졌거나 비공개로 바뀌었다 — 다시 시도할 이유가 없다

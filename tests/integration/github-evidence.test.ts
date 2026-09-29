@@ -466,4 +466,17 @@ describe("GitHub evidence refresh", () => {
     expect(source.normalizedFacts).toMatchObject({ stars: 146 });
     expect(JSON.stringify(log.mock.calls)).not.toMatch(/test-token|Live service|https?:\/\//i);
   });
+
+  it("schedules GitHub evidence after the auth-pool retry time", async () => {
+    const resetAt = new Date("2026-08-19T07:00:00.000Z");
+    const request = vi.fn().mockResolvedValue({ ok: false,
+      error: { kind: "auth_unavailable", reason: "expired", resetAt } });
+
+    await refreshGitHubEvidence({ slug: "github-product", repository: "owner/repo" }, {
+      request, now: () => new Date("2026-08-19T06:00:00.000Z"),
+    });
+
+    const [source] = await db.select().from(productEvidenceSources).where(eq(productEvidenceSources.slug, "github-product"));
+    expect(source).toMatchObject({ state: "failed", lastErrorCode: "auth_unavailable", nextAttemptAt: resetAt });
+  });
 });

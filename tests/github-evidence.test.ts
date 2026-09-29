@@ -10,6 +10,7 @@ const fetchMock = vi.fn();
 vi.mock("@/lib/crawl/github-quota", async importOriginal => ({
   ...await importOriginal<typeof import("@/lib/crawl/github-quota")>(),
   readGitHubCooldown: async () => null,
+  readGitHubAuthCooldown: async () => null,
   recordGitHubCooldown: async (_token: string, _resource: string, cooldown: { retryAt: Date }) => cooldown.retryAt,
 }));
 

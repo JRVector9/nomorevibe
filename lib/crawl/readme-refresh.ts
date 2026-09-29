@@ -9,7 +9,8 @@ const failed = (error = "temporary", retryAfter: number | null = null): ReadmeRe
 function apiFailure(error: GitHubFailure, confirmedPublic = false): ReadmeRefreshResult {
   return error.kind === "not_found" && confirmedPublic ? { ok: true, sample: "" }
     : failed(error.kind === "http" ? `http_${error.status}` : error.kind,
-      error.kind === "rate_limited" ? error.resetAt?.getTime() ?? null : null);
+      error.kind === "rate_limited" || error.kind === "auth_unavailable"
+        ? error.resetAt?.getTime() ?? null : null);
 }
 
 /** One eight-second budget; authenticated fallback may only read a currently public repository. */

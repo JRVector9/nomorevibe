@@ -284,6 +284,22 @@ describe("수집 잡", () => {
     expect(await crawl.dequeue(10)).toEqual([]);
   });
 
+  it("all credentials rejected pauses the batch without consuming repository attempts", async () => {
+    await crawl.enqueue([
+      { repo: "a/one", signal: "commit-trailer" },
+      { repo: "b/two", signal: "commit-trailer" },
+    ]);
+    const resetAt = new Date(Date.now() + 15 * 60_000);
+    getRepo.mockResolvedValue({ ok: false, error: { kind: "auth_unavailable", reason: "expired", resetAt } });
+
+    expect(await tick()).toMatchObject({ status: "completed", done: false });
+    expect(getRepo).toHaveBeenCalledTimes(1);
+    expect(await crawl.frontierCounts()).toEqual({ pending: 2 });
+    const waiting = await db.select().from(crawlFrontier);
+    expect(waiting.map(entry => entry.nextAttemptAt)).toEqual([resetAt, resetAt]);
+    expect(waiting.every(entry => entry.attempts === 0 && entry.lastError === null)).toBe(true);
+  });
+
   it("does not release a frontier claim replaced after the original batch was read", async () => {
     await crawl.enqueue([{ repo: "a/one", signal: "commit-trailer" }]);
     const claimed = await crawl.dequeue(1);
