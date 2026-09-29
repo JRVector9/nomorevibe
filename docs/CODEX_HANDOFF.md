@@ -1,3 +1,59 @@
+# 2026-09-29 — 수집·1차 심사 재시도 소진 복구 운영 적용 완료
+
+## Current objective / completed work
+
+멈춰 있던 1차 AI 심사 후보 2건과 GitHub 원본 재수집 실패 후보 1건을 사람 심사 큐로
+옮기는 수정을 PR #240으로 main `50b02b739a556af4ad92cd86fbd72c429f00e4e2`에
+병합했다. 새 공통 worker/web 이미지를 운영 8개 앱에 순차 배포했고 공개 M3·mini 웹
+health, 역할별 준비·진행 상태, 실제 후보 3건의 인계를 확인했다. 루트 checkout의 사용자
+변경, DB 서버·스트리밍·스키마는 건드리지 않았다.
+
+## Modified files / key design decisions
+
+기능 파일과 테스트 목록은 바로 아래 구현 단계 항목에 있다. 운영 적용 기록으로 이 파일을
+추가 수정했다. 재시도 소진은 자동 승인이나 오래된 원본 재사용 대신
+`ai_review_exhausted`/`source_refresh_failed` 사람 심사 사유로 남긴다. 단계별
+`manualAttention`은 워커 장애 경보와 분리한다. 이전 앱 설정의 0600 복구 스냅샷은
+`/private/tmp/nomorevibe-release-50b02b7.json`이며 비밀값을 포함하므로 내용을
+출력하거나 저장소에 넣지 않는다. 새 worker digest는
+`sha256:bb289114dc4a9e7fce059ff28b60a95e3086bbe2f3611a98ed7a8e260c710c9f`,
+web digest는 `sha256:35f5df4f1c9b92536eb39b0795391e0d4295b49fd4fc6238ae082febb9cb105e`다.
+
+## Test commands and results / failed approaches
+
+로컬 `npx tsc --noEmit`, `npm run lint`, `npm run build`, `git diff --check` 종료 0;
+`npm test` 160파일 1276/1276 통과, 관련 통합 56개·28개와 관리자 사유 파일 15/15 통과.
+PR #240의 GitGuardian, quality, 통합 3분할, 필수 `check` 성공; main run
+`36579824652`의 동일 검사와 worker/web 이미지 빌드 성공. 배포 CLI `plan`·`run`
+종료 0; 8개 앱 `done`/healthy, crawler·reviewer·publisher 역할 `ready`와 진행 `ok`,
+공개 M3·mini health `ok`. 배포 전 후보 ID 109663·109675는 `approved`, 16941은
+`new`/frontier `skipped`였다. 배포 후 세 후보 모두 `needs_review`가 됐고 실제
+`reviewQueueCauses`의 `ai_review_exhausted`에 앞의 2개, `source_refresh_failed`에
+나머지 1개가 나타났다. 실제 `pipelineThroughput`은 fetch `manualAttention=1`,
+first `manualAttention=2`; 진행 CLI는 두 단계 `manual_attention`, `alarm=false`,
+전체 failover/progress `ok`였다. 최근 5분 수집·규칙·1차·2차·발행 완료량은
+각각 14·14·4·5표·3이었다.
+
+첫 전체 단위 검사에서 새 repository 함수를 테스트 목에 빠뜨려 19개가 실패했으며,
+목 수정 후 전체 재실행이 통과했다. 운영 조회에서 TypeScript 프로세스가 DB 풀을
+열어 둬 SSH가 40초에 만료됐고, 조회 출력 뒤 프로세스를 종료하여 정상 측정했다.
+운영 복구/롤백 또는 장시간 장애 주입은 수행하지 않았다.
+
+## Remaining work / exact commands for the next agent
+
+이 운영 기록 문서만 commit/push하고 docs-only PR의 필수 `check`와 GitGuardian을
+확인한 뒤 병합한다. 장기 관측과 실제 장애·복구 주입은 `PENDING.md`의 별도 항목이다.
+
+```sh
+cd /private/tmp/nmv-pipeline-deploy-20260929
+git status --short --branch
+git diff --check
+gh run view 36579824652 --repo JRVector9/nomorevibe --json conclusion,jobs
+curl -fsS https://nomorevibe.brut.bot/api/health
+```
+
+---
+
 # 2026-09-29 22:56 KST — 수집·1차 심사 재시도 소진 복구 구현, 운영 적용 대기
 
 ## Current objective / completed work
