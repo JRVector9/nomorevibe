@@ -83,12 +83,14 @@ docker compose logs --since=5m scheduler crawler reviewer publisher text mainten
 ### 공통 이미지 릴리스
 
 코드 변경이 main에 들어간 뒤 CI의 필수 `check`가 성공하면 GHCR에
-`ghcr.io/jrvector9/nomorevibe-web:<SHA>`와
+비공개 `ghcr.io/jrvector9/nomorevibe-runtime-web:<SHA>`와
 `ghcr.io/jrvector9/nomorevibe-worker:<SHA>`가 각각 한 번 생성된다.
 두 이미지의 Actions 작업이 성공하고 OCI `revision`이 같은 SHA인지 확인한다.
 M3와 mini 모두 arm64다. 웹 빌드는 두 앱이 공유하는 Actions secret
 `NEXT_SERVER_ACTIONS_ENCRYPTION_KEY`와 `NEXT_DEPLOYMENT_ID=<SHA>`를 사용한다.
-비밀값은 보고서·셸 로그·Git에 남기지 않는다.
+비밀값은 보고서·셸 로그·Git에 남기지 않는다. Next 서버 참조 manifest에는 빌드 키가
+들어가므로 웹 패키지는 GHCR에서 `private`임을 확인한 뒤 빌드한다. 웹 이미지
+푸시는 `GHCR_PUSH_TOKEN`을 사용하고 공개 저장소와 연결되는 source label을 붙이지 않는다.
 
 배포 전에 두 이미지의 SHA 태그를 registry의 `sha256:` digest로 풀고,
 **각 서버에서** 해당 digest를 실제로 pull할 수 있는지 확인한다. Dokploy의

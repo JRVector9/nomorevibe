@@ -25,11 +25,13 @@ main push의 중복 전체 CI도 문서 변경에는 실행하지 않는다.
 ## 이미지 생성과 배포
 
 main의 코드 변경 `check` 성공 후 GitHub Actions가 같은 SHA의 `worker`와
-`runner` 이미지를 각각 한 번 빌드해 기존 JRVector9 GHCR에 올린다. 웹은
+`runner` 이미지를 각각 한 번 빌드해 JRVector9 GHCR에 올린다. 웹은
 운영 M3·mini가 모두 `arm64`이므로 `ubuntu-24.04-arm` runner에서
-`linux/arm64` 이미지로 빌드한다. 기존 GHCR-deppy 등록의 실제 Docker 로그인은
-인증 거부를 반환했다. 두 서버에서 이미지 pull을 확인하기 전에는 source를 전환하지
-않는다. 웹은
+`linux/arm64` 이미지로 빌드한다. Next의 서버 참조 manifest에 Actions 빌드 키가
+들어가므로 웹 패키지는 공개 저장소와 별도로 만든 비공개
+`nomorevibe-runtime-web`에만 발행한다. 기존 GHCR-deppy 등록의 실제 Docker 로그인은
+인증 거부를 반환했다. 두 서버에서 새 비공개 이미지 pull을 확인하기 전에는 source를
+전환하지 않는다. 웹은
 현재 Dokploy 두 앱의 동일한 `NEXT_SERVER_ACTIONS_ENCRYPTION_KEY`를 Actions
 secret으로 복사해 BuildKit secret mount에만 제공하고 `NEXT_DEPLOYMENT_ID`는
 commit SHA로 고정한다. Actions token에는 해당 잡에서만 `packages: write`를

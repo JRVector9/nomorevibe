@@ -1,3 +1,66 @@
+# 2026-09-29 18:50 KST — 공개 웹 이미지의 빌드 키 노출 대응
+
+## Current objective / completed work
+
+배포 시간 단축 PR #234는 main `202e9d7b2d3825842c5c5e2568aa8881bab66592`에 병합됐고
+main 필수 `check`와 두 ARM 이미지 빌드가 성공했다. 운영 8개 앱은 아직 이전 Git
+소스/릴리스 `e232f16`으로 실행 중이며 두 웹의 autoDeploy는 중복 빌드 방지를 위해
+false로 바꿨다. 공개 `nomorevibe-web` 이미지에서 실제
+`NEXT_SERVER_ACTIONS_ENCRYPTION_KEY`가 `/app/.next/server/server-reference-manifest.{js,json}`에
+들어간 것을 발견해 웹 앱 전환을 중지했다. 해당 GHCR 패키지를 삭제했고 익명 manifest
+접근이 404가 된 것을 확인했다. 이전 키는 노출된 것으로 보고 교체한다.
+
+## Modified files / key decisions
+
+새 작업 트리 `/private/tmp/nmv-private-web-20260929`의 `fix/private-web-image`에서
+`.github/workflows/ci.yml`, `README.md`,
+`docs/operations/independent-workers-runbook.md`, 이 파일을 수정 중이다.
+웹 이미지는 별도 `nomorevibe-runtime-web` 패키지에 계정 토큰으로 푸시하고,
+푸시 전 `private` 가드를 둔다. 공개 저장소를 연결하는 OCI source label을 웹에서는
+제거한다. 임시 작은 이미지로 새 패키지의 기본 `private` 설정을 직접 확인했고
+동일 이름의 비공개 웹 패키지를 bootstrap했다. 로컬 GitHub CLI의 package-write
+토큰을 Actions secret `GHCR_PUSH_TOKEN`에 등록했다.
+
+새 32바이트 base64 키는 값 출력 없이
+`/private/tmp/nmv-next-actions-rotated-20260929.key`(mode 0600)에 저장하고 Actions
+secret `NEXT_SERVER_ACTIONS_ENCRYPTION_KEY`를 갱신했다. 이 키는 아직 운영 웹
+두 앱에는 적용하지 않았다. 기존 두 웹의 빌드/런타임 키를 같은 새 값으로 교체해
+비공개 이미지와 함께 배포해야 한다. 기존 `GHCR-deppy` 등록 PAT는 Docker login이
+거부되므로 웹 Docker provider에는 유효한 pull 자격 정보를 직접 넣어야 한다.
+
+## Test commands and results / failed approaches
+
+PR #234 hosted `check`, 통합 3분할, 보안 검사 성공. main의 `check`와 첫 worker/web
+이미지 빌드도 성공했고 두 서버에서 두 digest의 실제 pull, arm64와 OCI revision을
+검증했다. 단, 첫 웹 이미지는 공개였다. 2,732개 웹 이미지 파일을 실제로 검색해
+키가 server-reference manifest 두 파일에 있는 것을 확인했다.
+GHCR public package는 private으로 되돌릴 수 없다는 GitHub 문서 때문에 해당
+신규 패키지를 삭제했다. 임시 이미지 계정 토큰 push는 private 패키지를 만들었고
+`nomorevibe-runtime-web` bootstrap도 `private`으로 확인했다. 새 workflow의
+`actionlint`와 `git diff --check`는 통과했다. PR hosted CI와 private 웹 빌드는
+아직 실행하지 않았다.
+
+## Remaining work / exact commands for the next agent
+
+새 workflow/diff 검증 후 PR을 열어 CI/병합한다. main private 이미지 빌드의
+package visibility와 digest를 확인하고 M3/mini에서 인증된 pull을 시험한다.
+두 운영 웹의 buildSecrets와 runtime env에 새 키를 넣고 같은 새 private image로
+교체한다. worker 역할 6개도 새 main worker digest로 예비→주 순서로 배포한다.
+실제 실행 중 이미지 digest, readiness/progress, 공개 health를 확인한다.
+문서 후속 PR에서 docs-only `check`를 실측하고 운영 기록을 갱신한다.
+
+```sh
+cd /private/tmp/nmv-private-web-20260929
+git status --short --branch
+actionlint .github/workflows/ci.yml
+git diff --check
+gh api user/packages/container/nomorevibe-runtime-web --jq '{name,visibility}'
+gh secret list --repo JRVector9/nomorevibe
+gh run list --repo JRVector9/nomorevibe --workflow ci.yml --limit 5
+```
+
+---
+
 # 2026-09-29 18:32 KST — CI 분할·공통 이미지 빌드 구현, PR 전 검증
 
 ## Current objective / completed work

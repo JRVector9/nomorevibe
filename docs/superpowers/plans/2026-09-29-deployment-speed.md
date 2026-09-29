@@ -30,6 +30,8 @@
 - [ ] GHCR 접근과 existing JRVector9 registry의 두 서버 접근을 검증한다.
 - [ ] main code-change `check` 성공 후 `worker`/`runner` 두 image를 Buildx로 빌드·푸시한다.
 - [ ] 이미지 label, SHA 태그, immutable digest, web/worker entrypoint·CLI·healthcheck를 확인한다.
+- [ ] 웹 이미지 package가 private이고 익명 manifest 조회가 거부되는지 빌드 전후 확인한다.
+- [ ] 이전 공개 웹 빌드 키를 회전하고 두 운영 웹의 build/runtime 키를 새 값으로 일치시킨다.
 
 ## Task 4 — 운영 이미지 배포 전환
 

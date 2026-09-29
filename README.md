@@ -90,7 +90,8 @@ main push와 PR에서 필수 `check`를 항상 실행한다. `README.md`, `PENDI
 전용 DB를 사용하고, 묶음 안에서는 파일을 직렬 실행한다. 같은 PR의 새 커밋은 이전 실행을 취소하며,
 서로 다른 PR은 별도로 실행한다. 코드 잡 제한은 20분이다. Actions는 Node 24 런타임의 고정 SHA를 사용한다.
 main의 코드 변경 `check`가 성공하면 arm64 웹·워커 이미지를 각각 한 번 빌드해 GHCR에 SHA 태그로
-올린다. 배포할 때는 태그가 가리키는 digest를 확인해 같은 이미지를 여러 앱에 사용한다.
+올린다. 웹 이미지 `nomorevibe-runtime-web`은 빌드 키가 포함될 수 있으므로 비공개 패키지에
+발행한다. 배포할 때는 태그가 가리키는 digest를 확인해 같은 이미지를 여러 앱에 사용한다.
 
 main은 관리자에게도 PR과 최신 base의 `check` 성공을 요구한다. 강제 푸시·브랜치 삭제를 막고,
 리뷰 대화 해결을 요구한다. 공개 저장소의 secret scanning·push protection·Dependabot 보안 업데이트도
