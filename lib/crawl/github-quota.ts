@@ -17,6 +17,25 @@ export function githubQuotaKeys(token: string, resource: GitHubResource) {
     legacySecondary: `${prefix}:secondary` };
 }
 
+export function githubAuthKey(token: string): string {
+  return `github:auth:${createHash("sha256").update(token).digest("hex")}`;
+}
+
+/** A rejected credential is shared across workers so it cannot be retried on every job tick. */
+export async function readGitHubAuthCooldown(token: string): Promise<Date | null> {
+  const rows = await db.select({ resetAt: rateLimits.resetAt }).from(rateLimits)
+    .where(sql`${rateLimits.key} = ${githubAuthKey(token)} and ${rateLimits.resetAt} > now()`);
+  return rows[0]?.resetAt ?? null;
+}
+
+export async function recordGitHubAuthCooldown(token: string, retryAt: Date): Promise<Date> {
+  const [row] = await db.insert(rateLimits).values({ key: githubAuthKey(token), count: 0, resetAt: retryAt })
+    .onConflictDoUpdate({ target: rateLimits.key,
+      set: { resetAt: sql`greatest(${rateLimits.resetAt}, excluded.reset_at)` } })
+    .returning({ resetAt: rateLimits.resetAt });
+  return row.resetAt;
+}
+
 export type GitHubCooldown = { retryAt: Date; primary: boolean; secondary: boolean };
 
 /** Both delay forms may be supplied; never resume before the later one. */

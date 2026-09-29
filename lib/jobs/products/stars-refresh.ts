@@ -31,7 +31,7 @@ export async function refreshProductStars(ctx:JobContext<StarsCursor>,dependenci
    let result:GitHubHttpResult<Record<string,unknown>>;
    try{result=repo?await request(`/repos/${repo}`,{},{timeoutMs:Math.min(8000,deadline-Date.now())}):{ok:false,error:{kind:'invalid_response'}};}
    catch{ return {retryAt:new Date(Date.now()+60*60_000)}; }
-   if(!result.ok && result.error.kind==='rate_limited')return {retryAt:result.error.resetAt??new Date(Date.now()+15*60_000)};
+   if(!result.ok && (result.error.kind==='rate_limited'||result.error.kind==='auth_unavailable'))return {retryAt:result.error.resetAt??new Date(Date.now()+15*60_000)};
    if(!result.ok && result.error.kind==='http' && [401,403].includes(result.error.status))return {retryAt:new Date(Date.now()+60*60_000)};
    const stats=result.ok&&result.status===200?parseRepositoryStats(result.value):null;
    // 레포나 공개 상태가 요청 중 바뀌면 이전 응답을 적용하지 않는다. 임대도 같은 트랜잭션에서 확인한다.

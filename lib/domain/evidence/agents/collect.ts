@@ -39,7 +39,7 @@ function normalizeScope(scope: string): string {
   return normalized;
 }
 function failure(error: GitHubFailure): Pick<CollectResult, 'errorCode' | 'retryAt'> {
-  return { errorCode: error.kind === 'rate_limited' ? 'rate_limited' : error.kind === 'invalid_response' ? 'invalid' : error.kind === 'transport' ? 'timeout' : 'unavailable', retryAt: error.kind === 'rate_limited' ? error.resetAt : null };
+  return { errorCode: error.kind === 'rate_limited' ? 'rate_limited' : error.kind === 'invalid_response' ? 'invalid' : error.kind === 'transport' ? 'timeout' : 'unavailable', retryAt: error.kind === 'rate_limited' || error.kind === 'auth_unavailable' ? error.resetAt : null };
 }
 export async function collectRepositoryAgentEvidence(input: {
   repositoryKey: string; scope?: string; cursor?: CollectCursor | null; request?: AgentGitHubRequest;

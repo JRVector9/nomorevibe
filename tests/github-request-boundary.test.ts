@@ -4,6 +4,7 @@ const quota = vi.hoisted(() => ({ read: vi.fn().mockResolvedValue(null), record:
 vi.mock("@/lib/crawl/github-quota", async importOriginal => ({
   ...await importOriginal<typeof import("@/lib/crawl/github-quota")>(),
   readGitHubCooldown: quota.read,
+  readGitHubAuthCooldown: async () => null,
   recordGitHubCooldown: async (token: string, resource: string, cooldown: { retryAt: Date }) => {
     quota.record(token, resource, cooldown); return cooldown.retryAt;
   },

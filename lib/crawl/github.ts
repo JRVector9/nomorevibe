@@ -1,6 +1,7 @@
 import { logger } from "@/lib/observability/logger";
 import { readBodyStrictlyCapped } from "@/lib/net/fetch";
-import { githubCooldown, githubResource, readGitHubCooldown, recordGitHubCooldown } from "./github-quota";
+import { githubCooldown, githubResource, readGitHubCooldown, recordGitHubCooldown,
+  readGitHubAuthCooldown, recordGitHubAuthCooldown } from "./github-quota";
 import { collectorTokens, observeCollectorQuota, type CollectorToken } from "./github-accounts";
 
 /**
@@ -16,12 +17,16 @@ import { collectorTokens, observeCollectorQuota, type CollectorToken } from "./g
 
 const API_ORIGIN = "https://api.github.com";
 const GITHUB_RESPONSE_MAX_BYTES = 2 * 1024 * 1024;
+const AUTH_RETRY_DELAYS_MS = [100, 250] as const;
+const AUTH_COOLDOWN_MS = 15 * 60_000;
+type AuthReason = "expired" | "revoked" | "bad_credentials" | "unauthorized" | "blocked" | "cooldown";
 
 export type GitHubFailure =
   | { kind: "rate_limited"; resetAt: Date | null }
   | { kind: "not_found" }
   | { kind: "transport" }
   | { kind: "invalid_response" }
+  | { kind: "auth_unavailable"; reason: AuthReason; resetAt: Date | null }
   | { kind: "http"; status: number };
 
 export type GitHubResult<T> = { ok: true; value: T } | { ok: false; error: GitHubFailure };
@@ -67,18 +72,47 @@ export async function githubRequest<T>(
   rotation[resource] = start + 1;
   const deadline = Date.now() + Math.max(1, Math.min(options.timeoutMs ?? 10_000, 10_000));
   let earliestReset: Date | null = null;
+  let authFailure: Extract<GitHubFailure, { kind: "auth_unavailable" }> | null = null;
   for (let offset = 0; offset < accounts.length; offset++) {
-    const remainingMs = deadline - Date.now();
-    if (remainingMs <= 0) return { ok: false, error: { kind: "transport" } };
     const account = accounts[(start + offset) % accounts.length];
     let secondary = false;
-    const result = await githubRequestWithToken<T>(path, conditional, { timeoutMs: remainingMs }, account, () => { secondary = true; });
+    let sawUnauthorized = false;
+    let result: GitHubHttpResult<T>;
+    for (let attempt = 0; ; attempt++) {
+      const remainingMs = deadline - Date.now();
+      if (remainingMs <= 0) return authFailure
+        ? { ok: false, error: { ...authFailure, resetAt: new Date(Math.min(
+          authFailure.resetAt?.getTime() ?? Infinity, Date.now() + 60_000)) } }
+        : { ok: false, error: { kind: "transport" } };
+      result = await githubRequestWithToken<T>(path, conditional, { timeoutMs: remainingMs }, account, () => { secondary = true; });
+      if (!result.ok && result.error.kind === "http" && result.error.status === 403 && sawUnauthorized) {
+        const resetAt = await recordGitHubAuthCooldown(account.token, new Date(Date.now() + AUTH_COOLDOWN_MS));
+        logger.warn("github.auth_rejected", { accountId: account.userId, reason: "blocked" });
+        result = { ok: false, error: { kind: "auth_unavailable", reason: "blocked", resetAt } };
+        break;
+      }
+      if (result.ok || result.error.kind !== "auth_unavailable" || result.error.reason === "cooldown") break;
+      sawUnauthorized = true;
+      if (result.error.reason === "blocked" || attempt >= AUTH_RETRY_DELAYS_MS.length
+        || deadline - Date.now() <= AUTH_RETRY_DELAYS_MS[attempt]) {
+        const resetAt = await recordGitHubAuthCooldown(account.token, new Date(Date.now() + AUTH_COOLDOWN_MS));
+        result = { ok: false, error: { ...result.error, resetAt } };
+        break;
+      }
+      await new Promise(resolve => setTimeout(resolve, AUTH_RETRY_DELAYS_MS[attempt]));
+    }
+    if (!result.ok && result.error.kind === "auth_unavailable") {
+      authFailure = result.error;
+      continue;
+    }
     if (!result.ok && result.error.kind === "rate_limited" && !secondary) {
       if (result.error.resetAt && (!earliestReset || result.error.resetAt < earliestReset)) earliestReset = result.error.resetAt;
       continue;
     }
     return result;
   }
+  if (earliestReset === null && authFailure) return { ok: false, error: { ...authFailure,
+    resetAt: new Date(Math.min(authFailure.resetAt?.getTime() ?? Infinity, Date.now() + 60_000)) } };
   return { ok: false, error: { kind: "rate_limited", resetAt: earliestReset } };
 }
 
@@ -88,6 +122,8 @@ async function githubRequestWithToken<T>(
 ): Promise<GitHubHttpResult<T>> {
   const token = account.token;
   const resource = githubResource(path);
+  const authUntil = await readGitHubAuthCooldown(token);
+  if (authUntil) return { ok: false, error: { kind: "auth_unavailable", reason: "cooldown", resetAt: authUntil } };
   const waitingUntil = await readGitHubCooldown(token, resource);
   if (waitingUntil) return { ok: false, error: { kind: "rate_limited", resetAt: waitingUntil } };
   const headers: Record<string, string> = {
@@ -148,6 +184,21 @@ async function githubRequestWithToken<T>(
     await res.body?.cancel().catch(() => {});
     logger.warn("github.rate_limited", { path, resetAt: resetAt?.toISOString(), secondary: cooldown.secondary });
     return { ok: false, error: { kind: "rate_limited", resetAt } };
+  }
+
+  if (res.status === 401) {
+    let reason: AuthReason = "unauthorized";
+    try {
+      const body = await readBodyStrictlyCapped(res, GITHUB_RESPONSE_MAX_BYTES);
+      const message = body ? (JSON.parse(body.toString("utf8")) as { message?: unknown }).message : null;
+      if (typeof message === "string") {
+        if (/expir/i.test(message)) reason = "expired";
+        else if (/revok/i.test(message)) reason = "revoked";
+        else if (/bad credentials/i.test(message)) reason = "bad_credentials";
+      }
+    } catch { /* Only a bounded reason code is recorded; raw response text is never logged. */ }
+    logger.warn("github.auth_rejected", { accountId: account.userId, reason });
+    return { ok: false, error: { kind: "auth_unavailable", reason, resetAt: null } };
   }
 
   const responseHeaders = {

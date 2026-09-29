@@ -77,6 +77,14 @@ describe('bounded GitHub agent collector', () => {
     expect(result.errorCode).toBe('rate_limited');
     expect(result.retryAt).toEqual(new Date('2026-09-07'));
   });
+  it('preserves the auth-pool retry time for an unavailable GitHub account pool', async () => {
+    const resetAt = new Date('2026-09-07T00:15:00Z');
+    const request = async <T>(): Promise<GitHubHttpResult<T>> => ({
+      ok: false, error: { kind: 'auth_unavailable', reason: 'expired', resetAt },
+    });
+    const result = await collectRepositoryAgentEvidence({ repositoryKey: 'acme/app', request });
+    expect(result).toMatchObject({ state: 'failed', errorCode: 'unavailable', retryAt: resetAt });
+  });
   it('skips immutable tree and blobs when the complete SHA is unchanged', async () => {
     const mock = mockRequest();
     const result = await collectRepositoryAgentEvidence({ repositoryKey: 'acme/app', request: mock.request, knownComplete: { repositoryId: '12', commitSha: COMMIT } });

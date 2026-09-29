@@ -1,3 +1,58 @@
+# 2026-09-29 12:16 KST — GitHub 401 계정 전환 수정
+
+## 현재 목적 / 완료 작업 / 수정 파일
+
+사용자는 수집 중 한 PAT가 만료되어 GitHub REST가 401을 돌려줄 때 응답 이유를
+검토하고 제한적으로 재시도한 뒤 다른 계정으로 즉시 전환하도록 요청했다. 별도 작업 트리
+`/private/tmp/nmv-github-auth-fallback`의 `fix/github-auth-fallback`에서 원인을 재현하고
+요청 함수, 수집 큐, 관련 GitHub 갱신 작업과 회귀 테스트를 수정했다. 운영 배포는 아직이다.
+루트 checkout의 사용자 변경·운영 DB 서버/streaming·중단된 `product-intro-check`는 건드리지 않았다.
+
+수정 파일: `lib/crawl/github{,-quota}.ts`, `lib/crawl/jobs/{fetch,seed}.ts`,
+`lib/crawl/readme-refresh.ts`, `lib/domain/evidence/agents/collect.ts`,
+`lib/domain/evidence/providers/github.ts`,
+`lib/jobs/products/{agent-evidence-refresh,stars-refresh}.ts`, 해당 단위·통합 테스트,
+`docs/operations/independent-workers-runbook.md`, `PENDING.md`, 이 문서.
+
+## 핵심 설계 결정 / 실제 시험 / 실패 접근
+
+401 JSON 본문을 크기 제한 안에서 읽어 `expired`·`revoked`·`bad_credentials`·
+`unauthorized`만 기록한다. 같은 토큰에 100ms·250ms 뒤 최대 두 번 재시도하고,
+반복 실패 또는 401 뒤 일반 403이면 SHA-256 키로 기존 `rate_limits`에 15분 보류한다.
+토큰 값이나 원문 오류는 기록하지 않는다. 다른 계정으로 즉시 전환하며, 모든 토큰이
+거부되면 풀을 약 1분 뒤 다시 확인한다. 프론티어 claim은 실패 횟수를 소모하지 않고
+되돌린다. 새 PAT는 새 해시 키라 보류된 기존 PAT와 독립이다. secondary 한도는 기존처럼
+전체 계정에 공유하고 일반 권한 403은 다른 토큰으로 자동 전환하지 않는다.
+
+TDD로 첫 401 전환 테스트와 전체 토큰 거부 시 fetch/seed 보류 테스트를 실패시킨 뒤
+수정했다. 401→403, 일시 401 회복, 공유 cooldown, README·agent evidence·GitHub
+근거·스타 갱신의 재개 시각도 각각 테스트했다. `npm test` 159파일 1,267/1,267,
+관련 통합 6파일 73/73, `npx next typegen`, `npx tsc --noEmit`, `npm run lint`,
+`npm run build`, `git diff --check` 통과. lint에는 기존 vendor 파일의 미사용 변수
+경고 1건, build에는 기존 `agent-review.ts` 동적 filesystem tracing 경고 1건이 있다.
+관련 테스트의 초기 전체 단위 실행 1건 실패는 새 테스트가 앞 테스트의 `mockResolvedValueOnce`
+잔여 값을 공유한 탓이었다. `beforeEach`에서 mock 구현을 초기화한 뒤 전체 재실행은 통과했다.
+운영 PAT를 실제로 만료·폐기해 보는 장애 주입은 하지 않았다.
+
+## 남은 작업 / 정확한 다음 명령
+
+PR 생성과 최신 base CI 통과, main 병합 후 crawler mini 예비→M3 주를 동일 릴리스로
+순차 배포한다. role lease/예비 대기, 수집 증가, `jobs.last_error`, API 계정 잔여량과
+공개 헬스를 확인한다. 코드-only 변경이며 운영 DB 마이그레이션은 없다.
+
+```sh
+cd /private/tmp/nmv-github-auth-fallback
+git diff --check
+git status --short --branch
+npm test
+npm run test:integration -- tests/integration/crawl-fetch.test.ts tests/integration/crawl-seed.test.ts tests/integration/github-auth-cooldown.test.ts tests/integration/github-evidence.test.ts tests/integration/popular-projects.test.ts tests/integration/crawl-github-identity.test.ts
+npx next typegen && npx tsc --noEmit
+npm run lint
+npm run build
+```
+
+---
+
 # 2026-09-29 09:04 KST — GitHub 수집 PAT 관리자 기능 운영 완료
 
 ## 현재 목적 / 완료 작업 / 수정 파일

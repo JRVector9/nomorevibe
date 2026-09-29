@@ -36,6 +36,14 @@ describe("public README fallback", () => {
     mocks.api.mockResolvedValueOnce({ ok: false, error: { kind: "rate_limited", resetAt } });
     expect(await fetchPublicReadme("someone/repo")).toEqual({ ok: false, error: "rate_limited", retryAfter: resetAt.getTime() });
   });
+  it("preserves the auth-pool retry time instead of treating a README as absent", async () => {
+    const resetAt = new Date(Date.now() + 60_000);
+    mocks.api.mockResolvedValueOnce({ ok: false,
+      error: { kind: "auth_unavailable", reason: "expired", resetAt } });
+    expect(await fetchPublicReadme("someone/repo")).toEqual({
+      ok: false, error: "auth_unavailable", retryAfter: resetAt.getTime(),
+    });
+  });
   it("downloads a bounded public raw prefix when the API omits oversized inline content", async () => {
     mocks.api.mockResolvedValueOnce(publicRepo).mockResolvedValueOnce({ ok: true, status: 200,
       value: { encoding: "none", download_url: "https://raw.githubusercontent.com/someone/repo/main/ReadMe.md" } });
