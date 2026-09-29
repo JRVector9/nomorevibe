@@ -1,3 +1,68 @@
+# 2026-09-29 09:04 KST — GitHub 수집 PAT 관리자 기능 운영 완료
+
+## 현재 목적 / 완료 작업 / 수정 파일
+
+사용자가 클립보드에 둔 두 번째 실제 GitHub 계정 PAT로 관리자 등록·교체 및 수집
+사용을 확인했다. 기능 PR #225는 최신 base의 CI `check`와 GitGuardian 성공 후
+main의 `0dbbf21489a779582018e3597ebab55492b115a4`로 병합됐다. 운영 앱 DB에
+가산 마이그레이션 0053을 적용했고 웹 M3·mini, crawler M3 주·mini 예비 네 앱에
+같은 전용 암호화 키와 병합 SHA를 배포했다. DB 서버·스트리밍 설정은 바꾸지 않았다.
+이 기록 단계에서 수정한 파일은 `docs/CODEX_HANDOFF.md`,
+`docs/operations/2026-09-29-github-collector-accounts.md`, `PENDING.md`,
+`docs/superpowers/plans/2026-09-29-github-pat-pool.md`이다. 루트 checkout의 사용자
+변경과 중지된 `product-intro-check`는 보존했다.
+
+## 핵심 설계 결정 / 실제 시험 / 실패 접근
+
+기존 crawler 환경 `GITHUB_TOKEN`을 유지하면서 DB에 등록된 다른 계정을 함께
+회전시킨다. PAT는 GitHub 숫자 사용자 ID로 식별해 동일 계정 등록은 교체하며,
+전용 키로 암호화해 저장한다. 관리자 화면·로그에는 원문과 암호문을 표시하지 않는다.
+primary core 한도 소진 시 다음 계정으로 전환하고 secondary cooldown은 전 계정에
+공유한다. 계정별 GitHub 사용량과 전체 원본 저장량은 다른 단위로 표시한다.
+
+클립보드 PAT의 `/user`는 `lollol-jr`/ID `227736397`로 기존 `JRVector9`와
+달랐고, `/rate_limit`은 core 5,000/시간이었다. 공개 저장소·저장소 검색·커밋
+검색이 모두 HTTP 200이었다. 운영 관리자 폼에서 등록과 명시적 동일 계정 교체를
+각각 수행해 HTTP 200/성공 문구/새로고침 후 계정 1개를 확인했다. 운영 DB에는
+활성 계정 1행과 길이 164자의 암호문만 확인했다. 앱 수집 코드로 DB 복호화 후
+공개 저장소 `octocat/Hello-World` 조회 HTTP 200도 확인했다. 새 계정 core
+잔여량이 4,884→4,808로 줄고 관측 시각이 갱신돼 배포 수집기가 계정을 실제
+사용 중이었다. 1시간 quota reset 이후 관리자 교체 화면은 5,000 잔여를 보였다.
+원본 총수는 108,406→108,445로 39건 증가했다. `crawl-fetch`는 최근 성공했고
+M3 crawler lease가 활성, mini는 배포 완료된 예비다. 두 공개 웹 헬스체크는
+각각 새 SHA에 `status:ok`, `db:ok`였다.
+
+최신 코드의 로컬 `npm test`는 159파일 1,256/1,256, 전용 DB 통합 시험은
+2파일 3/3 통과했다. `next typegen`, `tsc --noEmit`, 수정 파일 ESLint,
+`npm run build`도 통과했으며 기존 `agent-review.ts` 경고 1건이 있었다.
+PR CI의 lint·unit·integration·build와 GitGuardian이 모두 성공했다.
+처음 `gh run watch`는 별도 `gh` 로그인 계정의 core 5,000회 소진으로 403이었고,
+새 PAT로 읽기 전용 CI를 확인했다. 로컬 DB 연동 조회의 첫 실행은 결과 후 열린
+DB 풀 때문에 프로세스가 20초에 종료되지 않아 timeout 났다. 결과 출력 후
+명시적으로 종료한 재실행은 HTTP 200이었다. 실제 PAT 값은 어떤 출력·파일에도
+남기지 않았다.
+
+## 남은 작업 / 정확한 다음 명령
+
+실제 한 계정의 primary 한도 소진을 기다린 자동 계정 전환과 24시간 quota·수집량
+관측은 남는다. 단위 테스트에서는 primary·secondary·모두 소진 경로를 검증했다.
+새 계정 PAT 만료 전에 관리자에서 교체하고, 암호화 키 회전 때는 저장된 모든 PAT를
+새 키로 안전하게 재암호화해야 한다. 운영 키는 Dokploy 네 앱과 이 머신의 Keychain
+`nomorevibe/github-collector-secret`에 보관돼 있다. 값은 출력하지 않는다.
+
+```sh
+cd /private/tmp/nmv-github-token-pool
+gh pr view 225 --json state,mergeCommit,statusCheckRollup
+python3 /tmp/nmv-github-pat-deploy.py status 0dbbf21489a779582018e3597ebab55492b115a4 crawler-m3
+python3 /tmp/nmv-github-pat-deploy.py status 0dbbf21489a779582018e3597ebab55492b115a4 crawler-mini
+python3 /tmp/nmv-pat-verify.py
+curl -fsS https://nomorevibe.brut.bot/api/health
+git status --short --branch
+git diff --check
+```
+
+---
+
 # 2026-09-29 08:34 KST — 관리자 GitHub PAT 등록·교체 구현
 
 ## 현재 목적 / 완료 작업 / 수정 파일

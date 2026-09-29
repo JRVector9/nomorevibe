@@ -21,5 +21,5 @@
 ## 3. 배포·검증
 
 - [x] README/runbook에 0053 마이그레이션과 웹 2개·crawler 2개의 동일 전용 비밀키 선행 배포 절차 기록. DB 서버/복제 설정 변경 없음.
-- [ ] Vitest, lint, typecheck, build, diff check. PR의 최신 base `check` 확인.
-- [ ] 실제 두 번째 PAT 등록 후 운영 관측. 등록 전에는 두 계정 처리량을 검증했다고 주장하지 않음.
+- [x] Vitest, lint, typecheck, build, diff check. PR의 최신 base `check` 확인.
+- [x] 실제 두 번째 PAT 등록 후 계정 quota 관측과 원본 증가 확인. 실제 primary 소진 전환의 장기 운영 검증은 별도로 남음.
