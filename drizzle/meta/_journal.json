@@ -379,6 +379,13 @@
       "when": 1790638000000,
       "tag": "0053_github_collector_accounts",
       "breakpoints": true
+    },
+    {
+      "idx": 54,
+      "version": "7",
+      "when": 1790643742656,
+      "tag": "0054_crawl_github_identity_lookup",
+      "breakpoints": true
     }
   ]
 }

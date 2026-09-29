@@ -48,6 +48,8 @@ export const crawlFrontier = pgTable(
     /** 이 시각 이후에 시도한다. 실패 시 백오프로 미루고, fetching 중 죽으면 회수 기준이 된다 */
     nextAttemptAt: timestamp("next_attempt_at").notNull().defaultNow(),
     lastError: text("last_error"),
+    /** GitHub numeric ID matched an already stored repository under another path. */
+    aliasOf: varchar("alias_of", { length: 200 }),
     discoveredAt: timestamp("discovered_at").notNull().defaultNow(),
     updatedAt: timestamp("updated_at").notNull().defaultNow(),
   },
@@ -78,7 +80,9 @@ export const crawlDocuments = pgTable("crawl_documents", {
   /** 배포 페이지에서 뽑은 것 (title, description, ogImage) */
   pageMeta: jsonb("page_meta").$type<Record<string, unknown>>(),
   fetchedAt: timestamp("fetched_at").notNull().defaultNow(),
-});
+}, (t) => [
+  index("crawl_documents_github_id_idx").on(sql`${t.repoMeta}->>'id'`),
+]);
 
 // ─────────────────────────── 판정 ───────────────────────────
 

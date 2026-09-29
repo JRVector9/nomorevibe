@@ -98,6 +98,24 @@ M3·mini crawler 런타임에 비밀값으로 설정, (3) 같은 release의 웹�
 확인한다. 웹 또는 crawler의 암호화 키가 다르면 복호화가 실패하므로 키를 임의로
 회전하지 않는다. 앱 롤백은 가산 테이블을 보존한 채 수행한다.
 
+### 저장소 이름 변경 중복 차단 (0054)
+
+`0054_crawl_github_identity_lookup`은 원본의 GitHub 숫자 ID 조회 인덱스와
+`crawl_frontier.alias_of`를 추가한다. 기존 원본·후보·제품 행은 건드리지 않는다.
+마이그레이션 성공 후 같은 GitHub ID가 새 `owner/name`으로 들어오면 새 원본은 저장하지 않고
+새 프론티어를 `skipped`로 끝내며 기존 경로를 `alias_of`에 남긴다. 한 ID에 대한 동시 저장은
+트랜잭션 자문 잠금으로 막는다. 운영 DB 서버·복제 설정을 바꾸는 절차는 없다.
+
+배포 뒤 읽기 전용으로 새 별칭 처리와 중복 총량을 확인한다. 이전 중복은 이 배포만으로
+사라지지 않으므로, 배포 전후 전체 중복 수를 곧바로 0과 비교하지 않는다.
+
+```sql
+select repo, alias_of, updated_at from crawl_frontier
+where alias_of is not null order by updated_at desc limit 20;
+select count(*) - count(distinct repo_meta->>'id') as excess_rows
+from crawl_documents where repo_meta->>'id' is not null;
+```
+
 운영 환경 계약은 `docs/operations/production-multi-instance.env.example`을 사용한다. 실제 비밀값은
 Dokploy와 Keychain에만 저장하고 렌더링된 환경을 로그나 문서에 출력하지 않는다.
 

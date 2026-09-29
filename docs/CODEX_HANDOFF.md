@@ -63,6 +63,65 @@ git diff --check
 
 ---
 
+## 2026-09-29 — GitHub 저장소 ID 중복 차단 작업 (진행 중)
+
+### Current objective / 완료한 작업
+
+사용자는 두 GitHub 계정 수집이 겹치는지·수집량이 늘었는지 확인한 뒤 수정할 것을 정리해 수정하라고 요청했다.
+운영 코드는 한 활성 crawler가 계정을 요청별로 번갈아 사용한다. `owner/name` 중복은 프론티어에서
+막지만 이름 변경 뒤 같은 GitHub 숫자 ID가 새 경로로 다시 저장되는 결함을 확인했다.
+읽기 전용 운영 조회 당시 원본 299 중복 ID 그룹·초과 행 304개, 그중 발행 제품이 둘 이상인 그룹
+16개였다. 새 토큰 투입 뒤에도 이름 변경으로 새 경로 2개가 들어왔으며 계정 간 동시 작업 때문이라는
+근거는 없다. 기존 발행 제품 자동 병합 여부를 사용자에게 비동기 질문했고 답변을 기다리는 중이다.
+
+별도 작업 트리 `/private/tmp/nmv-github-identity-dedup`의 `fix/github-identity-dedup` 브랜치에서
+`getRepo`의 안전한 숫자 ID 검증, `crawl_documents` ID 조회 인덱스, `crawl_frontier.alias_of`,
+같은 ID 트랜잭션 자문 잠금과 새 별칭 원본 저장 차단, 별칭 로그/skip 처리를 구현했다.
+기존 중복 원본·후보·제품은 삭제하지 않는다. 배포·운영 DB migration은 아직 하지 않았다.
+
+### Modified files / 설계 결정
+
+`lib/crawl/{github.ts,repository.ts,jobs/fetch.ts}`, `lib/db/crawl-schema.ts`,
+`drizzle/0054_crawl_github_identity_lookup.sql`, `drizzle/meta/_journal.json`,
+`tests/github-request-boundary.test.ts`, `tests/integration/crawl-github-identity.test.ts`,
+`README.md`, `docs/operations/independent-workers-runbook.md`, `PENDING.md`, 이 문서.
+기존 304행은 발행·심사 참조가 있으므로 보존한다. 새 별칭은 기존 원본의 ID와 대조하여
+프론티어에 `skipped/alias_of`만 기록한다. 동시 별칭 저장은 GitHub ID별 DB 자문 잠금으로 직렬화한다.
+GitHub ID 누락/불안전 응답은 원본 수집 실패로 분류한다. 새 토큰만으로 수집량 증가를 단정하지 않으며
+검색 10분 주기와 대기열 상태는 이번 수정 범위에서 바꾸지 않았다.
+
+### Tests and results / failed approaches
+
+- 새 통합 테스트는 수정 전 2/3 실패(새 경로 중복 저장·동시 저장), 구현 후 3/3 통과했다.
+- GitHub ID 누락 테스트는 수정 전 실패했고 null 응답 추가 테스트도 예외를 재현한 뒤 수정해 14/14 통과했다.
+- 관련 통합 4파일 71/71, 전체 단위 159파일 1257/1257, `npx drizzle-kit check`, 대상 ESLint,
+  `npx tsc --noEmit`, `npm run build`는 성공했다. 빌드의 기존 Turbopack 동적 filesystem 경고는 남았다.
+- 전체 통합 99파일은 98파일 통과, 1파일 실패(928 passed, 1 failed, 1 todo)였다.
+  `tests/integration/product-audit.test.ts:163`의 gateway 미호출 기대가 실패했고,
+  변경 전 다른 작업 트리에서도 같은 단일 테스트 실패를 재현했다. 이번 중복 차단의 회귀가 아니다.
+- 첫 빌드는 작업 트리 밖 `node_modules` 심볼릭 링크를 Turbopack이 거부해 실패했다.
+  링크를 해제하고 `npm ci --ignore-scripts`로 작업 트리 안에 설치한 뒤 빌드 성공했다.
+
+### Remaining work / exact next commands
+
+사용자의 기존 발행 제품 병합 범위 답변을 확인한다. 답변 없이 공개 제품을 자동 병합·삭제하지 않는다.
+현재 변경의 코드 리뷰, diff 점검, 필요 시 PR/CI, 운영 적용 뒤 새 별칭과 중복 증가 여부 관측이 남았다.
+운영 DB 서버·스트리밍 설정과 중단된 `product-intro-check`는 건드리지 않는다.
+
+```sh
+cd /private/tmp/nmv-github-identity-dedup
+git status --short --branch
+git diff --check
+npx drizzle-kit check
+npx tsc --noEmit
+npm test
+npm run test:integration -- tests/integration/crawl-github-identity.test.ts tests/integration/crawl-fetch.test.ts tests/integration/crawl-pipeline.test.ts tests/integration/crawl-seed.test.ts
+npm run build
+git diff -- lib/crawl/github.ts lib/crawl/repository.ts lib/crawl/jobs/fetch.ts lib/db/crawl-schema.ts
+```
+
+---
+
 # 2026-09-29 08:34 KST — 관리자 GitHub PAT 등록·교체 구현
 
 ## 현재 목적 / 완료 작업 / 수정 파일

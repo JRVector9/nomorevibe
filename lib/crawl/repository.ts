@@ -1,6 +1,6 @@
 import { emitPipelineEvent } from "@/lib/observability/review-pipeline";
 import { isReviewCandidate } from "./agent-review-contract";
-import { and, asc, desc, eq, inArray, lt, lte, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, lt, lte, ne, sql } from "drizzle-orm";
 import { isDeepStrictEqual } from "node:util";
 import { db } from "@/lib/db";
 import {
@@ -188,7 +188,7 @@ export async function markFrontier(
 ): Promise<void> {
   await db.transaction(async tx => {
     await tx.update(crawlFrontier)
-    .set({ state, lastError: null, updatedAt: new Date() })
+    .set({ state, aliasOf: null, lastError: null, updatedAt: new Date() })
     .where(claim ? and(eq(crawlFrontier.repo, repo), claimed(claim)) : eq(crawlFrontier.repo, repo));
     if (lease) await assertJobLease(tx, lease);
   });
@@ -380,12 +380,29 @@ export async function saveFetchedDocument(
     pageMeta: Record<string, unknown> | null;
   },
   lease?: JobLease,
-): Promise<{ needsJudgement: boolean } | null> {
+): Promise<{ needsJudgement: boolean; duplicateOf?: string } | null> {
   return db.transaction(async (tx) => {
+    const githubId = typeof doc.repoMeta.id === "number" && Number.isSafeInteger(doc.repoMeta.id)
+      && doc.repoMeta.id > 0 ? String(doc.repoMeta.id) : null;
+    // A rename can arrive in two fetch lanes at once. Serialize by GitHub's stable ID,
+    // then check existing documents before either lane can insert a second path.
+    if (githubId) await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`crawl-github-id:${githubId}`}))`);
     const [candidate] = await tx.select().from(crawlCandidates).where(eq(crawlCandidates.repo, doc.repo)).for("update");
     const [previous] = await tx.select().from(crawlDocuments).where(eq(crawlDocuments.repo, doc.repo)).for("update");
+    if (githubId && (!previous || previous.repoMeta.id !== doc.repoMeta.id)) {
+      const [existing] = await tx.select({ repo: crawlDocuments.repo }).from(crawlDocuments)
+        .where(and(sql`${crawlDocuments.repoMeta}->>'id' = ${githubId}`, ne(crawlDocuments.repo, doc.repo)))
+        .orderBy(asc(crawlDocuments.id)).limit(1);
+      if (existing) {
+        const [owned] = await tx.update(crawlFrontier)
+          .set({ state: "skipped", aliasOf: existing.repo, lastError: null, updatedAt: new Date() })
+          .where(claimed(claim)).returning({ id: crawlFrontier.id });
+        if (lease) await assertJobLease(tx, lease);
+        return owned ? { needsJudgement: false, duplicateOf: existing.repo } : null;
+      }
+    }
     const [owned] = await tx.update(crawlFrontier)
-      .set({ state: "done", lastError: null, updatedAt: new Date() })
+      .set({ state: "done", aliasOf: null, lastError: null, updatedAt: new Date() })
       .where(claimed(claim))
       .returning({ id: crawlFrontier.id });
     if (lease) await assertJobLease(tx, lease);

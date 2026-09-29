@@ -1,5 +1,5 @@
 import { beforeEach, afterEach, expect, it, vi } from "vitest";
-import { githubRequest } from "@/lib/crawl/github";
+import { getRepo, githubRequest } from "@/lib/crawl/github";
 const quota = vi.hoisted(() => ({ read: vi.fn().mockResolvedValue(null), record: vi.fn() }));
 vi.mock("@/lib/crawl/github-quota", async importOriginal => ({
   ...await importOriginal<typeof import("@/lib/crawl/github-quota")>(),
@@ -12,6 +12,12 @@ vi.mock("@/lib/crawl/github-quota", async importOriginal => ({
 beforeEach(() => vi.stubEnv("GITHUB_TOKEN", "test-token"));
 
 afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); quota.read.mockReset().mockResolvedValue(null); quota.record.mockClear(); });
+
+it.each([null, { full_name: "maker/app" }, { id: "42", full_name: "maker/app" }])
+  ("rejects repository metadata without a safe numeric GitHub identity: %s", async body => {
+  vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify(body), { status: 200 })));
+  expect(await getRepo("maker/app")).toEqual({ ok: false, error: { kind: "invalid_response" } });
+});
 
 it("rejects path tricks before attaching the GitHub token", async () => {
   vi.stubEnv("GITHUB_TOKEN", "test-token");

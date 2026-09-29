@@ -232,6 +232,10 @@ async function fetchEntry(
     ctx.log("crawl.fetch_claim_lost", { repo: entry.repo });
     return { kind: "lost" };
   }
+  if (saved.duplicateOf) {
+    ctx.log("crawl.fetch_repository_alias", { repo: entry.repo, existingRepo: saved.duplicateOf });
+    return { kind: "skipped" };
+  }
   await requeueAfterAdminEvidenceRefresh(entry.repo, ctx.lease);
   return { kind: "fetched", needsJudgement: saved.needsJudgement };
 }

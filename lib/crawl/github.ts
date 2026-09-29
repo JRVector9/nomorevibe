@@ -190,7 +190,13 @@ async function request<T>(path: string): Promise<GitHubResult<T>> {
 
 /** 판정에 쓰는 레포 메타 원본. 가공하지 않고 그대로 보관한다 (기준이 바뀌면 다시 쓴다) */
 export async function getRepo(repo: string): Promise<GitHubResult<Record<string, unknown>>> {
-  return request<Record<string, unknown>>(`/repos/${repo}`);
+  const result = await request<Record<string, unknown>>(`/repos/${repo}`);
+  if (!result.ok) return result;
+  if (!result.value || typeof result.value.id !== "number"
+    || !Number.isSafeInteger(result.value.id) || result.value.id <= 0) {
+    return { ok: false, error: { kind: "invalid_response" } };
+  }
+  return result;
 }
 
 /** 검색 한 페이지의 최대 건수 */
