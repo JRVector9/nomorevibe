@@ -1,3 +1,59 @@
+# 2026-09-29 19:55 KST — 배포 속도 개선 1·2·3 완료, main 문서 경로·운영 재확인
+
+## Current objective / completed work
+
+배포 속도 개선 1·2·3을 완료했다. CI 병렬화·공통 이미지 배포 코드 PR #234/#235,
+운영 기록 PR #236은 main에 병합됐다. #236 문서 전용 PR의 첫 필수 `check`는
+실행 생성부터 14초, 최신 커밋은 19초였다. main 문서 push `908edf3`는
+16초였고 세 실행 모두 quality·integration·두 이미지 작업이 skipped였다.
+앞선 코드 PR #234의 필수 `check`는 2분 55초(직전 6분 27초), #235 main은
+2분 53초(직전 5분 3초)였으며 두 이미지 작업까지 4분 17초였다.
+8개 운영 앱은 worker/web 공통 digest로 실행 중이며 최종 재확인에서 8개
+Docker service 모두 지정 digest·1/1 복제본·배포 `done`이었다.
+
+## Modified files / key design decisions
+
+이번 최종 기록 브랜치 `docs/deployment-speed-final`은
+`docs/operations/2026-09-29-deployment-speed-rollout.md`와 이 파일만 수정한다.
+기능/운영 배포 변경 파일 목록, digest, 키 회전, DB 무변경 결정은 아래 19:48
+KST 항목에 있다. 운영 전체 교체는 확인 대기로 4분 12.8초가 걸려 이전 4분
+7초보다 짧아지지 않았다. 이 수치는 CI와 개별 앱 배포 개선과 분리해서 기록한다.
+
+## Test commands and results / failed approaches
+
+`gh run view 36557725684`, `36557913407`, `36557983527`의 jobs/완료 시각으로
+문서 전용 PR 두 실행과 main 실행의 성공·skip을 확인했다. 최종 운영 읽기 전용
+점검은 8개 앱의 Dokploy source/digest/release/deployment, 실제 service image와
+replica `1/1`을 모두 확인했다. 두 웹 컨테이너의 직접 health는 각각
+`status:ok`, `db:ok`였고 runtime 키와 deployment ID도 일치했다. 공개
+`/api/health`를 `curl`로 12회 조회해 M3 3회·mini 9회, 모두 새 release와
+`ok/db:ok`였다. private web package visibility도 재확인했다.
+
+첫 점검 스크립트는 Dokploy 표시 `name`으로 Docker service를 찾아 빈 값을
+오류로 판단했다. 실제 service 식별자인 `appName`으로 다시 조회해 8개 모두
+일치했다. Python 기본 `urllib` 요청은 공개 프록시에서 403이었으나 `curl`
+요청은 200이었고 12회 전체 검증을 마쳤다. 기능 테스트의 자세한 기록과
+첫 공개 웹 이미지 대응은 아래 19:48 KST 항목 및 운영 기록에 있다.
+
+## Remaining work / exact commands for the next agent
+
+필수 구현·검증은 끝났다. 24시간 처리/헬스 관측, GHCR pull 자격 정보를 별도
+최소 권한 토큰으로 교체하고 만료·철회 상황을 확인하는 일, 운영 순차 검증의
+자동화는 `PENDING.md`의 후속 작업이다. 이 최종 기록 PR을 병합한 뒤 main의
+문서 전용 `check` 성공과 이미지 작업 skip을 확인한다.
+
+```sh
+cd /private/tmp/nmv-deploy-speed-docs-20260929
+git status --short --branch
+git diff --check
+gh run view 36557983527 --repo JRVector9/nomorevibe --json createdAt,conclusion,jobs
+gh api user/packages/container/nomorevibe-runtime-web --jq '{name,visibility}'
+curl -fsS https://nomorevibe.brut.bot/api/health
+gh run list --repo JRVector9/nomorevibe --workflow ci.yml --limit 5
+```
+
+---
+
 # 2026-09-29 19:48 KST — 배포 시간 단축 1·2·3 운영 전환 완료, 문서 PR 병합 대기
 
 ## Current objective / completed work
