@@ -1,4 +1,59 @@
-# 2026-09-29 15:11 KST — 500스타 이상 자동 승인 정책 (검증 및 배포 진행 중)
+# 2026-09-29 15:47 KST — 500스타 이상 자동 승인 배포 완료
+
+## Current objective / completed work / modified files
+
+사용자 승인대로 공개·비포크·비보관 GitHub 저장소의 최신 원본에서 500스타 이상이면
+일반 규칙과 AI 심사를 거치지 않고 승인·발행한다. 관리자 설정 범위는 500–10,000,000이고
+과거 스타 상한은 판정에서 제거했다. 설계·구현·테스트는 PR #231로 main
+`e232f16a79e7db8e3b9abdfc79aadf717041795f`에 병합했다. 이전 단계의 세부 수정
+파일 목록은 아래 15:11 KST 기록을 따른다. 이번 단계의 새 수정 파일은
+`docs/operations/2026-09-29-star-auto-approval-rollout.md`, `PENDING.md`, 이 파일이다.
+루트 checkout의 사용자 변경과 DB 서버·스트리밍 설정은 건드리지 않았다.
+
+## Key decisions / test commands and results / failed approaches
+
+publisher·reviewer·crawler mini 예비→M3 주→웹 mini→M3 순서로 8개 앱을 배포했고
+모두 최신 deployment `done`/같은 main 커밋이었다. 공개 `/api/health`는
+`status:ok/db:ok`/같은 release였다. 운영 DB `scripts/check-failover-readiness.ts`는
+06:36:58과 06:38:32 UTC에 종료 코드 0/전체 `ok`였다. PR CI의 `check`·GitGuardian과
+main CI의 `check`가 성공했다. 최종 로컬 단위 1,274건, 통합 946건/기존 TODO 1건,
+typegen·tsc·lint·build 종료 코드 0은 이전 단계에서 실제 실행했다.
+
+배포 전 읽기 전용 계획 92건 중 1건이 자연 발행돼 배포 후 계획은 91건이었다.
+새 계획·DB 식별값과 저장된 GitHub ID 별칭/기발행 중복 0건을 확인한 뒤 89건을
+재수집 대기로 적용했다. 2건은 그 사이 변경돼 건너뛰었다. 재계획·재적용도
+건너뛰어 조사한 결과 두 건 모두 기존 제품 URL과 겹쳤다. 별도 재발행은 하지 않았다.
+06:46 UTC 초기 92건 중 88건 발행, URL 중복 2건·보관 저장소 1건 거부,
+GitHub 404/오래된 원본 1건이 `new`/frontier `skipped`였다. 발행 88건의
+GitHub ID별 중복 제품은 0건이고 118,660스타 저장소도 발행됐다.
+운영 기록에 시각·범위를 남겼다.
+
+PR CI는 6분 27초, main CI는 5분 3초(배포와 병행), 앱 8개 순차 완료는
+4분 7초였다. main CI에서 통합 테스트 3분 24초가 최장 단계였다.
+`Dockerfile`의 web/worker target을 8개 Dokploy 앱이 Git 소스에서 각자 빌드한다.
+배포 시간 단축의 우선순위는 중복 main CI 대기 제거, 통합 테스트 병목 개선,
+동일 커밋 이미지 2개를 한 번씩 빌드해 digest로 재사용이다. 실제 설정 변경은
+하지 않았다.
+
+## Remaining work / exact commands for the next agent
+
+24시간 동안 새 후보의 신선 원본·중복·발행 오류를 관측한다. GitHub 404로
+`new`에 남는 후보의 표시/정리 정책은 별도 설계가 필요하다. 문서 변경은 아직
+main에 반영되지 않았다. 아래 순서로 `git diff --check` 후 문서 커밋·PR·CI·병합한다.
+운영 DB를 다시 적용하지 않는다.
+
+```sh
+cd /private/tmp/nmv-github-auth-fallback
+git diff --check
+git status --short --branch
+gh pr view 231 --json state,mergeCommit,statusCheckRollup
+python3 /tmp/nmv-health-20260925.py status
+curl -fsS https://nomorevibe.brut.bot/api/health
+```
+
+---
+
+# 2026-09-29 15:11 KST — 500스타 이상 자동 승인 정책 (검증 및 배포 당시 진행 중)
 
 ## Current objective
 
