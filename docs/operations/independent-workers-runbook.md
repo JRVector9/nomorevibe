@@ -116,6 +116,52 @@ source/env 설정으로 되돌린다. DB 서버·스트리밍 설정은 이 작�
 문서만 바뀐 main push에는 새 이미지를 만들지 않는다. 수동 Actions 실행은
 전체 검증과 이미지 빌드를 수행한다.
 
+### 공통 이미지 배포 자동 확인
+
+`scripts/ops/deploy_shared_images.py`는 **main SHA를 checkout한 운영자 Mac**에서
+실행한다. GitHub CLI는 `JRVector9` 계정으로 로그인하고, Dokploy API 키는
+macOS Keychain의 `deploy.brut.bot`/`dokploy-api-key`에 있어야 한다. 두 서버에
+root SSH로 접근할 수 있어야 한다. 명령 인자의 이미지 주소는 main Actions가
+출력한 SHA 태그의 `sha256:` digest를 사용한다. DB migration이 포함된 릴리스라면
+기존 절차로 한 번 적용·검증한 뒤에만 `--migration-verified`를 추가한다.
+웹 서버 액션 키를 바꾸는 릴리스는 자동화 대상에서 제외하고 위의 두 웹
+build/runtime 키 교체 절차를 따른다.
+
+```sh
+python3 scripts/ops/deploy_shared_images.py plan \
+  --sha "$RELEASE_SHA" --worker-image "$WORKER_IMAGE" --web-image "$WEB_IMAGE"
+python3 scripts/ops/deploy_shared_images.py run \
+  --sha "$RELEASE_SHA" --worker-image "$WORKER_IMAGE" --web-image "$WEB_IMAGE" \
+  --snapshot "/private/tmp/nomorevibe-release-${RELEASE_SHA:0:7}.json"
+```
+
+`plan`은 8개 앱의 현재 동일 릴리스·실제 컨테이너 이미지·건강 상태, 두 웹의
+build/runtime 키 일치, 기존 failover·진행 상태, 새 이미지의 양 서버 실제
+pull/arm64/OCI revision과 비공개 웹 이미지 안의 빌드 키 일치를 값 노출 없이
+확인한다. 앱 설정은 변경하지 않는다. `run`은 같은
+사전 검사 뒤 기존 설정을 권한 0600 스냅샷에 저장하고 publisher→reviewer→crawler
+각각 mini 예비→M3 주, 마지막으로 mini→M3 웹을 배포한다. 각 앱마다 새 Dokploy
+deployment ID와 `done`, Swarm 1/1, 실행 컨테이너 digest·release·health를
+기다린다. 역할 쌍 뒤에는 `check-failover-readiness.ts`의 전체 `ok`와 해당 역할
+`ready`, `check-worker-progress.ts`의 `ok`를 확인한다. 웹 둘 뒤에는 공개
+`/api/health`에서 두 인스턴스의 같은 릴리스를 확인한다. 실패하면 뒤 앱 배포를
+멈추고 스냅샷 경로만 출력한다. 스냅샷에는 환경 비밀값이 있어 공유하거나 Git에
+넣지 않는다.
+
+실패한 단계의 Dokploy 기록과 실제 서비스를 확인한 후, 변경된 앱을 이전
+digest/env로 돌려야 하면 스냅샷에서 **앱 하나씩** 복구한다. 역할 쌍의 한쪽만
+복구한 경우 다른 쪽도 이전 릴리스로 맞추고 failover 상태를 다시 확인한다.
+
+```sh
+python3 scripts/ops/deploy_shared_images.py restore \
+  --snapshot "/private/tmp/nomorevibe-release-${RELEASE_SHA:0:7}.json" \
+  --app publisher-mini
+```
+
+이 도구는 릴리스 사이에 운영자가 기다리던 상태 확인을 자동화한다. 다음 실제
+릴리스에서 첫 앱 시작부터 마지막 앱 완료까지의 시간을 기록해 전체 소요시간
+개선 여부를 따로 판정한다.
+
 ### GitHub 수집 PAT 관리자 등록
 
 관리자 `/admin/github-accounts`에서 공개 저장소 읽기용 PAT를 등록·교체한다. 등록 시

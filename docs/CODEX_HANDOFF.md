@@ -1,3 +1,66 @@
+# 2026-09-29 20:29 KST — 공통 이미지 배포의 단계별 확인 자동화 구현, PR 전 검증
+
+## Current objective / completed work
+
+사용자가 요청한 순차 배포 확인 자동화를 진행 중이다. 별도 작업 트리
+`/private/tmp/nmv-deploy-verify-auto-20260929`의
+`feat/deployment-verification-automation`에서 8개 앱의 사전 확인, 순차 배포,
+각 앱의 Dokploy·Swarm·컨테이너 상태, 역할 쌍의 failover/progress, 웹의 직접·공개
+health를 자동으로 기다리는 운영자 CLI를 작성했다. 실패하면 뒤 앱을 배포하지
+않고 설정 스냅샷에서 개별 앱을 복구하는 `restore` 명령을 제공한다. 아직 PR·
+main 빌드·새 릴리스 실제 배포는 하지 않았다. 루트 checkout의 사용자 변경과
+운영 DB 서버·스트리밍은 건드리지 않았다.
+
+## Modified files / key design decisions
+
+`scripts/ops/deploy_shared_images.py`, `tests/test_deploy_shared_images.py`,
+`.github/workflows/ci.yml`, `.gitignore`, `.dockerignore`, `README.md`,
+`docs/operations/independent-workers-runbook.md`, 이 파일. CI quality 잡에
+Python 표준 라이브러리 테스트를 추가했다. 스크립트는 운영자 Mac의 Keychain,
+GitHub CLI, SSH, curl을 사용하며 비밀값·Dokploy 앱 원문을 출력하지 않는다.
+`plan`은 main SHA/비공개 웹 패키지, 8개 앱의 동일한 이전 릴리스, DB readiness,
+두 서버의 이미지 pull/arm64/revision 및 웹 이미지 빌드 키 일치를 확인한다.
+`run`은 권한 0600의 스냅샷을 만든 뒤 publisher→reviewer→crawler의
+mini→M3, 웹 mini→M3 순서로 진행한다. 새 deployment ID만으로 성공하지 않고
+실제 컨테이너 digest·release·health와 역할 상태를 함께 판정한다. migration
+변경이 있으면 별도 완료 표시를 요구한다. 웹 키 회전은 기존 수동 절차를 따른다.
+
+## Test commands and results / failed approaches
+
+`python3 -m unittest tests/test_deploy_shared_images.py -v` 7/7 통과,
+`python3 -m py_compile scripts/ops/deploy_shared_images.py`,
+`actionlint .github/workflows/ci.yml`, `git diff --check` 종료 0.
+실제 운영의 현재 릴리스를 읽기 전용으로 조사해 8개 앱의 Docker service·실행
+컨테이너 digest/health, baseline 8개, crawler failover/progress `ok`, 공개
+웹의 M3·mini 응답, 두 서버의 기존 digest pull과 웹 이미지 서버 액션 빌드 키
+일치를 확인했다. 새 코드의 실제 `run`은 아직 실행하지 않았다.
+
+첫 remote probe는 웹에 Docker healthcheck가 있다고 가정해 웹을 잘못
+`not ready`로 분류했다. 웹은 컨테이너 직접 `/api/health`로 판정하게 고쳤다.
+처음엔 Dokploy 표시 이름으로 service를 찾는 이전 점검이 실패했으나 새
+도구는 실제 `appName`을 사용한다. failover CLI의 역할 목록은 상위가 아닌
+`readiness.roles`에 있음을 확인하고 파서를 고쳤다.
+
+## Remaining work / exact commands for the next agent
+
+최종 코드 diff와 운영 절차를 검토한 뒤 commit/push, PR의 최신 base CI와
+GitGuardian을 확인해 병합한다. main의 worker/web 새 digest 빌드 완료 후
+새 main checkout에서 `plan`을 실행하고, 출력된 스냅샷 경로로 `run`을 실행한다.
+8개 앱의 실제 digest·health와 전체 교체 시간을 확인하고 운영 기록에 실측을
+남긴다. 실패 시 자동 계속 진행하지 않으며 해당 앱의 상태·스냅샷을 확인해
+`restore`로 이전 릴리스에 맞춘다.
+
+```sh
+cd /private/tmp/nmv-deploy-verify-auto-20260929
+git status --short --branch
+python3 -m unittest tests/test_deploy_shared_images.py -v
+actionlint .github/workflows/ci.yml
+git diff --check
+gh run list --repo JRVector9/nomorevibe --workflow ci.yml --limit 5
+```
+
+---
+
 # 2026-09-29 19:55 KST — 배포 속도 개선 1·2·3 완료, main 문서 경로·운영 재확인
 
 ## Current objective / completed work
