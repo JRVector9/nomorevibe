@@ -21,12 +21,12 @@ describe("저장된 기준과 기본값의 차이", () => {
   });
 
   it("바꾼 항목만 짚는다", async () => {
-    await saveSettings({ judge: { maxStars: 50, excludeOrganizations: true } }, "테스트");
+    await saveSettings({ judge: { autoApproveMinStars: 750, excludeOrganizations: true } }, "테스트");
 
     const drift = settingsDrift(await getSettings());
 
-    expect(drift.map((d) => d.label).sort()).toEqual(["스타 상한", "조직 계정 제외"]);
-    expect(drift.find((d) => d.label === "스타 상한")).toMatchObject({ stored: "50", standard: "1000" });
+    expect(drift.map((d) => d.label).sort()).toEqual(["자동 승인 최소 스타", "조직 계정 제외"].sort());
+    expect(drift.find((d) => d.label === "자동 승인 최소 스타")).toMatchObject({ stored: "750", standard: "500" });
   });
 
   it("새 필터가 코드에 생기면 저장된 설정에도 기본값으로 들어온다", async () => {

@@ -1,3 +1,85 @@
+# 2026-09-29 15:11 KST — 500스타 이상 자동 승인 정책 (검증 및 배포 진행 중)
+
+## Current objective
+
+사용자가 승인한 정책을 구현한다: 공개 GitHub 저장소의 최근 원본에서 500스타 이상을 확인하면
+10만 스타 이상을 포함해 규칙의 제품 적합성·AI 1차/2차 심사 없이 발행한다. 관리자에서 500 이상
+기준을 조정하고, 이전 스타 상한은 판정에서 제거한다. 미발행 기존 후보도 새 GitHub 응답을
+다시 받은 뒤 판정한다. 루트 checkout의 사용자 변경과 DB 서버·스트리밍 설정은 건드리지 않는다.
+
+## Completed work / Modified files
+
+분리된 `/private/tmp/nmv-github-auth-fallback` 작업 트리의 `feat/star-auto-approval` 브랜치에
+설계 문서 커밋 `748b191`이 있다. 구현은 아직 커밋 전이다. 주요 수정은 다음과 같다.
+
+- 설정/관리자: `lib/crawl/settings-schema.ts`, `lib/crawl/settings.ts`, `app/admin/SettingsForm.tsx`,
+  `app/admin/actions.ts`. 기본 자동 승인 500, 관리 범위 500–10,000,000, 과거 상한 UI/드리프트 제거.
+- 판정/검수/발행: `lib/crawl/star-auto-approval.ts`, `lib/crawl/rules.ts`, `lib/crawl/jobs/judge.ts`,
+  `lib/crawl/repository.ts`, `lib/crawl/agent-review-{repository,contract}.ts`,
+  `lib/crawl/jobs/{agent-review,publish}.ts`, `lib/crawl/publish.ts`, `lib/crawl/admin-review.ts`,
+  `lib/domain/products/recheck.ts`. 판정·관리자 화면·AI 대상 조회·발행 후보 조회가 같은
+  검증 자료를 사용하고, 발행 트랜잭션에서 재확인한다. 발행 지연/기준 변경 시 재수집/재판정한다.
+- 기존 후보: `lib/crawl/reconsider.ts`, 새 `scripts/reconsider-star-auto.ts`. 읽기 전용 계획과
+  지문·정책·중복 재확인 후 재수집 적용. 최종 읽기 전용 운영 계획은 자동 후보 92건
+  (거부 59, 보류 33; 517–116,862스타)이다. 92건 중 동일 GitHub ID의 다른 원본 또는
+  동일 ID로 이미 발행된 제품은 0건이었다. 아직 적용하지 않았다.
+- 테스트: `tests/star-auto-approval.test.ts`, `tests/crawl-rules.test.ts`,
+  `tests/crawl-settings-{form,drift}.test.ts`, `tests/agent-review-contract.test.ts`,
+  `tests/review-pipeline-equivalence.test.ts`, `tests/integration/{crawl-fetch,crawl-judge,
+  review-publication-gate,admin-review-causes,product-recheck,reconsider-installable,
+  settings-drift}.test.ts` 등.
+- 문서: `README.md`, `docs/operations/independent-workers-runbook.md`,
+  `docs/superpowers/specs/2026-09-29-star-auto-approval-design.md`, 이 handoff.
+
+## Key design decisions
+
+GitHub REST 원본의 숫자 ID·정수 스타·일치하는 full_name·공개·포크 아님·보관 아님·24시간 내
+수집을 모두 확인한다. 후보 marker만으로 발행하지 않는다. 관리자 결정, 중복/차단 제품과
+원본/설정 경합은 기존 잠금으로 보호한다. 홈페이지가 없으면 공식 GitHub 저장소 URL을 쓴다.
+`maxStars`는 저장된 과거 JSON 호환 필드로만 남기고 판정에는 쓰지 않는다. 기존 후보 적용은
+오래된 스타 수로 즉시 승인하지 않고 재수집을 요구한다. 자동 승인 자료가 만료되면 발행 워커가
+프론티어에 재수집을 넣고 새 원본 이후 판정하도록 한다.
+
+## Test commands and results
+
+- `npm test -- --silent`: 160파일, 1,274/1,274 통과(최신 코드에서 실행).
+- `npm run test:integration`: 최종 100파일, 946 통과/1 TODO. 중간 재실행 1실패는 새
+  테스트가 앞선 사례의 프론티어 항목을 집은 격리 문제였고 `beforeEach` 정리 후 전체
+  재실행 통과. 집중 실행 `review-publication-gate.test.ts` 23/23 통과.
+- `npx next typegen`, `npx tsc --noEmit -p .`, `npm run lint`, `git diff --check`,
+  `npm run build`: 종료 코드 0. lint의 기존 vendor 미사용 변수 경고 1건과 빌드의 기존
+  `agent-review.ts` 동적 파일 추적 경고 1건만 있다.
+- 운영 DB 읽기 전용 `scripts/reconsider-star-auto.ts --plan`: 종료 코드 0,
+  `examined=92`, `eligible=92`, DB 식별값 포함.
+  `.crawl-samples/star-auto-plan-identity-20260929.json` 생성. 별도 읽기 전용 대조에서
+  92건의 GitHub ID 별칭/기발행 ID 충돌/ID 누락은 모두 0건.
+
+## Failed approaches / Remaining work
+
+초기 CLI 계획 실행은 DB pool이 프로세스를 열어둬 시간 초과했다. 명시적 종료를 추가하고
+운영 읽기 전용 계획을 다시 실행해 정상 종료를 확인했다. 관리자 화면이 순수 `judge`를
+호출해 자동 승인 결과와 어긋나던 문제는 공통 저장 원본 판정으로 고쳤다. 저장소 ID만 바뀔 때
+재판정하지 않던 문제는 원본 변경 검출에 ID/full_name/private을 추가해 고쳤다.
+
+다음 단계: 변경 검토 및 커밋, PR 생성·최신 main CI 통과·병합,
+웹·crawler·reviewer·publisher 주/예비 동기 배포, 배포 후 새 계획 작성·기존 후보 적용,
+운영 처리/발행/중복/worker 상태 확인. 운영 DB 스키마 변경 없음.
+
+## Exact commands for the next agent
+
+```sh
+cd /private/tmp/nmv-github-auth-fallback
+npm run test:integration
+npx tsc --noEmit -p .
+npm run lint
+npm run build
+git diff --check
+git status --short --branch
+gh auth status
+```
+
+---
+
 # 2026-09-29 12:16 KST — GitHub 401 계정 전환 수정
 
 ## 현재 목적 / 완료 작업 / 수정 파일

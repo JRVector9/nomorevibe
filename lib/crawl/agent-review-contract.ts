@@ -6,7 +6,7 @@ import type { AgentObservation } from "@/lib/domain/evidence/agents/types";
 import { summarizeAgentEvidence } from "@/lib/domain/evidence/agents/summary";
 import { TEXT_SAMPLE_LIMIT } from "@/lib/net/normalize";
 import type { CrawlSettings } from "./settings-schema";
-import { accessFromDocument, factsFromRepoMeta, judge, pageFactsFromDocument } from "./rules";
+import { accessFromDocument, judgeStoredDocument, pageFactsFromDocument } from "./rules";
 import { linksOwnGithub } from "./github-links";
 import { README_SAMPLE_LIMIT } from "./readme";
 import { repositoryUrl, type ProductAccessMode } from "@/lib/domain/products/access";
@@ -106,7 +106,9 @@ function canonical(value: unknown): string {
 }
 export const reviewHash = (value: unknown): string => createHash("sha256").update(canonical(value)).digest("hex");
 export function reviewPolicyHash(settings: CrawlSettings): string {
-  return reviewHash({ judge: settings.judge, agentEvidence: {
+  const judge = { ...settings.judge };
+  delete (judge as Partial<typeof judge>).maxStars;
+  return reviewHash({ judge, agentEvidence: {
     enforceEligibility: settings.agentEvidence.enforceEligibility,
     detectorVersion: settings.agentEvidence.detectorVersion,
     policyVersion: settings.agentEvidence.policyVersion,
@@ -116,7 +118,7 @@ const limitedText = (value: unknown, size: number) => typeof value === "string" 
 
 /** 규칙이 멈춘 곳. 보류 후보는 마지막 단계가 멈춘 규칙이다 */
 function ruleStop(document: CrawlDocument, settings: CrawlSettings, now: Date): ReviewSnapshot["rules"] {
-  const verdict = judge(factsFromRepoMeta(document.repo, document.repoMeta), pageFactsFromDocument(document), settings, now);
+  const verdict = judgeStoredDocument(document, settings, now);
   const last = verdict.trace.at(-1);
   return last && !last.passed
     ? { stoppedAt: last.rule, detail: limitedText(last.detail, 300) || null, cause: verdict.cause ?? null }

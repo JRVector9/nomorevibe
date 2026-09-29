@@ -62,11 +62,9 @@ const discoverSchema = z.object({
 });
 
 const judgeSchema = z.object({
-  /**
-   * 스타 상한. 넘으면 개인이 AI로 만든 제품이 아니라고 본다.
-   * 하한이 아니라 상한인 것이 요지다 — 갓 배포한 제품은 정당하게 스타가 0개이므로
-   * 하한을 두면 우리가 찾으려는 것부터 걸러진다.
-   */
+  /** Fresh public GitHub repositories at or above this count bypass content and AI review. */
+  autoApproveMinStars: z.number().int().min(500).max(10_000_000).default(500),
+  /** Legacy saved value, retained for old receipts. New decisions do not use an upper star limit. */
   maxStars: z.number().int().min(0).max(1_000_000),
   /** 하한. 0이 기본이다 */
   minStars: z.number().int().min(0).max(100_000),
@@ -78,7 +76,7 @@ const judgeSchema = z.object({
    *
    * 기본값이 false인 이유는 실측이다. 표본 341개에서 large_oss로 거른 52건 중 39건이
    * "조직 계정인데 스타 1000 이하"였고, 그 안에 nodetool.ai·smithers.sh·albyhub.com 같은
-   * 실제 배포 제품이 섞여 있었다. 규모는 스타 상한이 이미 거른다 — 계정 종류로 한 번 더
+   * 실제 배포 제품이 섞여 있었다. 계정 종류로 한 번 더
    * 거르면 소규모 팀이 통째로 빠진다.
    */
   excludeOrganizations: z.boolean(),
@@ -439,7 +437,8 @@ export const DEFAULT_CRAWL_SETTINGS: CrawlSettings = {
     showHn: { enabled: true, priority: 120 },
   },
   judge: {
-    maxStars: 1000,
+    autoApproveMinStars: 500,
+    maxStars: 99999,
     minStars: 0,
     maxPushAgeDays: 180,
     excludeForks: true,

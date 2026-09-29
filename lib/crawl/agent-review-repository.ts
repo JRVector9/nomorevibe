@@ -1,6 +1,6 @@
 import { emitPipelineEvent } from "@/lib/observability/review-pipeline";
 import { isDeepStrictEqual } from "node:util";
-import { and, asc, desc, eq, inArray, notInArray, or, sql, type SQL } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, not, notInArray, or, sql, type SQL } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { crawlCandidates, crawlDocuments, crawlFrontier, crawlSettings, crawlReviewAttempts, secondReviews,
   agentRepositoryScans, agentRepositoryObservations,
@@ -11,6 +11,8 @@ import { assertJobLease, requestJob, type JobLease } from "@/lib/jobs/control";
 import { mergeWithDefaults } from "./settings";
 import type { CrawlSettings } from "./settings-schema";
 import { firstReviewer } from "./agent-review";
+import { candidateStarAutoApproval } from "./star-auto-approval";
+import { judgeRevision } from "./rules";
 import { lockFrontierIdentity } from "./repository";
 import {
   createReviewInput, isReviewCandidate, MAX_REVIEW_ATTEMPTS,
@@ -138,12 +140,84 @@ function secondApproved(attempt: { id: SQL; model: SQL }, voters: { provider: st
 
 export function reviewApprovalPredicate(settings: CrawlSettings): SQL {
   if (settings.reviewMode !== "enforce") return sql`true`;
-  return sql`(${crawlCandidates.decidedBy} = 'admin' OR EXISTS (
+  return sql`(${crawlCandidates.decidedBy} = 'admin' OR ${starAutoApprovalPredicate(settings)} OR EXISTS (
     SELECT 1 FROM ${crawlReviewAttempts} WHERE ${matchingSource(settings)}
     AND ${crawlReviewAttempts.state} = 'succeeded' AND ${crawlReviewAttempts.outcome}->>'decision' = 'approve'
     AND ${crawlReviewAttempts.validUntil} > now()
     AND ${secondGateRequired(settings) ? secondApproved({ id: sql`${crawlReviewAttempts.id}`, model: sql`${crawlReviewAttempts.model}` },
       settings.secondReview.voters, settings.secondReview.fallbacks ?? []) : sql`true`}))`;
+}
+
+/** SQL prefilter; the publication transaction repeats this check against locked rows. */
+export function starAutoApprovalPredicate(settings: CrawlSettings): SQL {
+  return sql`(${crawlCandidates.decidedBy} = 'auto'
+    AND ${crawlCandidates.signals}->'starAutoApproval' IS NOT NULL
+    AND EXISTS (SELECT 1 FROM ${crawlDocuments} popular
+      WHERE popular.repo = ${crawlCandidates.repo}
+        AND popular.product_url IS NOT DISTINCT FROM ${crawlCandidates.productUrl}
+        AND popular.fetched_at <= now() AND popular.fetched_at > now() - interval '24 hours'
+        AND popular.repo_meta->'private' = 'false'::jsonb
+        AND popular.repo_meta->'fork' = 'false'::jsonb
+        AND popular.repo_meta->'archived' = 'false'::jsonb
+        AND lower(popular.repo_meta->>'full_name') = lower(${crawlCandidates.repo})
+        AND CASE WHEN jsonb_typeof(popular.repo_meta->'id') = 'number'
+          THEN (popular.repo_meta->>'id')::numeric > 0
+            AND (popular.repo_meta->>'id')::numeric = trunc((popular.repo_meta->>'id')::numeric)
+          ELSE false END
+        AND CASE WHEN jsonb_typeof(popular.repo_meta->'stargazers_count') = 'number'
+          THEN (popular.repo_meta->>'stargazers_count')::numeric >= ${settings.judge.autoApproveMinStars}
+            AND (popular.repo_meta->>'stargazers_count')::numeric = trunc((popular.repo_meta->>'stargazers_count')::numeric)
+          ELSE false END
+        AND ${crawlCandidates.signals}->'starAutoApproval'->>'stars' = popular.repo_meta->>'stargazers_count'
+        AND ${crawlCandidates.signals}->'starAutoApproval'->>'githubId' = popular.repo_meta->>'id'))`;
+}
+
+/** Reopen star approvals whose source expired or no longer satisfies the current threshold. */
+export async function requeueInvalidStarApprovals(settings: CrawlSettings, lease: JobLease, limit = 50): Promise<number> {
+  if (!settings.enabled) return 0;
+  const ids = await db.select({ id: crawlCandidates.id }).from(crawlCandidates).where(and(
+    eq(crawlCandidates.state, "approved"), eq(crawlCandidates.decidedBy, "auto"),
+    sql`${crawlCandidates.signals}->'starAutoApproval' IS NOT NULL`, not(starAutoApprovalPredicate(settings)),
+  )).orderBy(asc(crawlCandidates.updatedAt), asc(crawlCandidates.id)).limit(limit);
+  let reopened = 0;
+  for (const { id } of ids) {
+    const changed = await db.transaction(async tx => {
+      const [candidate] = await tx.select().from(crawlCandidates).where(eq(crawlCandidates.id, id)).for("update");
+      if (!candidate || candidate.state !== "approved" || candidate.decidedBy !== "auto"
+        || !candidate.signals?.starAutoApproval) return false;
+      const [document] = await tx.select().from(crawlDocuments).where(eq(crawlDocuments.repo, candidate.repo)).for("share");
+      const [saved] = await tx.select().from(crawlSettings).where(eq(crawlSettings.id, 1)).for("share");
+      if (!isDeepStrictEqual(mergeWithDefaults(saved?.values), settings)) return false;
+      if (document && candidateStarAutoApproval(candidate, document, settings)) return false;
+      const now = new Date();
+      const fresh = document && document.fetchedAt <= now
+        && now.getTime() - document.fetchedAt.getTime() < 24 * 3600_000;
+      if (!fresh) {
+        await lockFrontierIdentity(tx, candidate.repo);
+        const frontiers = await tx.select().from(crawlFrontier)
+          .where(sql`lower(${crawlFrontier.repo}) = ${candidate.repo.toLowerCase()}`).for("update");
+        if (frontiers.some(row => row.repo !== candidate.repo)) return false;
+        const [frontier] = frontiers;
+        if (!frontier) await tx.insert(crawlFrontier).values({ repo: candidate.repo,
+          signal: "star-auto-source-refresh", priority: 100 });
+        else if (frontier.state !== "pending" && frontier.state !== "fetching") {
+          await tx.update(crawlFrontier).set({ state: "pending", attempts: 0,
+            nextAttemptAt: frontier.lastError ? sql`greatest(now(), ${crawlFrontier.nextAttemptAt})` : sql`now()`,
+            updatedAt: sql`now()` }).where(eq(crawlFrontier.id, frontier.id));
+        }
+      }
+      const signals = { ...candidate.signals };
+      if (fresh) delete signals.reconsiderAfter;
+      else if (document) signals.reconsiderAfter = new Date(Math.min(document.fetchedAt.getTime(), now.getTime())).toISOString();
+      await tx.update(crawlCandidates).set({ state: "new", reason: "source_changed", updatedAt: new Date(),
+        signals }).where(eq(crawlCandidates.id, candidate.id));
+      await requestJob(fresh ? "crawl-judge" : "crawl-fetch", tx);
+      await assertJobLease(tx, lease);
+      return true;
+    });
+    if (changed) reopened++;
+  }
+  return reopened;
 }
 
 /**
@@ -227,6 +301,7 @@ export function reviewCandidatePredicate(settings: CrawlSettings, options: Revie
     options.unreviewedOnly ? sql`NOT EXISTS (SELECT 1 FROM ${crawlReviewAttempts} ever
       WHERE ever.candidate_id = ${crawlCandidates.id} AND ever.state = 'succeeded')` : undefined,
     eq(crawlCandidates.decidedBy, "auto"),
+    sql`NOT ${starAutoApprovalPredicate(settings)}`,
     sql`EXISTS (SELECT 1 FROM crawl_documents fd
       LEFT JOIN LATERAL (SELECT fs.completed_at FROM agent_repository_scans fs
         WHERE fs.repository_key = lower(${crawlCandidates.repo}) AND fs.scope = ''
@@ -405,6 +480,13 @@ export async function assertReviewApproval(tx: ProductTransaction, input: {
 }): Promise<CrawlReviewAttempt | null> {
   if (input.settings.reviewMode !== "enforce" || input.candidate.decidedBy === "admin") {
     await assertJobLease(tx, input.lease);
+    return null;
+  }
+  if (input.candidate.signals?.starAutoApproval) {
+    const proof = candidateStarAutoApproval(input.candidate, input.document, input.settings);
+    await assertJobLease(tx, input.lease);
+    if (!proof || input.candidate.productUrl !== input.document.productUrl
+      || input.candidate.signals.judgedRevision !== judgeRevision(input.document)) throw new ReviewApprovalChangedError();
     return null;
   }
   await lockRepositoryAgentEvidence(tx, input.candidate.repo);

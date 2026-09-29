@@ -166,11 +166,13 @@ export function SettingsForm({ settings }: { settings: CrawlSettings }) {
       >
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
           <div>
-            <label className={label} htmlFor="maxStars">스타 상한</label>
-            <input id="maxStars" name="maxStars" type="number" min={0} defaultValue={judge.maxStars} className={`${field} mt-1.5`} />
+            <label className={label} htmlFor="autoApproveMinStars">자동 승인 최소 스타</label>
+            <input id="autoApproveMinStars" name="autoApproveMinStars" type="number" min={500} max={10000000}
+              defaultValue={judge.autoApproveMinStars} className={`${field} mt-1.5`} />
             <p className={hint}>
-              별 500개 이상인 제품에는 상한을 적용하지 않습니다. 배포 URL이 없는 경우에도
-              실제로 설치 가능한 제품·플러그인·스킬인지 심사합니다. 문서·설문·단순 자료 모음은 제외합니다.
+              최근 24시간 안에 확인한 공개 GitHub 저장소가 이 값 이상이면 1·2차 AI 심사 없이 발행합니다.
+              이 기준은 아래 스타 하한·방치 기준보다 우선합니다. 포크·보관 저장소, 기존 등재·차단 항목,
+              관리자 수동 거부는 제외합니다. 10만 스타 이상도 포함합니다.
             </p>
           </div>
           <div>

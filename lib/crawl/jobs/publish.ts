@@ -1,5 +1,5 @@
 import { emitPipelineEvent } from "@/lib/observability/review-pipeline";
-import { and } from 'drizzle-orm';
+import { and, or } from 'drizzle-orm';
 import { agentRequest } from '@/lib/operations/agent-client';
 import { classificationReadyPredicate, decisionFor, holdClassification } from '@/lib/operations/categories';
 import type { Category } from '@/lib/domain/products/schema';
@@ -9,7 +9,7 @@ import { getSettings } from "@/lib/crawl/settings";
 import { prepareCandidateClassification, publishCandidate } from "@/lib/crawl/publish";
 import { classifyCategories } from "@/lib/crawl/classify";
 import { recordPublicationFailure } from "@/lib/crawl/publication-guard";
-import { reviewApprovalPredicate } from "@/lib/crawl/agent-review-repository";
+import { requeueInvalidStarApprovals, reviewApprovalPredicate, starAutoApprovalPredicate } from "@/lib/crawl/agent-review-repository";
 import { requiresProfileCategory } from "@/lib/crawl/rules";
 import { requestJob } from "@/lib/jobs/control";
 
@@ -44,12 +44,19 @@ export async function publishCandidates(ctx: JobContext<null>): Promise<JobOutco
     return { done: true };
   }
 
+  if (ctx.lease) {
+    const reopened = await requeueInvalidStarApprovals(settings, ctx.lease);
+    if (reopened) ctx.log("crawl.star_approvals_reopened", { count: reopened });
+  }
+
   let published = 0;
   let skipped = 0;
 
   while (ctx.hasBudget()) {
     // Filter before LIMIT so pending reviews cannot starve approved products.
-    const candidates = await crawl.listCandidates(["approved"], BATCH, process.env.CONNECT_AGENT_URL ? and(reviewApprovalPredicate(settings), classificationReadyPredicate()) : reviewApprovalPredicate(settings));
+    const candidates = await crawl.listCandidates(["approved"], BATCH, process.env.CONNECT_AGENT_URL
+      ? and(reviewApprovalPredicate(settings), or(classificationReadyPredicate(), starAutoApprovalPredicate(settings)))
+      : reviewApprovalPredicate(settings));
     if (candidates.length === 0) {
       ctx.log("crawl.publish_done", { published, skipped, drained: true });
       return { done: true };
@@ -80,7 +87,7 @@ export async function publishCandidates(ctx: JobContext<null>): Promise<JobOutco
         const manual = decisions.get(candidate.repo);
         const category = manual?.category as Category | null ?? categoryByRepo.get(candidate.repo) ?? null;
         const snapshot = snapshotByRepo.get(candidate.repo);
-        if (process.env.CONNECT_AGENT_URL && snapshot && category === null) {
+        if (process.env.CONNECT_AGENT_URL && snapshot && category === null && !snapshot.starAutoApproved) {
           await holdClassification(candidate, snapshot.document); skipped++; continue;
         }
         /**

@@ -29,6 +29,30 @@ it("dry run preserves data; apply audits and waits for fresh source before rejud
   expect(await db.select().from(operationsAudit).where(eq(operationsAudit.action, "reconsider-installable"))).not.toHaveLength(0);
   expect((await applyReconsideration(plan, "test-policy-change")).queued).toEqual([]);
 });
+
+it("requeues old rejected and held popular sources for a fresh GitHub check without changing admin decisions", async () => {
+  await rejected("maker/popular", "auto", 100_000);
+  await rejected("maker/manual", "admin", 100_000);
+  await rejected("maker/small", "auto", 499);
+  await db.insert(crawlDocuments).values({ repo: "maker/held", productUrl: null,
+    repoMeta: { stargazers_count: 500 }, fetchedAt: new Date(Date.now() - 60_000) });
+  await db.insert(crawlCandidates).values({ repo: "maker/held", state: "needs_review", reason: "ambiguous", decidedBy: "auto" });
+
+  const plan = await planReconsideration(1000, { policy: "star-auto" });
+  expect(plan.entries.map(row => row.repo)).toEqual(["maker/popular", "maker/held"]);
+  expect((await applyReconsideration(plan, "star-policy")).queued).toEqual(["maker/popular", "maker/held"]);
+  expect(await judgementQueue(10)).toHaveLength(0);
+  expect((await db.select().from(crawlCandidates).where(eq(crawlCandidates.repo, "maker/manual")))[0])
+    .toMatchObject({ state: "rejected", decidedBy: "admin" });
+});
+it("rejects a star-auto plan made for a different database", async () => {
+  await rejected("maker/popular", "auto", 500);
+  const plan = await planReconsideration(1000, { policy: "star-auto" });
+  expect(plan.database).toMatch(/^[a-f0-9]{32}$/);
+  await expect(applyReconsideration({ ...plan, database: "0".repeat(32) }, "star-policy"))
+    .rejects.toThrow("reconsideration_database_changed");
+  expect((await db.select().from(crawlCandidates))[0].state).toBe("rejected");
+});
 it("preserves a decision or source changed after the dry run", async () => {
   await rejected("maker/changed");
   const plan = await planReconsideration();

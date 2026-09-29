@@ -182,6 +182,31 @@ CLI smoke는 통과했으나 운영 장기 Codex/Claude 인증 설정과 24시�
 초기화는 현재 리뷰 모드를 보존한다. 기존 `agentEvidence.enforceEligibility`는 별도 근거 정책이다.
 개발 근거 부족은 규칙 단계에서 needs_review로 보류하며, AI 오류도 자동 부적격 판정으로 바꾸지 않는다.
 
+### 500스타 이상 자동 승인 전환
+
+관리자 `자동 승인 최소 스타` 기본값은 500이다. 현재 GitHub 응답의 숫자 ID·공개 여부·포크·
+보관 여부·정수 스타 수와 원본 수집 시각(24시간 이내)을 확인한 후보는 AI 심사 없이 승인한다.
+10만 스타도 상한 없이 포함한다. 기존 제품·차단 제품의 중복과 관리자 직접 거부는 유지한다.
+발행 직전 잠긴 후보·원본·설정을 재확인하므로 설정 변경이나 원본 교체는 승인을 무효화한다.
+발행 워커가 재개했을 때 확인 자료가 24시간을 넘은 승인 후보는 재수집으로, 관리자 기준이
+바뀐 승인 후보는 재판정으로 자동 복귀한다.
+
+웹·crawler·reviewer·publisher 주/예비 앱이 모두 같은 릴리스 SHA가 된 뒤에 기존 자동
+거부·보류·미발행 승인 후보를 다시 수집한다. 계획은 읽기 전용이고 `.crawl-samples` 파일은
+민감할 수 있어 git에 넣지 않는다. 실행 환경의 `DATABASE_URL`과 운영 pooler 설정을 사용한다.
+
+```sh
+DB_POOLER_MODE=pgbouncer npx tsx scripts/reconsider-star-auto.ts --plan .crawl-samples/star-auto-plan.json
+# 파일의 후보·건수·사유를 확인한 뒤 같은 파일로 적용한다.
+DB_POOLER_MODE=pgbouncer npx tsx scripts/reconsider-star-auto.ts --apply .crawl-samples/star-auto-plan.json <actor>
+```
+
+적용은 계획을 만든 DB의 식별값과 행마다 계획 당시 후보·원본·정책 지문 및 제품 중복을
+다시 확인한다. 일치한 후보만
+`new`/재수집 대기로 바꾸며, 새 GitHub 응답이 저장된 뒤 판정한다. 적용 수와 변경되어 건너뛴
+수를 기록하고, 이후 `crawl-fetch`·`crawl-judge`·`crawl-publish` 완료와 실제 발행 결과를
+확인한다. 오래된 `scripts/rejudge-stars.ts`는 과거 스타 상한 변경용이므로 이 전환에 사용하지 않는다.
+
 ## 자원·비밀값
 
 다음은 초기 시험 예산이다. 최소 사양이나 사용량 보장이 아니며 실제 RSS/DB 연결/응답 지연을 기록해야 한다.

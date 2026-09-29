@@ -4,7 +4,7 @@ import { findRepositoryProduct } from "@/lib/domain/products/repository";
 import { accessFromDocument } from "../rules";
 import { loadReviewDocument } from "./review-document";
 import { getSettings } from "@/lib/crawl/settings";
-import { judge, factsFromRepoMeta, pageFactsFromDocument } from "@/lib/crawl/rules";
+import { judgeStoredDocument } from "@/lib/crawl/rules";
 import { isReviewCandidate, REVIEW_RULES_VERSION, type ReviewOutcome } from "@/lib/crawl/agent-review-contract";
 import { listReviewCandidates, loadReviewInput, claimAgentReview, recordAgentReview,
   requeueStaleReviewSources } from "@/lib/crawl/agent-review-repository";
@@ -49,8 +49,7 @@ export async function reviewCrawlCandidates(ctx: JobContext<null>): Promise<JobO
     // 판정 잡과 같은 추출기로 규칙을 태운다. 여기서 PageFacts를 손으로 조립했을 때 본문이 빠져
     // "설치 유도 아님"을 지나쳤고, 재수집으로 본문에 npm install이 생긴 needs_review 후보를 모델이
     // 메타데이터만 보고 승인했다(codex 재현). 규칙이 거부하는 것은 모델에게 보내지 않는다.
-    const verdict = judge(factsFromRepoMeta(document.repo, document.repoMeta), pageFactsFromDocument(document),
-      settings, new Date(), settings.agentEvidence.enforceEligibility ? {
+    const verdict = judgeStoredDocument(document, settings, new Date(), settings.agentEvidence.enforceEligibility ? {
         relationship: input.snapshot.relationship, scanState: input.snapshot.scanState,
         observations: input.snapshot.evidence.map(evidence => evidence.observation),
       } : undefined);

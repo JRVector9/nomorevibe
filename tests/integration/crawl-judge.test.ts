@@ -4,7 +4,7 @@ import { db } from "@/lib/db";
 import { crawlFrontier, crawlDocuments, crawlCandidates, crawlSettings } from "@/lib/db/schema";
 import * as crawl from "@/lib/crawl/repository";
 import * as products from "@/lib/domain/products/repository";
-import { saveSettings } from "@/lib/crawl/settings";
+import { getSettings, saveSettings } from "@/lib/crawl/settings";
 import { judgeCrawlDocuments } from "@/lib/crawl/jobs/judge";
 import { runJob } from "@/lib/jobs/runner";
 import { jobs } from "@/lib/db/schema";
@@ -46,6 +46,22 @@ beforeEach(async () => {
 });
 
 describe("판정 잡", () => {
+  it("500스타 이상은 enforce에서도 AI 심사 없이 발행을 요청한다", async () => {
+    const settings = await getSettings();
+    await db.update(crawlSettings).set({ values: { ...settings, reviewMode: "enforce" } });
+    await putDocument({ repo: "maker/popular", productUrl: null, pageStatus: null, meta: {
+      id: 321, full_name: "maker/popular", private: false, stargazers_count: 100_000,
+      description: "Survey and research notes",
+    } });
+
+    await tick();
+
+    expect(await crawl.getCandidate("maker/popular")).toMatchObject({ state: "approved", decidedBy: "auto",
+      signals: { starAutoApproval: { stars: 100_000, githubId: 321 } } });
+    expect(await db.query.jobs.findFirst({ where: eq(jobs.name, "crawl-publish") }))
+      .toMatchObject({ requestedVersion: 1 });
+    expect(await db.query.jobs.findFirst({ where: eq(jobs.name, "crawl-agent-review") })).toBeUndefined();
+  });
   it.each(["seeded", "banned"] as const)("recognizes a %s repository after its website changes", async status => {
     await products.insert({ slug: "previous-site", url: "https://old-site.test", repoUrl: "https://github.com/Maker/Plugin",
       name: "Plugin", tagline: "Plugin", description: "Plugin", category: "Plugin", status,
@@ -83,7 +99,7 @@ describe("판정 잡", () => {
 
   it("거른 것도 사유와 함께 남긴다", async () => {
     await putDocument({ repo: "someone/no-deploy", productUrl: null, pageStatus: null });
-    await saveSettings({ judge: { maxStars: 100 } }, "test");
+    await saveSettings({ judge: { minStars: 500 } }, "test");
     await putDocument({ repo: "someone/huge", meta: { stargazers_count: 400 } });
 
     await tick();
@@ -158,13 +174,13 @@ describe("판정 잡", () => {
   });
 
   it("후보를 new로 되돌리면 다시 판정한다 — 기준을 바꾼 뒤의 재판정 경로다", async () => {
-    await saveSettings({ judge: { maxStars: 100 } }, "test");
+    await saveSettings({ judge: { minStars: 500 } }, "test");
     await putDocument({ repo: "someone/my-app", meta: { stargazers_count: 400 } });
     await tick();
     expect(await crawl.getCandidate("someone/my-app")).toMatchObject({ reason: "large_oss" });
 
     // 기준을 올리고 재판정 대기로 되돌린다
-    await saveSettings({ judge: { maxStars: 100_000 } }, "테스트");
+    await saveSettings({ judge: { minStars: 0 } }, "테스트");
     await crawl.recordJudgement({
       repo: "someone/my-app",
       productUrl: "https://my-app.test",
@@ -258,7 +274,7 @@ describe("판정 잡", () => {
     await putDocument({repo:"someone/my-app"});
     const findRepositoryProduct = products.findRepositoryProduct;
     const spy = vi.spyOn(products,"findRepositoryProduct").mockImplementationOnce(async (repo, url) => {
-      await saveSettings({judge:{maxStars:1}},"concurrent admin");
+      await saveSettings({judge:{minStars:20}},"concurrent admin");
       return findRepositoryProduct(repo, url);
     });
     try {
