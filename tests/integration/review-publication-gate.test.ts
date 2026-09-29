@@ -62,7 +62,9 @@ async function candidate(index: number, approve = false, confidence?: number, in
 const tick = () => runJob("crawl-publish", publishCandidates);
 
 async function popularCandidate(repo: string, description: string | null, stars = 100_000) {
-  const now = new Date();
+  // The database clock can trail the test host by milliseconds (local Docker).
+  // Keep fresh fixtures safely inside the 24-hour eligibility window.
+  const now = new Date(Date.now() - 1000);
   const [document] = await db.insert(crawlDocuments).values({
     repo, productUrl: null, fetchedAt: now,
     repoMeta: { id: 888, full_name: repo, private: false, fork: false,

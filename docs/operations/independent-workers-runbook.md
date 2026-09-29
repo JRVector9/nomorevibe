@@ -80,6 +80,36 @@ docker compose logs --since=5m scheduler crawler reviewer publisher text mainten
 
 ## 운영 M3·mini 배포와 데이터 컷오버
 
+### 공통 이미지 릴리스
+
+코드 변경이 main에 들어간 뒤 CI의 필수 `check`가 성공하면 GHCR에
+`ghcr.io/jrvector9/nomorevibe-web:<SHA>`와
+`ghcr.io/jrvector9/nomorevibe-worker:<SHA>`가 각각 한 번 생성된다.
+두 이미지의 Actions 작업이 성공하고 OCI `revision`이 같은 SHA인지 확인한다.
+M3와 mini 모두 arm64다. 웹 빌드는 두 앱이 공유하는 Actions secret
+`NEXT_SERVER_ACTIONS_ENCRYPTION_KEY`와 `NEXT_DEPLOYMENT_ID=<SHA>`를 사용한다.
+비밀값은 보고서·셸 로그·Git에 남기지 않는다.
+
+배포 전에 두 이미지의 SHA 태그를 registry의 `sha256:` digest로 풀고,
+**각 서버에서** 해당 digest를 실제로 pull할 수 있는지 확인한다. Dokploy의
+registry 연결 시험만으로 GHCR 로그인 성공을 판단하지 않는다. 저장된 GHCR 자격
+정보가 거부되면 먼저 갱신하고 pull을 다시 확인한다. Dokploy 앱 8개의 현재
+source, 이미지/커밋, `RELEASE_TAG`, 환경·build 설정과 배포 상태를 안전한 위치에
+백업한다. DB migration이 필요한 릴리스는 기존 절차대로 소비자를 drain한 뒤
+한 번 실행하고 종료 코드 0을 확인한다.
+
+역할별 주·예비는 같은 worker digest와 `RELEASE_TAG=<SHA>`로 교체한다.
+mini 예비를 먼저 배포해 healthy standby를 확인하고 M3 주를 배포해 active와
+동일 릴리스를 확인한다. crawler → reviewer → publisher 순서로 역할 하나씩
+끝낸다. 그다음 mini 웹, M3 웹을 같은 web digest로 배포하고 각각 `/api/health`와
+공개 로드밸런서 응답을 확인한다. Dokploy의 `done`만으로 완료를 판단하지 않고
+실제 실행 중 컨테이너의 image digest, release, 다섯 역할의 readiness/progress를
+대조한다. 문제가 있으면 뒤의 앱을 전환하지 않고 해당 역할의 이전 이미지와
+source/env 설정으로 되돌린다. DB 서버·스트리밍 설정은 이 작업에서 바꾸지 않는다.
+
+문서만 바뀐 main push에는 새 이미지를 만들지 않는다. 수동 Actions 실행은
+전체 검증과 이미지 빌드를 수행한다.
+
 ### GitHub 수집 PAT 관리자 등록
 
 관리자 `/admin/github-accounts`에서 공개 저장소 읽기용 PAT를 등록·교체한다. 등록 시
