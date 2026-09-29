@@ -14,6 +14,14 @@ scheduler는 M3에서 2복제본이다. 공개 GitHub main은 최신 base의 CI 
 
 남은 항목은 배포 준비가 아니라 아래 직접 검증이다. 실행하지 않은 검증을 완료로 표시하지 않는다.
 
+- **500스타 자동 승인 장기 관측**: PR #231의 웹·crawler·reviewer·publisher
+  주/예비 8개 앱을 같은 main 커밋으로 배포했다. 기존 92건 중 88건 발행,
+  기존 제품 URL 중복 2건·보관 저장소 1건 거부, GitHub 404 저장소 1건의
+  `new`/frontier `skipped`를 확인했다. 발행 88건의 GitHub ID 중복은 0건이었다.
+  신규 수집의 24시간 신선 원본·중복·발행 오류 추세와 `new`로 남은 404 후보의
+  표시/정리 정책은 별도로 관측한다
+  ([운영 기록](docs/operations/2026-09-29-star-auto-approval-rollout.md)).
+
 - **GitHub 수집 계정 풀의 장기 관측**: PR #225 배포 후 서로 다른 실제 GitHub
   계정의 관리자 PAT 등록·교체, 암호화 저장, 수집 코드 조회, 새 계정 quota 관측과
   원본 39건 증가를 확인했다. 실제 한 계정의 primary 한도가 자연 소진될 때
