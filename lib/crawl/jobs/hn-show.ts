@@ -161,7 +161,7 @@ export async function seedFromShowHN(ctx: JobContext<ShowHnCursor>, request?: Ca
       if (repo) {
         discovered += await crawl.enqueue([{
           repo, signal: SHOW_HN_SIGNAL, builder: null, priority: settings.discover.showHn.priority,
-        }]);
+        }], ctx.lease);
       }
       cursor = item.created_at_i > cursor.seenUntil
         ? { ...cursor, seenUntil: item.created_at_i, seenIds: [item.objectID] }

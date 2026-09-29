@@ -59,6 +59,16 @@ beforeEach(() => {
 });
 
 describe("검색 신호 편집", () => {
+  it("관리자가 500스타 이상 자동 승인 기준을 조정하고 기존 상한은 표시하지 않는다", async () => {
+    const html = render(twoSignals);
+    expect(html).toContain("자동 승인 최소 스타");
+    expect(html).toContain('name="autoApproveMinStars"');
+    expect(html).not.toContain('name="maxStars"');
+
+    await saveCrawlSettings(null, submitted({ autoApproveMinStars: "750" }));
+    expect(saveSettings.mock.calls[0][0].judge.autoApproveMinStars).toBe(750);
+    expect(saveSettings.mock.calls[0][0].judge.maxStars).toBeUndefined();
+  });
   it.each(["-1", "1.5", "NaN", "Infinity", "1000"])("유효하지 않은 행 수 %s 는 설정을 만들기 전에 거절한다", async (queryCount) => {
     expect(await saveCrawlSettings(null, submitted({ queryCount }))).toMatchObject({ issues: expect.any(Array) });
     expect(saveSettings).not.toHaveBeenCalled();

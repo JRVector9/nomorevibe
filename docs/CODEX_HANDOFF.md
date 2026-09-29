@@ -1,3 +1,1951 @@
+# 2026-09-29 — 수집·1차 심사 재시도 소진 복구 운영 적용 완료
+
+## Current objective / completed work
+
+멈춰 있던 1차 AI 심사 후보 2건과 GitHub 원본 재수집 실패 후보 1건을 사람 심사 큐로
+옮기는 수정을 PR #240으로 main `50b02b739a556af4ad92cd86fbd72c429f00e4e2`에
+병합했다. 새 공통 worker/web 이미지를 운영 8개 앱에 순차 배포했고 공개 M3·mini 웹
+health, 역할별 준비·진행 상태, 실제 후보 3건의 인계를 확인했다. 루트 checkout의 사용자
+변경, DB 서버·스트리밍·스키마는 건드리지 않았다.
+
+## Modified files / key design decisions
+
+기능 파일과 테스트 목록은 바로 아래 구현 단계 항목에 있다. 운영 적용 기록으로 이 파일을
+추가 수정했다. 재시도 소진은 자동 승인이나 오래된 원본 재사용 대신
+`ai_review_exhausted`/`source_refresh_failed` 사람 심사 사유로 남긴다. 단계별
+`manualAttention`은 워커 장애 경보와 분리한다. 이전 앱 설정의 0600 복구 스냅샷은
+`/private/tmp/nomorevibe-release-50b02b7.json`이며 비밀값을 포함하므로 내용을
+출력하거나 저장소에 넣지 않는다. 새 worker digest는
+`sha256:bb289114dc4a9e7fce059ff28b60a95e3086bbe2f3611a98ed7a8e260c710c9f`,
+web digest는 `sha256:35f5df4f1c9b92536eb39b0795391e0d4295b49fd4fc6238ae082febb9cb105e`다.
+
+## Test commands and results / failed approaches
+
+로컬 `npx tsc --noEmit`, `npm run lint`, `npm run build`, `git diff --check` 종료 0;
+`npm test` 160파일 1276/1276 통과, 관련 통합 56개·28개와 관리자 사유 파일 15/15 통과.
+PR #240의 GitGuardian, quality, 통합 3분할, 필수 `check` 성공; main run
+`36579824652`의 동일 검사와 worker/web 이미지 빌드 성공. 배포 CLI `plan`·`run`
+종료 0; 8개 앱 `done`/healthy, crawler·reviewer·publisher 역할 `ready`와 진행 `ok`,
+공개 M3·mini health `ok`. 배포 전 후보 ID 109663·109675는 `approved`, 16941은
+`new`/frontier `skipped`였다. 배포 후 세 후보 모두 `needs_review`가 됐고 실제
+`reviewQueueCauses`의 `ai_review_exhausted`에 앞의 2개, `source_refresh_failed`에
+나머지 1개가 나타났다. 실제 `pipelineThroughput`은 fetch `manualAttention=1`,
+first `manualAttention=2`; 진행 CLI는 두 단계 `manual_attention`, `alarm=false`,
+전체 failover/progress `ok`였다. 최근 5분 수집·규칙·1차·2차·발행 완료량은
+각각 14·14·4·5표·3이었다.
+
+첫 전체 단위 검사에서 새 repository 함수를 테스트 목에 빠뜨려 19개가 실패했으며,
+목 수정 후 전체 재실행이 통과했다. 운영 조회에서 TypeScript 프로세스가 DB 풀을
+열어 둬 SSH가 40초에 만료됐고, 조회 출력 뒤 프로세스를 종료하여 정상 측정했다.
+운영 복구/롤백 또는 장시간 장애 주입은 수행하지 않았다.
+
+## Remaining work / exact commands for the next agent
+
+이 운영 기록 문서만 commit/push하고 docs-only PR의 필수 `check`와 GitGuardian을
+확인한 뒤 병합한다. 장기 관측과 실제 장애·복구 주입은 `PENDING.md`의 별도 항목이다.
+
+```sh
+cd /private/tmp/nmv-pipeline-deploy-20260929
+git status --short --branch
+git diff --check
+gh run view 36579824652 --repo JRVector9/nomorevibe --json conclusion,jobs
+curl -fsS https://nomorevibe.brut.bot/api/health
+```
+
+---
+
+# 2026-09-29 22:56 KST — 수집·1차 심사 재시도 소진 복구 구현, 운영 적용 대기
+
+## Current objective / completed work
+
+운영 확인에서 발견한 1차 AI 심사 재시도 소진 후보 2건과 GitHub 원본 재수집 실패 후보 1건을
+자동 작업의 숨은 대기에서 사람 심사 큐로 넘기도록 수정했다. 독립 작업 트리
+`/private/tmp/nmv-pipeline-stuck-20260929`의 `fix/pipeline-stuck-recovery`에서 작업했고,
+루트 checkout의 사용자 변경은 건드리지 않았다. 아직 commit·PR·운영 배포는 하지 않았다.
+
+## Modified files / key design decisions
+
+`lib/crawl/agent-review-repository.ts`, `lib/crawl/jobs/agent-review.ts`는 현재 설정·원본에 맞는
+1차 실패 3회가 있고 유효한 성공이 없는 자동 승인 후보를 `ai_review_exhausted`로 사람 큐에 넘긴다.
+`lib/crawl/repository.ts`, `lib/crawl/jobs/fetch.ts`는 `reconsiderAfter`보다 새 원본이 필요한데
+프론티어가 최종 `skipped`/`failed`이면 `source_refresh_failed`로 넘긴다. 양쪽 모두 작업 lease와
+후보 행 잠금으로 소유권을 확인하며 자동 승인·발행으로 우회하지 않는다. 새 사유는
+`lib/db/crawl-schema.ts`, `lib/crawl/admin-review.ts`, `app/admin/reasons.ts`,
+`app/admin/review/causes.ts`에 추가했다. `lib/operations/throughput-model.ts`, `throughput.ts`,
+`worker-progress.ts`, `app/admin/status/ThroughputStrip.tsx`, `throughput.module.css`는 단계별
+`manualAttention`을 표시한다. 워커 자체 장애가 아니므로 감시 종료 코드 0은 유지하고,
+관리자에는 직접 확인 링크·건수를 보인다. 운영 설명은
+`docs/operations/independent-workers-runbook.md`에 있다. DB 스키마·migration은 변경하지 않았다.
+테스트 파일은 `tests/integration/agent-review-records.test.ts`, `crawl-fetch.test.ts`,
+`operations-throughput.test.ts`, `tests/worker-progress.test.ts`,
+`tests/operations-throughput-display.test.ts`, `tests/agent-review-job.test.ts`,
+`tests/integration/admin-review-causes.test.ts`다.
+
+## Test commands and results / failed approaches
+
+`npm ci`, `npx next typegen`, `npx tsc --noEmit`, `npm run lint`(기존 미사용 변수 경고 1개),
+`npm run build`, `git diff --check` 종료 0. 통합 테스트 3파일 56/56,
+사람 심사·감시 관련 3파일 28/28, 새 관리자 사유 테스트가 포함된 파일 15/15,
+전체 `npm test` 160파일 1276/1276 통과했다. 첫 전체 단위 실행은 새 함수를 목에
+등록하지 않아 `agent-review-job.test.ts` 19개가 실패했다. 목을 추가하고 전체 재실행이
+성공했다. 실제 운영의 두 후보·한 후보가 새 코드로 이동하는지는 아직 확인하지 않았다.
+
+## Remaining work / exact commands for the next agent
+
+소스 재수집 대기 선별의 대량 큐 경계와 변경 diff를 재검토한다. 이후 commit/push, 보호 브랜치
+PR의 최신 CI `check` 성공 및 병합, worker/web 공통 이미지 배포, 운영 2+1건의 큐 이동·
+`manualAttention` 표시와 수집→1차→2차의 계속 진행을 확인한다. 배포 순서는
+`README.md`와 `docs/operations/independent-workers-runbook.md`를 따른다.
+
+```sh
+cd /private/tmp/nmv-pipeline-stuck-20260929
+git status --short --branch
+git diff --check
+npx vitest run --config vitest.integration.config.ts tests/integration/agent-review-records.test.ts tests/integration/crawl-fetch.test.ts tests/integration/operations-throughput.test.ts
+npx tsc --noEmit
+python3 scripts/ops/deploy_shared_images.py --help
+```
+
+---
+
+# 2026-09-29 21:35 KST — 자동 확인 릴리스 운영 적용 완료, 실측 기록 PR 대기
+
+## Current objective / completed work
+
+사용자가 요청한 배포 확인 자동화를 PR #238로 main
+`5d67b23466659e943e51d5110ce5f2fd2ef8eab1`에 병합하고 새 worker/web
+이미지를 운영 8개 앱에 실제 배포했다. `plan`은 기존 릴리스·두 서버 pull·웹
+빌드 키·failover를 확인했고 `run`은 publisher→reviewer→crawler 각각
+mini→M3, 웹 mini→M3를 사람의 단계별 대기 없이 처리했다. 8개 앱의 배포·
+실행 이미지·건강 상태, 세 역할 쌍의 failover/progress, 양쪽 공개 웹 응답이
+모두 정상이다. 운영 기록을 문서 전용 후속 PR로 병합할 일이 남았다.
+
+## Modified files / key design decisions
+
+PR #238은 `scripts/ops/deploy_shared_images.py`,
+`tests/test_deploy_shared_images.py`, `.github/workflows/ci.yml`,
+`.gitignore`, `.dockerignore`, `README.md`,
+`docs/operations/independent-workers-runbook.md`, 이 파일을 변경했다.
+현재 `docs/release-verification-rollout` 브랜치는 `PENDING.md`,
+`docs/operations/2026-09-29-deployment-speed-rollout.md`, 새
+`docs/operations/2026-09-29-deployment-verification-automation-rollout.md`, 이 파일을
+기록용으로 변경한다. 배포 실패 시 뒤 앱을 멈추고 권한 0600 스냅샷에서
+개별 앱을 복구한다. 웹 키 회전은 자동화하지 않으며 DB 서버·스트리밍·migration을
+변경하지 않았다. 루트 checkout의 사용자 변경은 건드리지 않았다.
+
+새 worker digest는
+`ghcr.io/jrvector9/nomorevibe-worker@sha256:89e32f9fb18179424310a96aaf23867507ac936327aaaf7f41451f28db8cb19f`,
+private web digest는
+`ghcr.io/jrvector9/nomorevibe-runtime-web@sha256:3c5b760860b53265c4db2fbe316f584260c6b7c10b4bc23d6913dc8a5ccdbe65`다.
+이전 운영 설정 스냅샷은
+`/private/tmp/nomorevibe-release-5d67b23.json`(0600)에 있으며 비밀값을
+포함하므로 내용은 로그·문서에 출력하지 않는다.
+
+## Test commands and results / failed approaches
+
+로컬 `python3 -m unittest tests/test_deploy_shared_images.py -v` 8/8,
+`python3 -m py_compile scripts/ops/deploy_shared_images.py`,
+`actionlint .github/workflows/ci.yml`, `git diff --check` 종료 코드 0.
+PR #238 최신 hosted quality·통합 3분할·필수 `check`·GitGuardian 성공,
+main run `36567972623`의 quality·통합 3분할·필수 `check`·web/worker 이미지
+빌드 모두 성공. 실제 `plan`은 20.27초·종료 0, `run`은 사전 검사를 포함해
+118.45초·종료 0. Dokploy 기록의 첫 시작 `12:31:16.253 UTC`부터 마지막
+완료 `12:32:45.706 UTC`까지 89.45초이며 앞 수동 릴리스 252.8초보다
+163.35초(64.6%) 짧다. 배포 후 별도 조회도 8개 앱의 새 digest·복제본·
+health와 전체 failover/progress `ok`, 공개 M3·mini health `ok/db:ok`였다.
+웹 GHCR 패키지는 private이다.
+
+실제 배포에서는 게이트 실패나 롤백이 없었다. 오류 후 중단·스냅샷 복원은
+Python 안전 테스트로 확인했으나 운영 장애 주입은 하지 않았다. 구현 중 웹
+Docker healthcheck 부재, failover 보고서의 중첩 구조를 발견해 직접 health·
+올바른 필드로 고쳤다. 기존 임시 점검의 논리 이름으로 Docker service를 찾던
+오류는 실제 `appName` 사용으로 해결했다.
+
+## Remaining work / exact commands for the next agent
+
+이번 운영 기록 문서만 commit/push·PR을 열고 docs-only 필수 `check`와
+GitGuardian 성공 뒤 병합한다. main 문서 push가 이미지를 다시 만들지
+않는지 확인한다. 24시간 처리/헬스 관측, 최소 권한 GHCR pull 토큰 교체,
+실제 장애·복구 주입은 `PENDING.md`에 남는다.
+
+```sh
+cd /private/tmp/nmv-deploy-verify-auto-20260929
+git status --short --branch
+git diff --check
+gh run view 36567972623 --repo JRVector9/nomorevibe --json conclusion,jobs
+gh api user/packages/container/nomorevibe-runtime-web --jq '{name,visibility}'
+curl -fsS https://nomorevibe.brut.bot/api/health
+```
+
+---
+
+# 2026-09-29 20:37 KST — 공통 이미지 배포의 단계별 확인 자동화 구현, PR 최신 검사 대기
+
+## Current objective / completed work
+
+사용자가 요청한 순차 배포 확인 자동화를 진행 중이다. 별도 작업 트리
+`/private/tmp/nmv-deploy-verify-auto-20260929`의
+`feat/deployment-verification-automation`에서 8개 앱의 사전 확인, 순차 배포,
+각 앱의 Dokploy·Swarm·컨테이너 상태, 역할 쌍의 failover/progress, 웹의 직접·공개
+health를 자동으로 기다리는 운영자 CLI를 작성했다. 실패하면 뒤 앱을 배포하지
+않고 설정 스냅샷에서 개별 앱을 복구하는 `restore` 명령을 제공한다. PR #238을
+열었고 첫 hosted CI와 GitGuardian은 성공했다. 최신 추가 테스트의 CI,
+main 빌드·새 릴리스 실제 배포는 아직 하지 않았다. 루트 checkout의 사용자 변경과
+운영 DB 서버·스트리밍은 건드리지 않았다.
+
+## Modified files / key design decisions
+
+`scripts/ops/deploy_shared_images.py`, `tests/test_deploy_shared_images.py`,
+`.github/workflows/ci.yml`, `.gitignore`, `.dockerignore`, `README.md`,
+`docs/operations/independent-workers-runbook.md`, 이 파일. CI quality 잡에
+Python 표준 라이브러리 테스트를 추가했다. 스크립트는 운영자 Mac의 Keychain,
+GitHub CLI, SSH, curl을 사용하며 비밀값·Dokploy 앱 원문을 출력하지 않는다.
+`plan`은 main SHA/비공개 웹 패키지, 8개 앱의 동일한 이전 릴리스, DB readiness,
+두 서버의 이미지 pull/arm64/revision 및 웹 이미지 빌드 키 일치를 확인한다.
+`run`은 권한 0600의 스냅샷을 만든 뒤 publisher→reviewer→crawler의
+mini→M3, 웹 mini→M3 순서로 진행한다. 새 deployment ID만으로 성공하지 않고
+실제 컨테이너 digest·release·health와 역할 상태를 함께 판정한다. migration
+변경이 있으면 별도 완료 표시를 요구한다. 웹 키 회전은 기존 수동 절차를 따른다.
+
+## Test commands and results / failed approaches
+
+`python3 -m unittest tests/test_deploy_shared_images.py -v` 8/8 통과,
+`python3 -m py_compile scripts/ops/deploy_shared_images.py`,
+`actionlint .github/workflows/ci.yml`, `git diff --check` 종료 0.
+실제 운영의 현재 릴리스를 읽기 전용으로 조사해 8개 앱의 Docker service·실행
+컨테이너 digest/health, baseline 8개, crawler failover/progress `ok`, 공개
+웹의 M3·mini 응답, 두 서버의 기존 digest pull과 웹 이미지 서버 액션 빌드 키
+일치를 확인했다. 새 코드의 실제 `run`은 아직 실행하지 않았다.
+PR #238 첫 hosted `quality`, 통합 3분할, 필수 `check`, GitGuardian은 성공했다.
+
+첫 remote probe는 웹에 Docker healthcheck가 있다고 가정해 웹을 잘못
+`not ready`로 분류했다. 웹은 컨테이너 직접 `/api/health`로 판정하게 고쳤다.
+처음엔 Dokploy 표시 이름으로 service를 찾는 이전 점검이 실패했으나 새
+도구는 실제 `appName`을 사용한다. failover CLI의 역할 목록은 상위가 아닌
+`readiness.roles`에 있음을 확인하고 파서를 고쳤다.
+
+## Remaining work / exact commands for the next agent
+
+최종 코드 diff와 운영 절차를 검토한 뒤 commit/push, PR의 최신 base CI와
+GitGuardian을 확인해 병합한다. main의 worker/web 새 digest 빌드 완료 후
+새 main checkout에서 `plan`을 실행하고, 출력된 스냅샷 경로로 `run`을 실행한다.
+8개 앱의 실제 digest·health와 전체 교체 시간을 확인하고 운영 기록에 실측을
+남긴다. 실패 시 자동 계속 진행하지 않으며 해당 앱의 상태·스냅샷을 확인해
+`restore`로 이전 릴리스에 맞춘다.
+
+```sh
+cd /private/tmp/nmv-deploy-verify-auto-20260929
+git status --short --branch
+python3 -m unittest tests/test_deploy_shared_images.py -v
+actionlint .github/workflows/ci.yml
+git diff --check
+gh run list --repo JRVector9/nomorevibe --workflow ci.yml --limit 5
+```
+
+---
+
+# 2026-09-29 19:55 KST — 배포 속도 개선 1·2·3 완료, main 문서 경로·운영 재확인
+
+## Current objective / completed work
+
+배포 속도 개선 1·2·3을 완료했다. CI 병렬화·공통 이미지 배포 코드 PR #234/#235,
+운영 기록 PR #236은 main에 병합됐다. #236 문서 전용 PR의 첫 필수 `check`는
+실행 생성부터 14초, 최신 커밋은 19초였다. main 문서 push `908edf3`는
+16초였고 세 실행 모두 quality·integration·두 이미지 작업이 skipped였다.
+앞선 코드 PR #234의 필수 `check`는 2분 55초(직전 6분 27초), #235 main은
+2분 53초(직전 5분 3초)였으며 두 이미지 작업까지 4분 17초였다.
+8개 운영 앱은 worker/web 공통 digest로 실행 중이며 최종 재확인에서 8개
+Docker service 모두 지정 digest·1/1 복제본·배포 `done`이었다.
+
+## Modified files / key design decisions
+
+이번 최종 기록 브랜치 `docs/deployment-speed-final`은
+`docs/operations/2026-09-29-deployment-speed-rollout.md`와 이 파일만 수정한다.
+기능/운영 배포 변경 파일 목록, digest, 키 회전, DB 무변경 결정은 아래 19:48
+KST 항목에 있다. 운영 전체 교체는 확인 대기로 4분 12.8초가 걸려 이전 4분
+7초보다 짧아지지 않았다. 이 수치는 CI와 개별 앱 배포 개선과 분리해서 기록한다.
+
+## Test commands and results / failed approaches
+
+`gh run view 36557725684`, `36557913407`, `36557983527`의 jobs/완료 시각으로
+문서 전용 PR 두 실행과 main 실행의 성공·skip을 확인했다. 최종 운영 읽기 전용
+점검은 8개 앱의 Dokploy source/digest/release/deployment, 실제 service image와
+replica `1/1`을 모두 확인했다. 두 웹 컨테이너의 직접 health는 각각
+`status:ok`, `db:ok`였고 runtime 키와 deployment ID도 일치했다. 공개
+`/api/health`를 `curl`로 12회 조회해 M3 3회·mini 9회, 모두 새 release와
+`ok/db:ok`였다. private web package visibility도 재확인했다.
+
+첫 점검 스크립트는 Dokploy 표시 `name`으로 Docker service를 찾아 빈 값을
+오류로 판단했다. 실제 service 식별자인 `appName`으로 다시 조회해 8개 모두
+일치했다. Python 기본 `urllib` 요청은 공개 프록시에서 403이었으나 `curl`
+요청은 200이었고 12회 전체 검증을 마쳤다. 기능 테스트의 자세한 기록과
+첫 공개 웹 이미지 대응은 아래 19:48 KST 항목 및 운영 기록에 있다.
+
+## Remaining work / exact commands for the next agent
+
+필수 구현·검증은 끝났다. 24시간 처리/헬스 관측, GHCR pull 자격 정보를 별도
+최소 권한 토큰으로 교체하고 만료·철회 상황을 확인하는 일, 운영 순차 검증의
+자동화는 `PENDING.md`의 후속 작업이다. 이 최종 기록 PR을 병합한 뒤 main의
+문서 전용 `check` 성공과 이미지 작업 skip을 확인한다.
+
+```sh
+cd /private/tmp/nmv-deploy-speed-docs-20260929
+git status --short --branch
+git diff --check
+gh run view 36557983527 --repo JRVector9/nomorevibe --json createdAt,conclusion,jobs
+gh api user/packages/container/nomorevibe-runtime-web --jq '{name,visibility}'
+curl -fsS https://nomorevibe.brut.bot/api/health
+gh run list --repo JRVector9/nomorevibe --workflow ci.yml --limit 5
+```
+
+---
+
+# 2026-09-29 19:48 KST — 배포 시간 단축 1·2·3 운영 전환 완료, 문서 PR 병합 대기
+
+## Current objective / completed work
+
+사용자가 요청한 (1) CI 병렬화, (2) 같은 SHA의 web/worker 공통 이미지 배포,
+(3) 문서 전용 빠른 CI를 적용했다. PR #234와 #235는 각각 main `202e9d7`,
+`cf64bc2`에 병합됐다. PR #234 필수 `check`는 2분 55초로 직전 PR #231의
+6분 27초보다 짧았고, PR #235 main `check`는 2분 53초로 이전 5분 3초보다
+짧았다. main의 두 이미지 작업까지는 4분 17초였다. Docker source로 바꾼
+운영 8개 앱의 실제 image digest, `RELEASE_TAG`, 배포 `done`을 확인했다.
+두 웹의 직접 및 공개 health, worker failover readiness/progress도 확인했다.
+문서 전용 PR #236의 첫 hosted 실행은 생성부터 필수 `check`까지 14초였다.
+이 문서 변경의 최신 검사와 병합이 남았다.
+
+## Modified files / key design decisions
+
+코드 변경은 PR #234/#235의 `.github/workflows/ci.yml`,
+`scripts/ci-scope.mjs`, `scripts/ci-scope.node-test.mjs`, 통합 테스트 fixture와
+`docs/superpowers/specs/2026-09-29-deployment-speed-design.md`에 있다.
+이번 문서 작업 트리 `/private/tmp/nmv-deploy-speed-docs-20260929`의
+`docs/deployment-speed-rollout`은 `README.md`, `PENDING.md`,
+`docs/operations/independent-workers-runbook.md`,
+`docs/operations/2026-09-29-deployment-speed-rollout.md`,
+`docs/superpowers/plans/2026-09-29-deployment-speed.md`, 이 파일을 수정한다.
+루트 checkout에는 다른 사용자 변경이 있어 건드리지 않는다.
+
+worker digest `ghcr.io/jrvector9/nomorevibe-worker@sha256:77f33353431c74be2886a0b3d5849fcf5e20cbaea722ecd45fcdefac183176d8`를
+crawler/reviewer/publisher 주·예비 6개가 공유한다. private web digest
+`ghcr.io/jrvector9/nomorevibe-runtime-web@sha256:b3a81e45d30c7720e5a90fa28de713c3ba496f84d17770b26d07bb4050164b39`를
+mini/M3 웹 2개가 공유한다. 8개 앱의 이전 source/env/build 백업은
+`/private/tmp/nmv-deploy-speed-app-snapshot.json`(0600)에 있다. DB 서버,
+스트리밍, migration은 변경하지 않았다. 웹 build/runtime key는 같은 새 값으로
+회전했고 `/private/tmp/nmv-next-actions-rotated-20260929.key`(0600)에 보관한다.
+
+## Test commands and results / failed approaches
+
+로컬 분류기 4/4, 독립 PostgreSQL 17 DB 3개를 쓴 통합 shard
+323/271/352개 통과와 기존 TODO 1개, `npx next typegen`, `npx tsc --noEmit`,
+`npm run lint`, `npm test`, `npm run build`, `actionlint`, `git diff --check`가
+통과했다. PR #234/#235 hosted 필수 `check`와 해당 main 이미지 작업이 성공했다.
+PR #236 첫 hosted 실행은 `scope`·`check` 성공, quality·integration·web/worker
+이미지 작업 skipped, GitGuardian 성공이었다.
+두 서버의 arm64 digest pull과 OCI revision을 확인했다. 8개 앱의 최신 deployment
+`done`, 실행 중 service의 digest·release 일치, 두 웹 직접 health `ok/db:ok`,
+공개 health 12회에서 M3 7·mini 5회 모두 새 SHA를 확인했다.
+10:38:59 UTC의 `check-failover-readiness.ts`와 `check-worker-progress.ts`는
+exit 0, 전체 `ok`였다. Dokploy 개별 배포 기록 합계는 6.103초이나 운영자가
+역할별로 확인해 첫 앱부터 마지막 앱까지 4분 12.8초로 이전 4분 7초보다 짧지 않았다.
+
+첫 `nomorevibe-web` 이미지가 public이며 server-reference manifest에 실제
+서버 액션 키를 포함한 것을 2,732개 파일 검사로 발견해 배포하지 않았다.
+패키지를 삭제하고 익명 접근 불가를 확인했으며 이전 키를 회전했다. 새 private
+`nomorevibe-runtime-web`은 빌드 전후 private/익명 차단을 확인했고 새 이미지에서
+이전 키가 발견되지 않았다. 기존 Dokploy `GHCR-deppy` 등록 토큰으로는 Docker
+login이 실패해 private web Docker provider에 검증된 운영 계정 pull 토큰을
+직접 설정했다. 외부에서 첫 이미지를 다운로드했는지는 알 수 없다.
+
+## Remaining work / exact commands for the next agent
+
+PR #236의 이번 측정 기록 commit/push 후 최신 base 필수 `check`와 GitGuardian
+성공을 확인해 병합한다.
+main 문서 push에서도 같은 skip을 확인한다. 이후 8개 앱 상태·공개 health를
+짧게 재확인한다. 별도 최소 권한 GHCR pull 토큰 교체와 24시간 운영 관측은
+`PENDING.md`에 남는다.
+
+```sh
+cd /private/tmp/nmv-deploy-speed-docs-20260929
+git status --short --branch
+git diff --check
+git add docs/CODEX_HANDOFF.md docs/operations/2026-09-29-deployment-speed-rollout.md docs/superpowers/plans/2026-09-29-deployment-speed.md
+git commit -m 'docs: record measured docs-only CI time'
+git push
+gh run list --repo JRVector9/nomorevibe --workflow ci.yml --limit 5
+gh pr checks --repo JRVector9/nomorevibe 236
+```
+
+---
+
+# 2026-09-29 18:50 KST — 공개 웹 이미지의 빌드 키 노출 대응
+
+## Current objective / completed work
+
+배포 시간 단축 PR #234는 main `202e9d7b2d3825842c5c5e2568aa8881bab66592`에 병합됐고
+main 필수 `check`와 두 ARM 이미지 빌드가 성공했다. 운영 8개 앱은 아직 이전 Git
+소스/릴리스 `e232f16`으로 실행 중이며 두 웹의 autoDeploy는 중복 빌드 방지를 위해
+false로 바꿨다. 공개 `nomorevibe-web` 이미지에서 실제
+`NEXT_SERVER_ACTIONS_ENCRYPTION_KEY`가 `/app/.next/server/server-reference-manifest.{js,json}`에
+들어간 것을 발견해 웹 앱 전환을 중지했다. 해당 GHCR 패키지를 삭제했고 익명 manifest
+접근이 404가 된 것을 확인했다. 이전 키는 노출된 것으로 보고 교체한다.
+
+## Modified files / key decisions
+
+새 작업 트리 `/private/tmp/nmv-private-web-20260929`의 `fix/private-web-image`에서
+`.github/workflows/ci.yml`, `README.md`,
+`docs/operations/independent-workers-runbook.md`, 이 파일을 수정 중이다.
+웹 이미지는 별도 `nomorevibe-runtime-web` 패키지에 계정 토큰으로 푸시하고,
+푸시 전 `private` 가드를 둔다. 공개 저장소를 연결하는 OCI source label을 웹에서는
+제거한다. 임시 작은 이미지로 새 패키지의 기본 `private` 설정을 직접 확인했고
+동일 이름의 비공개 웹 패키지를 bootstrap했다. 로컬 GitHub CLI의 package-write
+토큰을 Actions secret `GHCR_PUSH_TOKEN`에 등록했다.
+
+새 32바이트 base64 키는 값 출력 없이
+`/private/tmp/nmv-next-actions-rotated-20260929.key`(mode 0600)에 저장하고 Actions
+secret `NEXT_SERVER_ACTIONS_ENCRYPTION_KEY`를 갱신했다. 이 키는 아직 운영 웹
+두 앱에는 적용하지 않았다. 기존 두 웹의 빌드/런타임 키를 같은 새 값으로 교체해
+비공개 이미지와 함께 배포해야 한다. 기존 `GHCR-deppy` 등록 PAT는 Docker login이
+거부되므로 웹 Docker provider에는 유효한 pull 자격 정보를 직접 넣어야 한다.
+
+## Test commands and results / failed approaches
+
+PR #234 hosted `check`, 통합 3분할, 보안 검사 성공. main의 `check`와 첫 worker/web
+이미지 빌드도 성공했고 두 서버에서 두 digest의 실제 pull, arm64와 OCI revision을
+검증했다. 단, 첫 웹 이미지는 공개였다. 2,732개 웹 이미지 파일을 실제로 검색해
+키가 server-reference manifest 두 파일에 있는 것을 확인했다.
+GHCR public package는 private으로 되돌릴 수 없다는 GitHub 문서 때문에 해당
+신규 패키지를 삭제했다. 임시 이미지 계정 토큰 push는 private 패키지를 만들었고
+`nomorevibe-runtime-web` bootstrap도 `private`으로 확인했다. 새 workflow의
+`actionlint`와 `git diff --check`는 통과했다. PR hosted CI와 private 웹 빌드는
+아직 실행하지 않았다.
+
+## Remaining work / exact commands for the next agent
+
+새 workflow/diff 검증 후 PR을 열어 CI/병합한다. main private 이미지 빌드의
+package visibility와 digest를 확인하고 M3/mini에서 인증된 pull을 시험한다.
+두 운영 웹의 buildSecrets와 runtime env에 새 키를 넣고 같은 새 private image로
+교체한다. worker 역할 6개도 새 main worker digest로 예비→주 순서로 배포한다.
+실제 실행 중 이미지 digest, readiness/progress, 공개 health를 확인한다.
+문서 후속 PR에서 docs-only `check`를 실측하고 운영 기록을 갱신한다.
+
+```sh
+cd /private/tmp/nmv-private-web-20260929
+git status --short --branch
+actionlint .github/workflows/ci.yml
+git diff --check
+gh api user/packages/container/nomorevibe-runtime-web --jq '{name,visibility}'
+gh secret list --repo JRVector9/nomorevibe
+gh run list --repo JRVector9/nomorevibe --workflow ci.yml --limit 5
+```
+
+---
+
+# 2026-09-29 18:32 KST — CI 분할·공통 이미지 빌드 구현, PR 전 검증
+
+## Current objective / completed work
+
+사용자가 승인한 배포 시간 단축 우선순위 1·2·3을 진행한다. 별도 작업 트리
+`/private/tmp/nmv-deploy-speed-20260929`의 `feat/deployment-speed`에서 필수
+`check`를 유지한 변경 범위 판별, 독립 DB를 쓰는 통합 테스트 3분할,
+main 성공 후 웹/워커 arm64 이미지를 한 번씩 GHCR에 빌드하는 workflow를 작성했다.
+루트 checkout과 운영 DB 서버·스트리밍은 변경하지 않았다. PR·이미지 생성·Dokploy
+source 전환은 아직 하지 않았다.
+
+## Modified files / key decisions
+
+`.github/workflows/ci.yml`, `scripts/ci-scope.mjs`, `scripts/ci-scope.node-test.mjs`,
+`tests/integration/{setup,product-audit,review-publication-gate}.test.ts`, `README.md`,
+`docs/operations/independent-workers-runbook.md`,
+`docs/superpowers/{specs/2026-09-29-deployment-speed-design.md,
+plans/2026-09-29-deployment-speed.md}`, 이 파일.
+문서 경로만 변경되면 `scope`와 항상 실행하는 필수 `check`만 통과시킨다.
+코드 변경은 quality와 3개 DB 격리 integration을 병렬 실행한다. 운영 M3와 mini는
+모두 arm64이고 이미지 배포는 SHA 태그를 digest로 확인해 같은 digest를 재사용한다.
+기존 웹 두 앱의 동일한 32바이트 Actions 암호화 키를 값 노출 없이 GitHub Actions
+secret `NEXT_SERVER_ACTIONS_ENCRYPTION_KEY`에 등록했다.
+
+## Test commands and results / failed approaches
+
+`npm ci`, `npx next typegen`, `npx tsc --noEmit`, `npm run lint`, `npm test`,
+`DATABASE_URL=postgres://build:build@localhost:5432/build npm run build` 종료 코드 0.
+`actionlint .github/workflows/ci.yml`, `git diff --check`,
+`node --test scripts/ci-scope.node-test.mjs`(4/4) 통과.
+`TEST_DATABASE_URL=postgres://nomorevibe:nomorevibe@localhost:<전용포트>/nomorevibe_test
+npm run test:integration -- --shard=N/3`을 각 shard의 독립 PostgreSQL 17 DB에서
+실행했다. 1/3: 34파일 323개 통과, 2/3: 33파일 271개 통과,
+3/3: 33파일 352개 통과·1 TODO. 테스트 DB는 로컬 컨테이너
+`nmv-deploy-speed-db`(55445), `db2`(55446), `db3`(55447)에 격리했다.
+전체 기존 suite를 수정 전 새 DB에서 실행했을 때 11건 실패했고, 공통 초기화가
+감사 행을 남겨 뒤 테스트의 제품 ID에 붙는 것과 호스트/DB 시계 경계의 fixture
+불안정을 재현했다. 중앙 초기화에 감사 campaign을 넣고 두 fixture 시각을
+1초 이전으로 고쳐 세 shard 재실행을 통과시켰다. `vitest list --shard`는
+분할 목록을 보여주지 않아 검증 근거로 쓰지 않았다.
+
+기존 Dokploy `GHCR-deppy` 등록의 실제 `docker login`은 거부됐다. Dokploy
+registry 연결 API의 성공 응답은 pull 인증 검증이 아니었다. 현재 로컬 `gh auth`
+계정의 토큰으로 임시 Docker config 로그인은 성공했지만 운영 registry 자격 정보는
+아직 교체하지 않았다. 이미지가 올라오면 양 서버의 실제 pull을 확인한 뒤 전환한다.
+
+## Remaining work / exact commands for the next agent
+
+diff/계획을 최종 확인한다. 커밋·PR을 열어 hosted
+CI의 `check`와 분할 시간을 측정한 뒤 병합한다. main의 두 이미지 build, digest,
+GHCR pull 인증을 확인하고 예비→주→웹 순서로 운영 전환한다. 문서만 바뀌는 후속 PR에서
+빠른 필수 `check`를 실측한다. 각 단계 뒤 실제 이미지/커밋, 웹 health, failover
+readiness와 처리 진행을 확인하고 이 파일의 결과를 갱신한다.
+
+```sh
+cd /private/tmp/nmv-deploy-speed-20260929
+git status --short --branch
+actionlint .github/workflows/ci.yml
+node --test scripts/ci-scope.node-test.mjs
+git diff --check
+gh secret list --repo JRVector9/nomorevibe
+gh run list --repo JRVector9/nomorevibe --workflow ci.yml --limit 5
+```
+
+---
+
+# 2026-09-29 15:47 KST — 500스타 이상 자동 승인 배포 완료
+
+## Current objective / completed work / modified files
+
+사용자 승인대로 공개·비포크·비보관 GitHub 저장소의 최신 원본에서 500스타 이상이면
+일반 규칙과 AI 심사를 거치지 않고 승인·발행한다. 관리자 설정 범위는 500–10,000,000이고
+과거 스타 상한은 판정에서 제거했다. 설계·구현·테스트는 PR #231로 main
+`e232f16a79e7db8e3b9abdfc79aadf717041795f`에 병합했다. 이전 단계의 세부 수정
+파일 목록은 아래 15:11 KST 기록을 따른다. 이번 단계의 새 수정 파일은
+`docs/operations/2026-09-29-star-auto-approval-rollout.md`, `PENDING.md`, 이 파일이다.
+루트 checkout의 사용자 변경과 DB 서버·스트리밍 설정은 건드리지 않았다.
+
+## Key decisions / test commands and results / failed approaches
+
+publisher·reviewer·crawler mini 예비→M3 주→웹 mini→M3 순서로 8개 앱을 배포했고
+모두 최신 deployment `done`/같은 main 커밋이었다. 공개 `/api/health`는
+`status:ok/db:ok`/같은 release였다. 운영 DB `scripts/check-failover-readiness.ts`는
+06:36:58과 06:38:32 UTC에 종료 코드 0/전체 `ok`였다. PR CI의 `check`·GitGuardian과
+main CI의 `check`가 성공했다. 최종 로컬 단위 1,274건, 통합 946건/기존 TODO 1건,
+typegen·tsc·lint·build 종료 코드 0은 이전 단계에서 실제 실행했다.
+
+배포 전 읽기 전용 계획 92건 중 1건이 자연 발행돼 배포 후 계획은 91건이었다.
+새 계획·DB 식별값과 저장된 GitHub ID 별칭/기발행 중복 0건을 확인한 뒤 89건을
+재수집 대기로 적용했다. 2건은 그 사이 변경돼 건너뛰었다. 재계획·재적용도
+건너뛰어 조사한 결과 두 건 모두 기존 제품 URL과 겹쳤다. 별도 재발행은 하지 않았다.
+06:46 UTC 초기 92건 중 88건 발행, URL 중복 2건·보관 저장소 1건 거부,
+GitHub 404/오래된 원본 1건이 `new`/frontier `skipped`였다. 발행 88건의
+GitHub ID별 중복 제품은 0건이고 118,660스타 저장소도 발행됐다.
+운영 기록에 시각·범위를 남겼다.
+
+PR CI는 6분 27초, main CI는 5분 3초(배포와 병행), 앱 8개 순차 완료는
+4분 7초였다. main CI에서 통합 테스트 3분 24초가 최장 단계였다.
+`Dockerfile`의 web/worker target을 8개 Dokploy 앱이 Git 소스에서 각자 빌드한다.
+배포 시간 단축의 우선순위는 중복 main CI 대기 제거, 통합 테스트 병목 개선,
+동일 커밋 이미지 2개를 한 번씩 빌드해 digest로 재사용이다. 실제 설정 변경은
+하지 않았다.
+
+## Remaining work / exact commands for the next agent
+
+24시간 동안 새 후보의 신선 원본·중복·발행 오류를 관측한다. GitHub 404로
+`new`에 남는 후보의 표시/정리 정책은 별도 설계가 필요하다. 문서 변경은 아직
+main에 반영되지 않았다. 아래 순서로 `git diff --check` 후 문서 커밋·PR·CI·병합한다.
+운영 DB를 다시 적용하지 않는다.
+
+```sh
+cd /private/tmp/nmv-github-auth-fallback
+git diff --check
+git status --short --branch
+gh pr view 231 --json state,mergeCommit,statusCheckRollup
+python3 /tmp/nmv-health-20260925.py status
+curl -fsS https://nomorevibe.brut.bot/api/health
+```
+
+---
+
+# 2026-09-29 15:11 KST — 500스타 이상 자동 승인 정책 (검증 및 배포 당시 진행 중)
+
+## Current objective
+
+사용자가 승인한 정책을 구현한다: 공개 GitHub 저장소의 최근 원본에서 500스타 이상을 확인하면
+10만 스타 이상을 포함해 규칙의 제품 적합성·AI 1차/2차 심사 없이 발행한다. 관리자에서 500 이상
+기준을 조정하고, 이전 스타 상한은 판정에서 제거한다. 미발행 기존 후보도 새 GitHub 응답을
+다시 받은 뒤 판정한다. 루트 checkout의 사용자 변경과 DB 서버·스트리밍 설정은 건드리지 않는다.
+
+## Completed work / Modified files
+
+분리된 `/private/tmp/nmv-github-auth-fallback` 작업 트리의 `feat/star-auto-approval` 브랜치에
+설계 문서 커밋 `748b191`이 있다. 구현은 아직 커밋 전이다. 주요 수정은 다음과 같다.
+
+- 설정/관리자: `lib/crawl/settings-schema.ts`, `lib/crawl/settings.ts`, `app/admin/SettingsForm.tsx`,
+  `app/admin/actions.ts`. 기본 자동 승인 500, 관리 범위 500–10,000,000, 과거 상한 UI/드리프트 제거.
+- 판정/검수/발행: `lib/crawl/star-auto-approval.ts`, `lib/crawl/rules.ts`, `lib/crawl/jobs/judge.ts`,
+  `lib/crawl/repository.ts`, `lib/crawl/agent-review-{repository,contract}.ts`,
+  `lib/crawl/jobs/{agent-review,publish}.ts`, `lib/crawl/publish.ts`, `lib/crawl/admin-review.ts`,
+  `lib/domain/products/recheck.ts`. 판정·관리자 화면·AI 대상 조회·발행 후보 조회가 같은
+  검증 자료를 사용하고, 발행 트랜잭션에서 재확인한다. 발행 지연/기준 변경 시 재수집/재판정한다.
+- 기존 후보: `lib/crawl/reconsider.ts`, 새 `scripts/reconsider-star-auto.ts`. 읽기 전용 계획과
+  지문·정책·중복 재확인 후 재수집 적용. 최종 읽기 전용 운영 계획은 자동 후보 92건
+  (거부 59, 보류 33; 517–116,862스타)이다. 92건 중 동일 GitHub ID의 다른 원본 또는
+  동일 ID로 이미 발행된 제품은 0건이었다. 아직 적용하지 않았다.
+- 테스트: `tests/star-auto-approval.test.ts`, `tests/crawl-rules.test.ts`,
+  `tests/crawl-settings-{form,drift}.test.ts`, `tests/agent-review-contract.test.ts`,
+  `tests/review-pipeline-equivalence.test.ts`, `tests/integration/{crawl-fetch,crawl-judge,
+  review-publication-gate,admin-review-causes,product-recheck,reconsider-installable,
+  settings-drift}.test.ts` 등.
+- 문서: `README.md`, `docs/operations/independent-workers-runbook.md`,
+  `docs/superpowers/specs/2026-09-29-star-auto-approval-design.md`, 이 handoff.
+
+## Key design decisions
+
+GitHub REST 원본의 숫자 ID·정수 스타·일치하는 full_name·공개·포크 아님·보관 아님·24시간 내
+수집을 모두 확인한다. 후보 marker만으로 발행하지 않는다. 관리자 결정, 중복/차단 제품과
+원본/설정 경합은 기존 잠금으로 보호한다. 홈페이지가 없으면 공식 GitHub 저장소 URL을 쓴다.
+`maxStars`는 저장된 과거 JSON 호환 필드로만 남기고 판정에는 쓰지 않는다. 기존 후보 적용은
+오래된 스타 수로 즉시 승인하지 않고 재수집을 요구한다. 자동 승인 자료가 만료되면 발행 워커가
+프론티어에 재수집을 넣고 새 원본 이후 판정하도록 한다.
+
+## Test commands and results
+
+- `npm test -- --silent`: 160파일, 1,274/1,274 통과(최신 코드에서 실행).
+- `npm run test:integration`: 최종 100파일, 946 통과/1 TODO. 중간 재실행 1실패는 새
+  테스트가 앞선 사례의 프론티어 항목을 집은 격리 문제였고 `beforeEach` 정리 후 전체
+  재실행 통과. 집중 실행 `review-publication-gate.test.ts` 23/23 통과.
+- `npx next typegen`, `npx tsc --noEmit -p .`, `npm run lint`, `git diff --check`,
+  `npm run build`: 종료 코드 0. lint의 기존 vendor 미사용 변수 경고 1건과 빌드의 기존
+  `agent-review.ts` 동적 파일 추적 경고 1건만 있다.
+- 운영 DB 읽기 전용 `scripts/reconsider-star-auto.ts --plan`: 종료 코드 0,
+  `examined=92`, `eligible=92`, DB 식별값 포함.
+  `.crawl-samples/star-auto-plan-identity-20260929.json` 생성. 별도 읽기 전용 대조에서
+  92건의 GitHub ID 별칭/기발행 ID 충돌/ID 누락은 모두 0건.
+
+## Failed approaches / Remaining work
+
+초기 CLI 계획 실행은 DB pool이 프로세스를 열어둬 시간 초과했다. 명시적 종료를 추가하고
+운영 읽기 전용 계획을 다시 실행해 정상 종료를 확인했다. 관리자 화면이 순수 `judge`를
+호출해 자동 승인 결과와 어긋나던 문제는 공통 저장 원본 판정으로 고쳤다. 저장소 ID만 바뀔 때
+재판정하지 않던 문제는 원본 변경 검출에 ID/full_name/private을 추가해 고쳤다.
+
+다음 단계: 변경 검토 및 커밋, PR 생성·최신 main CI 통과·병합,
+웹·crawler·reviewer·publisher 주/예비 동기 배포, 배포 후 새 계획 작성·기존 후보 적용,
+운영 처리/발행/중복/worker 상태 확인. 운영 DB 스키마 변경 없음.
+
+## Exact commands for the next agent
+
+```sh
+cd /private/tmp/nmv-github-auth-fallback
+npm run test:integration
+npx tsc --noEmit -p .
+npm run lint
+npm run build
+git diff --check
+git status --short --branch
+gh auth status
+```
+
+---
+
+# 2026-09-29 12:16 KST — GitHub 401 계정 전환 수정
+
+## 현재 목적 / 완료 작업 / 수정 파일
+
+사용자는 수집 중 한 PAT가 만료되어 GitHub REST가 401을 돌려줄 때 응답 이유를
+검토하고 제한적으로 재시도한 뒤 다른 계정으로 즉시 전환하도록 요청했다. 별도 작업 트리
+`/private/tmp/nmv-github-auth-fallback`의 `fix/github-auth-fallback`에서 원인을 재현하고
+요청 함수, 수집 큐, 관련 GitHub 갱신 작업과 회귀 테스트를 수정했다. PR #229의
+최신 base CI와 GitGuardian 성공 후 main `202f16db532d3ecea6366f7309a7d1692c822031`에 병합하고
+crawler mini 예비→M3 주를 같은 SHA로 배포했다.
+루트 checkout의 사용자 변경·운영 DB 서버/streaming·중단된 `product-intro-check`는 건드리지 않았다.
+
+수정 파일: `lib/crawl/github{,-quota}.ts`, `lib/crawl/jobs/{fetch,seed}.ts`,
+`lib/crawl/readme-refresh.ts`, `lib/domain/evidence/agents/collect.ts`,
+`lib/domain/evidence/providers/github.ts`,
+`lib/jobs/products/{agent-evidence-refresh,stars-refresh}.ts`, 해당 단위·통합 테스트,
+`docs/operations/independent-workers-runbook.md`, `PENDING.md`, 이 문서.
+
+## 핵심 설계 결정 / 실제 시험 / 실패 접근
+
+401 JSON 본문을 크기 제한 안에서 읽어 `expired`·`revoked`·`bad_credentials`·
+`unauthorized`만 기록한다. 같은 토큰에 100ms·250ms 뒤 최대 두 번 재시도하고,
+반복 실패 또는 401 뒤 일반 403이면 SHA-256 키로 기존 `rate_limits`에 15분 보류한다.
+토큰 값이나 원문 오류는 기록하지 않는다. 다른 계정으로 즉시 전환하며, 모든 토큰이
+거부되면 풀을 약 1분 뒤 다시 확인한다. 프론티어 claim은 실패 횟수를 소모하지 않고
+되돌린다. 새 PAT는 새 해시 키라 보류된 기존 PAT와 독립이다. secondary 한도는 기존처럼
+전체 계정에 공유하고 일반 권한 403은 다른 토큰으로 자동 전환하지 않는다.
+
+TDD로 첫 401 전환 테스트와 전체 토큰 거부 시 fetch/seed 보류 테스트를 실패시킨 뒤
+수정했다. 401→403, 일시 401 회복, 공유 cooldown, README·agent evidence·GitHub
+근거·스타 갱신의 재개 시각도 각각 테스트했다. `npm test` 159파일 1,267/1,267,
+관련 통합 6파일 73/73, `npx next typegen`, `npx tsc --noEmit`, `npm run lint`,
+`npm run build`, `git diff --check` 통과. lint에는 기존 vendor 파일의 미사용 변수
+경고 1건, build에는 기존 `agent-review.ts` 동적 filesystem tracing 경고 1건이 있다.
+관련 테스트의 초기 전체 단위 실행 1건 실패는 새 테스트가 앞 테스트의 `mockResolvedValueOnce`
+잔여 값을 공유한 탓이었다. `beforeEach`에서 mock 구현을 초기화한 뒤 전체 재실행은 통과했다.
+운영 PAT를 실제로 만료·폐기해 보는 장애 주입은 하지 않았다. GitHub Actions 전체 CI
+`check`와 GitGuardian이 통과했다.
+
+03:26 UTC 배포 전 프론티어 108,919·원본 108,910, crawler 주 lease는 구 SHA였다.
+mini 예비 03:26:43, M3 주 03:27:45 UTC 배포 완료 후 두 후보가 같은 새 SHA의
+`active/standby`, lease owner는 M3였다. `check-failover-readiness.ts`는 종료 코드 0,
+다섯 역할과 scheduler 2복제본·진행 상태 모두 `ok`였다. 03:31 UTC 첫 검색 주기는
+21건을 새로 발견했고 `crawl-fetch`가 20건 원본·후보를 저장했다. 1건은 기존
+GitHub ID의 새 경로라 `skipped/alias_of`로 끝났고 새 문서가 없었다. 기존 ID 중복
+초과 행은 305건으로 증가하지 않았다. `crawl-seed`와 `crawl-fetch`는 최근 성공,
+`last_error=null`, 인증 보류 활성 행은 0개였다. 공개 웹 헬스는 `status:ok/db:ok`.
+[운영 기록](operations/2026-09-29-github-auth-fallback-rollout.md)에 상세 시각을 남겼다.
+
+## 남은 작업 / 정확한 다음 명령
+
+실제 운영 PAT를 만료·폐기하는 장애 주입은 수행하지 않는다. 자연 만료가 발생하면
+`github.auth_rejected` 사유 코드, 계정별 보류·다른 계정 수집 지속, 관리자 교체 후
+재개를 확인한다. 기존 중복 제품 정리와 24시간 quota·수집량 관측은 `PENDING.md`를 따른다.
+코드-only 변경이며 운영 DB 마이그레이션은 없었다.
+
+```sh
+cd /private/tmp/nmv-github-auth-fallback
+git diff --check
+git status --short --branch
+gh pr view 229 --json state,mergeCommit,statusCheckRollup
+python3 /tmp/nmv-health-20260925.py status
+curl -fsS https://nomorevibe.brut.bot/api/health
+```
+
+---
+
+# 2026-09-29 09:04 KST — GitHub 수집 PAT 관리자 기능 운영 완료
+
+## 현재 목적 / 완료 작업 / 수정 파일
+
+사용자가 클립보드에 둔 두 번째 실제 GitHub 계정 PAT로 관리자 등록·교체 및 수집
+사용을 확인했다. 기능 PR #225는 최신 base의 CI `check`와 GitGuardian 성공 후
+main의 `0dbbf21489a779582018e3597ebab55492b115a4`로 병합됐다. 운영 앱 DB에
+가산 마이그레이션 0053을 적용했고 웹 M3·mini, crawler M3 주·mini 예비 네 앱에
+같은 전용 암호화 키와 병합 SHA를 배포했다. DB 서버·스트리밍 설정은 바꾸지 않았다.
+이 기록 단계에서 수정한 파일은 `docs/CODEX_HANDOFF.md`,
+`docs/operations/2026-09-29-github-collector-accounts.md`, `PENDING.md`,
+`docs/superpowers/plans/2026-09-29-github-pat-pool.md`이다. 루트 checkout의 사용자
+변경과 중지된 `product-intro-check`는 보존했다.
+
+## 핵심 설계 결정 / 실제 시험 / 실패 접근
+
+기존 crawler 환경 `GITHUB_TOKEN`을 유지하면서 DB에 등록된 다른 계정을 함께
+회전시킨다. PAT는 GitHub 숫자 사용자 ID로 식별해 동일 계정 등록은 교체하며,
+전용 키로 암호화해 저장한다. 관리자 화면·로그에는 원문과 암호문을 표시하지 않는다.
+primary core 한도 소진 시 다음 계정으로 전환하고 secondary cooldown은 전 계정에
+공유한다. 계정별 GitHub 사용량과 전체 원본 저장량은 다른 단위로 표시한다.
+
+클립보드 PAT의 `/user`는 `lollol-jr`/ID `227736397`로 기존 `JRVector9`와
+달랐고, `/rate_limit`은 core 5,000/시간이었다. 공개 저장소·저장소 검색·커밋
+검색이 모두 HTTP 200이었다. 운영 관리자 폼에서 등록과 명시적 동일 계정 교체를
+각각 수행해 HTTP 200/성공 문구/새로고침 후 계정 1개를 확인했다. 운영 DB에는
+활성 계정 1행과 길이 164자의 암호문만 확인했다. 앱 수집 코드로 DB 복호화 후
+공개 저장소 `octocat/Hello-World` 조회 HTTP 200도 확인했다. 새 계정 core
+잔여량이 4,884→4,808로 줄고 관측 시각이 갱신돼 배포 수집기가 계정을 실제
+사용 중이었다. 1시간 quota reset 이후 관리자 교체 화면은 5,000 잔여를 보였다.
+원본 총수는 108,406→108,445로 39건 증가했다. `crawl-fetch`는 최근 성공했고
+M3 crawler lease가 활성, mini는 배포 완료된 예비다. 두 공개 웹 헬스체크는
+각각 새 SHA에 `status:ok`, `db:ok`였다.
+
+최신 코드의 로컬 `npm test`는 159파일 1,256/1,256, 전용 DB 통합 시험은
+2파일 3/3 통과했다. `next typegen`, `tsc --noEmit`, 수정 파일 ESLint,
+`npm run build`도 통과했으며 기존 `agent-review.ts` 경고 1건이 있었다.
+PR CI의 lint·unit·integration·build와 GitGuardian이 모두 성공했다.
+처음 `gh run watch`는 별도 `gh` 로그인 계정의 core 5,000회 소진으로 403이었고,
+새 PAT로 읽기 전용 CI를 확인했다. 로컬 DB 연동 조회의 첫 실행은 결과 후 열린
+DB 풀 때문에 프로세스가 20초에 종료되지 않아 timeout 났다. 결과 출력 후
+명시적으로 종료한 재실행은 HTTP 200이었다. 실제 PAT 값은 어떤 출력·파일에도
+남기지 않았다.
+
+## 남은 작업 / 정확한 다음 명령
+
+실제 한 계정의 primary 한도 소진을 기다린 자동 계정 전환과 24시간 quota·수집량
+관측은 남는다. 단위 테스트에서는 primary·secondary·모두 소진 경로를 검증했다.
+새 계정 PAT 만료 전에 관리자에서 교체하고, 암호화 키 회전 때는 저장된 모든 PAT를
+새 키로 안전하게 재암호화해야 한다. 운영 키는 Dokploy 네 앱과 이 머신의 Keychain
+`nomorevibe/github-collector-secret`에 보관돼 있다. 값은 출력하지 않는다.
+
+```sh
+cd /private/tmp/nmv-github-token-pool
+gh pr view 225 --json state,mergeCommit,statusCheckRollup
+python3 /tmp/nmv-github-pat-deploy.py status 0dbbf21489a779582018e3597ebab55492b115a4 crawler-m3
+python3 /tmp/nmv-github-pat-deploy.py status 0dbbf21489a779582018e3597ebab55492b115a4 crawler-mini
+python3 /tmp/nmv-pat-verify.py
+curl -fsS https://nomorevibe.brut.bot/api/health
+git status --short --branch
+git diff --check
+```
+
+---
+
+## 2026-09-29 — GitHub 저장소 ID 중복 차단 작업 (진행 중)
+
+### Current objective / 완료한 작업
+
+사용자는 두 GitHub 계정 수집이 겹치는지·수집량이 늘었는지 확인한 뒤 수정할 것을 정리해 수정하라고 요청했다.
+운영 코드는 한 활성 crawler가 계정을 요청별로 번갈아 사용한다. `owner/name` 중복은 프론티어에서
+막지만 이름 변경 뒤 같은 GitHub 숫자 ID가 새 경로로 다시 저장되는 결함을 확인했다.
+읽기 전용 운영 조회 당시 원본 299 중복 ID 그룹·초과 행 304개, 그중 발행 제품이 둘 이상인 그룹
+16개였다. 새 토큰 투입 뒤에도 이름 변경으로 새 경로 2개가 들어왔으며 계정 간 동시 작업 때문이라는
+근거는 없다. 기존 발행 제품 자동 병합 여부를 사용자에게 비동기 질문했고 답변을 기다리는 중이다.
+
+별도 작업 트리 `/private/tmp/nmv-github-identity-dedup`의 `fix/github-identity-dedup` 브랜치에서
+`getRepo`의 안전한 숫자 ID 검증, `crawl_documents` ID 조회 인덱스, `crawl_frontier.alias_of`,
+같은 ID 트랜잭션 자문 잠금과 새 별칭 원본 저장 차단, 별칭 로그/skip 처리를 구현했다.
+기존 중복 원본·후보·제품은 삭제하지 않는다. 배포·운영 DB migration은 아직 하지 않았다.
+
+### Modified files / 설계 결정
+
+`lib/crawl/{github.ts,repository.ts,jobs/fetch.ts}`, `lib/db/crawl-schema.ts`,
+`drizzle/0054_crawl_github_identity_lookup.sql`, `drizzle/meta/_journal.json`,
+`tests/github-request-boundary.test.ts`, `tests/integration/crawl-github-identity.test.ts`,
+`README.md`, `docs/operations/independent-workers-runbook.md`, `PENDING.md`, 이 문서.
+기존 304행은 발행·심사 참조가 있으므로 보존한다. 새 별칭은 기존 원본의 ID와 대조하여
+프론티어에 `skipped/alias_of`만 기록한다. 동시 별칭 저장은 GitHub ID별 DB 자문 잠금으로 직렬화한다.
+GitHub ID 누락/불안전 응답은 원본 수집 실패로 분류한다. 새 토큰만으로 수집량 증가를 단정하지 않으며
+검색 10분 주기와 대기열 상태는 이번 수정 범위에서 바꾸지 않았다.
+
+### Tests and results / failed approaches
+
+- 새 통합 테스트는 수정 전 2/3 실패(새 경로 중복 저장·동시 저장), 구현 후 3/3 통과했다.
+- GitHub ID 누락 테스트는 수정 전 실패했고 null 응답 추가 테스트도 예외를 재현한 뒤 수정해 14/14 통과했다.
+- 관련 통합 4파일 71/71, 전체 단위 159파일 1257/1257, `npx drizzle-kit check`, 대상 ESLint,
+  `npx tsc --noEmit`, `npm run build`는 성공했다. 빌드의 기존 Turbopack 동적 filesystem 경고는 남았다.
+- 전체 통합 99파일은 98파일 통과, 1파일 실패(928 passed, 1 failed, 1 todo)였다.
+  `tests/integration/product-audit.test.ts:163`의 gateway 미호출 기대가 실패했고,
+  변경 전 다른 작업 트리에서도 같은 단일 테스트 실패를 재현했다. 이번 중복 차단의 회귀가 아니다.
+- 첫 빌드는 작업 트리 밖 `node_modules` 심볼릭 링크를 Turbopack이 거부해 실패했다.
+  링크를 해제하고 `npm ci --ignore-scripts`로 작업 트리 안에 설치한 뒤 빌드 성공했다.
+
+### 운영 적용 / 남은 작업
+
+PR #227의 GitGuardian·CI `check`가 모두 통과했고 main `f305a6b21d575c53af515ec0debd3e9f491460c7`로
+병합됐다. 0054 앱 마이그레이션을 운영 DB 직접 연결로 한 번 적용했고 `alias_of` 컬럼과
+ID 조회 인덱스를 읽기 전용으로 확인했다. crawler mini 예비 → M3 주, web mini → M3 순서로
+네 앱을 같은 SHA로 배포했다. 두 웹의 공개 `/api/health`는 `ok/db:ok`, crawler role lease는
+M3 주/new SHA였고 `crawl-fetch` 최근 성공·오류 없음·대기열 0을 확인했다.
+01:33 UTC 운영 기준 기존 중복은 300그룹·초과 행 305개였다. 직전 추가된 1개는 새 코드 배포
+이전 01:12 UTC에 저장됐다. 자연 유입되는 새 이름 변경 별칭이 아직 없어 운영 분기(`alias_of`)
+자체는 직접 관측하지 못했다. [운영 기록](operations/2026-09-29-github-id-dedup-rollout.md)을 따른다.
+
+사용자의 기존 발행 제품 병합 범위 답변을 확인한다. 답변 없이 공개 제품을 자동 병합·삭제하지 않는다.
+운영 DB 서버·스트리밍 설정과 중단된 `product-intro-check`는 건드리지 않는다.
+
+```sh
+cd /private/tmp/nmv-github-identity-dedup
+git status --short --branch
+git diff --check
+gh pr view 227 --json state,mergeCommit,statusCheckRollup
+python3 /tmp/nmv-github-pat-deploy.py status f305a6b21d575c53af515ec0debd3e9f491460c7 crawler-m3
+python3 /tmp/nmv-github-pat-deploy.py status f305a6b21d575c53af515ec0debd3e9f491460c7 crawler-mini
+curl -fsS https://nomorevibe.brut.bot/api/health
+```
+
+---
+
+# 2026-09-29 08:34 KST — 관리자 GitHub PAT 등록·교체 구현
+
+## 현재 목적 / 완료 작업 / 수정 파일
+
+관리자에서 수집용 GitHub PAT를 등록·교체하고 실제 서로 다른 계정의 수집 한도
+전환을 지원하는 작업이다. 별도 worktree `/private/tmp/nmv-github-token-pool`, 브랜치
+`feat/github-collector-token-pool`에서 구현했다. 관리자 `/admin/github-accounts`에
+계정 등록/교체/활성·중지, core 한도, 최근 1시간 원본·신규 수집 제품 수를 추가했다.
+GitHub `/user` 숫자 ID로 계정을 식별하고 PAT를 전용 비밀키로 AES-GCM 암호화해
+새 앱 테이블에 저장한다. `githubRequest`는 기존 환경 토큰과 등록 토큰을 회전하며
+primary 한도 소진 시 다음 계정으로 전환하고 secondary cooldown은 공유한다.
+DB 서버·복제 설정과 중지된 `product-intro-check`는 건드리지 않았다.
+
+수정 파일: `app/admin/AdminNav.tsx`, `app/admin/github-accounts/*`,
+`lib/crawl/{github.ts,github-accounts.ts,github-quota.ts,readme-refresh.ts}`,
+`lib/db/operations-schema.ts`, `drizzle/0053_github_collector_accounts.sql`,
+`drizzle/meta/_journal.json`, `tests/{github-collector-accounts.test.ts,github-token-pool.test.ts,github-quota.test.ts,admin-navigation.test.tsx}`,
+`tests/integration/github-quota.test.ts`, `README.md`,
+`docs/operations/{independent-workers-runbook.md,production-multi-instance.env.example,2026-09-29-github-collector-accounts.md}`,
+`docs/superpowers/plans/2026-09-29-github-pat-pool.md`, 이 handoff.
+
+## 핵심 설계 / 실제 시험 / 실패 접근
+
+기존 `GITHUB_TOKEN`은 운영 이행용으로 유지한다. 등록 계정이 없으면 기존 토큰만
+사용한다. 같은 GitHub 숫자 ID를 등록하면 암호문을 교체하고, 명시한 교체 계정과
+새 PAT 계정이 다르면 저장을 거절한다. 토큰·암호문을 HTML, 감사 기록, 로그에
+표시하지 않는다. 토큰 만료 시 교체는 관리자 화면에서 다시 한다. 등록 계정의
+core 한도 헤더를 최대 30초 간격으로 저장한다. 다른 앱이 소비한 API 사용량도
+포함되므로 원본 저장 건수와 비율 계산은 하지 않는다.
+
+사용자가 클립보드에 둔 새 PAT는 토큰 값을 출력·파일 저장하지 않고 GitHub에
+읽기 요청으로 시험했다. `/user` HTTP 200: `lollol-jr`, 사용자 ID `227736397`로
+기존 `JRVector9`와 다르다. `/rate_limit` HTTP 200: core 5,000/시간,
+search 30/분. 공개 `octocat/Hello-World` 조회, 저장소 검색, 커밋 검색도 모두
+HTTP 200이었다. 같은 클립보드 PAT를 애플리케이션의
+`inspectGitHubCollectorToken`으로도 확인해 ID·login·core 5,000을 반환했다.
+이 시점 실제 PAT를 운영 또는 시험 DB에 등록하지는 않았다.
+
+TDD에서 새 모듈 import 실패와 풀 테스트의 기존 단일 토큰 강제 오류를 red로
+확인했다. 새/기존 GitHub 집중 테스트 45/45 통과, `next typegen`, `tsc --noEmit`,
+수정 파일 ESLint, `npm run build` 통과했다. build에는 기존
+`agent-review.ts` 동적 파일 접근 경고만 있었다. 첫 전체 `npm test`는 새 화면의
+12px 텍스트와 관리자 메뉴 9개 고정 기대 때문에 3건 실패했다. 텍스트를 13px로
+고치고 메뉴 테스트를 10개로 갱신한 뒤 전체 159파일 1255/1255 통과했다.
+전용 로컬 시험 DB의 마이그레이션 0053과 계정 암호화 저장·교체·비활성화
+통합 테스트는 2파일 3/3 통과했다. 시험 계정 행/감사 행은 테스트 후 삭제했다.
+`next start`로 전용 시험 DB에 연결한 관리자 페이지를 HTTP 200으로 읽어 제목,
+등록 폼, 빈 계정 안내가 렌더링됨을 확인한 뒤 서버를 중지했다.
+후속 검토에서 기존 secondary cooldown 행도 새 전역 제한에 포함하고, 여러 계정
+전환이 호출자의 단일 timeout 예산을 넘지 않게 고쳤다. 해당 단위 16/16,
+secondary 통합 2/2, 타입·ESLint가 통과했다. 운영 앱 DB에는 0053 가산
+마이그레이션을 직접 연결로 한 번 적용하고 8개 컬럼·빈 계정 행을 확인했다.
+M3·mini 웹과 crawler 주·예비 네 앱에는 동일한 전용 암호화 키를 설정했다.
+이 시점 새 PAT는 아직 운영 DB에 등록하지 않았고 앱 새 릴리스도 배포 전이다.
+
+## 남은 작업 / 정확한 다음 명령
+
+PR #225를 만들었고 최신 커밋의 CI `check`가 남았다. 기존 `gh` 로그인 계정의
+GitHub core 5,000회 한도가 2026-09-28 23:54:42 UTC까지 소진돼 `gh run watch`는
+403이었다. 새 PAT로 읽기 전용 CI 상태 조회는 HTTP 200이며 latest run의 `check`가
+진행 중인 것을 확인했다. 운영 전환의 DB 마이그레이션과 네 앱 전용 키 설정은
+완료했다. CI 통과 후 PR을 병합하고 같은 릴리스를 웹·crawler 주·예비에 배포한다.
+그 다음 관리자에서
+새 PAT를 등록하고 계정별 quota 및 원본 증가를 확인한다. 이 전에는 두 계정의
+실제 운영 처리량을 검증했다고 주장하지 않는다. 루트 checkout의 사용자 변경은
+보존한다.
+
+```sh
+cd /private/tmp/nmv-github-token-pool
+git status --short --branch
+git diff --check
+npm test
+npx next typegen && npx tsc --noEmit
+npx eslint app/admin/github-accounts app/admin/AdminNav.tsx lib/crawl/github.ts lib/crawl/github-accounts.ts lib/crawl/github-quota.ts lib/crawl/readme-refresh.ts lib/db/operations-schema.ts tests/github-collector-accounts.test.ts tests/github-token-pool.test.ts tests/github-quota.test.ts
+npm run build
+git diff --stat
+```
+
+---
+
+# 2026-09-29 08:00 KST — 수집 한도 장애 확인 및 관리자 화면 개선
+
+## 현재 목적 / 완료 작업 / 수정 파일
+
+수집 정체 원인을 운영에서 확인하고, 심사 구간 클릭이 해당 구간의 후보만 표시하도록
+고쳤다. 처리 속도가 0이어도 각 카드에 워커 관측·실행 가능 일감·재시도 예약·오류
+상태가 직접 나오도록 했다. 별도 기술 검토는
+`docs/operations/2026-09-29-github-collector-accounts.md`에 기록했다.
+수정 파일은 `app/admin/review/{page.tsx,stages.ts}`,
+`app/admin/status/{ThroughputStrip.tsx,throughput.module.css}`,
+`lib/operations/{throughput-model.ts,throughput.ts}`,
+`tests/{review-stages.test.ts,operations-throughput-display.test.ts}`와 위 문서, 이 handoff다.
+깨끗한 작업 공간 `/private/tmp/nmv-stage-runtime-ui`의
+`feat/review-stage-runtime-status`에서 작업했다. 루트 checkout의 사용자 변경은 보존했다.
+
+## 핵심 설계 / 실제 테스트 / 실패 접근
+
+구간 링크는 과거 검색·상세·기간·정렬을 모두 버리고 `stage`만 남기며 목록 앵커로
+이동한다. 목록 자체의 기존 구간 SQL 조건은 유지했다. 수집 재시도 예약 건수는
+기존 집계 `extra`를 fetch 구간에만 전달하고, 워커 생존 이상은 대기 0보다 우선해
+보여준다. 0건 저장이 워커 중단을 뜻하지 않도록 상태를 분리했다.
+
+운영 읽기 전용 관측에서 22:39:57 UTC GitHub `core` primary 한도 소진,
+22:53:40 UTC 초기화, 22:54:45 UTC 원본 저장 재개를 확인했다. 원본 총수는
+22:54:46 UTC 108,189건에서 22:59:53 UTC 108,248건으로 증가했다.
+22:59:53 UTC 현재 수집 계정 `JRVector9`의 `/rate_limit`은 core 609/5,000 사용,
+4,391 잔여였다. OAuth 관리자 로그인 토큰은 현재 저장되지 않고 운영 수집은
+환경 `GITHUB_TOKEN` 하나를 사용한다.
+
+`vitest run tests/review-stages.test.ts tests/operations-throughput-display.test.ts`는
+새 테스트 4건의 red를 확인한 뒤 16/16 통과했다. 해당 파일 ESLint와
+`next typegen` 후 `tsc --noEmit`은 통과했다. `npm run build`는 정상 의존성을
+설치한 뒤 통과했으며 기존 `agent-review.ts` 동적 파일 접근 경고 1건이 있었다.
+첫 build는 임시 작업 공간에서 다른 작업 공간의 `node_modules`를 가리킨
+심볼릭 링크가 Turbopack 파일시스템 경계 밖이라 실패했다. 링크를 풀고
+`npm ci --ignore-scripts --no-audit --no-fund`로 해당 공간에 설치해 해결했다.
+
+## 남은 작업 / 정확한 다음 명령
+
+diff 검토와 PR, 최신 base CI `check`, 병합·운영 웹 배포 확인이 남았다.
+수집 계정 연결/암호화 저장/토큰 풀/계정별 한도 및 저장 성과 지표는 구현되지 않았다.
+위 설계 문서를 따라 별도 작업으로 구현하고 실제 두 번째 계정 연결 후 운영 전환을
+시험해야 한다. DB 서버·복제 설정은 변경하지 않는다. 사용자가 중지한
+`product-intro-check`도 재개하지 않는다.
+
+```sh
+cd /private/tmp/nmv-stage-runtime-ui
+git diff --check
+node_modules/.bin/vitest run tests/review-stages.test.ts tests/operations-throughput-display.test.ts
+node_modules/.bin/next typegen && node_modules/.bin/tsc --noEmit
+npm run build
+git status --short
+git add app/admin/review/page.tsx app/admin/review/stages.ts app/admin/status/ThroughputStrip.tsx app/admin/status/throughput.module.css lib/operations/throughput-model.ts lib/operations/throughput.ts tests/review-stages.test.ts tests/operations-throughput-display.test.ts docs/operations/2026-09-29-github-collector-accounts.md docs/CODEX_HANDOFF.md
+git commit -m 'feat: clarify review stage and worker runtime status'
+git push -u origin feat/review-stage-runtime-status
+```
+
+---
+
+# 2026-09-29 01:43 KST — 이번 단계 종료 상태
+
+## 현재 목적 / 완료 작업 / 수정 파일
+
+워커 장애 시 주·예비 감시와 maintenance 실제 처리량을 보강하고 기존 역할 인계를
+재검토했다. 코드 PR #219, #220과 운영 기록 PR #221, DB 격리 복원 기록 PR #222는
+모두 main에 병합됐다. #222는 최신 base의 CI `check`와 GitGuardian 성공 후
+merge SHA `1229c2597235a6a6c528fc3a827e9c7e3aab329c`가 됐다. 운영 DB는 이미
+별도로 구성돼 있으며 이번 워커 failover 작업에서 설정·역할·운영 데이터를 바꾸지 않았다.
+이번 후속 변경 파일은 `docs/CODEX_HANDOFF.md`뿐이다. 루트 checkout의 사용자 변경과
+중단된 `product-intro-check`는 보존했다.
+
+## 핵심 판단 / 테스트 / 실패 접근
+
+운영 DB의 주·복제 스트리밍과 WAL 아카이브를 읽기 전용으로 확인했고, 운영 primary에서
+새 논리 백업을 로컬 격리 DB에 복원해 주요 행·마이그레이션과 실제 OG 이미지 바이트를
+대조했다. replica dump 첫 시도는 hot standby recovery conflict로 실패했고 primary
+재시도는 `pg_restore --exit-on-error` 종료 코드 0이었다. 로컬 시험 DB는 삭제했다.
+기존 보관 백업의 복원 성공이나 DB 자동 승격은 이 시험으로 주장하지 않는다.
+PR #222의 CI `check`와 GitGuardian은 실제 통과했다. 이번 후속 문서의
+`git diff --check`는 커밋 전에 실행한다.
+
+## 남은 작업 / 정확한 다음 명령
+
+운영 monitor는 코드만 main에 있고 Kuma Push/알림 수신자 및 별도 앱이 아직 없다.
+Kuma 로그인 경로와 알림 대상이 확인되면 기존 접속 설정으로 monitor를 연결해
+예비 중단 DOWN/복귀 UP과 감시자 자체 timeout을 실제 확인한다. 이어 mini 전체 장애의
+독립 deadman, publisher 예비 신규 발행, 실제 저장 정체·반복 부팅 격리,
+maintenance 6시간 backlog 장기 회복과 24시간 관측을 진행한다. DB 설정 작업은
+여기서 수행하지 않는다. DB 관련 미검증 경계는 `PENDING.md`와
+`docs/operations/2026-09-29-db-restore-verification.md`를 따른다.
+
+```sh
+cd /private/tmp/nmv-uptime-capacity
+git status --short --branch
+git diff --check
+gh pr view 222 --json state,mergeCommit,statusCheckRollup
+rg -n 'monitor|Kuma|deadman' PENDING.md docs/operations/independent-workers-runbook.md
+```
+
+---
+
+# 2026-09-29 01:35 KST — 기존 DB 구성 확인·격리 복원 기록
+
+## 현재 목적 / 완료 작업 / 수정 파일
+
+사용자는 남은 워커 failover 작업과 기존 구현 재검토를 요청했고, DB는 이미 별도로
+구성됐으므로 DB 서버 설정은 건드리지 말라고 명확히 했다. 이 방향을 따른다.
+독립 감시 PR #219와 maintenance 용량 PR #220, 용량 운영 기록 PR #221은 각각
+필수 CI 후 main에 병합됐다. maintenance M3 주·mini 예비는 같은 SHA `ce64737`와
+60/6 설정으로 운영 중이며 마지막 직접 확인에서 M3 active/mini standby였다.
+기존 다섯 역할은 모두 주·예비 후보와 lease가 일치했다.
+
+이번 문서 단계는 `PENDING.md`, 신규
+`docs/operations/2026-09-29-db-restore-verification.md`, 이 handoff를 수정한다.
+별도 worktree `/private/tmp/nmv-uptime-capacity`의
+`docs/db-restore-verification-20260929` 브랜치에서 진행하고 루트 checkout의 사용자
+변경과 중단된 `product-intro-check`는 보존한다.
+
+## 핵심 판단 / 실제 테스트 / 실패 접근
+
+- 운영 DB primary/replica는 이미 Patroni 스트리밍이다. 읽기 전용 당시 복제 lag
+  0바이트, WAL 아카이브 on/실패 0건을 확인했다. 서버 설정·운영 데이터 변경은 없다.
+- replica의 새 논리 dump를 로컬 격리 DB로 스트리밍한 첫 시도는
+  `crawl_review_attempts`의 hot standby recovery conflict로 실패했다. 로컬 부분
+  복원 DB를 버리고 primary에서 다시 `pg_dump -Fc --no-acl --no-owner`를 스트리밍해
+  `pg_restore --exit-on-error` 종료 코드 0으로 복원했다.
+- 원본/복원은 products 19,894, crawl_documents 107,220, jobs 25,
+  migration 53/최대 ID53/hash 집계 일치, `og_images` 19,865행/데이터 총
+  2,009,099,011바이트/한 표본 38,948바이트·MD5 일치였다. `media_assets`는
+  양쪽 0행이라 그 테이블의 bytea 복원은 검증하지 못했다. 로컬 시험 DB는 대조 후
+  `dropdb` 종료 코드 0으로 삭제했다. 기존 보관 백업본 복원·보존 기간·시점 복구는
+  시험하지 않았다.
+- PR #220의 단위 1,229건·통합 923건, 타입·lint(기존 vendor 경고1)·build와
+  Docker monitor build를 이전 단계에서 실제 실행했다. 이번 단계는 문서만 변경하며
+  문서 diff-check를 실행한다. 운영 monitor/Kuma 알림 실전 배포는 여전히 미완료다.
+
+## 남은 작업 / 정확한 다음 명령
+
+이 문서 diff를 검토·커밋하고 PR의 최신 main CI `check` 뒤 병합한다. 별도 DB
+설정 작업은 하지 않는다. mini Kuma 로그인 경로와 알림 수신자가 확인되면 기존
+DB 접속 설정으로 독립 monitor를 연결하고 예비 중단 DOWN/복귀 UP, 감시자 자체
+timeout을 검증한다. mini 호스트 장애의 독립 deadman, publisher 예비 신규 발행,
+실제 저장 정체/반복 부팅 격리, maintenance 6시간 backlog 장기 회복,
+24시간 연속 관측은 남았다. 별도로 관리하는 기존 보관 백업의 복구 가능성은
+이번 새 논리 백업 시험으로 증명되지 않는다.
+
+```sh
+cd /private/tmp/nmv-uptime-capacity
+git status --short --branch
+git diff --check
+git diff -- PENDING.md docs/CODEX_HANDOFF.md
+git add PENDING.md docs/CODEX_HANDOFF.md docs/operations/2026-09-29-db-restore-verification.md
+git commit -m 'docs: record isolated database restore verification'
+git push -u origin docs/db-restore-verification-20260929
+gh pr checks <new-pr-number>
+```
+
+---
+
+# 2026-09-29 01:22 KST — maintenance 60/6 단계적 운영 배포
+
+## 현재 목적 / 완료 작업 / 수정 파일
+
+남은 failover 운영 작업과 기존 구현 재검토를 계속한다. 독립 감시 PR #219는 main
+`a92e490`, 용량 PR #220는 필수 CI 후 main `ce64737edfc0bfc586fc428c082d060d08e0376e`로
+병합했다. monitor 코드는 main에 있지만 별도 앱과 실제 경보는 미배포다. mini Uptime Kuma는
+로그인이 필요하고 Keychain의 흔한 이름에서 자격을 찾지 못했다. 사용자에게 로그인 경로와
+알림 대상을 비동기로 요청했다.
+
+maintenance는 Dokploy의 mini 예비 앱 `T6ATm-paaE03hfSsQX8-S`, M3 주 앱
+`7OlFqQdacbyQseQM72E7b`를 순서대로 SHA `ce64737`에 배포하고 설정을 30/4→60/6으로
+증량했다. 현재 두 앱 배포 `done`, 같은 SHA와 60/6, lease epoch 7의 M3 active·mini
+standby다. 다른 역할 앱은 옛 SHA `20208d3`이며 각 주·예비가 같은 릴리스로 동작한다.
+
+운영 기록과 현재 미검증 경계를 반영하려고 새 브랜치 `docs/uptime-capacity-rollout`의
+`README.md`, `PENDING.md`, `docs/operations/independent-workers-runbook.md`,
+`docs/operations/2026-09-29-uptime-capacity-rollout.md`, 이 handoff를 수정했다.
+아직 커밋·문서 PR 전이다. 루트 checkout과 중단된 `product-intro-check`는 보존했다.
+
+## 핵심 판단 / 실제 테스트 / 실패 접근
+
+- 30/4에서 tick 30건/6.698초·9.351초·8.819초, 5분 저장 150건,
+  `jobs.last_error=null`; M3 컨테이너 healthy, CPU 0.89%, RSS 197.5MiB/1GiB.
+- 60/6 배포 전환 중 mini가 epoch 6으로 정상 인계해 60건/15.238초를 저장했다.
+  mini를 정상 drain해 M3가 epoch 7로 재획득하고 mini 1복제본을 복원했다.
+  M3 tick 60건/10.840초·13.092초·9.274초, 5분 저장 300건, 오류 없음.
+  6시간 초과 건수는 13,976→13,628로 줄었다. 수시간의 전체 회복은 미검증이다.
+- 기존 다섯 역할은 모두 M3 active·mini standby 신선한 관측과 lease/릴리스 일치.
+  publisher 승인 행 17은 적격 발행 큐가 아니며 예비 신규 제품 저장은 미검증.
+- 실제 DB 호스트는 V9-Primary `100.99.209.55`, 복제본 V9-Replica
+  `100.85.113.10`. 읽기 전용 확인에서 primary `pg_stat_replication`은
+  `streaming`/async/lag 0바이트, replica WAL receiver `streaming`이었다.
+  `archive_mode=on`, 아카이브 실패0. 백업 복원 시험은 하지 않았다.
+- Dokploy API 첫 읽기 명령은 셸 환경변수를 같은 명령에 할당하면서 헤더 확장이 먼저 돼
+  401이었다. 다음 호출에서 키를 별도 줄에 읽고 성공했으며 원문 키는 출력하지 않았다.
+  M3 컨테이너를 찾을 때 이전 컨테이너 ID로 `docker stats`를 호출해 0B가 나왔고
+  현재 컨테이너 ID로 재측정했다. mini scale 0/1은 성공하고 최종 standby를 확인했다.
+
+## 남은 작업 / 정확한 다음 명령
+
+문서 diff-check·커밋·PR·CI를 끝낸다. 60/6을 수시간 관측해 6시간 초과 건수가
+실제로 충분히 줄고 tick 예산, DB 연결, CPU/RSS가 유지되는지 확인한다.
+Kuma 로그인/알림 대상이 확인되면 read-only DB 자격과 Push monitor를 만들고 별도 M3
+monitor 앱, 예비 중단 DOWN/회복과 감시자 자체 timeout을 검증한다. mini 호스트 장애의
+독립 deadman, publisher 예비 신규 발행, 실제 저장 정체/반복 부팅 격리,
+백업 복원, 24시간 관측이 남았다.
+
+```sh
+cd /private/tmp/nmv-uptime-capacity
+git status --short --branch
+git diff --check
+git add README.md PENDING.md docs/CODEX_HANDOFF.md docs/operations/independent-workers-runbook.md docs/operations/2026-09-29-uptime-capacity-rollout.md
+git commit -m 'docs: record maintenance capacity rollout'
+git push -u origin docs/uptime-capacity-rollout
+python3 /tmp/nmv-p3-db-audit.py
+python3 /tmp/nmv-p3-db-status.py maintenance
+```
+
+---
+
+# 2026-09-29 00:59 KST — 독립 감시 병합·maintenance 용량 증량 준비
+
+## 현재 목적 / 완료 작업 / 수정 파일
+
+남은 워커 failover 작업과 기존 구현 재검토를 진행 중이다. 독립 감시 PR #219는 필수 CI
+`check`와 GitGuardian 통과 후 main SHA `a92e490937068ebbce79d5106dcfd5ced140670c`로
+병합됐다. 운영 monitor 앱·Kuma Push는 아직 만들지 않았다. mini Kuma의 로그인 화면을
+확인했고 접근 경로와 경보 대상에 대한 사용자 응답을 기다리면서 독립 작업을 계속한다.
+
+maintenance 용량은 별도 worktree `/private/tmp/nmv-uptime-capacity`, 브랜치
+`feat/uptime-capacity`에서 구현했다. 변경 파일은 `lib/jobs/products/uptime.ts`,
+`tests/uptime-config.test.ts`, `tests/integration/uptime.test.ts`, `README.md`, `PENDING.md`,
+`docs/operations/independent-workers-runbook.md`,
+`docs/operations/2026-09-29-uptime-capacity-preflight.md`,
+`docs/superpowers/plans/2026-09-29-uptime-capacity.md` 및 이 handoff다.
+루트 사용자의 미커밋 변경과 중단된 `product-intro-check`는 건드리지 않았다.
+
+## 설계 판단 / 실제 테스트 / 실패 접근
+
+운영 읽기 전용 표본에서 웹사이트 19,365곳·6시간 초과 13,976곳·점검 905건/시간.
+최근 900건 응답 지연 p50 717ms/p95 2,471ms/최대 6,091ms, 15건 tick 5,626ms다.
+6시간 목표는 분당 약 54건이 필요하다. 기본 15건/HTTP 동시3개는 유지하고
+환경 상한 60건/동시6개를 추가해 30/4→60/6으로 단계적 측정을 가능하게 했다.
+한 origin의 요청과 DB 기록은 각각 직렬, 25초 tick 예산도 유지한다. 설정값만으로
+실제 처리량이나 6시간 목표가 달성됐다고 보지 않는다.
+
+- `tests/uptime-config.test.ts` 구현 전 7건 실패→구현 후 7건 통과.
+  기존 통합의 증량 시험은 동시3개만 열려 실패→수정 후 24건 통과.
+- `npx next typegen`, `npx tsc --noEmit`, `npm test`(155파일/1,229건),
+  `npm run test:integration`(96파일/923건·TODO1), `npm run lint`(오류0·기존 vendor
+  경고1), `npm run build`, `git diff --check` 통과. 첫 capacity 커밋 `bd874d6`은
+  monitor 병합 이전 base였고, `git rebase origin/main`이 충돌 없이 완료됐다.
+- mini Kuma는 `http://100.116.119.93:3001/dashboard`의 로그인 화면까지 확인했다.
+  비밀번호가 없어 Push monitor 생성이나 실제 경보 발송은 하지 않았다.
+
+## 남은 작업 / 정확한 다음 명령
+
+capacity handoff 변경을 커밋하고 브랜치 푸시→별도 PR의 최신 CI `check`를 통과시킨다.
+그 뒤 maintenance 주·예비 같은 이미지 배포와 30/4→60/6 설정 증량, tick/DB/백로그
+실측이 필요하다. 독립 monitor는 mini Kuma 로그인/알림 대상과 읽기 전용 DB 자격을
+확정한 뒤 운영 앱을 연결해야 한다. publisher 예비 신규 발행, 실제 저장 정체/반복 부팅
+격리 주입, 백업 복구, 24시간 연속 관측, mini 장애에서 독립된 deadman도 남았다.
+
+```sh
+cd /private/tmp/nmv-uptime-capacity
+git status --short --branch
+git diff --check
+git add docs/CODEX_HANDOFF.md
+git commit -m 'docs: hand off uptime capacity rollout'
+git push -u origin feat/uptime-capacity
+gh pr create --base main --head feat/uptime-capacity --title 'Allow measured uptime check capacity ramp' --body-file /tmp/nmv-uptime-pr-body.md
+gh pr checks <new-pr-number>
+```
+
+---
+
+# 2026-09-29 00:43 KST — 독립 failover 감시 구현·기존 운영 재검토
+
+## 현재 목적 / 완료 작업 / 수정 파일
+
+사용자가 남은 failover 작업 진행과 이전 구현 재검토를 요청했다. 루트의 사용자 변경을
+보존하고 `origin/main` `77612eb`에서 별도 worktree
+`/private/tmp/nmv-worker-failover-followup` (`feat/worker-failover-followup`)를 만들었다.
+기존 진행 CLI가 최신 주 서비스 하나만 보아 예비 소실을 놓치는 공백을 찾았다.
+`lib/operations/failover-readiness.ts`, `failover-monitor.ts`,
+`scripts/check-failover-readiness.ts`, `watch-failover-readiness.ts`, `monitor-healthcheck.ts`,
+`lib/db/pool.ts`, `Dockerfile`, 관련 단위·통합 시험, README/PENDING/runbook,
+설계·계획 및 `docs/operations/2026-09-29-independent-worker-monitor-preflight.md`를 추가/수정했다.
+이 시점에 아직 커밋·PR·운영 배포는 하지 않았다.
+
+## 설계 판단 / 테스트 / 실패 접근
+
+DB `localtimestamp`로 후보 관측·lease 나이를 계산하고 M3/mini 5역할 쌍과 scheduler
+서로 다른 2복제본을 각각 판정한다. 30초 별도 monitor가 연속 2회 이상일 때 Kuma Push
+DOWN, 정상 복귀 때 UP을 전송한다. URL·응답 본문은 오류 로그에 남기지 않는다.
+mini 호스트 전체 장애 때 mini Kuma도 죽는 공백과 실제 경보 수신 미검증은 남는다.
+운영 monitor의 `CONNECT_AGENT_URL` 설정 여부는 publisher와 같아야 발행 적격 큐가
+같이 계산된다. monitor는 해당 URL에 요청하지 않으며 존재 여부만 사용한다.
+
+- 처음 단위 시험은 구현 파일이 없어 실패했고 구현 후 통과. 전용 DB의 정상/예비 70초 지연,
+  CLI 경보 종료 코드 2 통과. `npm test`: 156파일/1,235 통과.
+  `npm run test:integration`: 97파일/924 통과·TODO1.
+- `npx tsc --noEmit` 첫 실행은 새 worktree의 Next `PageProps` 생성물이 없고 시험 fixture
+  타입이 부족해 실패했다. `npx next typegen`과 fixture 교정 뒤 타입 검사 통과.
+  lint 오류0/기존 vendor 경고1, 웹 build, monitor Docker build, diff-check 통과.
+  DB 미설정 이미지의 CLI `unknown`/exit1, healthcheck exit1 확인.
+- 운영 읽기 전용에서 다섯 역할 M3 primary/mini standby 모두 신선하고 같은 릴리스,
+  lease owner M3였다. 진행 CLI `overall=ok`; crawler 문서·publisher 발행·maintenance
+  ping·text 프로필 결과 저장이 최근에도 있었다. 적격 발행 큐는 0이라 예비 새 제품 저장은
+  미검증. maintenance는 19,365 웹사이트 중 13,976곳 6시간 초과, 최근 905건/시간이다.
+- 운영 scheduler 컨테이너에서 `rg`가 없어 `grep`으로 바꿨다. 관측 JSON 확인에는 영향 없다.
+  임시 Node SQL 한 줄은 원격 shell 인용 오류로 실행되지 않았고 어떠한 DB 변경도 없었다.
+
+## 남은 작업 / 정확한 다음 명령
+
+diff와 문서를 다시 확인하고 커밋·PR·필수 CI `check`를 통과시킨다. 운영 알림 수신
+경로가 정해지면 전용 읽기 계정/Kuma Push monitor를 연결하고 monitor 앱의 실제 DOWN/UP,
+monitor heartbeat timeout을 검증한다. mini 전체 장애에 독립된 deadman, publisher 예비의
+적격 새 제품 저장, 실제 진행 정체/반복 부팅 격리, maintenance 용량 개선, 백업 복구와
+24시간 관측이 남았다. 중단된 `product-intro-check`는 재개하지 않는다.
+
+```sh
+cd /private/tmp/nmv-worker-failover-followup
+git status --short
+git diff --check
+npx next typegen
+npx tsc --noEmit
+npm test
+npm run test:integration
+git add Dockerfile README.md PENDING.md lib/db/pool.ts lib/operations/failover-readiness.ts lib/operations/failover-monitor.ts scripts/check-failover-readiness.ts scripts/watch-failover-readiness.ts scripts/monitor-healthcheck.ts tests/failover-readiness.test.ts tests/failover-monitor.test.ts tests/integration/failover-readiness-query.test.ts docs/CODEX_HANDOFF.md docs/operations/independent-workers-runbook.md docs/operations/2026-09-29-independent-worker-monitor-preflight.md docs/superpowers/specs/2026-09-29-independent-worker-monitor-design.md docs/superpowers/plans/2026-09-29-independent-worker-monitor.md
+git commit -m 'feat: independently monitor worker failover readiness'
+git push -u origin feat/worker-failover-followup
+```
+
+---
+
+# 2026-09-28 21:00 KST — P2 병합·운영 장애 복구 시험 완료
+
+## 현재 목적 / 완료 작업 / 수정 파일
+
+사용자의 우선순위에 따라 P0 진행 판정/owner-change 재시도(#213), P1 역할 lease·fencing·
+frontier 조기 회수(#214), P2 scheduler 2복제본·crawler/reviewer 주/예비(#215)를 진행했다.
+P2 main SHA `2f8a6bb607e622b18ba512415b4004d19f5557e5`. PR #215의 필수 CI
+`check`를 통과하고 기존 8개 앱에 배포했다. scheduler는 M3 2복제본, M3
+crawler/reviewer는 역할 후보 primary 명령, mini에는 같은 SHA의 별도 standby 앱
+2개를 배포해 총 10개 앱이 운영 중이다. 두 standby는 `autoDeploy=false`라 다음
+릴리스에 수동 교체가 필요하다. 운영 DB streaming·서버 설정은 수정하지 않았다.
+
+이 단계의 문서 브랜치 `/private/tmp/nmv-worker-failover-ops`에서 `AGENTS.md`,
+`README.md`, `PENDING.md`, `docs/operations/independent-workers-runbook.md`,
+`docs/operations/2026-09-28-worker-failover-rollout.md`, 이 handoff를 수정했다.
+루트 main의 사용자 미커밋 변경과 중단된 `product-intro-check`는 건드리지 않았다.
+
+## 설계 판단 / 실제 테스트 / 실패 접근
+
+- P2 로컬 단위 152파일/1217, PostgreSQL 통합 93파일/906 통과·TODO1, 타입·lint·
+  build·diff-check 통과. GitHub Actions `check`도 타입·lint·단위·통합·build 전부 통과.
+- 운영 10개 앱 최신 배포 `done`/source SHA 일치. M3·mini 웹 각각 public health
+  HTTP200/app+DB ok. scheduler 컨테이너 2개 healthy, 별도 신선한 DB 관측 2개,
+  `crawl-fetch` 요청 버전과 next schedule 전진, 최종 진행 판정 `overall=ok`.
+- crawler 자식 SIGKILL→Swarm 실패 감지/재시작→M3 주 epoch 1→2, M3 서비스
+  0 복제본→mini 예비 epoch 3, M3 재기동·예비 drain→M3 epoch 4. reviewer도 같은
+  순서로 epoch 1→2→3→4. 최종 두 주·두 예비 healthy, 주 active·예비 standby.
+  reviewer 예비 활성 중 `second-review` requested/processed version 전진.
+  자세한 명령·증거·검증 한계는
+  `docs/operations/2026-09-28-worker-failover-rollout.md`.
+- `gh pr merge 215 --squash --delete-branch`는 원격 merge 뒤 로컬 main이 다른 worktree에서
+  사용 중이라 종료1이었다. `gh pr view`와 `git ls-remote`로 원격 병합 SHA를 확인했다.
+  후반 GitHub REST API는 사용자 core quota 403으로 실패해 정상 git transport의
+  `git ls-remote origin refs/heads/main`으로 소스 SHA를 검증했다. 자격 증명 교체는 안 했다.
+- 운영에서 반복 부팅 격리·진행 정체 자동 재시작은 주입하지 않았다. 예비 활성 구간에
+  새 적격 결과가 없어 문서/심사 결과 저장 재개도 확인하지 못했다. 로컬 통합은 강제 종료
+  뒤 lease 만료를 DB에서 앞당겨 인계했으므로 운영 비정상 재시작 실패의 시간 실측이 아니다.
+
+## 남은 작업 / 정확한 다음 명령
+
+이 문서 변경을 diff-check 후 커밋·PR·CI로 main에 병합한다. 운영 완료 내용은
+`PENDING.md`에 미검증 경계와 함께 남긴다. 다음 우선순위는 독립 진행 감시의 주기 실행·
+외부 알림(메시지 전송 경로는 별도 승인 필요), 적격 backlog가 있을 때 예비의 결과 저장,
+반복 부팅 격리/정체 자동 재시작의 운영 시험이다. publisher/text/maintenance는
+supervisor·Swarm 1차 재시작만 있고 별도 예비/쓰기 fencing은 아직 없다. 이 역할까지
+확대하려면 P1의 역할 lease와 각 쓰기 경로를 동일하게 감사·구현해야 한다.
+
+```sh
+cd /private/tmp/nmv-worker-failover-ops
+git diff --check
+git status --short
+git add AGENTS.md README.md PENDING.md docs/CODEX_HANDOFF.md docs/operations/independent-workers-runbook.md docs/operations/2026-09-28-worker-failover-rollout.md
+git commit -m 'docs: record live worker failover rollout'
+git push -u origin feat/worker-failover-ops-20260928
+```
+
+---
+
+# 2026-09-28 20:24 KST — P1 운영 반영, P2 scheduler·정체 재시작 코드 검증
+
+## 현재 목적 / 완료 작업 / 수정 파일
+
+P1 PR #214 최신 CI(단위·PostgreSQL 통합·타입·lint·build)를 통과시킨 뒤 운영 DB에
+가산 migration 0051/0052를 직접 연결로 적용했다. `role_leases`와
+`primary_boots`·`quarantine_until` 컬럼 존재를 읽기 전용 확인했다. PR 병합 main SHA는
+`8401edfb31c9ecbcff351e61e6ec86949e9bbf2b`. 웹 M3·mini와 M3의
+scheduler/crawler/reviewer/publisher/text/maintenance 8개 앱을 해당 SHA로 배포했고,
+Dokploy 모두 `done`, `RELEASE_TAG`도 해당 SHA로 교정했다. 두 웹의
+`NEXT_DEPLOYMENT_ID` 환경/빌드 인자도 함께 교정했다. M3 6개 역할 컨테이너는 모두
+healthy, mini 웹은 컨테이너 내부 HTTP200/app+DB ok·동일 SHA, 공개 M3 웹도
+HTTP200/app+DB ok·동일 SHA다. P0 감시 CLI의 운영 읽기 전용 결과는 `overall=ok`,
+수집 저장 진행, scheduler 정상 예약, 심사 유휴/준비 중이다.
+
+P2는 별도 worktree `/private/tmp/nmv-worker-failover-p2`, 브랜치
+`feat/worker-failover-p2-20260928`에서 코드 작성 중이다. 변경 파일은
+`lib/operations/instance.ts`, `scripts/role-worker.ts`, `scripts/worker-supervisor.ts`,
+`tests/operations-instance.test.ts`, `tests/role-worker.test.ts`,
+`docs/operations/independent-workers-runbook.md`,
+`docs/superpowers/plans/2026-09-28-progress-restart-and-scheduler.md` 및 이 문서다.
+`SCHEDULER_REPLICA_IDENTITY=1`이면 HOSTNAME을 관측 키에 넣어 두 poller가 덮어쓰지 않는다.
+주 역할 후보만 수요가 있는데 저장이 없는 상태를 15초 간격 2회 확인하고,
+scheduler 정상·다른 단계 진행/제공자 오류 없음일 때 supervisor를 drain 후 종료 코드1로
+Swarm 재시작을 요청한다. 기존 반복 부팅 격리로 예비 승격이 이어진다. 운영 옵션·복제 수와
+예비 서비스는 아직 변경하지 않았다.
+
+## 실제 테스트 / 실패 접근
+
+- P2 표적 단위: 관측 키 9/9, 역할 후보 8/8 통과. 실제 프로세스/동시 scheduler 요청
+  PostgreSQL 통합 2파일/10 통과. 최신 `npm test`, 타입 검사, lint(기존 vendor 경고1),
+  `git diff --check` 통과. 전체 단위 152파일/1217, 전체 PostgreSQL 통합
+  93파일/906 통과·TODO1 (`/tmp/nmv-p2-integration.log`). `npm run build`도
+  종료 코드 0으로 통과했다. 빌드의 기존 Claude CLI 동적 경로 추적 경고는 남는다.
+- 새 worktree 첫 타입 검사는 Next `PageProps` 생성물이 없어 실패했고 `npx next typegen`
+  실행 뒤 통과했다. 진행 정체 기능의 첫 단위 실행은 함수 부재/타이머 대기로 실패한 뒤
+  구현하여 통과했다. 운영 mini 직접 Traefik 경로는404였지만 컨테이너 내부의
+  `HOSTNAME:3000/api/health`는 HTTP200이므로 앱 장애로 판정하지 않았다.
+- P1 CI는 강제 종료 테스트가 standby DB 선출 직후 heartbeat 전에 SIGTERM해 1회 실패했다.
+  테스트가 실제 실행 준비를 기다리게 하고 supervisor가 startup 정상 종료 요청을
+  깨끗한 drain으로 처리하도록 수정한 최신 CI는 통과했다.
+
+## 남은 작업 / 정확한 다음 명령
+
+P2 변경을 커밋한다. P1 병합 main으로 재기반해 새 PR의
+최신 CI를 통과시킨 뒤 scheduler 2복제본을 **먼저** 운영 검증한다. 그 뒤 crawler 주 후보
+명령 전환→같은 릴리스 예비 배치→실제 장애 주입/자료 저장 확인, 이어 reviewer 순서다.
+예비 배치 전 현재 운영 crawler/reviewer는 여전히 legacy 단일 supervisor 명령이다.
+P0 외부 알림 경로는 미연결, 사용자 중단 `product-intro-check`와 루트 사용자 변경은 보존.
+
+```sh
+cd /private/tmp/nmv-worker-failover-p2
+git status --short --branch
+tail -n 5 /tmp/nmv-p2-integration.log
+git diff --check
+git fetch origin main
+git log -3 --oneline
+```
+
+---
+
+# 2026-09-28 20:09 KST — P1 CI 시작 중 종료 경계 수정
+
+## 현재 목적 / 완료 작업 / 수정 파일
+
+PR #214 최신 head `7117b31`의 CI `check`가 통합 테스트에서 1건 실패했다. 실패 파일은
+`tests/integration/role-worker-process.test.ts`의 강제 종료 후 standby 승격 시험이다.
+DB owner가 standby로 바뀐 직후 자식 supervisor의 heartbeat 전에 SIGTERM을 보냈고,
+자식이 시작 도중 종료 코드1로 끝났다. `tests/integration/role-worker-process.test.ts`에서
+standby `status=running`/childPid까지 기다린 뒤 정상 drain을 검증하도록 고쳤다.
+동시에 `scripts/worker-supervisor.ts`에서 요청된 종료가 **첫 heartbeat 이전**인 경우
+자식의 signal/비정상 startup exit를 깨끗한 drain으로 인정한다. 실행 중 자식의 비정상
+종료와 45초 강제 종료는 계속 실패 처리한다. `tests/worker-supervisor.test.ts`에
+이 분기를 RED→GREEN 시험으로 추가했다. 이 3파일과 인계 문서는 아직 미커밋이다.
+
+## 실제 테스트 / 실패 접근
+
+- CI의 최신 검사: 타입·lint·단위 통과, 통합 92파일 통과·1파일 1테스트 실패.
+  `gh run view 36413096655 --log-failed`에서 시작 중 SIGTERM, `supervisor.stopped`
+  `exitCode=1`, 테스트의 종료 코드0 기대 실패를 확인했다. 전체 로그가 매우 길므로
+  다음에는 특정 실패 줄만 추출한다.
+- 수정 뒤 대상 단위 1파일/9, 실제 프로세스 통합 1파일/3 통과.
+  첫 타입 검사는 테스트 closure의 nullable `standby` 때문에 실패했고 non-null 접근으로
+  교정했다. 교정 뒤 타입 검사는 아직 다시 실행하지 않았다.
+- 운영 migration은 적용하지 않았다. `/tmp/nmv-p1-migrate-20260928.py preflight`로
+  직접 DB `nomorevibe`와 migration table 존재, `role_leases` 부재를 읽기 전용 확인했다.
+  `/tmp/nmv-p1-release-env-20260928.py preflight bc21ed3d27c624c4930cadbeee3e562cd9d89120`
+  으로 현 main SHA의 8개 앱 환경 교정 대상도 확인했다. 이 스크립트는 비밀값을 출력하지 않는다.
+
+## 남은 작업 / 정확한 다음 명령
+
+타입·lint·diff·대상 테스트를 다시 실행하고 수정 커밋을 PR #214에 푸시해 최신 CI를
+기다린다. 통과 전에는 migration·병합·배포하지 않는다. 이후 기존 단일 워커 명령 유지,
+P2 예비 배치 전까지 이중 실행 금지. P0 감시 주기/알림, 데이터 정체 자동 제어도 남았다.
+
+```sh
+cd /private/tmp/nmv-worker-failover-20260928
+npx tsc --noEmit
+npx eslint scripts/worker-supervisor.ts tests/worker-supervisor.test.ts tests/integration/role-worker-process.test.ts
+npm run test:integration -- tests/integration/role-worker-process.test.ts
+git diff --check
+git status --short
+gh pr checks 214
+```
+
+---
+
+# 2026-09-28 20:00 KST — P1 PR과 강제 종료 추가 검증
+
+## 현재 목적 / 완료 작업 / 수정 파일
+
+P1 변경을 P0 squash main 위로 재기반해 브랜치 `feat/worker-failover-20260928`에
+커밋 `50c9fc7`(수집 조기 회수), `e050496`(역할 후보/lease/fencing)으로 만들고
+PR #214를 열었다. 필수 CI `check`는 아직 진행 중이다. P1 코드는 운영에 배포되지 않았고
+예비 워커도 없다. PR 뒤 `tests/role-worker.test.ts`에 DB 갱신 예외 시 중단 시험,
+`tests/integration/role-worker-process.test.ts`에 실제 supervisor SIGKILL 뒤 역할 lease
+만료를 시험 DB에서 앞당겨 standby가 인계하는 시험을 추가했다. 두 파일과 이 문서는
+아직 후속 커밋 전이다.
+
+## 설계 판단 / 실제 테스트 / 실패 접근
+
+SIGKILL 시험은 Swarm이 재시작에 실패한 상황의 lease 만료를 모사한다. 실제 65초를
+기다리는 대신 DB `lease_until`을 21초 과거로 바꿨으므로 운영 복구 시간 측정은 아니다.
+실제 primary supervisor 프로세스 그룹을 SIGKILL했을 때 후보 프로세스가 종료 코드1로
+끝났고 owner가 남았다. DB 만료 뒤 standby가 새 owner가 되고 정상 drain에서 종료 코드0을
+반환했다. 해당 프로세스 통합 1파일/3 통과, 갱신 예외 단위 1파일/4 통과,
+`npx tsc --noEmit`, 대상 ESLint, `git diff --check` 통과했다. 초기 graceful drain 시험의
+간헐 실패 원인은 여전히 불명확하다.
+
+## 남은 작업 / 정확한 다음 명령
+
+추가 테스트를 커밋·푸시하고 PR #214의 **최신 head** CI를 확인한다. 통과하면 병합 후
+기존 단일 워커 명령 그대로 앱 8개에 배포하고 migration 0051/0052를 확인한다.
+P1 후보 실제 운영 활성화는 릴리스 태그 교정과 추가 장애 주입·쓰기 경로 감사 전까지
+금지한다. P0 정기 감시/알림·정체 제어, P2 scheduler 두 poller·crawler/reviewer standby,
+P3 후속 역할은 남았다. 사용자 중단 소개 검수와 루트 변경은 보존한다.
+
+```sh
+cd /private/tmp/nmv-worker-failover-20260928
+git status --short --branch
+git add tests/role-worker.test.ts tests/integration/role-worker-process.test.ts docs/CODEX_HANDOFF.md
+git commit -m 'test: verify DB renewal failure and crashed primary handoff'
+git push
+gh pr checks 214
+```
+
+---
+
+# 2026-09-28 19:54 KST — P0 운영 배포 완료, P1 코드 후보 검증
+
+## 현재 목적 / 완료 작업 / 수정 파일
+
+P0 PR #213의 병합 SHA `bc21ed3d27c624c4930cadbeee3e562cd9d89120`를 Dokploy의
+웹 M3·mini와 scheduler/crawler/reviewer/publisher/text/maintenance 총 8개 앱에 배포했다.
+8개 모두 해당 SHA deployment `done`이며 공개 `/api/health` 12회에서 M3·mini 양쪽이
+HTTP200, app/db ok였다. 실제 runtime `RELEASE_TAG`는 과거 `611820d` 값이라 P1 후보
+운영 전 실제 코드 SHA와 일치시켜야 한다. connect-agent는 이번 8개 배포 범위가 아니다.
+
+P1 worktree `/private/tmp/nmv-worker-failover-20260928`의 미커밋 변경은 역할 lease/epoch,
+동일 릴리스 standby 선출, 이전 job token 무효화와 쓰기 경로 fencing, 후보 로컬 health,
+후보 관측, crawler/reviewer 저장 경로 및 테스트다. 변경 파일은 `git status --short` 참조.
+정상 primary drain 뒤 owner가 null일 때 다른 릴리스 standby가 선출되던 결함을 RED→GREEN
+테스트로 수정했다. 두 standby 동시 경쟁에서 한 후보만 선출됐다. 실제 두 프로세스의
+primary drain→standby 활성화와 대기/활성 healthcheck를 확인했다. 정상 종료와 lease 상실의
+진단 사유를 구분한다. 운영 runbook과 설계 문서에 코드/미구현 경계를 반영했다.
+
+## 실제 테스트 / 실패 접근
+
+- P1 최종 전체 재실행: 단위 152파일/1210 통과
+  (`/tmp/nmv-failover-unit-p1-final.log`), 통합 93파일/905 통과·TODO1
+  (`/tmp/nmv-failover-integration-p1-final.log`), 타입 검사·lint(오류0,
+  기존 vendor 경고1)·build·diff-check 통과. 후보 healthcheck와 두 예비 경쟁을
+  포함한 결과다.
+- 프로세스 SIGTERM 테스트 최초 1회 15초 시간 초과 후 약47초에 강제 drain 실패가 있었다.
+  당시 로그 미수집이라 원인 미확정이다. 이후 동일 테스트 단독12회와 두 후보 테스트를
+  반복해 통과했지만 간헐 실패가 완전히 제거됐다고 주장하지 않는다.
+- 정상 drain 직후 다른 릴리스 예비 선출 테스트는 실패로 재현해 role-leader에서 owner
+  유무와 관계없이 마지막 owner release를 비교하도록 수정했다. 대기 healthcheck 테스트도
+  기존 함수 부재로 실패 확인 뒤 로컬 후보 상태/활성 supervisor 확인을 구현했다.
+
+## 남은 작업 / 정확한 다음 명령
+
+P1 변경을 커밋하고, P0 squash main 위로 재기반해 PR을 연다.
+역할 후보는 현재 Dokploy에 배치하지 않았다. P0 외부 감시 CLI의 정기 실행/경보와
+데이터 정체 자동 재시작 제어는 미구현이다. P1 추가 장애 주입(실제 SIGKILL,
+DB 단절, 느린 결과)과 crawler/reviewer 쓰기 경로 감사 후 P2 scheduler 두 poller,
+crawler standby, reviewer standby를 순서대로 활성화한다. P1 운영 시
+`RELEASE_TAG`·실제 이미지 SHA 일치를 먼저 교정하고 old standby→old primary drain→
+new primary→new standby 순서로 진행한다. 사용자 중단 `product-intro-check`와 루트
+작업트리 사용자 변경은 보존한다.
+
+```sh
+cd /private/tmp/nmv-worker-failover-20260928
+git status --short --branch
+npm test
+npm run test:integration
+npx tsc --noEmit
+npm run lint
+npm run build
+git diff --check
+python3 /tmp/nmv-health-20260925.py status
+```
+
+---
+
+# 2026-09-28 19:15 KST — P0 병합, P1 역할 임대 검증 중
+
+## 현재 목적 / 완료 작업 / 수정 파일
+
+수집·심사 워커의 장애를 판별하고 재시작 실패 시 같은 릴리스의 예비 워커로 안전하게
+인계하는 기능을 P0→P3 순서로 진행한다. P0를 별도 worktree
+`/private/tmp/nmv-worker-failover-p0`의 PR #213으로 분리했고 필수 CI `check`와
+GitGuardian 통과를 확인한 뒤 10:15 UTC에 squash 병합했다. main SHA는
+`bc21ed3d27c624c4930cadbeee3e562cd9d89120`이다. `gh pr merge`는 원격 병합 뒤 로컬
+`main`이 다른 worktree에서 사용 중이라 종료 코드 1을 냈지만 PR 상태 `MERGED`와 main SHA로
+원격 병합을 확인했다. 병합 직후 Dokploy 앱 8개는 아직 이전 `1e11190` deployment `done`이고
+connect-agent는 별도 앱이다. 새 SHA의 운영 배포는 아직 확인하지 않았다.
+
+P1 worktree `/private/tmp/nmv-worker-failover-20260928`에는 frontier 조기 회수 커밋
+`6f4aaf2` 뒤 미커밋 변경이 있다. `role_leases`/history migration, `lib/jobs/role-leader.ts`,
+`scripts/role-worker.ts`, `scripts/worker-supervisor.ts`, `scripts/worker.ts`,
+`lib/jobs/runner.ts`, `lib/jobs/control.ts`와 crawler/reviewer 저장 경로의 lease 검증,
+관련 통합·단위 테스트 및 설계 문서가 변경됐다. 정확한 전체 목록은 `git status --short`.
+역할 선출은 DB 락과 epoch를 사용하고 이전 잡 token을 무효화한다. 같은 릴리스의 standby만
+인계하며, 5분 내 primary 부팅 3회는 15분 격리한다. 후보 관측을 15초마다 기록한다.
+Compose/Dokploy의 예비 워커는 아직 만들거나 켜지 않았다.
+
+## 실제 테스트 / 실패 접근
+
+- P0 분리 worktree: `npm ci`, `npx next typegen`, `npx tsc --noEmit`, lint(오류0,
+  기존 vendor 경고1), 단위151파일/1206테스트, `npm run build`, `git diff --check` 통과.
+  호스팅 필수 CI `check` 통과. 통합 테스트는 호스팅 CI에서 실행됐다.
+- P1 기존 전체 실행: 단위152파일/1209 통과, 통합92파일/900 통과·TODO1,
+  타입 검사, lint(오류0·기존 경고1), build 통과. 통합 로그는
+  `/tmp/nmv-failover-integration-20260928.log`. 다만 그 뒤 리뷰 늦은 결과 테스트,
+  후보 관측, 프로세스 테스트를 추가했으므로 최종 전체 재실행은 남았다.
+- 실제 프로세스 SIGTERM drain 통합 테스트 `tests/integration/role-worker-process.test.ts`는
+  첫 실행에서 15초 대기 제한을 넘고 약47초 뒤 `role_lease_lost` 상태로 실패했다.
+  진단 출력 추가 뒤 4회 재실행은 각 1초 이내 통과했다. 원인 미확정이므로 간헐 실패가
+  해결됐다고 보지 않는다. 시스템 디버깅 절차로 재현·시그널·DB 경계를 조사한다.
+- 처음 P1 build는 외부 worktree `node_modules` symlink 때문에 Turbopack이 실패했다.
+  해당 worktree에서 `npm ci`로 실제 의존성 디렉터리를 만들고 build 통과했다.
+- 루트 worktree의 사용자 `scripts/search-judgments.json` 및 기타 미커밋 자료는 건드리지 않는다.
+  사용자가 중단한 `product-intro-check`도 재개하지 않는다.
+
+## 남은 작업 / 정확한 다음 명령
+
+P0의 운영 자동 배포가 main SHA로 완료되는지 확인한다. P0 CLI의 주기 실행과 외부 알림은
+아직 미연결이다. P1 프로세스 테스트 간헐 실패의 원인을 찾고 수집·심사 늦은 쓰기 경로를
+감사한다. 여러 후보의 강제 종료/DB 단절/지연 완료 시험과 전체 CI를 통과하기 전에는
+standby를 배치하지 않는다. 이후 scheduler 두 poller→crawler standby→reviewer standby→
+publisher/text/maintenance 순서로 진행한다. DB streaming/서버 자체 설정은 범위 밖이다.
+
+```sh
+cd /private/tmp/nmv-worker-failover-20260928
+git status --short --branch
+npm run test:integration -- tests/integration/role-worker-process.test.ts
+npm run test:integration -- tests/integration/role-leader.test.ts tests/integration/review-handoffs.test.ts
+python3 /tmp/nmv-health-20260925.py status
+gh pr view 213 --json state,mergeCommit
+```
+
+---
+
+# 2026-09-28 18:43 KST — P1 수집 선점 조기 회수 완료
+
+## 현재 목적 / 완료 작업 / 수정 파일
+
+P0 커밋 `1aab591`, `b0375e8`에 이어 P1 첫 코드 커밋 `6f4aaf2`를 만들었다.
+`lib/crawl/repository.ts`의 `recoverAbandonedFrontier`가 새 `crawl-fetch` 잡 token이
+유효할 때만 현재 잡의 DB `last_run_at`보다 오래된 `fetching` 항목을 `pending`으로 돌린다.
+오류 시도 횟수를 하나 되돌리고, `lib/crawl/jobs/fetch.ts`가 새 잡 첫 선점 전 한 번 호출한다.
+`tests/integration/crawl-fetch.test.ts`에 회수·토큰 검증·현재 선점 보호·옛 결과 거부·
+실제 다음 잡 틱 재개 테스트를 추가했다. frontier 컬럼 migration은 필요하지 않았다.
+설계 문서와 작업 계획에 이 선택을 반영했으나 문서는 아직 미커밋이다.
+
+## 설계 판단 / 테스트 / 실패 접근
+
+- 새 통합 테스트는 처음 10분 미래 `next_attempt_at` 때문에 원본이 저장되지 않아 RED였다.
+  다른 역할의 유효한 token도 잘못 회수하던 반례를 추가로 RED 확인한 뒤 `crawl-fetch`로 한정했다.
+- `npm run test:integration -- tests/integration/crawl-fetch.test.ts tests/integration/crawl-pipeline.test.ts tests/integration/job-control.test.ts`: 3파일 60/60 통과.
+  `npx vitest run tests/crawl-fetch-concurrency.test.ts tests/crawl-fetch-backpressure.test.ts`: 2파일 7/7 통과.
+  `npx tsc --noEmit`, 대상 ESLint, `git diff --check` 통과.
+- 첫 테스트에서 앱 시계 `Date.now()`와 DB `now()`가 약 12ms 달라 시각 단정이 실패했다.
+  DB에서 실제 `dequeue`가 가능한지 검증하도록 교정했다. 운영 결함으로 해석하지 않는다.
+- 이 조기 회수는 단일 `crawl-fetch` 잡의 선점을 처리한다. 예비 역할 인계/epoch 쓰기 차단은
+  아직 없다. 옛 워커의 모든 DB 쓰기를 막는 기능으로 보고하지 않는다.
+
+## 남은 작업 / 정확한 다음 명령
+
+P1 역할 lease/epoch, 늦은 쓰기 경로 감사와 예비 선출 시험을 수행한다. P2 운영 배치 전
+이 안전 조건이 통과해야 한다. P0 감시 CLI는 아직 운영 주기 실행/외부 경보 라우팅이 없다.
+사용자 중단 `product-intro-check`는 유지하고 루트 작업트리 사용자 변경은 건드리지 않는다.
+
+```sh
+cd /private/tmp/nmv-worker-failover-20260928
+git status --short --branch
+git log -3 --oneline
+sed -n '1,210p' scripts/worker.ts
+sed -n '1,150p' lib/jobs/control.ts
+rg -n 'assertJobLease|ctx.lease|recordAutomaticJudgement' lib/crawl
+```
+
+---
+
+# 2026-09-28 18:38 KST — 워커 failover P0 구현 결과
+
+## 현재 목적 / 완료 작업 / 수정 파일
+
+사용자 지시대로 P0→P3 순서로 계속 구현한다. 작업트리
+`/private/tmp/nmv-worker-failover-20260928`, 브랜치 `feat/worker-failover-20260928`.
+P0 코드 커밋 `1aab591`(심사 owner 변경 한도)과 `b0375e8`(수집·심사·scheduler 진행 판별,
+최근 5분 부팅 이력, 관리자 표시, JSON 감시 CLI)을 만들었다. 새 감시 CLI는
+`node --import tsx scripts/check-worker-progress.ts`이며 읽기 전용으로 DB를 조회한다.
+종료 코드 0=정상/유휴, 1=조회·판정 불가, 2=경보 대상이다. **운영에서 CLI를 주기 실행하거나
+외부 호출로 연결하지는 않았다.** 감시 서비스 배치는 P2 대상이다. 수정 파일은 두 커밋에 있고,
+설계·계획·이 인계 문서는 아직 별도 미커밋 상태다.
+
+## 판단 / 실제 테스트 / 실패 접근
+
+- 심사 회귀 통합 16/16, 연관 심사·발행 통합 30/30 통과(`1aab591` 단계).
+- P0 진행 판별 단계: `npm run test:integration -- tests/integration/worker-progress-query.test.ts tests/integration/operations-throughput.test.ts tests/integration/job-control.test.ts tests/integration/agent-review-records.test.ts` 4파일 34/34 통과.
+  `npx vitest run tests/worker-progress.test.ts tests/operations-throughput.test.ts tests/operations-throughput-display.test.ts tests/worker-supervisor.test.ts tests/scheduler-runtime.test.ts` 5파일 28/28 통과. 대상 ESLint, `npx tsc --noEmit`, `git diff --check` 통과.
+- `DATABASE_URL='' node --import tsx scripts/check-worker-progress.ts`는 JSON `overall=unknown`, 종료 코드1을 반환했다(예상 동작). 전용 DB에서는 경보 JSON과 종료 코드2를 통합 테스트로 확인했다.
+- TDD에서 누락 모듈, `unknown` 스텁, 이전 부팅 관측 덮어쓰기, scheduler heartbeat만 있는 상태의 잘못된 `scheduled` 판정, 관리자 라벨 누락을 각각 RED로 보고 교정했다. 첫 관측 구현은 `value.bootedAt`이 closure에서 unknown으로 추론되어 타입 검사에 실패했고 좁혀진 지역 변수로 교정했다.
+- `job.failed` 로그는 기존 테스트의 의도된 실패 주입이며 전체 테스트 결과는 통과다.
+
+## 남은 작업 / 정확한 다음 명령
+
+P0 관리자 화면은 최근 5분 저장량과 판별 사유를 표시하지만 마지막 저장의 전체 이력 시각은
+아직 제공하지 않는다. 외부 감시 주기 실행/경보 라우팅도 미배치다. P1에서는 수집 frontier의
+10분 선점 대기 조기 회수, 역할 lease/epoch와 이전 주인 쓰기 차단, 반복 정체 시 1회 재시작
+제어를 구현한다. 예비 활성화는 모든 쓰기 경로를 검증하기 전에는 켜지 않는다.
+P2는 scheduler 두 poller, crawler 예비, reviewer 예비 순서이며 P3는 후속 역할이다.
+사용자 중단 `product-intro-check`는 재개하지 않는다. 루트 사용자 변경은 보존한다.
+
+```sh
+cd /private/tmp/nmv-worker-failover-20260928
+git status --short --branch
+git log -2 --oneline
+sed -n '1,155p' docs/superpowers/specs/2026-09-28-worker-failover-design.md
+sed -n '90,175p' lib/crawl/repository.ts
+npm run test:integration -- tests/integration/worker-progress-query.test.ts tests/integration/agent-review-records.test.ts
+```
+
+---
+
+# 2026-09-28 18:22 KST — 워커 failover P0 심사 중단 한도 수정
+
+## 현재 목적 / 완료 작업 / 수정 파일
+
+사용자 지시대로 워커 장애 복구 설계의 P0→P3를 순서대로 구현 중이다. 별도 작업트리
+`/private/tmp/nmv-worker-failover-20260928`, 브랜치 `feat/worker-failover-20260928`에서 작업한다.
+P0 첫 수정으로 심사 `owner_changed`를 모델 실패 한도와 분리하고, 동일 입력의 최근 24시간
+소유권 변경 3회는 `infrastructure_interruptions_exhausted`로 별도 중단하도록 했다. 영구 회귀
+테스트에서 25시간이 지나면 다시 준비 큐에 들어와 다음 시도를 할 수 있음을 확인했다.
+코드·테스트 커밋 `1aab591`이며 수정 파일은 `lib/crawl/agent-review-repository.ts`,
+`tests/integration/agent-review-records.test.ts`다. 구현 계획은
+`docs/superpowers/plans/2026-09-28-worker-review-recovery.md`, 설계는
+`docs/superpowers/specs/2026-09-28-worker-failover-design.md`다.
+
+## 설계 결정 / 실제 테스트 / 실패 접근
+
+- 회귀 테스트 RED: 기존 코드는 `attempts_exhausted`를 반환했다. GREEN: 심사 기록 통합 16/16,
+  연관 심사 잡·발행 게이트·인계 통합 30/30 통과. `git diff --check` 통과.
+- 첫 작업트리 테스트는 `node_modules`가 없어 실행되지 않았다. 루트 의존성에 symlink해 해결했다.
+- 첫 타입 검사는 생성된 Next `PageProps`가 없어 실패했다. `npx next typegen` 성공 뒤
+  `npx tsc --noEmit` 통과했다. 이 오류는 변경 코드의 타입 오류가 아니었다.
+- 첫 GREEN 시도는 DB 행을 supersede한 뒤 메모리 행의 `errorCode`·`completedAt`을 갱신하지 않아
+  세 번째 변경을 세지 못했다. 같은 행을 갱신해 16/16 통과했다.
+- 테스트 로그의 `job_lease_lost`는 늦은 발행을 막는 기존 실패 주입 fixture이며 테스트 실패는 아니다.
+
+## 남은 작업 / 정확한 다음 명령
+
+P0 준비 큐·저장 결과·scheduler 예약 지연·반복 부팅 판별과 외부 감시용 구조화된 상태를
+구현한다. 이어서 P1 frontier 조기 회수/역할 lease·epoch, P2 scheduler 두 poller와
+crawler/reviewer 예비 배치, P3 후속 역할 순서다. 운영 강제 종료·예비 인계는 아직 미시험이다.
+사용자가 중단한 `product-intro-check`는 재개하지 않는다. 루트 작업트리의 사용자 변경은 보존한다.
+
+```sh
+cd /private/tmp/nmv-worker-failover-20260928
+git status --short --branch
+npm run test:integration -- tests/integration/agent-review-records.test.ts
+npx next typegen
+npx tsc --noEmit
+sed -n '1,260p' lib/operations/throughput.ts
+sed -n '1,180p' lib/operations/admin.ts
+```
+
+---
+
+# 2026-09-28 18:13 KST — 워커 장애 복구 설계 검증 완료
+
+## 현재 목적 / 완료 작업 / 변경 파일
+
+수집·심사 워커 장애 복구의 **현 구현을 실제 시험**하고 서버 설정 변경 전 우선순위를 검증했다.
+`docs/superpowers/specs/2026-09-28-worker-failover-design.md`를 새로 작성했다(아직 구현·배포하지 않음).
+운영 6개 역할 서비스는 각각 1복제본, Swarm `restart=any`, 지연 5초임을 읽기 전용으로 확인했다.
+2026-09-28 09:08:35 UTC 운영 DB 읽기 전용 표본에서 최근 1시간 발견155·원본159·규칙159·
+1차 AI38·2차 AI30·발행11건이 저장됐다. 5분 원본/규칙 대기0·진행0은 정상 유휴였다.
+첫 AI 준비 큐0이며 `needs_review` 전체2399건을 준비 큐로 해석하면 안 된다.
+
+## 설계 판단 / 테스트 / 실패 접근
+
+- `npx vitest run tests/worker-supervisor.test.ts tests/worker-runtime.test.ts tests/scheduler-runtime.test.ts tests/operations-throughput.test.ts`: 4파일 23테스트 통과.
+- `npm run test:integration -- tests/integration/job-runner.test.ts tests/integration/job-control.test.ts tests/integration/crawl-fetch.test.ts tests/integration/agent-review-records.test.ts tests/integration/operations-throughput.test.ts`: 전용 localhost:55435 PostgreSQL에서 5파일 70테스트 통과. 예상된 실패 주입 로그가 있으나 테스트 실패는 0건.
+- 일회성 통합 테스트 `tests/integration/worker-failover-audit-20260928.test.ts`에서 2테스트 통과 후 해당 임시 파일을 삭제했다. 모델 결과 0건인 채 owner가 세 번 바뀌면 네 번째 심사 claim은 `attempts_exhausted`이고 준비 큐에서도 제외됐다. `fetching` 항목은 9분에는 선택되지 않고 10분 경과 뒤 다시 선택됐다.
+- 현재 supervisor가 종료/응답 정지를 감시하고 Swarm이 재시작한다. 잡 lease는 90초 회수다. `crawl_frontier`의 개별 `fetching` 항목은 10분 재선택 시각을 갖고, `owner_changed` 심사 시도는 현 코드상 시도 한도에 포함된다.
+- 첫 일회성 시험은 설정 모델 불일치와 앱/DB 시계 차이 때문에 2개 실패했다. 시험 조건을 현재 모델과 DB의 예약 시각에 맞춰 교정한 뒤 2개 통과했다. 운영 코드의 새 실패로 해석하지 않는다.
+- scheduler는 모든 정기 요청의 의존성이고 동시 poll을 합치는 통합 테스트가 통과했다. 설계 순서를 바로잡아 P0 판별·경보와 심사 owner 변경 결함, P1 수집 조기 회수·역할 fencing, P2 scheduler 두 poller 배치→crawler 예비→reviewer 예비, P3 후속 역할로 정했다.
+- 운영 강제 종료 및 예비 인계는 시험하지 않았다. 예비 역할 서비스와 역할 lease는 미구현이다. 복구 시간의 실제 측정값을 주장하지 않는다.
+
+## 남은 작업 / 정확한 다음 명령
+
+구현은 아직 시작하지 않았다. 다음은 P0의 실제 일감·저장 진행·scheduler 예약 지연·반복 부팅 판별 및 경보, 심사 owner 변경 시도 한도 수정이다. 이어서 P1 수집 token/조기 회수·역할 lease/epoch를 플래그 off로 검증한다. 운영 배치는 P2까지 보류한다. 기존 사용자 `scripts/search-judgments.json` 수정과 다른 untracked 자료는 보존했다. 사용자 중단 `product-intro-check`는 재개하지 않았다.
+
+```sh
+cd /Users/jr/Desktop/projects/nomorevibe
+git status --short
+sed -n '1,150p' docs/superpowers/specs/2026-09-28-worker-failover-design.md
+sed -n '225,330p' lib/crawl/agent-review-repository.ts
+sed -n '100,145p' lib/crawl/repository.ts
+npm run test:integration -- tests/integration/job-control.test.ts tests/integration/agent-review-records.test.ts tests/integration/crawl-fetch.test.ts
+python3 /tmp/nmv-health-20260925.py audit
+```
+
+---
+
+# 2026-09-28 15:18 KST — 검색 키워드 검수 운영 적용 결과
+
+## 현재 목적 / 완료 작업 / 변경 파일
+
+README 입력 변경 뒤 검색 키워드를 정상 text 워커로 재생성·검수하는 중이다. PR209의 오래된
+검수 우선 순서와 PR211의 형식 오류 묶음별 개별 재시도를 main에 병합하고 운영 M3 7개 앱·
+mini 웹 1개 모두 `1e1119034624acae74dca825b590f5f125623a97` 소스, `done`을 확인했다.
+수정 파일은 각 PR의 `lib/domain/products/search-profiles.ts`, `lib/domain/products/search-verify.ts`,
+`tests/integration/search-verify.test.ts`, `tests/search-verify.test.ts`, `docs/CODEX_HANDOFF.md`다.
+이 절은 배포 관측을 반영하는 문서 수정이며 기능 코드는 바꾸지 않는다.
+
+- PR211 필수 CI [36384611587](https://github.com/JRVector9/nomorevibe/actions/runs/36384611587)의
+  타입·lint·단위·PostgreSQL 통합·빌드 PASS 뒤 병합했다. 로컬 TDD RED→GREEN 및 표적 단위17,
+  잡 예산6, 통합13 통과는 아래 절에 기록했다. 공개 `/api/health` 8회에서 M3 7회·mini 1회 모두
+  `status=ok`, `db=ok`였다.
+- 기존 재시도 소진5건 중 `authelia`, `product-491`, `ozo-calendar`는 이전 코드에서,
+  `linkfinder-ai`는 새 개별 재시도 코드로 06:14:22 UTC에 실제 `verified_at`을 확인했다.
+  총4/5 성공. `k-pop-wars`는 새 코드 검수에서 timeout으로 `verify_attempts=4`,
+  `verify_retry_at=2026-09-28 06:57:02 UTC`이며 아직 성공이 아니다. backoff는 존중한다.
+- 06:18 UTC 읽기 전용 운영 대조: 공개19,744개, 생성 대기2,435, 검수 대기302,
+  미표시 원본 해시·검색 사본 불일치0, 재시도 소진0, 최근15분 생성85·검수82.
+  가장 오래된 검수 대기는 `linkfinder-ai` 성공 뒤 약1,039분으로 내려갔다.
+  소개 검수 `product-intro-check`의 사용자 중단(`2100-01-01`)은 유지한다.
+
+## 설계 판단 / 실패 접근 / 남은 작업
+
+모델이 5개 묶음에서 원문 공백을 바꿔 적는 실제 오류를 확인했지만, 판정 파서를 느슨하게 하지 않았다.
+오류 난 묶음만 개별 검수하고 같은 전체 deadline과 원본·리스 검사를 유지한다. 한 응답이라도 실패하면
+부분 결과를 저장하지 않는다. 첫 격리 작업트리 타입 검사는 Next `PageProps` 생성 전이라 실패했고
+`npx next typegen` 뒤 통과했다. 테스트 모의 `Response` 재사용 실패는 매 호출 새 응답으로 교정했다.
+Dokploy의 자동 배포 플래그만으로 실제 배포를 추정하지 않고 8앱의 소스 커밋과 완료 상태를 확인했다.
+
+남은 작업은 정상 워커가 생성2,435건과 검수302건을 계속 처리하도록 관측하고,
+`k-pop-wars`의 06:57 UTC 이후 재시도가 성공하는지 확인하는 것이다. 다시 실패해 소진되면
+모델 응답·시간 제한을 새 근거로 조사한다. 원본 키워드·해시·재시도 시각을 임의로 덮어쓰지 않는다.
+
+```sh
+cd /Users/jr/Desktop/projects/nomorevibe
+git status --short --branch
+python3 /tmp/nmv-priority-ops-20260927.py health-check
+python3 /tmp/nmv-keyword-status-20260928.py
+python3 /tmp/nmv-repair-ops-20260926.py status
+gh pr view 211 --json state,mergeCommit,statusCheckRollup
+curl -fsS --max-time 15 https://nomorevibe.brut.bot/api/health
+```
+
+위 조회 명령은 읽기 전용이다. 기존 사용자 `scripts/search-judgments.json` 수정과 untracked
+자료는 건드리지 않았다. 아래 15:02 기록의 PR/배포 대기는 당시 상태로, 이 절의 완료 확인이 최신이다.
+
+---
+
+# 2026-09-28 15:02 KST — 반복 형식 오류의 개별 키워드 재시도
+
+## 현재 목적 / 완료 작업 / 수정 파일
+
+사용자 요청인 검색 키워드 재생성·검수를 계속 진행한다. PR209의 오래된 검수 우선 순서는
+운영 8개 앱에서 `b332457`로 적용됐고, 재시도 소진 5건 중 3건은 실제 검수가 끝났다.
+남은 `linkfinder-ai`와 `k-pop-wars`는 `invalid_output`이 반복되지만 소진은 0이다.
+읽기 전용 모델 진단에서 `linkfinder-ai`의 5개 묶음은 판정 수가 모두 맞아도
+`LinkedIn 프로필 찾기`를 `LinkedIn 프로필찾기`로 다시 써 엄격 일치 검사에 실패했다.
+같은 한 키워드만 요청한 진단은 정확한 원문과 유효 판정을 반환했다. `k-pop-wars`의
+동일 설정 4묶음 진단은 모두 유효해 일시적 응답 실패로 판단한다.
+
+`lib/domain/products/search-verify.ts`에 한정된 복구를 추가했다. 5개 묶음의 형식이 틀리면
+같은 전체 deadline 안에서 그 묶음의 키워드를 하나씩 재검수한다. 매 응답의 정확한 키워드와
+boolean 판정을 그대로 요구하고, 하나라도 실패하면 이전 묶음 결과까지 버린다.
+`tests/search-verify.test.ts`에 원문 공백 변화 회귀를, `tests/integration/search-verify.test.ts`에
+추가 호출을 반영했다. 이 문서까지 수정 파일 4개다. 루트 사용자 변경은 건드리지 않았다.
+
+## 설계 결정 / 실제 테스트 / 실패 접근
+
+- 새 단위 테스트 RED(`invalid_output`)→GREEN. `npx vitest run tests/search-verify.test.ts` 17/17,
+  `npx vitest run --config vitest.integration.config.ts tests/integration/search-verify.test.ts` 13/13.
+  `npx vitest run tests/search-job-budget.test.ts` 6/6.
+  `npx next typegen` 뒤 `npx tsc --noEmit`, 대상 ESLint, `git diff --check` PASS.
+- 독립 작업트리에서 첫 타입 검사에 `PageProps` 생성 파일이 없어 실패했고 `npx next typegen` 후 통과했다.
+  단위 테스트 모의 `Response`를 재사용해 두 번째 `.json()`이 `network`로 보인 오류는 매 호출에 새
+  응답을 만들도록 테스트 도구를 바로잡았다. 제품 코드의 네트워크 실패로 해석하지 않는다.
+- 원문 일치 규칙을 느슨하게 하지 않는다. `invalid_output`에만 개별 재시도를 적용하고
+  rate limit·timeout·취소 및 전체 deadline은 기존대로 처리한다. 검수 부분 결과는 DB에 저장하지 않는다.
+
+## 남은 작업 / 정확한 다음 명령
+
+브랜치 `fix/search-verify-singleton-retry`, 작업트리
+`/private/tmp/nmv-search-verify-singleton-20260928`의 PR, hosted CI, main 병합, 8개 앱 배포와
+운영 재시도 결과 확인이 남았다. 현재 운영(06:02 UTC) 공개19,743개, 생성 대기2,516,
+검수 대기300, 미표시 해시·검색 사본 불일치0, 재시도 소진0. 두 문제 제품은 각각
+06:11:33·06:15:38 UTC 이후 자동 재시도 대상이며 새 코드 배포 전에는 성공을 주장하지 않는다.
+소개 검수 `product-intro-check`의 사용자 중단(`2100-01-01`)은 유지한다.
+
+```sh
+cd /private/tmp/nmv-search-verify-singleton-20260928
+git status --short --branch
+npx vitest run tests/search-verify.test.ts
+npx vitest run --config vitest.integration.config.ts tests/integration/search-verify.test.ts
+npx next typegen
+npx tsc --noEmit
+npx eslint lib/domain/products/search-verify.ts tests/search-verify.test.ts tests/integration/search-verify.test.ts
+git diff --check
+cd /Users/jr/Desktop/projects/nomorevibe
+python3 /tmp/nmv-priority-ops-20260927.py health-check
+python3 /tmp/nmv-keyword-status-20260928.py
+```
+
+---
+
+# 2026-09-28 14:43 KST — 검색 검수 순서 운영 배포와 대기열 인계
+
+## 현재 목적 / 완료 작업 / 변경 파일
+
+README 입력 변경 뒤 검색 키워드 재생성·검수를 정상 워커로 계속 진행한다. PR209의
+`pendingVerifications` 대기 시각 우선 순서와 회귀 테스트를 main `b332457723cacaec78593d90ec4ecea8d8525088`에
+병합했다. 수정 파일은 `lib/domain/products/search-profiles.ts`,
+`tests/integration/search-verify.test.ts`, `docs/CODEX_HANDOFF.md`다. 이 절은 배포 후
+운영 관측을 추가한 문서 수정이며 기능 코드는 바꾸지 않는다.
+
+- PR209 필수 CI [36381746877](https://github.com/JRVector9/nomorevibe/actions/runs/36381746877)의
+  타입, lint, 단위·PostgreSQL 통합 테스트, 빌드가 모두 통과한 것을 확인한 뒤 병합했다.
+  테스트 RED→GREEN, 표적 통합13/13, 로컬 타입·lint·diff 검증은 바로 아래 절에 있다.
+- 자동 배포가 바로 시작되지 않아 Dokploy `application.one`에서 8개 앱 모두 이전 커밋인 것을 확인한 뒤
+  기존 `application.deploy` 절차로 M3 7개·mini 웹 1개를 함께 요청했다. 요청 수락과 완료를 분리해
+  8개 전부 `done`/소스 커밋 `b332457`을 확인했다. 공개 `/api/health` 8회에서 M3 6회,
+  mini 2회 모두 `status=ok`, `db=ok`였다.
+- 운영 읽기 전용 대조(05:41 UTC): 공개 19,735개, 생성 대기 2,600, 검수 대기 292,
+  미표시 원본 해시·검색 사본 불일치 각각0, 재시도 소진0. 생성·검수 성공 시각이 실제 진행 중이다.
+  재시도한 5건 중 `authelia`, `product-491`, `ozo-calendar` 3건의 `verified_at`을 확인했다.
+  `linkfinder-ai`는 이번 재검수에서 timeout으로 05:48:52 UTC 이후 다시 시도하며,
+  `k-pop-wars`는 형식 오류 뒤 대기 시각이 지났으나 앞선 검수 약72건을 순서대로 기다린다.
+  이 2건을 성공으로 세지 않는다. 소개 검수는 `2100-01-01` 중단 상태를 유지한다.
+
+## 판단 / 실패 접근 / 남은 작업
+
+검수 처리량과 새 키워드 생성량이 비슷해 대기량은 단기간에 0이 되지 않는다. 오래된 건을
+먼저 고르는 변경은 처리량 증가를 주장하기 위한 것이 아니라 무기한 뒤로 밀림을 막기 위한 것이다.
+실패한 첫 진단용 TypeScript의 CJS top-level await는 async `main()`으로 고쳤고,
+Dokploy의 `autoDeploy=true`만으로 새 소스가 배포됐다고 간주하지 않고 실제 source/status를 조회했다.
+남은 작업은 정상 워커가 2,600건 생성·292건 검수를 계속 처리하는 것을 관측하고,
+재시도 2건의 성공 또는 재소진 여부를 확인하는 것이다. 키워드나 원본 해시를 수동으로 덮어쓰지 않는다.
+
+```sh
+cd /Users/jr/Desktop/projects/nomorevibe
+git status --short --branch
+python3 /tmp/nmv-priority-ops-20260927.py health-check
+python3 /tmp/nmv-keyword-status-20260928.py
+python3 /tmp/nmv-repair-ops-20260926.py status
+gh pr view 209 --json state,mergeCommit,statusCheckRollup
+curl -fsS --max-time 15 https://nomorevibe.brut.bot/api/health
+```
+
+위 상태 도구는 읽기 전용이며 원문 키워드·자격 정보를 출력하지 않는다. 루트의 기존 사용자
+`scripts/search-judgments.json` 변경과 untracked 자료는 보호한다. 아래 14:22 기록의 PR/배포
+대기는 당시 상태이며 이 절의 완료 확인으로 대체한다.
+
+---
+
+# 2026-09-28 14:22 KST — 검색 키워드 재생성·검수 진행
+
+## 현재 목적과 완료 작업
+
+사용자 요청은 README 입력 변경 뒤 남은 검색 키워드 재생성·검수를 진행하는 것이다. 소개 검수
+`product-intro-check`는 사용자 중단 상태(`not_before=2100-01-01`)를 유지한다.
+운영 읽기 전용 대조에서 공개 19,732개, 생성 대기 2,716→2,691, 검수 대기 299,
+미표시 해시 불일치·검색 사본 불일치 0을 확인했다. text 워커의 두 잡은 실제 성공 시각이 진행 중이다.
+
+- 재시도 소진 5건을 원인별로 확인했다. `invalid_output` 4건은 기존
+  `scripts/reconcile-search-profiles.ts --apply --retry-invalid-output`로 1회 묶음 재검수에 넣었다.
+  `timeout` 1건(`product_id=11606`)은 기존 묶음 검수 코드가 처리할 수 있도록 조건부 DB 갱신으로
+  `verify_attempts=0, verify_retry_at=null, repair_version=1`로 되돌리고 오류 원인은 보존했다.
+  직후 읽기 전용 대조에서 `repeatedFailures=0`, `exhausted=0`이었다. 성공 검수 완료를 뜻하지는 않는다.
+- 검수 대기열이 제품 ID 역순이라 새 제품이 들어오면 오래된 검수가 밀리는 원인을 확인했다.
+  `pendingVerifications`를 프로필 `updated_at` 오름차순, 제품 ID 오름차순으로 바꿨다.
+  기존 재시도 시각·소유권·원본 해시·엄격 검수는 그대로 사용한다.
+
+## 변경 파일·테스트·실패 접근
+
+- 변경: `lib/domain/products/search-profiles.ts`, `tests/integration/search-verify.test.ts`, 이 문서.
+  분리된 작업트리 `/private/tmp/nmv-search-verification-20260928`, 브랜치
+  `fix/search-verification-fairness`. 루트의 기존 사용자 변경과 untracked 자료는 건드리지 않는다.
+- 회귀 테스트를 먼저 추가해 실제 실패(기대 ID 1, 결과 ID 2)를 확인했다. 순서 변경 후
+  `npx vitest run --config vitest.integration.config.ts tests/integration/search-verify.test.ts`:
+  13/13 PASS. `npx tsc --noEmit`, 대상 ESLint, `git diff --check`도 PASS.
+- 첫 임시 상태 스크립트가 CJS의 top-level await로 컴파일 실패했다. async `main()`으로 고친 뒤
+  읽기 전용 조회 성공. 키워드 생성·검수 우회 저장이나 해시 덮어쓰기는 하지 않았다.
+
+## 남은 작업과 정확한 다음 명령
+
+이 변경의 PR/hosted CI/병합/운영 text 앱 배포가 남았다. 배포 후 오래된 검수 5건의
+실제 성공 여부와 대기량 감소를 확인한다. 새 제품이 계속 들어오므로 단일 시점의 대기량 0을
+완료 조건으로 과장하지 않는다. README 일회성 12,418건 복구는 이전 절에서 완료했다.
+
+```sh
+cd /private/tmp/nmv-search-verification-20260928
+git status --short
+npx vitest run --config vitest.integration.config.ts tests/integration/search-verify.test.ts
+npx tsc --noEmit
+npx eslint lib/domain/products/search-profiles.ts tests/integration/search-verify.test.ts
+git diff --check
+cd /Users/jr/Desktop/projects/nomorevibe
+python3 /tmp/nmv-priority-ops-20260927.py health-check
+```
+
+---
+
 # 2026-09-27 11:04 KST — README 복구와 우선순위 후속 완료
 
 ## 현재 목적 / 완료 상태
@@ -3826,3 +5774,152 @@ Real browser scripts initiate login/model probes and must not be rerun during th
 - Existing unrelated ProductHero/product-detail test edits and `nomorevibe-final/`, `nomorevibe_final.html`, `nomorevibe_final_source.zip` remain outside this commit.
 - Most recent verification: full unit suite657 passed; Claude-focused15 passed; TypeScript, targeted ESLint, Docker builds and browser checks recorded above. No application code changed after those checks; commit preparation uses staged diff validation.
 - No runtime restart, authentication cancellation, model application, push or deployment requested/performed as part of commit preparation. Preserve any active Claude user approval.
+# 2026-09-28 19:06 KST — 워커 failover P0 별도 출고 준비
+
+## 현재 목적 / 완료 작업 / 수정 파일
+
+수집·심사 워커 장애 복구를 우선순위대로 진행한다. P0만 분리한 작업트리
+`/private/tmp/nmv-worker-failover-p0`, 브랜치 `feat/worker-failover-p0-20260928`에
+심사 `owner_changed` 반복을 모델 실패 한도와 분리한 커밋 `580f48e`, 일감·저장 진행·
+scheduler 지연·반복 부팅 판별과 읽기 전용 JSON CLI를 만든 커밋 `d0539d9`를 적용했다.
+`README.md`, `docs/operations/independent-workers-runbook.md`, `PENDING.md`에 명령·종료 코드·
+90초 잡 stale와 남은 외부 감시 배치를 기록했다. P1 역할 lease/예비 워커 코드는 별도 작업트리
+`/private/tmp/nmv-worker-failover-20260928`에서 개발 중이며 이 P0 브랜치에는 없다.
+
+## 설계 결정 / 테스트 / 실패 접근
+
+CLI 종료 코드는 0=정상·유휴, 1=DB/판별 불가, 2=경보다. 유휴·사용자 중단 소개 검수·
+backoff는 정체로 처리하지 않는다. 아직 독립 주기 실행과 외부 알림을 배치하지 않았다.
+기존 워커 supervisor·Swarm 재시작 설정을 변경하지 않는다. 이 브랜치에서 `npm ci`,
+`npx next typegen`, `npx tsc --noEmit`, `npm run lint`(기존 vendor 경고1·오류0),
+`npm test`(151파일 1206/1206), `npm run build`, `git diff --check`를 실제 실행해 통과했다.
+PostgreSQL 통합 전체는 이 브랜치에서 아직 실행하지 않았고, PR의 hosted CI에서 확인한다.
+원래 작업트리의 `node_modules` symlink는 Next/Turbopack 빌드에 실패하므로 여기에는 `npm ci`로
+직접 설치한다. 사용자 루트 작업트리의 수정은 보존한다.
+
+## 남은 작업 / 정확한 다음 명령
+
+P0 브랜치에서 CI 명령 실행, PR·hosted check·main 병합·운영 배포와 실제 상태 확인이 남았다.
+외부 감시 주기 실행·알림과 장애 주입은 별도 P1/P2 작업이다. 사용자가 중단한
+`product-intro-check`는 재개하지 않는다.
+
+```sh
+cd /private/tmp/nmv-worker-failover-p0
+npm ci
+npx next typegen
+npx tsc --noEmit
+npm run lint
+npm test
+npm run test:integration
+npm run build
+git status --short --branch
+```
+
+---
+# 2026-09-28 — P3 publisher → maintenance → text failover 진행 중
+
+## 현재 목적 / 완료 작업 / 수정 파일
+
+사용자 지시대로 publisher, maintenance, text 순서로 P1/P2의 역할 lease·주/예비 선출을 확장하고 이전 crawler/reviewer 배포도 재검토한다. 루트 체크아웃은 사용자 변경이 많아 건드리지 않고 `/private/tmp/nmv-worker-failover-p3` (`feat/worker-failover-p3`, `origin/main` 1f5c2df 기반)에서 작업한다. 운영은 아직 P2 코드 SHA `2f8a6bb`다. 새 코드 배포·PR·커밋은 아직 없다.
+
+`scripts/role-worker.ts`가 세 역할을 후보로 받아 진행 정체를 판별하도록 바꿨다. publisher 진행 신호와 OG 늦은 쓰기 fencing을 `lib/operations/worker-progress*`, `lib/crawl/publish.ts`, `lib/domain/products/{og,repository}.ts`에 추가했다. maintenance의 ping·검색 텍스트·뉴스·클릭 정리·랭킹 쓰기를 job lease로 fence하고 `lib/operations/maintenance-progress.ts`를 추가했다. text의 기존 번역·tagline·profile·verification 결과 쓰기는 이미 job lease+source CAS가 있음을 확인했고 `lib/operations/text-progress.ts`, `lib/crawl/translations.ts`에 정체 판별을 추가했다. 새 표적 테스트는 `tests/integration/{publisher-og-fencing,maintenance-fencing}.test.ts`, `tests/{maintenance-progress,text-progress}.test.ts`; 기존 parser/progress 테스트와 P3 계획 문서도 수정했다. 정확한 파일 목록은 `git status --short`를 본다.
+
+## 설계 판단 / 실제 테스트 / 실패 접근
+
+주 후보만 저장 가능한 일감이 오래 있고 실제 저장이 멎었으며 scheduler 정상·backoff/provider 오류가 아닐 때 15초 2회 후 자식 재시작을 요청한다. 예비는 진행 정체로 스스로 재시작하지 않는다. late write는 같은 DB 트랜잭션에서 현재 job lease를 확인한다. 운영 읽기 전용 검토에서 P2 crawler/reviewer 주·예비는 같은 SHA, 예비 autoDeploy=false, 진행 CLI `overall=ok`였다. 기존 역할 단위 3파일/21, 통합 3파일/14 통과. 새 maintenance 회귀 6파일/102, 새 fencing 6, publisher OG/진행 4, text/parser 단위 10 통과. `npx next typegen`, `npx tsc --noEmit` 통과. 전체 단위/통합, lint, build, CI와 운영 장애 주입은 이 단계에서 아직 실행하지 않았다.
+
+의도한 red→green 테스트를 실행했다. maintenance 신규 제품은 건강 기록이 없어도 실제 점검 대상임을 확인하여 잘못된 테스트 기대를 고쳤다. **남은 결함:** text tagline 경과 시간을 JS `Date`로 계산하면 운영 `timestamp without timezone`의 KST 해석으로 9시간 오판할 수 있어 DB 시계로 고쳐야 한다. 새로 추가한 P3 liveness 통합 테스트는 아직 실행 전이며 text/maintenance liveness 구현이 빠져 있어 red가 예상된다. 운영 maintenance backlog 약 19,328곳 중 13,939곳이 6시간 경과, 현재 처리 약 900건/시간이라 6시간 SLA 필요 약 3,222건/시간에 미달한다. 예비 배치는 용량 증가가 아니다.
+
+## 남은 작업 / 정확한 다음 명령
+
+P3 liveness 테스트를 red 확인 후 구현, tagline 시간 보정, 실제 후보 프로세스 선출/인계 테스트, 쓰기 경로 재감사, 전체 gate, 코드 리뷰, 문서 갱신을 끝낸다. 이후 최신 main CI를 통과한 PR과 운영 순차 배포·장애 주입을 진행한다. mini 예비의 구 SHA/autodeploy false와 P2 예비의 동일 릴리스 조건을 지킨다. 기존 P2의 반복 부팅 격리/정체 자동 재시작 운영 주입과 예비의 적격 결과 저장은 여전히 미검증이다. 사용자 중단 `product-intro-check`는 재개하지 않는다.
+
+```sh
+cd /private/tmp/nmv-worker-failover-p3
+npm run test:integration -- tests/integration/worker-progress-query.test.ts
+npm test -- tests/text-progress.test.ts tests/role-worker.test.ts
+npx next typegen
+npx tsc --noEmit
+git status --short
+```
+
+---
+
+## 2026-09-28 23:11 KST — P3 코드·검증 완료, PR/운영 전환 대기
+
+### 현재 목적 / 완료 작업 / 수정 파일
+
+publisher → maintenance → text 순으로 role lease 주/예비·진행 정체 감시·late-write fencing을 구현했다. 이전 P2의 crawler/reviewer 정체 감시도 실행 중 job lease가 있으면 재시작을 보류하도록 고쳤다. `worker-healthcheck.ts`가 P3 후보 3역할을 수락하도록 보완했고 P3 liveness를 읽기 전용 JSON에 추가했다. 마지막 수정 파일은 `git status --short`를 따른다. 주요 신규 파일은 `lib/operations/{maintenance-progress,text-progress}.ts`, `tests/integration/{maintenance-fencing,publisher-og-fencing,role-active-job}.test.ts`, `tests/{maintenance-progress,text-progress}.test.ts`, P3 계획 문서다. README·runbook·PENDING에 **아직 운영 배포 전**임을 기록했다.
+
+### 설계 판단 / 실행한 테스트 / 실패 접근
+
+- 발행 적격 대기 10분, maintenance 적격 점검과 최근 5분 ping 없음, text 적격 번역·소개·프로필·검수와 최근 10분 결과 없음이 2표본 지속될 때만 주 후보의 Swarm 재시작을 요청한다. scheduler 지연, backoff, 최근 제공자 오류, 실행 중인 job lease는 정체로 보지 않는다. job hard timeout은 기존 supervisor가 담당한다. job 결과 쓰기와 현재 token 확인은 같은 DB 트랜잭션이다.
+- 기존 P2 역할 단위 21·통합 14, 새 실제 프로세스 인계 포함 표적 11 통과. 전체 `npm test` 154파일/1222 통과. 전체 `npm run test:integration` **최종 재실행** 96파일/921 통과·TODO1. `npx tsc --noEmit`, `npm run lint`(기존 vendor 경고1), `npm run build`(기존 Claude CLI 추적 경고), `git diff --check` 통과. 빌드 첫 시도는 작업트리 `node_modules`가 외부 symlink라 Turbopack panic; 이 symlink를 제거하고 `npm ci`로 독립 설치 후 성공했다.
+- TDD 첫 실패로 P3 liveness, timezone 기준 tagline, 실행 중 job lease, 오래된 text provider 오류, 늦은 maintenance/OG 쓰기 경로를 확인·수정했다. 전체 통합 첫 실행 2건 실패는 OG mock 인자(lease 추가)와 오래된 text 오류 테스트였고 수정 후 관련 55 통과, 전체 최종 921 통과. 추가 cleanup 테스트 첫 기대는 기존 rate-limit 행을 무시해 실패했고 고유 키 범위로 고친 뒤 8 통과했다.
+- 운영 DB **읽기 전용** 새 쿼리 측정: maintenance 약106~291ms, text 약1.1~1.2s, 전체 약300~353ms. 최종 `overall=ok`, 6역할 liveness `present`, publisher `no_work`, text `providerError=false`. mini 32GiB/도커 17.61GiB, 기존 P2 예비 대기 RSS 약67~70MiB. P2 운영 진행 CLI도 `overall=ok`. 운영은 아직 구 SHA `2f8a6bb`이며 이 P3 코드는 배포하지 않았다.
+
+### 남은 작업 / 정확한 다음 명령
+
+코드 diff와 stage 범위를 최종 검토하고 커밋·PR을 만든다. 최신 main의 필수 CI `check` 성공 후에만 merge한다. 운영 autoDeploy=true 앱이 main merge 직후 P2 예비와 다른 이미지가 될 수 있으므로 **병합 전** 기존 앱의 자동 배포 설정을 확인·잠시 끄거나 동등하게 안전한 순차 릴리스 계획을 적용한다. P2 예비는 autoDeploy=false이고 구 이미지/RELEASE_TAG다. 각 역할 M3 주 명령과 같은 SHA의 mini 예비를 publisher, maintenance, text 순서로 배포하고 자식 강제 종료, 주 중단, 예비 저장, 복귀, 최종 주 active/예비 standby를 검증한다. 남은 P2 예비도 같은 릴리스로 교체하고 웹/스케줄러를 확인한다. 외부 독립 감시·24시간 관측·실제 P2 예비 저장, maintenance 용량 부족은 아직 해결되지 않았다. 사용자 중단 소개 검수는 재개하지 않는다.
+
+```sh
+cd /private/tmp/nmv-worker-failover-p3
+git status --short --branch
+git diff --check
+npm test
+npm run test:integration
+npx tsc --noEmit
+npm run lint
+npm run build
+git diff --stat
+```
+
+---
+
+### 2026-09-28 23:19 KST — PR #217 후속 경계 수정
+
+maintenance `uptime-ping`의 과거 `last_error`가 영구적으로 정체 재시작을 막던 조건을 발견했다. 전용 통합 시험을 red 확인 후 최근 5분 내 실행 오류만 보호하도록 `lib/operations/maintenance-progress.ts`, `tests/integration/maintenance-fencing.test.ts`를 수정했다. 표적 통합 1파일/9, `npx tsc --noEmit`, 운영 DB 읽기 전용 쿼리(maintenance 222ms, text 1131ms, 전체 337ms, overall=ok) 통과. 이 수정 뒤 전체 통합과 GitHub 필수 CI는 **다시 받아야 한다**. PR #217은 첫 커밋 `0c1d91e`로 생성됐고 CI가 진행 중이다. 정확한 다음 명령:
+
+```sh
+cd /private/tmp/nmv-worker-failover-p3
+git add lib/operations/maintenance-progress.ts tests/integration/maintenance-fencing.test.ts docs/CODEX_HANDOFF.md
+git diff --cached --check
+git commit -m 'fix: ignore stale uptime job errors in failover probe'
+git push
+gh pr checks 217 --watch
+```
+
+---
+
+## 2026-09-29 00:08 KST — 5역할 장애 복구 전환·P2 재검토 완료
+
+### 현재 목적 / 완료 작업 / 수정 파일
+
+사용자의 publisher→maintenance→text 순차 확대와 기존 crawler/reviewer 작업 재검토를 완료했다. PR #217은 CI `check` 성공 후 main `20208d3c96ed92e4e931f1c91c40f6561ab12ad9`로 병합·운영 배포했다. M3 7개 앱과 mini 웹·다섯 역할 예비 6개 앱, 총 13개다. 이 문서 작업 브랜치는 `/private/tmp/nmv-worker-failover-docs`의 `docs/worker-failover-p3-rollout`이며 수정 파일은 `README.md`, `PENDING.md`, `docs/operations/independent-workers-runbook.md`, `docs/operations/2026-09-29-worker-failover-p3-rollout.md`, 이 handoff다. 사용자 루트 체크아웃의 변경은 건드리지 않았다. 코드 수정은 이미 PR #217에 있고 이 브랜치에는 문서만 있다.
+
+### 설계 판단 / 실제 시험 / 실패 접근
+
+역할 앱은 주·예비가 한 이미지여야 하므로 5역할 주·예비 모두 `autoDeploy=false`로 두었다. 웹 M3·mini와 scheduler만 새 이미지 후 `autoDeploy=true`로 복원했다. P3 세 역할은 새 이미지 기존 명령→주 후보 명령→mini 예비 순으로 배포했다. 각 역할에서 M3 자식 SIGKILL 뒤 M3 재획득(epoch2), 주 서비스 0 뒤 mini 인계(epoch3), M3 복귀(epoch4)를 확인했다. maintenance mini의 실제 ping/검색 갱신, text mini의 검수 저장이 전진했다. publisher mini는 job 요청·처리와 성공은 전진했지만 적격 승인 후보가 없어 새 제품 저장은 미검증이다.
+
+P2 crawler/reviewer는 기존 주가 활성인 동안 mini 예비를 새 이미지/RELEASE_TAG로 먼저 교체했다. 릴리스 불일치 예비는 옛 주 lease를 승계할 수 없음을 코드와 DB에서 확인하고 주도 새 이미지로 배포했다. 새 쌍의 주 중단/mini 인계 후 crawler 새 문서 저장과 reviewer 1차 심사 저장을 확인했다. 둘 다 M3 epoch7 active/mini standby로 복귀했다. 이전 P2의 유효한 실행 중 job lease를 정체로 오인하는 결함은 PR #217 코드에서 수정돼 두 운영 이미지에도 반영됐다. 실제 정체 2회 자동 재시작과 반복 부팅 격리의 운영 주입은 하지 않았다.
+
+웹 2개는 Dokploy source `20208d3`/done, 공개 `/api/health`·`/admin/status`는 각각 HTTP 200. scheduler 2개 컨테이너 healthy, 새 RELEASE_TAG와 maintenance liveness 코드 표식, 그 컨테이너의 `check-worker-progress.ts` 종료 0·`overall=ok`·6역할 present를 확인했다. **scheduler Dokploy 최신 배포 description은 빈 문자열**이라 단순 source 필드 성공으로 보고하지 않았다. 실제 런타임 확인으로 보완했다. 첫 자동 배포 복원 스크립트가 이 빈 description 때문에 종료1했고, scheduler 런타임 두 컨테이너/코드 표식/RELEASE_TAG를 강제 검증하도록 임시 도구를 수정한 뒤 웹·scheduler만 복원했다. Docker service ps의 의도한 SIGKILL 과거 실패 task는 현재 task와 구분했다.
+
+코드 gate: `npm test` 154파일/1222 통과, `npm run test:integration` 96파일/921 통과·기존 TODO1, `npx tsc --noEmit`, lint(기존 vendor 경고), build(기존 Claude CLI 추적 경고), diff check, PR #217 최신 head CI `check` 성공. 이번 문서 수정 후 문서 정합성과 `git diff --check`를 다시 확인한다. DB streaming/서버 설정/사용자 중단 `product-intro-check`는 변경하지 않았다.
+
+### 남은 작업 / 정확한 다음 명령
+
+이 문서 브랜치의 diff를 검토·커밋해 PR을 만들고 최신 main CI `check` 성공 뒤 병합한다. 운영 재확인에서 13개 앱과 5개 역할의 주 active/예비 standby, 공개 health와 scheduler 두 컨테이너를 확인한다. publisher 예비의 새 제품 발행, 외부 감시/알림, 24시간 관측, 실제 정체 및 반복 부팅 격리, 백업 복구와 maintenance 용량 부족은 `PENDING.md`에 남겼다.
+
+```sh
+cd /private/tmp/nmv-worker-failover-docs
+git status --short --branch
+git diff --check
+git diff -- README.md PENDING.md docs/operations/independent-workers-runbook.md docs/operations/2026-09-29-worker-failover-p3-rollout.md docs/CODEX_HANDOFF.md
+git add README.md PENDING.md docs/operations/independent-workers-runbook.md docs/operations/2026-09-29-worker-failover-p3-rollout.md docs/CODEX_HANDOFF.md
+git commit -m 'docs: record five-role failover production rollout'
+git push -u origin docs/worker-failover-p3-rollout
+gh pr create --base main --head docs/worker-failover-p3-rollout --title 'docs: record five-role failover rollout' --body-file /tmp/nmv-worker-failover-docs-pr-body.md
+```
+
+---

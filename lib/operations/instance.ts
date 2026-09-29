@@ -32,6 +32,13 @@ export function serviceObservationKey(
   env: InstanceEnvironment = process.env,
 ): string {
   const instanceId = serviceInstanceId(env);
+  if (role === "scheduler" && env.SCHEDULER_REPLICA_IDENTITY === "1") {
+    const hostname = env.HOSTNAME?.trim();
+    if (!hostname || !INSTANCE_ID.test(hostname)) {
+      throw new Error("Invalid HOSTNAME for scheduler replica identity");
+    }
+    return `service:scheduler:${(instanceId ?? "scheduler").slice(0, 35)}-${hostname.slice(0, 12)}`;
+  }
   return instanceId ? `service:${role}:${instanceId}` : role;
 }
 

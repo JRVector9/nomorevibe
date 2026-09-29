@@ -52,6 +52,62 @@ beforeEach(async () => {
 });
 
 describe("수집 잡", () => {
+  it("moves an unfetchable reconsideration into the human queue without reusing old evidence", async () => {
+    const repo = "someone/gone-repository";
+    const old = new Date(Date.now() - 11 * 24 * 60 * 60_000);
+    await crawl.putDocument({ repo, repoMeta: STABLE_META, productUrl: "https://my-app.test" });
+    await db.update(crawlDocuments).set({ fetchedAt: old }).where(eq(crawlDocuments.repo, repo));
+    await db.insert(crawlCandidates).values({ repo, productUrl: "https://my-app.test", state: "new",
+      reason: "source_changed", decidedBy: "auto", signals: { reconsiderAfter: old.toISOString() } });
+    await db.insert(crawlFrontier).values({ repo, signal: "test", state: "skipped", attempts: 1 });
+
+    expect(await tick()).toMatchObject({ status: "completed" });
+    expect(await crawl.getCandidate(repo)).toMatchObject({ state: "needs_review",
+      reason: "source_refresh_failed", signals: { stoppedAt: { rule: "원본 재수집" } } });
+    expect(await crawl.frontierCounts()).toEqual({ skipped: 1 });
+    expect(getRepo).not.toHaveBeenCalled();
+  });
+
+  it("recovers a prior fetch claim without touching the current job or accepting the old result", async () => {
+    const lease = { name: "crawl-fetch", token: "current-owner", requestedVersion: 1 };
+    await db.insert(jobs).values({ name: lease.name, requestedVersion: 1,
+      leaseToken: lease.token, lockedAt: sql`now()`, lastRunAt: sql`now() - interval '30 seconds'` });
+    const future = new Date(Date.now() + 8 * 60_000);
+    await db.insert(crawlFrontier).values([
+      { repo: "audit/abandoned", signal: "test", state: "fetching", attempts: 2,
+        updatedAt: new Date(Date.now() - 60_000), nextAttemptAt: future },
+      { repo: "audit/current", signal: "test", state: "fetching", attempts: 1,
+        updatedAt: new Date(Date.now() + 10_000), nextAttemptAt: future },
+    ]);
+    const [oldClaim] = await db.select().from(crawlFrontier).where(eq(crawlFrontier.repo, "audit/abandoned"));
+    expect(await crawl.recoverAbandonedFrontier({ ...lease, token: "wrong-owner" })).toBe(0);
+    await db.insert(jobs).values({ name: "crawl-judge", requestedVersion: 1,
+      leaseToken: "judge-owner", lockedAt: sql`now()`, lastRunAt: sql`now()` });
+    expect(await crawl.recoverAbandonedFrontier({ name: "crawl-judge", token: "judge-owner", requestedVersion: 1 })).toBe(0);
+    expect(await crawl.recoverAbandonedFrontier(lease)).toBe(1);
+    const [abandoned, current] = await db.select().from(crawlFrontier).orderBy(crawlFrontier.repo);
+    expect(abandoned).toMatchObject({ repo: "audit/abandoned", state: "pending", attempts: 1 });
+    expect(abandoned.nextAttemptAt.getTime()).toBeLessThan(future.getTime());
+    expect(current).toMatchObject({ repo: "audit/current", state: "fetching", attempts: 1 });
+    expect((await crawl.dequeue(1)).map(row => row.repo)).toEqual(["audit/abandoned"]);
+    expect(await crawl.recoverAbandonedFrontier(lease)).toBe(0);
+    await crawl.markFrontier(oldClaim.repo, "skipped", oldClaim);
+    expect(await db.query.crawlFrontier.findFirst({ where: eq(crawlFrontier.repo, oldClaim.repo) }))
+      .toMatchObject({ state: "fetching", attempts: 2 });
+  });
+
+  it("restarts a dead fetch batch on the next job tick without a ten minute wait", async () => {
+    await db.insert(crawlFrontier).values({ repo: "audit/restarted", signal: "test", state: "fetching",
+      attempts: 1, updatedAt: new Date(Date.now() - 60_000),
+      nextAttemptAt: new Date(Date.now() + 8 * 60_000) });
+    getRepo.mockResolvedValue({ ok: true, value: STABLE_META });
+    fetchPage.mockResolvedValue({ status: 200, finalUrl: "https://my-app.test", html: "<title>Recovered</title>" });
+    expect(await tick()).toMatchObject({ status: "completed" });
+    expect(await crawl.getDocument("audit/restarted")).toMatchObject({ repo: "audit/restarted" });
+    expect(await db.query.crawlFrontier.findFirst({ where: eq(crawlFrontier.repo, "audit/restarted") }))
+      .toMatchObject({ state: "done", attempts: 1 });
+  });
+
   it("replaces the old excerpt when a fresh README observation confirms absence", async () => {
     const repo = "someone/removed-readme";
     await crawl.putDocument({ repo, repoMeta: STABLE_META,
@@ -203,6 +259,21 @@ describe("수집 잡", () => {
       .toMatchObject({ requestedVersion: 1, processedVersion: 0 });
   });
 
+  it("rejudges an unpublished star approval when GitHub replaces the repository ID", async () => {
+    const repo = "someone/replaced", productUrl = "https://my-app.test";
+    const meta = { ...STABLE_META, id: 100, full_name: repo, private: false, stargazers_count: 500 };
+    await crawl.putDocument({ repo, repoMeta: meta, productUrl, pageStatus: 200, pageMeta: { title: "My App" } });
+    await crawl.recordJudgement({ repo, productUrl, state: "approved", reason: "passed", decidedBy: "auto",
+      signals: { starAutoApproval: { githubId: 100, stars: 500 } } });
+    await crawl.enqueue([{ repo, signal: "test" }]);
+    const [claim] = await crawl.dequeue(1);
+
+    const result = await crawl.saveFetchedDocument(claim, { repo, repoMeta: { ...meta, id: 101 }, productUrl,
+      pageStatus: 200, pageMeta: { title: "My App" } });
+    expect(result?.needsJudgement).toBe(true);
+    expect(await crawl.getCandidate(repo)).toMatchObject({ state: "new", reason: "source_changed" });
+  });
+
   it("사라진 레포는 건너뛴다 — 다시 시도할 이유가 없다", async () => {
     await crawl.enqueue([{ repo: "someone/gone", signal: "commit-trailer" }]);
     getRepo.mockResolvedValue({ ok: false, error: { kind: "not_found" } });
@@ -242,6 +313,22 @@ describe("수집 잡", () => {
     expect(waiting.map(entry => entry.nextAttemptAt)).toEqual([resetAt, resetAt]);
     expect(waiting.every(entry => entry.attempts === 0)).toBe(true);
     expect(await crawl.dequeue(10)).toEqual([]);
+  });
+
+  it("all credentials rejected pauses the batch without consuming repository attempts", async () => {
+    await crawl.enqueue([
+      { repo: "a/one", signal: "commit-trailer" },
+      { repo: "b/two", signal: "commit-trailer" },
+    ]);
+    const resetAt = new Date(Date.now() + 15 * 60_000);
+    getRepo.mockResolvedValue({ ok: false, error: { kind: "auth_unavailable", reason: "expired", resetAt } });
+
+    expect(await tick()).toMatchObject({ status: "completed", done: false });
+    expect(getRepo).toHaveBeenCalledTimes(1);
+    expect(await crawl.frontierCounts()).toEqual({ pending: 2 });
+    const waiting = await db.select().from(crawlFrontier);
+    expect(waiting.map(entry => entry.nextAttemptAt)).toEqual([resetAt, resetAt]);
+    expect(waiting.every(entry => entry.attempts === 0 && entry.lastError === null)).toBe(true);
   });
 
   it("does not release a frontier claim replaced after the original batch was read", async () => {

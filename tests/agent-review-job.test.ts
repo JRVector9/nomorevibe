@@ -3,13 +3,13 @@ import { reviewCrawlCandidates } from "@/lib/crawl/jobs/agent-review";
 import { createReviewInput } from "@/lib/crawl/agent-review-contract";
 import { DEFAULT_CRAWL_SETTINGS, type CrawlSettings } from "@/lib/crawl/settings-schema";
 import type { CrawlCandidate, CrawlDocument } from "@/lib/db/schema";
-const mocks = vi.hoisted(() => ({settings:null as CrawlSettings|null,readme:vi.fn(),saveReadme:vi.fn(),requeue:vi.fn(),list:vi.fn(),document:vi.fn(),input:vi.fn(),claim:vi.fn(),record:vi.fn(),review:vi.fn(),gateway:vi.fn(),existing:vi.fn(),requestJob:vi.fn()}));
+const mocks = vi.hoisted(() => ({settings:null as CrawlSettings|null,readme:vi.fn(),saveReadme:vi.fn(),requeue:vi.fn(),handOff:vi.fn(),list:vi.fn(),document:vi.fn(),input:vi.fn(),claim:vi.fn(),record:vi.fn(),review:vi.fn(),gateway:vi.fn(),existing:vi.fn(),requestJob:vi.fn()}));
 vi.mock("@/lib/crawl/settings", () => ({getSettings:async () => mocks.settings}));
 vi.mock("@/lib/crawl/repository", () => ({getDocument:mocks.document,setReadmeSample:mocks.saveReadme}));
 // 단위 테스트가 README 를 받으러 밖으로 나가지 않게 한다
 vi.mock("@/lib/crawl/readme", () => ({fetchReadmeSample:mocks.readme,README_SAMPLE_LIMIT:3000,README_SAMPLE_VERSION:"2026-09-14.1"}));
 vi.mock("@/lib/domain/products/repository", () => ({findRepositoryProduct:mocks.existing}));
-vi.mock("@/lib/crawl/agent-review-repository", () => ({requeueStaleReviewSources:mocks.requeue,listReviewCandidates:mocks.list,loadReviewInput:mocks.input,claimAgentReview:mocks.claim,recordAgentReview:mocks.record}));
+vi.mock("@/lib/crawl/agent-review-repository", () => ({requeueStaleReviewSources:mocks.requeue,handOffExhaustedFirstReviews:mocks.handOff,listReviewCandidates:mocks.list,loadReviewInput:mocks.input,claimAgentReview:mocks.claim,recordAgentReview:mocks.record}));
 vi.mock("@/lib/crawl/agent-review", () => ({reviewModel:()=>"tested-model",reviewWithAgent:mocks.review,REVIEW_CLI_TIMEOUT_MS:20_000,
   firstReviewer:(s:{firstReview?:{provider:string;model:string}})=>s.firstReview ?? {provider:"claude-cli",model:"tested-model"}}));
 vi.mock("@/lib/crawl/agent-review-gateway", () => ({reviewWithGateway:mocks.gateway,REVIEW_GATEWAY_TIMEOUT_MS:60_000}));
@@ -20,6 +20,7 @@ beforeEach(() => {
   vi.resetAllMocks();
   mocks.settings = {...DEFAULT_CRAWL_SETTINGS,enabled:true,reviewMode:"observe"};
   mocks.requeue.mockResolvedValue(0);
+  mocks.handOff.mockResolvedValue(0);
   mocks.readme.mockResolvedValue("");
   const now = new Date();
   const document = {id:1,repo:"acme/demo",productUrl:"https://demo.example",repoMeta:{description:"Task tracker",homepage:"https://demo.example",pushed_at:now.toISOString(),stargazers_count:0,owner:{type:"User"}},
@@ -184,7 +185,7 @@ it("README 가 없으면 한 번 받아 저장하고, 있으면 다시 받지 �
   mocks.readme.mockResolvedValue("Oigo — dictation for macOS");
   await reviewCrawlCandidates(context());
   expect(mocks.readme).toHaveBeenCalledWith("acme/demo");
-  expect(mocks.saveReadme).toHaveBeenCalledWith("acme/demo", "Oigo — dictation for macOS", expect.objectContaining({id: 1}));
+  expect(mocks.saveReadme).toHaveBeenCalledWith("acme/demo", "Oigo — dictation for macOS", expect.objectContaining({id: 1}), expect.objectContaining({name: "crawl-agent-review", token: "token"}));
 
   mocks.readme.mockClear(); mocks.saveReadme.mockClear();
   const stored = await mocks.document();

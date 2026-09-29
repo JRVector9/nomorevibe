@@ -83,6 +83,24 @@ export const CAUSE_GUIDE: Record<CauseKey, {
       { decision: "거부", when: "빈 화면이거나 무엇인지 알 수 없다" },
     ],
   },
+  ai_review_exhausted: {
+    label: "1차 AI 심사 재시도 소진",
+    summary: "모델 호출이 반복 실패해 자동 심사를 끝낼 수 없습니다. 실패 기록을 확인하고 직접 판단합니다.",
+    question: "저장된 원본과 개발 근거로 승인 또는 거부할 수 있습니까?",
+    hints: [
+      { decision: "승인", when: "원본과 근거가 충분하고 현재도 유효하다" },
+      { decision: "거부", when: "제품이나 개발 근거가 기준에 맞지 않는다" },
+    ],
+  },
+  source_refresh_failed: {
+    label: "GitHub 원본 재수집 실패",
+    summary: "새 원본을 요청했지만 저장소를 찾지 못했거나 수집 재시도를 소진했습니다. 이전 원본은 최신 상태를 증명하지 않습니다.",
+    question: "저장소와 제품의 현재 상태를 직접 확인할 수 있습니까?",
+    hints: [
+      { decision: "거부", when: "저장소가 사라졌거나 현재 근거를 확인할 수 없다" },
+      { decision: "승인", when: "현재 저장소와 제품을 별도로 확인하고 근거를 기록할 수 있다" },
+    ],
+  },
   page_status_unknown: {
     label: "배포 URL 응답 미확인",
     summary: "수집기가 아직 이 URL을 열어보지 못했습니다. 수집이 끝나면 자동으로 다시 판정됩니다.",

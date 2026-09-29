@@ -23,6 +23,7 @@
 .stage[data-status="stalled"] { border-top-color: var(--down); }
 .stage[data-status="backlog"] { border-top-color: var(--warn); }
 .stage[data-status="processing"] { border-top-color: var(--up); }
+.stage[data-manual="true"] { border-top-color: var(--warn); }
 .stageHeading { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px; }
 .strip .stageHeading h3 { display: flex; align-items: center; gap: 6px; font-size: 14px; font-weight: 750; line-height: 1.5; margin: 0; }
 .step { font-size: 13px; color: var(--text-3); font-weight: 500; }
@@ -30,12 +31,15 @@
 .stage[data-status="stalled"] .status { color: var(--down); background: color-mix(in srgb, var(--down) 8%, var(--bg-card)); }
 .stage[data-status="backlog"] .status { color: var(--warn); background: color-mix(in srgb, var(--warn) 8%, var(--bg-card)); }
 .stage[data-status="processing"] .status { color: var(--up); background: color-mix(in srgb, var(--up) 8%, var(--bg-card)); }
+.stage[data-manual="true"] .status { color: var(--warn); background: color-mix(in srgb, var(--warn) 8%, var(--bg-card)); }
 .rate { margin-top: 18px; }
 .current { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px; font-variant-numeric: tabular-nums; }
 .current strong { font-size: 29px; font-weight: 800; line-height: 1.15; letter-spacing: -.5px; }
 .current > span { font-size: 13px; color: var(--text-2); white-space: nowrap; }
 .strip .average { margin: 7px 0 0; color: var(--text-3); font-size: 13px; line-height: 1.5; }
 .average b { color: var(--text-2); font-weight: 650; font-variant-numeric: tabular-nums; }
+.strip .runtimeState { margin: 12px 0 0; padding: 7px 9px; border-radius: 6px; background: var(--bg-soft); color: var(--text-2); font-size: 13px; font-weight: 650; line-height: 1.45; }
+.strip .runtimeState[data-alert="true"] { color: var(--down); background: color-mix(in srgb, var(--down) 8%, var(--bg-card)); }
 .stats { display: grid; gap: 8px; margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--border); font-size: 13px; line-height: 1.5; }
 .stats > div { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 10px; }
 .stats dt { color: var(--text-3); }
@@ -71,6 +75,7 @@
   .rate { margin-top: 2px; align-self: center; }
   .current strong { font-size: 28px; }
   .stats { margin-top: 0; padding: 0 0 0 12px; border-top: 0; border-left: 1px solid var(--border); gap: 6px; }
+  .strip .runtimeState { grid-column: 1 / -1; margin-top: 0; }
   .stats > div { display: block; }
   .stats dd { text-align: left; }
   .strip .queueNote { grid-column: 1 / -1; margin-top: 0; }

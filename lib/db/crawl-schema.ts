@@ -48,6 +48,8 @@ export const crawlFrontier = pgTable(
     /** 이 시각 이후에 시도한다. 실패 시 백오프로 미루고, fetching 중 죽으면 회수 기준이 된다 */
     nextAttemptAt: timestamp("next_attempt_at").notNull().defaultNow(),
     lastError: text("last_error"),
+    /** GitHub numeric ID matched an already stored repository under another path. */
+    aliasOf: varchar("alias_of", { length: 200 }),
     discoveredAt: timestamp("discovered_at").notNull().defaultNow(),
     updatedAt: timestamp("updated_at").notNull().defaultNow(),
   },
@@ -78,7 +80,9 @@ export const crawlDocuments = pgTable("crawl_documents", {
   /** 배포 페이지에서 뽑은 것 (title, description, ogImage) */
   pageMeta: jsonb("page_meta").$type<Record<string, unknown>>(),
   fetchedAt: timestamp("fetched_at").notNull().defaultNow(),
-});
+}, (t) => [
+  index("crawl_documents_github_id_idx").on(sql`${t.repoMeta}->>'id'`),
+]);
 
 // ─────────────────────────── 판정 ───────────────────────────
 
@@ -124,6 +128,10 @@ export type DecisionReason =
    * 사유다(REVIEW_RETRIABLE_REASONS 에 없다). 다시 집으면 같은 승인이 되풀이돼 "승인됐지만 발행은 막힌" 상태에 갇힌다.
    */
   | "second_review_split"
+  /** Automatic first review exhausted its attempts; a person must decide. */
+  | "ai_review_exhausted"
+  /** A requested source refresh ended without a newer GitHub document. */
+  | "source_refresh_failed"
   /**
    * 발행하려는데 페이지 설명도 레포 설명도 없어 소개를 만들 수 없다. 사람이 소개를 보고 가른다 — AI 심사가 다시
    * 집지 않는다. "ambiguous" 로 두었을 때 enforce 에서 보류 → AI 승인 → 발행 실패 → 보류가 AI 호출마다 되풀이됐다.

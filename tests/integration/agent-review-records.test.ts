@@ -5,7 +5,8 @@ import { jobs, crawlCandidates, crawlDocuments, crawlFrontier, crawlSettings, cr
 import * as crawl from "@/lib/crawl/repository";
 import { saveSettings, changeReviewMode, getSettings, resetSettings } from "@/lib/crawl/settings";
 import { loadReviewInput, claimAgentReview, recordAgentReview,
-  requeueStaleReviewSources, listReviewCandidates, reviewCandidatePredicate, reviewApprovalPredicate, assertReviewApproval } from "@/lib/crawl/agent-review-repository";
+  requeueStaleReviewSources, handOffExhaustedFirstReviews, listReviewCandidates,
+  reviewCandidatePredicate, reviewApprovalPredicate, assertReviewApproval } from "@/lib/crawl/agent-review-repository";
 import { ensureSchema } from "./setup";
 
 beforeAll(() => ensureSchema());
@@ -123,6 +124,53 @@ it("stops after three infrastructure failures without rejecting the product", as
   }
   expect(await claimAgentReview(context)).toEqual({ kind: "skipped", reason: "attempts_exhausted" });
   expect(await crawl.getCandidate(context.candidate.repo)).toEqual(context.candidate);
+});
+
+it("hands an approved candidate to human review after three current-source failures", async () => {
+  const base = await fixture("enforce");
+  await saveSettings({ firstReview: { provider: base.provider, model: base.model } }, "test");
+  const settings = await getSettings();
+  const context = { ...base, settings,
+    input: await loadReviewInput(base.candidate, base.document, settings) };
+  for (let number = 1; number <= 3; number++) {
+    const claim = await claimAgentReview(context);
+    if (claim.kind === "skipped") throw new Error(claim.reason);
+    await recordAgentReview({ ...context, attempt: claim.attempt, error: "gateway_error", retryAfter: new Date(0) });
+  }
+  expect(await handOffExhaustedFirstReviews(settings, context.lease)).toBe(1);
+  expect(await crawl.getCandidate(context.candidate.repo)).toMatchObject({
+    state: "needs_review", reason: "ai_review_exhausted", decidedBy: "auto",
+  });
+  expect(await handOffExhaustedFirstReviews(settings, context.lease)).toBe(0);
+  expect(await db.select().from(crawlReviewAttempts)).toHaveLength(3);
+});
+
+it("separates owner changes from model failures and retries after the interruption window", async () => {
+  const base = await fixture("enforce");
+  await saveSettings({ firstReview: { provider: base.provider, model: base.model } }, "test");
+  const settings = await getSettings();
+  const context = { ...base, settings,
+    input: await loadReviewInput(base.candidate, base.document, settings) };
+  const lease = { ...context.lease };
+  const claim = () => claimAgentReview({ ...context, lease });
+  for (let number = 1; number <= 3; number++) {
+    lease.token = `owner-${number}`;
+    await db.update(jobs).set({ leaseToken: lease.token, lockedAt: new Date() })
+      .where(eq(jobs.name, lease.name));
+    expect(await claim()).toMatchObject({ kind: "claimed", attempt: { attemptNumber: number } });
+  }
+  lease.token = "owner-4";
+  await db.update(jobs).set({ leaseToken: lease.token, lockedAt: new Date() })
+    .where(eq(jobs.name, lease.name));
+  expect(await claim()).toEqual({ kind: "skipped", reason: "infrastructure_interruptions_exhausted" });
+  expect((await db.select().from(crawlReviewAttempts)).map(row => [row.state, row.errorCode, row.outcome]))
+    .toEqual(Array.from({ length: 3 }, () => ["superseded", "owner_changed", null]));
+  const ready = () => db.select({ id: crawlCandidates.id }).from(crawlCandidates)
+    .where(reviewCandidatePredicate(settings, { readyOnly: true }));
+  expect(await ready()).toEqual([]);
+  await db.update(crawlReviewAttempts).set({ completedAt: new Date(Date.now() - 25 * 60 * 60_000) });
+  expect((await ready()).map(row => row.id)).toEqual([context.candidate.id]);
+  expect(await claim()).toMatchObject({ kind: "claimed", attempt: { attemptNumber: 4 } });
 });
 
 it("requeues an expired automatic review source instead of stranding publication", async () => {

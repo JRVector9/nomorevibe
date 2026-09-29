@@ -12,7 +12,28 @@ export function githubResource(path: string): GitHubResource {
 export function githubQuotaKeys(token: string, resource: GitHubResource) {
   const credential = createHash("sha256").update(token).digest("hex");
   const prefix = `github:quota:${credential}`;
-  return { primary: `${prefix}:primary:${resource}`, secondary: `${prefix}:secondary` };
+  // GitHub secondary limits can apply across authenticated users and the source IP.
+  return { primary: `${prefix}:primary:${resource}`, secondary: "github:quota:secondary:global",
+    legacySecondary: `${prefix}:secondary` };
+}
+
+export function githubAuthKey(token: string): string {
+  return `github:auth:${createHash("sha256").update(token).digest("hex")}`;
+}
+
+/** A rejected credential is shared across workers so it cannot be retried on every job tick. */
+export async function readGitHubAuthCooldown(token: string): Promise<Date | null> {
+  const rows = await db.select({ resetAt: rateLimits.resetAt }).from(rateLimits)
+    .where(sql`${rateLimits.key} = ${githubAuthKey(token)} and ${rateLimits.resetAt} > now()`);
+  return rows[0]?.resetAt ?? null;
+}
+
+export async function recordGitHubAuthCooldown(token: string, retryAt: Date): Promise<Date> {
+  const [row] = await db.insert(rateLimits).values({ key: githubAuthKey(token), count: 0, resetAt: retryAt })
+    .onConflictDoUpdate({ target: rateLimits.key,
+      set: { resetAt: sql`greatest(${rateLimits.resetAt}, excluded.reset_at)` } })
+    .returning({ resetAt: rateLimits.resetAt });
+  return row.resetAt;
 }
 
 export type GitHubCooldown = { retryAt: Date; primary: boolean; secondary: boolean };
@@ -40,7 +61,7 @@ export function githubCooldown(status: number, headers: Headers, now = new Date(
 export async function readGitHubCooldown(token: string, resource: GitHubResource): Promise<Date | null> {
   const keys = githubQuotaKeys(token, resource);
   const rows = await db.select({ resetAt: rateLimits.resetAt }).from(rateLimits)
-    .where(sql`${inArray(rateLimits.key, [keys.primary, keys.secondary])} and ${rateLimits.resetAt} > now()`);
+    .where(sql`${inArray(rateLimits.key, [keys.primary, keys.secondary, keys.legacySecondary])} and ${rateLimits.resetAt} > now()`);
   return rows.reduce<Date | null>((latest, row) => !latest || row.resetAt > latest ? row.resetAt : latest, null);
 }
 

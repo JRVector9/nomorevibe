@@ -7,7 +7,7 @@ import { attachRepositoryAgentScan, refreshRepositoryAgentEvidence } from '@/lib
 import type { AgentGitHubRequest } from '@/lib/domain/evidence/agents/collect';
 import type { JobContext, JobOutcome } from '@/lib/jobs/runner';
 import { requeueAfterAdminEvidenceRefresh } from '@/lib/crawl/admin-review';
-import { requestJob } from '@/lib/jobs/control';
+import { assertJobLease, requestJob, type JobLease } from '@/lib/jobs/control';
 
 export type AgentEvidenceRefreshCursor = { afterRepository?: string; retryAfter?: string };
 export function prioritizeAgentRefreshDemand(duePartial: string[], repositories: string[]) {
@@ -61,7 +61,7 @@ export async function refreshAgentEvidenceJob(ctx: JobContext<AgentEvidenceRefre
       if (!ctx.hasBudget() || Date.now() > deadlineAt - 8_000) return { done: false, cursor: { afterRepository } };
       const repositoryKey = row.repositoryKey;
       try {
-        const result = await refreshRepositoryAgentEvidence({ repositoryKey, hasBudget: ctx.hasBudget, request: dependencies.request, deadlineAt });
+        const result = await refreshRepositoryAgentEvidence({ repositoryKey, hasBudget: ctx.hasBudget, request: dependencies.request, deadlineAt, lease: ctx.lease });
         if (result.errorCode === 'budget_exhausted') {
           ctx.log('agent_evidence.deferred', { repositoryKey, scanId: result.scan?.id ?? null, state: 'pending', errorCode: result.errorCode });
           const cursor = { afterRepository };
@@ -70,10 +70,13 @@ export async function refreshAgentEvidenceJob(ctx: JobContext<AgentEvidenceRefre
         }
         ctx.log('agent_evidence.scanned', { repositoryKey, scanId: result.scan?.id ?? null, state: result.scan?.state ?? 'failed', observations: result.observations.length, cached: result.cached, errorCode: result.errorCode });
         if (result.scan?.state === 'complete' && !result.errorCode) {
-          if (!result.cached) await requeueAfterAdminEvidenceRefresh(repositoryKey);
-          await db.update(crawlCandidates).set({ state: 'new', updatedAt: new Date() }).where(and(sql`lower(${crawlCandidates.repo}) = ${repositoryKey}`, eq(crawlCandidates.state, 'needs_review'), eq(crawlCandidates.reason, 'ai_evidence_pending'), eq(crawlCandidates.decidedBy, 'auto')));
+          if (!result.cached) await requeueAfterAdminEvidenceRefresh(repositoryKey, ctx.lease);
+          await db.transaction(async tx => {
+            await tx.update(crawlCandidates).set({ state: 'new', updatedAt: new Date() }).where(and(sql`lower(${crawlCandidates.repo}) = ${repositoryKey}`, eq(crawlCandidates.state, 'needs_review'), eq(crawlCandidates.reason, 'ai_evidence_pending'), eq(crawlCandidates.decidedBy, 'auto')));
+            if (ctx.lease) await assertJobLease(tx, ctx.lease);
+          });
         }
-        if (result.errorCode === 'rate_limited') {
+        if (result.errorCode === 'rate_limited' || (result.errorCode === 'unavailable' && result.retryAt)) {
           const retryAfter = result.retryAt ?? result.scan?.nextAttemptAt ?? new Date(Date.now() + 15 * 60_000);
           const cursor = { afterRepository, retryAfter: retryAfter.toISOString() };
           await ctx.save(cursor); return { done: false, cursor };
@@ -89,7 +92,7 @@ export async function refreshAgentEvidenceJob(ctx: JobContext<AgentEvidenceRefre
   const outcome = await collect();
   // 제품 연결은 스캔과 따로 돈다. 앞에서 예산이 끊겨도 매 틱 돌아 굶지 않는다 (GitHub를 쓰지 않는다)
   await attachPendingScans(ctx);
-  await releaseEvidencePendingCandidates(settings.agentEvidence.detectorVersion);
+  await releaseEvidencePendingCandidates(settings.agentEvidence.detectorVersion, ctx.lease);
   return outcome;
 }
 
@@ -111,9 +114,10 @@ export async function refreshAgentEvidenceJob(ctx: JobContext<AgentEvidenceRefre
  * 않는다 — 관리자 거부가 new로 돌아가고, 판정은 admin+new를 재판정 요청으로 읽어 자동 승인으로 뒤집을
  * 수 있었다(codex가 짚음). 그래서 잠긴 행은 건너뛰고(SKIP LOCKED), 바깥 UPDATE에도 상태 조건을 다시 건다.
  */
-async function releaseEvidencePendingCandidates(detectorVersion: string) {
+async function releaseEvidencePendingCandidates(detectorVersion: string, lease?: JobLease) {
   if (detectorVersion !== AGENT_DETECTOR_VERSION) return;
-  const released = await db.execute<{ id: number }>(sql`
+  await db.transaction(async tx => {
+    const released = await tx.execute<{ id: number }>(sql`
     UPDATE crawl_candidates SET state = 'new', updated_at = now()
     WHERE id IN (
       SELECT candidate.id FROM crawl_candidates candidate
@@ -132,7 +136,9 @@ async function releaseEvidencePendingCandidates(detectorVersion: string) {
     RETURNING id
   `);
   // 푼 것은 곧바로 판정한다 — 스케줄(5분)을 기다리지 않는다
-  if (released.length > 0) await requestJob("crawl-judge");
+    if (lease) await assertJobLease(tx, lease);
+    if (released.length > 0) await requestJob("crawl-judge", tx);
+  });
 }
 
 /** 레포 하나의 최신 스캔 (refresh 의 캐시 판단과 같은 기준: 이 탐지기 버전, 전체 범위, 가장 늦게 시작한 것) */
@@ -176,7 +182,7 @@ async function attachPendingScans(ctx: JobContext<AgentEvidenceRefreshCursor>) {
   `);
   for (const row of pending) {
     try {
-      await attachRepositoryAgentScan({ productSlug: row.slug, productId: row.id, scanId: row.scan_id });
+      await attachRepositoryAgentScan({ productSlug: row.slug, productId: row.id, scanId: row.scan_id }, ctx.lease);
     } catch (error) {
       ctx.log('agent_evidence.attach_failed', { productId: row.id, scanId: row.scan_id, errorCode: error instanceof Error ? error.name : 'unknown' });
     }

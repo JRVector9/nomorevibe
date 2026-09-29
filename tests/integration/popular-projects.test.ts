@@ -51,6 +51,13 @@ it('쿼터 대기를 저장하고 재개 시각 전에는 API를 부르지 않�
  const result=await refreshProductStars(ctx,{request});expect(result.done).toBe(false);expect(result.cursor?.retryAfter).toBe(future.toISOString());
  request.mockClear();await refreshProductStars({...context(),cursor:result.cursor??null},{request});expect(request).not.toHaveBeenCalled();
 });
+it('인증 풀 장애도 제품별 실패로 기록하지 않고 재개 시각까지 기다린다',async()=>{
+ const p=await product(null);const future=new Date(Date.now()+60000);
+ const request=vi.fn(async()=>({ok:false as const,error:{kind:'auth_unavailable' as const,reason:'expired' as const,resetAt:future}}));
+ const result=await refreshProductStars(context(),{request});
+ expect(result).toMatchObject({done:false,cursor:{retryAfter:future.toISOString()}});
+ expect((await db.select().from(products).where(eq(products.id,p.id)))[0].starsCheckedAt).toBeNull();
+});
 it('요청 중 저장소가 바뀌면 이전 응답을 버린다',async()=>{
  const p=await product(null);const request=vi.fn(async()=>{await update(p.id,{repoUrl:'https://github.com/test/replacement'});return response(5000);});
  await refreshProductStars(context(),{request});expect((await db.select().from(products).where(eq(products.id,p.id)))[0].stars).toBeNull();

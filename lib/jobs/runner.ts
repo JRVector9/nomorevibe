@@ -5,6 +5,8 @@ import { jobs, operationsObservations } from "@/lib/db/schema";
 import { logger } from "@/lib/observability/logger";
 import { JobLeaseLostError, requestJob, type JobLease } from "./control";
 import { STALE_LOCK_MS } from "./lease";
+import { JOB_CATALOG } from "./catalog";
+import { assertRoleLease, RoleLeaseLostError, type RoleLease } from "./role-leader";
 
 /** Existing bounded handlers keep their cursors; execution ownership belongs to this runner. */
 export type JobContext<C> = {
@@ -39,20 +41,27 @@ const LEASE_TAKEOVER = sql`now() - ${STALE_LOCK_MS} * interval '1 millisecond'`;
 export async function runJob<C>(
   name: string,
   handler: (ctx: JobContext<C>) => Promise<JobOutcome<C>>,
-  options: { budgetMs?: number; requestedOnly?: boolean; signal?: AbortSignal } = {},
+  options: { budgetMs?: number; requestedOnly?: boolean; signal?: AbortSignal; roleLease?: RoleLease } = {},
 ): Promise<RunResult> {
   if (options.signal?.aborted) return { status: "skipped", reason: "stopping" };
   const startedAt = Date.now();
   const token = randomUUID();
-  await db.insert(jobs).values({ name }).onConflictDoNothing();
-  const [claimed] = await db.update(jobs).set({
+  if (options.roleLease && JOB_CATALOG.find(job => job.name === name)?.role !== options.roleLease.role) {
+    throw new Error('job_role_mismatch');
+  }
+  let claimed: { cursor: unknown; requestedVersion: number } | undefined;
+  try {
+    [claimed] = await db.transaction(async tx => {
+      if (options.roleLease) await assertRoleLease(tx, options.roleLease);
+      await tx.insert(jobs).values({ name }).onConflictDoNothing();
+      return tx.update(jobs).set({
     lockedAt: sql`now()`, lastRunAt: sql`now()`, updatedAt: sql`now()`,
     leaseToken: token, runs: sql`${jobs.runs} + 1`,
     // Direct callers retain one-tick behavior. Workers only consume an existing request.
     ...(options.requestedOnly ? {} : {
       requestedVersion: sql`greatest(${jobs.requestedVersion}, ${jobs.processedVersion}) + 1`,
     }),
-  }).where(and(
+      }).where(and(
     eq(jobs.name, name),
     or(isNull(jobs.lockedAt), sql`${jobs.lockedAt} < ${LEASE_TAKEOVER}`),
     sql`${jobs.requestedVersion} < 9007199254740991`,
@@ -60,7 +69,12 @@ export async function runJob<C>(
       sql`${jobs.requestedVersion} > ${jobs.processedVersion}`,
       or(isNull(jobs.notBefore), sql`${jobs.notBefore} <= now()`),
     ] : []),
-  )).returning({ cursor: jobs.cursor, requestedVersion: jobs.requestedVersion });
+      )).returning({ cursor: jobs.cursor, requestedVersion: jobs.requestedVersion });
+    });
+  } catch (error) {
+    if (error instanceof RoleLeaseLostError) return { status: 'skipped', reason: 'stopping' };
+    throw error;
+  }
   if (!claimed) {
     const state = await getJobState(name);
     const reason = options.requestedOnly && state && state.requestedVersion <= state.processedVersion

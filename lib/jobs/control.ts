@@ -63,6 +63,16 @@ export async function pendingJobNames(role: JobRole): Promise<string[]> {
   return rows.map(row => row.name);
 }
 
+/** A healthy in-flight job may take longer than the progress sample interval. */
+export async function hasActiveRoleJob(role: JobRole): Promise<boolean> {
+  const [row] = await db.select({ name: jobs.name }).from(jobs).where(and(
+    inArray(jobs.name, jobsForRole(role)),
+    sql`${jobs.leaseToken} is not null`,
+    sql`${jobs.lockedAt} >= now() - ${STALE_LOCK_MS} * interval '1 millisecond'`,
+  )).limit(1);
+  return Boolean(row);
+}
+
 /** Call inside the transaction that writes the result; never hold this across external work. */
 export async function assertJobLease(tx: ProductTransaction, lease: JobLease, mode: "share" | "update" = "share"): Promise<void> {
   const [owned] = await tx.select({ name: jobs.name }).from(jobs).where(and(
@@ -70,4 +80,13 @@ export async function assertJobLease(tx: ProductTransaction, lease: JobLease, mo
     sql`${jobs.lockedAt} >= now() - ${STALE_LOCK_MS} * interval '1 millisecond'`,
   )).for(mode);
   if (!owned) throw new JobLeaseLostError();
+}
+
+/** Keep a worker side effect and its job-token check in one commit. */
+export function withJobLeaseWrite<T>(lease: JobLease | undefined, write: (tx: ProductTransaction) => Promise<T>): Promise<T> {
+  return db.transaction(async tx => {
+    const result = await write(tx);
+    if (lease) await assertJobLease(tx, lease);
+    return result;
+  });
 }

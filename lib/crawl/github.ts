@@ -1,6 +1,8 @@
 import { logger } from "@/lib/observability/logger";
 import { readBodyStrictlyCapped } from "@/lib/net/fetch";
-import { githubCooldown, githubResource, readGitHubCooldown, recordGitHubCooldown } from "./github-quota";
+import { githubCooldown, githubResource, readGitHubCooldown, recordGitHubCooldown,
+  readGitHubAuthCooldown, recordGitHubAuthCooldown } from "./github-quota";
+import { collectorTokens, observeCollectorQuota, type CollectorToken } from "./github-accounts";
 
 /**
  * GitHub API — 수집기가 쓰는 만큼만.
@@ -15,12 +17,16 @@ import { githubCooldown, githubResource, readGitHubCooldown, recordGitHubCooldow
 
 const API_ORIGIN = "https://api.github.com";
 const GITHUB_RESPONSE_MAX_BYTES = 2 * 1024 * 1024;
+const AUTH_RETRY_DELAYS_MS = [100, 250] as const;
+const AUTH_COOLDOWN_MS = 15 * 60_000;
+type AuthReason = "expired" | "revoked" | "bad_credentials" | "unauthorized" | "blocked" | "cooldown";
 
 export type GitHubFailure =
   | { kind: "rate_limited"; resetAt: Date | null }
   | { kind: "not_found" }
   | { kind: "transport" }
   | { kind: "invalid_response" }
+  | { kind: "auth_unavailable"; reason: AuthReason; resetAt: Date | null }
   | { kind: "http"; status: number };
 
 export type GitHubResult<T> = { ok: true; value: T } | { ok: false; error: GitHubFailure };
@@ -44,12 +50,7 @@ export type GitHubHttpResult<T> =
     }
   | { ok: false; error: GitHubFailure };
 
-/** 토큰이 없으면 시간당 60회라 수집이 성립하지 않는다 — 조용히 도는 것보다 멈추는 게 낫다 */
-function requireToken(): string {
-  const token = process.env.GITHUB_TOKEN;
-  if (!token) throw new Error("GITHUB_TOKEN이 없습니다 — 수집기는 인증된 토큰이 필요합니다");
-  return token;
-}
+const rotation: Record<string, number> = {};
 
 export async function githubRequest<T>(
   path: string,
@@ -64,8 +65,65 @@ export async function githubRequest<T>(
     || decoded.split("/").some((part) => part === "." || part === "..")) {
     return { ok: false, error: { kind: "invalid_response" } };
   }
-  const token = requireToken();
+  const accounts = await collectorTokens();
+  if (accounts.length === 0) throw new Error("GitHub 수집 토큰이 없습니다 — 인증된 토큰이 필요합니다");
   const resource = githubResource(path);
+  const start = (rotation[resource] ?? 0) % accounts.length;
+  rotation[resource] = start + 1;
+  const deadline = Date.now() + Math.max(1, Math.min(options.timeoutMs ?? 10_000, 10_000));
+  let earliestReset: Date | null = null;
+  let authFailure: Extract<GitHubFailure, { kind: "auth_unavailable" }> | null = null;
+  for (let offset = 0; offset < accounts.length; offset++) {
+    const account = accounts[(start + offset) % accounts.length];
+    let secondary = false;
+    let sawUnauthorized = false;
+    let result: GitHubHttpResult<T>;
+    for (let attempt = 0; ; attempt++) {
+      const remainingMs = deadline - Date.now();
+      if (remainingMs <= 0) return authFailure
+        ? { ok: false, error: { ...authFailure, resetAt: new Date(Math.min(
+          authFailure.resetAt?.getTime() ?? Infinity, Date.now() + 60_000)) } }
+        : { ok: false, error: { kind: "transport" } };
+      result = await githubRequestWithToken<T>(path, conditional, { timeoutMs: remainingMs }, account, () => { secondary = true; });
+      if (!result.ok && result.error.kind === "http" && result.error.status === 403 && sawUnauthorized) {
+        const resetAt = await recordGitHubAuthCooldown(account.token, new Date(Date.now() + AUTH_COOLDOWN_MS));
+        logger.warn("github.auth_rejected", { accountId: account.userId, reason: "blocked" });
+        result = { ok: false, error: { kind: "auth_unavailable", reason: "blocked", resetAt } };
+        break;
+      }
+      if (result.ok || result.error.kind !== "auth_unavailable" || result.error.reason === "cooldown") break;
+      sawUnauthorized = true;
+      if (result.error.reason === "blocked" || attempt >= AUTH_RETRY_DELAYS_MS.length
+        || deadline - Date.now() <= AUTH_RETRY_DELAYS_MS[attempt]) {
+        const resetAt = await recordGitHubAuthCooldown(account.token, new Date(Date.now() + AUTH_COOLDOWN_MS));
+        result = { ok: false, error: { ...result.error, resetAt } };
+        break;
+      }
+      await new Promise(resolve => setTimeout(resolve, AUTH_RETRY_DELAYS_MS[attempt]));
+    }
+    if (!result.ok && result.error.kind === "auth_unavailable") {
+      authFailure = result.error;
+      continue;
+    }
+    if (!result.ok && result.error.kind === "rate_limited" && !secondary) {
+      if (result.error.resetAt && (!earliestReset || result.error.resetAt < earliestReset)) earliestReset = result.error.resetAt;
+      continue;
+    }
+    return result;
+  }
+  if (earliestReset === null && authFailure) return { ok: false, error: { ...authFailure,
+    resetAt: new Date(Math.min(authFailure.resetAt?.getTime() ?? Infinity, Date.now() + 60_000)) } };
+  return { ok: false, error: { kind: "rate_limited", resetAt: earliestReset } };
+}
+
+async function githubRequestWithToken<T>(
+  path: string, conditional: ConditionalRequest, options: { timeoutMs?: number },
+  account: CollectorToken, onSecondary: () => void,
+): Promise<GitHubHttpResult<T>> {
+  const token = account.token;
+  const resource = githubResource(path);
+  const authUntil = await readGitHubAuthCooldown(token);
+  if (authUntil) return { ok: false, error: { kind: "auth_unavailable", reason: "cooldown", resetAt: authUntil } };
   const waitingUntil = await readGitHubCooldown(token, resource);
   if (waitingUntil) return { ok: false, error: { kind: "rate_limited", resetAt: waitingUntil } };
   const headers: Record<string, string> = {
@@ -97,6 +155,7 @@ export async function githubRequest<T>(
       const redirectCooldown = githubCooldown(res.status, res.headers);
       if (redirectCooldown) {
         const resetAt = await recordGitHubCooldown(token, resource, redirectCooldown);
+        if (redirectCooldown.secondary) onSecondary();
         return { ok: false, error: { kind: "rate_limited", resetAt } };
       }
       visited.add(next.href);
@@ -106,6 +165,8 @@ export async function githubRequest<T>(
     return { ok: false, error: { kind: "transport" } };
   }
 
+  try { await observeCollectorQuota(account.userId, res.headers); }
+  catch { logger.warn("github.quota_observation_failed", { accountId: account.userId }); }
   // A successful response can consume the last primary request. Persist it while retaining its body.
   let cooldown = githubCooldown(res.status, res.headers);
   if (res.status === 403 && !cooldown?.secondary) {
@@ -119,9 +180,25 @@ export async function githubRequest<T>(
   }
   const resetAt = cooldown ? await recordGitHubCooldown(token, resource, cooldown) : null;
   if (cooldown && (res.status === 403 || res.status === 429)) {
+    if (cooldown.secondary) onSecondary();
     await res.body?.cancel().catch(() => {});
     logger.warn("github.rate_limited", { path, resetAt: resetAt?.toISOString(), secondary: cooldown.secondary });
     return { ok: false, error: { kind: "rate_limited", resetAt } };
+  }
+
+  if (res.status === 401) {
+    let reason: AuthReason = "unauthorized";
+    try {
+      const body = await readBodyStrictlyCapped(res, GITHUB_RESPONSE_MAX_BYTES);
+      const message = body ? (JSON.parse(body.toString("utf8")) as { message?: unknown }).message : null;
+      if (typeof message === "string") {
+        if (/expir/i.test(message)) reason = "expired";
+        else if (/revok/i.test(message)) reason = "revoked";
+        else if (/bad credentials/i.test(message)) reason = "bad_credentials";
+      }
+    } catch { /* Only a bounded reason code is recorded; raw response text is never logged. */ }
+    logger.warn("github.auth_rejected", { accountId: account.userId, reason });
+    return { ok: false, error: { kind: "auth_unavailable", reason, resetAt: null } };
   }
 
   const responseHeaders = {
@@ -164,7 +241,13 @@ async function request<T>(path: string): Promise<GitHubResult<T>> {
 
 /** 판정에 쓰는 레포 메타 원본. 가공하지 않고 그대로 보관한다 (기준이 바뀌면 다시 쓴다) */
 export async function getRepo(repo: string): Promise<GitHubResult<Record<string, unknown>>> {
-  return request<Record<string, unknown>>(`/repos/${repo}`);
+  const result = await request<Record<string, unknown>>(`/repos/${repo}`);
+  if (!result.ok) return result;
+  if (!result.value || typeof result.value.id !== "number"
+    || !Number.isSafeInteger(result.value.id) || result.value.id <= 0) {
+    return { ok: false, error: { kind: "invalid_response" } };
+  }
+  return result;
 }
 
 /** 검색 한 페이지의 최대 건수 */

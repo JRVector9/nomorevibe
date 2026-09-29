@@ -34,6 +34,7 @@ export const DOWN_THRESHOLD = 3;
  */
 export { RECHECK_AFTER_MINUTES } from "./health-freshness";
 import { RECHECK_AFTER_MINUTES } from "./health-freshness";
+import { assertJobLease, type JobLease } from "@/lib/jobs/control";
 
 export type PingTarget = { id: number; slug: string; url: string };
 
@@ -67,6 +68,7 @@ export async function recordPing(
   latencyMs: number | null = null,
   observedAt = new Date(),
   expectedProductId?: number,
+  lease?: JobLease,
 ): Promise<void> {
   const alive = status >= 200 && status < 400;
   if (!Number.isFinite(observedAt.getTime())) throw new Error("invalid ping timestamp");
@@ -117,6 +119,7 @@ export async function recordPing(
         latencySamples: sql`${productHealthDaily.latencySamples} + ${successfulLatency === null ? 0 : 1}`,
       },
     });
+    if (lease) await assertJobLease(tx, lease);
   });
 }
 

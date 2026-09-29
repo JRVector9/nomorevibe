@@ -240,9 +240,9 @@ describe("judge — 거르기", () => {
     expect(judge(goodRepo(), { ...livePage, title: "  " }, settings, NOW).state).toBe("approved");
   });
 
-  it("500 미만 후보에는 운영자가 정한 스타 상한을 적용한다", () => {
+  it("옛 스타 상한은 500 미만 후보도 거르지 않는다", () => {
     const v = judge(goodRepo({ stars: 400 }), livePage, { ...settings, judge: { ...settings.judge, maxStars: 100 } }, NOW);
-    expect(v).toMatchObject({ state: "rejected", reason: "large_oss" });
+    expect(v).toMatchObject({ state: "approved", reason: "passed" });
   });
 
   it("포크를 거른다", () => {
@@ -643,14 +643,14 @@ describe("판정 근거 — 심사 화면이 보여줄 발자국", () => {
   it("통과한 후보는 지나온 규칙이 전부 통과로 남는다", () => {
     const v = judge(goodRepo(), livePage, settings, NOW);
     expect(v.trace.every((s) => s.passed)).toBe(true);
-    expect(v.trace.map((s) => s.rule)).toContain("스타 상한 이하");
+    expect(v.trace.map((s) => s.rule)).toContain("스타 하한 이상");
     expect(v.cause).toBeUndefined();
   });
 
   it("멈춘 지점이 마지막 항목이고, 측정값과 기준을 함께 남긴다", () => {
-    const v = judge(goodRepo({ stars: 400 }), livePage, { ...settings, judge: { ...settings.judge, maxStars: 100 } }, NOW);
+    const v = judge(goodRepo({ stars: 400 }), livePage, { ...settings, judge: { ...settings.judge, minStars: 500 } }, NOW);
     expect(v).toMatchObject({ state: "rejected", reason: "large_oss" });
-    expect(stopped(v)).toEqual({ rule: "스타 상한 이하", detail: "400 > 100", passed: false });
+    expect(stopped(v)).toEqual({ rule: "스타 하한 이상", detail: "400 < 500", passed: false });
     // 멈추기 전까지는 전부 통과다
     expect(v.trace.slice(0, -1).every((s) => s.passed)).toBe(true);
   });
@@ -675,10 +675,10 @@ describe("판정 근거 — 심사 화면이 보여줄 발자국", () => {
   });
 
   it("기준을 바꾸면 근거의 숫자도 함께 바뀐다 — 화면이 규칙을 따로 구현하지 않는다는 뜻이다", () => {
-    const loose = { ...settings, judge: { ...settings.judge, maxStars: 9000 } };
+    const loose = { ...settings, judge: { ...settings.judge, minStars: 4500 } };
     const v = judge(goodRepo({ stars: 5000 }), livePage, loose, NOW);
     expect(v.state).toBe("approved");
-    expect(v.trace.find((s) => s.rule === "스타 상한 이하")?.detail).toBe("5,000 ≤ 9,000");
+    expect(v.trace.find((s) => s.rule === "스타 하한 이상")?.detail).toBe("5,000 ≥ 4,500");
   });
 });
 

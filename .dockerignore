@@ -4,6 +4,9 @@ node_modules
 .env*
 !.env.example
 tests
+scripts/ops
+**/__pycache__
+**/*.pyc
 drizzle.config.ts
 vitest*.config.ts
 .github

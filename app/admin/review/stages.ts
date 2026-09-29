@@ -41,6 +41,11 @@ export const STAGE_GROUPS: { step: string; title: string; stages: { key: StageKe
 
 export const STAGE_KEYS = STAGE_GROUPS.flatMap((group) => group.stages.map((stage) => stage.key));
 
+/** A stage card selects the whole stage, independent of previous detail/search filters. */
+export function stageHref(current: StageKey | "", selected: StageKey): string {
+  return current === selected ? "/admin/review#review-list" : `/admin/review?stage=${selected}#review-list`;
+}
+
 /**
  * 보류 후보를 구간으로 나눈다.
  *

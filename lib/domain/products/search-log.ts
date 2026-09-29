@@ -3,6 +3,7 @@ import { db } from "@/lib/db";
 import { searchQueries } from "@/lib/db/schema";
 import { logger } from "@/lib/observability/logger";
 import { normalizeQuery } from "./search-translation";
+import { withJobLeaseWrite, type JobLease } from "@/lib/jobs/control";
 
 /**
  * 검색 질의 기록.
@@ -40,10 +41,10 @@ export async function recordSearch(entry: {
 }
 
 /** 오래된 기록은 지운다. 며칠짜리 흐름을 보는 표라 영원히 둘 이유가 없다 */
-export async function pruneSearchQueries(days = 90): Promise<number> {
-  const result = await db.delete(searchQueries)
+export async function pruneSearchQueries(days = 90, lease?: JobLease): Promise<number> {
+  const result = await withJobLeaseWrite(lease, tx => tx.delete(searchQueries)
     .where(sql`${searchQueries.searchedAt} < now() - make_interval(days => ${days})`)
-    .returning({ id: searchQueries.id });
+    .returning({ id: searchQueries.id }));
   return result.length;
 }
 

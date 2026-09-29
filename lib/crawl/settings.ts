@@ -197,7 +197,7 @@ const TRACKED: { label: string; read: (s: CrawlSettings) => unknown }[] = [
   { label: "기간 창(일)", read: (s) => s.discover.windowDays },
   { label: "틱당 페이지", read: (s) => s.discover.pagesPerTick },
   { label: "Show HN 수집", read: (s) => s.discover.showHn.enabled },
-  { label: "스타 상한", read: (s) => s.judge.maxStars },
+  { label: "자동 승인 최소 스타", read: (s) => s.judge.autoApproveMinStars },
   { label: "스타 하한", read: (s) => s.judge.minStars },
   { label: "방치 기준(일)", read: (s) => s.judge.maxPushAgeDays },
   { label: "포크 제외", read: (s) => s.judge.excludeForks },

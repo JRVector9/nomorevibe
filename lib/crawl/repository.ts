@@ -1,6 +1,6 @@
 import { emitPipelineEvent } from "@/lib/observability/review-pipeline";
 import { isReviewCandidate } from "./agent-review-contract";
-import { and, asc, desc, eq, inArray, lte, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, lt, lte, ne, sql } from "drizzle-orm";
 import { isDeepStrictEqual } from "node:util";
 import { db } from "@/lib/db";
 import {
@@ -8,6 +8,7 @@ import {
   crawlDocuments,
   crawlCandidates,
   crawlSettings,
+  jobs,
   type FrontierEntry,
   type FrontierState,
   type CrawlDocument,
@@ -18,7 +19,8 @@ import {
 import { mergeWithDefaults } from "./settings";
 import type { CrawlSettings } from "./settings-schema";
 import { factsFromRepoMeta } from "./rules";
-import { assertJobLease, requestJob, type JobLease } from "@/lib/jobs/control";
+import { assertJobLease, requestJob, withJobLeaseWrite, type JobLease } from "@/lib/jobs/control";
+import { STALE_LOCK_MS } from "@/lib/jobs/lease";
 import { README_SAMPLE_VERSION } from "./readme";
 import type { ReadmeRefreshResult } from "./readme-refresh";
 import type { ProductTransaction } from "@/lib/domain/products/generation";
@@ -54,6 +56,7 @@ function nowExpr(at?: Date) {
  */
 export async function enqueue(
   entries: { repo: string; signal: string; builder?: string | null; priority?: number }[],
+  lease?: JobLease,
 ): Promise<number> {
   if (entries.length === 0) return 0;
   const first = new Map<string, (typeof entries)[number]>();
@@ -68,6 +71,7 @@ export async function enqueue(
     const inserted = await tx.insert(crawlFrontier).values([...first.values()].map(e => ({
       repo: e.repo, signal: e.signal, builder: e.builder ?? null, priority: e.priority ?? 0,
     }))).onConflictDoNothing({ target: crawlFrontier.repo }).returning({ id: crawlFrontier.id });
+    if (lease) await assertJobLease(tx, lease);
     return inserted.length;
   });
 }
@@ -97,7 +101,25 @@ export async function getFrontierBuilder(repo: string): Promise<string | null> {
  * 죽은 프로세스의 잠금을 회수하는 순간에는 두 프로세스가 겹칠 수 있다.
  * 그때 같은 항목을 둘이 가져가면 GitHub 호출이 낭비된다.
  */
-export async function dequeue(limit: number, now?: Date): Promise<FrontierEntry[]> {
+export async function recoverAbandonedFrontier(lease: JobLease): Promise<number> {
+  if (lease.name !== "crawl-fetch") return 0;
+  const currentRun = db.select({ startedAt: jobs.lastRunAt }).from(jobs).where(and(
+    eq(jobs.name, "crawl-fetch"), eq(jobs.leaseToken, lease.token),
+    sql`${jobs.lockedAt} >= now() - ${STALE_LOCK_MS} * interval '1 millisecond'`,
+  ));
+  const rows = await db.transaction(async tx => {
+    const recovered = await tx.update(crawlFrontier).set({
+    state: "pending", attempts: sql`greatest(0, ${crawlFrontier.attempts} - 1)`,
+    nextAttemptAt: sql`now()`, updatedAt: sql`now()`,
+  }).where(and(eq(crawlFrontier.state, "fetching"),
+    lt(crawlFrontier.updatedAt, sql`(${currentRun})`))).returning({ id: crawlFrontier.id });
+    if (recovered.length) await assertJobLease(tx, lease);
+    return recovered;
+  });
+  return rows.length;
+}
+
+export async function dequeue(limit: number, now?: Date, lease?: JobLease): Promise<FrontierEntry[]> {
   const at = nowExpr(now);
 
   // 잠금과 갱신을 한 트랜잭션에 둔다. SELECT ... FOR UPDATE의 잠금은 트랜잭션이
@@ -118,7 +140,7 @@ export async function dequeue(limit: number, now?: Date): Promise<FrontierEntry[
 
     if (locked.length === 0) return [];
 
-    return tx
+    const claimedRows = await tx
       .update(crawlFrontier)
       .set({
         state: "fetching",
@@ -133,6 +155,8 @@ export async function dequeue(limit: number, now?: Date): Promise<FrontierEntry[
         ),
       )
       .returning();
+    if (lease) await assertJobLease(tx, lease);
+    return claimedRows;
   });
 
   // RETURNING은 순서를 보장하지 않는다 — 갱신된 순서로 나올 뿐이다.
@@ -160,23 +184,63 @@ export async function markFrontier(
   repo: string,
   state: Extract<FrontierState, "done" | "skipped">,
   claim?: FrontierClaim,
+  lease?: JobLease,
 ): Promise<void> {
-  await db
-    .update(crawlFrontier)
-    .set({ state, lastError: null, updatedAt: new Date() })
+  await db.transaction(async tx => {
+    await tx.update(crawlFrontier)
+    .set({ state, aliasOf: null, lastError: null, updatedAt: new Date() })
     .where(claim ? and(eq(crawlFrontier.repo, repo), claimed(claim)) : eq(crawlFrontier.repo, repo));
+    if (lease) await assertJobLease(tx, lease);
+  });
+}
+
+/** A terminal GitHub fetch cannot satisfy reconsiderAfter. Put such candidates in the human queue. */
+export async function handOffFailedSourceRefreshes(lease: JobLease, limit = 20): Promise<number> {
+  if (lease.name !== "crawl-fetch") return 0;
+  return db.transaction(async tx => {
+    const candidates = await tx.select().from(crawlCandidates).where(and(
+      eq(crawlCandidates.state, "new"),
+      sql`${crawlCandidates.signals}->>'reconsiderAfter' IS NOT NULL`,
+      sql`EXISTS (SELECT 1 FROM ${crawlFrontier} terminal
+        WHERE terminal.repo = ${crawlCandidates.repo} AND terminal.state IN ('skipped', 'failed')
+          AND terminal.alias_of IS NULL)`,
+    )).orderBy(asc(crawlCandidates.updatedAt), asc(crawlCandidates.id))
+      .limit(Math.max(1, Math.min(100, limit))).for("update", { skipLocked: true });
+    let handedOff = 0;
+    for (const candidate of candidates) {
+      const [document] = await tx.select().from(crawlDocuments)
+        .where(eq(crawlDocuments.repo, candidate.repo)).for("share");
+      const [frontier] = await tx.select().from(crawlFrontier)
+        .where(eq(crawlFrontier.repo, candidate.repo)).for("update");
+      const after = Date.parse(String(candidate.signals?.reconsiderAfter));
+      if (!document || !Number.isFinite(after) || document.fetchedAt.getTime() > after
+        || !frontier || frontier.aliasOf || !["skipped", "failed"].includes(frontier.state)) continue;
+      const detail = frontier.state === "skipped" ? "GitHub 저장소를 찾지 못해 새 원본을 수집할 수 없습니다."
+        : `GitHub 원본 재수집 실패: ${(frontier.lastError ?? "원인 미상").slice(0, 220)}`;
+      await tx.update(crawlCandidates).set({
+        state: "needs_review", reason: "source_refresh_failed", updatedAt: sql`clock_timestamp()`,
+        signals: { ...candidate.signals, stoppedAt: { rule: "원본 재수집", detail } },
+      }).where(eq(crawlCandidates.id, candidate.id));
+      handedOff++;
+    }
+    if (handedOff) await assertJobLease(tx, lease);
+    return handedOff;
+  });
 }
 
 /** Return only this batch's still-owned claims; quota/budget waits are not failed attempts. */
-export async function deferFrontier(entries: FrontierEntry[], retryAt?: Date): Promise<void> {
+export async function deferFrontier(entries: FrontierEntry[], retryAt?: Date, lease?: JobLease): Promise<void> {
   if (entries.length === 0) return;
   const at = nowExpr();
-  await db.update(crawlFrontier).set({
+  await db.transaction(async tx => {
+    await tx.update(crawlFrontier).set({
     state: "pending",
     attempts: sql`greatest(0, ${crawlFrontier.attempts} - 1)`,
     nextAttemptAt: retryAt ? sql`greatest(${at}, ${retryAt.toISOString()}::timestamp)` : at,
     updatedAt: at,
   }).where(sql.join(entries.map(claimed), sql` or `));
+    if (lease) await assertJobLease(tx, lease);
+  });
 }
 
 /**
@@ -186,7 +250,7 @@ export async function deferFrontier(entries: FrontierEntry[], retryAt?: Date): P
  * claim을 주면 아직 내 것일 때만 기록한다. 회수된 항목에 옛 워커가 실패를 적으면 새 워커의
  * claim이 풀려, 그 워커가 받아 온 원본까지 버려진다.
  */
-export async function markFailed(repo: string, error: string, now?: Date, claim?: FrontierClaim): Promise<void> {
+export async function markFailed(repo: string, error: string, now?: Date, claim?: FrontierClaim, lease?: JobLease): Promise<void> {
   const current = await db.query.crawlFrontier.findFirst({ where: eq(crawlFrontier.repo, repo) });
   if (!current) return;
 
@@ -194,8 +258,8 @@ export async function markFailed(repo: string, error: string, now?: Date, claim?
   const backoff = BACKOFF_MINUTES[Math.min(current.attempts - 1, BACKOFF_MINUTES.length - 1)] ?? 5;
   const at = nowExpr(now);
 
-  await db
-    .update(crawlFrontier)
+  await db.transaction(async tx => {
+    await tx.update(crawlFrontier)
     .set({
       state: exhausted ? "failed" : "pending",
       // 소진됐으면 다음 시도 시각을 건드리지 않는다 (어차피 다시 꺼내지 않는다)
@@ -206,6 +270,8 @@ export async function markFailed(repo: string, error: string, now?: Date, claim?
       updatedAt: sql`${at}`,
     })
     .where(claim ? and(eq(crawlFrontier.repo, repo), claimed(claim)) : eq(crawlFrontier.repo, repo));
+    if (lease) await assertJobLease(tx, lease);
+  });
 }
 
 /**
@@ -220,12 +286,15 @@ export async function markFailed(repo: string, error: string, now?: Date, claim?
  * 본문만 덮는다 — 제목·소개는 발행 시점의 것이 남아야 한다.
  */
 /** AI 심사 입력용 README 앞부분을 원본 옆에 둔다. "" 은 없음 표시 — 다시 찾지 않는다 */
-export async function setReadmeSample(repo: string, readmeSample: string, expected: CrawlDocument): Promise<CrawlDocument | undefined> {
-  const [updated] = await db.update(crawlDocuments).set({
+export async function setReadmeSample(repo: string, readmeSample: string, expected: CrawlDocument, lease?: JobLease): Promise<CrawlDocument | undefined> {
+  return db.transaction(async tx => {
+    const [updated] = await tx.update(crawlDocuments).set({
     pageMeta: sql`coalesce(${crawlDocuments.pageMeta}, '{}'::jsonb) || ${JSON.stringify({ readmeSample, readmeSampleVersion: README_SAMPLE_VERSION })}::jsonb`,
   }).where(and(eq(crawlDocuments.repo, repo), eq(crawlDocuments.id, expected.id), eq(crawlDocuments.fetchedAt, expected.fetchedAt),
     sql`${crawlDocuments.pageMeta} IS NOT DISTINCT FROM ${expected.pageMeta === null ? null : JSON.stringify(expected.pageMeta)}::jsonb`)).returning();
-  return updated;
+    if (lease) await assertJobLease(tx, lease);
+    return updated;
+  });
 }
 
 /** Only recrawl-invalidated excerpts; ordinary cached or legacy missing READMEs are not queued. */
@@ -257,12 +326,12 @@ export async function recordPublishedReadme(expected: CrawlDocument, lease: JobL
   });
 }
 
-export async function refreshTextSample(slug: string, textSample: string): Promise<void> {
-  await db.execute(sql`
+export async function refreshTextSample(slug: string, textSample: string, lease?: JobLease): Promise<void> {
+  await withJobLeaseWrite(lease, tx => tx.execute(sql`
     update crawl_documents
        set page_meta = coalesce(page_meta, '{}'::jsonb) || jsonb_build_object('textSample', ${textSample}::text)
      where repo in (select repo from crawl_candidates where published_slug = ${slug})
-  `);
+  `));
 }
 
 /**
@@ -345,12 +414,29 @@ export async function saveFetchedDocument(
     pageMeta: Record<string, unknown> | null;
   },
   lease?: JobLease,
-): Promise<{ needsJudgement: boolean } | null> {
+): Promise<{ needsJudgement: boolean; duplicateOf?: string } | null> {
   return db.transaction(async (tx) => {
+    const githubId = typeof doc.repoMeta.id === "number" && Number.isSafeInteger(doc.repoMeta.id)
+      && doc.repoMeta.id > 0 ? String(doc.repoMeta.id) : null;
+    // A rename can arrive in two fetch lanes at once. Serialize by GitHub's stable ID,
+    // then check existing documents before either lane can insert a second path.
+    if (githubId) await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`crawl-github-id:${githubId}`}))`);
     const [candidate] = await tx.select().from(crawlCandidates).where(eq(crawlCandidates.repo, doc.repo)).for("update");
     const [previous] = await tx.select().from(crawlDocuments).where(eq(crawlDocuments.repo, doc.repo)).for("update");
+    if (githubId && (!previous || previous.repoMeta.id !== doc.repoMeta.id)) {
+      const [existing] = await tx.select({ repo: crawlDocuments.repo }).from(crawlDocuments)
+        .where(and(sql`${crawlDocuments.repoMeta}->>'id' = ${githubId}`, ne(crawlDocuments.repo, doc.repo)))
+        .orderBy(asc(crawlDocuments.id)).limit(1);
+      if (existing) {
+        const [owned] = await tx.update(crawlFrontier)
+          .set({ state: "skipped", aliasOf: existing.repo, lastError: null, updatedAt: new Date() })
+          .where(claimed(claim)).returning({ id: crawlFrontier.id });
+        if (lease) await assertJobLease(tx, lease);
+        return owned ? { needsJudgement: false, duplicateOf: existing.repo } : null;
+      }
+    }
     const [owned] = await tx.update(crawlFrontier)
-      .set({ state: "done", lastError: null, updatedAt: new Date() })
+      .set({ state: "done", aliasOf: null, lastError: null, updatedAt: new Date() })
       .where(claimed(claim))
       .returning({ id: crawlFrontier.id });
     if (lease) await assertJobLease(tx, lease);
@@ -399,6 +485,9 @@ function judgedSourceChanged(previous: CrawlDocument, next: CrawlDocument): bool
   return previous.productUrl !== next.productUrl
     || previous.pageStatus !== next.pageStatus
     || !isDeepStrictEqual(judgementPageMeta(previous.pageMeta), judgementPageMeta(next.pageMeta))
+    || previous.repoMeta.id !== next.repoMeta.id
+    || previous.repoMeta.full_name !== next.repoMeta.full_name
+    || previous.repoMeta.private !== next.repoMeta.private
     || !isDeepStrictEqual(factsFromRepoMeta(previous.repo, previous.repoMeta), factsFromRepoMeta(next.repo, next.repoMeta));
 }
 
@@ -473,6 +562,7 @@ export async function recordJudgement(judgement: {
 export async function recordAutomaticJudgement(input: {
   document:CrawlDocument; settings:CrawlSettings; candidate:CrawlCandidate|undefined;
   verdict:{state:"approved"|"rejected"|"needs_review";reason:DecisionReason;signals:Record<string,unknown>};
+  lease?: JobLease;
 }):Promise<boolean> {
   const requests: Awaited<ReturnType<typeof requestJob>>[] = [];
   let candidateId: number | undefined;
@@ -480,6 +570,7 @@ export async function recordAutomaticJudgement(input: {
     const [candidate] = await tx.select().from(crawlCandidates).where(eq(crawlCandidates.repo,input.document.repo)).for("update");
     const [document] = await tx.select().from(crawlDocuments).where(eq(crawlDocuments.id,input.document.id)).for("share");
     const [settingsRow] = await tx.select().from(crawlSettings).where(eq(crawlSettings.id,1)).for("share");
+    if (input.lease) await assertJobLease(tx, input.lease);
     // A pre-existing admin `new` is an explicit rejudge request. A later admin decision is never replaced.
     if ((candidate && candidate.state !== "new") || !isDeepStrictEqual(candidate,input.candidate)
       || !isDeepStrictEqual(document,input.document) || !isDeepStrictEqual(mergeWithDefaults(settingsRow?.values),input.settings)) return false;
@@ -499,9 +590,11 @@ export async function recordAutomaticJudgement(input: {
       if (!inserted) return false;
       candidateId = inserted.id;
     }
-    if (input.settings.enabled && input.settings.reviewMode !== "off" && isReviewCandidate(values as CrawlCandidate))
+    if (input.settings.enabled && input.settings.reviewMode !== "off" && !input.verdict.signals.starAutoApproval
+      && isReviewCandidate(values as CrawlCandidate))
       requests.push(await requestJob("crawl-agent-review", tx));
-    if (input.settings.enabled && input.settings.reviewMode !== "enforce" && values.state === "approved")
+    if (input.settings.enabled && values.state === "approved"
+      && (input.settings.reviewMode !== "enforce" || !!input.verdict.signals.starAutoApproval))
       requests.push(await requestJob("crawl-publish", tx));
     return true;
   });

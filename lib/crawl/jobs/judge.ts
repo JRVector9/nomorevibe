@@ -3,7 +3,8 @@ import type { CrawlDocument } from "@/lib/db/schema";
 import { findRepositoryProduct } from "@/lib/domain/products/repository";
 import * as crawl from "@/lib/crawl/repository";
 import { getSettings } from "@/lib/crawl/settings";
-import { judge, factsFromRepoMeta, pageFactsFromDocument, judgeRevision, type StoppedAt, type Verdict } from "@/lib/crawl/rules";
+import { judgeStoredDocument, judgeRevision, type StoppedAt, type Verdict } from "@/lib/crawl/rules";
+import { starAutoApproval } from "@/lib/crawl/star-auto-approval";
 import type { CrawlSettings } from "@/lib/crawl/settings-schema";
 import { loadAgentJudgeInput } from "@/lib/crawl/agent-evidence";
 import { accessFromDocument } from "../rules";
@@ -42,7 +43,7 @@ export async function judgeCrawlDocuments(ctx: JobContext<null>): Promise<JobOut
 
     for (const { document, candidate } of queue) {
       const verdict = await judgeDocument(document, settings);
-      if (!await crawl.recordAutomaticJudgement({document,settings,candidate,verdict})) {
+      if (!await crawl.recordAutomaticJudgement({document,settings,candidate,verdict,lease:ctx.lease})) {
         ctx.log("crawl.judgement_changed", {repo:document.repo});
         return {done:false};
       }
@@ -65,15 +66,9 @@ export async function judgeCrawlDocuments(ctx: JobContext<null>): Promise<JobOut
  * 아무 의미가 없고, 조회는 후보 수만큼 늘어난다.
  */
 async function judgeDocument(document: CrawlDocument, settings: CrawlSettings): Promise<Verdict> {
-  const agentEvidence = settings.agentEvidence.enforceEligibility
+  const agentEvidence = settings.agentEvidence.enforceEligibility && !starAutoApproval(document, settings)
     ? await loadAgentJudgeInput(document, settings) : undefined;
-  const verdict = judge(
-    factsFromRepoMeta(document.repo, document.repoMeta),
-    pageFactsFromDocument(document),
-    settings,
-    new Date(),
-    agentEvidence,
-  );
+  const verdict = judgeStoredDocument(document, settings, new Date(), agentEvidence);
   if (agentEvidence) verdict.signals.agentScanId = agentEvidence.scanId;
   // 발행 직전에 "이것이 판정받은 그 원본인가"를 이 값으로 가린다 (judgeRevision 참고)
   verdict.signals.judgedRevision = judgeRevision(document);

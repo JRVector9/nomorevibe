@@ -20,6 +20,7 @@ import { requestJob, type JobLease } from "@/lib/jobs/control";
 import { ReviewApprovalChangedError } from "./agent-review-repository";
 import { parseRepositoryStats } from "@/lib/domain/products/stars";
 import { SEARCH_PAGE_TEXT_CHARS } from "@/lib/domain/products/search";
+import { candidateStarAutoApproval } from "./star-auto-approval";
 
 /**
  * 발행 — 통과한 후보를 목록에 올린다.
@@ -42,6 +43,7 @@ type PublicationSnapshot = {
   url: string;
   settings: Awaited<ReturnType<typeof getSettings>>;
   checkedEvidence: Awaited<ReturnType<typeof loadAgentJudgeInput>> | null;
+  starAutoApproved: boolean;
   draft: ReturnType<typeof draftFrom>;
 };
 
@@ -63,6 +65,8 @@ async function preparePublication(candidate: CrawlCandidate): Promise<
   if (!document) return { ok: false, reason: "no_document" };
   if (publicationSourceChanged(candidate, document)) return { ok: false, reason: "source_changed" };
   const settings = await getSettings();
+  const starAutoApproved = candidateStarAutoApproval(candidate, document, settings) !== null;
+  if (candidate.signals?.starAutoApproval && !starAutoApproved) return { ok: false, reason: "review_approval_changed" };
   const access = accessFromDocument(document, settings);
   const url = access?.url;
   if (!url) return { ok: false, reason: "no_url" };
@@ -70,11 +74,11 @@ async function preparePublication(candidate: CrawlCandidate): Promise<
   if (existing) return { ok: false, reason: "already_listed", existing: { slug: existing.slug, status: existing.status } };
 
   const purpose = nonProductPurpose({ ...document.pageMeta, description: [document.repoMeta.description, document.pageMeta?.description].filter(v => typeof v === "string").join(" ") });
-  if (purpose) return { ok: false, reason: "not_a_product" };
-  if (access?.mode === "installable" && candidate.decidedBy !== "admin" && settings.reviewMode !== "enforce") {
+  if (purpose && !starAutoApproved) return { ok: false, reason: "not_a_product" };
+  if (access?.mode === "installable" && candidate.decidedBy !== "admin" && !starAutoApproved && settings.reviewMode !== "enforce") {
     return { ok: false, reason: "installation_review_required" };
   }
-  const checkedEvidence = settings.agentEvidence.enforceEligibility && candidate.decidedBy !== "admin"
+  const checkedEvidence = settings.agentEvidence.enforceEligibility && candidate.decidedBy !== "admin" && !starAutoApproved
     ? await loadAgentJudgeInput(document, settings) : null;
   if (checkedEvidence) {
     const summary = summarizeAgentEvidence(checkedEvidence);
@@ -115,10 +119,10 @@ async function preparePublication(candidate: CrawlCandidate): Promise<
       draft = draftFrom(candidate.repo, document, access.mode === "installable", { text: written.tagline, source: written.source, by: written.writtenBy });
     }
   }
-  if (!draft.hasDescription && candidate.decidedBy !== "admin") {
+  if (!draft.hasDescription && candidate.decidedBy !== "admin" && !starAutoApproved) {
     return { ok: false, reason: "no_description" };
   }
-  return { ok: true, snapshot: { document, url, settings, checkedEvidence, draft } };
+  return { ok: true, snapshot: { document, url, settings, checkedEvidence, starAutoApproved, draft } };
 }
 
 export async function publishCandidate(
@@ -130,8 +134,8 @@ export async function publishCandidate(
     ? { ok: true as const, snapshot: preclassification.snapshot }
     : await preparePublication(candidate);
   if (!prepared.ok) return prepared;
-  const { document, url, settings, checkedEvidence, draft } = prepared.snapshot;
-  if (nonProductPurpose(document.pageMeta ?? {})) return { ok: false, reason: "not_a_product" };
+  const { document, url, settings, checkedEvidence, starAutoApproved, draft } = prepared.snapshot;
+  if (!starAutoApproved && nonProductPurpose(document.pageMeta ?? {})) return { ok: false, reason: "not_a_product" };
   const repoStats = parseRepositoryStats(document.repoMeta);
 
   /**
@@ -231,8 +235,8 @@ export async function publishCandidate(
   // 상대 서버가 죽으면 목록이 깨지고, 이미지가 사후에 바뀔 수 있다.
   if (draft.ogImage) {
     // 발행 잡은 백그라운드다 — 전체 10초로 묶어 워커를 오래 붙잡지 않는다
-    const path = await cacheOgImage(draft.ogImage, slug, "background");
-    if (path) await products.setOgImage(slug, path);
+    const path = await cacheOgImage(draft.ogImage, slug, "background", lease);
+    if (path) await products.setOgImage(slug, path, lease);
   }
 
   logger.info("crawl.published", { repo: candidate.repo, slug, url, category });

@@ -5,6 +5,7 @@ import type { CrawlSettings } from "./settings-schema";
 import { summarizeAgentEvidence, type SummaryInput } from "@/lib/domain/evidence/agents/summary";
 import { linksOwnGithub } from "./github-links";
 import { productAccess, INSTALLABLE_MIN_STARS } from "@/lib/domain/products/access";
+import { starAutoApproval } from "./star-auto-approval";
 
 /**
  * 판정 규칙.
@@ -200,14 +201,35 @@ export function judge(
   return verdict;
 }
 
+/** The stored GitHub response can prove star eligibility; standalone rule fixtures cannot. */
+export function judgeStoredDocument(document: {
+  repo: string; repoMeta: Record<string, unknown>; fetchedAt: Date;
+  productUrl: string | null; pageStatus: number | null; pageMeta: unknown;
+}, settings: CrawlSettings, now = new Date(), agentEvidence?: SummaryInput): Verdict {
+  const facts = factsFromRepoMeta(document.repo, document.repoMeta);
+  const page = pageFactsFromDocument(document);
+  const ordinary = judge(facts, page, settings, now, agentEvidence);
+  const eligible = starAutoApproval(document, settings, now);
+  if (!eligible) return ordinary;
+  const accessMode = ordinary.state === "approved" && ordinary.signals.accessMode !== "installable"
+    ? "website" : "installable";
+  return {
+    state: "approved", reason: "passed",
+    signals: { stars: eligible.stars, githubId: eligible.githubId, accessMode,
+      productUrl: document.productUrl, starAutoApproval: eligible },
+    trace: [{ rule: "검증된 GitHub 스타 자동 승인", detail: `${eligible.stars} ≥ ${settings.judge.autoApproveMinStars}`, passed: true }],
+  };
+}
+
 /** All review, classification and publication stages must resolve the same entry point. */
 export function accessFromDocument(document: {
   repo: string; repoMeta: Record<string, unknown>; productUrl: string | null;
-  pageStatus: number | null; pageMeta: Record<string, unknown> | null;
+  pageStatus: number | null; pageMeta: Record<string, unknown> | null; fetchedAt?: Date;
 }, settings: CrawlSettings) {
-  const repo = factsFromRepoMeta(document.repo, document.repoMeta);
-  const verdict = judge(repo, pageFactsFromDocument(document), settings);
-  return productAccess({ repo: document.repo, stars: repo.stars,
+  const verdict = document.fetchedAt
+    ? judgeStoredDocument({ ...document, fetchedAt: document.fetchedAt }, settings)
+    : judge(factsFromRepoMeta(document.repo, document.repoMeta), pageFactsFromDocument(document), settings);
+  return productAccess({ repo: document.repo, stars: factsFromRepoMeta(document.repo, document.repoMeta).stars,
     productUrl: verdict.signals.accessMode === "installable" ? null : document.productUrl });
 }
 
@@ -250,7 +272,7 @@ function judgeWebsite(
    * 보류하되 맨 끝으로 미룬다(2026-09-19).
    *
    * 문서 생성기·문서 목차·이름 패턴은 확실한 거부가 아니라 "사람이나 AI 가 봐야 할 것"이다. 여기서 곧바로
-   * 보류하면 뒤의 확실한 거부(보관됨·HTTP 오류·방치 기준·스타 상한)를 건너뛰어, 죽은 페이지까지 사람에게 간다.
+   * 보류하면 뒤의 확실한 거부(보관됨·HTTP 오류·방치 기준)를 건너뛰어, 죽은 페이지까지 사람에게 간다.
    * 그래서 표시만 해 두고 나머지 규칙을 끝까지 태운다. 거부가 하나라도 걸리면 그쪽이 이긴다.
    * 첫 번째 것만 남긴다 — 멈춘 곳은 하나다.
    */
@@ -438,18 +460,12 @@ function judgeWebsite(
   if (profilePattern && !heldPattern) signals.profilePattern = profilePattern;
   if (!heldPattern) pass("제외 패턴 아님", profileSignal ? `개인 프로필 — ${profileSignal}` : repoName);
 
-  // 스타 상한이 대형 오픈소스를 거른다. 하한이 아니라 상한인 것이 요지다 —
-  // 갓 배포한 제품은 정당하게 스타가 0개다.
+  // The legacy upper limit is retired; verified popular sources have a separate auto-approval path.
   const n = (value: number) => value.toLocaleString("en-US");
-  if (repo.stars > rules.maxStars && repo.stars < INSTALLABLE_MIN_STARS) {
-    return reject("large_oss", "스타 상한 이하", `${n(repo.stars)} > ${n(rules.maxStars)}`);
-  }
   if (repo.stars < rules.minStars) {
     return reject("large_oss", "스타 하한 이상", `${n(repo.stars)} < ${n(rules.minStars)}`);
   }
-  pass("스타 상한 이하", repo.stars > rules.maxStars
-    ? `${n(repo.stars)} ≥ ${INSTALLABLE_MIN_STARS} — 인기 제품은 상한 예외`
-    : `${n(repo.stars)} ≤ ${n(rules.maxStars)}`);
+  pass("스타 하한 이상", `${n(repo.stars)} ≥ ${n(rules.minStars)}`);
   if (rules.excludeOrganizations && repo.ownerType === "Organization") {
     return reject("large_oss", "조직 계정 아님", "조직 계정 제외가 켜져 있음");
   }

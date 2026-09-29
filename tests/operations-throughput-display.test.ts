@@ -55,10 +55,87 @@ it("keeps paused stages distinct from bottlenecks and shows an empty queue expli
   expect(html).not.toContain("확인할 단계");
 });
 
+it("shows the verified worker reason beside a stalled stage", () => {
+  const html = renderToStaticMarkup(createElement(ThroughputStrip, {
+    snapshot: { measuredAt: "2026-09-22T01:02:03.000Z", stages: [{ ...stage, key: "fetch", label: "원본 수집",
+      unit: "건", completed1m: 0, completed5m: 0, status: "stalled" }] },
+    signals: [{ role: "crawler", stage: "fetch", reason: "no_progress", alarm: true }],
+  }));
+  expect(html).toContain("저장 진행 없음");
+  expect(html).toContain("확인할 워커");
+});
+
+it("shows an overdue scheduler request without treating zero discovery as failure", () => {
+  const html = renderToStaticMarkup(createElement(ThroughputStrip, {
+    snapshot: { measuredAt: "2026-09-22T01:02:03.000Z", stages: [stage] },
+    scheduler: { role: "scheduler", reason: "scheduler_missed", alarm: true, overdueJobs: ["crawl-fetch"] },
+  }));
+  expect(html).toContain("스케줄러 예약 지연");
+  expect(html).toContain("crawl-fetch");
+});
+
+it("shows a missing worker even when there is no eligible queue", () => {
+  const html = renderToStaticMarkup(createElement(ThroughputStrip, {
+    snapshot: { measuredAt: "2026-09-22T01:02:03.000Z", stages: [{ ...stage, waiting: 0 }] },
+    liveness: [{ role: "crawler", reason: "worker_missing", alarm: true }],
+  }));
+  expect(html).toContain("수집 워커 관측 끊김");
+});
+
+it("labels repeated restarts separately from a missing observation", () => {
+  const html = renderToStaticMarkup(createElement(ThroughputStrip, {
+    snapshot: { measuredAt: "2026-09-22T01:02:03.000Z", stages: [stage] },
+    liveness: [{ role: "reviewer", reason: "restart_loop", alarm: true }],
+  }));
+  expect(html).toContain("심사 워커 5분 내 반복 재시작");
+  expect(html).not.toContain("심사 워커 관측 끊김");
+});
+
 it("distinguishes an empty idle stage from a stage waiting for its next run", () => {
   const empty = render({ ...stage, completed1m: 0, completed5m: 0, waiting: 0, oldestMinutes: null, status: "idle" });
   const waiting = render({ ...stage, completed1m: 0, completed5m: 0, oldestMinutes: 1, status: "idle" });
 
   expect(empty).not.toContain("처리 대기");
   expect(waiting).toContain("처리 대기");
+});
+
+it("shows live worker and no eligible work beside a zero rate", () => {
+  const html = renderToStaticMarkup(createElement(ThroughputStrip, {
+    snapshot: { measuredAt: "2026-09-22T01:02:03.000Z", stages: [{ ...stage, completed1m: 0,
+      completed5m: 0, waiting: 0, oldestMinutes: null, status: "idle" }] },
+    signals: [{ role: "reviewer", stage: "second", reason: "no_work", alarm: false }],
+    liveness: [{ role: "reviewer", reason: "present", alarm: false }],
+  }));
+  expect(html).toContain("워커 정상 · 실행 가능 일감 없음");
+});
+
+it("shows exhausted automatic work as a human action with a review link", () => {
+  const html = render({ ...stage, key: "first", label: "AI 1차", unit: "건",
+    completed1m: 0, completed5m: 0, waiting: 0, manualAttention: 2, status: "idle" });
+  expect(html).toContain("직접 확인 필요");
+  expect(html).toContain("직접 확인 2건");
+  expect(html).toContain("/admin/review?stage=human#review-list");
+  expect(html).not.toContain("대기 없음");
+});
+
+it("shows deferred collection when no fetch is currently eligible", () => {
+  const html = renderToStaticMarkup(createElement(ThroughputStrip, {
+    snapshot: { measuredAt: "2026-09-22T01:02:03.000Z", stages: [{ ...stage, key: "fetch",
+      label: "원본 수집", unit: "건", completed1m: 0, completed5m: 0,
+      waiting: 0, deferred: 27, oldestMinutes: null, status: "idle" }] },
+    signals: [{ role: "crawler", stage: "fetch", reason: "no_work", alarm: false }],
+    liveness: [{ role: "crawler", reason: "present", alarm: false }],
+  }));
+  expect(html).toContain("워커 정상 · 재시도 예약 27건");
+  expect(html).not.toContain("워커 정상 · 실행 가능 일감 없음");
+});
+
+it("prioritizes a missing worker over an empty queue", () => {
+  const html = renderToStaticMarkup(createElement(ThroughputStrip, {
+    snapshot: { measuredAt: "2026-09-22T01:02:03.000Z", stages: [{ ...stage, completed1m: 0,
+      completed5m: 0, waiting: 0, oldestMinutes: null, status: "idle" }] },
+    signals: [{ role: "reviewer", stage: "second", reason: "no_work", alarm: false }],
+    liveness: [{ role: "reviewer", reason: "worker_missing", alarm: true }],
+  }));
+  expect(html).toContain("심사 워커 관측 끊김 · 확인 필요");
 });

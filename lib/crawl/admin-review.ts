@@ -6,7 +6,7 @@ import { crawlTaglines, type CrawlDocument, type CrawlTagline } from '@/lib/db/s
 import { agentRepositoryObservations, agentRepositoryScans, crawlCandidates, crawlDocuments, crawlFrontier,
   crawlReviewAttempts, crawlSettings, type CrawlCandidate, type CrawlReviewAttempt } from '@/lib/db/schema';
 import type { ProductTransaction } from '@/lib/domain/products/generation';
-import { requestJob } from '@/lib/jobs/control';
+import { assertJobLease, requestJob, type JobLease } from '@/lib/jobs/control';
 import { operationsAudit } from '@/lib/db/operations-schema';
 import { lockRepositoryAgentEvidence } from '@/lib/domain/evidence/agents/lock';
 import { secondReviewsFor } from './second-review';
@@ -16,7 +16,7 @@ import { createReviewInput, MAX_REVIEW_ATTEMPTS, REVIEW_PROMPT_VERSION, REVIEW_R
 import { loadReviewInput } from './agent-review-repository';
 import { DEFAULT_CRAWL_SETTINGS, type CrawlSettings } from './settings-schema';
 import { mergeWithDefaults, getSettings } from './settings';
-import { judge, factsFromRepoMeta, pageFactsFromDocument, type AmbiguityCause, type RuleStep } from './rules';
+import { judgeStoredDocument, type AmbiguityCause, type RuleStep } from './rules';
 import { loadAgentJudgeInputs } from './admin-review-batch';
 import { lockFrontierIdentity } from './repository';
 
@@ -151,7 +151,7 @@ export async function requestCandidateEvidence(request: AdminReviewRequest): Pro
 }
 
 /** Called only after a fresh collector result; one accepted request permits one rule rejudge. */
-export async function requeueAfterAdminEvidenceRefresh(repo: string): Promise<boolean> {
+export async function requeueAfterAdminEvidenceRefresh(repo: string, lease?: JobLease): Promise<boolean> {
   const [pending] = await db.select({ id: crawlReviewAttempts.id }).from(crawlReviewAttempts)
     .innerJoin(crawlCandidates, eq(crawlCandidates.id, crawlReviewAttempts.candidateId)).where(and(
       eq(crawlCandidates.repo, repo), eq(crawlCandidates.decidedBy, 'auto'), eq(crawlCandidates.state, 'needs_review'),
@@ -160,6 +160,7 @@ export async function requeueAfterAdminEvidenceRefresh(repo: string): Promise<bo
   if (!pending) return false;
   return db.transaction(async tx => {
     const current = await lockedInput(tx, repo);
+    if (lease) await assertJobLease(tx, lease);
     if (!current || current.candidate.decidedBy !== 'auto' || current.candidate.state !== 'needs_review') return false;
     const [request] = await tx.select().from(crawlReviewAttempts).where(and(
       eq(crawlReviewAttempts.candidateId, current.candidate.id), eq(crawlReviewAttempts.kind, 'evidence_refresh'),
@@ -219,7 +220,8 @@ const REVIEW_QUEUE_SCAN_CHUNK = 1_000;
  */
 export type ReviewQueueBucket = AmbiguityCause | 'ai_reject' | 'resolved' | 'unknown' | HumanOnlyReason;
 /** AI 심사가 다시 집지 않고 사람만 가르는 보류 사유(2026-09-19) — 규칙으로 되돌려도 같은 곳에 다시 선다 */
-export const HUMAN_ONLY_REASONS = ['second_review_split', 'no_description'] as const;
+export const HUMAN_ONLY_REASONS = ['second_review_split', 'no_description',
+  'ai_review_exhausted', 'source_refresh_failed'] as const;
 export type HumanOnlyReason = typeof HUMAN_ONLY_REASONS[number];
 const isHumanOnly = (reason: string | null): reason is HumanOnlyReason => HUMAN_ONLY_REASONS.some((value) => value === reason);
 export type ReviewQueueCauses = {
@@ -261,8 +263,7 @@ export async function reviewQueueCauses(settings: CrawlSettings): Promise<Review
     for (const candidate of page) {
       const document = documentByRepo.get(candidate.repo);
       const verdict = document
-        ? judge(factsFromRepoMeta(candidate.repo, document.repoMeta), pageFactsFromDocument(document),
-            settings, new Date(), agentInputs?.get(candidate.repo))
+        ? judgeStoredDocument(document, settings, new Date(), agentInputs?.get(candidate.repo))
         : null;
       const aiRejected = aiByCandidate.get(candidate.id)?.outcome?.decision === 'reject';
       // 사람만 가르는 사유는 규칙을 다시 태우면 통과로 나와 "보류가 아님"에 섞인다 — 사유 그대로 묶는다
@@ -336,8 +337,7 @@ export async function requeueResolvedCandidates(actor: string, limit = REVIEW_QU
   for (const candidate of candidates) {
     const document = documents.find(row => row.repo === candidate.repo);
     if (!document) continue;
-    const verdict = judge(factsFromRepoMeta(candidate.repo, document.repoMeta),
-      pageFactsFromDocument(document), settings, new Date(), agentInputs?.get(candidate.repo));
+    const verdict = judgeStoredDocument(document, settings, new Date(), agentInputs?.get(candidate.repo));
     if (verdict.state !== 'needs_review') resolved.push({ id: candidate.id, reason: `${verdict.state}:${verdict.reason}` });
   }
   if (!resolved.length) return { scanned: candidates.length, requeued: 0, byReason: [] };
@@ -531,8 +531,7 @@ export async function listAdminReviewEntries(settings: CrawlSettings, options: {
     const input = inputs[index];
     const document = documents.find(row => row.repo === candidate.repo);
     const recomputed = document
-      ? judge(factsFromRepoMeta(candidate.repo, document.repoMeta), pageFactsFromDocument(document),
-          settings, new Date(), agentInputs?.get(candidate.repo))
+      ? judgeStoredDocument(document, settings, new Date(), agentInputs?.get(candidate.repo))
       : null;
     const attempts = current.filter(row => row.candidateId === candidate.id);
     const last = latest.find(row => row.candidateId === candidate.id);

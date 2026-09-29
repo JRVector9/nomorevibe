@@ -12,7 +12,7 @@ import { BulkDecision } from "./BulkDecision";
 import { RequeueResolved } from "./RequeueResolved";
 import { ReviewConsole } from "./ReviewConsole";
 import { CAUSE_GUIDE, type CauseKey } from "./causes";
-import { heldStages, STAGE_GROUPS, STAGE_KEYS, STAGE_STATE, type StageKey } from "./stages";
+import { heldStages, stageHref, STAGE_GROUPS, STAGE_KEYS, STAGE_STATE, type StageKey } from "./stages";
 import { ListToolbar, UPDATED_DAYS, UPDATED_WINDOWS, type UpdatedWindow } from "./ListToolbar";
 import { pageWindow } from "../paging";
 import { publishedSecondReviews, secondReviewSummary } from "@/lib/crawl/second-review";
@@ -139,11 +139,9 @@ export default async function ReviewPage({ searchParams }: { searchParams: Promi
             {group.stages.map((item) => {
               const active = stage === item.key;
               const count = stageCount[item.key];
-              const toResult = !(item.key === 'ai' || item.key === 'second' || item.key === 'agreed' || item.key === 'human');
               return (
                 <Link key={item.key} aria-current={active ? 'page' : undefined}
-                  href={query({ stage: active ? undefined : item.key, state: undefined, page: 1,
-                    ...(toResult ? { cause: undefined, ai: undefined, second: undefined } : {}) })}
+                  href={stageHref(stage, item.key)}
                   className={`flex flex-col gap-0.5 rounded-lg border px-2.5 py-1.5 ${active ? 'border-accent bg-accent-soft' : 'border-line hover:bg-bg-hover'}`}>
                   <span className="flex items-baseline justify-between gap-2 text-[13px]">
                     <b className={`font-semibold ${active ? 'text-accent' : count === 0 ? 'text-fg-3' : 'text-fg'}`}>{item.label}</b>
@@ -211,6 +209,10 @@ export default async function ReviewPage({ searchParams }: { searchParams: Promi
       </details>
 
       {resolved && (!cause || cause === "resolved") ? <RequeueResolved count={resolved.count} /> : null}
+
+      <h2 id="review-list" className="scroll-mt-4 text-[15px] font-bold text-fg">
+        {stage ? `${STAGE_GROUPS.flatMap(group => group.stages).find(item => item.key === stage)?.label} · ${total.toLocaleString("ko-KR")}건` : `심사 후보 · ${total.toLocaleString("ko-KR")}건`}
+      </h2>
 
       {second !== 'published' && (
         <ListToolbar q={q} updated={updated} total={total} hiddenByAge={hiddenByAge}

@@ -59,9 +59,18 @@ npm run dev
 | `npm run build` | 프로덕션 빌드 (standalone) |
 | `npm run worker -- --role=crawler --once` | 주입된 환경변수로 크롤러 요청을 한 회차 소비 |
 | `npm run scheduler -- --once` | 주입된 환경변수로 주기가 도래한 DB 요청을 한 회차 접수 |
+| `node --import tsx scripts/check-worker-progress.ts` | 수집·심사·scheduler의 일감·저장 진행·생존 상태를 읽기 전용 JSON으로 확인 |
+| `node --import tsx scripts/check-failover-readiness.ts` | 다섯 역할의 주·예비/lease와 scheduler 2복제본 준비 상태를 진행 상태와 함께 확인 |
 | `npm run crawl:sample` | 판정 시험용 표본 수집 (GitHub 토큰 필요 — 아래 참조) |
 | `npm run crawl:rejudge` | 떠 놓은 표본으로 현재 판정 규칙 재판정 |
 | `npx drizzle-kit generate` / `migrate` | 마이그레이션 생성 / 적용 |
+
+maintenance의 `uptime-ping`은 기본 15건/분·서로 다른 origin 3곳 동시 확인이다.
+운영 처리량을 올릴 때는 `UPTIME_BATCH_SIZE=30`, `UPTIME_CONCURRENCY=4`부터 계측하고
+검증 뒤 상한 60/6까지 올린다. 같은 origin은 여전히 한 번에 하나만 열고 DB 기록은 직렬이다.
+자세한 단계와 6시간 backlog 확인은 운영 runbook을 따른다.
+2026-09-29 운영 maintenance 주·예비는 60/6으로 설정했고 5분 300건 저장을 확인했다.
+6시간 초과 대상의 장기 회복은 아직 관측 중이다.
 
 통합 테스트는 **개발 DB가 아닌 전용 DB**를 쓴다. 테이블을 비우므로 개발 DB를 가리키면
 작업 중인 데이터가 날아간다.
@@ -75,9 +84,14 @@ npm run test:integration
 
 ## GitHub CI와 변경 절차
 
-main push와 PR에서 `check`가 타입 생성·TypeScript·lint·단위 테스트·PostgreSQL 통합 테스트·빌드를
-실행한다. Actions 화면에서 수동 실행도 가능하다. 같은 PR의 새 커밋은 이전 실행을 취소하며,
-서로 다른 PR은 별도로 실행한다. 잡 제한은 20분이다. Actions는 Node 24 런타임의 고정 SHA를 사용한다.
+main push와 PR에서 필수 `check`를 항상 실행한다. `README.md`, `PENDING.md`, `docs/**`만 바뀌면
+변경 범위와 공백 오류를 확인하고 끝낸다. 코드·설정 변경이나 수동 실행은 타입 생성·TypeScript·lint·
+단위 테스트·빌드와 PostgreSQL 통합 테스트 3개 묶음을 병렬 실행한다. 묶음마다 별도 runner와
+전용 DB를 사용하고, 묶음 안에서는 파일을 직렬 실행한다. 같은 PR의 새 커밋은 이전 실행을 취소하며,
+서로 다른 PR은 별도로 실행한다. 코드 잡 제한은 20분이다. Actions는 Node 24 런타임의 고정 SHA를 사용한다.
+main의 코드 변경 `check`가 성공하면 arm64 웹·워커 이미지를 각각 한 번 빌드해 GHCR에 SHA 태그로
+올린다. 웹 이미지 `nomorevibe-runtime-web`은 빌드 키가 포함될 수 있으므로 비공개 패키지에
+발행한다. 배포할 때는 태그가 가리키는 digest를 확인해 같은 이미지를 여러 앱에 사용한다.
 
 main은 관리자에게도 PR과 최신 base의 `check` 성공을 요구한다. 강제 푸시·브랜치 삭제를 막고,
 리뷰 대화 해결을 요구한다. 공개 저장소의 secret scanning·push protection·Dependabot 보안 업데이트도
@@ -93,19 +107,42 @@ npm run test:integration    # localhost:55435의 nomorevibe_test 전용 DB
 npm run build
 ```
 
+CI의 3개 통합 테스트 묶음을 로컬에서 재현할 때는 각 명령에 **서로 다른 전용 DB**를 지정한다.
+같은 DB에서 묶음을 동시에 실행하면 테스트의 테이블 초기화가 서로 충돌한다.
+
+```bash
+TEST_DATABASE_URL=postgres://nomorevibe:nomorevibe@localhost:55435/nomorevibe_test npm run test:integration -- --shard=1/3
+# 2/3과 3/3은 각각 다른 포트의 별도 nomorevibe_test DB를 사용한다.
+```
+
 ## 운영 배포와 상태 확인
 
-운영은 Dokploy의 main 소스를 사용한다. M3에는 웹·scheduler·crawler·reviewer·publisher·text·maintenance,
-mini에는 두 번째 웹을 둬 총 8개 앱을 배포한다. 웹은 로드밸런서 뒤에서 동작하고 역할 워커는 M3에서만
-실행한다. 런타임 DB는 PgBouncer(6432), 별도 migration은 PostgreSQL 직접 연결(5432)을 사용한다.
+운영은 Dokploy를 사용한다. 웹 2개와 crawler·reviewer·publisher의 주·예비 6개는
+main CI가 만든 GHCR 이미지의 digest로 배포한다. scheduler·text·maintenance는
+계속 main Git 소스로 배포한다. M3에는 웹·scheduler(2복제본)·crawler·reviewer·publisher·text·maintenance,
+mini에는 두 번째 웹과 다섯 역할의 예비를 둬 총 13개 앱을 운영한다. 두 웹은 로드밸런서 뒤에서
+동작한다. 다섯 역할 모두 M3 주 후보가 작업하고 mini 예비는 같은 릴리스로 대기한다.
+2026-09-29 릴리스 `20208d3`에서 주 재시작·mini 인계·복귀와 crawler 문서, reviewer 심사,
+maintenance 점검, text 검수의 예비 저장을 확인했다. publisher 예비의 새 제품 발행은 적격 후보가
+없어 아직 확인하지 못했다. 역할 앱은 주·예비 이미지가 어긋나지 않도록 자동 배포를 끄고 함께 교체한다.
+런타임 DB는 PgBouncer(6432), 별도 migration은 PostgreSQL 직접 연결(5432)을 사용한다.
 
 PR의 GitHub CI 성공은 배포 완료를 뜻하지 않는다. [독립 워커 운영 절차](docs/operations/independent-workers-runbook.md)에
-따라 migration 종료 코드 0과 각 앱의 배포 소스 커밋·완료 상태를 확인하고 공개 페이지와 관리자 상태를 검증한다.
+따라 필요한 migration의 종료 코드 0과 각 앱의 이미지 digest 또는 소스 커밋·완료 상태를 확인하고
+공개 페이지와 관리자 상태를 검증한다.
+웹·crawler·reviewer·publisher 공통 이미지 릴리스는 운영 절차의
+`scripts/ops/deploy_shared_images.py`로 사전 검사, 순차 배포, 단계별 상태 확인을
+한 번에 실행할 수 있다. 실패한 단계에서 중단하고 권한 0600의 복구 스냅샷을 남긴다.
 `RELEASE_TAG`만 보고 최신 소스라고 판단하지 않는다. 실제 남은 운영 검증은 [PENDING.md](PENDING.md)에 기록한다.
 
 [관리자 상태](https://nomorevibe.brut.bot/admin/status)는 최근 구간의 수집·심사·발행·생존 확인 처리 속도와
 단계별 대기량, worker 생존, GitHub 대기, 마지막 실패를 함께 보여준다. 요청 접수·heartbeat 증가만으로
 수집 성공을 판단하지 않는다. 관리자 인증이 필요하다.
+독립 감시용 CLI는 같은 DB 관측을 JSON으로 내며 종료 코드 0은 정상·유휴·정책 중단, 1은 판별 불가,
+2는 작업 또는 워커 정체 경보다. 운영 주기 실행·외부 알림 연결은 별도 배포 검증 항목이다.
+새 failover CLI는 주 워커가 정상이어도 mini 예비의 관측이 60초 넘게 끊기면 경보로 기록한다.
+별도 `monitor` 이미지의 30초 감시와 Uptime Kuma Push 연동 절차는 운영 runbook에 있다.
+코드·이미지 검증과 운영 알림 수신 확인은 별개다.
 
 ## 구조
 
@@ -181,7 +218,8 @@ docker compose exec crawler node --import tsx scripts/run-job.ts crawl-fetch
 ```
 
 새 작업은 `lib/jobs/catalog.ts`에 이름·역할·주기를, `lib/jobs/registry.ts`에 핸들러를 추가한다.
-요청 버전과 실행 소유권으로 중복 실행과 실행 중 재요청 유실을 막는다. 운영은 역할당 워커 1개다.
+요청 버전과 실행 소유권으로 중복 실행과 실행 중 재요청 유실을 막는다.
+다섯 역할은 각각 주·예비 후보 중 역할 lease를 가진 1개만 작업한다.
 
 ## 수집 파이프라인
 
@@ -261,8 +299,27 @@ Compose `scheduler`가 10초마다 `lib/jobs/catalog.ts`의 주기를 확인해 
 AI 심사는 별도 `claude` CLI와 명시한 `CRAWL_REVIEW_MODEL`을 사용하며 기본 모델은 없다. 리뷰 실패는
 보류·재시도로 남고, `enforce`에서 유효 승인 없이 카테고리 폴백만으로 발행할 수 없다.
 
-수집기는 `GITHUB_TOKEN`이 있어야 돈다. 없으면 시간당 60회라 성립하지 않으므로 작업이 실패로
-남는다(`jobs.last_error`).
+관리자 `판정 기준`의 **자동 승인 최소 스타** 기본값은 500이다. 최근 24시간 안에 GitHub에서
+ID·공개 상태·스타 수를 확인한 500스타 이상 원본은 제품 적합성 규칙과 AI 1·2차 심사를 거치지
+않고 발행한다. 10만 스타 이상도 포함하며, 포크·보관 저장소·관리자 수동 거부·기존 등재/차단
+제품은 제외한다. 배포 주소가 없으면 공식 GitHub 저장소 주소를 쓴다. 기준 미만은 기존 심사
+절차를 따른다. 발행 전에 확인 자료가 24시간을 넘거나 관리자 기준이 바뀌면 후보를 다시
+판정하고, 만료된 자료는 먼저 GitHub에서 다시 수집한다. 과거 `스타 상한` 저장값은 호환
+목적으로만 남아 있고 판정에는 쓰지 않는다.
+과거 미발행 후보를 새 기준으로 다시 수집하는 절차는 운영 runbook을 따른다.
+
+수집기는 인증된 GitHub 토큰이 있어야 돈다. 기존 환경 `GITHUB_TOKEN` 또는
+`/admin/github-accounts`에 등록한 PAT를 사용한다. 관리자가 등록한 PAT는
+`GITHUB_COLLECTOR_SECRET`으로 암호화해 DB에 저장하며 이 키는 웹 2개와 수집 워커
+주·예비에 동일하게 설정한다. 등록 계정이 없어도 기존 환경 토큰은 계속 동작한다.
+토큰이 전혀 없으면 작업이 실패로 남는다(`jobs.last_error`).
+
+환경 토큰과 관리자 계정 PAT가 함께 있으면 GitHub API 요청 단위로 번갈아 사용하며, 한 계정의
+기본 한도가 소진되면 같은 요청을 다른 계정으로 시도한다. 수집 역할의 활성 워커는 한 대다.
+검색 결과의 `owner/name`은 대소문자를 무시해 프론티어에서 중복을 거르고, 가져온 GitHub
+원본의 숫자 `id`가 이미 다른 경로로 저장돼 있으면 새 원본·후보를 만들지 않고 프론티어에
+`skipped`와 `alias_of`를 기록한다. 이 검사는 같은 ID를 동시에 가져오는 경우에도 DB 잠금으로
+직렬화한다. 기존에 저장된 서로 다른 이름의 중복 원본은 자동 삭제하지 않는다.
 
 검색 신호는 두 종류다. **커밋 검색**(`Co-authored-by: Claude` 같은 트레일러)은 결과에 레포
 메타가 없어 배포 여부를 모른 채 프론티어에 넣고, 그중 상당수가 `no_homepage`로 거부된다(실측
@@ -406,7 +463,8 @@ npm run crawl:rejudge -- --out=.crawl-samples/after.json
 봐야 한다 — 실제로 이 방식으로 GitHub Pages 프로젝트 페이지가 통째로 거부되던 것과,
 이름이 `blog`인 개인 블로그가 `*-blog`를 통과하던 것을 잡았다.
 
-토큰은 `GITHUB_TOKEN` 환경변수만 쓴다. 로컬 `gh auth` 상태를 자동으로 읽지 않는다.
+토큰은 `GITHUB_TOKEN` 또는 관리자에 등록한 수집용 PAT만 쓴다. 로컬 `gh auth` 상태를
+자동으로 읽지 않는다. 같은 GitHub 사용자에게 발급한 PAT 여러 개는 한도를 공유한다.
 
 ## 클릭과 랭킹
 

@@ -2,6 +2,7 @@ import Link from "next/link";
 
 const PAGES = [
   { href: "/admin/status", label: "운영센터", hint: "서비스·작업 현황" },
+  { href: "/admin/github-accounts", label: "GitHub 수집 계정", hint: "토큰·한도 관리" },
   { href: "/admin/review", label: "심사 큐", hint: "후보 검토·승인" },
   { href: "/admin/products", label: "제품 관리", hint: "목록·제품 근거" },
   // /admin/products 아래에 두지 않는다 — 아래에 두면 제품 관리와 함께 선택된 것으로 보인다

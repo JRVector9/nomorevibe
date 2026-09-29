@@ -347,11 +347,12 @@ function httpClass(result: Extract<GitHubHttpResult<unknown>, { ok: false }>): s
   return result.error.kind;
 }
 
-/** rate limit이 알려준 재시도 시각. 그 밖의 실패는 자체 백오프를 쓰므로 null이다 */
+/** GitHub가 알려준 재시도 시각. 그 밖의 실패는 자체 백오프를 쓴다. */
 function rateLimitRetryAt(
   result: Extract<GitHubHttpResult<unknown>, { ok: false }>,
 ): Date | null {
-  return result.error.kind === "rate_limited" ? result.error.resetAt ?? null : null;
+  return result.error.kind === "rate_limited" || result.error.kind === "auth_unavailable"
+    ? result.error.resetAt ?? null : null;
 }
 
 async function persistReleases(

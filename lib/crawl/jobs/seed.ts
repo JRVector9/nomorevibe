@@ -174,7 +174,8 @@ export async function seedFrontier(ctx:JobContext<SeedCursor>):Promise<JobOutcom
         : await searchRepositories({query,page:cursor.page,sort:settings.discover.sort});
       if (!result.ok) {
         ctx.log('crawl.seed_failed',{signal:signal.label,error:result.error.kind});
-        const reset = result.error.kind === 'rate_limited' ? result.error.resetAt : null;
+        const reset = result.error.kind === 'rate_limited' || result.error.kind === 'auth_unavailable'
+          ? result.error.resetAt : null;
         cursor.retryAt = new Date(Math.max(Date.now()+60_000,reset?.getTime() ?? 0)).toISOString();
         return defer();
       }
@@ -214,7 +215,7 @@ export async function seedFrontier(ctx:JobContext<SeedCursor>):Promise<JobOutcom
         searchWindowFrom:new Date(window.from),searchWindowTo:new Date(window.to),
         incomplete:page.incomplete || page.saturated || page.capped || item.attributionLimited,
       }))),ctx.lease);
-      const added = await crawl.enqueue(batch.map(item => ({repo:item.repo,signal:signal.label,builder:null,priority:signal.priority})));
+      const added = await crawl.enqueue(batch.map(item => ({repo:item.repo,signal:signal.label,builder:null,priority:signal.priority})),ctx.lease);
       discovered += added;
       backlog += added;
       page.itemIndex += batch.length;

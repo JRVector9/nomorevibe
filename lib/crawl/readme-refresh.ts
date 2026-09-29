@@ -1,5 +1,6 @@
 import { fetchReadmeSample, readmeText } from "./readme";
 import { githubRequest, type GitHubFailure } from "./github";
+import { collectorTokens } from "./github-accounts";
 import { fetchCapped } from "@/lib/net/fetch";
 
 export type ReadmeRefreshResult = { ok: true; sample: string }
@@ -8,7 +9,8 @@ const failed = (error = "temporary", retryAfter: number | null = null): ReadmeRe
 function apiFailure(error: GitHubFailure, confirmedPublic = false): ReadmeRefreshResult {
   return error.kind === "not_found" && confirmedPublic ? { ok: true, sample: "" }
     : failed(error.kind === "http" ? `http_${error.status}` : error.kind,
-      error.kind === "rate_limited" ? error.resetAt?.getTime() ?? null : null);
+      error.kind === "rate_limited" || error.kind === "auth_unavailable"
+        ? error.resetAt?.getTime() ?? null : null);
 }
 
 /** One eight-second budget; authenticated fallback may only read a currently public repository. */
@@ -23,7 +25,7 @@ export async function fetchPublicReadme(repo: string, signal?: AbortSignal): Pro
   if (expired() || sample === null) return failed();
   if (sample) return { ok: true, sample };
   // GitHub supports README locations and casing beyond the common raw filenames.
-  if (!process.env.GITHUB_TOKEN?.trim()) return failed("no_token");
+  if ((await collectorTokens()).length === 0) return failed("no_token");
   const repository = await githubRequest<{ private?: boolean }>(`/repos/${repo}`, {}, { timeoutMs: remaining() });
   if (!repository.ok) return apiFailure(repository.error);
   if (repository.status !== 200 || repository.value.private !== false) return failed("not_public");

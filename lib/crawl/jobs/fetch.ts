@@ -11,6 +11,8 @@ import { extractSiteRepositoryKeys } from "@/lib/domain/evidence/providers/site-
 import { extractGithubLinks } from "@/lib/crawl/github-links";
 import { requeueAfterAdminEvidenceRefresh } from "@/lib/crawl/admin-review";
 import { requestJob } from "@/lib/jobs/control";
+import { assertJobLease } from "@/lib/jobs/control";
+import { db } from "@/lib/db";
 
 /**
  * 수집 잡 — 프론티어에서 꺼낸 레포의 원본을 확보한다.
@@ -50,20 +52,27 @@ export async function fetchCrawlDocuments(ctx: JobContext<null>): Promise<JobOut
     ctx.log("crawl.fetch_skipped", { reason: "disabled" });
     return { done: true };
   }
+  if (ctx.lease && ctx.hasBudget()) {
+    const recovered = await crawl.recoverAbandonedFrontier(ctx.lease);
+    if (recovered) ctx.log("crawl.fetch_recovered", { recovered });
+    const handedOff = await crawl.handOffFailedSourceRefreshes(ctx.lease);
+    if (handedOff) ctx.log("crawl.fetch_source_refresh_handed_off", { count: handedOff });
+  }
 
   const tally: Tally = { fetched: 0, skipped: 0, failed: 0 };
   const oneAtATime = originQueue();
 
   while (ctx.hasBudget()) {
-    const entries = await crawl.dequeue(BATCH);
+    const entries = ctx.lease ? await crawl.dequeue(BATCH, undefined, ctx.lease) : await crawl.dequeue(BATCH);
     if (entries.length === 0) {
       ctx.log("crawl.fetched", { ...tally, drained: true });
       return { done: true };
     }
 
-    const { retryAt } = await fetchBatch(entries, ctx, settings.judge.docsGenerators, oneAtATime, tally);
+    const { retryAt, pauseReason } = await fetchBatch(entries, ctx, settings.judge.docsGenerators, oneAtATime, tally);
     if (retryAt) {
-      ctx.log("crawl.fetch_rate_limited", { fetched: tally.fetched, resetAt: retryAt.toISOString() });
+      ctx.log(pauseReason === "auth_unavailable" ? "crawl.fetch_auth_unavailable" : "crawl.fetch_rate_limited",
+        { fetched: tally.fetched, resetAt: retryAt.toISOString() });
       return { done: false };
     }
   }
@@ -88,12 +97,13 @@ async function fetchBatch(
   docsGenerators: readonly string[],
   oneAtATime: OneAtATime,
   tally: Tally,
-): Promise<{ retryAt: Date | null }> {
+): Promise<{ retryAt: Date | null; pauseReason: "rate_limited" | "auth_unavailable" | null }> {
   // 여러 칸이 함께 고치는 상태라 한 객체에 둔다
   const batch = {
     next: 0,
     stopped: false,
     retryAt: null as Date | null,
+    pauseReason: null as "rate_limited" | "auth_unavailable" | null,
     needsJudgement: 0,
     /** 시작은 했지만 끝내지 못해 그대로 돌려줄 것 — 한도·예산 대기는 실패한 시도가 아니다 */
     giveBack: new Set<FrontierEntry>(),
@@ -111,15 +121,16 @@ async function fetchBatch(
           const entry = entries[batch.next++];
           const result = await getRepo(entry.repo);
           // 한도는 줄을 놓기 전에 알린다 — 뒤에 선 칸이 같은 한도에 요청을 또 쓰지 않도록
-          if (!result.ok && result.error.kind === "rate_limited") batch.stopped = true;
+          if (!result.ok && (result.error.kind === "rate_limited" || result.error.kind === "auth_unavailable")) batch.stopped = true;
           return { entry, result };
         });
         if (!started) return;
 
         const outcome = await fetchEntry(started.entry, started.result, ctx, docsGenerators, oneAtATime);
-        if (outcome.kind === "rate_limited") {
+        if (outcome.kind === "paused") {
           batch.stopped = true;
           if (!batch.retryAt || outcome.retryAt > batch.retryAt) batch.retryAt = outcome.retryAt;
+          batch.pauseReason = outcome.reason;
           batch.giveBack.add(started.entry);
         } else if (outcome.kind === "deferred") {
           batch.stopped = true;
@@ -144,20 +155,30 @@ async function fetchBatch(
 
   const unfinished = entries.filter((entry, index) => index >= batch.next || batch.giveBack.has(entry));
   if (unfinished.length > 0) {
-    if (batch.retryAt) await crawl.deferFrontier(unfinished, batch.retryAt);
+    if (batch.retryAt) {
+      if (ctx.lease) await crawl.deferFrontier(unfinished, batch.retryAt, ctx.lease);
+      else await crawl.deferFrontier(unfinished, batch.retryAt);
+    } else if (ctx.lease) await crawl.deferFrontier(unfinished, undefined, ctx.lease);
     else await crawl.deferFrontier(unfinished);
   }
-  if (batch.needsJudgement > 0) await requestJob("crawl-judge");
+  if (batch.needsJudgement > 0) {
+    const lease = ctx.lease;
+    if (lease) await db.transaction(async tx => {
+      await assertJobLease(tx, lease);
+      await requestJob("crawl-judge", tx);
+    });
+    else await requestJob("crawl-judge");
+  }
 
   const failure = lanes.find((settled): settled is PromiseRejectedResult => settled.status === "rejected");
   if (failure) throw failure.reason;
-  return { retryAt: batch.retryAt };
+  return { retryAt: batch.retryAt, pauseReason: batch.pauseReason };
 }
 
 type EntryOutcome =
   | { kind: "fetched"; needsJudgement: boolean }
   | { kind: "skipped" | "failed" | "lost" | "deferred" }
-  | { kind: "rate_limited"; retryAt: Date };
+  | { kind: "paused"; reason: "rate_limited" | "auth_unavailable"; retryAt: Date };
 
 /** GitHub 응답을 받은 항목 하나를 끝낸다. 실패는 여기서 항목별로 남긴다 */
 async function fetchEntry(
@@ -168,18 +189,21 @@ async function fetchEntry(
   oneAtATime: OneAtATime,
 ): Promise<EntryOutcome> {
   if (!result.ok) {
-    if (result.error.kind === "rate_limited") {
-      return { kind: "rate_limited", retryAt: result.error.resetAt ?? new Date(Date.now() + 60_000) };
+    if (result.error.kind === "rate_limited" || result.error.kind === "auth_unavailable") {
+      return { kind: "paused", reason: result.error.kind,
+        retryAt: result.error.resetAt ?? new Date(Date.now() + (result.error.kind === "auth_unavailable" ? 15 * 60_000 : 60_000)) };
     }
     if (result.error.kind === "not_found") {
       // 지워졌거나 비공개로 바뀌었다 — 다시 시도할 이유가 없다
-      await crawl.markFrontier(entry.repo, "skipped", entry);
+      if (ctx.lease) await crawl.markFrontier(entry.repo, "skipped", entry, ctx.lease);
+      else await crawl.markFrontier(entry.repo, "skipped", entry);
       return { kind: "skipped" };
     }
     const reason = result.error.kind === "http"
       ? `GitHub ${result.error.status}`
       : `GitHub ${result.error.kind}`;
-    await crawl.markFailed(entry.repo, reason, undefined, entry);
+    if (ctx.lease) await crawl.markFailed(entry.repo, reason, undefined, entry, ctx.lease);
+    else await crawl.markFailed(entry.repo, reason, undefined, entry);
     return { kind: "failed" };
   }
 
@@ -196,7 +220,8 @@ async function fetchEntry(
        * 번지던 때는 markFailed가 불리지 않아, 항목이 fetching으로 남았다 10분 뒤 회수되기를
        * 반복했고 최대 시도 횟수가 영영 걸리지 않았다(codex 재현).
        */
-      await crawl.markFailed(entry.repo, `페이지 본문 수신 실패 — ${describeError(error)}`, undefined, entry);
+      if (ctx.lease) await crawl.markFailed(entry.repo, `페이지 본문 수신 실패 — ${describeError(error)}`, undefined, entry, ctx.lease);
+      else await crawl.markFailed(entry.repo, `페이지 본문 수신 실패 — ${describeError(error)}`, undefined, entry);
       return { kind: "failed" };
     }
   }
@@ -213,7 +238,11 @@ async function fetchEntry(
     ctx.log("crawl.fetch_claim_lost", { repo: entry.repo });
     return { kind: "lost" };
   }
-  await requeueAfterAdminEvidenceRefresh(entry.repo);
+  if (saved.duplicateOf) {
+    ctx.log("crawl.fetch_repository_alias", { repo: entry.repo, existingRepo: saved.duplicateOf });
+    return { kind: "skipped" };
+  }
+  await requeueAfterAdminEvidenceRefresh(entry.repo, ctx.lease);
   return { kind: "fetched", needsJudgement: saved.needsJudgement };
 }
 

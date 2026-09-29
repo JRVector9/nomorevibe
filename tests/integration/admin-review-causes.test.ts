@@ -60,6 +60,20 @@ it('갈래로 거르면 그 갈래의 후보만 나온다', async () => {
   expect(entries.map((entry) => entry.candidate.repo)).toEqual(['acme/pending']);
 });
 
+it('자동 처리 종료 후보를 사람 판단 갈래에 남기고 재판정으로 되돌리지 않는다', async () => {
+  await held('acme/first-failed', 'https://first.test', 200);
+  await held('acme/source-failed', 'https://source.test', 200);
+  await db.update(crawlCandidates).set({ reason: 'ai_review_exhausted' })
+    .where(eq(crawlCandidates.repo, 'acme/first-failed'));
+  await db.update(crawlCandidates).set({ reason: 'source_refresh_failed' })
+    .where(eq(crawlCandidates.repo, 'acme/source-failed'));
+
+  const causes = await reviewQueueCauses(await getSettings());
+  expect(causes.ids.get('ai_review_exhausted')).toHaveLength(1);
+  expect(causes.ids.get('source_refresh_failed')).toHaveLength(1);
+  expect(await requeueResolvedCandidates('test')).toMatchObject({ requeued: 0 });
+});
+
 it('심사 항목마다 어디까지 통과하고 어디서 멈췄는지가 실린다', async () => {
   await held('tmokmss/my-ambient-agents', 'https://tmokmss.github.io/my-ambient-agents', 200);
 
@@ -76,17 +90,32 @@ it('심사 항목마다 어디까지 통과하고 어디서 멈췄는지가 실�
 
 it('기준이 바뀌면 저장된 판정과 다르다고 알린다', async () => {
   await held('acme/big', 'https://big.test', 200);
-  // 판정 뒤에 스타 상한을 0으로 낮추면 지금 기준으로는 거부다
-  await saveSettings({ judge: { maxStars: 0 } }, 'fixture');
+  // 판정 뒤에 하한을 올리면 지금 기준으로는 거부다
+  await saveSettings({ judge: { minStars: 4 } }, 'fixture');
 
   const { entries } = await listAdminReviewEntries(await getSettings(), { state: 'needs_review' });
   expect(entries[0].verdict).toMatchObject({ state: 'rejected', reason: 'large_oss', matchesStored: false });
 });
 
+it('검증된 500스타 원본은 관리자 심사 화면에서도 자동 승인으로 표시한다', async () => {
+  await held('acme/popular', 'https://acme.github.io/popular', 200, 500);
+  await db.update(crawlDocuments).set({ repoMeta: {
+    id: 101, full_name: 'acme/popular', private: false, fork: false, archived: false,
+    stargazers_count: 500, description: '배포한 서비스', pushed_at: new Date().toISOString(), owner: { type: 'User' },
+  } }).where(eq(crawlDocuments.repo, 'acme/popular'));
+
+  const settings = await getSettings();
+  const { entries } = await listAdminReviewEntries(settings, { state: 'needs_review' });
+  expect(entries[0].verdict).toMatchObject({ state: 'approved', reason: 'passed', matchesStored: false });
+  expect(entries[0].verdict?.signals.starAutoApproval).toMatchObject({ stars: 500, githubId: 101 });
+  expect((await reviewQueueCauses(settings)).counts).toEqual([{ cause: 'resolved', count: 1 }]);
+  expect(await requeueResolvedCandidates('test')).toMatchObject({ requeued: 1 });
+});
+
 it('지금 기준으로는 보류가 아닌 것과 원본이 없어 못 되짚는 것을 가른다', async () => {
   await held('acme/stale', 'https://stale.test', 200);
   // 판정 뒤에 기준이 바뀌어 지금은 거부다 — 사람이 볼 필요가 없다
-  await saveSettings({ judge: { maxStars: 0 } }, 'fixture');
+  await saveSettings({ judge: { minStars: 4 } }, 'fixture');
   // 원본이 없어 규칙 자체를 되짚을 수 없는 후보
   await crawl.recordJudgement({ repo: 'acme/orphan', productUrl: 'https://orphan.test', state: 'needs_review', reason: 'ambiguous', decidedBy: 'auto' });
 
@@ -104,9 +133,9 @@ it('지금 기준으로는 보류가 아닌 것과 원본이 없어 못 되짚�
 
 it('지금 기준으로는 보류가 아닌 것만 판정 대기로 되돌린다 — 지우지 않는다', async () => {
   await held('acme/stale', 'https://stale.test', 200);
-  // 스타 0이라 아래 maxStars:0 에 걸리지 않는다 — 규칙 순서상 스타가 호스트 패턴보다 앞이다
-  await held('acme/still', 'https://still.github.io/still', 200, 0);
-  await saveSettings({ judge: { maxStars: 0 } }, 'fixture'); // stale 은 이제 거부로 갈린다
+  // 스타 10인 후보는 하한을 통과하고 기존 호스트 보류로 남는다
+  await held('acme/still', 'https://still.github.io/still', 200, 10);
+  await saveSettings({ judge: { minStars: 4 } }, 'fixture'); // stale 은 이제 거부로 갈린다
 
   const result = await requeueResolvedCandidates('테스트');
   expect(result).toMatchObject({ requeued: 1, byReason: [{ reason: 'rejected:large_oss', count: 1 }] });
@@ -121,7 +150,7 @@ it('지금 기준으로는 보류가 아닌 것만 판정 대기로 되돌린다
 it('사람이 결정한 후보는 되돌리지 않는다', async () => {
   await held('acme/decided', 'https://decided.test', 200);
   await db.update(crawlCandidates).set({ decidedBy: 'admin' });
-  await saveSettings({ judge: { maxStars: 0 } }, 'fixture');
+  await saveSettings({ judge: { minStars: 4 } }, 'fixture');
 
   expect(await requeueResolvedCandidates('테스트')).toMatchObject({ requeued: 0 });
   expect((await db.select().from(crawlCandidates))[0].state).toBe('needs_review');

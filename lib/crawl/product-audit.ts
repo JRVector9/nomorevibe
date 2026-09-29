@@ -217,13 +217,17 @@ export async function recordAuditResult(call: AuditCall & (
 }
 
 /** 물을 것이 하나도 남지 않았으면 닫는다. 물러나기 중인 것이 있으면 아직 열어 둔다 */
-export async function finishAuditCampaign(campaignId: number): Promise<boolean> {
-  const rows = await db.update(productAuditCampaigns).set({ status: "done", finishedAt: sql`now()` })
+export async function finishAuditCampaign(campaignId: number, lease?: JobLease): Promise<boolean> {
+  const rows = await db.transaction(async tx => {
+    const saved = await tx.update(productAuditCampaigns).set({ status: "done", finishedAt: sql`now()` })
     .where(and(eq(productAuditCampaigns.id, campaignId), eq(productAuditCampaigns.status, "running"),
       sql`not exists (${db.select({ id: productAuditItems.id }).from(productAuditItems)
         .innerJoin(products, eq(products.id, productAuditItems.productId))
         .where(and(eq(productAuditItems.campaignId, campaignId), unanswered, listed))})`))
-    .returning({ id: productAuditCampaigns.id });
+      .returning({ id: productAuditCampaigns.id });
+    if (lease) await assertJobLease(tx, lease);
+    return saved;
+  });
   return rows.length > 0;
 }
 

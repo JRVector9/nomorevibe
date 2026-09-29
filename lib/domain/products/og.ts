@@ -1,5 +1,6 @@
 import { safeFetch, readBodyCapped, type FetchMode } from "@/lib/net/fetch";
 import * as repo from "./repository";
+import type { JobLease } from "@/lib/jobs/control";
 
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024; // 5MB
 const ALLOWED_TYPES = new Set(["image/jpeg", "image/png", "image/webp", "image/gif"]);
@@ -13,7 +14,7 @@ const ALLOWED_TYPES = new Set(["image/jpeg", "image/png", "image/webp", "image/g
  * background다 — 발행이 interactive로 받으면 느린 리다이렉트가 이어질 때 발행 워커를 최대 60초
  * 붙잡는다(codex가 짚음).
  */
-export async function cacheOgImage(imageUrl: string, slug: string, mode: FetchMode = "interactive"): Promise<string | null> {
+export async function cacheOgImage(imageUrl: string, slug: string, mode: FetchMode = "interactive", lease?: JobLease): Promise<string | null> {
   try {
     const fetched = await safeFetch(imageUrl, mode);
     if (!fetched) return null;
@@ -28,7 +29,7 @@ export async function cacheOgImage(imageUrl: string, slug: string, mode: FetchMo
     const buf = await readBodyCapped(fetched.response, MAX_IMAGE_BYTES + 1);
     if (buf.length === 0 || buf.length > MAX_IMAGE_BYTES) return null;
 
-    await repo.putOgImage(slug, type, buf);
+    await repo.putOgImage(slug, type, buf, lease);
     return `/api/og-cache/${slug}`;
   } catch {
     return null;
