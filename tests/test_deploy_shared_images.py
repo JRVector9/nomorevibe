@@ -1,7 +1,11 @@
 """Safety checks for the production release operator tool."""
 
 import importlib.util
+import io
+import os
+import tempfile
 import unittest
+from contextlib import redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
@@ -26,6 +30,14 @@ class FakeClient:
 
     def request(self, path, payload=None):
         self.requests.append(path)
+        if payload and path in ('application.saveEnvironment', 'application.saveDockerProvider'):
+            short = next(name for name, metadata in release.APPS.items()
+                         if metadata[0] == payload['applicationId'])
+            if path == 'application.saveEnvironment':
+                self.apps[short].update({key: payload[key] for key in
+                                         ('env', 'buildArgs', 'buildSecrets')})
+            else:
+                self.apps[short]['dockerImage'] = payload['dockerImage']
 
 
 class ReleaseSafetyTests(unittest.TestCase):
@@ -110,7 +122,8 @@ class ReleaseSafetyTests(unittest.TestCase):
             return {'app': short}
         with patch.object(release, 'save_snapshot'), \
              patch.object(release, 'stage_and_deploy', side_effect=stage), \
-             patch.object(release, 'monitor_gate', side_effect=TimeoutError('publisher_gate')):
+             patch.object(release, 'monitor_gate', side_effect=TimeoutError('publisher_gate')), \
+             redirect_stdout(io.StringIO()):
             with self.assertRaisesRegex(TimeoutError, 'publisher_gate'):
                 release.deploy(None, self.target, 'token',
                                {'apps': {}, 'previous': {'sha': self.old_sha}},
@@ -122,6 +135,27 @@ class ReleaseSafetyTests(unittest.TestCase):
                          '# a\nRELEASE_TAG=' + self.new_sha + '\n')
         with self.assertRaisesRegex(ValueError, 'RELEASE_TAG_line_count_2'):
             release.replace_setting('RELEASE_TAG=1\nRELEASE_TAG=2\n', 'RELEASE_TAG', self.new_sha)
+
+    def test_snapshot_is_private_and_restore_uses_previous_digest(self):
+        apps = self.apps()
+        current = apps['publisher-mini']
+        current['dockerImage'] = self.target['worker']
+        current['env'] = 'RELEASE_TAG=' + self.new_sha + '\n'
+        previous = {'sha': self.old_sha, 'worker': self.old_worker, 'web': self.old_web}
+        original = dict(current, dockerImage=self.old_worker,
+                        env='RELEASE_TAG=' + self.old_sha + '\n')
+        client = FakeClient(apps)
+        with tempfile.TemporaryDirectory() as directory:
+            path = str(Path(directory) / 'snapshot.json')
+            release.save_snapshot(path, self.target,
+                                  {'previous': previous, 'apps': {'publisher-mini': original}})
+            self.assertEqual(os.stat(path).st_mode & 0o777, 0o600)
+            with patch.object(release, 'check_app_deployed', return_value={'app': 'publisher-mini'}) as gate:
+                result = release.restore(client, path, 'publisher-mini', 'token')
+            self.assertEqual(result['app'], 'publisher-mini')
+            self.assertEqual(client.requests, ['application.saveEnvironment',
+                                               'application.saveDockerProvider', 'application.deploy'])
+            gate.assert_called_once_with(client, 'publisher-mini', previous, 'old')
 
 
 if __name__ == '__main__':

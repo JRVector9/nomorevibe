@@ -1,4 +1,4 @@
-# 2026-09-29 20:29 KST — 공통 이미지 배포의 단계별 확인 자동화 구현, PR 전 검증
+# 2026-09-29 20:37 KST — 공통 이미지 배포의 단계별 확인 자동화 구현, PR 최신 검사 대기
 
 ## Current objective / completed work
 
@@ -7,8 +7,9 @@
 `feat/deployment-verification-automation`에서 8개 앱의 사전 확인, 순차 배포,
 각 앱의 Dokploy·Swarm·컨테이너 상태, 역할 쌍의 failover/progress, 웹의 직접·공개
 health를 자동으로 기다리는 운영자 CLI를 작성했다. 실패하면 뒤 앱을 배포하지
-않고 설정 스냅샷에서 개별 앱을 복구하는 `restore` 명령을 제공한다. 아직 PR·
-main 빌드·새 릴리스 실제 배포는 하지 않았다. 루트 checkout의 사용자 변경과
+않고 설정 스냅샷에서 개별 앱을 복구하는 `restore` 명령을 제공한다. PR #238을
+열었고 첫 hosted CI와 GitGuardian은 성공했다. 최신 추가 테스트의 CI,
+main 빌드·새 릴리스 실제 배포는 아직 하지 않았다. 루트 checkout의 사용자 변경과
 운영 DB 서버·스트리밍은 건드리지 않았다.
 
 ## Modified files / key design decisions
@@ -27,13 +28,14 @@ mini→M3, 웹 mini→M3 순서로 진행한다. 새 deployment ID만으로 성�
 
 ## Test commands and results / failed approaches
 
-`python3 -m unittest tests/test_deploy_shared_images.py -v` 7/7 통과,
+`python3 -m unittest tests/test_deploy_shared_images.py -v` 8/8 통과,
 `python3 -m py_compile scripts/ops/deploy_shared_images.py`,
 `actionlint .github/workflows/ci.yml`, `git diff --check` 종료 0.
 실제 운영의 현재 릴리스를 읽기 전용으로 조사해 8개 앱의 Docker service·실행
 컨테이너 digest/health, baseline 8개, crawler failover/progress `ok`, 공개
 웹의 M3·mini 응답, 두 서버의 기존 digest pull과 웹 이미지 서버 액션 빌드 키
 일치를 확인했다. 새 코드의 실제 `run`은 아직 실행하지 않았다.
+PR #238 첫 hosted `quality`, 통합 3분할, 필수 `check`, GitGuardian은 성공했다.
 
 첫 remote probe는 웹에 Docker healthcheck가 있다고 가정해 웹을 잘못
 `not ready`로 분류했다. 웹은 컨테이너 직접 `/api/health`로 판정하게 고쳤다.
