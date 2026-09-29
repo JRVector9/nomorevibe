@@ -22,7 +22,11 @@ scheduler는 M3에서 2복제본이다. 공개 GitHub main은 최신 base의 CI 
   빌드 키를 회전했다. 이미지 pull 자격 정보는 현재 운영자가 가진 GitHub 계정
   토큰을 사용한다. 별도 최소 권한 토큰으로 교체하고 만료·철회 시 pull 실패 알림과
   다음 릴리스의 재배포를 확인해야 한다. 24시간 처리/헬스 추세는 아직 관측 중이다
-  ([운영 기록](docs/operations/2026-09-29-deployment-speed-rollout.md)).
+  ([첫 운영 기록](docs/operations/2026-09-29-deployment-speed-rollout.md)).
+  이어서 main `5d67b23`의 공통 이미지를 자동 게이트로 8개 앱에 배포했고
+  첫 앱부터 마지막 앱까지 89.45초, 모든 단계의 digest·health·failover 확인을
+  마쳤다. 게이트 실패 후 실제 운영 복구는 아직 주입하지 않았다
+  ([자동화 운영 기록](docs/operations/2026-09-29-deployment-verification-automation-rollout.md)).
 
 - **500스타 자동 승인 장기 관측**: PR #231의 웹·crawler·reviewer·publisher
   주/예비 8개 앱을 같은 main 커밋으로 배포했다. 기존 92건 중 88건 발행,
