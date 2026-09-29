@@ -7,7 +7,7 @@ import { getSettings } from "@/lib/crawl/settings";
 import { judgeStoredDocument } from "@/lib/crawl/rules";
 import { isReviewCandidate, REVIEW_RULES_VERSION, type ReviewOutcome } from "@/lib/crawl/agent-review-contract";
 import { listReviewCandidates, loadReviewInput, claimAgentReview, recordAgentReview,
-  requeueStaleReviewSources } from "@/lib/crawl/agent-review-repository";
+  requeueStaleReviewSources, handOffExhaustedFirstReviews } from "@/lib/crawl/agent-review-repository";
 import { firstReviewer, reviewWithAgent, REVIEW_CLI_TIMEOUT_MS } from "@/lib/crawl/agent-review";
 import { reviewWithGateway, REVIEW_GATEWAY_TIMEOUT_MS } from "@/lib/crawl/agent-review-gateway";
 
@@ -32,6 +32,8 @@ export async function reviewCrawlCandidates(ctx: JobContext<null>): Promise<JobO
   const concurrency = Math.min(settings.reviewConcurrency || 2, MAX_CONCURRENT_REVIEWS);
   const requeued = await requeueStaleReviewSources(settings, lease, 20);
   if (requeued) ctx.log("crawl.agent_review_sources_queued", { count: requeued });
+  const handedOff = await handOffExhaustedFirstReviews(settings, lease, 20);
+  if (handedOff) ctx.log("crawl.agent_review_exhausted_handed_off", { count: handedOff });
   const candidates = await listReviewCandidates(settings, Math.max(20, concurrency * 2));
   if (!candidates.length) return { done: true };
   const remaining = () => TICK_MS - (Date.now() - startedAt);

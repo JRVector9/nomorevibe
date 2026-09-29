@@ -1,5 +1,6 @@
 import type { ThroughputSnapshot, ThroughputStage, ThroughputStatus } from "@/lib/operations/throughput-model";
 import type { ProgressReason, SchedulerProgress, StageProgress, classifyLiveness } from "@/lib/operations/worker-progress";
+import Link from "next/link";
 import { LiveRefresh } from "./LiveRefresh";
 import styles from "./throughput.module.css";
 
@@ -15,6 +16,7 @@ const REASON_LABEL: Record<ProgressReason, string> = {
   backoff: "재시도 시각 대기", upstream_or_job_error: "최근 오류 기록 확인 필요",
   unknown_age: "대기 시각 확인 필요", warming_up: "판별 대기 중",
   worker_missing: "워커 관측 끊김", no_progress: "저장 진행 없음",
+  manual_attention: "자동 처리 종료 · 사람 확인 필요",
 };
 
 const count = (value: number) => value.toLocaleString("ko-KR");
@@ -52,7 +54,7 @@ export function ThroughputStrip({ snapshot, signals, scheduler, liveness }: {
     <div className={styles.heading}><h2 id="throughput-title">단계별 처리 속도</h2><LiveRefresh /></div>
     <p role="status">처리 속도를 불러오지 못했습니다. 다음 갱신에서 다시 확인합니다.</p>
   </section>;
-  const attention = snapshot.stages.filter((stage) => stage.status === "stalled" || stage.status === "backlog");
+  const attention = snapshot.stages.filter((stage) => stage.status === "stalled" || stage.status === "backlog" || (stage.manualAttention ?? 0) > 0);
   const measuredTime = new Date(snapshot.measuredAt).toLocaleTimeString("ko-KR", {
     timeZone: "Asia/Seoul", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false,
   });
@@ -70,7 +72,8 @@ export function ThroughputStrip({ snapshot, signals, scheduler, liveness }: {
       {attention.length > 0 && (
         <p className={styles.attention}>
           <strong>확인할 단계</strong>
-          {attention.map((stage) => <span key={stage.key}>{stage.label} · {STATUS_LABEL[stage.status]}</span>)}
+          {attention.map((stage) => <span key={stage.key}>{stage.label} · {(stage.manualAttention ?? 0) > 0
+            ? `직접 확인 ${count(stage.manualAttention ?? 0)}건` : STATUS_LABEL[stage.status]}</span>)}
         </p>
       )}
       {signals?.some(signal => signal.alarm) && <p className={styles.attention}>
@@ -96,10 +99,12 @@ export function ThroughputStrip({ snapshot, signals, scheduler, liveness }: {
         {snapshot.stages.map((stage, index) => {
           const state = runtimeState(stage, signals?.find(signal => signal.stage === stage.key), liveness);
           return (
-          <li key={stage.key} className={styles.stage} data-status={stage.status} aria-labelledby={`throughput-${stage.key}`}>
+          <li key={stage.key} className={styles.stage} data-status={stage.status}
+            data-manual={(stage.manualAttention ?? 0) > 0 ? "true" : undefined} aria-labelledby={`throughput-${stage.key}`}>
             <div className={styles.stageHeading}>
               <h3 id={`throughput-${stage.key}`}><span className={styles.step} aria-hidden="true">{index + 1}</span>{stage.label}</h3>
-              <span className={styles.status}>{stage.status === "idle" && stage.waiting === 0 ? "대기 없음" : STATUS_LABEL[stage.status]}</span>
+              <span className={styles.status}>{(stage.manualAttention ?? 0) > 0 && stage.waiting === 0
+                ? "직접 확인 필요" : stage.status === "idle" && stage.waiting === 0 ? "대기 없음" : STATUS_LABEL[stage.status]}</span>
             </div>
             <div className={styles.rate}>
               <div className={styles.current}><strong>{count(stage.completed1m)}</strong><span>{stage.unit}/1분</span></div>
@@ -110,6 +115,9 @@ export function ThroughputStrip({ snapshot, signals, scheduler, liveness }: {
               <div><dt>대기</dt><dd>{count(stage.waiting)}<span>{stage.unit}</span></dd></div>
               <div><dt>{stage.ageLabel ?? "가장 오래된 대기"}</dt><dd>{waitingTime(stage.oldestMinutes, stage.waiting)}</dd></div>
               {stage.errors5m !== null && <div><dt>5분 내 오류 기록</dt><dd data-error={stage.errors5m > 0 ? "true" : undefined}>{count(stage.errors5m)}<span>{stage.unit}</span></dd></div>}
+              {(stage.manualAttention ?? 0) > 0 && <div><dt>자동 처리 종료</dt><dd>
+                <Link href="/admin/review?stage=human#review-list">직접 확인 {count(stage.manualAttention ?? 0)}건</Link>
+              </dd></div>}
             </dl>
             {stage.queueNote && <p className={styles.queueNote}>{stage.queueNote}</p>}
           </li>

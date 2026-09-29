@@ -55,6 +55,8 @@ export async function fetchCrawlDocuments(ctx: JobContext<null>): Promise<JobOut
   if (ctx.lease && ctx.hasBudget()) {
     const recovered = await crawl.recoverAbandonedFrontier(ctx.lease);
     if (recovered) ctx.log("crawl.fetch_recovered", { recovered });
+    const handedOff = await crawl.handOffFailedSourceRefreshes(ctx.lease);
+    if (handedOff) ctx.log("crawl.fetch_source_refresh_handed_off", { count: handedOff });
   }
 
   const tally: Tally = { fetched: 0, skipped: 0, failed: 0 };

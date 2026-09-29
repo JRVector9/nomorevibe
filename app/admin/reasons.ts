@@ -17,5 +17,7 @@ export const REASON_LABELS: Record<string, string> = {
   source_changed: "발행 대상 URL 변경 — 재검토 필요",
   ai_evidence_supported: "개발 설정·기여 표기 확인",
   second_review_split: "2차 심사 갈림 — 사람 확인",
+  ai_review_exhausted: "1차 AI 심사 재시도 소진 — 사람 확인",
+  source_refresh_failed: "GitHub 원본 재수집 실패 — 사람 확인",
   no_description: "소개 문구 없음 — 사람 확인",
 };

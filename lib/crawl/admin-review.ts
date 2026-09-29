@@ -220,7 +220,8 @@ const REVIEW_QUEUE_SCAN_CHUNK = 1_000;
  */
 export type ReviewQueueBucket = AmbiguityCause | 'ai_reject' | 'resolved' | 'unknown' | HumanOnlyReason;
 /** AI 심사가 다시 집지 않고 사람만 가르는 보류 사유(2026-09-19) — 규칙으로 되돌려도 같은 곳에 다시 선다 */
-export const HUMAN_ONLY_REASONS = ['second_review_split', 'no_description'] as const;
+export const HUMAN_ONLY_REASONS = ['second_review_split', 'no_description',
+  'ai_review_exhausted', 'source_refresh_failed'] as const;
 export type HumanOnlyReason = typeof HUMAN_ONLY_REASONS[number];
 const isHumanOnly = (reason: string | null): reason is HumanOnlyReason => HUMAN_ONLY_REASONS.some((value) => value === reason);
 export type ReviewQueueCauses = {

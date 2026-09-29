@@ -47,6 +47,13 @@ it("matches the actual rules queue including documents without a candidate and r
   expect(await stage("judge")).toMatchObject({ waiting: 3, completed5m: 0, status: "stalled" });
 });
 
+it("counts human handoffs separately from executable collection and first-review work", async () => {
+  await candidate("manual/source", { state: "needs_review", reason: "source_refresh_failed" });
+  await candidate("manual/review", { state: "needs_review", reason: "ai_review_exhausted" });
+  expect(await stage("fetch")).toMatchObject({ waiting: 0, manualAttention: 1 });
+  expect(await stage("first")).toMatchObject({ waiting: 0, manualAttention: 1 });
+});
+
 it("separates fetch retry reservations from a stuck ready queue and recent error records", async () => {
   await db.insert(crawlFrontier).values([
     { signal: "test", repo: "fetch/old", state: "pending", discoveredAt: ago(600), updatedAt: ago(600), nextAttemptAt: ago(600) },

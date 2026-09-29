@@ -2,19 +2,19 @@ import type { ThroughputStage } from "./throughput-model";
 import { JOB_CATALOG } from "@/lib/jobs/catalog";
 
 export type ProgressReason = "paused" | "no_work" | "progressing" | "backoff" |
-  "upstream_or_job_error" | "unknown_age" | "warming_up" | "worker_missing" | "no_progress";
+  "upstream_or_job_error" | "unknown_age" | "warming_up" | "worker_missing" | "no_progress" | "manual_attention";
 export type StageProgress = { role: "crawler" | "reviewer" | "publisher"; stage: ThroughputStage["key"];
-  reason: ProgressReason; alarm: boolean };
+  reason: ProgressReason; alarm: boolean; manualAttention?: number };
 
 export function classifyStage(
-  stage: Pick<ThroughputStage, "key" | "enabled" | "waiting" | "oldestMinutes" | "completed5m" | "progress5m" | "errors5m">,
+  stage: Pick<ThroughputStage, "key" | "enabled" | "waiting" | "oldestMinutes" | "completed5m" | "progress5m" | "errors5m" | "manualAttention">,
   job: { notBefore: Date | null } | null,
   observed: boolean,
   now: Date,
 ): StageProgress {
   let reason: ProgressReason;
   if (!stage.enabled) reason = "paused";
-  else if (stage.waiting === 0) reason = "no_work";
+  else if (stage.waiting === 0) reason = (stage.manualAttention ?? 0) > 0 ? "manual_attention" : "no_work";
   else if ((stage.progress5m ?? stage.completed5m) > 0) reason = "progressing";
   else if (job?.notBefore && job.notBefore > now) reason = "backoff";
   else if (stage.errors5m !== null && stage.errors5m > 0) reason = "upstream_or_job_error";
@@ -22,7 +22,7 @@ export function classifyStage(
   else if (stage.oldestMinutes < (stage.key === "judge" ? 15 : stage.key === "publish" ? 10 : 5)) reason = "warming_up";
   else reason = observed ? "no_progress" : "worker_missing";
   return { role: stage.key === "fetch" ? "crawler" : stage.key === "publish" ? "publisher" : "reviewer", stage: stage.key,
-    reason, alarm: reason === "no_progress" || reason === "worker_missing" };
+    reason, alarm: reason === "no_progress" || reason === "worker_missing", manualAttention: stage.manualAttention ?? 0 };
 }
 
 export type SchedulerReason = "scheduled" | "unknown_schedule" | "worker_missing" | "scheduler_missed";

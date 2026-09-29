@@ -30,7 +30,7 @@ export async function pipelineThroughput(settings: CrawlSettings, now = new Date
     await tx.execute(sql`SET LOCAL statement_timeout = '3s'`);
     return tx.execute<{
     key: ThroughputStage["key"]; one: number; five: number; waiting: number;
-    oldest: number | null; errors: number | null; extra: number; progress: number;
+    oldest: number | null; errors: number | null; extra: number; progress: number; manual: number;
   }>(sql`
     WITH fetched AS (
       SELECT ${counts(sql`${crawlDocuments.fetchedAt}`)} FROM ${crawlDocuments}
@@ -84,6 +84,10 @@ export async function pipelineThroughput(settings: CrawlSettings, now = new Date
     ), published AS (
       SELECT ${counts(sql`${crawlPublicationChanges.occurredAt}`)} FROM ${crawlPublicationChanges}
       WHERE ${crawlPublicationChanges.delta} = 1 AND ${recent(sql`${crawlPublicationChanges.occurredAt}`, 5)}
+    ), manual_holds AS (
+      SELECT count(*) FILTER (WHERE ${crawlCandidates.reason} = 'source_refresh_failed')::int AS fetch,
+        count(*) FILTER (WHERE ${crawlCandidates.reason} = 'ai_review_exhausted')::int AS first
+      FROM ${crawlCandidates} WHERE ${crawlCandidates.state} = 'needs_review'
     ), publish_candidates AS MATERIALIZED (
       SELECT ${publishReady} AS ready, greatest(${crawlCandidates.updatedAt},
         (SELECT max(a.completed_at) FROM crawl_review_attempts a WHERE a.candidate_id = ${crawlCandidates.id}),
@@ -95,11 +99,13 @@ export async function pipelineThroughput(settings: CrawlSettings, now = new Date
         extract(epoch FROM (${at} - min(changed_at) FILTER (WHERE ready))) / 60 AS oldest,
         count(*) FILTER (WHERE NOT ready)::int AS extra FROM publish_candidates
     )
-    SELECT 'fetch' AS key, one, five, waiting, oldest, errors, extra, five AS progress FROM fetched CROSS JOIN fetch_queue
-    UNION ALL SELECT 'judge', one, five, waiting, oldest, NULL, 0, five FROM judged CROSS JOIN judge_queue
-    UNION ALL SELECT 'first', one, five, waiting, oldest, errors, extra, progress FROM first_done CROSS JOIN first_queue
-    UNION ALL SELECT 'second', one, five, waiting, oldest, errors, extra, five FROM second_stats
-    UNION ALL SELECT 'publish', one, five, waiting, oldest, NULL, extra, five FROM published CROSS JOIN publish_queue
+    SELECT 'fetch' AS key, one, five, waiting, oldest, errors, extra, five AS progress, manual_holds.fetch AS manual
+      FROM fetched CROSS JOIN fetch_queue CROSS JOIN manual_holds
+    UNION ALL SELECT 'judge', one, five, waiting, oldest, NULL, 0, five, 0 FROM judged CROSS JOIN judge_queue
+    UNION ALL SELECT 'first', one, five, waiting, oldest, errors, extra, progress, manual_holds.first
+      FROM first_done CROSS JOIN first_queue CROSS JOIN manual_holds
+    UNION ALL SELECT 'second', one, five, waiting, oldest, errors, extra, five, 0 FROM second_stats
+    UNION ALL SELECT 'publish', one, five, waiting, oldest, NULL, extra, five, 0 FROM published CROSS JOIN publish_queue
   `);
   }, { accessMode: "read only" });
 
@@ -120,6 +126,7 @@ export async function pipelineThroughput(settings: CrawlSettings, now = new Date
     const stage = {
       key: row.key, label: labels[row.key], unit: row.key === "second" ? "표" as const : "건" as const,
       completed1m: Number(row.one), completed5m: Number(row.five), progress5m: Number(row.progress), waiting: Number(row.waiting),
+      manualAttention: Number(row.manual),
       deferred: row.key === "fetch" ? extra : undefined,
       ageLabel: row.key === "first" ? "후보·원본 갱신 후" : row.key === "publish" ? "승인·심사 갱신 후" : "가장 오래된 대기",
       oldestMinutes: row.oldest === null ? null : Math.max(0, Number(row.oldest)),

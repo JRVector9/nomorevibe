@@ -23,6 +23,7 @@
 .stage[data-status="stalled"] { border-top-color: var(--down); }
 .stage[data-status="backlog"] { border-top-color: var(--warn); }
 .stage[data-status="processing"] { border-top-color: var(--up); }
+.stage[data-manual="true"] { border-top-color: var(--warn); }
 .stageHeading { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px; }
 .strip .stageHeading h3 { display: flex; align-items: center; gap: 6px; font-size: 14px; font-weight: 750; line-height: 1.5; margin: 0; }
 .step { font-size: 13px; color: var(--text-3); font-weight: 500; }
@@ -30,6 +31,7 @@
 .stage[data-status="stalled"] .status { color: var(--down); background: color-mix(in srgb, var(--down) 8%, var(--bg-card)); }
 .stage[data-status="backlog"] .status { color: var(--warn); background: color-mix(in srgb, var(--warn) 8%, var(--bg-card)); }
 .stage[data-status="processing"] .status { color: var(--up); background: color-mix(in srgb, var(--up) 8%, var(--bg-card)); }
+.stage[data-manual="true"] .status { color: var(--warn); background: color-mix(in srgb, var(--warn) 8%, var(--bg-card)); }
 .rate { margin-top: 18px; }
 .current { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px; font-variant-numeric: tabular-nums; }
 .current strong { font-size: 29px; font-weight: 800; line-height: 1.15; letter-spacing: -.5px; }
