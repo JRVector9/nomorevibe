@@ -155,6 +155,8 @@ describe("감사 잡", () => {
     await crawl.putDocument({ repo: "y/new", productUrl: "https://new.test", pageStatus: 200,
       repoMeta: { description: "새 것", stargazers_count: 1, pushed_at: new Date().toISOString(), owner: { type: "User" } },
       pageMeta: { title: "New", textSample: "새 앱" } });
+    await db.update(crawlDocuments).set({ fetchedAt: new Date(Date.now() - 1000) })
+      .where(eq(crawlDocuments.repo, "y/new"));
     await db.insert(crawlCandidates).values({ repo: "y/new", productUrl: "https://new.test", state: "approved", reason: "passed",
       decidedBy: "auto", judgedAt: new Date() });
     await start();

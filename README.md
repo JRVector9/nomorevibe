@@ -84,9 +84,13 @@ npm run test:integration
 
 ## GitHub CI와 변경 절차
 
-main push와 PR에서 `check`가 타입 생성·TypeScript·lint·단위 테스트·PostgreSQL 통합 테스트·빌드를
-실행한다. Actions 화면에서 수동 실행도 가능하다. 같은 PR의 새 커밋은 이전 실행을 취소하며,
-서로 다른 PR은 별도로 실행한다. 잡 제한은 20분이다. Actions는 Node 24 런타임의 고정 SHA를 사용한다.
+main push와 PR에서 필수 `check`를 항상 실행한다. `README.md`, `PENDING.md`, `docs/**`만 바뀌면
+변경 범위와 공백 오류를 확인하고 끝낸다. 코드·설정 변경이나 수동 실행은 타입 생성·TypeScript·lint·
+단위 테스트·빌드와 PostgreSQL 통합 테스트 3개 묶음을 병렬 실행한다. 묶음마다 별도 runner와
+전용 DB를 사용하고, 묶음 안에서는 파일을 직렬 실행한다. 같은 PR의 새 커밋은 이전 실행을 취소하며,
+서로 다른 PR은 별도로 실행한다. 코드 잡 제한은 20분이다. Actions는 Node 24 런타임의 고정 SHA를 사용한다.
+main의 코드 변경 `check`가 성공하면 arm64 웹·워커 이미지를 각각 한 번 빌드해 GHCR에 SHA 태그로
+올린다. 배포할 때는 태그가 가리키는 digest를 확인해 같은 이미지를 여러 앱에 사용한다.
 
 main은 관리자에게도 PR과 최신 base의 `check` 성공을 요구한다. 강제 푸시·브랜치 삭제를 막고,
 리뷰 대화 해결을 요구한다. 공개 저장소의 secret scanning·push protection·Dependabot 보안 업데이트도
@@ -100,6 +104,14 @@ npm run lint
 npm test
 npm run test:integration    # localhost:55435의 nomorevibe_test 전용 DB
 npm run build
+```
+
+CI의 3개 통합 테스트 묶음을 로컬에서 재현할 때는 각 명령에 **서로 다른 전용 DB**를 지정한다.
+같은 DB에서 묶음을 동시에 실행하면 테스트의 테이블 초기화가 서로 충돌한다.
+
+```bash
+TEST_DATABASE_URL=postgres://nomorevibe:nomorevibe@localhost:55435/nomorevibe_test npm run test:integration -- --shard=1/3
+# 2/3과 3/3은 각각 다른 포트의 별도 nomorevibe_test DB를 사용한다.
 ```
 
 ## 운영 배포와 상태 확인

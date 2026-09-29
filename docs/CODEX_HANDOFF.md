@@ -1,3 +1,69 @@
+# 2026-09-29 18:32 KST — CI 분할·공통 이미지 빌드 구현, PR 전 검증
+
+## Current objective / completed work
+
+사용자가 승인한 배포 시간 단축 우선순위 1·2·3을 진행한다. 별도 작업 트리
+`/private/tmp/nmv-deploy-speed-20260929`의 `feat/deployment-speed`에서 필수
+`check`를 유지한 변경 범위 판별, 독립 DB를 쓰는 통합 테스트 3분할,
+main 성공 후 웹/워커 arm64 이미지를 한 번씩 GHCR에 빌드하는 workflow를 작성했다.
+루트 checkout과 운영 DB 서버·스트리밍은 변경하지 않았다. PR·이미지 생성·Dokploy
+source 전환은 아직 하지 않았다.
+
+## Modified files / key decisions
+
+`.github/workflows/ci.yml`, `scripts/ci-scope.mjs`, `scripts/ci-scope.node-test.mjs`,
+`tests/integration/{setup,product-audit,review-publication-gate}.test.ts`, `README.md`,
+`docs/operations/independent-workers-runbook.md`,
+`docs/superpowers/{specs/2026-09-29-deployment-speed-design.md,
+plans/2026-09-29-deployment-speed.md}`, 이 파일.
+문서 경로만 변경되면 `scope`와 항상 실행하는 필수 `check`만 통과시킨다.
+코드 변경은 quality와 3개 DB 격리 integration을 병렬 실행한다. 운영 M3와 mini는
+모두 arm64이고 이미지 배포는 SHA 태그를 digest로 확인해 같은 digest를 재사용한다.
+기존 웹 두 앱의 동일한 32바이트 Actions 암호화 키를 값 노출 없이 GitHub Actions
+secret `NEXT_SERVER_ACTIONS_ENCRYPTION_KEY`에 등록했다.
+
+## Test commands and results / failed approaches
+
+`npm ci`, `npx next typegen`, `npx tsc --noEmit`, `npm run lint`, `npm test`,
+`DATABASE_URL=postgres://build:build@localhost:5432/build npm run build` 종료 코드 0.
+`actionlint .github/workflows/ci.yml`, `git diff --check`,
+`node --test scripts/ci-scope.node-test.mjs`(4/4) 통과.
+`TEST_DATABASE_URL=postgres://nomorevibe:nomorevibe@localhost:<전용포트>/nomorevibe_test
+npm run test:integration -- --shard=N/3`을 각 shard의 독립 PostgreSQL 17 DB에서
+실행했다. 1/3: 34파일 323개 통과, 2/3: 33파일 271개 통과,
+3/3: 33파일 352개 통과·1 TODO. 테스트 DB는 로컬 컨테이너
+`nmv-deploy-speed-db`(55445), `db2`(55446), `db3`(55447)에 격리했다.
+전체 기존 suite를 수정 전 새 DB에서 실행했을 때 11건 실패했고, 공통 초기화가
+감사 행을 남겨 뒤 테스트의 제품 ID에 붙는 것과 호스트/DB 시계 경계의 fixture
+불안정을 재현했다. 중앙 초기화에 감사 campaign을 넣고 두 fixture 시각을
+1초 이전으로 고쳐 세 shard 재실행을 통과시켰다. `vitest list --shard`는
+분할 목록을 보여주지 않아 검증 근거로 쓰지 않았다.
+
+기존 Dokploy `GHCR-deppy` 등록의 실제 `docker login`은 거부됐다. Dokploy
+registry 연결 API의 성공 응답은 pull 인증 검증이 아니었다. 현재 로컬 `gh auth`
+계정의 토큰으로 임시 Docker config 로그인은 성공했지만 운영 registry 자격 정보는
+아직 교체하지 않았다. 이미지가 올라오면 양 서버의 실제 pull을 확인한 뒤 전환한다.
+
+## Remaining work / exact commands for the next agent
+
+diff/계획을 최종 확인한다. 커밋·PR을 열어 hosted
+CI의 `check`와 분할 시간을 측정한 뒤 병합한다. main의 두 이미지 build, digest,
+GHCR pull 인증을 확인하고 예비→주→웹 순서로 운영 전환한다. 문서만 바뀌는 후속 PR에서
+빠른 필수 `check`를 실측한다. 각 단계 뒤 실제 이미지/커밋, 웹 health, failover
+readiness와 처리 진행을 확인하고 이 파일의 결과를 갱신한다.
+
+```sh
+cd /private/tmp/nmv-deploy-speed-20260929
+git status --short --branch
+actionlint .github/workflows/ci.yml
+node --test scripts/ci-scope.node-test.mjs
+git diff --check
+gh secret list --repo JRVector9/nomorevibe
+gh run list --repo JRVector9/nomorevibe --workflow ci.yml --limit 5
+```
+
+---
+
 # 2026-09-29 15:47 KST — 500스타 이상 자동 승인 배포 완료
 
 ## Current objective / completed work / modified files

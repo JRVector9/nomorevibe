@@ -14,10 +14,57 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  check:
+  scope:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      code_changed: ${{ steps.detect.outputs.code_changed }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+      - run: node --test scripts/ci-scope.node-test.mjs
+      - id: detect
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD_SHA: ${{ github.sha }}
+        run: node scripts/ci-scope.mjs
+
+  quality:
+    needs: scope
+    if: needs.scope.outputs.code_changed == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npx next typegen
+      - run: npx tsc --noEmit
+      - run: npm run lint
+      - run: npm test
+      - run: npm run build
+        env:
+          DATABASE_URL: postgres://build:build@localhost:5432/build
 
+  integration:
+    needs: scope
+    if: needs.scope.outputs.code_changed == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
     services:
       postgres:
         image: postgres:17
@@ -31,25 +78,124 @@ jobs:
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
-
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1, Node 24
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0, Node 24
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24
           cache: npm
-
       - run: npm ci
-      # PageProps 같은 라우트 전역 타입은 Next가 .next/types에 만든다.
-      # 새 체크아웃에는 그 파일이 없으므로 타입 검사 전에 먼저 생성한다.
-      - run: npx next typegen
-      - run: npx tsc --noEmit
-      - run: npm run lint
-      - run: npm test
-      - run: npm run test:integration
-      - run: npm run build
+      # Each runner owns a separate Postgres service; files within a shard stay serial.
+      - run: npm run test:integration -- --shard=${{ matrix.shard }}/3
+
+  check:
+    needs: [scope, quality, integration]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Required branch-protection result
         env:
-          # 빌드 중 페이지가 DB를 건드리지 않지만, 설정 누락으로 실패하지 않게 지정
-          DATABASE_URL: postgres://nomorevibe:nomorevibe@localhost:55435/nomorevibe_test
+          SCOPE_RESULT: ${{ needs.scope.result }}
+          CODE_CHANGED: ${{ needs.scope.outputs.code_changed }}
+          QUALITY_RESULT: ${{ needs.quality.result }}
+          INTEGRATION_RESULT: ${{ needs.integration.result }}
+        run: |
+          test "$SCOPE_RESULT" = success
+          if [ "$CODE_CHANGED" = true ]; then
+            test "$QUALITY_RESULT" = success
+            test "$INTEGRATION_RESULT" = success
+          elif [ "$CODE_CHANGED" = false ]; then
+            test "$QUALITY_RESULT" = skipped
+            test "$INTEGRATION_RESULT" = skipped
+          else
+            exit 1
+          fi
+
+  publish-worker-image:
+    needs: [scope, check]
+    if: >-
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
+      github.ref == 'refs/heads/main' &&
+      needs.scope.outputs.code_changed == 'true' && needs.check.result == 'success'
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: build
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: ./Dockerfile
+          target: worker
+          platforms: linux/arm64
+          push: true
+          tags: ghcr.io/jrvector9/nomorevibe-worker:${{ github.sha }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/JRVector9/nomorevibe
+            org.opencontainers.image.revision=${{ github.sha }}
+          cache-from: type=gha,scope=worker
+          cache-to: type=gha,scope=worker,mode=max
+      - name: Record worker digest
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          [[ "$DIGEST" =~ ^sha256:[a-f0-9]{64}$ ]]
+          printf 'worker image: ghcr.io/jrvector9/nomorevibe-worker@%s\n' "$DIGEST" >> "$GITHUB_STEP_SUMMARY"
+
+  publish-web-image:
+    needs: [scope, check]
+    if: >-
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
+      github.ref == 'refs/heads/main' &&
+      needs.scope.outputs.code_changed == 'true' && needs.check.result == 'success'
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: build
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: ./Dockerfile
+          target: runner
+          platforms: linux/arm64
+          push: true
+          tags: ghcr.io/jrvector9/nomorevibe-web:${{ github.sha }}
+          build-args: NEXT_DEPLOYMENT_ID=${{ github.sha }}
+          secrets: NEXT_SERVER_ACTIONS_ENCRYPTION_KEY=${{ secrets.NEXT_SERVER_ACTIONS_ENCRYPTION_KEY }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/JRVector9/nomorevibe
+            org.opencontainers.image.revision=${{ github.sha }}
+          cache-from: type=gha,scope=web
+          cache-to: type=gha,scope=web,mode=max
+      - name: Record web digest
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          [[ "$DIGEST" =~ ^sha256:[a-f0-9]{64}$ ]]
+          printf 'web image: ghcr.io/jrvector9/nomorevibe-web@%s\n' "$DIGEST" >> "$GITHUB_STEP_SUMMARY"
