@@ -1,3 +1,77 @@
+# 2026-09-29 19:46 KST — 배포 시간 단축 1·2·3 운영 전환 완료, 문서 PR 검증 대기
+
+## Current objective / completed work
+
+사용자가 요청한 (1) CI 병렬화, (2) 같은 SHA의 web/worker 공통 이미지 배포,
+(3) 문서 전용 빠른 CI를 적용했다. PR #234와 #235는 각각 main `202e9d7`,
+`cf64bc2`에 병합됐다. PR #234 필수 `check`는 2분 55초로 직전 PR #231의
+6분 27초보다 짧았고, PR #235 main `check`는 2분 53초로 이전 5분 3초보다
+짧았다. main의 두 이미지 작업까지는 4분 17초였다. Docker source로 바꾼
+운영 8개 앱의 실제 image digest, `RELEASE_TAG`, 배포 `done`을 확인했다.
+두 웹의 직접 및 공개 health, worker failover readiness/progress도 확인했다.
+문서 전용 PR의 hosted 빠른 경로 측정과 이 문서 변경의 병합이 남았다.
+
+## Modified files / key design decisions
+
+코드 변경은 PR #234/#235의 `.github/workflows/ci.yml`,
+`scripts/ci-scope.mjs`, `scripts/ci-scope.node-test.mjs`, 통합 테스트 fixture와
+`docs/superpowers/specs/2026-09-29-deployment-speed-design.md`에 있다.
+이번 문서 작업 트리 `/private/tmp/nmv-deploy-speed-docs-20260929`의
+`docs/deployment-speed-rollout`은 `README.md`, `PENDING.md`,
+`docs/operations/independent-workers-runbook.md`,
+`docs/operations/2026-09-29-deployment-speed-rollout.md`,
+`docs/superpowers/plans/2026-09-29-deployment-speed.md`, 이 파일을 수정한다.
+루트 checkout에는 다른 사용자 변경이 있어 건드리지 않는다.
+
+worker digest `ghcr.io/jrvector9/nomorevibe-worker@sha256:77f33353431c74be2886a0b3d5849fcf5e20cbaea722ecd45fcdefac183176d8`를
+crawler/reviewer/publisher 주·예비 6개가 공유한다. private web digest
+`ghcr.io/jrvector9/nomorevibe-runtime-web@sha256:b3a81e45d30c7720e5a90fa28de713c3ba496f84d17770b26d07bb4050164b39`를
+mini/M3 웹 2개가 공유한다. 8개 앱의 이전 source/env/build 백업은
+`/private/tmp/nmv-deploy-speed-app-snapshot.json`(0600)에 있다. DB 서버,
+스트리밍, migration은 변경하지 않았다. 웹 build/runtime key는 같은 새 값으로
+회전했고 `/private/tmp/nmv-next-actions-rotated-20260929.key`(0600)에 보관한다.
+
+## Test commands and results / failed approaches
+
+로컬 분류기 4/4, 독립 PostgreSQL 17 DB 3개를 쓴 통합 shard
+323/271/352개 통과와 기존 TODO 1개, `npx next typegen`, `npx tsc --noEmit`,
+`npm run lint`, `npm test`, `npm run build`, `actionlint`, `git diff --check`가
+통과했다. PR #234/#235 hosted 필수 `check`와 해당 main 이미지 작업이 성공했다.
+두 서버의 arm64 digest pull과 OCI revision을 확인했다. 8개 앱의 최신 deployment
+`done`, 실행 중 service의 digest·release 일치, 두 웹 직접 health `ok/db:ok`,
+공개 health 12회에서 M3 7·mini 5회 모두 새 SHA를 확인했다.
+10:38:59 UTC의 `check-failover-readiness.ts`와 `check-worker-progress.ts`는
+exit 0, 전체 `ok`였다. Dokploy 개별 배포 기록 합계는 6.103초이나 운영자가
+역할별로 확인해 첫 앱부터 마지막 앱까지 4분 12.8초로 이전 4분 7초보다 짧지 않았다.
+
+첫 `nomorevibe-web` 이미지가 public이며 server-reference manifest에 실제
+서버 액션 키를 포함한 것을 2,732개 파일 검사로 발견해 배포하지 않았다.
+패키지를 삭제하고 익명 접근 불가를 확인했으며 이전 키를 회전했다. 새 private
+`nomorevibe-runtime-web`은 빌드 전후 private/익명 차단을 확인했고 새 이미지에서
+이전 키가 발견되지 않았다. 기존 Dokploy `GHCR-deppy` 등록 토큰으로는 Docker
+login이 실패해 private web Docker provider에 검증된 운영 계정 pull 토큰을
+직접 설정했다. 외부에서 첫 이미지를 다운로드했는지는 알 수 없다.
+
+## Remaining work / exact commands for the next agent
+
+이번 문서 diff를 검토하고 commit/push 후 PR을 연다. hosted docs-only `check`의
+시간과 quality/integration/image skip을 확인하고 운영 기록·계획·handoff에
+실측을 추가한다. 문서 PR의 최신 base 필수 `check`와 GitGuardian 성공 뒤 병합한다.
+main 문서 push에서도 같은 skip을 확인한다. 이후 8개 앱 상태·공개 health를
+짧게 재확인한다. 별도 최소 권한 GHCR pull 토큰 교체와 24시간 운영 관측은
+`PENDING.md`에 남는다.
+
+```sh
+cd /private/tmp/nmv-deploy-speed-docs-20260929
+git status --short --branch
+git diff --check
+gh pr create --repo JRVector9/nomorevibe --base main --head docs/deployment-speed-rollout --title 'docs: record shared image rollout and deployment timing' --body-file /private/tmp/nmv-deployment-speed-pr-body.md
+gh run list --repo JRVector9/nomorevibe --workflow ci.yml --limit 5
+gh pr checks --repo JRVector9/nomorevibe <PR-number>
+```
+
+---
+
 # 2026-09-29 18:50 KST — 공개 웹 이미지의 빌드 키 노출 대응
 
 ## Current objective / completed work

@@ -8,11 +8,21 @@
 ## 현재 남은 운영 검증 — 2026-09-29
 
 첫 배포·운영 DB 연결·역할 워커 시작은 완료됐다. 서비스는 `https://nomorevibe.brut.bot`에서 운영하며,
-Dokploy의 M3 7개 앱과 mini 웹·다섯 역할 예비 6개 앱이 main 소스를 배포한다.
+Dokploy의 M3 7개 앱과 mini 웹·다섯 역할 예비 6개 앱이 운영된다. 웹과
+crawler·reviewer·publisher의 주·예비 8개 앱은 GHCR digest를 사용하고 나머지는
+main Git 소스를 사용한다.
 scheduler는 M3에서 2복제본이다. 공개 GitHub main은 최신 base의 CI `check` 성공과 PR을 요구한다.
 2026-09-29 릴리스 `20208d3`의 13개 앱 배포와 다섯 역할의 주/예비 인계를 확인했다.
 
 남은 항목은 배포 준비가 아니라 아래 직접 검증이다. 실행하지 않은 검증을 완료로 표시하지 않는다.
+
+- **공통 이미지 릴리스 장기 관측**: 2026-09-29 웹·crawler·reviewer·publisher
+  주/예비 8개 앱을 같은 SHA의 두 digest로 교체하고 공개 웹 두 인스턴스, failover,
+  진행 상태를 확인했다. 새 웹 패키지는 private이며 이전 공개 웹 패키지에 들어갔던
+  빌드 키를 회전했다. 이미지 pull 자격 정보는 현재 운영자가 가진 GitHub 계정
+  토큰을 사용한다. 별도 최소 권한 토큰으로 교체하고 만료·철회 시 pull 실패 알림과
+  다음 릴리스의 재배포를 확인해야 한다. 24시간 처리/헬스 추세는 아직 관측 중이다
+  ([운영 기록](docs/operations/2026-09-29-deployment-speed-rollout.md)).
 
 - **500스타 자동 승인 장기 관측**: PR #231의 웹·crawler·reviewer·publisher
   주/예비 8개 앱을 같은 main 커밋으로 배포했다. 기존 92건 중 88건 발행,
