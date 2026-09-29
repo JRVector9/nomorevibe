@@ -52,6 +52,7 @@ jobs:
       - run: npx tsc --noEmit
       - run: npm run lint
       - run: npm test
+      - run: python3 -m unittest tests/test_deploy_shared_images.py
       - run: npm run build
         env:
           DATABASE_URL: postgres://build:build@localhost:5432/build

@@ -130,6 +130,9 @@ maintenance 점검, text 검수의 예비 저장을 확인했다. publisher 예�
 PR의 GitHub CI 성공은 배포 완료를 뜻하지 않는다. [독립 워커 운영 절차](docs/operations/independent-workers-runbook.md)에
 따라 필요한 migration의 종료 코드 0과 각 앱의 이미지 digest 또는 소스 커밋·완료 상태를 확인하고
 공개 페이지와 관리자 상태를 검증한다.
+웹·crawler·reviewer·publisher 공통 이미지 릴리스는 운영 절차의
+`scripts/ops/deploy_shared_images.py`로 사전 검사, 순차 배포, 단계별 상태 확인을
+한 번에 실행할 수 있다. 실패한 단계에서 중단하고 권한 0600의 복구 스냅샷을 남긴다.
 `RELEASE_TAG`만 보고 최신 소스라고 판단하지 않는다. 실제 남은 운영 검증은 [PENDING.md](PENDING.md)에 기록한다.
 
 [관리자 상태](https://nomorevibe.brut.bot/admin/status)는 최근 구간의 수집·심사·발행·생존 확인 처리 속도와
