@@ -44,5 +44,5 @@
 ## Task 5 — 문서 전용 경로와 기록
 
 - [x] README/runbook/handoff에 새 빌드·배포·롤백 절차와 측정 결과를 기록한다.
-- [ ] 문서 전용 PR의 required `check`가 전체 테스트 없이 통과하는지 실측한다.
+- [x] 문서 전용 PR #236 첫 실행의 required `check`가 14초에 통과하고 quality·integration·image 작업이 skipped인 것을 확인했다.
 - [x] PENDING.md에 아직 직접 확인하지 않은 장기 관측만 남긴다.

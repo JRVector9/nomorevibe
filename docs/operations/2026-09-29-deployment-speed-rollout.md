@@ -6,7 +6,9 @@ PR #234의 필수 `check`는 `scope` 뒤에 품질 검사와 PostgreSQL 전용 D
 통합 테스트 3개를 병렬 실행한다. 기존 PR #231의 `check`는 6분 27초였고,
 #234는 실행 생성부터 `check` 완료까지 2분 55초였다. main의 기존 5분 3초 검사는
 PR #235 병합 뒤 2분 53초였다. 새 main 실행은 이미지 2개 빌드를 포함해
-4분 17초에 끝났다. 문서만 바뀐 PR의 짧은 경로는 이 문서 PR에서 별도로 실측한다.
+4분 17초에 끝났다. 문서 전용 PR #236의 첫 실행은 생성부터 필수 `check`까지
+14초였다. `scope`와 `check`가 성공하고 quality·integration·두 이미지 작업은
+모두 건너뛰었다.
 
 8개 앱은 이전 Git 소스의 개별 빌드에서 공통 이미지 digest로 전환했다.
 두 서버에서 이미지를 미리 pull한 뒤 Dokploy가 기록한 개별 배포 시간은
@@ -62,6 +64,7 @@ runtime env에 동일하게 적용했다. 계정 토큰으로 미리 만든
   통과(기존 TODO 1개). 타입 생성·TypeScript·lint·단위 테스트·빌드,
   `actionlint`, `git diff --check` 완료. lint의 기존 경고 1개는 남았다.
 - PR #234와 #235의 필수 `check`, 보안 검사, 두 main 실행의 이미지 작업 성공.
+- PR #236 첫 실행의 필수 `check`는 14초였고 GitGuardian 검사도 통과했다.
 - 실제 운영 상태는 짧은 시점의 검증이다. 24시간 처리·헬스 추세는
   [PENDING.md](../../PENDING.md)에 남겼다. private GHCR pull에 사용한 계정
   토큰을 별도 최소 권한 토큰으로 바꾸고 만료 시 재배포 경로를 확인해야 한다.

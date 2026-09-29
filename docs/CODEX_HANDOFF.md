@@ -1,4 +1,4 @@
-# 2026-09-29 19:46 KST — 배포 시간 단축 1·2·3 운영 전환 완료, 문서 PR 검증 대기
+# 2026-09-29 19:48 KST — 배포 시간 단축 1·2·3 운영 전환 완료, 문서 PR 병합 대기
 
 ## Current objective / completed work
 
@@ -9,7 +9,8 @@
 짧았다. main의 두 이미지 작업까지는 4분 17초였다. Docker source로 바꾼
 운영 8개 앱의 실제 image digest, `RELEASE_TAG`, 배포 `done`을 확인했다.
 두 웹의 직접 및 공개 health, worker failover readiness/progress도 확인했다.
-문서 전용 PR의 hosted 빠른 경로 측정과 이 문서 변경의 병합이 남았다.
+문서 전용 PR #236의 첫 hosted 실행은 생성부터 필수 `check`까지 14초였다.
+이 문서 변경의 최신 검사와 병합이 남았다.
 
 ## Modified files / key design decisions
 
@@ -37,6 +38,8 @@ mini/M3 웹 2개가 공유한다. 8개 앱의 이전 source/env/build 백업은
 323/271/352개 통과와 기존 TODO 1개, `npx next typegen`, `npx tsc --noEmit`,
 `npm run lint`, `npm test`, `npm run build`, `actionlint`, `git diff --check`가
 통과했다. PR #234/#235 hosted 필수 `check`와 해당 main 이미지 작업이 성공했다.
+PR #236 첫 hosted 실행은 `scope`·`check` 성공, quality·integration·web/worker
+이미지 작업 skipped, GitGuardian 성공이었다.
 두 서버의 arm64 digest pull과 OCI revision을 확인했다. 8개 앱의 최신 deployment
 `done`, 실행 중 service의 digest·release 일치, 두 웹 직접 health `ok/db:ok`,
 공개 health 12회에서 M3 7·mini 5회 모두 새 SHA를 확인했다.
@@ -54,9 +57,8 @@ login이 실패해 private web Docker provider에 검증된 운영 계정 pull �
 
 ## Remaining work / exact commands for the next agent
 
-이번 문서 diff를 검토하고 commit/push 후 PR을 연다. hosted docs-only `check`의
-시간과 quality/integration/image skip을 확인하고 운영 기록·계획·handoff에
-실측을 추가한다. 문서 PR의 최신 base 필수 `check`와 GitGuardian 성공 뒤 병합한다.
+PR #236의 이번 측정 기록 commit/push 후 최신 base 필수 `check`와 GitGuardian
+성공을 확인해 병합한다.
 main 문서 push에서도 같은 skip을 확인한다. 이후 8개 앱 상태·공개 health를
 짧게 재확인한다. 별도 최소 권한 GHCR pull 토큰 교체와 24시간 운영 관측은
 `PENDING.md`에 남는다.
@@ -65,9 +67,11 @@ main 문서 push에서도 같은 skip을 확인한다. 이후 8개 앱 상태·�
 cd /private/tmp/nmv-deploy-speed-docs-20260929
 git status --short --branch
 git diff --check
-gh pr create --repo JRVector9/nomorevibe --base main --head docs/deployment-speed-rollout --title 'docs: record shared image rollout and deployment timing' --body-file /private/tmp/nmv-deployment-speed-pr-body.md
+git add docs/CODEX_HANDOFF.md docs/operations/2026-09-29-deployment-speed-rollout.md docs/superpowers/plans/2026-09-29-deployment-speed.md
+git commit -m 'docs: record measured docs-only CI time'
+git push
 gh run list --repo JRVector9/nomorevibe --workflow ci.yml --limit 5
-gh pr checks --repo JRVector9/nomorevibe <PR-number>
+gh pr checks --repo JRVector9/nomorevibe 236
 ```
 
 ---
