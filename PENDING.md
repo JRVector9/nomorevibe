@@ -14,6 +14,13 @@ scheduler는 M3에서 2복제본이다. 공개 GitHub main은 최신 base의 CI 
 
 남은 항목은 배포 준비가 아니라 아래 직접 검증이다. 실행하지 않은 검증을 완료로 표시하지 않는다.
 
+- **GitHub 수집 계정 풀의 장기 관측**: PR #225 배포 후 서로 다른 실제 GitHub
+  계정의 관리자 PAT 등록·교체, 암호화 저장, 수집 코드 조회, 새 계정 quota 관측과
+  원본 39건 증가를 확인했다. 실제 한 계정의 primary 한도가 자연 소진될 때
+  다른 계정으로 전환되고 양쪽 reset 후 정상 재개되는 운영 경로와 24시간
+  API 사용량·저장량 추세는 아직 직접 관측하지 않았다. 토큰 만료 전 관리자
+  교체와 네 앱 공통 암호화 키의 보관·재암호화 절차도 장기 운영 항목이다.
+
 - **워커 진행 감시의 외부 실행**: `scripts/check-failover-readiness.ts`는 주·예비 후보,
   lease, scheduler 2복제본과 기존 진행 판정을 함께 내고 별도 monitor 이미지가 30초 간격으로
   Uptime Kuma Push를 보낼 수 있게 구현했다. 운영 monitor 앱·Push 대상·실제 경보 수신은
@@ -160,7 +167,8 @@ Codex 연구 프리뷰이므로 서버 access token과 계정 제공 여부를 �
 |---|---|
 | `DATABASE_URL` | 웹·모든 워커·migration에 필요 |
 | `CRON_SECRET` | 웹의 호환 cron 접수 인증. 미설정이면 403 |
-| `GITHUB_TOKEN` | crawler의 GitHub 요청. 없으면 seed·fetch 실패 |
+| `GITHUB_TOKEN` | crawler의 기존 GitHub 요청 토큰. 관리자 등록 PAT가 있으면 없어도 수집 가능 |
+| `GITHUB_COLLECTOR_SECRET` | 관리자 PAT 암호화·복호화. 웹 2개와 crawler 주·예비에 동일한 32자 이상 키 필요 |
 | `CODEX_ACCESS_TOKEN` | publisher의 Spark 분류. 없거나 실패하면 Terra로 진행 |
 | `OPENAI_API_KEY` | publisher의 Terra 분류. 없거나 실패하면 키워드 폴백 |
 | `CLAUDE_CODE_OAUTH_TOKEN` | reviewer. 리뷰 오류는 보류·제한 재시도 |
