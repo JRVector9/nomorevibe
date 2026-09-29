@@ -1,7 +1,7 @@
 import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { crawlCandidates, crawlDocuments, products } from "@/lib/db/schema";
-import { judge, factsFromRepoMeta, pageFactsFromDocument, PUSH_AGE_RULE, type RuleStep } from "@/lib/crawl/rules";
+import { judgeStoredDocument, pageFactsFromDocument, PUSH_AGE_RULE, type RuleStep } from "@/lib/crawl/rules";
 import type { CrawlSettings } from "@/lib/crawl/settings-schema";
 
 /**
@@ -79,13 +79,12 @@ export async function recheckPublishedProducts(
   const hits: RecheckHit[] = [];
   let withoutText = 0;
   for (const row of rows) {
-    const repo = factsFromRepoMeta(row.repo, row.document.repoMeta);
     const page = pageFactsFromDocument(row.document);
     if (!page.textSample) withoutText += 1;
 
-    let verdict = judge(repo, page, settings);
+    let verdict = judgeStoredDocument(row.document, settings);
     // 푸시 나이에서 멈췄으면 그 뒤 규칙을 아직 안 태운 것이다 — 끄고 다시 태운다
-    if (verdict.trace.at(-1)?.rule === PUSH_AGE_RULE) verdict = judge(repo, page, withoutPushAge);
+    if (verdict.trace.at(-1)?.rule === PUSH_AGE_RULE) verdict = judgeStoredDocument(row.document, withoutPushAge);
     // 보류는 "규칙이 못 가른 것"이라 이미 올라간 제품을 내릴 근거가 못 된다. 거부만 짚는다.
     if (verdict.state !== "rejected") continue;
     hits.push({

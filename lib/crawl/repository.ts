@@ -451,6 +451,9 @@ function judgedSourceChanged(previous: CrawlDocument, next: CrawlDocument): bool
   return previous.productUrl !== next.productUrl
     || previous.pageStatus !== next.pageStatus
     || !isDeepStrictEqual(judgementPageMeta(previous.pageMeta), judgementPageMeta(next.pageMeta))
+    || previous.repoMeta.id !== next.repoMeta.id
+    || previous.repoMeta.full_name !== next.repoMeta.full_name
+    || previous.repoMeta.private !== next.repoMeta.private
     || !isDeepStrictEqual(factsFromRepoMeta(previous.repo, previous.repoMeta), factsFromRepoMeta(next.repo, next.repoMeta));
 }
 
@@ -553,9 +556,11 @@ export async function recordAutomaticJudgement(input: {
       if (!inserted) return false;
       candidateId = inserted.id;
     }
-    if (input.settings.enabled && input.settings.reviewMode !== "off" && isReviewCandidate(values as CrawlCandidate))
+    if (input.settings.enabled && input.settings.reviewMode !== "off" && !input.verdict.signals.starAutoApproval
+      && isReviewCandidate(values as CrawlCandidate))
       requests.push(await requestJob("crawl-agent-review", tx));
-    if (input.settings.enabled && input.settings.reviewMode !== "enforce" && values.state === "approved")
+    if (input.settings.enabled && values.state === "approved"
+      && (input.settings.reviewMode !== "enforce" || !!input.verdict.signals.starAutoApproval))
       requests.push(await requestJob("crawl-publish", tx));
     return true;
   });

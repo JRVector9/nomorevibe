@@ -28,8 +28,8 @@ describe("설정 어긋남 — 사람이 고를 수 있어야 한다", () => {
     expect(settingsDrift(withJudge({ placeholderTitles: titles.slice(0, -1) }))
       .find((row) => row.label === "스캐폴드 제목")?.kind).toBe("absent");
 
-    expect(settingsDrift(withJudge({ maxStars: 99_999 })).find((row) => row.label === "스타 상한"))
-      .toMatchObject({ kind: "changed", stored: "99999", standard: "1000", absent: [], extra: [] });
+    expect(settingsDrift(withJudge({ autoApproveMinStars: 750 })).find((row) => row.label === "자동 승인 최소 스타"))
+      .toMatchObject({ kind: "changed", stored: "750", standard: "500", absent: [], extra: [] });
   });
 
   it("목록에 더 넣은 것은 빠진 것이 없어도 '다른 것'이다", () => {

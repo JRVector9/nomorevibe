@@ -243,6 +243,21 @@ describe("수집 잡", () => {
       .toMatchObject({ requestedVersion: 1, processedVersion: 0 });
   });
 
+  it("rejudges an unpublished star approval when GitHub replaces the repository ID", async () => {
+    const repo = "someone/replaced", productUrl = "https://my-app.test";
+    const meta = { ...STABLE_META, id: 100, full_name: repo, private: false, stargazers_count: 500 };
+    await crawl.putDocument({ repo, repoMeta: meta, productUrl, pageStatus: 200, pageMeta: { title: "My App" } });
+    await crawl.recordJudgement({ repo, productUrl, state: "approved", reason: "passed", decidedBy: "auto",
+      signals: { starAutoApproval: { githubId: 100, stars: 500 } } });
+    await crawl.enqueue([{ repo, signal: "test" }]);
+    const [claim] = await crawl.dequeue(1);
+
+    const result = await crawl.saveFetchedDocument(claim, { repo, repoMeta: { ...meta, id: 101 }, productUrl,
+      pageStatus: 200, pageMeta: { title: "My App" } });
+    expect(result?.needsJudgement).toBe(true);
+    expect(await crawl.getCandidate(repo)).toMatchObject({ state: "new", reason: "source_changed" });
+  });
+
   it("사라진 레포는 건너뛴다 — 다시 시도할 이유가 없다", async () => {
     await crawl.enqueue([{ repo: "someone/gone", signal: "commit-trailer" }]);
     getRepo.mockResolvedValue({ ok: false, error: { kind: "not_found" } });

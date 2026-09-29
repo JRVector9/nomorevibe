@@ -8,6 +8,7 @@ vi.mock("@/lib/crawl/classify", () => ({
 
 const { db } = await import("@/lib/db");
 const { crawlFrontier, crawlDocuments, crawlCandidates, crawlSettings, jobs } = await import("@/lib/db/schema");
+const { eq } = await import("drizzle-orm");
 const crawl = await import("@/lib/crawl/repository");
 const { judgeRevision } = await import("@/lib/crawl/rules");
 const { saveSettings, getSettings } = await import("@/lib/crawl/settings");
@@ -64,6 +65,18 @@ describe("발행분 재검수", () => {
     expect(result.hits).toHaveLength(1);
     expect(result.hits[0]).toMatchObject({ repo: "someone/scut-docs", reason: "not_a_product" });
     expect(result.hits[0].stopped?.rule).toBe("문서 제목 아님");
+  });
+
+  it("검증된 500스타 저장소는 같은 자동 승인 기준으로 재검수한다", async () => {
+    await published("someone/star-docs", { title: "Scut Docs" });
+    await db.update(crawlDocuments).set({ repoMeta: {
+      id: 202, full_name: "someone/star-docs", private: false, fork: false, archived: false,
+      stargazers_count: 500, description: "레포 설명", pushed_at: daysAgo(3),
+    }, fetchedAt: new Date() }).where(eq(crawlDocuments.repo, "someone/star-docs"));
+
+    const result = await recheckPublishedProducts(await getSettings());
+    expect(result.checked).toBe(1);
+    expect(result.hits).toEqual([]);
   });
 
   /**

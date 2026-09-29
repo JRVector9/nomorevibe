@@ -44,10 +44,17 @@ it("invalidates semantic approval on product, source relationship, evidence or p
   for (const changed of [
     createReviewInput(candidate, { ...document, pageMeta: { ...document.pageMeta, description: "Different product" } }, DEFAULT_CRAWL_SETTINGS, evidence, now),
     createReviewInput(candidate, { ...document, pageMeta: { ...document.pageMeta, repositoryKeys: ["other/app"] } }, DEFAULT_CRAWL_SETTINGS, evidence, now),
-    createReviewInput(candidate, document, { ...DEFAULT_CRAWL_SETTINGS, judge: { ...DEFAULT_CRAWL_SETTINGS.judge, maxStars: 99 } }, evidence, now),
+    createReviewInput(candidate, document, { ...DEFAULT_CRAWL_SETTINGS, judge: { ...DEFAULT_CRAWL_SETTINGS.judge, autoApproveMinStars: 750 } }, evidence, now),
     createReviewInput(candidate, document, DEFAULT_CRAWL_SETTINGS, { ...evidence, observations: [] }, now),
     createReviewInput(candidate, { ...document, pageMeta: { ...document.pageMeta, textSample: "App CLI. Install: npm install -g app" } }, DEFAULT_CRAWL_SETTINGS, evidence, now),
   ]) expect(changed.inputHash).not.toBe(first.inputHash);
+});
+
+it("does not invalidate review approval when the retired star cap changes", () => {
+  const first = createReviewInput(candidate, document, DEFAULT_CRAWL_SETTINGS, evidence, now);
+  const legacy = createReviewInput(candidate, document, { ...DEFAULT_CRAWL_SETTINGS,
+    judge: { ...DEFAULT_CRAWL_SETTINGS.judge, maxStars: 1 } }, evidence, now);
+  expect(legacy.policyHash).toBe(first.policyHash);
 });
 
 it("gives the model the same page body the rules judge", () => {

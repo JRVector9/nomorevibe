@@ -16,7 +16,7 @@ import { createReviewInput, MAX_REVIEW_ATTEMPTS, REVIEW_PROMPT_VERSION, REVIEW_R
 import { loadReviewInput } from './agent-review-repository';
 import { DEFAULT_CRAWL_SETTINGS, type CrawlSettings } from './settings-schema';
 import { mergeWithDefaults, getSettings } from './settings';
-import { judge, factsFromRepoMeta, pageFactsFromDocument, type AmbiguityCause, type RuleStep } from './rules';
+import { judgeStoredDocument, type AmbiguityCause, type RuleStep } from './rules';
 import { loadAgentJudgeInputs } from './admin-review-batch';
 import { lockFrontierIdentity } from './repository';
 
@@ -262,8 +262,7 @@ export async function reviewQueueCauses(settings: CrawlSettings): Promise<Review
     for (const candidate of page) {
       const document = documentByRepo.get(candidate.repo);
       const verdict = document
-        ? judge(factsFromRepoMeta(candidate.repo, document.repoMeta), pageFactsFromDocument(document),
-            settings, new Date(), agentInputs?.get(candidate.repo))
+        ? judgeStoredDocument(document, settings, new Date(), agentInputs?.get(candidate.repo))
         : null;
       const aiRejected = aiByCandidate.get(candidate.id)?.outcome?.decision === 'reject';
       // 사람만 가르는 사유는 규칙을 다시 태우면 통과로 나와 "보류가 아님"에 섞인다 — 사유 그대로 묶는다
@@ -337,8 +336,7 @@ export async function requeueResolvedCandidates(actor: string, limit = REVIEW_QU
   for (const candidate of candidates) {
     const document = documents.find(row => row.repo === candidate.repo);
     if (!document) continue;
-    const verdict = judge(factsFromRepoMeta(candidate.repo, document.repoMeta),
-      pageFactsFromDocument(document), settings, new Date(), agentInputs?.get(candidate.repo));
+    const verdict = judgeStoredDocument(document, settings, new Date(), agentInputs?.get(candidate.repo));
     if (verdict.state !== 'needs_review') resolved.push({ id: candidate.id, reason: `${verdict.state}:${verdict.reason}` });
   }
   if (!resolved.length) return { scanned: candidates.length, requeued: 0, byReason: [] };
@@ -532,8 +530,7 @@ export async function listAdminReviewEntries(settings: CrawlSettings, options: {
     const input = inputs[index];
     const document = documents.find(row => row.repo === candidate.repo);
     const recomputed = document
-      ? judge(factsFromRepoMeta(candidate.repo, document.repoMeta), pageFactsFromDocument(document),
-          settings, new Date(), agentInputs?.get(candidate.repo))
+      ? judgeStoredDocument(document, settings, new Date(), agentInputs?.get(candidate.repo))
       : null;
     const attempts = current.filter(row => row.candidateId === candidate.id);
     const last = latest.find(row => row.candidateId === candidate.id);

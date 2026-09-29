@@ -59,7 +59,7 @@ export async function saveCrawlSettings(_prev: SaveState, form: FormData): Promi
       pagesPerTick: num(form.get("pagesPerTick")),
     },
     judge: {
-      maxStars: num(form.get("maxStars")),
+      autoApproveMinStars: num(form.get("autoApproveMinStars")),
       minStars: num(form.get("minStars")),
       maxPushAgeDays: num(form.get("maxPushAgeDays")),
       excludeForks: form.get("excludeForks") === "on",

@@ -1,12 +1,13 @@
 import { beforeAll, beforeEach, expect, it, vi } from "vitest";
 import { eq } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { crawlCandidates, crawlDocuments, crawlSettings, crawlReviewAttempts, jobs, products } from "@/lib/db/schema";
+import { crawlCandidates, crawlDocuments, crawlFrontier, crawlSettings, crawlReviewAttempts, jobs, products } from "@/lib/db/schema";
 import { getSettings, saveSettings, changeReviewMode } from "@/lib/crawl/settings";
 import { loadReviewInput } from "@/lib/crawl/agent-review-repository";
-import { judgeRevision } from "@/lib/crawl/rules";
+import { judgeRevision, judgeStoredDocument } from "@/lib/crawl/rules";
 import { REVIEW_PROMPT_VERSION, REVIEW_RULES_VERSION } from "@/lib/crawl/agent-review-contract";
 import { runJob } from "@/lib/jobs/runner";
+import * as crawl from "@/lib/crawl/repository";
 import { publishCandidates } from "@/lib/crawl/jobs/publish";
 import { enqueueSecondReviews, recordSecondReview } from "@/lib/crawl/second-review";
 import { listReviewCandidates } from "@/lib/crawl/agent-review-repository";
@@ -25,6 +26,7 @@ beforeEach(async () => {
   await db.delete(secondReviews);
   await db.delete(crawlCandidates);
   await db.delete(crawlDocuments);
+  await db.delete(crawlFrontier);
   await db.delete(crawlSettings);
   await db.delete(jobs);
   await resetTables();
@@ -59,6 +61,84 @@ async function candidate(index: number, approve = false, confidence?: number, in
 }
 const tick = () => runJob("crawl-publish", publishCandidates);
 
+async function popularCandidate(repo: string, description: string | null, stars = 100_000) {
+  const now = new Date();
+  const [document] = await db.insert(crawlDocuments).values({
+    repo, productUrl: null, fetchedAt: now,
+    repoMeta: { id: 888, full_name: repo, private: false, fork: false,
+      archived: false, stargazers_count: stars, description },
+    pageStatus: null, pageMeta: null,
+  }).returning();
+  const verdict = judgeStoredDocument(document, await getSettings(), now);
+  const [candidate] = await db.insert(crawlCandidates).values({ repo: document.repo, productUrl: null,
+    state: verdict.state, reason: verdict.reason, decidedBy: "auto", judgedAt: now,
+    signals: { ...verdict.signals, judgedRevision: judgeRevision(document) } }).returning();
+  return { candidate, document };
+}
+
+it("publishes a verified 100,000-star repository without first or second AI approval", async () => {
+  await withGate();
+  await popularCandidate("gate/popular", "Research survey data");
+  expect(await listReviewCandidates(await getSettings())).toHaveLength(0);
+
+  await tick();
+
+  expect(await db.select().from(products)).toMatchObject([{
+    repoUrl: "https://github.com/gate/popular", url: "https://github.com/gate/popular",
+    accessMode: "installable",
+  }]);
+  expect(await db.select().from(crawlReviewAttempts)).toHaveLength(0);
+  expect(await db.select().from(secondReviews)).toHaveLength(0);
+});
+
+it("uses the repository name when a verified popular source has no description", async () => {
+  await popularCandidate("gate/unnamed", null, 500);
+  await tick();
+  expect(await db.select().from(products)).toMatchObject([{ tagline: "gate/unnamed", accessMode: "installable" }]);
+});
+
+it("does not publish a star approval after its threshold changes during classification", async () => {
+  await popularCandidate("gate/threshold", "A published tool", 500);
+  classify.mockImplementationOnce(async () => {
+    await saveSettings({ judge: { autoApproveMinStars: 1000 } }, "race");
+    return "Dev";
+  });
+  await tick();
+  expect(await db.select().from(products)).toHaveLength(0);
+  expect(await db.select().from(crawlCandidates)).toMatchObject([{ state: "approved" }]);
+});
+
+it("does not publish a star approval from a GitHub response older than 24 hours", async () => {
+  const { document } = await popularCandidate("gate/stale-stars", "An application", 500);
+  await db.update(crawlDocuments).set({ fetchedAt: new Date(Date.now() - 25 * 3600_000) })
+    .where(eq(crawlDocuments.id, document.id));
+  await tick();
+  expect(await db.select().from(products)).toHaveLength(0);
+});
+
+it("reopens an expired star approval for GitHub collection after a publisher outage", async () => {
+  const { document } = await popularCandidate("gate/expired", "An application", 500);
+  await db.update(crawlDocuments).set({ fetchedAt: new Date(Date.now() - 25 * 3600_000) })
+    .where(eq(crawlDocuments.id, document.id));
+  await tick();
+  expect(await db.select().from(crawlCandidates)).toMatchObject([{ state: "new", reason: "source_changed" }]);
+  expect(await db.select().from(crawlFrontier).where(eq(crawlFrontier.repo, "gate/expired")))
+    .toMatchObject([{ repo: "gate/expired", state: "pending" }]);
+  const [claim] = await crawl.dequeue(1);
+  expect(claim.repo).toBe("gate/expired");
+  expect(await crawl.saveFetchedDocument(claim, { repo: document.repo, repoMeta: document.repoMeta,
+    productUrl: null, pageStatus: null, pageMeta: null })).toMatchObject({ needsJudgement: true });
+  expect((await crawl.judgementQueue(10)).map(row => row.document.repo)).toContain("gate/expired");
+});
+
+it("reopens an approval when the administrator raises the star threshold", async () => {
+  await popularCandidate("gate/new-threshold", "An application", 500);
+  await saveSettings({ judge: { autoApproveMinStars: 750 } }, "admin");
+  await tick();
+  expect(await db.select().from(crawlCandidates)).toMatchObject([{ state: "new", reason: "source_changed" }]);
+  expect(await db.select().from(crawlFrontier).where(eq(crawlFrontier.repo, "gate/new-threshold"))).toHaveLength(0);
+});
+
 it("keeps the two-stage publication gate for installation-only repositories", async () => {
   const settings = await withGate();
   await candidate(41, true, 0.95, true);
@@ -91,7 +171,7 @@ it("excludes an approval whose source revision or policy changed", async () => {
   const first = await candidate(0, true);
   await candidate(1, true);
   await db.update(crawlDocuments).set({ fetchedAt: new Date() }).where(eq(crawlDocuments.id, first.document.id));
-  await saveSettings({ judge: { maxStars: 41 } }, "changed policy");
+  await saveSettings({ judge: { autoApproveMinStars: 750 } }, "changed policy");
   await tick();
   expect(classify).not.toHaveBeenCalled();
   expect(await db.select().from(products)).toHaveLength(0);
