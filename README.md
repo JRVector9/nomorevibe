@@ -117,7 +117,9 @@ TEST_DATABASE_URL=postgres://nomorevibe:nomorevibe@localhost:55435/nomorevibe_te
 
 ## 운영 배포와 상태 확인
 
-운영은 Dokploy의 main 소스를 사용한다. M3에는 웹·scheduler(2복제본)·crawler·reviewer·publisher·text·maintenance,
+운영은 Dokploy를 사용한다. 웹 2개와 crawler·reviewer·publisher의 주·예비 6개는
+main CI가 만든 GHCR 이미지의 digest로 배포한다. scheduler·text·maintenance는
+계속 main Git 소스로 배포한다. M3에는 웹·scheduler(2복제본)·crawler·reviewer·publisher·text·maintenance,
 mini에는 두 번째 웹과 다섯 역할의 예비를 둬 총 13개 앱을 운영한다. 두 웹은 로드밸런서 뒤에서
 동작한다. 다섯 역할 모두 M3 주 후보가 작업하고 mini 예비는 같은 릴리스로 대기한다.
 2026-09-29 릴리스 `20208d3`에서 주 재시작·mini 인계·복귀와 crawler 문서, reviewer 심사,
@@ -126,7 +128,8 @@ maintenance 점검, text 검수의 예비 저장을 확인했다. publisher 예�
 런타임 DB는 PgBouncer(6432), 별도 migration은 PostgreSQL 직접 연결(5432)을 사용한다.
 
 PR의 GitHub CI 성공은 배포 완료를 뜻하지 않는다. [독립 워커 운영 절차](docs/operations/independent-workers-runbook.md)에
-따라 migration 종료 코드 0과 각 앱의 배포 소스 커밋·완료 상태를 확인하고 공개 페이지와 관리자 상태를 검증한다.
+따라 필요한 migration의 종료 코드 0과 각 앱의 이미지 digest 또는 소스 커밋·완료 상태를 확인하고
+공개 페이지와 관리자 상태를 검증한다.
 `RELEASE_TAG`만 보고 최신 소스라고 판단하지 않는다. 실제 남은 운영 검증은 [PENDING.md](PENDING.md)에 기록한다.
 
 [관리자 상태](https://nomorevibe.brut.bot/admin/status)는 최근 구간의 수집·심사·발행·생존 확인 처리 속도와
