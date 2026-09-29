@@ -5,7 +5,9 @@
 사용자는 수집 중 한 PAT가 만료되어 GitHub REST가 401을 돌려줄 때 응답 이유를
 검토하고 제한적으로 재시도한 뒤 다른 계정으로 즉시 전환하도록 요청했다. 별도 작업 트리
 `/private/tmp/nmv-github-auth-fallback`의 `fix/github-auth-fallback`에서 원인을 재현하고
-요청 함수, 수집 큐, 관련 GitHub 갱신 작업과 회귀 테스트를 수정했다. 운영 배포는 아직이다.
+요청 함수, 수집 큐, 관련 GitHub 갱신 작업과 회귀 테스트를 수정했다. PR #229의
+최신 base CI와 GitGuardian 성공 후 main `202f16db532d3ecea6366f7309a7d1692c822031`에 병합하고
+crawler mini 예비→M3 주를 같은 SHA로 배포했다.
 루트 checkout의 사용자 변경·운영 DB 서버/streaming·중단된 `product-intro-check`는 건드리지 않았다.
 
 수정 파일: `lib/crawl/github{,-quota}.ts`, `lib/crawl/jobs/{fetch,seed}.ts`,
@@ -32,23 +34,33 @@ TDD로 첫 401 전환 테스트와 전체 토큰 거부 시 fetch/seed 보류 �
 경고 1건, build에는 기존 `agent-review.ts` 동적 filesystem tracing 경고 1건이 있다.
 관련 테스트의 초기 전체 단위 실행 1건 실패는 새 테스트가 앞 테스트의 `mockResolvedValueOnce`
 잔여 값을 공유한 탓이었다. `beforeEach`에서 mock 구현을 초기화한 뒤 전체 재실행은 통과했다.
-운영 PAT를 실제로 만료·폐기해 보는 장애 주입은 하지 않았다.
+운영 PAT를 실제로 만료·폐기해 보는 장애 주입은 하지 않았다. GitHub Actions 전체 CI
+`check`와 GitGuardian이 통과했다.
+
+03:26 UTC 배포 전 프론티어 108,919·원본 108,910, crawler 주 lease는 구 SHA였다.
+mini 예비 03:26:43, M3 주 03:27:45 UTC 배포 완료 후 두 후보가 같은 새 SHA의
+`active/standby`, lease owner는 M3였다. `check-failover-readiness.ts`는 종료 코드 0,
+다섯 역할과 scheduler 2복제본·진행 상태 모두 `ok`였다. 03:31 UTC 첫 검색 주기는
+21건을 새로 발견했고 `crawl-fetch`가 20건 원본·후보를 저장했다. 1건은 기존
+GitHub ID의 새 경로라 `skipped/alias_of`로 끝났고 새 문서가 없었다. 기존 ID 중복
+초과 행은 305건으로 증가하지 않았다. `crawl-seed`와 `crawl-fetch`는 최근 성공,
+`last_error=null`, 인증 보류 활성 행은 0개였다. 공개 웹 헬스는 `status:ok/db:ok`.
+[운영 기록](operations/2026-09-29-github-auth-fallback-rollout.md)에 상세 시각을 남겼다.
 
 ## 남은 작업 / 정확한 다음 명령
 
-PR 생성과 최신 base CI 통과, main 병합 후 crawler mini 예비→M3 주를 동일 릴리스로
-순차 배포한다. role lease/예비 대기, 수집 증가, `jobs.last_error`, API 계정 잔여량과
-공개 헬스를 확인한다. 코드-only 변경이며 운영 DB 마이그레이션은 없다.
+실제 운영 PAT를 만료·폐기하는 장애 주입은 수행하지 않는다. 자연 만료가 발생하면
+`github.auth_rejected` 사유 코드, 계정별 보류·다른 계정 수집 지속, 관리자 교체 후
+재개를 확인한다. 기존 중복 제품 정리와 24시간 quota·수집량 관측은 `PENDING.md`를 따른다.
+코드-only 변경이며 운영 DB 마이그레이션은 없었다.
 
 ```sh
 cd /private/tmp/nmv-github-auth-fallback
 git diff --check
 git status --short --branch
-npm test
-npm run test:integration -- tests/integration/crawl-fetch.test.ts tests/integration/crawl-seed.test.ts tests/integration/github-auth-cooldown.test.ts tests/integration/github-evidence.test.ts tests/integration/popular-projects.test.ts tests/integration/crawl-github-identity.test.ts
-npx next typegen && npx tsc --noEmit
-npm run lint
-npm run build
+gh pr view 229 --json state,mergeCommit,statusCheckRollup
+python3 /tmp/nmv-health-20260925.py status
+curl -fsS https://nomorevibe.brut.bot/api/health
 ```
 
 ---
