@@ -60,6 +60,20 @@ it('갈래로 거르면 그 갈래의 후보만 나온다', async () => {
   expect(entries.map((entry) => entry.candidate.repo)).toEqual(['acme/pending']);
 });
 
+it('자동 처리 종료 후보를 사람 판단 갈래에 남기고 재판정으로 되돌리지 않는다', async () => {
+  await held('acme/first-failed', 'https://first.test', 200);
+  await held('acme/source-failed', 'https://source.test', 200);
+  await db.update(crawlCandidates).set({ reason: 'ai_review_exhausted' })
+    .where(eq(crawlCandidates.repo, 'acme/first-failed'));
+  await db.update(crawlCandidates).set({ reason: 'source_refresh_failed' })
+    .where(eq(crawlCandidates.repo, 'acme/source-failed'));
+
+  const causes = await reviewQueueCauses(await getSettings());
+  expect(causes.ids.get('ai_review_exhausted')).toHaveLength(1);
+  expect(causes.ids.get('source_refresh_failed')).toHaveLength(1);
+  expect(await requeueResolvedCandidates('test')).toMatchObject({ requeued: 0 });
+});
+
 it('심사 항목마다 어디까지 통과하고 어디서 멈췄는지가 실린다', async () => {
   await held('tmokmss/my-ambient-agents', 'https://tmokmss.github.io/my-ambient-agents', 200);
 

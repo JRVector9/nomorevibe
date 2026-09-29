@@ -194,6 +194,40 @@ export async function markFrontier(
   });
 }
 
+/** A terminal GitHub fetch cannot satisfy reconsiderAfter. Put such candidates in the human queue. */
+export async function handOffFailedSourceRefreshes(lease: JobLease, limit = 20): Promise<number> {
+  if (lease.name !== "crawl-fetch") return 0;
+  return db.transaction(async tx => {
+    const candidates = await tx.select().from(crawlCandidates).where(and(
+      eq(crawlCandidates.state, "new"),
+      sql`${crawlCandidates.signals}->>'reconsiderAfter' IS NOT NULL`,
+      sql`EXISTS (SELECT 1 FROM ${crawlFrontier} terminal
+        WHERE terminal.repo = ${crawlCandidates.repo} AND terminal.state IN ('skipped', 'failed')
+          AND terminal.alias_of IS NULL)`,
+    )).orderBy(asc(crawlCandidates.updatedAt), asc(crawlCandidates.id))
+      .limit(Math.max(1, Math.min(100, limit))).for("update", { skipLocked: true });
+    let handedOff = 0;
+    for (const candidate of candidates) {
+      const [document] = await tx.select().from(crawlDocuments)
+        .where(eq(crawlDocuments.repo, candidate.repo)).for("share");
+      const [frontier] = await tx.select().from(crawlFrontier)
+        .where(eq(crawlFrontier.repo, candidate.repo)).for("update");
+      const after = Date.parse(String(candidate.signals?.reconsiderAfter));
+      if (!document || !Number.isFinite(after) || document.fetchedAt.getTime() > after
+        || !frontier || frontier.aliasOf || !["skipped", "failed"].includes(frontier.state)) continue;
+      const detail = frontier.state === "skipped" ? "GitHub 저장소를 찾지 못해 새 원본을 수집할 수 없습니다."
+        : `GitHub 원본 재수집 실패: ${(frontier.lastError ?? "원인 미상").slice(0, 220)}`;
+      await tx.update(crawlCandidates).set({
+        state: "needs_review", reason: "source_refresh_failed", updatedAt: sql`clock_timestamp()`,
+        signals: { ...candidate.signals, stoppedAt: { rule: "원본 재수집", detail } },
+      }).where(eq(crawlCandidates.id, candidate.id));
+      handedOff++;
+    }
+    if (handedOff) await assertJobLease(tx, lease);
+    return handedOff;
+  });
+}
+
 /** Return only this batch's still-owned claims; quota/budget waits are not failed attempts. */
 export async function deferFrontier(entries: FrontierEntry[], retryAt?: Date, lease?: JobLease): Promise<void> {
   if (entries.length === 0) return;

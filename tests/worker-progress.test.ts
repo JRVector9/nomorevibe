@@ -14,6 +14,12 @@ it("requires eligible work and no stored progress before reporting a stall", () 
   expect(classifyStage(stage, null, true, now).reason).toBe("no_progress");
 });
 
+it("reports exhausted manual cases without treating the healthy worker as stalled", () => {
+  expect(classifyStage({ ...stage, waiting: 0, manualAttention: 2 }, null, true, now)).toMatchObject({
+    reason: "manual_attention", alarm: false, manualAttention: 2,
+  });
+});
+
 it("keeps provider errors, missing queue ages, and the longer rule interval out of restart signals", () => {
   expect(classifyStage({ ...stage, errors5m: 2 }, null, true, now).reason).toBe("upstream_or_job_error");
   expect(classifyStage({ ...stage, key: "judge", oldestMinutes: 8 }, null, true, now).reason).toBe("warming_up");

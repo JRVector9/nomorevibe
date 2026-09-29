@@ -109,6 +109,15 @@ it("shows live worker and no eligible work beside a zero rate", () => {
   expect(html).toContain("워커 정상 · 실행 가능 일감 없음");
 });
 
+it("shows exhausted automatic work as a human action with a review link", () => {
+  const html = render({ ...stage, key: "first", label: "AI 1차", unit: "건",
+    completed1m: 0, completed5m: 0, waiting: 0, manualAttention: 2, status: "idle" });
+  expect(html).toContain("직접 확인 필요");
+  expect(html).toContain("직접 확인 2건");
+  expect(html).toContain("/admin/review?stage=human#review-list");
+  expect(html).not.toContain("대기 없음");
+});
+
 it("shows deferred collection when no fetch is currently eligible", () => {
   const html = renderToStaticMarkup(createElement(ThroughputStrip, {
     snapshot: { measuredAt: "2026-09-22T01:02:03.000Z", stages: [{ ...stage, key: "fetch",

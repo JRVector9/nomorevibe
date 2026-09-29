@@ -1,3 +1,57 @@
+# 2026-09-29 22:56 KST — 수집·1차 심사 재시도 소진 복구 구현, 운영 적용 대기
+
+## Current objective / completed work
+
+운영 확인에서 발견한 1차 AI 심사 재시도 소진 후보 2건과 GitHub 원본 재수집 실패 후보 1건을
+자동 작업의 숨은 대기에서 사람 심사 큐로 넘기도록 수정했다. 독립 작업 트리
+`/private/tmp/nmv-pipeline-stuck-20260929`의 `fix/pipeline-stuck-recovery`에서 작업했고,
+루트 checkout의 사용자 변경은 건드리지 않았다. 아직 commit·PR·운영 배포는 하지 않았다.
+
+## Modified files / key design decisions
+
+`lib/crawl/agent-review-repository.ts`, `lib/crawl/jobs/agent-review.ts`는 현재 설정·원본에 맞는
+1차 실패 3회가 있고 유효한 성공이 없는 자동 승인 후보를 `ai_review_exhausted`로 사람 큐에 넘긴다.
+`lib/crawl/repository.ts`, `lib/crawl/jobs/fetch.ts`는 `reconsiderAfter`보다 새 원본이 필요한데
+프론티어가 최종 `skipped`/`failed`이면 `source_refresh_failed`로 넘긴다. 양쪽 모두 작업 lease와
+후보 행 잠금으로 소유권을 확인하며 자동 승인·발행으로 우회하지 않는다. 새 사유는
+`lib/db/crawl-schema.ts`, `lib/crawl/admin-review.ts`, `app/admin/reasons.ts`,
+`app/admin/review/causes.ts`에 추가했다. `lib/operations/throughput-model.ts`, `throughput.ts`,
+`worker-progress.ts`, `app/admin/status/ThroughputStrip.tsx`, `throughput.module.css`는 단계별
+`manualAttention`을 표시한다. 워커 자체 장애가 아니므로 감시 종료 코드 0은 유지하고,
+관리자에는 직접 확인 링크·건수를 보인다. 운영 설명은
+`docs/operations/independent-workers-runbook.md`에 있다. DB 스키마·migration은 변경하지 않았다.
+테스트 파일은 `tests/integration/agent-review-records.test.ts`, `crawl-fetch.test.ts`,
+`operations-throughput.test.ts`, `tests/worker-progress.test.ts`,
+`tests/operations-throughput-display.test.ts`, `tests/agent-review-job.test.ts`,
+`tests/integration/admin-review-causes.test.ts`다.
+
+## Test commands and results / failed approaches
+
+`npm ci`, `npx next typegen`, `npx tsc --noEmit`, `npm run lint`(기존 미사용 변수 경고 1개),
+`npm run build`, `git diff --check` 종료 0. 통합 테스트 3파일 56/56,
+사람 심사·감시 관련 3파일 28/28, 새 관리자 사유 테스트가 포함된 파일 15/15,
+전체 `npm test` 160파일 1276/1276 통과했다. 첫 전체 단위 실행은 새 함수를 목에
+등록하지 않아 `agent-review-job.test.ts` 19개가 실패했다. 목을 추가하고 전체 재실행이
+성공했다. 실제 운영의 두 후보·한 후보가 새 코드로 이동하는지는 아직 확인하지 않았다.
+
+## Remaining work / exact commands for the next agent
+
+소스 재수집 대기 선별의 대량 큐 경계와 변경 diff를 재검토한다. 이후 commit/push, 보호 브랜치
+PR의 최신 CI `check` 성공 및 병합, worker/web 공통 이미지 배포, 운영 2+1건의 큐 이동·
+`manualAttention` 표시와 수집→1차→2차의 계속 진행을 확인한다. 배포 순서는
+`README.md`와 `docs/operations/independent-workers-runbook.md`를 따른다.
+
+```sh
+cd /private/tmp/nmv-pipeline-stuck-20260929
+git status --short --branch
+git diff --check
+npx vitest run --config vitest.integration.config.ts tests/integration/agent-review-records.test.ts tests/integration/crawl-fetch.test.ts tests/integration/operations-throughput.test.ts
+npx tsc --noEmit
+python3 scripts/ops/deploy_shared_images.py --help
+```
+
+---
+
 # 2026-09-29 21:35 KST — 자동 확인 릴리스 운영 적용 완료, 실측 기록 PR 대기
 
 ## Current objective / completed work

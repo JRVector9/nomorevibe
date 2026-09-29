@@ -52,6 +52,22 @@ beforeEach(async () => {
 });
 
 describe("수집 잡", () => {
+  it("moves an unfetchable reconsideration into the human queue without reusing old evidence", async () => {
+    const repo = "someone/gone-repository";
+    const old = new Date(Date.now() - 11 * 24 * 60 * 60_000);
+    await crawl.putDocument({ repo, repoMeta: STABLE_META, productUrl: "https://my-app.test" });
+    await db.update(crawlDocuments).set({ fetchedAt: old }).where(eq(crawlDocuments.repo, repo));
+    await db.insert(crawlCandidates).values({ repo, productUrl: "https://my-app.test", state: "new",
+      reason: "source_changed", decidedBy: "auto", signals: { reconsiderAfter: old.toISOString() } });
+    await db.insert(crawlFrontier).values({ repo, signal: "test", state: "skipped", attempts: 1 });
+
+    expect(await tick()).toMatchObject({ status: "completed" });
+    expect(await crawl.getCandidate(repo)).toMatchObject({ state: "needs_review",
+      reason: "source_refresh_failed", signals: { stoppedAt: { rule: "원본 재수집" } } });
+    expect(await crawl.frontierCounts()).toEqual({ skipped: 1 });
+    expect(getRepo).not.toHaveBeenCalled();
+  });
+
   it("recovers a prior fetch claim without touching the current job or accepting the old result", async () => {
     const lease = { name: "crawl-fetch", token: "current-owner", requestedVersion: 1 };
     await db.insert(jobs).values({ name: lease.name, requestedVersion: 1,

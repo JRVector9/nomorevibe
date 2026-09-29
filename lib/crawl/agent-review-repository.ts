@@ -276,6 +276,41 @@ export async function requeueStaleReviewSources(
   });
 }
 
+/** Move current-source first-review failures out of approved after the retry limit.
+ * Keeping them approved hides them from the human queue while the worker can never select them again.
+ */
+export async function handOffExhaustedFirstReviews(
+  settings: CrawlSettings, lease: JobLease, limit = 20,
+): Promise<number> {
+  if (!settings.enabled || settings.reviewMode !== "enforce") return 0;
+  return db.transaction(async tx => {
+    const [saved] = await tx.select().from(crawlSettings).where(eq(crawlSettings.id, 1)).for("share");
+    if (!isDeepStrictEqual(mergeWithDefaults(saved?.values), settings)) return 0;
+    const rows = await tx.select({ id: crawlCandidates.id }).from(crawlCandidates).where(and(
+      eq(crawlCandidates.state, "approved"), eq(crawlCandidates.decidedBy, "auto"),
+      not(starAutoApprovalPredicate(settings)),
+      sql`EXISTS (SELECT 1 FROM ${crawlDocuments} d WHERE d.repo = ${crawlCandidates.repo}
+        AND d.product_url IS NOT DISTINCT FROM ${crawlCandidates.productUrl}
+        AND d.fetched_at <= now() AND d.fetched_at > now() - interval '24 hours')`,
+      sql`(SELECT count(*) FROM ${crawlReviewAttempts} WHERE ${matchingSource(settings)}
+        AND ${crawlReviewAttempts.state} IN ('failed', 'superseded')
+        AND ${crawlReviewAttempts.errorCode} IS DISTINCT FROM 'owner_changed') >= ${MAX_REVIEW_ATTEMPTS}`,
+      sql`NOT EXISTS (SELECT 1 FROM ${crawlReviewAttempts} WHERE ${matchingSource(settings)}
+        AND ${crawlReviewAttempts.state} = 'succeeded' AND ${crawlReviewAttempts.validUntil} > now())`,
+    )).orderBy(asc(crawlCandidates.updatedAt), asc(crawlCandidates.id))
+      .limit(Math.max(1, Math.min(100, limit))).for("update", { skipLocked: true });
+    if (!rows.length) return 0;
+    const updated = await tx.update(crawlCandidates).set({
+      state: "needs_review", reason: "ai_review_exhausted", updatedAt: sql`clock_timestamp()`,
+      signals: sql`coalesce(${crawlCandidates.signals}, '{}'::jsonb) ||
+        jsonb_build_object('stoppedAt', jsonb_build_object('rule', 'AI 1차 심사',
+          'detail', '자동 심사 재시도 한도에 도달했습니다. 사람이 확인해야 합니다.'))`,
+    }).where(inArray(crawlCandidates.id, rows.map(row => row.id))).returning({ id: crawlCandidates.id });
+    await assertJobLease(tx, lease);
+    return updated.length;
+  });
+}
+
 /**
  * unreviewedOnly — 한 번도 심사를 통과한 적이 없는 후보만. 발행분 감사가 양보할지 가를 때 쓴다.
  *
