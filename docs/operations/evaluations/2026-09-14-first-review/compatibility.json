@@ -1,0 +1,38 @@
+{
+  "at": "2026-09-13T18:56:37.886Z",
+  "modelValidation": {
+    "first": null,
+    "gateway": "[MLX] gpt-oss-120b"
+  },
+  "exactEcho": {
+    "status": "needs_human",
+    "decision": "approve",
+    "votes": 1
+  },
+  "aliasEcho": {
+    "status": "agreed",
+    "decision": "approve",
+    "votes": 2
+  },
+  "lowFirst": {
+    "status": "needs_human",
+    "decision": "approve",
+    "votes": 1
+  },
+  "waitForFailure": {
+    "status": "pending",
+    "decision": null,
+    "votes": 0
+  },
+  "disagreement": {
+    "status": "needs_human",
+    "decision": null,
+    "votes": 2
+  },
+  "moved": {
+    "status": "agreed",
+    "decision": "approve",
+    "votes": 3
+  },
+  "assertions": 10
+}

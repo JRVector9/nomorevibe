@@ -1,0 +1,468 @@
+{
+  "at": "2026-09-26T12:35:47.780Z",
+  "invalidSamples": [
+    {
+      "repository_key": "fabric8io/kubernetes-client",
+      "head_sha": "f8cc68fa9446ecb31e228ce4c1a255f36d83bc79",
+      "commit_sha": "0bbff8a6b951cdd69cd9296b6c0966cac7fe8bc8",
+      "has_observations": true,
+      "request_count": 38
+    },
+    {
+      "repository_key": "yarro-ai/yarro-app",
+      "head_sha": "8502e6fdc39b0d875b249c3f0a47dc8222063f91",
+      "commit_sha": "c91d3e77da7caf9b38a1509aae20210268dcdc1c",
+      "has_observations": true,
+      "request_count": 43
+    },
+    {
+      "repository_key": "ygtotlrl-lab/hanhala-ruchanit",
+      "head_sha": "5e2d936bf270009e0a2cfcaa503cd9cc6ed1a2bf",
+      "commit_sha": "720ade35699eb14dde28bea62775644395811dea",
+      "has_observations": true,
+      "request_count": 19
+    },
+    {
+      "repository_key": "yue-here/rietx",
+      "head_sha": "4ee4e7f5e5322e256f753b02ae1d40a38483d633",
+      "commit_sha": "d58219553455c02f8eb85e8ef141aa8221f093ac",
+      "has_observations": true,
+      "request_count": 36
+    }
+  ],
+  "readmeSamples": [
+    {
+      "slug": "sanctuary",
+      "repo": "eriknewton/sanctuary-framework",
+      "created_at": "2026-09-19 14:52:42.342388",
+      "tagline_source": "maker",
+      "page_length": 6000,
+      "keyword_length": 269
+    },
+    {
+      "slug": "matchupketchup",
+      "repo": "milkduds1001/matchupketchup",
+      "created_at": "2026-09-19 14:44:13.449544",
+      "tagline_source": "maker",
+      "page_length": 14,
+      "keyword_length": 174
+    },
+    {
+      "slug": "legado-digital",
+      "repo": "rvnegocioss-cloud/legado-digital-",
+      "created_at": "2026-09-19 14:44:03.727843",
+      "tagline_source": "maker",
+      "page_length": 4621,
+      "keyword_length": 238
+    },
+    {
+      "slug": "svipall",
+      "repo": "ilien-dev/svipall",
+      "created_at": "2026-09-19 14:44:02.763295",
+      "tagline_source": "maker",
+      "page_length": 6000,
+      "keyword_length": 205
+    },
+    {
+      "slug": "kota",
+      "repo": "stabruriss/kota-app",
+      "created_at": "2026-09-19 14:44:02.157918",
+      "tagline_source": "maker",
+      "page_length": 868,
+      "keyword_length": 291
+    },
+    {
+      "slug": "ai-automation-that-understands-how-your-business-actually-wo",
+      "repo": "odysseyalive/claude-workforce",
+      "created_at": "2026-09-19 14:44:01.442824",
+      "tagline_source": "maker",
+      "page_length": 3583,
+      "keyword_length": 306
+    },
+    {
+      "slug": "tokendial",
+      "repo": "r4yb3l/tokendial",
+      "created_at": "2026-09-19 14:44:00.745339",
+      "tagline_source": "maker",
+      "page_length": 5316,
+      "keyword_length": 410
+    },
+    {
+      "slug": "aidc",
+      "repo": "pacepace/aidc",
+      "created_at": "2026-09-19 14:44:00.061569",
+      "tagline_source": "maker",
+      "page_length": 3343,
+      "keyword_length": 293
+    }
+  ],
+  "readmeDates": [
+    {
+      "day": "2026-09-26",
+      "n": 143,
+      "never_checked": 0
+    },
+    {
+      "day": "2026-09-25",
+      "n": 356,
+      "never_checked": 0
+    },
+    {
+      "day": "2026-09-24",
+      "n": 354,
+      "never_checked": 0
+    },
+    {
+      "day": "2026-09-23",
+      "n": 440,
+      "never_checked": 0
+    },
+    {
+      "day": "2026-09-22",
+      "n": 382,
+      "never_checked": 0
+    },
+    {
+      "day": "2026-09-21",
+      "n": 579,
+      "never_checked": 0
+    },
+    {
+      "day": "2026-09-20",
+      "n": 1842,
+      "never_checked": 0
+    },
+    {
+      "day": "2026-09-19",
+      "n": 3939,
+      "never_checked": 1327
+    },
+    {
+      "day": "2026-09-18",
+      "n": 1092,
+      "never_checked": 978
+    },
+    {
+      "day": "2026-09-17",
+      "n": 714,
+      "never_checked": 605
+    },
+    {
+      "day": "2026-09-16",
+      "n": 732,
+      "never_checked": 661
+    },
+    {
+      "day": "2026-09-15",
+      "n": 848,
+      "never_checked": 753
+    }
+  ],
+  "emptyProfiles": [
+    {
+      "slug": "adrian-erlikhman",
+      "name": "Adrian Erlikhman",
+      "tagline": "First-author NLP research under review at NeurIPS 2026. Papers accepted to the Journal of High School Science and the Oxford Journal of Student Scholarship. National Merit Semifinalist, 1st at Decode ",
+      "page_length": 2000,
+      "readme_length": 1827,
+      "created_at": "2026-09-24 16:43:35.300232",
+      "updated_at": "2026-09-24 16:43:35.300232"
+    },
+    {
+      "slug": "chute-oregon-cross-country-odds",
+      "name": "Chute: Oregon cross country odds",
+      "tagline": "Every team's chance of reaching Lane, from thousands of simulated seasons. All five classifications, boys and girls, scored against seasons we already know the answer to.",
+      "page_length": 2000,
+      "readme_length": 2000,
+      "created_at": "2026-09-23 12:20:03.838755",
+      "updated_at": "2026-09-23 12:20:03.838755"
+    },
+    {
+      "slug": "jonathan-wong",
+      "name": "Jonathan Wong",
+      "tagline": "15+ years turning ambiguous problems into time tested systems at Microsoft and Starbucks.",
+      "page_length": 2000,
+      "readme_length": 0,
+      "created_at": "2026-09-24 01:20:32.575419",
+      "updated_at": "2026-09-24 01:20:32.575419"
+    },
+    {
+      "slug": "sujay-kumar-suman",
+      "name": "Sujay Kumar Suman",
+      "tagline": "Sujay Kumar Suman — software engineer building Go services, Kubernetes-native controllers, and platforms that stay clear under load.",
+      "page_length": 37,
+      "readme_length": 2000,
+      "created_at": "2026-09-24 01:24:35.495796",
+      "updated_at": "2026-09-24 01:24:35.495796"
+    },
+    {
+      "slug": "product-689",
+      "name": "Даниил Орлов",
+      "tagline": "Веду digital-продукты полным циклом: от гипотез и проектирования до запуска и роста.",
+      "page_length": 30,
+      "readme_length": 0,
+      "created_at": "2026-09-23 04:06:53.283869",
+      "updated_at": "2026-09-23 04:06:53.283869"
+    },
+    {
+      "slug": "prompt-2",
+      "name": "Prompt",
+      "tagline": "2021.11.28.03.13 (Created on)",
+      "page_length": 699,
+      "readme_length": 1283,
+      "created_at": "2026-09-23 04:41:56.089322",
+      "updated_at": "2026-09-23 04:41:56.089322"
+    },
+    {
+      "slug": "xiaoye-lin",
+      "name": "Xiaoye Lin",
+      "tagline": "AI native, design thoughtful, strategic and useful products.",
+      "page_length": 941,
+      "readme_length": 1426,
+      "created_at": "2026-09-23 13:58:06.818067",
+      "updated_at": "2026-09-23 13:58:06.818067"
+    },
+    {
+      "slug": "herohome",
+      "name": "Herohome",
+      "tagline": "Progressive web app para Herohome",
+      "page_length": 8,
+      "readme_length": 46,
+      "created_at": "2026-09-23 14:56:48.480123",
+      "updated_at": "2026-09-23 14:56:48.480123"
+    }
+  ],
+  "exhaustedProfiles": [
+    {
+      "slug": "home-page-3",
+      "tagline": "Hyperswitch is an open-source global payments orchestrator that connects with multiple payment processors with a single API",
+      "error_code": "invalid_output",
+      "attempts": 5,
+      "verify_error": null,
+      "verify_attempts": 0,
+      "updated_at": "2026-09-24 17:11:35.787289"
+    },
+    {
+      "slug": "authelia",
+      "tagline": "Authelia is an open-source authentication and authorization server and portal fulfilling the identity and access management (IAM) role of information security in providing multi-factor authentication ",
+      "error_code": null,
+      "attempts": 1,
+      "verify_error": "invalid_output",
+      "verify_attempts": 5,
+      "updated_at": "2026-09-24 10:59:28.209414"
+    },
+    {
+      "slug": "snapnote",
+      "tagline": "SnapNote — 오답노트 학습 도우미",
+      "error_code": null,
+      "attempts": 1,
+      "verify_error": "invalid_output",
+      "verify_attempts": 5,
+      "updated_at": "2026-09-24 11:12:28.862562"
+    },
+    {
+      "slug": "springdoc-openapi",
+      "tagline": "springdoc-openapi generates OpenAPI 3 documentation and serves Swagger UI for Spring Boot applications automatically, from your controllers, annotations and constraints.",
+      "error_code": null,
+      "attempts": 1,
+      "verify_error": "invalid_output",
+      "verify_attempts": 5,
+      "updated_at": "2026-09-24 11:30:44.632069"
+    },
+    {
+      "slug": "openalice",
+      "tagline": "Trade with the coding agent you already use. OpenAlice turns trading into a coding task — open-source, self-hosted, every broker in one account. Works with Claude Code, Codex, OpenCode, and Pi.",
+      "error_code": null,
+      "attempts": 1,
+      "verify_error": "invalid_output",
+      "verify_attempts": 5,
+      "updated_at": "2026-09-24 13:55:10.736769"
+    },
+    {
+      "slug": "yoda",
+      "tagline": "把 Agent、上下文与交付放进同一个 AI 工作台，让想法真正变成产品。",
+      "error_code": null,
+      "attempts": 1,
+      "verify_error": "invalid_output",
+      "verify_attempts": 5,
+      "updated_at": "2026-09-24 14:15:29.362579"
+    }
+  ],
+  "invalidPhases": [
+    {
+      "compare_phase": true,
+      "n": 908,
+      "requests_min": 5,
+      "requests_max": 441
+    }
+  ],
+  "reviewErrors": [
+    {
+      "state": "failed",
+      "error_code": "cli_error",
+      "n": 1244,
+      "recent24h": 0
+    },
+    {
+      "state": "failed",
+      "error_code": "gateway_error",
+      "n": 652,
+      "recent24h": 0
+    },
+    {
+      "state": "failed",
+      "error_code": "timeout",
+      "n": 410,
+      "recent24h": 2
+    },
+    {
+      "state": "failed",
+      "error_code": "invalid_output",
+      "n": 200,
+      "recent24h": 2
+    },
+    {
+      "state": "failed",
+      "error_code": "model_unavailable",
+      "n": 48,
+      "recent24h": 0
+    },
+    {
+      "state": "failed",
+      "error_code": "cancelled",
+      "n": 15,
+      "recent24h": 0
+    }
+  ],
+  "secondErrors": [
+    {
+      "status": "needs_human",
+      "error_code": "cli_error",
+      "n": 1
+    },
+    {
+      "status": "needs_human",
+      "error_code": "invalid_output",
+      "n": 1
+    }
+  ],
+  "pageDiffRecheck": [
+    {
+      "n": 0
+    }
+  ],
+  "categoryRows": [
+    {
+      "category": "Social",
+      "search_category": "Social 소셜",
+      "n": 276
+    },
+    {
+      "category": "Plugin",
+      "search_category": "Plugin 플러그인",
+      "n": 69
+    },
+    {
+      "category": "Finance",
+      "search_category": "Finance 금융",
+      "n": 993
+    },
+    {
+      "category": "Design",
+      "search_category": "Design 디자인",
+      "n": 379
+    },
+    {
+      "category": "Sports",
+      "search_category": "Sports 스포츠·피트니스",
+      "n": 513
+    },
+    {
+      "category": "Productivity",
+      "search_category": "Productivity 생산성",
+      "n": 1099
+    },
+    {
+      "category": "Education",
+      "search_category": "Education 교육",
+      "n": 1315
+    },
+    {
+      "category": "Games",
+      "search_category": "Games 게임",
+      "n": 901
+    },
+    {
+      "category": "Business",
+      "search_category": "Business 비즈니스",
+      "n": 1638
+    },
+    {
+      "category": "Security",
+      "search_category": "Security 보안",
+      "n": 462
+    },
+    {
+      "category": "Dev",
+      "search_category": "Dev 개발 도구",
+      "n": 5543
+    },
+    {
+      "category": "Other",
+      "search_category": "Other 기타",
+      "n": 882
+    },
+    {
+      "category": "Media",
+      "search_category": "Media 미디어",
+      "n": 898
+    },
+    {
+      "category": "Profile",
+      "search_category": "Profile 개인프로필",
+      "n": 912
+    },
+    {
+      "category": "Marketing",
+      "search_category": "Marketing 마케팅",
+      "n": 545
+    },
+    {
+      "category": "Health",
+      "search_category": "Health 건강",
+      "n": 490
+    },
+    {
+      "category": "Data",
+      "search_category": "Data 데이터",
+      "n": 737
+    },
+    {
+      "category": "Skill",
+      "search_category": "Skill 스킬",
+      "n": 51
+    },
+    {
+      "category": "Lifestyle",
+      "search_category": "Lifestyle 라이프스타일",
+      "n": 866
+    },
+    {
+      "category": "Commerce",
+      "search_category": "Commerce 커머스",
+      "n": 650
+    }
+  ],
+  "settings": [
+    {
+      "agent_evidence": {
+        "enabled": true,
+        "policyVersion": "2026-09-06.1",
+        "detectorVersion": "2026-09-14.1",
+        "enforceEligibility": false,
+        "displayObservedFacts": false
+      }
+    }
+  ],
+  "categoryMismatch": 0
+}

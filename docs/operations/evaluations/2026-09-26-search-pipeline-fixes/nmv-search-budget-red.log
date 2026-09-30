@@ -1,0 +1,41 @@
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - ESM syntax in a file loaded as CommonJS (vitest.config.ts:1:1). Use a `.mjs` extension or set `"type": "module"` in the closest package.json
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+
+ RUN  v4.1.10 /private/tmp/nmv-search-tick-timeout-20260926
+
+ ❯ tests/search-job-budget.test.ts (4 tests | 2 failed) 5ms
+     × does not count a shortened generation deadline as a product failure 3ms
+     × does not count a shortened verification deadline as a product failure 0ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/search-job-budget.test.ts > search job time budget > does not count a shortened generation deadline as a product failure
+AssertionError: expected "vi.fn()" to be called 6 times, but got 7 times
+ ❯ tests/search-job-budget.test.ts:48:40
+     46|     });
+     47|     expect(await writeSearchProfiles(ctx())).toEqual({ done: false });
+     48|     expect(domain.recordProfileResult).toHaveBeenCalledTimes(6);
+       |                                        ^
+     49|     expect(domain.recordProfileResult.mock.calls.every((call) => call[…
+     50|   });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+ FAIL  tests/search-job-budget.test.ts > search job time budget > does not count a shortened verification deadline as a product failure
+AssertionError: expected "vi.fn()" to be called 8 times, but got 9 times
+ ❯ tests/search-job-budget.test.ts:65:45
+     63|     });
+     64|     expect(await verifySearchKeywords(ctx())).toEqual({ done: false });
+     65|     expect(domain.recordVerificationResult).toHaveBeenCalledTimes(8);
+       |                                             ^
+     66|     expect(domain.recordVerificationResult.mock.calls.every((call) => …
+     67|   });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  2 failed | 2 passed (4)
+   Start at  23:58:45
+   Duration  91ms (transform 19ms, setup 8ms, import 19ms, tests 5ms, environment 0ms)

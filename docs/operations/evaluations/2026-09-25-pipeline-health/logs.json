@@ -1,0 +1,90 @@
+[
+  {
+    "role": "maintenance",
+    "exit": 0,
+    "parsed": 573,
+    "events": {
+      "uptime.checked": 60,
+      "job.completed": 191,
+      "worker.job": 191,
+      "product_search.refreshed": 60,
+      "thumbnail.refreshed": 68,
+      "news.refreshed": 1,
+      "clicks.rolled": 1,
+      "ranking.refreshed": 1
+    },
+    "errorCodes": {},
+    "scans": {},
+    "uptimeChecked": 900
+  },
+  {
+    "role": "publisher",
+    "exit": 0,
+    "parsed": 86,
+    "events": {
+      "crawl.publish_done": 18,
+      "job.completed": 18,
+      "worker.job": 18,
+      "crawl.published": 16,
+      "review.pipeline": 16
+    },
+    "errorCodes": {},
+    "scans": {},
+    "uptimeChecked": 0
+  },
+  {
+    "role": "crawler",
+    "exit": 0,
+    "parsed": 2391,
+    "events": {
+      "crawl.seeded": 6,
+      "job.completed": 197,
+      "worker.job": 197,
+      "crawl.fetched": 55,
+      "evidence.github_refresh": 821,
+      "evidence.source_refresh": 847,
+      "evidence.refresh_batch": 59,
+      "agent_evidence.scanned": 183,
+      "product_stars.refreshed": 11,
+      "github.rate_limited": 3,
+      "crawl.fetch_rate_limited": 5,
+      "product_stars.waiting": 1,
+      "agent_evidence.deferred": 4,
+      "crawl.show_hn_seeded": 2
+    },
+    "errorCodes": {
+      "rate_limited": 1,
+      "invalid": 39,
+      "unavailable": 9,
+      "budget_exhausted": 4
+    },
+    "scans": {
+      "complete:None": 50,
+      "partial:None": 84,
+      "partial:rate_limited": 1,
+      "partial:invalid": 39,
+      "partial:unavailable": 7,
+      "failed:unavailable": 1,
+      "complete:unavailable": 1
+    },
+    "uptimeChecked": 0
+  },
+  {
+    "role": "reviewer",
+    "exit": 0,
+    "parsed": 228,
+    "events": {
+      "crawl.second_reviewed": 15,
+      "job.completed": 51,
+      "worker.job": 51,
+      "product_audit.skipped": 13,
+      "crawl.agent_review_sources_queued": 3,
+      "review.pipeline": 82,
+      "crawl.judged": 6,
+      "crawl.agent_reviewed": 7
+    },
+    "errorCodes": {},
+    "scans": {},
+    "uptimeChecked": 0
+  }
+]

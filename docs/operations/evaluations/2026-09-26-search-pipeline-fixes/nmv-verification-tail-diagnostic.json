@@ -1,0 +1,17 @@
+[
+  {
+    "event": "repair.tail_response",
+    "id": 609,
+    "status": 200,
+    "finishReason": "length",
+    "completionTokens": 2723,
+    "promptTokens": 1322,
+    "contentChars": 10893,
+    "validJSON": true,
+    "checksCount": 15,
+    "missingCount": 1,
+    "unknownCount": 1,
+    "duplicateCount": 0,
+    "nonBooleanCount": 0
+  }
+]

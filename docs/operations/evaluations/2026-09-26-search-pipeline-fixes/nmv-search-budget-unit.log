@@ -1,0 +1,75 @@
+
+> nomorevibe@0.1.0 test
+> vitest run
+
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - ESM syntax in a file loaded as CommonJS (vitest.config.ts:1:1). Use a `.mjs` extension or set `"type": "module"` in the closest package.json
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+
+ RUN  v4.1.10 /private/tmp/nmv-search-tick-timeout-20260926
+
+{"ts":"2026-09-26T15:00:37.980Z","level":"error","event":"crawl.classify_failed","repo":"verification/sample","count":1,"model":"gpt-5.3-codex-spark","reason":"auth","code":1}
+{"ts":"2026-09-26T15:00:37.985Z","level":"error","event":"crawl.classify_failed","repo":"o/r","count":1,"model":"gpt-5.3-codex-spark","reason":"auth","code":1}
+{"ts":"2026-09-26T15:00:37.981Z","level":"info","event":"crawl.classified","repo":"verification/sample","provider":"claude-cli","model":"sonnet","category":"Productivity","reason":"Tasks"}
+{"ts":"2026-09-26T15:00:37.985Z","level":"info","event":"crawl.classified","repo":"o/r","provider":"claude-cli","model":"sonnet","category":"Productivity","reason":"Tasks"}
+{"ts":"2026-09-26T15:00:37.988Z","level":"warn","event":"crawl.classify_failed","repo":"verification/sample","count":1,"model":"gpt-5.3-codex-spark","reason":"timeout"}
+{"ts":"2026-09-26T15:00:37.988Z","level":"info","event":"crawl.classified","repo":"verification/sample","provider":"claude-cli","model":"sonnet","category":"Productivity","reason":"Tasks"}
+{"ts":"2026-09-26T15:00:37.995Z","level":"warn","event":"crawl.classify_failed","repo":"o/r","count":1,"model":"gpt-5.3-codex-spark","reason":"timeout"}
+{"ts":"2026-09-26T15:00:37.995Z","level":"info","event":"crawl.classified","repo":"o/r","provider":"claude-cli","model":"sonnet","category":"Productivity","reason":"Tasks"}
+{"ts":"2026-09-26T15:00:37.998Z","level":"info","event":"crawl.classify_disabled","reason":"no_cli"}
+{"ts":"2026-09-26T15:00:37.998Z","level":"info","event":"crawl.classified","repo":"verification/sample","provider":"claude-cli","model":"sonnet","category":"Productivity","reason":"Tasks"}
+{"ts":"2026-09-26T15:00:38.004Z","level":"info","event":"crawl.classified","repo":"o/r","provider":"claude-cli","model":"sonnet","category":"Productivity","reason":"Tasks"}
+{"ts":"2026-09-26T15:00:38.006Z","level":"warn","event":"crawl.classify_failed","repo":"verification/sample","count":1,"model":"gpt-5.3-codex-spark","reason":"invalid_output","code":0}
+{"ts":"2026-09-26T15:00:38.006Z","level":"info","event":"crawl.classified","repo":"verification/sample","provider":"claude-cli","model":"sonnet","category":"Productivity","reason":"Tasks"}
+{"ts":"2026-09-26T15:00:38.013Z","level":"warn","event":"crawl.classify_failed","repo":"o/r","count":1,"model":"gpt-5.3-codex-spark","reason":"invalid_output","code":0}
+{"ts":"2026-09-26T15:00:38.013Z","level":"info","event":"crawl.classified","repo":"o/r","provider":"claude-cli","model":"sonnet","category":"Productivity","reason":"Tasks"}
+{"ts":"2026-09-26T15:00:38.016Z","level":"info","event":"crawl.classified","repo":"verification/sample","provider":"claude-cli","model":"sonnet","category":"Productivity","reason":"Tasks"}
+{"ts":"2026-09-26T15:00:38.016Z","level":"error","event":"crawl.classify_failed","repo":"verification/sample","count":1,"model":"gpt-5.3-codex-spark","reason":"auth","code":1}
+{"ts":"2026-09-26T15:00:38.024Z","level":"error","event":"crawl.classify_failed","repo":"o/r","count":1,"model":"gpt-5.3-codex-spark","reason":"auth","code":1}
+{"ts":"2026-09-26T15:00:38.024Z","level":"info","event":"crawl.classified","repo":"o/r","provider":"claude-cli","model":"sonnet","category":"Productivity","reason":"Tasks"}
+{"ts":"2026-09-26T15:00:38.026Z","level":"info","event":"crawl.classified","repo":"verification/sample","provider":"codex-cli","model":"gpt-5.3-codex-spark","category":"Productivity","reason":"Tasks"}
+{"ts":"2026-09-26T15:00:38.026Z","level":"info","event":"crawl.classified","repo":"verification/sample","provider":"claude-cli","model":"sonnet","category":"Productivity","reason":"Tasks"}
+{"ts":"2026-09-26T15:00:38.032Z","level":"info","event":"crawl.classified","repo":"o/r","provider":"codex-cli","model":"gpt-5.3-codex-spark","category":"Productivity","reason":"Tasks"}
+{"ts":"2026-09-26T15:00:38.033Z","level":"warn","event":"crawl.classify_failed","repo":"o/r","count":1,"model":"gpt-5.3-codex-spark","reason":"timeout"}
+{"ts":"2026-09-26T15:00:38.033Z","level":"warn","event":"crawl.classify_failed","repo":"o/r","count":1,"model":"sonnet","reason":"timeout"}
+{"ts":"2026-09-26T15:00:38.035Z","level":"warn","event":"crawl.classify_failed","repo":"verification/sample","count":1,"model":"gpt-5.3-codex-spark","reason":"timeout"}
+{"ts":"2026-09-26T15:00:38.035Z","level":"warn","event":"crawl.classify_failed","repo":"verification/sample","count":1,"model":"sonnet","reason":"timeout"}
+{"ts":"2026-09-26T15:00:38.417Z","level":"info","event":"admin.product_audit_decided","slug":"a","decision":"remove","login":"jr"}
+{"ts":"2026-09-26T15:00:38.417Z","level":"info","event":"admin.product_audit_decided","slug":"b","decision":"keep","login":"jr"}
+{"ts":"2026-09-26T15:00:38.418Z","level":"info","event":"admin.product_audit_started","campaign":8,"enrolled":10,"login":"jr"}
+{"ts":"2026-09-26T15:00:38.418Z","level":"info","event":"admin.product_audit_started","campaign":8,"enrolled":10,"login":"jr"}
+{"ts":"2026-09-26T15:00:38.802Z","level":"info","event":"crawl.classified","repo":"verification/sample","provider":"codex-cli","model":"gpt-5.3-codex-spark","category":"Productivity","reason":"Tasks"}
+{"ts":"2026-09-26T15:00:38.807Z","level":"info","event":"crawl.classified","repo":"verification/sample","provider":"codex-cli","model":"gpt-5.3-codex-spark","category":"Productivity","reason":"Tasks"}
+{"ts":"2026-09-26T15:00:38.808Z","level":"info","event":"crawl.classified","repo":"verification/sample","provider":"claude-cli","model":"sonnet","category":"Productivity","reason":"Tasks"}
+{"ts":"2026-09-26T15:00:38.954Z","level":"info","event":"crawl.classified","repo":"verification/sample","provider":"codex-cli","model":"gpt-5.3-codex-spark","category":"Productivity","reason":"Shared tasks"}
+{"ts":"2026-09-26T15:00:38.955Z","level":"info","event":"crawl.classified","repo":"verification/sample","provider":"codex-cli","model":"gpt-5.6-terra","category":"Productivity","reason":"Shared tasks"}
+{"ts":"2026-09-26T15:00:38.959Z","level":"info","event":"crawl.classified","repo":"o/r","provider":"codex-cli","model":"gpt-5.3-codex-spark","category":"Productivity","reason":"Shared tasks"}
+{"ts":"2026-09-26T15:00:38.962Z","level":"warn","event":"crawl.classify_failed","repo":"verification/sample","count":1,"model":"gpt-5.3-codex-spark","reason":"timeout"}
+{"ts":"2026-09-26T15:00:38.962Z","level":"warn","event":"crawl.classify_failed","repo":"verification/sample","count":1,"model":"gpt-5.6-terra","reason":"timeout"}
+{"ts":"2026-09-26T15:00:39.221Z","level":"warn","event":"github.rate_limited","path":"/repos/acme/app","resetAt":"2026-09-26T15:02:40.000Z","secondary":true}
+{"ts":"2026-09-26T15:00:39.431Z","level":"warn","event":"home.pulse_unavailable","error":{"name":"Error","message":"pulse down","stack":["Error: pulse down","    at /private/tmp/nmv-search-tick-timeout-20260926/tests/home-unclaimed.test.tsx:328:36","    at file:///private/tmp/nmv-search-tick-timeout-20260926/node_modules/@vitest/runner/dist/chunk-artifact.js:302:11","    at file:///private/tmp/nmv-search-tick-timeout-20260926/node_modules/@vitest/runner/dist/chunk-artifact.js:1903:26"]}}
+{"ts":"2026-09-26T15:00:39.435Z","level":"warn","event":"home.pulse_unavailable","error":{"name":"Error","message":"pulse down","stack":["Error: pulse down","    at /private/tmp/nmv-search-tick-timeout-20260926/tests/home-unclaimed.test.tsx:339:36","    at file:///private/tmp/nmv-search-tick-timeout-20260926/node_modules/@vitest/runner/dist/chunk-artifact.js:302:11","    at file:///private/tmp/nmv-search-tick-timeout-20260926/node_modules/@vitest/runner/dist/chunk-artifact.js:1903:26"]}}
+{"ts":"2026-09-26T15:00:39.435Z","level":"error","event":"home.list_failed","error":{"name":"Error","message":"db down","stack":["Error: db down","    at /private/tmp/nmv-search-tick-timeout-20260926/tests/home-unclaimed.test.tsx:341:40","    at file:///private/tmp/nmv-search-tick-timeout-20260926/node_modules/@vitest/runner/dist/chunk-artifact.js:302:11","    at file:///private/tmp/nmv-search-tick-timeout-20260926/node_modules/@vitest/runner/dist/chunk-artifact.js:1903:26"]}}
+{"ts":"2026-09-26T15:00:39.731Z","level":"info","event":"crawl.published","repo":"acme/app","slug":"sample","url":"https://app.example","category":"Other"}
+{"ts":"2026-09-26T15:00:39.749Z","level":"warn","event":"thumbnail.enqueue_failed","slug":"sample"}
+{"ts":"2026-09-26T15:00:39.883Z","level":"info","event":"crawl.classified","repo":"acme/revealui","provider":"codex-cli","model":"gpt-5.3-codex-spark","category":"Games","reason":"Playable interactive entertainment."}
+{"ts":"2026-09-26T15:00:39.885Z","level":"info","event":"crawl.classified","repo":"acme/revealui","provider":"codex-cli","model":"gpt-5.3-codex-spark","category":"Business","reason":"Sales workflow."}
+{"ts":"2026-09-26T15:00:39.885Z","level":"info","event":"crawl.classified","repo":"acme/ledger","provider":"codex-cli","model":"gpt-5.3-codex-spark","category":"Finance","reason":"Investment analysis."}
+{"ts":"2026-09-26T15:00:39.886Z","level":"warn","event":"crawl.classify_failed","repo":"acme/revealui","count":2,"model":"gpt-5.3-codex-spark","reason":"invalid_output","code":0}
+{"ts":"2026-09-26T15:00:39.887Z","level":"warn","event":"crawl.classify_failed","repo":"acme/revealui","count":2,"model":"gpt-5.6-terra","reason":"invalid_output","code":0}
+{"ts":"2026-09-26T15:00:39.887Z","level":"warn","event":"crawl.classify_failed","repo":"acme/revealui","count":1,"model":"gpt-5.3-codex-spark","reason":"error","code":1}
+{"ts":"2026-09-26T15:00:39.887Z","level":"info","event":"crawl.classified","repo":"acme/revealui","provider":"codex-cli","model":"gpt-5.6-terra","category":"Productivity","reason":"Team workflow."}
+{"ts":"2026-09-26T15:00:39.887Z","level":"warn","event":"crawl.classify_failed","repo":"acme/revealui","count":1,"model":"gpt-5.3-codex-spark","reason":"timeout"}
+{"ts":"2026-09-26T15:00:39.887Z","level":"error","event":"crawl.classify_failed","repo":"acme/revealui","count":1,"model":"gpt-5.6-terra","reason":"auth","code":1}
+{"ts":"2026-09-26T15:00:39.891Z","level":"info","event":"crawl.classified","repo":"acme/revealui","provider":"codex-cli","model":"gpt-5.3-codex-spark","category":"Other","reason":"Insufficient evidence."}
+{"ts":"2026-09-26T15:00:39.999Z","level":"warn","event":"github.rate_limited","path":"/repos/o/limited","resetAt":"2026-09-26T15:02:40.000Z","secondary":true}
+{"ts":"2026-09-26T15:00:40.000Z","level":"warn","event":"github.rate_limited","path":"/search/commits?q=x","resetAt":"2026-09-26T15:01:40.000Z","secondary":true}
+{"ts":"2026-09-26T15:00:40.043Z","level":"warn","event":"http.request","requestId":"de64b67b-853e-4499-acad-87820286fb40","route":"cron.run","method":"POST","status":400,"durationMs":2}
+{"ts":"2026-09-26T15:00:40.046Z","level":"warn","event":"http.request","requestId":"c8c986a3-0afe-44f9-817d-a84b3c805552","route":"cron.run","method":"POST","status":403,"durationMs":0}
+{"ts":"2026-09-26T15:00:40.046Z","level":"warn","event":"http.request","requestId":"c5439226-1d95-48d0-a689-64d5eaa2b23d","route":"cron.run","method":"POST","status":404,"durationMs":0}
+{"ts":"2026-09-26T15:00:40.047Z","level":"info","event":"http.request","requestId":"5cced0d6-7cd8-4a23-ba10-5d9f3ded7db5","route":"cron.run","method":"POST","status":202,"durationMs":0}
+
+ Test Files  148 passed (148)
+      Tests  1173 passed (1173)
+   Start at  00:00:37
+   Duration  4.05s (transform 11.12s, setup 1.72s, import 38.26s, tests 7.81s, environment 8ms)

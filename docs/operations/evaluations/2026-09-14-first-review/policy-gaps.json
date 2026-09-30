@@ -1,0 +1,16 @@
+{
+  "at": "2026-09-13T19:20:41.756Z",
+  "assertions": 4,
+  "markdown": "[Live demo](https://skillberry-store-demo-adv.onrender.com)\n[Website & docs](https://skillberry-ai.github.io/skillberry-store/)",
+  "normalized": "Live demo\nWebsite & docs",
+  "actual": {
+    "status": "agreed",
+    "decision": "approve",
+    "votes": 2
+  },
+  "aboveThreshold": {
+    "status": "needs_human",
+    "decision": null,
+    "votes": 3
+  }
+}

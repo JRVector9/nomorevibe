@@ -1,0 +1,110 @@
+{
+  "comparisons": [
+    {
+      "repo": "xsirch/openalice",
+      "httpStatus": "200",
+      "bytes": 2373767,
+      "over2MB": true,
+      "comparisonStatus": "ahead",
+      "totalCommits": 2628,
+      "message": null,
+      "exit": 0
+    },
+    {
+      "repo": "yeraze/meshmonitor",
+      "httpStatus": "200",
+      "bytes": 2470866,
+      "over2MB": true,
+      "comparisonStatus": "ahead",
+      "totalCommits": 129,
+      "message": null,
+      "exit": 0
+    },
+    {
+      "repo": "davidciocoiusimventure/navigate",
+      "httpStatus": "200",
+      "bytes": 2471923,
+      "over2MB": true,
+      "comparisonStatus": "ahead",
+      "totalCommits": 470,
+      "message": null,
+      "exit": 0
+    },
+    {
+      "repo": "yehor-design/over.garden",
+      "httpStatus": "200",
+      "bytes": 2450279,
+      "over2MB": true,
+      "comparisonStatus": "ahead",
+      "totalCommits": 153,
+      "message": null,
+      "exit": 0
+    }
+  ],
+  "readmes": [
+    {
+      "repo": "eriknewton/sanctuary-framework",
+      "slug": "sanctuary",
+      "httpStatus": "200",
+      "bytes": 33489,
+      "pageLength": 6000,
+      "exit": 0
+    },
+    {
+      "repo": "milkduds1001/matchupketchup",
+      "slug": "matchupketchup",
+      "httpStatus": "200",
+      "bytes": 1504,
+      "pageLength": 14,
+      "exit": 0
+    },
+    {
+      "repo": "rvnegocioss-cloud/legado-digital-",
+      "slug": "legado-digital",
+      "httpStatus": "200",
+      "bytes": 2376,
+      "pageLength": 4621,
+      "exit": 0
+    },
+    {
+      "repo": "ilien-dev/svipall",
+      "slug": "svipall",
+      "httpStatus": "200",
+      "bytes": 31878,
+      "pageLength": 6000,
+      "exit": 0
+    },
+    {
+      "repo": "stabruriss/kota-app",
+      "slug": "kota",
+      "httpStatus": "200",
+      "bytes": 3019,
+      "pageLength": 868,
+      "exit": 0
+    },
+    {
+      "repo": "odysseyalive/claude-workforce",
+      "slug": "ai-automation-that-understands-how-your-business-actually-wo",
+      "httpStatus": "200",
+      "bytes": 22918,
+      "pageLength": 3583,
+      "exit": 0
+    },
+    {
+      "repo": "r4yb3l/tokendial",
+      "slug": "tokendial",
+      "httpStatus": "200",
+      "bytes": 9471,
+      "pageLength": 5316,
+      "exit": 0
+    },
+    {
+      "repo": "pacepace/aidc",
+      "slug": "aidc",
+      "httpStatus": "200",
+      "bytes": 53086,
+      "pageLength": 3343,
+      "exit": 0
+    }
+  ]
+}

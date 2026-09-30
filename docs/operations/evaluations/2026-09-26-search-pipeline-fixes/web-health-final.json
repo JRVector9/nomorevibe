@@ -1,0 +1,30 @@
+[
+  {
+    "application": "nomorevibe-web-mini",
+    "container": "b0acafac17a1",
+    "health": {
+      "status": 200,
+      "body": {
+        "status": "ok",
+        "db": "ok",
+        "instanceId": "mini-web",
+        "release": "611820d63096f54700e1254634987046d25cbe01",
+        "dbLatencyMs": 2
+      }
+    }
+  },
+  {
+    "application": "nomorevibe-web-m3",
+    "container": "b1a046664741",
+    "health": {
+      "status": 200,
+      "body": {
+        "status": "ok",
+        "db": "ok",
+        "instanceId": "m3-web",
+        "release": "611820d63096f54700e1254634987046d25cbe01",
+        "dbLatencyMs": 2
+      }
+    }
+  }
+]

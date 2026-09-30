@@ -1,0 +1,56 @@
+[
+  {
+    "role": "crawler",
+    "path": "lib/crawl/github.ts",
+    "exit": 0,
+    "matchesWorkingTree": true
+  },
+  {
+    "role": "crawler",
+    "path": "lib/domain/evidence/agents/collect.ts",
+    "exit": 0,
+    "matchesWorkingTree": true
+  },
+  {
+    "role": "crawler",
+    "path": "lib/domain/evidence/agents/repository.ts",
+    "exit": 0,
+    "matchesWorkingTree": true
+  },
+  {
+    "role": "text",
+    "path": "lib/domain/products/search-profiles.ts",
+    "exit": 0,
+    "matchesWorkingTree": true
+  },
+  {
+    "role": "text",
+    "path": "lib/domain/products/search-profile.ts",
+    "exit": 0,
+    "matchesWorkingTree": true
+  },
+  {
+    "role": "text",
+    "path": "lib/domain/products/search-verify.ts",
+    "exit": 0,
+    "matchesWorkingTree": true
+  },
+  {
+    "role": "reviewer",
+    "path": "lib/domain/products/intro-checks.ts",
+    "exit": 0,
+    "matchesWorkingTree": true
+  },
+  {
+    "role": "reviewer",
+    "path": "lib/crawl/jobs/review-document.ts",
+    "exit": 0,
+    "matchesWorkingTree": true
+  },
+  {
+    "role": "maintenance",
+    "path": "lib/jobs/products/search-refresh.ts",
+    "exit": 0,
+    "matchesWorkingTree": true
+  }
+]

@@ -125,6 +125,8 @@ mini에는 두 번째 웹과 다섯 역할의 예비를 둬 총 13개 앱을 운
 2026-09-29 릴리스 `20208d3`에서 주 재시작·mini 인계·복귀와 crawler 문서, reviewer 심사,
 maintenance 점검, text 검수의 예비 저장을 확인했다. publisher 예비의 새 제품 발행은 적격 후보가
 없어 아직 확인하지 못했다. 역할 앱은 주·예비 이미지가 어긋나지 않도록 자동 배포를 끄고 함께 교체한다.
+2026-09-30 읽기 전용 재확인에서 공통 worker/web 이미지의 운영 8개 앱은 모두 릴리스
+`50b02b7`로 배포 `done`이었고, failover·worker progress는 `ok`, 공개 health는 `ok/db:ok`였다.
 런타임 DB는 PgBouncer(6432), 별도 migration은 PostgreSQL 직접 연결(5432)을 사용한다.
 
 PR의 GitHub CI 성공은 배포 완료를 뜻하지 않는다. [독립 워커 운영 절차](docs/operations/independent-workers-runbook.md)에

@@ -1,0 +1,17 @@
+{
+  "at": "2026-09-13T18:53:54.159Z",
+  "datasetHash": "d6557094241f106a679595a230f05ad41d5b009ef65e28f7e5e40016e0f7d3d7",
+  "promptHash": "ec290e9dbbe30d698b48544bf3260ba98b7d95b7bf13c165112fa102ec70d600",
+  "promptVersion": "2026-09-14.1",
+  "rulesVersion": "2026-09-14.2",
+  "models": [
+    "sonnet",
+    "[MLX] gemma4-26b",
+    "[MLX] gemma4-31b",
+    "[MLX] gpt-oss-120b"
+  ],
+  "limit": 50,
+  "concurrency": 2,
+  "firstCliTimeoutMs": 20000,
+  "gatewayTimeoutMs": 60000
+}

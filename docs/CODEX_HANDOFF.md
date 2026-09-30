@@ -1,3 +1,55 @@
+# 2026-09-30 — 로컬 문서·판정 자료와 원격 운영 상태 정리 진행 중
+
+## Current objective / completed work
+
+사용자 요청에 따라 뒤처진 로컬 `main`을 최신 원격 상태로 맞추고, 로컬 미커밋 자료 중
+화면 시안·이미지·압축본을 제외한 문서와 검색 판정 데이터를 커밋한다. 원격 main
+`e7867bc`에서 별도 작업 트리 `/private/tmp/nmv-repo-sync-20260930`의
+`docs/reconcile-local-20260930` 브랜치를 만들었다. 루트 checkout의 기존 자료는
+아직 변경하지 않았다. 공개 `/api/health`는 `ok/db:ok`, 릴리스 `50b02b7`이었다.
+공통 이미지 8개 앱은 모두 Dokploy `done`/최신 배포 `done`/릴리스 `50b02b7`, 운영
+failover·worker progress는 모두 `ok`로 읽기 전용 확인했다.
+
+## Modified files / key design decisions
+
+로컬의 운영 보고서·평가 근거 79개, 검색 수정 계획 1개, PT 기획 문서 3개,
+`.claude/prod.sh`와 `scripts/search-judgments.json`을 별도 작업 트리로 복사했다.
+`AGENTS.md`의 10개 앱 설명을 README와 실제 주·예비 13개 앱 구성에 맞게 고쳤다.
+PT 문서에는 화면 이미지가 저장소에 포함되지 않는다고 표시했다. 화면 시안 디렉터리,
+이미지, ZIP, 프로토타입은 커밋 대상에서 제외한다. 로컬의 9월 28일 설계 파일은
+동일 경로의 원격 파일보다 오래되어 덮어쓰지 않는다. 로컬 `CODEX_HANDOFF.md`의
+추가 37줄은 원격 파일의 2026-09-28 18:13 KST 항목과 본문이 완전히 같아 다시 넣지 않는다.
+
+## Test commands and results / failed approaches
+
+`git rev-list --left-right --count HEAD...origin/main`은 루트 기준 `0 28`이었다.
+검색 판정 데이터는 기존 1247개 항목을 바꾸거나 삭제하지 않고 1257개를 추가했다.
+`python3 -m json.tool scripts/search-judgments.json`, 새 JSON/JSONL 52파일 파싱,
+`bash -n .claude/prod.sh`, `git diff --cached --check` 종료 0. 처음의 diff 검사는
+원본 PT 문서의 Markdown hard break 공백과 평가 CSV/로그의 CRLF·끝 공백을 지적했다.
+작업 트리로 복사한 텍스트 59개를 정규화한 뒤 다시 통과했다.
+운영 8개 공통 이미지 앱과 두 감시 CLI의 읽기 전용 조회는 위 결과였다.
+문서·판정 자료의 커밋, PR 검사, 루트 main 갱신은 아직 하지 않았다.
+
+## Remaining work / exact commands for the next agent
+
+선별한 자료의 보안·중복·현재성 검사, 필요한 문구 보완 후 commit/push·PR 필수
+`check` 통과·병합한다. 그 뒤 루트의 추적 파일 수정분을 안전하게 보존하고 원격
+main으로 fast-forward한다. 원격과 경로가 겹치는 로컬의 오래된 설계 파일은 별도
+백업 후 최신 추적 파일을 받는다. 화면 자료는 로컬에 그대로 남겨 둔다.
+
+```sh
+cd /private/tmp/nmv-repo-sync-20260930
+git status --short --branch
+git diff --check
+bash -n .claude/prod.sh
+python3 -m json.tool scripts/search-judgments.json >/dev/null
+cd /Users/jr/Desktop/projects/nomorevibe
+git status --short --branch
+```
+
+---
+
 # 2026-09-29 — 수집·1차 심사 재시도 소진 복구 운영 적용 완료
 
 ## Current objective / completed work
