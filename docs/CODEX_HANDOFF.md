@@ -1,3 +1,59 @@
+# 2026-09-30 — 로컬·원격 정리와 운영 상태 문서화 완료
+
+## Current objective / completed work
+
+화면 시안·이미지·압축본을 제외한 로컬 미커밋 문서와 검색 판정 자료를 PR #242로
+main `11b90ef684ee8a002f25d414aa4f6b2961694e1d`에 병합했다. 로컬 루트
+`main`도 fast-forward하여 `HEAD...origin/main`이 `0 0`이다. 운영 공유 이미지
+8개 앱은 릴리스 `50b02b7`에서 모두 `done`, 공개 health `ok/db:ok`,
+failover와 worker progress `ok`다. 이번 병합은 문서·평가 데이터·로컬 운영 보조
+스크립트만 바꿨으며 운영 앱은 재배포하지 않았다.
+
+## Modified files / key design decisions
+
+PR #242는 운영 보고서·평가 근거, 검색 수정 계획, PT 기획 문서 텍스트,
+`scripts/search-judgments.json`, `.claude/prod.sh`, `AGENTS.md`, `README.md`,
+이 인계 문서를 포함한다. `AGENTS.md`의 과거 10개 앱 표기를 주·예비 13개 앱으로
+수정했다. PT 문서에는 화면 이미지가 Git에 포함되지 않음을 밝혔다. 로컬의 오래된
+동명 failover 설계는 원격의 최신 파일을 우선했고, 로컬 인계 문서의 9월 28일 메모는
+원격에 동일한 내용이 이미 있어 중복 추가하지 않았다. 화면 자료는 로컬에 남겼다.
+
+로컬 기존 자료의 사본·이동 백업은
+`/private/tmp/nmv-root-presync-20260930-8_39m5kv`(0700, manifest 0600),
+추적 파일 변경의 Git 백업은 `stash@{0}: presync-20260930-tracked-notes`다.
+백업에는 이전 로컬 문서와 검색 판정 자료가 있으므로 필요 여부 확인 전 삭제하지 않는다.
+
+## Test commands and results / failed approaches
+
+검색 판정 JSON은 이전 1247개 값 삭제·변경 없이 1257개 항목을 추가했다.
+`python3 -m json.tool scripts/search-judgments.json`, 새 JSON/JSONL 52파일 파싱,
+`bash -n .claude/prod.sh`, `git diff --cached --check`가 통과했다. PR #242의
+GitGuardian·quality·통합 3분할·필수 `check`, main run `36657187881`의
+quality·통합 3분할·필수 `check` 및 이미지 빌드가 모두 성공했다. 로컬 fast-forward
+후 `git rev-list --left-right --count HEAD...origin/main`은 `0 0`이었다.
+
+첫 staged diff 검사는 원본 PT Markdown hard break 공백과 평가 CSV/로그의 CRLF·
+끝 공백을 지적했다. 복사한 텍스트 59개를 정규화한 뒤 통과했다. 루트에서 바로
+fast-forward하면 미추적 문서와 최신 추적 문서가 충돌하므로, 85개 파일을 백업으로
+이동하고 추적 2개를 stash한 뒤 fast-forward했다. 원본 화면 자료는 이동하지 않았다.
+
+## Remaining work / exact commands for the next agent
+
+이 완료 기록만 docs-only PR로 병합한다. 별도로 요청되지 않은 화면 자료는 로컬
+미추적 상태로 유지한다. 백업·stash는 검증을 위해 보존했다. 장기 관측·실제
+복구 주입 등 운영 검증은 `PENDING.md`를 따른다.
+
+```sh
+cd /Users/jr/Desktop/projects/nomorevibe
+git status --short --branch
+git rev-list --left-right --count HEAD...origin/main
+git stash list -1
+gh run view 36657187881 --repo JRVector9/nomorevibe --json conclusion,jobs
+curl -fsS https://nomorevibe.brut.bot/api/health
+```
+
+---
+
 # 2026-09-30 — 로컬 문서·판정 자료와 원격 운영 상태 정리 진행 중
 
 ## Current objective / completed work
