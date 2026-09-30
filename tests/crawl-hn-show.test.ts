@@ -6,6 +6,15 @@ import type { CappedRequest } from '@/lib/net/fetch';
 const mocks = vi.hoisted(() => ({ enqueue: vi.fn(), settings: null as CrawlSettings | null }));
 vi.mock('@/lib/crawl/repository', () => ({ enqueue: mocks.enqueue }));
 vi.mock('@/lib/crawl/settings', () => ({ getSettings: async () => mocks.settings }));
+// HTTP는 모의 응답인데 URL 검사만 실제 DNS를 호출하고 있었다. 수백 번의 외부 조회가
+// CI 5초 제한을 넘기면 끝나지 않은 테스트가 다음 테스트의 mock까지 오염시킨다.
+// 공개 IP로 DNS만 고정하고 실제 URL/SSRF 검사·응답 크기 제한은 그대로 실행한다.
+vi.mock('node:dns', async original => {
+  const actual = await original<typeof import('node:dns')>();
+  return { ...actual, promises: { ...actual.promises,
+    lookup: vi.fn().mockResolvedValue([{ address: '1.1.1.1', family: 4 }]),
+  } };
+});
 
 const context = (cursor: ShowHnCursor | null = null, hasBudget = () => true) =>
   ({ cursor, hasBudget, save: vi.fn().mockResolvedValue(undefined), log: vi.fn() });

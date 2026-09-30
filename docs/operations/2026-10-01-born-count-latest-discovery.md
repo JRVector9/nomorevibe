@@ -48,7 +48,13 @@
 `tsc --noEmit` 성공, lint 오류 0·기존 vendor 경고 1이었다. 로컬 Docker daemon이 실행 중이
 아니므로 통합 DB 검증은 PR의 독립 PostgreSQL CI 3분할 결과로 확인한다.
 
-PR/main CI·이미지 배포·운영 저장값 수정은 아직 실행하지 않았다. 완료 시 이 항목을 갱신한다.
+수집 최종38검사(최신 탐색10개)와 TypeScript가 통과했다. PR #244의 필수 check,
+quality·통합3분할 통과 후 main `6d866e8`에 병합했다. main run `36745740075`은
+통합3분할은 통과했으나 기존 Show HN 단위검사(1,100건)가 5초 제한을 넘었다.
+종료되지 않은 비동기 테스트가 다음 테스트의 mock도 오염시켰다. HN HTTP는 주입한
+모의 응답인데 fetchCapped의 URL 검사가 실제 Algolia DNS를 수백 번 호출하는 문제였다.
+HN 단위검사에서 DNS만 공개 IP로 고정한다. 운영 URL/SSRF 코드는 바꾸지 않는다.
+이미지 배포·운영 저장값 수정은 아직 실행하지 않았다. 완료 시 이 항목을 갱신한다.
 운영 적용은 새 crawler/예비의 같은 릴리스 배포가 끝난 뒤 `saveSettings`로
 `discover.sort=recent`, `pagesPerTick=10`만 변경한다. 검색량은 틱당 상한만 2→10이며
 계정별 쿼터·공유 secondary cooldown을 유지한다. 설정 변경 전에 기존 cursor를 읽기 전용 보존한다.
