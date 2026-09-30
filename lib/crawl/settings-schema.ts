@@ -432,7 +432,7 @@ export const DEFAULT_CRAWL_SETTINGS: CrawlSettings = {
       ...ADDITIONAL_AGENT_DISCOVERY_QUERIES.map(query => ({...query})),
     ],
     windowDays: 3,
-    sort: "relevance",
+    sort: "recent",
     pagesPerTick: 10,
     showHn: { enabled: true, priority: 120 },
   },

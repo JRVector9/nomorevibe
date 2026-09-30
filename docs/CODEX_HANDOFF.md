@@ -1,3 +1,49 @@
+# 2026-10-01 — 태어난 프로젝트 감소·최신 수집 순서 조사 중
+
+## Current objective / completed work
+
+사용자가 요청한 홈 “태어난 프로젝트” 감소 원인을 운영 데이터와 집계 코드로 확인하고,
+GitHub 수집을 최신 날짜 우선으로 조정한다. origin/main `b2582e2`에서 별도 작업 트리
+`/private/tmp/nmv-born-latest-20261001`, 브랜치 `fix/latest-discovery-20261001`를 만들었다.
+화면 시안 등 루트 미추적 자료는 그대로 보존했다. 태어난 프로젝트는 누적 수가 아니라
+KST 오늘 자정 이전 완료된 최근 7일의 GitHub 저장소 생성일 집계다. 현재 공개 상태와
+자정 이전 발행 조건을 사용한다. GitHub 검색은 신호별 round-robin이며 정렬 설정은
+관련도/최근 활동이다. 포화 날짜 구간 분할은 현재 오래된 절반을 먼저 처리한다.
+
+## Modified files / key design decisions
+
+수정: `lib/crawl/jobs/seed.ts`, `settings-schema.ts`, `github.ts`, 관리자 SettingsForm,
+README, 수집 unit/integration fixtures·최신 탐색 회귀검사, 운영 조사 기록, 이 문서.
+전체 커서를 보존하면서 하루 지연 시 최신 첫 페이지를 별도 커서로 먼저 확인한다.
+날짜 분할은 최신 절반 우선, 정렬 변경은 미완 구간 보존/페이지1 재탐색. DB·서버 설정은 변경하지 않는다.
+
+## Test commands and results / failed approaches
+
+`git fetch origin main`, `git rev-list --left-right --count HEAD...origin/main` 결과 `0 0`.
+공개 health 첫 요청은 연결 reset이었으나 retry 후 `ok/db:ok`, 릴리스 `50b02b7` 확인.
+운영 읽기 전용 집계로 born16, 공개 seeded20,502, 최근8일 발행취소0,
+seed가9/15~18 구간에 머무는 사실을 확인했다. `npm test` 161파일1,283검사 성공.
+최신 탐색8검사 통과, 마지막 단일 페이지 auth 대기 회귀검사 추가 후 재검증 중.
+첫 TypeScript 검사는 테스트 반환 타입 추론이 너무 좁아 실패했고 반환 타입 명시 후
+`tsc --noEmit` 성공. lint 오류0, 기존 vendor 경고1. local Docker daemon 미실행;
+통합 테스트는 CI의 독립 PostgreSQL 3분할 결과를 사용한다.
+
+## Remaining work / exact commands for the next agent
+
+운영 생성일별 코호트·발행 변화·seed 커서와 설정을 확인한다. 최신 수집 설정과 포화구간
+순서 수정, 관련 회귀검증, PR 필수 check·병합·배포·운영 적용을 마친다. 최신 활동과
+저장소 생성 날짜의 차이를 설명한다.
+
+```sh
+cd /private/tmp/nmv-born-latest-20261001
+python3 /private/tmp/nmv-born-query.py
+sed -n '1,260p' lib/crawl/jobs/seed.ts
+sed -n '1,220p' tests/integration/crawl-seed.test.ts
+git diff --check
+```
+
+---
+
 # 2026-09-30 — 로컬·원격 정리와 운영 상태 문서화 완료
 
 ## Current objective / completed work

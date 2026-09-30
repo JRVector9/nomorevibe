@@ -51,6 +51,7 @@ beforeEach(async () => {
     enabled: true,
     discover: {
       pagesPerTick: 1,
+      sort: "relevance",
       queries: [
         { label: "Claude 커밋 트레일러", query: "Co-authored-by: Claude", enabled: true, priority: 100, builder: "Claude" },
         { label: "Codex 커밋 트레일러", query: "Co-authored-by: Codex", enabled: true, priority: 90, builder: "Codex" },
