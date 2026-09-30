@@ -289,7 +289,7 @@ async function seedSearchCycle(ctx:JobContext<SearchCursor>, settings:CrawlSetti
         repositoryKey:item.repo,signalId:signal.label,sourceUrl:`https://github.com/${item.repo}${item.sha ? `/commit/${item.sha}` : ''}`,
         commitSha:item.sha,attribution,
         searchWindowFrom:new Date(window.from),searchWindowTo:new Date(window.to),
-        incomplete:page.incomplete || page.saturated || page.capped || item.attributionLimited,
+        incomplete:page.incomplete || page.saturated || page.capped || (latestOnly && page.size >= SEARCH_PER_PAGE) || item.attributionLimited,
       }))),ctx.lease);
       const added = await crawl.enqueue(batch.map(item => ({repo:item.repo,signal:signal.label,builder:null,priority:signal.priority})),ctx.lease);
       discovered += added;

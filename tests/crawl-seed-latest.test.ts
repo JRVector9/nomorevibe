@@ -153,3 +153,12 @@ it('one-page alternation also respects the shared auth wait before selecting old
   expect(waiting).toEqual(first);
   expect(mocks.search).toHaveBeenCalledTimes(1);
 });
+
+it('marks a full preview page incomplete even below the 1000-result split threshold', async () => {
+  const old = await oldCursor();
+  mocks.settings!.discover.pagesPerTick = 2;
+  mocks.search.mockResolvedValue({ok:true,value:{...page(true).value,total_count:200,incomplete_results:false}});
+  await seedFrontier(ctx(old));
+  expect(mocks.record.mock.calls[0][0]).toHaveLength(100);
+  expect(mocks.record.mock.calls[0][0].every((r:{incomplete:boolean}) => r.incomplete)).toBe(true);
+});
