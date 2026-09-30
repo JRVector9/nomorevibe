@@ -1,0 +1,15 @@
+
+> nomorevibe@0.1.0 test
+> vitest run tests/search-profile.test.ts tests/search-verify.test.ts tests/search-query.test.ts tests/intro-check.test.ts tests/crawl-agent-input.test.ts tests/agent-evidence-collect.test.ts tests/crawl-publication-guard.test.ts
+
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - ESM syntax in a file loaded as CommonJS (vitest.config.ts:1:1). Use a `.mjs` extension or set `"type": "module"` in the closest package.json
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+
+ RUN  v4.1.10 /Users/jr/Desktop/projects/nomorevibe
+
+
+ Test Files  7 passed (7)
+      Tests  69 passed (69)
+   Start at  21:29:35
+   Duration  552ms (transform 409ms, setup 60ms, import 1.20s, tests 29ms, environment 0ms)

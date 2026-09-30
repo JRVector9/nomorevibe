@@ -1,0 +1,14 @@
+{
+  "at": "2026-09-26T22:41:51.895856+00:00",
+  "cleanup": {
+    "activeOwnedTemporaryPids": []
+  },
+  "workers": [
+    "/nomorevibe-text-m3-ebmybu.1.tgwv9gbghwd6zb82qpu9q3hrx running healthy",
+    "/app-navigate-neural-system-yf43c7.1.5u6d1gy60hbvp1hcbdkp1a2if running healthy",
+    "/app-connect-solid-state-sensor-g4swwd.1.li98o9mqi8i86a4xzp7jikc8v running healthy",
+    "/app-program-multi-byte-pixel-bypleq.1.jqytw31s0v925d4bw0h3svfbn running healthy",
+    "/app-generate-haptic-card-vjqgv4.1.70ncwen6xg4cr7egqp1m75oz3 running healthy",
+    "/app-copy-primary-hard-drive-b5fhzd.1.gpts69pcbjkq3smyg7tfy741a running healthy"
+  ]
+}

@@ -1,0 +1,104 @@
+
+> nomorevibe@0.1.0 build
+> next build
+
+▲ Next.js 16.3.1 (Turbopack)
+✓ Running next.config.ts took 84ms
+
+  Creating an optimized production build ...
+✓ Compiled successfully in 1149ms
+  Running TypeScript ...
+  Finished TypeScript in 1297ms ...
+  Collecting page data using 17 workers ...
+  Generating static pages using 17 workers (0/12) ...
+  Generating static pages using 17 workers (3/12)
+  Generating static pages using 17 workers (6/12)
+  Generating static pages using 17 workers (9/12)
+✓ Generating static pages using 17 workers (12/12) in 115ms
+Turbopack build encountered 1 warning:
+./lib/crawl/agent-review.ts:165:21
+Warning: Dynamic filesystem access causes tracing of the whole project
+  [90m163 |[0m       [36mconst[0m env = { ...process.env, [33mCLAUDE_CODE_MAX_OUTPUT_TOKENS[0m: [33mString[0m(options.maxOutp...
+  [90m164 |[0m       [36mdelete[0m (env [36mas[0m [33mNodeJS[0m.[33mProcessEnv[0m).[33mCLAUDECODE[0m;
+[33m[1m>[0m [90m165 |[0m       [36mconst[0m child = spawn(process.env.[33mCLAUDE_CLI[0m ?? [32m"claude"[0m, args, {
+  [90m    |[0m                     [33m[1m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+[33m[1m>[0m [90m166 |[0m         [90m// Inherit the worker process group so supervisor shutdown also reaches this child.[0m
+  [90m    |[0m [33m[1m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+[33m[1m>[0m [90m167 |[0m         cwd: directory, env, stdio: [[32m"pipe"[0m, [32m"pipe"[0m, [32m"pipe"[0m], detached: [36mfalse[0m,
+  [90m    |[0m [33m[1m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+[33m[1m>[0m [90m168 |[0m       });
+  [90m    |[0m [33m[1m^^^^^^^^[0m
+  [90m169 |[0m       [36mconst[0m stdout: [33mBuffer[0m[] = [], stderr: [33mBuffer[0m[] = [];
+  [90m170 |[0m       [36mlet[0m stdoutBytes = [35m0[0m, stderrBytes = [35m0[0m;
+  [90m171 |[0m       [36mlet[0m stopped: [33mExclude[0m<[33mReviewCliResult[0m, { kind: [32m"exit"[0m }> | [36mnull[0m = [36mnull[0m;
+
+Static analysis determined that this filesystem access causes the whole project to be traced and included in the output.
+This is usually unintentional and leads to all source files (including the public folder) to be deployed as part of the server code.
+This can slow down deployments or lead to failures when size limits are exceeded.
+To resolve this, you can
+- make sure the path is statically scoped to some subfolder, for example path.join(process.cwd(), 'data', bar), or
+- only use them in development, or
+- opt out by adding an ignore comment to the highlighted call: child_process.spawn(/*turbopackIgnore: true*/ ...), or
+- remove them.
+
+Import trace:
+  Server Component:
+    ./lib/crawl/agent-review.ts
+    ./lib/crawl/second-review.ts
+    ./app/admin/status/page.tsx
+
+
+  Finalizing page optimization ...
+
+Route (app)
+┌ ƒ /
+├ ○ /_not-found
+├ ƒ /[...catchAll]
+├ ƒ /admin
+├ ƒ /admin/audit
+├ ƒ /admin/categories
+├ ƒ /admin/evidence
+├ ○ /admin/login
+├ ƒ /admin/news
+├ ƒ /admin/products
+├ ƒ /admin/products/[slug]
+├ ƒ /admin/products/recheck
+├ ƒ /admin/ranking
+├ ƒ /admin/review
+├ ƒ /admin/status
+├ ƒ /api/admin/products/[slug]
+├ ƒ /api/auth/github
+├ ƒ /api/auth/github/callback
+├ ƒ /api/auth/logout
+├ ƒ /api/cron/[job]
+├ ƒ /api/health
+├ ƒ /api/media/[hash]
+├ ƒ /api/og-cache/[slug]
+├ ƒ /api/products
+├ ƒ /api/products/[slug]
+├ ƒ /api/products/[slug]/links
+├ ƒ /api/products/[slug]/media
+├ ƒ /api/products/[slug]/profile
+├ ƒ /api/products/[slug]/provenance
+├ ƒ /api/products/[slug]/refresh
+├ ƒ /api/products/[slug]/takedown
+├ ƒ /api/products/[slug]/updates
+├ ƒ /api/products/[slug]/updates/[id]
+├ ƒ /api/products/[slug]/verify
+├ ƒ /badge/[slug]
+├ ƒ /feed.xml
+├ ƒ /go/[slug]
+├ ƒ /install.sh
+├ ƒ /launch
+├ ƒ /p/[slug]
+├ ƒ /popular
+├ ƒ /rankings/[key]
+├ ƒ /robots.txt
+├ ƒ /sitemap.xml
+└ ƒ /skill.md
+
+
+ƒ Proxy (Middleware)
+
+○  (Static)   prerendered as static content
+ƒ  (Dynamic)  server-rendered on demand

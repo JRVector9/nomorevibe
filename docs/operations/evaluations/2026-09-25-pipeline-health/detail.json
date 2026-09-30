@@ -1,0 +1,109 @@
+{
+  "at": "2026-09-25T00:41:08.526Z",
+  "pauseAudit": [],
+  "invalidCursors": [
+    {
+      "blobs": false,
+      "trees": false,
+      "commits": true,
+      "n": 841
+    }
+  ],
+  "invalidSamples": [
+    {
+      "repository_key": "edwardlakin/profixiq",
+      "request_count": 21,
+      "file_count": 1,
+      "started_at": "2026-09-25 00:40:12.537",
+      "next_attempt_at": "2026-09-25 00:55:12.537",
+      "blob_path": null,
+      "blob_size": null,
+      "commits": 3,
+      "tree_path": null
+    },
+    {
+      "repository_key": "edgar981/coffee-template-app",
+      "request_count": 21,
+      "file_count": 1,
+      "started_at": "2026-09-25 00:39:03.91",
+      "next_attempt_at": "2026-09-25 00:54:03.91",
+      "blob_path": null,
+      "blob_size": null,
+      "commits": 5,
+      "tree_path": null
+    },
+    {
+      "repository_key": "easyway-german-school/easyway-lms",
+      "request_count": 20,
+      "file_count": 0,
+      "started_at": "2026-09-25 00:38:17.222",
+      "next_attempt_at": "2026-09-25 00:53:17.222",
+      "blob_path": null,
+      "blob_size": null,
+      "commits": 2,
+      "tree_path": null
+    },
+    {
+      "repository_key": "allan1052/no-limet-9max",
+      "request_count": 28,
+      "file_count": 2,
+      "started_at": "2026-09-25 00:38:14.763",
+      "next_attempt_at": "2026-09-25 00:53:14.763",
+      "blob_path": null,
+      "blob_size": null,
+      "commits": 2,
+      "tree_path": null
+    },
+    {
+      "repository_key": "fil-donadoni/tolaria",
+      "request_count": 76,
+      "file_count": 24,
+      "started_at": "2026-09-25 00:37:20.041",
+      "next_attempt_at": "2026-09-25 00:52:20.041",
+      "blob_path": null,
+      "blob_size": null,
+      "commits": 2,
+      "tree_path": null
+    },
+    {
+      "repository_key": "eduardoterwogt/serenata-erp",
+      "request_count": 52,
+      "file_count": 11,
+      "started_at": "2026-09-25 00:35:13.938",
+      "next_attempt_at": "2026-09-25 00:50:13.938",
+      "blob_path": null,
+      "blob_size": null,
+      "commits": 2,
+      "tree_path": null
+    },
+    {
+      "repository_key": "defai-digital/ax-code",
+      "request_count": 10,
+      "file_count": 0,
+      "started_at": "2026-09-25 00:34:19.902",
+      "next_attempt_at": "2026-09-25 00:49:19.902",
+      "blob_path": null,
+      "blob_size": null,
+      "commits": 1,
+      "tree_path": null
+    },
+    {
+      "repository_key": "brainyreadingclub-bot/jidokhae-2nd",
+      "request_count": 36,
+      "file_count": 5,
+      "started_at": "2026-09-25 00:34:14.113",
+      "next_attempt_at": "2026-09-25 00:49:14.113",
+      "blob_path": null,
+      "blob_size": null,
+      "commits": 2,
+      "tree_path": null
+    }
+  ],
+  "invalidRepeated": [],
+  "firstUnique": [
+    {
+      "h1": 46,
+      "h24": 1017
+    }
+  ]
+}

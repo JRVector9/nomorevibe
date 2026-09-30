@@ -1,0 +1,31 @@
+[
+  {
+    "event": "repair.chunk_check",
+    "id": 609,
+    "offset": 0,
+    "keywords": 5,
+    "ok": true
+  },
+  {
+    "event": "repair.chunk_check",
+    "id": 609,
+    "offset": 5,
+    "keywords": 5,
+    "ok": true
+  },
+  {
+    "event": "repair.chunk_check",
+    "id": 609,
+    "offset": 10,
+    "keywords": 5,
+    "ok": true
+  },
+  {
+    "event": "repair.complete_chunked_verification",
+    "keywords": 15,
+    "chunks": 3,
+    "id": 609,
+    "ok": true,
+    "saved": true
+  }
+]

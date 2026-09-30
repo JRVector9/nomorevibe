@@ -1,0 +1,29 @@
+import { db } from "/Users/jr/Desktop/projects/nomorevibe/lib/db";
+import { products, productSearchProfiles } from "/Users/jr/Desktop/projects/nomorevibe/lib/db/schema";
+import { and,gt,inArray,sql } from "/Users/jr/Desktop/projects/nomorevibe/node_modules/drizzle-orm";
+import { profileEvidence,profileHash,keywordText } from "/Users/jr/Desktop/projects/nomorevibe/lib/domain/products/search-profile";
+const fields={id:products.id,name:products.name,url:products.url,category:products.category,tagline:products.tagline,description:products.description,status:products.status,searchTopics:products.searchTopics,searchPageText:products.searchPageText,searchReadme:products.searchReadme,searchKeywords:products.searchKeywords};
+const note=sql<string|null>`(select a.ai_reason from product_audit_items a where a.product_id=products.id and a.ai_reason is not null order by a.id desc limit 1)`;
+async function snapshot(){return db.transaction(async tx=>{
+ await tx.execute(sql`SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY`);
+ const [time]=await tx.execute(sql`select clock_timestamp() as at`);
+ const result={at:time.at,isolation:"repeatable read / read only",total:0,pending:0,olderGenerationPending:0,generationErrors:0,verificationErrors:0,unverified:0,mismatched:0,unmarked:0,keywordCopiesChecked:0,keywordCopiesMismatched:0,missing:0,originalFailures:[] as unknown[]};
+ let after=0;
+ for(;;){const rows=await tx.select({product:fields,profile:productSearchProfiles,reviewerNote:note}).from(products).innerJoin(productSearchProfiles,sql`${products.id}=${productSearchProfiles.productId}`).where(and(inArray(products.status,["seeded","verified"]),gt(products.id,after))).orderBy(products.id).limit(500);
+  if(!rows.length)break;
+  for(const r of rows){const p=r.profile;result.total++;if(p.needsRefresh){result.pending++;if(p.updatedAt<new Date("2026-09-26T13:43:00Z"))result.olderGenerationPending++;}if(p.errorCode)result.generationErrors++;if(p.verifyError)result.verificationErrors++;
+   if(!p.needsRefresh&&!p.errorCode&&!p.verifiedAt&&p.keywordsEn.length+p.keywordsKo.length)result.unverified++;
+   if(p.sourceHash!==profileHash(profileEvidence(r.product,r.reviewerNote))){result.mismatched++;if(!p.needsRefresh)result.unmarked++;}
+   if(!p.needsRefresh&&!p.errorCode){const removed=new Set(p.removedKeywords);const expected=keywordText(p.keywordsEn.filter(k=>!removed.has(k)),p.keywordsKo.filter(k=>!removed.has(k)));result.keywordCopiesChecked++;if(r.product.searchKeywords!==expected)result.keywordCopiesMismatched++;}
+   if([1271,1829,4760,5366,5829,18759,609].includes(r.product.id))result.originalFailures.push({productId:r.product.id,needsRefresh:p.needsRefresh,errorCode:p.errorCode,verifyError:p.verifyError,verifiedAt:p.verifiedAt,keywords:p.keywordsEn.length+p.keywordsKo.length});
+  }after=rows[rows.length-1].product.id;
+ }
+ const [missing]=await tx.execute(sql`select count(*)::int as n from products p left join product_search_profiles s on s.product_id=p.id where p.status in ('seeded','verified') and s.product_id is null`);result.missing=Number(missing.n);
+ return result;
+});}
+async function main(){const deadline=Date.now()+3*60_000;let last:Awaited<ReturnType<typeof snapshot>>|undefined;
+ while(Date.now()<deadline){const [p]=await db.execute(sql`select count(*) filter(where s.needs_refresh or s.error_code is not null or s.verify_error is not null or (s.verified_at is null and jsonb_array_length(s.keywords_en)+jsonb_array_length(s.keywords_ko)>0))::int as outstanding from product_search_profiles s join products p on p.id=s.product_id where p.status in ('seeded','verified')`);
+  if(Number(p.outstanding)===0){last=await snapshot();if([last.pending,last.generationErrors,last.verificationErrors,last.unverified,last.mismatched,last.unmarked,last.keywordCopiesMismatched,last.missing].every(n=>n===0)){console.log(JSON.stringify({...last,complete:true}));return;}}
+  await new Promise(r=>setTimeout(r,5000));
+ }last??=await snapshot();console.log(JSON.stringify({...last,complete:false}));}
+main().then(()=>process.exit(0)).catch(()=>{console.error("consistent_audit_failed");process.exit(1)});

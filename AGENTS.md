@@ -13,8 +13,8 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 ## 운영 상태와 남은 검증
 
 운영 서비스는 `https://nomorevibe.brut.bot`에 배포되어 있다. Dokploy는 main을 사용하며
-M3의 웹·scheduler(2복제본)·crawler·reviewer·publisher·text·maintenance와 mini의 웹·crawler 예비·reviewer 예비,
-총 10개 앱으로 운영한다. crawler·reviewer는 DB 역할 lease로 한 후보만 작업한다.
+M3의 웹·scheduler(2복제본)·crawler·reviewer·publisher·text·maintenance와 mini의 웹·다섯 역할 예비,
+총 13개 앱으로 운영한다. 다섯 역할은 DB 역할 lease로 한 후보만 작업한다.
 공개 GitHub 저장소의 main은 PR 및 최신 base의 CI `check` 성공을 요구한다.
 
 배포·테스트 절차는 `README.md`와 `docs/operations/independent-workers-runbook.md`를 읽는다.

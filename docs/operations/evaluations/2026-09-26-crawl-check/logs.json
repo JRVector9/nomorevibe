@@ -1,0 +1,163 @@
+[
+  {
+    "role": "scheduler",
+    "exit": 0,
+    "events": {
+      "scheduler.tick": 178
+    },
+    "recent": []
+  },
+  {
+    "role": "crawler",
+    "exit": 0,
+    "events": {
+      "crawl.fetched": 30,
+      "job.completed": 99,
+      "worker.job": 99,
+      "evidence.github_refresh": 431,
+      "evidence.source_refresh": 451,
+      "evidence.refresh_batch": 30,
+      "agent_evidence.scanned": 127,
+      "crawl.seeded": 3,
+      "product_stars.refreshed": 6,
+      "crawl.show_hn_seeded": 1
+    },
+    "recent": [
+      {
+        "ts": "2026-09-26T11:58:40.861Z",
+        "level": "info",
+        "event": "crawl.fetched",
+        "job": "crawl-fetch",
+        "fetched": 0,
+        "skipped": 0,
+        "failed": 0,
+        "drained": true
+      },
+      {
+        "ts": "2026-09-26T11:59:44.314Z",
+        "level": "info",
+        "event": "crawl.fetched",
+        "job": "crawl-fetch",
+        "fetched": 0,
+        "skipped": 0,
+        "failed": 0,
+        "drained": true
+      },
+      {
+        "ts": "2026-09-26T12:00:42.780Z",
+        "level": "info",
+        "event": "crawl.fetched",
+        "job": "crawl-fetch",
+        "fetched": 0,
+        "skipped": 0,
+        "failed": 0,
+        "drained": true
+      },
+      {
+        "ts": "2026-09-26T12:01:53.314Z",
+        "level": "info",
+        "event": "crawl.seeded",
+        "job": "crawl-seed",
+        "discovered": 16,
+        "signal": "Claude \ucee4\ubc0b \ud2b8\ub808\uc77c\ub7ec",
+        "page": 2,
+        "incompleteWindows": 0
+      },
+      {
+        "ts": "2026-09-26T12:01:59.117Z",
+        "level": "info",
+        "event": "crawl.fetched",
+        "job": "crawl-fetch",
+        "fetched": 16,
+        "skipped": 0,
+        "failed": 0,
+        "drained": true
+      },
+      {
+        "ts": "2026-09-26T12:02:42.829Z",
+        "level": "info",
+        "event": "crawl.fetched",
+        "job": "crawl-fetch",
+        "fetched": 0,
+        "skipped": 0,
+        "failed": 0,
+        "drained": true
+      },
+      {
+        "ts": "2026-09-26T12:03:46.916Z",
+        "level": "info",
+        "event": "crawl.fetched",
+        "job": "crawl-fetch",
+        "fetched": 0,
+        "skipped": 0,
+        "failed": 0,
+        "drained": true
+      },
+      {
+        "ts": "2026-09-26T12:04:47.106Z",
+        "level": "info",
+        "event": "crawl.fetched",
+        "job": "crawl-fetch",
+        "fetched": 0,
+        "skipped": 0,
+        "failed": 0,
+        "drained": true
+      },
+      {
+        "ts": "2026-09-26T12:05:45.958Z",
+        "level": "info",
+        "event": "crawl.fetched",
+        "job": "crawl-fetch",
+        "fetched": 0,
+        "skipped": 0,
+        "failed": 0,
+        "drained": true
+      },
+      {
+        "ts": "2026-09-26T12:06:50.196Z",
+        "level": "info",
+        "event": "crawl.fetched",
+        "job": "crawl-fetch",
+        "fetched": 0,
+        "skipped": 0,
+        "failed": 0,
+        "drained": true
+      },
+      {
+        "ts": "2026-09-26T12:07:38.584Z",
+        "level": "info",
+        "event": "crawl.fetched",
+        "job": "crawl-fetch",
+        "fetched": 0,
+        "skipped": 0,
+        "failed": 0,
+        "drained": true
+      },
+      {
+        "ts": "2026-09-26T12:08:37.054Z",
+        "level": "info",
+        "event": "crawl.fetched",
+        "job": "crawl-fetch",
+        "fetched": 0,
+        "skipped": 0,
+        "failed": 0,
+        "drained": true
+      }
+    ]
+  },
+  {
+    "role": "reviewer",
+    "exit": 0,
+    "events": {
+      "job.completed": 109,
+      "worker.job": 109,
+      "product_audit.skipped": 30,
+      "crawl.second_reviewed": 32,
+      "review.pipeline": 237,
+      "crawl.judged": 12,
+      "crawl.agent_reviewed": 18,
+      "crawl.agent_review_sources_queued": 1
+    },
+    "recent": []
+  }
+]

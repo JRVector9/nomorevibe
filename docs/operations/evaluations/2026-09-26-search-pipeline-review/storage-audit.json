@@ -1,0 +1,322 @@
+{
+  "at": "2026-09-26T12:30:55.161Z",
+  "coverage": [
+    {
+      "total": 19217,
+      "crawler": 19217,
+      "topics": 8357,
+      "page": 18931,
+      "readme": 6810,
+      "keywords": 18941,
+      "category": 19217,
+      "empty_vector": 0,
+      "thin": 2381
+    }
+  ],
+  "sources": [
+    {
+      "source": "crawler",
+      "n": 19217,
+      "candidate": 19217,
+      "document": 19217,
+      "missing_doc": 0
+    }
+  ],
+  "sourceComparison": [
+    {
+      "paired": 19217,
+      "topics_diff": 0,
+      "page_diff": 1,
+      "readme_diff": 0,
+      "page_lost": 0,
+      "readme_lost": 0,
+      "source_page_empty": 286,
+      "source_readme_empty": 12407,
+      "no_readme_version": 12089
+    }
+  ],
+  "profiles": [
+    {
+      "products": 19217,
+      "missing_profile": 0,
+      "failed": 1,
+      "exhausted": 1,
+      "empty_success": 261,
+      "empty_en": 261,
+      "empty_ko": 261,
+      "verified": 18950,
+      "unverified": 5,
+      "verify_exhausted": 5,
+      "verify_failed": 5,
+      "orphan_keywords": 0,
+      "generated1h": 15,
+      "verified1h": 15
+    }
+  ],
+  "keywordCopy": [
+    {
+      "checked": 19216,
+      "mismatched": 0,
+      "lost": 0
+    }
+  ],
+  "profileErrors": [
+    {
+      "error_code": null,
+      "verify_error": "invalid_output",
+      "n": 5,
+      "latest": "2026-09-24 14:15:29.362579"
+    },
+    {
+      "error_code": "invalid_output",
+      "verify_error": null,
+      "n": 1,
+      "latest": "2026-09-24 17:11:35.787289"
+    }
+  ],
+  "verificationModels": [
+    {
+      "verify_model": "sonnet",
+      "n": 9539,
+      "first": "2026-09-24 03:52:11.661876",
+      "latest": "2026-09-24 23:35:10.696781"
+    },
+    {
+      "verify_model": "[supa] Qwen3.8-27B-NVFP4",
+      "n": 9411,
+      "first": "2026-09-25 01:17:18.846312",
+      "latest": "2026-09-26 12:24:08.995846"
+    }
+  ],
+  "intros": [
+    {
+      "tagline_source": "maker",
+      "n": 18352,
+      "checked": 162,
+      "replaced": 0,
+      "needs_editor": 35
+    },
+    {
+      "tagline_source": "ai_readme",
+      "n": 314,
+      "checked": 302,
+      "replaced": 0,
+      "needs_editor": 1
+    },
+    {
+      "tagline_source": "ai_both",
+      "n": 200,
+      "checked": 189,
+      "replaced": 0,
+      "needs_editor": 1
+    },
+    {
+      "tagline_source": "ai_fixed",
+      "n": 195,
+      "checked": 195,
+      "replaced": 195,
+      "needs_editor": 0
+    },
+    {
+      "tagline_source": "ai_page",
+      "n": 156,
+      "checked": 143,
+      "replaced": 0,
+      "needs_editor": 4
+    }
+  ],
+  "schema": [
+    {
+      "column_name": "search_category",
+      "data_type": "text",
+      "is_generated": "NEVER",
+      "generation_expression": null
+    },
+    {
+      "column_name": "search_keywords",
+      "data_type": "text",
+      "is_generated": "NEVER",
+      "generation_expression": null
+    },
+    {
+      "column_name": "search_page_text",
+      "data_type": "text",
+      "is_generated": "NEVER",
+      "generation_expression": null
+    },
+    {
+      "column_name": "search_readme",
+      "data_type": "text",
+      "is_generated": "NEVER",
+      "generation_expression": null
+    },
+    {
+      "column_name": "search_topics",
+      "data_type": "text",
+      "is_generated": "NEVER",
+      "generation_expression": null
+    },
+    {
+      "column_name": "search_vector",
+      "data_type": "tsvector",
+      "is_generated": "ALWAYS",
+      "generation_expression": "((((((((setweight(to_tsvector('english'::regconfig, (name)::text), 'A'::\"char\") || setweight(to_tsvector('english'::regconfig, COALESCE(search_topics, ''::text)), 'A'::\"char\")) || setweight(to_tsvector('english'::regconfig, (tagline)::text), 'B'::\"char\")) || setweight(to_tsvector('english'::regconfig,\nCASE\n    WHEN (description = (tagline)::text) THEN ''::text\n    ELSE description\nEND), 'B'::\"char\")) || setweight(to_tsvector('english'::regconfig, (((((((slug)::text || ' '::text) || COALESCE(regexp_replace(repo_url, '^https?://[^/]+/'::text, ''::text), ''::text)) || ' '::text) || COALESCE(replace(regexp_replace(repo_url, '^https?://[^/]+/'::text, ''::text), '/'::text, ' '::text), ''::text)) || ' '::text) || (\nCASE\n    WHEN (((source)::text <> 'crawler'::text) OR (claimed_at IS NOT NULL)) THEN COALESCE(builder, ''::character varying)\n    ELSE ''::character varying\nEND)::text)), 'C'::\"char\")) || setweight(to_tsvector('english'::regconfig, \"left\"(COALESCE(search_page_text, ''::text), 2000)), 'D'::\"char\")) || setweight(to_tsvector('english'::regconfig, \"left\"(COALESCE(search_readme, ''::text), 2000)), 'D'::\"char\")) || setweight(to_tsvector('english'::regconfig, COALESCE(search_keywords, ''::text)), 'C'::\"char\")) || setweight(to_tsvector('english'::regconfig, COALESCE(search_category, ''::text)), 'C'::\"char\"))"
+    }
+  ],
+  "indexes": [
+    {
+      "indexname": "product_intro_checks_pkey",
+      "indexdef": "CREATE UNIQUE INDEX product_intro_checks_pkey ON public.product_intro_checks USING btree (product_id)"
+    },
+    {
+      "indexname": "product_search_profiles_pkey",
+      "indexdef": "CREATE UNIQUE INDEX product_search_profiles_pkey ON public.product_search_profiles USING btree (product_id)"
+    },
+    {
+      "indexname": "products_search_idx",
+      "indexdef": "CREATE INDEX products_search_idx ON public.products USING gin (search_vector)"
+    },
+    {
+      "indexname": "search_queries_pkey",
+      "indexdef": "CREATE UNIQUE INDEX search_queries_pkey ON public.search_queries USING btree (id)"
+    },
+    {
+      "indexname": "search_queries_recent_idx",
+      "indexdef": "CREATE INDEX search_queries_recent_idx ON public.search_queries USING btree (searched_at DESC NULLS LAST)"
+    },
+    {
+      "indexname": "search_queries_zero_idx",
+      "indexdef": "CREATE INDEX search_queries_zero_idx ON public.search_queries USING btree (normalized) WHERE (results = 0)"
+    },
+    {
+      "indexname": "text_translations_source_hash_target_lang_pk",
+      "indexdef": "CREATE UNIQUE INDEX text_translations_source_hash_target_lang_pk ON public.text_translations USING btree (source_hash, target_lang)"
+    },
+    {
+      "indexname": "text_translations_updated_idx",
+      "indexdef": "CREATE INDEX text_translations_updated_idx ON public.text_translations USING btree (status, updated_at DESC NULLS LAST)"
+    }
+  ],
+  "logStats": [
+    {
+      "total": 130,
+      "recent24h": 81,
+      "zero_unfiltered24h": 0,
+      "untranslated_korean24h": 0,
+      "first": "2026-09-20 13:42:47.853101",
+      "latest": "2026-09-26 02:24:29.726089",
+      "incomplete": 0
+    }
+  ],
+  "translationStats": [
+    {
+      "target_lang": "en",
+      "status": "failed",
+      "n": 1,
+      "latest": "2026-09-20 13:42:56.863284"
+    },
+    {
+      "target_lang": "ko",
+      "status": "done",
+      "n": 70327,
+      "latest": "2026-09-26 12:25:14.906374"
+    },
+    {
+      "target_lang": "en",
+      "status": "done",
+      "n": 216,
+      "latest": "2026-09-26 02:24:06.535546"
+    }
+  ],
+  "activeInvalid": [
+    {
+      "state": "complete",
+      "last_error_code": null,
+      "n": 15095
+    },
+    {
+      "state": "partial",
+      "last_error_code": null,
+      "n": 1526
+    },
+    {
+      "state": "partial",
+      "last_error_code": "invalid",
+      "n": 883
+    },
+    {
+      "state": "complete",
+      "last_error_code": "unavailable",
+      "n": 127
+    },
+    {
+      "state": "partial",
+      "last_error_code": "unavailable",
+      "n": 98
+    },
+    {
+      "state": "partial",
+      "last_error_code": "rate_limited",
+      "n": 18
+    },
+    {
+      "state": "failed",
+      "last_error_code": "unavailable",
+      "n": 7
+    },
+    {
+      "state": "partial",
+      "last_error_code": "timeout",
+      "n": 4
+    },
+    {
+      "state": "complete",
+      "last_error_code": "rate_limited",
+      "n": 1
+    },
+    {
+      "state": "complete",
+      "last_error_code": "timeout",
+      "n": 1
+    }
+  ],
+  "invalidSamples": [
+    {
+      "repository_key": "davidciocoiusimventure/navigate",
+      "commit_sha": "92db04894cff3ab0c0500d798fa58223547325e2",
+      "has_commit_observations": true,
+      "request_count": 36,
+      "last_error_code": "invalid"
+    },
+    {
+      "repository_key": "yehor-design/over.garden",
+      "commit_sha": "f3ceee5f5159de5aa9f48190eb5ac4f04812a155",
+      "has_commit_observations": true,
+      "request_count": 39,
+      "last_error_code": "invalid"
+    },
+    {
+      "repository_key": "fabiokyrillos/d2r-codex",
+      "commit_sha": "c54d4256dd9a3ee20b4472401e7e0f127af83609",
+      "has_commit_observations": true,
+      "request_count": 30,
+      "last_error_code": "invalid"
+    },
+    {
+      "repository_key": "yc-software/qm",
+      "commit_sha": "e969774126bc706259ef17ade07286f3860d95fb",
+      "has_commit_observations": true,
+      "request_count": 40,
+      "last_error_code": "invalid"
+    }
+  ],
+  "queues": {
+    "profiles": 0,
+    "verify": 0,
+    "intro": 43
+  },
+  "profileHash": {
+    "checked": 19216,
+    "mismatch": 2747
+  }
+}

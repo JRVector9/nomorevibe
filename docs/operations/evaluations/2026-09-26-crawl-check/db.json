@@ -1,0 +1,825 @@
+{
+  "mode": "production-read-only",
+  "settings": {
+    "enabled": true,
+    "reviewMode": "enforce",
+    "reviewConcurrency": 4,
+    "secondReviewEnabled": true,
+    "secondVoters": [
+      {
+        "provider": "abcllm",
+        "model": "[MLX] qwen3.6-35b-heretic"
+      },
+      {
+        "provider": "abcllm",
+        "model": "[MLX] gpt-oss-120b"
+      }
+    ]
+  },
+  "throughput": {
+    "measuredAt": "2026-09-26T12:09:11.326Z",
+    "stages": [
+      {
+        "key": "fetch",
+        "label": "원본 수집",
+        "unit": "건",
+        "completed1m": 0,
+        "completed5m": 0,
+        "progress5m": 0,
+        "waiting": 0,
+        "ageLabel": "가장 오래된 대기",
+        "oldestMinutes": null,
+        "enabled": true,
+        "errors5m": 0,
+        "queueNote": "대기·선점",
+        "detail": "최근 원본을 저장한 저장소 수입니다. 같은 저장소의 반복 수집은 한 건입니다. 대기는 지금 수집 가능한 항목과 선점한 항목을 포함합니다.",
+        "status": "idle"
+      },
+      {
+        "key": "judge",
+        "label": "규칙 판정",
+        "unit": "건",
+        "completed1m": 0,
+        "completed5m": 0,
+        "progress5m": 0,
+        "waiting": 0,
+        "ageLabel": "가장 오래된 대기",
+        "oldestMinutes": null,
+        "enabled": true,
+        "errors5m": null,
+        "queueNote": "판정 대기",
+        "detail": "최근 자동 규칙 판정이 저장된 후보 수입니다. 관리자 판정과 아직 판정하지 않은 원본은 완료에서 제외합니다.",
+        "status": "idle"
+      },
+      {
+        "key": "first",
+        "label": "AI 1차",
+        "unit": "건",
+        "completed1m": 0,
+        "completed5m": 0,
+        "progress5m": 0,
+        "waiting": 0,
+        "ageLabel": "후보·원본 갱신 후",
+        "oldestMinutes": null,
+        "enabled": true,
+        "errors5m": 0,
+        "queueNote": "실행 가능 대기",
+        "detail": "최근 모델 심사가 완료된 후보 수입니다. 같은 후보는 한 건이며, 규칙 처리와 결과 재사용은 제외합니다. 대기는 현재 워커가 선택할 수 있는 후보이며 진행 중 심사와 재시도 유예는 제외합니다. 상태 판단은 규칙·재사용을 포함한 자동 처리 기록을 사용하며, 대기 경과는 후보·원본 갱신 시각 기준의 추정입니다.",
+        "status": "idle"
+      },
+      {
+        "key": "second",
+        "label": "AI 2차",
+        "unit": "표",
+        "completed1m": 0,
+        "completed5m": 1,
+        "progress5m": 1,
+        "waiting": 0,
+        "ageLabel": "가장 오래된 대기",
+        "oldestMinutes": null,
+        "enabled": true,
+        "errors5m": 0,
+        "queueNote": "대기·심사 중",
+        "detail": "최근 완료된 모델별 심사표 수입니다. 한 후보를 여러 모델이 보므로 후보 수와 다릅니다. 대기에 심사 중인 표도 포함하며, 같은 표의 재시도는 마지막 기록만 셉니다.",
+        "status": "processing"
+      },
+      {
+        "key": "publish",
+        "label": "발행",
+        "unit": "건",
+        "completed1m": 0,
+        "completed5m": 1,
+        "progress5m": 1,
+        "waiting": 0,
+        "ageLabel": "승인·심사 갱신 후",
+        "oldestMinutes": null,
+        "enabled": true,
+        "errors5m": null,
+        "queueNote": "실행 가능 대기 · 심사·분류 조건 대기 20건 별도",
+        "detail": "수집 후보가 발행 상태로 전환된 횟수입니다. 대기는 현재 심사·분류 조건을 충족한 승인 후보입니다. 최종 발행 검사는 작업 실행 시 진행됩니다. 경과 시간은 후보·심사·분류의 최근 갱신 기준이며, 실제 발행 가능 시각과 다를 수 있습니다.",
+        "status": "processing"
+      }
+    ]
+  },
+  "at": "2026-09-26 12:09:11.634213",
+  "rates": [
+    {
+      "stage": "discovery",
+      "h1": 169,
+      "h24": 3753,
+      "latest": "2026-09-26 12:01:53.111645"
+    },
+    {
+      "stage": "fetch",
+      "h1": 170,
+      "h24": 3826,
+      "latest": "2026-09-26 12:01:59.103"
+    },
+    {
+      "stage": "rules",
+      "h1": 170,
+      "h24": 3804,
+      "latest": "2026-09-26 12:01:59.615"
+    },
+    {
+      "stage": "first_ai",
+      "h1": 38,
+      "h24": 836,
+      "latest": "2026-09-26 12:04:00.204"
+    },
+    {
+      "stage": "second_ai",
+      "h1": 26,
+      "h24": 561,
+      "latest": "2026-09-26 12:04:11.36"
+    },
+    {
+      "stage": "publication",
+      "h1": 15,
+      "h24": 289,
+      "latest": "2026-09-26 12:04:18.232841"
+    },
+    {
+      "stage": "evidence_scan",
+      "h1": 64,
+      "h24": 1382,
+      "latest": "2026-09-26 12:07:23.488"
+    },
+    {
+      "stage": "uptime",
+      "h1": 900,
+      "h24": 18745,
+      "latest": "2026-09-26 12:08:44.649"
+    }
+  ],
+  "firstOutcomes": [
+    {
+      "state": "succeeded",
+      "provider": "abcllm",
+      "decision": "approve",
+      "error_code": null,
+      "n": 25
+    },
+    {
+      "state": "succeeded",
+      "provider": "abcllm",
+      "decision": "reject",
+      "error_code": null,
+      "n": 14
+    },
+    {
+      "state": "failed",
+      "provider": "abcllm",
+      "decision": null,
+      "error_code": "timeout",
+      "n": 1
+    },
+    {
+      "state": "succeeded",
+      "provider": "abcllm",
+      "decision": "needs_review",
+      "error_code": null,
+      "n": 1
+    }
+  ],
+  "secondOutcomes": [
+    {
+      "status": "agreed",
+      "second_decision": "approve",
+      "error_code": null,
+      "n": 15
+    },
+    {
+      "status": "needs_human",
+      "second_decision": "reject",
+      "error_code": null,
+      "n": 10
+    },
+    {
+      "status": "resolved",
+      "second_decision": "approve",
+      "error_code": null,
+      "n": 1
+    }
+  ],
+  "frontier": [
+    {
+      "state": "done",
+      "n": 99019,
+      "due": 99003,
+      "next_at": "2026-08-29 02:39:57.125929",
+      "oldest_hours": "681.6609773930555556"
+    },
+    {
+      "state": "failed",
+      "n": 5,
+      "due": 5,
+      "next_at": "2026-09-14 16:39:21.018726",
+      "oldest_hours": "287.2886542955555556"
+    },
+    {
+      "state": "skipped",
+      "n": 50,
+      "due": 50,
+      "next_at": "2026-09-11 20:18:46.275199",
+      "oldest_hours": "675.1067701172222222"
+    }
+  ],
+  "candidateStates": [
+    {
+      "state": "approved",
+      "n": 20
+    },
+    {
+      "state": "needs_review",
+      "n": 1989
+    },
+    {
+      "state": "published",
+      "n": 19247
+    },
+    {
+      "state": "rejected",
+      "n": 77810
+    }
+  ],
+  "candidateReasons": [
+    {
+      "state": "needs_review",
+      "reason": "second_review_split",
+      "n": 1826,
+      "oldest": "2026-09-19 14:57:41.531"
+    },
+    {
+      "state": "needs_review",
+      "reason": "ambiguous",
+      "n": 95,
+      "oldest": "2026-09-10 11:52:42.573"
+    },
+    {
+      "state": "needs_review",
+      "reason": "no_description",
+      "n": 68,
+      "oldest": "2026-09-19 14:58:10.062"
+    },
+    {
+      "state": "approved",
+      "reason": "passed",
+      "n": 20,
+      "oldest": "2026-09-19 23:43:52.694"
+    }
+  ],
+  "secondQueue": [],
+  "scans": [
+    {
+      "state": "complete",
+      "last_error_code": null,
+      "n": 15558,
+      "due": 14176,
+      "recent24h": 1446,
+      "oldest": "2026-09-10 03:29:40.966",
+      "newest": "2026-09-26 12:07:26.567"
+    },
+    {
+      "state": "partial",
+      "last_error_code": null,
+      "n": 1701,
+      "due": 1595,
+      "recent24h": 857,
+      "oldest": "2026-09-10 03:42:58.523",
+      "newest": "2026-09-26 12:09:07.196"
+    },
+    {
+      "state": "partial",
+      "last_error_code": "invalid",
+      "n": 908,
+      "due": 888,
+      "recent24h": 882,
+      "oldest": "2026-09-10 11:19:49.607",
+      "newest": "2026-09-26 12:08:08.031"
+    },
+    {
+      "state": "complete",
+      "last_error_code": "unavailable",
+      "n": 127,
+      "due": 127,
+      "recent24h": 19,
+      "oldest": "2026-09-12 06:14:57.1",
+      "newest": "2026-09-26 11:29:21.58"
+    },
+    {
+      "state": "partial",
+      "last_error_code": "unavailable",
+      "n": 98,
+      "due": 96,
+      "recent24h": 97,
+      "oldest": "2026-09-13 16:38:17.515",
+      "newest": "2026-09-26 12:05:14.173"
+    },
+    {
+      "state": "partial",
+      "last_error_code": "rate_limited",
+      "n": 16,
+      "due": 16,
+      "recent24h": 16,
+      "oldest": "2026-09-26 01:03:08.935",
+      "newest": "2026-09-26 11:19:05.821"
+    },
+    {
+      "state": "failed",
+      "last_error_code": "unavailable",
+      "n": 7,
+      "due": 7,
+      "recent24h": 1,
+      "oldest": "2026-09-13 08:56:50.83",
+      "newest": "2026-09-25 18:17:49.365"
+    },
+    {
+      "state": "partial",
+      "last_error_code": "timeout",
+      "n": 4,
+      "due": 4,
+      "recent24h": 4,
+      "oldest": "2026-09-26 03:47:13.801",
+      "newest": "2026-09-26 08:58:10.555"
+    },
+    {
+      "state": "complete",
+      "last_error_code": "rate_limited",
+      "n": 1,
+      "due": 1,
+      "recent24h": 1,
+      "oldest": "2026-09-26 09:17:03.935",
+      "newest": "2026-09-26 09:17:03.935"
+    },
+    {
+      "state": "complete",
+      "last_error_code": "timeout",
+      "n": 1,
+      "due": 1,
+      "recent24h": 0,
+      "oldest": "2026-09-21 01:26:19.115",
+      "newest": "2026-09-21 01:26:19.115"
+    }
+  ],
+  "evidenceSources": [
+    {
+      "state": "ok",
+      "last_error_code": null,
+      "n": 35203,
+      "success_1h": 1691,
+      "failure_1h": 0,
+      "due": 550
+    },
+    {
+      "state": "disconnected",
+      "last_error_code": "not_found",
+      "n": 402,
+      "success_1h": 0,
+      "failure_1h": 19,
+      "due": 7
+    },
+    {
+      "state": "failed",
+      "last_error_code": "site_http",
+      "n": 229,
+      "success_1h": 0,
+      "failure_1h": 10,
+      "due": 164
+    },
+    {
+      "state": "failed",
+      "last_error_code": "rate_limited",
+      "n": 228,
+      "success_1h": 0,
+      "failure_1h": 228,
+      "due": 228
+    },
+    {
+      "state": "failed",
+      "last_error_code": "site_too_large",
+      "n": 109,
+      "success_1h": 0,
+      "failure_1h": 2,
+      "due": 81
+    },
+    {
+      "state": "failed",
+      "last_error_code": "site_timeout",
+      "n": 30,
+      "success_1h": 0,
+      "failure_1h": 1,
+      "due": 19
+    },
+    {
+      "state": "failed",
+      "last_error_code": "site_unsafe_url",
+      "n": 18,
+      "success_1h": 0,
+      "failure_1h": 1,
+      "due": 15
+    },
+    {
+      "state": "stale",
+      "last_error_code": "rate_limited",
+      "n": 10,
+      "success_1h": 0,
+      "failure_1h": 10,
+      "due": 10
+    },
+    {
+      "state": "failed",
+      "last_error_code": "transport",
+      "n": 2,
+      "success_1h": 0,
+      "failure_1h": 0,
+      "due": 0
+    },
+    {
+      "state": "failed",
+      "last_error_code": "http_403",
+      "n": 1,
+      "success_1h": 0,
+      "failure_1h": 0,
+      "due": 0
+    },
+    {
+      "state": "failed",
+      "last_error_code": "collection_failed",
+      "n": 1,
+      "success_1h": 0,
+      "failure_1h": 0,
+      "due": 0
+    }
+  ],
+  "uptime": [
+    {
+      "products": 19212,
+      "checked6h": 5400,
+      "overdue6h": 13812,
+      "down": 204,
+      "oldest_check": "2026-09-25 15:19:49.093"
+    }
+  ],
+  "jobs": [
+    {
+      "name": "agent-evidence-refresh",
+      "runs": 25345,
+      "outstanding": "1",
+      "last_run_at": "2026-09-26 12:09:02.23291",
+      "last_success_at": "2026-09-26 12:08:16.982963",
+      "has_error": false,
+      "worker_age_seconds": 35,
+      "lock_age_seconds": 9,
+      "next_scheduled_at": "2026-09-26 12:09:35.610106",
+      "not_before": null
+    },
+    {
+      "name": "click-rollup",
+      "runs": 641,
+      "outstanding": "0",
+      "last_run_at": "2026-09-26 11:37:44.889501",
+      "last_success_at": "2026-09-26 11:37:44.911954",
+      "has_error": false,
+      "worker_age_seconds": 0,
+      "lock_age_seconds": null,
+      "next_scheduled_at": "2026-09-26 12:37:35.610106",
+      "not_before": null
+    },
+    {
+      "name": "crawl-agent-review",
+      "runs": 24813,
+      "outstanding": "0",
+      "last_run_at": "2026-09-26 12:08:39.216276",
+      "last_success_at": "2026-09-26 12:08:39.275104",
+      "has_error": false,
+      "worker_age_seconds": 2,
+      "lock_age_seconds": null,
+      "next_scheduled_at": "2026-09-26 12:09:35.610106",
+      "not_before": null
+    },
+    {
+      "name": "crawl-fetch",
+      "runs": 40387,
+      "outstanding": "0",
+      "last_run_at": "2026-09-26 12:08:37.034504",
+      "last_success_at": "2026-09-26 12:08:37.043522",
+      "has_error": false,
+      "worker_age_seconds": 35,
+      "lock_age_seconds": null,
+      "next_scheduled_at": "2026-09-26 12:09:35.610106",
+      "not_before": null
+    },
+    {
+      "name": "crawl-judge",
+      "runs": 15419,
+      "outstanding": "0",
+      "last_run_at": "2026-09-26 12:07:38.449346",
+      "last_success_at": "2026-09-26 12:07:38.605512",
+      "has_error": false,
+      "worker_age_seconds": 2,
+      "lock_age_seconds": null,
+      "next_scheduled_at": "2026-09-26 12:12:35.610106",
+      "not_before": null
+    },
+    {
+      "name": "crawl-publish",
+      "runs": 13220,
+      "outstanding": "0",
+      "last_run_at": "2026-09-26 12:07:40.614245",
+      "last_success_at": "2026-09-26 12:07:41.988915",
+      "has_error": false,
+      "worker_age_seconds": 0,
+      "lock_age_seconds": null,
+      "next_scheduled_at": "2026-09-26 12:12:35.610106",
+      "not_before": null
+    },
+    {
+      "name": "crawl-seed",
+      "runs": 6297,
+      "outstanding": "0",
+      "last_run_at": "2026-09-26 12:01:46.148574",
+      "last_success_at": "2026-09-26 12:01:53.305945",
+      "has_error": false,
+      "worker_age_seconds": 35,
+      "lock_age_seconds": null,
+      "next_scheduled_at": "2026-09-26 12:11:35.610106",
+      "not_before": null
+    },
+    {
+      "name": "crawl-tagline",
+      "runs": 8643,
+      "outstanding": "0",
+      "last_run_at": "2026-09-26 12:08:40.747042",
+      "last_success_at": "2026-09-26 12:08:40.762617",
+      "has_error": false,
+      "worker_age_seconds": 4,
+      "lock_age_seconds": null,
+      "next_scheduled_at": "2026-09-26 12:09:32.487848",
+      "not_before": null
+    },
+    {
+      "name": "heartbeat",
+      "runs": 2,
+      "outstanding": "0",
+      "last_run_at": "2026-08-29 02:24:02.611",
+      "last_success_at": "2026-08-29 02:24:02.614",
+      "has_error": false,
+      "worker_age_seconds": 4,
+      "lock_age_seconds": null,
+      "next_scheduled_at": null,
+      "not_before": null
+    },
+    {
+      "name": "hn-show-seed",
+      "runs": 812,
+      "outstanding": "1",
+      "last_run_at": "2026-09-26 11:39:34.769757",
+      "last_success_at": "2026-09-26 11:39:35.13039",
+      "has_error": false,
+      "worker_age_seconds": 35,
+      "lock_age_seconds": null,
+      "next_scheduled_at": "2026-09-26 12:38:43.354208",
+      "not_before": null
+    },
+    {
+      "name": "news-refresh",
+      "runs": 374,
+      "outstanding": "0",
+      "last_run_at": "2026-09-26 11:54:18.089605",
+      "last_success_at": "2026-09-26 11:54:20.476896",
+      "has_error": false,
+      "worker_age_seconds": 0,
+      "lock_age_seconds": null,
+      "next_scheduled_at": "2026-09-26 12:54:11.830195",
+      "not_before": null
+    },
+    {
+      "name": "product-audit",
+      "runs": 10795,
+      "outstanding": "0",
+      "last_run_at": "2026-09-26 12:08:49.334522",
+      "last_success_at": "2026-09-26 12:08:49.344947",
+      "has_error": false,
+      "worker_age_seconds": 2,
+      "lock_age_seconds": null,
+      "next_scheduled_at": "2026-09-26 12:09:45.61705",
+      "not_before": null
+    },
+    {
+      "name": "product-evidence-refresh",
+      "runs": 25861,
+      "outstanding": "0",
+      "last_run_at": "2026-09-26 12:08:37.050833",
+      "last_success_at": "2026-09-26 12:09:02.223535",
+      "has_error": false,
+      "worker_age_seconds": 20,
+      "lock_age_seconds": null,
+      "next_scheduled_at": "2026-09-26 12:09:35.610106",
+      "not_before": null
+    },
+    {
+      "name": "product-intro-check",
+      "runs": 741,
+      "outstanding": "1",
+      "last_run_at": "2026-09-24 23:35:31.635407",
+      "last_success_at": "2026-09-24 23:35:31.844544",
+      "has_error": false,
+      "worker_age_seconds": 2,
+      "lock_age_seconds": null,
+      "next_scheduled_at": "2026-09-26 12:09:23.366374",
+      "not_before": "2100-01-01 00:00:00"
+    },
+    {
+      "name": "product-search-profile",
+      "runs": 3545,
+      "outstanding": "0",
+      "last_run_at": "2026-09-26 12:08:30.641901",
+      "last_success_at": "2026-09-26 12:08:30.719607",
+      "has_error": false,
+      "worker_age_seconds": 4,
+      "lock_age_seconds": null,
+      "next_scheduled_at": "2026-09-26 12:09:18.975621",
+      "not_before": null
+    },
+    {
+      "name": "product-search-refresh",
+      "runs": 11439,
+      "outstanding": "0",
+      "last_run_at": "2026-09-26 12:08:59.688698",
+      "last_success_at": "2026-09-26 12:09:01.193166",
+      "has_error": false,
+      "worker_age_seconds": 0,
+      "lock_age_seconds": null,
+      "next_scheduled_at": "2026-09-26 12:09:53.750896",
+      "not_before": null
+    },
+    {
+      "name": "product-search-verify",
+      "runs": 1784,
+      "outstanding": "0",
+      "last_run_at": "2026-09-26 12:08:50.791459",
+      "last_success_at": "2026-09-26 12:08:50.822799",
+      "has_error": false,
+      "worker_age_seconds": 4,
+      "lock_age_seconds": null,
+      "next_scheduled_at": "2026-09-26 12:09:42.663316",
+      "not_before": null
+    },
+    {
+      "name": "product-stars-refresh",
+      "runs": 3977,
+      "outstanding": "0",
+      "last_run_at": "2026-09-26 12:04:32.191565",
+      "last_success_at": "2026-09-26 12:04:37.058713",
+      "has_error": false,
+      "worker_age_seconds": 35,
+      "lock_age_seconds": null,
+      "next_scheduled_at": "2026-09-26 12:09:18.531991",
+      "not_before": null
+    },
+    {
+      "name": "product-thumbnail-refresh",
+      "runs": 23345,
+      "outstanding": "1",
+      "last_run_at": "2026-09-26 12:09:11.213356",
+      "last_success_at": "2026-09-26 12:08:11.642626",
+      "has_error": false,
+      "worker_age_seconds": 0,
+      "lock_age_seconds": 0,
+      "next_scheduled_at": "2026-09-26 12:09:59.962245",
+      "not_before": null
+    },
+    {
+      "name": "ranking-refresh",
+      "runs": 641,
+      "outstanding": "0",
+      "last_run_at": "2026-09-26 11:37:49.938701",
+      "last_success_at": "2026-09-26 11:37:49.964636",
+      "has_error": false,
+      "worker_age_seconds": 0,
+      "lock_age_seconds": null,
+      "next_scheduled_at": null,
+      "not_before": null
+    },
+    {
+      "name": "reason-translate",
+      "runs": 20243,
+      "outstanding": "0",
+      "last_run_at": "2026-09-26 12:09:00.848459",
+      "last_success_at": "2026-09-26 12:09:02.667786",
+      "has_error": false,
+      "worker_age_seconds": 4,
+      "lock_age_seconds": null,
+      "next_scheduled_at": "2026-09-26 12:09:52.472453",
+      "not_before": null
+    },
+    {
+      "name": "second-review",
+      "runs": 18730,
+      "outstanding": "0",
+      "last_run_at": "2026-09-26 12:08:18.789895",
+      "last_success_at": "2026-09-26 12:08:19.134355",
+      "has_error": false,
+      "worker_age_seconds": 2,
+      "lock_age_seconds": null,
+      "next_scheduled_at": "2026-09-26 12:09:12.806575",
+      "not_before": null
+    },
+    {
+      "name": "uptime-ping",
+      "runs": 25867,
+      "outstanding": "0",
+      "last_run_at": "2026-09-26 12:08:41.722186",
+      "last_success_at": "2026-09-26 12:08:44.653702",
+      "has_error": false,
+      "worker_age_seconds": 0,
+      "lock_age_seconds": null,
+      "next_scheduled_at": "2026-09-26 12:09:35.610106",
+      "not_before": null
+    }
+  ],
+  "observations": [
+    {
+      "key": "service:app:mini-web",
+      "observed_at": "2026-09-26 12:09:10.775",
+      "role": null,
+      "status": "running",
+      "current_job": null,
+      "release": "611820d63096f54700e1254634987046d25cbe01",
+      "age_seconds": 1
+    },
+    {
+      "key": "service:publisher:m3-publisher",
+      "observed_at": "2026-09-26 12:09:10.636",
+      "role": "publisher",
+      "status": "running",
+      "current_job": null,
+      "release": "611820d63096f54700e1254634987046d25cbe01",
+      "age_seconds": 1
+    },
+    {
+      "key": "service:reviewer:m3-reviewer",
+      "observed_at": "2026-09-26 12:09:09.822",
+      "role": "reviewer",
+      "status": "running",
+      "current_job": null,
+      "release": "611820d63096f54700e1254634987046d25cbe01",
+      "age_seconds": 2
+    },
+    {
+      "key": "service:connect-agent:m3-connect-agent",
+      "observed_at": "2026-09-26 12:09:08.494",
+      "role": null,
+      "status": "running",
+      "current_job": null,
+      "release": "611820d63096f54700e1254634987046d25cbe01",
+      "age_seconds": 3
+    },
+    {
+      "key": "service:app:m3-web",
+      "observed_at": "2026-09-26 12:09:08.034",
+      "role": null,
+      "status": "running",
+      "current_job": null,
+      "release": "611820d63096f54700e1254634987046d25cbe01",
+      "age_seconds": 4
+    },
+    {
+      "key": "service:crawler:m3-crawler",
+      "observed_at": "2026-09-26 12:09:07.601",
+      "role": "crawler",
+      "status": "running",
+      "current_job": "agent-evidence-refresh",
+      "release": "611820d63096f54700e1254634987046d25cbe01",
+      "age_seconds": 4
+    },
+    {
+      "key": "service:scheduler:m3-scheduler",
+      "observed_at": "2026-09-26 12:09:03.521",
+      "role": "scheduler",
+      "status": "running",
+      "current_job": null,
+      "release": "611820d63096f54700e1254634987046d25cbe01",
+      "age_seconds": 8
+    },
+    {
+      "key": "service:text:m3-text",
+      "observed_at": "2026-09-26 12:08:59.442",
+      "role": "text",
+      "status": "running",
+      "current_job": null,
+      "release": "611820d63096f54700e1254634987046d25cbe01",
+      "age_seconds": 12
+    },
+    {
+      "key": "service:maintenance:m3-maintenance",
+      "observed_at": "2026-09-26 12:08:58.577",
+      "role": "maintenance",
+      "status": "running",
+      "current_job": null,
+      "release": "611820d63096f54700e1254634987046d25cbe01",
+      "age_seconds": 13
+    }
+  ]
+}

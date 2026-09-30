@@ -1,0 +1,840 @@
+{
+  "at": "2026-09-13T19:33:38.714Z",
+  "rows": 200,
+  "pairedCases": 50,
+  "metrics": [
+    {
+      "model": "sonnet",
+      "n": 50,
+      "referenceMatches": 43,
+      "referenceAgreementPct": 86,
+      "wilson95Pct": [
+        73.8,
+        93
+      ],
+      "falseApprove": 0,
+      "rejectLabels": 25,
+      "falseReject": 4,
+      "approveLabels": 25,
+      "held": 2,
+      "failed": 1,
+      "errors": [
+        "cli_error"
+      ],
+      "medianSeconds": 7.311,
+      "p95Seconds": 12.109,
+      "maxSeconds": 16.603,
+      "over20Seconds": 0,
+      "over24Seconds": 0,
+      "meanConfidenceCorrect": 0.7739534883720931,
+      "meanConfidenceWrong": 0.775,
+      "wrongHighConfidence": 0,
+      "resolvedModels": [
+        "claude-haiku-4-5-20251001",
+        "claude-sonnet-5"
+      ]
+    },
+    {
+      "model": "[MLX] gemma4-26b",
+      "n": 50,
+      "referenceMatches": 24,
+      "referenceAgreementPct": 48,
+      "wilson95Pct": [
+        34.8,
+        61.5
+      ],
+      "falseApprove": 9,
+      "rejectLabels": 25,
+      "falseReject": 2,
+      "approveLabels": 25,
+      "held": 0,
+      "failed": 15,
+      "errors": [
+        "timeout",
+        "timeout",
+        "timeout",
+        "timeout",
+        "timeout",
+        "timeout",
+        "timeout",
+        "timeout",
+        "timeout",
+        "timeout",
+        "timeout",
+        "timeout",
+        "timeout",
+        "timeout",
+        "timeout"
+      ],
+      "medianSeconds": 29.153,
+      "p95Seconds": 60.003,
+      "maxSeconds": 60.004,
+      "over20Seconds": 30,
+      "over24Seconds": 29,
+      "meanConfidenceCorrect": 0.9874999999999999,
+      "meanConfidenceWrong": 0.9727272727272727,
+      "wrongHighConfidence": 10,
+      "resolvedModels": [
+        "gemma4-26b"
+      ]
+    },
+    {
+      "model": "[MLX] gemma4-31b",
+      "n": 50,
+      "referenceMatches": 27,
+      "referenceAgreementPct": 54,
+      "wilson95Pct": [
+        40.4,
+        67
+      ],
+      "falseApprove": 1,
+      "rejectLabels": 25,
+      "falseReject": 6,
+      "approveLabels": 25,
+      "held": 3,
+      "failed": 13,
+      "errors": [
+        "timeout",
+        "timeout",
+        "timeout",
+        "timeout",
+        "timeout",
+        "timeout",
+        "timeout",
+        "timeout",
+        "timeout",
+        "timeout",
+        "timeout",
+        "timeout",
+        "timeout"
+      ],
+      "medianSeconds": 36.056,
+      "p95Seconds": 60.003,
+      "maxSeconds": 60.004,
+      "over20Seconds": 43,
+      "over24Seconds": 40,
+      "meanConfidenceCorrect": 0.9777777777777777,
+      "meanConfidenceWrong": 0.9571428571428572,
+      "wrongHighConfidence": 7,
+      "resolvedModels": [
+        "gemma4-31b"
+      ]
+    },
+    {
+      "model": "[MLX] gpt-oss-120b",
+      "n": 50,
+      "referenceMatches": 41,
+      "referenceAgreementPct": 82,
+      "wilson95Pct": [
+        69.2,
+        90.2
+      ],
+      "falseApprove": 5,
+      "rejectLabels": 25,
+      "falseReject": 4,
+      "approveLabels": 25,
+      "held": 0,
+      "failed": 0,
+      "errors": [],
+      "medianSeconds": 11.762,
+      "p95Seconds": 21.571,
+      "maxSeconds": 23.384,
+      "over20Seconds": 5,
+      "over24Seconds": 0,
+      "meanConfidenceCorrect": 0.9153658536585366,
+      "meanConfidenceWrong": 0.8811111111111112,
+      "wrongHighConfidence": 4,
+      "resolvedModels": [
+        "gpt-oss-120b"
+      ]
+    }
+  ],
+  "consensus": [
+    {
+      "name": "current_sonnet_plus_three",
+      "first": "sonnet",
+      "second": [
+        "[MLX] gemma4-26b",
+        "[MLX] gemma4-31b",
+        "[MLX] gpt-oss-120b"
+      ],
+      "n": 50,
+      "agreed": 14,
+      "agreedCorrect": 13,
+      "agreedWrong": 1,
+      "agreedFalseApprovals": 1,
+      "agreementCoveragePct": 28,
+      "conditionalAgreementAccuracyPct": 92.85714285714286,
+      "conditionalWilson95Pct": [
+        68.5,
+        98.7
+      ],
+      "needsHuman": 15,
+      "pending": 20,
+      "firstFailed": 1,
+      "wrongCases": [
+        {
+          "repo": "skillberry-ai/skillberry-store",
+          "label": "reject",
+          "status": "agreed",
+          "decision": "approve",
+          "votes": 2
+        }
+      ]
+    },
+    {
+      "name": "oss_first_plus_two_gemmas",
+      "first": "[MLX] gpt-oss-120b",
+      "second": [
+        "[MLX] gemma4-26b",
+        "[MLX] gemma4-31b"
+      ],
+      "n": 50,
+      "agreed": 15,
+      "agreedCorrect": 14,
+      "agreedWrong": 1,
+      "agreedFalseApprovals": 1,
+      "agreementCoveragePct": 30,
+      "conditionalAgreementAccuracyPct": 93.33333333333333,
+      "conditionalWilson95Pct": [
+        70.2,
+        98.8
+      ],
+      "needsHuman": 15,
+      "pending": 20,
+      "firstFailed": 0,
+      "wrongCases": [
+        {
+          "repo": "skillberry-ai/skillberry-store",
+          "label": "reject",
+          "status": "agreed",
+          "decision": "approve",
+          "votes": 2
+        }
+      ]
+    },
+    {
+      "name": "gemma26_first_plus_gemma31_oss",
+      "first": "[MLX] gemma4-26b",
+      "second": [
+        "[MLX] gemma4-31b",
+        "[MLX] gpt-oss-120b"
+      ],
+      "n": 50,
+      "agreed": 15,
+      "agreedCorrect": 14,
+      "agreedWrong": 1,
+      "agreedFalseApprovals": 1,
+      "agreementCoveragePct": 30,
+      "conditionalAgreementAccuracyPct": 93.33333333333333,
+      "conditionalWilson95Pct": [
+        70.2,
+        98.8
+      ],
+      "needsHuman": 15,
+      "pending": 5,
+      "firstFailed": 15,
+      "wrongCases": [
+        {
+          "repo": "skillberry-ai/skillberry-store",
+          "label": "reject",
+          "status": "agreed",
+          "decision": "approve",
+          "votes": 2
+        }
+      ]
+    },
+    {
+      "name": "gemma31_first_plus_gemma26_oss",
+      "first": "[MLX] gemma4-31b",
+      "second": [
+        "[MLX] gemma4-26b",
+        "[MLX] gpt-oss-120b"
+      ],
+      "n": 50,
+      "agreed": 15,
+      "agreedCorrect": 14,
+      "agreedWrong": 1,
+      "agreedFalseApprovals": 1,
+      "agreementCoveragePct": 30,
+      "conditionalAgreementAccuracyPct": 93.33333333333333,
+      "conditionalWilson95Pct": [
+        70.2,
+        98.8
+      ],
+      "needsHuman": 15,
+      "pending": 7,
+      "firstFailed": 13,
+      "wrongCases": [
+        {
+          "repo": "skillberry-ai/skillberry-store",
+          "label": "reject",
+          "status": "agreed",
+          "decision": "approve",
+          "votes": 2
+        }
+      ]
+    },
+    {
+      "name": "oss_first_sonnet_second",
+      "first": "[MLX] gpt-oss-120b",
+      "second": [
+        "sonnet"
+      ],
+      "n": 50,
+      "agreed": 35,
+      "agreedCorrect": 33,
+      "agreedWrong": 2,
+      "agreedFalseApprovals": 0,
+      "agreementCoveragePct": 70,
+      "conditionalAgreementAccuracyPct": 94.28571428571429,
+      "conditionalWilson95Pct": [
+        81.4,
+        98.4
+      ],
+      "needsHuman": 14,
+      "pending": 1,
+      "firstFailed": 0,
+      "wrongCases": [
+        {
+          "repo": "riskninja2026/research-reports",
+          "label": "approve",
+          "status": "agreed",
+          "decision": "reject",
+          "votes": 2
+        },
+        {
+          "repo": "OrangePeachPink/sprout",
+          "label": "approve",
+          "status": "agreed",
+          "decision": "reject",
+          "votes": 2
+        }
+      ]
+    },
+    {
+      "name": "gemma26_first_sonnet_second",
+      "first": "[MLX] gemma4-26b",
+      "second": [
+        "sonnet"
+      ],
+      "n": 50,
+      "agreed": 14,
+      "agreedCorrect": 14,
+      "agreedWrong": 0,
+      "agreedFalseApprovals": 0,
+      "agreementCoveragePct": 28,
+      "conditionalAgreementAccuracyPct": 100,
+      "conditionalWilson95Pct": [
+        78.5,
+        100
+      ],
+      "needsHuman": 20,
+      "pending": 1,
+      "firstFailed": 15,
+      "wrongCases": []
+    },
+    {
+      "name": "oss_first_sonnet_gemma26_second",
+      "first": "[MLX] gpt-oss-120b",
+      "second": [
+        "sonnet",
+        "[MLX] gemma4-26b"
+      ],
+      "n": 50,
+      "agreed": 20,
+      "agreedCorrect": 18,
+      "agreedWrong": 2,
+      "agreedFalseApprovals": 2,
+      "agreementCoveragePct": 40,
+      "conditionalAgreementAccuracyPct": 90,
+      "conditionalWilson95Pct": [
+        69.9,
+        97.2
+      ],
+      "needsHuman": 14,
+      "pending": 16,
+      "firstFailed": 0,
+      "wrongCases": [
+        {
+          "repo": "Atypical-Consulting/Koine",
+          "label": "reject",
+          "status": "agreed",
+          "decision": "approve",
+          "votes": 2
+        },
+        {
+          "repo": "skillberry-ai/skillberry-store",
+          "label": "reject",
+          "status": "agreed",
+          "decision": "approve",
+          "votes": 2
+        }
+      ]
+    }
+  ],
+  "disagreements": [
+    {
+      "repo": "codeiakofficial/cocktailmaker",
+      "label": "reject",
+      "model": "[MLX] gemma4-26b",
+      "decision": "approve",
+      "confidence": 1,
+      "reason": "The product URL (https://codeiakofficial.github.io/cocktailmaker) is a deployed site for a cocktail maker application. The architecture description and facts indicate it is a functional system for recipe management and drink dispensing using a React frontend and ASP.NET Core backend. While the repository contains the source code, the URL itself serves as the hosted interface for the product."
+    },
+    {
+      "repo": "thevibeworks/claude-reads-hn",
+      "label": "approve",
+      "model": "[MLX] gemma4-26b",
+      "decision": "reject",
+      "confidence": 1,
+      "reason": "The product description indicates that the service is an automated process where an AI reads Hacker News and writes digests to a Telegram channel (t.me/claudehn). The repository itself appears to be the source code for this automation rather than a usable deployed product like an app, dashboard, or service that a user can interact with via the provided URL. It is a background automation/bot service."
+    },
+    {
+      "repo": "thevibeworks/claude-reads-hn",
+      "label": "approve",
+      "model": "[MLX] gemma4-31b",
+      "decision": "reject",
+      "confidence": 1,
+      "reason": "The product is described as an AI that writes digests of Hacker News and posts them to a Telegram channel (t.me/claudehn). The provided URL is not a usable deployed product/app, but rather a repository or a link to a social media feed/bot output."
+    },
+    {
+      "repo": "CarpseDeam/Aura-IDE",
+      "label": "reject",
+      "model": "[MLX] gpt-oss-120b",
+      "decision": "approve",
+      "confidence": 0.93,
+      "reason": "The URL points to a GitHub Pages site for Aura IDE, an open-source desktop application that can be downloaded and run locally. The README describes downloading an executable for Windows and running from source on macOS/Linux, indicating it is a usable deployed product (a coding workspace tool)."
+    },
+    {
+      "repo": "riskninja2026/research-reports",
+      "label": "approve",
+      "model": "sonnet",
+      "decision": "reject",
+      "confidence": 0.85,
+      "reason": "The pageText and readme describe a public archive of self-contained HTML equity-research reports hosted on GitHub Pages ('公开研究报告' / 'Public archive of share-ready earnings and diligence reports'). It is a collection of individually published analysis articles/reports (business/financial commentary on listed companies), not an interactive app, tool, dashboard, or service that a person opens and 'uses'. The README explicitly states it 'contains finished reports only' — i.e., a static content archive, similar to a blog. There is no functionality described beyond reading pre-generated report pages, so this falls under the 'blog post/article' and 'personal research document' exclusions in the policy."
+    },
+    {
+      "repo": "riskninja2026/research-reports",
+      "label": "approve",
+      "model": "[MLX] gpt-oss-120b",
+      "decision": "reject",
+      "confidence": 0.93,
+      "reason": "The URL hosts a static GitHub Pages site that provides a collection of equity research reports. It functions as a documentation/archive site rather than an interactive app, tool, dashboard, or service that a user can actively use. Therefore it is not a usable deployed product."
+    },
+    {
+      "repo": "riskninja2026/research-reports",
+      "label": "approve",
+      "model": "[MLX] gemma4-31b",
+      "decision": "reject",
+      "confidence": 1,
+      "reason": "The product is a public archive of research reports and diligence documents (essentially a collection of articles/papers), which falls under the 'personal research document, notebook, paper/publication page' or 'blog post or article' category of non-usable products."
+    },
+    {
+      "repo": "0-co/company",
+      "label": "reject",
+      "model": "[MLX] gemma4-26b",
+      "decision": "approve",
+      "confidence": 1,
+      "reason": "The product is described as 'agent-friend', a universal tool adapter for AI agents. The README indicates it is a functional tool (write a Python function once, use it as a tool in OpenAI, Claude). While the description mentions it is running as an experiment on Twitch, the core product is a functional tool/adapter for AI agents, which qualifies as a usable product."
+    },
+    {
+      "repo": "777genius/universal-agent-plugins-registry",
+      "label": "reject",
+      "model": "[MLX] gemma4-26b",
+      "decision": "approve",
+      "confidence": 1,
+      "reason": "The product URL (https://777genius.github.io/universal-agent-plugins-registry) points to a GitHub Pages site hosting a registry of plugins. Based on the repository name and topics, this is a functional service/tool for managing or viewing agent plugins, which constitutes a usable product."
+    },
+    {
+      "repo": "jazzyalex/agent-sessions",
+      "label": "reject",
+      "model": "[MLX] gemma4-26b",
+      "decision": "approve",
+      "confidence": 0.9,
+      "reason": "The product URL https://jazzyalex.github.io/agent-sessions refers to a subpath of a GitHub Pages site. The README indicates it is 'Agent Sessions for macOS', which describes a functional tool/service. Given the context of the subpath and the README, it appears to be a hosted application or dashboard for managing agent sessions, making it a usable product."
+    },
+    {
+      "repo": "jazzyalex/agent-sessions",
+      "label": "reject",
+      "model": "[MLX] gpt-oss-120b",
+      "decision": "approve",
+      "confidence": 0.93,
+      "reason": "The URL points to a live product page for a macOS application (Agent Sessions) that can be installed via Homebrew Cask. The description and README describe functional features (searching local AI agent session histories, resuming sessions, quota tracking) indicating it is a usable deployed product rather than just documentation or a placeholder."
+    },
+    {
+      "repo": "rcarmo/swift-smart-prompter",
+      "label": "reject",
+      "model": "[MLX] gemma4-26b",
+      "decision": "approve",
+      "confidence": 1,
+      "reason": "The product URL https://rcarmo.github.io/projects/swift-smart-prompter hosts a functional application described as a local macOS meeting assistant. While the host is a github.io domain, the subpath contains the deployed product which is not a mere documentation or landing page for an external app, but the product itself as described in the repo metadata."
+    },
+    {
+      "repo": "Big-Yellow-Solutions/optimistic-labs-redesign",
+      "label": "reject",
+      "model": "sonnet",
+      "decision": "needs_review",
+      "confidence": 0.55,
+      "reason": "The product metadata describes this as an \"Optimistic Labs website redesign mockup,\" which hints it could be a static design mockup rather than a functional product, but pageText and readme are both empty and no evidence entries were supplied. There is no visible text or documentation to confirm whether the deployed page is a usable app/tool/service or just a placeholder/mockup page. Insufficient evidence to determine usability with confidence."
+    },
+    {
+      "repo": "LexaurinTheDog/esbirka-skill",
+      "label": "reject",
+      "model": "[MLX] gemma4-26b",
+      "error": "timeout"
+    },
+    {
+      "repo": "LexaurinTheDog/esbirka-skill",
+      "label": "reject",
+      "model": "[MLX] gemma4-31b",
+      "error": "timeout"
+    },
+    {
+      "repo": "thomas-powers-jr/cadence",
+      "label": "reject",
+      "model": "[MLX] gemma4-31b",
+      "error": "timeout"
+    },
+    {
+      "repo": "legobele/nivelato",
+      "label": "approve",
+      "model": "[MLX] gemma4-31b",
+      "decision": "reject",
+      "confidence": 1,
+      "reason": "The product is ineligible based on the provided evidence summary (eligible: false), and the provided facts describe a tool but do not provide a usable deployed URL for a person to open and use now; the source URL points to a markdown file in a repository."
+    },
+    {
+      "repo": "legobele/nivelato",
+      "label": "approve",
+      "model": "[MLX] gemma4-26b",
+      "error": "timeout"
+    },
+    {
+      "repo": "EpiForeSITE/insightnet-explorer",
+      "label": "approve",
+      "model": "sonnet",
+      "error": "cli_error"
+    },
+    {
+      "repo": "EpiForeSITE/insightnet-explorer",
+      "label": "approve",
+      "model": "[MLX] gemma4-31b",
+      "decision": "reject",
+      "confidence": 0.9,
+      "reason": "The provided information indicates that the product is a repository (EpiForeSITE/insightnet-explorer) and the description refers to a dashboard, but there is no evidence of a deployed, usable URL provided in the facts. Based on the available metadata, it appears to be a repository listing or a project in development rather than a live, usable product."
+    },
+    {
+      "repo": "starter-series/mcp-server-starter",
+      "label": "reject",
+      "model": "[MLX] gemma4-26b",
+      "decision": "approve",
+      "confidence": 0.8,
+      "reason": "The URL https://starter-series.github.io/starter-series appears to be a hosted site. While the provided facts suggest a subpath-related rule trigger, the content itself (based on the service name 'mcp-server-starter' and the URL structure) represents a deployed site/product. Given the context of the task, it is a usable web presence."
+    },
+    {
+      "repo": "sjdodge123/Raid-Ledger",
+      "label": "reject",
+      "model": "[MLX] gemma4-26b",
+      "decision": "approve",
+      "confidence": 1,
+      "reason": "The product URL https://sjdodge123.github.io/Raid-Ledger points to a deployed application described in the product metadata as a 'best-deal discovery' tool with Steam integration. Although hosted on GitHub Pages, the subpath contains a functional application rather than just documentation or a personal site."
+    },
+    {
+      "repo": "starter-series/mcp-server-starter",
+      "label": "reject",
+      "model": "[MLX] gemma4-31b",
+      "error": "timeout"
+    },
+    {
+      "repo": "sjdodge123/Raid-Ledger",
+      "label": "reject",
+      "model": "[MLX] gemma4-31b",
+      "decision": "approve",
+      "confidence": 0.9,
+      "reason": "The product is a usable deployed application called 'Raid-Ledger' which features Discord OAuth login and Steam integration, as indicated by the service name and listed features."
+    },
+    {
+      "repo": "Atypical-Consulting/Koine",
+      "label": "reject",
+      "model": "[MLX] gemma4-26b",
+      "decision": "approve",
+      "confidence": 1,
+      "reason": "The product URL (https://atypical-consulting.github.io/Koine) hosts a functional tool/documentation site for Koine, a DSL for Domain-Driven Design. While the README describes a compiler/DSL, the hosted content represents the usable interface/documentation for that tool. The host exclusion rule mentioned in the facts does not apply as the content is a specific subpath representing the product."
+    },
+    {
+      "repo": "Atypical-Consulting/Koine",
+      "label": "reject",
+      "model": "sonnet",
+      "decision": "needs_review",
+      "confidence": 0.5,
+      "reason": "The README describes Koine as a DSL/compiler and states \"Try it in the browser, zero install,\" strongly suggesting the URL (a GitHub Pages site at /Koine) hosts an interactive in-browser playground/compiler, which would qualify as a usable product. However, product.pageText is empty, so there is no direct evidence of what actually renders on the page — it could be a WASM app that the crawler failed to render, or it could be a landing/docs page pointing elsewhere. The repo evidence (CLAUDE.md, skills like run-studio-web) only proves files exist, not that the deployed page is functional. Given the empty pageText and lack of direct confirmation of an interactive UI at this URL, I cannot confidently determine usability from the supplied facts."
+    },
+    {
+      "repo": "Atypical-Consulting/Koine",
+      "label": "reject",
+      "model": "[MLX] gpt-oss-120b",
+      "decision": "approve",
+      "confidence": 0.86,
+      "reason": "The URL hosts a GitHub Pages site for Koine, a DSL that can be used directly in the browser to compile domain models to code in multiple languages. The README describes an interactive \"Try it in the browser\" feature, indicating the site provides a functional, usable product rather than merely documentation or a placeholder."
+    },
+    {
+      "repo": "synabreu/arxiv-wiki",
+      "label": "approve",
+      "model": "sonnet",
+      "decision": "reject",
+      "confidence": 0.75,
+      "reason": "The page at synabreu.github.io/arxiv-wiki is a GitHub Pages-hosted wiki/digest that displays daily generated Markdown summaries of arXiv AI papers (rankings, version changelog notes). The pageText describes content (summaries, version history, selection methodology) rather than any interactive tool, dashboard, or service a user can operate. The README confirms this is a script/GitHub Actions pipeline that generates static Markdown docs published via GitHub Pages, i.e., a content/blog-like output, not a usable app or tool. This matches the 'documentation/blog post' exclusion rather than a usable deployed product."
+    },
+    {
+      "repo": "brnyxx/xout",
+      "label": "reject",
+      "model": "[MLX] gemma4-26b",
+      "error": "timeout"
+    },
+    {
+      "repo": "brnyxx/xout",
+      "label": "reject",
+      "model": "[MLX] gemma4-31b",
+      "error": "timeout"
+    },
+    {
+      "repo": "skillberry-ai/skillberry-store",
+      "label": "reject",
+      "model": "[MLX] gemma4-26b",
+      "decision": "approve",
+      "confidence": 1,
+      "reason": "The product URL https://skillberry-ai.github.io/skillberry-store refers to the 'Skillberry-store service (a.k.a., SBS)', which according to the readme and description, is a service to manage, execute, and organize tools, skills, and snippets for agentic workflows. The description indicates it is a functional service/tool rather than just documentation or a landing page."
+    },
+    {
+      "repo": "skillberry-ai/skillberry-store",
+      "label": "reject",
+      "model": "[MLX] gpt-oss-120b",
+      "decision": "approve",
+      "confidence": 0.86,
+      "reason": "The product metadata and README describe a live, runnable service (Skillberry Store) with a live demo instance accessible via the provided URL. This indicates the URL hosts a usable deployed product (a service for managing and executing tools), not merely documentation or a placeholder."
+    },
+    {
+      "repo": "skillberry-ai/skillberry-store",
+      "label": "reject",
+      "model": "[MLX] gemma4-31b",
+      "decision": "needs_review",
+      "confidence": 0.8,
+      "reason": "The provided evidence contains no pageText or readme content to determine if the URL is a usable deployed product or merely a documentation/landing page for the repository. The description suggests a tool for managing agentic workflows, but it is unclear if the hosted URL is the functional application or a static site describing it."
+    },
+    {
+      "repo": "elias-leslie/a-term",
+      "label": "reject",
+      "model": "[MLX] gemma4-31b",
+      "error": "timeout"
+    },
+    {
+      "repo": "OrangePeachPink/sprout",
+      "label": "approve",
+      "model": "sonnet",
+      "decision": "reject",
+      "confidence": 0.82,
+      "reason": "The URL is a GitHub Pages project/landing page for 'Sprout', an ESP32-based plant monitoring hardware project. The pageText describes the project, links to source code, a web-based flashing tool for ESP32 hardware, contribution docs, and a roadmap, but the page itself does not provide a usable dashboard, app, or service one can open and use now — it requires separate hardware (ESP32 + soil sensor) and cloning/building the repo to actually run anything. This is a project/landing page for something that runs elsewhere on physical hardware, not a usable deployed product itself."
+    },
+    {
+      "repo": "OrangePeachPink/sprout",
+      "label": "approve",
+      "model": "[MLX] gpt-oss-120b",
+      "decision": "reject",
+      "confidence": 0.92,
+      "reason": "The URL points to a GitHub Pages site that primarily provides documentation, source code, and instructions for building a hardware plant‑care system. It does not host an interactive app, service, dashboard, or tool that a user can directly use without building or installing hardware/software. Therefore it is not a usable deployed product."
+    },
+    {
+      "repo": "OrangePeachPink/sprout",
+      "label": "approve",
+      "model": "[MLX] gemma4-31b",
+      "decision": "reject",
+      "confidence": 1,
+      "reason": "The product is described as a hardware-based plant care system running on an ESP32 microcontroller (product.description). The provided URL is not a usable deployed web application, but rather a project that requires physical hardware components (microcontroller, soil sensors) to function, making it a hardware project/repository rather than a usable deployed software product."
+    },
+    {
+      "repo": "pjt222/agent-almanac",
+      "label": "approve",
+      "model": "[MLX] gpt-oss-120b",
+      "decision": "reject",
+      "confidence": 0.78,
+      "reason": "The URL points to a GitHub Pages site that primarily serves as a visual catalog and documentation for a library of skills, agents, and teams. It does not provide an interactive service, tool, or application that a user can directly use for a task; it is essentially a reference/visualization of a repository's contents rather than a functional deployed product."
+    },
+    {
+      "repo": "ArcadeAI/safeword",
+      "label": "reject",
+      "model": "[MLX] gemma4-26b",
+      "error": "timeout"
+    },
+    {
+      "repo": "dmlguq456/hearting",
+      "label": "reject",
+      "model": "[MLX] gemma4-26b",
+      "error": "timeout"
+    },
+    {
+      "repo": "dmlguq456/hearting",
+      "label": "reject",
+      "model": "[MLX] gemma4-31b",
+      "error": "timeout"
+    },
+    {
+      "repo": "dmlguq456/hearting",
+      "label": "reject",
+      "model": "[MLX] gpt-oss-120b",
+      "decision": "approve",
+      "confidence": 0.86,
+      "reason": "The page at https://dmlguq456.github.io/hearting describes a CLI tool (Hearting) that can be installed via a script and used to manage agent workflows across multiple runtimes. The description includes installation instructions, requirements, and usage details, indicating it is a functional product rather than just documentation or a placeholder."
+    },
+    {
+      "repo": "edriso/claude-goat",
+      "label": "reject",
+      "model": "[MLX] gemma4-26b",
+      "error": "timeout"
+    },
+    {
+      "repo": "edriso/claude-goat",
+      "label": "reject",
+      "model": "[MLX] gemma4-31b",
+      "error": "timeout"
+    },
+    {
+      "repo": "Socialpranker/token-history",
+      "label": "approve",
+      "model": "[MLX] gemma4-31b",
+      "error": "timeout"
+    },
+    {
+      "repo": "yinjialu/ai-frontier-daily",
+      "label": "approve",
+      "model": "[MLX] gemma4-26b",
+      "error": "timeout"
+    },
+    {
+      "repo": "yinjialu/ai-frontier-daily",
+      "label": "approve",
+      "model": "[MLX] gemma4-31b",
+      "error": "timeout"
+    },
+    {
+      "repo": "Paraso42/Qbao",
+      "label": "approve",
+      "model": "sonnet",
+      "decision": "reject",
+      "confidence": 0.68,
+      "reason": "The URL is a GitHub Pages site (paraso42.github.io/Qbao) whose pageText is essentially the project's README rendered as a page: feature description, self-hosting/installation instructions (Node.js/Express/PostgreSQL backend, Electron desktop client), documentation links, and licensing terms. There is no indication this GitHub Pages URL itself hosts a working login/app interface — the actual product (web app) is described as running on a separate self-hosted server ('单台香港服务器', Caddy-served, requires backend deployment), with GitHub Pages appearing to serve only the README/documentation content. This matches the 'documentation/README site' and 'landing page for something that runs elsewhere' exclusions rather than a directly usable deployed product at this URL."
+    },
+    {
+      "repo": "Paraso42/Qbao",
+      "label": "approve",
+      "model": "[MLX] gemma4-31b",
+      "decision": "needs_review",
+      "confidence": 0.8,
+      "reason": "The provided evidence describes a product (Qbao, an interactive learning/question engine) and mentions deployment documentation, but there is no pageText or README content provided to verify if the specific URL is currently a usable deployed product or merely a repository/documentation site."
+    },
+    {
+      "repo": "axel-rock/models",
+      "label": "approve",
+      "model": "[MLX] gemma4-26b",
+      "decision": "reject",
+      "confidence": 1,
+      "reason": "The provided URL is a subpath to a GitHub repository containing a markdown file (.agents/skills/update-model-catalog/SKILL.md), which represents documentation or a repository file rather than a usable deployed product."
+    },
+    {
+      "repo": "axel-rock/models",
+      "label": "approve",
+      "model": "[MLX] gemma4-31b",
+      "decision": "needs_review",
+      "confidence": 1,
+      "reason": "The provided evidence contains no information about the product's URL, page text, or README, making it impossible to determine if the site is a usable deployed product."
+    },
+    {
+      "repo": "Liao-Ke/everyday",
+      "label": "approve",
+      "model": "[MLX] gpt-oss-120b",
+      "decision": "reject",
+      "confidence": 0.86,
+      "reason": "The URL points to a static VitePress site that displays pre-generated stories and documentation. While the repository provides code to generate daily stories using multiple AI models, the deployed page itself does not offer an interactive service for users to generate new stories without providing their own API keys and running the code locally. Therefore it is not a usable deployed product (app, tool, or service) that a person can open and use directly."
+    },
+    {
+      "repo": "Liao-Ke/everyday",
+      "label": "approve",
+      "model": "[MLX] gemma4-26b",
+      "error": "timeout"
+    },
+    {
+      "repo": "astrapi69/adaptive-learner",
+      "label": "approve",
+      "model": "[MLX] gemma4-31b",
+      "decision": "reject",
+      "confidence": 0.9,
+      "reason": "The product is not a usable deployed product. According to the provided facts, the product is an 'Adaptive Learner - KI-gestützte Sprachlern-App' hosted on GitHub Pages (product.url), but the evidence summary indicates that it is not eligible (evidence_summary_eligible=false) and the scan state is pending. More importantly, the provided facts do not contain any pageText or readme content to verify that a functional application is actually deployed at the URL; it appears to be a repository listing or a project in development."
+    },
+    {
+      "repo": "t29mato/world-express",
+      "label": "approve",
+      "model": "[MLX] gemma4-26b",
+      "error": "timeout"
+    },
+    {
+      "repo": "BOSSincrypto/news-minimalist",
+      "label": "approve",
+      "model": "[MLX] gemma4-26b",
+      "error": "timeout"
+    },
+    {
+      "repo": "liujontw-create/absolutelymysong",
+      "label": "approve",
+      "model": "[MLX] gemma4-26b",
+      "error": "timeout"
+    },
+    {
+      "repo": "liujontw-create/absolutelymysong",
+      "label": "approve",
+      "model": "[MLX] gemma4-31b",
+      "error": "timeout"
+    },
+    {
+      "repo": "altkriz/htmleditor",
+      "label": "approve",
+      "model": "[MLX] gemma4-26b",
+      "error": "timeout"
+    },
+    {
+      "repo": "altkriz/htmleditor",
+      "label": "approve",
+      "model": "[MLX] gemma4-31b",
+      "error": "timeout"
+    },
+    {
+      "repo": "QuantStrategyLab/QuantAdvisorResearch",
+      "label": "approve",
+      "model": "[MLX] gemma4-26b",
+      "error": "timeout"
+    },
+    {
+      "repo": "shishir-dey/ngspiceX",
+      "label": "approve",
+      "model": "[MLX] gemma4-31b",
+      "error": "timeout"
+    },
+    {
+      "repo": "victorsodre/remotion-agent-catalog",
+      "label": "approve",
+      "model": "[MLX] gemma4-26b",
+      "error": "timeout"
+    },
+    {
+      "repo": "GabrielGLevine/wandering-inn-rpg",
+      "label": "approve",
+      "model": "[MLX] gemma4-26b",
+      "error": "timeout"
+    },
+    {
+      "repo": "GabrielGLevine/wandering-inn-rpg",
+      "label": "approve",
+      "model": "[MLX] gemma4-31b",
+      "error": "timeout"
+    }
+  ]
+}

@@ -1,0 +1,42 @@
+[
+  {
+    "ts": "2026-09-26T12:09:41.494Z",
+    "level": "info",
+    "event": "crawl.fetched",
+    "job": "crawl-fetch",
+    "fetched": 1,
+    "skipped": 0,
+    "failed": 0,
+    "drained": true
+  },
+  {
+    "ts": "2026-09-26T12:10:39.926Z",
+    "level": "info",
+    "event": "crawl.fetched",
+    "job": "crawl-fetch",
+    "fetched": 0,
+    "skipped": 0,
+    "failed": 0,
+    "drained": true
+  },
+  {
+    "ts": "2026-09-26T12:11:47.705Z",
+    "level": "info",
+    "event": "crawl.seeded",
+    "job": "crawl-seed",
+    "discovered": 41,
+    "signal": "Claude \ucee4\ubc0b \ud2b8\ub808\uc77c\ub7ec",
+    "page": 4,
+    "incompleteWindows": 0
+  },
+  {
+    "ts": "2026-09-26T12:12:03.018Z",
+    "level": "info",
+    "event": "crawl.fetched",
+    "job": "crawl-fetch",
+    "fetched": 41,
+    "skipped": 0,
+    "failed": 0,
+    "drained": true
+  }
+]

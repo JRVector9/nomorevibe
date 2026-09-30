@@ -1,0 +1,24 @@
+import postgres from 'postgres';import {writeFileSync} from 'node:fs';
+import {assertLocalTestDatabase} from '@/scripts/test-database';
+import {parseKeywords} from '@/lib/domain/products/search-profile';
+import {parseVerification} from '@/lib/domain/products/search-verify';
+import {runJob} from '@/lib/jobs/runner';
+import {checkProductIntros} from '@/lib/jobs/products/intro-check';
+import {writeSearchProfiles} from '@/lib/jobs/products/search-profile';
+const url='postgres://nomorevibe:nomorevibe@localhost:55435/nomorevibe_test';assertLocalTestDatabase(url);process.env.DATABASE_URL=url;
+const c=postgres(url,{max:2,prepare:false,onnotice:()=>{}});(globalThis as any).pgClient=c;
+async function main(){const result:any={mode:'isolated-local-test-database',emptyGeneration:parseKeywords('{}','Proof'),incompleteVerification:parseVerification(['known correct','wrong keyword'],'{"checks":[]}')};
+const slug='audit-proof-20260926';const [p]=await c`insert into products(slug,name,url,tagline,tagline_source,description,category,status,source,verify_token,edit_token_hash,search_keywords) values(${slug},'Audit Proof','https://audit-proof-20260926.test','World of Warcraft item maker','ai_page','World of Warcraft item maker','Games','seeded','crawler','v','e','World of Warcraft items') returning id`;
+try{
+await c`insert into product_search_profiles(product_id,keywords_en,keywords_ko,source_hash,model) values(${p.id},' ["World of Warcraft items"]'::jsonb,'[]'::jsonb,'h','m')`;
+const cli:any=async (_args:any,stdin:string)=>{const input=JSON.parse(stdin.replace(/^<untrusted_evidence_json>\n/,'').replace(/\n<\/untrusted_evidence_json>$/,''));return {kind:'exit',code:0,stdout:JSON.stringify({is_error:false,structured_output:{results:input.map((v:any)=>({slug:v.slug,verdict:'wrong',problem:'Wrong game',corrected:'Create custom items for Margonem'}))}}),stderr:''};};
+await c`delete from jobs where name in('product-intro-check','product-search-profile')`;
+result.introRun=await runJob('product-intro-check',ctx=>checkProductIntros(ctx,cli));
+result.afterCorrection=(await c`select tagline,search_keywords,(select count(*)::int from product_search_profiles where product_id=${p.id}) as profiles from products where id=${p.id}`)[0];
+process.env.ABCLLM_API_KEY='local-fake-key';const original=globalThis.fetch;globalThis.fetch=(async()=>({ok:false,status:502})) as any;
+try{result.failedRegeneration=await runJob('product-search-profile',writeSearchProfiles);}finally{globalThis.fetch=original;}
+result.afterFailure=(await c`select p.tagline,p.search_keywords,sp.error_code from products p left join product_search_profiles sp on sp.product_id=p.id where p.id=${p.id}`)[0];
+if(result.afterCorrection.profiles!==0 || result.afterCorrection.search_keywords!=='World of Warcraft items' || result.afterFailure.error_code!=='http_502')throw new Error('proof_not_reproduced');
+}finally{await c`delete from products where id=${p.id}`;await c`delete from jobs where name in('product-intro-check','product-search-profile')`;}
+writeFileSync('/tmp/nmv-search-proofs-20260926.json',JSON.stringify(result,null,2));console.log(JSON.stringify(result,null,2));}
+main().catch(e=>{console.error(e.name,e.message);process.exitCode=1}).finally(()=>c.end());

@@ -1,0 +1,15 @@
+
+> nomorevibe@0.1.0 test:integration
+> vitest run --config vitest.integration.config.ts tests/integration/search-profile-note-correlation.test.ts
+
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - ESM syntax in a file loaded as CommonJS (vitest.integration.config.ts:1:1). Use a `.mjs` extension or set `"type": "module"` in the closest package.json
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+
+ RUN  v4.1.10 /Users/jr/Desktop/projects/nomorevibe
+
+
+ Test Files  1 passed (1)
+      Tests  3 passed (3)
+   Start at  23:18:12
+   Duration  1.79s (transform 130ms, setup 414ms, import 52ms, tests 1.15s, environment 0ms)

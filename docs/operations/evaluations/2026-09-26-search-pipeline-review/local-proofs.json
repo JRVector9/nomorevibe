@@ -1,0 +1,29 @@
+{
+  "mode": "isolated-local-test-database",
+  "emptyGeneration": {
+    "ok": true,
+    "en": [],
+    "ko": []
+  },
+  "incompleteVerification": [],
+  "introRun": {
+    "status": "completed",
+    "done": true,
+    "durationMs": 29
+  },
+  "afterCorrection": {
+    "tagline": "Create custom items for Margonem",
+    "search_keywords": "World of Warcraft items",
+    "profiles": 0
+  },
+  "failedRegeneration": {
+    "status": "completed",
+    "done": true,
+    "durationMs": 22
+  },
+  "afterFailure": {
+    "tagline": "Create custom items for Margonem",
+    "search_keywords": "World of Warcraft items",
+    "error_code": "http_502"
+  }
+}
