@@ -1,51 +1,74 @@
-# 2026-10-01 — 태어난 프로젝트 감소·최신 수집 순서 조사 중
+# 2026-10-01 — 최신 수집 수정·배포·실제 저장 검증 완료
 
 ## Current objective / completed work
 
-사용자가 요청한 홈 “태어난 프로젝트” 감소 원인을 운영 데이터와 집계 코드로 확인하고,
-GitHub 수집을 최신 날짜 우선으로 조정한다. origin/main `b2582e2`에서 별도 작업 트리
-`/private/tmp/nmv-born-latest-20261001`, 브랜치 `fix/latest-discovery-20261001`를 만들었다.
-화면 시안 등 루트 미추적 자료는 그대로 보존했다. 태어난 프로젝트는 누적 수가 아니라
-KST 오늘 자정 이전 완료된 최근 7일의 GitHub 저장소 생성일 집계다. 현재 공개 상태와
-자정 이전 발행 조건을 사용한다. GitHub 검색은 신호별 round-robin이며 정렬 설정은
-관련도/최근 활동이다. 포화 날짜 구간 분할은 현재 오래된 절반을 먼저 처리한다.
+홈 “태어난 프로젝트” 감소 원인을 확인하고 GitHub 수집을 최신 활동순으로 수정했다.
+운영 홈 지표는 현재 16건, 이전 7일 201건(-92%)이었다. KST 오늘 자정 이전 완료된
+최근 7일의 GitHub 생성일 집계이며 누적 수가 아니다. seed가 UTC 9/15~18의 Claude
+포화 구간에 약 12일 머물러 최신 생성분의 수집이 부족했다. 워커 실행·저장·발행은 계속됐다.
+
+PR #244(수집 수정), #245(HN 테스트 DNS 의존 제거)를 병합하고 운영 릴리스
+`dd3a21f07fe98acd60148701cce1c1f8d1afdae8`를 공유 이미지 8앱에 배포했다.
+모두 deployment done/service healthy, publisher·reviewer·crawler 준비 ready/progress ok,
+공개 m3-web·mini-web health ok/db:ok/같은 release 확인. 02:00:38 KST에 saveSettings로
+sort relevance→recent, pagesPerTick 2→10만 부분 수정했고 당시 기존 cursor는 그대로였다.
+정상 역할 worker에 seed 3틱을 순차 요청하여 최신 12개 신호를 모두 확인했다.
+latestScan은 UTC 9/27 17:01:22~9/30 17:01:22, doneSignals 12개/waiting=true,
+다음 최신 탐색은 03:01:22 KST 이후다. 그동안 기존 full cursor의 전체 탐색은 이어간다.
+
+02:15 KST 관측: 신규 frontier 389 = 원본/후보 382 + 기존 GitHub ID 별칭 7(skipped).
+신규 GitHub ID 중복 0, pending/fetching/failed 0. 최근 7일 생성 원본 112개를 확보했다.
+당시 83개는 규칙 거절(no_homepage 71/not_a_product 10/unreachable 2),
+16개 승인 상태, 13개 추가 심사(ambiguous 11/second_review_split 2)로 아직 공개 전이었다.
+홈 born은 심사·발행한 공개 제품만 포함하며 오늘 발행분은 다음 KST 자정 이후 집계 대상이다.
+로컬 root main도 운영 코드가 있는 origin/main으로 fast-forward했다. 화면 자료는 그대로다.
 
 ## Modified files / key design decisions
 
-수정: `lib/crawl/jobs/seed.ts`, `settings-schema.ts`, `github.ts`, 관리자 SettingsForm,
-README, 수집 unit/integration fixtures·최신 탐색 회귀검사, 운영 조사 기록, 이 문서.
-전체 커서를 보존하면서 하루 지연 시 최신 첫 페이지를 별도 커서로 먼저 확인한다.
-날짜 분할은 최신 절반 우선, 정렬 변경은 미완 구간 보존/페이지1 재탐색. DB·서버 설정은 변경하지 않는다.
+`lib/crawl/jobs/seed.ts`, `settings-schema.ts`, `github.ts`, `app/admin/SettingsForm.tsx`,
+README, 수집 unit/integration fixtures·최신 탐색 10개 회귀검사, HN 테스트 DNS stub,
+`docs/operations/2026-10-01-born-count-latest-discovery.md`, 이 문서를 수정했다.
+최신은 활동일(committer-date/updated desc), born은 생성일(created_at)이다. 하루 지연 시
+최신 첫 페이지를 먼저 확인하고 나머지 예산으로 기존 전체 탐색을 진행한다. 최신 peek를
+전체 탐색 완료로 간주하지 않는다. 정렬 변경 시 미완 기간을 보존하고 페이지 1부터 재탐색한다.
+두 커서는 같은 job/role lease 안에서 직렬 실행하며 중복·인증·쿼터·큐 상한을 유지한다.
+DB 서버·schema·streaming 설정과 중단된 소개 검수는 변경하지 않았다.
 
 ## Test commands and results / failed approaches
 
-`git fetch origin main`, `git rev-list --left-right --count HEAD...origin/main` 결과 `0 0`.
-공개 health 첫 요청은 연결 reset이었으나 retry 후 `ok/db:ok`, 릴리스 `50b02b7` 확인.
-운영 읽기 전용 집계로 born16, 공개 seeded20,502, 최근8일 발행취소0,
-seed가9/15~18 구간에 머무는 사실을 확인했다. `npm test` 161파일1,283검사 성공.
-최신 탐색8검사 통과, 최신 탐색 전용10개 포함 수집38검사·TypeScript 최종 성공.
-PR #244의 quality·통합3분할·check 성공 후 main `6d866e8` 병합.
-main run `36745740075`은 통합3분할 성공, 기존 HN 단위검사 timeout으로 quality/check 실패.
-모의 HTTP도 fetchCapped가 실제 hn.algolia.com DNS를 매번 조회하는 것이 원인이다.
-테스트 DNS를 공개 IP로 고정하여 I/O를 제거했다. 운영 SSRF 코드는 바꾸지 않는다.
-현재 후속 브랜치 `fix/offline-hn-tests-20261001` 검증 중. 아직 배포/설정변경하지 않았다.
-첫 TypeScript 검사는 테스트 반환 타입 추론이 너무 좁아 실패했고 반환 타입 명시 후
-`tsc --noEmit` 성공. lint 오류0, 기존 vendor 경고1. local Docker daemon 미실행;
-통합 테스트는 CI의 독립 PostgreSQL 3분할 결과를 사용한다.
+`npm test` 161파일·1,286검사, 수집 3파일·38검사, next typegen, `tsc --noEmit`,
+`git diff --check` 성공. lint 오류 0·기존 vendor 경고 1.
+`python3 -m unittest tests/test_deploy_shared_images.py` 8검사 성공.
+PR run 36745191372/#244, 36746542548/#245의 quality·통합 3분할·필수 check 성공.
+main run 36747035679는 quality·통합 3분할·check와 두 이미지 빌드 모두 성공.
+이전 main run 36745740075의 HN 1,100건 검사는 실제 DNS 반복으로 5초 timeout을 넘었고,
+끝나지 않은 테스트가 다음 mock도 오염시켰다. 테스트 DNS만 고정한 뒤 후속 검증이 성공했다.
+첫 TypeScript 검사는 테스트 반환 타입 추론이 좁아 실패했고 SeedCursor 명시로 수정했다.
+로컬 Docker daemon 미실행으로 통합 검증은 CI의 독립 PostgreSQL 3분할을 사용했다.
+실제 최신순 GitHub 표본은 commit 100건/97repo, topic 100건/100repo, 활동일도 최신이었다.
+Claude 광역 검색은 total 3,664,361/incomplete=true로 포화를 직접 확인했다.
+중간 원본·후보 수량 차이는 judge가 따라간 뒤 382/382로 일치했다. 저장 누락은 아니었다.
 
 ## Remaining work / exact commands for the next agent
 
-운영 생성일별 코호트·발행 변화·seed 커서와 설정을 확인한다. 최신 수집 설정과 포화구간
-순서 수정, 관련 회귀검증, PR 필수 check·병합·배포·운영 적용을 마친다. 최신 활동과
-저장소 생성 날짜의 차이를 설명한다.
+이번 요청의 구현·배포·수집 검증은 완료했다. 이 완료 기록은 docs-only PR로 보존하며
+문서만 바뀌므로 운영 재배포가 필요하지 않다. PENDING.md의 장기 관측·복구 주입은 별도다.
+사용자 화면 미추적 자료와 이전 backup/stash는 보존했다. 설정 적용과 seed 3틱을 다시
+실행하지 않는다. 최신/과거 두 cursor를 구분해 읽는다. 과거 full 날짜만 보고 최신 수집이
+여전히 멈췄다고 판단하지 않는다.
 
 ```sh
-cd /private/tmp/nmv-born-latest-20261001
-python3 /private/tmp/nmv-born-query.py
-sed -n '1,260p' lib/crawl/jobs/seed.ts
-sed -n '1,220p' tests/integration/crawl-seed.test.ts
-git diff --check
+cd /Users/jr/Desktop/projects/nomorevibe
+git status --short --branch
+git rev-list --left-right --count HEAD...origin/main
+gh run view 36747035679 --repo JRVector9/nomorevibe --json status,conclusion,jobs
+curl -fsS --retry 2 --retry-all-errors https://nomorevibe.brut.bot/api/health
+python3 /private/tmp/nmv-after-query.py
 ```
+
+배포 snapshot `/private/tmp/nomorevibe-release-dd3a21f.json`(0600)은 환경 비밀을 포함한다.
+표시/커밋 금지. 읽기 전용 관측 `/private/tmp/nmv-latest-final.json`, 수정 전 관측
+`/private/tmp/nmv-born-before.json`을 보존했다. 원격 보조는 Keychain/Dokploy를 쓰며 비밀을 출력하지 않는다.
 
 ---
 

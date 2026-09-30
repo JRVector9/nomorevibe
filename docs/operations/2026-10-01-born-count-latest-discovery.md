@@ -41,20 +41,70 @@
    두 커서를 페이지 부수효과 전에 함께 저장하여 DB 오류/재시작 시 저장 페이지부터 이어받는다.
 5. 관리자에 활동일과 생성일의 차이, 최신 우선/미완 구간 병행을 명시한다.
 
-## 검증·운영 적용
+## 실제 검사 결과
 
-로컬 `npm test`: 161파일·1,283검사 통과(추가 마지막 회귀검사 전).
-최신 탐색 전용 검사는 추가 중이며 typegen 성공, TypeScript 테스트 반환 타입 오류를 수정한 뒤
-`tsc --noEmit` 성공, lint 오류 0·기존 vendor 경고 1이었다. 로컬 Docker daemon이 실행 중이
-아니므로 통합 DB 검증은 PR의 독립 PostgreSQL CI 3분할 결과로 확인한다.
+- 로컬 `npm test`: 161파일·1,286검사 성공. 수집 3파일·38검사(최신 탐색 10개) 성공.
+- `next typegen`, `tsc --noEmit`, `git diff --check` 성공. lint 오류 0·기존 vendor 경고 1.
+- 배포 자동화 Python 검사 8개 성공.
+- PR #244 run `36745191372`, #245 run `36746542548`의 quality·통합 3분할·check 성공.
+- main run `36747035679`의 quality·통합 3분할·check·두 이미지 빌드 모두 성공.
 
-수집 최종38검사(최신 탐색10개)와 TypeScript가 통과했다. PR #244의 필수 check,
-quality·통합3분할 통과 후 main `6d866e8`에 병합했다. main run `36745740075`은
-통합3분할은 통과했으나 기존 Show HN 단위검사(1,100건)가 5초 제한을 넘었다.
-종료되지 않은 비동기 테스트가 다음 테스트의 mock도 오염시켰다. HN HTTP는 주입한
-모의 응답인데 fetchCapped의 URL 검사가 실제 Algolia DNS를 수백 번 호출하는 문제였다.
-HN 단위검사에서 DNS만 공개 IP로 고정한다. 운영 URL/SSRF 코드는 바꾸지 않는다.
-이미지 배포·운영 저장값 수정은 아직 실행하지 않았다. 완료 시 이 항목을 갱신한다.
-운영 적용은 새 crawler/예비의 같은 릴리스 배포가 끝난 뒤 `saveSettings`로
-`discover.sort=recent`, `pagesPerTick=10`만 변경한다. 검색량은 틱당 상한만 2→10이며
-계정별 쿼터·공유 secondary cooldown을 유지한다. 설정 변경 전에 기존 cursor를 읽기 전용 보존한다.
+이전 main run `36745740075`는 통합 검사는 통과했으나 기존 Show HN 1,100건 단위검사가
+5초 제한을 넘었다. HTTP는 모의 응답인데 URL 검사가 실제 Algolia DNS를 반복 조회했다.
+끝나지 않은 비동기 테스트는 다음 테스트의 mock도 오염시켰다. 해당 테스트의 DNS만 공개
+IP로 고정하여 외부 I/O를 제거한 뒤 후속 PR/main 검사가 성공했다. 운영 SSRF는 변경하지 않았다.
+첫 TypeScript 검사도 테스트 반환 타입 추론이 좁아 실패했고 SeedCursor 반환 타입 명시로 고쳤다.
+로컬 Docker daemon은 미실행 상태였으므로 실제 DB 통합 검증은 CI의 독립 PostgreSQL을 사용했다.
+
+## 배포·운영 설정 적용 완료
+
+운영 릴리스 `dd3a21f07fe98acd60148701cce1c1f8d1afdae8`:
+
+| 이미지 | digest |
+|---|---|
+| worker | `sha256:38009bf5c3bbd512412a862984a83e8a40a278b2e18a6ed1164e9cbf53d0b444` |
+| web | `sha256:49ef17b917384556e62af5a0c8ff58802bcdcde7984ab71a8c88ff87de2aa21d` |
+
+`scripts/ops/deploy_shared_images.py run`으로 publisher→reviewer→crawler 각각 mini 예비→M3 주,
+그다음 mini→M3 웹을 배포했다. 8앱 모두 deployment done/service healthy,
+각 역할 쌍의 readiness ready/progress ok, 공개 m3-web·mini-web health ok/db:ok와 같은
+release를 확인했다. DB migration은 없으며 DB 서버·스트리밍·서버 설정을 변경하지 않았다.
+
+02:00:38 KST에 새 crawler의 release를 확인하고 `saveSettings`로
+`discover.sort=relevance→recent`, `pagesPerTick=2→10`만 부분 수정했다.
+`windowDays=3`, 검색 신호·판정/심사 기준은 기존 값이며 설정 저장 당시 cursor도 그대로였다.
+정상 worker에 crawl-seed 3틱을 순차 요청하여 최신 신호 12개를 모두 훑었다.
+
+## 실제 수집 검증 (02:15 KST)
+
+| 항목 | 결과 |
+|---|---:|
+| 신규 frontier 발견 | 389 |
+| 원본 저장 | 382 |
+| 심사 후보 저장 | 382 |
+| 기존 GitHub ID 별칭으로 제외 | 7 |
+| 새로 저장한 GitHub ID 중복 | 0 |
+| 수집 대기/진행 중/재시도 소진 실패 | 0 / 0 / 0 |
+| 최근 7일 생성된 원본 | 112 |
+
+최신 cursor의 창은 UTC `2026-09-27T17:01:22Z..2026-09-30T17:01:22Z`이다.
+`doneSignals` 12개, `waiting=true`, 다음 최신 탐색은 03:01:22 KST 이후다.
+그동안 전체 탐색 cursor는 기존 UTC 9/15~18 주기를 유지하며 활성 창을 9/16에서
+9/18 20:10:38~20:11:40으로 진행했다. 과거 창을 버리지 않고 최신 탐색을 먼저 한 증거다.
+seed의 `requested_version=processed_version=2994`, `last_success_at=02:11:45 KST`, 오류 null.
+fetch·judge·1차 심사·publisher도 최근 성공/잡 오류 null을 확인했다.
+
+중간 관측에서 원본·후보 수량이 달랐지만 원본을 읽어 후보를 만드는 judge가 따라간 뒤
+382/382가 됐다. 별칭 7개는 원본을 두 번 저장하지 않도록 제외한 것이며 유실이 아니다.
+이전에 저장된 GitHub ID 중복을 정리했다고 주장하지 않는다.
+
+최근 생성 원본 112개 중 규칙 거절 83개(no_homepage 71/not_a_product 10/unreachable 2),
+승인 상태 16개, 추가 심사 13개(ambiguous 11/second_review_split 2)였다.
+이 112개가 모두 공개 제품이 되는 것은 아니다. 홈 born은 실제 공개된 제품만 세며
+오늘 발행한 제품은 다음 KST 자정 이후 집계 대상이다. 당시 신규 생성 원본의 발행은 아직 0건이었다.
+
+수정 전 읽기 전용 관측과 새 관측은 운영자 로컬 임시 경로에 보존했다. 환경 비밀을 포함한
+배포 snapshot은 권한 0600으로 저장했고 저장소에 포함하지 않았다. 화면 시안 등 미추적 자료도
+그대로 보존했다. 로컬 root main은 원격 운영 코드와 동기화했으며 이 최종 기록은 문서만 병합한다.
+
+GitHub 검색의 정렬·검색 상한은 [공식 Search API 문서](https://docs.github.com/en/rest/search/search)를 따른다.
