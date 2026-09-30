@@ -16,7 +16,7 @@ beforeEach(() => {
   mocks.enqueue.mockReset().mockResolvedValue(1); mocks.record.mockReset().mockResolvedValue(undefined); mocks.search.mockReset();
   mocks.counts.mockReset().mockResolvedValue({ pending: 0, fetching: 0 });
   mocks.settings = {...DEFAULT_CRAWL_SETTINGS,enabled:true,
-    discover:{...DEFAULT_CRAWL_SETTINGS.discover,pagesPerTick:1,queries:[{...topicQuery}]}};
+    discover:{...DEFAULT_CRAWL_SETTINGS.discover,sort:"relevance",pagesPerTick:1,queries:[{...topicQuery}]}};
 });
 
 /**

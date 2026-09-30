@@ -131,19 +131,19 @@ export function SettingsForm({ settings }: { settings: CrawlSettings }) {
             <input id="windowDays" name="windowDays" type="number" min={1} max={3650} defaultValue={discover.windowDays} className={`${field} mt-1.5`} />
             <p className={hint}>
               며칠 안에 손댄 레포까지 볼지. 3이면 최근 3일 안에 커밋된 것만 찾습니다.
-              늘리면 한 번에 더 넓게 훑지만 이미 본 것을 다시 만나고, 줄이면 갓 만들어진 것만 봅니다.
+              저장소 생성일이 아닌 활동일 기준입니다. 기존 미완 구간은 이어서 수집합니다.
             </p>
           </div>
           <div>
             <label className={label} htmlFor="sort">정렬</label>
             <select id="sort" name="sort" defaultValue={discover.sort} className={`${field} mt-1.5`}>
               <option value="relevance">관련도</option>
-              <option value="recent">최신순</option>
+              <option value="recent">최신 활동순 (기본)</option>
             </select>
             <p className={hint}>
-              검색 결과를 어떤 순서로 받을지. <b>관련도</b>는 여러 레포에 고루 퍼지고,
-              <b>최신순</b>은 방금 활발히 커밋한 몇몇 레포에 몰립니다.
-              실측: 같은 100건에서 서로 다른 레포가 관련도 63개 vs 최신순 2개.
+              <b>최신 활동순</b>은 커밋 날짜·저장소 갱신 날짜 내림차순입니다.
+              수집이 하루 이상 뒤처지면 최신 구간을 먼저 확인하며, 미완 구간도 함께 이어갑니다.
+              <b>관련도</b>는 검색어와의 관련성을 우선합니다.
             </p>
           </div>
           <div>

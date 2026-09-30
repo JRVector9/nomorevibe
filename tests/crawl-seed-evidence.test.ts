@@ -14,7 +14,7 @@ const recorded = ():{repositoryKey:string;attribution:{client:string|null}|null;
 beforeEach(() => {
   mocks.enqueue.mockReset().mockImplementation(async (entries:unknown[]) => entries.length); mocks.record.mockReset().mockResolvedValue(undefined); mocks.search.mockReset();
   mocks.counts.mockReset().mockResolvedValue({ pending: 0, fetching: 0 });
-  mocks.settings = {...DEFAULT_CRAWL_SETTINGS,enabled:true,discover:{...DEFAULT_CRAWL_SETTINGS.discover,pagesPerTick:1,queries:[{label:'Codex hint',kind:'commits',query:'Co-authored-by: Codex',enabled:true,builder:'Codex',priority:90}]}};
+  mocks.settings = {...DEFAULT_CRAWL_SETTINGS,enabled:true,discover:{...DEFAULT_CRAWL_SETTINGS.discover,sort:"relevance",pagesPerTick:1,queries:[{label:'Codex hint',kind:'commits',query:'Co-authored-by: Codex',enabled:true,builder:'Codex',priority:90}]}};
 });
 it('pauses within a saved page at 10000 and resumes below 5000 without refetching', async () => {
   mocks.counts.mockResolvedValue({ pending: 9998, fetching: 1 });

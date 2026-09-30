@@ -298,7 +298,7 @@ export async function searchCommits(params: {
  * 레포 검색.
  *
  * 커밋 검색과 달리 결과에 레포 메타(homepage)가 실려 온다. 배포 URL이 없는 레포를 프론티어에
- * 넣기 전에 거를 수 있다는 뜻이다. 정렬 "recent"는 마지막 푸시순이다.
+ * 넣기 전에 거를 수 있다는 뜻이다. 정렬 "recent"는 저장소 갱신(updated) 날짜 내림차순이다.
  */
 export async function searchRepositories(params: {
   query: string;

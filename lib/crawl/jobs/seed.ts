@@ -3,6 +3,7 @@ import type { JobContext, JobOutcome } from '@/lib/jobs/runner';
 import * as crawl from '@/lib/crawl/repository';
 import { normalizeUrl } from '@/lib/net/normalize';
 import { getSettings, enabledQueries } from '@/lib/crawl/settings';
+import type { CrawlSettings } from '@/lib/crawl/settings-schema';
 import { searchCommits, searchRepositories, SEARCH_PER_PAGE, MAX_SEARCH_PAGES, type CommitSearchResult, type RepositorySearchResult } from '@/lib/crawl/github';
 import { recordDiscoveryEvidenceBatch } from '@/lib/domain/evidence/agents/repository';
 import { isStorableLabel, parseCommitAttributions, type CommitAttribution } from '@/lib/domain/evidence/agents/commit-attribution';
@@ -20,7 +21,7 @@ type PendingPage = {items:PendingItem[]; itemIndex:number; size:number; incomple
 type IncompleteWindow = {signal:string; window:SearchWindow; retryAt:string};
 /** 차례를 넘길 때 보관하는 신호별 진행 위치. 페이지 경계에서만 저장하므로 pendingPage는 담지 않는다 */
 type SignalState = {page:number; window:SearchWindow; pendingWindows:SearchWindow[]; windowIncomplete?:boolean};
-export type SeedCursor = {
+type SearchCursor = {
   signal:string; page:number; queryHash?:string; configHash?:string;
   window?:SearchWindow; cycleWindow?:SearchWindow; pendingWindows?:SearchWindow[];
   retryAt?:string; pendingPage?:PendingPage; windowIncomplete?:boolean;
@@ -33,6 +34,13 @@ export type SeedCursor = {
   /** 덮은 구간을 따라잡아 더 훑을 것이 없는 상태. 검색하기 전에 새 구간부터 확인한다 */
   waiting?:boolean;
 };
+export type SeedCursor = SearchCursor & {
+  /** 뒤처진 전체 탐색을 버리지 않고 최신 첫 페이지를 별도로 확인한다. 중첩 커서는 없다. */
+  latestScan?: SearchCursor;
+  latestTurn?: boolean;
+};
+export const LATEST_SCAN_INTERVAL_MS = 60 * 60_000;
+export const LATEST_SCAN_LAG_MS = 24 * 60 * 60_000;
 const iso = (date:Date) => date.toISOString().replace(/\.\d{3}Z$/, 'Z');
 const sameWindow = (a:SearchWindow,b:SearchWindow) => a.from === b.from && a.to === b.to;
 
@@ -40,6 +48,57 @@ const sameWindow = (a:SearchWindow,b:SearchWindow) => a.from === b.from && a.to 
 export async function seedFrontier(ctx:JobContext<SeedCursor>):Promise<JobOutcome<SeedCursor>> {
   const settings = await getSettings();
   if (!settings.enabled) return {done:true};
+  if (settings.discover.sort !== 'recent') {
+    const historical = ctx.cursor ? { ...ctx.cursor } : null;
+    if (historical) { delete historical.latestScan; delete historical.latestTurn; }
+    return seedSearchCycle({ ...ctx, cursor: historical }, settings);
+  }
+  const covered = Date.parse(ctx.cursor?.cycleWindow?.to ?? '');
+  // 전체 수집이 하루 이상 뒤처진 경우 최신 탐색을 먼저 배정한다. 전체 수집도 매 틱 진행한다.
+  if (!Number.isFinite(covered) || covered >= Date.now() - LATEST_SCAN_LAG_MS) {
+    const historical = ctx.cursor ? { ...ctx.cursor } : null;
+    if (historical) { delete historical.latestScan; delete historical.latestTurn; }
+    return seedSearchCycle({ ...ctx, cursor: historical }, settings);
+  }
+  const { latestScan, latestTurn, ...historical } = ctx.cursor!;
+  let full: SearchCursor = historical;
+  let latest: SearchCursor | undefined = latestScan;
+  const snapshot = (): SeedCursor => ({ ...full, latestScan: latest, latestTurn: latestPages === 0 });
+  if (latest?.retryAt && !latest.waiting && Date.parse(latest.retryAt) > Date.now()) {
+    return { done:false, cursor:ctx.cursor! };
+  }
+  const total = settings.discover.pagesPerTick;
+  const latestWaiting = latest?.waiting && Date.parse(latest.retryAt ?? '') > Date.now();
+  const latestPages = latestWaiting ? 0 : total === 1 ? (latestTurn === false ? 0 : 1) : Math.ceil(total / 2);
+  const fullPages = total - latestPages;
+  let latestDone = latestWaiting === true;
+  if (latestPages && ctx.hasBudget()) {
+    const outcome = await seedSearchCycle({ ...ctx,
+      cursor: latest ? { ...latest, backlogPaused: latest.backlogPaused || full.backlogPaused } : null,
+      save: async value => { latest = value; await ctx.save(snapshot()); },
+    }, { ...settings, discover: { ...settings.discover, pagesPerTick: latestPages } }, true, full.backlogPaused);
+    latest = outcome.cursor ?? latest;
+    latestDone = outcome.done;
+    // 큐 상한·인증/쿼터 대기는 두 탐색에 공통이다. 같은 틱에 다시 외부 호출하지 않는다.
+    if (latest?.backlogPaused || (latest?.retryAt && !latest.waiting)) {
+      await ctx.save(snapshot());
+      return { done: false, cursor: snapshot() };
+    }
+  }
+  let fullDone = false;
+  if (fullPages && ctx.hasBudget()) {
+    const outcome = await seedSearchCycle({ ...ctx, cursor: full,
+      save: async value => { full = value; await ctx.save(snapshot()); },
+    }, { ...settings, discover: { ...settings.discover, pagesPerTick: fullPages } });
+    full = outcome.cursor ?? full;
+    fullDone = outcome.done;
+  }
+  await ctx.save(snapshot());
+  return { done: fullDone && latestDone, cursor: snapshot() };
+}
+
+/** 최신 탐색은 신호별 첫 페이지만 확인한다. 완전한 날짜 구간의 수집 책임은 전체 커서에 있다. */
+async function seedSearchCycle(ctx:JobContext<SearchCursor>, settings:CrawlSettings, latestOnly = false, inheritedPause = false):Promise<JobOutcome<SearchCursor>> {
   const queries = enabledQueries(settings);
   if (!queries.length) return {done:true};
   const spanMs = settings.discover.windowDays*86_400_000;
@@ -50,18 +109,34 @@ export async function seedFrontier(ctx:JobContext<SeedCursor>):Promise<JobOutcom
   const chunkFrom = (from:number):SearchWindow => ({from:iso(new Date(from)),to:iso(new Date(Math.min(Date.now(),from+spanMs)))});
   const freshWindow = ():SearchWindow => chunkFrom(Date.now()-spanMs);
   // Sort and every active query participate: an edited configuration cannot replay old page data or retry delays.
-  const configHash = createHash('sha256').update(JSON.stringify({queries,sort:settings.discover.sort,windowDays:settings.discover.windowDays})).digest('hex');
+  const hashFor = (sort:CrawlSettings['discover']['sort']) => createHash('sha256').update(JSON.stringify({queries,sort,windowDays:settings.discover.windowDays})).digest('hex');
+  const configHash = hashFor(settings.discover.sort);
   const queryHash = (index:number) => createHash('sha256').update(queries[index].kind+'\0'+queries[index].query+'\0'+settings.discover.windowDays).digest('hex');
   const resumedIndex = queries.findIndex(q => q.label === ctx.cursor?.signal);
-  const matches = ctx.cursor?.configHash === configHash && resumedIndex >= 0 && ctx.cursor.queryHash === queryHash(resumedIndex);
+  // 정렬만 바뀌면 미완 날짜 구간은 보존하되 페이지를 1부터 재탐색한다. 다른 정렬의 페이지를 섞지 않는다.
+  const sortChanged = ctx.cursor?.configHash === hashFor(settings.discover.sort === 'recent' ? 'relevance' : 'recent');
+  const matches = (ctx.cursor?.configHash === configHash || sortChanged) && resumedIndex >= 0 && ctx.cursor!.queryHash === queryHash(resumedIndex);
   let index = matches ? resumedIndex : 0;
   let initial = matches && ctx.cursor?.cycleWindow ? ctx.cursor.cycleWindow : freshWindow();
-  let cursor:SeedCursor = matches ? structuredClone(ctx.cursor!) : {
+  let cursor:SearchCursor = matches ? structuredClone(ctx.cursor!) : {
     signal:queries[0].label,page:1,queryHash:queryHash(0),configHash,window:initial,cycleWindow:initial,pendingWindows:[],incompleteWindows:[],phase:'discovery',states:{},doneSignals:[],
   };
+  if (matches && sortChanged) {
+    cursor.configHash = configHash; cursor.page = 1;
+    delete cursor.pendingPage; delete cursor.retryAt;
+    const reorder = (state:SignalState):SignalState => {
+      const windows = [state.window, ...state.pendingWindows];
+      if (settings.discover.sort === 'recent') windows.sort((a,b) => b.to.localeCompare(a.to));
+      return { page:1, window:windows[0], pendingWindows:windows.slice(1), windowIncomplete:false };
+    };
+    cursor.states = Object.fromEntries(Object.entries(cursor.states ?? {}).map(([label,state]) => [label,reorder(state)]));
+    const active = reorder({ page:cursor.page, window:cursor.window ?? initial, pendingWindows:cursor.pendingWindows ?? [] });
+    Object.assign(cursor, active);
+    ctx.log('crawl.seed_sort_changed', { sort: settings.discover.sort, preservedWindow: cursor.cycleWindow });
+  }
   const counts = await crawl.frontierCounts();
   let backlog = (counts.pending ?? 0) + (counts.fetching ?? 0);
-  const shouldPause = () => backlog >= SEED_BACKLOG_PAUSE || (cursor.backlogPaused === true && backlog > SEED_BACKLOG_RESUME);
+  const shouldPause = () => backlog >= SEED_BACKLOG_PAUSE || ((cursor.backlogPaused === true || inheritedPause) && backlog > SEED_BACKLOG_RESUME);
   if (shouldPause()) {
     cursor.backlogPaused = true;
     await ctx.save(cursor);
@@ -137,8 +212,8 @@ export async function seedFrontier(ctx:JobContext<SeedCursor>):Promise<JobOutcom
     const covered = Date.parse(cursor.cycleWindow?.to ?? '');
     const from = Number.isFinite(covered) ? covered : Date.now()-spanMs;
     // 따라잡았다. 새로 쌓일 때까지 기다린다 — 같은 구간을 다시 검색하지 않는다.
-    if (from+MIN_CYCLE_SPAN_MS > Date.now()) {cursor.retryAt = iso(new Date(from+MIN_CYCLE_SPAN_MS)); cursor.waiting = true; return false;}
-    initial = chunkFrom(from); index = 0;
+    if (from+(latestOnly ? LATEST_SCAN_INTERVAL_MS : MIN_CYCLE_SPAN_MS) > Date.now()) {cursor.retryAt = iso(new Date(from+(latestOnly ? LATEST_SCAN_INTERVAL_MS : MIN_CYCLE_SPAN_MS))); cursor.waiting = true; return false;}
+    initial = latestOnly ? freshWindow() : chunkFrom(from); index = 0;
     cursor = {signal:queries[0].label,page:1,configHash,queryHash:queryHash(0),window:initial,cycleWindow:initial,
       pendingWindows:[],incompleteWindows:cursor.incompleteWindows,phase:'discovery',states:{},doneSignals:[]};
     return true;
@@ -152,6 +227,7 @@ export async function seedFrontier(ctx:JobContext<SeedCursor>):Promise<JobOutcom
     // A persistently capped second must not starve discovery of newly pushed repositories.
     if (cursor.phase === 'retry') return startNextCycle();
     if (queries.some(query => !cursor.doneSignals!.includes(query.label))) {rotate(); return true;}
+    if (latestOnly) return startNextCycle();
     const retry = [...(cursor.incompleteWindows ?? [])].sort((a,b) => a.retryAt.localeCompare(b.retryAt))[0];
     if (!retry) return startNextCycle();
     index = queries.findIndex(q => q.label === retry.signal);
@@ -213,7 +289,7 @@ export async function seedFrontier(ctx:JobContext<SeedCursor>):Promise<JobOutcom
         repositoryKey:item.repo,signalId:signal.label,sourceUrl:`https://github.com/${item.repo}${item.sha ? `/commit/${item.sha}` : ''}`,
         commitSha:item.sha,attribution,
         searchWindowFrom:new Date(window.from),searchWindowTo:new Date(window.to),
-        incomplete:page.incomplete || page.saturated || page.capped || item.attributionLimited,
+        incomplete:page.incomplete || page.saturated || page.capped || (latestOnly && page.size >= SEARCH_PER_PAGE) || item.attributionLimited,
       }))),ctx.lease);
       const added = await crawl.enqueue(batch.map(item => ({repo:item.repo,signal:signal.label,builder:null,priority:signal.priority})),ctx.lease);
       discovered += added;
@@ -227,11 +303,12 @@ export async function seedFrontier(ctx:JobContext<SeedCursor>):Promise<JobOutcom
     }
     delete cursor.pendingPage;
     const incomplete = page.incomplete || page.saturated || page.capped;
-    if (incomplete) {
+    if (incomplete && !latestOnly) {
       const pieces = splitSearchWindow(window);
       if (pieces) {
-        cursor.pendingWindows = [pieces[1],...(cursor.pendingWindows ?? [])];
-        resetWindow(pieces[0]);
+        const [next, later] = settings.discover.sort === 'recent' ? [pieces[1], pieces[0]] : pieces;
+        cursor.pendingWindows = [later,...(cursor.pendingWindows ?? [])];
+        resetWindow(next);
         rotate();
         await save();
         continue;
@@ -239,7 +316,7 @@ export async function seedFrontier(ctx:JobContext<SeedCursor>):Promise<JobOutcom
       cursor.windowIncomplete = true;
     }
     // Even at one-second granularity, pages 2..10 remain accessible and may contain new repos.
-    if (page.size >= SEARCH_PER_PAGE && cursor.page < MAX_SEARCH_PAGES) {cursor.page++; rotate();}
+    if (!latestOnly && page.size >= SEARCH_PER_PAGE && cursor.page < MAX_SEARCH_PAGES) {cursor.page++; rotate();}
     else {
       if (cursor.windowIncomplete) {
         ctx.log('crawl.seed_incomplete',{signal:signal.label,window,page:cursor.page});
@@ -250,7 +327,7 @@ export async function seedFrontier(ctx:JobContext<SeedCursor>):Promise<JobOutcom
     }
     await save();
   }
-  ctx.log('crawl.seeded',{discovered,signal:cursor.signal,page:cursor.page,incompleteWindows:cursor.incompleteWindows?.length ?? 0});
+  ctx.log(latestOnly ? 'crawl.seed_latest_scanned' : 'crawl.seeded',{discovered,window:cursor.cycleWindow,signal:cursor.signal,page:cursor.page,incompleteWindows:cursor.incompleteWindows?.length ?? 0});
   return {done:false,cursor};
 }
 
