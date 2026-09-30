@@ -23,7 +23,12 @@ README, 수집 unit/integration fixtures·최신 탐색 회귀검사, 운영 조
 공개 health 첫 요청은 연결 reset이었으나 retry 후 `ok/db:ok`, 릴리스 `50b02b7` 확인.
 운영 읽기 전용 집계로 born16, 공개 seeded20,502, 최근8일 발행취소0,
 seed가9/15~18 구간에 머무는 사실을 확인했다. `npm test` 161파일1,283검사 성공.
-최신 탐색8검사 통과, 마지막 단일 페이지 auth 대기 회귀검사 추가 후 재검증 중.
+최신 탐색8검사 통과, 최신 탐색 전용10개 포함 수집38검사·TypeScript 최종 성공.
+PR #244의 quality·통합3분할·check 성공 후 main `6d866e8` 병합.
+main run `36745740075`은 통합3분할 성공, 기존 HN 단위검사 timeout으로 quality/check 실패.
+모의 HTTP도 fetchCapped가 실제 hn.algolia.com DNS를 매번 조회하는 것이 원인이다.
+테스트 DNS를 공개 IP로 고정하여 I/O를 제거했다. 운영 SSRF 코드는 바꾸지 않는다.
+현재 후속 브랜치 `fix/offline-hn-tests-20261001` 검증 중. 아직 배포/설정변경하지 않았다.
 첫 TypeScript 검사는 테스트 반환 타입 추론이 너무 좁아 실패했고 반환 타입 명시 후
 `tsc --noEmit` 성공. lint 오류0, 기존 vendor 경고1. local Docker daemon 미실행;
 통합 테스트는 CI의 독립 PostgreSQL 3분할 결과를 사용한다.
