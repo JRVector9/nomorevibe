@@ -50,7 +50,7 @@ export async function findByUrl(url: string): Promise<Product | undefined> {
  * 정렬 기준. 지금은 최신 검증순 하나뿐이지만, 랭킹(NMR 점수·CTR)이 붙으면
  * 이 유니온에 값을 추가하고 아래 map에 한 줄만 넣으면 된다 — 호출부는 그대로다.
  */
-export type ProductSort = "relevance" | "recent" | "popular";
+export type ProductSort = "relevance" | "recent" | "popular" | "rising" | "stars";
 
 export type ListOptions = {
   statuses: ProductStatus[];
@@ -70,6 +70,8 @@ export type ListOptions = {
   excludeDown?: boolean;
   /** 소개 검수가 근거로는 무엇인지 알 수 없다고 한 제품만(intro-checks.ts) — 어드민이 본다 */
   introNeedsEditor?: boolean;
+  /** 마지막 두 번 확인한 사이에 GitHub 스타가 는 제품만, 스타 RISING_MAX_STARS 미만 — 홈 '추천'의 대체 목록 */
+  rising?: boolean;
 };
 
 /**
@@ -91,6 +93,15 @@ const recentClicks = sql`(
     and c.occurred_at >= now() - ${sql.raw(`interval '${METRICS_WINDOW_DAYS} days'`)}
 )`;
 
+/**
+ * 마지막 두 번 확인한 사이에 늘어난 스타 — 카드의 StarMetric 이 보여주는 수와 같은 식(star-change.ts).
+ * 이전 확인이 없거나 순서가 뒤집힌 행은 셀 수 없다(null).
+ */
+const starGain = sql`case when ${products.starsPreviousAt} < ${products.starsAt} then ${products.stars} - ${products.starsPrevious} end`;
+/** 홈의 스타 구간(popular.ts)이 2천부터 따로 보여주므로 그 아래만 */
+export const RISING_MAX_STARS = 2000;
+const risingStars = sql`${starGain} > 0 and ${products.stars} < ${RISING_MAX_STARS}`;
+
 const SORTS = {
   /**
    * 검증된 제품을 먼저, 그 안에서 최신순.
@@ -108,6 +119,14 @@ const SORTS = {
    * 대신 이 정렬은 랭킹 대상(검증된 제품)에만 쓴다. 순서의 이름과 내용이 맞아야 한다.
    */
   popular: [sql`${recentClicks} desc`, sql`${listedAt} desc`],
+
+  /**
+   * 검증 제품이 모자라 방문 순위를 매길 수 없는 동안 홈 '추천'이 대신 쓰는 순서 — 마지막 확인 사이에
+   * 스타가 많이 는 순. 같으면 스타 많은 순, 그다음 최신.
+   */
+  rising: [sql`${starGain} desc nulls last`, sql`${products.stars} desc nulls last`, sql`${listedAt} desc`],
+  /** 같은 사정의 '관심 많은 순' — 스타 많은 순 */
+  stars: [sql`${products.stars} desc nulls last`, sql`${listedAt} desc`],
 } as const;
 
 /** 정렬 파라미터 검증용 (쿼리스트링 → ProductSort) */
@@ -134,10 +153,11 @@ const introNeedsEditor = sql`exists (
 )`;
 
 /** 목록과 개수가 같은 조건을 쓰도록 한 곳에서 만든다 */
-function listConditions({ statuses, category, query, builder, hasRepository, excludeDown, introNeedsEditor: needsEditor }: Omit<ListOptions, "limit" | "sort" | "offset">) {
+function listConditions({ statuses, category, query, builder, hasRepository, excludeDown, introNeedsEditor: needsEditor, rising }: Omit<ListOptions, "limit" | "sort" | "offset">) {
   const conditions = [inArray(products.status, statuses)];
   if (excludeDown) conditions.push(notDown);
   if (needsEditor) conditions.push(introNeedsEditor);
+  if (rising) conditions.push(risingStars);
   if (category) conditions.push(eq(products.category, category));
   if (builder) conditions.push(and(eq(products.builder, builder), builderIsReported)!);
   if (hasRepository) {

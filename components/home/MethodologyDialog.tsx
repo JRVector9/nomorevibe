@@ -11,14 +11,18 @@ function Formula({ children }: { children: React.ReactNode }) {
   return <code className="formula">{children}</code>;
 }
 
-export function MethodologyDialog({ pulse }: { pulse: HomePulseView }) {
+export function MethodologyDialog({ pulse, rankingFallback = false }: {
+  pulse: HomePulseView;
+  /** 검증 제품이 모자라 순위 탭이 스타 목록을 대신 보여주는 동안(app/page.tsx fallbackSort) 그 기준도 적는다 */
+  rankingFallback?: boolean;
+}) {
   const dialog = useRef<HTMLDialogElement>(null);
   const skipClose = useRef(false);
   const params = useSearchParams();
   const router = useRouter();
   const pathname = usePathname();
   const metric = params.get("metric") ?? "";
-  const open = pathname === "/" && ["all", "born", "updates", "active", "categories", "tools", "popular"].includes(metric);
+  const open = pathname === "/" && ["all", "born", "updates", "active", "categories", "tools", "popular", "rising"].includes(metric);
 
   useEffect(() => {
     const node = dialog.current;
@@ -49,6 +53,7 @@ export function MethodologyDialog({ pulse }: { pulse: HomePulseView }) {
 
   const metrics: [string, string][] = [["popular", "스타 구간"], ["born", "태어난 프로젝트"], ["updates", "새 버전"], ["active", "활발한 프로젝트"], ["categories", "분야 순위"]];
   if (pulse.tools) metrics.push(["tools", "제작 도구"]);
+  if (rankingFallback) metrics.push(["rising", "추천 목록"]);
   const nav = (
     <div className="metric-links">
       {metrics.map(([key, label]) => (
@@ -137,6 +142,23 @@ export function MethodologyDialog({ pulse }: { pulse: HomePulseView }) {
         </table>
       </>
     ),
+    ...(rankingFallback ? {
+      rising: (
+        <>
+          <h3>추천 목록 — 마지막 확인 사이에 늘어난 GitHub 스타.</h3>
+          <p>
+            순위는 검증된 제품의 유효 방문으로 매기는데, 검증된 제품이 아직 모자랍니다. 그동안 &ldquo;추천&rdquo;은 공개 프로젝트를
+            <b> 마지막 두 번 확인한 사이에 늘어난 스타</b> 순으로 보여줍니다 — 늘어난 것만, 스타 2천 미만만입니다(그 위는 스타 구간이
+            따로 보여줍니다). &ldquo;관심 많은 순&rdquo;은 같은 동안 스타 많은 순입니다.
+          </p>
+          <Formula>늘어난 스타 = 이번 확인 스타 − 직전 확인 스타 · 확인 간격은 보통 1~2일</Formula>
+          <p>
+            각 카드의 ★ 옆 숫자가 같은 값이고, 확인한 두 시각은 그 숫자에 올리면 보입니다. 간격이 길었던 프로젝트는 그만큼 더 는 것처럼
+            보일 수 있습니다. 검증된 제품이 모이면 방문 순위로 돌아갑니다.
+          </p>
+        </>
+      ),
+    } : {}),
     ...(pulse.tools ? {
       tools: (
         <>

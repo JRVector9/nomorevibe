@@ -39,14 +39,18 @@ export function BrowseFilters({
   total,
   builders,
   resultCount,
+  listLabel,
 }: {
   state: BrowseState;
   counts: Record<string, number>;
   total: number;
   builders?: string[];
   resultCount: number;
+  /** 순위 탭이 다른 목록을 대신 보여줄 때 그 목록의 이름 — 정렬 이름과 내용이 어긋나면 안 된다 */
+  listLabel?: string;
 }) {
   const narrowed = Boolean(state.query || state.category || state.builder);
+  const label = listLabel && !narrowed ? listLabel : resultLabel(state);
   const categories = CATEGORIES.filter((category) => (counts[category] ?? 0) > 0 || state.category === category);
   const toolOptions = builders ?? [];
 
@@ -94,7 +98,7 @@ export function BrowseFilters({
       </div>
       <div className="filter-summary">
         <span>
-          {resultLabel(state)} {resultCount}개
+          {label} {resultCount}개
           {total > 0 && !narrowed ? ` · 공개 ${total}개` : ""}
         </span>
         {narrowed && (

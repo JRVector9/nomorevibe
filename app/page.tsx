@@ -1,7 +1,7 @@
 import { after } from "next/server";
 import { Suspense } from "react";
 import Link from "next/link";
-import { BrowseFilters, parseHomeSort, parseShown, type HomeSort } from "@/components/BrowseFilters";
+import { BrowseFilters, metricHref, parseHomeSort, parseShown, type HomeSort } from "@/components/BrowseFilters";
 import { HomeAside } from "@/components/home/HomeAside";
 import { listHomeNews } from "@/lib/news/repository";
 import { HomeHero } from "@/components/home/HomeHero";
@@ -97,6 +97,20 @@ export function needsUnclaimedFill(verifiedTotal: number, minimumProducts: numbe
 }
 
 /**
+ * 검증 제품이 모자라 방문 순위를 세울 수 없는 동안 순위 탭이 대신 보여주는 공개 목록의 순서.
+ *
+ * 2026-10-02 운영: 공개 25,757건에 검증 0 — 기본 탭 '추천'과 '관심 많은 순'이 늘 "아직 순위에 오른
+ * 제품이 없습니다"였다. 그동안은 GitHub 이 주는 숫자로 채운다: 추천은 마지막 확인 사이에 스타가 는 순
+ * (스타 2천 미만 — 그 위는 스타 구간이 따로 보여준다), 관심 많은 순은 스타 많은 순. 기준은
+ * needsUnclaimedFill 과 같다 — 순위가 서는 순간 둘 다 원래 자리로 돌아간다.
+ */
+export type FallbackSort = "rising" | "stars";
+export function fallbackSort(sort: HomeSort, verifiedTotal: number, minimumProducts: number): FallbackSort | null {
+  if (!needsUnclaimedFill(verifiedTotal, minimumProducts)) return null;
+  return sort === "weekly" ? "rising" : sort === "all-time" ? "stars" : null;
+}
+
+/**
  * 빈 화면은 이유마다 다른 말을 해야 한다.
  *
  * 순위 정렬에서 결과가 없는 것은 제품이 없다는 뜻이 아니다 — 순위는 검증된 제품의 유효
@@ -109,10 +123,12 @@ export function needsUnclaimedFill(verifiedTotal: number, minimumProducts: numbe
  */
 function EmptyReason({
   sort,
+  fallback,
   filtered,
   hasUnclaimed,
 }: {
   sort: HomeSort;
+  fallback: FallbackSort | null;
   filtered: boolean;
   hasUnclaimed: boolean;
 }) {
@@ -123,6 +139,19 @@ function EmptyReason({
           <h3>조건에 맞는 제품이 없습니다</h3>
           <p>다른 검색어나 필터로 다시 찾아보세요.</p>
           <Link href="/" className="secondary">전체 보기</Link>
+        </div>
+      </div>
+    );
+  }
+
+  // 순위 대신 보여주는 목록이 비었다 — 순위 이야기를 하면 화면과 어긋난다
+  if (fallback) {
+    return (
+      <div className="projects-grid">
+        <div className="empty-state">
+          <h3>아직 스타 변화를 확인한 프로젝트가 없습니다</h3>
+          <p>GitHub 스타를 하루 간격으로 다시 확인하면 나타납니다.</p>
+          <Link href="/?sort=recent" className="secondary">최신순으로 보기</Link>
         </div>
       </div>
     );
@@ -228,6 +257,8 @@ export async function HomeContent({ params }: { params: HomeParams }) {
   let unclaimedTotal = 0;
   let dbDown = false;
   let translatedQuery: string | null = null;
+  let fallback: FallbackSort | null = null;
+  let rankingReady = true;
 
   /**
    * 상단 집계·도구 목록은 제품 목록과 서로의 결과를 쓰지 않는다 — 먼저 띄워 두고 목록 조회와 겹친다.
@@ -244,7 +275,6 @@ export async function HomeContent({ params }: { params: HomeParams }) {
       logger.warn("home.ranking_unavailable");
       effectiveSort = requestedSort === "weekly" || requestedSort === "trending" ? "recent" : requestedSort;
     }
-    const publicCatalogue = effectiveSort === "recent" || effectiveSort === "open" || effectiveSort === "relevance";
     /**
      * 한국어로 목적을 치면 영어 목록에 닿지 않는다. 그대로 찾아 보고 몇 건 안 되면 영어 낱말로
      * 옮겨 한 번 더 찾는다 — 옮긴 말은 결과 위에 밝힌다(search-translation.ts).
@@ -252,25 +282,39 @@ export async function HomeContent({ params }: { params: HomeParams }) {
     const search = await resolveSearchQuery(query);
     translatedQuery = search.translated;
     const options = { category, query: search.queries, builder, excludeDown: true };
+    /**
+     * 순위 탭의 개수는 순위가 서지 않을 때(fallbackSort)만 쓴다 — 그때 '추천'은 스타가 는 제품만 센다.
+     * 순위가 서면 이 값은 쓰이지 않으므로 검증 수를 기다리지 않고 함께 센다.
+     */
+    const listOptions = {
+      ...options,
+      hasRepository: effectiveSort === "open" ? true : undefined,
+      rising: effectiveSort === "weekly" ? true : undefined,
+    };
     const [loadedCounts, matchingTotal, verifiedTotal] = await Promise.all([
       categoryCounts({ statuses: ["verified", "seeded"], excludeDown: true }),
-      countProducts({ statuses: ["verified", "seeded"], ...options, hasRepository: effectiveSort === "open" ? true : undefined }),
+      countProducts({ statuses: ["verified", "seeded"], ...listOptions }),
       countProducts({ statuses: ["verified"], excludeDown: true }),
     ]);
     counts = loadedCounts;
     total = Object.values(counts).reduce((sum, count) => sum + count, 0);
+    const minimumProducts = (active?.policy ?? DEFAULT_RANKING_POLICY).eligibility.minimumProducts;
+    rankingReady = !needsUnclaimedFill(verifiedTotal, minimumProducts);
+    fallback = fallbackSort(effectiveSort, verifiedTotal, minimumProducts);
+    const publicCatalogue = effectiveSort === "recent" || effectiveSort === "open" || effectiveSort === "relevance" || fallback !== null;
     const requestedLimit = savedOnly ? Math.max(shown, SAVED_INITIAL_CANDIDATES) : shown;
     // Public lists load only what is visible. Rankings retain their separate eligibility.
     const limit = publicCatalogue ? Math.min(requestedLimit, matchingTotal) : verifiedTotal;
-    list = active
-      ? await listFor(effectiveSort, active, category, search.queries, builder, limit)
-      : publicCatalogue
-        ? await getPublicList(limit, { ...options, sort: effectiveSort === "relevance" ? "relevance" : "recent", hasRepository: effectiveSort === "open" ? true : undefined })
-        : await getVerifiedList(limit, { ...options, sort: "recent" });
+    list = fallback
+      ? await getPublicList(limit, { ...listOptions, sort: fallback })
+      : active
+        ? await listFor(effectiveSort, active, category, search.queries, builder, limit)
+        : publicCatalogue
+          ? await getPublicList(limit, { ...listOptions, sort: effectiveSort === "relevance" ? "relevance" : "recent" })
+          : await getVerifiedList(limit, { ...options, sort: "recent" });
     resultCount = publicCatalogue ? matchingTotal : list.length;
 
-    const minimumProducts = (active?.policy ?? DEFAULT_RANKING_POLICY).eligibility.minimumProducts;
-    if (!publicCatalogue && needsUnclaimedFill(verifiedTotal, minimumProducts)) {
+    if (!publicCatalogue && !rankingReady) {
       unclaimedTotal = await countProducts({ statuses: ["seeded"], ...options });
       unclaimed = await getUnclaimedList(Math.min(requestedLimit, unclaimedTotal), options);
     }
@@ -323,7 +367,15 @@ export async function HomeContent({ params }: { params: HomeParams }) {
               <h2 id="projects-title">{query ? `“${query}” 검색 결과` : "발견할 가치가 있는 프로젝트"}</h2>
               {/* 목록이 영어라 한국어 검색어는 영어 낱말로 한 번 더 찾는다. 무엇으로 찾았는지 밝힌다 */}
               {translatedQuery && <p>영어로 “{translatedQuery}”도 함께 찾았습니다.</p>}
-              {!query && <p>AI로 만들고, 사람이 다듬은 새로운 서비스들.</p>}
+              {/* 순위 대신 보여주는 목록은 무엇으로 줄 세웠는지 밝힌다 — 숫자의 기준이 보여야 한다 */}
+              {!query && fallback === "rising" && (
+                <p>
+                  마지막 확인 사이 GitHub 스타가 늘어난 프로젝트 — 스타 2천 미만, 늘어난 순.{" "}
+                  <Link href={metricHref(state, "rising")} scroll={false}>집계 기준</Link>
+                </p>
+              )}
+              {!query && fallback === "stars" && <p>GitHub 스타가 많은 순.</p>}
+              {!query && !fallback && <p>AI로 만들고, 사람이 다듬은 새로운 서비스들.</p>}
             </div>
             <Link className="all-link" href="/?sort=recent">
               전체 보기 <Icon name="arrow-right" size={14} />
@@ -336,6 +388,7 @@ export async function HomeContent({ params }: { params: HomeParams }) {
             total={total}
             builders={builders}
             resultCount={resultCount}
+            listLabel={fallback === "rising" ? "스타 증가 순" : fallback === "stars" ? "스타 많은 순" : undefined}
           />
 
           {dbDown ? (
@@ -356,6 +409,7 @@ export async function HomeContent({ params }: { params: HomeParams }) {
           ) : (
             <EmptyReason
               sort={effectiveSort}
+              fallback={fallback}
               filtered={filtered}
               hasUnclaimed={unclaimed.length > 0}
             />
@@ -383,7 +437,7 @@ export async function HomeContent({ params }: { params: HomeParams }) {
       </div>
 
       <Suspense>
-        <MethodologyDialog pulse={serializePulse(pulse)} />
+        <MethodologyDialog pulse={serializePulse(pulse)} rankingFallback={!rankingReady} />
       </Suspense>
     </main>
   );

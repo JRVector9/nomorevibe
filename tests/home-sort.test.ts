@@ -50,6 +50,19 @@ describe("home sort", () => {
     expect(hrefWith({ sort: "recent", shown: 18 }, { shown: 30 })).toBe("/?sort=recent&shown=30");
   });
 
+  it("순위 탭이 다른 목록을 대신 보여줄 때는 그 목록의 이름을 쓰고, 필터가 걸리면 검색 결과다", () => {
+    const html = renderToStaticMarkup(createElement(BrowseFilters, {
+      state: { sort: "weekly" }, counts: {}, total: 0, builders: [], resultCount: 7, listLabel: "스타 증가 순",
+    }));
+    expect(html).toContain("스타 증가 순 7개");
+    expect(html).not.toContain("에디터 추천");
+
+    const narrowed = renderToStaticMarkup(createElement(BrowseFilters, {
+      state: { sort: "weekly", category: "Dev" }, counts: { Dev: 1 }, total: 1, builders: [], resultCount: 1, listLabel: "스타 증가 순",
+    }));
+    expect(narrowed).toContain("검색 결과 1개");
+  });
+
   it("uses 추천 for the default season sort instead of a weekly cadence label", () => {
     const html = renderToStaticMarkup(createElement(BrowseFilters, {
       state: { sort: "weekly" },
