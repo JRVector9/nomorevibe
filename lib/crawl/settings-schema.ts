@@ -40,6 +40,13 @@ const discoverSchema = z.object({
         priority: z.number().int().min(0).max(1000),
         /** 검색 설정의 과거 호환용 힌트. 제작 AI 확정이나 공개 builder에 사용하지 않는다. */
         builder: z.string().min(1).max(40).nullable().default(null),
+        /**
+         * 이 신호로 찾은 레포는 AI 코딩 도구의 흔적(루트의 CLAUDE.md·.cursor 같은 파일, 최근 커밋의 Co-authored-by)이
+         * 있어야 들여보낸다(jobs/fetch.ts, ai-evidence-gate.ts). 검색어가 "AI로 만들었다"를 말하지 않는 신호 — 한국어
+         * README 전체를 긁는 `있습니다 in:readme` 같은 언어 표식 — 에 쓴다. 2026-10-02 표본 26건 중 17건에 흔적이 있었다.
+         * 없으면 요구하지 않는다 — 저장돼 있던 신호의 모양(과 seed 의 설정 해시)을 바꾸지 않으려고 기본값을 채우지 않는다.
+         */
+        requireEvidence: z.boolean().optional(),
       }),
     )
     .min(1),
