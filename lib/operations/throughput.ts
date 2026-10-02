@@ -1,8 +1,8 @@
-import { and, inArray, sql, type SQL } from "drizzle-orm";
+import { and, inArray, or, sql, type SQL } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { crawlCandidates, crawlDocuments, crawlFrontier, crawlPublicationChanges,
   crawlReviewAttempts, secondReviews } from "@/lib/db/schema";
-import { reviewApprovalPredicate, reviewCandidatePredicate } from "@/lib/crawl/agent-review-repository";
+import { reviewApprovalPredicate, reviewCandidatePredicate, starAutoApprovalPredicate } from "@/lib/crawl/agent-review-repository";
 import { SECOND_REVIEW_TRANSIENT_ERRORS, SECOND_REVIEW_RETRY_MS, TRANSIENT_RETRY_MS } from "@/lib/crawl/second-review";
 import { judgementQueuePredicate } from "@/lib/crawl/repository";
 import type { CrawlSettings } from "@/lib/crawl/settings-schema";
@@ -21,7 +21,10 @@ export async function pipelineThroughput(settings: CrawlSettings, now = new Date
     count(*) FILTER (WHERE ${recent(column, 5)})::int AS five`;
   const age = (column: SQL) => sql`extract(epoch FROM (${at} - min(${column}))) / 60`;
   const fetchReady = sql`(${crawlFrontier.state} = 'pending' AND ${crawlFrontier.nextAttemptAt} <= ${at}) OR ${crawlFrontier.state} = 'fetching'`;
-  const publishReady = and(reviewApprovalPredicate(settings), process.env.CONNECT_AGENT_URL ? classificationReadyPredicate() : undefined)!;
+  // 발행 잡(jobs/publish.ts)과 같은 기준 — 분류 보류 중인 후보는 잡이 집지 않으니 대기가 아니다(별 자동 승인은 보류를 건너뛴다).
+  // 재는 컨테이너의 CONNECT_AGENT_URL 로 가르지 않는다: crawler·reviewer 컨테이너엔 그 변수가 없어 보류 건이 "대기"로
+  // 잡혔고, 발행 단계가 no_progress 경보를 내 릴리스 게이트(check-worker-progress)가 섰다(2026-10-03).
+  const publishReady = and(reviewApprovalPredicate(settings), or(classificationReadyPredicate(), starAutoApprovalPredicate(settings)))!;
 
   const rows = await db.transaction(async tx => {
     // This small result has complex shared worker predicates. On production JIT compilation
