@@ -674,3 +674,26 @@ describe("발행 잡", () => {
     expect(await crawl.getCandidate("someone/my-app")).toMatchObject({state:"approved"});
   });
 });
+
+/**
+ * 별 자동승인은 규칙·AI 심사를 건너뛰지만 소개까지 건너뛰지는 않는다(2026-10-02 사용자 결정).
+ * 전에는 소개 없는 대형 저장소가 `owner/repo` 를 소개 삼아 올라갔다.
+ */
+it("별 자동승인도 소개가 없으면 올리지 않고 사람 확인(no_description)으로 보낸다", async () => {
+  const repo = "bigoss/no-intro";
+  await crawl.putDocument({
+    repo, productUrl: "https://bigoss.test", pageStatus: 200,
+    repoMeta: { id: 321, full_name: repo, stargazers_count: 100_000, private: false, fork: false, archived: false, language: "Go" },
+    pageMeta: { title: "BigOSS", ogImage: null },
+  });
+  const document = await crawl.getDocument(repo);
+  await crawl.recordJudgement({
+    repo, productUrl: "https://bigoss.test", state: "approved", reason: "passed", decidedBy: "auto",
+    signals: { stars: 100_000, judgedRevision: judgeRevision(document!), starAutoApproval: { stars: 100_000, githubId: 321 } },
+  });
+
+  await tick();
+
+  expect(await products.findByUrl("https://bigoss.test")).toBeUndefined();
+  expect(await crawl.getCandidate(repo)).toMatchObject({ state: "needs_review", reason: "no_description" });
+});
