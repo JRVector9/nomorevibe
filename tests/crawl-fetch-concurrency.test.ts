@@ -16,7 +16,7 @@ vi.mock("@/lib/crawl/repository", () => ({
   dequeue: mocks.dequeue, deferFrontier: mocks.defer, saveFetchedDocument: mocks.save,
   markFrontier: mocks.mark, markFailed: mocks.failed,
 }));
-vi.mock("@/lib/crawl/settings", () => ({ getSettings: async () => ({ enabled: true, judge: { docsGenerators: [] } }) }));
+vi.mock("@/lib/crawl/settings", () => ({ getSettings: async () => ({ enabled: true, judge: { docsGenerators: [] }, discover: { queries: [] } }) }));
 vi.mock("@/lib/crawl/github", () => ({ getRepo: mocks.repo }));
 vi.mock("@/lib/crawl/admin-review", () => ({ requeueAfterAdminEvidenceRefresh: async () => false }));
 vi.mock("@/lib/net/fetch", () => ({ fetchPage: mocks.page }));

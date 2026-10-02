@@ -33,6 +33,7 @@ const BLANK_QUERY = {
   enabled: false,
   priority: 0,
   builder: null,
+  requireEvidence: false,
 };
 
 export function SettingsForm({ settings }: { settings: CrawlSettings }) {
@@ -88,7 +89,7 @@ export function SettingsForm({ settings }: { settings: CrawlSettings }) {
               바뀌었다). 행의 내용을 키에 넣어 값이 바뀌면 다시 그리게 한다.
             */}
             {queryRows.map((q, i) => (
-              <div key={`${i}:${q.label}:${q.query}:${q.kind}`} className="grid grid-cols-1 gap-2 rounded-lg border border-line p-3 sm:grid-cols-[1fr_auto_1.6fr_auto_auto_auto]">
+              <div key={`${i}:${q.label}:${q.query}:${q.kind}`} className="grid grid-cols-1 gap-2 rounded-lg border border-line p-3 sm:grid-cols-[1fr_auto_1.6fr_auto_auto_auto_auto]">
                 <input name={`query.${i}.label`} defaultValue={q.label} className={field} placeholder="이름" />
                 <select
                   name={`query.${i}.kind`}
@@ -119,6 +120,13 @@ export function SettingsForm({ settings }: { settings: CrawlSettings }) {
                 <label className="flex items-center gap-2 whitespace-nowrap text-[13px]">
                   <input type="checkbox" name={`query.${i}.enabled`} defaultChecked={q.enabled} className="accent-[var(--accent)]" />
                   사용
+                </label>
+                <label
+                  className="flex items-center gap-2 whitespace-nowrap text-[13px]"
+                  title="레포 루트의 CLAUDE.md·.cursor 같은 파일이나 최근 커밋의 Co-authored-by 가 없으면 들여보내지 않습니다. 검색어가 AI 사용을 말하지 않는 신호(한국어 README 등)에 켭니다."
+                >
+                  <input type="checkbox" name={`query.${i}.requireEvidence`} defaultChecked={q.requireEvidence ?? false} className="accent-[var(--accent)]" />
+                  AI 흔적 필요
                 </label>
               </div>
             ))}

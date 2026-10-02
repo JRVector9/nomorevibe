@@ -7,6 +7,7 @@ import { resolveCanonical } from "@/lib/domain/products/register";
 import * as crawl from "@/lib/crawl/repository";
 import { getSettings } from "@/lib/crawl/settings";
 import { getRepo } from "@/lib/crawl/github";
+import { PROBE_COMMITS, probeAiEvidence } from "@/lib/crawl/ai-evidence-gate";
 import { extractSiteRepositoryKeys } from "@/lib/domain/evidence/providers/site-fingerprint";
 import { extractGithubLinks } from "@/lib/crawl/github-links";
 import { requeueAfterAdminEvidenceRefresh } from "@/lib/crawl/admin-review";
@@ -44,7 +45,8 @@ const CONCURRENCY = 3;
  */
 const GITHUB_ORIGIN = "https://api.github.com";
 
-type Tally = { fetched: number; skipped: number; failed: number };
+/** gated: AI 흔적이 없어 들여보내지 않은 것(requireEvidence 신호) */
+type Tally = { fetched: number; skipped: number; failed: number; gated: number };
 
 export async function fetchCrawlDocuments(ctx: JobContext<null>): Promise<JobOutcome<null>> {
   const settings = await getSettings();
@@ -52,6 +54,8 @@ export async function fetchCrawlDocuments(ctx: JobContext<null>): Promise<JobOut
     ctx.log("crawl.fetch_skipped", { reason: "disabled" });
     return { done: true };
   }
+  /** 흔적이 있어야 들여보내는 신호(settings-schema requireEvidence) — 프론티어의 signal 이 그 라벨이다 */
+  const evidenceRequired = new Set(settings.discover.queries.filter((q) => q.requireEvidence).map((q) => q.label));
   if (ctx.lease && ctx.hasBudget()) {
     const recovered = await crawl.recoverAbandonedFrontier(ctx.lease);
     if (recovered) ctx.log("crawl.fetch_recovered", { recovered });
@@ -59,7 +63,7 @@ export async function fetchCrawlDocuments(ctx: JobContext<null>): Promise<JobOut
     if (handedOff) ctx.log("crawl.fetch_source_refresh_handed_off", { count: handedOff });
   }
 
-  const tally: Tally = { fetched: 0, skipped: 0, failed: 0 };
+  const tally: Tally = { fetched: 0, skipped: 0, failed: 0, gated: 0 };
   const oneAtATime = originQueue();
 
   while (ctx.hasBudget()) {
@@ -69,7 +73,7 @@ export async function fetchCrawlDocuments(ctx: JobContext<null>): Promise<JobOut
       return { done: true };
     }
 
-    const { retryAt, pauseReason } = await fetchBatch(entries, ctx, settings.judge.docsGenerators, oneAtATime, tally);
+    const { retryAt, pauseReason } = await fetchBatch(entries, ctx, settings.judge.docsGenerators, evidenceRequired, oneAtATime, tally);
     if (retryAt) {
       ctx.log(pauseReason === "auth_unavailable" ? "crawl.fetch_auth_unavailable" : "crawl.fetch_rate_limited",
         { fetched: tally.fetched, resetAt: retryAt.toISOString() });
@@ -95,6 +99,7 @@ async function fetchBatch(
   entries: FrontierEntry[],
   ctx: JobContext<null>,
   docsGenerators: readonly string[],
+  evidenceRequired: ReadonlySet<string>,
   oneAtATime: OneAtATime,
   tally: Tally,
 ): Promise<{ retryAt: Date | null; pauseReason: "rate_limited" | "auth_unavailable" | null }> {
@@ -126,7 +131,7 @@ async function fetchBatch(
         });
         if (!started) return;
 
-        const outcome = await fetchEntry(started.entry, started.result, ctx, docsGenerators, oneAtATime);
+        const outcome = await fetchEntry(started.entry, started.result, ctx, docsGenerators, evidenceRequired, oneAtATime);
         if (outcome.kind === "paused") {
           batch.stopped = true;
           if (!batch.retryAt || outcome.retryAt > batch.retryAt) batch.retryAt = outcome.retryAt;
@@ -140,6 +145,8 @@ async function fetchBatch(
           if (outcome.needsJudgement) batch.needsJudgement++;
         } else if (outcome.kind === "skipped") {
           tally.skipped++;
+        } else if (outcome.kind === "gated") {
+          tally.gated++;
         } else if (outcome.kind === "failed") {
           tally.failed++;
         }
@@ -177,7 +184,7 @@ async function fetchBatch(
 
 type EntryOutcome =
   | { kind: "fetched"; needsJudgement: boolean }
-  | { kind: "skipped" | "failed" | "lost" | "deferred" }
+  | { kind: "skipped" | "failed" | "lost" | "deferred" | "gated" }
   | { kind: "paused"; reason: "rate_limited" | "auth_unavailable"; retryAt: Date };
 
 /** GitHub 응답을 받은 항목 하나를 끝낸다. 실패는 여기서 항목별로 남긴다 */
@@ -186,6 +193,7 @@ async function fetchEntry(
   result: Awaited<ReturnType<typeof getRepo>>,
   ctx: JobContext<null>,
   docsGenerators: readonly string[],
+  evidenceRequired: ReadonlySet<string>,
   oneAtATime: OneAtATime,
 ): Promise<EntryOutcome> {
   if (!result.ok) {
@@ -210,6 +218,53 @@ async function fetchEntry(
   if (!ctx.hasBudget()) return { kind: "deferred" };
   const repoMeta = result.value;
   const homepage = typeof repoMeta.homepage === "string" ? normalizeUrl(repoMeta.homepage) : null;
+
+  /**
+   * 검색어가 AI 사용을 말하지 않는 신호(한국어 README 같은 언어 표식)는 레포에 AI 코딩 도구의 흔적이 있어야
+   * 들여보낸다(ai-evidence-gate.ts). 페이지를 열기 전에 본다 — 흔적 없는 쪽(표본의 약 1/3)은 페이지·판정·심사
+   * 비용을 쓰지 않는다. 원본(레포 메타)은 남기고 후보를 거절로 적어 어떤 신호가 얼마나 걸러지는지 셀 수 있게 한다.
+   */
+  let evidence: string[] | null = null;
+  if (homepage && evidenceRequired.has(entry.signal)) {
+    const probe = await oneAtATime(GITHUB_ORIGIN, () => probeAiEvidence(entry.repo));
+    if (!probe.ok) {
+      if (probe.error.kind === "rate_limited" || probe.error.kind === "auth_unavailable") {
+        return { kind: "paused", reason: probe.error.kind,
+          retryAt: probe.error.resetAt ?? new Date(Date.now() + (probe.error.kind === "auth_unavailable" ? 15 * 60_000 : 60_000)) };
+      }
+      if (probe.error.kind === "not_found") {
+        // 빈 레포 — 볼 것이 없다
+        if (ctx.lease) await crawl.markFrontier(entry.repo, "skipped", entry, ctx.lease);
+        else await crawl.markFrontier(entry.repo, "skipped", entry);
+        return { kind: "skipped" };
+      }
+      const reason = `AI 흔적 확인 실패 — GitHub ${probe.error.kind === "http" ? probe.error.status : probe.error.kind}`;
+      if (ctx.lease) await crawl.markFailed(entry.repo, reason, undefined, entry, ctx.lease);
+      else await crawl.markFailed(entry.repo, reason, undefined, entry);
+      return { kind: "failed" };
+    }
+    if (probe.found.length === 0) {
+      const saved = await crawl.saveFetchedDocument(entry, {
+        repo: entry.repo, repoMeta, productUrl: homepage, pageStatus: null, pageMeta: null,
+      }, ctx.lease);
+      if (!saved) {
+        ctx.log("crawl.fetch_claim_lost", { repo: entry.repo });
+        return { kind: "lost" };
+      }
+      if (saved.duplicateOf) {
+        ctx.log("crawl.fetch_repository_alias", { repo: entry.repo, existingRepo: saved.duplicateOf });
+        return { kind: "skipped" };
+      }
+      // 판정 잡이 집기 전에 거절로 적는다 — 판정 대기열은 후보가 없거나 new 인 원본만 본다
+      await crawl.recordJudgement({
+        repo: entry.repo, productUrl: homepage, state: "rejected", reason: "ai_evidence_not_found", decidedBy: "auto",
+        signals: { evidenceGate: { signal: entry.signal, recentCommits: PROBE_COMMITS, found: [] } },
+      });
+      return { kind: "gated" };
+    }
+    evidence = probe.found;
+  }
+
   let page: Awaited<ReturnType<typeof visit>> | null = null;
   if (homepage) {
     try {
@@ -231,7 +286,8 @@ async function fetchEntry(
     repoMeta,
     productUrl: page?.productUrl ?? homepage,
     pageStatus: page?.status ?? null,
-    pageMeta: page?.meta ?? null,
+    // 들여보낸 흔적은 원본에 남긴다 — 심사 화면이 "왜 들어왔나"를 볼 수 있게
+    pageMeta: page?.meta ? { ...page.meta, ...(evidence ? { evidenceGate: { signal: entry.signal, found: evidence } } : {}) } : null,
   }, ctx.lease);
   if (!saved) {
     // 회수돼 다른 워커가 다시 꺼냈다 — 그쪽이 받은 것이 더 새것이다

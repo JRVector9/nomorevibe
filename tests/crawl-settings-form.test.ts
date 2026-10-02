@@ -134,7 +134,28 @@ describe("검색 신호 편집", () => {
       enabled: true,
       priority: 80,
       builder: null,
+      requireEvidence: false,
     });
+  });
+
+  it("행마다 'AI 흔적 필요'를 켤 수 있다 — 검색어가 AI 사용을 말하지 않는 신호를 위해", async () => {
+    expect(render(twoSignals)).toContain('name="query.2.requireEvidence"');
+
+    await saveCrawlSettings(
+      null,
+      submitted({
+        "query.2.label": "한국어 README",
+        "query.2.kind": "repositories",
+        "query.2.query": "있습니다 in:readme",
+        "query.2.priority": "10",
+        "query.2.enabled": "on",
+        "query.2.requireEvidence": "on",
+      }),
+    );
+
+    expect(savedQueries()[2]).toMatchObject({ label: "한국어 README", requireEvidence: true });
+    // 체크하지 않은 행은 false 로 저장된다 — 폼에서 저장한 신호는 값이 늘 있다
+    expect(savedQueries()[0].requireEvidence).toBe(false);
   });
 });
 
