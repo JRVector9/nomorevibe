@@ -9,8 +9,11 @@ import { requestOperation } from './actions';
 import { AiConnection } from './AiConnection';
 import { ManualClassification } from './ManualClassification';
 import './operations.css';
+import './dashboard/dashboard.css';
 import { OperationsDialog } from './OperationsDialog';
 import { JobTimeline } from './JobTimeline';
+import { JobsStrip } from './dashboard/JobsStrip';
+import { LiveRefresh } from './LiveRefresh';
 import { staleServiceInstanceCount } from '@/lib/operations/instance';
 export type OperationJob = { name:string; status:string; lastRunAt:string|null; lastSuccessAt:string|null; nextScheduledAt:string|null; notBefore:string|null; workerSeenAt:string|null; requestedVersion:number; processedVersion:number; runs:number; lastError:string|null; cursor:string };
 const time=(value:unknown)=>typeof value==='string'||typeof value==='number'?new Date(value).toLocaleString('ko-KR',{timeZone:'Asia/Seoul'}):'기록 없음';
@@ -19,7 +22,11 @@ const ago=(value:unknown,now:string)=>{if(typeof value!=='string'&&typeof value!
 const until=(value:unknown,now:string)=>{if(typeof value!=='string')return '—';const s=Math.round((new Date(value).getTime()-new Date(now).getTime())/1000);return s<=0?'지금':s<90?`${s}초`:s<5400?`${Math.round(s/60)}분`:`${Math.round(s/3600)}시간`;};
 const ROLES=['app','scheduler','crawler','reviewer','publisher','text','maintenance','db','connect-agent'];
 const DESCRIPTIONS:Record<string,string>={app:'제품 페이지·관리자·API 요청을 처리합니다.',scheduler:'예약 시각을 확인하고 담당 워커에게 작업을 요청합니다.',crawler:'프로젝트 원본·공개 근거를 수집합니다.',reviewer:'규칙 판정과 설정된 AI 심사로 후보를 검토합니다.',publisher:'승인 후보를 분류하고 최종 발행 조건을 검사합니다.',text:'소개 생성과 심사 사유 번역을 처리합니다.',maintenance:'발행된 제품이 열리는지 확인하고, 유효 방문을 집계해 랭킹을 갱신합니다.',db:'제품·후보·작업 요청과 실행 결과를 저장합니다.','connect-agent':'Codex·Claude 인증과 모델 검증·분류 실행을 전담합니다.'};
-export function OperationsCenter({initialTab="overview",jobs,data,candidates,reviewMode,enabled,oauthConfigured,localCodexAllowed,actionQueue,pipeline,queue,throughput,children }:{initialTab?: "overview" | "jobs" | "ai" | "manual";jobs:OperationJob[];data:Awaited<ReturnType<typeof operationsData>>;candidates:Awaited<ReturnType<typeof manualCandidates>>;reviewMode:string;enabled:boolean;oauthConfigured:boolean;localCodexAllowed:boolean;actionQueue:React.ReactNode;pipeline:React.ReactNode;queue:React.ReactNode;throughput:React.ReactNode;children:React.ReactNode}) {
+/**
+ * 전체 현황 탭은 서버가 그린 조각(dashboard·statusChips·queue·searchHealth)을 12칸 격자에 놓는다.
+ * 숫자를 모으는 쿼리는 page.tsx 에, 상호작용(탭·상세 창·작업 요청)은 여기에 둔다.
+ */
+export function OperationsCenter({initialTab="overview",jobs,data,candidates,reviewMode,enabled,oauthConfigured,localCodexAllowed,dashboard,statusChips,queue,searchHealth,children }:{initialTab?: "overview" | "jobs" | "ai" | "manual";jobs:OperationJob[];data:Awaited<ReturnType<typeof operationsData>>;candidates:Awaited<ReturnType<typeof manualCandidates>>;reviewMode:string;enabled:boolean;oauthConfigured:boolean;localCodexAllowed:boolean;dashboard:React.ReactNode;statusChips:React.ReactNode;queue:React.ReactNode;searchHealth:React.ReactNode;children:React.ReactNode}) {
   const [tab,setTab]=useState<string>(initialTab),[selected,setSelected]=useState('publisher'),[selectedJob,setJob]=useState<OperationJob|null>(null),[worker,setWorker]=useState(false),[message,setMessage]=useState(''),[pending,start]=useTransition();
   const job=jobs.find(j=>j.name===selectedJob?.name)??null;
   const router=useRouter();const snapshots=new Map(data.observations.map(o=>[o.key,o]));
@@ -36,27 +43,30 @@ export function OperationsCenter({initialTab="overview",jobs,data,candidates,rev
   }
   function request(name:string){start(async()=>{const result=await requestOperation(name);setMessage(result.error??result.message??'');router.refresh();});}
   return <div className="ops-center">
-    <header className="ops-header compact"><div><h1>운영센터</h1><span className="ops-snapshot-inline">{time(data.fetchedAt)} KST · 수집 {enabled?'켜짐':'꺼짐'} · 워커 관측 15초 간격</span></div><div className="ops-actions"><button disabled={pending} onClick={()=>start(()=>router.refresh())}>새로고침</button><button className="primary" onClick={()=>setTab('ai')}>AI 연결·설정</button></div></header>
-    {throughput}
+    <header className="ops-header compact"><div><h1>운영센터</h1><span className="ops-snapshot-inline">{time(data.fetchedAt)} KST · 수집 {enabled?'켜짐':'꺼짐'} · 워커 관측 15초 · 화면 10초</span></div><div className="ops-actions"><LiveRefresh/><button disabled={pending} onClick={()=>start(()=>router.refresh())}>새로고침</button><button className="primary" onClick={()=>setTab('ai')}>AI 연결·설정</button></div></header>
+    <div className="ops-status-chips">{statusChips}</div>
     {tab!=='ai'&&(!agent?.configReady||agent.lastAttempt?.result&&agent.lastAttempt.result!=='success')&&<div className="ops-alert"><div><strong>AI 연결·분류 상태를 확인해주세요</strong><p>분류 실패 후보는 보류됩니다. 계정을 연결하거나 수동으로 카테고리를 지정할 수 있습니다.</p></div><button onClick={()=>setTab('ai')}>연결 상태 확인 →</button></div>}
     <nav className="ops-tabs" aria-label="운영센터 화면">{[['overview','전체 현황'],['jobs','작업 흐름'],['ai','AI 연결'],['manual','수동 분류']].map(([key,label])=><button key={key} aria-current={tab===key?'page':undefined} onClick={()=>setTab(key)}>{label}{key==='manual'&&data.held>0&&<span>{data.held}</span>}</button>)}</nav>
     {message&&<p className="ops-message" role="status">{message}</p>}
     {tab==='overview'&&<div className="ops-console">
-      <div className="ops-console-main">
-        {actionQueue}
-        {pipeline}
-        {queue}
+      <div className="dash">
+        {dashboard}
+        <JobsStrip jobs={jobs} now={data.fetchedAt} onOpen={setJob}/>
       </div>
-      <aside className="ops-console-side">
-        <section className="ops-mini"><h3>서비스 <small>{ROLES.filter(key=>!/없음|지연|필요|failed/.test(status(key))).length}/{ROLES.length} 정상</small></h3>
-          <table><tbody>{ROLES.map(key=>{const warn=/없음|지연|필요|failed/.test(status(key));return <tr key={key} onClick={()=>{setSelected(key);setWorker(true);}} title={DESCRIPTIONS[key]}>
-            <td><i className={`ops-dot ${warn?'warn':'ok'}`}/>{ROLE_LABELS[key]}</td><td className="n">{key==='db'?`${data.dbLatencyMs}ms`:`${instancesFor(key).length}대`}</td><td className="n">{key==='db'?'조회':ago(latestFor(key)?.observedAt,data.fetchedAt)}</td></tr>;})}</tbody></table></section>
-        <section className="ops-mini"><h3>작업 <small>마지막 · 다음</small></h3>
-          <table><tbody>{jobs.filter(j=>j.name!=='heartbeat').map(j=><tr key={j.name} onClick={()=>setJob(j)} title={j.name}>
-            <td><i className={`ops-dot ${j.lastError?'bad':'ok'}`}/>{JOB_LABELS[j.name]??j.name}</td><td className="n">{ago(j.lastRunAt,data.fetchedAt)}</td><td className="n">{until(j.nextScheduledAt,data.fetchedAt)}</td></tr>)}</tbody></table></section>
-        <section className="ops-mini"><h3>최근 관리자 작업</h3>{data.audit.length?<ul>{data.audit.slice(0,5).map(a=><li key={a.id}><b>{a.action}</b> {a.target}<small>{a.actor} · {ago(a.createdAt,data.fetchedAt)}</small></li>)}</ul>:<p>기록 없음</p>}</section>
-      </aside>
-      <details className="ops-panel ops-console-full"><summary>수집·근거·랭킹 상세 지표</summary>{children}</details>
+      <div className="ops-console-main">{queue}</div>
+      <details className="ops-panel ops-console-full"><summary>수집·근거·랭킹 상세 지표</summary>
+        {searchHealth}
+        <div className="mt-3 grid gap-3 xl:grid-cols-2">
+          <section className="ops-mini"><h3>서비스 관측 <small>{ROLES.filter(key=>!/없음|지연|필요|failed/.test(status(key))).length}/{ROLES.length} 정상</small></h3>
+            <table><tbody>{ROLES.map(key=>{const warn=/없음|지연|필요|failed/.test(status(key));return <tr key={key} onClick={()=>{setSelected(key);setWorker(true);}} title={DESCRIPTIONS[key]}>
+              <td><i className={`ops-dot ${warn?'warn':'ok'}`}/>{ROLE_LABELS[key]}</td><td className="n">{key==='db'?`${data.dbLatencyMs}ms`:`${instancesFor(key).length}대`}</td><td className="n">{key==='db'?'조회':ago(latestFor(key)?.observedAt,data.fetchedAt)}</td></tr>;})}</tbody></table></section>
+          <section className="ops-mini"><h3>작업 <small>마지막 · 다음</small></h3>
+            <table><tbody>{jobs.filter(j=>j.name!=='heartbeat').map(j=><tr key={j.name} onClick={()=>setJob(j)} title={j.name}>
+              <td><i className={`ops-dot ${j.lastError?'bad':'ok'}`}/>{JOB_LABELS[j.name]??j.name}</td><td className="n">{ago(j.lastRunAt,data.fetchedAt)}</td><td className="n">{until(j.nextScheduledAt,data.fetchedAt)}</td></tr>)}</tbody></table></section>
+          <section className="ops-mini"><h3>최근 관리자 작업</h3>{data.audit.length?<ul>{data.audit.slice(0,8).map(a=><li key={a.id}><b>{a.action}</b> {a.target}<small>{a.actor} · {ago(a.createdAt,data.fetchedAt)}</small></li>)}</ul>:<p>기록 없음</p>}</section>
+        </div>
+        {children}
+      </details>
     </div>}
     {tab==='jobs'&&<JobTimeline jobs={jobs.filter(j=>j.name!=='heartbeat')} onOpen={setJob}/>}
     {tab==='ai'&&<AiConnection initial={agent??null} reviewMode={reviewMode} oauthConfigured={oauthConfigured} localCodexAllowed={localCodexAllowed}/>}

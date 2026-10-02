@@ -1,0 +1,119 @@
+/*
+ * 운영센터 격자.
+ *
+ * 모든 행이 같은 12칸을 쓴다 — 위 띠의 타일(2칸)과 아래 카드(4·8칸)의 세로 선이 맞는다.
+ * 전에는 행마다 따로 나눠(6칸·2fr+1fr·3칸) 경계가 어긋났다.
+ */
+.dash{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));gap:16px;min-width:0}
+.dash>*{min-width:0}
+.dash-2{grid-column:span 2}
+.dash-4{grid-column:span 4}
+.dash-6{grid-column:span 6}
+.dash-8{grid-column:span 8}
+.dash-12{grid-column:span 12}
+@media (max-width:1180px){.dash-2{grid-column:span 4}.dash-4{grid-column:span 6}.dash-8{grid-column:span 12}}
+@media (max-width:700px){.dash-2,.dash-4,.dash-6,.dash-8{grid-column:span 12}}
+
+.dash-card{border:1px solid var(--color-line);border-radius:12px;background:var(--color-bg-card);padding:14px 16px}
+.dash-card-h{display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin-bottom:10px}
+.dash-card-h h2{font-size:15px;font-weight:650;margin:0}
+.dash-card-h small{font-size:13px;color:var(--color-fg-3)}
+
+/* 지금 처리량 타일 */
+.dash-kpi{display:flex;flex-direction:column;gap:4px}
+.dash-kpi .label{font-size:13px;font-weight:550;color:var(--color-fg-2)}
+.dash-kpi .value{display:flex;flex-wrap:wrap;align-items:baseline;column-gap:6px;font-size:26px;font-weight:650;line-height:1.1;font-variant-numeric:tabular-nums}
+.dash-kpi .value small{font-size:13px;font-weight:500;color:var(--color-fg-3)}
+.dash-kpi .sub{font-size:13px;color:var(--color-fg-3)}
+.dash-kpi .sub[data-tone=warn]{color:var(--color-warn)}
+.dash-kpi .sub[data-tone=bad]{color:var(--color-down)}
+.dash-spark{display:block;width:100%;height:34px;margin-top:4px}
+
+/* 단계 레일 */
+.dash-rail{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));border:1px solid var(--color-line);border-radius:10px;overflow:hidden}
+.dash-rail>li{list-style:none;min-width:0;padding:10px 12px;border-right:1px solid var(--color-line);display:flex;flex-direction:column;gap:3px}
+.dash-rail>li:last-child{border-right:0}
+.dash-rail .t{font-size:13px;font-weight:550;color:var(--color-fg-2)}
+.dash-rail .n{font-size:22px;font-weight:650;line-height:1.1;font-variant-numeric:tabular-nums}
+.dash-rail .s{font-size:13px;color:var(--color-fg-3)}
+.dash-rail .w{margin-top:3px;color:var(--color-fg-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.dash-rail .w[data-tone=bad]{color:var(--color-down)}
+.dash-rail>li[data-tone=warn]{background:color-mix(in srgb,var(--color-warn) 10%,transparent)}
+.dash-rail>li[data-tone=warn] .n{color:var(--color-warn)}
+.dash-rail>li[data-tone=bad]{background:color-mix(in srgb,var(--color-down) 10%,transparent)}
+.dash-rail>li[data-tone=bad] .n{color:var(--color-down)}
+@media (max-width:900px){.dash-rail{grid-template-columns:repeat(3,minmax(0,1fr))}.dash-rail>li:nth-child(3){border-right:0}.dash-rail>li:nth-child(-n+3){border-bottom:1px solid var(--color-line)}}
+.dash-line{display:flex;gap:8px;align-items:flex-start;margin-top:10px;font-size:13px;color:var(--color-fg-2)}
+.dash-line b{color:var(--color-fg)}
+
+/* 점·알약 */
+.dash-dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--color-fg-3);flex:none;vertical-align:middle}
+.dash-dot[data-tone=ok]{background:var(--color-up)}
+.dash-dot[data-tone=warn]{background:var(--color-warn)}
+.dash-dot[data-tone=bad]{background:var(--color-down)}
+.dash-pill{display:inline-flex;align-items:center;gap:6px;border-radius:999px;padding:2px 9px;font-size:13px;font-weight:500;line-height:18px;border:1px solid var(--color-line);background:var(--color-bg-soft);color:var(--color-fg-2);white-space:nowrap}
+.dash-pill[data-tone=ok]{background:color-mix(in srgb,var(--color-up) 12%,transparent);color:var(--color-up);border-color:transparent}
+.dash-pill[data-tone=warn]{background:color-mix(in srgb,var(--color-warn) 14%,transparent);color:var(--color-warn);border-color:transparent}
+.dash-pill[data-tone=bad]{background:color-mix(in srgb,var(--color-down) 12%,transparent);color:var(--color-down);border-color:transparent}
+.dash-pill[data-tone=acc]{background:color-mix(in srgb,var(--color-accent) 12%,transparent);color:var(--color-accent);border-color:transparent}
+.dash-chips{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+
+/* 표 */
+.dash-table{width:100%;border-collapse:collapse;font-size:13px}
+.dash-table th{text-align:left;font-weight:500;color:var(--color-fg-3);font-size:13px;padding:4px 8px;border-bottom:1px solid var(--color-line)}
+.dash-table td{padding:7px 8px;border-bottom:1px solid var(--color-line);vertical-align:middle}
+.dash-table tr:last-child td{border-bottom:0}
+.dash-table .num{text-align:right;font-family:var(--font-mono);font-variant-numeric:tabular-nums}
+.dash-roles th,.dash-roles td{white-space:nowrap;padding-left:6px;padding-right:6px}
+.dash-roles .dash-pill{white-space:normal;flex-wrap:wrap;row-gap:0}
+.dash-roles .dash-pill>span{white-space:nowrap}
+.dash-bar{height:6px;border-radius:3px;background:var(--color-bg-soft);overflow:hidden;min-width:60px}
+.dash-bar i{display:block;height:100%;background:var(--color-accent)}
+
+/* 모델 카드 — 행마다 역할·상태 한 줄, 모델 이름·수치 한 줄 */
+.dash-models{display:flex;flex-direction:column;gap:6px}
+.dash-model{border:1px solid var(--color-line);border-radius:10px;padding:8px 11px;display:grid;grid-template-columns:minmax(0,1fr) auto;gap:2px 10px;align-items:center;min-width:0}
+.dash-model .role{font-weight:600;font-size:13px}
+.dash-model .name{font-size:13px;color:var(--color-fg-3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dash-model .stat{font-size:13px;color:var(--color-fg-2);white-space:nowrap;text-align:right}
+.dash-model .stat b{font-weight:600;color:var(--color-fg);font-family:var(--font-mono)}
+
+/* 조치할 일 */
+.dash-todo{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px}
+.dash-todo li{display:grid;grid-template-columns:4px minmax(0,1fr) auto;gap:10px;align-items:center;padding:7px 10px;border:1px solid var(--color-line);border-radius:10px}
+.dash-todo li i{display:block;width:4px;align-self:stretch;border-radius:2px;background:var(--color-fg-3)}
+.dash-todo li[data-tone=bad] i{background:var(--color-down)}
+.dash-todo li[data-tone=warn] i{background:var(--color-warn)}
+.dash-todo li[data-tone=ok] i{background:var(--color-up)}
+.dash-todo .t{font-weight:600;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dash-todo .d{font-size:13px;color:var(--color-fg-3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dash-todo .n{font-size:17px;font-weight:650;font-family:var(--font-mono);font-variant-numeric:tabular-nums;text-align:right}
+.dash-todo li[data-tone=bad] .n{color:var(--color-down)}
+.dash-todo li[data-tone=warn] .n{color:var(--color-warn)}
+.dash-todo li[data-tone=ok] .n{color:var(--color-up)}
+.dash-todo a{font-size:13px;font-weight:600;color:var(--color-accent);white-space:nowrap}
+
+/* 오늘 발행 */
+.dash-feed{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+.dash-item{border:1px solid var(--color-line);border-radius:10px;padding:9px 11px;min-width:0}
+.dash-item .nm{font-weight:600;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.dash-item .tg{font-size:13px;color:var(--color-fg-2);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.dash-item .meta{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px;align-items:center}
+@media (max-width:900px){.dash-feed{grid-template-columns:1fr}}
+
+/* 작업 생존 띠 */
+.dash-jobs{display:flex;flex-wrap:wrap;gap:6px}
+.dash-job{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--color-line);border-radius:8px;padding:3px 8px;font-size:13px;color:var(--color-fg-2);background:var(--color-bg-card);cursor:pointer}
+.dash-job b{font-weight:600;color:var(--color-fg)}
+.dash-job small{font-family:var(--font-mono);font-variant-numeric:tabular-nums;color:var(--color-fg-3)}
+.dash-job[data-tone=bad]{border-color:color-mix(in srgb,var(--color-down) 50%,var(--color-line))}
+.dash-job[data-tone=warn]{border-color:color-mix(in srgb,var(--color-warn) 50%,var(--color-line))}
+.dash-note{font-size:13px;color:var(--color-fg-3);margin-top:8px}
+
+/* 머리말 아래 상태 칩 줄과 격자 사이 간격 */
+.ops-status-chips{margin:10px 0 14px}
+.ops-center .dash{margin-bottom:12px}
+
+/* 옛 2열 콘솔(본문+300px 사이드)을 한 열로 — 새 격자가 전체 폭을 쓴다 */
+.ops-center .ops-console{display:flex;flex-direction:column;gap:12px}
+.ops-center .ops-console-main{display:block}

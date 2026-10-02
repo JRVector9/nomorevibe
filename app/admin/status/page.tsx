@@ -16,11 +16,19 @@ import { OperationsCenter } from "./OperationsCenter";
 import { operationsData } from "@/lib/operations/admin";
 import { latestServiceInstance } from "@/lib/operations/instance";
 import { pipelineFlow, oldestReviewWaitDays, stalledReviewCount } from "@/lib/operations/pipeline";
-import { ActionQueue, type ActionItem } from "./ActionQueue";
-import { PipelineRail } from "./PipelineRail";
 import { pipelineThroughput } from "@/lib/operations/throughput";
 import { buildWorkerProgress } from "@/lib/operations/worker-progress-query";
-import { ThroughputStrip } from "./ThroughputStrip";
+import { attentionCounts, hourlyThroughput, modelHealth, signalYields, todayPublications } from "@/lib/operations/dashboard";
+import { roleOverview } from "@/lib/operations/roles";
+import { listGitHubCollectorAccounts, parseCoreQuota } from "@/lib/crawl/github-accounts";
+import { KpiStrip } from "./dashboard/KpiStrip";
+import { StageRail } from "./dashboard/StageRail";
+import { RolesTable } from "./dashboard/RolesTable";
+import { ModelCards, type ConnectionProbe } from "./dashboard/ModelCards";
+import { AttentionList, type ActionItem } from "./dashboard/AttentionList";
+import { SignalTable } from "./dashboard/SignalTable";
+import { TodayFeed } from "./dashboard/TodayFeed";
+import { StatusChips } from "./dashboard/StatusChips";
 import type { AgentStatus } from "@/lib/operations/contracts";
 import { manualCandidates } from "@/lib/operations/categories";
 import { logger, redact } from "@/lib/observability/logger";
@@ -116,6 +124,23 @@ export default async function StatusPage({ searchParams }: { searchParams: Promi
   const lastQueuePage = Math.max(1, Math.ceil(queue.total / QUEUE_PAGE_SIZE));
   if (filters.page > lastQueuePage) redirect(queueFilterHref(filters, { page: lastQueuePage }));
 
+  /**
+   * 운영센터 격자가 쓰는 묶음 — 실패해도 화면은 나가야 한다. 24시간·7일 집계는 모듈 안에서 60초 담아 둔다.
+   */
+  const warn = (event: string) => (error: unknown) => {
+    logger.warn(event, { errorName: error instanceof Error ? error.name : "unknown" });
+    return null;
+  };
+  const [hourly, models, yields, today, attention, roles, accounts] = await Promise.all([
+    hourlyThroughput().catch(warn("operations.hourly_unavailable")),
+    modelHealth(settings).catch(warn("operations.models_unavailable")),
+    signalYields(settings).catch(warn("operations.signals_unavailable")),
+    todayPublications().catch(warn("operations.today_unavailable")),
+    attentionCounts().catch(warn("operations.attention_unavailable")),
+    roleOverview().catch(warn("operations.roles_unavailable")),
+    listGitHubCollectorAccounts().catch(warn("operations.accounts_unavailable")),
+  ]);
+
   const states = new Map(jobStates.map((job) => [job.name, job]));
   const workerProgress = throughput ? buildWorkerProgress(throughput, jobStates, ops.observations, new Date(ops.fetchedAt)) : null;
   const rejectedTotal = rejections.reduce((sum, r) => sum + r.count, 0);
@@ -206,6 +231,83 @@ export default async function StatusPage({ searchParams }: { searchParams: Promi
       action: { label: "제품 관리", href: "/admin/products" },
     });
   }
+  /**
+   * 역할·워커·모델·한도 — 전에는 스크립트와 접힌 표에만 있던 것들. 예비가 일하면 주가 죽은 것과 같은 무게로 올린다.
+   */
+  const standbyActive = roles?.roles.filter((row) => row.reason === "standby_active") ?? [];
+  if (standbyActive.length > 0) {
+    actions.push({
+      key: "standby", tone: "critical", count: standbyActive.length, title: "예비가 일하고 있는 역할",
+      detail: <>{standbyActive.map((row) => row.role).join(", ")} — 주(M3)가 lease 를 되찾지 못합니다. 예비를 잠깐 0으로 줄여 돌려놓습니다(runbook).</>,
+      action: { label: "역할 표", href: "/admin/status#roles" },
+    });
+  }
+  const releases = new Set(roles?.roles.map((row) => row.ownerRelease).filter((value): value is string => Boolean(value)));
+  if (releases.size > 1) {
+    actions.push({
+      key: "release", tone: "hold", count: releases.size, title: "역할마다 릴리스가 다릅니다",
+      detail: <>{[...releases].map((value) => value.slice(0, 7)).join(" · ")} — 주·예비 릴리스 절차로 맞춥니다.</>,
+    });
+  }
+  const workerAlarms = workerProgress?.liveness.filter((row) => row.alarm) ?? [];
+  if (workerAlarms.length > 0) {
+    actions.push({
+      key: "liveness", tone: "critical", count: workerAlarms.length, title: "워커 관측이 끊겼거나 반복 재시작 중",
+      detail: <>{workerAlarms.map((row) => `${row.role} ${row.reason === "restart_loop" ? "5분 내 반복 재시작" : "관측 끊김"}`).join(" · ")}</>,
+      action: { label: "작업 흐름", href: "/admin/status?tab=jobs" },
+    });
+  }
+  if (workerProgress?.scheduler.reason === "scheduler_missed") {
+    actions.push({
+      key: "scheduler", tone: "critical", count: workerProgress.scheduler.overdueJobs.length, title: "스케줄러 예약이 밀렸습니다",
+      detail: <>{workerProgress.scheduler.overdueJobs.join(", ")}</>,
+    });
+  }
+  if (workerProgress?.scheduler.reason === "unknown_schedule") {
+    actions.push({
+      key: "scheduler-unknown", tone: "hold", count: "?", title: "스케줄러 예약 상태를 확인할 수 없습니다",
+      detail: <>다음 예약 시각이 없는 작업이 있습니다 — 스케줄러 관측과 작업 표를 확인합니다.</>,
+      action: { label: "작업 흐름", href: "/admin/status?tab=jobs" },
+    });
+  }
+  // 워커는 관측되는데 저장 진행이 없는 단계 — 관측 끊김(liveness)과 달리 프로세스는 살아 있다
+  const stuckStages = workerProgress?.stages.filter((row) => row.alarm && row.reason === "no_progress") ?? [];
+  if (stuckStages.length > 0) {
+    actions.push({
+      key: "stage-progress", tone: "critical", count: stuckStages.length, title: "워커는 살아 있는데 단계가 나아가지 않습니다",
+      detail: <>{stuckStages.map((row) => throughput?.stages.find((stage) => stage.key === row.stage)?.label ?? row.stage).join(" · ")} — 오래 기다린 후보가 있는데 5분간 저장 진행이 없습니다.</>,
+      action: { label: "작업 흐름", href: "/admin/status?tab=jobs" },
+    });
+  }
+  if (attention && attention.auditRejectsOpen > 0) {
+    actions.push({
+      key: "audit", tone: "hold", count: attention.auditRejectsOpen, title: "감사가 거절 판정한 발행분이 처리되지 않았습니다",
+      detail: <>발행 뒤 감사가 &ldquo;제품 아님&rdquo;으로 본 것 — 사람이 내리거나 유지로 정해야 합니다.</>,
+      action: { label: "내릴 후보", href: "/admin/audit" },
+    });
+  }
+  if (attention && attention.healthOverdue > 0) {
+    actions.push({
+      key: "health-overdue", tone: attention.healthOverdue > 5_000 ? "hold" : "clear", count: attention.healthOverdue, title: "생존 확인이 6시간 넘게 밀린 제품",
+      detail: <>uptime-ping 처리량이 목표(시간당 3,224)에 못 미치면 쌓입니다.</>,
+    });
+  }
+  if (attention && attention.introNeedsEditor > 0) {
+    actions.push({
+      key: "intro", tone: "hold", count: attention.introNeedsEditor, title: "소개 확인이 필요한 제품",
+      detail: <>소개 검수가 근거로는 알 수 없다고 한 것 — 검수 잡은 멈춰 있습니다.</>,
+      action: { label: "제품 관리", href: "/admin/products?filter=intro" },
+    });
+  }
+  const quotaAccount = accounts?.find((row) => row.enabled && row.coreQuota);
+  const quota = quotaAccount ? parseCoreQuota(quotaAccount.coreQuota) : null;
+  if (quota && quota.limit > 0 && quota.remaining / quota.limit < 0.1) {
+    actions.push({
+      key: "quota", tone: "critical", count: quota.remaining, title: "GitHub API 한도가 거의 남지 않았습니다",
+      detail: <>{quota.remaining}/{quota.limit} · {new Date(quota.reset * 1000).toLocaleTimeString("ko-KR", { timeZone: "Asia/Seoul", hour: "2-digit", minute: "2-digit", hour12: false })} 초기화</>,
+      action: { label: "수집 계정", href: "/admin/github-accounts" },
+    });
+  }
   if (actions.length === 0) {
     actions.push({
       key: "clear", tone: "clear", count: "0", title: "지금 손댈 것이 없습니다",
@@ -224,9 +326,33 @@ export default async function StatusPage({ searchParams }: { searchParams: Promi
 
   const search = await searchLogSummary(7).catch(() => null);
 
+  /** 웹 두 대의 릴리스 — 같은 릴리스인지 머리말 칩이 본다 */
+  const web = ops.serviceInstances.filter((instance) => instance.role === "app")
+    .map((instance) => ({ instance: instance.instanceId, release: typeof instance.value.release === "string" ? instance.value.release : null }));
+  const probes: ConnectionProbe[] = (["claude", "codex"] as const).map((provider) => ({
+    provider, result: agent?.accounts?.[provider]?.probe?.result ?? agent?.accounts?.[provider]?.result ?? null,
+    checkedAt: agent?.accounts?.[provider]?.probe?.checkedAt ?? null,
+  }));
+  const roleRows = roles?.roles ?? [];
+  const scheduler = roles?.scheduler ?? { freshReplicas: 0, alarm: true };
+  const dashboard = (
+    <>
+      <KpiStrip series={hourly} textPending={health?.pendingGeneration ?? 0} verifyPending={health?.pendingVerification ?? 0} />
+      <StageRail snapshot={throughput} flow={flow} humanQueue={needsReview} humanOldestDays={oldestWait} humanSplit={seconds.counts.needsHuman}
+        signals={workerProgress?.stages} liveness={workerProgress?.liveness} />
+      <RolesTable roles={roleRows} scheduler={scheduler} web={web} />
+      <ModelCards rows={models ?? []} probes={probes} />
+      <AttentionList items={actions} />
+      <SignalTable rows={yields ?? []} />
+      <TodayFeed today={today ?? { total24h: 0, korean24h: 0, latest: [] }} down={down.length} />
+    </>
+  );
+  const statusChips = <StatusChips roles={roleRows} scheduler={scheduler} web={web} models={models ?? []}
+    quota={quota ? { remaining: quota.remaining, limit: quota.limit, resetAt: new Date(quota.reset * 1000).toISOString() } : null} />;
+
   return (
     <main className="pb-10">
-      <OperationsCenter throughput={<><ThroughputStrip snapshot={throughput} signals={workerProgress?.stages} scheduler={workerProgress?.scheduler} liveness={workerProgress?.liveness} /><SearchHealthPanel health={health} observedAt={healthObservation?.observedAt} /></>} key={initialTab} initialTab={initialTab} queue={<QueuePreview entries={queue.entries} total={queue.total} counts={decisions.counts} filters={filters} totalWaiting={needsReview} filterScanTruncated={causes?.truncated || Object.values(decisions.counts).reduce((sum, count) => sum + count, 0) < needsReview} />} data={ops} candidates={manual} reviewMode={settings.reviewMode} enabled={settings.enabled} localCodexAllowed={localCodexEnabled()} actionQueue={<ActionQueue items={actions}/>} pipeline={<div className="flex flex-col gap-2"><PipelineRail flow={flow}/><TranslationProgress progress={translation}/></div>} oauthConfigured={Boolean(process.env.GITHUB_OAUTH_CLIENT_ID && process.env.GITHUB_OAUTH_CLIENT_SECRET)}
+      <OperationsCenter dashboard={dashboard} statusChips={statusChips} searchHealth={<><SearchHealthPanel health={health} observedAt={healthObservation?.observedAt} /><TranslationProgress progress={translation} /></>} key={initialTab} initialTab={initialTab} queue={<QueuePreview entries={queue.entries} total={queue.total} counts={decisions.counts} filters={filters} totalWaiting={needsReview} filterScanTruncated={causes?.truncated || Object.values(decisions.counts).reduce((sum, count) => sum + count, 0) < needsReview} />} data={ops} candidates={manual} reviewMode={settings.reviewMode} enabled={settings.enabled} localCodexAllowed={localCodexEnabled()} oauthConfigured={Boolean(process.env.GITHUB_OAUTH_CLIENT_ID && process.env.GITHUB_OAUTH_CLIENT_SECRET)}
         jobs={JOB_NAMES.map(name => {
           const job = states.get(name);
           return { name, status: jobStatusLabel(job), lastRunAt: job?.lastRunAt?.toISOString() ?? null,
