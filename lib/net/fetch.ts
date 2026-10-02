@@ -7,6 +7,19 @@ const MAX_REDIRECTS = 5;
 const MAX_HTML_BYTES = 2 * 1024 * 1024; // 2MB
 
 /**
+ * 외부 페이지에 보내는 기본 헤더.
+ *
+ * 언어를 밝히지 않으면 지역화하는 사이트가 서버의 위치(한국)를 보고 한국어 판을 준다 — ClickHouse 가
+ * "빠른 오픈소스 OLAP DBMS"라는 이름으로, zuse.sh 가 한국어 소개로 올라왔다(2026-10-02 운영, 페이지만
+ * 한국어고 저장소는 영어인 제품 69건). 제품의 기준 언어는 영어 판으로 둔다. 한국어 판만 있는 사이트는
+ * 어차피 한국어가 온다.
+ */
+export const DEFAULT_HEADERS = {
+  "user-agent": "NoMoreVibe/1.0 (+https://nomorevibe.app)",
+  "accept-language": "en-US,en;q=0.9",
+} as const;
+
+/**
  * 연결 시점 DNS 검증 — 1차 검사와 실제 연결 사이에 레코드를 바꾸는 DNS 리바인딩을 차단한다.
  *
  * 주의: net.connect의 autoSelectFamily(Node 20+ 기본)는 lookup을 { all: true }로 호출하고
@@ -157,7 +170,7 @@ export async function fetchCapped(
   }
   const request = options.request ?? defaultRequest;
   const headers = {
-    "user-agent": "NoMoreVibe/1.0 (+https://nomorevibe.app)",
+    ...DEFAULT_HEADERS,
     ...options.headers,
   };
   let current = url;
@@ -328,7 +341,7 @@ export async function safeFetch(url: string, mode: FetchMode = "interactive"): P
       res = (await undiciFetch(current, {
         redirect: "manual",
         signal,
-        headers: { "user-agent": "NoMoreVibe/1.0 (+https://nomorevibe.app)" },
+        headers: DEFAULT_HEADERS,
         dispatcher: allowPrivate() ? undefined : ssrfSafeAgent,
       })) as unknown as Response;
     } catch {

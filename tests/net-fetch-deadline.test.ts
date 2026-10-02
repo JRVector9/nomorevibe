@@ -206,3 +206,22 @@ it("비표준 HTTP 상태도 원래 상태를 유지하고 본문과 origin 자�
   expect(cancel).toHaveBeenCalledOnce();
   expect((await safeFetch("https://unusual.test/again", "background"))?.response.status).toBe(200);
 });
+
+/**
+ * 언어를 밝히지 않으면 지역화하는 사이트가 서버 위치(한국)를 보고 한국어 판을 준다 — ClickHouse 가
+ * "빠른 오픈소스 OLAP DBMS"로 올라왔다(2026-10-02). 모든 hop 에 영어 선호를 보낸다.
+ */
+it("모든 hop 에 영어 선호(accept-language)와 user-agent 를 보낸다", async () => {
+  fetchMock
+    .mockResolvedValueOnce(response(302, "https://example.com/en"))
+    .mockResolvedValueOnce(response(200));
+
+  await safeFetch("https://example.com/", "background");
+
+  const headers = fetchMock.mock.calls.map(([, init]) => (init as { headers: Record<string, string> }).headers);
+  expect(headers).toHaveLength(2);
+  for (const sent of headers) {
+    expect(sent["accept-language"]).toBe("en-US,en;q=0.9");
+    expect(sent["user-agent"]).toContain("NoMoreVibe/1.0");
+  }
+});
