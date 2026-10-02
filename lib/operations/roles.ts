@@ -15,6 +15,9 @@ export type RoleOverview = {
   primaryRelease: string | null; standbyRelease: string | null;
 };
 
+/** 공통 이미지로 함께 올리는 역할 — 릴리스가 웹과 같아야 한다. maintenance·text 는 git 빌드라 따로 간다. */
+export const SHARED_IMAGE_ROLES = new Set(["crawler", "reviewer", "publisher"]);
+
 export async function roleOverview(): Promise<{ roles: RoleOverview[]; scheduler: { freshReplicas: number; alarm: boolean } }> {
   const [leases, observations] = await Promise.all([
     db.select({ role: roleLeases.role, ownerInstanceId: roleLeases.ownerInstanceId, ownerBootId: roleLeases.ownerBootId,

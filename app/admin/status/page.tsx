@@ -19,7 +19,7 @@ import { pipelineFlow, oldestReviewWaitDays, stalledReviewCount } from "@/lib/op
 import { pipelineThroughput } from "@/lib/operations/throughput";
 import { buildWorkerProgress } from "@/lib/operations/worker-progress-query";
 import { attentionCounts, hourlyThroughput, modelHealth, signalYields, todayPublications } from "@/lib/operations/dashboard";
-import { roleOverview } from "@/lib/operations/roles";
+import { roleOverview, SHARED_IMAGE_ROLES } from "@/lib/operations/roles";
 import { listGitHubCollectorAccounts, parseCoreQuota } from "@/lib/crawl/github-accounts";
 import { KpiStrip } from "./dashboard/KpiStrip";
 import { StageRail } from "./dashboard/StageRail";
@@ -154,6 +154,9 @@ export default async function StatusPage({ searchParams }: { searchParams: Promi
    * 원인이 아니다. 원인을 위에 두어야 아래가 저절로 풀린다.
    */
   const agent = latestServiceInstance(ops.serviceInstances, "connect-agent")?.value as AgentStatus | undefined;
+  /** 웹 두 대의 릴리스 — 머리말 칩과 릴리스 불일치 판단이 본다 */
+  const web = ops.serviceInstances.filter((instance) => instance.role === "app")
+    .map((instance) => ({ instance: instance.instanceId, release: typeof instance.value.release === "string" ? instance.value.release : null }));
   const failedJobs = jobStates.filter(job => job.lastError);
   const actions: ActionItem[] = [];
   const healthObservation = ops.observations.find(row => row.key === "job:product-search-health");
@@ -242,11 +245,13 @@ export default async function StatusPage({ searchParams }: { searchParams: Promi
       action: { label: "역할 표", href: "/admin/status#roles" },
     });
   }
-  const releases = new Set(roles?.roles.map((row) => row.ownerRelease).filter((value): value is string => Boolean(value)));
+  // 공통 이미지 역할과 웹만 비교한다 — maintenance·text 는 git 빌드라 릴리스가 다른 것이 정상이다(2026-10-03 오경보)
+  const releases = new Set([...(roles?.roles ?? []).filter((row) => SHARED_IMAGE_ROLES.has(row.role)).map((row) => row.ownerRelease),
+    ...web.map((row) => row.release)].filter((value): value is string => Boolean(value)));
   if (releases.size > 1) {
     actions.push({
-      key: "release", tone: "hold", count: releases.size, title: "역할마다 릴리스가 다릅니다",
-      detail: <>{[...releases].map((value) => value.slice(0, 7)).join(" · ")} — 주·예비 릴리스 절차로 맞춥니다.</>,
+      key: "release", tone: "hold", count: releases.size, title: "공통 이미지 릴리스가 갈렸습니다",
+      detail: <>{[...releases].map((value) => value.slice(0, 7)).join(" · ")} — 릴리스 도구(deploy_shared_images.py)로 8개 앱을 같은 SHA 로 맞춥니다.</>,
     });
   }
   const workerAlarms = workerProgress?.liveness.filter((row) => row.alarm) ?? [];
@@ -326,9 +331,6 @@ export default async function StatusPage({ searchParams }: { searchParams: Promi
 
   const search = await searchLogSummary(7).catch(() => null);
 
-  /** 웹 두 대의 릴리스 — 같은 릴리스인지 머리말 칩이 본다 */
-  const web = ops.serviceInstances.filter((instance) => instance.role === "app")
-    .map((instance) => ({ instance: instance.instanceId, release: typeof instance.value.release === "string" ? instance.value.release : null }));
   const probes: ConnectionProbe[] = (["claude", "codex"] as const).map((provider) => ({
     provider, result: agent?.accounts?.[provider]?.probe?.result ?? agent?.accounts?.[provider]?.result ?? null,
     checkedAt: agent?.accounts?.[provider]?.probe?.checkedAt ?? null,
