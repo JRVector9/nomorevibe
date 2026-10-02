@@ -97,6 +97,8 @@ export type BrowseOptions = {
   query?: SearchQuery;
   builder?: string;
   hasRepository?: boolean;
+  /** 마지막 확인 사이에 스타가 는 제품만(repository.ts) */
+  rising?: boolean;
 };
 
 export async function getPublicList(limit: number, options: BrowseOptions = {}): Promise<ProductListItem[]> {

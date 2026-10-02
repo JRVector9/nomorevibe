@@ -59,7 +59,7 @@ vi.mock("@/lib/domain/ranking/view", () => ({
   getSeasonRanking,
 }));
 
-import HomePage, { HomeContent, needsUnclaimedFill } from "@/app/page";
+import HomePage, { HomeContent, fallbackSort, needsUnclaimedFill } from "@/app/page";
 
 const season: SeasonSummary = {
   key: "2026-W34",
@@ -168,19 +168,59 @@ describe("미클레임 구획을 붙이는 기준", () => {
     const html = await render();
 
     expect(getUnclaimedList).not.toHaveBeenCalled();
+    expect(getPublicList).not.toHaveBeenCalled();
+    expect(html).toContain("ranked-0");
     expect(html).not.toContain("주인을 기다리는 제품");
   });
 
-  it("검증 제품이 모자라면 구획을 붙인다", async () => {
+  /**
+   * 검증 제품이 0인 동안 기본 탭이 늘 "아직 순위에 오른 제품이 없습니다"였다(2026-10-02 운영, 공개 25,757건).
+   * 그동안은 순위 대신 스타가 는 공개 목록을 보여준다 — 그 목록이 곧 미클레임 제품이라 구획을 따로 붙이지 않는다.
+   */
+  it("검증 제품이 모자라면 추천 탭은 순위 대신 스타가 는 목록을 보여주고 구획을 붙이지 않는다", async () => {
     getSeasonRanking.mockResolvedValue({ season, items: [ranked("verified-one", 1)] });
     countProducts.mockResolvedValue(3);
-    getUnclaimedList.mockResolvedValue([product("seeded-one")]);
+    getPublicList.mockResolvedValue([product("rising-one")]);
 
     const html = await render();
 
-    expect(getUnclaimedList).toHaveBeenCalled();
-    expect(html).toContain("주인을 기다리는 제품");
-    expect(html).toContain("seeded-one");
+    expect(getPublicList).toHaveBeenCalledWith(3, expect.objectContaining({ sort: "rising", rising: true, excludeDown: true }));
+    expect(getSeasonRanking).not.toHaveBeenCalled();
+    expect(getUnclaimedList).not.toHaveBeenCalled();
+    expect(html).toContain("rising-one");
+    expect(html).toContain("스타 증가 순 3개");
+    expect(html).toContain('href="/?metric=rising"');
+    expect(html).not.toContain("주인을 기다리는 제품");
+    expect(html).not.toContain("아직 순위에 오른 제품이 없습니다");
+  });
+
+  it("관심 많은 순도 검증 제품이 모자라면 스타 많은 순 공개 목록으로 대신한다", async () => {
+    countProducts.mockResolvedValue(5);
+    getPublicList.mockResolvedValue([product("starred-one")]);
+
+    const html = await render({ sort: "all-time" });
+
+    expect(getPublicList).toHaveBeenCalledWith(5, expect.objectContaining({ sort: "stars" }));
+    expect(getPublicList.mock.calls[0][1].rising).toBeUndefined();
+    expect(getAllTimeRanking).not.toHaveBeenCalled();
+    expect(html).toContain("starred-one");
+    expect(html).toContain("스타 많은 순 5개");
+  });
+
+  it("스타가 는 제품이 하나도 없으면 순위가 아니라 스타 확인 이야기를 한다", async () => {
+    const html = await render();
+
+    expect(html).toContain("아직 스타 변화를 확인한 프로젝트가 없습니다");
+    expect(html).not.toContain("아직 순위에 오른 제품이 없습니다");
+  });
+
+  it("대체 목록은 검증 제품이 모자랄 때 추천·관심 많은 순에만 있다", () => {
+    const { minimumProducts } = DEFAULT_RANKING_POLICY.eligibility;
+    expect(fallbackSort("weekly", 0, minimumProducts)).toBe("rising");
+    expect(fallbackSort("all-time", minimumProducts - 1, minimumProducts)).toBe("stars");
+    expect(fallbackSort("recent", 0, minimumProducts)).toBeNull();
+    expect(fallbackSort("trending", 0, minimumProducts)).toBeNull();
+    expect(fallbackSort("weekly", minimumProducts, minimumProducts)).toBeNull();
   });
 
   it("필터가 걸려 목록이 비어도 전역 검증 수가 충분하면 붙이지 않는다", async () => {
@@ -199,6 +239,8 @@ describe("미클레임 구획을 붙이는 기준", () => {
  */
 describe("빈 화면 문구", () => {
   it("중복 쿼리 값은 첫 값만 사용하고 500을 내지 않는다", async () => {
+    countProducts.mockResolvedValue(25);
+
     await render({ builder: ["Codex", "Claude"] });
 
     expect(getSeasonRanking).toHaveBeenCalledWith(expect.objectContaining({ builder: "Codex" }));
@@ -277,7 +319,8 @@ describe("빈 화면 문구", () => {
     categoryCounts.mockResolvedValue({});
     getUnclaimedList.mockResolvedValue([product("seeded-one")]);
 
-    const html = await render();
+    // 추천·관심 많은 순은 대체 목록으로 채워지므로 순위 설명이 남는 곳은 급상승뿐이다
+    const html = await render({ sort: "trending" });
 
     expect(html).toContain("아직 순위에 오른 제품이 없습니다");
     expect(html).toContain("주인을 기다리는 제품");
@@ -293,7 +336,7 @@ describe("카테고리 드롭다운", () => {
   it("추천 탭에서도 고를 수 있는 카테고리가 뜬다", async () => {
     getSeasonRanking.mockResolvedValue({ season, items: [] });
     categoryCounts.mockResolvedValue({ Dev: 12 });
-    getUnclaimedList.mockResolvedValue([product("seeded-one")]);
+    getPublicList.mockResolvedValue([product("seeded-one")]);
 
     const html = await render();
 
@@ -312,6 +355,7 @@ describe("조회 순서", () => {
     let releasePulse: (value: unknown) => void = () => {};
     getHomePulse.mockReturnValue(new Promise((resolve) => { releasePulse = resolve; }));
     getSeasonRanking.mockResolvedValue({ season, items: [ranked("verified-one", 1)] });
+    countProducts.mockResolvedValue(25);
 
     const rendering = render();
     await vi.waitFor(() => {
@@ -328,6 +372,7 @@ describe("조회 순서", () => {
     getHomePulse.mockRejectedValue(new Error("pulse down"));
     listBuilders.mockResolvedValue(["Codex"]);
     getSeasonRanking.mockResolvedValue({ season, items: [ranked("verified-one", 1)] });
+    countProducts.mockResolvedValue(25);
 
     const html = await render();
 
@@ -351,7 +396,7 @@ describe("구획 제목", () => {
     categoryCounts.mockResolvedValue({});
     getUnclaimedList.mockResolvedValue([product("seeded-one")]);
 
-    const html = await render();
+    const html = await render({ sort: "trending" });
 
     expect(html).not.toContain("새로 발견됨");
     expect(html).toContain("주인을 기다리는 제품");
