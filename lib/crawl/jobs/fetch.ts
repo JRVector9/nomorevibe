@@ -8,6 +8,7 @@ import * as crawl from "@/lib/crawl/repository";
 import { getSettings } from "@/lib/crawl/settings";
 import { getRepo } from "@/lib/crawl/github";
 import { PROBE_COMMITS, probeAiEvidence } from "@/lib/crawl/ai-evidence-gate";
+import { SHOW_HN_SIGNAL } from "@/lib/crawl/settings-schema";
 import { extractSiteRepositoryKeys } from "@/lib/domain/evidence/providers/site-fingerprint";
 import { extractGithubLinks } from "@/lib/crawl/github-links";
 import { requeueAfterAdminEvidenceRefresh } from "@/lib/crawl/admin-review";
@@ -56,6 +57,7 @@ export async function fetchCrawlDocuments(ctx: JobContext<null>): Promise<JobOut
   }
   /** 흔적이 있어야 들여보내는 신호(settings-schema requireEvidence) — 프론티어의 signal 이 그 라벨이다 */
   const evidenceRequired = new Set(settings.discover.queries.filter((q) => q.requireEvidence).map((q) => q.label));
+  if (settings.discover.showHn.requireEvidence) evidenceRequired.add(SHOW_HN_SIGNAL);
   if (ctx.lease && ctx.hasBudget()) {
     const recovered = await crawl.recoverAbandonedFrontier(ctx.lease);
     if (recovered) ctx.log("crawl.fetch_recovered", { recovered });

@@ -10,6 +10,7 @@ import { beforeEach, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   dequeue: vi.fn(), defer: vi.fn(), save: vi.fn(), mark: vi.fn(), failed: vi.fn(), judge: vi.fn(),
   repo: vi.fn(), page: vi.fn(), request: vi.fn(), probe: vi.fn(),
+  showHn: { enabled: true, priority: 120, requireEvidence: false },
 }));
 vi.mock("@/lib/crawl/repository", () => ({
   dequeue: mocks.dequeue, deferFrontier: mocks.defer, saveFetchedDocument: mocks.save,
@@ -20,7 +21,7 @@ vi.mock("@/lib/crawl/settings", () => ({ getSettings: async () => ({
   discover: { queries: [
     { label: "한국어 README", requireEvidence: true, enabled: true },
     { label: "Claude 커밋 트레일러", requireEvidence: false, enabled: true },
-  ] },
+  ], showHn: mocks.showHn },
 }) }));
 vi.mock("@/lib/crawl/github", () => ({ getRepo: mocks.repo }));
 vi.mock("@/lib/crawl/ai-evidence-gate", () => ({ PROBE_COMMITS: 30, probeAiEvidence: mocks.probe }));
@@ -35,6 +36,7 @@ const context = () => ({ cursor: null, hasBudget: () => true, save: vi.fn(), log
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mocks.showHn.requireEvidence = false;
   mocks.repo.mockResolvedValue({ ok: true, value: { id: 7, homepage: "https://app.test" } });
   mocks.page.mockImplementation(async (url: string) => ({ status: 200, finalUrl: url, html: "<title>App</title>" }));
   mocks.save.mockResolvedValue({ needsJudgement: true });
@@ -107,4 +109,18 @@ it("빈 레포(404)는 건너뛰고, 다른 GitHub 실패는 항목 실패로 �
   expect(mocks.mark).toHaveBeenCalledWith("kim/empty", "skipped", expect.anything());
   expect(mocks.failed).toHaveBeenCalledWith("kim/flaky", "AI 흔적 확인 실패 — GitHub 502", undefined, expect.anything());
   expect(mocks.page).not.toHaveBeenCalled();
+});
+
+// Show HN 은 검색 신호가 아니라 따로 켠다(settings.discover.showHn.requireEvidence) — 게시물에는 AI 조건이 없다
+it("Show HN 은 설정으로 켰을 때만 더듬는다", async () => {
+  mocks.dequeue.mockResolvedValueOnce([entry("hn/app", "Show HN")]).mockResolvedValue([]);
+  await fetchCrawlDocuments(context());
+  expect(mocks.probe).not.toHaveBeenCalled();
+
+  mocks.showHn.requireEvidence = true;
+  mocks.dequeue.mockResolvedValueOnce([entry("hn/app", "Show HN")]).mockResolvedValue([]);
+  mocks.probe.mockResolvedValue({ ok: true, found: [] });
+  await fetchCrawlDocuments(context());
+  expect(mocks.probe).toHaveBeenCalledWith("hn/app");
+  expect(mocks.judge).toHaveBeenCalledWith(expect.objectContaining({ repo: "hn/app", reason: "ai_evidence_not_found" }));
 });

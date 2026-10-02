@@ -1,3 +1,4 @@
+import { SHOW_HN_SIGNAL } from "@/lib/crawl/settings-schema";
 import { z } from "zod";
 import * as crawl from "@/lib/crawl/repository";
 import { getSettings } from "@/lib/crawl/settings";
@@ -18,7 +19,7 @@ import type { JobContext, JobOutcome } from "@/lib/jobs/runner";
  *
  * 인증이 없고 무료다. 우리 쪽 상한은 아래 상수로만 정한다.
  */
-export const SHOW_HN_SIGNAL = "Show HN";
+export { SHOW_HN_SIGNAL };
 const ENDPOINT = "https://hn.algolia.com/api/v1/search_by_date";
 const HITS_PER_PAGE = 100;
 /** 한 번도 돈 적이 없을 때 거슬러 올라갈 기간. 알골리아 페이지 상한(1,000건) 안에 든다 */

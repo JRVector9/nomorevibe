@@ -119,7 +119,8 @@ async function preparePublication(candidate: CrawlCandidate): Promise<
       draft = draftFrom(candidate.repo, document, access.mode === "installable", { text: written.tagline, source: written.source, by: written.writtenBy });
     }
   }
-  if (!draft.hasDescription && candidate.decidedBy !== "admin" && !starAutoApproved) {
+  // 별 자동승인도 소개 없이는 올리지 않는다(2026-10-02 사용자 결정) — 소개가 지어지면 평소 경로로 다시 온다
+  if (!draft.hasDescription && candidate.decidedBy !== "admin") {
     return { ok: false, reason: "no_description" };
   }
   return { ok: true, snapshot: { document, url, settings, checkedEvidence, starAutoApproved, draft } };

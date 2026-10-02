@@ -19,6 +19,9 @@ export const searchSortSchema = z.enum(["relevance", "recent"]).describe(
   "relevance는 레포가 넓게 흩어지고, recent는 최신 활동에 몰린다",
 );
 
+/** Show HN 게시물로 넣은 프론티어 항목의 signal 라벨 — 수집 잡(jobs/hn-show.ts)과 흔적 게이트(jobs/fetch.ts)가 같이 쓴다 */
+export const SHOW_HN_SIGNAL = "Show HN";
+
 const discoverSchema = z.object({
   /** 켜져 있는 검색 신호. 신호별 수율을 비교하려면 개별로 끌 수 있어야 한다 */
   queries: z
@@ -65,6 +68,8 @@ const discoverSchema = z.object({
     enabled: z.boolean(),
     /** 스스로 내놓은 것이라 커밋 트레일러로 주운 것보다 먼저 본다 */
     priority: z.number().int().min(0).max(1000),
+    /** 검색 신호의 requireEvidence 와 같다 — Show HN 게시물에는 AI 조건이 없어 흔적으로 거른다(발행분 트레일러 0.8%) */
+    requireEvidence: z.boolean().optional(),
   }).strict().default({ enabled: true, priority: 120 }),
 });
 

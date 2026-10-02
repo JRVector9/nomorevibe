@@ -93,10 +93,12 @@ it("publishes a verified 100,000-star repository without first or second AI appr
   expect(await db.select().from(secondReviews)).toHaveLength(0);
 });
 
-it("uses the repository name when a verified popular source has no description", async () => {
+// 2026-10-02 사용자 결정: 별 자동승인도 소개가 없으면 올리지 않는다 — 전에는 `owner/repo` 를 소개 삼아 올라갔다
+it("does not publish a verified popular source without a description — it waits for one", async () => {
   await popularCandidate("gate/unnamed", null, 500);
   await tick();
-  expect(await db.select().from(products)).toMatchObject([{ tagline: "gate/unnamed", accessMode: "installable" }]);
+  expect(await db.select().from(products)).toHaveLength(0);
+  expect(await db.select().from(crawlCandidates)).toMatchObject([{ state: "needs_review", reason: "no_description" }]);
 });
 
 it("does not publish a star approval after its threshold changes during classification", async () => {
