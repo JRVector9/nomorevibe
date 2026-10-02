@@ -144,3 +144,13 @@ it("uses positive publication transitions and separates blocked approvals from r
   expect(result).toMatchObject({ completed1m: 1, completed5m: 2, waiting: 1, errors5m: null });
   expect(result.queueNote).toContain("심사·분류 조건 대기 2건");
 });
+
+it("counts a classification hold as blocked even where the connect-agent URL is not configured", async () => {
+  // 릴리스 게이트는 crawler 컨테이너에서 재는데 거기엔 CONNECT_AGENT_URL 이 없다 — 보류 건이 대기로 잡혀 no_progress 오경보(2026-10-03)
+  await candidate("publish/classification-wait", { state: "approved", decidedBy: "admin", judgedAt: ago(600) });
+  await db.insert(categoryDecisions).values({ repo: "publish/classification-wait", sourceHash: "x", category: null,
+    reason: "waiting", actor: "publisher", retryAt: ago(-600), updatedAt: ago(300) });
+  const result = await stage("publish", { ...settings, reviewMode: "enforce" });
+  expect(result).toMatchObject({ waiting: 0 });
+  expect(result.queueNote).toContain("심사·분류 조건 대기 1건");
+});
