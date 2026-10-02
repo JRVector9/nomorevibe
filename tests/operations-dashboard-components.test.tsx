@@ -38,6 +38,12 @@ describe("지금 처리량", () => {
     expect(out).toContain("검수 대기 193");
   });
 
+  it("1차 실패율은 끝난 심사와 실패 호출의 합을 분모로 쓴다", () => {
+    const out = html(createElement(KpiStrip, { series: series({ firstReviews: 3, firstFailed: 17 }), textPending: 0, verifyPending: 0 }));
+    expect(out).toContain("실패 85%");
+    expect(out).toContain('data-tone="bad"');
+  });
+
   it("2차 일치가 70% 아래면 주황으로 갈림 수를 적는다", () => {
     const out = html(createElement(KpiStrip, { series: series({ secondReviews: 227, secondAgreed: 120 }), textPending: 0, verifyPending: 0 }));
     expect(out).toContain("1차와 일치 53%");
@@ -108,15 +114,17 @@ describe("역할 표와 상태 칩", () => {
   const scheduler = { freshReplicas: 2, alarm: false };
   const web = [{ instance: "m3-web", release: "6170584abc" }, { instance: "mini-web", release: "6170584abc" }];
 
-  it("예비가 일하는 역할은 주황 알약으로 보이고 릴리스가 갈리면 안내를 붙인다", () => {
+  it("예비가 일하는 역할은 주황 알약으로 보이고 공통 이미지 릴리스가 갈릴 때만 안내를 붙인다", () => {
     const out = html(createElement(RolesTable, { roles, scheduler, web }));
     expect(out).toContain("mini 예비");
     expect(out).toContain("· 예비가 일함");
     expect(out).toContain('data-tone="warn"');
     expect(out).toContain("6170584");
     expect(out).toContain("ce64737");
-    expect(out).toContain("릴리스가 2가지");
+    expect(out).not.toContain("릴리스가"); // maintenance 는 git 빌드 — 릴리스가 달라도 정상
     expect(out).toContain("2/2 복제");
+    const split = html(createElement(RolesTable, { roles, scheduler, web: [web[0], { instance: "mini-web", release: "ce64737xyz" }] }));
+    expect(split).toContain("릴리스가 2가지");
   });
 
   it("머리말 칩은 주 n/5·예비·스케줄러·웹·모델·한도를 한 줄로 요약한다", () => {
@@ -142,6 +150,7 @@ describe("모델·조치·신호", () => {
       { key: "fallback", label: "2차 fallback", model: "sonnet", calls1h: 0, failed1h: 0, avgSeconds: null, agreement1h: null, lastSuccessAt: null },
     ];
     const out = html(createElement(ModelCards, { rows, probes: [{ provider: "claude", result: "success", checkedAt: null }] }));
+    expect(out).toContain("11.0</b>초 (대기 포함)");
     expect(out).toContain("실패 12%");
     expect(out).toContain("일치 53%");
     expect(out).toContain("호출 없음");

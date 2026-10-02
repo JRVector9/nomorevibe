@@ -31,7 +31,7 @@ export function ModelCards({ rows, probes }: { rows: ModelHealth[]; probes: Conn
               <span className="role">{row.label}</span>
               <span className="dash-pill" data-tone={state.tone}>{state.text}</span>
               <span className="name" title={row.model ?? undefined}>{row.model ?? "설정 없음"}</span>
-              <span className="stat"><b>{n(row.calls1h)}</b> · 실패 <b>{n(row.failed1h)}</b>{row.avgSeconds !== null && <> · <b>{row.avgSeconds.toFixed(1)}</b>초</>}
+              <span className="stat"><b>{n(row.calls1h)}</b> · 실패 <b>{n(row.failed1h)}</b>{row.avgSeconds !== null && <> · <b>{row.avgSeconds.toFixed(1)}</b>초{(row.key === "second" || row.key === "fallback") && " (대기 포함)"}</>}
                 {row.key !== "second" && row.agreement1h !== null && <> · 일치 <b>{Math.round(row.agreement1h * 100)}%</b></>}</span>
             </div>
           );

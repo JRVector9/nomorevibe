@@ -19,14 +19,16 @@ export function KpiStrip({ series, textPending, verifyPending }: {
   const points = series.points;
   const last = points[points.length - 1];
   const avg = (pick: (p: typeof last) => number) => Math.round(points.reduce((sum, p) => sum + pick(p), 0) / points.length);
-  const firstFailPct = last.firstReviews > 0 ? last.firstFailed / last.firstReviews : 0;
+  // firstReviews(끝난 심사)와 firstFailed(실패한 호출)는 겹치지 않는다 — 실패율 분모는 둘의 합(프로드 첫 화면에 "실패 567%"가 떴다)
+  const firstTotal = last.firstReviews + last.firstFailed;
+  const firstFailPct = firstTotal > 0 ? last.firstFailed / firstTotal : 0;
   const agree = last.secondReviews > 0 ? last.secondAgreed / last.secondReviews : null;
   const tiles = [
     { key: "discovered", label: "발견 (frontier)", value: last.discovered, small: undefined, sub: `24h 평균 ${n(avg(p => p.discovered))}/h`, tone: undefined,
       values: points.map(p => p.discovered), color: "accent" as const },
     { key: "judged", label: "수집·판정", value: last.judged, small: undefined, sub: `24h 평균 ${n(avg(p => p.judged))}/h`, tone: undefined,
       values: points.map(p => p.judged), color: "accent" as const },
-    { key: "first", label: "1차 AI 심사", value: last.firstReviews, small: `실패 ${pct(last.firstFailed, last.firstReviews)}`,
+    { key: "first", label: "1차 AI 심사", value: last.firstReviews, small: `실패 ${pct(last.firstFailed, firstTotal)}`,
       sub: `24h 평균 ${n(avg(p => p.firstReviews))}/h`, tone: firstFailPct >= 0.1 ? "bad" : firstFailPct >= 0.05 ? "warn" : undefined,
       values: points.map(p => p.firstReviews), color: "accent" as const },
     { key: "second", label: "2차 AI 심사", value: last.secondReviews, small: agree === null ? undefined : `1차와 일치 ${Math.round(agree * 100)}%`,

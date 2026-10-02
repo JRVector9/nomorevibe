@@ -1,4 +1,4 @@
-import type { RoleOverview } from "@/lib/operations/roles";
+import { SHARED_IMAGE_ROLES, type RoleOverview } from "@/lib/operations/roles";
 
 const REASON: Record<string, string> = {
   ready: "정상", primary_missing: "주 관측 없음", standby_missing: "예비 관측 없음", lease_missing: "lease 없음",
@@ -15,7 +15,8 @@ const REASON: Record<string, string> = {
 export function RolesTable({ roles, scheduler, web }: {
   roles: RoleOverview[]; scheduler: { freshReplicas: number; alarm: boolean }; web: { instance: string; release: string | null }[];
 }) {
-  const releases = new Set([...roles.map((row) => row.ownerRelease).filter(Boolean), ...web.map((row) => row.release).filter(Boolean)]);
+  // maintenance·text 는 git 빌드라 릴리스가 달라도 정상 — 공통 이미지 역할과 웹만 센다
+  const releases = new Set([...roles.filter((row) => SHARED_IMAGE_ROLES.has(row.role)).map((row) => row.ownerRelease).filter(Boolean), ...web.map((row) => row.release).filter(Boolean)]);
   return (
     <section id="roles" className="dash-card dash-4" aria-label="역할과 예비">
       <div className="dash-card-h"><h2>역할 · 주/예비</h2><small>lease 45초 · 관측 15초</small></div>
@@ -49,7 +50,7 @@ export function RolesTable({ roles, scheduler, web }: {
           </tbody>
         </table>
       </div>
-      {releases.size > 1 && <p className="dash-note">릴리스가 {releases.size}가지입니다 — 주·예비 릴리스 절차(runbook 4)로 맞춥니다.</p>}
+      {releases.size > 1 && <p className="dash-note">공통 이미지 릴리스가 {releases.size}가지입니다 — 릴리스 도구로 8개 앱을 같은 SHA 로 맞춥니다.</p>}
     </section>
   );
 }
