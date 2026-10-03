@@ -99,6 +99,10 @@ export type BrowseOptions = {
   hasRepository?: boolean;
   /** 마지막 확인 사이에 스타가 는 제품만(repository.ts) */
   rising?: boolean;
+  /** 앞을 건너뛴다 — 홈의 급상승 띠가 보여 준 만큼 피드가 이어 받을 때 */
+  offset?: number;
+  listedSince?: Date;
+  minStars?: number;
 };
 
 export async function getPublicList(limit: number, options: BrowseOptions = {}): Promise<ProductListItem[]> {
@@ -186,3 +190,15 @@ export async function getRankedList(limit: number, options: BrowseOptions = {}):
 
 // 스타 구간은 별도 조회 모듈에 두되 공개 제품 뷰 진입점에서도 제공한다.
 export { getPopularGroups, getPopularPage } from "./popular";
+
+/** 홈 '이번 주 새로 나온' — 등재 7일 안·스타 NEW_THIS_WEEK_MIN_STARS 이상, 최신순 */
+export const NEW_THIS_WEEK_MIN_STARS = 50;
+export async function getNewThisWeek(limit: number, since: Date): Promise<ProductListItem[]> {
+  return getPublicList(limit, { sort: "recent", listedSince: since, minStars: NEW_THIS_WEEK_MIN_STARS });
+}
+
+/** 상세 끝의 '같은 분야에서 지금 뜨는' — 자기 자신은 뺀다 */
+export async function getRelatedRising(slug: string, category: Category, limit: number): Promise<ProductListItem[]> {
+  const rows = await getPublicList(limit + 1, { sort: "rising", rising: true, category });
+  return rows.filter((row) => row.slug !== slug).slice(0, limit);
+}

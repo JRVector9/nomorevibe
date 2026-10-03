@@ -72,6 +72,10 @@ export type ListOptions = {
   introNeedsEditor?: boolean;
   /** 마지막 두 번 확인한 사이에 GitHub 스타가 는 제품만, 스타 RISING_MAX_STARS 미만 — 홈 '추천'의 대체 목록 */
   rising?: boolean;
+  /** 이 시각 이후에 등재된 것만(listedAt) — 홈 '이번 주 새로 나온' */
+  listedSince?: Date;
+  /** GitHub 스타가 이만큼 이상인 것만 */
+  minStars?: number;
 };
 
 /**
@@ -153,11 +157,13 @@ const introNeedsEditor = sql`exists (
 )`;
 
 /** 목록과 개수가 같은 조건을 쓰도록 한 곳에서 만든다 */
-function listConditions({ statuses, category, query, builder, hasRepository, excludeDown, introNeedsEditor: needsEditor, rising }: Omit<ListOptions, "limit" | "sort" | "offset">) {
+function listConditions({ statuses, category, query, builder, hasRepository, excludeDown, introNeedsEditor: needsEditor, rising, listedSince, minStars }: Omit<ListOptions, "limit" | "sort" | "offset">) {
   const conditions = [inArray(products.status, statuses)];
   if (excludeDown) conditions.push(notDown);
   if (needsEditor) conditions.push(introNeedsEditor);
   if (rising) conditions.push(risingStars);
+  if (listedSince) conditions.push(sql`${listedAt} >= ${listedSince.toISOString()}::timestamptz`);
+  if (minStars !== undefined) conditions.push(sql`${products.stars} >= ${minStars}`);
   if (category) conditions.push(eq(products.category, category));
   if (builder) conditions.push(and(eq(products.builder, builder), builderIsReported)!);
   if (hasRepository) {
@@ -203,6 +209,22 @@ export async function countProducts(options: Omit<ListOptions, "limit" | "sort" 
   const [row] = await db.select({ count: sql<number>`count(*)::int` })
     .from(products).where(and(...listConditions(options)));
   return row?.count ?? 0;
+}
+
+/**
+ * 급상승 순위 — 홈 '지금 뜨는'과 같은 조건(risingStars)·같은 순서(starGain desc) 안에서 몇 번째인가.
+ * 조건 밖(스타 2천 이상, 증가 없음, 비공개)이면 null. 동률은 같은 순위.
+ */
+export async function getRisingRank(slug: string): Promise<number | null> {
+  const [row] = await db.execute<{ rank: number | null }>(sql`
+    with me as (
+      select ${starGain} as gain from ${products}
+       where ${products.slug} = ${slug} and ${products.status} in ('verified', 'seeded') and ${risingStars})
+    select case when me.gain is null then null
+                else (select count(*)::int + 1 from ${products}
+                       where ${products.status} in ('verified', 'seeded') and ${risingStars} and ${starGain} > me.gain) end as rank
+      from me`);
+  return row?.rank ?? null;
 }
 
 /** 발견 보드 — 검증 상태보다 실제 등재 시각을 우선해 시드 제품도 노출한다. */
