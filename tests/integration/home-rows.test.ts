@@ -1,7 +1,12 @@
 // tests/integration/home-rows.test.ts
-import { beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { eq } from "drizzle-orm";
+
+vi.mock("server-only", () => ({}));
+
 import { db } from "@/lib/db";
 import { productHealth, products, type ProductStatus } from "@/lib/db/schema";
+import { getProductDetail } from "@/lib/domain/products/detail-view";
 import { DOWN_THRESHOLD } from "@/lib/domain/products/health";
 import { getRisingRank } from "@/lib/domain/products/repository";
 import { getNewThisWeek, getPublicList, getRelatedRising } from "@/lib/domain/products/view";
@@ -82,5 +87,21 @@ describe("급상승 띠와 피드의 이어짐", () => {
     const feed = await getPublicList(10, { sort: "rising", rising: true, offset: 2 });
     expect(strip.map((row) => row.slug)).toEqual(["a", "b"]);
     expect(feed.map((row) => row.slug)).toEqual(["c", "d"]);
+  });
+});
+
+describe("상세 뷰모델", () => {
+  it("급상승 순위·같은 분야 추천·README 발췌·도구 조사 상태를 준다", async () => {
+    await product("me", { category: "Games", stars: 1180, starsPrevious: 1014 });
+    await product("g1", { category: "Games", stars: 317, starsPrevious: 297 });
+    await db.update(products).set({
+      repoUrl: "https://github.com/willfaust/Madeira",
+      searchReadme: "Madeira runs Windows games on iOS.\n\nIt combines FEX-Emu, Wine and DXMT into one app so that x86-64 titles start on a jailed device without a computer.",
+    }).where(eq(products.slug, "me"));
+    const detail = (await getProductDetail("me"))!;
+    expect(detail.risingRank).toBe(1);
+    expect(detail.related.map((row) => row.slug)).toEqual(["g1"]);
+    expect(detail.readmeExcerpt).toContain("FEX-Emu");
+    expect(detail.toolScan).toBe("none");
   });
 });

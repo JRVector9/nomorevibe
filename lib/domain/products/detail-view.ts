@@ -40,7 +40,10 @@ import { EVIDENCE_LABELS } from "@/lib/domain/evidence/provenance";
 import type { EvidenceSettings } from "@/lib/domain/evidence/settings";
 import { parseRankingPolicy } from "@/lib/domain/ranking/policy";
 import { healthMetrics, DOWN_THRESHOLD } from "./health";
-import { isUnclaimed } from "./view";
+import { getRelatedRising, isUnclaimed, type ProductListItem } from "./view";
+import { getRisingRank } from "./repository";
+import { readmeExcerpt } from "./readme-excerpt";
+import type { Category } from "./schema";
 import { METRICS_WINDOW_DAYS, visitMetrics, type VisitMetrics } from "./clicks";
 
 const slugSchema = z.string().min(1).max(80).regex(/^[a-z0-9][a-z0-9-]*$/);
@@ -187,6 +190,14 @@ export type ProductDetailView = {
   observedAgentFacts: ObservedAgentFactView[];
   skills: SkillView[];
   freshness: FreshnessView[];
+  /** 홈 '지금 뜨는'과 같은 순위 — 조건 밖이면 null (repository.ts getRisingRank) */
+  risingRank: number | null;
+  /** 같은 분야에서 지금 뜨는, 자기 자신 제외, 최대 5 */
+  related: ProductListItem[];
+  /** README 첫 문단들 — 소개가 한 줄뿐일 때 상세 본문이 된다 */
+  readmeExcerpt: string | null;
+  /** 저장소의 AI 도구 흔적 조사 — 없으면 '확인 전'이라고 말해야 한다 */
+  toolScan: "none" | "scanned";
 };
 
 async function findPublicProduct(slug: string): Promise<PublicProduct | null> {
@@ -622,7 +633,9 @@ export async function getProductDetail(slugInput: string): Promise<ProductDetail
   if (!product || product.status === "banned") return null;
   const slug = product.slug;
   const now = new Date();
-  const [rank, visitMap, health, profile, links, sources, media, updates, provenance, settings] = await Promise.all([
+  const primaryRepository = product.repoUrl ? normalizeTypedLink("repository", product.repoUrl) : null;
+  const [rank, visitMap, health, profile, links, sources, media, updates, provenance, settings,
+    risingRank, related, readmeRow, toolScanRow] = await Promise.all([
     activeRank(slug),
     visitMetrics([slug], { windowHours: METRICS_WINDOW_DAYS * 24, minimumPreviousUniqueVisitors: 5 }),
     detailHealth(slug),
@@ -633,6 +646,11 @@ export async function getProductDetail(slugInput: string): Promise<ProductDetail
     visibleUpdates(slug),
     visibleProvenance(slug),
     currentEvidenceSettings(),
+    getRisingRank(slug),
+    getRelatedRising(slug, product.category as Category, 5),
+    db.select({ readme: products.searchReadme }).from(products).where(eq(products.slug, slug)).then((rows) => rows[0] ?? null),
+    // GitHub 저장소가 아니면 키가 없어 조사도 없다. 현재 AGENT_DETECTOR_VERSION 의 조사만 보므로 옛 버전 조사만 있으면 '없음'이다
+    primaryRepository ? getLatestRepositoryAgentScan(primaryRepository.normalizedKey) : Promise.resolve(null),
   ]);
   const crawlSettings = await getCrawlSettings();
   const observedAgentFacts = await observedFacts(sources, settings, crawlSettings.agentEvidence.displayObservedFacts, now);
@@ -647,7 +665,6 @@ export async function getProductDetail(slugInput: string): Promise<ProductDetail
       relationshipState: relationship(source.normalizedFacts?.relationshipState), verifiedAt: source.lastSuccessAt };
     return { ...observed, evidenceLabel: linkEvidenceLabel(observed) };
   });
-  const primaryRepository = product.repoUrl ? normalizeTypedLink("repository", product.repoUrl) : null;
   const repositorySource = sources.find((source) => source.kind === "repository"
     && (!product.repoUrl || source.sourceKey === primaryRepository?.normalizedKey)) ?? null;
   const facts = repositorySource
@@ -692,5 +709,9 @@ export async function getProductDetail(slugInput: string): Promise<ProductDetail
     observedAgentFacts,
     skills: withEvidenceLabels(provenance.skills),
     freshness: sources.map((source) => sourceFreshness(source, settings, now)),
+    risingRank,
+    related,
+    readmeExcerpt: readmeExcerpt(readmeRow?.readme ?? null, currentProduct.tagline),
+    toolScan: toolScanRow ? "scanned" : "none",
   };
 }
