@@ -62,8 +62,8 @@ function samplePulse(): Pulse {
     born: { current: 280, previous: 204, change: 37.3 },
     updates: { projects: 788, releases: 3045 },
     active: [
-      { slug: "soleur", name: "Soleur", category: "Dev", releases: 40, stars: 15 },
-      { slug: "big", name: "Big Tool", category: "Data", releases: 12, stars: 2400 },
+      { slug: "soleur", name: "Soleur", category: "Dev", releases: 40, stars: 15, ogImage: null },
+      { slug: "big", name: "Big Tool", category: "Data", releases: 12, stars: 2400, ogImage: null },
     ],
     categories: [
       { key: "Dev", total: 1652, born: 67 },

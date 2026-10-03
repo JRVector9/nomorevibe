@@ -35,7 +35,7 @@ export type HomePulse = {
   /** 끝난 7일에 새 버전(GitHub 릴리스·제작자 업데이트)을 낸 프로젝트 */
   updates: { projects: number; releases: number };
   /** 새 버전을 가장 많이 낸 프로젝트 */
-  active: { slug: string; name: string; category: Category; releases: number; stars: number | null }[];
+  active: { slug: string; name: string; category: Category; releases: number; stars: number | null; ogImage: string | null }[];
   /** 분야별 공개 수와 그중 이번 주 태어난 수 — 공개 수 순 */
   categories: { key: Category; total: number; born: number }[];
   /** 저장소에서 흔적을 찾은 제작 도구. 관찰 사실 공개가 꺼져 있으면 null */
@@ -154,8 +154,8 @@ export async function loadHomePulse(now: Date): Promise<HomePulse> {
       .innerJoin(products, eq(products.slug, productUpdates.slug))
       .where(newVersion)
       .then((rows) => rows[0]),
-    db.execute<{ slug: string; name: string; category: Category; releases: number; stars: number | null }>(sql`
-      select p.slug, p.name, p.category, u.releases, (d.repo_meta->>'stargazers_count')::int as stars
+    db.execute<{ slug: string; name: string; category: Category; releases: number; stars: number | null; og_image: string | null }>(sql`
+      select p.slug, p.name, p.category, p.og_image, u.releases, (d.repo_meta->>'stargazers_count')::int as stars
         from (select ${productUpdates.slug} as slug, count(*)::int as releases
                 from ${productUpdates} join ${products} on ${products.slug} = ${productUpdates.slug}
                where ${newVersion} group by ${productUpdates.slug}) u
@@ -186,6 +186,7 @@ export async function loadHomePulse(now: Date): Promise<HomePulse> {
       category: row.category,
       releases: Number(row.releases),
       stars: row.stars === null ? null : Number(row.stars),
+      ogImage: row.og_image ?? null,
     })),
     categories: CATEGORIES
       .map((key) => ({ key, total: Number(byCategory.get(key)?.total ?? 0), born: Number(byCategory.get(key)?.born ?? 0) }))

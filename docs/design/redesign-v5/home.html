@@ -1,0 +1,404 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>NoMoreVibe 홈 5차 — 바로 프로젝트</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+body{margin:0}
+a{color:#1d1d1f;text-decoration:none}a:hover{color:#d63a40}
+</style>
+</helmet>
+<div style="font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'SF Pro Display', 'Apple SD Gothic Neo', 'Pretendard', system-ui, 'Helvetica Neue', sans-serif; color: #1d1d1f; background: #ffffff; -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; min-height: 100%">
+
+<header style="position: sticky; top: 0; z-index: 10; background: rgba(255,255,255,0.86); backdrop-filter: saturate(180%) blur(20px); -webkit-backdrop-filter: saturate(180%) blur(20px); border-bottom: 1px solid #e8e8ed">
+  <div style="max-width: 1120px; margin: 0 auto; padding: 0 32px; box-sizing: border-box; height: 56px; display: flex; align-items: center; gap: 24px">
+    <a href="#" aria-label="nomorevibe 홈" style="font-size: 18px; font-weight: 600; letter-spacing: -0.02em; color: #1d1d1f; display: inline-flex; align-items: center; gap: 6px; height: 44px; flex-shrink: 0"><i aria-hidden="true" style="width: 10px; height: 10px; border-radius: 50%; background: {{accent}}; display: inline-block"></i>nomorevibe</a>
+    <nav aria-label="주 메뉴" style="display: flex; gap: 20px; font-size: 14px; flex-shrink: 0">
+      <a href="#rising" style="color: #1d1d1f; font-weight: 500; display: inline-flex; align-items: center; height: 44px">급상승</a>
+      <a href="#feed" style="color: #6e6e73; display: inline-flex; align-items: center; height: 44px">발견하기</a>
+      <a href="#popular" style="color: #6e6e73; display: inline-flex; align-items: center; height: 44px">인기</a>
+      <a href="#new" style="color: #6e6e73; display: inline-flex; align-items: center; height: 44px">새로 나온</a>
+    </nav>
+    <form role="search" action="/" method="get" style="position: relative; flex: 1 1 200px; max-width: 420px; margin-left: auto">
+      <label for="q" style="position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap">프로젝트 검색</label>
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#6e6e73" stroke-width="2" stroke-linecap="round" aria-hidden="true" style="position: absolute; left: 14px; top: 11px"><circle cx="11" cy="11" r="7"></circle><path d="M20 20l-3.5-3.5"></path></svg>
+      <input id="q" name="q" type="search" placeholder="프로젝트, 도구, 아이디어 검색" autocomplete="off" style="width: 100%; box-sizing: border-box; height: 38px; border-radius: 980px; border: 0; padding: 0 48px 0 38px; font: inherit; font-size: 14px; color: #1d1d1f; background: #f5f5f7; outline: none">
+      <kbd style="position: absolute; right: 10px; top: 9px; font: inherit; font-size: 11px; color: #6e6e73; border: 1px solid #d2d2d7; border-radius: 6px; padding: 1px 5px; background: #ffffff">⌘K</kbd>
+    </form>
+    <a href="#" style="display: inline-flex; align-items: center; height: 36px; padding: 0 16px; border-radius: 980px; background: #1d1d1f; color: #ffffff; font-size: 14px; font-weight: 500; flex-shrink: 0">프로젝트 공개</a>
+  </div>
+</header>
+
+<section aria-label="소개" style="max-width: 1120px; margin: 0 auto; padding: 30px 32px 6px; box-sizing: border-box; display: flex; align-items: baseline; justify-content: space-between; gap: 16px 24px; flex-wrap: wrap">
+  <h1 style="margin: 0; font-size: 26px; line-height: 1.2; font-weight: 600; letter-spacing: -0.025em">AI로 만든 것들이 <span style="color: {{accent}}">제품</span>이 되는 곳.</h1>
+  <p style="margin: 0; font-size: 13px; color: #6e6e73; font-variant-numeric: tabular-nums">공개 <b style="color: #1d1d1f; font-weight: 600">25,183</b> · 이번 주 새로 <b style="color: #1d1d1f; font-weight: 600">157</b> · 새 버전 낸 프로젝트 <b style="color: #1d1d1f; font-weight: 600">3,483</b> · 10.02 00:00 KST</p>
+</section>
+
+<section id="rising" aria-labelledby="rising-title" style="max-width: 1120px; margin: 0 auto; padding: 22px 32px 40px; box-sizing: border-box; display: flex; flex-direction: column; gap: 16px">
+  <div style="display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; flex-wrap: wrap">
+    <div>
+      <h2 id="rising-title" style="margin: 0; font-size: 22px; font-weight: 600; letter-spacing: -0.02em; line-height: 1.2">지금 뜨는 프로젝트</h2>
+      <p style="margin: 4px 0 0; font-size: 13px; color: #6e6e73">마지막 확인 사이 GitHub 스타가 가장 많이 늘었습니다 · 스타 2천 미만</p>
+    </div>
+    <a href="#feed" style="font-size: 13px; color: {{accent}}; display: inline-flex; align-items: center; height: 44px">1,574개 모두 보기 ›</a>
+  </div>
+  <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(min(188px, 100%), 1fr)); gap: 16px">
+    <article style="background: #f5f5f7; border-radius: 16px; overflow: hidden; display: flex; flex-direction: column">
+      <a href="Product-v5.dc.html" aria-label="reladraw playground 상세 보기" style="display: flex; align-items: center; justify-content: center; height: 84px; background: #eef3fb"><span aria-hidden="true" style="width: 44px; height: 44px; border-radius: 12px; background: #ffffff; box-shadow: 0 1px 3px rgba(0,0,0,0.10); display: flex; align-items: center; justify-content: center; font-size: 19px; font-weight: 600; color: #1d1d1f">R</span></a>
+      <div style="padding: 12px 14px 14px; display: flex; flex-direction: column; gap: 4px">
+        <h3 style="margin: 0; font-size: 15px; font-weight: 600; letter-spacing: -0.01em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap"><a href="Product-v5.dc.html">reladraw playground</a></h3>
+        <p style="margin: 0; font-size: 13px; color: #6e6e73; overflow: hidden; text-overflow: ellipsis; white-space: nowrap">Write a diagram as stated relationships and watch it solve.</p>
+        <p style="margin: 4px 0 0; font-size: 13px; font-variant-numeric: tabular-nums"><span style="font-weight: 500">★ 990</span> <span style="color: #1e7b3c; font-weight: 500">+989</span> <span style="color: #6e6e73">· 디자인</span></p>
+      </div>
+    </article>
+    <article style="background: #f5f5f7; border-radius: 16px; overflow: hidden; display: flex; flex-direction: column">
+      <a href="Product-v5.dc.html" aria-label="workbuddy2api 상세 보기" style="display: flex; align-items: center; justify-content: center; height: 84px; background: #f5efe8"><span aria-hidden="true" style="width: 44px; height: 44px; border-radius: 12px; background: #ffffff; box-shadow: 0 1px 3px rgba(0,0,0,0.10); display: flex; align-items: center; justify-content: center; font-size: 19px; font-weight: 600; color: #1d1d1f">W</span></a>
+      <div style="padding: 12px 14px 14px; display: flex; flex-direction: column; gap: 4px">
+        <h3 style="margin: 0; font-size: 15px; font-weight: 600; letter-spacing: -0.01em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap"><a href="Product-v5.dc.html">workbuddy2api</a></h3>
+        <p style="margin: 0; font-size: 13px; color: #6e6e73; overflow: hidden; text-overflow: ellipsis; white-space: nowrap">WorkBuddy의 OpenAI 호환 리버스 프록시.</p>
+        <p style="margin: 4px 0 0; font-size: 13px; font-variant-numeric: tabular-nums"><span style="font-weight: 500">★ 1,512</span> <span style="color: #1e7b3c; font-weight: 500">+239</span> <span style="color: #6e6e73">· 개발 도구</span></p>
+      </div>
+    </article>
+    <article style="background: #f5f5f7; border-radius: 16px; overflow: hidden; display: flex; flex-direction: column">
+      <a href="Product-v5.dc.html" aria-label="Compass 상세 보기" style="display: flex; align-items: center; justify-content: center; height: 84px; background: #edf5ef"><span aria-hidden="true" style="width: 44px; height: 44px; border-radius: 12px; background: #ffffff; box-shadow: 0 1px 3px rgba(0,0,0,0.10); display: flex; align-items: center; justify-content: center; font-size: 19px; font-weight: 600; color: #1d1d1f">C</span></a>
+      <div style="padding: 12px 14px 14px; display: flex; flex-direction: column; gap: 4px">
+        <h3 style="margin: 0; font-size: 15px; font-weight: 600; letter-spacing: -0.01em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap"><a href="Product-v5.dc.html">Compass</a></h3>
+        <p style="margin: 0; font-size: 13px; color: #6e6e73; overflow: hidden; text-overflow: ellipsis; white-space: nowrap">로컬에서 도는 에이전트 장기 메모리 · LongMemEval P@5 97.8%.</p>
+        <p style="margin: 4px 0 0; font-size: 13px; font-variant-numeric: tabular-nums"><span style="font-weight: 500">★ 819</span> <span style="color: #1e7b3c; font-weight: 500">+197</span> <span style="color: #6e6e73">· 개발 도구</span></p>
+      </div>
+    </article>
+    <article style="background: #f5f5f7; border-radius: 16px; overflow: hidden; display: flex; flex-direction: column">
+      <a href="Product-v5.dc.html" aria-label="local_roborock_server 상세 보기" style="display: flex; align-items: center; justify-content: center; height: 84px; background: #f6eef3"><span aria-hidden="true" style="width: 44px; height: 44px; border-radius: 12px; background: #ffffff; box-shadow: 0 1px 3px rgba(0,0,0,0.10); display: flex; align-items: center; justify-content: center; font-size: 19px; font-weight: 600; color: #1d1d1f">L</span></a>
+      <div style="padding: 12px 14px 14px; display: flex; flex-direction: column; gap: 4px">
+        <h3 style="margin: 0; font-size: 15px; font-weight: 600; letter-spacing: -0.01em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap"><a href="Product-v5.dc.html">local_roborock_server</a></h3>
+        <p style="margin: 0; font-size: 13px; color: #6e6e73; overflow: hidden; text-overflow: ellipsis; white-space: nowrap">Local HTTPS and MQTT cloud emulator for Roborock vacuums.</p>
+        <p style="margin: 4px 0 0; font-size: 13px; font-variant-numeric: tabular-nums"><span style="font-weight: 500">★ 815</span> <span style="color: #1e7b3c; font-weight: 500">+172</span> <span style="color: #6e6e73">· 생산성</span></p>
+      </div>
+    </article>
+    <article style="background: #f5f5f7; border-radius: 16px; overflow: hidden; display: flex; flex-direction: column">
+      <a href="Product-v5.dc.html" aria-label="Madeira 상세 보기" style="display: flex; align-items: center; justify-content: center; height: 84px; background: #f0eff8"><span aria-hidden="true" style="width: 44px; height: 44px; border-radius: 12px; background: #ffffff; box-shadow: 0 1px 3px rgba(0,0,0,0.10); display: flex; align-items: center; justify-content: center; font-size: 19px; font-weight: 600; color: #1d1d1f">M</span></a>
+      <div style="padding: 12px 14px 14px; display: flex; flex-direction: column; gap: 4px">
+        <h3 style="margin: 0; font-size: 15px; font-weight: 600; letter-spacing: -0.01em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap"><a href="Product-v5.dc.html">Madeira</a></h3>
+        <p style="margin: 0; font-size: 13px; color: #6e6e73; overflow: hidden; text-overflow: ellipsis; white-space: nowrap">Run x86-64 Windows PC games on jailed iOS.</p>
+        <p style="margin: 4px 0 0; font-size: 13px; font-variant-numeric: tabular-nums"><span style="font-weight: 500">★ 1,180</span> <span style="color: #1e7b3c; font-weight: 500">+166</span> <span style="color: #6e6e73">· 게임</span></p>
+      </div>
+    </article>
+  </div>
+</section>
+
+<section id="feed" aria-labelledby="feed-title" style="max-width: 1120px; margin: 0 auto; padding: 8px 32px 56px; box-sizing: border-box; display: flex; flex-direction: column; gap: 18px">
+  <div style="display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; flex-wrap: wrap">
+    <h2 id="feed-title" style="margin: 0; font-size: 22px; font-weight: 600; letter-spacing: -0.02em; line-height: 1.2">발견할 가치가 있는 프로젝트</h2>
+    <div role="tablist" aria-label="프로젝트 정렬" style="display: inline-flex; background: #f5f5f7; border-radius: 980px; padding: 2px; gap: 2px">
+      <a role="tab" aria-selected="true" href="#" style="display: inline-flex; align-items: center; height: 40px; padding: 0 16px; border-radius: 980px; background: #ffffff; color: #1d1d1f; font-size: 14px; font-weight: 500; box-shadow: 0 1px 4px rgba(0,0,0,0.08)">추천</a>
+      <a role="tab" aria-selected="false" href="#" style="display: inline-flex; align-items: center; height: 40px; padding: 0 16px; border-radius: 980px; color: #6e6e73; font-size: 14px">최신</a>
+      <a role="tab" aria-selected="false" href="#" style="display: inline-flex; align-items: center; height: 40px; padding: 0 16px; border-radius: 980px; color: #6e6e73; font-size: 14px">관심 많은 순</a>
+    </div>
+  </div>
+  <nav aria-label="분야" style="display: flex; flex-wrap: wrap; gap: 8px">
+    <a href="#" aria-current="true" style="display: inline-flex; align-items: center; gap: 6px; height: 36px; padding: 0 14px; border-radius: 980px; background: #1d1d1f; color: #ffffff; font-size: 13px; font-weight: 500">전체</a>
+    <a href="#" style="display: inline-flex; align-items: center; gap: 6px; height: 36px; padding: 0 14px; border-radius: 980px; background: #f5f5f7; color: #1d1d1f; font-size: 13px">개발 도구 <span style="color: #6e6e73; font-variant-numeric: tabular-nums">6,612</span></a>
+    <a href="#" style="display: inline-flex; align-items: center; gap: 6px; height: 36px; padding: 0 14px; border-radius: 980px; background: #f5f5f7; color: #1d1d1f; font-size: 13px">비즈니스 <span style="color: #6e6e73; font-variant-numeric: tabular-nums">2,427</span></a>
+    <a href="#" style="display: inline-flex; align-items: center; gap: 6px; height: 36px; padding: 0 14px; border-radius: 980px; background: #f5f5f7; color: #1d1d1f; font-size: 13px">교육 <span style="color: #6e6e73; font-variant-numeric: tabular-nums">1,741</span></a>
+    <a href="#" style="display: inline-flex; align-items: center; gap: 6px; height: 36px; padding: 0 14px; border-radius: 980px; background: #f5f5f7; color: #1d1d1f; font-size: 13px">생산성 <span style="color: #6e6e73; font-variant-numeric: tabular-nums">1,433</span></a>
+    <a href="#" style="display: inline-flex; align-items: center; gap: 6px; height: 36px; padding: 0 14px; border-radius: 980px; background: #f5f5f7; color: #1d1d1f; font-size: 13px">금융 <span style="color: #6e6e73; font-variant-numeric: tabular-nums">1,369</span></a>
+    <a href="#" style="display: inline-flex; align-items: center; gap: 6px; height: 36px; padding: 0 14px; border-radius: 980px; background: #f5f5f7; color: #1d1d1f; font-size: 13px">게임 <span style="color: #6e6e73; font-variant-numeric: tabular-nums">1,256</span></a>
+    <a href="#" style="display: inline-flex; align-items: center; gap: 6px; height: 36px; padding: 0 14px; border-radius: 980px; background: #f5f5f7; color: #1d1d1f; font-size: 13px">미디어 <span style="color: #6e6e73; font-variant-numeric: tabular-nums">1,164</span></a>
+    <a href="#" style="display: inline-flex; align-items: center; gap: 6px; height: 36px; padding: 0 14px; border-radius: 980px; background: #f5f5f7; color: #1d1d1f; font-size: 13px">디자인</a>
+    <a href="#" style="display: inline-flex; align-items: center; gap: 6px; height: 36px; padding: 0 14px; border-radius: 980px; background: #f5f5f7; color: #6e6e73; font-size: 13px">더 보기</a>
+  </nav>
+
+  <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(min(300px, 100%), 1fr)); gap: 20px">
+
+    <article style="background: #f5f5f7; border-radius: 18px; overflow: hidden; display: flex; flex-direction: column">
+      <a href="Product-v5.dc.html" aria-label="Mobile Harness 상세 보기" style="display: flex; align-items: center; justify-content: center; position: relative; height: 112px; background: #eef3fb"><span aria-hidden="true" style="width: 60px; height: 60px; border-radius: 15px; background: #ffffff; box-shadow: 0 1px 3px rgba(0,0,0,0.10); display: flex; align-items: center; justify-content: center; font-size: 24px; font-weight: 600; color: #1d1d1f">M</span></a>
+      <div style="padding: 16px 18px 18px; display: flex; flex-direction: column; gap: 6px; flex-grow: 1">
+        <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px">
+          <h3 style="margin: 0; font-size: 17px; font-weight: 600; letter-spacing: -0.015em; line-height: 1.3"><a href="Product-v5.dc.html">Mobile Harness</a></h3>
+          <button type="button" aria-label="Mobile Harness 저장" style="width: 44px; height: 44px; margin: -8px -12px -8px 0; border: 0; background: transparent; color: #6e6e73; display: inline-flex; align-items: center; justify-content: center; border-radius: 980px"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 3h12a1 1 0 0 1 1 1v17l-7-4-7 4V4a1 1 0 0 1 1-1z"></path></svg></button>
+        </div>
+        <p style="margin: 0; font-size: 14px; line-height: 1.45; color: #6e6e73; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden">Three coding agents. A real Ubuntu subsystem. On-device builds and live web preview — on your phone, no root.</p>
+        <div style="margin-top: auto; padding-top: 8px; display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 13px; color: #6e6e73">
+          <span style="min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap">개발 도구 · @techjarves</span>
+          <span style="color: #1d1d1f; font-weight: 500; font-variant-numeric: tabular-nums; white-space: nowrap">★ 467 <span style="color: #1e7b3c">+152</span></span>
+        </div>
+      </div>
+    </article>
+
+    <article style="background: #f5f5f7; border-radius: 18px; overflow: hidden; display: flex; flex-direction: column">
+      <a href="Product-v5.dc.html" aria-label="IngeTrazo 상세 보기" style="display: flex; align-items: center; justify-content: center; position: relative; height: 112px; background: #f5efe8"><span aria-hidden="true" style="width: 60px; height: 60px; border-radius: 15px; background: #ffffff; box-shadow: 0 1px 3px rgba(0,0,0,0.10); display: flex; align-items: center; justify-content: center; font-size: 24px; font-weight: 600; color: #1d1d1f">I</span></a>
+      <div style="padding: 16px 18px 18px; display: flex; flex-direction: column; gap: 6px; flex-grow: 1">
+        <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px">
+          <h3 style="margin: 0; font-size: 17px; font-weight: 600; letter-spacing: -0.015em; line-height: 1.3"><a href="Product-v5.dc.html">IngeTrazo</a></h3>
+          <button type="button" aria-label="IngeTrazo 저장" style="width: 44px; height: 44px; margin: -8px -12px -8px 0; border: 0; background: transparent; color: #6e6e73; display: inline-flex; align-items: center; justify-content: center; border-radius: 980px"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 3h12a1 1 0 0 1 1 1v17l-7-4-7 4V4a1 1 0 0 1 1-1z"></path></svg></button>
+        </div>
+        <p style="margin: 0; font-size: 14px; line-height: 1.45; color: #6e6e73; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden">손으로 그리듯 선을 긋고 BIM 태그를 달아 물량을 뽑고 IFC로 내보냅니다. 위성 지형 지원.</p>
+        <div style="margin-top: auto; padding-top: 8px; display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 13px; color: #6e6e73">
+          <span style="min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap">디자인 · @ingelibre</span>
+          <span style="color: #1d1d1f; font-weight: 500; font-variant-numeric: tabular-nums; white-space: nowrap">★ 468 <span style="color: #1e7b3c">+151</span></span>
+        </div>
+      </div>
+    </article>
+
+    <article style="background: #f5f5f7; border-radius: 18px; overflow: hidden; display: flex; flex-direction: column">
+      <a href="Product-v5.dc.html" aria-label="LINKEDIN AGENT 상세 보기" style="display: flex; align-items: center; justify-content: center; position: relative; height: 112px; background: #edf5ef"><span aria-hidden="true" style="width: 60px; height: 60px; border-radius: 15px; background: #ffffff; box-shadow: 0 1px 3px rgba(0,0,0,0.10); display: flex; align-items: center; justify-content: center; font-size: 24px; font-weight: 600; color: #1d1d1f">L</span></a>
+      <div style="padding: 16px 18px 18px; display: flex; flex-direction: column; gap: 6px; flex-grow: 1">
+        <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px">
+          <h3 style="margin: 0; font-size: 17px; font-weight: 600; letter-spacing: -0.015em; line-height: 1.3"><a href="Product-v5.dc.html">LINKEDIN AGENT</a></h3>
+          <button type="button" aria-label="LINKEDIN AGENT 저장" style="width: 44px; height: 44px; margin: -8px -12px -8px 0; border: 0; background: transparent; color: #6e6e73; display: inline-flex; align-items: center; justify-content: center; border-radius: 980px"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 3h12a1 1 0 0 1 1 1v17l-7-4-7 4V4a1 1 0 0 1 1-1z"></path></svg></button>
+        </div>
+        <p style="margin: 0; font-size: 14px; line-height: 1.45; color: #6e6e73; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden">Eleven free Claude skills that run a LinkedIn account. Posts off 21 hook formulas.</p>
+        <div style="margin-top: auto; padding-top: 8px; display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 13px; color: #6e6e73">
+          <span style="min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap">마케팅 · @Jakeschincariol</span>
+          <span style="color: #1d1d1f; font-weight: 500; font-variant-numeric: tabular-nums; white-space: nowrap">★ 975 <span style="color: #1e7b3c">+145</span></span>
+        </div>
+      </div>
+    </article>
+
+    <article style="background: #f5f5f7; border-radius: 18px; overflow: hidden; display: flex; flex-direction: column">
+      <a href="Product-v5.dc.html" aria-label="Aru note 상세 보기" style="display: flex; align-items: center; justify-content: center; position: relative; height: 112px; background: #f6eef3"><span aria-hidden="true" style="width: 60px; height: 60px; border-radius: 15px; background: #ffffff; box-shadow: 0 1px 3px rgba(0,0,0,0.10); display: flex; align-items: center; justify-content: center; font-size: 24px; font-weight: 600; color: #1d1d1f">A</span></a>
+      <div style="padding: 16px 18px 18px; display: flex; flex-direction: column; gap: 6px; flex-grow: 1">
+        <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px">
+          <h3 style="margin: 0; font-size: 17px; font-weight: 600; letter-spacing: -0.015em; line-height: 1.3"><a href="Product-v5.dc.html">Aru｜note</a></h3>
+          <button type="button" aria-label="Aru note 저장" style="width: 44px; height: 44px; margin: -8px -12px -8px 0; border: 0; background: transparent; color: #6e6e73; display: inline-flex; align-items: center; justify-content: center; border-radius: 980px"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 3h12a1 1 0 0 1 1 1v17l-7-4-7 4V4a1 1 0 0 1 1-1z"></path></svg></button>
+        </div>
+        <p style="margin: 0; font-size: 14px; line-height: 1.45; color: #6e6e73; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden">Lossless long-term memory for a personal AI: never summarize, keep every line.</p>
+        <div style="margin-top: auto; padding-top: 8px; display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 13px; color: #6e6e73">
+          <span style="min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap">개발 도구 · @aru-labs</span>
+          <span style="color: #1d1d1f; font-weight: 500; font-variant-numeric: tabular-nums; white-space: nowrap">★ 134 <span style="color: #1e7b3c">+132</span></span>
+        </div>
+      </div>
+    </article>
+
+    <article style="background: #f5f5f7; border-radius: 18px; overflow: hidden; display: flex; flex-direction: column">
+      <a href="Product-v5.dc.html" aria-label="fyagent 상세 보기" style="display: flex; align-items: center; justify-content: center; position: relative; height: 112px; background: #f0eff8"><span aria-hidden="true" style="width: 60px; height: 60px; border-radius: 15px; background: #ffffff; box-shadow: 0 1px 3px rgba(0,0,0,0.10); display: flex; align-items: center; justify-content: center; font-size: 24px; font-weight: 600; color: #1d1d1f">F</span><span style="position: absolute; left: 12px; top: 12px; font-size: 12px; font-weight: 500; color: #ffffff; background: rgba(29,29,31,0.78); border-radius: 980px; padding: 4px 10px">직접 설치</span></a>
+      <div style="padding: 16px 18px 18px; display: flex; flex-direction: column; gap: 6px; flex-grow: 1">
+        <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px">
+          <h3 style="margin: 0; font-size: 17px; font-weight: 600; letter-spacing: -0.015em; line-height: 1.3"><a href="Product-v5.dc.html">fyagent</a></h3>
+          <button type="button" aria-label="fyagent 저장" style="width: 44px; height: 44px; margin: -8px -12px -8px 0; border: 0; background: transparent; color: #6e6e73; display: inline-flex; align-items: center; justify-content: center; border-radius: 980px"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 3h12a1 1 0 0 1 1 1v17l-7-4-7 4V4a1 1 0 0 1 1-1z"></path></svg></button>
+        </div>
+        <p style="margin: 0; font-size: 14px; line-height: 1.45; color: #6e6e73; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden">AI 시대의 개인 디지털 페르소나 — 내 모델·계정·스킬·프롬프트를 모든 AI 도구로 가져갑니다.</p>
+        <div style="margin-top: auto; padding-top: 8px; display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 13px; color: #6e6e73">
+          <span style="min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap">개발 도구 · @fy-agent</span>
+          <span style="color: #1d1d1f; font-weight: 500; font-variant-numeric: tabular-nums; white-space: nowrap">★ 1,531 <span style="color: #1e7b3c">+124</span></span>
+        </div>
+      </div>
+    </article>
+
+    <article style="background: #f5f5f7; border-radius: 18px; overflow: hidden; display: flex; flex-direction: column">
+      <a href="Product-v5.dc.html" aria-label="Foremerge 상세 보기" style="display: flex; align-items: center; justify-content: center; position: relative; height: 112px; background: #f2f2f7"><span aria-hidden="true" style="width: 60px; height: 60px; border-radius: 15px; background: #ffffff; box-shadow: 0 1px 3px rgba(0,0,0,0.10); display: flex; align-items: center; justify-content: center; font-size: 24px; font-weight: 600; color: #1d1d1f">F</span></a>
+      <div style="padding: 16px 18px 18px; display: flex; flex-direction: column; gap: 6px; flex-grow: 1">
+        <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px">
+          <h3 style="margin: 0; font-size: 17px; font-weight: 600; letter-spacing: -0.015em; line-height: 1.3"><a href="Product-v5.dc.html">Foremerge</a></h3>
+          <button type="button" aria-label="Foremerge 저장" style="width: 44px; height: 44px; margin: -8px -12px -8px 0; border: 0; background: transparent; color: #6e6e73; display: inline-flex; align-items: center; justify-content: center; border-radius: 980px"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 3h12a1 1 0 0 1 1 1v17l-7-4-7 4V4a1 1 0 0 1 1-1z"></path></svg></button>
+        </div>
+        <p style="margin: 0; font-size: 14px; line-height: 1.45; color: #6e6e73; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden">Catch intent conflicts before code conflicts. The open-source coordination protocol for agents.</p>
+        <div style="margin-top: auto; padding-top: 8px; display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 13px; color: #6e6e73">
+          <span style="min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap">개발 도구 · @naw103</span>
+          <span style="color: #1d1d1f; font-weight: 500; font-variant-numeric: tabular-nums; white-space: nowrap">★ 521 <span style="color: #1e7b3c">+121</span></span>
+        </div>
+      </div>
+    </article>
+
+  </div>
+
+  <div style="display: flex; justify-content: center; padding-top: 4px">
+    <a href="#" style="display: inline-flex; align-items: center; height: 44px; padding: 0 22px; border-radius: 980px; border: 1px solid #d2d2d7; color: #1d1d1f; font-size: 15px; font-weight: 500; background: #ffffff">프로젝트 더 보기 <span style="color: #6e6e73; margin-left: 6px; font-weight: 400">11 / 1,574</span></a>
+  </div>
+</section>
+
+<section id="popular" aria-labelledby="popular-title" style="background: #f5f5f7; padding: 48px 0">
+  <div style="max-width: 1120px; margin: 0 auto; padding: 0 32px; box-sizing: border-box; display: flex; flex-direction: column; gap: 18px">
+    <div style="display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; flex-wrap: wrap">
+      <div>
+        <h2 id="popular-title" style="margin: 0; font-size: 22px; font-weight: 600; letter-spacing: -0.02em; line-height: 1.2">많이 쓰이는 프로젝트</h2>
+        <p style="margin: 4px 0 0; font-size: 13px; color: #6e6e73">GitHub 스타 2천 이상 · 구간마다 상위 3</p>
+      </div>
+      <a href="#" style="font-size: 13px; color: {{accent}}; display: inline-flex; align-items: center; height: 44px">집계 기준 ›</a>
+    </div>
+    <div style="background: #e8e8ed; border-radius: 18px; overflow: hidden; display: grid; grid-template-columns: repeat(auto-fit, minmax(min(240px, 100%), 1fr)); gap: 1px">
+
+      <div style="background: #ffffff; padding: 18px 20px 14px; display: flex; flex-direction: column">
+        <h3 style="margin: 0 0 4px; font-size: 15px; font-weight: 600; display: flex; justify-content: space-between; align-items: baseline">떠오르는 <span style="font-size: 12px; font-weight: 400; color: #6e6e73">★ 2천–5천</span></h3>
+        <ol style="list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column">
+          <li style="display: grid; grid-template-columns: 14px 28px minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 9px 0; border-top: 1px solid #e8e8ed"><span style="font-size: 12px; color: #6e6e73; font-variant-numeric: tabular-nums">1</span><span aria-hidden="true" style="width: 28px; height: 28px; border-radius: 8px; background: #eef3fb; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 600">D</span><span style="min-width: 0"><a href="#" style="display: block; font-size: 14px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap">DefectDojo</a><span style="display: block; font-size: 12px; color: #6e6e73">@DefectDojo</span></span><span style="font-size: 13px; font-variant-numeric: tabular-nums; white-space: nowrap">★ 4,975 <span style="color: #1e7b3c">+5</span></span></li>
+          <li style="display: grid; grid-template-columns: 14px 28px minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 9px 0; border-top: 1px solid #e8e8ed"><span style="font-size: 12px; color: #6e6e73; font-variant-numeric: tabular-nums">2</span><span aria-hidden="true" style="width: 28px; height: 28px; border-radius: 8px; background: #f5efe8; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 600">O</span><span style="min-width: 0"><a href="#" style="display: block; font-size: 14px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap">OpenTelemetry</a><span style="display: block; font-size: 12px; color: #6e6e73">@open-telemetry</span></span><span style="font-size: 13px; font-variant-numeric: tabular-nums; white-space: nowrap">★ 4,962 <span style="color: #1e7b3c">+4</span></span></li>
+          <li style="display: grid; grid-template-columns: 14px 28px minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 9px 0; border-top: 1px solid #e8e8ed"><span style="font-size: 12px; color: #6e6e73; font-variant-numeric: tabular-nums">3</span><span aria-hidden="true" style="width: 28px; height: 28px; border-radius: 8px; background: #edf5ef; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 600">B</span><span style="min-width: 0"><a href="#" style="display: block; font-size: 14px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap">byterover-cli</a><span style="display: block; font-size: 12px; color: #6e6e73">@campfirein</span></span><span style="font-size: 13px; font-variant-numeric: tabular-nums; white-space: nowrap">★ 4,961 <span style="color: #6e6e73">−2</span></span></li>
+        </ol>
+        <a href="#" style="margin-top: auto; padding-top: 8px; font-size: 13px; color: {{accent}}; display: inline-flex; align-items: center; min-height: 44px">382개 모두 보기 ›</a>
+      </div>
+
+      <div style="background: #ffffff; padding: 18px 20px 14px; display: flex; flex-direction: column">
+        <h3 style="margin: 0 0 4px; font-size: 15px; font-weight: 600; display: flex; justify-content: space-between; align-items: baseline">주목받는 <span style="font-size: 12px; font-weight: 400; color: #6e6e73">★ 5천–1만</span></h3>
+        <ol style="list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column">
+          <li style="display: grid; grid-template-columns: 14px 28px minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 9px 0; border-top: 1px solid #e8e8ed"><span style="font-size: 12px; color: #6e6e73; font-variant-numeric: tabular-nums">1</span><span aria-hidden="true" style="width: 28px; height: 28px; border-radius: 8px; background: #f6eef3; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 600">O</span><span style="min-width: 0"><a href="#" style="display: block; font-size: 14px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap">OpenUI</a><span style="display: block; font-size: 12px; color: #6e6e73">@thesysdev</span></span><span style="font-size: 13px; font-variant-numeric: tabular-nums; white-space: nowrap">★ 9,945 <span style="color: #1e7b3c">+24</span></span></li>
+          <li style="display: grid; grid-template-columns: 14px 28px minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 9px 0; border-top: 1px solid #e8e8ed"><span style="font-size: 12px; color: #6e6e73; font-variant-numeric: tabular-nums">2</span><span aria-hidden="true" style="width: 28px; height: 28px; border-radius: 8px; background: #f0eff8; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 600">R</span><span style="min-width: 0"><a href="#" style="display: block; font-size: 14px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap">Read Frog</a><span style="display: block; font-size: 12px; color: #6e6e73">@mengxi-ream</span></span><span style="font-size: 13px; font-variant-numeric: tabular-nums; white-space: nowrap">★ 9,944 <span style="color: #1e7b3c">+27</span></span></li>
+          <li style="display: grid; grid-template-columns: 14px 28px minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 9px 0; border-top: 1px solid #e8e8ed"><span style="font-size: 12px; color: #6e6e73; font-variant-numeric: tabular-nums">3</span><span aria-hidden="true" style="width: 28px; height: 28px; border-radius: 8px; background: #f2f2f7; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 600">S</span><span style="min-width: 0"><a href="#" style="display: block; font-size: 14px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap">SQLFluff</a><span style="display: block; font-size: 12px; color: #6e6e73">@sqlfluff</span></span><span style="font-size: 13px; font-variant-numeric: tabular-nums; white-space: nowrap">★ 9,897</span></li>
+        </ol>
+        <a href="#" style="margin-top: auto; padding-top: 8px; font-size: 13px; color: {{accent}}; display: inline-flex; align-items: center; min-height: 44px">234개 모두 보기 ›</a>
+      </div>
+
+      <div style="background: #ffffff; padding: 18px 20px 14px; display: flex; flex-direction: column">
+        <h3 style="margin: 0 0 4px; font-size: 15px; font-weight: 600; display: flex; justify-content: space-between; align-items: baseline">인기 <span style="font-size: 12px; font-weight: 400; color: #6e6e73">★ 1만–3만</span></h3>
+        <ol style="list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column">
+          <li style="display: grid; grid-template-columns: 14px 28px minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 9px 0; border-top: 1px solid #e8e8ed"><span style="font-size: 12px; color: #6e6e73; font-variant-numeric: tabular-nums">1</span><span aria-hidden="true" style="width: 28px; height: 28px; border-radius: 8px; background: #eef3fb; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 600">S</span><span style="min-width: 0"><a href="#" style="display: block; font-size: 14px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap">serena</a><span style="display: block; font-size: 12px; color: #6e6e73">@oraios</span></span><span style="font-size: 13px; font-variant-numeric: tabular-nums; white-space: nowrap">★ 29,945 <span style="color: #1e7b3c">+31</span></span></li>
+          <li style="display: grid; grid-template-columns: 14px 28px minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 9px 0; border-top: 1px solid #e8e8ed"><span style="font-size: 12px; color: #6e6e73; font-variant-numeric: tabular-nums">2</span><span aria-hidden="true" style="width: 28px; height: 28px; border-radius: 8px; background: #f5efe8; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 600">F</span><span style="min-width: 0"><a href="#" style="display: block; font-size: 14px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap">FastGPT</a><span style="display: block; font-size: 12px; color: #6e6e73">@labring</span></span><span style="font-size: 13px; font-variant-numeric: tabular-nums; white-space: nowrap">★ 29,779 <span style="color: #1e7b3c">+10</span></span></li>
+          <li style="display: grid; grid-template-columns: 14px 28px minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 9px 0; border-top: 1px solid #e8e8ed"><span style="font-size: 12px; color: #6e6e73; font-variant-numeric: tabular-nums">3</span><span aria-hidden="true" style="width: 28px; height: 28px; border-radius: 8px; background: #edf5ef; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 600">T</span><span style="min-width: 0"><a href="#" style="display: block; font-size: 14px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap">The AI Workspace</a><span style="display: block; font-size: 12px; color: #6e6e73">@simstudioai</span></span><span style="font-size: 13px; font-variant-numeric: tabular-nums; white-space: nowrap">★ 29,761 <span style="color: #1e7b3c">+11</span></span></li>
+        </ol>
+        <a href="#" style="margin-top: auto; padding-top: 8px; font-size: 13px; color: {{accent}}; display: inline-flex; align-items: center; min-height: 44px">214개 모두 보기 ›</a>
+      </div>
+
+      <div style="background: #ffffff; padding: 18px 20px 14px; display: flex; flex-direction: column">
+        <h3 style="margin: 0 0 4px; font-size: 15px; font-weight: 600; display: flex; justify-content: space-between; align-items: baseline">대형 <span style="font-size: 12px; font-weight: 400; color: #6e6e73">★ 3만–10만</span></h3>
+        <ol style="list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column">
+          <li style="display: grid; grid-template-columns: 14px 28px minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 9px 0; border-top: 1px solid #e8e8ed"><span style="font-size: 12px; color: #6e6e73; font-variant-numeric: tabular-nums">1</span><span aria-hidden="true" style="width: 28px; height: 28px; border-radius: 8px; background: #f6eef3; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 600">O</span><span style="min-width: 0"><a href="#" style="display: block; font-size: 14px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap">OpenDesign</a><span style="display: block; font-size: 12px; color: #6e6e73">@nexu-io</span></span><span style="font-size: 13px; font-variant-numeric: tabular-nums; white-space: nowrap">★ 99,004 <span style="color: #1e7b3c">+382</span></span></li>
+          <li style="display: grid; grid-template-columns: 14px 28px minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 9px 0; border-top: 1px solid #e8e8ed"><span style="font-size: 12px; color: #6e6e73; font-variant-numeric: tabular-nums">2</span><span aria-hidden="true" style="width: 28px; height: 28px; border-radius: 8px; background: #f0eff8; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 600">P</span><span style="min-width: 0"><a href="#" style="display: block; font-size: 14px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap">Paperclip</a><span style="display: block; font-size: 12px; color: #6e6e73">@paperclipai</span></span><span style="font-size: 13px; font-variant-numeric: tabular-nums; white-space: nowrap">★ 95,566 <span style="color: #1e7b3c">+1,612</span></span></li>
+          <li style="display: grid; grid-template-columns: 14px 28px minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 9px 0; border-top: 1px solid #e8e8ed"><span style="font-size: 12px; color: #6e6e73; font-variant-numeric: tabular-nums">3</span><span aria-hidden="true" style="width: 28px; height: 28px; border-radius: 8px; background: #f2f2f7; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 600">C</span><span style="min-width: 0"><a href="#" style="display: block; font-size: 14px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap">claude-mem + cmem</a><span style="display: block; font-size: 12px; color: #6e6e73">@thedotmack</span></span><span style="font-size: 13px; font-variant-numeric: tabular-nums; white-space: nowrap">★ 95,072 <span style="color: #1e7b3c">+175</span></span></li>
+        </ol>
+        <a href="#" style="margin-top: auto; padding-top: 8px; font-size: 13px; color: {{accent}}; display: inline-flex; align-items: center; min-height: 44px">135개 모두 보기 ›</a>
+      </div>
+
+    </div>
+  </div>
+</section>
+
+<section id="new" aria-labelledby="new-title" style="max-width: 1120px; margin: 0 auto; padding: 48px 32px 8px; box-sizing: border-box; display: flex; flex-direction: column; gap: 16px">
+  <div style="display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; flex-wrap: wrap">
+    <div>
+      <h2 id="new-title" style="margin: 0; font-size: 22px; font-weight: 600; letter-spacing: -0.02em; line-height: 1.2">이번 주 새로 나온 프로젝트</h2>
+      <p style="margin: 4px 0 0; font-size: 13px; color: #6e6e73">최근 7일에 처음 공개된 157개 중 스타 50 이상</p>
+    </div>
+    <a href="#" style="font-size: 13px; color: {{accent}}; display: inline-flex; align-items: center; height: 44px">157개 모두 보기 ›</a>
+  </div>
+  <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(min(188px, 100%), 1fr)); gap: 16px">
+    <article style="background: #f5f5f7; border-radius: 16px; overflow: hidden; display: flex; flex-direction: column">
+      <a href="Product-v5.dc.html" aria-label="OpenRouter Costs Visualizer 상세 보기" style="display: flex; align-items: center; justify-content: center; height: 84px; background: #f2f2f7"><span aria-hidden="true" style="width: 44px; height: 44px; border-radius: 12px; background: #ffffff; box-shadow: 0 1px 3px rgba(0,0,0,0.10); display: flex; align-items: center; justify-content: center; font-size: 19px; font-weight: 600; color: #1d1d1f">O</span></a>
+      <div style="padding: 12px 14px 14px; display: flex; flex-direction: column; gap: 4px">
+        <h3 style="margin: 0; font-size: 15px; font-weight: 600; letter-spacing: -0.01em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap"><a href="Product-v5.dc.html">OpenRouter Costs Visualizer</a></h3>
+        <p style="margin: 0; font-size: 13px; color: #6e6e73; overflow: hidden; text-overflow: ellipsis; white-space: nowrap">Drop CSVs to analyze costs by model and over time. 100% local.</p>
+        <p style="margin: 4px 0 0; font-size: 13px; font-variant-numeric: tabular-nums"><span style="font-weight: 500">★ 180</span> <span style="color: #6e6e73">· 데이터 · 10.02</span></p>
+      </div>
+    </article>
+    <article style="background: #f5f5f7; border-radius: 16px; overflow: hidden; display: flex; flex-direction: column">
+      <a href="Product-v5.dc.html" aria-label="/zero-slop 상세 보기" style="display: flex; align-items: center; justify-content: center; height: 84px; background: #eef3fb"><span aria-hidden="true" style="width: 44px; height: 44px; border-radius: 12px; background: #ffffff; box-shadow: 0 1px 3px rgba(0,0,0,0.10); display: flex; align-items: center; justify-content: center; font-size: 19px; font-weight: 600; color: #1d1d1f">Z</span></a>
+      <div style="padding: 12px 14px 14px; display: flex; flex-direction: column; gap: 4px">
+        <h3 style="margin: 0; font-size: 15px; font-weight: 600; letter-spacing: -0.01em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap"><a href="Product-v5.dc.html">/zero-slop</a></h3>
+        <p style="margin: 0; font-size: 13px; color: #6e6e73; overflow: hidden; text-overflow: ellipsis; white-space: nowrap">Free, open-source agent skill that finds and fixes AI slop.</p>
+        <p style="margin: 4px 0 0; font-size: 13px; font-variant-numeric: tabular-nums"><span style="font-weight: 500">★ 125</span> <span style="color: #6e6e73">· 스킬 · 10.02</span></p>
+      </div>
+    </article>
+    <article style="background: #f5f5f7; border-radius: 16px; overflow: hidden; display: flex; flex-direction: column">
+      <a href="Product-v5.dc.html" aria-label="Ace Data Cloud 상세 보기" style="display: flex; align-items: center; justify-content: center; height: 84px; background: #f5efe8"><span aria-hidden="true" style="width: 44px; height: 44px; border-radius: 12px; background: #ffffff; box-shadow: 0 1px 3px rgba(0,0,0,0.10); display: flex; align-items: center; justify-content: center; font-size: 19px; font-weight: 600; color: #1d1d1f">A</span></a>
+      <div style="padding: 12px 14px 14px; display: flex; flex-direction: column; gap: 4px">
+        <h3 style="margin: 0; font-size: 15px; font-weight: 600; letter-spacing: -0.01em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap"><a href="Product-v5.dc.html">Ace Data Cloud</a></h3>
+        <p style="margin: 0; font-size: 13px; color: #6e6e73; overflow: hidden; text-overflow: ellipsis; white-space: nowrap">Easily creating your own AI websites and earning money.</p>
+        <p style="margin: 4px 0 0; font-size: 13px; font-variant-numeric: tabular-nums"><span style="font-weight: 500">★ 397</span> <span style="color: #6e6e73">· 개발 도구 · 10.02</span></p>
+      </div>
+    </article>
+    <article style="background: #f5f5f7; border-radius: 16px; overflow: hidden; display: flex; flex-direction: column">
+      <a href="Product-v5.dc.html" aria-label="AUTO-MAS 상세 보기" style="display: flex; align-items: center; justify-content: center; height: 84px; background: #edf5ef"><span aria-hidden="true" style="width: 44px; height: 44px; border-radius: 12px; background: #ffffff; box-shadow: 0 1px 3px rgba(0,0,0,0.10); display: flex; align-items: center; justify-content: center; font-size: 19px; font-weight: 600; color: #1d1d1f">A</span></a>
+      <div style="padding: 12px 14px 14px; display: flex; flex-direction: column; gap: 4px">
+        <h3 style="margin: 0; font-size: 15px; font-weight: 600; letter-spacing: -0.01em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap"><a href="Product-v5.dc.html">AUTO-MAS</a></h3>
+        <p style="margin: 0; font-size: 13px; color: #6e6e73; overflow: hidden; text-overflow: ellipsis; white-space: nowrap">여러 스크립트와 설정을 한곳에서 관리하고 자동 실행하는 오픈소스.</p>
+        <p style="margin: 4px 0 0; font-size: 13px; font-variant-numeric: tabular-nums"><span style="font-weight: 500">★ 697</span> <span style="color: #6e6e73">· 생산성 · 10.02</span></p>
+      </div>
+    </article>
+    <article style="background: #f5f5f7; border-radius: 16px; overflow: hidden; display: flex; flex-direction: column">
+      <a href="Product-v5.dc.html" aria-label="Enzyme Memory 상세 보기" style="display: flex; align-items: center; justify-content: center; height: 84px; background: #f6eef3"><span aria-hidden="true" style="width: 44px; height: 44px; border-radius: 12px; background: #ffffff; box-shadow: 0 1px 3px rgba(0,0,0,0.10); display: flex; align-items: center; justify-content: center; font-size: 19px; font-weight: 600; color: #1d1d1f">E</span></a>
+      <div style="padding: 12px 14px 14px; display: flex; flex-direction: column; gap: 4px">
+        <h3 style="margin: 0; font-size: 15px; font-weight: 600; letter-spacing: -0.01em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap"><a href="Product-v5.dc.html">Enzyme Memory</a></h3>
+        <p style="margin: 0; font-size: 13px; color: #6e6e73; overflow: hidden; text-overflow: ellipsis; white-space: nowrap">Memory retrieval tuned to your knowledge base.</p>
+        <p style="margin: 4px 0 0; font-size: 13px; font-variant-numeric: tabular-nums"><span style="font-weight: 500">★ 85</span> <span style="color: #6e6e73">· 생산성 · 10.02</span></p>
+      </div>
+    </article>
+  </div>
+</section>
+
+<section aria-label="만든 도구와 활발한 프로젝트" style="max-width: 1120px; margin: 0 auto; padding: 48px 32px 48px; box-sizing: border-box; display: grid; grid-template-columns: repeat(auto-fit, minmax(min(420px, 100%), 1fr)); gap: 40px 48px">
+
+  <div style="display: flex; flex-direction: column; gap: 14px">
+    <div>
+      <h2 style="margin: 0; font-size: 22px; font-weight: 600; letter-spacing: -0.02em; line-height: 1.2">무엇으로 만들었나</h2>
+      <p style="margin: 4px 0 0; font-size: 13px; color: #6e6e73">공개 프로젝트의 저장소에서 찾은 AI 코딩 도구 흔적 · 확인한 20,864개 중 16,650개 · 한 저장소에 여러 도구</p>
+    </div>
+    <ul style="list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 8px">
+      <li><a href="#" style="display: inline-flex; align-items: center; gap: 8px; height: 40px; padding: 0 14px; border-radius: 980px; background: #1d1d1f; color: #ffffff; font-size: 14px; font-weight: 500">Claude Code <span style="color: #a1a1a6; font-weight: 400; font-variant-numeric: tabular-nums">11,798</span></a></li>
+      <li><a href="#" style="display: inline-flex; align-items: center; gap: 8px; height: 40px; padding: 0 14px; border-radius: 980px; background: #f5f5f7; color: #1d1d1f; font-size: 14px">Codex <span style="color: #6e6e73; font-variant-numeric: tabular-nums">788</span></a></li>
+      <li><a href="#" style="display: inline-flex; align-items: center; gap: 8px; height: 40px; padding: 0 14px; border-radius: 980px; background: #f5f5f7; color: #1d1d1f; font-size: 14px">GitHub Copilot <span style="color: #6e6e73; font-variant-numeric: tabular-nums">682</span></a></li>
+      <li><a href="#" style="display: inline-flex; align-items: center; gap: 8px; height: 40px; padding: 0 14px; border-radius: 980px; background: #f5f5f7; color: #1d1d1f; font-size: 14px">Cursor <span style="color: #6e6e73; font-variant-numeric: tabular-nums">675</span></a></li>
+      <li><a href="#" style="display: inline-flex; align-items: center; gap: 8px; height: 40px; padding: 0 14px; border-radius: 980px; background: #f5f5f7; color: #1d1d1f; font-size: 14px">OpenCode <span style="color: #6e6e73; font-variant-numeric: tabular-nums">144</span></a></li>
+      <li><a href="#" style="display: inline-flex; align-items: center; gap: 8px; height: 40px; padding: 0 14px; border-radius: 980px; background: #f5f5f7; color: #1d1d1f; font-size: 14px">Windsurf <span style="color: #6e6e73; font-variant-numeric: tabular-nums">66</span></a></li>
+      <li><a href="#" style="display: inline-flex; align-items: center; gap: 8px; height: 40px; padding: 0 14px; border-radius: 980px; background: #f5f5f7; color: #1d1d1f; font-size: 14px">Gemini CLI <span style="color: #6e6e73; font-variant-numeric: tabular-nums">61</span></a></li>
+      <li><a href="#" style="display: inline-flex; align-items: center; gap: 8px; height: 40px; padding: 0 14px; border-radius: 980px; background: #f5f5f7; color: #1d1d1f; font-size: 14px">Cline <span style="color: #6e6e73; font-variant-numeric: tabular-nums">42</span></a></li>
+    </ul>
+    <p style="margin: 0; font-size: 13px; color: #6e6e73; line-height: 1.5">도구를 누르면 그 도구로 만든 프로젝트만 봅니다. 흔적은 설정 파일·커밋 서명에서 자동으로 찾고, 메이커가 신고한 값은 따로 표시합니다.</p>
+  </div>
+
+  <div style="display: flex; flex-direction: column; gap: 10px">
+    <div style="display: flex; justify-content: space-between; align-items: baseline; gap: 12px">
+      <h2 style="margin: 0; font-size: 22px; font-weight: 600; letter-spacing: -0.02em; line-height: 1.2">이번 주 가장 활발한</h2>
+      <span style="font-size: 12px; color: #6e6e73">새 버전 수 · 7일</span>
+    </div>
+    <ol style="list-style: none; margin: 0; padding: 0">
+      <li style="display: grid; grid-template-columns: 18px 28px minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 9px 0; border-top: 1px solid #e8e8ed"><span style="font-size: 12px; color: #6e6e73; font-variant-numeric: tabular-nums">1</span><span aria-hidden="true" style="width: 28px; height: 28px; border-radius: 8px; background: #eef3fb; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 600">V</span><span style="min-width: 0; display: flex; gap: 8px; align-items: baseline; overflow: hidden"><a href="#" style="font-size: 14px; font-weight: 500; white-space: nowrap">Vocion</a><span style="font-size: 12px; color: #6e6e73; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">개발 도구</span></span><b style="font-size: 14px; font-weight: 600; font-variant-numeric: tabular-nums">70건</b></li>
+      <li style="display: grid; grid-template-columns: 18px 28px minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 9px 0; border-top: 1px solid #e8e8ed"><span style="font-size: 12px; color: #6e6e73; font-variant-numeric: tabular-nums">2</span><span aria-hidden="true" style="width: 28px; height: 28px; border-radius: 8px; background: #f5efe8; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 600">A</span><span style="min-width: 0; display: flex; gap: 8px; align-items: baseline; overflow: hidden"><a href="#" style="font-size: 14px; font-weight: 500; white-space: nowrap">Agent-Native</a><span style="font-size: 12px; color: #6e6e73; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">개발 도구 · ★ 6,310</span></span><b style="font-size: 14px; font-weight: 600; font-variant-numeric: tabular-nums">66건</b></li>
+      <li style="display: grid; grid-template-columns: 18px 28px minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 9px 0; border-top: 1px solid #e8e8ed"><span style="font-size: 12px; color: #6e6e73; font-variant-numeric: tabular-nums">3</span><span aria-hidden="true" style="width: 28px; height: 28px; border-radius: 8px; background: #edf5ef; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 600">E</span><span style="min-width: 0; display: flex; gap: 8px; align-items: baseline; overflow: hidden"><a href="#" style="font-size: 14px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">Earn your first dollar online with Gumroad</a><span style="font-size: 12px; color: #6e6e73; white-space: nowrap">커머스</span></span><b style="font-size: 14px; font-weight: 600; font-variant-numeric: tabular-nums">66건</b></li>
+      <li style="display: grid; grid-template-columns: 18px 28px minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 9px 0; border-top: 1px solid #e8e8ed"><span style="font-size: 12px; color: #6e6e73; font-variant-numeric: tabular-nums">4</span><span aria-hidden="true" style="width: 28px; height: 28px; border-radius: 8px; background: #f6eef3; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 600">H</span><span style="min-width: 0; display: flex; gap: 8px; align-items: baseline; overflow: hidden"><a href="#" style="font-size: 14px; font-weight: 500; white-space: nowrap">Hive</a><span style="font-size: 12px; color: #6e6e73; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">개발 도구</span></span><b style="font-size: 14px; font-weight: 600; font-variant-numeric: tabular-nums">65건</b></li>
+      <li style="display: grid; grid-template-columns: 18px 28px minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 9px 0; border-top: 1px solid #e8e8ed; border-bottom: 1px solid #e8e8ed"><span style="font-size: 12px; color: #6e6e73; font-variant-numeric: tabular-nums">5</span><span aria-hidden="true" style="width: 28px; height: 28px; border-radius: 8px; background: #f0eff8; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 600">D</span><span style="min-width: 0; display: flex; gap: 8px; align-items: baseline; overflow: hidden"><a href="#" style="font-size: 14px; font-weight: 500; white-space: nowrap">Daggerfall Enhanced</a><span style="font-size: 12px; color: #6e6e73; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">게임</span></span><b style="font-size: 14px; font-weight: 600; font-variant-numeric: tabular-nums">64건</b></li>
+    </ol>
+    <p style="margin: 0; font-size: 12px; color: #6e6e73">새 버전을 낸 3,483개 중 상위 5 · 새 버전 = GitHub 릴리스·제작자 업데이트</p>
+  </div>
+</section>
+
+<section id="news" aria-labelledby="news-title" style="background: #f5f5f7; padding: 40px 0">
+  <div style="max-width: 1120px; margin: 0 auto; padding: 0 32px; box-sizing: border-box; display: flex; flex-direction: column; gap: 12px">
+    <div style="display: flex; align-items: baseline; justify-content: space-between; gap: 16px; flex-wrap: wrap">
+      <h2 id="news-title" style="margin: 0; font-size: 15px; font-weight: 600">빌더를 위한 AI 소식</h2>
+      <span style="font-size: 12px; color: #6e6e73">회사 공식 피드 · 회사마다 최신 1건</span>
+    </div>
+    <ul style="list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column">
+      <li><a href="#" style="display: grid; grid-template-columns: 150px minmax(0, 1fr) auto; gap: 16px; align-items: center; padding: 10px 0; border-top: 1px solid #e0e0e5; font-size: 13px"><span style="color: #6e6e73">GitHub Copilot</span><span style="font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap">GitHub Copilot can now interact with desktop apps with computer use</span><span style="color: #6e6e73; white-space: nowrap">10.02 ↗</span></a></li>
+      <li><a href="#" style="display: grid; grid-template-columns: 150px minmax(0, 1fr) auto; gap: 16px; align-items: center; padding: 10px 0; border-top: 1px solid #e0e0e5; font-size: 13px"><span style="color: #6e6e73">OpenAI</span><span style="font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap">The eternal complement</span><span style="color: #6e6e73; white-space: nowrap">10.02 ↗</span></a></li>
+      <li><a href="#" style="display: grid; grid-template-columns: 150px minmax(0, 1fr) auto; gap: 16px; align-items: center; padding: 10px 0; border-top: 1px solid #e0e0e5; border-bottom: 1px solid #e0e0e5; font-size: 13px"><span style="color: #6e6e73">Gemini</span><span style="font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap">Guided Vision in Gemini Live: built for accessibility</span><span style="color: #6e6e73; white-space: nowrap">10.02 ↗</span></a></li>
+    </ul>
+  </div>
+</section>
+
+<section aria-labelledby="launch-title" style="max-width: 1120px; margin: 0 auto; padding: 64px 32px; box-sizing: border-box; display: flex; align-items: center; justify-content: space-between; gap: 24px 40px; flex-wrap: wrap">
+  <div style="flex: 1 1 420px; min-width: 0">
+    <h2 id="launch-title" style="margin: 0; font-size: 30px; font-weight: 600; letter-spacing: -0.03em; line-height: 1.15; text-wrap: balance">만들었다면, 이제 <span style="color: {{accent}}">보여줄</span> 차례.</h2>
+    <p style="margin: 8px 0 0; font-size: 15px; line-height: 1.5; color: #6e6e73; max-width: 560px; text-wrap: pretty">긴 등록 폼 대신 프로젝트 폴더에서 한 줄. AI 기능이 없어도, AI로 만들었다면 괜찮습니다.</p>
+  </div>
+  <div style="display: flex; gap: 12px; flex-wrap: wrap; align-items: center">
+    <code style="font-family: 'SF Mono', ui-monospace, Menlo, monospace; font-size: 14px; background: #f5f5f7; border-radius: 12px; padding: 12px 18px; color: #1d1d1f">/nomorevibe launch</code>
+    <a href="#" style="display: inline-flex; align-items: center; height: 44px; padding: 0 22px; border-radius: 980px; background: {{accent}}; color: #ffffff; font-size: 15px; font-weight: 500">등록 흐름 보기</a>
+  </div>
+</section>
+
+<footer style="border-top: 1px solid #e8e8ed">
+  <div style="max-width: 1120px; margin: 0 auto; padding: 22px 32px 40px; box-sizing: border-box; display: flex; justify-content: space-between; gap: 16px; flex-wrap: wrap; font-size: 12px; color: #6e6e73">
+    <span><b style="font-weight: 600; color: #1d1d1f">nomorevibe</b> · Build something. Ship it. · 시즌 2026-W40, 3일 남음</span>
+    <nav aria-label="바닥 메뉴" style="display: flex; gap: 20px">
+      <a href="#" style="color: #6e6e73">데이터와 집계 기준</a>
+      <a href="#" style="color: #6e6e73">프로젝트 공개</a>
+      <a href="#" style="color: #6e6e73">게재 기준</a>
+    </nav>
+  </div>
+</footer>
+
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"accent":{"editor":"color","default":"#d63a40","options":["#d63a40","#0071e3","#1d1d1f"],"section":"색"},"$preview":{"width":1280,"height":2620}}'>
+class Component extends DCLogic {
+  renderVals() {
+    return { accent: this.props.accent ?? '#d63a40' };
+  }
+}
+</script>
+</body>
+</html>
