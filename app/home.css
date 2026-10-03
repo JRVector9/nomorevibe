@@ -1588,3 +1588,7 @@ dialog::backdrop {
 .star-change-neutral { color: var(--text-3, #6b7280); }
 .project-body > .star-metric { margin: 8px 0 2px; }
 .popular-project-heading > .star-metric { flex: 0 0 auto; }
+
+/* 새 헤더 마크업이 깨져 보이지 않게 하는 임시 규칙 — Task 11에서 헤더 블록 전체를 다시 쓴다 */
+.header-row { height: 56px; display: flex; align-items: center; gap: 24px; }
+.brand-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--accent); display: inline-block; }

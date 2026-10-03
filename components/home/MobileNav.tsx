@@ -19,9 +19,9 @@ export function MobileNav() {
         <Icon name="grid" />
         발견
       </Link>
-      <Link href="/#briefing">
-        <Icon name="news" />
-        AI 소식
+      <Link href="/#popular">
+        <Icon name="grid" />
+        인기
       </Link>
       <button type="button" onClick={openSaved}>
         <Icon name="bookmark" />
