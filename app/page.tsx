@@ -222,16 +222,14 @@ export default async function HomePage({ searchParams }: Props) {
 function SearchPending({ query }: { query: string }) {
   return (
     <main className="wrap">
-      <div className="content-layout search-results-layout">
-        <section id="projects" aria-labelledby="projects-title" aria-busy="true">
-          <div className="feed-head">
-            <div>
-              <h2 id="projects-title">“{query}” 검색 결과</h2>
-              <p>찾는 중입니다…</p>
-            </div>
+      <section id="projects" aria-labelledby="projects-title" aria-busy="true" className="feed">
+        <div className="row-head">
+          <div>
+            <h2 id="projects-title" className="row-title">“{query}” 검색 결과</h2>
+            <p className="row-note">찾는 중입니다…</p>
           </div>
-        </section>
-      </div>
+        </div>
+      </section>
     </main>
   );
 }
@@ -315,7 +313,8 @@ export async function HomeContent({ params }: { params: HomeParams }) {
     const requestedLimit = savedOnly ? Math.max(shown, SAVED_INITIAL_CANDIDATES) : shown;
     // Public lists load only what is visible. Rankings retain their separate eligibility.
     // 급상승 띠가 앞 5개를 보여 준 '추천'은 그 뒤부터 이어 받는다 — 띠와 피드가 겹치지 않게
-    const stripShown = !filtered && fallback === "rising" ? RISING_STRIP : 0;
+    // 저장 목록 보기(savedOnly)는 브라우저가 거르므로 띠의 다섯을 건너뛰면 그 안의 저장 제품이 사라진다
+    const stripShown = !filtered && !savedOnly && fallback === "rising" ? RISING_STRIP : 0;
     const limit = publicCatalogue ? Math.min(requestedLimit, Math.max(0, matchingTotal - stripShown)) : verifiedTotal;
     list = fallback
       ? await getPublicList(limit, { ...listOptions, sort: fallback, offset: stripShown })
@@ -366,7 +365,8 @@ export async function HomeContent({ params }: { params: HomeParams }) {
       {!query && <IntroLine pulse={pulse} state={state} />}
       {!filtered && (
         <CompactRow id="rising" title="지금 뜨는 프로젝트" note={`마지막 확인 사이 GitHub 스타가 가장 많이 늘었습니다 · 스타 ${RISING_MAX_STARS.toLocaleString("ko-KR")} 미만`}
-          more={{ href: "#projects", label: `${resultCount.toLocaleString("ko-KR")}개 모두 보기` }} items={strip} trailing="category" />
+          more={fallback === "rising" ? { href: "#projects", label: `${resultCount.toLocaleString("ko-KR")}개 모두 보기` } : { href: "/?sort=weekly#projects", label: "모두 보기" }}
+          items={strip} trailing="category" />
       )}
 
       <section id="projects" aria-labelledby="projects-title" className="feed">
