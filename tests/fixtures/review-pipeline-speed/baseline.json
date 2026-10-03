@@ -65,7 +65,7 @@
           },
           "policy": {
             "rulesVersion": "2026-09-21.2",
-            "promptVersion": "2026-09-21.3",
+            "promptVersion": "2026-10-03.1",
             "detectorVersion": "2026-09-14.1",
             "policyVersion": "2026-09-06.1",
             "enforceEligibility": false
@@ -188,7 +188,7 @@
           },
           "policy": {
             "rulesVersion": "2026-09-21.2",
-            "promptVersion": "2026-09-21.3",
+            "promptVersion": "2026-10-03.1",
             "detectorVersion": "2026-09-14.1",
             "policyVersion": "2026-09-06.1",
             "enforceEligibility": false
@@ -318,7 +318,7 @@
           },
           "policy": {
             "rulesVersion": "2026-09-21.2",
-            "promptVersion": "2026-09-21.3",
+            "promptVersion": "2026-10-03.1",
             "detectorVersion": "2026-09-14.1",
             "policyVersion": "2026-09-06.1",
             "enforceEligibility": false
@@ -448,7 +448,7 @@
           },
           "policy": {
             "rulesVersion": "2026-09-21.2",
-            "promptVersion": "2026-09-21.3",
+            "promptVersion": "2026-10-03.1",
             "detectorVersion": "2026-09-14.1",
             "policyVersion": "2026-09-06.1",
             "enforceEligibility": false
@@ -572,7 +572,7 @@
           },
           "policy": {
             "rulesVersion": "2026-09-21.2",
-            "promptVersion": "2026-09-21.3",
+            "promptVersion": "2026-10-03.1",
             "detectorVersion": "2026-09-14.1",
             "policyVersion": "2026-09-06.1",
             "enforceEligibility": false
@@ -696,7 +696,7 @@
           },
           "policy": {
             "rulesVersion": "2026-09-21.2",
-            "promptVersion": "2026-09-21.3",
+            "promptVersion": "2026-10-03.1",
             "detectorVersion": "2026-09-14.1",
             "policyVersion": "2026-09-06.1",
             "enforceEligibility": false
@@ -895,7 +895,7 @@
           },
           "policy": {
             "rulesVersion": "2026-09-21.2",
-            "promptVersion": "2026-09-21.3",
+            "promptVersion": "2026-10-03.1",
             "detectorVersion": "2026-09-14.1",
             "policyVersion": "2026-09-06.1",
             "enforceEligibility": false
@@ -1025,7 +1025,7 @@
           },
           "policy": {
             "rulesVersion": "2026-09-21.2",
-            "promptVersion": "2026-09-21.3",
+            "promptVersion": "2026-10-03.1",
             "detectorVersion": "2026-09-14.1",
             "policyVersion": "2026-09-06.1",
             "enforceEligibility": false
@@ -1155,7 +1155,7 @@
           },
           "policy": {
             "rulesVersion": "2026-09-21.2",
-            "promptVersion": "2026-09-21.3",
+            "promptVersion": "2026-10-03.1",
             "detectorVersion": "2026-09-14.1",
             "policyVersion": "2026-09-06.1",
             "enforceEligibility": false
@@ -1285,7 +1285,7 @@
           },
           "policy": {
             "rulesVersion": "2026-09-21.2",
-            "promptVersion": "2026-09-21.3",
+            "promptVersion": "2026-10-03.1",
             "detectorVersion": "2026-09-14.1",
             "policyVersion": "2026-09-06.1",
             "enforceEligibility": false
