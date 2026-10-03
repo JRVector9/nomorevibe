@@ -253,9 +253,10 @@ CLI smoke는 통과했으나 운영 장기 Codex/Claude 인증 설정과 24시�
 **Grok CLI(2차 표 제공자 `grok-cli`, 2026-10-03).** 워커 이미지에 xAI 공식 Grok Build CLI `1.0.46`이
 `/usr/local/bin/grok`으로 들어 있다(Dockerfile). 호출마다 `GROK_HOME`은 빈 임시 디렉터리를 쓰고, 로그인 파일만
 `GROK_AUTH_PATH`(기본 `~/.grok/auth.json`)로 함께 쓴다 — CLI가 갱신한 토큰을 그 파일에 다시 쓰므로 쓰기 가능한
-볼륨이어야 한다. 로그인은 reviewer 컨테이너마다 한 번: 쓰기 가능한 볼륨을 `/home/worker/.grok`에 마운트하고
-`docker exec -it <reviewer> grok login --device-auth`로 받은 코드를 브라우저에서 승인한다(M3·mini 각각, 구독
-계정 SuperGrok/X Premium+). 설정은 2차 표 `grok-cli` / 모델 `grok-4.7`(실제 id `grok-4.7-build`, effort high
+볼륨이어야 한다. 운영에서는 Dokploy 볼륨을 `/var/lib/nomorevibe-grok`(이미지에서 worker 소유로 만들어 둠)에
+마운트하고 reviewer 환경에 `GROK_AUTH_PATH=/var/lib/nomorevibe-grok/auth.json`을 둔다. 로그인은 reviewer 컨테이너마다
+한 번: `docker exec -t <reviewer> env GROK_HOME=/var/lib/nomorevibe-grok grok login --device-auth`로 받은 코드를
+브라우저에서 승인한다(M3·mini 각각, 구독 계정 SuperGrok/X Premium+). 볼륨이라 재배포해도 로그인이 남는다. 설정은 2차 표 `grok-cli` / 모델 `grok-4.7`(실제 id `grok-4.7-build`, effort high
 고정, 제한 90초 — 실측 중앙값 23초·최대 75초). 실패는 `auth`·`rate_limited`·`budget`으로 적히고 3회 실패 뒤
 대체 모델(sonnet)로 넘어간다. 주간 크레딧 한도는 CLI가 알려 주지 않으니 x.ai 계정 사용량에서 본다.
 
