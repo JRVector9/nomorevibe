@@ -4,7 +4,7 @@ import { DEFAULT_CRAWL_SETTINGS, type CrawlSettings } from "@/lib/crawl/settings
 
 const mocks = vi.hoisted(() => ({
   settings: null as CrawlSettings | null, enqueue: vi.fn(), close: vi.fn(), retry: vi.fn(), pending: vi.fn(), record: vi.fn(),
-  candidate: vi.fn(), document: vi.fn(), input: vi.fn(), review: vi.fn(), gateway: vi.fn(),
+  candidate: vi.fn(), document: vi.fn(), input: vi.fn(), review: vi.fn(), gateway: vi.fn(), grok: vi.fn(),
 }));
 vi.mock("@/lib/crawl/settings", () => ({ getSettings: async () => mocks.settings }));
 vi.mock("@/lib/db", () => ({ db: { select: () => ({ from: () => ({ where: () => ({ limit: mocks.candidate }) }) }) } }));
@@ -12,6 +12,7 @@ vi.mock("@/lib/crawl/jobs/review-document", () => ({ loadReviewDocument: mocks.d
 vi.mock("@/lib/crawl/second-review-input", () => ({ loadSecondReviewInput: mocks.input }));
 vi.mock("@/lib/crawl/agent-review", () => ({ reviewWithAgent: mocks.review, REVIEW_CLI_TIMEOUT_MS: 20_000 }));
 vi.mock("@/lib/crawl/agent-review-gateway", () => ({ reviewWithGateway: mocks.gateway, REVIEW_GATEWAY_TIMEOUT_MS: 30_000 }));
+vi.mock("@/lib/crawl/agent-review-grok", () => ({ reviewWithGrokCli: mocks.grok, GROK_REVIEW_TIMEOUT_MS: 90_000 }));
 vi.mock("@/lib/crawl/second-review", async (importOriginal) => ({
   // 판단을 합치는 규칙은 진짜를 쓴다 — 잡이 그것을 제대로 부르는지가 이 테스트의 요점이다
   combineVerdicts: (await importOriginal<typeof import("@/lib/crawl/second-review")>()).combineVerdicts,
@@ -147,4 +148,16 @@ it("does not save a successful response arriving after shutdown", async () => {
   mocks.review.mockImplementation(async () => { stopping.abort(); return { ok: true, outcome: { decision: "approve", confidence: .95 } }; });
   await secondReviewCandidates({ ...context(), signal: stopping.signal });
   expect(mocks.record).not.toHaveBeenCalled();
+});
+
+it("grok-cli 표는 Grok CLI 로 보고 그 제한 시간을 준다", async () => {
+  mocks.settings!.secondReview = { ...mocks.settings!.secondReview, voters: [{ provider: "grok-cli", model: "grok-4.7" }] };
+  mocks.pending.mockResolvedValue([row({ provider: "grok-cli", model: "grok-4.7", firstDecision: "approve" })]);
+  mocks.input.mockResolvedValue({ snapshot: {}, inputHash: "h", policyHash: "p" });
+  mocks.grok.mockResolvedValue({ ok: true, outcome: { decision: "approve", confidence: 0.9, reason: "pageText introduces software." }, usage: {} });
+  await secondReviewCandidates(context() as never);
+  expect(mocks.grok).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ model: "grok-4.7", timeoutMs: 90_000 }));
+  expect(mocks.review).not.toHaveBeenCalled();
+  expect(mocks.gateway).not.toHaveBeenCalled();
+  expect(mocks.record).toHaveBeenCalledWith(7, expect.objectContaining({ ok: true, provider: "grok-cli", model: "grok-4.7", status: "agreed" }), expect.any(Date), context().lease);
 });

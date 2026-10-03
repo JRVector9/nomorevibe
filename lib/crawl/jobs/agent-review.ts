@@ -10,6 +10,7 @@ import { listReviewCandidates, loadReviewInput, claimAgentReview, recordAgentRev
   requeueStaleReviewSources, handOffExhaustedFirstReviews } from "@/lib/crawl/agent-review-repository";
 import { firstReviewer, reviewWithAgent, REVIEW_CLI_TIMEOUT_MS } from "@/lib/crawl/agent-review";
 import { reviewWithGateway, REVIEW_GATEWAY_TIMEOUT_MS } from "@/lib/crawl/agent-review-gateway";
+import { reviewWithGrokCli, GROK_REVIEW_TIMEOUT_MS } from "@/lib/crawl/agent-review-grok";
 
 const MAX_CONCURRENT_REVIEWS = 16;
 const TICK_MS = 40_000;
@@ -37,7 +38,8 @@ export async function reviewCrawlCandidates(ctx: JobContext<null>): Promise<JobO
   const candidates = await listReviewCandidates(settings, Math.max(20, concurrency * 2));
   if (!candidates.length) return { done: true };
   const remaining = () => TICK_MS - (Date.now() - startedAt);
-  const ceiling = reviewProvider === "abcllm" ? Math.min(FIRST_GATEWAY_MS, REVIEW_GATEWAY_TIMEOUT_MS) : REVIEW_CLI_TIMEOUT_MS;
+  const ceiling = reviewProvider === "abcllm" ? Math.min(FIRST_GATEWAY_MS, REVIEW_GATEWAY_TIMEOUT_MS)
+    : reviewProvider === "grok-cli" ? GROK_REVIEW_TIMEOUT_MS : REVIEW_CLI_TIMEOUT_MS;
   const visited = new Set<number>();
   const controllers = new Set<AbortController>();
   let next = 0, admitted = 0, progress = 0, stopped = false;
@@ -108,7 +110,7 @@ export async function reviewCrawlCandidates(ctx: JobContext<null>): Promise<JobO
       const options = { model, timeoutMs: ceiling, signal: controller.signal };
       let result = await measureReviewCall(telemetry, () => (reviewProvider === "abcllm"
         ? reviewWithGateway(input, options)
-        : reviewWithAgent(input, options)), ctx.log);
+        : reviewProvider === "grok-cli" ? reviewWithGrokCli(input, options) : reviewWithAgent(input, options)), ctx.log);
       if (controller.signal.aborted) result = { ok: false, error: "cancelled" };
       if (!result.ok) stopped = true;
       const recorded = await recordAgentReview({

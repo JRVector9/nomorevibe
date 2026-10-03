@@ -250,6 +250,15 @@ Dokploy와 Keychain에만 저장하고 렌더링된 환경을 로그나 문서�
 `claude setup-token`으로 발급한 장기 `CLAUDE_CODE_OAUTH_TOKEN`을 reviewer에만 주입한다. 로컬
 CLI smoke는 통과했으나 운영 장기 Codex/Claude 인증 설정과 24시간 관측은 아직 남아 있다.
 
+**Grok CLI(2차 표 제공자 `grok-cli`, 2026-10-03).** 워커 이미지에 xAI 공식 Grok Build CLI `1.0.46`이
+`/usr/local/bin/grok`으로 들어 있다(Dockerfile). 호출마다 `GROK_HOME`은 빈 임시 디렉터리를 쓰고, 로그인 파일만
+`GROK_AUTH_PATH`(기본 `~/.grok/auth.json`)로 함께 쓴다 — CLI가 갱신한 토큰을 그 파일에 다시 쓰므로 쓰기 가능한
+볼륨이어야 한다. 로그인은 reviewer 컨테이너마다 한 번: 쓰기 가능한 볼륨을 `/home/worker/.grok`에 마운트하고
+`docker exec -it <reviewer> grok login --device-auth`로 받은 코드를 브라우저에서 승인한다(M3·mini 각각, 구독
+계정 SuperGrok/X Premium+). 설정은 2차 표 `grok-cli` / 모델 `grok-4.7`(실제 id `grok-4.7-build`, effort high
+고정, 제한 90초 — 실측 중앙값 23초·최대 75초). 실패는 `auth`·`rate_limited`·`budget`으로 적히고 3회 실패 뒤
+대체 모델(sonnet)로 넘어간다. 주간 크레딧 한도는 CLI가 알려 주지 않으니 x.ai 계정 사용량에서 본다.
+
 1. 초기 DB 모드는 `off`로 둔다. B 전체 릴리스가 모든 reviewer/publisher에 적용됐고
    reviewer의 명시한 모델·실제 인증·제한 시간 내 응답을 확인한다.
 2. 웹에 `CRAWL_REVIEW_READY=true`를 주입해 재시작한다. 이 플래그는 변경 준비 조건이며
