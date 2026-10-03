@@ -300,15 +300,15 @@ const defaultAgentEvidence = {
 const defaultSecondReview = { enabled: true, voters: [{ provider: "claude-cli" as const, model: "opus" }], includeAiHeld: false, sampleRate: 0.05, agreeAt: 0.85 };
 
 export const reviewVoterSchema = z.object({
-  provider: z.enum(["claude-cli", "abcllm"]),
+  provider: z.enum(["claude-cli", "abcllm", "grok-cli"]),
   model: z.string().trim().min(1).max(160)
     // 게이트웨이 이름은 "[MLX] gpt-oss-120b" 처럼 대괄호·공백이 들어간다. 제어 문자와
     // 셸·따옴표 문자는 막는다 — 지금은 JSON 본문으로만 나가지만, 이름은 좁게 받는 편이 낫다
     .regex(/^[^\p{Cc}"'`\\;$]+$/u),
 })
-  // CLI 쪽 이름은 명령 인자로 나가므로 예전 규칙 그대로 좁게 받는다
-  .refine((value) => value.provider !== "claude-cli" || /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,159}$/.test(value.model),
-    { path: ["model"], message: "claude-cli 모델 이름은 영숫자와 . _ : / - 만 쓸 수 있다" });
+  // CLI 쪽(claude-cli·grok-cli) 이름은 명령 인자로 나가므로 예전 규칙 그대로 좁게 받는다
+  .refine((value) => value.provider === "abcllm" || /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,159}$/.test(value.model),
+    { path: ["model"], message: "CLI 모델 이름은 영숫자와 . _ : / - 만 쓸 수 있다" });
 
 export const crawlSettingsSchema = z.object({
   /** 수집 자체를 멈추는 스위치. 무언가 잘못 돌 때 배포 없이 끊을 수 있어야 한다 */
