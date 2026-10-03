@@ -139,7 +139,7 @@ export function reviewModel(env: Readonly<Record<string, string | undefined>> = 
   return model && /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,159}$/.test(model) ? model : null;
 }
 
-export type FirstReviewer = { provider: "claude-cli" | "abcllm"; model: string };
+export type FirstReviewer = { provider: "claude-cli" | "abcllm" | "grok-cli"; model: string };
 /**
  * 1차 심사를 누가 볼지 — 설정이 있으면 그것, 없으면 예전대로 환경변수.
  *

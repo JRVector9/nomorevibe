@@ -15,7 +15,7 @@ import { pgTable, serial, integer, varchar, text, timestamp, doublePrecision, in
  */
 export type SecondReviewTrigger = "ai_decided" | "ai_held" | "ai_approved" | "risk" | "sample";
 export type SecondReviewStatus = "pending" | "agreed" | "needs_human" | "failed" | "resolved";
-export type SecondReviewProvider = "claude-cli" | "abcllm";
+export type SecondReviewProvider = "claude-cli" | "abcllm" | "grok-cli";
 
 export const secondReviews = pgTable("second_reviews", {
   id: serial("id").primaryKey(),

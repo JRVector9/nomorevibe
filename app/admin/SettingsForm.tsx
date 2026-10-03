@@ -392,6 +392,7 @@ export function SettingsForm({ settings }: { settings: CrawlSettings }) {
                     defaultValue={voter?.provider ?? "abcllm"} className={`${field} w-auto`}>
                     <option value="claude-cli">Claude CLI (한도 있음)</option>
                     <option value="abcllm">사내 게이트웨이 (한도 없음)</option>
+                    <option value="grok-cli">Grok CLI (구독, 주간 한도)</option>
                   </select>
                   <input name={`voterModel${index}`} aria-label={`${index + 1}번째 표 모델`} defaultValue={voter?.model ?? ""}
                     placeholder={index === 0 ? "opus" : "[MLX] gemma4-26b — 비우면 세우지 않습니다"}
@@ -410,7 +411,7 @@ export function SettingsForm({ settings }: { settings: CrawlSettings }) {
               const fallback = settings.secondReview.fallbacks?.[index];
               return <div key={`${index}:${fallback?.provider ?? ""}:${fallback?.model ?? ""}`} className="flex flex-wrap items-center gap-2">
                 <select name={`fallbackProvider${index}`} aria-label={`${index + 1}번째 대체 제공자`} defaultValue={fallback?.provider ?? "claude-cli"} className={`${field} w-auto`}>
-                  <option value="claude-cli">Claude CLI</option><option value="abcllm">사내 게이트웨이</option>
+                  <option value="claude-cli">Claude CLI</option><option value="abcllm">사내 게이트웨이</option><option value="grok-cli">Grok CLI</option>
                 </select>
                 <input name={`fallbackModel${index}`} aria-label={`${index + 1}번째 대체 모델`} defaultValue={fallback?.model ?? ""}
                   placeholder="비우면 사용하지 않습니다" className={`${field} min-w-[220px] flex-1 font-mono`} />

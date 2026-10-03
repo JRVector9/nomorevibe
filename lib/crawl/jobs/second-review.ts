@@ -3,6 +3,7 @@ import type { JobContext, JobOutcome } from "@/lib/jobs/runner";
 import { getSettings } from "@/lib/crawl/settings";
 import { reviewWithAgent, REVIEW_CLI_TIMEOUT_MS } from "@/lib/crawl/agent-review";
 import { reviewWithGateway, REVIEW_GATEWAY_TIMEOUT_MS } from "@/lib/crawl/agent-review-gateway";
+import { reviewWithGrokCli, GROK_REVIEW_TIMEOUT_MS } from "@/lib/crawl/agent-review-grok";
 import { closeSettledSecondReviews, combineVerdicts, enqueueSecondReviews, pendingSecondReviews, recordSecondReview,
   retryFailedSecondReviews } from "@/lib/crawl/second-review";
 import { loadSecondReviewInput } from "@/lib/crawl/second-review-input";
@@ -48,7 +49,7 @@ export async function secondReviewCandidates(ctx: JobContext<null>): Promise<Job
         // 누가 볼지는 행에 적혀 있다 — 도중에 설정이 바뀌어도 올릴 때 정한 모델이 그 표를 낸다
         const provider = row.provider ?? "claude-cli";
         const model = row.model ?? settings.secondReview.voters[0].model;
-        const limit = provider === "abcllm" ? REVIEW_GATEWAY_TIMEOUT_MS : REVIEW_CLI_TIMEOUT_MS;
+        const limit = provider === "abcllm" ? REVIEW_GATEWAY_TIMEOUT_MS : provider === "grok-cli" ? GROK_REVIEW_TIMEOUT_MS : REVIEW_CLI_TIMEOUT_MS;
         /*
          * 남은 시간에 끝낼 수 없는 호출은 시작하지 않는다.
          *
@@ -72,7 +73,9 @@ export async function secondReviewCandidates(ctx: JobContext<null>): Promise<Job
         if (row.createdAt) emitPipelineEvent("queue", { ...telemetry, waitMs: Date.now() - row.createdAt.getTime() }, ctx.log);
         const result = await measureReviewCall(telemetry, () => provider === "abcllm"
           ? reviewWithGateway(input, { model, timeoutMs: limit, signal: ctx.signal })
-          : reviewWithAgent(input, { model, timeoutMs: limit, signal: ctx.signal }), ctx.log);
+          : provider === "grok-cli"
+            ? reviewWithGrokCli(input, { model, timeoutMs: limit, signal: ctx.signal })
+            : reviewWithAgent(input, { model, timeoutMs: limit, signal: ctx.signal }), ctx.log);
         if (ctx.signal?.aborted) { deferred++; continue; }
         if (!result.ok) {
           // 멈추라고 해서 끊긴 것은 실패가 아니다 — 그대로 두면 다음 회차가 처음부터 본다
