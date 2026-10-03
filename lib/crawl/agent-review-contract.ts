@@ -37,7 +37,7 @@ import { repositoryUrl, type ProductAccessMode } from "@/lib/domain/products/acc
  *   규칙이 이 둘을 보류로 넘기게 되면서(규칙 2026-09-19.2) 모델이 "Docusaurus 로 만들었다 = 문서"로 읽고 거부했다.
  */
 // 2026-09-21.2: separate website URL exclusions from installable packages; distinguish data-only lists.
-export const REVIEW_PROMPT_VERSION = "2026-09-21.3";
+export const REVIEW_PROMPT_VERSION = "2026-10-03.1";
 /**
  * 규칙 2026-09-19.2: 문서 생성기·문서 목차·이름 패턴(*-website·awesome-*)을 거부에서 보류로 바꿨다. 새 기준에서
  *   이 셋이 거부한 것의 79%·95%·1/3~5/8 이 올려야 할 프로젝트 홈이었다(블라인드 표본). AI 가 가른다.
