@@ -1,14 +1,10 @@
 import type { Metadata } from "next";
 import { Suspense } from "react";
-import { Inter, JetBrains_Mono } from "next/font/google";
 import { MobileNav } from "@/components/home/MobileNav";
 import { SiteFooter } from "@/components/home/SiteFooter";
 import { SiteHeader } from "@/components/home/SiteHeader";
 import { siteOrigin } from "@/lib/site";
 import "./globals.css";
-
-const inter = Inter({ subsets: ["latin"], variable: "--font-inter" });
-const jetbrains = JetBrains_Mono({ subsets: ["latin"], variable: "--font-jetbrains" });
 
 export const metadata: Metadata = {
   title: "nomorevibe — AI로 만든 것들, 세상에 나오다.",
@@ -53,7 +49,7 @@ export default function RootLayout({
   return (
     <html lang="ko" suppressHydrationWarning>
       {/* min-h-screen flex — 짧은 페이지에서도 푸터를 하단에 고정 */}
-      <body className={`${inter.variable} ${jetbrains.variable} flex min-h-screen flex-col font-sans`}>
+      <body className="flex min-h-screen flex-col font-sans">
         <a className="skip" href="#main">본문으로 건너뛰기</a>
         {topbar}
         <Suspense fallback={<header className="nmb-header" />}>

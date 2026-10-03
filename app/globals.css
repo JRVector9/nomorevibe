@@ -10,22 +10,22 @@
 :root {
   color-scheme: light;
 
-  --bg: #f7f8fb;
-  --bg-soft: #eef1f7;
+  --bg: #ffffff;
+  --bg-soft: #f5f5f7;
   --bg-card: #ffffff;
-  --bg-hover: #f0f2f8;
-  --border: #dfe4ee;
-  --text: #10141c;
-  --text-2: #4a5468;
-  --text-3: #636d80;
-  --up: #0a7d4f;
+  --bg-hover: #f0f0f3;
+  --border: #e8e8ed;
+  --text: #1d1d1f;
+  --text-2: #6e6e73;
+  --text-3: #6e6e73;
+  --up: #1e7b3c;
   --down: #c62430;
   /* 위험과 정상 사이 — "지금 막혀 있지만 사람이 처리하면 풀린다" */
   --warn: #a2650f;
-  --accent: #5b46f0;
-  --accent-solid: #5b46f0;
-  --accent-soft: rgba(91, 70, 240, 0.1);
-  --star: #b8790a;
+  --accent: #d63a40;
+  --accent-solid: #d63a40;
+  --accent-soft: rgba(214, 58, 64, 0.1);
+  --star: #1d1d1f;
 }
 
 /**
@@ -45,9 +45,9 @@
   --up: #16c784;
   --down: #ef4d56;
   --warn: #e0a33c;
-  --accent: #8f81ff;
-  --accent-solid: #6a56f0;
-  --accent-soft: rgba(124, 107, 255, 0.14);
+  --accent: #ff6b70;
+  --accent-solid: #d63a40;
+  --accent-soft: rgba(255, 107, 112, 0.16);
   --star: #f6b73c;
 }
 
@@ -87,8 +87,8 @@
   --color-accent: var(--accent);
   --color-accent-solid: var(--accent-solid);
   --color-accent-soft: var(--accent-soft);
-  --font-sans: var(--font-inter), -apple-system, sans-serif;
-  --font-mono: var(--font-jetbrains), monospace;
+  --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Apple SD Gothic Neo", "Pretendard", system-ui, "Helvetica Neue", sans-serif;
+  --font-mono: "SF Mono", ui-monospace, Menlo, monospace;
 }
 
 body {
@@ -96,6 +96,7 @@ body {
   color: var(--text);
   font-size: 14px;
   -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }
 
 :focus-visible {
