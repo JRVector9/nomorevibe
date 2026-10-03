@@ -23,6 +23,8 @@
   /* 위험과 정상 사이 — "지금 막혀 있지만 사람이 처리하면 풀린다" */
   --warn: #a2650f;
   --accent: #d63a40;
+  /* 작은 글자 링크 — --accent 는 부드러운 바탕(#f5f5f7) 위 4.25:1 이라 AA 미달, 이 값은 5.1:1 */
+  --accent-ink: #c0323a;
   --accent-solid: #d63a40;
   --accent-soft: rgba(214, 58, 64, 0.1);
   --star: #1d1d1f;
@@ -46,6 +48,7 @@
   --down: #ef4d56;
   --warn: #e0a33c;
   --accent: #ff6b70;
+  --accent-ink: #ff6b70;
   --accent-solid: #d63a40;
   --accent-soft: rgba(255, 107, 112, 0.16);
   --star: #f6b73c;
@@ -85,6 +88,7 @@
   --color-down: var(--down);
   --color-warn: var(--warn);
   --color-accent: var(--accent);
+  --color-accent-ink: var(--accent-ink);
   --color-accent-solid: var(--accent-solid);
   --color-accent-soft: var(--accent-soft);
   --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Apple SD Gothic Neo", "Pretendard", system-ui, "Helvetica Neue", sans-serif;
