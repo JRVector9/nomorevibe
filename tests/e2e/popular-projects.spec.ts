@@ -11,12 +11,13 @@ test.beforeAll(async()=>{
 test('홈 네 구간과 전체 목록·페이지·개인 필터가 연결된다',async({page})=>{
  const errors:string[]=[];page.on('pageerror',e=>errors.push(e.message));
  await page.goto('/');await page.waitForLoadState('networkidle');
- const popular=page.locator('#popular-projects');
+ const popular=page.locator('#popular');
  await expect(popular.getByRole('heading',{name:'많이 쓰이는 프로젝트'})).toBeVisible();
  await expect(popular.locator('.popular-tier')).toHaveCount(4);
  await expect(popular.locator('.popular-tier').first().locator('li')).toHaveCount(3);
- await expect(popular.locator('.popular-tier').first().locator('li').first().getByRole('link',{name:'@example',exact:true})).toHaveAttribute('href','https://github.com/example');
- await expect(popular.locator('.popular-description').first()).toHaveText('매일의 일을 돕는 공개 제품 1');
+ // v5 순위 줄은 이름 링크 하나에 소유자는 글자로만 붙는다 — 한 줄 소개는 빠졌다
+ await expect(popular.locator('.popular-tier').first().locator('li').first().locator('.rank-name small')).toHaveText('@example');
+ await expect(popular.locator('.popular-tier').first().locator('li').first().getByRole('link')).toHaveText('인기 제품 1');
  await expect(popular.locator('.popular-tier').last().getByText('아직 없음')).toBeVisible();
  await popular.getByRole('link',{name:'20개 모두 보기'}).click();
  await expect(page).toHaveURL(/popular\?tier=rising/);
@@ -38,10 +39,10 @@ test('홈 네 구간과 전체 목록·페이지·개인 필터가 연결된다'
 for(const width of [1440,390])test(`${width}px에서 글자·가로 넘침·표 스크롤을 확인한다`,async({page})=>{
  await page.setViewportSize({width,height:1000});
  await page.goto('/');await page.waitForLoadState('networkidle');
- await page.locator('#popular-projects').scrollIntoViewIfNeeded();
- await page.locator('#popular-projects').screenshot({path:`/tmp/nomorevibe-popular-home-${width}.png`});
+ await page.locator('#popular').scrollIntoViewIfNeeded();
+ await page.locator('#popular').screenshot({path:`/tmp/nomorevibe-popular-home-${width}.png`});
  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
- expect(await page.locator('#popular-projects').evaluate(root=>Array.from(root.querySelectorAll('*')).filter(e=>e.textContent?.trim()&&getComputedStyle(e).display!=='none').every(e=>parseFloat(getComputedStyle(e).fontSize)>=13))).toBe(true);
+ expect(await page.locator('#popular').evaluate(root=>Array.from(root.querySelectorAll('*')).filter(e=>e.textContent?.trim()&&getComputedStyle(e).display!=='none').every(e=>parseFloat(getComputedStyle(e).fontSize)>=13))).toBe(true);
  await page.goto('/popular?tier=rising');await page.waitForLoadState('networkidle');
  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
  if(width===390)expect(await page.locator('.popular-table-scroll').evaluate(e=>e.scrollWidth>e.clientWidth)).toBe(true);

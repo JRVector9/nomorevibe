@@ -1,5 +1,4 @@
 import Link from "next/link";
-import { AutoSubmitSelect } from "@/components/home/AutoSubmitSelect";
 import {
   hrefWith,
   type BrowseState,
@@ -13,14 +12,13 @@ export { hrefWith, metricHref, parseHomeSort, parseShown } from "@/components/ho
 /**
  * 목록을 좁히는 줄.
  *
- * 탭과 셀렉트는 주소가 상태다. JS 없이 GET으로 동작하고, 공유·뒤로가기가 따라온다.
+ * 탭과 분야 알약은 주소가 상태다. JS 없이 GET으로 동작하고, 공유·뒤로가기가 따라온다.
  */
 
 const TABS = [
   { key: "weekly", label: "추천" },
   { key: "recent", label: "최신" },
   { key: "all-time", label: "관심 많은 순" },
-  { key: "open", label: "저장소 있음" },
 ] as const;
 
 function resultLabel(state: BrowseState): string {
@@ -37,22 +35,20 @@ export function BrowseFilters({
   state,
   counts,
   total,
-  builders,
   resultCount,
   listLabel,
 }: {
   state: BrowseState;
   counts: Record<string, number>;
   total: number;
-  builders?: string[];
   resultCount: number;
   /** 순위 탭이 다른 목록을 대신 보여줄 때 그 목록의 이름 — 정렬 이름과 내용이 어긋나면 안 된다 */
   listLabel?: string;
 }) {
   const narrowed = Boolean(state.query || state.category || state.builder);
   const label = listLabel && !narrowed ? listLabel : resultLabel(state);
-  const categories = CATEGORIES.filter((category) => (counts[category] ?? 0) > 0 || state.category === category);
-  const toolOptions = builders ?? [];
+  const categories = CATEGORIES.filter((category) => (counts[category] ?? 0) > 0 || state.category === category)
+    .sort((a, b) => (counts[b] ?? 0) - (counts[a] ?? 0));
 
   return (
     <div>
@@ -74,27 +70,14 @@ export function BrowseFilters({
             );
           })}
         </div>
-        <form action="/" method="get" className="selects">
-          {(state.sort !== "weekly" || state.query) && <input type="hidden" name="sort" value={state.sort} />}
-          {state.query && <input type="hidden" name="q" value={state.query} />}
-          <label className="sr-only" htmlFor="home-category">카테고리</label>
-          <AutoSubmitSelect id="home-category" name="category" defaultValue={state.category ?? ""}>
-            <option value="">모든 카테고리</option>
-            {categories.map((category) => (
-              <option key={category} value={category}>
-                {CATEGORY_LABELS[category]}
-              </option>
-            ))}
-          </AutoSubmitSelect>
-          <label className="sr-only" htmlFor="home-builder">제작 도구</label>
-          <AutoSubmitSelect id="home-builder" name="builder" defaultValue={state.builder ?? ""}>
-            <option value="">모든 제작 도구</option>
-            {toolOptions.map((builder) => (
-              <option key={builder} value={builder}>{builder}</option>
-            ))}
-          </AutoSubmitSelect>
-          <noscript><button type="submit" className="filter-apply">적용</button></noscript>
-        </form>
+        <nav className="chips chips-filter" aria-label="분야">
+          <Link href={hrefWith(state, { category: undefined })} className={`chip${state.category ? "" : " chip-dark"}`} aria-current={state.category ? undefined : "true"}>전체</Link>
+          {categories.map((category) => (
+            <Link key={category} href={hrefWith(state, { category })} className={`chip${state.category === category ? " chip-dark" : ""}`} aria-current={state.category === category ? "true" : undefined}>
+              {CATEGORY_LABELS[category]} <span className="chip-count">{(counts[category] ?? 0).toLocaleString("ko-KR")}</span>
+            </Link>
+          ))}
+        </nav>
       </div>
       <div className="filter-summary">
         <span>

@@ -27,10 +27,11 @@ export function ProductIcon({
     );
   }
   const color = AVATAR_COLORS[name.length % AVATAR_COLORS.length];
+  // 이니셜도 화면 글자다 — 작은 아이콘(28px)에서도 최소 글자 13px 아래로 내리지 않는다
   return (
     <span
       className="inline-flex shrink-0 items-center justify-center rounded-[10px] font-extrabold text-white"
-      style={{ width: size, height: size, background: color, fontSize: size * 0.42 }}
+      style={{ width: size, height: size, background: color, fontSize: Math.max(13, size * 0.42) }}
     >
       {name.slice(0, 1).toUpperCase()}
     </span>

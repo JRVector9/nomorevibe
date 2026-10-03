@@ -15,7 +15,7 @@ export default async function PopularPage({searchParams}:{searchParams:Promise<R
  let result: Awaited<ReturnType<typeof getPopularPage>> | undefined;
  try{result=await getPopularPage(tier,personal,page);}catch(error){logger.error('popular.list_failed',{error});}
  return <main className="wrap popular-page">
-  <Link className="popular-back" href={`/${personal?'?personal=1':''}#popular-projects`}>← 발견하기로 돌아가기</Link>
+  <Link className="popular-back" href={`/${personal?'?personal=1':''}#popular`}>← 발견하기로 돌아가기</Link>
   <div className="popular-heading"><div><span className="popular-eyebrow">GITHUB에서 주목받는</span><h1>많이 쓰이는 프로젝트</h1><p>GitHub 스타 2천 이상 · 10만 미만</p></div>
    <Suspense><PopularFilter personal={personal}/></Suspense></div>
   <nav className="popular-tabs" aria-label="스타 구간">{STAR_TIERS.map((t,index)=><Link key={t.key} aria-current={tier===t.key?'page':undefined} href={popularHref(t.key,personal)}>

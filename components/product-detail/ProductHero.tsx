@@ -1,5 +1,5 @@
 /* eslint-disable @next/next/no-img-element -- 검증 후 내부에 보관한 이미지를 저장 치수 그대로 제공한다. */
-import { ProjectCover, coverArtFor } from "@/components/home/ProjectCover";
+import { ProjectTile } from "@/components/home/ProjectTile";
 import { thumbnailPresentation } from "@/lib/domain/products/thumbnails/presentation";
 import { StatusBadge } from "@/components/TrustBadges";
 import { Tag } from "@/components/Tag";
@@ -119,11 +119,7 @@ export function ProductHero({
           ) : (
             <figure>
               <div className="detail-list-cover flex min-h-[320px] flex-col justify-center p-4 sm:min-h-[400px] sm:p-6 lg:min-h-[520px]">
-                <ProjectCover
-                  name={product.name}
-                  ogImage={safeIcon}
-                  art={coverArtFor(product.slug)}
-                />
+                <ProjectTile slug={product.slug} name={product.name} ogImage={safeIcon} size={64} />
               </div>
               <figcaption className="border-t border-line bg-bg-card px-4 py-3 text-[13px] leading-5 text-fg-3">
                 목록 미리보기

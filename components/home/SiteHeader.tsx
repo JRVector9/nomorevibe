@@ -52,18 +52,18 @@ export function SiteHeader() {
 
   return (
     <header className="nmb-header">
-      <div className="wrap">
+      <div className="wrap header-row">
         <Link className="brand" href="/" aria-label="nomorevibe 홈">
-          <span className="brand-symbol" aria-hidden="true">✳</span>
+          <i className="brand-dot" aria-hidden="true" />
           nomorevibe
-          <span className="brand-beta">BETA</span>
         </Link>
         <nav className="navigation" aria-label="주 메뉴">
-          <Link href="/" className={home ? "active" : undefined}>발견하기</Link>
-          <Link href="/#briefing">AI 소식</Link>
-          <Link href="/?metric=tools">제작 도구</Link>
+          <Link href="/#rising" className={home ? "active" : undefined}>급상승</Link>
+          <Link href="/#projects">발견하기</Link>
+          <Link href="/#popular">인기</Link>
+          <Link href="/#new">새로 나온</Link>
         </nav>
-        <form className="header-search" action="/" method="get">
+        <form className="header-search" action="/" method="get" role="search">
           <Icon name="search" />
           <input
             ref={input}
@@ -77,18 +77,13 @@ export function SiteHeader() {
             defaultValue={home ? params.get("q") ?? "" : ""}
             key={home ? params.get("q") ?? "" : "away"}
           />
-          <kbd className="key">⌘ K</kbd>
+          <kbd className="key">⌘K</kbd>
         </form>
-        <div className="header-right">
-          <button type="button" className="saved-nav" onClick={openSaved} aria-label="저장한 프로젝트">
-            <Icon name="bookmark" />
-            <i className={`saved-dot${hasSaved ? " on" : ""}`} />
-          </button>
-          <Link className="primary" href="/launch">
-            <Icon name="plus" size={15} />
-            프로젝트 공개
-          </Link>
-        </div>
+        <button type="button" className="saved-nav" onClick={openSaved} aria-label="저장한 프로젝트">
+          <Icon name="bookmark" />
+          <i className={`saved-dot${hasSaved ? " on" : ""}`} />
+        </button>
+        <Link className="primary" href="/launch">프로젝트 공개</Link>
       </div>
     </header>
   );

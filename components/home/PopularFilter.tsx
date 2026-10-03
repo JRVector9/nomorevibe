@@ -12,7 +12,7 @@ export function PopularFilter({personal}:{personal:boolean}){
   next.delete('page');
   startTransition(()=>{
    setChecked(selected);
-   router.push(`${pathname}?${next}${pathname==='/'?'#popular-projects':''}`,{scroll:false});
+   router.push(`${pathname}?${next}${pathname==='/'?'#popular':''}`,{scroll:false});
   });
  }}/><span>개인 계정만</span></label>;
 }

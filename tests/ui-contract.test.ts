@@ -47,8 +47,9 @@ describe("global light UI contract", () => {
     const css = readFileSync(join(ROOT, "app/globals.css"), "utf8");
     const root = css.match(/:root\s*\{([\s\S]*?)\}/)?.[1] ?? "";
     expect(root).toContain("color-scheme: light");
-    expect(root).toContain("--bg: #f7f8fb");
+    expect(root).toContain("--bg: #ffffff");
     expect(root).toContain("--bg-card: #ffffff");
+    expect(root).toContain("--accent: #d63a40");
     expect(css).not.toContain("@media (prefers-color-scheme: light)");
     expect(css).toMatch(/:root\[data-theme="dark"\]\s*\{[\s\S]*color-scheme:\s*dark/);
     expect(css).toContain(":focus-visible");

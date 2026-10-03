@@ -1,116 +1,54 @@
-import { StarMetric } from '@/components/StarMetric';
+import { StarMetric } from "@/components/StarMetric";
 import Link from "next/link";
-import { hrefWith, type BrowseState } from "@/components/home/browse-state";
+import type { BrowseState } from "@/components/home/browse-state";
 import { Icon } from "@/components/home/icons";
-import { ProjectCover, coverArtFor } from "@/components/home/ProjectCover";
+import { ProjectTile } from "@/components/home/ProjectTile";
 import { categoryLabel } from "@/lib/domain/products/labels";
 import type { HomeCardProduct } from "@/components/home/types";
 import { githubOwnerFromRepositoryUrl } from "@/lib/domain/products/github-owner";
 
-function interestCount(product: HomeCardProduct): number {
-  if (typeof product.validClicks === "number") return product.validClicks;
-  return product.metrics?.clicks ?? 0;
-}
-
-function makerLabel(product: HomeCardProduct): string {
-  if (product.makerName) return product.makerName;
-  if (product.unclaimed) return "미클레임";
-  return product.slug;
-}
-
-export function ProjectCard({
-  product,
-  saved,
-  onToggleSave,
-  browseState,
-}: {
+/**
+ * 홈 카드 — 타일 · 이름 · 한 줄 · "분야 · @소유자" / ★ 증가.
+ *
+ * 미클레임·저장소·관심 수는 방문자에게 뜻이 없어 뺐다(상세에서 밝힌다). 메이커가 신고한 제작 도구만
+ * 메타 줄 끝에 붙는다 — 수집기 추정값은 공개 뷰모델에서 이미 null 이다(view.ts toListItem).
+ */
+export function ProjectCard({ product, saved, onToggleSave }: {
   product: HomeCardProduct;
   saved: boolean;
   onToggleSave: (slug: string) => void;
   browseState: BrowseState;
 }) {
-  const hasRepository = Boolean(product.repoUrl);
-  const githubOwner = product.unclaimed ? githubOwnerFromRepositoryUrl(product.repoUrl) : null;
-  const interest = interestCount(product);
-  const visibleMaker = githubOwner ? `@${githubOwner.login}` : makerLabel(product);
-  const initial = visibleMaker.replace(/^@/, "").slice(0, 1).toUpperCase();
+  const owner = githubOwnerFromRepositoryUrl(product.repoUrl);
+  const maker = owner ? `@${owner.login}` : product.makerName ? `@${product.makerName.replace(/^@/, "")}` : null;
 
   return (
     <article className="project-card">
-      <div className="card-visual">
-        <Link
-          href={`/p/${product.slug}`}
-          className="cover-open"
-          aria-label={`${product.name} 상세 보기`}
-        >
-          <ProjectCover name={product.name} ogImage={product.ogImage} art={coverArtFor(product.slug)} />
-        </Link>
-        <button
-          type="button"
-          className={`cover-saved${saved ? " active" : ""}`}
-          aria-label={`${product.name} ${saved ? "저장 취소" : "저장"}`}
-          aria-pressed={saved}
-          onClick={() => onToggleSave(product.slug)}
-        >
-          <Icon name="bookmark" size={14} />
-        </button>
-      </div>
+      <Link href={`/p/${product.slug}`} className="card-visual" aria-label={`${product.name} 상세 보기`}>
+        <ProjectTile slug={product.slug} name={product.name} ogImage={product.ogImage} size={64} installable={product.accessMode === "installable"} />
+      </Link>
       <div className="project-body">
         <div className="project-title-row">
-          <h3 className="project-title">
-            <Link href={`/p/${product.slug}`} className="title-open">{product.name}</Link>
-          </h3>
-          {hasRepository && <span className="tiny-tag">저장소</span>}
-          {product.accessMode === "installable" && <span className="tiny-tag">직접 설치</span>}
-          {product.unclaimed && <span className="tiny-tag tiny-tag-muted">미클레임</span>}
+          <h3 className="project-title"><Link href={`/p/${product.slug}`}>{product.name}</Link></h3>
+          <button
+            type="button"
+            className={`cover-saved${saved ? " active" : ""}`}
+            aria-label={`${product.name} ${saved ? "저장 취소" : "저장"}`}
+            aria-pressed={saved}
+            onClick={() => onToggleSave(product.slug)}
+          >
+            <Icon name="bookmark" size={16} />
+          </button>
         </div>
         <p className="project-tagline" title={product.tagline}>{product.tagline}</p>
-        <div className="project-tags">
-          <Link className="pill" href={hrefWith(browseState, { category: product.category, sort: "recent" })}>
-            {categoryLabel(product.category)}
-          </Link>
-          {product.builder && product.builderClaim === "reported" && (
-            <Link
-              className="pill tool"
-              href={hrefWith(browseState, { builder: product.builder, sort: "recent" })}
-              title="제작자 등록 정보"
-            >
-              {product.builder}
-            </Link>
-          )}
-          {product.health?.down && <span className="pill pill-down">응답 없음</span>}
-        </div>
-        <StarMetric value={product} />
         <div className="project-bottom">
-          {githubOwner ? (
-            <a
-              className="maker maker-link"
-              href={githubOwner.profileUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              title="GitHub 저장소 소유자"
-              aria-label={`${githubOwner.login} GitHub 저장소 소유자 프로필`}
-            >
-              <span className="avatar" aria-hidden="true">{initial}</span>
-              <span className="truncate">{visibleMaker}</span>
-              <span aria-hidden>↗</span>
-            </a>
-          ) : (
-            <span className="maker">
-              <span className="avatar" aria-hidden="true">{initial}</span>
-              {product.makerName ? `@${product.makerName.replace(/^@/, "")}` : visibleMaker}
-            </span>
-          )}
-          <div className="card-actions">
-            <span className="save-count" title="이 브라우저에 저장">
-              <Icon name="bookmark" size={11} />
-              {saved ? "저장됨" : "저장"}
-            </span>
-            <span className="vote" title="NoMoreVibe를 통한 관심">
-              <Icon name="up" size={12} />
-              {interest}
-            </span>
-          </div>
+          <span className="project-meta">
+            {categoryLabel(product.category)}
+            {maker && (owner ? <> · <a href={owner.profileUrl} target="_blank" rel="noopener noreferrer" title="GitHub 저장소 소유자">{maker}</a></> : <> · {maker}</>)}
+            {product.builder && product.builderClaim === "reported" && <> · {product.builder}</>}
+            {product.health?.down && <> · <span className="meta-down">응답 없음</span></>}
+          </span>
+          <StarMetric value={product} />
         </div>
       </div>
     </article>
