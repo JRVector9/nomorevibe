@@ -27,9 +27,9 @@ test('wide repository wordmarks remain fully visible in covers and icons',async(
  // Render outside Playwright's component transform so the real React markup reaches the browser.
  const html=execFileSync(process.execPath,['--import','tsx','--input-type=module','-e',`
   import React from 'react';import{renderToStaticMarkup}from'react-dom/server';globalThis.React=React;
-  const{ProjectCover}=await import('./components/home/ProjectCover.tsx');const{ProductIcon}=await import('./components/ProductIcon.tsx');
+  const{ProjectTile}=await import('./components/home/ProjectTile.tsx');const{ProductIcon}=await import('./components/ProductIcon.tsx');
   const ogImage=${JSON.stringify(ogImage)};
-  console.log(renderToStaticMarkup(React.createElement('div',{id:'wide-logo-check',style:{width:360}},React.createElement(ProjectCover,{name:'Wide logo',ogImage,art:'paper'}),React.createElement(ProductIcon,{name:'Wide logo',ogImage,size:48}))));
+  console.log(renderToStaticMarkup(React.createElement('div',{id:'wide-logo-check',style:{width:360}},React.createElement(ProjectTile,{slug:'wide-logo',name:'Wide logo',ogImage,size:64}),React.createElement(ProductIcon,{name:'Wide logo',ogImage,size:48}))));
  `],{encoding:'utf8'});
 
  await page.evaluate(html=>{const host=document.createElement('div');host.innerHTML=html;document.body.prepend(host)},html);
