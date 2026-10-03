@@ -60,7 +60,8 @@ test("home discovery, saved projects, search, methodology, and mobile layout wor
   await search.fill("Evidence Studio");
   await Promise.all([page.waitForURL(/q=Evidence\+Studio/), search.press("Enter")]);
   await expect(page.getByRole("heading", { name: "Evidence Studio", exact: true })).toBeVisible();
-  await expect(page.getByRole("tab", { name: "최신" })).toHaveAttribute("aria-selected", "true");
+  // 헤더 검색은 관련도순이라 어느 탭도 선택되지 않는다
+  await expect(page.getByRole("tab", { selected: true })).toHaveCount(0);
 
   await page.getByRole("link", { name: "Evidence Studio", exact: true }).click();
   await expect(page).toHaveURL(new RegExp(`/p/${PRODUCT_DETAIL_FIXTURES.rich}$`));

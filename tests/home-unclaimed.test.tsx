@@ -406,6 +406,8 @@ describe("구획 제목", () => {
 
   it("첫 화면에 급상승 띠가 오고 피드는 그다음 항목부터 이어진다", async () => {
     categoryCounts.mockResolvedValue({ Dev: 3 });
+    // 맞는 제품 20 · 검증 0 — 급상승이 띠(5)를 채우고도 남아야 띠와 피드가 나뉜다
+    countProducts.mockResolvedValueOnce(20).mockResolvedValueOnce(0);
     const rising = ["r1", "r2", "r3", "r4", "r5", "r6"].map(product);
     getPublicList.mockImplementation(async (limit: number, options: { offset?: number } = {}) => rising.slice(options.offset ?? 0, (options.offset ?? 0) + limit));
     const html = await render({});
