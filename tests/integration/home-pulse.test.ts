@@ -31,12 +31,12 @@ beforeEach(async () => {
 
 /** 공개 제품 하나와 그 저장소 — 시각은 창 경계에서 하루 이상 떨어뜨린다(시간대 차이에 흔들리지 않게) */
 async function product(slug: string, category: string, options: {
-  status?: ProductStatus; listedAt?: Date; bornAt?: Date | null; stars?: number;
+  status?: ProductStatus; listedAt?: Date; bornAt?: Date | null; stars?: number; ogImage?: string;
 } = {}) {
   await db.insert(products).values({
     slug, url: `https://${slug}.example`, name: slug, tagline: "t", description: "d", category,
     status: options.status ?? "seeded", source: "crawler", verifyToken: `v-${slug}`, editTokenHash: "a".repeat(64),
-    createdAt: options.listedAt ?? daysBefore(30),
+    createdAt: options.listedAt ?? daysBefore(30), ogImage: options.ogImage,
   });
   if (options.bornAt === null) return;
   const repo = `acme/${slug}`;
@@ -67,7 +67,7 @@ async function scan(slug: string, clients: (string | null)[], completedAt = days
 }
 
 async function seed() {
-  await product("fresh-dev", "Dev", { bornAt: daysBefore(2), listedAt: daysBefore(1), stars: 1500 });
+  await product("fresh-dev", "Dev", { bornAt: daysBefore(2), listedAt: daysBefore(1), stars: 1500, ogImage: "https://fresh-dev.example/og.png" });
   await product("fresh-games", "Games", { bornAt: daysBefore(3), listedAt: daysBefore(2) });
   await product("prev-dev", "Dev", { status: "verified", bornAt: daysBefore(10), listedAt: daysBefore(9), stars: 40 });
   await product("old-other", "Other", { bornAt: daysBefore(60) });
@@ -103,8 +103,8 @@ describe("홈 윗줄·리더보드 집계", () => {
 
     expect(pulse.updates).toEqual({ projects: 2, releases: 4 });
     expect(pulse.active).toEqual([
-      { slug: "fresh-dev", name: "fresh-dev", category: "Dev", releases: 3, stars: 1500 },
-      { slug: "prev-dev", name: "prev-dev", category: "Dev", releases: 1, stars: 40 },
+      { slug: "fresh-dev", name: "fresh-dev", category: "Dev", releases: 3, stars: 1500, ogImage: "https://fresh-dev.example/og.png" },
+      { slug: "prev-dev", name: "prev-dev", category: "Dev", releases: 1, stars: 40, ogImage: null },
     ]);
   });
 
