@@ -261,6 +261,7 @@ export async function HomeContent({ params }: { params: HomeParams }) {
   let translatedQuery: string | null = null;
   let fallback: FallbackSort | null = null;
   let rankingReady = true;
+  let stripShown = 0;
 
   /**
    * 상단 집계·소식은 제품 목록과 서로의 결과를 쓰지 않는다 — 먼저 띄워 두고 목록 조회와 겹친다.
@@ -314,7 +315,8 @@ export async function HomeContent({ params }: { params: HomeParams }) {
     // Public lists load only what is visible. Rankings retain their separate eligibility.
     // 급상승 띠가 앞 5개를 보여 준 '추천'은 그 뒤부터 이어 받는다 — 띠와 피드가 겹치지 않게
     // 저장 목록 보기(savedOnly)는 브라우저가 거르므로 띠의 다섯을 건너뛰면 그 안의 저장 제품이 사라진다
-    const stripShown = !filtered && !savedOnly && fallback === "rising" ? RISING_STRIP : 0;
+    // 급상승이 띠 하나를 채우고도 남을 때만 띠와 피드를 나눈다 — 다섯 이하면 띠가 다 가져가 피드가 '없다'고 말한다
+    stripShown = !filtered && !savedOnly && fallback === "rising" && matchingTotal > RISING_STRIP ? RISING_STRIP : 0;
     const limit = publicCatalogue ? Math.min(requestedLimit, Math.max(0, matchingTotal - stripShown)) : verifiedTotal;
     list = fallback
       ? await getPublicList(limit, { ...listOptions, sort: fallback, offset: stripShown })
@@ -363,7 +365,7 @@ export async function HomeContent({ params }: { params: HomeParams }) {
   return (
     <main className="wrap">
       {!query && <IntroLine pulse={pulse} state={state} />}
-      {!filtered && (
+      {!filtered && (fallback !== "rising" || stripShown > 0) && (
         <CompactRow id="rising" title="지금 뜨는 프로젝트" note={`마지막 확인 사이 GitHub 스타가 가장 많이 늘었습니다 · 스타 ${RISING_MAX_STARS.toLocaleString("ko-KR")} 미만`}
           more={fallback === "rising" ? { href: "#projects", label: `${resultCount.toLocaleString("ko-KR")}개 모두 보기` } : { href: "/?sort=weekly#projects", label: "모두 보기" }}
           items={strip} trailing="category" />
