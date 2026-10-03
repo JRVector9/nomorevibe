@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+# Read-only check: is this NoMoreVibe instance worth driving?
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "$0")/../../../.." && pwd)"
+cd "$ROOT"
+
+ENV_FILE="${NOMOREVIBE_ENV_FILE:-.env.local}"
+if [[ -f "$ENV_FILE" ]]; then
+  set -a
+  # shellcheck disable=SC1090
+  source "$ENV_FILE"
+  set +a
+fi
+
+SITE="${NOMOREVIBE_SITE_URL:-${NEXT_PUBLIC_SITE_URL:-http://localhost:3000}}"
+SITE="${SITE%/}"
+DB_URL="${DATABASE_URL:-}"
+
+fail() { echo "doctor: FAIL: $*" >&2; exit 1; }
+ok() { echo "doctor: ok: $*"; }
+
+[[ -n "$DB_URL" ]] || fail "DATABASE_URL is empty (load $ENV_FILE or export it)"
+
+if command -v psql >/dev/null 2>&1; then
+  version="$(psql "$DB_URL" -Atc "SHOW server_version;" 2>/dev/null || true)"
+  [[ -n "$version" ]] || fail "cannot query PostgreSQL at DATABASE_URL"
+  [[ "$version" == 17.* ]] || fail "PostgreSQL $version is not 17.x; migrations need 17"
+  ok "postgres $version"
+else
+  echo "doctor: warn: psql not on PATH; skipped version check"
+fi
+
+health="$(curl -fsS --max-time 5 "$SITE/api/health" || true)"
+[[ -n "$health" ]] || fail "$SITE/api/health did not return a body"
+echo "$health" | grep -q '"status":"ok"' || fail "health status is not ok: $health"
+echo "$health" | grep -q '"db":"ok"' || fail "health db is not ok: $health"
+ok "health $health"
+
+home="$(curl -fsS --max-time 30 "$SITE/" || true)"
+echo "$home" | grep -q "AI로 만든 것들, 세상에 나오다." || fail "home page missing hero heading"
+ok "home heading present at $SITE/"
+
+if [[ "${ADMIN_LOCAL_LOGIN:-}" == "1" ]]; then
+  admin="$(curl -fsS --max-time 15 -o /dev/null -w "%{http_code} %{redirect_url}" "$SITE/admin/status" || true)"
+  echo "$admin" | grep -q "^200" || echo "doctor: warn: /admin/status did not return 200 ($admin)"
+  ok "ADMIN_LOCAL_LOGIN=1"
+else
+  echo "doctor: note: ADMIN_LOCAL_LOGIN is not 1; admin pages need GitHub OAuth"
+fi
+
+ok "instance at $SITE is driveable"
