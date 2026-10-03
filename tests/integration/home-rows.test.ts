@@ -1,7 +1,8 @@
 // tests/integration/home-rows.test.ts
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { db } from "@/lib/db";
-import { products, type ProductStatus } from "@/lib/db/schema";
+import { productHealth, products, type ProductStatus } from "@/lib/db/schema";
+import { DOWN_THRESHOLD } from "@/lib/domain/products/health";
 import { getRisingRank } from "@/lib/domain/products/repository";
 import { getNewThisWeek, getPublicList, getRelatedRising } from "@/lib/domain/products/view";
 import { ensureSchema, resetTables } from "./setup";
@@ -50,6 +51,14 @@ describe("급상승 순위", () => {
     expect(await getRisingRank("big")).toBeNull();
     expect(await getRisingRank("flat")).toBeNull();
     expect(await getRisingRank("missing")).toBeNull();
+  });
+
+  it("닿지 않는 제품은 홈 목록처럼 순위에서 빠지고 남의 자리도 밀지 않는다", async () => {
+    await product("down", { stars: 1500, starsPrevious: 1 });
+    await product("alive", { stars: 300, starsPrevious: 100 });
+    await db.insert(productHealth).values({ slug: "down", status: 0, failures: DOWN_THRESHOLD, downSince: daysAgo(2) });
+    expect(await getRisingRank("down")).toBeNull();
+    expect(await getRisingRank("alive")).toBe(1);
   });
 });
 

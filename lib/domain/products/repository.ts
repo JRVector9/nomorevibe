@@ -213,16 +213,16 @@ export async function countProducts(options: Omit<ListOptions, "limit" | "sort" 
 
 /**
  * 급상승 순위 — 홈 '지금 뜨는'과 같은 조건(risingStars)·같은 순서(starGain desc) 안에서 몇 번째인가.
- * 조건 밖(스타 2천 이상, 증가 없음, 비공개)이면 null. 동률은 같은 순위.
+ * 조건 밖(스타 2천 이상, 증가 없음, 비공개, 닿지 않는 제품)이면 null. 동률은 같은 순위.
+ * 홈 목록처럼 닿지 않는 제품(notDown)은 세지 않는다 — 안 그러면 숨은 제품이 남의 순위를 한 칸 밀어낸다.
  */
 export async function getRisingRank(slug: string): Promise<number | null> {
   const [row] = await db.execute<{ rank: number | null }>(sql`
     with me as (
       select ${starGain} as gain from ${products}
-       where ${products.slug} = ${slug} and ${products.status} in ('verified', 'seeded') and ${risingStars})
-    select case when me.gain is null then null
-                else (select count(*)::int + 1 from ${products}
-                       where ${products.status} in ('verified', 'seeded') and ${risingStars} and ${starGain} > me.gain) end as rank
+       where ${products.slug} = ${slug} and ${products.status} in ('verified', 'seeded') and ${risingStars} and ${notDown})
+    select (select count(*)::int + 1 from ${products}
+             where ${products.status} in ('verified', 'seeded') and ${risingStars} and ${notDown} and ${starGain} > me.gain) as rank
       from me`);
   return row?.rank ?? null;
 }
