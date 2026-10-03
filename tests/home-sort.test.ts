@@ -24,16 +24,15 @@ describe("home sort", () => {
       state: { sort: "recent", category: "Dev", query: "ai tool" },
       counts: { Dev: 1 },
       total: 1,
-      builders: ["Claude Code"],
       resultCount: 1,
     }));
 
     expect(html).toContain('href="/?sort=weekly&amp;category=Dev&amp;q=ai+tool"');
     expect(html).toContain('href="/?sort=all-time&amp;category=Dev&amp;q=ai+tool"');
-    expect(html).toContain('href="/?sort=open&amp;category=Dev&amp;q=ai+tool"');
     expect(html).toContain("추천");
     expect(html).toContain("관심 많은 순");
-    expect(html).toContain("저장소 있음");
+    // '저장소 있음' 탭은 내렸다 — 주소 ?sort=open 은 parseHomeSort 가 계속 받는다
+    expect(html).not.toContain("저장소 있음");
   });
 
   it("keeps the expanded list count in the address and drops it when filters change", () => {
@@ -52,13 +51,13 @@ describe("home sort", () => {
 
   it("순위 탭이 다른 목록을 대신 보여줄 때는 그 목록의 이름을 쓰고, 필터가 걸리면 검색 결과다", () => {
     const html = renderToStaticMarkup(createElement(BrowseFilters, {
-      state: { sort: "weekly" }, counts: {}, total: 0, builders: [], resultCount: 7, listLabel: "스타 증가 순",
+      state: { sort: "weekly" }, counts: {}, total: 0, resultCount: 7, listLabel: "스타 증가 순",
     }));
     expect(html).toContain("스타 증가 순 7개");
     expect(html).not.toContain("에디터 추천");
 
     const narrowed = renderToStaticMarkup(createElement(BrowseFilters, {
-      state: { sort: "weekly", category: "Dev" }, counts: { Dev: 1 }, total: 1, builders: [], resultCount: 1, listLabel: "스타 증가 순",
+      state: { sort: "weekly", category: "Dev" }, counts: { Dev: 1 }, total: 1, resultCount: 1, listLabel: "스타 증가 순",
     }));
     expect(narrowed).toContain("검색 결과 1개");
   });
@@ -68,7 +67,6 @@ describe("home sort", () => {
       state: { sort: "weekly" },
       counts: {},
       total: 0,
-      builders: [],
       resultCount: 0,
     }));
 

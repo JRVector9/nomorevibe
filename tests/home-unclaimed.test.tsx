@@ -16,7 +16,6 @@ import type { RankingListItem, SeasonSummary } from "@/lib/domain/ranking/view";
 const {
   categoryCounts,
   countProducts,
-  listBuilders,
   getAllTimeRanking,
   getCurrentSeason,
   getSeasonRanking,
@@ -27,7 +26,6 @@ const {
 } = vi.hoisted(() => ({
   categoryCounts: vi.fn(),
   countProducts: vi.fn(),
-  listBuilders: vi.fn(),
   getAllTimeRanking: vi.fn(),
   getCurrentSeason: vi.fn(),
   getSeasonRanking: vi.fn(),
@@ -40,13 +38,19 @@ const {
 // HomeContent starts these independent loads too; never reach a database from a unit test.
 vi.mock("@/lib/news/repository", () => ({ listHomeNews: vi.fn().mockResolvedValue([]) }));
 vi.mock("@/lib/domain/products/popular", () => ({ getPopularGroups: vi.fn().mockResolvedValue([]) }));
-vi.mock("@/lib/domain/products/repository", () => ({ categoryCounts, countProducts, listBuilders }));
+vi.mock("@/lib/domain/products/repository", () => ({ categoryCounts, countProducts, RISING_MAX_STARS: 2000 }));
 // 검색어 해석은 DB 로 어간을 뽑고 넓힐지 센다 — 이 화면 테스트는 목록 조합만 보므로 친 그대로 넘긴다
 vi.mock("@/lib/domain/products/search-translation", () => ({
   resolveSearchQuery: async (query?: string) => ({ queries: query ? [query] : [], translated: null }),
   normalizeQuery: (query: string) => query.trim().toLowerCase(),
 }));
-vi.mock("@/lib/domain/products/view", () => ({ getUnclaimedList, getVerifiedList, getPublicList }));
+vi.mock("@/lib/domain/products/view", () => ({
+  getUnclaimedList,
+  getVerifiedList,
+  getPublicList,
+  getNewThisWeek: vi.fn().mockResolvedValue([]),
+  NEW_THIS_WEEK_MIN_STARS: 50,
+}));
 vi.mock("@/lib/domain/products/home-pulse", async () => {
   const actual = await vi.importActual<typeof import("@/lib/domain/products/home-pulse")>(
     "@/lib/domain/products/home-pulse",
@@ -124,7 +128,6 @@ beforeEach(() => {
   getPublicList.mockResolvedValue([]);
   getAllTimeRanking.mockResolvedValue([]);
   getSeasonRanking.mockResolvedValue({ season, items: [] });
-  listBuilders.mockResolvedValue([]);
   categoryCounts.mockResolvedValue({});
   countProducts.mockResolvedValue(0);
   getHomePulse.mockResolvedValue({
@@ -168,7 +171,9 @@ describe("미클레임 구획을 붙이는 기준", () => {
     const html = await render();
 
     expect(getUnclaimedList).not.toHaveBeenCalled();
-    expect(getPublicList).not.toHaveBeenCalled();
+    // 공개 목록은 첫 화면 급상승 띠 한 번뿐 — 피드는 순위로 채운다
+    expect(getPublicList).toHaveBeenCalledTimes(1);
+    expect(getPublicList).toHaveBeenCalledWith(5, { sort: "rising", rising: true });
     expect(html).toContain("ranked-0");
     expect(html).not.toContain("주인을 기다리는 제품");
   });
@@ -179,7 +184,8 @@ describe("미클레임 구획을 붙이는 기준", () => {
    */
   it("검증 제품이 모자라면 추천 탭은 순위 대신 스타가 는 목록을 보여주고 구획을 붙이지 않는다", async () => {
     getSeasonRanking.mockResolvedValue({ season, items: [ranked("verified-one", 1)] });
-    countProducts.mockResolvedValue(3);
+    // 스타가 는 제품 8개 — 앞 5개는 급상승 띠가 보여 주고 피드는 나머지 3개를 센다
+    countProducts.mockResolvedValue(8);
     getPublicList.mockResolvedValue([product("rising-one")]);
 
     const html = await render();
@@ -201,7 +207,7 @@ describe("미클레임 구획을 붙이는 기준", () => {
     const html = await render({ sort: "all-time" });
 
     expect(getPublicList).toHaveBeenCalledWith(5, expect.objectContaining({ sort: "stars" }));
-    expect(getPublicList.mock.calls[0][1].rising).toBeUndefined();
+    expect(getPublicList.mock.calls.find(([, options]) => options.sort === "stars")?.[1].rising).toBeUndefined();
     expect(getAllTimeRanking).not.toHaveBeenCalled();
     expect(html).toContain("starred-one");
     expect(html).toContain("스타 많은 순 5개");
@@ -332,7 +338,7 @@ describe("빈 화면 문구", () => {
  * 개수를 검증분으로만 셌는데 검증 제품이 0이라 모든 카테고리가 0으로 떨어졌고,
  * 필터가 개수 0인 것을 지웠다. 화면에는 시드 제품이 나열되는 중이었다.
  */
-describe("카테고리 드롭다운", () => {
+describe("카테고리 필터", () => {
   it("추천 탭에서도 고를 수 있는 카테고리가 뜬다", async () => {
     getSeasonRanking.mockResolvedValue({ season, items: [] });
     categoryCounts.mockResolvedValue({ Dev: 12 });
@@ -341,7 +347,7 @@ describe("카테고리 드롭다운", () => {
     const html = await render();
 
     expect(categoryCounts).toHaveBeenCalledWith({ statuses: ["verified", "seeded"], excludeDown: true });
-    expect(html).toContain('<option value="Dev">');
+    expect(html).toContain('href="/?category=Dev"');
   });
 });
 
@@ -359,7 +365,6 @@ describe("조회 순서", () => {
 
     const rendering = render();
     await vi.waitFor(() => {
-      expect(listBuilders).toHaveBeenCalled();
       expect(getSeasonRanking).toHaveBeenCalled();
       expect(categoryCounts).toHaveBeenCalled();
     });
@@ -368,21 +373,18 @@ describe("조회 순서", () => {
     expect(await rendering).toContain("verified-one");
   });
 
-  it("집계가 실패해도 목록과 도구 목록은 그대로 뜬다", async () => {
+  it("집계가 실패해도 목록은 그대로 뜬다", async () => {
     getHomePulse.mockRejectedValue(new Error("pulse down"));
-    listBuilders.mockResolvedValue(["Codex"]);
     getSeasonRanking.mockResolvedValue({ season, items: [ranked("verified-one", 1)] });
     countProducts.mockResolvedValue(25);
 
     const html = await render();
 
     expect(html).toContain("verified-one");
-    expect(html).toContain('<option value="Codex">');
   });
 
   it("목록과 집계가 함께 실패해도 처리되지 않은 거부 없이 안내를 낸다", async () => {
     getHomePulse.mockRejectedValue(new Error("pulse down"));
-    listBuilders.mockRejectedValue(new Error("builders down"));
     getCurrentSeason.mockRejectedValue(new Error("db down"));
 
     const html = await render();
@@ -400,5 +402,15 @@ describe("구획 제목", () => {
 
     expect(html).not.toContain("새로 발견됨");
     expect(html).toContain("주인을 기다리는 제품");
+  });
+
+  it("첫 화면에 급상승 띠가 오고 피드는 그다음 항목부터 이어진다", async () => {
+    categoryCounts.mockResolvedValue({ Dev: 3 });
+    const rising = ["r1", "r2", "r3", "r4", "r5", "r6"].map(product);
+    getPublicList.mockImplementation(async (limit: number, options: { offset?: number } = {}) => rising.slice(options.offset ?? 0, (options.offset ?? 0) + limit));
+    const html = await render({});
+    expect(html.indexOf("지금 뜨는 프로젝트")).toBeLessThan(html.indexOf("발견할 가치가 있는 프로젝트"));
+    expect(getPublicList).toHaveBeenCalledWith(5, expect.objectContaining({ sort: "rising", rising: true }));
+    expect(getPublicList).toHaveBeenCalledWith(expect.any(Number), expect.objectContaining({ sort: "rising", offset: 5 }));
   });
 });

@@ -1,7 +1,4 @@
-import { createElement } from "react";
-import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { HomePulse } from "@/components/home/HomePulse";
 import { clickChangePercent } from "@/lib/domain/ranking/math";
 import {
   BORN_CHANGE_MIN,
@@ -9,7 +6,6 @@ import {
   emptyHomePulse,
   formatAsOfKst,
   kstMidnightUtc,
-  type HomePulse as Pulse,
 } from "@/lib/domain/products/home-pulse";
 import { CATEGORY_LABELS } from "@/lib/domain/products/labels";
 
@@ -52,49 +48,6 @@ describe("초기 상태", () => {
     expect(pulse.tools).toBeNull();
     expect(pulse.total).toBe(0);
     expect(pulse.timezone).toBe("Asia/Seoul");
-  });
-});
-
-function samplePulse(): Pulse {
-  return {
-    ...emptyHomePulse(new Date("2026-09-12T10:00:00+09:00")),
-    born: { current: 280, previous: 204, change: 37.3 },
-    updates: { projects: 788, releases: 3045 },
-    active: [
-      { slug: "soleur", name: "Soleur", category: "Dev", releases: 40, stars: 15, ogImage: null },
-      { slug: "big", name: "Big Tool", category: "Data", releases: 12, stars: 2400, ogImage: null },
-    ],
-    categories: [
-      { key: "Dev", total: 1652, born: 67 },
-      { key: "Other", total: 272, born: 22 },
-      { key: "Games", total: 143, born: 0 },
-    ],
-    total: 2067,
-  };
-}
-
-describe("리더보드", () => {
-  it("활발한 프로젝트는 상세로 잇고, 별이 적으면 별 수를 달지 않는다", () => {
-    const html = renderToStaticMarkup(createElement(HomePulse, { pulse: samplePulse(), state: { sort: "weekly" } }));
-
-    expect(html).toContain('href="/p/soleur"');
-    expect(html).toContain("40건");
-    expect(html).toContain("★2,400");
-    expect(html).not.toContain("★15");
-  });
-
-  it("분야 순위는 기타를 빼고, 이번 주 태어난 수를 곁에 단다", () => {
-    const html = renderToStaticMarkup(createElement(HomePulse, { pulse: samplePulse(), state: { sort: "weekly" } }));
-
-    expect(html).toContain("+67");
-    expect(html).toContain("&quot;기타&quot; 272개 제외 · 공개 2,067개 기준");
-    expect(html).toContain('href="/?sort=recent&amp;category=Dev"');
-    expect(html).not.toContain('category=Other');
-  });
-
-  it("관찰 사실 공개가 꺼져 있으면 제작 도구 보드를 내지 않는다", () => {
-    const html = renderToStaticMarkup(createElement(HomePulse, { pulse: samplePulse(), state: { sort: "weekly" } }));
-    expect(html).not.toContain("제작 도구 집계 기준");
   });
 });
 

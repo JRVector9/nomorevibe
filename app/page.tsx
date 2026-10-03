@@ -2,26 +2,31 @@ import { after } from "next/server";
 import { Suspense } from "react";
 import Link from "next/link";
 import { BrowseFilters, metricHref, parseHomeSort, parseShown, type HomeSort } from "@/components/BrowseFilters";
-import { HomeAside } from "@/components/home/HomeAside";
+import { ActiveList } from "@/components/home/ActiveList";
+import { CompactRow } from "@/components/home/CompactRow";
+import { IntroLine } from "@/components/home/IntroLine";
+import { LaunchBand } from "@/components/home/LaunchBand";
 import { listHomeNews } from "@/lib/news/repository";
-import { HomeHero } from "@/components/home/HomeHero";
+import { NewsList } from "@/components/home/NewsList";
 import { PopularTiers } from "@/components/home/PopularTiers";
-import { HomePulse } from "@/components/home/HomePulse";
-import { Icon } from "@/components/home/icons";
 import { MethodologyDialog } from "@/components/home/MethodologyDialog";
 import { ProjectGrid } from "@/components/home/ProjectGrid";
-import { categoryCounts, countProducts, listBuilders } from "@/lib/domain/products/repository";
+import { ToolsBoard } from "@/components/home/ToolsBoard";
+import { categoryCounts, countProducts, RISING_MAX_STARS } from "@/lib/domain/products/repository";
 import { resolveSearchQuery } from "@/lib/domain/products/search-translation";
 import type { SearchQuery } from "@/lib/domain/products/search";
 import { CATEGORIES } from "@/lib/domain/products/schema";
 import {
+  getNewThisWeek,
   getPublicList,
   getUnclaimedList,
   getVerifiedList,
+  NEW_THIS_WEEK_MIN_STARS,
   type ProductListItem,
 } from "@/lib/domain/products/view";
 import { recordSearch } from "@/lib/domain/products/search-log";
 import {
+  completedWindows,
   emptyHomePulse,
   formatAsOfKst,
   getHomePulse,
@@ -250,7 +255,6 @@ export async function HomeContent({ params }: { params: HomeParams }) {
   let list: ProductListItem[] | RankingListItem[] = [];
   let unclaimed: ProductListItem[] = [];
   let counts: Record<string, number> = {};
-  let builders: string[] = [];
   let pulse = emptyHomePulse(now);
   let total = 0;
   let resultCount = 0;
@@ -261,13 +265,19 @@ export async function HomeContent({ params }: { params: HomeParams }) {
   let rankingReady = true;
 
   /**
-   * 상단 집계·도구 목록은 제품 목록과 서로의 결과를 쓰지 않는다 — 먼저 띄워 두고 목록 조회와 겹친다.
+   * 상단 집계·소식은 제품 목록과 서로의 결과를 쓰지 않는다 — 먼저 띄워 두고 목록 조회와 겹친다.
    * 차례로 기다리면 목록 조회가 집계 쿼리 6개가 끝난 뒤에야 시작한다.
    *
    * allSettled 로 받는 이유: 목록 쪽이 먼저 던져 여기까지 늦게 와도 처리되지 않은 거부가 남지 않고,
    * 하나가 실패해도 다른 하나는 쓴다.
    */
-  const asideLoad = Promise.allSettled([getHomePulse(now), listBuilders(["verified", "seeded"]), listHomeNews()]);
+  const asideLoad = Promise.allSettled([getHomePulse(now), listHomeNews()]);
+
+  /** 첫 화면의 급상승 띠 — 필터·검색이 없을 때만. 피드의 '추천'(대체 목록)은 띠 다음부터 이어 받는다 */
+  const RISING_STRIP = 5;
+  const filtered = Boolean(query || category || builder);
+  const stripLoad = filtered ? Promise.resolve<ProductListItem[]>([]) : getPublicList(RISING_STRIP, { sort: "rising", rising: true }).catch(() => []);
+  const newLoad = filtered ? Promise.resolve<ProductListItem[]>([]) : getNewThisWeek(5, completedWindows(now).weekStart).catch(() => []);
 
   try {
     active = await getCurrentSeason();
@@ -304,15 +314,17 @@ export async function HomeContent({ params }: { params: HomeParams }) {
     const publicCatalogue = effectiveSort === "recent" || effectiveSort === "open" || effectiveSort === "relevance" || fallback !== null;
     const requestedLimit = savedOnly ? Math.max(shown, SAVED_INITIAL_CANDIDATES) : shown;
     // Public lists load only what is visible. Rankings retain their separate eligibility.
-    const limit = publicCatalogue ? Math.min(requestedLimit, matchingTotal) : verifiedTotal;
+    // 급상승 띠가 앞 5개를 보여 준 '추천'은 그 뒤부터 이어 받는다 — 띠와 피드가 겹치지 않게
+    const stripShown = !filtered && fallback === "rising" ? RISING_STRIP : 0;
+    const limit = publicCatalogue ? Math.min(requestedLimit, Math.max(0, matchingTotal - stripShown)) : verifiedTotal;
     list = fallback
-      ? await getPublicList(limit, { ...listOptions, sort: fallback })
+      ? await getPublicList(limit, { ...listOptions, sort: fallback, offset: stripShown })
       : active
         ? await listFor(effectiveSort, active, category, search.queries, builder, limit)
         : publicCatalogue
           ? await getPublicList(limit, { ...listOptions, sort: effectiveSort === "relevance" ? "relevance" : "recent" })
           : await getVerifiedList(limit, { ...options, sort: "recent" });
-    resultCount = publicCatalogue ? matchingTotal : list.length;
+    resultCount = publicCatalogue ? Math.max(0, matchingTotal - stripShown) : list.length;
 
     if (!publicCatalogue && !rankingReady) {
       unclaimedTotal = await countProducts({ statuses: ["seeded"], ...options });
@@ -338,103 +350,96 @@ export async function HomeContent({ params }: { params: HomeParams }) {
     after(() => recordSearch({ query, keywords, results: found, filtered: narrowed, startedAt: now }));
   }
 
-  const [pulseResult, buildersResult, newsResult] = await asideLoad;
+  const [pulseResult, newsResult] = await asideLoad;
   if (pulseResult.status === "fulfilled") pulse = pulseResult.value;
-  if (buildersResult.status === "fulfilled") builders = buildersResult.value;
   const news = newsResult.status === "fulfilled" ? newsResult.value : [];
-  const asideFailure = [pulseResult, buildersResult, newsResult]
+  const asideFailure = [pulseResult, newsResult]
     .find((result): result is PromiseRejectedResult => result.status === "rejected");
   if (asideFailure) logger.warn("home.pulse_unavailable", { error: asideFailure.reason });
+  const [strip, fresh] = await Promise.all([stripLoad, newLoad]);
 
   const state = { ...browseState, sort: effectiveSort };
-  const filtered = Boolean(query || category || builder);
   const savedCandidates = savedOnly ? [...list, ...unclaimed] : list;
 
   return (
     <main className="wrap">
-      {!query && <>
-      <HomeHero />
-      <HomePulse pulse={pulse} state={state} />
-      <Suspense fallback={<section className="popular-section"><h2>많이 쓰이는 프로젝트</h2></section>}>
-        <PopularTiers personal={firstValue(params.personal) === "1"} />
-      </Suspense>
-      </>}
+      {!query && <IntroLine pulse={pulse} state={state} />}
+      {!filtered && (
+        <CompactRow id="rising" title="지금 뜨는 프로젝트" note={`마지막 확인 사이 GitHub 스타가 가장 많이 늘었습니다 · 스타 ${RISING_MAX_STARS.toLocaleString("ko-KR")} 미만`}
+          more={{ href: "#projects", label: `${resultCount.toLocaleString("ko-KR")}개 모두 보기` }} items={strip} trailing="category" />
+      )}
 
-      <div className={`content-layout${query ? " search-results-layout" : ""}`}>
-        <section id="projects" aria-labelledby="projects-title">
-          <div className="feed-head">
-            <div>
-              <h2 id="projects-title">{query ? `“${query}” 검색 결과` : "발견할 가치가 있는 프로젝트"}</h2>
-              {/* 목록이 영어라 한국어 검색어는 영어 낱말로 한 번 더 찾는다. 무엇으로 찾았는지 밝힌다 */}
-              {translatedQuery && <p>영어로 “{translatedQuery}”도 함께 찾았습니다.</p>}
-              {/* 순위 대신 보여주는 목록은 무엇으로 줄 세웠는지 밝힌다 — 숫자의 기준이 보여야 한다 */}
-              {!query && fallback === "rising" && (
-                <p>
-                  마지막 확인 사이 GitHub 스타가 늘어난 프로젝트 — 스타 2천 미만, 늘어난 순.{" "}
-                  <Link href={metricHref(state, "rising")} scroll={false}>집계 기준</Link>
-                </p>
-              )}
-              {!query && fallback === "stars" && <p>GitHub 스타가 많은 순.</p>}
-              {!query && !fallback && <p>AI로 만들고, 사람이 다듬은 새로운 서비스들.</p>}
-            </div>
-            <Link className="all-link" href="/?sort=recent">
-              전체 보기 <Icon name="arrow-right" size={14} />
-            </Link>
+      <section id="projects" aria-labelledby="projects-title" className="feed">
+        <div className="row-head">
+          <div>
+            <h2 id="projects-title" className="row-title">{query ? `“${query}” 검색 결과` : "발견할 가치가 있는 프로젝트"}</h2>
+            {/* 목록이 영어라 한국어 검색어는 영어 낱말로 한 번 더 찾는다. 무엇으로 찾았는지 밝힌다 */}
+            {translatedQuery && <p className="row-note">영어로 “{translatedQuery}”도 함께 찾았습니다.</p>}
+            {/* 순위 대신 보여주는 목록은 무엇으로 줄 세웠는지 밝힌다 — 숫자의 기준이 보여야 한다 */}
+            {!query && fallback === "rising" && <p className="row-note">마지막 확인 사이 GitHub 스타가 늘어난 순 · <Link href={metricHref(state, "rising")} scroll={false}>집계 기준</Link></p>}
+            {!query && fallback === "stars" && <p className="row-note">GitHub 스타가 많은 순.</p>}
           </div>
+        </div>
 
-          <BrowseFilters
-            state={state}
-            counts={counts}
-            total={total}
-            builders={builders}
-            resultCount={resultCount}
-            listLabel={fallback === "rising" ? "스타 증가 순" : fallback === "stars" ? "스타 많은 순" : undefined}
+        <BrowseFilters
+          state={state}
+          counts={counts}
+          total={total}
+          resultCount={resultCount}
+          listLabel={fallback === "rising" ? "스타 증가 순" : fallback === "stars" ? "스타 많은 순" : undefined}
+        />
+
+        {dbDown ? (
+          <div className="projects-grid">
+            <div className="empty-state">
+              <h3>일시적으로 목록을 불러올 수 없습니다</h3>
+              <p>잠시 후 다시 시도해주세요.</p>
+            </div>
+          </div>
+        ) : savedOnly || list.length > 0 ? (
+          <ProjectGrid
+            key={`${effectiveSort}-${category ?? ""}-${builder ?? ""}-${query ?? ""}-${savedOnly ? "saved" : "all"}`}
+            totalCount={resultCount}
+            products={savedCandidates}
+            browseState={state}
+            initialOnlySaved={savedOnly}
           />
+        ) : (
+          <EmptyReason
+            sort={effectiveSort}
+            fallback={fallback}
+            filtered={filtered}
+            hasUnclaimed={unclaimed.length > 0}
+          />
+        )}
 
-          {dbDown ? (
-            <div className="projects-grid">
-              <div className="empty-state">
-                <h3>일시적으로 목록을 불러올 수 없습니다</h3>
-                <p>잠시 후 다시 시도해주세요.</p>
-              </div>
+        {!savedOnly && unclaimed.length > 0 && (
+          <section className="unclaimed-block">
+            <h2>주인을 기다리는 제품</h2>
+            <div className="mt-3">
+              <ProjectGrid products={unclaimed} browseState={state} totalCount={unclaimedTotal} />
             </div>
-          ) : savedOnly || list.length > 0 ? (
-            <ProjectGrid
-              key={`${effectiveSort}-${category ?? ""}-${builder ?? ""}-${query ?? ""}-${savedOnly ? "saved" : "all"}`}
-              totalCount={resultCount}
-              products={savedCandidates}
-              browseState={state}
-              initialOnlySaved={savedOnly}
-            />
-          ) : (
-            <EmptyReason
-              sort={effectiveSort}
-              fallback={fallback}
-              filtered={filtered}
-              hasUnclaimed={unclaimed.length > 0}
-            />
-          )}
+          </section>
+        )}
+      </section>
 
-          {!savedOnly && unclaimed.length > 0 && (
-            <section className="unclaimed-block">
-              <h2>주인을 기다리는 제품</h2>
-              <div className="mt-3">
-                <ProjectGrid products={unclaimed} browseState={state} totalCount={unclaimedTotal} />
-              </div>
-            </section>
-          )}
-
-          {!query && <div className="principle-box">
-            <Icon name="sparkles" size={24} />
-            <div>
-              <strong>AI 기능이 없어도, AI로 만들었다면.</strong>
-              문서 뷰어, 타이머, 쇼핑몰도 좋습니다. 여기서 중요한 건 무엇으로 만들었는가입니다.
-            </div>
-          </div>}
-        </section>
-
-        {!query && <HomeAside news={news} />}
-      </div>
+      {!query && (
+        <Suspense fallback={<section className="popular-section" id="popular"><h2>많이 쓰이는 프로젝트</h2></section>}>
+          <PopularTiers personal={firstValue(params.personal) === "1"} />
+        </Suspense>
+      )}
+      {!filtered && (
+        <CompactRow id="new" title="이번 주 새로 나온 프로젝트" note={`최근 7일에 처음 공개된 프로젝트 중 스타 ${NEW_THIS_WEEK_MIN_STARS} 이상`}
+          more={{ href: "/?sort=recent", label: "최신순 모두 보기" }} items={fresh} trailing="listed" />
+      )}
+      {!query && (
+        <div className="two-col">
+          <ToolsBoard tools={pulse.tools} state={state} />
+          <ActiveList active={pulse.active} projects={pulse.updates.projects} />
+        </div>
+      )}
+      {!query && <NewsList news={news} />}
+      {!query && <LaunchBand />}
 
       <Suspense>
         <MethodologyDialog pulse={serializePulse(pulse)} rankingFallback={!rankingReady} />
