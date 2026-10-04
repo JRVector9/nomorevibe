@@ -8,6 +8,7 @@ export type BrowseState = {
   category?: string;
   query?: string;
   builder?: string;
+  observedTool?: string;
   shown?: number;
 };
 
@@ -29,12 +30,13 @@ export function parseHomeSort(value: string | undefined): HomeSort {
 /** 지금 상태에서 한 가지만 바꾼 주소 — 필터를 겹쳐 걸 수 있어야 한다 */
 export function hrefWith(state: BrowseState, patch: Partial<BrowseState> = {}): string {
   const next = { ...state, ...patch };
-  const filterChanged = ["sort", "category", "builder", "query"].some((key) => key in patch);
+  const filterChanged = ["sort", "category", "builder", "observedTool", "query"].some((key) => key in patch);
   if (filterChanged && patch.shown === undefined) next.shown = undefined;
   const params = new URLSearchParams();
   if (next.sort !== "weekly" || next.query) params.set("sort", next.sort);
   if (next.category) params.set("category", next.category);
   if (next.builder) params.set("builder", next.builder);
+  if (next.observedTool) params.set("observedTool", next.observedTool);
   if (next.query) params.set("q", next.query);
   if (next.shown && next.shown > HOME_FIRST_PAGE) params.set("shown", String(next.shown));
   const qs = params.toString();

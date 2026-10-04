@@ -23,6 +23,7 @@ import {
 } from "@/lib/db/schema";
 import { topClickedSince } from "@/lib/domain/products/clicks";
 import { notDown } from "@/lib/domain/products/repository";
+import { observedToolPredicate } from "@/lib/domain/products/observed-tool";
 import type { Category } from "@/lib/domain/products/schema";
 import {
   getDiscoveryList,
@@ -119,6 +120,7 @@ export async function getSeasonRanking(options: {
   category?: Category;
   query?: SearchQuery;
   builder?: string;
+  observedTool?: string;
   limit: number;
 }): Promise<{ season: SeasonSummary | null; items: RankingListItem[] }> {
   const season = await findSeason(options.seasonKey);
@@ -136,6 +138,7 @@ export async function getSeasonRanking(options: {
   }
   if (options.category) conditions.push(eq(products.category, options.category));
   if (options.builder) conditions.push(and(eq(products.builder, options.builder), builderIsReported)!);
+  if (options.observedTool) conditions.push(observedToolPredicate(options.observedTool));
   if (hasSearchQuery(options.query)) conditions.push(productSearchPredicate(options.query!)!);
   if (options.order === "trending") {
     conditions.push(isNotNull(rankingEntries.changePercent));
@@ -272,6 +275,7 @@ export async function getAllTimeRanking(options: {
   category?: Category;
   query?: SearchQuery;
   builder?: string;
+  observedTool?: string;
   limit: number;
 }): Promise<RankingListItem[]> {
   const totals = (await topClickedSince(3650, 50_000))
@@ -296,7 +300,7 @@ export async function getAllTimeRanking(options: {
    * 맞는 슬러그를 따로 받아 오는 이유: 순위(rank)는 필터와 무관하게 "검증·생존 제품 중 몇 번째로
    * 많이 눌렸나"다. 아래 조회에 검색 조건을 합치면 걸러진 제품이 rank 를 세기 전에 빠져 번호가 밀린다.
    */
-  const matching = hasSearchQuery(options.query)
+  const matching = hasSearchQuery(options.query) || options.observedTool
     ? new Set((await db
       .select({ slug: products.slug })
       .from(products)
@@ -304,7 +308,8 @@ export async function getAllTimeRanking(options: {
         eq(products.status, "verified"),
         notDown,
         slugArrayPredicate(products.slug, totals.map((row) => row.slug)),
-        productSearchPredicate(options.query!)!,
+        hasSearchQuery(options.query) ? productSearchPredicate(options.query!) : undefined,
+        options.observedTool ? observedToolPredicate(options.observedTool) : undefined,
       ))).map((row) => row.slug))
     : null;
   const items: RankingListItem[] = [];

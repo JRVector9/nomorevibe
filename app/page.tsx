@@ -41,6 +41,8 @@ import {
 } from "@/lib/domain/ranking/view";
 import { DEFAULT_RANKING_POLICY } from "@/lib/domain/ranking/policy";
 import { logger } from "@/lib/observability/logger";
+import { getSettings as getCrawlSettings } from "@/lib/crawl/settings";
+import { agentClientLabel } from "@/lib/domain/evidence/agents/view";
 
 export const dynamic = "force-dynamic";
 
@@ -54,6 +56,7 @@ type Props = {
     category?: SearchValue;
     q?: SearchValue;
     builder?: SearchValue;
+    observedTool?: SearchValue;
     shown?: SearchValue;
     saved?: SearchValue;
     personal?: SearchValue;
@@ -70,22 +73,23 @@ function listFor(
   category: (typeof CATEGORIES)[number] | undefined,
   query: SearchQuery | undefined,
   builder: string | undefined,
+  observedTool: string | undefined,
   limit: number,
 ): Promise<ProductListItem[] | RankingListItem[]> {
-  const options = { category, query, builder, limit };
+  const options = { category, query, builder, observedTool };
   if (sort === "open") {
-    return getPublicList(limit, { sort: "recent", category, query, builder, hasRepository: true });
+    return getPublicList(limit, { ...options, sort: "recent", hasRepository: true });
   }
   if (sort === "weekly") {
-    return getSeasonRanking({ ...options, seasonKey: active.key, order: "rank" })
+    return getSeasonRanking({ ...options, limit, seasonKey: active.key, order: "rank" })
       .then((result) => result.items);
   }
   if (sort === "trending") {
-    return getSeasonRanking({ ...options, seasonKey: active.key, order: "trending" })
+    return getSeasonRanking({ ...options, limit, seasonKey: active.key, order: "trending" })
       .then((result) => result.items);
   }
-  if (sort === "all-time") return getAllTimeRanking(options);
-  return getPublicList(limit, { sort: sort === "relevance" ? "relevance" : "recent", category, query, builder });
+  if (sort === "all-time") return getAllTimeRanking({ ...options, limit });
+  return getPublicList(limit, { ...options, sort: sort === "relevance" ? "relevance" : "recent" });
 }
 
 /**
@@ -243,10 +247,14 @@ export async function HomeContent({ params }: { params: HomeParams }) {
   const categoryParam = firstValue(params.category);
   const category = CATEGORIES.find((item) => item === categoryParam);
   const builder = firstValue(params.builder)?.trim() || undefined;
+  const toolParam = firstValue(params.observedTool)?.trim().slice(0, 80);
+  // 직접 주소로도 숨겨 둔 관찰 사실을 거르지 않는다. 설정을 못 읽으면 공개하지 않는다.
+  const displayTools = toolParam ? await getCrawlSettings().then(settings => settings.agentEvidence.displayObservedFacts).catch(() => false) : false;
+  const observedTool = toolParam && displayTools ? agentClientLabel(toolParam) : undefined;
   const shown = parseShown(firstValue(params.shown));
   const savedOnly = firstValue(params.saved) === "1";
   const now = new Date();
-  const browseState = { sort: requestedSort, category, query, builder, shown };
+  const browseState = { sort: requestedSort, category, query, builder, observedTool, shown };
 
   let active: SeasonSummary | null = null;
   let effectiveSort: HomeSort = requestedSort;
@@ -274,7 +282,7 @@ export async function HomeContent({ params }: { params: HomeParams }) {
 
   /** 첫 화면의 급상승 띠 — 필터·검색이 없을 때만. 피드의 '추천'(대체 목록)은 띠 다음부터 이어 받는다 */
   const RISING_STRIP = 5;
-  const filtered = Boolean(query || category || builder);
+  const filtered = Boolean(query || category || builder || observedTool);
   const stripLoad = filtered ? Promise.resolve<ProductListItem[]>([]) : getPublicList(RISING_STRIP, { sort: "rising", rising: true }).catch(() => []);
   const newLoad = filtered ? Promise.resolve<ProductListItem[]>([]) : getNewThisWeek(5, completedWindows(now).weekStart).catch(() => []);
 
@@ -290,7 +298,7 @@ export async function HomeContent({ params }: { params: HomeParams }) {
      */
     const search = await resolveSearchQuery(query);
     translatedQuery = search.translated;
-    const options = { category, query: search.queries, builder, excludeDown: true };
+    const options = { category, query: search.queries, builder, observedTool, excludeDown: true };
     /**
      * 순위 탭의 개수는 순위가 서지 않을 때(fallbackSort)만 쓴다 — 그때 '추천'은 스타가 는 제품만 센다.
      * 순위가 서면 이 값은 쓰이지 않으므로 검증 수를 기다리지 않고 함께 센다.
@@ -321,7 +329,7 @@ export async function HomeContent({ params }: { params: HomeParams }) {
     list = fallback
       ? await getPublicList(limit, { ...listOptions, sort: fallback, offset: stripShown })
       : active
-        ? await listFor(effectiveSort, active, category, search.queries, builder, limit)
+        ? await listFor(effectiveSort, active, category, search.queries, builder, observedTool, limit)
         : publicCatalogue
           ? await getPublicList(limit, { ...listOptions, sort: effectiveSort === "relevance" ? "relevance" : "recent" })
           : await getVerifiedList(limit, { ...options, sort: "recent" });
@@ -343,7 +351,7 @@ export async function HomeContent({ params }: { params: HomeParams }) {
   if (query && !dbDown) {
     const found = resultCount;
     const keywords = translatedQuery;
-    const narrowed = Boolean(category || builder);
+    const narrowed = Boolean(category || builder || observedTool);
     /**
      * 걸린 시간은 이 화면이 만들어지기 시작한 때(now)부터 기록하는 때까지다 — 검색 쿼리만이
      * 아니라 사람이 기다린 시간이다. 시계는 기록하는 쪽이 읽는다(렌더는 시계를 읽지 않는다).
@@ -400,7 +408,7 @@ export async function HomeContent({ params }: { params: HomeParams }) {
           </div>
         ) : savedOnly || list.length > 0 ? (
           <ProjectGrid
-            key={`${effectiveSort}-${category ?? ""}-${builder ?? ""}-${query ?? ""}-${savedOnly ? "saved" : "all"}`}
+            key={`${effectiveSort}-${category ?? ""}-${builder ?? ""}-${observedTool ?? ""}-${query ?? ""}-${savedOnly ? "saved" : "all"}`}
             totalCount={resultCount}
             products={savedCandidates}
             browseState={state}
