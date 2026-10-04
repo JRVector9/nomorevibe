@@ -7,8 +7,8 @@ import {
   products,
   productUpdates,
 } from "@/lib/db/schema";
-import type { GitHubHttpResult } from "@/lib/crawl/github";
-import { refreshGitHubEvidence } from "@/lib/domain/evidence/providers/github";
+import type { ConditionalRequest, GitHubHttpResult } from "@/lib/crawl/github";
+import { mapGitHubRepositoryFacts, refreshGitHubEvidence } from "@/lib/domain/evidence/providers/github";
 import {
   replaceMakerLinks,
   saveMakerProfile,
@@ -115,11 +115,61 @@ function successfulRequest() {
         encoding: "base64",
       });
     }
+    if (path.includes("/activity?")) return { ok: false, error: { kind: "not_found" } };
     throw new Error(`unexpected path: ${path}`);
   });
 }
 
 describe("GitHub evidence refresh", () => {
+  it("defers persistence when the job budget expires during push pagination", async () => {
+    const baseRequest = successfulRequest();
+    let remaining = true;
+    const request = async (path: string): Promise<GitHubHttpResult<unknown>> => {
+      if (!path.includes("/activity?")) return baseRequest(path);
+      remaining = false;
+      return ok([{ id: 1, activity_type: "push", timestamp: "2026-08-18T00:00:00Z" }], {
+        link: '<https://api.github.com/repos/owner/repo/activity?after=next>; rel="next"',
+      });
+    };
+    await expect(refreshGitHubEvidence({ slug: "github-product", repository: "owner/repo" }, {
+      request, now: () => new Date("2026-08-19T00:00:00Z"), hasBudget: () => remaining,
+    })).resolves.toEqual({ status: "budget_exhausted", releases: 0 });
+    expect(await db.select().from(productEvidenceSources)).toHaveLength(0);
+    expect(await db.select().from(productUpdates)).toHaveLength(0);
+  });
+
+  it("stores complete weekly push counts without treating an optional activity failure as zero", async () => {
+    const now = new Date("2026-08-19T00:00:00.000Z");
+    await upsertObservedSource({ slug: "github-product", kind: "repository", provider: "github", sourceKey: "owner/repo", state: "ok", etag: '"legacy"',
+      normalizedFacts: mapGitHubRepositoryFacts({ repository, languages: {}, contributors: { items: [], link: null }, releases: [] }),
+    });
+    const baseRequest = successfulRequest();
+    const request = async (path: string, conditional?: ConditionalRequest): Promise<GitHubHttpResult<unknown>> => {
+      if (path === "/repos/owner/repo") return conditional?.etag
+        ? { ok: true, status: 304, etag: '"legacy"', lastModified: null, link: null }
+        : ok({ ...repository, id: 123 });
+      if (path.startsWith("/repositories/123/activity?")) return ok([
+        { id: 2, activity_type: "force_push", timestamp: "2026-08-17T00:00:00Z" },
+      ]);
+      if (path.includes("/activity?")) return ok([
+        { id: 1, activity_type: "push", timestamp: "2026-08-18T00:00:00Z" },
+        { id: 3, activity_type: "pr_merge", timestamp: "2026-08-17T00:00:00Z" },
+      ], { link: '<https://api.github.com/repositories/123/activity?after=next>; rel="next"' });
+      return baseRequest(path);
+    };
+    await refreshGitHubEvidence({ slug: "github-product", repository: "owner/repo" }, { request, now: () => now });
+    const [source] = await db.select().from(productEvidenceSources).where(eq(productEvidenceSources.kind, "repository"));
+    expect(source.normalizedFacts?.pushActivity).toEqual({
+      count: 2, since: "2026-08-12T00:00:00.000Z", observedAt: now.toISOString(),
+    });
+    await refreshGitHubEvidence({ slug: "github-product", repository: "owner/repo" }, {
+      request: baseRequest, now: () => new Date("2026-08-20T00:00:00Z"),
+    });
+    const [afterFailure] = await db.select().from(productEvidenceSources).where(eq(productEvidenceSources.kind, "repository"));
+    expect(afterFailure.state).toBe("ok");
+    expect(afterFailure.normalizedFacts?.pushActivity).toBeNull();
+  });
+
   it("does not duplicate a canonical release that an RSS feed observed first", async () => {
     const observedAt = new Date("2026-08-19T00:00:00.000Z");
     await insertUpdateCandidates("github-product", [{

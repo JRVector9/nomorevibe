@@ -1,4 +1,6 @@
 import type { StarObservation } from '@/lib/domain/products/star-change';
+import type { TaglineSource } from "@/lib/db/schema";
+import type { ProductActivity } from "@/lib/domain/products/activity";
 export type HomePulseView = {
   asOf: string;
   asOfLabel: string;
@@ -16,6 +18,8 @@ export type HomeCardProduct = StarObservation & {
   slug: string;
   name: string;
   tagline: string;
+  taglineSource?: TaglineSource;
+  activity?: ProductActivity;
   category: string;
   accessMode?: "website" | "installable";
   builder: string | null;

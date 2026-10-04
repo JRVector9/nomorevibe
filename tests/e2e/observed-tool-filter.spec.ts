@@ -37,6 +37,8 @@ test("도구 알약은 저장소 흔적만 거르고 분야·더 보기·초기�
   expect(control.height).toBeGreaterThanOrEqual(44);
   expect(control.fontSize).toBeGreaterThanOrEqual(13);
   await page.getByRole("navigation", { name: "분야", exact: true }).getByRole("link", { name: "개발 도구 13", exact: true }).click();
+  await expect(page).toHaveURL(/category=Dev/);
+  await expect(page.getByRole("link", { name: "프로젝트 더 보기 (9 / 12)", exact: true })).toHaveAttribute("href", /category=Dev/);
   await page.getByRole("link", { name: "프로젝트 더 보기 (9 / 12)", exact: true }).click();
   await expect(page.locator(".project-title")).toHaveText(Array.from({ length: 12 }, (_, i) => `Observed Project ${i}`));
   expect(Object.fromEntries(new URL(page.url()).searchParams)).toEqual({ sort: "recent", category: "Dev", observedTool: "Claude Code", shown: "12" });

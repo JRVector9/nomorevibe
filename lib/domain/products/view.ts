@@ -7,6 +7,7 @@ import type { Category } from "./schema";
 import { clickMetrics, type ClickMetrics } from "./clicks";
 import { healthFor, type HealthSignal } from "./health";
 import { logger } from "@/lib/observability/logger";
+import { withProductActivity, type ProductActivity } from "./activity";
 
 /**
  * 목록 화면이 쓰는 뷰모델.
@@ -46,6 +47,7 @@ export type ProductListItem = StarObservation & {
   metrics?: ClickMetrics;
   /** 생존 확인 결과. 확인한 적이 없으면 없다 */
   health?: { down: boolean; since: Date | null };
+  activity?: ProductActivity;
 };
 
 /** 아직 아무도 가져가지 않은 수집 결과인가 */
@@ -135,14 +137,14 @@ async function withMetrics(items: ProductListItem[]): Promise<ProductListItem[]>
     // 주석만 그렇게 적어두고 실제로는 예외가 그대로 올라가 홈이 통째로 "불러올 수
     // 없습니다"가 됐다. 지표가 없는 목록은 볼 수 있지만, 목록 없는 홈은 볼 것이 없다.
     logger.warn("products.metrics_failed", { count: items.length, error });
-    return items;
+    return withProductActivity(items);
   }
 
-  return items.map((item) => ({
+  return withProductActivity(items.map((item) => ({
     ...item,
     metrics: metrics.get(item.slug) ?? item.metrics,
     health: health.get(item.slug) ?? item.health,
-  }));
+  })));
 }
 
 /** 랭킹 스냅샷에 원천 클릭을 다시 조회하지 않고 생존 상태만 한 번에 붙인다. */
@@ -151,13 +153,13 @@ export async function withProductHealth<T extends ProductListItem>(items: T[]): 
 
   try {
     const health = await healthFor(items.map((item) => item.slug));
-    return items.map((item) => ({
+    return withProductActivity(items.map((item) => ({
       ...item,
       health: health.get(item.slug) ?? item.health,
-    }));
+    })));
   } catch (error) {
     logger.warn("products.health_failed", { count: items.length, error });
-    return items;
+    return withProductActivity(items);
   }
 }
 

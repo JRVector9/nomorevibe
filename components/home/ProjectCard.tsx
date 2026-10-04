@@ -6,6 +6,8 @@ import { ProjectTile } from "@/components/home/ProjectTile";
 import { categoryLabel } from "@/lib/domain/products/labels";
 import type { HomeCardProduct } from "@/components/home/types";
 import { githubOwnerFromRepositoryUrl } from "@/lib/domain/products/github-owner";
+import { ProductActivityRow } from "./ProductActivityRow";
+import { IntroductionSource } from "./IntroductionSource";
 
 /**
  * 홈 카드 — 타일 · 이름 · 한 줄 · "분야 · @소유자" / ★ 증가.
@@ -41,6 +43,7 @@ export function ProjectCard({ product, saved, onToggleSave }: {
           </button>
         </div>
         <p className="project-tagline" title={product.tagline}>{product.tagline}</p>
+        <IntroductionSource source={product.taglineSource} />
         <div className="project-bottom">
           <span className="project-meta">
             {categoryLabel(product.category)}
@@ -50,6 +53,7 @@ export function ProjectCard({ product, saved, onToggleSave }: {
           </span>
           <StarMetric value={product} />
         </div>
+        <ProductActivityRow activity={product.activity} />
       </div>
     </article>
   );
