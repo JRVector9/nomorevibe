@@ -13,7 +13,7 @@ export function SiteFooter({ children }: { children: React.ReactNode }) {
           <div className="footer-right">
             <Link href="/?metric=all">데이터와 집계 기준</Link>
             <Link href="/launch">프로젝트 공개</Link>
-            <span>AI로 만든 제품의 마켓 데이터베이스</span>
+            <Link href="/launch#policy">게재 기준</Link>
           </div>
         </div>
       </div>

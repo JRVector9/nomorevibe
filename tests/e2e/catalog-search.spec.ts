@@ -10,12 +10,13 @@ test('global search reveals nine cards and matches owner, repository and descrip
  await expect(page.locator('.project-card').filter({has:page.getByRole('heading',{name:'repo-11',exact:true})}).locator('.star-metric small')).toHaveCount(0);
  await expect(page.locator('.cover-brand').filter({hasText:'catalogueowner/'})).toHaveCount(0);
  expect(await page.locator('#projects').evaluate(e=>e.getBoundingClientRect().top)).toBeLessThan(400);
- await expect(page.locator('#popular-projects')).toHaveCount(0);
+ await expect(page.locator('#popular')).toHaveCount(0);
  await page.getByRole('link',{name:/프로젝트 더 보기/}).click();await expect(page.locator('.project-card')).toHaveCount(12);
  await search.fill('quantum');await search.press('Enter');await page.waitForURL(/q=quantum/);await expect(page.locator('.project-card')).toHaveCount(1);await expect(page.locator('.project-title')).toHaveText('Catalog Project 12');
  await search.fill('CatalogueOwner/repo-02');await search.press('Enter');await page.waitForURL(u=>u.searchParams.get('q')==='CatalogueOwner/repo-02');await expect(page.locator('.star-change-down')).toHaveText('−2');
  await page.setViewportSize({width:390,height:844});await search.fill('@CatalogueOwner');await search.press('Enter');await page.waitForURL(u=>u.searchParams.get('q')==='@CatalogueOwner');await expect(page.locator('.project-card')).toHaveCount(9);expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
- const description=page.locator('.project-tagline').first();expect(await description.evaluate(e=>getComputedStyle(e).webkitLineClamp)).toBe('2');expect(await description.evaluate(e=>e.getBoundingClientRect().height)).toBeCloseTo(41.6,0);
+ // 결과는 스트리밍으로 숨긴 채 먼저 오고 조금 뒤 드러난다 — 드러난 뒤에 잰다. v5 소개는 14px·줄 1.45 두 줄
+ const description=page.locator('.project-tagline').first();await expect(description).toBeVisible();expect(await description.evaluate(e=>getComputedStyle(e).webkitLineClamp)).toBe('2');expect(await description.evaluate(e=>e.getBoundingClientRect().height)).toBeCloseTo(40.6,0);
  await expect(page.getByText('비교 수집 중',{exact:true})).toHaveCount(0);
  await page.screenshot({path:'/tmp/nomorevibe-copy-mobile.png'});expect(errors).toEqual([]);
 });

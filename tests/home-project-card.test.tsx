@@ -45,4 +45,15 @@ describe("home project card builder evidence", () => {
     expect(html).toContain("@AgentWorkforce");
     expect(html).toContain("GitHub 저장소 소유자");
   });
+
+  it("renders an icon tile instead of a cover and no internal status badge", () => {
+    const html = render(baseProduct);
+    expect(html).toContain('class="project-tile tile-');
+    expect(html).not.toContain("미클레임");
+    expect(html).not.toContain("tiny-tag");
+  });
+
+  it("marks installable projects on the tile", () => {
+    expect(render({ ...baseProduct, accessMode: "installable" })).toContain("직접 설치");
+  });
 });
