@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { Icon } from "@/components/home/icons";
 
 export function ShareButton({ title, path }: { title: string; path: string }) {
   const [copied, setCopied] = useState(false);
@@ -17,13 +18,24 @@ export function ShareButton({ title, path }: { title: string; path: string }) {
   }
 
   return (
-    <button
-      type="button"
-      onClick={() => void share()}
-      className="inline-flex min-h-11 items-center justify-center rounded-[10px] border border-line bg-bg-card px-4 text-[13px] font-bold text-fg-2 transition-colors hover:border-accent hover:text-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
-      aria-live="polite"
-    >
-      {copied ? "링크 복사됨" : "공유"}
-    </button>
+    <span className="relative inline-flex">
+      <button
+        type="button"
+        onClick={() => void share()}
+        aria-label="공유"
+        className="inline-flex h-11 w-11 items-center justify-center rounded-full bg-bg-soft text-fg"
+      >
+        <Icon name="arrow-up-right" size={18} />
+      </button>
+      {/* 아이콘 단추라 글자를 바꿀 수 없다 — 링크를 복사했다는 말은 단추 아래에 잠깐 띄운다 */}
+      <span
+        role="status"
+        className={copied
+          ? "absolute left-1/2 top-full z-10 mt-1.5 -translate-x-1/2 whitespace-nowrap rounded-full border border-line bg-bg-card px-2.5 py-1 text-[13px] text-fg"
+          : "sr-only"}
+      >
+        {copied ? "링크 복사됨" : ""}
+      </span>
+    </span>
   );
 }

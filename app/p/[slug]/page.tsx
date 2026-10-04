@@ -48,11 +48,10 @@ export default async function ProductPage({ params }: Props) {
       <div className="space-y-5">
         <ProductHero
           product={detail.product}
-          media={detail.media}
           unclaimed={detail.unclaimed}
-          lifecycle={detail.profile?.lifecycle ?? null}
-          rank={detail.rank}
+          risingRank={detail.risingRank}
           health={detail.health}
+          languages={(detail.repository?.facts?.languages ?? []).slice(0, 2).map((item) => item.name)}
         />
         <ProductMetrics visits={detail.visits} health={detail.health} installable={detail.product.accessMode === "installable"} />
       </div>

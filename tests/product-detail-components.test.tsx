@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import type { ComponentProps } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { BuildProvenance } from "@/components/product-detail/BuildProvenance";
@@ -10,6 +11,7 @@ import { ProductHero } from "@/components/product-detail/ProductHero";
 import { ProductIntroduction } from "@/components/product-detail/ProductIntroduction";
 import { ProductMetrics } from "@/components/product-detail/ProductMetrics";
 import { RepositoryEvidence } from "@/components/product-detail/RepositoryEvidence";
+import { SaveButton } from "@/components/product-detail/SaveButton";
 import { SourceBadge } from "@/components/product-detail/SourceBadge";
 import { UpdateTimeline } from "@/components/product-detail/UpdateTimeline";
 import { UnclaimedOwnerContact } from "@/components/product-detail/UnclaimedOwnerContact";
@@ -89,102 +91,74 @@ const freshness: ProductDetailView["freshness"] = [{
   nextAttemptAt: new Date("2026-08-20T03:00:00.000Z"),
 }];
 
-const heroMedia: ProductDetailView["media"] = [{
-  id: 1,
-  hash: "a".repeat(64),
-  src: `/api/media/${"a".repeat(64)}`,
-  thumbnailSrc: `/api/media/${"a".repeat(64)}?variant=thumbnail`,
-  width: 1200,
-  height: 630,
-  thumbnailWidth: 480,
-  thumbnailHeight: 252,
-  altText: "simpleHWP 대표 제품 화면",
-  position: 0,
-  sourceMissing: false,
-  lastSuccessAt: observedAt,
-}];
+const unchecked: ProductDetailView["health"] = { uptime30d: null, latencyMs: null, checkedAt: null, down: false };
+
+/** 히어로는 기본 픽스처로 그리고, 케이스마다 바뀌는 값만 덮어쓴다 */
+function renderHero(overrides: Partial<ComponentProps<typeof ProductHero>> = {}) {
+  return renderToStaticMarkup(<ProductHero product={product} unclaimed={false} risingRank={null} health={unchecked} languages={[]} {...overrides} />);
+}
 
 describe("evidence product detail components", () => {
-  it("renders the current stored rank, verification, lifecycle, and a 44px outbound action", () => {
-    const html = renderToStaticMarkup(<ProductHero
-      product={product}
-      media={heroMedia}
-      unclaimed={false}
-      lifecycle="ga"
-      rank={{ seasonKey: "2026-W34", rank: 2, scoreMode: "unique_visitors" }}
-      health={{ uptime30d: 99, latencyMs: 84, checkedAt: observedAt, down: false }}
-    />);
+  it("renders the name, the unclaimed mark, save and share, and a 44px outbound action", () => {
+    const html = renderHero({ unclaimed: true, health: { uptime30d: 99, latencyMs: 84, checkedAt: new Date(), down: false } });
 
-    expect(html).toContain("이번 시즌 #2");
-    expect(html).toContain("도메인 검증됨");
-    expect(html).toContain("정식 운영");
-    expect(html).toContain("Productivity");
-    expect(html).toContain('href="/go/simple-hwp"');
+    expect(html).toContain(`>${product.name}</h1>`);
+    expect(html).toContain("미클레임");
+    expect(html).toMatch(/<a href="\/go\/simple-hwp"[^>]*class="[^"]*min-h-11[^"]*"[^>]*>제품 방문하기<\/a>/);
     expect(html).not.toContain('href="https://simplehwp.example"');
-    expect(html).toContain("min-h-11");
-    expect(html).toContain("공유");
-    expect(html).toContain('data-layout="editorial-product-hero"');
-    expect(html).toContain("제품 화면");
-    expect(html).toContain(product.description);
-    expect(html).toContain(heroMedia[0].src);
-    expect(html).toContain('width="1200"');
-    expect(html).toContain('height="630"');
+    expect(html).toContain(`href="${product.repoUrl}"`);
+    expect(html).toContain("온라인 · 84ms");
+    expect(html).toContain('aria-label="공유"');
+    expect(html).toContain('aria-label="simpleHWP 저장"');
+    // 시즌 순위·검증 배지·운영 단계는 히어로에서 뺐다 — 머리는 이름·소개·메타 한 줄만
+    expect(html).not.toContain("이번 시즌");
   });
 
-  it("drops the description line when it repeats the tagline word for word", () => {
-    const same = { ...product, description: `  ${product.tagline}  ` };
-    const html = renderToStaticMarkup(<ProductHero product={same} media={[]} unclaimed={false} lifecycle={null} rank={null}
-      health={{ uptime30d: null, latencyMs: null, checkedAt: null, down: false }} />);
-    // 소개는 한 번만 — 수집 발행분은 설명이 없으면 소개를 그대로 쓴다
-    expect(html.split(product.tagline).length - 1).toBe(1);
+  it("shows the rising rank badge only inside the top twenty", () => {
+    expect(renderHero({ risingRank: 5 })).toContain("지금 뜨는 5위");
+    expect(renderHero({ risingRank: 21 })).not.toContain("지금 뜨는");
+    expect(renderHero({ risingRank: null })).not.toContain("지금 뜨는");
   });
 
-  it("keeps the description when it says something the tagline does not", () => {
-    const html = renderToStaticMarkup(<ProductHero product={product} media={[]} unclaimed={false} lifecycle={null} rank={null}
-      health={{ uptime30d: null, latencyMs: null, checkedAt: null, down: false }} />);
-    expect(html).toContain(product.description);
-    expect(html).toContain(product.tagline);
+  it("puts category, stars, top languages, owner and status in one meta line without a large image", () => {
+    const html = renderHero({ product: { ...product, stars: 40064 }, languages: ["Rust", "TypeScript"] });
+    expect(html).toContain("생산성");
+    expect(html).toContain("★ 40,064");
+    expect(html).toContain("Rust · TypeScript");
+    expect(html).toContain("GitHub @example");
+    expect(html).toContain("가동 상태 확인 전");
+    expect(html).not.toContain("product-hero-media");
+    expect(html).not.toContain("<figure");
   });
 
-  it("stands a named cover where a screenshot would be, instead of an empty-state line", () => {
-    const html = renderToStaticMarkup(<ProductHero product={product} media={[]} unclaimed={false} lifecycle={null} rank={null}
-      health={{ uptime30d: null, latencyMs: null, checkedAt: null, down: false }} />);
-    expect(html).toContain("제품 화면");
-    expect(html).toContain(product.name);
-    // 아이콘 타일이 그 자리를 채운다 — 무엇이 없다고 적는 문구를 그 자리에 두지 않는다(PR 3에서 히어로와 함께 다시 쓴다)
-    expect(html).toContain("project-tile");
-    expect(html).not.toContain("이미지 없음");
-    expect(html).not.toContain("아직 보관된 제품 화면이 없습니다.");
+  it("shows only an internal icon copy, never an external image URL", () => {
+    expect(renderHero({ product: { ...product, ogImage: "/api/og-cache/simple-hwp" } })).toContain('src="/api/og-cache/simple-hwp"');
+    expect(renderHero({ product: { ...product, ogImage: "https://tracker.example/og.png" } })).not.toContain("tracker.example");
   });
 
-  it("uses a safe internal OG copy as the large representative image when media is empty", () => {
-    const html = renderToStaticMarkup(<ProductHero
-      product={{ ...product, ogImage: "/api/og-cache/simple-hwp" }}
-      media={[]}
-      unclaimed={false}
-      lifecycle={null}
-      rank={null}
-      health={{ uptime30d: null, latencyMs: null, checkedAt: null, down: false }}
-    />);
-    expect(html).toContain('src="/api/og-cache/simple-hwp"');
-    expect(html).toContain("공개 페이지 대표 이미지");
-    expect(html).not.toContain("이미지 없음");
-    expect(html).not.toContain("아직 보관된 제품 화면이 없습니다.");
+  it("still says when the one-line intro was written by AI rather than the maker", () => {
+    // 지은 소개를 메이커가 쓴 것처럼 두지 않는다(사용자 결정 2026-09-20)
+    expect(renderHero({ product: { ...product, taglineSource: "ai_readme" } })).toContain("AI가 요약 · README에서");
+    expect(renderHero()).not.toContain("AI가 요약");
   });
 
   it("does not call a nineteen-day-old health observation online", () => {
-    const html = renderToStaticMarkup(<ProductHero product={product} media={[]} unclaimed={false} lifecycle={null} rank={null}
-      health={{ uptime30d: 99, latencyMs: 84, checkedAt: new Date(Date.now() - 19 * 86400000), down: false }} />);
+    const html = renderHero({ health: { uptime30d: 99, latencyMs: 84, checkedAt: new Date(Date.now() - 19 * 86400000), down: false } });
     expect(html).not.toContain("온라인");
     expect(html).toContain("가동 상태 재확인 필요");
   });
 
   it("does not label a fresh failed health check online before the down threshold", () => {
-    const html = renderToStaticMarkup(<ProductHero product={product} media={[]} unclaimed={false} lifecycle={null} rank={null}
-      health={{ uptime30d: 99, latencyMs: null, checkedAt: new Date(), down: false, lastCheckSucceeded: false }} />);
+    const html = renderHero({ health: { uptime30d: 99, latencyMs: null, checkedAt: new Date(), down: false, lastCheckSucceeded: false } });
     expect(html).not.toContain("온라인");
     expect(html).toContain("최근 접속 확인 실패");
     expect(html).not.toContain("접속 불안정");
+  });
+
+  it("toggles the saved list through a labelled pressed state", () => {
+    const html = renderToStaticMarkup(<SaveButton slug="simple-hwp" name="simpleHWP" />);
+    expect(html).toContain('aria-pressed="false"');
+    expect(html).toContain('aria-label="simpleHWP 저장"');
   });
 
   it("labels only NoMoreVibe-originated seven-day visits and preserves collecting states", () => {
@@ -529,7 +503,7 @@ describe("evidence product detail components", () => {
     expect(source).toContain("getProductDetail(slug)");
     expect(source).not.toContain("findBySlug");
     expect(source).not.toMatch(/댓글|comment/i);
-    expect(source).toContain("media={detail.media}");
+    expect(source).toContain("risingRank={detail.risingRank}");
     expect(source).not.toContain("<ProductGallery");
     const order = [
       "<ProductHero",
@@ -552,9 +526,12 @@ describe("evidence product detail components", () => {
 it("offers an installation prompt instead of a visit CTA or a website uptime claim", () => {
   const installable = { ...product, accessMode: "installable" as const, url: product.repoUrl! };
   const health = { uptime30d: null, latencyMs: null, checkedAt: null, down: false };
-  const html = renderToStaticMarkup(<ProductHero product={installable} media={[]} unclaimed={true} lifecycle={null} rank={null} health={health} />);
+  const html = renderHero({ product: installable, unclaimed: true, health });
   expect(html).toContain("직접 설치");
-  expect(html).toContain("Copy Prompt");
+  expect(html).toContain("GitHub 저장소 열기");
+  expect(html).toContain("설치 프롬프트 복사");
+  // 자동 복사가 막혀도 직접 골라 복사할 칸이 남는다
+  expect(html).toContain(">설치 프롬프트</label>");
   expect(html).toContain("Claude·ChatGPT");
   expect(html).toContain(product.repoUrl);
   expect(html).not.toContain("제품 방문하기");

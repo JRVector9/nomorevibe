@@ -21,15 +21,16 @@ export function InstallPrompt({ repoUrl }: { repoUrl: string }) {
     }
   }
 
+  // 히어로 단추 줄에 그대로 끼어든다(contents) — 복사 단추는 제자리, 안내 문장과 직접 복사 칸은 줄 끝으로
   return (
-    <div className="w-full">
+    <div className="contents">
       <button type="button" onClick={copy}
-        className="inline-flex min-h-11 items-center justify-center rounded-[10px] bg-accent-solid px-5 text-[13px] font-extrabold text-white hover:opacity-90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent">
-        {copied ? "프롬프트 복사됨 ✓" : "Copy Prompt · 설치 도움받기"}
+        className="inline-flex min-h-11 items-center rounded-full bg-bg-soft px-5 text-[15px] font-medium text-fg">
+        {copied ? "복사됨 ✓" : "설치 프롬프트 복사"}
       </button>
-      <p className="mt-2 text-[13px] leading-6 text-fg-3">Claude·ChatGPT에 붙여넣으면 내 환경에 맞는 설치 방법을 안내받을 수 있습니다.</p>
+      <p className="order-last text-[13px] leading-6 text-fg-3">Claude·ChatGPT에 붙여넣으면 내 환경에 맞는 설치 방법을 안내받을 수 있습니다.</p>
       <span role="status" className="sr-only">{copied ? "설치 프롬프트가 복사되었습니다." : manual ? "자동 복사가 지원되지 않습니다. 아래 프롬프트를 선택해 복사해주세요." : ""}</span>
-      <details open={manual || undefined} className="mt-2 text-[13px] text-fg-3">
+      <details open={manual || undefined} className="order-last basis-full text-[13px] text-fg-3">
         <summary className="cursor-pointer">{manual ? "직접 선택해 복사하기" : "프롬프트 내용 보기"}</summary>
         <label className="sr-only" htmlFor={id}>설치 프롬프트</label>
         <textarea id={id} readOnly value={prompt} onFocus={event => event.currentTarget.select()} rows={9}
