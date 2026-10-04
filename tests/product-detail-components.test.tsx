@@ -2,14 +2,15 @@ import { readFileSync } from "node:fs";
 import type { ComponentProps } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { BuildProvenance } from "@/components/product-detail/BuildProvenance";
+import { BuildTools } from "@/components/product-detail/BuildTools";
 import { EvidenceSummary } from "@/components/product-detail/EvidenceSummary";
 import { FactsStrip } from "@/components/product-detail/FactsStrip";
 import { FreshnessPanel } from "@/components/product-detail/FreshnessPanel";
+import { IntroSection } from "@/components/product-detail/IntroSection";
+import { LanguageBar } from "@/components/product-detail/LanguageBar";
 import { ProductFacts } from "@/components/product-detail/ProductFacts";
 import { ProductGallery } from "@/components/product-detail/ProductGallery";
 import { ProductHero } from "@/components/product-detail/ProductHero";
-import { ProductIntroduction } from "@/components/product-detail/ProductIntroduction";
 import { RepositoryEvidence } from "@/components/product-detail/RepositoryEvidence";
 import { SaveButton } from "@/components/product-detail/SaveButton";
 import { SourceBadge } from "@/components/product-detail/SourceBadge";
@@ -157,6 +158,21 @@ function renderHero(overrides: Partial<ComponentProps<typeof ProductHero>> = {})
 function renderFacts(overrides: Partial<ComponentProps<typeof FactsStrip>> = {}) {
   return renderToStaticMarkup(<FactsStrip product={product} repository={observedRepository} license={observedLicense} health={unchecked} visits={collectingVisits} {...overrides} />);
 }
+
+function renderIntro(overrides: Partial<ComponentProps<typeof IntroSection>> = {}) {
+  return renderToStaticMarkup(<IntroSection product={product} profile={null} readmeExcerpt={null} unclaimed={false} {...overrides} />);
+}
+
+function renderTools(overrides: Partial<ComponentProps<typeof BuildTools>> = {}) {
+  return renderToStaticMarkup(<BuildTools product={product} unclaimed={false} agents={[]} observedAgentFacts={[]} skills={[]} toolScan="scanned" {...overrides} />);
+}
+
+const observedFact: ProductDetailView["observedAgentFacts"][number] = {
+  label: "모델 설정 확인", clientLabel: "Claude Code", modelLabel: "glm-4.7", gatewayLabel: "Z.AI",
+  role: "sonnet", scope: "", sourceUrl: "https://github.com/acme/app/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/.claude/settings.json",
+  sourcePath: ".claude/settings.json", commitSha: "a".repeat(40), observedAt,
+  coverageLabel: "일부 미확인", relationshipLabel: "제품과 저장소 관계 미확인", executionVerified: false,
+};
 
 describe("evidence product detail components", () => {
   it("renders the name, the unclaimed mark, save and share, and a 44px outbound action", () => {
@@ -316,9 +332,31 @@ describe("evidence product detail components", () => {
     expect(html).toContain("원본 없음 · 보관 이미지");
   });
 
+  it("drops the description line when it repeats the tagline word for word", () => {
+    const html = renderIntro({ product: { ...product, description: `  ${product.tagline}  ` } });
+    // 소개는 히어로의 한 줄 한 번만 — 소개 구획에는 아예 없고 README 로 가라는 한 줄이 선다
+    expect(html).not.toContain(product.tagline);
+    expect(html).toContain("메이커가 쓴 소개는 위의 한 줄이 전부입니다");
+    expect(html).toContain(`href="${product.repoUrl}"`);
+  });
+
+  it("keeps the description when it says something the tagline does not", () => {
+    const html = renderIntro();
+    expect(html).toContain(product.description);
+    expect(html).not.toContain("위의 한 줄이 전부입니다");
+  });
+
+  it("adds a readme excerpt when the intro is a single line", () => {
+    const html = renderIntro({ product: { ...product, description: product.tagline }, readmeExcerpt: "The README says more.\n\nSecond paragraph." });
+    expect(html).toContain("README에서");
+    expect(html).toContain("Second paragraph");
+    expect(html).toContain("README 전문 보기");
+    expect(html).not.toContain("위의 한 줄이 전부입니다");
+  });
+
   it("shows structured introduction and safe markdown without raw scripts", () => {
-    const html = renderToStaticMarkup(<ProductIntroduction product={product} profile={profile} unclaimed={false} />);
-    expect(html).toContain("상세 소개");
+    const html = renderIntro({ profile });
+    expect(html).toContain(">소개<");
     expect(html).toContain("해결하는 문제");
     expect(html).toContain("주요 기능");
     expect(html).toContain("메이커 제공·미검증");
@@ -327,12 +365,24 @@ describe("evidence product detail components", () => {
     expect(html).not.toContain("alert(1)");
     expect(html).not.toContain("tracker.example");
 
-    const unclaimed = renderToStaticMarkup(<ProductIntroduction product={product} profile={profile} unclaimed />);
+    const unclaimed = renderIntro({ profile, unclaimed: true });
     expect(unclaimed).toContain("자동 감지");
     expect(unclaimed).not.toContain("메이커 제공·미검증");
   });
 
-  it("renders objective facts, repository evidence, both conflicting licenses, agents, and skills", () => {
+  it("draws the top three languages and folds the rest into one share", () => {
+    const languages = [["C", 71.4], ["Swift", 12.8], ["Python", 7.5], ["Objective-C", 5], ["Shell", 3.3]]
+      .map(([name, percent]) => ({ name: name as string, bytes: 1, percent: percent as number }));
+    const html = renderToStaticMarkup(<LanguageBar repository={{ ...observedRepository, facts: { ...observedRepository.facts!, languages } }} />);
+    expect(html).toContain("언어 구성");
+    expect(html).toContain("Swift");
+    expect(html).toContain("Objective-C 외");
+    expect(html).toContain("8.3%");
+    expect(html).not.toContain("Shell");
+    expect(renderToStaticMarkup(<LanguageBar repository={null} />)).toBe("");
+  });
+
+  it("renders objective facts, repository evidence and both conflicting licenses", () => {
     const facts = renderToStaticMarkup(<ProductFacts product={product} profile={profile} links={links} unclaimed={false} />);
     expect(facts).toContain("객관적 정보");
     expect(facts).toContain("npm");
@@ -373,44 +423,6 @@ describe("evidence product detail components", () => {
     expect(collectingRepository).toContain(">—<");
     expect(collectingRepository).not.toContain("저장소 정보를 수집하고 있습니다");
     expect(collectingRepository).not.toContain("GitHub에서 확인");
-
-    const provenance = renderToStaticMarkup(<BuildProvenance
-      product={product}
-      unclaimed={false}
-      agents={[{
-        id: 1,
-        slug: product.slug,
-        provider: "OpenAI",
-        client: "Codex",
-        model: "GPT-5",
-        roles: ["planning", "implementation", "review"],
-        commitFrom: null,
-        commitTo: null,
-        dateFrom: null,
-        dateTo: null,
-        sourceUrl: null,
-        evidenceLevel: "maker_reported",
-        createdAt: observedAt,
-        evidenceLabel: "메이커 제공",
-      }]}
-      skills={[{
-        id: 1,
-        slug: product.slug,
-        namespace: "openai",
-        name: "review",
-        version: "1.0.0",
-        source: null,
-        hash: "b".repeat(64),
-        commit: null,
-        evidenceLevel: "maker_reported",
-        createdAt: observedAt,
-        evidenceLabel: "메이커 제공",
-      }]}
-    />);
-    expect(provenance).toContain("개발 근거");
-    expect(provenance).toContain("Codex");
-    expect(provenance).toContain("review");
-    expect(provenance).not.toContain("공개된 에이전트 정보가 없습니다");
   });
 
   it("renders one compact owner and contact section only for a valid GitHub repository", () => {
@@ -430,27 +442,39 @@ describe("evidence product detail components", () => {
       .toBe("");
   });
 
-  it("renders observed tool, configured model and gateway separately with citations while preserving maker reporting", () => {
-    const html = renderToStaticMarkup(<BuildProvenance product={product} unclaimed={false} agents={[]} skills={[]}
-      observedAgentFacts={[{ label: "모델 설정 확인", clientLabel: "Claude Code", modelLabel: "glm-4.7", gatewayLabel: "Z.AI",
-        role: "sonnet", scope: "", sourceUrl: "https://github.com/acme/app/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/.claude/settings.json",
-        sourcePath: ".claude/settings.json", commitSha: "a".repeat(40), observedAt,
-        coverageLabel: "일부 미확인", relationshipLabel: "제품과 저장소 관계 미확인", executionVerified: false }]} />);
+  it("renders one chip per observed tool with its citation while preserving maker reporting", () => {
+    const html = renderTools({
+      observedAgentFacts: [observedFact, { ...observedFact, label: "커밋 기여 표기 확인", commitSha: "b".repeat(40) }],
+      agents: [{
+        id: 1, slug: product.slug, provider: "OpenAI", client: "Codex", model: "GPT-5", roles: ["planning", "implementation", "review"],
+        commitFrom: null, commitTo: null, dateFrom: null, dateTo: null, sourceUrl: null, evidenceLevel: "maker_reported",
+        createdAt: observedAt, evidenceLabel: "메이커 제공",
+      }],
+      skills: [{
+        id: 1, slug: product.slug, namespace: "openai", name: "review", version: "1.0.0", source: null, hash: "b".repeat(64),
+        commit: null, evidenceLevel: "maker_reported", createdAt: observedAt, evidenceLabel: "메이커 제공",
+      }],
+    });
+    expect(html).toContain("무엇으로 만들었나");
     expect(html).toContain("메이커 신고");
-    expect(html).toContain("Codex");
+    expect(html).toContain("● Codex");
+    expect(html).toContain("OpenAI · Codex · GPT-5");
+    expect(html).toContain("openai/review@1.0.0");
+    // 같은 도구의 흔적 둘은 알약 하나 — 첫 흔적과 근거 링크, 나머지는 '외 1'
     expect(html).toContain("Claude Code");
-    expect(html).toContain("glm-4.7");
-    expect(html).toContain("Z.AI");
+    expect(html).toContain("모델 설정 확인");
+    expect(html).toContain(`href="${observedFact.sourceUrl}"`);
+    expect(html).toContain("근거 aaaaaaa");
+    expect(html).toContain("외 1");
     expect(html).toContain("일부 미확인");
-    expect(html).toContain("제품과 저장소 관계 미확인");
-    expect(html).toContain(".claude/settings.json");
-    expect(html).toContain("aaaaaaa");
+    // 흔적은 사용 주장일 뿐 — 미클레임이면 메이커 신고값을 쓰지 않는다
+    expect(renderTools({ unclaimed: true, observedAgentFacts: [observedFact] })).not.toContain("메이커 신고");
   });
 
-  it("omits the development section when no confirmed or observed information exists", () => {
-    const html = renderToStaticMarkup(<BuildProvenance product={{ ...product, builder: null }} unclaimed={true}
-      agents={[]} skills={[]} observedAgentFacts={[]} />);
-    expect(html).toBe("");
+  it("says the repository is not scanned yet, or that no trace was found, instead of omitting the section", () => {
+    const empty = { product: { ...product, builder: null }, agents: [], observedAgentFacts: [], skills: [] };
+    expect(renderTools({ ...empty, toolScan: "none" })).toContain("아직 저장소를 확인하지 않았습니다");
+    expect(renderTools({ ...empty, toolScan: "scanned" })).toContain("흔적을 찾지 못했습니다");
   });
 
   it.each([null, "maker_reported"] as const)("does not invent activity or a verified direction from unknown repository facts (%s)", (relationshipState) => {
@@ -523,10 +547,11 @@ describe("evidence product detail components", () => {
       "FactsStrip.tsx",
       "EvidenceSummary.tsx",
       "ProductGallery.tsx",
-      "ProductIntroduction.tsx",
+      "IntroSection.tsx",
+      "LanguageBar.tsx",
       "ProductFacts.tsx",
       "RepositoryEvidence.tsx",
-      "BuildProvenance.tsx",
+      "BuildTools.tsx",
       "FreshnessPanel.tsx",
       "UpdateTimeline.tsx",
       "SourceBadge.tsx",
@@ -549,12 +574,13 @@ describe("evidence product detail components", () => {
     const order = [
       "<ProductHero",
       "<FactsStrip",
-      "<ProductIntroduction",
+      "<IntroSection",
+      "<BuildTools",
+      "<LanguageBar",
       "<EvidenceSummary",
       "<UnclaimedOwnerContact",
       "<ProductFacts",
       "<RepositoryEvidence",
-      "<BuildProvenance",
       "<FreshnessPanel",
       "<UpdateTimeline",
     ].map((needle) => source.indexOf(needle));

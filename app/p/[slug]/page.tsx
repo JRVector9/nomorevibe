@@ -1,13 +1,14 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { BuildProvenance } from "@/components/product-detail/BuildProvenance";
+import { BuildTools } from "@/components/product-detail/BuildTools";
 import { EvidenceSummary } from "@/components/product-detail/EvidenceSummary";
 import { FactsStrip } from "@/components/product-detail/FactsStrip";
 import { FreshnessPanel } from "@/components/product-detail/FreshnessPanel";
+import { IntroSection } from "@/components/product-detail/IntroSection";
+import { LanguageBar } from "@/components/product-detail/LanguageBar";
 import { ProductFacts } from "@/components/product-detail/ProductFacts";
 import { ProductHero } from "@/components/product-detail/ProductHero";
-import { ProductIntroduction } from "@/components/product-detail/ProductIntroduction";
 import { RepositoryEvidence } from "@/components/product-detail/RepositoryEvidence";
 import { UpdateTimeline } from "@/components/product-detail/UpdateTimeline";
 import { UnclaimedOwnerContact } from "@/components/product-detail/UnclaimedOwnerContact";
@@ -57,8 +58,17 @@ export default async function ProductPage({ params }: Props) {
       </div>
 
       <div className="mt-8 grid gap-6 lg:grid-cols-[minmax(0,1fr)_340px] lg:items-start lg:gap-8">
-        <div className="lg:col-start-1 lg:row-start-1">
-          <ProductIntroduction product={detail.product} profile={detail.profile} unclaimed={detail.unclaimed} />
+        <div className="flex flex-col gap-9 lg:col-start-1 lg:row-start-1">
+          <IntroSection product={detail.product} profile={detail.profile} readmeExcerpt={detail.readmeExcerpt} unclaimed={detail.unclaimed} />
+          <BuildTools
+            product={detail.product}
+            unclaimed={detail.unclaimed}
+            agents={detail.agents}
+            observedAgentFacts={detail.observedAgentFacts}
+            skills={detail.skills}
+            toolScan={detail.toolScan}
+          />
+          <LanguageBar repository={detail.repository} />
         </div>
 
         <aside id="evidence" className="space-y-4 lg:col-start-2 lg:row-span-2 lg:row-start-1">
@@ -81,13 +91,6 @@ export default async function ProductPage({ params }: Props) {
             </section>
           )}
           <RepositoryEvidence repository={detail.repository} license={detail.license} dailyStars={detail.product} />
-          <BuildProvenance
-            product={detail.product}
-            unclaimed={detail.unclaimed}
-            agents={detail.agents}
-            observedAgentFacts={detail.observedAgentFacts}
-            skills={detail.skills}
-          />
           <FreshnessPanel freshness={detail.freshness} />
         </aside>
 
