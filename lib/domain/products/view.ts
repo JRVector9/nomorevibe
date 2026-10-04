@@ -96,6 +96,7 @@ export type BrowseOptions = {
   category?: Category;
   query?: SearchQuery;
   builder?: string;
+  observedTool?: string;
   hasRepository?: boolean;
   /** 마지막 확인 사이에 스타가 는 제품만(repository.ts) */
   rising?: boolean;

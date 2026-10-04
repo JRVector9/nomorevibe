@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { metricHref, type BrowseState } from "@/components/home/browse-state";
+import { hrefWith, type BrowseState } from "@/components/home/browse-state";
 import type { HomePulse } from "@/lib/domain/products/home-pulse";
 
 const num = (value: number) => value.toLocaleString("ko-KR");
@@ -7,8 +7,7 @@ const num = (value: number) => value.toLocaleString("ko-KR");
 /**
  * 무엇으로 만들었나 — 공개 프로젝트 저장소에서 찾은 AI 코딩 도구 흔적.
  *
- * 알약은 지금 걸러 보기로 이어지지 않는다 — `?builder=` 는 메이커가 신고한 값(3%)만 거르고 흔적은 다른 표다.
- * 흔적으로 거르는 조회가 생기기 전까지 집계 기준 창을 연다.
+ * 알약은 흔적으로 거른다 — 메이커가 신고한 값은 별도의 `?builder=` 필터다.
  */
 export function ToolsBoard({ tools, state }: { tools: HomePulse["tools"]; state: BrowseState }) {
   if (!tools || tools.rows.length === 0) return null;
@@ -21,9 +20,9 @@ export function ToolsBoard({ tools, state }: { tools: HomePulse["tools"]; state:
         </div>
       </div>
       <ul className="chips">
-        {tools.rows.slice(0, 8).map((tool, index) => (
+        {tools.rows.slice(0, 8).map((tool) => (
           <li key={tool.label}>
-            <Link href={metricHref(state, "tools")} className={`chip${index === 0 ? " chip-dark" : ""}`}>
+            <Link href={hrefWith(state, { observedTool: tool.label })} className={`chip${state.observedTool === tool.label ? " chip-dark" : ""}`} aria-current={state.observedTool === tool.label ? "true" : undefined}>
               {tool.label} <span className="chip-count">{num(tool.count)}</span>
             </Link>
           </li>
