@@ -112,4 +112,58 @@ describe("README 발췌", () => {
     expect(readmeExcerpt(nextjs, tagline)).toBeNull();
     expect(readmeExcerpt(vite, tagline)).toBeNull();
   });
+
+  it("이름·십진수·16진수 엔티티를 본문 글자로 풀고 줄 사이 공백을 정리한다", () => {
+    const encoded = "Atlas &amp; Compass helps teams collect &quot;notes&quot;, keep &#39;decisions&#39; together, and share progress&nbsp;without losing context. &#x1F680; &copy;";
+    expect(readmeExcerpt(encoded, tagline)).toBe('Atlas & Compass helps teams collect "notes", keep \'decisions\' together, and share progress without losing context. 🚀 ©');
+  });
+
+  it("알 수 없는 엔티티와 세미콜론 없는 일반 글은 그대로 두고 한 번만 푼다", () => {
+    const text = "The workspace keeps &unknown; and &copycat as ordinary text while &amp;amp; becomes one literal &amp; reference for readers.";
+    expect(readmeExcerpt(text, tagline)).toBe("The workspace keeps &unknown; and &copycat as ordinary text while &amp; becomes one literal & reference for readers.");
+    expect(readmeExcerpt("The workspace keeps invalid numeric references &#0; and &#x110000; readable while preserving the rest of this complete sentence.", tagline))
+      .toBe("The workspace keeps invalid numeric references � and � readable while preserving the rest of this complete sentence.");
+  });
+
+  it("인용 접두사와 알림 표시는 버리되 본문·문단·비교 기호는 보존한다", () => {
+    const first = "The workspace helps teams record decisions and review project progress without losing the original context.";
+    const second = "The filter keeps values > 5 and quoted examples intact while readers inspect the evidence together.";
+    expect(readmeExcerpt(`> [!NOTE]\n> ${first}\n>\n> > ${second}`, tagline)).toBe(`${first}\n\n${second}`);
+    expect(readmeExcerpt(`> \`\`\`sh\n> npm run install\n> \`\`\`\n\n${first}`, tagline)).toBe(first);
+  });
+
+  it.each([
+    "이 도구는 팀의 작업 기록과 일정 정보를 한곳에 모으고 필요한 내용을 검색하여 회의 준비와 진행 상황 확인을 돕습니다.",
+    "这是一款帮助团队整理工作记录和项目进展的协作工具，可以搜索讨论内容并保留每一次决策的依据。",
+    "このツールはチームの作業記録と予定をまとめ、必要な情報を検索して会議の準備と進捗の確認を支援します。",
+  ])("80자 미만의 CJK 본문은 별도 최소 분량으로 남긴다: %s", (text) => {
+    expect(text.length).toBeLessThan(80);
+    expect(readmeExcerpt(text, tagline)).toBe(text);
+    expect(readmeExcerpt(text, text)).toBeNull();
+  });
+
+  it("실제 36자 일본어 제품 소개도 본문으로 남긴다", () => {
+    const text = "iPad で ひとりでも、向かい合って ふたりでも あそべる ゲームばこ";
+    expect(readmeExcerpt(`${text}\n\n https://oekazuma.github.io/asobibako/`, tagline)).toBe(text);
+  });
+
+  it("띄어쓰기 없는 CJK 본문을 제목으로 버리지 않고 짧은 제목과 명시한 제목은 제외한다", () => {
+    const text = "这是一款帮助团队整理工作记录和项目进展的协作工具，可以搜索讨论内容并保留每一次决策的依据";
+    expect(readmeExcerpt(`项目介绍\n\n# ${text}\n\n${text}`, tagline)).toBe(text);
+    expect(readmeExcerpt("프로젝트 소개\n\n安装方法\n\nはじめに", tagline)).toBeNull();
+    expect(readmeExcerpt("A short English sentence with one 字 still stays below the English minimum.", tagline)).toBeNull();
+  });
+
+  it("긴 CJK 본문은 띄어쓰기 없는 문장 경계에서도 600자 안으로 자른다", () => {
+    const sentence = "这是一款帮助团队整理工作记录和项目进展的协作工具，可以搜索讨论内容并保留每一次决策的依据。";
+    const repeats = Math.floor(600 / sentence.length);
+    expect(readmeExcerpt(sentence.repeat(20), tagline)).toBe(sentence.repeat(repeats));
+  });
+
+  it("엔티티를 풀어도 태그 문자열은 글로 남고 소개와 같은 본문은 제외한다", () => {
+    const text = 'The examples keep &lt;script&gt;alert(&quot;sample&quot;)&lt;/script&gt; as literal source text, without changing the surrounding explanation.';
+    const expected = 'The examples keep <script>alert("sample")</script> as literal source text, without changing the surrounding explanation.';
+    expect(readmeExcerpt(text, tagline)).toBe(expected);
+    expect(readmeExcerpt(text, expected)).toBeNull();
+  });
 });
