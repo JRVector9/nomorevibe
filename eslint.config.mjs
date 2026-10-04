@@ -12,6 +12,10 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    ".crawl-samples/**",
+    "nomorevibe-final/**",
+    "prototypes/**",
+    ".claude/worktrees/**",
   ]),
 ]);
 
