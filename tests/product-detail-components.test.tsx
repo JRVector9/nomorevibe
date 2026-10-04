@@ -4,12 +4,12 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { BuildProvenance } from "@/components/product-detail/BuildProvenance";
 import { EvidenceSummary } from "@/components/product-detail/EvidenceSummary";
+import { FactsStrip } from "@/components/product-detail/FactsStrip";
 import { FreshnessPanel } from "@/components/product-detail/FreshnessPanel";
 import { ProductFacts } from "@/components/product-detail/ProductFacts";
 import { ProductGallery } from "@/components/product-detail/ProductGallery";
 import { ProductHero } from "@/components/product-detail/ProductHero";
 import { ProductIntroduction } from "@/components/product-detail/ProductIntroduction";
-import { ProductMetrics } from "@/components/product-detail/ProductMetrics";
 import { RepositoryEvidence } from "@/components/product-detail/RepositoryEvidence";
 import { SaveButton } from "@/components/product-detail/SaveButton";
 import { SourceBadge } from "@/components/product-detail/SourceBadge";
@@ -91,11 +91,71 @@ const freshness: ProductDetailView["freshness"] = [{
   nextAttemptAt: new Date("2026-08-20T03:00:00.000Z"),
 }];
 
+const observedRepository: NonNullable<ProductDetailView["repository"]> = {
+  provider: "github",
+  sourceUrl: "https://github.com/example/simple-hwp",
+  state: "ok",
+  observedAt,
+  lastSuccessAt: observedAt,
+  lastFailureAt: null,
+  facts: {
+    repositoryKey: "example/simple-hwp",
+    repositoryUrl: "https://github.com/example/simple-hwp",
+    createdAt: "2025-01-01T00:00:00.000Z",
+    pushedAt: "2026-08-18T00:00:00.000Z",
+    updatedAt: "2026-08-18T00:00:00.000Z",
+    stars: 146,
+    forks: 18,
+    public: true,
+    archived: false,
+    fork: false,
+    homepage: "https://simplehwp.example",
+    contributors: { count: 12, incomplete: false, cap: 500 },
+    license: { value: "GNU GPLv3", spdxId: "GPL-3.0", url: null, sourceLabel: "GitHub에서 확인" },
+    languages: [{ name: "TypeScript", bytes: 82_000, percent: 82 }],
+    latestRelease: {
+      tagName: "v1.6.0",
+      name: "v1.6.0",
+      url: "https://github.com/example/simple-hwp/releases/tag/v1.6.0",
+      notesUrl: null,
+      publishedAt: "2026-08-15T00:00:00.000Z",
+    },
+    relationshipState: "bidirectional",
+  },
+};
+
+const observedLicense: ProductDetailView["license"] = {
+  state: "observed_only",
+  label: "GitHub에서 확인",
+  maker: null,
+  observed: { value: "GNU GPLv3", spdxId: "GPL-3.0", url: null, sourceLabel: "GitHub에서 확인" },
+};
+
+const conflictLicense: ProductDetailView["license"] = {
+  state: "conflict",
+  label: "정보 충돌",
+  maker: { value: "MIT", spdxId: "MIT", url: null, sourceLabel: "메이커 제공·미검증" },
+  observed: { value: "GNU GPLv3", spdxId: "GPL-3.0", url: null, sourceLabel: "GitHub에서 확인" },
+};
+
+const collectingVisits: ProductDetailView["visits"] = {
+  periodDays: 7,
+  validVisits: 0,
+  uniqueVisitors: null,
+  uniqueChangePercent: null,
+  collectionStartedAt: null,
+  collecting: true,
+};
+
 const unchecked: ProductDetailView["health"] = { uptime30d: null, latencyMs: null, checkedAt: null, down: false };
 
 /** 히어로는 기본 픽스처로 그리고, 케이스마다 바뀌는 값만 덮어쓴다 */
 function renderHero(overrides: Partial<ComponentProps<typeof ProductHero>> = {}) {
   return renderToStaticMarkup(<ProductHero product={product} unclaimed={false} risingRank={null} health={unchecked} languages={[]} {...overrides} />);
+}
+
+function renderFacts(overrides: Partial<ComponentProps<typeof FactsStrip>> = {}) {
+  return renderToStaticMarkup(<FactsStrip product={product} repository={observedRepository} license={observedLicense} health={unchecked} visits={collectingVisits} {...overrides} />);
 }
 
 describe("evidence product detail components", () => {
@@ -143,16 +203,25 @@ describe("evidence product detail components", () => {
   });
 
   it("does not call a nineteen-day-old health observation online", () => {
-    const html = renderHero({ health: { uptime30d: 99, latencyMs: 84, checkedAt: new Date(Date.now() - 19 * 86400000), down: false } });
+    const health = { uptime30d: 99, latencyMs: 84, checkedAt: new Date(Date.now() - 19 * 86400000), down: false };
+    const html = renderHero({ health });
     expect(html).not.toContain("온라인");
     expect(html).toContain("가동 상태 재확인 필요");
+    const facts = renderFacts({ health });
+    expect(facts).not.toContain("온라인");
+    expect(facts).toContain("재확인 필요");
   });
 
   it("does not label a fresh failed health check online before the down threshold", () => {
-    const html = renderHero({ health: { uptime30d: 99, latencyMs: null, checkedAt: new Date(), down: false, lastCheckSucceeded: false } });
+    const health = { uptime30d: 99, latencyMs: null, checkedAt: new Date(), down: false, lastCheckSucceeded: false };
+    const html = renderHero({ health });
     expect(html).not.toContain("온라인");
     expect(html).toContain("최근 접속 확인 실패");
     expect(html).not.toContain("접속 불안정");
+    const facts = renderFacts({ health });
+    expect(facts).not.toContain("온라인");
+    expect(facts).toContain("접속 확인 실패");
+    expect(facts).not.toContain("접속 불안정");
   });
 
   it("toggles the saved list through a labelled pressed state", () => {
@@ -161,41 +230,49 @@ describe("evidence product detail components", () => {
     expect(html).toContain('aria-label="simpleHWP 저장"');
   });
 
-  it("labels only NoMoreVibe-originated seven-day visits and preserves collecting states", () => {
-    const rich = renderToStaticMarkup(<ProductMetrics
-      visits={{
-        periodDays: 7,
-        validVisits: 12,
-        uniqueVisitors: 8,
-        uniqueChangePercent: 24,
-        collectionStartedAt: new Date("2026-08-01T00:00:00.000Z"),
-        collecting: false,
-      }}
-      health={{ uptime30d: 99, latencyMs: 84, checkedAt: observedAt, down: false }}
-    />);
-    expect(rich).toContain("고유 유입자 · 최근 7일");
-    expect(rich).toContain("유효 방문 · 최근 7일");
-    expect(rich).toContain("고유 유입자 변동");
-    expect(rich).toContain("+24%");
-    expect(rich).toContain("30일 가동률");
-    expect(rich).not.toMatch(/전체 트래픽|총 방문자|서비스 전체/);
+  it("shows visits only when NoMoreVibe actually measured some", () => {
+    expect(renderFacts({ visits: { ...collectingVisits, collecting: true } })).not.toContain("유효 방문");
+    const measured = renderFacts({ visits: { ...collectingVisits, collecting: false, validVisits: 12, uniqueVisitors: 9, uniqueChangePercent: 50 } });
+    expect(measured).toContain("유효 방문 · 최근 7일");
+    expect(measured).toContain("고유 9 · +50%");
+    // NoMoreVibe 에서 나간 방문만 센다 — 서비스 전체 트래픽처럼 읽히는 말은 쓰지 않는다
+    expect(measured).not.toMatch(/전체 트래픽|총 방문자|서비스 전체/);
+  });
 
-    const collecting = renderToStaticMarkup(<ProductMetrics
-      visits={{
-        periodDays: 7,
-        validVisits: 0,
-        uniqueVisitors: null,
-        uniqueChangePercent: null,
-        collectionStartedAt: null,
-        collecting: true,
-      }}
-      health={{ uptime30d: null, latencyMs: null, checkedAt: null, down: false }}
-    />);
-    expect(collecting).toContain(">—<");
-    expect(collecting).not.toContain("집계 중");
-    expect(collecting).toContain("유효 방문 · 최근 7일");
-    expect(collecting).toContain(">0<");
-    expect(collecting).not.toContain("고유 식별자 집계 전에도 측정");
+  it("renders push, release, contributors, license and listing as the six facts", () => {
+    const html = renderFacts();
+    for (const label of ["최근 push", "최신 release", "기여자", "라이선스", "nomorevibe 등록"]) expect(html).toContain(label);
+    expect(html).toContain("가동 상태");
+    expect(html).toContain("8월 18일");
+    expect(html).toContain("활성 저장소");
+    expect(html).toContain("v1.6.0");
+    expect(html).toContain("12명");
+    expect(html).toContain("포크 18");
+    expect(html).toContain("GPL-3.0");
+    expect(html).toContain("저장소 생성 2025년 1월");
+    expect(renderFacts({ product: { ...product, accessMode: "installable" } })).toContain("이용 방식");
+  });
+
+  it("names both licenses when the maker and the repository disagree", () => {
+    const html = renderFacts({ license: conflictLicense });
+    expect(html).toContain("정보 충돌");
+    expect(html).toContain("MIT");
+    expect(html).toContain("GPL-3.0");
+    expect(html).toContain("두 값을 모두 확인하세요");
+  });
+
+  it("does not invent activity, a release, or a license from an unread repository", () => {
+    const missing: ProductDetailView["license"] = { state: "missing", label: "라이선스 확인 안 됨", maker: null, observed: null };
+    const unread = renderFacts({ repository: null, license: missing });
+    expect(unread).toContain("저장소 미확인");
+    expect(unread).toContain(">—<");
+    expect(unread).toContain("확인 안 됨");
+    expect(unread).not.toContain("활성");
+    expect(unread).not.toContain("없음");
+
+    const unknown = renderFacts({ repository: { ...observedRepository, facts: { ...observedRepository.facts!, archived: null, fork: null } } });
+    expect(unknown).not.toContain("활성");
+    expect(unknown).toContain("상태 미확인");
   });
 
   it("uses only internal mirrored gallery URLs and keeps useful missing-source copies", () => {
@@ -267,44 +344,8 @@ describe("evidence product detail components", () => {
     expect(unclaimedFacts).not.toContain("신고값");
 
     const repository = renderToStaticMarkup(<RepositoryEvidence
-      repository={{
-        provider: "github",
-        sourceUrl: "https://github.com/example/simple-hwp",
-        state: "ok",
-        observedAt,
-        lastSuccessAt: observedAt,
-        lastFailureAt: null,
-        facts: {
-          repositoryKey: "example/simple-hwp",
-          repositoryUrl: "https://github.com/example/simple-hwp",
-          createdAt: "2025-01-01T00:00:00.000Z",
-          pushedAt: "2026-08-18T00:00:00.000Z",
-          updatedAt: "2026-08-18T00:00:00.000Z",
-          stars: 146,
-          forks: 18,
-          public: true,
-          archived: false,
-          fork: false,
-          homepage: "https://simplehwp.example",
-          contributors: { count: 12, incomplete: false, cap: 500 },
-          license: { value: "GNU GPLv3", spdxId: "GPL-3.0", url: null, sourceLabel: "GitHub에서 확인" },
-          languages: [{ name: "TypeScript", bytes: 82_000, percent: 82 }],
-          latestRelease: {
-            tagName: "v1.6.0",
-            name: "v1.6.0",
-            url: "https://github.com/example/simple-hwp/releases/tag/v1.6.0",
-            notesUrl: null,
-            publishedAt: "2026-08-15T00:00:00.000Z",
-          },
-          relationshipState: "bidirectional",
-        },
-      }}
-      license={{
-        state: "conflict",
-        label: "정보 충돌",
-        maker: { value: "MIT", spdxId: "MIT", url: null, sourceLabel: "메이커 제공·미검증" },
-        observed: { value: "GNU GPLv3", spdxId: "GPL-3.0", url: null, sourceLabel: "GitHub에서 확인" },
-      }}
+      repository={observedRepository}
+      license={conflictLicense}
     />);
     expect(repository).toContain("저장소 생성일");
     expect(repository).toContain("현재 확인 가능한 정보");
@@ -479,7 +520,7 @@ describe("evidence product detail components", () => {
     expect(renderToStaticMarkup(<SourceBadge label="메이커 제공·미검증" />)).toContain("메이커 제공·미검증");
     const files = [
       "ProductHero.tsx",
-      "ProductMetrics.tsx",
+      "FactsStrip.tsx",
       "EvidenceSummary.tsx",
       "ProductGallery.tsx",
       "ProductIntroduction.tsx",
@@ -507,7 +548,7 @@ describe("evidence product detail components", () => {
     expect(source).not.toContain("<ProductGallery");
     const order = [
       "<ProductHero",
-      "<ProductMetrics",
+      "<FactsStrip",
       "<ProductIntroduction",
       "<EvidenceSummary",
       "<UnclaimedOwnerContact",
@@ -536,7 +577,8 @@ it("offers an installation prompt instead of a visit CTA or a website uptime cla
   expect(html).toContain(product.repoUrl);
   expect(html).not.toContain("제품 방문하기");
   expect(html).not.toContain("가동 상태 확인 전");
-  const metrics = renderToStaticMarkup(<ProductMetrics installable health={health} visits={{ collecting: true, uniqueVisitors: null, uniqueChangePercent: null, validVisits: 0, periodDays: 7 } as ProductDetailView["visits"]} />);
-  expect(metrics).not.toContain("30일 가동률");
-  expect(metrics).toContain("사용자 환경에서 실행");
+  const facts = renderFacts({ product: installable, health });
+  expect(facts).not.toContain("30일 가동률");
+  expect(facts).not.toContain("가동 상태");
+  expect(facts).toContain("사용자 환경에서 실행");
 });

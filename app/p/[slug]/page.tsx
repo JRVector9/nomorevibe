@@ -3,11 +3,11 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { BuildProvenance } from "@/components/product-detail/BuildProvenance";
 import { EvidenceSummary } from "@/components/product-detail/EvidenceSummary";
+import { FactsStrip } from "@/components/product-detail/FactsStrip";
 import { FreshnessPanel } from "@/components/product-detail/FreshnessPanel";
 import { ProductFacts } from "@/components/product-detail/ProductFacts";
 import { ProductHero } from "@/components/product-detail/ProductHero";
 import { ProductIntroduction } from "@/components/product-detail/ProductIntroduction";
-import { ProductMetrics } from "@/components/product-detail/ProductMetrics";
 import { RepositoryEvidence } from "@/components/product-detail/RepositoryEvidence";
 import { UpdateTimeline } from "@/components/product-detail/UpdateTimeline";
 import { UnclaimedOwnerContact } from "@/components/product-detail/UnclaimedOwnerContact";
@@ -53,7 +53,7 @@ export default async function ProductPage({ params }: Props) {
           health={detail.health}
           languages={(detail.repository?.facts?.languages ?? []).slice(0, 2).map((item) => item.name)}
         />
-        <ProductMetrics visits={detail.visits} health={detail.health} installable={detail.product.accessMode === "installable"} />
+        <FactsStrip product={detail.product} repository={detail.repository} license={detail.license} health={detail.health} visits={detail.visits} />
       </div>
 
       <div className="mt-8 grid gap-6 lg:grid-cols-[minmax(0,1fr)_340px] lg:items-start lg:gap-8">
