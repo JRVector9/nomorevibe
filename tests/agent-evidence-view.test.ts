@@ -7,7 +7,22 @@ it("keeps compatible instructions and unknown models separate from execution", (
  expect(view.label).toBe("Claude 호환 지침 파일 확인");
  expect(view.modelLabel).toBe("미확인");
  expect(view.executionVerified).toBe(false);
+ expect(view.developmentAttributed).toBe(false);
  expect(view.relationshipLabel).toBe("제품과 저장소 관계 미확인");
+});
+
+it("marks product-linked development attribution without claiming execution", () => {
+ const claim: AgentObservation = { ...observation, kind: "commit_attribution", client: "codex", role: "coauthor",
+  commitEvidence: { basis: "coauthor", changedPaths: ["src/app.ts"], changeKind: "development", headSha: "a".repeat(40) } };
+ const input = { observations: [claim], scanState: "complete" as const, observedAt: new Date("2026-09-06"), relationship: "same_product" as const };
+ expect(presentObservedAgentFacts(input)[0]).toMatchObject({ developmentAttributed: true, executionVerified: false });
+ for (const overrides of [
+  { relationship: "unknown" as const }, { relationship: "conflict" as const }, { scanState: "partial" as const },
+  { scanLastError: "timeout" }, { observations: [{ ...claim, scope: "packages/other" }] },
+  { observations: [{ ...claim, kind: "model_config" as const }] },
+  { observations: [{ ...claim, role: "committer" }] },
+  { observations: [{ ...claim, commitEvidence: { ...claim.commitEvidence!, changeKind: "other" as const } }] },
+ ]) expect(presentObservedAgentFacts({ ...input, ...overrides })[0].developmentAttributed).toBe(false);
 });
 it("preserves configured model, client, gateway, partial coverage and immutable citations", () => {
  const [view] = presentObservedAgentFacts({ observations:[{...observation,kind:"model_config",client:"claude-code",declaredModelId:"glm-4.7",gateway:"z-ai",routing:"fixed"}], scanState:"partial", observedAt:new Date("2026-09-06"), relationship:"same_product" });

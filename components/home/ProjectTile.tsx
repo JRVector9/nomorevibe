@@ -31,7 +31,7 @@ export function ProjectTile({ slug, name, ogImage, size, installable = false }: 
   return (
     <span className={`project-tile tile-${tileTintFor(slug)} tile-${size}`}>
       {internalImage && !presentation.identity ? (
-        <img src={internalImage} alt={`${name} · ${presentation.label}`} width={presentation.width} height={presentation.height} className="tile-preview" loading="lazy" />
+        <img src={internalImage} alt={`${name} · ${presentation.label}`} width={presentation.width} height={presentation.height} className={`tile-preview${presentation.contain ? " tile-preview-contain" : ""}`} loading="lazy" />
       ) : (
         <span className="tile-icon"><ProductIcon name={name} ogImage={internalImage} size={size === 64 ? 96 : 64} /></span>
       )}

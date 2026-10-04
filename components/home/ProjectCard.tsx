@@ -42,14 +42,14 @@ export function ProjectCard({ product, saved, onToggleSave }: {
             <Icon name="bookmark" size={16} />
           </button>
         </div>
+        <p className="card-category">{categoryLabel(product.category)}</p>
         <p className="project-tagline" title={product.tagline}>{product.tagline}</p>
         <IntroductionSource source={product.taglineSource} />
         <div className="project-bottom">
           <span className="project-meta">
-            {categoryLabel(product.category)}
-            {maker && (owner ? <> · <a href={owner.profileUrl} target="_blank" rel="noopener noreferrer" title="GitHub 저장소 소유자">{maker}</a></> : <> · {maker}</>)}
-            {product.builder && product.builderClaim === "reported" && <> · {product.builder}</>}
-            {product.health?.down && <> · <span className="meta-down">응답 없음</span></>}
+            {maker && (owner ? <a href={owner.profileUrl} target="_blank" rel="noopener noreferrer" title="GitHub 저장소 소유자">{maker}</a> : maker)}
+            {product.builder && product.builderClaim === "reported" && <>{maker && " · "}{product.builder}</>}
+            {product.health?.down && <>{(maker || (product.builder && product.builderClaim === "reported")) && " · "}<span className="meta-down">응답 없음</span></>}
           </span>
           <StarMetric value={product} />
         </div>

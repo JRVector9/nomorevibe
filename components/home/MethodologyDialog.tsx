@@ -11,6 +11,15 @@ function Formula({ children }: { children: React.ReactNode }) {
   return <code className="formula">{children}</code>;
 }
 
+/** 집계가 끝나는 서울 자정에서 7일씩 거슬러 올라간 기간을 적는다. */
+function periodLabel(asOf: string, weeksAgo: number): string {
+  const end = new Date(asOf).getTime() - weeksAgo * 7 * 86_400_000;
+  const date = (at: number) => new Intl.DateTimeFormat("ko-KR", {
+    timeZone: "Asia/Seoul", year: "numeric", month: "2-digit", day: "2-digit",
+  }).format(at).replace(/\. ?/g, ".").replace(/\.$/, "");
+  return `${date(end - 7 * 86_400_000)} 00:00–${date(end)} 00:00 KST`;
+}
+
 export function MethodologyDialog({ pulse, rankingFallback = false }: {
   pulse: HomePulseView;
   /** 검증 제품이 모자라 순위 탭이 스타 목록을 대신 보여주는 동안(app/page.tsx fallbackSort) 그 기준도 적는다 */
@@ -75,7 +84,7 @@ export function MethodologyDialog({ pulse, rankingFallback = false }: {
   const blocks: Record<string, React.ReactNode> = {
     popular: (<>
       <h3>많이 쓰이는 프로젝트 — GitHub 스타 구간.</h3>
-      <p>공개된 제품을 스타 2천–5천 미만, 5천–1만 미만, 1만–3만 미만, 3만–10만 미만으로 나눕니다. 각 구간은 스타 많은 순이고, 같으면 등재 ID 순입니다. 홈에는 구간별 최대 5개, 전체 목록에는 페이지당 15개를 보여줍니다.</p>
+      <p>공개된 제품을 스타 2천–5천 미만, 5천–1만 미만, 1만–3만 미만, 3만–10만 미만으로 나눕니다. 각 구간은 스타 많은 순이고, 같으면 등재 ID 순입니다. 홈에는 구간별 최대 3개, 전체 목록에는 페이지당 15개를 보여줍니다.</p>
       <p>스타는 저장소에 남긴 관심 표시로, 실제 이용자 수나 제품 품질을 보증하지 않습니다. 개인 계정만 필터는 GitHub의 User 유형만 포함합니다. 조직과 미확인 계정은 포함하지 않습니다.</p>
       <p>스타는 저장된 GitHub 원본에서 시작해 하루 간격으로 다시 확인합니다. 실패하면 마지막 성공 값과 확인일을 유지하며, 작업 대기로 더 늦어질 수 있습니다. 미공개·차단·접속 불가 제품과 스타 10만 이상은 제외합니다. 제작 근거는 각 제품 상세에서 확인할 수 있습니다.</p>
     </>),
@@ -83,9 +92,10 @@ export function MethodologyDialog({ pulse, rankingFallback = false }: {
       <>
         <h3>태어난 프로젝트 — 저장소를 처음 만든 날로 셉니다.</h3>
         <p>
-          공개 프로젝트 중 <b>GitHub 저장소를 처음 만든 날</b>이 최근 끝난 7일 안인 것의 개수입니다.
+          현재 공개 중이며 기준 시각 전에 목록에 오른 프로젝트 중 <b>GitHub 저장소를 처음 만든 날</b>이 최근 끝난 7일 안인 것의 개수입니다.
           우리 목록에 오른 날(소개된 날)도, 새 버전을 낸 날도 아닙니다.
         </p>
+        <p>소유권이 검증된 프로젝트는 등재 시각 대신 검증 시각이 기준 시각 전인지 확인합니다. 같은 저장소를 쓰는 프로젝트도 각각 셉니다. 저장소 생성일을 확인하지 못한 프로젝트는 태어난 수에 넣지 않습니다.</p>
         <Formula>
           태어난 프로젝트 = COUNT(저장소 created_at ∈ 최근 7일)
           <br />
@@ -105,7 +115,7 @@ export function MethodologyDialog({ pulse, rankingFallback = false }: {
       <>
         <h3>새 버전을 낸 프로젝트 — 출시 뒤에도 계속 만드는가.</h3>
         <p>
-          최근 끝난 7일 동안 공개된 릴리스가 있는 <b>고유 프로젝트 수</b>입니다.
+          최근 끝난 7일 동안 GitHub 릴리스 또는 제작자의 공개 업데이트가 있는 <b>고유 프로젝트 수</b>입니다.
           릴리스 {pulse.updates.releases}건이어도 같은 프로젝트를 합치면 {pulse.updates.projects}개입니다.
         </p>
         <Formula>
@@ -113,21 +123,22 @@ export function MethodologyDialog({ pulse, rankingFallback = false }: {
           <br />
           릴리스 건수 = COUNT(공개 github_release·maker 업데이트)
         </Formula>
+        <p>공개 시각이 없으면 처음 확인한 시각으로 셉니다. 제작자 업데이트는 버전 번호가 없어도 포함됩니다.</p>
         <p>소개문 수정이나 자동 재배포는 넣지 않습니다. 코드 품질이나 가동률을 보증하지 않습니다.</p>
       </>
     ),
     active: (
       <>
         <h3>가장 활발한 프로젝트 — 새 버전을 낸 횟수.</h3>
-        <p>최근 끝난 7일 동안 새 버전(GitHub 릴리스·제작자 업데이트)을 가장 많이 낸 공개 프로젝트 순입니다. 같으면 이름 순입니다.</p>
-        <Formula>활발함 = COUNT(최근 7일 공개 릴리스) · 상위 {pulse.active.length}개</Formula>
+        <p>최근 끝난 7일 동안 새 버전(GitHub 릴리스·제작자 업데이트)을 가장 많이 낸 공개 프로젝트 순입니다. 같으면 프로젝트 주소 순입니다.</p>
+        <Formula>활발함 = COUNT(최근 7일 공개 GitHub 릴리스·제작자 업데이트) · 상위 {pulse.active.length}개</Formula>
         <p>릴리스를 잘게 나눠 내는 프로젝트가 앞에 설 수 있습니다. 좋고 나쁨이 아니라 움직임의 크기입니다.</p>
       </>
     ),
     categories: (
       <>
         <h3>분야 순위 — 공개 수와 이번 주 태어난 수.</h3>
-        <p>분야마다 지금 공개된 프로젝트 수이고, 옆의 <b>+숫자</b>는 그중 저장소를 최근 7일 안에 처음 만든 것입니다. 어디에도 맞지 않는 &ldquo;기타&rdquo;는 순위에서 뺍니다.</p>
+        <p>분야마다 현재 공개 중이며 기준 시각 전에 목록에 오른 프로젝트 수입니다. 소유권이 검증된 프로젝트는 검증 시각을 기준으로 합니다. 옆의 <b>+숫자</b>는 그중 저장소를 최근 끝난 7일 안에 처음 만든 것입니다. 기타도 포함합니다.</p>
         <table className="method-table">
           <thead><tr><th>분야</th><th>공개</th><th>이번 주 태어남</th></tr></thead>
           <tbody>
@@ -149,7 +160,7 @@ export function MethodologyDialog({ pulse, rankingFallback = false }: {
           <p>
             순위는 검증된 제품의 유효 방문으로 매기는데, 검증된 제품이 아직 모자랍니다. 그동안 &ldquo;추천&rdquo;은 공개 프로젝트를
             <b> 마지막 두 번 확인한 사이에 늘어난 스타</b> 순으로 보여줍니다 — 늘어난 것만, 스타 2천 미만만입니다(그 위는 스타 구간이
-            따로 보여줍니다). &ldquo;관심 많은 순&rdquo;은 같은 동안 스타 많은 순입니다.
+            따로 보여줍니다). &ldquo;관심 많은 순&rdquo;은 마지막 확인의 전체 스타 수가 많은 순입니다.
           </p>
           <Formula>늘어난 스타 = 이번 확인 스타 − 직전 확인 스타 · 확인 간격은 보통 1~2일</Formula>
           <p>
@@ -187,7 +198,7 @@ export function MethodologyDialog({ pulse, rankingFallback = false }: {
     ? (
       <>
         <h3>출처, 기간, 분모가 보이는 숫자.</h3>
-        <p>윗줄과 순위는 전체 nomorevibe 기준입니다. 아래 제품 목록의 검색·필터를 바꿔도 집계 범위는 바뀌지 않습니다. &ldquo;이번 주&rdquo;는 끝난 7일이고, 이름의 동사로 가릅니다 — 태어났다(저장소를 처음 만듦) · 새 버전을 냈다(릴리스).</p>
+        <p>윗줄과 활동·분야·도구 집계는 전체 nomorevibe 기준입니다. 아래 제품 목록의 검색·필터를 바꿔도 이 집계 범위는 바뀌지 않습니다. 스타 구간의 개인 계정 필터는 해당 구간에 적용됩니다. &ldquo;이번 주&rdquo;는 끝난 7일이고, 이름의 동사로 가릅니다 — 태어났다(저장소를 처음 만듦) · 새 버전을 냈다(GitHub 릴리스·제작자 업데이트).</p>
         {nav}
         {Object.values(blocks).map((block, index) => (
           <div key={index}>
@@ -231,7 +242,11 @@ export function MethodologyDialog({ pulse, rankingFallback = false }: {
           AI 업계 전체의 시장 점유율·심리·사용량을 뜻하지 않습니다. 확인된 0과 계산할 수 없는 비율을 구별합니다.
         </div>
         {body}
-        <p className="method-foot">방법론 v{pulse.methodVersion} · {pulse.asOfLabel} · 기간은 시작 포함, 끝 제외</p>
+        <p className="method-foot">
+          방법론 v{pulse.methodVersion} · {pulse.asOfLabel} · 기간은 시작 포함, 끝 제외<br />
+          최근 7일: {periodLabel(pulse.asOf, 0)}<br />
+          직전 7일: {periodLabel(pulse.asOf, 1)}
+        </p>
       </div>
     </dialog>
   );

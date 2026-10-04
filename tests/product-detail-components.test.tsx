@@ -171,10 +171,10 @@ function renderTools(overrides: Partial<ComponentProps<typeof BuildTools>> = {})
 const textOf = (html: string) => html.replace(/<[^>]+>/g, "").replace(/&amp;/g, "&");
 
 const observedFact: ProductDetailView["observedAgentFacts"][number] = {
-  label: "모델 설정 확인", clientLabel: "Claude Code", modelLabel: "glm-4.7", gatewayLabel: "Z.AI",
-  role: "sonnet", scope: "", sourceUrl: "https://github.com/acme/app/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/.claude/settings.json",
-  sourcePath: ".claude/settings.json", commitSha: "a".repeat(40), observedAt,
-  coverageLabel: "일부 미확인", relationshipLabel: "제품과 저장소 관계 미확인", executionVerified: false,
+  label: "커밋 기여 표기 확인", clientLabel: "Claude Code", modelLabel: "glm-4.7", gatewayLabel: "Z.AI",
+  role: "coauthor", scope: "", sourceUrl: "https://github.com/acme/app/commit/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  sourcePath: null, commitSha: "a".repeat(40), observedAt,
+  coverageLabel: null, relationshipLabel: null, executionVerified: false, developmentAttributed: true,
 };
 
 describe("evidence product detail components", () => {
@@ -263,6 +263,7 @@ describe("evidence product detail components", () => {
     for (const label of ["최근 push", "최신 release", "기여자", "라이선스", "nomorevibe 등록"]) expect(html).toContain(label);
     expect(html).toContain("가동 상태");
     expect(html).toContain("8월 18일");
+    expect(html).toContain("09:00 KST");
     expect(html).toContain("활성 저장소");
     expect(html).toContain("v1.6.0");
     expect(html).toContain("12명");
@@ -489,11 +490,11 @@ describe("evidence product detail components", () => {
     expect(html).toContain("openai/review@1.0.0");
     // 같은 도구의 흔적 둘은 알약 하나 — 첫 흔적과 근거 링크, 나머지는 '외 1'
     expect(html).toContain("Claude Code");
-    expect(html).toContain("모델 설정 확인");
+    expect(html).toContain("커밋 기여 표기 확인");
     expect(html).toContain(`href="${observedFact.sourceUrl}"`);
     expect(html).toContain("근거 aaaaaaa");
     expect(html).toContain("외 1");
-    expect(html).toContain("일부 미확인 · 제품과 저장소 관계 미확인");
+    expect(html).not.toContain("제품과 저장소 관계 미확인");
     // 흔적은 사용 주장일 뿐 — 미클레임이면 메이커 신고값을 쓰지 않는다
     expect(renderTools({ unclaimed: true, observedAgentFacts: [observedFact] })).not.toContain("메이커 신고");
   });
@@ -510,10 +511,32 @@ describe("evidence product detail components", () => {
     expect(mixed).toContain("Claude Code · glm-4.7");
   });
 
-  it("says the repository is not scanned yet, or that no trace was found, instead of omitting the section", () => {
+  it("omits the build-tools section when the repository is unscanned or has no identified AI evidence", () => {
     const empty = { product: { ...product, builder: null }, agents: [], observedAgentFacts: [], skills: [] };
-    expect(renderTools({ ...empty, toolScan: "none" })).toContain("아직 저장소를 확인하지 않았습니다");
-    expect(renderTools({ ...empty, toolScan: "scanned" })).toContain("흔적을 찾지 못했습니다");
+    expect(renderTools({ ...empty, toolScan: "none" })).toBe("");
+    expect(renderTools({ ...empty, toolScan: "scanned" })).toBe("");
+    expect(renderTools({ unclaimed: true })).toBe("");
+    expect(renderTools({ product: { ...product, builder: "미확인" } })).toBe("");
+  });
+
+  it("does not infer AI development from settings, unnamed agents, or a skill alone", () => {
+    const empty = { product: { ...product, builder: null } };
+    expect(renderTools({ ...empty, observedAgentFacts: [{ ...observedFact, developmentAttributed: false, label: "모델 설정 확인" }] })).toBe("");
+    expect(renderTools({ ...empty, agents: [{ id: 1, slug: product.slug, provider: "미확인", client: "미확인", model: null,
+      roles: [], commitFrom: null, commitTo: null, dateFrom: null, dateTo: null, sourceUrl: null,
+      evidenceLevel: "maker_reported", createdAt: observedAt, evidenceLabel: "메이커 제공" }] })).toBe("");
+    expect(renderTools({ ...empty, skills: [{ id: 1, slug: product.slug, namespace: "openai", name: "review", version: null,
+      source: null, hash: null, commit: null, evidenceLevel: "maker_reported", createdAt: observedAt, evidenceLabel: "메이커 제공" }] })).toBe("");
+  });
+
+  it("shows attributed development with its citation but excludes unconfirmed settings", () => {
+    const html = renderTools({ unclaimed: true, observedAgentFacts: [observedFact,
+      { ...observedFact, clientLabel: "Cursor", developmentAttributed: false, label: "도구 설정 확인" }] });
+    expect(html).toContain("무엇으로 만들었나");
+    expect(html).toContain("Claude Code");
+    expect(html).toContain(`href="${observedFact.sourceUrl}"`);
+    expect(html).not.toContain("Cursor");
+    expect(html).not.toContain("메이커 신고");
   });
 
   it.each([null, "maker_reported"] as const)("does not invent activity or a verified direction from unknown repository facts (%s)", (relationshipState) => {

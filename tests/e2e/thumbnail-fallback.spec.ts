@@ -3,8 +3,8 @@ const kinds=['og','site_icon','repository_image','github_avatar','default'] as c
 const labels=['공개 페이지 대표 이미지','프로젝트 아이콘','GitHub 저장소 이미지','GitHub 프로필 이미지','nomorevibe 기본 이미지'];
 test.beforeAll(async()=>{
  const slugs=kinds.map(k=>'thumbnail-e2e-'+k.replaceAll('_','-'));await db.delete(ogImages).where(inArray(ogImages.slug,slugs));await db.delete(products).where(inArray(products.slug,slugs));
- for(const[k,kind]of kinds.entries()){const slug=slugs[k],size=kind==='site_icon'?32:256;const image=await sharp({create:{width:size,height:size,channels:4,background:'#345678'}}).webp().toBuffer();
-  await db.insert(products).values({slug,name:'Thumbnail '+kind,tagline:'A thumbnail test product',description:'A test description',category:'Dev',status:'seeded',source:'crawler',url:'https://'+slug+'.example.com',verifyToken:'test',editTokenHash:'test',ogImage:`/api/og-cache/${slug}?thumbnail=${kind}&w=${size}&h=${size}&v=1`});await db.insert(ogImages).values({slug,contentType:'image/webp',data:image});
+ for(const[k,kind]of kinds.entries()){const slug=slugs[k],size=kind==='site_icon'?32:256,width=kind==='og'?1200:size,height=kind==='og'?630:size;const image=await sharp({create:{width,height,channels:4,background:'#345678'}}).webp().toBuffer();
+  await db.insert(products).values({slug,name:'Thumbnail '+kind,tagline:'A thumbnail test product',description:'A test description',category:'Dev',status:'seeded',source:'crawler',url:'https://'+slug+'.example.com',verifyToken:'test',editTokenHash:'test',ogImage:`/api/og-cache/${slug}?thumbnail=${kind}&w=${width}&h=${height}&v=1`});await db.insert(ogImages).values({slug,contentType:'image/webp',data:image});
  }
 });
 test('hero icons and source-labelled previews render on desktop and mobile',async({page})=>{
@@ -48,7 +48,8 @@ test('wide repository wordmarks remain fully visible in covers and icons',async(
 });
 
 test('public-page representative images fill home thumbnails without changing the grid',async({page})=>{
- await page.setViewportSize({width:390,height:844});
+ for(const width of[1440,390]){
+ await page.setViewportSize({width,height:844});
  await page.goto('/?sort=recent&q=Thumbnail+og');
  const card=page.locator('.project-card').filter({hasText:'Thumbnail og'});
  const image=card.locator('.project-tile img');
@@ -61,7 +62,13 @@ test('public-page representative images fill home thumbnails without changing th
  }).toBeGreaterThan(0.9);
  const imageBox=await image.boundingBox();
  expect(imageBox!.height).toBeGreaterThan(150);
- expect(await image.evaluate(e=>getComputedStyle(e).objectFit)).toBe('contain');
+ expect(await image.evaluate(e=>getComputedStyle(e).objectFit)).toBe('cover');
+ const tileBox=(await card.locator('.project-tile').boundingBox())!;
+ expect(imageBox!.y).toBe(tileBox.y);
+ expect(imageBox!.height).toBe(tileBox.height);
+ expect(await image.evaluate((e:HTMLImageElement)=>[e.naturalWidth,e.naturalHeight])).toEqual([1200,630]);
  expect(await page.locator('.projects-grid').evaluate(e=>getComputedStyle(e).display)).toBe('grid');
  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+ await card.screenshot({path:`/private/tmp/nmv-detail-ui-card-${width}.png`});
+ }
 });

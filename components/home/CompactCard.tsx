@@ -21,11 +21,12 @@ export function CompactCard({ product, trailing }: { product: ProductListItem; t
       </Link>
       <div className="compact-body">
         <h3 className="compact-title"><Link href={`/p/${product.slug}`}>{product.name}</Link></h3>
+        <p className="card-category">{categoryLabel(product.category)}</p>
         <p className="compact-tagline" title={product.tagline}>{product.tagline}</p>
         <IntroductionSource source={product.taglineSource} />
         <p className="compact-meta">
           <StarMetric value={product} />
-          <span> · {trailing === "category" ? categoryLabel(product.category) : `${categoryLabel(product.category)} · ${listedLabel(product.listedAt)}`}</span>
+          {trailing === "listed" && <span> · {listedLabel(product.listedAt)}</span>}
         </p>
         <ProductActivityRow activity={product.activity} compact />
       </div>
