@@ -335,6 +335,10 @@ export default async function StatusPage({ searchParams }: { searchParams: Promi
     provider, result: agent?.accounts?.[provider]?.probe?.result ?? agent?.accounts?.[provider]?.result ?? null,
     checkedAt: agent?.accounts?.[provider]?.probe?.checkedAt ?? null,
   }));
+  // Grok 은 reviewer 의 grok-session-check 잡이 4시간마다 남기는 관측(service:grok:<instance>) — 가장 최근 것 하나
+  const grok = ops.observations.filter((row) => row.key.startsWith("service:grok:"))
+    .sort((a, b) => new Date(b.observedAt).getTime() - new Date(a.observedAt).getTime())[0];
+  if (grok) probes.push({ provider: "grok", result: typeof grok.value.result === "string" ? grok.value.result : null, checkedAt: grok.observedAt });
   const roleRows = roles?.roles ?? [];
   const scheduler = roles?.scheduler ?? { freshReplicas: 0, alarm: true };
   const dashboard = (

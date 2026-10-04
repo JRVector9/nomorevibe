@@ -5,6 +5,7 @@ import { fetchCrawlDocuments } from "@/lib/crawl/jobs/fetch";
 import { judgeCrawlDocuments } from "@/lib/crawl/jobs/judge";
 import { reviewCrawlCandidates } from "@/lib/crawl/jobs/agent-review";
 import { secondReviewCandidates } from "@/lib/crawl/jobs/second-review";
+import { checkGrokSession } from "@/lib/crawl/jobs/grok-session";
 import { auditPublishedProducts } from "@/lib/crawl/jobs/product-audit";
 import { translateReasons } from "@/lib/crawl/jobs/translate-reasons";
 import { writeTaglines } from "@/lib/crawl/jobs/tagline";
@@ -73,6 +74,8 @@ export const JOBS: Record<string, AnyJob> = {
   "product-search-health": auditSearchHealth,
   "product-readme-refresh": refreshPublishedReadmes,
   "product-intro-check": (ctx) => checkProductIntros(ctx),
+  /** Grok 로그인 파일이 살아 있는지 — 짧은 호출 하나로 토큰을 갱신하고 관측에 남긴다 */
+  "grok-session-check": (ctx) => checkGrokSession(ctx),
 
   /** 등재된 제품이 아직 떠 있는지 확인한다 (기록만 하고 목록은 건드리지 않는다) */
   "uptime-ping": pingProducts,

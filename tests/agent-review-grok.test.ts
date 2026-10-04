@@ -3,7 +3,7 @@ import { access, readFile } from "node:fs/promises";
 import { createReviewInput } from "@/lib/crawl/agent-review-contract";
 import { DEFAULT_CRAWL_SETTINGS } from "@/lib/crawl/settings-schema";
 import type { CrawlCandidate, CrawlDocument } from "@/lib/db/schema";
-import { grokAuthPath, grokFailure, grokReviewArgs, reviewWithGrokCli, type GrokCliRun } from "@/lib/crawl/agent-review-grok";
+import { grokAuthPath, grokFailure, grokReviewAgentDefinition, grokReviewArgs, grokReviewEffort, reviewWithGrokCli, type GrokCliRun } from "@/lib/crawl/agent-review-grok";
 
 /**
  * Grok CLI 2차 표 — 정책 글·스키마·도구 차단이 인자에 들어가고, 구조화 출력이 심사 결과로 읽히며,
@@ -22,13 +22,20 @@ const envelope = (structuredOutput: unknown, extra: Record<string, unknown> = {}
 });
 const answer = (stdout: string, code = 0, stderr = ""): GrokCliRun => async () => ({ kind: "exit", code, stdout, stderr });
 
-it("정책 글을 rules 로, 증거를 파일로, 출력은 스키마로 — 한 턴에 도구 없이", () => {
+it("정책 글을 에이전트 정의의 시스템 프롬프트로, 증거를 파일로, 출력은 스키마로 — 한 턴에 도구 없이", () => {
   const args = grokReviewArgs("grok-4.7", "/tmp/x/prompt.txt");
   const value = (flag: string) => args[args.indexOf(flag) + 1];
   expect(value("--prompt-file")).toBe("/tmp/x/prompt.txt");
-  expect(value("--rules")).toContain("does product.url belong on a directory");
+  expect(value("--agent")).toBe("nmv-review");
+  expect(args).not.toContain("--rules");
+  expect(value("--tools")).toBe("");
+  expect(grokReviewAgentDefinition()).toMatch(/^---\nname: nmv-review\n[\s\S]*promptMode: full[\s\S]*---\n/);
+  expect(grokReviewAgentDefinition()).toContain("does product.url belong on a directory");
   expect(value("-m")).toBe("grok-4.7");
   expect(value("--effort")).toBe("high");
+  expect(grokReviewEffort({ GROK_REVIEW_EFFORT: "Low" })).toBe("low");
+  expect(grokReviewEffort({ GROK_REVIEW_EFFORT: "turbo" })).toBe("high");
+  expect(grokReviewArgs("grok-4.7", "/tmp/x/prompt.txt", "medium")).toContain("medium");
   expect(value("--output-format")).toBe("json");
   expect(value("--max-turns")).toBe("1");
   expect(args).toContain("--disable-web-search");
@@ -42,6 +49,7 @@ it("빈 임시 GROK_HOME 과 로그인 파일 경로를 주고, 증거 파일을
     const promptFile = args[args.indexOf("--prompt-file") + 1];
     expect(await readFile(promptFile, "utf8")).toContain("<untrusted_evidence_json>");
     expect(options.env.GROK_HOME).toMatch(/nomorevibe-grok-/);
+    expect(await readFile(`${options.env.GROK_HOME}/agents/nmv-review.md`, "utf8")).toContain("promptMode: full");
     seen = { cwd: options.cwd, env: options.env, promptFile };
     return { kind: "exit", code: 0, stdout: envelope(approved), stderr: "" };
   };
