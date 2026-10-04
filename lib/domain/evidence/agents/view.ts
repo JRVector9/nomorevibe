@@ -2,6 +2,11 @@ import type { AgentObservation, AgentScanState } from "./types";
 const CLIENTS: Record<string, string> = { "claude-code":"Claude Code",codex:"Codex",cursor:"Cursor",cline:"Cline",roo:"Roo Code",opencode:"OpenCode",aider:"Aider",continue:"Continue","gemini-cli":"Gemini CLI","qwen-code":"Qwen Code","grok-build":"Grok Build","kimi-cli":"Kimi CLI","kimi-code":"Kimi Code",copilot:"GitHub Copilot",windsurf:"Windsurf",goose:"Goose",factory:"Factory Droid",kiro:"Kiro",kimi:"Kimi Code","roo-code":"Roo Code","factory-droid":"Factory Droid","github-copilot":"GitHub Copilot","devin-desktop":"Devin Desktop" };
 /** 저장소에서 찾은 도구 키의 표시 이름 — 모르는 키는 그대로 */
 export const agentClientLabel = (client: string) => CLIENTS[client] ?? client;
+/** 같은 표시 이름으로 묶이는 저장 키들 — 알약과 목록 필터가 별칭도 함께 본다 */
+export function agentClientKeys(value: string): string[] {
+  const keys = Object.keys(CLIENTS).filter(key => CLIENTS[key] === agentClientLabel(value));
+  return keys.length ? keys : [value];
+}
 const GATEWAYS: Record<string, string> = { "z-ai":"Z.AI",openrouter:"OpenRouter","deepseek-direct":"DeepSeek",deepseek:"DeepSeek",xai:"xAI",moonshot:"Moonshot",anthropic:"Anthropic",openai:"OpenAI","x-ai-direct":"xAI","moonshot-direct":"Moonshot","kimi-direct":"Kimi","openai-direct":"OpenAI","anthropic-direct":"Anthropic" };
 export type ObservedAgentFactView = {
   label:string; clientLabel:string; modelLabel:string; gatewayLabel:string; role:string|null; scope:string;

@@ -4,6 +4,15 @@ import { describe, expect, it } from "vitest";
 import { BrowseFilters, hrefWith, parseHomeSort, parseShown } from "@/components/BrowseFilters";
 
 describe("home sort", () => {
+  it("도구 흔적 필터는 정렬·분야·더 보기에서 유지하고 초기화하면 지운다", () => {
+    const state = { sort: "recent" as const, observedTool: "Claude Code", shown: 18 };
+    expect(hrefWith(state, { shown: 27 })).toBe("/?sort=recent&observedTool=Claude+Code&shown=27");
+    expect(hrefWith(state, { category: "Dev" })).toBe("/?sort=recent&category=Dev&observedTool=Claude+Code");
+    expect(hrefWith(state, { observedTool: "Codex" })).toBe("/?sort=recent&observedTool=Codex");
+    const html = renderToStaticMarkup(createElement(BrowseFilters, { state, counts: {}, total: 12, resultCount: 2 }));
+    expect(html).toContain("검색 결과 2개");
+    expect(html).toContain('class="clear-filters show" href="/?sort=recent"');
+  });
   it("defaults to weekly and keeps the old popular URL compatible", () => {
     expect(parseHomeSort(undefined)).toBe("weekly");
     expect(parseHomeSort("popular")).toBe("weekly");

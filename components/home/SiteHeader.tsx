@@ -64,6 +64,7 @@ export function SiteHeader() {
           <Link href="/#new">새로 나온</Link>
         </nav>
         <form className="header-search" action="/" method="get" role="search">
+          {home && params.get("observedTool") && <input type="hidden" name="observedTool" value={params.get("observedTool")!} />}
           <Icon name="search" />
           <input
             ref={input}
