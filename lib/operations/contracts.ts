@@ -27,7 +27,7 @@ export const JOB_LABELS: Record<string, string> = {
   'uptime-ping': '서비스 응답 점검', 'click-rollup': '유효 방문 집계', 'ranking-refresh': '랭킹 갱신',
   'product-evidence-refresh': '제품 근거 갱신', 'agent-evidence-refresh': '개발 AI 근거 갱신', 'news-refresh': 'AI 소식 수집',
   'product-thumbnail-refresh': '프로젝트 이미지 수집', 'product-audit': '발행분 감사',
-  'product-search-profile': '검색 키워드 짓기', 'product-search-verify': '검색 키워드 검수',
+  'product-search-profile': '검색 키워드 짓기', 'product-search-verify': '검색 키워드 검수', 'grok-session-check': 'Grok 로그인 확인',
   'product-readme-refresh': 'README 갱신',
   'product-search-health': '검색 데이터 자동 점검',
   'product-intro-check': '소개 검수',

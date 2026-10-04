@@ -2,7 +2,8 @@ import type { ModelHealth } from "@/lib/operations/dashboard";
 
 const n = (value: number) => value.toLocaleString("ko-KR");
 
-export type ConnectionProbe = { provider: "claude" | "codex"; result: string | null; checkedAt: string | null };
+export type ConnectionProbe = { provider: "claude" | "codex" | "grok"; result: string | null; checkedAt: string | null };
+const PROBE_LABEL = { claude: "Claude", codex: "Codex", grok: "Grok" } as const;
 
 function tone(row: ModelHealth): { tone: "ok" | "warn" | "bad"; text: string } {
   if (row.calls1h === 0) return { tone: "ok", text: "호출 없음" };
@@ -42,7 +43,7 @@ export function ModelCards({ rows, probes }: { rows: ModelHealth[]; probes: Conn
           {probes.map((probe) => (
             <span key={probe.provider} className="dash-pill" data-tone={probe.result === "success" ? "ok" : probe.result ? "bad" : undefined}>
               <span className="dash-dot" data-tone={probe.result === "success" ? "ok" : probe.result ? "bad" : undefined} aria-hidden />
-              {probe.provider === "claude" ? "Claude" : "Codex"} 연결 {probe.result === "success" ? "확인" : probe.result ?? "미확인"}
+              {PROBE_LABEL[probe.provider]} 연결 {probe.result === "success" ? "확인" : probe.result ?? "미확인"}
             </span>
           ))}
         </p>

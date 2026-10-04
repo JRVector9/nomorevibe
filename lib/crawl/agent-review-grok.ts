@@ -8,15 +8,42 @@ import { MAX_REVIEW_INPUT_BYTES, validateReviewOutcome, type ReviewInput } from 
 /**
  * Grok Build CLI(xAI 공식, 구독 로그인)로 보는 심사 — 2차 표 제공자 "grok-cli".
  *
- * 같은 정책 글(REVIEW_SYSTEM_PROMPT)을 --rules 로, 증거 JSON 을 --prompt-file 로 넘기고, 출력은 게이트웨이와
- * 같은 JSON 스키마(--json-schema → structuredOutput)로 받는다. 실측(2026-10-03, 200건, grok-4.7 effort high):
+ * 같은 정책 글(REVIEW_SYSTEM_PROMPT)을 에이전트 정의의 시스템 프롬프트(--agent, promptMode full)로, 증거 JSON 을
+ * --prompt-file 로 넘기고, 출력은 게이트웨이와 같은 JSON 스키마(--json-schema → structuredOutput)로 받는다. 실측(2026-10-03, 200건, grok-4.7 effort high):
  * 실패 0, 중앙값 23초, p90 46초, 최대 75초, 동시 3개까지 재시도·429 없음 — 그래서 제한 시간은 90초다.
  *
  * 호출마다 GROK_HOME 을 빈 임시 디렉터리로 두어 세션·로그가 쌓이지 않게 하고(200건에 39MB), 로그인 파일은
  * GROK_AUTH_PATH 하나만 함께 쓴다 — CLI 가 갱신한 토큰을 그 파일에 다시 쓰므로 쓸 수 있는 경로여야 한다.
  */
 export const GROK_REVIEW_TIMEOUT_MS = 90_000;
-export const GROK_REVIEW_EFFORT = "high";
+/**
+ * 추론 강도 — 기본 low, 환경변수로 바꾼다. 모델 카탈로그: minimal·low·medium·high·xhigh.
+ * 50건 비교(2026-10-04, 프롬프트 2026-10-03.1): low 는 high 와 48/50 같은 판정(다른 2건은 low 가 더 엄격), 중앙값 9.6초 vs 17.2초,
+ * 출력 토큰 1/3 — 심사는 한 턴짜리 분류라 긴 추론이 판정을 바꾸지 않았다.
+ */
+export function grokReviewEffort(env: Readonly<Record<string, string | undefined>> = process.env): string {
+  const value = env.GROK_REVIEW_EFFORT?.trim().toLowerCase();
+  return value && /^(minimal|low|medium|high|xhigh)$/.test(value) ? value : "low";
+}
+/**
+ * 에이전트 정의 — 기본 코딩 에이전트 프롬프트(도구 규약·작업 지침 ~1만 토큰) 대신 정책 글만 시스템 프롬프트로 쓴다(promptMode full).
+ * 같은 사례 실측(2026-10-04): 입력 16,805 → 9,476 토큰, 비용 -25%, 판정 같음. 호출마다 임시 GROK_HOME 에 써 넣고 --agent 로 고른다.
+ */
+export const GROK_REVIEW_AGENT = "nmv-review";
+export function grokReviewAgentDefinition(): string {
+  return `---
+name: ${GROK_REVIEW_AGENT}
+description: NoMoreVibe product page review — structured JSON only
+promptMode: full
+discoverSkills: false
+agentsMd: false
+injectDefaultTools: false
+disallowedTools: [run_terminal_cmd, search_replace, web_search, web_fetch, read_file, write_file, list_dir, grep, glob, Agent]
+---
+${REVIEW_SYSTEM_PROMPT}
+Return one JSON object with decision, reason, evidenceIds, confidence. Do not use any tools.
+`;
+}
 const MAX_STDOUT_BYTES = 64 * 1024;
 const MAX_STDERR_BYTES = 16 * 1024;
 const MODEL_NAME = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,159}$/;
@@ -43,11 +70,12 @@ export function grokAuthPath(env: Readonly<Record<string, string | undefined>> =
   return env.GROK_AUTH_PATH?.trim() || path.join(os.homedir(), ".grok", "auth.json");
 }
 
-export function grokReviewArgs(model: string, promptFile: string): string[] {
+export function grokReviewArgs(model: string, promptFile: string, effort = grokReviewEffort()): string[] {
   return [
-    "--prompt-file", promptFile,
-    "--rules", `${REVIEW_SYSTEM_PROMPT}\nReturn one JSON object with decision, reason, evidenceIds, confidence. Do not use any tools.`,
-    "-m", model, "--effort", GROK_REVIEW_EFFORT, "--output-format", "json",
+    "--prompt-file", promptFile, "--agent", GROK_REVIEW_AGENT,
+    // 빈 허용 목록 = 도구 없음 — 도구 스키마가 빠져 입력이 9,476 → 8,324 토큰(같은 사례)
+    "--tools", "",
+    "-m", model, "--effort", effort, "--output-format", "json",
     // 한 턴, 도구 없음 — 도구를 부르면 구조화 출력 없이 끝나 invalid_output 으로 적힌다
     "--max-turns", "1", "--disable-web-search", "--no-subagents", "--no-plan", "--no-auto-update",
     "--disallowed-tools", "run_terminal_cmd,search_replace,web_search,web_fetch",
@@ -100,7 +128,8 @@ export async function reviewWithGrokCli(input: ReviewInput, options: { model: st
   try {
     const promptFile = path.join(directory, "prompt.txt");
     const home = path.join(directory, "home");
-    await Promise.all([writeFile(promptFile, prompt, "utf8"), mkdir(home)]);
+    await mkdir(path.join(home, "agents"), { recursive: true });
+    await Promise.all([writeFile(promptFile, prompt, "utf8"), writeFile(path.join(home, "agents", `${GROK_REVIEW_AGENT}.md`), grokReviewAgentDefinition(), "utf8")]);
     const env = { ...process.env, GROK_HOME: home, GROK_AUTH_PATH: grokAuthPath(), RUST_LOG: "off", NO_COLOR: "1" };
     let result: GrokCliResult;
     try {
