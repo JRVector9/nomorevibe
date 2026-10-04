@@ -143,6 +143,22 @@ describe("역할 표와 상태 칩", () => {
 });
 
 describe("모델·조치·신호", () => {
+  it("Codex 접근·인증 오류 칩은 재인증 버튼이고 다른 상태는 표시만 한다", () => {
+    for (const result of ["access_denied", "auth"]) {
+      const out = html(createElement(ModelCards, { rows: [], probes: [
+        { provider: "codex", result, checkedAt: null },
+        { provider: "claude", result, checkedAt: null },
+      ] }));
+      expect(out).toContain(`<button type="button"`);
+      expect(out).toContain(`Codex 연결 ${result} · 다시 인증`);
+      expect(out).not.toContain(`Claude 연결 ${result} · 다시 인증`);
+    }
+    for (const result of ["success", "rate_limit", "timeout", null]) {
+      const out = html(createElement(ModelCards, { rows: [], probes: [{ provider: "codex", result, checkedAt: null }] }));
+      expect(out).not.toContain("다시 인증");
+    }
+  });
+
   it("실패율 10% 이상은 주황, 2차 일치 70% 미만은 일치율을 알약에 적는다", () => {
     const rows: ModelHealth[] = [
       { key: "first", label: "1차 심사", model: "[MLX] gpt-oss-120b", calls1h: 100, failed1h: 12, avgSeconds: 12.3, agreement1h: null, lastSuccessAt: null },
