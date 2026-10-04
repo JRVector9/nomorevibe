@@ -10,11 +10,13 @@ import { IntroSection } from "@/components/product-detail/IntroSection";
 import { LanguageBar } from "@/components/product-detail/LanguageBar";
 import { PreviewFigure } from "@/components/product-detail/PreviewFigure";
 import { ProductHero } from "@/components/product-detail/ProductHero";
+import { RelatedRow } from "@/components/product-detail/RelatedRow";
 import { SaveButton } from "@/components/product-detail/SaveButton";
 import { SourceBadge } from "@/components/product-detail/SourceBadge";
 import { UpdateTimeline } from "@/components/product-detail/UpdateTimeline";
 import { UnclaimedOwnerContact } from "@/components/product-detail/UnclaimedOwnerContact";
 import type { ProductDetailView } from "@/lib/domain/products/detail-view";
+import type { ProductListItem } from "@/lib/domain/products/view";
 
 const observedAt = new Date("2026-08-19T03:00:00.000Z");
 const product: ProductDetailView["product"] = {
@@ -628,20 +630,49 @@ describe("evidence product detail components", () => {
     expect(source).not.toMatch(/댓글|comment/i);
     expect(source).toContain("risingRank={detail.risingRank}");
     expect(source).not.toContain("<ProductGallery");
+    // 홈과 같은 폭 — 상세만의 1220px 틀은 버렸다
+    expect(source).toContain('<main className="wrap pb-14">');
+    expect(source).not.toContain("max-w-[1220px]");
+    // 분야 총수는 꾸밈 — 세다가 실패해도 페이지는 선다
+    expect(source).toMatch(/countProducts\(\{[^}]*excludeDown: true[^}]*\}\)\.catch\(\(\) => null\)/);
+    // 읽기 순서: 히어로 → 핵심 사실 → 무엇으로 만들었나 → 소개 → 언어 → 업데이트 → 정보 → 미리보기 → 근거 → 운영자 → 같은 분야
     const order = [
       "<ProductHero",
       "<FactsStrip",
-      "<IntroSection",
       "<BuildTools",
+      "<IntroSection",
       "<LanguageBar",
+      "<UpdateTimeline",
       "<InfoCard",
       "<PreviewFigure",
       "<EvidenceCard",
       "<UnclaimedOwnerContact",
-      "<UpdateTimeline",
+      "<RelatedRow",
     ].map((needle) => source.indexOf(needle));
     expect(order.every((index) => index >= 0)).toBe(true);
     expect(order).toEqual([...order].sort((left, right) => left - right));
+  });
+
+  it("ends with the rising projects of the same category, linking to the whole category", () => {
+    const item = (slug: string): ProductListItem => ({
+      slug, name: slug, tagline: `${slug} does things`, taglineSource: "maker", category: "Productivity",
+      builder: null, builderClaim: "guessed", stack: [], ogImage: null, makerName: null,
+      repoUrl: `https://github.com/acme/${slug}`, listedAt: new Date("2026-10-02T00:00:00Z"), status: "seeded",
+      unclaimed: true, stars: 990, starsAt: new Date("2026-10-02T00:00:00Z"), starsPrevious: 980,
+      starsPreviousAt: new Date("2026-10-01T00:00:00Z"),
+    });
+    const html = renderToStaticMarkup(<RelatedRow category="Productivity" items={[item("alpha"), item("beta")]} total={1256} />);
+    expect(html).toContain("생산성 분야에서 지금 뜨는");
+    expect(html).toContain("스타 2천 미만");
+    expect(html).toContain('href="/?category=Productivity&amp;sort=recent"');
+    expect(textOf(html)).toContain("생산성 1,256개 모두 보기 ›");
+    expect(html).toContain('href="/p/alpha"');
+    expect(html).toContain('href="/p/beta"');
+    // 총수를 못 세면 숫자 없이, 추천이 없으면 구획째 없다
+    const uncounted = textOf(renderToStaticMarkup(<RelatedRow category="Productivity" items={[item("alpha")]} total={null} />));
+    expect(uncounted).toContain("모두 보기 ›");
+    expect(uncounted).not.toContain("개 모두 보기");
+    expect(renderToStaticMarkup(<RelatedRow category="Productivity" items={[]} total={3} />)).toBe("");
   });
 });
 

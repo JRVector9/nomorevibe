@@ -9,9 +9,13 @@ import { IntroSection } from "@/components/product-detail/IntroSection";
 import { LanguageBar } from "@/components/product-detail/LanguageBar";
 import { PreviewFigure } from "@/components/product-detail/PreviewFigure";
 import { ProductHero } from "@/components/product-detail/ProductHero";
+import { RelatedRow } from "@/components/product-detail/RelatedRow";
 import { UpdateTimeline } from "@/components/product-detail/UpdateTimeline";
 import { UnclaimedOwnerContact } from "@/components/product-detail/UnclaimedOwnerContact";
 import { getProductDetail, getProductIdentity } from "@/lib/domain/products/detail-view";
+import { categoryLabel } from "@/lib/domain/products/labels";
+import { countProducts } from "@/lib/domain/products/repository";
+import type { Category } from "@/lib/domain/products/schema";
 
 export const dynamic = "force-dynamic";
 
@@ -33,32 +37,26 @@ export default async function ProductPage({ params }: Props) {
   const detail = await getProductDetail(slug);
   if (!detail) notFound();
 
+  const languages = (detail.repository?.facts?.languages ?? []).slice(0, 2).map((item) => item.name);
+  // '모두 보기'의 숫자일 뿐 — 세다가 실패해도 페이지는 그대로 선다
+  const categoryTotal = await countProducts({ statuses: ["verified", "seeded"], excludeDown: true, category: detail.product.category as Category }).catch(() => null);
+
   return (
-    <main className="mx-auto max-w-[1220px] px-4 pb-20 sm:px-6">
-      <nav aria-label="경로" className="py-4 text-[13px] text-fg-3">
-        <Link href="/" className="hover:text-fg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent">
-          제품
-        </Link>
-        <span aria-hidden className="px-2">›</span>
-        <span>{detail.product.category}</span>
-        <span aria-hidden className="px-2">›</span>
-        <span className="text-fg-2">{detail.product.name}</span>
+    <main className="wrap pb-14">
+      <nav aria-label="경로" className="flex items-center gap-2 pt-4 text-[13px] text-fg-3">
+        <Link href="/" className="shrink-0 hover:text-fg">발견하기</Link>
+        <span aria-hidden>›</span>
+        <Link href={`/?category=${encodeURIComponent(detail.product.category)}&sort=recent`} className="shrink-0 hover:text-fg">{categoryLabel(detail.product.category)}</Link>
+        <span aria-hidden>›</span>
+        <span className="min-w-0 truncate text-fg">{detail.product.name}</span>
       </nav>
 
-      <div className="space-y-5">
-        <ProductHero
-          product={detail.product}
-          unclaimed={detail.unclaimed}
-          risingRank={detail.risingRank}
-          health={detail.health}
-          languages={(detail.repository?.facts?.languages ?? []).slice(0, 2).map((item) => item.name)}
-        />
-        <FactsStrip product={detail.product} repository={detail.repository} license={detail.license} health={detail.health} visits={detail.visits} />
-      </div>
+      <ProductHero product={detail.product} unclaimed={detail.unclaimed} risingRank={detail.risingRank} health={detail.health} languages={languages} />
 
-      <div className="mt-8 grid gap-6 lg:grid-cols-[minmax(0,1fr)_340px] lg:items-start lg:gap-8">
-        <div className="flex flex-col gap-9 lg:col-start-1 lg:row-start-1">
-          <IntroSection product={detail.product} profile={detail.profile} readmeExcerpt={detail.readmeExcerpt} unclaimed={detail.unclaimed} />
+      {/* 넓으면 2:1 두 열, 좁으면 오른쪽 열이 본문 아래로 */}
+      <div className="flex flex-wrap items-start gap-x-12 gap-y-9 pt-7">
+        <div className="flex min-w-0 flex-[2_1_560px] flex-col gap-9">
+          <FactsStrip product={detail.product} repository={detail.repository} license={detail.license} health={detail.health} visits={detail.visits} />
           <BuildTools
             product={detail.product}
             unclaimed={detail.unclaimed}
@@ -67,10 +65,12 @@ export default async function ProductPage({ params }: Props) {
             skills={detail.skills}
             toolScan={detail.toolScan}
           />
+          <IntroSection product={detail.product} profile={detail.profile} readmeExcerpt={detail.readmeExcerpt} unclaimed={detail.unclaimed} />
           <LanguageBar repository={detail.repository} />
+          <UpdateTimeline updates={detail.updates} />
         </div>
 
-        <aside id="evidence" className="space-y-4 lg:col-start-2 lg:row-span-2 lg:row-start-1">
+        <aside id="evidence" className="flex min-w-0 flex-[1_1_300px] flex-col gap-4">
           <InfoCard product={detail.product} repository={detail.repository} freshness={detail.freshness} unclaimed={detail.unclaimed} />
           <PreviewFigure product={detail.product} media={detail.media} />
           <EvidenceCard links={detail.links} freshness={detail.freshness} />
@@ -87,11 +87,9 @@ export default async function ProductPage({ params }: Props) {
             </section>
           )}
         </aside>
-
-        <div className="lg:col-start-1 lg:row-start-2">
-          <UpdateTimeline updates={detail.updates} />
-        </div>
       </div>
+
+      <RelatedRow category={detail.product.category} items={detail.related} total={categoryTotal} />
     </main>
   );
 }

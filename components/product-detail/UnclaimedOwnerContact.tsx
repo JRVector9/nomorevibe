@@ -8,10 +8,10 @@ export function UnclaimedOwnerContact({ repoUrl, slug, installable = false }: { 
   if (!owner) return null;
 
   return (
-    <section className="rounded-[12px] border border-line bg-bg-card p-5">
+    <section className="rounded-[18px] border border-line p-5">
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div>
-          <h2 className="text-[16px] font-extrabold text-fg">운영 주체와 연락</h2>
+          <h2 className="text-[14px] font-semibold text-fg">운영 주체와 연락</h2>
           <p className="mt-1 text-[13px] leading-5 text-fg-3">현재 공개된 GitHub 정보입니다.</p>
         </div>
         <SourceBadge label="GitHub에서 확인" />
@@ -63,7 +63,7 @@ export function UnclaimedOwnerContact({ repoUrl, slug, installable = false }: { 
       </div>
 
       <div className="mt-5 border-t border-line pt-4">
-        <p className="text-[13px] font-extrabold text-fg">이 프로젝트의 운영자인가요?</p>
+        <p className="text-[14px] font-semibold text-fg">이 프로젝트의 운영자인가요?</p>
         <p className="mt-1 text-[13px] leading-5 text-fg-3">
           {installable ? "저장소 소유권 확인이 필요한 설치형 프로젝트입니다. 소개 수정은 관리자에게 요청해주세요." : <>
           프로젝트 폴더에서 <code className="font-mono font-semibold text-accent">/nomorevibe</code>를 실행하면
