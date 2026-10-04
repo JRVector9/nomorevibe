@@ -3,6 +3,8 @@ import { StarMetric } from "@/components/StarMetric";
 import { ProjectTile } from "@/components/home/ProjectTile";
 import { categoryLabel } from "@/lib/domain/products/labels";
 import type { ProductListItem } from "@/lib/domain/products/view";
+import { ProductActivityRow } from "./ProductActivityRow";
+import { IntroductionSource } from "./IntroductionSource";
 
 /** 등재일을 "10.02" 로 — 가로 띠의 '새로 나온' 카드가 쓴다 */
 function listedLabel(at: Date): string {
@@ -10,7 +12,7 @@ function listedLabel(at: Date): string {
     .format(at).replace(/\. ?/g, ".").replace(/\.$/, "");
 }
 
-/** 가로 띠용 작은 카드 — 타일 84px · 이름 한 줄 · 소개 한 줄 · ★과 꼬리말 */
+/** 기존 작은 카드 — 큰 썸네일 · 이름 한 줄 · 소개 한 줄 · ★과 활동 정보 */
 export function CompactCard({ product, trailing }: { product: ProductListItem; trailing: "category" | "listed" }) {
   return (
     <article className="compact-card">
@@ -20,10 +22,12 @@ export function CompactCard({ product, trailing }: { product: ProductListItem; t
       <div className="compact-body">
         <h3 className="compact-title"><Link href={`/p/${product.slug}`}>{product.name}</Link></h3>
         <p className="compact-tagline" title={product.tagline}>{product.tagline}</p>
+        <IntroductionSource source={product.taglineSource} />
         <p className="compact-meta">
           <StarMetric value={product} />
           <span> · {trailing === "category" ? categoryLabel(product.category) : `${categoryLabel(product.category)} · ${listedLabel(product.listedAt)}`}</span>
         </p>
+        <ProductActivityRow activity={product.activity} compact />
       </div>
     </article>
   );

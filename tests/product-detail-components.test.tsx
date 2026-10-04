@@ -648,12 +648,13 @@ describe("evidence product detail components", () => {
     expect(source).not.toMatch(/댓글|comment/i);
     expect(source).toContain("risingRank={detail.risingRank}");
     expect(source).not.toContain("<ProductGallery");
+    expect(source).not.toContain("<EvidenceCard");
     // 홈과 같은 폭 — 상세만의 1220px 틀은 버렸다
     expect(source).toContain('<main className="wrap pb-14">');
     expect(source).not.toContain("max-w-[1220px]");
     // 분야 총수는 꾸밈 — 세다가 실패해도 페이지는 선다
     expect(source).toMatch(/countProducts\(\{[^}]*excludeDown: true[^}]*\}\)\.catch\(\(\) => null\)/);
-    // 읽기 순서: 히어로 → 핵심 사실 → 무엇으로 만들었나 → 소개 → 언어 → 업데이트 → 정보 → 미리보기 → 근거 → 운영자 → 같은 분야
+    // 읽기 순서: 히어로 → 핵심 사실 → 무엇으로 만들었나 → 소개 → 언어 → 업데이트 → 정보 → 미리보기 → 운영자 → 같은 분야
     const order = [
       "<ProductHero",
       "<FactsStrip",
@@ -663,7 +664,6 @@ describe("evidence product detail components", () => {
       "<UpdateTimeline",
       "<InfoCard",
       "<PreviewFigure",
-      "<EvidenceCard",
       "<UnclaimedOwnerContact",
       "<RelatedRow",
     ].map((needle) => source.indexOf(needle));
