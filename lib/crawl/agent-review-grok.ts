@@ -16,10 +16,14 @@ import { MAX_REVIEW_INPUT_BYTES, validateReviewOutcome, type ReviewInput } from 
  * GROK_AUTH_PATH 하나만 함께 쓴다 — CLI 가 갱신한 토큰을 그 파일에 다시 쓰므로 쓸 수 있는 경로여야 한다.
  */
 export const GROK_REVIEW_TIMEOUT_MS = 90_000;
-/** 추론 강도 — 실측 뒤 환경변수로 바꾼다(기본 high). 모델 카탈로그: minimal·low·medium·high·xhigh */
+/**
+ * 추론 강도 — 기본 low, 환경변수로 바꾼다. 모델 카탈로그: minimal·low·medium·high·xhigh.
+ * 50건 비교(2026-10-04, 프롬프트 2026-10-03.1): low 는 high 와 48/50 같은 판정(다른 2건은 low 가 더 엄격), 중앙값 9.6초 vs 17.2초,
+ * 출력 토큰 1/3 — 심사는 한 턴짜리 분류라 긴 추론이 판정을 바꾸지 않았다.
+ */
 export function grokReviewEffort(env: Readonly<Record<string, string | undefined>> = process.env): string {
   const value = env.GROK_REVIEW_EFFORT?.trim().toLowerCase();
-  return value && /^(minimal|low|medium|high|xhigh)$/.test(value) ? value : "high";
+  return value && /^(minimal|low|medium|high|xhigh)$/.test(value) ? value : "low";
 }
 /**
  * 에이전트 정의 — 기본 코딩 에이전트 프롬프트(도구 규약·작업 지침 ~1만 토큰) 대신 정책 글만 시스템 프롬프트로 쓴다(promptMode full).

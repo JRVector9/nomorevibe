@@ -261,7 +261,7 @@ CLI smoke는 통과했으나 운영 장기 Codex/Claude 인증 설정과 24시�
 대체 모델(sonnet)로 넘어간다. 주간 크레딧 한도는 CLI가 알려 주지 않으니 x.ai 계정 사용량에서 본다.
 호출은 정책 글만 시스템 프롬프트로 쓰는 에이전트 정의(`--agent nmv-review`, promptMode full)와 빈 도구 목록으로 나가
 입력이 기본 에이전트의 절반(같은 사례 16,805 → 8,324 토큰)이다. 추론 강도는 reviewer 환경의 `GROK_REVIEW_EFFORT`
-(minimal·low·medium·high·xhigh, 기본 high)로 바꾼다. `grok-session-check` 잡(reviewer, 4시간)이 가장 짧은 호출로
+(minimal·low·medium·high·xhigh, 기본 low — 50건 비교에서 high 와 48/50 같은 판정, 절반 시간)로 바꾼다. `grok-session-check` 잡(reviewer, 4시간)이 가장 짧은 호출로
 토큰을 갱신하고 `service:grok:<instance>` 관측을 남겨 운영센터 모델 카드에 "Grok 연결"로 보인다 — 예비(mini)는
 잡을 돌리지 않으므로 넘겨받은 뒤 `auth` 실패가 보이면 다시 로그인한다.
 

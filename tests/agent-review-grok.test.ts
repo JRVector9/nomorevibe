@@ -32,9 +32,9 @@ it("정책 글을 에이전트 정의의 시스템 프롬프트로, 증거를 �
   expect(grokReviewAgentDefinition()).toMatch(/^---\nname: nmv-review\n[\s\S]*promptMode: full[\s\S]*---\n/);
   expect(grokReviewAgentDefinition()).toContain("does product.url belong on a directory");
   expect(value("-m")).toBe("grok-4.7");
-  expect(value("--effort")).toBe("high");
-  expect(grokReviewEffort({ GROK_REVIEW_EFFORT: "Low" })).toBe("low");
-  expect(grokReviewEffort({ GROK_REVIEW_EFFORT: "turbo" })).toBe("high");
+  expect(value("--effort")).toBe("low");
+  expect(grokReviewEffort({ GROK_REVIEW_EFFORT: "High" })).toBe("high");
+  expect(grokReviewEffort({ GROK_REVIEW_EFFORT: "turbo" })).toBe("low");
   expect(grokReviewArgs("grok-4.7", "/tmp/x/prompt.txt", "medium")).toContain("medium");
   expect(value("--output-format")).toBe("json");
   expect(value("--max-turns")).toBe("1");
