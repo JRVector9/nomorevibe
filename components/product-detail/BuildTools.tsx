@@ -3,6 +3,9 @@ import type { ProductDetailView } from "@/lib/domain/products/detail-view";
 
 const CHIP = "inline-flex h-10 items-center gap-2 rounded-full bg-bg-soft px-3.5 text-[14px] text-fg";
 
+/** '미확인'·'미확인 (…)' 이 아니면 아는 값 — 예전 개발 근거 구획과 같은 규칙 */
+const known = (value: string) => value !== "미확인" && !value.startsWith("미확인 (");
+
 /**
  * 무엇으로 만들었나 — 홈의 같은 이름 구획과 짝. 알약 하나가 도구 하나, 그 옆에 근거 링크.
  * 흔적은 사용 주장이지 실행 증명이 아니다 — 문구에 '흔적'을 남긴다.
@@ -23,7 +26,11 @@ export function BuildTools({ product, unclaimed, agents, observedAgentFacts, ski
     observed.set(key, [...(observed.get(key) ?? []), fact]);
   }
   const nothing = !reported && agents.length === 0 && skills.length === 0 && observed.size === 0;
-  const coverage = observedAgentFacts.find((fact) => fact.coverageLabel)?.coverageLabel;
+  // 수집 범위와 제품·저장소 관계 — 어느 흔적에든 붙어 있으면 첫 것 하나씩 한 줄로
+  const notes = [
+    observedAgentFacts.find((fact) => fact.coverageLabel)?.coverageLabel,
+    observedAgentFacts.find((fact) => fact.relationshipLabel)?.relationshipLabel,
+  ].filter(Boolean);
 
   return (
     <section aria-labelledby="tools-title" className="flex flex-col gap-2.5">
@@ -46,7 +53,8 @@ export function BuildTools({ product, unclaimed, agents, observedAgentFacts, ski
           ))}
           {[...observed].map(([label, facts]) => (
             <li key={label} className={CHIP}>
-              {label}
+              {/* 모델은 도구만큼 궁금한 값 — 흔적 중 하나라도 이름을 알면 도구 뒤에 */}
+              {[label, facts.map((fact) => fact.modelLabel).find(known)].filter(Boolean).join(" · ")}
               <span className="text-[13px] text-fg-3">{facts[0].label}</span>
               <a href={facts[0].sourceUrl} target="_blank" rel="noopener noreferrer" className="text-[13px] text-accent-ink hover:underline"
                 aria-label={`${label} 근거 ${facts[0].commitSha.slice(0, 7)}`}>근거 {facts[0].commitSha.slice(0, 7)} ↗</a>
@@ -61,7 +69,7 @@ export function BuildTools({ product, unclaimed, agents, observedAgentFacts, ski
           ))}
         </ul>
       )}
-      {observed.size > 0 && coverage && <p className="m-0 text-[13px] text-fg-3">{coverage}</p>}
+      {observed.size > 0 && notes.length > 0 && <p className="m-0 text-[13px] text-fg-3">{notes.join(" · ")}</p>}
     </section>
   );
 }

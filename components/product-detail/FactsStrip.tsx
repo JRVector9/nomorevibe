@@ -1,6 +1,6 @@
 import type { LicenseValue, ProductDetailView } from "@/lib/domain/products/detail-view";
 import { isHealthCurrent } from "@/lib/domain/products/health-freshness";
-import { formatNumber } from "./format";
+import { formatNumber, safeExternalUrl } from "./format";
 
 function Tile({ label, value, note, tone }: { label: string; value: React.ReactNode; note?: string; tone?: "up" | "down" }) {
   const color = tone === "up" ? "text-up" : tone === "down" ? "text-down" : "text-fg";
@@ -48,7 +48,9 @@ export function FactsStrip({ product, repository, license, health, visits }: {
   const current = isHealthCurrent(health.checkedAt);
   const failed = health.down || health.lastCheckSucceeded === false;
   const release = facts?.latestRelease ?? null;
-  // 보관·fork 여부를 둘 다 확인했을 때만 '활성'이라 한다(RepositoryEvidence 와 같은 규칙)
+  // 원래 릴리스 페이지로 — http(s) 가 아니면 링크 없이 태그만
+  const releaseUrl = safeExternalUrl(release?.url ?? null) ?? safeExternalUrl(release?.notesUrl ?? null);
+  // 보관·fork 여부를 둘 다 확인했을 때만 '활성'이라 한다(InfoCard 와 같은 규칙)
   const activity = !facts ? "" : facts.archived === true ? "보관됨" : facts.fork === true ? "fork 저장소"
     : facts.archived === false && facts.fork === false ? "활성 저장소" : "상태 미확인";
   const shown = license.observed ?? license.maker;
@@ -64,7 +66,10 @@ export function FactsStrip({ product, repository, license, health, visits }: {
                 : <span className="inline-flex items-center gap-2"><i aria-hidden className="inline-block h-[9px] w-[9px] rounded-full bg-up" />온라인</span>}
               note={health.checkedAt ? joinNote(health.latencyMs === null ? "응답 시간 미측정" : `${health.latencyMs}ms`, health.uptime30d === null ? "" : `30일 가동률 ${health.uptime30d}%`) : undefined} />}
         <Tile label="최근 push" value={monthDay(facts?.pushedAt)} note={facts ? joinNote(year(facts.pushedAt), activity) : "저장소 미확인"} />
-        <Tile label="최신 release" value={facts ? release?.tagName ?? "없음" : "—"}
+        <Tile label="최신 release"
+          value={!facts ? "—" : !release ? "없음" : releaseUrl
+            ? <a href={releaseUrl} target="_blank" rel="noopener noreferrer" className="hover:underline">{release.tagName}<span aria-hidden className="ml-1 text-[13px] font-normal text-fg-3">↗</span></a>
+            : release.tagName}
           note={release ? joinNote(release.name !== release.tagName ? release.name : "", kst(release.publishedAt, { month: "long", day: "numeric" })) : facts ? "GitHub 릴리스 기준" : undefined} />
         <Tile label="기여자" value={facts?.contributors ? `${formatNumber(facts.contributors.count)}명${facts.contributors.incomplete ? "+" : ""}` : "—"}
           note={facts ? `포크 ${formatNumber(facts.forks)}` : undefined} />

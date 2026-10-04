@@ -2,14 +2,13 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { BuildTools } from "@/components/product-detail/BuildTools";
-import { EvidenceSummary } from "@/components/product-detail/EvidenceSummary";
+import { EvidenceCard } from "@/components/product-detail/EvidenceCard";
 import { FactsStrip } from "@/components/product-detail/FactsStrip";
-import { FreshnessPanel } from "@/components/product-detail/FreshnessPanel";
+import { InfoCard } from "@/components/product-detail/InfoCard";
 import { IntroSection } from "@/components/product-detail/IntroSection";
 import { LanguageBar } from "@/components/product-detail/LanguageBar";
-import { ProductFacts } from "@/components/product-detail/ProductFacts";
+import { PreviewFigure } from "@/components/product-detail/PreviewFigure";
 import { ProductHero } from "@/components/product-detail/ProductHero";
-import { RepositoryEvidence } from "@/components/product-detail/RepositoryEvidence";
 import { UpdateTimeline } from "@/components/product-detail/UpdateTimeline";
 import { UnclaimedOwnerContact } from "@/components/product-detail/UnclaimedOwnerContact";
 import { getProductDetail, getProductIdentity } from "@/lib/domain/products/detail-view";
@@ -72,15 +71,12 @@ export default async function ProductPage({ params }: Props) {
         </div>
 
         <aside id="evidence" className="space-y-4 lg:col-start-2 lg:row-span-2 lg:row-start-1">
-          <EvidenceSummary
-            links={detail.links}
-            freshness={detail.freshness}
-            profileUpdatedAt={detail.profile?.updatedAt ?? null}
-          />
+          <InfoCard product={detail.product} repository={detail.repository} freshness={detail.freshness} unclaimed={detail.unclaimed} />
+          <PreviewFigure product={detail.product} media={detail.media} />
+          <EvidenceCard links={detail.links} freshness={detail.freshness} />
           {detail.unclaimed && (
             <UnclaimedOwnerContact repoUrl={detail.product.repoUrl} slug={detail.product.slug} installable={detail.product.accessMode === "installable"} />
           )}
-          <ProductFacts product={detail.product} profile={detail.profile} links={detail.links} unclaimed={detail.unclaimed} />
           {detail.product.status === "unverified" && (
             <section className="rounded-[12px] border border-line bg-bg-card p-5">
               <h2 className="text-[15px] font-extrabold text-fg">아직 공개 목록에 없습니다</h2>
@@ -90,8 +86,6 @@ export default async function ProductPage({ params }: Props) {
               </p>
             </section>
           )}
-          <RepositoryEvidence repository={detail.repository} license={detail.license} dailyStars={detail.product} />
-          <FreshnessPanel freshness={detail.freshness} />
         </aside>
 
         <div className="lg:col-start-1 lg:row-start-2">

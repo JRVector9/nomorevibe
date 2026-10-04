@@ -3,15 +3,13 @@ import type { ComponentProps } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { BuildTools } from "@/components/product-detail/BuildTools";
-import { EvidenceSummary } from "@/components/product-detail/EvidenceSummary";
+import { EvidenceCard } from "@/components/product-detail/EvidenceCard";
 import { FactsStrip } from "@/components/product-detail/FactsStrip";
-import { FreshnessPanel } from "@/components/product-detail/FreshnessPanel";
+import { InfoCard } from "@/components/product-detail/InfoCard";
 import { IntroSection } from "@/components/product-detail/IntroSection";
 import { LanguageBar } from "@/components/product-detail/LanguageBar";
-import { ProductFacts } from "@/components/product-detail/ProductFacts";
-import { ProductGallery } from "@/components/product-detail/ProductGallery";
+import { PreviewFigure } from "@/components/product-detail/PreviewFigure";
 import { ProductHero } from "@/components/product-detail/ProductHero";
-import { RepositoryEvidence } from "@/components/product-detail/RepositoryEvidence";
 import { SaveButton } from "@/components/product-detail/SaveButton";
 import { SourceBadge } from "@/components/product-detail/SourceBadge";
 import { UpdateTimeline } from "@/components/product-detail/UpdateTimeline";
@@ -167,6 +165,9 @@ function renderTools(overrides: Partial<ComponentProps<typeof BuildTools>> = {})
   return renderToStaticMarkup(<BuildTools product={product} unclaimed={false} agents={[]} observedAgentFacts={[]} skills={[]} toolScan="scanned" {...overrides} />);
 }
 
+/** 태그를 걷어낸 글자만 — 알약 안의 숫자처럼 span 으로 나뉜 문구를 한 줄로 확인한다 */
+const textOf = (html: string) => html.replace(/<[^>]+>/g, "").replace(/&amp;/g, "&");
+
 const observedFact: ProductDetailView["observedAgentFacts"][number] = {
   label: "모델 설정 확인", clientLabel: "Claude Code", modelLabel: "glm-4.7", gatewayLabel: "Z.AI",
   role: "sonnet", scope: "", sourceUrl: "https://github.com/acme/app/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/.claude/settings.json",
@@ -291,8 +292,8 @@ describe("evidence product detail components", () => {
     expect(unknown).toContain("상태 미확인");
   });
 
-  it("uses only internal mirrored gallery URLs and keeps useful missing-source copies", () => {
-    const html = renderToStaticMarkup(<ProductGallery name={product.name} media={[
+  it("previews the first internal copy, else a wide internal image, and nothing for an icon", () => {
+    const media: ProductDetailView["media"] = [
       {
         id: 1,
         hash: "a".repeat(64),
@@ -321,15 +322,28 @@ describe("evidence product detail components", () => {
         sourceMissing: true,
         lastSuccessAt: observedAt,
       },
-    ]} />);
+    ];
+    const first = renderToStaticMarkup(<PreviewFigure product={product} media={media} />);
+    expect(first).toContain(`src="/api/media/${"a".repeat(64)}"`);
+    expect(first).not.toContain("b".repeat(64));
+    expect(first).not.toContain("https://");
+    expect(first).toContain('width="960"');
+    expect(first).toContain('height="600"');
+    expect(first).toContain("simpleHWP 문서 뷰어 화면");
+    expect(first).toContain("사본 갱신 2026년 8월 19일");
+    expect(renderToStaticMarkup(<PreviewFigure product={product} media={[media[1]]} />)).toContain("원본 없음 · 보관 이미지");
 
-    expect(html).toContain(`/api/media/${"a".repeat(64)}`);
-    expect(html).not.toContain("https://");
-    expect(html).toContain('width="960"');
-    expect(html).toContain('height="600"');
-    expect(html).toContain('fetchPriority="high"');
-    expect(html).toContain('loading="lazy"');
-    expect(html).toContain("원본 없음 · 보관 이미지");
+    // 화면 사본이 없으면 넓은 대표 이미지 — 내부 사본 주소만
+    const wideSrc = "/api/og-cache/simple-hwp?thumbnail=repository_image&w=1200&h=400&v=1";
+    const wide = textOf(renderToStaticMarkup(<PreviewFigure product={{ ...product, ogImage: wideSrc }} media={[]} />));
+    expect(renderToStaticMarkup(<PreviewFigure product={{ ...product, ogImage: wideSrc }} media={[]} />)).toContain('src="/api/og-cache/simple-hwp?thumbnail=repository_image&amp;w=1200&amp;h=400&amp;v=1"');
+    expect(wide).toContain("GitHub 저장소 이미지");
+    expect(wide).not.toContain("사본 갱신");
+
+    // 아이콘뿐이거나 바깥 주소면 아무것도 그리지 않는다
+    for (const ogImage of [null, "/api/og-cache/simple-hwp?thumbnail=site_icon&w=96&h=96", "https://cdn.example/og.png", "//cdn.example/og.png"]) {
+      expect(renderToStaticMarkup(<PreviewFigure product={{ ...product, ogImage }} media={[]} />), String(ogImage)).toBe("");
+    }
   });
 
   it("drops the description line when it repeats the tagline word for word", () => {
@@ -382,47 +396,40 @@ describe("evidence product detail components", () => {
     expect(renderToStaticMarkup(<LanguageBar repository={null} />)).toBe("");
   });
 
-  it("renders objective facts, repository evidence and both conflicting licenses", () => {
-    const facts = renderToStaticMarkup(<ProductFacts product={product} profile={profile} links={links} unclaimed={false} />);
-    expect(facts).toContain("객관적 정보");
-    expect(facts).toContain("npm");
-    expect(facts).toContain("메이커 제공·미검증");
-    expect(facts).toContain("공식 출처에서 확인");
+  it("renders objective facts as one info card: owner, site, repository, connection, category, access, stack, last check", () => {
+    const html = renderToStaticMarkup(<InfoCard product={product} repository={observedRepository} freshness={freshness} unclaimed={false} />);
+    const text = textOf(html);
+    for (const label of ["정보", "운영 주체", "웹사이트", "저장소", "서비스 연결", "분야", "이용 방식", "기술 스택", "마지막 확인"]) expect(text).toContain(label);
+    expect(html).toContain('href="https://github.com/example"');
+    expect(text).toContain("@example ↗");
+    expect(text).toContain("GitHub 저장소 소유자");
+    expect(html).toContain('href="https://github.com/example/simple-hwp"');
+    expect(text).toContain("example/simple-hwp ↗");
+    expect(text).toContain("공개 · 활성");
+    expect(text).toContain("서비스 ↔ 저장소 연결 확인");
+    expect(html).toContain('href="/go/simple-hwp"');
+    expect(text).toContain("simplehwp.example ↗");
+    expect(text).toContain("생산성");
+    expect(text).toContain("웹사이트");
+    expect(text).toContain("React · WASM · Rust");
+    expect(text).toContain("2026년 8월 19일");
+    expect(text).toContain("GitHub");
+    // 작은 글자 링크는 모두 진한 코랄
+    expect(html.match(/<a /g)).toHaveLength(3);
+    expect(html.match(/<a [^>]*text-accent-ink/g)).toHaveLength(3);
 
-    const unclaimedFacts = renderToStaticMarkup(<ProductFacts product={product} profile={profile} links={[]} unclaimed />);
-    expect(unclaimedFacts).toContain("우리 추정");
-    expect(unclaimedFacts).not.toContain("신고값");
+    // GitHub 저장소가 아니면 소유자 대신 메이커 — 미클레임이면 신고값이 아니라 우리 추정
+    const unclaimed = textOf(renderToStaticMarkup(<InfoCard product={{ ...product, repoUrl: "https://gitlab.com/example/simple-hwp" }} repository={null} freshness={[]} unclaimed />));
+    expect(unclaimed).toContain("Simple Tools");
+    expect(unclaimed).toContain("우리 추정");
+    expect(unclaimed).not.toContain("신고값");
+    expect(unclaimed).not.toContain("서비스 연결");
+    expect(unclaimed).toContain("확인 전");
 
-    const repository = renderToStaticMarkup(<RepositoryEvidence
-      repository={observedRepository}
-      license={conflictLicense}
-    />);
-    expect(repository).toContain("저장소 생성일");
-    expect(repository).toContain("현재 확인 가능한 정보");
-    expect(repository).toContain('href="https://github.com/example"');
-    expect(repository).toContain("@example");
-    expect(repository).toContain("최근 push");
-    expect(repository).toContain("최신 release");
-    expect(repository).toContain("146");
-    expect(repository).toContain("정보 충돌");
-    expect(repository).toContain("MIT");
-    expect(repository).toContain("GPL-3.0");
-
-    const collectingRepository = renderToStaticMarkup(<RepositoryEvidence
-      repository={{
-        provider: "github",
-        sourceUrl: "https://github.com/example/pending",
-        state: "unobserved",
-        observedAt: null,
-        lastSuccessAt: null,
-        lastFailureAt: null,
-        facts: null,
-      }}
-      license={{ state: "missing", label: "라이선스 확인 안 됨", maker: null, observed: null }}
-    />);
-    expect(collectingRepository).toContain(">—<");
-    expect(collectingRepository).not.toContain("저장소 정보를 수집하고 있습니다");
-    expect(collectingRepository).not.toContain("GitHub에서 확인");
+    const installable = textOf(renderToStaticMarkup(<InfoCard product={{ ...product, accessMode: "installable" }} repository={observedRepository} freshness={freshness} unclaimed={false} />));
+    expect(installable).toContain("없음 · 저장소가 제품 페이지");
+    expect(installable).toContain("직접 설치");
+    expect(installable).not.toContain("simplehwp.example");
   });
 
   it("renders one compact owner and contact section only for a valid GitHub repository", () => {
@@ -466,9 +473,21 @@ describe("evidence product detail components", () => {
     expect(html).toContain(`href="${observedFact.sourceUrl}"`);
     expect(html).toContain("근거 aaaaaaa");
     expect(html).toContain("외 1");
-    expect(html).toContain("일부 미확인");
+    expect(html).toContain("일부 미확인 · 제품과 저장소 관계 미확인");
     // 흔적은 사용 주장일 뿐 — 미클레임이면 메이커 신고값을 쓰지 않는다
     expect(renderTools({ unclaimed: true, observedAgentFacts: [observedFact] })).not.toContain("메이커 신고");
+  });
+
+  it("names a known model after the tool and leaves an unknown one out", () => {
+    expect(textOf(renderTools({ observedAgentFacts: [{ ...observedFact, modelLabel: "claude-sonnet-4" }] }))).toContain("Claude Code · claude-sonnet-4");
+    for (const modelLabel of ["미확인", "미확인 (자동 선택)"]) {
+      const html = textOf(renderTools({ observedAgentFacts: [{ ...observedFact, modelLabel }] }));
+      expect(html, modelLabel).toContain("Claude Code");
+      expect(html, modelLabel).not.toContain("Claude Code ·");
+    }
+    // 같은 도구의 흔적 중 모델을 아는 것이 하나라도 있으면 그 이름
+    const mixed = textOf(renderTools({ observedAgentFacts: [{ ...observedFact, modelLabel: "미확인" }, { ...observedFact, modelLabel: "glm-4.7" }] }));
+    expect(mixed).toContain("Claude Code · glm-4.7");
   });
 
   it("says the repository is not scanned yet, or that no trace was found, instead of omitting the section", () => {
@@ -478,29 +497,41 @@ describe("evidence product detail components", () => {
   });
 
   it.each([null, "maker_reported"] as const)("does not invent activity or a verified direction from unknown repository facts (%s)", (relationshipState) => {
-    const html = renderToStaticMarkup(<RepositoryEvidence repository={{
+    const html = renderToStaticMarkup(<InfoCard product={product} freshness={[]} unclaimed={false} repository={{
       provider: "github", sourceUrl: "https://github.com/acme/app", state: "ok", observedAt, lastSuccessAt: observedAt, lastFailureAt: null,
       facts: { repositoryKey: "acme/app", repositoryUrl: "https://github.com/acme/app", createdAt: null, pushedAt: null, updatedAt: null,
         stars: null, forks: null, public: null, archived: null, fork: null, homepage: null, contributors: null, license: null,
         languages: [], latestRelease: null, relationshipState },
-    }} license={{ state: "missing", label: "라이선스 확인 안 됨", maker: null, observed: null }} />);
+    }} />);
     expect(html).not.toContain("활성");
     expect(html).not.toContain("일부 방향만 확인");
+    expect(html).not.toContain("공개 ·");
     expect(html).toContain("상태 미확인");
     expect(html).toContain("관계 미확인");
   });
 
   it("renders compact evidence and freshness empty states without inventing data", () => {
-    const summary = renderToStaticMarkup(<EvidenceSummary
-      links={links}
-      freshness={freshness}
-      profileUpdatedAt={profile.updatedAt}
-    />);
-    expect(summary).toContain("근거 요약");
-    expect(summary).toContain("공식 출처 1");
-    expect(summary).toContain("메이커 제공·미검증 1");
+    const counted = textOf(renderToStaticMarkup(<EvidenceCard links={links} freshness={freshness} />));
+    expect(counted).toContain("근거");
+    expect(counted).toContain("GitHub에서 확인 1");
+    expect(counted).toContain("공식 출처 1");
+    expect(counted).toContain("메이커 제공 1");
+    expect(counted).not.toContain("확인 필요");
 
-    const empty = renderToStaticMarkup(<FreshnessPanel freshness={[]} />);
+    // 저장소만 읽었고 그 정보가 오래됐으면 — 링크 수는 0, 문제 수는 따로
+    const stale = textOf(renderToStaticMarkup(<EvidenceCard links={[]} freshness={[{ ...freshness[0], state: "stale", label: "오래된 정보" }]} />));
+    expect(stale).toContain("GitHub에서 확인 1");
+    expect(stale).toContain("공식 출처 0");
+    expect(stale).toContain("메이커 제공 0");
+    expect(stale).toContain("확인 필요 1");
+
+    // 링크가 응답만 했거나 자동으로 찾은 것이면 그 수도 숨기지 않는다
+    const automatic = textOf(renderToStaticMarkup(<EvidenceCard freshness={[]}
+      links={[{ ...links[0], verificationState: "stale", declarationSource: "discovered", evidenceLabel: "자동 감지" }]} />));
+    expect(automatic).toContain("자동 감지 1");
+    expect(automatic).toContain("GitHub에서 확인 0");
+
+    const empty = renderToStaticMarkup(<EvidenceCard links={[]} freshness={[]} />);
     expect(empty).toContain("연결된 외부 출처가 없습니다");
     expect(empty).not.toContain(">0<");
   });
@@ -573,15 +604,13 @@ describe("evidence product detail components", () => {
     const files = [
       "ProductHero.tsx",
       "FactsStrip.tsx",
-      "EvidenceSummary.tsx",
-      "ProductGallery.tsx",
       "IntroSection.tsx",
       "LanguageBar.tsx",
-      "ProductFacts.tsx",
-      "RepositoryEvidence.tsx",
       "BuildTools.tsx",
-      "FreshnessPanel.tsx",
       "UpdateTimeline.tsx",
+      "InfoCard.tsx",
+      "PreviewFigure.tsx",
+      "EvidenceCard.tsx",
       "SourceBadge.tsx",
       "UnclaimedOwnerContact.tsx",
     ];
@@ -605,11 +634,10 @@ describe("evidence product detail components", () => {
       "<IntroSection",
       "<BuildTools",
       "<LanguageBar",
-      "<EvidenceSummary",
+      "<InfoCard",
+      "<PreviewFigure",
+      "<EvidenceCard",
       "<UnclaimedOwnerContact",
-      "<ProductFacts",
-      "<RepositoryEvidence",
-      "<FreshnessPanel",
       "<UpdateTimeline",
     ].map((needle) => source.indexOf(needle));
     expect(order.every((index) => index >= 0)).toBe(true);
