@@ -7,15 +7,20 @@ test.beforeAll(async()=>{
   await db.insert(products).values({slug,name:'Thumbnail '+kind,tagline:'A thumbnail test product',description:'A test description',category:'Dev',status:'seeded',source:'crawler',url:'https://'+slug+'.example.com',verifyToken:'test',editTokenHash:'test',ogImage:`/api/og-cache/${slug}?thumbnail=${kind}&w=${size}&h=${size}&v=1`});await db.insert(ogImages).values({slug,contentType:'image/webp',data:image});
  }
 });
-test('source labels and small icons render on desktop and mobile',async({page})=>{
+test('hero icons and source-labelled previews render on desktop and mobile',async({page})=>{
  const errors:string[]=[];page.on('pageerror',e=>errors.push(e.message));
  for(const width of[1440,390]){await page.setViewportSize({width,height:900});for(const[k,kind]of kinds.entries()){
-  await page.goto('/p/thumbnail-e2e-'+kind.replaceAll('_','-'));const root=page.getByTestId('product-hero-media');await expect(root).toContainText(labels[k]);const image=root.locator('img');await expect(image).toBeVisible();
-  expect(await image.evaluate((e:HTMLImageElement)=>e.complete&&e.naturalWidth>0)).toBe(true);
-  if(kind==='repository_image')expect((await image.boundingBox())!.width).toBeLessThanOrEqual(112);
-  if(kind==='site_icon')expect((await image.boundingBox())!.width).toBeLessThanOrEqual(32);
+  await page.goto('/p/thumbnail-e2e-'+kind.replaceAll('_','-'));
+  // v5 히어로는 큰 이미지 없이 80px 아이콘 하나 — 출처 이름은 아이콘이 아닌 이미지의 미리보기에만 붙는다
+  const icon=page.getByRole('img',{name:'Thumbnail '+kind,exact:true});await expect(icon).toBeVisible();
+  expect(await icon.evaluate((e:HTMLImageElement)=>e.complete&&e.naturalWidth>0)).toBe(true);
+  expect((await icon.boundingBox())!.width).toBeLessThanOrEqual(80);
+  const preview=page.locator('figure').filter({hasText:labels[k]});
+  if(kind==='og'){const image=preview.locator('img');await image.scrollIntoViewIfNeeded();await expect(image).toBeVisible();
+   await expect.poll(()=>image.evaluate((e:HTMLImageElement)=>e.complete&&e.naturalWidth>0)).toBe(true);}
+  else await expect(preview).toHaveCount(0);
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
-  if(kind==='site_icon'||kind==='default')await root.screenshot({path:`/tmp/nomorevibe-thumbnail-${kind}-${width}.png`});
+  if(kind==='site_icon'||kind==='default')await icon.screenshot({path:`/tmp/nomorevibe-thumbnail-${kind}-${width}.png`});
  }}expect(errors).toEqual([]);
 });
 test('wide repository wordmarks remain fully visible in covers and icons',async({page})=>{
