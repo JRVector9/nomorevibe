@@ -44,6 +44,7 @@ export function UpdateTimeline({ updates }: { updates: ProductDetailView["update
             {recent > 0 ? `최근 30일 ${recent.toLocaleString("ko-KR")}건` : `${updates.length.toLocaleString("ko-KR")}건`}
           </span>
         </h2>
+        {/* 필터도 누르는 단추라 다른 단추처럼 44px */}
         <div className="inline-flex gap-0.5 rounded-full bg-bg-soft p-0.5" role="tablist" aria-label="업데이트 출처 필터">
           {FILTERS.map((item) => (
             <button
@@ -52,7 +53,7 @@ export function UpdateTimeline({ updates }: { updates: ProductDetailView["update
               role="tab"
               onClick={() => setFilter(item.key)}
               aria-selected={filter === item.key}
-              className={`inline-flex h-10 items-center rounded-full px-3.5 text-[13px] ${
+              className={`inline-flex h-11 items-center rounded-full px-3.5 text-[13px] ${
                 filter === item.key ? "bg-bg-card font-medium text-fg shadow-[0_1px_4px_rgba(0,0,0,0.08)]" : "text-fg-3 hover:text-fg"
               }`}
             >
