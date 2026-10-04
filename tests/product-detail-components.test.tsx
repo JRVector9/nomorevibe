@@ -434,21 +434,39 @@ describe("evidence product detail components", () => {
     expect(installable).not.toContain("simplehwp.example");
   });
 
-  it("renders one compact owner and contact section only for a valid GitHub repository", () => {
+  it("운영자 안내에는 소유자 정보를 되풀이하지 않고 확인 명령과 내려달라는 요청을 남긴다", () => {
     const html = renderToStaticMarkup(<UnclaimedOwnerContact
       repoUrl="https://github.com/AgentWorkforce/relay"
       slug="agent-relay"
     />);
-    expect(html).toContain("운영 주체와 연락");
-    expect(html).toContain("@AgentWorkforce");
-    expect(html).toContain('href="https://github.com/AgentWorkforce"');
-    expect(html).toContain('href="https://github.com/AgentWorkforce/relay"');
-    expect(html).toContain("GitHub 저장소 소유자");
-    expect(html).toContain("실제 제작자가 다를 수 있습니다");
+    expect(html).toContain("이 프로젝트의 운영자인가요?");
+    expect(html).toContain("/nomorevibe verify");
+    expect(html).not.toContain("운영 주체와 연락");
+    expect(html).not.toContain("@AgentWorkforce");
+    expect(html).not.toContain("https://github.com/AgentWorkforce");
+    expect(html).not.toContain("<img");
     expect(html).toContain("목록에서 내려달라고 요청하기");
 
     expect(renderToStaticMarkup(<UnclaimedOwnerContact repoUrl="https://gitlab.com/acme/app" slug="app" />))
       .toBe("");
+  });
+
+  it("정보 카드와 운영자 안내를 함께 보여줘도 저장소 소유자 프로필은 한 번만 나온다", () => {
+    const html = renderToStaticMarkup(<>
+      <InfoCard product={product} repository={observedRepository} freshness={freshness} unclaimed />
+      <UnclaimedOwnerContact repoUrl={product.repoUrl} slug={product.slug} />
+    </>);
+    expect(textOf(html).match(/@example ↗/g)).toHaveLength(1);
+    expect(html.match(/href="https:\/\/github.com\/example"/g)).toHaveLength(1);
+    expect(html).toContain("GitHub 저장소 소유자");
+    expect(html).toContain("이 프로젝트의 운영자인가요?");
+  });
+
+  it("설치형 프로젝트의 소유권 확인 안내는 지원하지 않는 도메인 확인 명령을 권하지 않는다", () => {
+    const html = renderToStaticMarkup(<UnclaimedOwnerContact repoUrl={product.repoUrl} slug={product.slug} installable />);
+    expect(html).toContain("저장소 소유권 확인이 필요한 설치형 프로젝트입니다. 소개 수정은 관리자에게 요청해주세요.");
+    expect(html).toContain("목록에서 내려달라고 요청하기");
+    expect(html).not.toContain("/nomorevibe verify");
   });
 
   it("renders one chip per observed tool with its citation while preserving maker reporting", () => {

@@ -1,4 +1,7 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
+import { eq } from "drizzle-orm";
+import { db } from "@/lib/db";
+import { products } from "@/lib/db/schema";
 import {
   PRODUCT_DETAIL_FIXTURES,
   seedProductDetailFixtures,
@@ -308,6 +311,35 @@ test("collecting, stale-conflict, and unclaimed states remain explicit", async (
   await expect(page.getByText("저장소 미확인", { exact: true })).toBeVisible();
   await expect(page.getByText("메이커가 아직 상세 소개를 제공하지 않았습니다.")).toHaveCount(0);
 
+  await expectViewportContract(page);
+  expect(observed.externalRequests).toEqual([]);
+  expect(observed.consoleErrors).toEqual([]);
+  expect(observed.pageErrors).toEqual([]);
+});
+
+test("unclaimed owner guidance keeps one sidebar profile and accepts a takedown request", async ({ page }) => {
+  await db.update(products).set({ repoUrl: "https://github.com/example/open-seed" })
+    .where(eq(products.slug, PRODUCT_DETAIL_FIXTURES.unclaimed));
+  const observed = observePage(page);
+  await gotoProduct(page, PRODUCT_DETAIL_FIXTURES.unclaimed);
+
+  const sidebar = page.getByRole("complementary").filter({
+    has: page.getByRole("heading", { name: "정보", exact: true }),
+  });
+  await expect(sidebar.getByRole("link", { name: "@example ↗", exact: true })).toHaveCount(1);
+  await expect(sidebar.getByRole("heading", { name: "운영 주체와 연락", exact: true })).toHaveCount(0);
+  await expect(sidebar.getByRole("heading", { name: "이 프로젝트의 운영자인가요?", exact: true })).toBeVisible();
+  await expect(sidebar.locator("code")).toHaveText("/nomorevibe verify");
+
+  const request = sidebar.locator("summary", { hasText: "목록에서 내려달라고 요청하기" });
+  await expect(request).toBeVisible();
+  expect((await request.boundingBox())?.height).toBeGreaterThanOrEqual(44);
+  await request.click();
+  await sidebar.getByPlaceholder("이유를 적어주셔도 되고, 비워두셔도 됩니다").fill("브라우저 테스트 요청");
+  await sidebar.getByRole("button", { name: "요청 보내기", exact: true }).click();
+  await expect(sidebar.getByText("요청을 받았습니다. 확인 후 내려드리겠습니다.", { exact: true })).toBeVisible();
+
+  await page.setViewportSize({ width: 390, height: 844 });
   await expectViewportContract(page);
   expect(observed.externalRequests).toEqual([]);
   expect(observed.consoleErrors).toEqual([]);

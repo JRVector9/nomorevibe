@@ -33,6 +33,7 @@ import { slugifyName } from "@/lib/net/normalize";
 import type { Category } from "./schema";
 import { METRICS_WINDOW_DAYS } from "./clicks";
 import { lockProductRepository } from "./repository-identity";
+import { observedToolPredicate } from "./observed-tool";
 import { withJobLeaseWrite, type JobLease } from "@/lib/jobs/control";
 export { findRepositoryProduct } from "./repository-identity";
 
@@ -62,6 +63,8 @@ export type ListOptions = {
   query?: SearchQuery;
   /** 제작자가 등록한 도구 이름 */
   builder?: string;
+  /** 저장소의 마지막 완료·부분 조사에서 찾은 도구 */
+  observedTool?: string;
   /** 저장소 URL이 등록된 제품만. 공개 여부나 라이선스를 뜻하지 않는다. */
   hasRepository?: boolean;
   /** 건너뛸 개수. 목록이 상한에서 조용히 잘리지 않으려면 뒤를 볼 수 있어야 한다 */
@@ -157,7 +160,7 @@ const introNeedsEditor = sql`exists (
 )`;
 
 /** 목록과 개수가 같은 조건을 쓰도록 한 곳에서 만든다 */
-function listConditions({ statuses, category, query, builder, hasRepository, excludeDown, introNeedsEditor: needsEditor, rising, listedSince, minStars }: Omit<ListOptions, "limit" | "sort" | "offset">) {
+function listConditions({ statuses, category, query, builder, observedTool, hasRepository, excludeDown, introNeedsEditor: needsEditor, rising, listedSince, minStars }: Omit<ListOptions, "limit" | "sort" | "offset">) {
   const conditions = [inArray(products.status, statuses)];
   if (excludeDown) conditions.push(notDown);
   if (needsEditor) conditions.push(introNeedsEditor);
@@ -166,6 +169,7 @@ function listConditions({ statuses, category, query, builder, hasRepository, exc
   if (minStars !== undefined) conditions.push(sql`${products.stars} >= ${minStars}`);
   if (category) conditions.push(eq(products.category, category));
   if (builder) conditions.push(and(eq(products.builder, builder), builderIsReported)!);
+  if (observedTool) conditions.push(observedToolPredicate(observedTool));
   if (hasRepository) {
     conditions.push(isNotNull(products.repoUrl));
     conditions.push(sql`btrim(${products.repoUrl}) <> ''`);
