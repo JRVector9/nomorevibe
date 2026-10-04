@@ -64,7 +64,8 @@ button {
 .tile-flag { position: absolute; left: 12px; top: 12px; font-size: 13px; font-weight: 500; color: white; background: rgba(29, 29, 31, 0.78); border-radius: 980px; padding: 4px 10px; }
 
 /* 작은 카드 가로 띠 */
-.compact-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(188px, 100%), 1fr)); gap: 16px; }
+/* auto-fill: 항목이 하나뿐이어도 칸 너비를 지킨다(auto-fit 은 한 장을 전폭으로 늘린다) */
+.compact-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(188px, 100%), 1fr)); gap: 16px; }
 .compact-card { background: var(--bg-soft); border-radius: 16px; overflow: hidden; display: flex; flex-direction: column; }
 .compact-visual { display: block; }
 .compact-body { padding: 12px 14px 14px; display: flex; flex-direction: column; gap: 4px; min-width: 0; }
@@ -75,7 +76,7 @@ button {
 /* 피드 */
 .feed { padding: 8px 0 56px; display: flex; flex-direction: column; gap: 18px; scroll-margin-top: 72px; }
 .tabs { display: inline-flex; background: var(--bg-soft); border-radius: 980px; padding: 2px; gap: 2px; }
-.tab { display: inline-flex; align-items: center; height: 40px; padding: 0 16px; border-radius: 980px; color: var(--text-2); font-size: 14px; white-space: nowrap; }
+.tab { display: inline-flex; align-items: center; height: 44px; padding: 0 16px; border-radius: 980px; color: var(--text-2); font-size: 14px; white-space: nowrap; }
 .tab.active { background: white; color: var(--text); font-weight: 500; box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08); }
 .filter-top { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
 .filter-summary { display: flex; justify-content: space-between; gap: 12px; font-size: 13px; color: var(--text-2); }
@@ -87,7 +88,7 @@ button {
 .chip:hover { color: var(--text); background: var(--bg-hover); }
 .chip-dark:hover { color: white; background: var(--text); }
 
-.projects-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(300px, 100%), 1fr)); gap: 20px; }
+.projects-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(300px, 100%), 1fr)); gap: 20px; }
 .project-card { background: var(--bg-soft); border-radius: 18px; overflow: hidden; display: flex; flex-direction: column; }
 .card-visual { display: block; }
 .project-body { padding: 16px 18px 18px; display: flex; flex-direction: column; gap: 6px; flex-grow: 1; min-width: 0; }

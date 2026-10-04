@@ -15,14 +15,18 @@ export function ProductIcon({
   size: number;
 }) {
   if (ogImage) {
+    const presentation = thumbnailPresentation(ogImage);
+    // 작은 아이콘(32px 파비콘 등)은 늘리지 않는다 — 여백으로 제 크기에 두면 흐려지지 않는다
+    const natural = Math.max(presentation.width, presentation.height);
+    const padding = presentation.contain && natural < size ? Math.max(4, Math.floor((size - natural) / 2)) : 4;
     return (
       <img
         src={ogImage}
         alt={name}
         width={size}
         height={size}
-        className={`shrink-0 rounded-[10px] border border-line ${thumbnailPresentation(ogImage).contain ? "object-contain bg-bg-soft p-1" : "object-cover"}`}
-        style={{ width: size, height: size }}
+        className={`shrink-0 rounded-[10px] border border-line ${presentation.contain ? "object-contain bg-bg-soft" : "object-cover"}`}
+        style={{ width: size, height: size, padding: presentation.contain ? padding : undefined }}
       />
     );
   }

@@ -14,17 +14,6 @@ export function formatDate(value: Date | string | null): string {
   }).format(date);
 }
 
-export function formatDateTime(value: Date | null): string {
-  if (!value) return "확인 안 됨";
-  return new Intl.DateTimeFormat("ko-KR", {
-    timeZone: "Asia/Seoul",
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  }).format(value);
-}
-
 export function safeExternalUrl(value: string | null): string | null {
   if (!value) return null;
   try {

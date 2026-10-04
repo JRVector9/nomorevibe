@@ -1,15 +1,16 @@
-/* eslint-disable @next/next/no-img-element -- 검증 후 내부에 보관한 이미지를 저장 치수 그대로 제공한다. */
-import { ProjectTile } from "@/components/home/ProjectTile";
-import { thumbnailPresentation } from "@/lib/domain/products/thumbnails/presentation";
-import { StatusBadge } from "@/components/TrustBadges";
-import { Tag } from "@/components/Tag";
-import type { ProductLifecycle } from "@/lib/db/product-evidence-schema";
-import type { ProductDetailView } from "@/lib/domain/products/detail-view";
+import Link from "next/link";
+import { ProductIcon } from "@/components/ProductIcon";
 import type { TaglineSource } from "@/lib/db/schema";
+import type { ProductDetailView } from "@/lib/domain/products/detail-view";
+import { githubOwnerFromRepositoryUrl } from "@/lib/domain/products/github-owner";
 import { isHealthCurrent } from "@/lib/domain/products/health-freshness";
-import { formatDate } from "./format";
-import { ShareButton } from "./ShareButton";
+import { categoryLabel } from "@/lib/domain/products/labels";
 import { InstallPrompt } from "./InstallPrompt";
+import { SaveButton } from "./SaveButton";
+import { ShareButton } from "./ShareButton";
+
+/** 홈 '지금 뜨는'과 같은 순위 — 20위 안일 때만 배지 */
+const RISING_BADGE_MAX = 20;
 
 /** 메이커가 쓴 소개가 없어 우리가 채운 줄 — 누가 무엇을 보고 적었는지 */
 const TAGLINE_SOURCE_LABELS: Record<Exclude<TaglineSource, "maker">, string> = {
@@ -20,173 +21,84 @@ const TAGLINE_SOURCE_LABELS: Record<Exclude<TaglineSource, "maker">, string> = {
   editor: "직접 요약 · 페이지를 보고 적었습니다",
 };
 
-const LIFECYCLE_LABELS: Record<ProductLifecycle, string> = {
-  prototype: "프로토타입",
-  beta: "베타",
-  ga: "정식 운영",
-  maintenance: "유지보수",
-  sunset: "종료 예정",
-  unknown: "운영 단계 미확인",
-};
+/** 오래된 확인은 온라인이라 하지 않고, 한 번 실패는 연속 실패 기준(down) 전까지 '불안정'이라 하지 않는다 */
+function HealthStatus({ health }: { health: ProductDetailView["health"] }) {
+  if (!health.checkedAt) return <span>가동 상태 확인 전</span>;
+  if (!isHealthCurrent(health.checkedAt)) return <span>가동 상태 재확인 필요</span>;
+  if (health.down) return <span className="text-down">접속 불안정</span>;
+  if (health.lastCheckSucceeded === false) return <span className="text-down">최근 접속 확인 실패</span>;
+  return (
+    <span className="inline-flex items-center gap-1.5">
+      <i aria-hidden className="inline-block h-2 w-2 rounded-full bg-up" />
+      온라인{health.latencyMs === null ? "" : ` · ${health.latencyMs}ms`}
+    </span>
+  );
+}
 
-export function ProductHero({
-  product,
-  media,
-  unclaimed,
-  lifecycle,
-  rank,
-  health,
-}: {
+/**
+ * 상세 머리 — 아이콘 80 · 이름 40 · 한 줄 소개 20 · 메타 한 줄 · 버튼.
+ *
+ * 큰 이미지는 두지 않는다: 공개 제품의 54%는 256px 아이콘뿐이고 스크린샷은 0이다(2026-10-02).
+ * 넓은 이미지가 있으면 오른쪽 열의 PreviewFigure 가 작게 보여 준다.
+ */
+export function ProductHero({ product, unclaimed, risingRank, health, languages }: {
   product: ProductDetailView["product"];
-  media: ProductDetailView["media"];
   unclaimed: boolean;
-  lifecycle: ProductLifecycle | null;
-  rank: ProductDetailView["rank"];
+  risingRank: number | null;
   health: ProductDetailView["health"];
+  /** 저장소 언어 상위 둘 — RepositoryFacts.languages 에서 */
+  languages: string[];
 }) {
+  const owner = githubOwnerFromRepositoryUrl(product.repoUrl);
+  const installable = product.accessMode === "installable";
   const displayUrl = product.url.replace(/^https?:\/\/(www\.)?/, "").replace(/\/$/, "");
   const safeIcon = product.ogImage?.startsWith("/") ? product.ogImage : null;
-  const thumbnail = thumbnailPresentation(safeIcon);
-  const representative = media[0] ?? null;
-  const current = isHealthCurrent(health.checkedAt);
-  const healthLabel = !health.checkedAt ? "가동 상태 확인 전"
-    : !current ? "가동 상태 재확인 필요"
-    : health.down ? "접속 불안정"
-    : health.lastCheckSucceeded === false ? "최근 접속 확인 실패"
-    : `온라인${health.latencyMs === null ? "" : ` · ${health.latencyMs}ms`}`;
 
   return (
-    <section
-      data-layout="editorial-product-hero"
-      className="overflow-hidden rounded-[14px] border border-line bg-bg-card"
-    >
-      <div className="grid lg:grid-cols-[minmax(0,1.55fr)_minmax(340px,0.75fr)]">
-        <div
-          id="product-screen"
-          data-testid="product-hero-media"
-          className="min-w-0 scroll-mt-[90px] border-b border-line bg-bg-soft lg:border-b-0 lg:border-r"
-        >
-          <div className="flex min-h-12 flex-wrap items-center justify-between gap-2 border-b border-line bg-bg-card px-4 py-3">
-            <h2 className="text-[13px] font-extrabold text-fg">{representative || !safeIcon ? "제품 화면" : "대표 이미지"}</h2>
-            {representative && (
-              <span className="font-mono text-[13px] text-fg-3">
-                {representative.width} × {representative.height}
-              </span>
-            )}
-            {!representative && safeIcon && (
-              <span className="text-[13px] text-fg-3">{thumbnail.label}</span>
-            )}
-          </div>
-          {representative ? (
-            <figure>
-              <div className="flex min-h-[260px] items-center p-3 sm:min-h-[400px] sm:p-5 lg:min-h-[520px]">
-                <img
-                  src={representative.src}
-                  width={representative.width}
-                  height={representative.height}
-                  alt={representative.altText || `${product.name} 제품 화면`}
-                  loading="eager"
-                  fetchPriority="high"
-                  className="h-auto max-h-[560px] w-full object-contain"
-                />
-              </div>
-              <figcaption className="flex flex-wrap items-center justify-between gap-2 border-t border-line bg-bg-card px-4 py-3 text-[13px] leading-5 text-fg-3">
-                <span>{representative.altText || `${product.name} 제품 화면`}</span>
-                <span>사본 갱신 {formatDate(representative.lastSuccessAt)}</span>
-                {representative.sourceMissing && (
-                  <span className="w-full text-down">원본 없음 · 보관 이미지</span>
-                )}
-              </figcaption>
-            </figure>
-          ) : safeIcon ? (
-            <figure>
-              <div className="flex min-h-[260px] items-center p-3 sm:min-h-[400px] sm:p-5 lg:min-h-[520px]">
-                <img
-                  src={safeIcon}
-                  width={thumbnail.width}
-                  height={thumbnail.height}
-                  style={thumbnail.contain ? { maxWidth: thumbnail.identity ? Math.min(thumbnail.width, 112) : thumbnail.width, margin: "auto" } : undefined}
-                  alt={`${product.name} ${thumbnail.label}`}
-                  loading="eager"
-                  fetchPriority="high"
-                  className="h-auto max-h-[560px] w-full object-contain"
-                />
-              </div>
-              <figcaption className="border-t border-line bg-bg-card px-4 py-3 text-[13px] leading-5 text-fg-3">
-                {thumbnail.label}
-              </figcaption>
-            </figure>
-          ) : (
-            <figure>
-              <div className="detail-list-cover flex min-h-[320px] flex-col justify-center p-4 sm:min-h-[400px] sm:p-6 lg:min-h-[520px]">
-                <ProjectTile slug={product.slug} name={product.name} ogImage={safeIcon} size={64} />
-              </div>
-              <figcaption className="border-t border-line bg-bg-card px-4 py-3 text-[13px] leading-5 text-fg-3">
-                목록 미리보기
-              </figcaption>
-            </figure>
-          )}
+    <section className="border-b border-line pb-7 pt-6">
+      <div className="flex flex-wrap items-start gap-[22px]">
+        <div className="shrink-0 overflow-hidden rounded-[18px] border border-line bg-bg-soft [&_img]:rounded-none [&_img]:border-0">
+          <ProductIcon name={product.name} ogImage={safeIcon} size={80} />
         </div>
-
-        <div data-testid="product-hero-copy" className="flex min-w-0 flex-col p-6 sm:p-8 lg:p-9">
-          <p className="text-[13px] font-extrabold tracking-[0.14em] text-accent">{product.category}</p>
-          <div className="mt-4 flex flex-wrap items-center gap-2.5">
-            <h1 className="text-[38px] font-extrabold leading-none tracking-[-0.055em] text-fg sm:text-[48px]">
-              {product.name}
-            </h1>
-            <StatusBadge status={product.status} unclaimed={unclaimed} size="md" />
+        <div className="flex min-w-0 flex-[1_1_480px] flex-col gap-2.5">
+          <div className="flex flex-wrap items-center gap-3">
+            <h1 className="text-[40px] font-semibold leading-[1.05] tracking-[-0.03em] text-fg">{product.name}</h1>
+            {risingRank !== null && risingRank <= RISING_BADGE_MAX && (
+              <Link href="/#rising" className="inline-flex h-7 items-center rounded-full bg-accent-soft px-[11px] text-[13px] font-semibold text-accent-ink">
+                지금 뜨는 {risingRank}위
+              </Link>
+            )}
           </div>
-          {rank && (
-            <p className="mt-3 font-mono text-[13px] font-bold text-accent">이번 시즌 #{rank.rank}</p>
-          )}
-          <p className="mt-7 text-[19px] font-bold leading-8 tracking-[-0.02em] text-fg">{product.tagline}</p>
+          <p className="max-w-[720px] text-[20px] leading-[1.35] tracking-[-0.01em] text-fg">{product.tagline}</p>
           {/* 지은 줄은 무엇을 보고 지었는지까지 밝힌다 — 메이커가 소개를 쓰면 이 표시는 사라진다 */}
           {product.taglineSource !== "maker" && (
-            <p className="mt-2 inline-flex items-center gap-1.5 rounded-full border border-line bg-bg-soft px-2.5 py-1 text-[13px] font-semibold text-fg-3">
-              {TAGLINE_SOURCE_LABELS[product.taglineSource]}
-            </p>
+            <p className="text-[13px] text-fg-3">{TAGLINE_SOURCE_LABELS[product.taglineSource]}</p>
           )}
-          {/*
-            소개와 설명이 같으면 아래 줄을 두지 않는다 — 같은 문장을 두 번 읽히지 않게.
-            수집 발행분은 설명이 없을 때 소개를 그대로 쓰므로(publish.ts draftFrom) 자주 같아진다.
-          */}
-          {product.description.trim() !== product.tagline.trim() && (
-            <p className="mt-4 whitespace-pre-line text-[15px] leading-7 text-fg-2">{product.description}</p>
-          )}
-
-          <div className="mt-6 flex flex-wrap items-center gap-2">
-            <Tag>{product.category}</Tag>
-            {lifecycle && <Tag>{LIFECYCLE_LABELS[lifecycle]}</Tag>}
-            <span className={`inline-flex rounded-full border px-2.5 py-1 text-[13px] font-semibold ${
-              !current ? "border-line bg-bg-soft text-fg-3" : health.down || health.lastCheckSucceeded === false ? "border-down/30 bg-down/5 text-down" : "border-up/30 bg-up/10 text-up"
-            }`}>
-              {product.accessMode === "installable" ? "직접 설치" : healthLabel}
-            </span>
-          </div>
-
-          <div className="mt-7 flex flex-wrap gap-2">
-            {product.accessMode === "installable" ? (
-              <InstallPrompt repoUrl={product.repoUrl ?? product.url} />
+          <p className="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-[14px] text-fg-2 tabular-nums">
+            <span className="text-fg">{categoryLabel(product.category)}</span>
+            {product.stars !== null && product.stars !== undefined && <><span aria-hidden>·</span><span className="font-medium text-fg">★ {product.stars.toLocaleString("ko-KR")}</span></>}
+            {languages.length > 0 && <><span aria-hidden>·</span><span>{languages.join(" · ")}</span></>}
+            {owner && <><span aria-hidden>·</span><span>GitHub @{owner.login}</span></>}
+            <span aria-hidden>·</span>
+            {installable ? <span>직접 설치</span> : <HealthStatus health={health} />}
+            {unclaimed && <><span aria-hidden>·</span><span title="우리가 찾아서 올린 제품입니다. 아직 주인이 확인해주지 않았습니다.">미클레임</span></>}
+          </p>
+          <div className="mt-2 flex flex-wrap items-center gap-2.5">
+            {installable ? (
+              <>
+                <a href={`/go/${product.slug}`} target="_blank" rel="nofollow noopener noreferrer" className="inline-flex min-h-11 items-center rounded-full bg-accent-solid px-6 text-[15px] font-medium text-white hover:opacity-90">GitHub 저장소 열기</a>
+                <InstallPrompt repoUrl={product.repoUrl ?? product.url} />
+              </>
             ) : (
-            <a
-              href={`/go/${product.slug}`}
-              target="_blank"
-              rel="nofollow noopener noreferrer"
-              className="inline-flex min-h-11 flex-1 items-center justify-center rounded-[10px] bg-accent-solid px-5 text-[13px] font-extrabold text-white transition-opacity hover:opacity-90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent sm:flex-none"
-            >
-              제품 방문하기 ↗
-            </a>
+              <>
+                <a href={`/go/${product.slug}`} target="_blank" rel="nofollow noopener noreferrer" className="inline-flex min-h-11 items-center rounded-full bg-accent-solid px-6 text-[15px] font-medium text-white hover:opacity-90">제품 방문하기</a>
+                {product.repoUrl && <a href={product.repoUrl} target="_blank" rel="noopener noreferrer" className="inline-flex min-h-11 items-center rounded-full bg-bg-soft px-5 text-[15px] font-medium text-fg">GitHub 저장소</a>}
+              </>
             )}
             <ShareButton title={product.name} path={`/p/${product.slug}`} />
+            <SaveButton slug={product.slug} name={product.name} />
+            {!installable && <a href={`/go/${product.slug}`} target="_blank" rel="nofollow noopener noreferrer" className="ml-1 max-w-full truncate text-[14px] text-fg-2 hover:underline">{displayUrl} ↗</a>}
           </div>
-          <a
-            href={`/go/${product.slug}`}
-            target="_blank"
-            rel="nofollow noopener noreferrer"
-            className="mt-5 inline-flex max-w-full items-center gap-1 truncate text-[13px] font-semibold text-accent hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
-          >
-            {product.accessMode === "installable" ? "GitHub 저장소 보기" : displayUrl} ↗
-          </a>
         </div>
       </div>
     </section>
