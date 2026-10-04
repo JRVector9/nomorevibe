@@ -22,6 +22,7 @@ function kst(date: Date | string | null | undefined, options: Intl.DateTimeForma
 /** 월·일만 — "10월 1일". 연도는 note 에 */
 const monthDay = (date: Date | string | null | undefined) => kst(date, { month: "long", day: "numeric" }) || "—";
 const year = (date: Date | string | null | undefined) => kst(date, { year: "numeric" });
+const clock = (date: Date | string | null | undefined) => kst(date, { hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
 const yearMonth = (date: Date | string | null | undefined) => kst(date, { year: "numeric", month: "long" });
 const joinNote = (...parts: string[]) => parts.filter(Boolean).join(" · ");
 
@@ -65,7 +66,7 @@ export function FactsStrip({ product, repository, license, health, visits }: {
               value={!health.checkedAt ? "확인 전" : !current ? "재확인 필요" : health.down ? "접속 불안정" : failed ? "접속 확인 실패"
                 : <span className="inline-flex items-center gap-2"><i aria-hidden className="inline-block h-[9px] w-[9px] rounded-full bg-up" />온라인</span>}
               note={health.checkedAt ? joinNote(health.latencyMs === null ? "응답 시간 미측정" : `${health.latencyMs}ms`, health.uptime30d === null ? "" : `30일 가동률 ${health.uptime30d}%`) : undefined} />}
-        <Tile label="최근 push" value={monthDay(facts?.pushedAt)} note={facts ? joinNote(year(facts.pushedAt), activity) : "저장소 미확인"} />
+        <Tile label="최근 push" value={monthDay(facts?.pushedAt)} note={facts ? joinNote(year(facts.pushedAt), clock(facts.pushedAt) ? `${clock(facts.pushedAt)} KST` : "", activity) : "저장소 미확인"} />
         <Tile label="최신 release"
           value={!facts ? "—" : !release ? "없음" : releaseUrl
             ? <a href={releaseUrl} target="_blank" rel="noopener noreferrer" className="hover:underline">{release.tagName}<span aria-hidden className="ml-1 text-[13px] font-normal text-fg-3">↗</span></a>

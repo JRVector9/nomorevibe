@@ -83,3 +83,32 @@ test("home discovery, saved projects, search, methodology, and mobile layout wor
   expect(observed.consoleErrors).toEqual([]);
   expect(observed.pageErrors).toEqual([]);
 });
+
+test("methodology stays centered with internal scrolling on desktop and mobile", async ({ page }) => {
+  for (const viewport of [{ width: 1440, height: 1000 }, { width: 390, height: 844 }]) {
+    await page.setViewportSize(viewport);
+    for (const metric of ["born", "all"]) {
+      await page.goto(`/?sort=recent&metric=${metric}`);
+      const dialog = page.getByRole("dialog", { name: "숫자의 기준" });
+      await expect(dialog).toBeVisible();
+      await expect.poll(async () => {
+        const box = await dialog.boundingBox();
+        return box ? Math.abs(box.y + box.height / 2 - viewport.height / 2) : Infinity;
+      }).toBeLessThanOrEqual(1);
+      const box = (await dialog.boundingBox())!;
+      expect(Math.abs(box.x + box.width / 2 - viewport.width / 2)).toBeLessThanOrEqual(1);
+      expect(box.y).toBeGreaterThan(0);
+      expect(box.y + box.height).toBeLessThan(viewport.height);
+      expect(box.height).toBeLessThanOrEqual(viewport.height * 0.88 + 1);
+      for (const control of await dialog.locator(".close-btn, .metric-links button").all()) {
+        const bounds = (await control.boundingBox())!;
+        expect(bounds.height).toBeGreaterThanOrEqual(44);
+        expect(bounds.width).toBeGreaterThanOrEqual(44);
+      }
+      await dialog.screenshot({ path: `/private/tmp/nmv-detail-ui-methodology-${metric}-${viewport.width}.png` });
+      await dialog.getByRole("link", { name: "닫기", exact: true }).click();
+      await expect(dialog).toBeHidden();
+      await expect(page).not.toHaveURL(/metric=/);
+    }
+  }
+});

@@ -19,15 +19,16 @@ const mainCard = (p: ProductListItem) => renderToStaticMarkup(<ProjectCard produ
   onToggleSave={() => {}} browseState={{ sort: "recent" }} />);
 
 describe("home card activity", () => {
-  it("shows public updates, repository push time, and a measured zero separately", () => {
+  it("shows public updates, the push date without a clock, and a measured zero separately", () => {
     const html = mainCard({ ...product, activity });
     expect(text(html)).toContain("최근 업데이트");
     expect(text(html)).toContain("최근 푸시");
     expect(text(html)).toContain("7일 푸시");
     expect(text(html)).toContain("0회");
     expect(html).toContain('dateTime="2026-10-04T01:30:00.000Z"');
-    expect(text(html)).toContain("10:30");
-    expect(html).toContain("KST");
+    expect(html).toMatch(/<dt>최근 푸시<\/dt><dd><time[^>]*>2026\.10\.04<\/time><\/dd>/);
+    expect(text(html)).not.toContain("10:30");
+    expect(text(html)).not.toContain("KST");
   });
 
   it("keeps uncollected push counts absent while preserving a known push timestamp", () => {
@@ -44,7 +45,16 @@ describe("home card activity", () => {
     expect(text(html)).toContain("최근 업데이트");
     expect(text(html)).toContain("최근 푸시");
     expect(text(html)).toContain("7일 푸시");
-    expect(text(html)).toContain("10:30 KST");
+    expect(html).toMatch(/<dt>최근 푸시<\/dt><dd><time[^>]*>10\.04<\/time><\/dd>/);
+    expect(text(html)).not.toContain("10:30");
+  });
+
+  it("identifies the category before the introduction in both card sizes", () => {
+    for (const html of [mainCard(product), renderToStaticMarkup(<CompactCard product={product} trailing="category" />)]) {
+      expect(html).toContain('<p class="card-category">개발 도구</p>');
+      expect(html.indexOf('class="card-category"')).toBeLessThan(html.indexOf('class="' + (html.includes('project-tagline') ? 'project-tagline' : 'compact-tagline') + '"'));
+      expect(text(html).match(/개발 도구/g)).toHaveLength(1);
+    }
   });
 
   it("always labels AI introductions in both home card sizes", () => {

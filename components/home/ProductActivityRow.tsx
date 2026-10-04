@@ -18,7 +18,7 @@ export function ProductActivityRow({ activity, compact = false }: { activity?: P
   return (
     <dl className="card-activity">
       {activity.updatedAt && <div><dt>최근 업데이트</dt><dd><time dateTime={activity.updatedAt} title={fullLabel(activity.updatedAt)}>{dateLabel(activity.updatedAt, compact)}</time></dd></div>}
-      {activity.pushedAt && <div><dt>최근 푸시</dt><dd><time dateTime={activity.pushedAt} title={fullLabel(activity.pushedAt)}>{dateLabel(activity.pushedAt, compact)} <span>{timeLabel(activity.pushedAt)} KST</span></time></dd></div>}
+      {activity.pushedAt && <div><dt>최근 푸시</dt><dd><time dateTime={activity.pushedAt}>{dateLabel(activity.pushedAt, compact)}</time></dd></div>}
       {activity.pushCount !== null && activity.pushObservedAt && <div><dt>7일 푸시</dt><dd title={`${fullLabel(activity.pushObservedAt)} 확인 · 이전 7일의 푸시`}>{activity.pushCount.toLocaleString("ko-KR")}회</dd></div>}
     </dl>
   );

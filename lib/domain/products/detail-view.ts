@@ -196,7 +196,7 @@ export type ProductDetailView = {
   related: ProductListItem[];
   /** README 첫 문단들 — 소개가 한 줄뿐일 때 상세 본문이 된다 */
   readmeExcerpt: string | null;
-  /** 저장소의 AI 도구 흔적 조사 — 없으면 '확인 전'이라고 말해야 한다 */
+  /** 저장소의 AI 도구 흔적 조사 상태 — 제작 근거가 없으면 공개 구획은 숨긴다. */
   toolScan: "none" | "scanned";
 };
 

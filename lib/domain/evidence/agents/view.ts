@@ -1,4 +1,5 @@
 import type { AgentObservation, AgentScanState } from "./types";
+import { summarizeAgentEvidence } from "./summary";
 const CLIENTS: Record<string, string> = { "claude-code":"Claude Code",codex:"Codex",cursor:"Cursor",cline:"Cline",roo:"Roo Code",opencode:"OpenCode",aider:"Aider",continue:"Continue","gemini-cli":"Gemini CLI","qwen-code":"Qwen Code","grok-build":"Grok Build","kimi-cli":"Kimi CLI","kimi-code":"Kimi Code",copilot:"GitHub Copilot",windsurf:"Windsurf",goose:"Goose",factory:"Factory Droid",kiro:"Kiro",kimi:"Kimi Code","roo-code":"Roo Code","factory-droid":"Factory Droid","github-copilot":"GitHub Copilot","devin-desktop":"Devin Desktop" };
 /** 저장소에서 찾은 도구 키의 표시 이름 — 모르는 키는 그대로 */
 export const agentClientLabel = (client: string) => CLIENTS[client] ?? client;
@@ -12,6 +13,8 @@ export type ObservedAgentFactView = {
   label:string; clientLabel:string; modelLabel:string; gatewayLabel:string; role:string|null; scope:string;
   sourceUrl:string; sourcePath:string|null; commitSha:string; observedAt:Date;
   coverageLabel:string|null; relationshipLabel:string|null; executionVerified:false;
+  /** 제품과 연결된 개발 커밋의 AI 기여 표기 — 실제 실행 증명은 아니다. */
+  developmentAttributed:boolean;
 };
 export function presentObservedAgentFacts(input: { observations:AgentObservation[]; scanState:AgentScanState; observedAt:Date; relationship:"same_product"|"unknown"|"conflict"; now?:Date; scanLastError?:string|null }):ObservedAgentFactView[] {
   const age = (input.now ?? new Date()).getTime() - input.observedAt.getTime();
@@ -29,6 +32,9 @@ export function presentObservedAgentFacts(input: { observations:AgentObservation
     gatewayLabel: observation.gateway ? GATEWAYS[observation.gateway] ?? observation.gateway : "미확인",
     role: observation.role, scope: observation.scope, sourceUrl:observation.sourceUrl,sourcePath:observation.sourcePath,
     commitSha:observation.commitSha,observedAt:input.observedAt,executionVerified:false,
+    developmentAttributed: observation.scope === "" && !input.scanLastError && summarizeAgentEvidence({
+      scanState: input.scanState, relationship: input.relationship, observations: [observation],
+    }).eligible,
     coverageLabel,
     relationshipLabel:input.relationship === "same_product" ? null : input.relationship === "conflict" ? "제품과 저장소 관계 충돌" : "제품과 저장소 관계 미확인",
   }));

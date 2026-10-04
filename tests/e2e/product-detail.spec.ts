@@ -277,7 +277,15 @@ test("mobile profile keeps the approved reading order and visible core content",
   // 운영자 안내는 저장소가 있는 미클레임 제품에만 — 미리보기 다음에 온다.
   // 같은 분야 '지금 뜨는' 줄은 fixture 에 스타가 는 제품이 없어 나오지 않는다.
   await gotoProduct(page, PRODUCT_DETAIL_FIXTURES.installable);
-  await expectReadingOrder([...readingOrder("Editor Plugin"), page.getByText("이 프로젝트의 운영자인가요?")]);
+  await expect(page.getByRole("heading", { name: "무엇으로 만들었나" })).toHaveCount(0);
+  await expectReadingOrder([
+    page.getByRole("heading", { level: 1, name: "Editor Plugin" }),
+    page.getByText("최근 push", { exact: true }),
+    page.getByRole("heading", { name: "소개", exact: true }),
+    page.getByRole("heading", { name: /^업데이트/ }),
+    page.getByRole("heading", { name: "정보", exact: true }),
+    page.getByText("이 프로젝트의 운영자인가요?"),
+  ]);
   await expectViewportContract(page);
 });
 
