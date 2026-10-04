@@ -44,6 +44,9 @@ export default defineConfig({
       CRON_SECRET: "playwright-cron-secret",
       VISITOR_HASH_SECRET: "playwright-visitor-hash-secret-32-characters",
       GITHUB_TOKEN: "",
+      // 재인증 브라우저 검사는 테스트 파일의 로컬 RPC만 쓰며 실제 계정에는 접근하지 않는다.
+      CONNECT_AGENT_URL: "http://127.0.0.1:43129",
+      OPERATIONS_AGENT_SECRET: "playwright-operations-agent-secret-32-characters",
       // 분류 CLI를 없는 실행 파일로 돌려 e2e가 모델을 부르지 않게 한다
       CLAUDE_CLI: "claude-disabled-for-e2e",
     },

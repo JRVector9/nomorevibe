@@ -1,4 +1,5 @@
 import type { ModelHealth } from "@/lib/operations/dashboard";
+import { CodexReconnectButton } from "./CodexReconnect";
 
 const n = (value: number) => value.toLocaleString("ko-KR");
 
@@ -39,14 +40,16 @@ export function ModelCards({ rows, probes }: { rows: ModelHealth[]; probes: Conn
         })}
       </div>
       {probes.length > 0 && (
-        <p className="dash-chips" style={{ marginTop: 10 }}>
+        <div className="dash-chips" style={{ marginTop: 10 }}>
           {probes.map((probe) => (
+            probe.provider === "codex" && (probe.result === "access_denied" || probe.result === "auth") ?
+            <CodexReconnectButton key={probe.provider} result={probe.result} /> :
             <span key={probe.provider} className="dash-pill" data-tone={probe.result === "success" ? "ok" : probe.result ? "bad" : undefined}>
               <span className="dash-dot" data-tone={probe.result === "success" ? "ok" : probe.result ? "bad" : undefined} aria-hidden />
               {PROBE_LABEL[probe.provider]} 연결 {probe.result === "success" ? "확인" : probe.result ?? "미확인"}
             </span>
           ))}
-        </p>
+        </div>
       )}
     </section>
   );
