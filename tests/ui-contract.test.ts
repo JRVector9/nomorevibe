@@ -84,7 +84,6 @@ describe("global light UI contract", () => {
     const updates = readFileSync(join(ROOT, "components/product-detail/UpdateTimeline.tsx"), "utf8");
     expect(introduction).toContain('text-[17px] leading-[1.6] text-fg');
     expect(introduction).toContain('text-[15px] leading-[1.6]');
-    expect(updates).toContain('font-extrabold leading-6 text-[14px]');
-    expect(updates).toContain('mt-1.5 text-[14px] leading-6');
+    expect(updates).toContain('text-[13px] text-fg');
   });
 });

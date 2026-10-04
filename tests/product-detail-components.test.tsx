@@ -506,7 +506,7 @@ describe("evidence product detail components", () => {
   });
 
   it("offers maker/automatic filters without a connecting timeline line", () => {
-    const html = renderToStaticMarkup(<UpdateTimeline updates={[
+    const older: ProductDetailView["updates"] = [
       {
         id: 1,
         sourceKind: "maker",
@@ -531,13 +531,41 @@ describe("evidence product detail components", () => {
         observedAt,
         makerEditedAt: null,
       },
-    ]} />);
-    expect(html).toContain("전체");
+    ];
+    const html = renderToStaticMarkup(<UpdateTimeline updates={older} />);
+    expect(html.match(/role="tab"/g)).toHaveLength(3);
+    expect(html).toMatch(/aria-selected="true"[^>]*>전체</);
     expect(html).toContain("메이커");
     expect(html).toContain("자동 감지");
     expect(html).toContain("v1.6.0 공개");
+    expect(html).toContain("GitHub 릴리스 ↗");
+    // 최근 30일 안의 것이 없으면 전체 건수만
+    expect(html).not.toContain("최근 30일");
+    expect(html).toContain(">2건<");
+    expect(html).not.toContain("모두 보기");
     const source = readFileSync("components/product-detail/UpdateTimeline.tsx", "utf8");
     expect(source).not.toMatch(/border-l(?:-|\s)|before:|after:/);
+  });
+
+  it("shows the thirty-day count in the heading and only eight rows before the toggle", () => {
+    const recent: ProductDetailView["updates"] = Array.from({ length: 10 }, (_, index) => ({
+      id: 10 + index,
+      sourceKind: "github_release" as const,
+      sourceLabel: "자동 감지" as const,
+      canonicalUrl: `https://github.com/example/simple-hwp/releases/tag/v2.${index}.0`,
+      title: `v2.${index}.0`,
+      summary: null,
+      beforeAfter: null,
+      publishedAt: new Date(Date.now() - (index + 1) * 86_400_000),
+      observedAt: new Date(),
+      makerEditedAt: null,
+    }));
+    const old = { ...recent[0], id: 99, title: "v1.0.0", publishedAt: new Date(Date.now() - 60 * 86_400_000) };
+    const html = renderToStaticMarkup(<UpdateTimeline updates={[...recent, old]} />);
+    expect(html).toContain("최근 30일 10건");
+    expect(html.match(/<li/g)).toHaveLength(8);
+    expect(html).toContain("11건 모두 보기");
+    expect(html).not.toContain("v2.8.0");
   });
 
   it("keeps source badges explicit and every touched visible font at least 13px", () => {
