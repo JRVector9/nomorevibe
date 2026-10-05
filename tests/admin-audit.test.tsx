@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const mocks = vi.hoisted(() => ({
   admin: vi.fn(), redirect: vi.fn(), revalidate: vi.fn(),
   overview: vi.fn(), findings: vi.fn(), start: vi.fn(), cancel: vi.fn(), remove: vi.fn(), keep: vi.fn(),
+  takedownSummary: vi.fn(), takedownQueue: vi.fn(), takedownHistory: vi.fn(),
 }));
 vi.mock('@/lib/auth/admin', () => ({ currentAdmin: mocks.admin }));
 vi.mock('next/navigation', () => ({ redirect: mocks.redirect }));
@@ -11,6 +12,10 @@ vi.mock('next/cache', () => ({ revalidatePath: mocks.revalidate }));
 vi.mock('@/lib/crawl/product-audit', () => ({
   productAuditOverview: mocks.overview, listAuditFindings: mocks.findings, startProductAudit: mocks.start,
   cancelProductAudit: mocks.cancel, removeAuditedProduct: mocks.remove, keepAuditedProduct: mocks.keep,
+}));
+// 내려달라는 요청 집계도 DB를 읽는다 — CI 단위 테스트에는 DB가 없다
+vi.mock('@/lib/domain/products/takedown', () => ({
+  takedownSummary: mocks.takedownSummary, takedownQueue: mocks.takedownQueue, takedownHistory: mocks.takedownHistory,
 }));
 
 import AdminAuditPage from '@/app/admin/audit/page';
@@ -25,6 +30,10 @@ const finding = (id: number, slug: string) => ({
   id, slug, name: `이름 ${slug}`, url: `https://${slug}.test`, category: 'Productivity',
   reason: 'pageText shows only a sign-in form', confidence: 0.95, reviewedAt: new Date('2026-09-18T12:30:00Z'), owned: false,
 });
+const takedowns = (pending: number) => ({
+  pending, overdue: 0, oldestHours: pending ? 2 : null, handled24h: { removed: 0, dismissed: 0 }, last30d: { removed: 0, dismissed: 0 },
+  lastHour: { requests: 0, owners: 0, senders: 0, noReason: 0, topReason: null },
+});
 const render = async (searchParams: Record<string, string> = {}) =>
   renderToStaticMarkup(await AdminAuditPage({ searchParams: Promise.resolve(searchParams) }));
 const forms = (html: string) => html.split('<form').slice(1).map((chunk) => chunk.slice(0, chunk.indexOf('</form>')));
@@ -34,6 +43,9 @@ beforeEach(() => {
   mocks.admin.mockResolvedValue({ login: 'jr' });
   mocks.overview.mockResolvedValue({ campaign, counts, paused: null });
   mocks.findings.mockResolvedValue([finding(11, 'login-wall'), finding(12, 'docs-site'), finding(13, 'agency')]);
+  mocks.takedownSummary.mockResolvedValue(takedowns(0));
+  mocks.takedownQueue.mockResolvedValue([]);
+  mocks.takedownHistory.mockResolvedValue([]);
 });
 
 describe('내릴 후보 화면', () => {
@@ -90,6 +102,24 @@ describe('내릴 후보 화면', () => {
     expect(html).toMatch(/<button[^>]*disabled=""[^>]*>재감사 시작<\/button>/);
     expect(html).toContain('한 번에 하나만 돕니다');
     expect(html).toContain('이 감사 중단');
+  });
+
+  it('기다리는 요청이 있으면 요청 탭부터 열고, 감사 기록은 읽지 않는다', async () => {
+    mocks.takedownSummary.mockResolvedValue(takedowns(3));
+    const html = await render();
+    expect(html).toMatch(/aria-current="page"[^>]*>내려달라는 요청/);
+    expect(mocks.takedownQueue).toHaveBeenCalled();
+    expect(mocks.findings).not.toHaveBeenCalled();
+  });
+
+  it('요청이 있어도 감사 탭이나 보기를 고르면 감사 거절을 연다', async () => {
+    mocks.takedownSummary.mockResolvedValue(takedowns(3));
+    for (const params of [{ tab: 'audit' }, { view: 'needs_review' }] as Record<string, string>[]) {
+      const html = await render(params);
+      expect(html).toMatch(/aria-current="page"[^>]*>감사 거절/);
+    }
+    expect(mocks.takedownQueue).not.toHaveBeenCalled();
+    expect(mocks.findings).toHaveBeenCalledTimes(2);
   });
 
   it('끝난 감사 뒤에는 재감사를 열 수 있다', async () => {

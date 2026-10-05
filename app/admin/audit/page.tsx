@@ -57,7 +57,7 @@ export default async function AdminAuditPage({ searchParams }: Props) {
     tab === "history" ? takedownHistory() : Promise.resolve([]),
   ]);
   const open = { reject: counts.openReject, needs_review: counts.openNeedsReview };
-  const findings = campaign
+  const findings = campaign && tab === "audit"
     ? await listAuditFindings(campaign.id, view, { limit: PAGE_SIZE, offset: (page - 1) * PAGE_SIZE })
     : [];
   const pages = Math.max(1, Math.ceil(open[view] / PAGE_SIZE));
