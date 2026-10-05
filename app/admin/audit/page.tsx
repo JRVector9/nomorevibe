@@ -183,7 +183,7 @@ function TakedownChips({ summary }: { summary: TakedownSummary }) {
   );
 }
 
-/** 처리 기록 — 누가 언제 내렸거나 두었고, 왜 두었는지 */
+/** 처리 기록 — 누가(어디서) 언제 내렸거나 두었고, 왜 두었는지. 관리자 작업 로그에서 읽으므로 지워지지 않는다 */
 function TakedownHistory({ rows }: { rows: Awaited<ReturnType<typeof takedownHistory>> }) {
   if (rows.length === 0) return <p className="rounded-[12px] border border-line bg-bg-card px-5 py-8 text-center text-[13px] text-fg-3">아직 처리한 요청이 없습니다.</p>;
   return (
@@ -192,7 +192,7 @@ function TakedownHistory({ rows }: { rows: Awaited<ReturnType<typeof takedownHis
         <thead><tr><th>제품</th><th>결과</th><th>요청 사유</th><th>메모</th><th>보낸이</th><th>처리</th></tr></thead>
         <tbody>
           {rows.map((row) => (
-            <tr key={row.slug}>
+            <tr key={row.id}>
               <td><b className="font-semibold">{row.name ?? row.slug}</b>{row.requestCount > 1 && <span className="text-fg-3"> · {row.requestCount}번 요청</span>}<br />
                 <span className="font-mono text-fg-3">{row.url?.replace(/^https?:\/\//, "") ?? row.slug}</span></td>
               <td>{row.outcome === "removed" ? <span className="font-semibold text-down">내림</span>
@@ -200,7 +200,7 @@ function TakedownHistory({ rows }: { rows: Awaited<ReturnType<typeof takedownHis
               <td className="max-w-[320px] text-fg-2">{row.reason ?? <span className="text-fg-3">사유 없음</span>}</td>
               <td className="max-w-[240px] text-fg-2">{row.note ?? <span className="text-fg-3">—</span>}</td>
               <td className="font-mono text-fg-2">{senderLabel(row.requesterHash)}</td>
-              <td className="whitespace-nowrap text-fg-3">{time(row.handledAt)} · {row.handledBy}</td>
+              <td className="whitespace-nowrap text-fg-3">{time(row.handledAt)} · {row.handledBy}{row.ip && <span className="font-mono"> · {row.ip}</span>}</td>
             </tr>
           ))}
         </tbody>

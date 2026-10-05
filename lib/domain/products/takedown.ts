@@ -1,8 +1,9 @@
 import { createHmac } from "node:crypto";
-import { and, desc, eq, isNotNull, isNull, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { ogImages, products, takedownRequests, type TakedownRequest } from "@/lib/db/schema";
+import { ogImages, operationsAudit, products, takedownRequests, type TakedownRequest } from "@/lib/db/schema";
 import { logger } from "@/lib/observability/logger";
+import { adminAuditRow } from "@/lib/operations/admin-log";
 import { type Result, ok, fail } from "./errors";
 import { isUnclaimed } from "./view";
 import { lockProductGeneration } from "./generation";
@@ -168,15 +169,23 @@ export async function takedownSummary(): Promise<TakedownSummary> {
   };
 }
 
-/** 처리 기록 — 최근에 처리한 것부터 */
+/** 처리 기록 — 관리자 작업 로그에서 읽는다. 같은 제품을 두 번 처리했으면 두 줄이다. 최근에 처리한 것부터 */
 export async function takedownHistory(limit = 100) {
-  return db.select({
-    slug: takedownRequests.slug, reason: takedownRequests.reason, requestedAt: takedownRequests.requestedAt,
-    handledAt: takedownRequests.handledAt, handledBy: takedownRequests.handledBy, outcome: takedownRequests.outcome,
-    dismissReason: takedownRequests.dismissReason, note: takedownRequests.note, requestCount: takedownRequests.requestCount,
-    requesterHash: takedownRequests.requesterHash, name: products.name, url: products.url,
-  }).from(takedownRequests).leftJoin(products, eq(products.slug, takedownRequests.slug))
-    .where(isNotNull(takedownRequests.handledAt)).orderBy(desc(takedownRequests.handledAt)).limit(limit);
+  const rows = await db.select({
+    id: operationsAudit.id, slug: operationsAudit.target, handledAt: operationsAudit.createdAt, handledBy: operationsAudit.actor,
+    actorKind: operationsAudit.actorKind, ip: operationsAudit.ip, action: operationsAudit.action, detail: operationsAudit.detail,
+    name: products.name, url: products.url,
+  }).from(operationsAudit).leftJoin(products, eq(products.slug, operationsAudit.target))
+    .where(and(inArray(operationsAudit.action, ["takedown-remove", "takedown-dismiss"]), eq(operationsAudit.ok, true)))
+    .orderBy(desc(operationsAudit.id)).limit(limit);
+  return rows.map(({ detail, action, ...row }) => {
+    const text = (key: string) => typeof detail[key] === "string" ? detail[key] as string : null;
+    return {
+      ...row, outcome: action === "takedown-remove" ? "removed" : "dismissed",
+      reason: text("requestReason"), requestedAt: text("requestedAt"), dismissReason: text("dismissReason"), note: text("note"),
+      requestCount: typeof detail.requestCount === "number" ? detail.requestCount : 1, requesterHash: text("requesterHash"),
+    };
+  });
 }
 
 export type TakedownAction = "remove" | "dismiss";
@@ -214,10 +223,15 @@ export async function resolveTakedown(
       await tx.delete(ogImages).where(eq(ogImages.slug, slug));
     }
 
+    const dismissReason = action === "dismiss" ? resolution.dismissReason ?? null : null;
     await tx.update(takedownRequests)
-      .set({ handledAt: new Date(), handledBy: admin, outcome: action === "remove" ? "removed" : "dismissed",
-        dismissReason: action === "dismiss" ? resolution.dismissReason ?? null : null, note })
+      .set({ handledAt: new Date(), handledBy: admin, outcome: action === "remove" ? "removed" : "dismissed", dismissReason, note })
       .where(eq(takedownRequests.slug, slug));
+    // 처리 기록 — 요청 행은 다시 요청이 오면 덮이므로, 처리할 때마다 지우지 못하는 로그에 한 줄씩 쌓는다
+    await tx.insert(operationsAudit).values(await adminAuditRow(admin, { action: `takedown-${action}`, target: slug, detail: {
+      requestReason: request.reason, requestedAt: request.requestedAt.toISOString(), requestCount: request.requestCount,
+      requesterHash: request.requesterHash, dismissReason, note,
+    } }));
     return ok({ slug, action });
   });
 

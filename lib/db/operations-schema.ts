@@ -1,4 +1,4 @@
-import { pgTable, varchar, jsonb, timestamp, serial, integer, text, bigint, boolean } from 'drizzle-orm/pg-core';
+import { pgTable, varchar, jsonb, timestamp, serial, integer, text, bigint, boolean, index } from 'drizzle-orm/pg-core';
 
 /** One active process per job role. Database time is the authority for expiry. */
 export const roleLeases = pgTable('role_leases', {
@@ -29,12 +29,22 @@ export const categoryDecisions = pgTable('category_decisions', {
   retryAt: timestamp('retry_at').notNull(),
   updatedAt: timestamp('updated_at').notNull().defaultNow(),
 });
+/**
+ * 관리자 작업 로그. 덧붙이기만 한다 — 고치기·지우기·비우기는 DB 트리거가 거부한다(0056).
+ * 스크립트가 남긴 옛 행은 actor_kind·ip 가 비어 있다.
+ */
 export const operationsAudit = pgTable('operations_audit', {
   id: serial('id').primaryKey(), actor: varchar('actor', { length: 120 }).notNull(),
   action: varchar('action', { length: 80 }).notNull(), target: varchar('target', { length: 200 }).notNull(),
   detail: jsonb('detail').$type<Record<string, unknown>>().notNull(),
   createdAt: timestamp('created_at').notNull().defaultNow(),
-});
+  /** 'github' | 'local' | 'token' */
+  actorKind: varchar('actor_kind', { length: 12 }),
+  ip: varchar('ip', { length: 64 }),
+  userAgent: varchar('user_agent', { length: 300 }),
+  ok: boolean('ok').notNull().default(true),
+  error: varchar('error', { length: 300 }),
+}, (table) => [index('operations_audit_action_created_idx').on(table.action, table.createdAt.desc())]);
 
 /** Collector PATs are encrypted with a dedicated secret shared by web and crawler instances. */
 export const githubCollectorAccounts = pgTable('github_collector_accounts', {
