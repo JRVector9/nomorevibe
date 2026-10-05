@@ -1,7 +1,7 @@
 import { beforeAll, beforeEach, afterEach, expect, it, vi } from 'vitest';
 import { eq, sql } from 'drizzle-orm';
 import { db } from '@/lib/db';
-import { categoryDecisions, operationsAudit, crawlCandidates, crawlDocuments, crawlSettings, jobs, products } from '@/lib/db/schema';
+import { categoryDecisions, crawlCandidates, crawlDocuments, crawlSettings, jobs, products } from '@/lib/db/schema';
 import { categorySourceHash, setManualCategory, holdClassification, classificationReadyPredicate } from '@/lib/operations/categories';
 import { requestAdminJob } from '@/lib/operations/admin';
 import { listCandidates } from '@/lib/crawl/repository';
@@ -9,14 +9,15 @@ import { saveSettings } from '@/lib/crawl/settings';
 import { publishCandidate, prepareCandidateClassification } from '@/lib/crawl/publish';
 import { runJob } from '@/lib/jobs/runner';
 import { publishCandidates } from '@/lib/crawl/jobs/publish';
-import { ensureSchema, resetTables } from './setup';
+import { auditFloor, auditRowsAfter, ensureSchema, resetTables } from './setup';
 vi.mock('@/lib/domain/products/og',()=>({cacheOgImage:async()=>null}));
 vi.mock('@/lib/operations/agent-client',()=>({agentRequest:async()=>{throw new Error('disconnected');}}));
 beforeAll(ensureSchema);
-beforeEach(async()=>{await resetTables();for(const t of [categoryDecisions,operationsAudit,crawlCandidates,crawlDocuments,crawlSettings,jobs])await db.delete(t);await saveSettings({enabled:true},'test');});
+let floor=0;
+beforeEach(async()=>{await resetTables();for(const t of [categoryDecisions,crawlCandidates,crawlDocuments,crawlSettings,jobs])await db.delete(t);await saveSettings({enabled:true},'test');floor=await auditFloor();});
 afterEach(()=>vi.unstubAllEnvs());
 async function seed(){const repo='operations/sample',url='https://operations.example';const [document]=await db.insert(crawlDocuments).values({repo,productUrl:url,repoMeta:{description:'A calendar to plan team tasks'},pageStatus:200,pageMeta:{title:'Calendar',description:'Plan tasks'}}).returning();const [candidate]=await db.insert(crawlCandidates).values({repo,productUrl:url,state:'approved',reason:'passed'}).returning();return {candidate,document,sourceHash:categorySourceHash(candidate,document)};}
-it('coalesces simultaneous job requests and audits one request',async()=>{await Promise.all(Array.from({length:8},()=>requestAdminJob('crawl-seed','admin')));const [j]=await db.select().from(jobs).where(eq(jobs.name,'crawl-seed'));expect(j.requestedVersion).toBe(1);expect(await db.select().from(operationsAudit)).toHaveLength(1);await expect(requestAdminJob('heartbeat','admin')).rejects.toThrow();});
+it('coalesces simultaneous job requests and audits one request',async()=>{await Promise.all(Array.from({length:8},()=>requestAdminJob('crawl-seed','admin')));const [j]=await db.select().from(jobs).where(eq(jobs.name,'crawl-seed'));expect(j.requestedVersion).toBe(1);expect(await auditRowsAfter(floor,'request-job')).toHaveLength(1);await expect(requestAdminJob('heartbeat','admin')).rejects.toThrow();});
 // The hold uses the DB clock; model a later document on that same clock, not the host's.
 it('holds failed classification before LIMIT and releases source changes',async()=>{const {candidate,document}=await seed();await holdClassification(candidate,document);expect(await listCandidates(['approved'],10,classificationReadyPredicate())).toHaveLength(0);await db.update(crawlDocuments).set({fetchedAt:sql`clock_timestamp() + interval '1 second'`}).where(eq(crawlDocuments.id,document.id));expect(await listCandidates(['approved'],10,classificationReadyPredicate())).toHaveLength(1);});
 it('rejects stale or no-longer-approved manual decisions',async()=>{const {candidate,sourceHash}=await seed();await expect(setManualCategory({repo:candidate.repo,sourceHash:'old',category:'Games',reason:'Playable game',actor:'admin'})).rejects.toThrow();await db.update(crawlCandidates).set({state:'rejected'}).where(eq(crawlCandidates.id,candidate.id));await expect(setManualCategory({repo:candidate.repo,sourceHash,category:'Games',reason:'Playable game',actor:'admin'})).rejects.toThrow();expect(await db.select().from(categoryDecisions)).toHaveLength(0);});

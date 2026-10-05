@@ -1,7 +1,8 @@
 import { assertLocalTestDatabase } from "../../scripts/test-database";
 import { execSync } from "node:child_process";
-import { sql } from "drizzle-orm";
+import { and, eq, gt, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
+import { operationsAudit } from "@/lib/db/schema";
 
 /**
  * 통합 테스트용 DB 준비.
@@ -48,4 +49,18 @@ export async function resetTables() {
     INSERT INTO visit_collection_state (id, unique_visitor_started_at)
     VALUES (1, NULL)
   `);
+}
+
+/**
+ * 작업 로그는 지울 수 없다(0056) — 테스트끼리 남긴 줄이 쌓인다. 시작할 때의 마지막 id 를 잡아 두고
+ * 그 뒤에 생긴 줄만 본다.
+ */
+export async function auditFloor(): Promise<number> {
+  const [row] = await db.select({ max: sql<number>`coalesce(max(${operationsAudit.id}), 0)::int` }).from(operationsAudit);
+  return row.max;
+}
+
+export function auditRowsAfter(floor: number, action?: string) {
+  return db.select().from(operationsAudit)
+    .where(and(gt(operationsAudit.id, floor), action ? eq(operationsAudit.action, action) : undefined));
 }

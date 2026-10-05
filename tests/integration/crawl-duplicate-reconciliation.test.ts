@@ -1,8 +1,8 @@
 import { beforeAll, beforeEach, expect, it } from "vitest";
 import { db } from "@/lib/db";
-import { crawlCandidates, crawlPublicationChanges, crawlReviewAttempts, operationsAudit } from "@/lib/db/schema";
+import { crawlCandidates, crawlPublicationChanges, crawlReviewAttempts } from "@/lib/db/schema";
 import { insert } from "@/lib/domain/products/repository";
-import { ensureSchema, resetTables } from "./setup";
+import { auditFloor, auditRowsAfter, ensureSchema, resetTables } from "./setup";
 import { reconcileCrawlDuplicates } from "@/lib/crawl/duplicate-reconciliation";
 
 beforeAll(ensureSchema);
@@ -17,6 +17,7 @@ it("previews and repairs missing duplicate references without creating records o
     { repo: "maker/unmatched", state: "rejected", reason: "already_listed", decidedBy: "auto" },
     { repo: "Maker/Plugin", state: "rejected", reason: "already_listed", decidedBy: "admin" },
   ]);
+  const floor = await auditFloor();
   const before = await db.select().from(crawlCandidates);
   expect(await reconcileCrawlDuplicates({ actor: "reconciliation-test" })).toMatchObject({ eligible: 1, updated: 0 });
   expect(await db.select().from(crawlCandidates)).toEqual(before);
@@ -28,7 +29,7 @@ it("previews and repairs missing duplicate references without creating records o
   expect(after.find(c => c.decidedBy === "admin")).toEqual(before.find(c => c.decidedBy === "admin"));
   expect(await db.select().from(crawlPublicationChanges)).toHaveLength(0);
   expect(await reconcileCrawlDuplicates({ actor: "reconciliation-test", apply: true })).toMatchObject({ eligible: 0, updated: 0 });
-  const audit = await db.select().from(operationsAudit);
+  const audit = await auditRowsAfter(floor);
   expect(audit.filter(a => a.actor === "reconciliation-test")).toHaveLength(1);
 });
 
