@@ -20,7 +20,7 @@ const candidate = async (repo: string, over: Partial<typeof crawlCandidates.$inf
 it("사람 결정은 최근 24시간의 admin_override 만 세고 승인·거부를 나눈다", async () => {
   const row = await candidate("people/decide");
   let n = 0;
-  const attempt = (kind: string, decision: string, startedAt: Date): typeof crawlReviewAttempts.$inferInsert => ({
+  const attempt = (kind: "automatic" | "admin_override", decision: string, startedAt: Date): typeof crawlReviewAttempts.$inferInsert => ({
     candidateId: row.id, kind, state: "succeeded", inputHash: "i", policyHash: "p", sourceRevisionHash: "s", snapshot: {} as never,
     source: {} as never, promptVersion: "t", rulesVersion: "t", attemptNumber: ++n, validUntil: ago(-1), startedAt,
     outcome: { decision, reason: "r", evidenceIds: ["product"] } as never,
