@@ -14,18 +14,21 @@ type Reason = { value: string; label: string };
  *
  * 표 위 한 줄이다. 체크박스는 표의 각 행에 있고 form 속성으로 이 폼에 실린다 — 폼은 겹칠 수 없다.
  */
-export function BulkDecision({ formId, reasons, total }: {
-  formId: string; reasons: readonly Reason[]; total: number;
+export function BulkDecision({ formId, reasons, title }: {
+  formId: string; reasons: readonly Reason[];
+  /** 표 카드의 이름 — 지금 보는 구간과 건수 */
+  title: React.ReactNode;
 }) {
   const [state, action, pending] = useActionState<BulkReviewState, FormData>(decideCrawlCandidates, null);
 
   return (
-    <form id={formId} action={action} className="rounded-[12px] border border-line bg-bg-card px-3 py-2">
+    <form id={formId} action={action} className="border-b border-line px-3 py-2">
       <div className="flex flex-wrap items-center gap-2">
-        <b className="text-[13px] font-bold">선택한 후보 한 번에 처리</b>
+        <h2 id="review-list-title" className="text-[13px] font-bold">{title}</h2>
+        <span className="h-4 w-px bg-line" aria-hidden />
         <input
           name="note" required maxLength={2000} aria-label="판단 사유 — 선택한 모든 건에 같은 사유가 기록됩니다"
-          placeholder="판단 사유 (선택한 모든 건에 같은 사유로 기록)"
+          placeholder={`판단 사유 — 체크한 것 모두에 같은 사유로 기록 (최대 ${MAX_BULK_DECISIONS}건)`}
           className="min-w-[240px] flex-1 rounded-lg border border-line bg-bg-soft px-2.5 py-1.5 text-[13px]"
         />
         <button name="decision" value="approve" disabled={pending}
@@ -40,7 +43,7 @@ export function BulkDecision({ formId, reasons, total }: {
           className="rounded-lg border border-line px-3 py-1.5 text-[13px] font-semibold text-fg-2 disabled:opacity-50">
           선택 거부
         </button>
-        <span className="text-[13px] text-fg-3">{pending ? '처리 중…' : `이 쪽 ${total}건 중 체크한 것만 · 한 번에 최대 ${MAX_BULK_DECISIONS}건`}</span>
+        {pending && <span className="text-[13px] text-fg-3">처리 중…</span>}
       </div>
 
       <div aria-live="polite">
