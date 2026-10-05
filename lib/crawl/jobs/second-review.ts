@@ -4,7 +4,7 @@ import { getSettings } from "@/lib/crawl/settings";
 import { reviewWithAgent, REVIEW_CLI_TIMEOUT_MS } from "@/lib/crawl/agent-review";
 import { reviewWithGateway, REVIEW_GATEWAY_TIMEOUT_MS } from "@/lib/crawl/agent-review-gateway";
 import { reviewWithGrokCli, GROK_REVIEW_TIMEOUT_MS } from "@/lib/crawl/agent-review-grok";
-import { closeSettledSecondReviews, combineVerdicts, enqueueSecondReviews, pendingSecondReviews, recordSecondReview,
+import { closeSettledSecondReviews, combineVerdicts, enqueueSecondReviews, pendingSecondReviews, recordSecondReview, reopenOrphanedGateHolds,
   retryFailedSecondReviews } from "@/lib/crawl/second-review";
 import { loadSecondReviewInput } from "@/lib/crawl/second-review-input";
 
@@ -35,6 +35,7 @@ export async function secondReviewCandidates(ctx: JobContext<null>): Promise<Job
   }
   const enqueued = await enqueueSecondReviews(settings, undefined, ctx.lease);
   const closed = await closeSettledSecondReviews(undefined, ctx.lease);
+  const reopened = await reopenOrphanedGateHolds(settings, undefined, ctx.lease);
   await retryFailedSecondReviews(undefined, ctx.lease);
   const queue = [...await pendingSecondReviews(FETCH)];
   const remaining = () => TICK_MS - (Date.now() - startedAt);
@@ -97,7 +98,7 @@ export async function secondReviewCandidates(ctx: JobContext<null>): Promise<Job
   const failure = settled.find(result => result.status === "rejected");
   if (failure) throw failure.reason;
 
-  ctx.log("crawl.second_reviewed", { enqueued, closed, reviewed, failed, deferred });
+  ctx.log("crawl.second_reviewed", { enqueued, closed, reopened, reviewed, failed, deferred });
   if (reviewed && !failed && !ctx.signal?.aborted && ctx.hasBudget()) {
     const ready = await pendingSecondReviews(1);
     if (ready.some(row => !visited.has(row.id))) return { done: false, continuation: "ready" };

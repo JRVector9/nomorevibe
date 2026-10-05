@@ -3,7 +3,7 @@ import { secondReviewCandidates } from "@/lib/crawl/jobs/second-review";
 import { DEFAULT_CRAWL_SETTINGS, type CrawlSettings } from "@/lib/crawl/settings-schema";
 
 const mocks = vi.hoisted(() => ({
-  settings: null as CrawlSettings | null, enqueue: vi.fn(), close: vi.fn(), retry: vi.fn(), pending: vi.fn(), record: vi.fn(),
+  settings: null as CrawlSettings | null, enqueue: vi.fn(), close: vi.fn(), reopen: vi.fn(async () => 0), retry: vi.fn(), pending: vi.fn(), record: vi.fn(),
   candidate: vi.fn(), document: vi.fn(), input: vi.fn(), review: vi.fn(), gateway: vi.fn(), grok: vi.fn(),
 }));
 vi.mock("@/lib/crawl/settings", () => ({ getSettings: async () => mocks.settings }));
@@ -16,7 +16,7 @@ vi.mock("@/lib/crawl/agent-review-grok", () => ({ reviewWithGrokCli: mocks.grok,
 vi.mock("@/lib/crawl/second-review", async (importOriginal) => ({
   // 판단을 합치는 규칙은 진짜를 쓴다 — 잡이 그것을 제대로 부르는지가 이 테스트의 요점이다
   combineVerdicts: (await importOriginal<typeof import("@/lib/crawl/second-review")>()).combineVerdicts,
-  enqueueSecondReviews: mocks.enqueue, closeSettledSecondReviews: mocks.close, retryFailedSecondReviews: mocks.retry,
+  enqueueSecondReviews: mocks.enqueue, closeSettledSecondReviews: mocks.close, reopenOrphanedGateHolds: mocks.reopen, retryFailedSecondReviews: mocks.retry,
   pendingSecondReviews: mocks.pending, recordSecondReview: mocks.record,
 }));
 
