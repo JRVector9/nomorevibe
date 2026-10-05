@@ -218,4 +218,3 @@ describe("처리 화면 — 보낸이·계정·이력", () => {
     expect((await repo.findBySlug("x1"))?.status).toBe("banned");
   });
 });
-

@@ -46,4 +46,3 @@ body:has(.admin-login-area) > .nmb-footer { display: none; }
 .takedown-strip-go{margin-left:auto;border:1px solid var(--color-line);border-radius:8px;padding:3px 10px;font-weight:600;background:var(--color-bg-card);color:var(--color-fg-2);white-space:nowrap}
 .takedown-strip[data-tone=bad] .takedown-strip-go{border-color:transparent;background:color-mix(in srgb,var(--color-down) 12%,transparent);color:var(--color-down)}
 .takedown-strip-go:hover{color:var(--color-fg)}
-
