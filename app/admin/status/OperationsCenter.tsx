@@ -1,5 +1,6 @@
 'use client';
 import { useState, useTransition } from 'react';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { JOB_CATALOG } from '@/lib/jobs/catalog';
 import { JOB_LABELS, ROLE_LABELS, type AgentStatus } from '@/lib/operations/contracts';
@@ -63,7 +64,7 @@ export function OperationsCenter({initialTab="overview",jobs,data,candidates,rev
           <section className="ops-mini"><h3>작업 <small>마지막 · 다음</small></h3>
             <table><tbody>{jobs.filter(j=>j.name!=='heartbeat').map(j=><tr key={j.name} onClick={()=>setJob(j)} title={j.name}>
               <td><i className={`ops-dot ${j.lastError?'bad':'ok'}`}/>{JOB_LABELS[j.name]??j.name}</td><td className="n">{ago(j.lastRunAt,data.fetchedAt)}</td><td className="n">{until(j.nextScheduledAt,data.fetchedAt)}</td></tr>)}</tbody></table></section>
-          <section className="ops-mini"><h3>최근 관리자 작업</h3>{data.audit.length?<ul>{data.audit.slice(0,8).map(a=><li key={a.id}><b>{a.action}</b> {a.target}<small>{a.actor} · {ago(a.createdAt,data.fetchedAt)}</small></li>)}</ul>:<p>기록 없음</p>}</section>
+          <section className="ops-mini"><h3>최근 관리자 작업 <Link href="/admin/activity" prefetch={false}>전체 기록 →</Link></h3>{data.audit.length?<ul>{data.audit.slice(0,8).map(a=><li key={a.id}><b>{a.action}</b> {a.target}<small>{a.actor} · {ago(a.createdAt,data.fetchedAt)}</small></li>)}</ul>:<p>기록 없음</p>}</section>
         </div>
         {children}
       </details>

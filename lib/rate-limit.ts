@@ -59,7 +59,10 @@ export async function pruneExpiredRateLimits(lease?: JobLease): Promise<number> 
  *  - 2: CDN + 프록시 (Cloudflare + Traefik 등) → 뒤에서 두 번째 항목
  * 헤더 항목 수가 부족하면 가장 왼쪽 값을 쓴다(체인이 예상보다 짧은 경우).
  */
-export function clientIp(req: Request): string {
+/** 머리만 본다 — 서버 액션은 Request 없이 next/headers 의 머리만 받는다 */
+type WithHeaders = { headers: Pick<Headers, "get"> };
+
+export function clientIp(req: WithHeaders): string {
   const hops = Number(process.env.TRUSTED_PROXY_HOPS ?? "0");
   if (!Number.isFinite(hops) || hops < 1) return "direct";
 
@@ -76,7 +79,7 @@ export function clientIp(req: Request): string {
 }
 
 /** 신뢰 프록시가 없으면 모든 사용자를 하나의 `direct` 버킷으로 합치지 않는다. */
-export function trustedClientIp(req: Request): string | null {
+export function trustedClientIp(req: WithHeaders): string | null {
   const hops = Number(process.env.TRUSTED_PROXY_HOPS ?? "0");
   if (!Number.isFinite(hops) || hops < 1) return null;
   const value = clientIp(req);

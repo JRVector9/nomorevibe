@@ -1,6 +1,7 @@
 import { eq, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { githubCollectorAccounts, operationsAudit } from "@/lib/db/schema";
+import { adminAuditRow } from "@/lib/operations/admin-log";
 import { seal, unseal } from "@/lib/operations/credential-vault";
 
 export type CoreQuota = { limit: number; used: number; remaining: number; reset: number };
@@ -65,7 +66,7 @@ export async function saveGitHubCollectorAccount(token: string, actor: string, e
       set: { login: identity.login, encryptedToken, enabled: true,
         coreQuota: identity.core, quotaObservedAt: new Date(), updatedAt: new Date() },
     });
-    await tx.insert(operationsAudit).values({ actor, action: "github-collector-token-save", target: String(identity.userId), detail: { login: identity.login } });
+    await tx.insert(operationsAudit).values(await adminAuditRow(actor, { action: "github-collector-token-save", target: String(identity.userId), detail: { login: identity.login } }));
   });
   return identity;
 }
@@ -75,7 +76,7 @@ export async function setGitHubCollectorAccountEnabled(userId: number, enabled: 
     const changed = await tx.update(githubCollectorAccounts).set({ enabled, updatedAt: new Date() })
       .where(eq(githubCollectorAccounts.userId, userId)).returning({ userId: githubCollectorAccounts.userId });
     if (changed.length === 0) return false;
-    await tx.insert(operationsAudit).values({ actor, action: enabled ? "github-collector-enable" : "github-collector-disable", target: String(userId), detail: {} });
+    await tx.insert(operationsAudit).values(await adminAuditRow(actor, { action: enabled ? "github-collector-enable" : "github-collector-disable", target: String(userId) }));
     return true;
   });
 }

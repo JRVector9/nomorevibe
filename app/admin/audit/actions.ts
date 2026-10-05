@@ -4,6 +4,7 @@ import { revalidatePath } from 'next/cache';
 import { currentAdmin } from '@/lib/auth/admin';
 import { cancelProductAudit, keepAuditedProduct, removeAuditedProduct, startProductAudit } from '@/lib/crawl/product-audit';
 import { logger } from '@/lib/observability/logger';
+import { recordAdminAction } from '@/lib/operations/admin-log';
 
 export type AuditActionState = { error?: string; message?: string } | null;
 const UNAUTHORIZED = { error: '권한이 없습니다. 다시 로그인해주세요.' };
@@ -28,6 +29,8 @@ export async function decideAuditFinding(_previous: AuditActionState, form: Form
   const result = decision === 'remove'
     ? await removeAuditedProduct({ itemId, slug, by: admin.login })
     : await keepAuditedProduct({ itemId, slug, by: admin.login, note: String(form.get('note') ?? '') });
+  await recordAdminAction(admin.login, { action: `audit-${decision}`, target: slug,
+    detail: { itemId, note: String(form.get('note') ?? '') || null }, ok: result.ok, error: result.ok ? null : result.error });
   if (!result.ok) return { error: result.error };
   logger.info('admin.product_audit_decided', { slug, decision, login: admin.login });
   revalidatePath('/admin/audit');
@@ -39,9 +42,13 @@ export async function decideAuditFinding(_previous: AuditActionState, form: Form
 export async function startAudit(_previous: AuditActionState, form: FormData): Promise<AuditActionState> {
   const admin = await currentAdmin();
   if (!admin) return UNAUTHORIZED;
-  const result = await startProductAudit({
-    startedBy: admin.login, reason: String(form.get('reason') ?? ''), reauditKept: form.get('reauditKept') === 'on',
-  });
+  const reason = String(form.get('reason') ?? '');
+  const reauditKept = form.get('reauditKept') === 'on';
+  const result = await startProductAudit({ startedBy: admin.login, reason, reauditKept });
+  await recordAdminAction(admin.login, result.ok
+    ? { action: 'audit-start', target: `campaign:${result.campaignId}`,
+      detail: { reason, reauditKept, enrolled: result.enrolled, keptSkipped: result.keptSkipped } }
+    : { action: 'audit-start', target: 'product_audit', detail: { reason, reauditKept }, ok: false, error: result.error });
   if (!result.ok) return { error: result.error };
   logger.info('admin.product_audit_started', { campaign: result.campaignId, enrolled: result.enrolled, login: admin.login });
   revalidatePath('/admin/audit');
@@ -54,6 +61,8 @@ export async function cancelAudit(): Promise<AuditActionState> {
   const admin = await currentAdmin();
   if (!admin) return UNAUTHORIZED;
   const cancelled = await cancelProductAudit();
+  await recordAdminAction(admin.login, { action: 'audit-cancel', target: 'product_audit', ok: cancelled,
+    error: cancelled ? null : '진행 중인 감사가 없습니다' });
   logger.info('admin.product_audit_cancelled', { cancelled, login: admin.login });
   revalidatePath('/admin/audit');
   return cancelled ? { message: '중단했습니다.' } : { error: '진행 중인 감사가 없습니다.' };

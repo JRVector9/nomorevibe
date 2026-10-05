@@ -5,6 +5,7 @@ import { currentAdmin } from "@/lib/auth/admin";
 import { saveSettings } from "@/lib/crawl/settings";
 import { requestJob } from "@/lib/jobs/control";
 import { logger } from "@/lib/observability/logger";
+import { recordAdminAction } from "@/lib/operations/admin-log";
 import { NEWS_JOB, setNewsState } from "@/lib/news/repository";
 import { NEWS_SOURCE_KEYS } from "@/lib/news/sources";
 
@@ -24,6 +25,8 @@ export async function decideNews(_previous: NewsActionState, form: FormData): Pr
   if (ids.length > MAX_DECISIONS) return { error: `한 번에 ${MAX_DECISIONS}건까지 바꿉니다.` };
 
   const changed = await setNewsState(ids, decision, admin.login);
+  await recordAdminAction(admin.login, { action: `news-${decision === "approved" ? "approve" : "hide"}`,
+    target: ids.length === 1 ? `news:${ids[0]}` : `news:${ids.length}건`, detail: { ids, changed } });
   logger.info("admin.news_decided", { login: admin.login, decision, changed });
   revalidatePath("/admin/news");
   revalidatePath("/");
@@ -51,6 +54,7 @@ export async function refreshNewsNow(): Promise<NewsActionState> {
   const admin = await currentAdmin();
   if (!admin) return DENIED;
   await requestJob(NEWS_JOB);
+  await recordAdminAction(admin.login, { action: "request-job", target: NEWS_JOB });
   logger.info("admin.news_refresh_requested", { login: admin.login });
   return { ok: "수집을 요청했습니다. 1~2분 뒤 새로고침하면 보입니다." };
 }

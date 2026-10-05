@@ -8,6 +8,7 @@ import { getDocument } from '@/lib/crawl/repository';
 import { decideCandidate } from '@/lib/crawl/review';
 import { changeReviewMode } from '@/lib/crawl/settings';
 import { decidePublishedSecondReview } from '@/lib/crawl/published-second-review';
+import { recordAdminAction } from '@/lib/operations/admin-log';
 import type { RequeueState } from './contract';
 
 export type ReviewActionState = { error?: string; message?: string } | null;
@@ -41,6 +42,8 @@ export async function approveWithTagline(_previous: ReviewActionState, form: For
     inputHash: String(form.get('inputHash') ?? ''), sourceRevisionHash: String(form.get('sourceRevisionHash') ?? ''),
     candidateRevisionHash: String(form.get('candidateRevisionHash') ?? ''),
   });
+  await recordAdminAction(admin.login, { action: 'candidate-approve', target: repo, detail: { tagline },
+    ok: result.ok, error: result.ok ? null : result.message });
   // 적어 둔 줄은 남는다 — 승인이 경합으로 막혀도 다음에 그대로 쓰인다
   if (!result.ok) return { error: result.message };
   revalidatePath('/admin/review');
@@ -49,11 +52,15 @@ export async function approveWithTagline(_previous: ReviewActionState, form: For
 export async function collectCandidateEvidence(_previous: ReviewActionState, form: FormData): Promise<ReviewActionState> {
   const admin = await currentAdmin();
   if (!admin) return { error: '권한이 없습니다. 다시 로그인해주세요.' };
+  const repo = String(form.get('repo') ?? '');
+  const note = String(form.get('note') ?? '');
   const result = await requestCandidateEvidence({
-    actor: admin.login, repo: String(form.get('repo') ?? ''), reason: String(form.get('note') ?? ''),
+    actor: admin.login, repo, reason: note,
     inputHash: String(form.get('inputHash') ?? ''), sourceRevisionHash: String(form.get('sourceRevisionHash') ?? ''),
     candidateRevisionHash: String(form.get('candidateRevisionHash') ?? ''),
   });
+  await recordAdminAction(admin.login, { action: 'evidence-collect', target: repo, detail: { note },
+    ok: result.ok, error: result.ok ? null : result.message });
   if (!result.ok) return { error: result.message };
   revalidatePath('/admin/review');
   revalidatePath('/admin/status');
@@ -69,7 +76,12 @@ export async function setReviewMode(_previous: ReviewActionState, form: FormData
   }
   const result = await changeReviewMode({ actor: admin.login, mode: mode as 'off' | 'observe' | 'enforce',
     expectedMode: expectedMode as 'off' | 'observe' | 'enforce', reason: String(form.get('reason') ?? '') });
-  if (!result.ok) return { error: result.issues.join(' ') };
+  if (!result.ok) {
+    // 바꾼 것은 changeReviewMode 트랜잭션이 남긴다. 거절된 것만 여기서
+    await recordAdminAction(admin.login, { action: 'review-mode', target: 'crawl_settings',
+      detail: { before: expectedMode, after: mode }, ok: false, error: result.issues.join(' ') });
+    return { error: result.issues.join(' ') };
+  }
   revalidatePath('/admin/review');
   revalidatePath('/admin');
   revalidatePath('/admin/status');
@@ -102,6 +114,8 @@ export async function resolvePublishedSecondReview(_previous: ReviewActionState,
   const decision = form.get('decision');
   if (!Number.isSafeInteger(id) || id <= 0 || !slug || (decision !== 'ban' && decision !== 'keep')) return { error: '요청을 읽을 수 없습니다.' };
   const changed = await decidePublishedSecondReview({ id, slug, decision, actor: admin.login });
+  await recordAdminAction(admin.login, { action: `published-second-${decision}`, target: slug, detail: { secondReviewId: id },
+    ok: changed, error: changed ? null : '이미 처리됐거나 화면이 오래됨' });
   revalidatePath('/admin/review');
   revalidatePath('/admin/products');
   return changed ? { message: decision === 'ban' ? '내렸습니다.' : '그대로 둡니다.' } : { error: '이미 처리됐거나 화면이 오래됐습니다. 새로고침해주세요.' };
