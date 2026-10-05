@@ -5,8 +5,8 @@ import { currentAdmin } from "@/lib/auth/admin";
 import { candidateStateCounts, publicationChange24h, listAdminReviewEntries, reviewQueueAiDecisions, reviewQueueCauses, REVIEW_QUEUE_SCAN_LIMIT, REVIEW_SORTS, type ReviewAiDecision, type ReviewSort } from "@/lib/crawl/admin-review";
 import { getSettings } from "@/lib/crawl/settings";
 import { REVIEW_REJECT_REASONS } from "@/lib/crawl/review";
-import { pendingTakedowns } from "@/lib/domain/products/takedown";
-import { TakedownItem } from "./TakedownItem";
+import { takedownSummary } from "@/lib/domain/products/takedown";
+import { TakedownStrip } from "../TakedownStrip";
 import { ReviewModeForm } from "./ReviewModeForm";
 import { BulkDecision } from "./BulkDecision";
 import { RequeueResolved } from "./RequeueResolved";
@@ -69,7 +69,7 @@ export default async function ReviewPage({ searchParams }: { searchParams: Promi
   const sort = ((REVIEW_SORTS as readonly string[]).includes(one(params.sort)) ? one(params.sort) : '') as ReviewSort;
 
   const settings = await getSettings();
-  const [takedowns, causes, decisions, seconds, translation, stateCounts, publicationChange] = await Promise.all([pendingTakedowns(), reviewQueueCauses(settings), reviewQueueAiDecisions(), secondReviewSummary(settings.secondReview.agreeAt), translationProgress(), candidateStateCounts(), publicationChange24h()]);
+  const [takedowns, causes, decisions, seconds, translation, stateCounts, publicationChange] = await Promise.all([takedownSummary().catch(() => null), reviewQueueCauses(settings), reviewQueueAiDecisions(), secondReviewSummary(settings.secondReview.agreeAt), translationProgress(), candidateStateCounts(), publicationChange24h()]);
   const held = heldStages(decisions.ids, seconds.ids, [...(causes.ids.get('second_review_split') ?? []), ...(causes.ids.get('no_description') ?? [])]);
   const stageCount: Record<StageKey, number> = {
     judge: stateCounts.new, ai: held.ids.ai.length, second: held.ids.second.length, agreed: held.ids.agreed.length,
@@ -126,8 +126,9 @@ export default async function ReviewPage({ searchParams }: { searchParams: Promi
     { key: 'tagline', title: '소개 문구 없음', count: causeCount('no_description'),
       detail: taglines ? `AI 소개 지음 ${n(taglines.written)} · 근거로는 모름 ${n(taglines.unknown)} · 실패 ${n(taglines.failed)} · 시도 전 ${n(taglines.untried)}`
         : '페이지를 열어 한 줄로 적으면 그 소개로 승인합니다', href: '/admin/review?cause=no_description#review-list' },
-    { key: 'published', title: '공개분 확인 · 내려달라는 요청', count: seconds.counts.published + takedowns.length, tone: takedowns.length > 0 ? 'bad' : undefined,
-      detail: `2차가 공개분을 다시 본 것 ${n(seconds.counts.published)} · 요청 ${n(takedowns.length)}`, href: '/admin/review?second=published#review-list' },
+    // 내려달라는 요청은 머리의 한 줄(TakedownStrip)과 내릴 후보 화면이 맡는다 — 여기서는 2차가 다시 본 공개분만
+    { key: 'published', title: '공개분 확인 — 2차가 다시 본 공개분', count: seconds.counts.published,
+      detail: `내릴지 둘지 사람이 정합니다 · ${n(seconds.counts.published)}건`, href: '/admin/review?second=published#review-list' },
   ];
   // 보류 이유는 꼬리가 길다 — 앞의 일곱 개(와 지금 고른 것)만 칩으로, 나머지는 펼침 목록으로
   const CAUSE_CHIPS = 7;
@@ -170,19 +171,9 @@ export default async function ReviewPage({ searchParams }: { searchParams: Promi
         </div>
       </header>
 
-      <ReviewStatusChips models={models} human={human} publication={publicationChange} takedowns={takedowns.length} />
+      <ReviewStatusChips models={models} human={human} publication={publicationChange} takedowns={takedowns?.pending ?? 0} />
 
-      {takedowns.length > 0 && (
-        <section className="rounded-[12px] border border-down/40 bg-down/5 px-3 py-2">
-          <h2 className="text-[13px] font-bold text-down">내려달라는 요청 {takedowns.length}건 — 먼저 처리합니다</h2>
-          <ul className="mt-2 flex flex-col gap-2">
-            {takedowns.map((request) => (
-              <TakedownItem key={request.slug} slug={request.slug} reason={request.reason}
-                requestedAt={request.requestedAt.toLocaleString("ko-KR", { dateStyle: "medium", timeStyle: "short" })} />
-            ))}
-          </ul>
-        </section>
-      )}
+      <TakedownStrip summary={takedowns} />
 
       <ReviewStageRail stage={stage} counts={stageCount} agreed={{ reject: held.agreedReject, approve: held.agreedApprove }}
         publication={publicationChange} humanAge={humanAge} />

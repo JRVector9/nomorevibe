@@ -4,7 +4,8 @@ import { revalidatePath } from "next/cache";
 import { currentAdmin } from "@/lib/auth/admin";
 import { saveSettings, resetSettings } from "@/lib/crawl/settings";
 import { decideCandidate, type ReviewDecision } from "@/lib/crawl/review";
-import { resolveTakedown, type TakedownAction } from "@/lib/domain/products/takedown";
+import { resolveTakedown, resolveTakedowns, type TakedownAction } from "@/lib/domain/products/takedown";
+import { isDismissReason } from "@/lib/domain/products/takedown-view";
 import { banProduct, unbanProduct } from "@/lib/domain/products/manage";
 import { markClaimInvited } from "@/lib/domain/products/claim-invite";
 import { logger } from "@/lib/observability/logger";
@@ -207,14 +208,46 @@ export async function resolveTakedownRequest(_prev: ReviewState, form: FormData)
   const action = String(form.get("action") ?? "");
   if (action !== "remove" && action !== "dismiss") return { error: "알 수 없는 결정입니다" };
 
-  const result = await resolveTakedown(String(form.get("slug") ?? ""), action as TakedownAction, admin.login);
+  const dismissReason = form.get("dismissReason");
+  const result = await resolveTakedown(String(form.get("slug") ?? ""), action as TakedownAction, admin.login, {
+    dismissReason: isDismissReason(dismissReason) ? dismissReason : null, note: String(form.get("note") ?? "") || null,
+  });
   if (!result.ok) {
     logger.warn("admin.takedown_rejected", { login: admin.login, error: result.error });
     return { error: "요청을 처리하지 못했습니다" };
   }
 
-  revalidatePath("/admin/review");
+  revalidateTakedownViews();
   return null;
+}
+
+/** 요청 처리 결과가 보이는 곳 — 처리 화면, 심사 큐 띠, 운영센터 조치, 메뉴 배지(레이아웃) */
+function revalidateTakedownViews() {
+  revalidatePath("/admin/audit");
+  revalidatePath("/admin/review");
+  revalidatePath("/admin/status");
+  revalidatePath("/admin", "layout");
+}
+
+export type BulkTakedownState = { error?: string; done?: number; failed?: { slug: string; message: string }[] } | null;
+const MAX_BULK_TAKEDOWNS = 100;
+
+/** 여러 건 한 번에 내리거나 둔다 — 처리 화면의 체크박스·묶음 머리에서 */
+export async function resolveTakedownRequests(_prev: BulkTakedownState, form: FormData): Promise<BulkTakedownState> {
+  const admin = await currentAdmin();
+  if (!admin) return { error: "권한이 없습니다. 다시 로그인해주세요." };
+  const action = String(form.get("action") ?? "");
+  if (action !== "remove" && action !== "dismiss") return { error: "알 수 없는 결정입니다" };
+  const slugs = form.getAll("selected").map(String).filter(Boolean);
+  if (slugs.length === 0) return { error: "고른 요청이 없습니다" };
+  if (slugs.length > MAX_BULK_TAKEDOWNS) return { error: `한 번에 ${MAX_BULK_TAKEDOWNS}건까지 처리합니다` };
+  const dismissReason = form.get("dismissReason");
+  const result = await resolveTakedowns(slugs, action as TakedownAction, admin.login, {
+    dismissReason: isDismissReason(dismissReason) ? dismissReason : null, note: String(form.get("note") ?? "") || null,
+  });
+  logger.info("admin.takedown_bulk", { login: admin.login, action, done: result.done.length, failed: result.failed.length });
+  revalidateTakedownViews();
+  return { done: result.done.length, failed: result.failed };
 }
 
 /**

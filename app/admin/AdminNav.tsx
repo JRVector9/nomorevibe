@@ -6,7 +6,7 @@ const PAGES = [
   { href: "/admin/review", label: "심사 큐", hint: "후보 검토·승인" },
   { href: "/admin/products", label: "제품 관리", hint: "목록·제품 근거" },
   // /admin/products 아래에 두지 않는다 — 아래에 두면 제품 관리와 함께 선택된 것으로 보인다
-  { href: "/admin/audit", label: "내릴 후보", hint: "AI가 걸러낸 발행분" },
+  { href: "/admin/audit", label: "내릴 후보", hint: "요청·AI가 걸러낸 발행분" },
   { href: "/admin", label: "크롤 설정", hint: "수집 규칙·검색 신호" },
   { href: "/admin/categories", label: "카테고리 기준", hint: "분류 정의·예시" },
   { href: "/admin/evidence", label: "근거 설정", hint: "출처·갱신 정책" },
@@ -14,13 +14,17 @@ const PAGES = [
   { href: "/admin/news", label: "AI 소식", hint: "공식 피드·게시 승인" },
 ] as const;
 
-export function AdminNav({ current }: { current: string }) {
+export type NavBadge = { label: string; tone: "warn" | "bad" };
+
+/** badges — 메뉴 옆에 붙일 상태(예: 내려달라는 요청 수). 24시간 넘은 요청이 있으면 빨강 */
+export function AdminNav({ current, badges = {} }: { current: string; badges?: Partial<Record<string, NavBadge>> }) {
   return (
     <nav className="admin-navigation" aria-label="관리자 메뉴">
       {PAGES.map((page) => {
         const active = current === page.href || (page.href !== "/admin" && current.startsWith(`${page.href}/`));
         return <Link key={page.href} href={page.href} aria-current={active ? "page" : undefined} prefetch={false}>
-          <span>{page.label}</span><small>{page.hint}</small>
+          <span>{page.label}{badges[page.href] && <b className="admin-nav-badge" data-tone={badges[page.href]!.tone}>{badges[page.href]!.label}</b>}</span>
+          <small>{page.hint}</small>
         </Link>;
       })}
     </nav>
