@@ -6,7 +6,7 @@ import * as crawl from '@/lib/crawl/repository';
 import { getSettings, saveSettings } from '@/lib/crawl/settings';
 import { loadReviewInput } from '@/lib/crawl/agent-review-repository';
 import { closeSettledSecondReviews, enqueueSecondReviews, pendingSecondReviews, publishedInputHash, publishedSecondReviews, recentSecondReviewFailures,
-  recordSecondReview, resolveSecondReviews, retryFailedSecondReviews, secondReviewSummary, secondReviewsFor, TRANSIENT_RETRY_MS } from '@/lib/crawl/second-review';
+  recordSecondReview, reopenOrphanedGateHolds, resolveSecondReviews, retryFailedSecondReviews, secondReviewSummary, secondReviewsFor, TRANSIENT_RETRY_MS } from '@/lib/crawl/second-review';
 import { REVIEW_PROMPT_VERSION, REVIEW_RULES_VERSION } from '@/lib/crawl/agent-review-contract';
 import { ensureSchema } from './setup';
 
@@ -838,4 +838,38 @@ it('다른 독립 표가 일치해도 Sonnet 중복 대체를 완료한 후보�
   expect((await secondReviewSummary(.85)).counts).toMatchObject({pending:1,agreedApprove:0});
   await recordSecondReview(backup.id,{ok:true,decision:'approve',confidence:1,reason:'usable',provider:'claude-cli',model:'sonnet',status:'agreed'});
   expect((await secondReviewSummary(.85)).counts).toMatchObject({needsHuman:1,agreedApprove:0,unanimousApprove:0,pending:0});
+});
+
+it('지금 세우지 않은 투표자가 막은 갈림 보류만 승인으로 되돌린다 — 지금 투표자가 반대한 것과 관문 표가 없던 것은 그대로', async () => {
+  const split = async (repo: string) => {
+    const candidate = await held(repo);
+    await db.update(crawlCandidates).set({ state: 'needs_review', reason: 'second_review_split',
+      signals: { stoppedAt: { rule: '2차 심사', detail: 'qwen reject' } } }).where(eq(crawlCandidates.id, candidate.id));
+    return candidate;
+  };
+  const gate = (candidateId: number, repo: string, row: Partial<typeof secondReviews.$inferInsert>) => db.insert(secondReviews).values({
+    candidateId, repo, trigger: 'ai_approved', firstDecision: 'approve', firstConfidence: 0.9, inputHash: 'h', generationKey: `g-${repo}-${row.model}`,
+    provider: 'abcllm', model: '[MLX] qwen3.6-35b-heretic', secondDecision: 'reject', status: 'resolved', resolution: 'model_removed', ...row,
+  });
+  const orphan = await split('acme/orphan');
+  await gate(orphan.id, orphan.repo, {});
+  const opposed = await split('acme/opposed');
+  await gate(opposed.id, opposed.repo, {});
+  await gate(opposed.id, opposed.repo, { provider: 'grok-cli', model: 'grok-4.7', status: 'needs_human', resolution: null });
+  const lone = await split('acme/lone');
+
+  const settings = await getSettings();
+  expect(await reopenOrphanedGateHolds({ ...settings, reviewMode: 'observe' })).toBe(0);
+  const now = new Date();
+  expect(await reopenOrphanedGateHolds({ ...settings, reviewMode: 'enforce' }, now)).toBe(1);
+
+  const rows = new Map((await db.select().from(crawlCandidates)).map((row) => [row.id, row]));
+  expect(rows.get(orphan.id)).toMatchObject({ state: 'approved', reason: 'passed', decidedBy: 'auto' });
+  expect(rows.get(orphan.id)!.signals).toMatchObject({ gateReopenedAt: now.toISOString() });
+  expect(rows.get(orphan.id)!.signals).not.toHaveProperty('stoppedAt');
+  expect(rows.get(opposed.id)).toMatchObject({ state: 'needs_review', reason: 'second_review_split' });
+  expect(rows.get(lone.id)).toMatchObject({ state: 'needs_review', reason: 'second_review_split' });
+  // 옛 표는 지우지 않는다 — 누가 왜 막았는지는 남는다
+  expect(await db.select().from(secondReviews).where(eq(secondReviews.candidateId, orphan.id))).toHaveLength(1);
+  expect(await reopenOrphanedGateHolds({ ...settings, reviewMode: 'enforce' })).toBe(0);
 });

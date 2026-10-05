@@ -422,6 +422,40 @@ async function holdGateForHuman(candidateIds: number[], detail: string, now: Dat
     .where(and(inArray(crawlCandidates.id, [...new Set(candidateIds)]), eq(crawlCandidates.state, "approved"), eq(crawlCandidates.decidedBy, "auto"))));
 }
 
+/** 한 틱에 되돌리는 수 — 되돌린 후보마다 원본을 다시 받고 1차가 다시 본다. 몰리지 않게 조금씩 */
+const REOPEN_LIMIT = 25;
+
+/**
+ * 지금 세우지 않은 투표자가 막아 둔 갈림 보류를 다시 관문에 태운다(2026-10-06, 사용자 결정).
+ *
+ * 투표자를 바꾸면 옛 투표자의 관문 행은 model_removed 로 닫힌다(closeSettledSecondReviews). 그런데 그 표로
+ * 보류된 후보는 second_review_split 에 남는다 — AI 1차도, 관문(승인 상태만 본다)도 이 사유를 다시 집지 않아
+ * 사람만 볼 수 있었다. 2026-10-05 프로드 보류 4,053건 중 3,645건이 그랬다(거의 다 거절하던 qwen3.6 3,537 · Sonnet 108).
+ *
+ * 승인 상태로 되돌리면 원본을 새로 받고(requeueStaleReviewSources) 1차가 지금 프롬프트로 다시 본다 — 옛 1차는
+ * 유효기간이 지났다. 1차가 승인하면 지금 투표자가 관문 표를 낸다. 발행은 두 표가 모두 승인일 때뿐이라
+ * 되돌리는 것만으로 공개되지 않는다.
+ *
+ * 지금 투표자의 열린 관문 행이 있는 후보(지금 투표자가 반대한 것)와, 관문 행이 아예 없는 후보(1차와 다른 투표자가
+ * 없어 보류된 것 — 되돌리면 같은 자리로 돌아온다)는 건드리지 않는다.
+ */
+export async function reopenOrphanedGateHolds(settings: CrawlSettings, now = new Date(), lease?: JobLease,
+  limit = REOPEN_LIMIT): Promise<number> {
+  if (settings.reviewMode !== "enforce") return 0;
+  const reopened = await withJobLeaseWrite(lease, tx => tx.update(crawlCandidates).set({
+    state: "approved", reason: "passed", updatedAt: now,
+    signals: sql`(coalesce(${crawlCandidates.signals}, '{}'::jsonb) - 'stoppedAt')
+      || jsonb_build_object('gateReopenedAt', ${now.toISOString()}::text)`,
+  }).where(sql`${crawlCandidates.id} in (select c.id from crawl_candidates c
+      where c.state = 'needs_review' and c.reason = 'second_review_split' and c.decided_by = 'auto' and c.published_slug is null
+        and exists(select 1 from second_reviews s where s.candidate_id = c.id and s.trigger = 'ai_approved' and s.resolution = 'model_removed')
+        and not exists(select 1 from second_reviews s where s.candidate_id = c.id and s.trigger = 'ai_approved'
+          and s.status in ('pending', 'failed', 'agreed', 'needs_human'))
+      order by c.updated_at, c.id limit ${limit}
+      for update skip locked)`).returning({ id: crawlCandidates.id }));
+  return reopened.length;
+}
+
 export async function pendingSecondReviews(limit: number) {
   return db.select().from(secondReviews).where(eq(secondReviews.status, "pending")).orderBy(desc(sql`${secondReviews.fallbackForId} is not null`), secondReviews.id).limit(limit);
 }
