@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { currentAdmin } from "@/lib/auth/admin";
 import { saveGitHubCollectorAccount, setGitHubCollectorAccountEnabled } from "@/lib/crawl/github-accounts";
+import { recordAdminAction } from "@/lib/operations/admin-log";
 
 export type TokenActionState = { ok?: string; error?: string } | null;
 const messages: Record<string, string> = {
@@ -27,6 +28,9 @@ export async function saveCollectorToken(_previous: TokenActionState, form: Form
     revalidatePath("/admin/github-accounts");
     return { ok: `${identity.login} 계정의 수집 토큰을 저장했습니다.` };
   } catch (error) {
+    // 저장한 것은 저장 트랜잭션이 남긴다. 토큰 값은 어디에도 남기지 않는다
+    await recordAdminAction(admin.login, { action: "github-collector-token-save", target: expectedId ? String(expectedId) : "new",
+      ok: false, error: error instanceof Error ? error.message : "unknown" });
     return { error: error instanceof Error ? messages[error.message] ?? "토큰 저장에 실패했습니다. 운영 로그를 확인하세요." : "토큰 저장에 실패했습니다." };
   }
 }

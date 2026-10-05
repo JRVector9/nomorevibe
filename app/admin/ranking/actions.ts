@@ -6,6 +6,7 @@ import {
   cancelScheduledPolicy,
   schedulePolicy,
 } from "@/lib/domain/ranking/policies";
+import { recordAdminAction } from "@/lib/operations/admin-log";
 
 export type RankingPolicyActionState = {
   ok?: true;
@@ -28,6 +29,9 @@ export async function saveRankingPolicy(
   }
 
   const result = await schedulePolicy(raw, admin.login);
+  await recordAdminAction(admin.login, result.ok
+    ? { action: "ranking-schedule", target: `revision:${result.revision.id}`, detail: { policy: raw as Record<string, unknown> } }
+    : { action: "ranking-schedule", target: "ranking_policy", detail: { policy: raw as Record<string, unknown> }, ok: false, error: result.issues.join(" · ") });
   if (!result.ok) return { issues: result.issues };
 
   revalidatePath("/admin/ranking");
@@ -39,5 +43,6 @@ export async function cancelRankingPolicy(): Promise<void> {
   if (!admin) return;
 
   await cancelScheduledPolicy(admin.login);
+  await recordAdminAction(admin.login, { action: "ranking-cancel", target: "ranking_policy" });
   revalidatePath("/admin/ranking");
 }

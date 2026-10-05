@@ -19,6 +19,7 @@ import { mergeWithDefaults, getSettings } from './settings';
 import { judgeStoredDocument, type AmbiguityCause, type RuleStep } from './rules';
 import { loadAgentJudgeInputs } from './admin-review-batch';
 import { lockFrontierIdentity } from './repository';
+import { adminAuditRow } from '@/lib/operations/admin-log';
 
 export const MAX_EVIDENCE_REFRESHES = 2;
 export const EVIDENCE_REFRESH_COOLDOWN_MS = 15 * 60_000;
@@ -350,8 +351,8 @@ export async function requeueResolvedCandidates(actor: string, limit = REVIEW_QU
         eq(crawlCandidates.decidedBy, 'auto'), notInArray(crawlCandidates.reason, [...HUMAN_ONLY_REASONS])))
       .returning({ id: crawlCandidates.id });
     if (!rows.length) return rows;
-    await tx.insert(operationsAudit).values({ actor, action: 'requeue-resolved', target: 'crawl_candidates',
-      detail: { requeued: rows.length, scanned: candidates.length } });
+    await tx.insert(operationsAudit).values(await adminAuditRow(actor, { action: 'requeue-resolved', target: 'crawl_candidates',
+      detail: { requeued: rows.length, scanned: candidates.length } }));
     await requestJob('crawl-judge', tx);
     return rows;
   });

@@ -4,6 +4,7 @@ import { jobs, operationsObservations, operationsAudit, categoryDecisions } from
 import { JOB_NAMES } from '@/lib/jobs/catalog';
 import { requestJob } from '@/lib/jobs/control';
 import { serviceInstancesFromObservations } from './instance';
+import { adminAuditRow } from './admin-log';
 export async function requestAdminJob(name:string,actor:string) {
   if(name==='heartbeat'||!JOB_NAMES.includes(name))throw new Error('실행 요청할 수 없는 작업입니다.');
   return db.transaction(async tx=>{
@@ -12,7 +13,7 @@ export async function requestAdminJob(name:string,actor:string) {
     if(job.requestedVersion>job.processedVersion)return '이미 예약된 작업입니다.';
     if(job.lastRunAt && Date.now()-job.lastRunAt.getTime()<30_000)return '최근 실행된 작업입니다. 30초 후 다시 요청해주세요.';
     await requestJob(name,tx);
-    await tx.insert(operationsAudit).values({actor,action:'request-job',target:name,detail:{}});
+    await tx.insert(operationsAudit).values(await adminAuditRow(actor,{action:'request-job',target:name}));
     return '실행 요청을 기록했습니다. 담당 워커가 순서대로 처리합니다.';
   });
 }

@@ -1,18 +1,20 @@
 import { beforeAll, beforeEach, expect, it } from "vitest";
 import { eq, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { crawlCandidates, crawlDocuments, crawlFrontier, crawlSettings, jobs, operationsAudit, products } from "@/lib/db/schema";
+import { crawlCandidates, crawlDocuments, crawlFrontier, crawlSettings, jobs, products } from "@/lib/db/schema";
 import { getSettings, resetSettings, saveSettings } from "@/lib/crawl/settings";
 import { requeueResolvedCandidates } from "@/lib/crawl/admin-review";
 import { pipelineFlow } from "@/lib/operations/pipeline";
-import { ensureSchema, resetTables } from "./setup";
+import { auditFloor, auditRowsAfter, ensureSchema, resetTables } from "./setup";
 
 beforeAll(ensureSchema);
+let floor = 0;
 beforeEach(async () => {
   await resetTables();
-  for (const table of [crawlCandidates, crawlDocuments, crawlFrontier, crawlSettings, jobs, operationsAudit]) {
+  for (const table of [crawlCandidates, crawlDocuments, crawlFrontier, crawlSettings, jobs]) {
     await db.delete(table);
   }
+  floor = await auditFloor();
 });
 
 it.each(["needs_review", "approved"] as const)("does not requeue or count a concurrent admin decision in state %s", async (state) => {
@@ -41,7 +43,7 @@ it.each(["needs_review", "approved"] as const)("does not requeue or count a conc
   expect(await requeue!).toMatchObject({ scanned: 1, requeued: 0, byReason: [] });
   expect(await db.query.crawlCandidates.findFirst({ where: eq(crawlCandidates.id, candidate.id) }))
     .toMatchObject({ state, decidedBy: "admin" });
-  expect(await db.select().from(operationsAudit)).toHaveLength(0);
+  expect(await auditRowsAfter(floor, 'requeue-resolved')).toHaveLength(0);
   expect(await db.select().from(jobs)).toHaveLength(0);
 });
 

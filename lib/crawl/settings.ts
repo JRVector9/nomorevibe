@@ -1,7 +1,8 @@
 import { eq } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { crawlSettings, productEvidenceAudit } from "@/lib/db/schema";
+import { crawlSettings, operationsAudit, productEvidenceAudit } from "@/lib/db/schema";
 import { logger } from "@/lib/observability/logger";
+import { adminAuditRow, settingsChanges } from "@/lib/operations/admin-log";
 import {
   crawlSettingsSchema,
   DEFAULT_CRAWL_SETTINGS,
@@ -103,7 +104,10 @@ export async function saveSettings(patch: unknown, updatedBy: string): Promise<S
 
   const parsed = crawlSettingsSchema.safeParse(next);
   if (!parsed.success) {
-    return { ok: false, issues: parsed.error.issues.map((i) => `${i.path.join(".") || "설정"}: ${i.message}`) };
+    const issues = parsed.error.issues.map((i) => `${i.path.join(".") || "설정"}: ${i.message}`);
+    await tx.insert(operationsAudit).values(await adminAuditRow(updatedBy, { action: "settings-save", target: "crawl_settings",
+      detail: { changes: settingsChanges(current, next) }, ok: false, error: issues.join(" · ") }));
+    return { ok: false, issues };
   }
 
   await tx
@@ -116,6 +120,8 @@ export async function saveSettings(patch: unknown, updatedBy: string): Promise<S
 
   // 기준이 바뀌면 수집 결과가 바뀐다. 나중에 "왜 이때부터 달라졌지"를 되짚을 수 있어야 한다.
   logger.info("crawl.settings_saved", { updatedBy, enabled: parsed.data.enabled });
+  await tx.insert(operationsAudit).values(await adminAuditRow(updatedBy, { action: "settings-save", target: "crawl_settings",
+    detail: { changes: settingsChanges(current, parsed.data) } }));
   return { ok: true, settings: parsed.data };
   });
 }
@@ -145,6 +151,8 @@ export async function changeReviewMode(input: {
       .where(eq(crawlSettings.id, ROW_ID));
     await tx.insert(productEvidenceAudit).values({ slug: null, actor: input.actor, action: "admin.crawl.review_mode",
       reason: input.reason, metadata: { before: current.reviewMode, after: input.mode } });
+    await tx.insert(operationsAudit).values(await adminAuditRow(input.actor, { action: "review-mode", target: "crawl_settings",
+      detail: { before: current.reviewMode, after: input.mode, reason: input.reason } }));
     return { ok: true, settings };
   });
 }

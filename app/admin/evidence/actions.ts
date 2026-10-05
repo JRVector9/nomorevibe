@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { currentAdmin } from "@/lib/auth/admin";
 import { saveEvidenceSettingsValue } from "@/lib/domain/evidence/admin";
 import { evidenceSettingsSchema } from "@/lib/domain/evidence/settings";
+import { recordAdminAction } from "@/lib/operations/admin-log";
 
 export type EvidenceActionState = {
   ok?: true;
@@ -46,6 +47,7 @@ export async function saveEvidenceSettings(
   }
 
   await saveEvidenceSettingsValue(parsed.data, admin.login);
+  await recordAdminAction(admin.login, { action: "evidence-settings", target: "evidence_settings", detail: { values: parsed.data } });
   revalidatePath("/admin/evidence");
   revalidatePath("/admin/status");
   return { ok: true };

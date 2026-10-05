@@ -1,7 +1,7 @@
 import { afterEach, beforeAll, expect, it, vi } from "vitest";
 import { eq } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { githubCollectorAccounts, operationsAudit } from "@/lib/db/schema";
+import { githubCollectorAccounts } from "@/lib/db/schema";
 import { collectorTokens, listGitHubCollectorAccounts, saveGitHubCollectorAccount, setGitHubCollectorAccountEnabled } from "@/lib/crawl/github-accounts";
 import { ensureSchema } from "./setup";
 
@@ -10,7 +10,7 @@ beforeAll(() => ensureSchema());
 afterEach(async () => {
   vi.unstubAllGlobals(); vi.unstubAllEnvs();
   await db.delete(githubCollectorAccounts).where(eq(githubCollectorAccounts.userId, userId));
-  await db.delete(operationsAudit).where(eq(operationsAudit.target, String(userId)));
+  // 작업 로그는 지울 수 없다(0056) — 남은 줄은 다른 테스트와 겹치지 않는 대상 id 라 그대로 둔다
 });
 
 function githubIdentity() {

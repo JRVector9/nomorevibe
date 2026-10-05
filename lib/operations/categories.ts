@@ -4,6 +4,7 @@ import { db } from '@/lib/db';
 import { categoryDecisions, crawlCandidates, crawlDocuments, operationsAudit, type CrawlCandidate, type CrawlDocument } from '@/lib/db/schema';
 import { CATEGORIES, type Category } from '@/lib/domain/products/schema';
 import { requestJob } from '@/lib/jobs/control';
+import { adminAuditRow } from './admin-log';
 
 export function categorySourceHash(candidate: CrawlCandidate, document: CrawlDocument) {
   return createHash('sha256').update(JSON.stringify([candidate,document,CATEGORIES])).digest('hex');
@@ -38,7 +39,7 @@ export async function setManualCategory(input:{repo:string;sourceHash:string;cat
     if(!c||!d||c.state!=='approved'||categorySourceHash(c,d)!==input.sourceHash)throw new Error('후보 또는 출처가 변경되었습니다. 새로고침 후 다시 확인해주세요.');
     const values={sourceHash:input.sourceHash,category:input.category,reason:input.reason.trim(),actor:input.actor,retryAt:sql`now()`,updatedAt:sql`clock_timestamp()`};
     await tx.insert(categoryDecisions).values({repo:input.repo,...values}).onConflictDoUpdate({target:categoryDecisions.repo,set:{...values,revision:sql`${categoryDecisions.revision}+1`}});
-    await tx.insert(operationsAudit).values({actor:input.actor,action:'manual-category',target:input.repo,detail:{category:input.category,reason:input.reason,sourceHash:input.sourceHash}});
+    await tx.insert(operationsAudit).values(await adminAuditRow(input.actor,{action:'manual-category',target:input.repo,detail:{category:input.category,reason:input.reason,sourceHash:input.sourceHash}}));
     await requestJob('crawl-publish',tx);
   });
 }

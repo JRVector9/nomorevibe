@@ -9,6 +9,7 @@ import { isDismissReason } from "@/lib/domain/products/takedown-view";
 import { banProduct, unbanProduct } from "@/lib/domain/products/manage";
 import { markClaimInvited } from "@/lib/domain/products/claim-invite";
 import { logger } from "@/lib/observability/logger";
+import { recordAdminAction, recordAdminActions, type AdminLogEntry } from "@/lib/operations/admin-log";
 import { MAX_BULK_DECISIONS, parseSelection, type BulkReviewState } from "./review/contract";
 
 export type SaveState = { ok?: true; issues?: string[] } | null;
@@ -130,16 +131,21 @@ export async function decideCrawlCandidate(_prev: ReviewState, form: FormData): 
   const decision = String(form.get("decision") ?? "");
   if (decision !== "approve" && decision !== "reject") return { error: "알 수 없는 결정입니다" };
 
+  const repo = String(form.get("repo") ?? "");
+  const reason = String(form.get("reason") ?? "");
+  const note = String(form.get("note") ?? "");
   const result = await decideCandidate({
-    repo: String(form.get("repo") ?? ""),
+    repo,
     decision: decision as ReviewDecision,
-    reason: String(form.get("reason") ?? ""),
+    reason,
     admin: admin.login,
-    note: String(form.get("note") ?? ""),
+    note,
     inputHash: String(form.get("inputHash") ?? ""),
     sourceRevisionHash: String(form.get("sourceRevisionHash") ?? ""),
     candidateRevisionHash: String(form.get("candidateRevisionHash") ?? ""),
   });
+  await recordAdminAction(admin.login, { action: `candidate-${decision}`, target: repo, detail: { reason, note },
+    ok: result.ok, error: result.ok ? null : result.message });
   if (!result.ok) {
     logger.warn("admin.review_rejected", { login: admin.login, message: result.message });
     return { error: result.message };
@@ -174,6 +180,8 @@ export async function decideCrawlCandidates(_prev: BulkReviewState, form: FormDa
   }
 
   const failures: { repo: string; message: string }[] = [];
+  const reason = String(form.get("reason") ?? "");
+  const entries: AdminLogEntry[] = [];
   let ok = 0;
   for (const packed of selected) {
     const parsed = parseSelection(packed);
@@ -183,12 +191,15 @@ export async function decideCrawlCandidates(_prev: BulkReviewState, form: FormDa
     }
     const { repo, inputHash, sourceRevisionHash, candidateRevisionHash } = parsed;
     const result = await decideCandidate({
-      repo, decision: decision as ReviewDecision, reason: String(form.get("reason") ?? ""),
+      repo, decision: decision as ReviewDecision, reason,
       admin: admin.login, note, inputHash, sourceRevisionHash, candidateRevisionHash,
     });
     if (result.ok) ok++;
     else failures.push({ repo, message: result.message });
+    entries.push({ action: `candidate-${decision}`, target: repo, detail: { reason, note, bulk: selected.length },
+      ok: result.ok, error: result.ok ? null : result.message });
   }
+  await recordAdminActions(admin.login, entries);
 
   logger.info("admin.review_bulk", { login: admin.login, decision, ok, failed: failures.length });
   revalidatePath("/admin/review");
@@ -209,10 +220,13 @@ export async function resolveTakedownRequest(_prev: ReviewState, form: FormData)
   if (action !== "remove" && action !== "dismiss") return { error: "알 수 없는 결정입니다" };
 
   const dismissReason = form.get("dismissReason");
-  const result = await resolveTakedown(String(form.get("slug") ?? ""), action as TakedownAction, admin.login, {
+  const slug = String(form.get("slug") ?? "");
+  const result = await resolveTakedown(slug, action as TakedownAction, admin.login, {
     dismissReason: isDismissReason(dismissReason) ? dismissReason : null, note: String(form.get("note") ?? "") || null,
   });
   if (!result.ok) {
+    // 처리한 것은 처리 트랜잭션이 기록한다. 못 한 것만 여기서 남긴다
+    await recordAdminAction(admin.login, { action: `takedown-${action}`, target: slug, ok: false, error: result.error.kind });
     logger.warn("admin.takedown_rejected", { login: admin.login, error: result.error });
     return { error: "요청을 처리하지 못했습니다" };
   }
@@ -245,6 +259,8 @@ export async function resolveTakedownRequests(_prev: BulkTakedownState, form: Fo
   const result = await resolveTakedowns(slugs, action as TakedownAction, admin.login, {
     dismissReason: isDismissReason(dismissReason) ? dismissReason : null, note: String(form.get("note") ?? "") || null,
   });
+  await recordAdminActions(admin.login, result.failed.map((item) => ({ action: `takedown-${action}`, target: item.slug,
+    detail: { bulk: slugs.length }, ok: false, error: item.message })));
   logger.info("admin.takedown_bulk", { login: admin.login, action, done: result.done.length, failed: result.failed.length });
   revalidateTakedownViews();
   return { done: result.done.length, failed: result.failed };
@@ -286,6 +302,7 @@ export async function setProductBan(_prev: ReviewState, form: FormData): Promise
   if (action !== "ban" && action !== "unban") return { error: "알 수 없는 결정입니다" };
 
   const result = action === "ban" ? await banProduct(slug) : await unbanProduct(slug);
+  await recordAdminAction(admin.login, { action: `product-${action}`, target: slug, ok: result.ok, error: result.ok ? null : result.error.kind });
   if (!result.ok) return { error: "제품을 찾을 수 없습니다" };
 
   logger.info("admin.product_ban", { slug, action, login: admin.login });
@@ -315,11 +332,15 @@ export async function banProducts(_prev: BulkBanState, form: FormData): Promise<
 
   let ok = 0;
   const failures: string[] = [];
+  const entries: AdminLogEntry[] = [];
   for (const slug of slugs) {
     const result = await banProduct(slug);
     if (result.ok) ok += 1;
     else failures.push(slug);
+    entries.push({ action: "product-ban", target: slug, detail: { from: "recheck", bulk: slugs.length },
+      ok: result.ok, error: result.ok ? null : result.error.kind });
   }
+  await recordAdminActions(admin.login, entries);
 
   logger.info("admin.product_ban_bulk", { login: admin.login, ok, failed: failures.length });
   revalidatePath("/admin/products");
@@ -339,6 +360,7 @@ export async function markClaimInvite(_prev: ReviewState, form: FormData): Promi
 
   const slug = String(form.get("slug") ?? "");
   const result = await markClaimInvited(slug);
+  await recordAdminAction(admin.login, { action: "claim-invite", target: slug, ok: result.ok, error: result.ok ? null : result.error.kind });
   if (!result.ok) {
     return { error: result.error.kind === "forbidden" ? result.error.message : "제품을 찾을 수 없습니다" };
   }
