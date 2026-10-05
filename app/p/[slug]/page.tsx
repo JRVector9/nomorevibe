@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { BuildTools } from "@/components/product-detail/BuildTools";
-import { EvidenceCard } from "@/components/product-detail/EvidenceCard";
+import { DetailEntry } from "@/components/product-detail/DetailEntry";
 import { FactsStrip } from "@/components/product-detail/FactsStrip";
 import { InfoCard } from "@/components/product-detail/InfoCard";
 import { IntroSection } from "@/components/product-detail/IntroSection";
@@ -43,6 +43,7 @@ export default async function ProductPage({ params }: Props) {
 
   return (
     <main className="wrap pb-14">
+      <DetailEntry slug={slug} />
       <nav aria-label="경로" className="flex items-center gap-2 pt-4 text-[13px] text-fg-3">
         <Link href="/" className="shrink-0 hover:text-fg">발견하기</Link>
         <span aria-hidden>›</span>
@@ -73,7 +74,6 @@ export default async function ProductPage({ params }: Props) {
         <aside id="evidence" className="flex min-w-0 flex-[1_1_300px] flex-col gap-4">
           <InfoCard product={detail.product} repository={detail.repository} freshness={detail.freshness} unclaimed={detail.unclaimed} />
           <PreviewFigure product={detail.product} media={detail.media} />
-          <EvidenceCard links={detail.links} freshness={detail.freshness} />
           {detail.unclaimed && (
             <UnclaimedOwnerContact repoUrl={detail.product.repoUrl} slug={detail.product.slug} installable={detail.product.accessMode === "installable"} />
           )}

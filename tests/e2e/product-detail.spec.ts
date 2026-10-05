@@ -1,4 +1,7 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
+import { eq } from "drizzle-orm";
+import { db } from "@/lib/db";
+import { products } from "@/lib/db/schema";
 import {
   PRODUCT_DETAIL_FIXTURES,
   seedProductDetailFixtures,
@@ -212,7 +215,7 @@ test("rich desktop profile shows objective evidence and behaves without provider
   await expect(page.getByRole("heading", { name: "Evidence Studio" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "무엇으로 만들었나" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "정보", exact: true })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "근거", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "근거", exact: true })).toHaveCount(0);
   await expect(page.getByText("최근 push", { exact: true })).toBeVisible();
   // 유입은 실제로 잰 값이 있을 때만 일곱째 칸으로 나온다
   await expect(page.getByText("유효 방문 · 최근 7일")).toBeVisible();
@@ -253,7 +256,7 @@ test("mobile profile keeps the approved reading order and visible core content",
   const observed = observePage(page);
   await gotoProduct(page, PRODUCT_DETAIL_FIXTURES.rich);
 
-  // 히어로 → 핵심 사실 → 무엇으로 만들었나 → 소개 → 업데이트 → 정보 → 근거 (오른쪽 열은 본문 아래로)
+  // 히어로 → 핵심 사실 → 무엇으로 만들었나 → 소개 → 업데이트 → 정보 (오른쪽 열은 본문 아래로)
   const readingOrder = (name: string) => [
     page.getByRole("heading", { level: 1, name }),
     page.getByText("최근 push", { exact: true }),
@@ -261,7 +264,6 @@ test("mobile profile keeps the approved reading order and visible core content",
     page.getByRole("heading", { name: "소개", exact: true }),
     page.getByRole("heading", { name: /^업데이트/ }),
     page.getByRole("heading", { name: "정보", exact: true }),
-    page.getByRole("heading", { name: "근거", exact: true }),
   ];
   await expectReadingOrder(readingOrder("Evidence Studio"));
   await expectViewportContract(page);
@@ -272,7 +274,7 @@ test("mobile profile keeps the approved reading order and visible core content",
   expect(observed.pageErrors).toEqual([]);
   await page.screenshot({ path: "/private/tmp/nomorevibe-product-rich-mobile.png", fullPage: true });
 
-  // 운영자 안내는 저장소가 있는 미클레임 제품에만 — 근거 다음에 온다.
+  // 운영자 안내는 저장소가 있는 미클레임 제품에만 — 미리보기 다음에 온다.
   // 같은 분야 '지금 뜨는' 줄은 fixture 에 스타가 는 제품이 없어 나오지 않는다.
   await gotoProduct(page, PRODUCT_DETAIL_FIXTURES.installable);
   await expectReadingOrder([...readingOrder("Editor Plugin"), page.getByText("이 프로젝트의 운영자인가요?")]);
@@ -291,7 +293,9 @@ test("collecting, stale-conflict, and unclaimed states remain explicit", async (
 
   await gotoProduct(page, PRODUCT_DETAIL_FIXTURES.staleConflict);
   await expect(page.getByRole("heading", { name: "Conflict Lens" })).toBeVisible();
-  await expect(page.getByText(/확인 필요/).first()).toBeVisible();
+  // 사용자가 제거한 근거 요약은 사라지고, 개별 충돌·연결·접속 상태는 아래에서 확인한다.
+  await expect(page.getByRole("heading", { name: "근거", exact: true })).toHaveCount(0);
+  await expect(page.getByText("확인 필요 1", { exact: true })).toHaveCount(0);
   const license = page.getByText("라이선스", { exact: true }).locator("..");
   await expect(license).toContainText("정보 충돌");
   await expect(license).toContainText("메이커 MIT · 저장소 GPL-3.0 — 두 값을 모두 확인하세요");
@@ -312,4 +316,53 @@ test("collecting, stale-conflict, and unclaimed states remain explicit", async (
   expect(observed.externalRequests).toEqual([]);
   expect(observed.consoleErrors).toEqual([]);
   expect(observed.pageErrors).toEqual([]);
+});
+
+test("unclaimed owner guidance keeps one sidebar profile and accepts a takedown request", async ({ page }) => {
+  await db.update(products).set({ repoUrl: "https://github.com/example/open-seed" })
+    .where(eq(products.slug, PRODUCT_DETAIL_FIXTURES.unclaimed));
+  const observed = observePage(page);
+  await gotoProduct(page, PRODUCT_DETAIL_FIXTURES.unclaimed);
+
+  const sidebar = page.getByRole("complementary").filter({
+    has: page.getByRole("heading", { name: "정보", exact: true }),
+  });
+  await expect(sidebar.getByRole("link", { name: "@example ↗", exact: true })).toHaveCount(1);
+  await expect(sidebar.getByRole("heading", { name: "운영 주체와 연락", exact: true })).toHaveCount(0);
+  await expect(sidebar.getByRole("heading", { name: "이 프로젝트의 운영자인가요?", exact: true })).toBeVisible();
+  await expect(sidebar.locator("code")).toHaveText("/nomorevibe verify");
+
+  const request = sidebar.locator("summary", { hasText: "목록에서 내려달라고 요청하기" });
+  await expect(request).toBeVisible();
+  expect((await request.boundingBox())?.height).toBeGreaterThanOrEqual(44);
+  await request.click();
+  await sidebar.getByPlaceholder("이유를 적어주셔도 되고, 비워두셔도 됩니다").fill("브라우저 테스트 요청");
+  await sidebar.getByRole("button", { name: "요청 보내기", exact: true }).click();
+  await expect(sidebar.getByText("요청을 받았습니다. 확인 후 내려드리겠습니다.", { exact: true })).toBeVisible();
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expectViewportContract(page);
+  expect(observed.externalRequests).toEqual([]);
+  expect(observed.consoleErrors).toEqual([]);
+  expect(observed.pageErrors).toEqual([]);
+});
+
+
+test("mobile detail starts at the top after navigation, history return, and reload", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await gotoProduct(page, PRODUCT_DETAIL_FIXTURES.rich);
+  await page.evaluate(() => window.scrollTo(0, 900));
+  await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(900);
+  await page.locator(".brand").click();
+  await expect(page).toHaveURL(/\/$/);
+  await page.goBack();
+  await expect(page.getByRole("heading", { level: 1, name: "Evidence Studio" })).toBeVisible();
+  await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(0);
+
+  await page.evaluate(() => window.scrollTo(0, 900));
+  await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(900);
+  await page.reload();
+  await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(0);
+  await expect(page.getByRole("navigation", { name: "경로", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "근거", exact: true })).toHaveCount(0);
 });

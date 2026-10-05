@@ -29,7 +29,7 @@ test('wide repository wordmarks remain fully visible in covers and icons',async(
  await db.update(ogImages).set({data}).where(inArray(ogImages.slug,['thumbnail-e2e-repository-image']));
  const ogImage='/api/og-cache/thumbnail-e2e-repository-image?thumbnail=repository_image&w=512&h=128&v=2';
  await page.goto('/');
- // Render outside Playwright's component transform so the real React markup reaches the browser.
+ // 실제 React 마크업으로 커버와 아이콘의 원본 비율을 확인한다.
  const html=execFileSync(process.execPath,['--import','tsx','--input-type=module','-e',`
   import React from 'react';import{renderToStaticMarkup}from'react-dom/server';globalThis.React=React;
   const{ProjectTile}=await import('./components/home/ProjectTile.tsx');const{ProductIcon}=await import('./components/ProductIcon.tsx');
@@ -40,6 +40,28 @@ test('wide repository wordmarks remain fully visible in covers and icons',async(
  await page.evaluate(html=>{const host=document.createElement('div');host.innerHTML=html;document.body.prepend(host)},html);
  const images=page.locator('#wide-logo-check img');await expect(images).toHaveCount(2);
  for(const img of await images.all()){await expect(img).toBeVisible();await expect.poll(()=>img.evaluate((e:HTMLImageElement)=>e.complete&&e.naturalWidth===512)).toBe(true);expect(await img.evaluate(e=>getComputedStyle(e).objectFit)).toBe('contain');}
- expect((await images.first().boundingBox())!.height).toBeLessThanOrEqual(128);
+ const cover = await images.first().boundingBox();
+ expect(cover!.width).toBe(360);
+ expect(await images.first().evaluate(e=>getComputedStyle(e).objectFit)).toBe('contain');
+ expect((await images.last().boundingBox())!.width).toBe(48);
  await page.locator('#wide-logo-check').screenshot({path:'/tmp/nomorevibe-thumbnail-wide-logo.png'});
+});
+
+test('public-page representative images fill home thumbnails without changing the grid',async({page})=>{
+ await page.setViewportSize({width:390,height:844});
+ await page.goto('/?sort=recent&q=Thumbnail+og');
+ const card=page.locator('.project-card').filter({hasText:'Thumbnail og'});
+ const image=card.locator('.project-tile img');
+ await expect(image).toHaveAttribute('src',/thumbnail=og/);
+ await expect.poll(()=>image.evaluate((e:HTMLImageElement)=>e.complete&&e.naturalWidth>0)).toBe(true);
+ await expect(card).toBeVisible();
+ await expect.poll(async()=>{
+  const cardBox=await card.boundingBox(),imageBox=await image.boundingBox();
+  return cardBox&&imageBox?imageBox.width/cardBox.width:0;
+ }).toBeGreaterThan(0.9);
+ const imageBox=await image.boundingBox();
+ expect(imageBox!.height).toBeGreaterThan(150);
+ expect(await image.evaluate(e=>getComputedStyle(e).objectFit)).toBe('contain');
+ expect(await page.locator('.projects-grid').evaluate(e=>getComputedStyle(e).display)).toBe('grid');
+ expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
 });

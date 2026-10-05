@@ -15,6 +15,7 @@ import {
 } from "../repository";
 import { relationshipState } from "../relationship";
 import { insertUpdateCandidates } from "../updates";
+import { fetchPushActivity, type PushActivity } from "./github-activity";
 
 export const CONTRIBUTOR_COUNT_CAP = 500;
 const README_BYTES_CAP = 256 * 1024;
@@ -25,6 +26,7 @@ const RELEASE_LIMIT = 10;
 const RELEASE_PAGE_LIMIT = 10;
 
 type RepositoryPayload = {
+  id?: number;
   html_url: string;
   full_name: string;
   created_at: string;
@@ -54,9 +56,11 @@ type ReadmePayload = { html_url?: string; content?: string; encoding?: string };
 export type GitHubRepositoryFacts = {
   type: "github_repository";
   repositoryKey: string;
+  repositoryId?: number;
   repositoryUrl: string;
   createdAt: string;
   pushedAt: string | null;
+  pushActivity?: PushActivity | null;
   updatedAt: string;
   stars: number;
   forks: number;
@@ -158,6 +162,8 @@ export function mapGitHubRepositoryFacts(input: {
   return {
     type: "github_repository",
     repositoryKey: input.repository.full_name.toLowerCase(),
+    ...(typeof input.repository.id === "number" && Number.isSafeInteger(input.repository.id) && input.repository.id > 0
+      ? { repositoryId: input.repository.id } : {}),
     repositoryUrl: input.repository.html_url,
     createdAt,
     pushedAt: iso(input.repository.pushed_at),
@@ -451,10 +457,13 @@ export async function refreshGitHubEvidence(
     kind: "repository",
     sourceKey: repositoryKey,
   });
-  const root = await request(`/repos/${repositoryKey}`, {
+  // 숫자 ID가 없는 과거 관측은 본문을 다시 받아 활동 페이지의 저장소를 확인한다.
+  const id = current?.normalizedFacts?.repositoryId;
+  const hasRepositoryId = typeof id === "number" && Number.isSafeInteger(id) && id > 0;
+  const root = await request(`/repos/${repositoryKey}`, hasRepositoryId ? {
     etag: current?.etag,
     lastModified: current?.lastModified,
-  });
+  } : {});
 
   const log = (outcome: string, httpClass: string, count: number) => dependencies.log?.(
     "evidence.github_refresh",
@@ -545,6 +554,11 @@ export async function refreshGitHubEvidence(
     }),
     siteObservedRepository({ slug: input.slug, repositoryKey }),
   ]);
+  facts.pushActivity = await fetchPushActivity(request, repositoryKey, now, hasBudget, facts.repositoryId);
+  if (!hasBudget()) {
+    log("budget_exhausted", "budget", 0);
+    return { status: "budget_exhausted", releases: 0 };
+  }
   facts.relationshipState = relationshipState({
     makerDeclared,
     siteLinksRepository,

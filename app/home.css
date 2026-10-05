@@ -55,8 +55,8 @@ button {
 
 /* 타일 */
 .project-tile { display: flex; align-items: center; justify-content: center; position: relative; width: 100%; }
-.tile-64 { height: 112px; }
-.tile-44 { height: 84px; }
+.tile-64, .tile-44 { aspect-ratio: 16 / 9; }
+.tile-preview { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
 .tile-paper { background: #f2f2f7; } .tile-day { background: #eef3fb; } .tile-invoice { background: #f5efe8; }
 .tile-form { background: #edf5ef; } .tile-hue { background: #f6eef3; } .tile-note { background: #f0eff8; }
 .tile-icon img, .tile-icon > span { border-radius: 15px; border: 0; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1); background: white; }
@@ -102,6 +102,14 @@ button {
 .project-meta a { color: var(--text-2); }
 .meta-down { color: var(--down); }
 
+/* 기존 카드 메타 아래에 확인된 업데이트·푸시만 붙인다. */
+.card-intro-source { margin: 0; font-size: 13px; line-height: 1.5; color: var(--text-2); }
+.card-activity { margin: 8px 0 0; display: grid; gap: 4px; font-size: 13px; line-height: 1.5; font-variant-numeric: tabular-nums; }
+.card-activity > div { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.card-activity dt { color: var(--text-2); flex-shrink: 0; }
+.card-activity dd { margin: 0; color: var(--text); text-align: right; }
+.card-activity time span { white-space: nowrap; }
+
 /* 순위 행 — 인기 구간·활발한 목록이 같이 쓴다 */
 .rank-list, .tier-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
 .rank-row { display: grid; grid-template-columns: 18px 28px minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 9px 0; border-top: 1px solid var(--border); }
@@ -123,6 +131,9 @@ button {
 /* 도구·활발한 두 칸 */
 .two-col { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(420px, 100%), 1fr)); gap: 40px 48px; padding: 48px 0; }
 .tools-board, .active-list { display: flex; flex-direction: column; gap: 12px; }
+.tools-board .chip { height: 44px; }
+.tools-board .chip-dark, .tools-board .chip-dark:hover { color: var(--bg-card); }
+.tools-board .chip-dark .chip-count { color: color-mix(in srgb, var(--bg-card) 60%, var(--text)); }
 
 /* 회색 띠는 화면 끝까지 칠한다(시안). 그림자는 스크롤 폭을 늘리지 않는다 */
 .popular-section, .news-band { box-shadow: 0 0 0 100vmax var(--bg-soft); clip-path: inset(0 -100vmax); }

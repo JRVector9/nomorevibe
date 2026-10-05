@@ -23,6 +23,7 @@ const {
   getVerifiedList,
   getPublicList,
   getHomePulse,
+  getCrawlSettings,
 } = vi.hoisted(() => ({
   categoryCounts: vi.fn(),
   countProducts: vi.fn(),
@@ -33,7 +34,10 @@ const {
   getVerifiedList: vi.fn(),
   getPublicList: vi.fn(),
   getHomePulse: vi.fn(),
+  getCrawlSettings: vi.fn(),
 }));
+
+vi.mock("@/lib/crawl/settings", () => ({ getSettings: getCrawlSettings }));
 
 // HomeContent starts these independent loads too; never reach a database from a unit test.
 vi.mock("@/lib/news/repository", () => ({ listHomeNews: vi.fn().mockResolvedValue([]) }));
@@ -122,6 +126,7 @@ async function render(
 
 beforeEach(() => {
   vi.clearAllMocks();
+  getCrawlSettings.mockResolvedValue({ agentEvidence: { displayObservedFacts: true } });
   getCurrentSeason.mockResolvedValue(season);
   getUnclaimedList.mockResolvedValue([]);
   getVerifiedList.mockResolvedValue([]);
@@ -244,6 +249,25 @@ describe("미클레임 구획을 붙이는 기준", () => {
  * 커밋 cb64f25가 세운 불변식이다.
  */
 describe("빈 화면 문구", () => {
+  it("도구 흔적 필터는 목록·개수와 순위에 전달하고 첫 중복값만 쓰며 급상승 띠는 숨긴다", async () => {
+    countProducts.mockResolvedValue(25);
+    await render({ observedTool: ["Claude Code", "Codex"] });
+    expect(getSeasonRanking).toHaveBeenCalledWith(expect.objectContaining({ observedTool: "Claude Code" }));
+    expect(countProducts).toHaveBeenCalledWith(expect.objectContaining({ statuses: ["verified", "seeded"], observedTool: "Claude Code" }));
+    expect(getPublicList).not.toHaveBeenCalled();
+
+    await render({ sort: "recent", observedTool: "Codex" });
+    expect(getPublicList).toHaveBeenCalledWith(9, expect.objectContaining({ observedTool: "Codex" }));
+  });
+
+  it("관찰 사실 공개가 꺼져 있으면 직접 입력한 흔적 필터도 적용하지 않는다", async () => {
+    getCrawlSettings.mockResolvedValue({ agentEvidence: { displayObservedFacts: false } });
+    countProducts.mockResolvedValue(25);
+    const html = await render({ observedTool: "Codex", sort: "recent" });
+    expect(getCrawlSettings).toHaveBeenCalledOnce();
+    expect(getPublicList.mock.calls.every(([, options]) => options.observedTool === undefined)).toBe(true);
+    expect(html).not.toContain("observedTool=");
+  });
   it("중복 쿼리 값은 첫 값만 사용하고 500을 내지 않는다", async () => {
     countProducts.mockResolvedValue(25);
 

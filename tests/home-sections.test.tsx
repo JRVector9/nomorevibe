@@ -21,6 +21,17 @@ describe("홈 소개 줄", () => {
 });
 
 describe("무엇으로 만들었나", () => {
+  it("알약은 신고값 대신 도구 흔적을 거르고 현재 분야를 유지하며 더 보기 수를 초기화한다", () => {
+    const html = renderToStaticMarkup(createElement(ToolsBoard, {
+      tools: { scanned: 12, withTool: 10, rows: [{ label: "Claude Code", count: 9 }, { label: "Codex", count: 1 }] },
+      state: { sort: "recent", category: "Dev", observedTool: "Codex", shown: 18 },
+    }));
+    expect(html).toContain('href="/?sort=recent&amp;category=Dev&amp;observedTool=Claude+Code"');
+    expect(html).toContain('class="chip chip-dark" aria-current="true" href="/?sort=recent&amp;category=Dev&amp;observedTool=Codex"');
+    expect(html).not.toContain("metric=tools");
+    expect(html).not.toContain("builder=");
+    expect(html).not.toContain("shown=");
+  });
   it("도구 집계가 없으면 구획을 내지 않는다", () => {
     expect(renderToStaticMarkup(createElement(ToolsBoard, { tools: null, state: { sort: "weekly" } }))).toBe("");
   });

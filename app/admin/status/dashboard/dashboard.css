@@ -57,6 +57,8 @@
 .dash-pill[data-tone=bad]{background:color-mix(in srgb,var(--color-down) 12%,transparent);color:var(--color-down);border-color:transparent}
 .dash-pill[data-tone=acc]{background:color-mix(in srgb,var(--color-accent) 12%,transparent);color:var(--color-accent);border-color:transparent}
 .dash-chips{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.ops-center button.dash-reconnect{min-height:44px;min-width:44px;font-size:13px;border-radius:999px;white-space:normal;text-align:left}
+.codex-settings-link{display:inline-flex;align-items:center;min-height:44px;font-size:14px;color:var(--accent-ink)}
 
 /* 표 */
 .dash-table{width:100%;border-collapse:collapse;font-size:13px}

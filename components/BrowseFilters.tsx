@@ -22,7 +22,7 @@ const TABS = [
 ] as const;
 
 function resultLabel(state: BrowseState): string {
-  if (state.query || state.category || state.builder) return "검색 결과";
+  if (state.query || state.category || state.builder || state.observedTool) return "검색 결과";
   if (state.sort === "weekly") return "에디터 추천";
   if (state.sort === "recent") return "최신";
   if (state.sort === "all-time") return "관심 많은 순";
@@ -45,7 +45,7 @@ export function BrowseFilters({
   /** 순위 탭이 다른 목록을 대신 보여줄 때 그 목록의 이름 — 정렬 이름과 내용이 어긋나면 안 된다 */
   listLabel?: string;
 }) {
-  const narrowed = Boolean(state.query || state.category || state.builder);
+  const narrowed = Boolean(state.query || state.category || state.builder || state.observedTool);
   const label = listLabel && !narrowed ? listLabel : resultLabel(state);
   const categories = CATEGORIES.filter((category) => (counts[category] ?? 0) > 0 || state.category === category)
     .sort((a, b) => (counts[b] ?? 0) - (counts[a] ?? 0));
@@ -85,7 +85,7 @@ export function BrowseFilters({
           {total > 0 && !narrowed ? ` · 공개 ${total}개` : ""}
         </span>
         {narrowed && (
-          <Link href={hrefWith(state, { category: undefined, builder: undefined, query: undefined })} className="clear-filters show">
+          <Link href={hrefWith(state, { category: undefined, builder: undefined, observedTool: undefined, query: undefined })} className="clear-filters show">
             필터 초기화
           </Link>
         )}
