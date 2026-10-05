@@ -1,6 +1,6 @@
 'use client';
 
-import { useActionState } from 'react';
+import { useActionState, useEffect, useRef, useState } from 'react';
 import { decideCrawlCandidate, type ReviewState } from '../actions';
 import { approveWithTagline, collectCandidateEvidence } from './actions';
 import type { AdminReviewEntry } from '@/lib/crawl/admin-review';
@@ -59,6 +59,33 @@ export function ReviewDetail({ entry, reasons }: { entry: AdminReviewEntry; reas
   const stop = stoppedAt(candidate.signals);
   const facts = entryFacts(entry);
   const verdict = entry.review?.decision && entry.review.decision in VERDICT ? VERDICT[entry.review.decision as keyof typeof VERDICT] : null;
+  /*
+   * A/R — 판단 사유가 필수라 누르는 즉시 결정하지 않는다. 사유 칸으로 옮겨 가며 승인·거부를 미리 골라 두고,
+   * 사유를 적은 뒤 ⌘/Ctrl+Enter 로 보낸다. 상세는 후보마다 새로 그려져(key) 고른 것이 다음 후보로 넘어가지 않는다.
+   */
+  const [intent, setIntent] = useState<'approve' | 'reject' | null>(null);
+  const formRef = useRef<HTMLFormElement>(null);
+  const noteRef = useRef<HTMLTextAreaElement>(null);
+  useEffect(() => {
+    if (!canDecide) return;
+    function onKey(event: KeyboardEvent) {
+      const target = event.target as HTMLElement | null;
+      if (target && /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName)) return;
+      if (event.metaKey || event.ctrlKey || event.altKey) return;
+      if (event.key !== 'a' && event.key !== 'r') return;
+      event.preventDefault();
+      setIntent(event.key === 'a' ? 'approve' : 'reject');
+      noteRef.current?.focus();
+    }
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [canDecide]);
+  const submitIntent = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (!intent || event.key !== 'Enter' || !(event.metaKey || event.ctrlKey)) return;
+    event.preventDefault();
+    const button = formRef.current?.querySelector<HTMLButtonElement>(`button[name="decision"][value="${intent}"]`);
+    if (button) formRef.current?.requestSubmit(button);
+  };
 
   const identity = <>
     <input type="hidden" name="repo" value={candidate.repo} />
@@ -186,17 +213,23 @@ export function ReviewDetail({ entry, reasons }: { entry: AdminReviewEntry; reas
         <span className="ml-1.5 break-all font-mono text-fg-3">{stop.detail}</span>
       </p>}
 
-      {canDecide && <form action={action} className="rounded-lg border border-line bg-bg-soft p-3">
+      {canDecide && <form ref={formRef} action={action} className="rounded-lg border border-line bg-bg-soft p-3">
         {identity}
         <label className="block text-[13px] font-semibold">관리자 판단 사유
-          <textarea name="note" required maxLength={2000} rows={2} className="mt-1.5 block w-full rounded-lg border border-line bg-bg-card p-2 font-normal" />
+          <textarea ref={noteRef} name="note" required maxLength={2000} rows={2} onKeyDown={submitIntent}
+            className="mt-1.5 block w-full rounded-lg border border-line bg-bg-card p-2 font-normal" />
         </label>
+        <p className="mt-1 text-[13px] text-fg-3">
+          {intent ? `${intent === 'approve' ? '승인' : '거부'}으로 보냅니다 — 사유를 적고 ⌘/Ctrl + Enter` : 'A 승인 · R 거부 — 사유 칸으로 옮겨 갑니다'}
+        </p>
         <div className="mt-2 flex flex-wrap items-center gap-2">
-          <button name="decision" value="approve" disabled={pending || refreshing} className={`${button} border-up/40 bg-up/10 text-up`}>승인</button>
+          <button name="decision" value="approve" disabled={pending || refreshing}
+            className={`${button} border-up/40 bg-up/10 text-up ${intent === 'approve' ? 'ring-2 ring-up/40' : ''}`}>승인</button>
           <select name="reason" aria-label="거부 사유 유형" defaultValue={reasons[0]?.value} className="rounded-lg border border-line bg-bg-card px-2 py-1.5 text-[13px]">
             {reasons.map(reason => <option key={reason.value} value={reason.value}>{reason.label}</option>)}
           </select>
-          <button name="decision" value="reject" disabled={pending || refreshing} className={`${button} border-line bg-bg-card text-fg-2`}>거부</button>
+          <button name="decision" value="reject" disabled={pending || refreshing}
+            className={`${button} border-line bg-bg-card text-fg-2 ${intent === 'reject' ? 'ring-2 ring-down/40' : ''}`}>거부</button>
         </div>
         {state?.error && <p role="status" className="mt-2 text-[13px] text-down">{state.error}</p>}
       </form>}

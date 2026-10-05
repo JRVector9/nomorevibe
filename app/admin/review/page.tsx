@@ -12,13 +12,20 @@ import { BulkDecision } from "./BulkDecision";
 import { RequeueResolved } from "./RequeueResolved";
 import { ReviewConsole } from "./ReviewConsole";
 import { CAUSE_GUIDE, type CauseKey } from "./causes";
-import { heldStages, stageHref, STAGE_GROUPS, STAGE_KEYS, STAGE_STATE, type StageKey } from "./stages";
+import { heldStages, STAGE_GROUPS, STAGE_KEYS, STAGE_STATE, type StageKey } from "./stages";
 import { ListToolbar, UPDATED_DAYS, UPDATED_WINDOWS, type UpdatedWindow } from "./ListToolbar";
 import { pageWindow } from "../paging";
 import { publishedSecondReviews, secondReviewSummary } from "@/lib/crawl/second-review";
 import { PublishedSecondReviews } from "./PublishedSecondReviews";
 import { ReasonLanguageToggle } from "./ReasonText";
 import { translationProgress, translationsFor } from "@/lib/crawl/translations";
+import { modelHealth } from "@/lib/operations/dashboard";
+import { humanDecisions24h, taglineProgress, waitingAge } from "@/lib/crawl/review-overview";
+import { ReviewStatusChips } from "./ReviewStatusChips";
+import { ReviewStageRail } from "./ReviewStageRail";
+import { ReviewTodo, type TodoCard } from "./ReviewTodo";
+import "../status/dashboard/dashboard.css";
+import "./review.css";
 
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "심사 큐 — NoMoreVibe", robots: { index: false } };
@@ -68,6 +75,13 @@ export default async function ReviewPage({ searchParams }: { searchParams: Promi
     judge: stateCounts.new, ai: held.ids.ai.length, second: held.ids.second.length, agreed: held.ids.agreed.length,
     human: held.ids.human.length, publish: stateCounts.approved, published: stateCounts.published, rejected: stateCounts.rejected,
   };
+  // 머리 칩·할 일 카드의 숫자. 하나가 실패해도 큐는 그려야 하므로 각각 비운 채 넘긴다
+  const [models, human, humanAge, taglines] = await Promise.all([
+    modelHealth(settings).catch(() => null),
+    humanDecisions24h().catch(() => null),
+    waitingAge(held.ids.human).catch(() => null),
+    taglineProgress(causes.ids.get('no_description') ?? []).catch(() => null),
+  ]);
 
   /*
    * 구간과 세부 거르기는 겹쳐 고를 수 있다(겹치는 것만 남는다). 세부 거르기는 보류 안에서만 뜻이 있어,
@@ -101,20 +115,62 @@ export default async function ReviewPage({ searchParams }: { searchParams: Promi
     : count === 0 ? 'border-line bg-bg-card text-fg-3 hover:bg-bg-hover' : 'border-line bg-bg-card text-fg-2 hover:bg-bg-hover'}`;
   const resolved = causes.counts.find((row) => row.cause === "resolved");
 
+  const n = (value: number) => value.toLocaleString("ko-KR");
+  const causeCount = (key: CauseKey) => causes.counts.find((row) => row.cause === key)?.count ?? 0;
+  const todo: TodoCard[] = [
+    { key: 'agreed', title: '확정만 하면 됨 — 두 모델이 같은 결론', count: stageCount.agreed, tone: stageCount.agreed > 0 ? 'ok' : undefined,
+      detail: `훑어보고 한 번에 확정 · 거부 ${n(held.agreedReject)} · 승인 ${n(held.agreedApprove)}`, href: '/admin/review?stage=agreed#review-list' },
+    { key: 'human', title: '직접 판단 — 모델이 갈렸거나 표가 모자람', count: stageCount.human, tone: stageCount.human > 500 ? 'warn' : undefined,
+      detail: `2차 갈림 ${n(causeCount('second_review_split'))} · 재시도 소진 ${n(causeCount('ai_review_exhausted'))} · 오래된 것부터`,
+      href: '/admin/review?stage=human&sort=wait#review-list' },
+    { key: 'tagline', title: '소개 문구 없음', count: causeCount('no_description'),
+      detail: taglines ? `AI 소개 지음 ${n(taglines.written)} · 근거로는 모름 ${n(taglines.unknown)} · 실패 ${n(taglines.failed)} · 시도 전 ${n(taglines.untried)}`
+        : '페이지를 열어 한 줄로 적으면 그 소개로 승인합니다', href: '/admin/review?cause=no_description#review-list' },
+    { key: 'published', title: '공개분 확인 · 내려달라는 요청', count: seconds.counts.published + takedowns.length, tone: takedowns.length > 0 ? 'bad' : undefined,
+      detail: `2차가 공개분을 다시 본 것 ${n(seconds.counts.published)} · 요청 ${n(takedowns.length)}`, href: '/admin/review?second=published#review-list' },
+  ];
+  // 보류 이유는 꼬리가 길다 — 앞의 일곱 개(와 지금 고른 것)만 칩으로, 나머지는 펼침 목록으로
+  const CAUSE_CHIPS = 7;
+  const visibleCauses = causes.counts.filter((row, index) => index < CAUSE_CHIPS || row.cause === cause);
+  const moreCauses = causes.counts.filter((row) => !visibleCauses.includes(row));
+  const causeChip = ({ cause: key, count }: { cause: CauseKey; count: number }) => (
+    <Link key={key} href={query({ cause: cause === key ? undefined : key, state: undefined, page: 1 })}
+      title={CAUSE_GUIDE[key].summary} aria-current={cause === key ? 'page' : undefined} className={chip(cause === key, count)}>
+      {CAUSE_GUIDE[key].label} <span className="font-mono">{count.toLocaleString("ko-KR")}</span>
+    </Link>
+  );
+  const voters = settings.secondReview.voters.map((voter) => voter.model).join(', ');
+  const fallbacks = (settings.secondReview.fallbacks ?? []).map((voter) => voter.model).join(', ');
+  const listTitle = `${stage ? STAGE_GROUPS.flatMap(group => group.stages).find(item => item.key === stage)?.label : '심사 후보'} · ${total.toLocaleString("ko-KR")}건`;
+  const pagination = pages > 1 ? (
+    <nav aria-label="심사 목록 쪽 이동" className="ml-auto flex flex-wrap items-center gap-1 text-[13px]">
+      {page > 1 && <Link href={query({ page: page - 1 })} className="rounded-lg border border-line px-2.5 py-1">이전</Link>}
+      {pageWindow(page, pages).map((item, i) => item === null
+        ? <span key={`gap-${i}`} className="px-1 text-fg-3">…</span>
+        : <Link key={item} href={query({ page: item })} aria-current={item === page ? 'page' : undefined}
+            className={`min-w-8 rounded-lg border px-2.5 py-1 text-center font-mono ${item === page ? 'border-accent bg-accent text-white' : 'border-line text-fg-2'}`}>{item}</Link>)}
+      {page < pages && <Link href={query({ page: page + 1 })} className="rounded-lg border border-line px-2.5 py-1">다음</Link>}
+    </nav>
+  ) : null;
+
   return (
-    <main className="flex flex-col gap-2.5 pb-10 pt-6">
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-        <h1 className="text-[22px] font-extrabold tracking-tight">심사 큐</h1>
-        <span className="text-[13px] text-fg-3">
-          <Link href="/admin/review?state=needs_review" className="hover:text-fg">보류 {causes.total.toLocaleString("ko-KR")}건</Link>
-          {causes.truncated && ` 이상 (${REVIEW_QUEUE_SCAN_LIMIT.toLocaleString("ko-KR")}건까지 셈)`} · 이 조건 {total.toLocaleString("ko-KR")}건 · {page}/{pages}쪽
-          {(filtered || state !== 'pending' || q || updated) && <Link href="/admin/review" className="ml-2 text-fg-2 hover:text-fg">거르기 지우기</Link>}
-        </span>
-        <div className="ml-auto flex flex-wrap items-center gap-3">
+    <main className="rq">
+      <header className="rq-top">
+        <div className="l">
+          <h1 className="text-[22px] font-extrabold tracking-tight">심사 큐</h1>
+          <span className="text-[13px] text-fg-3">
+            <Link href="/admin/review?state=needs_review" className="hover:text-fg">보류 {causes.total.toLocaleString("ko-KR")}건</Link>
+            {causes.truncated && ` 이상 (${REVIEW_QUEUE_SCAN_LIMIT.toLocaleString("ko-KR")}건까지 셈)`} · 이 조건 {total.toLocaleString("ko-KR")}건 · {page}/{pages}쪽
+            {(filtered || state !== 'pending' || q || updated || sort) && <Link href="/admin/review" className="ml-2 text-accent hover:text-fg">거르기 지우기</Link>}
+          </span>
+        </div>
+        <div className="r">
           <ReasonLanguageToggle done={translation.done} total={translation.total} />
           <ReviewModeForm key={settings.reviewMode} mode={settings.reviewMode} ready={process.env.CRAWL_REVIEW_READY === 'true'} />
         </div>
-      </div>
+      </header>
+
+      <ReviewStatusChips models={models} human={human} publication={publicationChange} takedowns={takedowns.length} />
 
       {takedowns.length > 0 && (
         <section className="rounded-[12px] border border-down/40 bg-down/5 px-3 py-2">
@@ -128,57 +184,22 @@ export default async function ReviewPage({ searchParams }: { searchParams: Promi
         </section>
       )}
 
-      {/*
-        심사 구간 — 후보가 파이프라인의 어디에 서 있는가(stages.ts). 왼쪽에서 오른쪽으로 흐른다.
-        사람이 할 일은 4번 칸에 모인다. 칸은 겹치지 않아, 보류 칸들의 합이 보류 수다.
-      */}
-      <nav aria-label="심사 구간" className="grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
-        {STAGE_GROUPS.map((group) => (
-          <section key={group.step} aria-label={group.title} className="flex flex-col gap-1.5 rounded-[12px] border border-line bg-bg-card p-2.5">
-            <h2 className="text-[13px] font-semibold text-fg-3"><span className="font-mono">{group.step}</span> · {group.title}</h2>
-            {group.stages.map((item) => {
-              const active = stage === item.key;
-              const count = stageCount[item.key];
-              return (
-                <Link key={item.key} aria-current={active ? 'page' : undefined}
-                  href={stageHref(stage, item.key)}
-                  className={`flex flex-col gap-0.5 rounded-lg border px-2.5 py-1.5 ${active ? 'border-accent bg-accent-soft' : 'border-line hover:bg-bg-hover'}`}>
-                  <span className="flex items-baseline justify-between gap-2 text-[13px]">
-                    <b className={`font-semibold ${active ? 'text-accent' : count === 0 ? 'text-fg-3' : 'text-fg'}`}>{item.label}</b>
-                    <span className={`font-mono ${count === 0 ? 'text-fg-3' : active ? 'text-accent' : 'text-fg'}`}>
-                      {count.toLocaleString("ko-KR")}
-                      {item.key === 'published' && <span
-                        className={`ml-1 ${publicationChange.net < 0 ? 'text-down' : publicationChange.net > 0 ? 'text-up' : 'text-fg-3'}`}
-                        title={`최근 24시간: 발행 완료로 ${publicationChange.added}건 이동, ${publicationChange.removed}건 이탈`}
-                        aria-label={`최근 24시간 발행 완료 ${publicationChange.net >= 0 ? '+' : ''}${publicationChange.net}건`}>
-                        ({publicationChange.net >= 0 ? '+' : ''}{publicationChange.net.toLocaleString("ko-KR")})
-                      </span>}
-                    </span>
-                  </span>
-                  {/* 좁은 화면에서는 설명을 접는다 — 칸이 세로로 쌓여 한 화면을 넘긴다. 일치 건의 거부·승인 내역은 남긴다 */}
-                  <span className={`text-[13px] leading-[1.4] text-fg-3 ${item.key === 'agreed' ? '' : 'hidden sm:block'}`}>
-                    {item.key === 'agreed' ? `거부 ${held.agreedReject.toLocaleString("ko-KR")} · 승인 ${held.agreedApprove.toLocaleString("ko-KR")}` : item.key === 'published' ? '괄호는 최근 24시간 순증감' : item.hint}
-                  </span>
-                </Link>
-              );
-            })}
-          </section>
-        ))}
-      </nav>
+      <ReviewStageRail stage={stage} counts={stageCount} agreed={{ reject: held.agreedReject, approve: held.agreedApprove }}
+        publication={publicationChange} humanAge={humanAge} />
 
-      {/* 보류 안에서 더 좁히는 거르기. 구간이 먼저이고 이것은 필요할 때 연다 — 고른 것이 있으면 열어 둔다 */}
-      <details open={detailed} className="rounded-[12px] border border-line bg-bg-card px-3 py-2">
-        <summary className="cursor-pointer text-[13px] font-semibold text-fg-2">
-          세부 거르기 <span className="font-normal text-fg-3">— 보류 안에서 보류 이유·1차 AI 결론·2차 표로 좁힌다</span>
-        </summary>
-        <div className="mt-2 flex flex-col gap-2">
+      <ReviewTodo cards={todo} />
+
+      {/* 거르기 — 구간 안에서 더 좁힌다(겹쳐 고르면 겹치는 것만). 넷째 줄은 목록 자체의 검색·기간·정렬 */}
+      <section className="dash-card" aria-label="거르기">
+        <div className="rq-filters">
           <FilterRow label="보류 이유" hint="규칙이 멈춘 곳">
-            {causes.counts.map(({ cause: key, count }) => (
-              <Link key={key} href={query({ cause: cause === key ? undefined : key, state: undefined, page: 1 })}
-                title={CAUSE_GUIDE[key].summary} aria-current={cause === key ? 'page' : undefined} className={chip(cause === key, count)}>
-                {CAUSE_GUIDE[key].label} <span className="font-mono">{count.toLocaleString("ko-KR")}</span>
-              </Link>
-            ))}
+            {visibleCauses.map(causeChip)}
+            {moreCauses.length > 0 && (
+              <details className="rq-more">
+                <summary className={chip(false)}>그 밖 {moreCauses.length}가지 ▾</summary>
+                <div>{moreCauses.map(causeChip)}</div>
+              </details>
+            )}
           </FilterRow>
           <FilterRow label="1차 AI" hint="마지막 심사의 결론">
             {AI_FILTERS.map(([key, label]) => (
@@ -188,7 +209,7 @@ export default async function ReviewPage({ searchParams }: { searchParams: Promi
               </Link>
             ))}
           </FilterRow>
-          <FilterRow label="2차 심사" hint="다른 모델의 표">
+          <FilterRow label="2차 표" hint={fallbacks ? `${voters} · 대체 ${fallbacks}` : voters}>
             {SECOND_FILTERS.map(([key, label]) => {
               const count = key === 'unanimous_reject' ? seconds.counts.unanimousReject : key === 'unanimous_approve' ? seconds.counts.unanimousApprove
                 : key === 'agreed_reject' ? seconds.counts.agreedReject : key === 'agreed_approve' ? seconds.counts.agreedApprove : seconds.counts.needsHuman;
@@ -205,68 +226,57 @@ export default async function ReviewPage({ searchParams }: { searchParams: Promi
               공개분 확인 <span className="font-mono">{seconds.counts.published.toLocaleString("ko-KR")}</span>
             </Link>
           </FilterRow>
+          {second !== 'published' && (
+            <ListToolbar q={q} updated={updated} sort={sort} total={total} hiddenByAge={hiddenByAge}
+              keep={{ state: filtered || state === 'pending' ? undefined : state, stage: stage || undefined, cause: cause || undefined, ai: ai || undefined, second: second || undefined }}
+              clearHref={query({ q: undefined, updated: undefined, sort: undefined, page: 1 })} />
+          )}
         </div>
-      </details>
+      </section>
 
       {resolved && (!cause || cause === "resolved") ? <RequeueResolved count={resolved.count} /> : null}
 
-      <h2 id="review-list" className="scroll-mt-4 text-[15px] font-bold text-fg">
-        {stage ? `${STAGE_GROUPS.flatMap(group => group.stages).find(item => item.key === stage)?.label} · ${total.toLocaleString("ko-KR")}건` : `심사 후보 · ${total.toLocaleString("ko-KR")}건`}
-      </h2>
-
-      {second !== 'published' && (
-        <ListToolbar q={q} updated={updated} total={total} hiddenByAge={hiddenByAge}
-          keep={{ state: filtered || state === 'pending' ? undefined : state, stage: stage || undefined, cause: cause || undefined, ai: ai || undefined, second: second || undefined }}
-          clearHref={query({ q: undefined, updated: undefined, sort: undefined, page: 1 })} />
-      )}
-
-      {second === 'published' ? (
-        <PublishedSecondReviews rows={await (async () => {
-          const rows = await publishedSecondReviews();
-          const korean = await translationsFor(rows.map((row) => row.secondReason));
-          return rows.map((row) => ({ id: row.id, slug: row.publishedSlug ?? '', repo: row.repo, decision: row.secondDecision,
-            confidence: row.secondConfidence, reason: row.secondReason, reasonKo: row.secondReason ? korean.get(row.secondReason) ?? null : null,
-            trigger: row.trigger, signals: row.signals }));
-        })()} />
-      ) : entries.length === 0 ? (
-        <p className="rounded-[12px] border border-line bg-bg-card px-5 py-8 text-center text-[13px] text-fg-3">
-          {filtered ? '이 조건에 해당하는 후보가 없습니다.' : '심사할 후보가 없습니다.'}
-        </p>
-      ) : (
-        <>
-          <BulkDecision formId={BULK_FORM} reasons={REVIEW_REJECT_REASONS} total={entries.length} />
+      <div id="review-list" className="flex scroll-mt-4 flex-col gap-3">
+        {second === 'published' ? (
+          <>
+            <h2 className="text-[15px] font-bold text-fg">공개분 확인</h2>
+            <PublishedSecondReviews rows={await (async () => {
+              const rows = await publishedSecondReviews();
+              const korean = await translationsFor(rows.map((row) => row.secondReason));
+              return rows.map((row) => ({ id: row.id, slug: row.publishedSlug ?? '', repo: row.repo, decision: row.secondDecision,
+                confidence: row.secondConfidence, reason: row.secondReason, reasonKo: row.secondReason ? korean.get(row.secondReason) ?? null : null,
+                trigger: row.trigger, signals: row.signals }));
+            })()} />
+          </>
+        ) : entries.length === 0 ? (
+          <>
+            <h2 className="text-[15px] font-bold text-fg">{listTitle}</h2>
+            <p className="rounded-[12px] border border-line bg-bg-card px-5 py-8 text-center text-[13px] text-fg-3">
+              {filtered ? '이 조건에 해당하는 후보가 없습니다.' : '심사할 후보가 없습니다.'}
+            </p>
+          </>
+        ) : (
           <ReviewConsole key={`${page}:${state}:${stage}:${cause}:${ai}:${second}:${q}:${updated}:${sort}`}
             entries={entries} reasons={REVIEW_REJECT_REASONS} bulkFormId={BULK_FORM} focus={focus}
+            toolbar={<BulkDecision formId={BULK_FORM} reasons={REVIEW_REJECT_REASONS} title={listTitle} />}
+            footer={pagination}
             sort={sort} sortHref={Object.fromEntries(REVIEW_SORTS.map((key) => [key, query({ sort: key || undefined, page: 1 })])) as Record<ReviewSort, string>}
             cause={cause} causes={[{ value: '', label: '갈래 전체', count: causes.total, href: query({ cause: undefined, state: undefined, page: 1 }) },
               ...causes.counts.map(({ cause: key, count }) => ({ value: key, label: CAUSE_GUIDE[key].label, count,
                 href: query({ cause: key, state: undefined, page: 1 }) }))]} />
-        </>
-      )}
-
-      {pages > 1 && (
-        <nav aria-label="심사 목록 쪽 이동" className="flex flex-wrap items-center gap-1 text-[13px]">
-          {page > 1 && <Link href={query({ page: page - 1 })} className="rounded-lg border border-line px-2.5 py-1">이전</Link>}
-          {pageWindow(page, pages).map((item, i) => item === null
-            ? <span key={`gap-${i}`} className="px-1 text-fg-3">…</span>
-            : <Link key={item} href={query({ page: item })} aria-current={item === page ? 'page' : undefined}
-                className={`min-w-8 rounded-lg border px-2.5 py-1 text-center font-mono ${item === page ? 'border-accent bg-accent text-white' : 'border-line text-fg-2'}`}>{item}</Link>)}
-          {page < pages && <Link href={query({ page: page + 1 })} className="rounded-lg border border-line px-2.5 py-1">다음</Link>}
-        </nav>
-      )}
+        )}
+        {(second === 'published' || entries.length === 0) && pagination}
+      </div>
     </main>
   );
 }
 
-/** 거르기 한 줄 — 왼쪽에 무엇을 거르는지 이름을 붙인다. 좁은 화면에서는 이름이 위로 올라간다 */
+/** 거르기 한 줄 — 이름 칸과 값 칸. rq-filters 격자의 두 칸에 그대로 선다(좁은 화면에서는 이름이 위로) */
 function FilterRow({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
   return (
-    <div className="flex flex-col gap-1.5 sm:flex-row sm:items-center sm:gap-3">
-      <p className="shrink-0 text-[13px] sm:w-[128px]">
-        <b className="font-semibold text-fg-2">{label}</b>
-        {hint ? <span className="ml-1.5 text-fg-3 sm:ml-0 sm:block">{hint}</span> : null}
-      </p>
-      <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">{children}</div>
-    </div>
+    <>
+      <p className="k">{label}{hint ? <small>{hint}</small> : null}</p>
+      <div className="v">{children}</div>
+    </>
   );
 }
