@@ -20,6 +20,8 @@ import { pipelineThroughput } from "@/lib/operations/throughput";
 import { buildWorkerProgress } from "@/lib/operations/worker-progress-query";
 import { attentionCounts, hourlyThroughput, modelHealth, signalYields, todayPublications } from "@/lib/operations/dashboard";
 import { roleOverview, SHARED_IMAGE_ROLES } from "@/lib/operations/roles";
+import { takedownSummary } from "@/lib/domain/products/takedown";
+import { formatWait, isBurst } from "@/lib/domain/products/takedown-view";
 import { listGitHubCollectorAccounts, parseCoreQuota } from "@/lib/crawl/github-accounts";
 import { KpiStrip } from "./dashboard/KpiStrip";
 import { StageRail } from "./dashboard/StageRail";
@@ -131,7 +133,7 @@ export default async function StatusPage({ searchParams }: { searchParams: Promi
     logger.warn(event, { errorName: error instanceof Error ? error.name : "unknown" });
     return null;
   };
-  const [hourly, models, yields, today, attention, roles, accounts] = await Promise.all([
+  const [hourly, models, yields, today, attention, roles, accounts, takedowns] = await Promise.all([
     hourlyThroughput().catch(warn("operations.hourly_unavailable")),
     modelHealth(settings).catch(warn("operations.models_unavailable")),
     signalYields(settings).catch(warn("operations.signals_unavailable")),
@@ -139,6 +141,7 @@ export default async function StatusPage({ searchParams }: { searchParams: Promi
     attentionCounts().catch(warn("operations.attention_unavailable")),
     roleOverview().catch(warn("operations.roles_unavailable")),
     listGitHubCollectorAccounts().catch(warn("operations.accounts_unavailable")),
+    takedownSummary().catch(warn("operations.takedowns_unavailable")),
   ]);
 
   const states = new Map(jobStates.map((job) => [job.name, job]));
@@ -282,6 +285,16 @@ export default async function StatusPage({ searchParams }: { searchParams: Promi
       key: "stage-progress", tone: "critical", count: stuckStages.length, title: "워커는 살아 있는데 단계가 나아가지 않습니다",
       detail: <>{stuckStages.map((row) => throughput?.stages.find((stage) => stage.key === row.stage)?.label ?? row.stage).join(" · ")} — 오래 기다린 후보가 있는데 5분간 저장 진행이 없습니다.</>,
       action: { label: "작업 흐름", href: "/admin/status?tab=jobs" },
+    });
+  }
+  // 내려달라는 요청 — 상세 페이지가 내려 준다고 약속했다. 24시간을 넘기면 다른 경보처럼 맨 앞 급으로
+  if (takedowns && takedowns.pending > 0) {
+    const oldest = takedowns.oldestHours === null ? "" : ` · 최장 ${formatWait(takedowns.oldestHours)}`;
+    actions.push({
+      key: "takedowns", tone: takedowns.overdue > 0 ? "critical" : "hold", count: takedowns.pending,
+      title: takedowns.overdue > 0 ? `내려달라는 요청 — 24시간 넘음 ${takedowns.overdue}` : "내려달라는 요청",
+      detail: <>대기 {takedowns.pending}{oldest}{isBurst(takedowns) ? ` · 지난 1시간 ${takedowns.lastHour.requests}건 몰림` : ""} — 내릴 후보에서 처리</>,
+      action: { label: "처리", href: "/admin/audit?tab=requests" },
     });
   }
   if (attention && attention.auditRejectsOpen > 0) {

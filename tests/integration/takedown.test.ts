@@ -1,13 +1,17 @@
 import { describe, it, expect, beforeAll, beforeEach } from "vitest";
 import { db } from "@/lib/db";
-import { takedownRequests } from "@/lib/db/schema";
+import { productClickDaily, takedownRequests } from "@/lib/db/schema";
+import { sql } from "drizzle-orm";
 import * as repo from "@/lib/domain/products/repository";
-import { requestTakedown, pendingTakedowns, resolveTakedown } from "@/lib/domain/products/takedown";
+import { requestTakedown, pendingTakedowns, resolveTakedown, resolveTakedowns, takedownHistory, takedownQueue, takedownRequesterHash,
+  takedownSummary } from "@/lib/domain/products/takedown";
+import { productVisitorHash } from "@/lib/domain/products/visitors";
 import { ensureSchema, resetTables } from "./setup";
 
 /** 우리가 대신 올린 제품 — 주인이 부탁한 적이 없다 */
-async function seeded(slug = "found-app", url = "https://found.test") {
+async function seeded(slug = "found-app", url = "https://found.test", repoUrl: string | null = null) {
   await repo.insert({
+    repoUrl,
     slug,
     url,
     name: "FoundApp",
@@ -125,5 +129,92 @@ describe("내려달라는 요청", () => {
     expect(results.filter((result) => result.ok)).toHaveLength(1);
     const [request] = await db.select().from(takedownRequests);
     expect((await repo.findBySlug("found-app"))?.status).toBe(request.outcome === "removed" ? "banned" : "seeded");
+  });
+});
+
+describe("처리 화면 — 보낸이·계정·이력", () => {
+  const SECRET = "s".repeat(40);
+  /** 요청 시각을 직접 옮긴다 — 기다린 시간·몰림을 재려고 */
+  const backdate = (slug: string, hours: number) =>
+    db.execute(sql`update takedown_requests set requested_at = (current_timestamp at time zone 'UTC') - ${hours} * interval '1 hour' where slug = ${slug}`);
+
+  it("보낸이는 해시로만 남고 방문자 해시와 섞이지 않으며, 주소를 모르면 비운다", async () => {
+    const hash = takedownRequesterHash("203.0.113.7", SECRET)!;
+    expect(hash).toMatch(/^[0-9a-f]{64}$/);
+    expect(hash).toBe(takedownRequesterHash("203.0.113.7", SECRET));
+    expect(hash).not.toBe(takedownRequesterHash("203.0.113.8", SECRET));
+    expect(hash).not.toBe(productVisitorHash("takedown", "203.0.113.7", SECRET));
+    expect(takedownRequesterHash(null, SECRET)).toBeNull();
+    expect(takedownRequesterHash("203.0.113.7", "short")).toBeNull();
+    await seeded();
+    await requestTakedown("found-app", "내려 주세요", hash);
+    expect((await pendingTakedowns())[0].requesterHash).toBe(hash);
+  });
+
+  it("다시 요청하면 수를 세고, 전에 처리한 결과를 남기며 처리 칸은 비운다", async () => {
+    await seeded();
+    await requestTakedown("found-app", "첫 요청");
+    await resolveTakedown("found-app", "dismiss", "jr", { dismissReason: "test_spam", note: "테스트" });
+    await requestTakedown("found-app", "진짜 요청");
+    const [row] = await db.select().from(takedownRequests);
+    expect(row).toMatchObject({ requestCount: 2, previousOutcome: "dismissed", handledAt: null, outcome: null, dismissReason: null, note: null, reason: "진짜 요청" });
+  });
+
+  it("둘 때는 고른 이유와 메모가 남고, 모르는 이유는 받지 않는다", async () => {
+    await seeded();
+    await requestTakedown("found-app");
+    expect(await resolveTakedown("found-app", "dismiss", "jr", { dismissReason: "nope" as never })).toMatchObject({ ok: false, error: { kind: "invalid" } });
+    expect(await resolveTakedown("found-app", "dismiss", "jr", { dismissReason: "not_owner", note: "  저장소 주인이 아닌 듯  " })).toMatchObject({ ok: true });
+    const [history] = await takedownHistory();
+    expect(history).toMatchObject({ slug: "found-app", outcome: "dismissed", dismissReason: "not_owner", note: "저장소 주인이 아닌 듯", handledBy: "jr" });
+  });
+
+  it("처리 줄에 계정·보낸이·방문을 붙이고 오래 기다린 것부터 준다", async () => {
+    await seeded("a1", "https://a1.test", "https://github.com/Maker/one");
+    await seeded("a2", "https://a2.test", "https://github.com/maker/two");
+    await seeded("a3", "https://a3.test", "https://github.com/maker/three");
+    await seeded("b1", "https://b1.test", "https://github.com/other/app");
+    await seeded("c1", "https://c1.test");
+    const sender = takedownRequesterHash("198.51.100.1", SECRET);
+    await requestTakedown("a1", "모두 내려 주세요", sender);
+    await requestTakedown("a2", null, sender);
+    await requestTakedown("b1", "test", sender);
+    await requestTakedown("c1", null, null);
+    await backdate("a1", 30);
+    await backdate("a2", 5);
+    await db.insert(productClickDaily).values([{ slug: "a1", day: sql`current_date` as never, clicks: 9, uniqueVisitors: 7 },
+      { slug: "a1", day: sql`current_date - 20` as never, clicks: 50, uniqueVisitors: 40 }]);
+    const queue = await takedownQueue();
+    expect(queue.map((entry) => entry.slug)).toEqual(["a1", "a2", "b1", "c1"]);
+    const a1 = queue[0];
+    expect(a1).toMatchObject({ owner: "maker", ownerPublic: 3, ownerPending: 2, senderPending: 3, visits7d: 7, requestCount: 1 });
+    expect(a1.ageHours).toBeGreaterThan(29);
+    expect(a1.requestedAt).toMatch(/Z$/);
+    expect(a1.product?.name).toBe("FoundApp");
+    expect(queue[3]).toMatchObject({ owner: null, ownerPublic: 0, senderPending: 0, requesterHash: null });
+  });
+
+  it("요약은 24시간 넘은 것·몰림·처리 수를 센다", async () => {
+    for (let i = 0; i < 11; i++) await seeded(`p${i}`, `https://p${i}.test`, `https://github.com/acct${i}/x`);
+    for (let i = 0; i < 11; i++) await requestTakedown(`p${i}`, i < 3 ? "test" : null, takedownRequesterHash(i < 6 ? "10.0.0.1" : "10.0.0.2", SECRET));
+    await backdate("p0", 26);
+    await resolveTakedown("p1", "remove", "jr");
+    await resolveTakedown("p2", "dismiss", "jr", { dismissReason: "test_spam" });
+    const summary = await takedownSummary();
+    expect(summary).toMatchObject({ pending: 9, overdue: 1, handled24h: { removed: 1, dismissed: 1 }, last30d: { removed: 1, dismissed: 1 } });
+    expect(summary.oldestHours).toBeGreaterThan(25);
+    expect(summary.lastHour).toMatchObject({ requests: 10, owners: 10, senders: 2, noReason: 8, topReason: { text: "test", count: 2 } });
+  });
+
+  it("여러 건을 한 번에 — 그 사이 처리된 것만 실패로 돌려준다", async () => {
+    await seeded("x1", "https://x1.test");
+    await seeded("x2", "https://x2.test");
+    await requestTakedown("x1");
+    await requestTakedown("x2");
+    await resolveTakedown("x2", "dismiss", "other-admin");
+    const result = await resolveTakedowns(["x1", "x2", "x1"], "remove", "jr");
+    expect(result.done).toEqual(["x1"]);
+    expect(result.failed).toEqual([{ slug: "x2", message: "이미 처리됐거나 제품이 없습니다" }]);
+    expect((await repo.findBySlug("x1"))?.status).toBe("banned");
   });
 });

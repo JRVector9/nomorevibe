@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server";
-import { requestTakedown } from "@/lib/domain/products/takedown";
+import { requestTakedown, takedownRequesterHash } from "@/lib/domain/products/takedown";
 import { errorResponse, tooManyRequests, badJson } from "@/lib/http/respond";
 import { withRoute } from "@/lib/http/handler";
-import { rateLimit, clientIp } from "@/lib/rate-limit";
+import { rateLimit, clientIp, trustedClientIp } from "@/lib/rate-limit";
 
 type Params = { params: Promise<{ slug: string }> };
 
@@ -33,7 +33,8 @@ export const POST = withRoute("products.takedown", async (req: Request, { params
     }
   }
 
-  const result = await requestTakedown(slug, reason);
+  // 보낸이는 해시로만 남긴다 — 몰려 들어온 장난을 보낸이로 묶는 데 쓴다(관리자 처리 화면)
+  const result = await requestTakedown(slug, reason, takedownRequesterHash(trustedClientIp(req)));
   if (!result.ok) return errorResponse(result.error);
   return NextResponse.json({
     slug,

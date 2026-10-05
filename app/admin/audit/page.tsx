@@ -6,6 +6,11 @@ import { listAuditFindings, productAuditOverview, type AuditOverview } from "@/l
 import { AuditFinding } from "./AuditFinding";
 import { CancelAudit, StartAudit } from "./AuditControls";
 import { pageWindow } from "../paging";
+import { TakedownQueue } from "./TakedownQueue";
+import { takedownHistory, takedownQueue, takedownSummary } from "@/lib/domain/products/takedown";
+import { DISMISS_REASONS, formatWait, isBurst, isDismissReason, senderLabel, takedownSignal, type TakedownSummary } from "@/lib/domain/products/takedown-view";
+import "../status/dashboard/dashboard.css";
+import "./takedown.css";
 
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "내릴 후보 — NoMoreVibe", robots: { index: false } };
@@ -25,39 +30,86 @@ const time = (value: Date | null) =>
   value ? value.toLocaleString("ko-KR", { timeZone: "Asia/Seoul", dateStyle: "short", timeStyle: "short" }) : null;
 const count = (value: number) => value.toLocaleString("ko-KR");
 
-type Props = { searchParams: Promise<{ view?: string; page?: string }> };
+type Props = { searchParams: Promise<{ view?: string; page?: string; tab?: string }> };
+
+/**
+ * 탭 — 사람이 부탁한 것(내려달라는 요청), 감사가 걸러낸 것, 처리 기록. 기다리는 요청이 있으면 요청이 먼저다:
+ * 상세 페이지가 내려 준다고 약속했다. 감사의 갈래(?view=)로 들어오면 감사 탭이다.
+ */
+const TABS = { requests: "내려달라는 요청", audit: "감사 거절", history: "처리 기록" } as const;
+type Tab = keyof typeof TABS;
 
 export default async function AdminAuditPage({ searchParams }: Props) {
   const admin = await currentAdmin();
   if (!admin) redirect("/admin/login");
 
-  const { view: rawView, page: rawPage } = await searchParams;
+  const { view: rawView, page: rawPage, tab: rawTab } = await searchParams;
   // `in`은 프로토타입 키까지 통과시킨다 — 제품 관리의 ?filter=constructor 와 같은 함정
   const view: View = rawView && Object.hasOwn(VIEWS, rawView) ? rawView as View : "reject";
   const parsedPage = Number(rawPage ?? 1);
   const page = Number.isSafeInteger(parsedPage) && parsedPage > 0 ? parsedPage : 1;
 
-  const overview = await productAuditOverview();
+  const [overview, summary] = await Promise.all([productAuditOverview(), takedownSummary()]);
   const { campaign, counts } = overview;
+  const tab: Tab = rawTab && Object.hasOwn(TABS, rawTab) ? rawTab as Tab : rawView ? "audit" : summary.pending > 0 ? "requests" : "audit";
+  const [queue, history] = await Promise.all([
+    tab === "requests" ? takedownQueue() : Promise.resolve([]),
+    tab === "history" ? takedownHistory() : Promise.resolve([]),
+  ]);
   const open = { reject: counts.openReject, needs_review: counts.openNeedsReview };
-  const findings = campaign
+  const findings = campaign && tab === "audit"
     ? await listAuditFindings(campaign.id, view, { limit: PAGE_SIZE, offset: (page - 1) * PAGE_SIZE })
     : [];
   const pages = Math.max(1, Math.ceil(open[view] / PAGE_SIZE));
   const href = (nextView: View, nextPage = 1) => {
-    const params = new URLSearchParams();
+    const params = new URLSearchParams({ tab: "audit" });
     if (nextView !== "reject") params.set("view", nextView);
     if (nextPage > 1) params.set("page", String(nextPage));
     return `/admin/audit${params.size ? `?${params}` : ""}`;
   };
 
+  const signal = takedownSignal(summary);
+  const auditOpen = open.reject + open.needs_review;
   return (
-    <main className="flex flex-col gap-2.5 pb-10 pt-6">
-      <div className="flex flex-wrap items-baseline gap-3">
-        <h1 className="text-[22px] font-extrabold tracking-tight">내릴 후보</h1>
-        <span className="text-[13px] text-fg-3">AI가 걸러낸 발행분 · 내리는 것은 사람이 한 건씩</span>
+    <main className="flex flex-col gap-3 pb-10 pt-6">
+      <div className="flex flex-wrap items-end justify-between gap-x-4 gap-y-2 border-b border-line pb-3">
+        <div className="flex flex-wrap items-baseline gap-3">
+          <h1 className="text-[22px] font-extrabold tracking-tight">내릴 후보</h1>
+          <span className="text-[13px] text-fg-3">공개된 것 중 내릴지 정할 것 — 사람이 부탁한 것과 감사가 걸러낸 것</span>
+        </div>
+        <TakedownChips summary={summary} />
       </div>
 
+      <nav className="td-tabs" aria-label="내릴 후보 갈래">
+        {(Object.keys(TABS) as Tab[]).map((name) => (
+          <Link key={name} href={`/admin/audit?tab=${name}`} aria-current={name === tab ? "page" : undefined}>
+            {TABS[name]}
+            {name === "requests" && (signal ? <b className="admin-nav-badge" data-tone={signal.tone}>{count(summary.pending)}</b> : <span className="td-count">0</span>)}
+            {name === "audit" && <span className="td-count">{count(auditOpen)}</span>}
+          </Link>
+        ))}
+      </nav>
+
+      {tab === "requests" && (
+        <>
+          {isBurst(summary) && (
+            <div className="td-burst" role="status">
+              <i aria-hidden />
+              <div>
+                <b>지난 1시간에 요청 {count(summary.lastHour.requests)}건 — 평소(하루 0~1건)보다 훨씬 많습니다.</b><br />
+                서로 다른 계정 {count(summary.lastHour.owners)}곳 · 보낸이 {count(summary.lastHour.senders)} · 사유 없음 {count(summary.lastHour.noReason)}건
+                {summary.lastHour.topReason && summary.lastHour.topReason.count > 1 && ` · 같은 사유 "${summary.lastHour.topReason.text.slice(0, 40)}" ${summary.lastHour.topReason.count}건`}.
+                장난일 수 있으니 &ldquo;같은 보낸이&rdquo;나 &ldquo;들어온 시각&rdquo;으로 묶어 확인하세요.
+              </div>
+            </div>
+          )}
+          <TakedownQueue entries={queue} />
+        </>
+      )}
+
+      {tab === "history" && <TakedownHistory rows={history} />}
+
+      {tab === "audit" && <>
       <p className="max-w-[80ch] text-[13px] leading-[1.7] text-fg-2">
         이미 공개된 제품을 1차 심사 글로 다시 본 결과입니다. 감사는 <b className="font-semibold">아무것도 내리지 않습니다</b> —
         AI가 제품이 아니라고 했거나 판단을 미룬 것을 여기 모을 뿐입니다. 주소를 열어 확인하고 한 건씩
@@ -114,7 +166,46 @@ export default async function AdminAuditPage({ searchParams }: Props) {
           )}
         </>
       )}
+      </>}
     </main>
+  );
+}
+
+/** 머리 칩 — 24시간 넘은 요청, 지난 24시간 처리, 지난 30일 처리 */
+function TakedownChips({ summary }: { summary: TakedownSummary }) {
+  return (
+    <div className="dash-chips" aria-label="요청 처리 요약">
+      {summary.overdue > 0 && <span className="dash-pill" data-tone="bad"><span className="dash-dot" data-tone="bad" aria-hidden />24시간 넘음 {count(summary.overdue)}
+        {summary.oldestHours !== null && ` · 최장 ${formatWait(summary.oldestHours)}`}</span>}
+      <span className="dash-pill">24h 처리 {count(summary.handled24h.removed + summary.handled24h.dismissed)} · 내림 {count(summary.handled24h.removed)}</span>
+      <span className="dash-pill">30일 · 내림 {count(summary.last30d.removed)} · 둠 {count(summary.last30d.dismissed)}</span>
+    </div>
+  );
+}
+
+/** 처리 기록 — 누가 언제 내렸거나 두었고, 왜 두었는지 */
+function TakedownHistory({ rows }: { rows: Awaited<ReturnType<typeof takedownHistory>> }) {
+  if (rows.length === 0) return <p className="rounded-[12px] border border-line bg-bg-card px-5 py-8 text-center text-[13px] text-fg-3">아직 처리한 요청이 없습니다.</p>;
+  return (
+    <div className="overflow-x-auto rounded-[12px] border border-line bg-bg-card">
+      <table className="td-history">
+        <thead><tr><th>제품</th><th>결과</th><th>요청 사유</th><th>메모</th><th>보낸이</th><th>처리</th></tr></thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={row.slug}>
+              <td><b className="font-semibold">{row.name ?? row.slug}</b>{row.requestCount > 1 && <span className="text-fg-3"> · {row.requestCount}번 요청</span>}<br />
+                <span className="font-mono text-fg-3">{row.url?.replace(/^https?:\/\//, "") ?? row.slug}</span></td>
+              <td>{row.outcome === "removed" ? <span className="font-semibold text-down">내림</span>
+                : <span className="font-semibold">둠{isDismissReason(row.dismissReason) ? ` · ${DISMISS_REASONS[row.dismissReason]}` : ""}</span>}</td>
+              <td className="max-w-[320px] text-fg-2">{row.reason ?? <span className="text-fg-3">사유 없음</span>}</td>
+              <td className="max-w-[240px] text-fg-2">{row.note ?? <span className="text-fg-3">—</span>}</td>
+              <td className="font-mono text-fg-2">{senderLabel(row.requesterHash)}</td>
+              <td className="whitespace-nowrap text-fg-3">{time(row.handledAt)} · {row.handledBy}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   );
 }
 

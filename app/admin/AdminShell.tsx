@@ -3,10 +3,10 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState } from "react";
-import { AdminNav } from "./AdminNav";
+import { AdminNav, type NavBadge } from "./AdminNav";
 
 /** Page bodies remain server components; this boundary only owns navigation. */
-export function AdminShell({ children }: { children: React.ReactNode }) {
+export function AdminShell({ children, badges }: { children: React.ReactNode; badges?: Partial<Record<string, NavBadge>> }) {
   const pathname = usePathname();
   const [expandedOn, setExpandedOn] = useState<string | null>(null);
   if (pathname === "/admin/login") return <div className="admin-login-area">{children}</div>;
@@ -18,7 +18,7 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
           onClick={() => setExpandedOn(expanded ? null : pathname)}>메뉴 {expanded ? "닫기" : "열기"}</button>
       </div>
       <div id="admin-sidebar-menu" className={`admin-sidebar-menu${expanded ? " is-expanded" : ""}`}>
-        <AdminNav current={pathname} />
+        <AdminNav current={pathname} badges={badges} />
         <div className="admin-sidebar-bottom"><Link href="/">공개 사이트로 이동 ↗</Link><p>수집과 발행은 독립 워커에서 실행됩니다.</p></div>
       </div>
     </aside>

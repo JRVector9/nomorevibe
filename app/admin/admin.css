@@ -13,6 +13,9 @@ body:has(.admin-login-area) > .nmb-footer { display: none; }
 .admin-navigation small{font-size:11px;font-weight:400;color:var(--color-fg-3)}
 .admin-navigation a:hover{background:var(--color-bg-soft)}
 .admin-navigation a[aria-current=page]{color:var(--color-accent);background:color-mix(in srgb,var(--color-accent) 9%,transparent)}
+/* 메뉴 배지 — 기다리는 요청 수. 주황: 24시간 안, 빨강: 24시간 넘은 것이 있음 */
+.admin-nav-badge{display:inline-block;margin-left:6px;border-radius:999px;padding:0 7px;font-size:13px;font-weight:700;line-height:19px;font-family:var(--font-mono);vertical-align:1px;background:color-mix(in srgb,var(--color-warn) 14%,transparent);color:var(--color-warn)}
+.admin-nav-badge[data-tone=bad]{background:var(--color-down);color:#fff}
 .admin-sidebar-bottom{margin:16px 10px 0;padding-top:14px;border-top:1px solid var(--color-line);font-size:12px;color:var(--color-fg-2)}
 .admin-sidebar-bottom p{font-size:11px;margin-top:12px;line-height:1.7;color:var(--color-fg-3)}
 .admin-content{overflow-wrap:anywhere;min-width:0;padding:0 24px 20px;width:100%;max-width:1520px;margin:0 auto}
@@ -36,3 +39,10 @@ body:has(.admin-login-area) > .nmb-footer { display: none; }
 .admin-refresh{border:1px solid var(--color-line);padding:9px 14px;border-radius:8px;min-height:44px;font-size:13px;cursor:pointer}
 @media(max-width:1150px){.admin-area{grid-template-columns:200px minmax(0,1fr)}.admin-content{padding:0 22px 24px}.admin-worker-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:760px){.admin-area{display:block}.admin-sidebar{height:auto;position:sticky;z-index:30;padding:14px 16px;border-right:0;border-bottom:1px solid var(--color-line);overflow:visible}.admin-brand-row{display:flex;align-items:center;justify-content:space-between;gap:16px}.admin-brand{padding:0;font-size:18px}.admin-menu-toggle{display:block;font-size:13px;padding:10px 12px;border:1px solid var(--color-line);border-radius:8px;min-height:44px}.admin-sidebar-menu{display:none}.admin-sidebar-menu.is-expanded{display:block;max-height:70dvh;overflow:auto}.admin-navigation{display:grid;grid-template-columns:1fr 1fr;margin-top:16px}.admin-sidebar-bottom{margin-top:14px}.admin-content{padding:0 16px 24px}.admin-worker-grid{grid-template-columns:1fr}.admin-login-area{min-height:100dvh}}
+/* 내려달라는 요청 한 줄(TakedownStrip) — 심사 큐 머리. 주황: 24시간 안, 빨강: 넘김 */
+.takedown-strip{display:flex;flex-wrap:wrap;align-items:center;gap:6px 12px;border:1px solid color-mix(in srgb,var(--color-warn) 40%,var(--color-line));border-radius:10px;padding:8px 12px;font-size:13px;color:var(--color-fg-2);background:color-mix(in srgb,var(--color-warn) 8%,var(--color-bg-card))}
+.takedown-strip[data-tone=bad]{border-color:color-mix(in srgb,var(--color-down) 40%,var(--color-line));background:color-mix(in srgb,var(--color-down) 7%,var(--color-bg-card))}
+.takedown-strip b{font-weight:700;color:var(--color-fg)}
+.takedown-strip-go{margin-left:auto;border:1px solid var(--color-line);border-radius:8px;padding:3px 10px;font-weight:600;background:var(--color-bg-card);color:var(--color-fg-2);white-space:nowrap}
+.takedown-strip[data-tone=bad] .takedown-strip-go{border-color:transparent;background:color-mix(in srgb,var(--color-down) 12%,transparent);color:var(--color-down)}
+.takedown-strip-go:hover{color:var(--color-fg)}

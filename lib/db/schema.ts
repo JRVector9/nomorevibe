@@ -503,6 +503,19 @@ export const takedownRequests = pgTable("takedown_requests", {
   handledBy: varchar("handled_by", { length: 120 }),
   /** 'removed' | 'dismissed' */
   outcome: varchar("outcome", { length: 20 }),
+  /**
+   * 보낸이 — 접속 주소를 서버 비밀값으로 해시한 값(원문은 남기지 않는다). 몰려 들어온 장난을 보낸이로 묶는 데만 쓴다.
+   * 신뢰 프록시가 없어 주소를 모르면 null.
+   */
+  requesterHash: varchar("requester_hash", { length: 64 }),
+  /** 같은 제품에 들어온 요청 수 — 행은 제품마다 하나라 다시 오면 덮어쓰고 수만 센다 */
+  requestCount: integer("request_count").notNull().default(1),
+  /** 다시 요청이 오기 전 마지막 처리 결과('removed' | 'dismissed') — "전에 둔 적 있음"을 보이려고 */
+  previousOutcome: varchar("previous_outcome", { length: 20 }),
+  /** 둘 때 고른 이유 — 'test_spam' | 'not_owner' | 'already_removed' | 'other' */
+  dismissReason: varchar("dismiss_reason", { length: 24 }),
+  /** 처리한 사람의 메모 */
+  note: text("note"),
 });
 
 export type TakedownRequest = typeof takedownRequests.$inferSelect;
