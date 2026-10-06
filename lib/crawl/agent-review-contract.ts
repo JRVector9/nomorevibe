@@ -10,6 +10,7 @@ import { accessFromDocument, judgeStoredDocument, pageFactsFromDocument } from "
 import { linksOwnGithub } from "./github-links";
 import { README_SAMPLE_LIMIT } from "./readme";
 import { repositoryUrl, type ProductAccessMode } from "@/lib/domain/products/access";
+import { packageProofOf, type PackageProof } from "./package-proof";
 
 /**
  * 심사 입력이 바뀌면 둘 다 올린다.
@@ -37,12 +38,17 @@ import { repositoryUrl, type ProductAccessMode } from "@/lib/domain/products/acc
  *   규칙이 이 둘을 보류로 넘기게 되면서(규칙 2026-09-19.2) 모델이 "Docusaurus 로 만들었다 = 문서"로 읽고 거부했다.
  */
 // 2026-09-21.2: separate website URL exclusions from installable packages; distinguish data-only lists.
-export const REVIEW_PROMPT_VERSION = "2026-10-03.1";
+/**
+ * 2026-10-06.1: 설치형 예외를 패키지 증거로 넓혔다(사용자 결정 — 플러그인·스킬은 사이트가 없어도 받는다). 스타 500개 미만이라도
+ *   저장소에 SKILL.md·플러그인 manifest·MCP 서버·확장 manifest 가 있으면(product.packageProof, 5스타 이상) README 로 심사한다.
+ *   규칙도 같이 바뀌어(배포 URL 없음 → 설치형 보류) rulesVersion 도 올렸다.
+ */
+export const REVIEW_PROMPT_VERSION = "2026-10-06.1";
 /**
  * 규칙 2026-09-19.2: 문서 생성기·문서 목차·이름 패턴(*-website·awesome-*)을 거부에서 보류로 바꿨다. 새 기준에서
  *   이 셋이 거부한 것의 79%·95%·1/3~5/8 이 올려야 할 프로젝트 홈이었다(블라인드 표본). AI 가 가른다.
  */
-export const REVIEW_RULES_VERSION = "2026-09-21.2";
+export const REVIEW_RULES_VERSION = "2026-10-06.1";
 export const MAX_REVIEW_INPUT_BYTES = 64 * 1024;
 export const MAX_REVIEW_ATTEMPTS = 3;
 export const REVIEW_FRESH_MS = 24 * 3600_000;
@@ -77,7 +83,9 @@ export type ReviewSnapshot = {
     /** README 앞부분(lib/crawl/readme.ts). 아직 못 받았으면 "" */
     readme: string;
     /** 페이지가 제작자(레포 주인)의 GitHub 로 가는 링크를 걸었는가 — 걸었으면 프로젝트의 집이다 */
-    linksOwnGithub: boolean };
+    linksOwnGithub: boolean;
+    /** 저장소에서 찾은 스킬·플러그인·확장 파일(package-proof.ts). 찾은 것이 있을 때만 싣는다 — 없는 후보의 입력 해시는 그대로다 */
+    packageProof?: PackageProof };
   /** 저장소의 바뀌지 않는 사실. 스타·마지막 푸시·생성일 */
   repoFacts: { stars: number | null; pushedAt: string | null; createdAt: string | null };
   /** 규칙이 어디서 멈췄는지 — 모델이 무엇을 대신 가르는지 알게 한다 */
@@ -166,6 +174,7 @@ export function createReviewInput(
       language: limitedText(document.repoMeta.language, 100) || null,
       readme: limitedText(page.readmeSample, README_SAMPLE_LIMIT),
       linksOwnGithub: linksOwnGithub(candidate.repo, pageFactsFromDocument(document).githubLinks),
+      ...(packageProofOf(document.repoMeta).length ? { packageProof: packageProofOf(document.repoMeta) } : {}),
     },
     repoFacts: {
       stars: typeof document.repoMeta.stargazers_count === "number" ? document.repoMeta.stargazers_count : null,

@@ -64,8 +64,8 @@
             "cause": null
           },
           "policy": {
-            "rulesVersion": "2026-09-21.2",
-            "promptVersion": "2026-10-03.1",
+            "rulesVersion": "2026-10-06.1",
+            "promptVersion": "2026-10-06.1",
             "detectorVersion": "2026-09-14.1",
             "policyVersion": "2026-09-06.1",
             "enforceEligibility": false
@@ -187,8 +187,8 @@
             "cause": "installable_product"
           },
           "policy": {
-            "rulesVersion": "2026-09-21.2",
-            "promptVersion": "2026-10-03.1",
+            "rulesVersion": "2026-10-06.1",
+            "promptVersion": "2026-10-06.1",
             "detectorVersion": "2026-09-14.1",
             "policyVersion": "2026-09-06.1",
             "enforceEligibility": false
@@ -317,8 +317,8 @@
             "cause": "installable_product"
           },
           "policy": {
-            "rulesVersion": "2026-09-21.2",
-            "promptVersion": "2026-10-03.1",
+            "rulesVersion": "2026-10-06.1",
+            "promptVersion": "2026-10-06.1",
             "detectorVersion": "2026-09-14.1",
             "policyVersion": "2026-09-06.1",
             "enforceEligibility": false
@@ -447,8 +447,8 @@
             "cause": null
           },
           "policy": {
-            "rulesVersion": "2026-09-21.2",
-            "promptVersion": "2026-10-03.1",
+            "rulesVersion": "2026-10-06.1",
+            "promptVersion": "2026-10-06.1",
             "detectorVersion": "2026-09-14.1",
             "policyVersion": "2026-09-06.1",
             "enforceEligibility": false
@@ -571,8 +571,8 @@
             "cause": null
           },
           "policy": {
-            "rulesVersion": "2026-09-21.2",
-            "promptVersion": "2026-10-03.1",
+            "rulesVersion": "2026-10-06.1",
+            "promptVersion": "2026-10-06.1",
             "detectorVersion": "2026-09-14.1",
             "policyVersion": "2026-09-06.1",
             "enforceEligibility": false
@@ -695,8 +695,8 @@
             "cause": null
           },
           "policy": {
-            "rulesVersion": "2026-09-21.2",
-            "promptVersion": "2026-10-03.1",
+            "rulesVersion": "2026-10-06.1",
+            "promptVersion": "2026-10-06.1",
             "detectorVersion": "2026-09-14.1",
             "policyVersion": "2026-09-06.1",
             "enforceEligibility": false
@@ -894,8 +894,8 @@
             "cause": "installable_product"
           },
           "policy": {
-            "rulesVersion": "2026-09-21.2",
-            "promptVersion": "2026-10-03.1",
+            "rulesVersion": "2026-10-06.1",
+            "promptVersion": "2026-10-06.1",
             "detectorVersion": "2026-09-14.1",
             "policyVersion": "2026-09-06.1",
             "enforceEligibility": false
@@ -1024,8 +1024,8 @@
             "cause": "installable_product"
           },
           "policy": {
-            "rulesVersion": "2026-09-21.2",
-            "promptVersion": "2026-10-03.1",
+            "rulesVersion": "2026-10-06.1",
+            "promptVersion": "2026-10-06.1",
             "detectorVersion": "2026-09-14.1",
             "policyVersion": "2026-09-06.1",
             "enforceEligibility": false
@@ -1154,8 +1154,8 @@
             "cause": "installable_product"
           },
           "policy": {
-            "rulesVersion": "2026-09-21.2",
-            "promptVersion": "2026-10-03.1",
+            "rulesVersion": "2026-10-06.1",
+            "promptVersion": "2026-10-06.1",
             "detectorVersion": "2026-09-14.1",
             "policyVersion": "2026-09-06.1",
             "enforceEligibility": false
@@ -1284,8 +1284,8 @@
             "cause": null
           },
           "policy": {
-            "rulesVersion": "2026-09-21.2",
-            "promptVersion": "2026-10-03.1",
+            "rulesVersion": "2026-10-06.1",
+            "promptVersion": "2026-10-06.1",
             "detectorVersion": "2026-09-14.1",
             "policyVersion": "2026-09-06.1",
             "enforceEligibility": false
