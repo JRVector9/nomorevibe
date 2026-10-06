@@ -21,6 +21,7 @@
     "db:migrate": "node scripts/migrate.mjs"
   },
   "dependencies": {
+    "@aws-sdk/client-cloudfront": "3.1146.0",
     "drizzle-orm": "^0.45.2",
     "fast-xml-parser": "^5.11.0",
     "jsonc-parser": "3.3.1",

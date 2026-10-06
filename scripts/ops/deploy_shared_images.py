@@ -434,6 +434,20 @@ def purge_html():
             os.close(write_fd)
 
 
+def purge_cloudfront_html(distribution_id=None):
+    """CloudFront 의 옛 화면(#html 태그)을 무효화한다 — 운영자 프로필(nomorevibe, 키는 키체인)로. 배포 ID 가 없으면 건너뛴다."""
+    distribution_id = distribution_id or os.environ.get('NMV_CLOUDFRONT_DISTRIBUTION_ID')
+    if not distribution_id:
+        return {'cloudfrontHtml': 'skipped', 'reason': 'no_distribution_id'}
+    try:
+        out = run(['aws', 'cloudfront', 'create-invalidation', '--profile', 'nomorevibe',
+                   '--distribution-id', distribution_id, '--paths', '#html',
+                   '--query', 'Invalidation.Status', '--output', 'text'], timeout=40)
+        return {'cloudfrontHtml': 'ok', 'status': out}
+    except (RuntimeError, subprocess.TimeoutExpired) as error:
+        return {'cloudfrontHtml': 'failed', 'errors': [str(error)[:120]]}
+
+
 def deploy(client, target, token, state, snapshot):
     save_snapshot(snapshot, target, state)
     print(json.dumps({'snapshot': snapshot, 'preflight': 'passed'}), flush=True)
@@ -448,6 +462,7 @@ def deploy(client, target, token, state, snapshot):
                                               state['previous'])), flush=True)
         print(json.dumps(public_gate(target['sha'])), flush=True)
         print(json.dumps(purge_html()), flush=True)
+        print(json.dumps(purge_cloudfront_html()), flush=True)
     except Exception:
         print(json.dumps({'stopped': True, 'snapshot': snapshot,
                           'nextStep': 'restore affected app or pair before retrying'}), flush=True)

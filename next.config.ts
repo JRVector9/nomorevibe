@@ -29,7 +29,8 @@ const nextConfig: NextConfig = {
    * html: 배포 뒤 옛 화면 · lists: 제품이 내려가면 목록 화면 전체 · p-<slug>: 그 상세 화면(2026-10-06).
    */
   async headers() {
-    const tag = (value: string) => [{ key: "Cache-Tag", value }];
+    // CloudFront 는 태그를 x-amz-meta-cache-tag 에서 읽는다(CacheTagConfig) — Cloudflare 가 Cache-Tag 를 떼므로 따로 싣는다
+    const tag = (value: string) => [{ key: "Cache-Tag", value }, { key: "x-amz-meta-cache-tag", value }];
     /**
      * Cloudflare 만 읽는 캐시 시간 — 방문자에게 가는 Cache-Control(private, no-store)은 그대로다.
      * 목록 60초·상세 240초 뒤 60초 동안은 지난 사본을 주며 뒤에서 새로 받는다(최대 2분·5분 늦음).
@@ -40,6 +41,23 @@ const nextConfig: NextConfig = {
       missing: [{ type: "cookie" as const, key: "nmv_admin" }, { type: "query" as const, key: "q" }],
       headers: [{ key: "Cloudflare-CDN-Cache-Control", value: `max-age=${seconds}, stale-while-revalidate=60, stale-if-error=3600` }],
     });
+    /**
+     * CloudFront(서울 거점, 2026-10-07)가 읽는 표준 Cache-Control — CloudFront 는 Cloudflare 전용 헤더를 읽지 않는다.
+     * 브라우저에 갈 값은 X-NMV-Browser-Cache 로 실어 보내고 CloudFront 함수가 되돌린다(private, no-store 그대로).
+     * HTML 은 rsc·_rsc 가 둘 다 없을 때, 화면 이동용(RSC)은 둘 다 있을 때만 — 어긋나면 Next 기본(private, no-store)이라
+     * 저장되지 않는다. 관리자·검색도 마찬가지다. Next 는 Cache-Control 이 이미 있으면 자기 기본값을 넣지 않는다.
+     */
+    const personal = [{ type: "cookie" as const, key: "nmv_admin" }, { type: "query" as const, key: "q" }];
+    const cdn = (source: string, seconds: number) => {
+      const headers = [
+        { key: "Cache-Control", value: `public, max-age=0, s-maxage=${seconds}, stale-while-revalidate=60, stale-if-error=3600` },
+        { key: "X-NMV-Browser-Cache", value: "private, no-cache, no-store, max-age=0, must-revalidate" },
+      ];
+      return [
+        { source, missing: [...personal, { type: "header" as const, key: "rsc" }, { type: "query" as const, key: "_rsc" }], headers },
+        { source, has: [{ type: "header" as const, key: "rsc", value: "1" }, { type: "query" as const, key: "_rsc" }], missing: personal, headers },
+      ];
+    };
     return [
       { source: "/", headers: tag("html,lists") },
       { source: "/popular", headers: tag("html,lists") },
@@ -49,6 +67,10 @@ const nextConfig: NextConfig = {
       { source: "/popular", ...edge(60) },
       { source: "/rankings/:key", ...edge(60) },
       { source: "/p/:slug", ...edge(240) },
+      ...cdn("/", 60),
+      ...cdn("/popular", 60),
+      ...cdn("/rankings/:key", 60),
+      ...cdn("/p/:slug", 240),
     ];
   },
 };

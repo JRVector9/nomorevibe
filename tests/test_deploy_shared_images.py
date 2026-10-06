@@ -222,6 +222,17 @@ class ReleaseSafetyTests(unittest.TestCase):
         self.assertFalse(any('purge-secret' in part for part in command))
         self.assertEqual(len(kwargs['pass_fds']), 1)
 
+    def test_cloudfront_html_invalidation_is_optional_and_uses_the_operator_profile(self):
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop('NMV_CLOUDFRONT_DISTRIBUTION_ID', None)
+            self.assertEqual(release.purge_cloudfront_html(), {'cloudfrontHtml': 'skipped', 'reason': 'no_distribution_id'})
+        with patch.object(release, 'run', return_value='InProgress') as run:
+            self.assertEqual(release.purge_cloudfront_html('E123'), {'cloudfrontHtml': 'ok', 'status': 'InProgress'})
+        command = run.call_args.args[0]
+        self.assertEqual(command[:3], ['aws', 'cloudfront', 'create-invalidation'])
+        self.assertIn('nomorevibe', command)
+        self.assertEqual(command[command.index('--paths') + 1], '#html')
+
     def test_replace_setting_requires_one_line(self):
         self.assertEqual(release.replace_setting('# a\nRELEASE_TAG=old\n', 'RELEASE_TAG', self.new_sha),
                          '# a\nRELEASE_TAG=' + self.new_sha + '\n')
