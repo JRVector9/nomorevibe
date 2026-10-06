@@ -26,12 +26,12 @@ export function ProjectCard({ product, saved, onToggleSave }: {
 
   return (
     <article className="project-card">
-      <Link href={`/p/${product.slug}`} className="card-visual" aria-label={`${product.name} 상세 보기`}>
+      <Link prefetch={false} href={`/p/${product.slug}`} className="card-visual" aria-label={`${product.name} 상세 보기`}>
         <ProjectTile slug={product.slug} name={product.name} ogImage={product.ogImage} size={64} installable={product.accessMode === "installable"} />
       </Link>
       <div className="project-body">
         <div className="project-title-row">
-          <h3 className="project-title"><Link href={`/p/${product.slug}`}>{product.name}</Link></h3>
+          <h3 className="project-title"><Link prefetch={false} href={`/p/${product.slug}`}>{product.name}</Link></h3>
           <button
             type="button"
             className={`cover-saved${saved ? " active" : ""}`}

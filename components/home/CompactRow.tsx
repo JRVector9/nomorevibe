@@ -19,7 +19,7 @@ export function CompactRow({ id, title, note, more, items, trailing }: {
           <h2 id={`${id}-title`} className="row-title">{title}</h2>
           {note && <p className="row-note">{note}</p>}
         </div>
-        {more && <Link className="row-more" href={more.href}>{more.label} ›</Link>}
+        {more && <Link prefetch={false} className="row-more" href={more.href}>{more.label} ›</Link>}
       </div>
       <div className="compact-grid">
         {items.map((product) => <CompactCard key={product.slug} product={product} trailing={trailing} />)}

@@ -11,8 +11,8 @@ export function IntroLine({ pulse, state }: { pulse: HomePulse; state: BrowseSta
       <h1 className="intro-title">AI로 만든 것들이 <em>제품</em>이 되는 곳.</h1>
       <p className="intro-stats">
         공개 <b>{num(pulse.total)}</b>
-        {" · "}<Link href={metricHref(state, "born")}>이번 주 태어난 <b>{num(pulse.born.current)}</b></Link>
-        {" · "}<Link href={metricHref(state, "updates")}>새 버전 낸 프로젝트 <b>{num(pulse.updates.projects)}</b></Link>
+        {" · "}<Link prefetch={false} href={metricHref(state, "born")}>이번 주 태어난 <b>{num(pulse.born.current)}</b></Link>
+        {" · "}<Link prefetch={false} href={metricHref(state, "updates")}>새 버전 낸 프로젝트 <b>{num(pulse.updates.projects)}</b></Link>
         {" · "}{formatAsOfKst(pulse.asOf).replace(" 기준", "")}
       </p>
     </section>

@@ -15,11 +15,11 @@ export function MobileNav() {
 
   return (
     <nav className="mobile-bottom" aria-label="모바일 탐색">
-      <Link href="/" className={pathname === "/" ? "active" : undefined}>
+      <Link prefetch={false} href="/" className={pathname === "/" ? "active" : undefined}>
         <Icon name="grid" />
         발견
       </Link>
-      <Link href="/#popular">
+      <Link prefetch={false} href="/#popular">
         <Icon name="grid" />
         인기
       </Link>

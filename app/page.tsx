@@ -149,7 +149,7 @@ function EmptyReason({
         <div className="empty-state">
           <h3>조건에 맞는 제품이 없습니다</h3>
           <p>다른 검색어나 필터로 다시 찾아보세요.</p>
-          <Link href="/" className="secondary">전체 보기</Link>
+          <Link prefetch={false} href="/" className="secondary">전체 보기</Link>
         </div>
       </div>
     );
@@ -162,7 +162,7 @@ function EmptyReason({
         <div className="empty-state">
           <h3>아직 스타 변화를 확인한 프로젝트가 없습니다</h3>
           <p>GitHub 스타를 하루 간격으로 다시 확인하면 나타납니다.</p>
-          <Link href="/?sort=recent" className="secondary">최신순으로 보기</Link>
+          <Link prefetch={false} href="/?sort=recent" className="secondary">최신순으로 보기</Link>
         </div>
       </div>
     );
@@ -174,7 +174,7 @@ function EmptyReason({
         <div className="empty-state">
           <h3>아직 순위에 오른 제품이 없습니다</h3>
           <p>검증된 제품에 유효 방문이 쌓이면 나타납니다.</p>
-          <Link href="/?sort=recent" className="secondary">최신순으로 보기</Link>
+          <Link prefetch={false} href="/?sort=recent" className="secondary">최신순으로 보기</Link>
         </div>
       </div>
     );
@@ -415,7 +415,7 @@ export async function HomeContent({ params }: { params: HomeParams }) {
             {/* 목록이 영어라 한국어 검색어는 영어 낱말로 한 번 더 찾는다. 무엇으로 찾았는지 밝힌다 */}
             {translatedQuery && <p className="row-note">영어로 “{translatedQuery}”도 함께 찾았습니다.</p>}
             {/* 순위 대신 보여주는 목록은 무엇으로 줄 세웠는지 밝힌다 — 숫자의 기준이 보여야 한다 */}
-            {!query && fallback === "rising" && <p className="row-note">마지막 확인 사이 GitHub 스타가 늘어난 순 · <Link href={metricHref(state, "rising")} scroll={false}>집계 기준</Link></p>}
+            {!query && fallback === "rising" && <p className="row-note">마지막 확인 사이 GitHub 스타가 늘어난 순 · <Link prefetch={false} href={metricHref(state, "rising")} scroll={false}>집계 기준</Link></p>}
             {!query && fallback === "stars" && <p className="row-note">GitHub 스타가 많은 순.</p>}
           </div>
         </div>

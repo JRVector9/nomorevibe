@@ -22,7 +22,7 @@ export function ToolsBoard({ tools, state }: { tools: HomePulse["tools"]; state:
       <ul className="chips">
         {tools.rows.slice(0, 8).map((tool) => (
           <li key={tool.label}>
-            <Link href={hrefWith(state, { observedTool: tool.label })} className={`chip${state.observedTool === tool.label ? " chip-dark" : ""}`} aria-current={state.observedTool === tool.label ? "true" : undefined}>
+            <Link prefetch={false} href={hrefWith(state, { observedTool: tool.label })} className={`chip${state.observedTool === tool.label ? " chip-dark" : ""}`} aria-current={state.observedTool === tool.label ? "true" : undefined}>
               {tool.label} <span className="chip-count">{num(tool.count)}</span>
             </Link>
           </li>
