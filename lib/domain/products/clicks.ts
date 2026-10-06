@@ -3,6 +3,7 @@ import {
   eq,
   gte,
   inArray,
+  isNull,
   lt,
   sql,
   type DriverValueEncoder,
@@ -92,6 +93,8 @@ async function markUniqueCollectionStarted(): Promise<void> {
       set: {
         uniqueVisitorStartedAt: sql`coalesce(${visitCollectionState.uniqueVisitorStartedAt}, ${dbNow})`,
       },
+      // 이미 시작했으면 쓰지 않는다 — 클릭마다 같은 행을 다시 쓰면 그 행에서 클릭끼리 줄을 선다
+      setWhere: isNull(visitCollectionState.uniqueVisitorStartedAt),
     });
 }
 

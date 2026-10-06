@@ -178,7 +178,27 @@ function listConditions({ statuses, category, query, builder, observedTool, hasR
   return conditions;
 }
 
-export async function listProducts({ sort = "recent", limit, offset, ...options }: ListOptions): Promise<Product[]> {
+/**
+ * 공개 목록 카드가 쓰는 열(toListItem). 모든 열을 읽으면 search_vector·README·본문·토큰 해시까지 옮겨
+ * 카드 9장에 78KB 였다 — 쓰는 것은 4KB(2026-10-06 실측).
+ */
+export const LIST_COLUMNS = {
+  slug: true, name: true, repoUrl: true, tagline: true, taglineSource: true, category: true, accessMode: true, builder: true,
+  stack: true, ogImage: true, makerName: true, stars: true, starsAt: true, starsPrevious: true, starsPreviousAt: true,
+  verifiedAt: true, createdAt: true, status: true, source: true, claimedAt: true,
+} as const;
+export type ProductListRow = Pick<Product, keyof typeof LIST_COLUMNS>;
+
+export async function listProducts(options: ListOptions): Promise<Product[]> {
+  return db.query.products.findMany(listQuery(options));
+}
+
+/** listProducts 와 같은 목록을 카드에 쓰는 열만으로 */
+export async function listProductRows(options: ListOptions): Promise<ProductListRow[]> {
+  return db.query.products.findMany({ ...listQuery(options), columns: LIST_COLUMNS });
+}
+
+function listQuery({ sort = "recent", limit, offset, ...options }: ListOptions) {
   const conditions = listConditions(options);
   /**
    * 관련도순은 검색어가 있을 때만 있다 — 없으면 모든 행의 점수가 0이라 정렬이 아니다.
@@ -195,12 +215,7 @@ export async function listProducts({ sort = "recent", limit, offset, ...options 
     ...SORTS[sort === "relevance" ? "recent" : sort],
     products.slug,
   ];
-  return db.query.products.findMany({
-    where: and(...conditions),
-    orderBy,
-    limit,
-    offset,
-  });
+  return { where: and(...conditions), orderBy, limit, offset };
 }
 
 /**

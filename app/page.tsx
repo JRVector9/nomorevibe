@@ -286,8 +286,18 @@ export async function HomeContent({ params }: { params: HomeParams }) {
   const stripLoad = filtered ? Promise.resolve<ProductListItem[]>([]) : getPublicList(RISING_STRIP, { sort: "rising", rising: true }).catch(() => []);
   const newLoad = filtered ? Promise.resolve<ProductListItem[]>([]) : getNewThisWeek(5, completedWindows(now).weekStart).catch(() => []);
 
+  /*
+   * 서로 기다릴 필요가 없는 것은 함께 시작한다 — 시즌·검색어 해석·카테고리 개수·검증 수(2026-10-06: 시즌을 받은 뒤에야
+   * 개수를 세 홈이 한 왕복 더 기다렸다). 먼저 실패한 것이 처리되지 않은 거절로 남지 않게 잡아 두고, 아래 await 가 다시 던진다.
+   */
+  const seasonLoad = getCurrentSeason();
+  const searchLoad = resolveSearchQuery(query);
+  const countsLoad = categoryCounts({ statuses: ["verified", "seeded"], excludeDown: true });
+  const verifiedLoad = countProducts({ statuses: ["verified"], excludeDown: true });
+  for (const load of [seasonLoad, searchLoad, countsLoad, verifiedLoad]) load.catch(() => {});
+
   try {
-    active = await getCurrentSeason();
+    active = await seasonLoad;
     if (!active) {
       logger.warn("home.ranking_unavailable");
       effectiveSort = requestedSort === "weekly" || requestedSort === "trending" ? "recent" : requestedSort;
@@ -296,7 +306,7 @@ export async function HomeContent({ params }: { params: HomeParams }) {
      * 한국어로 목적을 치면 영어 목록에 닿지 않는다. 그대로 찾아 보고 몇 건 안 되면 영어 낱말로
      * 옮겨 한 번 더 찾는다 — 옮긴 말은 결과 위에 밝힌다(search-translation.ts).
      */
-    const search = await resolveSearchQuery(query);
+    const search = await searchLoad;
     translatedQuery = search.translated;
     const options = { category, query: search.queries, builder, observedTool, excludeDown: true };
     /**
@@ -308,31 +318,37 @@ export async function HomeContent({ params }: { params: HomeParams }) {
       hasRepository: effectiveSort === "open" ? true : undefined,
       rising: effectiveSort === "weekly" ? true : undefined,
     };
-    const [loadedCounts, matchingTotal, verifiedTotal] = await Promise.all([
-      categoryCounts({ statuses: ["verified", "seeded"], excludeDown: true }),
-      countProducts({ statuses: ["verified", "seeded"], ...listOptions }),
-      countProducts({ statuses: ["verified"], excludeDown: true }),
-    ]);
-    counts = loadedCounts;
-    total = Object.values(counts).reduce((sum, count) => sum + count, 0);
+    const verifiedTotal = await verifiedLoad;
     const minimumProducts = (active?.policy ?? DEFAULT_RANKING_POLICY).eligibility.minimumProducts;
     rankingReady = !needsUnclaimedFill(verifiedTotal, minimumProducts);
     fallback = fallbackSort(effectiveSort, verifiedTotal, minimumProducts);
     const publicCatalogue = effectiveSort === "recent" || effectiveSort === "open" || effectiveSort === "relevance" || fallback !== null;
     const requestedLimit = savedOnly ? Math.max(shown, SAVED_INITIAL_CANDIDATES) : shown;
+    const loadList = (limit: number, offset: number) => fallback
+      ? getPublicList(limit, { ...listOptions, sort: fallback, offset })
+      : active
+        ? listFor(effectiveSort, active, category, search.queries, builder, observedTool, limit)
+        : publicCatalogue
+          ? getPublicList(limit, { ...listOptions, sort: effectiveSort === "relevance" ? "relevance" : "recent" })
+          : getVerifiedList(limit, { ...options, sort: "recent" });
+    const matchingLoad = countProducts({ statuses: ["verified", "seeded"], ...listOptions });
+    /*
+     * 목록이 개수를 기다리는 것은 띠를 나눌지 정할 때뿐이다(거르기 없음 · 추천 대체 목록). 나머지는 LIMIT 이 이미 막으니
+     * 개수와 함께 받는다 — 넓은 검색에서 개수(214ms)를 기다린 뒤 목록(183ms)을 받던 것을 겹친다.
+     */
+    const stripPossible = !filtered && !savedOnly && fallback === "rising";
+    const earlyList = stripPossible ? null : loadList(publicCatalogue ? requestedLimit : verifiedTotal, 0);
+    earlyList?.catch(() => {});
+    const [loadedCounts, matchingTotal] = await Promise.all([countsLoad, matchingLoad]);
+    counts = loadedCounts;
+    total = Object.values(counts).reduce((sum, count) => sum + count, 0);
     // Public lists load only what is visible. Rankings retain their separate eligibility.
     // 급상승 띠가 앞 5개를 보여 준 '추천'은 그 뒤부터 이어 받는다 — 띠와 피드가 겹치지 않게
     // 저장 목록 보기(savedOnly)는 브라우저가 거르므로 띠의 다섯을 건너뛰면 그 안의 저장 제품이 사라진다
     // 급상승이 띠 하나를 채우고도 남을 때만 띠와 피드를 나눈다 — 다섯 이하면 띠가 다 가져가 피드가 '없다'고 말한다
-    stripShown = !filtered && !savedOnly && fallback === "rising" && matchingTotal > RISING_STRIP ? RISING_STRIP : 0;
+    stripShown = stripPossible && matchingTotal > RISING_STRIP ? RISING_STRIP : 0;
     const limit = publicCatalogue ? Math.min(requestedLimit, Math.max(0, matchingTotal - stripShown)) : verifiedTotal;
-    list = fallback
-      ? await getPublicList(limit, { ...listOptions, sort: fallback, offset: stripShown })
-      : active
-        ? await listFor(effectiveSort, active, category, search.queries, builder, observedTool, limit)
-        : publicCatalogue
-          ? await getPublicList(limit, { ...listOptions, sort: effectiveSort === "relevance" ? "relevance" : "recent" })
-          : await getVerifiedList(limit, { ...options, sort: "recent" });
+    list = earlyList ? (await earlyList).slice(0, limit) : await loadList(limit, stripShown);
     resultCount = publicCatalogue ? Math.max(0, matchingTotal - stripShown) : list.length;
 
     if (!publicCatalogue && !rankingReady) {

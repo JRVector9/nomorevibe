@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { usePathname, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { Icon } from "@/components/home/icons";
 import { categoryLabel } from "@/lib/domain/products/labels";
@@ -19,7 +19,6 @@ export function MethodologyDialog({ pulse, rankingFallback = false }: {
   const dialog = useRef<HTMLDialogElement>(null);
   const skipClose = useRef(false);
   const params = useSearchParams();
-  const router = useRouter();
   const pathname = usePathname();
   const metric = params.get("metric") ?? "";
   const open = pathname === "/" && ["all", "born", "updates", "active", "categories", "tools", "popular", "rising"].includes(metric);
@@ -47,8 +46,12 @@ export function MethodologyDialog({ pulse, rankingFallback = false }: {
     return qs ? `/?${qs}` : "/";
   }
 
+  /*
+   * 대화창은 주소의 metric 을 브라우저에서만 읽는다(서버 렌더는 쓰지 않는다). router.replace 는 홈 전체를 서버가 다시
+   * 그리게 해 탭을 누를 때마다 쿼리 26개가 돌았다(2026-10-06) — 주소만 바꾼다. useSearchParams 가 따라 바뀐다.
+   */
   function close() {
-    router.replace(closeHref(), { scroll: false });
+    window.history.replaceState(null, "", closeHref());
   }
 
   const metrics: [string, string][] = [["popular", "스타 구간"], ["born", "태어난 프로젝트"], ["updates", "새 버전"], ["active", "활발한 프로젝트"], ["categories", "분야 순위"]];
@@ -63,7 +66,7 @@ export function MethodologyDialog({ pulse, rankingFallback = false }: {
           onClick={() => {
             const next = new URLSearchParams(params.toString());
             next.set("metric", key);
-            router.replace(`/?${next.toString()}`, { scroll: false });
+            window.history.replaceState(null, "", `/?${next.toString()}`);
           }}
         >
           {label}

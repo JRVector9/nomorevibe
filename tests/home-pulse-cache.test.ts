@@ -63,6 +63,30 @@ describe("홈 상단 집계 캐시", () => {
     expect(queries()).toBe(QUERIES_PER_PULSE * 2);
   });
 
+  it("1분이 지나면 지난 값을 바로 주고 뒤에서 새로 집계한다 — 만료 순간의 요청이 1초 넘게 기다리지 않게", async () => {
+    let finish: (value: never) => void = () => {};
+    const slow = vi.fn((now: Date) => new Promise<never>((resolve) => { finish = resolve; void now; }));
+    const fresh = await getHomePulse(new Date("2026-09-07T10:00:00+09:00"));
+    const stale = await getHomePulse(new Date("2026-09-07T10:01:00+09:00"), slow);
+    expect(stale).toEqual(fresh);
+    expect(slow).toHaveBeenCalledTimes(1);
+    // 새로 집계하는 동안 들어온 요청은 같은 지난 값을 받고, 집계를 겹쳐 부르지 않는다
+    await getHomePulse(new Date("2026-09-07T10:01:01+09:00"), slow);
+    expect(slow).toHaveBeenCalledTimes(1);
+    finish({ ...fresh, total: 42 } as never);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect((await getHomePulse(new Date("2026-09-07T10:01:02+09:00"), slow)).total).toBe(42);
+  });
+
+  it("뒤에서 집계하다 실패하면 지난 값을 그대로 두고 다음 요청이 다시 시도한다", async () => {
+    const fresh = await getHomePulse(new Date("2026-09-08T10:00:00+09:00"));
+    const failing = vi.fn(async () => { throw new Error("db down"); });
+    expect(await getHomePulse(new Date("2026-09-08T10:01:00+09:00"), failing)).toEqual(fresh);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(await getHomePulse(new Date("2026-09-08T10:01:01+09:00"), failing)).toEqual(fresh);
+    expect(failing).toHaveBeenCalledTimes(2);
+  });
+
   it("실패는 담아 두지 않는다 — 다음 요청이 다시 집계한다", async () => {
     execute.mockRejectedValueOnce(new Error("db down"));
     await expect(getHomePulse(new Date("2026-09-06T10:00:00+09:00"))).rejects.toThrow("db down");

@@ -48,7 +48,9 @@ describe("home sort", () => {
     expect(parseShown(undefined)).toBe(9);
     expect(parseShown("18")).toBe(18);
     expect(parseShown("3")).toBe(9);
-    expect(parseShown("1000")).toBe(1000);
+    // 상한 — 주소 하나로 수만 행을 읽고 그리지 못하게(HOME_MAX_SHOWN)
+    expect(parseShown("1000")).toBe(198);
+    expect(parseShown("40000")).toBe(198);
     expect(parseShown("108")).toBe(108);
     expect(parseShown("Infinity")).toBe(9);
     expect(parseShown("9007199254740992")).toBe(9);

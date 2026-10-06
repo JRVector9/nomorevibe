@@ -13,6 +13,7 @@ import { getSettings as getCrawlSettings } from "@/lib/crawl/settings";
 import { agentClientLabel } from "@/lib/domain/evidence/agents/view";
 import { clickChangePercent } from "@/lib/domain/ranking/math";
 import { CATEGORIES, type Category } from "./schema";
+import { logger } from "@/lib/observability/logger";
 
 const DAY_MS = 86_400_000;
 const LISTED: ProductStatus[] = ["verified", "seeded"];
@@ -98,21 +99,47 @@ function at(date: Date) {
  * 공개 목록·카테고리 필터 개수는 담아 두지 않는다 — 차단·생존 상태가 바로 보여야 한다.
  */
 const HOME_PULSE_TTL_MS = 60_000;
-let cachedPulse: { key: string; expiresAt: number; value: Promise<HomePulse> } | null = null;
+type PulseEntry = { key: string; expiresAt: number; value: Promise<HomePulse>; refreshing: boolean };
+let cachedPulse: PulseEntry | null = null;
 
-/** 집계 창은 now 의 KST 날짜로만 정해진다 — 그 날짜와 집계 버전을 키로 잡는다 */
-export async function getHomePulse(now = new Date()): Promise<HomePulse> {
+/**
+ * 집계 창은 now 의 KST 날짜로만 정해진다 — 그 날짜와 집계 버전을 키로 잡는다.
+ *
+ * 1분이 지나면 지난 값을 바로 돌려주고 새 집계는 뒤에서 한다(stale-while-revalidate). 만료를 기다리게 하면
+ * 인스턴스마다 분당 한 요청이 1.1초 쿼리를 기다렸다(2026-10-06 실측 — 홈 첫 요청 1.4초의 원인). 날짜나 집계
+ * 버전이 바뀌면 지난 값은 다른 창이라 기다려 새로 집계한다.
+ */
+export async function getHomePulse(now = new Date(), load: (now: Date) => Promise<HomePulse> = loadHomePulse): Promise<HomePulse> {
   const key = `${kstCalendarDate(now)}:${METHOD_VERSION}`;
-  if (cachedPulse?.key === key && now.getTime() < cachedPulse.expiresAt) return cachedPulse.value;
-  const entry = { key, expiresAt: now.getTime() + HOME_PULSE_TTL_MS, value: loadHomePulse(now) };
+  const current = cachedPulse;
+  if (current?.key === key) {
+    if (now.getTime() >= current.expiresAt && !current.refreshing) refreshPulse(current, now, load);
+    try {
+      return await current.value;
+    } catch (error) {
+      // 실패는 담아 두지 않는다 — 다음 요청이 다시 집계한다
+      if (cachedPulse === current) cachedPulse = null;
+      throw error;
+    }
+  }
+  const entry: PulseEntry = { key, expiresAt: now.getTime() + HOME_PULSE_TTL_MS, value: load(now), refreshing: false };
   cachedPulse = entry;
   try {
     return await entry.value;
   } catch (error) {
-    // 실패는 담아 두지 않는다 — 다음 요청이 다시 집계한다
     if (cachedPulse === entry) cachedPulse = null;
     throw error;
   }
+}
+
+/** 뒤에서 새로 집계해 끝나면 바꿔 단다. 실패하면 지난 값을 그대로 두고 다음 요청이 다시 시도한다 */
+function refreshPulse(stale: PulseEntry, now: Date, load: (now: Date) => Promise<HomePulse>): void {
+  stale.refreshing = true;
+  const next = load(now);
+  next.then(
+    () => { if (cachedPulse === stale) cachedPulse = { key: stale.key, expiresAt: now.getTime() + HOME_PULSE_TTL_MS, value: next, refreshing: false }; },
+    (error: unknown) => { stale.refreshing = false; logger.warn("home.pulse_refresh_failed", { error: error instanceof Error ? error.message : String(error) }); },
+  );
 }
 
 /** 캐시 없이 한 번 집계한다 — 통합 테스트가 직접 부른다 */
