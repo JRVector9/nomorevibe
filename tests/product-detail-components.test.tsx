@@ -211,7 +211,8 @@ describe("evidence product detail components", () => {
   });
 
   it("shows only an internal icon copy, never an external image URL", () => {
-    expect(renderHero({ product: { ...product, ogImage: "/api/og-cache/simple-hwp" } })).toContain('src="/api/og-cache/simple-hwp"');
+    // 우리 사본을 화면 크기로 줄인 WebP 로(og-variants.ts)
+    expect(renderHero({ product: { ...product, ogImage: "/api/og-cache/simple-hwp" } })).toContain('src="/api/og-cache/simple-hwp.webp?size=192"');
     expect(renderHero({ product: { ...product, ogImage: "https://tracker.example/og.png" } })).not.toContain("tracker.example");
   });
 
@@ -338,7 +339,8 @@ describe("evidence product detail components", () => {
     // 화면 사본이 없으면 넓은 대표 이미지 — 내부 사본 주소만
     const wideSrc = "/api/og-cache/simple-hwp?thumbnail=repository_image&w=1200&h=400&v=1";
     const wide = textOf(renderToStaticMarkup(<PreviewFigure product={{ ...product, ogImage: wideSrc }} media={[]} />));
-    expect(renderToStaticMarkup(<PreviewFigure product={{ ...product, ogImage: wideSrc }} media={[]} />)).toContain('src="/api/og-cache/simple-hwp?thumbnail=repository_image&amp;w=1200&amp;h=400&amp;v=1"');
+    expect(renderToStaticMarkup(<PreviewFigure product={{ ...product, ogImage: wideSrc }} media={[]} />))
+      .toContain('src="/api/og-cache/simple-hwp.webp?thumbnail=repository_image&amp;w=1200&amp;h=400&amp;v=1&amp;size=1200"');
     expect(wide).toContain("GitHub 저장소 이미지");
     expect(wide).not.toContain("사본 갱신");
 

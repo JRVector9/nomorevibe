@@ -1,6 +1,7 @@
 /* eslint-disable @next/next/no-img-element -- 내부에 저장한 썸네일의 원본 비율과 크기를 그대로 쓴다 */
 import { ProductIcon } from "@/components/ProductIcon";
 import { thumbnailPresentation } from "@/lib/domain/products/thumbnails/presentation";
+import { ogVariantSrc } from "@/lib/domain/products/og-variants";
 
 /**
  * 카드 커버 — 대표 이미지는 전체 폭으로, 아이콘은 옅은 바탕 가운데로.
@@ -31,7 +32,7 @@ export function ProjectTile({ slug, name, ogImage, size, installable = false }: 
   return (
     <span className={`project-tile tile-${tileTintFor(slug)} tile-${size}`}>
       {internalImage && !presentation.identity ? (
-        <img src={internalImage} alt={`${name} · ${presentation.label}`} width={presentation.width} height={presentation.height} className="tile-preview" loading="lazy" />
+        <img src={ogVariantSrc(internalImage, 640)!} alt={`${name} · ${presentation.label}`} width={presentation.width} height={presentation.height} className="tile-preview" loading="lazy" />
       ) : (
         <span className="tile-icon"><ProductIcon name={name} ogImage={internalImage} size={size === 64 ? 96 : 64} /></span>
       )}
