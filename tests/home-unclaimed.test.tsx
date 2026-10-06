@@ -211,7 +211,8 @@ describe("미클레임 구획을 붙이는 기준", () => {
 
     const html = await render({ sort: "all-time" });
 
-    expect(getPublicList).toHaveBeenCalledWith(5, expect.objectContaining({ sort: "stars" }));
+    // 목록은 화면 분량으로 받아 개수까지만 쓴다 — 개수를 기다리지 않고 함께 받는다(app/page.tsx)
+    expect(getPublicList).toHaveBeenCalledWith(expect.any(Number), expect.objectContaining({ sort: "stars" }));
     expect(getPublicList.mock.calls.find(([, options]) => options.sort === "stars")?.[1].rising).toBeUndefined();
     expect(getAllTimeRanking).not.toHaveBeenCalled();
     expect(html).toContain("starred-one");
@@ -287,6 +288,7 @@ describe("빈 화면 문구", () => {
   });
 
   it("정렬을 명시하지 않은 검색은 순위가 아니라 공개 목록 전체에서 찾는다", async () => {
+    countProducts.mockResolvedValue(1);
     getPublicList.mockResolvedValue([product("searched-project")]);
 
     // 결과는 스트리밍되는 쪽(HomeContent)에서 그린다
@@ -319,6 +321,7 @@ describe("빈 화면 문구", () => {
 
   it("공개 목록에 수집 제품이 있으면 등록부터 하라고 말하지 않는다", async () => {
     categoryCounts.mockResolvedValue({});
+    countProducts.mockResolvedValue(1);
     getPublicList.mockResolvedValue([product("seeded-one")]);
 
     const html = await render({ sort: "recent" });
@@ -329,6 +332,7 @@ describe("빈 화면 문구", () => {
 
   it("필터로 걸러진 화면에서도 수집 제품이 있으면 없다고 말하지 않는다", async () => {
     categoryCounts.mockResolvedValue({});
+    countProducts.mockResolvedValue(1);
     getPublicList.mockResolvedValue([product("seeded-one")]);
 
     const html = await render({ sort: "recent", category: "Finance" });
@@ -430,8 +434,8 @@ describe("구획 제목", () => {
 
   it("첫 화면에 급상승 띠가 오고 피드는 그다음 항목부터 이어진다", async () => {
     categoryCounts.mockResolvedValue({ Dev: 3 });
-    // 맞는 제품 20 · 검증 0 — 급상승이 띠(5)를 채우고도 남아야 띠와 피드가 나뉜다
-    countProducts.mockResolvedValueOnce(20).mockResolvedValueOnce(0);
+    // 검증 0 · 맞는 제품 20 — 급상승이 띠(5)를 채우고도 남아야 띠와 피드가 나뉜다. 검증 수를 먼저 센다(app/page.tsx)
+    countProducts.mockResolvedValueOnce(0).mockResolvedValueOnce(20);
     const rising = ["r1", "r2", "r3", "r4", "r5", "r6"].map(product);
     getPublicList.mockImplementation(async (limit: number, options: { offset?: number } = {}) => rising.slice(options.offset ?? 0, (options.offset ?? 0) + limit));
     const html = await render({});

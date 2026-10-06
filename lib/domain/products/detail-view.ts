@@ -635,7 +635,7 @@ export async function getProductDetail(slugInput: string): Promise<ProductDetail
   const now = new Date();
   const primaryRepository = product.repoUrl ? normalizeTypedLink("repository", product.repoUrl) : null;
   const [rank, visitMap, health, profile, links, sources, media, updates, provenance, settings,
-    risingRank, related, readmeRow, toolScanRow] = await Promise.all([
+    risingRank, related, readmeRow, toolScanRow, crawlSettings] = await Promise.all([
     activeRank(slug),
     visitMetrics([slug], { windowHours: METRICS_WINDOW_DAYS * 24, minimumPreviousUniqueVisitors: 5 }),
     detailHealth(slug),
@@ -651,8 +651,9 @@ export async function getProductDetail(slugInput: string): Promise<ProductDetail
     db.select({ readme: products.searchReadme }).from(products).where(eq(products.slug, slug)).then((rows) => rows[0] ?? null),
     // GitHub 저장소가 아니면 키가 없어 조사도 없다. 현재 AGENT_DETECTOR_VERSION 의 조사만 보므로 옛 버전 조사만 있으면 '없음'이다
     primaryRepository ? getLatestRepositoryAgentScan(primaryRepository.normalizedKey) : Promise.resolve(null),
+    // 따로 기다리면 한 왕복이 더 든다 — 함께 읽는다
+    getCrawlSettings(),
   ]);
-  const crawlSettings = await getCrawlSettings();
   const observedAgentFacts = await observedFacts(sources, settings, crawlSettings.agentEvidence.displayObservedFacts, now);
   const publicLinks = links.map(link => {
     const source = sources.find(row => row.kind === link.kind && row.sourceKey === link.normalizedKey);

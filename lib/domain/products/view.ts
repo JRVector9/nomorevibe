@@ -1,7 +1,7 @@
 import { displayProjectName } from './display-name';
 import type { StarObservation } from '@/lib/domain/products/star-change';
 import type { Product, ProductStatus, TaglineSource } from "@/lib/db/schema";
-import { listProducts, listRecentlyDiscovered, type ProductSort } from "./repository";
+import { listProductRows, listRecentlyDiscovered, type ProductListRow, type ProductSort } from "./repository";
 import type { SearchQuery } from "./search";
 import type { Category } from "./schema";
 import { clickMetrics, type ClickMetrics } from "./clicks";
@@ -59,7 +59,7 @@ export function builderClaimOf(product: Pick<Product, "source" | "claimedAt">): 
   return isUnclaimed(product) ? "guessed" : "reported";
 }
 
-export function toListItem(p: Product): ProductListItem {
+export function toListItem(p: ProductListRow): ProductListItem {
   const builderClaim = builderClaimOf(p);
   return {
     slug: p.slug,
@@ -109,7 +109,7 @@ export type BrowseOptions = {
 };
 
 export async function getPublicList(limit: number, options: BrowseOptions = {}): Promise<ProductListItem[]> {
-  const rows = await listProducts({ statuses: ["verified", "seeded"], limit, excludeDown: true, ...options });
+  const rows = await listProductRows({ statuses: ["verified", "seeded"], limit, excludeDown: true, ...options });
   return withMetrics(rows.map(toListItem));
 }
 
@@ -168,7 +168,7 @@ export async function getVerifiedList(
   limit: number,
   options: BrowseOptions = {},
 ): Promise<ProductListItem[]> {
-  const rows = await listProducts({ statuses: ["verified"], limit, excludeDown: true, ...options });
+  const rows = await listProductRows({ statuses: ["verified"], limit, excludeDown: true, ...options });
   return withMetrics(rows.map(toListItem));
 }
 
@@ -182,7 +182,7 @@ export async function getUnclaimedList(
   limit: number,
   options: BrowseOptions = {},
 ): Promise<ProductListItem[]> {
-  const rows = await listProducts({ statuses: ["seeded"], sort: "recent", limit, excludeDown: true, ...options });
+  const rows = await listProductRows({ statuses: ["seeded"], sort: "recent", limit, excludeDown: true, ...options });
   return withMetrics(rows.map(toListItem));
 }
 

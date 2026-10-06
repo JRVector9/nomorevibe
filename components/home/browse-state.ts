@@ -2,6 +2,11 @@
 export type HomeSort = "weekly" | "trending" | "recent" | "all-time" | "open" | "relevance";
 export const HOME_FIRST_PAGE = 9;
 export const HOME_PAGE_SIZE = 9;
+/**
+ * "더 보기"로 늘릴 수 있는 끝. 상한이 없으면 `?shown=40000` 하나로 3만 행을 읽고 3만 장을 그렸다 —
+ * 누구나 주소 하나로 서버를 묶을 수 있었다(2026-10-06 점검). 사람이 더 보기로 닿는 수보다 넉넉하다.
+ */
+export const HOME_MAX_SHOWN = 198;
 
 export type BrowseState = {
   sort: HomeSort;
@@ -15,7 +20,7 @@ export type BrowseState = {
 export function parseShown(value: string | undefined): number {
   const count = Number(value);
   if (!Number.isSafeInteger(count) || count <= HOME_FIRST_PAGE) return HOME_FIRST_PAGE;
-  return count;
+  return Math.min(count, HOME_MAX_SHOWN);
 }
 
 export function parseHomeSort(value: string | undefined): HomeSort {
