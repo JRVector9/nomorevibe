@@ -1,6 +1,7 @@
 /* eslint-disable @next/next/no-img-element -- 검증 후 내부에 보관한 이미지를 저장 치수 그대로 제공한다. */
 import type { ProductDetailView } from "@/lib/domain/products/detail-view";
 import { thumbnailPresentation } from "@/lib/domain/products/thumbnails/presentation";
+import { ogVariantSrc } from "@/lib/domain/products/og-variants";
 import { formatDate } from "./format";
 
 /**
@@ -14,7 +15,7 @@ export function PreviewFigure({ product, media }: { product: ProductDetailView["
   const shown = first
     ? { src: first.src, width: first.width, height: first.height, caption: first.altText || `${product.name} 제품 화면`, at: first.lastSuccessAt, missing: first.sourceMissing }
     : internal && thumbnail && !thumbnail.identity
-      ? { src: internal, width: thumbnail.width, height: thumbnail.height, caption: thumbnail.label, at: null, missing: false }
+      ? { src: ogVariantSrc(internal, 1200)!, width: thumbnail.width, height: thumbnail.height, caption: thumbnail.label, at: null, missing: false }
       : null;
   if (!shown) return null;
 
