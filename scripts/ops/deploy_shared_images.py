@@ -113,44 +113,56 @@ class Dokploy:
         return rows[0]
 
 
+# expected: Dokploy 에 적힌 복제본 수, 또는 'any'(실행 중인 수가 원하는 수와 같기만 하면 — 배포 전 기준선).
+# 웹은 여러 대가 같은 요청을 나눠 받으므로 모든 컨테이너가 새 이미지·릴리스·상태 확인을 통과해야 준비다.
 REMOTE_PROBE = r'''import json,subprocess,sys
-service,image,sha,kind=sys.argv[1:]
+service,image,sha,kind,expected=sys.argv[1:]
 def command(*args):
  r=subprocess.run(args,capture_output=True,text=True)
  return r.stdout.strip() if r.returncode==0 else ''
+def container(cid):
+ c={'ok':False}
+ raw=command('docker','inspect',cid)
+ if not raw: return c
+ row=json.loads(raw)[0]
+ env=dict(line.split('=',1) for line in row['Config'].get('Env',[]) if '=' in line)
+ labels=row['Config'].get('Labels') or {}
+ state=row.get('State') or {}
+ c['containerImageMatch']=row['Config'].get('Image')==image
+ c['releaseMatch']=env.get('RELEASE_TAG')==sha
+ c['serviceLabelMatch']=labels.get('com.docker.swarm.service.name')==service
+ c['running']=state.get('Running') is True
+ c['health']=((state.get('Health') or {}).get('Status'))
+ c['deploymentIdMatch']=kind!='web' or env.get('NEXT_DEPLOYMENT_ID')==sha
+ if kind=='web' and all(c.get(key) for key in ('containerImageMatch','releaseMatch','running')):
+  script="fetch('http://'+process.env.HOSTNAME+':3000/api/health').then(r=>r.json()).then(j=>console.log(JSON.stringify(j)))"
+  try:
+   health=json.loads(command('docker','exec',cid,'node','-e',script))
+   c['webHealthMatch']=(health.get('status'),health.get('db'),health.get('release'))==('ok','ok',sha)
+   c['instanceId']=health.get('instanceId')
+  except Exception: c['webHealthMatch']=False
+ c['ok']=bool(c.get('containerImageMatch') and c.get('releaseMatch') and
+  c.get('serviceLabelMatch') and c.get('running') and
+  (c.get('health')=='healthy' if kind=='worker' else c.get('webHealthMatch')) and
+  c.get('deploymentIdMatch'))
+ return c
 rows=[line.split('\t') for line in command('docker','service','ls','--format','{{.Name}}\t{{.Image}}\t{{.Replicas}}').splitlines()]
 matches=[row for row in rows if len(row)==3 and row[0]==service]
 result={'ready':False,'serviceFound':len(matches)==1}
 if len(matches)==1:
  result['serviceImageMatch']=matches[0][1]==image
  result['replicas']=matches[0][2]
+ running,_,desired=matches[0][2].partition('/')
+ result['replicasMatch']=(running==desired and desired.isdigit() and int(desired)>=1 and
+  (expected=='any' or desired==expected))
  ids=command('docker','ps','--filter','name='+service,'--format','{{.ID}}').splitlines()
- if len(ids)==1:
-  raw=command('docker','inspect',ids[0])
-  if raw:
-   row=json.loads(raw)[0]
-   env=dict(line.split('=',1) for line in row['Config'].get('Env',[]) if '=' in line)
-   labels=row['Config'].get('Labels') or {}
-   state=row.get('State') or {}
-   result['containerImageMatch']=row['Config'].get('Image')==image
-   result['releaseMatch']=env.get('RELEASE_TAG')==sha
-   result['serviceLabelMatch']=labels.get('com.docker.swarm.service.name')==service
-   result['running']=state.get('Running') is True
-   result['health']=((state.get('Health') or {}).get('Status'))
-   result['deploymentIdMatch']=kind!='web' or env.get('NEXT_DEPLOYMENT_ID')==sha
-   if kind=='web' and all(result.get(key) for key in ('containerImageMatch','releaseMatch','running')):
-    script="fetch('http://'+process.env.HOSTNAME+':3000/api/health').then(r=>r.json()).then(j=>console.log(JSON.stringify(j)))"
-    raw=command('docker','exec',ids[0],'node','-e',script)
-    try:
-     health=json.loads(raw)
-     result['webHealthMatch']=(health.get('status'),health.get('db'),health.get('release'))==('ok','ok',sha)
-     result['instanceId']=health.get('instanceId')
-    except Exception: result['webHealthMatch']=False
-   result['ready']=(result.get('serviceImageMatch') and result.get('replicas')=='1/1' and
-    result.get('containerImageMatch') and result.get('releaseMatch') and
-    result.get('serviceLabelMatch') and result.get('running') and
-    (result.get('health')=='healthy' if kind=='worker' else result.get('webHealthMatch')) and
-    result.get('deploymentIdMatch'))
+ result['containers']=len(ids)
+ if result['replicasMatch'] and len(ids)==int(desired):
+  checks=[container(cid) for cid in ids]
+  result['containersReady']=sum(1 for c in checks if c['ok'])
+  ids_seen=sorted({c['instanceId'] for c in checks if c.get('instanceId')})
+  if ids_seen: result['instanceId']=','.join(ids_seen)
+  result['ready']=bool(result['serviceImageMatch'] and all(c['ok'] for c in checks))
 print(json.dumps(result))
 '''
 
@@ -161,14 +173,27 @@ def ssh_python(host, source, *args, input_text=None, timeout=40):
                 'root@' + host, command], input_text=input_text, timeout=timeout)
 
 
-def probe(short, app, target):
+WEB_MAX_REPLICAS = 8
+
+
+def replicas_allowed(kind, replicas):
+    """워커는 역할 lease 로 한 후보만 일하므로 한 대, 웹은 여러 대가 요청을 나눠 받는다(2026-10-06 M3 4·mini 2)."""
+    if kind == 'worker':
+        return replicas == 1
+    return isinstance(replicas, int) and not isinstance(replicas, bool) and 1 <= replicas <= WEB_MAX_REPLICAS
+
+
+def probe(short, app, target, expected='any'):
     kind = APPS[short][3]
     raw = ssh_python(APPS[short][2][1], REMOTE_PROBE, app['appName'], target[kind],
-                     target['sha'], kind)
+                     target['sha'], kind, str(expected))
     return json.loads(raw)
 
 
-def check_app_deployed(client, short, target, previous_id, *, timeout=240, pause=5):
+def check_app_deployed(client, short, target, previous_id, *, timeout=None, pause=5):
+    if timeout is None:
+        # Swarm 은 한 대씩 새로 띄우고 30초 지켜본 뒤 다음으로 넘어간다 — 복제본마다 시간을 더 준다
+        timeout = 240 + 90 * (max(1, client.app(short).get('replicas') or 1) - 1)
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         try:
@@ -183,7 +208,7 @@ def check_app_deployed(client, short, target, previous_id, *, timeout=240, pause
             if app.get('sourceType') != 'docker' or app.get('dockerImage') != target[APPS[short][3]] or setting(app.get('env'), 'RELEASE_TAG') != target['sha']:
                 raise RuntimeError(f'{short}_configuration_drift')
             try:
-                evidence = probe(short, app, target)
+                evidence = probe(short, app, target, app.get('replicas'))
             except (RuntimeError, json.JSONDecodeError, subprocess.TimeoutExpired):
                 evidence = {'ready': False}
             if evidence.get('ready') is True:
@@ -255,7 +280,7 @@ def baseline(client, target):
         current_image = app.get('dockerImage')
         if (app.get('sourceType') != 'docker' or app.get('applicationStatus') != 'done' or
                 latest.get('status') != 'done' or app.get('autoDeploy') is not False or
-                app.get('replicas') != 1 or not isinstance(current_image, str) or
+                not replicas_allowed(kind, app.get('replicas')) or not isinstance(current_image, str) or
                 not current_image.startswith(IMAGE_PREFIX[kind])):
             raise ValueError(f'{short}_baseline_not_ready')
         if release is None:

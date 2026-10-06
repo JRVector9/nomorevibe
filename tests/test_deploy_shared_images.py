@@ -2,7 +2,10 @@
 
 import importlib.util
 import io
+import json
 import os
+import subprocess
+import sys
 import tempfile
 import unittest
 from contextlib import redirect_stdout
@@ -129,6 +132,77 @@ class ReleaseSafetyTests(unittest.TestCase):
                                {'apps': {}, 'previous': {'sha': self.old_sha}},
                                '/private/tmp/snapshot.json')
         self.assertEqual(steps, ['publisher-mini', 'publisher-m3'])
+
+    def test_web_may_scale_out_but_workers_stay_single(self):
+        self.assertTrue(release.replicas_allowed('web', 4))
+        self.assertTrue(release.replicas_allowed('web', release.WEB_MAX_REPLICAS))
+        self.assertFalse(release.replicas_allowed('web', release.WEB_MAX_REPLICAS + 1))
+        self.assertFalse(release.replicas_allowed('web', 0))
+        self.assertFalse(release.replicas_allowed('web', True))
+        self.assertTrue(release.replicas_allowed('worker', 1))
+        self.assertFalse(release.replicas_allowed('worker', 2))
+
+        apps = self.apps()
+        apps['web-m3']['replicas'] = 4
+        apps['web-mini']['replicas'] = 2
+        with patch.object(release, 'probe', return_value={'ready': True}) as probe:
+            release.baseline(FakeClient(apps), self.target)
+        # 기준선은 Dokploy 에 새 수를 적어 두고 아직 배포하지 않은 상태도 받는다 — 실행 수 = 원하는 수만 본다
+        self.assertTrue(all(len(call.args) == 3 for call in probe.call_args_list))
+
+        apps['crawler-m3']['replicas'] = 2
+        with patch.object(release, 'probe') as probe:
+            with self.assertRaisesRegex(ValueError, 'crawler-m3_baseline_not_ready'):
+                release.baseline(FakeClient(apps), self.target)
+            probe.assert_not_called()
+
+    def test_wait_checks_the_configured_replica_count(self):
+        apps = self.apps()
+        apps['web-m3'].update({'replicas': 4, 'dockerImage': self.target['web'],
+                               'env': 'RELEASE_TAG=' + self.new_sha + '\n'})
+        client = FakeClient(apps, deployment_id='new')
+        with patch.object(release, 'probe', return_value={'ready': True, 'instanceId': 'm3-web'}) as probe:
+            result = release.check_app_deployed(client, 'web-m3', self.target, 'old')
+        self.assertEqual(result['instanceId'], 'm3-web')
+        self.assertEqual(probe.call_args.args[3], 4)
+
+    def run_probe(self, replicas, containers, expected):
+        """원격 상태 확인을 가짜 docker 로 그대로 돌린다 — 실제로 원격에서 도는 코드와 같은 문자열이다."""
+        web = self.target['web']
+        fixture = {'service': 'svc\t' + web + '\t' + replicas, 'containers': containers}
+        fake = ('import json,os,sys\n'
+                'f=json.loads(os.environ["FAKE_DOCKER"]);a=sys.argv[1:]\n'
+                'if a[:2]==["service","ls"]: print(f["service"])\n'
+                'elif a[0]=="ps": print("\\n".join(c["id"] for c in f["containers"]))\n'
+                'elif a[0]=="inspect":\n'
+                ' c=next(c for c in f["containers"] if c["id"]==a[1])\n'
+                ' print(json.dumps([{"Config":{"Image":c["image"],"Env":["RELEASE_TAG="+c["sha"],"NEXT_DEPLOYMENT_ID="+c["sha"]],'
+                '"Labels":{"com.docker.swarm.service.name":"svc"}},"State":{"Running":True}}]))\n'
+                'elif a[0]=="exec":\n'
+                ' c=next(c for c in f["containers"] if c["id"]==a[1])\n'
+                ' print(json.dumps({"status":"ok","db":"ok","release":c["sha"],"instanceId":"m3-web"}))\n')
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'docker'
+            path.write_text('#!' + sys.executable + '\n' + fake)
+            path.chmod(0o755)
+            out = subprocess.run([sys.executable, '-c', release.REMOTE_PROBE, 'svc', web, self.new_sha, 'web', expected],
+                                 capture_output=True, text=True, check=True,
+                                 env={**os.environ, 'PATH': directory + os.pathsep + os.environ['PATH'],
+                                      'FAKE_DOCKER': json.dumps(fixture)})
+        return json.loads(out.stdout)
+
+    def test_probe_requires_every_web_replica_on_the_new_release(self):
+        fresh = {'image': self.target['web'], 'sha': self.new_sha}
+        ready = self.run_probe('4/4', [dict(fresh, id=f'c{i}') for i in range(4)], '4')
+        self.assertTrue(ready['ready'])
+        self.assertEqual(ready['instanceId'], 'm3-web')
+
+        stale = [dict(fresh, id=f'c{i}') for i in range(3)] + [{'id': 'old', 'image': self.old_web, 'sha': self.old_sha}]
+        self.assertFalse(self.run_probe('4/4', stale, '4')['ready'])
+        # 아직 다 뜨지 않았거나 Dokploy 에 적은 수와 다르면 준비가 아니다
+        self.assertFalse(self.run_probe('3/4', [dict(fresh, id=f'c{i}') for i in range(3)], '4')['ready'])
+        self.assertFalse(self.run_probe('2/2', [dict(fresh, id=f'c{i}') for i in range(2)], '4')['ready'])
+        self.assertTrue(self.run_probe('2/2', [dict(fresh, id=f'c{i}') for i in range(2)], 'any')['ready'])
 
     def test_replace_setting_requires_one_line(self):
         self.assertEqual(release.replace_setting('# a\nRELEASE_TAG=old\n', 'RELEASE_TAG', self.new_sha),
