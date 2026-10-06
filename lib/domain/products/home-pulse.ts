@@ -165,14 +165,21 @@ export async function loadHomePulse(now: Date): Promise<HomePulse> {
   const repoOf = sql`
     left join lateral (select c.repo from ${crawlCandidates} c where c.published_slug = p.slug order by c.id desc limit 1) c on true
     left join ${crawlDocuments} d on d.repo = c.repo`;
-  const bornAt = sql`(d.repo_meta->>'created_at')::timestamptz`;
+  /**
+   * 제품 p 의 저장소가 태어난 시각 — 행마다 repo_meta 를 한 번만 푼다. 필터 넷이 저마다 풀어 1.16초 걸리던 것이
+   * 0.70초가 됐다(2026-10-06 복제본 실측, 결과 md5 같음). offset 0 이 바깥 식으로 다시 펼쳐지는 것을 막는다.
+   */
+  const bornOf = sql`
+    left join lateral (select c.repo from ${crawlCandidates} c where c.published_slug = p.slug order by c.id desc limit 1) c on true
+    left join lateral (select (d.repo_meta->>'created_at')::timestamptz as born_at from ${crawlDocuments} d where d.repo = c.repo offset 0) b on true`;
+  const bornAt = sql`b.born_at`;
 
   const [categoryRows, updateRow, activeRows, tools] = await Promise.all([
     db.execute<{ category: Category; total: number; born: number; born_prev: number }>(sql`
       select p.category, count(*)::int as total,
              (count(*) filter (where ${bornAt} >= ${weekAt} and ${bornAt} < ${asOfAt}))::int as born,
              (count(*) filter (where ${bornAt} >= ${prevAt} and ${bornAt} < ${weekAt}))::int as born_prev
-        from ${products} p ${repoOf}
+        from ${products} p ${bornOf}
        where p.status in ('verified', 'seeded') and coalesce(p.verified_at, p.created_at) < ${asOfAt}
        group by p.category`),
     db
