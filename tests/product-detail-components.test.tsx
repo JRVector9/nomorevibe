@@ -655,7 +655,8 @@ describe("evidence product detail components", () => {
     expect(source).toContain('<main className="wrap pb-14">');
     expect(source).not.toContain("max-w-[1220px]");
     // 분야 총수는 꾸밈 — 세다가 실패해도 페이지는 선다
-    expect(source).toMatch(/countProducts\(\{[^}]*excludeDown: true[^}]*\}\)\.catch\(\(\) => null\)/);
+    // 30초 읽기 캐시(publicRead)로 감싸도 실패는 null 로 삼킨다
+    expect(source).toMatch(/countProducts\(\{[^}]*excludeDown: true[^}]*\}\)\)?\.catch\(\(\) => null\)/);
     // 읽기 순서: 히어로 → 핵심 사실 → 무엇으로 만들었나 → 소개 → 언어 → 업데이트 → 정보 → 미리보기 → 운영자 → 같은 분야
     const order = [
       "<ProductHero",

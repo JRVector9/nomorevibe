@@ -25,6 +25,7 @@ import {
   NEW_THIS_WEEK_MIN_STARS,
   type ProductListItem,
 } from "@/lib/domain/products/view";
+import { publicRead } from "@/lib/domain/products/public-reads";
 import { recordSearch } from "@/lib/domain/products/search-log";
 import {
   completedWindows,
@@ -288,17 +289,17 @@ export async function HomeContent({ params }: { params: HomeParams }) {
   /** 첫 화면의 급상승 띠 — 필터·검색이 없을 때만. 피드의 '추천'(대체 목록)은 띠 다음부터 이어 받는다 */
   const RISING_STRIP = 5;
   const filtered = Boolean(query || category || builder || observedTool);
-  const stripLoad = filtered ? Promise.resolve<ProductListItem[]>([]) : getPublicList(RISING_STRIP, { sort: "rising", rising: true }).catch(() => []);
-  const newLoad = filtered ? Promise.resolve<ProductListItem[]>([]) : getNewThisWeek(5, completedWindows(now).weekStart).catch(() => []);
+  const stripLoad = filtered ? Promise.resolve<ProductListItem[]>([]) : publicRead("list", ["strip", RISING_STRIP], () => getPublicList(RISING_STRIP, { sort: "rising", rising: true })).catch(() => []);
+  const newLoad = filtered ? Promise.resolve<ProductListItem[]>([]) : publicRead("list", ["new", completedWindows(now).weekStart], () => getNewThisWeek(5, completedWindows(now).weekStart)).catch(() => []);
 
   /*
    * 서로 기다릴 필요가 없는 것은 함께 시작한다 — 시즌·검색어 해석·카테고리 개수·검증 수(2026-10-06: 시즌을 받은 뒤에야
    * 개수를 세 홈이 한 왕복 더 기다렸다). 먼저 실패한 것이 처리되지 않은 거절로 남지 않게 잡아 두고, 아래 await 가 다시 던진다.
    */
-  const seasonLoad = getCurrentSeason();
+  const seasonLoad = publicRead("count", ["season"], () => getCurrentSeason());
   const searchLoad = resolveSearchQuery(query);
-  const countsLoad = categoryCounts({ statuses: ["verified", "seeded"], excludeDown: true });
-  const verifiedLoad = countProducts({ statuses: ["verified"], excludeDown: true });
+  const countsLoad = publicRead("count", ["categories"], () => categoryCounts({ statuses: ["verified", "seeded"], excludeDown: true }));
+  const verifiedLoad = publicRead("count", ["verified"], () => countProducts({ statuses: ["verified"], excludeDown: true }));
   for (const load of [seasonLoad, searchLoad, countsLoad, verifiedLoad]) load.catch(() => {});
 
   try {
@@ -330,15 +331,16 @@ export async function HomeContent({ params }: { params: HomeParams }) {
     const publicCatalogue = effectiveSort === "recent" || effectiveSort === "open" || effectiveSort === "relevance" || fallback !== null;
     // 저장 목록 보기는 브라우저가 후보를 거르므로 창을 밀지 않고 앞에서부터 받는다
     const requestedLimit = savedOnly ? Math.max(Math.min(shown, HOME_MAX_SHOWN), SAVED_INITIAL_CANDIDATES) : shown;
-    const loadList = (limit: number, offset: number) => fallback
+    // 같은 정렬·거르기·구간이면 30초 동안 한 번만 읽는다(lib/domain/products/public-reads.ts)
+    const loadList = (limit: number, offset: number) => publicRead("list", ["home", effectiveSort, fallback, active?.key ?? null, listOptions, limit, offset], () => fallback
       ? getPublicList(limit, { ...listOptions, sort: fallback, offset })
       : active
         ? listFor(effectiveSort, active, category, search.queries, builder, observedTool, limit, offset)
         : publicCatalogue
           ? getPublicList(limit, { ...listOptions, sort: effectiveSort === "relevance" ? "relevance" : "recent", offset })
-          : getVerifiedList(limit, { ...options, sort: "recent" });
+          : getVerifiedList(limit, { ...options, sort: "recent" }));
     const spanOf = (count: number) => savedOnly ? { start: 0, count: Math.min(requestedLimit, count) } : shownWindow(shown, count);
-    const matchingLoad = countProducts({ statuses: ["verified", "seeded"], ...listOptions });
+    const matchingLoad = publicRead("count", ["matching", listOptions], () => countProducts({ statuses: ["verified", "seeded"], ...listOptions }));
     /*
      * 목록이 개수를 기다리는 것은 띠를 나눌지 정할 때뿐이다(거르기 없음 · 추천 대체 목록). 나머지는 LIMIT 이 이미 막으니
      * 개수와 함께 받는다 — 넓은 검색에서 개수(214ms)를 기다린 뒤 목록(183ms)을 받던 것을 겹친다.
@@ -363,10 +365,10 @@ export async function HomeContent({ params }: { params: HomeParams }) {
     resultCount = publicCatalogue ? catalogueTotal : list.length;
 
     if (!publicCatalogue && !rankingReady) {
-      unclaimedTotal = await countProducts({ statuses: ["seeded"], ...options });
+      unclaimedTotal = await publicRead("count", ["unclaimed", options], () => countProducts({ statuses: ["seeded"], ...options }));
       const unclaimedSpan = spanOf(unclaimedTotal);
       unclaimedStart = unclaimedSpan.start;
-      unclaimed = await getUnclaimedList(unclaimedSpan.count, { ...options, offset: unclaimedSpan.start });
+      unclaimed = await publicRead("list", ["unclaimed", options, unclaimedSpan], () => getUnclaimedList(unclaimedSpan.count, { ...options, offset: unclaimedSpan.start }));
     }
   } catch (error) {
     logger.error("home.list_failed", { error });
