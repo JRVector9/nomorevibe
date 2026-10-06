@@ -14,6 +14,7 @@ import { UpdateTimeline } from "@/components/product-detail/UpdateTimeline";
 import { UnclaimedOwnerContact } from "@/components/product-detail/UnclaimedOwnerContact";
 import { getProductDetail, getProductIdentity } from "@/lib/domain/products/detail-view";
 import { categoryLabel } from "@/lib/domain/products/labels";
+import { publicRead } from "@/lib/domain/products/public-reads";
 import { countProducts } from "@/lib/domain/products/repository";
 import type { Category } from "@/lib/domain/products/schema";
 
@@ -21,9 +22,12 @@ export const dynamic = "force-dynamic";
 
 type Props = { params: Promise<{ slug: string }> };
 
+/** 메타데이터·본문이 같은 제품을 여러 번 읽는다 — 30초 들고 있는다(lib/domain/products/public-reads.ts) */
+const identityOf = (slug: string) => publicRead("detail", ["identity", slug], () => getProductIdentity(slug));
+
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { slug } = await params;
-  const product = await getProductIdentity(slug);
+  const product = await identityOf(slug);
   if (!product) return {};
   return {
     title: `${product.name} — NoMoreVibe`,
@@ -36,11 +40,11 @@ export default async function ProductPage({ params }: Props) {
   const { slug } = await params;
   // '모두 보기'의 숫자일 뿐 — 세다가 실패해도 페이지는 그대로 선다. 기본 정보(메타데이터와 같은 요청 안에서 한 번 읽는다)를
   // 받자마자 상세와 함께 센다 — 상세를 다 받은 뒤 세던 한 왕복을 겹친다(2026-10-06)
-  const identity = await getProductIdentity(slug);
+  const identity = await identityOf(slug);
   const categoryLoad = identity
-    ? countProducts({ statuses: ["verified", "seeded"], excludeDown: true, category: identity.category as Category }).catch(() => null)
+    ? publicRead("count", ["category", identity.category], () => countProducts({ statuses: ["verified", "seeded"], excludeDown: true, category: identity.category as Category })).catch(() => null)
     : Promise.resolve(null);
-  const detail = await getProductDetail(slug);
+  const detail = await publicRead("detail", ["detail", slug], () => getProductDetail(slug));
   if (!detail) notFound();
 
   const languages = (detail.repository?.facts?.languages ?? []).slice(0, 2).map((item) => item.name);
