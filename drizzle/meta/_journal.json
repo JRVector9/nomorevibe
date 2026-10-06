@@ -407,6 +407,13 @@
       "when": 1791283230746,
       "tag": "0057_cdn_purges",
       "breakpoints": true
+    },
+    {
+      "idx": 58,
+      "version": "7",
+      "when": 1791294352349,
+      "tag": "0058_public_read_tuning",
+      "breakpoints": true
     }
   ]
 }
