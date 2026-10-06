@@ -7,7 +7,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  * DB 는 쿼리 수만 세는 가짜로 바꾼다 — 캐시가 무엇을 다시 부르는지만 본다.
  */
 const { select, execute, findFirst } = vi.hoisted(() => ({ select: vi.fn(), execute: vi.fn(), findFirst: vi.fn() }));
-vi.mock("@/lib/db", () => ({ db: { select, execute, query: { crawlSettings: { findFirst } } } }));
+vi.mock("@/lib/db", () => ({ db: { select, execute, query: { crawlSettings: { findFirst } } }, onReplica: <T>(load: () => Promise<T>) => load() }));
 
 import { getHomePulse } from "@/lib/domain/products/home-pulse";
 
