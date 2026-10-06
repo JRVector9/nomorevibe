@@ -49,7 +49,9 @@ export async function planReconsideration(limit = 1000, options: {
       // rechecks repository and URL identity under a lock before changing each row.
       policy === "star-auto" ? undefined : sql`not exists(select 1 from ${products} p where lower(rtrim(p.repo_url, '/')) = lower('https://github.com/' || ${crawlCandidates.repo}) or p.url = ${crawlDocuments.productUrl})`,
       policy === "package" ? and(eq(crawlCandidates.reason, "no_homepage"),
-        sql`coalesce((${crawlDocuments.repoMeta}->>'fork')::boolean, false) = false and coalesce((${crawlDocuments.repoMeta}->>'archived')::boolean, false) = false`) : undefined,
+        sql`coalesce((${crawlDocuments.repoMeta}->>'fork')::boolean, false) = false and coalesce((${crawlDocuments.repoMeta}->>'archived')::boolean, false) = false`,
+        // 한 번 다시 받은 것은 증거가 없어 같은 거절로 돌아온 것이다 — 500건씩 이어 돌릴 때 같은 것을 또 집지 않는다
+        sql`not exists(select 1 from ${operationsAudit} a where a.action = 'reconsider-package' and a.target = ${crawlCandidates.repo})`) : undefined,
       sql`case when jsonb_typeof(${crawlDocuments.repoMeta}->'stargazers_count') = 'number'
         then ${policy === "package"
           ? sql`${stars} >= ${PACKAGE_MIN_STARS} and ${stars} < ${INSTALLABLE_MIN_STARS}`

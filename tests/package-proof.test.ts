@@ -86,6 +86,16 @@ describe("패키지 증거 — GitHub 에서 찾기", () => {
       : { ok: false as const, error: { kind: "not_found" as const } });
     expect(await probePackageManifests("maker/tools", "main", gone as never)).toEqual({ ok: true, truncated: false, proof: [] });
   });
+
+  it("목록이 응답 상한을 넘는 큰 저장소는 증거 없음으로 넘기고, 읽지 못한 manifest 는 건너뛴다", async () => {
+    const huge = vi.fn(async () => ({ ok: false as const, error: { kind: "invalid_response" as const } }));
+    expect(await probePackageManifests("big/monorepo", "main", huge as never)).toEqual({ ok: true, truncated: true, proof: [] });
+    const unreadable = vi.fn(async (path: string) => path.includes("/git/trees/")
+      ? ok({ tree: [{ path: "skills/a/SKILL.md", type: "blob", size: 10 }, { path: "package.json", type: "blob", size: 10 }] })
+      : { ok: false as const, error: { kind: "invalid_response" as const } });
+    expect(await probePackageManifests("maker/tools", "main", unreadable as never))
+      .toEqual({ ok: true, truncated: false, proof: [{ kind: "skill", path: "skills/a/SKILL.md" }] });
+  });
 });
 
 describe("패키지 증거 — 판정", () => {
