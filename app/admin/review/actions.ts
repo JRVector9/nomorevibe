@@ -6,10 +6,13 @@ import { requestCandidateEvidence, requeueResolvedCandidates } from '@/lib/crawl
 import { writeTaglineByHand } from '@/lib/crawl/taglines';
 import { getDocument } from '@/lib/crawl/repository';
 import { decideCandidate } from '@/lib/crawl/review';
-import { changeReviewMode } from '@/lib/crawl/settings';
+import { changeReviewMode, getSettings, saveSettings } from '@/lib/crawl/settings';
+import { listGatewayModels } from '@/lib/crawl/agent-review-gateway';
+import { sameReviewModel } from '@/lib/crawl/review-model-identity';
 import { decidePublishedSecondReview } from '@/lib/crawl/published-second-review';
 import { recordAdminAction } from '@/lib/operations/admin-log';
 import type { RequeueState } from './contract';
+import { CLAUDE_MODELS, GROK_MODELS, parseVoterValue } from './voters';
 
 export type ReviewActionState = { error?: string; message?: string } | null;
 
@@ -119,4 +122,31 @@ export async function resolvePublishedSecondReview(_previous: ReviewActionState,
   revalidatePath('/admin/review');
   revalidatePath('/admin/products');
   return changed ? { message: decision === 'ban' ? '내렸습니다.' : '그대로 둡니다.' } : { error: '이미 처리됐거나 화면이 오래됐습니다. 새로고침해주세요.' };
+}
+
+/**
+ * 2차 표를 바로 바꾼다 — Grok 한도가 바닥나거나 게이트웨이 모델이 내려가면 큰 설정 폼을 다시 저장하지 않고 여기서 고른다.
+ * 표는 하나만 세운다. 대체(fallbacks)·기준값은 그대로 둔다. 바꾸면 옛 표의 대기 행은 다음 2차 잡이 닫는다(model_removed).
+ * 기록은 설정 저장이 같은 트랜잭션에서 남긴다(settings-save, 바뀐 값 전과 후).
+ */
+export async function switchSecondVoter(_previous: ReviewActionState, form: FormData): Promise<ReviewActionState> {
+  const admin = await currentAdmin();
+  if (!admin) return { error: '권한이 없습니다. 다시 로그인해주세요.' };
+  const choice = parseVoterValue(form.get('voter'));
+  if (!choice) return { error: '고를 수 있는 모델이 아닙니다.' };
+  // 화면 밖에서 만든 요청도 같은 목록 안에서만 받는다
+  const allowed = choice.provider === 'grok-cli' ? (GROK_MODELS as readonly string[]).includes(choice.model)
+    : choice.provider === 'claude-cli' ? (CLAUDE_MODELS as readonly string[]).includes(choice.model)
+      : (await listGatewayModels())?.includes(choice.model) ?? false;
+  if (!allowed) return { error: choice.provider === 'abcllm' ? '게이트웨이에 지금 없는 모델입니다. 새로고침해주세요.' : '고를 수 있는 모델이 아닙니다.' };
+  const settings = await getSettings();
+  if (sameReviewModel(settings.firstReview?.model, choice.model)) return { error: '1차와 같은 모델은 2차 표가 될 수 없습니다.' };
+  const current = settings.secondReview.voters;
+  if (current.length === 1 && current[0].provider === choice.provider && current[0].model === choice.model) return { message: '이미 이 모델이 2차 표입니다.' };
+  const result = await saveSettings({ secondReview: { ...settings.secondReview, voters: [choice] } }, admin.login);
+  if (!result.ok) return { error: result.issues.join(' ') };
+  revalidatePath('/admin/review');
+  revalidatePath('/admin');
+  revalidatePath('/admin/status');
+  return { message: `2차 표를 ${choice.model} 로 바꿨습니다. 다음 2차 잡(1분 안)부터 이 모델이 봅니다.` };
 }

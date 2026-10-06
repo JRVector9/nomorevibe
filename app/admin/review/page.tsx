@@ -24,6 +24,9 @@ import { humanDecisions24h, taglineProgress, waitingAge } from "@/lib/crawl/revi
 import { ReviewStatusChips } from "./ReviewStatusChips";
 import { ReviewStageRail } from "./ReviewStageRail";
 import { ReviewTodo, type TodoCard } from "./ReviewTodo";
+import { SecondVoterSwitch } from "./SecondVoterSwitch";
+import { voterChoices } from "./voters";
+import { listGatewayModels } from "@/lib/crawl/agent-review-gateway";
 import "../status/dashboard/dashboard.css";
 import "./review.css";
 
@@ -76,12 +79,15 @@ export default async function ReviewPage({ searchParams }: { searchParams: Promi
     human: held.ids.human.length, publish: stateCounts.approved, published: stateCounts.published, rejected: stateCounts.rejected,
   };
   // 머리 칩·할 일 카드의 숫자. 하나가 실패해도 큐는 그려야 하므로 각각 비운 채 넘긴다
-  const [models, human, humanAge, taglines] = await Promise.all([
+  const [models, human, humanAge, taglines, gatewayModels] = await Promise.all([
     modelHealth(settings).catch(() => null),
     humanDecisions24h().catch(() => null),
     waitingAge(held.ids.human).catch(() => null),
     taglineProgress(causes.ids.get('no_description') ?? []).catch(() => null),
+    // 2차 표 전환의 선택지 — 닿지 않으면 Grok·Claude 만
+    listGatewayModels(),
   ]);
+  const currentVoter = settings.secondReview.voters[0] ?? null;
 
   /*
    * 구간과 세부 거르기는 겹쳐 고를 수 있다(겹치는 것만 남는다). 세부 거르기는 보류 안에서만 뜻이 있어,
@@ -167,6 +173,8 @@ export default async function ReviewPage({ searchParams }: { searchParams: Promi
         </div>
         <div className="r">
           <ReasonLanguageToggle done={translation.done} total={translation.total} />
+          <SecondVoterSwitch key={currentVoter ? `${currentVoter.provider}|${currentVoter.model}` : 'none'} current={currentVoter}
+            choices={voterChoices(gatewayModels, currentVoter, settings.firstReview?.model ?? null)} gatewayReachable={gatewayModels !== null} />
           <ReviewModeForm key={settings.reviewMode} mode={settings.reviewMode} ready={process.env.CRAWL_REVIEW_READY === 'true'} />
         </div>
       </header>
