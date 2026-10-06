@@ -30,11 +30,25 @@ const nextConfig: NextConfig = {
    */
   async headers() {
     const tag = (value: string) => [{ key: "Cache-Tag", value }];
+    /**
+     * Cloudflare 만 읽는 캐시 시간 — 방문자에게 가는 Cache-Control(private, no-store)은 그대로다.
+     * 목록 60초·상세 240초 뒤 60초 동안은 지난 사본을 주며 뒤에서 새로 받는다(최대 2분·5분 늦음).
+     * 원 서버가 5xx 면 1시간까지 지난 사본을 준다. s-maxage 는 Cloudflare 의 SWR 을 꺼서 쓰지 않는다.
+     * 관리자(쿠키)·검색(q, 응답 뒤 검색 기록을 남긴다)은 저장하지 않는다.
+     */
+    const edge = (seconds: number) => ({
+      missing: [{ type: "cookie" as const, key: "nmv_admin" }, { type: "query" as const, key: "q" }],
+      headers: [{ key: "Cloudflare-CDN-Cache-Control", value: `max-age=${seconds}, stale-while-revalidate=60, stale-if-error=3600` }],
+    });
     return [
       { source: "/", headers: tag("html,lists") },
       { source: "/popular", headers: tag("html,lists") },
       { source: "/rankings/:key", headers: tag("html,lists") },
       { source: "/p/:slug", headers: tag("html,p-:slug") },
+      { source: "/", ...edge(60) },
+      { source: "/popular", ...edge(60) },
+      { source: "/rankings/:key", ...edge(60) },
+      { source: "/p/:slug", ...edge(240) },
     ];
   },
 };
