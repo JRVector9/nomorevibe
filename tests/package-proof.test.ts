@@ -16,6 +16,20 @@ describe("패키지 증거 — 경로와 내용", () => {
     expect(pathProof(["node_modules/x/SKILL.md", "vendor/y/.claude-plugin/plugin.json", "docs/skill.md"])).toEqual([]);
   });
 
+  it("저장소 개발용(.agents·.claude·.cursor)과 예시·문서·테스트 아래의 SKILL.md 는 제품 증거가 아니다", () => {
+    for (const path of [".agents/skills/dev/SKILL.md", ".claude/skills/review/SKILL.md", "home/.agents/skills/b/SKILL.md",
+      "docs/skills/x/SKILL.md", "examples/skill/SKILL.md", "internal/gaggles/example/skills/implement/SKILL.md", "tests/fixtures/SKILL.md"]) {
+      expect(pathProof([path])).toEqual([]);
+    }
+    // 내놓는 스킬 — 루트, skills/ 아래, 플러그인 묶음 아래
+    for (const path of ["SKILL.md", "skills/pdf/SKILL.md", "plugins/review/skills/lint/SKILL.md"]) {
+      expect(pathProof([path])).toEqual([{ kind: "skill", path }]);
+    }
+    // 이미 저장된 옛 증거도 지금 기준으로 다시 거른다
+    expect(packageProofOf({ [PACKAGE_PROOF_KEY]: [{ kind: "skill", path: ".agents/skills/dev/SKILL.md" }, { kind: "mcp-server", path: "package.json" }] }))
+      .toEqual([{ kind: "mcp-server", path: "package.json" }]);
+  });
+
   it("내용은 루트 것부터 세 개까지, 큰 파일과 남의 코드는 읽지 않는다", () => {
     expect(contentFiles([{ path: "extension/manifest.json", size: 900 }, { path: "package.json", size: 800 },
       { path: "node_modules/a/package.json", size: 10 }, { path: "pyproject.toml", size: 999_999 }, { path: "server.json", size: 10 }]))
@@ -23,12 +37,15 @@ describe("패키지 증거 — 경로와 내용", () => {
   });
 
   it("package.json·manifest.json·pyproject·server.json 에서 MCP·확장을 알아본다", () => {
-    expect(contentProof("package.json", JSON.stringify({ dependencies: { "@modelcontextprotocol/sdk": "^1" } }))).toEqual(["mcp-server"]);
+    expect(contentProof("package.json", JSON.stringify({ bin: { "pdf-mcp": "dist/index.js" }, dependencies: { "@modelcontextprotocol/sdk": "^1" } }))).toEqual(["mcp-server"]);
+    // 실행 진입점이 없으면 MCP 를 쓰는 라이브러리·SDK 일 뿐이다
+    expect(contentProof("package.json", JSON.stringify({ dependencies: { "@modelcontextprotocol/sdk": "^1" } }))).toEqual([]);
+    expect(contentProof("pyproject.toml", 'dependencies = ["mcp>=1.2"]')).toEqual([]);
     expect(contentProof("package.json", JSON.stringify({ engines: { vscode: "^1.90.0" }, devDependencies: { "@raycast/api": "1" } })))
       .toEqual(["vscode-extension", "raycast-extension"]);
     expect(contentProof("src/manifest.json", JSON.stringify({ manifest_version: 3, name: "Tab saver" }))).toEqual(["browser-extension"]);
     expect(contentProof("manifest.json", JSON.stringify({ id: "daily-notes", minAppVersion: "1.4.0" }))).toEqual(["obsidian-plugin"]);
-    expect(contentProof("pyproject.toml", 'dependencies = ["mcp[cli]>=1.2", "httpx"]')).toEqual(["mcp-server"]);
+    expect(contentProof("pyproject.toml", 'dependencies = ["mcp[cli]>=1.2", "httpx"]\n\n[project.scripts]\npdf-mcp = "pdf_mcp:main"')).toEqual(["mcp-server"]);
     expect(contentProof("server.json", JSON.stringify({ $schema: "https://static.modelcontextprotocol.io/schemas/server.schema.json" }))).toEqual(["mcp-server"]);
     // 웹앱 manifest·평범한 패키지·깨진 JSON 은 아니다
     expect(contentProof("public/manifest.json", JSON.stringify({ name: "PWA", start_url: "/" }))).toEqual([]);
@@ -53,7 +70,7 @@ describe("패키지 증거 — GitHub 에서 찾기", () => {
       if (path.includes("/git/trees/")) return ok({ truncated: false, tree: [
         { path: "skills", type: "tree" }, { path: "skills/pdf/SKILL.md", type: "blob", size: 400 },
         { path: "package.json", type: "blob", size: 300 }] });
-      return ok({ encoding: "base64", content: base64(JSON.stringify({ dependencies: { "@modelcontextprotocol/sdk": "1" } })) });
+      return ok({ encoding: "base64", content: base64(JSON.stringify({ bin: "dist/index.js", dependencies: { "@modelcontextprotocol/sdk": "1" } })) });
     });
     const probe = await probePackageManifests("maker/tools", "main", request as never);
     expect(probe).toEqual({ ok: true, truncated: false, proof: [{ kind: "skill", path: "skills/pdf/SKILL.md" }, { kind: "mcp-server", path: "package.json" }] });

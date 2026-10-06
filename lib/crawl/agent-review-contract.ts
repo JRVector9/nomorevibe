@@ -42,13 +42,15 @@ import { packageProofOf, type PackageProof } from "./package-proof";
  * 2026-10-06.1: 설치형 예외를 패키지 증거로 넓혔다(사용자 결정 — 플러그인·스킬은 사이트가 없어도 받는다). 스타 500개 미만이라도
  *   저장소에 SKILL.md·플러그인 manifest·MCP 서버·확장 manifest 가 있으면(product.packageProof, 5스타 이상) README 로 심사한다.
  *   규칙도 같이 바뀌어(배포 URL 없음 → 설치형 보류) rulesVersion 도 올렸다.
+ * 2026-10-06.2: 패키지 증거로만 들어온 것은 그 패키지(스킬·플러그인·MCP 서버·확장)를 내놓는 저장소여야 한다. 개발용 .agents/·.claude/
+ *   스킬은 증거에서 뺐다(package-proof.ts) — 저장된 증거의 해석이 바뀌므로 rulesVersion 도 올렸다.
  */
-export const REVIEW_PROMPT_VERSION = "2026-10-06.1";
+export const REVIEW_PROMPT_VERSION = "2026-10-06.2";
 /**
  * 규칙 2026-09-19.2: 문서 생성기·문서 목차·이름 패턴(*-website·awesome-*)을 거부에서 보류로 바꿨다. 새 기준에서
  *   이 셋이 거부한 것의 79%·95%·1/3~5/8 이 올려야 할 프로젝트 홈이었다(블라인드 표본). AI 가 가른다.
  */
-export const REVIEW_RULES_VERSION = "2026-10-06.1";
+export const REVIEW_RULES_VERSION = "2026-10-06.2";
 export const MAX_REVIEW_INPUT_BYTES = 64 * 1024;
 export const MAX_REVIEW_ATTEMPTS = 3;
 export const REVIEW_FRESH_MS = 24 * 3600_000;

@@ -17,10 +17,16 @@ export type PackageProof = { kind: PackageKind; path: string }[];
 
 /** 남의 코드를 담아 둔 곳 — 거기 있는 SKILL.md·manifest 는 이 저장소의 것이 아니다 */
 const VENDORED = /(^|\/)(node_modules|vendor|third_party|\.git)\//;
+/**
+ * 저장소를 만들 때 쓰는 곳 — `.agents/skills`·`.claude/skills`·`.cursor/` 의 스킬은 그 저장소에서 일할 에이전트용이고,
+ * docs·examples·tests·templates·internal 아래의 것은 예시다. 거기 있는 SKILL.md 는 내놓는 제품이 아니다
+ * (2026-10-06 재검토 500건 첫 99건: dotfiles·라이브러리가 .agents/skills 로 설치형 심사를 받아 승인됐다).
+ */
+const DEVELOPMENT = /(^|\/)(\.[^/]+|docs?|examples?|samples?|tests?|__tests__|fixtures?|templates?|internal)\//;
 
 /** 경로만으로 가르는 것 */
-const PATH_RULES: { kind: PackageKind; pattern: RegExp }[] = [
-  { kind: "skill", pattern: /(^|\/)SKILL\.md$/ },
+const PATH_RULES: { kind: PackageKind; pattern: RegExp; development?: boolean }[] = [
+  { kind: "skill", pattern: /(^|\/)SKILL\.md$/, development: true },
   { kind: "claude-plugin", pattern: /^\.claude-plugin\/(plugin|marketplace)\.json$/ },
   { kind: "jetbrains-plugin", pattern: /(^|\/)src\/main\/resources\/META-INF\/plugin\.xml$/ },
 ];
@@ -33,7 +39,7 @@ export const MAX_CONTENT_BYTES = 64 * 1024;
 export function pathProof(paths: readonly string[]): PackageProof {
   const proof: PackageProof = [];
   for (const rule of PATH_RULES) {
-    const path = paths.find((item) => !VENDORED.test(item) && rule.pattern.test(item));
+    const path = paths.find((item) => !VENDORED.test(item) && !(rule.development && DEVELOPMENT.test(item)) && rule.pattern.test(item));
     if (path) proof.push({ kind: rule.kind, path });
   }
   return proof;
@@ -49,7 +55,9 @@ export function contentFiles(files: readonly { path: string; size?: number }[]):
 /** 파일 하나의 내용이 어떤 패키지를 말하는지 */
 export function contentProof(path: string, text: string): PackageKind[] {
   const name = path.split("/").at(-1);
-  if (name === "pyproject.toml") return /["'](mcp|fastmcp)(\[[^\]]*\])?\s*([<>=~!]|["'])/.test(text) ? ["mcp-server"] : [];
+  // MCP 는 의존성만으로 세지 않는다 — SDK·클라이언트도 mcp 를 쓴다. 실행 진입점(서버로 띄울 명령)이 있어야 한다
+  if (name === "pyproject.toml") return /["'](mcp|fastmcp)(\[[^\]]*\])?\s*([<>=~!]|["'])/.test(text) && /^\[project\.scripts\]/m.test(text)
+    ? ["mcp-server"] : [];
   let json: unknown;
   try { json = JSON.parse(text); } catch { return []; }
   if (!json || typeof json !== "object" || Array.isArray(json)) return [];
@@ -64,20 +72,21 @@ export function contentProof(path: string, text: string): PackageKind[] {
   const dependencies = ["dependencies", "devDependencies", "peerDependencies"]
     .flatMap((key) => value[key] && typeof value[key] === "object" ? Object.keys(value[key] as object) : []);
   const kinds: PackageKind[] = [];
-  if (dependencies.includes("@modelcontextprotocol/sdk") || dependencies.includes("fastmcp")) kinds.push("mcp-server");
+  if ((dependencies.includes("@modelcontextprotocol/sdk") || dependencies.includes("fastmcp")) && value.bin) kinds.push("mcp-server");
   const engines = value.engines as Record<string, unknown> | undefined;
   if (typeof engines?.vscode === "string") kinds.push("vscode-extension");
   if (dependencies.includes("@raycast/api")) kinds.push("raycast-extension");
   return kinds;
 }
 
-/** 저장된 증거를 읽는다 — 모르는 종류·모양은 버린다 */
+/** 저장된 증거를 읽는다 — 모르는 종류·모양은 버리고, 지금 기준으로 개발용 경로인 스킬도 버린다(먼저 저장된 것까지) */
 export function packageProofOf(meta: Record<string, unknown> | null | undefined): PackageProof {
   const raw = meta?.[PACKAGE_PROOF_KEY];
   if (!Array.isArray(raw)) return [];
   return raw.flatMap((item) => item && typeof item === "object"
     && (PACKAGE_KINDS as readonly string[]).includes((item as { kind?: unknown }).kind as string)
     && typeof (item as { path?: unknown }).path === "string"
+    && !((item as { kind: string }).kind === "skill" && DEVELOPMENT.test((item as { path: string }).path))
     ? [{ kind: (item as { kind: PackageKind }).kind, path: (item as { path: string }).path.slice(0, 300) }] : []).slice(0, PACKAGE_KINDS.length);
 }
 
