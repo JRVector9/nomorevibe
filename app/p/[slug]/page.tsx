@@ -50,9 +50,9 @@ export default async function ProductPage({ params }: Props) {
     <main className="wrap pb-14">
       <DetailEntry slug={slug} />
       <nav aria-label="경로" className="flex items-center gap-2 pt-4 text-[13px] text-fg-3">
-        <Link href="/" className="shrink-0 hover:text-fg">발견하기</Link>
+        <Link prefetch={false} href="/" className="shrink-0 hover:text-fg">발견하기</Link>
         <span aria-hidden>›</span>
-        <Link href={`/?category=${encodeURIComponent(detail.product.category)}&sort=recent`} className="shrink-0 hover:text-fg">{categoryLabel(detail.product.category)}</Link>
+        <Link prefetch={false} href={`/?category=${encodeURIComponent(detail.product.category)}&sort=recent`} className="shrink-0 hover:text-fg">{categoryLabel(detail.product.category)}</Link>
         <span aria-hidden>›</span>
         <span className="min-w-0 truncate text-fg">{detail.product.name}</span>
       </nav>

@@ -22,6 +22,21 @@ const nextConfig: NextConfig = {
   outputFileTracingIncludes: {
     "/skill.md": ["./skill/SKILL.md"],
   },
+
+  /**
+   * Cloudflare 캐시 태그 — 저장한 사본을 골라 지울 이름표다(Cloudflare 가 방문자에게 보내기 전에 뗀다).
+   * 화면 이동용(RSC) 사본은 `?_rsc=` 주소가 제각각이라 주소로는 다 못 지운다. 태그는 갈래를 함께 지운다.
+   * html: 배포 뒤 옛 화면 · lists: 제품이 내려가면 목록 화면 전체 · p-<slug>: 그 상세 화면(2026-10-06).
+   */
+  async headers() {
+    const tag = (value: string) => [{ key: "Cache-Tag", value }];
+    return [
+      { source: "/", headers: tag("html,lists") },
+      { source: "/popular", headers: tag("html,lists") },
+      { source: "/rankings/:key", headers: tag("html,lists") },
+      { source: "/p/:slug", headers: tag("html,p-:slug") },
+    ];
+  },
 };
 
 export default nextConfig;

@@ -53,15 +53,15 @@ export function SiteHeader() {
   return (
     <header className="nmb-header">
       <div className="wrap header-row">
-        <Link className="brand" href="/" aria-label="nomorevibe 홈">
+        <Link prefetch={false} className="brand" href="/" aria-label="nomorevibe 홈">
           <i className="brand-dot" aria-hidden="true" />
           nomorevibe
         </Link>
         <nav className="navigation" aria-label="주 메뉴">
-          <Link href="/#rising" className={home ? "active" : undefined}>급상승</Link>
-          <Link href="/#projects">발견하기</Link>
-          <Link href="/#popular">인기</Link>
-          <Link href="/#new">새로 나온</Link>
+          <Link prefetch={false} href="/#rising" className={home ? "active" : undefined}>급상승</Link>
+          <Link prefetch={false} href="/#projects">발견하기</Link>
+          <Link prefetch={false} href="/#popular">인기</Link>
+          <Link prefetch={false} href="/#new">새로 나온</Link>
         </nav>
         <form className="header-search" action="/" method="get" role="search">
           {home && params.get("observedTool") && <input type="hidden" name="observedTool" value={params.get("observedTool")!} />}

@@ -52,9 +52,9 @@ export function SeasonFooter({
       <span className="font-semibold text-accent">{remainingTime(season.endsAt, now)}</span>
       <span>{snapshotAge(season.refreshedAt, now)}</span>
       <div className="ml-auto flex gap-3 font-semibold">
-        <Link href={`/rankings/${season.key}`} className="text-accent hover:underline">현재 규칙 보기</Link>
+        <Link prefetch={false} href={`/rankings/${season.key}`} className="text-accent hover:underline">현재 규칙 보기</Link>
         {latestClosed && (
-          <Link href={`/rankings/${latestClosed.key}`} className="text-fg-2 hover:text-fg">지난 시즌</Link>
+          <Link prefetch={false} href={`/rankings/${latestClosed.key}`} className="text-fg-2 hover:text-fg">지난 시즌</Link>
         )}
       </div>
     </div>

@@ -51,7 +51,7 @@ export function ProjectGrid({
           <Icon name="bookmark" size={29} />
           <h3>아직 저장한 프로젝트가 없습니다.</h3>
           <p>관심 있는 프로젝트의 북마크를 눌러 모아보세요.</p>
-          <Link className="secondary" href={hrefWith(browseState)}>
+          <Link prefetch={false} className="secondary" href={hrefWith(browseState)}>
             전체 프로젝트 보기
           </Link>
         </div>
@@ -64,7 +64,7 @@ export function ProjectGrid({
       {onlySaved && (
         <div className="saved-banner">
           이 브라우저에 저장한 프로젝트 {rows.length}개
-          <Link className="text-button" href={hrefWith(browseState)}>
+          <Link prefetch={false} className="text-button" href={hrefWith(browseState)}>
             전체 보기
           </Link>
         </div>
@@ -72,7 +72,7 @@ export function ProjectGrid({
       {start > 0 && (
         <div className="saved-banner">
           앞의 {start.toLocaleString("ko-KR")}개는 접었습니다
-          <Link className="text-button" href={hrefWith(browseState, { shown: undefined })}>
+          <Link prefetch={false} className="text-button" href={hrefWith(browseState, { shown: undefined })}>
             처음부터 보기
           </Link>
         </div>
@@ -94,7 +94,7 @@ export function ProjectGrid({
             프로젝트 더 보기 ({visible.length} / {total})
           </button>
         ) : (
-          <Link
+          <Link prefetch={false}
             className="more-btn"
             href={hrefWith(browseState, { shown: Math.min(limit + HOME_PAGE_SIZE, total) })}
             scroll={false}
