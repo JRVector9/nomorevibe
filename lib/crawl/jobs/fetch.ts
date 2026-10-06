@@ -8,6 +8,9 @@ import * as crawl from "@/lib/crawl/repository";
 import { getSettings } from "@/lib/crawl/settings";
 import { getRepo } from "@/lib/crawl/github";
 import { PROBE_COMMITS, probeAiEvidence } from "@/lib/crawl/ai-evidence-gate";
+import { probePackageManifests } from "@/lib/crawl/package-probe";
+import { PACKAGE_PROOF_KEY } from "@/lib/crawl/package-proof";
+import { INSTALLABLE_MIN_STARS, PACKAGE_MIN_STARS, lacksDeployment } from "@/lib/domain/products/access";
 import { SHOW_HN_SIGNAL } from "@/lib/crawl/settings-schema";
 import { extractSiteRepositoryKeys } from "@/lib/domain/evidence/providers/site-fingerprint";
 import { extractGithubLinks } from "@/lib/crawl/github-links";
@@ -267,6 +270,34 @@ async function fetchEntry(
     evidence = probe.found;
   }
 
+  /**
+   * 사이트 없는 스킬·플러그인·확장 — 저장소 안의 패키지 파일을 찾아 원본에 붙인다(package-proof.ts).
+   * 500 스타 이상은 이미 설치형으로 보고, 5 스타 미만·포크·보관된 것은 보지 않는다(하루 약 200건).
+   */
+  let meta = repoMeta;
+  const stars = typeof repoMeta.stargazers_count === "number" ? repoMeta.stargazers_count : 0;
+  if (stars >= PACKAGE_MIN_STARS && stars < INSTALLABLE_MIN_STARS && repoMeta.fork !== true && repoMeta.archived !== true
+    && lacksDeployment(entry.repo, homepage)) {
+    const branch = typeof repoMeta.default_branch === "string" && repoMeta.default_branch ? repoMeta.default_branch : "HEAD";
+    const probe = await oneAtATime(GITHUB_ORIGIN, () => probePackageManifests(entry.repo, branch));
+    if (!probe.ok) {
+      if (probe.error.kind === "rate_limited" || probe.error.kind === "auth_unavailable") {
+        return { kind: "paused", reason: probe.error.kind,
+          retryAt: probe.error.resetAt ?? new Date(Date.now() + (probe.error.kind === "auth_unavailable" ? 15 * 60_000 : 60_000)) };
+      }
+      // 빈 저장소는 404·409 로 답한다 — 패키지가 없을 뿐이다. 나머지는 이 항목만 다시 시도한다
+      if (!(probe.error.kind === "not_found" || (probe.error.kind === "http" && probe.error.status === 409))) {
+        const reason = `패키지 확인 실패 — GitHub ${probe.error.kind === "http" ? probe.error.status : probe.error.kind}`;
+        if (ctx.lease) await crawl.markFailed(entry.repo, reason, undefined, entry, ctx.lease);
+        else await crawl.markFailed(entry.repo, reason, undefined, entry);
+        return { kind: "failed" };
+      }
+    } else if (probe.proof.length) {
+      meta = { ...repoMeta, [PACKAGE_PROOF_KEY]: probe.proof };
+      ctx.log("crawl.package_proof", { repo: entry.repo, stars, proof: probe.proof.map((item) => item.kind) });
+    }
+  }
+
   let page: Awaited<ReturnType<typeof visit>> | null = null;
   if (homepage) {
     try {
@@ -285,7 +316,7 @@ async function fetchEntry(
 
   const saved = await crawl.saveFetchedDocument(entry, {
     repo: entry.repo,
-    repoMeta,
+    repoMeta: meta,
     productUrl: page?.productUrl ?? homepage,
     pageStatus: page?.status ?? null,
     // 들여보낸 흔적은 원본에 남긴다 — 심사 화면이 "왜 들어왔나"를 볼 수 있게

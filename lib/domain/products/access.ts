@@ -1,4 +1,6 @@
 export const INSTALLABLE_MIN_STARS = 500;
+/** 저장소에 스킬·플러그인·확장 같은 패키지 증거가 있으면 이 스타부터 사이트 없이 심사한다(lib/crawl/package-proof.ts) */
+export const PACKAGE_MIN_STARS = 5;
 export type ProductAccessMode = "website" | "installable";
 
 /** GitHub identity is data, never an arbitrary URL or an installation command. */
@@ -7,17 +9,25 @@ export function repositoryUrl(repo: string): string | null {
     && ![".", ".."].includes(repo.split("/")[1]) ? `https://github.com/${repo}` : null;
 }
 
+/** 배포 주소가 없거나, 자기 GitHub 저장소·문서 주소뿐인가 — 설치형으로 볼 수 있는 입구 */
+export function lacksDeployment(repo: string, productUrl: string | null): boolean {
+  if (!productUrl) return true;
+  const homepage = URL.parse(productUrl);
+  const ownRepository = homepage?.hostname.toLowerCase() === "github.com"
+    && homepage.pathname.replace(/\/$/, "").toLowerCase() === `/${repo}`.toLowerCase();
+  const documentation = homepage && (/(^|\.)docs?\./i.test(homepage.hostname) || /^\/docs?(\/|$)/i.test(homepage.pathname));
+  return Boolean(ownRepository || documentation);
+}
+
 /** An alternate entry point only; substantive software review is still required. */
-export function productAccess(input: { repo: string; stars: number; productUrl: string | null }): {
+export function productAccess(input: { repo: string; stars: number; productUrl: string | null;
+  packageProof?: readonly unknown[] }): {
   mode: ProductAccessMode; url: string;
 } | null {
   const canonical = repositoryUrl(input.repo);
-  const homepage = input.productUrl ? URL.parse(input.productUrl) : null;
-  const ownRepository = homepage?.hostname.toLowerCase() === "github.com"
-    && homepage.pathname.replace(/\/$/, "").toLowerCase() === `/${input.repo}`.toLowerCase();
-  const documentation = homepage && (/(^|\.)docs?\./i.test(homepage.hostname) || /^\/docs?(\/|$)/i.test(homepage.pathname));
-  if (canonical && Number.isSafeInteger(input.stars) && input.stars >= INSTALLABLE_MIN_STARS
-    && (!input.productUrl || ownRepository || documentation)) return { mode: "installable", url: canonical };
+  const minimum = input.packageProof?.length ? PACKAGE_MIN_STARS : INSTALLABLE_MIN_STARS;
+  if (canonical && Number.isSafeInteger(input.stars) && input.stars >= minimum
+    && lacksDeployment(input.repo, input.productUrl)) return { mode: "installable", url: canonical };
   return input.productUrl ? { mode: "website", url: input.productUrl } : null;
 }
 

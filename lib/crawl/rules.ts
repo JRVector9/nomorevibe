@@ -4,7 +4,8 @@ import type { DecisionReason } from "@/lib/db/schema";
 import type { CrawlSettings } from "./settings-schema";
 import { summarizeAgentEvidence, type SummaryInput } from "@/lib/domain/evidence/agents/summary";
 import { linksOwnGithub } from "./github-links";
-import { productAccess, INSTALLABLE_MIN_STARS } from "@/lib/domain/products/access";
+import { productAccess, INSTALLABLE_MIN_STARS, PACKAGE_MIN_STARS } from "@/lib/domain/products/access";
+import { packageProofOf, type PackageProof } from "./package-proof";
 import { starAutoApproval } from "./star-auto-approval";
 
 /**
@@ -25,6 +26,8 @@ export type RepoFacts = {
   archived: boolean;
   /** 레포 설명. 이름과 URL에 단서가 없을 때 여기에만 있는 경우가 있다 */
   description: string;
+  /** 저장소에서 찾은 스킬·플러그인·확장 파일(package-proof.ts). 없으면 빈 목록 */
+  packageProof?: PackageProof;
 };
 
 export type PageFacts = {
@@ -229,7 +232,8 @@ export function accessFromDocument(document: {
   const verdict = document.fetchedAt
     ? judgeStoredDocument({ ...document, fetchedAt: document.fetchedAt }, settings)
     : judge(factsFromRepoMeta(document.repo, document.repoMeta), pageFactsFromDocument(document), settings);
-  return productAccess({ repo: document.repo, stars: factsFromRepoMeta(document.repo, document.repoMeta).stars,
+  const facts = factsFromRepoMeta(document.repo, document.repoMeta);
+  return productAccess({ repo: document.repo, stars: facts.stars, packageProof: facts.packageProof,
     productUrl: verdict.signals.accessMode === "installable" ? null : document.productUrl });
 }
 
@@ -279,14 +283,16 @@ function judgeWebsite(
   let deferred: { cause: AmbiguityCause; rule: string; detail: string } | null = null;
   const defer = (cause: AmbiguityCause, rule: string, detail: string) => { deferred ??= { cause, rule, detail }; };
 
-  const access = productAccess({ repo: repo.repo, stars: repo.stars, productUrl: page.productUrl });
+  const access = productAccess({ repo: repo.repo, stars: repo.stars, productUrl: page.productUrl, packageProof: repo.packageProof });
   if (access?.mode === "installable") {
     signals.accessMode = access.mode;
+    if (repo.packageProof?.length) signals.packageProof = repo.packageProof;
     const purpose = nonProductPurpose({ ...page, description: [repo.description, page.description].filter(Boolean).join(" ") });
     if (purpose) return reject("not_a_product", "독립 제품·서비스", `${purpose.kind}: ${purpose.evidence}`);
     if (repo.isFork && rules.excludeForks) return reject("fork", "포크 아님", "포크 저장소");
     if (repo.archived) return reject("personal_site", "보관됨 아님", "archived=true");
-    pass("설치형 제품 스타 기준", `${repo.stars} ≥ ${INSTALLABLE_MIN_STARS}`);
+    if (repo.stars >= INSTALLABLE_MIN_STARS) pass("설치형 제품 스타 기준", `${repo.stars} ≥ ${INSTALLABLE_MIN_STARS}`);
+    else pass("패키지 증거", `${(repo.packageProof ?? []).map((item) => `${item.kind}: ${item.path}`).join(", ")} · 스타 ${repo.stars} ≥ ${PACKAGE_MIN_STARS}`);
     return hold("ambiguous", "installable_product", "설치형 제품 확인",
       "배포 URL 대신 공식 저장소를 사용합니다. README에서 실제 소프트웨어·플러그인·스킬인지 심사해야 합니다");
   }
@@ -656,6 +662,8 @@ export function factsFromRepoMeta(repo: string, meta: Record<string, unknown>): 
     pushedAt: pushed && !Number.isNaN(pushed.getTime()) ? pushed : null,
     archived: meta.archived === true,
     description: typeof meta.description === "string" ? meta.description : "",
+    // 찾은 것이 있을 때만 — 없는 레포의 사실(과 원본 변경 비교)은 예전 그대로다
+    ...(packageProofOf(meta).length ? { packageProof: packageProofOf(meta) } : {}),
   };
 }
 

@@ -45,6 +45,26 @@ it("requeues old rejected and held popular sources for a fresh GitHub check with
   expect((await db.select().from(crawlCandidates).where(eq(crawlCandidates.repo, "maker/manual")))[0])
     .toMatchObject({ state: "rejected", decidedBy: "admin" });
 });
+it("package policy refetches small no-homepage rejections so the fetch can look for skill or plugin files", async () => {
+  await rejected("maker/pdf-skill", "auto", 12);
+  await rejected("maker/tiny", "auto", 4);
+  await rejected("maker/popular", "auto", 600);
+  await rejected("maker/manual", "admin", 12);
+  await db.insert(crawlDocuments).values({ repo: "maker/fork", productUrl: null, repoMeta: { stargazers_count: 12, fork: true }, fetchedAt: new Date() });
+  await db.insert(crawlCandidates).values({ repo: "maker/fork", state: "rejected", reason: "no_homepage", decidedBy: "auto" });
+  await db.insert(crawlDocuments).values({ repo: "maker/site", productUrl: "https://site.test", repoMeta: { stargazers_count: 12 }, fetchedAt: new Date() });
+  await db.insert(crawlCandidates).values({ repo: "maker/site", state: "rejected", reason: "not_a_product", decidedBy: "auto" });
+
+  await expect(planReconsideration(1000, { policy: "package", includeAdmin: true })).rejects.toThrow("admin_rejections_are_protected");
+  const plan = await planReconsideration(1000, { policy: "package" });
+  expect(plan.entries.map(row => row.repo)).toEqual(["maker/pdf-skill"]);
+  expect((await applyReconsideration(plan, "package-policy")).queued).toEqual(["maker/pdf-skill"]);
+  // 새 수집(35~120)보다 뒤에 선다
+  expect(await db.select().from(crawlFrontier)).toMatchObject([{ repo: "maker/pdf-skill", state: "pending", priority: 30,
+    signal: "package-policy-reconsideration" }]);
+  expect((await db.select().from(crawlCandidates).where(eq(crawlCandidates.repo, "maker/pdf-skill")))[0])
+    .toMatchObject({ state: "new", reason: "source_changed", decidedBy: "auto" });
+});
 it("rejects a star-auto plan made for a different database", async () => {
   await rejected("maker/popular", "auto", 500);
   const plan = await planReconsideration(1000, { policy: "star-auto" });

@@ -27,6 +27,16 @@ it("reviews a popular installation repository while preserving the original null
   expect(input.source.productUrl).toBeNull();
 });
 
+it("sends a small repository with package proof to installable review, and leaves other inputs untouched", () => {
+  const proof = [{ kind: "skill", path: "skills/pdf/SKILL.md" }];
+  const input = createReviewInput({ ...candidate, productUrl: null }, { ...document, productUrl: null,
+    repoMeta: { stargazers_count: 12, description: "PDF skill", nmv_package_proof: proof },
+    pageMeta: { readmeSample: "Copy the skill into ~/.claude/skills." } }, DEFAULT_CRAWL_SETTINGS, evidence, now);
+  expect(input.snapshot.product).toMatchObject({ accessMode: "installable", packageProof: proof });
+  // 증거가 없는 후보의 입력에는 칸이 생기지 않는다 — 기존 입력 해시가 그대로다
+  expect(createReviewInput(candidate, document, DEFAULT_CRAWL_SETTINGS, evidence, now).snapshot.product).not.toHaveProperty("packageProof");
+});
+
 it("hashes semantic inputs stably while tracking operational source revisions separately", () => {
   const first = createReviewInput(candidate, document, DEFAULT_CRAWL_SETTINGS, evidence, now);
   const operational = createReviewInput({ ...candidate, state: "needs_review", updatedAt: new Date(0) }, document,
