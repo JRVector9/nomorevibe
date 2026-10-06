@@ -49,6 +49,28 @@ export function gatewayModel(value: string): string | null {
   return model && model.length <= 160 && !/[\p{Cc}\n\r]/u.test(model) ? model : null;
 }
 
+/** 심사에 쓸 수 없는 모델 — 임베딩·음성·비전 전용 */
+const NON_CHAT_MODEL = /(bge|embed|whisper|-vl-|vl-\d|rerank)/i;
+
+/**
+ * 게이트웨이에 지금 올라와 있는 대화 모델. 목록은 예고 없이 바뀐다 — 관리자가 2차 표를 고를 때 그때그때 읽는다.
+ * 키가 없거나 닿지 않으면 null.
+ */
+export async function listGatewayModels(options: { timeoutMs?: number; request?: typeof fetch } = {}): Promise<string[] | null> {
+  const key = process.env.ABCLLM_API_KEY?.trim();
+  if (!key) return null;
+  try {
+    const response = await (options.request ?? fetch)(`${BASE_URL}/v1/models`, {
+      headers: { authorization: `Bearer ${key}` }, signal: AbortSignal.timeout(options.timeoutMs ?? 5_000), cache: "no-store",
+    });
+    if (!response.ok) return null;
+    const body = await response.json() as { data?: { id?: unknown }[] };
+    return (body.data ?? []).flatMap((item) => typeof item.id === "string" && gatewayModel(item.id) && !NON_CHAT_MODEL.test(item.id) ? [item.id] : []);
+  } catch {
+    return null;
+  }
+}
+
 function httpFailure(status: number): ReviewFailure {
   if (status === 404) return "model_unavailable";
   if (status === 401 || status === 403) return "auth";
