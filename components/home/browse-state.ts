@@ -3,8 +3,8 @@ export type HomeSort = "weekly" | "trending" | "recent" | "all-time" | "open" | 
 export const HOME_FIRST_PAGE = 9;
 export const HOME_PAGE_SIZE = 9;
 /**
- * "더 보기"로 늘릴 수 있는 끝. 상한이 없으면 `?shown=40000` 하나로 3만 행을 읽고 3만 장을 그렸다 —
- * 누구나 주소 하나로 서버를 묶을 수 있었다(2026-10-06 점검). 사람이 더 보기로 닿는 수보다 넉넉하다.
+ * 한 화면이 한 번에 그리는 카드의 끝. 상한이 없으면 `?shown=40000` 하나로 3만 행을 읽고 3만 장을 그렸다 —
+ * 누구나 주소 하나로 서버를 묶을 수 있었다(2026-10-06 점검). 그 너머는 창을 민다(shownWindow).
  */
 export const HOME_MAX_SHOWN = 198;
 
@@ -20,7 +20,18 @@ export type BrowseState = {
 export function parseShown(value: string | undefined): number {
   const count = Number(value);
   if (!Number.isSafeInteger(count) || count <= HOME_FIRST_PAGE) return HOME_FIRST_PAGE;
-  return Math.min(count, HOME_MAX_SHOWN);
+  return count;
+}
+
+/**
+ * 더 보기로 늘린 목록 가운데 이번 화면이 그릴 구간 — 끝은 shown(전체를 넘지 않게), 길이는 HOME_MAX_SHOWN 까지.
+ * 넘치면 앞에서부터 접는다. 2026-10-06 상한만 두었을 때는 "더 보기 (198 / 33692)"에서 더 늘지 않아
+ * 공개 목록 대부분에 닿을 길이 없었다.
+ */
+export function shownWindow(shown: number, total: number): { start: number; count: number } {
+  const end = Math.max(0, Math.min(shown, total));
+  const start = Math.max(0, end - HOME_MAX_SHOWN);
+  return { start, count: end - start };
 }
 
 export function parseHomeSort(value: string | undefined): HomeSort {

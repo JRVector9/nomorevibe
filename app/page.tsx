@@ -2,6 +2,7 @@ import { after } from "next/server";
 import { Suspense } from "react";
 import Link from "next/link";
 import { BrowseFilters, metricHref, parseHomeSort, parseShown, type HomeSort } from "@/components/BrowseFilters";
+import { HOME_MAX_SHOWN, shownWindow } from "@/components/home/browse-state";
 import { ActiveList } from "@/components/home/ActiveList";
 import { CompactRow } from "@/components/home/CompactRow";
 import { IntroLine } from "@/components/home/IntroLine";
@@ -75,10 +76,11 @@ function listFor(
   builder: string | undefined,
   observedTool: string | undefined,
   limit: number,
+  offset = 0,
 ): Promise<ProductListItem[] | RankingListItem[]> {
   const options = { category, query, builder, observedTool };
   if (sort === "open") {
-    return getPublicList(limit, { ...options, sort: "recent", hasRepository: true });
+    return getPublicList(limit, { ...options, sort: "recent", hasRepository: true, offset });
   }
   if (sort === "weekly") {
     return getSeasonRanking({ ...options, limit, seasonKey: active.key, order: "rank" })
@@ -89,7 +91,7 @@ function listFor(
       .then((result) => result.items);
   }
   if (sort === "all-time") return getAllTimeRanking({ ...options, limit });
-  return getPublicList(limit, { ...options, sort: sort === "relevance" ? "relevance" : "recent" });
+  return getPublicList(limit, { ...options, sort: sort === "relevance" ? "relevance" : "recent", offset });
 }
 
 /**
@@ -270,6 +272,9 @@ export async function HomeContent({ params }: { params: HomeParams }) {
   let fallback: FallbackSort | null = null;
   let rankingReady = true;
   let stripShown = 0;
+  /** 창이 접은 앞 항목 수(shownWindow) — 순위 목록은 다 받아 두므로 늘 0 */
+  let listStart = 0;
+  let unclaimedStart = 0;
 
   /**
    * 상단 집계·소식은 제품 목록과 서로의 결과를 쓰지 않는다 — 먼저 띄워 두고 목록 조회와 겹친다.
@@ -323,21 +328,25 @@ export async function HomeContent({ params }: { params: HomeParams }) {
     rankingReady = !needsUnclaimedFill(verifiedTotal, minimumProducts);
     fallback = fallbackSort(effectiveSort, verifiedTotal, minimumProducts);
     const publicCatalogue = effectiveSort === "recent" || effectiveSort === "open" || effectiveSort === "relevance" || fallback !== null;
-    const requestedLimit = savedOnly ? Math.max(shown, SAVED_INITIAL_CANDIDATES) : shown;
+    // 저장 목록 보기는 브라우저가 후보를 거르므로 창을 밀지 않고 앞에서부터 받는다
+    const requestedLimit = savedOnly ? Math.max(Math.min(shown, HOME_MAX_SHOWN), SAVED_INITIAL_CANDIDATES) : shown;
     const loadList = (limit: number, offset: number) => fallback
       ? getPublicList(limit, { ...listOptions, sort: fallback, offset })
       : active
-        ? listFor(effectiveSort, active, category, search.queries, builder, observedTool, limit)
+        ? listFor(effectiveSort, active, category, search.queries, builder, observedTool, limit, offset)
         : publicCatalogue
-          ? getPublicList(limit, { ...listOptions, sort: effectiveSort === "relevance" ? "relevance" : "recent" })
+          ? getPublicList(limit, { ...listOptions, sort: effectiveSort === "relevance" ? "relevance" : "recent", offset })
           : getVerifiedList(limit, { ...options, sort: "recent" });
+    const spanOf = (count: number) => savedOnly ? { start: 0, count: Math.min(requestedLimit, count) } : shownWindow(shown, count);
     const matchingLoad = countProducts({ statuses: ["verified", "seeded"], ...listOptions });
     /*
      * 목록이 개수를 기다리는 것은 띠를 나눌지 정할 때뿐이다(거르기 없음 · 추천 대체 목록). 나머지는 LIMIT 이 이미 막으니
      * 개수와 함께 받는다 — 넓은 검색에서 개수(214ms)를 기다린 뒤 목록(183ms)을 받던 것을 겹친다.
      */
     const stripPossible = !filtered && !savedOnly && fallback === "rising";
-    const earlyList = stripPossible ? null : loadList(publicCatalogue ? requestedLimit : verifiedTotal, 0);
+    // 창이 앞을 접을 수 있으면(HOME_MAX_SHOWN 초과) 어디서부터 받을지가 개수에 달려 있어 기다린다
+    const windowed = publicCatalogue && requestedLimit > HOME_MAX_SHOWN;
+    const earlyList = stripPossible || windowed ? null : loadList(publicCatalogue ? requestedLimit : verifiedTotal, 0);
     earlyList?.catch(() => {});
     const [loadedCounts, matchingTotal] = await Promise.all([countsLoad, matchingLoad]);
     counts = loadedCounts;
@@ -347,13 +356,17 @@ export async function HomeContent({ params }: { params: HomeParams }) {
     // 저장 목록 보기(savedOnly)는 브라우저가 거르므로 띠의 다섯을 건너뛰면 그 안의 저장 제품이 사라진다
     // 급상승이 띠 하나를 채우고도 남을 때만 띠와 피드를 나눈다 — 다섯 이하면 띠가 다 가져가 피드가 '없다'고 말한다
     stripShown = stripPossible && matchingTotal > RISING_STRIP ? RISING_STRIP : 0;
-    const limit = publicCatalogue ? Math.min(requestedLimit, Math.max(0, matchingTotal - stripShown)) : verifiedTotal;
-    list = earlyList ? (await earlyList).slice(0, limit) : await loadList(limit, stripShown);
-    resultCount = publicCatalogue ? Math.max(0, matchingTotal - stripShown) : list.length;
+    const catalogueTotal = Math.max(0, matchingTotal - stripShown);
+    const span = publicCatalogue ? spanOf(catalogueTotal) : { start: 0, count: verifiedTotal };
+    listStart = span.start;
+    list = earlyList ? (await earlyList).slice(0, span.count) : await loadList(span.count, stripShown + span.start);
+    resultCount = publicCatalogue ? catalogueTotal : list.length;
 
     if (!publicCatalogue && !rankingReady) {
       unclaimedTotal = await countProducts({ statuses: ["seeded"], ...options });
-      unclaimed = await getUnclaimedList(Math.min(requestedLimit, unclaimedTotal), options);
+      const unclaimedSpan = spanOf(unclaimedTotal);
+      unclaimedStart = unclaimedSpan.start;
+      unclaimed = await getUnclaimedList(unclaimedSpan.count, { ...options, offset: unclaimedSpan.start });
     }
   } catch (error) {
     logger.error("home.list_failed", { error });
@@ -429,6 +442,7 @@ export async function HomeContent({ params }: { params: HomeParams }) {
             products={savedCandidates}
             browseState={state}
             initialOnlySaved={savedOnly}
+            start={listStart}
           />
         ) : (
           <EmptyReason
@@ -443,7 +457,7 @@ export async function HomeContent({ params }: { params: HomeParams }) {
           <section className="unclaimed-block">
             <h2>주인을 기다리는 제품</h2>
             <div className="mt-3">
-              <ProjectGrid products={unclaimed} browseState={state} totalCount={unclaimedTotal} />
+              <ProjectGrid products={unclaimed} browseState={state} totalCount={unclaimedTotal} start={unclaimedStart} />
             </div>
           </section>
         )}
