@@ -196,6 +196,11 @@ export const productUpdates = pgTable("product_updates", {
     table.visible,
     sql`coalesce(${table.publishedAt}, ${table.observedAt}) desc`,
   ),
+  // 홈 '새 버전 낸 프로젝트'(home-pulse)가 구간으로 찾는다 — 전체를 훑지 않게(0058)
+  index("product_updates_public_released_idx").on(
+    sql`coalesce(${table.publishedAt}, ${table.observedAt})`,
+    table.slug,
+  ).where(sql`${table.visible} and ${table.makerDeletedAt} is null and ${table.sourceKind} in ('github_release', 'maker')`),
 ]);
 
 export const productAgents = pgTable("product_agents", {

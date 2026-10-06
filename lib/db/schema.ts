@@ -479,7 +479,10 @@ export const productHealth = pgTable("product_health", {
   failures: integer("failures").notNull().default(0),
   /** 죽기 시작한 시각. 살아 있으면 null */
   downSince: timestamp("down_since"),
-});
+}, (table) => [
+  // 공개 목록·개수 열두 곳이 "닿지 않는 제품 빼기"(failures >= 3)로 표 전체를 훑었다 — 그 몇백 행만 담는다(0058)
+  index("product_health_down_slug_idx").on(table.slug).where(sql`${table.failures} >= 3`),
+]);
 
 export type ProductHealth = typeof productHealth.$inferSelect;
 
