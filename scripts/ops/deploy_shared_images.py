@@ -401,6 +401,39 @@ def public_gate(sha, *, attempts=24):
     raise TimeoutError('public_health_gate_timeout')
 
 
+CLOUDFLARE_ZONE_ID = '986aecb54a017f95119a8b81f9bc4296'  # brut.bot — 비밀이 아니다
+PURGE_TOKEN_ITEM = 'nomorevibe-cloudflare-purge-token'
+
+
+def purge_html():
+    """웹이 모두 새 릴리스가 된 뒤 Cloudflare 의 옛 화면(html 태그)을 지운다.
+
+    지우지 않으면 캐시된 옛 HTML 이 새 이미지에 없는 옛 JS 조각을 최대 5분 가리킨다. 릴리스는 이미 끝났으므로
+    실패해도 멈추지 않고 결과만 알린다. 토큰은 지우기 권한 하나만 가진 키체인 항목이다."""
+    try:
+        token = run(['security', 'find-generic-password', '-s', PURGE_TOKEN_ITEM, '-w'])
+    except RuntimeError:
+        return {'htmlPurge': 'skipped', 'reason': 'no_purge_token'}
+    read_fd, write_fd = os.pipe()
+    try:
+        os.write(write_fd, ('header = ' + json.dumps('Authorization: Bearer ' + token) + '\n').encode())
+        os.close(write_fd)
+        write_fd = -1
+        result = subprocess.run(['curl', '-sS', '--max-time', '20', '--config', f'/dev/fd/{read_fd}',
+                                 '-H', 'Content-Type: application/json', '--data-binary', '{"tags":["html"]}',
+                                 f'https://api.cloudflare.com/client/v4/zones/{CLOUDFLARE_ZONE_ID}/purge_cache'],
+                                text=True, capture_output=True, pass_fds=(read_fd,), timeout=25)
+        body = json.loads(result.stdout or '{}')
+        return {'htmlPurge': 'ok' if body.get('success') else 'failed',
+                'errors': [error.get('message') for error in body.get('errors') or []]}
+    except (subprocess.TimeoutExpired, json.JSONDecodeError) as error:
+        return {'htmlPurge': 'failed', 'errors': [type(error).__name__]}
+    finally:
+        os.close(read_fd)
+        if write_fd >= 0:
+            os.close(write_fd)
+
+
 def deploy(client, target, token, state, snapshot):
     save_snapshot(snapshot, target, state)
     print(json.dumps({'snapshot': snapshot, 'preflight': 'passed'}), flush=True)
@@ -414,6 +447,7 @@ def deploy(client, target, token, state, snapshot):
             print(json.dumps(stage_and_deploy(client, short, target, token,
                                               state['previous'])), flush=True)
         print(json.dumps(public_gate(target['sha'])), flush=True)
+        print(json.dumps(purge_html()), flush=True)
     except Exception:
         print(json.dumps({'stopped': True, 'snapshot': snapshot,
                           'nextStep': 'restore affected app or pair before retrying'}), flush=True)

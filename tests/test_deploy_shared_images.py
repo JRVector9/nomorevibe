@@ -204,6 +204,24 @@ class ReleaseSafetyTests(unittest.TestCase):
         self.assertFalse(self.run_probe('2/2', [dict(fresh, id=f'c{i}') for i in range(2)], '4')['ready'])
         self.assertTrue(self.run_probe('2/2', [dict(fresh, id=f'c{i}') for i in range(2)], 'any')['ready'])
 
+    def test_html_purge_after_release_uses_only_the_purge_token(self):
+        with patch.object(release, 'run', side_effect=RuntimeError('command_failed:security:44')):
+            self.assertEqual(release.purge_html(), {'htmlPurge': 'skipped', 'reason': 'no_purge_token'})
+
+        calls = []
+        def fake_run(command, **kwargs):
+            calls.append((command, kwargs))
+            return subprocess.CompletedProcess(command, 0, stdout='{"success": true, "errors": []}', stderr='')
+        with patch.object(release, 'run', return_value='purge-secret'), \
+             patch.object(release.subprocess, 'run', side_effect=fake_run):
+            self.assertEqual(release.purge_html(), {'htmlPurge': 'ok', 'errors': []})
+        command, kwargs = calls[0]
+        self.assertIn('{"tags":["html"]}', command)
+        self.assertTrue(command[-1].endswith('/zones/' + release.CLOUDFLARE_ZONE_ID + '/purge_cache'))
+        # 토큰은 명령줄에 남기지 않는다 — curl 이 파일 기술자로 읽는다
+        self.assertFalse(any('purge-secret' in part for part in command))
+        self.assertEqual(len(kwargs['pass_fds']), 1)
+
     def test_replace_setting_requires_one_line(self):
         self.assertEqual(release.replace_setting('# a\nRELEASE_TAG=old\n', 'RELEASE_TAG', self.new_sha),
                          '# a\nRELEASE_TAG=' + self.new_sha + '\n')

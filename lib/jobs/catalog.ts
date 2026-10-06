@@ -25,6 +25,11 @@ export const JOB_CATALOG: readonly { name: string; role: JobRole | "scheduler"; 
    */
   { name: "product-audit", role: "reviewer", intervalMs: 60_000 },
   { name: "crawl-publish", role: "publisher", intervalMs: 5 * 60_000 },
+  /**
+   * 내려간 제품을 Cloudflare 에서 지운다(cdn_purges). 발행 워커는 5분마다 한 번 도는 잡뿐이라 한가하고,
+   * 1분마다 한 요청이면 Free 요금제의 태그 지우기 한도(계정 전체 분당 5회)를 넘지 않는다.
+   */
+  { name: "cdn-purge", role: "publisher", intervalMs: 60_000 },
   // 사유 번역 — 전용 text 워커에서 1분마다 옮긴다(틱 55초, 한 번에 4건·1,600자까지)
   { name: "reason-translate", role: "text", intervalMs: 60_000 },
   /**
