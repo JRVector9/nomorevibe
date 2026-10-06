@@ -421,6 +421,74 @@ describe("조회 순서", () => {
   });
 });
 
+/**
+ * 2026-10-06 한 화면 상한(198)만 두었더니 "더 보기 (198 / 33692)"에서 더 늘지 않았다 — 공개 목록 대부분에 닿을 길이 없었다.
+ * 상한을 넘으면 앞을 접고(shownWindow) 그다음 구간만 받아 그린다. 한 번에 받는 수는 늘 198 이하다.
+ */
+describe("끝까지 닿는 목록", () => {
+  const TOTAL = 33_692;
+  function catalogue() {
+    countProducts.mockImplementation(async (options: { statuses: string[] }) =>
+      options.statuses.length === 1 && options.statuses[0] === "verified" ? 0 : TOTAL);
+    const page = (limit: number, options: { offset?: number } = {}) =>
+      Array.from({ length: Math.min(limit, TOTAL - (options.offset ?? 0)) }, (_, i) => product(`p-${(options.offset ?? 0) + i + 1}`));
+    getPublicList.mockImplementation(async (limit: number, options: { offset?: number } = {}) => page(limit, options));
+    getUnclaimedList.mockImplementation(async (limit: number, options: { offset?: number } = {}) => page(limit, options));
+  }
+
+  it("198개를 넘기면 앞을 접고 다음 구간만 받는다", async () => {
+    catalogue();
+
+    const html = await render({ sort: "recent", shown: "207" });
+
+    expect(getPublicList).toHaveBeenCalledWith(198, expect.objectContaining({ sort: "recent", offset: 9 }));
+    expect(html).toContain("앞의 9개는 접었습니다");
+    expect(html).toContain('href="/?sort=recent"');
+    expect(html).toContain("p-10 태그라인");
+    expect(html).toContain("p-207 태그라인");
+    expect(html).not.toContain("p-9 태그라인");
+    expect(html).toContain("프로젝트 더 보기 (207 / 33692)");
+    expect(html).toContain('href="/?sort=recent&amp;shown=216"');
+  });
+
+  it("마지막 항목까지 닿고 거기서 더 보기가 사라진다", async () => {
+    catalogue();
+
+    const html = await render({ sort: "recent", shown: String(TOTAL + 50) });
+
+    expect(getPublicList).toHaveBeenCalledWith(198, expect.objectContaining({ offset: TOTAL - 198 }));
+    expect(html).toContain(`p-${TOTAL} 태그라인`);
+    expect(html).not.toContain("프로젝트 더 보기");
+  });
+
+  it("급상승 띠가 앞 다섯을 가져간 추천 목록도 띠 다음부터 창을 민다", async () => {
+    catalogue();
+
+    await render({ shown: "207" });
+
+    expect(getPublicList).toHaveBeenCalledWith(198, expect.objectContaining({ sort: "rising", offset: 5 + 9 }));
+  });
+
+  it("주인을 기다리는 제품 목록도 같은 창으로 끝까지 닿는다", async () => {
+    catalogue();
+
+    const html = await render({ sort: "trending", shown: "207" });
+
+    expect(getUnclaimedList).toHaveBeenCalledWith(198, expect.objectContaining({ offset: 9 }));
+    expect(html).toContain("앞의 9개는 접었습니다");
+  });
+
+  it("198개 이하는 예전처럼 앞에서부터 다 그린다", async () => {
+    catalogue();
+
+    const html = await render({ sort: "recent", shown: "18" });
+
+    expect(getPublicList).toHaveBeenCalledWith(18, expect.objectContaining({ offset: 0 }));
+    expect(html).not.toContain("접었습니다");
+    expect(html).toContain("프로젝트 더 보기 (18 / 33692)");
+  });
+});
+
 describe("구획 제목", () => {
   it("미클레임 구획을 발견 보드 제목과 섞지 않는다", async () => {
     categoryCounts.mockResolvedValue({});
