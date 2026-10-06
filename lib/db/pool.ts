@@ -11,6 +11,8 @@ export type DbPoolConfig = {
   statementMs: number;
   lockMs: number;
   lifetimeSeconds: number;
+  /** pg_stat_activity 에서 가려 보는 이름 — 없으면 nomorevibe:<role> */
+  applicationName?: string;
 };
 
 type PoolEnvironment = Readonly<Record<string, string | undefined>>;
@@ -48,10 +50,11 @@ export function dbPoolConfig(env: PoolEnvironment = process.env): DbPoolConfig {
 }
 
 export function postgresClientOptions(config: DbPoolConfig) {
+  const applicationName = config.applicationName ?? `nomorevibe:${config.role}`;
   const connection = config.poolerMode === "pgbouncer"
-    ? { application_name: `nomorevibe:${config.role}` }
+    ? { application_name: applicationName }
     : {
-        application_name: `nomorevibe:${config.role}`,
+        application_name: applicationName,
         statement_timeout: config.statementMs,
         lock_timeout: config.lockMs,
         idle_in_transaction_session_timeout: Math.max(config.statementMs, 60_000),

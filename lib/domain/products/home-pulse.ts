@@ -1,5 +1,5 @@
 import { and, eq, inArray, sql } from "drizzle-orm";
-import { db } from "@/lib/db";
+import { db, onReplica } from "@/lib/db";
 import {
   agentRepositoryObservations,
   agentRepositoryScans,
@@ -109,7 +109,10 @@ let cachedPulse: PulseEntry | null = null;
  * 인스턴스마다 분당 한 요청이 1.1초 쿼리를 기다렸다(2026-10-06 실측 — 홈 첫 요청 1.4초의 원인). 날짜나 집계
  * 버전이 바뀌면 지난 값은 다른 창이라 기다려 새로 집계한다.
  */
-export async function getHomePulse(now = new Date(), load: (now: Date) => Promise<HomePulse> = loadHomePulse): Promise<HomePulse> {
+/** 집계는 공개 읽기라 복제본에서 — 뒤에서 새로 받을 때도 같은 길로(lib/db/replica.ts) */
+const loadFromReplica = (now: Date) => onReplica(() => loadHomePulse(now));
+
+export async function getHomePulse(now = new Date(), load: (now: Date) => Promise<HomePulse> = loadFromReplica): Promise<HomePulse> {
   const key = `${kstCalendarDate(now)}:${METHOD_VERSION}`;
   const current = cachedPulse;
   if (current?.key === key) {
