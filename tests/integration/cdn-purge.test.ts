@@ -5,13 +5,16 @@ import { ensureSchema, resetTables } from "./setup";
 const { db } = await import("@/lib/db");
 const { products, cdnPurges } = await import("@/lib/db/schema");
 const { purgeRemovedProducts } = await import("@/lib/jobs/products/cdn-purge");
+const { purgeTargets } = await import("@/lib/cdn/purge");
 
 /**
  * 내려간 제품을 Cloudflare 에서 지운다(2026-10-06 엣지 캐시).
  * 내리는 길이 여럿이라 DB 트리거가 적고, 발행 워커가 모아서 지운 뒤 60초 뒤 한 번 더 지운다.
  */
 const ctx = { cursor: null, save: async () => {}, hasBudget: () => true, log: vi.fn() };
-const config = { zoneId: "zone-1", token: "purge-token" };
+const env = { CLOUDFLARE_ZONE_ID: "zone-1", CLOUDFLARE_PURGE_TOKEN: "purge-token" };
+/** Cloudflare 만 설정된 워커 — fetch 를 가짜로 */
+const cloudflareOnly = (fetch: typeof globalThis.fetch) => ({ targets: purgeTargets(env, { fetch }) });
 
 async function product(slug: string, status: "seeded" | "verified" | "banned") {
   await db.insert(products).values({
@@ -53,7 +56,7 @@ describe("내려간 제품의 Cloudflare 지우기", () => {
     await db.update(products).set({ status: "banned" });
 
     const fetch = cloudflare();
-    await purgeRemovedProducts(ctx, { config, fetch });
+    await purgeRemovedProducts(ctx, cloudflareOnly(fetch));
     expect(fetch).toHaveBeenCalledTimes(1);
     const [url, init] = fetch.mock.calls[0] as unknown as [string, RequestInit];
     expect(url).toBe("https://api.cloudflare.com/client/v4/zones/zone-1/purge_cache");
@@ -61,17 +64,17 @@ describe("내려간 제품의 Cloudflare 지우기", () => {
     expect(tagsSent(fetch)).toEqual(["p-one", "og-one", "p-two", "og-two", "lists"]);
 
     // 60초가 지나기 전에는 다시 보내지 않는다
-    await purgeRemovedProducts(ctx, { config, fetch });
+    await purgeRemovedProducts(ctx, cloudflareOnly(fetch));
     expect(fetch).toHaveBeenCalledTimes(1);
 
     await db.update(cdnPurges).set({ purgedAt: sql`now() - interval '61 seconds'` });
-    await purgeRemovedProducts(ctx, { config, fetch });
+    await purgeRemovedProducts(ctx, cloudflareOnly(fetch));
     expect(fetch).toHaveBeenCalledTimes(2);
     expect(tagsSent(fetch, 1)).toEqual(["p-one", "og-one", "p-two", "og-two", "lists"]);
     const rows = await db.select().from(cdnPurges);
     expect(rows.every((row) => row.purgedAt && row.confirmedAt)).toBe(true);
 
-    await purgeRemovedProducts(ctx, { config, fetch });
+    await purgeRemovedProducts(ctx, cloudflareOnly(fetch));
     expect(fetch).toHaveBeenCalledTimes(2);
   });
 
@@ -79,10 +82,10 @@ describe("내려간 제품의 Cloudflare 지우기", () => {
     await product("limited", "seeded");
     await db.update(products).set({ status: "banned" });
 
-    await purgeRemovedProducts(ctx, { config, fetch: cloudflare({ success: false, errors: [{ message: "rate limited" }] }, 429) });
+    await purgeRemovedProducts(ctx, cloudflareOnly(cloudflare({ success: false, errors: [{ message: "rate limited" }] }, 429)));
 
     const [row] = await db.select().from(cdnPurges);
-    expect(row).toMatchObject({ purgedAt: null, confirmedAt: null, attempts: 1, lastError: "rate limited" });
+    expect(row).toMatchObject({ purgedAt: null, confirmedAt: null, attempts: 1, lastError: "cloudflare: rate limited" });
     expect(ctx.log).toHaveBeenCalledWith("cdn_purge.failed", expect.objectContaining({ status: 429 }));
   });
 
@@ -91,11 +94,37 @@ describe("내려간 제품의 Cloudflare 지우기", () => {
     await db.update(products).set({ status: "banned" });
     const fetch = cloudflare();
 
-    await purgeRemovedProducts(ctx, { config: null, fetch });
+    await purgeRemovedProducts(ctx, { targets: purgeTargets({}, { fetch }) });
 
     expect(fetch).not.toHaveBeenCalled();
     const [row] = await db.select().from(cdnPurges);
     expect(row).toMatchObject({ purgedAt: null, attempts: 0 });
     expect(ctx.log).toHaveBeenCalledWith("cdn_purge.unconfigured", { pending: 1 });
+  });
+
+  it("CloudFront 도 설정돼 있으면 같은 태그로 무효화하고, 한쪽이라도 실패하면 다시 보낸다", async () => {
+    await product("both", "seeded");
+    await db.update(products).set({ status: "banned" });
+    const sent: unknown[] = [];
+    let fail = true;
+    const cloudfront = { send: vi.fn(async (command: { input: unknown }) => {
+      sent.push(command.input);
+      if (fail) throw Object.assign(new Error("Throttled"), { name: "TooManyInvalidationsInProgress", $metadata: { httpStatusCode: 400 } });
+      return {};
+    }) };
+    const fetch = cloudflare();
+    const targets = purgeTargets({ ...env, CLOUDFRONT_DISTRIBUTION_ID: "E123" }, { fetch, cloudfront: cloudfront as never });
+    expect(targets.map((target) => target.name)).toEqual(["cloudflare", "cloudfront"]);
+
+    await purgeRemovedProducts(ctx, { targets });
+    let [row] = await db.select().from(cdnPurges);
+    expect(row).toMatchObject({ purgedAt: null, attempts: 1 });
+    expect(row.lastError).toContain("cloudfront: TooManyInvalidationsInProgress");
+
+    fail = false;
+    await purgeRemovedProducts(ctx, { targets });
+    [row] = await db.select().from(cdnPurges);
+    expect(row.purgedAt).not.toBeNull();
+    expect(sent.at(-1)).toMatchObject({ DistributionId: "E123", InvalidationBatch: { Paths: { Quantity: 3, Items: ["#p-both", "#og-both", "#lists"] } } });
   });
 });

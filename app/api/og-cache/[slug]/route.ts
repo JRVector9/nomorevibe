@@ -10,7 +10,7 @@ type Params = { params: Promise<{ slug: string }> };
 const variants = new VariantCache();
 /** 원본 주소는 브라우저 1시간. 줄인 사본은 Cloudflare 가 하루 들고 있고, 바뀐 그림은 하루 안에 퍼진다 */
 const VARIANT_CACHE = "public, max-age=3600, s-maxage=86400, stale-while-revalidate=604800";
-/** Cloudflare 캐시 태그 — 제품이 내려가면 크기별 사본을 한 번에 지운다(lib/cdn/purge.ts) */
+/** 캐시 태그(Cloudflare: cache-tag, CloudFront: x-amz-meta-cache-tag) — 제품이 내려가면 크기별 사본을 한 번에 지운다(lib/cdn/purge.ts) */
 const ogTag = (slug: string) => `og-${slug}`;
 
 /**
@@ -29,7 +29,7 @@ export const GET = withRoute("og.serve", async (req: Request, { params }: Params
   const key = `${slug}|${size}|${url.searchParams.get("v") ?? ""}`;
   if (variant) {
     const hit = variants.get(key);
-    if (hit) return new NextResponse(new Uint8Array(hit), { headers: { "content-type": "image/webp", "cache-control": VARIANT_CACHE, "cache-tag": ogTag(slug) } });
+    if (hit) return new NextResponse(new Uint8Array(hit), { headers: { "content-type": "image/webp", "cache-control": VARIANT_CACHE, "cache-tag": ogTag(slug), "x-amz-meta-cache-tag": ogTag(slug) } });
   }
   const cached = await getOgImage(slug);
   if (!cached) {
@@ -41,7 +41,7 @@ export const GET = withRoute("og.serve", async (req: Request, { params }: Params
       const data = await sharp(cached.data, { animated: cached.contentType === "image/gif", limitInputPixels: 16_000_000 })
         .resize({ width: size, withoutEnlargement: true }).webp({ quality: 78 }).toBuffer();
       variants.set(key, data);
-      return new NextResponse(new Uint8Array(data), { headers: { "content-type": "image/webp", "cache-control": VARIANT_CACHE, "cache-tag": ogTag(slug) } });
+      return new NextResponse(new Uint8Array(data), { headers: { "content-type": "image/webp", "cache-control": VARIANT_CACHE, "cache-tag": ogTag(slug), "x-amz-meta-cache-tag": ogTag(slug) } });
     } catch (error) {
       // 줄이지 못하면 원본을 그대로 — 그림이 깨지는 것보다 무거운 편이 낫다
       logger.warn("og.variant_failed", { slug, size, error: error instanceof Error ? error.message : String(error) });
@@ -52,6 +52,7 @@ export const GET = withRoute("og.serve", async (req: Request, { params }: Params
       "content-type": cached.contentType,
       "cache-control": "public, max-age=3600",
       "cache-tag": ogTag(slug),
+      "x-amz-meta-cache-tag": ogTag(slug),
     },
   });
 });
