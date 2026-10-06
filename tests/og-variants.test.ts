@@ -51,6 +51,8 @@ describe("썸네일 경로", () => {
     expect(response.status).toBe(200);
     expect(response.headers.get("content-type")).toBe("image/webp");
     expect(response.headers.get("cache-control")).toContain("s-maxage=86400");
+    // 제품이 내려가면 크기별 사본을 태그 하나로 지운다
+    expect(response.headers.get("cache-tag")).toBe("og-big-shot");
     const body = Buffer.from(await response.arrayBuffer());
     expect(body.length).toBeLessThan(original.length / 10);
     expect((await sharp(body).metadata()).width).toBe(640);
@@ -67,6 +69,7 @@ describe("썸네일 경로", () => {
     const legacy = await call("/api/og-cache/tiny-icon");
     expect(legacy.headers.get("content-type")).toBe("image/png");
     expect(legacy.headers.get("cache-control")).toBe("public, max-age=3600");
+    expect(legacy.headers.get("cache-tag")).toBe("og-tiny-icon");
     expect(Buffer.from(await legacy.arrayBuffer()).equals(icon)).toBe(true);
   });
 

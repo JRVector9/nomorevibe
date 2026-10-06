@@ -225,7 +225,7 @@ export function MethodologyDialog({ pulse, rankingFallback = false }: {
     >
       <div className="modal-head">
         <h2 id="dialog-title">숫자의 기준</h2>
-        <Link href={closeHref()} className="close-btn" aria-label="닫기" scroll={false}>
+        <Link prefetch={false} href={closeHref()} className="close-btn" aria-label="닫기" scroll={false}>
           <Icon name="close" />
         </Link>
       </div>

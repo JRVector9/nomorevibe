@@ -16,7 +16,7 @@ export async function PopularTiers({personal=false}:{personal?:boolean}){
  }
  return <section className="popular-section" id="popular" aria-labelledby="popular-title">
   <div className="row-head"><div><h2 id="popular-title" className="row-title">많이 쓰이는 프로젝트</h2><p className="row-note">GitHub 스타 2천 이상 · 구간마다 상위 3</p></div>
-   <div><Suspense><PopularFilter personal={personal}/></Suspense><Link className="row-more" href="/?metric=popular#popular" scroll={false}>집계 기준 ›</Link></div></div>
+   <div><Suspense><PopularFilter personal={personal}/></Suspense><Link prefetch={false} className="row-more" href="/?metric=popular#popular" scroll={false}>집계 기준 ›</Link></div></div>
   <div className="popular-columns">{groups.map(group=><article className="popular-tier" key={group.key}>
    <header><h3>{group.label}</h3><span>★ {group.range}</span></header>
    {group.items.length?<ol className="tier-list">{group.items.map((p,index)=>{
@@ -24,11 +24,11 @@ export async function PopularTiers({personal=false}:{personal?:boolean}){
     return <li key={p.slug} className="rank-row">
      <span className="rank-no">{index+1}</span>
      <ProductIcon name={p.name} ogImage={p.ogImage} size={28} />
-     <span className="rank-name"><Link href={`/p/${p.slug}`} title={p.name}>{p.name}</Link>{owner?<small>@{owner.login}</small>:null}</span>
+     <span className="rank-name"><Link prefetch={false} href={`/p/${p.slug}`} title={p.name}>{p.name}</Link>{owner?<small>@{owner.login}</small>:null}</span>
      <StarMetric value={p} />
     </li>;
    })}</ol>:<p className="popular-empty">아직 없음</p>}
-   <Link className="popular-all" href={popularHref(group.key,personal)}>{group.total.toLocaleString('ko-KR')}개 모두 보기 <span aria-hidden="true">→</span></Link>
+   <Link prefetch={false} className="popular-all" href={popularHref(group.key,personal)}>{group.total.toLocaleString('ko-KR')}개 모두 보기 <span aria-hidden="true">→</span></Link>
   </article>)}</div>
  </section>;
 }

@@ -24,7 +24,7 @@
     "drizzle-orm": "^0.45.2",
     "fast-xml-parser": "^5.11.0",
     "jsonc-parser": "3.3.1",
-    "next": "16.3.3",
+    "next": "16.3.8",
     "parse-entities": "4.0.2",
     "postgres": "3.4.9",
     "react": "19.2.8",
@@ -48,7 +48,7 @@
     "@types/react-dom": "^19",
     "drizzle-kit": "^0.31.10",
     "eslint": "^9",
-    "eslint-config-next": "16.3.3",
+    "eslint-config-next": "16.3.8",
     "tailwindcss": "^4",
     "typescript": "^5",
     "vitest": "^4.1.11"

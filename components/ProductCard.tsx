@@ -21,7 +21,7 @@ export function ProductCard({ product, rank }: { product: ProductListItem; rank?
   const { metrics, health } = product;
 
   return (
-    <Link
+    <Link prefetch={false}
       href={`/p/${product.slug}`}
       className="flex items-center gap-4 border-b border-line bg-bg-card px-5 py-4 transition-colors last:border-b-0 hover:bg-bg-hover"
     >

@@ -11,7 +11,7 @@ export function SiteFooter({ children }: { children: React.ReactNode }) {
             Build something. Ship it.
           </div>
           <div className="footer-right">
-            <Link href="/?metric=all">데이터와 집계 기준</Link>
+            <Link prefetch={false} href="/?metric=all">데이터와 집계 기준</Link>
             <Link href="/launch">프로젝트 공개</Link>
             <Link href="/launch#policy">게재 기준</Link>
           </div>

@@ -57,7 +57,7 @@ export function BrowseFilters({
           {TABS.map(({ key, label }) => {
             const active = state.sort === key;
             return (
-              <Link
+              <Link prefetch={false}
                 key={key}
                 href={hrefWith(state, { sort: key })}
                 className={`tab${active ? " active" : ""}`}
@@ -71,9 +71,9 @@ export function BrowseFilters({
           })}
         </div>
         <nav className="chips chips-filter" aria-label="분야">
-          <Link href={hrefWith(state, { category: undefined })} className={`chip${state.category ? "" : " chip-dark"}`} aria-current={state.category ? undefined : "true"}>전체</Link>
+          <Link prefetch={false} href={hrefWith(state, { category: undefined })} className={`chip${state.category ? "" : " chip-dark"}`} aria-current={state.category ? undefined : "true"}>전체</Link>
           {categories.map((category) => (
-            <Link key={category} href={hrefWith(state, { category })} className={`chip${state.category === category ? " chip-dark" : ""}`} aria-current={state.category === category ? "true" : undefined}>
+            <Link prefetch={false} key={category} href={hrefWith(state, { category })} className={`chip${state.category === category ? " chip-dark" : ""}`} aria-current={state.category === category ? "true" : undefined}>
               {CATEGORY_LABELS[category]} <span className="chip-count">{(counts[category] ?? 0).toLocaleString("ko-KR")}</span>
             </Link>
           ))}
@@ -85,7 +85,7 @@ export function BrowseFilters({
           {total > 0 && !narrowed ? ` · 공개 ${total}개` : ""}
         </span>
         {narrowed && (
-          <Link href={hrefWith(state, { category: undefined, builder: undefined, observedTool: undefined, query: undefined })} className="clear-filters show">
+          <Link prefetch={false} href={hrefWith(state, { category: undefined, builder: undefined, observedTool: undefined, query: undefined })} className="clear-filters show">
             필터 초기화
           </Link>
         )}

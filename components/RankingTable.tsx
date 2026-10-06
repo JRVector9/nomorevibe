@@ -18,7 +18,7 @@ function ProductIdentity({ item, mobileDetails }: {
   return (
     <>
       <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
-        <Link href={`/p/${item.slug}`} className="min-w-0 truncate font-bold hover:text-accent">
+        <Link prefetch={false} href={`/p/${item.slug}`} className="min-w-0 truncate font-bold hover:text-accent">
           {item.name}
         </Link>
         <StatusBadge status={item.status} unclaimed={item.unclaimed} />

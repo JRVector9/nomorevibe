@@ -16,11 +16,11 @@ function listedLabel(at: Date): string {
 export function CompactCard({ product, trailing }: { product: ProductListItem; trailing: "category" | "listed" }) {
   return (
     <article className="compact-card">
-      <Link href={`/p/${product.slug}`} className="compact-visual" aria-label={`${product.name} 상세 보기`}>
+      <Link prefetch={false} href={`/p/${product.slug}`} className="compact-visual" aria-label={`${product.name} 상세 보기`}>
         <ProjectTile slug={product.slug} name={product.name} ogImage={product.ogImage} size={44} installable={product.accessMode === "installable"} />
       </Link>
       <div className="compact-body">
-        <h3 className="compact-title"><Link href={`/p/${product.slug}`}>{product.name}</Link></h3>
+        <h3 className="compact-title"><Link prefetch={false} href={`/p/${product.slug}`}>{product.name}</Link></h3>
         <p className="compact-tagline" title={product.tagline}>{product.tagline}</p>
         <IntroductionSource source={product.taglineSource} />
         <p className="compact-meta">

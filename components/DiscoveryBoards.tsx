@@ -17,7 +17,7 @@ function relativeDate(date: Date, now: Date): string {
 function ProductLink({ product, detail }: { product: ProductListItem; detail: React.ReactNode }) {
   return (
     <li className="border-t border-line py-3 first:border-0 first:pt-0 last:pb-0">
-      <Link href={`/p/${product.slug}`} className="group block">
+      <Link prefetch={false} href={`/p/${product.slug}`} className="group block">
         <div className="flex items-center gap-2">
           <span className="min-w-0 flex-1 truncate font-bold group-hover:text-accent">
             {product.name}

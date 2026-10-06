@@ -23,7 +23,7 @@ export function ActiveList({ active, projects }: { active: HomePulse["active"]; 
               <span className="rank-no">{index + 1}</span>
               <ProductIcon name={item.name} ogImage={item.ogImage} size={28} />
               <span className="rank-name">
-                <Link href={`/p/${item.slug}`}>{item.name}</Link>
+                <Link prefetch={false} href={`/p/${item.slug}`}>{item.name}</Link>
                 <small>{categoryLabel(item.category)}{item.stars !== null && item.stars >= 100 ? ` · ★ ${num(item.stars)}` : ""}</small>
               </span>
               <b className="rank-value">{item.releases}건</b>

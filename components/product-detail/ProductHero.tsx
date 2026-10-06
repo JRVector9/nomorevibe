@@ -64,7 +64,7 @@ export function ProductHero({ product, unclaimed, risingRank, health, languages 
           <div className="flex flex-wrap items-center gap-3">
             <h1 className="text-[40px] font-semibold leading-[1.05] tracking-[-0.03em] text-fg">{product.name}</h1>
             {risingRank !== null && risingRank <= RISING_BADGE_MAX && (
-              <Link href="/#rising" className="inline-flex h-7 items-center rounded-full bg-accent-soft px-[11px] text-[13px] font-semibold text-accent-ink">
+              <Link prefetch={false} href="/#rising" className="inline-flex h-7 items-center rounded-full bg-accent-soft px-[11px] text-[13px] font-semibold text-accent-ink">
                 지금 뜨는 {risingRank}위
               </Link>
             )}
