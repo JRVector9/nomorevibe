@@ -9,7 +9,7 @@ import { workerIsHealthy } from "@/scripts/worker-healthcheck";
 
 it("owns text jobs once, with an executable role, bounded pool and health identity", () => {
   expect(JOB_ROLES).toContain("text");
-  expect(jobsForRole("publisher")).toEqual(["crawl-publish"]);
+  expect(jobsForRole("publisher")).toEqual(["crawl-publish", "cdn-purge"]);
   expect(jobsForRole("text")).toEqual(["reason-translate", "crawl-tagline", "product-search-profile", "product-search-verify"]);
   expect(JOB_CATALOG.filter(job => ["reason-translate", "crawl-tagline", "product-search-profile", "product-search-verify"].includes(job.name))).toHaveLength(4);
   expect(parseWorkerArgs(["--role=text"])).toMatchObject({ role: "text" });

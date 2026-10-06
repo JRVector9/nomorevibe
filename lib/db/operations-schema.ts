@@ -1,4 +1,22 @@
+import { sql } from 'drizzle-orm';
 import { pgTable, varchar, jsonb, timestamp, serial, integer, text, bigint, boolean, index } from 'drizzle-orm/pg-core';
+
+/**
+ * Cloudflare 에서 지울 제품 — 공개 제품이 내려가거나 지워지면 DB 트리거가 같은 트랜잭션에서 적는다(0057).
+ * 내리는 길(관리자 차단·내려달라는 요청·감사·재검토)마다 코드를 넣지 않아도 빠지지 않는다.
+ * 발행 워커가 태그로 지우고(purgedAt), 원 서버가 옛 내용을 다시 채웠을 때를 위해 60초 뒤 한 번 더 지운다(confirmedAt).
+ */
+export const cdnPurges = pgTable('cdn_purges', {
+  id: serial('id').primaryKey(),
+  slug: varchar('slug', { length: 80 }).notNull(),
+  /** 바뀐 상태 또는 'deleted' */
+  reason: varchar('reason', { length: 20 }).notNull(),
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+  purgedAt: timestamp('purged_at'),
+  confirmedAt: timestamp('confirmed_at'),
+  attempts: integer('attempts').notNull().default(0),
+  lastError: varchar('last_error', { length: 300 }),
+}, (table) => [index('cdn_purges_pending_idx').on(table.id).where(sql`confirmed_at is null`)]);
 
 /** One active process per job role. Database time is the authority for expiry. */
 export const roleLeases = pgTable('role_leases', {
