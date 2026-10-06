@@ -18,11 +18,14 @@ export function ProjectGrid({
   browseState,
   initialOnlySaved = false,
   totalCount,
+  start = 0,
 }: {
   products: HomeCardProduct[];
   browseState: BrowseState;
   initialOnlySaved?: boolean;
   totalCount?: number;
+  /** 화면이 앞에서 접은 항목 수 — products 는 그다음부터다(shownWindow) */
+  start?: number;
 }) {
   const raw = useSyncExternalStore(subscribeSaved, savedSnapshot, () => "[]");
   const saved = useMemo(() => parseSaved(raw), [raw]);
@@ -38,8 +41,8 @@ export function ProjectGrid({
   }
 
   const rows = onlySaved ? products.filter((product) => saved.has(product.slug)) : products;
-  const visible = rows.slice(0, limit);
-  const total = onlySaved ? rows.length : Math.max(rows.length, totalCount ?? rows.length);
+  const visible = rows.slice(0, limit - start);
+  const total = onlySaved ? rows.length : Math.max(start + rows.length, totalCount ?? rows.length);
 
   if (rows.length === 0) {
     return (
@@ -66,6 +69,14 @@ export function ProjectGrid({
           </Link>
         </div>
       )}
+      {start > 0 && (
+        <div className="saved-banner">
+          앞의 {start.toLocaleString("ko-KR")}개는 접었습니다
+          <Link className="text-button" href={hrefWith(browseState, { shown: undefined })}>
+            처음부터 보기
+          </Link>
+        </div>
+      )}
       <div className="projects-grid" id="project-grid" role="tabpanel" aria-label="프로젝트 목록">
         {visible.map((product) => (
           <ProjectCard
@@ -88,7 +99,7 @@ export function ProjectGrid({
             href={hrefWith(browseState, { shown: Math.min(limit + HOME_PAGE_SIZE, total) })}
             scroll={false}
           >
-            프로젝트 더 보기 ({visible.length} / {total})
+            프로젝트 더 보기 ({start + visible.length} / {total})
           </Link>
         )
       )}

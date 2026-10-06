@@ -2,6 +2,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { BrowseFilters, hrefWith, parseHomeSort, parseShown } from "@/components/BrowseFilters";
+import { HOME_MAX_SHOWN, shownWindow } from "@/components/home/browse-state";
 
 describe("home sort", () => {
   it("도구 흔적 필터는 정렬·분야·더 보기에서 유지하고 초기화하면 지운다", () => {
@@ -48,9 +49,9 @@ describe("home sort", () => {
     expect(parseShown(undefined)).toBe(9);
     expect(parseShown("18")).toBe(18);
     expect(parseShown("3")).toBe(9);
-    // 상한 — 주소 하나로 수만 행을 읽고 그리지 못하게(HOME_MAX_SHOWN)
-    expect(parseShown("1000")).toBe(198);
-    expect(parseShown("40000")).toBe(198);
+    // 주소의 수는 그대로 둔다 — 한 화면이 그리는 수는 shownWindow 가 HOME_MAX_SHOWN 으로 묶는다
+    expect(parseShown("1000")).toBe(1000);
+    expect(parseShown("40000")).toBe(40000);
     expect(parseShown("108")).toBe(108);
     expect(parseShown("Infinity")).toBe(9);
     expect(parseShown("9007199254740992")).toBe(9);
@@ -58,6 +59,17 @@ describe("home sort", () => {
     expect(hrefWith({ sort: "weekly", query: "directory", shown: 99 }, { shown: 108 })).toBe("/?sort=weekly&q=directory&shown=108");
     expect(hrefWith({ sort: "weekly", shown: 18 }, { sort: "recent" })).toBe("/?sort=recent");
     expect(hrefWith({ sort: "recent", shown: 18 }, { shown: 30 })).toBe("/?sort=recent&shown=30");
+  });
+
+  it("더 보기가 HOME_MAX_SHOWN 을 넘으면 앞을 접고 끝까지 이어 그린다", () => {
+    expect(shownWindow(18, 33_692)).toEqual({ start: 0, count: 18 });
+    expect(shownWindow(HOME_MAX_SHOWN, 33_692)).toEqual({ start: 0, count: HOME_MAX_SHOWN });
+    expect(shownWindow(207, 33_692)).toEqual({ start: 9, count: HOME_MAX_SHOWN });
+    // 마지막 항목까지 닿는다 — 전체를 넘는 수는 전체에서 멈춘다
+    expect(shownWindow(33_692, 33_692)).toEqual({ start: 33_692 - HOME_MAX_SHOWN, count: HOME_MAX_SHOWN });
+    expect(shownWindow(9_000_000_000_000, 33_692)).toEqual({ start: 33_692 - HOME_MAX_SHOWN, count: HOME_MAX_SHOWN });
+    expect(shownWindow(9_000_000_000_000, 117)).toEqual({ start: 0, count: 117 });
+    expect(shownWindow(9, 0)).toEqual({ start: 0, count: 0 });
   });
 
   it("순위 탭이 다른 목록을 대신 보여줄 때는 그 목록의 이름을 쓰고, 필터가 걸리면 검색 결과다", () => {
