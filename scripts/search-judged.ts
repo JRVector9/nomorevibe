@@ -15,7 +15,11 @@
  *
  * 정답이 20위 밖이면 200위까지 더 보아 "후보에는 있는데 순위가 낮음"과 "아예 안 걸림"을 가른다.
  *
- *   tsx scripts/search-judged.ts [--out=결과.json]
+ * 기본은 화면의 관련도순 검색과 같은 길이다(relevance.ts — 낱말 + 의미 검색을 섞고 앞 30 재정렬, 번역은 캐시에 있을 때만).
+ * --fts 는 그 전의 낱말 검색만(번역을 기다림), --no-translation 은 옮겨 둔 번역도 쓰지 않는다(처음 들어온 한국어 문장).
+ * 의미 검색·재정렬은 EMBEDDING_URL·RERANK_URL 이 있어야 돈다 — 없으면 낱말 검색으로 내므로 결과 줄의 [의미·재정렬] 표시를 본다.
+ *
+ *   tsx scripts/search-judged.ts [--out=결과.json] [--fts] [--no-translation]
  */
 import { parseArgs } from "node:util";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
@@ -23,6 +27,7 @@ import path from "node:path";
 import type { ProductStatus } from "@/lib/db/schema";
 import { countProducts, listProducts } from "@/lib/domain/products/repository";
 import { resolveSearchQuery } from "@/lib/domain/products/search-translation";
+import { rankRelevance, relevanceWindow } from "@/lib/domain/products/relevance";
 
 const JUDGED: [query: string, slug: string][] = [
   // 페이지는 비고 README 만 있는 제품 — README 를 색인하면 달라져야 한다
@@ -81,21 +86,33 @@ function ndcg(grades: readonly number[], ideal: readonly number[], k: number): n
 }
 
 async function main() {
-  const { values } = parseArgs({ options: { out: { type: "string" } } });
+  const { values } = parseArgs({ options: { out: { type: "string" }, fts: { type: "boolean" }, "no-translation": { type: "boolean" } } });
   const judgments: Judgments = existsSync(JUDGMENTS_FILE) ? JSON.parse(readFileSync(JUDGMENTS_FILE, "utf8")) : {};
   const results: {
     query: string; slug: string; rank: number | null; deepRank: number | null; hits: number; translated: string | null; ms: number;
+    semantic?: boolean; reranked?: boolean;
     ndcg10?: number; relevantTop5?: number; top1Grade?: number | null; unjudgedTop10?: number;
   }[] = [];
   for (const [query, slug] of JUDGED) {
     const started = Date.now();
-    const resolved = await resolveSearchQuery(query);
+    const resolved = values["no-translation"] ? { queries: [query], translated: null }
+      : await resolveSearchQuery(query, { waitForTranslation: Boolean(values.fts) });
     const options = { statuses: PUBLIC, query: resolved.queries, excludeDown: true };
-    const [hits, rows] = await Promise.all([countProducts(options), listProducts({ ...options, sort: "relevance", limit: DEPTH })]);
+    let hits: number, rows: { slug: string }[], deepen: () => Promise<{ slug: string }[]>, mode: { semantic?: boolean; reranked?: boolean } = {};
+    if (values.fts) {
+      [hits, rows] = await Promise.all([countProducts(options), listProducts({ ...options, sort: "relevance", limit: DEPTH })]);
+      deepen = () => listProducts({ ...options, sort: "relevance", limit: DIAGNOSE_DEPTH });
+    } else {
+      const ranked = await rankRelevance(query, resolved.queries, {});
+      hits = ranked.total;
+      rows = (await relevanceWindow(ranked, resolved.queries, {}, 0, DEPTH)).map((slug) => ({ slug }));
+      deepen = async () => (await relevanceWindow(ranked, resolved.queries, {}, 0, DIAGNOSE_DEPTH)).map((slug) => ({ slug }));
+      mode = { semantic: ranked.semantic, reranked: ranked.reranked };
+    }
     const ms = Date.now() - started;
     const index = rows.findIndex((row) => row.slug === slug);
     // 20위 밖이면 더 깊이 — 시간에는 넣지 않는다(화면은 이만큼 보지 않는다)
-    const deep = index >= 0 ? index : (await listProducts({ ...options, sort: "relevance", limit: DIAGNOSE_DEPTH })).findIndex((row) => row.slug === slug);
+    const deep = index >= 0 ? index : (await deepen()).findIndex((row) => row.slug === slug);
     const judged = judgments[query];
     const graded = judged ? {
       ndcg10: ndcg(rows.map((row) => judged[row.slug] ?? 0), Object.values(judged), 10),
@@ -103,10 +120,11 @@ async function main() {
       top1Grade: rows[0] ? judged[rows[0].slug] ?? null : null,
       unjudgedTop10: rows.slice(0, 10).filter((row) => !(row.slug in judged)).length,
     } : {};
-    results.push({ query, slug, rank: index >= 0 ? index + 1 : null, deepRank: deep >= 0 ? deep + 1 : null, hits, translated: resolved.translated, ms, ...graded });
+    results.push({ query, slug, rank: index >= 0 ? index + 1 : null, deepRank: deep >= 0 ? deep + 1 : null, hits, translated: resolved.translated, ms, ...mode, ...graded });
     const r = results.at(-1)!;
     const where = r.rank ? `${r.rank}위` : r.deepRank ? `(${r.deepRank}위)` : "후보 없음";
-    console.log(`${where.padStart(8)}  ${String(hits).padStart(5)}건  ${String(ms).padStart(5)}ms  ${r.ndcg10 !== undefined ? `nDCG ${r.ndcg10.toFixed(2)}  ` : ""}${query}${r.translated ? `  → ${r.translated}` : ""}`);
+    const flags = values.fts ? "" : `[${r.semantic ? "의미" : "-"}·${r.reranked ? "재정렬" : "-"}] `;
+    console.log(`${where.padStart(8)}  ${String(hits).padStart(5)}건  ${String(ms).padStart(5)}ms  ${flags}${r.ndcg10 !== undefined ? `nDCG ${r.ndcg10.toFixed(2)}  ` : ""}${query}${r.translated ? `  → ${r.translated}` : ""}`);
   }
   const n = results.length;
   const within = (k: number) => results.filter((r) => r.rank !== null && r.rank <= k).length;

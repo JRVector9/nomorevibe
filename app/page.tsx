@@ -14,12 +14,14 @@ import { MethodologyDialog } from "@/components/home/MethodologyDialog";
 import { ProjectGrid } from "@/components/home/ProjectGrid";
 import { ToolsBoard } from "@/components/home/ToolsBoard";
 import { categoryCounts, countProducts, RISING_MAX_STARS } from "@/lib/domain/products/repository";
-import { resolveSearchQuery } from "@/lib/domain/products/search-translation";
+import { resolveSearchQuery, warmQueryTranslation } from "@/lib/domain/products/search-translation";
+import { rankRelevance, relevanceWindow } from "@/lib/domain/products/relevance";
 import type { SearchQuery } from "@/lib/domain/products/search";
 import { CATEGORIES } from "@/lib/domain/products/schema";
 import {
   getNewThisWeek,
   getPublicList,
+  getPublicListBySlugs,
   getUnclaimedList,
   getVerifiedList,
   NEW_THIS_WEEK_MIN_STARS,
@@ -297,7 +299,8 @@ export async function HomeContent({ params }: { params: HomeParams }) {
    * 개수를 세 홈이 한 왕복 더 기다렸다). 먼저 실패한 것이 처리되지 않은 거절로 남지 않게 잡아 두고, 아래 await 가 다시 던진다.
    */
   const seasonLoad = publicRead("count", ["season"], () => getCurrentSeason());
-  const searchLoad = resolveSearchQuery(query);
+  // 관련도순은 번역을 기다리지 않는다 — 의미 검색이 한국어 문장을 그대로 잰다(search-translation.ts warmQueryTranslation)
+  const searchLoad = resolveSearchQuery(query, { waitForTranslation: requestedSort !== "relevance" });
   const countsLoad = publicRead("count", ["categories"], () => categoryCounts({ statuses: ["verified", "seeded"], excludeDown: true }));
   const verifiedLoad = publicRead("count", ["verified"], () => countProducts({ statuses: ["verified"], excludeDown: true }));
   for (const load of [seasonLoad, searchLoad, countsLoad, verifiedLoad]) load.catch(() => {});
@@ -314,6 +317,7 @@ export async function HomeContent({ params }: { params: HomeParams }) {
      */
     const search = await searchLoad;
     translatedQuery = search.translated;
+    if (query && search.translationPending) after(() => warmQueryTranslation(query));
     const options = { category, query: search.queries, builder, observedTool, excludeDown: true };
     /**
      * 순위 탭의 개수는 순위가 서지 않을 때(fallbackSort)만 쓴다 — 그때 '추천'은 스타가 는 제품만 센다.
@@ -331,8 +335,20 @@ export async function HomeContent({ params }: { params: HomeParams }) {
     const publicCatalogue = effectiveSort === "recent" || effectiveSort === "open" || effectiveSort === "relevance" || fallback !== null;
     // 저장 목록 보기는 브라우저가 후보를 거르므로 창을 밀지 않고 앞에서부터 받는다
     const requestedLimit = savedOnly ? Math.max(Math.min(shown, HOME_MAX_SHOWN), SAVED_INITIAL_CANDIDATES) : shown;
+    /**
+     * 관련도순 검색은 낱말 검색과 의미 검색을 섞고 앞 30개를 재정렬한다(lib/domain/products/relevance.ts).
+     * 순위와 전체 수를 30초 동안 웹 여러 대가 함께 쓴다 — "더 보기"가 같은 순위를 이어 받는다.
+     */
+    const filters = { category, builder, observedTool };
+    const relevanceLoad = query && effectiveSort === "relevance" && !fallback
+      ? publicRead("list", ["relevance", query, search.queries, filters], () => rankRelevance(query, search.queries, filters))
+      : null;
+    relevanceLoad?.catch(() => {});
     // 같은 정렬·거르기·구간이면 30초 동안 한 번만 읽는다(lib/domain/products/public-reads.ts)
-    const loadList = (limit: number, offset: number) => publicRead("list", ["home", effectiveSort, fallback, active?.key ?? null, listOptions, limit, offset], () => fallback
+    const loadList = (limit: number, offset: number) => relevanceLoad
+      ? publicRead("list", ["relevance-rows", query, search.queries, filters, limit, offset],
+        async () => getPublicListBySlugs(await relevanceWindow(await relevanceLoad, search.queries, filters, offset, limit)))
+      : publicRead("list", ["home", effectiveSort, fallback, active?.key ?? null, listOptions, limit, offset], () => fallback
       ? getPublicList(limit, { ...listOptions, sort: fallback, offset })
       : active
         ? listFor(effectiveSort, active, category, search.queries, builder, observedTool, limit, offset)
@@ -340,7 +356,9 @@ export async function HomeContent({ params }: { params: HomeParams }) {
           ? getPublicList(limit, { ...listOptions, sort: effectiveSort === "relevance" ? "relevance" : "recent", offset })
           : getVerifiedList(limit, { ...options, sort: "recent" }));
     const spanOf = (count: number) => savedOnly ? { start: 0, count: Math.min(requestedLimit, count) } : shownWindow(shown, count);
-    const matchingLoad = publicRead("count", ["matching", listOptions], () => countProducts({ statuses: ["verified", "seeded"], ...listOptions }));
+    const matchingLoad = relevanceLoad
+      ? relevanceLoad.then((ranked) => ranked.total)
+      : publicRead("count", ["matching", listOptions], () => countProducts({ statuses: ["verified", "seeded"], ...listOptions }));
     /*
      * 목록이 개수를 기다리는 것은 띠를 나눌지 정할 때뿐이다(거르기 없음 · 추천 대체 목록). 나머지는 LIMIT 이 이미 막으니
      * 개수와 함께 받는다 — 넓은 검색에서 개수(214ms)를 기다린 뒤 목록(183ms)을 받던 것을 겹친다.

@@ -3,7 +3,7 @@ import { and, eq, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { crawlCandidates, crawlDocuments, products, textTranslations } from "@/lib/db/schema";
 import { listProducts } from "@/lib/domain/products/repository";
-import { queryTranslationKey, resolveSearchQuery } from "@/lib/domain/products/search-translation";
+import { queryTranslationKey, resolveSearchQuery, warmQueryTranslation } from "@/lib/domain/products/search-translation";
 import { searchQueries } from "@/lib/domain/products/search";
 import { refreshProductSearchDocuments } from "@/lib/jobs/products/search-refresh";
 import { ensureSchema, resetTables } from "./setup";
@@ -124,5 +124,27 @@ it("번역이 안 되면 친 그대로 찾는다 — 오류 화면이 되지 않
   const [row] = await db.select().from(textTranslations)
     .where(and(eq(textTranslations.sourceHash, queryTranslationKey("PDF 합치는 도구")), eq(textTranslations.targetLang, "en")));
   expect(row.status).toBe("failed");
+  expect(row.errorCode).toBe("no_key");
+});
+
+it("관련도순은 번역을 기다리지 않는다 — 옮겨 둔 것은 쓰고, 없으면 친 그대로 찾고 응답 뒤에 옮겨 둔다", async () => {
+  delete process.env.ABCLLM_API_KEY;
+  const translationRow = (query: string) => db.select().from(textTranslations)
+    .where(and(eq(textTranslations.sourceHash, queryTranslationKey(query)), eq(textTranslations.targetLang, "en")));
+  await db.insert(textTranslations).values({ sourceHash: queryTranslationKey("PDF 합치는 도구"), targetLang: "en", status: "done", translated: "merge pdf" });
+
+  const cached = await resolveSearchQuery("PDF 합치는 도구", { waitForTranslation: false });
+  expect(cached.translated).toBe("merge pdf");
+  expect(cached.translationPending).toBeUndefined();
+
+  const fresh = await resolveSearchQuery("회의록 정리", { waitForTranslation: false });
+  expect(fresh).toMatchObject({ translated: null, translationPending: true });
+  expect(searchQueries(fresh.queries)).toEqual(["회의록 정리"]);
+  // 게이트웨이를 부르지 않았다 — 기록도 없다
+  expect(await translationRow("회의록 정리")).toEqual([]);
+
+  // 응답 뒤(after)에 옮긴다 — 여기서는 키가 없어 실패로 남는 것으로 불렀음을 본다
+  await warmQueryTranslation("회의록 정리");
+  const [row] = await translationRow("회의록 정리");
   expect(row.errorCode).toBe("no_key");
 });

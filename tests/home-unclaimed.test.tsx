@@ -24,7 +24,13 @@ const {
   getPublicList,
   getHomePulse,
   getCrawlSettings,
+  getPublicListBySlugs,
+  rankRelevance,
+  relevanceWindow,
 } = vi.hoisted(() => ({
+  getPublicListBySlugs: vi.fn(),
+  rankRelevance: vi.fn(),
+  relevanceWindow: vi.fn(),
   categoryCounts: vi.fn(),
   countProducts: vi.fn(),
   getAllTimeRanking: vi.fn(),
@@ -48,10 +54,13 @@ vi.mock("@/lib/domain/products/search-translation", () => ({
   resolveSearchQuery: async (query?: string) => ({ queries: query ? [query] : [], translated: null }),
   normalizeQuery: (query: string) => query.trim().toLowerCase(),
 }));
+// 관련도순 검색(섞기·재정렬)은 모델 서버와 DB 를 부른다 — 화면 조합만 본다
+vi.mock("@/lib/domain/products/relevance", () => ({ rankRelevance, relevanceWindow }));
 vi.mock("@/lib/domain/products/view", () => ({
   getUnclaimedList,
   getVerifiedList,
   getPublicList,
+  getPublicListBySlugs,
   getNewThisWeek: vi.fn().mockResolvedValue([]),
   NEW_THIS_WEEK_MIN_STARS: 50,
 }));
@@ -131,6 +140,9 @@ beforeEach(() => {
   getUnclaimedList.mockResolvedValue([]);
   getVerifiedList.mockResolvedValue([]);
   getPublicList.mockResolvedValue([]);
+  rankRelevance.mockResolvedValue({ head: [], total: 0, semantic: false, reranked: false });
+  relevanceWindow.mockResolvedValue([]);
+  getPublicListBySlugs.mockResolvedValue([]);
   getAllTimeRanking.mockResolvedValue([]);
   getSeasonRanking.mockResolvedValue({ season, items: [] });
   categoryCounts.mockResolvedValue({});
@@ -287,17 +299,34 @@ describe("빈 화면 문구", () => {
     expect(html).not.toContain("searched-project");
   });
 
-  it("정렬을 명시하지 않은 검색은 순위가 아니라 공개 목록 전체에서 찾는다", async () => {
-    countProducts.mockResolvedValue(1);
-    getPublicList.mockResolvedValue([product("searched-project")]);
+  it("정렬을 명시하지 않은 검색은 순위가 아니라 공개 목록 전체를 관련도순(섞기·재정렬)으로 찾는다", async () => {
+    rankRelevance.mockResolvedValue({ head: ["searched-project", "second"], total: 2, semantic: true, reranked: true });
+    relevanceWindow.mockImplementation(async (ranked: { head: string[] }, _plan: unknown, _filters: unknown, start: number, count: number) =>
+      ranked.head.slice(start, start + count));
+    getPublicListBySlugs.mockImplementation(async (slugs: string[]) => slugs.map(product));
 
     // 결과는 스트리밍되는 쪽(HomeContent)에서 그린다
     const html = renderToStaticMarkup(await HomeContent({ params: { q: "searched" } }));
 
-    expect(getPublicList).toHaveBeenCalled();
+    expect(rankRelevance).toHaveBeenCalledWith("searched", ["searched"], { category: undefined, builder: undefined, observedTool: undefined });
+    expect(getPublicList).not.toHaveBeenCalled();
     expect(getVerifiedList).not.toHaveBeenCalled();
     expect(getSeasonRanking).not.toHaveBeenCalled();
+    // 전체 수는 낱말 검색 수가 아니라 섞은 결과의 수다
+    expect(countProducts).not.toHaveBeenCalledWith(expect.objectContaining({ query: ["searched"] }));
     expect(html).toContain("searched-project");
+    expect(html.indexOf("searched-project")).toBeLessThan(html.indexOf("second"));
+  });
+
+  it("다른 정렬을 고른 검색은 지금처럼 낱말 검색으로 거른다", async () => {
+    countProducts.mockResolvedValue(1);
+    getPublicList.mockResolvedValue([product("recent-match")]);
+
+    const html = renderToStaticMarkup(await HomeContent({ params: { q: "searched", sort: "recent" } }));
+
+    expect(rankRelevance).not.toHaveBeenCalled();
+    expect(getPublicList).toHaveBeenCalledWith(expect.any(Number), expect.objectContaining({ query: ["searched"], sort: "recent" }));
+    expect(html).toContain("recent-match");
   });
 
   it("최신 탭은 수집 제품을 포함한 공개 목록을 사용한다", async () => {
