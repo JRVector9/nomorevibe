@@ -414,6 +414,13 @@
       "when": 1791294352349,
       "tag": "0058_public_read_tuning",
       "breakpoints": true
+    },
+    {
+      "idx": 59,
+      "version": "7",
+      "when": 1791363579369,
+      "tag": "0059_product_embeddings",
+      "breakpoints": true
     }
   ]
 }

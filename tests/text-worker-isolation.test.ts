@@ -10,8 +10,8 @@ import { workerIsHealthy } from "@/scripts/worker-healthcheck";
 it("owns text jobs once, with an executable role, bounded pool and health identity", () => {
   expect(JOB_ROLES).toContain("text");
   expect(jobsForRole("publisher")).toEqual(["crawl-publish", "cdn-purge"]);
-  expect(jobsForRole("text")).toEqual(["reason-translate", "crawl-tagline", "product-search-profile", "product-search-verify"]);
-  expect(JOB_CATALOG.filter(job => ["reason-translate", "crawl-tagline", "product-search-profile", "product-search-verify"].includes(job.name))).toHaveLength(4);
+  expect(jobsForRole("text")).toEqual(["reason-translate", "crawl-tagline", "product-search-profile", "product-search-verify", "product-embedding"]);
+  expect(JOB_CATALOG.filter(job => ["reason-translate", "crawl-tagline", "product-search-profile", "product-search-verify", "product-embedding"].includes(job.name))).toHaveLength(5);
   expect(parseWorkerArgs(["--role=text"])).toMatchObject({ role: "text" });
   expect(dbPoolConfig({ WORKER_ROLE: "text" }).max).toBe(3);
   expect(supervisorLimits("text", {}).jobMs).toBe(180_000);
@@ -21,6 +21,7 @@ it("owns text jobs once, with an executable role, bounded pool and health identi
   expect(workerIsHealthy({ role: "text", status: "running", updatedAt: 1000, lastHeartbeatAt: 1000 }, 2000, "text")).toBe(true);
   expect(jobRunOptions("reason-translate", { requestedOnly: true }).budgetMs).toBe(55_000);
   expect(jobRunOptions("product-search-profile", { requestedOnly: true }).budgetMs).toBe(55_000);
+  expect(jobRunOptions("product-embedding", { requestedOnly: true }).budgetMs).toBe(50_000);
   expect(jobRunOptions("crawl-tagline", { requestedOnly: true }).budgetMs).toBeUndefined();
 });
 it("publication starts while text is blocked, and text jobs remain serial", async () => {

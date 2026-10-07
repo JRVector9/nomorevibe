@@ -41,7 +41,7 @@ Node.js 24와 PostgreSQL 17을 사용한다. 의존성은 lockfile과 맞춰 `np
 # DB (전용 컨테이너)
 docker run -d --name nomorevibe-local-db \
   -e POSTGRES_USER=nomorevibe -e POSTGRES_PASSWORD=nomorevibe -e POSTGRES_DB=nomorevibe \
-  -p 55434:5432 -v nomorevibe-local-pgdata:/var/lib/postgresql/data postgres:17
+  -p 55434:5432 -v nomorevibe-local-pgdata:/var/lib/postgresql/data pgvector/pgvector:0.8.6-pg17
 
 cp .env.example .env.local     # ALLOW_PRIVATE_URLS=1 주석 해제 (로컬 테스트용)
 # openssl rand -hex 32 결과를 VISITOR_HASH_SECRET에 넣는다
@@ -78,9 +78,12 @@ maintenance의 `uptime-ping`은 기본 15건/분·서로 다른 origin 3곳 동�
 ```bash
 docker run -d --name nomorevibe-test-db \
   -e POSTGRES_USER=nomorevibe -e POSTGRES_PASSWORD=nomorevibe -e POSTGRES_DB=nomorevibe_test \
-  -p 55435:5432 postgres:17
+  -p 55435:5432 pgvector/pgvector:0.8.6-pg17
 npm run test:integration
 ```
+
+DB 는 pgvector 가 든 이미지를 쓴다(의미 검색 벡터, 0059). 프로드와 같은 0.8.6 이다. 예전 `postgres:17` 컨테이너는
+마이그레이션 0059 에서 `extension "vector" is not available` 로 멈춘다 — 이미지만 바꿔 다시 만든다(같은 볼륨을 붙이면 데이터는 남는다).
 
 ## GitHub CI와 변경 절차
 
