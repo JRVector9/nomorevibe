@@ -27,7 +27,7 @@ import path from "node:path";
 import type { ProductStatus } from "@/lib/db/schema";
 import { countProducts, listProducts } from "@/lib/domain/products/repository";
 import { resolveSearchQuery } from "@/lib/domain/products/search-translation";
-import { rankRelevance, relevanceWindow } from "@/lib/domain/products/relevance";
+import { relevanceWindow, searchRelevance } from "@/lib/domain/products/relevance";
 
 const JUDGED: [query: string, slug: string][] = [
   // 페이지는 비고 README 만 있는 제품 — README 를 색인하면 달라져야 한다
@@ -95,7 +95,7 @@ async function main() {
   }[] = [];
   for (const [query, slug] of JUDGED) {
     const started = Date.now();
-    const resolved = values["no-translation"] ? { queries: [query], translated: null }
+    const resolved = values["no-translation"] ? { queries: [query], translated: null, translationPending: false }
       : await resolveSearchQuery(query, { waitForTranslation: Boolean(values.fts) });
     const options = { statuses: PUBLIC, query: resolved.queries, excludeDown: true };
     let hits: number, rows: { slug: string }[], deepen: () => Promise<{ slug: string }[]>, mode: { semantic?: boolean; reranked?: boolean } = {};
@@ -103,10 +103,12 @@ async function main() {
       [hits, rows] = await Promise.all([countProducts(options), listProducts({ ...options, sort: "relevance", limit: DEPTH })]);
       deepen = () => listProducts({ ...options, sort: "relevance", limit: DIAGNOSE_DEPTH });
     } else {
-      const ranked = await rankRelevance(query, resolved.queries, {});
+      // 화면과 같은 길 — 원문으로 0건이면 번역을 기다려 다시(--no-translation 이면 다시 찾지 않는다)
+      const ranked = await searchRelevance(query, resolved, {}, () => values["no-translation"]
+        ? Promise.resolve(resolved) : resolveSearchQuery(query, { waitForTranslation: true }));
       hits = ranked.total;
-      rows = (await relevanceWindow(ranked, resolved.queries, {}, 0, DEPTH)).map((slug) => ({ slug }));
-      deepen = async () => (await relevanceWindow(ranked, resolved.queries, {}, 0, DIAGNOSE_DEPTH)).map((slug) => ({ slug }));
+      rows = (await relevanceWindow(ranked, ranked.plan, {}, 0, DEPTH)).map((slug) => ({ slug }));
+      deepen = async () => (await relevanceWindow(ranked, ranked.plan, {}, 0, DIAGNOSE_DEPTH)).map((slug) => ({ slug }));
       mode = { semantic: ranked.semantic, reranked: ranked.reranked };
     }
     const ms = Date.now() - started;

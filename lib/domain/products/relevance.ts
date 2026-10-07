@@ -5,6 +5,7 @@
  */
 import type { Category } from "./schema";
 import type { SearchQuery } from "./search";
+import type { ResolvedSearch } from "./search-translation";
 import { rankSearch, type RankDependencies, type RankedSearch } from "./hybrid-search";
 import { countProducts, listProductSlugs, nearestProductSlugs, productDocuments } from "./repository";
 import { onPrimary } from "@/lib/db";
@@ -45,6 +46,30 @@ export function rankRelevance(raw: string, plan: SearchQuery, filters: Relevance
     documents: productDocuments,
     ...deps,
   });
+}
+
+export type RelevanceResult = RankedSearch & {
+  /** 이 순위를 낸 낱말 검색 계획 — 뒤쪽 창(relevanceWindow)도 같은 계획으로 이어 받는다 */
+  plan: SearchQuery;
+  /** 화면에 밝힐 번역 */
+  translated: string | null;
+};
+
+/**
+ * 관련도순 검색 한 번 — 번역을 기다리지 않고 찾되, 처음 들어온 한국어 문장이 원문으로 하나도 걸리지 않으면
+ * 그때만 번역을 기다려 한 번 더 찾는다(예전처럼 약 3초). "드라마 평점 차트"는 한국어 낱말이 색인에 없고 뜻이 가까운
+ * 정답도 하한(코사인 0.5) 아래라 원문만으로는 0건이었다 — 번역("tv show ratings")이 붙으면 걸린다.
+ */
+export async function searchRelevance(
+  raw: string, resolved: ResolvedSearch, filters: RelevanceFilters,
+  translate: () => Promise<ResolvedSearch>,
+  rank: typeof rankRelevance = rankRelevance,
+): Promise<RelevanceResult> {
+  const ranked = await rank(raw, resolved.queries, filters);
+  if (ranked.total > 0 || !resolved.translationPending) return { ...ranked, plan: resolved.queries, translated: resolved.translated };
+  const waited = await translate();
+  if (!waited.translated) return { ...ranked, plan: resolved.queries, translated: null };
+  return { ...await rank(raw, waited.queries, filters), plan: waited.queries, translated: waited.translated };
 }
 
 /**
