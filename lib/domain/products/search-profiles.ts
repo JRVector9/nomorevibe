@@ -34,6 +34,10 @@ export type ProfileTask = { product: ProductFields; profile: ProductSearchProfil
  *
  * 안 지은 것이 먼저이고, 그중에서도 소개가 한 줄뿐인 제품(설명=소개, 공개분의 40%)이 먼저다 —
  * 키워드가 가장 크게 보태는 쪽이다.
+ *
+ * 이미 지은 것은 마지막으로 손댄 지(updated_at) 오래된 것부터다. 트리거는 updated_at 을 건드리지 않아 그 뒤에 들어온
+ * 갱신 요청은 모두 그보다 늦다 — 한 번 처리하면 맨 뒤로 가니 굶는 것이 없다. 전에는 id 큰 것부터라 계속 다시 바뀌는
+ * 최근 제품들이 앞을 차지해, 9/24부터 기다린 갱신이 10/08에도 남아 있었다.
  */
 export async function pendingProfiles(limit: number): Promise<ProfileTask[]> {
   const rows = await db.select({ product: FIELDS, profile: productSearchProfiles, reviewerNote: REVIEWER_NOTE })
@@ -48,7 +52,8 @@ export async function pendingProfiles(limit: number): Promise<ProfileTask[]> {
             or ${productSearchProfiles.updatedAt} < now() - interval '30 days')))`,
     ))
     .orderBy(sql`(${productSearchProfiles.productId} is null) desc,
-      (btrim(${products.description}) = btrim(${products.tagline})) desc, ${products.id} desc`)
+      (${productSearchProfiles.productId} is null and btrim(${products.description}) = btrim(${products.tagline})) desc,
+      ${productSearchProfiles.updatedAt}, ${products.id} desc`)
     .limit(limit);
   return rows.map((row) => ({ product: row.product, profile: row.profile ?? null, reviewerNote: row.reviewerNote }));
 }
