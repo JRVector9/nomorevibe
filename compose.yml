@@ -40,7 +40,7 @@ x-worker: &worker
 
 services:
   db:
-    image: postgres:17
+    image: pgvector/pgvector:0.8.6-pg17
     environment:
       POSTGRES_USER: nomorevibe
       POSTGRES_PASSWORD: nomorevibe

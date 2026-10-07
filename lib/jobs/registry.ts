@@ -24,6 +24,7 @@ import { refreshProductEvidenceJob } from "@/lib/jobs/products/evidence-refresh"
 import { refreshProductStars } from "@/lib/jobs/products/stars-refresh";
 import { refreshProductThumbnails } from "@/lib/jobs/products/thumbnail-refresh";
 import { refreshProductSearchDocuments } from "@/lib/jobs/products/search-refresh";
+import { refreshProductEmbeddings } from "@/lib/jobs/products/embedding-refresh";
 import { refreshNews } from "@/lib/news/refresh";
 
 /**
@@ -74,6 +75,8 @@ export const JOBS: Record<string, AnyJob> = {
   /** 공개 제품마다 한·영 검색 키워드를 적는다 */
   "product-search-profile": writeSearchProfiles,
   "product-search-verify": (ctx) => verifySearchKeywords(ctx),
+  /** 공개 제품의 글을 의미 검색용 벡터로 바꿔 둔다 */
+  "product-embedding": (ctx) => refreshProductEmbeddings(ctx),
   "product-search-health": auditSearchHealth,
   "product-readme-refresh": refreshPublishedReadmes,
   "product-intro-check": (ctx) => checkProductIntros(ctx),

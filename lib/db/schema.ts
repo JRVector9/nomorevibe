@@ -15,6 +15,7 @@ import {
   bigint,
   numeric,
   uniqueIndex,
+  halfvec,
 } from "drizzle-orm/pg-core";
 
 // drizzle pg-core에 내장 bytea 타입이 없어 customType으로 정의
@@ -356,6 +357,21 @@ export const productSearchProfiles = pgTable("product_search_profiles", {
 });
 
 export type ProductSearchProfile = typeof productSearchProfiles.$inferSelect;
+
+/**
+ * 의미 검색의 제품 벡터 — 이름·소개·설명·토픽·카테고리·키워드를 bge-m3 로 임베딩한 것(product-embedding 잡).
+ *
+ * 검색어도 같은 모델로 바꿔 가까운 제품을 찾고, 낱말 검색 순위와 섞는다(lib/domain/products/hybrid-search.ts).
+ * 글이나 모델이 바뀌면(text_hash·model) 다시 임베딩한다. 2026-10-07 실험과 실행기 선택은 docs/operations/search-model-servers.md.
+ */
+export const productEmbeddings = pgTable("product_embeddings", {
+  productId: integer("product_id").primaryKey().references(() => products.id, { onDelete: "cascade" }),
+  model: varchar("model", { length: 80 }).notNull(),
+  /** 임베딩한 글의 md5 — 글이 바뀌면 다시 임베딩한다 */
+  textHash: varchar("text_hash", { length: 32 }).notNull(),
+  embedding: halfvec("embedding", { dimensions: 1024 }).notNull(),
+  embeddedAt: timestamp("embedded_at").notNull().defaultNow(),
+});
 
 export type IntroVerdict = "ok" | "wrong" | "uninformative";
 /** kept: 그대로 둠 · replaced: 고쳐 쓴 소개로 바꿈 · needs_editor: 근거로는 알 수 없어 사람이 본다 */

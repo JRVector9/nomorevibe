@@ -68,7 +68,8 @@ jobs:
         shard: [1, 2, 3]
     services:
       postgres:
-        image: postgres:17
+        # 의미 검색 벡터(0059)가 pgvector 를 쓴다 — 프로드와 같은 0.8.6
+        image: pgvector/pgvector:0.8.6-pg17
         env:
           POSTGRES_USER: nomorevibe
           POSTGRES_PASSWORD: nomorevibe
