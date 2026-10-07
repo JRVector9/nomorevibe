@@ -86,4 +86,3 @@ describe("짧은 읽기 캐시", () => {
     expect(await memo.get("k", async () => 6)).toBe(5);
   });
 });
-
