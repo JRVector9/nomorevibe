@@ -60,6 +60,12 @@ export async function saveCrawlSettings(_prev: SaveState, form: FormData): Promi
       windowDays: num(form.get("windowDays")),
       sort: String(form.get("sort") ?? "relevance"),
       pagesPerTick: num(form.get("pagesPerTick")),
+      // Show HN 행은 2026-10-08 화면부터 있다 — 그 칸을 보내지 않은 폼은 Show HN 설정을 건드리지 않는다
+      ...(form.has("showHn.priority") ? { showHn: {
+        enabled: form.get("showHn.enabled") === "on",
+        priority: num(form.get("showHn.priority")),
+        requireEvidence: form.get("showHn.requireEvidence") === "on",
+      } } : {}),
     },
     judge: {
       autoApproveMinStars: num(form.get("autoApproveMinStars")),

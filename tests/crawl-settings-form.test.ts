@@ -159,8 +159,11 @@ describe("검색 신호 편집", () => {
   });
 });
 
-it('대체 모델 두 칸을 표시하고 입력 순서대로 저장한다', async () => {
-  expect(render(twoSignals)).toContain('name="fallbackModel0"');
+it('세운 대체 모델만 칸으로 그리고, 없으면 더하기 버튼을 둔다 · 입력 순서대로 저장한다', async () => {
+  const withFallback: CrawlSettings = { ...twoSignals, secondReview: { ...twoSignals.secondReview, fallbacks: [{ provider: 'abcllm', model: 'qwen3-coder:30b' }] } };
+  expect(render(withFallback)).toContain('name="fallbackModel0"');
+  expect(render(withFallback)).not.toContain('name="fallbackModel1"');
+  expect(render({ ...twoSignals, secondReview: { ...twoSignals.secondReview, fallbacks: [] } })).toContain('+ 대체 모델 더하기');
   const form = submitted({ fallbackProvider0: 'claude-cli', fallbackModel0: 'opus', fallbackProvider1: 'abcllm', fallbackModel1: 'qwen3-coder:30b' });
   await saveCrawlSettings(null, form);
   expect(saveSettings.mock.calls.at(-1)?.[0].secondReview.fallbacks).toEqual([
@@ -201,5 +204,44 @@ describe("1차 심사 설정", () => {
     // 키가 있고 값이 undefined 여야 {...지금, ...바꾼 것} 에서 지금 값을 덮는다
     expect("firstReview" in patch).toBe(true);
     expect(patch.firstReview).toBeUndefined();
+  });
+});
+
+describe("2026-10-08 리디자인", () => {
+  const settingsWithShowHn: CrawlSettings = {
+    ...twoSignals,
+    discover: { ...twoSignals.discover, showHn: { enabled: true, priority: 120, requireEvidence: true } },
+  };
+
+  it("Show HN 행을 그리고, 그 칸을 보낸 폼만 Show HN 설정을 바꾼다", async () => {
+    const html = render(settingsWithShowHn);
+    expect(html).toContain('name="showHn.priority"');
+    expect(html).toMatch(/name="showHn\.enabled"[^>]*checked/);
+
+    await saveCrawlSettings(null, submitted({ "showHn.priority": "130", "showHn.requireEvidence": "on" }));
+    expect(saveSettings.mock.calls[0][0].discover.showHn).toEqual({ enabled: false, priority: 130, requireEvidence: true });
+
+    saveSettings.mockClear();
+    await saveCrawlSettings(null, submitted());
+    // 옛 폼(그 칸이 없다)은 Show HN 을 건드리지 않는다 — 꺼진 것으로 저장되면 수집이 멈춘다
+    expect(saveSettings.mock.calls[0][0].discover).not.toHaveProperty("showHn");
+  });
+
+  it("거르는 목록 다섯은 보이지 않는 탭까지 늘 함께 보낸다", () => {
+    const html = render(twoSignals);
+    for (const name of ["blockedHomepageDomains", "thirdPartyHosts", "stubPageTitles", "excludedRepoPatterns", "heldRepoPatterns"]) {
+      expect(html).toContain(`name="${name}"`);
+    }
+    expect(html).toMatch(/<textarea[^>]*name="heldRepoPatterns"[^>]*>\*-website\nawesome-\*<\/textarea>/);
+  });
+
+  it("신호마다 지난 7일 수집과 발행률을 붙인다", () => {
+    const html = renderToStaticMarkup(createElement(SettingsForm, {
+      settings: twoSignals,
+      yields: { "Claude 커밋 트레일러": { enqueued: 80815, published: 8343, gated: 0 }, "Show HN": { enqueued: 252, published: 48, gated: 34 } },
+    }));
+    expect(html).toContain("80,815");
+    expect(html).toContain("10.3%");
+    expect(html).toContain("흔적 없어 보류 34");
   });
 });
