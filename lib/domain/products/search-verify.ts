@@ -102,25 +102,34 @@ function firstObject(text: string): string {
   return text.slice(Math.max(0, start));
 }
 
+/** 띄어쓰기만 다른 말을 같게 본다 — 모델이 한글 앞 공백을 지워 옮기는 때가 있다("AI 하네스 엔지니어" → "AI하네스 엔지니어") */
+const squash = (text: string) => text.normalize("NFC").replace(/\s+/g, "");
+
 /**
- * 받은 답을 그대로 믿지 않는다 — 보낸 키워드와 글자까지 같은 것만, fits 가 false 로 분명한 것만 뺀다.
+ * 받은 답을 그대로 믿지 않는다 — 보낸 키워드와 같은 것만, fits 가 false 로 분명한 것만 뺀다.
  * 모든 키워드에 boolean 판정이 하나씩 있어야 한다. 누락·중복·알 수 없는 키워드는 실패로 다시 검수한다.
+ *
+ * 띄어쓰기만 다르게 옮긴 것은 보낸 키워드로 읽는다 — 보낸 것 중 띄어쓰기를 빼면 같아지는 것이 하나뿐일 때만.
+ * 2026-10-07 Qwen3.8 이 "AI 하네스 엔지니어"를 혼자 보내도 매번 "AI하네스 엔지니어"로 옮겨 한 제품이 다섯 번 실패하고
+ * 재시도 한도에 걸린 채 경보로 남았다. 글자가 다른 것은 여전히 실패다.
  */
 export function parseVerification(keywords: readonly string[], content: string): string[] {
   const body = content.replace(/<think>[\s\S]*?<\/think>/g, "");
   const parsed = JSON.parse(firstObject(body)) as { checks?: unknown };
   if (!parsed || !Array.isArray(parsed.checks)) throw new Error("invalid_output");
   const own = new Set(keywords);
+  // 띄어쓰기를 뺀 꼴 → 보낸 키워드(둘 이상이 같은 꼴이면 null — 어느 것인지 모른다)
+  const bySquash = new Map<string, string | null>();
+  for (const keyword of own) bySquash.set(squash(keyword), bySquash.has(squash(keyword)) ? null : keyword);
   const seen = new Set<string>();
   const unsupported: string[] = [];
   for (const check of parsed.checks) {
     if (!check || typeof check !== "object") throw new Error("invalid_output");
     const { keyword, fits } = check as { keyword?: unknown; fits?: unknown };
-    if (typeof keyword !== "string" || typeof fits !== "boolean" || !own.has(keyword) || seen.has(keyword)) {
-      throw new Error("invalid_output");
-    }
-    seen.add(keyword);
-    if (!fits) unsupported.push(keyword);
+    const sent = typeof keyword !== "string" ? undefined : own.has(keyword) ? keyword : bySquash.get(squash(keyword)) ?? undefined;
+    if (!sent || typeof fits !== "boolean" || seen.has(sent)) throw new Error("invalid_output");
+    seen.add(sent);
+    if (!fits) unsupported.push(sent);
   }
   if (seen.size !== own.size) throw new Error("invalid_output");
   return unsupported;
