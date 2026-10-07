@@ -37,6 +37,26 @@ it('오래된 스타만 갱신하고 신선한 제품은 재조회하지 않는�
  expect((await db.select().from(products).where(eq(products.id,stale.id)))[0]).toMatchObject({stars:7000,starsPrevious:2500,ownerType:'Organization'});
  expect((await db.select().from(products).where(eq(products.id,fresh.id)))[0].stars).toBe(2600);
 });
+it('잡이 처음 보는 제품을 차례 순회보다 먼저 보고, 실패하면 차례 순회로 돌려보낸다',async()=>{
+ const walked:Awaited<ReturnType<typeof product>>[]=[];for(let i=0;i<40;i++)walked.push(await product(100));
+ const unseen=await product(50);
+ // 차례 순회 대상은 이미 두 번 관측했다. 새 제품은 발행 때의 첫 관측뿐이다 — 둘 다 하루가 지나 갱신할 때다
+ await db.execute(sql`update products set stars_at=now()-interval '2 days',stars_previous=90,stars_previous_at=now()-interval '4 days',stars_checked_at=now()-interval '2 days' where id<>${unseen.id}`);
+ await db.execute(sql`update products set stars_at=now()-interval '25 hours' where id=${unseen.id}`);
+ const paths:string[]=[];
+ const request=vi.fn(async(path:string)=>{paths.push(path);return path.endsWith(unseen.slug)?{ok:false as const,error:{kind:'not_found' as const}}:response(120);});
+ const ctx=context();
+ const result=await refreshProductStars(ctx,{request});
+ // 한 번에 40개 그대로 — 새 제품이 첫 자리를 받고 순회는 39개까지 간다
+ expect(paths).toHaveLength(40);expect(paths[0]).toBe(`/repos/test/${unseen.slug}`);
+ expect(result).toEqual({done:false,cursor:{afterId:walked[38].id}});
+ expect((await db.select().from(products).where(eq(products.id,walked[39].id)))[0].stars).toBe(100);
+ // 404 는 확인 시각만 남긴다 — 다음 바퀴부터는 앞을 차지하지 않고 ID 차례로 돈다
+ await db.execute(sql`update products set stars_checked_at=now()-interval '2 hours' where id=${unseen.id}`);
+ paths.length=0;
+ expect(await refreshProductStars({...context(),cursor:result.cursor??null},{request})).toEqual({done:true,cursor:null});
+ expect(paths).toEqual([`/repos/test/${walked[39].slug}`,`/repos/test/${unseen.slug}`]);
+});
 it('실패 시 값과 성공 시각을 보존하고 다음 후보를 계속 본다',async()=>{
  const first=await product(null);const second=await product(null);
  const request=vi.fn(async(path:string)=>path.endsWith(first.slug)?{ok:false as const,error:{kind:'not_found' as const}}:response(4000));

@@ -190,7 +190,7 @@ export type ProductDetailView = {
   observedAgentFacts: ObservedAgentFactView[];
   skills: SkillView[];
   freshness: FreshnessView[];
-  /** 홈 '지금 뜨는'과 같은 순위 — 조건 밖이면 null (repository.ts getRisingRank) */
+  /** 홈 '지금 뜨는' 띠·피드의 자리 — 20위 밖이거나 조건 밖이면 null (repository.ts getRisingRank) */
   risingRank: number | null;
   /** 같은 분야에서 지금 뜨는, 자기 자신 제외, 최대 5 */
   related: ProductListItem[];

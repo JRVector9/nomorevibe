@@ -40,15 +40,16 @@ export default async function ProductPage({ params }: Props) {
   const { slug } = await params;
   // '모두 보기'의 숫자일 뿐 — 세다가 실패해도 페이지는 그대로 선다. 기본 정보(메타데이터와 같은 요청 안에서 한 번 읽는다)를
   // 받자마자 상세와 함께 센다 — 상세를 다 받은 뒤 세던 한 왕복을 겹친다(2026-10-06)
+  // 분야 전체가 아니라 그 분야에서 지금 뜨는 수 — 링크가 여는 홈 목록이 세는 것과 같은 조건이다
   const identity = await identityOf(slug);
-  const categoryLoad = identity
-    ? publicRead("count", ["category", identity.category], () => countProducts({ statuses: ["verified", "seeded"], excludeDown: true, category: identity.category as Category })).catch(() => null)
+  const risingLoad = identity
+    ? publicRead("count", ["category-rising", identity.category], () => countProducts({ statuses: ["verified", "seeded"], excludeDown: true, rising: true, category: identity.category as Category })).catch(() => null)
     : Promise.resolve(null);
   const detail = await publicRead("detail", ["detail", slug], () => getProductDetail(slug));
   if (!detail) notFound();
 
   const languages = (detail.repository?.facts?.languages ?? []).slice(0, 2).map((item) => item.name);
-  const categoryTotal = await categoryLoad;
+  const risingTotal = await risingLoad;
 
   return (
     <main className="wrap pb-14">
@@ -98,7 +99,7 @@ export default async function ProductPage({ params }: Props) {
         </aside>
       </div>
 
-      <RelatedRow category={detail.product.category} items={detail.related} total={categoryTotal} />
+      <RelatedRow category={detail.product.category} items={detail.related} total={risingTotal} />
     </main>
   );
 }

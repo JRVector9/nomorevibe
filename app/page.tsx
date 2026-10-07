@@ -164,7 +164,7 @@ function EmptyReason({
       <div className="projects-grid">
         <div className="empty-state">
           <h3>아직 스타 변화를 확인한 프로젝트가 없습니다</h3>
-          <p>GitHub 스타를 하루 간격으로 다시 확인하면 나타납니다.</p>
+          <p>GitHub 스타는 제품마다 하루가 지난 뒤 차례로 다시 확인합니다(지금은 보통 2~3일 간격). 두 번 확인되면 나타납니다.</p>
           <Link prefetch={false} href="/?sort=recent" className="secondary">최신순으로 보기</Link>
         </div>
       </div>
@@ -428,7 +428,7 @@ export async function HomeContent({ params }: { params: HomeParams }) {
     <main className="wrap">
       {!query && <IntroLine pulse={pulse} state={state} />}
       {!filtered && (fallback !== "rising" || stripShown > 0) && (
-        <CompactRow id="rising" title="지금 뜨는 프로젝트" note={`마지막 확인 사이 GitHub 스타가 가장 많이 늘었습니다 · 스타 ${RISING_MAX_STARS.toLocaleString("ko-KR")} 미만`}
+        <CompactRow id="rising" title="지금 뜨는 프로젝트" note={`최근 두 확인 사이 하루 평균 GitHub 스타가 가장 많이 늘었습니다 · 스타 ${RISING_MAX_STARS.toLocaleString("ko-KR")} 미만`}
           more={fallback === "rising" ? { href: "#projects", label: `${resultCount.toLocaleString("ko-KR")}개 모두 보기` } : { href: "/?sort=weekly#projects", label: "모두 보기" }}
           items={strip} trailing="category" />
       )}
@@ -440,7 +440,7 @@ export async function HomeContent({ params }: { params: HomeParams }) {
             {/* 목록이 영어라 한국어 검색어는 영어 낱말로 한 번 더 찾는다. 무엇으로 찾았는지 밝힌다 */}
             {translatedQuery && <p className="row-note">영어로 “{translatedQuery}”도 함께 찾았습니다.</p>}
             {/* 순위 대신 보여주는 목록은 무엇으로 줄 세웠는지 밝힌다 — 숫자의 기준이 보여야 한다 */}
-            {!query && fallback === "rising" && <p className="row-note">마지막 확인 사이 GitHub 스타가 늘어난 순 · <Link prefetch={false} href={metricHref(state, "rising")} scroll={false}>집계 기준</Link></p>}
+            {!query && fallback === "rising" && <p className="row-note">최근 두 확인 사이 하루 평균 GitHub 스타가 늘어난 순 · <Link prefetch={false} href={metricHref(state, "rising")} scroll={false}>집계 기준</Link></p>}
             {!query && fallback === "stars" && <p className="row-note">GitHub 스타가 많은 순.</p>}
           </div>
         </div>

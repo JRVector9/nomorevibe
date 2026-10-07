@@ -75,7 +75,7 @@ export type ListOptions = {
   excludeDown?: boolean;
   /** 소개 검수가 근거로는 무엇인지 알 수 없다고 한 제품만(intro-checks.ts) — 어드민이 본다 */
   introNeedsEditor?: boolean;
-  /** 마지막 두 번 확인한 사이에 GitHub 스타가 는 제품만, 스타 RISING_MAX_STARS 미만 — 홈 '추천'의 대체 목록 */
+  /** 마지막 두 번 확인한 사이에 GitHub 스타가 는 제품만, 스타 RISING_MAX_STARS 미만·마지막 확인 RISING_FRESH_DAYS 안 — 홈 '추천'의 대체 목록 */
   rising?: boolean;
   /** 이 시각 이후에 등재된 것만(listedAt) — 홈 '이번 주 새로 나온' */
   listedSince?: Date;
@@ -111,9 +111,28 @@ const recentClicks = sql`(
  * 이전 확인이 없거나 순서가 뒤집힌 행은 셀 수 없다(null).
  */
 const starGain = sql`case when ${products.starsPreviousAt} < ${products.starsAt} then ${products.stars} - ${products.starsPrevious} end`;
+/**
+ * 하루 평균으로 늘어난 스타 — 두 확인 사이 간격이 제품마다 1~5일로 달라(2026-10-08 운영) 합계로 줄 세우면
+ * 오래 기다린 제품이 앞선다. 간격은 갱신 잡이 24시간 뒤에야 다시 보므로 하루 아래로 내려가지 않지만, 혹시 짧아도
+ * 하루로 쳐서 몇 시간 사이의 몇 개가 하루치로 부풀지 않게 한다.
+ */
+const starGainPerDay = sql`${starGain} / greatest(extract(epoch from (${products.starsAt} - ${products.starsPreviousAt})) / 86400, 1)`;
 /** 홈의 스타 구간(popular.ts)이 2천부터 따로 보여주므로 그 아래만 */
 export const RISING_MAX_STARS = 2000;
-const risingStars = sql`${starGain} > 0 and ${products.stars} < ${RISING_MAX_STARS}`;
+/**
+ * 마지막 확인이 이보다 오래된 제품은 '지금' 뜬다고 하지 않는다.
+ *
+ * 갱신 잡(product-stars-refresh)은 성공한 제품을 하루가 지난 뒤 차례로 다시 본다. 2026-10-08 운영에서 확인이
+ * 성공하고 있는 제품의 마지막 확인은 99.9%가 2.63일 안이었고, 새 제품 밀린 몫을 더해도 한 바퀴가 3일 남짓이다.
+ * 오래된 것은 확인이 계속 실패하는 것이었다(지워진 저장소의 404 — 그 사이 증가가 영영 남아 2위에 있었다).
+ * 실패는 스타·확인 시각을 그대로 두므로 따로 표시하지 않아도 이 기간이 지나면 여기서 빠진다.
+ * 4일로 두면 갱신 잡이 조금만 밀려도 멀쩡한 제품이 빠져, 한 바퀴의 두 배쯤인 7일로 둔다(2026-10-08 운영자 결정).
+ * 잡은 하루 11,520개(5분마다 40개)가 한도라 한 바퀴는 공개 저장소 수에 비례한다 — 한 바퀴가 7일을 넘으면
+ * 그만큼이 여기서 빠진다. 그때는 이 값이 아니라 갱신 예산을 늘린다.
+ */
+export const RISING_FRESH_DAYS = 7;
+const risingStars = sql`${starGain} > 0 and ${products.stars} < ${RISING_MAX_STARS}
+  and ${products.starsAt} > now() - ${sql.raw(`interval '${RISING_FRESH_DAYS} days'`)}`;
 
 const SORTS = {
   /**
@@ -134,10 +153,10 @@ const SORTS = {
   popular: [sql`${recentClicks} desc`, sql`${listedAt} desc`],
 
   /**
-   * 검증 제품이 모자라 방문 순위를 매길 수 없는 동안 홈 '추천'이 대신 쓰는 순서 — 마지막 확인 사이에
-   * 스타가 많이 는 순. 같으면 스타 많은 순, 그다음 최신.
+   * 검증 제품이 모자라 방문 순위를 매길 수 없는 동안 홈 '추천'이 대신 쓰는 순서 — 마지막 두 확인 사이에
+   * 하루 평균 스타가 많이 는 순. 같으면 스타 많은 순, 그다음 최신.
    */
-  rising: [sql`${starGain} desc nulls last`, sql`${products.stars} desc nulls last`, sql`${listedAt} desc`],
+  rising: [sql`${starGainPerDay} desc nulls last`, sql`${products.stars} desc nulls last`, sql`${listedAt} desc`],
   /** 같은 사정의 '관심 많은 순' — 스타 많은 순 */
   stars: [sql`${products.stars} desc nulls last`, sql`${listedAt} desc`],
 } as const;
@@ -273,20 +292,20 @@ export async function countProducts(options: Omit<ListOptions, "limit" | "sort" 
   return row?.count ?? 0;
 }
 
+/** 상세의 급상승 배지가 보여 주는 깊이 — ProductHero 의 RISING_BADGE_MAX 와 같다 */
+const RISING_RANK_DEPTH = 20;
+
 /**
- * 급상승 순위 — 홈 '지금 뜨는'과 같은 조건(risingStars)·같은 순서(starGain desc) 안에서 몇 번째인가.
- * 조건 밖(스타 2천 이상, 증가 없음, 비공개, 닿지 않는 제품)이면 null. 동률은 같은 순위.
- * 홈 목록처럼 닿지 않는 제품(notDown)은 세지 않는다 — 안 그러면 숨은 제품이 남의 순위를 한 칸 밀어낸다.
+ * 급상승 순위 — 홈 '지금 뜨는' 띠와 그 뒤를 잇는 피드에서 몇 번째인가. RISING_RANK_DEPTH 밖이거나 조건 밖이면 null.
+ *
+ * 홈과 같은 목록 쿼리(listQuery: 같은 조건·같은 정렬·같은 동점 처리)의 앞부분에서 자리를 찾는다. 예전에는
+ * "나보다 많이 는 수 + 1"로 세어 동점이 같은 순위를 나눠 가졌고, '5위' 배지를 단 제품이 홈에서는 6번째라
+ * 배지가 가리키는 띠에 없었다(2026-10-08).
  */
 export async function getRisingRank(slug: string): Promise<number | null> {
-  const [row] = await db.execute<{ rank: number | null }>(sql`
-    with me as (
-      select ${starGain} as gain from ${products}
-       where ${products.slug} = ${slug} and ${products.status} in ('verified', 'seeded') and ${risingStars} and ${notDown})
-    select (select count(*)::int + 1 from ${products}
-             where ${products.status} in ('verified', 'seeded') and ${risingStars} and ${notDown} and ${starGain} > me.gain) as rank
-      from me`);
-  return row?.rank ?? null;
+  const slugs = await listProductSlugs({ statuses: ["verified", "seeded"], sort: "rising", rising: true, excludeDown: true, limit: RISING_RANK_DEPTH });
+  const index = slugs.indexOf(slug);
+  return index < 0 ? null : index + 1;
 }
 
 /** 발견 보드 — 검증 상태보다 실제 등재 시각을 우선해 시드 제품도 노출한다. */
