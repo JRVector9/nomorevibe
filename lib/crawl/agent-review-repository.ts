@@ -322,11 +322,21 @@ export async function handOffExhaustedFirstReviews(
  */
 export type ReviewCandidateOptions = {
   unreviewedOnly?: boolean; excludeCandidateIds?: number[]; readyOnly?: boolean;
+  /**
+   * staleScanOnly — 원본은 신선한데 레포 스캔이 24시간을 넘겨 1차 심사에 들지 못하는 후보만.
+   * 다른 조건은 그대로라, 스캔만 새로 하면 심사가 고를 후보와 같은 집합이다(agent-evidence-refresh 가 먼저 스캔한다).
+   *
+   * 없을 때는 이런 후보가 갈 곳이 없었다. 2026-10-08 프로드에서 614건이 멈춰 있었는데 그중 550건이 이 경우였다 —
+   * 원본은 requeueStaleReviewSources 가 매일 다시 받는데, 스캔은 2만4천여 레포를 이름순으로 도는 일반 대기에서
+   * 12일에 한 번 차례가 왔다. 그동안 심사도, 발행도, 사람 대기열에도 들지 않았다.
+   */
+  staleScanOnly?: boolean;
 };
 
 /** Shared by worker selection and uncapped operations queue counts. */
 export function reviewCandidatePredicate(settings: CrawlSettings, options: ReviewCandidateOptions = {}): SQL {
   if (!settings.enabled || settings.reviewMode === "off") return sql`false`;
+  const scanFresh = sql`(fres.completed_at <= now() AND fres.completed_at > now() - interval '24 hours')`;
   return and(
     options.excludeCandidateIds?.length ? notInArray(crawlCandidates.id, options.excludeCandidateIds) : undefined,
     options.readyOnly ? sql`NOT EXISTS (SELECT 1 FROM ${crawlReviewAttempts} WHERE ${matchingSource(settings)}
@@ -344,7 +354,8 @@ export function reviewCandidatePredicate(settings: CrawlSettings, options: Revie
       WHERE fd.repo = ${crawlCandidates.repo}
         AND fd.product_url IS NOT DISTINCT FROM ${crawlCandidates.productUrl}
         AND fd.fetched_at <= now() AND fd.fetched_at > now() - interval '24 hours'
-        AND (fres.completed_at IS NULL OR (fres.completed_at <= now() AND fres.completed_at > now() - interval '24 hours')))`,
+        AND ${options.staleScanOnly ? sql`fres.completed_at IS NOT NULL AND NOT ${scanFresh}`
+          : sql`(fres.completed_at IS NULL OR ${scanFresh})`})`,
     sql`(${crawlCandidates.state} = 'approved' OR (${crawlCandidates.state} = 'needs_review'
       AND ${inArray(crawlCandidates.reason, [...REVIEW_RETRIABLE_REASONS])}))`,
     sql`NOT EXISTS (SELECT 1 FROM ${crawlReviewAttempts} WHERE ${matchingSource(settings)}
