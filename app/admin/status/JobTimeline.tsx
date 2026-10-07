@@ -2,6 +2,7 @@
 
 import { JOB_CATALOG } from '@/lib/jobs/catalog';
 import { JOB_LABELS, ROLE_LABELS } from '@/lib/operations/contracts';
+import { PAUSED_AFTER_MS } from '@/lib/jobs/status';
 import type { OperationJob } from './OperationsCenter';
 
 /**
@@ -50,7 +51,11 @@ function countdown(at: string | null): string {
   return minutes < 60 ? `${minutes}분 후` : `${Math.round(minutes / 60)}시간 후`;
 }
 
+/** 사람이 멈춘 작업(not_before 가 먼 미래) — "대기 중·다음 39초 후"로 보이면 도는 줄 안다 */
+const paused = (job: OperationJob) => !!job.notBefore && new Date(job.notBefore).getTime() - Date.now() > PAUSED_AFTER_MS;
+
 function tone(job: OperationJob): { badge: string; node: string; label: string } {
+  if (paused(job)) return { badge: 'border-line bg-bg-soft text-fg-3', node: 'border-line bg-bg-card text-fg-3', label: '멈춤' };
   if (job.lastError) return { badge: 'border-down/40 bg-down/10 text-down', node: 'border-down/40 bg-down/10 text-down', label: '실패' };
   if (job.requestedVersion > job.processedVersion) return { badge: 'border-accent/40 bg-accent-soft text-accent', node: 'border-accent bg-accent text-white', label: '대기 중' };
   if (!job.lastSuccessAt) return { badge: 'border-line bg-bg-soft text-fg-3', node: 'border-line bg-bg-card text-fg-3', label: '실행 기록 없음' };
@@ -104,7 +109,7 @@ export function JobTimeline({ jobs, onOpen }: { jobs: OperationJob[]; onOpen: (j
 
                 <div className="mt-2.5 flex flex-wrap gap-x-5 gap-y-1 border-t border-line pt-2 text-[13px] text-fg-3">
                   <span>주기 <b className="font-mono font-semibold text-fg-2">{catalog?.intervalMs ? `${catalog.intervalMs / 60_000}분` : '요청될 때'}</b></span>
-                  <span>다음 <b className="font-mono font-semibold text-fg-2">{countdown(job.nextScheduledAt)}</b></span>
+                  <span>다음 <b className="font-mono font-semibold text-fg-2">{paused(job) ? '사람이 다시 켤 때까지 멈춤' : countdown(job.nextScheduledAt)}</b></span>
                   <span>마지막 성공 <b className="font-mono font-semibold text-fg-2">{time(job.lastSuccessAt)}</b></span>
                   <span>누적 <b className="font-mono font-semibold text-fg-2">{job.runs.toLocaleString('ko-KR')}회</b></span>
                   <button type="button" onClick={() => onOpen(job)} className="ml-auto underline">상세</button>
@@ -115,7 +120,7 @@ export function JobTimeline({ jobs, onOpen }: { jobs: OperationJob[]; onOpen: (j
                     <b className="font-semibold text-down">마지막 오류</b> {job.lastError.slice(0, 300)}
                   </p>
                 )}
-                {!job.lastError && job.requestedVersion > job.processedVersion && (
+                {!job.lastError && !paused(job) && job.requestedVersion > job.processedVersion && (
                   <p className="mt-2 text-[13px] text-fg-3">
                     실행이 요청됐고 아직 처리되지 않았습니다 · 담당 {ROLE_LABELS[catalog?.role ?? ''] ?? catalog?.role}
                   </p>

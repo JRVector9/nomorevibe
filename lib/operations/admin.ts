@@ -23,8 +23,9 @@ export async function operationsData() {
   const dbLatencyMs=Date.now()-start;
   const [audit,held]=await Promise.all([
     db.select().from(operationsAudit).orderBy(desc(operationsAudit.createdAt)).limit(20),
-    db.select({count:sql<number>`count(*)::int`}).from(categoryDecisions).where(sql`category is null and exists(select 1 from crawl_candidates c where c.repo=${categoryDecisions.repo} and c.state='approved')`),
+    // 보류는 1시간 뒤 저절로 다시 분류한다 — 가장 이른 재시도 시각을 함께 낸다(화면이 "사람이 지정해야"로만 읽혔다)
+    db.select({count:sql<number>`count(*)::int`,nextRetryAt:sql`min(${categoryDecisions.retryAt}) filter (where ${categoryDecisions.retryAt} > now())`.mapWith(categoryDecisions.retryAt)}).from(categoryDecisions).where(sql`category is null and exists(select 1 from crawl_candidates c where c.repo=${categoryDecisions.repo} and c.state='approved')`),
   ]);
   const serialized=observations.map(row=>({...row,observedAt:row.observedAt.toISOString()}));
-  return {fetchedAt:new Date().toISOString(),observations:serialized,serviceInstances:serviceInstancesFromObservations(serialized),dbLatencyMs,audit:audit.map(row=>({...row,createdAt:row.createdAt.toISOString()})),held:held[0].count};
+  return {fetchedAt:new Date().toISOString(),observations:serialized,serviceInstances:serviceInstancesFromObservations(serialized),dbLatencyMs,audit:audit.map(row=>({...row,createdAt:row.createdAt.toISOString()})),held:held[0].count,heldNextRetryAt:held[0].nextRetryAt?held[0].nextRetryAt.toISOString():null};
 }

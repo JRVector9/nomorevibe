@@ -10,5 +10,7 @@ describe("job observation labels", () => {
     expect(jobStatusLabel({ ...empty, notBefore: new Date(now + 1000) }, now)).toBe("재시도 대기");
     expect(jobStatusLabel({ ...empty, lockedAt: new Date(now - 90_000) }, now)).toBe("실행 중");
     expect(jobStatusLabel({ ...empty, lockedAt: new Date(now - 90_001) }, now)).toBe("중단·회수 대기");
+    // 소개 검수처럼 not_before 를 먼 미래로 밀어 둔 것은 재시도가 아니라 멈춤이다
+    expect(jobStatusLabel({ ...empty, notBefore: new Date("2100-01-01"), requestedVersion: 2, processedVersion: 1 }, now)).toBe("멈춤(사람이 중단)");
   });
 });

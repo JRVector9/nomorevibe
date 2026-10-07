@@ -33,11 +33,13 @@ export function OperationsCenter({initialTab="overview",jobs,data,candidates,rev
   const router=useRouter();const snapshots=new Map(data.observations.map(o=>[o.key,o]));
   const instancesFor=(key:string)=>data.serviceInstances.filter(instance=>instance.role===key).sort((a,b)=>new Date(b.observedAt).getTime()-new Date(a.observedAt).getTime());
   const latestFor=(key:string)=>instancesFor(key)[0];
+  /** 지난 배포·예비의 키는 지워지지 않는다 — 1시간 넘게 관측이 없는 인스턴스는 지금 도는 것이 아니다(9개 옛 스케줄러 키가 늘 "일부 지연"을 냈다) */
+  const liveFor=(key:string)=>instancesFor(key).filter(instance=>new Date(data.fetchedAt).getTime()-new Date(instance.observedAt).getTime()<=3_600_000);
   const agent=latestFor('connect-agent')?.value as AgentStatus|undefined;
   const observation=latestFor(selected),owned=jobs.filter(j=>JOB_CATALOG.find(c=>c.name===j.name)?.role===selected),runtime=observation?.value;
   function status(key:string){
     if(key==='db')return '조회 성공';
-    const instances=instancesFor(key),seen=instances[0];if(!seen)return '관측 없음';
+    const instances=liveFor(key),seen=instances[0];if(!seen)return instancesFor(key).length?'관측 지연':'관측 없음';
     const stale=staleServiceInstanceCount(instances,new Date(data.fetchedAt).getTime());
     if(stale===instances.length)return '관측 지연';if(stale>0)return `일부 관측 지연 · ${stale}개`;
     return key==='connect-agent'?(agent?.busy?'작업 중':'응답 관측'):seen.value.status==='running'?'실행 관측':String(seen.value.status??'확인 필요');
@@ -60,7 +62,7 @@ export function OperationsCenter({initialTab="overview",jobs,data,candidates,rev
         <div className="mt-3 grid gap-3 xl:grid-cols-2">
           <section className="ops-mini"><h3>서비스 관측 <small>{ROLES.filter(key=>!/없음|지연|필요|failed/.test(status(key))).length}/{ROLES.length} 정상</small></h3>
             <table><tbody>{ROLES.map(key=>{const warn=/없음|지연|필요|failed/.test(status(key));return <tr key={key} onClick={()=>{setSelected(key);setWorker(true);}} title={DESCRIPTIONS[key]}>
-              <td><i className={`ops-dot ${warn?'warn':'ok'}`}/>{ROLE_LABELS[key]}</td><td className="n">{key==='db'?`${data.dbLatencyMs}ms`:`${instancesFor(key).length}대`}</td><td className="n">{key==='db'?'조회':ago(latestFor(key)?.observedAt,data.fetchedAt)}</td></tr>;})}</tbody></table></section>
+              <td><i className={`ops-dot ${warn?'warn':'ok'}`}/>{ROLE_LABELS[key]}</td><td className="n">{key==='db'?`${data.dbLatencyMs}ms`:`${liveFor(key).length}대`}</td><td className="n">{key==='db'?'조회':ago(latestFor(key)?.observedAt,data.fetchedAt)}</td></tr>;})}</tbody></table></section>
           <section className="ops-mini"><h3>작업 <small>마지막 · 다음</small></h3>
             <table><tbody>{jobs.filter(j=>j.name!=='heartbeat').map(j=><tr key={j.name} onClick={()=>setJob(j)} title={j.name}>
               <td><i className={`ops-dot ${j.lastError?'bad':'ok'}`}/>{JOB_LABELS[j.name]??j.name}</td><td className="n">{ago(j.lastRunAt,data.fetchedAt)}</td><td className="n">{until(j.nextScheduledAt,data.fetchedAt)}</td></tr>)}</tbody></table></section>

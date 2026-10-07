@@ -92,10 +92,12 @@ export async function pipelineThroughput(settings: CrawlSettings, now = new Date
         count(*) FILTER (WHERE ${crawlCandidates.reason} = 'ai_review_exhausted')::int AS first
       FROM ${crawlCandidates} WHERE ${crawlCandidates.state} = 'needs_review'
     ), publish_candidates AS MATERIALIZED (
+      -- 분류 보류는 retry_at 이 지나야 발행 대상이 된다. 보류를 건 시각(updated_at)으로 재면 막 풀린 후보가
+      -- "1시간 기다림"으로 보여, 5분 주기 발행 잡이 돌기 전에 감시가 발행 워커를 멈춘 것으로 보고 재시작했다(2026-10-08 두 번)
       SELECT ${publishReady} AS ready, greatest(${crawlCandidates.updatedAt},
         (SELECT max(a.completed_at) FROM crawl_review_attempts a WHERE a.candidate_id = ${crawlCandidates.id}),
         (SELECT max(s.reviewed_at) FROM second_reviews s WHERE s.candidate_id = ${crawlCandidates.id}),
-        (SELECT max(cd.updated_at) FROM category_decisions cd WHERE cd.repo = ${crawlCandidates.repo})) AS changed_at
+        (SELECT max(greatest(cd.updated_at, cd.retry_at)) FROM category_decisions cd WHERE cd.repo = ${crawlCandidates.repo})) AS changed_at
       FROM ${crawlCandidates} WHERE ${crawlCandidates.state} = 'approved'
     ), publish_queue AS (
       SELECT count(*) FILTER (WHERE ready)::int AS waiting,
