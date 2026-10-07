@@ -1,12 +1,13 @@
 import { beforeAll, beforeEach, expect, it, vi } from 'vitest';
 import { eq, sql } from 'drizzle-orm';
 import { db } from '@/lib/db';
-import { agentRepositoryScans, crawlCandidates, crawlSettings, productEvidenceSources, productLinks, products } from '@/lib/db/schema';
+import { agentRepositoryScans, crawlCandidates, crawlDocuments, crawlReviewAttempts, crawlSettings, productEvidenceSources, productLinks, products } from '@/lib/db/schema';
 import { saveRepositoryAgentScan, getLatestRepositoryAgentScan } from '@/lib/domain/evidence/agents/repository';
 import { AGENT_DETECTOR_VERSION } from '@/lib/domain/evidence/agents/types';
 import { ARTIFACT_RULES } from '@/lib/domain/evidence/agents/catalog';
-import { saveSettings } from '@/lib/crawl/settings';
-import { refreshAgentEvidenceJob } from '@/lib/jobs/products/agent-evidence-refresh';
+import { changeReviewMode, getSettings, saveSettings } from '@/lib/crawl/settings';
+import { listReviewCandidates } from '@/lib/crawl/agent-review-repository';
+import { refreshAgentEvidenceJob, REVIEW_SCAN_SHARE } from '@/lib/jobs/products/agent-evidence-refresh';
 import type { GitHubHttpResult } from '@/lib/crawl/github';
 import { ensureSchema, resetTables } from './setup';
 const spies = vi.hoisted(() => ({ refresh: vi.fn() }));
@@ -17,7 +18,7 @@ vi.mock('@/lib/domain/evidence/agents/repository', async importOriginal => {
   return { ...original, refreshRepositoryAgentEvidence: spies.refresh };
 });
 beforeAll(() => ensureSchema());
-beforeEach(async () => { await resetTables(); await db.delete(crawlCandidates); await db.delete(crawlSettings); spies.refresh.mockClear(); });
+beforeEach(async () => { await resetTables(); await db.delete(crawlReviewAttempts); await db.delete(crawlCandidates); await db.delete(crawlDocuments); await db.delete(crawlSettings); spies.refresh.mockClear(); });
 /** 막 완료된 과거 시각을 명시한다. 앱/DB의 now() 경계에서 테스트가 간헐적으로 보류되지 않게 한다. */
 const completeScan = (repositoryKey: string, repositoryId: string) => saveRepositoryAgentScan({ repositoryId, repositoryKey,
   commitSha: 'c'.repeat(40), scope: '', state: 'complete', observations: [], requestCount: 1, fileCount: 0, errorCode: null, retryAt: null, cursor: null }, new Date(Date.now() - 1000));
@@ -192,4 +193,79 @@ it('does not release candidates when the configured detector differs from the on
   await refreshAgentEvidenceJob(context(), { request: emptyRepository([]) });
 
   expect(await db.select().from(crawlCandidates)).toMatchObject([{ state: 'needs_review', reason: 'ai_evidence_pending' }]);
+});
+
+/** 레포마다 다른 GitHub id 를 주는 GitHub. 머리 커밋이 completeScan 과 같아 트리를 다시 읽지 않는다(프로드에서 흔한 경우) */
+const unchangedRepositories = (ids: Record<string, number>) => async <T>(path: string): Promise<GitHubHttpResult<T>> => {
+  const key = path.split('/').slice(2, 4).join('/');
+  const value = path.includes('/commits/') ? { sha: 'c'.repeat(40), commit: { tree: { sha: 'b'.repeat(40) } } } : { private: false, id: ids[key], default_branch: 'main', full_name: key };
+  return { ok: true, status: 200, value: value as T, etag: null, lastModified: null, link: null };
+};
+async function enableReview() {
+  await saveSettings({ enabled: true, agentEvidence: { enabled: true } }, 'test');
+  vi.stubEnv('CRAWL_REVIEW_READY', 'true');
+  expect(await changeReviewMode({ mode: 'enforce', expectedMode: 'off', actor: 'test', reason: 'parked review scans' })).toMatchObject({ ok: true });
+  vi.unstubAllEnvs();
+  return getSettings();
+}
+/** 원본은 방금 받았고 스캔은 하루도 더 전에 끝난 1차 심사 대기 후보 — 2026-10-08 프로드에서 550건이 이 모양으로 멈춰 있었다 */
+async function waitingOnReview(repo: string, githubId: number, options: { scanAgeHours?: number; candidate?: Partial<typeof crawlCandidates.$inferInsert> } = {}) {
+  const productUrl = `https://${githubId}.example`, fetchedAt = new Date(Date.now() - 2000);
+  await db.insert(crawlDocuments).values({ repo, productUrl, pageStatus: 200, fetchedAt,
+    repoMeta: { description: 'A deployed service' }, pageMeta: { title: 'App', description: 'A deployed service' } });
+  const [candidate] = await db.insert(crawlCandidates).values({ repo, productUrl, state: 'approved', reason: 'passed', decidedBy: 'auto',
+    judgedAt: fetchedAt, ...options.candidate }).returning();
+  const scan = (await completeScan(repo, String(githubId)))!;
+  const old = new Date(Date.now() - (options.scanAgeHours ?? 30) * 3600_000);
+  // 다시 볼 때(완료 + 하루)는 이미 지났다 — 일반 대기의 이름순 차례만 기다리던 상태
+  await db.update(agentRepositoryScans).set({ startedAt: old, completedAt: old, nextAttemptAt: new Date(old.getTime() + 24 * 3600_000) })
+    .where(eq(agentRepositoryScans.id, scan.id));
+  return candidate;
+}
+
+it('rescans a repository whose candidate waits on first review ahead of the alphabetical sweep', async () => {
+  const settings = await enableReview();
+  const candidate = await waitingOnReview('acme/waiting', 11);
+  // 스캔이 24시간을 넘겨 1차 심사가 고르지 못한다
+  expect(await listReviewCandidates(settings)).toEqual([]);
+  const saved: string[] = [];
+
+  await refreshAgentEvidenceJob({ ...context(), cursor: { afterRepository: 'zzz/last' }, save: async cursor => { saved.push(cursor.afterRepository ?? ''); } },
+    { request: unchangedRepositories({ 'acme/waiting': 11 }) });
+
+  expect(spies.refresh.mock.calls.map(([input]) => input.repositoryKey)).toEqual(['acme/waiting']);
+  // 일반 대기의 자리는 그대로다
+  expect(saved.every(after => after === 'zzz/last')).toBe(true);
+  expect((await listReviewCandidates(settings)).map(row => row.id)).toEqual([candidate.id]);
+});
+
+it('takes at most its per-tick share of review rescans, longest-unscanned first', async () => {
+  await enableReview();
+  await waitingOnReview('acme/a', 21, { scanAgeHours: 30 });
+  await waitingOnReview('acme/b', 22, { scanAgeHours: 50 });
+  await waitingOnReview('acme/c', 23, { scanAgeHours: 40 });
+
+  await refreshAgentEvidenceJob({ ...context(), cursor: { afterRepository: 'zzz/last' } },
+    { request: unchangedRepositories({ 'acme/a': 21, 'acme/b': 22, 'acme/c': 23 }) });
+
+  expect(spies.refresh.mock.calls.map(([input]) => input.repositoryKey)).toEqual(['acme/b', 'acme/c'].slice(0, REVIEW_SCAN_SHARE));
+});
+
+it('leaves repositories alone that first review is not waiting on', async () => {
+  await enableReview();
+  await waitingOnReview('acme/admin', 31, { candidate: { decidedBy: 'admin' } });
+  await waitingOnReview('acme/rejected', 32, { candidate: { state: 'rejected', reason: 'not_a_product' } });
+  await waitingOnReview('acme/human', 33, { candidate: { state: 'needs_review', reason: 'ai_review_exhausted' } });
+  // 원본도 낡았다 — 원본을 먼저 다시 받아야 심사할 수 있다(requeueStaleReviewSources 몫)
+  await waitingOnReview('acme/stale-source', 34);
+  await db.update(crawlDocuments).set({ fetchedAt: new Date(Date.now() - 25 * 3600_000) }).where(eq(crawlDocuments.repo, 'acme/stale-source'));
+  // 실패한 스캔이 저장된 재시도 시각을 기다린다
+  await waitingOnReview('acme/retrying', 35);
+  await db.update(agentRepositoryScans).set({ nextAttemptAt: new Date(Date.now() + 15 * 60_000) }).where(eq(agentRepositoryScans.repositoryKey, 'acme/retrying'));
+  // 견줄 것 하나 — 이것만 골라야 한다
+  await waitingOnReview('acme/waiting', 36);
+
+  await refreshAgentEvidenceJob({ ...context(), cursor: { afterRepository: 'zzz/last' } }, { request: unchangedRepositories({ 'acme/waiting': 36 }) });
+
+  expect(spies.refresh.mock.calls.map(([input]) => input.repositoryKey)).toEqual(['acme/waiting']);
 });

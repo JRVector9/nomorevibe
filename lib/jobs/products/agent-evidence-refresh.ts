@@ -7,13 +7,27 @@ import { attachRepositoryAgentScan, refreshRepositoryAgentEvidence } from '@/lib
 import type { AgentGitHubRequest } from '@/lib/domain/evidence/agents/collect';
 import type { JobContext, JobOutcome } from '@/lib/jobs/runner';
 import { requeueAfterAdminEvidenceRefresh } from '@/lib/crawl/admin-review';
+import { reviewCandidatePredicate } from '@/lib/crawl/agent-review-repository';
 import { assertJobLease, requestJob, type JobLease } from '@/lib/jobs/control';
 
 export type AgentEvidenceRefreshCursor = { afterRepository?: string; retryAfter?: string };
-export function prioritizeAgentRefreshDemand(duePartial: string[], repositories: string[]) {
-  const resumed = new Set(duePartial.slice(0, 3));
-  return [...resumed].map(repositoryKey => ({ repositoryKey, advanceCursor: false }))
-    .concat(repositories.filter(key => !resumed.has(key)).map(repositoryKey => ({ repositoryKey, advanceCursor: true })));
+/**
+ * 1차 심사를 스캔 때문에 기다리는 레포를 한 틱에 몇 개까지 일반 대기보다 먼저 보는가.
+ *
+ * 틱 하나가 스캔 1~4개를 하므로(2026-10 프로드 시간당 약 60개) 둘이면 밀린 것을 반나절쯤에 비우고,
+ * 그 뒤에는 대개 비어 일반 대기가 틱을 거의 다 쓴다. 상한이 없으면 밀린 수백 개가 끝날 때까지
+ * 일반 대기가 멈춘다. 한 틱의 일은 시간(20초)과 스캔당 요청 상한으로 묶여 있어 GitHub 호출은 늘지 않고,
+ * 무엇을 먼저 보느냐만 바뀐다.
+ */
+export const REVIEW_SCAN_SHARE = 2;
+/**
+ * 이어 할 스캔(최대 3개) → 1차 심사를 기다리는 레포(최대 REVIEW_SCAN_SHARE개) → 이름순 일반 대기.
+ * 앞의 둘은 커서를 옮기지 않는다 — 일반 대기의 자리는 그대로 남는다.
+ */
+export function prioritizeAgentRefreshDemand(duePartial: string[], repositories: string[], reviewWaiting: string[] = []) {
+  const ahead = new Set([...duePartial.slice(0, 3), ...reviewWaiting.slice(0, REVIEW_SCAN_SHARE)]);
+  return [...ahead].map(repositoryKey => ({ repositoryKey, advanceCursor: false }))
+    .concat(repositories.filter(key => !ahead.has(key)).map(repositoryKey => ({ repositoryKey, advanceCursor: true })));
 }
 export async function refreshAgentEvidenceJob(ctx: JobContext<AgentEvidenceRefreshCursor>, dependencies: { request?: AgentGitHubRequest } = {}): Promise<JobOutcome<AgentEvidenceRefreshCursor>> {
   const deadlineAt = Date.now() + 20_000;
@@ -55,7 +69,21 @@ export async function refreshAgentEvidenceJob(ctx: JobContext<AgentEvidenceRefre
     )
     ORDER BY repository_key LIMIT 10
   `);
-  const work = prioritizeAgentRefreshDemand(partial.map(row => row.repository_key), rows.map(row => row.repository_key));
+  /**
+   * 1차 심사가 스캔만 기다리는 후보의 레포. 원본은 신선한데(requeueStaleReviewSources 가 매일 다시 받는다)
+   * 스캔이 24시간을 넘겨 심사가 고르지 못한다 — 이름순 일반 대기로는 차례가 12일에 한 번이라
+   * 2026-10-08 프로드에서 550건이 그렇게 멈춰 있었다. 다시 볼 때가 된 것만 고르고, 마지막 스캔을 시작한 지
+   * 오래된 것부터 본다 — 실패해 15분 뒤 다시 볼 때가 된 레포가 늘 맨 앞에 서서 몫을 다 차지하지 않게.
+   */
+  const reviewWaiting = !settings.enabled || settings.reviewMode === 'off' ? [] : await db.execute<{ repository_key: string }>(sql`
+    SELECT lower(${crawlCandidates.repo}) AS repository_key FROM ${crawlCandidates}
+    LEFT JOIN LATERAL (${latestScan(sql`lower(${crawlCandidates.repo})`)}) latest ON true
+    WHERE ${reviewCandidatePredicate(settings, { staleScanOnly: true })}
+      AND (latest.id IS NULL OR latest.next_attempt_at <= now())
+    GROUP BY 1 ORDER BY min(latest.started_at) NULLS FIRST, 1 LIMIT ${REVIEW_SCAN_SHARE}
+  `);
+  const work = prioritizeAgentRefreshDemand(partial.map(row => row.repository_key), rows.map(row => row.repository_key),
+    reviewWaiting.map(row => row.repository_key));
   const collect = async (): Promise<JobOutcome<AgentEvidenceRefreshCursor>> => {
     for (const row of work) {
       if (!ctx.hasBudget() || Date.now() > deadlineAt - 8_000) return { done: false, cursor: { afterRepository } };
@@ -144,7 +172,7 @@ async function releaseEvidencePendingCandidates(detectorVersion: string, lease?:
 /** 레포 하나의 최신 스캔 (refresh 의 캐시 판단과 같은 기준: 이 탐지기 버전, 전체 범위, 가장 늦게 시작한 것) */
 function latestScan(repositoryKey: SQL) {
   return sql`
-    SELECT scan.id, scan.repository_key, scan.state, scan.last_error_code, scan.next_attempt_at FROM agent_repository_scans scan
+    SELECT scan.id, scan.repository_key, scan.state, scan.last_error_code, scan.next_attempt_at, scan.started_at FROM agent_repository_scans scan
     WHERE scan.repository_key = ${repositoryKey} AND scan.scope = '' AND scan.detector_version = ${AGENT_DETECTOR_VERSION}
     ORDER BY scan.started_at DESC, scan.id DESC LIMIT 1
   `;
