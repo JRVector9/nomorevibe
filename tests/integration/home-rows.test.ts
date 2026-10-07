@@ -58,6 +58,30 @@ describe("급상승 순위", () => {
     expect(await getRisingRank("missing")).toBeNull();
   });
 
+  it("동점도 홈 띠·피드의 자리와 같은 순위를 준다 — 같은 순위를 나눠 갖지 않는다", async () => {
+    // 같은 하루 증가·같은 스타 — 그다음 키(등재 최신 → 주소)가 자리를 가른다
+    await product("top", { stars: 900, starsPrevious: 100 });
+    await product("tie-old", { stars: 300, starsPrevious: 200, createdAt: daysAgo(20) });
+    await product("tie-new", { stars: 300, starsPrevious: 200, createdAt: daysAgo(10) });
+    await product("tie-new-b", { stars: 300, starsPrevious: 200, createdAt: daysAgo(10) });
+    await product("last", { stars: 150, starsPrevious: 100 });
+    const strip = await getPublicList(2, { sort: "rising", rising: true });
+    const feed = await getPublicList(10, { sort: "rising", rising: true, offset: 2 });
+    const home = [...strip, ...feed].map((row) => row.slug);
+    expect(home).toEqual(["top", "tie-new", "tie-new-b", "tie-old", "last"]);
+    for (const [index, slug] of home.entries()) expect(await getRisingRank(slug)).toBe(index + 1);
+  });
+
+  it("20위 밖과 마지막 확인이 오래된 제품은 배지가 없다", async () => {
+    for (let index = 0; index < 21; index++) await product(`p${String(index).padStart(2, "0")}`, { stars: 1000 - index, starsPrevious: 100 });
+    await product("stale", { stars: 1900, starsPrevious: 1 });
+    await db.update(products).set({ starsAt: daysAgo(10), starsPreviousAt: daysAgo(11) }).where(eq(products.slug, "stale"));
+    expect(await getRisingRank("p00")).toBe(1);
+    expect(await getRisingRank("p19")).toBe(20);
+    expect(await getRisingRank("p20")).toBeNull();
+    expect(await getRisingRank("stale")).toBeNull();
+  });
+
   it("닿지 않는 제품은 홈 목록처럼 순위에서 빠지고 남의 자리도 밀지 않는다", async () => {
     await product("down", { stars: 1500, starsPrevious: 1 });
     await product("alive", { stars: 300, starsPrevious: 100 });
