@@ -1,9 +1,6 @@
 'use server';
-import { localCodexEnabled } from '@/lib/auth/local-codex';
-import { cookies } from 'next/headers';
 import { revalidatePath } from 'next/cache';
-import { currentAdmin, authSecret, adminLogins } from '@/lib/auth/admin';
-import { SESSION_COOKIE, verifySession } from '@/lib/auth/session';
+import { currentAdmin } from '@/lib/auth/admin';
 import { agentRequest } from '@/lib/operations/agent-client';
 import { requestAdminJob } from '@/lib/operations/admin';
 import { setManualCategory } from '@/lib/operations/categories';
@@ -11,20 +8,18 @@ import { modelConfigSchema, type AgentStatus } from '@/lib/operations/contracts'
 import { CATEGORIES, type Category } from '@/lib/domain/products/schema';
 import { recordAdminAction } from '@/lib/operations/admin-log';
 export type ActionResult = { message?: string; error?: string; status?: AgentStatus };
-async function actualAdmin() {
-  if(localCodexEnabled())return {login:"local"};
-  const secret=authSecret();if(!secret)return null;
-  const session=await verifySession((await cookies()).get(SESSION_COOKIE)?.value,secret);
-  return session && adminLogins().includes(session.login.toLowerCase()) ? session : null;
-}
 export async function requestOperation(name:string):Promise<ActionResult> {
   const admin=await currentAdmin();if(!admin)return {error:'관리자 로그인이 필요합니다.'};
   try{const message=await requestAdminJob(name,admin.login);revalidatePath('/admin/status');return {message};}
   catch(error){await recordAdminAction(admin.login,{action:'request-job',target:name,ok:false,error:error instanceof Error?error.message:String(error)});return {error:'작업 요청을 처리하지 못했습니다.'};}
 }
 export async function codexOperation(action:string,data:Record<string,unknown>={}):Promise<ActionResult> {
-  // Explicit loopback-only local mode or a real allowlisted session; general UI bypass is insufficient.
-  const admin=await actualAdmin();if(!admin)return {error:'관리자 인증이 필요합니다. 서버에서는 허용된 GitHub 계정으로 로그인하고, 로컬에서는 로컬 전용 AI 연결 설정을 확인해주세요.'};
+  /**
+   * 관리자 화면을 여는 사람이면 연결을 다시 맺을 수 있다(2026-10-07 운영자 결정) — 다른 관리자 작업과 같은 문.
+   * 전에는 GitHub 로그인 세션을 따로 요구해, 로그인 없이 여는 운영 관리자(ADMIN_LOCAL_LOGIN)에서는 "다시 인증"이 늘 막혔다.
+   * 관리자 화면이 열려 있는 동안은 누구나 Codex·Claude 계정을 바꿔 맺을 수 있으므로 관리자 화면 자체를 닫는 것(OAuth·Cloudflare Access)이 남은 일이다.
+   */
+  const admin=await currentAdmin();if(!admin)return {error:'관리자 로그인이 필요합니다.'};
   if(!['status','connect','input','cancel','probe','test','apply'].includes(action))return {error:'허용되지 않은 작업입니다.'};
   try {
     if(action==='test'||action==='apply')data={...data,config:modelConfigSchema.parse(data.config)};

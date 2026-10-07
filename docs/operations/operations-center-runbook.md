@@ -14,7 +14,7 @@
 
 `connect-agent`는 외부 포트를 공개하지 않는 내부 서비스다. 웹/퍼블리셔는 `CONNECT_AGENT_URL`과 `OPERATIONS_AGENT_SECRET`으로 내부 RPC를 인증한다. Docker socket을 사용하지 않는다. Compose의 현재 기본값은 기존 AUTH_SECRET을 내부 키로 전달한다.
 
-서버 배포 모드에서는 연결·상태 상세·모델 검사·적용에 `ADMIN_GITHUB_LOGINS`에 허용된 정상 서명 쿠키가 필요하다. 로컬 개발은 `ADMIN_LOCAL_LOGIN=1`, `ADMIN_LOCAL_CODEX=1`, HTTP loopback `NEXT_PUBLIC_SITE_URL`을 모두 지정하면 GitHub OAuth 없이 연결할 수 있다. 로컬 Compose 웹 포트는 `127.0.0.1:3200:3000`으로 제한한다. 이 모드를 외부 프록시로 공개하지 않는다. 운영 배포에서는 두 로컬 플래그를 끄고 정상 관리자 로그인을 사용한다.
+연결·상태 상세·모델 검사·적용은 다른 관리자 작업과 같은 자격(`currentAdmin`)이면 된다(2026-10-07 운영자 결정 — 전에는 GitHub 로그인 세션을 따로 요구해 로그인 없이 여는 운영 관리자에서 "다시 인증"이 막혔다). 관리자 화면이 열려 있으면 누구나 계정을 바꿔 맺을 수 있으므로, 관리자 화면 자체를 닫는 것(GitHub OAuth 또는 Cloudflare Access)이 남은 보안 과제다.
 
 AI 연결 탭에서 연결을 시작하고 공식 OpenAI 인증 페이지에서 승인한다. 진행 중인 로그인은 '연결 계속'으로 다시 열 수 있다. 요청 실패에는 오류와 재시도 버튼을 표시하며, 취소/만료/실패 상태에서는 이전 코드나 코드 준비 문구를 표시하지 않는다.
 
