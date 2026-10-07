@@ -33,6 +33,21 @@ describe("검수 답 읽기", () => {
     expect(() => parseVerification(item.keywords, answer(checks))).toThrow("invalid_output");
   });
 
+  it("띄어쓰기만 바꿔 옮긴 키워드는 보낸 키워드로 읽는다 — 뺄 때도 보낸 그대로", () => {
+    const keywords = ["AI 하네스 엔지니어", "AI harness engineering"];
+    expect(parseVerification(keywords, answer([
+      { keyword: "AI하네스 엔지니어", fits: false },
+      { keyword: "AI harness  engineering", fits: true },
+    ]))).toEqual(["AI 하네스 엔지니어"]);
+  });
+
+  it("띄어쓰기를 빼면 둘이 같아지거나 글자가 다르면 여전히 실패다", () => {
+    expect(() => parseVerification(["AI 하네스", "AI하네스"], answer([
+      { keyword: "AI 하 네스", fits: true }, { keyword: "AI하네스", fits: true },
+    ]))).toThrow("invalid_output");
+    expect(() => parseVerification(["AI 하네스 엔지니어"], answer([{ keyword: "AI 하네스 개발자", fits: true }]))).toThrow("invalid_output");
+  });
+
   it("모양이 다르면 실패다", () => {
     expect(() => parseVerification(item.keywords, JSON.stringify({ unsupported: [] }))).toThrow();
     expect(() => parseVerification(item.keywords, "")).toThrow();
@@ -40,22 +55,32 @@ describe("검수 답 읽기", () => {
 });
 
 describe("bounded chunk retry", () => {
+  const chunkRequest = (rewrite: (keyword: string) => string, sizes: number[]) => vi.fn(async (_url, options) => {
+    const body = JSON.parse(options.body as string);
+    const supplied = JSON.parse(body.messages[1].content.split("\n")[1]).keywords as string[];
+    sizes.push(supplied.length);
+    const checks = supplied.map(keyword => ({
+      keyword: supplied.length > 1 ? rewrite(keyword) : keyword,
+      fits: keyword !== "contact enrichment",
+    }));
+    return new Response(JSON.stringify({ choices: [{ message: { content: answer(checks) } }] }));
+  }) as typeof fetch;
+  const leadKeywords = ["lead enrichment", "sales prospecting", "contact enrichment", "LinkedIn 프로필 찾기", "이메일 찾기"];
+
+  it("accepts a five-keyword answer that only rewrote spacing, in one call", async () => {
+    vi.stubEnv("ABCLLM_API_KEY", "test-key");
+    const sizes: number[] = [];
+    const request = chunkRequest(keyword => keyword.replace("프로필 찾기", "프로필찾기"), sizes);
+    expect(await verifyKeywordsInChunks({ evidence, keywords: leadKeywords }, { request, timeoutMs: 60_000 }))
+      .toEqual({ ok: true, unsupported: ["contact enrichment"] });
+    expect(sizes).toEqual([5]);
+  });
+
   it("retries a malformed five-keyword answer one keyword at a time without changing the submitted text", async () => {
     vi.stubEnv("ABCLLM_API_KEY", "test-key");
-    const keywords = ["lead enrichment", "sales prospecting", "contact enrichment", "LinkedIn 프로필 찾기", "이메일 찾기"];
     const sizes: number[] = [];
-    const request = vi.fn(async (_url, options) => {
-      const body = JSON.parse(options.body as string);
-      const supplied = JSON.parse(body.messages[1].content.split("\n")[1]).keywords as string[];
-      sizes.push(supplied.length);
-      const checks = supplied.map(keyword => ({
-        keyword: supplied.length > 1 ? keyword.replace("프로필 찾기", "프로필찾기") : keyword,
-        fits: keyword !== "contact enrichment",
-      }));
-      return new Response(JSON.stringify({ choices: [{ message: { content: answer(checks) } }] }));
-    }) as typeof fetch;
-
-    expect(await verifyKeywordsInChunks({ evidence, keywords }, { request, timeoutMs: 60_000 }))
+    const request = chunkRequest(keyword => keyword.replace("프로필 찾기", "프로필 검색"), sizes);
+    expect(await verifyKeywordsInChunks({ evidence, keywords: leadKeywords }, { request, timeoutMs: 60_000 }))
       .toEqual({ ok: true, unsupported: ["contact enrichment"] });
     expect(sizes).toEqual([5, 1, 1, 1, 1, 1]);
   });
