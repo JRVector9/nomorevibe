@@ -88,7 +88,7 @@ export async function pipelineThroughput(settings: CrawlSettings, now = new Date
       SELECT ${counts(sql`${crawlPublicationChanges.occurredAt}`)} FROM ${crawlPublicationChanges}
       WHERE ${crawlPublicationChanges.delta} = 1 AND ${recent(sql`${crawlPublicationChanges.occurredAt}`, 5)}
     ), manual_holds AS (
-      SELECT count(*) FILTER (WHERE ${crawlCandidates.reason} = 'source_refresh_failed')::int AS fetch,
+      SELECT count(*) FILTER (WHERE ${crawlCandidates.reason} IN ('source_refresh_failed', 'repo_deleted'))::int AS fetch,
         count(*) FILTER (WHERE ${crawlCandidates.reason} = 'ai_review_exhausted')::int AS first
       FROM ${crawlCandidates} WHERE ${crawlCandidates.state} = 'needs_review'
     ), publish_candidates AS MATERIALIZED (

@@ -133,6 +133,11 @@ export type DecisionReason =
   /** A requested source refresh ended without a newer GitHub document. */
   | "source_refresh_failed"
   /**
+   * GitHub 저장소가 404(삭제·비공개)라 원본을 다시 받을 수 없다(2026-10-08). 사람이 제품을 직접 보고 가른다 —
+   * AI 심사가 다시 집지 않는다. 이름이 바뀐 저장소는 alias 로 따라가므로 여기 오지 않는다.
+   */
+  | "repo_deleted"
+  /**
    * 발행하려는데 페이지 설명도 레포 설명도 없어 소개를 만들 수 없다. 사람이 소개를 보고 가른다 — AI 심사가 다시
    * 집지 않는다. "ambiguous" 로 두었을 때 enforce 에서 보류 → AI 승인 → 발행 실패 → 보류가 AI 호출마다 되풀이됐다.
    */

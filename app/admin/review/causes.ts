@@ -101,6 +101,15 @@ export const CAUSE_GUIDE: Record<CauseKey, {
       { decision: "승인", when: "현재 저장소와 제품을 별도로 확인하고 근거를 기록할 수 있다" },
     ],
   },
+  repo_deleted: {
+    label: "레포 삭제됨",
+    summary: "GitHub 저장소가 404 입니다(삭제 또는 비공개). 저장해 둔 원본은 지금 상태를 증명하지 않습니다.",
+    question: "저장소 없이도 제품이 지금 살아 있고, 다른 근거로 확인할 수 있습니까?",
+    hints: [
+      { decision: "거부", when: "저장소가 사라졌고 제품도 확인할 수 없다" },
+      { decision: "승인", when: "제품이 따로 살아 있고 근거를 직접 기록할 수 있다" },
+    ],
+  },
   page_status_unknown: {
     label: "배포 URL 응답 미확인",
     summary: "수집기가 아직 이 URL을 열어보지 못했습니다. 수집이 끝나면 자동으로 다시 판정됩니다.",

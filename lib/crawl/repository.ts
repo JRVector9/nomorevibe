@@ -1,6 +1,6 @@
 import { emitPipelineEvent } from "@/lib/observability/review-pipeline";
-import { isReviewCandidate } from "./agent-review-contract";
-import { and, asc, desc, eq, inArray, lt, lte, ne, sql } from "drizzle-orm";
+import { isReviewCandidate, REVIEW_RETRIABLE_REASONS } from "./agent-review-contract";
+import { and, asc, desc, eq, inArray, lt, lte, ne, or, sql } from "drizzle-orm";
 import { isDeepStrictEqual } from "node:util";
 import { db } from "@/lib/db";
 import {
@@ -194,9 +194,19 @@ export async function markFrontier(
   });
 }
 
-/** A terminal GitHub fetch cannot satisfy reconsiderAfter. Put such candidates in the human queue. */
+const GONE_DETAIL = "GitHub 저장소를 찾지 못했습니다(삭제·비공개) — 새 원본을 수집할 수 없습니다.";
+
+/**
+ * 원본을 다시 받을 수 없게 된 후보를 사람에게 넘긴다.
+ *
+ * 판정 전(new·reconsiderAfter)은 수집이 끝내 실패하면 넘긴다 — 저장소가 없으면(skipped) repo_deleted, 그 밖의
+ * 실패는 source_refresh_failed. 승인 대기·재시도 보류 후보도 저장소가 사라지면(마지막 원본 뒤에 skipped) repo_deleted 로
+ * 넘긴다. 2026-10-08 운영에서 63건이 이렇게 갇혀 있었다 — 1차 심사는 신선한 원본이 없어 집지 않고, 원본 재수집은
+ * 매일 404 로 끝나 사람 대기열에도 오지 않았다. 이름이 바뀐 저장소(alias_of)는 따라가므로 넘기지 않는다.
+ */
 export async function handOffFailedSourceRefreshes(lease: JobLease, limit = 20): Promise<number> {
   if (lease.name !== "crawl-fetch") return 0;
+  const cap = Math.max(1, Math.min(100, limit));
   return db.transaction(async tx => {
     const candidates = await tx.select().from(crawlCandidates).where(and(
       eq(crawlCandidates.state, "new"),
@@ -205,7 +215,7 @@ export async function handOffFailedSourceRefreshes(lease: JobLease, limit = 20):
         WHERE terminal.repo = ${crawlCandidates.repo} AND terminal.state IN ('skipped', 'failed')
           AND terminal.alias_of IS NULL)`,
     )).orderBy(asc(crawlCandidates.updatedAt), asc(crawlCandidates.id))
-      .limit(Math.max(1, Math.min(100, limit))).for("update", { skipLocked: true });
+      .limit(cap).for("update", { skipLocked: true });
     let handedOff = 0;
     for (const candidate of candidates) {
       const [document] = await tx.select().from(crawlDocuments)
@@ -215,11 +225,34 @@ export async function handOffFailedSourceRefreshes(lease: JobLease, limit = 20):
       const after = Date.parse(String(candidate.signals?.reconsiderAfter));
       if (!document || !Number.isFinite(after) || document.fetchedAt.getTime() > after
         || !frontier || frontier.aliasOf || !["skipped", "failed"].includes(frontier.state)) continue;
-      const detail = frontier.state === "skipped" ? "GitHub 저장소를 찾지 못해 새 원본을 수집할 수 없습니다."
-        : `GitHub 원본 재수집 실패: ${(frontier.lastError ?? "원인 미상").slice(0, 220)}`;
+      const gone = frontier.state === "skipped";
+      const detail = gone ? GONE_DETAIL : `GitHub 원본 재수집 실패: ${(frontier.lastError ?? "원인 미상").slice(0, 220)}`;
       await tx.update(crawlCandidates).set({
-        state: "needs_review", reason: "source_refresh_failed", updatedAt: sql`clock_timestamp()`,
+        state: "needs_review", reason: gone ? "repo_deleted" : "source_refresh_failed", updatedAt: sql`clock_timestamp()`,
         signals: { ...candidate.signals, stoppedAt: { rule: "원본 재수집", detail } },
+      }).where(eq(crawlCandidates.id, candidate.id));
+      handedOff++;
+    }
+    // 승인 대기·재시도 보류 — 마지막 원본보다 뒤에 저장소를 찾지 못했다(skipped)
+    const parked = handedOff >= cap ? [] : await tx.select().from(crawlCandidates).where(and(
+      eq(crawlCandidates.decidedBy, "auto"),
+      or(eq(crawlCandidates.state, "approved"),
+        and(eq(crawlCandidates.state, "needs_review"), inArray(crawlCandidates.reason, [...REVIEW_RETRIABLE_REASONS]))),
+      sql`EXISTS (SELECT 1 FROM ${crawlFrontier} gone JOIN ${crawlDocuments} doc ON doc.repo = gone.repo
+        WHERE gone.repo = ${crawlCandidates.repo} AND gone.state = 'skipped' AND gone.alias_of IS NULL
+          AND gone.updated_at > doc.fetched_at)`,
+    )).orderBy(asc(crawlCandidates.updatedAt), asc(crawlCandidates.id))
+      .limit(cap - handedOff).for("update", { skipLocked: true });
+    for (const candidate of parked) {
+      const [document] = await tx.select().from(crawlDocuments)
+        .where(eq(crawlDocuments.repo, candidate.repo)).for("share");
+      const [frontier] = await tx.select().from(crawlFrontier)
+        .where(eq(crawlFrontier.repo, candidate.repo)).for("update");
+      if (!document || !frontier || frontier.aliasOf || frontier.state !== "skipped"
+        || frontier.updatedAt.getTime() <= document.fetchedAt.getTime()) continue;
+      await tx.update(crawlCandidates).set({
+        state: "needs_review", reason: "repo_deleted", updatedAt: sql`clock_timestamp()`,
+        signals: { ...candidate.signals, stoppedAt: { rule: "원본 재수집", detail: GONE_DETAIL } },
       }).where(eq(crawlCandidates.id, candidate.id));
       handedOff++;
     }
