@@ -10,16 +10,32 @@ export type StarsCursor={afterId?:number;retryAfter?:string};
 type Request=(path:string,conditional?:object,options?:{timeoutMs?:number})=>Promise<GitHubHttpResult<Record<string,unknown>>>;
 const PUBLIC=['seeded','verified'] as const;
 
-/** 하루 한 번 성공 값을 갱신한다. 실패는 한 시간 뒤로 미루고 뒤의 제품을 계속 본다. */
+/**
+ * 잡이 아직 한 번도 보지 않은 제품 — 발행 때 적은 첫 관측뿐이라 급상승에 오를 수 없다.
+ * 실패하면 확인 시각이 남아 여기서 빠지고 아래 차례 순회로 돌아간다 — 지워진 저장소가 매번 앞을 차지하지 않는다.
+ */
+const unseen=sql`(${products.starsPreviousAt} is null and ${products.starsCheckedAt} is null)`;
+
+/**
+ * 성공 값은 하루가 지나야 다시 갱신한다. 실패는 한 시간 뒤로 미루고 뒤의 제품을 계속 본다.
+ * 한 번에 40개 — 처음 보는 제품(unseen)을 먼저 채우고 남는 자리에 ID 차례 순회를 잇는다. 차례 순회는 한 바퀴가
+ * 사흘 가까이 걸려 새 제품이 두 번째 관측을 받기까지 1~3.6일을 기다렸다(2026-10-08).
+ */
 export async function refreshProductStars(ctx:JobContext<StarsCursor>,dependencies:{request?:Request}={}):Promise<JobOutcome<StarsCursor>>{
  const deadline=Date.now()+15_000;
  if(ctx.cursor?.retryAfter && Date.parse(ctx.cursor.retryAfter)>Date.now())return {done:false,cursor:ctx.cursor};
  let afterId=ctx.cursor?.afterId??0;
- const rows=await db.select({id:products.id,repoUrl:products.repoUrl,updatedAt:sql<string>`${products.updatedAt}::text`}).from(products).where(and(
-  inArray(products.status,[...PUBLIC]),sql`${products.repoUrl} is not null`,sql`${products.id}>${afterId}`,
+ const due=and(
+  inArray(products.status,[...PUBLIC]),sql`${products.repoUrl} is not null`,
   sql`(${products.starsAt} is null or ${products.starsAt}<now()-interval '24 hours')`,
   sql`(${products.starsCheckedAt} is null or ${products.starsCheckedAt}<now()-interval '1 hour')`,
- )).orderBy(asc(products.id)).limit(40);
+ );
+ const columns={id:products.id,repoUrl:products.repoUrl,updatedAt:sql<string>`${products.updatedAt}::text`};
+ const first=await db.select(columns).from(products).where(and(due,unseen)).orderBy(asc(products.id)).limit(40);
+ const rest=first.length<40?await db.select(columns).from(products).where(and(due,sql`not ${unseen}`,sql`${products.id}>${afterId}`))
+  .orderBy(asc(products.id)).limit(40-first.length):[];
+ // 차례 순회의 자리(afterId)는 순회에서 온 행으로만 민다
+ const rows=[...first.map(row=>({...row,walk:false})),...rest.map(row=>({...row,walk:true}))];
  const request=dependencies.request??githubRequest<Record<string,unknown>>;
  let updated=0,failed=0;
  for(let offset=0;offset<rows.length;offset+=3){
@@ -49,7 +65,7 @@ export async function refreshProductStars(ctx:JobContext<StarsCursor>,dependenci
    const retryAfter=new Date(Math.max(...retries.map(d=>d.getTime()))).toISOString();
    await ctx.save({afterId,retryAfter});ctx.log('product_stars.waiting',{updated,failed});return {done:false,cursor:{afterId,retryAfter}};
   }
-  afterId=batch.at(-1)!.id;await ctx.save({afterId});
+  afterId=batch.findLast(row=>row.walk)?.id??afterId;await ctx.save({afterId});
  }
  ctx.log('product_stars.refreshed',{updated,failed,examined:rows.length});
  return rows.length<40?{done:true,cursor:null}:{done:false,cursor:{afterId}};

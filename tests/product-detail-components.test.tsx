@@ -674,7 +674,7 @@ describe("evidence product detail components", () => {
     expect(order).toEqual([...order].sort((left, right) => left - right));
   });
 
-  it("ends with the rising projects of the same category, linking to the whole category", () => {
+  it("ends with the rising projects of the same category, linking to that category's rising list", () => {
     const item = (slug: string): ProductListItem => ({
       slug, name: slug, tagline: `${slug} does things`, taglineSource: "maker", category: "Productivity",
       builder: null, builderClaim: "guessed", stack: [], ogImage: null, makerName: null,
@@ -682,11 +682,15 @@ describe("evidence product detail components", () => {
       unclaimed: true, stars: 990, starsAt: new Date("2026-10-02T00:00:00Z"), starsPrevious: 980,
       starsPreviousAt: new Date("2026-10-01T00:00:00Z"),
     });
-    const html = renderToStaticMarkup(<RelatedRow category="Productivity" items={[item("alpha"), item("beta")]} total={1256} />);
+    // total 은 그 분야에서 지금 뜨는 수다 — 분야 전체가 아니다
+    const html = renderToStaticMarkup(<RelatedRow category="Productivity" items={[item("alpha"), item("beta")]} total={37} />);
     expect(html).toContain("생산성 분야에서 지금 뜨는");
+    expect(html).toContain("하루 평균");
     expect(html).toContain("스타 2천 미만");
-    expect(html).toContain('href="/?category=Productivity&amp;sort=recent"');
-    expect(textOf(html)).toContain("생산성 1,256개 모두 보기 ›");
+    // 홈의 기본 정렬('추천')이 같은 급상승 순서다 — 최신순(sort=recent)으로 보내지 않는다
+    expect(html).toContain('href="/?category=Productivity"');
+    expect(html).not.toContain("sort=recent");
+    expect(textOf(html)).toContain("37개 모두 보기 ›");
     expect(html).toContain('href="/p/alpha"');
     expect(html).toContain('href="/p/beta"');
     // 총수를 못 세면 숫자 없이, 추천이 없으면 구획째 없다
