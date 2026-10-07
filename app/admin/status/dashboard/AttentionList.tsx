@@ -29,7 +29,11 @@ export function AttentionList({ items }: { items: ActionItem[] }) {
               <div className="t">{item.title}</div>
               <div className="d">{item.detail}</div>
             </div>
-            {item.action ? <Link href={item.action.href}>{item.action.label}</Link> : <span className="n">{item.count}</span>}
+            {/* 숫자와 가는 곳을 둘 다 — 링크만 두니 열한 줄 중 열 줄이 "얼마나"를 말하지 않았다(2026-10-08) */}
+            <div className="flex shrink-0 flex-col items-end gap-0.5">
+              <span className="n">{typeof item.count === "number" ? item.count.toLocaleString("ko-KR") : item.count}</span>
+              {item.action && <Link href={item.action.href}>{item.action.label}</Link>}
+            </div>
           </li>
         ))}
       </ul>

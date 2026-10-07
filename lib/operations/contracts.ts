@@ -31,6 +31,8 @@ export const JOB_LABELS: Record<string, string> = {
   'product-readme-refresh': 'README 갱신',
   'product-search-health': '검색 데이터 자동 점검',
   'product-intro-check': '소개 검수',
+  'cdn-purge': 'CDN 캐시 지우기', 'crawl-tagline': '한 줄 소개 짓기', 'product-embedding': '의미 검색 벡터',
+  'product-search-refresh': '검색 데이터 갱신', 'product-stars-refresh': 'GitHub 스타 갱신',
 };
 export const ROLE_LABELS: Record<string, string> = { app: '웹·관리자 서비스', db: '데이터베이스', scheduler: '작업 일정 관리', crawler: '프로젝트 수집', reviewer: '후보 심사', publisher: '제품 발행', text: '소개·사유 번역', maintenance: '생존 확인·지표 집계', 'connect-agent': 'AI 연결·분류 실행' };
 export type AgentStatus = {
@@ -38,6 +40,8 @@ export type AgentStatus = {
   activity?: { id: string; kind: 'login' | 'oauth_exchange' | 'model'; startedAt: number; deadlineAt: number; model?: string } | null;
   accounts?: Partial<Record<'codex' | 'claude', { storedAt?: string; checkedAt?: string; result?: string; model?: string; probe?: { prompt: 'hi~'; reply?: string; result: string; model: string; checkedAt: string } }>>;
   configReady?: boolean;
+  /** 지금 분류 요청을 받는가 — 적용한 설정과 계정이 있으면 true. 옛 연결 서비스는 보내지 않는다 */
+  classifyReady?: boolean;
   connected: boolean; claudeConnected?: boolean; generation: number; configVersion: number; config: ModelConfig;
   busy: string | null; connection: { provider?: 'codex' | 'claude'; inputRequired?: boolean; error?: string; id: string; state: string; url?: string; code?: string; expiresAt: number } | null;
   verification: { id: string; state: string; config: ModelConfig; generation: number; results: Array<{ model: string; result: string }> } | null;

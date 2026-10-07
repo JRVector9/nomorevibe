@@ -43,6 +43,15 @@ describe('operations credentials and model lifecycle',()=>{
   expect(a.snapshot().lastUsedVersion).toBe(1);expect(calls[0]).toContain('gpt-5.3-codex-spark');
   expect(readFileSync(join(dir,'vault.enc'),'utf8')).not.toContain('tokens');
  });
+ it('keeps classifying with the applied config after a re-login until the new one is applied',async()=>{
+  // 2026-10-08: Codex 재로그인(generation 증가) 뒤 적용 전 한 시간 동안 분류가 통째로 거부됐다
+  dir=mkdtempSync(join(tmpdir(),'operations-test-'));
+  writeFileSync(join(dir,'vault.enc'),seal(JSON.stringify({credential:auth,appliedGeneration:1,state:{connected:true,generation:2,configVersion:1,config:DEFAULT_CONFIG}}),secret));
+  agent=new ConnectAgent(dir,secret,async()=>({kind:'exit',code:0,stdout:JSON.stringify({results:[{id:0,category:'Productivity',reason:'Shared tasks'}]}),stderr:''}));
+  expect(agent.snapshot()).toMatchObject({configReady:false,classifyReady:true});
+  const input={inputs:[{repo:'o/r',url:'https://example.com',name:'Tasks',tagline:'Tasks',topics:[],language:null}]};
+  expect((await agent.classify(input)).categories).toEqual(['Productivity']);
+ });
  it('failure and concurrent probes cannot authorize a config',async()=>{
   let release:()=>void=()=>{};const gate=new Promise<void>(r=>{release=r;});
   const a=connected(async()=>{await gate;return {kind:'timeout'};});a.test(DEFAULT_CONFIG);

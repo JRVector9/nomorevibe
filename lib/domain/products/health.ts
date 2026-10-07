@@ -200,6 +200,19 @@ export async function healthFor(slugs: string[]): Promise<Map<string, HealthSign
 
 export type DownProduct = ProductHealth & { name: string; url: string };
 
+const downWhere = () => and(
+  gte(productHealth.failures, DOWN_THRESHOLD),
+  isNotNull(productHealth.downSince),
+  inArray(products.status, ["verified", "seeded"]),
+);
+
+/** 응답 없는 공개 제품 수 — 목록은 50건까지만 그리므로 수는 따로 센다(2026-10-08 화면 50, 실제 593) */
+export async function downProductCount(): Promise<number> {
+  const [row] = await db.select({ count: sql<number>`count(*)::int` }).from(productHealth)
+    .innerJoin(products, eq(products.slug, productHealth.slug)).where(downWhere());
+  return Number(row?.count ?? 0);
+}
+
 /** 연속으로 실패하고 있는 제품 (어드민 화면이 쓴다) */
 export async function downProducts(limit = 50): Promise<DownProduct[]> {
   const rows = await db
@@ -215,13 +228,7 @@ export async function downProducts(limit = 50): Promise<DownProduct[]> {
     })
     .from(productHealth)
     .innerJoin(products, eq(products.slug, productHealth.slug))
-    .where(
-      and(
-        gte(productHealth.failures, DOWN_THRESHOLD),
-        isNotNull(productHealth.downSince),
-        inArray(products.status, ["verified", "seeded"]),
-      ),
-    )
+    .where(downWhere())
     .orderBy(desc(productHealth.failures), asc(productHealth.downSince))
     .limit(limit);
   return rows;

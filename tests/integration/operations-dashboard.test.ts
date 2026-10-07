@@ -154,5 +154,7 @@ it("lists the last 24 hours of listed products with their discovery signal", asy
 it("counts what needs a person", async () => {
   // 생존 확인: korean-app 은 1시간 전에 봤고, 설치형·차단 제품은 확인 대상이 아니다
   // 목표: 웹사이트 공개 제품 둘(korean-app·english-app) ÷ 6시간 → 시간당 1건(올림)
-  expect(await attentionCounts(now)).toEqual({ auditRejectsOpen: 1, healthOverdue: 1, healthTargetPerHour: 1, introNeedsEditor: 1 });
+  // 진행 중인 감사는 시작 때 프롬프트("test")가 지금 코드와 달라 잡이 건너뛰는 상태다
+  expect(await attentionCounts(now)).toMatchObject({ auditRejectsOpen: 1, healthOverdue: 1, healthTargetPerHour: 1, introNeedsEditor: 1,
+    auditCampaign: { promptVersion: "test", current: false, unanswered: 0 }, cdnPurgesPending: 0 });
 });

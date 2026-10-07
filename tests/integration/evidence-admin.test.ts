@@ -187,6 +187,7 @@ describe("evidence admin read models", () => {
       { slug: "evidence-admin", kind: "documentation", provider: "documentation", sourceKey: "c", state: "disconnected", nextAttemptAt: new Date("2026-08-20T01:00:00Z") },
     ]);
 
-    await expect(getEvidenceStatusSummary(NOW)).resolves.toEqual({ due: 2, stale: 1, failed: 2 });
+    // 가장 오래 밀린 것은 01:00 기한 — NOW(03:00)보다 2시간
+    await expect(getEvidenceStatusSummary(NOW)).resolves.toEqual({ due: 2, stale: 1, failed: 2, oldestDueHours: 2 });
   });
 });

@@ -13,7 +13,7 @@ const REASON: Record<string, string> = {
  * 예비가 일하면 주황, 관측이 끊기면 빨강으로 바로 보인다.
  */
 export function RolesTable({ roles, scheduler, web }: {
-  roles: RoleOverview[]; scheduler: { freshReplicas: number; alarm: boolean }; web: { instance: string; release: string | null }[];
+  roles: RoleOverview[]; scheduler: { freshReplicas: number; alarm: boolean }; web: { instance: string; release: string | null; stale?: boolean }[];
 }) {
   // maintenance·text 는 git 빌드라 릴리스가 달라도 정상 — 공통 이미지 역할과 웹만 센다
   const releases = new Set([...roles.filter((row) => SHARED_IMAGE_ROLES.has(row.role)).map((row) => row.ownerRelease).filter(Boolean), ...web.map((row) => row.release).filter(Boolean)]);
@@ -40,13 +40,16 @@ export function RolesTable({ roles, scheduler, web }: {
               <td><span className="dash-pill" data-tone={scheduler.alarm ? "bad" : "ok"}><span className="dash-dot" data-tone={scheduler.alarm ? "bad" : "ok"} aria-hidden />{scheduler.freshReplicas}/2 복제</span></td>
               <td className="font-mono text-[13px]">—</td>
             </tr>
-            {web.map((row) => (
+            {web.map((row) => {
+              const tone = row.stale ? "bad" : row.release ? "ok" : "warn";
+              return (
               <tr key={row.instance}>
                 <td className="font-semibold">web · {row.instance}</td>
-                <td><span className="dash-pill" data-tone={row.release ? "ok" : "warn"}><span className="dash-dot" data-tone={row.release ? "ok" : "warn"} aria-hidden />{row.release ? "응답" : "관측 없음"}</span></td>
+                <td><span className="dash-pill" data-tone={tone}><span className="dash-dot" data-tone={tone} aria-hidden />{row.stale ? "관측 지연" : row.release ? "응답" : "관측 없음"}</span></td>
                 <td className="font-mono text-[13px]">{row.release?.slice(0, 7) ?? "—"}</td>
               </tr>
-            ))}
+              );
+            })}
           </tbody>
         </table>
       </div>

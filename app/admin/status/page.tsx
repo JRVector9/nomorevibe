@@ -4,10 +4,10 @@ import { currentAdmin } from "@/lib/auth/admin";
 import { frontierCounts, candidateCounts, rejectionBreakdown, yieldBySignal } from "@/lib/crawl/repository";
 import { getSettings } from "@/lib/crawl/settings";
 import { listJobStates } from "@/lib/jobs/runner";
-import { downProducts, DOWN_THRESHOLD } from "@/lib/domain/products/health";
+import { downProductCount, downProducts, DOWN_THRESHOLD } from "@/lib/domain/products/health";
 import { topClickedSince } from "@/lib/domain/products/clicks";
 import { JOB_NAMES, JOB_CATALOG } from "@/lib/jobs/catalog";
-import { jobStatusLabel } from "@/lib/jobs/status";
+import { isPausedJob, jobStatusLabel } from "@/lib/jobs/status";
 import { getCurrentSeason, RANKING_STALE_MS } from "@/lib/domain/ranking/view";
 import { getEvidenceStatusSummary } from "@/lib/domain/evidence/admin";
 import { Panel } from "@/components/Panel";
@@ -43,6 +43,7 @@ import { REASON_LABELS } from "../reasons";
 import { searchLogSummary } from "@/lib/domain/products/search-log";
 import { readSearchHealth, searchHealthAlerts } from "@/lib/operations/search-health-model";
 import { SearchHealthPanel } from "./SearchHealthPanel";
+import { modelServerHealth } from "@/lib/operations/model-servers";
 
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "운영센터 — NoMoreVibe", robots: { index: false } };
@@ -106,7 +107,7 @@ export default async function StatusPage({ searchParams }: { searchParams: Promi
     getCurrentSeason(),
     getEvidenceStatusSummary(new Date()),
   ]);
-  const [down, topClicked, ops, manual] = await Promise.all([downProducts(), topClickedSince(30), operationsData(), manualCandidates()]);
+  const [down, downCount, topClicked, ops, manual] = await Promise.all([downProducts(), downProductCount(), topClickedSince(30), operationsData(), manualCandidates()]);
   const [flow, oldestWait, stalled, decisions, causes, seconds, translation, secondFailures, throughput] = await Promise.all([pipelineFlow(), oldestReviewWaitDays(), stalledReviewCount(),
     reviewQueueAiDecisions(), filters.cause ? reviewQueueCauses(settings) : Promise.resolve(null),
     secondReviewSummary(settings.secondReview.agreeAt), translationProgress(), recentSecondReviewFailures(), pipelineThroughput(settings).catch(error => {
@@ -132,7 +133,7 @@ export default async function StatusPage({ searchParams }: { searchParams: Promi
     logger.warn(event, { errorName: error instanceof Error ? error.name : "unknown" });
     return null;
   };
-  const [hourly, models, yields, today, attention, roles, accounts, takedowns] = await Promise.all([
+  const [hourly, models, yields, today, attention, roles, accounts, takedowns, modelServers] = await Promise.all([
     hourlyThroughput().catch(warn("operations.hourly_unavailable")),
     modelHealth(settings).catch(warn("operations.models_unavailable")),
     signalYields(settings).catch(warn("operations.signals_unavailable")),
@@ -141,6 +142,7 @@ export default async function StatusPage({ searchParams }: { searchParams: Promi
     roleOverview().catch(warn("operations.roles_unavailable")),
     listGitHubCollectorAccounts().catch(warn("operations.accounts_unavailable")),
     takedownSummary().catch(warn("operations.takedowns_unavailable")),
+    modelServerHealth().catch(warn("operations.model_servers_unavailable")),
   ]);
 
   const states = new Map(jobStates.map((job) => [job.name, job]));
@@ -155,10 +157,17 @@ export default async function StatusPage({ searchParams }: { searchParams: Promi
    * 막고 있는 순서대로 놓는다 — AI 연결이 끊겨 있으면 심사 큐가 쌓이는 것은 결과이지
    * 원인이 아니다. 원인을 위에 두어야 아래가 저절로 풀린다.
    */
-  const agent = latestServiceInstance(ops.serviceInstances, "connect-agent")?.value as AgentStatus | undefined;
-  /** 웹 두 대의 릴리스 — 머리말 칩과 릴리스 불일치 판단이 본다 */
-  const web = ops.serviceInstances.filter((instance) => instance.role === "app")
-    .map((instance) => ({ instance: instance.instanceId, release: typeof instance.value.release === "string" ? instance.value.release : null }));
+  const fetchedAt = Date.parse(ops.fetchedAt);
+  const ageMs = (at: string | Date) => fetchedAt - new Date(at).getTime();
+  const agentInstance = latestServiceInstance(ops.serviceInstances, "connect-agent");
+  const agent = agentInstance?.value as AgentStatus | undefined;
+  /**
+   * 웹 인스턴스의 릴리스 — 머리말 칩과 릴리스 불일치 판단이 본다. 1시간 넘게 관측이 없는 키는 지난 배포의 것이라 뺀다.
+   * 45초가 지나면 "관측 지연" — 릴리스 문자열만 있으면 "응답"으로 보였다.
+   */
+  const web = ops.serviceInstances.filter((instance) => instance.role === "app" && ageMs(instance.observedAt) <= 60 * 60_000)
+    .map((instance) => ({ instance: instance.instanceId, release: typeof instance.value.release === "string" ? instance.value.release : null,
+      stale: ageMs(instance.observedAt) > 45_000 }));
   const failedJobs = jobStates.filter(job => job.lastError);
   const actions: ActionItem[] = [];
   const healthObservation = ops.observations.find(row => row.key === "job:product-search-health");
@@ -168,11 +177,60 @@ export default async function StatusPage({ searchParams }: { searchParams: Promi
       action: { label: "점검 작업", href: "/admin/status?tab=jobs" } })));
   }
 
-  if (!agent?.configReady) {
+  /**
+   * AI 연결(connect-agent)은 발행 워커의 카테고리 분류만 맡는다 — 1차·2차 심사는 게이트웨이로 간다.
+   * 2026-10-07 Codex 가 access_denied 인데 Claude 예비가 분류를 이어 받아 화면에 아무 경보도 없었다.
+   * 그 뒤 재로그인하자 적용 전까지 분류가 통째로 막혔는데, 제목은 "연결돼 있지 않습니다"였다.
+   */
+  const ACCOUNT_FAILURES = new Set(["access_denied", "auth", "rate_limit", "no_cli"]);
+  const providerName = { codex: "Codex", claude: "Claude" } as const;
+  const configuredProviders = agent ? [...new Set([agent.config?.primary, agent.config?.fallback]
+    .flatMap((model) => model ? [model.model === "sonnet" ? "claude" as const : "codex" as const] : []))] : [];
+  const failingProviders = configuredProviders.filter((provider) => ACCOUNT_FAILURES.has(agent?.accounts?.[provider]?.result ?? ""));
+  // 옛 연결 서비스는 classifyReady 를 보내지 않는다 — 그때는 적용 전 분류를 거부하므로 configReady 가 곧 분류 가능 여부다
+  const classifyReady = agent?.classifyReady ?? agent?.configReady === true;
+  if (!agent || !agentInstance || ageMs(agentInstance.observedAt) > 2 * 60_000) {
     actions.push({
-      key: "ai", tone: "critical", count: "!", title: "AI 계정이 연결돼 있지 않습니다",
-      detail: <>AI 심사(<span className="font-mono">crawl-agent-review</span>)가 매 틱 건너뛰고, 발행 워커는 카테고리를 정하지 못해 승인 후보를 보류합니다. 아래 쌓인 것들의 원인입니다.</>,
+      key: "ai", tone: "critical", count: "!", title: "AI 연결 서비스 관측이 끊겼습니다",
+      detail: <>connect-agent 마지막 관측 {agentInstance ? when(new Date(agentInstance.observedAt)) : "없음"} — 발행 워커가 카테고리를 정하지 못해 승인 후보를 1시간씩 보류합니다.</>,
       action: { label: "연결 상태", href: "/admin/status?tab=ai" },
+    });
+  } else if (!classifyReady) {
+    actions.push({
+      key: "ai", tone: "critical", count: "!", title: "AI 분류를 받지 않습니다",
+      detail: <>{agent.configVersion > 0 ? "새 인증 뒤 모델 검사·적용이 남았습니다" : "적용한 모델 설정이 없습니다"} — 적용할 때까지 발행 워커가 승인 후보를 1시간씩 보류합니다.</>,
+      action: { label: "검사·적용", href: "/admin/status?tab=ai" },
+    });
+  } else {
+    if (failingProviders.length > 0) {
+      const all = failingProviders.length === configuredProviders.length;
+      actions.push({
+        key: "ai-account", tone: all ? "critical" : "hold", count: `${failingProviders.length}/${configuredProviders.length}`,
+        title: all ? "설정한 AI 계정이 모두 실패합니다" : `${failingProviders.map((provider) => providerName[provider]).join("·")} 계정이 실패합니다 — 예비 모델이 대신 분류 중`,
+        detail: <>{failingProviders.map((provider) => `${providerName[provider]} ${agent.accounts?.[provider]?.result}${agent.accounts?.[provider]?.checkedAt ? ` · ${when(new Date(agent.accounts[provider]!.checkedAt!))}` : ""}`).join(" · ")} — 다시 인증하고 모델을 검사·적용합니다.</>,
+        action: { label: "다시 인증", href: "/admin/status?tab=ai" },
+      });
+    }
+    if (!agent.configReady) {
+      actions.push({
+        key: "ai-apply", tone: "hold", count: "!", title: "새 인증으로 모델 검사·적용이 남았습니다",
+        detail: <>그때까지 기존 설정({agent.config?.primary.model}{agent.config?.fallback ? ` → ${agent.config.fallback.model}` : ""})으로 분류를 계속합니다.</>,
+        action: { label: "검사·적용", href: "/admin/status?tab=ai" },
+      });
+    }
+  }
+  const unhealthyServers = modelServers?.filter((server) => !server.ok) ?? [];
+  if (unhealthyServers.length > 0) {
+    actions.push({
+      key: "model-servers", tone: "hold", count: unhealthyServers.length, title: "검색 모델 서버가 응답하지 않습니다",
+      detail: <>{unhealthyServers.map((server) => `${server.name} ${server.error}`).join(" · ")} — 검색은 단어 검색으로만 나가고, 새 제품의 의미 검색 벡터가 밀립니다(M3 launchd bot.brut.nmv-*).</>,
+    });
+  }
+  if (!health) {
+    actions.push({
+      key: "search-health-missing", tone: "hold", count: "?", title: "검색 데이터 점검 결과가 없습니다",
+      detail: <>{states.get("product-search-health")?.lastError ? "점검 작업이 마지막 회차에 실패했습니다" : `마지막 점검 ${healthObservation ? when(new Date(healthObservation.observedAt)) : "없음"} — 45분이 지나면 결과를 믿지 않습니다`}. 키워드 대기 수도 알 수 없습니다.</>,
+      action: { label: "점검 작업", href: "/admin/status?tab=jobs" },
     });
   }
   if (failedJobs.length > 0) {
@@ -223,15 +281,16 @@ export default async function StatusPage({ searchParams }: { searchParams: Promi
     });
   }
   if (ops.held > 0) {
+    const retry = ops.heldNextRetryAt ? new Date(ops.heldNextRetryAt).toLocaleTimeString("ko-KR", { timeZone: "Asia/Seoul", hour: "2-digit", minute: "2-digit", hour12: false }) : null;
     actions.push({
       key: "held", tone: "hold", count: ops.held, title: "분류를 못 정해 발행이 멈춘 후보",
-      detail: <>승인은 끝났고 카테고리만 없습니다. 수동으로 지정하면 다음 발행 틱에 올라갑니다.</>,
-      action: { label: "카테고리 기준", href: "/admin/categories" },
+      detail: <>승인은 끝났고 카테고리만 없습니다. 1시간 뒤 저절로 다시 분류합니다{retry ? ` — 다음 ${retry}` : ""}. 급하면 수동으로 지정합니다.</>,
+      action: { label: "수동 분류", href: "/admin/status?tab=manual" },
     });
   }
-  if (down.length > 0) {
+  if (downCount > 0) {
     actions.push({
-      key: "down", tone: "critical", count: down.length, title: "응답하지 않는 공개 제품",
+      key: "down", tone: "critical", count: downCount, title: "응답하지 않는 공개 제품",
       detail: <>{DOWN_THRESHOLD}회 넘게 연속으로 실패해 공개 목록에서 빠져 있습니다. 지우거나 차단하지는 않습니다 — 다시 열리면 그대로 돌아옵니다. 끝난 서비스인지는 사람이 보고 정합니다.</>,
       action: { label: "제품 관리", href: "/admin/products" },
     });
@@ -264,6 +323,26 @@ export default async function StatusPage({ searchParams }: { searchParams: Promi
       action: { label: "작업 흐름", href: "/admin/status?tab=jobs" },
     });
   }
+  // 같은 릴리스로 다시 뜬 워커 — 5분 안 세 번이 아니어도 죽고 있다는 뜻이다(2026-10-08 발행 워커가 20분 사이 두 번)
+  const restarted = (["crawler", "reviewer", "publisher", "text", "maintenance"] as const).flatMap((role) => {
+    const count = latestServiceInstance(ops.serviceInstances, role)?.value.restartCount1h;
+    return typeof count === "number" && count > 0 ? [{ role, count }] : [];
+  });
+  if (restarted.length > 0) {
+    actions.push({
+      key: "restarts", tone: "hold", count: restarted.reduce((sum, row) => sum + row.count, 0), title: "최근 1시간 안에 다시 뜬 워커",
+      detail: <>{restarted.map((row) => `${row.role} ${row.count}회`).join(" · ")} — 배포가 아닌 재시작입니다. 컨테이너 로그(supervisor.stopping 사유)를 봅니다.</>,
+      action: { label: "역할 표", href: "/admin/status#roles" },
+    });
+  }
+  // 두 대 중 한 대만 남은 경우 — 둘 다 없으면 위 관측 끊김(scheduler)이 이미 잡는다
+  if (roles && roles.scheduler.freshReplicas === 1) {
+    actions.push({
+      key: "scheduler-replicas", tone: "hold", count: "1/2", title: "스케줄러 복제가 한 대뿐입니다",
+      detail: <>관측되는 스케줄러가 1대입니다 — 이것마저 죽으면 예약이 멈춥니다.</>,
+      action: { label: "역할 표", href: "/admin/status#roles" },
+    });
+  }
   if (workerProgress?.scheduler.reason === "scheduler_missed") {
     actions.push({
       key: "scheduler", tone: "critical", count: workerProgress.scheduler.overdueJobs.length, title: "스케줄러 예약이 밀렸습니다",
@@ -286,6 +365,14 @@ export default async function StatusPage({ searchParams }: { searchParams: Promi
       action: { label: "작업 흐름", href: "/admin/status?tab=jobs" },
     });
   }
+  // 1시간 실패율 20% 이상인 모델 자리 — 예비가 받아 주면 "미해결 오류"에는 안 잡힌다(2차 투표 26% 가 숨었다)
+  const failingModels = (models ?? []).filter((row) => row.calls1h >= 10 && row.failed1h / row.calls1h >= 0.2);
+  if (failingModels.length > 0) {
+    actions.push({
+      key: "model-failures", tone: "hold", count: failingModels.length, title: "모델 호출이 자주 실패합니다",
+      detail: <>{failingModels.map((row) => `${row.label} ${row.model ?? ""} 실패 ${Math.round((row.failed1h / row.calls1h) * 100)}% (${row.failed1h}/${row.calls1h})`).join(" · ")} — 재시도와 예비 모델이 받아 주지만 처리량이 줄고 지연이 늘어납니다.</>,
+    });
+  }
   // 내려달라는 요청 — 상세 페이지가 내려 준다고 약속했다. 24시간을 넘기면 다른 경보처럼 맨 앞 급으로
   if (takedowns && takedowns.pending > 0) {
     const oldest = takedowns.oldestHours === null ? "" : ` · 최장 ${formatWait(takedowns.oldestHours)}`;
@@ -303,6 +390,26 @@ export default async function StatusPage({ searchParams }: { searchParams: Promi
       action: { label: "내릴 후보", href: "/admin/audit" },
     });
   }
+  if (attention?.auditCampaign && !attention.auditCampaign.current) {
+    actions.push({
+      key: "audit-stalled", tone: "hold", count: attention.auditCampaign.unanswered, title: "발행분 감사가 멈춰 있습니다",
+      detail: <>감사 #{attention.auditCampaign.id}은 프롬프트 {attention.auditCampaign.promptVersion}로 시작했는데 지금 코드와 달라 매 틱 건너뜁니다 — 남은 {attention.auditCampaign.unanswered.toLocaleString("ko-KR")}건은 사람이 중단하고 새 감사를 열어야 다시 봅니다.</>,
+      action: { label: "감사", href: "/admin/audit" },
+    });
+  }
+  if (attention && attention.cdnPurgesPending > 0) {
+    actions.push({
+      key: "cdn-purge", tone: "hold", count: attention.cdnPurgesPending, title: "내린 제품의 CDN 캐시가 지워지지 않았습니다",
+      detail: <>10분 넘게 확인되지 않은 지우기 요청 — 발행 워커의 CLOUDFLARE_ZONE_ID·CLOUDFLARE_PURGE_TOKEN 을 확인합니다. 그동안 내린 페이지가 Cloudflare 에 남습니다.</>,
+      action: { label: "작업 흐름", href: "/admin/status?tab=jobs" },
+    });
+  }
+  if (evidenceSummary.oldestDueHours !== null && evidenceSummary.oldestDueHours > 72) {
+    actions.push({
+      key: "evidence-backlog", tone: "hold", count: evidenceSummary.due, title: "제품 근거 갱신이 밀렸습니다",
+      detail: <>기한 지난 출처 {evidenceSummary.due.toLocaleString("ko-KR")}건 · 가장 오래된 것 {Math.round(evidenceSummary.oldestDueHours / 24)}일 — product-evidence-refresh 처리량이 출처 수를 못 따라갑니다.</>,
+    });
+  }
   if (attention && attention.healthOverdue > 0) {
     actions.push({
       key: "health-overdue", tone: attention.healthOverdue > 5_000 ? "hold" : "clear", count: attention.healthOverdue, title: "생존 확인이 6시간 넘게 밀린 제품",
@@ -312,7 +419,7 @@ export default async function StatusPage({ searchParams }: { searchParams: Promi
   if (attention && attention.introNeedsEditor > 0) {
     actions.push({
       key: "intro", tone: "hold", count: attention.introNeedsEditor, title: "소개 확인이 필요한 제품",
-      detail: <>소개 검수가 근거로는 알 수 없다고 한 것 — 검수 잡은 멈춰 있습니다.</>,
+      detail: <>소개 검수가 근거로는 알 수 없다고 한 것{isPausedJob(states.get("product-intro-check")) ? " — 검수 잡은 멈춰 있습니다" : ""}.</>,
       action: { label: "제품 관리", href: "/admin/products?filter=intro" },
     });
   }
@@ -347,22 +454,26 @@ export default async function StatusPage({ searchParams }: { searchParams: Promi
     provider, result: agent?.accounts?.[provider]?.probe?.result ?? agent?.accounts?.[provider]?.result ?? null,
     checkedAt: agent?.accounts?.[provider]?.probe?.checkedAt ?? null,
   }));
-  // Grok 은 reviewer 의 grok-session-check 잡이 4시간마다 남기는 관측(service:grok:<instance>) — 가장 최근 것 하나
+  // Grok 은 reviewer 의 grok-session-check 잡이 4시간마다 남기는 관측(service:grok:<instance>) — 가장 최근 것 하나.
+  // 심사에 Grok 을 쓰지 않으면 잡이 아무것도 남기지 않아 옛 관측이 초록으로 남았다(2026-10-08, 34시간 전 것) — 쓸 때만, 5시간 넘으면 오래됨
+  const grokConfigured = [settings.firstReview, ...settings.secondReview.voters, ...(settings.secondReview.fallbacks ?? [])]
+    .some((voter) => voter?.provider === "grok-cli");
   const grok = ops.observations.filter((row) => row.key.startsWith("service:grok:"))
     .sort((a, b) => new Date(b.observedAt).getTime() - new Date(a.observedAt).getTime())[0];
-  if (grok) probes.push({ provider: "grok", result: typeof grok.value.result === "string" ? grok.value.result : null, checkedAt: grok.observedAt });
+  if (grokConfigured) probes.push({ provider: "grok", checkedAt: grok?.observedAt ?? null,
+    result: !grok ? null : ageMs(grok.observedAt) > 5 * 3_600_000 ? "오래됨" : typeof grok.value.result === "string" ? grok.value.result : null });
   const roleRows = roles?.roles ?? [];
   const scheduler = roles?.scheduler ?? { freshReplicas: 0, alarm: true };
   const dashboard = (
     <>
-      <KpiStrip series={hourly} textPending={health?.pendingGeneration ?? 0} verifyPending={health?.pendingVerification ?? 0} />
+      <KpiStrip series={hourly} textPending={health?.pendingGeneration ?? null} verifyPending={health?.pendingVerification ?? null} />
       <StageRail snapshot={throughput} flow={flow} humanQueue={needsReview} humanOldestDays={oldestWait} humanSplit={seconds.counts.needsHuman}
         signals={workerProgress?.stages} liveness={workerProgress?.liveness} />
       <RolesTable roles={roleRows} scheduler={scheduler} web={web} />
       <ModelCards rows={models ?? []} probes={probes} />
       <AttentionList items={actions} />
       <SignalTable rows={yields ?? []} />
-      <TodayFeed today={today ?? { total24h: 0, korean24h: 0, latest: [] }} down={down.length} />
+      <TodayFeed today={today ?? { total24h: 0, korean24h: 0, latest: [] }} down={downCount} />
     </>
   );
   const statusChips = <StatusChips roles={roleRows} scheduler={scheduler} web={web} models={models ?? []}
@@ -470,7 +581,7 @@ export default async function StatusPage({ searchParams }: { searchParams: Promi
         {down.length > 0 && (
           <Panel
             title="응답하지 않는 제품"
-            note={`${DOWN_THRESHOLD}회 넘게 연속으로 실패해 공개 목록에서 빠진 것입니다. 지우거나 차단하지는 않습니다 — 다시 열리면 그대로 돌아옵니다.`}
+            note={`${DOWN_THRESHOLD}회 넘게 연속으로 실패해 공개 목록에서 빠진 것 ${downCount.toLocaleString("ko-KR")}건${downCount > down.length ? ` 중 실패가 많은 ${down.length}건` : ""}입니다. 지우거나 차단하지는 않습니다 — 다시 열리면 그대로 돌아옵니다.`}
           >
             <ul className="flex flex-col gap-1.5 text-[13px]">
               {down.map((item) => (

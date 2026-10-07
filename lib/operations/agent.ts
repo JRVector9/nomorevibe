@@ -37,7 +37,13 @@ export class ConnectAgent {
     process.env.CODEX_HOME = this.home;
     delete process.env.CODEX_ACCESS_TOKEN; delete process.env.OPENAI_API_KEY;
   }
-  snapshot(): AgentStatus { return structuredClone({...this.state, serverNow: Date.now(), configReady: this.state.configVersion > 0 && this.appliedGeneration === this.state.generation}); }
+  snapshot(): AgentStatus { return structuredClone({...this.state, serverNow: Date.now(), configReady: this.state.configVersion > 0 && this.appliedGeneration === this.state.generation, classifyReady: this.canClassify()}); }
+  /**
+   * 분류는 한 번이라도 적용한 설정이 있고 계정이 하나라도 있으면 한다. 다시 로그인해 generation 이 올라도 막지 않는다 —
+   * 2026-10-08 Codex 재로그인 뒤 적용 전 한 시간 동안 잘 돌던 Claude 예비까지 거부해 발행이 2건에 그쳤다.
+   * 새 계정에서 안 되는 모델은 호출이 실패하고 다음 모델로 넘어간다. configReady 는 "새 계정으로 다시 검사·적용"이 남았는지만 뜻한다.
+   */
+  private canClassify() { return this.state.configVersion > 0 && (!!this.credential || !!this.claudeCredential); }
   private writeAuth(home: string, value: string) {
     const file = join(home, 'auth.json'); writeFileSync(file+'.tmp', value, { mode: 0o600 }); renameSync(file+'.tmp',file); chmodSync(file,0o600);
   }
@@ -210,7 +216,7 @@ export class ConnectAgent {
   }
   async classify(input: unknown) {
     this.available();const {inputs,definitions}=classifyPayloadSchema.parse(input);
-    if((!this.credential && !this.claudeCredential) || this.appliedGeneration!==this.state.generation)throw new Error('AI 연결 후 모델 검사·적용이 필요합니다.');
+    if(!this.canClassify())throw new Error('AI 연결 후 모델 검사·적용이 필요합니다.');
     this.state.busy='classification';const config=this.state.config;
     try {
       const result=await classifyCategories(inputs,this.routeRun,[config.primary,...(config.fallback?[config.fallback]:[])].map(m=>({...m,timeoutMs:35_000})),(model,result)=>{

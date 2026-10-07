@@ -226,6 +226,8 @@ export async function getEvidenceStatusSummary(now: Date) {
     due: sql<number>`count(*) filter (where ${productEvidenceSources.nextAttemptAt} <= ${now.toISOString()}::timestamptz)::int`,
     stale: sql<number>`count(*) filter (where ${productEvidenceSources.state} = 'stale')::int`,
     failed: sql<number>`count(*) filter (where ${productEvidenceSources.state} in ('failed', 'disconnected'))::int`,
+    oldestDueHours: sql<number | null>`extract(epoch from (${now.toISOString()}::timestamptz - min(${productEvidenceSources.nextAttemptAt}) filter (where ${productEvidenceSources.nextAttemptAt} <= ${now.toISOString()}::timestamptz))) / 3600`,
   }).from(productEvidenceSources);
-  return { due: row?.due ?? 0, stale: row?.stale ?? 0, failed: row?.failed ?? 0 };
+  return { due: row?.due ?? 0, stale: row?.stale ?? 0, failed: row?.failed ?? 0,
+    oldestDueHours: row?.oldestDueHours == null ? null : Number(row.oldestDueHours) };
 }
