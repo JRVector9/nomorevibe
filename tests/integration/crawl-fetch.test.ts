@@ -62,10 +62,38 @@ describe("수집 잡", () => {
     await db.insert(crawlFrontier).values({ repo, signal: "test", state: "skipped", attempts: 1 });
 
     expect(await tick()).toMatchObject({ status: "completed" });
+    // 수집이 저장소를 찾지 못해 건너뛴 것(skipped)은 레포 삭제다 — 그 밖의 실패만 원본 재수집 실패
     expect(await crawl.getCandidate(repo)).toMatchObject({ state: "needs_review",
-      reason: "source_refresh_failed", signals: { stoppedAt: { rule: "원본 재수집" } } });
+      reason: "repo_deleted", signals: { stoppedAt: { rule: "원본 재수집" } } });
     expect(await crawl.frontierCounts()).toEqual({ skipped: 1 });
     expect(getRepo).not.toHaveBeenCalled();
+  });
+
+  it("hands approved and retriable held candidates whose repository vanished to a person as repo_deleted", async () => {
+    // 2026-10-08 운영: 승인 대기 44건·보류 19건이 신선한 원본이 없어 1차 심사도, 사람 대기열도 아닌 곳에 갇혀 있었다
+    const old = new Date(Date.now() - 3 * 24 * 60 * 60_000);
+    const park = async (repo: string, candidate: Record<string, unknown>, frontier: Record<string, unknown> = {}) => {
+      await crawl.putDocument({ repo, repoMeta: STABLE_META, productUrl: "https://my-app.test" });
+      await db.update(crawlDocuments).set({ fetchedAt: old }).where(eq(crawlDocuments.repo, repo));
+      await db.insert(crawlCandidates).values({ repo, productUrl: "https://my-app.test", decidedBy: "auto", ...candidate });
+      await db.insert(crawlFrontier).values({ repo, signal: "test", state: "skipped", attempts: 1, ...frontier });
+    };
+    await park("gone/approved", { state: "approved", reason: "passed" });
+    await park("gone/held", { state: "needs_review", reason: "ambiguous" });
+    // 사람이 이미 정한 것, 사람 대기 사유, 이름을 따라간 것, 원본이 저장소를 놓친 뒤에 다시 받아진 것은 그대로
+    await park("gone/admin", { state: "approved", reason: "passed", decidedBy: "admin" });
+    await park("gone/split", { state: "needs_review", reason: "second_review_split" });
+    await park("moved/old-name", { state: "approved", reason: "passed" }, { aliasOf: "moved/new-name" });
+    await park("back/again", { state: "approved", reason: "passed" }, { updatedAt: new Date(old.getTime() - 60_000) });
+
+    expect(await tick()).toMatchObject({ status: "completed" });
+    const reasons = Object.fromEntries((await db.select().from(crawlCandidates)).map(row => [row.repo, `${row.state}:${row.reason}`]));
+    expect(reasons).toEqual({
+      "gone/approved": "needs_review:repo_deleted", "gone/held": "needs_review:repo_deleted",
+      "gone/admin": "approved:passed", "gone/split": "needs_review:second_review_split",
+      "moved/old-name": "approved:passed", "back/again": "approved:passed",
+    });
+    expect(await crawl.getCandidate("gone/approved")).toMatchObject({ signals: { stoppedAt: { rule: "원본 재수집" } } });
   });
 
   it("recovers a prior fetch claim without touching the current job or accepting the old result", async () => {
