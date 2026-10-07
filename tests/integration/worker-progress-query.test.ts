@@ -2,7 +2,7 @@ import { beforeAll, beforeEach, expect, it, vi } from "vitest";
 import { spawnSync } from "node:child_process";
 import { eq } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { categoryDecisions, crawlCandidates, crawlDocuments, crawlFrontier, crawlSettings, operationsObservations } from "@/lib/db/schema";
+import { categoryDecisions, crawlCandidates, crawlDocuments, crawlFrontier, crawlPublicationChanges, crawlSettings, operationsObservations } from "@/lib/db/schema";
 import { saveSettings } from "@/lib/crawl/settings";
 import { buildWorkerProgress, readWorkerProgress } from "@/lib/operations/worker-progress-query";
 import { observeService } from "@/lib/operations/observations";
@@ -58,6 +58,8 @@ it("keeps an hour of boots and counts same-release restarts, not deploys", async
 });
 
 it("ages an expired classification hold from its retry time, not from when it was held", async () => {
+  // 같은 샤드의 다른 파일이 남긴 최근 발행이 있으면 "진행 중"으로 읽힌다 — 발행 진행이 없는 상태에서 잰다
+  await db.delete(crawlPublicationChanges);
   const now = new Date();
   const ago = (minutes: number) => new Date(now.getTime() - minutes * 60_000);
   // 2026-10-08: 1시간 보류가 막 풀린 후보가 "61분 대기"로 보여 감시가 발행 워커를 재시작했다
