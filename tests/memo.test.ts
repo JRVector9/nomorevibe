@@ -58,4 +58,32 @@ describe("짧은 읽기 캐시", () => {
       .toBe('["list",9,{"sort":"recent","since":"2026-10-01T00:00:00.000Z"}]');
     expect(memoKey({ a: 1, b: undefined })).toBe(memoKey({ a: 1 }));
   });
+
+  it("두 번째 층(Valkey)에 값이 있으면 읽지 않고, 그 만료 시각을 그대로 따른다", async () => {
+    let now = 1_000;
+    const remote = new Map<string, { value: unknown; expiresAt: number }>([["list:k", { value: "from-other-web", expiresAt: 21_000 }]]);
+    const store = {
+      get: vi.fn(async (key: string) => remote.get(key) ?? null) as never,
+      set: vi.fn((key: string, value: unknown, expiresAt: number) => { remote.set(key, { value, expiresAt }); }) as never,
+    };
+    const memo = createMemo<string>({ ttlMs: 30_000, max: 10, now: () => now, shared: { store, namespace: "list" } });
+    const load = vi.fn(async () => "from-db");
+
+    expect(await memo.get("k", load)).toBe("from-other-web");
+    expect(load).not.toHaveBeenCalled();
+    // 다른 웹이 넣은 값은 21초에 끝난다 — 이 웹에 들어온 뒤로 30초를 새로 세지 않는다
+    now = 21_000;
+    expect(await memo.get("k", load)).toBe("from-db");
+    expect(store.set).toHaveBeenCalledWith("list:k", "from-db", 51_000);
+  });
+
+  it("두 번째 층이 비었거나 응답하지 않으면 읽어서 두 층 모두에 넣는다", async () => {
+    const store = { get: vi.fn(async () => null) as never, set: vi.fn() as never };
+    const memo = createMemo<number>({ ttlMs: 30_000, max: 10, now: () => 0, shared: { store, namespace: "count" } });
+
+    expect(await memo.get("k", async () => 5)).toBe(5);
+    expect(store.set).toHaveBeenCalledWith("count:k", 5, 30_000);
+    expect(await memo.get("k", async () => 6)).toBe(5);
+  });
 });
+

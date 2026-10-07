@@ -1,4 +1,5 @@
 import { createMemo, memoKey } from "@/lib/cache/memo";
+import { sharedStore } from "@/lib/cache/shared";
 import { onReplica } from "@/lib/db";
 
 /**
@@ -6,15 +7,16 @@ import { onReplica } from "@/lib/db";
  *
  * 30초는 Cloudflare 의 두 번째 지우기(60초 뒤, cdn-purge)보다 짧다. 내린 제품을 원 서버가 그 뒤까지 내놓지 않는다.
  * 관리자·워커는 이것을 쓰지 않는다 — 바로 고친 값을 봐야 한다. 읽기는 복제본에서 한다(lib/db/replica.ts).
+ * 웹 6대는 두 번째 층(Valkey, lib/cache/shared.ts)을 함께 쓴다 — 한 대가 읽은 값을 나머지가 그대로 쓴다.
  */
 const PUBLIC_TTL_MS = 30_000;
 const memos = {
   /** 개수·시즌 — 열쇠가 적다 */
-  count: createMemo<unknown>({ ttlMs: PUBLIC_TTL_MS, max: 300 }),
+  count: createMemo<unknown>({ ttlMs: PUBLIC_TTL_MS, max: 300, shared: { store: sharedStore, namespace: "count" } }),
   /** 목록 — 한 항목이 클 수 있어(최대 198장) 수를 적게 */
-  list: createMemo<unknown>({ ttlMs: PUBLIC_TTL_MS, max: 200 }),
+  list: createMemo<unknown>({ ttlMs: PUBLIC_TTL_MS, max: 200, shared: { store: sharedStore, namespace: "list" } }),
   /** 상세 — 제품마다 하나 */
-  detail: createMemo<unknown>({ ttlMs: PUBLIC_TTL_MS, max: 2_000 }),
+  detail: createMemo<unknown>({ ttlMs: PUBLIC_TTL_MS, max: 2_000, shared: { store: sharedStore, namespace: "detail" } }),
 };
 
 export function publicRead<T>(kind: keyof typeof memos, key: unknown[], load: () => Promise<T>): Promise<T> {
