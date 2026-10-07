@@ -7,8 +7,26 @@ import type { Category } from "./schema";
 import type { SearchQuery } from "./search";
 import { rankSearch, type RankDependencies, type RankedSearch } from "./hybrid-search";
 import { countProducts, listProductSlugs, nearestProductSlugs, productDocuments } from "./repository";
+import { onPrimary } from "@/lib/db";
+import { logger } from "@/lib/observability/logger";
 
 export type RelevanceFilters = { category?: Category; builder?: string; observedTool?: string };
+
+/**
+ * 복제본이 pgvector 를 모르면(패키지 없음 — 2026-10-07 V9-Replica) 벡터 읽기만 주 DB 에서 다시 한다.
+ * 58P01 확장 파일 없음 · 42704 타입 없음 · 42883 함수 없음. 다른 오류는 그대로 던진다(낱말 검색으로 내려간다).
+ */
+const MISSING_ON_REPLICA = new Set(["58P01", "42704", "42883"]);
+export async function withPrimaryFallback<T>(load: () => Promise<T>, primary: (load: () => Promise<T>) => Promise<T> = onPrimary): Promise<T> {
+  try {
+    return await load();
+  } catch (error) {
+    const code = (error as { code?: unknown; cause?: { code?: unknown } }).code ?? (error as { cause?: { code?: unknown } }).cause?.code;
+    if (typeof code !== "string" || !MISSING_ON_REPLICA.has(code)) throw error;
+    logger.warn("search.vector_read_on_primary", { code });
+    return primary(load);
+  }
+}
 
 /** 공개 목록과 같은 바탕 — 검증·시드, 닿지 않는 제품 빼기 */
 const scope = (filters: RelevanceFilters) => ({ statuses: ["verified" as const, "seeded" as const], excludeDown: true, ...filters });
@@ -23,7 +41,7 @@ export function rankRelevance(raw: string, plan: SearchQuery, filters: Relevance
     ftsSlugs: (limit) => listProductSlugs({ ...base, query: plan, sort: "relevance", limit }),
     ftsCount: () => countProducts({ ...base, query: plan }),
     ftsMatching: (slugs) => listProductSlugs({ ...base, query: plan, slugs, limit: slugs.length }),
-    nearestSlugs: (vector, limit, minSimilarity) => nearestProductSlugs(vector, base, limit, minSimilarity),
+    nearestSlugs: (vector, limit, minSimilarity) => withPrimaryFallback(() => nearestProductSlugs(vector, base, limit, minSimilarity)),
     documents: productDocuments,
     ...deps,
   });

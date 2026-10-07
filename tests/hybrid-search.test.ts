@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { CANDIDATES, fuseRanks, rankSearch, rerankDocuments, RERANK_TOP, type RankDependencies } from "@/lib/domain/products/hybrid-search";
+import { withPrimaryFallback } from "@/lib/domain/products/relevance";
 
 const slugs = (prefix: string, n: number) => Array.from({ length: n }, (_, i) => `${prefix}${i + 1}`);
 
@@ -95,5 +96,20 @@ describe("재정렬 서버 부르기", () => {
     await expect(rerankDocuments("q", ["a"], { url: "http://m", fetchImpl: failing })).rejects.toThrow("rerank_http_503");
     const partial = vi.fn(async () => new Response(JSON.stringify({ results: [{ index: 0, relevance_score: 1 }] })));
     await expect(rerankDocuments("q", ["a", "b"], { url: "http://m", fetchImpl: partial })).rejects.toThrow("rerank_bad_response");
+  });
+});
+
+describe("복제본이 pgvector 를 모를 때", () => {
+  it("확장이 없다는 오류에만 주 DB 에서 다시 읽는다", async () => {
+    const missing = Object.assign(new Error('could not access file "$libdir/vector"'), { code: "58P01" });
+    const load = vi.fn().mockRejectedValueOnce(missing).mockResolvedValueOnce(["on-primary"]);
+    const primary = vi.fn(async (again: () => Promise<string[]>) => again());
+    expect(await withPrimaryFallback(load, primary)).toEqual(["on-primary"]);
+    expect(primary).toHaveBeenCalledTimes(1);
+
+    const timeout = Object.assign(new Error("canceling statement due to statement timeout"), { code: "57014" });
+    const other = vi.fn(async () => primary(async () => ["never"]));
+    await expect(withPrimaryFallback(vi.fn().mockRejectedValue(timeout), other)).rejects.toThrow("statement timeout");
+    expect(other).not.toHaveBeenCalled();
   });
 });

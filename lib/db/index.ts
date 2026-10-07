@@ -72,3 +72,8 @@ const router = createReplicaRouter<Db>({
 export function onReplica<T>(load: () => Promise<T>): Promise<T> {
   return router.read(load);
 }
+
+/** 복제본 안에서 이 읽기만 주 DB 로 — 복제본이 아직 갖추지 못한 것(확장 등)을 읽을 때 */
+export function onPrimary<T>(load: () => Promise<T>): Promise<T> {
+  return replicaScope.exit(load);
+}
