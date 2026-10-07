@@ -50,6 +50,8 @@ export type AttentionCounts = {
   auditRejectsOpen: number;      // product_audit_items where ai_decision = 'reject' and human_decision is null
   /** 생존 확인 대상(웹사이트로 여는 공개 제품)만 센다 — 설치형은 확인하지 않으므로 늘 밀린 것으로 보이게 된다 */
   healthOverdue: number;         // listed products (status seeded|verified) whose product_health.checked_at is null or older than 6 hours
+  /** 생존 확인이 따라가야 할 시간당 건수 — 웹사이트 공개 제품 수 ÷ 재확인 간격(시간) */
+  healthTargetPerHour: number;
   introNeedsEditor: number;      // use countProducts({ statuses: ["seeded","verified"], introNeedsEditor: true }) from "@/lib/domain/products/repository"
 };
 
@@ -296,7 +298,7 @@ export async function todayPublications(now = new Date(), limit = 6): Promise<To
 
 export async function attentionCounts(now = new Date()): Promise<AttentionCounts> {
   const [[row], introNeedsEditor] = await Promise.all([
-    readOnly<{ audit: number; health: number }>(sql`
+    readOnly<{ audit: number; health: number; websites: number }>(sql`
       SELECT
         (SELECT count(*)::int FROM ${productAuditItems} JOIN ${products} ON ${products.id} = ${productAuditItems.productId}
           WHERE ${productAuditItems.campaignId} = (SELECT max(${productAuditCampaigns.id}) FROM ${productAuditCampaigns})
@@ -305,9 +307,13 @@ export async function attentionCounts(now = new Date()): Promise<AttentionCounts
         (SELECT count(*)::int FROM ${products} LEFT JOIN ${productHealth} ON ${productHealth.slug} = ${products.slug}
           WHERE ${products.status} IN ('seeded', 'verified') AND ${products.accessMode} = 'website'
             AND (${productHealth.checkedAt} IS NULL
-              OR ${productHealth.checkedAt} < ${at(now)} - ${RECHECK_AFTER_MINUTES}::int * interval '1 minute')) AS health
+              OR ${productHealth.checkedAt} < ${at(now)} - ${RECHECK_AFTER_MINUTES}::int * interval '1 minute')) AS health,
+        (SELECT count(*)::int FROM ${products}
+          WHERE ${products.status} IN ('seeded', 'verified') AND ${products.accessMode} = 'website') AS websites
     `),
     countProducts({ statuses: ["seeded", "verified"], introNeedsEditor: true }),
   ]);
-  return { auditRejectsOpen: Number(row?.audit ?? 0), healthOverdue: Number(row?.health ?? 0), introNeedsEditor };
+  // 한 바퀴를 재확인 간격 안에 돌려면 시간당 몇 건을 봐야 하나 — 제품이 늘면 목표도 는다(고정값 3,224 는 1만9천 개 때 것)
+  const healthTargetPerHour = Math.ceil(Number(row?.websites ?? 0) / (RECHECK_AFTER_MINUTES / 60));
+  return { auditRejectsOpen: Number(row?.audit ?? 0), healthOverdue: Number(row?.health ?? 0), healthTargetPerHour, introNeedsEditor };
 }
