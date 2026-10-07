@@ -2,7 +2,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vite
 import { eq, sql } from "drizzle-orm";
 
 const { db } = await import("@/lib/db");
-const { jobs, products, productSearchProfiles, textTranslations } = await import("@/lib/db/schema");
+const { crawlCandidates, crawlDocuments, jobs, products, productSearchProfiles, textTranslations } = await import("@/lib/db/schema");
 const { SLOW_CALL_MS, writeSearchProfiles } = await import("@/lib/jobs/products/search-profile");
 const { refreshProductSearchDocuments } = await import("@/lib/jobs/products/search-refresh");
 const { productAuditCampaigns, productAuditItems } = await import("@/lib/db/product-audit-schema");
@@ -39,6 +39,8 @@ beforeEach(async () => {
   await resetTables();
   await db.delete(productSearchProfiles);
   await db.delete(jobs);
+  await db.delete(crawlCandidates);
+  await db.delete(crawlDocuments);
   await db.execute(sql`truncate product_audit_campaigns, product_audit_items, product_audit_attempts restart identity cascade`);
   await db.delete(textTranslations).where(eq(textTranslations.targetLang, "en"));
   vi.stubEnv("ABCLLM_API_KEY", "test-key");
@@ -281,6 +283,20 @@ describe("검색 키워드 잡", () => {
     expect(await db.select().from(productSearchProfiles)).toHaveLength(2);
   });
 
+  it("안 지은 것 다음에는 오래 기다린 갱신부터 짓는다 — 최근 제품이 앞을 차지하지 않게", async () => {
+    const waited = await seed("waited");
+    const recent = await seed("recent");
+    gateway.mockResolvedValue(answer(["grocery list"], ["장보기"]));
+    await tick();
+    await db.update(products).set({ tagline: "changed" });
+    await db.update(productSearchProfiles).set({ updatedAt: sql`now() - interval '14 days'` }).where(eq(productSearchProfiles.productId, waited));
+    await db.update(productSearchProfiles).set({ updatedAt: sql`now() - interval '1 hour'` }).where(eq(productSearchProfiles.productId, recent));
+    const rich = await seed("new-rich", { description: "A longer description" });
+    const thin = await seed("new-thin");
+
+    expect((await pendingProfiles(10)).map((task) => task.product.id)).toEqual([thin, rich, waited, recent]);
+  });
+
   it("공개되지 않은 제품은 짓지 않는다", async () => {
     await seed("hidden", { status: "banned" });
     await tick();
@@ -299,5 +315,63 @@ describe("카테고리 색인", () => {
     // 소개에 "game"이 없어도 카테고리가 잇는다
     expect(await find("chess game")).toContain("rookies-revenge");
     expect(await find("게임")).toContain("rookies-revenge");
+  });
+});
+
+describe("본문 옮겨 적기와 키워드 갱신", () => {
+  async function crawled(slug: string, textSample: string) {
+    const id = await seed(slug, { searchPageText: textSample });
+    await db.insert(crawlDocuments).values({ repo: `owner/${slug}`, productUrl: `https://${slug}.test`, pageStatus: 200,
+      repoMeta: { topics: ["pdf"] }, pageMeta: { textSample } });
+    await db.insert(crawlCandidates).values({ repo: `owner/${slug}`, state: "published", publishedSlug: slug });
+    await refreshProductSearchDocuments(ctx);
+    gateway.mockResolvedValue(answer(["grocery list"], ["장보기"]));
+    await tick();
+    return id;
+  }
+  // 생존 확인이 본문을 새로 떠 온 것과 같다(uptime.ts → refreshTextSample)
+  const resample = (slug: string, textSample: string) => db.update(crawlDocuments)
+    .set({ pageMeta: { textSample } }).where(eq(crawlDocuments.repo, `owner/${slug}`));
+  const state = async (id: number) => {
+    const [product] = await db.select().from(products).where(eq(products.id, id));
+    const [profile] = await db.select().from(productSearchProfiles).where(eq(productSearchProfiles.productId, id));
+    return { pageText: product.searchPageText, topics: product.searchTopics, needsRefresh: profile.needsRefresh };
+  };
+
+  it("지은 지 일주일이 안 됐으면 본문만 바뀐 것은 옮기지 않아 다시 짓지 않는다", async () => {
+    const id = await crawled("visits", "Ranking · 2,798 visits");
+    await resample("visits", "Ranking · 2,812 visits");
+    await refreshProductSearchDocuments(ctx);
+    expect(await state(id)).toMatchObject({ pageText: "Ranking · 2,798 visits", needsRefresh: false });
+    gateway.mockClear();
+    await tick();
+    expect(gateway).not.toHaveBeenCalled();
+  });
+
+  it("일주일이 지나면 바뀐 본문을 옮기고 다시 짓는다", async () => {
+    const id = await crawled("weekly", "Ranking · 2,798 visits");
+    await db.update(productSearchProfiles).set({ generatedAt: sql`now() - interval '8 days'` }).where(eq(productSearchProfiles.productId, id));
+    await resample("weekly", "Ranking · 9,999 visits");
+    await refreshProductSearchDocuments(ctx);
+    expect(await state(id)).toMatchObject({ pageText: "Ranking · 9,999 visits", needsRefresh: true });
+  });
+
+  it("본문 말고 다른 원본이 바뀌면 바로 옮기고 다시 짓는다 — 본문도 같이", async () => {
+    const id = await crawled("topics", "Merge PDF files");
+    await db.update(crawlDocuments).set({ repoMeta: { topics: ["pdf", "cli"] }, pageMeta: { textSample: "Merge PDF files fast" } })
+      .where(eq(crawlDocuments.repo, "owner/topics"));
+    await refreshProductSearchDocuments(ctx);
+    expect(await state(id)).toMatchObject({ topics: "pdf cli", pageText: "Merge PDF files fast", needsRefresh: true });
+  });
+
+  it("비었던 본문이 생기거나, 다른 원인으로 다시 지을 차례면 본문을 바로 옮긴다", async () => {
+    const empty = await crawled("empty", "");
+    const pending = await crawled("pending", "Merge PDF files");
+    await resample("empty", "Merge PDF files");
+    await db.update(products).set({ tagline: "PDF merger" }).where(eq(products.id, pending));
+    await resample("pending", "Merge PDF files fast");
+    await refreshProductSearchDocuments(ctx);
+    expect(await state(empty)).toMatchObject({ pageText: "Merge PDF files", needsRefresh: true });
+    expect(await state(pending)).toMatchObject({ pageText: "Merge PDF files fast", needsRefresh: true });
   });
 });
