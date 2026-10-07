@@ -32,6 +32,8 @@ export type ResolvedSearch = {
   queries: SearchQuery;
   /** 화면에 "이 말로도 찾았다"고 밝힐 영어 낱말 — 표현이 둘이면 " / "로 잇는다. 옮기지 않았으면 null */
   translated: string | null;
+  /** 기다리지 않아서 아직 옮기지 못했다 — 응답 뒤에 옮겨 캐시에 둔다(warmQueryTranslation) */
+  translationPending?: boolean;
 };
 
 /** 같은 뜻인데 공백·대소문자만 다른 말을 따로 옮기지 않는다 */
@@ -119,20 +121,43 @@ async function translateKorean(raw: string): Promise<string | null> {
   }
 }
 
-export async function resolveSearchQuery(query: string | undefined): Promise<ResolvedSearch> {
+/**
+ * 응답을 보낸 뒤 옮겨 둔다 — 같은 말을 다시 찾으면 캐시에서 바로 붙는다.
+ * 관련도순 검색은 번역을 기다리지 않는다(2026-10-07): 의미 검색·재정렬이 한국어 문장을 영어 소개와 바로 재서,
+ * 번역 없이도 nDCG 0.824(번역을 붙이면 0.832)다. 처음 들어온 한국어 문장의 게이트웨이 대기(약 3초)를 없앤다.
+ */
+export async function warmQueryTranslation(query: string): Promise<void> {
+  const raw = query.trim();
+  if (raw && hasHangul(raw)) await translateKorean(raw);
+}
+
+/** 캐시에만 묻는다 — 없으면 null. 캐시가 죽어도 검색은 돈다 */
+async function storedTranslation(raw: string): Promise<string | null> {
+  try {
+    return await cachedTranslation(queryTranslationKey(raw));
+  } catch (error) {
+    logger.warn("search.translate_unavailable", { error });
+    return null;
+  }
+}
+
+export async function resolveSearchQuery(query: string | undefined, options: { waitForTranslation?: boolean } = {}): Promise<ResolvedSearch> {
   const raw = query?.trim() ?? "";
   if (!raw) return { queries: [], translated: null };
-  const stored = hasHangul(raw) ? await translateKorean(raw) : null;
+  const wait = options.waitForTranslation ?? true;
+  const stored = !hasHangul(raw) ? null : wait ? await translateKorean(raw) : await storedTranslation(raw);
+  const translationPending = !wait && hasHangul(raw) && stored === null;
   // 영어로 옮기면 엉뚱한 것이 걸리는 한국식 영어는 정해 둔 영어 말로도 찾는다(translate.ts QUERY_EXPANSIONS)
   const phrases = [...new Set([...(stored ? queryTranslationPhrases(stored) : []), ...queryExpansions(raw)])];
   const translated = phrases.length ? phrases.join(" / ") : null;
   const texts = [raw, ...phrases];
+  const pending = translationPending ? { translationPending } : {};
   try {
     // 번역 표현들은 같은 뜻이라 한 묶음이다 — 원문(0)과 번역(1)
-    return { queries: { ...await planSearch(texts), groups: texts.map((_, index) => (index === 0 ? 0 : 1)) }, translated };
+    return { queries: { ...await planSearch(texts), groups: texts.map((_, index) => (index === 0 ? 0 : 1)) }, translated, ...pending };
   } catch (error) {
     // 짜지 못해도 검색은 돈다 — 예전처럼 모든 낱말로 찾는다
     logger.warn("search.plan_failed", { error });
-    return { queries: texts, translated };
+    return { queries: texts, translated, ...pending };
   }
 }

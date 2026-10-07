@@ -1,6 +1,6 @@
 import { hasSearchQuery, productSearchPredicate, productSearchRank, type SearchQuery } from './search';
 import { syncRepositoryLink } from "@/lib/domain/evidence/repository-link-sync";
-import { and, desc, eq, inArray, isNotNull, like, ne, or, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNotNull, like, ne, notInArray, or, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { lockProductGeneration, type ProductTransaction } from "./generation";
 import { DOWN_THRESHOLD } from "./health";
@@ -25,6 +25,7 @@ import {
   productRefreshRequests,
   productSkills,
   productUpdates,
+  productEmbeddings,
   type Product,
   type NewProduct,
   type ProductStatus,
@@ -35,6 +36,7 @@ import { METRICS_WINDOW_DAYS } from "./clicks";
 import { lockProductRepository } from "./repository-identity";
 import { observedToolPredicate } from "./observed-tool";
 import { withJobLeaseWrite, type JobLease } from "@/lib/jobs/control";
+import { EMBEDDING_DOCUMENT, EMBEDDING_MODEL, vectorLiteral } from "./embedding";
 export { findRepositoryProduct } from "./repository-identity";
 
 /** 제품 데이터 접근 — 도메인 바깥에서 DB를 직접 만지지 않도록 여기로 모은다 */
@@ -79,6 +81,10 @@ export type ListOptions = {
   listedSince?: Date;
   /** GitHub 스타가 이만큼 이상인 것만 */
   minStars?: number;
+  /** 이 제품들만 — 관련도순 검색이 이미 줄 세운 주소의 행을 받을 때(hybrid-search.ts) */
+  slugs?: readonly string[];
+  /** 이 제품들은 빼고 — 관련도순 검색의 앞쪽에 이미 나온 것 */
+  excludeSlugs?: readonly string[];
 };
 
 /**
@@ -160,8 +166,10 @@ const introNeedsEditor = sql`exists (
 )`;
 
 /** 목록과 개수가 같은 조건을 쓰도록 한 곳에서 만든다 */
-function listConditions({ statuses, category, query, builder, observedTool, hasRepository, excludeDown, introNeedsEditor: needsEditor, rising, listedSince, minStars }: Omit<ListOptions, "limit" | "sort" | "offset">) {
+function listConditions({ statuses, category, query, builder, observedTool, hasRepository, excludeDown, introNeedsEditor: needsEditor, rising, listedSince, minStars, slugs, excludeSlugs }: Omit<ListOptions, "limit" | "sort" | "offset">) {
   const conditions = [inArray(products.status, statuses)];
+  if (slugs) conditions.push(slugs.length ? inArray(products.slug, [...slugs]) : sql`false`);
+  if (excludeSlugs?.length) conditions.push(notInArray(products.slug, [...excludeSlugs]));
   if (excludeDown) conditions.push(notDown);
   if (needsEditor) conditions.push(introNeedsEditor);
   if (rising) conditions.push(risingStars);
@@ -196,6 +204,41 @@ export async function listProducts(options: ListOptions): Promise<Product[]> {
 /** listProducts 와 같은 목록을 카드에 쓰는 열만으로 */
 export async function listProductRows(options: ListOptions): Promise<ProductListRow[]> {
   return db.query.products.findMany({ ...listQuery(options), columns: LIST_COLUMNS });
+}
+
+/** listProducts 와 같은 조건·순서의 주소만 — 관련도순 검색이 낱말 검색 순서를 섞을 때 */
+export async function listProductSlugs(options: ListOptions): Promise<string[]> {
+  const { where, orderBy, limit, offset } = listQuery(options);
+  const rows = await db.select({ slug: products.slug }).from(products).where(where).orderBy(...orderBy).limit(limit).offset(offset ?? 0);
+  return rows.map((row) => row.slug);
+}
+
+/**
+ * 검색어 벡터와 가까운 제품 — 목록과 같은 거르기, 코사인 하한 이상, 가까운 순.
+ *
+ * 색인 없이 다 잰다(공개분 3만5천 행, halfvec). 정확하고 카테고리 같은 거르기를 그대로 건다.
+ * 지금 모델로 임베딩한 것만 본다 — 모델을 바꾸는 동안 옛 벡터와 새 검색어가 섞이지 않게.
+ */
+export async function nearestProductSlugs(
+  vector: readonly number[],
+  options: Omit<ListOptions, "limit" | "sort" | "offset" | "query">,
+  limit: number,
+  minSimilarity: number,
+): Promise<string[]> {
+  const distance = sql`(${productEmbeddings.embedding} <=> ${vectorLiteral(vector)}::halfvec)`;
+  const rows = await db.select({ slug: products.slug }).from(products)
+    .innerJoin(productEmbeddings, and(eq(productEmbeddings.productId, products.id), eq(productEmbeddings.model, EMBEDDING_MODEL)))
+    .where(and(...listConditions(options), sql`${distance} <= ${1 - minSimilarity}`))
+    .orderBy(distance, products.slug)
+    .limit(limit);
+  return rows.map((row) => row.slug);
+}
+
+/** 재정렬 모델이 읽을 제품 글 — 임베딩한 것과 같은 글(EMBEDDING_DOCUMENT) */
+export async function productDocuments(slugs: readonly string[]): Promise<Map<string, string>> {
+  if (slugs.length === 0) return new Map();
+  const rows = await db.select({ slug: products.slug, text: EMBEDDING_DOCUMENT }).from(products).where(inArray(products.slug, [...slugs]));
+  return new Map(rows.map((row) => [row.slug, row.text]));
 }
 
 function listQuery({ sort = "recent", limit, offset, ...options }: ListOptions) {

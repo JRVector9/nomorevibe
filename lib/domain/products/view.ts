@@ -113,6 +113,14 @@ export async function getPublicList(limit: number, options: BrowseOptions = {}):
   return withMetrics(rows.map(toListItem));
 }
 
+/** 이미 줄 세운 주소의 카드 — 관련도순 검색(relevance.ts)의 순서를 그대로 지킨다. 그사이 내려간 제품은 빠진다 */
+export async function getPublicListBySlugs(slugs: readonly string[]): Promise<ProductListItem[]> {
+  if (slugs.length === 0) return [];
+  const rows = await listProductRows({ statuses: ["verified", "seeded"], limit: slugs.length, excludeDown: true, slugs });
+  const position = new Map(slugs.map((slug, index) => [slug, index]));
+  return withMetrics(rows.sort((a, b) => position.get(a.slug)! - position.get(b.slug)!).map(toListItem));
+}
+
 /** 발견 보드 — 검증·시드 제품을 실제 등재 시각순으로 함께 보여준다. */
 export async function getDiscoveryList(limit: number): Promise<ProductListItem[]> {
   const rows = await listRecentlyDiscovered(limit);
