@@ -1,5 +1,3 @@
-/* OAuth uses an anchor so prefetch never starts authentication. */
-/* eslint-disable @next/next/no-html-link-for-pages */
 'use client';
 import Link from 'next/link';
 import { useState } from 'react';
@@ -17,7 +15,7 @@ const LABELS:Record<string,string>={starting:'인증 페이지 준비 중',await
 const label=(s:string)=>LABELS[s]??s;
 const CONNECTION_ERRORS:Record<string,string>={oauth_rejected:'Claude가 인증 코드를 거절했습니다. 새 연결을 시작한 뒤 공식 페이지에서 받은 최신 코드를 입력해주세요.',exchange_timeout:'코드 확인에 응답이 없습니다. 새 연결을 시작해주세요.',credential_capture_failed:'인증 정보를 저장하지 못했습니다. 새 연결로 다시 시도해주세요.'};
 
-export function AiConnection({initial,reviewMode,oauthConfigured,localCodexAllowed}:{initial:AgentStatus|null;reviewMode:string;oauthConfigured:boolean;localCodexAllowed:boolean}) {
+export function AiConnection({initial,reviewMode}:{initial:AgentStatus|null;reviewMode:string}) {
   const {status,pending,transportError,message,checkedAt,refresh,perform}=useAgentConnection(initial);
   const [draft,setDraft]=useState<ModelConfig|null>(null),[dialogProvider,setDialogProvider]=useState<Provider|null>(null);
   const [authCode,setAuthCode]=useState(''),[dialogError,setDialogError]=useState(''),[copied,setCopied]=useState(false);
@@ -71,7 +69,6 @@ export function AiConnection({initial,reviewMode,oauthConfigured,localCodexAllow
       })}
       {busyText&&<div className="ai-notice"><p role="status">{busyText}</p>{countdown}{status?.busy==='login'&&<button disabled={pending} onClick={()=>void cancel()}>진행 중인 연결 취소</button>}</div>}
       <p className="ai-caption">Claude 연결 확인은 저장된 인증으로 hi~를 보내고 실제 답변을 표시합니다. 분류 설정 적용에는 아래의 선택 모델 검사가 필요합니다.</p>
-      {!localCodexAllowed&&<p className="ai-caption">{oauthConfigured?<a href="/api/auth/github">GitHub 관리자 계정으로 로그인</a>:'서버의 관리자 GitHub OAuth 설정이 필요합니다.'}</p>}
     </section>
     <section className="ops-panel ai-model-panel" aria-labelledby="ai-model-title">
       <div className="ops-row"><div><h3 id="ai-model-title">분류 모델 선택</h3><p>우선 모델이 실패하면 예비 모델로 다시 시도합니다.</p></div><button disabled={pending} onClick={()=>setDraft(DEFAULT_CONFIG)}>Spark → Claude 선택</button></div>
