@@ -3,7 +3,6 @@
 import { useActionState } from "react";
 import { resetCrawlSettings, type SaveState } from "./actions";
 import type { SettingsDrift, SettingsDriftItem } from "@/lib/crawl/settings";
-import { Panel } from "@/components/Panel";
 
 /**
  * 저장된 기준이 코드 기본값과 어긋났을 때만 뜬다.
@@ -26,14 +25,21 @@ export function SettingsDriftNotice({ drift }: { drift: SettingsDrift }) {
   const absent = drift.filter((item) => item.kind === "absent");
   const changed = drift.filter((item) => item.kind === "changed");
 
+  /*
+   * 2026-10-08 리디자인: 맨 위의 큰 경고 상자에서 맨 아래 접힌 상자로 옮겼다. 오류가 아니라 비교라서다.
+   * 목록에서 빠진 기본값은 거르는 목록 카드 안에서도 보이고 "모두 더하기"로 채운다.
+   */
   return (
-    <div className="mt-6">
-      <Panel
-        tone="warn"
-        title="저장된 기준이 기본값과 다릅니다"
-        actions={<span className="text-[13px] text-fg-2">{drift.length}항목</span>}
-        note="기준을 한 번 저장하면 그 값이 코드 기본값을 덮습니다. 그래서 규칙을 고쳐도 이 환경에는 닿지 않습니다."
-      >
+    <details id="defaults" className="group scroll-mt-6 rounded-[12px] border border-line bg-bg-card px-[22px] py-4">
+      <summary className="flex cursor-pointer list-none flex-wrap items-baseline gap-2 [&::-webkit-details-marker]:hidden">
+        <h2 className="text-[17px] font-semibold tracking-tight">기본값과 비교</h2>
+        <span className="text-[13px] font-semibold text-warn">다른 항목 {drift.length}개</span>
+        <span className="ml-auto text-[13px] font-semibold text-accent-ink group-open:hidden">펼치기</span>
+      </summary>
+      <p className="mt-2 max-w-[72ch] text-[13px] leading-[1.6] text-fg-3">
+        기준을 한 번 저장하면 그 값이 코드 기본값을 덮습니다. 그래서 규칙을 고쳐도 이 환경에는 닿지 않습니다.
+      </p>
+      <div className="mt-4">
         <div className="flex flex-col gap-5">
           {absent.length > 0 && (
             <Group
@@ -86,8 +92,8 @@ export function SettingsDriftNotice({ drift }: { drift: SettingsDrift }) {
           </span>
         </form>
         {state?.issues && <p className="mt-2 text-[13px] text-down">{state.issues.join(", ")}</p>}
-      </Panel>
-    </div>
+      </div>
+    </details>
   );
 }
 

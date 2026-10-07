@@ -1,474 +1,238 @@
 "use client";
 
-import { useActionState } from "react";
+import { useActionState, useEffect, useReducer, useRef, useState } from "react";
 import { saveCrawlSettings, type SaveState } from "./actions";
 import type { CrawlSettings } from "@/lib/crawl/settings-schema";
-import { Panel } from "@/components/Panel";
+import { describeChanges, formValues, type FieldValues } from "./settings/changes";
+import { searchUsage, SEED_INTERVAL_MINUTES } from "./settings/model";
+import { FilterLists } from "./settings/FilterLists";
+import { ModelRows } from "./settings/ModelRows";
+import { SignalsTable, type SignalYieldView } from "./settings/SignalsTable";
+import { chipClass, hintClass, inputBase, inputClass, labelClass, SettingsCard, Switch } from "./settings/Switch";
 
-const field = "w-full rounded-lg border border-line bg-bg-soft px-3 py-2 text-[13px] text-fg outline-none focus:border-accent";
-const label = "block text-[13px] font-semibold text-fg-2";
-const hint = "mt-1 text-[13px] leading-[1.6] text-fg-3";
+/** 2026-09-18 실측(사내 게이트웨이) — 동시 실행 수마다 성공률과 처리량 */
+const MEASURED = [
+  { at: 2, perHour: 119, note: "성공 99%" },
+  { at: 4, perHour: 225, note: "성공 94% · 남는 몫으로 감사" },
+  { at: 6, perHour: 156, note: "성공 87% · 실패가 늘어 더 느림" },
+];
 
-function Toggle({ name, defaultChecked, children }: { name: string; defaultChecked: boolean; children: React.ReactNode }) {
+const segment = "relative flex cursor-pointer items-center gap-1.5 border-l border-line px-3 py-2 text-[13px] font-semibold text-fg-3 first:border-l-0 has-[:checked]:bg-fg has-[:checked]:text-bg";
+
+function Segmented({ name, label, options, defaultValue }: {
+  name: string; label: string; options: { value: string; label: string }[]; defaultValue: string;
+}) {
   return (
-    <label className="flex items-start gap-2.5 text-[13px]">
-      <input type="checkbox" name={name} defaultChecked={defaultChecked} className="mt-0.5 accent-[var(--accent)]" />
-      <span>{children}</span>
-    </label>
+    <div role="radiogroup" aria-label={label} className="inline-flex w-fit overflow-hidden rounded-[9px] border border-line">
+      {options.map((option) => (
+        <label key={option.value} className={segment}>
+          <input type="radio" name={name} value={option.value} defaultChecked={defaultValue === option.value} className="absolute h-px w-px opacity-0" />
+          {option.label}
+        </label>
+      ))}
+    </div>
+  );
+}
+
+function ToggleRow({ name, defaultChecked, title, note }: { name: string; defaultChecked: boolean; title: string; note?: string }) {
+  return (
+    <div className="flex items-center gap-3 border-t border-bg-hover py-3 first:border-t-0">
+      <Switch name={name} defaultChecked={defaultChecked} label={title} />
+      <div className="min-w-0 flex-1">
+        <div className="text-[14px] font-semibold">{title}</div>
+        {note && <div className="text-[13px] text-fg-3">{note}</div>}
+      </div>
+    </div>
+  );
+}
+
+function NumberField({ id, label, defaultValue, min, max, step, hint, suffix, onValue }: {
+  id: string; label: React.ReactNode; defaultValue: number; min?: number; max?: number; step?: number;
+  hint?: React.ReactNode; suffix?: string; onValue?: (value: number) => void;
+}) {
+  const input = <input id={id} name={id} type="number" min={min} max={max} step={step} defaultValue={defaultValue}
+    onChange={onValue ? (event) => onValue(Number(event.target.value)) : undefined} className={inputClass} />;
+  return (
+    <div className="flex min-w-0 flex-col gap-1.5">
+      {/* 라벨 높이를 맞춘다 — "권장 0" 칩이 붙은 라벨만 높아지면 그 칸의 입력이 옆 칸보다 내려간다 */}
+      <label htmlFor={id} className={`${labelClass} flex min-h-6 items-center`}>{label}</label>
+      {suffix ? <div className="flex items-center gap-2">{input}<span className={hintClass}>{suffix}</span></div> : input}
+      {hint && <div className={hintClass}>{hint}</div>}
+    </div>
   );
 }
 
 /**
- * 신호를 더하는 유일한 길 — 목록 끝의 빈 행.
+ * 크롤 설정 폼 — 2026-10-08 리디자인(시안 https://claude.ai/artifact/SDW3BrHUfgDp1EsGof3cAB).
  *
- * 저장된 신호 목록이 코드 기본값을 통째로 덮으므로(settings.ts), 기본 신호를 새로 넣어도
- * 이미 저장된 환경에는 닿지 않는다. 빈 행이 없던 동안 남은 길은 판정 기준까지 함께
- * 되돌리는 "기본값으로 되돌리기"뿐이었다. 라벨이나 검색어가 비면 서버 액션이 버리므로
- * (actions.ts) 그냥 저장을 눌러도 신호가 늘지 않는다.
+ * 필드 이름과 서버 액션(saveCrawlSettings)은 그대로다. 바뀐 것은 배치와, 신호별 7일 성과·빠진 기본값 더하기·
+ * 저장 바(무엇이 바뀌었는지)다. "되돌리기"는 폼을 처음 그린 값으로 다시 그린다.
  */
-const BLANK_QUERY = {
-  label: "",
-  kind: "commits" as const,
-  query: "",
-  enabled: false,
-  priority: 0,
-  builder: null,
-  requireEvidence: false,
-};
+export function SettingsForm({ settings, yields = {} }: { settings: CrawlSettings; yields?: Record<string, SignalYieldView> }) {
+  const [generation, setGeneration] = useState(0);
+  return <SettingsFormBody key={generation} settings={settings} yields={yields} onRevert={() => setGeneration((g) => g + 1)} />;
+}
 
-export function SettingsForm({ settings }: { settings: CrawlSettings }) {
+function SettingsFormBody({ settings, yields, onRevert }: { settings: CrawlSettings; yields: Record<string, SignalYieldView>; onRevert: () => void }) {
   const [state, action, pending] = useActionState<SaveState, FormData>(saveCrawlSettings, null);
-  const { discover, judge } = settings;
-  const queryRows = [...discover.queries, BLANK_QUERY];
+  const { discover, judge, secondReview } = settings;
+  const form = useRef<HTMLFormElement>(null);
+  const [baseline, setBaseline] = useState<FieldValues | null>(null);
+  const [changes, setChanges] = useState<string[]>([]);
+  const [tick, touched] = useReducer((n: number) => n + 1, 0);
+  const [pages, setPages] = useState(discover.pagesPerTick);
+  const [concurrency, setConcurrency] = useState(settings.reviewConcurrency);
+
+  // 처음 그린 값이 기준이다. 저장에 성공하면 그때 값이 새 기준이 된다
+  useEffect(() => { if (form.current) setBaseline(formValues(form.current)); }, []);
+  useEffect(() => { if (state?.ok && form.current) setBaseline(formValues(form.current)); }, [state]);
+  /*
+   * 입력·칩·행이 바뀔 때마다 다시 견준다. 손대지 않는 입력은 상태가 없어 그린 뒤에 폼을 다시 읽는다 —
+   * 폼의 입력·클릭이 tick 을 올리고, 같은 이벤트에서 바뀐 칩·행이 그려진 다음에 이 효과가 돈다.
+   */
+  useEffect(() => {
+    if (!baseline || !form.current) return;
+    const next = describeChanges(baseline, formValues(form.current));
+    setChanges((current) => (current.join("|") === next.join("|") ? current : next));
+  }, [baseline, tick]);
+
+  const usage = searchUsage(pages);
+  const summary = changes.length > 3 ? `${changes.slice(0, 3).join(" · ")} 외 ${changes.length - 3}개` : changes.join(" · ");
 
   return (
-    <form action={action} className="mt-6 flex flex-col gap-4">
-      {state?.issues && state.issues.length > 0 && (
-        <div className="rounded-[10px] border border-down/40 bg-down/10 px-4 py-3 text-[13px] text-down">
-          {state.issues.map((issue) => (
-            <div key={issue}>{issue}</div>
-          ))}
+    <form ref={form} action={action} onInput={touched} onChange={touched} onClick={touched} className="flex min-w-0 flex-col gap-4">
+      <section className="flex flex-wrap items-center gap-4 rounded-[12px] border border-line bg-bg-card px-[22px] py-4">
+        <Switch name="enabled" defaultChecked={settings.enabled} label="수집 켜기" />
+        <div className="min-w-0 flex-[1_1_320px]">
+          <div className="text-[15px] font-semibold">수집</div>
+          <div className="text-[13px] text-fg-3">끄면 다음 틱부터 검색·수집을 멈춥니다. 배포 없이 끊는 스위치입니다.</div>
         </div>
-      )}
-      {state?.ok && (
-        <div className="rounded-[10px] border border-up/40 bg-up/10 px-4 py-3 text-[13px] text-up">
-          저장했습니다. 다음 틱부터 적용됩니다.
-        </div>
-      )}
+      </section>
 
-      <Panel
-        title="수집 스위치"
-        note="무언가 잘못 돌 때 배포 없이 끊을 수 있어야 합니다. 끄면 discover 작업이 아무것도 하지 않습니다."
-      >
-        <Toggle name="enabled" defaultChecked={settings.enabled}>
-          수집을 켠다
-        </Toggle>
-      </Panel>
+      <SignalsTable discover={discover} yields={yields} />
 
-      <Panel
-        title="검색 기준"
-        note="여기는 “무엇을 찾아올지”를 정합니다. GitHub 검색으로 후보 레포를 주워 오는 단계라, 여기서 안 주운 것은 뒤에서 아무리 기준을 고쳐도 목록에 오르지 않습니다."
-      >
-        <div>
-          <span className={label}>검색 신호</span>
-          <p className={hint}>
-            “신호”는 AI로 만든 것을 찾아내는 단서 하나입니다. 예를 들어 커밋 메시지의
-            <code className="mx-1 font-mono">Co-authored-by: Claude</code>나 레포에 달린
-            <code className="mx-1 font-mono">topic:vibe-coding</code>이 그렇습니다. 신호마다 건지는
-            양과 質이 달라서 하나씩 끄고 켜며 비교할 수 있게 해 뒀습니다.
-            <br />
-            마지막 빈 행에 적으면 신호가 늘고, 이름이나 검색어를 지우면 그 신호가 빠집니다.
-            우선순위는 먼저 조사할 순서입니다(높을수록 먼저).
-          </p>
-          <input type="hidden" name="queryCount" value={queryRows.length} />
-          <div className="mt-3 flex flex-col gap-2">
-            {/*
-              키를 순번으로 잡으면 저장 뒤 빈 행의 DOM 노드가 새 행으로 재사용되고,
-              defaultValue는 다시 적용되지 않아 낡은 값이 그대로 남는다. 다음 저장이 그것을
-              제출해 방금 고른 검색 종류가 조용히 되돌아간다 (실제로 topic 신호가 커밋 검색으로
-              바뀌었다). 행의 내용을 키에 넣어 값이 바뀌면 다시 그리게 한다.
-            */}
-            {queryRows.map((q, i) => (
-              <div key={`${i}:${q.label}:${q.query}:${q.kind}`} className="grid grid-cols-1 gap-2 rounded-lg border border-line p-3 sm:grid-cols-[1fr_auto_1.6fr_auto_auto_auto_auto]">
-                <input name={`query.${i}.label`} defaultValue={q.label} className={field} placeholder="이름" />
-                <select
-                  name={`query.${i}.kind`}
-                  defaultValue={q.kind}
-                  className={field}
-                  title="커밋 검색은 트레일러를, 레포 검색은 topic 같은 레포 수식어를 찾습니다. 레포 검색은 배포 URL이 없는 레포를 넣지 않습니다."
-                >
-                  <option value="commits">커밋</option>
-                  <option value="repositories">레포</option>
-                </select>
-                <input name={`query.${i}.query`} defaultValue={q.query} className={`${field} font-mono`} placeholder="검색 문자열" />
-                <input
-                  name={`query.${i}.builder`}
-                  defaultValue={q.builder ?? ""}
-                  className={`${field} sm:w-28`}
-                  placeholder="추정 AI"
-                  title="이 신호로 찾은 제품에 '우리 추정'으로 붙일 만든 AI. 비우면 추정하지 않습니다."
-                />
-                <input
-                  name={`query.${i}.priority`}
-                  defaultValue={q.priority}
-                  type="number"
-                  min={0}
-                  max={1000}
-                  className={`${field} sm:w-24`}
-                  title="조사 우선순위"
-                />
-                <label className="flex items-center gap-2 whitespace-nowrap text-[13px]">
-                  <input type="checkbox" name={`query.${i}.enabled`} defaultChecked={q.enabled} className="accent-[var(--accent)]" />
-                  사용
-                </label>
-                <label
-                  className="flex items-center gap-2 whitespace-nowrap text-[13px]"
-                  title="레포 루트의 CLAUDE.md·.cursor 같은 파일이나 최근 커밋의 Co-authored-by 가 없으면 들여보내지 않습니다. 검색어가 AI 사용을 말하지 않는 신호(한국어 README 등)에 켭니다."
-                >
-                  <input type="checkbox" name={`query.${i}.requireEvidence`} defaultChecked={q.requireEvidence ?? false} className="accent-[var(--accent)]" />
-                  AI 흔적 필요
-                </label>
-              </div>
-            ))}
-          </div>
-        </div>
-
+      <SettingsCard id="scope" title="수집 범위" note="검색 한 번에 얼마나, 얼마 전 것까지 볼지">
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-          <div>
-            <label className={label} htmlFor="windowDays">최근 며칠</label>
-            <input id="windowDays" name="windowDays" type="number" min={1} max={3650} defaultValue={discover.windowDays} className={`${field} mt-1.5`} />
-            <p className={hint}>
-              며칠 안에 손댄 레포까지 볼지. 3이면 최근 3일 안에 커밋된 것만 찾습니다.
-              저장소 생성일이 아닌 활동일 기준입니다. 기존 미완 구간은 이어서 수집합니다.
-            </p>
+          <NumberField id="windowDays" label="최근 며칠" defaultValue={discover.windowDays} min={1} max={3650}
+            hint={<>며칠 안에 커밋된 레포까지 볼지. 생성일이 아니라 활동일 기준이고, 미완 구간은 이어서 수집합니다.</>} />
+          <div className="flex min-w-0 flex-col gap-1.5">
+            <span className={labelClass}>정렬</span>
+            <Segmented name="sort" label="정렬" defaultValue={discover.sort}
+              options={[{ value: "recent", label: "최신 활동순" }, { value: "relevance", label: "관련도" }]} />
+            <p className={hintClass}>뒤처지면 최신 구간부터 확인하고 미완 구간도 이어 갑니다. 관련도는 검색어와의 관련성을 우선합니다.</p>
           </div>
-          <div>
-            <label className={label} htmlFor="sort">정렬</label>
-            <select id="sort" name="sort" defaultValue={discover.sort} className={`${field} mt-1.5`}>
-              <option value="relevance">관련도</option>
-              <option value="recent">최신 활동순 (기본)</option>
-            </select>
-            <p className={hint}>
-              <b>최신 활동순</b>은 커밋 날짜·저장소 갱신 날짜 내림차순입니다.
-              수집이 하루 이상 뒤처지면 최신 구간을 먼저 확인하며, 미완 구간도 함께 이어갑니다.
-              <b>관련도</b>는 검색어와의 관련성을 우선합니다.
-            </p>
-          </div>
-          <div>
-            <label className={label} htmlFor="pagesPerTick">틱당 페이지</label>
-            <input id="pagesPerTick" name="pagesPerTick" type="number" min={1} max={10} defaultValue={discover.pagesPerTick} className={`${field} mt-1.5`} />
-            <p className={hint}>
-              한 번 돌 때 검색 결과를 몇 페이지까지 넘길지. <b>한 페이지가 검색 1회</b>이고
-              수집은 10분마다 돕니다. 올리면 새 레포를 그만큼 빨리 찾습니다.
-              <br />
-              GitHub 검색 한도는 분당 30회인데, 2로 두면 10분에 2회라 한도의 1%도 안 씁니다
-              (실측: 한도에 걸린 기록 0건). 10으로 올려도 3% 수준입니다.
-            </p>
-          </div>
+          <NumberField id="pagesPerTick" label="틱당 페이지" defaultValue={discover.pagesPerTick} min={1} max={10} onValue={setPages}
+            hint={<span className="font-semibold text-up">{SEED_INTERVAL_MINUTES}분마다 {pages}회 → 시간당 {usage.perHour}회 · 한도의 {usage.percent}</span>} />
         </div>
-      </Panel>
+      </SettingsCard>
 
-      <Panel
-        title="판정 기준"
-        note="여기는 “주워 온 것 중 무엇을 올릴지”를 정합니다. 원본을 보관하므로 이 값을 바꾸면 GitHub을 다시 긁지 않고 곧바로 다시 판정합니다 — 기준을 바꿔 보는 비용이 거의 없습니다. 이미 발행된 것은 건드리지 않습니다(재검수 화면에서 따로 봅니다)."
-      >
+      <SettingsCard id="judge" title="판정 기준" note="주워 온 것 중 무엇을 올릴지 — 바꾸면 GitHub 을 다시 긁지 않고 곧바로 다시 판정합니다. 이미 발행된 것은 건드리지 않습니다">
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-          <div>
-            <label className={label} htmlFor="autoApproveMinStars">자동 승인 최소 스타</label>
-            <input id="autoApproveMinStars" name="autoApproveMinStars" type="number" min={500} max={10000000}
-              defaultValue={judge.autoApproveMinStars} className={`${field} mt-1.5`} />
-            <p className={hint}>
-              최근 24시간 안에 확인한 공개 GitHub 저장소가 이 값 이상이면 1·2차 AI 심사 없이 발행합니다.
-              이 기준은 아래 스타 하한·방치 기준보다 우선합니다. 포크·보관 저장소, 기존 등재·차단 항목,
-              관리자 수동 거부는 제외합니다. 10만 스타 이상도 포함합니다.
-            </p>
+          <NumberField id="autoApproveMinStars" label="자동 승인 최소 스타" defaultValue={judge.autoApproveMinStars} min={500} max={10000000}
+            hint="24시간 안에 확인한 스타가 이 이상이면 1·2차 AI 심사 없이 발행합니다. 포크·보관·차단·수동 거부는 제외합니다." />
+          <NumberField id="minStars" defaultValue={judge.minStars} min={0}
+            label={<>스타 하한 <span className="ml-1 rounded-full bg-up/10 px-2 py-px text-[13px] font-semibold text-up">권장 0</span></>}
+            hint="갓 배포한 제품은 정당하게 별이 0개입니다 — 올리는 순간 가장 찾고 싶은 것부터 사라집니다." />
+          <NumberField id="maxPushAgeDays" label="방치 기준" defaultValue={judge.maxPushAgeDays} min={1} max={3650} suffix="일"
+            hint="마지막 커밋이 이보다 오래되면 죽은 프로젝트로 봅니다. 너무 짧으면 다 만들고 손을 뗀 멀쩡한 제품이 빠집니다." />
+        </div>
+        <div className="flex flex-col">
+          <ToggleRow name="excludeForks" defaultChecked={judge.excludeForks} title="포크 제외" />
+          <ToggleRow name="excludeOrganizations" defaultChecked={judge.excludeOrganizations} title="조직 계정 제외"
+            note="개인이 조직 계정을 쓰는 경우도 있어 놓치는 것이 생깁니다" />
+          <ToggleRow name="holdAmbiguous" defaultChecked={judge.holdAmbiguous} title="애매하면 보류" note="끄면 애매한 것을 바로 거부합니다" />
+          {/* 근거를 모으는 것과 그것을 발행 조건으로 삼는 것은 다른 결정이다 — 모으기만 하면 판정은 그대로다 */}
+          <ToggleRow name="agentEvidenceEnabled" defaultChecked={settings.agentEvidence.enabled} title="개발 AI 근거 수집"
+            note="AGENTS.md·설정 파일·커밋 표기를 모읍니다. 판정은 바뀌지 않습니다" />
+          <ToggleRow name="agentEvidenceEnforce" defaultChecked={settings.agentEvidence.enforceEligibility} title="근거를 발행 조건으로 사용"
+            note="켜면 근거가 기준에 못 미치는 후보를 보류합니다 — 수집을 먼저 켜세요" />
+        </div>
+      </SettingsCard>
+
+      <FilterLists judge={judge} />
+
+      {/* 발행을 막을지(reviewMode)는 여기서 못 바꾼다 — 심사 화면의 전용 폼에서만 바꾼다 */}
+      <SettingsCard id="first" title="1차 심사" note="규칙이 통과시킨 후보를 AI가 한 번 더 봅니다 · 발행을 막을지(enforce)는 심사 화면에서 정합니다"
+        actions={<span className={`${chipClass} bg-bg-hover text-fg-2`}>모드 {settings.reviewMode}</span>}>
+        <div className="flex flex-wrap items-end gap-3">
+          <div className="flex flex-col gap-1.5">
+            <span className={labelClass}>부르는 곳</span>
+            <Segmented name="firstReviewProvider" label="1차 심사를 부르는 곳" defaultValue={settings.firstReview?.provider ?? "abcllm"}
+              options={[{ value: "abcllm", label: "사내 게이트웨이 · 한도 없음" }, { value: "claude-cli", label: "Claude CLI · 한도 있음" }]} />
           </div>
-          <div>
-            <label className={label} htmlFor="minStars">스타 하한</label>
-            <input id="minStars" name="minStars" type="number" min={0} defaultValue={judge.minStars} className={`${field} mt-1.5`} />
-            <p className={hint}>
-              별이 이 수보다 적으면 거릅니다. <b>0을 권합니다</b> — 갓 배포한 제품은 정당하게
-              별이 0개라서, 올리는 순간 우리가 가장 찾고 싶은 것부터 사라집니다.
-            </p>
-          </div>
-          <div>
-            <label className={label} htmlFor="maxPushAgeDays">방치 기준(일)</label>
-            <input id="maxPushAgeDays" name="maxPushAgeDays" type="number" min={1} max={3650} defaultValue={judge.maxPushAgeDays} className={`${field} mt-1.5`} />
-            <p className={hint}>
-              마지막 커밋이 이보다 오래되면 죽은 프로젝트로 봅니다.
-              다만 실측에서 여기 걸린 31건의 주소가 <b>전부 살아 있었습니다</b> — 다 만들고 손을
-              뗀 것도 있어서, 너무 짧게 잡으면 멀쩡한 제품이 빠집니다.
-            </p>
+          <div className="flex min-w-0 flex-[1_1_260px] flex-col gap-1.5">
+            <label htmlFor="firstReviewModel" className={labelClass}>모델</label>
+            <input id="firstReviewModel" name="firstReviewModel" defaultValue={settings.firstReview?.model ?? ""}
+              placeholder="[MLX] gpt-oss-120b — 비우면 서버 기본값(CRAWL_REVIEW_MODEL)" className={`${inputClass} font-mono`} />
           </div>
         </div>
-
-        <div className="flex flex-col gap-2.5">
-          <Toggle name="excludeForks" defaultChecked={judge.excludeForks}>포크 제외</Toggle>
-          <Toggle name="excludeOrganizations" defaultChecked={judge.excludeOrganizations}>
-            조직 계정 제외
-            <span className="ml-1 text-fg-3">— 개인이 조직 계정을 쓰는 경우도 있어 놓치는 것이 생깁니다</span>
-          </Toggle>
-          <Toggle name="holdAmbiguous" defaultChecked={judge.holdAmbiguous}>
-            애매하면 보류
-            <span className="ml-1 text-fg-3">— 끄면 애매한 것을 바로 거부합니다</span>
-          </Toggle>
-          {/*
-            근거를 모으는 것과 그것을 발행 조건으로 삼는 것은 다른 결정이다.
-            모으기만 하면 판정은 그대로이므로 먼저 켜서 무엇이 쌓이는지 볼 수 있다.
-          */}
-          <Toggle name="agentEvidenceEnabled" defaultChecked={settings.agentEvidence.enabled}>
-            개발 AI 근거 수집
-            <span className="ml-1 text-fg-3">— AGENTS.md·설정 파일·커밋 표기를 모읍니다. 판정은 바뀌지 않습니다</span>
-          </Toggle>
-          <Toggle name="agentEvidenceEnforce" defaultChecked={settings.agentEvidence.enforceEligibility}>
-            근거를 발행 조건으로 사용
-            <span className="ml-1 text-fg-3">— 켜면 근거가 기준에 못 미치는 후보를 보류합니다. 수집을 먼저 켜세요</span>
-          </Toggle>
-        </div>
-
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-          <div>
-            <label className={label} htmlFor="blockedHomepageDomains">차단 도메인</label>
-            <p className={hint}>
-              레포의 배포 주소가 이 도메인이면 <b>제품이 아니라 제품의 소개·등록 페이지</b>로 봅니다.
-              npm 패키지 페이지나 GitHub 저장소 주소를 제품으로 올리지 않기 위한 것입니다.
-              한 줄에 하나, 하위 도메인도 함께 걸립니다.
-            </p>
-            <textarea
-              id="blockedHomepageDomains"
-              name="blockedHomepageDomains"
-              rows={8}
-              defaultValue={judge.blockedHomepageDomains.join("\n")}
-              className={`${field} mt-1.5 font-mono`}
-            />
-          </div>
-          <div>
-            <label className={label} htmlFor="thirdPartyHosts">남의 사이트 주소</label>
-            <p className={hint}>
-              제작자가 만든 곳이 아니라 <b>남의 서비스에 올려 둔 글·초대·양식</b>인 주소입니다
-              (Substack 글, Discord 초대, Google 양식 등). 그 주소는 제품이 아니라 제품 이야기입니다.
-              주소 뒤쪽이 일치하면 걸립니다. 한 줄에 하나.
-            </p>
-            <textarea
-              id="thirdPartyHosts"
-              name="thirdPartyHosts"
-              rows={8}
-              defaultValue={judge.thirdPartyHosts.join("\n")}
-              className={`${field} mt-1.5 font-mono`}
-            />
-          </div>
-          <div>
-            <label className={label} htmlFor="stubPageTitles">빈 페이지·대기 화면 제목</label>
-            <p className={hint}>
-              열어 봤더니 제품이 아니라 <b>로그인 화면·공사 중 안내·404</b>인 경우를 제목으로 걸러냅니다.
-              배포 주소는 살아 있어도 쓸 수 있는 것이 없는 경우입니다.
-              <code className="mx-1 font-mono">*</code>를 쓸 수 있고, 한 줄에 하나.
-            </p>
-            <textarea
-              id="stubPageTitles"
-              name="stubPageTitles"
-              rows={8}
-              defaultValue={judge.stubPageTitles.join("\n")}
-              className={`${field} mt-1.5 font-mono`}
-            />
-          </div>
-          <div>
-            <label className={label} htmlFor="excludedRepoPatterns">레포명 제외 패턴</label>
-            <p className={hint}>
-              레포 이름이 이 모양이면 제품이 아니라고 봅니다 — 설정 파일 저장소(<code className="mx-1 font-mono">dotfiles</code>),
-              문서 저장소(<code className="mx-1 font-mono">documentation</code>) 같은 것들입니다.
-              <br />
-              이력·포트폴리오·개인 홈페이지는 여기 걸려도 거부되지 않고 <b>개인프로필</b>로 발행됩니다.
-              <code className="mx-1 font-mono">*</code>를 쓸 수 있고, 한 줄에 하나.
-            </p>
-            <textarea
-              id="excludedRepoPatterns"
-              name="excludedRepoPatterns"
-              rows={8}
-              defaultValue={judge.excludedRepoPatterns.join("\n")}
-              className={`${field} mt-1.5 font-mono`}
-            />
-          </div>
-          <div>
-            <label className={label} htmlFor="heldRepoPatterns">레포명 보류 패턴</label>
-            <p className={hint}>
-              이름만으로는 못 가르는 모양입니다 — 거부하지 않고 <b>보류</b>해 AI·사람이 가릅니다. 회사 소개 사이트인지 앱 사이트인지
-              (<code className="mx-1 font-mono">*-website</code>), 단순 링크 모음인지 검색되는 디렉터리인지
-              (<code className="mx-1 font-mono">awesome-*</code>)는 페이지를 읽어야 압니다. 한 줄에 하나.
-            </p>
-            <textarea
-              id="heldRepoPatterns"
-              name="heldRepoPatterns"
-              rows={4}
-              defaultValue={judge.heldRepoPatterns.join("\n")}
-              className={`${field} mt-1.5 font-mono`}
-            />
-          </div>
-        </div>
-      </Panel>
-
-      {/*
-        1차 심사자와 동시 실행 수는 데이터로 뺐는데(2026-09-18) 한동안 이 화면에 없어 스크립트로만
-        바꿀 수 있었다. 배포 없이 조정하려고 뺀 값이라 화면이 없으면 그 이유가 반쪽이 된다.
-        발행을 막을지(reviewMode)는 여기서 못 바꾼다 — 심사 화면의 전용 폼에서만 바꾼다.
-      */}
-      <Panel
-        title="1차 심사"
-        note="규칙이 통과시킨 후보를 AI가 한 번 더 봅니다. 여기서는 누가 보는지와 한 번에 몇 건을 보는지를 정합니다. 발행을 막을지(enforce)는 심사 화면에서 따로 정합니다."
-      >
-        <fieldset>
-          <legend className={label}>1차 심사자</legend>
-          <p className={hint}>
-            어느 모델이 후보를 볼지. 비우면 서버의 <code className="mx-1 font-mono">CRAWL_REVIEW_MODEL</code>
-            (Claude CLI)로 돌아갑니다.
-            <br />
-            실측(2026-09-18, 정답을 가려놓고 매긴 40건): Claude sonnet 84% · 사내 gpt-oss-120b 85%로 정확도는
-            사실상 같습니다. 차이는 한도입니다 — Claude 는 구독 한도가 있고 사내 게이트웨이는 없습니다.
-          </p>
-          <div className="mt-2 flex flex-wrap items-center gap-2">
-            <select name="firstReviewProvider" aria-label="1차 심사를 부르는 곳"
-              defaultValue={settings.firstReview?.provider ?? "abcllm"} className={`${field} w-auto`}>
-              <option value="claude-cli">Claude CLI (한도 있음)</option>
-              <option value="abcllm">사내 게이트웨이 (한도 없음)</option>
-            </select>
-            <input name="firstReviewModel" aria-label="1차 심사 모델" defaultValue={settings.firstReview?.model ?? ""}
-              placeholder="[MLX] gpt-oss-120b — 비우면 서버 기본값"
-              className={`${field} min-w-[220px] flex-1 font-mono`} />
-          </div>
-        </fieldset>
-
-        <div className="max-w-[260px]">
-          <label className={label} htmlFor="reviewConcurrency">동시 실행 수</label>
-          <input id="reviewConcurrency" name="reviewConcurrency" type="number" min={1} max={16}
-            defaultValue={settings.reviewConcurrency} className={`${field} mt-1.5`} />
-        </div>
-        <p className={hint}>
-          1분마다 한 번에 몇 건을 동시에 볼지. 올리면 빨리 끝나지만 사내 게이트웨이는 여럿이 같이 쓰는 서버라
-          너무 올리면 실패가 늘어 오히려 느려집니다. 실측(사내 게이트웨이, 2026-09-18):
-        </p>
-        <table className="mt-1.5 text-[13px] text-fg-2">
-          <tbody>
-            <tr><td className="pr-4">2</td><td className="pr-4">성공 99%</td><td>시간당 약 119건 — 평소 새 후보(시간당 약 100건)는 이것으로 충분</td></tr>
-            <tr className="font-semibold text-fg"><td className="pr-4">4</td><td className="pr-4">성공 94%</td><td>시간당 약 225건 — 남는 몫(약 130건)으로 발행분 감사를 돌릴 수 있음</td></tr>
-            <tr><td className="pr-4">6</td><td className="pr-4">성공 87%</td><td>시간당 약 156건 — 실패가 늘어 4보다 느림</td></tr>
-          </tbody>
-        </table>
-        {/*
-          처음 이 표를 올렸을 때 4의 설명을 "발행 속도(213건)를 넘는 첫 값"이라고 적었다. 213건은
-          404건을 한꺼번에 되돌린 날의 순간치였고 평소 발행은 시간당 30~40건이다(2026-09-18 실측,
-          이틀 전 하루 776건). 평소 수요는 2로도 채워지고, 4의 몫은 발행분 감사를 도는 데 쓰인다.
-
-          2차 심사와 동시 실행이 겹쳐 게이트웨이에 여덟 건이 몰린다는 지적도 있었지만 틀렸다 —
-          워커는 한 역할의 잡을 하나씩 차례로 돌린다(scripts/worker.ts 의 await). 1차와 2차는
-          같은 reviewer 워커라 동시에 돌지 않는다.
-        */}
-        <p className={hint}>
-          실패한 건은 사라지지 않고 몇 분 뒤 다시 봅니다(4에서 재시도를 다 쓴 후보 0건). 그래도 실패율이
-          오르면 한 단계 내리세요. 1차와 2차 심사는 같은 워커가 차례로 돌려서 서로 겹치지 않습니다.
-        </p>
-      </Panel>
-
-      <Panel
-        title="2차 심사"
-        note="1차 AI가 확정한 것·위험 신호가 있는 것·규칙만 통과한 공개분 일부를 다른 모델이 다시 봅니다. 결과는 제안일 뿐 판정을 바꾸지 않습니다."
-      >
-        <fieldset className="mb-4">
-          <legend className={label}>다시 볼 모델 (최대 3)</legend>
-          <p className={hint}>
-            성향이 서로 다른 모델을 세울수록 좋습니다 — 관대한 모델과 엄격한 모델이 같은 결론을 내면 실수가 상쇄됩니다.
-            게이트웨이는 모델 목록이 바뀝니다. 없는 모델을 적으면 그 표만 실패로 남고 운영센터에 뜹니다.
-          </p>
-          <div className="mt-2 grid gap-2">
-            {[0, 1, 2].map((index) => {
-              const voter = settings.secondReview.voters[index];
-              /*
-               * 키에 내용을 넣는다. 순번만 쓰면 칸을 지웠을 때 다음 칸이 이 DOM 을 물려받는데,
-               * 다루지 않는(uncontrolled) select 는 defaultValue 가 바뀌어도 다시 그려지지 않아
-               * 남은 모델이 앞 칸의 제공자를 뒤집어쓴다 — 검색 신호 행이 같은 이유로 이렇게 한다.
-               */
-              return (
-                <div key={`${index}:${voter?.provider ?? ""}:${voter?.model ?? ""}`} className="flex flex-wrap items-center gap-2">
-                  <select name={`voterProvider${index}`} aria-label={`${index + 1}번째 표 부르는 곳`}
-                    defaultValue={voter?.provider ?? "abcllm"} className={`${field} w-auto`}>
-                    <option value="claude-cli">Claude CLI (한도 있음)</option>
-                    <option value="abcllm">사내 게이트웨이 (한도 없음)</option>
-                    <option value="grok-cli">Grok CLI (구독, 주간 한도)</option>
-                  </select>
-                  <input name={`voterModel${index}`} aria-label={`${index + 1}번째 표 모델`} defaultValue={voter?.model ?? ""}
-                    placeholder={index === 0 ? "opus" : "[MLX] gemma4-26b — 비우면 세우지 않습니다"}
-                    className={`${field} min-w-[220px] flex-1 font-mono`} />
+        <div className="flex flex-col gap-1.5">
+          <label htmlFor="reviewConcurrency" className={labelClass}>동시 실행 수</label>
+          <div className="flex flex-wrap items-start gap-4">
+            <input id="reviewConcurrency" name="reviewConcurrency" type="number" min={1} max={16} defaultValue={settings.reviewConcurrency}
+              onChange={(event) => setConcurrency(Number(event.target.value))} className={`${inputBase} w-24`} />
+            <div className="grid min-w-0 flex-[1_1_420px] grid-cols-3 gap-2.5" aria-label="2026-09-18 실측">
+              {MEASURED.map((row) => (
+                <div key={row.at} className={`flex flex-col gap-0.5 rounded-[10px] border px-3 py-2.5 ${row.at === concurrency ? "border-accent bg-accent-soft" : "border-line"}`}>
+                  <span className="text-[13px] text-fg-3">동시 {row.at}{row.at === concurrency ? " · 지금" : ""}</span>
+                  <span className="text-[20px] font-semibold tabular-nums">{row.perHour}<span className="text-[13px] font-normal text-fg-3">건/시</span></span>
+                  <span className="text-[13px] text-fg-3">{row.note}</span>
                 </div>
-              );
-            })}
+              ))}
+            </div>
           </div>
-        </fieldset>
+          <p className={hintClass}>실측 2026-09-18 · 사내 게이트웨이. 실패율이 오르면 한 단계 내리세요. 1차와 2차는 같은 워커가 차례로 돌려 겹치지 않습니다.</p>
+        </div>
+      </SettingsCard>
 
-        <fieldset className="mb-4">
-          <legend className={label}>실패 시 대체 모델 (순서대로 최대 2)</legend>
-          <p className={hint}>시간 초과나 응답 오류에만 사용합니다. 대체 시도를 포함해 3회 실패하면 사람 확인으로 넘깁니다. 1차와 같은 모델의 대체 결과는 참고 의견이며, 독립 표로 세지 않고 사람 확인이 필요합니다.</p>
-          <div className="mt-2 grid gap-2">
-            {[0, 1].map(index => {
-              const fallback = settings.secondReview.fallbacks?.[index];
-              return <div key={`${index}:${fallback?.provider ?? ""}:${fallback?.model ?? ""}`} className="flex flex-wrap items-center gap-2">
-                <select name={`fallbackProvider${index}`} aria-label={`${index + 1}번째 대체 제공자`} defaultValue={fallback?.provider ?? "claude-cli"} className={`${field} w-auto`}>
-                  <option value="claude-cli">Claude CLI</option><option value="abcllm">사내 게이트웨이</option><option value="grok-cli">Grok CLI</option>
-                </select>
-                <input name={`fallbackModel${index}`} aria-label={`${index + 1}번째 대체 모델`} defaultValue={fallback?.model ?? ""}
-                  placeholder="비우면 사용하지 않습니다" className={`${field} min-w-[220px] flex-1 font-mono`} />
-              </div>;
-            })}
+      <SettingsCard id="second" title="2차 심사" note="다른 모델이 다시 봅니다 · 결과는 제안일 뿐 판정을 바꾸지 않습니다"
+        actions={<span className="flex items-center gap-2 text-[13px] font-semibold"><Switch name="secondReviewEnabled" defaultChecked={secondReview.enabled} label="2차 심사 켜기" />켜기</span>}>
+        <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
+          <div className="flex min-w-0 flex-col gap-1.5">
+            <span className={labelClass}>다시 볼 모델 <span className="font-normal text-fg-3">최대 3</span></span>
+            <ModelRows prefix="voter" initial={secondReview.voters} max={3} placeholder="[supa] Qwen3.8-27B-NVFP4"
+              addLabel="+ 모델 세우기 (성향이 다른 모델일수록 좋습니다)" />
+            <p className={hintClass}>게이트웨이는 모델 목록이 바뀝니다. 없는 모델을 적으면 그 표만 실패로 남고 운영센터에 뜹니다.</p>
           </div>
-        </fieldset>
-
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-          <div>
-            <label className={label} htmlFor="secondReviewSamplePercent">공개분 표본 (%)</label>
-            <input
-              id="secondReviewSamplePercent"
-              name="secondReviewSamplePercent"
-              type="number"
-              min={0}
-              max={50}
-              step={1}
-              defaultValue={Math.round(settings.secondReview.sampleRate * 100)}
-              className={`${field} mt-1.5`}
-            />
-            <p className={hint}>규칙만 통과해 공개된 것 중 다시 볼 비율</p>
-          </div>
-          <div>
-            <label className={label} htmlFor="secondReviewAgreeAt">일치 기준 확신</label>
-            <input
-              id="secondReviewAgreeAt"
-              name="secondReviewAgreeAt"
-              type="number"
-              min={0.5}
-              max={1}
-              step={0.05}
-              defaultValue={settings.secondReview.agreeAt}
-              className={`${field} mt-1.5`}
-            />
-            <p className={hint}>두 판단이 같고 둘 다 이 값 이상이면 한 번에 확정할 수 있게 묶습니다</p>
+          <div className="flex min-w-0 flex-col gap-1.5">
+            <span className={labelClass}>실패 시 대체 <span className="font-normal text-fg-3">순서대로 최대 2</span></span>
+            <ModelRows prefix="fallback" initial={secondReview.fallbacks ?? []} max={2} placeholder="qwen3-coder:30b" addLabel="+ 대체 모델 더하기" />
+            <p className={hintClass}>시간 초과·응답 오류에만 씁니다. 세 번 실패하면 사람 확인으로 넘깁니다. 1차와 같은 모델의 대체 결과는 참고 의견입니다.</p>
           </div>
         </div>
-        <div className="mt-4">
-          <Toggle name="secondReviewIncludeAiHeld" defaultChecked={settings.secondReview.includeAiHeld}>
-            1차 AI도 못 가른 것까지 본다
-            <span className="ml-1 text-fg-3">— 1차가 표를 내지 않으므로 세워 둔 모델 둘이 같은 결론을 내야 일치가 됩니다</span>
-          </Toggle>
-          <Toggle name="secondReviewEnabled" defaultChecked={settings.secondReview.enabled}>
-            2차 심사 켜기
-            <span className="ml-1 text-fg-3">— 끄면 새로 쌓지 않습니다. 이미 받은 결과는 그대로 보입니다</span>
-          </Toggle>
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+          <NumberField id="secondReviewSamplePercent" label="공개분 표본" defaultValue={Math.round(secondReview.sampleRate * 100)} min={0} max={50} step={1}
+            suffix="%" hint="규칙만 통과해 공개된 것 중 다시 볼 비율" />
+          <NumberField id="secondReviewAgreeAt" label="일치 기준 확신" defaultValue={secondReview.agreeAt} min={0.5} max={1} step={0.05}
+            hint="두 판단이 같고 둘 다 이 값 이상이면 한 번에 확정할 수 있게 묶습니다" />
+          <div className="flex min-w-0 flex-col gap-1.5">
+            <span className={labelClass}>1차 AI도 못 가른 것</span>
+            <div className="flex min-h-[38px] items-center gap-2.5">
+              <Switch name="secondReviewIncludeAiHeld" defaultChecked={secondReview.includeAiHeld} label="1차 AI도 못 가른 것까지 본다" />
+              <span className="text-[13px] text-fg-2">까지 본다</span>
+            </div>
+            <p className={hintClass}>켜면 1차가 표를 내지 않으므로 세운 모델 둘이 같아야 일치입니다</p>
+          </div>
         </div>
-      </Panel>
+      </SettingsCard>
 
-      <div className="flex items-center gap-3">
-        <button
-          type="submit"
-          disabled={pending}
-          className="rounded-[10px] bg-accent-solid px-5 py-2.5 text-[13.5px] font-semibold text-white hover:brightness-110 disabled:opacity-50"
-        >
-          {pending ? "저장 중…" : "저장"}
+      {state?.issues && state.issues.length > 0 && (
+        <div role="alert" className="rounded-[10px] border border-down/40 bg-down/10 px-4 py-3 text-[13px] text-down">
+          {state.issues.map((issue) => <div key={issue}>{issue}</div>)}
+        </div>
+      )}
+      <div className="flex flex-wrap items-center gap-3 rounded-[12px] bg-fg px-[18px] py-3.5 text-bg" aria-live="polite">
+        {changes.length > 0 ? (<>
+          <span className="text-[14px] font-semibold">바뀐 항목 {changes.length}개</span>
+          <span className="min-w-0 text-[13px] opacity-75">{summary}</span>
+        </>) : (
+          <span className="text-[14px] font-semibold">{state?.ok ? "저장했습니다 — 다음 틱부터 적용됩니다" : "바뀐 것이 없습니다"}</span>
+        )}
+        <button type="button" disabled={pending || changes.length === 0} onClick={onRevert}
+          className="ml-auto inline-flex min-h-9 items-center rounded-[9px] border border-white/30 px-3.5 text-[13px] font-semibold disabled:opacity-40">되돌리기</button>
+        <button type="submit" disabled={pending}
+          className="inline-flex min-h-9 items-center rounded-[9px] bg-accent-solid px-4 text-[13px] font-semibold text-white hover:brightness-110 disabled:opacity-50">
+          {pending ? "저장 중…" : "저장 — 다음 틱부터 적용"}
         </button>
       </div>
     </form>
