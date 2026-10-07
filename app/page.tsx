@@ -15,7 +15,7 @@ import { ProjectGrid } from "@/components/home/ProjectGrid";
 import { ToolsBoard } from "@/components/home/ToolsBoard";
 import { categoryCounts, countProducts, RISING_MAX_STARS } from "@/lib/domain/products/repository";
 import { resolveSearchQuery, warmQueryTranslation } from "@/lib/domain/products/search-translation";
-import { rankRelevance, relevanceWindow } from "@/lib/domain/products/relevance";
+import { relevanceWindow, searchRelevance } from "@/lib/domain/products/relevance";
 import type { SearchQuery } from "@/lib/domain/products/search";
 import { CATEGORIES } from "@/lib/domain/products/schema";
 import {
@@ -341,13 +341,16 @@ export async function HomeContent({ params }: { params: HomeParams }) {
      */
     const filters = { category, builder, observedTool };
     const relevanceLoad = query && effectiveSort === "relevance" && !fallback
-      ? publicRead("list", ["relevance", query, search.queries, filters], () => rankRelevance(query, search.queries, filters))
+      ? publicRead("list", ["relevance", query, search.queries, filters],
+        () => searchRelevance(query, search, filters, () => resolveSearchQuery(query, { waitForTranslation: true })))
       : null;
     relevanceLoad?.catch(() => {});
     // 같은 정렬·거르기·구간이면 30초 동안 한 번만 읽는다(lib/domain/products/public-reads.ts)
     const loadList = (limit: number, offset: number) => relevanceLoad
-      ? publicRead("list", ["relevance-rows", query, search.queries, filters, limit, offset],
-        async () => getPublicListBySlugs(await relevanceWindow(await relevanceLoad, search.queries, filters, offset, limit)))
+      ? publicRead("list", ["relevance-rows", query, search.queries, filters, limit, offset], async () => {
+        const ranked = await relevanceLoad;
+        return getPublicListBySlugs(await relevanceWindow(ranked, ranked.plan, filters, offset, limit));
+      })
       : publicRead("list", ["home", effectiveSort, fallback, active?.key ?? null, listOptions, limit, offset], () => fallback
       ? getPublicList(limit, { ...listOptions, sort: fallback, offset })
       : active
@@ -369,6 +372,8 @@ export async function HomeContent({ params }: { params: HomeParams }) {
     const earlyList = stripPossible || windowed ? null : loadList(publicCatalogue ? requestedLimit : verifiedTotal, 0);
     earlyList?.catch(() => {});
     const [loadedCounts, matchingTotal] = await Promise.all([countsLoad, matchingLoad]);
+    // 0건이라 번역을 기다려 다시 찾았으면 그 번역을 밝힌다
+    if (relevanceLoad) translatedQuery = (await relevanceLoad).translated;
     counts = loadedCounts;
     total = Object.values(counts).reduce((sum, count) => sum + count, 0);
     // Public lists load only what is visible. Rankings retain their separate eligibility.

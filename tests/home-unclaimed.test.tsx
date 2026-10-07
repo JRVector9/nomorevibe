@@ -25,11 +25,11 @@ const {
   getHomePulse,
   getCrawlSettings,
   getPublicListBySlugs,
-  rankRelevance,
+  searchRelevance,
   relevanceWindow,
 } = vi.hoisted(() => ({
   getPublicListBySlugs: vi.fn(),
-  rankRelevance: vi.fn(),
+  searchRelevance: vi.fn(),
   relevanceWindow: vi.fn(),
   categoryCounts: vi.fn(),
   countProducts: vi.fn(),
@@ -55,7 +55,7 @@ vi.mock("@/lib/domain/products/search-translation", () => ({
   normalizeQuery: (query: string) => query.trim().toLowerCase(),
 }));
 // 관련도순 검색(섞기·재정렬)은 모델 서버와 DB 를 부른다 — 화면 조합만 본다
-vi.mock("@/lib/domain/products/relevance", () => ({ rankRelevance, relevanceWindow }));
+vi.mock("@/lib/domain/products/relevance", () => ({ searchRelevance, relevanceWindow }));
 vi.mock("@/lib/domain/products/view", () => ({
   getUnclaimedList,
   getVerifiedList,
@@ -140,7 +140,7 @@ beforeEach(() => {
   getUnclaimedList.mockResolvedValue([]);
   getVerifiedList.mockResolvedValue([]);
   getPublicList.mockResolvedValue([]);
-  rankRelevance.mockResolvedValue({ head: [], total: 0, semantic: false, reranked: false });
+  searchRelevance.mockResolvedValue({ head: [], total: 0, semantic: false, reranked: false, plan: [], translated: null });
   relevanceWindow.mockResolvedValue([]);
   getPublicListBySlugs.mockResolvedValue([]);
   getAllTimeRanking.mockResolvedValue([]);
@@ -300,7 +300,7 @@ describe("빈 화면 문구", () => {
   });
 
   it("정렬을 명시하지 않은 검색은 순위가 아니라 공개 목록 전체를 관련도순(섞기·재정렬)으로 찾는다", async () => {
-    rankRelevance.mockResolvedValue({ head: ["searched-project", "second"], total: 2, semantic: true, reranked: true });
+    searchRelevance.mockResolvedValue({ head: ["searched-project", "second"], total: 2, semantic: true, reranked: true, plan: ["searched"], translated: null });
     relevanceWindow.mockImplementation(async (ranked: { head: string[] }, _plan: unknown, _filters: unknown, start: number, count: number) =>
       ranked.head.slice(start, start + count));
     getPublicListBySlugs.mockImplementation(async (slugs: string[]) => slugs.map(product));
@@ -308,7 +308,8 @@ describe("빈 화면 문구", () => {
     // 결과는 스트리밍되는 쪽(HomeContent)에서 그린다
     const html = renderToStaticMarkup(await HomeContent({ params: { q: "searched" } }));
 
-    expect(rankRelevance).toHaveBeenCalledWith("searched", ["searched"], { category: undefined, builder: undefined, observedTool: undefined });
+    expect(searchRelevance).toHaveBeenCalledWith("searched", expect.objectContaining({ queries: ["searched"] }),
+      { category: undefined, builder: undefined, observedTool: undefined }, expect.any(Function));
     expect(getPublicList).not.toHaveBeenCalled();
     expect(getVerifiedList).not.toHaveBeenCalled();
     expect(getSeasonRanking).not.toHaveBeenCalled();
@@ -324,7 +325,7 @@ describe("빈 화면 문구", () => {
 
     const html = renderToStaticMarkup(await HomeContent({ params: { q: "searched", sort: "recent" } }));
 
-    expect(rankRelevance).not.toHaveBeenCalled();
+    expect(searchRelevance).not.toHaveBeenCalled();
     expect(getPublicList).toHaveBeenCalledWith(expect.any(Number), expect.objectContaining({ query: ["searched"], sort: "recent" }));
     expect(html).toContain("recent-match");
   });

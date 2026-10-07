@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { CANDIDATES, fuseRanks, rankSearch, rerankDocuments, RERANK_TOP, type RankDependencies } from "@/lib/domain/products/hybrid-search";
-import { withPrimaryFallback } from "@/lib/domain/products/relevance";
+import { searchRelevance, withPrimaryFallback } from "@/lib/domain/products/relevance";
 
 const slugs = (prefix: string, n: number) => Array.from({ length: n }, (_, i) => `${prefix}${i + 1}`);
 
@@ -111,5 +111,27 @@ describe("복제본이 pgvector 를 모를 때", () => {
     const other = vi.fn(async () => primary(async () => ["never"]));
     await expect(withPrimaryFallback(vi.fn().mockRejectedValue(timeout), other)).rejects.toThrow("statement timeout");
     expect(other).not.toHaveBeenCalled();
+  });
+});
+
+describe("처음 들어온 한국어 문장", () => {
+  const empty = { head: [], total: 0, semantic: true, reranked: false };
+  const found = { head: ["tv-shows-chart"], total: 1, semantic: true, reranked: true };
+
+  it("원문으로 0건이면 그때만 번역을 기다려 다시 찾는다", async () => {
+    const rank = vi.fn().mockResolvedValueOnce(empty).mockResolvedValueOnce(found);
+    const translate = vi.fn(async () => ({ queries: ["드라마 평점 차트", "tv show ratings"], translated: "tv show ratings" }));
+    const result = await searchRelevance("드라마 평점 차트", { queries: ["드라마 평점 차트"], translated: null, translationPending: true }, {}, translate, rank);
+    expect(result).toEqual({ ...found, plan: ["드라마 평점 차트", "tv show ratings"], translated: "tv show ratings" });
+    expect(rank).toHaveBeenLastCalledWith("드라마 평점 차트", ["드라마 평점 차트", "tv show ratings"], {});
+  });
+
+  it("결과가 있거나 이미 옮긴 말이면 기다리지 않는다", async () => {
+    const translate = vi.fn();
+    const rank = vi.fn().mockResolvedValue(found);
+    await searchRelevance("회의록", { queries: ["회의록"], translated: null, translationPending: true }, {}, translate, rank);
+    const none = vi.fn().mockResolvedValue(empty);
+    await searchRelevance("asdfgh", { queries: ["asdfgh"], translated: null }, {}, translate, none);
+    expect(translate).not.toHaveBeenCalled();
   });
 });
