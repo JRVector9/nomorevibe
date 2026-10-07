@@ -307,7 +307,7 @@ export default async function StatusPage({ searchParams }: { searchParams: Promi
   if (attention && attention.healthOverdue > 0) {
     actions.push({
       key: "health-overdue", tone: attention.healthOverdue > 5_000 ? "hold" : "clear", count: attention.healthOverdue, title: "생존 확인이 6시간 넘게 밀린 제품",
-      detail: <>uptime-ping 처리량이 목표(시간당 3,224)에 못 미치면 쌓입니다.</>,
+      detail: <>uptime-ping 처리량이 목표(시간당 {attention.healthTargetPerHour.toLocaleString("ko-KR")})에 못 미치면 쌓입니다.</>,
     });
   }
   if (attention && attention.introNeedsEditor > 0) {

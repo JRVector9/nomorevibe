@@ -21,6 +21,10 @@ import { nextToCheck, recordPing, type PingTarget } from "@/lib/domain/products/
  * 분당 54건 이상이 필요하다. 기본 15건/분은 기존 작은 규모에 맞고 현재 규모에는 부족하다.
  * 용량 상향은 환경 설정으로 한 역할씩 측정하며 진행한다.
  *
+ * 2026-10-07 공개 웹사이트가 3만6천 개가 되자 분당 100건이 필요해졌는데 상한(60건·동시 6)에 붙어
+ * 시간당 3,600건만 봤다 — 6시간 넘게 밀린 제품이 1만2천을 넘었다. 한 틱 60건은 11초에 끝나 예산(25초)이
+ * 남았으므로 상한을 200건·동시 16으로 올리고 운영은 150건·동시 12로 둔다(밀린 몫까지 따라잡는다).
+ *
  * 주기를 당긴 만큼 한 틱이 늘어지면 안 된다. 순차로 열면 응답 없는 서버 하나가 10초를 먹어
  * 25초 예산에 두세 건밖에 못 본다. 그래서 서로 다른 서버를 CONCURRENCY곳까지 동시에 연다.
  * 응답이 느리면 25초 예산이 먼저 끝나므로 설정값이 곧 실제 처리량이라는 뜻은 아니다.
@@ -59,8 +63,8 @@ function capacitySetting(env: Readonly<Record<string, string | undefined>>, key:
 
 /** Bounded maintenance-only ramp; defaults preserve the existing request rate. */
 export function uptimeCapacityConfig(env: Readonly<Record<string, string | undefined>> = process.env) {
-  return { batch: capacitySetting(env, "UPTIME_BATCH_SIZE", DEFAULT_BATCH, 60),
-    concurrency: capacitySetting(env, "UPTIME_CONCURRENCY", DEFAULT_CONCURRENCY, 6) };
+  return { batch: capacitySetting(env, "UPTIME_BATCH_SIZE", DEFAULT_BATCH, 200),
+    concurrency: capacitySetting(env, "UPTIME_CONCURRENCY", DEFAULT_CONCURRENCY, 16) };
 }
 
 /**
