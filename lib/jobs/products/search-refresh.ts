@@ -32,6 +32,16 @@ const PAGE_TEXT = sql`left(d.page_meta ->> 'textSample', ${SEARCH_PAGE_TEXT_CHAR
 /** README 앞부분 — 심사용으로 받아 둔 것. 본문과 같은 길이만 적는다 */
 const README = sql`nullif(left(d.page_meta ->> 'readmeSample', ${SEARCH_PAGE_TEXT_CHARS}), '')`;
 
+/**
+ * 키워드를 지은 뒤 이 기간에는 본문만 바뀐 것을 옮겨 적지 않는다.
+ *
+ * 생존 확인(uptime-ping)이 몇 시간마다 본문을 새로 떠 오는데, 방문자 수·피드·날짜·CSS 클래스처럼 늘 바뀌는 페이지가 많다.
+ * 옮겨 적을 때마다 트리거가 키워드를 다시 짓게 해(0048) 하루 3,600건 남짓이 같은 제품을 다시 지었다 — 키워드·검수·임베딩
+ * 세 번씩(2026-10-08 프로드: 3분 사이 리비전이 오른 12건이 모두 본문만 바뀐 것). 본문은 키워드의 보조 근거라 일주일 늦어도
+ * 잃는 것이 거의 없다. 비었던 본문이 생기거나 사라진 것, 다른 원인으로 다시 지을 차례인 것은 바로 옮긴다.
+ */
+const PAGE_TEXT_HOLD = sql`interval '7 days'`;
+
 export async function refreshProductSearchDocuments(ctx: JobContext<null>): Promise<JobOutcome<null>> {
   const { updated, categorized } = await withJobLeaseWrite(ctx.lease, async tx => {
     const rows = await tx.execute<{ slug: string }>(sql`
@@ -40,9 +50,12 @@ export async function refreshProductSearchDocuments(ctx: JobContext<null>): Prom
         from products p
         join crawl_candidates c on c.published_slug = p.slug
         join crawl_documents d on d.repo = c.repo
+        left join product_search_profiles s on s.product_id = p.id
        where p.search_topics is distinct from ${TOPICS}
-          or p.search_page_text is distinct from ${PAGE_TEXT}
           or p.search_readme is distinct from ${README}
+          or (p.search_page_text is distinct from ${PAGE_TEXT}
+              and (coalesce(p.search_page_text, '') = '' or coalesce(${PAGE_TEXT}, '') = ''
+                   or s.generated_at is null or s.generated_at < now() - ${PAGE_TEXT_HOLD} or s.needs_refresh))
        order by p.id
        limit ${BATCH}
     )
