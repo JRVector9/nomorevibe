@@ -227,6 +227,19 @@ describe("2026-10-08 리디자인", () => {
     expect(saveSettings.mock.calls[0][0].discover).not.toHaveProperty("showHn");
   });
 
+  it("공개 목록의 급상승 확인 기간을 그리고, 그 칸을 보낸 폼만 기간을 바꾼다", async () => {
+    const html = render({ ...twoSignals, rising: { freshDays: 10 } });
+    expect(html).toMatch(/<input[^>]*name="risingFreshDays"[^>]*value="10"/);
+
+    await saveCrawlSettings(null, submitted({ risingFreshDays: "3" }));
+    expect(saveSettings.mock.calls[0][0].rising).toEqual({ freshDays: 3 });
+
+    saveSettings.mockClear();
+    await saveCrawlSettings(null, submitted());
+    // 옛 폼(그 칸이 없다)은 저장된 기간을 건드리지 않는다 — 빈 값으로 저장되면 검증에 걸려 저장 전체가 실패한다
+    expect(saveSettings.mock.calls[0][0]).not.toHaveProperty("rising");
+  });
+
   it("거르는 목록 다섯은 보이지 않는 탭까지 늘 함께 보낸다", () => {
     const html = render(twoSignals);
     for (const name of ["blockedHomepageDomains", "thirdPartyHosts", "stubPageTitles", "excludedRepoPatterns", "heldRepoPatterns"]) {

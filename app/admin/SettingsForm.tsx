@@ -216,6 +216,14 @@ function SettingsFormBody({ settings, yields, onRevert }: { settings: CrawlSetti
         </div>
       </SettingsCard>
 
+      {/* 크롤 기준은 아니지만 배포 없이 바꾸는 운영 값이라 같은 설정 행에 둔다(settings-schema.ts rising) */}
+      <SettingsCard id="public" title="공개 목록" note="홈·상세에 보이는 목록의 기준 · 저장하면 몇 분 안에(서버 캐시 1분 반, Cloudflare 사본 최대 2분) 공개 화면에 반영됩니다">
+        <div className="max-w-[440px]">
+          <NumberField id="risingFreshDays" label="지금 뜨는 프로젝트 · 마지막 스타 확인 기간" defaultValue={settings.rising.freshDays} min={1} max={30} suffix="일"
+            hint="마지막 스타 확인이 이보다 오래된 제품은 뺍니다 — 지워졌거나 확인이 계속 실패하는 저장소가 빠집니다. 너무 짧으면 멀쩡한 제품도 빠집니다: 스타 갱신은 한 바퀴에 보통 2~3일 걸리고 밀리면 더 걸립니다. 기본 7일." />
+        </div>
+      </SettingsCard>
+
       {state?.issues && state.issues.length > 0 && (
         <div role="alert" className="rounded-[10px] border border-down/40 bg-down/10 px-4 py-3 text-[13px] text-down">
           {state.issues.map((issue) => <div key={issue}>{issue}</div>)}

@@ -59,6 +59,7 @@ export default async function AdminPage() {
     { href: "#lists", label: "거르는 목록", badge: listsDrifted > 0 ? <span className="text-warn">● {listsDrifted}</span> : undefined },
     { href: "#first", label: "1차 심사" },
     { href: "#second", label: "2차 심사" },
+    { href: "#public", label: "공개 목록" },
     ...(drift.length > 0 ? [{ href: "#defaults", label: "기본값과 비교", badge: <span className="text-warn">{drift.length}</span> }] : []),
   ];
 

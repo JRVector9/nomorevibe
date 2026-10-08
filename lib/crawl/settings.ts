@@ -56,6 +56,7 @@ export function mergeWithDefaults(stored: unknown): CrawlSettings {
     classify: mergeClassify(DEFAULT_CRAWL_SETTINGS.classify, raw.classify),
     agentEvidence: { ...DEFAULT_CRAWL_SETTINGS.agentEvidence, ...((raw.agentEvidence as object) ?? {}) },
     news: { ...DEFAULT_CRAWL_SETTINGS.news, ...((raw.news as object) ?? {}) },
+    rising: { ...DEFAULT_CRAWL_SETTINGS.rising, ...((raw.rising as object) ?? {}) },
     secondReview: mergeSecondReview(raw.secondReview),
   };
 
@@ -99,6 +100,7 @@ export async function saveSettings(patch: unknown, updatedBy: string): Promise<S
     classify: mergeClassify(current.classify, raw.classify),
     agentEvidence: { ...current.agentEvidence, ...((raw.agentEvidence as object) ?? {}) },
     news: { ...current.news, ...((raw.news as object) ?? {}) },
+    rising: { ...current.rising, ...((raw.rising as object) ?? {}) },
     secondReview: { ...current.secondReview, ...((raw.secondReview as object) ?? {}) },
   };
 

@@ -39,6 +39,7 @@ const SCALARS: Record<string, string> = {
   "showHn.enabled": "Show HN",
   "showHn.priority": "Show HN 우선순위",
   "showHn.requireEvidence": "Show HN AI 흔적",
+  risingFreshDays: "지금 뜨는 확인 기간(일)",
 };
 
 const LISTS: Record<string, string> = {

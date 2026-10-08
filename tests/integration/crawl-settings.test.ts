@@ -46,6 +46,22 @@ describe("설정 저장", () => {
     expect(saved.judge.excludeForks).toBe(false);
   });
 
+  it("급상승 확인 기간은 따로 저장되고, 다른 항목을 저장해도 남는다", async () => {
+    await saveSettings({ judge: { maxStars: 500 } }, "a");
+    await saveSettings({ rising: { freshDays: 10 } }, "b");
+    await saveSettings({ judge: { excludeForks: false } }, "c");
+
+    const saved = await getSettings();
+    expect(saved.rising).toEqual({ freshDays: 10 });
+    expect(saved.judge.maxStars).toBe(500);
+    expect(saved.judge.excludeForks).toBe(false);
+    expect(saved.discover).toEqual(DEFAULT_CRAWL_SETTINGS.discover);
+
+    // 범위 밖은 쓰지 않는다
+    expect((await saveSettings({ rising: { freshDays: 31 } }, "d")).ok).toBe(false);
+    expect((await getSettings()).rising).toEqual({ freshDays: 10 });
+  });
+
   it("검증에 실패하면 아무것도 쓰지 않는다", async () => {
     await saveSettings({ judge: { maxStars: 500 } }, "admin");
 
