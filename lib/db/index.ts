@@ -1,10 +1,9 @@
 import { AsyncLocalStorage } from "node:async_hooks";
-import { sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/postgres-js";
 import type postgres from "postgres";
 import { logger } from "@/lib/observability/logger";
 import { createDbClient, dbPoolConfig } from "./pool";
-import { createReplicaRouter } from "./replica";
+import { createReplicaRouter, REPLICA_LAG_QUERY } from "./replica";
 import * as schema from "./schema";
 
 type Db = ReturnType<typeof drizzle<typeof schema>>;
@@ -59,10 +58,7 @@ const router = createReplicaRouter<Db>({
   replica: getReadDb,
   scope: (readDb, load) => replicaScope.run(readDb, load),
   lagSeconds: async (readDb) => {
-    // 다 따라잡았으면 0 — 주 DB 가 한가하면 마지막 적용 시각이 오래돼 보여도 밀린 것이 아니다
-    const [row] = await readDb.execute<{ lag: number | null }>(sql`
-      select case when pg_last_wal_receive_lsn() = pg_last_wal_replay_lsn() then 0
-                  else extract(epoch from now() - pg_last_xact_replay_timestamp()) end as lag`);
+    const [row] = await readDb.execute<{ lag: number | null }>(REPLICA_LAG_QUERY);
     return Number(row?.lag ?? 0);
   },
   warn: (event, fields) => (event === "db.replica_write_attempt" ? logger.error : logger.warn)(event, fields),
