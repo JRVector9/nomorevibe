@@ -97,8 +97,11 @@ export async function refreshProductStars(ctx:JobContext<StarsCursor>,dependenci
  const limit=REPOSITORY_BATCH*BATCHES;
  const columns={id:products.id,repoUrl:products.repoUrl,updatedAt:sql<string>`${products.updatedAt}::text`};
  const first=await db.select(columns).from(products).where(and(due,unseen)).orderBy(asc(products.id)).limit(limit);
+ // 저장소를 아직 한 번도 확인하지 않은 것은 새 제품부터 — '최신' 목록은 확인을 마친 제품만 보이므로(#317) 오래된 것부터 돌면
+ // 최근 제품이 가장 늦게 확인돼 최신 목록이 비었다. 확인한 것은 가장 오래 전에 본 것부터
  const rest=first.length<limit?await db.select(columns).from(products).where(and(due,sql`not ${unseen}`))
-  .orderBy(sql`${products.repoCheckedAt} asc nulls first`,asc(products.id)).limit(limit-first.length):[];
+  .orderBy(sql`${products.repoCheckedAt} asc nulls first`,sql`case when ${products.repoCheckedAt} is null then ${products.id} end desc nulls last`,asc(products.id))
+  .limit(limit-first.length):[];
  const rows=[...first,...rest];
  const check=dependencies.check??checkRepositories;
  const counts={examined:0,updated:0,ok:0,missing:0,empty:0,blocked:0,unknown:0,renamed:0,archived:0,batches:0};
