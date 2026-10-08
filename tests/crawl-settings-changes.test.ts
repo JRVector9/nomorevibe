@@ -5,14 +5,14 @@ import { DEFAULT_CRAWL_SETTINGS } from "@/lib/crawl/settings-schema";
 
 /** 크롤 설정 저장 바 — 처음 그린 값과 지금 값을 견줘 사람이 읽는 문장으로 */
 describe("저장 바의 바뀐 항목", () => {
-  const before = { enabled: "on", pagesPerTick: "10", sort: "recent", blockedHomepageDomains: "github.com\nx.com", "query.0.label": "Claude", queryCount: "2" };
+  const before = { excludeForks: "on", pagesPerTick: "10", sort: "recent", blockedHomepageDomains: "github.com\nx.com", "query.0.label": "Claude", queryCount: "2" };
 
   it("값·스위치·정렬을 화면 순서대로 적는다", () => {
     expect(describeChanges(before, { ...before, pagesPerTick: "12", sort: "relevance" }))
       .toEqual(["정렬 최신 활동순 → 관련도", "틱당 페이지 10 → 12"]);
     // 꺼진 체크박스는 폼에서 값이 빠진다
-    const off = Object.fromEntries(Object.entries(before).filter(([key]) => key !== "enabled"));
-    expect(describeChanges(before, off)).toEqual(["수집 켬 → 끔"]);
+    const off = Object.fromEntries(Object.entries(before).filter(([key]) => key !== "excludeForks"));
+    expect(describeChanges(before, off)).toEqual(["포크 제외 켬 → 끔"]);
   });
 
   it("목록은 더하고 뺀 수를, 신호는 늘어난 수를 적는다", () => {

@@ -14,7 +14,11 @@ export type SignalYieldView = { enqueued: number; published: number; gated: numb
 const BLANK: Query = { label: "", kind: "commits", query: "", enabled: false, priority: 0, builder: null, requireEvidence: false };
 
 const cell = "border-b border-bg-hover px-2.5 py-2.5 align-middle";
-const bare = "w-full min-w-0 rounded-[7px] border border-transparent bg-transparent px-2 py-1 text-fg outline-none hover:border-line focus:border-accent focus:bg-bg-card";
+/** 너비 없는 칸 — 우선·추정 AI 처럼 너비를 정하는 칸이 w-full 과 겨루지 않게 나눈다(w-full 이 이기면 칸이 줄어 "1(" 처럼 잘렸다, ADM-17) */
+const bareBase = "rounded-[7px] border border-transparent bg-transparent px-2 py-1 text-fg outline-none hover:border-line focus:border-accent focus:bg-bg-card";
+const bare = `${bareBase} w-full min-w-0`;
+/** 우선순위 입력 — 0~1000 네 자리와 숫자 단추가 들어가는 너비 */
+const priorityInput = `${bareBase} w-[84px] shrink-0 text-right tabular-nums`;
 const fmt = (n: number) => n.toLocaleString("ko-KR");
 
 function Yield({ value }: { value?: SignalYieldView }) {
@@ -53,13 +57,13 @@ export function SignalsTable({ discover, yields }: { discover: CrawlSettings["di
       <td className={`${cell} text-fg-3`}>—</td>
       <td className={cell}>
         <input name="showHn.priority" type="number" min={0} max={1000} defaultValue={showHn.priority} aria-label="Show HN 우선순위"
-          className={`${bare} w-[72px] text-right tabular-nums`} />
+          className={priorityInput} />
       </td>
       <td className={cell}>
         <input type="checkbox" name="showHn.requireEvidence" defaultChecked={showHn.requireEvidence ?? false} aria-label="Show HN AI 흔적 필요"
           className="h-4 w-4 accent-[var(--accent)]" />
       </td>
-      <td className={`${cell} text-right tabular-nums`}>{yields["Show HN"] ? fmt(yields["Show HN"].enqueued) : "—"}</td>
+      <td className={`${cell} whitespace-nowrap text-right tabular-nums`}>{yields["Show HN"] ? fmt(yields["Show HN"].enqueued) : "—"}</td>
       <td className={cell}><Yield value={yields["Show HN"]} /></td>
     </tr>
   );
@@ -103,18 +107,18 @@ export function SignalsTable({ discover, yields }: { discover: CrawlSettings["di
                   </td>
                   <td className={cell}>
                     <input name={`query.${i}.builder`} defaultValue={q.builder ?? ""} placeholder="—" aria-label="추정 AI"
-                      title="이 신호로 찾은 제품에 '우리 추정'으로 붙일 만든 AI. 비우면 추정하지 않습니다." className={`${bare} w-[96px]`} />
+                      title="이 신호로 찾은 제품에 '우리 추정'으로 붙일 만든 AI. 비우면 추정하지 않습니다." className={`${bareBase} w-[96px]`} />
                   </td>
                   <td className={cell}>
                     <input name={`query.${i}.priority`} type="number" min={0} max={1000} defaultValue={q.priority} aria-label="조사 우선순위"
-                      className={`${bare} w-[72px] text-right tabular-nums`} />
+                      className={priorityInput} />
                   </td>
                   <td className={cell}>
                     <input type="checkbox" name={`query.${i}.requireEvidence`} defaultChecked={q.requireEvidence ?? false} aria-label="AI 흔적 필요"
                       title="레포 루트의 CLAUDE.md·.cursor 같은 파일이나 최근 커밋의 Co-authored-by 가 없으면 들여보내지 않습니다."
                       className="h-4 w-4 accent-[var(--accent)]" />
                   </td>
-                  <td className={`${cell} text-right tabular-nums`}>{q.label && yields[q.label] ? fmt(yields[q.label].enqueued) : "—"}</td>
+                  <td className={`${cell} whitespace-nowrap text-right tabular-nums`}>{q.label && yields[q.label] ? fmt(yields[q.label].enqueued) : "—"}</td>
                   <td className={cell}><Yield value={q.label ? yields[q.label] : undefined} /></td>
                 </tr>
               );

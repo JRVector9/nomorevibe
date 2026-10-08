@@ -1,15 +1,24 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { redirect } from "next/navigation";
+import { Suspense } from "react";
 import { currentAdmin } from "@/lib/auth/admin";
-import { getSettings, getSettingsMeta, settingsDrift, settingsFormVersion } from "@/lib/crawl/settings";
+import { listGatewayModels } from "@/lib/crawl/agent-review-gateway";
+import { getSettings, getSettingsMeta, resetChanges, settingsDrift, settingsFormVersion } from "@/lib/crawl/settings";
 import { candidateCounts } from "@/lib/crawl/repository";
+import { formatListTime } from "@/lib/format/time";
 import { signalYields } from "@/lib/operations/dashboard";
+import { readSettingsApply } from "@/lib/operations/settings-apply";
 import { logger } from "@/lib/observability/logger";
 import { SettingsForm } from "./SettingsForm";
 import { SettingsDriftNotice } from "./SettingsDriftNotice";
 import { ScrollToHash } from "./ScrollToHash";
+import { ReviewModeForm } from "./review/ReviewModeForm";
+import { SecondVoterSwitch } from "./review/SecondVoterSwitch";
+import { voterChoices } from "./review/voters";
 import { LIST_KEYS, missingDefaults, searchUsage } from "./settings/model";
+import { describeReset } from "./settings/reset-diff";
+import { SettingsApplyLine } from "./settings/SettingsApplyLine";
 
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "크롤 설정 — NoMoreVibe", robots: { index: false } };
@@ -36,12 +45,19 @@ export default async function AdminPage() {
   const admin = await currentAdmin();
   if (!admin) redirect("/admin/login");
 
-  const [settings, meta, counts] = await Promise.all([getSettings(), getSettingsMeta(), candidateCounts()]);
+  const now = new Date();
+  const [settings, meta, counts, apply] = await Promise.all([getSettings(), getSettingsMeta(), candidateCounts(),
+    // 적용 확인도 덤이다 — 관측을 못 읽어도 설정은 고칠 수 있어야 한다
+    readSettingsApply().catch((error) => {
+      logger.warn("admin.settings_apply_unavailable", { error });
+      return null;
+    })]);
   // 성과는 덤이다 — 집계가 실패해도 설정은 고칠 수 있어야 한다
   const yields = await signalYields(settings, 7).catch((error) => {
     logger.warn("admin.signal_yields_unavailable", { error });
     return [];
   });
+  const currentVoter = settings.secondReview.voters[0] ?? null;
   const waiting = counts.needs_review ?? 0;
   const drift = settingsDrift(settings);
 
@@ -73,14 +89,12 @@ export default async function AdminPage() {
             ? <span className={`${chip} bg-up/10 text-up`}><span className="h-[7px] w-[7px] rounded-full bg-current" aria-hidden />수집 켜짐</span>
             : <span className={`${chip} bg-bg-hover text-fg-2`}><span className="h-[7px] w-[7px] rounded-full bg-current" aria-hidden />수집 꺼짐</span>}
           {waiting > 0 && <Link prefetch={false} href="/admin/review" className={`${chip} bg-accent-soft text-accent-ink`}>심사 대기 {fmt(waiting)}건 →</Link>}
-          <span className="ml-auto text-[13px] text-fg-3">
-            {meta && <>마지막 변경 <span className="font-mono">{meta.updatedAt.toLocaleString("ko-KR", { dateStyle: "medium", timeStyle: "short" })}</span> · {meta.updatedBy ?? "알 수 없음"} · </>}
-            {admin.login}
-          </span>
-          <form action="/api/auth/logout" method="post">
-            <button type="submit" className="text-[13px] font-semibold text-fg-2 hover:text-fg">로그아웃</button>
-          </form>
+          {/* 계정·로그아웃은 사이드바 아래 한 곳에 있다(ADM-28) */}
+          {meta && <span className="ml-auto text-[13px] text-fg-3">
+            마지막 변경 <span className="font-mono">{formatListTime(meta.updatedAt, now)}</span> · {meta.updatedBy ?? "알 수 없음"}
+          </span>}
         </div>
+        {apply && <SettingsApplyLine apply={apply} now={now} />}
         <p className="max-w-[72ch] text-[14px] text-fg-3">
           무엇을 찾아올지(검색 신호·수집 범위)와 무엇을 올릴지(판정·거르는 목록), 누가 다시 볼지(1·2차 심사)를 정합니다.
           저장하면 다음 틱부터 적용되고, 판정 기준은 보관한 원본으로 다시 판정합니다.
@@ -106,11 +120,25 @@ export default async function AdminPage() {
           </nav>
         </aside>
         <div className="flex min-w-0 flex-[999_1_640px] flex-col gap-4">
-          <SettingsForm settings={settings} version={settingsFormVersion(settings)} yields={yieldsByLabel} />
-          <SettingsDriftNotice drift={drift} />
+          <SettingsForm settings={settings} version={settingsFormVersion(settings)} yields={yieldsByLabel} secondControls={<>
+            <ReviewModeForm key={settings.reviewMode} mode={settings.reviewMode} ready={process.env.CRAWL_REVIEW_READY === "true"} />
+            {/* 게이트웨이 모델 목록을 기다리는 동안에도 나머지 설정은 먼저 그린다 */}
+            <Suspense fallback={<p aria-busy="true" className="rounded-[10px] border border-line px-4 py-3 text-[13px] font-semibold text-fg-2">
+              2차 표 · <span className="font-mono">{currentVoter?.model ?? "없음"}</span> · 모델 목록을 읽는 중…</p>}>
+              <VoterSwitchSlot key={currentVoter ? `${currentVoter.provider}|${currentVoter.model}` : "none"} current={currentVoter}
+                firstModel={settings.firstReview?.model ?? null} />
+            </Suspense>
+          </>} />
+          <SettingsDriftNotice drift={drift} reset={drift.length > 0 ? describeReset(resetChanges(settings)) : []} />
         </div>
       </div>
       <ScrollToHash />
     </main>
   );
+}
+
+/** 2차 표 바로 바꾸기 — 게이트웨이 모델 목록이 오면 그린다(못 읽으면 Grok·Claude 만) */
+async function VoterSwitchSlot({ current, firstModel }: { current: { provider: string; model: string } | null; firstModel: string | null }) {
+  const models = await listGatewayModels();
+  return <SecondVoterSwitch current={current} choices={voterChoices(models, current, firstModel)} gatewayReachable={models !== null} />;
 }

@@ -4,6 +4,7 @@ import { sql, and, eq } from "drizzle-orm";
 import { currentAdmin } from "@/lib/auth/admin";
 import { listGitHubCollectorAccounts } from "@/lib/crawl/github-accounts";
 import { db } from "@/lib/db";
+import { formatListTime } from "@/lib/format/time";
 import { crawlDocuments, products } from "@/lib/db/schema";
 import { TokenForm } from "./TokenForm";
 import { toggleCollectorAccount } from "./actions";
@@ -20,6 +21,7 @@ export default async function GitHubAccountsPage() {
     db.select({ count: sql<number>`count(*)::int` }).from(products).where(and(eq(products.source, "crawler"), sql`${products.createdAt} >= now() - interval '1 hour'`)),
   ]);
   const ready = (process.env.GITHUB_COLLECTOR_SECRET?.length ?? 0) >= 32;
+  const now = new Date();
   return <main className="mx-auto max-w-[1100px] px-6 pb-20">
     <div className="pt-6">
       <h1 className="text-[22px] font-extrabold tracking-tight">GitHub 수집 계정</h1>
@@ -46,7 +48,7 @@ export default async function GitHubAccountsPage() {
             <p className="mt-1 font-mono text-[13px] text-fg-3">GitHub 사용자 ID {account.userId}</p>
             {quota ? <p className="mt-4 text-[14px]">core 잔여 <strong>{quota.remaining.toLocaleString("ko-KR")}</strong> / {quota.limit.toLocaleString("ko-KR")} · 사용 {quota.used.toLocaleString("ko-KR")}</p>
               : <p className="mt-4 text-[13px] text-fg-2">한도 관측 없음</p>}
-            <p className="mt-1 text-[13px] text-fg-3">{stale ? "한도 정보 오래됨 · " : ""}관측 {observed?.toLocaleString("ko-KR", { timeZone: "Asia/Seoul" }) ?? "없음"} · 초기화 {quota ? new Date(quota.reset * 1000).toLocaleString("ko-KR", { timeZone: "Asia/Seoul" }) : "알 수 없음"}</p>
+            <p className="mt-1 text-[13px] text-fg-3">{stale ? "한도 정보 오래됨 · " : ""}관측 {formatListTime(observed, now, "없음")} · 초기화 {quota ? formatListTime(quota.reset * 1000, now) : "알 수 없음"}</p>
             <form action={toggleCollectorAccount} className="mt-4">
               <input type="hidden" name="userId" value={account.userId} /><input type="hidden" name="enabled" value={account.enabled ? "false" : "true"} />
               <button className="rounded-lg border border-line px-3 py-1.5 text-[13px] font-semibold">{account.enabled ? "수집에서 제외" : "수집에 다시 사용"}</button>

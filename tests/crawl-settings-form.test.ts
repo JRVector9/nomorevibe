@@ -4,11 +4,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // 폼과 서버 액션을 같이 본다 — 빈 행을 그리는 쪽과 버리는 쪽이 어긋나면 신호가 늘지 않는다
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
+// 떠날 때 묻는 확인 창이 라우터로 이동한다 — 정적 그리기에는 라우터가 없다
+vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn() }) }));
 vi.mock("@/lib/auth/admin", () => ({ currentAdmin: vi.fn().mockResolvedValue({ login: "jr" }) }));
 const saveSettings = vi.fn();
 vi.mock("@/lib/crawl/settings", () => ({
   saveSettings: (...args: unknown[]) => saveSettings(...args),
   resetSettings: vi.fn(),
+  settingsFormVersion: () => "v-saved",
 }));
 
 const { SettingsForm } = await import("@/app/admin/SettingsForm");
@@ -275,5 +278,46 @@ describe("열어 둔 폼이 다른 곳의 변경을 덮지 않는다", () => {
   it("판이 없는 제출도 견주게 한다 — 빈 판은 어떤 저장값과도 맞지 않는다", async () => {
     await saveCrawlSettings(null, submitted());
     expect(saveSettings.mock.calls[0][2]).toEqual({ expectedFormVersion: "" });
+  });
+});
+
+/**
+ * 수집 켜기·끄기는 운영센터 머리의 즉시 스위치만 바꾼다(2026-10-08 UX 감사 ADM-18, 계약 C4).
+ * 폼에 스위치가 없는데 저장이 "enabled" 를 폼에서 읽으면, 칸이 없으니 꺼짐으로 저장돼 설정을 저장할 때마다 수집이 멈춘다.
+ */
+describe("설정 저장은 수집 켜짐·꺼짐을 바꾸지 않는다", () => {
+  it("폼에 수집 스위치가 없고, 지금 상태와 운영센터로 가는 길만 보인다", () => {
+    const on = render({ ...twoSignals, enabled: true });
+    expect(on).not.toContain('name="enabled"');
+    expect(on).toContain("수집 켜짐");
+    expect(on).toMatch(/<a[^>]*href="\/admin\/status"[^>]*>운영센터에서 켜고 끄기/);
+    expect(render({ ...twoSignals, enabled: false })).toContain("수집 꺼짐");
+  });
+
+  it.each([["보낸 값 on", "on"], ["보낸 값 없음", null]])("%s — 저장할 값에 enabled 가 없어 저장된 값이 그대로 남는다", async (_case, value) => {
+    const form = submitted();
+    if (value === null) form.delete("enabled");
+    await saveCrawlSettings(null, form);
+    expect(saveSettings.mock.calls[0][0]).not.toHaveProperty("enabled");
+  });
+
+  it("저장에 성공하면 새 폼 판을 돌려준다 — 열어 둔 폼이 다음 저장에 싣는다", async () => {
+    expect(await saveCrawlSettings(null, submitted())).toEqual({ ok: true, version: "v-saved" });
+  });
+});
+
+describe("저장 바", () => {
+  it("화면 아래에 붙어 있고, 바뀐 것이 없으면 조용한 한 줄이다", () => {
+    const html = render(twoSignals);
+    expect(html).toMatch(/class="sticky bottom-0[^"]*border-line bg-bg-card/);
+    expect(html).not.toContain("data-dirty");
+    expect(html).toContain("바뀐 것이 없습니다");
+  });
+
+  it("발행 보호·2차 표 바로 바꾸기는 2차 심사 칸(#second) 안에 그린다", () => {
+    const html = renderToStaticMarkup(createElement(SettingsForm, { settings: twoSignals, secondControls: createElement("p", null, "바로 바꾸기 자리") }));
+    const second = html.slice(html.indexOf('id="second"'));
+    expect(second).toContain("바로 바꾸기 자리");
+    expect(html.indexOf("바로 바꾸기 자리")).toBeGreaterThan(html.indexOf('id="second"'));
   });
 });
