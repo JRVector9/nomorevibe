@@ -8,6 +8,7 @@ import { signalYields } from "@/lib/operations/dashboard";
 import { logger } from "@/lib/observability/logger";
 import { SettingsForm } from "./SettingsForm";
 import { SettingsDriftNotice } from "./SettingsDriftNotice";
+import { ScrollToHash } from "./ScrollToHash";
 import { LIST_KEYS, missingDefaults, searchUsage } from "./settings/model";
 
 export const dynamic = "force-dynamic";
@@ -109,6 +110,7 @@ export default async function AdminPage() {
           <SettingsDriftNotice drift={drift} />
         </div>
       </div>
+      <ScrollToHash />
     </main>
   );
 }
