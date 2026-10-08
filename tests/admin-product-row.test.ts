@@ -7,6 +7,7 @@ vi.mock("@/app/admin/actions", () => ({
   markClaimInvite: vi.fn(),
   decideRepoReviewAction: vi.fn(),
 }));
+vi.mock("@/app/admin/products/actions", () => ({ keepIntroAction: vi.fn() }));
 import { ProductRow, type AdminProduct } from "@/app/admin/products/ProductRow";
 import { repoReviewView } from "@/app/admin/products/repo-review-view";
 import { PRODUCT_FILTERS } from "@/app/admin/products/filters";
@@ -79,19 +80,22 @@ describe("admin product row — 저장소 사라진 웹사이트의 AI 판정", 
     reviewedAt: new Date("2026-10-08T03:00:00Z"), nextReviewAt: null, operatorDecision: null, operatorBy: null, operatorAt: null,
   };
 
-  it("판정·이유·걸린 질문·페이지를 보여 주고 운영자 버튼 둘을 단다", () => {
-    const html = render({ repoReview: repoReviewView(row) });
+  it("판정·이유·걸린 질문·페이지를 보여 주고 운영자 버튼 둘을 단다 — 내리기는 확인 창부터 연다", () => {
+    const html = render({ repoReview: repoReviewView(row, new Date("2026-10-08T05:00:00Z")) });
     expect(html).toContain("AI: 내릴 후보");
     expect(html).toContain("AI 판단 · 다른 제품 · 주차·오류 페이지");
     expect(html).toContain("200 · https://found.test/ · “found.test is for sale”");
-    expect(html).toContain('value="keep"');
-    expect(html).toContain('value="delist"');
+    // 목록 시각(lib/format/time) — 오늘이면 "12:00 (2시간 전)"
+    expect(html).toContain("12:00 (2시간 전)");
+    expect(html).toMatch(/<button type="button"[^>]*>유지<\/button>/);
+    expect(html).toMatch(/<button type="button" aria-haspopup="dialog"[^>]*>내리기<\/button>/);
+    expect(html).not.toContain('type="submit" name="decision"');
     expect(html).toContain("text-warn");
   });
 
   it("아직 안 본 것·차단된 것·운영자가 정한 것", () => {
     expect(render({ repoReview: null })).toContain("AI 사이트 확인 대기");
-    expect(render({ repoReview: repoReviewView(row), status: "banned" })).not.toContain('value="delist"');
+    expect(render({ repoReview: repoReviewView(row), status: "banned" })).not.toContain(">내리기<");
     const kept = repoReviewView({ ...row, operatorDecision: "keep", operatorBy: "jr", operatorAt: new Date("2026-10-08T04:00:00Z") });
     expect(kept.open).toBe(false);
     expect(render({ repoReview: kept })).toContain("운영자 유지 · jr");
@@ -116,5 +120,32 @@ describe("운영센터 → 제품 거르기 링크", () => {
     expect(linked.length).toBeGreaterThanOrEqual(3);
     // ?filter=intro 처럼 없는 이름이면 제품 화면이 조용히 '전체'로 떨어진다
     for (const name of linked) expect(Object.keys(PRODUCT_FILTERS)).toContain(name);
+  });
+});
+
+describe("admin product row — 차단 (2026-10-08 UX 감사 ADM-06)", () => {
+  it("⋯ 메뉴의 차단은 submit 이 아니라 사유를 묻는 확인 창을 연다", () => {
+    const html = render({});
+    expect(html).toMatch(/<button type="button" aria-haspopup="dialog"[^>]*>차단<\/button>/);
+    expect(html).toContain('<dialog class="admin-confirm" data-tone="danger"');
+    expect(html).not.toContain('value="ban"');
+  });
+
+  it("차단된 제품은 해제 버튼만 — 확인 창 없이 바로 푼다", () => {
+    const html = render({ status: "banned" });
+    expect(html).toMatch(/<button type="button"[^>]*>차단 해제<\/button>/);
+    expect(html).not.toContain("admin-confirm");
+  });
+});
+
+describe("admin product row — 소개 확인 필요 (ADM-23)", () => {
+  it("지금 소개와 검수 사유를 한 줄로 보이고 그대로 두기·차단을 단다", () => {
+    const html = render({ intro: { tagline: "Loading…", problem: "근거가 기본 페이지뿐" } });
+    expect(html).toContain("“Loading…”");
+    expect(html).toContain("검수: 근거가 기본 페이지뿐");
+    expect(html).toMatch(/>그대로 두기<\/button>/);
+    // ⋯ 메뉴의 차단과 줄의 차단 — 둘 다 확인 창
+    expect(html.match(/aria-haspopup="dialog"[^>]*>차단<\/button>/g)).toHaveLength(2);
+    expect(render({})).not.toContain("그대로 두기");
   });
 });

@@ -12,6 +12,7 @@ import { markClaimInvited } from "@/lib/domain/products/claim-invite";
 import { decideRepoReview } from "@/lib/domain/products/repo-reviews";
 import { logger } from "@/lib/observability/logger";
 import { recordAdminAction, recordAdminActions, type AdminLogEntry } from "@/lib/operations/admin-log";
+import { isBanReason } from "./products/ban-reasons";
 import { MAX_BULK_DECISIONS, parseSelection, type BulkReviewState, type ReviewDecisionState } from "./review/contract";
 
 /** version: 저장한 뒤의 폼 판 — 열어 둔 폼이 다음 저장에 이 판을 싣는다 */
@@ -327,22 +328,36 @@ export async function resetCrawlSettings(): Promise<SaveState> {
  *
  * 차단은 행을 남기므로 같은 URL의 재등록과 재수집이 함께 막힌다. 해제는 차단 전 상태를
  * 유도해 되돌린다 — 되돌릴 길이 없으면 차단 버튼을 누르는 것 자체가 무서운 일이 된다.
+ *
+ * 차단은 사유(ban-reasons.ts)를 꼭 골라야 한다 — 사유는 차단 감사 행과 작업 로그에 함께 남는다(2026-10-08 UX 감사 ADM-06).
+ * 성공하면 null 대신 알림이 쓸 결과를 돌려준다(ADM-12). undo 는 알림의 '되돌리기'가 보낸 해제라는 표시다.
  */
-export async function setProductBan(_prev: ReviewState, form: FormData): Promise<ReviewState> {
+export type ProductBanState = { error?: string; ok?: true; message?: string } | null;
+
+export async function setProductBan(_prev: ProductBanState, form: FormData): Promise<ProductBanState> {
   const admin = await currentAdmin();
   if (!admin) return { error: "권한이 없습니다. 다시 로그인해주세요." };
 
   const slug = String(form.get("slug") ?? "");
   const action = String(form.get("action") ?? "");
   if (action !== "ban" && action !== "unban") return { error: "알 수 없는 결정입니다" };
+  const reason = form.get("reason");
+  if (action === "ban" && !isBanReason(reason)) return { error: "차단 사유를 골라 주세요" };
+  const note = String(form.get("note") ?? "").trim().slice(0, 500);
+  const undo = form.get("undo") === "1";
 
-  const result = action === "ban" ? await banProduct(slug) : await unbanProduct(slug);
-  await recordAdminAction(admin.login, { action: `product-${action}`, target: slug, ok: result.ok, error: result.ok ? null : result.error.kind });
+  const result = action === "ban"
+    ? await banProduct(slug, { reason: reason as string, metadata: { by: admin.login, ...(note ? { note } : {}) } })
+    : await unbanProduct(slug, { metadata: { by: admin.login, ...(undo ? { undo: true } : {}) } });
+  await recordAdminAction(admin.login, { action: `product-${action}`, target: slug,
+    detail: action === "ban" ? { reason, ...(note ? { note } : {}) } : undo ? { undo: true } : undefined,
+    ok: result.ok, error: result.ok ? null : result.error.kind });
   if (!result.ok) return { error: "제품을 찾을 수 없습니다" };
 
   logger.info("admin.product_ban", { slug, action, login: admin.login });
   revalidatePath("/admin/products");
-  return null;
+  revalidatePath(`/admin/products/${slug}`);
+  return { ok: true, message: action === "ban" ? "차단했습니다" : "차단을 풀었습니다" };
 }
 
 /**
@@ -351,7 +366,7 @@ export async function setProductBan(_prev: ReviewState, form: FormData): Promise
  * 내리기는 위 차단과 같은 길이다(setStatusWithAudit 'admin.product.ban' — 행은 남고 되돌릴 수 있다). 결정은 같은
  * 트랜잭션에 적는다. 한 번에 한 제품 — AI 판정은 사람이 하나씩 보고 정한다(감사 내리기와 같다).
  */
-export async function decideRepoReviewAction(_prev: ReviewState, form: FormData): Promise<ReviewState> {
+export async function decideRepoReviewAction(_prev: ReviewState, form: FormData): Promise<ProductBanState> {
   const admin = await currentAdmin();
   if (!admin) return { error: "권한이 없습니다. 다시 로그인해주세요." };
 
@@ -367,7 +382,8 @@ export async function decideRepoReviewAction(_prev: ReviewState, form: FormData)
 
   logger.info("admin.repo_review_decided", { slug, decision, login: admin.login });
   revalidatePath("/admin/products");
-  return null;
+  // 알림(ADM-12)이 쓸 결과 — 내린 것은 알림의 '되돌리기'가 setProductBan 해제로 되돌린다
+  return { ok: true, message: decision === "keep" ? "유지했습니다" : "내렸습니다" };
 }
 
 /**
@@ -386,6 +402,9 @@ export async function banProducts(_prev: BulkBanState, form: FormData): Promise<
 
   const slugs = [...new Set(form.getAll("slug").map(String).filter(Boolean))];
   if (slugs.length === 0) return { error: "선택한 제품이 없습니다" };
+  // 한 건 차단과 같이 사유를 꼭 고른다(ADM-06) — 감사 행과 작업 로그에 남는다
+  const reason = form.get("reason");
+  if (!isBanReason(reason)) return { error: "차단 사유를 골라 주세요" };
   if (slugs.length > MAX_BULK_DECISIONS) {
     return { error: `한 번에 ${MAX_BULK_DECISIONS}건까지 내립니다. 나눠서 눌러주세요.` };
   }
@@ -394,10 +413,10 @@ export async function banProducts(_prev: BulkBanState, form: FormData): Promise<
   const failures: string[] = [];
   const entries: AdminLogEntry[] = [];
   for (const slug of slugs) {
-    const result = await banProduct(slug);
+    const result = await banProduct(slug, { reason, metadata: { by: admin.login, bulk: slugs.length } });
     if (result.ok) ok += 1;
     else failures.push(slug);
-    entries.push({ action: "product-ban", target: slug, detail: { from: "recheck", bulk: slugs.length },
+    entries.push({ action: "product-ban", target: slug, detail: { from: "recheck", bulk: slugs.length, reason },
       ok: result.ok, error: result.ok ? null : result.error.kind });
   }
   await recordAdminActions(admin.login, entries);

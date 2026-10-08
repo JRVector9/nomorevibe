@@ -1,4 +1,5 @@
 import type { ProductRepoReview } from "@/lib/db/schema";
+import { formatListTime } from "@/lib/format/time";
 import type { AdminProduct } from "./ProductRow";
 
 /** 2단계 판정 이유 — 코드 거르기(repo-review.ts preFilter)와 모델 */
@@ -15,7 +16,6 @@ const REASONS: Record<string, string> = {
   invalid_output: "AI 답이 두 번 깨짐",
 };
 const DECISIONS = { keep: "AI: 유지", delist_candidate: "AI: 내릴 후보", human: "AI: 사람 확인" } as const;
-const date = (value: Date) => value.toLocaleDateString("ko-KR", { timeZone: "Asia/Seoul" });
 
 /** 네 질문 중 걸린 것만 — 모두 괜찮으면 그렇다고 */
 function answersSummary(review: ProductRepoReview): string | null {
@@ -26,8 +26,12 @@ function answersSummary(review: ProductRepoReview): string | null {
   return flags.length ? flags.join(" · ") : "네 질문 모두 정상";
 }
 
-/** 어드민 줄에 실을 2단계 판정 — 운영자를 기다리는지(open)는 repo-reviews.ts repoReviewOpen 과 같은 규칙이다 */
-export function repoReviewView(review: ProductRepoReview): NonNullable<AdminProduct["repoReview"]> {
+/**
+ * 어드민 줄에 실을 2단계 판정 — 운영자를 기다리는지(open)는 repo-reviews.ts repoReviewOpen 과 같은 규칙이다.
+ * now 는 서버가 목록을 읽은 시각이다(lib/format/time 목록 표기 "13:38 (3분 전)"·"10/7 21:15").
+ */
+export function repoReviewView(review: ProductRepoReview, now: Date = new Date()): NonNullable<AdminProduct["repoReview"]> {
+  const date = (value: Date) => formatListTime(value, now);
   const operator = review.operatorDecision
     ? `운영자 ${review.operatorDecision === "keep" ? "유지" : "내림"} · ${review.operatorBy ?? ""} · ${review.operatorAt ? date(review.operatorAt) : ""}`
     : null;

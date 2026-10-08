@@ -91,6 +91,8 @@ export type ListOptions = {
   excludeSlugs?: readonly string[];
   /** GitHub 저장소가 사라졌다고 확정된 제품만(repoGone) — 어드민이 본다 */
   repoGone?: boolean;
+  /** 저장소가 지금 없거나 빈 제품만 — 24시간이 지나지 않아 아직 repoGone 이 아닌 것까지(어드민 '저장소 사라짐' pending 보기) */
+  repoMissing?: boolean;
   /** GitHub 이 보관(archived)이라고 한 저장소만 — 기록만 하는 값이라 어드민만 본다 */
   repoArchived?: boolean;
   /** GitHub 이 다른 owner/name 으로 돌려준 저장소만(이름 바뀜·옮김) — 어드민만 본다 */
@@ -278,13 +280,14 @@ const introNeedsEditor = sql`exists (
 )`;
 
 /** 목록과 개수가 같은 조건을 쓰도록 한 곳에서 만든다. 급상승 기간은 설정에서 읽으므로 비동기다 */
-async function listConditions({ statuses, category, query, builder, observedTool, hasRepository, excludeDown, introNeedsEditor: needsEditor, rising, listedSince, minStars, slugs, excludeSlugs, repoGone: goneOnly, repoArchived, repoRenamed, down, adminSearch, repoChecked, spamBanned }: Omit<ListOptions, "limit" | "sort" | "offset">) {
+async function listConditions({ statuses, category, query, builder, observedTool, hasRepository, excludeDown, introNeedsEditor: needsEditor, rising, listedSince, minStars, slugs, excludeSlugs, repoGone: goneOnly, repoMissing, repoArchived, repoRenamed, down, adminSearch, repoChecked, spamBanned }: Omit<ListOptions, "limit" | "sort" | "offset">) {
   const conditions = [inArray(products.status, statuses)];
   if (slugs) conditions.push(slugs.length ? inArray(products.slug, [...slugs]) : sql`false`);
   if (excludeSlugs?.length) conditions.push(notInArray(products.slug, [...excludeSlugs]));
   if (excludeDown) conditions.push(notDown);
   if (needsEditor) conditions.push(introNeedsEditor);
   if (goneOnly) conditions.push(repoGone);
+  if (repoMissing) conditions.push(inArray(products.repoStatus, ["not_found", "empty"]));
   if (repoArchived) conditions.push(eq(products.repoArchived, true));
   if (repoRenamed) conditions.push(isNotNull(products.repoRenamedTo));
   if (down) conditions.push(isDown);

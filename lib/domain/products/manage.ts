@@ -45,7 +45,10 @@ export async function deleteProduct(
  * 어드민 차단 — 행을 지우지 않고 banned로 표시한다.
  * 행이 남아 있으므로 같은 URL의 재등록도 자동으로 막힌다.
  */
-export async function banProduct(slug: string): Promise<Result<{ slug: string }>> {
+/** 차단·해제 감사 행에 함께 남길 사유와 덧붙일 값(누가·메모 등) — setStatusWithAudit 에 그대로 넘긴다 */
+export type BanAudit = { reason?: string; metadata?: Record<string, unknown> };
+
+export async function banProduct(slug: string, audit: BanAudit = {}): Promise<Result<{ slug: string }>> {
   const product = await repo.findBySlug(slug);
   if (!product) return fail({ kind: "not_found" });
   if (product.status === "banned") return ok({ slug });
@@ -55,6 +58,7 @@ export async function banProduct(slug: string): Promise<Result<{ slug: string }>
     slug,
     status: "banned",
     action: "admin.product.ban",
+    ...audit,
   });
   if (!changed) return fail({ kind: "not_found" });
   return ok({ slug });
@@ -67,7 +71,7 @@ export async function banProduct(slug: string): Promise<Result<{ slug: string }>
  * 수집기가 올린 것이면 seeded, 나머지는 검증 대기다. 잘못 누른 차단을 되돌릴 길이 없으면
  * 차단 버튼을 누르는 것 자체가 무서운 일이 된다.
  */
-export async function unbanProduct(slug: string): Promise<Result<{ slug: string; status: ProductStatus }>> {
+export async function unbanProduct(slug: string, audit: BanAudit = {}): Promise<Result<{ slug: string; status: ProductStatus }>> {
   const product = await repo.findBySlug(slug);
   if (!product) return fail({ kind: "not_found" });
   if (product.status !== "banned") return ok({ slug, status: product.status });
@@ -82,6 +86,7 @@ export async function unbanProduct(slug: string): Promise<Result<{ slug: string;
     slug,
     status,
     action: "admin.product.unban",
+    ...audit,
   });
   if (!changed) return fail({ kind: "not_found" });
   return ok({ slug, status });

@@ -1,8 +1,13 @@
 "use client";
 
-import { useActionState } from "react";
+import { useActionState, useState } from "react";
 import Link from "next/link";
-import { decideRepoReviewAction, markClaimInvite, setProductBan, type ReviewState } from "../actions";
+import { LIMITS } from "@/lib/domain/products/schema";
+import { decideRepoReviewAction, markClaimInvite, type ReviewState } from "../actions";
+import { ConfirmAction } from "../components/ConfirmAction";
+import { resultError, resultToast, useAdminToast } from "../components/Toast";
+import { editIntroAction, keepIntroAction } from "./actions";
+import { BanAction, bannedToast, historyLink } from "./BanAction";
 
 export type AdminProduct = {
   slug: string;
@@ -30,6 +35,8 @@ export type AdminProduct = {
   } | null;
   /** '저장소 보관됨'·'저장소 이름 바뀜' 거르기 — 기록만 하는 값(공개 화면에 영향 없음) */
   repoNote?: string | null;
+  /** '소개 확인 필요' 거르기 — 지금 공개된 소개와 검수가 사람에게 넘긴 이유 */
+  intro?: { tagline: string; problem: string } | null;
 };
 
 const STATUS: Record<string, { label: string; className: string }> = {
@@ -48,11 +55,10 @@ const menuButton = "block w-full rounded-md px-2.5 py-1.5 text-left text-[13px] 
  */
 /** dropUp: 표 아래쪽 줄은 메뉴를 위로 연다 — 표를 감싼 스크롤 상자 밖으로 나가면 잘린다 */
 export function ProductRow({ product, dropUp = false }: { product: AdminProduct; dropUp?: boolean }) {
-  const [state, action, pending] = useActionState<ReviewState, FormData>(setProductBan, null);
   const [inviteState, inviteAction, inviting] = useActionState<ReviewState, FormData>(markClaimInvite, null);
   const banned = product.status === "banned";
   const status = STATUS[product.status] ?? { label: product.status, className: "bg-bg-soft text-fg-2" };
-  const error = state?.error ? `차단: ${state.error}` : inviteState?.error ? `초대: ${inviteState.error}` : null;
+  const error = inviteState?.error ? `초대: ${inviteState.error}` : null;
 
   return (
     <tr className={`border-t border-line ${banned ? "bg-bg-soft text-fg-3" : ""}`}>
@@ -65,8 +71,9 @@ export function ProductRow({ product, dropUp = false }: { product: AdminProduct;
         </div>
         {product.repoGone && <p className="text-[13px] text-fg-3">{product.repoGone}</p>}
         {product.repoReview === null && <p className="text-[13px] text-fg-3">AI 사이트 확인 대기</p>}
-        {product.repoReview && <RepoReview slug={product.slug} review={product.repoReview} banned={banned} />}
+        {product.repoReview && <RepoReview slug={product.slug} name={product.name} review={product.repoReview} banned={banned} />}
         {product.repoNote && <p className="text-[13px] text-fg-3">{product.repoNote}</p>}
+        {product.intro && !banned && <IntroCheck product={product} intro={product.intro} />}
         {error && <p className="text-[13px] text-down">{error}</p>}
       </td>
       <td className="whitespace-nowrap px-2 py-1.5"><span className={`rounded px-1.5 py-0.5 font-semibold ${status.className}`}>{status.label}</span></td>
@@ -79,11 +86,7 @@ export function ProductRow({ product, dropUp = false }: { product: AdminProduct;
         <details className="inline-block text-left">
           <summary aria-label={`${product.name} 관리`} className="cursor-pointer list-none rounded-md px-2 py-0.5 text-[15px] text-fg-3 hover:bg-bg-hover">⋯</summary>
           <div className={`absolute right-2 z-10 w-[240px] rounded-lg border border-line bg-bg-card p-1.5 shadow-lg ${dropUp ? "bottom-full" : "top-full"}`}>
-            <form action={action}>
-              <input type="hidden" name="slug" value={product.slug} />
-              <button type="submit" name="action" value={banned ? "unban" : "ban"} disabled={pending}
-                className={`${menuButton} ${banned ? "text-fg-2" : "text-down"}`}>{banned ? "차단 해제" : "차단"}</button>
-            </form>
+            <BanAction slug={product.slug} name={product.name} banned={banned} className={`${menuButton} ${banned ? "text-fg-2" : "text-down"}`} />
             {/* 주인이 없는 제품에만. 보내는 것은 GitHub에서 운영자가 직접 하고 여기서는 보냈다고만 표시한다 */}
             {product.unclaimed && !banned && (
               product.invitedAt ? (
@@ -112,9 +115,18 @@ export function ProductRow({ product, dropUp = false }: { product: AdminProduct;
 /**
  * 저장소가 사라진 웹사이트의 AI 판정과 운영자 버튼. 판정은 아무것도 가리지 않는다 — '내리기'를 눌러야 차단된다
  * (⋯ 메뉴의 차단과 같은 길). 운영자를 기다리는 것은 굵게 보인다.
+ * 내리기는 확인 창을 거치고, 끝나면 알림에 되돌리기(차단 해제)와 기록 보기를 단다(2026-10-08 UX 감사 ADM-06·12).
  */
-function RepoReview({ slug, review, banned }: { slug: string; review: NonNullable<AdminProduct["repoReview"]>; banned: boolean }) {
-  const [state, action, pending] = useActionState<ReviewState, FormData>(decideRepoReviewAction, null);
+function RepoReview({ slug, name, review, banned }: { slug: string; name: string; review: NonNullable<AdminProduct["repoReview"]>; banned: boolean }) {
+  const toast = useAdminToast();
+  const [pending, setPending] = useState(false);
+  const decide = (decision: "keep" | "delist") => {
+    const form = new FormData();
+    form.set("slug", slug);
+    form.set("decision", decision);
+    return decideRepoReviewAction(null, form);
+  };
+  const button = "rounded-md border border-line px-2 py-0.5 font-semibold hover:bg-bg-hover disabled:opacity-50";
   return (
     <div className="mt-0.5 flex flex-wrap items-baseline gap-x-2 text-[13px] text-fg-3">
       <span className={review.open ? "font-semibold text-warn" : ""}>{review.decision}</span>
@@ -123,15 +135,77 @@ function RepoReview({ slug, review, banned }: { slug: string; review: NonNullabl
       {review.page && <span className="w-full truncate font-mono">{review.page}</span>}
       {review.operator && <span>{review.operator}</span>}
       {!banned && (
-        <form action={action} className="flex gap-1">
-          <input type="hidden" name="slug" value={slug} />
-          <button type="submit" name="decision" value="keep" disabled={pending}
-            className="rounded-md border border-line px-2 py-0.5 font-semibold text-fg-2 hover:bg-bg-hover disabled:opacity-50">유지</button>
-          <button type="submit" name="decision" value="delist" disabled={pending}
-            className="rounded-md border border-line px-2 py-0.5 font-semibold text-down hover:bg-bg-hover disabled:opacity-50">내리기</button>
-        </form>
+        <span className="flex gap-1">
+          <button type="button" disabled={pending} className={`${button} text-fg-2`} onClick={async () => {
+            setPending(true);
+            try {
+              toast.show(resultToast(await decide("keep"), { message: `유지함 · ${name}`, link: historyLink(slug) }));
+            } finally {
+              setPending(false);
+            }
+          }}>유지</button>
+          <ConfirmAction
+            title="이 웹사이트를 공개 목록에서 내립니다"
+            targets={[name]}
+            summary={<p className="text-[13px] leading-[1.6]">{review.decision} · {review.reason}<br />차단과 같습니다 — 행은 남고 같은 주소의 재수집·재등록이 막힙니다.</p>}
+            confirmLabel="내리기"
+            onConfirm={async () => {
+              const result = await decide("delist");
+              if (!resultError(result)) toast.show(bannedToast(slug, `내림 · ${name}`));
+              return result;
+            }}
+            trigger={(open) => <button type="button" onClick={open} disabled={pending} aria-haspopup="dialog"
+              className={`${button} text-down`}>내리기</button>}
+          />
+        </span>
       )}
-      {state?.error && <span className="text-down">{state.error}</span>}
+    </div>
+  );
+}
+
+/**
+ * '소개 확인 필요' 줄(2026-10-08 UX 감사 ADM-23) — 지금 공개된 소개와 검수가 넘긴 이유를 한 줄로 보이고 그 자리에서 정한다.
+ * 소개 고치기·그대로 두기·차단 모두 끝나면 목록에서 빠진다.
+ */
+function IntroCheck({ product, intro }: { product: AdminProduct; intro: NonNullable<AdminProduct["intro"]> }) {
+  const toast = useAdminToast();
+  const [pending, setPending] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const button = "rounded-md border border-line px-2 py-0.5 font-semibold hover:bg-bg-hover disabled:opacity-50";
+  async function run(action: typeof keepIntroAction, form: FormData, message: string) {
+    setPending(true);
+    try {
+      const result = await action(null, form);
+      toast.show(resultToast(result, { message: `${message} · ${product.name}`, link: historyLink(product.slug) }));
+      if (!result?.error) setEditing(false);
+    } finally {
+      setPending(false);
+    }
+  }
+  return (
+    <div className="mt-0.5 flex flex-wrap items-baseline gap-x-2 text-[13px] text-fg-3">
+      <p className="min-w-0 basis-full truncate" title={`${intro.tagline}\n검수: ${intro.problem}`}>
+        <span className="text-fg-2">“{intro.tagline}”</span>{intro.problem && <> · 검수: {intro.problem}</>}
+      </p>
+      {editing && <form className="flex min-w-0 basis-full gap-1" onSubmit={(event) => {
+        event.preventDefault();
+        void run(editIntroAction, new FormData(event.currentTarget), "소개 고침");
+      }}>
+        <input type="hidden" name="slug" value={product.slug} />
+        <input name="tagline" defaultValue={intro.tagline} maxLength={LIMITS.tagline} required aria-label={`${product.name} 새 소개`}
+          className="min-w-0 flex-1 rounded-md border border-line bg-bg-card px-2 py-0.5 text-fg" autoFocus />
+        <button type="submit" disabled={pending} className={`${button} text-fg-2`}>저장</button>
+        <button type="button" disabled={pending} className={`${button} text-fg-3`} onClick={() => setEditing(false)}>취소</button>
+      </form>}
+      <span className="flex gap-1">
+        {!editing && <button type="button" disabled={pending} className={`${button} text-fg-2`} onClick={() => setEditing(true)}>소개 고치기</button>}
+        <button type="button" disabled={pending} className={`${button} text-fg-2`} onClick={() => {
+          const form = new FormData();
+          form.set("slug", product.slug);
+          void run(keepIntroAction, form, "소개 그대로 둠");
+        }}>그대로 두기</button>
+        <BanAction slug={product.slug} name={product.name} banned={false} className={`${button} text-down`} />
+      </span>
     </div>
   );
 }
