@@ -68,12 +68,12 @@ function NumberField({ id, label, defaultValue, min, max, step, hint, suffix, on
  * 필드 이름과 서버 액션(saveCrawlSettings)은 그대로다. 바뀐 것은 배치와, 신호별 7일 성과·빠진 기본값 더하기·
  * 저장 바(무엇이 바뀌었는지)다. "되돌리기"는 폼을 처음 그린 값으로 다시 그린다.
  */
-export function SettingsForm({ settings, yields = {} }: { settings: CrawlSettings; yields?: Record<string, SignalYieldView> }) {
+export function SettingsForm({ settings, version = "", yields = {} }: { settings: CrawlSettings; version?: string; yields?: Record<string, SignalYieldView> }) {
   const [generation, setGeneration] = useState(0);
-  return <SettingsFormBody key={generation} settings={settings} yields={yields} onRevert={() => setGeneration((g) => g + 1)} />;
+  return <SettingsFormBody key={generation} settings={settings} version={version} yields={yields} onRevert={() => setGeneration((g) => g + 1)} />;
 }
 
-function SettingsFormBody({ settings, yields, onRevert }: { settings: CrawlSettings; yields: Record<string, SignalYieldView>; onRevert: () => void }) {
+function SettingsFormBody({ settings, version, yields, onRevert }: { settings: CrawlSettings; version: string; yields: Record<string, SignalYieldView>; onRevert: () => void }) {
   const [state, action, pending] = useActionState<SaveState, FormData>(saveCrawlSettings, null);
   const { discover, judge, secondReview } = settings;
   const form = useRef<HTMLFormElement>(null);
@@ -101,6 +101,8 @@ function SettingsFormBody({ settings, yields, onRevert }: { settings: CrawlSetti
 
   return (
     <form ref={form} action={action} onInput={touched} onChange={touched} onClick={touched} className="flex min-w-0 flex-col gap-4">
+      {/* 그린 값의 판 — 저장이 견줘 그 사이 다른 곳(다른 탭·심사 큐)에서 바뀐 값을 옛 값으로 덮지 않는다 */}
+      <input type="hidden" name="settingsVersion" value={version} />
       <section className="flex flex-wrap items-center gap-4 rounded-[12px] border border-line bg-bg-card px-[22px] py-4">
         <Switch name="enabled" defaultChecked={settings.enabled} label="수집 켜기" />
         <div className="min-w-0 flex-[1_1_320px]">
