@@ -67,16 +67,19 @@ describe("조치할 일 링크", () => {
   });
 
   it("운영센터는 모아 둔 주소만 쓰고, 이름으로 고른 작업은 실제 작업이다", () => {
-    const page = source("app/admin/status/page.tsx");
+    // 조치할 일은 attention.tsx 가 세운다(운영센터 화면과 메뉴 배지가 같이 쓴다)
+    const page = source("app/admin/status/attention.tsx") + source("app/admin/status/page.tsx");
     const hrefs = [...page.matchAll(/\bhref:\s*([^}\n]+)/g)].map((match) => match[1]);
     expect(hrefs.length).toBeGreaterThan(20);
     for (const value of hrefs) expect(value, value).toMatch(/^(ACTION_LINKS\.|jobHref\(|[\w.!\s=><[\]0-9]+\?\s*(ACTION_LINKS\.|jobHref\())/);
     expect(page).not.toMatch(/\bhref:\s*["'`]/);
+    expect(source("app/admin/status/page.tsx")).not.toMatch(/href=\{?["'`]\/admin/);
     for (const [, name] of page.matchAll(/jobHref\("([^"]+)"\)/g)) expect(JOB_NAMES).toContain(name);
-    // 받는 쪽이 ?tab= ?job= 을 실제로 읽는다
-    expect(page).toContain("STATUS_TABS");
-    expect(page).toMatch(/params\.job/);
-    expect(source("app/admin/status/OperationsCenter.tsx")).toContain("initialJob");
+    // 받는 쪽이 ?tab= ?job= 을 주소에서 읽는다(ADM-29 — 처음 열 때만이 아니라 늘)
+    const center = source("app/admin/status/OperationsCenter.tsx");
+    expect(center).toContain("STATUS_TABS");
+    expect(center).toContain("params.get('tab')");
+    expect(center).toContain("params.get('job')");
   });
 
   it("고쳐 둔 세 곳 — 응답 없음 거르기, 2차 설정 앵커, 직접 판단 구간", () => {

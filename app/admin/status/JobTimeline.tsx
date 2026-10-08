@@ -3,6 +3,7 @@
 import { JOB_CATALOG } from '@/lib/jobs/catalog';
 import { JOB_LABELS, ROLE_LABELS } from '@/lib/operations/contracts';
 import { PAUSED_AFTER_MS } from '@/lib/jobs/status';
+import { formatAgo, formatListTime } from '@/lib/format/time';
 import type { OperationJob } from './OperationsCenter';
 
 /**
@@ -38,31 +39,28 @@ const FLOW: Record<string, { reads: string; writes: string }> = {
   'news-refresh': { reads: '공식 피드', writes: 'AI 소식' },
 };
 
-const time = (value: string | null) =>
-  value ? new Date(value).toLocaleString('ko-KR', { timeZone: 'Asia/Seoul', dateStyle: 'short', timeStyle: 'short' }) : '기록 없음';
-
-/** 다음 실행까지 남은 시간. 지났으면 "지금" */
-function countdown(at: string | null): string {
+/**
+ * 다음 실행까지 남은 시간. 지났으면 "지금".
+ * 기준 시각(now)은 서버가 읽은 시각이다 — 렌더 중에 Date.now() 를 쓰면 서버와 브라우저 글자가 달라 hydration 오류(#418)가 났다(ADM-27).
+ */
+function countdown(at: string | null, now: string): string {
   if (!at) return '예약 없음';
-  const seconds = Math.round((new Date(at).getTime() - Date.now()) / 1000);
-  if (seconds <= 0) return '지금';
-  if (seconds < 60) return `${seconds}초 후`;
-  const minutes = Math.round(seconds / 60);
-  return minutes < 60 ? `${minutes}분 후` : `${Math.round(minutes / 60)}시간 후`;
+  return Date.parse(at) - Date.parse(now) < 60_000 ? '지금' : formatAgo(at, now);
 }
 
 /** 사람이 멈춘 작업(not_before 가 먼 미래) — "대기 중·다음 39초 후"로 보이면 도는 줄 안다 */
-const paused = (job: OperationJob) => !!job.notBefore && new Date(job.notBefore).getTime() - Date.now() > PAUSED_AFTER_MS;
+const paused = (job: OperationJob, now: string) => !!job.notBefore && Date.parse(job.notBefore) - Date.parse(now) > PAUSED_AFTER_MS;
 
-function tone(job: OperationJob): { badge: string; node: string; label: string } {
-  if (paused(job)) return { badge: 'border-line bg-bg-soft text-fg-3', node: 'border-line bg-bg-card text-fg-3', label: '멈춤' };
+/** 요청됨(대기 중)은 정상 상태라 중립 회색 — 빨강·accent 로 그리면 건강한 작업 흐름이 경보로 덮였다(ADM-14) */
+function tone(job: OperationJob, now: string): { badge: string; node: string; label: string } {
+  if (paused(job, now)) return { badge: 'border-line bg-bg-soft text-fg-3', node: 'border-line bg-bg-card text-fg-3', label: '멈춤' };
   if (job.lastError) return { badge: 'border-down/40 bg-down/10 text-down', node: 'border-down/40 bg-down/10 text-down', label: '실패' };
-  if (job.requestedVersion > job.processedVersion) return { badge: 'border-accent/40 bg-accent-soft text-accent', node: 'border-accent bg-accent text-white', label: '대기 중' };
+  if (job.requestedVersion > job.processedVersion) return { badge: 'border-line bg-bg-soft text-fg-2', node: 'border-line bg-bg-soft text-fg-2', label: '대기 중' };
   if (!job.lastSuccessAt) return { badge: 'border-line bg-bg-soft text-fg-3', node: 'border-line bg-bg-card text-fg-3', label: '실행 기록 없음' };
   return { badge: 'border-up/40 bg-up/10 text-up', node: 'border-up/40 bg-up/10 text-up', label: '정상' };
 }
 
-export function JobTimeline({ jobs, onOpen }: { jobs: OperationJob[]; onOpen: (job: OperationJob) => void }) {
+export function JobTimeline({ jobs, now, onOpen }: { jobs: OperationJob[]; now: string; onOpen: (job: OperationJob) => void }) {
   const ordered = [
     ...PIPELINE_ORDER.map((name) => jobs.find((job) => job.name === name)).filter((job): job is OperationJob => !!job),
     ...jobs.filter((job) => job.name !== 'heartbeat' && !PIPELINE_ORDER.includes(job.name)),
@@ -82,7 +80,7 @@ export function JobTimeline({ jobs, onOpen }: { jobs: OperationJob[]; onOpen: (j
         {ordered.map((job, index) => {
           const catalog = JOB_CATALOG.find((entry) => entry.name === job.name);
           const flow = FLOW[job.name];
-          const state = tone(job);
+          const state = tone(job, now);
           return (
             <li key={job.name} className="grid grid-cols-[34px_minmax(0,1fr)] gap-x-3">
               <div className="flex flex-col items-center">
@@ -95,7 +93,7 @@ export function JobTimeline({ jobs, onOpen }: { jobs: OperationJob[]; onOpen: (j
               <div className="mb-2 min-w-0 rounded-[11px] border border-line bg-bg-card p-3.5">
                 <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
                   <h3 className="text-[14px] font-bold">{JOB_LABELS[job.name] ?? job.name}</h3>
-                  <code className="font-mono text-[13px] text-fg-3">{job.name}</code>
+                  <code className="font-mono text-[13px] text-fg-3" title="작업 코드">{job.name}</code>
                   <span className={`ml-auto rounded-full border px-2 py-0.5 text-[13px] font-semibold ${state.badge}`}>{state.label}</span>
                 </div>
 
@@ -109,8 +107,8 @@ export function JobTimeline({ jobs, onOpen }: { jobs: OperationJob[]; onOpen: (j
 
                 <div className="mt-2.5 flex flex-wrap gap-x-5 gap-y-1 border-t border-line pt-2 text-[13px] text-fg-3">
                   <span>주기 <b className="font-mono font-semibold text-fg-2">{catalog?.intervalMs ? `${catalog.intervalMs / 60_000}분` : '요청될 때'}</b></span>
-                  <span>다음 <b className="font-mono font-semibold text-fg-2">{paused(job) ? '사람이 다시 켤 때까지 멈춤' : countdown(job.nextScheduledAt)}</b></span>
-                  <span>마지막 성공 <b className="font-mono font-semibold text-fg-2">{time(job.lastSuccessAt)}</b></span>
+                  <span>다음 <b className="font-mono font-semibold text-fg-2">{paused(job, now) ? '사람이 다시 켤 때까지 멈춤' : countdown(job.nextScheduledAt, now)}</b></span>
+                  <span>마지막 성공 <b className="font-mono font-semibold text-fg-2">{formatListTime(job.lastSuccessAt, now, '기록 없음')}</b></span>
                   <span>누적 <b className="font-mono font-semibold text-fg-2">{job.runs.toLocaleString('ko-KR')}회</b></span>
                   <button type="button" onClick={() => onOpen(job)} className="ml-auto underline">상세</button>
                 </div>
@@ -120,7 +118,7 @@ export function JobTimeline({ jobs, onOpen }: { jobs: OperationJob[]; onOpen: (j
                     <b className="font-semibold text-down">마지막 오류</b> {job.lastError.slice(0, 300)}
                   </p>
                 )}
-                {!job.lastError && !paused(job) && job.requestedVersion > job.processedVersion && (
+                {!job.lastError && !paused(job, now) && job.requestedVersion > job.processedVersion && (
                   <p className="mt-2 text-[13px] text-fg-3">
                     실행이 요청됐고 아직 처리되지 않았습니다 · 담당 {ROLE_LABELS[catalog?.role ?? ''] ?? catalog?.role}
                   </p>

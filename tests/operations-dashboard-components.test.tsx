@@ -1,11 +1,11 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { KpiStrip } from "@/app/admin/status/dashboard/KpiStrip";
 import { StageRail } from "@/app/admin/status/dashboard/StageRail";
 import { RolesTable } from "@/app/admin/status/dashboard/RolesTable";
 import { StatusChips } from "@/app/admin/status/dashboard/StatusChips";
-import { AttentionList } from "@/app/admin/status/dashboard/AttentionList";
+import { AttentionList, trendLabel, type SplitItem } from "@/app/admin/status/dashboard/AttentionList";
 import { SignalTable } from "@/app/admin/status/dashboard/SignalTable";
 import { ModelCards } from "@/app/admin/status/dashboard/ModelCards";
 import { Sparkline } from "@/app/admin/status/dashboard/Sparkline";
@@ -13,6 +13,8 @@ import type { HourlySeries, ModelHealth } from "@/lib/operations/dashboard";
 import type { ThroughputStage } from "@/lib/operations/throughput-model";
 import type { RoleOverview } from "@/lib/operations/roles";
 import { humanOverview } from "./fixtures/human-queue";
+
+vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh() {} }) }));
 
 /**
  * 운영센터 격자 조각 — 숫자와 색이 데이터대로 나오는지.
@@ -135,12 +137,12 @@ describe("역할 표와 상태 칩", () => {
       { key: "first", label: "1차 심사", model: "gpt-oss", calls1h: 300, failed1h: 10, avgSeconds: 12, agreement1h: null, lastSuccessAt: null },
       { key: "second", label: "2차 투표", model: "qwen", calls1h: 200, failed1h: 5, avgSeconds: 11, agreement1h: 0.53, lastSuccessAt: null },
     ];
-    const out = html(createElement(StatusChips, { roles, scheduler, web, models, quota: { remaining: 400, limit: 5000, resetAt: "2026-10-02T14:35:00.000Z" } }));
+    const out = html(createElement(StatusChips, { roles, scheduler, web, models, quota: { remaining: 400, limit: 5000, resetAt: "2026-10-02T14:35:00.000Z" }, now: "2026-10-02T13:53:00.000Z" }));
     expect(out).toContain("워커 주 1/2 · 예비가 일함 1");
     expect(out).toContain("스케줄러 2/2");
     expect(out).toContain("웹 m3·mini 같은 릴리스");
     expect(out).toContain("모델 1/2 정상");
-    expect(out).toContain("GitHub 한도 400/5,000");
+    expect(out).toContain("GitHub 한도 400/5,000 · 23:35 (42분 후) 초기화");
     expect(out).toContain('data-tone="bad"');
   });
 });
@@ -176,14 +178,32 @@ describe("모델·조치·신호", () => {
     expect(out).toContain("Claude 연결 확인");
   });
 
-  it("조치 목록은 받은 순서대로 띠 색을 단다", () => {
-    const out = html(createElement(AttentionList, { items: [
-      { key: "a", tone: "critical", count: 3, title: "예비가 일하고 있는 역할", detail: "maintenance" },
-      { key: "b", tone: "hold", count: 2270, title: "사람이 가려야 할 후보", detail: "…", action: { label: "심사 큐", href: "/admin/review" } },
-    ] }));
+  it("조치 목록은 띠 색과 숫자 옆 단위를 달고, 쌓인 일에는 24시간 변화와 숨김 단추를 단다", () => {
+    const row = (over: Partial<SplitItem>): SplitItem => ({ key: "a", tone: "critical", count: 3, unit: "개", title: "예비가 일하고 있는 역할", detail: "maintenance", trend: null, fresh: false, ...over });
+    const out = html(createElement(AttentionList, {
+      urgent: [row({}), row({ key: "c", tone: "hold", count: "끊김", unit: "상태", title: "새 줄", fresh: true })],
+      backlog: [row({ key: "b", tone: "hold", count: 2270, unit: "건", title: "사람이 가려야 할 후보", detail: "…", action: { label: "심사 큐", href: "/admin/review" }, trend: { delta: 120, hours: 24 } })],
+      hidden: [row({ key: "d", tone: "hold", count: 4, unit: "%", title: "저장소 확인 범위", ack: { key: "d", actor: "local", at: new Date("2026-10-07T04:00:00Z"), until: new Date("2026-10-14T04:00:00Z") } })],
+      now: "2026-10-08T04:38:00.000Z",
+    }));
     expect(out.indexOf("예비가 일하고")).toBeLessThan(out.indexOf("사람이 가려야"));
     expect(out).toContain('data-tone="bad"');
     expect(out).toContain('href="/admin/review"');
+    expect(out).toContain("2,270</span><small>건</small>");
+    expect(out).toContain("끊김</span><small>상태</small>");
+    expect(out).toContain("새로 생김");
+    expect(out).toContain("↑ 24h +120");
+    expect(out).toContain("확인함 · 7일 숨김");
+    expect(out).toContain("확인함으로 숨긴 것 1건");
+    expect(out).toContain("local 확인 1일 전 · 10/14 13:00까지");
+    expect(out).toContain("다시 보이기");
+  });
+
+  it("쌓인 일의 변화 글자 — 기록이 하루가 안 되면 그 시간으로 적는다", () => {
+    expect(trendLabel({ delta: -50, hours: 24 })).toBe("↓ 24h −50");
+    expect(trendLabel({ delta: 0, hours: 23 })).toBe("→ 24h 그대로");
+    expect(trendLabel({ delta: 1203, hours: 5 })).toBe("↑ 5시간 +1,203");
+    expect(trendLabel(null)).toBeNull();
   });
 
   it("신호 표는 게이트가 켜진 신호에만 거른 수를 적는다", () => {

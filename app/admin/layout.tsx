@@ -6,6 +6,7 @@ import { humanQueueOverview } from "@/lib/crawl/review-overview";
 import { getSettings } from "@/lib/crawl/settings";
 import { takedownSummary } from "@/lib/domain/products/takedown";
 import { takedownSignal } from "@/lib/domain/products/takedown-view";
+import { criticalActionCount } from "./status/attention";
 import "./admin.css";
 
 /**
@@ -16,15 +17,17 @@ const humanCount = createMemo<number>({ ttlMs: 60_000, max: 1 });
 
 async function navBadges(): Promise<NavBadges> {
   // 하나가 실패해도 나머지 배지와 페이지는 그린다
-  const [takedown, human] = await Promise.all([
+  const [takedown, human, critical] = await Promise.all([
     takedownSummary().then(takedownSignal).catch(() => null),
     humanCount.get("human", async () => (await humanQueueOverview(await getSettings())).stages.human).catch(() => null),
+    criticalActionCount(),
   ]);
   return {
     // 내려달라는 요청 — 24시간 넘은 것이 있으면 빨강
     "/admin/audit": takedown ? { label: takedown.label, tone: takedown.tone === "bad" ? "critical" : "warn" } : undefined,
     "/admin/review": countBadge(human, "warn", (count) => `직접 판단 ${count}건`),
-    // 운영센터 — 여기에 critical 수를 단다: "/admin/status": countBadge(criticalCount, "critical", (count) => `긴급 ${count}건`)
+    // 운영센터 — 조치할 일의 critical 수(운영센터와 같은 buildActions, 30초 담아 둠·실패하면 배지 없음)
+    "/admin/status": countBadge(critical, "critical", (count) => `긴급 ${count}건`),
   };
 }
 

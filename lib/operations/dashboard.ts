@@ -210,7 +210,7 @@ async function loadHourly(now: Date): Promise<HourlySeries> {
 const MODEL_SLOTS = [
   { key: "first", label: "1차 심사" },
   { key: "second", label: "2차 투표" },
-  { key: "fallback", label: "2차 fallback" },
+  { key: "fallback", label: "2차 예비 모델" },
   { key: "keywords", label: "키워드 짓기" },
 ] as const;
 

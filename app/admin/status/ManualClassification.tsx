@@ -34,7 +34,7 @@ export function ManualClassification({ candidates }: { candidates: Awaited<Retur
       </section>
       <section className="ops-panel">
         {candidate ? <>
-          <div className="ops-eyebrow">PUBLICATION REVIEW</div><h2>{candidate.name}</h2>
+          <div className="ops-eyebrow">발행 검토</div><h2>{candidate.name}</h2>
           <p><a href={`https://github.com/${candidate.repo}`} target="_blank" rel="noreferrer noopener">{candidate.repo} ↗</a></p>
           <p>{candidate.url && /^https?:\/\//.test(candidate.url) && <a href={candidate.url} target="_blank" rel="noreferrer noopener">서비스 방문 ↗</a>}</p>
           <p>{candidate.description || '수집된 소개가 없습니다.'}</p>

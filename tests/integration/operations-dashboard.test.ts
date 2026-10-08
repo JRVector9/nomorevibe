@@ -120,7 +120,7 @@ it("reports each model slot over the last hour", async () => {
       agreement1h: null, lastSuccessAt: ago(12, 4).toISOString() },
     { key: "second", label: "2차 투표", model: "qwen", calls1h: 2, failed1h: 0, avgSeconds: 180,
       agreement1h: 0.5, lastSuccessAt: ago(5).toISOString() },
-    { key: "fallback", label: "2차 fallback", model: "sonnet", calls1h: 0, failed1h: 0, avgSeconds: null,
+    { key: "fallback", label: "2차 예비 모델", model: "sonnet", calls1h: 0, failed1h: 0, avgSeconds: null,
       agreement1h: null, lastSuccessAt: null },
     { key: "keywords", label: "키워드 짓기", model: PROFILE_MODEL, calls1h: 1, failed1h: 0, avgSeconds: null,
       agreement1h: null, lastSuccessAt: ago(3).toISOString() },

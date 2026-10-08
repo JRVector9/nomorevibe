@@ -1,0 +1,484 @@
+import { Fragment } from "react";
+import type { CrawlSettings } from "@/lib/crawl/settings-schema";
+import { listJobStates } from "@/lib/jobs/runner";
+import { isPausedJob } from "@/lib/jobs/status";
+import { downProductCount, DOWN_THRESHOLD } from "@/lib/domain/products/health";
+import { getEvidenceStatusSummary } from "@/lib/domain/evidence/admin";
+import { operationsData } from "@/lib/operations/admin";
+import { latestServiceInstance } from "@/lib/operations/instance";
+import { pipelineThroughput } from "@/lib/operations/throughput";
+import { buildWorkerProgress } from "@/lib/operations/worker-progress-query";
+import { attentionCounts, modelHealth } from "@/lib/operations/dashboard";
+import { roleOverview, SHARED_IMAGE_ROLES } from "@/lib/operations/roles";
+import { JOB_LABELS, ROLE_LABELS, type AgentStatus } from "@/lib/operations/contracts";
+import { readSearchHealth, searchHealthAlerts } from "@/lib/operations/search-health-model";
+import { modelServerHealth } from "@/lib/operations/model-servers";
+import { attentionBaseline, BACKLOG_KEYS, recordAttentionSample, type AttentionAck, type AttentionSample } from "@/lib/operations/attention";
+import { takedownSummary } from "@/lib/domain/products/takedown";
+import { formatWait, isBurst } from "@/lib/domain/products/takedown-view";
+import { listGitHubCollectorAccounts, parseCoreQuota } from "@/lib/crawl/github-accounts";
+import { getSettings } from "@/lib/crawl/settings";
+import { humanQueueOverview } from "@/lib/crawl/review-overview";
+import { humanFlowLabel, humanWaitLabel } from "@/lib/crawl/human-queue";
+import { recentSecondReviewFailures } from "@/lib/crawl/second-review";
+import { SPAM_DETECTOR_VERSION } from "@/lib/crawl/spam-signals";
+import { MAX_AUTO_BANS_PER_DAY } from "@/lib/jobs/products/spam-rescan";
+import { formatListTime } from "@/lib/format/time";
+import { logger } from "@/lib/observability/logger";
+import { ACTION_LINKS, jobHref } from "./action-links";
+import { REPO_COVERAGE_TARGET, REPO_REVIEW_OVERDUE_HOURS } from "./dashboard/RepoHealthCard";
+import { sortActions, type ActionItem, type SplitItem } from "./dashboard/AttentionList";
+import { modelName } from "./dashboard/ModelCards";
+
+/**
+ * 조치할 일 — 무엇을 읽어(loadActionInputs) 어떤 줄을 세우는지(buildActions), 그 줄을 "지금 조치"와 "쌓인 일"로 나누는 것(splitActions).
+ *
+ * 운영센터 화면과 메뉴의 긴급 배지(criticalActionCount)가 같은 함수로 센다 — 전에는 page.tsx 안에만 있었다.
+ */
+
+export type ActionInputs = {
+  settings: CrawlSettings;
+  ops: Awaited<ReturnType<typeof operationsData>>;
+  jobStates: Awaited<ReturnType<typeof listJobStates>>;
+  evidenceSummary: Awaited<ReturnType<typeof getEvidenceStatusSummary>>;
+  downCount: number;
+  overview: Awaited<ReturnType<typeof humanQueueOverview>>;
+  secondFailures: Awaited<ReturnType<typeof recentSecondReviewFailures>>;
+  throughput: Awaited<ReturnType<typeof pipelineThroughput>> | null;
+  models: Awaited<ReturnType<typeof modelHealth>> | null;
+  attention: Awaited<ReturnType<typeof attentionCounts>> | null;
+  roles: Awaited<ReturnType<typeof roleOverview>> | null;
+  accounts: Awaited<ReturnType<typeof listGitHubCollectorAccounts>> | null;
+  takedowns: Awaited<ReturnType<typeof takedownSummary>> | null;
+  modelServers: Awaited<ReturnType<typeof modelServerHealth>> | null;
+};
+
+/** 한 묶음이 실패해도 화면은 나가야 한다 — 그 칸만 비운다 */
+const warn = (event: string) => (error: unknown) => {
+  logger.warn(event, { errorName: error instanceof Error ? error.name : "unknown" });
+  return null;
+};
+
+/** 조치할 일과 머리말 칩이 읽는 것 — 서로 기다릴 까닭이 없어 한꺼번에 띄운다 */
+export async function loadActionInputs(settings: CrawlSettings): Promise<ActionInputs> {
+  const [ops, jobStates, evidenceSummary, downCount, overview, secondFailures, throughput, models, attention, roles, accounts, takedowns, modelServers] = await Promise.all([
+    operationsData(), listJobStates(), getEvidenceStatusSummary(new Date()), downProductCount(),
+    // 사람 몫의 수(직접 판단·확정만·나이·24시간 흐름)는 심사 큐와 같은 humanQueueOverview 하나에서 온다
+    humanQueueOverview(settings), recentSecondReviewFailures(),
+    pipelineThroughput(settings).catch(warn("operations.throughput_unavailable")),
+    modelHealth(settings).catch(warn("operations.models_unavailable")),
+    attentionCounts().catch(warn("operations.attention_unavailable")),
+    roleOverview().catch(warn("operations.roles_unavailable")),
+    listGitHubCollectorAccounts().catch(warn("operations.accounts_unavailable")),
+    takedownSummary().catch(warn("operations.takedowns_unavailable")),
+    modelServerHealth().catch(warn("operations.model_servers_unavailable")),
+  ]);
+  return { settings, ops, jobStates, evidenceSummary, downCount, overview, secondFailures, throughput, models, attention, roles, accounts, takedowns, modelServers };
+}
+
+/** 조치할 일과 화면 조각이 함께 쓰는 판단 — 웹 인스턴스, 워커 진행, 검색 점검, GitHub 한도, AI 연결 */
+export function deriveStatus(inputs: ActionInputs) {
+  const { ops, jobStates, throughput } = inputs;
+  const fetchedAt = Date.parse(ops.fetchedAt);
+  const ageMs = (at: string | Date) => fetchedAt - new Date(at).getTime();
+  const states = new Map(jobStates.map((job) => [job.name, job]));
+  const agentInstance = latestServiceInstance(ops.serviceInstances, "connect-agent");
+  /**
+   * 웹 인스턴스의 릴리스 — 머리말 칩과 릴리스 불일치 판단이 본다. 1시간 넘게 관측이 없는 키는 지난 배포의 것이라 뺀다.
+   * 45초가 지나면 "관측 지연" — 릴리스 문자열만 있으면 "응답"으로 보였다.
+   */
+  const web = ops.serviceInstances.filter((instance) => instance.role === "app" && ageMs(instance.observedAt) <= 60 * 60_000)
+    .map((instance) => ({ instance: instance.instanceId, release: typeof instance.value.release === "string" ? instance.value.release : null,
+      stale: ageMs(instance.observedAt) > 45_000 }));
+  const healthObservation = ops.observations.find((row) => row.key === "job:product-search-health");
+  const health = states.get("product-search-health")?.lastError ? null : readSearchHealth(healthObservation);
+  const quotaAccount = inputs.accounts?.find((row) => row.enabled && row.coreQuota);
+  const quota = quotaAccount ? parseCoreQuota(quotaAccount.coreQuota) : null;
+  return {
+    ageMs, states, web, healthObservation, health, quota, agentInstance,
+    agent: agentInstance?.value as AgentStatus | undefined,
+    workerProgress: throughput ? buildWorkerProgress(throughput, jobStates, ops.observations, new Date(ops.fetchedAt)) : null,
+  };
+}
+
+export type DerivedStatus = ReturnType<typeof deriveStatus>;
+
+const n = (value: number) => value.toLocaleString("ko-KR");
+/** 사람이 읽는 작업 이름 — 코드는 툴팁으로만(ADM-28) */
+const job = (name: string) => <span title={name}>{JOB_LABELS[name] ?? name}</span>;
+const role = (name: string) => <span title={name}>{ROLE_LABELS[name] ?? name}</span>;
+const joined = (nodes: React.ReactNode[], separator = ", ") =>
+  nodes.map((node, index) => <Fragment key={index}>{index > 0 && separator}{node}</Fragment>);
+
+/**
+ * 지금 사람이 손대야 하는 것.
+ *
+ * 막고 있는 순서대로 놓는다 — AI 연결이 끊겨 있으면 심사 큐가 쌓이는 것은 결과이지
+ * 원인이 아니다. 원인을 위에 두어야 아래가 저절로 풀린다. 급(critical → hold)은 sortActions 가 앞세운다.
+ * 숫자 칸에는 단위(unit)를 단다 — 건·%·회가 한 칸에 섞여 크기를 견줄 수 없었다(ADM-08). 숫자가 아닌 것은 "상태".
+ */
+export function buildActions(inputs: ActionInputs, derived: DerivedStatus): ActionItem[] {
+  const { ops, jobStates, evidenceSummary, downCount, overview, secondFailures, throughput, models, attention, roles, takedowns, modelServers } = inputs;
+  const { ageMs, states, web, healthObservation, health, quota, agent, agentInstance, workerProgress } = derived;
+  const now = ops.fetchedAt;
+  const failedJobs = jobStates.filter((row) => row.lastError);
+  const actions: ActionItem[] = [];
+  if (health) {
+    actions.push(...searchHealthAlerts(health).map((alert) => ({ ...alert, unit: "건", key: `search-${alert.key}`,
+      action: { label: "점검 작업", href: ACTION_LINKS.jobs } })));
+  }
+
+  /**
+   * AI 연결(connect-agent)은 발행 워커의 카테고리 분류만 맡는다 — 1차·2차 심사는 게이트웨이로 간다.
+   * 2026-10-07 Codex 가 access_denied 인데 Claude 예비가 분류를 이어 받아 화면에 아무 경보도 없었다.
+   * 그 뒤 재로그인하자 적용 전까지 분류가 통째로 막혔는데, 제목은 "연결돼 있지 않습니다"였다.
+   */
+  const ACCOUNT_FAILURES = new Set(["access_denied", "auth", "rate_limit", "no_cli"]);
+  const providerName = { codex: "Codex", claude: "Claude" } as const;
+  const configuredProviders = agent ? [...new Set([agent.config?.primary, agent.config?.fallback]
+    .flatMap((model) => model ? [model.model === "sonnet" ? "claude" as const : "codex" as const] : []))] : [];
+  const failingProviders = configuredProviders.filter((provider) => ACCOUNT_FAILURES.has(agent?.accounts?.[provider]?.result ?? ""));
+  // 옛 연결 서비스는 classifyReady 를 보내지 않는다 — 그때는 적용 전 분류를 거부하므로 configReady 가 곧 분류 가능 여부다
+  const classifyReady = agent?.classifyReady ?? agent?.configReady === true;
+  if (!agent || !agentInstance || ageMs(agentInstance.observedAt) > 2 * 60_000) {
+    actions.push({
+      key: "ai", tone: "critical", count: "끊김", unit: "상태", title: "AI 연결 서비스 관측이 끊겼습니다",
+      detail: <>{role("connect-agent")} 마지막 관측 {agentInstance ? formatListTime(agentInstance.observedAt, now) : "없음"} — 발행 워커가 카테고리를 정하지 못해 승인 후보를 1시간씩 보류합니다.</>,
+      action: { label: "연결 상태", href: ACTION_LINKS.ai },
+    });
+  } else if (!classifyReady) {
+    actions.push({
+      key: "ai", tone: "critical", count: "멈춤", unit: "상태", title: "AI 분류를 받지 않습니다",
+      detail: <>{agent.configVersion > 0 ? "새 인증 뒤 모델 검사·적용이 남았습니다" : "적용한 모델 설정이 없습니다"} — 적용할 때까지 발행 워커가 승인 후보를 1시간씩 보류합니다.</>,
+      action: { label: "검사·적용", href: ACTION_LINKS.ai },
+    });
+  } else {
+    if (failingProviders.length > 0) {
+      const all = failingProviders.length === configuredProviders.length;
+      actions.push({
+        key: "ai-account", tone: all ? "critical" : "hold", count: `${failingProviders.length}/${configuredProviders.length}`, unit: "계정",
+        title: all ? "설정한 AI 계정이 모두 실패합니다" : `${failingProviders.map((provider) => providerName[provider]).join("·")} 계정이 실패합니다 — 예비 모델이 대신 분류 중`,
+        detail: <>{failingProviders.map((provider) => `${providerName[provider]} ${agent.accounts?.[provider]?.result}${agent.accounts?.[provider]?.checkedAt ? ` · ${formatListTime(agent.accounts[provider]!.checkedAt!, now)}` : ""}`).join(" · ")} — 다시 인증하고 모델을 검사·적용합니다.</>,
+        action: { label: "다시 인증", href: ACTION_LINKS.ai },
+      });
+    }
+    if (!agent.configReady) {
+      actions.push({
+        key: "ai-apply", tone: "hold", count: "대기", unit: "상태", title: "새 인증으로 모델 검사·적용이 남았습니다",
+        detail: <>그때까지 기존 설정({agent.config?.primary.model}{agent.config?.fallback ? ` → ${agent.config.fallback.model}` : ""})으로 분류를 계속합니다.</>,
+        action: { label: "검사·적용", href: ACTION_LINKS.ai },
+      });
+    }
+  }
+  const unhealthyServers = modelServers?.filter((server) => !server.ok) ?? [];
+  if (unhealthyServers.length > 0) {
+    actions.push({
+      key: "model-servers", tone: "hold", count: unhealthyServers.length, unit: "대", title: "검색 모델 서버가 응답하지 않습니다",
+      detail: <>{unhealthyServers.map((server) => `${server.name} ${server.error}`).join(" · ")} — 검색은 단어 검색으로만 나가고, 새 제품의 의미 검색 벡터가 밀립니다(M3 launchd bot.brut.nmv-*).</>,
+      action: { label: "의미 검색 벡터", href: jobHref("product-embedding") },
+    });
+  }
+  if (!health) {
+    actions.push({
+      key: "search-health-missing", tone: "hold", count: "모름", unit: "상태", title: "검색 데이터 점검 결과가 없습니다",
+      detail: <>{states.get("product-search-health")?.lastError ? "점검 작업이 마지막 회차에 실패했습니다" : `마지막 점검 ${healthObservation ? formatListTime(healthObservation.observedAt, now) : "없음"} — 45분이 지나면 결과를 믿지 않습니다`}. 키워드 대기 수도 알 수 없습니다.</>,
+      action: { label: "점검 작업", href: ACTION_LINKS.jobs },
+    });
+  }
+  if (failedJobs.length > 0) {
+    actions.push({
+      key: "jobs", tone: "critical", count: failedJobs.length, unit: "개", title: "마지막 회차가 실패한 작업",
+      detail: <>{joined(failedJobs.map((row) => job(row.name)))} — 실패한 작업 뒤의 단계는 새 일감을 받지 못합니다.</>,
+      action: { label: "작업 흐름", href: failedJobs.length === 1 ? jobHref(failedJobs[0].name) : ACTION_LINKS.jobs },
+    });
+  }
+  /**
+   * 사람 몫 — 심사 큐의 "직접 판단"·"확정만 하면 됨"과 같은 수(humanQueueOverview). 전에는 보류 전체(AI·2차 대기 포함)를
+   * "사람이 가려야 할 후보"로, 보류가 아닌 후보까지 센 2차 칩 합을 "2차 심사 확인"으로 보여 심사 큐와 숫자가 갈렸다.
+   */
+  if (overview.stages.human > 0) {
+    actions.push({
+      key: "review", tone: "hold", count: overview.stages.human, unit: "건", title: "사람이 가려야 할 후보 — 직접 판단",
+      detail: <>
+        {humanWaitLabel(overview)} · {humanFlowLabel(overview)}.
+        {(overview.wait?.stalled ?? 0) > 0 && <> 그중 <span className="font-mono">{n(overview.wait!.stalled)}건</span>은 판정한 지 2주가 넘었습니다 — 갈래별로 묶으면 한 번에 처리할 수 있습니다.</>}
+      </>,
+      action: { label: "심사 큐", href: ACTION_LINKS.reviewHuman },
+    });
+  }
+  if (overview.stages.agreed + overview.secondPublished > 0) {
+    actions.push({
+      key: "second", tone: "hold", count: overview.stages.agreed + overview.secondPublished, unit: "건", title: "2차 심사 확인",
+      detail: <>확정만 하면 됨 {n(overview.stages.agreed)}건(거부 {n(overview.agreed.reject)} · 승인 {n(overview.agreed.approve)}, 그중 만장일치 {n(overview.second.unanimous_reject + overview.second.unanimous_approve)})은 한 번에 확정 · 공개분 {n(overview.secondPublished)}건은 사람이 봅니다. 엇갈린 것은 직접 판단에 들어 있습니다.</>,
+      // 비어 있는 구간을 열지 않는다 — 할 일이 있다고 해 놓고 빈 화면을 주면 신뢰를 잃는다
+      action: { label: "2차 심사", href: overview.stages.agreed > 0 ? ACTION_LINKS.reviewAgreed : ACTION_LINKS.reviewPublished },
+    });
+  }
+  /**
+   * 2차가 실패하고 있으면 대기 수만 보여 줘선 안 된다.
+   *
+   * 게이트웨이는 모델 목록이 예고 없이 바뀌어, 없는 모델을 적어 두면 매 틱 404 로 끝난다 —
+   * 화면에는 "대기 N건"만 늘어나 멈춘 줄 모른다. 어느 모델이 무슨 까닭으로 실패했는지 적는다.
+   */
+  if (secondFailures.length > 0) {
+    const total = secondFailures.reduce((sum, row) => sum + row.count, 0);
+    const gone = secondFailures.some((row) => row.errorCode === "model_unavailable" || row.errorCode === "not_configured");
+    actions.push({
+      key: "second-failed", tone: gone ? "critical" : "hold", count: total, unit: "건", title: "2차 심사가 실패하고 있습니다",
+      detail: <>
+        최근 24시간 미해결 오류 · {secondFailures.slice(0, 3).map((row) => `${row.model ? modelName(row.model) : "모델 미상"} ${row.errorCode} ${row.count}건`).join(" · ")}
+        {gone && <> — 설정한 모델을 게이트웨이가 더 이상 갖고 있지 않습니다.</>}
+      </>,
+      action: { label: "2차 심사 설정", href: ACTION_LINKS.secondSettings },
+    });
+  }
+  if (ops.held > 0) {
+    actions.push({
+      key: "held", tone: "hold", count: ops.held, unit: "건", title: "분류를 못 정해 발행이 멈춘 후보",
+      detail: <>승인은 끝났고 카테고리만 없습니다. 1시간 뒤 저절로 다시 분류합니다{ops.heldNextRetryAt ? ` — 다음 ${formatListTime(ops.heldNextRetryAt, now)}` : ""}. 급하면 수동으로 지정합니다.</>,
+      action: { label: "수동 분류", href: ACTION_LINKS.manual },
+    });
+  }
+  if (downCount > 0) {
+    actions.push({
+      key: "down", tone: "critical", count: downCount, unit: "건", title: "응답하지 않는 공개 제품",
+      detail: <>{DOWN_THRESHOLD}회 넘게 연속으로 실패해 공개 목록에서 빠져 있습니다. 지우거나 차단하지는 않습니다 — 다시 열리면 그대로 돌아옵니다. 끝난 서비스인지는 사람이 보고 정합니다.</>,
+      action: { label: "응답 없음 목록", href: ACTION_LINKS.productsDown },
+    });
+  }
+  /**
+   * 역할·워커·모델·한도 — 전에는 스크립트와 접힌 표에만 있던 것들. 예비가 일하면 주가 죽은 것과 같은 무게로 올린다.
+   */
+  const standbyActive = roles?.roles.filter((row) => row.reason === "standby_active") ?? [];
+  if (standbyActive.length > 0) {
+    actions.push({
+      key: "standby", tone: "critical", count: standbyActive.length, unit: "개", title: "예비가 일하고 있는 역할",
+      detail: <>{joined(standbyActive.map((row) => role(row.role)))} — 주(M3)가 담당을 되찾지 못합니다. 예비를 잠깐 0으로 줄여 돌려놓습니다(runbook).</>,
+      action: { label: "역할 표", href: ACTION_LINKS.roles },
+    });
+  }
+  // 공통 이미지 역할과 웹만 비교한다 — maintenance·text 는 git 빌드라 릴리스가 다른 것이 정상이다(2026-10-03 오경보)
+  const releases = new Set([...(roles?.roles ?? []).filter((row) => SHARED_IMAGE_ROLES.has(row.role)).map((row) => row.ownerRelease),
+    ...web.map((row) => row.release)].filter((value): value is string => Boolean(value)));
+  if (releases.size > 1) {
+    actions.push({
+      key: "release", tone: "hold", count: releases.size, unit: "가지", title: "공통 이미지 릴리스가 갈렸습니다",
+      detail: <>{[...releases].map((value) => value.slice(0, 7)).join(" · ")} — 릴리스 도구(deploy_shared_images.py)로 8개 앱을 같은 SHA 로 맞춥니다.</>,
+      action: { label: "역할 표", href: ACTION_LINKS.roles },
+    });
+  }
+  const workerAlarms = workerProgress?.liveness.filter((row) => row.alarm) ?? [];
+  if (workerAlarms.length > 0) {
+    actions.push({
+      key: "liveness", tone: "critical", count: workerAlarms.length, unit: "개", title: "워커 관측이 끊겼거나 반복 재시작 중",
+      detail: <>{joined(workerAlarms.map((row) => <>{role(row.role)} {row.reason === "restart_loop" ? "5분 내 반복 재시작" : "관측 끊김"}</>), " · ")}</>,
+      action: { label: "작업 흐름", href: ACTION_LINKS.jobs },
+    });
+  }
+  // 같은 릴리스로 다시 뜬 워커 — 5분 안 세 번이 아니어도 죽고 있다는 뜻이다(2026-10-08 발행 워커가 20분 사이 두 번)
+  const restarted = (["crawler", "reviewer", "publisher", "text", "maintenance"] as const).flatMap((name) => {
+    const count = latestServiceInstance(ops.serviceInstances, name)?.value.restartCount1h;
+    return typeof count === "number" && count > 0 ? [{ role: name, count }] : [];
+  });
+  if (restarted.length > 0) {
+    actions.push({
+      key: "restarts", tone: "hold", count: restarted.reduce((sum, row) => sum + row.count, 0), unit: "회", title: "최근 1시간 안에 다시 뜬 워커",
+      detail: <>{joined(restarted.map((row) => <>{role(row.role)} {row.count}회</>), " · ")} — 배포가 아닌 재시작입니다. 컨테이너 로그(supervisor.stopping 사유)를 봅니다.</>,
+      action: { label: "역할 표", href: ACTION_LINKS.roles },
+    });
+  }
+  // 두 대 중 한 대만 남은 경우 — 둘 다 없으면 위 관측 끊김(scheduler)이 이미 잡는다
+  if (roles && roles.scheduler.freshReplicas === 1) {
+    actions.push({
+      key: "scheduler-replicas", tone: "hold", count: "1/2", unit: "대", title: "스케줄러 복제가 한 대뿐입니다",
+      detail: <>관측되는 스케줄러가 1대입니다 — 이것마저 죽으면 예약이 멈춥니다.</>,
+      action: { label: "역할 표", href: ACTION_LINKS.roles },
+    });
+  }
+  if (workerProgress?.scheduler.reason === "scheduler_missed") {
+    const overdue = workerProgress.scheduler.overdueJobs;
+    actions.push({
+      key: "scheduler", tone: "critical", count: overdue.length, unit: "개", title: "스케줄러 예약이 밀렸습니다",
+      detail: <>{joined(overdue.map(job))}</>,
+      action: { label: "작업 흐름", href: overdue.length === 1 ? jobHref(overdue[0]) : ACTION_LINKS.jobs },
+    });
+  }
+  if (workerProgress?.scheduler.reason === "unknown_schedule") {
+    actions.push({
+      key: "scheduler-unknown", tone: "hold", count: "모름", unit: "상태", title: "스케줄러 예약 상태를 확인할 수 없습니다",
+      detail: <>다음 예약 시각이 없는 작업이 있습니다 — 스케줄러 관측과 작업 표를 확인합니다.</>,
+      action: { label: "작업 흐름", href: ACTION_LINKS.jobs },
+    });
+  }
+  // 워커는 관측되는데 저장 진행이 없는 단계 — 관측 끊김(liveness)과 달리 프로세스는 살아 있다
+  const stuckStages = workerProgress?.stages.filter((row) => row.alarm && row.reason === "no_progress") ?? [];
+  if (stuckStages.length > 0) {
+    actions.push({
+      key: "stage-progress", tone: "critical", count: stuckStages.length, unit: "단계", title: "워커는 살아 있는데 단계가 나아가지 않습니다",
+      detail: <>{stuckStages.map((row) => throughput?.stages.find((stage) => stage.key === row.stage)?.label ?? row.stage).join(" · ")} — 오래 기다린 후보가 있는데 5분간 저장 진행이 없습니다.</>,
+      action: { label: "작업 흐름", href: ACTION_LINKS.jobs },
+    });
+  }
+  // 1시간 실패율 20% 이상인 모델 자리 — 예비가 받아 주면 "미해결 오류"에는 안 잡힌다(2차 투표 26% 가 숨었다)
+  const failingModels = (models ?? []).filter((row) => row.calls1h >= 10 && row.failed1h / row.calls1h >= 0.2);
+  if (failingModels.length > 0) {
+    actions.push({
+      key: "model-failures", tone: "hold", count: failingModels.length, unit: "자리", title: "모델 호출이 자주 실패합니다",
+      detail: <>{failingModels.map((row) => `${row.label} ${row.model ? modelName(row.model) : ""} 실패 ${Math.round((row.failed1h / row.calls1h) * 100)}% (${row.failed1h}/${row.calls1h})`).join(" · ")} — 재시도와 예비 모델이 받아 주지만 처리량이 줄고 지연이 늘어납니다.</>,
+      action: { label: "모델 연결", href: ACTION_LINKS.models },
+    });
+  }
+  // 내려달라는 요청 — 상세 페이지가 내려 준다고 약속했다. 24시간을 넘기면 다른 경보처럼 맨 앞 급으로
+  if (takedowns && takedowns.pending > 0) {
+    const oldest = takedowns.oldestHours === null ? "" : ` · 최장 ${formatWait(takedowns.oldestHours)}`;
+    actions.push({
+      key: "takedowns", tone: takedowns.overdue > 0 ? "critical" : "hold", count: takedowns.pending, unit: "건",
+      title: takedowns.overdue > 0 ? `내려달라는 요청 — 24시간 넘음 ${takedowns.overdue}` : "내려달라는 요청",
+      detail: <>대기 {takedowns.pending}{oldest}{isBurst(takedowns) ? ` · 지난 1시간 ${takedowns.lastHour.requests}건 몰림` : ""} — 내릴 후보에서 처리</>,
+      action: { label: "처리", href: ACTION_LINKS.takedowns },
+    });
+  }
+  if (attention && attention.auditRejectsOpen > 0) {
+    actions.push({
+      key: "audit", tone: "hold", count: attention.auditRejectsOpen, unit: "건", title: "감사가 거절 판정한 발행분이 처리되지 않았습니다",
+      detail: <>발행 뒤 감사가 &ldquo;제품 아님&rdquo;으로 본 것 — 사람이 내리거나 유지로 정해야 합니다.</>,
+      action: { label: "내릴 후보", href: ACTION_LINKS.audit },
+    });
+  }
+  if (attention?.auditCampaign && !attention.auditCampaign.current) {
+    actions.push({
+      key: "audit-stalled", tone: "hold", count: attention.auditCampaign.unanswered, unit: "건", title: "발행분 감사가 멈춰 있습니다",
+      detail: <>감사 #{attention.auditCampaign.id}은 프롬프트 {attention.auditCampaign.promptVersion}로 시작했는데 지금 코드와 달라 매 틱 건너뜁니다 — 남은 {n(attention.auditCampaign.unanswered)}건은 사람이 중단하고 새 감사를 열어야 다시 봅니다.</>,
+      action: { label: "감사", href: ACTION_LINKS.audit },
+    });
+  }
+  if (attention && attention.cdnPurgesPending > 0) {
+    actions.push({
+      key: "cdn-purge", tone: "hold", count: attention.cdnPurgesPending, unit: "건", title: "내린 제품의 CDN 캐시가 지워지지 않았습니다",
+      detail: <>10분 넘게 확인되지 않은 지우기 요청 — 발행 워커의 CLOUDFLARE_ZONE_ID·CLOUDFLARE_PURGE_TOKEN 을 확인합니다. 그동안 내린 페이지가 Cloudflare 에 남습니다.</>,
+      action: { label: "작업 흐름", href: ACTION_LINKS.jobs },
+    });
+  }
+  if (evidenceSummary.oldestDueHours !== null && evidenceSummary.oldestDueHours > 72) {
+    actions.push({
+      key: "evidence-backlog", tone: "hold", count: evidenceSummary.due, unit: "건", title: "제품 근거 갱신이 밀렸습니다",
+      detail: <>기한 지난 출처 {n(evidenceSummary.due)}건 · 가장 오래된 것 {Math.round(evidenceSummary.oldestDueHours / 24)}일 — {job("product-evidence-refresh")} 처리량이 출처 수를 못 따라갑니다.</>,
+      action: { label: "근거 갱신 작업", href: jobHref("product-evidence-refresh") },
+    });
+  }
+  if (attention && attention.healthOverdue > 0) {
+    actions.push({
+      key: "health-overdue", tone: attention.healthOverdue > 5_000 ? "hold" : "clear", count: attention.healthOverdue, unit: "건", title: "생존 확인이 6시간 넘게 밀린 제품",
+      detail: <>{job("uptime-ping")} 처리량이 목표(시간당 {n(attention.healthTargetPerHour)})에 못 미치면 쌓입니다.</>,
+      action: { label: "응답 점검 작업", href: jobHref("uptime-ping") },
+    });
+  }
+  if (attention && attention.introNeedsEditor > 0) {
+    actions.push({
+      key: "intro", tone: "hold", count: attention.introNeedsEditor, unit: "건", title: "소개 확인이 필요한 제품",
+      detail: <>소개 검수가 근거로는 알 수 없다고 한 것{isPausedJob(states.get("product-intro-check")) ? " — 검수 잡은 멈춰 있습니다" : ""}.</>,
+      action: { label: "제품 관리", href: ACTION_LINKS.productsIntro },
+    });
+  }
+  if (attention && attention.repoGone.installable + attention.repoGone.website > 0) {
+    const review = attention.repoReview;
+    // 2단계(AI 사이트 확인)가 사라졌다고 확정된 뒤 이틀 넘게 끝나지 않은 것이 있으면 맨 앞 급으로
+    const overdue = review.oldestHours !== null && review.oldestHours > REPO_REVIEW_OVERDUE_HOURS;
+    actions.push({
+      key: "repo-gone", tone: overdue ? "critical" : "hold", count: attention.repoGone.installable + attention.repoGone.website, unit: "건",
+      title: overdue ? `저장소가 사라진 공개 제품 — ${REPO_REVIEW_OVERDUE_HOURS}시간 넘게 처리 안 됨` : "저장소가 사라진 공개 제품",
+      detail: <>GitHub 저장소가 없거나 빈 채로 하루 넘게 이어짐 — 설치형 {n(attention.repoGone.installable)}건은 목록에서 가려짐 · 웹 {n(attention.repoGone.website)}건은 GitHub 표시만 뺌.
+        {" "}웹은 AI 가 사이트를 다시 봅니다: 확인 대기 {n(review.pending)} · 내릴 후보 {n(review.delistCandidates)} · 사람 확인 {n(review.human)} · AI 유지 {n(review.kept)}
+        {review.oldestHours !== null && <> · 가장 오래 기다린 것 {Math.round(review.oldestHours)}시간</>}. 내리는 것은 사람이 정합니다.</>,
+      action: { label: "제품 관리", href: ACTION_LINKS.productsRepoGone },
+    });
+  }
+  // 공개 제품 스팸 재검사(product-spam-rescan)가 자동으로 내린 것 — 하루 한도에 닿으면 판정이 잘못 바뀌었을 수 있어 더 내리지 않는다
+  if (attention && attention.spamAutoBans.day > 0) {
+    const capped = attention.spamAutoBans.day >= MAX_AUTO_BANS_PER_DAY;
+    actions.push({
+      key: "spam-auto-ban", tone: capped ? "critical" : "hold", count: attention.spamAutoBans.day, unit: "건",
+      title: capped ? `스팸 자동 차단이 하루 한도(${MAX_AUTO_BANS_PER_DAY}건)에 닿아 멈췄습니다` : "스팸 패턴으로 자동 차단한 공개 제품",
+      detail: <>지난 24시간에 {n(attention.spamAutoBans.day)}건을 내렸습니다(판정 {SPAM_DETECTOR_VERSION}).{" "}
+        {capped ? "더 걸린 것은 내리지 않고 기다립니다 — 판정이 잘못 바뀌지 않았는지 내린 목록부터 보세요." : "잘못 내려간 것은 차단 해제하면 재검사가 다시 내리지 않습니다."}
+        {" "}자동 차단으로 남아 있는 것 {n(attention.spamAutoBans.banned)}건.</>,
+      action: { label: "자동 차단 목록", href: ACTION_LINKS.productsSpamBanned },
+    });
+  }
+  // 공개 제품의 GitHub 저장소를 하루에 한 번씩 다 보고 있나(product-stars-refresh) — 배포 직후 첫 바퀴(약 10시간)는 낮다
+  const repoCoverage = attention && attention.repoHealth.tracked > 0 ? attention.repoHealth.checked24h / attention.repoHealth.tracked : null;
+  if (repoCoverage !== null && repoCoverage < REPO_COVERAGE_TARGET) {
+    actions.push({
+      key: "repo-coverage", tone: "hold", count: Math.floor(repoCoverage * 100), unit: "%", title: "저장소 확인 범위가 95% 아래입니다",
+      detail: <>GitHub 저장소가 있는 공개 제품 {n(attention!.repoHealth.tracked)}개 중 지난 24시간에 확인한 것 {n(attention!.repoHealth.checked24h)}개 — {job("product-stars-refresh")} 작업이 밀리거나 GitHub 한도에 걸렸습니다.</>,
+      action: { label: "작업 흐름", href: ACTION_LINKS.jobs },
+    });
+  }
+  if (quota && quota.limit > 0 && quota.remaining / quota.limit < 0.1) {
+    actions.push({
+      key: "quota", tone: "critical", count: quota.remaining, unit: "회", title: "GitHub API 한도가 거의 남지 않았습니다",
+      detail: <>{n(quota.remaining)}/{n(quota.limit)} 남음 · {formatListTime(quota.reset * 1000, now)} 초기화</>,
+      action: { label: "수집 계정", href: ACTION_LINKS.githubAccounts },
+    });
+  }
+  return actions;
+}
+
+/**
+ * "지금 조치"와 "쌓인 일"로 나눈다(2026-10-08 UX 감사 ADM-08).
+ *
+ * - 지금 조치: critical, 만성 백로그가 아닌 것(장애·설정·요청), 그리고 기준 시각에 없다가 새로 생긴 백로그.
+ * - 쌓인 일: 늘 떠 있는 백로그(BACKLOG_KEYS) — 24시간 변화를 단다. "확인함"으로 7일 숨긴 것은 따로 접는다.
+ * 숨김은 쌓인 일에만 걸린다 — 같은 항목이 critical 로 바뀌거나 새로 생기면 숨김과 상관없이 지금 조치에 선다.
+ */
+export function splitActions(items: ActionItem[], options: { samples: AttentionSample[]; acks: Map<string, AttentionAck>; now: Date }) {
+  const baseline = attentionBaseline(options.samples, options.now);
+  const hours = baseline ? Math.round((options.now.getTime() - Date.parse(baseline.at)) / 3_600_000) : 0;
+  const urgent: SplitItem[] = [], backlog: SplitItem[] = [], hidden: SplitItem[] = [];
+  for (const item of sortActions(items)) {
+    const before = baseline?.counts[item.key];
+    const fresh = baseline !== null && before === undefined;
+    const trend = typeof item.count === "number" && typeof before === "number" ? { delta: item.count - before, hours } : null;
+    const split: SplitItem = { ...item, trend, fresh };
+    if (item.tone === "critical" || !BACKLOG_KEYS.has(item.key) || fresh) urgent.push(split);
+    else if (options.acks.has(item.key)) hidden.push({ ...split, ack: options.acks.get(item.key) });
+    else backlog.push(split);
+  }
+  return { urgent, backlog, hidden };
+}
+
+/** 시간별 기록에 남길 수 — 숫자인 것만(상태 글자는 견줄 수 없다) */
+export function actionCounts(items: ActionItem[]): Record<string, number> {
+  return Object.fromEntries(items.flatMap((item) => typeof item.count === "number" ? [[item.key, item.count]] : []));
+}
+
+/**
+ * 메뉴의 "긴급 N건" 배지 — 운영센터와 같은 buildActions 로 센 critical 수.
+ *
+ * 레이아웃은 모든 관리자 화면 앞에 서므로 30초 들고 있고, 지난 값이 5분 안이면 기다리지 않고 그 값을 주며 뒤에서 다시 센다.
+ * 운영센터가 그릴 때마다 rememberCriticalCount 로 이 값을 맞춘다 — 운영센터를 열어 둔 동안 배지와 화면의 수가 같다.
+ * 세기에 실패하면 배지를 달지 않는다(null).
+ */
+const CRITICAL_TTL_MS = 30_000;
+const CRITICAL_STALE_MS = 5 * 60_000;
+let critical: { count: number; at: number } | null = null;
+let counting: Promise<number | null> | null = null;
+
+export function rememberCriticalCount(items: ActionItem[]): number {
+  critical = { count: items.filter((item) => item.tone === "critical").length, at: Date.now() };
+  return critical.count;
+}
+
+export async function criticalActionCount(): Promise<number | null> {
+  const age = critical ? Date.now() - critical.at : Infinity;
+  if (critical && age < CRITICAL_TTL_MS) return critical.count;
+  counting ??= (async () => {
+    const inputs = await loadActionInputs(await getSettings());
+    const items = buildActions(inputs, deriveStatus(inputs));
+    const count = rememberCriticalCount(items);
+    // 아무도 운영센터를 열지 않는 날에도 24시간 변화를 잴 수 있게 시간별 수를 남긴다(55분에 한 번만 적는다)
+    await recordAttentionSample(actionCounts(items)).catch(warn("operations.attention_sample_failed"));
+    return count;
+  })().catch(warn("operations.critical_count_failed")).finally(() => { counting = null; });
+  return critical && age < CRITICAL_STALE_MS ? critical.count : counting;
+}
