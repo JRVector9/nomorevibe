@@ -74,7 +74,7 @@ export function CategoryDefinitionsForm({
 
         <div className="mt-5 flex flex-wrap items-center gap-3 border-t border-line pt-4">
           <button type="submit" disabled={pending}
-            className="rounded-lg bg-accent px-4 py-2 text-[13px] font-bold text-white disabled:opacity-50">
+            className="rounded-lg bg-accent-solid px-4 py-2 text-[13px] font-bold text-white disabled:opacity-50">
             {pending ? "저장 중" : `${selected} 기준 저장`}
           </button>
           <div aria-live="polite" className="text-[13px] text-fg-2">

@@ -9,6 +9,7 @@ import {
   DEFAULT_CRAWL_SETTINGS,
   type CrawlSettings,
 } from "./settings-schema";
+import { noteSettingsRead, storedSettingsVersion } from "./settings-version";
 
 const ROW_ID = 1;
 
@@ -74,6 +75,8 @@ export function mergeWithDefaults(stored: unknown): CrawlSettings {
 
 export async function getSettings(): Promise<CrawlSettings> {
   const row = await db.query.crawlSettings.findFirst({ where: eq(crawlSettings.id, ROW_ID) });
+  // 워커 heartbeat 가 이 판을 싣는다 — 설정 화면이 "새 판으로 돌기 시작했나"를 본다(settings-version.ts)
+  noteSettingsRead(storedSettingsVersion(row?.values));
   return mergeWithDefaults(row?.values);
 }
 
@@ -93,6 +96,24 @@ export function settingsFormVersion(settings: CrawlSettings): string {
   return createHash("sha256").update(JSON.stringify(edited)).digest("hex").slice(0, 32);
 }
 
+/** 저장이 쓸 값 — 지금 값 위에 바꾼 것을 한 단계 더 깊이 덮는다 */
+function applyPatch(current: CrawlSettings, patch: unknown) {
+  const raw = (patch ?? {}) as Record<string, unknown>;
+  return {
+    ...current,
+    ...raw,
+    // A general or stale settings form cannot change the publication gate.
+    reviewMode: current.reviewMode,
+    discover: { ...current.discover, ...((raw.discover as object) ?? {}) },
+    judge: { ...current.judge, ...((raw.judge as object) ?? {}) },
+    classify: mergeClassify(current.classify, raw.classify),
+    agentEvidence: { ...current.agentEvidence, ...((raw.agentEvidence as object) ?? {}) },
+    news: { ...current.news, ...((raw.news as object) ?? {}) },
+    rising: { ...current.rising, ...((raw.rising as object) ?? {}) },
+    secondReview: { ...current.secondReview, ...((raw.secondReview as object) ?? {}) },
+  };
+}
+
 /**
  * 설정을 저장한다. 부분 수정을 허용한다 — 화면이 한 항목만 바꿔 보낼 수 있어야 한다.
  * 검증에 실패하면 아무것도 쓰지 않는다.
@@ -107,20 +128,7 @@ export async function saveSettings(
   await tx.insert(crawlSettings).values({ id: ROW_ID, values: DEFAULT_CRAWL_SETTINGS }).onConflictDoNothing();
   const [row] = await tx.select().from(crawlSettings).where(eq(crawlSettings.id, ROW_ID)).for("update");
   const current = mergeWithDefaults(row?.values);
-  const raw = (patch ?? {}) as Record<string, unknown>;
-  const next = {
-    ...current,
-    ...raw,
-    // A general or stale settings form cannot change the publication gate.
-    reviewMode: current.reviewMode,
-    discover: { ...current.discover, ...((raw.discover as object) ?? {}) },
-    judge: { ...current.judge, ...((raw.judge as object) ?? {}) },
-    classify: mergeClassify(current.classify, raw.classify),
-    agentEvidence: { ...current.agentEvidence, ...((raw.agentEvidence as object) ?? {}) },
-    news: { ...current.news, ...((raw.news as object) ?? {}) },
-    rising: { ...current.rising, ...((raw.rising as object) ?? {}) },
-    secondReview: { ...current.secondReview, ...((raw.secondReview as object) ?? {}) },
-  };
+  const next = applyPatch(current, patch);
 
   if (options.expectedFormVersion !== undefined && options.expectedFormVersion !== settingsFormVersion(current)) {
     await tx.insert(operationsAudit).values(await adminAuditRow(updatedBy, { action: "settings-save", target: "crawl_settings",
@@ -278,11 +286,25 @@ export function settingsDrift(current: CrawlSettings): SettingsDrift {
  * 수집 스위치(enabled)는 그대로 둔다 — 기준을 맞추려다 수집이 켜지거나 꺼지면 그게 더 큰 사고다.
  */
 export async function resetSettings(updatedBy: string): Promise<SaveResult> {
+  return saveSettings(resetPatch(), updatedBy);
+}
+
+function resetPatch(): Partial<CrawlSettings> {
   const defaults: Partial<CrawlSettings> = { ...DEFAULT_CRAWL_SETTINGS };
   // saveSettings의 행 잠금 안에서 읽은 스위치를 유지한다. 잠금 전 값을 다시 쓰면
   // 동시에 들어온 비상 정지를 되돌려 수집이 다시 켜질 수 있다.
   delete defaults.enabled;
-  return saveSettings(defaults, updatedBy);
+  return defaults;
+}
+
+/**
+ * 기본값으로 되돌리면 바뀔 값 — 경로마다 전과 후. 되돌리기 확인 창이 보인다(2026-10-08 UX 감사 ADM-06).
+ * 비교표(TRACKED)에 없는 값(1·2차 심사, 카테고리 기준, 근거 수집 등)도 함께 되돌아가므로 저장과 같은 합치기로 센다.
+ */
+export function resetChanges(current: CrawlSettings) {
+  const next = applyPatch(current, resetPatch());
+  const parsed = crawlSettingsSchema.safeParse(next);
+  return settingsChanges(current, parsed.success ? parsed.data : next);
 }
 
 /** 켜져 있는 검색 신호만 (discover 작업이 쓴다) */

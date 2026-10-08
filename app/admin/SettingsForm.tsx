@@ -1,7 +1,10 @@
 "use client";
 
 import { useActionState, useEffect, useReducer, useRef, useState } from "react";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { saveCrawlSettings, type SaveState } from "./actions";
+import { ConfirmAction } from "./components/ConfirmAction";
 import type { CrawlSettings } from "@/lib/crawl/settings-schema";
 import { describeChanges, formValues, type FieldValues } from "./settings/changes";
 import { searchUsage, SEED_INTERVAL_MINUTES } from "./settings/model";
@@ -16,6 +19,8 @@ const MEASURED = [
   { at: 4, perHour: 225, note: "성공 94% · 남는 몫으로 감사" },
   { at: 6, perHour: 156, note: "성공 87% · 실패가 늘어 더 느림" },
 ];
+
+const REVIEW_MODE_LABELS: Record<CrawlSettings["reviewMode"], string> = { off: "꺼짐", observe: "관측", enforce: "적용" };
 
 const segment = "relative flex cursor-pointer items-center gap-1.5 border-l border-line px-3 py-2 text-[13px] font-semibold text-fg-3 first:border-l-0 has-[:checked]:bg-fg has-[:checked]:text-bg";
 
@@ -67,14 +72,60 @@ function NumberField({ id, label, defaultValue, min, max, step, hint, suffix, on
  *
  * 필드 이름과 서버 액션(saveCrawlSettings)은 그대로다. 바뀐 것은 배치와, 신호별 7일 성과·빠진 기본값 더하기·
  * 저장 바(무엇이 바뀌었는지)다. "되돌리기"는 폼을 처음 그린 값으로 다시 그린다.
+ *
+ * 2026-10-08 UX 감사 ADM-18: 저장 바는 화면 아래에 붙어 있고 바뀐 것이 있을 때만 도드라진다. 바뀐 값이 있으면
+ * 창을 닫거나 다른 메뉴로 갈 때 묻는다. 수집 켜기·끄기는 폼에서 빼 운영센터 머리의 즉시 스위치로 옮겼다.
+ * secondControls 는 저장 없이 바로 바뀌는 2차 심사 손잡이(발행 보호·2차 표)로, 2차 심사 칸에 들어간다(ADM-24).
  */
-export function SettingsForm({ settings, version = "", yields = {} }: { settings: CrawlSettings; version?: string; yields?: Record<string, SignalYieldView> }) {
+export function SettingsForm({ settings, version = "", yields = {}, secondControls }: {
+  settings: CrawlSettings; version?: string; yields?: Record<string, SignalYieldView>; secondControls?: React.ReactNode;
+}) {
   const [generation, setGeneration] = useState(0);
-  return <SettingsFormBody key={generation} settings={settings} version={version} yields={yields} onRevert={() => setGeneration((g) => g + 1)} />;
+  return <SettingsFormBody key={generation} settings={settings} version={version} yields={yields} secondControls={secondControls}
+    onRevert={() => setGeneration((g) => g + 1)} />;
 }
 
-function SettingsFormBody({ settings, version, yields, onRevert }: { settings: CrawlSettings; version: string; yields: Record<string, SignalYieldView>; onRevert: () => void }) {
+/** 바뀐 값이 있는 채로 떠나려 할 때 묻는다 — 창 닫기·새로고침·외부 이동은 beforeunload, 관리자 안의 이동은 링크 클릭 */
+function useLeaveGuard(dirty: boolean, onLeave: (href: string) => void) {
+  useEffect(() => {
+    if (!dirty) return;
+    const onBeforeUnload = (event: BeforeUnloadEvent) => { event.preventDefault(); };
+    /*
+     * Next 의 화면 이동(<Link>)은 beforeunload 를 부르지 않고, 이 판의 라우터에는 이동을 막는 전역 손잡이가 없다
+     * (Link 의 onNavigate 는 링크마다 단다 — 사이드바 링크는 이 화면 것이 아니다). 그래서 문서에서 먼저(capture) 링크 클릭을 받아
+     * 막고 확인 창을 띄운다. 새 탭·다운로드·바깥 주소·같은 화면 안 구획 이동(#signals)은 그대로 둔다.
+     */
+    const onClick = (event: MouseEvent) => {
+      if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+      const link = event.target instanceof Element ? event.target.closest("a[href]") : null;
+      if (!(link instanceof HTMLAnchorElement) || (link.target && link.target !== "_self") || link.hasAttribute("download")) return;
+      const url = new URL(link.href, window.location.href);
+      if (url.origin !== window.location.origin) return;
+      if (url.pathname === window.location.pathname && url.search === window.location.search) return;
+      event.preventDefault();
+      event.stopPropagation();
+      onLeave(`${url.pathname}${url.search}${url.hash}`);
+    };
+    window.addEventListener("beforeunload", onBeforeUnload);
+    document.addEventListener("click", onClick, true);
+    return () => {
+      window.removeEventListener("beforeunload", onBeforeUnload);
+      document.removeEventListener("click", onClick, true);
+    };
+  }, [dirty, onLeave]);
+}
+
+function SettingsFormBody({ settings, version, yields, secondControls, onRevert }: {
+  settings: CrawlSettings; version: string; yields: Record<string, SignalYieldView>; secondControls?: React.ReactNode; onRevert: () => void;
+}) {
   const [state, action, pending] = useActionState<SaveState, FormData>(saveCrawlSettings, null);
+  const router = useRouter();
+  /*
+   * 폼이 그린 값의 판. 저장에 성공했을 때만 새 판으로 바꾼다 — 같은 화면의 2차 표 바로 바꾸기·기본값 되돌리기가 판을 바꿔도
+   * 이 폼의 칸은 옛 값이라, 옛 판을 그대로 실어 저장이 거절되게 한다(옛 값으로 덮지 않는다).
+   */
+  const [formVersion, setFormVersion] = useState(version);
+  const [leaving, setLeaving] = useState<string | null>(null);
   const { discover, judge, secondReview } = settings;
   const form = useRef<HTMLFormElement>(null);
   const [baseline, setBaseline] = useState<FieldValues | null>(null);
@@ -85,7 +136,10 @@ function SettingsFormBody({ settings, version, yields, onRevert }: { settings: C
 
   // 처음 그린 값이 기준이다. 저장에 성공하면 그때 값이 새 기준이 된다
   useEffect(() => { if (form.current) setBaseline(formValues(form.current)); }, []);
-  useEffect(() => { if (state?.ok && form.current) setBaseline(formValues(form.current)); }, [state]);
+  useEffect(() => {
+    if (state?.ok && form.current) setBaseline(formValues(form.current));
+    if (state?.version) setFormVersion(state.version);
+  }, [state]);
   /*
    * 입력·칩·행이 바뀔 때마다 다시 견준다. 손대지 않는 입력은 상태가 없어 그린 뒤에 폼을 다시 읽는다 —
    * 폼의 입력·클릭이 tick 을 올리고, 같은 이벤트에서 바뀐 칩·행이 그려진 다음에 이 효과가 돈다.
@@ -98,17 +152,18 @@ function SettingsFormBody({ settings, version, yields, onRevert }: { settings: C
 
   const usage = searchUsage(pages);
   const summary = changes.length > 3 ? `${changes.slice(0, 3).join(" · ")} 외 ${changes.length - 3}개` : changes.join(" · ");
+  const dirty = changes.length > 0;
+  useLeaveGuard(dirty, setLeaving);
 
   return (
     <form ref={form} action={action} onInput={touched} onChange={touched} onClick={touched} className="flex min-w-0 flex-col gap-4">
       {/* 그린 값의 판 — 저장이 견줘 그 사이 다른 곳(다른 탭·심사 큐)에서 바뀐 값을 옛 값으로 덮지 않는다 */}
-      <input type="hidden" name="settingsVersion" value={version} />
-      <section className="flex flex-wrap items-center gap-4 rounded-[12px] border border-line bg-bg-card px-[22px] py-4">
-        <Switch name="enabled" defaultChecked={settings.enabled} label="수집 켜기" />
-        <div className="min-w-0 flex-[1_1_320px]">
-          <div className="text-[15px] font-semibold">수집</div>
-          <div className="text-[13px] text-fg-3">끄면 다음 틱부터 검색·수집을 멈춥니다. 배포 없이 끊는 스위치입니다.</div>
-        </div>
+      <input type="hidden" name="settingsVersion" value={formVersion} />
+      {/* 수집 켜기·끄기는 저장과 묶이면 안 된다 — 운영센터 머리에서 확인 창을 거쳐 바로 바꾼다(ADM-18). 여기서는 지금 상태만 */}
+      <section className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-[12px] border border-line bg-bg-card px-[22px] py-3 text-[14px]">
+        <span className="font-semibold">수집 {settings.enabled ? "켜짐" : "꺼짐"}</span>
+        <span className="text-[13px] text-fg-3">이 폼을 저장해도 바뀌지 않습니다</span>
+        <Link prefetch={false} href="/admin/status" className="ml-auto text-[13px] font-semibold text-accent-ink hover:underline">운영센터에서 켜고 끄기 →</Link>
       </section>
 
       <SignalsTable discover={discover} yields={yields} />
@@ -153,9 +208,8 @@ function SettingsFormBody({ settings, version, yields, onRevert }: { settings: C
 
       <FilterLists judge={judge} />
 
-      {/* 발행을 막을지(reviewMode)는 여기서 못 바꾼다 — 심사 화면의 전용 폼에서만 바꾼다 */}
-      <SettingsCard id="first" title="1차 심사" note="규칙이 통과시킨 후보를 AI가 한 번 더 봅니다 · 발행을 막을지(enforce)는 심사 화면에서 정합니다"
-        actions={<span className={`${chipClass} bg-bg-hover text-fg-2`}>모드 {settings.reviewMode}</span>}>
+      <SettingsCard id="first" title="1차 심사" note="규칙이 통과시킨 후보를 AI가 한 번 더 봅니다 · 발행을 막을지(발행 보호)는 아래 2차 심사 칸에서 정합니다"
+        actions={<a href="#second" className={`${chipClass} bg-bg-hover text-fg-2 hover:text-fg`}>발행 보호 {REVIEW_MODE_LABELS[settings.reviewMode]}</a>}>
         <div className="flex flex-wrap items-end gap-3">
           <div className="flex flex-col gap-1.5">
             <span className={labelClass}>부르는 곳</span>
@@ -189,6 +243,7 @@ function SettingsFormBody({ settings, version, yields, onRevert }: { settings: C
 
       <SettingsCard id="second" title="2차 심사" note="다른 모델이 다시 봅니다 · 결과는 제안일 뿐 판정을 바꾸지 않습니다"
         actions={<span className="flex items-center gap-2 text-[13px] font-semibold"><Switch name="secondReviewEnabled" defaultChecked={secondReview.enabled} label="2차 심사 켜기" />켜기</span>}>
+        {secondControls && <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">{secondControls}</div>}
         <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
           <div className="flex min-w-0 flex-col gap-1.5">
             <span className={labelClass}>다시 볼 모델 <span className="font-normal text-fg-3">최대 3</span></span>
@@ -231,20 +286,27 @@ function SettingsFormBody({ settings, version, yields, onRevert }: { settings: C
           {state.issues.map((issue) => <div key={issue}>{issue}</div>)}
         </div>
       )}
-      <div className="flex flex-wrap items-center gap-3 rounded-[12px] bg-fg px-[18px] py-3.5 text-bg" aria-live="polite">
-        {changes.length > 0 ? (<>
+      {/* 4천 px 넘는 폼이라 저장 바를 화면 아래에 붙인다. 바뀐 것이 있을 때만 진하게 — 없으면 조용한 한 줄이다 */}
+      <div data-dirty={dirty || undefined} aria-live="polite"
+        className={`sticky bottom-0 z-10 flex flex-wrap items-center gap-3 rounded-[12px] border px-[18px] py-3.5 shadow-[0_-6px_18px_rgba(0,0,0,0.08)] ${
+          dirty ? "border-fg bg-fg text-bg" : "border-line bg-bg-card text-fg-2"}`}>
+        {dirty ? (<>
           <span className="text-[14px] font-semibold">바뀐 항목 {changes.length}개</span>
           <span className="min-w-0 text-[13px] opacity-75">{summary}</span>
         </>) : (
-          <span className="text-[14px] font-semibold">{state?.ok ? "저장했습니다 — 다음 틱부터 적용됩니다" : "바뀐 것이 없습니다"}</span>
+          <span className="text-[14px] font-semibold">{state?.ok ? "저장했습니다 — 위 '저장 판' 줄에서 워커 적용을 확인하세요" : "바뀐 것이 없습니다"}</span>
         )}
-        <button type="button" disabled={pending || changes.length === 0} onClick={onRevert}
-          className="ml-auto inline-flex min-h-9 items-center rounded-[9px] border border-white/30 px-3.5 text-[13px] font-semibold disabled:opacity-40">되돌리기</button>
+        <button type="button" disabled={pending || !dirty} onClick={onRevert}
+          className="ml-auto inline-flex min-h-9 items-center rounded-[9px] border border-current/30 px-3.5 text-[13px] font-semibold disabled:opacity-40">되돌리기</button>
         <button type="submit" disabled={pending}
           className="inline-flex min-h-9 items-center rounded-[9px] bg-accent-solid px-4 text-[13px] font-semibold text-white hover:brightness-110 disabled:opacity-50">
           {pending ? "저장 중…" : "저장 — 다음 틱부터 적용"}
         </button>
       </div>
+      <ConfirmAction open={leaving !== null} onOpenChange={(open) => { if (!open) setLeaving(null); }}
+        title="저장하지 않은 변경이 있습니다" confirmLabel="저장하지 않고 떠나기"
+        summary={<p className="text-[13px] text-fg-2">바뀐 항목 {changes.length}개({summary})가 사라집니다. 남기려면 취소하고 아래 저장 바에서 저장하세요.</p>}
+        onConfirm={() => { if (leaving) router.push(leaving); }} />
     </form>
   );
 }

@@ -10,6 +10,7 @@ import {
 } from "@/lib/domain/ranking/policy";
 import type { CalculatedEntry } from "@/lib/domain/ranking/refresh";
 import { getRankingAdminState } from "@/lib/domain/ranking/view";
+import { formatDetailTime } from "@/lib/format/time";
 import { cancelRankingPolicy } from "./actions";
 import { RankingPolicyForm } from "./RankingPolicyForm";
 import styles from "./ranking.module.css";
@@ -17,21 +18,15 @@ import styles from "./ranking.module.css";
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "랭킹 설정 — NoMoreVibe", robots: { index: false } };
 
+/** 시각 표기는 lib/format/time 하나로(ADM-26) — 상세 표기 "2026-10-08 13:38:13 KST" */
 function dateTime(value: Date | null): string {
-  if (!value) return "없음";
-  return value.toLocaleString("ko-KR", {
-    timeZone: "Asia/Seoul",
-    year: "numeric", month: "2-digit", day: "2-digit",
-    hour: "2-digit", minute: "2-digit", hour12: false,
-  });
+  return formatDetailTime(value, "없음");
 }
 
+/** 시즌 기간 "10-01 00:00 – 11-01 00:00 KST" — 상세 표기에서 해·초를 뗀다(한 칸에 둘이 들어가야 한다) */
 function dateRange(startsAt: Date, endsAt: Date): string {
-  const format = new Intl.DateTimeFormat("ko-KR", {
-    timeZone: "Asia/Seoul",
-    month: "long", day: "numeric", hour: "2-digit", minute: "2-digit", hour12: false,
-  });
-  return `${format.format(startsAt)} – ${format.format(endsAt)}`;
+  const short = (value: Date) => formatDetailTime(value).slice(5, 16);
+  return `${short(startsAt)} – ${short(endsAt)} KST`;
 }
 
 function remaining(endsAt: Date): string {

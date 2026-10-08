@@ -1,6 +1,7 @@
 /** Role-specific consumer. Scheduling belongs to scheduler.ts, never this poll loop. */
 import { basename } from 'node:path';
 import { JOB_ROLES, type JobRole } from '@/lib/jobs/catalog';
+import { lastSettingsRead } from '@/lib/crawl/settings-version';
 
 export type RuntimeState = 'idle' | 'polling' | 'running' | 'stopping';
 export type RuntimeHeartbeat = {
@@ -12,6 +13,8 @@ export type RuntimeHeartbeat = {
   currentJob: string | null;
   startedAt: number | null;
   lastProgressAt: number;
+  /** 이 프로세스의 잡이 마지막으로 읽은 크롤 설정 판과 그 시각(epoch ms) — 설정 화면의 적용 확인(ADM-19). 옛 워커는 싣지 않는다 */
+  settings?: { version: string; at: number } | null;
 };
 export type RuntimeReport = (state: RuntimeState, currentJob?: string | null) => void;
 export type RequestedRunOptions = { requestedOnly: true; signal?: AbortSignal };
@@ -118,7 +121,7 @@ export async function withRuntimeProcess<T>(
   const heartbeat = () => {
     if (process.connected && process.send) {
       // The parent can disconnect during shutdown. IPC failure must not interrupt a DB write.
-      try { process.send({ ...current, at: Date.now() }, () => {}); } catch { /* disconnected */ }
+      try { process.send({ ...current, at: Date.now(), settings: lastSettingsRead() }, () => {}); } catch { /* disconnected */ }
     }
   };
   const report: RuntimeReport = (state, currentJob = null) => {

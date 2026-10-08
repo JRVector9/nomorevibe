@@ -1,7 +1,9 @@
 "use client";
 
-import { useActionState } from "react";
-import { resetCrawlSettings, type SaveState } from "./actions";
+import { resetCrawlSettings } from "./actions";
+import { ConfirmAction } from "./components/ConfirmAction";
+import { useAdminToast } from "./components/Toast";
+import type { ResetLine } from "./settings/reset-diff";
 import type { SettingsDrift, SettingsDriftItem } from "@/lib/crawl/settings";
 
 /**
@@ -14,11 +16,8 @@ import type { SettingsDrift, SettingsDriftItem } from "@/lib/crawl/settings";
  * 나란히 놓으면 무엇이 빠졌는지 사람이 눈으로 빼야 했다(2026-09-18, 사용자가 판단 못 하겠다고 함).
  * 지금은 빠진 것만 세어 보여 주고, 갈래를 나눠 "실수로 안 들어온 것"과 "일부러 바꾼 것"을 가른다.
  */
-export function SettingsDriftNotice({ drift }: { drift: SettingsDrift }) {
-  const [state, action, pending] = useActionState<SaveState, FormData>(
-    () => resetCrawlSettings(),
-    null,
-  );
+export function SettingsDriftNotice({ drift, reset = [] }: { drift: SettingsDrift; reset?: ResetLine[] }) {
+  const toast = useAdminToast();
 
   if (drift.length === 0) return null;
 
@@ -77,23 +76,52 @@ export function SettingsDriftNotice({ drift }: { drift: SettingsDrift }) {
           )}
         </div>
 
-        <form action={action} className="mt-5">
-          <button
-            type="submit"
-            disabled={pending}
-            className="rounded-lg border border-line bg-bg-soft px-3 py-1.5 text-[13px] font-semibold text-fg-2 hover:text-fg disabled:opacity-50"
-          >
-            {pending ? "되돌리는 중…" : `${drift.length}항목 전부 기본값으로 되돌리기`}
-          </button>
+        {/* 일부러 바꾼 값까지 덮으므로 바뀔 값을 한 번 훑고 누르게 한다(2026-10-08 UX 감사 ADM-06) */}
+        <div className="mt-5">
+          <ConfirmAction
+            title="크롤 설정을 기본값으로 되돌립니다"
+            confirmLabel={`${reset.length}개 값 되돌리기`}
+            summary={<ResetSummary lines={reset} />}
+            onConfirm={async () => {
+              const result = await resetCrawlSettings();
+              if (result?.ok) toast.show({ message: "기본값으로 되돌렸습니다 — 다음 틱부터 적용됩니다" });
+              return result;
+            }}
+            trigger={(open) => (
+              <button type="button" onClick={open}
+                className="rounded-lg border border-line bg-bg-soft px-3 py-1.5 text-[13px] font-semibold text-fg-2 hover:text-fg">
+                {`${drift.length}항목 전부 기본값으로 되돌리기`}
+              </button>
+            )}
+          />
           <span className="ml-2 text-[13px] text-fg-3">
             {changed.length > 0
               ? `일부러 바꾼 값도 함께 되돌아갑니다 (${changed.map((item) => item.label).join(", ")})`
               : "수집 스위치는 건드리지 않습니다"}
           </span>
-        </form>
-        {state?.issues && <p className="mt-2 text-[13px] text-down">{state.issues.join(", ")}</p>}
+        </div>
       </div>
     </details>
+  );
+}
+
+/** 확인 창 — 되돌리면 바뀔 값(지금 → 기본값). 비교표에 없는 값(심사·카테고리 기준 등)도 여기에는 다 나온다 */
+function ResetSummary({ lines }: { lines: ResetLine[] }) {
+  return (
+    <div className="flex flex-col gap-2 text-[13px]">
+      <p className="text-fg-2">바뀌는 값 {lines.length}개 · 지금 → 기본값. 수집 켜짐·꺼짐과 발행 보호(리뷰 모드)는 그대로 둡니다.</p>
+      <ul className="flex max-h-[40dvh] flex-col gap-1 overflow-y-auto" aria-label="바뀔 값">
+        {lines.map((line) => (
+          <li key={line.label} className="flex flex-wrap items-baseline gap-x-2">
+            <span className="font-semibold text-fg">{line.label}</span>
+            <span className="font-mono text-fg-2">{line.before}</span>
+            <span className="text-fg-3">→</span>
+            <span className="font-mono font-semibold text-fg">{line.after}</span>
+            {line.note && <span className="w-full break-words text-fg-3">{line.note}</span>}
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }
 

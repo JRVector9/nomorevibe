@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { currentAdmin } from "@/lib/auth/admin";
-import { saveSettings, resetSettings } from "@/lib/crawl/settings";
+import { saveSettings, resetSettings, settingsFormVersion } from "@/lib/crawl/settings";
 import { decideCandidate, type ReviewDecision } from "@/lib/crawl/review";
 import { resolveTakedown, resolveTakedowns, type TakedownAction } from "@/lib/domain/products/takedown";
 import { isDismissReason } from "@/lib/domain/products/takedown-view";
@@ -13,7 +13,8 @@ import { logger } from "@/lib/observability/logger";
 import { recordAdminAction, recordAdminActions, type AdminLogEntry } from "@/lib/operations/admin-log";
 import { MAX_BULK_DECISIONS, parseSelection, type BulkReviewState } from "./review/contract";
 
-export type SaveState = { ok?: true; issues?: string[] } | null;
+/** version: 저장한 뒤의 폼 판 — 열어 둔 폼이 다음 저장에 이 판을 싣는다 */
+export type SaveState = { ok?: true; version?: string; issues?: string[] } | null;
 
 /** 여러 줄 입력을 배열로 (빈 줄과 공백 제거) */
 function lines(value: FormDataEntryValue | null): string[] {
@@ -54,8 +55,11 @@ export async function saveCrawlSettings(_prev: SaveState, form: FormData): Promi
     requireEvidence: form.get(`query.${i}.requireEvidence`) === "on",
   })).filter((q) => q.label && q.query);
 
+  /*
+   * 수집 켜기·끄기(enabled)는 폼에서 읽지 않는다 — 운영센터 머리의 즉시 스위치만 바꾼다(2026-10-08 UX 감사 ADM-18).
+   * 키를 빼면 saveSettings 가 저장된 값을 그대로 둔다. 옛 폼이 "enabled" 를 보내도 수집이 켜지거나 꺼지지 않는다.
+   */
   const patch = {
-    enabled: form.get("enabled") === "on",
     discover: {
       queries,
       windowDays: num(form.get("windowDays")),
@@ -123,7 +127,7 @@ export async function saveCrawlSettings(_prev: SaveState, form: FormData): Promi
   }
 
   revalidatePath("/admin");
-  return { ok: true };
+  return { ok: true, version: settingsFormVersion(result.settings) };
 }
 
 export type ReviewState = { error?: string } | null;
