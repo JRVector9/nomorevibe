@@ -7,9 +7,13 @@ import { githubGraphql, type GitHubFailure, type GraphqlError } from "./github";
  * 2026-10-08 실측: 별칭 100개짜리 질의가 1점, 4.4초. REST 로 하나씩 물으면 100번(100점)이다.
  * 없는 저장소는 그 별칭이 null 이고 errors 에 {type:"NOT_FOUND", path:[별칭]} 이 붙는다(공개 제품 100개 중 4개).
  * 이름이 바뀐 저장소는 옛 이름으로 물어도 새 nameWithOwner 로 돌려준다(twitter/bootstrap → twbs/bootstrap 확인).
- * 빈 저장소는 isEmpty=true, defaultBranchRef=null 이다.
+ * 빈 저장소는 isEmpty=true 다.
+ *
+ * 묶음은 50개다. 100개에 기본 브랜치(defaultBranchRef)까지 물으면 오래된 큰 저장소가 몰린 묶음이 GitHub 의 10초 질의 상한을
+ * 넘어 묶음째 실패했다 — 2026-10-08 운영에서 07:59 이후 매 틱 같은 실패로 확인이 멈췄다(100개: 10.3초, 기본 브랜치 빼고 4.1초,
+ * 50개·기본 브랜치 없이 3.0~3.8초). 빈 저장소는 isEmpty 하나로 가린다.
  */
-export const REPOSITORY_BATCH = 100;
+export const REPOSITORY_BATCH = 50;
 
 export type RepositoryRef = { owner: string; name: string };
 
@@ -35,7 +39,7 @@ export type RepositoryBatchResult =
   | { ok: false; error: GitHubFailure };
 
 const SEGMENT = /^[A-Za-z0-9_.-]+$/;
-const FIELDS = "nameWithOwner isArchived isEmpty isDisabled isLocked pushedAt stargazerCount defaultBranchRef { name } owner { __typename }";
+const FIELDS = "nameWithOwner isArchived isEmpty isDisabled isLocked pushedAt stargazerCount owner { __typename }";
 const alias = (index: number) => `r${index}`;
 
 /** owner·name 은 githubOwnerFromRepositoryUrl 이 이미 걸렀지만 질의에 바로 넣으므로 여기서도 막는다 */
@@ -56,7 +60,7 @@ function asObject(value: unknown): Record<string, unknown> | null {
 
 /**
  * 별칭 하나의 답을 상태로 바꾼다.
- * - 객체: 비활성·잠김 → blocked, 빈 저장소(isEmpty 또는 기본 브랜치 없음) → empty, 나머지 → ok
+ * - 객체: 비활성·잠김 → blocked, 빈 저장소(isEmpty) → empty, 나머지 → ok
  * - null + NOT_FOUND → not_found, null + FORBIDDEN → blocked
  * - 그 밖의 오류나 깨진 객체 → 모름(null). 상태를 바꾸지 않는다
  */
@@ -72,7 +76,7 @@ export function mapRepositoryBatch(repos: readonly RepositoryRef[], data: Record
       const ownerType = asObject(node.owner)?.__typename;
       const pushedAt = typeof node.pushedAt === "string" && Number.isFinite(Date.parse(node.pushedAt)) ? node.pushedAt : null;
       const status: RepoStatus = node.isDisabled === true || node.isLocked === true ? "blocked"
-        : node.isEmpty === true || !asObject(node.defaultBranchRef) ? "empty" : "ok";
+        : node.isEmpty === true ? "empty" : "ok";
       return {
         status,
         facts: {
