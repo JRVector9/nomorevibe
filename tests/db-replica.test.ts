@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
-import { createReplicaRouter, LAG_CHECK_MS, REPLICA_COOLDOWN_MS, replicaFailure } from "@/lib/db/replica";
+import { PgDialect } from "drizzle-orm/pg-core";
+import { createReplicaRouter, LAG_CHECK_MS, REPLICA_COOLDOWN_MS, REPLICA_LAG_QUERY, replicaFailure } from "@/lib/db/replica";
 
 /**
  * 공개 읽기를 복제본에서 하되, 복제본이 안 되면 주 DB 로 돌아간다(2026-10-06 P2).
@@ -95,5 +96,18 @@ describe("복제본 읽기", () => {
     expect(replicaFailure(err("25006"))).toBe("readonly");
     expect(replicaFailure(err("23505"))).toBeNull();
     expect(replicaFailure(new Error("plain"))).toBeNull();
+  });
+});
+
+describe("복제 지연 측정", () => {
+  /**
+   * 스트리밍이 끊기면 받은 위치에서 멈추고 재생이 거기까지 따라잡아 "받은 = 재생한" 이 된다. 그것만 보고 0 이라 하면
+   * 끊긴 복제본을 무기한 최신으로 본다(2026-10-08 로컬 주·복제 컨테이너로 재현: 주 DB 를 멈추자 20초 뒤에도 0).
+   * 받는 프로세스(pg_stat_wal_receiver — 권한 없는 계정도 행은 보인다)가 있을 때만 따라잡았다고 본다.
+   */
+  it("WAL 수신 프로세스가 있을 때만 '다 따라잡음'을 0으로 본다", () => {
+    const text = new PgDialect().sqlToQuery(REPLICA_LAG_QUERY).sql.replace(/\s+/g, " ");
+    expect(text).toMatch(/pg_last_wal_receive_lsn\(\) = pg_last_wal_replay_lsn\(\) and exists \(select 1 from pg_stat_wal_receiver\) then 0/);
+    expect(text).toContain("now() - pg_last_xact_replay_timestamp()");
   });
 });

@@ -28,18 +28,28 @@ export function variantSize(value: string | null): OgVariantSize {
   return (OG_VARIANT_SIZES as readonly number[]).includes(size) ? size as OgVariantSize : 640;
 }
 
+/**
+ * 메모리 사본의 수명 — 공개 읽기(public-reads.ts)와 같은 30초. 사본은 DB 를 다시 보지 않고 나가므로, 수명이 없으면
+ * 내리거나 지운 제품의 그림을 원 서버가 계속 내놓아 Cloudflare 의 두 번째 지우기(60초 뒤, cdn-purge) 뒤에 다시 채워졌다.
+ * 같은 slug 를 새 제품이 다시 쓰면 옛 제품의 그림이 나갔다.
+ */
+const VARIANT_TTL_MS = 30_000;
+
 /** 서버 메모리의 줄인 사본 — 인스턴스마다 최근 것 몇백 장. Cloudflare 가 놓친 요청만 여기까지 온다 */
 export class VariantCache {
-  private entries = new Map<string, Buffer>();
-  constructor(private readonly limit = 400) {}
+  private entries = new Map<string, { value: Buffer; expiresAt: number }>();
+  constructor(private readonly limit = 400, private readonly now: () => number = Date.now) {}
   get(key: string): Buffer | undefined {
-    const value = this.entries.get(key);
-    if (value) { this.entries.delete(key); this.entries.set(key, value); }
-    return value;
+    const entry = this.entries.get(key);
+    if (!entry) return undefined;
+    this.entries.delete(key);
+    if (entry.expiresAt <= this.now()) return undefined;
+    this.entries.set(key, entry);
+    return entry.value;
   }
   set(key: string, value: Buffer): void {
     this.entries.delete(key);
-    this.entries.set(key, value);
+    this.entries.set(key, { value, expiresAt: this.now() + VARIANT_TTL_MS });
     while (this.entries.size > this.limit) this.entries.delete(this.entries.keys().next().value!);
   }
 }

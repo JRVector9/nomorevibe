@@ -1,14 +1,29 @@
 /**
  * 공개 읽기를 스트리밍 복제본에서 — 주 DB 는 워커(수집·심사)와 다른 DB 19개가 같이 쓴다(2026-10-06 P2).
  *
- * 쓰는 곳은 익명 공개 읽기뿐이다(lib/domain/products/public-reads.ts, 홈 집계). 관리자·워커·쓰기는 주 DB 그대로다.
+ * 쓰는 곳은 익명 공개 읽기(lib/domain/products/public-reads.ts, 홈 집계)와 방금 쓴 값이 필요 없는 관리자 집계
+ * (운영센터 대시보드 lib/operations/dashboard.ts, 사유 번역 진행 lib/crawl/translations.ts)다. 그 밖의 관리자·워커·쓰기는 주 DB 그대로다.
  * - 연결이 안 되면 같은 읽기를 주 DB 로 다시 하고 30초 동안 복제본을 건너뛴다.
  * - 복제 적용과 부딪혀 취소된 읽기(40001)는 주 DB 로 한 번 더. 복제본에 쓰기를 시도했다면(25006) 주 DB 로 하되 버그로 남긴다.
  * - 10초마다 복제가 밀렸는지 본다 — 스트리밍이 끊겨 10초 넘게 밀렸으면 쓰지 않는다. 내린 제품을 Cloudflare 가
  *   두 번째로 지운 뒤(60초) 옛 값을 다시 채우지 않게 하려는 것이다.
  */
 
+import { sql } from "drizzle-orm";
+
 export type ReplicaFailure = "down" | "conflict" | "readonly";
+
+/**
+ * 복제가 몇 초 밀렸나 — 다 따라잡았으면 0. 주 DB 가 한가하면 마지막 적용 시각이 오래돼 보여도 밀린 것이 아니다.
+ *
+ * "다 따라잡음"은 WAL 을 받는 프로세스가 있을 때만 믿는다. 스트리밍이 끊기면 받은 위치가 멈추고 재생이 거기까지
+ * 따라잡아 둘이 같아진다 — 그것만 보면 끊긴 복제본을 무기한 최신으로 보고 내린 제품을 계속 보여 준다.
+ * 받는 프로세스가 없으면 마지막 적용 시각으로 잰다(주 DB 는 워커 심장 박동으로 늘 쓰고 있다).
+ * pg_stat_wal_receiver 는 권한 없는 계정에도 행(pid)은 보인다.
+ */
+export const REPLICA_LAG_QUERY = sql`
+  select case when pg_last_wal_receive_lsn() = pg_last_wal_replay_lsn() and exists (select 1 from pg_stat_wal_receiver) then 0
+              else extract(epoch from now() - pg_last_xact_replay_timestamp()) end as lag`;
 
 const DOWN_CODES = new Set([
   "ECONNREFUSED", "ECONNRESET", "ETIMEDOUT", "EHOSTUNREACH", "ENETUNREACH", "EAI_AGAIN",

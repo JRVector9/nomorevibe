@@ -23,7 +23,9 @@ export async function readMaintenanceUptimeProgress(): Promise<Omit<MaintenanceU
     in_backoff: boolean; job_error: boolean;
   }>(sql`
     with due as (
-      select coalesce(h.checked_at, p.created_at) as since
+      -- 기다림은 다시 볼 때가 된 시각(마지막 확인 + 6시간)부터 잰다. 마지막 확인부터 재면 막 차례가 된 제품도
+      -- 6시간 기다린 것으로 보여, 1분 주기 잡이 집기 전에 감시가 maintenance 를 재시작한다
+      select coalesce(h.checked_at + interval '6 hours', p.created_at) as since
         from products p left join product_health h on h.slug = p.slug
        where p.status in ('seeded', 'verified') and p.access_mode = 'website'
          and (h.checked_at is null or h.checked_at < now() - interval '6 hours')

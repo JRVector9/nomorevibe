@@ -2,7 +2,7 @@ import { afterEach, beforeAll, beforeEach, expect, it, vi } from 'vitest';
 import { eq, sql } from 'drizzle-orm';
 import { db } from '@/lib/db';
 import { clickEvents, jobs, newsItems, productClickDaily,
-  productHealth, products, rankingSeasons, rateLimits, searchQueries } from '@/lib/db/schema';
+  productHealth, products, productSearchProfiles, rankingSeasons, rateLimits, searchQueries } from '@/lib/db/schema';
 import { recordPing } from '@/lib/domain/products/health';
 import { refreshProductSearchDocuments } from '@/lib/jobs/products/search-refresh';
 import { insertNewsItems } from '@/lib/news/repository';
@@ -109,4 +109,40 @@ it('does not suppress an uptime stall forever because of an old job error', asyn
   await db.insert(jobs).values({ name: 'uptime-ping', lastError: 'old request failure',
     lastRunAt: sql`now() - interval '1 hour'` });
   expect((await readMaintenanceUptimeProgress()).jobError).toBe(false);
+});
+
+/**
+ * 감시(role-worker checkProgress)는 "할 일이 몇 분째 기다리나"로 멈춤을 판단한다. 기다림은 할 일이 된 때부터 잰다 —
+ * 마지막으로 본 때부터 재면 다시 볼 때가 막 된 일이 몇 시간·며칠 기다린 것으로 보여, 잡이 다음 틱에 집기도 전에
+ * 워커를 멈춘 것으로 보고 재시작한다(2026-10-08 발행 단계의 분류 보류와 같은 실수).
+ */
+it('ages an uptime recheck from when it became due, not from the previous check', async () => {
+  await db.insert(productHealth).values({ slug: 'maintenance-fence', status: 200,
+    checkedAt: sql`now() - interval '6 hours' - interval '2 minutes'` });
+  const uptime = await readMaintenanceUptimeProgress();
+  expect(uptime.waiting).toBe(true);
+  expect(uptime.oldestMinutes).toBeGreaterThan(1);
+  expect(uptime.oldestMinutes).toBeLessThan(5);
+});
+
+it('ages text work from when a refresh or retry became due', async () => {
+  vi.stubEnv('ABCLLM_API_KEY', 'present');
+  try {
+    const [product] = await db.select({ id: products.id }).from(products);
+    // 30일이 막 지난 키워드 — 다시 지을 차례가 된 지 2분
+    await db.insert(productSearchProfiles).values({ productId: product.id, sourceHash: 'h', keywordsEn: ['a'],
+      verifiedAt: sql`now()`, updatedAt: sql`now() - interval '30 days' - interval '2 minutes'` });
+    expect((await readTextProgress()).oldestReadyMinutes).toBeLessThan(5);
+
+    // 두 시간 전에 실패해 2분 전에 다시 볼 때가 된 짓기
+    await db.update(productSearchProfiles).set({ errorCode: 'timeout', attempts: 1,
+      retryAt: sql`now() - interval '2 minutes'`, updatedAt: sql`now() - interval '2 hours'` });
+    expect((await readTextProgress()).oldestReadyMinutes).toBeLessThan(5);
+
+    // 두 시간 전에 실패해 2분 전에 다시 볼 때가 된 검수
+    await db.update(productSearchProfiles).set({ errorCode: null, retryAt: null, verifiedAt: null,
+      verifyError: 'timeout', verifyAttempts: 1, verifyRetryAt: sql`now() - interval '2 minutes'`,
+      updatedAt: sql`now() - interval '2 hours'` });
+    expect((await readTextProgress()).oldestReadyMinutes).toBeLessThan(5);
+  } finally { vi.unstubAllEnvs(); }
 });

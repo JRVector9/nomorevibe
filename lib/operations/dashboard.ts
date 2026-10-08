@@ -1,6 +1,6 @@
 import { sql, type SQL } from "drizzle-orm";
 import type { AnyPgColumn } from "drizzle-orm/pg-core";
-import { db } from "@/lib/db";
+import { db, onReplica } from "@/lib/db";
 import { cdnPurges, crawlCandidates, crawlFrontier, crawlReviewAttempts, productAuditCampaigns, productAuditItems, productHealth,
   productRepoReviews, productSearchProfiles, products, secondReviews } from "@/lib/db/schema";
 import { REVIEW_PROMPT_VERSION, REVIEW_RULES_VERSION } from "@/lib/crawl/agent-review-contract";
@@ -104,12 +104,16 @@ const voted = sql`${secondReviews.secondDecision} IS NOT NULL AND ${secondReview
 const listedSince = (since: SQL) => sql`${products.status} IN ('seeded', 'verified')
   AND coalesce(${products.verifiedAt}, ${products.createdAt}) >= ${since} AND ${products.createdAt} >= ${since}`;
 
-/** 프로드에서 JIT 컴파일이 집계보다 오래 걸렸다(throughput.ts, 7.3초) — 대시보드 읽기는 끄고 돈다 */
+/**
+ * 프로드에서 JIT 컴파일이 집계보다 오래 걸렸다(throughput.ts, 7.3초) — 대시보드 읽기는 끄고 돈다.
+ * 운영센터가 10초마다 다시 부르는 표 훑기라 복제본에서 센다(lib/db/replica.ts) — 주 DB 는 워커와 다른 DB 가 같이 쓴다.
+ * 복제가 10초 넘게 밀리거나 닿지 않으면 주 DB 로 읽는다.
+ */
 function readOnly<T extends Record<string, unknown>>(query: SQL) {
-  return db.transaction(async (tx) => {
+  return onReplica(() => db.transaction(async (tx) => {
     await tx.execute(sql`SET LOCAL jit = off`);
     return tx.execute<T>(query);
-  }, { accessMode: "read only" });
+  }, { accessMode: "read only" }));
 }
 
 /**

@@ -39,6 +39,16 @@ describe("화면용 썸네일 주소", () => {
     expect(cache.get("b")).toBeUndefined();
     expect(cache.get("a")?.toString()).toBe("a");
   });
+
+  it("메모리 사본은 30초 안에만 쓴다 — 내린 제품의 그림을 Cloudflare 두 번째 지우기(60초 뒤) 뒤까지 내놓지 않는다", () => {
+    let clock = 0;
+    const cache = new VariantCache(400, () => clock);
+    cache.set("a", Buffer.from("a"));
+    clock = 29_999;
+    expect(cache.get("a")?.toString()).toBe("a");
+    clock = 30_000;
+    expect(cache.get("a")).toBeUndefined();
+  });
 });
 
 describe("썸네일 경로", () => {

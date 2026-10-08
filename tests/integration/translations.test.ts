@@ -1,5 +1,6 @@
 import { beforeAll, beforeEach, expect, it } from 'vitest';
 import { eq, sql } from 'drizzle-orm';
+import { clearAllMemos } from '@/lib/cache/memo';
 import { db } from '@/lib/db';
 import { crawlCandidates, crawlDocuments, crawlFrontier, crawlReviewAttempts, crawlSettings, secondReviews, textTranslations } from '@/lib/db/schema';
 import * as crawl from '@/lib/crawl/repository';
@@ -11,6 +12,8 @@ import { ensureSchema } from './setup';
 
 beforeAll(() => ensureSchema());
 beforeEach(async () => {
+  // 번역 진행은 1분 담아 둔다(translations.ts) — 앞 테스트가 센 값을 다음 테스트가 받지 않게
+  clearAllMemos();
   await db.delete(textTranslations);
   await db.delete(secondReviews);
   await db.delete(crawlReviewAttempts);
@@ -104,6 +107,20 @@ it('진행을 센다 — 옮길 글 중 몇 개를 옮겼고 몇 개가 실패�
 
   expect(await translationProgress()).toMatchObject({ total: 2, done: 1, failed: 1, pending: 1, lastHour: 1 });
   expect((await translationProgress()).lastSecondsAgo).toBeLessThan(60);
+});
+
+it('진행은 1분 담아 두고 센 시각을 함께 준다 — 화면이 "N초 전 집계"로 밝힌다', async () => {
+  await attempt('acme/a', EN_A);
+  const first = await translationProgress();
+  expect(first).toMatchObject({ total: 1, done: 0 });
+  expect(Date.now() - Date.parse(first.measuredAt)).toBeLessThan(60_000);
+
+  // 담아 둔 동안에는 새로 옮긴 것이 보이지 않는다 — 같은 값을 그대로 준다
+  await recordTranslations([{ hash: textHash(EN_A), translated: '문서 사이트다' }], 'gpt-oss');
+  expect(await translationProgress()).toEqual(first);
+
+  clearAllMemos();
+  expect(await translationProgress()).toMatchObject({ total: 1, done: 1 });
 });
 
 it('실패는 사유별로 보인다 — 무엇이 막혔는지 알아야 게이트웨이를 볼지 글을 볼지 안다', async () => {

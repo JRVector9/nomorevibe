@@ -258,3 +258,22 @@ describe("2026-10-08 리디자인", () => {
     expect(html).toContain("흔적 없어 보류 34");
   });
 });
+
+/**
+ * 폼은 열어 둔 채로 몇 시간이 갈 수 있다. 그 사이 다른 화면(심사 큐의 2차 표 전환)이나 다른 탭(수집 끄기)이
+ * 바꾼 값을, 열 때 그린 값으로 덮으면 안 된다 — 폼이 그린 판을 함께 보내 저장이 견주게 한다.
+ */
+describe("열어 둔 폼이 다른 곳의 변경을 덮지 않는다", () => {
+  it("그린 판을 숨은 칸으로 싣고, 저장이 그 판을 넘긴다", async () => {
+    const html = renderToStaticMarkup(createElement(SettingsForm, { settings: twoSignals, version: "v-1234" }));
+    expect(html).toMatch(/<input[^>]*name="settingsVersion"[^>]*value="v-1234"/);
+
+    await saveCrawlSettings(null, submitted({ settingsVersion: "v-1234" }));
+    expect(saveSettings.mock.calls[0][2]).toEqual({ expectedFormVersion: "v-1234" });
+  });
+
+  it("판이 없는 제출도 견주게 한다 — 빈 판은 어떤 저장값과도 맞지 않는다", async () => {
+    await saveCrawlSettings(null, submitted());
+    expect(saveSettings.mock.calls[0][2]).toEqual({ expectedFormVersion: "" });
+  });
+});
