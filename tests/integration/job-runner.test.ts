@@ -144,9 +144,46 @@ describe("runJob — 실패 기록", () => {
     expect(state?.lastSuccessAt).toBeInstanceOf(Date);
   });
 
+  it("실패하면 30초 뒤 재시도로 미루고, 성공하면 그 유예를 지운다", async () => {
+    await runJob("backoff", async () => {
+      throw new Error("장애");
+    });
+    const failed = await getJobState("backoff");
+    expect(failed?.notBefore!.getTime()).toBeGreaterThan(Date.now() + 20_000);
+    expect(failed?.notBefore!.getTime()).toBeLessThan(Date.now() + 40_000);
+
+    await runJob("backoff", async () => ({ done: true }));
+    expect((await getJobState("backoff"))?.notBefore).toBeNull();
+  });
+
   it("실행 횟수를 센다 (스케줄이 도는지 확인하는 근거)", async () => {
     for (let i = 0; i < 3; i++) await runJob("counted", async () => ({ done: true }));
     expect((await getJobState("counted"))?.runs).toBe(3);
+  });
+});
+
+/**
+ * 사람이 멈춘 작업은 not_before 를 먼 미래(2100-01-01)로 민다(lib/jobs/status.ts). 소개 검수는 한 틱이
+ * 110초라 도는 중에 멈추기 쉽다 — 그 틱이 끝나며 not_before 를 지우거나 30초로 덮으면 멈춘 작업이 저절로 다시 돈다.
+ */
+describe("runJob — 사람이 멈춘 작업", () => {
+  const PAUSED = new Date("2100-01-01T00:00:00.000Z");
+  const pauseWhileRunning = (name: string) => db.update(jobs).set({ notBefore: PAUSED }).where(eq(jobs.name, name));
+
+  it("도는 중에 멈추면 성공한 틱이 멈춤을 지우지 않는다", async () => {
+    await runJob("paused-ok", async () => {
+      await pauseWhileRunning("paused-ok");
+      return { done: true };
+    });
+    expect((await getJobState("paused-ok"))?.notBefore).toEqual(PAUSED);
+  });
+
+  it("도는 중에 멈추면 실패한 틱이 멈춤을 30초 재시도로 덮지 않는다", async () => {
+    await runJob("paused-failed", async () => {
+      await pauseWhileRunning("paused-failed");
+      throw new Error("장애");
+    });
+    expect((await getJobState("paused-failed"))?.notBefore).toEqual(PAUSED);
   });
 });
 

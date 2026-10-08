@@ -25,12 +25,16 @@ export async function readTextProgress(): Promise<Omit<TextProgress, 'schedulerS
           from products p left join product_search_profiles sp on sp.product_id = p.id
          where p.status in ('seeded', 'verified')
       )
+      -- 기다림은 할 일이 된 시각부터 잰다 — 재시도는 retry_at, 30일 갱신은 updated_at + 30일. 마지막 갱신부터 재면
+      -- 막 차례가 된 일이 몇 시간·며칠 기다린 것으로 보여, 1분 주기 잡이 집기 전에 감시가 text 워커를 재시작한다
       select
-        (select extract(epoch from (now() - min(coalesce(updated_at, created_at)))) / 60 from active
+        (select extract(epoch from (now() - min(case when product_id is null then created_at
+            when error_code is not null then greatest(updated_at, retry_at)
+            when needs_refresh then updated_at else updated_at + interval '30 days' end))) / 60 from active
           where product_id is null or
             (error_code is not null and attempts < 5 and (retry_at is null or retry_at <= now())) or
             (error_code is null and (needs_refresh or updated_at < now() - interval '30 days'))) as profile_age,
-        (select extract(epoch from (now() - min(updated_at))) / 60 from active
+        (select extract(epoch from (now() - min(greatest(updated_at, verify_retry_at)))) / 60 from active
           where product_id is not null and not needs_refresh and error_code is null and verified_at is null
             and jsonb_array_length(keywords_en) + jsonb_array_length(keywords_ko) > 0
             and verify_attempts < 5 and (verify_retry_at is null or verify_retry_at <= now())) as verify_age,
