@@ -112,6 +112,27 @@ describe("수집 잡", () => {
     expect(await crawl.getCandidate("gone/approved")).toMatchObject({ signals: { stoppedAt: { rule: "원본 재수집" } } });
   });
 
+  it("hands an approved candidate whose source refresh keeps failing to a person instead of retrying it daily forever", async () => {
+    // 2026-10-08 운영: 커밋 메시지가 65KB 인 레포의 흔적 확인이 매번 invalid_response 로 끝나, 승인 후보가 10-05 부터
+    // 원본 재수집(하루 한 번, 네 번 실패) → failed → 하루 뒤 다시를 되풀이하며 심사에도 사람 대기열에도 오지 않았다
+    const old = new Date(Date.now() - 3 * 24 * 60 * 60_000);
+    const park = async (repo: string, frontier: Record<string, unknown> = {}) => {
+      await crawl.putDocument({ repo, repoMeta: STABLE_META, productUrl: "https://my-app.test" });
+      await db.update(crawlDocuments).set({ fetchedAt: old }).where(eq(crawlDocuments.repo, repo));
+      await db.insert(crawlCandidates).values({ repo, productUrl: "https://my-app.test", decidedBy: "auto", state: "approved", reason: "passed" });
+      await db.insert(crawlFrontier).values({ repo, signal: "test", state: "failed", attempts: crawl.MAX_ATTEMPTS,
+        lastError: "AI 흔적 확인 실패 — GitHub invalid_response", ...frontier });
+    };
+    await park("failing/approved");
+    // 실패가 마지막 원본보다 앞선 것이면 그 뒤에 다시 받아진 것이다 — 그대로 둔다
+    await park("failing/before-source", { updatedAt: new Date(old.getTime() - 60_000) });
+
+    expect(await tick()).toMatchObject({ status: "completed" });
+    expect(await crawl.getCandidate("failing/approved")).toMatchObject({ state: "needs_review", reason: "source_refresh_failed",
+      signals: { stoppedAt: { rule: "원본 재수집", detail: expect.stringContaining("invalid_response") } } });
+    expect(await crawl.getCandidate("failing/before-source")).toMatchObject({ state: "approved", reason: "passed" });
+  });
+
   it("recovers a prior fetch claim without touching the current job or accepting the old result", async () => {
     const lease = { name: "crawl-fetch", token: "current-owner", requestedVersion: 1 };
     await db.insert(jobs).values({ name: lease.name, requestedVersion: 1,

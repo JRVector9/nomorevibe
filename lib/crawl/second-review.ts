@@ -389,22 +389,24 @@ export async function closeSettledSecondReviews(now = new Date(), lease?: JobLea
 }
 
 async function closeDecidedSecondReviews(now: Date, lease?: JobLease): Promise<number> {
-  // 공개분의 일치는 끝난 기록이다(그대로 둔다) — 훑는 대상에 넣으면 날마다 쌓여 한도를 잡아먹는다
-  const open = await db.select({ id: secondReviews.id, candidateId: secondReviews.candidateId, published: secondReviews.publishedSlug, trigger: secondReviews.trigger })
-    .from(secondReviews).where(or(inArray(secondReviews.status, ["pending", "failed", "needs_human"]),
-      and(eq(secondReviews.status, "agreed"), isNull(secondReviews.publishedSlug))))
-    .orderBy(secondReviews.id).limit(1_000);
-  if (!open.length) return 0;
-  const candidates = await db.select({ id: crawlCandidates.id, state: crawlCandidates.state }).from(crawlCandidates)
-    .where(inArray(crawlCandidates.id, [...new Set(open.map((row) => row.candidateId))]));
-  const state = new Map(candidates.map((row) => [row.id, row.state]));
   /*
    * 관문 행은 후보가 발행을 기다리는 동안(승인)과, 2차가 반대해 사람에게 넘어간 동안(보류) 열려 있다 —
    * 발행 조건이 일치한 행을 보고, 사람은 심사 화면에서 두 모델의 의견을 나란히 본다.
+   *
+   * 닫을 것을 고르는 조건은 SQL 안(LIMIT 앞)에 둔다. 열린 행을 id 순으로 1,000건 읽고 나서 거르던 때는
+   * 사람을 기다리며 오래 열려 있는 행(갈림 보류)이 1,000건을 넘자 그 뒤의 행은 영영 닫히지 않았다 —
+   * 2026-10-08 프로드에서 열린 행 1,000건이 모두 아직 열려 있어야 하는 것이었고, 그 뒤에서 발행·거부된
+   * 후보의 관문 행 95건이 "일치(승인)" 칩에 남아 있었다.
    */
-  const settled = open.filter((row) => row.published ? state.get(row.candidateId) !== "published"
-    : row.trigger === "ai_approved" ? !["approved", "needs_review"].includes(state.get(row.candidateId) ?? "")
-      : state.get(row.candidateId) !== "needs_review");
+  const settled = await db.select({ id: secondReviews.id })
+    .from(secondReviews).leftJoin(crawlCandidates, eq(crawlCandidates.id, secondReviews.candidateId))
+    // 공개분의 일치는 끝난 기록이다(그대로 둔다) — 훑는 대상에 넣으면 날마다 쌓여 한도를 잡아먹는다
+    .where(and(or(inArray(secondReviews.status, ["pending", "failed", "needs_human"]),
+      and(eq(secondReviews.status, "agreed"), isNull(secondReviews.publishedSlug))),
+      sql`case when ${secondReviews.publishedSlug} is not null then ${crawlCandidates.state} is distinct from 'published'
+        when ${secondReviews.trigger} = 'ai_approved' then coalesce(${crawlCandidates.state} not in ('approved', 'needs_review'), true)
+        else ${crawlCandidates.state} is distinct from 'needs_review' end`))
+    .orderBy(secondReviews.id).limit(1_000);
   if (!settled.length) return 0;
   await withJobLeaseWrite(lease, tx => tx.update(secondReviews).set({ status: "resolved", resolution: "decided_elsewhere", resolvedAt: now })
     .where(inArray(secondReviews.id, settled.map((row) => row.id))));
