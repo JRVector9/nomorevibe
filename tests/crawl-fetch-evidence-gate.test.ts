@@ -15,6 +15,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock("@/lib/crawl/repository", () => ({
   dequeue: mocks.dequeue, deferFrontier: mocks.defer, saveFetchedDocument: mocks.save,
   markFrontier: mocks.mark, markFailed: mocks.failed, recordJudgement: mocks.judge,
+  SKIP_NOT_FOUND: "github_not_found", SKIP_EMPTY_REPOSITORY: "github_empty_repository",
 }));
 vi.mock("@/lib/crawl/settings", () => ({ getSettings: async () => ({
   enabled: true, judge: { docsGenerators: [] },
@@ -106,7 +107,8 @@ it("빈 레포(404)는 건너뛰고, 다른 GitHub 실패는 항목 실패로 �
 
   await fetchCrawlDocuments(context());
 
-  expect(mocks.mark).toHaveBeenCalledWith("kim/empty", "skipped", expect.anything());
+  // 빈 저장소라는 까닭을 남긴다 — 사람 대기열에서 "레포 삭제됨"과 섞이지 않게
+  expect(mocks.mark).toHaveBeenCalledWith("kim/empty", "skipped", expect.anything(), undefined, "github_empty_repository");
   expect(mocks.failed).toHaveBeenCalledWith("kim/flaky", "AI 흔적 확인 실패 — GitHub 502", undefined, expect.anything());
   expect(mocks.page).not.toHaveBeenCalled();
 });

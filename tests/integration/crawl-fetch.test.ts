@@ -59,13 +59,25 @@ describe("수집 잡", () => {
     await db.update(crawlDocuments).set({ fetchedAt: old }).where(eq(crawlDocuments.repo, repo));
     await db.insert(crawlCandidates).values({ repo, productUrl: "https://my-app.test", state: "new",
       reason: "source_changed", decidedBy: "auto", signals: { reconsiderAfter: old.toISOString() } });
-    await db.insert(crawlFrontier).values({ repo, signal: "test", state: "skipped", attempts: 1 });
+    await db.insert(crawlFrontier).values({ repo, signal: "test", state: "skipped", attempts: 1, lastError: crawl.SKIP_NOT_FOUND });
+    // 빈 저장소와 까닭이 기록되기 전의 옛 skipped 는 삭제가 아니다
+    for (const [other, lastError] of [["someone/empty-repository", crawl.SKIP_EMPTY_REPOSITORY], ["someone/old-skip", null]] as const) {
+      await crawl.putDocument({ repo: other, repoMeta: STABLE_META, productUrl: "https://my-app.test" });
+      await db.update(crawlDocuments).set({ fetchedAt: old }).where(eq(crawlDocuments.repo, other));
+      await db.insert(crawlCandidates).values({ repo: other, productUrl: "https://my-app.test", state: "new",
+        reason: "source_changed", decidedBy: "auto", signals: { reconsiderAfter: old.toISOString() } });
+      await db.insert(crawlFrontier).values({ repo: other, signal: "test", state: "skipped", attempts: 1, lastError });
+    }
 
     expect(await tick()).toMatchObject({ status: "completed" });
-    // 수집이 저장소를 찾지 못해 건너뛴 것(skipped)은 레포 삭제다 — 그 밖의 실패만 원본 재수집 실패
+    // GitHub 가 404 로 답해 건너뛴 것만 레포 삭제다
     expect(await crawl.getCandidate(repo)).toMatchObject({ state: "needs_review",
       reason: "repo_deleted", signals: { stoppedAt: { rule: "원본 재수집" } } });
-    expect(await crawl.frontierCounts()).toEqual({ skipped: 1 });
+    expect(await crawl.getCandidate("someone/empty-repository")).toMatchObject({ state: "needs_review", reason: "source_refresh_failed",
+      signals: { stoppedAt: { detail: expect.stringContaining("비어 있어") } } });
+    expect(await crawl.getCandidate("someone/old-skip")).toMatchObject({ state: "needs_review", reason: "source_refresh_failed",
+      signals: { stoppedAt: { detail: expect.stringContaining("기록 없음") } } });
+    expect(await crawl.frontierCounts()).toEqual({ skipped: 3 });
     expect(getRepo).not.toHaveBeenCalled();
   });
 
@@ -76,7 +88,7 @@ describe("수집 잡", () => {
       await crawl.putDocument({ repo, repoMeta: STABLE_META, productUrl: "https://my-app.test" });
       await db.update(crawlDocuments).set({ fetchedAt: old }).where(eq(crawlDocuments.repo, repo));
       await db.insert(crawlCandidates).values({ repo, productUrl: "https://my-app.test", decidedBy: "auto", ...candidate });
-      await db.insert(crawlFrontier).values({ repo, signal: "test", state: "skipped", attempts: 1, ...frontier });
+      await db.insert(crawlFrontier).values({ repo, signal: "test", state: "skipped", attempts: 1, lastError: crawl.SKIP_NOT_FOUND, ...frontier });
     };
     await park("gone/approved", { state: "approved", reason: "passed" });
     await park("gone/held", { state: "needs_review", reason: "ambiguous" });
@@ -85,6 +97,9 @@ describe("수집 잡", () => {
     await park("gone/split", { state: "needs_review", reason: "second_review_split" });
     await park("moved/old-name", { state: "approved", reason: "passed" }, { aliasOf: "moved/new-name" });
     await park("back/again", { state: "approved", reason: "passed" }, { updatedAt: new Date(old.getTime() - 60_000) });
+    // 빈 저장소는 원본 재수집 실패로, 까닭이 기록되기 전의 옛 skipped 는 다시 받아 까닭이 남을 때까지 기다린다
+    await park("empty/approved", { state: "approved", reason: "passed" }, { lastError: crawl.SKIP_EMPTY_REPOSITORY });
+    await park("unknown/approved", { state: "approved", reason: "passed" }, { lastError: null });
 
     expect(await tick()).toMatchObject({ status: "completed" });
     const reasons = Object.fromEntries((await db.select().from(crawlCandidates)).map(row => [row.repo, `${row.state}:${row.reason}`]));
@@ -92,6 +107,7 @@ describe("수집 잡", () => {
       "gone/approved": "needs_review:repo_deleted", "gone/held": "needs_review:repo_deleted",
       "gone/admin": "approved:passed", "gone/split": "needs_review:second_review_split",
       "moved/old-name": "approved:passed", "back/again": "approved:passed",
+      "empty/approved": "needs_review:source_refresh_failed", "unknown/approved": "approved:passed",
     });
     expect(await crawl.getCandidate("gone/approved")).toMatchObject({ signals: { stoppedAt: { rule: "원본 재수집" } } });
   });
@@ -310,6 +326,9 @@ describe("수집 잡", () => {
 
     expect(await crawl.frontierCounts()).toEqual({ skipped: 1 });
     expect(await crawl.getDocument("someone/gone")).toBeUndefined();
+    // 404 였다는 것을 남긴다 — 사람 대기열이 "레포 삭제됨"과 빈 저장소를 가른다
+    const [frontier] = await db.select().from(crawlFrontier).where(eq(crawlFrontier.repo, "someone/gone"));
+    expect(frontier.lastError).toBe(crawl.SKIP_NOT_FOUND);
   });
 
   it("일시적 오류는 백오프로 미룬다", async () => {
