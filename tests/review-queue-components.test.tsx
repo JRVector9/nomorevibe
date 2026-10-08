@@ -6,7 +6,6 @@ import type { ModelHealth } from "@/lib/operations/dashboard";
 import { secondVoteView } from "@/app/admin/review/secondVote";
 import { ReviewStatusChips } from "@/app/admin/review/ReviewStatusChips";
 import { ReviewStageRail } from "@/app/admin/review/ReviewStageRail";
-import { ReviewTodo } from "@/app/admin/review/ReviewTodo";
 import { humanOverview } from "./fixtures/human-queue";
 
 /**
@@ -76,13 +75,32 @@ describe("구간 레일과 할 일", () => {
     expect(out).toContain('data-zero="true"');
   });
 
-  it("할 일 카드는 0건이어도 자리를 지키고 흐려진다", () => {
-    const out = html(createElement(ReviewTodo, { cards: [
-      { key: "agreed", title: "확정만 하면 됨", detail: "한 번에 확정", count: 15, href: "/admin/review?stage=agreed", tone: "ok" },
-      { key: "published", title: "공개분 확인", detail: "요청 0", count: 0, href: "/admin/review?second=published" },
-    ] }));
-    expect(out).toContain('href="/admin/review?stage=agreed"');
-    expect(out).toContain('data-tone="ok"');
-    expect(out.match(/data-zero="true"/g)).toHaveLength(1);
+  it("할 일은 탭 배지로 합친다 — 확정만은 거부·승인 수, 직접 판단은 최장 날수, 공개분 확인은 구간 뒤 탭", () => {
+    const overview = humanOverview({ human: 3904, agreed: 15, oldestDays: 45, in24h: 38, decided: 7 });
+    const out = html(createElement(ReviewStageRail, { stage: "", counts, overview, publication: { added: 0, removed: 0, net: 0 },
+      humanDetail: "2차 갈림 3 · 소개 없음 41",
+      todo: [{ key: "published", label: "공개분 확인", count: 2, href: "/admin/review?second=published", title: "2차가 다시 본 공개분", active: false, tone: "warn" }] }));
+    expect(out.match(/<a /g)).toHaveLength(9);
+    expect(out).toContain('class="b" data-tone="ok">거부 0 · 승인 15</span>');
+    expect(out).toContain('class="b" data-tone="warn">최장 45일</span>');
+    expect(out).toContain("소개 없음 41");
+    expect(out).toContain('href="/admin/review?second=published"');
+    expect(out).not.toContain("rq-todo");
+  });
+});
+
+describe("오늘 목표 칩", () => {
+  it("24시간 사람 처리가 0인데 들어온 것이 있으면 주황, 목표와 처리 수를 함께 적는다", () => {
+    const out = html(createElement(ReviewStatusChips, { models: null, human: { approve: 0, reject: 0 }, publication: { net: 0 }, takedowns: 0, inflow: 238 }));
+    expect(out).toMatch(/data-tone="warn"[^>]*>.*24h 사람 처리/);
+    expect(out).toContain('오늘 목표 <span class="font-mono">238</span>건 / 처리 <span class="font-mono">0</span>건');
+  });
+
+  it("처리했거나 들어온 것이 없으면 주황이 아니다", () => {
+    const done = html(createElement(ReviewStatusChips, { models: null, human: { approve: 3, reject: 2 }, publication: { net: 0 }, takedowns: 0, inflow: 4 }));
+    expect(done).not.toContain('data-tone="warn"');
+    expect(done).toContain('data-tone="ok"');
+    const quiet = html(createElement(ReviewStatusChips, { models: null, human: { approve: 0, reject: 0 }, publication: { net: 0 }, takedowns: 0, inflow: 0 }));
+    expect(quiet).not.toContain('data-tone="warn"');
   });
 });
