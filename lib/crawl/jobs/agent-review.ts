@@ -8,6 +8,7 @@ import { judgeStoredDocument } from "@/lib/crawl/rules";
 import { isReviewCandidate, REVIEW_RULES_VERSION, type ReviewOutcome } from "@/lib/crawl/agent-review-contract";
 import { listReviewCandidates, loadReviewInput, claimAgentReview, recordAgentReview,
   requeueStaleReviewSources, handOffExhaustedFirstReviews } from "@/lib/crawl/agent-review-repository";
+import { holdSuspectedSpam } from "@/lib/crawl/repository";
 import { firstReviewer, reviewWithAgent, REVIEW_CLI_TIMEOUT_MS } from "@/lib/crawl/agent-review";
 import { reviewWithGateway, REVIEW_GATEWAY_TIMEOUT_MS } from "@/lib/crawl/agent-review-gateway";
 import { reviewWithGrokCli, GROK_REVIEW_TIMEOUT_MS } from "@/lib/crawl/agent-review-grok";
@@ -57,6 +58,12 @@ export async function reviewCrawlCandidates(ctx: JobContext<null>): Promise<JobO
         relationship: input.snapshot.relationship, scanState: input.snapshot.scanState,
         observations: input.snapshot.evidence.map(evidence => evidence.observation),
       } : undefined);
+    // README 를 받고 나서 드러난 스팸·악성 의심은 모델에게 보내지 않고 사람에게 넘긴다
+    if (verdict.reason === "suspected_spam") {
+      const held = await holdSuspectedSpam(candidate, verdict, lease);
+      ctx.log("crawl.agent_review_suspected_spam", { repo: candidate.repo, held });
+      return;
+    }
     const access = accessFromDocument(document, settings);
     const existing = access && verdict.state !== "rejected"
       ? await findRepositoryProduct(document.repo, document.productUrl) : null;

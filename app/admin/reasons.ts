@@ -20,5 +20,6 @@ export const REASON_LABELS: Record<string, string> = {
   ai_review_exhausted: "1차 AI 심사 재시도 소진 — 사람 확인",
   source_refresh_failed: "GitHub 원본 재수집 실패 — 사람 확인",
   repo_deleted: "레포 삭제됨",
+  suspected_spam: "스팸·악성 의심",
   no_description: "소개 문구 없음 — 사람 확인",
 };

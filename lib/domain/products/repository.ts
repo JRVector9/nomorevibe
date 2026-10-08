@@ -95,6 +95,8 @@ export type ListOptions = {
   repoArchived?: boolean;
   /** GitHub 이 다른 owner/name 으로 돌려준 저장소만(이름 바뀜·옮김) — 어드민만 본다 */
   repoRenamed?: boolean;
+  /** 저장소 확인을 마친 것만(repoCheckedForNewest) — 공개 최신 목록 */
+  repoChecked?: boolean;
 };
 
 /**
@@ -158,6 +160,17 @@ export const RISING_FRESH_DAYS = 7;
  */
 export const repoGone = sql`coalesce(${products.repoStatus} in ('not_found', 'empty')
   and ${products.repoCheckedAt} >= ${products.repoMissingSince} + interval '24 hours', false)`;
+/**
+ * 최신 목록(홈 '최신'·'저장소 있음', '이번 주 새로 나온', 새로 발견됨·RSS)에 올려도 되는가(2026-10-08, UX-03).
+ *
+ * GitHub 저장소가 있는 제품은 하루 저장소 확인(product-stars-refresh)이 'ok' 라고 답한 뒤에만 올린다. 악성 배포 캠페인
+ * 저장소는 GitHub 이 곧 내리는데, 그 전에 "최신" 첫 화면에 먼저 섞였다. 확인 잡은 한 번도 보지 않은 제품부터 묻는다.
+ * 확인 잡이 물을 수 없는 주소(github.com/owner/repo 꼴이 아님)와 저장소가 없는 제품은 기다리지 않는다 — 영영 'ok' 가 오지 않는다.
+ * 다른 목록(검색·스타순·급상승·카테고리 화면의 다른 정렬)은 건드리지 않는다.
+ */
+export const repoCheckedForNewest = sql`(${products.repoStatus} = 'ok'
+  or coalesce(${products.repoUrl}, '') !~* '^https?://(www[.])?github[.]com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/?$')`;
+
 /** 목록·상세 행에 판정을 같이 실어 온다 — 화면이 같은 식을 JS 로 다시 쓰지 않게 */
 export const repoGoneField = { repoGone: sql<boolean>`${repoGone}`.as("repo_gone") };
 
@@ -232,7 +245,7 @@ const introNeedsEditor = sql`exists (
 )`;
 
 /** 목록과 개수가 같은 조건을 쓰도록 한 곳에서 만든다. 급상승 기간은 설정에서 읽으므로 비동기다 */
-async function listConditions({ statuses, category, query, builder, observedTool, hasRepository, excludeDown, introNeedsEditor: needsEditor, rising, listedSince, minStars, slugs, excludeSlugs, repoGone: goneOnly, repoArchived, repoRenamed }: Omit<ListOptions, "limit" | "sort" | "offset">) {
+async function listConditions({ statuses, category, query, builder, observedTool, hasRepository, excludeDown, introNeedsEditor: needsEditor, rising, listedSince, minStars, slugs, excludeSlugs, repoGone: goneOnly, repoArchived, repoRenamed, repoChecked }: Omit<ListOptions, "limit" | "sort" | "offset">) {
   const conditions = [inArray(products.status, statuses)];
   if (slugs) conditions.push(slugs.length ? inArray(products.slug, [...slugs]) : sql`false`);
   if (excludeSlugs?.length) conditions.push(notInArray(products.slug, [...excludeSlugs]));
@@ -241,6 +254,7 @@ async function listConditions({ statuses, category, query, builder, observedTool
   if (goneOnly) conditions.push(repoGone);
   if (repoArchived) conditions.push(eq(products.repoArchived, true));
   if (repoRenamed) conditions.push(isNotNull(products.repoRenamedTo));
+  if (repoChecked) conditions.push(repoCheckedForNewest);
   if (rising) conditions.push(risingStars(await risingFreshDays()));
   if (listedSince) conditions.push(sql`${listedAt} >= ${listedSince.toISOString()}::timestamptz`);
   if (minStars !== undefined) conditions.push(sql`${products.stars} >= ${minStars}`);
@@ -358,11 +372,11 @@ export async function getRisingRank(slug: string): Promise<number | null> {
   return index < 0 ? null : index + 1;
 }
 
-/** 발견 보드 — 검증 상태보다 실제 등재 시각을 우선해 시드 제품도 노출한다. */
+/** 발견 보드 — 검증 상태보다 실제 등재 시각을 우선해 시드 제품도 노출한다. 최신 목록이라 저장소 확인을 마친 것만(RSS 도 이것을 쓴다) */
 export async function listRecentlyDiscovered(limit: number): Promise<(Product & { repoGone: boolean })[]> {
   return db.query.products.findMany({
     extras: repoGoneField,
-    where: and(inArray(products.status, ["verified", "seeded"]), notDown),
+    where: and(inArray(products.status, ["verified", "seeded"]), notDown, repoCheckedForNewest),
     orderBy: [sql`${listedAt} desc`, products.slug],
     limit,
   });

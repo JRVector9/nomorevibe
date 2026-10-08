@@ -138,6 +138,11 @@ export type DecisionReason =
    */
   | "repo_deleted"
   /**
+   * 악성 배포 캠페인과 같은 모양(lib/crawl/spam-signals.ts — 틀에 찍은 README·다운로드 미끼·남의 github.io 첫 화면)
+   * 이라 사람에게 넘긴다(2026-10-08, UX-03). AI 심사·규칙 재판정이 다시 집지 않고, 사람이 승인하기 전에는 발행하지 않는다.
+   */
+  | "suspected_spam"
+  /**
    * 발행하려는데 페이지 설명도 레포 설명도 없어 소개를 만들 수 없다. 사람이 소개를 보고 가른다 — AI 심사가 다시
    * 집지 않는다. "ambiguous" 로 두었을 때 enforce 에서 보류 → AI 승인 → 발행 실패 → 보류가 AI 호출마다 되풀이됐다.
    */

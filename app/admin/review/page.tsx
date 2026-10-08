@@ -80,7 +80,8 @@ export default async function ReviewPage({ searchParams }: { searchParams: Promi
   const gatewayModels = listGatewayModels();
   const modelsLoad = modelHealth(settings).catch(() => null);
   const [takedowns, causes, decisions, seconds, stateCounts, publicationChange] = await Promise.all([takedownSummary().catch(() => null), reviewQueueCauses(settings), reviewQueueAiDecisions(), secondReviewSummary(settings.secondReview.agreeAt), candidateStateCounts(), publicationChange24h()]);
-  const held = heldStages(decisions.ids, seconds.ids, [...(causes.ids.get('second_review_split') ?? []), ...(causes.ids.get('no_description') ?? [])]);
+  const held = heldStages(decisions.ids, seconds.ids, [...(causes.ids.get('second_review_split') ?? []), ...(causes.ids.get('no_description') ?? []),
+    ...(causes.ids.get('suspected_spam') ?? [])]);
   const stageCount: Record<StageKey, number> = {
     judge: stateCounts.new, ai: held.ids.ai.length, second: held.ids.second.length, agreed: held.ids.agreed.length,
     human: held.ids.human.length, publish: stateCounts.approved, published: stateCounts.published, rejected: stateCounts.rejected,
@@ -132,7 +133,7 @@ export default async function ReviewPage({ searchParams }: { searchParams: Promi
     { key: 'agreed', title: '확정만 하면 됨 — 두 모델이 같은 결론', count: stageCount.agreed, tone: stageCount.agreed > 0 ? 'ok' : undefined,
       detail: `훑어보고 한 번에 확정 · 거부 ${n(held.agreedReject)} · 승인 ${n(held.agreedApprove)}`, href: '/admin/review?stage=agreed#review-list' },
     { key: 'human', title: '직접 판단 — 모델이 갈렸거나 표가 모자람', count: stageCount.human, tone: stageCount.human > 500 ? 'warn' : undefined,
-      detail: `2차 갈림 ${n(causeCount('second_review_split'))} · 재시도 소진 ${n(causeCount('ai_review_exhausted'))} · 오래된 것부터`,
+      detail: `2차 갈림 ${n(causeCount('second_review_split'))} · 재시도 소진 ${n(causeCount('ai_review_exhausted'))} · 스팸·악성 의심 ${n(causeCount('suspected_spam'))} · 오래된 것부터`,
       href: '/admin/review?stage=human&sort=wait#review-list' },
     { key: 'tagline', title: '소개 문구 없음', count: causeCount('no_description'),
       detail: taglines ? `AI 소개 지음 ${n(taglines.written)} · 근거로는 모름 ${n(taglines.unknown)} · 실패 ${n(taglines.failed)} · 시도 전 ${n(taglines.untried)}`

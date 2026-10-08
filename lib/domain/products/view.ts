@@ -109,6 +109,8 @@ export type BrowseOptions = {
   offset?: number;
   listedSince?: Date;
   minStars?: number;
+  /** 저장소 확인을 마친 것만 — 최신 목록(repository.ts repoCheckedForNewest) */
+  repoChecked?: boolean;
 };
 
 export async function getPublicList(limit: number, options: BrowseOptions = {}): Promise<ProductListItem[]> {
@@ -208,7 +210,7 @@ export { getPopularGroups, getPopularPage } from "./popular";
 /** 홈 '이번 주 새로 나온' — 등재 7일 안·스타 NEW_THIS_WEEK_MIN_STARS 이상, 최신순 */
 export const NEW_THIS_WEEK_MIN_STARS = 50;
 export async function getNewThisWeek(limit: number, since: Date): Promise<ProductListItem[]> {
-  return getPublicList(limit, { sort: "recent", listedSince: since, minStars: NEW_THIS_WEEK_MIN_STARS });
+  return getPublicList(limit, { sort: "recent", listedSince: since, minStars: NEW_THIS_WEEK_MIN_STARS, repoChecked: true });
 }
 
 /** 상세 끝의 '같은 분야에서 지금 뜨는' — 자기 자신은 뺀다 */

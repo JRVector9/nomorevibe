@@ -283,6 +283,27 @@ export async function handOffFailedSourceRefreshes(lease: JobLease, limit = 20):
   });
 }
 
+/**
+ * 스팸·악성 배포 의심(rules.ts SPAM_RULE)을 사람에게 넘긴다 — AI 심사 직전에 받은 README 로 처음 드러난 경우(2026-10-08).
+ *
+ * 판정 잡은 README 없이 가르므로 승인·보류로 AI 심사에 온 뒤에야 보이는 것이 있다. 모델에게 보내지 않는다 —
+ * 보내면 보류(ambiguous)로 돌아와 AI 가 다시 집는다. 읽은 뒤 사람·다른 워커가 바꾼 후보는 건드리지 않는다.
+ */
+export async function holdSuspectedSpam(
+  candidate: CrawlCandidate, verdict: { signals: Record<string, unknown> }, lease: JobLease,
+): Promise<boolean> {
+  return db.transaction(async tx => {
+    const [current] = await tx.select().from(crawlCandidates).where(eq(crawlCandidates.id, candidate.id)).for("update");
+    await assertJobLease(tx, lease);
+    if (!current || current.decidedBy !== "auto" || !isDeepStrictEqual(current, candidate)) return false;
+    await tx.update(crawlCandidates).set({
+      state: "needs_review", reason: "suspected_spam", updatedAt: sql`clock_timestamp()`,
+      signals: { ...(current.signals ?? {}), suspectedSpam: verdict.signals.suspectedSpam, stoppedAt: verdict.signals.stoppedAt },
+    }).where(eq(crawlCandidates.id, current.id));
+    return true;
+  });
+}
+
 /** Return only this batch's still-owned claims; quota/budget waits are not failed attempts. */
 export async function deferFrontier(entries: FrontierEntry[], retryAt?: Date, lease?: JobLease): Promise<void> {
   if (entries.length === 0) return;
