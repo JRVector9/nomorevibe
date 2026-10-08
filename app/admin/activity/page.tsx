@@ -46,7 +46,8 @@ export default async function AdminActivityPage({ searchParams }: Props) {
   const actor = params.actor?.slice(0, 120) || undefined;
   const failedOnly = params.failed === "1";
   const parsedBefore = Number(params.before);
-  const before = Number.isSafeInteger(parsedBefore) && parsedBefore > 0 ? parsedBefore : undefined;
+  // id 는 serial(int4)이다 — 그보다 큰 값을 넘기면 DB 가 범위 오류를 내 화면이 깨진다
+  const before = Number.isSafeInteger(parsedBefore) && parsedBefore > 0 && parsedBefore <= 2_147_483_647 ? parsedBefore : undefined;
 
   const [rows, facets] = await Promise.all([
     adminLog({ actions: group ? [...ACTION_GROUPS[group].actions] : undefined, actor, failedOnly, before }),

@@ -53,6 +53,13 @@ describe('작업 로그 화면', () => {
     await render({ group: 'constructor', before: '-1' });
     expect(mocks.log).toHaveBeenLastCalledWith(expect.objectContaining({ actions: undefined, before: undefined }));
   });
+
+  it('id 열(serial, int4) 범위를 넘는 before 는 버린다 — DB 가 범위 오류로 화면을 깨뜨린다', async () => {
+    await render({ before: '99999999999' });
+    expect(mocks.log).toHaveBeenLastCalledWith(expect.objectContaining({ before: undefined }));
+    await render({ before: '2147483647' });
+    expect(mocks.log).toHaveBeenLastCalledWith(expect.objectContaining({ before: 2147483647 }));
+  });
 });
 
 describe('작업 로그 도우미', () => {
