@@ -40,7 +40,8 @@ export function ReasonText({ text, korean, limit }: { text: string | null; korea
   </>;
 }
 
-export function ReasonLanguageToggle({ done, total }: { done: number; total: number }) {
+/** done·total 이 null 이면 번역 진행을 아직 세는 중이거나 못 센 것이다 — 단추만 그린다 */
+export function ReasonLanguageToggle({ done, total }: { done: number | null; total: number | null }) {
   const lang = useReasonLang();
   const option = (value: Lang, label: string) => (
     <button type="button" aria-pressed={lang === value} onClick={() => choose(value)}
@@ -51,9 +52,9 @@ export function ReasonLanguageToggle({ done, total }: { done: number; total: num
       <div role="group" aria-label="사유 표시 언어" className="flex overflow-hidden rounded-full border border-line bg-bg-card">
         {option('ko', '한글')}{option('original', '원문')}
       </div>
-      <span className="font-mono text-[13px] text-fg-3" title="영어 사유를 미리 한국어로 옮겨 둡니다 (gpt-oss-120b)">
+      {done !== null && total !== null && <span className="font-mono text-[13px] text-fg-3" title="영어 사유를 미리 한국어로 옮겨 둡니다 (gpt-oss-120b)">
         번역 {done.toLocaleString('ko-KR')}/{total.toLocaleString('ko-KR')}
-      </span>
+      </span>}
     </div>
   );
 }
