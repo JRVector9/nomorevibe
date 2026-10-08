@@ -207,9 +207,9 @@ async function fetchEntry(
         retryAt: result.error.resetAt ?? new Date(Date.now() + (result.error.kind === "auth_unavailable" ? 15 * 60_000 : 60_000)) };
     }
     if (result.error.kind === "not_found") {
-      // 지워졌거나 비공개로 바뀌었다 — 다시 시도할 이유가 없다
-      if (ctx.lease) await crawl.markFrontier(entry.repo, "skipped", entry, ctx.lease);
-      else await crawl.markFrontier(entry.repo, "skipped", entry);
+      // 지워졌거나 비공개로 바뀌었다 — 다시 시도할 이유가 없다. 404 였다는 것을 남긴다(사람 대기열의 "레포 삭제됨")
+      if (ctx.lease) await crawl.markFrontier(entry.repo, "skipped", entry, ctx.lease, crawl.SKIP_NOT_FOUND);
+      else await crawl.markFrontier(entry.repo, "skipped", entry, undefined, crawl.SKIP_NOT_FOUND);
       return { kind: "skipped" };
     }
     const reason = result.error.kind === "http"
@@ -238,9 +238,9 @@ async function fetchEntry(
           retryAt: probe.error.resetAt ?? new Date(Date.now() + (probe.error.kind === "auth_unavailable" ? 15 * 60_000 : 60_000)) };
       }
       if (probe.error.kind === "not_found") {
-        // 빈 레포 — 볼 것이 없다
-        if (ctx.lease) await crawl.markFrontier(entry.repo, "skipped", entry, ctx.lease);
-        else await crawl.markFrontier(entry.repo, "skipped", entry);
+        // 빈 레포 — 볼 것이 없다. 삭제와 섞이지 않게 까닭을 따로 남긴다
+        if (ctx.lease) await crawl.markFrontier(entry.repo, "skipped", entry, ctx.lease, crawl.SKIP_EMPTY_REPOSITORY);
+        else await crawl.markFrontier(entry.repo, "skipped", entry, undefined, crawl.SKIP_EMPTY_REPOSITORY);
         return { kind: "skipped" };
       }
       const reason = `AI 흔적 확인 실패 — GitHub ${probe.error.kind === "http" ? probe.error.status : probe.error.kind}`;
