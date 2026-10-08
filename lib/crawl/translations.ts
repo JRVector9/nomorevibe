@@ -1,7 +1,9 @@
 import { assertJobLease, type JobLease } from "@/lib/jobs/control";
 import type { ProductTransaction } from "@/lib/domain/products/generation";
 import { and, eq, inArray, sql } from "drizzle-orm";
-import { db } from "@/lib/db";
+import { db, onReplica } from "@/lib/db";
+import { createMemo } from "@/lib/cache/memo";
+import { sharedStore } from "@/lib/cache/shared";
 import { textTranslations } from "@/lib/db/schema";
 import { needsKorean, textHash } from "./translate";
 
@@ -132,7 +134,8 @@ export async function translationsFor(texts: readonly (string | null | undefined
 /** 실패 사유 한 줄 — 무엇이 몇 건 막혔고 언제 다시 보는지 */
 export type TranslationFailure = { code: string; count: number; dueNow: number; maxAttempts: number };
 
-export type TranslationProgress = { total: number; done: number; failed: number; pending: number; lastHour: number; lastSecondsAgo: number | null; failures: TranslationFailure[] };
+/** measuredAt — 센 시각(ISO). 아래 캐시 때문에 최대 1분 지난 값일 수 있어 화면이 "N초 전 집계"로 밝힌다 */
+export type TranslationProgress = { total: number; done: number; failed: number; pending: number; lastHour: number; lastSecondsAgo: number | null; failures: TranslationFailure[]; measuredAt: string };
 
 /**
  * 실패 사유별 집계.
@@ -155,8 +158,24 @@ async function failureBreakdown(): Promise<TranslationFailure[]> {
   }));
 }
 
-/** 운영센터가 보여 주는 진행 — 옮길 글(같은 글은 하나) 중 몇 개를 옮겼나 */
-export async function translationProgress(): Promise<TranslationProgress> {
+/**
+ * 진행률은 1분 늦어도 된다 — 60초 담아 두고 웹 6대가 Valkey 로 나눠 쓴다(lib/cache/memo.ts).
+ *
+ * 원본 14만 행마다 한글 비율과 sha256 을 다시 재 한 번에 2.2초·버퍼 50만 개였다(2026-10-08 복제본 EXPLAIN).
+ * 운영센터는 10초마다 다시 읽고 심사 큐도 매번 불러, 두 화면이 늘 이 2.2초를 기다렸다. 세는 곳도 복제본으로 옮겨
+ * 워커와 다른 DB 가 같이 쓰는 주 DB 를 비운다 — 진행률은 방금 쓴 값을 읽을 필요가 없다.
+ */
+const PROGRESS_TTL_MS = 60_000;
+const progressMemo = createMemo<TranslationProgress>({ ttlMs: PROGRESS_TTL_MS, max: 1,
+  shared: { store: sharedStore, namespace: "admin:translation-progress" } });
+
+/** 운영센터·심사 큐가 보여 주는 진행 — 옮길 글(같은 글은 하나) 중 몇 개를 옮겼나 */
+export function translationProgress(): Promise<TranslationProgress> {
+  return progressMemo.get("ko", () => onReplica(countTranslationProgress));
+}
+
+async function countTranslationProgress(): Promise<TranslationProgress> {
+  const measuredAt = new Date().toISOString();
   const [row] = [...await db.execute<{ total: number; done: number; failed: number; last_hour: number; last_ago: number | null }>(sql`
     select count(*)::int as total,
            (count(*) filter (where t.status = 'done'))::int as done,
@@ -170,5 +189,5 @@ export async function translationProgress(): Promise<TranslationProgress> {
   const failed = Number(row?.failed ?? 0);
   return { total, done, failed, pending: total - done, lastHour: Number(row?.last_hour ?? 0),
     lastSecondsAgo: row?.last_ago === null || row?.last_ago === undefined ? null : Number(row.last_ago),
-    failures: failed > 0 ? await failureBreakdown() : [] };
+    failures: failed > 0 ? await failureBreakdown() : [], measuredAt };
 }
