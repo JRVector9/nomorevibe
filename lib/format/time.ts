@@ -1,5 +1,6 @@
 /**
  * 관리자 화면의 시각 표기 — 여기 하나로 모은다(2026-10-08 UX 감사 ADM-26).
+ * 공개 화면의 날짜("10월 8일")는 아래 formatPublicDate·formatPublicDateTime 이다(UX-28).
  *
  * - 목록: 오늘이면 "13:38 (3분 전)", 오늘이 아니면 "10/7 21:15", 해가 다르면 "2025/10/7 21:15"
  * - 상세: "2026-10-08 13:38:13 KST"
@@ -93,4 +94,27 @@ export function formatDetailTime(value: TimeInput, empty = EMPTY): string {
   if (!date) return empty;
   const at = kst(date);
   return `${at.year}-${pad(at.month)}-${pad(at.day)} ${at.hour}:${at.minute}:${at.second} KST`;
+}
+
+/**
+ * 공개 화면의 날짜 — 하나의 형식으로(2026-10-08 UX 감사 UX-28). 올해면 "10월 8일", 해가 다르면 "2025년 10월 8일".
+ * 한국 날짜로 가른다 — UTC 로는 12/31 이어도 한국으로 1/1 이면 새해다. 'KST' 는 붙이지 않는다(집계 기준 창에서 한 번만 밝힌다).
+ * now 는 "올해"를 정하는 시각이다 — 서버가 읽은 시각을 넘겨야 연말에 서버와 브라우저가 같은 글자를 낸다.
+ */
+export function formatPublicDate(value: TimeInput, now: Date | string | number, empty = EMPTY): string {
+  const date = toDate(value);
+  const base = toDate(now);
+  if (!date || !base) return empty;
+  const at = kst(date);
+  const day = `${at.month}월 ${at.day}일`;
+  return at.year === kst(base).year ? day : `${at.year}년 ${day}`;
+}
+
+/** 공개 화면의 날짜와 시각 — "10월 8일 22:28", 해가 다르면 "2025년 10월 8일 22:28"(24시간제, 한국 시각) */
+export function formatPublicDateTime(value: TimeInput, now: Date | string | number, empty = EMPTY): string {
+  const date = toDate(value);
+  const day = formatPublicDate(date, now, "");
+  if (!date || !day) return empty;
+  const at = kst(date);
+  return `${day} ${at.hour}:${at.minute}`;
 }
