@@ -51,7 +51,7 @@ export function UpdateVisibilityForm({
           required
           maxLength={500}
           placeholder="숨김 사유"
-          className="min-w-[180px] rounded-lg border border-line bg-white px-3 py-1.5 text-[13px]"
+          className="min-w-[180px] rounded-lg border border-line bg-bg-card px-3 py-1.5 text-[13px] text-fg"
         />
       )}
       <button disabled={pending} className="rounded-lg border border-line px-3 py-1.5 text-[13px] font-semibold disabled:opacity-50">

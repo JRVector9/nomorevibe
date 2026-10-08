@@ -251,7 +251,7 @@ const operator = (slug: string | string[], decision: string) => {
 it("'내리기'는 어드민 차단과 같은 길로 차단하고 결정·작업 로그를 남긴다", async () => {
   const p = await reviewed("Gone Site", "delist_candidate");
   const floor = await auditFloor();
-  expect(await operator(p.slug, "delist")).toBeNull();
+  expect(await operator(p.slug, "delist")).toMatchObject({ ok: true });
   expect(await read(p.id)).toMatchObject({ status: "banned" });
   expect(await review(p.id)).toMatchObject({ operatorDecision: "delist", operatorBy: "operator", decision: "delist_candidate" });
   expect(await db.select().from(productEvidenceAudit).where(eq(productEvidenceAudit.slug, p.slug)))
@@ -270,7 +270,7 @@ it("'유지'는 결정만 적고 30일 뒤에 다시 본다 — 다시 봐도 �
   const p = await reviewed("Kept Site", "human");
   const floor = await auditFloor();
   expect((await attentionCounts()).repoReview).toMatchObject({ human: 1, delistCandidates: 0 });
-  expect(await operator(p.slug, "keep")).toBeNull();
+  expect(await operator(p.slug, "keep")).toMatchObject({ ok: true });
   expect(await read(p.id)).toMatchObject({ status: "seeded" });
   const kept = await review(p.id);
   expect(kept).toMatchObject({ operatorDecision: "keep", operatorBy: "operator" });
@@ -294,7 +294,7 @@ it("판정이 없거나 이미 내린 제품, 한 번에 둘은 받지 않는다
   expect(await operator([p.slug, bare.slug], "delist")).toMatchObject({ error: expect.any(String) });
   expect(await operator(p.slug, "remove")).toMatchObject({ error: expect.any(String) });
   expect(await read(p.id)).toMatchObject({ status: "seeded" });
-  expect(await operator(p.slug, "delist")).toBeNull();
+  expect(await operator(p.slug, "delist")).toMatchObject({ ok: true });
   expect(await operator(p.slug, "keep")).toMatchObject({ error: expect.any(String) });
   mocks.admin.mockResolvedValue(null);
   expect(await operator(p.slug, "keep")).toMatchObject({ error: expect.any(String) });

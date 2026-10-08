@@ -3,6 +3,7 @@
 import { useActionState, useRef, useState } from "react";
 import { banProducts, type BulkBanState } from "../../actions";
 import { MAX_BULK_DECISIONS } from "../../review/contract";
+import { BAN_REASONS } from "../ban-reasons";
 
 /**
  * 재검수가 짚은 것을 이 화면에서 바로 내린다.
@@ -16,6 +17,7 @@ import { MAX_BULK_DECISIONS } from "../../review/contract";
  * submit 이라 체크해 둔 것이 한 번에 공개 목록에서 사라졌고, 되돌리기는 제품 화면에서 한 건씩만
  * 된다. 누르기 전에 몇 건이, 무엇이, 어떻게 되는지를 이름과 함께 보여 줘야 한다.
  * 기본 초점은 "취소"에 둔다 — 창이 뜬 채로 엔터를 치면 내리는 쪽이 아니라 닫히는 쪽이어야 한다.
+ * 한 건 차단과 같이 사유를 골라야 내릴 수 있다(2026-10-08 UX 감사 ADM-06) — 서버도 사유 없는 요청을 거절한다.
  */
 type Picked = { slug: string; name: string };
 
@@ -24,6 +26,7 @@ export function BanHits({ formId, total }: { formId: string; total: number }) {
   const form = useRef<HTMLFormElement>(null);
   const dialog = useRef<HTMLDialogElement>(null);
   const [picked, setPicked] = useState<Picked[]>([]);
+  const [reason, setReason] = useState("");
 
   /** 창을 여는 순간 체크된 것을 그대로 옮겨 적는다. 창이 떠 있는 동안에는 체크를 바꿀 수 없다 */
   function openConfirm() {
@@ -40,7 +43,7 @@ export function BanHits({ formId, total }: { formId: string; total: number }) {
   }
 
   const tooMany = picked.length > MAX_BULK_DECISIONS;
-  const blocked = picked.length === 0 || tooMany;
+  const blocked = picked.length === 0 || tooMany || !reason;
 
   return (
     <form ref={form} id={formId} action={action} className="mt-5 rounded-[12px] border border-line bg-bg-card p-4">
@@ -107,6 +110,17 @@ export function BanHits({ formId, total }: { formId: string; total: number }) {
                 ))}
               </ol>
             </>
+          )}
+
+          {picked.length > 0 && (
+            <label className="mt-4 flex flex-wrap items-center gap-2 text-[13px] font-semibold text-fg-2">
+              차단 사유
+              <select name="reason" value={reason} onChange={(event) => setReason(event.target.value)} required
+                className="rounded-lg border border-line bg-bg-card px-2 py-1.5 text-[13px] text-fg">
+                <option value="">고르세요</option>
+                {BAN_REASONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+              </select>
+            </label>
           )}
 
           <div className="mt-5 flex flex-wrap justify-end gap-2">
