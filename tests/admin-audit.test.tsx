@@ -73,7 +73,9 @@ describe('내릴 후보 화면', () => {
       expect(decisions[index].match(/name="slug"/g)).toHaveLength(1);
       expect(decisions[index].match(/name="item"/g)).toHaveLength(1);
       expect(decisions[index]).toContain(`value="${slug}"`);
-      expect(decisions[index]).toContain('value="remove"');
+      // 내리기는 바로 보내지 않고 확인 창(ConfirmAction)을 연다 — 폼에는 보내는 단추가 유지뿐이다
+      expect(decisions[index]).toMatch(/<button type="button"[^>]*>내리기<\/button>/);
+      expect(decisions[index]).not.toContain('value="remove"');
       expect(decisions[index]).toContain('value="keep"');
     }
     // 화면의 체크박스는 "유지 판정도 다시 보기" 하나뿐이다 — 제품을 고르는 칸이 아니다

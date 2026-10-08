@@ -5,6 +5,7 @@
 export const ACTION_LABELS: Record<string, string> = {
   "candidate-approve": "후보 승인",
   "candidate-reject": "후보 거부",
+  "candidate-undo": "후보 결정 되돌리기",
   "evidence-collect": "근거 더 모으기",
   "requeue-resolved": "보류 되돌리기",
   "review-mode": "발행 관문 모드",
@@ -19,6 +20,8 @@ export const ACTION_LABELS: Record<string, string> = {
   "audit-cancel": "감사 중단",
   "product-ban": "제품 차단",
   "product-unban": "제품 차단 해제",
+  "intro-keep": "소개 그대로 둠",
+  "intro-edit": "소개 고침",
   "repo-review-delist": "저장소 사라진 사이트 내림",
   "repo-review-keep": "저장소 사라진 사이트 둠",
   "claim-invite": "클레임 초대 표시",
@@ -26,6 +29,9 @@ export const ACTION_LABELS: Record<string, string> = {
   "update-hide": "자동 업데이트 숨김",
   "update-restore": "자동 업데이트 복원",
   "settings-save": "설정 저장",
+  "collection-enabled": "수집 켜기·끄기",
+  "attention-ack": "조치 확인함·숨김",
+  "attention-unack": "조치 다시 보이기",
   "evidence-settings": "근거 설정 저장",
   "ranking-schedule": "랭킹 정책 예약",
   "ranking-cancel": "랭킹 정책 취소",
@@ -94,13 +100,13 @@ export function targetLabel(target: string): { text: string; entity: boolean } {
 export const ACTION_GROUPS = {
   takedown: { label: "내리기·차단", actions: ["takedown-remove", "takedown-dismiss", "audit-remove", "audit-keep", "audit-start", "audit-cancel",
     "product-ban", "product-unban", "published-second-ban", "published-second-keep", "repo-review-delist", "repo-review-keep", "ban-spam-campaign"] },
-  review: { label: "심사", actions: ["candidate-approve", "candidate-reject", "evidence-collect", "requeue-resolved", "manual-category",
+  review: { label: "심사", actions: ["candidate-approve", "candidate-reject", "candidate-undo", "evidence-collect", "requeue-resolved", "manual-category",
     "requeue-evidence-gated", "requeue-rejected-under-new-policy", "requeue-rejected-under-held-rules", "reconsider-installable",
     "reconsider-star-auto", "reconsider-package", "reconcile-crawl-duplicate", "relabel-repo-deleted"] },
-  settings: { label: "설정·연결", actions: ["settings-save", "review-mode", "evidence-settings", "ranking-schedule", "ranking-cancel",
+  settings: { label: "설정·연결", actions: ["settings-save", "collection-enabled", "attention-ack", "attention-unack", "review-mode", "evidence-settings", "ranking-schedule", "ranking-cancel",
     "github-collector-token-save", "github-collector-enable", "github-collector-disable",
     "ai-connect", "ai-input", "ai-cancel", "ai-probe", "ai-test", "ai-apply"] },
-  content: { label: "제품·소식·작업", actions: ["claim-invite", "product-refresh", "update-hide", "update-restore", "news-approve", "news-hide", "request-job",
+  content: { label: "제품·소식·작업", actions: ["claim-invite", "intro-keep", "intro-edit", "product-refresh", "update-hide", "update-restore", "news-approve", "news-hide", "request-job",
     "retry-exhausted-transport-once", "resume-after-github-redirect-fix", "export", "operator-name"] },
 } as const;
 export type ActionGroup = keyof typeof ACTION_GROUPS;
