@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { isJobName, JOB_CATALOG } from "@/lib/jobs/catalog";
 import { requestJob } from "@/lib/jobs/control";
 import { withRoute } from "@/lib/http/handler";
+import { bearerMatches } from "@/lib/auth/bearer";
 
 type Params = { params: Promise<{ job: string }> };
 const requestableJobs = JOB_CATALOG.filter(job => job.role !== "scheduler").map(job => job.name);
@@ -12,8 +13,7 @@ const requestableJobs = JOB_CATALOG.filter(job => job.role !== "scheduler").map(
  * 인증된 운영 요청을 영속 저장한다. 실제 수집은 독립 worker가 수행한다.
  */
 export const POST = withRoute("cron.run", async (req: Request, { params }: Params) => {
-  const secret = process.env.CRON_SECRET;
-  if (!secret || req.headers.get("authorization") !== `Bearer ${secret}`) {
+  if (!bearerMatches(req.headers.get("authorization"), process.env.CRON_SECRET)) {
     return NextResponse.json({ error: "권한이 없습니다" }, { status: 403 });
   }
 
