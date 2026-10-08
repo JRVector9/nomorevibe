@@ -100,6 +100,25 @@ it('사람이 이미 결정했거나 공개분이 내려가면 닫는다 — 지
   ]);
 });
 
+it('사람을 기다리는 열린 행이 1,000건을 넘어도 그 뒤에서 결정된 관문 행을 닫는다', async () => {
+  // 갈림 보류로 사람을 기다리는 후보 — 행이 오래 열려 있어야 한다
+  const waiting = await held('acme/waiting');
+  await db.update(crawlCandidates).set({ reason: 'second_review_split' }).where(eq(crawlCandidates.id, waiting.id));
+  const gate = { trigger: 'ai_approved' as const, firstDecision: 'approve', firstConfidence: 0.9, provider: 'claude-cli' as const, model: 'opus' };
+  await db.insert(secondReviews).values(Array.from({ length: 1_000 }, (_, index) => ({ ...gate,
+    candidateId: waiting.id, repo: waiting.repo, inputHash: `waiting-${index}`, generationKey: `g-${index}`,
+    status: 'needs_human' as const, secondDecision: 'reject' })));
+  // 그 뒤에 올라와 두 표가 일치했고, 이미 발행된 후보
+  const done = await published('acme/done', '제품');
+  await db.insert(secondReviews).values({ ...gate, candidateId: done.id, repo: done.repo, inputHash: 'done',
+    generationKey: 'g-done', status: 'agreed', secondDecision: 'approve' });
+
+  expect(await closeSettledSecondReviews()).toBe(1);
+  const [closed] = await db.select().from(secondReviews).where(eq(secondReviews.candidateId, done.id));
+  expect(closed).toMatchObject({ status: 'resolved', resolution: 'decided_elsewhere' });
+  expect((await secondReviewSummary(0.85)).ids.agreed_approve).toEqual([]);
+});
+
 it('does not reopen failed votes after the reviewer job token is revoked', async () => {
   await held('acme/late-vote');
   await firstReview('acme/late-vote', 'approve');

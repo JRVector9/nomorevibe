@@ -2,14 +2,14 @@ import { NextResponse } from "next/server";
 import { banProduct } from "@/lib/domain/products/manage";
 import { errorResponse } from "@/lib/http/respond";
 import { withRoute } from "@/lib/http/handler";
+import { bearerMatches } from "@/lib/auth/bearer";
 import { recordAdminAction } from "@/lib/operations/admin-log";
 
 type Params = { params: Promise<{ slug: string }> };
 
 export const DELETE = withRoute("admin.ban", async (req: Request, { params }: Params) => {
   const { slug } = await params;
-  const adminToken = process.env.ADMIN_TOKEN;
-  if (!adminToken || req.headers.get("authorization") !== `Bearer ${adminToken}`) {
+  if (!bearerMatches(req.headers.get("authorization"), process.env.ADMIN_TOKEN)) {
     return NextResponse.json({ error: "권한이 없습니다" }, { status: 403 });
   }
 

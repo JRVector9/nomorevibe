@@ -108,17 +108,28 @@ async function seedSearchCycle(ctx:JobContext<SearchCursor>, settings:CrawlSetti
    */
   const chunkFrom = (from:number):SearchWindow => ({from:iso(new Date(from)),to:iso(new Date(Math.min(Date.now(),from+spanMs)))});
   const freshWindow = ():SearchWindow => chunkFrom(Date.now()-spanMs);
-  // Sort and every active query participate: an edited configuration cannot replay old page data or retry delays.
-  const hashFor = (sort:CrawlSettings['discover']['sort']) => createHash('sha256').update(JSON.stringify({queries,sort,windowDays:settings.discover.windowDays})).digest('hex');
+  /**
+   * Sort and every active query participate: an edited configuration cannot replay old page data or retry delays.
+   *
+   * 신호에서는 검색 결과와 커서를 가르는 것(라벨·종류·검색어)만 넣는다. 신호 객체를 통째로 넣던 때는 우선순위·
+   * requireEvidence 처럼 검색과 무관한 칸 하나만 고쳐도 주기가 처음부터 다시 돌았다 — 2026-10-02 설정 저장 한 번에
+   * 발견이 1~2시간 멈추고 발행이 시간당 177건에서 7건으로 떨어졌다.
+   */
+  const hashFor = (sort:CrawlSettings['discover']['sort']) => createHash('sha256').update(JSON.stringify({
+    queries:queries.map(q => [q.label,q.kind,q.query]),sort,windowDays:settings.discover.windowDays})).digest('hex');
+  /** 위 해시 이전의 커서가 든 값(신호 전체). 설정이 그대로면 배포 뒤에도 이어 간다 */
+  const legacyHashFor = (sort:CrawlSettings['discover']['sort']) => createHash('sha256').update(JSON.stringify({queries,sort,windowDays:settings.discover.windowDays})).digest('hex');
+  const hashedWith = (sort:CrawlSettings['discover']['sort']) => ctx.cursor?.configHash !== undefined
+    && (ctx.cursor.configHash === hashFor(sort) || ctx.cursor.configHash === legacyHashFor(sort));
   const configHash = hashFor(settings.discover.sort);
   const queryHash = (index:number) => createHash('sha256').update(queries[index].kind+'\0'+queries[index].query+'\0'+settings.discover.windowDays).digest('hex');
   const resumedIndex = queries.findIndex(q => q.label === ctx.cursor?.signal);
   // 정렬만 바뀌면 미완 날짜 구간은 보존하되 페이지를 1부터 재탐색한다. 다른 정렬의 페이지를 섞지 않는다.
-  const sortChanged = ctx.cursor?.configHash === hashFor(settings.discover.sort === 'recent' ? 'relevance' : 'recent');
-  const matches = (ctx.cursor?.configHash === configHash || sortChanged) && resumedIndex >= 0 && ctx.cursor!.queryHash === queryHash(resumedIndex);
+  const sortChanged = hashedWith(settings.discover.sort === 'recent' ? 'relevance' : 'recent');
+  const matches = (hashedWith(settings.discover.sort) || sortChanged) && resumedIndex >= 0 && ctx.cursor!.queryHash === queryHash(resumedIndex);
   let index = matches ? resumedIndex : 0;
   let initial = matches && ctx.cursor?.cycleWindow ? ctx.cursor.cycleWindow : freshWindow();
-  let cursor:SearchCursor = matches ? structuredClone(ctx.cursor!) : {
+  let cursor:SearchCursor = matches ? { ...structuredClone(ctx.cursor!), configHash } : {
     signal:queries[0].label,page:1,queryHash:queryHash(0),configHash,window:initial,cycleWindow:initial,pendingWindows:[],incompleteWindows:[],phase:'discovery',states:{},doneSignals:[],
   };
   if (matches && sortChanged) {
