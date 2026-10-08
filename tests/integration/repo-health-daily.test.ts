@@ -106,7 +106,7 @@ it("보관·마지막 push·바뀐 이름은 기록만 한다 — repo_url 과 �
   expect(await countProducts({ statuses: PUBLIC, repoArchived: true })).toBe(0);
 });
 
-it("한 틱에 100개씩 네 묶음까지 묻고, 남은 것은 다음 틱이 잇는다", async () => {
+it("한 틱에 50개씩 여덟 묶음까지 묻고, 남은 것은 다음 틱이 잇는다", async () => {
   await db.insert(products).values(Array.from({ length: 430 }, (_, index) => ({
     slug: `bulk-${index}`, name: `bulk-${index}`, url: `https://bulk-${index}.example`, tagline: "t", description: "d", category: "Dev",
     repoUrl: `https://github.com/test/bulk-${index}`, status: "seeded" as const, source: "crawler" as const, verifyToken: `v-bulk-${index}`,
@@ -114,7 +114,8 @@ it("한 틱에 100개씩 네 묶음까지 묻고, 남은 것은 다음 틱이 �
   })));
   const check = checker(() => ok());
   expect(await refreshProductStars(starsContext(), { check })).toEqual({ done: false, cursor: null });
-  expect(check.mock.calls.map(([repos]) => repos.length)).toEqual([100, 100, 100, 100]);
+  // 100개 묶음은 GitHub 10초 질의 상한을 넘었다 — 50개씩(github-repositories.ts)
+  expect(check.mock.calls.map(([repos]) => repos.length)).toEqual([50, 50, 50, 50, 50, 50, 50, 50]);
   check.mockClear();
   expect(await refreshProductStars(starsContext(), { check })).toEqual({ done: true, cursor: null });
   expect(check.mock.calls.map(([repos]) => repos.length)).toEqual([30]);
