@@ -4,6 +4,7 @@ import Link from 'next/link';
 import type {Metadata} from 'next';
 import {getPopularPage} from '@/lib/domain/products/popular';
 import {STAR_TIERS,parsePopularParams,popularHref} from '@/lib/domain/products/stars';
+import {starObservationDay} from '@/lib/domain/products/star-change';
 import {categoryLabel} from '@/lib/domain/products/labels';
 import {PopularFilter} from '@/components/home/PopularFilter';
 import {logger} from '@/lib/observability/logger';
@@ -27,7 +28,7 @@ export default async function PopularPage({searchParams}:{searchParams:Promise<R
      <tbody>{result.items.length?result.items.map((p,index)=><tr key={p.slug}><td>{(result.page-1)*15+index+1}</td>
       <th scope="row"><Link prefetch={false} href={`/p/${p.slug}`}>{p.name}</Link><span>{categoryLabel(p.category)}</span></th><td><p className="popular-description" title={p.tagline}>{p.tagline}</p></td>
       <td className="popular-stars"><StarMetric value={p} /></td>
-      <td>{p.ownerType==='User'?'개인':p.ownerType==='Organization'?'조직':'미확인'}</td><td><time>{p.starsAt?.slice(0,10)??'미확인'}</time></td>
+      <td>{p.ownerType==='User'?'개인':p.ownerType==='Organization'?'조직':'미확인'}</td><td><time>{starObservationDay(p.starsAt)??'미확인'}</time></td>
      </tr>):<tr><td colSpan={6} className="popular-empty">아직 없음</td></tr>}</tbody>
     </table>
    </div>

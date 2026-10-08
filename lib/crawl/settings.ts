@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { crawlSettings, operationsAudit, productEvidenceAudit } from "@/lib/db/schema";
@@ -81,10 +82,27 @@ export type SaveResult =
   | { ok: false; issues: string[] };
 
 /**
+ * 크롤 설정 폼이 그린 값의 판.
+ *
+ * 폼은 열어 둔 채로 몇 시간이 갈 수 있고, 저장하면 그린 값 전체를 보낸다. 그 사이 다른 곳(다른 탭의 수집 끄기,
+ * 심사 큐의 2차 표 전환)이 바꾼 값을 옛 값으로 덮지 않도록 저장이 이 판을 견준다. 소식·카테고리·리뷰 모드는
+ * 다른 화면이 고치고 이 폼이 보내지 않으므로 판에 넣지 않는다 — 넣으면 상관없는 저장마다 폼이 거절된다.
+ */
+export function settingsFormVersion(settings: CrawlSettings): string {
+  const edited = { ...settings, reviewMode: null, classify: null, news: null };
+  return createHash("sha256").update(JSON.stringify(edited)).digest("hex").slice(0, 32);
+}
+
+/**
  * 설정을 저장한다. 부분 수정을 허용한다 — 화면이 한 항목만 바꿔 보낼 수 있어야 한다.
  * 검증에 실패하면 아무것도 쓰지 않는다.
+ * expectedFormVersion 을 주면 행 잠금 안에서 지금 판과 견주고, 다르면 쓰지 않는다(크롤 설정 폼).
  */
-export async function saveSettings(patch: unknown, updatedBy: string): Promise<SaveResult> {
+export async function saveSettings(
+  patch: unknown,
+  updatedBy: string,
+  options: { expectedFormVersion?: string } = {},
+): Promise<SaveResult> {
   return db.transaction(async tx => {
   await tx.insert(crawlSettings).values({ id: ROW_ID, values: DEFAULT_CRAWL_SETTINGS }).onConflictDoNothing();
   const [row] = await tx.select().from(crawlSettings).where(eq(crawlSettings.id, ROW_ID)).for("update");
@@ -103,6 +121,12 @@ export async function saveSettings(patch: unknown, updatedBy: string): Promise<S
     rising: { ...current.rising, ...((raw.rising as object) ?? {}) },
     secondReview: { ...current.secondReview, ...((raw.secondReview as object) ?? {}) },
   };
+
+  if (options.expectedFormVersion !== undefined && options.expectedFormVersion !== settingsFormVersion(current)) {
+    await tx.insert(operationsAudit).values(await adminAuditRow(updatedBy, { action: "settings-save", target: "crawl_settings",
+      detail: { changes: settingsChanges(current, next) }, ok: false, error: "stale_form" }));
+    return { ok: false, issues: ["그 사이 다른 곳에서 설정이 바뀌었습니다. 새로고침해 바뀐 값을 확인한 뒤 다시 저장해주세요."] };
+  }
 
   const parsed = crawlSettingsSchema.safeParse(next);
   if (!parsed.success) {

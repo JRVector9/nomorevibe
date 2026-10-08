@@ -114,7 +114,8 @@ export async function saveCrawlSettings(_prev: SaveState, form: FormData): Promi
     ...(form.has("risingFreshDays") ? { rising: { freshDays: num(form.get("risingFreshDays")) } } : {}),
   };
 
-  const result = await saveSettings(patch, admin.login);
+  // 폼이 그린 판 — 그 사이 다른 곳에서 바뀌었으면 저장이 거절한다. 판이 없는 제출도 견주게 빈 값으로 넘긴다
+  const result = await saveSettings(patch, admin.login, { expectedFormVersion: String(form.get("settingsVersion") ?? "") });
   if (!result.ok) {
     logger.warn("admin.settings_rejected", { login: admin.login, issues: result.issues });
     return { issues: result.issues };
