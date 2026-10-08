@@ -2,7 +2,7 @@
 
 import { useActionState } from "react";
 import Link from "next/link";
-import { markClaimInvite, setProductBan, type ReviewState } from "../actions";
+import { decideRepoReviewAction, markClaimInvite, setProductBan, type ReviewState } from "../actions";
 
 export type AdminProduct = {
   slug: string;
@@ -19,6 +19,17 @@ export type AdminProduct = {
   invitedAt: string | null;
   /** '저장소 사라짐' 거르기에서만 — 이용 방식과 공개 화면에 생긴 일, 404 가 이어진 시작 */
   repoGone?: string | null;
+  /**
+   * '저장소 사라짐'의 웹사이트 — AI 2단계 판정(product_repo_reviews). undefined 면 줄을 그리지 않고,
+   * null 이면 아직 AI 가 보지 않았다
+   */
+  repoReview?: {
+    decision: string; reason: string; page: string; reviewedAt: string; operator: string | null;
+    /** 운영자를 기다린다 — AI 가 유지가 아니라고 했고 운영자가 아직 안 봤거나 그 뒤에 다시 봤다 */
+    open: boolean;
+  } | null;
+  /** '저장소 보관됨'·'저장소 이름 바뀜' 거르기 — 기록만 하는 값(공개 화면에 영향 없음) */
+  repoNote?: string | null;
 };
 
 const STATUS: Record<string, { label: string; className: string }> = {
@@ -53,6 +64,9 @@ export function ProductRow({ product, dropUp = false }: { product: AdminProduct;
           </a>
         </div>
         {product.repoGone && <p className="text-[13px] text-fg-3">{product.repoGone}</p>}
+        {product.repoReview === null && <p className="text-[13px] text-fg-3">AI 사이트 확인 대기</p>}
+        {product.repoReview && <RepoReview slug={product.slug} review={product.repoReview} banned={banned} />}
+        {product.repoNote && <p className="text-[13px] text-fg-3">{product.repoNote}</p>}
         {error && <p className="text-[13px] text-down">{error}</p>}
       </td>
       <td className="whitespace-nowrap px-2 py-1.5"><span className={`rounded px-1.5 py-0.5 font-semibold ${status.className}`}>{status.label}</span></td>
@@ -92,5 +106,32 @@ export function ProductRow({ product, dropUp = false }: { product: AdminProduct;
         </details>
       </td>
     </tr>
+  );
+}
+
+/**
+ * 저장소가 사라진 웹사이트의 AI 판정과 운영자 버튼. 판정은 아무것도 가리지 않는다 — '내리기'를 눌러야 차단된다
+ * (⋯ 메뉴의 차단과 같은 길). 운영자를 기다리는 것은 굵게 보인다.
+ */
+function RepoReview({ slug, review, banned }: { slug: string; review: NonNullable<AdminProduct["repoReview"]>; banned: boolean }) {
+  const [state, action, pending] = useActionState<ReviewState, FormData>(decideRepoReviewAction, null);
+  return (
+    <div className="mt-0.5 flex flex-wrap items-baseline gap-x-2 text-[13px] text-fg-3">
+      <span className={review.open ? "font-semibold text-warn" : ""}>{review.decision}</span>
+      <span>{review.reason}</span>
+      <span className="font-mono">{review.reviewedAt}</span>
+      {review.page && <span className="w-full truncate font-mono">{review.page}</span>}
+      {review.operator && <span>{review.operator}</span>}
+      {!banned && (
+        <form action={action} className="flex gap-1">
+          <input type="hidden" name="slug" value={slug} />
+          <button type="submit" name="decision" value="keep" disabled={pending}
+            className="rounded-md border border-line px-2 py-0.5 font-semibold text-fg-2 hover:bg-bg-hover disabled:opacity-50">유지</button>
+          <button type="submit" name="decision" value="delist" disabled={pending}
+            className="rounded-md border border-line px-2 py-0.5 font-semibold text-down hover:bg-bg-hover disabled:opacity-50">내리기</button>
+        </form>
+      )}
+      {state?.error && <span className="text-down">{state.error}</span>}
+    </div>
   );
 }

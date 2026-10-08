@@ -6,8 +6,11 @@ import { describe, expect, it, vi } from "vitest";
 vi.mock("@/app/admin/actions", () => ({
   setProductBan: vi.fn(),
   markClaimInvite: vi.fn(),
+  decideRepoReviewAction: vi.fn(),
 }));
 import { ProductRow, type AdminProduct } from "@/app/admin/products/ProductRow";
+import { repoReviewView } from "@/app/admin/products/repo-review-view";
+import type { ProductRepoReview } from "@/lib/db/schema";
 
 const base: AdminProduct = {
   slug: "found-app",
@@ -65,6 +68,42 @@ describe("admin product row — 저장소 사라짐", () => {
     const html = render({ repoGone: "설치형 · 목록에서 가려짐 · 2026. 10. 5.부터 404" });
     expect(html).toContain("설치형 · 목록에서 가려짐 · 2026. 10. 5.부터 404");
     expect(render({})).not.toContain("목록에서 가려짐");
+  });
+});
+
+describe("admin product row — 저장소 사라진 웹사이트의 AI 판정", () => {
+  const row: ProductRepoReview = {
+    productId: 1, decision: "delist_candidate", reason: "model", answers: { same_product: false, parked: true, shutdown: false, no_content: false },
+    model: "m", pageHttpStatus: 200, finalUrl: "https://found.test/", pageTitle: "found.test is for sale", pageExcerpt: null,
+    reviewedAt: new Date("2026-10-08T03:00:00Z"), nextReviewAt: null, operatorDecision: null, operatorBy: null, operatorAt: null,
+  };
+
+  it("판정·이유·걸린 질문·페이지를 보여 주고 운영자 버튼 둘을 단다", () => {
+    const html = render({ repoReview: repoReviewView(row) });
+    expect(html).toContain("AI: 내릴 후보");
+    expect(html).toContain("AI 판단 · 다른 제품 · 주차·오류 페이지");
+    expect(html).toContain("200 · https://found.test/ · “found.test is for sale”");
+    expect(html).toContain('value="keep"');
+    expect(html).toContain('value="delist"');
+    expect(html).toContain("text-warn");
+  });
+
+  it("아직 안 본 것·차단된 것·운영자가 정한 것", () => {
+    expect(render({ repoReview: null })).toContain("AI 사이트 확인 대기");
+    expect(render({ repoReview: repoReviewView(row), status: "banned" })).not.toContain('value="delist"');
+    const kept = repoReviewView({ ...row, operatorDecision: "keep", operatorBy: "jr", operatorAt: new Date("2026-10-08T04:00:00Z") });
+    expect(kept.open).toBe(false);
+    expect(render({ repoReview: kept })).toContain("운영자 유지 · jr");
+    // 운영자 결정 뒤에 AI 가 다시 봤으면 다시 기다린다
+    expect(repoReviewView({ ...row, operatorDecision: "keep", operatorAt: new Date("2026-10-01T00:00:00Z") }).open).toBe(true);
+    expect(repoReviewView({ ...row, decision: "keep", answers: { same_product: true, parked: false, shutdown: false, no_content: false } }))
+      .toMatchObject({ open: false, decision: "AI: 유지", reason: "AI 판단 · 네 질문 모두 정상" });
+    expect(repoReviewView({ ...row, reason: "site_down", answers: null, pageHttpStatus: 0, finalUrl: null, pageTitle: null }))
+      .toMatchObject({ reason: "사흘 넘게 응답 없음", page: "연결 안 됨" });
+  });
+
+  it("보관·이름 바뀜 거르기의 기록을 보여 준다", () => {
+    expect(render({ repoNote: "이름 바뀜 → neworg/app (repo_url 은 옛 이름 그대로)" })).toContain("이름 바뀜 → neworg/app");
   });
 });
 

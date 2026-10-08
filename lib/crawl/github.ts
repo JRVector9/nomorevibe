@@ -55,7 +55,8 @@ const rotation: Record<string, number> = {};
 export async function githubRequest<T>(
   path: string,
   conditional: ConditionalRequest = {},
-  options: { timeoutMs?: number } = {},
+  /** body 가 있으면 JSON 으로 POST 한다(GraphQL) */
+  options: { timeoutMs?: number; body?: unknown } = {},
 ): Promise<GitHubHttpResult<T>> {
   // Paths come from repository metadata and cursors; never let them change the API origin.
   let decoded: string;
@@ -84,7 +85,7 @@ export async function githubRequest<T>(
         ? { ok: false, error: { ...authFailure, resetAt: new Date(Math.min(
           authFailure.resetAt?.getTime() ?? Infinity, Date.now() + 60_000)) } }
         : { ok: false, error: { kind: "transport" } };
-      result = await githubRequestWithToken<T>(path, conditional, { timeoutMs: remainingMs }, account, () => { secondary = true; });
+      result = await githubRequestWithToken<T>(path, conditional, { timeoutMs: remainingMs, body: options.body }, account, () => { secondary = true; });
       if (!result.ok && result.error.kind === "http" && result.error.status === 403 && sawUnauthorized) {
         const resetAt = await recordGitHubAuthCooldown(account.token, new Date(Date.now() + AUTH_COOLDOWN_MS));
         logger.warn("github.auth_rejected", { accountId: account.userId, reason: "blocked" });
@@ -117,7 +118,7 @@ export async function githubRequest<T>(
 }
 
 async function githubRequestWithToken<T>(
-  path: string, conditional: ConditionalRequest, options: { timeoutMs?: number },
+  path: string, conditional: ConditionalRequest, options: { timeoutMs?: number; body?: unknown },
   account: CollectorToken, onSecondary: () => void,
 ): Promise<GitHubHttpResult<T>> {
   const token = account.token;
@@ -133,6 +134,8 @@ async function githubRequestWithToken<T>(
   };
   if (conditional.etag) headers["If-None-Match"] = conditional.etag;
   if (conditional.lastModified) headers["If-Modified-Since"] = conditional.lastModified;
+  const post = options.body !== undefined;
+  if (post) headers["Content-Type"] = "application/json";
 
   let res: Response;
   const signal = AbortSignal.timeout(Math.max(1, Math.min(options.timeoutMs ?? 10_000, 10_000)));
@@ -140,11 +143,13 @@ async function githubRequestWithToken<T>(
   const visited = new Set([url]);
   try {
     for (let redirects = 0; ; redirects++) {
-      res = await fetch(url, { headers, redirect: "manual", signal });
+      res = await fetch(url, { method: post ? "POST" : "GET", headers, body: post ? JSON.stringify(options.body) : undefined,
+        redirect: "manual", signal });
       if (![301, 302, 303, 307, 308].includes(res.status)) break;
       const location = res.headers.get("location");
       await res.body?.cancel().catch(() => {});
-      if (!location || redirects >= 3) return { ok: false, error: { kind: "invalid_response" } };
+      // GraphQL 은 옮겨 가지 않는다 — 본문을 다른 곳에 다시 보내지 않는다
+      if (post || !location || redirects >= 3) return { ok: false, error: { kind: "invalid_response" } };
       let next: URL;
       try { next = new URL(location, url); }
       catch { return { ok: false, error: { kind: "invalid_response" } }; }
@@ -230,6 +235,28 @@ async function githubRequestWithToken<T>(
   if (res.status === 404) return { ok: false, error: { kind: "not_found" } };
 
   return { ok: false, error: { kind: "http", status: res.status } };
+}
+
+export type GraphqlError = { type?: string; path?: (string | number)[]; message?: string };
+export type GitHubGraphqlResult<T> = { ok: true; data: T | null; errors: GraphqlError[] } | { ok: false; error: GitHubFailure };
+
+/**
+ * GraphQL 한 번 — 토큰 고르기·한도·인증 실패 처리는 githubRequest 와 같다(토큰을 돌려 가며, 기다림은 DB 에 함께 적는다).
+ *
+ * 별칭마다 따로 실패할 수 있어(없는 저장소는 그 별칭이 null 이고 errors 에 path 가 붙는다) data 와 errors 를 둘 다 돌려준다.
+ * 한도가 바닥나면 GitHub 이 200 에 RATE_LIMITED 오류로 답하기도 한다 — 그때는 rate_limited 로 바꾼다
+ * (기다릴 시각은 githubRequest 가 응답 머리 x-ratelimit-remaining: 0 으로 이미 적었다).
+ */
+export async function githubGraphql<T>(query: string, options: { timeoutMs?: number } = {}): Promise<GitHubGraphqlResult<T>> {
+  const result = await githubRequest<{ data?: unknown; errors?: unknown }>("/graphql", {}, { ...options, body: { query } });
+  if (!result.ok) return result;
+  if (result.status !== 200 || !result.value || typeof result.value !== "object") return { ok: false, error: { kind: "invalid_response" } };
+  const errors = (Array.isArray(result.value.errors) ? result.value.errors : [])
+    .filter((error): error is GraphqlError => !!error && typeof error === "object");
+  if (errors.some((error) => error.type === "RATE_LIMITED")) return { ok: false, error: { kind: "rate_limited", resetAt: null } };
+  const data = result.value.data && typeof result.value.data === "object" ? result.value.data as T : null;
+  if (!data && errors.length === 0) return { ok: false, error: { kind: "invalid_response" } };
+  return { ok: true, data, errors };
 }
 
 async function request<T>(path: string): Promise<GitHubResult<T>> {

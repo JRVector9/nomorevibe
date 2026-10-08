@@ -90,13 +90,27 @@ export const products = pgTable("products", {
   ownerType: varchar("owner_type", { length: 20 }).$type<"User" | "Organization">(),
   starsCheckedAt: timestamp("stars_checked_at"),
   /**
-   * GitHub 이 저장소에 대해 마지막으로 준 확정적인 답(product-stars-refresh) — 'ok' 200 · 'not_found' 404 ·
-   * 'blocked' 451·한도가 아닌 403. 시간 초과·5xx 는 적지 않는다. 스타가 0인 것은 200 이라 'ok' 다.
-   * repoMissingSince 는 지금 이어지는 404 의 시작이다. 사라졌다는 판정은 repository.ts 의 repoGone 하나뿐이다.
+   * GitHub 이 저장소에 대해 마지막으로 준 확정적인 답(product-stars-refresh, 하루 한 번 GraphQL 묶음) —
+   * 'ok' 있음 · 'not_found' 없음 · 'empty' 커밋이 하나도 없음(빈 저장소) · 'blocked' 비활성·잠김·접근 금지.
+   * 시간 초과·5xx·그 밖의 오류는 적지 않는다. 스타가 0인 것은 'ok' 다.
+   * repoMissingSince 는 지금 이어지는 없음·빈 저장소의 시작이다. 사라졌다는 판정은 repository.ts 의 repoGone 하나뿐이다.
    */
-  repoStatus: varchar("repo_status", { length: 16 }).$type<"ok" | "not_found" | "blocked">(),
+  repoStatus: varchar("repo_status", { length: 16 }).$type<RepoStatus>(),
   repoCheckedAt: timestamp("repo_checked_at"),
   repoMissingSince: timestamp("repo_missing_since"),
+  /**
+   * 기록만 한다(0061) — 보관(archived)·오래 손대지 않음을 어떻게 다룰지 아직 정하지 않았다. 어드민에만 보인다.
+   * 저장소 객체를 받았을 때만 고쳐 쓴다(없음·오류는 지난 값을 둔다)
+   */
+  repoArchived: boolean("repo_archived"),
+  repoPushedAt: timestamp("repo_pushed_at"),
+  /**
+   * GitHub 이 이름이 바뀐 저장소를 새 owner/name 으로 돌려준 것(2026-10-08 실측: twitter/bootstrap → twbs/bootstrap).
+   * repo_url 은 다른 표의 열쇠라 여기서 고쳐 쓰지 않는다 — 어드민이 보고, 고쳐 쓰는 일은 뒤에 따로 한다
+   */
+  repoRenamedTo: varchar("repo_renamed_to", { length: 160 }),
+  /** 상태·보관·바뀐 이름이 앞선 확인과 달라진 마지막 시각 — 운영센터의 '오늘 새로'. 첫 기록은 바뀐 것으로 치지 않는다 */
+  repoChangedAt: timestamp("repo_changed_at"),
   status: varchar("status", { length: 20 })
     .$type<ProductStatus>()
     .notNull()
@@ -179,6 +193,9 @@ export const products = pgTable("products", {
   index("products_public_stars_idx").on(table.stars.desc(), table.id)
     .where(sql`${table.status} in ('seeded', 'verified') and ${table.stars} >= 2000 and ${table.stars} < 100000`),
   index("products_stars_refresh_idx").on(table.id)
+    .where(sql`${table.status} in ('seeded', 'verified') and ${table.repoUrl} is not null`),
+  /** 하루 저장소 확인(product-stars-refresh)이 가장 오래 확인하지 않은 것부터 집는다 — 확인 범위 지표도 이것을 쓴다(0061) */
+  index("products_repo_check_idx").on(sql`${table.repoCheckedAt} nulls first`, table.id)
     .where(sql`${table.status} in ('seeded', 'verified') and ${table.repoUrl} is not null`),
   /**
    * 홈 목록 정렬용.
@@ -416,6 +433,38 @@ export const productIntroChecks = pgTable("product_intro_checks", {
 });
 
 export type ProductIntroCheck = typeof productIntroChecks.$inferSelect;
+
+export type RepoStatus = "ok" | "not_found" | "empty" | "blocked";
+export type RepoReviewDecision = "keep" | "delist_candidate" | "human";
+export type RepoReviewAnswers = { same_product: boolean; parked: boolean; shutdown: boolean; no_content: boolean };
+
+/**
+ * 저장소가 사라졌거나 빈 웹사이트 제품의 2단계 확인(product-repo-review, 0061).
+ *
+ * 저장소가 없어도 사이트는 살아 있을 수 있다. 사이트를 새로 열어 코드 거르기 → Qwen3.8 한 번(네 질문)으로
+ * keep · delist_candidate · human 을 정한다. 아무것도 자동으로 가리지 않는다 — keep 만 저절로 끝나고(매주 다시 본다)
+ * 나머지는 운영자가 어드민 '저장소 사라짐'에서 유지·내리기를 고른다. 다시 봐도 운영자 결정은 지우지 않는다.
+ */
+export const productRepoReviews = pgTable("product_repo_reviews", {
+  productId: integer("product_id").primaryKey().references(() => products.id, { onDelete: "cascade" }),
+  decision: varchar("decision", { length: 20 }).$type<RepoReviewDecision>().notNull(),
+  /** 코드 거르기의 이유(deployment_gone·parked·site_down·…) 또는 model · invalid_output */
+  reason: varchar("reason", { length: 40 }).notNull(),
+  answers: jsonb("answers").$type<RepoReviewAnswers>(),
+  model: varchar("model", { length: 80 }),
+  /** 새로 연 페이지의 응답 코드. 0 이면 연결 자체가 안 됐다 */
+  pageHttpStatus: integer("page_http_status"),
+  finalUrl: text("final_url"),
+  pageTitle: varchar("page_title", { length: 300 }),
+  pageExcerpt: varchar("page_excerpt", { length: 600 }),
+  reviewedAt: timestamp("reviewed_at").notNull().defaultNow(),
+  /** 다시 볼 때 — keep 은 일주일, human 은 사흘, delist_candidate 는 운영자를 기다린다(null) */
+  nextReviewAt: timestamp("next_review_at"),
+  operatorDecision: varchar("operator_decision", { length: 10 }).$type<"keep" | "delist">(),
+  operatorBy: varchar("operator_by", { length: 120 }),
+  operatorAt: timestamp("operator_at"),
+});
+export type ProductRepoReview = typeof productRepoReviews.$inferSelect;
 
 export const visitCollectionState = pgTable("visit_collection_state", {
   id: integer("id").primaryKey().default(1),

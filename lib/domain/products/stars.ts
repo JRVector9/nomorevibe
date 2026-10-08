@@ -5,6 +5,12 @@ export const STAR_TIERS = [
   { key: 'large', label: '대형', range: '3만–10만 미만', min: 30000, max: 100000 },
 ] as const;
 export type StarTier = typeof STAR_TIERS[number]['key'];
+/**
+ * 스타 비교 구간의 최소 길이(시간). 저장소 확인(product-stars-refresh)은 하루에 한 번보다 조금 잦게(20시간마다) 돌고,
+ * 지금 값이 이보다 오래됐을 때만 지금 값을 이전 값으로 넘긴다 — 그래서 두 관측 사이는 늘 20시간 이상이다.
+ * 급상승의 하루 평균(repository.ts starGainPerDay)도 이 길이 아래로는 나누지 않는다.
+ */
+export const STARS_BASELINE_HOURS = 20;
 export function starTier(stars: number): StarTier | null {
   return STAR_TIERS.find(t => stars >= t.min && stars < t.max)?.key ?? null;
 }

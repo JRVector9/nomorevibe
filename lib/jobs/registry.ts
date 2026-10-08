@@ -22,6 +22,7 @@ import { refreshRankings } from "@/lib/jobs/products/ranking-refresh";
 import { refreshAgentEvidenceJob } from "@/lib/jobs/products/agent-evidence-refresh";
 import { refreshProductEvidenceJob } from "@/lib/jobs/products/evidence-refresh";
 import { refreshProductStars } from "@/lib/jobs/products/stars-refresh";
+import { reviewGoneRepositories } from "@/lib/jobs/products/repo-review";
 import { refreshProductThumbnails } from "@/lib/jobs/products/thumbnail-refresh";
 import { refreshProductSearchDocuments } from "@/lib/jobs/products/search-refresh";
 import { refreshProductEmbeddings } from "@/lib/jobs/products/embedding-refresh";
@@ -96,6 +97,8 @@ export const JOBS: Record<string, AnyJob> = {
   "product-evidence-refresh": refreshProductEvidenceJob,
   "agent-evidence-refresh": refreshAgentEvidenceJob,
   "product-stars-refresh": refreshProductStars,
+  /** 저장소가 사라진 웹사이트가 아직 그 제품인지 본다 — 판정만 적고 운영자가 정한다 */
+  "product-repo-review": (ctx) => reviewGoneRepositories(ctx),
   "product-thumbnail-refresh": refreshProductThumbnails,
   /** 검색이 읽는 토픽·본문을 crawl_documents 와 맞춘다 */
   "product-search-refresh": refreshProductSearchDocuments,

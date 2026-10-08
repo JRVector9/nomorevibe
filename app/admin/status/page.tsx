@@ -30,6 +30,7 @@ import { ModelCards, type ConnectionProbe } from "./dashboard/ModelCards";
 import { AttentionList, type ActionItem } from "./dashboard/AttentionList";
 import { SignalTable } from "./dashboard/SignalTable";
 import { TodayFeed } from "./dashboard/TodayFeed";
+import { RepoHealthCard, REPO_COVERAGE_TARGET, REPO_REVIEW_OVERDUE_HOURS } from "./dashboard/RepoHealthCard";
 import { StatusChips } from "./dashboard/StatusChips";
 import type { AgentStatus } from "@/lib/operations/contracts";
 import { manualCandidates } from "@/lib/operations/categories";
@@ -450,10 +451,25 @@ export default async function StatusPage({ searchParams }: { searchParams: Promi
     });
   }
   if (attention && attention.repoGone.installable + attention.repoGone.website > 0) {
+    const review = attention.repoReview;
+    // 2단계(AI 사이트 확인)가 사라졌다고 확정된 뒤 이틀 넘게 끝나지 않은 것이 있으면 맨 앞 급으로
+    const overdue = review.oldestHours !== null && review.oldestHours > REPO_REVIEW_OVERDUE_HOURS;
     actions.push({
-      key: "repo-gone", tone: "hold", count: attention.repoGone.installable + attention.repoGone.website, title: "저장소가 사라진 공개 제품",
-      detail: <>GitHub 이 하루 넘게 404 를 준 저장소 — 설치형 {attention.repoGone.installable.toLocaleString("ko-KR")}건은 목록에서 가려짐 · 웹 {attention.repoGone.website.toLocaleString("ko-KR")}건은 GitHub 표시만 뺌. 내릴지는 사람이 정합니다.</>,
+      key: "repo-gone", tone: overdue ? "critical" : "hold", count: attention.repoGone.installable + attention.repoGone.website,
+      title: overdue ? `저장소가 사라진 공개 제품 — ${REPO_REVIEW_OVERDUE_HOURS}시간 넘게 처리 안 됨` : "저장소가 사라진 공개 제품",
+      detail: <>GitHub 저장소가 없거나 빈 채로 하루 넘게 이어짐 — 설치형 {attention.repoGone.installable.toLocaleString("ko-KR")}건은 목록에서 가려짐 · 웹 {attention.repoGone.website.toLocaleString("ko-KR")}건은 GitHub 표시만 뺌.
+        {" "}웹은 AI 가 사이트를 다시 봅니다: 확인 대기 {review.pending.toLocaleString("ko-KR")} · 내릴 후보 {review.delistCandidates.toLocaleString("ko-KR")} · 사람 확인 {review.human.toLocaleString("ko-KR")} · AI 유지 {review.kept.toLocaleString("ko-KR")}
+        {review.oldestHours !== null && <> · 가장 오래 기다린 것 {Math.round(review.oldestHours)}시간</>}. 내리는 것은 사람이 정합니다.</>,
       action: { label: "제품 관리", href: `/admin/products?filter=${encodeURIComponent("저장소 사라짐")}` },
+    });
+  }
+  // 공개 제품의 GitHub 저장소를 하루에 한 번씩 다 보고 있나(product-stars-refresh) — 배포 직후 첫 바퀴(약 10시간)는 낮다
+  const repoCoverage = attention && attention.repoHealth.tracked > 0 ? attention.repoHealth.checked24h / attention.repoHealth.tracked : null;
+  if (repoCoverage !== null && repoCoverage < REPO_COVERAGE_TARGET) {
+    actions.push({
+      key: "repo-coverage", tone: "hold", count: `${Math.floor(repoCoverage * 100)}%`, title: "저장소 확인 범위가 95% 아래입니다",
+      detail: <>GitHub 저장소가 있는 공개 제품 {attention!.repoHealth.tracked.toLocaleString("ko-KR")}개 중 지난 24시간에 확인한 것 {attention!.repoHealth.checked24h.toLocaleString("ko-KR")}개 — product-stars-refresh 가 밀리거나 GitHub 한도에 걸렸습니다.</>,
+      action: { label: "작업 흐름", href: "/admin/status?tab=jobs" },
     });
   }
   const quotaAccount = accounts?.find((row) => row.enabled && row.coreQuota);
@@ -507,6 +523,7 @@ export default async function StatusPage({ searchParams }: { searchParams: Promi
       <AttentionList items={actions} />
       <SignalTable rows={yields ?? []} />
       <TodayFeed today={today ?? { total24h: 0, korean24h: 0, latest: [] }} down={downCount} />
+      {attention && <RepoHealthCard health={attention.repoHealth} review={attention.repoReview} />}
     </>
   );
   const statusChips = <StatusChips roles={roleRows} scheduler={scheduler} web={web} models={models ?? []}
