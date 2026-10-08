@@ -4,8 +4,10 @@ import { db } from "@/lib/db";
 import { rateLimits } from "@/lib/db/schema";
 
 /** GitHub credentials never appear in persisted keys or logs. */
-export type GitHubResource = "core" | "search" | "code_search";
+export type GitHubResource = "core" | "search" | "code_search" | "graphql";
 export function githubResource(path: string): GitHubResource {
+  // GraphQL 은 REST 와 따로 점수(시간당 5,000)를 센다 — 한쪽이 바닥나도 다른 쪽을 기다리게 하지 않는다
+  if (path === "/graphql") return "graphql";
   return /^\/search\/code(?:\?|$)/.test(path) ? "code_search" : path.startsWith("/search/") ? "search" : "core";
 }
 

@@ -7,6 +7,7 @@ import {refreshProductStars} from '@/lib/jobs/products/stars-refresh';
 import {update} from '@/lib/domain/products/repository';
 import {ensureSchema,resetTables} from './setup';
 import type {JobContext} from '@/lib/jobs/runner';
+import type {RepositoryCheck,RepositoryRef} from '@/lib/crawl/github-repositories';
 vi.mock('server-only',()=>({}));
 beforeAll(ensureSchema);
 beforeEach(async()=>{await db.delete(crawlCandidates);await db.delete(crawlDocuments);await db.delete(crawlSettings);await resetTables();});
@@ -16,7 +17,13 @@ async function product(stars: number|null, ownerType: 'User'|'Organization'|null
  const [row]=await db.insert(products).values({slug,name:slug,url:`https://${slug}.example`,tagline:'A useful product',description:'description',category:'Dev',repoUrl:`https://github.com/test/${slug}`,stars,starsAt:stars===null?null:new Date(),ownerType,status,source:'crawler',verifyToken:`v-${slug}`,editTokenHash:'a'.repeat(64)}).returning();return row;
 }
 const context = ():JobContext<{afterId?:number;retryAfter?:string}> => ({cursor:null,save:vi.fn(),hasBudget:()=>true,log:vi.fn()});
-const response=(stars:number)=>({ok:true as const,status:200 as const,value:{stargazers_count:stars,owner:{type:'Organization'}},etag:null,lastModified:null,link:null});
+const response=(stars:number):RepositoryCheck=>({status:'ok',facts:{stars,ownerType:'Organization',archived:false,pushedAt:null,renamedTo:null}});
+const missing:RepositoryCheck={status:'not_found',facts:null};
+/** GraphQL 묶음 대신 — 저장소마다 답을 고르고, 물은 저장소를 차례대로 남긴다 */
+const checker=(answer:(repo:RepositoryRef)=>RepositoryCheck|Promise<RepositoryCheck>,paths:string[]=[])=>vi.fn(async(repos:RepositoryRef[])=>{
+ const checks:RepositoryCheck[]=[];for(const repo of repos){paths.push(`${repo.owner}/${repo.name}`);checks.push(await answer(repo));}
+ return {ok:true as const,checks,rateLimit:null};
+});
 it('공개되고 접속 가능한 제품만 세고 동점은 ID로 정렬한다',async()=>{
  for(const stars of [1999,2000,4999,5000,9999,10000,29999,30000,99999,100000])await product(stars);
  await product(4500,'Organization');await product(4500,null);await product(4500,'User','banned');await product(4500,'User','unverified');
@@ -28,59 +35,57 @@ it('공개되고 접속 가능한 제품만 세고 동점은 ID로 정렬한다'
  expect((await getPopularGroups(false)).map(g=>g.total)).toEqual([4,2,2,2]);
  expect((await getPopularPage('rising',false,999)).page).toBe(1);
 });
-it('오래된 스타만 갱신하고 신선한 제품은 재조회하지 않는다',async()=>{
+it('하루에 한 번 다시 보고, 지금 값이 20시간 넘었을 때만 이전 값으로 넘긴다',async()=>{
  const stale=await product(2500);const fresh=await product(2600);
  await db.execute(sql`update products set stars_at=now()-interval '2 days' where id=${stale.id}`);
- const request=vi.fn(async()=>response(7000));
- await refreshProductStars(context(),{request});
+ const request=checker(()=>response(7000));
+ await refreshProductStars(context(),{check:request});
  expect(request).toHaveBeenCalledTimes(1);
  expect((await db.select().from(products).where(eq(products.id,stale.id)))[0]).toMatchObject({stars:7000,starsPrevious:2500,ownerType:'Organization'});
- expect((await db.select().from(products).where(eq(products.id,fresh.id)))[0].stars).toBe(2600);
+ // 발행 직후의 관측은 넘기지 않는다 — 지금 값만 새로 적고 다음 확인에서 넘긴다
+ expect((await db.select().from(products).where(eq(products.id,fresh.id)))[0]).toMatchObject({stars:7000,starsPrevious:null,starsPreviousAt:null});
+ request.mockClear();await refreshProductStars(context(),{check:request});expect(request).not.toHaveBeenCalled();
 });
-it('잡이 처음 보는 제품을 차례 순회보다 먼저 보고, 실패하면 차례 순회로 돌려보낸다',async()=>{
- const walked:Awaited<ReturnType<typeof product>>[]=[];for(let i=0;i<40;i++)walked.push(await product(100));
- const unseen=await product(50);
- // 차례 순회 대상은 이미 두 번 관측했다. 새 제품은 발행 때의 첫 관측뿐이다 — 둘 다 하루가 지나 갱신할 때다
+it('잡이 처음 보는 제품을 먼저, 그다음 저장소를 아직 안 본 것과 가장 오래 전에 본 것 차례로 본다',async()=>{
+ const older=await product(100);const old=await product(100);const never=await product(100);const unseen=await product(50);
+ // 앞의 셋은 이미 두 번 관측했다. 새 제품은 발행 때의 첫 관측뿐이다
  await db.execute(sql`update products set stars_at=now()-interval '2 days',stars_previous=90,stars_previous_at=now()-interval '4 days',stars_checked_at=now()-interval '2 days' where id<>${unseen.id}`);
- await db.execute(sql`update products set stars_at=now()-interval '25 hours' where id=${unseen.id}`);
+ await db.execute(sql`update products set repo_status='ok',repo_checked_at=now()-interval '40 hours' where id=${older.id}`);
+ await db.execute(sql`update products set repo_status='ok',repo_checked_at=now()-interval '30 hours' where id=${old.id}`);
  const paths:string[]=[];
- const request=vi.fn(async(path:string)=>{paths.push(path);return path.endsWith(unseen.slug)?{ok:false as const,error:{kind:'not_found' as const}}:response(120);});
- const ctx=context();
- const result=await refreshProductStars(ctx,{request});
- // 한 번에 40개 그대로 — 새 제품이 첫 자리를 받고 순회는 39개까지 간다
- expect(paths).toHaveLength(40);expect(paths[0]).toBe(`/repos/test/${unseen.slug}`);
- expect(result).toEqual({done:false,cursor:{afterId:walked[38].id}});
- expect((await db.select().from(products).where(eq(products.id,walked[39].id)))[0].stars).toBe(100);
- // 404 는 확인 시각과 저장소 답만 남긴다 — 다음 바퀴부터는 앞을 차지하지 않고 ID 차례로 돈다(없다고 확정한 저장소는 하루 뒤에)
- await db.execute(sql`update products set stars_checked_at=now()-interval '25 hours' where id=${unseen.id}`);
+ const request=checker(repo=>repo.name===unseen.slug?missing:response(120),paths);
+ expect(await refreshProductStars(context(),{check:request})).toEqual({done:true,cursor:null});
+ expect(paths).toEqual([unseen,never,older,old].map(row=>`test/${row.slug}`));
+ // 없음은 확인 시각과 저장소 답만 남긴다 — 하루 뒤에 다시 본다
  paths.length=0;
- expect(await refreshProductStars({...context(),cursor:result.cursor??null},{request})).toEqual({done:true,cursor:null});
- expect(paths).toEqual([`/repos/test/${walked[39].slug}`,`/repos/test/${unseen.slug}`]);
+ await db.execute(sql`update products set stars_checked_at=now()-interval '2 hours'`);
+ await refreshProductStars(context(),{check:request});
+ expect(paths).toEqual([]);
 });
 it('실패 시 값과 성공 시각을 보존하고 다음 후보를 계속 본다',async()=>{
  const first=await product(null);const second=await product(null);
- const request=vi.fn(async(path:string)=>path.endsWith(first.slug)?{ok:false as const,error:{kind:'not_found' as const}}:response(4000));
- await refreshProductStars(context(),{request});
+ const request=checker(repo=>repo.name===first.slug?missing:response(4000));
+ await refreshProductStars(context(),{check:request});
  expect((await db.select().from(products).where(eq(products.id,first.id)))[0]).toMatchObject({stars:null,starsAt:null});
  expect((await db.select().from(products).where(eq(products.id,second.id)))[0].stars).toBe(4000);
- request.mockClear();await refreshProductStars(context(),{request});expect(request).not.toHaveBeenCalled();
+ request.mockClear();await refreshProductStars(context(),{check:request});expect(request).not.toHaveBeenCalled();
 });
 it('쿼터 대기를 저장하고 재개 시각 전에는 API를 부르지 않는다',async()=>{
  await product(null);const ctx=context();const future=new Date(Date.now()+60000);
  const request=vi.fn(async()=>({ok:false as const,error:{kind:'rate_limited' as const,resetAt:future}}));
- const result=await refreshProductStars(ctx,{request});expect(result.done).toBe(false);expect(result.cursor?.retryAfter).toBe(future.toISOString());
- request.mockClear();await refreshProductStars({...context(),cursor:result.cursor??null},{request});expect(request).not.toHaveBeenCalled();
+ const result=await refreshProductStars(ctx,{check:request});expect(result.done).toBe(false);expect(result.cursor?.retryAfter).toBe(future.toISOString());
+ request.mockClear();await refreshProductStars({...context(),cursor:result.cursor??null},{check:request});expect(request).not.toHaveBeenCalled();
 });
 it('인증 풀 장애도 제품별 실패로 기록하지 않고 재개 시각까지 기다린다',async()=>{
  const p=await product(null);const future=new Date(Date.now()+60000);
  const request=vi.fn(async()=>({ok:false as const,error:{kind:'auth_unavailable' as const,reason:'expired' as const,resetAt:future}}));
- const result=await refreshProductStars(context(),{request});
+ const result=await refreshProductStars(context(),{check:request});
  expect(result).toMatchObject({done:false,cursor:{retryAfter:future.toISOString()}});
  expect((await db.select().from(products).where(eq(products.id,p.id)))[0].starsCheckedAt).toBeNull();
 });
 it('요청 중 저장소가 바뀌면 이전 응답을 버린다',async()=>{
- const p=await product(null);const request=vi.fn(async()=>{await update(p.id,{repoUrl:'https://github.com/test/replacement'});return response(5000);});
- await refreshProductStars(context(),{request});expect((await db.select().from(products).where(eq(products.id,p.id)))[0].stars).toBeNull();
+ const p=await product(null);const request=checker(async()=>{await update(p.id,{repoUrl:'https://github.com/test/replacement'});return response(5000);});
+ await refreshProductStars(context(),{check:request});expect((await db.select().from(products).where(eq(products.id,p.id)))[0].stars).toBeNull();
 });
 it('저장소를 바꾸면 이전 저장소의 스타를 표시하지 않는다',async()=>{
  const p=await product(9000);await update(p.id,{repoUrl:'https://github.com/test/replacement'});
@@ -101,11 +106,11 @@ it('백필은 제품의 현재 저장소에 연결된 최신 원본만 사용한
 });
 it('저장소 주소가 바뀌었다 돌아와도 진행 중이던 응답은 적용하지 않는다',async()=>{
  const p=await product(null);
- await refreshProductStars(context(),{request:async()=>{
+ await refreshProductStars(context(),{check:checker(async()=>{
   await update(p.id,{repoUrl:'https://github.com/test/interim'});
   await update(p.id,{repoUrl:p.repoUrl});
   return response(9900);
- }});
+ })});
  expect((await db.select().from(products).where(eq(products.id,p.id)))[0].stars).toBeNull();
 });
 it('목록의 AI 흔적은 공개 설정과 링크 숨김을 지키고 오래된 관측을 표시한다',async()=>{
@@ -129,7 +134,7 @@ it('목록의 AI 흔적은 공개 설정과 링크 숨김을 지키고 오래된
 it('retains daily baseline on failures and clears it when the repository changes',async()=>{
  const p=await product(100);const previousAt=new Date('2026-09-10T00:00:00Z');
  await db.update(products).set({starsPrevious:95,starsPreviousAt:previousAt,starsAt:new Date('2026-09-11T00:00:00Z')}).where(eq(products.id,p.id));
- await refreshProductStars(context(),{request:async()=>({ok:false,error:{kind:'not_found'}})});
+ await refreshProductStars(context(),{check:checker(()=>missing)});
  expect((await db.select().from(products).where(eq(products.id,p.id)))[0]).toMatchObject({stars:100,starsPrevious:95,starsPreviousAt:previousAt});
  await update(p.id,{repoUrl:'https://github.com/test/changed'});
  expect((await db.select().from(products).where(eq(products.id,p.id)))[0]).toMatchObject({stars:null,starsAt:null,starsPrevious:null,starsPreviousAt:null});

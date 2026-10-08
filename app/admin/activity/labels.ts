@@ -19,6 +19,8 @@ export const ACTION_LABELS: Record<string, string> = {
   "audit-cancel": "감사 중단",
   "product-ban": "제품 차단",
   "product-unban": "제품 차단 해제",
+  "repo-review-delist": "저장소 사라진 사이트 내림",
+  "repo-review-keep": "저장소 사라진 사이트 둠",
   "claim-invite": "클레임 초대 표시",
   "product-refresh": "제품 근거 갱신",
   "update-hide": "자동 업데이트 숨김",
@@ -43,7 +45,7 @@ export const ACTION_LABELS: Record<string, string> = {
 
 export const ACTION_GROUPS = {
   takedown: { label: "내리기·차단", actions: ["takedown-remove", "takedown-dismiss", "audit-remove", "audit-keep", "audit-start", "audit-cancel",
-    "product-ban", "product-unban", "published-second-ban", "published-second-keep"] },
+    "product-ban", "product-unban", "published-second-ban", "published-second-keep", "repo-review-delist", "repo-review-keep"] },
   review: { label: "심사", actions: ["candidate-approve", "candidate-reject", "evidence-collect", "requeue-resolved", "manual-category"] },
   settings: { label: "설정·연결", actions: ["settings-save", "review-mode", "evidence-settings", "ranking-schedule", "ranking-cancel",
     "github-collector-token-save", "github-collector-enable", "github-collector-disable",

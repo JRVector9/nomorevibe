@@ -32,7 +32,8 @@ export const JOB_LABELS: Record<string, string> = {
   'product-search-health': '검색 데이터 자동 점검',
   'product-intro-check': '소개 검수',
   'cdn-purge': 'CDN 캐시 지우기', 'crawl-tagline': '한 줄 소개 짓기', 'product-embedding': '의미 검색 벡터',
-  'product-search-refresh': '검색 데이터 갱신', 'product-stars-refresh': 'GitHub 스타 갱신',
+  'product-search-refresh': '검색 데이터 갱신', 'product-stars-refresh': 'GitHub 저장소·스타 확인',
+  'product-repo-review': '저장소 사라진 사이트 확인',
 };
 export const ROLE_LABELS: Record<string, string> = { app: '웹·관리자 서비스', db: '데이터베이스', scheduler: '작업 일정 관리', crawler: '프로젝트 수집', reviewer: '후보 심사', publisher: '제품 발행', text: '소개·사유 번역', maintenance: '생존 확인·지표 집계', 'connect-agent': 'AI 연결·분류 실행' };
 export type AgentStatus = {

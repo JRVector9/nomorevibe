@@ -5,9 +5,11 @@ import { currentAdmin } from "@/lib/auth/admin";
 import { countProducts, listProducts } from "@/lib/domain/products/repository";
 import { isUnclaimed } from "@/lib/domain/products/view";
 import { claimInviteUrl, isPublicOrigin } from "@/lib/domain/products/claim-invite";
+import { repoReviewsFor } from "@/lib/domain/products/repo-reviews";
 import { siteOrigin } from "@/lib/site";
 import type { ProductStatus } from "@/lib/db/schema";
 import { ProductRow } from "./ProductRow";
+import { repoReviewView } from "./repo-review-view";
 import { pageWindow } from "../paging";
 
 export const dynamic = "force-dynamic";
@@ -26,10 +28,15 @@ const FILTERS = {
   /** 소개 검수가 근거로는 무엇인지 알 수 없다고 한 것 — 페이지를 열어 보고 내릴지 정한다 */
   "소개 확인 필요": ["seeded", "verified"],
   /**
-   * GitHub 저장소가 사라졌다고 확정된 공개 제품(repository.ts repoGone) — 설치형은 이미 목록에서 가려졌고
-   * 웹사이트는 목록에 두고 GitHub 표시만 뺐다. 사람이 내릴지 정한다(나중에 AI 판정이 붙을 자리)
+   * GitHub 저장소가 없거나 빈 채로 하루 넘게 이어진 공개 제품(repository.ts repoGone) — 설치형은 이미 목록에서 가려졌고
+   * 웹사이트는 목록에 두고 GitHub 표시만 뺐다. 웹사이트는 AI 가 사이트를 다시 본 판정(product-repo-review)을 붙이고
+   * 사람이 유지·내리기를 고른다
    */
   "저장소 사라짐": ["seeded", "verified"],
+  /** GitHub 이 보관(archived)이라고 한 저장소 — 다루는 방법을 아직 정하지 않아 기록만 한다 */
+  "저장소 보관됨": ["seeded", "verified"],
+  /** GitHub 이 다른 이름으로 돌려준 저장소 — repo_url 은 아직 옛 이름이다(고쳐 쓰기는 뒤에 따로) */
+  "저장소 이름 바뀜": ["seeded", "verified"],
 } as const satisfies Record<string, ProductStatus[]>;
 
 type Props = { searchParams: Promise<{ filter?: string; page?: string }> };
@@ -46,10 +53,14 @@ export default async function AdminProductsPage({ searchParams }: Props) {
   const statuses = [...FILTERS[active]];
   const introNeedsEditor = active === "소개 확인 필요";
   const repoGone = active === "저장소 사라짐";
+  const repoArchived = active === "저장소 보관됨";
+  const repoRenamed = active === "저장소 이름 바뀜";
   const [products, total] = await Promise.all([
-    listProducts({ statuses, introNeedsEditor, repoGone, limit: PAGE_SIZE, offset: (page - 1) * PAGE_SIZE }),
-    countProducts({ statuses, introNeedsEditor, repoGone }),
+    listProducts({ statuses, introNeedsEditor, repoGone, repoArchived, repoRenamed, limit: PAGE_SIZE, offset: (page - 1) * PAGE_SIZE }),
+    countProducts({ statuses, introNeedsEditor, repoGone, repoArchived, repoRenamed }),
   ]);
+  const reviews = repoGone ? await repoReviewsFor(products.filter((product) => product.accessMode === "website").map((product) => product.id)) : null;
+  const day = (value: Date | null) => value?.toLocaleDateString("ko-KR", { timeZone: "Asia/Seoul" });
   const pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
   const href = (next: number) => {
     const params = new URLSearchParams();
@@ -125,8 +136,11 @@ export default async function AdminProductsPage({ searchParams }: Props) {
                   product.claimInvitedAt?.toLocaleDateString("ko-KR", { timeZone: "Asia/Seoul" }) ?? null,
                 repoGone: repoGone ? [
                   product.accessMode === "website" ? "웹 · GitHub 표시만 뺌" : "설치형 · 목록에서 가려짐",
-                  product.repoMissingSince && `${product.repoMissingSince.toLocaleDateString("ko-KR", { timeZone: "Asia/Seoul" })}부터 404`,
+                  product.repoMissingSince && `${day(product.repoMissingSince)}부터 ${product.repoStatus === "empty" ? "빈 저장소" : "없음"}`,
                 ].filter(Boolean).join(" · ") : null,
+                ...(reviews && product.accessMode === "website" ? { repoReview: reviews.has(product.id) ? repoReviewView(reviews.get(product.id)!) : null } : {}),
+                repoNote: repoArchived ? `보관됨 · 마지막 push ${day(product.repoPushedAt) ?? "모름"}`
+                  : repoRenamed ? `이름 바뀜 → ${product.repoRenamedTo} (repo_url 은 옛 이름 그대로)` : null,
               }}
             />
           ))}

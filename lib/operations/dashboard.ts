@@ -2,12 +2,13 @@ import { sql, type SQL } from "drizzle-orm";
 import type { AnyPgColumn } from "drizzle-orm/pg-core";
 import { db } from "@/lib/db";
 import { cdnPurges, crawlCandidates, crawlFrontier, crawlReviewAttempts, productAuditCampaigns, productAuditItems, productHealth,
-  productSearchProfiles, products, secondReviews } from "@/lib/db/schema";
+  productRepoReviews, productSearchProfiles, products, secondReviews } from "@/lib/db/schema";
 import { REVIEW_PROMPT_VERSION, REVIEW_RULES_VERSION } from "@/lib/crawl/agent-review-contract";
 import { sameReviewModel } from "@/lib/crawl/review-model-identity";
 import { SHOW_HN_SIGNAL, type CrawlSettings } from "@/lib/crawl/settings-schema";
 import { RECHECK_AFTER_MINUTES } from "@/lib/domain/products/health-freshness";
 import { countProducts, repoGone } from "@/lib/domain/products/repository";
+import { repoReviewOpen } from "@/lib/domain/products/repo-reviews";
 import { PROFILE_MODEL } from "@/lib/domain/products/search-profile";
 
 /**
@@ -66,6 +67,21 @@ export type AttentionCounts = {
    * 설치형은 목록에서 가려졌고 웹사이트는 GitHub 표시만 뺐다
    */
   repoGone: { installable: number; website: number };
+  /**
+   * 하루 저장소 확인(product-stars-refresh)의 품질 — 공개 제품 중 GitHub 저장소가 있는 것(tracked) 가운데 지난 24시간에
+   * 확정 답을 받은 것(checked24h). 상태별 수와 그중 지난 24시간에 바뀐 것(repo_changed_at — 첫 기록은 세지 않는다).
+   * archived·renamed 는 상태와 겹친다(보관된 저장소도 'ok' 다)
+   */
+  repoHealth: {
+    tracked: number; checked24h: number;
+    states: Record<"ok" | "not_found" | "empty" | "blocked" | "archived" | "renamed", { total: number; new24h: number }>;
+  };
+  /**
+   * 2단계 확인(product-repo-review) — 저장소가 사라진 공개 웹사이트. pending 은 아직 AI 가 안 본 것,
+   * delistCandidates·human 은 운영자를 기다리는 것(repoReviewOpen), kept 는 AI 가 그대로 둔 것.
+   * oldestHours 는 안 본 것·기다리는 것 중 사라졌다고 확정된 뒤(repo_missing_since + 24시간) 가장 오래된 것
+   */
+  repoReview: { pending: number; delistCandidates: number; human: number; kept: number; oldestHours: number | null };
 };
 
 const at = (now: Date) => sql`${now.toISOString()}::timestamp`;
@@ -309,8 +325,18 @@ export async function todayPublications(now = new Date(), limit = 6): Promise<To
   };
 }
 
+/** 저장소 상태별로 셀 조건 — 보관·이름 바뀜은 상태와 따로 센다 */
+const REPO_STATES = [
+  ["ok", sql`${products.repoStatus} = 'ok'`],
+  ["not_found", sql`${products.repoStatus} = 'not_found'`],
+  ["empty", sql`${products.repoStatus} = 'empty'`],
+  ["blocked", sql`${products.repoStatus} = 'blocked'`],
+  ["archived", sql`${products.repoArchived} IS TRUE`],
+  ["renamed", sql`${products.repoRenamedTo} IS NOT NULL`],
+] as const;
+
 export async function attentionCounts(now = new Date()): Promise<AttentionCounts> {
-  const [[row], introNeedsEditor, [campaign]] = await Promise.all([
+  const [[row], introNeedsEditor, [campaign], [repo], [review]] = await Promise.all([
     readOnly<{ audit: number; health: number; websites: number; purges: number; gone_installable: number; gone_website: number }>(sql`
       SELECT
         (SELECT count(*)::int FROM ${productAuditItems} JOIN ${products} ON ${products.id} = ${productAuditItems.productId}
@@ -336,12 +362,34 @@ export async function attentionCounts(now = new Date()): Promise<AttentionCounts
         (SELECT count(*)::int FROM ${productAuditItems} i WHERE i.campaign_id = c.id AND i.ai_decision IS NULL) AS unanswered
       FROM ${productAuditCampaigns} c WHERE c.status = 'running' ORDER BY c.id DESC LIMIT 1
     `),
+    readOnly<Record<string, number>>(sql`
+      SELECT count(*)::int AS tracked,
+        count(*) FILTER (WHERE ${products.repoCheckedAt} >= ${at(now)} - interval '24 hours')::int AS checked,
+        ${sql.join(REPO_STATES.map(([key, condition]) => sql`count(*) FILTER (WHERE ${condition})::int AS ${sql.identifier(key)},
+          count(*) FILTER (WHERE ${condition} AND ${products.repoChangedAt} >= ${at(now)} - interval '24 hours')::int AS ${sql.identifier(`${key}_new`)}`), sql`, `)}
+      FROM ${products} WHERE ${products.status} IN ('seeded', 'verified') AND ${products.repoUrl} IS NOT NULL
+    `),
+    readOnly<{ pending: number; delist: number; human: number; kept: number; oldest_hours: number | null }>(sql`
+      SELECT count(*) FILTER (WHERE ${productRepoReviews.productId} IS NULL)::int AS pending,
+        count(*) FILTER (WHERE ${repoReviewOpen} AND ${productRepoReviews.decision} = 'delist_candidate')::int AS delist,
+        count(*) FILTER (WHERE ${repoReviewOpen} AND ${productRepoReviews.decision} = 'human')::int AS human,
+        count(*) FILTER (WHERE ${productRepoReviews.decision} = 'keep')::int AS kept,
+        (max(extract(epoch FROM ${at(now)} - (${products.repoMissingSince} + interval '24 hours')))
+          FILTER (WHERE ${productRepoReviews.productId} IS NULL OR ${repoReviewOpen}) / 3600)::float8 AS oldest_hours
+      FROM ${products} LEFT JOIN ${productRepoReviews} ON ${productRepoReviews.productId} = ${products.id}
+      WHERE ${products.status} IN ('seeded', 'verified') AND ${products.accessMode} = 'website' AND ${repoGone}
+    `),
   ]);
   // 한 바퀴를 재확인 간격 안에 돌려면 시간당 몇 건을 봐야 하나 — 제품이 늘면 목표도 는다(고정값 3,224 는 1만9천 개 때 것)
   const healthTargetPerHour = Math.ceil(Number(row?.websites ?? 0) / (RECHECK_AFTER_MINUTES / 60));
   return { auditRejectsOpen: Number(row?.audit ?? 0), healthOverdue: Number(row?.health ?? 0), healthTargetPerHour, introNeedsEditor,
     cdnPurgesPending: Number(row?.purges ?? 0),
     repoGone: { installable: Number(row?.gone_installable ?? 0), website: Number(row?.gone_website ?? 0) },
+    repoHealth: { tracked: Number(repo?.tracked ?? 0), checked24h: Number(repo?.checked ?? 0),
+      states: Object.fromEntries(REPO_STATES.map(([key]) => [key, { total: Number(repo?.[key] ?? 0), new24h: Number(repo?.[`${key}_new`] ?? 0) }])) as
+        AttentionCounts["repoHealth"]["states"] },
+    repoReview: { pending: Number(review?.pending ?? 0), delistCandidates: Number(review?.delist ?? 0), human: Number(review?.human ?? 0),
+      kept: Number(review?.kept ?? 0), oldestHours: review?.oldest_hours === null || review?.oldest_hours === undefined ? null : Number(review.oldest_hours) },
     auditCampaign: campaign ? { id: Number(campaign.id), promptVersion: campaign.prompt_version,
       current: campaign.prompt_version === REVIEW_PROMPT_VERSION && campaign.rules_version === REVIEW_RULES_VERSION,
       unanswered: Number(campaign.unanswered) } : null };

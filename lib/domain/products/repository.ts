@@ -26,6 +26,7 @@ import {
   productSkills,
   productUpdates,
   productEmbeddings,
+  productRepoReviews,
   type Product,
   type NewProduct,
   type ProductStatus,
@@ -38,6 +39,7 @@ import { observedToolPredicate } from "./observed-tool";
 import { withJobLeaseWrite, type JobLease } from "@/lib/jobs/control";
 import { EMBEDDING_DOCUMENT, EMBEDDING_MODEL, vectorLiteral } from "./embedding";
 import { createMemo } from "@/lib/cache/memo";
+import { STARS_BASELINE_HOURS } from "./stars";
 import { getSettings as getCrawlSettings } from "@/lib/crawl/settings";
 export { findRepositoryProduct } from "./repository-identity";
 
@@ -89,6 +91,10 @@ export type ListOptions = {
   excludeSlugs?: readonly string[];
   /** GitHub 저장소가 사라졌다고 확정된 제품만(repoGone) — 어드민이 본다 */
   repoGone?: boolean;
+  /** GitHub 이 보관(archived)이라고 한 저장소만 — 기록만 하는 값이라 어드민만 본다 */
+  repoArchived?: boolean;
+  /** GitHub 이 다른 owner/name 으로 돌려준 저장소만(이름 바뀜·옮김) — 어드민만 본다 */
+  repoRenamed?: boolean;
 };
 
 /**
@@ -117,10 +123,11 @@ const recentClicks = sql`(
 const starGain = sql`case when ${products.starsPreviousAt} < ${products.starsAt} then ${products.stars} - ${products.starsPrevious} end`;
 /**
  * 하루 평균으로 늘어난 스타 — 두 확인 사이 간격이 제품마다 1~5일로 달라(2026-10-08 운영) 합계로 줄 세우면
- * 오래 기다린 제품이 앞선다. 간격은 갱신 잡이 24시간 뒤에야 다시 보므로 하루 아래로 내려가지 않지만, 혹시 짧아도
- * 하루로 쳐서 몇 시간 사이의 몇 개가 하루치로 부풀지 않게 한다.
+ * 오래 기다린 제품이 앞선다. 갱신 잡은 지금 값이 STARS_BASELINE_HOURS(20시간)보다 오래됐을 때만 이전 값으로 넘기므로
+ * 간격은 그 아래로 내려가지 않는다(stars-refresh.ts). 하루 한 번 보는 지금은 간격이 20~24시간이라 하루로 올려 나누면
+ * 20시간 구간이 6분의 1 덜 늘어난 것처럼 보인다 — 바닥을 그 길이로 맞춘다. 혹시 짧아도 몇 시간 사이의 몇 개가 부풀지 않는다.
  */
-const starGainPerDay = sql`${starGain} / greatest(extract(epoch from (${products.starsAt} - ${products.starsPreviousAt})) / 86400, 1)`;
+const starGainPerDay = sql`${starGain} / greatest(extract(epoch from (${products.starsAt} - ${products.starsPreviousAt})) / 86400, ${sql.raw(String(STARS_BASELINE_HOURS))} / 24.0)`;
 /** 홈의 스타 구간(popular.ts)이 2천부터 따로 보여주므로 그 아래만 */
 export const RISING_MAX_STARS = 2000;
 /**
@@ -131,23 +138,25 @@ export const RISING_MAX_STARS = 2000;
  * 오래된 것은 확인이 계속 실패하는 것이었다(지워진 저장소의 404 — 그 사이 증가가 영영 남아 2위에 있었다).
  * 실패는 스타·확인 시각을 그대로 두므로 따로 표시하지 않아도 이 기간이 지나면 여기서 빠진다.
  * 4일로 두면 갱신 잡이 조금만 밀려도 멀쩡한 제품이 빠져, 한 바퀴의 두 배쯤인 7일로 둔다(2026-10-08 운영자 결정).
- * 잡은 하루 11,520개(5분마다 40개)가 한도라 한 바퀴는 공개 저장소 수에 비례한다 — 한 바퀴가 7일을 넘으면
- * 그만큼이 여기서 빠진다. 그때는 이 값이 아니라 갱신 예산을 늘린다.
+ * 그 뒤 잡이 GraphQL 묶음으로 바뀌어(0061) 모든 공개 저장소를 20시간마다 본다 — 한 바퀴가 하루 안쪽이다.
+ * 하루 115,200개가 한도라 공개 저장소가 그 가까이 늘면 바퀴가 길어진다. 그때는 이 값이 아니라 갱신 예산을 늘린다.
  *
  * 운영 값은 어드민 크롤 설정(rising.freshDays, 1~30일)에서 정한다 — 이것은 그 기본값이다(settings-schema.ts 와 같다).
  */
 export const RISING_FRESH_DAYS = 7;
 /**
- * GitHub 저장소가 사라졌다고 확정한 제품 — 하루 넘게 떨어져 받은 404 가 두 번 이상(첫 404 = repo_missing_since).
+ * GitHub 저장소가 사라졌다고 확정한 제품 — 없음(not_found)이나 빈 저장소(empty)가 하루 넘게 떨어진 두 확인 이상 이어졌다
+ * (시작 = repo_missing_since). 빈 저장소도 사라진 것과 똑같이 다룬다(2026-10-08 운영자 결정) — 보여 줄 코드가 없다.
  *
- * product-stars-refresh 가 이미 부르는 저장소 조회의 답으로만 정한다(0060). 스타가 0인 저장소는 200 이라 여기 들지 않고,
- * 시간 초과·5xx 는 답을 바꾸지 않는다. 한 번의 404 는 비공개로 잠깐 돌린 것일 수 있어(2026-10-08 표본 32건 중 2건)
- * 하루를 기다린다. 행은 그대로 두고 조건으로만 쓰므로 다음 확인에서 200 이 오면 저절로 풀린다.
+ * product-stars-refresh 가 하루 한 번 묻는 저장소 답으로만 정한다(0060·0061). 스타가 0인 저장소는 'ok' 라 여기 들지 않고,
+ * 시간 초과·5xx 는 답을 바꾸지 않는다. 한 번의 없음은 비공개로 잠깐 돌린 것일 수 있어(2026-10-08 표본 32건 중 2건)
+ * 하루를 기다린다. 행은 그대로 두고 조건으로만 쓰므로 다음 확인에서 'ok' 가 오면 저절로 풀린다.
+ * 보관(archived)·오래 손대지 않음은 여기 들지 않는다 — 아직 정하지 않아 기록만 한다.
  * 이 판정을 쓰는 곳 — 설치형은 공개 목록에서 가린다(notDown), 웹사이트는 목록에 두고 GitHub 신호만 뺀다
  * (급상승·스타 구간·스타순·카드와 상세의 ★·저장소 링크). 어드민의 '저장소 사라짐'도 이것이다.
  * null 이 섞여도 참·거짓만 내도록 coalesce 한다 — notDown 이 null 이 되면 멀쩡한 제품이 목록에서 빠진다.
  */
-export const repoGone = sql`coalesce(${products.repoStatus} = 'not_found'
+export const repoGone = sql`coalesce(${products.repoStatus} in ('not_found', 'empty')
   and ${products.repoCheckedAt} >= ${products.repoMissingSince} + interval '24 hours', false)`;
 /** 목록·상세 행에 판정을 같이 실어 온다 — 화면이 같은 식을 JS 로 다시 쓰지 않게 */
 export const repoGoneField = { repoGone: sql<boolean>`${repoGone}`.as("repo_gone") };
@@ -223,13 +232,15 @@ const introNeedsEditor = sql`exists (
 )`;
 
 /** 목록과 개수가 같은 조건을 쓰도록 한 곳에서 만든다. 급상승 기간은 설정에서 읽으므로 비동기다 */
-async function listConditions({ statuses, category, query, builder, observedTool, hasRepository, excludeDown, introNeedsEditor: needsEditor, rising, listedSince, minStars, slugs, excludeSlugs, repoGone: goneOnly }: Omit<ListOptions, "limit" | "sort" | "offset">) {
+async function listConditions({ statuses, category, query, builder, observedTool, hasRepository, excludeDown, introNeedsEditor: needsEditor, rising, listedSince, minStars, slugs, excludeSlugs, repoGone: goneOnly, repoArchived, repoRenamed }: Omit<ListOptions, "limit" | "sort" | "offset">) {
   const conditions = [inArray(products.status, statuses)];
   if (slugs) conditions.push(slugs.length ? inArray(products.slug, [...slugs]) : sql`false`);
   if (excludeSlugs?.length) conditions.push(notInArray(products.slug, [...excludeSlugs]));
   if (excludeDown) conditions.push(notDown);
   if (needsEditor) conditions.push(introNeedsEditor);
   if (goneOnly) conditions.push(repoGone);
+  if (repoArchived) conditions.push(eq(products.repoArchived, true));
+  if (repoRenamed) conditions.push(isNotNull(products.repoRenamedTo));
   if (rising) conditions.push(risingStars(await risingFreshDays()));
   if (listedSince) conditions.push(sql`${listedAt} >= ${listedSince.toISOString()}::timestamptz`);
   if (minStars !== undefined) conditions.push(sql`${products.stars} >= ${minStars}`);
@@ -441,10 +452,12 @@ export async function update(id: number, values: Partial<Product>): Promise<void
     const [locked] = await tx.select({ repoUrl: products.repoUrl }).from(products).where(eq(products.id, id));
     const resetStats = values.repoUrl !== undefined && values.repoUrl !== locked.repoUrl
       ? { stars: null, starsAt: null, starsPrevious: null, starsPreviousAt: null, ownerType: null, starsCheckedAt: null,
-        repoStatus: null, repoCheckedAt: null, repoMissingSince: null } : {};
+        repoStatus: null, repoCheckedAt: null, repoMissingSince: null, repoArchived: null, repoPushedAt: null, repoRenamedTo: null, repoChangedAt: null } : {};
     // 소개를 고쳐 쓰면 그 소개는 쓴 사람의 것이다 — "AI가 요약" 표시를 뗀다
     const wroteTagline = values.tagline !== undefined && values.taglineSource === undefined ? { taglineSource: "maker" as const } : {};
     const [product] = await tx.update(products).set({ ...values, ...resetStats, ...wroteTagline, updatedAt: new Date() }).where(eq(products.id, id)).returning();
+    // 2단계 확인은 옛 저장소가 사라졌을 때의 것이다 — 새 저장소에는 맞지 않는다
+    if (Object.keys(resetStats).length) await tx.delete(productRepoReviews).where(eq(productRepoReviews.productId, id));
     if (values.repoUrl !== undefined) await syncRepositoryLink({ productId: product.id, slug: product.slug,
       repoUrl: product.repoUrl, declarationSource: "maker", mode: "explicit" }, tx);
   });

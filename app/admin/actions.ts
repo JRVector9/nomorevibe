@@ -8,6 +8,7 @@ import { resolveTakedown, resolveTakedowns, type TakedownAction } from "@/lib/do
 import { isDismissReason } from "@/lib/domain/products/takedown-view";
 import { banProduct, unbanProduct } from "@/lib/domain/products/manage";
 import { markClaimInvited } from "@/lib/domain/products/claim-invite";
+import { decideRepoReview } from "@/lib/domain/products/repo-reviews";
 import { logger } from "@/lib/observability/logger";
 import { recordAdminAction, recordAdminActions, type AdminLogEntry } from "@/lib/operations/admin-log";
 import { MAX_BULK_DECISIONS, parseSelection, type BulkReviewState } from "./review/contract";
@@ -314,6 +315,31 @@ export async function setProductBan(_prev: ReviewState, form: FormData): Promise
   if (!result.ok) return { error: "제품을 찾을 수 없습니다" };
 
   logger.info("admin.product_ban", { slug, action, login: admin.login });
+  revalidatePath("/admin/products");
+  return null;
+}
+
+/**
+ * 저장소가 사라진 웹사이트의 2단계 판정(product_repo_reviews)을 운영자가 정한다 — 유지 또는 내리기.
+ *
+ * 내리기는 위 차단과 같은 길이다(setStatusWithAudit 'admin.product.ban' — 행은 남고 되돌릴 수 있다). 결정은 같은
+ * 트랜잭션에 적는다. 한 번에 한 제품 — AI 판정은 사람이 하나씩 보고 정한다(감사 내리기와 같다).
+ */
+export async function decideRepoReviewAction(_prev: ReviewState, form: FormData): Promise<ReviewState> {
+  const admin = await currentAdmin();
+  if (!admin) return { error: "권한이 없습니다. 다시 로그인해주세요." };
+
+  const slugs = form.getAll("slug");
+  const decision = form.get("decision");
+  if (slugs.length !== 1 || !slugs[0] || (decision !== "keep" && decision !== "delist")) {
+    return { error: "한 번에 한 제품만 처리합니다. 새로고침해주세요." };
+  }
+  const slug = String(slugs[0]);
+  const result = await decideRepoReview({ slug, decision, by: admin.login });
+  await recordAdminAction(admin.login, { action: `repo-review-${decision}`, target: slug, ok: result.ok, error: result.ok ? null : result.error });
+  if (!result.ok) return { error: result.error };
+
+  logger.info("admin.repo_review_decided", { slug, decision, login: admin.login });
   revalidatePath("/admin/products");
   return null;
 }

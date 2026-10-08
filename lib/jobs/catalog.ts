@@ -49,6 +49,11 @@ export const JOB_CATALOG: readonly { name: string; role: JobRole | "scheduler"; 
    * 키워드 짓기와 같은 text 워커에 둔다. 게이트웨이를 쓰지 않아 심사와 다투지 않는다.
    */
   { name: "product-embedding", role: "text", intervalMs: 60_000 },
+  /**
+   * 저장소가 사라졌거나 빈 웹사이트를 다시 본다 — 페이지를 새로 열고 게이트웨이 Qwen3.8 에 한 번 묻는다(repo-review.ts).
+   * 게이트웨이 키가 있는 text 워커에서 5분마다 8건까지. 판정만 적고 아무것도 가리지 않는다
+   */
+  { name: "product-repo-review", role: "text", intervalMs: 5 * 60_000 },
   /** 소개 검수 — AI 소개와 쓸모없어 보이는 메이커 소개를 Sonnet 이 근거와 대조한다. 새로 발행된 것부터 */
   { name: "product-intro-check", role: "reviewer", intervalMs: 60_000 },
   /** Grok 로그인 확인 — 6시간 토큰이 심사가 뜸한 사이 만료되지 않게 4시간마다 가장 짧은 호출 한 번(grok-cli 설정이 있을 때만) */
@@ -83,7 +88,10 @@ export const JOB_CATALOG: readonly { name: string; role: JobRole | "scheduler"; 
   { name: "product-search-health", role: "maintenance", intervalMs: 15 * 60_000 },
   { name: "product-evidence-refresh", role: "crawler", intervalMs: 60_000 },
   { name: "agent-evidence-refresh", role: "crawler", intervalMs: 60_000 },
-  // 새 스타 값은 하루 한 번. 한 틱 40건·15초 이내로 기존 수집 예산을 보존한다.
+  /**
+   * 공개 제품의 GitHub 저장소를 하루 한 번 모두 본다(있음·없음·빈 저장소·막힘과 스타). GraphQL 100개씩 한 틱 4묶음까지,
+   * 새 묶음은 틱 14초 안에서만 연다 — 기본 예산 25초 안에 끝나 수집 예산을 크게 늘리지 않는다(stars-refresh.ts).
+   */
   { name: "product-stars-refresh", role: "crawler", intervalMs: 5 * 60_000 },
   // Crawler already owns GitHub authentication; two recrawl-invalidated READMEs per tick.
   { name: "product-readme-refresh", role: "crawler", intervalMs: 5 * 60_000 },

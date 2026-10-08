@@ -84,12 +84,12 @@ it("확인 기간은 어드민 설정(rising.freshDays)을 따른다 — 목록�
   expect(await visible()).toEqual({ slugs: [], count: 0, rank: null });
 });
 
-it("하루 평균 증가 순이다 — 간격이 긴 큰 합계보다 짧은 간격의 빠른 증가가 앞, 하루 미만 간격은 하루로 친다", async () => {
+it("하루 평균 증가 순이다 — 간격이 긴 큰 합계보다 짧은 간격의 빠른 증가가 앞, 20시간 미만 간격은 20시간으로 친다", async () => {
   // 운영 예: +249 / 3.2일(77.8/일) 이 +227 / 2.3일(98.7/일) 보다 앞에 있었다
   await seed("long-window", { stars: 1249, previous: 1000, previousAt: daysAgo(3.7), at: daysAgo(0.5) });
   await seed("short-window", { stars: 1227, previous: 1000, previousAt: daysAgo(2.8), at: daysAgo(0.5) });
-  // 반나절 사이 +90 — 하루로 쳐서 90/일. 180/일로 부풀면 맨 앞에 선다
-  await seed("half-day", { stars: 190, previous: 100, previousAt: daysAgo(1), at: daysAgo(0.5) });
+  // 반나절 사이 +80 — 20시간(STARS_BASELINE_HOURS)으로 쳐서 96/일. 160/일로 부풀면 맨 앞에 선다
+  await seed("half-day", { stars: 180, previous: 100, previousAt: daysAgo(1), at: daysAgo(0.5) });
 
   const rows = await listProducts({ statuses: ["seeded"], sort: "rising", rising: true, limit: 10 });
   expect(rows.map((row) => row.slug)).toEqual(["short-window", "half-day", "long-window"]);
