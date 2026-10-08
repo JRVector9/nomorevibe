@@ -1,7 +1,9 @@
-import { beforeAll, beforeEach, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, expect, it } from "vitest";
+import { clearAllMemos } from "@/lib/cache/memo";
+import { saveSettings } from "@/lib/crawl/settings";
 import { db } from "@/lib/db";
-import { products } from "@/lib/db/schema";
-import { countProducts, listProducts, RISING_FRESH_DAYS, RISING_MAX_STARS } from "@/lib/domain/products/repository";
+import { crawlSettings, products } from "@/lib/db/schema";
+import { countProducts, getRisingRank, listProducts, RISING_FRESH_DAYS, RISING_MAX_STARS } from "@/lib/domain/products/repository";
 import { ensureSchema, resetTables } from "./setup";
 
 /**
@@ -9,7 +11,15 @@ import { ensureSchema, resetTables } from "./setup";
  */
 
 beforeAll(() => ensureSchema());
-beforeEach(() => resetTables());
+// 확인 기간은 크롤 설정에서 읽는다 — 설정 행은 resetTables 가 비우지 않으므로 여기서 지운다
+beforeEach(async () => {
+  await resetTables();
+  await db.delete(crawlSettings);
+  clearAllMemos();
+});
+afterAll(async () => {
+  await db.delete(crawlSettings);
+});
 
 // 급상승은 마지막 확인이 RISING_FRESH_DAYS 안인 것만 보므로 시각은 지금에서 잰다
 const DAY = 86_400_000;
@@ -51,6 +61,27 @@ it("마지막 확인이 RISING_FRESH_DAYS 보다 오래된 제품은 목록에�
   const rows = await listProducts({ statuses: ["seeded"], sort: "rising", rising: true, limit: 10 });
   expect(rows.map((row) => row.slug)).toEqual(["fresh"]);
   expect(await countProducts({ statuses: ["seeded"], rising: true })).toBe(1);
+});
+
+it("확인 기간은 어드민 설정(rising.freshDays)을 따른다 — 목록·개수·상세 순위가 함께", async () => {
+  await seed("checked-4-days-ago", { stars: 110, previous: 100, previousAt: daysAgo(6), at: daysAgo(4) });
+  await seed("checked-8-days-ago", { stars: 900, previous: 100, previousAt: daysAgo(10), at: daysAgo(8) });
+  const visible = async () => ({
+    slugs: (await listProducts({ statuses: ["seeded"], sort: "rising", rising: true, limit: 10 })).map((row) => row.slug),
+    count: await countProducts({ statuses: ["seeded"], rising: true }),
+    rank: await getRisingRank("checked-8-days-ago"),
+  });
+
+  // 저장된 설정이 없으면 기본 7일
+  expect(await visible()).toEqual({ slugs: ["checked-4-days-ago"], count: 1, rank: null });
+
+  expect((await saveSettings({ rising: { freshDays: 10 } }, "test")).ok).toBe(true);
+  clearAllMemos();
+  expect(await visible()).toEqual({ slugs: ["checked-8-days-ago", "checked-4-days-ago"], count: 2, rank: 1 });
+
+  expect((await saveSettings({ rising: { freshDays: 3 } }, "test")).ok).toBe(true);
+  clearAllMemos();
+  expect(await visible()).toEqual({ slugs: [], count: 0, rank: null });
 });
 
 it("하루 평균 증가 순이다 — 간격이 긴 큰 합계보다 짧은 간격의 빠른 증가가 앞, 하루 미만 간격은 하루로 친다", async () => {

@@ -20,6 +20,11 @@ describe("저장 바의 바뀐 항목", () => {
     expect(describeChanges(before, { ...before, queryCount: "3", "query.1.label": "Codex" })).toEqual(["검색 신호 +1"]);
   });
 
+  it("공개 목록의 급상승 확인 기간도 적는다", () => {
+    expect(describeChanges({ ...before, risingFreshDays: "7" }, { ...before, risingFreshDays: "10" }))
+      .toEqual(["지금 뜨는 확인 기간(일) 7 → 10"]);
+  });
+
   it("바뀐 것이 없으면 비어 있다", () => {
     expect(describeChanges(before, { ...before })).toEqual([]);
   });

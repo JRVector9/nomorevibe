@@ -110,6 +110,8 @@ export async function saveCrawlSettings(_prev: SaveState, form: FormData): Promi
       enabled: form.get("agentEvidenceEnabled") === "on",
       enforceEligibility: form.get("agentEvidenceEnforce") === "on",
     },
+    // 공개 목록 칸은 2026-10-08 화면부터 있다 — 그 칸을 보내지 않은 폼은 저장된 기간을 건드리지 않는다
+    ...(form.has("risingFreshDays") ? { rising: { freshDays: num(form.get("risingFreshDays")) } } : {}),
   };
 
   const result = await saveSettings(patch, admin.login);

@@ -284,6 +284,9 @@ const defaultClassify = { definitions: DEFAULT_CATEGORY_DEFINITIONS };
 /** AI 소식. 새 글은 기본으로 곧바로 공개한다 — 관리자는 내릴 것만 고른다 */
 const defaultNews = { autoApprove: true, disabledSources: [] as string[] };
 
+/** 홈 '지금 뜨는 프로젝트'의 마지막 스타 확인 기간 — 코드 기본값은 RISING_FRESH_DAYS(lib/domain/products/repository.ts)와 같다 */
+const defaultRising = { freshDays: 7 };
+
 const defaultAgentEvidence = {
   enabled: false,
   enforceEligibility: false,
@@ -386,6 +389,16 @@ export const crawlSettingsSchema = z.object({
     /** 수집하지 않을 출처 key (lib/news/sources.ts) */
     disabledSources: z.array(z.string().regex(/^[a-z0-9-]{1,60}$/)).max(100),
   }).default(defaultNews),
+  /**
+   * 공개 목록의 '지금 뜨는 프로젝트'(급상승).
+   *
+   * 크롤 기준은 아니지만 배포 없이 바꿔야 하는 운영 값이라 같은 행에 둔다. 갱신 잡이 밀리는 정도(한 바퀴 2~3일)를
+   * 보며 조정한다 — 근거는 repository.ts RISING_FRESH_DAYS. 저장된 행에 없으면 기본값으로 읽는다.
+   */
+  rising: z.object({
+    /** 마지막 스타 확인이 이 일수보다 오래된 제품은 뺀다 */
+    freshDays: z.number().int().min(1).max(30),
+  }).strict().default(defaultRising),
 });
 
 export type CrawlSettings = z.infer<typeof crawlSettingsSchema>;
@@ -428,6 +441,7 @@ export const DEFAULT_CRAWL_SETTINGS: CrawlSettings = {
   reviewConcurrency: 2,
   agentEvidence: defaultAgentEvidence,
   news: defaultNews,
+  rising: defaultRising,
   secondReview: defaultSecondReview,
   classify: defaultClassify,
   discover: {

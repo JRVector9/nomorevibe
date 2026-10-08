@@ -37,6 +37,8 @@ import { lockProductRepository } from "./repository-identity";
 import { observedToolPredicate } from "./observed-tool";
 import { withJobLeaseWrite, type JobLease } from "@/lib/jobs/control";
 import { EMBEDDING_DOCUMENT, EMBEDDING_MODEL, vectorLiteral } from "./embedding";
+import { createMemo } from "@/lib/cache/memo";
+import { getSettings as getCrawlSettings } from "@/lib/crawl/settings";
 export { findRepositoryProduct } from "./repository-identity";
 
 /** 제품 데이터 접근 — 도메인 바깥에서 DB를 직접 만지지 않도록 여기로 모은다 */
@@ -75,7 +77,7 @@ export type ListOptions = {
   excludeDown?: boolean;
   /** 소개 검수가 근거로는 무엇인지 알 수 없다고 한 제품만(intro-checks.ts) — 어드민이 본다 */
   introNeedsEditor?: boolean;
-  /** 마지막 두 번 확인한 사이에 GitHub 스타가 는 제품만, 스타 RISING_MAX_STARS 미만·마지막 확인 RISING_FRESH_DAYS 안 — 홈 '추천'의 대체 목록 */
+  /** 마지막 두 번 확인한 사이에 GitHub 스타가 는 제품만, 스타 RISING_MAX_STARS 미만·마지막 확인 risingFreshDays() 안 — 홈 '추천'의 대체 목록 */
   rising?: boolean;
   /** 이 시각 이후에 등재된 것만(listedAt) — 홈 '이번 주 새로 나온' */
   listedSince?: Date;
@@ -129,10 +131,26 @@ export const RISING_MAX_STARS = 2000;
  * 4일로 두면 갱신 잡이 조금만 밀려도 멀쩡한 제품이 빠져, 한 바퀴의 두 배쯤인 7일로 둔다(2026-10-08 운영자 결정).
  * 잡은 하루 11,520개(5분마다 40개)가 한도라 한 바퀴는 공개 저장소 수에 비례한다 — 한 바퀴가 7일을 넘으면
  * 그만큼이 여기서 빠진다. 그때는 이 값이 아니라 갱신 예산을 늘린다.
+ *
+ * 운영 값은 어드민 크롤 설정(rising.freshDays, 1~30일)에서 정한다 — 이것은 그 기본값이다(settings-schema.ts 와 같다).
  */
 export const RISING_FRESH_DAYS = 7;
-const risingStars = sql`${starGain} > 0 and ${products.stars} < ${RISING_MAX_STARS}
-  and ${products.starsAt} > now() - ${sql.raw(`interval '${RISING_FRESH_DAYS} days'`)}`;
+
+/**
+ * 설정 한 행을 공개 읽기마다 읽지 않게 웹 프로세스 안에 60초 들고 있는다. 공개 목록은 그 위에 30초를 더 담으므로
+ * 어드민에서 바꾼 값은 길어야 1분 반쯤 뒤에 보인다(Cloudflare 사본은 따로 1~2분).
+ */
+const risingSettings = createMemo<number>({ ttlMs: 60_000, max: 1 });
+export function risingFreshDays(): Promise<number> {
+  return risingSettings.get("freshDays", async () => (await getCrawlSettings()).rising.freshDays);
+}
+
+function risingStars(freshDays: number) {
+  // 설정은 스키마가 정수 1~30으로 막지만, SQL 에는 다시 정수로 바꿔 매개변수로만 넘긴다
+  const days = Number.isSafeInteger(freshDays) && freshDays > 0 ? freshDays : RISING_FRESH_DAYS;
+  return sql`${starGain} > 0 and ${products.stars} < ${RISING_MAX_STARS}
+  and ${products.starsAt} > now() - make_interval(days => ${days}::int)`;
+}
 
 const SORTS = {
   /**
@@ -184,14 +202,14 @@ const introNeedsEditor = sql`exists (
   where c.product_id = ${products.id} and c.outcome = 'needs_editor' and c.checked_tagline = ${products.tagline}
 )`;
 
-/** 목록과 개수가 같은 조건을 쓰도록 한 곳에서 만든다 */
-function listConditions({ statuses, category, query, builder, observedTool, hasRepository, excludeDown, introNeedsEditor: needsEditor, rising, listedSince, minStars, slugs, excludeSlugs }: Omit<ListOptions, "limit" | "sort" | "offset">) {
+/** 목록과 개수가 같은 조건을 쓰도록 한 곳에서 만든다. 급상승 기간은 설정에서 읽으므로 비동기다 */
+async function listConditions({ statuses, category, query, builder, observedTool, hasRepository, excludeDown, introNeedsEditor: needsEditor, rising, listedSince, minStars, slugs, excludeSlugs }: Omit<ListOptions, "limit" | "sort" | "offset">) {
   const conditions = [inArray(products.status, statuses)];
   if (slugs) conditions.push(slugs.length ? inArray(products.slug, [...slugs]) : sql`false`);
   if (excludeSlugs?.length) conditions.push(notInArray(products.slug, [...excludeSlugs]));
   if (excludeDown) conditions.push(notDown);
   if (needsEditor) conditions.push(introNeedsEditor);
-  if (rising) conditions.push(risingStars);
+  if (rising) conditions.push(risingStars(await risingFreshDays()));
   if (listedSince) conditions.push(sql`${listedAt} >= ${listedSince.toISOString()}::timestamptz`);
   if (minStars !== undefined) conditions.push(sql`${products.stars} >= ${minStars}`);
   if (category) conditions.push(eq(products.category, category));
@@ -217,17 +235,17 @@ export const LIST_COLUMNS = {
 export type ProductListRow = Pick<Product, keyof typeof LIST_COLUMNS>;
 
 export async function listProducts(options: ListOptions): Promise<Product[]> {
-  return db.query.products.findMany(listQuery(options));
+  return db.query.products.findMany(await listQuery(options));
 }
 
 /** listProducts 와 같은 목록을 카드에 쓰는 열만으로 */
 export async function listProductRows(options: ListOptions): Promise<ProductListRow[]> {
-  return db.query.products.findMany({ ...listQuery(options), columns: LIST_COLUMNS });
+  return db.query.products.findMany({ ...(await listQuery(options)), columns: LIST_COLUMNS });
 }
 
 /** listProducts 와 같은 조건·순서의 주소만 — 관련도순 검색이 낱말 검색 순서를 섞을 때 */
 export async function listProductSlugs(options: ListOptions): Promise<string[]> {
-  const { where, orderBy, limit, offset } = listQuery(options);
+  const { where, orderBy, limit, offset } = await listQuery(options);
   const rows = await db.select({ slug: products.slug }).from(products).where(where).orderBy(...orderBy).limit(limit).offset(offset ?? 0);
   return rows.map((row) => row.slug);
 }
@@ -247,7 +265,7 @@ export async function nearestProductSlugs(
   const distance = sql`(${productEmbeddings.embedding} <=> ${vectorLiteral(vector)}::halfvec)`;
   const rows = await db.select({ slug: products.slug }).from(products)
     .innerJoin(productEmbeddings, and(eq(productEmbeddings.productId, products.id), eq(productEmbeddings.model, EMBEDDING_MODEL)))
-    .where(and(...listConditions(options), sql`${distance} <= ${1 - minSimilarity}`))
+    .where(and(...(await listConditions(options)), sql`${distance} <= ${1 - minSimilarity}`))
     .orderBy(distance, products.slug)
     .limit(limit);
   return rows.map((row) => row.slug);
@@ -260,8 +278,8 @@ export async function productDocuments(slugs: readonly string[]): Promise<Map<st
   return new Map(rows.map((row) => [row.slug, row.text]));
 }
 
-function listQuery({ sort = "recent", limit, offset, ...options }: ListOptions) {
-  const conditions = listConditions(options);
+async function listQuery({ sort = "recent", limit, offset, ...options }: ListOptions) {
+  const conditions = await listConditions(options);
   /**
    * 관련도순은 검색어가 있을 때만 있다 — 없으면 모든 행의 점수가 0이라 정렬이 아니다.
    * 그 아래는 최신순 그대로 둔다. ts_rank 는 같은 점수가 많이 나오고(무게가 네 단계뿐),
@@ -288,7 +306,7 @@ function listQuery({ sort = "recent", limit, offset, ...options }: ListOptions) 
  */
 export async function countProducts(options: Omit<ListOptions, "limit" | "sort" | "offset">): Promise<number> {
   const [row] = await db.select({ count: sql<number>`count(*)::int` })
-    .from(products).where(and(...listConditions(options)));
+    .from(products).where(and(...(await listConditions(options))));
   return row?.count ?? 0;
 }
 
@@ -360,7 +378,7 @@ export async function categoryCounts(
   const rows = await db
     .select({ category: products.category, count: sql<number>`count(*)::int` })
     .from(products)
-    .where(and(...listConditions(options)))
+    .where(and(...(await listConditions(options))))
     .groupBy(products.category);
   return Object.fromEntries(rows.map((r) => [r.category, r.count]));
 }
