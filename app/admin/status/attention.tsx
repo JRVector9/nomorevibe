@@ -455,7 +455,8 @@ export function actionCounts(items: ActionItem[]): Record<string, number> {
 /**
  * 메뉴의 "긴급 N건" 배지 — 운영센터와 같은 buildActions 로 센 critical 수.
  *
- * 레이아웃은 모든 관리자 화면 앞에 서므로 30초 들고 있고, 지난 값이 5분 안이면 기다리지 않고 그 값을 주며 뒤에서 다시 센다.
+ * 레이아웃은 모든 관리자 화면 앞에 서므로 화면을 기다리게 하지 않는다 — 30초 들고 있고, 그 뒤 5분 안이면 지난 값을 주며
+ * 뒤에서 다시 센다. 처음(프로세스가 막 떴을 때)이거나 5분 넘게 묵었으면 배지 없이 그리고 뒤에서 센다.
  * 운영센터가 그릴 때마다 rememberCriticalCount 로 이 값을 맞춘다 — 운영센터를 열어 둔 동안 배지와 화면의 수가 같다.
  * 세기에 실패하면 배지를 달지 않는다(null).
  */
@@ -480,5 +481,5 @@ export async function criticalActionCount(): Promise<number | null> {
     await recordAttentionSample(actionCounts(items)).catch(warn("operations.attention_sample_failed"));
     return count;
   })().catch(warn("operations.critical_count_failed")).finally(() => { counting = null; });
-  return critical && age < CRITICAL_STALE_MS ? critical.count : counting;
+  return critical && age < CRITICAL_STALE_MS ? critical.count : null;
 }
