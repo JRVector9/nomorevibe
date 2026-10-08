@@ -213,8 +213,8 @@ const UNKNOWN_SKIP_DETAIL = "GitHub 저장소를 수집하지 못했습니다(�
  * 원본을 다시 받을 수 없게 된 후보를 사람에게 넘긴다.
  *
  * 판정 전(new·reconsiderAfter)은 수집이 끝내 실패하면 넘긴다 — 저장소가 없으면(skipped) repo_deleted, 그 밖의
- * 실패는 source_refresh_failed. 승인 대기·재시도 보류 후보도 저장소가 사라지면(마지막 원본 뒤에 skipped) repo_deleted 로
- * 넘긴다. 2026-10-08 운영에서 63건이 이렇게 갇혀 있었다 — 1차 심사는 신선한 원본이 없어 집지 않고, 원본 재수집은
+ * 실패는 source_refresh_failed. 승인 대기·재시도 보류 후보도 저장소가 사라지면(마지막 원본 뒤에 skipped) repo_deleted 로,
+ * 재수집이 시도를 다 쓰고 실패하면(마지막 원본 뒤에 failed) source_refresh_failed 로 넘긴다. 2026-10-08 운영에서 63건이 이렇게 갇혀 있었다 — 1차 심사는 신선한 원본이 없어 집지 않고, 원본 재수집은
  * 매일 404 로 끝나 사람 대기열에도 오지 않았다. 이름이 바뀐 저장소(alias_of)는 따라가므로 넘기지 않는다.
  */
 export async function handOffFailedSourceRefreshes(lease: JobLease, limit = 20): Promise<number> {
@@ -248,15 +248,17 @@ export async function handOffFailedSourceRefreshes(lease: JobLease, limit = 20):
       }).where(eq(crawlCandidates.id, candidate.id));
       handedOff++;
     }
-    // 승인 대기·재시도 보류 — 마지막 원본보다 뒤에 저장소가 404 이거나 비어 있었다. 까닭이 기록되지 않은 옛 skipped 는
-    // 기다린다 — 원본 재수집이 하루 안에 다시 받아 까닭을 남긴다
+    // 승인 대기·재시도 보류 — 마지막 원본보다 뒤에 저장소가 404 이거나 비어 있었거나, 재수집이 시도를 다 쓰고 실패했다.
+    // 까닭이 기록되지 않은 옛 skipped 는 기다린다 — 원본 재수집이 하루 안에 다시 받아 까닭을 남긴다.
+    // 실패(failed)를 넘기지 않던 때는 원본 재수집이 하루마다 다시 실패하는 후보가 승인 상태에 갇혔다 — 2026-10-08 운영에서
+    // 커밋 메시지가 65KB 인 레포가 흔적 확인에서 매번 invalid_response 로 끝나 10-05 부터 심사도 사람 대기열도 아닌 곳에 있었다.
     const parked = handedOff >= cap ? [] : await tx.select().from(crawlCandidates).where(and(
       eq(crawlCandidates.decidedBy, "auto"),
       or(eq(crawlCandidates.state, "approved"),
         and(eq(crawlCandidates.state, "needs_review"), inArray(crawlCandidates.reason, [...REVIEW_RETRIABLE_REASONS]))),
       sql`EXISTS (SELECT 1 FROM ${crawlFrontier} gone JOIN ${crawlDocuments} doc ON doc.repo = gone.repo
-        WHERE gone.repo = ${crawlCandidates.repo} AND gone.state = 'skipped' AND gone.alias_of IS NULL
-          AND gone.last_error IN (${SKIP_NOT_FOUND}, ${SKIP_EMPTY_REPOSITORY}) AND gone.updated_at > doc.fetched_at)`,
+        WHERE gone.repo = ${crawlCandidates.repo} AND gone.alias_of IS NULL AND gone.updated_at > doc.fetched_at
+          AND (gone.state = 'failed' OR (gone.state = 'skipped' AND gone.last_error IN (${SKIP_NOT_FOUND}, ${SKIP_EMPTY_REPOSITORY}))))`,
     )).orderBy(asc(crawlCandidates.updatedAt), asc(crawlCandidates.id))
       .limit(cap - handedOff).for("update", { skipLocked: true });
     for (const candidate of parked) {
@@ -264,13 +266,15 @@ export async function handOffFailedSourceRefreshes(lease: JobLease, limit = 20):
         .where(eq(crawlDocuments.repo, candidate.repo)).for("share");
       const [frontier] = await tx.select().from(crawlFrontier)
         .where(eq(crawlFrontier.repo, candidate.repo)).for("update");
-      if (!document || !frontier || frontier.aliasOf || frontier.state !== "skipped"
+      if (!document || !frontier || frontier.aliasOf || !["skipped", "failed"].includes(frontier.state)
         || frontier.updatedAt.getTime() <= document.fetchedAt.getTime()) continue;
-      const gone = frontier.lastError === SKIP_NOT_FOUND;
-      if (!gone && frontier.lastError !== SKIP_EMPTY_REPOSITORY) continue;
+      const failed = frontier.state === "failed";
+      const gone = !failed && frontier.lastError === SKIP_NOT_FOUND;
+      if (!failed && !gone && frontier.lastError !== SKIP_EMPTY_REPOSITORY) continue;
+      const detail = failed ? `GitHub 원본 재수집 실패: ${(frontier.lastError ?? "원인 미상").slice(0, 220)}` : gone ? GONE_DETAIL : EMPTY_DETAIL;
       await tx.update(crawlCandidates).set({
         state: "needs_review", reason: gone ? "repo_deleted" : "source_refresh_failed", updatedAt: sql`clock_timestamp()`,
-        signals: { ...candidate.signals, stoppedAt: { rule: "원본 재수집", detail: gone ? GONE_DETAIL : EMPTY_DETAIL } },
+        signals: { ...candidate.signals, stoppedAt: { rule: "원본 재수집", detail } },
       }).where(eq(crawlCandidates.id, candidate.id));
       handedOff++;
     }

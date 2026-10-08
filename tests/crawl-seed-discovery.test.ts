@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { beforeEach, expect, it, vi } from 'vitest';
 import { DEFAULT_CRAWL_SETTINGS, type CrawlSettings } from '@/lib/crawl/settings-schema';
 import { seedFrontier, type SeedCursor } from '@/lib/crawl/jobs/seed';
@@ -109,4 +110,44 @@ it('따라잡으면 검색을 쓰지 않고 기다린다', async () => {
   cursor = {...outcome.cursor!, retryAt:undefined};
   for (let tick = 0; tick < 3; tick++) cursor = (await seedFrontier(context({...cursor, retryAt:undefined}))).cursor ?? cursor;
   expect(mocks.search.mock.calls.length).toBe(before);
+});
+
+it('검색과 무관한 칸(우선순위·흔적 요구·builder)만 고치면 주기를 처음부터 다시 돌지 않는다', async () => {
+  mocks.settings!.discover.queries = [signal(0), signal(1)];
+  mocks.search.mockResolvedValue(saturating);
+  const first = await seedFrontier(context());
+  const parked = first.cursor!.states!['신호0'];
+
+  // 2026-10-02: 신호에 requireEvidence 를 켠 저장 한 번에 주기가 재시작돼 발견이 1~2시간 멈췄다
+  mocks.settings!.discover.queries = [{...signal(0), priority:7, requireEvidence:true, builder:'Claude'}, signal(1)];
+  const second = await seedFrontier(context(first.cursor!));
+  expect(second.cursor?.signal).toBe('신호0');
+  expect(second.cursor?.window).toEqual(parked.window);
+  expect(second.cursor?.cycleWindow).toEqual(first.cursor!.cycleWindow);
+});
+
+it('배포 전 해시를 든 커서도 설정이 그대로면 이어 간다', async () => {
+  mocks.settings!.discover.queries = [signal(0), signal(1)];
+  mocks.search.mockResolvedValue(saturating);
+  const first = await seedFrontier(context());
+  const { queries, sort, windowDays } = mocks.settings!.discover;
+  const legacy = createHash('sha256').update(JSON.stringify({queries,sort,windowDays})).digest('hex');
+  const second = await seedFrontier(context({...first.cursor!, configHash:legacy}));
+  expect(second.cursor?.signal).toBe('신호0');
+  expect(second.cursor?.window).toEqual(first.cursor!.states!['신호0'].window);
+  expect(second.cursor?.configHash).toBe(first.cursor!.configHash);
+});
+
+it('검색어를 고치면 여전히 처음부터 다시 돈다', async () => {
+  mocks.settings!.discover.queries = [signal(0), signal(1)];
+  mocks.search.mockResolvedValue(saturating);
+  const first = await seedFrontier(context());
+  mocks.settings!.discover.queries = [signal(0), {...signal(1), query:'q1 changed'}];
+  mocks.search.mockClear();
+  const parked = first.cursor!.states!['신호0'].window;
+  await seedFrontier(context(first.cursor!));
+  // 보관해 둔 반쪽 창이 아니라 새 주기의 첫 신호·첫 페이지부터
+  expect(mocks.search.mock.calls[0][0].query.startsWith('q0 ')).toBe(true);
+  expect(mocks.search.mock.calls[0][0].query).not.toContain(`${parked.from}..${parked.to}`);
+  expect(mocks.search.mock.calls[0][0].page).toBe(1);
 });
