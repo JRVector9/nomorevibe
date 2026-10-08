@@ -1,7 +1,10 @@
 "use client";
 
-import { useActionState, useEffect, useMemo, useRef, useState } from "react";
+import { startTransition, useActionState, useEffect, useMemo, useRef, useState } from "react";
 import { resolveTakedownRequest, resolveTakedownRequests, type BulkTakedownState, type ReviewState } from "../actions";
+import { ConfirmAction } from "../components/ConfirmAction";
+import { ScrollTable } from "../components/ScrollTable";
+import { resultError, useAdminToast } from "../components/Toast";
 import {
   DISMISS_REASONS, formatWait, groupTakedowns, senderLabel, waitTone,
   type GroupMode, type TakedownEntry,
@@ -40,6 +43,7 @@ export function TakedownQueue({ entries }: { entries: TakedownEntry[] }) {
   const [confirm, setConfirm] = useState<string[] | null>(null);
   const [bulk, bulkAction, bulkPending] = useActionState<BulkTakedownState, FormData>(resolveTakedownRequests, null);
   const detailRef = useRef<{ confirmRemove: () => void; focusDismiss: () => void } | null>(null);
+  const bulkFormRef = useRef<HTMLFormElement>(null);
 
   const visible = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -95,8 +99,8 @@ export function TakedownQueue({ entries }: { entries: TakedownEntry[] }) {
           <input type="search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="이름·주소·사유·계정" aria-label="검색" className="td-field td-grow" />
         </div>
 
-        <form action={(form) => { bulkAction(form); setConfirm(null); setSelected(new Set()); }} className="td-bulk" aria-label="고른 요청 처리">
-          {(confirm ?? picked).map((slug) => <input key={slug} type="hidden" name="selected" value={slug} />)}
+        <form ref={bulkFormRef} action={(form) => { bulkAction(form); setSelected(new Set()); }} className="td-bulk" aria-label="고른 요청 처리">
+          {picked.map((slug) => <input key={slug} type="hidden" name="selected" value={slug} />)}
           <b>선택 {n(picked.length)}건</b>
           <button type="button" className="td-btn td-danger" disabled={picked.length === 0 || bulkPending} onClick={() => setConfirm(picked)}>선택 내린다</button>
           <select name="dismissReason" aria-label="두는 이유" className="td-field" defaultValue="test_spam">
@@ -104,24 +108,26 @@ export function TakedownQueue({ entries }: { entries: TakedownEntry[] }) {
           </select>
           <button type="submit" name="action" value="dismiss" className="td-btn" disabled={picked.length === 0 || bulkPending}>선택 둔다</button>
           <span className="td-note td-push">{bulkPending ? "처리 중…" : "내리기는 이름을 한 번 훑는 확인을 거칩니다"}</span>
-          {confirm && (
-            <div className="td-confirm" role="dialog" aria-label="내리기 확인">
-              <h3>{n(confirm.length)}건을 내립니다 — 이름을 한 번 훑어 주세요</h3>
-              <div className="td-names">{names(confirm).map((name, i) => <span key={`${name}-${i}`} className="td-tag">{name}</span>)}</div>
-              <ul>{REMOVE_EFFECTS.map((line) => <li key={line}>{line}</li>)}</ul>
-              <div className="td-row">
-                <button type="submit" name="action" value="remove" className="td-btn td-solid">{n(confirm.length)}건 내리기</button>
-                <button type="button" className="td-btn" onClick={() => setConfirm(null)}>취소</button>
-              </div>
-            </div>
-          )}
         </form>
+        {/* 고른 것·묶음 전체 내리기 — 이름을 한 번 훑는 확인. 결과는 아래 줄(bulk)에 뜬다 */}
+        <ConfirmAction open={confirm !== null} onOpenChange={(open) => { if (!open) setConfirm(null); }}
+          title={`${n(confirm?.length ?? 0)}건을 내립니다 — 이름을 한 번 훑어 주세요`} targets={names(confirm ?? [])}
+          summary={<RemoveEffects />} confirmLabel={`${n(confirm?.length ?? 0)}건 내리기`}
+          onConfirm={() => {
+            // 전에 form 이 보내던 것과 같은 값 — 두는 이유 칸까지 실어 보낸다
+            const form = new FormData(bulkFormRef.current ?? undefined);
+            form.delete("selected");
+            for (const slug of confirm ?? []) form.append("selected", slug);
+            form.set("action", "remove");
+            startTransition(() => bulkAction(form));
+            setSelected(new Set());
+          }} />
         <div aria-live="polite">
           {bulk?.error && <p className="td-msg text-down">{bulk.error}</p>}
           {typeof bulk?.done === "number" && <p className="td-msg"><b className="text-up">{n(bulk.done)}건 처리했습니다.</b>{bulk.failed?.length ? ` ${bulk.failed.length}건은 처리하지 못했습니다 — 이미 처리됐거나 제품이 없습니다.` : ""}</p>}
         </div>
 
-        <div className="overflow-x-auto">
+        <ScrollTable label="요청 목록 표">
           <table className="td-table">
             <colgroup><col className="w-[34px]" /><col className="w-[28%]" /><col /><col className="w-[96px]" /><col className="w-[90px]" /><col className="w-[60px]" /><col className="w-[64px]" /></colgroup>
             <thead><tr>
@@ -139,7 +145,7 @@ export function TakedownQueue({ entries }: { entries: TakedownEntry[] }) {
               ))}
             </tbody>
           </table>
-        </div>
+        </ScrollTable>
         <p className="td-foot">{n(order.length)}건 보임 · J/K 이동 · Space 선택 · X 내리기 확인 · D 둘 이유 고르기 · 줄을 누르면 오른쪽에 사유와 이력</p>
       </section>
 
@@ -190,11 +196,17 @@ function GroupRows({ title, detail, together, mode, entries, selected, current, 
   );
 }
 
+function RemoveEffects() {
+  return <ul>{REMOVE_EFFECTS.map((line) => <li key={line}>{line}</li>)}</ul>;
+}
+
 /** 고른 한 건 — 사유·계정·보낸이·이력을 보고 내리거나 둔다. 내리기는 확인을 한 번 더 */
 function TakedownDetail({ entry, handleRef }: { entry: TakedownEntry; handleRef: React.RefObject<{ confirmRemove: () => void; focusDismiss: () => void } | null> }) {
   const [state, action, pending] = useActionState<ReviewState, FormData>(resolveTakedownRequest, null);
   const [confirming, setConfirming] = useState(false);
   const dismissRef = useRef<HTMLSelectElement>(null);
+  const formRef = useRef<HTMLFormElement>(null);
+  const toast = useAdminToast();
   useEffect(() => {
     handleRef.current = { confirmRemove: () => entry.product && setConfirming(true), focusDismiss: () => dismissRef.current?.focus() };
     return () => { handleRef.current = null; };
@@ -224,28 +236,27 @@ function TakedownDetail({ entry, handleRef }: { entry: TakedownEntry; handleRef:
         <dt>같은 계정</dt><dd>{entry.owner ? <><b>{entry.owner}</b> · 공개 {n(entry.ownerPublic)}개 · 대기 요청 {n(entry.ownerPending)}건</> : "GitHub 저장소 없음"}</dd>
         <dt>같은 보낸이</dt><dd>{entry.requesterHash ? `${senderLabel(entry.requesterHash)} · 대기 요청 ${n(entry.senderPending)}건` : "주소를 모름 — 묶을 수 없습니다"}</dd>
       </dl>
-      <form action={action} className="td-decide">
+      <form ref={formRef} action={action} className="td-decide">
         <input type="hidden" name="slug" value={entry.slug} />
         <label><b>메모</b> <span className="text-fg-3">(선택 — 처리 기록에 남음)</span>
           <textarea name="note" maxLength={1000} rows={2} placeholder="예: 본인 요청 · 계정 전체 내림" /></label>
-        {confirming ? (
-          <div className="td-confirm" role="dialog" aria-label="내리기 확인">
-            <h3>&ldquo;{product?.name}&rdquo;을 내립니다</h3>
-            <ul>{REMOVE_EFFECTS.map((line) => <li key={line}>{line}</li>)}</ul>
-            <div className="td-row">
-              <button type="submit" name="action" value="remove" disabled={pending} className="td-btn td-solid">내리기</button>
-              <button type="button" className="td-btn" onClick={() => setConfirming(false)}>취소</button>
-            </div>
-          </div>
-        ) : (
-          <div className="td-row">
-            <button type="button" className="td-btn td-danger" disabled={!product || pending} onClick={() => setConfirming(true)}>내린다</button>
-            <select ref={dismissRef} name="dismissReason" aria-label="두는 이유" className="td-field" defaultValue="test_spam">
-              {Object.entries(DISMISS_REASONS).map(([value, label]) => <option key={value} value={value}>둔다 — {label}</option>)}
-            </select>
-            <button type="submit" name="action" value="dismiss" disabled={pending} className="td-btn">둔다</button>
-          </div>
-        )}
+        <div className="td-row">
+          <button type="button" className="td-btn td-danger" disabled={!product || pending} onClick={() => setConfirming(true)}>내린다</button>
+          <select ref={dismissRef} name="dismissReason" aria-label="두는 이유" className="td-field" defaultValue="test_spam">
+            {Object.entries(DISMISS_REASONS).map(([value, label]) => <option key={value} value={value}>둔다 — {label}</option>)}
+          </select>
+          <button type="submit" name="action" value="dismiss" disabled={pending} className="td-btn">둔다</button>
+        </div>
+        {/* 한 건 내리기 — 메모까지 이 form 의 값을 그대로 보낸다. 처리하는 동안 창이 "처리 중…"으로 기다리고, 실패하면 창에 사유가 뜬다 */}
+        <ConfirmAction open={confirming} onOpenChange={setConfirming} title={`“${product?.name}”을 내립니다`}
+          summary={<RemoveEffects />} confirmLabel="내리기"
+          onConfirm={async () => {
+            const form = new FormData(formRef.current ?? undefined);
+            form.set("action", "remove");
+            const result = await resolveTakedownRequest(null, form);
+            if (!resultError(result)) toast.show({ message: `내림 · ${product?.name ?? entry.slug}`, link: { label: "기록 보기", href: "/admin/activity" } });
+            return result;
+          }} />
         {state?.error && <p role="status" className="text-down">{state.error}</p>}
       </form>
       {entry.owner && entry.ownerPublic > entry.ownerPending && (

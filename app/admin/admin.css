@@ -1,28 +1,142 @@
 /* Scope to mounted admin layouts: public navigation returns on client navigation home. */
 body:has(.admin-area) > .nmb-header,
 body:has(.admin-area) > .nmb-footer,
+body:has(.admin-area) > .skip,
 body:has(.admin-login-area) > .nmb-header,
 body:has(.admin-login-area) > .nmb-footer { display: none; }
+
+/*
+ * 관리자 색 토큰(2026-10-08 UX 감사 ADM-14·25).
+ *
+ * 공개 사이트의 accent 는 브랜드 빨강이라 "선택됨·기본 버튼·포커스"와 "오류·위험"이 같은 색이었다. 관리자 범위에서만
+ * accent 를 중립 파랑으로 바꾸고, 빨강(--color-danger = --down)은 실패·파괴적 행동에만 쓴다.
+ * 토큰을 body 에 두는 까닭: body 배경도 같은 값을 따라 캔버스 끝(스크롤 넘침)까지 어두워진다.
+ * --color-* 를 여기서 다시 잇는 까닭: Tailwind 가 :root 에서 --color-accent: var(--accent) 를 이미 풀어 두므로
+ * --accent 만 바꾸면 var(--color-accent) 를 쓰는 CSS 는 여전히 빨강을 본다.
+ *
+ * 화면이 쓸 이름 — accent(선택·기본 버튼·포커스·링크), danger(실패·파괴), warn(사람이 볼 것·지연), ok(정상),
+ * neutral / neutral-soft(중립 배지 글자·바탕), brand(로고 점만).
+ */
+body:has(.admin-area) {
+  --accent: #2457c5;
+  --accent-ink: #2457c5;
+  --accent-solid: #2457c5;
+  --accent-soft: rgba(36, 87, 197, 0.1);
+  --brand: #d63a40;
+
+  --color-bg: var(--bg);
+  --color-bg-soft: var(--bg-soft);
+  --color-bg-card: var(--bg-card);
+  --color-bg-hover: var(--bg-hover);
+  --color-line: var(--border);
+  --color-fg: var(--text);
+  --color-fg-2: var(--text-2);
+  --color-fg-3: var(--text-3);
+  --color-up: var(--up);
+  --color-down: var(--down);
+  --color-warn: var(--warn);
+  --color-accent: var(--accent);
+  --color-accent-ink: var(--accent-ink);
+  --color-accent-solid: var(--accent-solid);
+  --color-accent-soft: var(--accent-soft);
+  --color-danger: var(--down);
+  --color-ok: var(--up);
+  --color-neutral: var(--text-2);
+  --color-neutral-soft: var(--bg-hover);
+  --color-brand: var(--brand);
+}
+
+/* 다크 — 사이드바 아래 토글이 html 에 data-admin-theme 을 단다. 없으면(시스템) 기기 설정을 따른다 */
+html[data-admin-theme="dark"] body:has(.admin-area) {
+  color-scheme: dark;
+  --bg: #0d1117;
+  --bg-soft: #131926;
+  --bg-card: #161d2e;
+  --bg-hover: #1c2438;
+  --border: #232c42;
+  --text: #f0f3fa;
+  --text-2: #98a2b8;
+  --text-3: #8a94a8;
+  --up: #16c784;
+  --down: #ef4d56;
+  --warn: #e0a33c;
+  --accent: #7aa7ff;
+  --accent-ink: #7aa7ff;
+  --accent-solid: #3b6fe0;
+  --accent-soft: rgba(122, 167, 255, 0.16);
+  --brand: #ff6b70;
+  --star: #f6b73c;
+}
+@media (prefers-color-scheme: dark) {
+  html:not([data-admin-theme="light"]) body:has(.admin-area) {
+    color-scheme: dark;
+    --bg: #0d1117;
+    --bg-soft: #131926;
+    --bg-card: #161d2e;
+    --bg-hover: #1c2438;
+    --border: #232c42;
+    --text: #f0f3fa;
+    --text-2: #98a2b8;
+    --text-3: #8a94a8;
+    --up: #16c784;
+    --down: #ef4d56;
+    --warn: #e0a33c;
+    --accent: #7aa7ff;
+    --accent-ink: #7aa7ff;
+    --accent-solid: #3b6fe0;
+    --accent-soft: rgba(122, 167, 255, 0.16);
+    --brand: #ff6b70;
+    --star: #f6b73c;
+  }
+}
+
 .admin-area{display:grid;grid-template-columns:200px minmax(0,1fr);min-height:100vh;background:var(--color-bg)}
-.admin-sidebar{position:sticky;top:0;align-self:start;height:100dvh;overflow-y:auto;border-right:1px solid var(--color-line);background:var(--color-bg-card);padding:18px 12px;}
+/* 보이지 않지만 읽히는 글자 — 접힌 메뉴 이름, 배지 설명 */
+.admin-vh{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0}
+/* 본문으로 건너뛰기(ADM-31) — 공개 레이아웃의 .skip 은 #main(사이드바 포함)으로 가므로 관리자에서는 숨긴다 */
+.admin-skip{position:fixed;left:12px;top:-80px;z-index:1000;border-radius:8px;padding:10px 14px;background:var(--color-fg);color:var(--color-bg);font-size:14px;font-weight:650}
+.admin-skip:focus{top:12px}
+.admin-sidebar{position:sticky;top:0;align-self:start;height:100dvh;overflow-y:auto;border-right:1px solid var(--color-line);background:var(--color-bg-card);padding:18px 12px;display:flex;flex-direction:column}
 .admin-brand{display:block;font-size:21px;font-weight:850;letter-spacing:-.8px;padding:0 12px;color:var(--color-fg)}
-.admin-brand span{color:var(--color-accent)}
+.admin-brand-full>span,.admin-brand-short>span{color:var(--color-brand)}
+.admin-brand-full{display:block}
 .admin-brand small{display:block;font-size:10px;letter-spacing:.15em;color:var(--color-fg-3);margin-top:6px;font-weight:650}
-.admin-navigation{display:flex;flex-direction:column;gap:2px;margin-top:18px}
-.admin-navigation a{display:flex;flex-direction:column;gap:0;padding:6px 10px;border-radius:8px;color:var(--color-fg-2);font-size:14px;font-weight:650}
+.admin-brand-short{display:none}
+.admin-sidebar-menu{display:flex;flex-direction:column;flex:1}
+.admin-navigation{display:flex;flex-direction:column;gap:14px;margin-top:18px}
+.admin-nav-group{display:flex;flex-direction:column;gap:2px}
+.admin-nav-group-title{padding:0 10px 2px;font-size:11px;font-weight:700;letter-spacing:.08em;color:var(--color-fg-3)}
+.admin-nav-group ul{display:flex;flex-direction:column;gap:2px}
+.admin-navigation a{position:relative;display:flex;align-items:flex-start;gap:8px;padding:6px 10px;border-radius:8px;color:var(--color-fg-2);font-size:14px;font-weight:650}
+.admin-navigation a svg{flex:none;margin-top:2px}
+.admin-nav-text{display:flex;flex-direction:column;min-width:0}
+.admin-navigation .admin-nav-badge{margin-left:auto}
 .admin-navigation small{font-size:11px;font-weight:400;color:var(--color-fg-3)}
 .admin-navigation a:hover{background:var(--color-bg-soft)}
-.admin-navigation a[aria-current=page]{color:var(--color-accent);background:color-mix(in srgb,var(--color-accent) 9%,transparent)}
-/* 메뉴 배지 — 기다리는 요청 수. 주황: 24시간 안, 빨강: 24시간 넘은 것이 있음 */
-.admin-nav-badge{display:inline-block;margin-left:6px;border-radius:999px;padding:0 7px;font-size:13px;font-weight:700;line-height:19px;font-family:var(--font-mono);vertical-align:1px;background:color-mix(in srgb,var(--color-warn) 14%,transparent);color:var(--color-warn)}
-.admin-nav-badge[data-tone=bad]{background:var(--color-down);color:#fff}
-.admin-sidebar-bottom{margin:16px 10px 0;padding-top:14px;border-top:1px solid var(--color-line);font-size:12px;color:var(--color-fg-2)}
-.admin-sidebar-bottom p{font-size:11px;margin-top:12px;line-height:1.7;color:var(--color-fg-3)}
+.admin-navigation a[aria-current=page]{color:var(--color-accent);background:var(--color-accent-soft)}
+/* 메뉴 배지 — critical(빨강): 지금 막힘·약속 넘김, warn(주황): 사람이 볼 것, neutral(회색): 참고 수 */
+.admin-nav-badge{display:inline-block;flex:none;white-space:nowrap;margin-left:6px;border-radius:999px;padding:0 7px;font-size:13px;font-weight:700;line-height:19px;font-family:var(--font-mono);vertical-align:1px;background:color-mix(in srgb,var(--color-warn) 14%,transparent);color:var(--color-warn)}
+.admin-nav-badge[data-tone=critical],.admin-nav-badge[data-tone=bad]{background:var(--color-danger);color:#fff}
+.admin-nav-badge[data-tone=neutral]{background:var(--color-neutral-soft);color:var(--color-neutral)}
+.admin-sidebar-bottom{display:grid;gap:12px;margin:16px 10px 0;padding-top:14px;border-top:1px solid var(--color-line);font-size:12px;color:var(--color-fg-2)}
+.admin-sidebar-bottom p{font-size:11px;line-height:1.7;color:var(--color-fg-3)}
+.admin-account{display:flex;align-items:center;justify-content:space-between;gap:8px;min-width:0}
+.admin-account span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--font-mono)}
+.admin-sidebar-button{display:inline-flex;align-items:center;gap:6px;border-radius:6px;padding:4px 6px;font-size:12px;font-weight:650;color:var(--color-fg-2)}
+.admin-sidebar-button:hover{background:var(--color-bg-soft);color:var(--color-fg)}
+/* 테마 토글 — 라이트/다크/시스템 */
+.admin-theme{display:flex;border:1px solid var(--color-line);border-radius:8px;padding:2px;gap:2px}
+.admin-theme button{flex:1;display:inline-flex;align-items:center;justify-content:center;gap:3px;border-radius:6px;padding:4px 2px;font-size:12px;white-space:nowrap;color:var(--color-fg-3)}
+.admin-theme button[aria-pressed=true]{background:var(--color-accent-soft);color:var(--color-accent);font-weight:650}
 .admin-content{overflow-wrap:anywhere;min-width:0;padding:0 24px 20px;width:100%;max-width:1520px;margin:0 auto}
+.admin-content:focus{outline:none}
 .admin-content>main{width:100%;max-width:none;margin:0;padding-left:0;padding-right:0}
 .admin-content h1{letter-spacing:-.7px}
-.admin-menu-toggle{display:none}
+.admin-menu-toggle,.admin-rail-toggle{display:none}
 .admin-area a:focus-visible,.admin-area button:focus-visible{outline:3px solid var(--color-accent);outline-offset:3px}
+/* 넓은 표의 가로 스크롤 — ScrollTable(components/ScrollTable.tsx)이 쓴다 */
+.admin-table-scroll{max-width:100%;overflow-x:auto;overscroll-behavior-x:contain}
+.admin-table-scroll:focus-visible{outline:3px solid var(--color-accent);outline-offset:2px}
 .admin-worker-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
 .admin-worker{border:1px solid var(--color-line);background:var(--color-bg-card);border-radius:12px;padding:20px;min-width:0}
 .admin-worker h2{font-size:17px;font-weight:750}
@@ -37,8 +151,78 @@ body:has(.admin-login-area) > .nmb-footer { display: none; }
 .admin-job-detail dl{margin:10px 0;font-size:12px}
 .admin-job-detail pre{white-space:pre-wrap;overflow-wrap:anywhere;max-height:200px;overflow:auto;font-size:11px}
 .admin-refresh{border:1px solid var(--color-line);padding:9px 14px;border-radius:8px;min-height:44px;font-size:13px;cursor:pointer}
-@media(max-width:1150px){.admin-area{grid-template-columns:200px minmax(0,1fr)}.admin-content{padding:0 22px 24px}.admin-worker-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
-@media(max-width:760px){.admin-area{display:block}.admin-sidebar{height:auto;position:sticky;z-index:30;padding:14px 16px;border-right:0;border-bottom:1px solid var(--color-line);overflow:visible}.admin-brand-row{display:flex;align-items:center;justify-content:space-between;gap:16px}.admin-brand{padding:0;font-size:18px}.admin-menu-toggle{display:block;font-size:13px;padding:10px 12px;border:1px solid var(--color-line);border-radius:8px;min-height:44px}.admin-sidebar-menu{display:none}.admin-sidebar-menu.is-expanded{display:block;max-height:70dvh;overflow:auto}.admin-navigation{display:grid;grid-template-columns:1fr 1fr;margin-top:16px}.admin-sidebar-bottom{margin-top:14px}.admin-content{padding:0 16px 24px}.admin-worker-grid{grid-template-columns:1fr}.admin-login-area{min-height:100dvh}}
+@media(max-width:1150px){.admin-content{padding:0 22px 24px}.admin-worker-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+/*
+ * 접힌 메뉴(ADM-22) — 761~1279px 에서는 아이콘만 남긴다. 이름은 .admin-vh 처럼 읽히고 마우스에는 title 로 뜬다.
+ * "메뉴 이름 펼치기"를 누르면 data-rail=expanded 로 넓은 메뉴가 돌아온다.
+ */
+@media(min-width:761px) and (max-width:1279px){
+  .admin-rail-toggle{display:inline-flex;align-items:center;justify-content:center;gap:6px;margin:12px 0 0;border:1px solid var(--color-line);border-radius:8px;padding:6px;min-height:36px;font-size:12px;color:var(--color-fg-2)}
+  .admin-rail-toggle:hover{background:var(--color-bg-soft)}
+  .admin-area:not([data-rail=expanded]){grid-template-columns:64px minmax(0,1fr)}
+  .admin-area:not([data-rail=expanded]) .admin-sidebar{padding:18px 8px}
+  .admin-area:not([data-rail=expanded]) .admin-brand{padding:0;text-align:center;font-size:18px}
+  .admin-area:not([data-rail=expanded]) .admin-brand-full,
+  .admin-area:not([data-rail=expanded]) .admin-nav-text,
+  .admin-area:not([data-rail=expanded]) .admin-nav-group-title,
+  .admin-area:not([data-rail=expanded]) .admin-rail-label,
+  .admin-area:not([data-rail=expanded]) .admin-sidebar-label{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0}
+  .admin-area:not([data-rail=expanded]) .admin-brand-short{display:block}
+  .admin-area:not([data-rail=expanded]) .admin-nav-group+.admin-nav-group{border-top:1px solid var(--color-line);padding-top:12px}
+  .admin-area:not([data-rail=expanded]) .admin-navigation a{justify-content:center;padding:10px 0}
+  .admin-area:not([data-rail=expanded]) .admin-navigation a svg{margin-top:0}
+  .admin-area:not([data-rail=expanded]) .admin-nav-badge{position:absolute;top:2px;right:2px;margin:0;padding:0 4px;font-size:11px;line-height:15px}
+  .admin-area:not([data-rail=expanded]) .admin-sidebar-bottom{margin:16px 0 0;justify-items:center}
+  .admin-area:not([data-rail=expanded]) .admin-theme{flex-direction:column;border:0;padding:0}
+  .admin-area:not([data-rail=expanded]) .admin-theme button{padding:6px}
+  .admin-area:not([data-rail=expanded]) .admin-account{flex-direction:column}
+  .admin-area:not([data-rail=expanded]) .admin-sidebar-bottom p{display:none}
+}
+@media(max-width:760px){.admin-area{display:block}.admin-sidebar{height:auto;position:sticky;z-index:30;padding:14px 16px;border-right:0;border-bottom:1px solid var(--color-line);overflow:visible}.admin-brand-row{display:flex;align-items:center;justify-content:space-between;gap:16px}.admin-brand{padding:0;font-size:18px}.admin-menu-toggle{display:block;font-size:13px;padding:10px 12px;border:1px solid var(--color-line);border-radius:8px;min-height:44px}.admin-sidebar-menu{display:none}.admin-sidebar-menu.is-expanded{display:block;max-height:70dvh;overflow:auto}.admin-nav-group ul{display:grid;grid-template-columns:repeat(2,minmax(0,1fr))}.admin-navigation{margin-top:16px}.admin-sidebar-bottom{margin-top:14px}.admin-content{padding:0 16px 24px}.admin-worker-grid{grid-template-columns:1fr}.admin-login-area{min-height:100dvh}}
+
+/* 상태 점(StatusDot, ADM-31) — 색만이 아니라 모양과 글자로도 가른다: 정상 ●, 지연 ▲, 실패 ■, 대기 ○ */
+.admin-status{display:inline-flex;align-items:center;gap:5px;font-size:13px;font-weight:600;color:var(--color-fg-2);white-space:nowrap}
+.admin-status-mark{flex:none;width:9px;height:9px;border-radius:50%;background:var(--color-ok)}
+.admin-status[data-state=delayed]{color:var(--color-warn)}
+.admin-status[data-state=delayed] .admin-status-mark{width:10px;height:9px;border-radius:0;background:var(--color-warn);clip-path:polygon(50% 0,100% 100%,0 100%)}
+.admin-status[data-state=failed]{color:var(--color-danger)}
+.admin-status[data-state=failed] .admin-status-mark{border-radius:2px;background:var(--color-danger)}
+.admin-status[data-state=idle]{color:var(--color-fg-3)}
+.admin-status[data-state=idle] .admin-status-mark{background:transparent;border:2px solid var(--color-fg-3)}
+
+/* 확인 창(ConfirmAction, ADM-06) */
+.admin-confirm{width:min(560px,calc(100vw - 32px));max-height:min(80dvh,720px);margin:auto;border:1px solid var(--color-line);border-radius:14px;padding:0;background:var(--color-bg-card);color:var(--color-fg);box-shadow:0 20px 60px rgba(0,0,0,.25)}
+.admin-confirm[data-tone=danger]{border-color:color-mix(in srgb,var(--color-danger) 45%,var(--color-line))}
+.admin-confirm::backdrop{background:rgba(10,14,24,.45)}
+.admin-confirm-body{display:grid;gap:12px;padding:20px 22px;font-size:13px}
+.admin-confirm h2{font-size:16px;font-weight:750}
+.admin-confirm-count{color:var(--color-fg-3);font-weight:600}
+.admin-confirm-targets{display:flex;flex-wrap:wrap;gap:6px;max-height:160px;overflow:auto;padding:2px 0}
+.admin-confirm-targets li{border-radius:6px;padding:1px 6px;background:var(--color-bg-soft);font-weight:600}
+.admin-confirm label{display:grid;gap:4px;font-weight:650}
+.admin-confirm select,.admin-confirm textarea{border:1px solid var(--color-line);border-radius:8px;padding:6px 8px;background:var(--color-bg);color:var(--color-fg);font-weight:400}
+.admin-confirm-body ul:not(.admin-confirm-targets){display:grid;gap:2px;margin:0;padding-left:18px;list-style:disc;color:var(--color-fg-2)}
+.admin-confirm-error{color:var(--color-danger);font-weight:600}
+.admin-confirm-actions{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:8px}
+.admin-button{display:inline-flex;align-items:center;justify-content:center;gap:6px;min-height:36px;border:1px solid var(--color-line);border-radius:8px;padding:6px 14px;background:var(--color-bg-card);color:var(--color-fg-2);font-size:13px;font-weight:650;white-space:nowrap}
+.admin-button:hover{color:var(--color-fg)}
+.admin-button:disabled{opacity:.55;cursor:default}
+.admin-button[data-tone=primary]{border-color:var(--color-accent-solid);background:var(--color-accent-solid);color:#fff}
+.admin-button[data-tone=danger]{border-color:var(--color-danger);background:var(--color-danger);color:#fff}
+
+/* 알림(Toast, ADM-12) — 화면 오른쪽 아래, 가장 최근 것이 아래 */
+.admin-toasts{position:fixed;right:16px;bottom:16px;z-index:200;display:grid;gap:8px;width:min(380px,calc(100vw - 32px));pointer-events:none}
+.admin-toast{pointer-events:auto;display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;border:1px solid var(--color-line);border-left:4px solid var(--color-ok);border-radius:10px;padding:10px 12px;background:var(--color-bg-card);color:var(--color-fg);box-shadow:0 8px 28px rgba(0,0,0,.16);font-size:13px;animation:admin-toast-in .18s ease-out}
+.admin-toast[data-tone=warn]{border-left-color:var(--color-warn)}
+.admin-toast[data-tone=error]{border-left-color:var(--color-danger)}
+.admin-toast-message{flex:1 1 180px;min-width:0;font-weight:600}
+.admin-toast a,.admin-toast-undo{color:var(--color-accent);font-weight:650}
+.admin-toast-undo:disabled{opacity:.55}
+.admin-toast-close{margin-left:auto;border-radius:6px;padding:2px 6px;color:var(--color-fg-3)}
+.admin-toast-close:hover{background:var(--color-bg-soft);color:var(--color-fg)}
+@keyframes admin-toast-in{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+@media (prefers-reduced-motion: reduce){.admin-toast{animation:none}}
+
 /* 내려달라는 요청 한 줄(TakedownStrip) — 심사 큐 머리. 주황: 24시간 안, 빨강: 넘김 */
 .takedown-strip{display:flex;flex-wrap:wrap;align-items:center;gap:6px 12px;border:1px solid color-mix(in srgb,var(--color-warn) 40%,var(--color-line));border-radius:10px;padding:8px 12px;font-size:13px;color:var(--color-fg-2);background:color-mix(in srgb,var(--color-warn) 8%,var(--color-bg-card))}
 .takedown-strip[data-tone=bad]{border-color:color-mix(in srgb,var(--color-down) 40%,var(--color-line));background:color-mix(in srgb,var(--color-down) 7%,var(--color-bg-card))}
