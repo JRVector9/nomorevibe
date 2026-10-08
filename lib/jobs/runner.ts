@@ -6,6 +6,7 @@ import { logger } from "@/lib/observability/logger";
 import { JobLeaseLostError, requestJob, type JobLease } from "./control";
 import { STALE_LOCK_MS } from "./lease";
 import { JOB_CATALOG } from "./catalog";
+import { PAUSED_AFTER_MS } from "./status";
 import { assertRoleLease, RoleLeaseLostError, type RoleLease } from "./role-leader";
 
 /** Existing bounded handlers keep their cursors; execution ownership belongs to this runner. */
@@ -37,6 +38,11 @@ export type RunResult =
  * 죽은 것으로 본다.
  */
 const LEASE_TAKEOVER = sql`now() - ${STALE_LOCK_MS} * interval '1 millisecond'`;
+/**
+ * 사람이 멈춘 작업(not_before 가 먼 미래, lib/jobs/status.ts)인가. 도는 중에 멈출 수 있다 — 틱을 끝내며
+ * not_before 를 지우거나 30초 재시도로 덮으면 멈춘 작업이 저절로 다시 돈다.
+ */
+const PAUSED = sql`${jobs.notBefore} > now() + ${PAUSED_AFTER_MS} * interval '1 millisecond'`;
 
 export async function runJob<C>(
   name: string,
@@ -134,7 +140,7 @@ export async function runJob<C>(
             and ${jobs.requestedVersion} < 9007199254740991 then ${jobs.requestedVersion} + 1
             else ${jobs.requestedVersion} end`,
         } : {}),
-        lockedAt: null, leaseToken: null, notBefore: null,
+        lockedAt: null, leaseToken: null, notBefore: sql`case when ${PAUSED} then ${jobs.notBefore} end`,
         lastSuccessAt: sql`now()`, lastError: null, updatedAt: sql`now()`,
       }).where(owned).returning({ name: jobs.name });
       if (!row) throw new JobLeaseLostError();
@@ -156,7 +162,7 @@ export async function runJob<C>(
     // Preserve pending version/cursor and never release somebody else's lease.
     await db.update(jobs).set({
       lockedAt: null, leaseToken: null, lastError: message.slice(0, 2000),
-      notBefore: sql`now() + interval '30 seconds'`, updatedAt: sql`now()`,
+      notBefore: sql`case when ${PAUSED} then ${jobs.notBefore} else now() + interval '30 seconds' end`, updatedAt: sql`now()`,
     }).where(owned);
     const durationMs = Date.now() - startedAt;
     logger.error("job.failed", { job: name, durationMs, error });
