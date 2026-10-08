@@ -33,6 +33,7 @@ it("사람 결정은 최근 24시간의 admin_override 만 세고 승인·거부
     attempt("admin_override", "approve", ago(25)),   // 24시간 밖
     attempt("automatic", "approve", ago(1)),          // 사람 결정이 아님
     attempt("admin_override", "approve", ago(-1)),   // 기준 시각 뒤
+    { ...attempt("admin_override", "reject", ago(3)), state: "superseded", errorCode: "admin_undo" },   // 되돌린 결정
   ]);
   expect(await humanDecisions24h(now)).toEqual({ approve: 1, reject: 1 });
 });

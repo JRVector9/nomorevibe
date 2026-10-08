@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
+import { StatusDot } from '../components/StatusDot';
 
 /**
  * 운영센터를 스스로 다시 읽는다.
@@ -40,8 +41,8 @@ export function LiveRefresh() {
   return (
     <button type="button" onClick={() => setLive(!live)} aria-pressed={live}
       title={live ? `${INTERVAL_MS / 1000}초마다 다시 읽습니다. 눌러서 멈춥니다.` : '멈춰 있습니다. 눌러서 다시 읽습니다.'}>
-      <span aria-hidden className={live ? 'ops-live-dot on' : 'ops-live-dot'} />
-      {live ? (pending ? '갱신 중' : '자동 갱신') : '갱신 멈춤'}
+      {/* 색 점만으로 켜짐·멈춤을 가르지 않는다(ADM-31) — 모양과 글자가 함께 바뀐다 */}
+      <StatusDot state={live ? 'ok' : 'idle'} label={live ? (pending ? '갱신 중' : '자동 갱신') : '갱신 멈춤'} />
     </button>
   );
 }

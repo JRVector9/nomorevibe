@@ -14,6 +14,8 @@ export type WorkerHealth = {
   updatedAt: number; lastHeartbeatAt: number; lastProgressAt: number;
   state: RuntimeHeartbeat['state']; currentJob: string | null; jobStartedAt: number | null;
   status: 'starting' | 'running' | 'stopping' | 'failed'; reason?: string;
+  /** 일하는 프로세스가 마지막으로 읽은 크롤 설정 판·시각 — 관측(service:<역할>)에 실려 설정 화면이 견준다 */
+  settingsVersion?: string | null; settingsReadAt?: number | null;
 };
 export const DEFAULT_HEALTH_PATH = '/tmp/nomorevibe-worker-health.json';
 const JOB_LIMIT_MS: Record<RuntimeRole, number> = {
@@ -52,6 +54,13 @@ export function isRuntimeHeartbeat(value: unknown, role: RuntimeRole, pid: numbe
     (v.currentJob === null || typeof v.currentJob === 'string') &&
     (v.startedAt === null || Number.isFinite(v.startedAt)) &&
     (v.state !== 'running' || (typeof v.currentJob === 'string' && typeof v.startedAt === 'number'));
+}
+
+/** heartbeat 의 설정 판을 건강 기록으로. 옛 워커(싣지 않음)나 모양이 틀린 값은 건너뛴다 — 지난 판을 지우지 않는다 */
+export function settingsFromHeartbeat(value: RuntimeHeartbeat): Pick<WorkerHealth, 'settingsVersion' | 'settingsReadAt'> {
+  const settings = value.settings;
+  if (typeof settings?.version !== 'string' || !Number.isFinite(settings.at)) return {};
+  return { settingsVersion: settings.version.slice(0, 64), settingsReadAt: settings.at };
 }
 
 function writeHealth(path: string, health: WorkerHealth) {
@@ -178,6 +187,7 @@ export async function superviseWorker(role: RuntimeRole, options: {
         ...health, lastHeartbeatAt: Date.now(), lastProgressAt: value.lastProgressAt,
         state: value.state, currentJob: value.currentJob, jobStartedAt: value.startedAt,
         status: stopping ? 'stopping' : 'running',
+        ...settingsFromHeartbeat(value),
       };
       publish();
     });

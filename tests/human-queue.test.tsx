@@ -1,12 +1,15 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { buildHumanQueueOverview, heldStages, humanFlowLabel, humanWaitLabel } from "@/lib/crawl/human-queue";
 import type { ReviewAiDecision } from "@/lib/crawl/admin-review";
 import { StageRail } from "@/app/admin/status/dashboard/StageRail";
 import { ReviewStageRail } from "@/app/admin/review/ReviewStageRail";
 import { AttentionList, sortActions, type ActionItem } from "@/app/admin/status/dashboard/AttentionList";
 import { humanOverview } from "./fixtures/human-queue";
+
+// 쌓인 일의 "확인함" 단추가 router 를 쓴다 — 정적 그리기에는 앱 라우터가 없다
+vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh() {} }) }));
 
 /**
  * "사람이 볼 것"은 한 곳(human-queue.ts)에서 정하고 운영센터·심사 큐가 같은 필드를 그린다(2026-10-08 감사 ADM-04).
@@ -62,30 +65,24 @@ describe("사람이 볼 것 — 정의", () => {
 });
 
 describe("조치할 일 — 자리와 순서", () => {
-  const item = (key: string, tone: ActionItem["tone"]): ActionItem => ({ key, tone, count: 1, title: key, detail: `${key} 설명` });
+  const item = (key: string, tone: ActionItem["tone"]): ActionItem => ({ key, tone, count: 1, unit: "건", title: key, detail: `${key} 설명` });
+  const split = (row: ActionItem) => ({ ...row, trend: null, fresh: false });
 
   it("급한 것부터, 같은 급 안에서는 넣은 차례(막는 순서)를 지킨다", () => {
     const sorted = sortActions([item("review", "hold"), item("second", "hold"), item("health", "clear"), item("down", "critical"), item("jobs", "critical")]);
     expect(sorted.map((row) => row.key)).toEqual(["down", "jobs", "review", "second", "health"]);
   });
 
-  it("전체 폭으로 맨 위에 서고, 급한 것이 있으면 펼쳐 둔다", () => {
-    const out = html(createElement(AttentionList, { items: [item("review", "hold"), item("down", "critical")] }));
-    expect(out).toContain("dash-12");
-    expect(out).not.toContain("<details");
+  it("지금 조치와 쌓인 일을 두 칸으로 나눠 그린다 — 지금 조치가 먼저", () => {
+    const out = html(createElement(AttentionList, { urgent: [split(item("down", "critical"))], backlog: [split(item("review", "hold"))], hidden: [], now: "2026-10-08T04:38:00Z" }));
+    expect(out.match(/dash-6/g)).toHaveLength(2);
+    expect(out.indexOf("지금 조치")).toBeLessThan(out.indexOf("쌓인 일"));
     expect(out.indexOf("down 설명")).toBeLessThan(out.indexOf("review 설명"));
   });
 
-  it("급한 것이 없으면 '지금 급한 것 없음 · 쌓인 일 N건' 한 줄로 접고, 펼치면 목록이다", () => {
-    const out = html(createElement(AttentionList, { items: [item("review", "hold"), item("health", "clear")] }));
-    expect(out).toContain('<details class="dash-todo-fold">');
-    expect(out).toContain("지금 급한 것 없음 · 쌓인 일 2건");
-    expect(out).toContain("review 설명");
-  });
-
-  it("손댈 것이 없을 때는 접지 않고 그 한 줄을 보인다", () => {
-    const out = html(createElement(AttentionList, { items: [{ ...item("clear", "clear"), title: "지금 손댈 것이 없습니다" }] }));
-    expect(out).not.toContain("<details");
+  it("지금 조치가 비면 '지금 손댈 것이 없습니다'를 보인다", () => {
+    const out = html(createElement(AttentionList, { urgent: [], backlog: [split(item("review", "hold"))], hidden: [], now: "2026-10-08T04:38:00Z" }));
     expect(out).toContain("지금 손댈 것이 없습니다");
+    expect(out).toContain("review 설명");
   });
 });

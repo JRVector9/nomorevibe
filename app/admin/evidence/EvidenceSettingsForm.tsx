@@ -48,7 +48,7 @@ export function EvidenceSettingsForm({ initialSettings }: { initialSettings: Evi
                   ...current,
                   [field.key]: numberOrPrevious(event.target.value, current[field.key]),
                 }))}
-                className="min-w-0 flex-1 rounded-lg border border-line bg-white px-3 py-2 text-[13px] text-fg outline-none focus:border-accent"
+                className="min-w-0 flex-1 rounded-lg border border-line bg-bg-card px-3 py-2 text-[13px] text-fg outline-none focus:border-accent"
               />
               <span className="w-[54px] text-[13px] font-medium text-fg-3">{field.unit}</span>
             </span>
@@ -59,7 +59,7 @@ export function EvidenceSettingsForm({ initialSettings }: { initialSettings: Evi
         <button
           type="submit"
           disabled={pending}
-          className="rounded-lg bg-accent px-4 py-2 text-[13px] font-bold text-white disabled:opacity-50"
+          className="rounded-lg bg-accent-solid px-4 py-2 text-[13px] font-bold text-white disabled:opacity-50"
         >
           {pending ? "저장 중" : "설정 저장"}
         </button>

@@ -5,7 +5,7 @@ import { currentEvidenceSettings } from "@/lib/domain/evidence/settings-store";
 import { EvidenceSettingsForm } from "./EvidenceSettingsForm";
 
 export const dynamic = "force-dynamic";
-export const metadata: Metadata = { title: "근거 설정 — NoMoreVibe", robots: { index: false } };
+export const metadata: Metadata = { title: "근거 수집 설정 — NoMoreVibe", robots: { index: false } };
 
 export default async function AdminEvidencePage() {
   const admin = await currentAdmin();

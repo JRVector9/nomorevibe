@@ -17,7 +17,6 @@ export function formValues(form: HTMLFormElement): FieldValues {
 }
 
 const SCALARS: Record<string, string> = {
-  enabled: "수집",
   windowDays: "최근 며칠",
   sort: "정렬",
   pagesPerTick: "틱당 페이지",
@@ -53,7 +52,7 @@ const LISTS: Record<string, string> = {
 const SORTS: Record<string, string> = { recent: "최신 활동순", relevance: "관련도" };
 const PROVIDERS: Record<string, string> = { abcllm: "사내 게이트웨이", "claude-cli": "Claude CLI", "grok-cli": "Grok CLI" };
 
-const CHECKBOXES = new Set(["enabled", "excludeForks", "excludeOrganizations", "holdAmbiguous", "agentEvidenceEnabled",
+const CHECKBOXES = new Set(["excludeForks", "excludeOrganizations", "holdAmbiguous", "agentEvidenceEnabled",
   "agentEvidenceEnforce", "secondReviewEnabled", "secondReviewIncludeAiHeld", "showHn.enabled", "showHn.requireEvidence"]);
 
 function shown(key: string, value: string | undefined): string {
@@ -71,7 +70,6 @@ export function describeChanges(before: FieldValues, after: FieldValues): string
   const keys = [...new Set([...Object.keys(before), ...Object.keys(after)])];
   const differs = (key: string) => (before[key] ?? "") !== (after[key] ?? "");
 
-  if (differs("enabled")) changes.push(`수집 ${shown("enabled", before.enabled)} → ${shown("enabled", after.enabled)}`);
   // 신호는 행 단위라 한 줄로 — 무엇이 바뀌었는지는 표가 보여 준다
   if (keys.some((key) => (key.startsWith("query.") || key.startsWith("showHn.") || key === "queryCount") && differs(key))) {
     const added = (rows: FieldValues) => Object.keys(rows).filter((key) => /^query\.\d+\.label$/.test(key) && rows[key].trim()).length;
@@ -79,7 +77,7 @@ export function describeChanges(before: FieldValues, after: FieldValues): string
     changes.push(delta > 0 ? `검색 신호 +${delta}` : delta < 0 ? `검색 신호 ${delta}` : "검색 신호");
   }
   for (const key of Object.keys(SCALARS)) {
-    if (key === "enabled" || key.startsWith("showHn.") || !differs(key)) continue;
+    if (key.startsWith("showHn.") || !differs(key)) continue;
     changes.push(`${SCALARS[key]} ${shown(key, before[key])} → ${shown(key, after[key])}`);
   }
   for (const [key, label] of Object.entries(LISTS)) {

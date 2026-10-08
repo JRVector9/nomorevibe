@@ -3,6 +3,10 @@ import { redirect } from "next/navigation";
 import { currentAdmin } from "@/lib/auth/admin";
 import { getSettings, getSettingsMeta } from "@/lib/crawl/settings";
 import { categoryCounts } from "@/lib/domain/products/repository";
+import { formatListTime } from "@/lib/format/time";
+import { logger } from "@/lib/observability/logger";
+import { readSettingsApply } from "@/lib/operations/settings-apply";
+import { SettingsApplyLine } from "../settings/SettingsApplyLine";
 import { CategoryDefinitionsForm } from "./CategoryDefinitionsForm";
 
 export const dynamic = "force-dynamic";
@@ -12,10 +16,16 @@ export default async function AdminCategoriesPage() {
   const admin = await currentAdmin();
   if (!admin) redirect("/admin/login");
 
-  const [settings, meta, counts] = await Promise.all([
+  const now = new Date();
+  const [settings, meta, counts, apply] = await Promise.all([
     getSettings(),
     getSettingsMeta(),
     categoryCounts({ statuses: ["verified", "seeded"] }),
+    // 카테고리 기준은 크롤 설정과 같은 행이라 같은 판을 쓴다 — 워커가 새 정의로 도는지 여기서도 본다(ADM-19)
+    readSettingsApply().catch((error) => {
+      logger.warn("admin.settings_apply_unavailable", { error });
+      return null;
+    }),
   ]);
 
   return (
@@ -33,10 +43,10 @@ export default async function AdminCategoriesPage() {
 
       {meta && (
         <p className="mt-1.5 font-mono text-[13px] text-fg-3">
-          마지막 변경 {meta.updatedBy ?? "알 수 없음"} ·{" "}
-          {meta.updatedAt.toLocaleString("ko-KR", { dateStyle: "medium", timeStyle: "short" })}
+          마지막 변경 {meta.updatedBy ?? "알 수 없음"} · {formatListTime(meta.updatedAt, now)}
         </p>
       )}
+      {apply && <div className="mt-1.5"><SettingsApplyLine apply={apply} now={now} /></div>}
 
       <div className="mt-6">
         <CategoryDefinitionsForm definitions={settings.classify.definitions} counts={counts} />

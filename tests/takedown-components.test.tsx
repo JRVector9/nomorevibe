@@ -35,8 +35,8 @@ describe("심사 큐 한 줄", () => {
 
 describe("메뉴 배지", () => {
   it("내릴 후보 옆에만 붙고 색을 단다", () => {
-    const html = renderToStaticMarkup(<AdminNav current="/admin/review" badges={{ "/admin/audit": { label: "요청 14", tone: "bad" } }} />);
-    expect(html).toContain('class="admin-nav-badge" data-tone="bad">요청 14</b>');
+    const html = renderToStaticMarkup(<AdminNav current="/admin/review" badges={{ "/admin/audit": { label: "요청 14", tone: "critical" } }} />);
+    expect(html).toContain('class="admin-nav-badge" data-tone="critical">요청 14</b>');
     expect(html.match(/admin-nav-badge/g)).toHaveLength(1);
     expect(html).toContain("요청·AI가 걸러낸 발행분");
   });

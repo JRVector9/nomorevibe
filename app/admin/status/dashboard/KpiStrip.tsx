@@ -1,5 +1,6 @@
 import type { HourlySeries } from "@/lib/operations/dashboard";
 import { Sparkline } from "./Sparkline";
+import { Flash } from "./Flash";
 
 const n = (value: number) => value.toLocaleString("ko-KR");
 const pct = (part: number, whole: number) => whole > 0 ? `${Math.round((part / whole) * 100)}%` : "—";
@@ -9,6 +10,7 @@ const pct = (part: number, whole: number) => whole > 0 ? `${Math.round((part / w
  *
  * 숫자 하나보다 "평소보다 많은가"가 먼저 보여야 한다. 그래서 칸마다 24시간 선을 깐다.
  * 타일 여섯은 격자 2칸씩이라 아래 행의 8칸·4칸 카드와 세로 선이 맞는다.
+ * 자동 갱신으로 큰 숫자가 바뀌면 1초 강조한다(Flash, ADM-35).
  */
 export function KpiStrip({ series, textPending, verifyPending }: {
   /** 검색 점검 결과가 없거나 오래되면 null — 0 으로 그리면 밀린 것이 없는 줄 안다 */
@@ -28,7 +30,7 @@ export function KpiStrip({ series, textPending, verifyPending }: {
   const firstFailPct = firstTotal > 0 ? last.firstFailed / firstTotal : 0;
   const agree = last.secondReviews > 0 ? last.secondAgreed / last.secondReviews : null;
   const tiles = [
-    { key: "discovered", label: "발견 (frontier)", value: last.discovered, small: undefined, sub: `${partial}24h 평균 ${n(avg(p => p.discovered))}/h`, tone: undefined,
+    { key: "discovered", label: "발견", value: last.discovered, small: undefined, sub: `${partial}24h 평균 ${n(avg(p => p.discovered))}/h`, tone: undefined,
       values: points.map(p => p.discovered), color: "accent" as const },
     { key: "judged", label: "수집·판정", value: last.judged, small: undefined, sub: `${partial}24h 평균 ${n(avg(p => p.judged))}/h`, tone: undefined,
       values: points.map(p => p.judged), color: "accent" as const },
@@ -50,7 +52,7 @@ export function KpiStrip({ series, textPending, verifyPending }: {
       {tiles.map((tile) => (
         <article key={tile.key} className="dash-card dash-2 dash-kpi" aria-label={tile.label}>
           <span className="label">{tile.label}</span>
-          <span className="value">{n(tile.value)}{tile.small && <small>{tile.small}</small>}</span>
+          <span className="value"><Flash value={tile.value}>{n(tile.value)}</Flash>{tile.small && <small>{tile.small}</small>}</span>
           <span className="sub" data-tone={tile.tone}>{tile.sub}</span>
           <Sparkline values={tile.values} tone={tile.color} />
         </article>

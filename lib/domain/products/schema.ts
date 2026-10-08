@@ -2,19 +2,9 @@ import { z } from "zod";
 import { normalizeHttpUrl } from "@/lib/net/normalize";
 
 import { CATEGORIES } from "./categories";
+import { LIMITS } from "./limits";
 export { CATEGORIES, type Category } from "./categories";
-
-// 입력 길이 상한 — DB 비대와 상세 페이지 수 MB 렌더를 막는다
-export const LIMITS = {
-  name: 120,
-  tagline: 200,
-  description: 4000,
-  builder: 60,
-  makerName: 120,
-  repoUrl: 500,
-  stackItems: 12,
-  stackItemLength: 40,
-} as const;
+export { LIMITS } from "./limits";
 
 /** http(s)만 허용 — javascript:/data: URI 차단 */
 const httpUrl = z

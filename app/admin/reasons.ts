@@ -23,3 +23,15 @@ export const REASON_LABELS: Record<string, string> = {
   suspected_spam: "스팸·악성 의심",
   no_description: "소개 문구 없음 — 사람 확인",
 };
+
+/**
+ * 심사 결정에서 자주 쓰는 거부 사유 다섯(2026-10-08 UX 감사 ADM-11) — 칩을 누르거나 숫자 1~5 로 고르면 거부 사유 코드와
+ * 메모가 함께 들어간다. 사유 코드는 REVIEW_REJECT_REASONS(lib/crawl/review.ts)의 값이다.
+ */
+export const REVIEW_QUICK_REASONS = [
+  { reason: "not_a_product", note: "문서·글·강의가 본문 — 제품이 아님" },
+  { reason: "not_a_product", note: "빈 화면이거나 무엇인지 알 수 없음" },
+  { reason: "personal_site", note: "회사·행사 소개 또는 링크 모음" },
+  { reason: "not_a_product", note: "남의 프로젝트를 베낀 내려받기 유인" },
+  { reason: "large_oss", note: "대형 오픈소스·조직의 프로젝트" },
+] as const satisfies readonly { reason: "personal_site" | "not_a_product" | "large_oss"; note: string }[];

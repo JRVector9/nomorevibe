@@ -14,13 +14,16 @@ import { buildHumanQueueOverview, type HumanQueueOverview } from "./human-queue"
  */
 const clock = (now?: Date) => now ? sql`${now.toISOString()}::timestamp` : sql`(current_timestamp at time zone 'UTC')`;
 
-/** 사람이 최근 24시간에 내린 결정. 한 건씩·일괄 모두 overrideCandidate 를 거쳐 admin_override 행으로 남는다 */
+/**
+ * 사람이 최근 24시간에 내린 결정. 한 건씩·일괄 모두 overrideCandidate 를 거쳐 admin_override 행으로 남는다.
+ * 되돌린 결정(undoAdminDecision 이 superseded 로 닫는다)은 세지 않는다.
+ */
 export async function humanDecisions24h(now?: Date): Promise<{ approve: number; reject: number }> {
   const end = clock(now);
   const [row] = await db.select({
     approve: sql<number>`count(*) filter (where ${crawlReviewAttempts.outcome}->>'decision' = 'approve')::int`,
     reject: sql<number>`count(*) filter (where ${crawlReviewAttempts.outcome}->>'decision' = 'reject')::int`,
-  }).from(crawlReviewAttempts).where(and(eq(crawlReviewAttempts.kind, "admin_override"),
+  }).from(crawlReviewAttempts).where(and(eq(crawlReviewAttempts.kind, "admin_override"), eq(crawlReviewAttempts.state, "succeeded"),
     sql`${crawlReviewAttempts.startedAt} > ${end} - interval '24 hours'`, sql`${crawlReviewAttempts.startedAt} <= ${end}`));
   return { approve: row?.approve ?? 0, reject: row?.reject ?? 0 };
 }

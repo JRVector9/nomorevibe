@@ -43,17 +43,19 @@ test.beforeEach(async ({ context, baseURL }) => {
 test("administrator mode changes and decisions preserve audited queue boundaries", async ({ page }) => {
   const errors: string[] = [];
   page.on("pageerror", error => errors.push(error.message));
-  await page.goto("/admin/review");
+  // 발행 보호(리뷰 모드)는 크롤 설정 2차 심사 칸에서 바꾼다(2026-10-08 UX 감사 ADM-24)
+  await page.goto("/admin#second");
   await page.waitForLoadState("networkidle");
-  const mode = page.getByRole("group").filter({ has: page.locator("summary").filter({ hasText: "AI 리뷰 운영 모드" }) });
+  const mode = page.getByRole("group", { name: "발행 보호 · AI 리뷰 운영 모드", exact: true });
   await expect(mode).toHaveCount(1);
-  await expect(mode.locator("summary")).toHaveText("AI 리뷰 운영 모드 · 관측");
-  await mode.locator("summary").click();
+  await expect(mode).toContainText("지금 관측");
   await mode.getByRole("combobox", { name: "모드", exact: true }).selectOption("enforce");
   await mode.getByLabel("변경 사유", { exact: true }).fill("Browser acceptance: enforce gate");
   await mode.getByRole("button", { name: "모드 변경", exact: true }).click();
   await expect.poll(async () => (await db.select().from(crawlSettings))[0].values.reviewMode).toBe("enforce");
-  await expect(mode.locator("summary")).toHaveText("AI 리뷰 운영 모드 · 적용");
+  await expect(page.getByRole("group", { name: "발행 보호 · AI 리뷰 운영 모드", exact: true })).toContainText("지금 적용");
+  await page.goto("/admin/review");
+  await page.waitForLoadState("networkidle");
   const approval = page.getByRole("complementary").filter({ has: page.getByRole("heading", { name: repos[0], exact: true }) });
   await expect(approval).toHaveCount(1);
   await approval.getByLabel("관리자 판단 사유", { exact: true }).fill("Browser fixture verified by administrator");

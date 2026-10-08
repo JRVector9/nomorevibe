@@ -5,12 +5,14 @@ import { Countdown } from './Countdown';
 import { OperationsDialog } from './OperationsDialog';
 import { useAgentConnection } from './useAgentConnection';
 import { DEFAULT_CONFIG, MODEL_IDS, modelConfigSchema, type AgentStatus, type ModelConfig } from '@/lib/operations/contracts';
+import { formatDetailTime } from '@/lib/format/time';
 
 type Provider = 'codex'|'claude';
 const PROVIDERS: Provider[]=['codex','claude'];
 const providerName=(p:Provider)=>p==='codex'?'Codex':'Claude';
 const modelName=(m:string)=>m==='sonnet'?'Claude Sonnet':m==='gpt-5.3-codex-spark'?'Codex Spark':'Codex Terra';
-const time=(value:string|null|undefined)=>value?new Date(value).toLocaleString('ko-KR',{timeZone:'Asia/Seoul',month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit',second:'2-digit'}):'기록 없음';
+/** 상세 시각 "2026-10-08 13:38:13 KST" — 화면마다 달랐던 표기를 하나로(ADM-26) */
+const time=(value:string|null|undefined)=>formatDetailTime(value,'기록 없음');
 const LABELS:Record<string,string>={starting:'인증 페이지 준비 중',awaiting_approval:'공식 페이지 승인 대기',exchanging:'인증 코드 확인 중',stored:'연결 완료',cancelled:'연결 취소됨',expired:'연결 시간 만료',failed:'연결 실패',running:'검사 중',verified:'검사 통과',applied:'설정 적용 완료',success:'정상 응답 확인',auth:'인증 실패 · 재연결 필요',timeout:'응답 시간 초과',access_denied:'이 모델에 접근할 수 없음',rate_limit:'사용 한도 또는 요청 제한',invalid_output:'응답 형식 오류',no_cli:'CLI 실행 불가',error:'요청 실패',cli_error:'CLI 요청 실패',output_too_large:'응답 크기 초과',credential_store_failed:'인증 저장 실패'};
 const label=(s:string)=>LABELS[s]??s;
 const CONNECTION_ERRORS:Record<string,string>={oauth_rejected:'Claude가 인증 코드를 거절했습니다. 새 연결을 시작한 뒤 공식 페이지에서 받은 최신 코드를 입력해주세요.',exchange_timeout:'코드 확인에 응답이 없습니다. 새 연결을 시작해주세요.',credential_capture_failed:'인증 정보를 저장하지 못했습니다. 새 연결로 다시 시도해주세요.'};

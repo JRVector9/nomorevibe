@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest';
-import { childExitCode, isRuntimeHeartbeat, stalledReason, supervisorLimits, type WorkerHealth } from '@/scripts/worker-supervisor';
+import { childExitCode, isRuntimeHeartbeat, settingsFromHeartbeat, stalledReason, supervisorLimits, type WorkerHealth } from '@/scripts/worker-supervisor';
 import { roleCandidateIsHealthy, workerIsHealthy } from '@/scripts/worker-healthcheck';
 import { parseCapacityArgs } from '@/scripts/measure-worker-capacity';
 
@@ -45,6 +45,14 @@ it('accepts only structurally valid IPC from the expected child and role', () =>
   expect(isRuntimeHeartbeat(message, 'reviewer', 2)).toBe(false);
   expect(isRuntimeHeartbeat({ ...message, pid: 3 }, 'crawler', 2)).toBe(false);
   expect(isRuntimeHeartbeat({ ...message, startedAt: null }, 'crawler', 2)).toBe(false);
+});
+it('carries the crawl settings version the worker last read, and keeps accepting old workers that send none', () => {
+  const message = { type: 'runtime.heartbeat' as const, role: 'crawler', pid: 2, at: 1_000, state: 'idle' as const, currentJob: null, startedAt: null, lastProgressAt: 1_000 };
+  expect(isRuntimeHeartbeat(message, 'crawler', 2)).toBe(true);
+  expect(settingsFromHeartbeat(message)).toEqual({});
+  expect(settingsFromHeartbeat({ ...message, settings: null })).toEqual({});
+  expect(settingsFromHeartbeat({ ...message, settings: { version: 'abc123', at: 900 } })).toEqual({ settingsVersion: 'abc123', settingsReadAt: 900 });
+  expect(settingsFromHeartbeat({ ...message, settings: { version: 42, at: 900 } as never })).toEqual({});
 });
 it('rejects stale, stopped and different-role health without any network probe', () => {
   expect(workerIsHealthy(health, 5_000, 'crawler')).toBe(true);

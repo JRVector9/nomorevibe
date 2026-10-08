@@ -11,14 +11,24 @@ import type { HumanOnlyReason } from "@/lib/crawl/admin-review";
  */
 export type CauseKey = AmbiguityCause | "ai_reject" | "resolved" | "unknown" | HumanOnlyReason;
 
+/** 거부 사유 코드 — lib/crawl/review.ts 의 REVIEW_REJECT_REASONS 와 같은 값(그 모듈은 DB 를 불러 화면에서 못 읽는다) */
+export type RejectCode = "personal_site" | "not_a_product" | "large_oss";
+/** 갈래의 흔한 결론과 미리 쓴 사유 — 사람이 사유를 적지 않고 확정할 수 있게(ADM-07). 갈래만으로 못 정하면 null */
+export type CauseRecommend = { decision: "approve"; note: string } | { decision: "reject"; reason: RejectCode; note: string };
+
 export const CAUSE_GUIDE: Record<CauseKey, {
   label: string;
+  /** 표·칩에 쓰는 짧은 이름(ADM-13) — 긴 이름을 잘라 쓰면 '직접 설치하는 프로…'처럼 갈래끼리 구분되지 않았다 */
+  short: string;
+  recommend: CauseRecommend | null;
   summary: string;
   question: string;
   hints: { decision: string; when: string }[];
 }> = {
   installable_product: {
     label: "직접 설치하는 프로젝트",
+    short: "설치형",
+    recommend: { decision: "approve", note: "설치해 쓰는 제품 — README에 기능과 설치·사용법이 있음" },
     summary: "GitHub 별 500개 이상으로 배포 URL 대신 저장소의 실제 설치·사용 대상을 심사합니다.",
     question: "문서 모음이 아니라 설치해 반복 사용할 수 있는 제품입니까?",
     hints: [
@@ -29,6 +39,8 @@ export const CAUSE_GUIDE: Record<CauseKey, {
   },
   host_excluded_subpath: {
     label: "호스트는 제외 대상, 배포물은 하위 경로",
+    short: "호스트·하위경로",
+    recommend: { decision: "approve", note: "하위 경로에 올린 제품·도구 페이지" },
     summary: "owner.github.io 루트면 개인 홈페이지지만, 그 아래 경로는 올려둔 제품일 수 있습니다.",
     // 2026-09-19 기준: 가입·설치·다운로드 페이지와 라이브러리·SDK 도 승인, 개인 프로필도 승인(2026-09-18)
     question: "이 페이지는 누가 만든 소프트웨어의 페이지이거나, 한 사람의 프로필입니까?",
@@ -40,6 +52,8 @@ export const CAUSE_GUIDE: Record<CauseKey, {
   },
   docs_generator: {
     label: "문서 도구로 만든 페이지",
+    short: "문서 도구",
+    recommend: { decision: "approve", note: "프로젝트 홈 — 소개와 설치·사용법 안내" },
     summary: "Docusaurus·VitePress·MkDocs 같은 문서 도구로 만든 페이지입니다. 라이브러리·CLI 의 홈페이지가 흔히 이렇게 만들어집니다.",
     question: "프로젝트의 홈페이지입니까, 문서 자체입니까?",
     hints: [
@@ -49,6 +63,8 @@ export const CAUSE_GUIDE: Record<CauseKey, {
   },
   docs_nav: {
     label: "문서 목차 낱말이 많은 페이지",
+    short: "문서 목차",
+    recommend: { decision: "approve", note: "프로젝트 홈 — 소개와 설치·사용법 안내" },
     summary: "본문에 Getting started·Installation·API reference 같은 목차 낱말이 여럿입니다. 라이브러리 홈페이지에도 흔합니다.",
     question: "프로젝트의 홈페이지입니까, 문서 자체입니까?",
     hints: [
@@ -58,6 +74,8 @@ export const CAUSE_GUIDE: Record<CauseKey, {
   },
   name_pattern: {
     label: "이름으로는 못 가름 (*-website · awesome-*)",
+    short: "이름 패턴",
+    recommend: { decision: "reject", reason: "personal_site", note: "회사·행사 소개 또는 남의 도구 링크 모음" },
     summary: "회사 소개 사이트나 링크 모음일 때가 많지만, 앱 사이트나 검색되는 디렉터리도 섞여 있습니다.",
     question: "누가 만든 제품의 사이트입니까, 회사·행사 소개나 단순 링크 모음입니까?",
     hints: [
@@ -67,6 +85,8 @@ export const CAUSE_GUIDE: Record<CauseKey, {
   },
   second_review_split: {
     label: "2차 심사가 갈림",
+    short: "2차 갈림",
+    recommend: null,
     summary: "1차 AI 는 승인했는데 2차 모델이 승인하지 않았습니다. 두 모델이 모두 승인해야 공개하므로 사람이 가릅니다.",
     question: "두 모델 중 어느 쪽이 맞습니까?",
     hints: [
@@ -76,6 +96,8 @@ export const CAUSE_GUIDE: Record<CauseKey, {
   },
   no_description: {
     label: "소개 문구 없음",
+    short: "소개 없음",
+    recommend: { decision: "reject", reason: "not_a_product", note: "빈 화면이거나 무엇인지 알 수 없음" },
     summary: "페이지 설명도 레포 설명도 없고, AI 도 페이지 글에서 한 줄을 뽑지 못했습니다(대부분 글이 아예 없는 화면입니다). 여기 남은 것은 사람이 페이지를 열어 봐야 합니다.",
     question: "페이지를 열어 보면 무엇인지 알 수 있습니까?",
     hints: [
@@ -85,6 +107,8 @@ export const CAUSE_GUIDE: Record<CauseKey, {
   },
   ai_review_exhausted: {
     label: "1차 AI 심사 재시도 소진",
+    short: "1차 재시도 소진",
+    recommend: null,
     summary: "모델 호출이 반복 실패해 자동 심사를 끝낼 수 없습니다. 실패 기록을 확인하고 직접 판단합니다.",
     question: "저장된 원본과 개발 근거로 승인 또는 거부할 수 있습니까?",
     hints: [
@@ -94,6 +118,8 @@ export const CAUSE_GUIDE: Record<CauseKey, {
   },
   source_refresh_failed: {
     label: "GitHub 원본 재수집 실패",
+    short: "원본 재수집 실패",
+    recommend: { decision: "reject", reason: "not_a_product", note: "저장소가 사라졌거나 지금 근거를 확인할 수 없음" },
     summary: "새 원본을 요청했지만 저장소를 찾지 못했거나 수집 재시도를 소진했습니다. 이전 원본은 최신 상태를 증명하지 않습니다.",
     question: "저장소와 제품의 현재 상태를 직접 확인할 수 있습니까?",
     hints: [
@@ -103,6 +129,8 @@ export const CAUSE_GUIDE: Record<CauseKey, {
   },
   repo_deleted: {
     label: "레포 삭제됨",
+    short: "레포 삭제",
+    recommend: { decision: "reject", reason: "not_a_product", note: "레포 삭제됨 — 제품을 확인할 수 없음" },
     summary: "GitHub 가 저장소를 404 로 답합니다 — 삭제됐거나 비공개로 바뀌었습니다(GitHub 는 둘을 구분해 알려주지 않습니다). 저장해 둔 원본은 지금 상태를 증명하지 않습니다.",
     question: "저장소 없이도 제품이 지금 살아 있고, 다른 근거로 확인할 수 있습니까?",
     hints: [
@@ -112,6 +140,8 @@ export const CAUSE_GUIDE: Record<CauseKey, {
   },
   suspected_spam: {
     label: "스팸·악성 의심",
+    short: "스팸 의심",
+    recommend: { decision: "reject", reason: "not_a_product", note: "남의 프로젝트를 베껴 내려받기로 유인하는 페이지" },
     summary: "악성 배포 캠페인과 같은 모양입니다 — 틀에 찍은 README 제목(🤖 이름 - …), 다운로드 미끼 문구, 남의 레포 github.io 첫 화면으로 보내는 다운로드, ★0~1·이슈 꺼짐. 잡힌 신호는 근거의 '스팸·악성 배포 의심 아님' 줄에 있습니다.",
     question: "이 저장소가 직접 만든 소프트웨어입니까, 남의 프로젝트를 베껴 내려받기로 유인하는 페이지입니까?",
     hints: [
@@ -121,6 +151,8 @@ export const CAUSE_GUIDE: Record<CauseKey, {
   },
   page_status_unknown: {
     label: "배포 URL 응답 미확인",
+    short: "응답 미확인",
+    recommend: null,
     summary: "수집기가 아직 이 URL을 열어보지 못했습니다. 수집이 끝나면 자동으로 다시 판정됩니다.",
     question: "지금은 판단하지 않아도 됩니다.",
     hints: [
@@ -130,6 +162,8 @@ export const CAUSE_GUIDE: Record<CauseKey, {
   },
   push_time_unknown: {
     label: "마지막 푸시 시각 미상",
+    short: "푸시 미상",
+    recommend: null,
     summary: "레포 메타에 pushed_at 이 없어 살아있는 프로젝트인지 확인할 수 없습니다.",
     question: "이 저장소가 아직 살아 있습니까?",
     hints: [
@@ -139,6 +173,8 @@ export const CAUSE_GUIDE: Record<CauseKey, {
   },
   agent_evidence: {
     label: "개발 AI 근거 부족",
+    short: "AI 근거 부족",
+    recommend: null,
     summary: "공개된 근거가 기준에 못 미칩니다. 지침·설정 파일이 있다고 그 AI로 개발했다는 확인은 아닙니다.",
     question: "AI로 만들었다는 공개 근거가 충분합니까?",
     hints: [
@@ -148,6 +184,8 @@ export const CAUSE_GUIDE: Record<CauseKey, {
   },
   ai_reject: {
     label: "AI가 거부로 판정함",
+    short: "AI 거부",
+    recommend: { decision: "reject", reason: "not_a_product", note: "AI 거부 사유가 맞음 — 제품이 아님" },
     summary: "규칙이 못 가른 것을 AI 심사가 갈랐습니다. 사유를 확인하고 묶어서 처리할 수 있습니다.",
     question: "AI가 든 사유가 맞습니까?",
     hints: [
@@ -157,6 +195,8 @@ export const CAUSE_GUIDE: Record<CauseKey, {
   },
   resolved: {
     label: "지금 기준으로는 보류가 아님",
+    short: "보류 아님",
+    recommend: null,
     summary: "판정한 뒤 시간이 지났거나 기준이 바뀌어, 다시 판정하면 승인이나 거부로 갈립니다.",
     question: "사람이 볼 필요가 없습니다.",
     hints: [
@@ -166,6 +206,8 @@ export const CAUSE_GUIDE: Record<CauseKey, {
   },
   unknown: {
     label: "갈래를 다시 계산하지 못함",
+    short: "계산 불가",
+    recommend: null,
     summary: "원본이 없어 규칙을 되짚을 수 없습니다. 추가 수집을 걸거나 직접 확인해주세요.",
     question: "원본 없이 판단해야 합니다.",
     hints: [{ decision: "추가 수집", when: "원본을 다시 받아온다" }],
@@ -173,6 +215,35 @@ export const CAUSE_GUIDE: Record<CauseKey, {
 };
 
 export const causeLabel = (cause: CauseKey) => CAUSE_GUIDE[cause]?.label ?? cause;
+export const causeShort = (cause: CauseKey) => CAUSE_GUIDE[cause]?.short ?? cause;
+
+/** 1차 AI 결론과 2차 표가 같은가 — 1차와 같은 모델의 표(echo)는 세지 않는다 */
+export function modelsAgree(ai: string | null | undefined, seconds: readonly { decision: string | null; status: string; echo: boolean }[]): boolean {
+  return (ai === "approve" || ai === "reject") && seconds.some((vote) => !vote.echo && vote.status === "agreed" && vote.decision === ai);
+}
+
+/** 승인할 때 자동으로 채우는 사유(ADM-11) — 두 모델이 같은 결론이거나 AI 승인을 따를 때. 아니면 null(사람이 적거나 기본값) */
+export function approvalNote(ai: string | null | undefined, agree: boolean): string | null {
+  if (ai !== "approve") return null;
+  return agree ? "AI·2차 일치 승인" : "AI 승인을 따름";
+}
+
+export type Recommendation = CauseRecommend & { basis: string };
+
+/**
+ * 한 후보의 권장 결정 + 미리 쓴 사유(2026-10-08 UX 감사 ADM-07). 두 모델이 같은 결론이면 그것을, 아니면 갈래의 흔한 결론을 낸다.
+ * 모델이 갈래의 흔한 결론과 반대로 봤으면 권하지 않는다 — 그때는 사람이 근거를 보고 가른다.
+ */
+export function recommendDecision(input: { bucket: CauseKey | null; ai: string | null | undefined; agree: boolean }): Recommendation | null {
+  const preset = input.bucket ? CAUSE_GUIDE[input.bucket]?.recommend ?? null : null;
+  if (input.agree && input.ai === "approve") return { decision: "approve", note: "AI·2차 일치 승인", basis: "두 모델이 같은 결론" };
+  if (input.agree && input.ai === "reject") {
+    return { decision: "reject", reason: preset?.decision === "reject" ? preset.reason : "not_a_product", note: "AI·2차 일치 거부", basis: "두 모델이 같은 결론" };
+  }
+  if (!preset || !input.bucket) return null;
+  if ((input.ai === "approve" || input.ai === "reject") && input.ai !== preset.decision) return null;
+  return { ...preset, basis: `${causeShort(input.bucket)} 갈래의 흔한 결론` };
+}
 
 /** 갈래 칸의 뜻 — 운영센터와 심사 큐 목록이 같은 값(reviewQueueBucket)을 보인다 */
 export const BUCKET_NOTE = "갈래 — 사람만 가르는 저장 사유는 그대로, 나머지는 지금 기준으로 다시 판정해 멈춘 곳(운영센터·심사 큐가 같은 값)";

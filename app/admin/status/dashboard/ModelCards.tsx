@@ -2,6 +2,8 @@ import type { ModelHealth } from "@/lib/operations/dashboard";
 import { CodexReconnectButton } from "./CodexReconnect";
 
 const n = (value: number) => value.toLocaleString("ko-KR");
+/** 게이트웨이 모델 이름 앞의 실행기 표시("[MLX] ", "[supa] ")는 떼고 보인다 — 전체 이름은 title 로(ADM-28) */
+export const modelName = (model: string) => model.replace(/^\[[^\]]*\]\s*/, "");
 
 export type ConnectionProbe = { provider: "claude" | "codex" | "grok"; result: string | null; checkedAt: string | null };
 const PROBE_LABEL = { claude: "Claude", codex: "Codex", grok: "Grok" } as const;
@@ -32,7 +34,7 @@ export function ModelCards({ rows, probes }: { rows: ModelHealth[]; probes: Conn
             <div key={row.key} className="dash-model">
               <span className="role">{row.label}</span>
               <span className="dash-pill" data-tone={state.tone}>{state.text}</span>
-              <span className="name" title={row.model ?? undefined}>{row.model ?? "설정 없음"}</span>
+              <span className="name" title={row.model ?? undefined}>{row.model ? modelName(row.model) : "설정 없음"}</span>
               <span className="stat"><b>{n(row.calls1h)}</b> · 실패 <b>{n(row.failed1h)}</b>{row.avgSeconds !== null && <> · <b>{row.avgSeconds.toFixed(1)}</b>초{(row.key === "second" || row.key === "fallback") && " (대기 포함)"}</>}
                 {row.key !== "second" && row.agreement1h !== null && <> · 일치 <b>{Math.round(row.agreement1h * 100)}%</b></>}</span>
             </div>

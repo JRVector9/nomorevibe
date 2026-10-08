@@ -2,8 +2,9 @@
 
 import { revalidatePath } from "next/cache";
 import { currentAdmin } from "@/lib/auth/admin";
-import { saveSettings, resetSettings } from "@/lib/crawl/settings";
-import { decideCandidate, type ReviewDecision } from "@/lib/crawl/review";
+import { saveSettings, resetSettings, settingsFormVersion } from "@/lib/crawl/settings";
+import { REVIEW_REJECT_REASONS } from "@/lib/crawl/review";
+import { overrideCandidate } from "@/lib/crawl/admin-review";
 import { resolveTakedown, resolveTakedowns, type TakedownAction } from "@/lib/domain/products/takedown";
 import { isDismissReason } from "@/lib/domain/products/takedown-view";
 import { banProduct, unbanProduct } from "@/lib/domain/products/manage";
@@ -11,9 +12,11 @@ import { markClaimInvited } from "@/lib/domain/products/claim-invite";
 import { decideRepoReview } from "@/lib/domain/products/repo-reviews";
 import { logger } from "@/lib/observability/logger";
 import { recordAdminAction, recordAdminActions, type AdminLogEntry } from "@/lib/operations/admin-log";
-import { MAX_BULK_DECISIONS, parseSelection, type BulkReviewState } from "./review/contract";
+import { isBanReason } from "./products/ban-reasons";
+import { MAX_BULK_DECISIONS, parseSelection, type BulkReviewState, type ReviewDecisionState } from "./review/contract";
 
-export type SaveState = { ok?: true; issues?: string[] } | null;
+/** version: 저장한 뒤의 폼 판 — 열어 둔 폼이 다음 저장에 이 판을 싣는다 */
+export type SaveState = { ok?: true; version?: string; issues?: string[] } | null;
 
 /** 여러 줄 입력을 배열로 (빈 줄과 공백 제거) */
 function lines(value: FormDataEntryValue | null): string[] {
@@ -54,8 +57,11 @@ export async function saveCrawlSettings(_prev: SaveState, form: FormData): Promi
     requireEvidence: form.get(`query.${i}.requireEvidence`) === "on",
   })).filter((q) => q.label && q.query);
 
+  /*
+   * 수집 켜기·끄기(enabled)는 폼에서 읽지 않는다 — 운영센터 머리의 즉시 스위치만 바꾼다(2026-10-08 UX 감사 ADM-18).
+   * 키를 빼면 saveSettings 가 저장된 값을 그대로 둔다. 옛 폼이 "enabled" 를 보내도 수집이 켜지거나 꺼지지 않는다.
+   */
   const patch = {
-    enabled: form.get("enabled") === "on",
     discover: {
       queries,
       windowDays: num(form.get("windowDays")),
@@ -123,18 +129,36 @@ export async function saveCrawlSettings(_prev: SaveState, form: FormData): Promi
   }
 
   revalidatePath("/admin");
-  return { ok: true };
+  return { ok: true, version: settingsFormVersion(result.settings) };
 }
 
 export type ReviewState = { error?: string } | null;
+
+/** 관리자가 고를 수 있는 결정 사유 코드 — 승인은 늘 passed, 거부는 고른 사유(REVIEW_REJECT_REASONS) */
+type DecisionReasonCode = "passed" | (typeof REVIEW_REJECT_REASONS)[number]["value"];
+function decisionReasonCode(decision: "approve" | "reject", reason: string): DecisionReasonCode | null {
+  if (decision === "approve") return "passed";
+  return REVIEW_REJECT_REASONS.find((row) => row.value === reason)?.value ?? null;
+}
+/**
+ * 메모를 비운 결정에 남길 사유(2026-10-08 UX 감사 ADM-11) — 승인마다 자유 서술을 적게 하던 것을 풀었다.
+ * 기록에는 늘 사유가 남아야 하므로(overrideCandidate 가 1자 이상을 요구한다) 고른 사유의 이름을 쓴다.
+ */
+function defaultDecisionNote(code: DecisionReasonCode): string {
+  return code === "passed" ? "관리자 승인" : REVIEW_REJECT_REASONS.find((row) => row.value === code)!.label;
+}
 
 /**
  * 심사 결정.
  *
  * 설정 저장과 같은 이유로 여기서도 자격을 다시 확인한다 — 서버 액션은 URL 없이
  * 호출될 수 있으므로 middleware가 막아주지 않는다.
+ *
+ * 거부 사유는 여기서 막는다 — 화면이 첫 사유를 기본값으로 두어 고르지 않은 거부가 틀린 사유로 기록됐다(ADM-11).
+ * 성공하면 알림과 되돌리기(undoCandidateDecisions)가 쓸 결정 기록 id 와 이전 상태를 돌려준다(ADM-12).
+ * 전에는 성공이 null 이었다 — 실패만 보던 화면은 그대로 error 만 보면 된다.
  */
-export async function decideCrawlCandidate(_prev: ReviewState, form: FormData): Promise<ReviewState> {
+export async function decideCrawlCandidate(_prev: ReviewDecisionState | ReviewState, form: FormData): Promise<ReviewDecisionState> {
   const admin = await currentAdmin();
   if (!admin) return { error: "권한이 없습니다. 다시 로그인해주세요." };
 
@@ -142,27 +166,27 @@ export async function decideCrawlCandidate(_prev: ReviewState, form: FormData): 
   if (decision !== "approve" && decision !== "reject") return { error: "알 수 없는 결정입니다" };
 
   const repo = String(form.get("repo") ?? "");
-  const reason = String(form.get("reason") ?? "");
-  const note = String(form.get("note") ?? "");
-  const result = await decideCandidate({
-    repo,
-    decision: decision as ReviewDecision,
-    reason,
-    admin: admin.login,
-    note,
+  const reason = decision === "reject" ? String(form.get("reason") ?? "") : "";
+  const reasonCode = decisionReasonCode(decision, reason);
+  if (!reasonCode) return { error: "거부 사유를 골라주세요." };
+  const note = String(form.get("note") ?? "").trim() || defaultDecisionNote(reasonCode);
+  const result = await overrideCandidate({
+    repo, actor: admin.login, decision, reasonCode, reason: note,
     inputHash: String(form.get("inputHash") ?? ""),
     sourceRevisionHash: String(form.get("sourceRevisionHash") ?? ""),
     candidateRevisionHash: String(form.get("candidateRevisionHash") ?? ""),
   });
-  await recordAdminAction(admin.login, { action: `candidate-${decision}`, target: repo, detail: { reason, note },
+  await recordAdminAction(admin.login, { action: `candidate-${decision}`, target: repo,
+    detail: { reason, note, ...(result.ok ? { attemptId: result.attemptId } : {}) },
     ok: result.ok, error: result.ok ? null : result.message });
   if (!result.ok) {
     logger.warn("admin.review_rejected", { login: admin.login, message: result.message });
     return { error: result.message };
   }
+  logger.info("crawl.reviewed", { repo, decision, reason: reasonCode, admin: admin.login });
 
   revalidatePath("/admin/review");
-  return null;
+  return { ok: true, repo, decision, attemptId: result.attemptId, previous: result.previous };
 }
 
 /**
@@ -173,6 +197,7 @@ export async function decideCrawlCandidate(_prev: ReviewState, form: FormData): 
  *
  * 묶어서 보낼 뿐, 검사는 한 건씩 그대로 받는다. 각 후보의 입력·원본·후보 해시를 따로 실어
  * 보내므로 그중 하나라도 그 사이에 바뀌었으면 그 건만 거절되고 나머지는 처리된다.
+ * 처리한 건은 decided 로 돌려준다 — 알림의 되돌리기가 그 목록을 그대로 되돌린다.
  */
 export async function decideCrawlCandidates(_prev: BulkReviewState, form: FormData): Promise<BulkReviewState> {
   const admin = await currentAdmin();
@@ -180,8 +205,10 @@ export async function decideCrawlCandidates(_prev: BulkReviewState, form: FormDa
 
   const decision = String(form.get("decision") ?? "");
   if (decision !== "approve" && decision !== "reject") return { error: "알 수 없는 결정입니다" };
-  const note = String(form.get("note") ?? "").trim();
-  if (!note) return { error: "판단 사유를 적어주세요. 기록에 남습니다." };
+  const reason = decision === "reject" ? String(form.get("reason") ?? "") : "";
+  const reasonCode = decisionReasonCode(decision, reason);
+  if (!reasonCode) return { error: "거부 사유를 골라주세요." };
+  const note = String(form.get("note") ?? "").trim() || defaultDecisionNote(reasonCode);
 
   const selected = form.getAll("selected").map(String).filter(Boolean);
   if (!selected.length) return { error: "처리할 후보를 선택해주세요." };
@@ -190,9 +217,8 @@ export async function decideCrawlCandidates(_prev: BulkReviewState, form: FormDa
   }
 
   const failures: { repo: string; message: string }[] = [];
-  const reason = String(form.get("reason") ?? "");
+  const decided: { repo: string; attemptId: number }[] = [];
   const entries: AdminLogEntry[] = [];
-  let ok = 0;
   for (const packed of selected) {
     const parsed = parseSelection(packed);
     if (!parsed) {
@@ -200,20 +226,20 @@ export async function decideCrawlCandidates(_prev: BulkReviewState, form: FormDa
       continue;
     }
     const { repo, inputHash, sourceRevisionHash, candidateRevisionHash } = parsed;
-    const result = await decideCandidate({
-      repo, decision: decision as ReviewDecision, reason,
-      admin: admin.login, note, inputHash, sourceRevisionHash, candidateRevisionHash,
+    const result = await overrideCandidate({
+      repo, actor: admin.login, decision, reasonCode, reason: note, inputHash, sourceRevisionHash, candidateRevisionHash,
     });
-    if (result.ok) ok++;
+    if (result.ok) decided.push({ repo, attemptId: result.attemptId });
     else failures.push({ repo, message: result.message });
-    entries.push({ action: `candidate-${decision}`, target: repo, detail: { reason, note, bulk: selected.length },
+    entries.push({ action: `candidate-${decision}`, target: repo,
+      detail: { reason, note, bulk: selected.length, ...(result.ok ? { attemptId: result.attemptId } : {}) },
       ok: result.ok, error: result.ok ? null : result.message });
   }
   await recordAdminActions(admin.login, entries);
 
-  logger.info("admin.review_bulk", { login: admin.login, decision, ok, failed: failures.length });
+  logger.info("admin.review_bulk", { login: admin.login, decision, ok: decided.length, failed: failures.length });
   revalidatePath("/admin/review");
-  return { ok, failures };
+  return { ok: decided.length, failures, decided };
 }
 
 /**
@@ -302,22 +328,36 @@ export async function resetCrawlSettings(): Promise<SaveState> {
  *
  * 차단은 행을 남기므로 같은 URL의 재등록과 재수집이 함께 막힌다. 해제는 차단 전 상태를
  * 유도해 되돌린다 — 되돌릴 길이 없으면 차단 버튼을 누르는 것 자체가 무서운 일이 된다.
+ *
+ * 차단은 사유(ban-reasons.ts)를 꼭 골라야 한다 — 사유는 차단 감사 행과 작업 로그에 함께 남는다(2026-10-08 UX 감사 ADM-06).
+ * 성공하면 null 대신 알림이 쓸 결과를 돌려준다(ADM-12). undo 는 알림의 '되돌리기'가 보낸 해제라는 표시다.
  */
-export async function setProductBan(_prev: ReviewState, form: FormData): Promise<ReviewState> {
+export type ProductBanState = { error?: string; ok?: true; message?: string } | null;
+
+export async function setProductBan(_prev: ProductBanState, form: FormData): Promise<ProductBanState> {
   const admin = await currentAdmin();
   if (!admin) return { error: "권한이 없습니다. 다시 로그인해주세요." };
 
   const slug = String(form.get("slug") ?? "");
   const action = String(form.get("action") ?? "");
   if (action !== "ban" && action !== "unban") return { error: "알 수 없는 결정입니다" };
+  const reason = form.get("reason");
+  if (action === "ban" && !isBanReason(reason)) return { error: "차단 사유를 골라 주세요" };
+  const note = String(form.get("note") ?? "").trim().slice(0, 500);
+  const undo = form.get("undo") === "1";
 
-  const result = action === "ban" ? await banProduct(slug) : await unbanProduct(slug);
-  await recordAdminAction(admin.login, { action: `product-${action}`, target: slug, ok: result.ok, error: result.ok ? null : result.error.kind });
+  const result = action === "ban"
+    ? await banProduct(slug, { reason: reason as string, metadata: { by: admin.login, ...(note ? { note } : {}) } })
+    : await unbanProduct(slug, { metadata: { by: admin.login, ...(undo ? { undo: true } : {}) } });
+  await recordAdminAction(admin.login, { action: `product-${action}`, target: slug,
+    detail: action === "ban" ? { reason, ...(note ? { note } : {}) } : undo ? { undo: true } : undefined,
+    ok: result.ok, error: result.ok ? null : result.error.kind });
   if (!result.ok) return { error: "제품을 찾을 수 없습니다" };
 
   logger.info("admin.product_ban", { slug, action, login: admin.login });
   revalidatePath("/admin/products");
-  return null;
+  revalidatePath(`/admin/products/${slug}`);
+  return { ok: true, message: action === "ban" ? "차단했습니다" : "차단을 풀었습니다" };
 }
 
 /**
@@ -326,7 +366,7 @@ export async function setProductBan(_prev: ReviewState, form: FormData): Promise
  * 내리기는 위 차단과 같은 길이다(setStatusWithAudit 'admin.product.ban' — 행은 남고 되돌릴 수 있다). 결정은 같은
  * 트랜잭션에 적는다. 한 번에 한 제품 — AI 판정은 사람이 하나씩 보고 정한다(감사 내리기와 같다).
  */
-export async function decideRepoReviewAction(_prev: ReviewState, form: FormData): Promise<ReviewState> {
+export async function decideRepoReviewAction(_prev: ReviewState, form: FormData): Promise<ProductBanState> {
   const admin = await currentAdmin();
   if (!admin) return { error: "권한이 없습니다. 다시 로그인해주세요." };
 
@@ -342,7 +382,8 @@ export async function decideRepoReviewAction(_prev: ReviewState, form: FormData)
 
   logger.info("admin.repo_review_decided", { slug, decision, login: admin.login });
   revalidatePath("/admin/products");
-  return null;
+  // 알림(ADM-12)이 쓸 결과 — 내린 것은 알림의 '되돌리기'가 setProductBan 해제로 되돌린다
+  return { ok: true, message: decision === "keep" ? "유지했습니다" : "내렸습니다" };
 }
 
 /**
@@ -361,6 +402,9 @@ export async function banProducts(_prev: BulkBanState, form: FormData): Promise<
 
   const slugs = [...new Set(form.getAll("slug").map(String).filter(Boolean))];
   if (slugs.length === 0) return { error: "선택한 제품이 없습니다" };
+  // 한 건 차단과 같이 사유를 꼭 고른다(ADM-06) — 감사 행과 작업 로그에 남는다
+  const reason = form.get("reason");
+  if (!isBanReason(reason)) return { error: "차단 사유를 골라 주세요" };
   if (slugs.length > MAX_BULK_DECISIONS) {
     return { error: `한 번에 ${MAX_BULK_DECISIONS}건까지 내립니다. 나눠서 눌러주세요.` };
   }
@@ -369,10 +413,10 @@ export async function banProducts(_prev: BulkBanState, form: FormData): Promise<
   const failures: string[] = [];
   const entries: AdminLogEntry[] = [];
   for (const slug of slugs) {
-    const result = await banProduct(slug);
+    const result = await banProduct(slug, { reason, metadata: { by: admin.login, bulk: slugs.length } });
     if (result.ok) ok += 1;
     else failures.push(slug);
-    entries.push({ action: "product-ban", target: slug, detail: { from: "recheck", bulk: slugs.length },
+    entries.push({ action: "product-ban", target: slug, detail: { from: "recheck", bulk: slugs.length, reason },
       ok: result.ok, error: result.ok ? null : result.error.kind });
   }
   await recordAdminActions(admin.login, entries);

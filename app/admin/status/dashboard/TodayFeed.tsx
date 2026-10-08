@@ -1,10 +1,10 @@
 import type { TodayPublications } from "@/lib/operations/dashboard";
+import { formatListTime } from "@/lib/format/time";
 
 const n = (value: number) => value.toLocaleString("ko-KR");
-const clock = (iso: string) => new Date(iso).toLocaleTimeString("ko-KR", { timeZone: "Asia/Seoul", hour: "2-digit", minute: "2-digit", hour12: false });
 
 /** 오늘 무엇이 올라갔나 — 24시간 수와 한국어 비율, 마지막 여섯 건 */
-export function TodayFeed({ today, down }: { today: TodayPublications; down: number }) {
+export function TodayFeed({ today, down, now }: { today: TodayPublications; down: number; now: string }) {
   const korean = today.total24h > 0 ? Math.round((today.korean24h / today.total24h) * 100) : 0;
   return (
     <section className="dash-card dash-12" aria-label="오늘 발행">
@@ -22,7 +22,7 @@ export function TodayFeed({ today, down }: { today: TodayPublications; down: num
                 {item.signal && <span className="dash-pill">{item.signal}</span>}
                 <span className="dash-pill">{item.category}</span>
                 {item.korean && <span className="dash-pill" data-tone="acc">한국어</span>}
-                <span className="font-mono text-[13px] text-fg-3">{clock(item.createdAt)}</span>
+                <span className="font-mono text-[13px] text-fg-3">{formatListTime(item.createdAt, now)}</span>
               </div>
             </a>
           ))}

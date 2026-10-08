@@ -6,8 +6,8 @@
  * 쿼리 값이 받는 화면에 실제로 있는지, page.tsx 가 여기 밖의 주소를 쓰지 않는지 본다.
  */
 
-/** 운영센터 탭(?tab=) — 첫 화면이 overview */
-export const STATUS_TABS = ["overview", "jobs", "ai", "manual"] as const;
+/** 운영센터 탭(?tab=) — 첫 화면이 overview. diagnostics(진단)는 옛 접힌 "상세 지표"(ADM-16) */
+export const STATUS_TABS = ["overview", "jobs", "ai", "manual", "diagnostics"] as const;
 export type StatusTab = typeof STATUS_TABS[number];
 
 /** 작업 흐름 탭에서 그 작업의 상세 창을 연 채로 */
@@ -29,6 +29,8 @@ export const ACTION_LINKS = {
   reviewPublished: "/admin/review?second=published#review-list",
   /** 설정 화면의 2차 심사 칸(SettingsForm id="second") */
   secondSettings: "/admin#second",
+  /** 설정 화면 머리의 워커별 적용 확인(SettingsApplyLine id="apply") */
+  settingsApply: "/admin#apply",
   productsDown: productFilter("응답 없음"),
   productsIntro: productFilter("소개 확인 필요"),
   productsRepoGone: productFilter("저장소 사라짐"),

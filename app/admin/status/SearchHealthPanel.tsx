@@ -1,4 +1,5 @@
 import type { SearchHealth } from "@/lib/operations/search-health-model";
+import { formatDetailTime } from "@/lib/format/time";
 
 export function SearchHealthPanel({ health, observedAt }: { health: SearchHealth | null; observedAt?: string }) {
   if (!health) return <section className="my-3 rounded-lg border border-warn p-3" role="status">
@@ -7,7 +8,7 @@ export function SearchHealthPanel({ health, observedAt }: { health: SearchHealth
   </section>;
   return <section aria-label="검색 데이터 자동 점검" className="my-3 rounded-lg border border-line p-3">
     <p className="text-[13px]"><strong>검색 데이터 점검</strong> · {health.total.toLocaleString("ko-KR")}건 대조
-      {observedAt && <> · {new Date(observedAt).toLocaleString("ko-KR", { timeZone: "Asia/Seoul", hour12: false })} KST</>}</p>
+      {observedAt && <> · {formatDetailTime(observedAt)}</>}</p>
     <dl className="mt-2 flex flex-wrap gap-x-5 gap-y-2 text-[13px]">
       {[["갱신 대기", health.pendingGeneration], ["검수 대기", health.pendingVerification],
         ["해시 결함", health.unmarked], ["검색 사본 불일치", health.copiesMismatched],

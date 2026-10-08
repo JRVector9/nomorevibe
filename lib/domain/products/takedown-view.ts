@@ -1,3 +1,5 @@
+import { formatDetailTime } from "@/lib/format/time";
+
 /**
  * 내려달라는 요청 — 화면이 쓰는 규칙(서버·화면 공용, DB 를 부르지 않는다).
  *
@@ -77,10 +79,10 @@ export const isBurst = (summary: Pick<TakedownSummary, "lastHour">) => summary.l
 export type GroupMode = "none" | "owner" | "sender" | "time";
 export type TakedownGroup = { key: string; title: string; detail: string; entries: TakedownEntry[]; together: boolean };
 
-const KST_HOUR = new Intl.DateTimeFormat("ko-KR", { timeZone: "Asia/Seoul", month: "2-digit", day: "2-digit", hour: "2-digit", hourCycle: "h23" });
+/** 들어온 시각대 "10-05 14시" — 한국 시각("2026-10-05 14:40:00 KST")에서 월·일·시만 */
 const hourLabel = (iso: string) => {
-  const parts = Object.fromEntries(KST_HOUR.formatToParts(new Date(iso)).map((part) => [part.type, part.value]));
-  return `${parts.month}-${parts.day} ${parts.hour}시`;
+  const at = formatDetailTime(iso);
+  return `${at.slice(5, 10)} ${at.slice(11, 13)}시`;
 };
 const distinct = (values: (string | null)[]) => new Set(values.filter(Boolean)).size;
 

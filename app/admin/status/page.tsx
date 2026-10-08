@@ -1,57 +1,47 @@
 import { Suspense } from "react";
 import type { Metadata } from "next";
+import Link from "next/link";
 import { redirect } from "next/navigation";
+import { after } from "next/server";
 import { currentAdmin } from "@/lib/auth/admin";
-import { frontierCounts, candidateCounts, rejectionBreakdown, yieldBySignal } from "@/lib/crawl/repository";
+import { frontierCounts, candidateCounts, rejectionBreakdown } from "@/lib/crawl/repository";
 import { getSettings } from "@/lib/crawl/settings";
-import { listJobStates } from "@/lib/jobs/runner";
-import { downProductCount, downProducts, DOWN_THRESHOLD } from "@/lib/domain/products/health";
+import type { CrawlSettings } from "@/lib/crawl/settings-schema";
+import { downProducts, DOWN_THRESHOLD } from "@/lib/domain/products/health";
 import { topClickedSince } from "@/lib/domain/products/clicks";
-import { JOB_NAMES, JOB_CATALOG } from "@/lib/jobs/catalog";
-import { isPausedJob, jobStatusLabel } from "@/lib/jobs/status";
+import { JOB_NAMES } from "@/lib/jobs/catalog";
+import { jobStatusLabel } from "@/lib/jobs/status";
 import { getCurrentSeason, RANKING_STALE_MS } from "@/lib/domain/ranking/view";
-import { getEvidenceStatusSummary } from "@/lib/domain/evidence/admin";
 import { Panel } from "@/components/Panel";
 import { OperationsCenter } from "./OperationsCenter";
-import { operationsData } from "@/lib/operations/admin";
-import { latestServiceInstance } from "@/lib/operations/instance";
 import { pipelineFlow } from "@/lib/operations/pipeline";
-import { pipelineThroughput } from "@/lib/operations/throughput";
-import { buildWorkerProgress } from "@/lib/operations/worker-progress-query";
-import { attentionCounts, hourlyThroughput, modelHealth, signalYields, todayPublications } from "@/lib/operations/dashboard";
-import { roleOverview, SHARED_IMAGE_ROLES } from "@/lib/operations/roles";
-import { takedownSummary } from "@/lib/domain/products/takedown";
-import { formatWait, isBurst } from "@/lib/domain/products/takedown-view";
-import { listGitHubCollectorAccounts, parseCoreQuota } from "@/lib/crawl/github-accounts";
+import { hourlyThroughput, signalYields, todayPublications } from "@/lib/operations/dashboard";
+import { JOB_LABELS, ROLE_LABELS } from "@/lib/operations/contracts";
+import { JOB_CATALOG } from "@/lib/jobs/catalog";
+import { ATTENTION_HISTORY_KEY, attentionAcks, readAttentionHistory, recordAttentionSample } from "@/lib/operations/attention";
+import { formatAgo, formatDay, formatListTime } from "@/lib/format/time";
 import { KpiStrip } from "./dashboard/KpiStrip";
 import { StageRail } from "./dashboard/StageRail";
 import { RolesTable } from "./dashboard/RolesTable";
 import { ModelCards, type ConnectionProbe } from "./dashboard/ModelCards";
-import { AttentionList, type ActionItem } from "./dashboard/AttentionList";
+import { AttentionList } from "./dashboard/AttentionList";
 import { SignalTable } from "./dashboard/SignalTable";
 import { TodayFeed } from "./dashboard/TodayFeed";
-import { RepoHealthCard, REPO_COVERAGE_TARGET, REPO_REVIEW_OVERDUE_HOURS } from "./dashboard/RepoHealthCard";
+import { RepoHealthCard } from "./dashboard/RepoHealthCard";
 import { StatusChips } from "./dashboard/StatusChips";
-import type { AgentStatus } from "@/lib/operations/contracts";
 import { manualCandidates } from "@/lib/operations/categories";
+import { ManualClassification } from "./ManualClassification";
 import { logger, redact } from "@/lib/observability/logger";
-import { listAdminReviewEntries, reviewQueueCauses } from "@/lib/crawl/admin-review";
-import { humanQueueOverview } from "@/lib/crawl/review-overview";
-import { humanFlowLabel, humanWaitLabel } from "@/lib/crawl/human-queue";
-import { ACTION_LINKS, jobHref, STATUS_TABS, type StatusTab } from "./action-links";
-import { QueuePreview } from "./QueuePreview";
-import { intersectQueueIds, parseQueueFilters, queueFilterHref, QUEUE_PAGE_SIZE, type QueueSearch } from './queue-filters';
-import { recentSecondReviewFailures } from "@/lib/crawl/second-review";
+import { humanWaitLabel } from "@/lib/crawl/human-queue";
+import { ACTION_LINKS } from "./action-links";
 import { translationProgress } from "@/lib/crawl/translations";
 import { TranslationProgress } from "./TranslationProgress";
 import { REASON_LABELS } from "../reasons";
 import { searchLogSummary } from "@/lib/domain/products/search-log";
-import { readSearchHealth, searchHealthAlerts } from "@/lib/operations/search-health-model";
 import { SearchHealthPanel } from "./SearchHealthPanel";
-import { modelServerHealth } from "@/lib/operations/model-servers";
 import { ScrollToHash } from "../ScrollToHash";
-import { SPAM_DETECTOR_VERSION } from "@/lib/crawl/spam-signals";
-import { MAX_AUTO_BANS_PER_DAY } from "@/lib/jobs/products/spam-rescan";
+import { ScrollTable } from "../components/ScrollTable";
+import { actionCounts, buildActions, deriveStatus, loadActionInputs, rememberCriticalCount, splitActions, type DerivedStatus } from "./attention";
 
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "운영센터 — NoMoreVibe", robots: { index: false } };
@@ -70,18 +60,13 @@ const STATE_LABELS: Record<string, string> = {
   published: "발행됨",
 };
 
-function when(at: Date | null): string {
-  if (!at) return "없음";
-  const minutes = Math.round((Date.now() - at.getTime()) / 60_000);
-  if (minutes < 1) return "방금";
-  if (minutes < 60) return `${minutes}분 전`;
-  const hours = Math.round(minutes / 60);
-  return hours < 24 ? `${hours}시간 전` : `${Math.round(hours / 24)}일 전`;
-}
+const n = (value: number) => value.toLocaleString("ko-KR");
 
-function rankingSnapshotIsStale(at: Date | null): boolean {
-  return !at || Date.now() - at.getTime() > RANKING_STALE_MS;
-}
+/** 한 묶음이 실패해도 화면은 나가야 한다 — 그 칸만 비운다 */
+const warn = (event: string) => (error: unknown) => {
+  logger.warn(event, { errorName: error instanceof Error ? error.name : "unknown" });
+  return null;
+};
 
 function Counts({ counts, empty }: { counts: Record<string, number>; empty: string }) {
   const rows = Object.entries(counts).sort((a, b) => b[1] - a[1]);
@@ -91,25 +76,54 @@ function Counts({ counts, empty }: { counts: Record<string, number>; empty: stri
       {rows.map(([key, count]) => (
         <div key={key} className="flex items-baseline gap-2">
           <dt className="text-[13px] text-fg-2">{STATE_LABELS[key] ?? key}</dt>
-          <dd className="font-mono text-[14px] font-bold">{count.toLocaleString("ko-KR")}</dd>
+          <dd className="font-mono text-[14px] font-bold">{n(count)}</dd>
         </div>
       ))}
     </dl>
   );
 }
 
+/** 느린 조각이 오기 전의 자리 — 같은 칸 수를 차지해 격자가 흔들리지 않게 */
+function CardPending({ span, label }: { span: string; label: string }) {
+  return <section className={`dash-card ${span}`} aria-label={label} aria-busy="true"><p className="text-[13px] text-fg-3">{label} 세는 중…</p></section>;
+}
+
+/*
+ * 아래 조각들은 따로 흘려보낸다(2026-10-08 UX 감사 ADM-35) — 머리 칩과 조치할 일을 먼저 그리고, 느린 집계는 오는 대로 채운다.
+ * 각 조각은 실패하면 그 칸만 비운다.
+ */
+
+async function KpiSlot({ derived }: { derived: DerivedStatus }) {
+  const hourly = await hourlyThroughput().catch(warn("operations.hourly_unavailable"));
+  return <KpiStrip series={hourly} textPending={derived.health?.pendingGeneration ?? null} verifyPending={derived.health?.pendingVerification ?? null} />;
+}
+
+async function StageSlot({ inputs, derived }: { inputs: Awaited<ReturnType<typeof loadActionInputs>>; derived: DerivedStatus }) {
+  const flow = await pipelineFlow();
+  return <StageRail snapshot={inputs.throughput} flow={flow} human={inputs.overview}
+    signals={derived.workerProgress?.stages} liveness={derived.workerProgress?.liveness} />;
+}
+
+async function SignalSlot({ settings }: { settings: CrawlSettings }) {
+  return <SignalTable rows={await signalYields(settings).catch(warn("operations.signals_unavailable")) ?? []} />;
+}
+
+async function TodaySlot({ down, now }: { down: number; now: string }) {
+  const today = await todayPublications().catch(warn("operations.today_unavailable"));
+  return <TodayFeed today={today ?? { total24h: 0, korean24h: 0, latest: [] }} down={down} now={now} />;
+}
+
+async function ManualSlot() {
+  return <ManualClassification candidates={await manualCandidates()} />;
+}
+
 /**
- * 사유 번역 진행은 캐시가 비면 2초 넘게 센다(translations.ts) — 접힌 상세 칸 하나 때문에 화면 전체를 붙잡지 않게
+ * 사유 번역 진행은 캐시가 비면 2초 넘게 센다(translations.ts) — 진단 칸 하나 때문에 화면 전체를 붙잡지 않게
  * 따로 흘려보낸다. 못 세면 이 줄만 비운다.
  */
 async function TranslationProgressSlot({ now }: { now: string }) {
-  const progress = await translationProgress().catch(warnTranslation);
+  const progress = await translationProgress().catch(warn("operations.translation_unavailable"));
   return progress ? <TranslationProgress progress={progress} now={now} /> : <TranslationProgressPending failed />;
-}
-
-function warnTranslation(error: unknown) {
-  logger.warn("operations.translation_unavailable", { errorName: error instanceof Error ? error.name : "unknown" });
-  return null;
 }
 
 function TranslationProgressPending({ failed = false }: { failed?: boolean }) {
@@ -117,417 +131,245 @@ function TranslationProgressPending({ failed = false }: { failed?: boolean }) {
     사유 번역 {failed ? "진행을 읽지 못했습니다" : "진행을 세는 중"}</p>;
 }
 
-export default async function StatusPage({ searchParams }: { searchParams: Promise<QueueSearch> }) {
+/**
+ * 진단 탭의 표들 — 전에는 전체 현황 아래 접힌 "수집·근거·랭킹 상세 지표"였다(ADM-16).
+ * 신호별 수율은 전체 현황의 카드 하나만 남기고 여기서는 뺐다(같은 표가 두 번 나왔다).
+ */
+async function DiagnosticsPanels({ inputs, derived }: { inputs: Awaited<ReturnType<typeof loadActionInputs>>; derived: DerivedStatus }) {
+  const { jobStates, evidenceSummary, downCount, ops } = inputs;
+  const now = ops.fetchedAt;
+  const [frontier, candidates, rejections, rankingSeason, down, topClicked, search] = await Promise.all([
+    frontierCounts(), candidateCounts(), rejectionBreakdown(), getCurrentSeason(), downProducts(), topClickedSince(30),
+    searchLogSummary(7).catch(() => null),
+  ]);
+  const rejectedTotal = rejections.reduce((sum, r) => sum + r.count, 0);
+  const rankingStale = !rankingSeason?.refreshedAt || Date.parse(now) - rankingSeason.refreshedAt.getTime() > RANKING_STALE_MS;
+  const evidenceJob = derived.states.get("product-evidence-refresh");
+  return (
+    <div className="mt-3 grid grid-cols-1 gap-3 xl:grid-cols-2">
+      <Panel
+        title="작업"
+        note="예약과 실행, 워커 생존을 구분합니다. 마지막 회차 성공은 대기 중인 모든 항목의 처리 완료를 뜻하지 않습니다."
+      >
+        <ScrollTable label="작업 표">
+          <table className="w-full min-w-[420px] text-[13px]">
+            <thead className="text-fg-3">
+              <tr className="text-left">
+                <th className="pb-2 font-medium">이름</th>
+                <th className="pb-2 font-medium">상태</th>
+                <th className="pb-2 font-medium">워커 관측</th>
+                <th className="pb-2 font-medium">마지막 실행</th>
+                <th className="pb-2 font-medium">회차 성공</th>
+                <th className="pb-2 font-medium">횟수</th>
+              </tr>
+            </thead>
+            <tbody>
+              {JOB_NAMES.map((name) => {
+                const state = derived.states.get(name);
+                const role = JOB_CATALOG.find((job) => job.name === name)?.role;
+                return (
+                  <tr key={name} className="border-t border-line">
+                    <td className="py-2" title={name}>{JOB_LABELS[name] ?? name}<span className="block text-[13px] text-fg-3" title={role}>{role ? ROLE_LABELS[role] ?? role : ""}</span></td>
+                    <td className="py-2 text-fg-2">{name === "heartbeat" ? "스케줄러 관측" : jobStatusLabel(state)}</td>
+                    <td className="py-2 text-fg-2">{formatAgo(state?.workerSeenAt, now, "없음")}</td>
+                    <td className="py-2 text-fg-2">{state?.lastRunAt ? formatAgo(state.lastRunAt, now) : "실행 기록 없음"}</td>
+                    <td className="py-2 text-fg-2">{state ? formatAgo(state.lastSuccessAt, now, "없음") : "—"}</td>
+                    <td className="py-2 font-mono text-fg-2">{state?.runs ?? 0}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </ScrollTable>
+
+        {jobStates
+          .filter((job) => job.lastError)
+          .map((job) => (
+            <p key={job.name} className="mt-3 rounded-[10px] border border-down/40 bg-down/10 px-3 py-2 text-[13px] text-down">
+              <span className="font-semibold" title={job.name}>{JOB_LABELS[job.name] ?? job.name}</span> {job.lastError}
+            </p>
+          ))}
+      </Panel>
+
+      <Panel
+        title="제품 근거 수집"
+        note="오류 원문은 위 작업 표 한 곳에서만 보고, 여기서는 처리해야 할 출처 수와 마지막 성공 시각만 봅니다."
+      >
+        <dl className="flex flex-wrap gap-x-8 gap-y-3 text-[13px]">
+          <div><dt className="text-fg-3">수집 기한 지난 출처</dt><dd className="mt-1 font-mono font-bold">{n(evidenceSummary.due)}건</dd></div>
+          <div><dt className="text-fg-3">오래됨</dt><dd className="mt-1 font-mono font-bold">{n(evidenceSummary.stale)}건</dd></div>
+          <div><dt className="text-fg-3">실패·연결 끊김</dt><dd className="mt-1 font-mono font-bold">{n(evidenceSummary.failed)}건</dd></div>
+          <div><dt className="text-fg-3">마지막 성공</dt><dd className="mt-1 font-semibold">{evidenceJob ? formatListTime(evidenceJob.lastSuccessAt, now, "없음") : "실행 기록 없음"}</dd></div>
+        </dl>
+      </Panel>
+
+      <Panel
+        title="랭킹 스냅샷"
+        note="작업 실행 상태는 위 표의 랭킹 갱신 한 곳에서만 확인하고, 여기서는 마지막으로 저장된 시즌 결과의 나이만 봅니다."
+      >
+        {rankingSeason ? (
+          <dl className="flex flex-wrap gap-x-8 gap-y-3 text-[13px]">
+            <div>
+              <dt className="text-fg-3">현재 시즌</dt>
+              <dd className="mt-1 font-mono font-semibold">{rankingSeason.key}</dd>
+            </div>
+            <div>
+              <dt className="text-fg-3">기간</dt>
+              <dd className="mt-1 font-semibold">{formatDay(rankingSeason.startsAt)} – {formatDay(rankingSeason.endsAt)}</dd>
+            </div>
+            <div>
+              <dt className="text-fg-3">마지막 집계</dt>
+              <dd className={`mt-1 font-semibold ${rankingStale ? "text-down" : "text-up"}`}>
+                {rankingSeason.refreshedAt ? formatListTime(rankingSeason.refreshedAt, now) : "집계 없음"}
+                {rankingSeason.refreshedAt && rankingStale && " · 오래됨"}
+              </dd>
+            </div>
+          </dl>
+        ) : (
+          <p className="text-[13px] text-fg-3">아직 생성된 랭킹 시즌이 없습니다.</p>
+        )}
+      </Panel>
+
+      {down.length > 0 && (
+        <Panel
+          title="응답하지 않는 제품"
+          note={`${DOWN_THRESHOLD}회 넘게 연속으로 실패해 공개 목록에서 빠진 것 ${n(downCount)}건${downCount > down.length ? ` 중 실패가 많은 ${down.length}건` : ""}입니다. 지우거나 차단하지는 않습니다 — 다시 열리면 그대로 돌아옵니다.`}
+        >
+          <ul className="flex flex-col gap-1.5 text-[13px]">
+            {down.map((item) => (
+              <li key={item.slug} className="flex flex-wrap items-baseline gap-x-2">
+                <a href={`/p/${item.slug}`} className="font-semibold hover:text-accent">
+                  {item.name}
+                </a>
+                <span className="font-mono text-[13px] text-fg-3">
+                  {item.status === 0 ? "접속 실패" : `HTTP ${item.status}`} · {item.failures}회 연속
+                  {item.downSince && ` · ${formatListTime(item.downSince, now)}부터`}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </Panel>
+      )}
+
+      <Panel title="프론티어" note="조사 대상 큐입니다. 대기가 0이면 수집 대상 탐색이 더 찾아야 합니다.">
+        <Counts counts={frontier} empty="아직 발견한 레포가 없습니다." />
+      </Panel>
+
+      <Panel title="후보" note="판정 결과입니다. 심사 대기는 사람이 가를 것, 발행 대기는 다음 발행 회차가 올릴 것입니다.">
+        <Counts counts={candidates} empty="아직 판정한 것이 없습니다." />
+      </Panel>
+
+      {topClicked.length > 0 && (
+        <Panel
+          title="많이 눌린 제품 (30일)"
+          note="하루 단위로 굴린 집계입니다. 원천은 35일이면 지우므로 오래된 구간은 여기서만 볼 수 있습니다."
+        >
+          <ul className="flex flex-col gap-1.5 text-[13px]">
+            {topClicked.map((item) => (
+              <li key={item.slug} className="flex items-baseline gap-2">
+                <a href={`/p/${item.slug}`} className="font-semibold hover:text-accent">
+                  {item.slug}
+                </a>
+                <span className="font-mono text-fg-3">{item.clicks}회</span>
+              </li>
+            ))}
+          </ul>
+        </Panel>
+      )}
+
+      <Panel
+        title="검색"
+        note="지난 7일 동안 사람들이 무엇을 찾았고 무엇을 못 찾았는지입니다. 못 찾은 말이 다음에 고칠 곳입니다."
+      >
+        {!search || search.searches === 0 ? (
+          <p className="text-[13px] text-fg-3">아직 기록된 검색이 없습니다.</p>
+        ) : (
+          <div className="flex flex-col gap-3">
+            <p className="flex flex-wrap gap-x-4 gap-y-1 text-[13px] text-fg-2">
+              <span>검색 <b className="font-semibold">{n(search.searches)}</b>회</span>
+              <span>0건 <b className={`font-semibold ${search.zero > 0 ? "text-down" : ""}`}>{n(search.zero)}</b>회
+                ({Math.round((search.zero / search.searches) * 100)}%)</span>
+              <span>한국어 번역 <b className="font-semibold">{n(search.translated)}</b>회</span>
+              <span>p95 <b className="font-semibold">{search.p95Ms === null ? "—" : `${n(search.p95Ms)}ms`}</b></span>
+            </p>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div>
+                <h4 className="text-[13px] font-semibold text-down">못 찾은 말</h4>
+                {search.misses.length === 0 ? <p className="mt-1 text-[13px] text-fg-3">없습니다.</p> : (
+                  <ul className="mt-1 flex flex-col gap-1 text-[13px]">
+                    {search.misses.map((row) => (
+                      <li key={row.query} className="flex items-baseline justify-between gap-2">
+                        <span className="truncate text-fg-2">{row.query}
+                          {row.keywords && <span className="ml-1.5 font-mono text-fg-3">→ {row.keywords}</span>}</span>
+                        <span className="shrink-0 font-mono text-fg-3">{row.count}</span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+              <div>
+                <h4 className="text-[13px] font-semibold text-fg-2">찾은 말</h4>
+                {search.hits.length === 0 ? <p className="mt-1 text-[13px] text-fg-3">없습니다.</p> : (
+                  <ul className="mt-1 flex flex-col gap-1 text-[13px]">
+                    {search.hits.map((row) => (
+                      <li key={row.query} className="flex items-baseline justify-between gap-2">
+                        <span className="truncate text-fg-2">{row.query}</span>
+                        <span className="shrink-0 font-mono text-fg-3">{row.count}회 · {row.results}건</span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+      </Panel>
+
+      <Panel
+        title="거부 사유"
+        note="어떤 규칙이 얼마나 거르고 있는지입니다. 한 사유가 압도적이면 그 기준부터 의심합니다."
+      >
+        {rejections.length === 0 ? (
+          <p className="text-[13px] text-fg-3">아직 거부한 것이 없습니다.</p>
+        ) : (
+          <ul className="flex flex-col gap-1.5">
+            {rejections.map((row) => (
+              <li key={row.reason} className="flex items-center gap-3 text-[13px]">
+                <span className="w-[150px] shrink-0 text-fg-2">{REASON_LABELS[row.reason] ?? row.reason}</span>
+                <span className="h-[6px] rounded-full bg-accent/60" style={{ width: `${(row.count / rejectedTotal) * 60}%` }} />
+                <span className="font-mono text-fg-3">
+                  {row.count} · {Math.round((row.count / rejectedTotal) * 100)}%
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </Panel>
+    </div>
+  );
+}
+
+export default async function StatusPage() {
   const admin = await currentAdmin();
   if (!admin) redirect("/admin/login");
-  const params = await searchParams;
-  const filters = parseQueueFilters(params);
-  const initialTab = (STATUS_TABS as readonly unknown[]).includes(params.tab) ? params.tab as StatusTab : 'overview';
-  // ?job= 은 작업 흐름 탭에서 그 작업의 상세 창을 연 채로 연다(조치할 일의 작업 링크)
-  const initialJob = typeof params.job === 'string' && JOB_NAMES.includes(params.job) ? params.job : null;
 
   const settings = await getSettings();
-  /**
-   * 운영센터 격자가 쓰는 묶음 — 실패해도 화면은 나가야 한다. 24시간·7일 집계는 모듈 안에서 60초 담아 둔다.
-   */
-  const warn = (event: string) => (error: unknown) => {
-    logger.warn(event, { errorName: error instanceof Error ? error.name : "unknown" });
-    return null;
-  };
-  // 서로 기다릴 까닭이 없는 조회는 한꺼번에 띄운다 — 전에는 다섯 묶음을 차례로 기다려 묶음마다 가장 느린 것의 시간이 더해졌다
-  const baseLoads = Promise.all([
-    frontierCounts(),
-    candidateCounts(),
-    rejectionBreakdown(),
-    listJobStates(),
-    yieldBySignal(),
-    getCurrentSeason(),
-    getEvidenceStatusSummary(new Date()),
-  ]);
-  const productLoads = Promise.all([downProducts(), downProductCount(), topClickedSince(30), operationsData(), manualCandidates()]);
-  // 사람 몫의 수(직접 판단·확정만·나이·24시간 흐름)는 심사 큐와 같은 humanQueueOverview 하나에서 온다
-  const queueLoads = Promise.all([pipelineFlow(), humanQueueOverview(settings),
-    filters.cause ? reviewQueueCauses(settings) : Promise.resolve(null),
-    recentSecondReviewFailures(), pipelineThroughput(settings).catch(error => {
-      logger.warn("operations.throughput_unavailable", { errorName: error instanceof Error ? error.name : "unknown" });
-      return null;
-    })]);
-  // 아래 둘은 항목마다 실패를 받아 내므로 기다리기 전에 띄워 두어도 처리되지 않은 거부가 남지 않는다
-  const dashboardLoads = Promise.all([
-    hourlyThroughput().catch(warn("operations.hourly_unavailable")),
-    modelHealth(settings).catch(warn("operations.models_unavailable")),
-    signalYields(settings).catch(warn("operations.signals_unavailable")),
-    todayPublications().catch(warn("operations.today_unavailable")),
-    attentionCounts().catch(warn("operations.attention_unavailable")),
-    roleOverview().catch(warn("operations.roles_unavailable")),
-    listGitHubCollectorAccounts().catch(warn("operations.accounts_unavailable")),
-    takedownSummary().catch(warn("operations.takedowns_unavailable")),
-    modelServerHealth().catch(warn("operations.model_servers_unavailable")),
-  ]);
-  const searchLoad = searchLogSummary(7).catch(() => null);
-  const [[frontier, candidates, rejections, jobStates, signalRows, rankingSeason, evidenceSummary], [down, downCount, topClicked, ops, manual],
-    [flow, overview, causes, secondFailures, throughput]] = await Promise.all([baseLoads, productLoads, queueLoads]);
-  const decisions = overview.aiDecisions;
-  // Filter the whole queue before pagination, not the fourteen rows already on screen.
-  const queue = await listAdminReviewEntries(settings, {
-    state: 'needs_review', limit: QUEUE_PAGE_SIZE, offset: (filters.page - 1) * QUEUE_PAGE_SIZE,
-    ids: intersectQueueIds(filters.cause ? causes?.ids.get(filters.cause) ?? [] : undefined,
-      filters.ai ? decisions.ids.get(filters.ai) ?? [] : undefined),
-    search: filters.q || undefined,
-    minStars: filters.minStars ? Number(filters.minStars) : undefined,
-    pushedWithinDays: filters.updated ? Number(filters.updated) : undefined,
-  });
-  const lastQueuePage = Math.max(1, Math.ceil(queue.total / QUEUE_PAGE_SIZE));
-  if (filters.page > lastQueuePage) redirect(queueFilterHref(filters, { page: lastQueuePage }));
+  // 조치할 일과 머리 칩에 드는 것만 기다린다 — 나머지는 아래 Suspense 조각이 따로 센다
+  const [inputs, acks] = await Promise.all([loadActionInputs(settings),
+    attentionAcks().catch((error) => { warn("operations.attention_acks_unavailable")(error); return new Map(); })]);
+  const derived = deriveStatus(inputs);
+  const { ops, overview, roles, models, attention, downCount } = inputs;
+  const now = ops.fetchedAt;
 
-  const [hourly, models, yields, today, attention, roles, accounts, takedowns, modelServers] = await dashboardLoads;
+  const actions = buildActions(inputs, derived);
+  // 메뉴의 긴급 배지가 이 화면과 같은 수를 보이게(attention.tsx criticalActionCount)
+  rememberCriticalCount(actions);
+  const history = ops.observations.find((row) => row.key === ATTENTION_HISTORY_KEY);
+  const split = splitActions(actions, { samples: readAttentionHistory(history?.value), acks, now: new Date(now) });
+  // 24시간 변화를 재려고 한 시간에 한 번 수를 남긴다 — 응답을 보낸 뒤에
+  after(() => recordAttentionSample(actionCounts(actions)).catch(warn("operations.attention_sample_failed")));
 
-  const states = new Map(jobStates.map((job) => [job.name, job]));
-  const workerProgress = throughput ? buildWorkerProgress(throughput, jobStates, ops.observations, new Date(ops.fetchedAt)) : null;
-  const rejectedTotal = rejections.reduce((sum, r) => sum + r.count, 0);
-  const rankingStale = rankingSnapshotIsStale(rankingSeason?.refreshedAt ?? null);
-  const evidenceJob = states.get("product-evidence-refresh");
-
-  /**
-   * 지금 사람이 손대야 하는 것.
-   *
-   * 막고 있는 순서대로 놓는다 — AI 연결이 끊겨 있으면 심사 큐가 쌓이는 것은 결과이지
-   * 원인이 아니다. 원인을 위에 두어야 아래가 저절로 풀린다.
-   */
-  const fetchedAt = Date.parse(ops.fetchedAt);
-  const ageMs = (at: string | Date) => fetchedAt - new Date(at).getTime();
-  const agentInstance = latestServiceInstance(ops.serviceInstances, "connect-agent");
-  const agent = agentInstance?.value as AgentStatus | undefined;
-  /**
-   * 웹 인스턴스의 릴리스 — 머리말 칩과 릴리스 불일치 판단이 본다. 1시간 넘게 관측이 없는 키는 지난 배포의 것이라 뺀다.
-   * 45초가 지나면 "관측 지연" — 릴리스 문자열만 있으면 "응답"으로 보였다.
-   */
-  const web = ops.serviceInstances.filter((instance) => instance.role === "app" && ageMs(instance.observedAt) <= 60 * 60_000)
-    .map((instance) => ({ instance: instance.instanceId, release: typeof instance.value.release === "string" ? instance.value.release : null,
-      stale: ageMs(instance.observedAt) > 45_000 }));
-  const failedJobs = jobStates.filter(job => job.lastError);
-  // 순서는 같은 급 안의 차례다 — 급(critical → hold → clear)은 AttentionList 가 앞세운다
-  const actions: ActionItem[] = [];
-  const healthObservation = ops.observations.find(row => row.key === "job:product-search-health");
-  const health = states.get("product-search-health")?.lastError ? null : readSearchHealth(healthObservation);
-  if (health) {
-    actions.push(...searchHealthAlerts(health).map(alert => ({ ...alert, key: `search-${alert.key}`,
-      action: { label: "점검 작업", href: ACTION_LINKS.jobs } })));
-  }
-
-  /**
-   * AI 연결(connect-agent)은 발행 워커의 카테고리 분류만 맡는다 — 1차·2차 심사는 게이트웨이로 간다.
-   * 2026-10-07 Codex 가 access_denied 인데 Claude 예비가 분류를 이어 받아 화면에 아무 경보도 없었다.
-   * 그 뒤 재로그인하자 적용 전까지 분류가 통째로 막혔는데, 제목은 "연결돼 있지 않습니다"였다.
-   */
-  const ACCOUNT_FAILURES = new Set(["access_denied", "auth", "rate_limit", "no_cli"]);
-  const providerName = { codex: "Codex", claude: "Claude" } as const;
-  const configuredProviders = agent ? [...new Set([agent.config?.primary, agent.config?.fallback]
-    .flatMap((model) => model ? [model.model === "sonnet" ? "claude" as const : "codex" as const] : []))] : [];
-  const failingProviders = configuredProviders.filter((provider) => ACCOUNT_FAILURES.has(agent?.accounts?.[provider]?.result ?? ""));
-  // 옛 연결 서비스는 classifyReady 를 보내지 않는다 — 그때는 적용 전 분류를 거부하므로 configReady 가 곧 분류 가능 여부다
-  const classifyReady = agent?.classifyReady ?? agent?.configReady === true;
-  if (!agent || !agentInstance || ageMs(agentInstance.observedAt) > 2 * 60_000) {
-    actions.push({
-      key: "ai", tone: "critical", count: "!", title: "AI 연결 서비스 관측이 끊겼습니다",
-      detail: <>connect-agent 마지막 관측 {agentInstance ? when(new Date(agentInstance.observedAt)) : "없음"} — 발행 워커가 카테고리를 정하지 못해 승인 후보를 1시간씩 보류합니다.</>,
-      action: { label: "연결 상태", href: ACTION_LINKS.ai },
-    });
-  } else if (!classifyReady) {
-    actions.push({
-      key: "ai", tone: "critical", count: "!", title: "AI 분류를 받지 않습니다",
-      detail: <>{agent.configVersion > 0 ? "새 인증 뒤 모델 검사·적용이 남았습니다" : "적용한 모델 설정이 없습니다"} — 적용할 때까지 발행 워커가 승인 후보를 1시간씩 보류합니다.</>,
-      action: { label: "검사·적용", href: ACTION_LINKS.ai },
-    });
-  } else {
-    if (failingProviders.length > 0) {
-      const all = failingProviders.length === configuredProviders.length;
-      actions.push({
-        key: "ai-account", tone: all ? "critical" : "hold", count: `${failingProviders.length}/${configuredProviders.length}`,
-        title: all ? "설정한 AI 계정이 모두 실패합니다" : `${failingProviders.map((provider) => providerName[provider]).join("·")} 계정이 실패합니다 — 예비 모델이 대신 분류 중`,
-        detail: <>{failingProviders.map((provider) => `${providerName[provider]} ${agent.accounts?.[provider]?.result}${agent.accounts?.[provider]?.checkedAt ? ` · ${when(new Date(agent.accounts[provider]!.checkedAt!))}` : ""}`).join(" · ")} — 다시 인증하고 모델을 검사·적용합니다.</>,
-        action: { label: "다시 인증", href: ACTION_LINKS.ai },
-      });
-    }
-    if (!agent.configReady) {
-      actions.push({
-        key: "ai-apply", tone: "hold", count: "!", title: "새 인증으로 모델 검사·적용이 남았습니다",
-        detail: <>그때까지 기존 설정({agent.config?.primary.model}{agent.config?.fallback ? ` → ${agent.config.fallback.model}` : ""})으로 분류를 계속합니다.</>,
-        action: { label: "검사·적용", href: ACTION_LINKS.ai },
-      });
-    }
-  }
-  const unhealthyServers = modelServers?.filter((server) => !server.ok) ?? [];
-  if (unhealthyServers.length > 0) {
-    actions.push({
-      key: "model-servers", tone: "hold", count: unhealthyServers.length, title: "검색 모델 서버가 응답하지 않습니다",
-      detail: <>{unhealthyServers.map((server) => `${server.name} ${server.error}`).join(" · ")} — 검색은 단어 검색으로만 나가고, 새 제품의 의미 검색 벡터가 밀립니다(M3 launchd bot.brut.nmv-*).</>,
-      action: { label: "의미 검색 벡터", href: jobHref("product-embedding") },
-    });
-  }
-  if (!health) {
-    actions.push({
-      key: "search-health-missing", tone: "hold", count: "?", title: "검색 데이터 점검 결과가 없습니다",
-      detail: <>{states.get("product-search-health")?.lastError ? "점검 작업이 마지막 회차에 실패했습니다" : `마지막 점검 ${healthObservation ? when(new Date(healthObservation.observedAt)) : "없음"} — 45분이 지나면 결과를 믿지 않습니다`}. 키워드 대기 수도 알 수 없습니다.</>,
-      action: { label: "점검 작업", href: ACTION_LINKS.jobs },
-    });
-  }
-  if (failedJobs.length > 0) {
-    actions.push({
-      key: "jobs", tone: "critical", count: failedJobs.length, title: "마지막 회차가 실패한 작업",
-      detail: <>{failedJobs.map(job => job.name).join(", ")} — 실패한 작업 뒤의 단계는 새 일감을 받지 못합니다.</>,
-      action: { label: "작업 흐름", href: failedJobs.length === 1 ? jobHref(failedJobs[0].name) : ACTION_LINKS.jobs },
-    });
-  }
-  /**
-   * 사람 몫 — 심사 큐의 "직접 판단"·"확정만 하면 됨"과 같은 수(humanQueueOverview). 전에는 보류 전체(AI·2차 대기 포함)를
-   * "사람이 가려야 할 후보"로, 보류가 아닌 후보까지 센 2차 칩 합을 "2차 심사 확인"으로 보여 심사 큐와 숫자가 갈렸다.
-   */
-  if (overview.stages.human > 0) {
-    actions.push({
-      key: "review", tone: "hold", count: overview.stages.human, title: "사람이 가려야 할 후보 — 직접 판단",
-      detail: <>
-        {humanWaitLabel(overview)} · {humanFlowLabel(overview)}.
-        {(overview.wait?.stalled ?? 0) > 0 && <> 그중 <span className="font-mono">{overview.wait!.stalled.toLocaleString("ko-KR")}건</span>은 판정한 지 2주가 넘었습니다 — 갈래별로 묶으면 한 번에 처리할 수 있습니다.</>}
-      </>,
-      action: { label: "심사 큐", href: ACTION_LINKS.reviewHuman },
-    });
-  }
-  if (overview.stages.agreed + overview.secondPublished > 0) {
-    actions.push({
-      key: "second", tone: "hold", count: overview.stages.agreed + overview.secondPublished, title: "2차 심사 확인",
-      detail: <>확정만 하면 됨 {overview.stages.agreed.toLocaleString("ko-KR")}건(거부 {overview.agreed.reject.toLocaleString("ko-KR")} · 승인 {overview.agreed.approve.toLocaleString("ko-KR")}, 그중 만장일치 {(overview.second.unanimous_reject + overview.second.unanimous_approve).toLocaleString("ko-KR")})은 한 번에 확정 · 공개분 {overview.secondPublished.toLocaleString("ko-KR")}건은 사람이 봅니다. 엇갈린 것은 직접 판단에 들어 있습니다.</>,
-      // 비어 있는 구간을 열지 않는다 — 할 일이 있다고 해 놓고 빈 화면을 주면 신뢰를 잃는다
-      action: { label: "2차 심사", href: overview.stages.agreed > 0 ? ACTION_LINKS.reviewAgreed : ACTION_LINKS.reviewPublished },
-    });
-  }
-  /**
-   * 2차가 실패하고 있으면 대기 수만 보여 줘선 안 된다.
-   *
-   * 게이트웨이는 모델 목록이 예고 없이 바뀌어, 없는 모델을 적어 두면 매 틱 404 로 끝난다 —
-   * 화면에는 "대기 N건"만 늘어나 멈춘 줄 모른다. 어느 모델이 무슨 까닭으로 실패했는지 적는다.
-   */
-  if (secondFailures.length > 0) {
-    const total = secondFailures.reduce((sum, row) => sum + row.count, 0);
-    const gone = secondFailures.some((row) => row.errorCode === "model_unavailable" || row.errorCode === "not_configured");
-    actions.push({
-      key: "second-failed", tone: gone ? "critical" : "hold", count: total, title: "2차 심사가 실패하고 있습니다",
-      detail: <>
-        최근 24시간 미해결 오류 · {secondFailures.slice(0, 3).map((row) => `${row.model ?? "모델 미상"} ${row.errorCode} ${row.count}건`).join(" · ")}
-        {gone && <> — 설정한 모델을 게이트웨이가 더 이상 갖고 있지 않습니다.</>}
-      </>,
-      action: { label: "2차 심사 설정", href: ACTION_LINKS.secondSettings },
-    });
-  }
-  if (ops.held > 0) {
-    const retry = ops.heldNextRetryAt ? new Date(ops.heldNextRetryAt).toLocaleTimeString("ko-KR", { timeZone: "Asia/Seoul", hour: "2-digit", minute: "2-digit", hour12: false }) : null;
-    actions.push({
-      key: "held", tone: "hold", count: ops.held, title: "분류를 못 정해 발행이 멈춘 후보",
-      detail: <>승인은 끝났고 카테고리만 없습니다. 1시간 뒤 저절로 다시 분류합니다{retry ? ` — 다음 ${retry}` : ""}. 급하면 수동으로 지정합니다.</>,
-      action: { label: "수동 분류", href: ACTION_LINKS.manual },
-    });
-  }
-  if (downCount > 0) {
-    actions.push({
-      key: "down", tone: "critical", count: downCount, title: "응답하지 않는 공개 제품",
-      detail: <>{DOWN_THRESHOLD}회 넘게 연속으로 실패해 공개 목록에서 빠져 있습니다. 지우거나 차단하지는 않습니다 — 다시 열리면 그대로 돌아옵니다. 끝난 서비스인지는 사람이 보고 정합니다.</>,
-      action: { label: "응답 없음 목록", href: ACTION_LINKS.productsDown },
-    });
-  }
-  /**
-   * 역할·워커·모델·한도 — 전에는 스크립트와 접힌 표에만 있던 것들. 예비가 일하면 주가 죽은 것과 같은 무게로 올린다.
-   */
-  const standbyActive = roles?.roles.filter((row) => row.reason === "standby_active") ?? [];
-  if (standbyActive.length > 0) {
-    actions.push({
-      key: "standby", tone: "critical", count: standbyActive.length, title: "예비가 일하고 있는 역할",
-      detail: <>{standbyActive.map((row) => row.role).join(", ")} — 주(M3)가 lease 를 되찾지 못합니다. 예비를 잠깐 0으로 줄여 돌려놓습니다(runbook).</>,
-      action: { label: "역할 표", href: ACTION_LINKS.roles },
-    });
-  }
-  // 공통 이미지 역할과 웹만 비교한다 — maintenance·text 는 git 빌드라 릴리스가 다른 것이 정상이다(2026-10-03 오경보)
-  const releases = new Set([...(roles?.roles ?? []).filter((row) => SHARED_IMAGE_ROLES.has(row.role)).map((row) => row.ownerRelease),
-    ...web.map((row) => row.release)].filter((value): value is string => Boolean(value)));
-  if (releases.size > 1) {
-    actions.push({
-      key: "release", tone: "hold", count: releases.size, title: "공통 이미지 릴리스가 갈렸습니다",
-      detail: <>{[...releases].map((value) => value.slice(0, 7)).join(" · ")} — 릴리스 도구(deploy_shared_images.py)로 8개 앱을 같은 SHA 로 맞춥니다.</>,
-      action: { label: "역할 표", href: ACTION_LINKS.roles },
-    });
-  }
-  const workerAlarms = workerProgress?.liveness.filter((row) => row.alarm) ?? [];
-  if (workerAlarms.length > 0) {
-    actions.push({
-      key: "liveness", tone: "critical", count: workerAlarms.length, title: "워커 관측이 끊겼거나 반복 재시작 중",
-      detail: <>{workerAlarms.map((row) => `${row.role} ${row.reason === "restart_loop" ? "5분 내 반복 재시작" : "관측 끊김"}`).join(" · ")}</>,
-      action: { label: "작업 흐름", href: ACTION_LINKS.jobs },
-    });
-  }
-  // 같은 릴리스로 다시 뜬 워커 — 5분 안 세 번이 아니어도 죽고 있다는 뜻이다(2026-10-08 발행 워커가 20분 사이 두 번)
-  const restarted = (["crawler", "reviewer", "publisher", "text", "maintenance"] as const).flatMap((role) => {
-    const count = latestServiceInstance(ops.serviceInstances, role)?.value.restartCount1h;
-    return typeof count === "number" && count > 0 ? [{ role, count }] : [];
-  });
-  if (restarted.length > 0) {
-    actions.push({
-      key: "restarts", tone: "hold", count: restarted.reduce((sum, row) => sum + row.count, 0), title: "최근 1시간 안에 다시 뜬 워커",
-      detail: <>{restarted.map((row) => `${row.role} ${row.count}회`).join(" · ")} — 배포가 아닌 재시작입니다. 컨테이너 로그(supervisor.stopping 사유)를 봅니다.</>,
-      action: { label: "역할 표", href: ACTION_LINKS.roles },
-    });
-  }
-  // 두 대 중 한 대만 남은 경우 — 둘 다 없으면 위 관측 끊김(scheduler)이 이미 잡는다
-  if (roles && roles.scheduler.freshReplicas === 1) {
-    actions.push({
-      key: "scheduler-replicas", tone: "hold", count: "1/2", title: "스케줄러 복제가 한 대뿐입니다",
-      detail: <>관측되는 스케줄러가 1대입니다 — 이것마저 죽으면 예약이 멈춥니다.</>,
-      action: { label: "역할 표", href: ACTION_LINKS.roles },
-    });
-  }
-  if (workerProgress?.scheduler.reason === "scheduler_missed") {
-    actions.push({
-      key: "scheduler", tone: "critical", count: workerProgress.scheduler.overdueJobs.length, title: "스케줄러 예약이 밀렸습니다",
-      detail: <>{workerProgress.scheduler.overdueJobs.join(", ")}</>,
-      action: { label: "작업 흐름", href: workerProgress.scheduler.overdueJobs.length === 1 ? jobHref(workerProgress.scheduler.overdueJobs[0]) : ACTION_LINKS.jobs },
-    });
-  }
-  if (workerProgress?.scheduler.reason === "unknown_schedule") {
-    actions.push({
-      key: "scheduler-unknown", tone: "hold", count: "?", title: "스케줄러 예약 상태를 확인할 수 없습니다",
-      detail: <>다음 예약 시각이 없는 작업이 있습니다 — 스케줄러 관측과 작업 표를 확인합니다.</>,
-      action: { label: "작업 흐름", href: ACTION_LINKS.jobs },
-    });
-  }
-  // 워커는 관측되는데 저장 진행이 없는 단계 — 관측 끊김(liveness)과 달리 프로세스는 살아 있다
-  const stuckStages = workerProgress?.stages.filter((row) => row.alarm && row.reason === "no_progress") ?? [];
-  if (stuckStages.length > 0) {
-    actions.push({
-      key: "stage-progress", tone: "critical", count: stuckStages.length, title: "워커는 살아 있는데 단계가 나아가지 않습니다",
-      detail: <>{stuckStages.map((row) => throughput?.stages.find((stage) => stage.key === row.stage)?.label ?? row.stage).join(" · ")} — 오래 기다린 후보가 있는데 5분간 저장 진행이 없습니다.</>,
-      action: { label: "작업 흐름", href: ACTION_LINKS.jobs },
-    });
-  }
-  // 1시간 실패율 20% 이상인 모델 자리 — 예비가 받아 주면 "미해결 오류"에는 안 잡힌다(2차 투표 26% 가 숨었다)
-  const failingModels = (models ?? []).filter((row) => row.calls1h >= 10 && row.failed1h / row.calls1h >= 0.2);
-  if (failingModels.length > 0) {
-    actions.push({
-      key: "model-failures", tone: "hold", count: failingModels.length, title: "모델 호출이 자주 실패합니다",
-      detail: <>{failingModels.map((row) => `${row.label} ${row.model ?? ""} 실패 ${Math.round((row.failed1h / row.calls1h) * 100)}% (${row.failed1h}/${row.calls1h})`).join(" · ")} — 재시도와 예비 모델이 받아 주지만 처리량이 줄고 지연이 늘어납니다.</>,
-      action: { label: "모델 연결", href: ACTION_LINKS.models },
-    });
-  }
-  // 내려달라는 요청 — 상세 페이지가 내려 준다고 약속했다. 24시간을 넘기면 다른 경보처럼 맨 앞 급으로
-  if (takedowns && takedowns.pending > 0) {
-    const oldest = takedowns.oldestHours === null ? "" : ` · 최장 ${formatWait(takedowns.oldestHours)}`;
-    actions.push({
-      key: "takedowns", tone: takedowns.overdue > 0 ? "critical" : "hold", count: takedowns.pending,
-      title: takedowns.overdue > 0 ? `내려달라는 요청 — 24시간 넘음 ${takedowns.overdue}` : "내려달라는 요청",
-      detail: <>대기 {takedowns.pending}{oldest}{isBurst(takedowns) ? ` · 지난 1시간 ${takedowns.lastHour.requests}건 몰림` : ""} — 내릴 후보에서 처리</>,
-      action: { label: "처리", href: ACTION_LINKS.takedowns },
-    });
-  }
-  if (attention && attention.auditRejectsOpen > 0) {
-    actions.push({
-      key: "audit", tone: "hold", count: attention.auditRejectsOpen, title: "감사가 거절 판정한 발행분이 처리되지 않았습니다",
-      detail: <>발행 뒤 감사가 &ldquo;제품 아님&rdquo;으로 본 것 — 사람이 내리거나 유지로 정해야 합니다.</>,
-      action: { label: "내릴 후보", href: ACTION_LINKS.audit },
-    });
-  }
-  if (attention?.auditCampaign && !attention.auditCampaign.current) {
-    actions.push({
-      key: "audit-stalled", tone: "hold", count: attention.auditCampaign.unanswered, title: "발행분 감사가 멈춰 있습니다",
-      detail: <>감사 #{attention.auditCampaign.id}은 프롬프트 {attention.auditCampaign.promptVersion}로 시작했는데 지금 코드와 달라 매 틱 건너뜁니다 — 남은 {attention.auditCampaign.unanswered.toLocaleString("ko-KR")}건은 사람이 중단하고 새 감사를 열어야 다시 봅니다.</>,
-      action: { label: "감사", href: ACTION_LINKS.audit },
-    });
-  }
-  if (attention && attention.cdnPurgesPending > 0) {
-    actions.push({
-      key: "cdn-purge", tone: "hold", count: attention.cdnPurgesPending, title: "내린 제품의 CDN 캐시가 지워지지 않았습니다",
-      detail: <>10분 넘게 확인되지 않은 지우기 요청 — 발행 워커의 CLOUDFLARE_ZONE_ID·CLOUDFLARE_PURGE_TOKEN 을 확인합니다. 그동안 내린 페이지가 Cloudflare 에 남습니다.</>,
-      action: { label: "작업 흐름", href: ACTION_LINKS.jobs },
-    });
-  }
-  if (evidenceSummary.oldestDueHours !== null && evidenceSummary.oldestDueHours > 72) {
-    actions.push({
-      key: "evidence-backlog", tone: "hold", count: evidenceSummary.due, title: "제품 근거 갱신이 밀렸습니다",
-      detail: <>기한 지난 출처 {evidenceSummary.due.toLocaleString("ko-KR")}건 · 가장 오래된 것 {Math.round(evidenceSummary.oldestDueHours / 24)}일 — product-evidence-refresh 처리량이 출처 수를 못 따라갑니다.</>,
-      action: { label: "근거 갱신 작업", href: jobHref("product-evidence-refresh") },
-    });
-  }
-  if (attention && attention.healthOverdue > 0) {
-    actions.push({
-      key: "health-overdue", tone: attention.healthOverdue > 5_000 ? "hold" : "clear", count: attention.healthOverdue, title: "생존 확인이 6시간 넘게 밀린 제품",
-      detail: <>uptime-ping 처리량이 목표(시간당 {attention.healthTargetPerHour.toLocaleString("ko-KR")})에 못 미치면 쌓입니다.</>,
-      action: { label: "응답 점검 작업", href: jobHref("uptime-ping") },
-    });
-  }
-  if (attention && attention.introNeedsEditor > 0) {
-    actions.push({
-      key: "intro", tone: "hold", count: attention.introNeedsEditor, title: "소개 확인이 필요한 제품",
-      detail: <>소개 검수가 근거로는 알 수 없다고 한 것{isPausedJob(states.get("product-intro-check")) ? " — 검수 잡은 멈춰 있습니다" : ""}.</>,
-      action: { label: "제품 관리", href: ACTION_LINKS.productsIntro },
-    });
-  }
-  if (attention && attention.repoGone.installable + attention.repoGone.website > 0) {
-    const review = attention.repoReview;
-    // 2단계(AI 사이트 확인)가 사라졌다고 확정된 뒤 이틀 넘게 끝나지 않은 것이 있으면 맨 앞 급으로
-    const overdue = review.oldestHours !== null && review.oldestHours > REPO_REVIEW_OVERDUE_HOURS;
-    actions.push({
-      key: "repo-gone", tone: overdue ? "critical" : "hold", count: attention.repoGone.installable + attention.repoGone.website,
-      title: overdue ? `저장소가 사라진 공개 제품 — ${REPO_REVIEW_OVERDUE_HOURS}시간 넘게 처리 안 됨` : "저장소가 사라진 공개 제품",
-      detail: <>GitHub 저장소가 없거나 빈 채로 하루 넘게 이어짐 — 설치형 {attention.repoGone.installable.toLocaleString("ko-KR")}건은 목록에서 가려짐 · 웹 {attention.repoGone.website.toLocaleString("ko-KR")}건은 GitHub 표시만 뺌.
-        {" "}웹은 AI 가 사이트를 다시 봅니다: 확인 대기 {review.pending.toLocaleString("ko-KR")} · 내릴 후보 {review.delistCandidates.toLocaleString("ko-KR")} · 사람 확인 {review.human.toLocaleString("ko-KR")} · AI 유지 {review.kept.toLocaleString("ko-KR")}
-        {review.oldestHours !== null && <> · 가장 오래 기다린 것 {Math.round(review.oldestHours)}시간</>}. 내리는 것은 사람이 정합니다.</>,
-      action: { label: "제품 관리", href: ACTION_LINKS.productsRepoGone },
-    });
-  }
-  // 공개 제품 스팸 재검사(product-spam-rescan)가 자동으로 내린 것 — 하루 한도에 닿으면 판정이 잘못 바뀌었을 수 있어 더 내리지 않는다
-  if (attention && attention.spamAutoBans.day > 0) {
-    const capped = attention.spamAutoBans.day >= MAX_AUTO_BANS_PER_DAY;
-    actions.push({
-      key: "spam-auto-ban", tone: capped ? "critical" : "hold", count: attention.spamAutoBans.day,
-      title: capped ? `스팸 자동 차단이 하루 한도(${MAX_AUTO_BANS_PER_DAY}건)에 닿아 멈췄습니다` : "스팸 패턴으로 자동 차단한 공개 제품",
-      detail: <>지난 24시간에 {attention.spamAutoBans.day.toLocaleString("ko-KR")}건을 내렸습니다(판정 {SPAM_DETECTOR_VERSION}).{" "}
-        {capped ? "더 걸린 것은 내리지 않고 기다립니다 — 판정이 잘못 바뀌지 않았는지 내린 목록부터 보세요." : "잘못 내려간 것은 차단 해제하면 재검사가 다시 내리지 않습니다."}
-        {" "}자동 차단으로 남아 있는 것 {attention.spamAutoBans.banned.toLocaleString("ko-KR")}건.</>,
-      action: { label: "자동 차단 목록", href: ACTION_LINKS.productsSpamBanned },
-    });
-  }
-  // 공개 제품의 GitHub 저장소를 하루에 한 번씩 다 보고 있나(product-stars-refresh) — 배포 직후 첫 바퀴(약 10시간)는 낮다
-  const repoCoverage = attention && attention.repoHealth.tracked > 0 ? attention.repoHealth.checked24h / attention.repoHealth.tracked : null;
-  if (repoCoverage !== null && repoCoverage < REPO_COVERAGE_TARGET) {
-    actions.push({
-      key: "repo-coverage", tone: "hold", count: `${Math.floor(repoCoverage * 100)}%`, title: "저장소 확인 범위가 95% 아래입니다",
-      detail: <>GitHub 저장소가 있는 공개 제품 {attention!.repoHealth.tracked.toLocaleString("ko-KR")}개 중 지난 24시간에 확인한 것 {attention!.repoHealth.checked24h.toLocaleString("ko-KR")}개 — product-stars-refresh 가 밀리거나 GitHub 한도에 걸렸습니다.</>,
-      action: { label: "작업 흐름", href: ACTION_LINKS.jobs },
-    });
-  }
-  const quotaAccount = accounts?.find((row) => row.enabled && row.coreQuota);
-  const quota = quotaAccount ? parseCoreQuota(quotaAccount.coreQuota) : null;
-  if (quota && quota.limit > 0 && quota.remaining / quota.limit < 0.1) {
-    actions.push({
-      key: "quota", tone: "critical", count: quota.remaining, title: "GitHub API 한도가 거의 남지 않았습니다",
-      detail: <>{quota.remaining}/{quota.limit} · {new Date(quota.reset * 1000).toLocaleTimeString("ko-KR", { timeZone: "Asia/Seoul", hour: "2-digit", minute: "2-digit", hour12: false })} 초기화</>,
-      action: { label: "수집 계정", href: ACTION_LINKS.githubAccounts },
-    });
-  }
-  if (actions.length === 0) {
-    actions.push({
-      key: "clear", tone: "clear", count: "0", title: "지금 손댈 것이 없습니다",
-      detail: <>실패한 작업이 없고, 사람이 가려야 할 후보도 없습니다.</>,
-    });
-  }
-
-  /** 신호별로 조사한 수와 그중 목록에 오른 수 */
-  const signals = new Map<string, { judged: number; kept: number }>();
-  for (const row of signalRows) {
-    const entry = signals.get(row.signal) ?? { judged: 0, kept: 0 };
-    entry.judged += row.count;
-    if (row.state === "approved" || row.state === "published") entry.kept += row.count;
-    signals.set(row.signal, entry);
-  }
-
-  const search = await searchLoad;
-
+  const { agent, web, quota, health, healthObservation } = derived;
   const probes: ConnectionProbe[] = (["claude", "codex"] as const).map((provider) => ({
     provider, result: agent?.accounts?.[provider]?.probe?.result ?? agent?.accounts?.[provider]?.result ?? null,
     checkedAt: agent?.accounts?.[provider]?.probe?.checkedAt ?? null,
@@ -539,274 +381,66 @@ export default async function StatusPage({ searchParams }: { searchParams: Promi
   const grok = ops.observations.filter((row) => row.key.startsWith("service:grok:"))
     .sort((a, b) => new Date(b.observedAt).getTime() - new Date(a.observedAt).getTime())[0];
   if (grokConfigured) probes.push({ provider: "grok", checkedAt: grok?.observedAt ?? null,
-    result: !grok ? null : ageMs(grok.observedAt) > 5 * 3_600_000 ? "오래됨" : typeof grok.value.result === "string" ? grok.value.result : null });
+    result: !grok ? null : derived.ageMs(grok.observedAt) > 5 * 3_600_000 ? "오래됨" : typeof grok.value.result === "string" ? grok.value.result : null });
   const roleRows = roles?.roles ?? [];
   const scheduler = roles?.scheduler ?? { freshReplicas: 0, alarm: true };
-  const dashboard = (
+
+  /*
+   * 전체 현황 — 지금 조치 · 쌓인 일 · 사람 확인 한 줄, 그다음 지표.
+   * 폰(ADM-30)에서는 상태 칩 + 조치할 일 + 역할 표만 보이고, ops-phone-rest 로 감싼 지표는 "나머지 지표 보기"로 편다.
+   * 심사 대기 표(QueuePreview)는 뺐다 — 같은 후보가 두 화면에서 다른 갈래·다른 거르기로 보였다(ADM-16). 처리는 심사 큐에서.
+   */
+  const attentionCards = (
     <>
-      <KpiStrip series={hourly} textPending={health?.pendingGeneration ?? null} verifyPending={health?.pendingVerification ?? null} />
-      <StageRail snapshot={throughput} flow={flow} human={overview}
-        signals={workerProgress?.stages} liveness={workerProgress?.liveness} />
-      <RolesTable roles={roleRows} scheduler={scheduler} web={web} />
-      <ModelCards rows={models ?? []} probes={probes} />
-      <SignalTable rows={yields ?? []} />
-      <TodayFeed today={today ?? { total24h: 0, korean24h: 0, latest: [] }} down={downCount} />
-      {attention && <RepoHealthCard health={attention.repoHealth} review={attention.repoReview} />}
+      <AttentionList urgent={split.urgent} backlog={split.backlog} hidden={split.hidden} now={now} />
+      <p className="dash-card dash-12 ops-human-line">
+        사람 확인 <b>{n(overview.stages.human)}</b>건 · {humanWaitLabel(overview)}
+        <Link href={ACTION_LINKS.reviewHuman}>→ 심사 큐</Link>
+      </p>
     </>
   );
-  const statusChips = <StatusChips roles={roleRows} scheduler={scheduler} web={web} models={models ?? []}
+  const dashboard = (
+    <>
+      <div className="ops-phone-rest">
+        <Suspense fallback={<CardPending span="dash-12" label="지금 처리량" />}><KpiSlot derived={derived} /></Suspense>
+        <Suspense fallback={<CardPending span="dash-8" label="파이프라인" />}><StageSlot inputs={inputs} derived={derived} /></Suspense>
+      </div>
+      <RolesTable roles={roleRows} scheduler={scheduler} web={web} />
+      <div className="ops-phone-rest">
+        <ModelCards rows={models ?? []} probes={probes} />
+        <Suspense fallback={<CardPending span="dash-4" label="신호별 수율" />}><SignalSlot settings={settings} /></Suspense>
+        <Suspense fallback={<CardPending span="dash-12" label="오늘 발행" />}><TodaySlot down={downCount} now={now} /></Suspense>
+        {attention && <RepoHealthCard health={attention.repoHealth} review={attention.repoReview} />}
+      </div>
+    </>
+  );
+  const statusChips = <StatusChips roles={roleRows} scheduler={scheduler} web={web} models={models ?? []} now={now}
     quota={quota ? { remaining: quota.remaining, limit: quota.limit, resetAt: new Date(quota.reset * 1000).toISOString() } : null} />;
+  const diagnostics = (
+    <>
+      <SearchHealthPanel health={health} observedAt={healthObservation?.observedAt} />
+      <Suspense fallback={<TranslationProgressPending />}><TranslationProgressSlot now={now} /></Suspense>
+      <Suspense fallback={<p className="mt-3 text-[13px] text-fg-3" aria-busy="true">진단 지표를 세는 중…</p>}>
+        <DiagnosticsPanels inputs={inputs} derived={derived} />
+      </Suspense>
+    </>
+  );
 
   return (
     <main className="pb-10">
-      <OperationsCenter attention={<AttentionList items={actions} />} dashboard={dashboard} statusChips={statusChips} searchHealth={<><SearchHealthPanel health={health} observedAt={healthObservation?.observedAt} /><Suspense fallback={<TranslationProgressPending />}><TranslationProgressSlot now={ops.fetchedAt} /></Suspense></>} key={`${initialTab}:${initialJob ?? ''}`} initialTab={initialTab} initialJob={initialJob} queue={<QueuePreview entries={queue.entries} total={queue.total} counts={decisions.counts} filters={filters} totalWaiting={candidates.needs_review ?? 0} filterScanTruncated={causes?.truncated || Object.values(decisions.counts).reduce((sum, count) => sum + count, 0) < (candidates.needs_review ?? 0)} />} data={ops} candidates={manual} reviewMode={settings.reviewMode} enabled={settings.enabled}
+      <OperationsCenter attention={attentionCards} dashboard={dashboard} statusChips={statusChips} diagnostics={diagnostics}
+        manual={<Suspense fallback={<p className="ops-note" aria-busy="true">분류할 후보를 읽는 중…</p>}><ManualSlot /></Suspense>}
+        // 시간별 조치 수는 화면에 쓰지 않는다 — 브라우저로 보내지 않는다
+        data={{ ...ops, observations: ops.observations.filter((row) => row.key !== ATTENTION_HISTORY_KEY) }}
+        reviewMode={settings.reviewMode} enabled={settings.enabled}
         jobs={JOB_NAMES.map(name => {
-          const job = states.get(name);
+          const job = derived.states.get(name);
           return { name, status: jobStatusLabel(job), lastRunAt: job?.lastRunAt?.toISOString() ?? null,
             lastSuccessAt: job?.lastSuccessAt?.toISOString() ?? null, nextScheduledAt: job?.nextScheduledAt?.toISOString() ?? null,
             notBefore: job?.notBefore?.toISOString() ?? null, workerSeenAt: job?.workerSeenAt?.toISOString() ?? null,
             requestedVersion: job?.requestedVersion ?? 0, processedVersion: job?.processedVersion ?? 0, runs: job?.runs ?? 0,
             lastError: job?.lastError?.slice(0,1000) ?? null, cursor: JSON.stringify(redact(job?.cursor ?? null),null,2).slice(0,8000) };
-        })}>
-      <div className="mt-3 grid gap-3 xl:grid-cols-2">
-        <Panel
-          title="작업"
-          note="예약과 실행, 워커 생존을 구분합니다. 마지막 tick 성공은 대기 중인 모든 항목의 처리 완료를 뜻하지 않습니다."
-        >
-          {/* 좁은 화면에서 표가 밀려 나가지 않게 감싼다 */}
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[420px] text-[13px]">
-              <thead className="text-fg-3">
-                <tr className="text-left">
-                  <th className="pb-2 font-medium">이름</th>
-                  <th className="pb-2 font-medium">상태</th>
-                  <th className="pb-2 font-medium">워커 관측</th>
-                <th className="pb-2 font-medium">마지막 실행</th>
-                <th className="pb-2 font-medium">tick 성공</th>
-                <th className="pb-2 font-medium">횟수</th>
-              </tr>
-            </thead>
-            <tbody>
-              {JOB_NAMES.map((name) => {
-                const state = states.get(name);
-                return (
-                  <tr key={name} className="border-t border-line">
-                    <td className="py-2 font-mono">{name}<span className="block text-[13px] text-fg-3">{JOB_CATALOG.find(job => job.name === name)?.role}</span></td>
-                    <td className="py-2 text-fg-2">{name === "heartbeat" ? "스케줄러 관측" : jobStatusLabel(state)}</td>
-                    <td className="py-2 text-fg-2">{when(state?.workerSeenAt ?? null)}</td>
-                    <td className="py-2 text-fg-2">{state?.lastRunAt ? when(state.lastRunAt) : "실행 기록 없음"}</td>
-                    <td className="py-2 text-fg-2">{state ? when(state.lastSuccessAt) : "—"}</td>
-                    <td className="py-2 font-mono text-fg-2">{state?.runs ?? 0}</td>
-                  </tr>
-                );
-              })}
-            </tbody>
-            </table>
-          </div>
-
-          {jobStates
-            .filter((job) => job.lastError)
-            .map((job) => (
-              <p key={job.name} className="mt-3 rounded-[10px] border border-down/40 bg-down/10 px-3 py-2 text-[13px] text-down">
-                <span className="font-mono font-semibold">{job.name}</span> {job.lastError}
-              </p>
-            ))}
-        </Panel>
-
-        <Panel
-          title="제품 근거 수집"
-          note="오류 원문은 위 작업 표 한 곳에서만 보고, 여기서는 처리해야 할 출처 수와 마지막 성공 시각만 봅니다."
-        >
-          <dl className="flex flex-wrap gap-x-8 gap-y-3 text-[13px]">
-            <div><dt className="text-fg-3">수집 기한 지난 출처</dt><dd className="mt-1 font-mono font-bold">{evidenceSummary.due}</dd></div>
-            <div><dt className="text-fg-3">오래됨</dt><dd className="mt-1 font-mono font-bold">{evidenceSummary.stale}</dd></div>
-            <div><dt className="text-fg-3">실패·연결 끊김</dt><dd className="mt-1 font-mono font-bold">{evidenceSummary.failed}</dd></div>
-            <div><dt className="text-fg-3">마지막 성공</dt><dd className="mt-1 font-semibold">{evidenceJob ? when(evidenceJob.lastSuccessAt) : "실행 기록 없음"}</dd></div>
-          </dl>
-        </Panel>
-
-        <Panel
-          title="랭킹 스냅샷"
-          note="작업 실행 상태는 위 표의 ranking-refresh 한 곳에서만 확인하고, 여기서는 마지막으로 저장된 시즌 결과의 나이만 봅니다."
-        >
-          {rankingSeason ? (
-            <dl className="flex flex-wrap gap-x-8 gap-y-3 text-[13px]">
-              <div>
-                <dt className="text-fg-3">현재 시즌</dt>
-                <dd className="mt-1 font-mono font-semibold">{rankingSeason.key}</dd>
-              </div>
-              <div>
-                <dt className="text-fg-3">기간</dt>
-                <dd className="mt-1 font-semibold">
-                  {rankingSeason.startsAt.toLocaleDateString("ko-KR", { timeZone: "Asia/Seoul" })}
-                  {" – "}
-                  {rankingSeason.endsAt.toLocaleDateString("ko-KR", { timeZone: "Asia/Seoul" })}
-                </dd>
-              </div>
-              <div>
-                <dt className="text-fg-3">마지막 집계</dt>
-                <dd className={`mt-1 font-semibold ${rankingStale ? "text-down" : "text-up"}`}>
-                  {rankingSeason.refreshedAt ? when(rankingSeason.refreshedAt) : "집계 없음"}
-                  {rankingSeason.refreshedAt && rankingStale && " · 오래됨"}
-                </dd>
-              </div>
-            </dl>
-          ) : (
-            <p className="text-[13px] text-fg-3">아직 생성된 랭킹 시즌이 없습니다.</p>
-          )}
-        </Panel>
-
-        {down.length > 0 && (
-          <Panel
-            title="응답하지 않는 제품"
-            note={`${DOWN_THRESHOLD}회 넘게 연속으로 실패해 공개 목록에서 빠진 것 ${downCount.toLocaleString("ko-KR")}건${downCount > down.length ? ` 중 실패가 많은 ${down.length}건` : ""}입니다. 지우거나 차단하지는 않습니다 — 다시 열리면 그대로 돌아옵니다.`}
-          >
-            <ul className="flex flex-col gap-1.5 text-[13px]">
-              {down.map((item) => (
-                <li key={item.slug} className="flex flex-wrap items-baseline gap-x-2">
-                  <a href={`/p/${item.slug}`} className="font-semibold hover:text-accent">
-                    {item.name}
-                  </a>
-                  <span className="font-mono text-[13px] text-fg-3">
-                    {item.status === 0 ? "접속 실패" : `HTTP ${item.status}`} · {item.failures}회 연속
-                    {item.downSince && ` · ${when(item.downSince)}부터`}
-                  </span>
-                </li>
-              ))}
-            </ul>
-          </Panel>
-        )}
-
-        <Panel title="프론티어" note="조사 대상 큐입니다. 대기가 0이면 crawl-seed가 더 찾아야 합니다.">
-          <Counts counts={frontier} empty="아직 발견한 레포가 없습니다." />
-        </Panel>
-
-        <Panel title="후보" note="판정 결과입니다. 심사 대기는 사람이 가를 것, 발행 대기는 다음 발행 틱이 올릴 것입니다.">
-          <Counts counts={candidates} empty="아직 판정한 것이 없습니다." />
-        </Panel>
-
-        {topClicked.length > 0 && (
-          <Panel
-            title="많이 눌린 제품 (30일)"
-            note="하루 단위로 굴린 집계입니다. 원천은 35일이면 지우므로 오래된 구간은 여기서만 볼 수 있습니다."
-          >
-            <ul className="flex flex-col gap-1.5 text-[13px]">
-              {topClicked.map((item) => (
-                <li key={item.slug} className="flex items-baseline gap-2">
-                  <a href={`/p/${item.slug}`} className="font-semibold hover:text-accent">
-                    {item.slug}
-                  </a>
-                  <span className="font-mono text-fg-3">{item.clicks}회</span>
-                </li>
-              ))}
-            </ul>
-          </Panel>
-        )}
-
-        <Panel
-          title="신호별 수율"
-          note="어떤 검색어가 쓸 만한 것을 데려오는지입니다. 켜고 끄기 전에 숫자로 봅니다."
-        >
-          {signals.size === 0 ? (
-            <p className="text-[13px] text-fg-3">아직 판정한 것이 없습니다.</p>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full min-w-[420px] text-[13px]">
-                <thead className="text-fg-3">
-                  <tr className="text-left">
-                    <th className="pb-2 font-medium">신호</th>
-                  <th className="pb-2 font-medium">판정한 수</th>
-                  <th className="pb-2 font-medium">목록에 오른 수</th>
-                  <th className="pb-2 font-medium">수율</th>
-                </tr>
-              </thead>
-              <tbody>
-                {[...signals]
-                  .sort((a, b) => b[1].kept / b[1].judged - a[1].kept / a[1].judged)
-                  .map(([signal, { judged, kept }]) => (
-                    <tr key={signal} className="border-t border-line">
-                      <td className="py-2">{signal}</td>
-                      <td className="py-2 font-mono text-fg-2">{judged}</td>
-                      <td className="py-2 font-mono text-fg-2">{kept}</td>
-                      <td className="py-2 font-mono font-bold">{Math.round((kept / judged) * 100)}%</td>
-                    </tr>
-                  ))}
-              </tbody>
-              </table>
-            </div>
-          )}
-        </Panel>
-
-        <Panel
-          title="검색"
-          note="지난 7일 동안 사람들이 무엇을 찾았고 무엇을 못 찾았는지입니다. 못 찾은 말이 다음에 고칠 곳입니다."
-        >
-          {!search || search.searches === 0 ? (
-            <p className="text-[13px] text-fg-3">아직 기록된 검색이 없습니다.</p>
-          ) : (
-            <div className="flex flex-col gap-3">
-              <p className="flex flex-wrap gap-x-4 gap-y-1 text-[13px] text-fg-2">
-                <span>검색 <b className="font-semibold">{search.searches.toLocaleString("ko-KR")}</b>회</span>
-                <span>0건 <b className={`font-semibold ${search.zero > 0 ? "text-down" : ""}`}>{search.zero.toLocaleString("ko-KR")}</b>회
-                  ({Math.round((search.zero / search.searches) * 100)}%)</span>
-                <span>한국어 번역 <b className="font-semibold">{search.translated.toLocaleString("ko-KR")}</b>회</span>
-                <span>p95 <b className="font-semibold">{search.p95Ms === null ? "—" : `${search.p95Ms.toLocaleString("ko-KR")}ms`}</b></span>
-              </p>
-              <div className="grid gap-3 sm:grid-cols-2">
-                <div>
-                  <h4 className="text-[13px] font-semibold text-down">못 찾은 말</h4>
-                  {search.misses.length === 0 ? <p className="mt-1 text-[13px] text-fg-3">없습니다.</p> : (
-                    <ul className="mt-1 flex flex-col gap-1 text-[13px]">
-                      {search.misses.map((row) => (
-                        <li key={row.query} className="flex items-baseline justify-between gap-2">
-                          <span className="truncate text-fg-2">{row.query}
-                            {row.keywords && <span className="ml-1.5 font-mono text-fg-3">→ {row.keywords}</span>}</span>
-                          <span className="shrink-0 font-mono text-fg-3">{row.count}</span>
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                </div>
-                <div>
-                  <h4 className="text-[13px] font-semibold text-fg-2">찾은 말</h4>
-                  {search.hits.length === 0 ? <p className="mt-1 text-[13px] text-fg-3">없습니다.</p> : (
-                    <ul className="mt-1 flex flex-col gap-1 text-[13px]">
-                      {search.hits.map((row) => (
-                        <li key={row.query} className="flex items-baseline justify-between gap-2">
-                          <span className="truncate text-fg-2">{row.query}</span>
-                          <span className="shrink-0 font-mono text-fg-3">{row.count}회 · {row.results}건</span>
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                </div>
-              </div>
-            </div>
-          )}
-        </Panel>
-
-        <Panel
-          title="거부 사유"
-          note="어떤 규칙이 얼마나 거르고 있는지입니다. 한 사유가 압도적이면 그 기준부터 의심합니다."
-        >
-          {rejections.length === 0 ? (
-            <p className="text-[13px] text-fg-3">아직 거부한 것이 없습니다.</p>
-          ) : (
-            <ul className="flex flex-col gap-1.5">
-              {rejections.map((row) => (
-                <li key={row.reason} className="flex items-center gap-3 text-[13px]">
-                  <span className="w-[150px] shrink-0 text-fg-2">{REASON_LABELS[row.reason] ?? row.reason}</span>
-                  <span className="h-[6px] rounded-full bg-accent/60" style={{ width: `${(row.count / rejectedTotal) * 60}%` }} />
-                  <span className="font-mono text-fg-3">
-                    {row.count} · {Math.round((row.count / rejectedTotal) * 100)}%
-                  </span>
-                </li>
-              ))}
-            </ul>
-          )}
-        </Panel>
-      </div>
-      </OperationsCenter>
+        })} />
       <ScrollToHash />
     </main>
   );

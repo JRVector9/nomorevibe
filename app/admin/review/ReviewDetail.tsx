@@ -1,14 +1,20 @@
 'use client';
 
-import { useActionState, useEffect, useRef, useState } from 'react';
-import { decideCrawlCandidate, type ReviewState } from '../actions';
-import { approveWithTagline, collectCandidateEvidence } from './actions';
+import { useActionState, useEffect, useEffectEvent, useRef, useState, useTransition } from 'react';
 import type { AdminReviewEntry } from '@/lib/crawl/admin-review';
 import type { StoppedAt } from '@/lib/crawl/rules';
+import { formatDetailTime } from '@/lib/format/time';
+import { decideCrawlCandidate } from '../actions';
+import { REASON_LABELS, REVIEW_QUICK_REASONS } from '../reasons';
+import { approveWithTagline, collectCandidateEvidence } from './actions';
 import { RuleTrace } from './RuleTrace';
-import { causeLabel } from './causes';
-import { REASON_LABELS } from '../reasons';
+import { approvalNote, causeLabel, modelsAgree, recommendDecision } from './causes';
+import type { ReviewDecisionState } from './contract';
 import { ReasonText } from './ReasonText';
+import { revealInPanel, reviewShortcut } from './shortcuts';
+
+/** 성공한 한 건 결정 — 알림과 되돌리기가 쓴다 */
+export type DecidedResult = Extract<NonNullable<ReviewDecisionState>, { ok: true }>;
 
 type Reason = { value: string; label: string };
 const button = 'rounded-lg border px-3 py-1.5 text-[13px] font-semibold disabled:opacity-50';
@@ -47,12 +53,13 @@ export function waitingDays(entry: AdminReviewEntry): number | null {
   return at ? Math.floor((Date.now() - new Date(at).getTime()) / 86_400_000) : null;
 }
 
-/** 오른쪽 상세. 표에서 고른 후보 하나의 근거와 결정 */
-export function ReviewDetail({ entry, reasons }: { entry: AdminReviewEntry; reasons: readonly Reason[] }) {
+/** 오른쪽 상세. 표에서 고른 후보 하나의 근거와 결정. 결정이 기록되면 onDecided 로 알린다(알림·다음 줄은 표가 맡는다) */
+export function ReviewDetail({ entry, reasons, onDecided }: {
+  entry: AdminReviewEntry; reasons: readonly Reason[]; onDecided?: (result: DecidedResult) => void;
+}) {
   const { candidate } = entry;
   // 보류 후보는 갈래 칩·목록과 같은 갈래(entry.bucket), 나머지는 지금 기준으로 다시 판정해 멈춘 곳
   const bucket = entry.bucket ?? entry.verdict?.cause ?? null;
-  const [state, action, pending] = useActionState<ReviewState, FormData>(decideCrawlCandidate, null);
   const [refresh, refreshAction, refreshing] = useActionState(collectCandidateEvidence, null);
   const [written, writeAction, writing] = useActionState(approveWithTagline, null);
   const canDecide = !!entry.inputHash && !!entry.sourceRevisionHash && candidate.state !== 'published' && !candidate.publishedSlug;
@@ -61,33 +68,76 @@ export function ReviewDetail({ entry, reasons }: { entry: AdminReviewEntry; reas
   const stop = stoppedAt(candidate.signals);
   const facts = entryFacts(entry);
   const verdict = entry.review?.decision && entry.review.decision in VERDICT ? VERDICT[entry.review.decision as keyof typeof VERDICT] : null;
+  const ai = entry.review?.decision ?? null;
+  const agree = modelsAgree(ai, entry.seconds);
+  // 권장 결정 + 미리 쓴 사유(ADM-07) — 누르면 사유를 적지 않고 그대로 확정한다
+  const recommendation = canDecide ? recommendDecision({ bucket: entry.bucket, ai, agree }) : null;
   /*
-   * A/R — 판단 사유가 필수라 누르는 즉시 결정하지 않는다. 사유 칸으로 옮겨 가며 승인·거부를 미리 골라 두고,
-   * 사유를 적은 뒤 ⌘/Ctrl+Enter 로 보낸다. 상세는 후보마다 새로 그려져(key) 고른 것이 다음 후보로 넘어가지 않는다.
+   * A/R 은 결정을 준비만 한다 — 승인은 두 모델이 같거나 AI 승인을 따르면 사유가 저절로 채워지고(ADM-11),
+   * 거부는 사유를 골라야 한다(1~5 자주 쓰는 사유). ⌘/Ctrl+Enter 로 보낸다. 메모는 비워도 된다 — 서버가 고른 사유 이름을 남긴다.
+   * 상세는 후보마다 새로 그려져(key) 고른 것이 다음 후보로 넘어가지 않는다.
    */
   const [intent, setIntent] = useState<'approve' | 'reject' | null>(null);
-  const formRef = useRef<HTMLFormElement>(null);
+  const [reason, setReason] = useState('');
+  const [note, setNote] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [pending, startDecision] = useTransition();
   const noteRef = useRef<HTMLTextAreaElement>(null);
+  const reasonRef = useRef<HTMLSelectElement>(null);
+
+  function decide(decision: 'approve' | 'reject', values: { reason: string; note: string } = { reason, note }) {
+    if (pending) return;
+    if (decision === 'reject' && !values.reason) {
+      setIntent('reject');
+      setError('거부 사유를 골라주세요.');
+      if (reasonRef.current) revealInPanel(reasonRef.current);
+      return;
+    }
+    const form = new FormData();
+    form.set('repo', candidate.repo);
+    form.set('inputHash', entry.inputHash ?? '');
+    form.set('sourceRevisionHash', entry.sourceRevisionHash ?? '');
+    form.set('candidateRevisionHash', entry.candidateRevisionHash);
+    form.set('decision', decision);
+    form.set('reason', decision === 'reject' ? values.reason : '');
+    // 승인 단추를 바로 눌러도 두 모델이 같거나 AI 승인을 따르는 것이면 그 사유로 남긴다
+    form.set('note', values.note || (decision === 'approve' ? approvalNote(ai, agree) ?? '' : ''));
+    setError(null);
+    startDecision(async () => {
+      const result = await decideCrawlCandidate(null, form);
+      if (result?.ok) onDecided?.(result);
+      else setError(result?.error ?? '처리하지 못했습니다 — 잠시 뒤 다시 해 주세요');
+    });
+  }
+  function prepare(decision: 'approve' | 'reject') {
+    setIntent(decision);
+    setError(null);
+    if (decision === 'approve') {
+      const auto = approvalNote(ai, agree);
+      if (auto && !note) setNote(auto);
+      if (noteRef.current) revealInPanel(noteRef.current);
+    } else if (reasonRef.current) revealInPanel(reasonRef.current);
+  }
+  function pickQuick(index: number) {
+    const quick = REVIEW_QUICK_REASONS[index];
+    if (!quick) return;
+    setIntent('reject');
+    setReason(quick.reason);
+    setNote(quick.note);
+    setError(null);
+  }
+  const onKey = useEffectEvent((event: KeyboardEvent) => {
+    const shortcut = reviewShortcut(event);
+    if (shortcut?.kind === 'intent') { event.preventDefault(); prepare(shortcut.decision); }
+    else if (shortcut?.kind === 'reason' && shortcut.index < REVIEW_QUICK_REASONS.length) { event.preventDefault(); pickQuick(shortcut.index); }
+    else if (shortcut?.kind === 'submit' && intent) { event.preventDefault(); decide(intent); }
+  });
   useEffect(() => {
     if (!canDecide) return;
-    function onKey(event: KeyboardEvent) {
-      const target = event.target as HTMLElement | null;
-      if (target && /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName)) return;
-      if (event.metaKey || event.ctrlKey || event.altKey) return;
-      if (event.key !== 'a' && event.key !== 'r') return;
-      event.preventDefault();
-      setIntent(event.key === 'a' ? 'approve' : 'reject');
-      noteRef.current?.focus();
-    }
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
+    const listener = (event: KeyboardEvent) => onKey(event);
+    window.addEventListener('keydown', listener);
+    return () => window.removeEventListener('keydown', listener);
   }, [canDecide]);
-  const submitIntent = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (!intent || event.key !== 'Enter' || !(event.metaKey || event.ctrlKey)) return;
-    event.preventDefault();
-    const button = formRef.current?.querySelector<HTMLButtonElement>(`button[name="decision"][value="${intent}"]`);
-    if (button) formRef.current?.requestSubmit(button);
-  };
 
   const identity = <>
     <input type="hidden" name="repo" value={candidate.repo} />
@@ -215,25 +265,59 @@ export function ReviewDetail({ entry, reasons }: { entry: AdminReviewEntry; reas
         <span className="ml-1.5 break-all font-mono text-fg-3">{stop.detail}</span>
       </p>}
 
-      {canDecide && <form ref={formRef} action={action} className="rounded-lg border border-line bg-bg-soft p-3">
-        {identity}
-        <label className="block text-[13px] font-semibold">관리자 판단 사유
-          <textarea ref={noteRef} name="note" required maxLength={2000} rows={2} onKeyDown={submitIntent}
+      {canDecide && <form onSubmit={(event) => {
+        event.preventDefault();
+        const submitter = (event.nativeEvent as SubmitEvent).submitter as HTMLButtonElement | null;
+        const decision = submitter?.value === 'reject' ? 'reject' : submitter?.value === 'approve' ? 'approve' : intent;
+        if (decision) decide(decision);
+      }} className="rounded-lg border border-line bg-bg-soft p-3">
+        {recommendation && (
+          <div className="mb-2.5 flex items-center gap-3 rounded-lg border border-line bg-bg-card px-2.5 py-2 text-[13px]">
+            <p className="min-w-0 flex-1 leading-[1.5]">
+              <span className="block text-fg-3">권장 · {recommendation.basis}</span>
+              <b className={`font-semibold ${recommendation.decision === 'approve' ? 'text-up' : 'text-down'}`}>
+                {recommendation.decision === 'approve' ? '승인' : `거부 · ${reasons.find((row) => row.value === recommendation.reason)?.label ?? recommendation.reason}`}
+              </b>
+              <span className="text-fg-2"> — “{recommendation.note}”</span>
+            </p>
+            <button type="button" disabled={pending || refreshing}
+              onClick={() => decide(recommendation.decision, { reason: recommendation.decision === 'reject' ? recommendation.reason : '', note: recommendation.note })}
+              className={`${button} shrink-0 whitespace-nowrap ${recommendation.decision === 'approve' ? 'border-up/40 bg-up/10 text-up' : 'border-down/40 bg-down/10 text-down'}`}>
+              이대로 {recommendation.decision === 'approve' ? '승인' : '거부'}
+            </button>
+          </div>
+        )}
+        <div className="flex flex-wrap items-center gap-2">
+          <button type="submit" value="approve" disabled={pending || refreshing}
+            className={`${button} border-up/40 bg-up/10 text-up ${intent === 'approve' ? 'ring-2 ring-up/40' : ''}`}>승인</button>
+          <select ref={reasonRef} aria-label="거부 사유 유형" value={reason} required={intent === 'reject'} aria-invalid={error !== null && intent === 'reject' && !reason}
+            onChange={(event) => { setReason(event.target.value); if (event.target.value) setIntent('reject'); }}
+            className="rounded-lg border border-line bg-bg-card px-2 py-1.5 text-[13px]">
+            <option value="">사유 선택</option>
+            {reasons.map(row => <option key={row.value} value={row.value}>{row.label}</option>)}
+          </select>
+          <button type="submit" value="reject" disabled={pending || refreshing}
+            className={`${button} border-line bg-bg-card text-fg-2 ${intent === 'reject' ? 'ring-2 ring-down/40' : ''}`}>거부</button>
+          {pending && <span className="text-[13px] text-fg-3">보내는 중…</span>}
+        </div>
+        {/* 자주 쓰는 거부 사유 — 누르거나 숫자키로 사유 코드와 메모를 한 번에 넣는다 */}
+        <div className="mt-2 flex flex-wrap gap-1.5" role="group" aria-label="자주 쓰는 거부 사유">
+          {REVIEW_QUICK_REASONS.map((quick, index) => (
+            <button key={quick.note} type="button" onClick={() => pickQuick(index)} aria-pressed={intent === 'reject' && note === quick.note}
+              className={`rounded-full border px-2 py-0.5 text-[13px] ${intent === 'reject' && note === quick.note ? 'border-accent bg-accent-soft text-accent' : 'border-line bg-bg-card text-fg-2 hover:bg-bg-hover'}`}>
+              <kbd className="mr-1 font-mono text-fg-3">{index + 1}</kbd>{quick.note}
+            </button>
+          ))}
+        </div>
+        <label className="mt-2 block text-[13px] font-semibold">메모 <span className="font-normal text-fg-3">(선택)</span>
+          <textarea ref={noteRef} value={note} onChange={(event) => setNote(event.target.value)} maxLength={2000} rows={2}
+            placeholder={intent === 'reject' ? '비우면 고른 거부 사유 이름으로 기록합니다' : '비우면 “관리자 승인”으로 기록합니다'}
             className="mt-1.5 block w-full rounded-lg border border-line bg-bg-card p-2 font-normal" />
         </label>
         <p className="mt-1 text-[13px] text-fg-3">
-          {intent ? `${intent === 'approve' ? '승인' : '거부'}으로 보냅니다 — 사유를 적고 ⌘/Ctrl + Enter` : 'A 승인 · R 거부 — 사유 칸으로 옮겨 갑니다'}
+          {intent ? `${intent === 'approve' ? '승인' : '거부'}으로 보냅니다 — ⌘/Ctrl + Enter` : 'A 승인 · R 거부 · 1~5 사유 — ⌘/Ctrl + Enter 로 보내고 다음 줄로'}
         </p>
-        <div className="mt-2 flex flex-wrap items-center gap-2">
-          <button name="decision" value="approve" disabled={pending || refreshing}
-            className={`${button} border-up/40 bg-up/10 text-up ${intent === 'approve' ? 'ring-2 ring-up/40' : ''}`}>승인</button>
-          <select name="reason" aria-label="거부 사유 유형" defaultValue={reasons[0]?.value} className="rounded-lg border border-line bg-bg-card px-2 py-1.5 text-[13px]">
-            {reasons.map(reason => <option key={reason.value} value={reason.value}>{reason.label}</option>)}
-          </select>
-          <button name="decision" value="reject" disabled={pending || refreshing}
-            className={`${button} border-line bg-bg-card text-fg-2 ${intent === 'reject' ? 'ring-2 ring-down/40' : ''}`}>거부</button>
-        </div>
-        {state?.error && <p role="status" className="mt-2 text-[13px] text-down">{state.error}</p>}
+        {error && <p role="alert" className="mt-2 text-[13px] text-down">{error}</p>}
       </form>}
 
       {entry.description && (
@@ -255,7 +339,7 @@ export function ReviewDetail({ entry, reasons }: { entry: AdminReviewEntry; reas
         {entry.latest.actor && <p>담당자: {entry.latest.actor}</p>}
         {entry.latest.reason && <p className="whitespace-pre-line"><ReasonText text={entry.latest.reason} korean={entry.latest.reasonKo} /></p>}
         {entry.latest.error && <p className="text-down">실행 오류: {entry.latest.error}</p>}
-        <p className="mt-1 text-[13px] text-fg-3">{entry.latest.at}</p>
+        <p className="mt-1 text-[13px] text-fg-3">{formatDetailTime(entry.latest.at)}</p>
       </div>}
 
       <details className="text-[13px] text-fg-2">

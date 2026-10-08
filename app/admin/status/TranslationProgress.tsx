@@ -1,14 +1,14 @@
 import type { TranslationProgress as Progress } from "@/lib/crawl/translations";
+import { formatAgo } from "@/lib/format/time";
 import { TranslationFailures } from "./TranslationFailures";
 
 /** 30분 넘게 한 건도 옮기지 못했는데 남은 것이 있으면 멈춘 것으로 본다 — 틱은 1분마다다 */
 const STALL_SECONDS = 30 * 60;
 
-function ago(seconds: number | null): string {
-  if (seconds === null) return "아직 없음";
-  if (seconds < 90) return "방금";
-  if (seconds < 3_600) return `${Math.round(seconds / 60)}분 전`;
-  return `${Math.round(seconds / 3_600)}시간 전`;
+/** 마지막으로 옮긴 때 — 집계 시각(measuredAt)에서 lastSecondsAgo 를 뺀 시각을 화면 기준 시각(now)과 견준다 */
+function ago(progress: Progress, now: string): string {
+  if (progress.lastSecondsAgo === null) return "아직 없음";
+  return formatAgo(Date.parse(progress.measuredAt) - progress.lastSecondsAgo * 1000, now);
 }
 
 /**
@@ -30,7 +30,7 @@ export function TranslationProgress({ progress, now }: { progress: Progress; now
       </div>
       <div className="font-mono tabular-nums text-fg-2">
         {progress.done.toLocaleString("ko-KR")}/{progress.total.toLocaleString("ko-KR")} ({percent}%)
-        <div className="inline text-fg-3"> · 남음 {progress.pending.toLocaleString("ko-KR")} · <TranslationFailures failed={progress.failed} failures={progress.failures} /> · 최근 1시간 {progress.lastHour.toLocaleString("ko-KR")}건 · 마지막 {ago(progress.lastSecondsAgo)}{measuredAgo >= 5 && ` · ${measuredAgo}초 전 집계`}</div>
+        <div className="inline text-fg-3"> · 남음 {progress.pending.toLocaleString("ko-KR")} · <TranslationFailures failed={progress.failed} failures={progress.failures} /> · 최근 1시간 {progress.lastHour.toLocaleString("ko-KR")}건 · 마지막 {ago(progress, now)}{measuredAgo >= 5 && ` · ${measuredAgo}초 전 집계`}</div>
       </div>
       {stalled && <p className="w-full text-warn">30분 넘게 옮긴 것이 없습니다 — <span className="font-mono">reason-translate</span> 작업과 ABCLLM_API_KEY 를 확인하세요.</p>}
     </section>

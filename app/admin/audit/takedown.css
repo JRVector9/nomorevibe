@@ -29,14 +29,8 @@
 .td-btn:disabled{opacity:.5;cursor:default}
 .td-sm{padding:2px 8px}
 .td-danger{border-color:transparent;background:color-mix(in srgb,var(--color-down) 11%,transparent);color:var(--color-down)}
-.td-solid{border-color:var(--color-down);background:var(--color-down);color:#fff}
 .td-note{font-size:13px;color:var(--color-fg-3)}
 .td-msg{padding:6px 12px;font-size:13px;color:var(--color-fg-2)}
-.td-confirm{flex-basis:100%;display:grid;gap:8px;border:1px solid color-mix(in srgb,var(--color-down) 40%,var(--color-line));border-radius:10px;padding:12px 14px;background:var(--color-bg-card);font-size:13px}
-.td-confirm h3{font-size:13px;font-weight:700}
-.td-confirm ul{margin:0;padding-left:18px;display:grid;gap:2px;color:var(--color-fg-2)}
-.td-names{display:flex;flex-wrap:wrap;gap:6px}
-.td-tag{border-radius:6px;padding:1px 6px;background:var(--color-bg-soft);font-weight:600}
 .td-row{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px}
 .td-between{justify-content:space-between}
 
