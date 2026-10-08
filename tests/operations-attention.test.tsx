@@ -110,4 +110,13 @@ describe("조치 문구 — 코드 대신 사람이 읽는 이름", () => {
     expect(byKey.get("ai")).toMatchObject({ tone: "critical", count: "끊김", unit: "상태" });
     for (const row of actions) expect(row.unit, row.key).toBeTruthy();
   });
+
+  it("설정 적용이 늦은 워커는 settings-apply 판단 그대로 지금 조치에 올리고 설정 화면의 적용 확인으로 보낸다(ADM-19)", () => {
+    expect(byKey.has("settings-apply")).toBe(false);
+    const lagging = { ...inputs, settingsApply: { attention: { key: "settings-apply", tone: "hold", count: 2,
+      title: "설정을 저장했는데 워커 2개가 아직 옛 판으로 돕니다", detail: "후보 심사 · 제품 발행", href: "/admin#apply" } } } as unknown as ActionInputs;
+    const row = buildActions(lagging, deriveStatus(lagging)).find((item) => item.key === "settings-apply");
+    expect(row).toMatchObject({ tone: "hold", count: 2, unit: "개", action: { href: "/admin#apply" } });
+    expect(splitActions([row!], { samples: [], acks: new Map(), now: NOW }).urgent.map((item) => item.key)).toEqual(["settings-apply"]);
+  });
 });

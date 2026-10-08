@@ -29,6 +29,8 @@ export const ACTION_LINKS = {
   reviewPublished: "/admin/review?second=published#review-list",
   /** 설정 화면의 2차 심사 칸(SettingsForm id="second") */
   secondSettings: "/admin#second",
+  /** 설정 화면 머리의 워커별 적용 확인(SettingsApplyLine id="apply") */
+  settingsApply: "/admin#apply",
   productsDown: productFilter("응답 없음"),
   productsIntro: productFilter("소개 확인 필요"),
   productsRepoGone: productFilter("저장소 사라짐"),

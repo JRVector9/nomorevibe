@@ -5,6 +5,7 @@ import { isPausedJob } from "@/lib/jobs/status";
 import { downProductCount, DOWN_THRESHOLD } from "@/lib/domain/products/health";
 import { getEvidenceStatusSummary } from "@/lib/domain/evidence/admin";
 import { operationsData } from "@/lib/operations/admin";
+import { readSettingsApply, type SettingsApply } from "@/lib/operations/settings-apply";
 import { latestServiceInstance } from "@/lib/operations/instance";
 import { pipelineThroughput } from "@/lib/operations/throughput";
 import { buildWorkerProgress } from "@/lib/operations/worker-progress-query";
@@ -38,6 +39,8 @@ import { modelName } from "./dashboard/ModelCards";
 
 export type ActionInputs = {
   settings: CrawlSettings;
+  /** 워커마다 지금 저장된 크롤 설정 판으로 도는지(ADM-19) — 못 읽으면 null */
+  settingsApply: SettingsApply | null;
   ops: Awaited<ReturnType<typeof operationsData>>;
   jobStates: Awaited<ReturnType<typeof listJobStates>>;
   evidenceSummary: Awaited<ReturnType<typeof getEvidenceStatusSummary>>;
@@ -61,7 +64,7 @@ const warn = (event: string) => (error: unknown) => {
 
 /** 조치할 일과 머리말 칩이 읽는 것 — 서로 기다릴 까닭이 없어 한꺼번에 띄운다 */
 export async function loadActionInputs(settings: CrawlSettings): Promise<ActionInputs> {
-  const [ops, jobStates, evidenceSummary, downCount, overview, secondFailures, throughput, models, attention, roles, accounts, takedowns, modelServers] = await Promise.all([
+  const [ops, jobStates, evidenceSummary, downCount, overview, secondFailures, throughput, models, attention, roles, accounts, takedowns, modelServers, settingsApply] = await Promise.all([
     operationsData(), listJobStates(), getEvidenceStatusSummary(new Date()), downProductCount(),
     // 사람 몫의 수(직접 판단·확정만·나이·24시간 흐름)는 심사 큐와 같은 humanQueueOverview 하나에서 온다
     humanQueueOverview(settings), recentSecondReviewFailures(),
@@ -72,8 +75,9 @@ export async function loadActionInputs(settings: CrawlSettings): Promise<ActionI
     listGitHubCollectorAccounts().catch(warn("operations.accounts_unavailable")),
     takedownSummary().catch(warn("operations.takedowns_unavailable")),
     modelServerHealth().catch(warn("operations.model_servers_unavailable")),
+    readSettingsApply().catch(warn("operations.settings_apply_unavailable")),
   ]);
-  return { settings, ops, jobStates, evidenceSummary, downCount, overview, secondFailures, throughput, models, attention, roles, accounts, takedowns, modelServers };
+  return { settings, settingsApply, ops, jobStates, evidenceSummary, downCount, overview, secondFailures, throughput, models, attention, roles, accounts, takedowns, modelServers };
 }
 
 /** 조치할 일과 화면 조각이 함께 쓰는 판단 — 웹 인스턴스, 워커 진행, 검색 점검, GitHub 한도, AI 연결 */
@@ -412,6 +416,14 @@ export function buildActions(inputs: ActionInputs, derived: DerivedStatus): Acti
       key: "repo-coverage", tone: "hold", count: Math.floor(repoCoverage * 100), unit: "%", title: "저장소 확인 범위가 95% 아래입니다",
       detail: <>GitHub 저장소가 있는 공개 제품 {n(attention!.repoHealth.tracked)}개 중 지난 24시간에 확인한 것 {n(attention!.repoHealth.checked24h)}개 — {job("product-stars-refresh")} 작업이 밀리거나 GitHub 한도에 걸렸습니다.</>,
       action: { label: "작업 흐름", href: ACTION_LINKS.jobs },
+    });
+  }
+  // 설정을 저장했는데 10분 넘게 옛 판으로 도는 워커(ADM-19) — 설정 화면 머리의 적용 확인과 같은 판단(settings-apply.ts)
+  const settingsLag = inputs.settingsApply?.attention;
+  if (settingsLag) {
+    actions.push({
+      key: settingsLag.key, tone: settingsLag.tone, count: settingsLag.count, unit: "개", title: settingsLag.title, detail: settingsLag.detail,
+      action: { label: "적용 확인", href: ACTION_LINKS.settingsApply },
     });
   }
   if (quota && quota.limit > 0 && quota.remaining / quota.limit < 0.1) {

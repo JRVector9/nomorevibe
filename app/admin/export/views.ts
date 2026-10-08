@@ -28,7 +28,7 @@ export type ExportView = { columns: readonly { key: string; label: string }[]; l
 const text = (params: URLSearchParams, key: string) => params.get(key) ?? "";
 const time = (value: Date | string | null | undefined) => (value ? formatDetailTime(value) : null);
 
-// ─────────────────────────── 제품 (/admin/products?filter·q·sort) ───────────────────────────
+// ─────────────────────────── 제품 (/admin/products?filter·q·sort·pending) ───────────────────────────
 
 /** app/admin/products/page.tsx 가 주소를 읽는 식과 같다 — 그 화면은 줄 안에서 읽어 여기 옮겨 두었다 */
 function productQuery(params: URLSearchParams) {
@@ -37,7 +37,9 @@ function productQuery(params: URLSearchParams) {
   const sort = Object.hasOwn(PRODUCT_SORTS, text(params, "sort")) ? text(params, "sort") as ProductAdminSort : "recent";
   const q = text(params, "q").trim().slice(0, 100);
   const { statuses, ...flags } = PRODUCT_FILTERS[active];
-  return { statuses: [...statuses], ...flags, adminSearch: q || undefined, sort };
+  // ?pending=1 — 저장소 사라짐에 아직 24시간이 지나지 않은 '지금 없음'까지(화면과 같은 식, ADM-33)
+  const pending = active === "저장소 사라짐" && text(params, "pending") === "1";
+  return { statuses: [...statuses], ...flags, ...(pending ? { repoGone: undefined, repoMissing: true } : {}), adminSearch: q || undefined, sort };
 }
 
 const products: ExportView = {
