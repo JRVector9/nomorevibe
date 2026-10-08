@@ -228,9 +228,13 @@ async function fetchEntry(
    * 검색어가 AI 사용을 말하지 않는 신호(한국어 README 같은 언어 표식)는 레포에 AI 코딩 도구의 흔적이 있어야
    * 들여보낸다(ai-evidence-gate.ts). 페이지를 열기 전에 본다 — 흔적 없는 쪽(표본의 약 1/3)은 페이지·판정·심사
    * 비용을 쓰지 않는다. 원본(레포 메타)은 남기고 후보를 거절로 적어 어떤 신호가 얼마나 걸러지는지 셀 수 있게 한다.
+   *
+   * 처음 들어오는 레포에만 건다. 이미 후보가 있는 레포의 재수집(승인·보류 후보의 원본 갱신, 관리자의 근거 재수집)은
+   * 같은 신호로 다시 여기 오는데, 관문을 다시 걸면 심사 중인 후보를 잠금·상태 확인 없이 거절로 덮었다 —
+   * 2026-10-05~06 1차 AI 승인을 받은 후보 237건이 그렇게 거절됐다. 그런 후보는 이미 심사(1·2차)가 흔적을 함께 본다.
    */
   let evidence: string[] | null = null;
-  if (homepage && evidenceRequired.has(entry.signal)) {
+  if (homepage && evidenceRequired.has(entry.signal) && !(await crawl.getCandidate(entry.repo))) {
     const probe = await oneAtATime(GITHUB_ORIGIN, () => probeAiEvidence(entry.repo));
     if (!probe.ok) {
       if (probe.error.kind === "rate_limited" || probe.error.kind === "auth_unavailable") {
