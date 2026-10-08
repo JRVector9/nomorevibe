@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, beforeEach, vi } from "vitest";
 import { eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { crawlSettings } from "@/lib/db/schema";
-import { getSettings, saveSettings, getSettingsMeta, enabledQueries } from "@/lib/crawl/settings";
+import { getSettings, saveSettings, getSettingsMeta, enabledQueries, settingsFormVersion } from "@/lib/crawl/settings";
 import { DEFAULT_CRAWL_SETTINGS } from "@/lib/crawl/settings-schema";
 import { ensureSchema } from "./setup";
 
@@ -157,5 +157,43 @@ describe("행이 하나만 존재한다", () => {
     expect(rows).toHaveLength(1);
     expect(await db.$count(crawlSettings)).toBe(1);
     expect((await getSettings()).judge.maxStars).toBe(300);
+  });
+});
+
+/**
+ * 크롤 설정 폼은 그린 판(settingsFormVersion)을 함께 보낸다. 그 사이 다른 곳이 폼이 다루는 값을 바꿨으면
+ * 저장하지 않는다 — 열어 둔 폼의 옛 값이 비상 정지나 2차 표 전환을 조용히 되돌리던 길이다.
+ */
+describe("열어 둔 폼의 옛 값", () => {
+  it("다른 곳에서 수집을 끈 뒤 옛 폼이 저장하면 거절하고 꺼진 채로 둔다", async () => {
+    await saveSettings({ enabled: true }, "setup");
+    const opened = settingsFormVersion(await getSettings());
+
+    // 다른 탭에서 비상 정지
+    await saveSettings({ enabled: false }, "other-tab");
+
+    const result = await saveSettings({ enabled: true, discover: { windowDays: 9 } }, "stale-tab", { expectedFormVersion: opened });
+    expect(result.ok).toBe(false);
+    const saved = await getSettings();
+    expect(saved.enabled).toBe(false);
+    expect(saved.discover.windowDays).toBe(DEFAULT_CRAWL_SETTINGS.discover.windowDays);
+  });
+
+  it("폼이 다루지 않는 값(소식·카테고리·리뷰 모드)이 바뀐 것은 판을 바꾸지 않는다", async () => {
+    const opened = settingsFormVersion(await getSettings());
+    await saveSettings({ news: { autoApprove: false } }, "news-page");
+
+    const result = await saveSettings({ discover: { windowDays: 9 } }, "settings-page", { expectedFormVersion: opened });
+    expect(result.ok).toBe(true);
+    expect((await getSettings()).discover.windowDays).toBe(9);
+    expect((await getSettings()).news.autoApprove).toBe(false);
+  });
+
+  it("판이 맞으면 저장하고, 저장한 뒤의 판은 새 값을 따른다", async () => {
+    const opened = settingsFormVersion(await getSettings());
+    expect((await saveSettings({ discover: { windowDays: 9 } }, "a", { expectedFormVersion: opened })).ok).toBe(true);
+    expect(settingsFormVersion(await getSettings())).not.toBe(opened);
+    // 같은 판으로 한 번 더 — 이미 바뀌었으니 거절
+    expect((await saveSettings({ discover: { windowDays: 10 } }, "a", { expectedFormVersion: opened })).ok).toBe(false);
   });
 });

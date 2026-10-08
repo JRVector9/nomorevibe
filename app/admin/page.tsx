@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { currentAdmin } from "@/lib/auth/admin";
-import { getSettings, getSettingsMeta, settingsDrift } from "@/lib/crawl/settings";
+import { getSettings, getSettingsMeta, settingsDrift, settingsFormVersion } from "@/lib/crawl/settings";
 import { candidateCounts } from "@/lib/crawl/repository";
 import { signalYields } from "@/lib/operations/dashboard";
 import { logger } from "@/lib/observability/logger";
@@ -105,7 +105,7 @@ export default async function AdminPage() {
           </nav>
         </aside>
         <div className="flex min-w-0 flex-[999_1_640px] flex-col gap-4">
-          <SettingsForm settings={settings} yields={yieldsByLabel} />
+          <SettingsForm settings={settings} version={settingsFormVersion(settings)} yields={yieldsByLabel} />
           <SettingsDriftNotice drift={drift} />
         </div>
       </div>
