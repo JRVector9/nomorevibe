@@ -6,15 +6,18 @@ import { currentAdmin } from "@/lib/auth/admin";
 import { getSettings } from "@/lib/crawl/settings";
 import type { NewsState } from "@/lib/db/schema";
 import type { NewsCursor, NewsSourceState } from "@/lib/news/refresh";
-import { countNewsByState, listNewsForAdmin, newsJobState } from "@/lib/news/repository";
+import { countNewsByState, newsJobState } from "@/lib/news/repository";
 import { NEWS_SOURCES, newsSource, type NewsSource } from "@/lib/news/sources";
+import { formatListTime } from "@/lib/format/time";
+import { pageWindow } from "../paging";
+import { listNewsPage, NEWS_PAGE_SIZE, newsFilter } from "./list";
 import { NewsBoard } from "./NewsBoard";
 import { NewsSettingsForm } from "./NewsSettingsForm";
 
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "AI 소식 — NoMoreVibe", robots: { index: false } };
 
-type Props = { searchParams: Promise<{ state?: string }> };
+type Props = { searchParams: Promise<{ state?: string; page?: string }> };
 
 const FILTERS: { key: NewsState | "all"; label: string }[] = [
   { key: "all", label: "전체" },
@@ -25,10 +28,9 @@ const FILTERS: { key: NewsState | "all"; label: string }[] = [
 const KIND_LABEL: Record<NewsSource["kind"], string> = { feed: "RSS·Atom", sitemap: "사이트맵", npm: "npm" };
 const SECTION_LABEL: Record<NewsSource["section"], string> = { news: "공식 발표 · 홈 노출", release: "도구 릴리스" };
 
-const at = (iso: string) => new Date(iso).toLocaleString("ko-KR", { timeZone: "Asia/Seoul", dateStyle: "short", timeStyle: "short" });
-
-/** 출처 한 줄의 마지막 수집 결과 */
-function sourceStatus(source: NewsSource, state: NewsSourceState | undefined): { status: string; failing: boolean } {
+/** 출처 한 줄의 마지막 수집 결과. now 는 화면을 그린 시각 — "13:38 (3분 전)"을 센다 */
+function sourceStatus(source: NewsSource, state: NewsSourceState | undefined, now: Date): { status: string; failing: boolean } {
+  const at = (iso: string) => formatListTime(iso, now);
   if (!state) return { status: "아직 수집 전", failing: false };
   if (!state.ok) return { status: `${at(state.checkedAt)} · 실패 ${state.error ?? ""}`, failing: true };
   if (source.kind === "sitemap" && state.found === 0) {
@@ -40,18 +42,29 @@ function sourceStatus(source: NewsSource, state: NewsSourceState | undefined): {
 export default async function AdminNewsPage({ searchParams }: Props) {
   const admin = await currentAdmin();
   if (!admin) redirect("/admin/login");
-  const { state: rawState } = await searchParams;
-  const filter = FILTERS.find((item) => item.key === rawState)?.key ?? "all";
+  const { state: rawState, page: rawPage } = await searchParams;
+  const filter = newsFilter(rawState);
+  const parsedPage = Number(rawPage ?? 1);
+  const page = Number.isSafeInteger(parsedPage) && parsedPage > 0 ? parsedPage : 1;
+  const now = new Date();
 
   const [settings, job, counts, items] = await Promise.all([
     getSettings(),
     newsJobState(),
     countNewsByState(),
-    listNewsForAdmin(filter),
+    listNewsPage(filter, { limit: NEWS_PAGE_SIZE, offset: (page - 1) * NEWS_PAGE_SIZE }),
   ]);
   const cursor = (job?.cursor ?? null) as NewsCursor | null;
   const disabled = new Set(settings.news.disabledSources);
   const total = counts.approved + counts.pending + counts.hidden;
+  const pages = Math.max(1, Math.ceil((filter === "all" ? total : counts[filter]) / NEWS_PAGE_SIZE));
+  // 상태 거르기를 이어 가고, 거르기가 바뀌면 첫 쪽부터
+  const href = (next: number, state: NewsState | "all" = filter) => {
+    const params = new URLSearchParams();
+    if (state !== "all") params.set("state", state);
+    if (next > 1) params.set("page", String(next));
+    return `/admin/news${params.size ? `?${params}` : ""}`;
+  };
 
   return (
     <main className="mx-auto max-w-[1000px] px-6 pb-20">
@@ -76,26 +89,28 @@ export default async function AdminNewsPage({ searchParams }: Props) {
               sectionLabel: SECTION_LABEL[source.section],
               url: source.url,
               enabled: !disabled.has(source.key),
-              ...sourceStatus(source, cursor?.sources[source.key]),
+              ...sourceStatus(source, cursor?.sources[source.key], now),
             }))}
           />
         </Panel>
 
-        <Panel title="모은 글" note={`전체 ${total.toLocaleString("ko-KR")}건 · 최근 게시일 순으로 200건까지`}>
-          <nav className="mb-3 flex flex-wrap gap-2" aria-label="상태 필터">
+        <Panel title="모은 글" note={`전체 ${total.toLocaleString("ko-KR")}건 · 최근 게시일 순 ${NEWS_PAGE_SIZE}건씩${pages > 1 ? ` · ${page}/${pages} 쪽` : ""}`}>
+          <nav className="mb-3 flex flex-wrap items-center gap-2" aria-label="상태 필터">
             {FILTERS.map((item) => {
               const count = item.key === "all" ? total : counts[item.key];
               return (
-                <Link key={item.key} href={item.key === "all" ? "/admin/news" : `/admin/news?state=${item.key}`}
+                <Link key={item.key} href={href(1, item.key)}
                   aria-current={filter === item.key ? "page" : undefined}
                   className={`rounded-full border px-3 py-1 text-[13px] ${filter === item.key ? "border-accent bg-accent-soft font-semibold text-accent" : "border-line text-fg-2"}`}>
                   {item.label} {count.toLocaleString("ko-KR")}
                 </Link>
               );
             })}
+            <a href={`/admin/export?view=news&format=csv${filter === "all" ? "" : `&state=${filter}`}`} className="ml-auto text-[13px] text-accent hover:underline">CSV 내보내기</a>
           </nav>
           <NewsBoard
-            key={filter}
+            key={`${filter}-${page}`}
+            now={now.toISOString()}
             items={items.map((item) => ({
               id: item.id,
               source: newsSource(item.sourceKey)?.name ?? item.sourceKey,
@@ -105,6 +120,16 @@ export default async function AdminNewsPage({ searchParams }: Props) {
               state: item.state,
             }))}
           />
+          {pages > 1 && (
+            <nav aria-label="모은 글 쪽 이동" className="mt-3 flex flex-wrap items-center gap-1 text-[13px]">
+              {page > 1 && <Link href={href(page - 1)} className="rounded-lg border border-line px-2.5 py-1">이전</Link>}
+              {pageWindow(page, pages).map((item, i) => item === null
+                ? <span key={`gap-${i}`} className="px-1 text-fg-3">…</span>
+                : <Link key={item} href={href(item)} aria-current={item === page ? "page" : undefined}
+                    className={`min-w-8 rounded-lg border px-2.5 py-1 text-center font-mono ${item === page ? "border-accent bg-accent text-white" : "border-line text-fg-2"}`}>{item}</Link>)}
+              {page < pages && <Link href={href(page + 1)} className="rounded-lg border border-line px-2.5 py-1">다음</Link>}
+            </nav>
+          )}
         </Panel>
       </div>
     </main>

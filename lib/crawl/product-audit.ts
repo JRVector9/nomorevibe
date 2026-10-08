@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, inArray, isNull, lt, sql, type SQL } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, isNull, lt, lte, sql, type SQL } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { crawlCandidates, crawlDocuments, products, productAuditAttempts, productAuditCampaigns, productAuditItems,
   type ProductAuditCampaign } from "@/lib/db/schema";
@@ -76,6 +76,12 @@ export type StartAuditResult =
  */
 export async function startProductAudit(input: {
   startedBy: string; reason: string; reauditKept: boolean;
+  /**
+   * 멈춘 감사(auditCampaignStalled)를 닫고 그 자리에 연다 — 닫기와 열기가 한 트랜잭션이다(ADM-15). 새 감사를 열 수 없으면
+   * (사유·심사자 없음) 멈춘 감사도 그대로 둔다. 그 감사가 이미 닫혔거나 지금 글로 돌고 있으면 아무것도 하지 않는다 —
+   * 두 번 눌러도 방금 연 새 감사를 닫지 않는다.
+   */
+  replacing?: number;
 }): Promise<StartAuditResult> {
   const reason = input.reason.trim();
   if (!reason) return { ok: false, error: "왜 다시 보는지 적어주세요. 감사 기록에 남습니다." };
@@ -84,6 +90,13 @@ export async function startProductAudit(input: {
   if (!reviewer) return { ok: false, error: "1차 심사자를 설정해야 감사를 시작할 수 있습니다." };
   try {
     return await db.transaction(async (tx) => {
+      if (input.replacing !== undefined) {
+        const closed = await tx.update(productAuditCampaigns).set({ status: "cancelled", finishedAt: sql`now()` })
+          .where(and(eq(productAuditCampaigns.id, input.replacing), eq(productAuditCampaigns.status, "running"),
+            sql`(${productAuditCampaigns.promptVersion} <> ${REVIEW_PROMPT_VERSION} or ${productAuditCampaigns.rulesVersion} <> ${REVIEW_RULES_VERSION})`))
+          .returning({ id: productAuditCampaigns.id });
+        if (!closed.length) return { ok: false as const, error: "이미 중단됐거나 지금 글로 도는 감사입니다. 새로고침해주세요." };
+      }
       const [campaign] = await tx.insert(productAuditCampaigns).values({
         startedBy: input.startedBy.slice(0, 120), reason: reason.slice(0, 500),
         promptVersion: REVIEW_PROMPT_VERSION, rulesVersion: REVIEW_RULES_VERSION,
@@ -137,6 +150,16 @@ export async function cancelProductAudit(): Promise<boolean> {
     .where(eq(productAuditCampaigns.status, "running")).returning({ id: productAuditCampaigns.id });
   return rows.length > 0;
 }
+
+/**
+ * 시작한 뒤 심사 글·규칙이 바뀐 감사 — 잡이 묻지 않고 멈춰 있다(jobs/product-audit.ts). 사람이 중단하고 새로 열어야 풀린다.
+ * 화면은 이것을 "진행 중"이 아니라 "멈춤 · 사람 필요"로 보인다(2026-10-08 UX 감사 ADM-15).
+ */
+export function auditCampaignStalled(campaign: Pick<ProductAuditCampaign, "status" | "promptVersion" | "rulesVersion">): boolean {
+  return campaign.status === "running"
+    && (campaign.promptVersion !== REVIEW_PROMPT_VERSION || campaign.rulesVersion !== REVIEW_RULES_VERSION);
+}
+
 
 // ─────────────────────────── 묻기 (잡) ───────────────────────────
 
@@ -248,12 +271,14 @@ export type AuditOverview = {
   counts: AuditCounts;
   /** 진행 중인데 잡이 묻지 않고 있는 까닭. 없으면 null */
   paused: string | null;
+  /** 심사 글이 바뀌어 사람이 중단하고 새로 열어야 하는 감사(auditCampaignStalled) */
+  stalled: boolean;
 };
 
 export async function productAuditOverview(): Promise<AuditOverview> {
   const [campaign] = await db.select().from(productAuditCampaigns).orderBy(desc(productAuditCampaigns.id)).limit(1);
   const empty: AuditCounts = { total: 0, reviewed: 0, reject: 0, needsReview: 0, openReject: 0, openNeedsReview: 0, removed: 0, kept: 0, failed: 0, skipped: 0 };
-  if (!campaign) return { campaign: null, counts: empty, paused: null };
+  if (!campaign) return { campaign: null, counts: empty, paused: null, stalled: false };
   const open = sql`${productAuditItems.humanDecision} is null and ${products.status} in ('seeded', 'verified')`;
   const failed = sql`${productAuditItems.aiDecision} is null
     and (${productAuditItems.errorCode} is not distinct from 'no_source' or ${productAuditItems.attempts} >= ${MAX_REVIEW_ATTEMPTS})`;
@@ -275,13 +300,13 @@ export async function productAuditOverview(): Promise<AuditOverview> {
   if (campaign.status === "running") {
     const settings = await getSettings();
     if (!settings.enabled) paused = "크롤 설정의 수집 스위치가 꺼져 있어 멈춰 있습니다. 켜면 이어서 봅니다.";
-    else if (campaign.promptVersion !== REVIEW_PROMPT_VERSION || campaign.rulesVersion !== REVIEW_RULES_VERSION) {
+    else if (auditCampaignStalled(campaign)) {
       paused = `시작한 뒤 심사 글이 바뀌었습니다(글 ${campaign.promptVersion}·규칙 ${campaign.rulesVersion} → `
         + `글 ${REVIEW_PROMPT_VERSION}·규칙 ${REVIEW_RULES_VERSION}). `
         + "두 글의 판단을 한 목록에 섞지 않도록 멈췄습니다. 이 감사를 중단하고 새로 시작하세요.";
     }
   }
-  return { campaign, counts: counts ?? empty, paused };
+  return { campaign, counts: counts ?? empty, paused, stalled: auditCampaignStalled(campaign) };
 }
 
 export type AuditFindingRow = {
@@ -315,13 +340,18 @@ const STALE = "이미 처리됐거나 화면이 오래됐습니다. 새로고침
  * 제품 세대와 항목을 잠그고 차단·기록을 함께 커밋한다. 유지와 동시에 눌러도 먼저 정한 한 결정만 남긴다.
  */
 export async function removeAuditedProduct(input: { itemId: number; slug: string; by: string }): Promise<AuditDecisionResult> {
+  return removeOne(input);
+}
+
+/** 한 제품 내리기의 본체. only: 잠근 뒤 항목에 더 거는 조건(묶어 내리기의 문턱) — 맞지 않으면 아무것도 하지 않는다 */
+function removeOne(input: { itemId: number; slug: string; by: string }, only?: SQL): Promise<AuditDecisionResult> {
   return db.transaction(async (tx) => {
     const [item] = await tx.select({ productId: productAuditItems.productId }).from(productAuditItems)
       .where(eq(productAuditItems.id, input.itemId));
     if (!item || !(await lockProductGeneration(tx, item.productId, input.slug))) return { ok: false, error: STALE };
     const [current] = await tx.select({ id: productAuditItems.id }).from(productAuditItems).where(and(
       eq(productAuditItems.id, input.itemId), eq(productAuditItems.productId, item.productId),
-      isNull(productAuditItems.humanDecision),
+      isNull(productAuditItems.humanDecision), only,
     )).for("update");
     if (!current) return { ok: false, error: STALE };
     const banned = await setStatusWithAudit({ id: item.productId, slug: input.slug,
@@ -343,4 +373,66 @@ export async function keepAuditedProduct(input: { itemId: number; slug: string; 
     sql`exists (select 1 from ${products} where ${products.id} = ${productAuditItems.productId} and ${products.slug} = ${input.slug})`))
     .returning({ id: productAuditItems.id });
   return rows.length ? { ok: true } : { ok: false, error: STALE };
+}
+
+// ─────────────────────────── 묶어 내리기 ───────────────────────────
+
+/**
+ * 묶어 내리기(2026-10-08 UX 감사 ADM-07) — 모델이 이만큼 확신한 거부만, 같은 분류끼리, 한 번에 이만큼까지.
+ *
+ * 한 건씩만 내리게 한 까닭(1차 심사 글의 실측 정확도 85%)은 그대로다. 그래서 문턱을 높게 두고, 사람이 이름을 한 번
+ * 훑는 확인을 거친 것만 내린다. 주인이 있는 것(클레임·검증)은 묶지 않는다 — 주인이 있으면 한 건씩 열어 본다.
+ */
+export const GROUP_REMOVE_MIN_CONFIDENCE = 0.95;
+export const GROUP_REMOVE_MAX = 50;
+
+/** 묶을 수 있는 것 — 아직 아무도 손대지 않았고, 떠 있고, 주인이 없고, 확신이 문턱 이상인 거부 */
+const groupable = and(eq(productAuditItems.aiDecision, "reject"), isNull(productAuditItems.humanDecision),
+  gte(productAuditItems.aiConfidence, GROUP_REMOVE_MIN_CONFIDENCE));
+const groupableItem = and(groupable, sql`not exists (select 1 from ${products} where ${products.id} = ${productAuditItems.productId}
+  and (${products.claimedAt} is not null or ${products.status} = 'verified'))`);
+
+export type AuditRemovalGroup = {
+  /** 제품의 지금 분류 — 모델의 분류(ai_category)는 승인할 때만 붙어 거부에는 거의 비어 있다 */
+  category: string;
+  total: number;
+  /** 확신 높은 순으로 GROUP_REMOVE_MAX 건까지 — 다음 묶음은 이것을 내린 뒤에 온다 */
+  items: { id: number; slug: string; name: string; url: string; confidence: number }[];
+};
+
+/** 묶음 — 큰 것부터. 묶음마다 확신 높은 순으로 한 번에 내릴 만큼만 */
+export async function auditRemovalGroups(campaignId: number): Promise<AuditRemovalGroup[]> {
+  const ranked = db.select({
+    id: productAuditItems.id, slug: products.slug, name: products.name, url: products.url, category: products.category,
+    confidence: sql<number>`${productAuditItems.aiConfidence}`.as("confidence"),
+    rank: sql<number>`(row_number() over (partition by ${products.category} order by ${productAuditItems.aiConfidence} desc, ${productAuditItems.id}))::int`.as("rank"),
+    total: sql<number>`(count(*) over (partition by ${products.category}))::int`.as("total"),
+  }).from(productAuditItems).innerJoin(products, eq(products.id, productAuditItems.productId))
+    .where(and(eq(productAuditItems.campaignId, campaignId), groupable, listed, sql`not ${owned}`)).as("ranked");
+  const rows = await db.select().from(ranked).where(lte(ranked.rank, GROUP_REMOVE_MAX))
+    .orderBy(desc(ranked.total), asc(ranked.category), asc(ranked.rank));
+  const groups = new Map<string, AuditRemovalGroup>();
+  for (const row of rows) {
+    const group = groups.get(row.category) ?? { category: row.category, total: row.total, items: [] };
+    group.items.push({ id: row.id, slug: row.slug, name: row.name, url: row.url, confidence: row.confidence });
+    groups.set(row.category, group);
+  }
+  return [...groups.values()];
+}
+
+export type AuditBatchResult = { removed: string[]; failed: { slug: string; error: string }[] };
+
+/**
+ * 사람이 이름을 훑고 고른 묶음을 내린다 — 한 건씩 내리기와 같은 길(잠금·차단·기록)을 한 건마다 따로 탄다.
+ * 한 건이 실패해도 나머지는 내린다. 그 사이 사람이 결정했거나, 문턱 밖이거나, 주인이 생긴 것은 건너뛴다.
+ */
+export async function removeAuditedProducts(input: { items: { itemId: number; slug: string }[]; by: string }): Promise<AuditBatchResult> {
+  if (input.items.length > GROUP_REMOVE_MAX) throw new Error(`audit_batch_over_${GROUP_REMOVE_MAX}`);
+  const result: AuditBatchResult = { removed: [], failed: [] };
+  for (const item of input.items) {
+    const done = await removeOne({ ...item, by: input.by }, groupableItem);
+    if (done.ok) result.removed.push(item.slug);
+    else result.failed.push({ slug: item.slug, error: done.error });
+  }
+  return result;
 }

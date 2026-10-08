@@ -41,16 +41,67 @@ export const ACTION_LABELS: Record<string, string> = {
   "ai-probe": "AI 모델 조회",
   "ai-test": "AI 모델 시험",
   "ai-apply": "AI 모델 적용",
+  "export": "목록 내보내기",
+  "operator-name": "내 이름 적기",
+  // 스크립트·잡이 남기는 작업(.crawl-samples·scripts·lib/crawl) — 화면에는 "스크립트" 배지와 함께 보인다
+  "requeue-evidence-gated": "근거 관문에 막힌 후보 다시 판정",
+  "requeue-rejected-under-new-policy": "새 기준으로 거부분 다시 판정",
+  "requeue-rejected-under-held-rules": "보류 규칙으로 거부분 다시 판정",
+  "reconsider-installable": "설치형 거부분 다시 판정",
+  "reconsider-star-auto": "별 기준 자동 승인 다시 판정",
+  "reconsider-package": "패키지 증거로 다시 판정",
+  "reconcile-crawl-duplicate": "중복 후보 정리",
+  "relabel-repo-deleted": "저장소 삭제로 다시 분류",
+  "ban-spam-campaign": "스팸 캠페인 일괄 차단",
+  "retry-exhausted-transport-once": "수집 실패 한 번 더 시도",
+  "resume-after-github-redirect-fix": "이름 바뀐 저장소 수집 재개",
 };
+
+/**
+ * 대상 칸의 테이블 이름·접두어 → 사람이 읽는 말. 제품(slug)·저장소(owner/repo)·작업 이름은 그대로 둔다.
+ * 테이블 이름이 대상인 줄은 여러 건을 한 번에 바꾼 줄이다 — 건수는 내용 요약이 말한다.
+ */
+export const TARGET_LABELS: Record<string, string> = {
+  crawl_candidates: "수집 후보 여러 건",
+  crawl_frontier: "수집 대기열",
+  products: "제품 여러 건",
+  crawl_settings: "크롤 설정",
+  evidence_settings: "근거 설정",
+  ranking_policy: "랭킹 정책",
+  product_audit: "발행분 감사",
+  "connect-agent": "AI 연결 도우미",
+  "local-session": "이 브라우저",
+};
+const TARGET_PREFIXES: [RegExp, (rest: string) => string][] = [
+  [/^campaign:(\d+)$/, (id) => `감사 #${id}`],
+  [/^news:(\d+)$/, (id) => `소식 #${id}`],
+  [/^news:(\d+)건$/, (count) => `소식 ${count}건`],
+  [/^revision:(\d+)$/, (id) => `랭킹 정책 #${id}`],
+  [/^export:(\w+)$/, (view) => `내보내기 · ${EXPORT_VIEW_NAMES[view] ?? view}`],
+];
+const EXPORT_VIEW_NAMES: Record<string, string> = { products: "제품", review: "심사 큐", audit: "감사 거절", activity: "작업 로그", news: "AI 소식" };
+
+/** 대상 표기. 바꿔 적었으면 entity 가 false — 제품·저장소처럼 "이 대상의 기록"으로 거를 수 있는 것만 true */
+export function targetLabel(target: string): { text: string; entity: boolean } {
+  if (Object.hasOwn(TARGET_LABELS, target)) return { text: TARGET_LABELS[target], entity: false };
+  for (const [pattern, label] of TARGET_PREFIXES) {
+    const match = target.match(pattern);
+    if (match) return { text: label(match[1]), entity: false };
+  }
+  return { text: target, entity: true };
+}
 
 export const ACTION_GROUPS = {
   takedown: { label: "내리기·차단", actions: ["takedown-remove", "takedown-dismiss", "audit-remove", "audit-keep", "audit-start", "audit-cancel",
-    "product-ban", "product-unban", "published-second-ban", "published-second-keep", "repo-review-delist", "repo-review-keep"] },
-  review: { label: "심사", actions: ["candidate-approve", "candidate-reject", "evidence-collect", "requeue-resolved", "manual-category"] },
+    "product-ban", "product-unban", "published-second-ban", "published-second-keep", "repo-review-delist", "repo-review-keep", "ban-spam-campaign"] },
+  review: { label: "심사", actions: ["candidate-approve", "candidate-reject", "evidence-collect", "requeue-resolved", "manual-category",
+    "requeue-evidence-gated", "requeue-rejected-under-new-policy", "requeue-rejected-under-held-rules", "reconsider-installable",
+    "reconsider-star-auto", "reconsider-package", "reconcile-crawl-duplicate", "relabel-repo-deleted"] },
   settings: { label: "설정·연결", actions: ["settings-save", "review-mode", "evidence-settings", "ranking-schedule", "ranking-cancel",
     "github-collector-token-save", "github-collector-enable", "github-collector-disable",
     "ai-connect", "ai-input", "ai-cancel", "ai-probe", "ai-test", "ai-apply"] },
-  content: { label: "제품·소식·작업", actions: ["claim-invite", "product-refresh", "update-hide", "update-restore", "news-approve", "news-hide", "request-job"] },
+  content: { label: "제품·소식·작업", actions: ["claim-invite", "product-refresh", "update-hide", "update-restore", "news-approve", "news-hide", "request-job",
+    "retry-exhausted-transport-once", "resume-after-github-redirect-fix", "export", "operator-name"] },
 } as const;
 export type ActionGroup = keyof typeof ACTION_GROUPS;
 

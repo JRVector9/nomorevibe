@@ -1,27 +1,35 @@
 'use client';
 
-import { useActionState } from 'react';
+import { useActionState, useState } from 'react';
+import { ReasonText } from '../review/ReasonText';
 import { decideAuditFinding, type AuditActionState } from './actions';
 
 export type AuditFindingView = {
   id: number; slug: string; name: string; url: string; category: string;
-  reason: string | null; confidence: number | null; reviewedAt: string | null; owned: boolean;
+  reason: string | null; reasonKo: string | null; confidence: number | null; reviewedAt: string | null; owned: boolean;
 };
 
 /**
  * 감사가 짚은 제품 한 줄. 폼 하나가 제품 하나다 — 고르는 칸도, 모두 고르기도 두지 않는다.
  *
  * 주소는 새 탭으로 연다. 사람이 판단하는 근거는 모델의 사유가 아니라 지금 떠 있는 그 페이지다.
+ * 사유는 두 줄로 접어 두고 눌러서 편다 — 한 화면에 더 많은 줄이 들어오게(ADM-32). 한글·원문은 화면 위 토글을 따른다.
  */
 export function AuditFinding({ finding }: { finding: AuditFindingView }) {
   const [state, action, pending] = useActionState<AuditActionState, FormData>(decideAuditFinding, null);
+  const [expanded, setExpanded] = useState(false);
   return (
     <tr className="border-t border-line align-top">
       <td className="px-3 py-2">
         <a href={finding.url} target="_blank" rel="noreferrer noopener" className="font-semibold hover:text-accent">{finding.name}</a>
         {finding.owned && <span className="ml-2 rounded bg-bg-soft px-1.5 py-0.5 text-fg-3">주인 있음</span>}
         <span className="mt-0.5 block break-all font-mono text-fg-3">{finding.url.replace(/^https?:\/\//, '')}</span>
-        <p className="mt-1 leading-[1.6] text-fg-2">{finding.reason ?? '사유 없음'}</p>
+        {finding.reason ? (
+          <button type="button" aria-expanded={expanded} onClick={() => setExpanded((now) => !now)} title={expanded ? '접기' : '사유 펼치기'}
+            className={`mt-1 block w-full text-left leading-[1.6] text-fg-2 ${expanded ? 'whitespace-pre-line' : 'line-clamp-2'}`}>
+            <ReasonText text={finding.reason} korean={finding.reasonKo} />
+          </button>
+        ) : <p className="mt-1 text-fg-3">사유 없음</p>}
         {state?.error && <p className="mt-1 text-down">{state.error}</p>}
         {state?.message && <p className="mt-1 text-up">{state.message}</p>}
       </td>
