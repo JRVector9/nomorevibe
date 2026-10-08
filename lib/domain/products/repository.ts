@@ -101,6 +101,8 @@ export type ListOptions = {
   adminSearch?: string;
   /** 저장소 확인을 마친 것만(repoCheckedForNewest) — 공개 최신 목록 */
   repoChecked?: boolean;
+  /** 스팸 재검사가 자동으로 내린 것만(spamAutoBanned) — 어드민 '스팸 자동 차단' */
+  spamBanned?: boolean;
 };
 
 /**
@@ -174,6 +176,17 @@ export const repoGone = sql`coalesce(${products.repoStatus} in ('not_found', 'em
  */
 export const repoCheckedForNewest = sql`(${products.repoStatus} = 'ok'
   or coalesce(${products.repoUrl}, '') !~* '^https?://(www[.])?github[.]com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/?$')`;
+
+/**
+ * 스팸 재검사(product-spam-rescan)가 내린 사유 — 감사 행의 reason 에 적고, 하루 한도와 어드민 거르기가 이것으로 센다.
+ * 관리자가 손으로 내린 차단·일괄 정리 스크립트는 사유를 적지 않아 여기 들지 않는다.
+ */
+export const SPAM_AUTO_BAN_REASON = "suspected_spam";
+export const SPAM_AUTO_BAN_ACTOR = "spam-rescan";
+/** 지금 차단 상태이고 스팸 재검사가 내린 적이 있는 제품 */
+export const spamAutoBanned = sql`(${products.status} = 'banned' and exists (select 1 from ${productEvidenceAudit} a
+  where a.slug = ${products.slug} and a.action = 'admin.product.ban' and a.actor = ${SPAM_AUTO_BAN_ACTOR}
+  and a.reason = ${SPAM_AUTO_BAN_REASON}))`;
 
 /** 목록·상세 행에 판정을 같이 실어 온다 — 화면이 같은 식을 JS 로 다시 쓰지 않게 */
 export const repoGoneField = { repoGone: sql<boolean>`${repoGone}`.as("repo_gone") };
@@ -265,7 +278,7 @@ const introNeedsEditor = sql`exists (
 )`;
 
 /** 목록과 개수가 같은 조건을 쓰도록 한 곳에서 만든다. 급상승 기간은 설정에서 읽으므로 비동기다 */
-async function listConditions({ statuses, category, query, builder, observedTool, hasRepository, excludeDown, introNeedsEditor: needsEditor, rising, listedSince, minStars, slugs, excludeSlugs, repoGone: goneOnly, repoArchived, repoRenamed, down, adminSearch, repoChecked }: Omit<ListOptions, "limit" | "sort" | "offset">) {
+async function listConditions({ statuses, category, query, builder, observedTool, hasRepository, excludeDown, introNeedsEditor: needsEditor, rising, listedSince, minStars, slugs, excludeSlugs, repoGone: goneOnly, repoArchived, repoRenamed, down, adminSearch, repoChecked, spamBanned }: Omit<ListOptions, "limit" | "sort" | "offset">) {
   const conditions = [inArray(products.status, statuses)];
   if (slugs) conditions.push(slugs.length ? inArray(products.slug, [...slugs]) : sql`false`);
   if (excludeSlugs?.length) conditions.push(notInArray(products.slug, [...excludeSlugs]));
@@ -277,6 +290,7 @@ async function listConditions({ statuses, category, query, builder, observedTool
   if (down) conditions.push(isDown);
   if (adminSearch?.trim()) conditions.push(adminSearchPredicate(adminSearch));
   if (repoChecked) conditions.push(repoCheckedForNewest);
+  if (spamBanned) conditions.push(spamAutoBanned);
   if (rising) conditions.push(risingStars(await risingFreshDays()));
   if (listedSince) conditions.push(sql`${listedAt} >= ${listedSince.toISOString()}::timestamptz`);
   if (minStars !== undefined) conditions.push(sql`${products.stars} >= ${minStars}`);
@@ -638,6 +652,10 @@ export async function setStatusWithAudit(input: {
   slug: string;
   status: ProductStatus;
   action: "admin.product.ban" | "admin.product.unban";
+  /** 자동으로 내리는 잡이 누구·왜를 남긴다(기본 admin, 사유 없음) */
+  actor?: string;
+  reason?: string;
+  metadata?: Record<string, unknown>;
 }, transaction?: ProductTransaction): Promise<boolean> {
   const apply = async (tx: ProductTransaction) => {
     if (!(await lockProductGeneration(tx, input.id, input.slug))) return false;
@@ -653,9 +671,10 @@ export async function setStatusWithAudit(input: {
     if (updated.length !== 1) return false;
     await tx.insert(productEvidenceAudit).values({
       slug: input.slug,
-      actor: "admin",
+      actor: input.actor ?? "admin",
       action: input.action,
-      metadata: { status: input.status },
+      reason: input.reason,
+      metadata: { ...input.metadata, status: input.status },
     });
     return true;
   };

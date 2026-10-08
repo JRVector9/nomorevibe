@@ -50,6 +50,8 @@ import { readSearchHealth, searchHealthAlerts } from "@/lib/operations/search-he
 import { SearchHealthPanel } from "./SearchHealthPanel";
 import { modelServerHealth } from "@/lib/operations/model-servers";
 import { ScrollToHash } from "../ScrollToHash";
+import { SPAM_DETECTOR_VERSION } from "@/lib/crawl/spam-signals";
+import { MAX_AUTO_BANS_PER_DAY } from "@/lib/jobs/products/spam-rescan";
 
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "운영센터 — NoMoreVibe", robots: { index: false } };
@@ -476,6 +478,18 @@ export default async function StatusPage({ searchParams }: { searchParams: Promi
         {" "}웹은 AI 가 사이트를 다시 봅니다: 확인 대기 {review.pending.toLocaleString("ko-KR")} · 내릴 후보 {review.delistCandidates.toLocaleString("ko-KR")} · 사람 확인 {review.human.toLocaleString("ko-KR")} · AI 유지 {review.kept.toLocaleString("ko-KR")}
         {review.oldestHours !== null && <> · 가장 오래 기다린 것 {Math.round(review.oldestHours)}시간</>}. 내리는 것은 사람이 정합니다.</>,
       action: { label: "제품 관리", href: ACTION_LINKS.productsRepoGone },
+    });
+  }
+  // 공개 제품 스팸 재검사(product-spam-rescan)가 자동으로 내린 것 — 하루 한도에 닿으면 판정이 잘못 바뀌었을 수 있어 더 내리지 않는다
+  if (attention && attention.spamAutoBans.day > 0) {
+    const capped = attention.spamAutoBans.day >= MAX_AUTO_BANS_PER_DAY;
+    actions.push({
+      key: "spam-auto-ban", tone: capped ? "critical" : "hold", count: attention.spamAutoBans.day,
+      title: capped ? `스팸 자동 차단이 하루 한도(${MAX_AUTO_BANS_PER_DAY}건)에 닿아 멈췄습니다` : "스팸 패턴으로 자동 차단한 공개 제품",
+      detail: <>지난 24시간에 {attention.spamAutoBans.day.toLocaleString("ko-KR")}건을 내렸습니다(판정 {SPAM_DETECTOR_VERSION}).{" "}
+        {capped ? "더 걸린 것은 내리지 않고 기다립니다 — 판정이 잘못 바뀌지 않았는지 내린 목록부터 보세요." : "잘못 내려간 것은 차단 해제하면 재검사가 다시 내리지 않습니다."}
+        {" "}자동 차단으로 남아 있는 것 {attention.spamAutoBans.banned.toLocaleString("ko-KR")}건.</>,
+      action: { label: "자동 차단 목록", href: ACTION_LINKS.productsSpamBanned },
     });
   }
   // 공개 제품의 GitHub 저장소를 하루에 한 번씩 다 보고 있나(product-stars-refresh) — 배포 직후 첫 바퀴(약 10시간)는 낮다

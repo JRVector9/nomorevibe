@@ -16,6 +16,7 @@ import { refreshPublishedReadmes } from "@/lib/jobs/products/readme-refresh";
 import { checkProductIntros } from "@/lib/jobs/products/intro-check";
 import { publishCandidates } from "@/lib/crawl/jobs/publish";
 import { purgeRemovedProducts } from "@/lib/jobs/products/cdn-purge";
+import { rescanPublishedSpam } from "@/lib/jobs/products/spam-rescan";
 import { pingProducts } from "@/lib/jobs/products/uptime";
 import { rollupClicks } from "@/lib/jobs/products/click-rollup";
 import { refreshRankings } from "@/lib/jobs/products/ranking-refresh";
@@ -99,6 +100,8 @@ export const JOBS: Record<string, AnyJob> = {
   "product-stars-refresh": refreshProductStars,
   /** 저장소가 사라진 웹사이트가 아직 그 제품인지 본다 — 판정만 적고 운영자가 정한다 */
   "product-repo-review": (ctx) => reviewGoneRepositories(ctx),
+  /** 공개 제품을 스팸·악성 배포 판정으로 다시 보고 잡히면 내린다(하루 한도 안에서) */
+  "product-spam-rescan": rescanPublishedSpam,
   "product-thumbnail-refresh": refreshProductThumbnails,
   /** 검색이 읽는 토픽·본문을 crawl_documents 와 맞춘다 */
   "product-search-refresh": refreshProductSearchDocuments,

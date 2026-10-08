@@ -86,6 +86,11 @@ export const JOB_CATALOG: readonly { name: string; role: JobRole | "scheduler"; 
   { name: "product-search-refresh", role: "maintenance", intervalMs: 60_000 },
   /** Read-only canonical hash / search-copy audit, independent of the text worker. */
   { name: "product-search-health", role: "maintenance", intervalMs: 15 * 60_000 },
+  /**
+   * 공개 제품에 스팸·악성 배포 판정을 다시 태워 잡히면 내린다(spam-rescan.ts). 한 틱 1,000건 — 공개분 한 바퀴가 3시간쯤,
+   * 다 돌면 하루 쉬고, 판정 버전이 바뀌면 곧바로 다시 돈다. 저장된 원본만 읽으므로 한가한 maintenance 에 둔다.
+   */
+  { name: "product-spam-rescan", role: "maintenance", intervalMs: 5 * 60_000 },
   { name: "product-evidence-refresh", role: "crawler", intervalMs: 60_000 },
   { name: "agent-evidence-refresh", role: "crawler", intervalMs: 60_000 },
   /**

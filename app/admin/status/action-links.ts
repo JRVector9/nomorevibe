@@ -32,6 +32,7 @@ export const ACTION_LINKS = {
   productsDown: productFilter("응답 없음"),
   productsIntro: productFilter("소개 확인 필요"),
   productsRepoGone: productFilter("저장소 사라짐"),
+  productsSpamBanned: productFilter("스팸 자동 차단"),
   takedowns: "/admin/audit?tab=requests",
   audit: "/admin/audit",
   githubAccounts: "/admin/github-accounts",

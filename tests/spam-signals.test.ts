@@ -125,6 +125,49 @@ describe("spam signals", () => {
   });
 });
 
+describe("spam signals — variants found after the first sweep (2026-10-08)", () => {
+  /** 프로드 /p/flow-fixer 원본을 줄인 것 — README 는 이름 한 줄, 틀 제목은 github.io 첫 화면 본문에만 있다 */
+  const landingOnly = {
+    repo: "Lowlevel-perimeter652/flow-fixer",
+    repoMeta: { name: "flow-fixer", owner: { login: "Lowlevel-perimeter652" }, stargazers_count: 0, has_issues: false },
+    productUrl: "https://lowlevel-perimeter652.github.io",
+    pageMeta: {
+      title: "flow-fixer - Improve Google Flow reliability today",
+      description: "Repair and analyze Google Flow issues with flow-fixer. A simple tool for HAR forensics on Windows.",
+      textSample: "flow-fixer - Improve Google Flow reliability today 🛠️ flow-fixer - Improve Google Flow reliability today Download flow-fixer The flow-fixer tool assists users",
+      readmeSample: "flow-fixer",
+    },
+  };
+
+  it("reads the templated heading on the landing page when the README is empty", () => {
+    const verdict = spamSignals(landingOnly);
+    expect(keys(verdict)).toEqual(expect.arrayContaining(["templated_title", "pages_root_landing"]));
+    expect(verdict).toMatchObject({ flagged: true, confidence: "medium" });
+    expect(verdict.signals.find((signal) => signal.key === "templated_title")?.detail).toContain("🛠️ flow-fixer - Improve");
+  });
+
+  it("ignores a templated heading on the landing page that names another project", () => {
+    const verdict = spamSignals({ ...landingOnly, pageMeta: { ...landingOnly.pageMeta,
+      textSample: "My notes 📌 other-tool - A tool I like and use every day" } });
+    expect(keys(verdict)).not.toContain("templated_title");
+  });
+
+  it("holds one strong signal when all three weak ones line up, as low confidence", () => {
+    // 프로드 product-513: 남의 레포를 베끼고 남의 블로그를 복사한 github.io 첫 화면을 건 캠페인 계정 — 다운로드 미끼는 아직 없다
+    const copied = {
+      repo: "Latescalcarifertshiluba176/kgai",
+      repoMeta: { name: "kgai", owner: { login: "Latescalcarifertshiluba176" }, stargazers_count: 0, has_issues: false },
+      productUrl: "https://latescalcarifertshiluba176.github.io",
+      pageMeta: { title: "首页", readmeSample: "kgai — shared decision memory for AI dev teams" },
+    };
+    const verdict = spamSignals(copied);
+    expect(keys(verdict)).toEqual(["pages_root_landing", "low_stars", "issues_disabled", "random_account"]);
+    expect(verdict).toMatchObject({ flagged: true, confidence: "low", score: 6 });
+    // 약한 신호가 둘이면 개인 포트폴리오와 갈리지 않는다(공개분 17건 중 16건이 정상) — 잡지 않는다
+    expect(spamSignals({ ...copied, repoMeta: { ...copied.repoMeta, has_issues: true } }).flagged).toBe(false);
+  });
+});
+
 describe("spam gate in rule judging", () => {
   it("holds a candidate the rules would otherwise pass as human-only suspected_spam with its signals", () => {
     const verdict = judgeStoredDocument(campaign, DEFAULT_CRAWL_SETTINGS, now);

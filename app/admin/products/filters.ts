@@ -7,7 +7,7 @@ import type { ProductStatus } from "@/lib/db/schema";
  * page.tsx 는 Next 가 정한 것만 내보낼 수 있어 따로 둔다. 운영센터의 링크 검사(admin-status-action-links)가
  * 이 이름들을 읽어 "조치할 일"이 없는 거르기로 보내지 않는지 본다.
  */
-export type ProductFilter = { statuses: ProductStatus[] } & Pick<ListOptions, "introNeedsEditor" | "repoGone" | "repoArchived" | "repoRenamed" | "down">;
+export type ProductFilter = { statuses: ProductStatus[] } & Pick<ListOptions, "introNeedsEditor" | "repoGone" | "repoArchived" | "repoRenamed" | "down" | "spamBanned">;
 
 export const PRODUCT_FILTERS = {
   전체: { statuses: ["verified", "seeded", "unverified", "banned"] },
@@ -32,6 +32,11 @@ export const PRODUCT_FILTERS = {
   "저장소 보관됨": { statuses: ["seeded", "verified"], repoArchived: true },
   /** GitHub 이 다른 이름으로 돌려준 저장소 — repo_url 은 아직 옛 이름이다(고쳐 쓰기는 뒤에 따로) */
   "저장소 이름 바뀜": { statuses: ["seeded", "verified"], repoRenamed: true },
+  /**
+   * 공개 제품 스팸 재검사(product-spam-rescan)가 자동으로 내린 것 — 잘못 내려간 것은 차단 해제한다.
+   * 해제하면 재검사는 다시 내리지 않는다
+   */
+  "스팸 자동 차단": { statuses: ["banned"], spamBanned: true },
 } satisfies Record<string, ProductFilter>;
 export type ProductFilterName = keyof typeof PRODUCT_FILTERS;
 
