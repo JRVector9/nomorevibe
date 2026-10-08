@@ -1,69 +1,41 @@
 /*
- * 심사 큐 — 운영센터(status/dashboard/dashboard.css)와 같은 12칸 격자·카드·알약을 쓴다.
- * 위에서 아래로 "어디에 몇 건(구간) → 지금 할 일 → 거르기 → 표 + 고른 한 건".
+ * 심사 큐 — 운영센터(status/dashboard/dashboard.css)와 같은 카드·알약을 쓴다.
+ * 위에서 아래로 "머리 칩 → 구간 탭(한 줄) → 거르기 ▾·검색 한 줄 → 표 + 고른 한 건". 표가 첫 화면에서 시작해야 한다(ADM-09).
  */
-.rq{display:flex;flex-direction:column;gap:16px;padding-block:24px 40px}
-.rq-top{display:flex;flex-wrap:wrap;align-items:flex-end;justify-content:space-between;gap:10px 24px;padding-bottom:12px;border-bottom:1px solid var(--color-line)}
+.rq{display:flex;flex-direction:column;gap:10px;padding-block:16px 40px;min-width:0}
+.rq-top{display:flex;flex-wrap:wrap;align-items:flex-end;justify-content:space-between;gap:8px 24px;padding-bottom:10px;border-bottom:1px solid var(--color-line)}
 .rq-top .l{display:flex;flex-wrap:wrap;align-items:baseline;gap:6px 12px;min-width:0}
-.rq-top .r{display:flex;flex-wrap:wrap;align-items:center;gap:10px 14px}
-.rq .dash-chips{margin-top:-4px}
+.rq-top .r{display:flex;flex-wrap:wrap;align-items:center;gap:8px 10px;min-width:0}
+.rq-top .r .dash-pill{max-width:100%;overflow:hidden;text-overflow:ellipsis}
 
-/* 구간 레일 — 여덟 칸 한 줄, 위에 단계 이름(단계마다 칸 수만큼 걸친다) */
-.rq-steps,.rq-rail{display:grid;grid-template-columns:repeat(8,minmax(0,1fr))}
-.rq-steps{margin-bottom:6px}
-.rq-steps span{font-size:13px;color:var(--color-fg-3);padding-inline:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.rq-steps b{font-family:var(--font-mono);font-weight:600;color:var(--color-fg-2);margin-right:4px}
-.rq-rail{border:1px solid var(--color-line);border-radius:10px;overflow:hidden}
-.rq-rail>a{display:flex;flex-direction:column;gap:3px;padding:10px 12px;border-right:1px solid var(--color-line);min-width:0;color:inherit}
-.rq-rail>a:last-child{border-right:0}
-.rq-rail>a:hover{background:var(--color-bg-hover)}
-.rq-rail .t{font-size:13px;font-weight:550;color:var(--color-fg-2)}
-.rq-rail .n{font-size:22px;font-weight:650;line-height:1.1;font-family:var(--font-mono);font-variant-numeric:tabular-nums;white-space:nowrap}
-.rq-rail .n span{font-size:13px;font-weight:500;margin-left:4px}
-.rq-rail .s{font-size:13px;color:var(--color-fg-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.rq-rail>a[data-zero] .n{color:var(--color-fg-3)}
-.rq-rail>a[data-tone=warn] .n{color:var(--color-warn)}
-.rq-rail>a[aria-current=page]{background:var(--color-accent-soft)}
-.rq-rail>a[aria-current=page] .n,.rq-rail>a[aria-current=page] .t{color:var(--color-accent)}
-@media (max-width:1180px){
-  .rq-steps{display:none}
-  .rq-rail{grid-template-columns:repeat(4,minmax(0,1fr))}
-  .rq-rail>a:nth-child(4n){border-right:0}
-  .rq-rail>a:nth-child(-n+4){border-bottom:1px solid var(--color-line)}
-}
-@media (max-width:640px){
-  .rq-rail{grid-template-columns:repeat(2,minmax(0,1fr))}
-  .rq-rail>a{border-right:1px solid var(--color-line)!important;border-bottom:1px solid var(--color-line)}
-  .rq-rail>a:nth-child(2n){border-right:0!important}
-}
+/* 구간 탭 — 한 줄(구간명 + 수 + 할 일 배지). 넘치면 탭 줄만 옆으로 스크롤한다 */
+.rq-tabs{display:flex;align-items:stretch;gap:2px;overflow-x:auto;border:1px solid var(--color-line);border-radius:10px;padding:3px;background:var(--color-bg-card);scrollbar-width:thin}
+.rq-tabs>a{display:flex;align-items:baseline;gap:6px;flex:none;border-radius:7px;padding:6px 10px;color:var(--color-fg-2);white-space:nowrap}
+.rq-tabs>a:hover{background:var(--color-bg-hover)}
+.rq-tabs .t{font-size:13px;font-weight:550}
+.rq-tabs .n{font-size:15px;font-weight:650;font-family:var(--font-mono);font-variant-numeric:tabular-nums;color:var(--color-fg)}
+.rq-tabs .d{font-size:13px;font-family:var(--font-mono)}
+.rq-tabs .b{border-radius:999px;padding:0 7px;font-size:12px;font-weight:600;line-height:18px;background:var(--color-neutral-soft);color:var(--color-neutral)}
+.rq-tabs .b[data-tone=ok]{background:color-mix(in srgb,var(--color-ok) 14%,transparent);color:var(--color-ok)}
+.rq-tabs .b[data-tone=warn]{background:color-mix(in srgb,var(--color-warn) 14%,transparent);color:var(--color-warn)}
+.rq-tabs>a[data-zero] .n{color:var(--color-fg-3)}
+.rq-tabs>a[data-tone=warn] .n{color:var(--color-warn)}
+.rq-tabs>a[aria-current=page]{background:var(--color-accent-soft)}
+.rq-tabs>a[aria-current=page] .t,.rq-tabs>a[aria-current=page] .n{color:var(--color-accent)}
+.rq-tabs .sep{flex:none;width:1px;margin:4px 4px;background:var(--color-line)}
 
-/* 지금 할 일 — 운영센터 조치 목록과 같은 띠 카드, 네 장 가로 */
-.rq-todo{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:16px;list-style:none;margin:0;padding:0}
-.rq-todo li{min-width:0}
-.rq-todo a{display:grid;grid-template-columns:4px minmax(0,1fr) auto;gap:10px;align-items:center;padding:9px 12px;border:1px solid var(--color-line);border-radius:10px;background:var(--color-bg-card);color:inherit;height:100%}
-.rq-todo a:hover{background:var(--color-bg-hover)}
-.rq-todo i{display:block;width:4px;align-self:stretch;border-radius:2px;background:var(--color-fg-3)}
-.rq-todo .x{display:grid;min-width:0}
-.rq-todo .t{font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.rq-todo .d{font-size:13px;color:var(--color-fg-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.rq-todo .n{font-size:20px;font-weight:650;font-family:var(--font-mono);font-variant-numeric:tabular-nums;text-align:right}
-.rq-todo [data-tone=ok] i{background:var(--color-up)} .rq-todo [data-tone=ok] .n{color:var(--color-up)}
-.rq-todo [data-tone=warn] i{background:var(--color-warn)} .rq-todo [data-tone=warn] .n{color:var(--color-warn)}
-.rq-todo [data-tone=bad] i{background:var(--color-down)} .rq-todo [data-tone=bad] .n{color:var(--color-down)}
-.rq-todo [data-zero] .n{color:var(--color-fg-3)}
-@media (max-width:1180px){.rq-todo{grid-template-columns:repeat(2,minmax(0,1fr))}}
-@media (max-width:640px){.rq-todo{grid-template-columns:1fr}}
-
-/* 거르기 — 이름 칸 + 값 칸, 넷째 줄은 검색·기간·정렬 폼(display:contents 로 같은 격자에 선다) */
-.rq-filters{display:grid;grid-template-columns:128px minmax(0,1fr);gap:10px 12px;align-items:center}
+/* 거르기 ▾ 와 검색 한 줄 */
+.rq-bar{display:flex;flex-wrap:wrap;align-items:center;gap:8px;min-width:0}
+.rq-filter{position:relative}
+.rq-filter summary{list-style:none;cursor:pointer;white-space:nowrap}
+.rq-filter summary::-webkit-details-marker{display:none}
+.rq-filter>.rq-filters{position:absolute;z-index:20;top:calc(100% + 6px);left:0;width:min(720px,calc(100vw - 32px));padding:12px;border:1px solid var(--color-line);border-radius:10px;background:var(--color-bg-card);box-shadow:0 8px 24px rgb(0 0 0 / .16)}
+.rq-filters{display:grid;grid-template-columns:96px minmax(0,1fr);gap:10px 12px;align-items:center}
 .rq-filters .k{font-size:13px;font-weight:600;color:var(--color-fg-2)}
-.rq-filters .k small{display:block;font-size:13px;font-weight:400;color:var(--color-fg-3)}
+.rq-filters .k small{display:block;font-size:12px;font-weight:400;color:var(--color-fg-3)}
 .rq-filters .v{display:flex;flex-wrap:wrap;gap:6px;align-items:center;min-width:0}
-.rq-more{position:relative}
-.rq-more summary{list-style:none;cursor:pointer}
-.rq-more summary::-webkit-details-marker{display:none}
-.rq-more>div{position:absolute;z-index:10;top:calc(100% + 4px);left:0;display:flex;flex-direction:column;gap:4px;min-width:240px;padding:6px;border:1px solid var(--color-line);border-radius:10px;background:var(--color-bg-card);box-shadow:0 8px 24px rgb(0 0 0 / .12)}
-@media (max-width:640px){.rq-filters{grid-template-columns:1fr}.rq-filters .k small{display:inline;margin-left:6px}}
+.rq-search{display:flex;flex:1 1 420px;flex-wrap:wrap;align-items:center;gap:6px;min-width:0}
+@media (max-width:640px){.rq-filters{grid-template-columns:1fr}.rq-filters .k small{display:inline;margin-left:6px}.rq-search{flex-basis:100%}}
 
 /* 표 + 상세 */
 .rq-work{display:grid;grid-template-columns:minmax(0,2fr) minmax(0,1fr);gap:16px;align-items:start}

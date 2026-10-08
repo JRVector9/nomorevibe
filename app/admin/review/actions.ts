@@ -2,7 +2,7 @@
 
 import { revalidatePath } from 'next/cache';
 import { currentAdmin } from '@/lib/auth/admin';
-import { requestCandidateEvidence, requeueResolvedCandidates } from '@/lib/crawl/admin-review';
+import { requestCandidateEvidence, requeueResolvedCandidates, undoAdminDecision } from '@/lib/crawl/admin-review';
 import { writeTaglineByHand } from '@/lib/crawl/taglines';
 import { getDocument } from '@/lib/crawl/repository';
 import { decideCandidate } from '@/lib/crawl/review';
@@ -10,8 +10,8 @@ import { changeReviewMode, getSettings, saveSettings } from '@/lib/crawl/setting
 import { listGatewayModels } from '@/lib/crawl/agent-review-gateway';
 import { sameReviewModel } from '@/lib/crawl/review-model-identity';
 import { decidePublishedSecondReview } from '@/lib/crawl/published-second-review';
-import { recordAdminAction } from '@/lib/operations/admin-log';
-import type { RequeueState } from './contract';
+import { recordAdminAction, recordAdminActions } from '@/lib/operations/admin-log';
+import { MAX_BULK_DECISIONS, type DecidedCandidate, type RequeueState } from './contract';
 import { CLAUDE_MODELS, GROK_MODELS, parseVoterValue } from './voters';
 
 export type ReviewActionState = { error?: string; message?: string } | null;
@@ -149,4 +149,34 @@ export async function switchSecondVoter(_previous: ReviewActionState, form: Form
   revalidatePath('/admin');
   revalidatePath('/admin/status');
   return { message: `2차 표를 ${choice.model} 로 바꿨습니다. 다음 2차 잡(1분 안)부터 이 모델이 봅니다.` };
+}
+
+/**
+ * 방금 내린 승인·거부를 되돌린다 — 결정 뒤 알림의 "되돌리기(10초)"가 부른다(2026-10-08 UX 감사 ADM-12).
+ *
+ * 결정한 뒤 아무 일도 없었을 때만 이전 상태로 돌린다(undoAdminDecision). 발행 워커가 이미 올렸거나 상태를 바꿨으면
+ * 그 사유를 돌려준다. 되돌린 것은 같은 트랜잭션에서 작업 로그에 새 줄로 남고, 못 한 것은 여기서 실패로 남긴다.
+ */
+export async function undoCandidateDecisions(targets: DecidedCandidate[]): Promise<ReviewActionState> {
+  const admin = await currentAdmin();
+  if (!admin) return { error: '권한이 없습니다. 다시 로그인해주세요.' };
+  // 화면 밖에서 만든 요청도 같은 모양만 받는다
+  const list = Array.isArray(targets) ? targets.filter((target) => typeof target?.repo === 'string' && target.repo.length <= 200
+    && Number.isSafeInteger(target.attemptId) && target.attemptId > 0) : [];
+  if (!list.length || list.length !== targets.length) return { error: '되돌릴 결정을 읽을 수 없습니다.' };
+  if (list.length > MAX_BULK_DECISIONS) return { error: `한 번에 최대 ${MAX_BULK_DECISIONS}건까지 되돌립니다.` };
+
+  const failures: (DecidedCandidate & { message: string })[] = [];
+  for (const target of list) {
+    const result = await undoAdminDecision({ repo: target.repo, attemptId: target.attemptId, actor: admin.login });
+    if (!result.ok) failures.push({ ...target, message: result.message });
+  }
+  await recordAdminActions(admin.login, failures.map((failure) => ({ action: 'candidate-undo', target: failure.repo,
+    detail: { attemptId: failure.attemptId }, ok: false, error: failure.message })));
+  revalidatePath('/admin/review');
+  revalidatePath('/admin/status');
+  const restored = list.length - failures.length;
+  if (!failures.length) return { message: `${restored.toLocaleString('ko-KR')}건을 결정 앞 상태로 되돌렸습니다.` };
+  if (list.length === 1) return { error: failures[0].message };
+  return { error: `${failures.length}건은 되돌리지 못했습니다(${restored}건은 되돌림) — ${failures[0].repo}: ${failures[0].message}` };
 }

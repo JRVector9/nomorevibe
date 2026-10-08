@@ -2,7 +2,7 @@ import { sameReviewModel } from "./review-model-identity";
 import { and, asc, desc, eq, gt, inArray, not, notInArray, or, sql, type SQL } from 'drizzle-orm';
 import { z } from 'zod';
 import { db } from '@/lib/db';
-import { crawlTaglines, type CrawlDocument, type CrawlTagline } from '@/lib/db/schema';
+import { crawlTaglines, type CandidateState, type CrawlDocument, type CrawlTagline, type DecisionReason } from '@/lib/db/schema';
 import { agentRepositoryObservations, agentRepositoryScans, crawlCandidates, crawlDocuments, crawlFrontier,
   crawlReviewAttempts, crawlSettings, type CrawlCandidate, type CrawlReviewAttempt } from '@/lib/db/schema';
 import type { ProductTransaction } from '@/lib/domain/products/generation';
@@ -65,9 +65,20 @@ function auditValues(candidateId: number, input: ReviewInput, actor: string, rea
     actor, reason, startedAt: now, completedAt: now, validUntil: input.validUntil };
 }
 
+/**
+ * 관리자 결정 바로 앞의 후보 — 되돌리기(undoAdminDecision)가 이 값으로 돌린다. 후보 signals 의 adminReviewPrevious 에 둔다
+ * (표를 늘리지 않으려고). 시각은 ISO 글자다.
+ */
+export type AdminDecisionPrevious = {
+  attemptId: number; state: CandidateState; reason: DecisionReason | null; decidedBy: string | null;
+  decidedAt: string | null; judgedAt: string | null; adminReviewAttemptId: number | null;
+};
+export type AdminOverrideResult = { ok: true; message: string; attemptId: number; previous: { state: CandidateState; reason: DecisionReason | null } }
+  | { ok: false; message: string };
+
 export async function overrideCandidate(request: AdminReviewRequest & {
   decision: 'approve' | 'reject'; reasonCode: 'passed' | 'personal_site' | 'not_a_product' | 'large_oss';
-}): Promise<AdminReviewResult> {
+}): Promise<AdminOverrideResult> {
   const parsed = adminReviewRequestSchema.safeParse(request);
   if (!parsed.success) return { ok: false, message: '최신 심사 화면에서 사유를 1~2000자로 입력해주세요.' };
   if (request.decision !== 'approve' && request.decision !== 'reject' ||
@@ -91,13 +102,70 @@ export async function overrideCandidate(request: AdminReviewRequest & {
       kind: 'admin_override', attemptNumber: count.count + 1,
       outcome: { decision: request.decision, reason: parsed.data.reason, evidenceIds: ['product'] },
     }).returning({ id: crawlReviewAttempts.id });
+    const { candidate } = current;
+    const previous: AdminDecisionPrevious = { attemptId: audit.id, state: candidate.state, reason: candidate.reason,
+      decidedBy: candidate.decidedBy, decidedAt: candidate.decidedAt?.toISOString() ?? null, judgedAt: candidate.judgedAt?.toISOString() ?? null,
+      adminReviewAttemptId: typeof candidate.signals?.adminReviewAttemptId === 'number' ? candidate.signals.adminReviewAttemptId : null };
+    // decidedAt 과 updatedAt 을 같은 값으로 둔다 — 그 뒤 누가 손대면 updatedAt 이 달라져 되돌리기가 멈춘다
     await tx.update(crawlCandidates).set({
       state: request.decision === 'approve' ? 'approved' : 'rejected', reason: request.reasonCode,
       decidedBy: 'admin', decidedAt: now, judgedAt: now, updatedAt: now,
-      signals: { ...current.candidate.signals, adminReviewAttemptId: audit.id },
-    }).where(eq(crawlCandidates.id, current.candidate.id));
+      signals: { ...candidate.signals, adminReviewAttemptId: audit.id, adminReviewPrevious: previous },
+    }).where(eq(crawlCandidates.id, candidate.id));
     if (request.decision === 'approve') await requestJob('crawl-publish', tx);
-    return { ok: true, message: request.decision === 'approve' ? '관리자 승인과 사유를 기록했습니다. 발행 워커가 최종 조건을 확인합니다.' : '관리자 거부와 사유를 기록했습니다.' };
+    return { ok: true, attemptId: audit.id, previous: { state: candidate.state, reason: candidate.reason },
+      message: request.decision === 'approve' ? '관리자 승인과 사유를 기록했습니다. 발행 워커가 최종 조건을 확인합니다.' : '관리자 거부와 사유를 기록했습니다.' };
+  });
+}
+
+const previousSchema = z.object({
+  attemptId: z.number().int(), state: z.enum(['new', 'approved', 'rejected', 'needs_review', 'published']),
+  reason: z.string().nullable(), decidedBy: z.string().nullable(), decidedAt: z.string().nullable(), judgedAt: z.string().nullable(),
+  adminReviewAttemptId: z.number().int().nullable(),
+});
+
+/**
+ * 방금 내린 관리자 결정을 되돌린다(2026-10-08 UX 감사 ADM-12) — 잘못 누른 승인·거부를 결정 바로 앞 상태로.
+ *
+ * 결정 뒤에 아무 일도 없었을 때만 한다. 그 결정이 후보의 마지막 결정이고(adminReviewAttemptId), 후보가 그 뒤로
+ * 바뀌지 않았어야 한다(updatedAt = decidedAt). 발행 워커가 이미 올렸거나 막아 상태를 바꿨으면 거절한다 — 그때는
+ * 제품 관리에서 내리거나 다시 판단해야 한다. 결정 기록(admin_override)은 지우지 않고 superseded 로 닫으며,
+ * 되돌림은 작업 로그에 새 줄(candidate-undo)로 같은 트랜잭션에서 남긴다.
+ */
+export async function undoAdminDecision(input: { repo: string; attemptId: number; actor: string }): Promise<
+  { ok: true; restored: { state: CandidateState; reason: DecisionReason | null } } | { ok: false; message: string }> {
+  return db.transaction(async tx => {
+    const [candidate] = await tx.select().from(crawlCandidates).where(eq(crawlCandidates.repo, input.repo)).for('update');
+    if (!candidate) return { ok: false, message: '후보를 찾지 못했습니다.' };
+    const parsed = previousSchema.safeParse(candidate.signals?.adminReviewPrevious);
+    if (candidate.signals?.adminReviewAttemptId !== input.attemptId || !parsed.success || parsed.data.attemptId !== input.attemptId) {
+      return { ok: false, message: '그 뒤에 다른 결정이 있어 되돌릴 수 없습니다. 새로고침해 지금 상태를 확인해주세요.' };
+    }
+    if (candidate.state === 'published' || candidate.publishedSlug) {
+      return { ok: false, message: '발행 워커가 이미 발행했습니다. 내리려면 제품 관리에서 처리해주세요.' };
+    }
+    if (candidate.decidedBy !== 'admin' || !candidate.decidedAt || candidate.updatedAt.getTime() !== candidate.decidedAt.getTime()) {
+      return { ok: false, message: '결정 뒤에 발행 워커나 판정이 이미 이 후보를 처리했습니다. 새로고침해 지금 상태를 확인해주세요.' };
+    }
+    const previous = parsed.data;
+    const now = new Date();
+    const closed = await tx.update(crawlReviewAttempts).set({ state: 'superseded', errorCode: 'admin_undo', completedAt: now })
+      .where(and(eq(crawlReviewAttempts.id, input.attemptId), eq(crawlReviewAttempts.candidateId, candidate.id),
+        eq(crawlReviewAttempts.kind, 'admin_override'), eq(crawlReviewAttempts.state, 'succeeded')))
+      .returning({ id: crawlReviewAttempts.id });
+    if (!closed.length) return { ok: false, message: '결정 기록을 찾지 못했습니다. 새로고침해주세요.' };
+    // 결정이 덧붙인 두 값만 걷는다 — 나머지 signals 는 결정 뒤로 바뀌지 않았다(updatedAt 이 같다)
+    const signals = { ...candidate.signals };
+    delete signals.adminReviewAttemptId;
+    delete signals.adminReviewPrevious;
+    if (previous.adminReviewAttemptId !== null) signals.adminReviewAttemptId = previous.adminReviewAttemptId;
+    const restored = { state: previous.state, reason: previous.reason as DecisionReason | null };
+    await tx.update(crawlCandidates).set({ ...restored, decidedBy: previous.decidedBy,
+      decidedAt: previous.decidedAt ? new Date(previous.decidedAt) : null, judgedAt: previous.judgedAt ? new Date(previous.judgedAt) : null,
+      updatedAt: now, signals }).where(eq(crawlCandidates.id, candidate.id));
+    await tx.insert(operationsAudit).values(await adminAuditRow(input.actor, { action: 'candidate-undo', target: candidate.repo,
+      detail: { attemptId: input.attemptId, from: { state: candidate.state, reason: candidate.reason }, to: restored } }));
+    return { ok: true, restored };
   });
 }
 

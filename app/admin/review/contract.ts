@@ -8,8 +8,20 @@
 /** 한 번에 처리할 최대 건수. 실수로 큐 전체를 뒤집는 것을 막는다 */
 export const MAX_BULK_DECISIONS = 50;
 
+/** 되돌릴 결정 하나 — 후보와 그 결정의 기록(admin_override) id */
+export type DecidedCandidate = { repo: string; attemptId: number };
+
 export type BulkReviewState =
-  | { error?: string; ok?: number; failures?: { repo: string; message: string }[] }
+  | { error?: string; ok?: number; failures?: { repo: string; message: string }[]; decided?: DecidedCandidate[] }
+  | null;
+
+/**
+ * 한 건 결정의 결과. 실패면 error, 성공이면 알림·되돌리기가 쓸 값 — 무엇을 결정했고(decision), 되돌릴 기록(attemptId),
+ * 결정 앞의 상태(previous). 성공도 null 이던 때가 있어 error 만 보는 화면은 그대로 쓴다.
+ */
+export type ReviewDecisionState =
+  | { error: string; ok?: undefined }
+  | { ok: true; error?: undefined; repo: string; decision: 'approve' | 'reject'; attemptId: number; previous: { state: string; reason: string | null } }
   | null;
 
 export type RequeueState =
