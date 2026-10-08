@@ -179,22 +179,35 @@ function claimed(claim: FrontierClaim) {
     and date_trunc('milliseconds', ${crawlFrontier.nextAttemptAt}) = ${claim.nextAttemptAt.toISOString()}::timestamp)`;
 }
 
+/**
+ * 건너뛴 까닭 — skipped 의 last_error 에 남긴다. 레포가 정말 없는지(404)와 비어 있는지를 가려야 사람 대기열의
+ * 사유를 정확히 적는다(2026-10-08: 둘 다 "레포 삭제됨"으로 묶일 뻔했다). 다시 수집할 때 비운다.
+ */
+export const SKIP_NOT_FOUND = "github_not_found";
+export const SKIP_EMPTY_REPOSITORY = "github_empty_repository";
+export type FrontierSkipCause = typeof SKIP_NOT_FOUND | typeof SKIP_EMPTY_REPOSITORY;
+
 /** claim을 주면 아직 내 것일 때만 바꾼다 — 회수된 항목을 옛 워커가 끝내 버리지 않도록 */
 export async function markFrontier(
   repo: string,
   state: Extract<FrontierState, "done" | "skipped">,
   claim?: FrontierClaim,
   lease?: JobLease,
+  cause?: FrontierSkipCause,
 ): Promise<void> {
   await db.transaction(async tx => {
     await tx.update(crawlFrontier)
-    .set({ state, aliasOf: null, lastError: null, updatedAt: new Date() })
+    .set({ state, aliasOf: null, lastError: state === "skipped" ? cause ?? null : null, updatedAt: new Date() })
     .where(claim ? and(eq(crawlFrontier.repo, repo), claimed(claim)) : eq(crawlFrontier.repo, repo));
     if (lease) await assertJobLease(tx, lease);
   });
 }
 
-const GONE_DETAIL = "GitHub 저장소를 찾지 못했습니다(삭제·비공개) — 새 원본을 수집할 수 없습니다.";
+/** GitHub 는 지운 저장소와 비공개로 바꾼 저장소를 똑같이 404 로 답한다 — 둘을 가를 수 없다는 것까지 적는다 */
+const GONE_DETAIL = "GitHub 가 저장소를 404 로 답합니다 — 삭제됐거나 비공개로 바뀌었습니다(GitHub 는 둘을 구분해 알려주지 않습니다).";
+const EMPTY_DETAIL = "GitHub 저장소가 비어 있어 새 원본을 수집할 수 없습니다.";
+/** 건너뛴 까닭이 기록되기 전(2026-10-08 이전)의 skipped — 404 인지 빈 저장소인지 모른다 */
+const UNKNOWN_SKIP_DETAIL = "GitHub 저장소를 수집하지 못했습니다(건너뛴 까닭 기록 없음).";
 
 /**
  * 원본을 다시 받을 수 없게 된 후보를 사람에게 넘긴다.
@@ -225,22 +238,25 @@ export async function handOffFailedSourceRefreshes(lease: JobLease, limit = 20):
       const after = Date.parse(String(candidate.signals?.reconsiderAfter));
       if (!document || !Number.isFinite(after) || document.fetchedAt.getTime() > after
         || !frontier || frontier.aliasOf || !["skipped", "failed"].includes(frontier.state)) continue;
-      const gone = frontier.state === "skipped";
-      const detail = gone ? GONE_DETAIL : `GitHub 원본 재수집 실패: ${(frontier.lastError ?? "원인 미상").slice(0, 220)}`;
+      // 404 로 건너뛴 것만 레포 삭제다. 빈 저장소·까닭 모름·수집 실패는 원본 재수집 실패로 둔다
+      const gone = frontier.state === "skipped" && frontier.lastError === SKIP_NOT_FOUND;
+      const detail = frontier.state !== "skipped" ? `GitHub 원본 재수집 실패: ${(frontier.lastError ?? "원인 미상").slice(0, 220)}`
+        : gone ? GONE_DETAIL : frontier.lastError === SKIP_EMPTY_REPOSITORY ? EMPTY_DETAIL : UNKNOWN_SKIP_DETAIL;
       await tx.update(crawlCandidates).set({
         state: "needs_review", reason: gone ? "repo_deleted" : "source_refresh_failed", updatedAt: sql`clock_timestamp()`,
         signals: { ...candidate.signals, stoppedAt: { rule: "원본 재수집", detail } },
       }).where(eq(crawlCandidates.id, candidate.id));
       handedOff++;
     }
-    // 승인 대기·재시도 보류 — 마지막 원본보다 뒤에 저장소를 찾지 못했다(skipped)
+    // 승인 대기·재시도 보류 — 마지막 원본보다 뒤에 저장소가 404 이거나 비어 있었다. 까닭이 기록되지 않은 옛 skipped 는
+    // 기다린다 — 원본 재수집이 하루 안에 다시 받아 까닭을 남긴다
     const parked = handedOff >= cap ? [] : await tx.select().from(crawlCandidates).where(and(
       eq(crawlCandidates.decidedBy, "auto"),
       or(eq(crawlCandidates.state, "approved"),
         and(eq(crawlCandidates.state, "needs_review"), inArray(crawlCandidates.reason, [...REVIEW_RETRIABLE_REASONS]))),
       sql`EXISTS (SELECT 1 FROM ${crawlFrontier} gone JOIN ${crawlDocuments} doc ON doc.repo = gone.repo
         WHERE gone.repo = ${crawlCandidates.repo} AND gone.state = 'skipped' AND gone.alias_of IS NULL
-          AND gone.updated_at > doc.fetched_at)`,
+          AND gone.last_error IN (${SKIP_NOT_FOUND}, ${SKIP_EMPTY_REPOSITORY}) AND gone.updated_at > doc.fetched_at)`,
     )).orderBy(asc(crawlCandidates.updatedAt), asc(crawlCandidates.id))
       .limit(cap - handedOff).for("update", { skipLocked: true });
     for (const candidate of parked) {
@@ -250,9 +266,11 @@ export async function handOffFailedSourceRefreshes(lease: JobLease, limit = 20):
         .where(eq(crawlFrontier.repo, candidate.repo)).for("update");
       if (!document || !frontier || frontier.aliasOf || frontier.state !== "skipped"
         || frontier.updatedAt.getTime() <= document.fetchedAt.getTime()) continue;
+      const gone = frontier.lastError === SKIP_NOT_FOUND;
+      if (!gone && frontier.lastError !== SKIP_EMPTY_REPOSITORY) continue;
       await tx.update(crawlCandidates).set({
-        state: "needs_review", reason: "repo_deleted", updatedAt: sql`clock_timestamp()`,
-        signals: { ...candidate.signals, stoppedAt: { rule: "원본 재수집", detail: GONE_DETAIL } },
+        state: "needs_review", reason: gone ? "repo_deleted" : "source_refresh_failed", updatedAt: sql`clock_timestamp()`,
+        signals: { ...candidate.signals, stoppedAt: { rule: "원본 재수집", detail: gone ? GONE_DETAIL : EMPTY_DETAIL } },
       }).where(eq(crawlCandidates.id, candidate.id));
       handedOff++;
     }

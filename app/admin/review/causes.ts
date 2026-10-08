@@ -103,7 +103,7 @@ export const CAUSE_GUIDE: Record<CauseKey, {
   },
   repo_deleted: {
     label: "레포 삭제됨",
-    summary: "GitHub 저장소가 404 입니다(삭제 또는 비공개). 저장해 둔 원본은 지금 상태를 증명하지 않습니다.",
+    summary: "GitHub 가 저장소를 404 로 답합니다 — 삭제됐거나 비공개로 바뀌었습니다(GitHub 는 둘을 구분해 알려주지 않습니다). 저장해 둔 원본은 지금 상태를 증명하지 않습니다.",
     question: "저장소 없이도 제품이 지금 살아 있고, 다른 근거로 확인할 수 있습니까?",
     hints: [
       { decision: "거부", when: "저장소가 사라졌고 제품도 확인할 수 없다" },
