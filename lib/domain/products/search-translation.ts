@@ -1,5 +1,5 @@
 import { and, eq, sql } from "drizzle-orm";
-import { db } from "@/lib/db";
+import { db, onPrimary } from "@/lib/db";
 import { textTranslations } from "@/lib/db/schema";
 import { GLOSSARY_VERSION, glossaryHints, QUERY_PROMPT_VERSION, queryExpansions, queryTranslationPhrases, textHash, TRANSLATE_MODEL,
   translateQueryToEnglish } from "@/lib/crawl/translate";
@@ -103,11 +103,13 @@ async function translateKorean(raw: string): Promise<string | null> {
     if (cached) return cached;
 
     const result = await translateQueryToEnglish(raw, TIMEOUT_MS);
-    await recordTranslations(
+    // 관련도순 검색은 0건이면 공개 읽기(복제본) 안에서 번역을 기다린다 — 기록은 쓰기라 늘 주 DB 로 보낸다.
+    // 복제본에서 쓰면 25006 으로 실패하고, 아래 catch 가 받아 온 번역까지 버렸다
+    await onPrimary(() => recordTranslations(
       [{ hash, translated: result.ok ? result.keywords : null, error: result.ok ? undefined : result.error }],
       TRANSLATE_MODEL,
       "en",
-    );
+    ));
     if (!result.ok) {
       logger.warn("search.translate_failed", { error: result.error });
       return null;

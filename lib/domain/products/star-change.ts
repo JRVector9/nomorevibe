@@ -13,3 +13,7 @@ export function starChange(value:StarObservation):number|null{
 export function starObservationLabel(value:Date|string|null|undefined){
  const at=time(value);return Number.isFinite(at)?new Intl.DateTimeFormat('ko-KR',{timeZone:'Asia/Seoul',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'}).format(new Date(at)):'확인 전';
 }
+/** 확인한 날 — 한국 날짜(YYYY-MM-DD). UTC 텍스트의 앞 10자를 자르면 15시(UTC) 뒤의 확인이 하루 이르게 적힌다 */
+export function starObservationDay(value:Date|string|null|undefined):string|null{
+ const at=time(value);return Number.isFinite(at)?new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Seoul',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date(at)):null;
+}
