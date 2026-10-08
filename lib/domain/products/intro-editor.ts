@@ -1,6 +1,8 @@
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { productIntroChecks, products, type IntroVerdict } from "@/lib/db/schema";
+import { productIntroChecks, products, productSearchProfiles, type IntroVerdict } from "@/lib/db/schema";
+import { lockProductGeneration } from "./generation";
+import { LIMITS } from "./schema";
 
 /**
  * 관리자 '소개 확인 필요'(검수 outcome = needs_editor)의 읽기와 '그대로 두기'(2026-10-08 UX 감사 ADM-23).
@@ -32,4 +34,31 @@ export async function keepIntro(slug: string): Promise<boolean> {
       eq(productIntroChecks.checkedTagline, products.tagline)))
     .returning({ productId: productIntroChecks.productId });
   return updated.length === 1;
+}
+
+/**
+ * 소개 고치기 — 사람이 지금 소개 대신 새 한 줄을 적는다(ADM-23). 출처는 editor 라 검수 잡이 다시 보지 않는다
+ * (pendingIntroChecks 는 AI 가 쓴 소개만 본다). 검수 잡이 고쳐 쓸 때(intro-checks.ts recordIntroCheck)처럼 검색 키워드를 비우고
+ * 검색 프로필을 지워 새 소개로 다시 짓게 하고, 소개와 같은 글이던 설명도 함께 바꾼다. 메이커 수정(repository.ts update)처럼
+ * 제품 세대를 잠근다. 검수 행은 그대로 둔다 — 소개가 바뀌어 '소개 확인 필요'(checked_tagline = tagline)에서 저절로 빠진다.
+ * 그 사이 소개가 바뀌었거나 이미 처리했으면 null, 고쳤으면 고치기 전 소개.
+ */
+export async function editIntro(slug: string, line: string): Promise<{ before: string } | null> {
+  const tagline = line.trim();
+  if (!tagline || tagline.length > LIMITS.tagline) return null;
+  return db.transaction(async (tx) => {
+    const [product] = await tx.select({ id: products.id, tagline: products.tagline, description: products.description, status: products.status })
+      .from(products).where(eq(products.slug, slug));
+    if (!product || (product.status !== "seeded" && product.status !== "verified")) return null;
+    if (!(await lockProductGeneration(tx, product.id, slug))) return null;
+    const [check] = await tx.select({ outcome: productIntroChecks.outcome, checkedTagline: productIntroChecks.checkedTagline })
+      .from(productIntroChecks).where(eq(productIntroChecks.productId, product.id)).for("update");
+    const [locked] = await tx.select({ tagline: products.tagline, description: products.description }).from(products).where(eq(products.id, product.id));
+    if (!check || check.outcome !== "needs_editor" || check.checkedTagline !== locked.tagline) return null;
+    const sameText = locked.description.trim() === locked.tagline.trim();
+    await tx.update(products).set({ tagline, taglineSource: "editor", searchKeywords: null, ...(sameText ? { description: tagline } : {}),
+      updatedAt: sql`now()` }).where(eq(products.id, product.id));
+    await tx.delete(productSearchProfiles).where(eq(productSearchProfiles.productId, product.id));
+    return { before: locked.tagline };
+  });
 }

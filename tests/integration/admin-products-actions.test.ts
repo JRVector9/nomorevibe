@@ -3,13 +3,13 @@ import { eq, inArray, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import {
   crawlCandidates, crawlReviewAttempts, operationsAudit, productAuditCampaigns, productAuditItems, productEvidenceAudit, productIntroChecks,
-  productRepoReviews, products,
+  productRepoReviews, products, productSearchProfiles,
 } from "@/lib/db/schema";
 import { countProducts, listProducts } from "@/lib/domain/products/repository";
 import { productHistory } from "@/lib/domain/products/history";
 import { repoGonePending } from "@/lib/domain/products/repo-pending";
 import { banProducts, setProductBan } from "@/app/admin/actions";
-import { keepIntroAction } from "@/app/admin/products/actions";
+import { editIntroAction, keepIntroAction } from "@/app/admin/products/actions";
 import { PRODUCT_FILTERS } from "@/app/admin/products/filters";
 import { auditFloor, auditRowsAfter, ensureSchema, resetTables } from "./setup";
 
@@ -183,6 +183,32 @@ it("그대로 두기는 검수 결과를 kept 로 바꿔 '소개 확인 필요'�
   expect(await keepIntroAction(null, form({ slug: changed.slug }))).toMatchObject({ error: expect.any(String) });
   mocks.admin.mockResolvedValue(null);
   expect(await keepIntroAction(null, form({ slug: p.slug }))).toMatchObject({ error: expect.any(String) });
+});
+
+it("소개 고치기는 사람이 쓴 소개(editor)로 바꾸고 검색 키워드·프로필을 비워 '소개 확인 필요'에서 뺀다 — 바뀐 소개·빈 글은 거절한다", async () => {
+  const p = await seed({ tagline: "Loading", description: "Loading", taglineSource: "ai_page", searchKeywords: "old keywords" });
+  const changed = await seed({ tagline: "New tagline written by maker" });
+  await db.insert(productIntroChecks).values([
+    { productId: p.id, checkedTagline: "Loading", verdict: "uninformative", problem: "자리표시", outcome: "needs_editor" },
+    { productId: changed.id, checkedTagline: "Old tagline", verdict: "uninformative", problem: "x", outcome: "needs_editor" },
+  ]);
+  await db.insert(productSearchProfiles).values({ productId: p.id, sourceHash: "h" });
+  const filter = PRODUCT_FILTERS["소개 확인 필요"];
+
+  expect(await editIntroAction(null, form({ slug: p.slug, tagline: "   " }))).toMatchObject({ error: expect.any(String) });
+  const floor = await auditFloor();
+  expect(await editIntroAction(null, form({ slug: p.slug, tagline: "  Track AI agent runs in one dashboard  " }))).toMatchObject({ ok: true });
+  expect(await read(p.id)).toMatchObject({ tagline: "Track AI agent runs in one dashboard", description: "Track AI agent runs in one dashboard",
+    taglineSource: "editor", searchKeywords: null });
+  expect(await db.select().from(productSearchProfiles).where(eq(productSearchProfiles.productId, p.id))).toEqual([]);
+  expect(await countProducts(filter)).toBe(0);
+  expect(await auditRowsAfter(floor, "intro-edit")).toEqual([expect.objectContaining({ actor: "operator", target: p.slug, ok: true,
+    detail: { before: "Loading", after: "Track AI agent runs in one dashboard" } })]);
+
+  // 이미 고친 것, 그 사이 바뀐 소개는 거절한다
+  expect(await editIntroAction(null, form({ slug: p.slug, tagline: "Again" }))).toMatchObject({ error: expect.any(String) });
+  expect(await editIntroAction(null, form({ slug: changed.slug, tagline: "Mine" }))).toMatchObject({ error: expect.any(String) });
+  expect(await read(changed.id)).toMatchObject({ tagline: "New tagline written by maker" });
 });
 
 // ─────────────────────────── 저장소 사라짐 대기 ───────────────────────────

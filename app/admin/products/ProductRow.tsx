@@ -2,10 +2,11 @@
 
 import { useActionState, useState } from "react";
 import Link from "next/link";
+import { LIMITS } from "@/lib/domain/products/schema";
 import { decideRepoReviewAction, markClaimInvite, type ReviewState } from "../actions";
 import { ConfirmAction } from "../components/ConfirmAction";
 import { resultError, resultToast, useAdminToast } from "../components/Toast";
-import { keepIntroAction } from "./actions";
+import { editIntroAction, keepIntroAction } from "./actions";
 import { BanAction, bannedToast, historyLink } from "./BanAction";
 
 export type AdminProduct = {
@@ -164,27 +165,44 @@ function RepoReview({ slug, name, review, banned }: { slug: string; name: string
 
 /**
  * '소개 확인 필요' 줄(2026-10-08 UX 감사 ADM-23) — 지금 공개된 소개와 검수가 넘긴 이유를 한 줄로 보이고 그 자리에서 정한다.
- * 그대로 두기·차단 모두 끝나면 목록에서 빠진다. 소개를 고쳐 쓰는 관리자 길은 아직 없다(공개 제품의 소개는 메이커 API·검수 잡만 바꾼다).
+ * 소개 고치기·그대로 두기·차단 모두 끝나면 목록에서 빠진다.
  */
 function IntroCheck({ product, intro }: { product: AdminProduct; intro: NonNullable<AdminProduct["intro"]> }) {
   const toast = useAdminToast();
   const [pending, setPending] = useState(false);
+  const [editing, setEditing] = useState(false);
   const button = "rounded-md border border-line px-2 py-0.5 font-semibold hover:bg-bg-hover disabled:opacity-50";
+  async function run(action: typeof keepIntroAction, form: FormData, message: string) {
+    setPending(true);
+    try {
+      const result = await action(null, form);
+      toast.show(resultToast(result, { message: `${message} · ${product.name}`, link: historyLink(product.slug) }));
+      if (!result?.error) setEditing(false);
+    } finally {
+      setPending(false);
+    }
+  }
   return (
     <div className="mt-0.5 flex flex-wrap items-baseline gap-x-2 text-[13px] text-fg-3">
       <p className="min-w-0 basis-full truncate" title={`${intro.tagline}\n검수: ${intro.problem}`}>
         <span className="text-fg-2">“{intro.tagline}”</span>{intro.problem && <> · 검수: {intro.problem}</>}
       </p>
+      {editing && <form className="flex min-w-0 basis-full gap-1" onSubmit={(event) => {
+        event.preventDefault();
+        void run(editIntroAction, new FormData(event.currentTarget), "소개 고침");
+      }}>
+        <input type="hidden" name="slug" value={product.slug} />
+        <input name="tagline" defaultValue={intro.tagline} maxLength={LIMITS.tagline} required aria-label={`${product.name} 새 소개`}
+          className="min-w-0 flex-1 rounded-md border border-line bg-bg-card px-2 py-0.5 text-fg" autoFocus />
+        <button type="submit" disabled={pending} className={`${button} text-fg-2`}>저장</button>
+        <button type="button" disabled={pending} className={`${button} text-fg-3`} onClick={() => setEditing(false)}>취소</button>
+      </form>}
       <span className="flex gap-1">
-        <button type="button" disabled={pending} className={`${button} text-fg-2`} onClick={async () => {
-          setPending(true);
+        {!editing && <button type="button" disabled={pending} className={`${button} text-fg-2`} onClick={() => setEditing(true)}>소개 고치기</button>}
+        <button type="button" disabled={pending} className={`${button} text-fg-2`} onClick={() => {
           const form = new FormData();
           form.set("slug", product.slug);
-          try {
-            toast.show(resultToast(await keepIntroAction(null, form), { message: `소개 그대로 둠 · ${product.name}`, link: historyLink(product.slug) }));
-          } finally {
-            setPending(false);
-          }
+          void run(keepIntroAction, form, "소개 그대로 둠");
         }}>그대로 두기</button>
         <BanAction slug={product.slug} name={product.name} banned={false} className={`${button} text-down`} />
       </span>
