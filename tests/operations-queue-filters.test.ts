@@ -1,6 +1,6 @@
 import { expect, it } from 'vitest';
-import { parseQueueFilters, queueFilterHref, intersectQueueIds, queueEntryCause } from '@/app/admin/status/queue-filters';
-import type { AdminReviewEntry } from '@/lib/crawl/admin-review';
+import { parseQueueFilters, queueFilterHref, intersectQueueIds } from '@/app/admin/status/queue-filters';
+import { reviewQueueBucket } from '@/lib/crawl/admin-review';
 
 it('validates URL filters and rejects repeated or inherited keys', () => {
   expect(parseQueueFilters({ cause: 'constructor', ai: ['approve'], minStars: '-1', updated: '999', queuePage: 'Infinity' }))
@@ -24,8 +24,11 @@ it('intersects the entire cause and AI candidate sets, keeping empty matches emp
 });
 
 it('shows the same human-only and AI-rejection buckets as the cause filter', () => {
-  const entry = { candidate: { reason: 'no_description' }, verdict: { cause: null }, review: { decision: 'approve' } } as AdminReviewEntry;
-  expect(queueEntryCause(entry)).toBe('no_description');
-  expect(queueEntryCause({ ...entry, candidate: { reason: 'ambiguous' }, verdict: { cause: 'agent_evidence' }, review: { decision: 'reject' } } as AdminReviewEntry)).toBe('ai_reject');
-  expect(queueEntryCause({ ...entry, candidate: { reason: 'ambiguous' }, verdict: null } as AdminReviewEntry)).toBe('unknown');
+  // 갈래 칩(reviewQueueCauses)과 두 화면의 목록 칸이 모두 이 함수를 쓴다
+  expect(reviewQueueBucket('no_description', { cause: 'installable_product' }, false)).toBe('no_description');
+  expect(reviewQueueBucket('repo_deleted', null, false)).toBe('repo_deleted');
+  expect(reviewQueueBucket('ambiguous', { cause: 'agent_evidence' }, true)).toBe('ai_reject');
+  expect(reviewQueueBucket('ambiguous', { cause: 'agent_evidence' }, false)).toBe('agent_evidence');
+  expect(reviewQueueBucket('ambiguous', { cause: null }, false)).toBe('resolved');
+  expect(reviewQueueBucket('ambiguous', null, false)).toBe('unknown');
 });

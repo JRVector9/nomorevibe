@@ -23,7 +23,7 @@ function tone(row: ModelHealth): { tone: "ok" | "warn" | "bad"; text: string } {
  */
 export function ModelCards({ rows, probes }: { rows: ModelHealth[]; probes: ConnectionProbe[] }) {
   return (
-    <section className="dash-card dash-4" aria-label="모델 연결">
+    <section id="models" className="dash-card dash-4" aria-label="모델 연결">
       <div className="dash-card-h"><h2>모델 연결 · 최근 1시간</h2><small>호출 · 실패 · 평균</small></div>
       <div className="dash-models">
         {rows.map((row) => {

@@ -225,6 +225,18 @@ export const HUMAN_ONLY_REASONS = ['second_review_split', 'no_description',
   'ai_review_exhausted', 'source_refresh_failed', 'repo_deleted'] as const;
 export type HumanOnlyReason = typeof HUMAN_ONLY_REASONS[number];
 const isHumanOnly = (reason: string | null): reason is HumanOnlyReason => HUMAN_ONLY_REASONS.some((value) => value === reason);
+/**
+ * 보류 후보 한 건의 갈래 — 갈래 칩(reviewQueueCauses)과 운영센터·심사 큐 목록의 갈래 칸이 모두 이 식 하나를 쓴다.
+ * 사람만 가르는 저장 사유는 그대로, 나머지는 지금 기준으로 다시 판정해 멈춘 곳(없으면 'resolved')이다.
+ * 전에는 목록이 다시 판정한 멈춘 곳만 보여 같은 후보가 칩·운영센터에서는 "소개 문구 없음", 심사 큐 줄에서는
+ * "직접 설치하는 프로젝트"로 갈렸다(2026-10-08 감사 ADM-04).
+ */
+export function reviewQueueBucket(reason: string | null, verdict: { cause: AmbiguityCause | null } | null, aiRejected: boolean): ReviewQueueBucket {
+  // 사람만 가르는 사유는 규칙을 다시 태우면 통과로 나와 "보류가 아님"에 섞인다 — 사유 그대로 묶는다
+  if (isHumanOnly(reason)) return reason;
+  if (!verdict) return 'unknown';
+  return verdict.cause ? (aiRejected ? 'ai_reject' : verdict.cause) : 'resolved';
+}
 export type ReviewQueueCauses = {
   counts: { cause: ReviewQueueBucket; count: number }[];
   ids: Map<ReviewQueueBucket, number[]>;
@@ -266,10 +278,8 @@ export async function reviewQueueCauses(settings: CrawlSettings): Promise<Review
       const verdict = document
         ? judgeStoredDocument(document, settings, new Date(), agentInputs?.get(candidate.repo))
         : null;
-      const aiRejected = aiByCandidate.get(candidate.id)?.outcome?.decision === 'reject';
-      // 사람만 가르는 사유는 규칙을 다시 태우면 통과로 나와 "보류가 아님"에 섞인다 — 사유 그대로 묶는다
-      const key: ReviewQueueBucket = isHumanOnly(candidate.reason) ? candidate.reason : !verdict ? 'unknown'
-        : verdict.cause ? (aiRejected ? 'ai_reject' : verdict.cause) : 'resolved';
+      const key = reviewQueueBucket(candidate.reason, verdict ? { cause: verdict.cause ?? null } : null,
+        aiByCandidate.get(candidate.id)?.outcome?.decision === 'reject');
       ids.set(key, [...(ids.get(key) ?? []), candidate.id]);
     }
     total += page.length;
@@ -392,6 +402,8 @@ export type AdminReviewEntry = {
   evidence: { id: string; label: string; url: string }[]; status: AdminReviewStatus; refreshCount: number;
   latest: AdminReviewAttempt | null; review: AdminReviewAttempt | null;
   verdict: AdminReviewVerdict | null;
+  /** 보류 후보의 갈래(reviewQueueBucket) — 갈래 칩과 같은 값. 보류가 아니면 null */
+  bucket: ReviewQueueBucket | null;
   /**
    * AI 가 지은 한 줄 소개의 상태. 소개가 없어 멈춘 후보(no_description)를 사람이 볼 때,
    * "AI 가 해봤는가, 무엇을 보고 못 했는가"를 알아야 판단이 된다.
@@ -537,6 +549,7 @@ export async function listAdminReviewEntries(settings: CrawlSettings, options: {
     const attempts = current.filter(row => row.candidateId === candidate.id);
     const last = latest.find(row => row.candidateId === candidate.id);
     const review = latestAutomatic.find(row => row.candidateId === candidate.id);
+    const succeeded = latestSuccessfulAutomatic.find(row => row.candidateId === candidate.id);
     return {
       candidate, inputHash: input?.inputHash ?? null, sourceRevisionHash: input?.sourceRevisionHash ?? null,
       candidateRevisionHash: candidateRevisionHash(candidate), name: input?.snapshot.product.name ?? candidate.repo,
@@ -547,7 +560,9 @@ export async function listAdminReviewEntries(settings: CrawlSettings, options: {
         url: item.observation.sourceUrl })) ?? [],
       refreshCount: attempts.filter(row => row.kind === 'evidence_refresh').length,
       tagline: taglineOf(taglines.find(row => row.repo === candidate.repo), document),
-      latest: summarizeAttempt(last), review: summarizeAttempt(latestSuccessfulAutomatic.find(row => row.candidateId === candidate.id)),
+      latest: summarizeAttempt(last), review: summarizeAttempt(succeeded),
+      bucket: candidate.state === 'needs_review' ? reviewQueueBucket(candidate.reason, recomputed ? { cause: recomputed.cause ?? null } : null,
+        succeeded?.outcome?.decision === 'reject') : null,
       seconds: seconds.filter(item => item.candidateId === candidate.id).map(row => ({ decision: row.secondDecision,
         confidence: row.secondConfidence, reason: row.secondReason, reasonKo: null, model: row.model, provider: row.provider,
         status: row.status, trigger: row.trigger, errorCode: row.errorCode, isFallback: Boolean(row.fallbackForId),

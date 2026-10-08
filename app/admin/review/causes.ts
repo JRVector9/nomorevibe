@@ -164,3 +164,6 @@ export const CAUSE_GUIDE: Record<CauseKey, {
 };
 
 export const causeLabel = (cause: CauseKey) => CAUSE_GUIDE[cause]?.label ?? cause;
+
+/** 갈래 칸의 뜻 — 운영센터와 심사 큐 목록이 같은 값(reviewQueueBucket)을 보인다 */
+export const BUCKET_NOTE = "갈래 — 사람만 가르는 저장 사유는 그대로, 나머지는 지금 기준으로 다시 판정해 멈춘 곳(운영센터·심사 큐가 같은 값)";

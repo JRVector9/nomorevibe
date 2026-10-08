@@ -88,7 +88,20 @@
 .dash-todo li[data-tone=warn] i{background:var(--color-warn)}
 .dash-todo li[data-tone=ok] i{background:var(--color-up)}
 .dash-todo .t{font-weight:600;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.dash-todo .d{font-size:13px;color:var(--color-fg-3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* 설명은 두 줄까지 — 넘치면 AttentionDetail 이 "더 보기"를 단다 */
+.dash-todo .d{font-size:13px;color:var(--color-fg-3);overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow-wrap:anywhere}
+.dash-todo .d[data-open]{display:block;-webkit-line-clamp:unset}
+/* 누를 자리는 44px 로 두되 줄 높이는 늘리지 않는다 */
+.ops-center button.dash-todo-more{min-height:44px;margin:-12px 0 -14px;padding:0 2px;border:0;background:transparent;color:var(--color-accent);font-size:13px;font-weight:600}
+.ops-center button.dash-todo-more:hover{background:transparent;text-decoration:underline}
+/* 급한 것이 없을 때 접어 둔 한 줄 */
+.dash-todo-fold>summary{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 12px;cursor:pointer;list-style:none;min-height:24px}
+.dash-todo-fold>summary::-webkit-details-marker{display:none}
+.dash-todo-fold>summary h2{font-size:15px;font-weight:650;margin:0}
+.dash-todo-fold>summary span{font-size:13px;color:var(--color-fg-2)}
+.dash-todo-fold>summary span::after{content:" ▾";color:var(--color-fg-3)}
+.dash-todo-fold[open]>summary{margin-bottom:10px}
+.dash-todo-fold[open]>summary span::after{content:" ▴"}
 .dash-todo .n{font-size:17px;font-weight:650;font-family:var(--font-mono);font-variant-numeric:tabular-nums;text-align:right}
 .dash-todo li[data-tone=bad] .n{color:var(--color-down)}
 .dash-todo li[data-tone=warn] .n{color:var(--color-warn)}

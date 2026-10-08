@@ -1,8 +1,8 @@
 import Link from "next/link";
 import Form from "next/form";
 import type { AdminReviewEntry, ReviewAiDecision } from "@/lib/crawl/admin-review";
-import { CAUSE_GUIDE, causeLabel } from "../review/causes";
-import { QUEUE_AI_FILTERS, QUEUE_PAGE_SIZE, QUEUE_PUSH_FILTERS, QUEUE_STAR_FILTERS, queueEntryCause, queueFilterHref, type QueueFilters } from './queue-filters';
+import { BUCKET_NOTE, CAUSE_GUIDE, causeLabel } from "../review/causes";
+import { QUEUE_AI_FILTERS, QUEUE_PAGE_SIZE, QUEUE_PUSH_FILTERS, QUEUE_STAR_FILTERS, queueFilterHref, type QueueFilters } from './queue-filters';
 
 const AI: Record<string, { label: string; className: string }> = {
   reject: { label: "AI 거부", className: "bg-down/10 text-down" },
@@ -38,7 +38,7 @@ export function QueuePreview({ entries, total, counts, filters, totalWaiting, fi
       </div>
       <Form action="/admin/status" scroll={false} key={queueFilterHref(filters, { page: filters.page })}>
       <div className="flex flex-wrap items-center gap-2 border-b border-line px-3 py-2 text-[13px]">
-        <span className="mr-auto text-fg-2">{filtered ? '필터 결과' : '전체 대기'} <b className="text-fg">{total.toLocaleString('ko-KR')}건</b> · 갈래는 보류 이유입니다.</span>
+        <span className="mr-auto text-fg-2">{filtered ? '필터 결과' : '전체 대기'} <b className="text-fg">{total.toLocaleString('ko-KR')}건</b> · <span title={BUCKET_NOTE}>갈래는 보류 이유입니다(심사 큐와 같은 값).</span></span>
         <button type="submit" className="primary">필터 적용</button>
         {filtered && <Link href="/admin/status" scroll={false} className="px-1 py-1.5 text-fg-2 underline">초기화</Link>}
       </div>
@@ -74,7 +74,7 @@ export function QueuePreview({ entries, total, counts, filters, totalWaiting, fi
                       <span className="truncate font-mono text-fg-3">{entry.candidate.repo}</span>
                     </Link>
                   </td>
-                  <td className="px-2 py-1.5"><span className="block truncate rounded bg-warn/10 px-1.5 py-0.5 font-semibold text-warn" title={causeLabel(queueEntryCause(entry))}>{causeLabel(queueEntryCause(entry))}</span></td>
+                  <td className="px-2 py-1.5"><span className="block truncate rounded bg-warn/10 px-1.5 py-0.5 font-semibold text-warn" title={causeLabel(entry.bucket ?? 'unknown')}>{causeLabel(entry.bucket ?? 'unknown')}</span></td>
                   <td className="whitespace-nowrap px-2 py-1.5">{chip ? <span className={`rounded px-1.5 py-0.5 font-semibold ${chip.className}`}>{chip.label}</span> : <span className="text-fg-3">—</span>}</td>
                   <td className="whitespace-nowrap px-2 py-1.5 text-right">{typeof signals.stars === "number" ? signals.stars.toLocaleString('ko-KR') : "—"}</td>
                   <td className="whitespace-nowrap px-3 py-1.5 text-right">{typeof signals.pushAgeDays === "number" ? `${signals.pushAgeDays}일` : "—"}</td>

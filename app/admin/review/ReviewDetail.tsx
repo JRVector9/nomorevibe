@@ -50,6 +50,8 @@ export function waitingDays(entry: AdminReviewEntry): number | null {
 /** 오른쪽 상세. 표에서 고른 후보 하나의 근거와 결정 */
 export function ReviewDetail({ entry, reasons }: { entry: AdminReviewEntry; reasons: readonly Reason[] }) {
   const { candidate } = entry;
+  // 보류 후보는 갈래 칩·목록과 같은 갈래(entry.bucket), 나머지는 지금 기준으로 다시 판정해 멈춘 곳
+  const bucket = entry.bucket ?? entry.verdict?.cause ?? null;
   const [state, action, pending] = useActionState<ReviewState, FormData>(decideCrawlCandidate, null);
   const [refresh, refreshAction, refreshing] = useActionState(collectCandidateEvidence, null);
   const [written, writeAction, writing] = useActionState(approveWithTagline, null);
@@ -201,8 +203,8 @@ export function ReviewDetail({ entry, reasons }: { entry: AdminReviewEntry; reas
       ))}
 
       <p className="text-[13px] text-fg-2">
-        {entry.verdict?.cause
-          ? <b className="font-semibold text-down">{causeLabel(entry.verdict.cause)}</b>
+        {bucket
+          ? <b className="font-semibold text-down">{causeLabel(bucket)}</b>
           : <>{STATES[candidate.state]} · {candidate.reason ? REASON_LABELS[candidate.reason] ?? candidate.reason : '사유 없음'}</>}
         {' · '}{candidate.decidedBy === 'admin' ? '관리자 결정' : STATUS[entry.status]}
       </p>
