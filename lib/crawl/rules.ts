@@ -240,7 +240,7 @@ function holdSuspectedSpam(verdict: Verdict, document: Parameters<typeof spamSig
   if (verdict.state === "rejected") return verdict;
   const spam = spamSignals(document);
   if (!spam.flagged) return verdict;
-  const detail = `${spam.confidence === "high" ? "강함" : "중간"} · ${spam.signals.map((signal) => signal.detail).join(" · ")}`;
+  const detail = `${spam.confidence === "high" ? "강함" : spam.confidence === "medium" ? "중간" : "낮음"} · ${spam.signals.map((signal) => signal.detail).join(" · ")}`;
   const stoppedAt: StoppedAt = { rule: SPAM_RULE, detail: detail.slice(0, STOPPED_DETAIL_MAX) };
   return {
     state: "needs_review", reason: "suspected_spam", cause: "suspected_spam",

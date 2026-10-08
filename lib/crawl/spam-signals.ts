@@ -12,7 +12,8 @@
  *
  * 하나하나는 정상 레포에도 흔하다 — 이모지 제목은 vercel 앱 README 에, github.io 첫 화면은 개인 홈페이지에,
  * "adjective-noun-1234" 는 GitHub 이 추천하는 사용자 이름에 그대로 있다. 그래서 강한 신호 둘 이상이 겹치고
- * 약한 신호도 하나 있어야(또는 강한 신호 셋) 잡는다. 약한 신호만으로는 몇 개가 모여도 잡지 않는다.
+ * 약한 신호도 하나 있어야(또는 강한 신호 셋) 잡는다. 강한 신호 하나에 약한 신호 셋이 모두 겹치면 "낮음"으로 잡는다.
+ * 약한 신호만으로는 몇 개가 모여도 잡지 않는다.
  *
  * 순수 함수다. 수집 때 이미 저장한 원본(repo_meta·page_meta)만 읽는다 — 판정·발행·검사 스크립트가 같은 답을 낸다.
  * 잡는다고 거부하지 않는다. 사람에게 넘길 뿐이다(reason=suspected_spam).
@@ -28,19 +29,25 @@ export type SpamVerdict = {
   flagged: boolean;
   /** 강한 신호 3점, 약한 신호 1점 */
   score: number;
-  /** 강한 신호 셋 이상이면 high, 둘이면 medium. 잡지 않았으면 null */
-  confidence: "high" | "medium" | null;
+  /** 강한 신호 셋 이상이면 high, 둘이면 medium, 하나(+약한 셋)면 low. 잡지 않았으면 null */
+  confidence: "high" | "medium" | "low" | null;
   signals: SpamSignal[];
 };
 
 /** 기준이 바뀌면 올린다 — candidate.signals 에 같이 남아 어느 기준으로 잡았는지 되짚는다 */
-export const SPAM_DETECTOR_VERSION = "2026-10-08.1";
+export const SPAM_DETECTOR_VERSION = "2026-10-08.2";
 
 const STRONG = 3;
 const WEAK = 1;
 /** 강한 둘 + 약한 하나, 또는 강한 셋 */
 export const SPAM_FLAG_SCORE = 2 * STRONG + WEAK;
 export const SPAM_MIN_STRONG = 2;
+/**
+ * 강한 하나 + 약한 셋 — ★0~1·이슈 꺼짐·무작위 계정이 다 겹친 것. 2026-10-08 공개 37,298건에서 이 칸은 하나뿐이었고
+ * 캠페인이었다(product-513: 남의 레포 kgai 를 베끼고 남의 블로그를 복사한 github.io 첫 화면을 걸었다 — 다운로드 미끼가 아직 없다).
+ * 약한 둘(강한 하나 + 약한 둘)까지 내리면 17건 중 16건이 개인 포트폴리오·앱이라 거기서 멈춘다.
+ */
+export const SPAM_LOW_MIN_WEAK = 3;
 
 /**
  * "🤖 codex-deepseek - Run Codex on DeepSeek Models".
@@ -66,6 +73,23 @@ const LURE_PHRASES = [
 const RAW_ARCHIVE = /github\.com\/[^\s)]+\/raw\/[^\s)]+\.(?:zip|rar|7z|exe|msi)\b/i;
 
 const RANDOM_ACCOUNT = /^[a-z]+(?:-[a-z]+)?\d{2,4}$/i;
+
+/**
+ * 랜딩 본문 첫머리의 틀 제목. README 를 이름 한 줄로 비우고 틀 제목("🛠️ flow-fixer - Improve …")을 github.io 첫 화면에만 둔
+ * 변형이 있다(2026-10-08 실측 flow-fixer·less-tokens — README·페이지 제목에는 이모지가 없어 강한 신호가 하나뿐이었다).
+ * 본문 글은 제목과 이어 붙어 있어 이모지 자리마다 잘라 본다. 본문에는 남의 글도 섞이므로 틀 속 이름이 이 레포 이름일 때만 센다.
+ */
+const LANDING_HEAD = 400;
+const TEMPLATED_NAME = /^\p{Extended_Pictographic}\uFE0F?(?:\u200D\p{Extended_Pictographic}\uFE0F?)*\s*([A-Za-z0-9][\w.-]*)\s+-\s+\S/u;
+
+function landingTemplate(textSample: string, repoName: string): string | null {
+  const head = textSample.slice(0, LANDING_HEAD);
+  for (const match of head.matchAll(/\p{Extended_Pictographic}/gu)) {
+    const rest = head.slice(match.index);
+    if (rest.match(TEMPLATED_NAME)?.[1]?.toLowerCase() === repoName) return rest.slice(0, 80);
+  }
+  return null;
+}
 
 const text = (value: unknown) => typeof value === "string" ? value : "";
 
@@ -98,7 +122,7 @@ export function spamSignals(document: {
   const strong = (key: SpamSignalKey, detail: string) => signals.push({ key, strength: "strong", detail: detail.slice(0, 200) });
   const weak = (key: SpamSignalKey, detail: string) => signals.push({ key, strength: "weak", detail: detail.slice(0, 200) });
 
-  const templated = [readmeFirst, title].find(line => TEMPLATED_TITLE.test(line));
+  const templated = [readmeFirst, title].find(line => TEMPLATED_TITLE.test(line)) ?? landingTemplate(text(page.textSample), repoName);
   if (templated) strong("templated_title", `틀에 찍은 제목 “${templated}”`);
 
   const body = [readme, text(page.textSample), text(page.description), text(page.title), text(meta.description)]
@@ -131,6 +155,8 @@ export function spamSignals(document: {
 
   const strongCount = signals.filter(signal => signal.strength === "strong").length;
   const score = signals.reduce((sum, signal) => sum + (signal.strength === "strong" ? STRONG : WEAK), 0);
-  const flagged = strongCount >= SPAM_MIN_STRONG && score >= SPAM_FLAG_SCORE;
-  return { flagged, score, confidence: flagged ? strongCount >= 3 ? "high" : "medium" : null, signals };
+  const weakCount = signals.length - strongCount;
+  const flagged = (strongCount >= SPAM_MIN_STRONG && score >= SPAM_FLAG_SCORE) || (strongCount >= 1 && weakCount >= SPAM_LOW_MIN_WEAK);
+  const confidence = !flagged ? null : strongCount >= 3 ? "high" : strongCount === 2 ? "medium" : "low";
+  return { flagged, score, confidence, signals };
 }

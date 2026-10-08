@@ -1,13 +1,13 @@
 import { sql, type SQL } from "drizzle-orm";
 import type { AnyPgColumn } from "drizzle-orm/pg-core";
 import { db, onReplica } from "@/lib/db";
-import { cdnPurges, crawlCandidates, crawlFrontier, crawlReviewAttempts, productAuditCampaigns, productAuditItems, productHealth,
+import { cdnPurges, crawlCandidates, crawlFrontier, crawlReviewAttempts, productAuditCampaigns, productAuditItems, productEvidenceAudit, productHealth,
   productRepoReviews, productSearchProfiles, products, secondReviews } from "@/lib/db/schema";
 import { REVIEW_PROMPT_VERSION, REVIEW_RULES_VERSION } from "@/lib/crawl/agent-review-contract";
 import { sameReviewModel } from "@/lib/crawl/review-model-identity";
 import { SHOW_HN_SIGNAL, type CrawlSettings } from "@/lib/crawl/settings-schema";
 import { RECHECK_AFTER_MINUTES } from "@/lib/domain/products/health-freshness";
-import { countProducts, repoGone } from "@/lib/domain/products/repository";
+import { countProducts, repoGone, SPAM_AUTO_BAN_ACTOR, SPAM_AUTO_BAN_REASON, spamAutoBanned } from "@/lib/domain/products/repository";
 import { repoReviewOpen } from "@/lib/domain/products/repo-reviews";
 import { PROFILE_MODEL } from "@/lib/domain/products/search-profile";
 
@@ -82,6 +82,11 @@ export type AttentionCounts = {
    * oldestHours 는 안 본 것·기다리는 것 중 사라졌다고 확정된 뒤(repo_missing_since + 24시간) 가장 오래된 것
    */
   repoReview: { pending: number; delistCandidates: number; human: number; kept: number; oldestHours: number | null };
+  /**
+   * 공개 제품 스팸 재검사(product-spam-rescan)가 내린 것 — day 는 지난 24시간에 내린 수(잡의 하루 한도와 같은 식),
+   * banned 는 지금 차단 상태로 남은 수(/admin/products '스팸 자동 차단'과 같다)
+   */
+  spamAutoBans: { day: number; banned: number };
 };
 
 const at = (now: Date) => sql`${now.toISOString()}::timestamp`;
@@ -341,7 +346,8 @@ const REPO_STATES = [
 
 export async function attentionCounts(now = new Date()): Promise<AttentionCounts> {
   const [[row], introNeedsEditor, [campaign], [repo], [review]] = await Promise.all([
-    readOnly<{ audit: number; health: number; websites: number; purges: number; gone_installable: number; gone_website: number }>(sql`
+    readOnly<{ audit: number; health: number; websites: number; purges: number; gone_installable: number; gone_website: number;
+      spam_day: number; spam_banned: number }>(sql`
       SELECT
         (SELECT count(*)::int FROM ${productAuditItems} JOIN ${products} ON ${products.id} = ${productAuditItems.productId}
           WHERE ${productAuditItems.campaignId} = (SELECT max(${productAuditCampaigns.id}) FROM ${productAuditCampaigns})
@@ -358,7 +364,11 @@ export async function attentionCounts(now = new Date()): Promise<AttentionCounts
         (SELECT count(*)::int FROM ${products}
           WHERE ${products.status} IN ('seeded', 'verified') AND ${products.accessMode} <> 'website' AND ${repoGone}) AS gone_installable,
         (SELECT count(*)::int FROM ${products}
-          WHERE ${products.status} IN ('seeded', 'verified') AND ${products.accessMode} = 'website' AND ${repoGone}) AS gone_website
+          WHERE ${products.status} IN ('seeded', 'verified') AND ${products.accessMode} = 'website' AND ${repoGone}) AS gone_website,
+        (SELECT count(*)::int FROM ${productEvidenceAudit} WHERE ${productEvidenceAudit.action} = 'admin.product.ban'
+          AND ${productEvidenceAudit.actor} = ${SPAM_AUTO_BAN_ACTOR} AND ${productEvidenceAudit.reason} = ${SPAM_AUTO_BAN_REASON}
+          AND ${productEvidenceAudit.createdAt} > ${at(now)} - interval '24 hours') AS spam_day,
+        (SELECT count(*)::int FROM ${products} WHERE ${spamAutoBanned}) AS spam_banned
     `),
     countProducts({ statuses: ["seeded", "verified"], introNeedsEditor: true }),
     readOnly<{ id: number; prompt_version: string; rules_version: string; unanswered: number }>(sql`
@@ -389,6 +399,7 @@ export async function attentionCounts(now = new Date()): Promise<AttentionCounts
   return { auditRejectsOpen: Number(row?.audit ?? 0), healthOverdue: Number(row?.health ?? 0), healthTargetPerHour, introNeedsEditor,
     cdnPurgesPending: Number(row?.purges ?? 0),
     repoGone: { installable: Number(row?.gone_installable ?? 0), website: Number(row?.gone_website ?? 0) },
+    spamAutoBans: { day: Number(row?.spam_day ?? 0), banned: Number(row?.spam_banned ?? 0) },
     repoHealth: { tracked: Number(repo?.tracked ?? 0), checked24h: Number(repo?.checked ?? 0),
       states: Object.fromEntries(REPO_STATES.map(([key]) => [key, { total: Number(repo?.[key] ?? 0), new24h: Number(repo?.[`${key}_new`] ?? 0) }])) as
         AttentionCounts["repoHealth"]["states"] },

@@ -51,9 +51,9 @@ const SPAM_REPO = "Promisedlandsubtraction2856/codex-deepseek";
 const judge = () => runJob("crawl-judge", judgeCrawlDocuments);
 const publish = () => runJob("crawl-publish", publishCandidates);
 
-async function putSpam(pageMeta: Record<string, unknown> = SPAM_PAGE, repo = SPAM_REPO) {
+async function putSpam(pageMeta: Record<string, unknown> = SPAM_PAGE, repo = SPAM_REPO, repoMeta: Record<string, unknown> = {}) {
   await crawl.putDocument({ repo, productUrl: SPAM_URL, pageStatus: 200, pageMeta,
-    repoMeta: { ...SPAM_REPO_META, pushed_at: new Date().toISOString() } });
+    repoMeta: { ...SPAM_REPO_META, pushed_at: new Date().toISOString(), ...repoMeta } });
 }
 
 /** 탐지기가 생기기 전에 승인돼 발행을 기다리던 후보 — 판정 리비전은 지금 원본과 같다 */
@@ -123,8 +123,8 @@ describe("spam gate", () => {
     vi.stubEnv("CRAWL_REVIEW_MODEL", "test-model");
     vi.stubEnv("CRAWL_REVIEW_READY", "true");
     expect(await changeReviewMode({ mode: "enforce", expectedMode: "off", actor: "test", reason: "spam gate test" })).toMatchObject({ ok: true });
-    // 판정은 README 없이 페이지만 봤다 — 강한 신호 하나라 통과했다
-    await putSpam(QUIET_PAGE);
+    // 판정은 README 없이 페이지만 봤다 — 강한 신호 하나에 약한 신호 둘(이슈는 켜 둠)이라 통과했다
+    await putSpam(QUIET_PAGE, SPAM_REPO, { has_issues: true });
     await judge();
     expect(await crawl.getCandidate(SPAM_REPO)).toMatchObject({ state: "approved" });
     // 심사 직전에 받은 README(받은 것으로 둔다 — 바깥을 타지 않게)
@@ -135,6 +135,14 @@ describe("spam gate", () => {
     expect(await crawl.getCandidate(SPAM_REPO)).toMatchObject({ state: "needs_review", reason: "suspected_spam",
       signals: { suspectedSpam: { confidence: "high" } } });
     vi.unstubAllEnvs();
+  });
+
+  it("holds the page-only shape at judging when all three weak signals line up (low confidence)", async () => {
+    // 같은 캠페인 계정 — ★1·이슈 꺼짐·무작위 계정 이름이 다 겹치면 README 를 받기 전 규칙 판정에서 사람에게 넘긴다
+    await putSpam(QUIET_PAGE);
+    await judge();
+    expect(await crawl.getCandidate(SPAM_REPO)).toMatchObject({ state: "needs_review", reason: "suspected_spam",
+      signals: { suspectedSpam: { confidence: "low" } } });
   });
 
   it("leaves a legit low-star repository with a github.io site alone", async () => {
