@@ -34,7 +34,7 @@ describe("저장소 묶음 질의", () => {
     expect(query).toContain("fragment R on Repository { nameWithOwner isArchived isEmpty isDisabled isLocked pushedAt stargazerCount");
   });
 
-  it("질의를 깨뜨릴 수 있는 이름과 100개를 넘는 묶음은 받지 않는다", () => {
+  it("질의를 깨뜨릴 수 있는 이름과 묶음 상한을 넘는 묶음은 받지 않는다", () => {
     expect(() => repositoryBatchQuery([{ owner: 'acme") { x } y: repository(owner: "z', name: "a" }])).toThrow("repository_batch_name");
     expect(() => repositoryBatchQuery([])).toThrow("repository_batch_size");
     expect(() => repositoryBatchQuery(Array.from({ length: REPOSITORY_BATCH + 1 }, (_, i) => ({ owner: "a", name: `r${i}` })))).toThrow("repository_batch_size");

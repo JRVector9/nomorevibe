@@ -14,19 +14,20 @@ const PUBLIC=['seeded','verified'] as const;
 /**
  * 공개 제품의 GitHub 저장소를 하루 한 번 모두 본다 — 있는지·비었는지·막혔는지와 스타·보관·마지막 push·바뀐 이름.
  *
- * GraphQL 로 100개씩 묻는다(github-repositories.ts, 한 번 1점·약 4.4초). 한 틱에 4묶음(400개)까지, 묶음 사이 1초 쉰다
- * (2차 한도를 건드리지 않게 한 번에 하나씩). 5분마다 돌므로 하루 115,200개를 볼 수 있고 GraphQL 점수는 하루 1,152점이다
- * (토큰 하나가 시간당 5,000점). 2026-10-08 공개 저장소 36,766개를 20시간마다 보려면 하루 44,100개 — 2.6배 여유가 있고,
- * 하루 1.5천~2.8천 개씩 늘어도 한 달쯤은 버틴다. 모자라면 운영센터의 '저장소 확인 범위'가 95% 아래로 떨어져 알린다.
+ * GraphQL 로 50개씩 묻는다(github-repositories.ts, 한 번 1점·3~4초). 묶음 사이 1초 쉬며 한 번에 하나씩(2차 한도),
+ * 틱 시작 28초 안에서만 새 묶음을 연다 — 한 틱에 6~7묶음(약 300개), 5분마다라 하루 약 9만 개, GraphQL 점수는 하루 2천 점 안쪽
+ * (토큰 하나가 시간당 5,000점). 2026-10-08 공개 저장소 3만 7천 개를 20시간마다 보려면 하루 4만 4천 개 — 2배 남짓 여유이고,
+ * 하루 2천 개 넘게 늘면 두어 주 뒤 다시 본다. 모자라면 운영센터의 '저장소 확인 범위'가 95% 아래로 떨어져 알린다.
+ * (처음엔 100개씩·틱 14초였는데 100개 묶음이 GitHub 10초 질의 상한을 넘어 묶음째 실패했다 — github-repositories.ts)
  *
  * 차례: 잡이 한 번도 보지 않은 새 제품(unseen, #305)을 먼저, 그다음 저장소를 가장 오래 확인하지 않은 것(아직 없는 것 먼저).
  * 다시 볼 때: 'ok' 는 20시간 뒤, 없음·빈 저장소·막힘은 24시간 뒤 — 첫 '없음' 다음 확인이 곧 하루 넘게 이어졌다는
  * 확정(repository.ts repoGone)이 된다. 묶음 전체가 시간 초과·5xx 로 실패하거나 별칭 하나가 알 수 없는 오류면 상태는 그대로 두고
  * 시도 시각(stars_checked_at)만 남겨 한 시간 뒤에 다시 본다 — 같은 행이 매 틱 앞을 막지 않는다.
  */
-const BATCHES=4;
-/** 새 묶음은 틱 시작 뒤 이 안에서만 연다 — 한 묶음이 10초(githubRequest 상한)까지 걸려도 기본 예산 25초 안에 끝난다 */
-const START_WITHIN_MS=14_000;
+const BATCHES=8;
+/** 새 묶음은 틱 시작 뒤 이 안에서만 연다 — 한 묶음이 10초(githubRequest 상한)까지 걸려도 이 잡의 예산 40초(scripts/worker.ts) 안에 끝난다 */
+const START_WITHIN_MS=28_000;
 const PAUSE_MS=1_000;
 /** GraphQL 점수가 이만큼 아래로 내려가면 이번 틱을 접고 초기화 시각까지 기다린다 — 다른 잡의 몫을 남긴다 */
 const MIN_REMAINING=200;
@@ -96,8 +97,11 @@ export async function refreshProductStars(ctx:JobContext<StarsCursor>,dependenci
  const limit=REPOSITORY_BATCH*BATCHES;
  const columns={id:products.id,repoUrl:products.repoUrl,updatedAt:sql<string>`${products.updatedAt}::text`};
  const first=await db.select(columns).from(products).where(and(due,unseen)).orderBy(asc(products.id)).limit(limit);
+ // 저장소를 아직 한 번도 확인하지 않은 것은 새 제품부터 — '최신' 목록은 확인을 마친 제품만 보이므로(#317) 오래된 것부터 돌면
+ // 최근 제품이 가장 늦게 확인돼 최신 목록이 비었다. 확인한 것은 가장 오래 전에 본 것부터
  const rest=first.length<limit?await db.select(columns).from(products).where(and(due,sql`not ${unseen}`))
-  .orderBy(sql`${products.repoCheckedAt} asc nulls first`,asc(products.id)).limit(limit-first.length):[];
+  .orderBy(sql`${products.repoCheckedAt} asc nulls first`,sql`case when ${products.repoCheckedAt} is null then ${products.id} end desc nulls last`,asc(products.id))
+  .limit(limit-first.length):[];
  const rows=[...first,...rest];
  const check=dependencies.check??checkRepositories;
  const counts={examined:0,updated:0,ok:0,missing:0,empty:0,blocked:0,unknown:0,renamed:0,archived:0,batches:0};

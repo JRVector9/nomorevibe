@@ -7,6 +7,7 @@ import { linksOwnGithub } from "./github-links";
 import { productAccess, INSTALLABLE_MIN_STARS, PACKAGE_MIN_STARS } from "@/lib/domain/products/access";
 import { packageProofOf, type PackageProof } from "./package-proof";
 import { starAutoApproval } from "./star-auto-approval";
+import { spamSignals, SPAM_DETECTOR_VERSION } from "./spam-signals";
 
 /**
  * 판정 규칙.
@@ -92,7 +93,9 @@ export type AmbiguityCause =
   /** 본문에 문서 목차 낱말이 여럿 — 위와 같다 */
   | "docs_nav"
   /** 이름만으로는 회사 소개·링크 모음인지 제품 사이트인지 못 가르는 레포 이름(heldRepoPatterns) */
-  | "name_pattern";
+  | "name_pattern"
+  /** 스팸·악성 배포 의심 — 이것만 reason 이 ambiguous 가 아니라 suspected_spam 이다(사람만 가른다) */
+  | "suspected_spam";
 
 export type Verdict = {
   state: "approved" | "rejected" | "needs_review";
@@ -213,7 +216,7 @@ export function judgeStoredDocument(document: {
   const page = pageFactsFromDocument(document);
   const ordinary = judge(facts, page, settings, now, agentEvidence);
   const eligible = starAutoApproval(document, settings, now);
-  if (!eligible) return ordinary;
+  if (!eligible) return holdSuspectedSpam(ordinary, document);
   const accessMode = ordinary.state === "approved" && ordinary.signals.accessMode !== "installable"
     ? "website" : "installable";
   return {
@@ -221,6 +224,29 @@ export function judgeStoredDocument(document: {
     signals: { stars: eligible.stars, githubId: eligible.githubId, accessMode,
       productUrl: document.productUrl, starAutoApproval: eligible },
     trace: [{ rule: "검증된 GitHub 스타 자동 승인", detail: `${eligible.stars} ≥ ${settings.judge.autoApproveMinStars}`, passed: true }],
+  };
+}
+
+/** 스팸·악성 배포 의심으로 멈춘 규칙의 이름 — 심사 화면의 발자국과 signals.stoppedAt 에 같이 쓴다 */
+export const SPAM_RULE = "스팸·악성 배포 의심 아님";
+
+/**
+ * 규칙이 통과시켰거나 보류한 것 중 악성 배포 캠페인 모양(spam-signals.ts)은 사람에게 넘긴다(2026-10-08, UX-03).
+ *
+ * 거부는 그대로 둔다 — 이미 목록에 오르지 않는다. 신호는 signals.suspectedSpam 에 남겨 사람이 왜 잡혔는지 본다.
+ * 판정 잡·AI 심사 직전·심사 화면이 모두 이 함수를 지나므로 README 를 받은 뒤에는 그것까지 본다.
+ */
+function holdSuspectedSpam(verdict: Verdict, document: Parameters<typeof spamSignals>[0]): Verdict {
+  if (verdict.state === "rejected") return verdict;
+  const spam = spamSignals(document);
+  if (!spam.flagged) return verdict;
+  const detail = `${spam.confidence === "high" ? "강함" : "중간"} · ${spam.signals.map((signal) => signal.detail).join(" · ")}`;
+  const stoppedAt: StoppedAt = { rule: SPAM_RULE, detail: detail.slice(0, STOPPED_DETAIL_MAX) };
+  return {
+    state: "needs_review", reason: "suspected_spam", cause: "suspected_spam",
+    signals: { ...verdict.signals, stoppedAt,
+      suspectedSpam: { version: SPAM_DETECTOR_VERSION, score: spam.score, confidence: spam.confidence, signals: spam.signals } },
+    trace: [...verdict.trace, { rule: SPAM_RULE, detail, passed: false }],
   };
 }
 

@@ -67,6 +67,9 @@ type Props = {
   }>;
 };
 
+/** 최신순 목록('최신'·'저장소 있음')은 저장소 확인을 마친 제품만 — 한 곳에서 정해 목록과 개수가 같은 조건을 쓴다(repoCheckedForNewest) */
+const newestOnly = (sort: HomeSort) => sort === "recent" || sort === "open" ? true : undefined;
+
 function firstValue(value: SearchValue): string | undefined {
   return Array.isArray(value) ? value[0] : value;
 }
@@ -83,7 +86,7 @@ function listFor(
 ): Promise<ProductListItem[] | RankingListItem[]> {
   const options = { category, query, builder, observedTool };
   if (sort === "open") {
-    return getPublicList(limit, { ...options, sort: "recent", hasRepository: true, offset });
+    return getPublicList(limit, { ...options, sort: "recent", hasRepository: true, repoChecked: newestOnly(sort), offset });
   }
   if (sort === "weekly") {
     return getSeasonRanking({ ...options, limit, seasonKey: active.key, order: "rank" })
@@ -94,7 +97,7 @@ function listFor(
       .then((result) => result.items);
   }
   if (sort === "all-time") return getAllTimeRanking({ ...options, limit });
-  return getPublicList(limit, { ...options, sort: sort === "relevance" ? "relevance" : "recent", offset });
+  return getPublicList(limit, { ...options, sort: sort === "relevance" ? "relevance" : "recent", repoChecked: newestOnly(sort), offset });
 }
 
 /**
@@ -327,6 +330,7 @@ export async function HomeContent({ params }: { params: HomeParams }) {
       ...options,
       hasRepository: effectiveSort === "open" ? true : undefined,
       rising: effectiveSort === "weekly" ? true : undefined,
+      repoChecked: newestOnly(effectiveSort),
     };
     const verifiedTotal = await verifiedLoad;
     const minimumProducts = (active?.policy ?? DEFAULT_RANKING_POLICY).eligibility.minimumProducts;

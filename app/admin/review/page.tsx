@@ -128,7 +128,7 @@ export default async function ReviewPage({ searchParams }: { searchParams: Promi
     { key: 'agreed', title: '확정만 하면 됨 — 두 모델이 같은 결론', count: stageCount.agreed, tone: stageCount.agreed > 0 ? 'ok' : undefined,
       detail: `훑어보고 한 번에 확정 · 거부 ${n(overview.agreed.reject)} · 승인 ${n(overview.agreed.approve)}`, href: '/admin/review?stage=agreed#review-list' },
     { key: 'human', title: '직접 판단 — 모델이 갈렸거나 표가 모자람', count: stageCount.human, tone: stageCount.human > 500 ? 'warn' : undefined,
-      detail: `${humanWaitLabel(overview)} · 2차 갈림 ${n(causeCount('second_review_split'))} · 재시도 소진 ${n(causeCount('ai_review_exhausted'))} · 오래된 것부터`,
+      detail: `${humanWaitLabel(overview)} · 2차 갈림 ${n(causeCount('second_review_split'))} · 재시도 소진 ${n(causeCount('ai_review_exhausted'))} · 스팸·악성 의심 ${n(causeCount('suspected_spam'))} · 오래된 것부터`,
       href: '/admin/review?stage=human&sort=wait#review-list' },
     { key: 'tagline', title: '소개 문구 없음', count: causeCount('no_description'),
       detail: taglines ? `AI 소개 지음 ${n(taglines.written)} · 근거로는 모름 ${n(taglines.unknown)} · 실패 ${n(taglines.failed)} · 시도 전 ${n(taglines.untried)}`

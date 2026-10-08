@@ -21,6 +21,7 @@ import { ReviewApprovalChangedError } from "./agent-review-repository";
 import { parseRepositoryStats } from "@/lib/domain/products/stars";
 import { SEARCH_PAGE_TEXT_CHARS } from "@/lib/domain/products/search";
 import { candidateStarAutoApproval } from "./star-auto-approval";
+import { spamSignals, SPAM_DETECTOR_VERSION } from "./spam-signals";
 
 /**
  * 발행 — 통과한 후보를 목록에 올린다.
@@ -36,7 +37,9 @@ const MAX_SLUG_ATTEMPTS = 4;
 
 export type PublishResult =
   | { ok: true; slug: string }
-  | { ok: false; existing?: { slug: string; status: import("@/lib/db/schema").ProductStatus }; reason: "installation_review_required" | "not_a_product" | "no_document" | "no_url" | "already_listed" | "no_description" | "publication_state_changed" | "review_approval_changed" | "source_changed" | "stale_judgement" | AgentEvidenceSummary["reason"] };
+  | { ok: false; existing?: { slug: string; status: import("@/lib/db/schema").ProductStatus }; reason: "installation_review_required" | "not_a_product" | "no_document" | "no_url" | "already_listed" | "no_description" | "publication_state_changed" | "review_approval_changed" | "source_changed" | "stale_judgement" | "suspected_spam" | AgentEvidenceSummary["reason"];
+    /** suspected_spam 일 때 잡힌 신호 — 보류 기록(signals.suspectedSpam)에 남긴다 */
+    suspectedSpam?: Record<string, unknown> };
 
 type PublicationSnapshot = {
   document: CrawlDocument;
@@ -73,6 +76,18 @@ async function preparePublication(candidate: CrawlCandidate): Promise<
   const existing = await products.findRepositoryProduct(document.repo, document.productUrl);
   if (existing) return { ok: false, reason: "already_listed", existing: { slug: existing.slug, status: existing.status } };
 
+  /**
+   * 스팸·악성 배포 의심은 사람이 승인하기 전에는 올리지 않는다(2026-10-08, UX-03).
+   *
+   * 판정은 README 없이 가를 때가 많다 — README 는 AI 심사 직전에 받는다(review-document.ts). 그래서 판정을
+   * 통과해 승인된 뒤 README 로 드러나는 것이 있고, 이 탐지기가 생기기 전에 승인돼 발행을 기다리던 것도 있다.
+   * 판정 리비전(judgedRevision)은 README 를 보지 않으므로 여기서 지금 원본으로 한 번 더 본다.
+   */
+  if (candidate.decidedBy !== "admin" && !starAutoApproved) {
+    const spam = spamSignals(document);
+    if (spam.flagged) return { ok: false, reason: "suspected_spam", suspectedSpam: {
+      version: SPAM_DETECTOR_VERSION, score: spam.score, confidence: spam.confidence, signals: spam.signals } };
+  }
   const purpose = nonProductPurpose({ ...document.pageMeta, description: [document.repoMeta.description, document.pageMeta?.description].filter(v => typeof v === "string").join(" ") });
   if (purpose && !starAutoApproved) return { ok: false, reason: "not_a_product" };
   if (access?.mode === "installable" && candidate.decidedBy !== "admin" && !starAutoApproved && settings.reviewMode !== "enforce") {
