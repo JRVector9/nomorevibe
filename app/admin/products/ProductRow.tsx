@@ -2,7 +2,7 @@
 
 import { useActionState, useState } from "react";
 import Link from "next/link";
-import { LIMITS } from "@/lib/domain/products/schema";
+import { LIMITS } from "@/lib/domain/products/limits";
 import { decideRepoReviewAction, markClaimInvite, type ReviewState } from "../actions";
 import { ConfirmAction } from "../components/ConfirmAction";
 import { resultError, resultToast, useAdminToast } from "../components/Toast";
