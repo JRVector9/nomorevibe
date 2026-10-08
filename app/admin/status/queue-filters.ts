@@ -45,7 +45,8 @@ export function intersectQueueIds(causeIds?: number[], aiIds?: number[]): number
 
 /** Match reviewQueueCauses, including reasons that do not appear in the rule verdict. */
 export function queueEntryCause(entry: AdminReviewEntry): CauseKey {
-  if (entry.candidate.reason === 'second_review_split' || entry.candidate.reason === 'no_description') return entry.candidate.reason;
+  if (entry.candidate.reason === 'second_review_split' || entry.candidate.reason === 'no_description'
+    || entry.candidate.reason === 'suspected_spam') return entry.candidate.reason;
   if (!entry.verdict) return 'unknown';
   if (!entry.verdict.cause) return 'resolved';
   return entry.review?.decision === 'reject' ? 'ai_reject' : entry.verdict.cause;

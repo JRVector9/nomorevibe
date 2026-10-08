@@ -110,6 +110,15 @@ export const CAUSE_GUIDE: Record<CauseKey, {
       { decision: "승인", when: "제품이 따로 살아 있고 근거를 직접 기록할 수 있다" },
     ],
   },
+  suspected_spam: {
+    label: "스팸·악성 의심",
+    summary: "악성 배포 캠페인과 같은 모양입니다 — 틀에 찍은 README 제목(🤖 이름 - …), 다운로드 미끼 문구, 남의 레포 github.io 첫 화면으로 보내는 다운로드, ★0~1·이슈 꺼짐. 잡힌 신호는 근거의 '스팸·악성 배포 의심 아님' 줄에 있습니다.",
+    question: "이 저장소가 직접 만든 소프트웨어입니까, 남의 프로젝트를 베껴 내려받기로 유인하는 페이지입니까?",
+    hints: [
+      { decision: "거부 · 제품이 아님", when: "README 가 원본 프로젝트를 베꼈고 다운로드가 github.io 첫 화면·저장소 안 zip/exe 로만 간다 — 링크를 열거나 내려받지 말 것" },
+      { decision: "승인", when: "코드·커밋 이력이 실제로 있고 다운로드가 공식 릴리스나 제품 사이트로 간다 — 이름 모양(adjective-noun-1234)만으로는 거부하지 않는다" },
+    ],
+  },
   page_status_unknown: {
     label: "배포 URL 응답 미확인",
     summary: "수집기가 아직 이 URL을 열어보지 못했습니다. 수집이 끝나면 자동으로 다시 판정됩니다.",

@@ -39,6 +39,8 @@ export async function recordPublicationFailure(candidate: CrawlCandidate, failur
   /** 발행에서 멈춘 이유. 판정이 남기는 것과 같은 자리(signals.stoppedAt)에 남긴다 */
   stoppedAt?: StoppedAt;
   existing?: { slug: string; status: Product["status"] };
+  /** 보류 이유의 근거(예: suspectedSpam) — 기존 signals 위에 얹는다 */
+  signals?: Record<string, unknown>;
 }, lease?: JobLease):Promise<boolean> {
   return db.transaction(async tx => {
     const [current] = await tx.select().from(crawlCandidates).where(eq(crawlCandidates.id,candidate.id)).for("update");
@@ -49,7 +51,7 @@ export async function recordPublicationFailure(candidate: CrawlCandidate, failur
       state:failure.state,reason:failure.reason,judgedAt:now,updatedAt:now,
       // Retain the original reviewer and signals; an unsuccessful publish is not a new review.
       // 멈춘 이유만 얹는다 — 없으면 "보류 207건"이 왜 보류인지 기록으로 알 수 없었다(2026-09-19)
-      ...(failure.stoppedAt || failure.existing ? { signals: { ...(current.signals ?? {}),
+      ...(failure.stoppedAt || failure.existing || failure.signals ? { signals: { ...(current.signals ?? {}), ...(failure.signals ?? {}),
         ...(failure.stoppedAt ? { stoppedAt: failure.stoppedAt } : {}),
         ...(failure.existing ? { existingSlug: failure.existing.slug, existingStatus: failure.existing.status } : {}),
       } } : {}),
