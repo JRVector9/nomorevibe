@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { FLOW_NOTE, humanFlowLabel, humanWaitLabel, WAIT_REFERENCE, type HumanQueueOverview } from "@/lib/crawl/human-queue";
 import { STAGE_GROUPS, stageHref, type StageKey } from "./stages";
 
 const n = (value: number) => value.toLocaleString("ko-KR");
@@ -6,16 +7,17 @@ const n = (value: number) => value.toLocaleString("ko-KR");
 /**
  * 심사 구간 — 후보가 파이프라인의 어디에 서 있는가(stages.ts). 여덟 칸을 한 줄에, 위에 단계 이름.
  *
- * 칸은 겹치지 않아 보류 칸들의 합이 보류 수다. 사람 몫(직접 판단)은 가장 오래 기다린 날수와 24시간 유입을 적어
- * 줄고 있는지 늘고 있는지가 숫자 하나로 보인다. 500건을 넘으면 주황.
+ * 칸은 겹치지 않아 보류 칸들의 합이 보류 수다. 사람 몫(직접 판단)은 가장 오래 기다린 날수와 24시간 흐름을 적어
+ * 줄고 있는지 늘고 있는지가 숫자 하나로 보인다. 500건을 넘으면 주황. 사람 몫의 문구는 운영센터 파이프라인과 같은
+ * 함수(human-queue.ts)로 만든다.
  */
-export function ReviewStageRail({ stage, counts, agreed, publication, humanAge }: {
-  stage: StageKey | ""; counts: Record<StageKey, number>; agreed: { reject: number; approve: number };
-  publication: { added: number; removed: number; net: number }; humanAge: { oldestDays: number | null; new24h: number } | null;
+export function ReviewStageRail({ stage, counts, overview, publication }: {
+  stage: StageKey | ""; counts: Record<StageKey, number>; overview: HumanQueueOverview;
+  publication: { added: number; removed: number; net: number };
 }) {
-  const sub = (key: StageKey, hint: string) => key === "agreed" ? `거부 ${n(agreed.reject)} · 승인 ${n(agreed.approve)}`
+  const sub = (key: StageKey, hint: string) => key === "agreed" ? `거부 ${n(overview.agreed.reject)} · 승인 ${n(overview.agreed.approve)}`
     : key === "published" ? "괄호는 최근 24시간 순증감"
-    : key === "human" && humanAge?.oldestDays !== null && humanAge ? `최장 ${humanAge.oldestDays}일 · 24h +${n(humanAge.new24h)}`
+    : key === "human" ? `${humanWaitLabel(overview)} · ${humanFlowLabel(overview)}`
     : hint;
   return (
     <section className="dash-card" aria-labelledby="review-stages-title">
@@ -27,7 +29,8 @@ export function ReviewStageRail({ stage, counts, agreed, publication, humanAge }
         {STAGE_GROUPS.flatMap((group) => group.stages).map((item) => {
           const count = counts[item.key];
           return (
-            <Link key={item.key} href={stageHref(stage, item.key)} aria-current={stage === item.key ? "page" : undefined} title={item.hint}
+            <Link key={item.key} href={stageHref(stage, item.key)} aria-current={stage === item.key ? "page" : undefined}
+              title={item.key === "human" ? `${item.hint} · 대기는 ${WAIT_REFERENCE} · ${FLOW_NOTE}` : item.hint}
               data-zero={count === 0 || undefined} data-tone={item.key === "human" && count > 500 ? "warn" : undefined}>
               <span className="t">{item.label}</span>
               <span className="n">{n(count)}

@@ -7,6 +7,7 @@ import { secondVoteView } from "@/app/admin/review/secondVote";
 import { ReviewStatusChips } from "@/app/admin/review/ReviewStatusChips";
 import { ReviewStageRail } from "@/app/admin/review/ReviewStageRail";
 import { ReviewTodo } from "@/app/admin/review/ReviewTodo";
+import { humanOverview } from "./fixtures/human-queue";
 
 /**
  * 심사 큐 머리·구간·할 일·2차 표 칸 — 숫자와 색이 데이터대로 나오는지.
@@ -62,11 +63,11 @@ describe("머리말 칩", () => {
 describe("구간 레일과 할 일", () => {
   const counts = { judge: 0, ai: 101, second: 22, agreed: 15, human: 3904, publish: 17, published: 29820, rejected: 146819 };
   it("여덟 칸에 수를 적고, 사람 칸에는 최장·24시간 유입, 500 넘으면 주황, 고른 칸은 현재 위치다", () => {
-    const out = html(createElement(ReviewStageRail, { stage: "human", counts, agreed: { reject: 0, approve: 15 },
-      publication: { added: 3, removed: 1, net: 2 }, humanAge: { oldestDays: 45, new24h: 38 } }));
+    const overview = humanOverview({ human: 3904, agreed: 15, oldestDays: 45, in24h: 38, decided: 7 });
+    const out = html(createElement(ReviewStageRail, { stage: "human", counts, overview, publication: { added: 3, removed: 1, net: 2 } }));
     expect(out.match(/<a /g)).toHaveLength(8);
     expect(out).toContain('aria-label="심사 구간"');
-    expect(out).toContain("최장 45일 · 24h +38");
+    expect(out).toContain("판정 뒤 최장 45일 · 24h +38 · 처리 7");
     expect(out).toContain("거부 0 · 승인 15");
     expect(out).toContain('aria-label="최근 24시간 발행 완료 +2건"');
     expect(out).toContain(">(+2)</span>");

@@ -1,6 +1,10 @@
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { crawlCandidates, crawlReviewAttempts, crawlTaglines } from "@/lib/db/schema";
+import { HUMAN_ONLY_REASONS, reviewQueueAiDecisions } from "./admin-review";
+import { secondReviewSummary } from "./second-review";
+import type { CrawlSettings } from "./settings-schema";
+import { buildHumanQueueOverview, type HumanQueueOverview } from "./human-queue";
 
 /**
  * 심사 큐 머리의 숫자 — 사람이 오늘 얼마나 처리했고, 쌓인 것이 얼마나 오래됐는가.
@@ -22,18 +26,40 @@ export async function humanDecisions24h(now?: Date): Promise<{ approve: number; 
 }
 
 /**
- * 구간에 선 후보들이 얼마나 기다렸나 — 가장 오래된 것의 날수와 최근 24시간에 들어온 수.
- * 대기는 상세의 waitingDays 와 같은 기준(판정 시각, 없으면 갱신 시각)이다.
+ * 구간에 선 후보들이 얼마나 기다렸나 — 가장 오래된 것의 날수, 2주 넘은 수, 최근 24시간에 들어온 수.
+ * 대기는 상세의 waitingDays 와 같은 기준(판정 시각, 없으면 갱신 시각 — human-queue.ts WAIT_REFERENCE)이다.
  */
-export async function waitingAge(ids: number[], now?: Date): Promise<{ oldestDays: number | null; new24h: number }> {
-  if (ids.length === 0) return { oldestDays: null, new24h: 0 };
+export async function waitingAge(ids: number[], now?: Date): Promise<{ oldestDays: number | null; new24h: number; stalled: number }> {
+  if (ids.length === 0) return { oldestDays: null, new24h: 0, stalled: 0 };
   const end = clock(now);
   const at = sql`coalesce(${crawlCandidates.judgedAt}, ${crawlCandidates.updatedAt})`;
   const [row] = await db.select({
     oldestDays: sql<number | null>`floor(extract(epoch from (${end} - min(${at}))) / 86400)::int`,
     new24h: sql<number>`count(*) filter (where ${at} > ${end} - interval '24 hours')::int`,
+    stalled: sql<number>`count(*) filter (where ${at} < ${end} - interval '14 days')::int`,
   }).from(crawlCandidates).where(inArray(crawlCandidates.id, ids));
-  return { oldestDays: row?.oldestDays ?? null, new24h: row?.new24h ?? 0 };
+  return { oldestDays: row?.oldestDays ?? null, new24h: row?.new24h ?? 0, stalled: row?.stalled ?? 0 };
+}
+
+/** 사람만 가르는 사유로 보류된 후보 — 사유 목록(HUMAN_ONLY_REASONS)이 늘면 그대로 따라 센다 */
+export async function humanOnlyCandidateIds(): Promise<number[]> {
+  const rows = await db.select({ id: crawlCandidates.id }).from(crawlCandidates)
+    .where(and(eq(crawlCandidates.state, "needs_review"), inArray(crawlCandidates.reason, [...HUMAN_ONLY_REASONS])));
+  return rows.map((row) => row.id);
+}
+
+/**
+ * 운영센터와 심사 큐가 함께 그리는 "사람이 볼 것"(human-queue.ts) — 두 화면은 이 함수 하나만 부른다.
+ * 갈래 셈(reviewQueueCauses)처럼 원본을 다시 판정하지 않으므로 싸다. 나이·결정 수는 못 읽어도 나머지는 그린다.
+ */
+export async function humanQueueOverview(settings: CrawlSettings, now?: Date): Promise<HumanQueueOverview> {
+  const [aiDecisions, seconds, humanOnly, decided24h] = await Promise.all([
+    reviewQueueAiDecisions(), secondReviewSummary(settings.secondReview.agreeAt), humanOnlyCandidateIds(),
+    humanDecisions24h(now).catch(() => null),
+  ]);
+  const overview = buildHumanQueueOverview({ aiDecisions, seconds, humanOnly, wait: null, decided24h });
+  const age = await waitingAge(overview.ids.human, now).catch(() => null);
+  return { ...overview, wait: age && { oldestDays: age.oldestDays, stalled: age.stalled, in24h: age.new24h } };
 }
 
 /**

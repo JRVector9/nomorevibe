@@ -12,6 +12,7 @@ import { Sparkline } from "@/app/admin/status/dashboard/Sparkline";
 import type { HourlySeries, ModelHealth } from "@/lib/operations/dashboard";
 import type { ThroughputStage } from "@/lib/operations/throughput-model";
 import type { RoleOverview } from "@/lib/operations/roles";
+import { humanOverview } from "./fixtures/human-queue";
 
 /**
  * 운영센터 격자 조각 — 숫자와 색이 데이터대로 나오는지.
@@ -67,7 +68,8 @@ describe("파이프라인 레일", () => {
   it("단계마다 대기·최장·5분 처리·워커 진행을 적고 정체는 빨강, 사람 확인이 크면 주황이다", () => {
     const signals = [{ role: "reviewer" as const, stage: "first" as const, reason: "no_progress" as const, alarm: true }];
     const liveness = [{ role: "crawler" as const, reason: "present" as const, alarm: false }];
-    const out = html(createElement(StageRail, { snapshot, flow, humanQueue: 2270, humanOldestDays: 22, humanSplit: 2081, signals, liveness }));
+    const human = humanOverview({ human: 2270, agreed: 49, oldestDays: 22, in24h: 238, decided: 0 });
+    const out = html(createElement(StageRail, { snapshot, flow, human, signals, liveness }));
     expect(out).toContain("dash-8");
     expect(out).toContain('data-tone="bad"');
     expect(out).toContain("최장 12분");
@@ -75,14 +77,15 @@ describe("파이프라인 레일", () => {
     expect(out).toContain("진행 없음");
     expect(out).toContain("워커 정상");
     expect(out).toContain("2,270");
-    expect(out).toContain("최장 22일");
-    expect(out).toContain("2차 갈림 2,081");
-    expect(out).toContain("사람 확인 2,270건이 가장 큰 적체");
+    expect(out).toContain("판정 뒤 최장 22일");
+    expect(out).toContain("확정만 하면 됨 49");
+    expect(out).toContain("24h +238 · 처리 0");
+    expect(out).toContain("직접 판단 2,270건이 가장 큰 적체");
   });
 
   // 사람 확인 칸은 "최장 1일"로 고정해 두어 단계 칸의 문구만 잰다
   const one = (over: Partial<ThroughputStage>, extra: Record<string, unknown> = {}) => html(createElement(StageRail, {
-    snapshot: { measuredAt: snapshot.measuredAt, stages: [{ ...snapshot.stages[0], ...over }] }, flow, humanQueue: 1, humanOldestDays: 1, humanSplit: 0, ...extra }));
+    snapshot: { measuredAt: snapshot.measuredAt, stages: [{ ...snapshot.stages[0], ...over }] }, flow, human: humanOverview({ human: 1, oldestDays: 1 }), ...extra }));
 
   it("워커 줄은 관측 끊김·반복 재시작을 일감 없음보다 먼저 적는다", () => {
     const missing = one({ waiting: 0 }, { signals: [{ role: "crawler", stage: "fetch", reason: "no_work", alarm: false }], liveness: [{ role: "crawler", reason: "worker_missing", alarm: true }] });
@@ -99,7 +102,7 @@ describe("파이프라인 레일", () => {
     expect(deferred).not.toContain("일감 없음");
     const manual = one({ waiting: 0, oldestMinutes: null, manualAttention: 2 });
     expect(manual).toContain("직접 확인 2건");
-    expect(manual).toContain("/admin/review?stage=human#review-list");
+    expect(manual).toContain("/admin/review?stage=human&amp;sort=wait#review-list");
     expect(manual).not.toContain("대기 없음");
     const idle = one({ waiting: 0, oldestMinutes: null }, { signals: [{ role: "crawler", stage: "fetch", reason: "no_work", alarm: false }], liveness: [{ role: "crawler", reason: "present", alarm: false }] });
     expect(idle).toContain("일감 없음");

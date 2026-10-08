@@ -3,7 +3,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { currentAdmin } from "@/lib/auth/admin";
-import { candidateStateCounts, publicationChange24h, listAdminReviewEntries, reviewQueueAiDecisions, reviewQueueCauses, REVIEW_QUEUE_SCAN_LIMIT, REVIEW_SORTS, type ReviewAiDecision, type ReviewSort } from "@/lib/crawl/admin-review";
+import { candidateStateCounts, publicationChange24h, listAdminReviewEntries, reviewQueueCauses, REVIEW_QUEUE_SCAN_LIMIT, REVIEW_SORTS, type ReviewAiDecision, type ReviewSort } from "@/lib/crawl/admin-review";
 import { getSettings } from "@/lib/crawl/settings";
 import { REVIEW_REJECT_REASONS } from "@/lib/crawl/review";
 import { takedownSummary } from "@/lib/domain/products/takedown";
@@ -13,20 +13,22 @@ import { BulkDecision } from "./BulkDecision";
 import { RequeueResolved } from "./RequeueResolved";
 import { ReviewConsole } from "./ReviewConsole";
 import { CAUSE_GUIDE, type CauseKey } from "./causes";
-import { heldStages, STAGE_GROUPS, STAGE_KEYS, STAGE_STATE, type StageKey } from "./stages";
+import { SECOND_FILTER_KEYS, SECOND_FILTERS, STAGE_GROUPS, STAGE_KEYS, STAGE_STATE, type SecondFilter, type StageKey } from "./stages";
 import { ListToolbar, UPDATED_DAYS, UPDATED_WINDOWS, type UpdatedWindow } from "./ListToolbar";
 import { pageWindow } from "../paging";
-import { publishedSecondReviews, secondReviewSummary } from "@/lib/crawl/second-review";
+import { publishedSecondReviews } from "@/lib/crawl/second-review";
 import { PublishedSecondReviews } from "./PublishedSecondReviews";
 import { ReasonLanguageToggle } from "./ReasonText";
 import { translationProgress, translationsFor } from "@/lib/crawl/translations";
 import { modelHealth } from "@/lib/operations/dashboard";
-import { humanDecisions24h, taglineProgress, waitingAge } from "@/lib/crawl/review-overview";
+import { humanQueueOverview, taglineProgress } from "@/lib/crawl/review-overview";
+import { humanWaitLabel } from "@/lib/crawl/human-queue";
 import { ReviewStatusChips } from "./ReviewStatusChips";
 import { ReviewStageRail } from "./ReviewStageRail";
 import { ReviewTodo, type TodoCard } from "./ReviewTodo";
 import { SecondVoterSwitch } from "./SecondVoterSwitch";
 import { voterChoices } from "./voters";
+import { ScrollToHash } from "../ScrollToHash";
 import { listGatewayModels } from "@/lib/crawl/agent-review-gateway";
 import "../status/dashboard/dashboard.css";
 import "./review.css";
@@ -44,10 +46,6 @@ export const metadata: Metadata = { title: "심사 큐 — NoMoreVibe", robots: 
 const PAGE_SIZE = 50;
 const BULK_FORM = "review-bulk";
 const AI_FILTERS: [ReviewAiDecision, string][] = [['reject', '거부'], ['approve', '승인'], ['needs_review', '보류'], ['none', '판단 없음']];
-/** 2차 심사 거르기 — 같은 결론끼리 모아 한 번에 확정한다 */
-const SECOND_FILTERS = [['unanimous_reject', '만장일치·거부'], ['unanimous_approve', '만장일치·승인'],
-  ['agreed_reject', '2표 일치·거부'], ['agreed_approve', '2표 일치·승인'], ['needs_human', '사람 확인']] as const;
-type SecondFilter = typeof SECOND_FILTERS[number][0] | 'published';
 
 type Search = { state?: string | string[]; stage?: string | string[]; q?: string | string[]; updated?: string | string[]; page?: string | string[]; cause?: string | string[]; ai?: string | string[]; second?: string | string[]; focus?: string | string[]; sort?: string | string[] };
 const one = (value: string | string[] | undefined) => (typeof value === 'string' ? value : '');
@@ -67,7 +65,7 @@ export default async function ReviewPage({ searchParams }: { searchParams: Promi
   const rawPage = Number(one(params.page) || 1);
   const page = Number.isSafeInteger(rawPage) && rawPage > 0 ? rawPage : 1;
   const focus = Number(one(params.focus)) || undefined;
-  const second = ([...SECOND_FILTERS.map(([key]) => key), 'published'] as string[]).includes(one(params.second)) ? one(params.second) as SecondFilter : '';
+  const second = (SECOND_FILTER_KEYS as readonly string[]).includes(one(params.second)) ? one(params.second) as SecondFilter : '';
   const q = one(params.q).trim().slice(0, 100);
   const updated = (UPDATED_WINDOWS.some(([value]) => value === one(params.updated)) ? one(params.updated) : '') as UpdatedWindow;
   const sort = ((REVIEW_SORTS as readonly string[]).includes(one(params.sort)) ? one(params.sort) : '') as ReviewSort;
@@ -79,18 +77,15 @@ export default async function ReviewPage({ searchParams }: { searchParams: Promi
   // 2차 표 전환의 선택지 — 닿지 않으면 Grok·Claude 만
   const gatewayModels = listGatewayModels();
   const modelsLoad = modelHealth(settings).catch(() => null);
-  const [takedowns, causes, decisions, seconds, stateCounts, publicationChange] = await Promise.all([takedownSummary().catch(() => null), reviewQueueCauses(settings), reviewQueueAiDecisions(), secondReviewSummary(settings.secondReview.agreeAt), candidateStateCounts(), publicationChange24h()]);
-  const held = heldStages(decisions.ids, seconds.ids, [...(causes.ids.get('second_review_split') ?? []), ...(causes.ids.get('no_description') ?? []),
-    ...(causes.ids.get('suspected_spam') ?? [])]);
+  // 구간·2차 칩·사람 몫의 수는 운영센터와 같은 humanQueueOverview 하나에서 온다 — 두 화면의 숫자가 갈리지 않게
+  const [takedowns, causes, overview, stateCounts, publicationChange] = await Promise.all([takedownSummary().catch(() => null), reviewQueueCauses(settings), humanQueueOverview(settings), candidateStateCounts(), publicationChange24h()]);
+  const decisions = overview.aiDecisions;
   const stageCount: Record<StageKey, number> = {
-    judge: stateCounts.new, ai: held.ids.ai.length, second: held.ids.second.length, agreed: held.ids.agreed.length,
-    human: held.ids.human.length, publish: stateCounts.approved, published: stateCounts.published, rejected: stateCounts.rejected,
+    judge: stateCounts.new, ...overview.stages, publish: stateCounts.approved, published: stateCounts.published, rejected: stateCounts.rejected,
   };
   // 머리 칩·할 일 카드의 숫자. 하나가 실패해도 큐는 그려야 하므로 각각 비운 채 넘긴다
-  const [models, human, humanAge, taglines] = await Promise.all([
+  const [models, taglines] = await Promise.all([
     modelsLoad,
-    humanDecisions24h().catch(() => null),
-    waitingAge(held.ids.human).catch(() => null),
     taglineProgress(causes.ids.get('no_description') ?? []).catch(() => null),
   ]);
   const currentVoter = settings.secondReview.voters[0] ?? null;
@@ -104,8 +99,8 @@ export default async function ReviewPage({ searchParams }: { searchParams: Promi
   const detailable = !stage || heldStage !== null;
   const causeIds = detailable && cause ? (causes.ids.get(cause) ?? []) : undefined;
   const aiIds = detailable && ai ? (decisions.ids.get(ai) ?? []) : undefined;
-  const secondIds = detailable && second && second !== 'published' ? seconds.ids[second] : undefined;
-  const ids = [heldStage ? held.ids[heldStage] : undefined, causeIds, aiIds, secondIds].filter((list): list is number[] => Boolean(list))
+  const secondIds = detailable && second && second !== 'published' ? overview.secondIds[second] : undefined;
+  const ids = [heldStage ? overview.ids[heldStage] : undefined, causeIds, aiIds, secondIds].filter((list): list is number[] => Boolean(list))
     .reduce<number[] | undefined>((acc, list) => { if (!acc) return list; const keep = new Set(list); return acc.filter((id) => keep.has(id)); }, undefined);
   const detailed = detailable && Boolean(cause || ai || second);
   const filtered = Boolean(stage) || detailed;
@@ -131,16 +126,16 @@ export default async function ReviewPage({ searchParams }: { searchParams: Promi
   const causeCount = (key: CauseKey) => causes.counts.find((row) => row.cause === key)?.count ?? 0;
   const todo: TodoCard[] = [
     { key: 'agreed', title: '확정만 하면 됨 — 두 모델이 같은 결론', count: stageCount.agreed, tone: stageCount.agreed > 0 ? 'ok' : undefined,
-      detail: `훑어보고 한 번에 확정 · 거부 ${n(held.agreedReject)} · 승인 ${n(held.agreedApprove)}`, href: '/admin/review?stage=agreed#review-list' },
+      detail: `훑어보고 한 번에 확정 · 거부 ${n(overview.agreed.reject)} · 승인 ${n(overview.agreed.approve)}`, href: '/admin/review?stage=agreed#review-list' },
     { key: 'human', title: '직접 판단 — 모델이 갈렸거나 표가 모자람', count: stageCount.human, tone: stageCount.human > 500 ? 'warn' : undefined,
-      detail: `2차 갈림 ${n(causeCount('second_review_split'))} · 재시도 소진 ${n(causeCount('ai_review_exhausted'))} · 스팸·악성 의심 ${n(causeCount('suspected_spam'))} · 오래된 것부터`,
+      detail: `${humanWaitLabel(overview)} · 2차 갈림 ${n(causeCount('second_review_split'))} · 재시도 소진 ${n(causeCount('ai_review_exhausted'))} · 스팸·악성 의심 ${n(causeCount('suspected_spam'))} · 오래된 것부터`,
       href: '/admin/review?stage=human&sort=wait#review-list' },
     { key: 'tagline', title: '소개 문구 없음', count: causeCount('no_description'),
       detail: taglines ? `AI 소개 지음 ${n(taglines.written)} · 근거로는 모름 ${n(taglines.unknown)} · 실패 ${n(taglines.failed)} · 시도 전 ${n(taglines.untried)}`
         : '페이지를 열어 한 줄로 적으면 그 소개로 승인합니다', href: '/admin/review?cause=no_description#review-list' },
     // 내려달라는 요청은 머리의 한 줄(TakedownStrip)과 내릴 후보 화면이 맡는다 — 여기서는 2차가 다시 본 공개분만
-    { key: 'published', title: '공개분 확인 — 2차가 다시 본 공개분', count: seconds.counts.published,
-      detail: `내릴지 둘지 사람이 정합니다 · ${n(seconds.counts.published)}건`, href: '/admin/review?second=published#review-list' },
+    { key: 'published', title: '공개분 확인 — 2차가 다시 본 공개분', count: overview.secondPublished,
+      detail: `내릴지 둘지 사람이 정합니다 · ${n(overview.secondPublished)}건`, href: '/admin/review?second=published#review-list' },
   ];
   // 보류 이유는 꼬리가 길다 — 앞의 일곱 개(와 지금 고른 것)만 칩으로, 나머지는 펼침 목록으로
   const CAUSE_CHIPS = 7;
@@ -189,12 +184,11 @@ export default async function ReviewPage({ searchParams }: { searchParams: Promi
         </div>
       </header>
 
-      <ReviewStatusChips models={models} human={human} publication={publicationChange} takedowns={takedowns?.pending ?? 0} />
+      <ReviewStatusChips models={models} human={overview.decided24h} publication={publicationChange} takedowns={takedowns?.pending ?? 0} />
 
       <TakedownStrip summary={takedowns} />
 
-      <ReviewStageRail stage={stage} counts={stageCount} agreed={{ reject: held.agreedReject, approve: held.agreedApprove }}
-        publication={publicationChange} humanAge={humanAge} />
+      <ReviewStageRail stage={stage} counts={stageCount} overview={overview} publication={publicationChange} />
 
       <ReviewTodo cards={todo} />
 
@@ -220,8 +214,8 @@ export default async function ReviewPage({ searchParams }: { searchParams: Promi
           </FilterRow>
           <FilterRow label="2차 표" hint={fallbacks ? `${voters} · 대체 ${fallbacks}` : voters}>
             {SECOND_FILTERS.map(([key, label]) => {
-              const count = key === 'unanimous_reject' ? seconds.counts.unanimousReject : key === 'unanimous_approve' ? seconds.counts.unanimousApprove
-                : key === 'agreed_reject' ? seconds.counts.agreedReject : key === 'agreed_approve' ? seconds.counts.agreedApprove : seconds.counts.needsHuman;
+              // 보류 안의 후보로 좁힌 수 — 칩을 누른 목록의 건수와 같다
+              const count = overview.second[key];
               return (
                 <Link key={key} href={query({ second: second === key ? undefined : key, state: undefined, page: 1 })}
                   aria-current={second === key ? 'page' : undefined} className={chip(second === key, count)}>
@@ -231,8 +225,8 @@ export default async function ReviewPage({ searchParams }: { searchParams: Promi
             })}
             <span className="mx-1 h-4 w-px bg-line" aria-hidden />
             <Link href={query({ second: second === 'published' ? undefined : 'published', stage: undefined, cause: undefined, ai: undefined, state: undefined, page: 1 })}
-              aria-current={second === 'published' ? 'page' : undefined} className={chip(second === 'published', seconds.counts.published)}>
-              공개분 확인 <span className="font-mono">{seconds.counts.published.toLocaleString("ko-KR")}</span>
+              aria-current={second === 'published' ? 'page' : undefined} className={chip(second === 'published', overview.secondPublished)}>
+              공개분 확인 <span className="font-mono">{overview.secondPublished.toLocaleString("ko-KR")}</span>
             </Link>
           </FilterRow>
           {second !== 'published' && (
@@ -276,6 +270,7 @@ export default async function ReviewPage({ searchParams }: { searchParams: Promi
         )}
         {(second === 'published' || entries.length === 0) && pagination}
       </div>
+      <ScrollToHash />
     </main>
   );
 }

@@ -1,4 +1,3 @@
-import { readFileSync } from "node:fs";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
@@ -10,6 +9,8 @@ vi.mock("@/app/admin/actions", () => ({
 }));
 import { ProductRow, type AdminProduct } from "@/app/admin/products/ProductRow";
 import { repoReviewView } from "@/app/admin/products/repo-review-view";
+import { PRODUCT_FILTERS } from "@/app/admin/products/filters";
+import { ACTION_LINKS } from "@/app/admin/status/action-links";
 import type { ProductRepoReview } from "@/lib/db/schema";
 
 const base: AdminProduct = {
@@ -109,16 +110,11 @@ describe("admin product row — 저장소 사라진 웹사이트의 AI 판정", 
 
 describe("운영센터 → 제품 거르기 링크", () => {
   it("운영센터가 여는 거르기는 모두 제품 화면에 있는 이름이다", () => {
-    const products = readFileSync("app/admin/products/page.tsx", "utf8");
-    const block = products.slice(products.indexOf("const FILTERS = {"), products.indexOf("} as const satisfies"));
-    const filters = new Set([...block.matchAll(/^\s+"?([^":\s/*][^":]*?)"?: \[/gm)].map((match) => match[1]));
-    expect(filters).toContain("소개 확인 필요");
-    expect(filters).toContain("저장소 사라짐");
-    const status = readFileSync("app/admin/status/page.tsx", "utf8");
+    // 조치할 일의 주소는 ACTION_LINKS 한 곳에 있다 — 전체 검사는 admin-status-action-links.test.ts
+    const linked = Object.values(ACTION_LINKS).filter((href) => href.startsWith("/admin/products?"))
+      .map((href) => new URL(href, "http://localhost").searchParams.get("filter"));
+    expect(linked.length).toBeGreaterThanOrEqual(3);
     // ?filter=intro 처럼 없는 이름이면 제품 화면이 조용히 '전체'로 떨어진다
-    const linked = [...status.matchAll(/\/admin\/products\?filter=\$\{encodeURIComponent\("([^"]+)"\)\}|\/admin\/products\?filter=([^"`&$]+)/g)]
-      .map((match) => match[1] ?? decodeURIComponent(match[2]));
-    expect(linked.length).toBeGreaterThanOrEqual(2);
-    for (const name of linked) expect(filters).toContain(name);
+    for (const name of linked) expect(Object.keys(PRODUCT_FILTERS)).toContain(name);
   });
 });

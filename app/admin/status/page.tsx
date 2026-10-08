@@ -15,7 +15,7 @@ import { Panel } from "@/components/Panel";
 import { OperationsCenter } from "./OperationsCenter";
 import { operationsData } from "@/lib/operations/admin";
 import { latestServiceInstance } from "@/lib/operations/instance";
-import { pipelineFlow, oldestReviewWaitDays, stalledReviewCount } from "@/lib/operations/pipeline";
+import { pipelineFlow } from "@/lib/operations/pipeline";
 import { pipelineThroughput } from "@/lib/operations/throughput";
 import { buildWorkerProgress } from "@/lib/operations/worker-progress-query";
 import { attentionCounts, hourlyThroughput, modelHealth, signalYields, todayPublications } from "@/lib/operations/dashboard";
@@ -35,10 +35,13 @@ import { StatusChips } from "./dashboard/StatusChips";
 import type { AgentStatus } from "@/lib/operations/contracts";
 import { manualCandidates } from "@/lib/operations/categories";
 import { logger, redact } from "@/lib/observability/logger";
-import { listAdminReviewEntries, reviewQueueAiDecisions, reviewQueueCauses } from "@/lib/crawl/admin-review";
+import { listAdminReviewEntries, reviewQueueCauses } from "@/lib/crawl/admin-review";
+import { humanQueueOverview } from "@/lib/crawl/review-overview";
+import { humanFlowLabel, humanWaitLabel } from "@/lib/crawl/human-queue";
+import { ACTION_LINKS, jobHref, STATUS_TABS, type StatusTab } from "./action-links";
 import { QueuePreview } from "./QueuePreview";
 import { intersectQueueIds, parseQueueFilters, queueFilterHref, QUEUE_PAGE_SIZE, type QueueSearch } from './queue-filters';
-import { recentSecondReviewFailures, secondReviewSummary } from "@/lib/crawl/second-review";
+import { recentSecondReviewFailures } from "@/lib/crawl/second-review";
 import { translationProgress } from "@/lib/crawl/translations";
 import { TranslationProgress } from "./TranslationProgress";
 import { REASON_LABELS } from "../reasons";
@@ -46,6 +49,7 @@ import { searchLogSummary } from "@/lib/domain/products/search-log";
 import { readSearchHealth, searchHealthAlerts } from "@/lib/operations/search-health-model";
 import { SearchHealthPanel } from "./SearchHealthPanel";
 import { modelServerHealth } from "@/lib/operations/model-servers";
+import { ScrollToHash } from "../ScrollToHash";
 
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "운영센터 — NoMoreVibe", robots: { index: false } };
@@ -116,7 +120,9 @@ export default async function StatusPage({ searchParams }: { searchParams: Promi
   if (!admin) redirect("/admin/login");
   const params = await searchParams;
   const filters = parseQueueFilters(params);
-  const initialTab = params.tab === 'ai' || params.tab === 'jobs' || params.tab === 'manual' ? params.tab : 'overview';
+  const initialTab = (STATUS_TABS as readonly unknown[]).includes(params.tab) ? params.tab as StatusTab : 'overview';
+  // ?job= 은 작업 흐름 탭에서 그 작업의 상세 창을 연 채로 연다(조치할 일의 작업 링크)
+  const initialJob = typeof params.job === 'string' && JOB_NAMES.includes(params.job) ? params.job : null;
 
   const settings = await getSettings();
   /**
@@ -137,9 +143,10 @@ export default async function StatusPage({ searchParams }: { searchParams: Promi
     getEvidenceStatusSummary(new Date()),
   ]);
   const productLoads = Promise.all([downProducts(), downProductCount(), topClickedSince(30), operationsData(), manualCandidates()]);
-  const queueLoads = Promise.all([pipelineFlow(), oldestReviewWaitDays(), stalledReviewCount(),
-    reviewQueueAiDecisions(), filters.cause ? reviewQueueCauses(settings) : Promise.resolve(null),
-    secondReviewSummary(settings.secondReview.agreeAt), recentSecondReviewFailures(), pipelineThroughput(settings).catch(error => {
+  // 사람 몫의 수(직접 판단·확정만·나이·24시간 흐름)는 심사 큐와 같은 humanQueueOverview 하나에서 온다
+  const queueLoads = Promise.all([pipelineFlow(), humanQueueOverview(settings),
+    filters.cause ? reviewQueueCauses(settings) : Promise.resolve(null),
+    recentSecondReviewFailures(), pipelineThroughput(settings).catch(error => {
       logger.warn("operations.throughput_unavailable", { errorName: error instanceof Error ? error.name : "unknown" });
       return null;
     })]);
@@ -157,7 +164,8 @@ export default async function StatusPage({ searchParams }: { searchParams: Promi
   ]);
   const searchLoad = searchLogSummary(7).catch(() => null);
   const [[frontier, candidates, rejections, jobStates, signalRows, rankingSeason, evidenceSummary], [down, downCount, topClicked, ops, manual],
-    [flow, oldestWait, stalled, decisions, causes, seconds, secondFailures, throughput]] = await Promise.all([baseLoads, productLoads, queueLoads]);
+    [flow, overview, causes, secondFailures, throughput]] = await Promise.all([baseLoads, productLoads, queueLoads]);
+  const decisions = overview.aiDecisions;
   // Filter the whole queue before pagination, not the fourteen rows already on screen.
   const queue = await listAdminReviewEntries(settings, {
     state: 'needs_review', limit: QUEUE_PAGE_SIZE, offset: (filters.page - 1) * QUEUE_PAGE_SIZE,
@@ -196,12 +204,13 @@ export default async function StatusPage({ searchParams }: { searchParams: Promi
     .map((instance) => ({ instance: instance.instanceId, release: typeof instance.value.release === "string" ? instance.value.release : null,
       stale: ageMs(instance.observedAt) > 45_000 }));
   const failedJobs = jobStates.filter(job => job.lastError);
+  // 순서는 같은 급 안의 차례다 — 급(critical → hold → clear)은 AttentionList 가 앞세운다
   const actions: ActionItem[] = [];
   const healthObservation = ops.observations.find(row => row.key === "job:product-search-health");
   const health = states.get("product-search-health")?.lastError ? null : readSearchHealth(healthObservation);
   if (health) {
     actions.push(...searchHealthAlerts(health).map(alert => ({ ...alert, key: `search-${alert.key}`,
-      action: { label: "점검 작업", href: "/admin/status?tab=jobs" } })));
+      action: { label: "점검 작업", href: ACTION_LINKS.jobs } })));
   }
 
   /**
@@ -220,13 +229,13 @@ export default async function StatusPage({ searchParams }: { searchParams: Promi
     actions.push({
       key: "ai", tone: "critical", count: "!", title: "AI 연결 서비스 관측이 끊겼습니다",
       detail: <>connect-agent 마지막 관측 {agentInstance ? when(new Date(agentInstance.observedAt)) : "없음"} — 발행 워커가 카테고리를 정하지 못해 승인 후보를 1시간씩 보류합니다.</>,
-      action: { label: "연결 상태", href: "/admin/status?tab=ai" },
+      action: { label: "연결 상태", href: ACTION_LINKS.ai },
     });
   } else if (!classifyReady) {
     actions.push({
       key: "ai", tone: "critical", count: "!", title: "AI 분류를 받지 않습니다",
       detail: <>{agent.configVersion > 0 ? "새 인증 뒤 모델 검사·적용이 남았습니다" : "적용한 모델 설정이 없습니다"} — 적용할 때까지 발행 워커가 승인 후보를 1시간씩 보류합니다.</>,
-      action: { label: "검사·적용", href: "/admin/status?tab=ai" },
+      action: { label: "검사·적용", href: ACTION_LINKS.ai },
     });
   } else {
     if (failingProviders.length > 0) {
@@ -235,14 +244,14 @@ export default async function StatusPage({ searchParams }: { searchParams: Promi
         key: "ai-account", tone: all ? "critical" : "hold", count: `${failingProviders.length}/${configuredProviders.length}`,
         title: all ? "설정한 AI 계정이 모두 실패합니다" : `${failingProviders.map((provider) => providerName[provider]).join("·")} 계정이 실패합니다 — 예비 모델이 대신 분류 중`,
         detail: <>{failingProviders.map((provider) => `${providerName[provider]} ${agent.accounts?.[provider]?.result}${agent.accounts?.[provider]?.checkedAt ? ` · ${when(new Date(agent.accounts[provider]!.checkedAt!))}` : ""}`).join(" · ")} — 다시 인증하고 모델을 검사·적용합니다.</>,
-        action: { label: "다시 인증", href: "/admin/status?tab=ai" },
+        action: { label: "다시 인증", href: ACTION_LINKS.ai },
       });
     }
     if (!agent.configReady) {
       actions.push({
         key: "ai-apply", tone: "hold", count: "!", title: "새 인증으로 모델 검사·적용이 남았습니다",
         detail: <>그때까지 기존 설정({agent.config?.primary.model}{agent.config?.fallback ? ` → ${agent.config.fallback.model}` : ""})으로 분류를 계속합니다.</>,
-        action: { label: "검사·적용", href: "/admin/status?tab=ai" },
+        action: { label: "검사·적용", href: ACTION_LINKS.ai },
       });
     }
   }
@@ -251,42 +260,43 @@ export default async function StatusPage({ searchParams }: { searchParams: Promi
     actions.push({
       key: "model-servers", tone: "hold", count: unhealthyServers.length, title: "검색 모델 서버가 응답하지 않습니다",
       detail: <>{unhealthyServers.map((server) => `${server.name} ${server.error}`).join(" · ")} — 검색은 단어 검색으로만 나가고, 새 제품의 의미 검색 벡터가 밀립니다(M3 launchd bot.brut.nmv-*).</>,
+      action: { label: "의미 검색 벡터", href: jobHref("product-embedding") },
     });
   }
   if (!health) {
     actions.push({
       key: "search-health-missing", tone: "hold", count: "?", title: "검색 데이터 점검 결과가 없습니다",
       detail: <>{states.get("product-search-health")?.lastError ? "점검 작업이 마지막 회차에 실패했습니다" : `마지막 점검 ${healthObservation ? when(new Date(healthObservation.observedAt)) : "없음"} — 45분이 지나면 결과를 믿지 않습니다`}. 키워드 대기 수도 알 수 없습니다.</>,
-      action: { label: "점검 작업", href: "/admin/status?tab=jobs" },
+      action: { label: "점검 작업", href: ACTION_LINKS.jobs },
     });
   }
   if (failedJobs.length > 0) {
     actions.push({
       key: "jobs", tone: "critical", count: failedJobs.length, title: "마지막 회차가 실패한 작업",
       detail: <>{failedJobs.map(job => job.name).join(", ")} — 실패한 작업 뒤의 단계는 새 일감을 받지 못합니다.</>,
+      action: { label: "작업 흐름", href: failedJobs.length === 1 ? jobHref(failedJobs[0].name) : ACTION_LINKS.jobs },
     });
   }
-  const needsReview = candidates.needs_review ?? 0;
-  if (needsReview > 0) {
+  /**
+   * 사람 몫 — 심사 큐의 "직접 판단"·"확정만 하면 됨"과 같은 수(humanQueueOverview). 전에는 보류 전체(AI·2차 대기 포함)를
+   * "사람이 가려야 할 후보"로, 보류가 아닌 후보까지 센 2차 칩 합을 "2차 심사 확인"으로 보여 심사 큐와 숫자가 갈렸다.
+   */
+  if (overview.stages.human > 0) {
     actions.push({
-      key: "review", tone: "hold", count: needsReview, title: "사람이 가려야 할 후보",
+      key: "review", tone: "hold", count: overview.stages.human, title: "사람이 가려야 할 후보 — 직접 판단",
       detail: <>
-        {oldestWait !== null && <>가장 오래 기다린 것 <span className="font-mono">{oldestWait}일</span>. </>}
-        {stalled > 0 && <>그중 <span className="font-mono">{stalled}건</span>은 판정한 지 2주가 넘었습니다 — 갈래별로 묶으면 한 번에 처리할 수 있습니다.</>}
+        {humanWaitLabel(overview)} · {humanFlowLabel(overview)}.
+        {(overview.wait?.stalled ?? 0) > 0 && <> 그중 <span className="font-mono">{overview.wait!.stalled.toLocaleString("ko-KR")}건</span>은 판정한 지 2주가 넘었습니다 — 갈래별로 묶으면 한 번에 처리할 수 있습니다.</>}
       </>,
-      action: { label: "심사 큐", href: "/admin/review" },
+      action: { label: "심사 큐", href: ACTION_LINKS.reviewHuman },
     });
   }
-  const secondAgreed = seconds.counts.unanimousReject + seconds.counts.unanimousApprove + seconds.counts.agreedReject + seconds.counts.agreedApprove;
-  const secondOpen = secondAgreed + seconds.counts.needsHuman + seconds.counts.published;
-  if (secondOpen > 0) {
+  if (overview.stages.agreed + overview.secondPublished > 0) {
     actions.push({
-      key: "second", tone: "hold", count: secondOpen, title: "2차 심사 확인",
-      detail: <>일치 {secondAgreed}건은 한 번에 확정(그중 만장일치 {seconds.counts.unanimousReject + seconds.counts.unanimousApprove}건) · 엇갈림 {seconds.counts.needsHuman}건 · 공개분 {seconds.counts.published}건은 사람이 봅니다.</>,
-      // 비어 있는 칩을 열지 않는다 — 할 일이 있다고 해 놓고 빈 화면을 주면 신뢰를 잃는다
-      action: { label: "2차 심사", href: `/admin/review?second=${
-        (["needs_human", "unanimous_reject", "unanimous_approve", "agreed_reject", "agreed_approve"] as const)
-          .find((key) => seconds.ids[key].length) ?? "needs_human"}` },
+      key: "second", tone: "hold", count: overview.stages.agreed + overview.secondPublished, title: "2차 심사 확인",
+      detail: <>확정만 하면 됨 {overview.stages.agreed.toLocaleString("ko-KR")}건(거부 {overview.agreed.reject.toLocaleString("ko-KR")} · 승인 {overview.agreed.approve.toLocaleString("ko-KR")}, 그중 만장일치 {(overview.second.unanimous_reject + overview.second.unanimous_approve).toLocaleString("ko-KR")})은 한 번에 확정 · 공개분 {overview.secondPublished.toLocaleString("ko-KR")}건은 사람이 봅니다. 엇갈린 것은 직접 판단에 들어 있습니다.</>,
+      // 비어 있는 구간을 열지 않는다 — 할 일이 있다고 해 놓고 빈 화면을 주면 신뢰를 잃는다
+      action: { label: "2차 심사", href: overview.stages.agreed > 0 ? ACTION_LINKS.reviewAgreed : ACTION_LINKS.reviewPublished },
     });
   }
   /**
@@ -304,7 +314,7 @@ export default async function StatusPage({ searchParams }: { searchParams: Promi
         최근 24시간 미해결 오류 · {secondFailures.slice(0, 3).map((row) => `${row.model ?? "모델 미상"} ${row.errorCode} ${row.count}건`).join(" · ")}
         {gone && <> — 설정한 모델을 게이트웨이가 더 이상 갖고 있지 않습니다.</>}
       </>,
-      action: { label: "2차 심사 설정", href: "/admin#second-review" },
+      action: { label: "2차 심사 설정", href: ACTION_LINKS.secondSettings },
     });
   }
   if (ops.held > 0) {
@@ -312,14 +322,14 @@ export default async function StatusPage({ searchParams }: { searchParams: Promi
     actions.push({
       key: "held", tone: "hold", count: ops.held, title: "분류를 못 정해 발행이 멈춘 후보",
       detail: <>승인은 끝났고 카테고리만 없습니다. 1시간 뒤 저절로 다시 분류합니다{retry ? ` — 다음 ${retry}` : ""}. 급하면 수동으로 지정합니다.</>,
-      action: { label: "수동 분류", href: "/admin/status?tab=manual" },
+      action: { label: "수동 분류", href: ACTION_LINKS.manual },
     });
   }
   if (downCount > 0) {
     actions.push({
       key: "down", tone: "critical", count: downCount, title: "응답하지 않는 공개 제품",
       detail: <>{DOWN_THRESHOLD}회 넘게 연속으로 실패해 공개 목록에서 빠져 있습니다. 지우거나 차단하지는 않습니다 — 다시 열리면 그대로 돌아옵니다. 끝난 서비스인지는 사람이 보고 정합니다.</>,
-      action: { label: "제품 관리", href: "/admin/products" },
+      action: { label: "응답 없음 목록", href: ACTION_LINKS.productsDown },
     });
   }
   /**
@@ -330,7 +340,7 @@ export default async function StatusPage({ searchParams }: { searchParams: Promi
     actions.push({
       key: "standby", tone: "critical", count: standbyActive.length, title: "예비가 일하고 있는 역할",
       detail: <>{standbyActive.map((row) => row.role).join(", ")} — 주(M3)가 lease 를 되찾지 못합니다. 예비를 잠깐 0으로 줄여 돌려놓습니다(runbook).</>,
-      action: { label: "역할 표", href: "/admin/status#roles" },
+      action: { label: "역할 표", href: ACTION_LINKS.roles },
     });
   }
   // 공통 이미지 역할과 웹만 비교한다 — maintenance·text 는 git 빌드라 릴리스가 다른 것이 정상이다(2026-10-03 오경보)
@@ -340,6 +350,7 @@ export default async function StatusPage({ searchParams }: { searchParams: Promi
     actions.push({
       key: "release", tone: "hold", count: releases.size, title: "공통 이미지 릴리스가 갈렸습니다",
       detail: <>{[...releases].map((value) => value.slice(0, 7)).join(" · ")} — 릴리스 도구(deploy_shared_images.py)로 8개 앱을 같은 SHA 로 맞춥니다.</>,
+      action: { label: "역할 표", href: ACTION_LINKS.roles },
     });
   }
   const workerAlarms = workerProgress?.liveness.filter((row) => row.alarm) ?? [];
@@ -347,7 +358,7 @@ export default async function StatusPage({ searchParams }: { searchParams: Promi
     actions.push({
       key: "liveness", tone: "critical", count: workerAlarms.length, title: "워커 관측이 끊겼거나 반복 재시작 중",
       detail: <>{workerAlarms.map((row) => `${row.role} ${row.reason === "restart_loop" ? "5분 내 반복 재시작" : "관측 끊김"}`).join(" · ")}</>,
-      action: { label: "작업 흐름", href: "/admin/status?tab=jobs" },
+      action: { label: "작업 흐름", href: ACTION_LINKS.jobs },
     });
   }
   // 같은 릴리스로 다시 뜬 워커 — 5분 안 세 번이 아니어도 죽고 있다는 뜻이다(2026-10-08 발행 워커가 20분 사이 두 번)
@@ -359,7 +370,7 @@ export default async function StatusPage({ searchParams }: { searchParams: Promi
     actions.push({
       key: "restarts", tone: "hold", count: restarted.reduce((sum, row) => sum + row.count, 0), title: "최근 1시간 안에 다시 뜬 워커",
       detail: <>{restarted.map((row) => `${row.role} ${row.count}회`).join(" · ")} — 배포가 아닌 재시작입니다. 컨테이너 로그(supervisor.stopping 사유)를 봅니다.</>,
-      action: { label: "역할 표", href: "/admin/status#roles" },
+      action: { label: "역할 표", href: ACTION_LINKS.roles },
     });
   }
   // 두 대 중 한 대만 남은 경우 — 둘 다 없으면 위 관측 끊김(scheduler)이 이미 잡는다
@@ -367,20 +378,21 @@ export default async function StatusPage({ searchParams }: { searchParams: Promi
     actions.push({
       key: "scheduler-replicas", tone: "hold", count: "1/2", title: "스케줄러 복제가 한 대뿐입니다",
       detail: <>관측되는 스케줄러가 1대입니다 — 이것마저 죽으면 예약이 멈춥니다.</>,
-      action: { label: "역할 표", href: "/admin/status#roles" },
+      action: { label: "역할 표", href: ACTION_LINKS.roles },
     });
   }
   if (workerProgress?.scheduler.reason === "scheduler_missed") {
     actions.push({
       key: "scheduler", tone: "critical", count: workerProgress.scheduler.overdueJobs.length, title: "스케줄러 예약이 밀렸습니다",
       detail: <>{workerProgress.scheduler.overdueJobs.join(", ")}</>,
+      action: { label: "작업 흐름", href: workerProgress.scheduler.overdueJobs.length === 1 ? jobHref(workerProgress.scheduler.overdueJobs[0]) : ACTION_LINKS.jobs },
     });
   }
   if (workerProgress?.scheduler.reason === "unknown_schedule") {
     actions.push({
       key: "scheduler-unknown", tone: "hold", count: "?", title: "스케줄러 예약 상태를 확인할 수 없습니다",
       detail: <>다음 예약 시각이 없는 작업이 있습니다 — 스케줄러 관측과 작업 표를 확인합니다.</>,
-      action: { label: "작업 흐름", href: "/admin/status?tab=jobs" },
+      action: { label: "작업 흐름", href: ACTION_LINKS.jobs },
     });
   }
   // 워커는 관측되는데 저장 진행이 없는 단계 — 관측 끊김(liveness)과 달리 프로세스는 살아 있다
@@ -389,7 +401,7 @@ export default async function StatusPage({ searchParams }: { searchParams: Promi
     actions.push({
       key: "stage-progress", tone: "critical", count: stuckStages.length, title: "워커는 살아 있는데 단계가 나아가지 않습니다",
       detail: <>{stuckStages.map((row) => throughput?.stages.find((stage) => stage.key === row.stage)?.label ?? row.stage).join(" · ")} — 오래 기다린 후보가 있는데 5분간 저장 진행이 없습니다.</>,
-      action: { label: "작업 흐름", href: "/admin/status?tab=jobs" },
+      action: { label: "작업 흐름", href: ACTION_LINKS.jobs },
     });
   }
   // 1시간 실패율 20% 이상인 모델 자리 — 예비가 받아 주면 "미해결 오류"에는 안 잡힌다(2차 투표 26% 가 숨었다)
@@ -398,6 +410,7 @@ export default async function StatusPage({ searchParams }: { searchParams: Promi
     actions.push({
       key: "model-failures", tone: "hold", count: failingModels.length, title: "모델 호출이 자주 실패합니다",
       detail: <>{failingModels.map((row) => `${row.label} ${row.model ?? ""} 실패 ${Math.round((row.failed1h / row.calls1h) * 100)}% (${row.failed1h}/${row.calls1h})`).join(" · ")} — 재시도와 예비 모델이 받아 주지만 처리량이 줄고 지연이 늘어납니다.</>,
+      action: { label: "모델 연결", href: ACTION_LINKS.models },
     });
   }
   // 내려달라는 요청 — 상세 페이지가 내려 준다고 약속했다. 24시간을 넘기면 다른 경보처럼 맨 앞 급으로
@@ -407,47 +420,49 @@ export default async function StatusPage({ searchParams }: { searchParams: Promi
       key: "takedowns", tone: takedowns.overdue > 0 ? "critical" : "hold", count: takedowns.pending,
       title: takedowns.overdue > 0 ? `내려달라는 요청 — 24시간 넘음 ${takedowns.overdue}` : "내려달라는 요청",
       detail: <>대기 {takedowns.pending}{oldest}{isBurst(takedowns) ? ` · 지난 1시간 ${takedowns.lastHour.requests}건 몰림` : ""} — 내릴 후보에서 처리</>,
-      action: { label: "처리", href: "/admin/audit?tab=requests" },
+      action: { label: "처리", href: ACTION_LINKS.takedowns },
     });
   }
   if (attention && attention.auditRejectsOpen > 0) {
     actions.push({
       key: "audit", tone: "hold", count: attention.auditRejectsOpen, title: "감사가 거절 판정한 발행분이 처리되지 않았습니다",
       detail: <>발행 뒤 감사가 &ldquo;제품 아님&rdquo;으로 본 것 — 사람이 내리거나 유지로 정해야 합니다.</>,
-      action: { label: "내릴 후보", href: "/admin/audit" },
+      action: { label: "내릴 후보", href: ACTION_LINKS.audit },
     });
   }
   if (attention?.auditCampaign && !attention.auditCampaign.current) {
     actions.push({
       key: "audit-stalled", tone: "hold", count: attention.auditCampaign.unanswered, title: "발행분 감사가 멈춰 있습니다",
       detail: <>감사 #{attention.auditCampaign.id}은 프롬프트 {attention.auditCampaign.promptVersion}로 시작했는데 지금 코드와 달라 매 틱 건너뜁니다 — 남은 {attention.auditCampaign.unanswered.toLocaleString("ko-KR")}건은 사람이 중단하고 새 감사를 열어야 다시 봅니다.</>,
-      action: { label: "감사", href: "/admin/audit" },
+      action: { label: "감사", href: ACTION_LINKS.audit },
     });
   }
   if (attention && attention.cdnPurgesPending > 0) {
     actions.push({
       key: "cdn-purge", tone: "hold", count: attention.cdnPurgesPending, title: "내린 제품의 CDN 캐시가 지워지지 않았습니다",
       detail: <>10분 넘게 확인되지 않은 지우기 요청 — 발행 워커의 CLOUDFLARE_ZONE_ID·CLOUDFLARE_PURGE_TOKEN 을 확인합니다. 그동안 내린 페이지가 Cloudflare 에 남습니다.</>,
-      action: { label: "작업 흐름", href: "/admin/status?tab=jobs" },
+      action: { label: "작업 흐름", href: ACTION_LINKS.jobs },
     });
   }
   if (evidenceSummary.oldestDueHours !== null && evidenceSummary.oldestDueHours > 72) {
     actions.push({
       key: "evidence-backlog", tone: "hold", count: evidenceSummary.due, title: "제품 근거 갱신이 밀렸습니다",
       detail: <>기한 지난 출처 {evidenceSummary.due.toLocaleString("ko-KR")}건 · 가장 오래된 것 {Math.round(evidenceSummary.oldestDueHours / 24)}일 — product-evidence-refresh 처리량이 출처 수를 못 따라갑니다.</>,
+      action: { label: "근거 갱신 작업", href: jobHref("product-evidence-refresh") },
     });
   }
   if (attention && attention.healthOverdue > 0) {
     actions.push({
       key: "health-overdue", tone: attention.healthOverdue > 5_000 ? "hold" : "clear", count: attention.healthOverdue, title: "생존 확인이 6시간 넘게 밀린 제품",
       detail: <>uptime-ping 처리량이 목표(시간당 {attention.healthTargetPerHour.toLocaleString("ko-KR")})에 못 미치면 쌓입니다.</>,
+      action: { label: "응답 점검 작업", href: jobHref("uptime-ping") },
     });
   }
   if (attention && attention.introNeedsEditor > 0) {
     actions.push({
       key: "intro", tone: "hold", count: attention.introNeedsEditor, title: "소개 확인이 필요한 제품",
       detail: <>소개 검수가 근거로는 알 수 없다고 한 것{isPausedJob(states.get("product-intro-check")) ? " — 검수 잡은 멈춰 있습니다" : ""}.</>,
-      action: { label: "제품 관리", href: `/admin/products?filter=${encodeURIComponent("소개 확인 필요")}` },
+      action: { label: "제품 관리", href: ACTION_LINKS.productsIntro },
     });
   }
   if (attention && attention.repoGone.installable + attention.repoGone.website > 0) {
@@ -460,7 +475,7 @@ export default async function StatusPage({ searchParams }: { searchParams: Promi
       detail: <>GitHub 저장소가 없거나 빈 채로 하루 넘게 이어짐 — 설치형 {attention.repoGone.installable.toLocaleString("ko-KR")}건은 목록에서 가려짐 · 웹 {attention.repoGone.website.toLocaleString("ko-KR")}건은 GitHub 표시만 뺌.
         {" "}웹은 AI 가 사이트를 다시 봅니다: 확인 대기 {review.pending.toLocaleString("ko-KR")} · 내릴 후보 {review.delistCandidates.toLocaleString("ko-KR")} · 사람 확인 {review.human.toLocaleString("ko-KR")} · AI 유지 {review.kept.toLocaleString("ko-KR")}
         {review.oldestHours !== null && <> · 가장 오래 기다린 것 {Math.round(review.oldestHours)}시간</>}. 내리는 것은 사람이 정합니다.</>,
-      action: { label: "제품 관리", href: `/admin/products?filter=${encodeURIComponent("저장소 사라짐")}` },
+      action: { label: "제품 관리", href: ACTION_LINKS.productsRepoGone },
     });
   }
   // 공개 제품의 GitHub 저장소를 하루에 한 번씩 다 보고 있나(product-stars-refresh) — 배포 직후 첫 바퀴(약 10시간)는 낮다
@@ -469,7 +484,7 @@ export default async function StatusPage({ searchParams }: { searchParams: Promi
     actions.push({
       key: "repo-coverage", tone: "hold", count: `${Math.floor(repoCoverage * 100)}%`, title: "저장소 확인 범위가 95% 아래입니다",
       detail: <>GitHub 저장소가 있는 공개 제품 {attention!.repoHealth.tracked.toLocaleString("ko-KR")}개 중 지난 24시간에 확인한 것 {attention!.repoHealth.checked24h.toLocaleString("ko-KR")}개 — product-stars-refresh 가 밀리거나 GitHub 한도에 걸렸습니다.</>,
-      action: { label: "작업 흐름", href: "/admin/status?tab=jobs" },
+      action: { label: "작업 흐름", href: ACTION_LINKS.jobs },
     });
   }
   const quotaAccount = accounts?.find((row) => row.enabled && row.coreQuota);
@@ -478,7 +493,7 @@ export default async function StatusPage({ searchParams }: { searchParams: Promi
     actions.push({
       key: "quota", tone: "critical", count: quota.remaining, title: "GitHub API 한도가 거의 남지 않았습니다",
       detail: <>{quota.remaining}/{quota.limit} · {new Date(quota.reset * 1000).toLocaleTimeString("ko-KR", { timeZone: "Asia/Seoul", hour: "2-digit", minute: "2-digit", hour12: false })} 초기화</>,
-      action: { label: "수집 계정", href: "/admin/github-accounts" },
+      action: { label: "수집 계정", href: ACTION_LINKS.githubAccounts },
     });
   }
   if (actions.length === 0) {
@@ -516,11 +531,10 @@ export default async function StatusPage({ searchParams }: { searchParams: Promi
   const dashboard = (
     <>
       <KpiStrip series={hourly} textPending={health?.pendingGeneration ?? null} verifyPending={health?.pendingVerification ?? null} />
-      <StageRail snapshot={throughput} flow={flow} humanQueue={needsReview} humanOldestDays={oldestWait} humanSplit={seconds.counts.needsHuman}
+      <StageRail snapshot={throughput} flow={flow} human={overview}
         signals={workerProgress?.stages} liveness={workerProgress?.liveness} />
       <RolesTable roles={roleRows} scheduler={scheduler} web={web} />
       <ModelCards rows={models ?? []} probes={probes} />
-      <AttentionList items={actions} />
       <SignalTable rows={yields ?? []} />
       <TodayFeed today={today ?? { total24h: 0, korean24h: 0, latest: [] }} down={downCount} />
       {attention && <RepoHealthCard health={attention.repoHealth} review={attention.repoReview} />}
@@ -531,7 +545,7 @@ export default async function StatusPage({ searchParams }: { searchParams: Promi
 
   return (
     <main className="pb-10">
-      <OperationsCenter dashboard={dashboard} statusChips={statusChips} searchHealth={<><SearchHealthPanel health={health} observedAt={healthObservation?.observedAt} /><Suspense fallback={<TranslationProgressPending />}><TranslationProgressSlot now={ops.fetchedAt} /></Suspense></>} key={initialTab} initialTab={initialTab} queue={<QueuePreview entries={queue.entries} total={queue.total} counts={decisions.counts} filters={filters} totalWaiting={needsReview} filterScanTruncated={causes?.truncated || Object.values(decisions.counts).reduce((sum, count) => sum + count, 0) < needsReview} />} data={ops} candidates={manual} reviewMode={settings.reviewMode} enabled={settings.enabled}
+      <OperationsCenter attention={<AttentionList items={actions} />} dashboard={dashboard} statusChips={statusChips} searchHealth={<><SearchHealthPanel health={health} observedAt={healthObservation?.observedAt} /><Suspense fallback={<TranslationProgressPending />}><TranslationProgressSlot now={ops.fetchedAt} /></Suspense></>} key={`${initialTab}:${initialJob ?? ''}`} initialTab={initialTab} initialJob={initialJob} queue={<QueuePreview entries={queue.entries} total={queue.total} counts={decisions.counts} filters={filters} totalWaiting={candidates.needs_review ?? 0} filterScanTruncated={causes?.truncated || Object.values(decisions.counts).reduce((sum, count) => sum + count, 0) < (candidates.needs_review ?? 0)} />} data={ops} candidates={manual} reviewMode={settings.reviewMode} enabled={settings.enabled}
         jobs={JOB_NAMES.map(name => {
           const job = states.get(name);
           return { name, status: jobStatusLabel(job), lastRunAt: job?.lastRunAt?.toISOString() ?? null,
@@ -779,6 +793,7 @@ export default async function StatusPage({ searchParams }: { searchParams: Promi
         </Panel>
       </div>
       </OperationsCenter>
+      <ScrollToHash />
     </main>
   );
 }

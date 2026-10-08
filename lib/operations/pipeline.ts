@@ -1,4 +1,4 @@
-import { and, eq, gte, inArray, isNotNull, lt, sql } from "drizzle-orm";
+import { and, gte, inArray, isNotNull, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { crawlCandidates, crawlDocuments, crawlFrontier, products } from "@/lib/db/schema";
 
@@ -83,21 +83,4 @@ export async function pipelineFlow(): Promise<PipelineFlow> {
   ];
 
   return { stages, bottleneck: findBottleneck(stages), published: published[0].count };
-}
-
-/** 심사 큐에서 가장 오래 기다린 후보의 나이(일). 없으면 null */
-export async function oldestReviewWaitDays(): Promise<number | null> {
-  const [row] = await db.select({ at: sql<Date | null>`min(${crawlCandidates.judgedAt})` })
-    .from(crawlCandidates).where(eq(crawlCandidates.state, "needs_review"));
-  if (!row?.at) return null;
-  return Math.floor((Date.now() - new Date(row.at).getTime()) / 86_400_000);
-}
-
-/** 판정한 지 오래됐는데 아직 큐에 있는 수 — 기준이 바뀌었는지 의심할 근거 */
-export async function stalledReviewCount(days = 14): Promise<number> {
-  const [row] = await db.select({ count }).from(crawlCandidates).where(and(
-    eq(crawlCandidates.state, "needs_review"),
-    lt(crawlCandidates.judgedAt, new Date(Date.now() - days * 86_400_000)),
-  ));
-  return row.count;
 }

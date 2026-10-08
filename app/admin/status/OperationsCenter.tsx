@@ -24,11 +24,13 @@ const until=(value:unknown,now:string)=>{if(typeof value!=='string')return '—'
 const ROLES=['app','scheduler','crawler','reviewer','publisher','text','maintenance','db','connect-agent'];
 const DESCRIPTIONS:Record<string,string>={app:'제품 페이지·관리자·API 요청을 처리합니다.',scheduler:'예약 시각을 확인하고 담당 워커에게 작업을 요청합니다.',crawler:'프로젝트 원본·공개 근거를 수집합니다.',reviewer:'규칙 판정과 설정된 AI 심사로 후보를 검토합니다.',publisher:'승인 후보를 분류하고 최종 발행 조건을 검사합니다.',text:'소개 생성과 심사 사유 번역을 처리합니다.',maintenance:'발행된 제품이 열리는지 확인하고, 유효 방문을 집계해 랭킹을 갱신합니다.',db:'제품·후보·작업 요청과 실행 결과를 저장합니다.','connect-agent':'Codex·Claude 인증과 모델 검증·분류 실행을 전담합니다.'};
 /**
- * 전체 현황 탭은 서버가 그린 조각(dashboard·statusChips·queue·searchHealth)을 12칸 격자에 놓는다.
+ * 전체 현황 탭은 서버가 그린 조각(attention·dashboard·statusChips·queue·searchHealth)을 12칸 격자에 놓는다.
  * 숫자를 모으는 쿼리는 page.tsx 에, 상호작용(탭·상세 창·작업 요청)은 여기에 둔다.
+ * 조치할 일(attention)은 전체 현황 맨 위 전체 폭 — 전에는 KPI·파이프라인 아래(1440×900 에서 768px)라 첫 화면 밖이었다.
+ * initialJob(?job=)이 오면 그 작업의 상세 창을 연 채로 시작한다 — 조치할 일의 작업 링크가 쓴다.
  */
-export function OperationsCenter({initialTab="overview",jobs,data,candidates,reviewMode,enabled,dashboard,statusChips,queue,searchHealth,children }:{initialTab?: "overview" | "jobs" | "ai" | "manual";jobs:OperationJob[];data:Awaited<ReturnType<typeof operationsData>>;candidates:Awaited<ReturnType<typeof manualCandidates>>;reviewMode:string;enabled:boolean;dashboard:React.ReactNode;statusChips:React.ReactNode;queue:React.ReactNode;searchHealth:React.ReactNode;children:React.ReactNode}) {
-  const [tab,setTab]=useState<string>(initialTab),[selected,setSelected]=useState('publisher'),[selectedJob,setJob]=useState<OperationJob|null>(null),[worker,setWorker]=useState(false),[message,setMessage]=useState(''),[pending,start]=useTransition();
+export function OperationsCenter({initialTab="overview",initialJob=null,jobs,data,candidates,reviewMode,enabled,attention,dashboard,statusChips,queue,searchHealth,children }:{initialTab?: "overview" | "jobs" | "ai" | "manual";initialJob?:string|null;jobs:OperationJob[];data:Awaited<ReturnType<typeof operationsData>>;candidates:Awaited<ReturnType<typeof manualCandidates>>;reviewMode:string;enabled:boolean;attention:React.ReactNode;dashboard:React.ReactNode;statusChips:React.ReactNode;queue:React.ReactNode;searchHealth:React.ReactNode;children:React.ReactNode}) {
+  const [tab,setTab]=useState<string>(initialTab),[selected,setSelected]=useState('publisher'),[selectedJob,setJob]=useState<OperationJob|null>(()=>jobs.find(j=>j.name===initialJob)??null),[worker,setWorker]=useState(false),[message,setMessage]=useState(''),[pending,start]=useTransition();
   const job=jobs.find(j=>j.name===selectedJob?.name)??null;
   const router=useRouter();const snapshots=new Map(data.observations.map(o=>[o.key,o]));
   const instancesFor=(key:string)=>data.serviceInstances.filter(instance=>instance.role===key).sort((a,b)=>new Date(b.observedAt).getTime()-new Date(a.observedAt).getTime());
@@ -53,6 +55,7 @@ export function OperationsCenter({initialTab="overview",jobs,data,candidates,rev
     {message&&<p className="ops-message" role="status">{message}</p>}
     {tab==='overview'&&<div className="ops-console">
       <div className="dash">
+        {attention}
         {dashboard}
         <JobsStrip jobs={jobs} now={data.fetchedAt} onOpen={setJob}/>
       </div>

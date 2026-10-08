@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import type { AdminReviewEntry, ReviewSort } from '@/lib/crawl/admin-review';
-import { causeLabel } from './causes';
+import { BUCKET_NOTE, causeLabel } from './causes';
 import { REASON_LABELS } from '../reasons';
 import { packSelection } from './contract';
 import { ReviewDetail, entryFacts, waitingDays } from './ReviewDetail';
@@ -99,7 +99,7 @@ export function ReviewConsole({ entries, reasons, bulkFormId, focus, sort, sortH
                   onChange={() => setChecked(allChecked ? new Set() : new Set(selectable.map((entry) => entry.candidate.id)))} />
               </th>
               <th className="px-2 py-2 font-semibold">후보</th>
-              <th className="px-2 py-1 font-semibold">
+              <th className="px-2 py-1 font-semibold" title={BUCKET_NOTE}>
                 {/* 갈래는 정렬이 아니라 거르기다 — 같은 갈래는 같은 판단이라 몰아서 본다 */}
                 <select aria-label="갈래로 거르기" value={cause} onChange={(event) => {
                   const picked = causes.find((option) => option.value === event.target.value);
@@ -126,6 +126,7 @@ export function ReviewConsole({ entries, reasons, bulkFormId, focus, sort, sortH
               const days = waitingDays(entry);
               const chip = entry.review?.decision ? AI_CHIP[entry.review.decision] : null;
               const vote = secondVoteView(entry.seconds);
+              const bucket = entry.bucket ?? entry.verdict?.cause ?? null;
               const canDecide = selectable.includes(entry);
               const active = row === index;
               return (
@@ -144,10 +145,11 @@ export function ReviewConsole({ entries, reasons, bulkFormId, focus, sort, sortH
                       <span className="truncate font-mono text-fg-3">{candidate.repo}</span>
                     </div>
                   </td>
-                  {/* 갈래가 없는 줄(거부·통과)은 사유 코드를 사람 말로 적는다 — 거부 목록이 영어 코드로 보였다 */}
+                  {/* 갈래가 없는 줄(거부·통과)은 사유 코드를 사람 말로 적는다 — 거부 목록이 영어 코드로 보였다.
+                      보류 줄은 갈래 칩·운영센터와 같은 값(entry.bucket)을 쓴다 */}
                   <td className="truncate px-2 py-1.5">
-                    {entry.verdict?.cause
-                      ? <span className="rounded bg-warn/10 px-1.5 py-0.5 font-semibold text-warn">{causeLabel(entry.verdict.cause).slice(0, 14)}</span>
+                    {bucket
+                      ? <span className="rounded bg-warn/10 px-1.5 py-0.5 font-semibold text-warn" title={causeLabel(bucket)}>{causeLabel(bucket).slice(0, 14)}</span>
                       : <span className="text-fg-3">{candidate.reason ? REASON_LABELS[candidate.reason] ?? candidate.reason : '—'}</span>}
                   </td>
                   <td className="whitespace-nowrap px-2 py-1.5">
