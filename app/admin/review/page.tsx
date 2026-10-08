@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { redirect } from "next/navigation";
@@ -72,20 +73,24 @@ export default async function ReviewPage({ searchParams }: { searchParams: Promi
   const sort = ((REVIEW_SORTS as readonly string[]).includes(one(params.sort)) ? one(params.sort) : '') as ReviewSort;
 
   const settings = await getSettings();
-  const [takedowns, causes, decisions, seconds, translation, stateCounts, publicationChange] = await Promise.all([takedownSummary().catch(() => null), reviewQueueCauses(settings), reviewQueueAiDecisions(), secondReviewSummary(settings.secondReview.agreeAt), translationProgress(), candidateStateCounts(), publicationChange24h()]);
+  // 머리의 번역 진행·2차 표 전환은 느린 바깥 읽기다(번역 집계 캐시가 비면 2.2초, 게이트웨이 모델 목록 0.3~1.1초) —
+  // 먼저 띄워 두고 그 자리만 따로 흘려보낸다. 모델 상태도 갈래 셈을 기다릴 까닭이 없어 같이 띄운다
+  const translation = translationProgress().catch(() => null);
+  // 2차 표 전환의 선택지 — 닿지 않으면 Grok·Claude 만
+  const gatewayModels = listGatewayModels();
+  const modelsLoad = modelHealth(settings).catch(() => null);
+  const [takedowns, causes, decisions, seconds, stateCounts, publicationChange] = await Promise.all([takedownSummary().catch(() => null), reviewQueueCauses(settings), reviewQueueAiDecisions(), secondReviewSummary(settings.secondReview.agreeAt), candidateStateCounts(), publicationChange24h()]);
   const held = heldStages(decisions.ids, seconds.ids, [...(causes.ids.get('second_review_split') ?? []), ...(causes.ids.get('no_description') ?? [])]);
   const stageCount: Record<StageKey, number> = {
     judge: stateCounts.new, ai: held.ids.ai.length, second: held.ids.second.length, agreed: held.ids.agreed.length,
     human: held.ids.human.length, publish: stateCounts.approved, published: stateCounts.published, rejected: stateCounts.rejected,
   };
   // 머리 칩·할 일 카드의 숫자. 하나가 실패해도 큐는 그려야 하므로 각각 비운 채 넘긴다
-  const [models, human, humanAge, taglines, gatewayModels] = await Promise.all([
-    modelHealth(settings).catch(() => null),
+  const [models, human, humanAge, taglines] = await Promise.all([
+    modelsLoad,
     humanDecisions24h().catch(() => null),
     waitingAge(held.ids.human).catch(() => null),
     taglineProgress(causes.ids.get('no_description') ?? []).catch(() => null),
-    // 2차 표 전환의 선택지 — 닿지 않으면 Grok·Claude 만
-    listGatewayModels(),
   ]);
   const currentVoter = settings.secondReview.voters[0] ?? null;
 
@@ -172,9 +177,13 @@ export default async function ReviewPage({ searchParams }: { searchParams: Promi
           </span>
         </div>
         <div className="r">
-          <ReasonLanguageToggle done={translation.done} total={translation.total} />
-          <SecondVoterSwitch key={currentVoter ? `${currentVoter.provider}|${currentVoter.model}` : 'none'} current={currentVoter}
-            choices={voterChoices(gatewayModels, currentVoter, settings.firstReview?.model ?? null)} gatewayReachable={gatewayModels !== null} />
+          <Suspense fallback={<ReasonLanguageToggle done={null} total={null} />}>
+            <TranslationToggleSlot progress={translation} />
+          </Suspense>
+          <Suspense fallback={<VoterSwitchPending model={currentVoter?.model ?? null} />}>
+            <VoterSwitchSlot key={currentVoter ? `${currentVoter.provider}|${currentVoter.model}` : 'none'} current={currentVoter}
+              gatewayModels={gatewayModels} firstModel={settings.firstReview?.model ?? null} />
+          </Suspense>
           <ReviewModeForm key={settings.reviewMode} mode={settings.reviewMode} ready={process.env.CRAWL_REVIEW_READY === 'true'} />
         </div>
       </header>
@@ -268,6 +277,26 @@ export default async function ReviewPage({ searchParams }: { searchParams: Promi
       </div>
     </main>
   );
+}
+
+/** 번역 진행이 오면 수를 붙인다 — 못 세면 수 없이 단추만 */
+async function TranslationToggleSlot({ progress }: { progress: Promise<{ done: number; total: number } | null> }) {
+  const value = await progress;
+  return <ReasonLanguageToggle done={value?.done ?? null} total={value?.total ?? null} />;
+}
+
+/** 게이트웨이 모델 목록이 오면 2차 표 전환을 그린다 */
+async function VoterSwitchSlot({ current, gatewayModels, firstModel }: {
+  current: { provider: string; model: string } | null; gatewayModels: Promise<string[] | null>; firstModel: string | null;
+}) {
+  const models = await gatewayModels;
+  return <SecondVoterSwitch current={current} choices={voterChoices(models, current, firstModel)} gatewayReachable={models !== null} />;
+}
+
+/** 목록을 기다리는 동안 — 지금 누가 2차를 보는지는 설정만으로 안다 */
+function VoterSwitchPending({ model }: { model: string | null }) {
+  return <p aria-busy="true" className="rounded-lg border border-line bg-bg-card px-3 py-1.5 text-[13px] font-semibold text-fg-2">
+    2차 표 · <span className="font-mono text-accent">{model ?? '없음'}</span></p>;
 }
 
 /** 거르기 한 줄 — 이름 칸과 값 칸. rq-filters 격자의 두 칸에 그대로 선다(좁은 화면에서는 이름이 위로) */

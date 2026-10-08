@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 import { currentAdmin } from "@/lib/auth/admin";
@@ -90,6 +91,25 @@ function Counts({ counts, empty }: { counts: Record<string, number>; empty: stri
   );
 }
 
+/**
+ * 사유 번역 진행은 캐시가 비면 2초 넘게 센다(translations.ts) — 접힌 상세 칸 하나 때문에 화면 전체를 붙잡지 않게
+ * 따로 흘려보낸다. 못 세면 이 줄만 비운다.
+ */
+async function TranslationProgressSlot({ now }: { now: string }) {
+  const progress = await translationProgress().catch(warnTranslation);
+  return progress ? <TranslationProgress progress={progress} now={now} /> : <TranslationProgressPending failed />;
+}
+
+function warnTranslation(error: unknown) {
+  logger.warn("operations.translation_unavailable", { errorName: error instanceof Error ? error.name : "unknown" });
+  return null;
+}
+
+function TranslationProgressPending({ failed = false }: { failed?: boolean }) {
+  return <p aria-busy={!failed} className="rounded-[12px] border border-line bg-bg-card px-3 py-2 text-[13px] text-fg-3">
+    사유 번역 {failed ? "진행을 읽지 못했습니다" : "진행을 세는 중"}</p>;
+}
+
 export default async function StatusPage({ searchParams }: { searchParams: Promise<QueueSearch> }) {
   const admin = await currentAdmin();
   if (!admin) redirect("/admin/login");
@@ -97,8 +117,16 @@ export default async function StatusPage({ searchParams }: { searchParams: Promi
   const filters = parseQueueFilters(params);
   const initialTab = params.tab === 'ai' || params.tab === 'jobs' || params.tab === 'manual' ? params.tab : 'overview';
 
-  const [settings, frontier, candidates, rejections, jobStates, signalRows, rankingSeason, evidenceSummary] = await Promise.all([
-    getSettings(),
+  const settings = await getSettings();
+  /**
+   * 운영센터 격자가 쓰는 묶음 — 실패해도 화면은 나가야 한다. 24시간·7일 집계는 모듈 안에서 60초 담아 둔다.
+   */
+  const warn = (event: string) => (error: unknown) => {
+    logger.warn(event, { errorName: error instanceof Error ? error.name : "unknown" });
+    return null;
+  };
+  // 서로 기다릴 까닭이 없는 조회는 한꺼번에 띄운다 — 전에는 다섯 묶음을 차례로 기다려 묶음마다 가장 느린 것의 시간이 더해졌다
+  const baseLoads = Promise.all([
     frontierCounts(),
     candidateCounts(),
     rejectionBreakdown(),
@@ -107,13 +135,28 @@ export default async function StatusPage({ searchParams }: { searchParams: Promi
     getCurrentSeason(),
     getEvidenceStatusSummary(new Date()),
   ]);
-  const [down, downCount, topClicked, ops, manual] = await Promise.all([downProducts(), downProductCount(), topClickedSince(30), operationsData(), manualCandidates()]);
-  const [flow, oldestWait, stalled, decisions, causes, seconds, translation, secondFailures, throughput] = await Promise.all([pipelineFlow(), oldestReviewWaitDays(), stalledReviewCount(),
+  const productLoads = Promise.all([downProducts(), downProductCount(), topClickedSince(30), operationsData(), manualCandidates()]);
+  const queueLoads = Promise.all([pipelineFlow(), oldestReviewWaitDays(), stalledReviewCount(),
     reviewQueueAiDecisions(), filters.cause ? reviewQueueCauses(settings) : Promise.resolve(null),
-    secondReviewSummary(settings.secondReview.agreeAt), translationProgress(), recentSecondReviewFailures(), pipelineThroughput(settings).catch(error => {
+    secondReviewSummary(settings.secondReview.agreeAt), recentSecondReviewFailures(), pipelineThroughput(settings).catch(error => {
       logger.warn("operations.throughput_unavailable", { errorName: error instanceof Error ? error.name : "unknown" });
       return null;
     })]);
+  // 아래 둘은 항목마다 실패를 받아 내므로 기다리기 전에 띄워 두어도 처리되지 않은 거부가 남지 않는다
+  const dashboardLoads = Promise.all([
+    hourlyThroughput().catch(warn("operations.hourly_unavailable")),
+    modelHealth(settings).catch(warn("operations.models_unavailable")),
+    signalYields(settings).catch(warn("operations.signals_unavailable")),
+    todayPublications().catch(warn("operations.today_unavailable")),
+    attentionCounts().catch(warn("operations.attention_unavailable")),
+    roleOverview().catch(warn("operations.roles_unavailable")),
+    listGitHubCollectorAccounts().catch(warn("operations.accounts_unavailable")),
+    takedownSummary().catch(warn("operations.takedowns_unavailable")),
+    modelServerHealth().catch(warn("operations.model_servers_unavailable")),
+  ]);
+  const searchLoad = searchLogSummary(7).catch(() => null);
+  const [[frontier, candidates, rejections, jobStates, signalRows, rankingSeason, evidenceSummary], [down, downCount, topClicked, ops, manual],
+    [flow, oldestWait, stalled, decisions, causes, seconds, secondFailures, throughput]] = await Promise.all([baseLoads, productLoads, queueLoads]);
   // Filter the whole queue before pagination, not the fourteen rows already on screen.
   const queue = await listAdminReviewEntries(settings, {
     state: 'needs_review', limit: QUEUE_PAGE_SIZE, offset: (filters.page - 1) * QUEUE_PAGE_SIZE,
@@ -126,24 +169,7 @@ export default async function StatusPage({ searchParams }: { searchParams: Promi
   const lastQueuePage = Math.max(1, Math.ceil(queue.total / QUEUE_PAGE_SIZE));
   if (filters.page > lastQueuePage) redirect(queueFilterHref(filters, { page: lastQueuePage }));
 
-  /**
-   * 운영센터 격자가 쓰는 묶음 — 실패해도 화면은 나가야 한다. 24시간·7일 집계는 모듈 안에서 60초 담아 둔다.
-   */
-  const warn = (event: string) => (error: unknown) => {
-    logger.warn(event, { errorName: error instanceof Error ? error.name : "unknown" });
-    return null;
-  };
-  const [hourly, models, yields, today, attention, roles, accounts, takedowns, modelServers] = await Promise.all([
-    hourlyThroughput().catch(warn("operations.hourly_unavailable")),
-    modelHealth(settings).catch(warn("operations.models_unavailable")),
-    signalYields(settings).catch(warn("operations.signals_unavailable")),
-    todayPublications().catch(warn("operations.today_unavailable")),
-    attentionCounts().catch(warn("operations.attention_unavailable")),
-    roleOverview().catch(warn("operations.roles_unavailable")),
-    listGitHubCollectorAccounts().catch(warn("operations.accounts_unavailable")),
-    takedownSummary().catch(warn("operations.takedowns_unavailable")),
-    modelServerHealth().catch(warn("operations.model_servers_unavailable")),
-  ]);
+  const [hourly, models, yields, today, attention, roles, accounts, takedowns, modelServers] = await dashboardLoads;
 
   const states = new Map(jobStates.map((job) => [job.name, job]));
   const workerProgress = throughput ? buildWorkerProgress(throughput, jobStates, ops.observations, new Date(ops.fetchedAt)) : null;
@@ -455,7 +481,7 @@ export default async function StatusPage({ searchParams }: { searchParams: Promi
     signals.set(row.signal, entry);
   }
 
-  const search = await searchLogSummary(7).catch(() => null);
+  const search = await searchLoad;
 
   const probes: ConnectionProbe[] = (["claude", "codex"] as const).map((provider) => ({
     provider, result: agent?.accounts?.[provider]?.probe?.result ?? agent?.accounts?.[provider]?.result ?? null,
@@ -488,7 +514,7 @@ export default async function StatusPage({ searchParams }: { searchParams: Promi
 
   return (
     <main className="pb-10">
-      <OperationsCenter dashboard={dashboard} statusChips={statusChips} searchHealth={<><SearchHealthPanel health={health} observedAt={healthObservation?.observedAt} /><TranslationProgress progress={translation} /></>} key={initialTab} initialTab={initialTab} queue={<QueuePreview entries={queue.entries} total={queue.total} counts={decisions.counts} filters={filters} totalWaiting={needsReview} filterScanTruncated={causes?.truncated || Object.values(decisions.counts).reduce((sum, count) => sum + count, 0) < needsReview} />} data={ops} candidates={manual} reviewMode={settings.reviewMode} enabled={settings.enabled}
+      <OperationsCenter dashboard={dashboard} statusChips={statusChips} searchHealth={<><SearchHealthPanel health={health} observedAt={healthObservation?.observedAt} /><Suspense fallback={<TranslationProgressPending />}><TranslationProgressSlot now={ops.fetchedAt} /></Suspense></>} key={initialTab} initialTab={initialTab} queue={<QueuePreview entries={queue.entries} total={queue.total} counts={decisions.counts} filters={filters} totalWaiting={needsReview} filterScanTruncated={causes?.truncated || Object.values(decisions.counts).reduce((sum, count) => sum + count, 0) < needsReview} />} data={ops} candidates={manual} reviewMode={settings.reviewMode} enabled={settings.enabled}
         jobs={JOB_NAMES.map(name => {
           const job = states.get(name);
           return { name, status: jobStatusLabel(job), lastRunAt: job?.lastRunAt?.toISOString() ?? null,
