@@ -12,6 +12,7 @@ export const NAV_GROUPS: readonly { title: string; pages: readonly NavPage[] }[]
   {
     title: "일하기",
     pages: [
+      { href: "/admin/inbox", label: "오늘 할 일", hint: "지금 처리할 것", icon: "inbox" },
       { href: "/admin/status", label: "운영센터", hint: "서비스·작업 현황", icon: "pulse" },
       { href: "/admin/review", label: "심사 큐", hint: "후보 검토·승인", icon: "check" },
       // /admin/products 아래에 두지 않는다 — 아래에 두면 제품과 함께 선택된 것으로 보인다
