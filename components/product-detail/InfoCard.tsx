@@ -61,7 +61,11 @@ export function InfoCard({ product, repository, freshness, unclaimed }: {
           ? <Row label="운영 주체" sub="GitHub 저장소 소유자"><a href={owner.profileUrl} target="_blank" rel="noopener noreferrer" className={LINK}>@{owner.login} ↗</a></Row>
           : product.makerName && <Row label="메이커" sub={unclaimed ? "우리 추정" : "신고값"}>{product.makerName}</Row>}
         {site && <Row label="웹사이트"><a href={`/go/${product.slug}`} target="_blank" rel="nofollow noopener noreferrer" className={LINK}>{displayUrl} ↗</a></Row>}
-        {repoUrl && (
+        {/* 사라졌다고 확정된 저장소(repoGone)로는 링크를 걸지 않는다 */}
+        {repoUrl && product.repoGone && (
+          <Row label="저장소"><span className="font-normal text-fg-3">사라짐 · 삭제 또는 비공개</span></Row>
+        )}
+        {repoUrl && !product.repoGone && (
           <Row label="저장소" sub={facts ? [visibility, activity].filter(Boolean).join(" · ") : undefined}>
             <a href={repoUrl} target="_blank" rel="noopener noreferrer" className={LINK}>{facts?.repositoryKey ?? "열기"} ↗</a>
           </Row>

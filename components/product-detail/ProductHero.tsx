@@ -84,7 +84,10 @@ export function ProductHero({ product, unclaimed, risingRank, health, languages 
             {unclaimed && <><span aria-hidden>·</span><span title="우리가 찾아서 올린 제품입니다. 아직 주인이 확인해주지 않았습니다.">미클레임</span></>}
           </p>
           <div className="mt-2 flex flex-wrap items-center gap-2.5">
-            {installable ? (
+            {/* 저장소가 사라졌다고 확정되면(repoGone) 열리지 않는 저장소로 보내거나 설치하라고 하지 않는다 */}
+            {installable && product.repoGone ? (
+              <span className="inline-flex min-h-11 items-center rounded-full bg-bg-soft px-5 text-[15px] font-medium text-down">저장소가 사라졌습니다</span>
+            ) : installable ? (
               <>
                 <a href={`/go/${product.slug}`} target="_blank" rel="nofollow noopener noreferrer" className="inline-flex min-h-11 items-center rounded-full bg-accent-solid px-6 text-[15px] font-medium text-white hover:opacity-90">GitHub 저장소 열기</a>
                 <InstallPrompt repoUrl={product.repoUrl ?? product.url} />
@@ -92,13 +95,20 @@ export function ProductHero({ product, unclaimed, risingRank, health, languages 
             ) : (
               <>
                 <a href={`/go/${product.slug}`} target="_blank" rel="nofollow noopener noreferrer" className="inline-flex min-h-11 items-center rounded-full bg-accent-solid px-6 text-[15px] font-medium text-white hover:opacity-90">제품 방문하기</a>
-                {product.repoUrl && <a href={product.repoUrl} target="_blank" rel="noopener noreferrer" className="inline-flex min-h-11 items-center rounded-full bg-bg-soft px-5 text-[15px] font-medium text-fg">GitHub 저장소</a>}
+                {product.repoUrl && !product.repoGone && <a href={product.repoUrl} target="_blank" rel="noopener noreferrer" className="inline-flex min-h-11 items-center rounded-full bg-bg-soft px-5 text-[15px] font-medium text-fg">GitHub 저장소</a>}
               </>
             )}
             <ShareButton title={product.name} path={`/p/${product.slug}`} />
             <SaveButton slug={product.slug} name={product.name} />
             {!installable && <a href={`/go/${product.slug}`} target="_blank" rel="nofollow noopener noreferrer" className="ml-1 max-w-full truncate text-[14px] text-fg-2 hover:underline">{displayUrl} ↗</a>}
           </div>
+          {product.repoGone && (
+            <p className="text-[13px] text-fg-3">
+              {installable
+                ? "GitHub 저장소가 사라졌습니다(삭제 또는 비공개). 지금은 설치할 수 없어 목록에서 가렸습니다."
+                : "GitHub 저장소가 사라졌습니다(삭제 또는 비공개)."}
+            </p>
+          )}
         </div>
       </div>
     </section>

@@ -210,6 +210,26 @@ describe("evidence product detail components", () => {
     expect(html).not.toContain("<figure");
   });
 
+  it("저장소가 사라졌다고 확정되면 저장소로 보내거나 설치하라고 하지 않고 그렇다고 알린다", () => {
+    // 웹사이트: 제품 방문은 그대로, GitHub 저장소 단추·★ 는 빼고 한 줄로 알린다(★ 는 detail-view 가 이미 비운다)
+    const website = renderHero({ product: { ...product, repoGone: true, stars: null } });
+    expect(website).toContain("제품 방문하기");
+    expect(website).not.toContain(`href="${product.repoUrl}"`);
+    expect(website).not.toContain("★");
+    expect(textOf(website)).toContain("GitHub 저장소가 사라졌습니다(삭제 또는 비공개).");
+    // 설치형: 저장소 열기·설치 프롬프트 대신
+    const installable = textOf(renderHero({ product: { ...product, accessMode: "installable", repoGone: true, stars: null } }));
+    expect(installable).toContain("저장소가 사라졌습니다");
+    expect(installable).not.toContain("GitHub 저장소 열기");
+    expect(installable).not.toContain("설치 프롬프트 복사");
+    // 확정 전에는 그대로
+    expect(textOf(renderHero({ product: { ...product, accessMode: "installable" } }))).toContain("설치 프롬프트 복사");
+    // 정보 카드의 저장소 줄도 링크 없이
+    const info = renderToStaticMarkup(<InfoCard product={{ ...product, repoGone: true }} repository={observedRepository} freshness={freshness} unclaimed={false} />);
+    expect(info).not.toContain('href="https://github.com/example/simple-hwp"');
+    expect(textOf(info)).toContain("사라짐 · 삭제 또는 비공개");
+  });
+
   it("shows only an internal icon copy, never an external image URL", () => {
     // 우리 사본을 화면 크기로 줄인 WebP 로(og-variants.ts)
     expect(renderHero({ product: { ...product, ogImage: "/api/og-cache/simple-hwp" } })).toContain('src="/api/og-cache/simple-hwp.webp?size=192"');

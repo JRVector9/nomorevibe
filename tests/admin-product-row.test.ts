@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
@@ -56,5 +57,29 @@ describe("admin product row — 클레임 초대", () => {
   it("주인이 있는 제품에는 초대 UI가 없다", () => {
     const html = render({ status: "verified", source: "skill", unclaimed: false });
     expect(html).not.toContain("초대");
+  });
+});
+
+describe("admin product row — 저장소 사라짐", () => {
+  it("거르기에서 넘겨준 이용 방식·시작 줄을 이름 아래에 보여준다", () => {
+    const html = render({ repoGone: "설치형 · 목록에서 가려짐 · 2026. 10. 5.부터 404" });
+    expect(html).toContain("설치형 · 목록에서 가려짐 · 2026. 10. 5.부터 404");
+    expect(render({})).not.toContain("목록에서 가려짐");
+  });
+});
+
+describe("운영센터 → 제품 거르기 링크", () => {
+  it("운영센터가 여는 거르기는 모두 제품 화면에 있는 이름이다", () => {
+    const products = readFileSync("app/admin/products/page.tsx", "utf8");
+    const block = products.slice(products.indexOf("const FILTERS = {"), products.indexOf("} as const satisfies"));
+    const filters = new Set([...block.matchAll(/^\s+"?([^":\s/*][^":]*?)"?: \[/gm)].map((match) => match[1]));
+    expect(filters).toContain("소개 확인 필요");
+    expect(filters).toContain("저장소 사라짐");
+    const status = readFileSync("app/admin/status/page.tsx", "utf8");
+    // ?filter=intro 처럼 없는 이름이면 제품 화면이 조용히 '전체'로 떨어진다
+    const linked = [...status.matchAll(/\/admin\/products\?filter=\$\{encodeURIComponent\("([^"]+)"\)\}|\/admin\/products\?filter=([^"`&$]+)/g)]
+      .map((match) => match[1] ?? decodeURIComponent(match[2]));
+    expect(linked.length).toBeGreaterThanOrEqual(2);
+    for (const name of linked) expect(filters).toContain(name);
   });
 });

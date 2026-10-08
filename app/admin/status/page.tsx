@@ -420,7 +420,14 @@ export default async function StatusPage({ searchParams }: { searchParams: Promi
     actions.push({
       key: "intro", tone: "hold", count: attention.introNeedsEditor, title: "소개 확인이 필요한 제품",
       detail: <>소개 검수가 근거로는 알 수 없다고 한 것{isPausedJob(states.get("product-intro-check")) ? " — 검수 잡은 멈춰 있습니다" : ""}.</>,
-      action: { label: "제품 관리", href: "/admin/products?filter=intro" },
+      action: { label: "제품 관리", href: `/admin/products?filter=${encodeURIComponent("소개 확인 필요")}` },
+    });
+  }
+  if (attention && attention.repoGone.installable + attention.repoGone.website > 0) {
+    actions.push({
+      key: "repo-gone", tone: "hold", count: attention.repoGone.installable + attention.repoGone.website, title: "저장소가 사라진 공개 제품",
+      detail: <>GitHub 이 하루 넘게 404 를 준 저장소 — 설치형 {attention.repoGone.installable.toLocaleString("ko-KR")}건은 목록에서 가려짐 · 웹 {attention.repoGone.website.toLocaleString("ko-KR")}건은 GitHub 표시만 뺌. 내릴지는 사람이 정합니다.</>,
+      action: { label: "제품 관리", href: `/admin/products?filter=${encodeURIComponent("저장소 사라짐")}` },
     });
   }
   const quotaAccount = accounts?.find((row) => row.enabled && row.coreQuota);

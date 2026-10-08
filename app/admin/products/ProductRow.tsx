@@ -17,6 +17,8 @@ export type AdminProduct = {
   /** 이슈 본문에 실을 공개 주소가 없다 — 레포가 있어도 초대를 만들 수 없다 */
   publicOriginMissing: boolean;
   invitedAt: string | null;
+  /** '저장소 사라짐' 거르기에서만 — 이용 방식과 공개 화면에 생긴 일, 404 가 이어진 시작 */
+  repoGone?: string | null;
 };
 
 const STATUS: Record<string, { label: string; className: string }> = {
@@ -50,6 +52,7 @@ export function ProductRow({ product, dropUp = false }: { product: AdminProduct;
             {product.url.replace(/^https?:\/\//, "")}
           </a>
         </div>
+        {product.repoGone && <p className="text-[13px] text-fg-3">{product.repoGone}</p>}
         {error && <p className="text-[13px] text-down">{error}</p>}
       </td>
       <td className="whitespace-nowrap px-2 py-1.5"><span className={`rounded px-1.5 py-0.5 font-semibold ${status.className}`}>{status.label}</span></td>
