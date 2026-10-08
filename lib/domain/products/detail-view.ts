@@ -41,7 +41,7 @@ import type { EvidenceSettings } from "@/lib/domain/evidence/settings";
 import { parseRankingPolicy } from "@/lib/domain/ranking/policy";
 import { healthMetrics, DOWN_THRESHOLD } from "./health";
 import { getRelatedRising, isUnclaimed, type ProductListItem } from "./view";
-import { getRisingRank } from "./repository";
+import { getRisingRank, repoGoneField } from "./repository";
 import { readmeExcerpt } from "./readme-excerpt";
 import type { Category } from "./schema";
 import { METRICS_WINDOW_DAYS, visitMetrics, type VisitMetrics } from "./clicks";
@@ -166,7 +166,10 @@ export type PublicProduct = StarObservation & Pick<Product,
   | "verifiedAt"
   | "createdAt"
   | "updatedAt"
->;
+> & {
+  /** GitHub 저장소가 사라졌다고 확정됐다(repository.ts repoGone) — 스타는 이미 비워 두고, 화면은 저장소 링크·설치 안내 대신 알린다 */
+  repoGone?: boolean;
+};
 
 export type ProductDetailView = {
   product: PublicProduct;
@@ -226,8 +229,12 @@ async function findPublicProduct(slug: string): Promise<PublicProduct | null> {
       createdAt: true,
       updatedAt: true,
     },
+    extras: repoGoneField,
   });
-  return product ? {...product, name: displayProjectName(product.name, product.repoUrl)} : null;
+  if (!product) return null;
+  // 사라진 저장소의 스타는 마지막으로 본 옛 값이다 — 상세에 ★ 를 그리지 않는다(목록 카드의 toListItem 과 같다)
+  const stars = product.repoGone ? { stars: null, starsAt: null, starsPrevious: null, starsPreviousAt: null } : {};
+  return {...product, ...stars, name: displayProjectName(product.name, product.repoUrl)};
 }
 
 export const getProductIdentity = cache(async (slugInput: string): Promise<PublicProduct | null> => {

@@ -17,7 +17,21 @@ const PUBLIC=['seeded','verified'] as const;
 const unseen=sql`(${products.starsPreviousAt} is null and ${products.starsCheckedAt} is null)`;
 
 /**
+ * GitHub 이 저장소 자체에 대해 확정해 준 답만 고른다 — 시간 초과·5xx·깨진 응답은 null 이라 지난 답을 그대로 둔다.
+ * 한도·인증 문제인 403 은 githubRequest 가 rate_limited·auth_unavailable 로 따로 돌려준다. 여기 남는 403 은
+ * 저장소 접근이 막힌 것("Repository access blocked")이라 451 과 같이 'blocked' 로 적고 다음 제품으로 간다 —
+ * 전에는 한 시간 대기로 처리해 그런 저장소 하나가 잡 전체를 세웠다. 스타가 0이어도 200 이면 'ok' 다.
+ */
+function repositoryAnswer(result:GitHubHttpResult<Record<string,unknown>>):'ok'|'not_found'|'blocked'|null{
+ if(result.ok)return result.status===200?'ok':null;
+ if(result.error.kind==='not_found')return 'not_found';
+ return result.error.kind==='http' && [403,451].includes(result.error.status)?'blocked':null;
+}
+
+/**
  * 성공 값은 하루가 지나야 다시 갱신한다. 실패는 한 시간 뒤로 미루고 뒤의 제품을 계속 본다.
+ * 다만 GitHub 이 없다(404)·막혔다(451·403)고 확정해 준 저장소는 하루에 한 번만 다시 본다 — 한 시간마다 같은 답을 받느라
+ * 예산을 쓰지 않는다. 하루 간격이라 두 번째 404 가 곧 사라졌다는 판정(repository.ts repoGone)이 된다.
  * 한 번에 40개 — 처음 보는 제품(unseen)을 먼저 채우고 남는 자리에 ID 차례 순회를 잇는다. 차례 순회는 한 바퀴가
  * 사흘 가까이 걸려 새 제품이 두 번째 관측을 받기까지 1~3.6일을 기다렸다(2026-10-08).
  */
@@ -28,7 +42,7 @@ export async function refreshProductStars(ctx:JobContext<StarsCursor>,dependenci
  const due=and(
   inArray(products.status,[...PUBLIC]),sql`${products.repoUrl} is not null`,
   sql`(${products.starsAt} is null or ${products.starsAt}<now()-interval '24 hours')`,
-  sql`(${products.starsCheckedAt} is null or ${products.starsCheckedAt}<now()-interval '1 hour')`,
+  sql`(${products.starsCheckedAt} is null or ${products.starsCheckedAt}<now()-case when ${products.repoStatus} in ('not_found','blocked') then interval '24 hours' else interval '1 hour' end)`,
  );
  const columns={id:products.id,repoUrl:products.repoUrl,updatedAt:sql<string>`${products.updatedAt}::text`};
  const first=await db.select(columns).from(products).where(and(due,unseen)).orderBy(asc(products.id)).limit(40);
@@ -37,7 +51,7 @@ export async function refreshProductStars(ctx:JobContext<StarsCursor>,dependenci
  // 차례 순회의 자리(afterId)는 순회에서 온 행으로만 민다
  const rows=[...first.map(row=>({...row,walk:false})),...rest.map(row=>({...row,walk:true}))];
  const request=dependencies.request??githubRequest<Record<string,unknown>>;
- let updated=0,failed=0;
+ let updated=0,failed=0,missing=0;
  for(let offset=0;offset<rows.length;offset+=3){
   if(!ctx.hasBudget()||ctx.signal?.aborted||Date.now()>deadline-1000)return {done:false,cursor:{afterId}};
   const batch=rows.slice(offset,offset+3);
@@ -48,16 +62,19 @@ export async function refreshProductStars(ctx:JobContext<StarsCursor>,dependenci
    try{result=repo?await request(`/repos/${repo}`,{},{timeoutMs:Math.min(8000,deadline-Date.now())}):{ok:false,error:{kind:'invalid_response'}};}
    catch{ return {retryAt:new Date(Date.now()+60*60_000)}; }
    if(!result.ok && (result.error.kind==='rate_limited'||result.error.kind==='auth_unavailable'))return {retryAt:result.error.resetAt??new Date(Date.now()+15*60_000)};
-   if(!result.ok && result.error.kind==='http' && [401,403].includes(result.error.status))return {retryAt:new Date(Date.now()+60*60_000)};
+   if(!result.ok && result.error.kind==='http' && result.error.status===401)return {retryAt:new Date(Date.now()+60*60_000)};
    const stats=result.ok&&result.status===200?parseRepositoryStats(result.value):null;
+   const answer=repositoryAnswer(result);
    // 레포나 공개 상태가 요청 중 바뀌면 이전 응답을 적용하지 않는다. 임대도 같은 트랜잭션에서 확인한다.
    const changed=await db.transaction(async tx=>{
     if(ctx.lease)await assertJobLease(tx,ctx.lease);
-    return tx.update(products).set({starsCheckedAt:sql`now()`,...(stats?{...stats,starsPrevious:products.stars,starsPreviousAt:products.starsAt,starsAt:sql`now()`}:{})})
+    return tx.update(products).set({starsCheckedAt:sql`now()`,...(stats?{...stats,starsPrevious:products.stars,starsPreviousAt:products.starsAt,starsAt:sql`now()`}:{}),
+     ...(answer?{repoStatus:answer,repoCheckedAt:sql`now()`,repoMissingSince:answer==='not_found'?sql`coalesce(${products.repoMissingSince},now())`:null}:{})})
      .where(and(eq(products.id,row.id),eq(products.repoUrl,row.repoUrl!),sql`${products.updatedAt}=${row.updatedAt}::timestamp`,inArray(products.status,[...PUBLIC])))
      .returning({id:products.id});
    });
    if(stats)updated+=changed.length;else failed++;
+   if(answer==='not_found')missing+=changed.length;
    return {};
   }));
   const retries=outcomes.flatMap(o=>o.retryAt?[o.retryAt]:[]);
@@ -67,6 +84,6 @@ export async function refreshProductStars(ctx:JobContext<StarsCursor>,dependenci
   }
   afterId=batch.findLast(row=>row.walk)?.id??afterId;await ctx.save({afterId});
  }
- ctx.log('product_stars.refreshed',{updated,failed,examined:rows.length});
+ ctx.log('product_stars.refreshed',{updated,failed,missing,examined:rows.length});
  return rows.length<40?{done:true,cursor:null}:{done:false,cursor:{afterId}};
 }

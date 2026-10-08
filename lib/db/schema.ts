@@ -89,6 +89,14 @@ export const products = pgTable("products", {
   starsPreviousAt: timestamp("stars_previous_at"),
   ownerType: varchar("owner_type", { length: 20 }).$type<"User" | "Organization">(),
   starsCheckedAt: timestamp("stars_checked_at"),
+  /**
+   * GitHub 이 저장소에 대해 마지막으로 준 확정적인 답(product-stars-refresh) — 'ok' 200 · 'not_found' 404 ·
+   * 'blocked' 451·한도가 아닌 403. 시간 초과·5xx 는 적지 않는다. 스타가 0인 것은 200 이라 'ok' 다.
+   * repoMissingSince 는 지금 이어지는 404 의 시작이다. 사라졌다는 판정은 repository.ts 의 repoGone 하나뿐이다.
+   */
+  repoStatus: varchar("repo_status", { length: 16 }).$type<"ok" | "not_found" | "blocked">(),
+  repoCheckedAt: timestamp("repo_checked_at"),
+  repoMissingSince: timestamp("repo_missing_since"),
   status: varchar("status", { length: 20 })
     .$type<ProductStatus>()
     .notNull()

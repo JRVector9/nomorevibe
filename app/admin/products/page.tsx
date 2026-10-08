@@ -25,6 +25,11 @@ const FILTERS = {
   차단됨: ["banned"],
   /** 소개 검수가 근거로는 무엇인지 알 수 없다고 한 것 — 페이지를 열어 보고 내릴지 정한다 */
   "소개 확인 필요": ["seeded", "verified"],
+  /**
+   * GitHub 저장소가 사라졌다고 확정된 공개 제품(repository.ts repoGone) — 설치형은 이미 목록에서 가려졌고
+   * 웹사이트는 목록에 두고 GitHub 표시만 뺐다. 사람이 내릴지 정한다(나중에 AI 판정이 붙을 자리)
+   */
+  "저장소 사라짐": ["seeded", "verified"],
 } as const satisfies Record<string, ProductStatus[]>;
 
 type Props = { searchParams: Promise<{ filter?: string; page?: string }> };
@@ -40,9 +45,10 @@ export default async function AdminProductsPage({ searchParams }: Props) {
   const page = Number.isSafeInteger(parsedPage) && parsedPage > 0 ? parsedPage : 1;
   const statuses = [...FILTERS[active]];
   const introNeedsEditor = active === "소개 확인 필요";
+  const repoGone = active === "저장소 사라짐";
   const [products, total] = await Promise.all([
-    listProducts({ statuses, introNeedsEditor, limit: PAGE_SIZE, offset: (page - 1) * PAGE_SIZE }),
-    countProducts({ statuses, introNeedsEditor }),
+    listProducts({ statuses, introNeedsEditor, repoGone, limit: PAGE_SIZE, offset: (page - 1) * PAGE_SIZE }),
+    countProducts({ statuses, introNeedsEditor, repoGone }),
   ]);
   const pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
   const href = (next: number) => {
@@ -117,6 +123,10 @@ export default async function AdminProductsPage({ searchParams }: Props) {
                 publicOriginMissing,
                 invitedAt:
                   product.claimInvitedAt?.toLocaleDateString("ko-KR", { timeZone: "Asia/Seoul" }) ?? null,
+                repoGone: repoGone ? [
+                  product.accessMode === "website" ? "웹 · GitHub 표시만 뺌" : "설치형 · 목록에서 가려짐",
+                  product.repoMissingSince && `${product.repoMissingSince.toLocaleDateString("ko-KR", { timeZone: "Asia/Seoul" })}부터 404`,
+                ].filter(Boolean).join(" · ") : null,
               }}
             />
           ))}

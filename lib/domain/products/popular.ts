@@ -3,14 +3,15 @@ import type { StarObservation } from './star-change';
 import {and,asc,desc,eq,inArray,sql} from 'drizzle-orm';
 import {db} from '@/lib/db';
 import {products} from '@/lib/db/schema';
-import {notDown} from './repository';
+import {notDown,repoGone} from './repository';
 import {STAR_TIERS,type StarTier} from './stars';
 
 export type PopularProduct=StarObservation&{slug:string;name:string;tagline:string;category:string;repoUrl:string|null;ogImage:string|null;stars:number;ownerType:'User'|'Organization'|null;starsAt:string|null};
 const fields={slug:products.slug,name:products.name,tagline:products.tagline,category:products.category,repoUrl:products.repoUrl,ogImage:products.ogImage,
  starsPrevious:products.starsPrevious,starsPreviousAt:sql<string|null>`${products.starsPreviousAt}::text`,
  stars:sql<number>`${products.stars}`,ownerType:products.ownerType,starsAt:sql<string|null>`${products.starsAt}::text`};
-function publicStars(personal:boolean){return and(inArray(products.status,['seeded','verified']),notDown,
+// 저장소가 사라진 제품의 스타는 마지막으로 본 옛 값이라 구간에 넣지 않는다(repository.ts repoGone)
+function publicStars(personal:boolean){return and(inArray(products.status,['seeded','verified']),notDown,sql`not ${repoGone}`,
  sql`${products.stars}>=2000 and ${products.stars}<100000`,personal?eq(products.ownerType,'User'):undefined);}
 async function counts(personal:boolean){
  const [row]=await db.execute<{rising:number;noticed:number;popular:number;large:number}>(sql`select

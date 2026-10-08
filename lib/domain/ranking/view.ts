@@ -22,7 +22,7 @@ import {
   type RankingSeason,
 } from "@/lib/db/schema";
 import { topClickedSince } from "@/lib/domain/products/clicks";
-import { notDown } from "@/lib/domain/products/repository";
+import { notDown, repoGoneField } from "@/lib/domain/products/repository";
 import { observedToolPredicate } from "@/lib/domain/products/observed-tool";
 import type { Category } from "@/lib/domain/products/schema";
 import {
@@ -150,6 +150,7 @@ export async function getSeasonRanking(options: {
   const rows = await db
     .select({
       ...getTableColumns(products),
+      ...repoGoneField,
       rank: rankingEntries.rank,
       validClicks: rankingEntries.validClicks,
       uniqueVisitors: rankingEntries.uniqueVisitors,
@@ -283,7 +284,7 @@ export async function getAllTimeRanking(options: {
   if (totals.length === 0) return [];
 
   const rows = await db
-    .select()
+    .select({ ...getTableColumns(products), ...repoGoneField })
     .from(products)
     .where(and(
       eq(products.status, "verified"),

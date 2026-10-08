@@ -51,8 +51,8 @@ it('잡이 처음 보는 제품을 차례 순회보다 먼저 보고, 실패하�
  expect(paths).toHaveLength(40);expect(paths[0]).toBe(`/repos/test/${unseen.slug}`);
  expect(result).toEqual({done:false,cursor:{afterId:walked[38].id}});
  expect((await db.select().from(products).where(eq(products.id,walked[39].id)))[0].stars).toBe(100);
- // 404 는 확인 시각만 남긴다 — 다음 바퀴부터는 앞을 차지하지 않고 ID 차례로 돈다
- await db.execute(sql`update products set stars_checked_at=now()-interval '2 hours' where id=${unseen.id}`);
+ // 404 는 확인 시각과 저장소 답만 남긴다 — 다음 바퀴부터는 앞을 차지하지 않고 ID 차례로 돈다(없다고 확정한 저장소는 하루 뒤에)
+ await db.execute(sql`update products set stars_checked_at=now()-interval '25 hours' where id=${unseen.id}`);
  paths.length=0;
  expect(await refreshProductStars({...context(),cursor:result.cursor??null},{request})).toEqual({done:true,cursor:null});
  expect(paths).toEqual([`/repos/test/${walked[39].slug}`,`/repos/test/${unseen.slug}`]);

@@ -75,7 +75,10 @@ export function toListItem(p: ProductListRow): ProductListItem {
     ogImage: p.ogImage,
     makerName: p.makerName,
     repoUrl: p.repoUrl,
-    stars: p.stars, starsAt: p.starsAt, starsPrevious: p.starsPrevious, starsPreviousAt: p.starsPreviousAt,
+    // 저장소가 사라졌다고 확정된 제품의 스타는 마지막으로 본 옛 값이다 — 카드에 ★·증감을 그리지 않는다(repository.ts repoGone)
+    ...(p.repoGone
+      ? { stars: null, starsAt: null, starsPrevious: null, starsPreviousAt: null }
+      : { stars: p.stars, starsAt: p.starsAt, starsPrevious: p.starsPrevious, starsPreviousAt: p.starsPreviousAt }),
     listedAt: p.verifiedAt ?? p.createdAt,
     status: p.status,
     unclaimed: isUnclaimed(p),

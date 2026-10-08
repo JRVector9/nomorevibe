@@ -7,7 +7,7 @@ import { REVIEW_PROMPT_VERSION, REVIEW_RULES_VERSION } from "@/lib/crawl/agent-r
 import { sameReviewModel } from "@/lib/crawl/review-model-identity";
 import { SHOW_HN_SIGNAL, type CrawlSettings } from "@/lib/crawl/settings-schema";
 import { RECHECK_AFTER_MINUTES } from "@/lib/domain/products/health-freshness";
-import { countProducts } from "@/lib/domain/products/repository";
+import { countProducts, repoGone } from "@/lib/domain/products/repository";
 import { PROFILE_MODEL } from "@/lib/domain/products/search-profile";
 
 /**
@@ -61,6 +61,11 @@ export type AttentionCounts = {
   auditCampaign: { id: number; promptVersion: string; current: boolean; unanswered: number } | null;
   /** 내린 제품의 CDN 캐시 지우기가 10분 넘게 확인되지 않은 것 — 지우기 토큰이 없으면 잡은 "끝남"으로만 남는다 */
   cdnPurgesPending: number;
+  /**
+   * GitHub 저장소가 사라졌다고 확정된 공개 제품(repository.ts repoGone) — /admin/products '저장소 사라짐'과 같은 수.
+   * 설치형은 목록에서 가려졌고 웹사이트는 GitHub 표시만 뺐다
+   */
+  repoGone: { installable: number; website: number };
 };
 
 const at = (now: Date) => sql`${now.toISOString()}::timestamp`;
@@ -306,7 +311,7 @@ export async function todayPublications(now = new Date(), limit = 6): Promise<To
 
 export async function attentionCounts(now = new Date()): Promise<AttentionCounts> {
   const [[row], introNeedsEditor, [campaign]] = await Promise.all([
-    readOnly<{ audit: number; health: number; websites: number; purges: number }>(sql`
+    readOnly<{ audit: number; health: number; websites: number; purges: number; gone_installable: number; gone_website: number }>(sql`
       SELECT
         (SELECT count(*)::int FROM ${productAuditItems} JOIN ${products} ON ${products.id} = ${productAuditItems.productId}
           WHERE ${productAuditItems.campaignId} = (SELECT max(${productAuditCampaigns.id}) FROM ${productAuditCampaigns})
@@ -319,7 +324,11 @@ export async function attentionCounts(now = new Date()): Promise<AttentionCounts
         (SELECT count(*)::int FROM ${products}
           WHERE ${products.status} IN ('seeded', 'verified') AND ${products.accessMode} = 'website') AS websites,
         (SELECT count(*)::int FROM ${cdnPurges} WHERE ${cdnPurges.confirmedAt} IS NULL
-          AND ${cdnPurges.createdAt} < ${at(now)} - interval '10 minutes') AS purges
+          AND ${cdnPurges.createdAt} < ${at(now)} - interval '10 minutes') AS purges,
+        (SELECT count(*)::int FROM ${products}
+          WHERE ${products.status} IN ('seeded', 'verified') AND ${products.accessMode} <> 'website' AND ${repoGone}) AS gone_installable,
+        (SELECT count(*)::int FROM ${products}
+          WHERE ${products.status} IN ('seeded', 'verified') AND ${products.accessMode} = 'website' AND ${repoGone}) AS gone_website
     `),
     countProducts({ statuses: ["seeded", "verified"], introNeedsEditor: true }),
     readOnly<{ id: number; prompt_version: string; rules_version: string; unanswered: number }>(sql`
@@ -332,6 +341,7 @@ export async function attentionCounts(now = new Date()): Promise<AttentionCounts
   const healthTargetPerHour = Math.ceil(Number(row?.websites ?? 0) / (RECHECK_AFTER_MINUTES / 60));
   return { auditRejectsOpen: Number(row?.audit ?? 0), healthOverdue: Number(row?.health ?? 0), healthTargetPerHour, introNeedsEditor,
     cdnPurgesPending: Number(row?.purges ?? 0),
+    repoGone: { installable: Number(row?.gone_installable ?? 0), website: Number(row?.gone_website ?? 0) },
     auditCampaign: campaign ? { id: Number(campaign.id), promptVersion: campaign.prompt_version,
       current: campaign.prompt_version === REVIEW_PROMPT_VERSION && campaign.rules_version === REVIEW_RULES_VERSION,
       unanswered: Number(campaign.unanswered) } : null };

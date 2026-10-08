@@ -87,6 +87,8 @@ export type ListOptions = {
   slugs?: readonly string[];
   /** 이 제품들은 빼고 — 관련도순 검색의 앞쪽에 이미 나온 것 */
   excludeSlugs?: readonly string[];
+  /** GitHub 저장소가 사라졌다고 확정된 제품만(repoGone) — 어드민이 본다 */
+  repoGone?: boolean;
 };
 
 /**
@@ -135,6 +137,21 @@ export const RISING_MAX_STARS = 2000;
  * 운영 값은 어드민 크롤 설정(rising.freshDays, 1~30일)에서 정한다 — 이것은 그 기본값이다(settings-schema.ts 와 같다).
  */
 export const RISING_FRESH_DAYS = 7;
+/**
+ * GitHub 저장소가 사라졌다고 확정한 제품 — 하루 넘게 떨어져 받은 404 가 두 번 이상(첫 404 = repo_missing_since).
+ *
+ * product-stars-refresh 가 이미 부르는 저장소 조회의 답으로만 정한다(0060). 스타가 0인 저장소는 200 이라 여기 들지 않고,
+ * 시간 초과·5xx 는 답을 바꾸지 않는다. 한 번의 404 는 비공개로 잠깐 돌린 것일 수 있어(2026-10-08 표본 32건 중 2건)
+ * 하루를 기다린다. 행은 그대로 두고 조건으로만 쓰므로 다음 확인에서 200 이 오면 저절로 풀린다.
+ * 이 판정을 쓰는 곳 — 설치형은 공개 목록에서 가린다(notDown), 웹사이트는 목록에 두고 GitHub 신호만 뺀다
+ * (급상승·스타 구간·스타순·카드와 상세의 ★·저장소 링크). 어드민의 '저장소 사라짐'도 이것이다.
+ * null 이 섞여도 참·거짓만 내도록 coalesce 한다 — notDown 이 null 이 되면 멀쩡한 제품이 목록에서 빠진다.
+ */
+export const repoGone = sql`coalesce(${products.repoStatus} = 'not_found'
+  and ${products.repoCheckedAt} >= ${products.repoMissingSince} + interval '24 hours', false)`;
+/** 목록·상세 행에 판정을 같이 실어 온다 — 화면이 같은 식을 JS 로 다시 쓰지 않게 */
+export const repoGoneField = { repoGone: sql<boolean>`${repoGone}`.as("repo_gone") };
+
 
 /**
  * 설정 한 행을 공개 읽기마다 읽지 않게 웹 프로세스 안에 60초 들고 있는다. 공개 목록은 그 위에 30초를 더 담으므로
@@ -149,7 +166,7 @@ function risingStars(freshDays: number) {
   // 설정은 스키마가 정수 1~30으로 막지만, SQL 에는 다시 정수로 바꿔 매개변수로만 넘긴다
   const days = Number.isSafeInteger(freshDays) && freshDays > 0 ? freshDays : RISING_FRESH_DAYS;
   return sql`${starGain} > 0 and ${products.stars} < ${RISING_MAX_STARS}
-  and ${products.starsAt} > now() - make_interval(days => ${days}::int)`;
+  and ${products.starsAt} > now() - make_interval(days => ${days}::int) and not ${repoGone}`;
 }
 
 const SORTS = {
@@ -175,8 +192,8 @@ const SORTS = {
    * 하루 평균 스타가 많이 는 순. 같으면 스타 많은 순, 그다음 최신.
    */
   rising: [sql`${starGainPerDay} desc nulls last`, sql`${products.stars} desc nulls last`, sql`${listedAt} desc`],
-  /** 같은 사정의 '관심 많은 순' — 스타 많은 순 */
-  stars: [sql`${products.stars} desc nulls last`, sql`${listedAt} desc`],
+  /** 같은 사정의 '관심 많은 순' — 스타 많은 순. 저장소가 사라진 제품의 옛 스타로는 줄 세우지 않는다 */
+  stars: [sql`(case when ${repoGone} then null else ${products.stars} end) desc nulls last`, sql`${listedAt} desc`],
 } as const;
 
 /** 정렬 파라미터 검증용 (쿼리스트링 → ProductSort) */
@@ -190,11 +207,14 @@ const SORTS = {
  *
  * 공개 랭킹(ranking/view.ts)도 이것을 그대로 쓴다. 조건을 두 벌 두면 한쪽만 고쳐져 목록에서
  * 빠진 제품이 순위에는 남는다. products 테이블을 별칭 없이 조인한 쿼리에서만 쓸 수 있다.
+ *
+ * 설치형은 생존 확인을 하지 않는다 — 저장소가 곧 제품이라 저장소가 사라졌다고 확정되면(repoGone) 닿지 않는 것과 같다.
+ * 같은 이유로 여기서 함께 가린다. 웹사이트는 사이트가 살아 있을 수 있어 목록에 두고 GitHub 신호만 뺀다.
  */
-export const notDown = sql`not exists (
+export const notDown = sql`(not exists (
   select 1 from product_health h
   where h.slug = ${products.slug} and h.failures >= ${DOWN_THRESHOLD}
-)`;
+) and not (${products.accessMode} <> 'website' and ${repoGone}))`;
 
 /** 소개 검수가 근거로는 무엇인지 알 수 없다고 한 지금 소개(product_intro_checks) — 소개가 바뀌면 빠진다 */
 const introNeedsEditor = sql`exists (
@@ -203,12 +223,13 @@ const introNeedsEditor = sql`exists (
 )`;
 
 /** 목록과 개수가 같은 조건을 쓰도록 한 곳에서 만든다. 급상승 기간은 설정에서 읽으므로 비동기다 */
-async function listConditions({ statuses, category, query, builder, observedTool, hasRepository, excludeDown, introNeedsEditor: needsEditor, rising, listedSince, minStars, slugs, excludeSlugs }: Omit<ListOptions, "limit" | "sort" | "offset">) {
+async function listConditions({ statuses, category, query, builder, observedTool, hasRepository, excludeDown, introNeedsEditor: needsEditor, rising, listedSince, minStars, slugs, excludeSlugs, repoGone: goneOnly }: Omit<ListOptions, "limit" | "sort" | "offset">) {
   const conditions = [inArray(products.status, statuses)];
   if (slugs) conditions.push(slugs.length ? inArray(products.slug, [...slugs]) : sql`false`);
   if (excludeSlugs?.length) conditions.push(notInArray(products.slug, [...excludeSlugs]));
   if (excludeDown) conditions.push(notDown);
   if (needsEditor) conditions.push(introNeedsEditor);
+  if (goneOnly) conditions.push(repoGone);
   if (rising) conditions.push(risingStars(await risingFreshDays()));
   if (listedSince) conditions.push(sql`${listedAt} >= ${listedSince.toISOString()}::timestamptz`);
   if (minStars !== undefined) conditions.push(sql`${products.stars} >= ${minStars}`);
@@ -232,7 +253,7 @@ export const LIST_COLUMNS = {
   stack: true, ogImage: true, makerName: true, stars: true, starsAt: true, starsPrevious: true, starsPreviousAt: true,
   verifiedAt: true, createdAt: true, status: true, source: true, claimedAt: true,
 } as const;
-export type ProductListRow = Pick<Product, keyof typeof LIST_COLUMNS>;
+export type ProductListRow = Pick<Product, keyof typeof LIST_COLUMNS> & { repoGone?: boolean };
 
 export async function listProducts(options: ListOptions): Promise<Product[]> {
   return db.query.products.findMany(await listQuery(options));
@@ -240,7 +261,7 @@ export async function listProducts(options: ListOptions): Promise<Product[]> {
 
 /** listProducts 와 같은 목록을 카드에 쓰는 열만으로 */
 export async function listProductRows(options: ListOptions): Promise<ProductListRow[]> {
-  return db.query.products.findMany({ ...(await listQuery(options)), columns: LIST_COLUMNS });
+  return db.query.products.findMany({ ...(await listQuery(options)), columns: LIST_COLUMNS, extras: repoGoneField });
 }
 
 /** listProducts 와 같은 조건·순서의 주소만 — 관련도순 검색이 낱말 검색 순서를 섞을 때 */
@@ -327,8 +348,9 @@ export async function getRisingRank(slug: string): Promise<number | null> {
 }
 
 /** 발견 보드 — 검증 상태보다 실제 등재 시각을 우선해 시드 제품도 노출한다. */
-export async function listRecentlyDiscovered(limit: number): Promise<Product[]> {
+export async function listRecentlyDiscovered(limit: number): Promise<(Product & { repoGone: boolean })[]> {
   return db.query.products.findMany({
+    extras: repoGoneField,
     where: and(inArray(products.status, ["verified", "seeded"]), notDown),
     orderBy: [sql`${listedAt} desc`, products.slug],
     limit,
@@ -418,7 +440,8 @@ export async function update(id: number, values: Partial<Product>): Promise<void
     if (!current || !(await lockProductGeneration(tx, id, current.slug))) return;
     const [locked] = await tx.select({ repoUrl: products.repoUrl }).from(products).where(eq(products.id, id));
     const resetStats = values.repoUrl !== undefined && values.repoUrl !== locked.repoUrl
-      ? { stars: null, starsAt: null, starsPrevious: null, starsPreviousAt: null, ownerType: null, starsCheckedAt: null } : {};
+      ? { stars: null, starsAt: null, starsPrevious: null, starsPreviousAt: null, ownerType: null, starsCheckedAt: null,
+        repoStatus: null, repoCheckedAt: null, repoMissingSince: null } : {};
     // 소개를 고쳐 쓰면 그 소개는 쓴 사람의 것이다 — "AI가 요약" 표시를 뗀다
     const wroteTagline = values.tagline !== undefined && values.taglineSource === undefined ? { taglineSource: "maker" as const } : {};
     const [product] = await tx.update(products).set({ ...values, ...resetStats, ...wroteTagline, updatedAt: new Date() }).where(eq(products.id, id)).returning();

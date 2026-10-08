@@ -156,5 +156,5 @@ it("counts what needs a person", async () => {
   // 목표: 웹사이트 공개 제품 둘(korean-app·english-app) ÷ 6시간 → 시간당 1건(올림)
   // 진행 중인 감사는 시작 때 프롬프트("test")가 지금 코드와 달라 잡이 건너뛰는 상태다
   expect(await attentionCounts(now)).toMatchObject({ auditRejectsOpen: 1, healthOverdue: 1, healthTargetPerHour: 1, introNeedsEditor: 1,
-    auditCampaign: { promptVersion: "test", current: false, unanswered: 0 }, cdnPurgesPending: 0 });
+    auditCampaign: { promptVersion: "test", current: false, unanswered: 0 }, cdnPurgesPending: 0, repoGone: { installable: 0, website: 0 } });
 });
