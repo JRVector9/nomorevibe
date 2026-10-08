@@ -95,6 +95,10 @@ export type ListOptions = {
   repoArchived?: boolean;
   /** GitHub 이 다른 owner/name 으로 돌려준 저장소만(이름 바뀜·옮김) — 어드민만 본다 */
   repoRenamed?: boolean;
+  /** 연속 실패로 응답 없는 제품만(isDown) — 어드민 '응답 없음'. 운영센터의 응답 없는 공개 제품 수와 같은 식이다 */
+  down?: boolean;
+  /** 어드민 제품 찾기 — 이름·주소(slug)·URL·저장소 URL 에 이 글자가 들어간 것(대소문자 무시) */
+  adminSearch?: string;
 };
 
 /**
@@ -225,6 +229,22 @@ export const notDown = sql`(not exists (
   where h.slug = ${products.slug} and h.failures >= ${DOWN_THRESHOLD}
 ) and not (${products.accessMode} <> 'website' and ${repoGone}))`;
 
+/**
+ * 응답 없음 — health.ts 의 downWhere(downProducts·downProductCount)와 같은 식: DOWN_THRESHOLD 회 이상 연속 실패했고
+ * 죽기 시작한 시각이 있다. notDown 과 달리 저장소 사라짐은 넣지 않는다 — 그것은 '저장소 사라짐' 거르기가 따로 본다.
+ */
+const isDown = sql`exists (
+  select 1 from product_health h
+  where h.slug = ${products.slug} and h.failures >= ${DOWN_THRESHOLD} and h.down_since is not null
+)`;
+
+/** ILIKE 의 % _ \ 는 글자 그대로 찾는다 — 앞뒤 공백은 떼고 100자까지 */
+function adminSearchPredicate(term: string) {
+  const like = `%${term.trim().slice(0, 100).replace(/[\\%_]/g, (char) => `\\${char}`)}%`;
+  return sql`(${products.name} ilike ${like} or ${products.slug} ilike ${like} or ${products.url} ilike ${like}
+    or coalesce(${products.repoUrl}, '') ilike ${like})`;
+}
+
 /** 소개 검수가 근거로는 무엇인지 알 수 없다고 한 지금 소개(product_intro_checks) — 소개가 바뀌면 빠진다 */
 const introNeedsEditor = sql`exists (
   select 1 from product_intro_checks c
@@ -232,7 +252,7 @@ const introNeedsEditor = sql`exists (
 )`;
 
 /** 목록과 개수가 같은 조건을 쓰도록 한 곳에서 만든다. 급상승 기간은 설정에서 읽으므로 비동기다 */
-async function listConditions({ statuses, category, query, builder, observedTool, hasRepository, excludeDown, introNeedsEditor: needsEditor, rising, listedSince, minStars, slugs, excludeSlugs, repoGone: goneOnly, repoArchived, repoRenamed }: Omit<ListOptions, "limit" | "sort" | "offset">) {
+async function listConditions({ statuses, category, query, builder, observedTool, hasRepository, excludeDown, introNeedsEditor: needsEditor, rising, listedSince, minStars, slugs, excludeSlugs, repoGone: goneOnly, repoArchived, repoRenamed, down, adminSearch }: Omit<ListOptions, "limit" | "sort" | "offset">) {
   const conditions = [inArray(products.status, statuses)];
   if (slugs) conditions.push(slugs.length ? inArray(products.slug, [...slugs]) : sql`false`);
   if (excludeSlugs?.length) conditions.push(notInArray(products.slug, [...excludeSlugs]));
@@ -241,6 +261,8 @@ async function listConditions({ statuses, category, query, builder, observedTool
   if (goneOnly) conditions.push(repoGone);
   if (repoArchived) conditions.push(eq(products.repoArchived, true));
   if (repoRenamed) conditions.push(isNotNull(products.repoRenamedTo));
+  if (down) conditions.push(isDown);
+  if (adminSearch?.trim()) conditions.push(adminSearchPredicate(adminSearch));
   if (rising) conditions.push(risingStars(await risingFreshDays()));
   if (listedSince) conditions.push(sql`${listedAt} >= ${listedSince.toISOString()}::timestamptz`);
   if (minStars !== undefined) conditions.push(sql`${products.stars} >= ${minStars}`);
@@ -340,6 +362,24 @@ export async function countProducts(options: Omit<ListOptions, "limit" | "sort" 
   const [row] = await db.select({ count: sql<number>`count(*)::int` })
     .from(products).where(and(...(await listConditions(options))));
   return row?.count ?? 0;
+}
+
+/**
+ * 거르기마다의 개수를 한 번에 — 어드민 제품 관리의 거르기 칩. 칩마다 countProducts 를 따로 부르면 표를 열 번 훑는다.
+ * 각 칸은 countProducts 와 같은 조건(listConditions)이라 칩의 수와 칩을 누른 목록의 수가 같다.
+ * 찾는 글자(adminSearch)는 칸마다 되풀이하지 않고 바깥 where 에 한 번만 건다 — 칸마다 걸면 ILIKE 를 열 번 돈다.
+ */
+export async function countProductsByFilter<K extends string>(
+  filters: Record<K, Omit<ListOptions, "limit" | "sort" | "offset" | "adminSearch">>,
+  adminSearch?: string,
+): Promise<Record<K, number>> {
+  const keys = Object.keys(filters) as K[];
+  if (keys.length === 0) return {} as Record<K, number>;
+  const columns = await Promise.all(keys.map(async (key, index) =>
+    sql`count(*) filter (where ${and(...(await listConditions(filters[key])))})::int as ${sql.identifier(`c${index}`)}`));
+  const where = adminSearch?.trim() ? sql` where ${adminSearchPredicate(adminSearch)}` : sql``;
+  const [row] = await db.execute<Record<string, number>>(sql`select ${sql.join(columns, sql`, `)} from ${products}${where}`);
+  return Object.fromEntries(keys.map((key, index) => [key, Number(row?.[`c${index}`] ?? 0)])) as Record<K, number>;
 }
 
 /** 상세의 급상승 배지가 보여 주는 깊이 — ProductHero 의 RISING_BADGE_MAX 와 같다 */

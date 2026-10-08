@@ -1,16 +1,18 @@
 import type { Metadata } from "next";
+import Form from "next/form";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { currentAdmin } from "@/lib/auth/admin";
-import { countProducts, listProducts } from "@/lib/domain/products/repository";
+import { createMemo } from "@/lib/cache/memo";
+import { countProducts, countProductsByFilter, listProducts } from "@/lib/domain/products/repository";
 import { isUnclaimed } from "@/lib/domain/products/view";
 import { claimInviteUrl, isPublicOrigin } from "@/lib/domain/products/claim-invite";
 import { repoReviewsFor } from "@/lib/domain/products/repo-reviews";
 import { siteOrigin } from "@/lib/site";
-import type { ProductStatus } from "@/lib/db/schema";
 import { ProductRow } from "./ProductRow";
 import { repoReviewView } from "./repo-review-view";
 import { pageWindow } from "../paging";
+import { PRODUCT_FILTERS, PRODUCT_SORTS, type ProductAdminSort, type ProductFilterName } from "./filters";
 
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "제품 — NoMoreVibe", robots: { index: false } };
@@ -18,53 +20,46 @@ export const metadata: Metadata = { title: "제품 — NoMoreVibe", robots: { in
 /** 한 쪽 — 줄 높이 34px로 한 화면에 머리·거르기와 함께 들어가는 수 */
 const PAGE_SIZE = 25;
 
-/** 상태 묶음. 어드민이 실제로 묻는 질문에 맞춘다 */
-const FILTERS = {
-  전체: ["verified", "seeded", "unverified", "banned"],
-  검증됨: ["verified"],
-  미클레임: ["seeded"],
-  "검증 대기": ["unverified"],
-  차단됨: ["banned"],
-  /** 소개 검수가 근거로는 무엇인지 알 수 없다고 한 것 — 페이지를 열어 보고 내릴지 정한다 */
-  "소개 확인 필요": ["seeded", "verified"],
-  /**
-   * GitHub 저장소가 없거나 빈 채로 하루 넘게 이어진 공개 제품(repository.ts repoGone) — 설치형은 이미 목록에서 가려졌고
-   * 웹사이트는 목록에 두고 GitHub 표시만 뺐다. 웹사이트는 AI 가 사이트를 다시 본 판정(product-repo-review)을 붙이고
-   * 사람이 유지·내리기를 고른다
-   */
-  "저장소 사라짐": ["seeded", "verified"],
-  /** GitHub 이 보관(archived)이라고 한 저장소 — 다루는 방법을 아직 정하지 않아 기록만 한다 */
-  "저장소 보관됨": ["seeded", "verified"],
-  /** GitHub 이 다른 이름으로 돌려준 저장소 — repo_url 은 아직 옛 이름이다(고쳐 쓰기는 뒤에 따로) */
-  "저장소 이름 바뀜": ["seeded", "verified"],
-} as const satisfies Record<string, ProductStatus[]>;
+/**
+ * 찾는 글자 없이 센 칩의 수 — 한 번에 공개 제품 3만7천 행을 훑어 150ms 쯤 든다(2026-10-08 복제본 실측).
+ * 1분 담아 둔다. 찾는 글자가 있으면 그 결과로 다시 센다(목록과 함께 바뀌어야 뜻이 있다).
+ */
+const allFilterCounts = createMemo<Record<ProductFilterName, number>>({ ttlMs: 60_000, max: 1 });
 
-type Props = { searchParams: Promise<{ filter?: string; page?: string }> };
+type Props = { searchParams: Promise<{ filter?: string; page?: string; q?: string; sort?: string }> };
 
 export default async function AdminProductsPage({ searchParams }: Props) {
   const admin = await currentAdmin();
   if (!admin) redirect("/admin/login");
 
-  const { filter, page: rawPage } = await searchParams;
+  const { filter, page: rawPage, q: rawQuery, sort: rawSort } = await searchParams;
   // `in`은 프로토타입 키까지 통과시킨다 — ?filter=constructor 하나로 500이 났다
-  const active = (filter && Object.hasOwn(FILTERS, filter) ? filter : "전체") as keyof typeof FILTERS;
+  const active = (typeof filter === "string" && Object.hasOwn(PRODUCT_FILTERS, filter) ? filter : "전체") as ProductFilterName;
   const parsedPage = Number(rawPage ?? 1);
   const page = Number.isSafeInteger(parsedPage) && parsedPage > 0 ? parsedPage : 1;
-  const statuses = [...FILTERS[active]];
-  const introNeedsEditor = active === "소개 확인 필요";
+  // 이름·slug·URL·저장소 URL 에서 찾는다(repository adminSearch) — 앞뒤 공백을 떼고 100자까지
+  const q = typeof rawQuery === "string" ? rawQuery.trim().slice(0, 100) : "";
+  const sort: ProductAdminSort = typeof rawSort === "string" && Object.hasOwn(PRODUCT_SORTS, rawSort) ? rawSort as ProductAdminSort : "recent";
+  const { statuses, ...flags } = PRODUCT_FILTERS[active];
+  const conditions = { statuses: [...statuses], ...flags, adminSearch: q || undefined };
   const repoGone = active === "저장소 사라짐";
   const repoArchived = active === "저장소 보관됨";
   const repoRenamed = active === "저장소 이름 바뀜";
-  const [products, total] = await Promise.all([
-    listProducts({ statuses, introNeedsEditor, repoGone, repoArchived, repoRenamed, limit: PAGE_SIZE, offset: (page - 1) * PAGE_SIZE }),
-    countProducts({ statuses, introNeedsEditor, repoGone, repoArchived, repoRenamed }),
+  const [products, total, counts] = await Promise.all([
+    listProducts({ ...conditions, sort, limit: PAGE_SIZE, offset: (page - 1) * PAGE_SIZE }),
+    countProducts(conditions),
+    // 칩의 수는 없어도 목록은 그린다
+    (q ? countProductsByFilter(PRODUCT_FILTERS, q) : allFilterCounts.get("all", () => countProductsByFilter(PRODUCT_FILTERS))).catch(() => null),
   ]);
   const reviews = repoGone ? await repoReviewsFor(products.filter((product) => product.accessMode === "website").map((product) => product.id)) : null;
   const day = (value: Date | null) => value?.toLocaleDateString("ko-KR", { timeZone: "Asia/Seoul" });
   const pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
-  const href = (next: number) => {
+  // 거르기·찾는 글자·정렬을 이어 가고, 조건이 바뀌면 첫 쪽부터
+  const href = (next: number, name: ProductFilterName = active) => {
     const params = new URLSearchParams();
-    if (active !== "전체") params.set("filter", active);
+    if (name !== "전체") params.set("filter", name);
+    if (q) params.set("q", q);
+    if (sort !== "recent") params.set("sort", sort);
     if (next > 1) params.set("page", String(next));
     return `/admin/products${params.size ? `?${params}` : ""}`;
   };
@@ -91,23 +86,44 @@ export default async function AdminProductsPage({ searchParams }: Props) {
         <Link href="/admin/products/recheck" className="font-semibold text-accent">발행분 재검수</Link>로 이미 올라간 것에도 지금 기준을 태웁니다.
       </p>
 
-      <nav className="flex flex-wrap gap-1.5">
-        {Object.keys(FILTERS).map((name) => (
+      {/* 찾기 — 지금 거르기를 지키고 첫 쪽부터. 신고·메일로 이름만 들었을 때 목록에서 바로 찾는다(2026-10-08 감사 ADM-05) */}
+      <Form action="/admin/products" className="flex flex-wrap items-center gap-2 text-[13px]">
+        {active !== "전체" && <input type="hidden" name="filter" value={active} />}
+        <label className="flex min-w-0 flex-1 basis-[260px] items-center gap-2">
+          <span className="shrink-0 font-semibold text-fg-2">찾기</span>
+          <input type="search" name="q" defaultValue={q} maxLength={100} placeholder="이름 · 주소(slug) · URL · 저장소"
+            className="min-w-0 flex-1 rounded-lg border border-line bg-bg-card px-2.5 py-1.5 text-[13px] text-fg focus:outline-2 focus:outline-accent" />
+        </label>
+        <label className="flex items-center gap-2">
+          <span className="font-semibold text-fg-2">정렬</span>
+          <select name="sort" defaultValue={sort} className="rounded-lg border border-line bg-bg-card px-2 py-1.5 text-[13px] text-fg">
+            {Object.entries(PRODUCT_SORTS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+          </select>
+        </label>
+        <button type="submit" className="rounded-lg border border-accent bg-accent px-3 py-1.5 font-semibold text-white">찾기</button>
+        {(q || sort !== "recent") && <Link href={active === "전체" ? "/admin/products" : `/admin/products?filter=${encodeURIComponent(active)}`}
+          className="px-1 py-1.5 text-fg-2 underline">지우기</Link>}
+      </Form>
+
+      <nav className="flex flex-wrap gap-1.5" aria-label="제품 거르기">
+        {(Object.keys(PRODUCT_FILTERS) as ProductFilterName[]).map((name) => (
           <Link
             key={name}
-            href={name === "전체" ? "/admin/products" : `/admin/products?filter=${encodeURIComponent(name)}`}
+            href={href(1, name)}
+            aria-current={name === active ? "page" : undefined}
             className={`rounded-full border px-2.5 py-1 text-[13px] ${
-              name === active ? "border-accent bg-accent-soft font-semibold text-accent" : "border-line bg-bg-card text-fg-2 hover:bg-bg-hover"
+              name === active ? "border-accent bg-accent-soft font-semibold text-accent"
+                : counts?.[name] === 0 ? "border-line bg-bg-card text-fg-3 hover:bg-bg-hover" : "border-line bg-bg-card text-fg-2 hover:bg-bg-hover"
             }`}
           >
-            {name}
+            {name}{counts && <> <span className="font-mono">{counts[name].toLocaleString("ko-KR")}</span></>}
           </Link>
         ))}
       </nav>
 
       {products.length === 0 ? (
         <p className="rounded-[12px] border border-line bg-bg-card px-5 py-8 text-center text-[13px] text-fg-3">
-          해당하는 제품이 없습니다.
+          {q ? `"${q}"에 해당하는 제품이 없습니다.` : "해당하는 제품이 없습니다."}
         </p>
       ) : (
         <div className="overflow-x-auto rounded-[12px] border border-line bg-bg-card">
