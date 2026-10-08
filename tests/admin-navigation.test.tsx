@@ -3,9 +3,9 @@ import { describe, expect, it } from 'vitest';
 import { AdminNav, countBadge, NAV_GROUPS } from '@/app/admin/AdminNav';
 
 describe('shared administrator navigation', () => {
-  it('keeps all eleven menus including the selected page visible', () => {
+  it('keeps all twelve menus including the selected page visible', () => {
     const html = renderToStaticMarkup(<AdminNav current="/admin/status" />);
-    expect(html.match(/href="\/admin/g)).toHaveLength(11);
+    expect(html.match(/href="\/admin/g)).toHaveLength(12);
     expect(html).toContain('운영센터');
     expect(html).toContain('GitHub 수집 계정');
     expect(html).toContain('AI 소식');
@@ -36,7 +36,7 @@ describe('shared administrator navigation', () => {
 describe('menu groups', () => {
   it('splits daily work from settings and history', () => {
     expect(NAV_GROUPS.map((group) => group.title)).toEqual(['일하기', '설정·기록']);
-    expect(NAV_GROUPS[0].pages.map((page) => page.href)).toEqual(['/admin/status', '/admin/review', '/admin/audit', '/admin/products']);
+    expect(NAV_GROUPS[0].pages.map((page) => page.href)).toEqual(['/admin/inbox', '/admin/status', '/admin/review', '/admin/audit', '/admin/products']);
     expect(NAV_GROUPS[1].pages.at(-1)?.href).toBe('/admin/activity');
     const html = renderToStaticMarkup(<AdminNav current="/admin/status" />);
     expect(html).toContain('id="admin-nav-group-0">일하기</p><ul aria-labelledby="admin-nav-group-0"');
