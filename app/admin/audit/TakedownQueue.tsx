@@ -9,15 +9,11 @@ import {
   DISMISS_REASONS, formatWait, groupTakedowns, senderLabel, waitTone,
   type GroupMode, type TakedownEntry,
 } from "@/lib/domain/products/takedown-view";
+import { formatDay, formatDetailTime } from "@/lib/format/time";
 
 const n = (value: number) => value.toLocaleString("ko-KR");
-const KST = new Intl.DateTimeFormat("ko-KR", { timeZone: "Asia/Seoul", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
-/** "10-03 19:10" — 한국 시각 */
-const kst = (iso: string) => {
-  const parts = Object.fromEntries(KST.formatToParts(new Date(iso)).map((part) => [part.type, part.value]));
-  return `${parts.month}-${parts.day} ${parts.hour}:${parts.minute}`;
-};
-const day = (iso: string) => (iso ? iso.slice(5, 10) : "—");
+/** 발행 칸 "10-05" — 한국 날짜(ISO 앞자리를 자르면 UTC 날짜라 아침 9시 전 것이 하루 어긋난다) */
+const day = (iso: string) => formatDay(iso, "").slice(5) || "—";
 const GROUPS: [GroupMode, string][] = [["none", "없음"], ["owner", "같은 계정"], ["sender", "같은 보낸이"], ["time", "들어온 시각"]];
 const SORTS = { oldest: "오래 기다린 것부터", newest: "막 들어온 것부터", visits: "방문 많은 것부터" } as const;
 type Sort = keyof typeof SORTS;
@@ -222,7 +218,7 @@ function TakedownDetail({ entry, handleRef }: { entry: TakedownEntry; handleRef:
           {product?.repoUrl && <a href={product.repoUrl} target="_blank" rel="noreferrer noopener" className="font-mono">{product.repoUrl.replace(/^https?:\/\/(www\.)?/, "")} ↗</a>}
           {product && <a href={`/p/${entry.slug}`} target="_blank" rel="noreferrer noopener">공개 페이지 ↗</a>}
         </div>
-        <p className="td-facts">요청 {kst(entry.requestedAt)} · {senderLabel(entry.requesterHash)}{product ? ` · ${product.category}` : " · 제품이 이미 없습니다"}</p>
+        <p className="td-facts">요청 {formatDetailTime(entry.requestedAt)} · {senderLabel(entry.requesterHash)}{product ? ` · ${product.category}` : " · 제품이 이미 없습니다"}</p>
       </div>
       <div>
         <h3>요청 사유</h3>
@@ -230,7 +226,7 @@ function TakedownDetail({ entry, handleRef }: { entry: TakedownEntry; handleRef:
         <p className="td-note">요청자 연락처는 받지 않습니다 — 처리 결과는 페이지가 사라지는 것으로만 전해집니다.</p>
       </div>
       <dl className="td-kv">
-        <dt>발행</dt><dd>{product?.listedAt ? product.listedAt.slice(0, 10) : "—"}{product?.stars ? ` · ★ ${n(product.stars)}` : ""}</dd>
+        <dt>발행</dt><dd>{formatDay(product?.listedAt)}{product?.stars ? ` · ★ ${n(product.stars)}` : ""}</dd>
         <dt>지난 7일</dt><dd>방문 {n(entry.visits7d)}</dd>
         <dt>이 제품</dt><dd>{entry.requestCount > 1 ? `${entry.requestCount}번째 요청` : "첫 요청"}{outcome ? ` · 전에 ${outcome}` : " · 전에 처리한 적 없음"}</dd>
         <dt>같은 계정</dt><dd>{entry.owner ? <><b>{entry.owner}</b> · 공개 {n(entry.ownerPublic)}개 · 대기 요청 {n(entry.ownerPending)}건</> : "GitHub 저장소 없음"}</dd>

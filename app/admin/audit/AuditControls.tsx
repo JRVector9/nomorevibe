@@ -1,7 +1,9 @@
 'use client';
 
 import { useActionState } from 'react';
-import { cancelAudit, startAudit, type AuditActionState } from './actions';
+import { ConfirmAction } from '../components/ConfirmAction';
+import { resultToast, useAdminToast } from '../components/Toast';
+import { cancelAudit, restartStalledAudit, startAudit, type AuditActionState } from './actions';
 
 /**
  * 감사를 여는 폼. 이 버튼은 아무것도 내리지 않는다 — 화면에도 그렇게 적는다.
@@ -18,7 +20,7 @@ export function StartAudit({ blockedReason, first }: { blockedReason: string | n
     <form action={action} className="flex flex-col gap-2 border-t border-line pt-3">
       <p className="text-[13px] leading-[1.7] text-fg-2">
         <b className="font-semibold">이 버튼은 아무것도 내리지 않습니다.</b> 공개된 제품을 지금의 심사 글로 다시 보고,
-        사람이 확인할 새 목록을 만들 뿐입니다. 내리는 것은 아래 목록에서 한 건씩 누릅니다.
+        사람이 확인할 새 목록을 만들 뿐입니다. 내리는 것은 아래 목록에서 한 건씩, 또는 묶음의 이름을 훑고 누릅니다.
       </p>
       <input name="reason" required maxLength={500} disabled={disabled} placeholder="왜 다시 보는지 (기록에 남습니다)"
         className="rounded-lg border border-line bg-bg-soft px-3 py-2 text-[13px] disabled:opacity-50" />
@@ -57,5 +59,31 @@ export function CancelAudit() {
       <span className="text-[13px] text-fg-3">멈춰도 아무것도 내려가지 않고, 지금까지 찾은 것은 남습니다.</span>
       {state?.error && <span className="text-[13px] text-down">{state.error}</span>}
     </form>
+  );
+}
+
+/**
+ * 멈춘 감사(심사 글이 바뀜)의 기본 버튼 — 중단과 새 감사를 한 번에(ADM-15). 새 감사도 사유를 남겨야 열리므로 창에서 받는다.
+ * 유지 판정은 다시 보지 않는다(새 감사 폼의 기본값과 같다) — 켜야 하면 중단만 하고 아래 폼에서 연다.
+ */
+export function RestartStalledAudit({ campaignId, from, to }: { campaignId: number; from: string; to: string }) {
+  const toast = useAdminToast();
+  return (
+    <ConfirmAction tone="neutral" title={`감사 #${campaignId}을 중단하고 새 감사를 엽니다`} confirmLabel="중단하고 새 감사 시작"
+      summary={<ul>
+        <li>심사 글이 {from} → {to}로 바뀌어 이 감사는 더 묻지 않고 멈춰 있습니다.</li>
+        <li>아무것도 내리지 않습니다. 지금까지 찾은 것은 목록에 남습니다.</li>
+        <li>새 감사는 지금 글로 공개된 제품을 다시 봅니다. 유지 판정은 다시 보지 않습니다.</li>
+      </ul>}
+      note={{ label: '왜 다시 보는지 (기록에 남습니다)', placeholder: `예: 심사 글 ${to} 배포`, maxLength: 500 }}
+      onConfirm={async ({ note }) => {
+        const form = new FormData();
+        form.set('campaign', String(campaignId));
+        form.set('reason', note ?? '');
+        const result = await restartStalledAudit(form);
+        toast.show(resultToast(result, { message: result?.message ?? '새 감사를 열었습니다', link: { label: '기록 보기', href: '/admin/activity?group=takedown' } }));
+        return result;
+      }}
+      trigger={(open) => <button type="button" className="admin-button" data-tone="primary" onClick={open}>이 감사 중단 → 새 감사 시작</button>} />
   );
 }

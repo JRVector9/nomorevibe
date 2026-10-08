@@ -6,8 +6,8 @@ import { crawlCandidates, crawlDocuments, crawlFrontier, crawlReviewAttempts, cr
 import * as crawl from "@/lib/crawl/repository";
 import { changeReviewMode, saveSettings } from "@/lib/crawl/settings";
 import { MAX_REVIEW_ATTEMPTS } from "@/lib/crawl/agent-review-contract";
-import { cancelProductAudit, keepAuditedProduct, listAuditFindings, productAuditOverview, removeAuditedProduct,
-  startProductAudit } from "@/lib/crawl/product-audit";
+import { auditRemovalGroups, cancelProductAudit, GROUP_REMOVE_MAX, keepAuditedProduct, listAuditFindings,
+  productAuditOverview, removeAuditedProduct, removeAuditedProducts, startProductAudit } from "@/lib/crawl/product-audit";
 import { auditPublishedProducts } from "@/lib/crawl/jobs/product-audit";
 import { runJob } from "@/lib/jobs/runner";
 import { ensureSchema, resetTables } from "./setup";
@@ -347,5 +347,98 @@ describe("사람의 결정", () => {
     expect(item).toMatchObject({ humanDecision: "kept", humanBy: "jr", humanNote: "열어 보니 계산기다" });
     expect((await listAuditFindings(campaignId, "reject", { limit: 50, offset: 0 })).map((row) => row.slug)).toEqual(["low", "mine"]);
     expect((await db.select().from(products)).every((row) => row.status === "seeded")).toBe(true);
+  });
+});
+
+describe("멈춘 감사", () => {
+  it("심사 글이 바뀐 진행 중 감사는 stalled 이고, 닫고 새로 열기는 한 번에 — 두 번째 누름은 새 감사를 닫지 않는다", async () => {
+    await listed("s/one");
+    await start();
+    const [first] = await db.select().from(productAuditCampaigns);
+    expect((await productAuditOverview()).stalled).toBe(false);
+    // 지금 글로 도는 감사는 바꿔 열지 않는다
+    expect(await start({ reason: "다시", replacing: first.id })).toMatchObject({ ok: false });
+
+    await db.update(productAuditCampaigns).set({ promptVersion: "2000-01-01.1" });
+    expect((await productAuditOverview()).stalled).toBe(true);
+    // 새 감사를 열 수 없으면(사유 없음) 멈춘 감사도 그대로다
+    expect(await start({ reason: " ", replacing: first.id })).toMatchObject({ ok: false });
+    expect((await productAuditOverview()).campaign?.id).toBe(first.id);
+
+    const restarted = await start({ reason: "새 글", replacing: first.id });
+    expect(restarted).toMatchObject({ ok: true, enrolled: 1 });
+    expect(await start({ reason: "새 글", replacing: first.id })).toMatchObject({ ok: false });
+    const campaigns = await db.select().from(productAuditCampaigns).orderBy(asc(productAuditCampaigns.id));
+    expect(campaigns.map((row) => row.status)).toEqual(["cancelled", "running"]);
+    expect((await productAuditOverview()).stalled).toBe(false);
+  });
+});
+
+describe("묶어 내리기", () => {
+  /** 모델의 답을 직접 적는다 — 묶음은 답의 모양만 본다 */
+  async function judged(rows: { repo: string; category: string; decision: "reject" | "needs_review"; confidence: number; claimed?: boolean }[]) {
+    for (const row of rows) {
+      const product = await listed(row.repo, { claimed: row.claimed });
+      await db.update(products).set({ category: row.category }).where(eq(products.id, product.id));
+    }
+    await start();
+    for (const row of rows) {
+      await db.update(productAuditItems).set({ aiDecision: row.decision, aiConfidence: row.confidence, aiReason: "pageText: x", reviewedAt: sql`now()` })
+        .where(eq(productAuditItems.slug, row.repo.split("/")[1]));
+    }
+    const [campaign] = await db.select().from(productAuditCampaigns);
+    const byslug = Object.fromEntries((await items()).map((item) => [item.slug, item.id]));
+    return { campaignId: campaign.id, id: (slug: string) => byslug[slug] };
+  }
+
+  it("확신 0.95 이상·주인 없는 거부만, 분류별로 큰 묶음부터 확신 높은 순으로 묶는다", async () => {
+    const { campaignId } = await judged([
+      { repo: "g/c1", category: "Commerce", decision: "reject", confidence: 0.99 },
+      { repo: "g/c2", category: "Commerce", decision: "reject", confidence: 0.96 },
+      { repo: "g/c3", category: "Commerce", decision: "reject", confidence: 0.9 },
+      { repo: "g/own", category: "Commerce", decision: "reject", confidence: 1, claimed: true },
+      { repo: "g/h1", category: "Health", decision: "reject", confidence: 0.97 },
+      { repo: "g/unsure", category: "Health", decision: "needs_review", confidence: 0.99 },
+    ]);
+    const groups = await auditRemovalGroups(campaignId);
+    expect(groups.map((group) => [group.category, group.total, group.items.map((item) => item.slug)])).toEqual([
+      ["Commerce", 2, ["c1", "c2"]], ["Health", 1, ["h1"]],
+    ]);
+    expect(groups[0].items[0]).toMatchObject({ name: "c1", url: "https://c1.test", confidence: 0.99 });
+  });
+
+  it("사람이 이미 정한 것·문턱 밖·주인 있는 것은 건너뛰고, 나머지는 한 건씩 내리기와 같이 내린다", async () => {
+    const { id } = await judged([
+      { repo: "b/c1", category: "Commerce", decision: "reject", confidence: 0.99 },
+      { repo: "b/kept", category: "Commerce", decision: "reject", confidence: 0.98 },
+      { repo: "b/low", category: "Commerce", decision: "reject", confidence: 0.9 },
+      { repo: "b/own", category: "Commerce", decision: "reject", confidence: 1, claimed: true },
+    ]);
+    expect(await keepAuditedProduct({ itemId: id("kept"), slug: "kept", by: "sam", note: "직접 봤다" })).toEqual({ ok: true });
+
+    const result = await removeAuditedProducts({ by: "jr", items: ["c1", "kept", "low", "own"].map((slug) => ({ itemId: id(slug), slug })) });
+    expect(result.removed).toEqual(["c1"]);
+    expect(result.failed.map((item) => item.slug)).toEqual(["kept", "low", "own"]);
+    const statuses = Object.fromEntries((await db.select().from(products)).map((row) => [row.slug, row.status]));
+    expect(statuses).toEqual({ c1: "banned", kept: "seeded", low: "seeded", own: "seeded" });
+    const decided = Object.fromEntries((await items()).map((item) => [item.slug, [item.humanDecision, item.humanBy]]));
+    expect(decided).toEqual({ c1: ["removed", "jr"], kept: ["kept", "sam"], low: [null, null], own: [null, null] });
+  });
+
+  it("한 번에 50건까지 — 묶음도 50건씩 보이고, 넘게 보내면 아무것도 내리지 않는다", async () => {
+    const rows = Array.from({ length: GROUP_REMOVE_MAX + 2 }, (_, index) =>
+      ({ repo: `m/p${index}`, category: "Commerce", decision: "reject" as const, confidence: 0.99 }));
+    const { campaignId, id } = await judged(rows);
+    const [group] = await auditRemovalGroups(campaignId);
+    expect(group.total).toBe(GROUP_REMOVE_MAX + 2);
+    expect(group.items).toHaveLength(GROUP_REMOVE_MAX);
+
+    const all = rows.map((row) => { const slug = row.repo.split("/")[1]; return { itemId: id(slug), slug }; });
+    await expect(removeAuditedProducts({ by: "jr", items: all })).rejects.toThrow();
+    expect((await db.select().from(products)).every((row) => row.status === "seeded")).toBe(true);
+
+    expect((await removeAuditedProducts({ by: "jr", items: group.items.map((item) => ({ itemId: item.id, slug: item.slug })) })).removed)
+      .toHaveLength(GROUP_REMOVE_MAX);
+    expect((await auditRemovalGroups(campaignId))[0]).toMatchObject({ total: 2 });
   });
 });

@@ -1,6 +1,8 @@
 "use client";
 
 import { useActionState, useState } from "react";
+import { formatListTime } from "@/lib/format/time";
+import { ScrollTable } from "../components/ScrollTable";
 import { decideNews, type NewsActionState } from "./actions";
 
 export type NewsBoardItem = {
@@ -18,11 +20,8 @@ const STATE_LABEL: Record<NewsBoardItem["state"], { text: string; className: str
   hidden: { text: "숨김", className: "border-line bg-bg-soft text-fg-3" },
 };
 
-const posted = (iso: string) =>
-  new Date(iso).toLocaleString("ko-KR", { timeZone: "Asia/Seoul", dateStyle: "short", timeStyle: "short" });
-
-/** 글 목록. 고른 것을 한 번에 게시하거나 숨긴다 */
-export function NewsBoard({ items }: { items: NewsBoardItem[] }) {
+/** 글 목록. 고른 것을 한 번에 게시하거나 숨긴다. now 는 서버가 그린 시각 — 서버와 브라우저가 같은 "3분 전"을 낸다 */
+export function NewsBoard({ items, now }: { items: NewsBoardItem[]; now: string }) {
   const [state, action, pending] = useActionState<NewsActionState, FormData>(decideNews, null);
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const allSelected = items.length > 0 && selected.size === items.length;
@@ -51,7 +50,8 @@ export function NewsBoard({ items }: { items: NewsBoardItem[] }) {
         </div>
       </div>
 
-      <div className="overflow-x-auto rounded-[12px] border border-line bg-bg-card">
+      <div className="overflow-hidden rounded-[12px] border border-line bg-bg-card">
+        <ScrollTable label="모은 글">
         <table className="w-full min-w-[720px] text-[13px]">
           <thead className="text-left text-fg-3">
             <tr className="border-b border-line">
@@ -76,7 +76,7 @@ export function NewsBoard({ items }: { items: NewsBoardItem[] }) {
                 <td className="px-3 py-2">
                   <a href={item.url} target="_blank" rel="noopener noreferrer" className="font-semibold hover:underline">{item.title}</a>
                 </td>
-                <td className="whitespace-nowrap px-3 py-2 text-fg-3">{posted(item.publishedAt)}</td>
+                <td className="whitespace-nowrap px-3 py-2 text-fg-3">{formatListTime(item.publishedAt, now)}</td>
                 <td className="px-3 py-2">
                   <span className={`rounded-full border px-2 py-0.5 text-[13px] font-semibold ${STATE_LABEL[item.state].className}`}>
                     {STATE_LABEL[item.state].text}
@@ -89,6 +89,7 @@ export function NewsBoard({ items }: { items: NewsBoardItem[] }) {
             )}
           </tbody>
         </table>
+        </ScrollTable>
       </div>
     </form>
   );

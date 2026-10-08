@@ -2,9 +2,16 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { currentAdmin } from "@/lib/auth/admin";
-import { listAuditFindings, productAuditOverview, type AuditOverview } from "@/lib/crawl/product-audit";
+import { auditRemovalGroups, GROUP_REMOVE_MAX, GROUP_REMOVE_MIN_CONFIDENCE, listAuditFindings, productAuditOverview,
+  type AuditOverview } from "@/lib/crawl/product-audit";
+import { REVIEW_PROMPT_VERSION, REVIEW_RULES_VERSION } from "@/lib/crawl/agent-review-contract";
+import { translationsFor } from "@/lib/crawl/translations";
+import { formatListTime } from "@/lib/format/time";
 import { AuditFinding } from "./AuditFinding";
-import { CancelAudit, StartAudit } from "./AuditControls";
+import { AuditGroups } from "./AuditGroups";
+import { CancelAudit, RestartStalledAudit, StartAudit } from "./AuditControls";
+import { ScrollTable } from "../components/ScrollTable";
+import { ReasonLanguageToggle } from "../review/ReasonText";
 import { pageWindow } from "../paging";
 import { TakedownQueue } from "./TakedownQueue";
 import { takedownHistory, takedownQueue, takedownSummary } from "@/lib/domain/products/takedown";
@@ -26,8 +33,6 @@ const VIEWS = {
 type View = keyof typeof VIEWS;
 
 const STATUS: Record<string, string> = { running: "진행 중", done: "끝남", cancelled: "중단됨" };
-const time = (value: Date | null) =>
-  value ? value.toLocaleString("ko-KR", { timeZone: "Asia/Seoul", dateStyle: "short", timeStyle: "short" }) : null;
 const count = (value: number) => value.toLocaleString("ko-KR");
 
 type Props = { searchParams: Promise<{ view?: string; page?: string; tab?: string }> };
@@ -49,6 +54,8 @@ export default async function AdminAuditPage({ searchParams }: Props) {
   const parsedPage = Number(rawPage ?? 1);
   const page = Number.isSafeInteger(parsedPage) && parsedPage > 0 ? parsedPage : 1;
 
+  // 목록의 "13:38 (3분 전)"은 이 시각을 기준으로 센다
+  const now = new Date();
   const [overview, summary] = await Promise.all([productAuditOverview(), takedownSummary()]);
   const { campaign, counts } = overview;
   const tab: Tab = rawTab && Object.hasOwn(TABS, rawTab) ? rawTab as Tab : rawView ? "audit" : summary.pending > 0 ? "requests" : "audit";
@@ -57,9 +64,12 @@ export default async function AdminAuditPage({ searchParams }: Props) {
     tab === "history" ? takedownHistory() : Promise.resolve([]),
   ]);
   const open = { reject: counts.openReject, needs_review: counts.openNeedsReview };
-  const findings = campaign && tab === "audit"
-    ? await listAuditFindings(campaign.id, view, { limit: PAGE_SIZE, offset: (page - 1) * PAGE_SIZE })
-    : [];
+  const [findings, groups] = campaign && tab === "audit" ? await Promise.all([
+    listAuditFindings(campaign.id, view, { limit: PAGE_SIZE, offset: (page - 1) * PAGE_SIZE }),
+    view === "reject" ? auditRemovalGroups(campaign.id) : Promise.resolve([]),
+  ]) : [[], []];
+  // 사유의 한국어 — 미리 옮겨 둔 것이 있을 때만(lib/crawl/translations). 없으면 원문과 "번역 대기"
+  const korean = findings.length ? await translationsFor(findings.map((finding) => finding.reason)) : new Map<string, string>();
   const pages = Math.max(1, Math.ceil(open[view] / PAGE_SIZE));
   const href = (nextView: View, nextPage = 1) => {
     const params = new URLSearchParams({ tab: "audit" });
@@ -107,7 +117,7 @@ export default async function AdminAuditPage({ searchParams }: Props) {
         </>
       )}
 
-      {tab === "history" && <TakedownHistory rows={history} />}
+      {tab === "history" && <TakedownHistory rows={history} now={now} />}
 
       {tab === "audit" && <>
       <p className="max-w-[80ch] text-[13px] leading-[1.7] text-fg-2">
@@ -115,13 +125,16 @@ export default async function AdminAuditPage({ searchParams }: Props) {
         AI가 제품이 아니라고 했거나 판단을 미룬 것을 여기 모을 뿐입니다. 주소를 열어 확인하고 한 건씩
         <b className="font-semibold"> 내리기</b>(차단 — 행은 남고 제품 관리에서 되돌릴 수 있음) 또는
         <b className="font-semibold"> 유지</b>(90일 동안, 페이지가 그대로인 한 다음 감사에서 뺌)를 누릅니다.
+        확신이 아주 높은 것은 같은 분류끼리 묶어 이름을 훑고 한 번에 내릴 수 있습니다.
       </p>
 
-      <CampaignPanel overview={overview} />
+      <CampaignPanel overview={overview} now={now} />
 
       {campaign && (
         <>
-          <nav className="flex flex-wrap gap-1.5">
+          {view === "reject" && <AuditGroups groups={groups} minConfidence={GROUP_REMOVE_MIN_CONFIDENCE} max={GROUP_REMOVE_MAX} />}
+
+          <nav className="flex flex-wrap items-center gap-1.5">
             {(Object.keys(VIEWS) as View[]).map((name) => (
               <Link key={name} href={href(name)} aria-current={name === view ? "page" : undefined}
                 className={`rounded-full border px-2.5 py-1 text-[13px] ${
@@ -130,12 +143,19 @@ export default async function AdminAuditPage({ searchParams }: Props) {
                 {VIEWS[name].label} {count(open[name])}
               </Link>
             ))}
+            <span className="ml-auto flex flex-wrap items-center gap-3">
+              <ReasonLanguageToggle done={null} total={null} />
+              {/* 내보내기의 view 는 화면 갈래라 감사의 갈래는 decision 으로 싣는다 */}
+              <a href={`/admin/export?view=audit&format=csv&decision=${view}`} className="text-[13px] text-accent hover:underline">CSV 내보내기</a>
+            </span>
           </nav>
 
           {findings.length === 0 ? (
             <p className="rounded-[12px] border border-line bg-bg-card px-5 py-8 text-center text-[13px] text-fg-3">{VIEWS[view].empty}</p>
           ) : (
-            <div className="overflow-x-auto rounded-[12px] border border-line bg-bg-card">
+            // relative: 표 머리의 sr-only(절대 위치)가 가로 스크롤 상자를 벗어나 390px 화면 전체를 넓히지 않게
+            <div className="relative overflow-hidden rounded-[12px] border border-line bg-bg-card">
+              <ScrollTable label="감사가 짚은 제품">
               <table className="w-full min-w-[760px] text-[13px]">
                 <thead className="bg-bg-soft text-left text-fg-3">
                   <tr>
@@ -147,10 +167,12 @@ export default async function AdminAuditPage({ searchParams }: Props) {
                 </thead>
                 <tbody>
                   {findings.map((finding) => (
-                    <AuditFinding key={finding.id} finding={{ ...finding, reviewedAt: time(finding.reviewedAt) }} />
+                    <AuditFinding key={finding.id} finding={{ ...finding, reasonKo: finding.reason ? korean.get(finding.reason) ?? null : null,
+                      reviewedAt: finding.reviewedAt ? formatListTime(finding.reviewedAt, now) : null }} />
                   ))}
                 </tbody>
               </table>
+              </ScrollTable>
             </div>
           )}
 
@@ -184,10 +206,11 @@ function TakedownChips({ summary }: { summary: TakedownSummary }) {
 }
 
 /** 처리 기록 — 누가(어디서) 언제 내렸거나 두었고, 왜 두었는지. 관리자 작업 로그에서 읽으므로 지워지지 않는다 */
-function TakedownHistory({ rows }: { rows: Awaited<ReturnType<typeof takedownHistory>> }) {
+function TakedownHistory({ rows, now }: { rows: Awaited<ReturnType<typeof takedownHistory>>; now: Date }) {
   if (rows.length === 0) return <p className="rounded-[12px] border border-line bg-bg-card px-5 py-8 text-center text-[13px] text-fg-3">아직 처리한 요청이 없습니다.</p>;
   return (
-    <div className="overflow-x-auto rounded-[12px] border border-line bg-bg-card">
+    <div className="overflow-hidden rounded-[12px] border border-line bg-bg-card">
+      <ScrollTable label="처리 기록">
       <table className="td-history">
         <thead><tr><th>제품</th><th>결과</th><th>요청 사유</th><th>메모</th><th>보낸이</th><th>처리</th></tr></thead>
         <tbody>
@@ -200,18 +223,19 @@ function TakedownHistory({ rows }: { rows: Awaited<ReturnType<typeof takedownHis
               <td className="max-w-[320px] text-fg-2">{row.reason ?? <span className="text-fg-3">사유 없음</span>}</td>
               <td className="max-w-[240px] text-fg-2">{row.note ?? <span className="text-fg-3">—</span>}</td>
               <td className="font-mono text-fg-2">{senderLabel(row.requesterHash)}</td>
-              <td className="whitespace-nowrap text-fg-3">{time(row.handledAt)} · {row.handledBy}{row.ip && <span className="font-mono"> · {row.ip}</span>}</td>
+              <td className="whitespace-nowrap text-fg-3">{formatListTime(row.handledAt, now)} · {row.handledBy}{row.ip && <span className="font-mono"> · {row.ip}</span>}</td>
             </tr>
           ))}
         </tbody>
       </table>
+      </ScrollTable>
     </div>
   );
 }
 
 /** 지금 감사가 어디까지 왔고, 무엇으로, 누가 열었는지. 새 감사는 여기서 연다 */
-function CampaignPanel({ overview }: { overview: AuditOverview }) {
-  const { campaign, counts, paused } = overview;
+function CampaignPanel({ overview, now }: { overview: AuditOverview; now: Date }) {
+  const { campaign, counts, paused, stalled } = overview;
   const running = campaign?.status === "running";
   const percent = counts.total ? Math.floor((counts.reviewed / counts.total) * 100) : 0;
   return (
@@ -220,11 +244,16 @@ function CampaignPanel({ overview }: { overview: AuditOverview }) {
         <>
           <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
             <h2 className="text-[14.5px] font-bold">감사 #{campaign.id}</h2>
-            <span className={`rounded px-1.5 py-0.5 text-[13px] font-semibold ${running ? "bg-accent-soft text-accent" : "bg-bg-soft text-fg-2"}`}>
-              {STATUS[campaign.status] ?? campaign.status}
-            </span>
+            {/* 글이 바뀌어 멈춘 감사는 "진행 중"이 아니다 — 사람이 중단하고 새로 열어야 풀린다(ADM-15) */}
+            {stalled
+              ? <span className="rounded bg-warn/15 px-1.5 py-0.5 text-[13px] font-semibold text-warn">멈춤 · 사람 필요</span>
+              : <span className={`rounded px-1.5 py-0.5 text-[13px] font-semibold ${running ? "bg-accent-soft text-accent" : "bg-bg-soft text-fg-2"}`}>
+                {STATUS[campaign.status] ?? campaign.status}
+              </span>}
+            {stalled && <RestartStalledAudit campaignId={campaign.id}
+              from={`${campaign.promptVersion}·${campaign.rulesVersion}`} to={`${REVIEW_PROMPT_VERSION}·${REVIEW_RULES_VERSION}`} />}
             <span className="text-[13px] text-fg-3">
-              {time(campaign.startedAt)} · {campaign.startedBy} · 심사 글 {campaign.promptVersion} · {campaign.provider} {campaign.model}
+              {formatListTime(campaign.startedAt, now)} · {campaign.startedBy} · 심사 글 {campaign.promptVersion} · {campaign.provider} {campaign.model}
               {campaign.reauditKept && " · 유지 판정 포함"}
             </span>
           </div>
@@ -237,13 +266,14 @@ function CampaignPanel({ overview }: { overview: AuditOverview }) {
             {counts.skipped > 0 && ` · 묻기 전에 내려가 건너뜀 ${count(counts.skipped)}`}
           </p>
           {paused && <p className="rounded-lg border border-warn/40 bg-warn/10 px-3 py-2 text-[13px] leading-[1.7] text-fg-2">{paused}</p>}
-          {running && <CancelAudit />}
+          {running && !stalled && <CancelAudit />}
         </>
       ) : (
         <p className="text-[13px] text-fg-2">아직 연 감사가 없습니다.</p>
       )}
       <StartAudit first={!campaign}
-        blockedReason={running ? "감사가 진행 중입니다. 한 번에 하나만 돕니다 — 끝나거나 중단한 뒤에 시작할 수 있습니다." : null} />
+        blockedReason={stalled ? "멈춘 감사가 열려 있습니다 — 위의 \u201c이 감사 중단 → 새 감사 시작\u201d을 누르세요."
+          : running ? "감사가 진행 중입니다. 한 번에 하나만 돕니다 — 끝나거나 중단한 뒤에 시작할 수 있습니다." : null} />
     </section>
   );
 }

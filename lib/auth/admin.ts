@@ -34,6 +34,29 @@ export function isAdminLogin(login: string): boolean {
   return allowed.length > 0 && allowed.includes(normalized);
 }
 
+/**
+ * 로컬 로그인의 운영자 이름(2026-10-08 UX 감사 ADM-21).
+ *
+ * 로컬 로그인은 모두 'local' 이라 작업 로그로 누가 했는지 알 수 없다. 진짜 로그인(Cloudflare Access·GitHub)을 붙이기
+ * 전까지 각자 자기 이름을 적어 두면 작업 로그의 처리자로 남긴다(처리 방식은 그대로 'local'). 본인이 적은 이름이라
+ * 신원 확인은 아니다. 로컬 로그인에는 세션 쿠키가 없어 이 쿠키 하나에 이름만 둔다.
+ */
+export const OPERATOR_COOKIE = "nmv_operator";
+export const OPERATOR_NAME_MAX = 40;
+
+/** 이름 다듬기 — 제어 문자를 빼고 공백을 하나로 모아 40자까지. 비면 null */
+export function normalizeOperatorName(raw: unknown): string | null {
+  if (typeof raw !== "string") return null;
+  const name = raw.replace(/[\u0000-\u001f\u007f]/g, "").replace(/\s+/g, " ").trim().slice(0, OPERATOR_NAME_MAX).trim();
+  return name || null;
+}
+
+/** 이 요청의 로컬 운영자 이름. 로컬 로그인이 아니거나 적지 않았으면 null */
+export async function localOperatorName(): Promise<string | null> {
+  if (!adminLocalLoginEnabled()) return null;
+  return normalizeOperatorName((await cookies()).get(OPERATOR_COOKIE)?.value);
+}
+
 export function authSecret(): string | null {
   const secret = process.env.AUTH_SECRET;
   // 짧은 비밀키는 서명의 의미를 없앤다
