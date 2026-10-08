@@ -9,12 +9,12 @@ import { beforeEach, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   dequeue: vi.fn(), defer: vi.fn(), save: vi.fn(), mark: vi.fn(), failed: vi.fn(), judge: vi.fn(),
-  repo: vi.fn(), page: vi.fn(), request: vi.fn(), probe: vi.fn(),
+  repo: vi.fn(), page: vi.fn(), request: vi.fn(), probe: vi.fn(), candidate: vi.fn(),
   showHn: { enabled: true, priority: 120, requireEvidence: false },
 }));
 vi.mock("@/lib/crawl/repository", () => ({
   dequeue: mocks.dequeue, deferFrontier: mocks.defer, saveFetchedDocument: mocks.save,
-  markFrontier: mocks.mark, markFailed: mocks.failed, recordJudgement: mocks.judge,
+  markFrontier: mocks.mark, markFailed: mocks.failed, recordJudgement: mocks.judge, getCandidate: mocks.candidate,
   SKIP_NOT_FOUND: "github_not_found", SKIP_EMPTY_REPOSITORY: "github_empty_repository",
 }));
 vi.mock("@/lib/crawl/settings", () => ({ getSettings: async () => ({
@@ -41,6 +41,22 @@ beforeEach(() => {
   mocks.repo.mockResolvedValue({ ok: true, value: { id: 7, homepage: "https://app.test" } });
   mocks.page.mockImplementation(async (url: string) => ({ status: 200, finalUrl: url, html: "<title>App</title>" }));
   mocks.save.mockResolvedValue({ needsJudgement: true });
+  mocks.candidate.mockResolvedValue(undefined);
+});
+
+it("이미 후보가 있는 레포의 재수집에는 흔적 관문을 걸지 않는다 — 심사 중인 후보를 거절로 덮지 않는다", async () => {
+  // 2026-10-05~06: 원본 재수집(승인·보류 후보)이 이 관문에 다시 걸려 1차 AI 승인 237건이 잠금·상태 확인 없이 거절로 덮였다
+  mocks.candidate.mockResolvedValue({ id: 9, repo: "kim/todo", state: "approved", reason: "passed" });
+  mocks.dequeue.mockResolvedValueOnce([entry("kim/todo", "한국어 README")]).mockResolvedValue([]);
+  mocks.probe.mockResolvedValue({ ok: true, found: [] });
+
+  expect(await fetchCrawlDocuments(context())).toEqual({ done: true });
+
+  expect(mocks.probe).not.toHaveBeenCalled();
+  expect(mocks.judge).not.toHaveBeenCalledWith(expect.objectContaining({ reason: "ai_evidence_not_found" }));
+  // 관문 없이 평소처럼 페이지를 받아 원본을 갱신한다
+  expect(mocks.page).toHaveBeenCalled();
+  expect(mocks.save).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ repo: "kim/todo", pageStatus: 200 }), undefined);
 });
 
 it("흔적이 없으면 페이지를 열지 않고 원본만 남긴 채 거절로 적는다", async () => {
