@@ -17,7 +17,7 @@ export function LanguageBar({ repository }: { repository: ProductDetailView["rep
   const rows = rest > 0 ? [...top, { name: `${languages[3]?.name ?? "기타"} 외`, percent: rest }] : top;
   return (
     <section aria-labelledby="lang-title" className="flex flex-col gap-2.5">
-      <h2 id="lang-title" className="m-0 text-[13px] font-semibold tracking-[0.02em] text-fg-3">언어 구성</h2>
+      <h2 id="lang-title" className="m-0 text-[13px] font-semibold tracking-[0.02em] text-fg-2">언어 구성</h2>
       <div aria-hidden className="flex h-2 overflow-hidden rounded-full bg-line">
         {rows.map((item, index) => <span key={item.name} style={{ width: `${item.percent}%`, background: SHADES[index] }} />)}
       </div>
@@ -25,7 +25,7 @@ export function LanguageBar({ repository }: { repository: ProductDetailView["rep
         {rows.map((item, index) => (
           <li key={item.name} className="inline-flex items-center gap-[7px]">
             <i aria-hidden className="inline-block h-[9px] w-[9px] rounded-full" style={{ background: SHADES[index] }} />
-            {item.name} <span className="text-fg-3">{item.percent}%</span>
+            {item.name} <span className="text-fg-2">{item.percent}%</span>
           </li>
         ))}
       </ul>

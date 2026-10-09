@@ -216,7 +216,7 @@ test("rich desktop profile shows objective evidence and behaves without provider
   await expect(page.getByRole("heading", { name: "무엇으로 만들었나" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "정보", exact: true })).toBeVisible();
   await expect(page.getByRole("heading", { name: "근거", exact: true })).toHaveCount(0);
-  await expect(page.getByText("최근 push", { exact: true })).toBeVisible();
+  await expect(page.getByText("최근 코드 업데이트", { exact: true })).toBeVisible();
   // 유입은 실제로 잰 값이 있을 때만 일곱째 칸으로 나온다
   await expect(page.getByText("유효 방문 · 최근 7일")).toBeVisible();
   await expect(page.getByText(/저장소 생성 \d{4}년/)).toBeVisible();
@@ -259,7 +259,7 @@ test("mobile profile keeps the approved reading order and visible core content",
   // 히어로 → 핵심 사실 → 무엇으로 만들었나 → 소개 → 업데이트 → 정보 (오른쪽 열은 본문 아래로)
   const readingOrder = (name: string) => [
     page.getByRole("heading", { level: 1, name }),
-    page.getByText("최근 push", { exact: true }),
+    page.getByText("nomorevibe 등록", { exact: true }),
     page.getByRole("heading", { name: "무엇으로 만들었나" }),
     page.getByRole("heading", { name: "소개", exact: true }),
     page.getByRole("heading", { name: /^업데이트/ }),
@@ -274,7 +274,7 @@ test("mobile profile keeps the approved reading order and visible core content",
   expect(observed.pageErrors).toEqual([]);
   await page.screenshot({ path: "/private/tmp/nomorevibe-product-rich-mobile.png", fullPage: true });
 
-  // 운영자 안내는 저장소가 있는 미클레임 제품에만 — 미리보기 다음에 온다.
+  // 운영자 안내는 저장소가 있는 운영자 미확인 제품에만 — 미리보기 다음에 온다.
   // 같은 분야 '지금 뜨는' 줄은 fixture 에 스타가 는 제품이 없어 나오지 않는다.
   await gotoProduct(page, PRODUCT_DETAIL_FIXTURES.installable);
   await expectReadingOrder([...readingOrder("Editor Plugin"), page.getByText("이 프로젝트의 운영자인가요?")]);
@@ -306,10 +306,10 @@ test("collecting, stale-conflict, and unclaimed states remain explicit", async (
   await gotoProduct(page, PRODUCT_DETAIL_FIXTURES.unclaimed);
   await expect(page.getByRole("heading", { name: "Open Seed" })).toBeVisible();
   const hero = page.getByRole("heading", { level: 1, name: "Open Seed" }).locator("xpath=ancestor::section[1]");
-  await expect(hero.getByText("미클레임", { exact: true })).toBeVisible();
-  // 저장소가 없는 미클레임 제품은 운영 주체를 추정해 표시하지 않는다.
+  await expect(hero.getByText("운영자 미확인", { exact: true })).toBeVisible();
+  // 저장소가 없는 운영자 미확인 제품은 운영 주체를 추정해 표시하지 않는다.
   await expect(page.getByRole("heading", { name: "운영 주체와 연락" })).toHaveCount(0);
-  await expect(page.getByText("저장소 미확인", { exact: true })).toBeVisible();
+  await expect(page.getByText("nomorevibe 등록", { exact: true })).toBeVisible();
   await expect(page.getByText("메이커가 아직 상세 소개를 제공하지 않았습니다.")).toHaveCount(0);
 
   await expectViewportContract(page);
@@ -336,9 +336,9 @@ test("unclaimed owner guidance keeps one sidebar profile and accepts a takedown 
   await expect(request).toBeVisible();
   expect((await request.boundingBox())?.height).toBeGreaterThanOrEqual(44);
   await request.click();
-  await sidebar.getByPlaceholder("이유를 적어주셔도 되고, 비워두셔도 됩니다").fill("브라우저 테스트 요청");
+  await sidebar.getByLabel("요청 이유").fill("브라우저 테스트 요청");
   await sidebar.getByRole("button", { name: "요청 보내기", exact: true }).click();
-  await expect(sidebar.getByText("요청을 받았습니다. 확인 후 내려드리겠습니다.", { exact: true })).toBeVisible();
+  await expect(sidebar.getByText("요청을 받았습니다. 24시간 안에 확인합니다. 확인 전에도 검색엔진 노출은 바로 멈춥니다.", { exact: true })).toBeVisible();
 
   await page.setViewportSize({ width: 390, height: 844 });
   await expectViewportContract(page);

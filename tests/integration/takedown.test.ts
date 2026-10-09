@@ -1,12 +1,16 @@
-import { describe, it, expect, beforeAll, beforeEach } from "vitest";
+import { describe, it, expect, beforeAll, beforeEach, vi } from "vitest";
 import { db } from "@/lib/db";
-import { productClickDaily, takedownRequests } from "@/lib/db/schema";
+import { cdnPurges, productClickDaily, takedownRequests } from "@/lib/db/schema";
 import { sql } from "drizzle-orm";
+import { getProductIdentity } from "@/lib/domain/products/detail-view";
+import { productIndexable } from "@/lib/domain/products/indexing";
 import * as repo from "@/lib/domain/products/repository";
 import { requestTakedown, pendingTakedowns, resolveTakedown, resolveTakedowns, takedownHistory, takedownQueue, takedownRequesterHash,
   takedownSummary } from "@/lib/domain/products/takedown";
 import { productVisitorHash } from "@/lib/domain/products/visitors";
 import { ensureSchema, resetTables } from "./setup";
+
+vi.mock("server-only", () => ({}));
 
 /** 우리가 대신 올린 제품 — 주인이 부탁한 적이 없다 */
 async function seeded(slug = "found-app", url = "https://found.test", repoUrl: string | null = null) {
@@ -129,6 +133,65 @@ describe("내려달라는 요청", () => {
     expect(results.filter((result) => result.ok)).toHaveLength(1);
     const [request] = await db.select().from(takedownRequests);
     expect((await repo.findBySlug("found-app"))?.status).toBe(request.outcome === "removed" ? "banned" : "seeded");
+  });
+});
+
+describe("새 요청은 엣지 사본을 지운다 — noindex 가 바로 닿게(UX-08, C7)", () => {
+  const purges = () => db.select({ slug: cdnPurges.slug, reason: cdnPurges.reason }).from(cdnPurges).orderBy(cdnPurges.id);
+
+  it("새로 대기에 들어간 요청만 같은 트랜잭션에서 Cloudflare 지우기를 적는다", async () => {
+    await seeded();
+    await requestTakedown("found-app", "내려 주세요");
+    expect(await purges()).toEqual([{ slug: "found-app", reason: "takedown" }]);
+
+    // 이미 대기 중인 요청이 다시 오면 적지 않는다 — 상세는 이미 noindex
+    await requestTakedown("found-app", "다시 보냅니다");
+    expect(await purges()).toHaveLength(1);
+
+    // 둠으로 처리된 뒤 다시 오면 새 요청이다 — 다시 noindex 로 바뀌므로 다시 지운다
+    await resolveTakedown("found-app", "dismiss", "jr");
+    await requestTakedown("found-app", "진짜 요청");
+    expect(await purges()).toEqual([{ slug: "found-app", reason: "takedown" }, { slug: "found-app", reason: "takedown" }]);
+  });
+
+  it("받지 않은 요청은 지우기를 적지 않는다", async () => {
+    await repo.insert({
+      slug: "owned", url: "https://owned.test", name: "Owned", tagline: "소개", description: "설명", category: "Other", stack: [],
+      status: "verified", source: "skill", verifyToken: "nmv_verify_owned", editTokenHash: "z".repeat(64),
+    });
+    expect(await requestTakedown("owned")).toMatchObject({ ok: false });
+    expect(await requestTakedown("missing")).toMatchObject({ ok: false });
+    expect(await purges()).toEqual([]);
+  });
+
+  it("요청이 들어오면 상세의 색인 판단이 바로 noindex 로 바뀐다", async () => {
+    await seeded();
+    expect((await getProductIdentity("found-app"))?.takedownPending).toBe(false);
+    await requestTakedown("found-app");
+    const product = await getProductIdentity("found-app");
+    expect(product?.takedownPending).toBe(true);
+    expect(productIndexable(product!)).toBe(false);
+  });
+});
+
+describe("요청의 갈래 — 사유 앞에 붙는다(UX-19)", () => {
+  it("운영자 요청·스팸 신고를 사유 첫머리에 남기고, 이유가 없으면 이름만", async () => {
+    await seeded("a1", "https://a1.test");
+    await seeded("a2", "https://a2.test");
+    await requestTakedown("a1", " 제 프로젝트입니다 ", null, "owner");
+    await requestTakedown("a2", "", null, "abuse");
+    const reasons = Object.fromEntries((await pendingTakedowns()).map((row) => [row.slug, row.reason]));
+    expect(reasons).toEqual({ a1: "[운영자 요청] 제 프로젝트입니다", a2: "[스팸·악성 신고]" });
+    // 처리 화면 줄도 그대로 — 갈래가 첫머리에 읽힌다
+    expect((await takedownQueue()).map((entry) => entry.reason).sort()).toEqual(["[스팸·악성 신고]", "[운영자 요청] 제 프로젝트입니다"]);
+  });
+
+  it("이름만 있는 사유는 몰림 요약에서 '사유 없음'으로 센다", async () => {
+    for (const slug of ["n1", "n2", "n3"]) await seeded(slug, `https://${slug}.test`);
+    await requestTakedown("n1", null, null, "owner");
+    await requestTakedown("n2", "실제 이유", null, "owner");
+    await requestTakedown("n3");
+    expect((await takedownSummary()).lastHour.noReason).toBe(2);
   });
 });
 

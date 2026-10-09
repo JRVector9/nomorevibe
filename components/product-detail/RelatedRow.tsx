@@ -1,4 +1,5 @@
 import { CompactRow } from "@/components/home/CompactRow";
+import { formatCount } from "@/lib/format/number";
 import { categoryLabel } from "@/lib/domain/products/labels";
 import type { ProductListItem } from "@/lib/domain/products/view";
 
@@ -16,7 +17,7 @@ export function RelatedRow({ category, items, total }: { category: string; items
       note="최근 두 확인 사이 하루 평균 GitHub 스타가 많이 는 순 · 스타 2천 미만"
       more={{
         href: `/?category=${encodeURIComponent(category)}`,
-        label: total === null ? "모두 보기" : `${total.toLocaleString("ko-KR")}개 모두 보기`,
+        label: total === null ? "모두 보기" : `${formatCount(total)}개 모두 보기`,
       }}
       items={items}
       trailing="category"

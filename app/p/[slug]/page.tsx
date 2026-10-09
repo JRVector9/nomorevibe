@@ -12,7 +12,9 @@ import { ProductHero } from "@/components/product-detail/ProductHero";
 import { RelatedRow } from "@/components/product-detail/RelatedRow";
 import { UpdateTimeline } from "@/components/product-detail/UpdateTimeline";
 import { UnclaimedOwnerContact } from "@/components/product-detail/UnclaimedOwnerContact";
+import { pageTitle } from "@/lib/copy/brand";
 import { getProductDetail, getProductIdentity } from "@/lib/domain/products/detail-view";
+import { productIndexable } from "@/lib/domain/products/indexing";
 import { categoryLabel } from "@/lib/domain/products/labels";
 import { publicRead } from "@/lib/domain/products/public-reads";
 import { countProducts } from "@/lib/domain/products/repository";
@@ -30,9 +32,10 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const product = await identityOf(slug);
   if (!product) return {};
   return {
-    title: `${product.name} — NoMoreVibe`,
+    title: pageTitle(product.name),
     description: product.tagline,
-    robots: product.status === "verified" ? undefined : { index: false, follow: false },
+    // 색인 규칙은 sitemap 과 하나다(indexing.ts, UX-08·D1) — 내려달라는 요청이 들어오면 바로 noindex(엣지 사본은 그때 지운다 — takedown.ts)
+    robots: productIndexable(product) ? undefined : { index: false, follow: false },
   };
 }
 
@@ -50,11 +53,13 @@ export default async function ProductPage({ params }: Props) {
 
   const languages = (detail.repository?.facts?.languages ?? []).slice(0, 2).map((item) => item.name);
   const risingTotal = await risingLoad;
+  // 날짜의 '올해'를 정하는 시각 — 업데이트 목록(클라이언트)도 서버가 읽은 이 값으로 그린다
+  const now = new Date();
 
   return (
     <main className="wrap pb-14">
       <DetailEntry slug={slug} />
-      <nav aria-label="경로" className="flex items-center gap-2 pt-4 text-[13px] text-fg-3">
+      <nav aria-label="경로" className="flex items-center gap-2 pt-4 text-[13px] text-fg-2">
         <Link prefetch={false} href="/" className="shrink-0 hover:text-fg">발견하기</Link>
         <span aria-hidden>›</span>
         <Link prefetch={false} href={`/?category=${encodeURIComponent(detail.product.category)}&sort=recent`} className="shrink-0 hover:text-fg">{categoryLabel(detail.product.category)}</Link>
@@ -62,7 +67,8 @@ export default async function ProductPage({ params }: Props) {
         <span className="min-w-0 truncate text-fg">{detail.product.name}</span>
       </nav>
 
-      <ProductHero product={detail.product} unclaimed={detail.unclaimed} risingRank={detail.risingRank} health={detail.health} languages={languages} />
+      <ProductHero product={detail.product} unclaimed={detail.unclaimed} risingRank={detail.risingRank} health={detail.health} languages={languages}
+        repositoryUrl={detail.repository?.facts?.repositoryUrl ?? null} />
 
       {/* 넓으면 2:1 두 열, 좁으면 오른쪽 열이 본문 아래로 */}
       <div className="flex flex-wrap items-start gap-x-12 gap-y-9 pt-7">
@@ -78,7 +84,7 @@ export default async function ProductPage({ params }: Props) {
           />
           <IntroSection product={detail.product} profile={detail.profile} readmeExcerpt={detail.readmeExcerpt} unclaimed={detail.unclaimed} />
           <LanguageBar repository={detail.repository} />
-          <UpdateTimeline updates={detail.updates} />
+          <UpdateTimeline updates={detail.updates} now={now} />
         </div>
 
         <aside id="evidence" className="flex min-w-0 flex-[1_1_300px] flex-col gap-4">
