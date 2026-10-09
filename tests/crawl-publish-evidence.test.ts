@@ -7,6 +7,7 @@ vi.mock("@/lib/crawl/settings",()=>({getSettings:async()=>({...DEFAULT_CRAWL_SET
 vi.mock("@/lib/crawl/agent-evidence",()=>({loadAgentJudgeInput:async()=>({scanState:"pending",relationship:"unknown",observations:[],scanId:null})}));
 vi.mock("@/lib/domain/products/repository",()=>({nextAvailableSlug:async()=>"sample",insert:state.insert,findRepositoryProduct:async()=>undefined}));
 vi.mock("@/lib/domain/products/og",()=>({cacheOgImage:async()=>null}));
+vi.mock("@/lib/domain/evidence/ai-level-store",()=>({storedAiLevel:async()=>null}));
 vi.mock("@/lib/crawl/classify",()=>({classifyCategory:async()=>null}));
 vi.mock("@/lib/crawl/repository",()=>({
   getDocument:async()=>state.document,
