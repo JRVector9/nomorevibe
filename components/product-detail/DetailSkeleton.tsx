@@ -2,12 +2,15 @@
 const BAR = "animate-pulse rounded-[8px] bg-bg-soft";
 
 /**
- * 상세를 누른 즉시 뜨는 머리 골격(2026-10-08 UX 감사 UX-38).
+ * 상세 본문이 오는 동안의 머리 골격(2026-10-08 UX 감사 UX-38).
  *
  * 상세는 force-dynamic 이고 저장소 사실·근거를 여러 표에서 모아 읽는다 — 그동안 이전 화면 그대로라 눌린 것인지 알 수 없었다.
  * ProductHero 와 같은 자리(아이콘 80 · 이름 40 · 소개 20 · 메타 한 줄 · 단추 줄)와 사실 칸 줄만 그린다.
+ *
+ * loading.tsx 가 아니라 페이지 안의 Suspense 로 건다 — 구간 전체를 감싸는 loading 은 응답을 먼저 흘려보내
+ * 없는 제품도 404 대신 200 을 낸다. 페이지가 제품을 먼저 찾고(없으면 404) 그다음에 이 골격을 흘린다(app/p/[slug]/page.tsx).
  */
-export default function ProductLoading() {
+export function DetailSkeleton() {
   return (
     <main aria-busy="true" aria-live="polite" className="wrap pb-14">
       <span className="sr-only">프로젝트를 불러오는 중</span>

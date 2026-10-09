@@ -1,8 +1,10 @@
+import { Suspense } from "react";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { BuildTools } from "@/components/product-detail/BuildTools";
 import { DetailEntry } from "@/components/product-detail/DetailEntry";
+import { DetailSkeleton } from "@/components/product-detail/DetailSkeleton";
 import { FactsStrip } from "@/components/product-detail/FactsStrip";
 import { InfoCard } from "@/components/product-detail/InfoCard";
 import { IntroSection } from "@/components/product-detail/IntroSection";
@@ -39,15 +41,28 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   };
 }
 
+/**
+ * 없는 제품은 응답을 흘려보내기 전에 404 로 끝낸다 — 기본 정보(메타데이터와 같은 요청 안에서 한 번 읽는다)만 먼저 읽고,
+ * 여러 표를 모아 읽는 본문은 그다음 Suspense 안에서 머리 골격(DetailSkeleton)을 먼저 보이며 채운다(UX-38).
+ * 구간 loading.tsx 를 두면 응답이 골격부터 흘러가 상태 코드를 바꿀 수 없어, 없는 제품도 200 이 된다.
+ */
 export default async function ProductPage({ params }: Props) {
   const { slug } = await params;
-  // '모두 보기'의 숫자일 뿐 — 세다가 실패해도 페이지는 그대로 선다. 기본 정보(메타데이터와 같은 요청 안에서 한 번 읽는다)를
-  // 받자마자 상세와 함께 센다 — 상세를 다 받은 뒤 세던 한 왕복을 겹친다(2026-10-06)
-  // 분야 전체가 아니라 그 분야에서 지금 뜨는 수 — 링크가 여는 홈 목록이 세는 것과 같은 조건이다
   const identity = await identityOf(slug);
-  const risingLoad = identity
-    ? publicRead("count", ["category-rising", identity.category], () => countProducts({ statuses: ["verified", "seeded"], excludeDown: true, rising: true, category: identity.category as Category })).catch(() => null)
-    : Promise.resolve(null);
+  if (!identity) notFound();
+  return (
+    <Suspense fallback={<DetailSkeleton />}>
+      <ProductDetail slug={slug} category={identity.category} />
+    </Suspense>
+  );
+}
+
+async function ProductDetail({ slug, category }: { slug: string; category: string }) {
+  // '모두 보기'의 숫자일 뿐 — 세다가 실패해도 페이지는 그대로 선다. 기본 정보를 받자마자 상세와 함께 센다 —
+  // 상세를 다 받은 뒤 세던 한 왕복을 겹친다(2026-10-06)
+  // 분야 전체가 아니라 그 분야에서 지금 뜨는 수 — 링크가 여는 홈 목록이 세는 것과 같은 조건이다
+  const risingLoad = publicRead("count", ["category-rising", category], () => countProducts({ statuses: ["verified", "seeded"], excludeDown: true, rising: true, category: category as Category })).catch(() => null);
+  // 기본 정보를 읽은 뒤 그사이 내려갔으면 여기서 404 화면(응답은 이미 흘렀으므로 상태는 200, noindex 가 붙는다)
   const detail = await publicRead("detail", ["detail", slug], () => getProductDetail(slug));
   if (!detail) notFound();
 

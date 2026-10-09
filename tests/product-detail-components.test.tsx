@@ -1,8 +1,9 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import type { ComponentProps } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { BuildTools } from "@/components/product-detail/BuildTools";
+import { DetailSkeleton } from "@/components/product-detail/DetailSkeleton";
 import { EvidenceCard } from "@/components/product-detail/EvidenceCard";
 import { FactsStrip } from "@/components/product-detail/FactsStrip";
 import { InfoCard } from "@/components/product-detail/InfoCard";
@@ -776,6 +777,13 @@ describe("evidence product detail components", () => {
     // 분야 총수는 꾸밈 — 세다가 실패해도 페이지는 선다
     // 30초 읽기 캐시(publicRead)로 감싸도 실패는 null 로 삼킨다
     expect(source).toMatch(/countProducts\(\{[^}]*excludeDown: true[^}]*\}\)\)?\.catch\(\(\) => null\)/);
+    // 없는 제품은 진짜 404 — 기본 정보로 notFound() 를 먼저 부르고, 본문만 Suspense 안에서 머리 골격을 보이며 채운다.
+    // 구간 loading.tsx 는 응답을 먼저 흘려 상태를 200 으로 굳히므로 두지 않는다(UX-38)
+    expect(existsSync("app/p/[slug]/loading.tsx")).toBe(false);
+    const notFoundAt = source.indexOf("if (!identity) notFound();");
+    expect(notFoundAt).toBeGreaterThan(-1);
+    expect(notFoundAt).toBeLessThan(source.indexOf("<Suspense fallback={<DetailSkeleton />}>"));
+    expect(renderToStaticMarkup(<DetailSkeleton />)).toContain('aria-busy="true"');
     // 읽기 순서: 히어로 → 핵심 사실 → 무엇으로 만들었나 → 소개 → 언어 → 업데이트 → 정보 → 미리보기 → 운영자 → 같은 분야
     const order = [
       "<ProductHero",
