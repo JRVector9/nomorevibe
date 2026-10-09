@@ -36,9 +36,12 @@ export const NAME_ISSUE_LABELS: Record<NameIssue, string> = {
 /**
  * source — 제안이 어디서 왔나. title: 제목 안의 말(구분자 앞뒤·이모지 뗀 나머지·대소문자만 고침), repo: 제목에서 못 찾아 저장소 이름으로 대신했다.
  * 저장소 이름 대신은 자주 틀린다(2026-10-09 공개분 표본: 'AgentKit: AI Agent Integrations…' → 'Authstack', 'The W App' → 'W App Web') —
- * 발행·일괄 정리는 title 만 자동으로 쓰고, repo 는 관리자 '이름 확인 필요'에서 사람이 고른다.
+ * guess: 제목 안의 말이지만 저장소 이름에 기대어 골랐거나(구분자 뒤 조각·40자 넘는 제목 속 묶음) 대소문자를 짐작했다 —
+ * 2026-10-09 백필 표본에서 'Earn your first dollar online with Gumroad' → 'Gumroad', 'MicroGains || Daily-habit-tracker' →
+ * 'Daily-habit-tracker', 'HAIDER ALI' → 'Haider ALI' 로 틀렸다.
+ * 발행·일괄 정리는 title 만 자동으로 쓰고, guess·repo 는 관리자 '이름 확인 필요'에서 사람이 고른다.
  */
-export type NameReview = { issues: NameIssue[]; proposed: string | null; source: "title" | "repo" | null };
+export type NameReview = { issues: NameIssue[]; proposed: string | null; source: "title" | "guess" | "repo" | null };
 
 /** 이보다 긴 이름은 이름이 아니라 문장이다(UX-33) */
 export const NAME_MAX = 40;
@@ -129,9 +132,18 @@ function isAllCaps(name: string): boolean {
   return name.split(/[^A-Za-z]+/).some((word) => word.length >= 6);
 }
 
-function recase(name: string, repo: { owner: string; name: string } | null): string {
-  // 저장소가 같은 이름을 섞어 쓴 대소문자로 적어 두었으면 그 표기를 쓴다 — 'DEEPSEEKAGENTS' → DeepSeekAgents
-  if (repo && fold(repo.name) === fold(name) && /[a-z]/.test(repo.name) && /[A-Z]/.test(repo.name)) return repo.name.split(/[-_]+/).join(' ');
+/**
+ * 저장소가 같은 이름을 섞어 쓴 대소문자로 적어 두었으면 그 대소문자 — 'DEEPSEEKAGENTS' → DeepSeekAgents.
+ * 띄어쓰기·하이픈은 제목 것을 둔다 — 'ZARVIS MOBILE' 과 저장소 ZarvisMobile → 'Zarvis Mobile'(저장소 표기를 통째로 쓰면 'ZarvisMobile')
+ */
+function repoSpelling(name: string, repo: { owner: string; name: string } | null): string | null {
+  if (!repo || fold(repo.name) !== fold(name) || !/[a-z]/.test(repo.name) || !/[A-Z]/.test(repo.name)) return null;
+  const letters = [...repo.name].filter((char) => /[\p{L}\p{N}]/u.test(char));
+  const spelled = [...name].map((char) => /[\p{L}\p{N}]/u.test(char) ? letters.shift() ?? char : char).join('');
+  return spelled.toLowerCase() === name.toLowerCase() ? spelled : null;
+}
+
+function recase(name: string): string {
   // 첫 낱말이 아닌 for·of·the 같은 낱말은 소문자로
   return name.replace(/[A-Za-z]+/g, (word, offset: number) => {
     const lower = word.toLowerCase();
@@ -165,6 +177,8 @@ export function reviewProductName(name: string, repoUrl: string | null): NameRev
   const repo = repoParts(repoUrl);
   const issues: NameIssue[] = [];
   let current = original;
+  // 저장소 이름에 기대어 고르거나 대소문자를 짐작했다 — 자동으로 쓰지 않는다(NameReview guess)
+  let guessed = false;
 
   const emoji = current.match(EMOJI_PREFIX);
   // 떼고 나면 글자가 거의 없는 이름('🐋 vs 🦞')은 그림 문자가 이름의 일부다 — 두다
@@ -185,6 +199,7 @@ export function reviewProductName(name: string, repoUrl: string | null): NameRev
       // 앞쪽이 설명이고 이름이 뒤에 있는 제목도 있다 — '台灣包車旅遊・機場接送｜RelayGo 專業包車平台'. 저장소와 이어지는 쪽이 이름이다
       const named = related(head, repo) ? undefined : rest.find((part) => related(part, repo));
       current = named ? (repo && repoSpan(named, repo.name)) || named : head;
+      if (named) guessed = true;
       issues.push('slogan_tail');
     }
   } else if (colon && related(current.slice(0, colon.index), repo) && current.slice(colon.index + colon[0].length).split(/\s+/).length >= 2) {
@@ -198,6 +213,7 @@ export function reviewProductName(name: string, repoUrl: string | null): NameRev
   } else if ([...current].length > NAME_MAX) {
     issues.push('too_long');
     current = repo ? repoSpan(current, repo.name) ?? '' : '';
+    guessed = true;
   } else if (isSlogan(current, repo)) {
     issues.push('slogan');
     current = '';
@@ -205,17 +221,19 @@ export function reviewProductName(name: string, repoUrl: string | null): NameRev
 
   if (current && isAllCaps(current)) {
     issues.push('all_caps');
-    current = recase(current, repo);
+    const spelled = repoSpelling(current, repo);
+    if (!spelled) guessed = true;
+    current = spelled ?? recase(current);
   }
 
   if (!issues.length) return null;
   const fromTitle = Boolean(current);
   const proposed = current || prettyRepoName(repoUrl);
   const kept = proposed && proposed !== original ? proposed.slice(0, 120) : null;
-  return { issues, proposed: kept, source: kept ? (fromTitle ? "title" : "repo") : null };
+  return { issues, proposed: kept, source: kept ? (fromTitle ? (guessed ? "guess" : "title") : "repo") : null };
 }
 
-/** 발행할 이름 — 제목 안의 말로 고친 제안만 쓴다. 저장소 이름으로 대신한 제안은 관리자 '이름 확인 필요'에서 사람이 고른다 */
+/** 발행할 이름 — 제목 안의 말로 고친 제안(title)만 쓴다. 짐작(guess)·저장소 이름 대신(repo)은 관리자 '이름 확인 필요'에서 사람이 고른다 */
 export function normalizedProductName(name: string, repoUrl: string | null): string {
   const review = reviewProductName(name, repoUrl);
   return review?.source === "title" && review.proposed ? review.proposed : name;

@@ -97,9 +97,16 @@ describe("normalizedProductName — 발행할 때 고친 이름을 쓴다", () =
 });
 
 describe("제안의 출처(source) — 제목 안의 말만 자동으로 쓴다(2026-10-09 공개분 표본)", () => {
-  it("제목 안의 말로 고친 것은 title, 저장소 이름으로 대신한 것은 repo", () => {
+  it("제목 안의 말로 고친 것은 title, 짐작한 것은 guess, 저장소 이름으로 대신한 것은 repo", () => {
     expect(reviewProductName("Wireshark • Go Deep", gh("wireshark/wireshark"))).toMatchObject({ proposed: "Wireshark", source: "title" });
-    expect(reviewProductName("LINKEDIN AGENT", gh("acme/li-outreach"))).toMatchObject({ proposed: "Linkedin Agent", source: "title" });
+    expect(reviewProductName("DEEPSEEKAGENTS", gh("acme/DeepSeekAgents"))).toMatchObject({ proposed: "DeepSeekAgents", source: "title" });
+    // 대소문자만 저장소에서 가져오고 띄어쓰기·하이픈은 제목 것을 둔다
+    expect(reviewProductName("ZARVIS MOBILE", gh("acme/ZarvisMobile"))).toMatchObject({ proposed: "Zarvis Mobile", source: "title" });
+    expect(reviewProductName("D-AGROBUSINESS", gh("acme/D_AgroBusiness"))).toMatchObject({ proposed: "D-AgroBusiness", source: "title" });
+    expect(reviewProductName("LINKEDIN AGENT", gh("acme/li-outreach"))).toMatchObject({ proposed: "Linkedin Agent", source: "guess" });
+    expect(reviewProductName("台灣包車旅遊・機場接送｜RelayGo 專業包車平台", gh("acme/relaygo"))).toMatchObject({ proposed: "RelayGo", source: "guess" });
+    expect(reviewProductName("Two Prices for the Same Model and How I Built Claude Burst", gh("acme/claude-burst")))
+      .toMatchObject({ proposed: "Claude Burst", source: "guess" });
     expect(reviewProductName("Home | TradeFlow WMS", gh("acme/tradeflow-wms"))).toMatchObject({ proposed: "TradeFlow WMS", source: "title" });
     expect(reviewProductName("The AI Workspace", gh("acme/atlas"))).toMatchObject({ proposed: "Atlas", source: "repo" });
     expect(reviewProductName("首页", gh("someone/shuiyun-notes"))).toMatchObject({ proposed: "Shuiyun Notes", source: "repo" });
@@ -111,6 +118,17 @@ describe("제안의 출처(source) — 제목 안의 말만 자동으로 쓴다(
     // 실제로 틀렸던 대신: 'AgentKit: AI Agent Integrations & MCP Gateway' → 'Authstack'
     expect(normalizedProductName("AgentKit: AI Agent Integrations & MCP Gateway", gh("acme/authstack"))).toBe("AgentKit: AI Agent Integrations & MCP Gateway");
     expect(normalizedProductName("The AI Workspace", gh("acme/atlas"))).toBe("The AI Workspace");
+  });
+
+  it("짐작한 제안도 원래 이름을 둔다 — 2026-10-09 백필 표본에서 틀린 것들", () => {
+    // 40자 넘는 제목 속 저장소 이름 묶음: 저장소가 남의 서비스 이름을 땄다
+    expect(normalizedProductName("Earn your first dollar online with Gumroad", gh("acme/gumroad"))).toBe("Earn your first dollar online with Gumroad");
+    // 구분자 뒤 조각이 저장소 이름과 맞아도 앞쪽이 브랜드였다
+    expect(normalizedProductName("MicroGains || Daily-habit-tracker", gh("acme/daily-habit-tracker"))).toBe("MicroGains || Daily-habit-tracker");
+    // 짧은 낱말을 약어로 짐작했다('Haider ALI')
+    expect(normalizedProductName("HAIDER ALI", gh("acme/portfolio"))).toBe("HAIDER ALI");
+    // 이모지만 뗀 것은 그대로 고친다
+    expect(normalizedProductName("🦎 Reptiles RPG", gh("acme/reptiles-rpg"))).toBe("Reptiles RPG");
   });
 
   it("그림 문자를 떼면 글자가 거의 안 남는 이름은 두다", () => {

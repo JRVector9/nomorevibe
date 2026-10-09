@@ -80,8 +80,9 @@ export default async function AdminProductsPage({ searchParams }: Props) {
   /** 이름 확인 — 지금 이름(행의 제목) 옆에 제안과 사유 */
   const nameNote = (slug: string) => {
     const review = nameReviews?.get(slug);
-    // 저장소 이름으로 대신한 제안은 자주 틀린다 — 그대로 고르지 말고 사이트를 보고 정하라고 적는다
-    const proposal = review?.proposed ? `${review.proposed}${review.source === "repo" ? " (저장소 이름 — 확인 필요)" : ""}` : "없음 (직접 확인)";
+    // 짐작한 제안·저장소 이름으로 대신한 제안은 자주 틀린다 — 그대로 고르지 말고 사이트를 보고 정하라고 적는다
+    const caution = review?.source === "repo" ? " (저장소 이름 — 확인 필요)" : review?.source === "guess" ? " (짐작 — 확인 필요)" : "";
+    const proposal = review?.proposed ? `${review.proposed}${caution}` : "없음 (직접 확인)";
     return review ? `제안 → ${proposal} · ${review.issues.map((issue) => NAME_ISSUE_LABELS[issue]).join(", ")}` : null;
   };
   const time = (value: Date | null) => value ? formatListTime(value, now) : null;
