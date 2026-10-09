@@ -67,11 +67,6 @@ export function completedWindows(now: Date) {
   };
 }
 
-export function formatAsOfKst(asOf: Date): string {
-  const [, month, day] = kstCalendarDate(asOf).split("-");
-  return `${month}.${day} 00:00 KST 기준`;
-}
-
 export function emptyHomePulse(now: Date): HomePulse {
   return {
     asOf: completedWindows(now).asOf,

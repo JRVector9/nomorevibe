@@ -30,21 +30,27 @@ test("도구 알약은 저장소 흔적만 거르고 분야·더 보기·초기�
   await tools.getByRole("link", { name: "Claude Code 12", exact: true }).click();
   await expect(page).toHaveURL(/observedTool=Claude\+Code/);
   expect(new URL(page.url()).searchParams.get("observedTool")).toBe("Claude Code");
-  await expect(page.locator(".filter-summary")).toContainText("검색 결과 12개");
+  // 검색어 없이 필터만 걸리면 결과 줄은 그 필터 이름이다(UX-27)
+  await expect(page.locator(".filter-summary")).toContainText("Claude Code 12개");
   await expect(page.locator(".project-card")).toHaveCount(9);
   await expect(tools.getByRole("link", { name: "Claude Code 12", exact: true })).toHaveAttribute("aria-current", "true");
   const control = await tools.getByRole("link", { name: "Claude Code 12", exact: true }).evaluate(element => ({ height: element.getBoundingClientRect().height, fontSize: parseFloat(getComputedStyle(element).fontSize) }));
   expect(control.height).toBeGreaterThanOrEqual(44);
   expect(control.fontSize).toBeGreaterThanOrEqual(13);
-  await page.getByRole("navigation", { name: "분야", exact: true }).getByRole("link", { name: "개발 도구 13", exact: true }).click();
-  await expect(page).toHaveURL(/category=Dev/);
-  await expect(page.getByRole("link", { name: "프로젝트 더 보기 (9 / 12)", exact: true })).toHaveAttribute("href", /category=Dev/);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await tools.screenshot({ path: "/private/tmp/nmv-v5-c1-tools-mobile.png" });
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  // 도구 흔적으로 좁힌 동안 분야 알약 수(전체 13)는 결과(12)와 달라 숨긴다(UX-12)
+  await page.getByRole("navigation", { name: "분야", exact: true }).getByRole("link", { name: "개발 도구", exact: true }).click();
+  // 분야는 정식 주소 /c/<분야> 로 간다(UX-40) — 분야 화면에는 필터 없는 전체 기준의 아래 홈 구획(도구 알약 등)이 없다
+  await expect(page).toHaveURL(/\/c\/dev\?/);
+  await expect(tools).toHaveCount(0);
+  await expect(page.getByRole("link", { name: "프로젝트 더 보기 (9 / 12)", exact: true })).toHaveAttribute("href", /^\/c\/dev\?/);
   await page.getByRole("link", { name: "프로젝트 더 보기 (9 / 12)", exact: true }).click();
   await expect(page.locator(".project-title")).toHaveText(Array.from({ length: 12 }, (_, i) => `Observed Project ${i}`));
-  expect(Object.fromEntries(new URL(page.url()).searchParams)).toEqual({ sort: "recent", category: "Dev", observedTool: "Claude Code", shown: "12" });
+  expect(Object.fromEntries(new URL(page.url()).searchParams)).toEqual({ sort: "recent", observedTool: "Claude Code", shown: "12" });
   await page.setViewportSize({ width: 390, height: 844 });
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
-  await tools.screenshot({ path: "/private/tmp/nmv-v5-c1-tools-mobile.png" });
   await page.getByRole("link", { name: "필터 초기화", exact: true }).click();
   await expect(page.locator(".filter-summary")).toContainText("13개");
   expect(new URL(page.url()).searchParams.has("observedTool")).toBe(false);
@@ -53,11 +59,11 @@ test("도구 알약은 저장소 흔적만 거르고 분야·더 보기·초기�
 
 test("헤더 검색에서도 관찰 도구 필터가 남아 신고값만 같은 제품을 포함하지 않는다", async ({ page }) => {
   await page.goto("/?sort=recent&observedTool=Claude+Code");
-  await expect(page.locator(".filter-summary")).toContainText("검색 결과 12개");
+  await expect(page.locator(".filter-summary")).toContainText("Claude Code 12개");
   const search = page.getByRole("searchbox", { name: "프로젝트 검색", exact: true });
   await search.fill("Outsider"); await search.press("Enter");
   await expect(page).toHaveURL(/q=Outsider/);
   expect(new URL(page.url()).searchParams.get("observedTool")).toBe("Claude Code");
-  await expect(page.getByRole("heading", { name: "조건에 맞는 제품이 없습니다", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "“Outsider”에 맞는 프로젝트가 없습니다", exact: true })).toBeVisible();
   await expect(page.locator(".project-card")).toHaveCount(0);
 });

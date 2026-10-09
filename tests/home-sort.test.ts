@@ -8,10 +8,11 @@ describe("home sort", () => {
   it("도구 흔적 필터는 정렬·분야·더 보기에서 유지하고 초기화하면 지운다", () => {
     const state = { sort: "recent" as const, observedTool: "Claude Code", shown: 18 };
     expect(hrefWith(state, { shown: 27 })).toBe("/?sort=recent&observedTool=Claude+Code&shown=27");
-    expect(hrefWith(state, { category: "Dev" })).toBe("/?sort=recent&category=Dev&observedTool=Claude+Code");
+    expect(hrefWith(state, { category: "Dev" })).toBe("/c/dev?sort=recent&observedTool=Claude+Code");
     expect(hrefWith(state, { observedTool: "Codex" })).toBe("/?sort=recent&observedTool=Codex");
     const html = renderToStaticMarkup(createElement(BrowseFilters, { state, counts: {}, total: 12, resultCount: 2 }));
-    expect(html).toContain("검색 결과 2개");
+    // 검색어 없이 필터만 걸리면 결과 줄은 필터 이름이다(UX-27)
+    expect(html).toContain("Claude Code 2개");
     expect(html).toContain('class="clear-filters show" href="/?sort=recent"');
   });
   it("defaults to weekly and keeps the old popular URL compatible", () => {
@@ -37,8 +38,8 @@ describe("home sort", () => {
       resultCount: 1,
     }));
 
-    expect(html).toContain('href="/?sort=weekly&amp;category=Dev&amp;q=ai+tool"');
-    expect(html).toContain('href="/?sort=all-time&amp;category=Dev&amp;q=ai+tool"');
+    expect(html).toContain('href="/c/dev?sort=weekly&amp;q=ai+tool"');
+    expect(html).toContain('href="/c/dev?sort=all-time&amp;q=ai+tool"');
     expect(html).toContain("추천");
     expect(html).toContain("관심 많은 순");
     // '저장소 있음' 탭은 내렸다 — 주소 ?sort=open 은 parseHomeSort 가 계속 받는다
@@ -72,7 +73,7 @@ describe("home sort", () => {
     expect(shownWindow(9, 0)).toEqual({ start: 0, count: 0 });
   });
 
-  it("순위 탭이 다른 목록을 대신 보여줄 때는 그 목록의 이름을 쓰고, 필터가 걸리면 검색 결과다", () => {
+  it("순위 탭이 다른 목록을 대신 보여줄 때는 그 목록의 이름을 쓰고, 필터가 걸리면 그 필터 이름이다", () => {
     const html = renderToStaticMarkup(createElement(BrowseFilters, {
       state: { sort: "weekly" }, counts: {}, total: 0, resultCount: 7, listLabel: "스타 증가 순",
     }));
@@ -82,7 +83,8 @@ describe("home sort", () => {
     const narrowed = renderToStaticMarkup(createElement(BrowseFilters, {
       state: { sort: "weekly", category: "Dev" }, counts: { Dev: 1 }, total: 1, resultCount: 1, listLabel: "스타 증가 순",
     }));
-    expect(narrowed).toContain("검색 결과 1개");
+    expect(narrowed).toContain("개발 도구 · 스타 증가 순 1개");
+    expect(narrowed).not.toContain("검색 결과");
   });
 
   it("uses 추천 for the default season sort instead of a weekly cadence label", () => {

@@ -1,3 +1,4 @@
+import { formatCount } from "@/lib/format/number";
 import type { MarketStats as Stats } from "@/lib/domain/products/stats";
 
 /**
@@ -9,14 +10,12 @@ import type { MarketStats as Stats } from "@/lib/domain/products/stats";
  * 화면 맨 위에 얇게 지나가고 스크롤과 함께 사라진다. 목록보다 먼저 나오지만 자리를
  * 차지하지 않아야 해서, 카드 넷이 아니라 한 줄이다. 헤더만 sticky로 남는다.
  */
-const FORMAT = new Intl.NumberFormat("ko-KR");
-
 function Stat({ label, value, note }: { label: string; value: number; note?: string }) {
   return (
     <span className="flex shrink-0 items-baseline gap-1.5">
-      <span className="text-fg-3">{label}</span>
-      <span className="font-mono font-bold tabular-nums text-fg">{FORMAT.format(value)}</span>
-      {note && <span className="text-fg-3">{note}</span>}
+      <span className="text-fg-2">{label}</span>
+      <span className="font-mono font-bold tabular-nums text-fg">{formatCount(value)}</span>
+      {note && <span className="text-fg-2">{note}</span>}
     </span>
   );
 }

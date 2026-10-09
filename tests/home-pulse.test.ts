@@ -4,7 +4,6 @@ import {
   BORN_CHANGE_MIN,
   completedWindows,
   emptyHomePulse,
-  formatAsOfKst,
   kstMidnightUtc,
 } from "@/lib/domain/products/home-pulse";
 import { CATEGORY_LABELS } from "@/lib/domain/products/labels";
@@ -18,7 +17,6 @@ describe("완료된 KST 집계 창", () => {
     expect(asOf.toISOString()).toBe("2026-09-07T15:00:00.000Z");
     expect(windows.weekStart.toISOString()).toBe("2026-08-31T15:00:00.000Z");
     expect(windows.prevStart.toISOString()).toBe("2026-08-24T15:00:00.000Z");
-    expect(formatAsOfKst(asOf)).toBe("09.08 00:00 KST 기준");
   });
 
   it("같은 KST 날짜면 시각과 무관하게 창이 같다", () => {

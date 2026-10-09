@@ -1,8 +1,7 @@
 import Link from "next/link";
 import { hrefWith, type BrowseState } from "@/components/home/browse-state";
+import { formatCount } from "@/lib/format/number";
 import type { HomePulse } from "@/lib/domain/products/home-pulse";
-
-const num = (value: number) => value.toLocaleString("ko-KR");
 
 /**
  * 무엇으로 만들었나 — 공개 프로젝트 저장소에서 찾은 AI 코딩 도구 흔적.
@@ -16,14 +15,14 @@ export function ToolsBoard({ tools, state }: { tools: HomePulse["tools"]; state:
       <div className="row-head">
         <div>
           <h2 id="tools-title" className="row-title">무엇으로 만들었나</h2>
-          <p className="row-note">공개 프로젝트의 저장소에서 찾은 AI 코딩 도구 흔적 · 확인한 {num(tools.scanned)}개 중 {num(tools.withTool)}개 · 한 저장소에 여러 도구</p>
+          <p className="row-note">공개 프로젝트의 저장소에서 찾은 AI 코딩 도구 흔적 · 확인한 {formatCount(tools.scanned)}개 중 {formatCount(tools.withTool)}개 · 한 저장소에 여러 도구</p>
         </div>
       </div>
       <ul className="chips">
         {tools.rows.slice(0, 8).map((tool) => (
           <li key={tool.label}>
             <Link prefetch={false} href={hrefWith(state, { observedTool: tool.label })} className={`chip${state.observedTool === tool.label ? " chip-dark" : ""}`} aria-current={state.observedTool === tool.label ? "true" : undefined}>
-              {tool.label} <span className="chip-count">{num(tool.count)}</span>
+              {tool.label} <span className="chip-count">{formatCount(tool.count)}</span>
             </Link>
           </li>
         ))}

@@ -249,7 +249,9 @@ describe("discovery boards", () => {
     expect(html).toContain('href="/p/verified"');
     expect(html).toContain('href="/p/seeded"');
     expect(html).not.toContain('href="http');
-    expect(html).toContain("미클레임");
+    // 옛 '미클레임'은 용어표의 말로(UX-14)
+    expect(html).toContain("운영자 미확인");
+    expect(html).not.toContain("미클레임");
     expect(html).toContain("#7 · 유효 방문 42");
     expect(html).not.toContain("유효 클릭");
   });

@@ -9,14 +9,17 @@ import { emptyHomePulse } from "@/lib/domain/products/home-pulse";
 const now = new Date("2026-10-02T03:00:00+09:00");
 
 describe("홈 소개 줄", () => {
-  it("타이틀 한 줄과 세 숫자를 낸다", () => {
+  it("타이틀 한 줄과 세 숫자를 낸다 — 공개 수는 목록과 같은 지금 값, 이번 주 기준은 말로", () => {
     const pulse = { ...emptyHomePulse(now), total: 25183, born: { current: 157, previous: 100, change: 57 }, updates: { projects: 3483, releases: 17553 } };
-    const html = renderToStaticMarkup(createElement(IntroLine, { pulse, state: { sort: "weekly" } }));
+    const html = renderToStaticMarkup(createElement(IntroLine, { pulse, total: 25_402, state: { sort: "weekly" } }));
     expect(html).toContain("AI로 만든 것들이");
-    expect(html).toContain("25,183");
-    expect(html).toContain("157");
+    // 같은 화면의 '공개' 수는 하나 — 자정 집계(pulse.total)가 아니라 목록이 세는 값(UX-27)
+    expect(html).toContain("공개 <b>25,402</b>");
+    expect(html).not.toContain("25,183");
+    expect(html).toContain("이번 주 새로 생긴 <b>157</b>");
     expect(html).toContain("3,483");
-    expect(html).toContain("10.02 00:00 KST");
+    expect(html).toContain("이번 주 = 어제 자정까지 7일");
+    expect(html).not.toContain("KST");
   });
 });
 
@@ -26,8 +29,8 @@ describe("무엇으로 만들었나", () => {
       tools: { scanned: 12, withTool: 10, rows: [{ label: "Claude Code", count: 9 }, { label: "Codex", count: 1 }] },
       state: { sort: "recent", category: "Dev", observedTool: "Codex", shown: 18 },
     }));
-    expect(html).toContain('href="/?sort=recent&amp;category=Dev&amp;observedTool=Claude+Code"');
-    expect(html).toContain('class="chip chip-dark" aria-current="true" href="/?sort=recent&amp;category=Dev&amp;observedTool=Codex"');
+    expect(html).toContain('href="/c/dev?sort=recent&amp;observedTool=Claude+Code"');
+    expect(html).toContain('class="chip chip-dark" aria-current="true" href="/c/dev?sort=recent&amp;observedTool=Codex"');
     expect(html).not.toContain("metric=tools");
     expect(html).not.toContain("builder=");
     expect(html).not.toContain("shown=");
