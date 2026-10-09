@@ -435,6 +435,13 @@
       "when": 1791460000000,
       "tag": "0061_repo_health_daily",
       "breakpoints": true
+    },
+    {
+      "idx": 62,
+      "version": "7",
+      "when": 1791500000000,
+      "tag": "0062_product_korean_taglines",
+      "breakpoints": true
     }
   ]
 }

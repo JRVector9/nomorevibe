@@ -1,6 +1,8 @@
+import { BRAND } from "@/lib/copy/brand";
 import type { Product } from "@/lib/db/schema";
 import { isPrivateHostname, isPrivateIp } from "@/lib/net/ssrf";
 import { type Result, fail, ok } from "./errors";
+import { LAUNCH_COMMAND, installCommand } from "./launch-command";
 import * as repo from "./repository";
 import { isUnclaimed } from "./view";
 
@@ -19,14 +21,14 @@ import { isUnclaimed } from "./view";
 function inviteIssue(product: Pick<Product, "name" | "slug">, origin: string) {
   const page = `${origin}/p/${product.slug}`;
   return {
-    title: `${product.name} is listed on NoMoreVibe — claim or remove it`,
+    title: `${product.name} is listed on ${BRAND} — claim or remove it`,
     body: [
-      `Hi! We found this repository through public signals — an AI co-authored commit trailer or a repository topic — and listed the deployed product on NoMoreVibe, a public database of products built with AI.`,
+      `Hi! We found this repository through public signals — an AI co-authored commit trailer or a repository topic — and listed the deployed product on ${BRAND}, a public database of products built with AI.`,
       ``,
       `Listing: ${page}`,
       ``,
       `You have two options — both are one step:`,
-      `- **Claim it** to get the ✓ verified badge, edit the listing, and join the weekly ranking: run \`curl -fsSL ${origin}/install.sh | sh\` in your project, then \`/nomorevibe\` in Claude Code or Codex.`,
+      `- **Claim it** to get the ✓ verified badge, edit the listing, and join the weekly ranking: run \`${installCommand(origin)}\` in your project, then \`${LAUNCH_COMMAND}\` in Claude Code or Codex.`,
       `- **Remove it** if you'd rather not be listed: use the takedown form at the bottom of the listing page. No account needed.`,
       ``,
       `Everything we show is either checked by us (domain ownership) or labeled as unverified. Nothing was taken from private sources.`,

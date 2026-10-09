@@ -59,6 +59,8 @@ export const ACTION_LABELS: Record<string, string> = {
   "reconcile-crawl-duplicate": "중복 후보 정리",
   "relabel-repo-deleted": "저장소 삭제로 다시 분류",
   "ban-spam-campaign": "스팸 캠페인 일괄 차단",
+  "normalize-product-names": "제품 이름 일괄 정리",
+  "revert-product-names": "제품 이름 정리 되돌리기",
   "retry-exhausted-transport-once": "수집 실패 한 번 더 시도",
   "resume-after-github-redirect-fix": "이름 바뀐 저장소 수집 재개",
 };
@@ -107,7 +109,8 @@ export const ACTION_GROUPS = {
     "github-collector-token-save", "github-collector-enable", "github-collector-disable",
     "ai-connect", "ai-input", "ai-cancel", "ai-probe", "ai-test", "ai-apply"] },
   content: { label: "제품·소식·작업", actions: ["claim-invite", "intro-keep", "intro-edit", "product-refresh", "update-hide", "update-restore", "news-approve", "news-hide", "request-job",
-    "retry-exhausted-transport-once", "resume-after-github-redirect-fix", "export", "operator-name"] },
+    "retry-exhausted-transport-once", "resume-after-github-redirect-fix", "export", "operator-name",
+    "normalize-product-names", "revert-product-names"] },
 } as const;
 export type ActionGroup = keyof typeof ACTION_GROUPS;
 

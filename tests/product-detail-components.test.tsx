@@ -1,8 +1,9 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import type { ComponentProps } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { BuildTools } from "@/components/product-detail/BuildTools";
+import { DetailSkeleton } from "@/components/product-detail/DetailSkeleton";
 import { EvidenceCard } from "@/components/product-detail/EvidenceCard";
 import { FactsStrip } from "@/components/product-detail/FactsStrip";
 import { InfoCard } from "@/components/product-detail/InfoCard";
@@ -15,7 +16,9 @@ import { SaveButton } from "@/components/product-detail/SaveButton";
 import { SourceBadge } from "@/components/product-detail/SourceBadge";
 import { UpdateTimeline } from "@/components/product-detail/UpdateTimeline";
 import { UnclaimedOwnerContact } from "@/components/product-detail/UnclaimedOwnerContact";
+import { LAST_CODE_UPDATE_LABEL, LATEST_VERSION_LABEL, SITE_REPO_RELATION_LABEL, UNCLAIMED_HINT } from "@/lib/copy/terms";
 import type { ProductDetailView } from "@/lib/domain/products/detail-view";
+import { TAKEDOWN_PROMISE } from "@/lib/domain/products/takedown-view";
 import type { ProductListItem } from "@/lib/domain/products/view";
 
 const observedAt = new Date("2026-08-19T03:00:00.000Z");
@@ -40,6 +43,8 @@ const product: ProductDetailView["product"] = {
   verifiedAt: new Date("2026-07-02T00:00:00.000Z"),
   createdAt: new Date("2026-07-01T00:00:00.000Z"),
   updatedAt: observedAt,
+  aiEvidence: false,
+  takedownPending: false, taglineKo: null,
 };
 
 const profile: NonNullable<ProductDetailView["profile"]> = {
@@ -182,15 +187,53 @@ describe("evidence product detail components", () => {
     const html = renderHero({ unclaimed: true, health: { uptime30d: 99, latencyMs: 84, checkedAt: new Date(), down: false } });
 
     expect(html).toContain(`>${product.name}</h1>`);
-    expect(html).toContain("미클레임");
+    // 옛 '미클레임' 대신 용어표의 말(UX-14)과 툴팁
+    expect(textOf(html)).toContain("운영자 미확인");
+    expect(html).not.toContain("미클레임");
+    expect(html).toContain(`title="${UNCLAIMED_HINT}"`);
     expect(html).toMatch(/<a href="\/go\/simple-hwp"[^>]*class="[^"]*min-h-11[^"]*"[^>]*>제품 방문하기<\/a>/);
     expect(html).not.toContain('href="https://simplehwp.example"');
     expect(html).toContain(`href="${product.repoUrl}"`);
-    expect(html).toContain("온라인 · 84ms");
-    expect(html).toContain('aria-label="공유"');
+    // 응답 시간(ms)은 툴팁으로만
+    expect(textOf(html)).toContain("온라인");
+    expect(textOf(html)).not.toContain("84ms");
+    expect(html).toContain('title="응답 시간 84ms"');
     expect(html).toContain('aria-label="simpleHWP 저장"');
     // 시즌 순위·검증 배지·운영 단계는 히어로에서 뺐다 — 머리는 이름·소개·메타 한 줄만
     expect(html).not.toContain("이번 시즌");
+  });
+
+  it("keeps four buttons — visit, GitHub, share with a label, save — and drops the duplicate domain link (UX-31)", () => {
+    const html = renderHero();
+    expect(html).toMatch(/<a [^>]*aria-label="GitHub 저장소"[^>]*>GitHub<\/a>/);
+    // 공유는 바깥 링크 화살표(↗)가 아니라 공유 아이콘과 '공유' 글자 — 접근 이름도 '공유'
+    expect(html).toMatch(/<button type="button"[^>]*><svg[^>]*aria-hidden="true"[^>]*>[\s\S]*?<\/svg>공유<\/button>/);
+    expect(html).not.toContain('aria-label="공유"');
+    // 단추 줄의 차례 — 방문 · GitHub · 공유 · 저장
+    const order = ["제품 방문하기</a>", ">GitHub</a>", "공유</button>", 'aria-label="simpleHWP 저장"'].map((needle) => html.indexOf(needle));
+    expect(order.every((index) => index >= 0)).toBe(true);
+    expect(order).toEqual([...order].sort((left, right) => left - right));
+    // 같은 사이트로 가는 도메인 글자 링크는 없다 — 사이트 주소는 정보 카드의 '웹사이트' 줄
+    expect(textOf(html)).not.toContain("simplehwp.example");
+    expect(html.match(/href="\/go\/simple-hwp"/g)).toHaveLength(1);
+  });
+
+  it("names the current repository owner as the operator, not the account in an old repository URL (UX-15, amontlabs/lcu)", () => {
+    // 등록한 주소는 0xpolarzero/lcu, GitHub 이 넘겨준 정식 주소는 amontlabs/lcu(2026-10-08 감사)
+    const lcu = { ...product, repoUrl: "https://github.com/0xpolarzero/lcu" };
+    const moved = { ...observedRepository, facts: { ...observedRepository.facts!, repositoryKey: "amontlabs/lcu", repositoryUrl: "https://github.com/amontlabs/lcu" } };
+    const hero = textOf(renderHero({ product: lcu, repositoryUrl: moved.facts.repositoryUrl }));
+    expect(hero).toContain("GitHub @amontlabs");
+    expect(hero).not.toContain("@0xpolarzero");
+    const info = renderToStaticMarkup(<InfoCard product={lcu} repository={moved} freshness={freshness} unclaimed />);
+    expect(textOf(info)).toContain("운영 주체@amontlabs ↗GitHub 저장소 소유자");
+    expect(textOf(info)).toContain("주요 기여자@0xpolarzero ↗이전 저장소 주소의 계정");
+    expect(info).toContain('href="https://github.com/amontlabs"');
+    expect(info).toContain('href="https://github.com/amontlabs/lcu"');
+    // 저장소를 아직 읽지 않았으면 등록한 주소의 계정이 운영 주체, 기여자 줄은 없다
+    const unread = textOf(renderToStaticMarkup(<InfoCard product={lcu} repository={null} freshness={[]} unclaimed />));
+    expect(unread).toContain("운영 주체@0xpolarzero ↗");
+    expect(unread).not.toContain("주요 기여자");
   });
 
   it("shows the rising rank badge only inside the top twenty", () => {
@@ -232,7 +275,10 @@ describe("evidence product detail components", () => {
 
   it("shows only an internal icon copy, never an external image URL", () => {
     // 우리 사본을 화면 크기로 줄인 WebP 로(og-variants.ts)
-    expect(renderHero({ product: { ...product, ogImage: "/api/og-cache/simple-hwp" } })).toContain('src="/api/og-cache/simple-hwp.webp?size=192"');
+    expect(renderHero({ product: { ...product, ogImage: "/api/og-cache/simple-hwp?thumbnail=site_icon&w=64&h=64" } }))
+      .toContain('src="/api/og-cache/simple-hwp.webp?thumbnail=site_icon&amp;w=64&amp;h=64&amp;size=192"');
+    // 대표 이미지(OG 배너)는 정사각 아이콘 자리에 잘라 넣지 않는다 — 모노그램이 대신한다(UX-32)
+    expect(renderHero({ product: { ...product, ogImage: "/api/og-cache/simple-hwp" } })).not.toContain("<img");
     expect(renderHero({ product: { ...product, ogImage: "https://tracker.example/og.png" } })).not.toContain("tracker.example");
   });
 
@@ -279,10 +325,16 @@ describe("evidence product detail components", () => {
     expect(measured).not.toMatch(/전체 트래픽|총 방문자|서비스 전체/);
   });
 
-  it("renders push, release, contributors, license and listing as the six facts", () => {
-    const html = renderFacts();
-    for (const label of ["최근 push", "최신 release", "기여자", "라이선스", "nomorevibe 등록"]) expect(html).toContain(label);
+  it("renders code update, version, contributors, license and listing as the facts", () => {
+    const html = renderFacts({ health: { uptime30d: 99, latencyMs: 84, checkedAt: new Date(), down: false } });
+    for (const label of [LAST_CODE_UPDATE_LABEL, LATEST_VERSION_LABEL, "기여자", "라이선스", "nomorevibe 등록"]) expect(html).toContain(label);
+    // 옛 영어 용어(UX-14)
+    expect(html).not.toMatch(/최근 push|최신 release|GitHub 릴리스 기준/);
     expect(html).toContain("가동 상태");
+    expect(html).toContain("30일 가동률 99%");
+    expect(textOf(html)).not.toContain("84ms");
+    expect(html).toContain('title="응답 시간 84ms"');
+    expect(html.match(/<dt/g)).toHaveLength(6);
     expect(html).toContain("8월 18일");
     expect(html).toContain("활성 저장소");
     expect(html).toContain("v1.6.0");
@@ -301,14 +353,33 @@ describe("evidence product detail components", () => {
     expect(html).toContain("두 값을 모두 확인하세요");
   });
 
-  it("does not invent activity, a release, or a license from an unread repository", () => {
+  it("does not invent activity, a release, or a license from an unread repository — empty cells fold into one line (UX-16)", () => {
     const missing: ProductDetailView["license"] = { state: "missing", label: "라이선스 확인 안 됨", maker: null, observed: null };
     const unread = renderFacts({ repository: null, license: missing });
-    expect(unread).toContain("저장소 미확인");
-    expect(unread).toContain(">—<");
-    expect(unread).toContain("확인 안 됨");
+    // 값이 없는 칸은 그리지 않고, 셋보다 적게 남으면 격자 대신 한 줄
+    expect(unread).not.toContain("grid");
+    expect(unread.match(/<dt/g)).toHaveLength(1);
+    expect(textOf(unread)).toContain("nomorevibe 등록7월 1일");
+    expect(textOf(unread)).toContain("저장소 정보는 아직 수집하지 않았습니다.");
+    expect(unread).not.toContain(">—<");
+    expect(unread).not.toMatch(/확인 안 됨|확인 전|가동 상태/);
     expect(unread).not.toContain("활성");
     expect(unread).not.toContain("없음");
+    // 저장소가 없는 제품은 '수집 전'이라고 하지 않는다
+    expect(renderFacts({ product: { ...product, repoUrl: null }, repository: null, license: missing })).not.toContain("수집하지 않았습니다");
+    // 확인한 가동 상태 하나가 더해져도 둘 — 아직 한 줄
+    const checked = { uptime30d: null, latencyMs: null, checkedAt: new Date(), down: false };
+    const two = renderFacts({ repository: null, license: missing, health: checked });
+    expect(two).not.toContain("grid");
+    expect(textOf(two)).toContain("가동 상태온라인");
+    // 셋이면 격자
+    const three = renderFacts({ repository: null, license: observedLicense, health: checked });
+    expect(three).toContain("grid");
+    expect(three.match(/<dt/g)).toHaveLength(3);
+    // 라이선스를 읽지 못했으면 그 칸만 빠진다
+    const noLicense = renderFacts({ license: missing });
+    expect(noLicense).not.toContain("라이선스");
+    expect(noLicense).toContain("grid");
 
     const unknown = renderFacts({ repository: { ...observedRepository, facts: { ...observedRepository.facts!, archived: null, fork: null } } });
     expect(unknown).not.toContain("활성");
@@ -353,7 +424,7 @@ describe("evidence product detail components", () => {
     expect(first).toContain('width="960"');
     expect(first).toContain('height="600"');
     expect(first).toContain("simpleHWP 문서 뷰어 화면");
-    expect(first).toContain("사본 갱신 2026년 8월 19일");
+    expect(first).toContain("사본 갱신 8월 19일");
     expect(renderToStaticMarkup(<PreviewFigure product={product} media={[media[1]]} />)).toContain("원본 없음 · 보관 이미지");
 
     // 화면 사본이 없으면 넓은 대표 이미지 — 내부 사본 주소만
@@ -404,7 +475,7 @@ describe("evidence product detail components", () => {
     expect(html).not.toContain("tracker.example");
 
     const unclaimed = renderIntro({ profile, unclaimed: true });
-    expect(unclaimed).toContain("자동 감지");
+    expect(unclaimed).toContain("저장소 README에서 가져옴");
     expect(unclaimed).not.toContain("메이커 제공·미검증");
   });
 
@@ -420,23 +491,25 @@ describe("evidence product detail components", () => {
     expect(renderToStaticMarkup(<LanguageBar repository={null} />)).toBe("");
   });
 
-  it("renders objective facts as one info card: owner, site, repository, connection, category, access, stack, last check", () => {
+  it("renders objective facts as one info card: owner, site, repository, connection, category, access, stack, last refresh", () => {
     const html = renderToStaticMarkup(<InfoCard product={product} repository={observedRepository} freshness={freshness} unclaimed={false} />);
     const text = textOf(html);
-    for (const label of ["정보", "운영 주체", "웹사이트", "저장소", "서비스 연결", "분야", "이용 방식", "기술 스택", "마지막 확인"]) expect(text).toContain(label);
+    for (const label of ["정보", "운영 주체", "웹사이트", "저장소", SITE_REPO_RELATION_LABEL, "분야", "이용 방식", "기술 스택", "정보 갱신"]) expect(text).toContain(label);
+    // '확인'은 AI 흔적 검사와 헷갈린다 — 정보를 읽은 때는 '정보 갱신'(UX-16), 옛 '서비스 연결'(UX-14)도 없다
+    expect(text).not.toMatch(/마지막 확인|서비스 연결|주요 기여자/);
     expect(html).toContain('href="https://github.com/example"');
     expect(text).toContain("@example ↗");
     expect(text).toContain("GitHub 저장소 소유자");
     expect(html).toContain('href="https://github.com/example/simple-hwp"');
     expect(text).toContain("example/simple-hwp ↗");
     expect(text).toContain("공개 · 활성");
-    expect(text).toContain("서비스 ↔ 저장소 연결 확인");
+    expect(text).toContain("서로 주소를 적어 둠");
     expect(html).toContain('href="/go/simple-hwp"');
     expect(text).toContain("simplehwp.example ↗");
     expect(text).toContain("생산성");
     expect(text).toContain("웹사이트");
     expect(text).toContain("React · WASM · Rust");
-    expect(text).toContain("2026년 8월 19일");
+    expect(text).toContain("8월 19일");
     expect(text).toContain("GitHub");
     // 작은 글자 링크는 모두 진한 코랄
     expect(html.match(/<a /g)).toHaveLength(3);
@@ -447,8 +520,10 @@ describe("evidence product detail components", () => {
     expect(unclaimed).toContain("Simple Tools");
     expect(unclaimed).toContain("우리 추정");
     expect(unclaimed).not.toContain("신고값");
-    expect(unclaimed).not.toContain("서비스 연결");
-    expect(unclaimed).toContain("확인 전");
+    expect(unclaimed).not.toContain(SITE_REPO_RELATION_LABEL);
+    // 아직 아무것도 읽지 않았으면 갱신 줄이 없다 — '확인 전'이라고 하지 않는다
+    expect(unclaimed).not.toContain("정보 갱신");
+    expect(unclaimed).not.toContain("확인 전");
 
     const installable = textOf(renderToStaticMarkup(<InfoCard product={{ ...product, accessMode: "installable" }} repository={observedRepository} freshness={freshness} unclaimed={false} />));
     expect(installable).toContain("없음 · 저장소가 제품 페이지");
@@ -463,7 +538,21 @@ describe("evidence product detail components", () => {
     />);
     expect(html).toContain("이 프로젝트의 운영자인가요?");
     expect(html).toContain("/nomorevibe verify");
+    // 막다른 안내가 아니다 — 확인 순서(/launch#verify)와 사이트 안 요청(/policy#contact)으로 보낸다(UX-18, C5·C6)
+    expect(html).toMatch(/<a [^>]*href="\/launch#verify"[^>]*>1분 만에 확인하기<\/a>/);
+    expect(html).toMatch(/<a [^>]*href="\/policy#contact"[^>]*>관리자에게 요청<\/a>/);
+    expect(textOf(html)).toContain("CLI를 쓰지 않나요? GitHub 로그인으로 확인하는 방법은 준비 중입니다.");
+    // 공개 이메일은 두지 않는다(D5)
+    expect(html).not.toMatch(/mailto:|[\w.+-]+@[\w-]+\.[a-z]{2,}/i);
     expect(html).not.toContain("운영 주체와 연락");
+    // 내려달라는 요청 — 갈래 둘, 운영자 확인 방법, 처리 약속과 절차 링크, 연락처 칸 없음(UX-19, D5)
+    expect(html.match(/<input type="radio"[^>]*name="kind"/g)).toHaveLength(2);
+    expect(textOf(html)).toContain("운영자 요청 · 운영자가 목록에서 빼 달라는 요청");
+    expect(textOf(html)).toContain("스팸·악성 신고 · 스팸이거나 악성 코드·사기로 이어지는 프로젝트");
+    expect(textOf(html)).toContain("저장소에 이 요청을 적은 이슈를 열거나 저장소에 파일을 하나 더한 뒤");
+    expect(textOf(html)).toContain(TAKEDOWN_PROMISE);
+    expect(html).toMatch(/<a [^>]*href="\/policy#takedown"[^>]*>처리 절차 보기<\/a>/);
+    expect(html).not.toMatch(/type="email"|연락처|이메일/);
     expect(html).not.toContain("@AgentWorkforce");
     expect(html).not.toContain("https://github.com/AgentWorkforce");
     expect(html).not.toContain("<img");
@@ -486,9 +575,12 @@ describe("evidence product detail components", () => {
 
   it("설치형 프로젝트의 소유권 확인 안내는 지원하지 않는 도메인 확인 명령을 권하지 않는다", () => {
     const html = renderToStaticMarkup(<UnclaimedOwnerContact repoUrl={product.repoUrl} slug={product.slug} installable />);
-    expect(html).toContain("저장소 소유권 확인이 필요한 설치형 프로젝트입니다. 소개 수정은 관리자에게 요청해주세요.");
+    expect(textOf(html)).toContain("설치형 프로젝트는 배포 도메인이 없어 명령으로 소유를 확인할 수 없습니다.");
+    expect(html).toMatch(/<a [^>]*href="\/policy#contact"[^>]*>관리자에게 요청<\/a>/);
+    expect(textOf(html)).toContain("GitHub 로그인으로 저장소 주인을 확인하는 방법은 준비 중입니다.");
     expect(html).toContain("목록에서 내려달라고 요청하기");
     expect(html).not.toContain("/nomorevibe verify");
+    expect(html).not.toContain("/launch#verify");
   });
 
   it("renders one chip per observed tool with its citation while preserving maker reporting", () => {
@@ -532,10 +624,19 @@ describe("evidence product detail components", () => {
     expect(mixed).toContain("Claude Code · glm-4.7");
   });
 
-  it("says the repository is not scanned yet, or that no trace was found, instead of omitting the section", () => {
+  it("says the AI-trace scan is pending, or that no trace was found, instead of omitting the section", () => {
     const empty = { product: { ...product, builder: null }, agents: [], observedAgentFacts: [], skills: [] };
-    expect(renderTools({ ...empty, toolScan: "none" })).toContain("아직 저장소를 확인하지 않았습니다");
-    expect(renderTools({ ...empty, toolScan: "scanned" })).toContain("흔적을 찾지 못했습니다");
+    // 정보 카드의 '정보 갱신'과 다른 일 — '확인'이라 부르지 않는다(UX-16)
+    const pending = renderTools({ ...empty, toolScan: "none" });
+    expect(pending).toContain("AI 흔적 검사 대기 중");
+    expect(pending).not.toContain("확인하지 않았습니다");
+    expect(renderTools({ ...empty, toolScan: "scanned" })).toContain("AI 흔적 검사에서 AI 코딩 도구의 흔적을 찾지 못했습니다");
+    // GitHub 저장소가 없거나 사라졌으면 기다릴 검사가 없다
+    for (const changed of [{ repoUrl: "https://gitlab.com/acme/app" }, { repoUrl: null }, { repoGone: true }]) {
+      const html = renderTools({ ...empty, product: { ...empty.product, ...changed }, toolScan: "none" });
+      expect(html, JSON.stringify(changed)).toContain("AI 흔적 검사를 할 수 없습니다");
+      expect(html, JSON.stringify(changed)).not.toContain("대기 중");
+    }
   });
 
   it.each([null, "maker_reported"] as const)("does not invent activity or a verified direction from unknown repository facts (%s)", (relationshipState) => {
@@ -549,7 +650,9 @@ describe("evidence product detail components", () => {
     expect(html).not.toContain("일부 방향만 확인");
     expect(html).not.toContain("공개 ·");
     expect(html).toContain("상태 미확인");
-    expect(html).toContain("관계 미확인");
+    // 누가 누구의 주소를 적었는지 모르면 줄째 없다 — 메이커가 알려 준 것은 그렇다고 적는다
+    if (relationshipState) expect(textOf(html)).toContain(`${SITE_REPO_RELATION_LABEL}메이커가 알려 줌 · 확인 전`);
+    else expect(html).not.toContain(SITE_REPO_RELATION_LABEL);
   });
 
   it("renders compact evidence and freshness empty states without inventing data", () => {
@@ -605,7 +708,7 @@ describe("evidence product detail components", () => {
         makerEditedAt: null,
       },
     ];
-    const html = renderToStaticMarkup(<UpdateTimeline updates={older} />);
+    const html = renderToStaticMarkup(<UpdateTimeline updates={older} now={new Date()} />);
     expect(html.match(/role="tab"/g)).toHaveLength(3);
     expect(html).toMatch(/aria-selected="true"[^>]*>전체</);
     expect(html).toContain("메이커");
@@ -634,7 +737,7 @@ describe("evidence product detail components", () => {
       makerEditedAt: null,
     }));
     const old = { ...recent[0], id: 99, title: "v1.0.0", publishedAt: new Date(Date.now() - 60 * 86_400_000) };
-    const html = renderToStaticMarkup(<UpdateTimeline updates={[...recent, old]} />);
+    const html = renderToStaticMarkup(<UpdateTimeline updates={[...recent, old]} now={new Date()} />);
     expect(html).toContain("최근 30일 10건");
     expect(html.match(/<li/g)).toHaveLength(8);
     expect(html).toContain("11건 모두 보기");
@@ -677,6 +780,13 @@ describe("evidence product detail components", () => {
     // 분야 총수는 꾸밈 — 세다가 실패해도 페이지는 선다
     // 30초 읽기 캐시(publicRead)로 감싸도 실패는 null 로 삼킨다
     expect(source).toMatch(/countProducts\(\{[^}]*excludeDown: true[^}]*\}\)\)?\.catch\(\(\) => null\)/);
+    // 없는 제품은 진짜 404 — 기본 정보로 notFound() 를 먼저 부르고, 본문만 Suspense 안에서 머리 골격을 보이며 채운다.
+    // 구간 loading.tsx 는 응답을 먼저 흘려 상태를 200 으로 굳히므로 두지 않는다(UX-38)
+    expect(existsSync("app/p/[slug]/loading.tsx")).toBe(false);
+    const notFoundAt = source.indexOf("if (!identity) notFound();");
+    expect(notFoundAt).toBeGreaterThan(-1);
+    expect(notFoundAt).toBeLessThan(source.indexOf("<Suspense fallback={<DetailSkeleton />}>"));
+    expect(renderToStaticMarkup(<DetailSkeleton />)).toContain('aria-busy="true"');
     // 읽기 순서: 히어로 → 핵심 사실 → 무엇으로 만들었나 → 소개 → 언어 → 업데이트 → 정보 → 미리보기 → 운영자 → 같은 분야
     const order = [
       "<ProductHero",
@@ -708,7 +818,8 @@ describe("evidence product detail components", () => {
     expect(html).toContain("하루 평균");
     expect(html).toContain("스타 2천 미만");
     // 홈의 기본 정렬('추천')이 같은 급상승 순서다 — 최신순(sort=recent)으로 보내지 않는다
-    expect(html).toContain('href="/?category=Productivity"');
+    // 분야는 정식 주소(/c/<소문자>)로 보낸다 — 옛 /?category= 는 307 로 넘어간다(UX-40)
+    expect(html).toContain('href="/c/productivity"');
     expect(html).not.toContain("sort=recent");
     expect(textOf(html)).toContain("37개 모두 보기 ›");
     expect(html).toContain('href="/p/alpha"');

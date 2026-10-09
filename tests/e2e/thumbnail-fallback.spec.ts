@@ -1,6 +1,6 @@
 import{test,expect}from'@playwright/test';import sharp from'sharp';import{inArray}from'drizzle-orm';import{db}from'@/lib/db';import{products,ogImages}from'@/lib/db/schema';
 const kinds=['og','site_icon','repository_image','github_avatar','default'] as const;
-const labels=['공개 페이지 대표 이미지','프로젝트 아이콘','GitHub 저장소 이미지','GitHub 프로필 이미지','nomorevibe 기본 이미지'];
+const labels=['사이트 미리보기 이미지','프로젝트 아이콘','GitHub 저장소 이미지','GitHub 프로필 이미지','nomorevibe 기본 이미지'];
 test.beforeAll(async()=>{
  const slugs=kinds.map(k=>'thumbnail-e2e-'+k.replaceAll('_','-'));await db.delete(ogImages).where(inArray(ogImages.slug,slugs));await db.delete(products).where(inArray(products.slug,slugs));
  for(const[k,kind]of kinds.entries()){const slug=slugs[k],size=kind==='site_icon'?32:256;const image=await sharp({create:{width:size,height:size,channels:4,background:'#345678'}}).webp().toBuffer();
@@ -12,18 +12,23 @@ test('hero icons and source-labelled previews render on desktop and mobile',asyn
  for(const width of[1440,390]){await page.setViewportSize({width,height:900});for(const[k,kind]of kinds.entries()){
   await page.goto('/p/thumbnail-e2e-'+kind.replaceAll('_','-'));
   // v5 히어로는 큰 이미지 없이 80px 아이콘 하나 — 출처 이름은 아이콘이 아닌 이미지의 미리보기에만 붙는다
-  const icon=page.getByRole('img',{name:'Thumbnail '+kind,exact:true});await expect(icon).toBeVisible();
-  expect(await icon.evaluate((e:HTMLImageElement)=>e.complete&&e.naturalWidth>0)).toBe(true);
+  // 아이콘 자리에는 사이트 아이콘·GitHub 프로필만 — 나머지는 이름 첫 글자 모노그램이다(UX-32)
+  const hero=page.locator('main section').first(),iconKind=kind==='site_icon'||kind==='github_avatar';
+  const icon=iconKind?page.getByRole('img',{name:'Thumbnail '+kind,exact:true}):hero.locator('.product-monogram');
+  await expect(icon).toBeVisible();
+  if(iconKind)expect(await icon.evaluate((e:HTMLImageElement)=>e.complete&&e.naturalWidth>0)).toBe(true);
+  else await expect(hero.locator('img')).toHaveCount(0);
   expect((await icon.boundingBox())!.width).toBeLessThanOrEqual(80);
   const preview=page.locator('figure').filter({hasText:labels[k]});
-  if(kind==='og'){const image=preview.locator('img');await image.scrollIntoViewIfNeeded();await expect(image).toBeVisible();
+  // README 이미지는 아이콘 자리에 두지 않으므로(UX-32) 미리보기에 보인다 — 대표 배너와 함께. 나머지(아이콘·기본)는 미리보기가 없다
+  if(kind==='og'||kind==='repository_image'){const image=preview.locator('img');await image.scrollIntoViewIfNeeded();await expect(image).toBeVisible();
    await expect.poll(()=>image.evaluate((e:HTMLImageElement)=>e.complete&&e.naturalWidth>0)).toBe(true);}
   else await expect(preview).toHaveCount(0);
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
   if(kind==='site_icon'||kind==='default')await icon.screenshot({path:`/tmp/nomorevibe-thumbnail-${kind}-${width}.png`});
  }}expect(errors).toEqual([]);
 });
-test('wide repository wordmarks remain fully visible in covers and icons',async({page})=>{
+test('wide repository wordmarks stay whole in covers and never in the icon square',async({page})=>{
  const{execFileSync}=await import('node:child_process');
  const data=await sharp({create:{width:512,height:128,channels:4,background:'#345678'}}).webp().toBuffer();
  await db.update(ogImages).set({data}).where(inArray(ogImages.slug,['thumbnail-e2e-repository-image']));
@@ -38,12 +43,14 @@ test('wide repository wordmarks remain fully visible in covers and icons',async(
  `],{encoding:'utf8'});
 
  await page.evaluate(html=>{const host=document.createElement('div');host.innerHTML=html;document.body.prepend(host)},html);
- const images=page.locator('#wide-logo-check img');await expect(images).toHaveCount(2);
- for(const img of await images.all()){await expect(img).toBeVisible();await expect.poll(()=>img.evaluate((e:HTMLImageElement)=>e.complete&&e.naturalWidth===512)).toBe(true);expect(await img.evaluate(e=>getComputedStyle(e).objectFit)).toBe('contain');}
- const cover = await images.first().boundingBox();
- expect(cover!.width).toBe(360);
- expect(await images.first().evaluate(e=>getComputedStyle(e).objectFit)).toBe('contain');
- expect((await images.last().boundingBox())!.width).toBe(48);
+ // README 그림은 커버에만 — 정사각 아이콘 자리에는 모노그램(UX-32). 커버는 늘리지 않고 잘리지 않게(scale-down)
+ const images=page.locator('#wide-logo-check img');await expect(images).toHaveCount(1);
+ const cover=images.first();await expect(cover).toBeVisible();
+ await expect.poll(()=>cover.evaluate((e:HTMLImageElement)=>e.complete&&e.naturalWidth===512)).toBe(true);
+ expect(await cover.evaluate(e=>getComputedStyle(e).objectFit)).toBe('scale-down');
+ expect((await cover.boundingBox())!.width).toBe(360);
+ const monogram=page.locator('#wide-logo-check > .product-monogram');await expect(monogram).toHaveText('W');
+ expect((await monogram.boundingBox())!.width).toBe(48);
  await page.locator('#wide-logo-check').screenshot({path:'/tmp/nomorevibe-thumbnail-wide-logo.png'});
 });
 

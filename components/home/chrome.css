@@ -1,0 +1,56 @@
+/*
+ * 사이트 틀 — 헤더·푸터·모바일 탭(2026-10-08 UX 감사 UX-26·UX-38). 기본 모양은 app/home.css 에 있고 여기는 그 위에 더한 것이다.
+ * 이 파일이 home.css 보다 뒤에 온다는 보장이 없다(레이아웃이 컴포넌트를 전역 CSS 보다 먼저 가져온다) —
+ * home.css 의 같은 자리를 바꾸는 규칙은 부모 클래스를 하나 더 붙여 우선한다.
+ */
+
+/* 검색 중 — 입력창 오른쪽, ⌘K 자리에 도는 고리 */
+.header-search .search-spinner {
+  position: absolute;
+  right: 14px;
+  width: 16px;
+  height: 16px;
+  box-sizing: border-box;
+  border-radius: 50%;
+  border: 2px solid var(--border-strong);
+  border-top-color: var(--text-2);
+  animation: nmb-search-spin 0.7s linear infinite;
+}
+@keyframes nmb-search-spin {
+  to { transform: rotate(360deg); }
+}
+/* 검색 중에는 브라우저의 지우기(×) 단추를 감춘다 — 좁은 화면에서 고리와 같은 자리에 겹친다 */
+.header-search[aria-busy="true"] input::-webkit-search-cancel-button { -webkit-appearance: none; appearance: none; }
+
+@media (max-width: 520px) {
+  /* 첫 줄(로고·저장·공개) 44px, 둘째 줄 검색 44px — 누르는 자리는 모두 44px 이상 */
+  .nmb-header .header-row { padding-top: 4px; padding-bottom: 8px; row-gap: 6px; }
+  .nmb-header .header-search input { height: 44px; }
+  .nmb-header .header-search[aria-busy="true"] input { padding-right: 40px; }
+  /* 공개 버튼은 보이는 높이(36px)를 두고 누르는 자리만 위아래로 넓힌다 */
+  .nmb-header .primary { position: relative; }
+  .nmb-header .primary::after { content: ""; position: absolute; inset: -4px 0; }
+
+  /*
+   * 아래로 스크롤하면 검색줄을 접는다(SiteHeader 가 data-collapsed 를 단다). 헤더가 차지하는 자리는 그대로 두고
+   * 그리는 범위만 첫 줄(52px)로 자른다 — 높이를 줄이면 아래 내용이 그만큼 끌려 올라가 화면이 튄다.
+   * 잘린 자리는 눌러도 아래 내용이 받는다. 검색창에 초점이 들어오면(Tab·아래 '검색' 탭) 다시 편다.
+   */
+  .nmb-header { clip-path: inset(0 0 0 0); transition: clip-path 0.2s ease; }
+  .nmb-header .header-search { transition: opacity 0.2s ease; }
+  .nmb-header[data-collapsed]:not(:focus-within) { clip-path: inset(0 0 calc(100% - 52px) 0); }
+  .nmb-header[data-collapsed]:not(:focus-within) .header-search { opacity: 0; }
+  .nmb-header[data-collapsed]:not(:focus-within)::after {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 51px;
+    height: 1px;
+    background: var(--border);
+  }
+
+  /* 푸터 링크도 44px */
+  .nmb-footer .footer-right { flex-wrap: wrap; column-gap: 20px; row-gap: 0; }
+  .nmb-footer .footer-right a { display: inline-flex; align-items: center; min-height: 44px; }
+}

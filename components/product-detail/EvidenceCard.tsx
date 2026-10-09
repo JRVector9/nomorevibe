@@ -24,12 +24,12 @@ export function EvidenceCard({ links, freshness }: {
 
   return (
     <section aria-labelledby="evidence-title" className="rounded-[18px] bg-bg-soft px-5 py-[18px]">
-      <h2 id="evidence-title" className="m-0 text-[13px] font-semibold tracking-[0.02em] text-fg-3">근거</h2>
+      <h2 id="evidence-title" className="m-0 text-[13px] font-semibold tracking-[0.02em] text-fg-2">근거</h2>
       {links.length === 0 && freshness.length === 0 ? (
-        <p className="m-0 mt-2.5 text-[13px] leading-[1.5] text-fg-3">연결된 외부 출처가 없습니다.</p>
+        <p className="m-0 mt-2.5 text-[13px] leading-[1.5] text-fg-2">연결된 외부 출처가 없습니다.</p>
       ) : (
         <ul className="m-0 mt-2.5 flex list-none flex-wrap gap-1.5 p-0">
-          {chips.map(([label, n]) => <li key={label} className={CHIP}>{label} <span className="text-fg-3">{n}</span></li>)}
+          {chips.map(([label, n]) => <li key={label} className={CHIP}>{label} <span className="text-fg-2">{n}</span></li>)}
           {problems > 0 && <li className="rounded-full border border-down/30 bg-down/5 px-[11px] py-1.5 text-[13px] font-medium text-down">확인 필요 {problems}</li>}
         </ul>
       )}

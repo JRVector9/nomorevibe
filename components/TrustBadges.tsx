@@ -1,3 +1,5 @@
+import { BRAND } from "@/lib/copy/brand";
+import { UNCLAIMED_HINT, UNCLAIMED_LABEL } from "@/lib/copy/terms";
 import type { ProductStatus } from "@/lib/db/schema";
 import type { BuilderClaim } from "@/lib/domain/products/view";
 
@@ -11,7 +13,7 @@ import type { BuilderClaim } from "@/lib/domain/products/view";
 /**
  * 상태 배지. ✓ 는 우리가 직접 확인한 도메인 소유권에만 붙는다.
  *
- * 미클레임과 미검증은 다르다 — 전자는 주인이 아직 없는 것이고,
+ * 운영자 미확인과 미검증은 다르다 — 전자는 주인이 아직 없는 것이고,
  * 후자는 주인이 등록해놓고 검증을 안 끝낸 것이다.
  */
 export function StatusBadge({
@@ -30,7 +32,7 @@ export function StatusBadge({
     return (
       <span
         className={`shrink-0 font-semibold text-up ${shell} ${md ? "border-up/40 bg-up/10" : ""}`}
-        title="도메인 소유권을 NoMoreVibe가 직접 확인했습니다."
+        title={`도메인 소유권을 ${BRAND}가 직접 확인했습니다.`}
       >
         ✓ {md ? "도메인 검증됨" : "검증됨"}
       </span>
@@ -38,12 +40,12 @@ export function StatusBadge({
   }
 
   const [label, tip] = unclaimed
-    ? (["미클레임", "우리가 찾아서 올린 제품입니다. 아직 주인이 확인해주지 않았습니다."] as const)
+    ? ([UNCLAIMED_LABEL, UNCLAIMED_HINT] as const)
     : (["미검증", "등록은 됐지만 도메인 소유권 확인이 끝나지 않았습니다."] as const);
 
   return (
     <span
-      className={`shrink-0 font-semibold text-fg-3 ${shell} ${md ? "border-line bg-bg-soft" : ""}`}
+      className={`shrink-0 font-semibold text-fg-2 ${shell} ${md ? "border-line bg-bg-soft" : ""}`}
       title={tip}
     >
       {label}
@@ -59,7 +61,7 @@ export function StatusBadge({
  */
 export function BuilderBadge({ builder, claim }: { builder: string; claim: BuilderClaim }) {
   const guessed = claim === "guessed";
-  if (guessed) return <span className="rounded-full border border-line bg-bg-soft px-2 py-0.5 text-[13px] font-semibold text-fg-3"
+  if (guessed) return <span className="rounded-full border border-line bg-bg-soft px-2 py-0.5 text-[13px] font-semibold text-fg-2"
     title="이전 검색 분류만으로 개발 도구나 모델을 확인할 수 없습니다.">개발 AI 미확인</span>;
   return (
     <span
@@ -75,7 +77,7 @@ export function BuilderBadge({ builder, claim }: { builder: string; claim: Build
       }
     >
       ● {builder}
-      <span className="ml-1 font-normal text-fg-3">{guessed ? "우리 추정" : "메이커 신고"}</span>
+      <span className="ml-1 font-normal text-fg-2">{guessed ? "우리 추정" : "메이커 신고"}</span>
     </span>
   );
 }

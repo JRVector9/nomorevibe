@@ -1,0 +1,44 @@
+/* 카드 — ProjectCard·CompactCard·ProjectTile 이 가져온다(2026-10-08 UX 감사 UX-29·30·32). */
+/* app/home.css 의 옛 카드 규칙(.project-card·.compact-card 등)에 덧붙인다. 바꾼 자리는 새 이름을 써서 순서에 기대지 않는다. */
+
+/* 커버 바탕 — 토큰이라 다크에서 어두운 타일이 된다(home.css .tile-paper… 의 밝은 값보다 앞선다) */
+.project-tile.tile-paper { background: var(--tile-paper); }
+.project-tile.tile-day { background: var(--tile-day); }
+.project-tile.tile-invoice { background: var(--tile-invoice); }
+.project-tile.tile-form { background: var(--tile-form); }
+.project-tile.tile-hue { background: var(--tile-hue); }
+.project-tile.tile-note { background: var(--tile-note); }
+/* README 그림은 커버에 — 작은 로고는 늘리지 않고 제 크기로, 큰 그림은 잘리지 않게 맞춘다 */
+.tile-preview.tile-preview-readme { object-fit: scale-down; }
+
+/* 카드 하나 = 링크 하나(UX-30). 제목 링크의 ::after 가 카드 전체를 덮는다 */
+.project-card, .compact-card { position: relative; }
+.card-link::after { content: ""; position: absolute; inset: 0; }
+.project-card .card-link::after { border-radius: 18px; }
+.compact-card .card-link::after { border-radius: 16px; }
+/* 키보드 초점은 제목이 아니라 카드 테두리에 */
+.card-link:focus-visible { outline: none; }
+.card-link:focus-visible::after { outline: 2px solid var(--accent); outline-offset: -2px; }
+/* 덮개 위에서 따로 눌리는 것 — 저장(44×44)과 소유자 링크 */
+.project-card .cover-saved, .card-owner { position: relative; z-index: 1; }
+
+/* 조각 사이 가운뎃점 — 빠진 조각 옆에 점이 남지 않게 CSS 가 넣는다 */
+.card-dots > * + *::before { content: "·"; margin: 0 0.3em; color: var(--text-2); font-weight: 400; }
+
+/* 소유자 줄 — 제목 바로 아래 */
+.card-byline { margin: -2px 0 0; display: flex; align-items: center; min-width: 0; font-size: 13px; line-height: 1.5; color: var(--text-2); white-space: nowrap; }
+.card-byline > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.card-owner { display: flex; align-items: center; min-width: 0; color: var(--text-2); }
+.card-owner > span { overflow: hidden; text-overflow: ellipsis; }
+.card-owner:hover { color: var(--accent-ink); }
+@media (max-width: 520px), (pointer: coarse) {
+  /* 손가락 탭 영역 44px — 줄 높이는 그대로 두고 위아래로만 넓힌다 */
+  .card-owner { min-height: 44px; margin: -12px 0; }
+}
+
+/* 메타 한 줄(UX-29) — 길면 줄바꿈 대신 말줄임. 카드 바닥에 붙어 한 줄의 카드끼리 높이와 메타 위치가 같다 */
+.compact-body { flex-grow: 1; }
+.card-meta { margin: auto 0 0; padding-top: 8px; display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; font-size: 13px; line-height: 1.5; color: var(--text-2); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.card-meta-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.card-meta .star-metric { flex: none; flex-wrap: nowrap; color: var(--text); font-weight: 500; }
+.card-meta-compact { display: block; padding-top: 4px; overflow: hidden; text-overflow: ellipsis; }

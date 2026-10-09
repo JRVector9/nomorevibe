@@ -48,6 +48,42 @@ export async function pruneSearchQueries(days = 90, lease?: JobLease): Promise<n
   return result.length;
 }
 
+/** 0건 화면에 띄울 검색어의 최대 길이 — 검색어가 아니라 문장·붙여넣기면 남의 글을 옮겨 싣는 셈이다 */
+const SUGGESTION_MAX_CHARS = 20;
+/** 남이 친 말을 공개 화면에 싣는 것이라 여러 번 찾은 말만 — 한 사람이 몇 번 친 말이 실리지 않게 */
+const SUGGESTION_MIN_COUNT = 5;
+
+/**
+ * 공개 화면에 실어도 되는 검색어인가 — 사람을 가리킬 수 있는 꼴(이메일·사이트 주소·전화번호·@계정)과 기호 범벅은 뺀다.
+ * 글자·숫자·빈칸과 + # ' - 만 허용한다(점·@·/ 가 없으니 이메일과 주소가 지나가지 못한다). 숫자가 7개 이상이면 전화번호일 수 있다.
+ */
+export function isPublicSuggestion(query: string): boolean {
+  const text = query.trim();
+  const length = [...text].length;
+  if (length < 2 || length > SUGGESTION_MAX_CHARS) return false;
+  if ((text.match(/\d/g)?.length ?? 0) >= 7) return false;
+  return /^[\p{L}\p{N} +#'-]+$/u.test(text);
+}
+
+/**
+ * 결과 0건 화면의 '이런 검색어는 어떠세요'(UX-24) — 최근 30일에 여러 번 찾았고 결과가 있던 말, 잦은 순.
+ * 걸러 낸 뒤 limit 개까지. 기록이 모자라면 화면이 정해 둔 목록으로 채운다(app/page.tsx).
+ */
+export async function popularSearches(limit = 6, days = 30): Promise<string[]> {
+  // 같은 말을 여러 꼴로 쳤으면 가장 많이 친 꼴을 보인다("Todo App" 5번, "todo  app" 1번 → "Todo App")
+  const rows = await db.select({ query: sql<string>`mode() within group (order by ${searchQueries.query})` })
+    .from(searchQueries)
+    .where(sql`${searchQueries.searchedAt} > now() - make_interval(days => ${days})
+      and ${searchQueries.results} > 0 and not ${searchQueries.filtered}
+      and char_length(${searchQueries.normalized}) <= ${SUGGESTION_MAX_CHARS}`)
+    .groupBy(searchQueries.normalized)
+    .having(sql`count(*) >= ${SUGGESTION_MIN_COUNT}`)
+    .orderBy(sql`count(*) desc, min(${searchQueries.query})`)
+    // 걸러 낼 것을 감안해 넉넉히 읽는다
+    .limit(limit * 3);
+  return rows.map((row) => row.query.trim().replace(/\s+/g, " ")).filter(isPublicSuggestion).slice(0, limit);
+}
+
 export type SearchLogSummary = {
   days: number;
   searches: number;

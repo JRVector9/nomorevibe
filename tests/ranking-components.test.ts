@@ -192,11 +192,12 @@ describe("season policy", () => {
       state: "closed",
     };
 
-    const html = renderToStaticMarkup(createElement(SeasonPolicy, { season }));
+    const html = renderToStaticMarkup(createElement(SeasonPolicy, { season, now: new Date("2026-10-09T00:00:00.000Z") }));
 
-    expect(html).toContain("2026. 08. 10. 00:00");
-    expect(html).toContain("2026. 08. 17. 00:00");
-    expect(html).toContain("KST");
+    // 공개 날짜 형식(lib/format/time.ts) — 올해면 연도 없이, 'KST' 없이
+    expect(html).toContain("8월 10일 00:00 – 8월 17일 00:00");
+    expect(html).toContain("8월 17일 00:05");
+    expect(html).not.toContain("KST");
     expect(html).toContain("확정 참가 기간");
     expect(html).toContain("21일");
     expect(html).toContain("봇 제외");
@@ -249,7 +250,9 @@ describe("discovery boards", () => {
     expect(html).toContain('href="/p/verified"');
     expect(html).toContain('href="/p/seeded"');
     expect(html).not.toContain('href="http');
-    expect(html).toContain("미클레임");
+    // 옛 '미클레임'은 용어표의 말로(UX-14)
+    expect(html).toContain("운영자 미확인");
+    expect(html).not.toContain("미클레임");
     expect(html).toContain("#7 · 유효 방문 42");
     expect(html).not.toContain("유효 클릭");
   });

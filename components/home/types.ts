@@ -18,6 +18,8 @@ export type HomeCardProduct = StarObservation & {
   slug: string;
   name: string;
   tagline: string;
+  /** 한국어 한 줄 소개(UX-13) — ProductTagline 이 먼저 보인다 */
+  taglineKo?: string | null;
   taglineSource?: TaglineSource;
   activity?: ProductActivity;
   category: string;
@@ -27,6 +29,8 @@ export type HomeCardProduct = StarObservation & {
   ogImage: string | null;
   makerName: string | null;
   repoUrl: string | null;
+  /** GitHub 이 돌려준 지금 owner/name — 운영 주체 표기(listedRepositoryOwner) */
+  repoRenamedTo?: string | null;
   unclaimed: boolean;
   health?: { down: boolean };
   metrics?: { clicks: number };

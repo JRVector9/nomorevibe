@@ -41,6 +41,8 @@ import type { EvidenceSettings } from "@/lib/domain/evidence/settings";
 import { parseRankingPolicy } from "@/lib/domain/ranking/policy";
 import { healthMetrics, DOWN_THRESHOLD } from "./health";
 import { getRelatedRising, isUnclaimed, type ProductListItem } from "./view";
+import { indexingFields } from "./indexing";
+import { taglineKoField } from "./korean-tagline";
 import { getRisingRank, repoGoneField } from "./repository";
 import { readmeExcerpt } from "./readme-excerpt";
 import type { Category } from "./schema";
@@ -169,6 +171,11 @@ export type PublicProduct = StarObservation & Pick<Product,
 > & {
   /** GitHub 저장소가 사라졌다고 확정됐다(repository.ts repoGone) — 스타는 이미 비워 두고, 화면은 저장소 링크·설치 안내 대신 알린다 */
   repoGone?: boolean;
+  /** 색인 판단(indexing.ts productIndexable)에 드는 두 값 — AI 근거 확인, 처리 전 내려달라는 요청 */
+  aiEvidence: boolean;
+  takedownPending: boolean;
+  /** 지금 소개로 지은 한국어 한 줄 소개(korean-tagline.ts) — 없으면 원문만 */
+  taglineKo: string | null;
 };
 
 export type ProductDetailView = {
@@ -229,7 +236,8 @@ async function findPublicProduct(slug: string): Promise<PublicProduct | null> {
       createdAt: true,
       updatedAt: true,
     },
-    extras: repoGoneField,
+    // 상세 메타데이터의 robots 가 이 행 하나로 정해진다(UX-08) — sitemap 과 같은 규칙(indexing.ts)
+    extras: { ...repoGoneField, ...indexingFields, ...taglineKoField },
   });
   if (!product) return null;
   // 사라진 저장소의 스타는 마지막으로 본 옛 값이다 — 상세에 ★ 를 그리지 않는다(목록 카드의 toListItem 과 같다)

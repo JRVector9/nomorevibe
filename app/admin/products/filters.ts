@@ -7,7 +7,7 @@ import type { ProductStatus } from "@/lib/db/schema";
  * page.tsx 는 Next 가 정한 것만 내보낼 수 있어 따로 둔다. 운영센터의 링크 검사(admin-status-action-links)가
  * 이 이름들을 읽어 "조치할 일"이 없는 거르기로 보내지 않는지 본다.
  */
-export type ProductFilter = { statuses: ProductStatus[] } & Pick<ListOptions, "introNeedsEditor" | "repoGone" | "repoArchived" | "repoRenamed" | "down" | "spamBanned">;
+export type ProductFilter = { statuses: ProductStatus[] } & Pick<ListOptions, "introNeedsEditor" | "repoGone" | "repoArchived" | "repoRenamed" | "down" | "spamBanned" | "nameNeedsReview">;
 
 export const PRODUCT_FILTERS = {
   전체: { statuses: ["verified", "seeded", "unverified", "banned"] },
@@ -22,6 +22,11 @@ export const PRODUCT_FILTERS = {
   "응답 없음": { statuses: ["seeded", "verified"], down: true },
   /** 소개 검수가 근거로는 무엇인지 알 수 없다고 한 것 — 페이지를 열어 보고 내릴지 정한다 */
   "소개 확인 필요": { statuses: ["seeded", "verified"], introNeedsEditor: true },
+  /**
+   * 페이지 제목이 그대로 이름이 된 주인 없는 공개분(UX-33, display-name.ts reviewProductName) — 일반어·슬로건·40자 넘음·
+   * 이모지 접두·전부 대문자. 행마다 지금 이름과 제안을 보인다. 고치는 일은 scripts/normalize-product-names.ts 가 한다
+   */
+  "이름 확인 필요": { statuses: ["seeded", "verified"], nameNeedsReview: true },
   /**
    * GitHub 저장소가 없거나 빈 채로 하루 넘게 이어진 공개 제품(repository.ts repoGone) — 설치형은 이미 목록에서 가려졌고
    * 웹사이트는 목록에 두고 GitHub 표시만 뺐다. 웹사이트는 AI 가 사이트를 다시 본 판정(product-repo-review)을 붙이고

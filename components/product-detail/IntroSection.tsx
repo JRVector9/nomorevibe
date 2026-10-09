@@ -2,6 +2,7 @@ import type { ComponentPropsWithoutRef, ReactNode } from "react";
 import ReactMarkdown from "react-markdown";
 import rehypeSanitize from "rehype-sanitize";
 import remarkGfm from "remark-gfm";
+import { README_INTRO_SOURCE } from "@/lib/copy/terms";
 import type { ProductDetailView } from "@/lib/domain/products/detail-view";
 import { safeExternalUrl } from "./format";
 
@@ -12,7 +13,7 @@ function SafeMarkdownLink({ href, children }: ComponentPropsWithoutRef<"a">) {
 }
 
 function Heading({ id, children }: { id: string; children: ReactNode }) {
-  return <h2 className="m-0 text-[13px] font-semibold tracking-[0.02em] text-fg-3"><span id={id}>{children}</span></h2>;
+  return <h2 className="m-0 text-[13px] font-semibold tracking-[0.02em] text-fg-2"><span id={id}>{children}</span></h2>;
 }
 
 /**
@@ -42,7 +43,7 @@ export function IntroSection({ product, profile, readmeExcerpt, unclaimed }: {
               {repo && <> 더 자세한 내용은 <a href={repo} target="_blank" rel="noopener noreferrer" className="text-accent-ink hover:underline">저장소 README ↗</a>에서 읽을 수 있습니다.</>}
             </p>
           )}
-        {description && <p className="m-0 text-[13px] text-fg-3">{unclaimed ? "자동 감지 · 저장소 README 기준" : "메이커 제공·미검증"}</p>}
+        {description && <p className="m-0 text-[13px] text-fg-2">{unclaimed ? README_INTRO_SOURCE : "메이커 제공·미검증"}</p>}
       </section>
       {readmeExcerpt && (
         <section aria-labelledby="readme-title" className="flex flex-col gap-3">

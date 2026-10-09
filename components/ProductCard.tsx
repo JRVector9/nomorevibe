@@ -1,6 +1,9 @@
 import Link from "next/link";
 import type { ProductListItem } from "@/lib/domain/products/view";
+import { formatCount } from "@/lib/format/number";
+import { formatPublicDate } from "@/lib/format/time";
 import { ProductIcon } from "./ProductIcon";
+import { ProductTagline } from "./ProductTagline";
 import { StatusBadge, BuilderBadge } from "./TrustBadges";
 import { Tag } from "./Tag";
 
@@ -19,6 +22,7 @@ function downFor(since: Date | null): string {
 
 export function ProductCard({ product, rank }: { product: ProductListItem; rank?: number }) {
   const { metrics, health } = product;
+  const now = new Date();
 
   return (
     <Link prefetch={false}
@@ -26,11 +30,11 @@ export function ProductCard({ product, rank }: { product: ProductListItem; rank?
       className="flex items-center gap-4 border-b border-line bg-bg-card px-5 py-4 transition-colors last:border-b-0 hover:bg-bg-hover"
     >
       {rank !== undefined && (
-        <span className="hidden w-5 shrink-0 text-right font-mono text-[13px] font-semibold text-fg-3 sm:block">
+        <span className="hidden w-5 shrink-0 text-right font-mono text-[13px] font-semibold text-fg-2 sm:block">
           {rank}
         </span>
       )}
-      <ProductIcon name={product.name} ogImage={product.ogImage} size={44} />
+      <ProductIcon name={product.name} ogImage={product.ogImage} size={44} category={product.category} />
 
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
@@ -42,15 +46,8 @@ export function ProductCard({ product, rank }: { product: ProductListItem; rank?
             </span>
           )}
         </div>
-        <div className="mt-0.5 truncate text-[13px] text-fg-3">
-          {/* 메이커가 쓴 소개가 없어 모델이 지은 줄 — 밝히지 않으면 메이커의 말처럼 읽힌다 */}
-          {product.taglineSource !== "maker" && (
-            <span className="mr-1.5 rounded border border-line px-1.5 py-px text-[13px] font-semibold text-fg-3">
-              {product.taglineSource === "editor" ? "직접 요약" : "AI 요약"}
-            </span>
-          )}
-          {product.tagline}
-        </div>
+        {/* 메이커가 쓴 소개가 없어 모델이 지은 줄은 ProductTagline 이 출처를 밝힌다 */}
+        <ProductTagline tagline={product.tagline} source={product.taglineSource} className="mt-0.5 truncate text-[13px] text-fg-2" />
         <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
           <Tag>{product.category}</Tag>
           {product.accessMode === "installable" && <Tag>직접 설치</Tag>}
@@ -61,10 +58,10 @@ export function ProductCard({ product, rank }: { product: ProductListItem; rank?
         </div>
       </div>
 
-      <div className="hidden shrink-0 text-right text-[13px] text-fg-3 sm:block">
+      <div className="hidden shrink-0 text-right text-[13px] text-fg-2 sm:block">
         {metrics && metrics.clicks > 0 && (
           <div className="font-mono text-[13px] font-bold text-fg-2">
-            {metrics.clicks}
+            {formatCount(metrics.clicks)}
             {metrics.changePercent !== null && metrics.changePercent !== 0 && (
               <span className={metrics.changePercent > 0 ? "ml-1 text-up" : "ml-1 text-down"}>
                 {metrics.changePercent > 0 ? "▲" : "▼"}
@@ -73,7 +70,7 @@ export function ProductCard({ product, rank }: { product: ProductListItem; rank?
             )}
           </div>
         )}
-        {product.listedAt.toLocaleDateString("ko-KR", { month: "short", day: "numeric" })} 등록
+        {formatPublicDate(product.listedAt, now)} 등록
       </div>
     </Link>
   );

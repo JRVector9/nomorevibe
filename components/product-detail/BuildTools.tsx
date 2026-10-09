@@ -1,5 +1,6 @@
 import { BuilderBadge } from "@/components/TrustBadges";
 import type { ProductDetailView } from "@/lib/domain/products/detail-view";
+import { githubOwnerFromRepositoryUrl } from "@/lib/domain/products/github-owner";
 
 const CHIP = "inline-flex h-10 items-center gap-2 rounded-full bg-bg-soft px-3.5 text-[14px] text-fg";
 
@@ -9,6 +10,9 @@ const known = (value: string) => value !== "미확인" && !value.startsWith("미
 /**
  * 무엇으로 만들었나 — 홈의 같은 이름 구획과 짝. 알약 하나가 도구 하나, 그 옆에 근거 링크.
  * 흔적은 사용 주장이지 실행 증명이 아니다 — 문구에 '흔적'을 남긴다.
+ *
+ * 여기서 말하는 것은 'AI 흔적 검사'(저장소 파일·커밋 서명 조사)다. 정보 카드의 '정보 갱신'(GitHub 에서 사실을 읽음)과
+ * 다른 일이라 '확인'이라는 한 낱말로 둘을 부르지 않는다(UX-16) — 정보는 갱신됐는데 검사는 아직일 수 있다.
  */
 export function BuildTools({ product, unclaimed, agents, observedAgentFacts, skills, toolScan }: {
   product: ProductDetailView["product"];
@@ -26,6 +30,8 @@ export function BuildTools({ product, unclaimed, agents, observedAgentFacts, ski
     observed.set(key, [...(observed.get(key) ?? []), fact]);
   }
   const nothing = !reported && agents.length === 0 && skills.length === 0 && observed.size === 0;
+  // 검사는 GitHub 저장소에만 한다 — 저장소가 없거나 사라졌으면 '대기 중'이 아니라 검사할 수 없다
+  const scannable = githubOwnerFromRepositoryUrl(product.repoUrl) !== null && !product.repoGone;
   // 수집 범위와 제품·저장소 관계 — 어느 흔적에든 붙어 있으면 첫 것 하나씩 한 줄로
   const notes = [
     observedAgentFacts.find((fact) => fact.coverageLabel)?.coverageLabel,
@@ -34,12 +40,14 @@ export function BuildTools({ product, unclaimed, agents, observedAgentFacts, ski
 
   return (
     <section aria-labelledby="tools-title" className="flex flex-col gap-2.5">
-      <h2 id="tools-title" className="m-0 text-[13px] font-semibold tracking-[0.02em] text-fg-3">무엇으로 만들었나</h2>
+      <h2 id="tools-title" className="m-0 text-[13px] font-semibold tracking-[0.02em] text-fg-2">무엇으로 만들었나</h2>
       {nothing ? (
         <p className="m-0 max-w-[720px] text-[14px] leading-[1.5] text-fg-2">
-          {toolScan === "none"
-            ? "아직 저장소를 확인하지 않았습니다. 확인되면 설정 파일과 커밋 서명에서 찾은 AI 코딩 도구 흔적이 여기에 보입니다."
-            : "저장소를 확인했지만 AI 코딩 도구의 흔적을 찾지 못했습니다. 메이커가 신고하면 여기에 표시됩니다."}
+          {toolScan === "scanned"
+            ? "AI 흔적 검사에서 AI 코딩 도구의 흔적을 찾지 못했습니다. 메이커가 신고하면 여기에 표시됩니다."
+            : scannable
+              ? "AI 흔적 검사 대기 중 — 검사가 끝나면 저장소의 설정 파일과 커밋 서명에서 찾은 AI 코딩 도구 흔적이 여기에 보입니다."
+              : `${product.repoGone ? "GitHub 저장소가 사라져" : "공개 GitHub 저장소가 없어"} AI 흔적 검사를 할 수 없습니다. 메이커가 신고하면 여기에 표시됩니다.`}
         </p>
       ) : (
         <ul className="m-0 flex list-none flex-wrap gap-2 p-0">
@@ -48,28 +56,28 @@ export function BuildTools({ product, unclaimed, agents, observedAgentFacts, ski
           {agents.map((agent) => (
             <li key={agent.id} className={CHIP}>
               {[agent.provider, agent.client, agent.model].filter(Boolean).join(" · ")}
-              <span className="text-[13px] text-fg-3">{agent.evidenceLabel}</span>
+              <span className="text-[13px] text-fg-2">{agent.evidenceLabel}</span>
             </li>
           ))}
           {[...observed].map(([label, facts]) => (
             <li key={label} className={CHIP}>
               {/* 모델은 도구만큼 궁금한 값 — 흔적 중 하나라도 이름을 알면 도구 뒤에 */}
               {[label, facts.map((fact) => fact.modelLabel).find(known)].filter(Boolean).join(" · ")}
-              <span className="text-[13px] text-fg-3">{facts[0].label}</span>
+              <span className="text-[13px] text-fg-2">{facts[0].label}</span>
               <a href={facts[0].sourceUrl} target="_blank" rel="noopener noreferrer" className="text-[13px] text-accent-ink hover:underline"
                 aria-label={`${label} 근거 ${facts[0].commitSha.slice(0, 7)}`}>근거 {facts[0].commitSha.slice(0, 7)} ↗</a>
-              {facts.length > 1 && <span className="text-[13px] text-fg-3">외 {facts.length - 1}</span>}
+              {facts.length > 1 && <span className="text-[13px] text-fg-2">외 {facts.length - 1}</span>}
             </li>
           ))}
           {skills.map((skill) => (
             <li key={skill.id} className="inline-flex h-10 items-center gap-2 rounded-full bg-bg-soft px-3.5 font-mono text-[13px] text-fg">
               {skill.namespace}/{skill.name}{skill.version ? `@${skill.version}` : ""}
-              <span className="font-sans text-[13px] text-fg-3">{skill.evidenceLabel}</span>
+              <span className="font-sans text-[13px] text-fg-2">{skill.evidenceLabel}</span>
             </li>
           ))}
         </ul>
       )}
-      {observed.size > 0 && notes.length > 0 && <p className="m-0 text-[13px] text-fg-3">{notes.join(" · ")}</p>}
+      {observed.size > 0 && notes.length > 0 && <p className="m-0 text-[13px] text-fg-2">{notes.join(" · ")}</p>}
     </section>
   );
 }

@@ -1,3 +1,4 @@
+import { isGenericName } from "@/lib/domain/products/display-name";
 import { decodeEntities } from "@/lib/net/normalize";
 
 /**
@@ -31,18 +32,9 @@ const HEAD_LIMIT = 40;
 /** 이보다 길면 이름이 아니라 문장이다 — 그 안에서 레포 이름을 찾아 본다 */
 const SENTENCE_LENGTH = 45;
 
-/**
- * 제품 이름이 아닌 제목 — 로그인 벽·문서 첫 장·빈 템플릿.
- * 실측: Home 14개, Sign in 11개, Login 4개, Introduction 4개가 그대로 이름이 됐다.
- */
-const GENERIC_TITLES = new Set([
-  "home", "homepage", "index", "top", "welcome", "about", "introduction", "overview", "dashboard", "sign in", "signin",
-  "sign up", "log in", "login", "entrar", "app", "react app", "vite app", "vite + react", "vite + react + ts",
-  "lovable app", "untitled", "document", "frontend", "storybook", "로그인", "홈", "đăng nhập",
-]);
-
+/** 제품 이름이 아닌 제목 — 로그인 벽·문서 첫 장·빈 템플릿·홈페이지. 목록은 이름 확인(display-name.ts)과 함께 쓴다 */
 export function isGenericTitle(name: string): boolean {
-  return GENERIC_TITLES.has(name.trim().toLowerCase());
+  return isGenericName(name);
 }
 
 /** 글자와 숫자만 소문자로 — "Telegram Claude + Codex"와 "telegram-claude-codex"를 같게 본다 */

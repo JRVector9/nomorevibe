@@ -1,13 +1,18 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Suspense } from "react";
 import { MobileNav } from "@/components/home/MobileNav";
 import { SiteFooter } from "@/components/home/SiteFooter";
 import { SiteHeader } from "@/components/home/SiteHeader";
+import { HOME_TITLE } from "@/lib/copy/brand";
 import { siteOrigin } from "@/lib/site";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "nomorevibe — AI로 만든 것들, 세상에 나오다.",
+  /**
+   * 제목 틀(title.template)은 두지 않는다 — 화면마다 pageTitle(lib/copy/brand.ts)로 완성된 제목을 넘긴다.
+   * 틀을 두면 이미 브랜드를 붙여 쓰는 관리자 화면 제목에 브랜드가 두 번 붙는다.
+   */
+  title: HOME_TITLE,
   description:
     "AI로 만들어 배포한 서비스를 /nomorevibe 한 번으로 등록하세요. 우리가 직접 확인한 것만 보여줍니다.",
   /**
@@ -19,6 +24,14 @@ export const metadata: Metadata = {
   alternates: {
     types: { "application/rss+xml": `${siteOrigin()}/feed.xml` },
   },
+};
+
+/**
+ * 라이트·다크 둘 다 그린다(globals.css 가 기기 설정을 따른다) — 브라우저가 첫 바탕과 스크롤바·입력칸을 그에 맞춘다.
+ * 테마를 고르는 스크립트는 두지 않는다. 미디어 쿼리만으로 정해져 첫 그리기에 깜빡임이 없다.
+ */
+export const viewport: Viewport = {
+  colorScheme: "light dark",
 };
 
 /**

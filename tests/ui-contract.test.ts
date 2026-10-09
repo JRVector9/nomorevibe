@@ -43,7 +43,15 @@ describe("global light UI contract", () => {
     expect(violations).toEqual([]);
   });
 
-  it("uses light tokens unconditionally and retains only an explicit future dark override", () => {
+  /** 다크 토큰 두 벌 — 기기 설정(미디어 쿼리)과 명시 속성(data-theme="dark"). 값이 같아야 한다(UX-34) */
+  const darkBlocks = (css: string) => ({
+    media: css.match(/@media \(prefers-color-scheme: dark\)\s*\{\s*:root:not\(\[data-theme="light"\]\):not\(:has\(\.admin-area\)\)\s*\{([\s\S]*?)\}/)?.[1] ?? "",
+    explicit: css.match(/:root\[data-theme="dark"\]\s*\{([\s\S]*?)\}/)?.[1] ?? "",
+  });
+  const declarations = (block: string) => block.split(";").map((line) => line.trim()).filter(Boolean).sort();
+  const tokenOf = (block: string) => (name: string) => block.match(new RegExp(`--${name}:\\s*(#[0-9a-f]{6})`, "i"))?.[1] ?? "";
+
+  it("uses light tokens by default and dark tokens only by device setting or an explicit attribute", () => {
     const css = readFileSync(join(ROOT, "app/globals.css"), "utf8");
     const root = css.match(/:root\s*\{([\s\S]*?)\}/)?.[1] ?? "";
     expect(root).toContain("color-scheme: light");
@@ -51,19 +59,30 @@ describe("global light UI contract", () => {
     expect(root).toContain("--bg-card: #ffffff");
     expect(root).toContain("--accent: #d63a40");
     expect(css).not.toContain("@media (prefers-color-scheme: light)");
-    expect(css).toMatch(/:root\[data-theme="dark"\]\s*\{[\s\S]*color-scheme:\s*dark/);
+    const dark = darkBlocks(css);
+    expect(dark.media).toContain("color-scheme: dark");
+    expect(dark.explicit).toContain("color-scheme: dark");
+    expect(declarations(dark.media)).toEqual(declarations(dark.explicit));
+    // 라이트에 있는 토큰은 다크에도 모두 있다 — 빠지면 그 자리만 밝게 남는다
+    const names = (block: string) => [...block.matchAll(/(--[a-z0-9-]+):/g)].map((match) => match[1]).sort();
+    expect(names(dark.explicit)).toEqual(names(root));
     expect(css).toContain(":focus-visible");
     expect(css).toContain("@media (prefers-reduced-motion: reduce)");
   });
 
-  it("keeps 13px muted text AA-readable on every light surface", () => {
+  it("keeps 13px muted text (--text-2) AA-readable and --text-3 large-text readable on every surface", () => {
     const css = readFileSync(join(ROOT, "app/globals.css"), "utf8");
     const root = css.match(/:root\s*\{([\s\S]*?)\}/)?.[1] ?? "";
-    const token = (name: string) => root.match(new RegExp(`--${name}:\\s*(#[0-9a-f]{6})`, "i"))?.[1] ?? "";
-    const muted = token("text-3");
-    expect(muted).toMatch(/^#[0-9a-f]{6}$/i);
-    for (const surface of [token("bg"), token("bg-soft"), token("bg-card")]) {
-      expect(contrastRatio(muted, surface), `${muted} on ${surface}`).toBeGreaterThanOrEqual(4.5);
+    for (const block of [root, darkBlocks(css).explicit]) {
+      const token = tokenOf(block);
+      const surfaces = [token("bg"), token("bg-soft"), token("bg-card")];
+      expect(token("text-2")).toMatch(/^#[0-9a-f]{6}$/i);
+      expect(token("text-3")).toMatch(/^#[0-9a-f]{6}$/i);
+      for (const surface of surfaces) {
+        expect(contrastRatio(token("text-2"), surface), `${token("text-2")} on ${surface}`).toBeGreaterThanOrEqual(4.5);
+        // 3차색은 큰 글자·글자 아닌 표시 전용(UX-36) — WCAG 큰 글자 기준 3:1
+        expect(contrastRatio(token("text-3"), surface), `${token("text-3")} on ${surface}`).toBeGreaterThanOrEqual(3);
+      }
     }
   });
 

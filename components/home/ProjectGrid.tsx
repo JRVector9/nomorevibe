@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useMemo, useState, useSyncExternalStore } from "react";
 import {
+  formatResultCount,
   HOME_FIRST_PAGE,
   HOME_PAGE_SIZE,
   hrefWith,
@@ -12,6 +13,7 @@ import { Icon } from "@/components/home/icons";
 import { ProjectCard } from "@/components/home/ProjectCard";
 import { parseSaved, persistSaved, savedSnapshot, subscribeSaved } from "@/components/home/saved";
 import type { HomeCardProduct } from "@/components/home/types";
+import { formatCount } from "@/lib/format/number";
 
 export function ProjectGrid({
   products,
@@ -19,6 +21,8 @@ export function ProjectGrid({
   initialOnlySaved = false,
   totalCount,
   start = 0,
+  approximate = false,
+  now,
 }: {
   products: HomeCardProduct[];
   browseState: BrowseState;
@@ -26,6 +30,10 @@ export function ProjectGrid({
   totalCount?: number;
   /** 화면이 앞에서 접은 항목 수 — products 는 그다음부터다(shownWindow) */
   start?: number;
+  /** 전체 수가 관련도순 검색(섞은 수)이라 '약 n'으로 써야 하는지 — 결과 줄과 같은 표기(browse-state.ts) */
+  approximate?: boolean;
+  /** 서버가 그린 시각(ISO) — 카드의 'n일 전'·'새 프로젝트'가 서버와 브라우저에서 같은 글자를 낸다 */
+  now?: string;
 }) {
   const raw = useSyncExternalStore(subscribeSaved, savedSnapshot, () => "[]");
   const saved = useMemo(() => parseSaved(raw), [raw]);
@@ -63,7 +71,7 @@ export function ProjectGrid({
     <>
       {onlySaved && (
         <div className="saved-banner">
-          이 브라우저에 저장한 프로젝트 {rows.length}개
+          이 브라우저에 저장한 프로젝트 {formatCount(rows.length)}개
           <Link prefetch={false} className="text-button" href={hrefWith(browseState)}>
             전체 보기
           </Link>
@@ -71,7 +79,7 @@ export function ProjectGrid({
       )}
       {start > 0 && (
         <div className="saved-banner">
-          앞의 {start.toLocaleString("ko-KR")}개는 접었습니다
+          앞의 {formatCount(start)}개는 접었습니다
           <Link prefetch={false} className="text-button" href={hrefWith(browseState, { shown: undefined })}>
             처음부터 보기
           </Link>
@@ -85,13 +93,14 @@ export function ProjectGrid({
             saved={saved.has(product.slug)}
             onToggleSave={toggleSave}
             browseState={browseState}
+            now={now}
           />
         ))}
       </div>
       {limit < total && (
         onlySaved ? (
           <button type="button" className="more-btn" onClick={() => setLocalLimit((current) => current + HOME_PAGE_SIZE)}>
-            프로젝트 더 보기 ({visible.length} / {total})
+            프로젝트 더 보기 ({formatCount(visible.length)} / {formatCount(total)})
           </button>
         ) : (
           <Link prefetch={false}
@@ -99,7 +108,7 @@ export function ProjectGrid({
             href={hrefWith(browseState, { shown: Math.min(limit + HOME_PAGE_SIZE, total) })}
             scroll={false}
           >
-            프로젝트 더 보기 ({start + visible.length} / {total})
+            프로젝트 더 보기 ({formatCount(start + visible.length)} / {formatResultCount(total, approximate)})
           </Link>
         )
       )}

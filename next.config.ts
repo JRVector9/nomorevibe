@@ -42,11 +42,17 @@ const nextConfig: NextConfig = {
     });
     return [
       { source: "/", headers: tag("html,lists") },
+      // 분야 주소(/c/[category], UX-40)는 홈 목록과 같은 화면이다 — 같은 태그·같은 시간
+      { source: "/c/:category", headers: tag("html,lists") },
       { source: "/popular", headers: tag("html,lists") },
+      { source: "/policy", headers: tag("html") },
       { source: "/rankings/:key", headers: tag("html,lists") },
       { source: "/p/:slug", headers: tag("html,p-:slug") },
       { source: "/", ...edge(60) },
+      { source: "/c/:category", ...edge(60) },
       { source: "/popular", ...edge(60) },
+      // 게재 기준은 글이 거의 바뀌지 않는다 — 배포 뒤에는 html 태그로 지운다
+      { source: "/policy", ...edge(600) },
       { source: "/rankings/:key", ...edge(60) },
       { source: "/p/:slug", ...edge(240) },
     ];

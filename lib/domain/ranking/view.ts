@@ -22,6 +22,7 @@ import {
   type RankingSeason,
 } from "@/lib/db/schema";
 import { topClickedSince } from "@/lib/domain/products/clicks";
+import { taglineKoField } from "@/lib/domain/products/korean-tagline";
 import { notDown, repoGoneField } from "@/lib/domain/products/repository";
 import { observedToolPredicate } from "@/lib/domain/products/observed-tool";
 import type { Category } from "@/lib/domain/products/schema";
@@ -151,6 +152,7 @@ export async function getSeasonRanking(options: {
     .select({
       ...getTableColumns(products),
       ...repoGoneField,
+      ...taglineKoField,
       rank: rankingEntries.rank,
       validClicks: rankingEntries.validClicks,
       uniqueVisitors: rankingEntries.uniqueVisitors,
@@ -284,7 +286,7 @@ export async function getAllTimeRanking(options: {
   if (totals.length === 0) return [];
 
   const rows = await db
-    .select({ ...getTableColumns(products), ...repoGoneField })
+    .select({ ...getTableColumns(products), ...repoGoneField, ...taglineKoField })
     .from(products)
     .where(and(
       eq(products.status, "verified"),
