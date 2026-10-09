@@ -33,11 +33,15 @@ export function namesNeedingReview(): Promise<Map<string, NameReviewRow>> {
 
 export type NameChange = { slug: string; before: string; after: string; issues: NameReview["issues"] };
 
-/** 고칠 계획 — 제안이 있는 것만. 제안이 없는 것(내세울 이름이 없음)은 관리자 화면에서 사람이 본다 */
-export async function planNameChanges(): Promise<{ changes: NameChange[]; withoutProposal: NameReviewRow[] }> {
+/**
+ * 고칠 계획 — 제목 안의 말로 고친 제안(source title)만. 저장소 이름으로 대신한 제안(repoSuggestions)과 내세울 이름이 없는 것
+ * (withoutProposal)은 관리자 '이름 확인 필요'에서 사람이 본다 — 저장소 이름 대신은 자주 틀린다(display-name.ts NameReview).
+ */
+export async function planNameChanges(): Promise<{ changes: NameChange[]; repoSuggestions: NameReviewRow[]; withoutProposal: NameReviewRow[] }> {
   const rows = await scanProductNames();
   return {
-    changes: rows.flatMap((row) => row.proposed ? [{ slug: row.slug, before: row.name, after: row.proposed, issues: row.issues }] : []),
+    changes: rows.flatMap((row) => row.proposed && row.source === "title" ? [{ slug: row.slug, before: row.name, after: row.proposed, issues: row.issues }] : []),
+    repoSuggestions: rows.filter((row) => row.proposed && row.source === "repo"),
     withoutProposal: rows.filter((row) => !row.proposed),
   };
 }

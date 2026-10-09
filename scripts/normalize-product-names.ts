@@ -50,7 +50,11 @@ export async function main(argv = process.argv.slice(2)) {
 
   const plan: Plan = values.plan
     ? JSON.parse(readFileSync(values.plan, "utf8"))
-    : { createdAt: new Date().toISOString(), changes: (await planNameChanges()).changes };
+    : await planNameChanges().then(({ changes, repoSuggestions, withoutProposal }) => {
+      // 저장소 이름으로 대신한 제안·제안 없음은 자동으로 바꾸지 않는다 — 관리자 '이름 확인 필요'에서 사람이 고른다
+      console.log(`사람이 볼 것: 저장소 이름 제안 ${repoSuggestions.length}건 · 제안 없음 ${withoutProposal.length}건 (관리자 '이름 확인 필요')`);
+      return { createdAt: new Date().toISOString(), changes };
+    });
   show(plan.changes);
   if (values.out) {
     writeJson(values.out, plan);

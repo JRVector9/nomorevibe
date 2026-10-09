@@ -77,22 +77,23 @@ describe("백필 스크립트", () => {
     await db.update(products).set({ name: "Wireshark (by hand)" }).where(eq(products.slug, "wireshark"));
 
     const result = await main(["--apply", "--plan", planFile, "--actor", "tester", "--revert-out", revertFile]);
-    expect(result.applied.map((change) => change.slug).sort()).toEqual(["erpnext", "linkedin", "shouye", "transformer"]);
+    // 제목 안의 말로 고친 것만 바꾼다 — 저장소 이름으로 대신한 '首页'→'Shuiyun Notes'·'Flexible…'→'Erpnext' 는 사람이 고른다
+    expect(result.applied.map((change) => change.slug).sort()).toEqual(["linkedin", "transformer"]);
     expect(result.skipped).toBe(1);
     expect(await names()).toMatchObject({
-      shouye: "Shuiyun Notes", erpnext: "Erpnext", linkedin: "Linkedin Agent", transformer: "transformer-architecture",
+      shouye: "首页", erpnext: "Flexible Open-Source ERP & CRM for SMBs", linkedin: "Linkedin Agent", transformer: "transformer-architecture",
       wireshark: "Wireshark (by hand)", workspace: "Atlas Notes", homeless: "Home", vscode: "Visual Studio Code", owned: "首页",
       registered: "LINKEDIN AGENT", banned: "首页",
     });
     expect(existsSync(revertFile)).toBe(true);
-    expect(JSON.parse(readFileSync(revertFile, "utf8")).changes).toHaveLength(5);
+    expect(JSON.parse(readFileSync(revertFile, "utf8")).changes).toHaveLength(3);
     const [log] = await auditRowsAfter(floor, "normalize-product-names");
     expect(log).toMatchObject({ actor: "tester", target: "products", ok: true });
-    expect(log.detail).toMatchObject({ applied: 4, skipped: 1, revertFile, issues: { generic: 1, slogan: 1, all_caps: 1, emoji_prefix: 1 } });
+    expect(log.detail).toMatchObject({ applied: 2, skipped: 1, revertFile, issues: { all_caps: 1, emoji_prefix: 1 } });
 
-    // 다시 계획하면 남은 것은 제안 없는 'Home' 과 사람이 고친 것 중 아직 걸리는 것뿐이다
+    // 다시 계획하면 남은 것은 사람이 볼 것 — 저장소 이름 제안 둘과 제안 없는 'Home'
     clearAllMemos();
-    expect((await scanProductNames()).map((row) => row.slug).sort()).toEqual(["homeless"]);
+    expect((await scanProductNames()).map((row) => row.slug).sort()).toEqual(["erpnext", "homeless", "shouye"]);
 
     await main(["--revert", revertFile, "--actor", "tester"]);
     expect(await names()).toEqual({ ...before, workspace: "Atlas Notes", wireshark: "Wireshark (by hand)" });

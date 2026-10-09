@@ -33,7 +33,12 @@ export type NameIssue = 'generic' | 'slogan_tail' | 'too_long' | 'slogan' | 'emo
 export const NAME_ISSUE_LABELS: Record<NameIssue, string> = {
   generic: '일반어 제목', slogan_tail: '구분자 뒤 슬로건', too_long: '40자 넘음', slogan: '이름이 아닌 문구', emoji_prefix: '이모지 접두', all_caps: '전부 대문자',
 };
-export type NameReview = { issues: NameIssue[]; proposed: string | null };
+/**
+ * source — 제안이 어디서 왔나. title: 제목 안의 말(구분자 앞뒤·이모지 뗀 나머지·대소문자만 고침), repo: 제목에서 못 찾아 저장소 이름으로 대신했다.
+ * 저장소 이름 대신은 자주 틀린다(2026-10-09 공개분 표본: 'AgentKit: AI Agent Integrations…' → 'Authstack', 'The W App' → 'W App Web') —
+ * 발행·일괄 정리는 title 만 자동으로 쓰고, repo 는 관리자 '이름 확인 필요'에서 사람이 고른다.
+ */
+export type NameReview = { issues: NameIssue[]; proposed: string | null; source: "title" | "repo" | null };
 
 /** 이보다 긴 이름은 이름이 아니라 문장이다(UX-33) */
 export const NAME_MAX = 40;
@@ -113,8 +118,12 @@ export function prettyRepoName(repoUrl: string | null): string | null {
   return words.map((word) => ACRONYMS[word] ?? word.charAt(0).toUpperCase() + word.slice(1)).join(' ');
 }
 
-/** 영문자가 모두 대문자인 긴 이름 — 'LINKEDIN AGENT'. NASA·AWS CLI·MITRE ATT&CK 처럼 짧은 약어 이름은 두다 */
+/**
+ * 영문자가 모두 대문자인 긴 이름 — 'LINKEDIN AGENT'. NASA·AWS CLI·MITRE ATT&CK 처럼 짧은 약어 이름은 두다.
+ * 로마자 밖의 글자(베트남어 'BỘ TÀI LIỆU' 등)가 섞이면 보지 않는다 — 영문 낱말만 고쳐 써서 대소문자가 뒤섞인다.
+ */
 function isAllCaps(name: string): boolean {
+  if (/[^A-Za-z]/.test((name.match(/\p{L}/gu) ?? []).join(""))) return false;
   const latin = name.match(/[A-Za-z]/g) ?? [];
   if (latin.length < 8 || /[a-z]/.test(name)) return false;
   return name.split(/[^A-Za-z]+/).some((word) => word.length >= 6);
@@ -158,7 +167,8 @@ export function reviewProductName(name: string, repoUrl: string | null): NameRev
   let current = original;
 
   const emoji = current.match(EMOJI_PREFIX);
-  if (emoji) {
+  // 떼고 나면 글자가 거의 없는 이름('🐋 vs 🦞')은 그림 문자가 이름의 일부다 — 두다
+  if (emoji && (current.slice(emoji[0].length).match(/\p{L}/gu) ?? []).length >= 3) {
     current = current.slice(emoji[0].length).trim();
     issues.push('emoji_prefix');
   }
@@ -199,11 +209,14 @@ export function reviewProductName(name: string, repoUrl: string | null): NameRev
   }
 
   if (!issues.length) return null;
+  const fromTitle = Boolean(current);
   const proposed = current || prettyRepoName(repoUrl);
-  return { issues, proposed: proposed && proposed !== original ? proposed.slice(0, 120) : null };
+  const kept = proposed && proposed !== original ? proposed.slice(0, 120) : null;
+  return { issues, proposed: kept, source: kept ? (fromTitle ? "title" : "repo") : null };
 }
 
-/** 발행할 이름 — 걸리고 제안이 있으면 제안을, 아니면 그대로 */
+/** 발행할 이름 — 제목 안의 말로 고친 제안만 쓴다. 저장소 이름으로 대신한 제안은 관리자 '이름 확인 필요'에서 사람이 고른다 */
 export function normalizedProductName(name: string, repoUrl: string | null): string {
-  return reviewProductName(name, repoUrl)?.proposed ?? name;
+  const review = reviewProductName(name, repoUrl);
+  return review?.source === "title" && review.proposed ? review.proposed : name;
 }
