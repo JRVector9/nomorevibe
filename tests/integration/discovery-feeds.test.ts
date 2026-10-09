@@ -84,7 +84,7 @@ describe("feed.xml", () => {
     type Item = { title: string; link: string; description: string };
     const raw = parsed.rss.channel.item as Item | Item[];
     const items = Array.isArray(raw) ? raw : [raw];
-    expect(items.map((i) => i.title).sort()).toEqual(["Found — 미클레임", "Mine — ✓ 검증됨"]);
+    expect(items.map((i) => i.title).sort()).toEqual(["Found — 운영자 미확인", "Mine — ✓ 검증됨"]);
     // origin은 NEXT_PUBLIC_SITE_URL이 무엇이냐에 달렸다 — 경로만 본다
     expect(items.map((i) => new URL(i.link).pathname).sort()).toEqual(["/p/found", "/p/mine"]);
     // 태그라인의 <b>와 &는 글자로 남아야 한다 — 이스케이프가 깨지면 피드 전체가 안 읽힌다
@@ -94,7 +94,8 @@ describe("feed.xml", () => {
   it("비어 있어도 유효한 피드를 준다", async () => {
     const res = await request();
     const parsed = new XMLParser().parse(await res.text());
-    expect(parsed.rss.channel.title).toContain("NoMoreVibe");
+    // 브랜드 표기는 로고와 같은 소문자 하나(UX-39)
+    expect(parsed.rss.channel.title).toBe("새로 등재된 제품 — nomorevibe");
   });
 
   /**
@@ -127,7 +128,7 @@ describe("feed.xml", () => {
     expect(illegalControls(xml)).toEqual([]);
     expect(XMLValidator.validate(xml)).toBe(true);
     const parsed = new XMLParser({ ignoreAttributes: false }).parse(xml);
-    expect(parsed.rss.channel.item.title).toBe("CtrlName — 미클레임");
+    expect(parsed.rss.channel.item.title).toBe("CtrlName — 운영자 미확인");
     expect(parsed.rss.channel.item.description).toBe("한 줄 소개");
   });
 
@@ -154,7 +155,7 @@ describe("feed.xml", () => {
       `<?xml version="1.0" encoding="UTF-8"?>
 <rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom">
   <channel>
-    <title>NoMoreVibe — 새로 등재된 제품</title>
+    <title>새로 등재된 제품 — nomorevibe</title>
     <link>${origin}/</link>
     <description>AI로 만들어 배포된 제품. 도메인 소유권을 우리가 직접 확인한 것에만 ✓ 검증됨이 붙습니다.</description>
     <language>ko</language>

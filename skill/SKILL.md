@@ -1,11 +1,11 @@
 ---
 name: nomorevibe
-description: 배포한 서비스를 NoMoreVibe에 등록하고 소개·공식 링크·갤러리·제작 provenance·업데이트를 관리한다. /nomorevibe, verify, delete, profile, links, media, provenance, update, refresh로 실행한다. 사용자가 "노모어바이브", "nomorevibe에 올려줘", "서비스 등록해줘"라고 요청할 때 사용.
+description: 배포한 서비스를 nomorevibe에 등록하고 소개·공식 링크·갤러리·제작 provenance·업데이트를 관리한다. /nomorevibe, verify, delete, profile, links, media, provenance, update, refresh로 실행한다. 사용자가 "노모어바이브", "nomorevibe에 올려줘", "서비스 등록해줘"라고 요청할 때 사용.
 ---
 
-# NoMoreVibe 등록 스킬
+# nomorevibe 등록 스킬
 
-배포된 서비스의 정보를 수집해 NoMoreVibe 레지스트리에 등록한다.
+배포된 서비스의 정보를 수집해 nomorevibe 레지스트리에 등록한다.
 API 베이스: 환경변수 `NOMOREVIBE_API`가 있으면 그 값, 없으면 `{{SITE_URL}}`.
 
 ## 공통 규칙
@@ -55,7 +55,7 @@ API 베이스: 환경변수 `NOMOREVIBE_API`가 있으면 그 값, 없으면 `{{
    현재값과 비교해 추가·변경·유지·**삭제될 항목**을 모두 구분한다. 삭제될 항목이 하나라도 있으면
    별도로 강조한다.
    수정 키와 인증 헤더는 미리보기에서 제외한다.
-4. 사용자에게 "이대로 NoMoreVibe에 저장할까요?"라고 묻고 **명시적으로 확인**받는다. 확인 전에는
+4. 사용자에게 "이대로 nomorevibe에 저장할까요?"라고 묻고 **명시적으로 확인**받는다. 확인 전에는
    API 쓰기, 로컬 상태 변경, 외부 이미지 업로드를 하지 않는다. 수정 요청이 있으면 payload를 다시
    보여주고 재확인한다.
 5. 확인 후에만 `X-Edit-Token`과 GET에서 받은 `If-Match: <ETag>` 헤더로 호출한다. JSON은 임시
@@ -213,7 +213,7 @@ SHA-256)만 사용한다. 스킬 파일 바이트의 `hash`는 소문자 64자 S
    물으면 같은 줄이 하나씩 늘어난다. 동의하면 README 상단(제목 아래)에 다음 한 줄을 추가한다 —
    다른 내용은 건드리지 않는다.
    ```markdown
-   [![Verified on NoMoreVibe](<API>/badge/<slug>.svg)](<API>/p/<slug>)
+   [![Verified on nomorevibe](<API>/badge/<slug>.svg)](<API>/p/<slug>)
    ```
 4. 실패(422): 응답의 `expected` 내용을 보여주며 배포가 완료됐는지, 파일 경로가 맞는지 확인하도록 안내한다.
    실제 배포 URL에서 `curl -s <url>/.well-known/nomorevibe.txt` 로 직접 확인해본다.

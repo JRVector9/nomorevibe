@@ -1,8 +1,9 @@
+/** 구간 이름은 범위로만 쓴다('2천+') — '떠오르는'·'주목받는'이 '지금 뜨는'(스타 증가)과 헷갈렸다(2026-10-08 UX 감사 UX-35) */
 export const STAR_TIERS = [
-  { key: 'rising', label: '떠오르는', range: '2천–5천 미만', min: 2000, max: 5000 },
-  { key: 'noticed', label: '주목받는', range: '5천–1만 미만', min: 5000, max: 10000 },
-  { key: 'popular', label: '인기', range: '1만–3만 미만', min: 10000, max: 30000 },
-  { key: 'large', label: '대형', range: '3만–10만 미만', min: 30000, max: 100000 },
+  { key: 'rising', label: '2천+', range: '2천–5천 미만', min: 2000, max: 5000 },
+  { key: 'noticed', label: '5천+', range: '5천–1만 미만', min: 5000, max: 10000 },
+  { key: 'popular', label: '1만+', range: '1만–3만 미만', min: 10000, max: 30000 },
+  { key: 'large', label: '3만+', range: '3만–10만 미만', min: 30000, max: 100000 },
 ] as const;
 export type StarTier = typeof STAR_TIERS[number]['key'];
 /**

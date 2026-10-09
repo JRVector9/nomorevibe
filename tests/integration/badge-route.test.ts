@@ -37,7 +37,7 @@ describe("배지", () => {
     expect(res.headers.get("content-type")).toContain("image/svg+xml");
     const svg = await res.text();
     expect(svg.startsWith("<svg")).toBe(true);
-    expect(svg).toContain("NoMoreVibe");
+    expect(svg).toContain(">nomorevibe</text>");
     expect(svg).toContain("verified");
   });
 

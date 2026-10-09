@@ -1,0 +1,27 @@
+/*
+ * /popular 좁은 화면(≤640px) — 가로로 밀리던 표 대신 카드 행, 구간 탭은 가로로 밀리는 칩 줄(2026-10-08 UX 감사 UX-23).
+ * 표·탭의 넓은 화면 규칙은 app/home.css 에 있다. 이 파일은 640px 이하만 바꾼다 — 불러오는 순서와 무관하게
+ * home.css 를 이기도록 .popular-page 를 앞에 붙인다.
+ */
+.popular-cards { display: none; }
+
+@media (max-width: 640px) {
+  .popular-page .popular-table-scroll { display: none; }
+
+  .popular-page .popular-cards { display: block; list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--border); }
+  /* 한 줄: 순위 · 아이콘 · 이름 · ★수와 증감, 그 아래 소개 두 줄(이름 칸부터) */
+  .popular-card { display: grid; grid-template-columns: 22px 28px minmax(0, 1fr) auto; column-gap: 10px; align-items: center; padding: 8px 0 14px; border-bottom: 1px solid var(--border); }
+  .popular-card-rank { font-size: 13px; color: var(--text-2); font-variant-numeric: tabular-nums; text-align: right; }
+  /* 줄 높이 44px — 이름이 곧 누르는 자리다 */
+  .popular-card-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 15px; font-weight: 600; line-height: 44px; }
+  .popular-card .star-metric { flex-wrap: nowrap; font-variant-numeric: tabular-nums; }
+  .popular-card-intro { grid-column: 3 / -1; min-width: 0; }
+
+  /* 칩 줄 — 화면 끝까지 밀어 잘린 칩이 "더 있음"을 보이게 한다 */
+  .popular-page .popular-tabs { gap: 8px; margin: 22px -16px 20px; padding: 0 16px; border-bottom: 0; scrollbar-width: none; }
+  .popular-page .popular-tabs::-webkit-scrollbar { display: none; }
+  .popular-page .popular-tabs a { flex-shrink: 0; min-height: 44px; padding: 0 16px; border: 0; border-radius: 980px; background: var(--bg-soft); color: var(--text); }
+  .popular-page .popular-tabs a[aria-current] { background: var(--text); color: var(--bg-card); }
+  .popular-page .popular-tabs b { padding: 0; background: none; font-weight: 400; color: var(--text-2); }
+  .popular-page .popular-tabs a[aria-current] b { color: color-mix(in srgb, var(--bg-card) 72%, var(--text)); }
+}

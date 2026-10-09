@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 import { XMLBuilder } from "fast-xml-parser";
+import { pageTitle } from "@/lib/copy/brand";
+import { UNCLAIMED_LABEL } from "@/lib/copy/terms";
 import { listRecentlyDiscovered } from "@/lib/domain/products/repository";
 import { toListItem } from "@/lib/domain/products/view";
 import { withRoute } from "@/lib/http/handler";
@@ -51,14 +53,14 @@ export const GET = withRoute("feed", async (req: Request) => {
       "@_version": "2.0",
       "@_xmlns:atom": "http://www.w3.org/2005/Atom",
       channel: {
-        title: "NoMoreVibe — 새로 등재된 제품",
+        title: pageTitle("새로 등재된 제품"),
         link: `${origin}/`,
         description: "AI로 만들어 배포된 제품. 도메인 소유권을 우리가 직접 확인한 것에만 ✓ 검증됨이 붙습니다.",
         language: "ko",
         "atom:link": { "@_href": `${origin}/feed.xml`, "@_rel": "self", "@_type": "application/rss+xml" },
         lastBuildDate: (items[0]?.listedAt ?? new Date()).toUTCString(),
         item: items.map((product) => ({
-          title: xmlText(`${product.name} — ${product.status === "verified" ? "✓ 검증됨" : "미클레임"}`),
+          title: xmlText(`${product.name} — ${product.status === "verified" ? "✓ 검증됨" : UNCLAIMED_LABEL}`),
           link: `${origin}/p/${product.slug}`,
           guid: { "@_isPermaLink": "true", "#text": `${origin}/p/${product.slug}` },
           description: xmlText(product.tagline),
