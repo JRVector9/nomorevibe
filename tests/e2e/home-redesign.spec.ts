@@ -41,8 +41,10 @@ test("home discovery, saved projects, search, methodology, and mobile layout wor
   const card = page.locator(".project-card").filter({ hasText: "Evidence Studio" });
   const tile = card.locator(".project-tile");
   const save = card.getByRole("button", { name: "Evidence Studio 저장" });
-  await expect(card.getByRole("link", { name: "Evidence Studio 상세 보기" }))
+  // 카드 하나 = 링크 하나(UX-30) — 커버 링크는 탭·읽기 도구에서 빠지고 제목 링크가 카드를 덮는다
+  await expect(card.getByRole("link", { name: "Evidence Studio", exact: true }))
     .toHaveAttribute("href", `/p/${PRODUCT_DETAIL_FIXTURES.rich}`);
+  await expect(card.locator(`a[href="/p/${PRODUCT_DETAIL_FIXTURES.rich}"]:not([tabindex="-1"])`)).toHaveCount(1);
   await expect(tile).toBeVisible();
   await save.click();
   await expect(card.getByRole("button", { name: "Evidence Studio 저장 취소" })).toHaveAttribute("aria-pressed", "true");
