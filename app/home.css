@@ -533,7 +533,7 @@ dialog::backdrop {
   #rising .compact-card, #new .compact-card { scroll-snap-align: start; }
   /* 화면 끝까지 — 좌우 여백(16px)만큼 넓혀 왼쪽으로 당긴다 */
   .chips-filter { flex: 0 0 calc(100% + 32px); flex-wrap: nowrap; overflow-x: auto; margin: 0 -16px; padding: 0 16px; scrollbar-width: none; }
-  .chips-filter .chip { height: 44px; flex-shrink: 0; }
+  .chips-filter .chip, .chips-ai .chip { height: 44px; flex-shrink: 0; }
   .tabs { max-width: 100%; overflow-x: auto; scrollbar-width: none; }
   #rising .compact-grid::-webkit-scrollbar, #new .compact-grid::-webkit-scrollbar,
   .chips-filter::-webkit-scrollbar, .tabs::-webkit-scrollbar { display: none; }

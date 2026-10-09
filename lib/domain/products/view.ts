@@ -1,7 +1,7 @@
 import { displayProjectName } from './display-name';
 import type { StarObservation } from '@/lib/domain/products/star-change';
 import type { Product, ProductStatus, TaglineSource } from "@/lib/db/schema";
-import { listProductRows, listRecentlyDiscovered, type ProductListRow, type ProductSort } from "./repository";
+import { listProductRows, listRecentlyDiscovered, type ListOptions, type ProductListRow, type ProductSort } from "./repository";
 import type { SearchQuery } from "./search";
 import type { Category } from "./schema";
 import { clickMetrics, type ClickMetrics } from "./clicks";
@@ -108,6 +108,8 @@ export type BrowseOptions = {
   query?: SearchQuery;
   builder?: string;
   observedTool?: string;
+  /** 홈 '만든 방식' — AI 제작 근거 단계 */
+  aiLevels?: ListOptions["aiLevels"];
   hasRepository?: boolean;
   /** 마지막 확인 사이에 스타가 는 제품만(repository.ts) */
   rising?: boolean;
