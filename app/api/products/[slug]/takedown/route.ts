@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { requestTakedown, takedownRequesterHash } from "@/lib/domain/products/takedown";
+import { isTakedownKind, TAKEDOWN_RECEIVED, type TakedownKind } from "@/lib/domain/products/takedown-view";
 import { errorResponse, tooManyRequests, badJson } from "@/lib/http/respond";
 import { withRoute } from "@/lib/http/handler";
 import { rateLimit, clientIp, trustedClientIp } from "@/lib/rate-limit";
@@ -24,21 +25,25 @@ export const POST = withRoute("products.takedown", async (req: Request, { params
   }
 
   let reason: string | null = null;
+  let kind: TakedownKind | null = null;
   const body = await req.text();
   if (body.trim()) {
     try {
-      reason = (JSON.parse(body) as { reason?: string }).reason ?? null;
+      const parsed = JSON.parse(body) as { reason?: string; kind?: unknown };
+      reason = parsed.reason ?? null;
+      // 갈래(운영자 요청·스팸 신고)는 고른 값만 받는다 — 모르는 값이면 갈래 없이 사유만 남긴다
+      kind = isTakedownKind(parsed.kind) ? parsed.kind : null;
     } catch {
       return badJson();
     }
   }
 
   // 보낸이는 해시로만 남긴다 — 몰려 들어온 장난을 보낸이로 묶는 데 쓴다(관리자 처리 화면)
-  const result = await requestTakedown(slug, reason, takedownRequesterHash(trustedClientIp(req)));
+  const result = await requestTakedown(slug, reason, takedownRequesterHash(trustedClientIp(req)), kind);
   if (!result.ok) return errorResponse(result.error);
   return NextResponse.json({
     slug,
     received: true,
-    message: "요청을 받았습니다. 확인 후 내려드리겠습니다.",
+    message: TAKEDOWN_RECEIVED,
   });
 });

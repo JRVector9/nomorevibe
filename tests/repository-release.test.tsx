@@ -17,17 +17,17 @@ const product: ProductDetailView['product'] = {
   id: 1, slug: 'app', url: 'https://github.com/example/app', accessMode: 'installable', name: 'app', tagline: 'An app.',
   taglineSource: 'maker', description: 'An app.', category: 'Dev', builder: null, stack: [], ogImage: null, makerName: null,
   repoUrl: 'https://github.com/example/app', status: 'seeded', source: 'crawler', claimedAt: null, verifiedAt: null,
-  createdAt: new Date('2026-09-01T00:00:00Z'), updatedAt: new Date('2026-09-14T00:00:00Z'),
+  createdAt: new Date('2026-09-01T00:00:00Z'), updatedAt: new Date('2026-09-14T00:00:00Z'), aiEvidence: false, takedownPending: false,
 };
 const release = { tagName: 'v1.2.0', name: 'Version 1.2', url: 'https://github.com/example/app/releases/tag/v1.2.0', notesUrl: null, publishedAt: '2026-09-10T17:53:34Z' };
 
-/** 핵심 사실 띠의 '최신 release' 칸만 — 다른 칸의 날짜(최근 push 등)와 섞이지 않게 */
+/** 핵심 사실 띠의 '최신 버전' 칸만 — 다른 칸의 날짜(최근 코드 업데이트 등)와 섞이지 않게 */
 function releaseTile(latestRelease: RepositoryFactsView['latestRelease']) {
   const html = renderToStaticMarkup(<FactsStrip product={product} repository={{ ...repository, facts: { ...repository.facts!, latestRelease } }}
     license={{ state: 'missing', label: '라이선스 확인 안 됨', maker: null, observed: null }}
     health={{ uptime30d: null, latencyMs: null, checkedAt: null, down: false }}
     visits={{ periodDays: 7, validVisits: 0, uniqueVisitors: null, uniqueChangePercent: null, collectionStartedAt: null, collecting: true }} />);
-  return { html, tile: html.match(/<dt[^>]*>최신 release<\/dt>[\s\S]*?<\/div>/)?.[0] ?? '' };
+  return { html, tile: html.match(/<dt[^>]*>최신 버전<\/dt>[\s\S]*?<\/div>/)?.[0] ?? '' };
 }
 
 describe('repository release provenance', () => {
@@ -35,7 +35,7 @@ describe('repository release provenance', () => {
     const { html, tile } = releaseTile(null);
     expect(tile).toContain('없음');
     expect(tile).not.toMatch(/\d+월 \d+일/);
-    expect(html).toContain('최근 push');
+    expect(html).toContain('최근 코드 업데이트');
   });
   it.each([{ ...release, publishedAt: null }, { ...release, publishedAt: '' }, { ...release, publishedAt: 'not-a-date' }])(
     'never substitutes a push or observation date for an undated release (%j)', latestRelease => {

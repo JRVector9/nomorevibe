@@ -1,14 +1,14 @@
 import { createHmac } from "node:crypto";
 import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { ogImages, operationsAudit, products, takedownRequests, type TakedownRequest } from "@/lib/db/schema";
+import { cdnPurges, ogImages, operationsAudit, products, takedownRequests, type TakedownRequest } from "@/lib/db/schema";
 import { logger } from "@/lib/observability/logger";
 import { adminAuditRow } from "@/lib/operations/admin-log";
 import { type Result, ok, fail } from "./errors";
 import { isUnclaimed } from "./view";
 import { lockProductGeneration } from "./generation";
 import * as repo from "./repository";
-import { isDismissReason, type DismissReason, type TakedownEntry, type TakedownSummary } from "./takedown-view";
+import { isDismissReason, takedownReasonText, type DismissReason, type TakedownEntry, type TakedownKind, type TakedownSummary } from "./takedown-view";
 
 /**
  * 내려달라는 요청.
@@ -33,10 +33,19 @@ export function takedownRequesterHash(ip: string | null, secret = process.env.VI
   return createHmac("sha256", secret).update("takedown:requester\0").update(ip).digest("hex");
 }
 
+/**
+ * 요청을 받는다. 처리 전 요청이 하나라도 있으면 상세가 바로 noindex 로 바뀐다(indexing.ts, 운영자 결정 D1).
+ *
+ * 새로 대기에 들어간 요청(처음이거나, 지난 요청을 처리한 뒤 다시 온 것)이면 같은 트랜잭션에서 Cloudflare 지우기(cdn_purges)를
+ * 적는다 — 상세는 엣지에 4분 남으므로(next.config.ts) 지우지 않으면 noindex 가 그만큼 늦게 닿는다. 제품이 내려갈 때 DB 트리거가
+ * 적는 것(drizzle/0057)과 같은 행이고, 발행 워커의 cdn-purge 잡이 보낸다. 이미 대기 중인 요청이 다시 오면 적지 않는다 —
+ * 장난 요청이 쌓여도 지우기 한도(Free 요금제 분당 5회)를 쓰지 않게.
+ */
 export async function requestTakedown(
   slug: string,
   reason?: string | null,
   requesterHash: string | null = null,
+  kind: TakedownKind | null = null,
 ): Promise<Result<{ slug: string }>> {
   const product = await repo.findBySlug(slug);
   if (!product || product.status === "banned") return fail({ kind: "not_found" });
@@ -52,20 +61,25 @@ export async function requestTakedown(
     });
   }
 
-  const trimmed = reason?.trim().slice(0, MAX_REASON) || null;
+  const trimmed = takedownReasonText(kind, reason?.trim().slice(0, MAX_REASON));
   const values = { slug, reason: trimmed, requestedAt: new Date(), requesterHash };
-  // 같은 제품에 여러 번 오면 최신 요청 하나로 남긴다 — 큐가 같은 항목으로 차지 않게. 몇 번 왔는지와 지난 처리 결과만 남긴다
-  await db
-    .insert(takedownRequests)
-    .values(values)
-    .onConflictDoUpdate({
-      target: takedownRequests.slug,
-      set: {
-        ...values, handledAt: null, handledBy: null, outcome: null, dismissReason: null, note: null,
-        requestCount: sql`${takedownRequests.requestCount} + 1`,
-        previousOutcome: sql`coalesce(${takedownRequests.outcome}, ${takedownRequests.previousOutcome})`,
-      },
-    });
+  await db.transaction(async (tx) => {
+    const [before] = await tx.select({ handledAt: takedownRequests.handledAt }).from(takedownRequests)
+      .where(eq(takedownRequests.slug, slug)).for("update");
+    // 같은 제품에 여러 번 오면 최신 요청 하나로 남긴다 — 큐가 같은 항목으로 차지 않게. 몇 번 왔는지와 지난 처리 결과만 남긴다
+    await tx
+      .insert(takedownRequests)
+      .values(values)
+      .onConflictDoUpdate({
+        target: takedownRequests.slug,
+        set: {
+          ...values, handledAt: null, handledBy: null, outcome: null, dismissReason: null, note: null,
+          requestCount: sql`${takedownRequests.requestCount} + 1`,
+          previousOutcome: sql`coalesce(${takedownRequests.outcome}, ${takedownRequests.previousOutcome})`,
+        },
+      });
+    if (!before || before.handledAt !== null) await tx.insert(cdnPurges).values({ slug, reason: "takedown" });
+  });
 
   logger.info("takedown.requested", { slug, url: product.url });
   return ok({ slug });
@@ -83,6 +97,8 @@ export async function pendingTakedowns(limit = 50): Promise<TakedownRequest[]> {
 
 /** UTC 로 저장된 시각을 같은 시계로 잰다(시각 열은 시간대 없이 UTC — JS Date 로 쓴다) */
 const NOW = sql`(current_timestamp at time zone 'UTC')`;
+/** 이유를 쓰지 않은 요청 — 갈래 이름만 붙은 "[운영자 요청]"도 이유가 없는 것이다(takedown-view.ts takedownReasonText) */
+const NO_REASON = sql`(reason is null or reason ~ '^\\[[^]]*\\]$')`;
 const GITHUB_OWNER = (column: unknown) => sql`case when ${column} ~* '^https?://(www\.)?github\.com/[^/]+'
   then lower(split_part(regexp_replace(${column}, '^https?://(www\.)?github\.com/', '', 'i'), '/', 1)) end`;
 
@@ -147,7 +163,7 @@ export async function takedownSummary(): Promise<TakedownSummary> {
       count(*) filter (where handled_at > ${NOW} - interval '30 days' and outcome = 'dismissed')::int as dismissed30d,
       count(*) filter (where requested_at > ${NOW} - interval '1 hour')::int as last_hour,
       count(distinct requester_hash) filter (where requested_at > ${NOW} - interval '1 hour')::int as senders,
-      count(*) filter (where requested_at > ${NOW} - interval '1 hour' and reason is null)::int as no_reason
+      count(*) filter (where requested_at > ${NOW} - interval '1 hour' and ${NO_REASON})::int as no_reason
     from takedown_requests`);
   let owners = 0;
   let topReason: { text: string; count: number } | null = null;

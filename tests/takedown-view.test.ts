@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { formatWait, groupTakedowns, isBurst, senderLabel, takedownSignal, waitTone, type TakedownEntry } from "@/lib/domain/products/takedown-view";
+import { formatWait, groupTakedowns, isBurst, isTakedownKind, senderLabel, takedownReasonText, takedownSignal, waitTone,
+  type TakedownEntry } from "@/lib/domain/products/takedown-view";
 
 /** 내려달라는 요청 — 기다림의 색, 표기, 묶기 규칙 */
 const entry = (slug: string, over: Partial<TakedownEntry> = {}): TakedownEntry => ({
@@ -64,5 +65,19 @@ describe("묶기", () => {
     expect(groups[0]).toMatchObject({ title: "10-05 14시", together: true });
     expect(groups[0].entries.map((e) => e.slug)).toEqual(["a2", "d1"]);
     expect(groups[1]).toMatchObject({ title: "10-05 12시", together: true });
+  });
+});
+
+describe("요청의 갈래 — 사유 앞의 [이름](UX-19)", () => {
+  it("갈래가 있으면 사유 앞에 붙이고, 이유가 비면 이름만, 갈래가 없으면 사유 그대로", () => {
+    expect(takedownReasonText("owner", "  제 프로젝트입니다  ")).toBe("[운영자 요청] 제 프로젝트입니다");
+    expect(takedownReasonText("abuse", "")).toBe("[스팸·악성 신고]");
+    expect(takedownReasonText(null, " 내려 주세요 ")).toBe("내려 주세요");
+    expect(takedownReasonText(null, "  ")).toBeNull();
+  });
+  it("고른 두 값만 갈래로 받는다", () => {
+    expect(isTakedownKind("owner")).toBe(true);
+    expect(isTakedownKind("abuse")).toBe(true);
+    for (const value of ["toString", "spam", "", null, 1]) expect(isTakedownKind(value)).toBe(false);
   });
 });

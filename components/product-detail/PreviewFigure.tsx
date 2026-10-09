@@ -1,8 +1,8 @@
 /* eslint-disable @next/next/no-img-element -- 검증 후 내부에 보관한 이미지를 저장 치수 그대로 제공한다. */
+import { formatPublicDate } from "@/lib/format/time";
 import type { ProductDetailView } from "@/lib/domain/products/detail-view";
 import { thumbnailPresentation } from "@/lib/domain/products/thumbnails/presentation";
 import { ogVariantSrc } from "@/lib/domain/products/og-variants";
-import { formatDate } from "./format";
 
 /**
  * 넓은 이미지가 있을 때만 — 오른쪽 열에 작게. 화면 사본이 있으면 첫 장, 없으면 넓은 대표 이미지.
@@ -22,9 +22,9 @@ export function PreviewFigure({ product, media }: { product: ProductDetailView["
   return (
     <figure className="m-0 flex flex-col gap-2 rounded-[18px] bg-bg-soft p-3 pb-2.5">
       <img src={shown.src} width={shown.width} height={shown.height} alt={shown.caption} loading="lazy" className="h-auto w-full rounded-[10px] object-cover" />
-      <figcaption className="flex flex-wrap justify-between gap-x-2 gap-y-1 text-[13px] text-fg-3">
+      <figcaption className="flex flex-wrap justify-between gap-x-2 gap-y-1 text-[13px] text-fg-2">
         <span>{shown.caption}</span>
-        {shown.at && <span>사본 갱신 {formatDate(shown.at)}</span>}
+        {shown.at && <span>사본 갱신 {formatPublicDate(shown.at, new Date())}</span>}
         {shown.missing && <span className="w-full text-down">원본 없음 · 보관 이미지</span>}
       </figcaption>
     </figure>

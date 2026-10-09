@@ -1,10 +1,11 @@
+import { BRAND } from "@/lib/copy/brand";
 import type { EvidenceLevel } from "@/lib/db/product-evidence-schema";
 import { makerProvenanceSchema, PROVENANCE_ROLES } from "./contracts";
 
 export const EVIDENCE_LABELS = {
   maker_reported: "메이커 제공",
   repository_evidenced: "저장소 근거",
-  nomorevibe_recorded: "NoMoreVibe 기록",
+  nomorevibe_recorded: `${BRAND} 기록`,
   signed_build: "서명된 빌드 증명",
 } as const satisfies Record<EvidenceLevel, string>;
 

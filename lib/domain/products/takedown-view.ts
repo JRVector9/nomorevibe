@@ -11,6 +11,33 @@ export const TAKEDOWN_LATE_HOURS = 12;
 /** 1시간에 이만큼 넘게 들어오면 "몰려 들어옴" — 평소는 하루 0~1건이다 */
 export const TAKEDOWN_BURST_PER_HOUR = 10;
 
+/**
+ * 처리 약속(운영자 결정 D5 — 24시간 안 확인, 확인 전 검색 노출 중지). 상세의 폼과 접수 응답이 같은 말을 한다.
+ * '검색 노출'은 검색엔진이다 — 요청이 들어오는 즉시 상세가 noindex 로 바뀐다(indexing.ts). 자세한 절차는 /policy#takedown.
+ */
+export const TAKEDOWN_PROMISE = "24시간 안에 확인합니다. 확인 전에도 검색엔진 노출은 바로 멈춥니다.";
+export const TAKEDOWN_RECEIVED = `요청을 받았습니다. ${TAKEDOWN_PROMISE}`;
+
+/**
+ * 요청의 갈래(2026-10-08 UX 감사 UX-19) — 상세의 폼이 고르게 한다. 표에 열이 없으므로 사유 맨 앞에 "[이름] "으로 적는다:
+ *   "[운영자 요청] 제 프로젝트인데 내려 주세요" · "[스팸·악성 신고]"(이유를 비우면 이름만)
+ * 처리 화면은 사유를 그대로 보여 주므로 갈래가 첫머리에 읽힌다. 갈래 없이 온 옛 요청은 사유 그대로다.
+ */
+export const TAKEDOWN_KINDS = {
+  owner: "운영자 요청",
+  abuse: "스팸·악성 신고",
+} as const;
+export type TakedownKind = keyof typeof TAKEDOWN_KINDS;
+export const isTakedownKind = (value: unknown): value is TakedownKind =>
+  typeof value === "string" && Object.hasOwn(TAKEDOWN_KINDS, value);
+
+/** 저장할 사유 — 갈래가 있으면 "[이름] 이유", 이유가 비면 "[이름]". 갈래도 이유도 없으면 null */
+export function takedownReasonText(kind: TakedownKind | null | undefined, reason: string | null | undefined): string | null {
+  const text = reason?.trim() || null;
+  if (!kind) return text;
+  return text ? `[${TAKEDOWN_KINDS[kind]}] ${text}` : `[${TAKEDOWN_KINDS[kind]}]`;
+}
+
 export const DISMISS_REASONS = {
   test_spam: "테스트·장난",
   not_owner: "주인이 아닌 것 같음",
