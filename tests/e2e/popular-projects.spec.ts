@@ -29,7 +29,7 @@ test('홈 네 구간과 전체 목록·페이지·개인 필터가 연결된다'
  await expect(page.locator('.popular-table tbody tr')).toHaveCount(10);
  await expect(page.locator('.popular-table tbody').getByText('조직',{exact:true})).toHaveCount(0);
  await page.reload();await expect(page.getByRole('checkbox',{name:'개인 계정만'})).toBeChecked();
- await page.getByRole('navigation',{name:'스타 구간'}).getByRole('link',{name:/대형/}).click();
+ await page.getByRole('navigation',{name:'스타 구간'}).getByRole('link',{name:/3만\+/}).click();
  await expect(page.getByText('아직 없음',{exact:true})).toBeVisible();
  await page.getByRole('link',{name:'집계 기준',exact:true}).click();
  await expect(page.getByRole('dialog',{name:'숫자의 기준'})).toBeVisible();
@@ -45,6 +45,13 @@ for(const width of [1440,390])test(`${width}px에서 글자·가로 넘침·표 
  expect(await page.locator('#popular').evaluate(root=>Array.from(root.querySelectorAll('*')).filter(e=>e.textContent?.trim()&&getComputedStyle(e).display!=='none').every(e=>parseFloat(getComputedStyle(e).fontSize)>=13))).toBe(true);
  await page.goto('/popular?tier=rising');await page.waitForLoadState('networkidle');
  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
- if(width===390)expect(await page.locator('.popular-table-scroll').evaluate(e=>e.scrollWidth>e.clientWidth)).toBe(true);
+ // 좁은 화면은 표 대신 카드 행(순위·아이콘·이름·★ 한 줄 + 소개)이다
+ if(width===390){await expect(page.locator('.popular-table-scroll')).toBeHidden();await expect(page.locator('.popular-cards li')).toHaveCount(15);await expect(page.locator('.popular-cards li').first()).toBeVisible();}
+ else await expect(page.locator('.popular-cards')).toBeHidden();
  await page.screenshot({path:`/tmp/nomorevibe-popular-table-${width}.png`,fullPage:true});
+ // 구간 칩 줄이 넘치면 고른 칩을 줄 안으로 민다
+ if(width===390){
+  await page.goto('/popular?tier=large');await page.waitForLoadState('networkidle');
+  expect(await page.locator('.popular-tabs').evaluate(nav=>{const chip=nav.querySelector('[aria-current="page"]')!.getBoundingClientRect(),box=nav.getBoundingClientRect();return chip.left>=box.left&&chip.right<=box.right;})).toBe(true);
+ }
 });

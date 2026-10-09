@@ -5,6 +5,7 @@ import Link from 'next/link';
 import {getPopularGroups} from '@/lib/domain/products/popular';
 import {githubOwnerFromRepositoryUrl} from '@/lib/domain/products/github-owner';
 import {popularHref} from '@/lib/domain/products/stars';
+import {formatCount} from '@/lib/format/number';
 import {PopularFilter} from './PopularFilter';
 import {logger} from '@/lib/observability/logger';
 
@@ -28,7 +29,7 @@ export async function PopularTiers({personal=false}:{personal?:boolean}){
      <StarMetric value={p} />
     </li>;
    })}</ol>:<p className="popular-empty">아직 없음</p>}
-   <Link prefetch={false} className="popular-all" href={popularHref(group.key,personal)}>{group.total.toLocaleString('ko-KR')}개 모두 보기 <span aria-hidden="true">→</span></Link>
+   <Link prefetch={false} className="popular-all" href={popularHref(group.key,personal)}>{formatCount(group.total)}개 모두 보기 <span aria-hidden="true">→</span></Link>
   </article>)}</div>
  </section>;
 }
