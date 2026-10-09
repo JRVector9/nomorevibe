@@ -9,7 +9,7 @@ describe("product build provenance", () => {
     expect(EVIDENCE_LABELS).toEqual({
       maker_reported: "메이커 제공",
       repository_evidenced: "저장소 근거",
-      nomorevibe_recorded: "NoMoreVibe 기록",
+      nomorevibe_recorded: "nomorevibe 기록",
       signed_build: "서명된 빌드 증명",
     });
   });

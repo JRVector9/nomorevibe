@@ -160,6 +160,66 @@ describe("README 발췌", () => {
     expect(readmeExcerpt(sentence.repeat(20), tagline)).toBe(sentence.repeat(repeats));
   });
 
+  it("목록 기호는 •로, 인라인 코드는 따옴표만 떼서 평문으로 — 감사의 Moa README(UX-17)", () => {
+    // detail-moa-d.jpg 에 그대로 보이던 백틱과 '- ' 목록
+    const readme = [
+      "Moa",
+      "",
+      "Next.js App Router + Feature-Sliced Design(`src/`) + Supabase로 만든 개인 자산 관리 앱입니다. 거래를 기록하고 월별 흐름을 봅니다.",
+      "",
+      "- 거래 기록 — 수입·지출을 날짜별로 기록하고 분류합니다",
+      "- TanStack Query, Zustand, Supabase (`@supabase/ssr`)",
+      "* [x] 월별 예산과 남은 금액을 한눈에 보여 줍니다",
+    ].join("\n");
+    expect(readmeExcerpt(readme, "개인 자산 관리 앱")).toBe([
+      "Next.js App Router + Feature-Sliced Design(src/) + Supabase로 만든 개인 자산 관리 앱입니다. 거래를 기록하고 월별 흐름을 봅니다.",
+      "",
+      "• 거래 기록 — 수입·지출을 날짜별로 기록하고 분류합니다",
+      "• TanStack Query, Zustand, Supabase (@supabase/ssr)",
+      "• 월별 예산과 남은 금액을 한눈에 보여 줍니다",
+    ].join("\n"));
+  });
+
+  it("배지·HTML 잔재는 지우고 링크는 이름만, 강조는 글자만 남긴다 — 낱말 안 밑줄과 코드 안 기호는 그대로", () => {
+    const readme = [
+      '<p align="center"><img src="docs/logo.png" width="120" alt="Atlas"></p>',
+      '<h1 align="center">Atlas</h1>',
+      "<!-- badges -->",
+      "[![npm](https://img.shields.io/npm/v/atlas.svg)](https://www.npmjs.com/package/atlas) [![CI][ci-badge]][ci-url] ![license](https://img.shields.io/badge/license-MIT-blue)",
+      "",
+      "---",
+      "",
+      "## Why Atlas",
+      "Atlas is a *fast*, __local-first__ note app with `snake_case_ids`, `**kwargs` support and ~~no~~ sync built in.",
+      "See the [docs](https://atlas.dev/docs) or the [changelog][changes] — my_config_file stays as written.",
+    ].join("\n");
+    expect(readmeExcerpt(readme, "Local-first notes")).toBe([
+      "Atlas is a fast, local-first note app with snake_case_ids, **kwargs support and no sync built in.",
+      "See the docs or the changelog — my_config_file stays as written.",
+    ].join("\n"));
+  });
+
+  it("README 안의 날것 태그는 글로 남기지 않고 지운다 — 상세는 발췌를 글자로만 그린다", () => {
+    const readme = 'Sketchpad turns rough wireframes into components <script>alert("x")</script> and <img src=x onerror="alert(1)"> exports them to React with one command.';
+    const text = readmeExcerpt(readme, tagline)!;
+    expect(text).not.toMatch(/<\/?(?:script|img)/i);
+    expect(text).not.toContain("onerror");
+    expect(text).toContain("Sketchpad turns rough wireframes into components");
+    expect(text).toContain("exports them to React with one command.");
+  });
+
+  it("저장된 README(lib/crawl/readme.ts 를 거친 글)에서도 참조형 배지가 남지 않는다", () => {
+    const stored = readmeText([
+      "[![npm][npm-badge]][npm-url] [![Build](https://github.com/acme/kit/actions/workflows/ci.yml/badge.svg)](https://github.com/acme/kit/actions)",
+      "",
+      "Kit is a small toolkit for building command line apps in TypeScript with typed flags and helpful errors.",
+      "",
+      "[npm-badge]: https://img.shields.io/npm/v/kit.svg",
+      "[npm-url]: https://www.npmjs.com/package/kit",
+    ].join("\n"));
+    expect(readmeExcerpt(stored, "CLI toolkit")).toBe("Kit is a small toolkit for building command line apps in TypeScript with typed flags and helpful errors.");
+  });
+
   it("엔티티를 풀어도 태그 문자열은 글로 남고 소개와 같은 본문은 제외한다", () => {
     const text = 'The examples keep &lt;script&gt;alert(&quot;sample&quot;)&lt;/script&gt; as literal source text, without changing the surrounding explanation.';
     const expected = 'The examples keep <script>alert("sample")</script> as literal source text, without changing the surrounding explanation.';
