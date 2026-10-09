@@ -36,7 +36,8 @@ export function BuildTools({ product, unclaimed, agents, observedAgentFacts, ski
   const nothing = !reported && agents.length === 0 && skills.length === 0 && observed.size === 0;
   // 검사는 GitHub 저장소에만 한다 — 저장소가 없거나 사라졌으면 '대기 중'이 아니라 검사할 수 없다
   const scannable = githubOwnerFromRepositoryUrl(product.repoUrl) !== null && !product.repoGone;
-  const level = scannable && aiLevel.checked ? aiLevel.level : null;
+  // 저장소가 사라져도 그 전에 찾은 근거의 단계는 보인다 — 홈 'AI로 제작' 필터도 그 단계로 거른다
+  const level = githubOwnerFromRepositoryUrl(product.repoUrl) !== null && aiLevel.checked ? aiLevel.level : null;
   // 검사했지만 1~3단계 근거가 없다 — 흔적 알약이 보이는 동안은 그 말과 어긋나 쓰지 않는다
   const noTrace = scannable && aiLevel.checked && level === null && observed.size === 0;
   // 수집 범위와 제품·저장소 관계 — 어느 흔적에든 붙어 있으면 첫 것 하나씩 한 줄로

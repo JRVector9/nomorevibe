@@ -11,7 +11,7 @@
 export type AiLevel = 1 | 2 | 3;
 
 /** 판정 규칙의 판 — 올리면 ai-level-refresh 가 모든 저장소를 다시 본다(그동안 지난 판의 단계는 그대로 보인다) */
-export const AI_LEVEL_RULES_VERSION = "2026-10-10.1";
+export const AI_LEVEL_RULES_VERSION = "2026-10-10.2";
 
 export const AI_LEVELS: readonly AiLevel[] = [1, 2, 3];
 
@@ -43,6 +43,13 @@ export type AiLevelEvidence = {
   files?: { path: string; client: string }[];
   /** 확인했지만 코드 파일을 바꾸지 않은 에이전트 PR·표기 커밋 — 다시 묻지 않으려고 남긴다(잡 내부용) */
   nonDevelopment?: { pullRequests: number[]; commits: string[] };
+  /**
+   * AI 도구 표기는 있는데 코드를 바꿨는지 아직 확인하지 못한 커밋(최신부터) — 잡이 틱마다 REST 로 하나씩 확인한다(잡 내부용).
+   * 남아 있는 동안 단계가 없으면 '검사 대기 중'이다(근거 없음이 아니다)
+   */
+  pendingCommits?: { sha: string; client: string; basis: "coauthor" | "author" | "footer" | "scan" }[];
+  /** 코드를 바꿨는지 아직 보지 못한 에이전트 PR — 다음 방문에 본다. 남아 있는 동안 단계가 없으면 '검사 대기 중'이다 */
+  pendingPullRequests?: number[];
 };
 
 /**

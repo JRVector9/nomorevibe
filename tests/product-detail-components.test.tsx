@@ -635,8 +635,8 @@ describe("evidence product detail components", () => {
     // 검사했지만 근거가 없다 — AI 없이 만들었다는 말로 읽히지 않게
     expect(renderTools({ ...empty, aiLevel: { checked: true, level: null } }))
       .toContain("검사에서 AI 코딩 도구 흔적을 찾지 못했습니다 — AI 없이 만들었다는 뜻은 아닙니다.");
-    // GitHub 저장소가 없거나 사라졌으면 기다릴 검사가 없다 — 남아 있는 단계도 보이지 않는다
-    for (const changed of [{ repoUrl: "https://gitlab.com/acme/app" }, { repoUrl: null }, { repoGone: true }]) {
+    // GitHub 저장소가 없으면 기다릴 검사가 없다 — 남아 있는 단계도 보이지 않는다
+    for (const changed of [{ repoUrl: "https://gitlab.com/acme/app" }, { repoUrl: null }]) {
       for (const aiLevel of [unchecked, { checked: true, level: 2 as const }]) {
         const html = renderTools({ ...empty, product: { ...empty.product, ...changed }, aiLevel });
         expect(html, JSON.stringify(changed)).toContain("AI 흔적 검사를 할 수 없습니다");
@@ -644,6 +644,10 @@ describe("evidence product detail components", () => {
         expect(html, JSON.stringify(changed)).not.toContain("단계");
       }
     }
+    // 저장소가 사라졌으면 다시 검사할 수 없지만, 그 전에 찾은 근거의 단계는 보인다(홈 필터도 그 단계로 거른다)
+    const gone = { ...empty, product: { ...empty.product, repoGone: true } };
+    expect(renderTools({ ...gone, aiLevel: unchecked })).toContain("AI 흔적 검사를 할 수 없습니다");
+    expect(renderTools({ ...gone, aiLevel: { checked: true, level: 2 } })).toContain("AI 제작 근거 2단계");
   });
 
   it.each([1, 2, 3] as const)("names AI level %i and its description without links or tool names", (level) => {

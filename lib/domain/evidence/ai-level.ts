@@ -13,6 +13,7 @@ import type { AiLevel, AiLevelEvidence } from './ai-level-labels';
  * 2단계: 코드 파일을 바꾼 커밋에 AI 도구 서명(Co-authored-by)·작성자 표기·도구가 붙이는 꼬리 줄. 저장소 주인의 워크플로가 토큰을 받아 쓰는
  *   claude[bot] 이 연 PR 도 여기다(주인이 꾸밀 수 있다). 포크는 커밋 표기를 보지 않는다 — 원본 저장소의 것을 물려받는다.
  * 3단계: 루트의 AI 도구 전용 설정·규칙 파일(agents/catalog.ts 의 도구가 정해진 규칙). CLAUDE.md·AGENTS.md 처럼 여러 도구가 읽는 공유 형식은 넣지 않는다.
+ *   포크는 파일도 원본에서 물려받으므로 커밋처럼 보지 않는다.
  * 기존 근거 수집(agent_repository_observations)이 찾은 개발 커밋 표기·도구 파일도 같은 단계로 센다.
  */
 
@@ -151,7 +152,7 @@ export function classifyAiLevel(input: ClassifyInput): { level: AiLevel | null; 
   const pullRequests = input.pullRequests.filter((pr) => pr.development === true);
   const commits = (input.isFork ? input.commits.filter((commit) => commit.basis === 'scan') : input.commits)
     .filter((commit) => commit.development === true);
-  const files = [...new Map(input.files.map((file) => [file.path, file])).values()];
+  const files = input.isFork ? [] : [...new Map(input.files.map((file) => [file.path, file])).values()];
   const level: AiLevel | null = pullRequests.some((pr) => pr.level === 1) ? 1
     : pullRequests.length || commits.length ? 2 : files.length ? 3 : null;
   const clients = [...new Set([...pullRequests.map((pr) => pr.client), ...commits.map((commit) => commit.client), ...files.map((file) => file.client)])].sort();

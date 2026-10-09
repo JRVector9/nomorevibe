@@ -1,6 +1,7 @@
 import { hasSearchQuery, productSearchPredicate, productSearchRank, type SearchQuery } from './search';
 import { syncRepositoryLink } from "@/lib/domain/evidence/repository-link-sync";
 import { isAiLevel, type AiLevel } from "@/lib/domain/evidence/ai-level-labels";
+import { aiLevelRepositoryKey } from "@/lib/domain/evidence/ai-level-store";
 import { and, desc, eq, inArray, isNotNull, like, ne, notInArray, or, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { lockProductGeneration, type ProductTransaction } from "./generation";
@@ -31,6 +32,7 @@ import {
   type Product,
   type NewProduct,
   type ProductStatus,
+  repositoryAiLevels,
 } from "@/lib/db/schema";
 import { slugifyName } from "@/lib/net/normalize";
 import type { Category } from "./schema";
@@ -308,6 +310,14 @@ const introNeedsEditor = sql`exists (
   where c.product_id = ${products.id} and c.outcome = 'needs_editor' and c.checked_tagline = ${products.tagline}
 )`;
 
+/** 저장소 주소의 판정된 단계(repository_ai_levels) — 제품의 저장소를 바꿀 때 옮겨 적는다 */
+async function storedAiLevelFor(tx: ProductTransaction, repoUrl: string | null): Promise<AiLevel | null> {
+  const key = aiLevelRepositoryKey(repoUrl);
+  if (!key) return null;
+  const [row] = await tx.select({ level: repositoryAiLevels.level }).from(repositoryAiLevels).where(eq(repositoryAiLevels.repositoryKey, key)).limit(1);
+  return isAiLevel(row?.level) ? row.level : null;
+}
+
 /** AI 제작 근거 단계가 이 중 하나 — 공개 순위(ranking/view.ts)도 같은 식을 쓴다. 빈 목록이면 아무것도 걸리지 않는다 */
 export function aiLevelPredicate(levels: readonly AiLevel[]) {
   return levels.length ? inArray(products.aiLevel, [...levels]) : sql`false`;
@@ -558,7 +568,9 @@ export async function update(id: number, values: Partial<Product>): Promise<void
     const [locked] = await tx.select({ repoUrl: products.repoUrl }).from(products).where(eq(products.id, id));
     const resetStats = values.repoUrl !== undefined && values.repoUrl !== locked.repoUrl
       ? { stars: null, starsAt: null, starsPrevious: null, starsPreviousAt: null, ownerType: null, starsCheckedAt: null,
-        repoStatus: null, repoCheckedAt: null, repoMissingSince: null, repoArchived: null, repoPushedAt: null, repoRenamedTo: null, repoChangedAt: null } : {};
+        repoStatus: null, repoCheckedAt: null, repoMissingSince: null, repoArchived: null, repoPushedAt: null, repoRenamedTo: null, repoChangedAt: null,
+        // AI 제작 근거 단계는 새 저장소의 판정으로(없으면 비운다 — ai-level-refresh 가 그 저장소를 보면 채운다)
+        aiLevel: await storedAiLevelFor(tx, values.repoUrl) } : {};
     // 소개를 고쳐 쓰면 그 소개는 쓴 사람의 것이다 — "AI가 요약" 표시를 뗀다
     const wroteTagline = values.tagline !== undefined && values.taglineSource === undefined ? { taglineSource: "maker" as const } : {};
     const [product] = await tx.update(products).set({ ...values, ...resetStats, ...wroteTagline, updatedAt: new Date() }).where(eq(products.id, id)).returning();
