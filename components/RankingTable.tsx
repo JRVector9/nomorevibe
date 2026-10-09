@@ -1,6 +1,8 @@
 import Link from "next/link";
+import { ProductTagline } from "@/components/ProductTagline";
 import { StatusBadge } from "@/components/TrustBadges";
 import type { RankingListItem } from "@/lib/domain/ranking/view";
+import { formatCount } from "@/lib/format/number";
 
 function changeLabel(change: number | null): string {
   if (change === null) return "신규";
@@ -28,7 +30,8 @@ function ProductIdentity({ item, mobileDetails }: {
           </span>
         )}
       </div>
-      <span className="block max-w-64 truncate text-[13px] text-fg-3">{item.tagline}</span>
+      {/* 좁은 표 칸이라 출처 줄은 끈다 — 소개는 ProductTagline 으로만 그린다(한국어 소개가 붙을 자리) */}
+      <ProductTagline tagline={item.tagline} source={item.taglineSource} showSource={false} className="block max-w-64 truncate text-[13px] text-fg-2" />
       {mobileDetails}
     </>
   );
@@ -59,7 +62,7 @@ export function RankingTable({
   return (
     <div className="overflow-x-auto rounded-[12px] border border-line bg-bg-card">
       <table className="w-full min-w-full sm:min-w-[760px] text-left text-[13px]">
-        <thead className="text-fg-3">
+        <thead className="text-fg-2">
           <tr>
             <th className="w-8 px-2 py-3 font-medium sm:w-12 sm:px-4">#</th>
             <th className="w-full min-w-28 px-2 py-3 font-medium sm:min-w-48 sm:px-3">제품</th>
@@ -90,7 +93,7 @@ export function RankingTable({
                   <ProductIdentity
                     item={item}
                     mobileDetails={seasonal ? (
-                      <span className="mt-1 flex flex-wrap gap-x-2 text-[13px] text-fg-3 sm:hidden">
+                      <span className="mt-1 flex flex-wrap gap-x-2 text-[13px] text-fg-2 sm:hidden">
                         <span className={factor < 100 ? "font-semibold text-down" : undefined}>반영 {factor}%</span>
                         <span>{status}</span>
                       </span>
@@ -99,11 +102,11 @@ export function RankingTable({
                 </td>
                 <td className="whitespace-nowrap px-2 py-3 text-right font-mono font-bold sm:px-3">
                   <span className="block">
-                    {(uniqueScoring ? item.uniqueVisitors : item.validClicks).toLocaleString("ko-KR")}
+                    {formatCount(uniqueScoring ? item.uniqueVisitors : item.validClicks)}
                   </span>
                   {uniqueScoring && (
-                    <span className="block text-[13px] font-medium text-fg-3">
-                      유효 방문 {item.validClicks.toLocaleString("ko-KR")}
+                    <span className="block text-[13px] font-medium text-fg-2">
+                      유효 방문 {formatCount(item.validClicks)}
                     </span>
                   )}
                 </td>
