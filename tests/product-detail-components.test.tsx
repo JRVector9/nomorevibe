@@ -404,7 +404,7 @@ describe("evidence product detail components", () => {
     expect(html).not.toContain("tracker.example");
 
     const unclaimed = renderIntro({ profile, unclaimed: true });
-    expect(unclaimed).toContain("자동 감지");
+    expect(unclaimed).toContain("저장소 README에서 가져옴");
     expect(unclaimed).not.toContain("메이커 제공·미검증");
   });
 

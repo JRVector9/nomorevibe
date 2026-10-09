@@ -10,6 +10,8 @@ import { claimInviteUrl, isPublicOrigin } from "@/lib/domain/products/claim-invi
 import { repoReviewsFor } from "@/lib/domain/products/repo-reviews";
 import { REPO_GONE_WAIT_MS, repoGonePending } from "@/lib/domain/products/repo-pending";
 import { introEditorNotes } from "@/lib/domain/products/intro-editor";
+import { NAME_ISSUE_LABELS } from "@/lib/domain/products/display-name";
+import { namesNeedingReview } from "@/lib/domain/products/name-review";
 import { formatDay, formatDetailTime, formatListTime } from "@/lib/format/time";
 import { siteOrigin } from "@/lib/site";
 import { ScrollTable } from "../components/ScrollTable";
@@ -68,12 +70,18 @@ export default async function AdminProductsPage({ searchParams }: Props) {
     (q ? countProductsByFilter(PRODUCT_FILTERS, q) : allFilterCounts.get("all", () => countProductsByFilter(PRODUCT_FILTERS))).catch(() => null),
   ]);
   const intro = active === "소개 확인 필요";
-  const [reviews, waiting, introNotes] = await Promise.all([
+  const [reviews, waiting, introNotes, nameReviews] = await Promise.all([
     repoGone ? repoReviewsFor(products.filter((product) => product.accessMode === "website").map((product) => product.id)) : null,
     // 빈 거르기가 운영센터의 '없음'과 어긋나 보이지 않게 — 못 읽으면 안내만 뺀다
     repoGone && !pending ? repoGonePending().catch(() => null) : null,
     intro ? introEditorNotes(products.map((product) => product.id)) : null,
+    active === "이름 확인 필요" ? namesNeedingReview() : null,
   ]);
+  /** 이름 확인 — 지금 이름(행의 제목) 옆에 제안과 사유 */
+  const nameNote = (slug: string) => {
+    const review = nameReviews?.get(slug);
+    return review ? `제안 → ${review.proposed ?? "없음 (직접 확인)"} · ${review.issues.map((issue) => NAME_ISSUE_LABELS[issue]).join(", ")}` : null;
+  };
   const time = (value: Date | null) => value ? formatListTime(value, now) : null;
   /** 24시간을 채워 확정됐는지 — repository.ts repoGone 과 같은 식 */
   const confirmedGone = (product: (typeof products)[number]) => Boolean(product.repoCheckedAt && product.repoMissingSince
@@ -212,7 +220,8 @@ export default async function AdminProductsPage({ searchParams }: Props) {
                 ].filter(Boolean).join(" · ") : null,
                 ...(reviews && product.accessMode === "website" ? { repoReview: reviews.has(product.id) ? repoReviewView(reviews.get(product.id)!, now) : null } : {}),
                 repoNote: repoArchived ? `보관됨 · 마지막 push ${time(product.repoPushedAt) ?? "모름"}`
-                  : repoRenamed ? `이름 바뀜 → ${product.repoRenamedTo} (repo_url 은 옛 이름 그대로)` : null,
+                  : repoRenamed ? `이름 바뀜 → ${product.repoRenamedTo} (repo_url 은 옛 이름 그대로)`
+                  : nameNote(product.slug),
                 ...(introNotes ? { intro: { tagline: product.tagline, problem: introNotes.get(product.id)?.problem ?? "" } } : {}),
               }}
             />

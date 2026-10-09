@@ -59,6 +59,8 @@ export function jobRunOptions(name: string, options: RequestedRunOptions): JobRu
   if (name === 'product-embedding') return { ...options, budgetMs: 50_000 };
   // 페이지 열기(10초)와 모델 한 번을 셋씩 — 기본 25초면 한 바퀴밖에 못 돈다
   if (name === 'product-repo-review') return { ...options, budgetMs: 55_000 };
+  // 소개 8건 묶음 한 번이 15~25초 — 기본 25초면 한 묶음도 빠듯하다(사유 번역과 같은 까닭)
+  if (name === 'product-tagline-ko') return { ...options, budgetMs: 55_000 };
   // 저장소 50개 묶음이 3~4초 — 기본 25초면 하루치(공개 저장소 전부)를 다 못 본다(stars-refresh.ts)
   if (name === 'product-stars-refresh') return { ...options, budgetMs: 40_000 };
   if (name === 'product-intro-check') return { ...options, budgetMs: 110_000 };

@@ -24,6 +24,7 @@ import { refreshAgentEvidenceJob } from "@/lib/jobs/products/agent-evidence-refr
 import { refreshProductEvidenceJob } from "@/lib/jobs/products/evidence-refresh";
 import { refreshProductStars } from "@/lib/jobs/products/stars-refresh";
 import { reviewGoneRepositories } from "@/lib/jobs/products/repo-review";
+import { writeKoreanTaglines } from "@/lib/jobs/products/korean-tagline";
 import { refreshProductThumbnails } from "@/lib/jobs/products/thumbnail-refresh";
 import { refreshProductSearchDocuments } from "@/lib/jobs/products/search-refresh";
 import { refreshProductEmbeddings } from "@/lib/jobs/products/embedding-refresh";
@@ -100,6 +101,8 @@ export const JOBS: Record<string, AnyJob> = {
   "product-stars-refresh": refreshProductStars,
   /** 저장소가 사라진 웹사이트가 아직 그 제품인지 본다 — 판정만 적고 운영자가 정한다 */
   "product-repo-review": (ctx) => reviewGoneRepositories(ctx),
+  /** 공개 제품의 소개를 한국어 한 줄로 옮긴다 — 검사를 통과한 줄만 화면에 먼저 보이고 원문은 토글로 */
+  "product-tagline-ko": writeKoreanTaglines,
   /** 공개 제품을 스팸·악성 배포 판정으로 다시 보고 잡히면 내린다(하루 한도 안에서) */
   "product-spam-rescan": rescanPublishedSpam,
   "product-thumbnail-refresh": refreshProductThumbnails,

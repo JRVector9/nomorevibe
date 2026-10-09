@@ -41,6 +41,10 @@ import { EMBEDDING_DOCUMENT, EMBEDDING_MODEL, vectorLiteral } from "./embedding"
 import { createMemo } from "@/lib/cache/memo";
 import { STARS_BASELINE_HOURS } from "./stars";
 import { getSettings as getCrawlSettings } from "@/lib/crawl/settings";
+import { slugArrayPredicate } from "@/lib/domain/ranking/refresh";
+import { taglineKoField } from "./korean-tagline";
+import { namesNeedingReview } from "./name-review";
+import { HIDDEN_BY_DEFAULT_CATEGORIES } from "./visibility";
 export { findRepositoryProduct } from "./repository-identity";
 
 /** 제품 데이터 접근 — 도메인 바깥에서 DB를 직접 만지지 않도록 여기로 모은다 */
@@ -75,7 +79,10 @@ export type ListOptions = {
   hasRepository?: boolean;
   /** 건너뛸 개수. 목록이 상한에서 조용히 잘리지 않으려면 뒤를 볼 수 있어야 한다 */
   offset?: number;
-  /** 연속 실패로 닿지 않는 제품을 뺀다. 공개 목록만 켠다 — 어드민은 그것을 봐야 처리한다 */
+  /**
+   * 공개 목록의 거르기 — 연속 실패로 닿지 않는 제품(notDown)과, 주인 없는 개인 프로필(listedByDefault)을 뺀다.
+   * 공개 목록만 켠다 — 어드민은 그것을 봐야 처리한다
+   */
   excludeDown?: boolean;
   /** 소개 검수가 근거로는 무엇인지 알 수 없다고 한 제품만(intro-checks.ts) — 어드민이 본다 */
   introNeedsEditor?: boolean;
@@ -105,6 +112,8 @@ export type ListOptions = {
   repoChecked?: boolean;
   /** 스팸 재검사가 자동으로 내린 것만(spamAutoBanned) — 어드민 '스팸 자동 차단' */
   spamBanned?: boolean;
+  /** 이름 정리가 필요한 주인 없는 공개분만(name-review.ts) — 어드민 '이름 확인 필요' */
+  nameNeedsReview?: boolean;
 };
 
 /**
@@ -112,7 +121,24 @@ export type ListOptions = {
  * verified_at만으로 정렬하면 seeded(null)가 목록 맨 위를 차지한다.
  */
 const listedAt = sql`coalesce(${products.verifiedAt}, ${products.createdAt})`;
+/** 주인이 있는 제품 — 메이커가 등록했거나(수집분이 아님) 우리가 올린 것을 가져갔다(view.ts isUnclaimed 의 반대) */
 const builderIsReported = or(ne(products.source, "crawler"), isNotNull(products.claimedAt))!;
+
+/**
+ * 기본 공개 목록에 싣는가(2026-10-09 운영자 결정 D2, UX-22) — HIDDEN_BY_DEFAULT_CATEGORIES(개인 프로필)는 주인이 등록했거나
+ * 클레임한 것만 싣는다. 실명 개인의 포트폴리오를 동의 없이 목록·분야·검색·인기·피드에 올리지 않는다.
+ * 지우지 않는다 — 상세 주소는 그대로 열리고 색인은 indexing.ts 가 막는다.
+ *
+ * 공개 목록이 지나는 길 하나(listConditions 의 excludeDown)와, 그 길을 쓰지 않는 공개 읽기(발견·RSS listRecentlyDiscovered,
+ * 인기 구간 popular.ts, 홈 집계 home-pulse.ts)가 이것을 함께 쓴다.
+ */
+const hiddenCategories = sql.join(HIDDEN_BY_DEFAULT_CATEGORIES.map((category) => sql`${category}`), sql`, `);
+export const listedByDefault = sql`(${products.category} not in (${hiddenCategories}) or ${builderIsReported})`;
+/** 같은 조건을 products 를 별칭으로 부르는 원문 SQL 에서(home-pulse.ts 의 p) */
+export function listedByDefaultAs(alias: string) {
+  const column = (name: string) => sql`${sql.identifier(alias)}.${sql.identifier(name)}`;
+  return sql`(${column("category")} not in (${hiddenCategories}) or ${column("source")} <> 'crawler' or ${column("claimed_at")} is not null)`;
+}
 
 /**
  * 최근 창의 클릭 합.
@@ -280,11 +306,11 @@ const introNeedsEditor = sql`exists (
 )`;
 
 /** 목록과 개수가 같은 조건을 쓰도록 한 곳에서 만든다. 급상승 기간은 설정에서 읽으므로 비동기다 */
-async function listConditions({ statuses, category, query, builder, observedTool, hasRepository, excludeDown, introNeedsEditor: needsEditor, rising, listedSince, minStars, slugs, excludeSlugs, repoGone: goneOnly, repoMissing, repoArchived, repoRenamed, down, adminSearch, repoChecked, spamBanned }: Omit<ListOptions, "limit" | "sort" | "offset">) {
+async function listConditions({ statuses, category, query, builder, observedTool, hasRepository, excludeDown, introNeedsEditor: needsEditor, rising, listedSince, minStars, slugs, excludeSlugs, repoGone: goneOnly, repoMissing, repoArchived, repoRenamed, down, adminSearch, repoChecked, spamBanned, nameNeedsReview }: Omit<ListOptions, "limit" | "sort" | "offset">) {
   const conditions = [inArray(products.status, statuses)];
   if (slugs) conditions.push(slugs.length ? inArray(products.slug, [...slugs]) : sql`false`);
   if (excludeSlugs?.length) conditions.push(notInArray(products.slug, [...excludeSlugs]));
-  if (excludeDown) conditions.push(notDown);
+  if (excludeDown) conditions.push(notDown, listedByDefault);
   if (needsEditor) conditions.push(introNeedsEditor);
   if (goneOnly) conditions.push(repoGone);
   if (repoMissing) conditions.push(inArray(products.repoStatus, ["not_found", "empty"]));
@@ -294,6 +320,8 @@ async function listConditions({ statuses, category, query, builder, observedTool
   if (adminSearch?.trim()) conditions.push(adminSearchPredicate(adminSearch));
   if (repoChecked) conditions.push(repoCheckedForNewest);
   if (spamBanned) conditions.push(spamAutoBanned);
+  // 규칙이 JS 하나라 걸린 주소를 받아 건다(1분 담아 둔 결과)
+  if (nameNeedsReview) conditions.push(slugArrayPredicate(products.slug, [...(await namesNeedingReview()).keys()]));
   if (rising) conditions.push(risingStars(await risingFreshDays()));
   if (listedSince) conditions.push(sql`${listedAt} >= ${listedSince.toISOString()}::timestamptz`);
   if (minStars !== undefined) conditions.push(sql`${products.stars} >= ${minStars}`);
@@ -317,7 +345,7 @@ export const LIST_COLUMNS = {
   stack: true, ogImage: true, makerName: true, stars: true, starsAt: true, starsPrevious: true, starsPreviousAt: true,
   verifiedAt: true, createdAt: true, status: true, source: true, claimedAt: true,
 } as const;
-export type ProductListRow = Pick<Product, keyof typeof LIST_COLUMNS> & { repoGone?: boolean };
+export type ProductListRow = Pick<Product, keyof typeof LIST_COLUMNS> & { repoGone?: boolean; taglineKo?: string | null };
 
 export async function listProducts(options: ListOptions): Promise<Product[]> {
   return db.query.products.findMany(await listQuery(options));
@@ -325,7 +353,7 @@ export async function listProducts(options: ListOptions): Promise<Product[]> {
 
 /** listProducts 와 같은 목록을 카드에 쓰는 열만으로 */
 export async function listProductRows(options: ListOptions): Promise<ProductListRow[]> {
-  return db.query.products.findMany({ ...(await listQuery(options)), columns: LIST_COLUMNS, extras: repoGoneField });
+  return db.query.products.findMany({ ...(await listQuery(options)), columns: LIST_COLUMNS, extras: { ...repoGoneField, ...taglineKoField } });
 }
 
 /** listProducts 와 같은 조건·순서의 주소만 — 관련도순 검색이 낱말 검색 순서를 섞을 때 */
@@ -430,10 +458,10 @@ export async function getRisingRank(slug: string): Promise<number | null> {
 }
 
 /** 발견 보드 — 검증 상태보다 실제 등재 시각을 우선해 시드 제품도 노출한다. 최신 목록이라 저장소 확인을 마친 것만(RSS 도 이것을 쓴다) */
-export async function listRecentlyDiscovered(limit: number): Promise<(Product & { repoGone: boolean })[]> {
+export async function listRecentlyDiscovered(limit: number): Promise<(Product & { repoGone: boolean; taglineKo: string | null })[]> {
   return db.query.products.findMany({
-    extras: repoGoneField,
-    where: and(inArray(products.status, ["verified", "seeded"]), notDown, repoCheckedForNewest),
+    extras: { ...repoGoneField, ...taglineKoField },
+    where: and(inArray(products.status, ["verified", "seeded"]), notDown, listedByDefault, repoCheckedForNewest),
     orderBy: [sql`${listedAt} desc`, products.slug],
     limit,
   });

@@ -2,6 +2,7 @@ import { nonProductPurpose } from './product-purpose';
 import { accessFromDocument } from "./rules";
 import type { CrawlCandidate, CrawlDocument, TaglineSource } from "@/lib/db/schema";
 import { LIMITS, type Category } from "@/lib/domain/products/schema";
+import { normalizedProductName } from "@/lib/domain/products/display-name";
 import * as products from "@/lib/domain/products/repository";
 import { cacheOgImage } from "@/lib/domain/products/og";
 import { generateEditToken, generateVerifyToken, hashToken } from "@/lib/tokens";
@@ -313,7 +314,9 @@ function draftFrom(repo: string, document: CrawlDocument, installable: boolean, 
       : !generated ? "maker"
       : written?.by ? "editor"
       : `ai_${written!.source}`) as TaglineSource,
-    name: (installable ? repo.split("/").at(-1)! : productName(pageTitle, repo, document.productUrl)).slice(0, LIMITS.name),
+    // 제목이 일반어·슬로건·전부 대문자·이모지 접두면 고친 이름으로 올린다(UX-33, display-name.ts reviewProductName)
+    name: normalizedProductName(installable ? repo.split("/").at(-1)! : productName(pageTitle, repo, document.productUrl),
+      `https://github.com/${repo}`).slice(0, LIMITS.name),
     tagline: tagline.slice(0, LIMITS.tagline),
     description: (repoDescription || pageDescription || tagline).slice(0, LIMITS.description),
     category: classify(meta),
