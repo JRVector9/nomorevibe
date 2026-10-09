@@ -16,6 +16,7 @@ import {
   numeric,
   uniqueIndex,
   halfvec,
+  smallint,
 } from "drizzle-orm/pg-core";
 
 // drizzle pg-core에 내장 bytea 타입이 없어 customType으로 정의
@@ -111,6 +112,11 @@ export const products = pgTable("products", {
   repoRenamedTo: varchar("repo_renamed_to", { length: 160 }),
   /** 상태·보관·바뀐 이름이 앞선 확인과 달라진 마지막 시각 — 운영센터의 '오늘 새로'. 첫 기록은 바뀐 것으로 치지 않는다 */
   repoChangedAt: timestamp("repo_changed_at"),
+  /**
+   * AI 제작 근거 단계(0063) — 1 AI 에이전트 앱이 연 PR 병합 · 2 AI 도구 서명 개발 커밋 · 3 AI 도구 전용 설정 파일.
+   * NULL 은 검사 전이거나 근거 없음. 원본은 repository_ai_levels 이고 ai-level-refresh 잡이 옮겨 적는다(목록이 거르는 데 쓴다)
+   */
+  aiLevel: smallint("ai_level").$type<1 | 2 | 3>(),
   status: varchar("status", { length: 20 })
     .$type<ProductStatus>()
     .notNull()
@@ -209,6 +215,8 @@ export const products = pgTable("products", {
   ),
   /** 검색. 이 표에는 전문 인덱스가 하나도 없었다 — 검색어가 붙으면 10,751행을 매번 훑었다 */
   index("products_search_idx").using("gin", table.searchVector),
+  /** 홈 'AI로 제작'·'AI 도구 설정' 필터(0063) — 근거가 있는 행만 */
+  index("products_ai_level_idx").on(table.aiLevel).where(sql`${table.aiLevel} is not null`),
 ]);
 
 // OG 이미지 사본 — 로컬 디스크는 재배포/다중 인스턴스에서 유실되므로 DB에 저장

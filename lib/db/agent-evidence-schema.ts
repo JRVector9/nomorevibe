@@ -1,6 +1,8 @@
-import { bigint, boolean, index, integer, jsonb, pgTable, serial, text, timestamp, uniqueIndex, varchar } from 'drizzle-orm/pg-core';
+import { sql } from 'drizzle-orm';
+import { bigint, boolean, index, integer, jsonb, pgTable, serial, smallint, text, timestamp, uniqueIndex, varchar } from 'drizzle-orm/pg-core';
 import type { AgentObservation } from '@/lib/domain/evidence/agents/types';
 import type { CollectCursor } from '@/lib/domain/evidence/agents/collect';
+import type { AiLevelEvidence } from '@/lib/domain/evidence/ai-level-labels';
 export const agentRepositoryScans = pgTable('agent_repository_scans', {
   id: serial('id').primaryKey(), githubRepositoryId: bigint('github_repository_id', { mode: 'bigint' }).notNull(),
   repositoryKey: varchar('repository_key', { length: 200 }).notNull(), commitSha: varchar('commit_sha', { length: 64 }).notNull(),
@@ -22,3 +24,20 @@ export const crawlDiscoveryEvidence = pgTable('crawl_discovery_evidence', {
   incomplete: boolean('incomplete').notNull().default(false), observedAt: timestamp('observed_at').notNull().defaultNow(),
 }, table => [uniqueIndex('crawl_discovery_repository_key_idx').on(table.repositoryKey, table.evidenceKey)]);
 export type AgentRepositoryScan = typeof agentRepositoryScans.$inferSelect;
+/**
+ * 저장소마다 AI 제작 근거 단계(0063, lib/domain/evidence/ai-level.ts) — ai-level-refresh 잡이 GraphQL 묶음으로 판정해 적는다.
+ * level: 1 AI 에이전트 앱이 연 PR 병합 · 2 AI 도구 서명 개발 커밋 · 3 AI 도구 전용 설정 파일 · NULL 검사했지만 근거 없음.
+ * evidence 는 단계를 세운 근거 몇 건(PR 번호·커밋·파일 경로)이다 — 공개 화면에는 단계 이름만 보인다(2026-10-10 운영자 결정).
+ */
+export const repositoryAiLevels = pgTable('repository_ai_levels', {
+  repositoryKey: varchar('repository_key', { length: 200 }).primaryKey(),
+  level: smallint('level').$type<1 | 2 | 3>(),
+  clients: text('clients').array().notNull().default(sql`'{}'::text[]`),
+  evidence: jsonb('evidence').$type<AiLevelEvidence>().notNull().default({}),
+  rulesVersion: varchar('rules_version', { length: 40 }).notNull(),
+  headSha: varchar('head_sha', { length: 64 }),
+  checkedAt: timestamp('checked_at').notNull(),
+  nextCheckAt: timestamp('next_check_at').notNull(),
+  lastError: varchar('last_error', { length: 60 }),
+}, table => [index('repository_ai_levels_due_idx').on(table.nextCheckAt)]);
+export type RepositoryAiLevel = typeof repositoryAiLevels.$inferSelect;
