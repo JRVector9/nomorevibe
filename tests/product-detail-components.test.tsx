@@ -232,7 +232,10 @@ describe("evidence product detail components", () => {
 
   it("shows only an internal icon copy, never an external image URL", () => {
     // 우리 사본을 화면 크기로 줄인 WebP 로(og-variants.ts)
-    expect(renderHero({ product: { ...product, ogImage: "/api/og-cache/simple-hwp" } })).toContain('src="/api/og-cache/simple-hwp.webp?size=192"');
+    expect(renderHero({ product: { ...product, ogImage: "/api/og-cache/simple-hwp?thumbnail=site_icon&w=64&h=64" } }))
+      .toContain('src="/api/og-cache/simple-hwp.webp?thumbnail=site_icon&amp;w=64&amp;h=64&amp;size=192"');
+    // 대표 이미지(OG 배너)는 정사각 아이콘 자리에 잘라 넣지 않는다 — 모노그램이 대신한다(UX-32)
+    expect(renderHero({ product: { ...product, ogImage: "/api/og-cache/simple-hwp" } })).not.toContain("<img");
     expect(renderHero({ product: { ...product, ogImage: "https://tracker.example/og.png" } })).not.toContain("tracker.example");
   });
 
