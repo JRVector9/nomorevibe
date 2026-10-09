@@ -17,7 +17,7 @@ const { getSeasonByKey, notFound } = vi.hoisted(() => ({
 vi.mock("@/lib/domain/ranking/view", () => ({ getSeasonByKey }));
 vi.mock("next/navigation", () => ({ notFound }));
 
-import RankingSeasonPage, { dynamic } from "@/app/rankings/[key]/page";
+import RankingSeasonPage, { dynamic, generateMetadata } from "@/app/rankings/[key]/page";
 
 const season: SeasonSummary = {
   key: "2026-W33",
@@ -74,7 +74,10 @@ describe("ranking season page", () => {
 
     expect(dynamic).toBe("force-dynamic");
     expect(getSeasonByKey).toHaveBeenCalledWith("2026-W33");
-    expect(html).toContain("2026-W33 랭킹");
+    expect(html).toContain("2026년 33주 랭킹");
+    // 규칙 표는 표 아래 '집계 기준' 접힘 안에 있다
+    expect(html.indexOf("History One")).toBeLessThan(html.indexOf("<details"));
+    expect(html).toContain("집계 기준</summary>");
     expect(html).toContain("24h 유효 방문 변동률");
     expect(html).toContain("History One");
   });
@@ -102,6 +105,44 @@ describe("ranking season page", () => {
     expect(html).toContain("유효 방문 42");
     expect(html).toContain("24h 고유 유입자 변동률");
     expect(html).toContain("+50%");
+  });
+
+  it("titles the page from the season key and keeps a ranked season indexable", async () => {
+    getSeasonByKey.mockResolvedValue({ season: { ...season, key: "2026-W41" }, items: [item] });
+
+    const metadata = await generateMetadata({ params: Promise.resolve({ key: "2026-W41" }), searchParams: Promise.resolve({}) });
+
+    expect(metadata.title).toBe("2026년 41주 랭킹 — nomorevibe");
+    expect(metadata.robots).toBeUndefined();
+  });
+
+  it("explains an empty season, links to the rising projects and asks not to index it", async () => {
+    getSeasonByKey.mockResolvedValue({ season: { ...season, key: "2026-W41", state: "active" }, items: [] });
+
+    const page = await RankingSeasonPage({
+      params: Promise.resolve({ key: "2026-W41" }),
+      searchParams: Promise.resolve({}),
+    });
+    const html = renderToStaticMarkup(createElement(() => page));
+    const metadata = await generateMetadata({ params: Promise.resolve({ key: "2026-W41" }), searchParams: Promise.resolve({}) });
+
+    expect(html).toContain("이번 주는 아직 집계된 제품이 없습니다");
+    expect(html).toContain('href="/#rising"');
+    expect(html).toContain("지금 뜨는 프로젝트 보기");
+    expect(html).not.toContain("<table");
+    expect(metadata.robots).toEqual({ index: false, follow: true });
+  });
+
+  it("says a closed empty season had no entries", async () => {
+    getSeasonByKey.mockResolvedValue({ season, items: [] });
+
+    const page = await RankingSeasonPage({
+      params: Promise.resolve({ key: season.key }),
+      searchParams: Promise.resolve({}),
+    });
+    const html = renderToStaticMarkup(createElement(() => page));
+
+    expect(html).toContain("이 주에는 집계된 제품이 없었습니다");
   });
 
   it("uses notFound for an unknown season", async () => {
