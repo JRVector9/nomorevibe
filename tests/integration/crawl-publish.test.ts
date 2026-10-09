@@ -371,8 +371,8 @@ describe("발행 잡", () => {
 
     await tick();
 
-    // 앞쪽만 남기고, 전부 대문자는 정리한다(UX-33, display-name.ts reviewProductName)
-    expect((await products.findByUrl("https://my-app.test"))?.name).toBe("Deepseekagents");
+    // 앞쪽만 남긴다. 전부 대문자의 대소문자 고침은 짐작이라 발행에서는 하지 않는다 — 관리자 '이름 확인 필요'에서 사람이 본다(display-name.ts NameReview)
+    expect((await products.findByUrl("https://my-app.test"))?.name).toBe("DEEPSEEKAGENTS");
   });
 
   it("슬로건 구분자 뒤를 떼고, 일반어 제목은 저장소 이름으로 올린다 (UX-33)", async () => {
