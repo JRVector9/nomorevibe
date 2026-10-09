@@ -21,6 +21,7 @@ import { pingProducts } from "@/lib/jobs/products/uptime";
 import { rollupClicks } from "@/lib/jobs/products/click-rollup";
 import { refreshRankings } from "@/lib/jobs/products/ranking-refresh";
 import { refreshAgentEvidenceJob } from "@/lib/jobs/products/agent-evidence-refresh";
+import { refreshAiLevelsJob } from "@/lib/jobs/products/ai-level-refresh";
 import { refreshProductEvidenceJob } from "@/lib/jobs/products/evidence-refresh";
 import { refreshProductStars } from "@/lib/jobs/products/stars-refresh";
 import { reviewGoneRepositories } from "@/lib/jobs/products/repo-review";
@@ -98,6 +99,7 @@ export const JOBS: Record<string, AnyJob> = {
   /** 외부 근거와 내부 미디어를 bounded batch로 갱신한다 */
   "product-evidence-refresh": refreshProductEvidenceJob,
   "agent-evidence-refresh": refreshAgentEvidenceJob,
+  "ai-level-refresh": refreshAiLevelsJob,
   "product-stars-refresh": refreshProductStars,
   /** 저장소가 사라진 웹사이트가 아직 그 제품인지 본다 — 판정만 적고 운영자가 정한다 */
   "product-repo-review": (ctx) => reviewGoneRepositories(ctx),

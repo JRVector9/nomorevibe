@@ -41,6 +41,8 @@ export type AiLevelEvidence = {
   commits?: { sha: string; client: string; basis: "coauthor" | "author" | "footer" | "scan" }[];
   /** 3단계: 루트의 AI 도구 전용 파일 */
   files?: { path: string; client: string }[];
+  /** 확인했지만 코드 파일을 바꾸지 않은 에이전트 PR·표기 커밋 — 다시 묻지 않으려고 남긴다(잡 내부용) */
+  nonDevelopment?: { pullRequests: number[]; commits: string[] };
 };
 
 /** 홈 필터 — made 'AI로 제작'(1·2단계), config 'AI 도구 설정'(3단계만). 주소는 ?ai=made|config */

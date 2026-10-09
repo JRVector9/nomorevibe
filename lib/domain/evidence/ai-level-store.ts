@@ -16,8 +16,17 @@ export type RepositoryAiLevelView = { checked: boolean; level: AiLevel | null; c
 export async function getRepositoryAiLevel(repoUrl: string | null | undefined): Promise<RepositoryAiLevelView> {
   const key = aiLevelRepositoryKey(repoUrl);
   if (!key) return { checked: false, level: null, clients: [], checkedAt: null };
-  const [row] = await db.select({ level: repositoryAiLevels.level, clients: repositoryAiLevels.clients, checkedAt: repositoryAiLevels.checkedAt })
-    .from(repositoryAiLevels).where(eq(repositoryAiLevels.repositoryKey, key)).limit(1);
-  if (!row) return { checked: false, level: null, clients: [], checkedAt: null };
-  return { checked: true, level: isAiLevel(row.level) ? row.level : null, clients: row.clients, checkedAt: row.checkedAt };
+  const [row] = await db.select({ level: repositoryAiLevels.level, clients: repositoryAiLevels.clients, checkedAt: repositoryAiLevels.checkedAt,
+    lastError: repositoryAiLevels.lastError, headSha: repositoryAiLevels.headSha }).from(repositoryAiLevels).where(eq(repositoryAiLevels.repositoryKey, key)).limit(1);
+  const level = isAiLevel(row?.level) ? row.level : null;
+  // 묻다 실패하거나 저장소가 없어 한 번도 판정하지 못한 행(잡이 실패만 적은 행: 오류 있음·head 없음)은 '검사 전'이다 — '근거 없음'으로 보이면 안 된다
+  if (!row || (row.lastError && !row.headSha && level === null)) return { checked: false, level: null, clients: [], checkedAt: null };
+  return { checked: true, level, clients: row.clients, checkedAt: row.checkedAt };
+}
+
+/** 발행할 때 제품에 옮겨 적을 단계 — 잡이 후보를 먼저 보므로 발행 전에 대개 판정이 있다. 없으면 null(잡이 뒤에 채운다) */
+export async function storedAiLevel(repositoryKey: string): Promise<AiLevel | null> {
+  const [row] = await db.select({ level: repositoryAiLevels.level }).from(repositoryAiLevels)
+    .where(eq(repositoryAiLevels.repositoryKey, repositoryKey.toLowerCase())).limit(1);
+  return isAiLevel(row?.level) ? row.level : null;
 }

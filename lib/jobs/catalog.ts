@@ -99,6 +99,11 @@ export const JOB_CATALOG: readonly { name: string; role: JobRole | "scheduler"; 
   { name: "product-evidence-refresh", role: "crawler", intervalMs: 60_000 },
   { name: "agent-evidence-refresh", role: "crawler", intervalMs: 60_000 },
   /**
+   * AI 제작 근거 단계(1·2·3단계)를 저장소마다 판정해 제품 ai_level 에 옮긴다(ai-level-refresh.ts). 새 후보 → 새 공개 제품 → 사흘 지난 것.
+   * GraphQL 10개 묶음(1점)을 한 틱 38초 안에서 — 공개분 첫 바퀴가 반나절, 그 뒤 하루 1만 3천 개쯤
+   */
+  { name: "ai-level-refresh", role: "crawler", intervalMs: 60_000 },
+  /**
    * 공개 제품의 GitHub 저장소를 하루 한 번 모두 본다(있음·없음·빈 저장소·막힘과 스타). GraphQL 100개씩 한 틱 4묶음까지,
    * 새 묶음은 틱 14초 안에서만 연다 — 기본 예산 25초 안에 끝나 수집 예산을 크게 늘리지 않는다(stars-refresh.ts).
    */
