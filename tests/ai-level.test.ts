@@ -91,9 +91,10 @@ describe("classifyAiLevel", () => {
       .toMatchObject({ level: 2, clients: ["claude-code", "cursor"] });
     expect(classifyAiLevel({ ...base, files: [{ path: ".cursorrules", client: "cursor" }] }).level).toBe(3);
   });
-  it("포크는 커밋 표기를 보지 않는다 — 기존 근거 수집이 이미 거른 것만", () => {
+  it("포크는 커밋 표기도 도구 파일도 원본에서 물려받으므로 보지 않는다 — 기존 근거 수집이 이미 거른 커밋만", () => {
     const commits = [{ sha: SHA, client: "claude-code", basis: "coauthor" as const, development: true }];
     expect(classifyAiLevel({ ...base, isFork: true, commits }).level).toBeNull();
+    expect(classifyAiLevel({ ...base, isFork: true, files: [{ path: ".cursorrules", client: "cursor" }] }).level).toBeNull();
     expect(classifyAiLevel({ ...base, isFork: true, commits: [{ ...commits[0], basis: "scan" as const }] }).level).toBe(2);
   });
 });
@@ -138,9 +139,9 @@ describe("GraphQL 질의와 읽기", () => {
     expect(() => aiLevelDetailQuery([{ ...request, directories: ["src"] }])).toThrow();
     const [detail] = parseAiLevelDetail([request], { r0: {
       d0: { entries: [{ name: "rules", type: "tree", mode: 16384, object: { entries: [{ name: "style.mdc", type: "blob", mode: 33188 }] } }] },
-      p0: { files: { nodes: [{ path: "src/app.ts" }, { path: "README.md" }] } },
+      p0: { files: { nodes: [{ path: "src/app.ts" }, { path: "README.md" }], pageInfo: { hasNextPage: true } } },
     } });
     expect(detail?.entries.map((entry) => entry.path)).toEqual([".cursor/rules", ".cursor/rules/style.mdc"]);
-    expect(detail?.pullRequestFiles.get(3)).toEqual(["src/app.ts", "README.md"]);
+    expect(detail?.pullRequestFiles.get(3)).toEqual({ paths: ["src/app.ts", "README.md"], more: true });
   });
 });

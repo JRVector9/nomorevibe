@@ -91,7 +91,8 @@ export function parseAiLevelBatch(repos: readonly RepositoryRef[], data: Record<
 
 /** 두 번째 질의 — 루트의 에이전트 폴더 두 겹과 에이전트 PR 이 바꾼 파일. 필요한 저장소만 */
 export type AiLevelDetailRequest = { repo: RepositoryRef; directories: readonly string[]; pullRequests: readonly number[] };
-export type AiLevelDetail = { entries: TreeEntry[]; pullRequestFiles: Map<number, string[]> } | null;
+/** pullRequestFiles: 바뀐 파일 앞 100개와, 그 뒤가 더 있는지(more) */
+export type AiLevelDetail = { entries: TreeEntry[]; pullRequestFiles: Map<number, { paths: string[]; more: boolean }> } | null;
 
 const DIRECTORY_SET = new Set<string>(AGENT_ROOT_DIRECTORIES);
 
@@ -102,7 +103,7 @@ export function aiLevelDetailQuery(items: readonly AiLevelDetailRequest[]): stri
     if (item.pullRequests.some((number) => !Number.isSafeInteger(number) || number <= 0)) throw new Error('ai_level_pull_request');
     const body = [
       ...item.directories.map((directory, at) => `d${at}: object(expression: ${JSON.stringify(`HEAD:${directory}`)}) { ...T }`),
-      ...item.pullRequests.map((number, at) => `p${at}: pullRequest(number: ${number}) { files(first: 100) { nodes { path } } }`),
+      ...item.pullRequests.map((number, at) => `p${at}: pullRequest(number: ${number}) { files(first: 100) { nodes { path } pageInfo { hasNextPage } } }`),
     ].join(' ');
     return repositoryCall(`r${index}`, item.repo, body || '__typename');
   });
@@ -123,14 +124,14 @@ export function parseAiLevelDetail(items: readonly AiLevelDetailRequest[], data:
       });
       return [...top, ...nested];
     });
-    const pullRequestFiles = new Map<number, string[]>();
+    const pullRequestFiles = new Map<number, { paths: string[]; more: boolean }>();
     item.pullRequests.forEach((number, at) => {
       const files = asObject(asObject(node[`p${at}`])?.files);
       if (!files) return;
-      pullRequestFiles.set(number, asArray(files.nodes).flatMap((file) => {
+      pullRequestFiles.set(number, { more: asObject(files.pageInfo)?.hasNextPage === true, paths: asArray(files.nodes).flatMap((file) => {
         const path = asObject(file)?.path;
         return typeof path === 'string' && path.length <= 1000 ? [path] : [];
-      }));
+      }) });
     });
     return { entries, pullRequestFiles };
   });

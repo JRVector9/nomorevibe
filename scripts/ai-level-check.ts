@@ -14,7 +14,7 @@ import { agentObservationSchema } from "@/lib/domain/evidence/agents/types";
 import { scanEvidence } from "@/lib/domain/evidence/ai-level";
 import { AI_LEVEL_BATCH } from "@/lib/domain/evidence/ai-level-query";
 import { AI_LEVEL_RULES_VERSION } from "@/lib/domain/evidence/ai-level-labels";
-import { processBatch, type AiLevelTick, type Previous } from "@/lib/jobs/products/ai-level-refresh";
+import { applyCommitChecks, checkCommits, processBatch, type AiLevelTick, type Judged, type Previous } from "@/lib/jobs/products/ai-level-refresh";
 
 async function main() {
   const { values } = parseArgs({ options: { keys: { type: "string" }, scanned: { type: "string" }, out: { type: "string" }, rest: { type: "string" }, previous: { type: "string" } } });
@@ -27,12 +27,19 @@ async function main() {
     .map((line) => JSON.parse(line)).filter((row) => !row.error)
     .map((row) => [row.key, { level: row.level, evidence: row.evidence, rulesVersion: AI_LEVEL_RULES_VERSION }]));
   const tick: AiLevelTick = {
-    graphql: githubGraphql, request: githubRequest, restLeft: Number(values.rest ?? 3000), restUntil: Infinity,
+    graphql: githubGraphql, request: githubRequest, restLeft: Number(values.rest ?? 3000), startUntil: Infinity, restUntil: Infinity,
     load: { previous: async (batch) => new Map(batch.flatMap((key) => previous.has(key) ? [[key, previous.get(key)!]] : [])), scanned: async (batch) => new Map(batch.flatMap((key) => scanned.has(key) ? [[key, scanned.get(key)!]] : [])) },
   };
   for (let start = 0; start < keys.length; start += AI_LEVEL_BATCH) {
     const result = await processBatch(tick, keys.slice(start, start + AI_LEVEL_BATCH));
-    for (const item of result.judged) appendFileSync(values.out, JSON.stringify({ ...item, scanned: scanned.get(item.key) ?? null }) + "\n");
+    // 잡이 틱마다 하는 확인을 대기가 빌 때까지 이어서 — 저장소마다 한 번에 한 커밋
+    let judged: Judged[] = result.judged;
+    for (let round = 0; round < 10 && judged.some((item) => item.evidence.pendingCommits?.length); round++) {
+      const waiting = judged.filter((item) => item.evidence.pendingCommits?.length);
+      const results = await checkCommits(tick, waiting.map((item) => ({ key: item.key, sha: item.evidence.pendingCommits![0].sha })));
+      judged = judged.map((item) => item.evidence.pendingCommits?.length ? { ...item, ...applyCommitChecks(item, item.key, results) } : item);
+    }
+    for (const item of judged) appendFileSync(values.out, JSON.stringify({ ...item, scanned: scanned.get(item.key) ?? null }) + "\n");
     for (const item of result.failed) appendFileSync(values.out, JSON.stringify(item) + "\n");
     if (result.rateLimitedUntil) throw new Error(`GitHub 한도 — ${result.rateLimitedUntil} 뒤에 이어서`);
     if ((start / AI_LEVEL_BATCH) % 10 === 0) console.log(`${Math.min(start + AI_LEVEL_BATCH, keys.length)}/${keys.length} · REST 남음 ${tick.restLeft}`);
