@@ -9,7 +9,7 @@ import {
   AGENT_ROOT_DIRECTORIES, agentPullRequests, classifyAiLevel, commitAiClaims, scanEvidence, SERVICE_AGENT_APPS, toolFiles, WORKFLOW_AGENT_APPS,
   type AgentPullRequest, type ClassifyInput,
 } from '@/lib/domain/evidence/ai-level';
-import { AI_LEVEL_RULES_VERSION, type AiLevel, type AiLevelEvidence } from '@/lib/domain/evidence/ai-level-labels';
+import { AI_LEVEL_RULES_VERSION, isAiLevel, type AiLevel, type AiLevelEvidence } from '@/lib/domain/evidence/ai-level-labels';
 import {
   AI_LEVEL_BATCH, aiLevelBatchQuery, aiLevelDetailQuery, parseAiLevelBatch, parseAiLevelDetail,
   type AiLevelDetail, type AiLevelDetailRequest, type RepositoryAiScan,
@@ -23,7 +23,7 @@ import type { JobContext, JobOutcome } from '@/lib/jobs/runner';
  * 차례: 새로 수집한 후보(new·needs_review·approved)를 최신부터 → 이 규칙 판으로 아직 보지 않은 공개 제품을 최신부터 → 다시 볼 때가 된 것.
  * 공개 여부는 바꾸지 않는다(2026-10-10 운영자 결정) — 분류만 한다.
  *
- * 예산(2026-10-10 실측, 운영 토큰 하나): GraphQL 10개 묶음이 1점·3.5~4.5초 — 한 틱(예산 50초) 38초 안에서 묶음을 연다(70개 남짓).
+ * 예산(2026-10-10 실측, 운영 토큰 하나): GraphQL 10개 묶음이 1점·3.5~4.5초 — 한 틱(예산 55초) 30초 안에서 묶음을 연다(60개 남짓).
  * 공개 3만 8천 개 첫 바퀴가 반나절, 그 뒤 사흘마다 다시 보면 하루 1만 3천 개(1,300점). GraphQL 점수가 MIN_REMAINING 아래면 접는다.
  * 2단계 커밋이 코드를 바꿨는지는 REST 커밋 한 건씩 봐야 해서(GraphQL 은 바뀐 파일을 주지 않는다) 틱마다 REST_PER_TICK 건까지만 —
  * 운영 토큰의 REST 시간당 5,000건은 근거 수집(agent-evidence-refresh)과 나눠 쓴다. 확인한 결과는 근거에 남겨 다시 묻지 않는다.
@@ -33,12 +33,14 @@ type Request = typeof githubRequest;
 type Graphql = typeof githubGraphql;
 
 const DUE_LIMIT = 80;
-const START_WITHIN_MS = 38_000;
+const START_WITHIN_MS = 30_000;
+/** REST 커밋 확인은 이때까지만 — 마지막 묶음(10초)·두 번째 질의(10초)와 기록까지 예산 55초 안에 끝난다 */
+const REST_WITHIN_MS = 38_000;
 const PAUSE_MS = 500;
 const MIN_REMAINING = 1_000;
-const REST_PER_TICK = 10;
+const REST_PER_TICK = 20;
 /** 한 저장소에서 코드 변경을 확인할 표기 커밋 수(최신부터) */
-const COMMIT_CHECKS_PER_REPOSITORY = 2;
+const COMMIT_CHECKS_PER_REPOSITORY = 3;
 /** 에이전트 PR 의 바뀐 파일을 볼 수(최신부터) */
 const PR_CHECKS_PER_REPOSITORY = 3;
 const HOUR = 60 * 60_000;
@@ -113,20 +115,20 @@ function knownChecks(previous: Previous | undefined) {
 
 /** REST 커밋 한 건 — 바뀐 파일에 코드가 있는가. null 은 이번에 모름 */
 async function commitChangesCode(request: Request, key: string, sha: string): Promise<boolean | null> {
-  const result = await request<{ files?: Array<{ filename?: unknown }> }>(`/repos/${key}/commits/${sha}`, {}, { timeoutMs: 8_000 });
+  const result = await request<{ files?: Array<{ filename?: unknown }> }>(`/repos/${key}/commits/${sha}`, {}, { timeoutMs: 6_000 });
   if (!result.ok || result.status !== 200 || !result.value) return null;
   return (result.value.files ?? []).some((file) => typeof file.filename === 'string' && isDevelopmentPath(file.filename));
 }
 
 export type Judged = { key: string; level: AiLevel | null; clients: string[]; evidence: AiLevelEvidence; headSha: string | null; retryMs: number };
-export type Failed = { key: string; error: 'not_found' | 'unknown'; retryMs: number };
+export type Failed = { key: string; error: 'not_found' | 'unknown'; retryMs: number; fallback?: ReturnType<typeof classifyAiLevel> };
 
 type Loaders = {
   previous: (keys: string[]) => Promise<Map<string, Previous>>;
   scanned: (keys: string[]) => Promise<Map<string, ReturnType<typeof scanEvidence>>>;
 };
 /** 한 틱의 의존 — 확인 스크립트(scripts/ai-level-check.ts)는 운영 DB 대신 내보낸 근거를 넣는다 */
-export type AiLevelTick = { request: Request; graphql: Graphql; restLeft: number; load: Loaders };
+export type AiLevelTick = { request: Request; graphql: Graphql; restLeft: number; restUntil: number; load: Loaders };
 type Tick = AiLevelTick;
 
 async function previousLevels(keys: string[]): Promise<Map<string, Previous>> {
@@ -158,7 +160,7 @@ async function judge(tick: Tick, key: string, scan: RepositoryAiScan, detail: Ai
   const needCommits = !pullRequests.some((pr) => pr.development === true) && !prior.commits.length && !commits.length;
   let lookups = 0;
   for (const sha of [...new Set(claimed.map((claim) => claim.sha))]) {
-    if (!needCommits || commits.length || lookups >= COMMIT_CHECKS_PER_REPOSITORY || tick.restLeft <= 0) break;
+    if (!needCommits || commits.length || lookups >= COMMIT_CHECKS_PER_REPOSITORY || tick.restLeft <= 0 || Date.now() > tick.restUntil) break;
     if (otherCommits.has(sha)) continue;
     lookups++; tick.restLeft--;
     const development = await commitChangesCode(tick.request, key, sha);
@@ -226,7 +228,14 @@ export async function processBatch(tick: Tick, batch: string[]): Promise<{ judge
   for (const [index, item] of answers.entries()) {
     const key = batch[index];
     const plan = plans[index];
-    if (item.kind === 'not_found') failed.push({ key, error: 'not_found', retryMs: RECHECK_MS });
+    if (item.kind === 'not_found') {
+      // 저장소가 지금은 없다 — 지난 판정이 없고 기존 근거 수집이 찾은 근거가 있으면 그것으로 단계를 세운다(근거는 사라지지 않았다)
+      const prior = scanned.get(key);
+      const before = previous.get(key);
+      const fromScan = prior && !isAiLevel(before?.level) ? classifyAiLevel({ isFork: false, pullRequests: [],
+        commits: prior.commits.map((commit) => ({ ...commit, basis: 'scan' as const, development: true })), files: prior.files }) : null;
+      failed.push({ key, error: 'not_found', retryMs: RECHECK_MS, ...(fromScan?.level ? { fallback: fromScan } : {}) });
+    }
     else if (!plan) failed.push({ key, error: 'unknown', retryMs: ERROR_RETRY_MS });
     // 폴더·PR 을 묻는 두 번째 질의가 실패했으면 반쪽 판정을 적지 않는다 — 한 시간 뒤 다시
     else if (wanted.includes(index) && !details.has(index)) failed.push({ key, error: 'unknown', retryMs: ERROR_RETRY_MS });
@@ -239,8 +248,9 @@ export async function processBatch(tick: Tick, batch: string[]): Promise<{ judge
 
 export async function refreshAiLevelsJob(ctx: JobContext<AiLevelCursor>, dependencies: { graphql?: Graphql; request?: Request } = {}): Promise<JobOutcome<AiLevelCursor>> {
   if (ctx.cursor?.retryAfter && Date.parse(ctx.cursor.retryAfter) > Date.now()) return { done: true, cursor: ctx.cursor };
-  const tick: Tick = { graphql: dependencies.graphql ?? githubGraphql, request: dependencies.request ?? githubRequest, restLeft: REST_PER_TICK, load: DATABASE_LOADERS };
   const started = Date.now();
+  const tick: Tick = { graphql: dependencies.graphql ?? githubGraphql, request: dependencies.request ?? githubRequest, restLeft: REST_PER_TICK,
+    restUntil: started + REST_WITHIN_MS, load: DATABASE_LOADERS };
   const keys = await dueRepositories();
   let checked = 0;
   for (let start = 0; start < keys.length; start += AI_LEVEL_BATCH) {
@@ -274,9 +284,13 @@ async function record(ctx: JobContext<AiLevelCursor>, judged: Judged[], failed: 
     if (ctx.lease) await assertJobLease(tx, ctx.lease);
     for (const item of failed) {
       const next = new Date(now.getTime() + item.retryMs);
-      await tx.insert(repositoryAiLevels).values({ repositoryKey: item.key, level: null, clients: [], evidence: {}, rulesVersion: AI_LEVEL_RULES_VERSION,
-        headSha: null, checkedAt: now, nextCheckAt: next, lastError: item.error })
-        .onConflictDoUpdate({ target: repositoryAiLevels.repositoryKey, set: { nextCheckAt: next, lastError: item.error, rulesVersion: AI_LEVEL_RULES_VERSION } });
+      const fallback = item.fallback;
+      await tx.insert(repositoryAiLevels).values({ repositoryKey: item.key, level: fallback?.level ?? null, clients: fallback?.clients ?? [],
+        evidence: fallback?.evidence ?? {}, rulesVersion: AI_LEVEL_RULES_VERSION, headSha: null, checkedAt: now, nextCheckAt: next, lastError: item.error })
+        .onConflictDoUpdate({ target: repositoryAiLevels.repositoryKey, set: { nextCheckAt: next, lastError: item.error, rulesVersion: AI_LEVEL_RULES_VERSION,
+          ...(fallback ? { level: fallback.level, clients: fallback.clients, evidence: fallback.evidence, checkedAt: now } : {}) } });
+      if (fallback) await tx.execute(sql`UPDATE products SET ai_level = ${fallback.level}
+        WHERE ${PRODUCT_IDENTITY} = ${`https://github.com/${item.key}`} AND ai_level IS DISTINCT FROM ${fallback.level}`);
     }
     for (const item of judged) {
       const values = { repositoryKey: item.key, level: item.level, clients: item.clients, evidence: item.evidence, rulesVersion: AI_LEVEL_RULES_VERSION,

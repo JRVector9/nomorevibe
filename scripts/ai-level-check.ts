@@ -5,7 +5,7 @@
  *
  * keys.txt: 한 줄에 owner/name 하나. scanned.json: { "owner/name": AgentObservation[] } — 운영 DB 에서 읽기 전용으로 내보낸
  * 기존 근거 수집의 마지막 루트 조사(없으면 {}). DATABASE_URL 은 GitHub 대기 시각을 적을 로컬 DB 를, GITHUB_TOKEN 은 읽기용 토큰을 준다.
- * 지난 판정 없이 처음부터 판정한다. 결과는 한 줄에 저장소 하나(JSON).
+ * --previous=result.jsonl 을 주면 그 판정을 지난 판정으로 읽어 다음 방문을 흉내 낸다(이미 확인한 PR·커밋은 다시 묻지 않는다). 결과는 한 줄에 저장소 하나(JSON).
  */
 import { appendFileSync, readFileSync } from "node:fs";
 import { parseArgs } from "node:util";
@@ -13,18 +13,22 @@ import { githubGraphql, githubRequest } from "@/lib/crawl/github";
 import { agentObservationSchema } from "@/lib/domain/evidence/agents/types";
 import { scanEvidence } from "@/lib/domain/evidence/ai-level";
 import { AI_LEVEL_BATCH } from "@/lib/domain/evidence/ai-level-query";
-import { processBatch, type AiLevelTick } from "@/lib/jobs/products/ai-level-refresh";
+import { AI_LEVEL_RULES_VERSION } from "@/lib/domain/evidence/ai-level-labels";
+import { processBatch, type AiLevelTick, type Previous } from "@/lib/jobs/products/ai-level-refresh";
 
 async function main() {
-  const { values } = parseArgs({ options: { keys: { type: "string" }, scanned: { type: "string" }, out: { type: "string" }, rest: { type: "string" } } });
+  const { values } = parseArgs({ options: { keys: { type: "string" }, scanned: { type: "string" }, out: { type: "string" }, rest: { type: "string" }, previous: { type: "string" } } });
   if (!values.keys || !values.out) throw new Error("--keys 와 --out 이 필요합니다");
   const keys = readFileSync(values.keys, "utf8").split("\n").map((line) => line.trim().toLowerCase()).filter(Boolean);
   const raw: Record<string, unknown[]> = values.scanned ? JSON.parse(readFileSync(values.scanned, "utf8")) : {};
   const scanned = new Map(Object.entries(raw).map(([key, list]) => [key.toLowerCase(),
     scanEvidence(list.flatMap((item) => { const parsed = agentObservationSchema.safeParse(item); return parsed.success ? [parsed.data] : []; }))]));
+  const previous = new Map<string, Previous>((values.previous ? readFileSync(values.previous, "utf8").split("\n").filter(Boolean) : [])
+    .map((line) => JSON.parse(line)).filter((row) => !row.error)
+    .map((row) => [row.key, { level: row.level, evidence: row.evidence, rulesVersion: AI_LEVEL_RULES_VERSION }]));
   const tick: AiLevelTick = {
-    graphql: githubGraphql, request: githubRequest, restLeft: Number(values.rest ?? 3000),
-    load: { previous: async () => new Map(), scanned: async (batch) => new Map(batch.flatMap((key) => scanned.has(key) ? [[key, scanned.get(key)!]] : [])) },
+    graphql: githubGraphql, request: githubRequest, restLeft: Number(values.rest ?? 3000), restUntil: Infinity,
+    load: { previous: async (batch) => new Map(batch.flatMap((key) => previous.has(key) ? [[key, previous.get(key)!]] : [])), scanned: async (batch) => new Map(batch.flatMap((key) => scanned.has(key) ? [[key, scanned.get(key)!]] : [])) },
   };
   for (let start = 0; start < keys.length; start += AI_LEVEL_BATCH) {
     const result = await processBatch(tick, keys.slice(start, start + AI_LEVEL_BATCH));

@@ -185,6 +185,20 @@ it("처음 보는 저장소가 실패하면 '검사 전'으로 남기고 한 시
   expect(await dueRepositories(10)).toEqual([]);
 });
 
+it("지금은 없어진 저장소라도 기존 근거 수집이 찾은 개발 커밋 표기가 있으면 그것으로 단계를 세운다", async () => {
+  const gone = await product("https://github.com/acme/vanished");
+  const [scan] = await db.insert(agentRepositoryScans).values({ githubRepositoryId: BigInt(7), repositoryKey: "acme/vanished", commitSha: SHA(998),
+    detectorVersion: "2026-09-14.1", scope: "", scopeHash: createHash("sha256").update(JSON.stringify("")).digest("hex"), state: "complete", completedAt: new Date() }).returning();
+  await db.insert(agentRepositoryObservations).values({ scanId: scan.id, observationKey: "k", facts: {
+    kind: "commit_attribution", client: "codex", compatibleClients: [], modelDeveloper: null, declaredModelId: null, gateway: null, routing: "unknown",
+    role: "coauthor", scope: "", keyPath: null, ruleId: "commit.coauthor.v2", sourcePath: null, commitSha: SHA(5), blobSha: null,
+    sourceUrl: `https://github.com/acme/vanished/commit/${SHA(5)}`, commitEvidence: { basis: "coauthor", changedPaths: ["app.py"], changeKind: "development", headSha: SHA(998) } } });
+  await refreshAiLevelsJob(context(), fakeGithub({ "acme/vanished": { missing: true } }));
+  expect(await row("acme/vanished")).toMatchObject({ level: 2, lastError: "not_found", clients: ["codex"] });
+  expect(await levelOf(gone.id)).toBe(2);
+  expect(await getRepositoryAiLevel("https://github.com/acme/vanished")).toMatchObject({ checked: true, level: 2 });
+});
+
 it("GitHub 한도에 걸리면 아무것도 적지 않고 풀릴 때까지 쉰다", async () => {
   await product("https://github.com/acme/agent");
   const resetAt = new Date(Date.now() + 30 * 60_000);
