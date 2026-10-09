@@ -434,6 +434,29 @@ export const productIntroChecks = pgTable("product_intro_checks", {
 
 export type ProductIntroCheck = typeof productIntroChecks.$inferSelect;
 
+/**
+ * 한국어 한 줄 소개(UX-13, 2026-10-09 운영자 결정 D3) — product-tagline-ko 잡이 지금 소개(products.tagline)를 게이트웨이
+ * gpt-oss-120b 로 한국어 한 줄로 옮기고, 코드 검사(lib/domain/products/korean-tagline.ts)를 통과한 것만 tagline_ko 에 남긴다.
+ *
+ * source_tagline 은 옮긴(또는 옮기려 한) 소개다. 제품 소개가 이것과 다르면 화면은 tagline_ko 를 쓰지 않고(taglineKoField)
+ * 잡이 지금 소개로 다시 옮긴다 — 소개 검수(product_intro_checks.checked_tagline)와 같은 방식이다.
+ * error_code: null 성공 · 'rejected:<사유>' 검사에서 버림(글은 남기지 않는다) · 그 밖은 게이트웨이 실패.
+ */
+export const productKoreanTaglines = pgTable("product_korean_taglines", {
+  productId: integer("product_id").primaryKey().references(() => products.id, { onDelete: "cascade" }),
+  sourceTagline: varchar("source_tagline", { length: 200 }).notNull(),
+  taglineKo: varchar("tagline_ko", { length: 120 }),
+  model: varchar("model", { length: 160 }).notNull().default(""),
+  /** 같은 소개로 시도한 횟수 — 소개가 바뀌면 1부터 다시 */
+  attempts: integer("attempts").notNull().default(0),
+  errorCode: varchar("error_code", { length: 60 }),
+  retryAt: timestamp("retry_at"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+export type ProductKoreanTagline = typeof productKoreanTaglines.$inferSelect;
+
 export type RepoStatus = "ok" | "not_found" | "empty" | "blocked";
 export type RepoReviewDecision = "keep" | "delist_candidate" | "human";
 export type RepoReviewAnswers = { same_product: boolean; parked: boolean; shutdown: boolean; no_content: boolean };

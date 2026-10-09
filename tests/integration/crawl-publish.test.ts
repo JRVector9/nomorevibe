@@ -371,7 +371,20 @@ describe("발행 잡", () => {
 
     await tick();
 
-    expect((await products.findByUrl("https://my-app.test"))?.name).toBe("DEEPSEEKAGENTS");
+    // 앞쪽만 남기고, 전부 대문자는 정리한다(UX-33, display-name.ts reviewProductName)
+    expect((await products.findByUrl("https://my-app.test"))?.name).toBe("Deepseekagents");
+  });
+
+  it("슬로건 구분자 뒤를 떼고, 일반어 제목은 저장소 이름으로 올린다 (UX-33)", async () => {
+    await approved("someone/wireshark", { pageMeta: { title: "Wireshark • Go Deep", description: "소개" } });
+    await tick();
+    expect((await products.findByUrl("https://my-app.test"))?.name).toBe("Wireshark");
+  });
+
+  it("중국어 '홈페이지' 제목은 저장소 이름이 된다 (UX-33)", async () => {
+    await approved("someone/shuiyun", { pageMeta: { title: "首页", description: "소개" } });
+    await tick();
+    expect((await products.findByUrl("https://my-app.test"))?.name).toBe("shuiyun");
   });
 
   it("이름 안의 하이픈은 자르지 않는다", async () => {
