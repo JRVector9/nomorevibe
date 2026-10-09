@@ -304,25 +304,25 @@ describe("빈 화면 문구", () => {
     countProducts.mockResolvedValue(25);
     aiLevelCounts.mockResolvedValue([{ category: "Dev", level: 2, count: 25 }, { category: "Dev", level: 3, count: 4 }]);
     const html = await render({ ai: ["made", "config"] });
-    expect(getSeasonRanking).toHaveBeenCalledWith(expect.objectContaining({ aiLevels: [1, 2] }));
-    expect(countProducts).toHaveBeenCalledWith(expect.objectContaining({ statuses: ["verified", "seeded"], aiLevels: [1, 2] }));
+    expect(getSeasonRanking).toHaveBeenCalledWith(expect.objectContaining({ aiLevels: [1, 2, 3] }));
+    expect(countProducts).toHaveBeenCalledWith(expect.objectContaining({ statuses: ["verified", "seeded"], aiLevels: [1, 2, 3] }));
     expect(html).not.toContain('id="rising"');
-    expect(html).toContain('<a class="chip chip-dark" aria-current="true" href="/">AI로 제작 <span class="chip-count">25</span></a>');
+    expect(html).toContain('<a class="chip chip-dark" aria-current="true" href="/">AI로 제작 <span class="chip-count">29</span></a>');
 
-    await render({ sort: "recent", ai: "config" });
-    expect(getPublicList).toHaveBeenCalledWith(9, expect.objectContaining({ aiLevels: [3] }));
+    await render({ sort: "recent", ai: "made" });
+    expect(getPublicList).toHaveBeenCalledWith(9, expect.objectContaining({ aiLevels: [1, 2, 3] }));
 
     await render({ sort: "all-time", ai: "made" });
-    expect(getAllTimeRanking).toHaveBeenCalledWith(expect.objectContaining({ aiLevels: [1, 2] }));
+    expect(getAllTimeRanking).toHaveBeenCalledWith(expect.objectContaining({ aiLevels: [1, 2, 3] }));
 
         await render({ q: "가계부", ai: "made" });
-    expect(searchRelevance).toHaveBeenCalledWith("가계부", expect.anything(), expect.objectContaining({ aiLevels: [1, 2] }), expect.any(Function));
+    expect(searchRelevance).toHaveBeenCalledWith("가계부", expect.anything(), expect.objectContaining({ aiLevels: [1, 2, 3] }), expect.any(Function));
   });
 
   it("순위가 서기 전 아래 붙는 주인을 기다리는 목록도 같은 단계로 거른다", async () => {
     await render({ sort: "trending", ai: "made" });
-    expect(countProducts).toHaveBeenCalledWith(expect.objectContaining({ statuses: ["seeded"], aiLevels: [1, 2] }));
-    expect(getUnclaimedList).toHaveBeenCalledWith(expect.any(Number), expect.objectContaining({ aiLevels: [1, 2] }));
+    expect(countProducts).toHaveBeenCalledWith(expect.objectContaining({ statuses: ["seeded"], aiLevels: [1, 2, 3] }));
+    expect(getUnclaimedList).toHaveBeenCalledWith(expect.any(Number), expect.objectContaining({ aiLevels: [1, 2, 3] }));
   });
 
   it("모르는 ?ai= 값은 무시하고 전체 목록을 보인다", async () => {

@@ -4,7 +4,7 @@
  * 1 AI 에이전트 앱이 연 PR 이 기본 브랜치에 병합 — PR 을 연 계정은 GitHub 이 기록하고, 서비스가 쥔 앱 토큰 없이는 그 계정으로 열 수 없다.
  * 2 코드를 바꾼 커밋에 AI 도구 서명(Co-authored-by)·작성자 표기 — 저장소가 밝힌 것이라 꾸밀 수 있다.
  * 3 AI 도구 전용 설정·규칙 파일 — 그 도구를 쓰도록 설정했다는 뜻까지다.
- * 근거를 보여 주는 링크는 공개 화면에 내지 않는다(단계 이름만). 'AI 제작 검증' 같은 말은 어느 단계에도 쓰지 않는다.
+ * 홈 'AI로 제작' 필터는 세 단계를 모두 보인다. 근거를 보여 주는 링크는 공개 화면에 내지 않는다(단계 이름만). 'AI 제작 검증' 같은 말은 어느 단계에도 쓰지 않는다.
  *
  * 브라우저에서도 읽는다 — 서버 모듈을 가져오지 않는다.
  */
@@ -45,15 +45,18 @@ export type AiLevelEvidence = {
   nonDevelopment?: { pullRequests: number[]; commits: string[] };
 };
 
-/** 홈 필터 — made 'AI로 제작'(1·2단계), config 'AI 도구 설정'(3단계만). 주소는 ?ai=made|config */
-export type AiFilter = "made" | "config";
-export const AI_FILTERS: readonly AiFilter[] = ["made", "config"];
-export const AI_FILTER_LEVELS: Record<AiFilter, readonly AiLevel[]> = { made: [1, 2], config: [3] };
-export const AI_FILTER_LABELS: Record<AiFilter, string> = { made: "AI로 제작", config: "AI 도구 설정" };
+/**
+ * 홈 필터 — 'AI로 제작' 하나가 1·2·3단계를 모두 보인다. 주소는 ?ai=made.
+ * 처음(#339)은 1·2단계와 3단계('AI 도구 설정')를 나눴는데, 운영자가 AI 로 개발했다고 판명된 것은 단계와 상관없이 한 필터로 보기로 했다(2026-10-10).
+ * 그때 잠깐 쓰인 ?ai=config 는 모르는 값으로 두어 전체 목록을 보인다.
+ */
+export type AiFilter = "made";
+export const AI_FILTERS: readonly AiFilter[] = ["made"];
+export const AI_FILTER_LEVELS: Record<AiFilter, readonly AiLevel[]> = { made: [1, 2, 3] };
+export const AI_FILTER_LABELS: Record<AiFilter, string> = { made: "AI로 제작" };
 
 export function parseAiFilter(value: string | null | undefined): AiFilter | null {
-  const key = value?.trim().toLowerCase();
-  return key === "made" || key === "config" ? key : null;
+  return value?.trim().toLowerCase() === "made" ? "made" : null;
 }
 
 export function isAiLevel(value: unknown): value is AiLevel {

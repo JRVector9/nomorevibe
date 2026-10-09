@@ -5,6 +5,7 @@ import { after } from "next/server";
 import Link from "next/link";
 import { BrowseFilters, chipCategories, metricHref, parseHomeSort, parseShown, type HomeSort } from "@/components/BrowseFilters";
 import {
+  aiLevelTotals,
   browseTitle,
   categoryHref,
   categoryRedirect,
@@ -638,7 +639,7 @@ export async function HomeContent({ params }: { params: HomeParams }) {
       {!query && <LaunchBand />}
 
       <Suspense>
-        <MethodologyDialog pulse={serializePulse(pulse, now)} rankingFallback={!rankingReady} />
+        <MethodologyDialog pulse={serializePulse(pulse, now)} rankingFallback={!rankingReady} aiLevels={aiLevelTotals(aiCounts)} />
       </Suspense>
     </main>
   );

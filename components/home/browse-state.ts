@@ -20,7 +20,7 @@ export type BrowseState = {
   query?: string;
   builder?: string;
   observedTool?: string;
-  /** 만든 방식 — 'AI로 제작'(1·2단계)·'AI 도구 설정'(3단계). 주소는 ?ai=made|config */
+  /** 만든 방식 — 'AI로 제작'(1·2·3단계). 주소는 ?ai=made */
   ai?: AiFilter;
   shown?: number;
 };
@@ -174,4 +174,12 @@ export function categoryCountsForAi(rows: readonly AiLevelCount[], ai: AiFilter)
     if (AI_FILTER_LEVELS[ai].includes(row.level)) counts[row.category] = (counts[row.category] ?? 0) + row.count;
   }
   return counts;
+}
+
+/** 단계마다의 공개 수 — '데이터와 집계 기준'의 만든 방식 표(MethodologyDialog). 못 읽었으면 null */
+export function aiLevelTotals(rows: readonly AiLevelCount[] | null): Record<AiLevel, number> | null {
+  if (!rows) return null;
+  const totals: Record<AiLevel, number> = { 1: 0, 2: 0, 3: 0 };
+  for (const row of rows) totals[row.level] += row.count;
+  return totals;
 }

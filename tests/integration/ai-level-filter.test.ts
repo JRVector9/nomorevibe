@@ -26,7 +26,6 @@ async function product(slug: string, values: Partial<typeof products.$inferInser
 
 const PUBLIC = { statuses: ["verified", "seeded"] as ("verified" | "seeded")[], excludeDown: true };
 const MADE = AI_FILTER_LEVELS.made;
-const CONFIG = AI_FILTER_LEVELS.config;
 const slugs = async (extra: Partial<Parameters<typeof listProducts>[0]> = {}) =>
   (await listProducts({ ...PUBLIC, limit: 50, ...extra })).map((row) => row.slug).sort();
 
@@ -50,15 +49,14 @@ async function seedCatalogue() {
 }
 
 describe("만든 방식 목록·개수", () => {
-  it("AI로 제작은 1·2단계, AI 도구 설정은 3단계만 — 목록과 개수가 같은 조건", async () => {
+  it("AI로 제작은 1·2·3단계 모두 — 목록과 개수가 같은 조건", async () => {
     await seedCatalogue();
-    expect(await slugs({ aiLevels: MADE })).toEqual(["agent-pr", "finance-made", "signed-commit"]);
-    expect(await countProducts({ ...PUBLIC, aiLevels: MADE })).toBe(3);
-    expect(await slugs({ aiLevels: CONFIG })).toEqual(["config-file"]);
-    expect(await countProducts({ ...PUBLIC, aiLevels: CONFIG })).toBe(1);
+    expect(await slugs({ aiLevels: MADE })).toEqual(["agent-pr", "config-file", "finance-made", "signed-commit"]);
+    expect(await countProducts({ ...PUBLIC, aiLevels: MADE })).toBe(4);
+    expect(await slugs({ aiLevels: [3] })).toEqual(["config-file"]);
     // 분야·검색과 겹쳐 건다
     expect(await slugs({ aiLevels: MADE, category: "Finance" })).toEqual(["finance-made"]);
-    expect(await countProducts({ ...PUBLIC, aiLevels: MADE, category: "Dev", query: ["budget"] })).toBe(2);
+    expect(await countProducts({ ...PUBLIC, aiLevels: MADE, category: "Dev", query: ["budget"] })).toBe(3);
     // 걸지 않으면 그대로, 빈 단계 목록은 아무것도 걸리지 않는다
     expect(await slugs()).toEqual(["agent-pr", "config-file", "finance-made", "plain", "signed-commit"]);
     expect(await countProducts({ ...PUBLIC, aiLevels: [] })).toBe(0);
@@ -85,14 +83,15 @@ describe("만든 방식 목록·개수", () => {
     const servers = { embed: vi.fn(async () => query), rerank: vi.fn(async (_q: string, docs: string[]) => docs.map((_, i) => -i)) };
     expect((await rankRelevance("budget", ["budget"], {}, servers)).head).toContain("plain");
     const ranked = await rankRelevance("budget", ["budget"], { aiLevels: MADE }, servers);
-    expect([...ranked.head].sort()).toEqual(["agent-pr", "finance-made", "signed-commit"]);
-    expect(ranked.total).toBe(3);
-    const tail = await relevanceWindow({ ...ranked, head: [] }, ["budget"], { aiLevels: CONFIG }, 0, 10);
+    expect([...ranked.head].sort()).toEqual(["agent-pr", "config-file", "finance-made", "signed-commit"]);
+    expect(ranked.total).toBe(4);
+    const tail = await relevanceWindow({ ...ranked, head: [] }, ["budget"], { aiLevels: [3] }, 0, 10);
     expect(tail).toEqual(["config-file"]);
   });
 
   it("시즌·누적 순위도 단계로 거르며 원래 순위 번호는 보존한다", async () => {
-    await product("rank-one", { status: "verified", source: "skill", aiLevel: 3 });
+    // 1위는 단계가 없다 — 걸면 빠지고 2위는 번호를 그대로 둔다
+    await product("rank-one", { status: "verified", source: "skill" });
     await product("rank-two", { status: "verified", source: "skill", aiLevel: 2 });
     const [revision] = await db.insert(rankingPolicyRevisions).values({ values: DEFAULT_RANKING_POLICY, state: "applied", createdBy: "test" }).returning();
     const [season] = await db.insert(rankingSeasons).values({ key: "ai-levels", cadence: "weekly", startsAt: new Date("2026-09-01"), endsAt: new Date("2027-01-01"), state: "active", policyRevisionId: revision.id, policySnapshot: DEFAULT_RANKING_POLICY, effectiveLaunchWindowDays: 28 }).returning();
@@ -101,7 +100,6 @@ describe("만든 방식 목록·개수", () => {
     await db.insert(productClickDaily).values([{ slug: "rank-one", day, clicks: 10 }, { slug: "rank-two", day, clicks: 5 }]);
     expect((await getSeasonRanking({ seasonKey: season.key, aiLevels: MADE, limit: 10 })).items.map((row) => [row.slug, row.rank])).toEqual([["rank-two", 2]]);
     expect((await getAllTimeRanking({ aiLevels: MADE, limit: 10 })).map((row) => [row.slug, row.rank])).toEqual([["rank-two", 2]]);
-    expect((await getAllTimeRanking({ aiLevels: CONFIG, limit: 10 })).map((row) => [row.slug, row.rank])).toEqual([["rank-one", 1]]);
   });
 });
 
