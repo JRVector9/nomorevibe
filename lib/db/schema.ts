@@ -215,7 +215,7 @@ export const products = pgTable("products", {
   ),
   /** 검색. 이 표에는 전문 인덱스가 하나도 없었다 — 검색어가 붙으면 10,751행을 매번 훑었다 */
   index("products_search_idx").using("gin", table.searchVector),
-  /** 홈 'AI로 제작'·'AI 도구 설정' 필터(0063) — 근거가 있는 행만 */
+  /** 홈 'AI로 제작' 필터(0063) — 근거가 있는 행만 */
   index("products_ai_level_idx").on(table.aiLevel).where(sql`${table.aiLevel} is not null`),
 ]);
 

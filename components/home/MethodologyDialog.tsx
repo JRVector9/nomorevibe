@@ -5,6 +5,7 @@ import { usePathname, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { Icon } from "@/components/home/icons";
 import { NEW_PROJECTS_LABEL } from "@/lib/copy/terms";
+import { AI_LEVEL_LABELS, AI_LEVELS, type AiLevel } from "@/lib/domain/evidence/ai-level-labels";
 import { formatCount } from "@/lib/format/number";
 import { categoryLabel } from "@/lib/domain/products/labels";
 import { hiddenByDefault } from "@/lib/domain/products/visibility";
@@ -30,17 +31,19 @@ function Formula({ children }: { children: React.ReactNode }) {
 /** 대화창이 열리는 화면 — 홈과 분야 화면(/c/…)이 같은 목록을 쓴다 */
 const isBrowsePath = (pathname: string) => pathname === "/" || pathname.startsWith("/c/");
 
-export function MethodologyDialog({ pulse, rankingFallback = false }: {
+export function MethodologyDialog({ pulse, rankingFallback = false, aiLevels = null }: {
   pulse: HomePulseView;
   /** 검증 제품이 모자라 순위 탭이 스타 목록을 대신 보여주는 동안(app/page.tsx fallbackSort) 그 기준도 적는다 */
   rankingFallback?: boolean;
+  /** AI 제작 근거 단계마다의 공개 수(홈 '만든 방식' 칩과 같은 집계) — 못 읽었으면 null(수 없이 기준만) */
+  aiLevels?: Record<AiLevel, number> | null;
 }) {
   const dialog = useRef<HTMLDialogElement>(null);
   const skipClose = useRef(false);
   const params = useSearchParams();
   const pathname = usePathname();
   const metric = params.get("metric") ?? "";
-  const open = isBrowsePath(pathname) && ["all", "born", "updates", "active", "categories", "tools", "popular", "rising"].includes(metric);
+  const open = isBrowsePath(pathname) && ["all", "born", "updates", "active", "categories", "ai", "tools", "popular", "rising"].includes(metric);
 
   useEffect(() => {
     const node = dialog.current;
@@ -74,7 +77,7 @@ export function MethodologyDialog({ pulse, rankingFallback = false }: {
     window.history.replaceState(null, "", hrefWithMetric(null));
   }
 
-  const metrics: [string, string][] = [["popular", "스타 구간"], ["born", NEW_PROJECTS_LABEL], ["updates", "새 버전"], ["active", "활발한 프로젝트"], ["categories", "분야 순위"]];
+  const metrics: [string, string][] = [["popular", "스타 구간"], ["born", NEW_PROJECTS_LABEL], ["updates", "새 버전"], ["active", "활발한 프로젝트"], ["categories", "분야 순위"], ["ai", "만든 방식"]];
   if (pulse.tools) metrics.push(["tools", "제작 도구"]);
   if (rankingFallback) metrics.push(["rising", "지금 뜨는"]);
   const nav = (
@@ -172,6 +175,36 @@ export function MethodologyDialog({ pulse, rankingFallback = false }: {
         </table>
         <Details>
           <p>어디에도 맞지 않는 &ldquo;기타&rdquo;는 순위에서 뺍니다. 개인 프로필은 본인이 등록하거나 확인한 것만 보이므로 분야 순위에 싣지 않습니다.</p>
+        </Details>
+      </>
+    ),
+    ai: (
+      <>
+        <h3>만든 방식 — 저장소에 남은 AI 제작 근거로 나눕니다.</h3>
+        <p>
+          공개 GitHub 저장소에서 AI 코딩 도구가 남긴 근거를 찾아 세 단계로 나눕니다. 셋 다 홈의 &ldquo;AI로 제작&rdquo;에 들어가고,
+          한 프로젝트에 근거가 여러 개면 가장 앞 단계 하나로 셉니다.
+        </p>
+        <table className="method-table">
+          <thead><tr><th>단계</th><th>근거</th>{aiLevels && <th>프로젝트 수</th>}</tr></thead>
+          <tbody>
+            {AI_LEVELS.map((level) => (
+              <tr key={level}>
+                <td>{level}단계</td>
+                <td>{AI_LEVEL_LABELS[level].title}</td>
+                {aiLevels && <td>{formatCount(aiLevels[level])}개</td>}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        <p>단계가 없다고 AI 없이 만든 것은 아닙니다. 아직 검사하지 않았거나, 흔적을 남기지 않는 방식으로 만들었을 수 있습니다.</p>
+        <Details>
+          {AI_LEVELS.map((level) => <p key={level}><b>{level}단계</b> — {AI_LEVEL_LABELS[level].description}</p>)}
+          <p>
+            어느 단계도 제품 전체를 AI가 만들었다는 증명은 아닙니다. 1단계도 병합된 그 PR의 변경까지만 말하고, 2·3단계는 저장소가 밝힌 것이라
+            꾸밀 수 있습니다. 여러 도구가 함께 읽는 지침 파일(CLAUDE.md·AGENTS.md)만 있는 저장소는 단계에 넣지 않습니다.
+          </p>
+          <p>저장소는 사흘마다 다시 봅니다. 저장소가 없는 프로젝트는 검사할 수 없어 단계가 없습니다.</p>
         </Details>
       </>
     ),
