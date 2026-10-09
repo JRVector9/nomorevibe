@@ -14,6 +14,7 @@ import type { ProductListItem } from "@/lib/domain/products/view";
 import type { RankingListItem, SeasonSummary } from "@/lib/domain/ranking/view";
 
 const {
+  aiLevelCounts,
   categoryCounts,
   countProducts,
   getAllTimeRanking,
@@ -29,6 +30,7 @@ const {
   relevanceWindow,
   popularSearches,
 } = vi.hoisted(() => ({
+  aiLevelCounts: vi.fn(),
   popularSearches: vi.fn(),
   getPublicListBySlugs: vi.fn(),
   searchRelevance: vi.fn(),
@@ -50,7 +52,7 @@ vi.mock("@/lib/crawl/settings", () => ({ getSettings: getCrawlSettings }));
 // HomeContent starts these independent loads too; never reach a database from a unit test.
 vi.mock("@/lib/news/repository", () => ({ listHomeNews: vi.fn().mockResolvedValue([]) }));
 vi.mock("@/lib/domain/products/popular", () => ({ getPopularGroups: vi.fn().mockResolvedValue([]) }));
-vi.mock("@/lib/domain/products/repository", () => ({ categoryCounts, countProducts, RISING_MAX_STARS: 2000 }));
+vi.mock("@/lib/domain/products/repository", () => ({ aiLevelCounts, categoryCounts, countProducts, RISING_MAX_STARS: 2000 }));
 // 0건 화면의 추천 검색어는 검색 기록(DB)에서 읽는다 — 화면 조합만 본다
 vi.mock("@/lib/domain/products/search-log", () => ({ recordSearch: vi.fn(), popularSearches }));
 // 검색어 해석은 DB 로 어간을 뽑고 넓힐지 센다 — 이 화면 테스트는 목록 조합만 보므로 친 그대로 넘긴다
@@ -159,6 +161,7 @@ beforeEach(() => {
   getAllTimeRanking.mockResolvedValue([]);
   getSeasonRanking.mockResolvedValue({ season, items: [] });
   categoryCounts.mockResolvedValue({});
+  aiLevelCounts.mockResolvedValue([]);
   countProducts.mockResolvedValue(0);
   popularSearches.mockResolvedValue([]);
   getHomePulse.mockResolvedValue({
@@ -297,6 +300,48 @@ describe("빈 화면 문구", () => {
     expect(getPublicList.mock.calls.every(([, options]) => options.observedTool === undefined)).toBe(true);
     expect(html).not.toContain("observedTool=");
   });
+  it("만든 방식(?ai=) 필터는 순위·목록·개수·미클레임·관련도 검색에 같은 단계로 전달하고 급상승 띠는 숨긴다", async () => {
+    countProducts.mockResolvedValue(25);
+    aiLevelCounts.mockResolvedValue([{ category: "Dev", level: 2, count: 25 }, { category: "Dev", level: 3, count: 4 }]);
+    const html = await render({ ai: ["made", "config"] });
+    expect(getSeasonRanking).toHaveBeenCalledWith(expect.objectContaining({ aiLevels: [1, 2] }));
+    expect(countProducts).toHaveBeenCalledWith(expect.objectContaining({ statuses: ["verified", "seeded"], aiLevels: [1, 2] }));
+    expect(html).not.toContain('id="rising"');
+    expect(html).toContain('<a class="chip chip-dark" aria-current="true" href="/">AI로 제작 <span class="chip-count">25</span></a>');
+
+    await render({ sort: "recent", ai: "config" });
+    expect(getPublicList).toHaveBeenCalledWith(9, expect.objectContaining({ aiLevels: [3] }));
+
+    await render({ sort: "all-time", ai: "made" });
+    expect(getAllTimeRanking).toHaveBeenCalledWith(expect.objectContaining({ aiLevels: [1, 2] }));
+
+        await render({ q: "가계부", ai: "made" });
+    expect(searchRelevance).toHaveBeenCalledWith("가계부", expect.anything(), expect.objectContaining({ aiLevels: [1, 2] }), expect.any(Function));
+  });
+
+  it("순위가 서기 전 아래 붙는 주인을 기다리는 목록도 같은 단계로 거른다", async () => {
+    await render({ sort: "trending", ai: "made" });
+    expect(countProducts).toHaveBeenCalledWith(expect.objectContaining({ statuses: ["seeded"], aiLevels: [1, 2] }));
+    expect(getUnclaimedList).toHaveBeenCalledWith(expect.any(Number), expect.objectContaining({ aiLevels: [1, 2] }));
+  });
+
+  it("모르는 ?ai= 값은 무시하고 전체 목록을 보인다", async () => {
+    countProducts.mockResolvedValue(25);
+    const html = await render({ sort: "recent", ai: "verified" });
+    expect(getPublicList.mock.calls.every(([, options]) => options.aiLevels === undefined)).toBe(true);
+    expect(html).not.toContain("ai=verified");
+    expect(html).not.toContain("필터 초기화");
+  });
+
+  it("만든 방식 칩의 수를 못 읽어도 목록은 선다", async () => {
+    aiLevelCounts.mockRejectedValue(new Error("db"));
+    getPublicList.mockResolvedValue([product("listed")]);
+    countProducts.mockResolvedValue(1);
+    const html = await render({ sort: "recent", ai: "made" });
+    expect(html).toContain("listed");
+    expect(html).toContain("AI로 제작 1개");
+  });
+
   it("중복 쿼리 값은 첫 값만 사용하고 500을 내지 않는다", async () => {
     countProducts.mockResolvedValue(25);
 

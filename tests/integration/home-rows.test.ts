@@ -126,6 +126,7 @@ describe("상세 뷰모델", () => {
     expect(detail.risingRank).toBe(1);
     expect(detail.related.map((row) => row.slug)).toEqual(["g1"]);
     expect(detail.readmeExcerpt).toContain("FEX-Emu");
-    expect(detail.toolScan).toBe("none");
+    // AI 제작 근거 단계 검사 전 — 상세는 '대기 중'이라고 말한다
+    expect(detail.aiLevel).toEqual({ checked: false, level: null });
   });
 });

@@ -96,7 +96,7 @@ async function ProductDetail({ slug, category }: { slug: string; category: strin
             agents={detail.agents}
             observedAgentFacts={detail.observedAgentFacts}
             skills={detail.skills}
-            toolScan={detail.toolScan}
+            aiLevel={detail.aiLevel}
           />
           <IntroSection product={detail.product} profile={detail.profile} readmeExcerpt={detail.readmeExcerpt} unclaimed={detail.unclaimed} />
           <LanguageBar repository={detail.repository} />

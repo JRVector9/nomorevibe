@@ -7,11 +7,11 @@ import type { Category } from "./schema";
 import type { SearchQuery } from "./search";
 import type { ResolvedSearch } from "./search-translation";
 import { rankSearch, type RankDependencies, type RankedSearch } from "./hybrid-search";
-import { countProducts, listProductSlugs, nearestProductSlugs, productDocuments } from "./repository";
+import { countProducts, listProductSlugs, nearestProductSlugs, productDocuments, type ListOptions } from "./repository";
 import { onPrimary } from "@/lib/db";
 import { logger } from "@/lib/observability/logger";
 
-export type RelevanceFilters = { category?: Category; builder?: string; observedTool?: string };
+export type RelevanceFilters = { category?: Category; builder?: string; observedTool?: string; aiLevels?: ListOptions["aiLevels"] };
 
 /**
  * 복제본이 pgvector 를 모르면(패키지 없음 — 2026-10-07 V9-Replica) 벡터 읽기만 주 DB 에서 다시 한다.

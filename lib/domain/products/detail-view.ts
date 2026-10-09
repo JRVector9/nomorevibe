@@ -34,6 +34,8 @@ import {
 import { getSettings as getCrawlSettings } from "@/lib/crawl/settings";
 import { getRepositoryAgentEvidence, getLatestRepositoryAgentScan } from "@/lib/domain/evidence/agents/repository";
 import { presentObservedAgentFacts, type ObservedAgentFactView } from "@/lib/domain/evidence/agents/view";
+import type { AiLevel } from "@/lib/domain/evidence/ai-level-labels";
+import { getRepositoryAiLevel } from "@/lib/domain/evidence/ai-level-store";
 import { currentEvidenceSettings } from "@/lib/domain/evidence/settings-store";
 import { normalizeTypedLink } from "@/lib/domain/evidence/contracts";
 import { EVIDENCE_LABELS } from "@/lib/domain/evidence/provenance";
@@ -206,8 +208,11 @@ export type ProductDetailView = {
   related: ProductListItem[];
   /** README 첫 문단들 — 소개가 한 줄뿐일 때 상세 본문이 된다 */
   readmeExcerpt: string | null;
-  /** 저장소의 AI 도구 흔적 조사 — 없으면 '확인 전'이라고 말해야 한다 */
-  toolScan: "none" | "scanned";
+  /**
+   * 저장소의 AI 제작 근거 단계(repository_ai_levels) — 검사 전이면 checked=false 라 '대기 중'이라고 말해야 한다.
+   * 단계만 싣는다 — 근거(PR·커밋·파일)와 도구 이름은 공개 화면에 내지 않는다(2026-10-10 운영자 결정)
+   */
+  aiLevel: { checked: boolean; level: AiLevel | null };
 };
 
 async function findPublicProduct(slug: string): Promise<PublicProduct | null> {
@@ -650,7 +655,7 @@ export async function getProductDetail(slugInput: string): Promise<ProductDetail
   const now = new Date();
   const primaryRepository = product.repoUrl ? normalizeTypedLink("repository", product.repoUrl) : null;
   const [rank, visitMap, health, profile, links, sources, media, updates, provenance, settings,
-    risingRank, related, readmeRow, toolScanRow, crawlSettings] = await Promise.all([
+    risingRank, related, readmeRow, aiLevel, crawlSettings] = await Promise.all([
     activeRank(slug),
     visitMetrics([slug], { windowHours: METRICS_WINDOW_DAYS * 24, minimumPreviousUniqueVisitors: 5 }),
     detailHealth(slug),
@@ -664,8 +669,8 @@ export async function getProductDetail(slugInput: string): Promise<ProductDetail
     getRisingRank(slug),
     getRelatedRising(slug, product.category as Category, 5),
     db.select({ readme: products.searchReadme }).from(products).where(eq(products.slug, slug)).then((rows) => rows[0] ?? null),
-    // GitHub 저장소가 아니면 키가 없어 조사도 없다. 현재 AGENT_DETECTOR_VERSION 의 조사만 보므로 옛 버전 조사만 있으면 '없음'이다
-    primaryRepository ? getLatestRepositoryAgentScan(primaryRepository.normalizedKey) : Promise.resolve(null),
+    // GitHub 저장소가 아니면 키가 없어 검사도 없다(checked=false)
+    getRepositoryAiLevel(product.repoUrl),
     // 따로 기다리면 한 왕복이 더 든다 — 함께 읽는다
     getCrawlSettings(),
   ]);
@@ -728,6 +733,6 @@ export async function getProductDetail(slugInput: string): Promise<ProductDetail
     risingRank,
     related,
     readmeExcerpt: readmeExcerpt(readmeRow?.readme ?? null, currentProduct.tagline),
-    toolScan: toolScanRow ? "scanned" : "none",
+    aiLevel: { checked: aiLevel.checked, level: aiLevel.level },
   };
 }

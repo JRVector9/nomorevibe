@@ -442,6 +442,13 @@
       "when": 1791500000000,
       "tag": "0062_product_korean_taglines",
       "breakpoints": true
+    },
+    {
+      "idx": 63,
+      "version": "7",
+      "when": 1791600000000,
+      "tag": "0063_ai_levels",
+      "breakpoints": true
     }
   ]
 }

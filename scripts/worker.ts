@@ -63,6 +63,8 @@ export function jobRunOptions(name: string, options: RequestedRunOptions): JobRu
   if (name === 'product-tagline-ko') return { ...options, budgetMs: 55_000 };
   // 저장소 50개 묶음이 3~4초 — 기본 25초면 하루치(공개 저장소 전부)를 다 못 본다(stars-refresh.ts)
   if (name === 'product-stars-refresh') return { ...options, budgetMs: 40_000 };
+  // AI 제작 근거 단계 — GraphQL 묶음을 30초 안에서 열고 마지막 묶음·두 번째 질의(각 10초 상한)와 기록까지(ai-level-refresh.ts)
+  if (name === 'ai-level-refresh') return { ...options, budgetMs: 55_000 };
   if (name === 'product-intro-check') return { ...options, budgetMs: 110_000 };
   // 게이트웨이가 붐비면 한 건이 45초까지 간다. 틱이 짧으면 그 호출을 아예 시작하지 못한다
   if (name === 'second-review') return { ...options, budgetMs: 110_000 };

@@ -23,7 +23,7 @@ import { PopularTiers } from "@/components/home/PopularTiers";
 import { MethodologyDialog } from "@/components/home/MethodologyDialog";
 import { ProjectGrid } from "@/components/home/ProjectGrid";
 import { ToolsBoard } from "@/components/home/ToolsBoard";
-import { categoryCounts, countProducts, RISING_MAX_STARS } from "@/lib/domain/products/repository";
+import { aiLevelCounts, categoryCounts, countProducts, RISING_MAX_STARS } from "@/lib/domain/products/repository";
 import { resolveSearchQuery, warmQueryTranslation } from "@/lib/domain/products/search-translation";
 import { relevanceWindow, searchRelevance } from "@/lib/domain/products/relevance";
 import type { SearchQuery } from "@/lib/domain/products/search";
@@ -59,6 +59,7 @@ import { DEFAULT_RANKING_POLICY } from "@/lib/domain/ranking/policy";
 import { logger } from "@/lib/observability/logger";
 import { getSettings as getCrawlSettings } from "@/lib/crawl/settings";
 import { agentClientLabel } from "@/lib/domain/evidence/agents/view";
+import { AI_FILTER_LEVELS, parseAiFilter, type AiLevel } from "@/lib/domain/evidence/ai-level-labels";
 
 export const dynamic = "force-dynamic";
 
@@ -73,6 +74,7 @@ type Props = {
     q?: SearchValue;
     builder?: SearchValue;
     observedTool?: SearchValue;
+    ai?: SearchValue;
     shown?: SearchValue;
     saved?: SearchValue;
     personal?: SearchValue;
@@ -93,10 +95,11 @@ function listFor(
   query: SearchQuery | undefined,
   builder: string | undefined,
   observedTool: string | undefined,
+  aiLevels: readonly AiLevel[] | undefined,
   limit: number,
   offset = 0,
 ): Promise<ProductListItem[] | RankingListItem[]> {
-  const options = { category, query, builder, observedTool };
+  const options = { category, query, builder, observedTool, aiLevels };
   if (sort === "open") {
     return getPublicList(limit, { ...options, sort: "recent", hasRepository: true, repoChecked: newestOnly(sort), offset });
   }
@@ -304,7 +307,7 @@ export default async function HomePage({ searchParams }: Props) {
  */
 export async function HomeScreen({ params }: { params: HomeParams }) {
   const query = firstValue(params.q)?.trim().slice(0, 200) || undefined;
-  const key = [query, params.category, params.sort, params.builder, params.observedTool, params.saved].map((value) => firstValue(value) ?? "").join("|");
+  const key = [query, params.category, params.sort, params.builder, params.observedTool, params.ai, params.saved].map((value) => firstValue(value) ?? "").join("|");
   const category = parseCategory(firstValue(params.category));
   const title = query ? `“${query}” 검색 결과` : category ? `${categoryLabel(category)} 프로젝트` : undefined;
   return (
@@ -355,10 +358,13 @@ export async function HomeContent({ params }: { params: HomeParams }) {
   // 직접 주소로도 숨겨 둔 관찰 사실을 거르지 않는다. 설정을 못 읽으면 공개하지 않는다.
   const displayTools = toolParam ? await getCrawlSettings().then(settings => settings.agentEvidence.displayObservedFacts).catch(() => false) : false;
   const observedTool = toolParam && displayTools ? agentClientLabel(toolParam) : undefined;
+  // 만든 방식 — 모르는 값은 거르지 않는다(전체 목록)
+  const ai = parseAiFilter(firstValue(params.ai)) ?? undefined;
+  const aiLevels = ai ? AI_FILTER_LEVELS[ai] : undefined;
   const shown = parseShown(firstValue(params.shown));
   const savedOnly = firstValue(params.saved) === "1";
   const now = new Date();
-  const browseState = { sort: requestedSort, category, query, builder, observedTool, shown };
+  const browseState = { sort: requestedSort, category, query, builder, observedTool, ai, shown };
 
   let active: SeasonSummary | null = null;
   let effectiveSort: HomeSort = requestedSort;
@@ -391,7 +397,7 @@ export async function HomeContent({ params }: { params: HomeParams }) {
 
   /** 첫 화면의 '지금 뜨는' 띠 — 필터·검색이 없을 때만. 피드의 '추천'(대체 목록)은 띠 다음부터 이어 받는다 */
   const RISING_STRIP = 5;
-  const filtered = Boolean(query || category || builder || observedTool);
+  const filtered = Boolean(query || category || builder || observedTool || ai);
   /** 검색·분야 화면 — 아래 홈 구획(인기·새로 나온·도구·활발한·소식)은 필터가 걸리지 않은 전체 기준이라 숨긴다(UX-35) */
   const scoped = Boolean(query || category);
   const stripLoad = filtered ? Promise.resolve<ProductListItem[]>([]) : publicRead("list", ["strip", RISING_STRIP], () => getPublicList(RISING_STRIP, { sort: "rising", rising: true })).catch(() => []);
@@ -406,6 +412,8 @@ export async function HomeContent({ params }: { params: HomeParams }) {
   const searchLoad = resolveSearchQuery(query, { waitForTranslation: requestedSort !== "relevance" });
   const countsLoad = publicRead("count", ["categories"], () => categoryCounts({ statuses: ["verified", "seeded"], excludeDown: true }));
   const verifiedLoad = publicRead("count", ["verified"], () => countProducts({ statuses: ["verified"], excludeDown: true }));
+  // '만든 방식' 칩의 수 — 못 세도 목록은 선다(칩은 수 없이)
+  const aiCountsLoad = publicRead("count", ["ai-levels"], () => aiLevelCounts()).catch(() => null);
   for (const load of [seasonLoad, searchLoad, countsLoad, verifiedLoad]) load.catch(() => {});
 
   try {
@@ -421,7 +429,7 @@ export async function HomeContent({ params }: { params: HomeParams }) {
     const search = await searchLoad;
     translatedQuery = search.translated;
     if (query && search.translationPending) after(() => warmQueryTranslation(query));
-    const options = { category, query: search.queries, builder, observedTool, excludeDown: true };
+    const options = { category, query: search.queries, builder, observedTool, aiLevels, excludeDown: true };
     /**
      * 순위 탭의 개수는 순위가 서지 않을 때(fallbackSort)만 쓴다 — 그때 '추천'은 스타가 는 제품만 센다.
      * 순위가 서면 이 값은 쓰이지 않으므로 검증 수를 기다리지 않고 함께 센다.
@@ -443,7 +451,7 @@ export async function HomeContent({ params }: { params: HomeParams }) {
      * 관련도순 검색은 낱말 검색과 의미 검색을 섞고 앞 30개를 재정렬한다(lib/domain/products/relevance.ts).
      * 순위와 전체 수를 30초 동안 웹 여러 대가 함께 쓴다 — "더 보기"가 같은 순위를 이어 받는다.
      */
-    const filters = { category, builder, observedTool };
+    const filters = { category, builder, observedTool, aiLevels };
     const relevanceLoad = query && effectiveSort === "relevance" && !fallback
       ? publicRead("list", ["relevance", query, search.queries, filters],
         () => searchRelevance(query, search, filters, () => resolveSearchQuery(query, { waitForTranslation: true })))
@@ -459,7 +467,7 @@ export async function HomeContent({ params }: { params: HomeParams }) {
       : publicRead("list", ["home", effectiveSort, fallback, active?.key ?? null, listOptions, limit, offset], () => fallback
       ? getPublicList(limit, { ...listOptions, sort: fallback, offset })
       : active
-        ? listFor(effectiveSort, active, category, search.queries, builder, observedTool, limit, offset)
+        ? listFor(effectiveSort, active, category, search.queries, builder, observedTool, aiLevels, limit, offset)
         : publicCatalogue
           ? getPublicList(limit, { ...listOptions, sort: effectiveSort === "relevance" ? "relevance" : "recent", offset })
           : getVerifiedList(limit, { ...options, sort: "recent" }));
@@ -510,7 +518,7 @@ export async function HomeContent({ params }: { params: HomeParams }) {
   if (query && !dbDown) {
     const found = resultCount;
     const keywords = translatedQuery;
-    const narrowed = Boolean(category || builder || observedTool);
+    const narrowed = Boolean(category || builder || observedTool || ai);
     /**
      * 걸린 시간은 이 화면이 만들어지기 시작한 때(now)부터 기록하는 때까지다 — 검색 쿼리만이
      * 아니라 사람이 기다린 시간이다. 시계는 기록하는 쪽이 읽는다(렌더는 시계를 읽지 않는다).
@@ -524,7 +532,7 @@ export async function HomeContent({ params }: { params: HomeParams }) {
   const asideFailure = [pulseResult, newsResult]
     .find((result): result is PromiseRejectedResult => result.status === "rejected");
   if (asideFailure) logger.warn("home.pulse_unavailable", { error: asideFailure.reason });
-  const [strip, fresh] = await Promise.all([stripLoad, newLoad]);
+  const [strip, fresh, aiCounts] = await Promise.all([stripLoad, newLoad, aiCountsLoad]);
 
   const state = { ...browseState, sort: effectiveSort };
   const savedCandidates = savedOnly ? [...list, ...unclaimed] : list;
@@ -563,6 +571,7 @@ export async function HomeContent({ params }: { params: HomeParams }) {
         <BrowseFilters
           state={state}
           counts={counts}
+          aiCounts={aiCounts}
           total={total}
           resultCount={resultCount}
           listLabel={fallback === "rising" ? "지금 뜨는" : fallback === "stars" ? "스타 많은 순" : undefined}
@@ -580,7 +589,7 @@ export async function HomeContent({ params }: { params: HomeParams }) {
         ) : savedOnly || list.length > 0 ? (
           <ProjectGrid
             now={now.toISOString()}
-            key={`${effectiveSort}-${category ?? ""}-${builder ?? ""}-${observedTool ?? ""}-${query ?? ""}-${savedOnly ? "saved" : "all"}`}
+            key={`${effectiveSort}-${category ?? ""}-${builder ?? ""}-${observedTool ?? ""}-${ai ?? ""}-${query ?? ""}-${savedOnly ? "saved" : "all"}`}
             totalCount={resultCount}
             products={savedCandidates}
             browseState={state}

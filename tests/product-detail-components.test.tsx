@@ -17,6 +17,7 @@ import { SourceBadge } from "@/components/product-detail/SourceBadge";
 import { UpdateTimeline } from "@/components/product-detail/UpdateTimeline";
 import { UnclaimedOwnerContact } from "@/components/product-detail/UnclaimedOwnerContact";
 import { LAST_CODE_UPDATE_LABEL, LATEST_VERSION_LABEL, SITE_REPO_RELATION_LABEL, UNCLAIMED_HINT } from "@/lib/copy/terms";
+import { AI_LEVEL_LABELS } from "@/lib/domain/evidence/ai-level-labels";
 import type { ProductDetailView } from "@/lib/domain/products/detail-view";
 import { TAKEDOWN_PROMISE } from "@/lib/domain/products/takedown-view";
 import type { ProductListItem } from "@/lib/domain/products/view";
@@ -169,7 +170,7 @@ function renderIntro(overrides: Partial<ComponentProps<typeof IntroSection>> = {
 }
 
 function renderTools(overrides: Partial<ComponentProps<typeof BuildTools>> = {}) {
-  return renderToStaticMarkup(<BuildTools product={product} unclaimed={false} agents={[]} observedAgentFacts={[]} skills={[]} toolScan="scanned" {...overrides} />);
+  return renderToStaticMarkup(<BuildTools product={product} unclaimed={false} agents={[]} observedAgentFacts={[]} skills={[]} aiLevel={{ checked: true, level: null }} {...overrides} />);
 }
 
 /** 태그를 걷어낸 글자만 — 알약 안의 숫자처럼 span 으로 나뉜 문구를 한 줄로 확인한다 */
@@ -626,17 +627,43 @@ describe("evidence product detail components", () => {
 
   it("says the AI-trace scan is pending, or that no trace was found, instead of omitting the section", () => {
     const empty = { product: { ...product, builder: null }, agents: [], observedAgentFacts: [], skills: [] };
+    const unchecked = { checked: false, level: null };
     // 정보 카드의 '정보 갱신'과 다른 일 — '확인'이라 부르지 않는다(UX-16)
-    const pending = renderTools({ ...empty, toolScan: "none" });
+    const pending = renderTools({ ...empty, aiLevel: unchecked });
     expect(pending).toContain("AI 흔적 검사 대기 중");
     expect(pending).not.toContain("확인하지 않았습니다");
-    expect(renderTools({ ...empty, toolScan: "scanned" })).toContain("AI 흔적 검사에서 AI 코딩 도구의 흔적을 찾지 못했습니다");
-    // GitHub 저장소가 없거나 사라졌으면 기다릴 검사가 없다
+    // 검사했지만 근거가 없다 — AI 없이 만들었다는 말로 읽히지 않게
+    expect(renderTools({ ...empty, aiLevel: { checked: true, level: null } }))
+      .toContain("검사에서 AI 코딩 도구 흔적을 찾지 못했습니다 — AI 없이 만들었다는 뜻은 아닙니다.");
+    // GitHub 저장소가 없거나 사라졌으면 기다릴 검사가 없다 — 남아 있는 단계도 보이지 않는다
     for (const changed of [{ repoUrl: "https://gitlab.com/acme/app" }, { repoUrl: null }, { repoGone: true }]) {
-      const html = renderTools({ ...empty, product: { ...empty.product, ...changed }, toolScan: "none" });
-      expect(html, JSON.stringify(changed)).toContain("AI 흔적 검사를 할 수 없습니다");
-      expect(html, JSON.stringify(changed)).not.toContain("대기 중");
+      for (const aiLevel of [unchecked, { checked: true, level: 2 as const }]) {
+        const html = renderTools({ ...empty, product: { ...empty.product, ...changed }, aiLevel });
+        expect(html, JSON.stringify(changed)).toContain("AI 흔적 검사를 할 수 없습니다");
+        expect(html, JSON.stringify(changed)).not.toContain("대기 중");
+        expect(html, JSON.stringify(changed)).not.toContain("단계");
+      }
     }
+  });
+
+  it.each([1, 2, 3] as const)("names AI level %i and its description without links or tool names", (level) => {
+    const html = renderTools({ product: { ...product, builder: null }, aiLevel: { checked: true, level } });
+    const text = textOf(html);
+    expect(text).toContain(`AI 제작 근거 ${level}단계 · ${AI_LEVEL_LABELS[level].title}`);
+    expect(text).toContain(AI_LEVEL_LABELS[level].description);
+    expect(html).not.toContain("<a ");
+    expect(text).not.toContain("찾지 못했습니다");
+    expect(text).not.toContain("대기 중");
+  });
+
+  it("keeps the maker-reported builder next to the AI level line", () => {
+    const text = textOf(renderTools({ aiLevel: { checked: true, level: 1 } }));
+    expect(text).toContain("메이커 신고");
+    expect(text).toContain(`AI 제작 근거 1단계 · ${AI_LEVEL_LABELS[1].title}`);
+    // 신고값만 있고 검사 전이면 지금처럼 신고값만
+    const pending = textOf(renderTools({ aiLevel: { checked: false, level: null } }));
+    expect(pending).toContain("메이커 신고");
+    expect(pending).not.toContain("대기 중");
   });
 
   it.each([null, "maker_reported"] as const)("does not invent activity or a verified direction from unknown repository facts (%s)", (relationshipState) => {

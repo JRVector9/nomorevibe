@@ -1,5 +1,6 @@
 import { hasSearchQuery, productSearchPredicate, productSearchRank, type SearchQuery } from './search';
 import { syncRepositoryLink } from "@/lib/domain/evidence/repository-link-sync";
+import { isAiLevel, type AiLevel } from "@/lib/domain/evidence/ai-level-labels";
 import { and, desc, eq, inArray, isNotNull, like, ne, notInArray, or, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { lockProductGeneration, type ProductTransaction } from "./generation";
@@ -75,6 +76,8 @@ export type ListOptions = {
   builder?: string;
   /** 저장소의 마지막 완료·부분 조사에서 찾은 도구 */
   observedTool?: string;
+  /** AI 제작 근거 단계가 이 중 하나인 것만(products.ai_level) — 홈 '만든 방식' 필터 */
+  aiLevels?: readonly AiLevel[];
   /** 저장소 URL이 등록된 제품만. 공개 여부나 라이선스를 뜻하지 않는다. */
   hasRepository?: boolean;
   /** 건너뛸 개수. 목록이 상한에서 조용히 잘리지 않으려면 뒤를 볼 수 있어야 한다 */
@@ -305,8 +308,13 @@ const introNeedsEditor = sql`exists (
   where c.product_id = ${products.id} and c.outcome = 'needs_editor' and c.checked_tagline = ${products.tagline}
 )`;
 
+/** AI 제작 근거 단계가 이 중 하나 — 공개 순위(ranking/view.ts)도 같은 식을 쓴다. 빈 목록이면 아무것도 걸리지 않는다 */
+export function aiLevelPredicate(levels: readonly AiLevel[]) {
+  return levels.length ? inArray(products.aiLevel, [...levels]) : sql`false`;
+}
+
 /** 목록과 개수가 같은 조건을 쓰도록 한 곳에서 만든다. 급상승 기간은 설정에서 읽으므로 비동기다 */
-async function listConditions({ statuses, category, query, builder, observedTool, hasRepository, excludeDown, introNeedsEditor: needsEditor, rising, listedSince, minStars, slugs, excludeSlugs, repoGone: goneOnly, repoMissing, repoArchived, repoRenamed, down, adminSearch, repoChecked, spamBanned, nameNeedsReview }: Omit<ListOptions, "limit" | "sort" | "offset">) {
+async function listConditions({ statuses, category, query, builder, observedTool, aiLevels, hasRepository, excludeDown, introNeedsEditor: needsEditor, rising, listedSince, minStars, slugs, excludeSlugs, repoGone: goneOnly, repoMissing, repoArchived, repoRenamed, down, adminSearch, repoChecked, spamBanned, nameNeedsReview }: Omit<ListOptions, "limit" | "sort" | "offset">) {
   const conditions = [inArray(products.status, statuses)];
   if (slugs) conditions.push(slugs.length ? inArray(products.slug, [...slugs]) : sql`false`);
   if (excludeSlugs?.length) conditions.push(notInArray(products.slug, [...excludeSlugs]));
@@ -328,6 +336,7 @@ async function listConditions({ statuses, category, query, builder, observedTool
   if (category) conditions.push(eq(products.category, category));
   if (builder) conditions.push(and(eq(products.builder, builder), builderIsReported)!);
   if (observedTool) conditions.push(observedToolPredicate(observedTool));
+  if (aiLevels) conditions.push(aiLevelPredicate(aiLevels));
   if (hasRepository) {
     conditions.push(isNotNull(products.repoUrl));
     conditions.push(sql`btrim(${products.repoUrl}) <> ''`);
@@ -497,6 +506,20 @@ export async function categoryCounts(
     .where(and(...(await listConditions(options))))
     .groupBy(products.category);
   return Object.fromEntries(rows.map((r) => [r.category, r.count]));
+}
+
+/**
+ * 홈 '만든 방식' 칩의 수 — 공개 목록과 같은 바탕(검증·시드, 닿지 않는 것·기본 목록에서 빼는 분야 제외)에서 분야·단계마다.
+ * 단계가 있는 행만 센다(부분 색인 products_ai_level_idx). 분야를 고른 화면은 그 분야 칸만, 단계를 고른 화면의 분야 알약은
+ * 그 단계 칸만 더한다(browse-state.ts) — 한 번 세어 두 칩이 함께 쓴다.
+ */
+export async function aiLevelCounts(): Promise<{ category: string; level: AiLevel; count: number }[]> {
+  const rows = await db
+    .select({ category: products.category, level: products.aiLevel, count: sql<number>`count(*)::int` })
+    .from(products)
+    .where(and(...(await listConditions({ statuses: ["verified", "seeded"], excludeDown: true })), isNotNull(products.aiLevel)))
+    .groupBy(products.category, products.aiLevel);
+  return rows.flatMap(({ category, level, count }) => isAiLevel(level) ? [{ category, level, count }] : []);
 }
 
 /** base 계열 slug를 한 번에 조회해 메모리에서 빈 자리를 찾는다 (후보마다 왕복하지 않음) */

@@ -21,7 +21,7 @@ function serverHydrationSnapshot(): boolean {
 }
 
 /** 이 값 중 하나라도 있으면 홈이 아니라 검색·거르기 화면이다 — 메뉴 활성 표시를 끈다(UX-12) */
-const FILTER_PARAMS = ["q", "category", "sort", "builder", "observedTool", "saved"] as const;
+const FILTER_PARAMS = ["q", "category", "sort", "builder", "observedTool", "ai", "saved"] as const;
 /** 이만큼 내려온 뒤부터 검색줄을 접는다 — 첫 화면에서는 늘 보인다 */
 const COLLAPSE_AFTER_PX = 120;
 /** 이보다 작은 움직임은 방향으로 치지 않는다 — 손가락 떨림·관성 끝자락에 접혔다 펴지지 않게 */

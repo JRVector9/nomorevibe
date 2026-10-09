@@ -23,6 +23,7 @@ import { parseRepositoryStats } from "@/lib/domain/products/stars";
 import { SEARCH_PAGE_TEXT_CHARS } from "@/lib/domain/products/search";
 import { candidateStarAutoApproval } from "./star-auto-approval";
 import { spamSignals, SPAM_DETECTOR_VERSION } from "./spam-signals";
+import { storedAiLevel } from "@/lib/domain/evidence/ai-level-store";
 
 /**
  * 발행 — 통과한 후보를 목록에 올린다.
@@ -217,6 +218,8 @@ export async function publishCandidate(
         ogImage: null,
         makerName: null,
         repoUrl: `https://github.com/${candidate.repo}`,
+        // AI 제작 근거 단계 — ai-level-refresh 가 후보 때 이미 판정해 둔 값(없으면 잡이 뒤에 채운다)
+        aiLevel: await storedAiLevel(candidate.repo),
         ...(repoStats ? { ...repoStats, starsAt: document.fetchedAt } : {}),
         status: "seeded",
         source: "crawler",

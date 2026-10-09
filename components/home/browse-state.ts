@@ -2,6 +2,7 @@ import { pageTitle } from "@/lib/copy/brand";
 import { formatApprox, formatCount } from "@/lib/format/number";
 import { CATEGORIES, type Category } from "@/lib/domain/products/categories";
 import { categoryLabel } from "@/lib/domain/products/labels";
+import { AI_FILTER_LABELS, AI_FILTER_LEVELS, AI_FILTERS, type AiFilter, type AiLevel } from "@/lib/domain/evidence/ai-level-labels";
 
 /** relevance 는 검색어가 있을 때만 쓰는 순서다 — 검색 중에만 '관련도' 탭으로 맨 앞에 선다 */
 export type HomeSort = "weekly" | "trending" | "recent" | "all-time" | "open" | "relevance";
@@ -19,6 +20,8 @@ export type BrowseState = {
   query?: string;
   builder?: string;
   observedTool?: string;
+  /** 만든 방식 — 'AI로 제작'(1·2단계)·'AI 도구 설정'(3단계). 주소는 ?ai=made|config */
+  ai?: AiFilter;
   shown?: number;
 };
 
@@ -66,12 +69,13 @@ export function parseCategory(value: string | null | undefined): Category | null
 /** 지금 상태에서 한 가지만 바꾼 주소 — 필터를 겹쳐 걸 수 있어야 한다. 분야가 있으면 /c/<분야> 아래로 간다 */
 export function hrefWith(state: BrowseState, patch: Partial<BrowseState> = {}): string {
   const next = { ...state, ...patch };
-  const filterChanged = ["sort", "category", "builder", "observedTool", "query"].some((key) => key in patch);
+  const filterChanged = ["sort", "category", "builder", "observedTool", "ai", "query"].some((key) => key in patch);
   if (filterChanged && patch.shown === undefined) next.shown = undefined;
   const params = new URLSearchParams();
   if (next.sort !== "weekly" || next.query) params.set("sort", next.sort);
   if (next.builder) params.set("builder", next.builder);
   if (next.observedTool) params.set("observedTool", next.observedTool);
+  if (next.ai) params.set("ai", next.ai);
   if (next.query) params.set("q", next.query);
   if (next.shown && next.shown > HOME_FIRST_PAGE) params.set("shown", String(next.shown));
   const path = next.category ? `/c/${encodeURIComponent(categorySlug(next.category))}` : "/";
@@ -142,7 +146,7 @@ const SORT_LABELS: Record<HomeSort, string> = {
  */
 export function resultLine(state: BrowseState, count: number, { approximate = false, listLabel }: { approximate?: boolean; listLabel?: string } = {}): string {
   if (state.query) return approximate ? `관련 결과 ${formatResultCount(count, true)}개` : `검색 결과 ${formatCount(count)}개`;
-  const filters = [state.category ? categoryLabel(state.category) : null, state.observedTool, state.builder].filter(Boolean);
+  const filters = [state.category ? categoryLabel(state.category) : null, state.ai ? AI_FILTER_LABELS[state.ai] : null, state.observedTool, state.builder].filter(Boolean);
   if (filters.length) return `${[...filters, listLabel].filter(Boolean).join(" · ")} ${formatCount(count)}개`;
   return `${listLabel ?? SORT_LABELS[state.sort]} ${formatCount(count)}개`;
 }
@@ -151,4 +155,23 @@ export function resultLine(state: BrowseState, count: number, { approximate = fa
 export function sortLabel(sort: HomeSort, rankingReady = true): string {
   if (sort === "weekly" && !rankingReady) return "지금 뜨는";
   return SORT_LABELS[sort];
+}
+
+/** 분야·단계마다의 공개 수(repository.ts aiLevelCounts) — 칩의 수를 이것 하나로 센다 */
+export type AiLevelCount = { category: string; level: AiLevel; count: number };
+
+/** '만든 방식' 칩의 수 — 분야를 골랐으면 그 분야 안의 수(누른 목록의 수와 같게) */
+export function aiFilterCounts(rows: readonly AiLevelCount[], category?: string): Record<AiFilter, number> {
+  const scoped = category ? rows.filter((row) => row.category === category) : rows;
+  const sum = (filter: AiFilter) => scoped.filter((row) => AI_FILTER_LEVELS[filter].includes(row.level)).reduce((total, row) => total + row.count, 0);
+  return Object.fromEntries(AI_FILTERS.map((filter) => [filter, sum(filter)])) as Record<AiFilter, number>;
+}
+
+/** '만든 방식'을 골랐을 때 분야 알약의 수 — 그 단계의 제품만 센다 */
+export function categoryCountsForAi(rows: readonly AiLevelCount[], ai: AiFilter): Record<string, number> {
+  const counts: Record<string, number> = {};
+  for (const row of rows) {
+    if (AI_FILTER_LEVELS[ai].includes(row.level)) counts[row.category] = (counts[row.category] ?? 0) + row.count;
+  }
+  return counts;
 }

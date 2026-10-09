@@ -15,8 +15,8 @@ export function isStorableLabel(label: string): boolean {
   return label.length > 0 && label.length <= 80 && !/[\x00-\x1f<>@]|(?:sk-|ghp_|github_pat_)/i.test(label);
 }
 
-/** Attribution is a claim in the final Git trailer block, not an authenticated execution record. */
-export function parseCommitAttributions(message: string): CommitAttribution[] {
+/** 커밋 메시지 마지막 트레일러 묶음의 줄들 — 묶음이 아니면(본문 문장·닫히지 않은 코드 블록 안) 빈 배열 */
+export function finalTrailerLines(message: string): string[] {
   if (message.length > 128 * 1024) return [];
   const lines = message.replace(/\r\n/g,'\n').trimEnd().split('\n');
   const boundary = lines.lastIndexOf('');
@@ -29,7 +29,12 @@ export function parseCommitAttributions(message: string): CommitAttribution[] {
     const match = line.match(/^\s{0,3}(`{3,}|~{3,})/);
     if (match) { if (!fence) fence = match[1][0]; else if (fence === match[1][0]) fence = null; }
   }
-  if (fence) return [];
+  return fence ? [] : trailerLines;
+}
+
+/** Attribution is a claim in the final Git trailer block, not an authenticated execution record. */
+export function parseCommitAttributions(message: string): CommitAttribution[] {
+  const trailerLines = finalTrailerLines(message);
   const result: CommitAttribution[] = [];
   for (const line of trailerLines) {
     const match = line.match(/^Co-authored-by:\s*([^<>\r\n]+?)\s*<[^<>\s]+@[^<>\s]+>\s*$/i);

@@ -23,7 +23,7 @@ import {
 } from "@/lib/db/schema";
 import { topClickedSince } from "@/lib/domain/products/clicks";
 import { taglineKoField } from "@/lib/domain/products/korean-tagline";
-import { notDown, repoGoneField } from "@/lib/domain/products/repository";
+import { aiLevelPredicate, notDown, repoGoneField, type ListOptions } from "@/lib/domain/products/repository";
 import { observedToolPredicate } from "@/lib/domain/products/observed-tool";
 import type { Category } from "@/lib/domain/products/schema";
 import {
@@ -122,6 +122,8 @@ export async function getSeasonRanking(options: {
   query?: SearchQuery;
   builder?: string;
   observedTool?: string;
+  /** 홈 '만든 방식' — AI 제작 근거 단계(products.ai_level) */
+  aiLevels?: ListOptions["aiLevels"];
   limit: number;
 }): Promise<{ season: SeasonSummary | null; items: RankingListItem[] }> {
   const season = await findSeason(options.seasonKey);
@@ -140,6 +142,7 @@ export async function getSeasonRanking(options: {
   if (options.category) conditions.push(eq(products.category, options.category));
   if (options.builder) conditions.push(and(eq(products.builder, options.builder), builderIsReported)!);
   if (options.observedTool) conditions.push(observedToolPredicate(options.observedTool));
+  if (options.aiLevels) conditions.push(aiLevelPredicate(options.aiLevels));
   if (hasSearchQuery(options.query)) conditions.push(productSearchPredicate(options.query!)!);
   if (options.order === "trending") {
     conditions.push(isNotNull(rankingEntries.changePercent));
@@ -279,6 +282,7 @@ export async function getAllTimeRanking(options: {
   query?: SearchQuery;
   builder?: string;
   observedTool?: string;
+  aiLevels?: ListOptions["aiLevels"];
   limit: number;
 }): Promise<RankingListItem[]> {
   const totals = (await topClickedSince(3650, 50_000))
@@ -325,6 +329,7 @@ export async function getAllTimeRanking(options: {
     const hasReportedBuilder = product.source !== "crawler" || product.claimedAt !== null;
     if (options.category && product.category !== options.category) continue;
     if (options.builder && (!hasReportedBuilder || product.builder !== options.builder)) continue;
+    if (options.aiLevels && !(product.aiLevel !== null && options.aiLevels.includes(product.aiLevel))) continue;
     if (matching && !matching.has(product.slug)) continue;
 
     items.push({
