@@ -20,7 +20,8 @@ test('hero icons and source-labelled previews render on desktop and mobile',asyn
   else await expect(hero.locator('img')).toHaveCount(0);
   expect((await icon.boundingBox())!.width).toBeLessThanOrEqual(80);
   const preview=page.locator('figure').filter({hasText:labels[k]});
-  if(kind==='og'){const image=preview.locator('img');await image.scrollIntoViewIfNeeded();await expect(image).toBeVisible();
+  // README 이미지는 아이콘 자리에 두지 않으므로(UX-32) 미리보기에 보인다 — 대표 배너와 함께. 나머지(아이콘·기본)는 미리보기가 없다
+  if(kind==='og'||kind==='repository_image'){const image=preview.locator('img');await image.scrollIntoViewIfNeeded();await expect(image).toBeVisible();
    await expect.poll(()=>image.evaluate((e:HTMLImageElement)=>e.complete&&e.naturalWidth>0)).toBe(true);}
   else await expect(preview).toHaveCount(0);
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
