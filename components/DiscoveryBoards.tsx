@@ -1,4 +1,7 @@
 import Link from "next/link";
+import { ProductTagline } from "@/components/ProductTagline";
+import { UNCLAIMED_HINT, UNCLAIMED_LABEL } from "@/lib/copy/terms";
+import { formatCount } from "@/lib/format/number";
 import type { ProductListItem } from "@/lib/domain/products/view";
 import type { getDiscoveryBoards, RankingListItem } from "@/lib/domain/ranking/view";
 
@@ -23,12 +26,12 @@ function ProductLink({ product, detail }: { product: ProductListItem; detail: Re
             {product.name}
           </span>
           {product.unclaimed && (
-            <span className="shrink-0 rounded-full border border-line px-2 py-0.5 text-[13px] font-semibold text-fg-3">
-              미클레임
+            <span className="shrink-0 rounded-full border border-line px-2 py-0.5 text-[13px] font-semibold text-fg-2" title={UNCLAIMED_HINT}>
+              {UNCLAIMED_LABEL}
             </span>
           )}
         </div>
-        <p className="mt-0.5 truncate text-[13px] text-fg-3">{product.tagline}</p>
+        <ProductTagline tagline={product.tagline} source={product.taglineSource} className="mt-0.5 truncate text-[13px] text-fg-2" showSource={false} />
         <div className="mt-1 font-mono text-[13px] font-semibold text-fg-2">{detail}</div>
       </Link>
     </li>
@@ -51,7 +54,7 @@ function Entries({
   items: ProductListItem[];
   detail: (item: ProductListItem) => React.ReactNode;
 }) {
-  if (items.length === 0) return <p className="text-[13px] text-fg-3">아직 표시할 제품이 없습니다.</p>;
+  if (items.length === 0) return <p className="text-[13px] text-fg-2">아직 표시할 프로젝트가 없습니다.</p>;
   return <ol>{items.map((item) => <ProductLink key={item.slug} product={item} detail={detail(item)} />)}</ol>;
 }
 
@@ -64,13 +67,13 @@ export function DiscoveryBoards({ boards, now = new Date() }: { boards: Boards; 
           detail={(item) => {
             const ranked = item as RankingListItem;
             if (ranked.scoreMode === "unique_visitors") {
-              return `#${ranked.rank} · 고유 유입자 ${ranked.uniqueVisitors.toLocaleString("ko-KR")} · 유효 방문 ${ranked.validClicks.toLocaleString("ko-KR")}`;
+              return `#${ranked.rank} · 고유 유입자 ${formatCount(ranked.uniqueVisitors)} · 유효 방문 ${formatCount(ranked.validClicks)}`;
             }
-            return `#${ranked.rank} · 유효 방문 ${ranked.validClicks.toLocaleString("ko-KR")}`;
+            return `#${ranked.rank} · 유효 방문 ${formatCount(ranked.validClicks)}`;
           }}
         />
       </Board>
-      <Board title="급상승">
+      <Board title="방문 증가">
         <Entries
           items={boards.trending}
           detail={(item) => {

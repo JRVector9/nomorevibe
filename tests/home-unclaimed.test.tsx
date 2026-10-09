@@ -27,7 +27,9 @@ const {
   getPublicListBySlugs,
   searchRelevance,
   relevanceWindow,
+  popularSearches,
 } = vi.hoisted(() => ({
+  popularSearches: vi.fn(),
   getPublicListBySlugs: vi.fn(),
   searchRelevance: vi.fn(),
   relevanceWindow: vi.fn(),
@@ -49,6 +51,8 @@ vi.mock("@/lib/crawl/settings", () => ({ getSettings: getCrawlSettings }));
 vi.mock("@/lib/news/repository", () => ({ listHomeNews: vi.fn().mockResolvedValue([]) }));
 vi.mock("@/lib/domain/products/popular", () => ({ getPopularGroups: vi.fn().mockResolvedValue([]) }));
 vi.mock("@/lib/domain/products/repository", () => ({ categoryCounts, countProducts, RISING_MAX_STARS: 2000 }));
+// 0건 화면의 추천 검색어는 검색 기록(DB)에서 읽는다 — 화면 조합만 본다
+vi.mock("@/lib/domain/products/search-log", () => ({ recordSearch: vi.fn(), popularSearches }));
 // 검색어 해석은 DB 로 어간을 뽑고 넓힐지 센다 — 이 화면 테스트는 목록 조합만 보므로 친 그대로 넘긴다
 vi.mock("@/lib/domain/products/search-translation", () => ({
   resolveSearchQuery: async (query?: string) => ({ queries: query ? [query] : [], translated: null }),
@@ -76,7 +80,7 @@ vi.mock("@/lib/domain/ranking/view", () => ({
   getSeasonRanking,
 }));
 
-import HomePage, { HomeContent, fallbackSort, needsUnclaimedFill } from "@/app/page";
+import HomePage, { HomeContent, fallbackSort, generateMetadata, needsUnclaimedFill, searchSuggestions } from "@/app/page";
 
 const season: SeasonSummary = {
   key: "2026-W34",
@@ -127,11 +131,20 @@ function ranked(slug: string, rank: number): RankingListItem {
   };
 }
 
+/** 목록 화면 — 페이지는 목록을 Suspense 로 흘려 보내므로(골격 먼저) 내용은 HomeContent 가 그린 것을 본다 */
 async function render(
   params: Record<string, string | string[] | undefined> = {},
 ): Promise<string> {
+  return renderToStaticMarkup(await HomeContent({ params }));
+}
+
+/** 페이지 그대로 — 리다이렉트와 먼저 나가는 골격(Suspense fallback) */
+async function renderPage(params: Record<string, string | string[] | undefined> = {}): Promise<string> {
   return renderToStaticMarkup(await HomePage({ searchParams: Promise.resolve(params) }));
 }
+
+/** 분야 화면(/c/[category])처럼 — 분야는 주소 경로에서 정식 값으로 온다 */
+const renderScreen = render;
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -147,6 +160,7 @@ beforeEach(() => {
   getSeasonRanking.mockResolvedValue({ season, items: [] });
   categoryCounts.mockResolvedValue({});
   countProducts.mockResolvedValue(0);
+  popularSearches.mockResolvedValue([]);
   getHomePulse.mockResolvedValue({
     asOf: new Date("2026-09-08T00:00:00+09:00"),
     timezone: "Asia/Seoul",
@@ -192,7 +206,7 @@ describe("미클레임 구획을 붙이는 기준", () => {
     expect(getPublicList).toHaveBeenCalledTimes(1);
     expect(getPublicList).toHaveBeenCalledWith(5, { sort: "rising", rising: true });
     expect(html).toContain("ranked-0");
-    expect(html).not.toContain("주인을 기다리는 제품");
+    expect(html).not.toContain("주인을 기다리는 프로젝트");
   });
 
   /**
@@ -211,10 +225,12 @@ describe("미클레임 구획을 붙이는 기준", () => {
     expect(getSeasonRanking).not.toHaveBeenCalled();
     expect(getUnclaimedList).not.toHaveBeenCalled();
     expect(html).toContain("rising-one");
-    expect(html).toContain("스타 증가 순 3개");
+    expect(html).toContain("지금 뜨는 3개");
+    // 순위가 서기 전 '추천' 탭은 스타가 는 목록이라 이름도 '지금 뜨는'(UX-35)
+    expect(html).toMatch(/aria-selected="true"[^>]*>지금 뜨는</);
     expect(html).toContain('href="/?metric=rising"');
-    expect(html).not.toContain("주인을 기다리는 제품");
-    expect(html).not.toContain("아직 순위에 오른 제품이 없습니다");
+    expect(html).not.toContain("주인을 기다리는 프로젝트");
+    expect(html).not.toContain("아직 순위에 오른 프로젝트가 없습니다");
   });
 
   it("관심 많은 순도 검증 제품이 모자라면 스타 많은 순 공개 목록으로 대신한다", async () => {
@@ -235,7 +251,7 @@ describe("미클레임 구획을 붙이는 기준", () => {
     const html = await render();
 
     expect(html).toContain("아직 스타 변화를 확인한 프로젝트가 없습니다");
-    expect(html).not.toContain("아직 순위에 오른 제품이 없습니다");
+    expect(html).not.toContain("아직 순위에 오른 프로젝트가 없습니다");
   });
 
   it("대체 목록은 검증 제품이 모자랄 때 추천·관심 많은 순에만 있다", () => {
@@ -250,10 +266,10 @@ describe("미클레임 구획을 붙이는 기준", () => {
   it("필터가 걸려 목록이 비어도 전역 검증 수가 충분하면 붙이지 않는다", async () => {
     countProducts.mockResolvedValue(25);
 
-    const html = await render({ category: "Finance" });
+    const html = await renderScreen({ category: "Finance" });
 
     expect(getUnclaimedList).not.toHaveBeenCalled();
-    expect(html).toContain("조건에 맞는 제품이 없습니다");
+    expect(html).toContain("조건에 맞는 프로젝트가 없습니다");
   });
 });
 
@@ -292,11 +308,21 @@ describe("빈 화면 문구", () => {
   it("검색어가 있으면 결과를 기다리지 않고 틀과 '찾는 중'부터 보낸다", async () => {
     getPublicList.mockResolvedValue([product("searched-project")]);
 
-    const html = await render({ q: "searched" });
+    const html = await renderPage({ q: "searched" });
 
     expect(html).toContain("“searched” 검색 결과");
     expect(html).toContain("찾는 중입니다");
     expect(html).not.toContain("searched-project");
+  });
+
+  it("검색어가 없어도 목록은 카드 9장 골격부터 보낸다(UX-38) — 경로의 loading.tsx 없이 페이지 안에서", async () => {
+    getPublicList.mockResolvedValue([product("listed-project")]);
+
+    const html = await renderPage({ sort: "recent" });
+
+    expect(html.match(/class="skeleton-card"/g)).toHaveLength(9);
+    expect(html).toContain('aria-busy="true"');
+    expect(html).not.toContain("listed-project");
   });
 
   it("정렬을 명시하지 않은 검색은 순위가 아니라 공개 목록 전체를 관련도순(섞기·재정렬)으로 찾는다", async () => {
@@ -356,7 +382,7 @@ describe("빈 화면 문구", () => {
 
     const html = await render({ sort: "recent" });
 
-    expect(html).not.toContain("아직 등록된 제품이 없습니다");
+    expect(html).not.toContain("아직 등록된 프로젝트가 없습니다");
     expect(html).toContain("seeded-one");
   });
 
@@ -365,9 +391,9 @@ describe("빈 화면 문구", () => {
     countProducts.mockResolvedValue(1);
     getPublicList.mockResolvedValue([product("seeded-one")]);
 
-    const html = await render({ sort: "recent", category: "Finance" });
+    const html = await renderScreen({ sort: "recent", category: "Finance" });
 
-    expect(html).not.toContain("조건에 맞는 제품이 없습니다");
+    expect(html).not.toContain("조건에 맞는 프로젝트가 없습니다");
     expect(html).toContain("seeded-one");
   });
 
@@ -376,7 +402,7 @@ describe("빈 화면 문구", () => {
 
     const html = await render({ sort: "recent" });
 
-    expect(html).toContain("아직 등록된 제품이 없습니다");
+    expect(html).toContain("아직 등록된 프로젝트가 없습니다");
   });
 
   it("순위가 비었다는 설명은 미클레임 목록과 함께 남는다", async () => {
@@ -386,8 +412,8 @@ describe("빈 화면 문구", () => {
     // 추천·관심 많은 순은 대체 목록으로 채워지므로 순위 설명이 남는 곳은 급상승뿐이다
     const html = await render({ sort: "trending" });
 
-    expect(html).toContain("아직 순위에 오른 제품이 없습니다");
-    expect(html).toContain("주인을 기다리는 제품");
+    expect(html).toContain("아직 순위에 오른 프로젝트가 없습니다");
+    expect(html).toContain("주인을 기다리는 프로젝트");
   });
 });
 
@@ -405,7 +431,7 @@ describe("카테고리 필터", () => {
     const html = await render();
 
     expect(categoryCounts).toHaveBeenCalledWith({ statuses: ["verified", "seeded"], excludeDown: true });
-    expect(html).toContain('href="/?category=Dev"');
+    expect(html).toContain('href="/c/dev"');
   });
 });
 
@@ -477,7 +503,7 @@ describe("끝까지 닿는 목록", () => {
     expect(html).toContain("p-10 태그라인");
     expect(html).toContain("p-207 태그라인");
     expect(html).not.toContain("p-9 태그라인");
-    expect(html).toContain("프로젝트 더 보기 (207 / 33692)");
+    expect(html).toContain("프로젝트 더 보기 (207 / 33,692)");
     expect(html).toContain('href="/?sort=recent&amp;shown=216"');
   });
 
@@ -515,7 +541,7 @@ describe("끝까지 닿는 목록", () => {
 
     expect(getPublicList).toHaveBeenCalledWith(18, expect.objectContaining({ offset: 0 }));
     expect(html).not.toContain("접었습니다");
-    expect(html).toContain("프로젝트 더 보기 (18 / 33692)");
+    expect(html).toContain("프로젝트 더 보기 (18 / 33,692)");
   });
 });
 
@@ -527,7 +553,7 @@ describe("구획 제목", () => {
     const html = await render({ sort: "trending" });
 
     expect(html).not.toContain("새로 발견됨");
-    expect(html).toContain("주인을 기다리는 제품");
+    expect(html).toContain("주인을 기다리는 프로젝트");
   });
 
   it("첫 화면에 급상승 띠가 오고 피드는 그다음 항목부터 이어진다", async () => {
@@ -540,5 +566,72 @@ describe("구획 제목", () => {
     expect(html.indexOf("지금 뜨는 프로젝트")).toBeLessThan(html.indexOf("발견할 가치가 있는 프로젝트"));
     expect(getPublicList).toHaveBeenCalledWith(5, expect.objectContaining({ sort: "rising", rising: true }));
     expect(getPublicList).toHaveBeenCalledWith(expect.any(Number), expect.objectContaining({ sort: "rising", offset: 5 }));
+  });
+});
+
+describe("분야 주소·검색 상태 (UX-12·24·35·39·40)", () => {
+  it("옛 주소 ?category= 는 대소문자를 가리지 않고 /c/<분야> 로 보낸다 — 다른 조건은 따라간다", async () => {
+    await expect(renderPage({ category: "finance", sort: "recent" })).rejects.toMatchObject({ digest: expect.stringContaining("/c/finance?sort=recent") });
+    await expect(renderPage({ category: "Finance" })).rejects.toMatchObject({ digest: expect.stringContaining("/c/finance") });
+    expect(getPublicList).not.toHaveBeenCalled();
+  });
+
+  it("분야 화면은 그 분야 제목을 h1 으로 두고, 필터 없는 전체 기준의 아래 홈 구획은 숨긴다", async () => {
+    countProducts.mockResolvedValue(25);
+    categoryCounts.mockResolvedValue({ Dev: 3, Finance: 1, Profile: 9 });
+    getSeasonRanking.mockResolvedValue({ season, items: [ranked("finance-one", 1)] });
+
+    const html = await renderScreen({ category: "Finance" });
+
+    expect(html).toContain('<h1 id="projects-title" class="row-title">금융 프로젝트</h1>');
+    expect(html).toContain("금융 1개");
+    expect(html).not.toContain("AI로 만든 것들이");
+    expect(html).not.toContain("많이 쓰이는 프로젝트");
+    expect(html).not.toContain("무엇으로 만들었나");
+    expect(html).not.toContain("이번 주 가장 활발한");
+    // 개인 프로필은 분야 알약에 없다(계약 C3)
+    expect(html).not.toContain("개인프로필");
+  });
+
+  it("검색어로 0건이면 찾아볼 말 여섯과 분야를 주고, 초기화 링크는 결과 줄에 하나만 둔다", async () => {
+    popularSearches.mockResolvedValue(["meeting notes", "가계부"]);
+    categoryCounts.mockResolvedValue({ Dev: 9_157, Finance: 285, Profile: 2_577 });
+    searchRelevance.mockResolvedValue({ head: [], total: 0, semantic: true, reranked: false, plan: [], translated: null });
+
+    const html = renderToStaticMarkup(await HomeContent({ params: { q: "zzqxqzvbn" } }));
+
+    expect(html).toContain("“zzqxqzvbn”에 맞는 프로젝트가 없습니다");
+    expect(html).toContain("이런 검색어는 어떠세요");
+    // 기록에서 고른 말이 먼저, 겹치는 말은 한 번, 모자라면 정해 둔 말로 채워 여섯
+    expect(html.match(/href="\/\?q=/g)).toHaveLength(6);
+    expect(html.indexOf("meeting notes")).toBeLessThan(html.indexOf("회의록 요약"));
+    expect(html).toContain('href="/c/dev"');
+    expect(html).toContain('href="/c/finance"');
+    expect(html).not.toContain('href="/c/profile"');
+    expect(html).not.toContain("전체 보기");
+    expect(html.match(/필터 초기화/g)).toHaveLength(1);
+    expect(html).toContain("관련 결과 0개");
+  });
+
+  it("추천 검색어는 지금 친 말과 대소문자·빈칸만 다른 말을 빼고 여섯까지", () => {
+    expect(searchSuggestions(["Todo  App", "todo app", "가계부"], "TODO app")).toEqual(["가계부", "회의록 요약", "PDF 합치기", "할 일 관리", "이미지 생성", "코드 리뷰"]);
+    expect(searchSuggestions(["a1", "a2", "a3", "a4", "a5", "a6", "a7"], undefined)).toEqual(["a1", "a2", "a3", "a4", "a5", "a6"]);
+  });
+
+  it("관련도순 검색은 섞은 수라 '관련 결과 약 n개'로, 더 보기도 같은 표기로 쓴다", async () => {
+    searchRelevance.mockResolvedValue({ head: ["a"], total: 1_779, semantic: true, reranked: true, plan: ["calender"], translated: null });
+    relevanceWindow.mockResolvedValue(["a"]);
+    getPublicListBySlugs.mockResolvedValue([product("a")]);
+
+    const html = renderToStaticMarkup(await HomeContent({ params: { q: "calender" } }));
+
+    expect(html).toContain("관련 결과 약 1,800개");
+    expect(html).toContain("프로젝트 더 보기 (1 / 약 1,800)");
+    expect(html).not.toContain("1779");
+  });
+
+  it("탭 제목은 검색어로 정한다(UX-39)", async () => {
+    expect(await generateMetadata({ searchParams: Promise.resolve({ q: "가계부" }) })).toEqual({ title: "“가계부” 검색 결과 — nomorevibe" });
+    expect(await generateMetadata({ searchParams: Promise.resolve({}) })).toEqual({ title: "nomorevibe — AI로 만든 것들, 세상에 나오다." });
   });
 });

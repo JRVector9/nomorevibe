@@ -7,9 +7,11 @@ import { ensureSchema, resetTables } from '../integration/setup';
 test.beforeAll(async () => {
   ensureSchema(); await resetTables();
   const createdAt = new Date('2026-09-01T00:00:00Z');
+  // 기본 '지금 뜨는' 목록은 마지막 스타 확인이 7일 안인 것만 센다(repository.ts risingStars) — 고정 날짜는 시간이 지나면 빠진다
+  const starsAt = new Date(); const starsPreviousAt = new Date(Date.now() - 86_400_000);
   const rows = Array.from({ length: 124 }, (_, i) => {
     const number = String(i + 1).padStart(3, '0');
-    return { slug: `directory-${number}`, name: `Directory Project ${number}`, url: `https://directory-${number}.example`, tagline: 'A useful project in the complete catalogue', description: 'Directory tools', category: i < 117 || i >= 122 ? 'Dev' as const : 'Design' as const, status: i === 123 ? 'banned' as const : 'seeded' as const, source: 'crawler' as const, createdAt, stars: 100, starsPrevious: 90, starsAt: new Date('2026-09-03T00:00:00Z'), starsPreviousAt: new Date('2026-09-02T00:00:00Z'), verifyToken: 'v', editTokenHash: 'e' };
+    return { slug: `directory-${number}`, name: `Directory Project ${number}`, url: `https://directory-${number}.example`, tagline: 'A useful project in the complete catalogue', description: 'Directory tools', category: i < 117 || i >= 122 ? 'Dev' as const : 'Design' as const, status: i === 123 ? 'banned' as const : 'seeded' as const, source: 'crawler' as const, createdAt, stars: 100, starsPrevious: 90, starsAt, starsPreviousAt, verifyToken: 'v', editTokenHash: 'e' };
   });
   await db.insert(products).values(rows);
   await db.insert(productHealth).values({ slug: 'directory-123', status: 503, failures: 3 });
@@ -28,7 +30,8 @@ test('public filtered catalogue crosses 100 and reaches the final project', asyn
   await page.getByRole('link', { name: '프로젝트 더 보기 (99 / 117)' }).click();
   await expect(page.locator('.project-card')).toHaveCount(108);
   expect(new URL(page.url()).searchParams.get('q')).toBe('directory');
-  expect(new URL(page.url()).searchParams.get('category')).toBe('Dev');
+  // 분야는 정식 주소 /c/<분야> 의 경로로 남는다(UX-40)
+  expect(new URL(page.url()).pathname).toBe('/c/dev');
   await page.getByRole('link', { name: '프로젝트 더 보기 (108 / 117)' }).click();
   await expect(page.locator('.project-card')).toHaveCount(117);
   await expect(page.getByRole('heading', { name: 'Directory Project 117', exact: true })).toBeVisible();
@@ -45,11 +48,12 @@ test('public filtered catalogue crosses 100 and reaches the final project', asyn
 test('the default fallback catalogue continues beyond 100 without an unclaimed section', async ({page})=>{
   await page.goto('/?sort=weekly&q=directory&category=Dev&shown=99');
   await expect(page.locator('.unclaimed-block')).toHaveCount(0);
-  await expect(page.getByRole('heading', { name: '주인을 기다리는 제품', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('heading', { name: '주인을 기다리는 프로젝트', exact: true })).toHaveCount(0);
   await expect(page.locator('.project-card')).toHaveCount(99);
   await page.getByRole('link', { name: '프로젝트 더 보기 (99 / 117)', exact: true }).click();
   await expect(page.locator('.project-card')).toHaveCount(108);
-  expect(Object.fromEntries(new URL(page.url()).searchParams)).toEqual({ sort: 'weekly', category: 'Dev', q: 'directory', shown: '108' });
+  expect(new URL(page.url()).pathname).toBe('/c/dev');
+  expect(Object.fromEntries(new URL(page.url()).searchParams)).toEqual({ sort: 'weekly', q: 'directory', shown: '108' });
   await page.getByRole('link', { name: '프로젝트 더 보기 (108 / 117)', exact: true }).click();
   await expect(page.locator('.project-card')).toHaveCount(117);
   await expect(page.locator('.project-title')).toHaveText(Array.from({ length: 117 }, (_, i) => `Directory Project ${String(i + 1).padStart(3, '0')}`));

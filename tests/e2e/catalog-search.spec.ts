@@ -2,7 +2,7 @@ import{test,expect}from'@playwright/test';import{db}from'@/lib/db';import{produc
 test.beforeAll(async()=>{ensureSchema();await resetTables();for(let i=1;i<=12;i++){const num=String(i).padStart(2,'0');await db.insert(products).values({slug:`catalog-qa-${num}`,name:i===11?`CatalogueOwner/repo-${num}`:`Catalog Project ${num}`,url:`https://catalog-${num}.example`,tagline:'A useful app for teams to organize research, build products and share detailed plans with everyone across the entire organization.',description:i===12?'A quantum experiment planner':'Plan daily work',repoUrl:`https://github.com/CatalogueOwner/repo-${num}`,category:'Dev',status:'seeded',source:'crawler',stars:2500,starsPrevious:i===11?null:i===2?2502:2495,starsAt:new Date(),starsPreviousAt:new Date(Date.now()-86400000),verifyToken:'v',editTokenHash:'e'});}});
 test('global search reveals nine cards and matches owner, repository and description',async({page})=>{
  const errors:string[]=[];page.on('pageerror',e=>errors.push(e.message));
- await page.setViewportSize({width:1440,height:1000});await page.goto('/?sort=all-time&category=Finance');
+ await page.setViewportSize({width:1440,height:1000});await page.goto('/c/finance?sort=all-time');
  const search=page.getByRole('searchbox',{name:'프로젝트 검색'});await search.fill('@CatalogueOwner');await search.press('Enter');await page.waitForURL(u=>u.searchParams.get('q')==='@CatalogueOwner');
  expect(new URL(page.url()).searchParams.has('category')).toBe(false);expect(new URL(page.url()).searchParams.has('sort')).toBe(false);
  await expect(page.getByRole('heading',{name:'“@CatalogueOwner” 검색 결과'})).toBeVisible();await expect(page.locator('.project-card')).toHaveCount(9);

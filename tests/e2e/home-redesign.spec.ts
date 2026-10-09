@@ -49,11 +49,15 @@ test("home discovery, saved projects, search, methodology, and mobile layout wor
   await save.click();
   await expect(card.getByRole("button", { name: "Evidence Studio 저장 취소" })).toHaveAttribute("aria-pressed", "true");
 
-  await page.getByRole("link", { name: /이번 주 태어난/ }).click();
+  await page.getByRole("link", { name: /이번 주 새로 생긴/ }).click();
   const dialog = page.getByRole("dialog", { name: "숫자의 기준" });
   await expect(dialog).toBeVisible();
   expect(await dialog.evaluate((node) => node.matches(":modal"))).toBe(true);
-  await expect(dialog.getByText("태어난 프로젝트 — 저장소를 처음 만든 날로 셉니다.")).toBeVisible();
+  // 모달은 화면 가운데(UX-11) — 왼쪽 위 모서리에 붙지 않는다
+  const box = await dialog.boundingBox();
+  expect(Math.abs(box!.x + box!.width / 2 - 720)).toBeLessThan(2);
+  expect(Math.abs(box!.y + box!.height / 2 - 500)).toBeLessThan(2);
+  await expect(dialog.getByText("새로 생긴 프로젝트 — 저장소를 처음 만든 날로 셉니다.")).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(dialog).toBeHidden();
   await expect(page).not.toHaveURL(/metric=/);
@@ -62,8 +66,9 @@ test("home discovery, saved projects, search, methodology, and mobile layout wor
   await search.fill("Evidence Studio");
   await Promise.all([page.waitForURL(/q=Evidence\+Studio/), search.press("Enter")]);
   await expect(page.getByRole("heading", { name: "Evidence Studio", exact: true })).toBeVisible();
-  // 헤더 검색은 관련도순이라 어느 탭도 선택되지 않는다
-  await expect(page.getByRole("tab", { selected: true })).toHaveCount(0);
+  // 헤더 검색은 관련도순 — '관련도' 탭이 맨 앞에서 켜진다(UX-12)
+  await expect(page.getByRole("tab", { selected: true })).toHaveText("관련도");
+  await expect(page).toHaveTitle("“Evidence Studio” 검색 결과 — nomorevibe");
 
   await page.getByRole("link", { name: "Evidence Studio", exact: true }).click();
   await expect(page).toHaveURL(new RegExp(`/p/${PRODUCT_DETAIL_FIXTURES.rich}$`));
