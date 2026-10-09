@@ -80,7 +80,9 @@ export default async function AdminProductsPage({ searchParams }: Props) {
   /** 이름 확인 — 지금 이름(행의 제목) 옆에 제안과 사유 */
   const nameNote = (slug: string) => {
     const review = nameReviews?.get(slug);
-    return review ? `제안 → ${review.proposed ?? "없음 (직접 확인)"} · ${review.issues.map((issue) => NAME_ISSUE_LABELS[issue]).join(", ")}` : null;
+    // 저장소 이름으로 대신한 제안은 자주 틀린다 — 그대로 고르지 말고 사이트를 보고 정하라고 적는다
+    const proposal = review?.proposed ? `${review.proposed}${review.source === "repo" ? " (저장소 이름 — 확인 필요)" : ""}` : "없음 (직접 확인)";
+    return review ? `제안 → ${proposal} · ${review.issues.map((issue) => NAME_ISSUE_LABELS[issue]).join(", ")}` : null;
   };
   const time = (value: Date | null) => value ? formatListTime(value, now) : null;
   /** 24시간을 채워 확정됐는지 — repository.ts repoGone 과 같은 식 */
