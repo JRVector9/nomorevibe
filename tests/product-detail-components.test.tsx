@@ -17,6 +17,7 @@ import { UpdateTimeline } from "@/components/product-detail/UpdateTimeline";
 import { UnclaimedOwnerContact } from "@/components/product-detail/UnclaimedOwnerContact";
 import { LAST_CODE_UPDATE_LABEL, LATEST_VERSION_LABEL, SITE_REPO_RELATION_LABEL, UNCLAIMED_HINT } from "@/lib/copy/terms";
 import type { ProductDetailView } from "@/lib/domain/products/detail-view";
+import { TAKEDOWN_PROMISE } from "@/lib/domain/products/takedown-view";
 import type { ProductListItem } from "@/lib/domain/products/view";
 
 const observedAt = new Date("2026-08-19T03:00:00.000Z");
@@ -540,6 +541,14 @@ describe("evidence product detail components", () => {
     // 공개 이메일은 두지 않는다(D5)
     expect(html).not.toMatch(/mailto:|[\w.+-]+@[\w-]+\.[a-z]{2,}/i);
     expect(html).not.toContain("운영 주체와 연락");
+    // 내려달라는 요청 — 갈래 둘, 운영자 확인 방법, 처리 약속과 절차 링크, 연락처 칸 없음(UX-19, D5)
+    expect(html.match(/<input type="radio"[^>]*name="kind"/g)).toHaveLength(2);
+    expect(textOf(html)).toContain("운영자 요청 · 운영자가 목록에서 빼 달라는 요청");
+    expect(textOf(html)).toContain("스팸·악성 신고 · 스팸이거나 악성 코드·사기로 이어지는 프로젝트");
+    expect(textOf(html)).toContain("저장소에 이 요청을 적은 이슈를 열거나 저장소에 파일을 하나 더한 뒤");
+    expect(textOf(html)).toContain(TAKEDOWN_PROMISE);
+    expect(html).toMatch(/<a [^>]*href="\/policy#takedown"[^>]*>처리 절차 보기<\/a>/);
+    expect(html).not.toMatch(/type="email"|연락처|이메일/);
     expect(html).not.toContain("@AgentWorkforce");
     expect(html).not.toContain("https://github.com/AgentWorkforce");
     expect(html).not.toContain("<img");

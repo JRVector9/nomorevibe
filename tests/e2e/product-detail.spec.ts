@@ -1,5 +1,6 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { eq } from "drizzle-orm";
+import { SITE_REPO_RELATION } from "@/lib/copy/terms";
 import { db } from "@/lib/db";
 import { products } from "@/lib/db/schema";
 import {
@@ -299,7 +300,7 @@ test("collecting, stale-conflict, and unclaimed states remain explicit", async (
   const license = page.getByText("라이선스", { exact: true }).locator("..");
   await expect(license).toContainText("정보 충돌");
   await expect(license).toContainText("메이커 MIT · 저장소 GPL-3.0 — 두 값을 모두 확인하세요");
-  await expect(page.getByText("연결 끊김")).toBeVisible();
+  await expect(page.getByText(SITE_REPO_RELATION.disconnected, { exact: true })).toBeVisible();
   await expect(page.getByText("접속 불안정").first()).toBeVisible();
   await expect(page.locator("main").getByText(/온라인/)).toHaveCount(0);
 
