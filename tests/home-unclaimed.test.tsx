@@ -631,7 +631,9 @@ describe("분야 주소·검색 상태 (UX-12·24·35·39·40)", () => {
   });
 
   it("탭 제목은 검색어로 정한다(UX-39)", async () => {
-    expect(await generateMetadata({ searchParams: Promise.resolve({ q: "가계부" }) })).toEqual({ title: "“가계부” 검색 결과 — nomorevibe" });
+    // 검색 결과는 색인하지 않는다 — 검색어마다 얇은 목록이 끝없이 생긴다(분야는 /c/ 정식 주소가 맡는다)
+    expect(await generateMetadata({ searchParams: Promise.resolve({ q: "가계부" }) }))
+      .toEqual({ title: "“가계부” 검색 결과 — nomorevibe", robots: { index: false, follow: true } });
     expect(await generateMetadata({ searchParams: Promise.resolve({}) })).toEqual({ title: "nomorevibe — AI로 만든 것들, 세상에 나오다." });
   });
 });

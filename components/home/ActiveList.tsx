@@ -20,7 +20,7 @@ export function ActiveList({ active, projects }: { active: HomePulse["active"]; 
           {rows.map((item, index) => (
             <li key={item.slug} className="rank-row">
               <span className="rank-no">{index + 1}</span>
-              <ProductIcon name={item.name} ogImage={item.ogImage} size={28} />
+              <ProductIcon name={item.name} ogImage={item.ogImage} size={28} category={item.category} />
               <span className="rank-name">
                 <Link prefetch={false} href={`/p/${item.slug}`}>{item.name}</Link>
                 <small>{categoryLabel(item.category)}{item.stars !== null && item.stars >= 100 ? ` · ★ ${formatCount(item.stars)}` : ""}</small>

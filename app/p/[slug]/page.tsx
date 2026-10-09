@@ -14,6 +14,7 @@ import { ProductHero } from "@/components/product-detail/ProductHero";
 import { RelatedRow } from "@/components/product-detail/RelatedRow";
 import { UpdateTimeline } from "@/components/product-detail/UpdateTimeline";
 import { UnclaimedOwnerContact } from "@/components/product-detail/UnclaimedOwnerContact";
+import { categoryHref } from "@/components/home/browse-state";
 import { pageTitle } from "@/lib/copy/brand";
 import { getProductDetail, getProductIdentity } from "@/lib/domain/products/detail-view";
 import { productIndexable } from "@/lib/domain/products/indexing";
@@ -77,7 +78,7 @@ async function ProductDetail({ slug, category }: { slug: string; category: strin
       <nav aria-label="경로" className="flex items-center gap-2 pt-4 text-[13px] text-fg-2">
         <Link prefetch={false} href="/" className="shrink-0 hover:text-fg">발견하기</Link>
         <span aria-hidden>›</span>
-        <Link prefetch={false} href={`/?category=${encodeURIComponent(detail.product.category)}&sort=recent`} className="shrink-0 hover:text-fg">{categoryLabel(detail.product.category)}</Link>
+        <Link prefetch={false} href={categoryHref(detail.product.category, { sort: "recent" })} className="shrink-0 hover:text-fg">{categoryLabel(detail.product.category)}</Link>
         <span aria-hidden>›</span>
         <span className="min-w-0 truncate text-fg">{detail.product.name}</span>
       </nav>

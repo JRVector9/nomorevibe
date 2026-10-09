@@ -13,8 +13,8 @@ import { TierTabs } from "@/app/popular/TierTabs";
 import { STAR_TIERS } from "@/lib/domain/products/stars";
 
 const product = (over: Partial<PopularProduct> = {}): PopularProduct => ({
-  slug: "lcu", name: "LCU", tagline: "League client helper", taglineSource: "ai_readme", category: "Dev",
-  repoUrl: "https://github.com/a/lcu", ogImage: null, stars: 4_900, ownerType: "User",
+  slug: "lcu", name: "LCU", tagline: "League client helper", taglineKo: null, taglineSource: "ai_readme", category: "Dev",
+  repoUrl: "https://github.com/a/lcu", repoRenamedTo: null, ogImage: null, stars: 4_900, ownerType: "User",
   starsAt: "2026-10-08 04:38:13", starsPrevious: 4_850, starsPreviousAt: "2026-10-07 02:00:00", ...over,
 });
 

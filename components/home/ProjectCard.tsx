@@ -5,7 +5,7 @@ import type { BrowseState } from "@/components/home/browse-state";
 import { Icon } from "@/components/home/icons";
 import { ProjectTile } from "@/components/home/ProjectTile";
 import type { HomeCardProduct } from "@/components/home/types";
-import { githubOwnerFromRepositoryUrl } from "@/lib/domain/products/github-owner";
+import { listedRepositoryOwner } from "@/lib/domain/products/github-owner";
 import { categoryLabel } from "@/lib/domain/products/labels";
 import type { TimeInput } from "@/lib/format/time";
 import { ProductActivityRow } from "./ProductActivityRow";
@@ -27,7 +27,7 @@ export function ProjectCard({ product, saved, onToggleSave, now }: {
   /** 서버가 읽은 시각 — 넘기면 서버와 브라우저가 같은 'n일 전'을 그린다. 없으면 지금 */
   now?: Date | string | number;
 }) {
-  const owner = githubOwnerFromRepositoryUrl(product.repoUrl);
+  const owner = listedRepositoryOwner(product.repoUrl, product.repoRenamedTo);
   const maker = owner ? `@${owner.login}` : product.makerName ? `@${product.makerName.replace(/^@/, "")}` : null;
   const builder = product.builder && product.builderClaim === "reported" ? product.builder : null;
   const at = now ?? new Date();
@@ -59,7 +59,7 @@ export function ProjectCard({ product, saved, onToggleSave, now }: {
             {builder && <span>{builder}</span>}
           </p>
         )}
-        <ProductTagline tagline={product.tagline} source={product.taglineSource} className="project-tagline" />
+        <ProductTagline tagline={product.tagline} taglineKo={product.taglineKo} source={product.taglineSource} className="project-tagline" />
         <div className="card-meta">
           {/* 조각 사이 '·'는 CSS 가 넣는다(card-dots) — 빠진 조각 옆에 점만 남지 않게 */}
           <span className="card-meta-text card-dots">

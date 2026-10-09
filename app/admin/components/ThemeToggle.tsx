@@ -7,7 +7,7 @@ import { AdminIcon, type AdminIconName } from "./AdminIcon";
  * 관리자 화면 테마(2026-10-08 UX 감사 ADM-25) — 라이트/다크/시스템, 이 브라우저에만 기억한다(localStorage).
  *
  * 고른 값은 html 의 data-admin-theme 으로 단다. 시스템이면 속성을 지워 admin.css 의 prefers-color-scheme 이 따르게 한다.
- * 공개 사이트는 늘 라이트다 — admin.css 가 이 속성을 .admin-area 가 있는 body 에만 적용한다.
+ * 이 속성은 admin.css 가 .admin-area 가 있는 body 에만 적용한다 — 공개 사이트는 따로 시스템 설정(prefers-color-scheme)을 따른다(UX-34).
  */
 export type AdminTheme = "light" | "dark" | "system";
 

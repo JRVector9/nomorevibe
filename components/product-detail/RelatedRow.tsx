@@ -1,3 +1,4 @@
+import { categoryHref } from "@/components/home/browse-state";
 import { CompactRow } from "@/components/home/CompactRow";
 import { formatCount } from "@/lib/format/number";
 import { categoryLabel } from "@/lib/domain/products/labels";
@@ -16,7 +17,7 @@ export function RelatedRow({ category, items, total }: { category: string; items
       title={`${label} 분야에서 지금 뜨는`}
       note="최근 두 확인 사이 하루 평균 GitHub 스타가 많이 는 순 · 스타 2천 미만"
       more={{
-        href: `/?category=${encodeURIComponent(category)}`,
+        href: categoryHref(category),
         label: total === null ? "모두 보기" : `${formatCount(total)}개 모두 보기`,
       }}
       items={items}

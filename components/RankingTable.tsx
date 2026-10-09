@@ -31,7 +31,7 @@ function ProductIdentity({ item, mobileDetails }: {
         )}
       </div>
       {/* 좁은 표 칸이라 출처 줄은 끈다 — 소개는 ProductTagline 으로만 그린다(한국어 소개가 붙을 자리) */}
-      <ProductTagline tagline={item.tagline} source={item.taglineSource} showSource={false} className="block max-w-64 truncate text-[13px] text-fg-2" />
+      <ProductTagline tagline={item.tagline} taglineKo={item.taglineKo} source={item.taglineSource} showSource={false} className="block max-w-64 truncate text-[13px] text-fg-2" />
       {mobileDetails}
     </>
   );

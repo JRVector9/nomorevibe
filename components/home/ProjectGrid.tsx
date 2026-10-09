@@ -22,6 +22,7 @@ export function ProjectGrid({
   totalCount,
   start = 0,
   approximate = false,
+  now,
 }: {
   products: HomeCardProduct[];
   browseState: BrowseState;
@@ -31,6 +32,8 @@ export function ProjectGrid({
   start?: number;
   /** 전체 수가 관련도순 검색(섞은 수)이라 '약 n'으로 써야 하는지 — 결과 줄과 같은 표기(browse-state.ts) */
   approximate?: boolean;
+  /** 서버가 그린 시각(ISO) — 카드의 'n일 전'·'새 프로젝트'가 서버와 브라우저에서 같은 글자를 낸다 */
+  now?: string;
 }) {
   const raw = useSyncExternalStore(subscribeSaved, savedSnapshot, () => "[]");
   const saved = useMemo(() => parseSaved(raw), [raw]);
@@ -90,6 +93,7 @@ export function ProjectGrid({
             saved={saved.has(product.slug)}
             onToggleSave={toggleSave}
             browseState={browseState}
+            now={now}
           />
         ))}
       </div>

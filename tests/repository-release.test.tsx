@@ -17,7 +17,7 @@ const product: ProductDetailView['product'] = {
   id: 1, slug: 'app', url: 'https://github.com/example/app', accessMode: 'installable', name: 'app', tagline: 'An app.',
   taglineSource: 'maker', description: 'An app.', category: 'Dev', builder: null, stack: [], ogImage: null, makerName: null,
   repoUrl: 'https://github.com/example/app', status: 'seeded', source: 'crawler', claimedAt: null, verifiedAt: null,
-  createdAt: new Date('2026-09-01T00:00:00Z'), updatedAt: new Date('2026-09-14T00:00:00Z'), aiEvidence: false, takedownPending: false,
+  createdAt: new Date('2026-09-01T00:00:00Z'), updatedAt: new Date('2026-09-14T00:00:00Z'), aiEvidence: false, takedownPending: false, taglineKo: null,
 };
 const release = { tagName: 'v1.2.0', name: 'Version 1.2', url: 'https://github.com/example/app/releases/tag/v1.2.0', notesUrl: null, publishedAt: '2026-09-10T17:53:34Z' };
 

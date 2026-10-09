@@ -24,7 +24,7 @@ export function CompactCard({ product, trailing }: { product: ProductListItem; t
       </Link>
       <div className="compact-body">
         <h3 className="compact-title"><Link prefetch={false} href={href} className="card-link">{product.name}</Link></h3>
-        <ProductTagline tagline={product.tagline} source={product.taglineSource} className="compact-tagline" />
+        <ProductTagline tagline={product.tagline} taglineKo={product.taglineKo} source={product.taglineSource} className="compact-tagline" />
         {/* 조각 사이 '·'는 CSS 가 넣는다(card-dots) */}
         <p className="card-meta card-meta-compact card-dots">
           <StarMetric value={product} now={now} listedAt={product.listedAt} />

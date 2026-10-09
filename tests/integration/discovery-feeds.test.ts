@@ -10,7 +10,7 @@ const { ensureSchema, resetTables } = await import("./setup");
 /**
  * 밖으로 나가는 두 문 — 검색엔진의 sitemap과 구독자의 RSS.
  *
- * 둘은 담는 것이 다르다. sitemap은 검증된 제품만이다(상세 페이지가 나머지를 noindex로 두므로).
+ * 둘은 담는 것이 다르다. sitemap은 색인해도 되는 제품만이다(indexing.ts — 상세 페이지가 나머지를 noindex로 둔다).
  * 피드는 홈의 발견 보드처럼 우리가 대신 올린 것도 싣되 제목에 어느 쪽인지 적는다.
  */
 async function product(over: {
@@ -59,7 +59,7 @@ beforeAll(() => ensureSchema());
 beforeEach(() => resetTables());
 
 describe("sitemap", () => {
-  it("검증된 제품만 싣는다 — 나머지는 상세 페이지가 색인하지 말라고 한다", async () => {
+  it("색인해도 되는 제품만 싣는다 — AI 근거가 확인되지 않은 미클레임은 상세 페이지가 색인하지 말라고 한다", async () => {
     await product({ slug: "mine", status: "verified" });
     await product({ slug: "found", status: "seeded" });
 

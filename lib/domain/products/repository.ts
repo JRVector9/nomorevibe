@@ -343,7 +343,7 @@ async function listConditions({ statuses, category, query, builder, observedTool
 export const LIST_COLUMNS = {
   slug: true, name: true, repoUrl: true, tagline: true, taglineSource: true, category: true, accessMode: true, builder: true,
   stack: true, ogImage: true, makerName: true, stars: true, starsAt: true, starsPrevious: true, starsPreviousAt: true,
-  verifiedAt: true, createdAt: true, status: true, source: true, claimedAt: true,
+  verifiedAt: true, createdAt: true, status: true, source: true, claimedAt: true, repoRenamedTo: true,
 } as const;
 export type ProductListRow = Pick<Product, keyof typeof LIST_COLUMNS> & { repoGone?: boolean; taglineKo?: string | null };
 
@@ -465,22 +465,6 @@ export async function listRecentlyDiscovered(limit: number): Promise<(Product & 
     orderBy: [sql`${listedAt} desc`, products.slug],
     limit,
   });
-}
-
-/**
- * sitemap이 쓰는 것만 — 검증된 제품의 주소와 갱신 시각.
- *
- * 상한이 50,000건이라 전체 컬럼(description·stack·og_image…)을 읽으면 쓰지도 않을 바이트를
- * 그만큼 실어 나른다. 정렬은 listProducts의 recent와 같다 — 검증된 것만 담으므로 그 정렬의
- * 첫 키(검증 여부)가 상수가 되어 등재 시각순만 남는다.
- */
-export async function listVerifiedSlugs(limit: number): Promise<{ slug: string; updatedAt: Date }[]> {
-  return db
-    .select({ slug: products.slug, updatedAt: products.updatedAt })
-    .from(products)
-    .where(eq(products.status, "verified"))
-    .orderBy(sql`${listedAt} desc`)
-    .limit(limit);
 }
 
 /** 필터 셀렉트에 올릴 제작 도구 이름 */

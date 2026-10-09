@@ -71,7 +71,7 @@ export function ProductHero({ product, unclaimed, risingRank, health, languages,
     <section className="border-b border-line pb-7 pt-6">
       <div className="flex flex-wrap items-start gap-[22px]">
         <div className="shrink-0 overflow-hidden rounded-[18px] border border-line bg-bg-soft [&_img]:rounded-none [&_img]:border-0">
-          <ProductIcon name={product.name} ogImage={safeIcon} size={80} />
+          <ProductIcon name={product.name} ogImage={safeIcon} size={80} category={product.category} />
         </div>
         <div className="flex min-w-0 flex-[1_1_480px] flex-col gap-2.5">
           <div className="flex flex-wrap items-center gap-3">
@@ -83,7 +83,7 @@ export function ProductHero({ product, unclaimed, risingRank, health, languages,
             )}
           </div>
           {/* 한 줄 소개는 공용 부품으로만 그린다(C2). 출처 줄은 아래 — 편집자가 쓴 줄('직접 요약')까지 밝히는 상세의 목록을 쓴다 */}
-          <ProductTagline tagline={product.tagline} source={product.taglineSource} showSource={false}
+          <ProductTagline tagline={product.tagline} taglineKo={product.taglineKo} original="toggle" source={product.taglineSource} showSource={false}
             className="max-w-[720px] text-[20px] leading-[1.35] tracking-[-0.01em] text-fg" />
           {/* 지은 줄은 무엇을 보고 지었는지까지 밝힌다 — 메이커가 소개를 쓰면 이 표시는 사라진다 */}
           {product.taglineSource !== "maker" && (

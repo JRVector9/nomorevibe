@@ -66,3 +66,11 @@ export function repositoryOperator(repoUrl: string | null | undefined, observedR
   const moved = observed !== null && listed.login.toLowerCase() !== observed.login.toLowerCase();
   return { owner: observed ?? listed, contributor: moved ? listed : null };
 }
+
+/**
+ * 목록 카드의 운영 주체 — 상세(repositoryOperator)와 같은 판단. 하루 저장소 확인이 GitHub 이 돌려준 지금 이름(repo_renamed_to,
+ * owner/name)을 적어 두었으면 그 계정이 운영 주체다(2026-10-08 UX-15: 조직으로 옮긴 저장소를 옛 개인 계정으로 적었다).
+ */
+export function listedRepositoryOwner(repoUrl: string | null | undefined, renamedTo: string | null | undefined) {
+  return repositoryOperator(repoUrl, renamedTo ? `https://github.com/${renamedTo}` : null)?.owner ?? null;
+}

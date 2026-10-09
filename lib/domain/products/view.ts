@@ -42,6 +42,8 @@ export type ProductListItem = StarObservation & {
   ogImage: string | null;
   makerName: string | null;
   repoUrl: string | null;
+  /** GitHub 이 돌려준 지금 owner/name(이름 바뀜·옮김) — 카드의 운영 주체(github-owner.ts listedRepositoryOwner) */
+  repoRenamedTo?: string | null;
   listedAt: Date;
   status: ProductStatus;
   /** 우리가 대신 올렸고 아직 주인이 나타나지 않았다 */
@@ -78,6 +80,7 @@ export function toListItem(p: ProductListRow): ProductListItem {
     ogImage: p.ogImage,
     makerName: p.makerName,
     repoUrl: p.repoUrl,
+    repoRenamedTo: p.repoRenamedTo ?? null,
     // 저장소가 사라졌다고 확정된 제품의 스타는 마지막으로 본 옛 값이다 — 카드에 ★·증감을 그리지 않는다(repository.ts repoGone)
     ...(p.repoGone
       ? { stars: null, starsAt: null, starsPrevious: null, starsPreviousAt: null }

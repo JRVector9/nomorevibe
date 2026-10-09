@@ -19,7 +19,7 @@ export function PopularCards({ items, first }: { items: PopularProduct[]; first:
           <StarMetric value={p} />
           {/* 좁은 행이라 출처 줄은 끈다 — 상세에서 밝힌다 */}
           <div className="popular-card-intro">
-            <ProductTagline tagline={p.tagline} source={p.taglineSource} className="popular-description" showSource={false} />
+            <ProductTagline tagline={p.tagline} taglineKo={p.taglineKo} source={p.taglineSource} className="popular-description" showSource={false} />
           </div>
         </li>
       ))}

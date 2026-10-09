@@ -44,7 +44,7 @@ const product: ProductDetailView["product"] = {
   createdAt: new Date("2026-07-01T00:00:00.000Z"),
   updatedAt: observedAt,
   aiEvidence: false,
-  takedownPending: false,
+  takedownPending: false, taglineKo: null,
 };
 
 const profile: NonNullable<ProductDetailView["profile"]> = {
@@ -818,7 +818,8 @@ describe("evidence product detail components", () => {
     expect(html).toContain("하루 평균");
     expect(html).toContain("스타 2천 미만");
     // 홈의 기본 정렬('추천')이 같은 급상승 순서다 — 최신순(sort=recent)으로 보내지 않는다
-    expect(html).toContain('href="/?category=Productivity"');
+    // 분야는 정식 주소(/c/<소문자>)로 보낸다 — 옛 /?category= 는 307 로 넘어간다(UX-40)
+    expect(html).toContain('href="/c/productivity"');
     expect(html).not.toContain("sort=recent");
     expect(textOf(html)).toContain("37개 모두 보기 ›");
     expect(html).toContain('href="/p/alpha"');

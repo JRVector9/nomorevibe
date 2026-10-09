@@ -274,7 +274,8 @@ export type HomeParams = Awaited<Props["searchParams"]>;
 export async function generateMetadata({ searchParams }: Props): Promise<Metadata> {
   const params = await searchParams;
   const query = firstValue(params.q)?.trim().slice(0, 200) || undefined;
-  return { title: browseTitle({ query }) };
+  // 검색 결과는 색인하지 않는다 — 검색어마다 얇은 목록 페이지가 끝없이 생긴다. 분야는 /c/[category] 정식 주소가 맡는다
+  return { title: browseTitle({ query }), ...(query ? { robots: { index: false, follow: true } } : {}) };
 }
 
 /**
@@ -578,6 +579,7 @@ export async function HomeContent({ params }: { params: HomeParams }) {
           </div>
         ) : savedOnly || list.length > 0 ? (
           <ProjectGrid
+            now={now.toISOString()}
             key={`${effectiveSort}-${category ?? ""}-${builder ?? ""}-${observedTool ?? ""}-${query ?? ""}-${savedOnly ? "saved" : "all"}`}
             totalCount={resultCount}
             products={savedCandidates}
@@ -602,7 +604,7 @@ export async function HomeContent({ params }: { params: HomeParams }) {
           <section className="unclaimed-block">
             <h2>주인을 기다리는 프로젝트</h2>
             <div className="mt-3">
-              <ProjectGrid products={unclaimed} browseState={state} totalCount={unclaimedTotal} start={unclaimedStart} />
+              <ProjectGrid now={now.toISOString()} products={unclaimed} browseState={state} totalCount={unclaimedTotal} start={unclaimedStart} />
             </div>
           </section>
         )}

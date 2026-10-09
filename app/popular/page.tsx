@@ -34,7 +34,7 @@ export default async function PopularPage({searchParams}:{searchParams:Promise<R
     <div className="popular-table-scroll" role="region" aria-label={`스타 ${selected.range} 프로젝트 표`} tabIndex={0}>
      <table className="popular-table"><thead><tr><th scope="col">#</th><th scope="col">프로젝트</th><th scope="col">소개</th><th scope="col">스타</th><th scope="col">계정</th><th scope="col">스타 확인일</th></tr></thead>
       <tbody>{result.items.map((p,index)=><tr key={p.slug}><td>{(result.page-1)*15+index+1}</td>
-       <th scope="row"><Link prefetch={false} href={`/p/${p.slug}`}>{p.name}</Link><span>{categoryLabel(p.category)}</span></th><td><ProductTagline tagline={p.tagline} source={p.taglineSource} className="popular-description"/></td>
+       <th scope="row"><Link prefetch={false} href={`/p/${p.slug}`}>{p.name}</Link><span>{categoryLabel(p.category)}</span></th><td><ProductTagline tagline={p.tagline} taglineKo={p.taglineKo} source={p.taglineSource} className="popular-description"/></td>
        <td className="popular-stars"><StarMetric value={p} /></td>
        <td>{p.ownerType==='User'?'개인':p.ownerType==='Organization'?'조직':'미확인'}</td><td><time dateTime={formatDay(p.starsAt,'')||undefined}>{formatPublicDate(p.starsAt,now,'미확인')}</time></td>
       </tr>)}</tbody>

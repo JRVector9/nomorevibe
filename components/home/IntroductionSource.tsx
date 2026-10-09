@@ -16,6 +16,7 @@ export function IntroductionSource({ source, korean = false }: { source?: Taglin
   const label = korean ? `AI가 한국어로 요약${origin ? ` · ${origin}` : ""}`
     : origin ? `AI가 요약 · ${origin}`
     : source === "ai_fixed" ? "AI가 요약 · 검수에서 고쳐 썼습니다"
+    : source === "editor" ? "운영진이 고쳐 썼습니다"
     : null;
   return label ? <p className="card-intro-source">{label}</p> : null;
 }

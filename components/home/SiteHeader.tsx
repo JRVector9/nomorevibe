@@ -44,6 +44,8 @@ export function SiteHeader() {
   const savedRaw = useSyncExternalStore(subscribeSaved, savedSnapshot, () => "[]");
   const hasSaved = parseSaved(savedRaw).size > 0;
   const home = hydrated && pathname === "/";
+  /** 목록을 고르는 화면 — 홈과 분야 주소(/c/[category]). 검색어 기본값·도구 거르기를 이어 간다 */
+  const browse = hydrated && (pathname === "/" || pathname.startsWith("/c/"));
   /** 거르기 없는 홈 — 검색 결과·분야 화면에서 '지금 뜨는'이 켜져 있으면 지금 어디인지 틀리게 말한다 */
   const bareHome = home && FILTER_PARAMS.every((name) => !params.has(name));
 
@@ -114,7 +116,7 @@ export function SiteHeader() {
           <Link prefetch={false} href="/#new">새로 나온</Link>
         </nav>
         <form className="header-search" action="/" method="get" role="search" onSubmit={submitSearch} aria-busy={searching}>
-          {home && params.get("observedTool") && <input type="hidden" name="observedTool" value={params.get("observedTool")!} />}
+          {browse && params.get("observedTool") && <input type="hidden" name="observedTool" value={params.get("observedTool")!} />}
           <Icon name="search" />
           <input
             ref={input}
@@ -125,8 +127,8 @@ export function SiteHeader() {
             aria-label="프로젝트 검색"
             autoComplete="off"
             maxLength={200}
-            defaultValue={home ? params.get("q") ?? "" : ""}
-            key={home ? params.get("q") ?? "" : "away"}
+            defaultValue={browse ? params.get("q") ?? "" : ""}
+            key={browse ? params.get("q") ?? "" : "away"}
           />
           {searching
             ? <span className="search-spinner" role="status"><span className="sr-only">검색 중</span></span>
