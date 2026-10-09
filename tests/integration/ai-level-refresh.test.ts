@@ -99,7 +99,9 @@ it("차례: 새로 수집한 후보가 먼저, 그다음 아직 보지 않은 �
   await product("https://github.com/acme/new");
   await product("https://github.com/acme/banned", { status: "banned" });
   await db.insert(crawlCandidates).values([{ repo: "Cand/Fresh", state: "new" }, { repo: "cand/rejected", state: "rejected" }]);
-  expect(await dueRepositories(10)).toEqual(["cand/fresh", "acme/new", "acme/old"]);
+  expect(await dueRepositories(10)).toEqual({ keys: ["cand/fresh", "acme/new", "acme/old"], unseenExhausted: true });
+  // 쉬는 동안은 안 본 공개 제품을 찾지 않는다
+  expect(await dueRepositories(10, { skipUnseen: true })).toEqual({ keys: ["cand/fresh"], unseenExhausted: false });
 });
 
 it("단계마다 판정하고 같은 저장소의 제품(대소문자·.git 이 달라도)에 옮긴다", async () => {
@@ -130,7 +132,7 @@ it("단계마다 판정하고 같은 저장소의 제품(대소문자·.git 이 
     sourceUrl: `https://github.com/acme/scanned/commit/${SHA(4)}`, commitEvidence: { basis: "coauthor", changedPaths: ["src/b.ts"], changeKind: "development", headSha: SHA(999) } } });
 
   const outcome = await refreshAiLevelsJob(context(), github);
-  expect(outcome).toMatchObject({ done: true, cursor: null });
+  expect(outcome).toMatchObject({ done: true, cursor: { unseenIdleUntil: expect.any(String) } });
   const levels = Object.fromEntries(await Promise.all(Object.entries(ids).map(async ([key, id]) => [key, await levelOf(id)])));
   expect(levels).toEqual({
     "acme/agent": 1, "acme/docs-agent": null, "acme/human-cursor": null, "acme/signed": 2, "acme/signed-docs": null,
@@ -182,7 +184,7 @@ it("처음 보는 저장소가 실패하면 '검사 전'으로 남기고 한 시
   await refreshAiLevelsJob(context(), fakeGithub({ "acme/slow": { fail: true } }));
   expect(await row("acme/slow")).toMatchObject({ level: null, lastError: "unknown", headSha: null });
   expect(await getRepositoryAiLevel("https://github.com/acme/slow")).toMatchObject({ checked: false });
-  expect(await dueRepositories(10)).toEqual([]);
+  expect((await dueRepositories(10)).keys).toEqual([]);
 });
 
 it("지금은 없어진 저장소라도 기존 근거 수집이 찾은 개발 커밋 표기가 있으면 그것으로 단계를 세운다", async () => {
@@ -204,7 +206,7 @@ it("GitHub 한도에 걸리면 아무것도 적지 않고 풀릴 때까지 쉰�
   const resetAt = new Date(Date.now() + 30 * 60_000);
   const graphql = vi.fn(async () => ({ ok: false as const, error: { kind: "rate_limited" as const, resetAt } })) as unknown as typeof githubGraphql;
   const outcome = await refreshAiLevelsJob(context(), { graphql });
-  expect(outcome).toEqual({ done: true, cursor: { retryAfter: resetAt.toISOString() } });
+  expect(outcome).toEqual({ done: true, cursor: { retryAfter: resetAt.toISOString(), unseenIdleUntil: expect.any(String) } });
   expect(await db.select().from(repositoryAiLevels)).toEqual([]);
   // 쉬는 동안은 부르지도 않는다
   await refreshAiLevelsJob(context(outcome.cursor!), { graphql });

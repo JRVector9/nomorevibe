@@ -28,7 +28,8 @@ import type { JobContext, JobOutcome } from '@/lib/jobs/runner';
  * 2단계 커밋이 코드를 바꿨는지는 REST 커밋 한 건씩 봐야 해서(GraphQL 은 바뀐 파일을 주지 않는다) 틱마다 REST_PER_TICK 건까지만 —
  * 운영 토큰의 REST 시간당 5,000건은 근거 수집(agent-evidence-refresh)과 나눠 쓴다. 확인한 결과는 근거에 남겨 다시 묻지 않는다.
  */
-export type AiLevelCursor = { retryAfter?: string };
+/** unseenIdleUntil: 아직 안 본 공개 제품을 찾는 질의(3만 8천 행 정규식, 1초 남짓)를 이때까지 쉰다 — 다 봤을 때만 */
+export type AiLevelCursor = { retryAfter?: string; unseenIdleUntil?: string };
 type Request = typeof githubRequest;
 type Graphql = typeof githubGraphql;
 
@@ -54,8 +55,11 @@ const ACTIVE_CANDIDATES = sql`('new', 'needs_review', 'approved')`;
 const PRODUCT_IDENTITY = sql`regexp_replace(regexp_replace(lower(rtrim(repo_url, '/')), '^https?://(www[.])?', 'https://'), '[.]git$', '')`;
 const PRODUCT_KEY = sql`lower(regexp_replace(repo_url, '^https://github.com/([^/]+/[^/#?]+?)([.]git)?/?$', '\\1'))`;
 
-/** 이번 틱에 볼 저장소 키 — 새 후보 → 새 공개 제품 → 다시 볼 때 */
-export async function dueRepositories(limit = DUE_LIMIT): Promise<string[]> {
+/**
+ * 이번 틱에 볼 저장소 키 — 새 후보 → 새 공개 제품 → 다시 볼 때.
+ * 안 본 공개 제품 찾기는 운영에서 1초 남짓(2026-10-10 실측, 공개 3만 8천 행 정규식) — skipUnseen 이면 건너뛴다. unseenExhausted: 그 질의가 모자라게 돌려줬다(다 봤다)
+ */
+export async function dueRepositories(limit = DUE_LIMIT, { skipUnseen = false } = {}): Promise<{ keys: string[]; unseenExhausted: boolean }> {
   const unseen = (keyed: ReturnType<typeof sql>) => sql`
     SELECT d.key FROM (${keyed}) d
     WHERE NOT EXISTS (SELECT 1 FROM repository_ai_levels r WHERE r.repository_key = d.key AND r.rules_version = ${AI_LEVEL_RULES_VERSION})
@@ -65,9 +69,15 @@ export async function dueRepositories(limit = DUE_LIMIT): Promise<string[]> {
   add(await db.execute<{ key: string }>(sql`${unseen(sql`
     SELECT lower(repo) AS key, max(id) AS recent FROM crawl_candidates
     WHERE state IN ${ACTIVE_CANDIDATES} AND repo ~ '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$' GROUP BY 1`)} LIMIT ${limit}`));
-  if (keys.length < limit) add(await db.execute<{ key: string }>(sql`${unseen(sql`
-    SELECT ${PRODUCT_KEY} AS key, max(id) AS recent FROM products
-    WHERE status IN ${PUBLIC} AND repo_url ~ '^https://github.com/[^/]+/[^/#?]+/?$' GROUP BY 1`)} LIMIT ${limit - keys.length}`));
+  let unseenExhausted = false;
+  if (keys.length < limit && !skipUnseen) {
+    const wanted = limit - keys.length;
+    const fresh = await db.execute<{ key: string }>(sql`${unseen(sql`
+      SELECT ${PRODUCT_KEY} AS key, max(id) AS recent FROM products
+      WHERE status IN ${PUBLIC} AND repo_url ~ '^https://github.com/[^/]+/[^/#?]+/?$' GROUP BY 1`)} LIMIT ${wanted}`);
+    unseenExhausted = fresh.length < wanted;
+    add(fresh);
+  }
   // 공개 제품이거나 아직 심사 중인 후보의 저장소만 다시 본다 — 내려간 제품·거절된 후보의 행은 그대로 둔다
   if (keys.length < limit) add(await db.execute<{ key: string }>(sql`
     WITH active AS (SELECT DISTINCT lower(repo) AS key FROM crawl_candidates WHERE state IN ${ACTIVE_CANDIDATES})
@@ -76,7 +86,7 @@ export async function dueRepositories(limit = DUE_LIMIT): Promise<string[]> {
       AND (r.repository_key IN (SELECT key FROM active)
         OR EXISTS (SELECT 1 FROM products WHERE status IN ${PUBLIC} AND ${PRODUCT_IDENTITY} = 'https://github.com/' || r.repository_key))
     ORDER BY r.next_check_at LIMIT ${limit - keys.length}`));
-  return keys.filter((key) => /^[a-z0-9_.-]+\/[a-z0-9_.-]+$/.test(key));
+  return { keys: keys.filter((key) => /^[a-z0-9_.-]+\/[a-z0-9_.-]+$/.test(key)), unseenExhausted };
 }
 
 /** 기존 근거 수집의 마지막 루트 조사(완료·부분)에서 단계로 셀 개발 커밋 표기·도구 파일 */
@@ -251,7 +261,10 @@ export async function refreshAiLevelsJob(ctx: JobContext<AiLevelCursor>, depende
   const started = Date.now();
   const tick: Tick = { graphql: dependencies.graphql ?? githubGraphql, request: dependencies.request ?? githubRequest, restLeft: REST_PER_TICK,
     restUntil: started + REST_WITHIN_MS, load: DATABASE_LOADERS };
-  const keys = await dueRepositories();
+  const skipUnseen = Boolean(ctx.cursor?.unseenIdleUntil && Date.parse(ctx.cursor.unseenIdleUntil) > Date.now());
+  const { keys, unseenExhausted } = await dueRepositories(DUE_LIMIT, { skipUnseen });
+  // 안 본 공개 제품을 다 봤으면 10분 쉰다 — 크롤러로 새로 들어오는 제품은 후보 때 이미 판정된다(1번 차례)
+  const idle = skipUnseen ? { unseenIdleUntil: ctx.cursor!.unseenIdleUntil } : unseenExhausted ? { unseenIdleUntil: new Date(Date.now() + 10 * 60_000).toISOString() } : {};
   let checked = 0;
   for (let start = 0; start < keys.length; start += AI_LEVEL_BATCH) {
     if (!ctx.hasBudget() || Date.now() - started > START_WITHIN_MS) break;
@@ -260,16 +273,16 @@ export async function refreshAiLevelsJob(ctx: JobContext<AiLevelCursor>, depende
     checked += result.judged.length + result.failed.length;
     if (result.rateLimitedUntil) {
       ctx.log('ai_level.rate_limited', { retryAfter: result.rateLimitedUntil });
-      return { done: true, cursor: { retryAfter: result.rateLimitedUntil } };
+      return { done: true, cursor: { retryAfter: result.rateLimitedUntil, ...idle } };
     }
     if (result.remaining !== null && result.remaining < MIN_REMAINING) {
       ctx.log('ai_level.graphql_low', { remaining: result.remaining });
-      return { done: true, cursor: { retryAfter: new Date(Date.now() + 15 * 60_000).toISOString() } };
+      return { done: true, cursor: { retryAfter: new Date(Date.now() + 15 * 60_000).toISOString(), ...idle } };
     }
     await new Promise((resolve) => setTimeout(resolve, PAUSE_MS));
   }
   ctx.log('ai_level.tick', { checked, due: keys.length, restUsed: REST_PER_TICK - tick.restLeft });
-  return { done: checked >= keys.length, cursor: null };
+  return { done: checked >= keys.length, cursor: Object.keys(idle).length ? idle : null };
 }
 
 /**
