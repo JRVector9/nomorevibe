@@ -1,0 +1,660 @@
+<title>AI 제작 표시 시안</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@500;600&display=swap">
+<style>
+/* 배치: 검토 문서(회색 바탕) 위에 실제 사이트를 옮긴 화면 틀을 얹는다. 파란 표시(--note)는 시안 주석, 나머지는 사이트 토큰 그대로 */
+:root {
+  color-scheme: light;
+  /* 사이트 토큰 — app/globals.css 그대로 */
+  --bg: #ffffff; --bg-soft: #f5f5f7; --bg-card: #ffffff; --bg-hover: #f0f0f3;
+  --border: #e8e8ed; --border-strong: #d2d2d7;
+  --text: #1d1d1f; --text-2: #6e6e73; --text-3: #86868b;
+  --up: #1e7b3c; --down: #c62430; --warn: #a2650f;
+  --accent: #d63a40; --accent-ink: #c0323a; --accent-soft: rgba(214, 58, 64, 0.1);
+  --tile-paper: #f2f2f7; --tile-day: #eef3fb; --tile-invoice: #f5efe8; --tile-form: #edf5ef; --tile-hue: #f6eef3; --tile-note: #f0eff8;
+  --icon-face: #ffffff;
+  /* 시안 문서 토큰 */
+  --canvas: #e9ebf0;
+  --note: #2a55c9;
+  --note-soft: rgba(42, 85, 201, 0.1);
+  --ok: #1e7b3c; --ok-soft: rgba(30, 123, 60, 0.1);
+  --ask: #a2650f; --ask-soft: rgba(162, 101, 15, 0.12);
+  --shadow: 0 1px 2px rgba(20, 24, 40, 0.06), 0 8px 28px rgba(20, 24, 40, 0.08);
+  --sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Apple SD Gothic Neo", "Pretendard", system-ui, "Helvetica Neue", "Noto Sans KR", sans-serif;
+  --mono: "IBM Plex Mono", "SF Mono", ui-monospace, Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --bg: #0d1117; --bg-soft: #131926; --bg-card: #161d2e; --bg-hover: #1c2438;
+    --border: #232c42; --border-strong: #34405c;
+    --text: #f0f3fa; --text-2: #98a2b8; --text-3: #7d8799;
+    --up: #16c784; --down: #ef4d56; --warn: #e0a33c;
+    --accent: #ff6b70; --accent-ink: #ff6b70; --accent-soft: rgba(255, 107, 112, 0.16);
+    --tile-paper: #1a1f2b; --tile-day: #16213a; --tile-invoice: #2a2119; --tile-form: #172a20; --tile-hue: #2a1a25; --tile-note: #1f1c33;
+    --icon-face: #f4f5f8;
+    --canvas: #05070b;
+    --note: #8fb0ff; --note-soft: rgba(143, 176, 255, 0.14);
+    --ok: #16c784; --ok-soft: rgba(22, 199, 132, 0.14);
+    --ask: #e0a33c; --ask-soft: rgba(224, 163, 60, 0.16);
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 8px 28px rgba(0, 0, 0, 0.35);
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #0d1117; --bg-soft: #131926; --bg-card: #161d2e; --bg-hover: #1c2438;
+  --border: #232c42; --border-strong: #34405c;
+  --text: #f0f3fa; --text-2: #98a2b8; --text-3: #7d8799;
+  --up: #16c784; --down: #ef4d56; --warn: #e0a33c;
+  --accent: #ff6b70; --accent-ink: #ff6b70; --accent-soft: rgba(255, 107, 112, 0.16);
+  --tile-paper: #1a1f2b; --tile-day: #16213a; --tile-invoice: #2a2119; --tile-form: #172a20; --tile-hue: #2a1a25; --tile-note: #1f1c33;
+  --icon-face: #f4f5f8;
+  --canvas: #05070b;
+  --note: #8fb0ff; --note-soft: rgba(143, 176, 255, 0.14);
+  --ok: #16c784; --ok-soft: rgba(22, 199, 132, 0.14);
+  --ask: #e0a33c; --ask-soft: rgba(224, 163, 60, 0.16);
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 8px 28px rgba(0, 0, 0, 0.35);
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--canvas); color: var(--text); font: 14px/1.6 var(--sans); -webkit-font-smoothing: antialiased; }
+a { color: inherit; text-decoration: none; }
+button { font: inherit; color: inherit; cursor: pointer; }
+:focus-visible { outline: 2px solid var(--note); outline-offset: 2px; }
+
+/* ── 검토 문서 ── */
+.doc { max-width: 1240px; margin: 0 auto; padding-inline: 24px; padding-block: 40px 96px; display: flex; flex-direction: column; gap: 64px; }
+.doc-head { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 20px 40px; }
+.eyebrow { font: 600 12px/1.4 var(--mono); letter-spacing: 0.06em; color: var(--note); text-transform: uppercase; margin: 0 0 10px; }
+.doc-head h1 { margin: 0; font-size: 34px; line-height: 1.15; letter-spacing: -0.03em; font-weight: 700; text-wrap: balance; }
+.lede { margin: 12px 0 0; max-width: 640px; font-size: 15px; color: var(--text-2); text-wrap: pretty; }
+.theme { display: inline-flex; gap: 2px; padding: 2px; border-radius: 980px; background: var(--bg-card); box-shadow: var(--shadow); }
+.theme button { border: 0; background: transparent; height: 34px; padding: 0 14px; border-radius: 980px; font-size: 13px; color: var(--text-2); }
+.theme button[aria-pressed="true"] { background: var(--text); color: var(--bg-card); font-weight: 500; }
+
+.sec { display: flex; flex-direction: column; gap: 20px; scroll-margin-top: 16px; }
+.sec-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 14px; }
+.sec-code { font: 600 13px/1 var(--mono); color: var(--bg-card); background: var(--note); border-radius: 6px; padding: 5px 7px; }
+.sec-head h2 { margin: 0; font-size: 22px; letter-spacing: -0.02em; line-height: 1.25; }
+.sec-head p { flex-basis: 100%; margin: 0; color: var(--text-2); max-width: 760px; }
+.sub { margin: 8px 0 0; font-size: 15px; font-weight: 600; letter-spacing: -0.01em; }
+.caption { margin: 0; font-size: 13px; color: var(--text-2); max-width: 780px; }
+.caption b { color: var(--text); font-weight: 600; }
+.tag-ex { display: inline-block; font: 600 11px/1 var(--mono); color: var(--ask); background: var(--ask-soft); border-radius: 4px; padding: 3px 5px; vertical-align: 1px; margin-right: 4px; }
+
+/* 제안 목록 */
+.plist { list-style: none; margin: 0; padding: 0; background: var(--bg-card); border-radius: 18px; box-shadow: var(--shadow); overflow: hidden; }
+.prow { display: grid; grid-template-columns: 44px minmax(0, 1fr) 120px; gap: 6px 16px; padding: 18px 22px; border-top: 1px solid var(--border); align-items: start; }
+.prow:first-child { border-top: 0; }
+.pno { width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center; background: var(--note); color: var(--bg-card); font: 600 13px/1 var(--mono); }
+.pbody { min-width: 0; }
+.pbody h3 { margin: 2px 0 4px; font-size: 15px; line-height: 1.45; }
+.pbody p { margin: 0; font-size: 13px; color: var(--text-2); }
+.pbody p + p { margin-top: 4px; }
+.pbody .rec { color: var(--text); }
+.pbody a { color: var(--note); }
+.status { justify-self: end; font-size: 12px; font-weight: 600; border-radius: 980px; padding: 4px 10px; white-space: nowrap; }
+.st-done { color: var(--ok); background: var(--ok-soft); }
+.st-ask { color: var(--ask); background: var(--ask-soft); }
+.side-lists { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(360px, 100%), 1fr)); gap: 16px; }
+.box { background: var(--bg-card); border-radius: 18px; box-shadow: var(--shadow); padding: 18px 22px; min-width: 0; }
+.box h3 { margin: 0 0 8px; font-size: 15px; }
+.box ul { margin: 0; padding-left: 18px; font-size: 13px; color: var(--text-2); display: flex; flex-direction: column; gap: 6px; }
+.box li b { color: var(--text); font-weight: 600; }
+
+/* 화면 틀 */
+.frame-bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.frame-bar .caption { flex: 1 1 320px; }
+.fit-btn { border: 1px solid var(--border-strong); background: var(--bg-card); border-radius: 980px; height: 32px; padding: 0 14px; font-size: 13px; color: var(--text-2); }
+.scroller { overflow-x: auto; border-radius: 14px; box-shadow: var(--shadow); background: var(--bg); }
+.frame-desk { width: 1440px; }
+.phone-row { display: grid; grid-template-columns: 390px minmax(0, 1fr); gap: 32px; align-items: start; }
+.phone { width: 390px; max-width: 100%; border-radius: 28px; overflow: hidden; box-shadow: var(--shadow); border: 1px solid var(--border-strong); }
+.notes { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.note { display: grid; grid-template-columns: 28px minmax(0, 1fr); gap: 10px; font-size: 13px; color: var(--text-2); }
+.note b { color: var(--text); }
+@media (max-width: 860px) { .phone-row { grid-template-columns: minmax(0, 1fr); } .phone { margin: 0 auto; } }
+
+/* 주석 핀 */
+.pin { display: inline-grid; place-items: center; width: 22px; height: 22px; border-radius: 50%; background: var(--note); color: var(--bg-card); font: 600 12px/1 var(--mono); box-shadow: 0 0 0 3px var(--bg); flex: none; }
+.pinned { position: relative; }
+.pinned > .pin { position: absolute; top: -11px; right: -11px; z-index: 3; }
+.ai-mark.pinned > .pin { top: 50%; right: -30px; transform: translateY(-50%); }
+.note > .pin { margin-top: 1px; }
+.hint { outline: 2px dashed var(--note); outline-offset: 4px; border-radius: 980px; }
+
+/* ── 사이트 옮김(.site 안에서만) ── */
+.site { background: var(--bg); color: var(--text); font: 14px/1.5 var(--sans); }
+.site h2, .site h3, .site h4, .site p { margin: 0; }
+.s-wrap { max-width: 1120px; margin: 0 auto; padding: 0 32px; }
+.s-header { border-bottom: 1px solid var(--border); background: var(--bg); }
+.s-hrow { height: 56px; display: flex; align-items: center; gap: 24px; }
+.s-brand { font-size: 18px; font-weight: 600; letter-spacing: -0.02em; display: inline-flex; align-items: center; gap: 6px; flex: none; }
+.s-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--accent); }
+.s-nav { display: flex; gap: 20px; color: var(--text-2); flex: none; }
+.s-nav .on { color: var(--text); font-weight: 500; }
+.s-search { flex: 1 1 200px; max-width: 420px; margin-left: auto; height: 38px; border-radius: 980px; background: var(--bg-soft); color: var(--text-2); display: flex; align-items: center; gap: 8px; padding: 0 14px; }
+.s-search kbd { margin-left: auto; font: 13px var(--sans); border: 1px solid var(--border-strong); border-radius: 6px; padding: 0 5px; background: var(--bg-card); }
+.s-icon { color: var(--text-2); display: inline-flex; }
+.s-primary { height: 36px; padding: 0 16px; border-radius: 980px; background: var(--text); color: var(--bg-card); font-weight: 500; display: inline-flex; align-items: center; flex: none; }
+.s-feed { padding: 30px 0 48px; display: flex; flex-direction: column; gap: 18px; }
+.s-title { font-size: 22px; font-weight: 600; letter-spacing: -0.02em; line-height: 1.2; }
+.s-rownote { margin-top: 4px !important; font-size: 13px; color: var(--text-2); }
+.s-rownote a, .s-link { color: var(--accent-ink); }
+.s-filter-top { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+.s-tabs { display: inline-flex; background: var(--bg-soft); border-radius: 980px; padding: 2px; gap: 2px; }
+.s-tab { height: 44px; padding: 0 16px; border-radius: 980px; color: var(--text-2); display: inline-flex; align-items: center; white-space: nowrap; }
+.s-tab.on { background: var(--bg-card); color: var(--text); font-weight: 500; box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08); }
+.s-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.s-chips-cat { flex-basis: 100%; }
+.s-chip { display: inline-flex; align-items: center; gap: 6px; height: 36px; padding: 0 14px; border-radius: 980px; background: var(--bg-soft); color: var(--text); font-size: 13px; white-space: nowrap; border: 0; }
+.s-chip .n { color: var(--text-2); font-variant-numeric: tabular-nums; }
+.s-chip.dark { background: var(--text); color: var(--bg-card); font-weight: 500; }
+.s-chip.dark .n { color: color-mix(in srgb, var(--bg-card) 60%, var(--text)); }
+button.s-chip:hover:not(.dark) { background: var(--bg-hover); }
+.hide-n .n { display: none; }
+/* 새 자리: 만든 방식 묶음 */
+.s-ai { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.s-ai-label { font-size: 13px; color: var(--text-2); margin-right: 2px; }
+.s-ai .s-link { font-size: 13px; text-decoration: underline; text-underline-offset: 3px; padding: 0 2px; }
+.s-summary { display: flex; justify-content: space-between; gap: 12px; font-size: 13px; color: var(--text-2); font-variant-numeric: tabular-nums; margin-top: -4px; }
+.s-summary .s-link { text-decoration: underline; text-underline-offset: 3px; }
+.s-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(300px, 100%), 1fr)); gap: 20px; }
+
+/* 카드 — ProjectCard */
+.s-card { background: var(--bg-soft); border-radius: 18px; overflow: hidden; display: flex; flex-direction: column; min-width: 0; }
+.s-tile { aspect-ratio: 16 / 9; max-width: 100%; display: flex; align-items: center; justify-content: center; position: relative; }
+.t-paper { background: var(--tile-paper); } .t-day { background: var(--tile-day); } .t-invoice { background: var(--tile-invoice); }
+.t-form { background: var(--tile-form); } .t-hue { background: var(--tile-hue); } .t-note { background: var(--tile-note); }
+.s-mono { width: 96px; height: 96px; border-radius: 15px; background: var(--icon-face); box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1); display: grid; place-items: center; font-size: 40px; font-weight: 700; letter-spacing: -0.03em; }
+.s-flag { position: absolute; left: 12px; top: 12px; font-size: 13px; font-weight: 500; color: #fff; background: rgba(29, 29, 31, 0.78); border-radius: 980px; padding: 4px 10px; }
+.s-flag-ai { left: auto; right: 12px; }
+.s-body { padding: 16px 18px 18px; display: flex; flex-direction: column; gap: 6px; flex-grow: 1; min-width: 0; }
+.s-trow { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.s-ctitle { font-size: 17px; font-weight: 600; letter-spacing: -0.015em; line-height: 1.3; min-width: 0; }
+.s-save { color: var(--text-2); display: inline-flex; margin-right: -2px; }
+.s-byline { margin-top: -2px !important; display: flex; align-items: center; gap: 0; min-width: 0; font-size: 13px; color: var(--text-2); white-space: nowrap; }
+.s-byline .own { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+/* 안 A — 소유자 줄 끝 작은 글자 표시 */
+.ai-mark { flex: none; display: inline-flex; align-items: center; gap: 5px; margin-left: 8px; height: 24px; padding: 0 9px 0 7px; border-radius: 980px; background: var(--bg-card); color: var(--text); font-size: 13px; font-weight: 500; }
+.ai-mark svg { color: var(--text-2); }
+.s-tagline { font-size: 14px; line-height: 1.45; color: var(--text-2); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.s-src { font-size: 13px; color: var(--text-2); }
+.s-meta { margin-top: auto; padding-top: 8px; display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; font-size: 13px; color: var(--text-2); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.s-meta-t { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.s-meta-t b { color: var(--text); font-weight: 500; }
+.s-star { flex: none; color: var(--text); font-weight: 500; display: inline-flex; gap: 6px; }
+.s-star .up { color: var(--up); }
+
+/* 모바일 틀 */
+.m .s-wrap { padding: 0 16px; }
+.m .s-hrow { height: auto; flex-wrap: wrap; gap: 4px 12px; padding: 6px 16px 10px; }
+.m .s-hrow .s-icon { margin-left: auto; padding: 10px; }
+.m .s-search { order: 3; flex-basis: 100%; max-width: none; margin: 0; }
+.m .s-feed { padding-top: 22px; gap: 14px; }
+.m .s-tabs { max-width: 100%; overflow-x: auto; scrollbar-width: none; }
+.m .s-chips-cat { flex-wrap: nowrap; overflow-x: auto; margin: 0 -16px; padding: 0 16px; scrollbar-width: none; }
+.m .s-chips-cat .s-chip, .m .s-ai .s-chip { height: 44px; flex: none; }
+/* 모바일은 묶음 이름을 화면에서 빼고(읽기 도구에는 남김) 알약 둘과 기준을 한 줄에 */
+.m .s-ai-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+.m .s-ai { flex-wrap: nowrap; }
+.m .s-grid { gap: 16px; }
+.m-bottom { display: flex; justify-content: space-around; border-top: 1px solid var(--border); padding: 10px 12px 14px; background: var(--bg); }
+.m-bottom span { display: flex; flex-direction: column; align-items: center; gap: 4px; font-size: 13px; color: var(--text-2); min-width: 55px; }
+.m-bottom svg { width: 20px; height: 20px; }
+.m-bottom .on { color: var(--accent-ink); }
+
+/* 비교 세 안 */
+.variants { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 20px; }
+.variant { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.v-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.v-head h4 { margin: 0; font-size: 15px; }
+.v-rec { font-size: 12px; font-weight: 600; color: var(--ok); background: var(--ok-soft); border-radius: 980px; padding: 3px 9px; }
+.v-stage { background: var(--bg); border-radius: 14px; padding: 16px; box-shadow: var(--shadow); }
+.v-list { margin: 0; padding: 0; list-style: none; font-size: 13px; color: var(--text-2); display: flex; flex-direction: column; gap: 4px; }
+.v-list li::before { content: attr(data-k); display: inline-block; width: 18px; font-weight: 700; }
+.v-list .pro::before { color: var(--ok); }
+.v-list .con::before { color: var(--down); }
+@media (max-width: 900px) { .variants { grid-template-columns: minmax(0, 1fr); } .variant .v-stage { max-width: 380px; } }
+
+/* 상태별 필터 줄 */
+.states { display: flex; flex-direction: column; gap: 0; background: var(--bg); border-radius: 14px; box-shadow: var(--shadow); overflow: hidden; }
+.state-row { display: grid; grid-template-columns: 180px minmax(0, 1fr); gap: 16px; padding: 18px 22px; border-top: 1px solid var(--border); align-items: start; }
+.state-row:first-child { border-top: 0; }
+.state-k { font-size: 13px; font-weight: 600; color: var(--note); padding-top: 9px; }
+.state-v { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.state-v .s-chips { flex-wrap: nowrap; overflow: hidden; mask-image: linear-gradient(90deg, #000 85%, transparent); -webkit-mask-image: linear-gradient(90deg, #000 85%, transparent); }
+.state-v .s-summary { margin: 0; }
+@media (max-width: 760px) { .state-row { grid-template-columns: minmax(0, 1fr); gap: 8px; } .state-k { padding-top: 0; } }
+
+/* 기준 창 — MethodologyDialog */
+.c-row { display: grid; grid-template-columns: minmax(0, 670px) minmax(0, 1fr); gap: 32px; align-items: start; }
+@media (max-width: 1000px) { .c-row { grid-template-columns: minmax(0, 1fr); } }
+.dlg { border: 1px solid var(--border); border-radius: 22px; background: var(--bg-card); box-shadow: 0 24px 90px rgba(0, 0, 0, 0.19); overflow: hidden; max-width: 670px; }
+.dlg-head { padding: 21px 26px 15px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border); }
+.dlg-head h2 { font-size: 18px; letter-spacing: -0.4px; }
+.dlg-x { width: 32px; height: 32px; border-radius: 8px; background: var(--bg-soft); color: var(--text-2); display: grid; place-items: center; }
+.dlg-body { padding: 24px 26px 28px; }
+.dlg-body h3 { font-size: 15px; margin: 4px 0 8px; }
+.dlg-body p { font-size: 13px; color: var(--text-2); line-height: 1.9; margin: 8px 0; }
+.dlg-notice { background: var(--bg-soft); border: 1px solid var(--border); border-radius: 9px; color: var(--text-2); padding: 12px 14px; font-size: 13px; line-height: 1.8; margin: 0 0 14px; }
+.dlg-notice.strong { color: var(--text); }
+.metric-links { display: flex; gap: 7px; flex-wrap: wrap; margin: 10px 0 19px; }
+.metric-links span { background: var(--accent-soft); color: var(--accent-ink); border-radius: 7px; font-size: 13px; padding: 7px 10px; }
+.metric-links .on { background: var(--text); color: var(--bg-card); font-weight: 500; }
+.tbl-scroll { overflow-x: auto; }
+.mtable { width: 100%; border-collapse: collapse; font-size: 13px; margin: 13px 0; }
+.mtable th, .mtable td { padding: 10px 8px; border-bottom: 1px solid var(--border); text-align: left; vertical-align: top; }
+.mtable th { font-weight: 600; background: var(--bg-soft); white-space: nowrap; }
+.mtable td:first-child { color: var(--text-2); white-space: nowrap; }
+.mtable td small { display: block; color: var(--text-2); font-size: 13px; line-height: 1.6; margin-top: 2px; }
+.mtable td:last-child:not(.num) { white-space: nowrap; }
+.mtable .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.dlg-body .more { font-size: 13px; color: var(--accent-ink); padding: 6px 0; margin: 0; }
+.dlg-foot { font-size: 13px; color: var(--text-2); margin-top: 14px !important; }
+
+/* 0건 화면 */
+.empty { text-align: center; background: var(--bg-card); border: 1px dashed var(--border); border-radius: 18px; padding: 44px 20px; }
+.empty h3 { font-size: 18px; margin: 10px 0 8px; }
+.empty p { color: var(--text-2); font-size: 13px; max-width: 460px; margin: 0 auto 20px; }
+.empty .s-chips { justify-content: center; }
+.empty-ico { color: var(--text-3); }
+
+/* 상세 상태 */
+.d-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(520px, 100%), 1fr)); gap: 20px; }
+.d-tile { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.d-k { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; font-size: 13px; color: var(--text-2); }
+.d-k b { color: var(--note); font-size: 14px; }
+.d-stage { background: var(--bg); border-radius: 14px; box-shadow: var(--shadow); padding: 22px 24px; display: flex; flex-direction: column; gap: 10px; }
+.d-h { font-size: 13px; font-weight: 600; letter-spacing: 0.02em; color: var(--text-2); }
+.lv { display: flex; flex-direction: column; gap: 3px; }
+.lv-top { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.lv-step { font-size: 13px; font-weight: 600; color: var(--text-2); background: var(--bg-soft); border-radius: 6px; padding: 2px 7px; font-variant-numeric: tabular-nums; }
+.lv-name { font-size: 15px; font-weight: 600; letter-spacing: -0.01em; }
+.lv-link { margin-left: auto; font-size: 13px; color: var(--accent-ink); }
+.lv-desc { font-size: 13px; line-height: 1.6; color: var(--text-2); max-width: 600px; }
+.d-pills { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 4px; }
+.d-pill { display: inline-flex; align-items: center; gap: 8px; height: 40px; padding: 0 14px; border-radius: 980px; background: var(--bg-soft); font-size: 14px; flex-wrap: nowrap; white-space: nowrap; max-width: 100%; overflow: hidden; }
+.d-pill small { font-size: 13px; color: var(--text-2); }
+.d-pill a { font-size: 13px; color: var(--accent-ink); }
+.d-plain { font-size: 14px; line-height: 1.5; color: var(--text-2); max-width: 600px; }
+.was { font-size: 13px; color: var(--text-2); border-top: 1px dashed var(--border-strong); padding-top: 10px; margin-top: 4px; }
+.was s { color: var(--text-3); }
+.flag-q { font-size: 12px; font-weight: 600; color: var(--ask); background: var(--ask-soft); border-radius: 4px; padding: 1px 6px; margin-left: 6px; }
+
+@media (max-width: 640px) {
+  .doc { padding-inline: 16px; gap: 48px; }
+  .doc-head h1 { font-size: 28px; }
+  .prow { grid-template-columns: 34px minmax(0, 1fr); padding: 16px; }
+  .status { grid-column: 2; justify-self: start; }
+}
+@media (prefers-reduced-motion: no-preference) { .s-chip, .theme button { transition: background-color .15s, color .15s; } }
+</style>
+
+<main class="doc">
+  <header class="doc-head">
+    <div>
+      <p class="eyebrow">nomorevibe · 홈 · 상세 · 2026-10-10</p>
+      <h1>AI 제작 표시 시안</h1>
+      <p class="lede">필터 두 개(결정됨) 말고 홈과 상세에서 바뀌는 자리를 모았습니다. 번호마다 승인 여부를 정해 주세요. 파란 번호는 화면 위 같은 번호의 자리입니다.</p>
+    </div>
+    <div class="theme" role="group" aria-label="화면 테마">
+      <button type="button" data-theme-set="" aria-pressed="true">기기 설정</button>
+      <button type="button" data-theme-set="light" aria-pressed="false">라이트</button>
+      <button type="button" data-theme-set="dark" aria-pressed="false">다크</button>
+    </div>
+  </header>
+
+  <!-- 제안 목록 -->
+  <section class="sec" id="list" aria-labelledby="list-t">
+    <div class="sec-head"><h2 id="list-t">제안 목록</h2><p>1·2·7번 내용은 이미 정해진 결정(D2·D3)이라 위치와 모양만 확인하시면 됩니다.</p></div>
+    <ol class="plist">
+      <li class="prow"><span class="pno">1</span><div class="pbody">
+        <h3>홈 필터 &lsquo;만든 방식&rsquo; — AI로 제작 · AI 도구 설정</h3>
+        <p>AI로 제작 = 1·2단계, AI 도구 설정 = 3단계(D2). 데스크톱은 정렬 탭 줄 오른쪽, 모바일은 정렬 탭 아래 한 줄. 분야·검색과 함께 걸리고 둘 중 하나만 켜집니다(다시 누르면 꺼짐, 주소 <code>?ai=made|config</code>).</p>
+        <p>분야 알약 20개 사이에 넣으면 분야 하나처럼 읽혀서, 묶음 이름을 단 따로 자리에 둡니다.</p>
+      </div><span class="status st-done">결정됨 · 위치 확인</span></li>
+      <li class="prow"><span class="pno">2</span><div class="pbody">
+        <h3>결과 줄 — &ldquo;AI로 제작 · 지금 뜨는 n개&rdquo; + 필터 초기화</h3>
+        <p>지금 결과 줄 규칙(분야 · 정렬 n개)에 필터 이름만 끼웁니다. 새 문구 없음.</p>
+      </div><span class="status st-done">결정됨에 딸림</span></li>
+      <li class="prow"><span class="pno">3</span><div class="pbody">
+        <h3>알약 숫자 규칙</h3>
+        <p>시안: 만든 방식 알약 숫자는 분야·검색·도구로 좁히면 숨기고, 만든 방식을 켜면 분야 알약 숫자를 숨깁니다(UX-12).</p>
+        <p class="rec">구현은 숨기는 대신 맞춰 셉니다(오케스트레이터): 분야를 고르면 만든 방식 숫자가 그 분야 안의 수로, 만든 방식을 켜면 분야 알약 숫자가 그 단계 안의 수로 바뀝니다 — 분야×단계 집계 하나로 세어 눌렀을 때 목록 수와 같습니다. 검색어·도구로 좁히면 지금처럼 숨깁니다. 아래 화면은 시안대로(숨김) 그려져 있습니다.</p>
+      </div><span class="status st-ask">구현됨 · 확인</span></li>
+      <li class="prow"><span class="pno">4</span><div class="pbody">
+        <h3>카드 표시 — 소유자 줄 끝에 단계 짧은 이름(안 A)</h3>
+        <p class="rec">실측 반영(오케스트레이터): 공개분 무작위 1,000개를 실제로 판정하니 2단계가 78%라, 1·2단계에 붙이면 카드 다섯 장 중 네 장에 붙습니다. 그래서 <b>안 A′ — 1단계(&ldquo;AI 에이전트 PR&rdquo;, 약 1%)에만 소유자 줄 끝 표시</b>를 추천합니다. 2단계·3단계·단계 없음은 카드에 아무것도 붙이지 않고 필터로만 구분합니다.</p>
+        <p>아래 화면은 처음 안(1·2단계 모두 표시)대로 그려져 있습니다 — 2단계 카드의 &ldquo;AI 도구 커밋&rdquo; 표시가 빠진다고 보시면 됩니다. 커버 배지(안 C)는 인증 도장처럼 읽히고, 메타 줄(안 B)은 좁은 카드에서 말줄임으로 잘립니다. <a href="#variants">세 안 비교</a></p>
+      </div><span class="status st-ask">승인 필요 · 안 선택</span></li>
+      <li class="prow"><span class="pno">5</span><div class="pbody">
+        <h3>&lsquo;기준&rsquo; 링크 → 기존 &lsquo;숫자의 기준&rsquo; 창에 &lsquo;만든 방식&rsquo; 항목 추가</h3>
+        <p>새 창이나 툴팁을 만들지 않고 MethodologyDialog에 <code>?metric=ai</code> 한 칸을 더합니다. 세 단계 이름·뜻·어느 필터인지, 단계 없음은 AI 없이 만들었다는 뜻이 아니라는 것, 검사 범위 숫자를 싣습니다. 상세의 &lsquo;단계 기준&rsquo;도 같은 창을 엽니다. <a href="#c">C에서 보기</a></p>
+      </div><span class="status st-ask">승인 필요</span></li>
+      <li class="prow"><span class="pno">6</span><div class="pbody">
+        <h3>0건 화면</h3>
+        <p>만든 방식 때문에 0건이면 &ldquo;필터 끄고 n개 보기&rdquo;와 다른 단계 알약을 주고, 아직 검사하지 않은 저장소가 남아 늘어날 수 있다고 한 줄 적습니다.</p>
+      </div><span class="status st-ask">승인 필요</span></li>
+      <li class="prow"><span class="pno">7</span><div class="pbody">
+        <h3>상세 &lsquo;무엇으로 만들었나&rsquo; 맨 위에 단계 줄</h3>
+        <p>&ldquo;n단계 + 단계 이름&rdquo;과 한 줄 설명만, 근거 링크 없이(D3). 근거 없음·검사 전 문구도 바꿉니다. 지금 실제 1단계인 Hypersomnia·OpenRTMP 상세는 &ldquo;흔적을 찾지 못했습니다&rdquo;로 나오고 있어 이 줄이 그 모순을 고칩니다. <a href="#d">D에서 보기</a></p>
+      </div><span class="status st-done">결정됨 · 배치 확인</span></li>
+    </ol>
+    <div class="side-lists">
+      <div class="box">
+        <h3>바꾸지 않는 것</h3>
+        <ul>
+          <li><b>소개 문구와 윗줄 통계</b> — &ldquo;AI로 만든 것들이 제품이 되는 곳.&rdquo;과 공개·새로 생긴·새 버전 수는 그대로. 단계는 분류일 뿐이라 머리 숫자로 올리지 않습니다.</li>
+          <li><b>지금 뜨는·새로 나온 작은 카드 띠, 인기 구간 행</b> — 표시 없음. 작은 카드는 메타 줄이 이미 꽉 찹니다.</li>
+          <li><b>홈 &lsquo;무엇으로 만들었나&rsquo; 도구 판</b> — 도구별 흔적 수는 단계와 세는 법이 달라 그대로 둡니다(오늘 캡처 때 홈에 보이지 않았습니다).</li>
+          <li><b>발행·게재 기준(D1)</b>, 상세 상단 메타 줄.</li>
+        </ul>
+      </div>
+      <div class="box">
+        <h3>확인이 필요한 것</h3>
+        <ul>
+          <li><b>Q1</b> 상세의 기존 도구 알약에 붙은 &ldquo;근거 1a2b3c4 ↗&rdquo; 커밋 링크가 D3(공개 화면에 근거 링크 없음)와 부딪칩니다. 지울지 둘지 정해 주세요. 시안은 그대로 두고 표시만 했습니다.</li>
+          <li><b>Q2</b> 카드 문구를 단계 짧은 이름 두 가지로 할지, 필터와 같은 &ldquo;AI로 제작&rdquo; 하나로 할지.</li>
+          <li><b>Q3</b> 단계는 없고 흔적 알약만 있는 상세(CLAUDE.md 같은 지침 파일만)는 단계 줄 없이 알약만 둔다고 가정했습니다.</li>
+          <li><b>Q4</b> 분야 화면(/c/…)과 검색 결과에도 같은 알약이 붙는다고 가정했습니다.</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- A. 홈 데스크톱 -->
+  <section class="sec" id="a" aria-labelledby="a-t">
+    <div class="sec-head"><span class="sec-code">A</span><h2 id="a-t">홈 — 데스크톱 1440</h2><p>&lsquo;발견할 가치가 있는 프로젝트&rsquo; 목록만 옮겼습니다. 만든 방식 알약은 눌러 볼 수 있습니다.</p></div>
+    <div class="frame-bar">
+      <p class="caption"><span class="tag-ex">추정</span>알약 숫자와 결과 수는 공개분 무작위 1,000개 실측(1단계 0.9% · 2단계 78% · 3단계 3.3% · 근거 없음 14%)을 공개 34,886개에 곱한 추정입니다. <span class="tag-ex">예시</span>1단계로 표시한 Hypersomnia·jev-pruner·База українських запитань(실제 운영 데이터)을 뺀 카드의 단계 배정은 예시입니다. nanoMuse는 3단계(예시)라 카드에 표시가 없습니다. 커버 그림은 모노그램으로 줄였습니다.</p>
+      <button type="button" class="fit-btn" id="fit-toggle" aria-pressed="true">실제 크기로 보기</button>
+    </div>
+    <div class="scroller" id="desk-scroller">
+      <div class="frame-desk site" id="desk"></div>
+    </div>
+
+    <h3 class="sub">상태별 필터 줄과 결과 줄</h3>
+    <div class="states site" id="states"></div>
+
+    <h3 class="sub" id="variants">카드 표시 세 안 <span class="pin" aria-label="제안 4">4</span></h3>
+    <p class="caption">같은 카드(LCU, <span class="tag-ex">예시</span>2단계)에 세 가지로 붙였습니다.</p>
+    <div class="variants" id="variant-host"></div>
+  </section>
+
+  <!-- B. 홈 모바일 -->
+  <section class="sec" id="b" aria-labelledby="b-t">
+    <div class="sec-head"><span class="sec-code">B</span><h2 id="b-t">홈 — 모바일 390</h2><p>&lsquo;AI로 제작&rsquo;을 켠 상태입니다.</p></div>
+    <div class="phone-row">
+      <div class="phone site m" id="phone"></div>
+      <div class="notes">
+        <div class="note"><span class="pin">1</span><p><b>만든 방식은 정렬 탭 아래 한 줄.</b> 분야 줄은 지금처럼 옆으로 넘기는 한 줄이라, 그 안에 섞으면 화면 밖으로 밀려 안 보입니다. 390 폭에 한 줄로 들어가도록 &lsquo;만든 방식&rsquo; 글자는 화면에서 빼고 읽기 도구용 이름으로만 남깁니다. 누르는 높이는 분야 알약과 같은 44px.</p></div>
+        <div class="note"><span class="pin">2</span><p><b>결과 줄</b>은 데스크톱과 같습니다. &lsquo;필터 초기화&rsquo;가 만든 방식도 끕니다.</p></div>
+        <div class="note"><span class="pin">3</span><p><b>분야 알약 숫자는 숨깁니다.</b> 만든 방식이 켜지면 &lsquo;개발 도구 9,364&rsquo;는 지금 목록과 다른 수라서요.</p></div>
+        <div class="note"><span class="pin">4</span><p><b>카드 표시</b>는 소유자 줄 끝. 소유자 이름이 길면 이름이 먼저 말줄임되고 표시는 남습니다.</p></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- C. 그 밖의 홈 변경 -->
+  <section class="sec" id="c" aria-labelledby="c-t">
+    <div class="sec-head"><span class="sec-code">C</span><h2 id="c-t">그 밖의 홈 변경</h2><p>설명은 새로 만들지 않고 지금 &lsquo;숫자의 기준&rsquo; 창에 한 칸을 더합니다. 좁은 화면에서는 지금처럼 아래에서 올라오는 시트가 됩니다.</p></div>
+    <div class="c-row">
+      <div class="site pinned" style="background:transparent">
+        <span class="pin" aria-label="제안 5">5</span>
+        <div class="dlg" id="explainer">
+          <div class="dlg-head"><h2>숫자의 기준</h2><span class="dlg-x" aria-hidden="true"><svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M3 3l8 8M11 3l-8 8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></span></div>
+          <div class="dlg-body">
+            <div class="dlg-notice">AI 업계 전체의 시장 점유율·심리·사용량을 뜻하지 않습니다. 확인된 0과 계산할 수 없는 비율을 구별합니다.</div>
+            <nav class="metric-links" aria-label="기준 항목"><span>스타 구간</span><span>새로 생긴 프로젝트</span><span>새 버전</span><span>활발한 프로젝트</span><span>분야 순위</span><span>제작 도구</span><span class="on">만든 방식</span></nav>
+            <h3>만든 방식 — 저장소에 남은 근거로 나눕니다.</h3>
+            <p>공개 GitHub 저장소에서 AI 코딩 도구가 남긴 근거를 찾아 세 단계로 나눕니다. 한 프로젝트에 근거가 여러 개면 가장 앞 단계 하나로 셉니다.</p>
+            <div class="tbl-scroll">
+              <table class="mtable">
+                <thead><tr><th>단계</th><th>근거</th><th>필터</th></tr></thead>
+                <tbody>
+                  <tr><td>1단계</td><td>AI 에이전트가 연 PR 병합<small>AI 에이전트 서비스가 연 PR 이 기본 브랜치에 병합됐습니다. PR 을 연 계정은 GitHub 이 기록합니다.</small></td><td>AI로 제작</td></tr>
+                  <tr><td>2단계</td><td>AI 도구 서명이 있는 개발 커밋<small>코드를 바꾼 커밋에 AI 코딩 도구의 서명이나 작성자 표기가 있습니다. 저장소가 밝힌 것이라 실제 실행을 증명하지는 않습니다.</small></td><td>AI로 제작</td></tr>
+                  <tr><td>3단계</td><td>AI 도구 전용 설정 파일<small>저장소에 AI 코딩 도구 전용 설정·규칙 파일이 있습니다. 그 도구를 쓰도록 설정했다는 뜻입니다.</small></td><td>AI 도구 설정</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <div class="dlg-notice strong">단계가 없다고 AI 없이 만든 것은 아닙니다. 아직 검사하지 않았거나, 흔적을 남기지 않는 방식으로 만들었을 수 있습니다.</div>
+            <p>어느 단계도 제품 전체를 AI가 만들었다는 증명은 아닙니다. 1단계도 병합된 그 PR의 변경까지만 말합니다.</p>
+            <div class="tbl-scroll">
+              <table class="mtable">
+                <thead><tr><th>공개 프로젝트 <span class="tag-ex">추정</span></th><th class="num">수</th></tr></thead>
+                <tbody>
+                  <tr><td>1단계</td><td class="num">약 310개</td></tr>
+                  <tr><td>2단계</td><td class="num">약 27,300개</td></tr>
+                  <tr><td>3단계</td><td class="num">약 1,150개</td></tr>
+                  <tr><td>검사했지만 근거 없음</td><td class="num">약 4,900개</td></tr>
+                  <tr><td>저장소가 사라짐</td><td class="num">약 1,150개</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <p class="more">자세히</p>
+            <p class="dlg-foot">10월 10일 기준 · 판정 규칙 2026-10-10.1 · 규칙이 바뀌면 모든 저장소를 다시 보고, 그동안은 지난 판의 단계가 보입니다.</p>
+          </div>
+        </div>
+      </div>
+      <div class="notes">
+        <div class="note"><span class="pin">5</span><p><b>왜 기존 창인가.</b> 홈에는 이미 &lsquo;집계 기준&rsquo; 링크와 &lsquo;제작 도구&rsquo; 항목이 있습니다. 같은 곳에 두면 새 부품 없이 링크 하나(<code>?metric=ai</code>)로 끝납니다. 숫자 표는 이 창의 원칙(출처·분모가 보이는 숫자)대로 미검사 수까지 적습니다.</p></div>
+        <div class="note"><span class="pin">5</span><p><b>창 제목 &lsquo;숫자의 기준&rsquo;은 그대로.</b> 만든 방식만 열 때 제목을 &lsquo;만든 방식의 기준&rsquo;으로 바꾸는 것도 가능하지만 시안은 손대지 않았습니다.</p></div>
+        <h3 class="sub">0건 화면 <span class="pin" aria-label="제안 6">6</span></h3>
+        <div class="site" style="border-radius:14px;padding:18px;box-shadow:var(--shadow)">
+          <div class="s-summary" style="margin:0 0 14px"><span>검색 결과 0개 · AI로 제작</span><a class="s-link">필터 초기화</a></div>
+          <div class="empty">
+            <svg class="empty-ico" width="32" height="32" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="11" cy="11" r="6.5" stroke="currentColor" stroke-width="1.6"/><path d="M16 16l4 4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+            <h3>AI로 제작 근거가 있는 결과가 없습니다</h3>
+            <p>&lsquo;plex&rsquo; 검색 결과 23개 중 1·2단계 근거를 찾은 프로젝트가 아직 없습니다. 검사하지 않은 저장소가 남아 있어 늘어날 수 있습니다.</p>
+            <div class="s-chips"><span class="s-chip dark">만든 방식 끄고 23개 보기</span><span class="s-chip">AI 도구 설정 <span class="n">2</span></span></div>
+          </div>
+          <p class="caption" style="margin-top:10px"><span class="tag-ex">예시</span>검색어와 수는 예시입니다.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- D. 상세 -->
+  <section class="sec" id="d" aria-labelledby="d-t">
+    <div class="sec-head"><span class="sec-code">D</span><h2 id="d-t">상세 &lsquo;무엇으로 만들었나&rsquo; — 상태별 <span class="pin" aria-label="제안 7">7</span></h2><p>단계 이름과 한 줄 설명만 보이고, PR·커밋·파일 링크는 없습니다. &lsquo;단계 기준&rsquo;은 C의 창을 엽니다. 메이커 신고 배지와 흔적 알약은 지금 그대로 그 아래에 둡니다.</p></div>
+    <div class="d-grid">
+      <div class="d-tile">
+        <p class="d-k"><b>1단계</b> Free Multiplayer Top-Down Shooter · 실제 데이터(GitHub Copilot이 연 PR)</p>
+        <div class="d-stage site">
+          <h4 class="d-h">무엇으로 만들었나</h4>
+          <div class="lv"><div class="lv-top"><span class="lv-step">1단계</span><span class="lv-name">AI 에이전트가 연 PR 병합</span><a class="lv-link" href="#explainer">단계 기준</a></div>
+          <p class="lv-desc">AI 에이전트 서비스가 연 PR 이 기본 브랜치에 병합됐습니다. PR 을 연 계정은 GitHub 이 기록합니다.</p></div>
+          <p class="was">지금 화면: <s>AI 흔적 검사에서 AI 코딩 도구의 흔적을 찾지 못했습니다. 메이커가 신고하면 여기에 표시됩니다.</s></p>
+        </div>
+      </div>
+      <div class="d-tile">
+        <p class="d-k"><b>2단계</b> LCU · <span class="tag-ex">예시</span>단계와 알약</p>
+        <div class="d-stage site">
+          <h4 class="d-h">무엇으로 만들었나</h4>
+          <div class="lv"><div class="lv-top"><span class="lv-step">2단계</span><span class="lv-name">AI 도구 서명이 있는 개발 커밋</span><a class="lv-link" href="#explainer">단계 기준</a></div>
+          <p class="lv-desc">코드를 바꾼 커밋에 AI 코딩 도구의 서명이나 작성자 표기가 있습니다. 저장소가 밝힌 것이라 실제 실행을 증명하지는 않습니다.</p></div>
+          <div class="d-pills"><span class="d-pill">Claude Code <small>커밋 서명</small> <a>근거 1a2b3c4 ↗</a><small>외 12</small></span><span class="d-pill">Codex <small>커밋 서명</small> <a>근거 9f8e7d6 ↗</a></span></div>
+          <p class="caption">기존 흔적 알약 그대로 <span class="flag-q">Q1 근거 링크를 지울지</span></p>
+        </div>
+      </div>
+      <div class="d-tile">
+        <p class="d-k"><b>3단계</b> nanoMuse · <span class="tag-ex">예시</span>단계와 알약</p>
+        <div class="d-stage site">
+          <h4 class="d-h">무엇으로 만들었나</h4>
+          <div class="lv"><div class="lv-top"><span class="lv-step">3단계</span><span class="lv-name">AI 도구 전용 설정 파일</span><a class="lv-link" href="#explainer">단계 기준</a></div>
+          <p class="lv-desc">저장소에 AI 코딩 도구 전용 설정·규칙 파일이 있습니다. 그 도구를 쓰도록 설정했다는 뜻입니다.</p></div>
+          <div class="d-pills"><span class="d-pill">Cursor <small>설정 파일</small></span></div>
+        </div>
+      </div>
+      <div class="d-tile">
+        <p class="d-k"><b>검사했지만 근거 없음</b> Zarvis Mobile · 실제 현재 상태</p>
+        <div class="d-stage site">
+          <h4 class="d-h">무엇으로 만들었나</h4>
+          <p class="d-plain">검사에서 AI 코딩 도구 흔적을 찾지 못했습니다 — AI 없이 만들었다는 뜻은 아닙니다.</p>
+          <p class="was">지금 화면: <s>AI 흔적 검사에서 AI 코딩 도구의 흔적을 찾지 못했습니다. 메이커가 신고하면 여기에 표시됩니다.</s></p>
+        </div>
+      </div>
+      <div class="d-tile">
+        <p class="d-k"><b>검사 전</b> hd-lang · 실제 현재 상태</p>
+        <div class="d-stage site">
+          <h4 class="d-h">무엇으로 만들었나</h4>
+          <p class="d-plain">AI 흔적 검사 대기 중 — 검사가 끝나면 저장소의 설정 파일과 커밋 서명에서 찾은 근거의 단계가 여기에 보입니다.</p>
+          <p class="was">바뀐 곳: 끝부분 &ldquo;찾은 AI 코딩 도구 흔적이&rdquo; → &ldquo;찾은 근거의 단계가&rdquo;. 저장소가 없거나 사라진 경우의 문구(&ldquo;검사할 수 없습니다&rdquo;)는 그대로.</p>
+        </div>
+      </div>
+      <div class="d-tile">
+        <p class="d-k"><b>단계 없음 + 흔적 알약</b> 지침 파일만 있는 저장소 · <span class="tag-ex">예시</span></p>
+        <div class="d-stage site">
+          <h4 class="d-h">무엇으로 만들었나</h4>
+          <div class="d-pills"><span class="d-pill">미확인 도구 <small>지침 파일</small> <a>근거 4c5d6e7 ↗</a></span></div>
+          <p class="caption">단계 줄 없이 기존 알약만 <span class="flag-q">Q3 가정</span></p>
+        </div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<script>
+// 카드 자료 — 이름·소유자·소개·분야·스타는 2026-10-10 홈에서 옮김. lv 는 1단계 표시(실데이터) 외에는 예시
+const P = {
+  hd:   { name: "hd-lang", owner: "HerringtonDarkholme", tag: "Pythonic Goland에 Rustic 효과 적용", ko: true, cat: "개발 도구", act: "최근 업데이트 1일 전", star: "99", up: "+95", tint: "day", mono: "H", color: "#5b3fd6", lv: 0 },
+  plx:  { name: "PlxNative", owner: "GLinnik21", tag: "PlxNative는 비공식 오픈소스 Plex 앱으로, LG webOS TV(4.0 이상)에서 루트 없이 빠르게 Plex 서버에 연결", ko: true, cat: "미디어", act: "최근 업데이트 1일 전", star: "174", up: "+93", tint: "hue", mono: "P", color: "#e5a00d", lv: 2 },
+  hyp:  { name: "Free Multiplayer Top-Down Shooter", owner: "TeamHypersomnia", tag: "Hypersomnia is a free-to-play competitive 2D top-down shooter with intense gunplay, tactical gameplay, and stunning pixel art.", ko: false, cat: "게임", act: "", star: "1,679", up: "", tint: "hue", mono: "F", color: "#c0323a", lv: 1 },
+  lcu:  { name: "LCU", owner: "amontlabs", tag: "설치된 ChatGPT 데스크톱 앱의 원래 컴퓨터 사용 런타임을 Claude Code·Codex CLI·Pi로 제공, Codex 로그인 불필요", ko: true, cat: "개발 도구", act: "최근 업데이트 1일 전", star: "827", up: "+66", tint: "day", mono: "L", color: "#7b4ae2", lv: 2 },
+  muse: { name: "nanoMuse", owner: "nano-muse", tag: "nanoMuse는 휴대폰과 컴퓨터용 개인 에이전트이며 무료·오픈소스·비영리입니다", ko: true, cat: "생산성", act: "최근 업데이트 1일 전", star: "372", up: "+69", tint: "note", mono: "N", color: "#1a73e8", lv: 3 },
+  jev:  { name: "jev-pruner", owner: "tamaratran", tag: "Claude Code plugin: trim long Bash output with TypeSafe Jev before the model sees it", ko: false, cat: "플러그인", act: "", star: "159", up: "", tint: "note", mono: "J", color: "#1e7b3c", lv: 1, flag: "직접 설치" },
+  team: { name: "Human-AI Collaboration Workspace for Teams & Agents", owner: "alookai", tag: "공유 방에서 로컬 Claude Code·Codex·Grok Build·Cursor·OpenCode·Pi 에이전트와 인간‑AI 팀 구축", ko: true, cat: "개발 도구", act: "최근 업데이트 1일 전", star: "1,254", up: "+61", tint: "day", mono: "H", color: "#f08c2e", lv: 2 },
+  ukr:  { name: "База українських запитань", owner: "IvanMisyats", tag: "우크라이나 질문(무엇·어디·언제) 데이터베이스", ko: true, cat: "게임", act: "", star: "0", up: "", tint: "hue", mono: "Б", color: "#2d6cdf", lv: 1 },
+  reel: { name: "reelmimic", owner: "edenfunf", tag: "좋아하는 영상을 보여주면 같은 스타일의 새 영상을 AI 팀이 함께 기획·제작·검토해 줍니다", ko: true, cat: "미디어", act: "최근 업데이트 2일 전", star: "1,762", up: "+60", tint: "hue", mono: "R", color: "#c2185b", lv: 3, flag: "직접 설치" },
+  oil:  { name: "Oil UI Skill", owner: "oil-oil", tag: "하나의 디자인 방식으로 다양한 AI 모델을 적용합니다 모든 요소가 Oil UI로 제작·여러 차례 개선 실시간 페이지를 열어 체험하세요", ko: true, cat: "스킬", act: "최근 업데이트 1일 전", star: "1,087", up: "+57", tint: "note", mono: "O", color: "#3d3d3f", lv: 3 },
+};
+const SHORT = { 1: "AI 에이전트 PR", 2: "AI 도구 커밋" };
+const LISTS = { all: ["hd", "plx", "hyp", "lcu", "muse", "jev"], made: ["hyp", "plx", "lcu", "jev", "team", "ukr"], config: ["muse", "reel", "oil"] };
+const SUMMARY = { all: "지금 뜨는 1,605개 · 공개 34,886개", made: "AI로 제작 · 지금 뜨는 1,270개", config: "AI 도구 설정 · 지금 뜨는 53개" };
+const CATS = [["개발 도구", "9,364"], ["비즈니스", "3,314"], ["교육", "2,452"], ["생산성", "2,102"], ["게임", "2,061"], ["금융", "1,998"], ["미디어", "1,667"], ["라이프스타일", "1,607"], ["기타", "1,410"], ["데이터", "1,360"], ["커머스", "1,115"], ["플러그인", "998"], ["스포츠·피트니스", "928"], ["마케팅", "903"], ["건강", "887"], ["보안", "830"], ["디자인", "687"], ["스킬", "672"], ["소셜", "531"]];
+const ICON = {
+  bookmark: '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M4 2.5h8v11l-4-2.8-4 2.8z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/></svg>',
+  search: '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><circle cx="7" cy="7" r="4.6" stroke="currentColor" stroke-width="1.5"/><path d="M10.5 10.5l3 3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>',
+  // 단계 표시 앞 작은 표식 — 갈래(브랜치) 모양: 저장소 기록에서 온 근거라는 뜻
+  branch: '<svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true"><circle cx="3" cy="2.5" r="1.4" stroke="currentColor" stroke-width="1.2"/><circle cx="3" cy="9.5" r="1.4" stroke="currentColor" stroke-width="1.2"/><circle cx="9" cy="4.5" r="1.4" stroke="currentColor" stroke-width="1.2"/><path d="M3 4v4M9 6c0 2-2 2.5-5 2.8" stroke="currentColor" stroke-width="1.2"/></svg>',
+};
+const esc = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;");
+
+function card(p, variant = "A", pinFirst = false) {
+  const mark = p.lv === 1 || p.lv === 2 ? SHORT[p.lv] : null;
+  const pin = pinFirst && mark ? '<span class="pin" aria-label="제안 4">4</span>' : "";
+  const a = variant === "A" && mark ? `<span class="ai-mark ${pin ? "pinned" : ""}">${ICON.branch}${mark}${pin}</span>` : "";
+  const b = variant === "B" && mark ? `<b>${mark}</b>` : "";
+  const c = variant === "C" && mark ? `<span class="s-flag s-flag-ai">${mark}</span>` : "";
+  const meta = [b, p.cat, p.act].filter(Boolean).join(" · ");
+  return `<article class="s-card">
+    <div class="s-tile t-${p.tint}"><span class="s-mono" style="color:${p.color}">${p.mono}</span>${p.flag ? `<span class="s-flag">${p.flag}</span>` : ""}${c}</div>
+    <div class="s-body">
+      <div class="s-trow"><h3 class="s-ctitle">${esc(p.name)}</h3><span class="s-save">${ICON.bookmark}</span></div>
+      <p class="s-byline"><span class="own">@${p.owner}</span>${a}</p>
+      <p class="s-tagline">${esc(p.tag)}</p>
+      ${p.ko ? '<p class="s-src">AI가 한국어로 요약</p>' : ""}
+      <div class="s-meta"><span class="s-meta-t">${meta}</span><span class="s-star">★ ${p.star}${p.up ? ` <span class="up">${p.up}</span>` : ""}</span></div>
+    </div></article>`;
+}
+
+function aiGroup(state, { counts = true, pins = true, idPrefix = "" } = {}) {
+  const chip = (key, label, n) => `<button type="button" class="s-chip${state === key ? " dark" : ""}" data-ai="${key}" aria-pressed="${state === key}">${label}${counts ? ` <span class="n">${n}</span>` : ""}</button>`;
+  return `<div class="s-ai ${pins ? "pinned" : ""}" role="group" aria-label="만든 방식">${pins ? '<span class="pin" aria-label="제안 1">1</span>' : ""}
+    <span class="s-ai-label">만든 방식</span>${chip("made", "AI로 제작", "27,600")}${chip("config", "AI 도구 설정", "1,150")}
+    <a class="s-link" href="#explainer">기준</a></div>`;
+}
+
+function catChips(selected, hideCounts, pin) {
+  return `<nav class="s-chips s-chips-cat ${hideCounts ? "hide-n" : ""} ${pin ? "pinned" : ""}" aria-label="분야">${pin ? '<span class="pin" aria-label="제안 3">3</span>' : ""}
+    <span class="s-chip${selected ? "" : " dark"}">전체</span>${CATS.map(([c, n]) => `<span class="s-chip${selected === c ? " dark" : ""}">${c} <span class="n">${n}</span></span>`).join("")}</nav>`;
+}
+
+function summary(state, pin) {
+  return `<div class="s-summary"><span class="${pin ? "pinned" : ""}" style="padding-right:${pin ? "18px" : "0"}">${SUMMARY[state]}${pin ? '<span class="pin" aria-label="제안 2">2</span>' : ""}</span>${state === "all" ? "" : '<a class="s-link">필터 초기화</a>'}</div>`;
+}
+
+const header = (mobile) => mobile
+  ? `<header class="s-header"><div class="s-hrow"><span class="s-brand"><span class="s-dot"></span>nomorevibe</span><span class="s-icon">${ICON.bookmark}</span><span class="s-primary">프로젝트 공개</span><div class="s-search">${ICON.search}프로젝트, 도구, 아이디어 검색</div></div></header>`
+  : `<header class="s-header"><div class="s-wrap s-hrow"><span class="s-brand"><span class="s-dot"></span>nomorevibe</span><nav class="s-nav"><span class="on">지금 뜨는</span><span>발견하기</span><span>인기</span><span>새로 나온</span></nav><div class="s-search">${ICON.search}프로젝트, 도구, 아이디어 검색<kbd>⌘K</kbd></div><span class="s-icon">${ICON.bookmark}</span><span class="s-primary">프로젝트 공개</span></div></header>`;
+
+const tabs = '<div class="s-tabs" role="tablist" aria-label="정렬"><span class="s-tab on">지금 뜨는</span><span class="s-tab">최신</span><span class="s-tab">관심 많은 순</span></div>';
+const head = '<div><h2 class="s-title">발견할 가치가 있는 프로젝트</h2><p class="s-rownote">최근 두 확인 사이 하루 평균 GitHub 스타가 늘어난 순 · <a>집계 기준</a></p></div>';
+
+function renderDesk(state) {
+  const el = document.getElementById("desk");
+  el.innerHTML = `${header(false)}<div class="s-wrap"><section class="s-feed">${head}
+    <div><div class="s-filter-top">${tabs}${aiGroup(state)}${catChips(null, state !== "all", state !== "all")}</div></div>
+    ${summary(state, true)}
+    <div class="s-grid">${LISTS[state].map((k, i) => card(P[k], "A", i === 0 || (state === "all" && i === 2))).join("")}</div>
+  </section></div>`;
+  el.querySelectorAll("[data-ai]").forEach((b) => b.addEventListener("click", () => renderDesk(b.dataset.ai === state ? "all" : b.dataset.ai)));
+  fit();
+}
+
+function renderPhone(state) {
+  const el = document.getElementById("phone");
+  el.innerHTML = `${header(true)}<div class="s-wrap"><section class="s-feed">${head}${tabs}
+    ${aiGroup(state)}${catChips(null, state !== "all", false)}${summary(state, true)}
+    <div class="s-grid">${LISTS[state].slice(0, 2).map((k, i) => card(P[k], "A", i === 0)).join("")}</div>
+  </section></div><nav class="m-bottom" aria-label="아래 메뉴"><span class="on"><svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><rect x="3" y="3" width="5.5" height="5.5" rx="1.2" stroke="currentColor" stroke-width="1.5"/><rect x="11.5" y="3" width="5.5" height="5.5" rx="1.2" stroke="currentColor" stroke-width="1.5"/><rect x="3" y="11.5" width="5.5" height="5.5" rx="1.2" stroke="currentColor" stroke-width="1.5"/><rect x="11.5" y="11.5" width="5.5" height="5.5" rx="1.2" stroke="currentColor" stroke-width="1.5"/></svg>발견</span><span><svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><circle cx="9" cy="9" r="5.5" stroke="currentColor" stroke-width="1.5"/><path d="M13 13l4 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>검색</span><span><svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M6 3h8v4a4 4 0 01-8 0zM6 5H3.5a2.5 2.5 0 002.8 3M14 5h2.5a2.5 2.5 0 01-2.8 3M10 11v3M7 17h6M8 14h4v3H8z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/></svg>인기</span><span><svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M5.5 3h9v14l-4.5-3.2L5.5 17z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>저장</span></nav>`;
+  el.querySelectorAll("[data-ai]").forEach((b) => b.addEventListener("click", () => renderPhone(b.dataset.ai === state ? "all" : b.dataset.ai)));
+}
+
+function renderStates() {
+  const rows = [
+    ["필터 끔(지금과 같음)", "all", null, "지금 뜨는 1,605개 · 공개 34,886개", false],
+    ["AI로 제작 켬", "made", null, "AI로 제작 · 지금 뜨는 1,270개", true],
+    ["개발 도구 + AI로 제작", "made", "개발 도구", "개발 도구 · AI로 제작 · 지금 뜨는 486개", true],
+    ["AI 도구 설정 켬", "config", null, "AI 도구 설정 · 지금 뜨는 53개", true],
+  ];
+  document.getElementById("states").innerHTML = rows.map(([k, s, cat, line, narrowed]) => `<div class="state-row"><span class="state-k">${k}</span><div class="state-v">
+    <div class="s-filter-top">${tabs}${aiGroup(s, { counts: !cat, pins: false })}</div>
+    ${catChips(cat, s !== "all", false)}
+    <div class="s-summary"><span>${line}</span>${narrowed ? '<a class="s-link">필터 초기화</a>' : ""}</div></div></div>`).join("")
+    + `<div class="state-row"><span class="state-k">규칙</span><div class="state-v"><p class="caption">만든 방식 알약은 한 번에 하나만 켜집니다. 분야를 고르면 만든 방식 알약 숫자가 사라지고(3번), 만든 방식을 켜면 분야 알약 숫자가 사라집니다. 수는 <span class="tag-ex">예시</span></p></div></div>`;
+}
+
+function renderVariants() {
+  const v = [
+    ["A", "안 A · 소유자 줄 끝", true, [["pro", "근거 이름이 &lsquo;누가·무엇으로&rsquo; 줄에 붙어 뜻이 맞습니다"], ["pro", "카드 모양이 그대로이고 표시가 없는 카드와 높이가 같습니다"], ["con", "소유자 이름이 길면 이름이 더 일찍 잘립니다"]]],
+    ["B", "안 B · 메타 줄 맨 앞", false, [["pro", "새 부품이 없습니다"], ["con", "메타 줄은 좁은 카드에서 말줄임이라 &lsquo;최근 업데이트&rsquo;가 밀려 잘립니다"], ["con", "분야·날짜와 같은 무게라 거의 안 보입니다"]]],
+    ["C", "안 C · 커버 배지", false, [["pro", "가장 잘 보입니다"], ["con", "카드 10장 중 4장꼴로 붙어 목록이 시끄럽습니다"], ["con", "도장처럼 생겨 &lsquo;인증&rsquo;으로 읽히고, &lsquo;직접 설치&rsquo; 배지와 부딪칩니다"]]],
+  ];
+  document.getElementById("variant-host").innerHTML = v.map(([key, title, rec, items]) => `<div class="variant">
+    <div class="v-head"><h4>${title}</h4>${rec ? '<span class="v-rec">추천</span>' : ""}</div>
+    <div class="v-stage site">${card(P.lcu, key)}</div>
+    <ul class="v-list">${items.map(([k, t]) => `<li class="${k}" data-k="${k === "pro" ? "+" : "−"}">${t}</li>`).join("")}</ul></div>`).join("");
+}
+
+// 데스크톱 틀: 기본은 화면 폭에 맞춰 줄이고, 단추로 실제 크기(가로 스크롤)
+let fitOn = true;
+function fit() {
+  const frame = document.getElementById("desk");
+  const box = document.getElementById("desk-scroller");
+  const scale = fitOn ? Math.min(1, box.clientWidth / 1440) : 1;
+  frame.style.zoom = scale < 1 ? String(scale) : "";
+}
+document.getElementById("fit-toggle").addEventListener("click", (e) => {
+  fitOn = !fitOn;
+  e.currentTarget.setAttribute("aria-pressed", String(fitOn));
+  e.currentTarget.textContent = fitOn ? "실제 크기로 보기" : "화면에 맞추기";
+  fit();
+});
+window.addEventListener("resize", fit);
+
+// 테마 단추
+document.querySelectorAll("[data-theme-set]").forEach((b) => b.addEventListener("click", () => {
+  const v = b.dataset.themeSet;
+  if (v) document.documentElement.setAttribute("data-theme", v); else document.documentElement.removeAttribute("data-theme");
+  document.querySelectorAll("[data-theme-set]").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
+}));
+
+renderDesk("all");
+renderPhone("made");
+renderStates();
+renderVariants();
+</script>
