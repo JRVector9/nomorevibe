@@ -1,5 +1,5 @@
-import { expect, it } from 'vitest';
-import { JOB_CATALOG, jobsForRole } from '@/lib/jobs/catalog';
+import { describe, expect, it } from 'vitest';
+import { JOB_CATALOG, jobsForRole, lanesForRole } from '@/lib/jobs/catalog';
 import { dbPoolConfig } from '@/lib/db/pool';
 import { runWorker } from '@/scripts/worker';
 
@@ -60,4 +60,15 @@ it('발행분 감사는 1차 심사와 같은 reviewer 역할에서 돈다', () 
 it('maintenance 풀이 생존 확인이 동시에 쥐는 연결을 담는다', () => {
   // HTTP는 3곳을 동시에 열지만 기록은 한 번에 하나다 — 기록 1 + 러너 임대 갱신 1
   expect(dbPoolConfig({ WORKER_ROLE: 'maintenance' }).max).toBeGreaterThanOrEqual(2);
+});
+
+describe('lanesForRole', () => {
+  it('puts the AI-level judging in its own crawler lane and keeps every other role in one lane', () => {
+    const crawler = lanesForRole('crawler');
+    expect(crawler).toHaveLength(2);
+    expect(crawler[1]).toEqual(['ai-level-refresh']);
+    expect(crawler[0]).toContain('crawl-fetch');
+    expect(crawler.flat().sort()).toEqual(jobsForRole('crawler').sort());
+    for (const role of ['reviewer', 'publisher', 'text', 'maintenance'] as const) expect(lanesForRole(role)).toEqual([jobsForRole(role)]);
+  });
 });
