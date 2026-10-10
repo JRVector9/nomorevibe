@@ -314,18 +314,27 @@ export type AuditFindingRow = {
   reason: string | null; confidence: number | null; reviewedAt: Date | null; owned: boolean;
 };
 
-/** 사람이 볼 것 — 아직 아무도 손대지 않았고 제품이 아직 떠 있는 것. 주인 없는 것 먼저, 확신 높은 순 */
+/** 사람이 볼 것 — 아직 아무도 손대지 않았고 제품이 아직 떠 있는 것. 주인 없는 것 먼저, 확신 높은 순. ids 가 있으면 그 항목만(사유 갈래 거르기) */
 export async function listAuditFindings(campaignId: number, decision: "reject" | "needs_review",
-  { limit, offset }: { limit: number; offset: number }): Promise<AuditFindingRow[]> {
+  { limit, offset, ids }: { limit: number; offset: number; ids?: number[] }): Promise<AuditFindingRow[]> {
+  if (ids && ids.length === 0) return [];
   return db.select({
     id: productAuditItems.id, slug: products.slug, name: products.name, url: products.url, category: products.category,
     reason: productAuditItems.aiReason, confidence: productAuditItems.aiConfidence, reviewedAt: productAuditItems.reviewedAt,
     owned,
   }).from(productAuditItems).innerJoin(products, eq(products.id, productAuditItems.productId))
     .where(and(eq(productAuditItems.campaignId, campaignId), eq(productAuditItems.aiDecision, decision),
-      isNull(productAuditItems.humanDecision), listed))
+      isNull(productAuditItems.humanDecision), listed, ...(ids ? [inArray(productAuditItems.id, ids)] : [])))
     .orderBy(owned, sql`${productAuditItems.aiConfidence} desc nulls last`, asc(productAuditItems.id))
     .limit(limit).offset(offset);
+}
+
+/** 사람이 볼 것 전부의 사유 — 사유 갈래(audit-reason-category)를 세고 거르는 데만 쓴다. 감사 하나에 수천 건이라 한 번에 읽는다 */
+export async function auditFindingReasons(campaignId: number, decision: "reject" | "needs_review"): Promise<{ id: number; reason: string | null }[]> {
+  return db.select({ id: productAuditItems.id, reason: productAuditItems.aiReason })
+    .from(productAuditItems).innerJoin(products, eq(products.id, productAuditItems.productId))
+    .where(and(eq(productAuditItems.campaignId, campaignId), eq(productAuditItems.aiDecision, decision),
+      isNull(productAuditItems.humanDecision), listed));
 }
 
 // ─────────────────────────── 사람의 결정 ───────────────────────────

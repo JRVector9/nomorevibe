@@ -8,6 +8,8 @@ import { decideAuditFinding, type AuditActionState } from './actions';
 export type AuditFindingView = {
   id: number; slug: string; name: string; url: string; category: string;
   reason: string | null; reasonKo: string | null; confidence: number | null; reviewedAt: string | null; owned: boolean;
+  /** 사유 갈래 이름(audit-reason-category) — 무엇 때문에 내릴 후보가 됐는지 사유를 펴기 전에 본다 */
+  reasonCategory: string;
 };
 
 /**
@@ -26,6 +28,7 @@ export function AuditFinding({ finding }: { finding: AuditFindingView }) {
         <a href={finding.url} target="_blank" rel="noreferrer noopener" className="font-semibold hover:text-accent">{finding.name}</a>
         {finding.owned && <span className="ml-2 rounded bg-bg-soft px-1.5 py-0.5 text-fg-3">주인 있음</span>}
         <span className="mt-0.5 block break-all font-mono text-fg-3">{finding.url.replace(/^https?:\/\//, '')}</span>
+        <span className="mt-1 inline-block rounded bg-bg-soft px-1.5 py-0.5 font-semibold text-fg-2">{finding.reasonCategory}</span>
         {finding.reason ? (
           <button type="button" aria-expanded={expanded} onClick={() => setExpanded((now) => !now)} title={expanded ? '접기' : '사유 펼치기'}
             className={`mt-1 block w-full text-left leading-[1.6] text-fg-2 ${expanded ? 'whitespace-pre-line' : 'line-clamp-2'}`}>
