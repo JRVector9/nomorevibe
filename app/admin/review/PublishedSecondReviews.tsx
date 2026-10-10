@@ -15,7 +15,8 @@ function Row({ row }: { row: PublishedSecondRow }) {
     <tr className="border-t border-line align-top">
       <td className="px-3 py-2">
         <a href={`/p/${row.slug}`} target="_blank" rel="noreferrer noopener" className="font-semibold hover:text-accent">{row.slug}</a>
-        <span className="ml-2 font-mono text-fg-3">{row.repo}</span>
+        <a href={`https://github.com/${row.repo}`} target="_blank" rel="noreferrer noopener" title="GitHub 에서 열기"
+          className="ml-2 font-mono text-fg-3 hover:text-accent hover:underline">{row.repo} ↗</a>
         <p className="mt-0.5 text-fg-2"><ReasonText text={row.reason} korean={row.reasonKo} limit={260} /></p>
         {state?.error && <p className="text-down">{state.error}</p>}
         {state?.message && <p className="text-up">{state.message}</p>}
