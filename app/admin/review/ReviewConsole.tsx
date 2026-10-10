@@ -9,7 +9,7 @@ import { REASON_LABELS } from '../reasons';
 import { undoCandidateDecisions } from './actions';
 import { BulkDecision } from './BulkDecision';
 import { BUCKET_NOTE, causeLabel, causeShort } from './causes';
-import { ReviewDetail, entryFacts, waitingDays, type DecidedResult } from './ReviewDetail';
+import { ReviewDetail, entryFacts, safeUrl, waitingDays, type DecidedResult } from './ReviewDetail';
 import { secondVoteView } from './secondVote';
 import { SHORTCUT_TABLE, reviewShortcut } from './shortcuts';
 
@@ -188,6 +188,8 @@ export function ReviewConsole({ entries, reasons, focus, sort, sortHref, cause, 
               const canDecide = selectable.includes(entry);
               const active = row === index;
               const reasonText = candidate.reason ? REASON_LABELS[candidate.reason] ?? candidate.reason : '—';
+              const deployUrl = safeUrl(candidate.productUrl);
+              const productUrl = deployUrl ? { href: deployUrl, host: new URL(deployUrl).host } : null;
               return (
                 <tr key={`${candidate.id}:${entry.candidateRevisionHash}`} role="row" tabIndex={0} data-review-row={candidate.id}
                   onClick={() => select(row, false)} onFocus={(event) => { if (event.target === event.currentTarget && !active) select(row, false); }} aria-selected={active}
@@ -198,10 +200,18 @@ export function ReviewConsole({ entries, reasons, focus, sort, sortHref, cause, 
                         checked={checked.has(candidate.id)} onChange={() => toggle(candidate.id)} />
                     )}
                   </td>
+                  {/* 승인 전에 저장소와 배포 페이지를 바로 열어 본다 — 링크는 탭 순서에서 빼 J/K·Enter 흐름을 지킨다(상세에도 같은 링크가 있다) */}
                   <td className="px-2 py-1">
                     <div className="flex min-w-0 flex-col leading-[16px]">
                       <span className="truncate font-semibold" title={entry.name}>{entry.name}</span>
-                      {entry.name !== candidate.repo && <span className="truncate font-mono text-fg-3" title={candidate.repo}>{candidate.repo}</span>}
+                      <span className="flex min-w-0 items-baseline gap-2">
+                        <a href={`https://github.com/${candidate.repo}`} target="_blank" rel="noreferrer noopener" tabIndex={-1}
+                          title={`GitHub 에서 열기 — ${candidate.repo}`} className="min-w-0 truncate font-mono text-fg-3 hover:text-accent hover:underline">{candidate.repo} ↗</a>
+                        {productUrl && (
+                          <a href={productUrl.href} target="_blank" rel="noreferrer noopener" tabIndex={-1}
+                            title={`배포 페이지 열기 — ${productUrl.href}`} className="min-w-0 shrink-[2] truncate text-accent hover:underline">{productUrl.host} ↗</a>
+                        )}
+                      </span>
                     </div>
                   </td>
                   {/* 갈래가 없는 줄(거부·통과)은 사유 코드를 사람 말로 적는다 — 거부 목록이 영어 코드로 보였다.
