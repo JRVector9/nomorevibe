@@ -449,6 +449,13 @@
       "when": 1791600000000,
       "tag": "0063_ai_levels",
       "breakpoints": true
+    },
+    {
+      "idx": 64,
+      "version": "7",
+      "when": 1791700000000,
+      "tag": "0064_github_collector_apps",
+      "breakpoints": true
     }
   ]
 }

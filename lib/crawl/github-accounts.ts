@@ -1,30 +1,22 @@
 import { eq, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { githubCollectorAccounts, operationsAudit } from "@/lib/db/schema";
+import { githubCollectorAccounts, githubCollectorApps, operationsAudit } from "@/lib/db/schema";
 import { adminAuditRow } from "@/lib/operations/admin-log";
 import { seal, unseal } from "@/lib/operations/credential-vault";
+import { appCollectorTokens } from "./github-apps";
+import { collectorSecret, parseCoreQuota, type CoreQuota } from "./github-secret";
 
-export type CoreQuota = { limit: number; used: number; remaining: number; reset: number };
+export { collectorSecret, parseCoreQuota, type CoreQuota };
+
 export type CollectorIdentity = { userId: number; login: string; core: CoreQuota | null };
-export type CollectorToken = { token: string; userId: number | null; login: string };
-const lastQuotaWrite = new Map<number, number>();
+/** installationId: GitHub App 설치 토큰이면 그 설치(0064) — 한도 관측을 그 설치에 적는다 */
+export type CollectorToken = { token: string; userId: number | null; login: string; installationId?: number };
+const lastQuotaWrite = new Map<string, number>();
 
-export function collectorSecret(): string {
-  const secret = process.env.GITHUB_COLLECTOR_SECRET;
-  if (!secret || secret.length < 32) throw new Error("github_collector_secret_missing");
-  return secret;
-}
 
 export function encryptCollectorToken(token: string, secret: string): string { return seal(token, secret); }
 export function decryptCollectorToken(ciphertext: string, secret: string): string { return unseal(ciphertext, secret); }
 
-export function parseCoreQuota(input: unknown): CoreQuota | null {
-  if (!input || typeof input !== "object") return null;
-  const value = input as Record<string, unknown>;
-  const numbers = [value.limit, value.used, value.remaining, value.reset];
-  if (!numbers.every(n => typeof n === "number" && Number.isSafeInteger(n) && n >= 0)) return null;
-  return { limit: value.limit as number, used: value.used as number, remaining: value.remaining as number, reset: value.reset as number };
-}
 
 /** GitHub identity is the deduplication key; no supplied login or account ID is trusted. */
 export async function inspectGitHubCollectorToken(token: string): Promise<CollectorIdentity> {
@@ -97,8 +89,10 @@ export async function collectorTokens(): Promise<CollectorToken[]> {
   const rows = await db.select({ userId: githubCollectorAccounts.userId, login: githubCollectorAccounts.login,
     encryptedToken: githubCollectorAccounts.encryptedToken }).from(githubCollectorAccounts)
     .where(eq(githubCollectorAccounts.enabled, true)).orderBy(githubCollectorAccounts.userId);
-  if (rows.length === 0) return legacy ? [{ token: legacy, userId: null, login: "환경 토큰" }] : [];
   const secret = collectorSecret();
+  // GitHub App 설치 토큰 — 같은 계정이어도 설치마다 한도가 따로다(github-apps.ts). 받지 못한 설치는 빠진다
+  const apps = await appCollectorTokens(secret);
+  if (rows.length === 0 && apps.length === 0) return legacy ? [{ token: legacy, userId: null, login: "환경 토큰" }] : [];
   const seen = new Set<string>();
   const result: CollectorToken[] = [];
   if (legacy) { seen.add(legacy); result.push({ token: legacy, userId: null, login: "환경 토큰" }); }
@@ -106,12 +100,14 @@ export async function collectorTokens(): Promise<CollectorToken[]> {
     const token = decryptCollectorToken(row.encryptedToken, secret);
     if (!seen.has(token)) { result.push({ token, userId: row.userId, login: row.login }); seen.add(token); }
   }
+  for (const app of apps) if (!seen.has(app.token)) { result.push({ token: app.token, userId: null, login: app.login, installationId: app.installationId }); seen.add(app.token); }
   return result;
 }
 
-/** Quota headers are account-scoped. Keep no PAT or ciphertext in this record. */
-export async function observeCollectorQuota(userId: number | null, headers: Headers): Promise<void> {
-  if (userId === null) return;
+/** Quota headers are account-scoped (App 은 설치마다). Keep no PAT or ciphertext in this record. */
+export async function observeCollectorQuota(account: Pick<CollectorToken, "userId" | "installationId">, headers: Headers): Promise<void> {
+  const { userId, installationId } = account;
+  if (userId === null && installationId === undefined) return;
   if (["x-ratelimit-limit", "x-ratelimit-used", "x-ratelimit-remaining", "x-ratelimit-reset"]
     .some(name => headers.get(name) === null)) return;
   const quota = parseCoreQuota({
@@ -120,8 +116,12 @@ export async function observeCollectorQuota(userId: number | null, headers: Head
   });
   if (!quota || headers.get("x-ratelimit-resource") !== "core") return;
   const now = Date.now();
-  if (quota.remaining > 0 && now - (lastQuotaWrite.get(userId) ?? 0) < 30_000) return;
-  await db.update(githubCollectorAccounts).set({ coreQuota: quota, quotaObservedAt: new Date() })
-    .where(eq(githubCollectorAccounts.userId, userId));
-  lastQuotaWrite.set(userId, now);
+  const key = installationId !== undefined ? `app:${installationId}` : `user:${userId}`;
+  if (quota.remaining > 0 && now - (lastQuotaWrite.get(key) ?? 0) < 30_000) return;
+  if (installationId !== undefined) {
+    await db.update(githubCollectorApps).set({ coreQuota: quota, quotaObservedAt: new Date() }).where(eq(githubCollectorApps.installationId, installationId));
+  } else {
+    await db.update(githubCollectorAccounts).set({ coreQuota: quota, quotaObservedAt: new Date() }).where(eq(githubCollectorAccounts.userId, userId!));
+  }
+  lastQuotaWrite.set(key, now);
 }
