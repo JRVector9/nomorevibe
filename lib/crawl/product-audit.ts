@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gte, inArray, isNull, lt, lte, sql, type SQL } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, isNotNull, isNull, lt, lte, sql, type SQL } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { crawlCandidates, crawlDocuments, products, productAuditAttempts, productAuditCampaigns, productAuditItems,
   type ProductAuditCampaign } from "@/lib/db/schema";
@@ -8,6 +8,7 @@ import { assertJobLease, type JobLease } from "@/lib/jobs/control";
 import { getSettings } from "./settings";
 import type { CrawlSettings } from "./settings-schema";
 import { firstReviewer } from "./agent-review";
+import { classifyAuditReason } from "./audit-reason-category";
 import { loadReviewInput } from "./agent-review-repository";
 import { createReviewInput, MAX_REVIEW_ATTEMPTS, REVIEW_PROMPT_VERSION, REVIEW_RULES_VERSION, reviewHash,
   type ReviewInput, type ReviewOutcome } from "./agent-review-contract";
@@ -353,9 +354,18 @@ export async function removeAuditedProduct(input: { itemId: number; slug: string
 }
 
 /** 한 제품 내리기의 본체. only: 잠근 뒤 항목에 더 거는 조건(묶어 내리기의 문턱) — 맞지 않으면 아무것도 하지 않는다 */
+/**
+ * 감사로 내린 차단의 사유 — 차단 사유 코드 '제품 아님'과 감사 사유 갈래(audit-reason-category).
+ * 제품 기록(관리자 제품 화면)이 '제품 아님 · 감사: 쇼핑몰·판매' 로 읽는다(ban-reasons.ts banReasonLabel). 2026-10-11 전에는 사유 없이 남았다
+ */
+export function auditBanReason(aiReason: string | null): string {
+  return `not_product · audit:${classifyAuditReason(aiReason)}`;
+}
+
 function removeOne(input: { itemId: number; slug: string; by: string }, only?: SQL): Promise<AuditDecisionResult> {
   return db.transaction(async (tx) => {
-    const [item] = await tx.select({ productId: productAuditItems.productId }).from(productAuditItems)
+    const [item] = await tx.select({ productId: productAuditItems.productId, campaignId: productAuditItems.campaignId,
+      aiReason: productAuditItems.aiReason, aiConfidence: productAuditItems.aiConfidence }).from(productAuditItems)
       .where(eq(productAuditItems.id, input.itemId));
     if (!item || !(await lockProductGeneration(tx, item.productId, input.slug))) return { ok: false, error: STALE };
     const [current] = await tx.select({ id: productAuditItems.id }).from(productAuditItems).where(and(
@@ -363,13 +373,25 @@ function removeOne(input: { itemId: number; slug: string; by: string }, only?: S
       isNull(productAuditItems.humanDecision), only,
     )).for("update");
     if (!current) return { ok: false, error: STALE };
-    const banned = await setStatusWithAudit({ id: item.productId, slug: input.slug,
-      status: "banned", action: "admin.product.ban" }, tx);
+    const banned = await setStatusWithAudit({ id: item.productId, slug: input.slug, status: "banned", action: "admin.product.ban",
+      actor: input.by.slice(0, 120), reason: auditBanReason(item.aiReason),
+      metadata: { source: "product-audit", campaignId: item.campaignId, itemId: current.id, reasonCategory: classifyAuditReason(item.aiReason),
+        aiConfidence: item.aiConfidence } }, tx);
     if (!banned) return { ok: false, error: STALE };
     await tx.update(productAuditItems).set({ humanDecision: "removed", humanBy: input.by.slice(0, 120), humanAt: sql`now()` })
       .where(eq(productAuditItems.id, current.id));
     return { ok: true };
   });
+}
+
+/** 감사에서 사람이 정한 것 — 최근부터. 처리 기록 탭이 사유 갈래·AI 사유와 함께 보인다 */
+export async function auditDecisionHistory(limit = 100) {
+  return db.select({
+    id: productAuditItems.id, slug: products.slug, name: products.name, url: products.url, decision: productAuditItems.humanDecision,
+    by: productAuditItems.humanBy, at: productAuditItems.humanAt, note: productAuditItems.humanNote,
+    reason: productAuditItems.aiReason, confidence: productAuditItems.aiConfidence, campaignId: productAuditItems.campaignId,
+  }).from(productAuditItems).innerJoin(products, eq(products.id, productAuditItems.productId))
+    .where(isNotNull(productAuditItems.humanAt)).orderBy(desc(productAuditItems.humanAt), desc(productAuditItems.id)).limit(limit);
 }
 
 /** 그대로 둔다. KEEP_DAYS 동안, 페이지가 그대로인 한 다음 감사에서 빠진다 */

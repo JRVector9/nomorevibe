@@ -2,11 +2,11 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { asc, eq, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { crawlCandidates, crawlDocuments, crawlFrontier, crawlReviewAttempts, crawlSettings, jobs, products,
-  productAuditAttempts, productAuditCampaigns, productAuditItems } from "@/lib/db/schema";
+  productAuditAttempts, productAuditCampaigns, productAuditItems, productEvidenceAudit } from "@/lib/db/schema";
 import * as crawl from "@/lib/crawl/repository";
 import { changeReviewMode, saveSettings } from "@/lib/crawl/settings";
 import { MAX_REVIEW_ATTEMPTS } from "@/lib/crawl/agent-review-contract";
-import { auditRemovalGroups, cancelProductAudit, GROUP_REMOVE_MAX, keepAuditedProduct, listAuditFindings,
+import { auditBanReason, auditRemovalGroups, cancelProductAudit, GROUP_REMOVE_MAX, keepAuditedProduct, listAuditFindings,
   productAuditOverview, removeAuditedProduct, removeAuditedProducts, startProductAudit } from "@/lib/crawl/product-audit";
 import { auditPublishedProducts } from "@/lib/crawl/jobs/product-audit";
 import { runJob } from "@/lib/jobs/runner";
@@ -311,6 +311,11 @@ describe("사람의 결정", () => {
     const [item] = await db.select().from(productAuditItems).where(eq(productAuditItems.id, high.id));
     expect(item).toMatchObject({ humanDecision: "removed", humanBy: "jr" });
     expect(item.humanAt).toBeInstanceOf(Date);
+    // 차단 기록에 사유(제품 아님 · 감사 갈래)와 누가 했는지가 남는다 — 제품 화면의 기록이 읽는다(2026-10-11)
+    const [ban] = await db.select().from(productEvidenceAudit).where(eq(productEvidenceAudit.slug, "high"));
+    expect(ban).toMatchObject({ action: "admin.product.ban", actor: "jr", reason: auditBanReason(item.aiReason) });
+    expect(ban.reason).toMatch(/^not_product · audit:\w+$/);
+    expect(ban.metadata).toMatchObject({ source: "product-audit", campaignId, itemId: high.id });
     expect((await listAuditFindings(campaignId, "reject", { limit: 50, offset: 0 })).map((row) => row.slug)).toEqual(["low", "mine"]);
     // 두 번 누르면 아무것도 하지 않는다
     expect(await removeAuditedProduct({ itemId: high.id, slug: "high", by: "jr" })).toMatchObject({ ok: false });

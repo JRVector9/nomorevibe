@@ -1,3 +1,5 @@
+import { AUDIT_REASON_CATEGORIES, isAuditReasonCategory } from "@/lib/crawl/audit-reason-category";
+
 /**
  * 차단 사유(2026-10-08 UX 감사 ADM-06) — 차단은 사유를 하나 골라야 된다. 값은 차단 감사 행(product_evidence_audit.reason)과
  * 작업 로그 detail 에 그대로 남는다.
@@ -20,5 +22,8 @@ export function isBanReason(value: unknown): value is BanReason {
 }
 
 export function banReasonLabel(value: string): string {
+  // 감사로 내린 것은 사유 갈래를 함께 남긴다(product-audit.ts auditBanReason) — 'audit:shop' → '감사: 쇼핑몰·판매'
+  const audit = /^audit:(\w+)$/.exec(value)?.[1];
+  if (audit) return `감사: ${isAuditReasonCategory(audit) ? AUDIT_REASON_CATEGORIES[audit].label : audit}`;
   return BAN_REASONS.find((reason) => reason.value === value)?.label ?? value;
 }
