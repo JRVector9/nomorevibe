@@ -1,8 +1,8 @@
-import { and, asc, eq, inArray, isNull } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { operationsAudit, products } from "@/lib/db/schema";
 import { createMemo } from "@/lib/cache/memo";
-import { reviewProductName, type NameReview } from "./display-name";
+import { AUTOMATIC_NAME_SOURCES, reviewProductName, type NameReview } from "./display-name";
 
 /**
  * 이미 올라간 제품의 이름 확인(UX-33) — 관리자 '이름 확인 필요'와 백필 스크립트(scripts/normalize-product-names.ts)가 쓴다.
@@ -17,9 +17,21 @@ const unclaimedPublic = and(inArray(products.status, ["seeded", "verified"]), eq
 export async function scanProductNames(): Promise<NameReviewRow[]> {
   const rows = await db.select({ id: products.id, slug: products.slug, name: products.name, repoUrl: products.repoUrl })
     .from(products).where(unclaimedPublic).orderBy(asc(products.id));
-  return rows.flatMap((row) => {
+  const reviewed = rows.flatMap((row) => {
     const review = reviewProductName(row.name, row.repoUrl);
-    return review ? [{ id: row.id, slug: row.slug, name: row.name, ...review }] : [];
+    return review ? [{ ...row, review }] : [];
+  });
+  // 제목에서 이름을 못 찾은 것만 README 앞부분을 읽어 첫 제목을 본다 — 공개분 전부의 README 를 읽지 않게(관리자 목록이 1분마다 다시 센다)
+  const readmeIds = reviewed.filter(({ review }) => review.source === "repo" || review.proposed === null).map(({ id }) => id);
+  const readmes = new Map<number, string | null>();
+  for (let start = 0; start < readmeIds.length; start += 1_000) {
+    const batch = await db.select({ id: products.id, readme: sql<string | null>`left(${products.searchReadme}, 2000)` })
+      .from(products).where(inArray(products.id, readmeIds.slice(start, start + 1_000)));
+    for (const row of batch) readmes.set(row.id, row.readme);
+  }
+  return reviewed.flatMap(({ id, slug, name, repoUrl, review }) => {
+    const final = readmes.get(id) ? reviewProductName(name, repoUrl, readmes.get(id)) ?? review : review;
+    return [{ id, slug, name, ...final }];
   });
 }
 
@@ -34,13 +46,13 @@ export function namesNeedingReview(): Promise<Map<string, NameReviewRow>> {
 export type NameChange = { slug: string; before: string; after: string; issues: NameReview["issues"] };
 
 /**
- * 고칠 계획 — 제목 안의 말로 고친 제안(source title)만. 짐작한 제안(guessSuggestions)·저장소 이름으로 대신한 제안(repoSuggestions)과
+ * 고칠 계획 — 제목 안의 말로 고친 제안(source title)과 저장소와 이어지는 README 첫 제목(source readme)만. 짐작한 제안(guessSuggestions)·저장소 이름으로 대신한 제안(repoSuggestions)과
  * 내세울 이름이 없는 것(withoutProposal)은 관리자 '이름 확인 필요'에서 사람이 본다 — 둘 다 자주 틀린다(display-name.ts NameReview).
  */
 export async function planNameChanges(): Promise<{ changes: NameChange[]; guessSuggestions: NameReviewRow[]; repoSuggestions: NameReviewRow[]; withoutProposal: NameReviewRow[] }> {
   const rows = await scanProductNames();
   return {
-    changes: rows.flatMap((row) => row.proposed && row.source === "title" ? [{ slug: row.slug, before: row.name, after: row.proposed, issues: row.issues }] : []),
+    changes: rows.flatMap((row) => row.proposed && AUTOMATIC_NAME_SOURCES.has(row.source) ? [{ slug: row.slug, before: row.name, after: row.proposed, issues: row.issues }] : []),
     guessSuggestions: rows.filter((row) => row.proposed && row.source === "guess"),
     repoSuggestions: rows.filter((row) => row.proposed && row.source === "repo"),
     withoutProposal: rows.filter((row) => !row.proposed),
