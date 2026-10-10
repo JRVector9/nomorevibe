@@ -1,4 +1,4 @@
-import { isGenericName } from "@/lib/domain/products/display-name";
+import { isGenericName, readmeHeading } from "@/lib/domain/products/display-name";
 import { decodeEntities } from "@/lib/net/normalize";
 
 /**
@@ -99,7 +99,7 @@ function repoSpan(text: string, repo: string): string | null {
   return null;
 }
 
-export function productName(title: string, repo: string, url: string | null = null): string {
+export function productName(title: string, repo: string, url: string | null = null, readme: string | null = null): string {
   const repoName = repo.split("/")[1] ?? repo;
   const facts: Facts = { repo: repoName, host: hostLabel(url) };
   const clean = decodeEntities(title).replace(/\s+/g, " ").trim();
@@ -129,8 +129,10 @@ export function productName(title: string, repo: string, url: string | null = nu
   // 그래도 문장이면 그 안의 레포 이름 — "Two Prices for the Same Model: Building Claude Burst"
   if (name.length > SENTENCE_LENGTH) name = repoSpan(name, repoName) ?? name;
 
-  // 제목이 없거나 이름이 아니면 레포 이름 — 그것도 흔한 이름이면 제목을 그대로 둔다
+  // 제목이 없거나 이름이 아니면 README 첫 제목(저장소와 이어질 때만), 없으면 레포 이름 — 그것도 흔한 이름이면 제목을 그대로 둔다
   if (!name || isGenericTitle(name)) {
+    const heading = readmeHeading(readme, `https://github.com/${repo}`);
+    if (heading) return heading;
     return isGenericTitle(repoName) ? name || repoName : repoName;
   }
   return name;

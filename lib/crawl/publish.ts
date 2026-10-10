@@ -299,6 +299,8 @@ function draftFrom(repo: string, document: CrawlDocument, installable: boolean, 
   const meta = document.repoMeta;
   const repoDescription = typeof meta.description === "string" ? meta.description.trim() : "";
   const pageTitle = typeof page.title === "string" ? page.title.trim() : "";
+  // 제목에 이름이 없을 때 README 첫 제목을 이름으로 쓴다(display-name.ts readmeHeading)
+  const readmeSample = typeof page.readmeSample === "string" ? page.readmeSample : null;
   // Repository/documentation wrapper metadata describes the host page, not the installed software.
   const pageDescription = !installable && typeof page.description === "string" ? page.description.trim() : "";
   const language = typeof meta.language === "string" ? meta.language : null;
@@ -318,8 +320,8 @@ function draftFrom(repo: string, document: CrawlDocument, installable: boolean, 
       : written?.by ? "editor"
       : `ai_${written!.source}`) as TaglineSource,
     // 제목이 일반어·슬로건·전부 대문자·이모지 접두면 고친 이름으로 올린다(UX-33, display-name.ts reviewProductName)
-    name: normalizedProductName(installable ? repo.split("/").at(-1)! : productName(pageTitle, repo, document.productUrl),
-      `https://github.com/${repo}`).slice(0, LIMITS.name),
+    name: normalizedProductName(installable ? repo.split("/").at(-1)! : productName(pageTitle, repo, document.productUrl, readmeSample),
+      `https://github.com/${repo}`, readmeSample).slice(0, LIMITS.name),
     tagline: tagline.slice(0, LIMITS.tagline),
     description: (repoDescription || pageDescription || tagline).slice(0, LIMITS.description),
     category: classify(meta),
