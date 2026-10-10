@@ -2,8 +2,10 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { currentAdmin } from "@/lib/auth/admin";
-import { auditRemovalGroups, GROUP_REMOVE_MAX, GROUP_REMOVE_MIN_CONFIDENCE, listAuditFindings, productAuditOverview,
+import { auditFindingReasons, auditRemovalGroups, GROUP_REMOVE_MAX, GROUP_REMOVE_MIN_CONFIDENCE, listAuditFindings, productAuditOverview,
   type AuditOverview } from "@/lib/crawl/product-audit";
+import { AUDIT_REASON_CATEGORIES, AUDIT_REASON_KEYS, classifyAuditReason, groupAuditReasons, isAuditReasonCategory,
+  type AuditReasonCategory } from "@/lib/crawl/audit-reason-category";
 import { REVIEW_PROMPT_VERSION, REVIEW_RULES_VERSION } from "@/lib/crawl/agent-review-contract";
 import { translationsFor } from "@/lib/crawl/translations";
 import { formatListTime } from "@/lib/format/time";
@@ -35,7 +37,7 @@ type View = keyof typeof VIEWS;
 const STATUS: Record<string, string> = { running: "진행 중", done: "끝남", cancelled: "중단됨" };
 const count = (value: number) => value.toLocaleString("ko-KR");
 
-type Props = { searchParams: Promise<{ view?: string; page?: string; tab?: string }> };
+type Props = { searchParams: Promise<{ view?: string; page?: string; tab?: string; reason?: string }> };
 
 /**
  * 탭 — 사람이 부탁한 것(내려달라는 요청), 감사가 걸러낸 것, 처리 기록. 기다리는 요청이 있으면 요청이 먼저다:
@@ -48,9 +50,11 @@ export default async function AdminAuditPage({ searchParams }: Props) {
   const admin = await currentAdmin();
   if (!admin) redirect("/admin/login");
 
-  const { view: rawView, page: rawPage, tab: rawTab } = await searchParams;
+  const { view: rawView, page: rawPage, tab: rawTab, reason: rawReason } = await searchParams;
   // `in`은 프로토타입 키까지 통과시킨다 — 제품 관리의 ?filter=constructor 와 같은 함정
   const view: View = rawView && Object.hasOwn(VIEWS, rawView) ? rawView as View : "reject";
+  // 사유 갈래 — 모델의 사유 문장을 낱말로 나눈 것(audit-reason-category). 판단은 바꾸지 않고 묶어 보기만 한다
+  const reason: AuditReasonCategory | null = isAuditReasonCategory(rawReason) ? rawReason : null;
   const parsedPage = Number(rawPage ?? 1);
   const page = Number.isSafeInteger(parsedPage) && parsedPage > 0 ? parsedPage : 1;
 
@@ -64,16 +68,20 @@ export default async function AdminAuditPage({ searchParams }: Props) {
     tab === "history" ? takedownHistory() : Promise.resolve([]),
   ]);
   const open = { reject: counts.openReject, needs_review: counts.openNeedsReview };
+  const reasonIds = campaign && tab === "audit" ? groupAuditReasons(await auditFindingReasons(campaign.id, view)) : null;
+  const filteredIds = reason && reasonIds ? reasonIds[reason] : undefined;
   const [findings, groups] = campaign && tab === "audit" ? await Promise.all([
-    listAuditFindings(campaign.id, view, { limit: PAGE_SIZE, offset: (page - 1) * PAGE_SIZE }),
+    listAuditFindings(campaign.id, view, { limit: PAGE_SIZE, offset: (page - 1) * PAGE_SIZE, ids: filteredIds }),
     view === "reject" ? auditRemovalGroups(campaign.id) : Promise.resolve([]),
   ]) : [[], []];
   // 사유의 한국어 — 미리 옮겨 둔 것이 있을 때만(lib/crawl/translations). 없으면 원문과 "번역 대기"
   const korean = findings.length ? await translationsFor(findings.map((finding) => finding.reason)) : new Map<string, string>();
-  const pages = Math.max(1, Math.ceil(open[view] / PAGE_SIZE));
-  const href = (nextView: View, nextPage = 1) => {
+  const pages = Math.max(1, Math.ceil((filteredIds?.length ?? open[view]) / PAGE_SIZE));
+  // 갈래를 바꾸면(view) 사유 거르기는 푼다 — 두 갈래의 사유는 섞여 세지 않는다
+  const href = (nextView: View, nextPage = 1, nextReason: AuditReasonCategory | null = nextView === view ? reason : null) => {
     const params = new URLSearchParams({ tab: "audit" });
     if (nextView !== "reject") params.set("view", nextView);
+    if (nextReason) params.set("reason", nextReason);
     if (nextPage > 1) params.set("page", String(nextPage));
     return `/admin/audit${params.size ? `?${params}` : ""}`;
   };
@@ -150,8 +158,11 @@ export default async function AdminAuditPage({ searchParams }: Props) {
             </span>
           </nav>
 
+          {reasonIds && <ReasonChips counts={reasonIds} total={open[view]} active={reason} href={(next) => href(view, 1, next)} />}
+
           {findings.length === 0 ? (
-            <p className="rounded-[12px] border border-line bg-bg-card px-5 py-8 text-center text-[13px] text-fg-3">{VIEWS[view].empty}</p>
+            <p className="rounded-[12px] border border-line bg-bg-card px-5 py-8 text-center text-[13px] text-fg-3">
+              {reason ? `‘${AUDIT_REASON_CATEGORIES[reason].label}’ 갈래에 남은 것이 없습니다.` : VIEWS[view].empty}</p>
           ) : (
             // relative: 표 머리의 sr-only(절대 위치)가 가로 스크롤 상자를 벗어나 390px 화면 전체를 넓히지 않게
             <div className="relative overflow-hidden rounded-[12px] border border-line bg-bg-card">
@@ -168,6 +179,7 @@ export default async function AdminAuditPage({ searchParams }: Props) {
                 <tbody>
                   {findings.map((finding) => (
                     <AuditFinding key={finding.id} finding={{ ...finding, reasonKo: finding.reason ? korean.get(finding.reason) ?? null : null,
+                      reasonCategory: AUDIT_REASON_CATEGORIES[classifyAuditReason(finding.reason)].label,
                       reviewedAt: finding.reviewedAt ? formatListTime(finding.reviewedAt, now) : null }} />
                   ))}
                 </tbody>
@@ -190,6 +202,30 @@ export default async function AdminAuditPage({ searchParams }: Props) {
       )}
       </>}
     </main>
+  );
+}
+
+/**
+ * 사유 갈래 칩 — 내릴 까닭이 같은 것끼리 몰아 본다(2026-10-11 운영자 요청). 수는 지금 갈래(view)의 사람이 볼 것 전부를 센다.
+ * 많은 갈래부터, '기타'는 맨 뒤. 0건인 갈래는 빼서 칩이 할 일만 보이게 한다
+ */
+function ReasonChips({ counts, total, active, href }: {
+  counts: Record<AuditReasonCategory, number[]>; total: number; active: AuditReasonCategory | null; href: (reason: AuditReasonCategory | null) => string;
+}) {
+  const keys = AUDIT_REASON_KEYS.filter((key) => counts[key].length > 0)
+    .sort((a, b) => Number(a === "other") - Number(b === "other") || counts[b].length - counts[a].length);
+  if (keys.length === 0) return null;
+  const chip = (on: boolean) => `rounded-full border px-2.5 py-1 text-[13px] ${on ? "border-accent bg-accent-soft font-semibold text-accent" : "border-line bg-bg-card text-fg-2 hover:bg-bg-hover"}`;
+  return (
+    <nav aria-label="내릴 사유 갈래" className="flex flex-wrap items-center gap-1.5">
+      <span className="text-[13px] font-semibold text-fg-3">사유</span>
+      <Link href={href(null)} aria-current={active === null ? "page" : undefined} className={chip(active === null)}>전체 {count(total)}</Link>
+      {keys.map((key) => (
+        <Link key={key} href={href(key)} aria-current={active === key ? "page" : undefined} title={AUDIT_REASON_CATEGORIES[key].hint} className={chip(active === key)}>
+          {AUDIT_REASON_CATEGORIES[key].label} {count(counts[key].length)}
+        </Link>
+      ))}
+    </nav>
   );
 }
 

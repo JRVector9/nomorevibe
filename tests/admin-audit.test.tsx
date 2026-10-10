@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const mocks = vi.hoisted(() => ({
   admin: vi.fn(), redirect: vi.fn(), revalidate: vi.fn(),
   overview: vi.fn(), findings: vi.fn(), start: vi.fn(), cancel: vi.fn(), remove: vi.fn(), keep: vi.fn(),
-  groups: vi.fn(), removeMany: vi.fn(), translations: vi.fn(), log: vi.fn(),
+  groups: vi.fn(), removeMany: vi.fn(), translations: vi.fn(), log: vi.fn(), reasons: vi.fn(),
   takedownSummary: vi.fn(), takedownQueue: vi.fn(), takedownHistory: vi.fn(),
 }));
 vi.mock('@/lib/auth/admin', () => ({ currentAdmin: mocks.admin }));
@@ -13,7 +13,7 @@ vi.mock('next/cache', () => ({ revalidatePath: mocks.revalidate }));
 vi.mock('@/lib/crawl/product-audit', () => ({
   productAuditOverview: mocks.overview, listAuditFindings: mocks.findings, startProductAudit: mocks.start,
   cancelProductAudit: mocks.cancel, removeAuditedProduct: mocks.remove, keepAuditedProduct: mocks.keep,
-  auditRemovalGroups: mocks.groups, removeAuditedProducts: mocks.removeMany,
+  auditRemovalGroups: mocks.groups, removeAuditedProducts: mocks.removeMany, auditFindingReasons: mocks.reasons,
   GROUP_REMOVE_MAX: 50, GROUP_REMOVE_MIN_CONFIDENCE: 0.95,
 }));
 vi.mock('@/lib/crawl/translations', () => ({ translationsFor: mocks.translations }));
@@ -50,6 +50,9 @@ beforeEach(() => {
   mocks.overview.mockResolvedValue({ campaign, counts, paused: null, stalled: false });
   mocks.findings.mockResolvedValue([finding(11, 'login-wall'), finding(12, 'docs-site'), finding(13, 'agency')]);
   mocks.groups.mockResolvedValue([]);
+  mocks.reasons.mockResolvedValue([
+    { id: 11, reason: 'pageText shows only a sign-in form' }, { id: 12, reason: 'a documentation site' }, { id: 13, reason: 'a consulting agency site' },
+  ]);
   mocks.translations.mockResolvedValue(new Map());
   mocks.takedownSummary.mockResolvedValue(takedowns(0));
   mocks.takedownQueue.mockResolvedValue([]);
@@ -57,6 +60,27 @@ beforeEach(() => {
 });
 
 describe('내릴 후보 화면', () => {
+  /** 사유 갈래(2026-10-11) — 내릴 까닭이 같은 것끼리 몰아 본다. 판단은 바꾸지 않고 묶어 보기만 한다 */
+  it('사유 갈래 칩에 수를 적고, 줄마다 갈래를 보이며, 갈래를 고르면 그 항목만 쪽을 넘긴다', async () => {
+    const html = await render({ tab: 'audit' });
+    expect(html).toContain('aria-label="내릴 사유 갈래"');
+    expect(html).toMatch(/aria-current="page"[^>]*>전체 3/);
+    for (const label of ['로그인 화면만', '글·문서·강의', '회사·서비스 소개']) expect(html).toContain(`${label} 1`);
+    expect(html).not.toContain('쇼핑몰·판매');
+    expect(html).toContain('href="/admin/audit?tab=audit&amp;reason=login"');
+    expect(mocks.findings).toHaveBeenLastCalledWith(7, 'reject', { limit: 50, offset: 0, ids: undefined });
+
+    mocks.findings.mockResolvedValue([finding(11, 'login-wall')]);
+    const filtered = await render({ tab: 'audit', reason: 'login' });
+    expect(mocks.findings).toHaveBeenLastCalledWith(7, 'reject', { limit: 50, offset: 0, ids: [11] });
+    expect(filtered).toMatch(/aria-current="page"[^>]*>로그인 화면만 1/);
+    expect(filtered).toMatch(/rounded bg-bg-soft[^"]*">로그인 화면만<\/span>/);
+
+    // 모르는 갈래는 거르지 않는다
+    await render({ tab: 'audit', reason: 'constructor' });
+    expect(mocks.findings).toHaveBeenLastCalledWith(7, 'reject', { limit: 50, offset: 0, ids: undefined });
+  });
+
   it('로그아웃 상태면 감사 기록을 읽기 전에 로그인으로 보낸다', async () => {
     mocks.admin.mockResolvedValue(null);
     mocks.redirect.mockImplementation((path: string) => { throw new Error(`redirect:${path}`); });
