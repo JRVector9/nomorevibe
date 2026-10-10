@@ -6,7 +6,7 @@ export const JOB_ROLES: readonly JobRole[] = ["crawler", "reviewer", "publisher"
  * lane: 같은 역할 워커 안에서 따로 도는 줄. 역할 lease 는 하나라 워커를 늘려도 한 대만 일한다 — 줄이 다르면 한 프로세스 안에서
  * 동시에 돈다. 줄을 적지 않은 잡은 기본 줄(main)에서 차례로 돈다(scripts/worker.ts runWorker).
  */
-export type JobLane = "main" | "evidence";
+export type JobLane = "main" | "evidence" | "scan";
 export const JOB_CATALOG: readonly { name: string; role: JobRole | "scheduler"; intervalMs: number | null; lane?: JobLane }[] = [
   { name: "heartbeat", role: "scheduler", intervalMs: null },
   /**
@@ -102,7 +102,8 @@ export const JOB_CATALOG: readonly { name: string; role: JobRole | "scheduler"; 
    */
   { name: "product-spam-rescan", role: "maintenance", intervalMs: 5 * 60_000 },
   { name: "product-evidence-refresh", role: "crawler", intervalMs: 60_000 },
-  { name: "agent-evidence-refresh", role: "crawler", intervalMs: 60_000 },
+  // 저장소 파일·커밋 서명 조사 — 틱마다 14초 남짓. 기본 줄에서 70초 간격으로 밀려(목표 60초) 따로 돈다(2026-10-10)
+  { name: "agent-evidence-refresh", role: "crawler", intervalMs: 60_000, lane: "scan" },
   /**
    * AI 제작 근거 단계(1·2·3단계)를 저장소마다 판정해 제품 ai_level 에 옮긴다(ai-level-refresh.ts). 새 후보 → 새 공개 제품 → 사흘 지난 것.
    * GraphQL 10개 묶음(1점)을 한 틱 38초 안에서 — 공개분 첫 바퀴가 반나절, 그 뒤 하루 1만 3천 개쯤
