@@ -32,7 +32,7 @@ export function ProductTagline({ tagline, taglineKo, source, className, showSour
   return (
     <>
       <p className={className} title={original === "tooltip" ? `원문: ${tagline}` : korean}>{korean}</p>
-      {showSource && <IntroductionSource source={source ?? undefined} korean />}
+      {showSource && <IntroductionSource source={source ?? undefined} />}
       {original === "toggle" && (
         <details className="text-[13px] leading-[1.5] text-fg-2">
           <summary className="inline-flex min-h-8 cursor-pointer select-none items-center text-accent-ink hover:underline">원문 보기</summary>

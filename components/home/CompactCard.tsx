@@ -20,7 +20,8 @@ export function CompactCard({ product, trailing }: { product: ProductListItem; t
   return (
     <article className="compact-card">
       <Link prefetch={false} href={href} className="compact-visual" tabIndex={-1} aria-hidden="true">
-        <ProjectTile slug={product.slug} name={product.name} ogImage={product.ogImage} size={44} installable={product.accessMode === "installable"} category={product.category} />
+        <ProjectTile slug={product.slug} name={product.name} ogImage={product.ogImage} size={44} installable={product.accessMode === "installable"}
+          ai={product.aiLevel != null} category={product.category} />
       </Link>
       <div className="compact-body">
         <h3 className="compact-title"><Link prefetch={false} href={href} className="card-link">{product.name}</Link></h3>

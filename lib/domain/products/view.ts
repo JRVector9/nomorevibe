@@ -52,6 +52,8 @@ export type ProductListItem = StarObservation & {
   /** 생존 확인 결과. 확인한 적이 없으면 없다 */
   health?: { down: boolean; since: Date | null };
   activity?: ProductActivity;
+  /** AI 제작 근거 단계(products.ai_level) — 카드 커버의 'AI' 배지. 단계는 나눠 보이지 않는다(2026-10-11 운영자 결정) */
+  aiLevel?: number | null;
 };
 
 /** 아직 아무도 가져가지 않은 수집 결과인가 */
@@ -73,6 +75,7 @@ export function toListItem(p: ProductListRow): ProductListItem {
     taglineKo: p.taglineKo ?? null,
     category: p.category,
     accessMode: p.accessMode,
+    aiLevel: p.aiLevel ?? null,
     // 수집기가 추정한 값은 공개 뷰모델에서 제거한다. 메이커가 확인한 값만 UI와 검색에 쓴다.
     builder: builderClaim === "reported" ? p.builder : null,
     builderClaim,

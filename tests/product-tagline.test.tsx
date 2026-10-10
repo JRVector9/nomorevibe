@@ -16,14 +16,17 @@ describe("ProductTagline — 한국어 소개를 먼저, 원문은 뒤에(UX-13)
     const html = render({ tagline: "Edit videos locally", taglineKo: "로컬에서 동영상 편집", source: "maker" });
     expect(html).toContain('title="원문: Edit videos locally"');
     expect(html).toContain(">로컬에서 동영상 편집</p>");
-    expect(html).toContain("AI가 한국어로 요약");
+    // 한국어로 옮겼다는 말은 적지 않는다(2026-10-11 운영자 결정) — 메이커가 쓴 원문이면 출처 줄도 없다
+    expect(html).not.toContain("한국어로 요약");
+    expect(html).not.toContain("card-intro-source");
     expect(html).not.toContain("<details");
   });
 
   it("상세는 '원문 보기' 토글 안에 원문을 둔다 — 원문이 AI 가 지은 것이면 무엇을 보고 지었는지도", () => {
     const html = render({ tagline: "Edit videos locally", taglineKo: "로컬에서 동영상 편집", source: "ai_page", original: "toggle" });
     expect(html).toMatch(/<details[^>]*><summary[^>]*>원문 보기<\/summary><p[^>]*>Edit videos locally<\/p><\/details>/);
-    expect(html).toContain("AI가 한국어로 요약 · 페이지 글에서");
+    expect(html).toContain("AI가 요약 · 페이지 글에서");
+    expect(html).not.toContain("한국어로 요약");
     expect(html).not.toContain("원문: ");
   });
 

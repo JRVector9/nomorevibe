@@ -180,31 +180,30 @@ export function MethodologyDialog({ pulse, rankingFallback = false, aiLevels = n
     ),
     ai: (
       <>
-        <h3>만든 방식 — 저장소에 남은 AI 제작 근거로 나눕니다.</h3>
+        <h3>만든 방식 — 저장소에 남은 AI 제작 근거로 봅니다.</h3>
         <p>
-          공개 GitHub 저장소에서 AI 코딩 도구가 남긴 근거를 찾아 세 단계로 나눕니다. 셋 다 홈의 &ldquo;AI로 제작&rdquo;에 들어가고,
-          한 프로젝트에 근거가 여러 개면 가장 앞 단계 하나로 셉니다.
+          공개 GitHub 저장소에서 AI 코딩 도구가 남긴 근거를 찾습니다. 아래 근거 중 하나라도 있으면 카드와 상세에 &ldquo;AI&rdquo;로 표시하고
+          홈의 &ldquo;AI로 제작&rdquo;에 들어갑니다. 근거가 여러 개인 프로젝트는 표의 위쪽 한 줄로 셉니다.
         </p>
         <table className="method-table">
-          <thead><tr><th>단계</th><th>근거</th>{aiLevels && <th>프로젝트 수</th>}</tr></thead>
+          <thead><tr><th>근거</th>{aiLevels && <th>프로젝트 수</th>}</tr></thead>
           <tbody>
             {AI_LEVELS.map((level) => (
               <tr key={level}>
-                <td>{level}단계</td>
                 <td>{AI_LEVEL_LABELS[level].title}</td>
                 {aiLevels && <td>{formatCount(aiLevels[level])}개</td>}
               </tr>
             ))}
           </tbody>
         </table>
-        <p>단계가 없다고 AI 없이 만든 것은 아닙니다. 아직 검사하지 않았거나, 흔적을 남기지 않는 방식으로 만들었을 수 있습니다.</p>
+        <p>&ldquo;AI&rdquo; 표시가 없다고 AI 없이 만든 것은 아닙니다. 아직 검사하지 않았거나, 흔적을 남기지 않는 방식으로 만들었을 수 있습니다.</p>
         <Details>
-          {AI_LEVELS.map((level) => <p key={level}><b>{level}단계</b> — {AI_LEVEL_LABELS[level].description}</p>)}
+          {AI_LEVELS.map((level) => <p key={level}><b>{AI_LEVEL_LABELS[level].title}</b> — {AI_LEVEL_LABELS[level].description}</p>)}
           <p>
-            어느 단계도 제품 전체를 AI가 만들었다는 증명은 아닙니다. 1단계도 병합된 그 PR의 변경까지만 말하고, 2·3단계는 저장소가 밝힌 것이라
-            꾸밀 수 있습니다. 여러 도구가 함께 읽는 지침 파일(CLAUDE.md·AGENTS.md)만 있는 저장소는 단계에 넣지 않습니다.
+            어느 근거도 제품 전체를 AI가 만들었다는 증명은 아닙니다. 에이전트가 연 PR도 병합된 그 PR의 변경까지만 말하고, 커밋 서명·설정 파일은
+            저장소가 밝힌 것이라 꾸밀 수 있습니다. 여러 도구가 함께 읽는 지침 파일(CLAUDE.md·AGENTS.md)만 있는 저장소는 &ldquo;AI&rdquo;로 표시하지 않습니다.
           </p>
-          <p>저장소는 사흘마다 다시 봅니다. 저장소가 없는 프로젝트는 검사할 수 없어 단계가 없습니다.</p>
+          <p>저장소는 사흘마다 다시 봅니다. 저장소가 없는 프로젝트는 검사할 수 없어 &ldquo;AI&rdquo; 표시가 없습니다.</p>
         </Details>
       </>
     ),
