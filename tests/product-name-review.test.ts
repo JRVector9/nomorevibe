@@ -142,3 +142,64 @@ describe("제안의 출처(source) — 제목 안의 말만 자동으로 쓴다(
     expect(review?.proposed).toBe("BỘ TÀI LIỆU AI AGENTIC 1 NGƯỜI (0Đ)");
   });
 });
+
+/** 2026-10-11 공개분에서 찾은 오류 모양 — 자동으로 고치되, 틀린 이름을 만들지 않는다 */
+describe("인사·문서 머리말과 README 첫 줄 (2026-10-11)", () => {
+  const auto = (name: string, repo: string, readme?: string) => normalizedProductName(name, gh(repo), readme);
+
+  it("문서 생성기의 기본 제목은 안의 이름을 그대로 쓴다", () => {
+    expect(reviewProductName("Welcome to pytimer’s documentation!", gh("veltzer/pytimer"))).toMatchObject({ issues: ["boilerplate"], proposed: "pytimer", source: "title" });
+    expect(auto("Welcome to TensorRT LLM’s Documentation!", "NVIDIA/TensorRT-LLM")).toBe("TensorRT LLM");
+    expect(auto("Welcome to the Kitsu Developer Documentation!", "cgwire/kitsu")).toBe("Kitsu");
+    // 이름 없는 문서 제목은 고칠 이름이 없다
+    expect(auto("Welcome to the documentation", "acme/handbook")).toBe("Welcome to the documentation");
+  });
+
+  it("Welcome to·About 은 남는 말이 저장소와 이어질 때만 뗀다", () => {
+    expect(auto("Welcome to Workrave", "rcaelers/workrave")).toBe("Workrave");
+    expect(auto("About OSDCloud | OSDCloud by Recast", "RecastSoftware/RecastOSDCloud")).toBe("OSDCloud");
+    expect(auto("Welcome to the Apache Struts project", "apache/struts")).toBe("Apache Struts");
+    // 저장소와 이어지지 않으면 짐작 — 자동으로 쓰지 않는다
+    expect(reviewProductName("Welcome to my portfolio site", gh("jdoe/jdoe.dev"))).toMatchObject({ source: "guess" });
+    expect(auto("Welcome to my portfolio site", "jdoe/jdoe.dev")).toBe("Welcome to my portfolio site");
+    // 제목 전체가 저장소 이름이면 진짜 이름이다
+    expect(auto("About Time", "acme/about-time")).toBe("About Time");
+  });
+
+  it("뒤 꾸밈말(demo·docs·playground·文档)은 남는 이름이 저장소 이름과 같을 때만 뗀다", () => {
+    expect(auto("Lab Tracker Demo", "SamuelBrudner/lab-tracker")).toBe("Lab Tracker");
+    expect(auto("AgentRouter 文档", "acme/agentrouter")).toBe("AgentRouter");
+    expect(auto("fast-check official documentation", "dubzzz/fast-check")).toBe("fast-check");
+    expect(auto("MUI / Playground", "acme/mui")).toBe("MUI");
+    expect(auto("@fnix/lexxy-mathjax demo", "fnix/lexxy-mathjax")).toBe("@fnix/lexxy-mathjax");
+    // 2026-10-11 미리보기에서 틀렸던 것들 — 그대로 둔다
+    expect(auto("Lawson's Learning Playground", "MrGamble01/lawson")).toBe("Lawson's Learning Playground");
+    expect(auto("Modelica by Example", "mtiller/ModelicaByExample")).toBe("Modelica by Example");
+    expect(auto(".NET documentation", "dotnet/runtime")).toBe(".NET documentation");
+    // 저장소 이름에도 꾸밈말이 있으면 이름의 일부다
+    expect(auto("NVIDIA NemoClaw Community Examples", "NVIDIA/nemoclaw-community-examples")).toBe("NVIDIA NemoClaw Community Examples");
+  });
+
+  it("@storybook/… 제목은 이름이 아니다 — README 첫 줄이 저장소 이름과 같으면 그 표기로", () => {
+    expect(reviewProductName("@storybook/core", gh("adobe/react-spectrum-charts"), "React Spectrum Charts\n\nDocumentation\n"))
+      .toMatchObject({ issues: ["generic"], proposed: "React Spectrum Charts", source: "readme" });
+    // README 가 없으면 저장소 이름 제안 — 사람이 본다
+    expect(reviewProductName("@storybook/core", gh("cosmosgl/graph"))).toMatchObject({ issues: ["generic"], source: "repo" });
+    expect(auto("@storybook/core", "cosmosgl/graph")).toBe("@storybook/core");
+  });
+
+  it("README 첫 줄은 저장소(또는 owner) 이름과 같을 때만, 템플릿·흔한 배포 이름·주소는 쓰지 않는다", () => {
+    expect(auto("Welcome back", "kendrick-na/findable", "Findable — 한국 최초 Agentic GEO Platform\n\n**AI 답변…**")).toBe("Findable");
+    expect(auto("Home Page", "kadakareer/product", "Kadakareer — Product\n\nProduct management workspace")).toBe("Kadakareer");
+    // 템플릿 README
+    expect(auto("Welcome back", "SamIrving94/Bellwood-Lane-Ventures", "next-forge\n\n**Production-grade Turborepo template**")).toBe("Welcome back");
+    // 저장소와 이어지기만 하는 첫 줄
+    expect(auto("Home", "acme/scanx", "ScanX: Scan Smarter. Understand Better.")).toBe("Home");
+    // 흔한 배포 이름
+    expect(auto("Accueil", "jdoe/portfolio-v1", "Portfolio v1\n")).toBe("Accueil");
+    // 주소만 든 첫 줄
+    expect(auto("Home Page", "opendatahub-io/opendatahub-operator", "(https://codecov.io/github/opendatahub-io/opendatahub-operator)\n")).toBe("Home Page");
+    // 슬로건 제목은 README 로 대신하지 않는다
+    expect(reviewProductName("Flexible Open-Source ERP & CRM for SMBs", gh("acme/mycompany"), "MyCompany\n")).toMatchObject({ source: "repo" });
+  });
+});

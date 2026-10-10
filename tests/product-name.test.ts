@@ -82,3 +82,11 @@ describe("productName — 제목에서 이름만 남긴다", () => {
     expect(isGenericTitle("Homey")).toBe(false);
   });
 });
+
+describe("productName — 제목에 이름이 없으면 README 첫 줄 (2026-10-11)", () => {
+  it("@storybook/cli - Storybook 제목은 README 첫 줄이 저장소 이름과 같을 때 그 표기를 쓴다", () => {
+    expect(productName("@storybook/cli - Storybook", "adobe/react-spectrum-charts", null, "React Spectrum Charts\n\nDocs")).toBe("React Spectrum Charts");
+    // README 가 저장소 이름과 다르면 지금처럼 레포 이름
+    expect(productName("@storybook/cli - Storybook", "primer/css", "https://primer.style/css", "Primer CSS\n")).toBe("css");
+  });
+});

@@ -22,16 +22,25 @@ const GENERIC_NAMES = new Set([
   'sign up', 'log in', 'login', 'entrar', 'app', 'react app', 'vite app', 'vite + react', 'vite + react + ts',
   'lovable app', 'untitled', 'document', 'frontend', 'storybook', '로그인', '홈', '홈페이지', 'đăng nhập', 'trang chủ',
   '首页', '首頁', '主页', '主頁', 'ホーム', 'トップページ', 'inicio', 'accueil', 'startseite',
+  // 2026-10-11 공개분: 'Welcome back' 'About Me' 가 그대로 이름이었다
+  'welcome back', 'about me', 'about us',
 ]);
+/**
+ * 제목이 문서 도구의 이름인 것 — 사이트를 Storybook 으로 띄우면 제목이 '@storybook/cli - Storybook'·'@storybook/core' 다.
+ * 2026-10-11 공개분 5건(Primer CSS·react-spectrum-charts·cosmos.gl…)이 이 이름으로 올라가 있었다
+ */
+const GENERIC_PATTERNS = [/^@storybook\/[\w.-]+$/];
 
 export function isGenericName(name: string): boolean {
-  return GENERIC_NAMES.has(name.trim().toLowerCase());
+  const lower = name.trim().toLowerCase();
+  return GENERIC_NAMES.has(lower) || GENERIC_PATTERNS.some((pattern) => pattern.test(lower));
 }
 
 /** 이름 정리 사유 — 관리자 '이름 확인 필요'가 사람이 읽는 말로 보여 준다(NAME_ISSUE_LABELS) */
-export type NameIssue = 'generic' | 'slogan_tail' | 'too_long' | 'slogan' | 'emoji_prefix' | 'all_caps';
+export type NameIssue = 'generic' | 'slogan_tail' | 'too_long' | 'slogan' | 'emoji_prefix' | 'all_caps' | 'boilerplate';
 export const NAME_ISSUE_LABELS: Record<NameIssue, string> = {
   generic: '일반어 제목', slogan_tail: '구분자 뒤 슬로건', too_long: '40자 넘음', slogan: '이름이 아닌 문구', emoji_prefix: '이모지 접두', all_caps: '전부 대문자',
+  boilerplate: '인사·문서 머리말',
 };
 /**
  * source — 제안이 어디서 왔나. title: 제목 안의 말(구분자 앞뒤·이모지 뗀 나머지·대소문자만 고침), repo: 제목에서 못 찾아 저장소 이름으로 대신했다.
@@ -41,7 +50,9 @@ export const NAME_ISSUE_LABELS: Record<NameIssue, string> = {
  * 'Daily-habit-tracker', 'HAIDER ALI' → 'Haider ALI' 로 틀렸다.
  * 발행·일괄 정리는 title 만 자동으로 쓰고, guess·repo 는 관리자 '이름 확인 필요'에서 사람이 고른다.
  */
-export type NameReview = { issues: NameIssue[]; proposed: string | null; source: "title" | "guess" | "repo" | null };
+export type NameReview = { issues: NameIssue[]; proposed: string | null; source: "title" | "guess" | "repo" | "readme" | null };
+/** 사람 손 없이 쓰는 제안 — 제목 안의 말(title)과 저장소와 이어지는 README 첫 제목(readme). 짐작(guess)·저장소 이름 대신(repo)은 사람이 고른다 */
+export const AUTOMATIC_NAME_SOURCES: ReadonlySet<NameReview["source"]> = new Set(["title", "readme"]);
 
 /** 이보다 긴 이름은 이름이 아니라 문장이다(UX-33) */
 export const NAME_MAX = 40;
@@ -143,6 +154,83 @@ function repoSpelling(name: string, repo: { owner: string; name: string } | null
   return spelled.toLowerCase() === name.toLowerCase() ? spelled : null;
 }
 
+/**
+ * 인사·문서 머리말 — 2026-10-11 공개분 실측: 'Welcome to pytimer’s documentation!'(Sphinx 기본 제목) 59건, 'Welcome to Workrave' 류 28건,
+ * 'About OSDCloud' 류 9건, '@fnix/lexxy-mathjax demo' 류 3건이 그대로 이름이었다.
+ * 문서 생성기의 기본 제목은 틀이 정해져 있어 안의 이름을 그대로 믿는다. 나머지는 뗀 말이 저장소와 이어질 때만 자동으로 쓴다
+ * ('About Time' 같은 진짜 이름을 'Time' 으로 자르지 않게, 제목 전체가 저장소 이름과 같으면 떼지 않는다).
+ */
+const DOCS_WELCOME = /^welcome to (?:the )?(.+?)(?:['’]s)?\s+(?:v?\d[\w.-]*\s+)?(?:(?:developer|user|api|official|online)\s+)?documentation\b/i;
+/** 이름 뒤에 붙는 꾸밈말 — 'Shaka Player Demo', 'AegisFlow documentation', 'ChatUp 文档'. 앞의 수식어('official'·'live'·'web')도 같이 뗀다 */
+const DESCRIPTOR = /\s+(?:(?:live|web|official|online|interactive|code|developer|user|api)\s+)?(demo|docs|documentation|playground|storybook|examples?|samples?|showcase|组件展示|組件展示|文档|ドキュメント)[!.]*$/i;
+/** 꾸밈말이 저장소 이름에도 있으면 그 말은 이름의 일부다 — dotnet/docs 의 '.NET documentation', nemoclaw-community-examples */
+const DESCRIPTOR_ROOTS: Record<string, string> = { documentation: 'doc', docs: 'doc', examples: 'example', example: 'example', samples: 'sample', sample: 'sample' };
+const WRAPPERS = [
+  /^welcome to (?:the )?(.+?)(?:\s+(?:project|website|site|homepage))?[!.]*$/i,
+  /^about (?:the )?(.+)$/i,
+  /^(@[\w.-]+\/[\w.-]+)\s+\S.*$/,
+];
+
+/** 저장소 이름과 글자가 같다 — 배포용 꼬리(-web·-app·-docs…)를 떼고도 본다 */
+function sameAsRepo(text: string, repo: { owner: string; name: string } | null): boolean {
+  if (!repo) return false;
+  const folded = fold(text);
+  return folded.length >= 3 && [repo.name, repo.name.replace(/[-_.](?:frontend|web|app|site|website|landing|docs|demo|ui|client|www)$/i, '')]
+    .some((name) => fold(name) === folded);
+}
+
+function unwrapBoilerplate(text: string, repo: { owner: string; name: string } | null): { name: string; sure: boolean } | null {
+  if (repo && fold(text) === fold(repo.name)) return null;
+  // 뗀 뒤 끝에 남은 구분자·문장부호는 지운다('MUI / Playground' → MUI). 끝이 by·of 같은 낱말이면 이름 중간을 자른 것이다('Modelica by Example')
+  const clean = (name: string) => name.replace(/[\s/|:·•–—-]+$/u, '').trim();
+  const usable = (name: string) => fold(name).length >= 3 && !FUNCTION_WORDS.has(name.toLowerCase()) && !isGenericName(name)
+    && !FUNCTION_WORDS.has(name.split(/\s+/).at(-1)!.toLowerCase());
+  const docs = DOCS_WELCOME.exec(text);
+  if (docs) return usable(clean(docs[1])) ? { name: clean(docs[1]), sure: true } : { name: '', sure: true };
+  const descriptor = DESCRIPTOR.exec(text);
+  if (descriptor) {
+    const root = DESCRIPTOR_ROOTS[descriptor[1].toLowerCase()] ?? fold(descriptor[1]);
+    const name = clean(text.slice(0, descriptor.index));
+    if (repo && fold(repo.name).includes(root)) return null;
+    // 꾸밈말을 떼는 것은 남는 말이 저장소 이름과 글자까지 같을 때만 자동이다 — "Lawson's Learning Playground"(저장소 lawson)는
+    // README 가 'Lawson's Playground' 라 'Lawson's Learning' 이 틀린 이름이었다. 스코프(@fnix/)는 빼고 견준다
+    return usable(name) ? { name, sure: sameAsRepo(name.replace(/^@[\w.-]+\//, ''), repo) } : null;
+  }
+  for (const pattern of WRAPPERS) {
+    const name = clean(pattern.exec(text)?.[1] ?? '');
+    if (name && usable(name)) return { name, sure: related(name, repo) };
+  }
+  return null;
+}
+
+/** README 머리 제목이 틀에서 온 것 — 템플릿이 쓴 제목은 제품 이름이 아니다 */
+const README_BOILERPLATE = /^(?:getting started|create react app|react \+|vite \+|welcome to (?:your|the)|project (?:title|name)|readme|template|untitled|my (?:app|project)|next\.js|next-forge|nuxt|sveltekit|expo|turborepo|create t3 app|lovable|bolt|v0)\b/i;
+
+/**
+ * README 첫 제목 — 제목에 이름이 없을 때('Welcome back'·'@storybook/core') 메이커가 README 에 적은 이름.
+ * 저장된 README(readmeSample·search_readme)는 마크다운 표시(#)가 빠진 글이라 글이 있는 첫 줄을 제목으로 본다. 그림·주소만 든 줄은 건너뛰고,
+ * 첫 줄이 주소를 품거나 40자를 넘거나 일반어·템플릿 제목('next-forge'·'Getting Started with Create React App')이면 쓰지 않는다.
+ * 'Findable — 한국 최초 Agentic GEO Platform' 처럼 구분자 뒤 슬로건은 뗀다. 저장소 이름(또는 owner)과 글자까지 같을 때만 쓴다 —
+ * 두 곳이 같은 이름을 말해야 사람 없이 쓴다. 2026-10-11 공개분 미리보기에서 '이어지기만' 하는 README 첫 줄은
+ * 'github.io'·'A portfolio you can talk to'·'Explore Santos ↗' 같은 것이 섞였다.
+ */
+export function readmeHeading(readme: string | null | undefined, repoUrl: string | null): string | null {
+  if (!readme) return null;
+  const repo = repoParts(repoUrl);
+  for (const line of readme.split('\n').slice(0, 30)) {
+    const text = line.replace(/!\[[^\]]*\]\([^)]*\)/g, '').replace(/\[([^\]]*)\]\([^)]*\)/g, '$1').replace(/<[^>]+>/g, '')
+      .replace(/^\s*#+\s*/, '').replace(/[`*_]/g, '').replace(EMOJI_PREFIX, '').trim();
+    if (!/[\p{L}\p{N}]/u.test(text) || /^[=\-\s]+$/.test(text)) continue;
+    if (/https?:\/\/|\(\s*\)/.test(text)) return null;
+    const name = text.split(SLOGAN_SEPARATOR)[0].replace(/&nbsp;/g, ' ').replace(/[^\p{L}\p{N}).!?'"]+$/u, '').trim();
+    const confirmed = sameAsRepo(name, repo) || (repo !== null && fold(name).length >= 3 && fold(name) === fold(repo.owner));
+    // 'blog'·'Portfolio v1' 같은 흔한 배포 이름은 저장소와 같아도 이름으로 내세우지 않는다(prettyRepoName 과 같은 선)
+    const deployName = DEPLOY_WORDS.has(name.toLowerCase().replace(/[\s_-]*v?\d+$/, ''));
+    return name && [...name].length <= NAME_MAX && !isGenericName(name) && !README_BOILERPLATE.test(name) && !deployName && confirmed ? name : null;
+  }
+  return null;
+}
+
 function recase(name: string): string {
   // 첫 낱말이 아닌 for·of·the 같은 낱말은 소문자로
   return name.replace(/[A-Za-z]+/g, (word, offset: number) => {
@@ -170,7 +258,7 @@ function isSlogan(name: string, repo: { owner: string; name: string } | null): b
  *
  * 쓰는 곳: 새 제품 발행(lib/crawl/publish.ts, normalizedProductName), 관리자 '이름 확인 필요'와 기존 제품 백필(name-review.ts).
  */
-export function reviewProductName(name: string, repoUrl: string | null): NameReview | null {
+export function reviewProductName(name: string, repoUrl: string | null, readme?: string | null): NameReview | null {
   const original = name.trim();
   // owner/repo 꼴은 화면이 이미 저장소 이름으로 줄여 보인다(displayProjectName)
   if (!original || displayProjectName(original, repoUrl) !== original) return null;
@@ -185,6 +273,15 @@ export function reviewProductName(name: string, repoUrl: string | null): NameRev
   if (emoji && (current.slice(emoji[0].length).match(/\p{L}/gu) ?? []).length >= 3) {
     current = current.slice(emoji[0].length).trim();
     issues.push('emoji_prefix');
+  }
+
+  if (!isGenericName(current)) {
+    const unwrapped = unwrapBoilerplate(current, repo);
+    if (unwrapped) {
+      current = unwrapped.name;
+      issues.push('boilerplate');
+      if (!unwrapped.sure) guessed = true;
+    }
   }
 
   const parts = current.split(SLOGAN_SEPARATOR).map((part) => part.trim()).filter(Boolean);
@@ -227,14 +324,17 @@ export function reviewProductName(name: string, repoUrl: string | null): NameRev
   }
 
   if (!issues.length) return null;
-  const fromTitle = Boolean(current);
-  const proposed = current || prettyRepoName(repoUrl);
+  // 제목에 이름이 아예 없으면(일반어 제목) README 첫 줄이 저장소 이름과 같을 때 그 표기를, 아니면 저장소 이름(사람이 본다).
+  // 슬로건·긴 제목은 README 로 대신하지 않는다 — README 첫 줄도 슬로건인 경우가 많았다
+  const heading = current || !issues.includes('generic') ? null : readmeHeading(readme, repoUrl);
+  const proposed = current || heading || prettyRepoName(repoUrl);
   const kept = proposed && proposed !== original ? proposed.slice(0, 120) : null;
-  return { issues, proposed: kept, source: kept ? (fromTitle ? (guessed ? "guess" : "title") : "repo") : null };
+  const source = current ? (guessed ? "guess" : "title") : heading ? "readme" : "repo";
+  return { issues, proposed: kept, source: kept ? source : null };
 }
 
-/** 발행할 이름 — 제목 안의 말로 고친 제안(title)만 쓴다. 짐작(guess)·저장소 이름 대신(repo)은 관리자 '이름 확인 필요'에서 사람이 고른다 */
-export function normalizedProductName(name: string, repoUrl: string | null): string {
-  const review = reviewProductName(name, repoUrl);
-  return review?.source === "title" && review.proposed ? review.proposed : name;
+/** 발행할 이름 — 제목 안의 말(title)·README 첫 제목(readme)만 쓴다. 짐작(guess)·저장소 이름 대신(repo)은 관리자 '이름 확인 필요'에서 사람이 고른다 */
+export function normalizedProductName(name: string, repoUrl: string | null, readme?: string | null): string {
+  const review = reviewProductName(name, repoUrl, readme);
+  return review && AUTOMATIC_NAME_SOURCES.has(review.source) && review.proposed ? review.proposed : name;
 }
