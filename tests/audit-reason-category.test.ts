@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { AUDIT_REASON_KEYS, classifyAuditReason, groupAuditReasons, isAuditReasonCategory } from "@/lib/crawl/audit-reason-category";
+import { banReasonLabel } from "@/app/admin/products/ban-reasons";
 
 /** 감사 사유 갈래(2026-10-11) — 감사 #3 미처리 사유에서 옮긴 문장들 */
 describe("감사 사유 갈래", () => {
@@ -50,5 +51,13 @@ describe("감사 사유 갈래", () => {
     expect(ids.content).toEqual([2]);
     expect(ids.other).toEqual([3]);
     expect(AUDIT_REASON_KEYS.flatMap((key) => ids[key]).sort()).toEqual([1, 2, 3, 4]);
+  });
+});
+
+describe("감사로 내린 차단의 사유 이름", () => {
+  it("'audit:갈래'는 '감사: 갈래 이름'으로, 모르는 갈래는 코드 그대로", () => {
+    expect(banReasonLabel("audit:shop")).toBe("감사: 쇼핑몰·판매");
+    expect(banReasonLabel("audit:nope")).toBe("감사: nope");
+    expect(banReasonLabel("not_product")).toBe("제품 아님");
   });
 });

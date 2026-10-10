@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const mocks = vi.hoisted(() => ({
   admin: vi.fn(), redirect: vi.fn(), revalidate: vi.fn(),
   overview: vi.fn(), findings: vi.fn(), start: vi.fn(), cancel: vi.fn(), remove: vi.fn(), keep: vi.fn(),
-  groups: vi.fn(), removeMany: vi.fn(), translations: vi.fn(), log: vi.fn(), reasons: vi.fn(),
+  groups: vi.fn(), removeMany: vi.fn(), translations: vi.fn(), log: vi.fn(), reasons: vi.fn(), decisions: vi.fn(),
   takedownSummary: vi.fn(), takedownQueue: vi.fn(), takedownHistory: vi.fn(),
 }));
 vi.mock('@/lib/auth/admin', () => ({ currentAdmin: mocks.admin }));
@@ -13,7 +13,7 @@ vi.mock('next/cache', () => ({ revalidatePath: mocks.revalidate }));
 vi.mock('@/lib/crawl/product-audit', () => ({
   productAuditOverview: mocks.overview, listAuditFindings: mocks.findings, startProductAudit: mocks.start,
   cancelProductAudit: mocks.cancel, removeAuditedProduct: mocks.remove, keepAuditedProduct: mocks.keep,
-  auditRemovalGroups: mocks.groups, removeAuditedProducts: mocks.removeMany, auditFindingReasons: mocks.reasons,
+  auditRemovalGroups: mocks.groups, removeAuditedProducts: mocks.removeMany, auditFindingReasons: mocks.reasons, auditDecisionHistory: mocks.decisions,
   GROUP_REMOVE_MAX: 50, GROUP_REMOVE_MIN_CONFIDENCE: 0.95,
 }));
 vi.mock('@/lib/crawl/translations', () => ({ translationsFor: mocks.translations }));
@@ -57,9 +57,31 @@ beforeEach(() => {
   mocks.takedownSummary.mockResolvedValue(takedowns(0));
   mocks.takedownQueue.mockResolvedValue([]);
   mocks.takedownHistory.mockResolvedValue([]);
+  mocks.decisions.mockResolvedValue([]);
 });
 
 describe('내릴 후보 화면', () => {
+  /** 감사 처리 기록(2026-10-11) — 무엇 때문에 내렸는지 사유 갈래·AI 사유와 함께 본다 */
+  it('처리 기록 탭은 감사에서 내리고 둔 것을 사유 갈래·AI 사유·누가 언제와 함께 보인다', async () => {
+    mocks.decisions.mockResolvedValue([
+      { id: 31, slug: 'shop', name: '가게', url: 'https://shop.test', decision: 'removed', by: 'jr', at: new Date('2026-10-11T00:00:00Z'),
+        note: null, reason: 'The URL is an e-commerce storefront selling clothing.', confidence: 0.97, campaignId: 3 },
+      { id: 32, slug: 'tool', name: '도구', url: 'https://tool.test', decision: 'kept', by: 'jr', at: new Date('2026-10-10T23:00:00Z'),
+        note: '실제 앱', reason: 'only a login form', confidence: 0.8, campaignId: 3 },
+    ]);
+    const html = await render({ tab: 'history' });
+    expect(mocks.decisions).toHaveBeenCalled();
+    expect(html).toContain('감사 처리');
+    expect(html).toContain('최근 2건 · 내림 1 · 유지 1');
+    expect(html).toContain('내린 사유: 쇼핑몰·판매 1');
+    expect(html).toMatch(/rounded bg-bg-soft[^"]*">쇼핑몰·판매<\/span>/);
+    expect(html).toMatch(/rounded bg-bg-soft[^"]*">로그인 화면만<\/span>/);
+    expect(html).toContain('e-commerce storefront');
+    expect(html).toContain('실제 앱');
+    expect(html).toContain('감사 #3');
+    expect(html).toContain('href="https://shop.test" target="_blank"');
+  });
+
   /** 사유 갈래(2026-10-11) — 내릴 까닭이 같은 것끼리 몰아 본다. 판단은 바꾸지 않고 묶어 보기만 한다 */
   it('사유 갈래 칩에 수를 적고, 줄마다 갈래를 보이며, 갈래를 고르면 그 항목만 쪽을 넘긴다', async () => {
     const html = await render({ tab: 'audit' });

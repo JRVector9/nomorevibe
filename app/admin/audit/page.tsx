@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { currentAdmin } from "@/lib/auth/admin";
-import { auditFindingReasons, auditRemovalGroups, GROUP_REMOVE_MAX, GROUP_REMOVE_MIN_CONFIDENCE, listAuditFindings, productAuditOverview,
+import { auditDecisionHistory, auditFindingReasons, auditRemovalGroups, GROUP_REMOVE_MAX, GROUP_REMOVE_MIN_CONFIDENCE, listAuditFindings, productAuditOverview,
   type AuditOverview } from "@/lib/crawl/product-audit";
 import { AUDIT_REASON_CATEGORIES, AUDIT_REASON_KEYS, classifyAuditReason, groupAuditReasons, isAuditReasonCategory,
   type AuditReasonCategory } from "@/lib/crawl/audit-reason-category";
@@ -13,7 +13,7 @@ import { AuditFinding } from "./AuditFinding";
 import { AuditGroups } from "./AuditGroups";
 import { CancelAudit, RestartStalledAudit, StartAudit } from "./AuditControls";
 import { ScrollTable } from "../components/ScrollTable";
-import { ReasonLanguageToggle } from "../review/ReasonText";
+import { ReasonLanguageToggle, ReasonText } from "../review/ReasonText";
 import { pageWindow } from "../paging";
 import { TakedownQueue } from "./TakedownQueue";
 import { takedownHistory, takedownQueue, takedownSummary } from "@/lib/domain/products/takedown";
@@ -63,10 +63,12 @@ export default async function AdminAuditPage({ searchParams }: Props) {
   const [overview, summary] = await Promise.all([productAuditOverview(), takedownSummary()]);
   const { campaign, counts } = overview;
   const tab: Tab = rawTab && Object.hasOwn(TABS, rawTab) ? rawTab as Tab : rawView ? "audit" : summary.pending > 0 ? "requests" : "audit";
-  const [queue, history] = await Promise.all([
+  const [queue, history, auditHistory] = await Promise.all([
     tab === "requests" ? takedownQueue() : Promise.resolve([]),
     tab === "history" ? takedownHistory() : Promise.resolve([]),
+    tab === "history" ? auditDecisionHistory() : Promise.resolve([]),
   ]);
+  const auditHistoryKorean = auditHistory.length ? await translationsFor(auditHistory.map((row) => row.reason)) : new Map<string, string>();
   const open = { reject: counts.openReject, needs_review: counts.openNeedsReview };
   const reasonIds = campaign && tab === "audit" ? groupAuditReasons(await auditFindingReasons(campaign.id, view)) : null;
   const filteredIds = reason && reasonIds ? reasonIds[reason] : undefined;
@@ -125,7 +127,12 @@ export default async function AdminAuditPage({ searchParams }: Props) {
         </>
       )}
 
-      {tab === "history" && <TakedownHistory rows={history} now={now} />}
+      {tab === "history" && <>
+        <h2 className="text-[15px] font-bold">내려달라는 요청</h2>
+        <TakedownHistory rows={history} now={now} />
+        <h2 className="mt-3 text-[15px] font-bold">감사 처리</h2>
+        <AuditHistory rows={auditHistory} korean={auditHistoryKorean} now={now} />
+      </>}
 
       {tab === "audit" && <>
       <p className="max-w-[80ch] text-[13px] leading-[1.7] text-fg-2">
@@ -260,6 +267,46 @@ function TakedownHistory({ rows, now }: { rows: Awaited<ReturnType<typeof takedo
               <td className="max-w-[240px] text-fg-2">{row.note ?? <span className="text-fg-3">—</span>}</td>
               <td className="font-mono text-fg-2">{senderLabel(row.requesterHash)}</td>
               <td className="whitespace-nowrap text-fg-3">{formatListTime(row.handledAt, now)} · {row.handledBy}{row.ip && <span className="font-mono"> · {row.ip}</span>}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      </ScrollTable>
+    </div>
+  );
+}
+
+/**
+ * 감사 처리 기록 — 감사 거절에서 사람이 내렸거나 둔 것. 무엇 때문에 내렸는지 사유 갈래와 AI 사유를 함께 보인다(2026-10-11 운영자 요청).
+ * 내린 것은 차단 기록에도 같은 갈래가 남는다(product-audit.ts auditBanReason) — 제품 화면의 기록에서도 보인다
+ */
+function AuditHistory({ rows, korean, now }: { rows: Awaited<ReturnType<typeof auditDecisionHistory>>; korean: Map<string, string>; now: Date }) {
+  if (rows.length === 0) return <p className="rounded-[12px] border border-line bg-bg-card px-5 py-8 text-center text-[13px] text-fg-3">아직 감사에서 처리한 것이 없습니다.</p>;
+  const removed = rows.filter((row) => row.decision === "removed");
+  const byCategory = AUDIT_REASON_KEYS.map((key) => [key, removed.filter((row) => classifyAuditReason(row.reason) === key).length] as const)
+    .filter(([, n]) => n > 0).sort((a, b) => b[1] - a[1]);
+  return (
+    <div className="overflow-hidden rounded-[12px] border border-line bg-bg-card">
+      <p className="border-b border-line px-3 py-2 text-[13px] text-fg-2">
+        최근 {count(rows.length)}건 · 내림 {count(removed.length)} · 유지 {count(rows.length - removed.length)}
+        {byCategory.length > 0 && <> — 내린 사유: {byCategory.map(([key, n]) => `${AUDIT_REASON_CATEGORIES[key].label} ${count(n)}`).join(" · ")}</>}
+      </p>
+      <ScrollTable label="감사 처리 기록">
+      <table className="td-history">
+        <thead><tr><th>제품</th><th>결과</th><th>사유 갈래</th><th>AI 사유</th><th>메모</th><th>처리</th></tr></thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={row.id}>
+              <td><b className="font-semibold">{row.name}</b><br />
+                <a href={row.url} target="_blank" rel="noreferrer noopener" className="break-all font-mono text-fg-3 hover:text-accent">{row.url.replace(/^https?:\/\//, "")}</a></td>
+              <td>{row.decision === "removed" ? <span className="font-semibold text-down">내림</span> : <span className="font-semibold">유지</span>}</td>
+              <td><span className="whitespace-nowrap rounded bg-bg-soft px-1.5 py-0.5 font-semibold text-fg-2">{AUDIT_REASON_CATEGORIES[classifyAuditReason(row.reason)].label}</span></td>
+              <td className="max-w-[360px] text-fg-2">{row.reason
+                ? <span className="line-clamp-3"><ReasonText text={row.reason} korean={korean.get(row.reason) ?? null} /></span>
+                : <span className="text-fg-3">사유 없음</span>}
+                {typeof row.confidence === "number" && <span className="block font-mono text-fg-3">확신 {row.confidence.toFixed(2)}</span>}</td>
+              <td className="max-w-[200px] text-fg-2">{row.note ?? <span className="text-fg-3">—</span>}</td>
+              <td className="whitespace-nowrap text-fg-3">{row.at ? formatListTime(row.at, now) : "—"} · {row.by ?? "—"} · 감사 #{row.campaignId}</td>
             </tr>
           ))}
         </tbody>
