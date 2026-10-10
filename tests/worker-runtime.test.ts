@@ -103,3 +103,49 @@ it('gives the publisher batch enough cooperative time below the supervisor deadl
   expect(jobRunOptions('reason-translate', base)).toEqual({ ...base, budgetMs: 55_000 });
   expect(jobRunOptions('crawl-fetch', base)).toBe(base);
 });
+
+it('runs lanes at the same time — a slow evidence job does not hold up the main lane', async () => {
+  let releaseSlow!: () => void;
+  const slowGate = new Promise<void>((resolve) => { releaseSlow = resolve; });
+  const order: string[] = [];
+  const result = await runWorker({ role: 'crawler', once: true }, {
+    names: ['crawl-fetch', 'ai-level-refresh'], lanes: [['crawl-fetch'], ['ai-level-refresh']],
+    seen: async () => {}, pending: async () => ['crawl-fetch', 'ai-level-refresh'],
+    run: async (name) => {
+      order.push(`start:${name}`);
+      // 느린 잡은 기본 줄의 잡이 끝나야 풀린다 — 한 줄로 돌면 여기서 멈춘다
+      if (name === 'ai-level-refresh') await slowGate;
+      else releaseSlow();
+      order.push(`end:${name}`);
+      return { status: 'completed' };
+    },
+  });
+  expect(order).toHaveLength(4);
+  expect(order.indexOf('end:crawl-fetch')).toBeLessThan(order.indexOf('end:ai-level-refresh'));
+  expect(result).toEqual({ ticks: 2, failures: 0 });
+});
+
+it('reports the longest-running job across lanes with its own start time — the supervisor times jobs from it', async () => {
+  const resolvers = new Map<string, () => void>();
+  const reports: [string, string | null | undefined, number | null | undefined][] = [];
+  const work = runWorker({ role: 'crawler', once: true }, {
+    names: ['crawl-fetch', 'ai-level-refresh'], lanes: [['crawl-fetch'], ['ai-level-refresh']],
+    // 기본 줄은 조금 늦게 시작한다 — 근거 줄의 잡이 먼저 돈다
+    seen: (names) => names.includes('crawl-fetch') ? new Promise((resolve) => setTimeout(resolve, 20)) : Promise.resolve(),
+    pending: async () => ['crawl-fetch', 'ai-level-refresh'],
+    report: (state, job, startedAt) => { reports.push([state, job, startedAt]); },
+    run: (name) => new Promise((resolve) => { resolvers.set(name, () => resolve({ status: 'completed' })); }),
+  });
+  await vi.waitFor(() => expect(resolvers.size).toBe(2));
+  const first = reports.find(([state, job]) => state === 'running' && job === 'ai-level-refresh')!;
+  // 둘 다 도는 동안은 먼저 시작한 잡과 그 시작 시각
+  expect(reports.at(-1)).toEqual(['running', 'ai-level-refresh', first[2]]);
+  resolvers.get('crawl-fetch')!();
+  await vi.waitFor(() => expect(reports.at(-1)?.[0]).toBe('running'));
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  // 기본 줄이 끝나도 남은 잡의 시작 시각은 그대로 — 다시 알릴 때 지금 시각으로 바뀌면 감독이 오래 걸린 잡을 놓친다
+  expect(reports.at(-1)).toEqual(['running', 'ai-level-refresh', first[2]]);
+  resolvers.get('ai-level-refresh')!();
+  await work;
+  expect(reports.at(-1)?.[0]).toBe('idle');
+});

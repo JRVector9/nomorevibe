@@ -2,7 +2,12 @@
 export type JobRole = "crawler" | "reviewer" | "publisher" | "text" | "maintenance";
 export const JOB_ROLES: readonly JobRole[] = ["crawler", "reviewer", "publisher", "text", "maintenance"];
 
-export const JOB_CATALOG: readonly { name: string; role: JobRole | "scheduler"; intervalMs: number | null }[] = [
+/**
+ * lane: 같은 역할 워커 안에서 따로 도는 줄. 역할 lease 는 하나라 워커를 늘려도 한 대만 일한다 — 줄이 다르면 한 프로세스 안에서
+ * 동시에 돈다. 줄을 적지 않은 잡은 기본 줄(main)에서 차례로 돈다(scripts/worker.ts runWorker).
+ */
+export type JobLane = "main" | "evidence";
+export const JOB_CATALOG: readonly { name: string; role: JobRole | "scheduler"; intervalMs: number | null; lane?: JobLane }[] = [
   { name: "heartbeat", role: "scheduler", intervalMs: null },
   /**
    * 검색 쿼터는 토큰 단위(30회/분 = 시간당 1,800페이지)라 워커를 늘려도 늘지 않는다.
@@ -102,7 +107,8 @@ export const JOB_CATALOG: readonly { name: string; role: JobRole | "scheduler"; 
    * AI 제작 근거 단계(1·2·3단계)를 저장소마다 판정해 제품 ai_level 에 옮긴다(ai-level-refresh.ts). 새 후보 → 새 공개 제품 → 사흘 지난 것.
    * GraphQL 10개 묶음(1점)을 한 틱 38초 안에서 — 공개분 첫 바퀴가 반나절, 그 뒤 하루 1만 3천 개쯤
    */
-  { name: "ai-level-refresh", role: "crawler", intervalMs: 60_000 },
+  // 크롤러 시간의 3분의 1을 썼다(2026-10-10 실측: 크롤러 90% 바쁨, crawl-fetch 60→70초 간격) — 따로 도는 줄에 둔다
+  { name: "ai-level-refresh", role: "crawler", intervalMs: 60_000, lane: "evidence" },
   /**
    * 공개 제품의 GitHub 저장소를 하루 한 번 모두 본다(있음·없음·빈 저장소·막힘과 스타). GraphQL 100개씩 한 틱 4묶음까지,
    * 새 묶음은 틱 14초 안에서만 연다 — 기본 예산 25초 안에 끝나 수집 예산을 크게 늘리지 않는다(stars-refresh.ts).
@@ -116,4 +122,14 @@ export const JOB_NAMES = JOB_CATALOG.map(job => job.name);
 export function isJobName(name: string): boolean { return JOB_NAMES.includes(name); }
 export function jobsForRole(role: JobRole): string[] {
   return JOB_CATALOG.filter(job => job.role === role).map(job => job.name);
+}
+/** 역할의 잡을 줄마다 — 기본 줄이 먼저, 각 줄 안은 카탈로그 차례. 빈 줄은 없다 */
+export function lanesForRole(role: JobRole): string[][] {
+  const lanes = new Map<JobLane, string[]>([["main", []]]);
+  for (const job of JOB_CATALOG) {
+    if (job.role !== role) continue;
+    const lane = job.lane ?? "main";
+    lanes.set(lane, [...(lanes.get(lane) ?? []), job.name]);
+  }
+  return [...lanes.values()].filter((names) => names.length > 0);
 }

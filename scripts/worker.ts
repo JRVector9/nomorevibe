@@ -16,12 +16,15 @@ export type RuntimeHeartbeat = {
   /** 이 프로세스의 잡이 마지막으로 읽은 크롤 설정 판과 그 시각(epoch ms) — 설정 화면의 적용 확인(ADM-19). 옛 워커는 싣지 않는다 */
   settings?: { version: string; at: number } | null;
 };
-export type RuntimeReport = (state: RuntimeState, currentJob?: string | null) => void;
+/** startedAt: 그 잡을 시작한 시각 — 줄이 여럿이면 가장 오래 돈 잡의 시작을 그대로 넘겨야 감독(job_timeout)이 맞게 잰다 */
+export type RuntimeReport = (state: RuntimeState, currentJob?: string | null, startedAt?: number | null) => void;
 export type RequestedRunOptions = { requestedOnly: true; signal?: AbortSignal };
 export type JobRunOptions = RequestedRunOptions & { budgetMs?: number };
 type WorkerOptions = { role: JobRole; once?: boolean; intervalMs?: number; signal?: AbortSignal };
 type WorkerDependencies = {
   names: readonly string[];
+  /** 한 프로세스 안에서 동시에 도는 줄(catalog lanesForRole) — 없으면 names 한 줄 */
+  lanes?: readonly (readonly string[])[];
   pending: () => Promise<string[]>;
   seen: (names: string[]) => Promise<void>;
   run: (name: string, options: RequestedRunOptions) => Promise<{ status: string }>;
@@ -72,14 +75,36 @@ export function jobRunOptions(name: string, options: RequestedRunOptions): JobRu
   return options;
 }
 
-/** A once run processes one pending snapshot, not the entire queue or future requests. */
+/**
+ * A once run processes one pending snapshot, not the entire queue or future requests.
+ *
+ * 줄(lane)마다 아래 차례 실행을 동시에 돌린다 — 역할 lease 는 하나라 워커를 늘려도 한 대만 일하므로, 오래 걸리는 잡은 따로 도는 줄에
+ * 둔다(2026-10-10 크롤러: AI 단계 판정이 시간의 3분의 1을 쓰며 crawl-fetch 간격이 60→70초). 줄 안은 지금처럼 한 번에 하나씩.
+ * 감독에게는 줄들을 합쳐 알린다 — 도는 잡이 있으면 가장 오래 돈 잡과 그 시작 시각(감독의 job_timeout 이 그것으로 잰다).
+ */
 export async function runWorker(options: WorkerOptions, dependencies: WorkerDependencies) {
   const intervalMs = Math.max(1_000, Math.min(options.intervalMs ?? 5_000, 60_000));
-  const names = [...new Set(dependencies.names)];
+  const lanes = (dependencies.lanes ?? [dependencies.names]).map((names) => [...new Set(names)]).filter((names) => names.length > 0);
+  const states = lanes.map((): { state: RuntimeState; job: string | null; startedAt: number | null } => ({ state: 'idle', job: null, startedAt: null }));
+  const emit = () => {
+    const running = states.filter((lane) => lane.state === 'running' && lane.job !== null && lane.startedAt !== null)
+      .sort((a, b) => a.startedAt! - b.startedAt!)[0];
+    if (running) dependencies.report?.('running', running.job, running.startedAt);
+    else dependencies.report?.(states.some((lane) => lane.state === 'polling') ? 'polling' : 'idle');
+  };
+  const laneReport = (index: number): RuntimeReport => (state, currentJob = null) => {
+    states[index] = { state, job: currentJob, startedAt: state === 'running' ? Date.now() : null };
+    emit();
+  };
+  const results = await Promise.all(lanes.map((names, index) => runLane(options, dependencies, names, intervalMs, laneReport(index))));
+  return { ticks: results.reduce((sum, result) => sum + result.ticks, 0), failures: results.reduce((sum, result) => sum + result.failures, 0) };
+}
+
+async function runLane(options: WorkerOptions, dependencies: WorkerDependencies, names: string[], intervalMs: number, report: RuntimeReport) {
   let ticks = 0, failures = 0, nextIndex = 0;
   while (!options.signal?.aborted) {
     ticks++;
-    dependencies.report?.('polling');
+    report('polling');
     try {
       await dependencies.seen(names);
       const pending = new Set(await dependencies.pending());
@@ -88,7 +113,7 @@ export async function runWorker(options: WorkerOptions, dependencies: WorkerDepe
       for (const name of ordered) {
         if (options.signal?.aborted) break;
         if (!pending.has(name)) continue;
-        dependencies.report?.('running', name);
+        report('running', name);
         try {
           const result = await dependencies.run(name, { requestedOnly: true, signal: options.signal });
           if (result.status === 'failed') failures++;
@@ -98,14 +123,14 @@ export async function runWorker(options: WorkerOptions, dependencies: WorkerDepe
           dependencies.log?.('worker.job', { role: options.role, name, status: 'failed' });
         } finally {
           nextIndex = (names.indexOf(name) + 1) % names.length;
-          dependencies.report?.('polling');
+          report('polling');
         }
       }
     } catch {
       failures++;
       dependencies.log?.('worker.poll_failed', { role: options.role });
     }
-    dependencies.report?.('idle');
+    report('idle');
     if (options.once || options.signal?.aborted) break;
     await (dependencies.sleep ?? interruptibleSleep)(intervalMs, options.signal);
   }
@@ -128,11 +153,11 @@ export async function withRuntimeProcess<T>(
       try { process.send({ ...current, at: Date.now(), settings: lastSettingsRead() }, () => {}); } catch { /* disconnected */ }
     }
   };
-  const report: RuntimeReport = (state, currentJob = null) => {
+  const report: RuntimeReport = (state, currentJob = null, startedAt = null) => {
     const now = Date.now();
     current = {
       ...current, state: controller.signal.aborted ? 'stopping' : state,
-      currentJob, startedAt: state === 'running' ? now : null, lastProgressAt: now,
+      currentJob, startedAt: state === 'running' ? startedAt ?? now : null, lastProgressAt: now,
     };
     heartbeat();
   };
@@ -189,13 +214,14 @@ export function parseLoopArgs(args: string[], defaultSeconds: number) {
 async function main() {
   const options = parseWorkerArgs(process.argv.slice(2));
   await withRuntimeProcess(options.role, async (signal, report) => {
-    const [{ jobsForRole }, { pendingJobNames, markWorkerSeen }, { JOBS }, { runJob }, { roleLeaseFromEnv }] = await Promise.all([
+    const [{ jobsForRole, lanesForRole }, { pendingJobNames, markWorkerSeen }, { JOBS }, { runJob }, { roleLeaseFromEnv }] = await Promise.all([
       import('@/lib/jobs/catalog'), import('@/lib/jobs/control'), import('@/lib/jobs/registry'),
       import('@/lib/jobs/runner'), import('@/lib/jobs/role-leader'),
     ]);
     const roleLease = roleLeaseFromEnv(options.role, process.env);
     const result = await runWorker({ ...options, signal }, {
       names: jobsForRole(options.role),
+      lanes: lanesForRole(options.role),
       pending: () => pendingJobNames(options.role),
       seen: markWorkerSeen,
       run: (name, runOptions) => runJob(name, JOBS[name], { ...jobRunOptions(name, runOptions), roleLease }),
