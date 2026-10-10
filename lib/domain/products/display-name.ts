@@ -100,6 +100,17 @@ function related(text: string, repo: { owner: string; name: string } | null): bo
   return text.split(/[^\p{L}\p{N}]+/u).map(fold).some((word) => word.length >= 4 && facts.some((fact) => fact.includes(word)));
 }
 
+/**
+ * 저장소 이름과 굳게 이어진다 — 접어서 한쪽이 다른 쪽을 품는다(4자 이상). related 는 낱말 하나만 겹쳐도 이어진다고 봐서
+ * 'Open source: IPCamLapse…'(저장소 OpenCamInterop)의 'open', 'firstworks: SQL Relay'의 owner 가 이름을 자르는 근거가 됐다.
+ */
+function strongRelated(text: string, repo: { owner: string; name: string } | null): boolean {
+  if (!repo) return false;
+  const folded = fold(text);
+  const name = fold(repo.name);
+  return folded.length >= 4 && name.length >= 4 && (name.includes(folded) || folded.includes(name));
+}
+
 /** 문장 속에서 저장소 이름과 같은 낱말 묶음 — 'I open sourced IronMem today' → IronMem */
 function repoSpan(text: string, repoName: string): string | null {
   const target = fold(repoName);
@@ -296,10 +307,14 @@ export function reviewProductName(name: string, repoUrl: string | null, readme?:
       // 앞쪽이 설명이고 이름이 뒤에 있는 제목도 있다 — '台灣包車旅遊・機場接送｜RelayGo 專業包車平台'. 저장소와 이어지는 쪽이 이름이다
       const named = related(head, repo) ? undefined : rest.find((part) => related(part, repo));
       current = named ? (repo && repoSpan(named, repo.name)) || named : head;
-      if (named) guessed = true;
+      // 앞쪽이 저장소와 흔한 낱말 하나로만 이어지고 뒤쪽도 이어지면 어느 쪽이 이름인지 모른다 — 짐작으로 둔다.
+      // 2026-10-11: 'CRM • André Vitor Fotografia' → 'CRM', 'Travel Blog & Travel Guides • Daniela and Will Travel' → 앞쪽이 틀렸다
+      // (뒤쪽이 저장소 이름이라고 뒤쪽을 고르는 것도 틀린다 — 'MicroGains || Daily-habit-tracker')
+      const ambiguous = !named && !strongRelated(head, repo) && rest.some((part) => related(part, repo));
+      if (named || ambiguous) guessed = true;
       issues.push('slogan_tail');
     }
-  } else if (colon && related(current.slice(0, colon.index), repo) && current.slice(colon.index + colon[0].length).split(/\s+/).length >= 2) {
+  } else if (colon && strongRelated(current.slice(0, colon.index), repo) && current.slice(colon.index + colon[0].length).split(/\s+/).length >= 2) {
     current = current.slice(0, colon.index).trim();
     issues.push('slogan_tail');
   }

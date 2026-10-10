@@ -203,3 +203,18 @@ describe("인사·문서 머리말과 README 첫 줄 (2026-10-11)", () => {
     expect(reviewProductName("Flexible Open-Source ERP & CRM for SMBs", gh("acme/mycompany"), "MyCompany\n")).toMatchObject({ source: "repo" });
   });
 });
+
+/** 2026-10-11 백필 계획에서 기존 규칙이 틀린 넷 — 자동으로 고치지 않는다 */
+describe("구분자·콜론 앞쪽이 저장소와 흔한 낱말 하나로만 이어질 때 (2026-10-11)", () => {
+  it("앞뒤가 다 이어지면 짐작이다", () => {
+    expect(reviewProductName("CRM • André Vitor Fotografia", gh("contatoandevitorfotografia-hue/crm-andre-vitor"))).toMatchObject({ source: "guess" });
+    expect(normalizedProductName("Travel Blog & Travel Guides • Daniela and Will Travel", gh("Daniela-and-Will-Travel/daniela-and-will-travel.github.io")))
+      .toBe("Travel Blog & Travel Guides • Daniela and Will Travel");
+  });
+
+  it("콜론은 앞쪽이 저장소 이름을 품을 때만 자른다 — owner·흔한 낱말로는 자르지 않는다", () => {
+    expect(normalizedProductName("firstworks: SQL Relay", gh("firstworks-software/sqlrelay"))).toBe("firstworks: SQL Relay");
+    expect(normalizedProductName("Open source: IPCamLapse and OpenCamInterop", gh("KalyteraSystems/OpenCamInterop"))).toBe("Open source: IPCamLapse and OpenCamInterop");
+    expect(normalizedProductName("AppFlowy: Open Source Notion Alternative", gh("AppFlowy-IO/AppFlowy"))).toBe("AppFlowy");
+  });
+});
