@@ -75,3 +75,19 @@ export const githubCollectorAccounts = pgTable('github_collector_accounts', {
   createdAt: timestamp('created_at').notNull().defaultNow(),
   updatedAt: timestamp('updated_at').notNull().defaultNow(),
 });
+/**
+ * GitHub App 수집 자격(0064) — 설치(installation)마다 따로 한도가 있어, 같은 계정의 개인 토큰과 달리 한도가 더해진다.
+ * 개인 키는 수집 비밀키(GITHUB_COLLECTOR_SECRET)로 암호화해 두고, 워커가 한 시간짜리 설치 토큰을 만들어 쓴다(github-apps.ts).
+ */
+export const githubCollectorApps = pgTable('github_collector_apps', {
+  installationId: bigint('installation_id', { mode: 'number' }).primaryKey(),
+  appId: bigint('app_id', { mode: 'number' }).notNull(),
+  appSlug: varchar('app_slug', { length: 100 }).notNull(),
+  accountLogin: varchar('account_login', { length: 100 }).notNull(),
+  encryptedPrivateKey: text('encrypted_private_key').notNull(),
+  enabled: boolean('enabled').notNull().default(true),
+  coreQuota: jsonb('core_quota').$type<{ limit: number; used: number; remaining: number; reset: number }>(),
+  quotaObservedAt: timestamp('quota_observed_at'),
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+  updatedAt: timestamp('updated_at').notNull().defaultNow(),
+});

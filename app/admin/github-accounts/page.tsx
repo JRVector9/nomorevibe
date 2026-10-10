@@ -3,11 +3,13 @@ import { redirect } from "next/navigation";
 import { sql, and, eq } from "drizzle-orm";
 import { currentAdmin } from "@/lib/auth/admin";
 import { listGitHubCollectorAccounts } from "@/lib/crawl/github-accounts";
+import { listGitHubCollectorApps } from "@/lib/crawl/github-apps";
 import { db } from "@/lib/db";
 import { formatListTime } from "@/lib/format/time";
 import { crawlDocuments, products } from "@/lib/db/schema";
+import { AppForm } from "./AppForm";
 import { TokenForm } from "./TokenForm";
-import { toggleCollectorAccount } from "./actions";
+import { toggleCollectorAccount, toggleCollectorApp } from "./actions";
 
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "GitHub 수집 계정 — NoMoreVibe", robots: { index: false } };
@@ -15,8 +17,9 @@ export const metadata: Metadata = { title: "GitHub 수집 계정 — NoMoreVibe"
 export default async function GitHubAccountsPage() {
   const admin = await currentAdmin();
   if (!admin) redirect("/admin/login");
-  const [accounts, documents, newProducts] = await Promise.all([
+  const [accounts, apps, documents, newProducts] = await Promise.all([
     listGitHubCollectorAccounts(),
+    listGitHubCollectorApps(),
     db.select({ count: sql<number>`count(*)::int` }).from(crawlDocuments).where(sql`${crawlDocuments.fetchedAt} >= now() - interval '1 hour'`),
     db.select({ count: sql<number>`count(*)::int` }).from(products).where(and(eq(products.source, "crawler"), sql`${products.createdAt} >= now() - interval '1 hour'`)),
   ]);
@@ -25,7 +28,7 @@ export default async function GitHubAccountsPage() {
   return <main className="mx-auto max-w-[1100px] px-6 pb-20">
     <div className="pt-6">
       <h1 className="text-[22px] font-extrabold tracking-tight">GitHub 수집 계정</h1>
-      <p className="mt-2 text-[13px] leading-6 text-fg-2">계정마다 독립된 REST 한도가 있습니다. 같은 GitHub 계정의 토큰을 교체해도 한도는 추가되지 않습니다.</p>
+      <p className="mt-2 text-[13px] leading-6 text-fg-2">계정마다 독립된 REST 한도가 있습니다. 같은 GitHub 계정의 토큰을 교체해도 한도는 추가되지 않습니다 — 같은 계정으로 한도를 늘리려면 아래 GitHub App 을 등록합니다(설치마다 따로 한도).</p>
     </div>
 
     <section className="mt-6 grid gap-3 sm:grid-cols-2" aria-label="최근 수집 결과">
@@ -58,6 +61,30 @@ export default async function GitHubAccountsPage() {
       </div>
     </section>
 
-    <section className="mt-7"><TokenForm accounts={accounts.map(({ userId, login }) => ({ userId, login }))} ready={ready} /></section>
+    <section className="mt-7" aria-label="등록된 GitHub App">
+      <h2 className="text-[17px] font-bold">등록된 GitHub App {apps.length}개</h2>
+      {apps.length === 0 && <p className="mt-3 rounded-xl border border-line bg-bg-card p-4 text-[13px] text-fg-2">등록된 App 이 없습니다.</p>}
+      <div className="mt-3 grid gap-3 md:grid-cols-2">
+        {apps.map(app => {
+          const quota = app.coreQuota;
+          return <article key={app.installationId} className="rounded-xl border border-line bg-bg-card p-4">
+            <div className="flex items-center justify-between gap-3"><h3 className="font-bold">{app.appSlug}</h3><span className="text-[13px] text-fg-2">{app.enabled ? (quota?.remaining === 0 ? "한도 소진" : "수집에 사용") : "수집 중지"}</span></div>
+            <p className="mt-1 font-mono text-[13px] text-fg-3">App {app.appId} · 설치 {app.installationId} · {app.accountLogin}</p>
+            {quota ? <p className="mt-4 text-[14px]">core 잔여 <strong>{quota.remaining.toLocaleString("ko-KR")}</strong> / {quota.limit.toLocaleString("ko-KR")} · 사용 {quota.used.toLocaleString("ko-KR")}</p>
+              : <p className="mt-4 text-[13px] text-fg-2">한도 관측 없음</p>}
+            <p className="mt-1 text-[13px] text-fg-3">관측 {formatListTime(app.quotaObservedAt, now, "없음")}</p>
+            <form action={toggleCollectorApp} className="mt-4">
+              <input type="hidden" name="installationId" value={app.installationId} /><input type="hidden" name="enabled" value={app.enabled ? "false" : "true"} />
+              <button className="rounded-lg border border-line px-3 py-1.5 text-[13px] font-semibold">{app.enabled ? "수집에서 제외" : "수집에 다시 사용"}</button>
+            </form>
+          </article>;
+        })}
+      </div>
+    </section>
+
+    <section className="mt-7 grid gap-4 lg:grid-cols-2">
+      <AppForm ready={ready} />
+      <TokenForm accounts={accounts.map(({ userId, login }) => ({ userId, login }))} ready={ready} />
+    </section>
   </main>;
 }

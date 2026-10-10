@@ -88,7 +88,7 @@ export async function githubRequest<T>(
       result = await githubRequestWithToken<T>(path, conditional, { timeoutMs: remainingMs, body: options.body }, account, () => { secondary = true; });
       if (!result.ok && result.error.kind === "http" && result.error.status === 403 && sawUnauthorized) {
         const resetAt = await recordGitHubAuthCooldown(account.token, new Date(Date.now() + AUTH_COOLDOWN_MS));
-        logger.warn("github.auth_rejected", { accountId: account.userId, reason: "blocked" });
+        logger.warn("github.auth_rejected", { accountId: account.userId, installationId: account.installationId, reason: "blocked" });
         result = { ok: false, error: { kind: "auth_unavailable", reason: "blocked", resetAt } };
         break;
       }
@@ -170,8 +170,8 @@ async function githubRequestWithToken<T>(
     return { ok: false, error: { kind: "transport" } };
   }
 
-  try { await observeCollectorQuota(account.userId, res.headers); }
-  catch { logger.warn("github.quota_observation_failed", { accountId: account.userId }); }
+  try { await observeCollectorQuota(account, res.headers); }
+  catch { logger.warn("github.quota_observation_failed", { accountId: account.userId, installationId: account.installationId }); }
   // A successful response can consume the last primary request. Persist it while retaining its body.
   let cooldown = githubCooldown(res.status, res.headers);
   if (res.status === 403 && !cooldown?.secondary) {
@@ -202,7 +202,7 @@ async function githubRequestWithToken<T>(
         else if (/bad credentials/i.test(message)) reason = "bad_credentials";
       }
     } catch { /* Only a bounded reason code is recorded; raw response text is never logged. */ }
-    logger.warn("github.auth_rejected", { accountId: account.userId, reason });
+    logger.warn("github.auth_rejected", { accountId: account.userId, installationId: account.installationId, reason });
     return { ok: false, error: { kind: "auth_unavailable", reason, resetAt: null } };
   }
 
