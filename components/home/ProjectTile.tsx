@@ -10,13 +10,15 @@ import { ogVariantSrc } from "@/lib/domain/products/og-variants";
  * 커버 규칙(토큰 바탕·README 그림)은 cards.css 에 있고 이 커버를 쓰는 카드(ProjectCard·CompactCard)가 가져온다 —
  * 여기서 CSS 를 가져오면 Node 에서 마크업만 그리는 검사(e2e thumbnail-fallback)가 깨진다.
  */
-export function ProjectTile({ slug, name, ogImage, size, installable = false, category }: {
+export function ProjectTile({ slug, name, ogImage, size, installable = false, ai = false, category }: {
   slug: string;
   name: string;
   ogImage: string | null;
   /** 기존 큰 카드와 작은 카드의 구분 */
   size: 64 | 44;
   installable?: boolean;
+  /** AI 로 만든 근거가 있다(1·2·3단계 어느 것이든) — 커버 오른쪽 위 'AI' 배지(2026-10-10 시안 안 C, 2026-10-11 운영자 선택) */
+  ai?: boolean;
   /** 모노그램 색을 정하는 분야 */
   category?: string;
 }) {
@@ -39,6 +41,7 @@ export function ProjectTile({ slug, name, ogImage, size, installable = false, ca
         <span className="tile-icon"><ProductIcon name={name} ogImage={internalImage} size={size === 64 ? 96 : 64} category={category} /></span>
       )}
       {installable && <span className="tile-flag">직접 설치</span>}
+      {ai && <span className="tile-flag tile-flag-ai">AI</span>}
     </span>
   );
 }

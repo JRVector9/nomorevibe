@@ -62,6 +62,8 @@ button {
 .tile-icon img, .tile-icon > span { border-radius: 15px; border: 0; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1); background: white; }
 .tile-44 .tile-icon img, .tile-44 .tile-icon > span { border-radius: 12px; }
 .tile-flag { position: absolute; left: 12px; top: 12px; font-size: 13px; font-weight: 500; color: white; background: rgba(29, 29, 31, 0.78); border-radius: 980px; padding: 4px 10px; }
+/* AI 로 만든 근거가 있는 카드 — 오른쪽 위(왼쪽 위 '직접 설치'와 겹치지 않게). 2026-10-10 시안 안 C */
+.tile-flag-ai { left: auto; right: 12px; }
 
 /* 작은 카드 가로 띠 */
 /* auto-fill: 항목이 하나뿐이어도 칸 너비를 지킨다(auto-fit 은 한 장을 전폭으로 늘린다) */

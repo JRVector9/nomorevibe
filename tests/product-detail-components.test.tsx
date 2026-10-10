@@ -635,35 +635,37 @@ describe("evidence product detail components", () => {
     // 검사했지만 근거가 없다 — AI 없이 만들었다는 말로 읽히지 않게
     expect(renderTools({ ...empty, aiLevel: { checked: true, level: null } }))
       .toContain("검사에서 AI 코딩 도구 흔적을 찾지 못했습니다 — AI 없이 만들었다는 뜻은 아닙니다.");
-    // GitHub 저장소가 없으면 기다릴 검사가 없다 — 남아 있는 단계도 보이지 않는다
+    // GitHub 저장소가 없으면 기다릴 검사가 없다 — 남아 있는 단계(AI 표시)도 보이지 않는다
     for (const changed of [{ repoUrl: "https://gitlab.com/acme/app" }, { repoUrl: null }]) {
       for (const aiLevel of [unchecked, { checked: true, level: 2 as const }]) {
         const html = renderTools({ ...empty, product: { ...empty.product, ...changed }, aiLevel });
         expect(html, JSON.stringify(changed)).toContain("AI 흔적 검사를 할 수 없습니다");
         expect(html, JSON.stringify(changed)).not.toContain("대기 중");
-        expect(html, JSON.stringify(changed)).not.toContain("단계");
+        expect(html, JSON.stringify(changed)).not.toContain("AI 코딩 도구로 만든 근거가 있습니다");
       }
     }
-    // 저장소가 사라졌으면 다시 검사할 수 없지만, 그 전에 찾은 근거의 단계는 보인다(홈 필터도 그 단계로 거른다)
+    // 저장소가 사라졌으면 다시 검사할 수 없지만, 그 전에 찾은 근거로 AI 표시는 남는다(홈 필터도 그 단계로 거른다)
     const gone = { ...empty, product: { ...empty.product, repoGone: true } };
     expect(renderTools({ ...gone, aiLevel: unchecked })).toContain("AI 흔적 검사를 할 수 없습니다");
-    expect(renderTools({ ...gone, aiLevel: { checked: true, level: 2 } })).toContain("AI 제작 근거 2단계");
+    expect(renderTools({ ...gone, aiLevel: { checked: true, level: 2 } })).toContain("저장소에 AI 코딩 도구로 만든 근거가 있습니다.");
   });
 
-  it.each([1, 2, 3] as const)("names AI level %i and its description without links or tool names", (level) => {
+  // 단계는 나눠 보이지 않고 'AI' 하나로 적는다(2026-10-11 운영자 결정)
+  it.each([1, 2, 3] as const)("shows AI level %i as one 'AI' line without the level, links or tool names", (level) => {
     const html = renderTools({ product: { ...product, builder: null }, aiLevel: { checked: true, level } });
     const text = textOf(html);
-    expect(text).toContain(`AI 제작 근거 ${level}단계 · ${AI_LEVEL_LABELS[level].title}`);
-    expect(text).toContain(AI_LEVEL_LABELS[level].description);
+    expect(text).toContain("AI저장소에 AI 코딩 도구로 만든 근거가 있습니다.");
+    expect(text).not.toContain("단계");
+    expect(text).not.toContain(AI_LEVEL_LABELS[level].title);
     expect(html).not.toContain("<a ");
     expect(text).not.toContain("찾지 못했습니다");
     expect(text).not.toContain("대기 중");
   });
 
-  it("keeps the maker-reported builder next to the AI level line", () => {
+  it("keeps the maker-reported builder next to the AI line", () => {
     const text = textOf(renderTools({ aiLevel: { checked: true, level: 1 } }));
     expect(text).toContain("메이커 신고");
-    expect(text).toContain(`AI 제작 근거 1단계 · ${AI_LEVEL_LABELS[1].title}`);
+    expect(text).toContain("저장소에 AI 코딩 도구로 만든 근거가 있습니다.");
     // 신고값만 있고 검사 전이면 지금처럼 신고값만
     const pending = textOf(renderTools({ aiLevel: { checked: false, level: null } }));
     expect(pending).toContain("메이커 신고");

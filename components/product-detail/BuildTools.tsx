@@ -1,5 +1,4 @@
 import { BuilderBadge } from "@/components/TrustBadges";
-import { AI_LEVEL_LABELS } from "@/lib/domain/evidence/ai-level-labels";
 import type { ProductDetailView } from "@/lib/domain/products/detail-view";
 import { githubOwnerFromRepositoryUrl } from "@/lib/domain/products/github-owner";
 
@@ -77,10 +76,11 @@ export function BuildTools({ product, unclaimed, agents, observedAgentFacts, ski
           ))}
         </ul>
       )}
+      {/* 단계는 나눠 보이지 않고 'AI' 하나로 적는다(2026-10-11 운영자 결정) — 카드 커버 배지와 같은 말 */}
       {level ? (
-        <div className="flex max-w-[720px] flex-col gap-1">
-          <p className="m-0 text-[14px] font-semibold leading-[1.5] text-fg">AI 제작 근거 {level}단계 · {AI_LEVEL_LABELS[level].title}</p>
-          <p className="m-0 text-[13px] leading-[1.5] text-fg-2">{AI_LEVEL_LABELS[level].description}</p>
+        <div className="flex max-w-[720px] items-center gap-2">
+          <span className="rounded-full bg-fg px-2.5 py-0.5 text-[13px] font-semibold text-bg">AI</span>
+          <p className="m-0 text-[14px] leading-[1.5] text-fg">저장소에 AI 코딩 도구로 만든 근거가 있습니다.</p>
         </div>
       ) : noTrace ? (
         <p className="m-0 max-w-[720px] text-[14px] leading-[1.5] text-fg-2">검사에서 AI 코딩 도구 흔적을 찾지 못했습니다 — AI 없이 만들었다는 뜻은 아닙니다.</p>

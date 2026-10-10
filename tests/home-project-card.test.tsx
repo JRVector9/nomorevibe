@@ -56,4 +56,19 @@ describe("home project card builder evidence", () => {
   it("marks installable projects on the tile", () => {
     expect(render({ ...baseProduct, accessMode: "installable" })).toContain("직접 설치");
   });
+
+  // 커버 배지(2026-10-10 시안 안 C) — 1·2·3단계 어느 것이든 'AI' 하나, 단계는 보이지 않는다(2026-10-11 운영자 결정)
+  it.each([1, 2, 3])("puts one 'AI' badge on the cover for AI level %i", (aiLevel) => {
+    const html = render({ ...baseProduct, aiLevel });
+    expect(html).toContain('<span class="tile-flag tile-flag-ai">AI</span>');
+    expect(html).not.toContain("단계");
+  });
+
+  it("has no AI badge without an AI level, and keeps it beside the installable badge", () => {
+    expect(render({ ...baseProduct, aiLevel: null })).not.toContain("tile-flag-ai");
+    expect(render(baseProduct)).not.toContain("tile-flag-ai");
+    const both = render({ ...baseProduct, accessMode: "installable", aiLevel: 2 });
+    expect(both).toContain(">직접 설치</span>");
+    expect(both).toContain(">AI</span>");
+  });
 });

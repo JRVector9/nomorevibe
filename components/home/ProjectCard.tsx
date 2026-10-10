@@ -36,7 +36,8 @@ export function ProjectCard({ product, saved, onToggleSave, now }: {
   return (
     <article className="project-card">
       <Link prefetch={false} href={href} className="card-visual" tabIndex={-1} aria-hidden="true">
-        <ProjectTile slug={product.slug} name={product.name} ogImage={product.ogImage} size={64} installable={product.accessMode === "installable"} category={product.category} />
+        <ProjectTile slug={product.slug} name={product.name} ogImage={product.ogImage} size={64} installable={product.accessMode === "installable"}
+          ai={product.aiLevel != null} category={product.category} />
       </Link>
       <div className="project-body">
         <div className="project-title-row">

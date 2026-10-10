@@ -24,6 +24,8 @@ export type HomeCardProduct = StarObservation & {
   activity?: ProductActivity;
   category: string;
   accessMode?: "website" | "installable";
+  /** AI 제작 근거 단계 — 있으면 커버에 'AI' 배지(ProjectTile) */
+  aiLevel?: number | null;
   builder: string | null;
   builderClaim: "reported" | "guessed";
   ogImage: string | null;

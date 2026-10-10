@@ -362,7 +362,7 @@ async function listConditions({ statuses, category, query, builder, observedTool
 export const LIST_COLUMNS = {
   slug: true, name: true, repoUrl: true, tagline: true, taglineSource: true, category: true, accessMode: true, builder: true,
   stack: true, ogImage: true, makerName: true, stars: true, starsAt: true, starsPrevious: true, starsPreviousAt: true,
-  verifiedAt: true, createdAt: true, status: true, source: true, claimedAt: true, repoRenamedTo: true,
+  verifiedAt: true, createdAt: true, status: true, source: true, claimedAt: true, repoRenamedTo: true, aiLevel: true,
 } as const;
 export type ProductListRow = Pick<Product, keyof typeof LIST_COLUMNS> & { repoGone?: boolean; taglineKo?: string | null };
 
