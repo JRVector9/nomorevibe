@@ -1,0 +1,225 @@
+<title>AI 제작 판정 기준</title>
+<meta name="description" content="nomorevibe 가 'AI로 만들었다'를 어디까지 확신할 수 있는지 — 근거 단계, 위조 가능성, 지금 코드가 수집하는 것과 빠진 것(2026-10-09).">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;700;800&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+  :root {
+    --bg: #f6f5f1; --card: #ffffff; --ink: #1c1d22; --ink-2: #4a4d57; --ink-3: #7a7d87; --line: #e3e1da; --soft: #efede7;
+    --accent: #2457c5; --accent-soft: #e6edfb;
+    --l1: #0f7a4b; --l1-soft: #e3f4ec; --l2: #2457c5; --l2-soft: #e6edfb; --l3: #a86a00; --l3-soft: #fbf0db;
+    --l4: #7a5b9a; --l4-soft: #f1ebf7; --l0: #8a8d96; --l0-soft: #efeff1; --warn: #b4361f; --warn-soft: #fbe9e5;
+  }
+  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+    --bg: #111317; --card: #191c22; --ink: #eceef2; --ink-2: #b6bac4; --ink-3: #8a8f9b; --line: #2a2e37; --soft: #20242b;
+    --accent: #7aa7ff; --accent-soft: #1d2a45;
+    --l1: #4cc98d; --l1-soft: #143226; --l2: #7aa7ff; --l2-soft: #1d2a45; --l3: #e0a53f; --l3-soft: #352915;
+    --l4: #c4a6e6; --l4-soft: #2b2236; --l0: #9a9ea8; --l0-soft: #23262d; --warn: #ff8a73; --warn-soft: #3a1f1a; color-scheme: dark; } }
+  :root[data-theme="dark"] {
+    --bg: #111317; --card: #191c22; --ink: #eceef2; --ink-2: #b6bac4; --ink-3: #8a8f9b; --line: #2a2e37; --soft: #20242b;
+    --accent: #7aa7ff; --accent-soft: #1d2a45;
+    --l1: #4cc98d; --l1-soft: #143226; --l2: #7aa7ff; --l2-soft: #1d2a45; --l3: #e0a53f; --l3-soft: #352915;
+    --l4: #c4a6e6; --l4-soft: #2b2236; --l0: #9a9ea8; --l0-soft: #23262d; --warn: #ff8a73; --warn-soft: #3a1f1a; color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.7 "Noto Sans KR", system-ui, -apple-system, "Apple SD Gothic Neo", sans-serif; }
+  .wrap { max-width: 980px; margin: 0 auto; padding-inline: 20px; padding-block: 40px 72px; }
+  header .eyebrow { font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--ink-3); font-weight: 700; }
+  h1 { font-size: clamp(26px, 4vw, 36px); line-height: 1.25; margin: 8px 0 12px; font-weight: 800; text-wrap: balance; }
+  h2 { font-size: 21px; margin: 44px 0 12px; font-weight: 800; text-wrap: balance; }
+  h3 { font-size: 16px; margin: 0 0 6px; font-weight: 700; }
+  p { margin: 0 0 12px; max-width: 70ch; }
+  .lead { font-size: 17px; color: var(--ink-2); }
+  code, .mono { font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; }
+  code { background: var(--soft); padding: 1px 6px; border-radius: 6px; }
+  .verdict { margin-top: 24px; background: var(--card); border: 1px solid var(--line); border-left: 4px solid var(--warn); border-radius: 14px; padding: 18px 20px; }
+  .verdict strong { color: var(--warn); }
+  .verdict p:last-child { margin-bottom: 0; }
+  .ladder { display: grid; gap: 12px; margin-top: 12px; }
+  .rung { display: grid; grid-template-columns: 120px minmax(0, 1fr); gap: 16px; background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 16px 18px; }
+  .badge { display: inline-flex; flex-direction: column; gap: 2px; align-self: start; border-radius: 10px; padding: 8px 10px; font-weight: 800; font-size: 13px; line-height: 1.3; }
+  .badge small { font-weight: 500; font-size: 11.5px; }
+  .b1 { background: var(--l1-soft); color: var(--l1); } .b2 { background: var(--l2-soft); color: var(--l2); }
+  .b3 { background: var(--l3-soft); color: var(--l3); } .b4 { background: var(--l4-soft); color: var(--l4); } .b0 { background: var(--l0-soft); color: var(--l0); }
+  .rung dl { display: grid; grid-template-columns: 112px minmax(0, 1fr); gap: 4px 14px; margin: 8px 0 0; font-size: 14px; }
+  .rung dt { color: var(--ink-3); font-size: 13px; }
+  .rung dd { margin: 0; color: var(--ink-2); min-width: 0; }
+  .rung .now { display: inline-block; font-size: 12px; font-weight: 700; border-radius: 999px; padding: 1px 8px; margin-left: 6px; vertical-align: 1px; }
+  .now.yes { background: var(--l1-soft); color: var(--l1); } .now.no { background: var(--warn-soft); color: var(--warn); } .now.part { background: var(--l3-soft); color: var(--l3); }
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-top: 12px; }
+  .stat { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; }
+  .stat b { display: block; font-size: 24px; font-variant-numeric: tabular-nums; font-weight: 800; }
+  .stat span { color: var(--ink-3); font-size: 13px; }
+  .bar { display: flex; height: 14px; border-radius: 999px; overflow: hidden; margin: 16px 0 6px; background: var(--soft); }
+  .bar i { display: block; height: 100%; }
+  .legend { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 13px; color: var(--ink-2); }
+  .legend span::before { content: ""; display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 6px; background: var(--c); vertical-align: -1px; }
+  .table-scroll { overflow-x: auto; border: 1px solid var(--line); border-radius: 12px; background: var(--card); margin-top: 12px; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; min-width: 640px; }
+  th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { font-size: 12.5px; color: var(--ink-3); font-weight: 700; background: var(--soft); }
+  tr:last-child td { border-bottom: 0; }
+  ol.todo { padding-left: 20px; margin: 8px 0 0; }
+  ol.todo li { margin-bottom: 10px; max-width: 72ch; }
+  ol.todo li b { color: var(--ink); }
+  .muted { color: var(--ink-3); font-size: 13px; }
+  footer { margin-top: 48px; color: var(--ink-3); font-size: 13px; border-top: 1px solid var(--line); padding-top: 14px; }
+  @media (max-width: 640px) {
+    .rung { grid-template-columns: minmax(0, 1fr); gap: 10px; }
+    .badge { flex-direction: row; gap: 8px; align-items: baseline; }
+    .rung dl { grid-template-columns: minmax(0, 1fr); }
+    .rung dt { margin-top: 6px; }
+  }
+</style>
+
+<div class="wrap">
+  <header>
+    <div class="eyebrow">nomorevibe · 근거 기준 · 2026-10-09 · 10-10 적용</div>
+    <h1>‘AI로 만들었다’를 어디까지 확신할 수 있나</h1>
+    <p class="lead">상세 페이지의 ‘무엇으로 만들었나’가 무엇을 근거로 말하는지, 각 근거가 무엇을 증명하고 무엇은 증명하지 못하는지 정리했습니다. 2026-10-10 이 기준으로 1·2·3단계 판정을 만들어 운영에 적용했습니다(#339·#340) — 무엇을 모으는지, 공개분 표본의 실측과 남은 한계를 함께 적었습니다.</p>
+  </header>
+
+  <section class="verdict" aria-labelledby="verdict-title">
+    <h3 id="verdict-title">결론</h3>
+    <p><strong>공개된 저장소만 보고 “이 제품 전체를 AI로 만들었다”를 100% 확정할 수 있는 경우는 없습니다.</strong> 커밋의 작성자 이름·이메일, 커밋 메시지 끝의 서명 줄, 설정 파일은 모두 사람이 직접 쓰거나 복사할 수 있습니다. GitHub 가 ‘Verified’로 표시한 커밋도 API 로 만들면 작성자를 마음대로 적을 수 있습니다.</p>
+    <p>확정에 가장 가까운 것은 <strong>AI 에이전트 서비스의 GitHub 앱 계정(봇)이 연 PR 이 기본 브랜치에 병합된 경우</strong>입니다. 그 계정으로 PR 을 여는 것은 그 앱만 할 수 있으므로, “이 변경은 AI 에이전트가 만들었다”는 것까지는 사실상 확정입니다. 다만 그것도 그 PR 의 변경에 대한 사실이지, 제품 전체에 대한 사실은 아닙니다. 2026-10-10부터 이 신호를 모읍니다.</p>
+    <p>그래서 화면은 “AI로 만들었다”가 아니라 <em>어떤 근거가 있는지</em>를 단계별로 말해야 합니다. 지금 코드도 같은 원칙을 지키고 있어 모든 판정에 ‘실행 검증 안 됨’(<code>executionVerified: false</code>)이 고정돼 있습니다.</p>
+  </section>
+
+  <h2>근거의 단계</h2>
+  <p>위에서 아래로 갈수록 약합니다. 한 제품에 여러 근거가 있으면 가장 높은 단계로 말합니다.</p>
+  <div class="ladder">
+    <article class="rung">
+      <span class="badge b1">1단계<small>사실상 확정</small></span>
+      <div>
+        <h3>AI 에이전트 봇 계정이 연 PR 이 병합됨 <span class="now yes">모음 · 10-10</span></h3>
+        <dl>
+          <dt>예</dt><dd>GitHub Copilot 코딩 에이전트, Devin, Jules 같은 서비스가 자기 GitHub 앱 계정으로 PR 을 열고, 그 PR 이 기본 브랜치에 병합됨. 서비스마다 PR 을 여는 계정이 달라서, 계정 목록은 실제 PR 로 확인해 가며 유지해야 합니다.</dd>
+          <dt>증명하는 것</dt><dd>그 PR 의 변경을 AI 에이전트 서비스가 만들었다. PR 을 연 계정은 GitHub 가 보증하고, 그 앱의 설치 토큰 없이는 그 계정으로 PR 을 열 수 없습니다.</dd>
+          <dt>증명 못 하는 것</dt><dd>제품의 나머지 코드, 병합 뒤 사람이 고친 부분.</dd>
+          <dt>위조</dt><dd>매우 어려움. 앱 권한을 탈취하지 않는 한 불가능합니다.</dd>
+          <dt>지금 코드</dt><dd>기본 브랜치의 최근 병합 PR 30개에서 PR 을 연 계정이 서비스가 토큰을 쥔 에이전트 앱(<code>copilot-swe-agent</code>·<code>devin-ai-integration</code>·<code>google-labs-jules</code>·<code>cursor</code>·<code>kiro-agent</code>·<code>codegen-sh</code>·<code>amazon-q-developer</code>·<code>factory-droid</code>·<code>arena-ai-coding-agent</code>)이고, PR 이 코드 파일을 바꿨으면 1단계. PR 안 커밋 작성자는 보지 않습니다 — Devin·Arena·Cursor 는 사용자 이름으로 커밋합니다(실측). <code>claude[bot]</code>은 저장소 주인의 워크플로가 토큰을 받아 쓰므로 2단계입니다.</dd>
+        </dl>
+      </div>
+    </article>
+    <article class="rung">
+      <span class="badge b2">2단계<small>강함</small></span>
+      <div>
+        <h3>AI 도구 서명이 붙은 ‘개발’ 커밋이 기본 브랜치에 있음 <span class="now yes">모음 · 10-10</span></h3>
+        <dl>
+          <dt>예</dt><dd>커밋 메시지 끝에 <code>Co-authored-by: Claude &lt;noreply@anthropic.com&gt;</code>, <code>Co-authored-by: Codex</code> 같은 줄이 있고, 그 커밋이 테스트·문서가 아닌 실제 코드 파일을 바꿨다.</dd>
+          <dt>증명하는 것</dt><dd>그 도구를 쓴 작업 흐름에서 이 커밋이 만들어졌다고 저장소가 스스로 밝혔다. 도구가 자동으로 붙이는 줄이라 정상적인 경우 강한 신호입니다.</dd>
+          <dt>증명 못 하는 것</dt><dd>실제로 도구가 코드를 썼는지. 이 줄은 사람이 손으로 써 넣을 수 있습니다.</dd>
+          <dt>위조</dt><dd>쉬움. 의도적으로 꾸미면 막을 방법이 없습니다.</dd>
+          <dt>지금 코드</dt><dd>기본 브랜치의 최근 커밋 30개를 직접 봅니다(병합 커밋 제외). <code>Co-authored-by</code> 표기(모델 이름 뒤 괄호·Fable 포함), 작성자 자체가 도구인 커밋(<code>Claude &lt;noreply@anthropic.com&gt;</code>·Cursor Agent·Copilot·Codex), 도구가 붙이는 꼬리 줄을 읽고, 그 커밋이 코드 파일을 바꿨는지 하나씩 확인합니다. 사람 이름이기도 한 표기(Claude·Devin·Jules)는 메일 주소까지 맞아야 합니다. 기존 수집이 찾은 개발 커밋 표기도 2단계로 셉니다. 포크는 커밋 표기를 보지 않습니다.</dd>
+        </dl>
+      </div>
+    </article>
+    <article class="rung">
+      <span class="badge b3">3단계<small>보통</small></span>
+      <div>
+        <h3>특정 AI 도구 전용 설정·규칙 파일이 있음 <span class="now yes">모음</span></h3>
+        <dl>
+          <dt>예</dt><dd><code>.claude/settings.json</code>, <code>.claude/rules/*.md</code>, <code>.codex/config.toml</code>, <code>.cursor/rules/*.mdc</code>, <code>.github/copilot-instructions.md</code>, <code>.windsurfrules</code>, <code>.clinerules</code>, <code>.aider.conf.yml</code></dd>
+          <dt>증명하는 것</dt><dd>누군가 이 저장소에서 그 도구를 쓰도록 설정했다. 의도와 환경까지입니다.</dd>
+          <dt>증명 못 하는 것</dt><dd>그 도구가 실제로 코드를 썼는지. 설정만 복사해 둔 저장소도 있습니다.</dd>
+          <dt>위조</dt><dd>쉬움. 파일 하나를 추가하면 됩니다.</dd>
+          <dt>지금 코드</dt><dd>루트와 에이전트 폴더(<code>.claude</code>·<code>.cursor</code>·<code>.github</code> 등) 두 겹을 보고, 도구가 정해진 규칙(<code>agents/catalog.ts</code>)에 맞는 파일이 있으면 3단계.</dd>
+        </dl>
+      </div>
+    </article>
+    <article class="rung">
+      <span class="badge b4">4단계<small>약함</small></span>
+      <div>
+        <h3>도구를 특정할 수 없는 지침 파일, 메이커의 자기 신고 <span class="now yes">모음 · 도구 미상</span></h3>
+        <dl>
+          <dt>예</dt><dd><code>CLAUDE.md</code>, <code>AGENTS.md</code>, <code>GEMINI.md</code>, 스킬 폴더의 <code>SKILL.md</code>는 여러 도구가 같이 읽는 형식이라 어느 도구인지 정할 수 없습니다. <code>/nomorevibe</code>로 등록할 때 AI 가 스스로 적어 넣는 ‘제작 도구’(builder)와 README 의 “built with …”도 여기에 속합니다.</dd>
+          <dt>증명하는 것</dt><dd>AI 도구와 함께 일할 준비를 했거나, 그렇게 주장한다.</dd>
+          <dt>증명 못 하는 것</dt><dd>어느 도구인지, 실제로 썼는지.</dd>
+          <dt>지금 코드</dt><dd><code>CLAUDE.md</code>·<code>AGENTS.md</code>는 관찰은 하지만 이름 있는 도구로 세지 않습니다(<code>client: null</code>). 메이커 신고는 화면에 ‘메이커 신고 · 검증할 방법 없음’으로만 보입니다.</dd>
+        </dl>
+      </div>
+    </article>
+    <article class="rung">
+      <span class="badge b0">근거 아님</span>
+      <div>
+        <h3>판단에 쓰지 않는 것</h3>
+        <dl>
+          <dt>예</dt><dd>GitHub 토픽(<code>vibe-coding</code> 등), 페이지나 README 의 ‘AI’ 단어, 제품이 AI 기능을 가진 것, 커미터만 도구 이름인 커밋, 포크로 물려받은 커밋, 예제·템플릿 폴더 안의 설정 파일.</dd>
+          <dt>흔적 없음</dt><dd>흔적을 못 찾았다고 해서 AI 없이 만들었다는 뜻은 아닙니다. 검사 범위 밖에 있거나, 흔적을 남기지 않는 방식으로 썼을 수 있습니다.</dd>
+        </dl>
+      </div>
+    </article>
+  </div>
+
+  <h2>화면에서 쓰는 말 (2026-10-10 적용)</h2>
+  <p>단계마다 말할 수 있는 만큼만 말합니다. ‘AI 제작 검증 완료’ 같은 배지는 어느 단계에서도 쓰지 않습니다. 공개 여부는 단계와 상관없이 지금처럼 정합니다 — 단계는 분류에만 씁니다.</p>
+  <div class="table-scroll">
+    <table>
+      <thead><tr><th>자리</th><th>보이는 것</th></tr></thead>
+      <tbody>
+        <tr><td><b>홈 필터</b></td><td>‘만든 방식’의 <b>AI로 제작</b> 칩 하나 — 1·2·3단계 모두. 분야·검색·순위와 함께 걸립니다(<code>?ai=made</code>).</td></tr>
+        <tr><td><b>카드</b></td><td>표시 없음(일단 필터로만 가립니다).</td></tr>
+        <tr><td><b>상세</b></td><td>“AI 제작 근거 N단계 · 단계 이름”과 한 줄 설명만. PR·커밋·파일 링크와 도구 이름은 내지 않습니다.</td></tr>
+        <tr><td><b>근거 없음</b></td><td>“검사에서 AI 코딩 도구 흔적을 찾지 못했습니다 — AI 없이 만들었다는 뜻은 아닙니다.”</td></tr>
+        <tr><td><b>검사 전</b></td><td>“AI 흔적 검사 대기 중 …”</td></tr>
+        <tr><td><b>기준 설명</b></td><td>푸터 ‘데이터와 집계 기준’의 ‘만든 방식’ — 단계 뜻·한계·단계별 공개 수.</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h2>운영 수치</h2>
+  <p class="muted">2026-10-10 공개 제품 무작위 1,000개를 운영 DB 에 쓰지 않고 같은 판정 코드로 돌린 결과(다시 보는 차례 세 번까지 흉내). 전체 판정은 배포한 잡이 반나절에 걸쳐 채웁니다.</p>
+  <div class="stats">
+    <div class="stat"><b>0.9%</b><span>1단계 — 에이전트 앱이 연 PR 병합</span></div>
+    <div class="stat"><b>78.3%</b><span>2단계 — 도구 표기가 있는 개발 커밋</span></div>
+    <div class="stat"><b>3.3%</b><span>3단계만 — 도구 전용 설정·규칙 파일</span></div>
+    <div class="stat"><b>14.1%</b><span>검사했지만 1~3단계 근거 없음</span></div>
+    <div class="stat"><b>3.3%</b><span>저장소가 사라짐</span></div>
+  </div>
+  <div class="bar" role="img" aria-label="단계 비율: 1단계 0.9%, 2단계 78.3%, 3단계 3.3%, 근거 없음 14.1%, 저장소 없음 3.3%">
+    <i style="width:0.9%;background:var(--l1)"></i><i style="width:78.3%;background:var(--l2)"></i><i style="width:3.3%;background:var(--l3)"></i><i style="width:14.1%;background:var(--l0)"></i><i style="width:3.4%;background:var(--line)"></i>
+  </div>
+  <div class="legend">
+    <span style="--c:var(--l1)">1단계 0.9%</span><span style="--c:var(--l2)">2단계 78.3%</span><span style="--c:var(--l3)">3단계 3.3%</span><span style="--c:var(--l0)">근거 없음 14.1%</span><span style="--c:var(--line)">저장소 없음 3.3%</span>
+  </div>
+  <p class="muted" style="margin-top:10px">판정 코드와 다른 길(GitHub REST)로 다시 확인: 1단계 30/30, 새 규칙의 2단계 25/25, 3단계 20/20 정확. 2단계가 이전 수집의 최고 단계(31%)보다 많은 것은 이전 수집이 저장소마다 검색으로 찾은 커밋을 최대 5개만 봤기 때문입니다. 도구는 Claude Code 가 가장 많습니다(1·2단계의 97%).</p>
+
+  <h2>‘AI 흔적 검사 대기 중’이 보이는 때</h2>
+  <ol class="todo">
+    <li><b>판정 잡(<code>ai-level-refresh</code>)이 아직 그 저장소를 보지 않았을 때.</b> 새 후보 → 아직 안 본 공개 제품(최신부터) → 사흘 지난 것 차례로, 1분마다 60개 남짓 봅니다. 크롤러가 올리는 새 제품은 후보 때 이미 판정돼 발행과 함께 단계가 붙습니다.</li>
+    <li><b>묻다 실패해 한 번도 판정하지 못했을 때</b>(GitHub 시간 초과 등) — 한 시간 뒤 다시 봅니다. 한 번 판정한 저장소는 실패해도 지난 단계를 그대로 둡니다.</li>
+  </ol>
+
+  <h2>고친 것과 남은 것</h2>
+  <ol class="todo">
+    <li><b>고침 — 1단계를 모읍니다.</b> 병합 PR 을 연 계정을 읽어 에이전트 앱이면 1단계(#339).</li>
+    <li><b>고침 — 기본 브랜치 최근 커밋 30개를 직접 봅니다.</b> 발견 검색으로 찾은 커밋만 보던 한계가 없어졌습니다.</li>
+    <li><b>고침 — 근거가 있는데 “찾지 못했습니다”가 나오던 상세 문구.</b> 단계 이름을 보이고, 근거가 없을 때만 그 말을 씁니다.</li>
+    <li><b>고침 — 서명 표기의 변형.</b> 모델 이름 뒤 괄호·Fable·Cursor Agent·작성자 표기·꼬리 줄을 읽습니다. 기존 수집기의 규칙(<code>commit-attribution.ts</code>)은 판정 판을 올리면 모든 제품이 ‘대기 중’이 되므로 그대로 두었습니다.</li>
+    <li><b>남음 — 최근 병합 PR 30개·커밋 30개 밖은 보지 않습니다.</b> 오래 활발한 저장소는 그 밖의 근거를 놓칠 수 있습니다(단계를 낮게 볼 수는 있어도 높게 보지는 않습니다). 처음 확인한 표기 커밋이 문서만 바꿨으면 다음 차례에 3개씩 더 봅니다.</li>
+    <li><b>남음 — 하위 폴더의 지침 파일은 보지 않습니다.</b> <code>apps/web/CLAUDE.md</code>처럼 모노레포 안쪽의 파일. 공유 형식이라 단계에는 들지 않습니다.</li>
+    <li><b>남음 — 검색엔진 노출 규칙.</b> <code>lib/domain/products/indexing.ts</code>는 아직 이전 수집기의 흔적을 봅니다. 새 단계로 바꿀지 정해야 합니다.</li>
+    <li><b>남음 — 우리가 직접 기록하는 길.</b> 메이커가 <code>/nomorevibe</code>로 개발 과정을 남기게 하면 ‘우리가 확인한 AI 제작’ 단계를 만들 수 있습니다(<code>nomorevibe_recorded</code>, 아직 쓰는 곳 없음).</li>
+  </ol>
+
+  <h2>근거 출처</h2>
+  <div class="table-scroll">
+    <table>
+      <thead><tr><th>무엇</th><th>코드</th></tr></thead>
+      <tbody>
+        <tr><td>파일 규칙(도구별 경로)</td><td class="mono">lib/domain/evidence/agents/catalog.ts</td></tr>
+        <tr><td>커밋 서명 해석</td><td class="mono">lib/domain/evidence/agents/commit-attribution.ts · commit-changes.ts</td></tr>
+        <tr><td>검사 실행·한도</td><td class="mono">lib/domain/evidence/agents/collect.ts · lib/jobs/products/agent-evidence-refresh.ts</td></tr>
+        <tr><td>1·2·3단계 판정(규칙)</td><td class="mono">lib/domain/evidence/ai-level.ts · ai-level-query.ts · ai-level-labels.ts</td></tr>
+        <tr><td>판정 잡·저장</td><td class="mono">lib/jobs/products/ai-level-refresh.ts · repository_ai_levels · products.ai_level (0063)</td></tr>
+        <tr><td>표본 확인 도구</td><td class="mono">scripts/ai-level-check.ts</td></tr>
+        <tr><td>이전 판정(심사용)</td><td class="mono">lib/domain/evidence/agents/summary.ts (executionVerified: false)</td></tr>
+        <tr><td>상세 문구</td><td class="mono">components/product-detail/BuildTools.tsx</td></tr>
+        <tr><td>검색엔진 노출 규칙</td><td class="mono">lib/domain/products/indexing.ts</td></tr>
+        <tr><td>설계 원칙</td><td class="mono">docs/superpowers/specs/2026-09-06-agent-evidence-design.md</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <footer>운영 수치는 2026-10-10 공개분 무작위 1,000개 표본 판정입니다. 단계 규칙 판 2026-10-10.1(이전 수집기 판 2026-09-14.1).</footer>
+</div>
