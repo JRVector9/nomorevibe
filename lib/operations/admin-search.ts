@@ -1,6 +1,9 @@
 import { and, desc, ilike, or, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { crawlCandidates, operationsAudit, products } from "@/lib/db/schema";
+import { activityHref, candidateHref, searchTerm, type AdminSearchResult } from "./admin-search-shared";
+
+export * from "./admin-search-shared";
 
 /**
  * 관리자 전역 검색(⌘K, 2026-10-08 UX 점검 ADM-05) — 제품·심사 후보·작업 로그 대상을 한 번에 찾는다.
@@ -9,36 +12,9 @@ import { crawlCandidates, operationsAudit, products } from "@/lib/db/schema";
  * 2026-10-11 운영 실측: 제품 4만·후보 25만 행 ILIKE 가 각 0.1초 안팎이라 trigram 색인 없이 둔다(pg_trgm 미설치).
  * 셋을 함께 읽고, 글자 그대로 찾는다(% _ \ 는 이스케이프).
  */
-export const ADMIN_SEARCH_MIN = 2;
 const LIMIT = { products: 8, candidates: 8, targets: 6 } as const;
 
-export type AdminSearchProduct = { slug: string; name: string; url: string; repoUrl: string | null; status: string; href: string; publicHref: string; logHref: string };
-export type AdminSearchCandidate = { id: number; repo: string; state: string; productUrl: string | null; href: string; logHref: string };
-export type AdminSearchTarget = { target: string; count: number; lastAt: Date; href: string };
-export type AdminSearchResult = { q: string; products: AdminSearchProduct[]; candidates: AdminSearchCandidate[]; targets: AdminSearchTarget[] };
-
-/** 찾는 글자 — 앞뒤 공백을 떼고 100자까지. 너무 짧으면 null(모든 행이 걸린다) */
-export function searchTerm(raw: string | null | undefined): string | null {
-  const term = (raw ?? "").trim().slice(0, 100);
-  return [...term].length >= ADMIN_SEARCH_MIN ? term : null;
-}
-
 const likeOf = (term: string) => `%${term.replace(/[\\%_]/g, (char) => `\\${char}`)}%`;
-
-/** 작업 로그를 그 대상으로 거른 화면 */
-export const activityHref = (target: string) => `/admin/activity?target=${encodeURIComponent(target)}`;
-
-/**
- * 후보가 있는 심사 큐 화면 — 그 저장소로 거르고 그 줄을 고른다. 심사 큐의 기본 보기는 아직 결론이 안 난 것(new·approved·보류)이라
- * 거부·발행된 후보는 그 보기로 보낸다.
- */
-export function candidateHref(candidate: { id: number; repo: string; state: string }): string {
-  const params = new URLSearchParams();
-  if (candidate.state === "rejected" || candidate.state === "published") params.set("state", candidate.state);
-  params.set("q", candidate.repo);
-  params.set("focus", String(candidate.id));
-  return `/admin/review?${params}#review-list`;
-}
 
 export async function adminGlobalSearch(raw: string): Promise<AdminSearchResult> {
   const term = searchTerm(raw);

@@ -2,8 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useEffect, useEffectEvent, useId, useRef, useState } from "react";
-import type { AdminSearchResult } from "@/lib/operations/admin-search";
-import { ADMIN_SEARCH_MIN } from "@/lib/operations/admin-search";
+import { ADMIN_SEARCH_MIN, type AdminSearchResult } from "@/lib/operations/admin-search-shared";
 import { AdminIcon } from "./AdminIcon";
 
 /** 상태 이름 — 제품 표(ProductRow)·심사 상세(ReviewDetail)와 같은 말 */
