@@ -7,7 +7,7 @@
 | 작업 | 브랜치 / 소유 범위 | 상태 |
 |---|---|---|
 | PR01 신규 목록 | `feat/home-new-repository-birth-20261012`; repository/view와 홈 신규 카드·설명 | [PR369](https://github.com/JRVector9/nomorevibe/pull/369), head5231fbb, 필수CI38157584835 성공 후 main9424d6e 병합 |
-| PR02 관측 | delivery `feat/home-star-observations-20261012`; DB migration·schema·job·scheduler/worker 최소 연결 | 커밋a9887bf, PR370; 최소 auth-empty 보완 최종 소스 리뷰 및 필수 CI 중 |
+| PR02 관측 | delivery `feat/home-star-observations-20261012`; DB migration·schema·job·scheduler/worker 최소 연결 | 커밋a9887bf, PR370; 최종 소스 리뷰 추가 지적 없음, 필수 CI 중 |
 | PR03 상승 조회 | delivery `feat/home-star-growth-reader-20261012`; 전용 조회·회차 캐시·응답 타입 | 통합 커밋54e6b2a, 부모 및 독립 소스 리뷰 추가 지적 없음; PR02 병합 뒤 전달 |
 | PR04 상승 UI | `feat/star-growth-ui-20261012`; 홈·/rising·카드·설명·헤더 | 소스 커밋03a2b73 통합 완료, 부모 및 독립 소스 리뷰 추가 지적 없음; PR03 병합 뒤 전달 |
 
@@ -77,4 +77,4 @@ PR01 main9424d6e의 원격 CI38157890474도 quality/integration/check 및 웹·�
 | 느린 optional App mint가 정상 토큰 사용 차단 | P2 / high confidence | dispatch5초 확보, 뒤 정상 캐시 수집 |
 | cold App-only의 준비 결과 없음이 전송 실패로 계산 | 부모 검토 | deadline 경로 auth 대기, 기존 호출 오류 보존 |
 
-신규 수정 경로·상승 조회·UI·mint reserve 경로의 독립 소스 재리뷰는 추가 지적 없었으며, 마지막3줄 auth-empty 보완을 통합한 최소 경로의 최종 소스 리뷰는 별도 완료 결과를 기록한다. 신규 스키마·인덱스·GraphQLID·isPrivate·lease/deadline·기준/표기를 소스에 대조했으며 이는 실행 테스트가 아니다.
+신규 수정 경로·상승 조회·UI·mint reserve 경로의 독립 소스 재리뷰는 추가 지적 없었으며, 마지막 auth-empty 보완을 통합한 최소 경로의 최종 소스 리뷰도 추가 지적 없었다. 신규 스키마·인덱스·GraphQLID·isPrivate·lease/deadline·기준/표기를 소스에 대조했으며 이는 실행 테스트가 아니다.
