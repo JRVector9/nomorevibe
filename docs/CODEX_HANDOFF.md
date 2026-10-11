@@ -6468,3 +6468,40 @@ gh pr checks 366
 ```
 
 이후 root에서 rg -n '이번 주|새로 나온|지금 뜨는|trending|rising|recent' app components lib 로 홈 목록 경로를 찾는다. 소스와 운영의 repository createdAt/publishedAt/ranking window·snapshot 시각·주기·증가량을 읽기 전용으로 대조한다. 사용자 요청은 우선 검토이며 새 기준을 임의로 정해 배포하지 않는다. 중단한 소개 검수는 재개하지 않는다.
+
+### 2026-10-11 23:56 KST — 홈 목록 소스 조사 완료, 운영 데이터 대조 진행
+
+PR366은 최신-base 필수 CI38148821876 check 성공 후 main298eb926으로 병합했고 사용자 main도 fast-forward했다. 상세 화면의 운영 이미지는 앞서 검증한 a91eecf2이며 이후 main 변경은 문서뿐이다. GitHub App 등록 확인 및 Resend 답변은 아직 없어 플래그 OFF를 유지한다.
+
+현재 목적은 사용자가 추가 요청한 신규/급상승 목록의 **읽기 전용 검토**다. 독립 문서 worktree /private/tmp/nomorevibe-home-criteria-audit-20261011, branch docs/home-criteria-audit-20261011에서 기록한다. detail_compact와 integration_reactivation의 gpt-6.1-sol/xhigh 소스 조사 완료. 새 코드·테스트·빌드·기준 변경은 하지 않았다.
+
+확인된 소스: getNewThisWeek는 저장소 생성일 대신 coalesce(verified_at,created_at) 등재/인증일을 사용하고 시작 경계만 적용한다. 따라서 오래된 저장소와 집계 종료일 이후 등재도 포함된다. 반면 홈의 ‘이번 주 새로 생김’ 요약은 crawl_documents.repo_meta.created_at과 KST 완료 7일 양쪽 경계를 사용한다. 급상승은 두 숫자 관측 사이 일평균 증가량의 고정 상위5개이며 정상 재조회20시간, 시도 작업5분, freshness 기본7일이다. 집계 설명의 1일 바닥·2~3일 주기는 소스와 다르다.
+
+실패 접근: root .env/.env.local DATABASE_URL로 읽기 전용 연결했지만 제품 스키마에 repo_status/repo_checked_at 등 현재 필드가 없어 복잡한 조회가42703으로 실패했다. 이 연결의 crawl_settings.updated_at은2026-09-09이며 운영 연결로 간주할 수 없다. 정보스키마 조회로 확인했고 **마이그레이션하거나 변경하지 않았다**. 운영 웹의 실제 연결을 안전하게 사용해 날짜·순위·관측 시각·job 상태를 대조해야 한다. 웹 도구 nomorevibe.com open도 internal/not-accessible 오류로 콘텐츠 근거를 얻지 못했다.
+
+실행한 검사는 git 상태/소스 읽기와 위 READ ONLY 트랜잭션 및 정보스키마 조회뿐이며 기능 테스트 결과는 없다. 사용자 untracked PPT/prototypes와 중단한 소개 검수는 보존한다. 비밀 env·접속 문자열은 출력/커밋하지 않는다.
+
+다음 명령: cd /private/tmp/nomorevibe-home-criteria-audit-20261011; git diff --check. /private/tmp/nomorevibe-release-inspect-20261011.py를 import해 client().app('web-mini')로 운영 연결을 메모리에 가져오거나 실행 컨테이너에서 postgres READ ONLY 조회한다. 해당 도구 inventory()는 비밀 스냅샷을 만들므로 실행하지 않는다. 제품 신규top5/급상승top10, rising 설정, stars_at/checked_at/previous_at, product-stars-refresh job 및 관측 counts를 수집한 뒤 이 기록과 운영 검토 문서를 갱신한다.
+
+### 2026-10-12 00:06 KST — 홈 기준 운영 대조 완료
+
+완료 작업: 운영 mini 웹 실행 컨테이너의 실제 DATABASE_URL/READ_DATABASE_URL을 사용해 각각 REPEATABLE READ, READ ONLY로 조사했다. 컨테이너 runtime a91eecf2와 현재 제품 필드를 확인했다. 00:02:30 KST 주 DB/읽기 복제본의 신규top5/급상승top10 결과가 같았고, 복제본 replay 경과 약0.058초다. 공개 홈 HTTP 읽기에서도 급상승5개 순서·스타·증가량이 일치했고 CF DYNAMIC였다. 해당 읽기는 기능 테스트가 아니다.
+
+신규 상위5개 vm2api/Yielded Auth/Aptos Explorer/examples/HyperDX 모두 기간 이전 생성 저장소다. 기간내 서비스 등재·스타50이상·정상공개 조건1,307개 중1,289개(98.62%)가 이전 생성,18개가 기간내 생성이다. 시작 경계만 사용하고 카드도 등재일을 표시하므로 화면 명칭과 구현이 다르다. 완료7일 창은10/5 00시~10/12 00시 KST이고 달력 이번 주와도 다르다.
+
+급상승 freshDays=7. 정상ok36,262개 모두 숫자 관측24시간 이내이며 공개 저장소37,479개 중24시간 내 숫자36,269개,48시간 초과1,165개다. product-stars-refresh 요청/처리8,332 동일, 오류/lock/retryAfter 없음, 최근23:59:28 성공, 관측examined35/updated15/ok15/missing20/unknown0. 현재 상위5개 관측 간격20.07~20.09시간, 마지막 성공14.38~19.97시간 전. 이 표본에서 수집 정체나 오래된 복제본을 원인으로 확인하지 않았다. 고정5개·20시간 재관측·두 관측 일평균 기준이다. 과거 순위가 수일간 동일했는지까지 확정하지 않는다. 설명의1일 바닥/2~3일 확인은 실제20시간과 다르다.
+
+수정 파일: docs/operations/2026-10-12-home-criteria-audit.md 신규 보고서, 이 handoff. 앱 코드/기준/DB/운영설정 변경 없음. 최소 수정안을 신규 의미/날짜/범위 정합성 PR, 급상승 설명 PR, 공통24시간 이력은 별도 선택 PR로 기록했다. 사용자 요청은 검토이므로 아직 구현하지 않는다. 원래 스타/댓글 활성화는 GitHub App 최종 등록 확인과 Resend 발신 정보 대기이며 OFF다. 사용자 중단 소개 검수와 untracked 산출물 보존.
+
+검사/실패: 테스트·빌드·린트·브라우저 기능 테스트 미실행. 앞서 stale local DB에서42703으로 실패한 접근은 운영 연결로 교체했다. 웹 도구 open 접근 실패 후 일반HTTP 읽기를 사용했다. 임시 도구 /private/tmp/nomorevibe-home-audit-20261011.py와 .mjs는 비밀을 출력하지 않고 read-only 조회만 수행한다. 운영 결과는 보고서에 표본 시각과 함께 기록했다. 독립 서브에이전트 보고서 읽기 리뷰 완료: 실패/성공 표현과 ‘관측 간격 상한만으로 공통24시간 창은 만들 수 없음’ 두 문구를 수정했다. 문서 diff 검사 통과, 커밋/PR/필수CI 병합을 진행한다.
+
+정확한 다음 명령:
+```sh
+cd /private/tmp/nomorevibe-home-criteria-audit-20261011
+git diff --check
+git diff --stat
+git add docs/CODEX_HANDOFF.md docs/operations/2026-10-12-home-criteria-audit.md
+git commit -m 'docs: audit home new and rising criteria'
+git push -u origin docs/home-criteria-audit-20261011
+gh pr create --base main --head docs/home-criteria-audit-20261011 --title 'docs: audit home new and rising project criteria' --body-file /private/tmp/nomorevibe-home-criteria-audit-pr-body.md
+```
