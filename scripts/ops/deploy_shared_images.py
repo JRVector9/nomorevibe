@@ -30,6 +30,10 @@ APPS = {
     'web-m3': ('oipo2OAnIrtcnILBCRoG2', 'nomorevibe-web-m3', M3, 'web'),
 }
 ORDER = tuple(APPS)
+READ_ONLY_MAINTENANCE = {
+    'maintenance-mini': ('T6ATm-paaE03hfSsQX8-S', 'nomorevibe-maintenance-standby-mini', MINI, 'worker'),
+    'maintenance-m3': ('7OlFqQdacbyQseQM72E7b', 'nomorevibe-maintenance-m3', M3, 'worker'),
+}
 IMAGE_PREFIX = {
     'worker': 'ghcr.io/jrvector9/nomorevibe-worker@',
     'web': 'ghcr.io/jrvector9/nomorevibe-runtime-web@',
@@ -70,6 +74,52 @@ def setting(value, key):
     return rows[0]
 
 
+def dotenv_settings(value):
+    """Parse literal dotenv values without interpolation or secret-bearing errors."""
+    rows = (value or '').splitlines()
+    result = {}
+    index = 0
+    while index < len(rows):
+        line = rows[index].strip()
+        index += 1
+        if not line or line.startswith('#'):
+            continue
+        match = re.fullmatch(r'(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)', line)
+        if not match:
+            raise ValueError(f'dotenv_invalid_line_{index}')
+        key, raw = match.groups()
+        if key in result:
+            raise ValueError(f'{key}_line_count_2')
+        if raw.startswith(('"', "'")):
+            quote = raw[0]
+            raw = raw[1:]
+            end = None
+            while end is None:
+                for position, char in enumerate(raw):
+                    if char != quote:
+                        continue
+                    escapes = len(raw[:position]) - len(raw[:position].rstrip('\\'))
+                    if quote == "'" or escapes % 2 == 0:
+                        end = position
+                        break
+                if end is None:
+                    if index == len(rows):
+                        raise ValueError(f'{key}_unterminated')
+                    raw += '\n' + rows[index]
+                    index += 1
+            suffix = raw[end + 1:].strip()
+            if suffix and not suffix.startswith('#'):
+                raise ValueError(f'{key}_invalid_quoted_suffix')
+            parsed = raw[:end]
+            if quote == '"':
+                escapes = {'n': '\n', 'r': '\r', 't': '\t', '"': '"', '\\': '\\'}
+                parsed = re.sub(r'\\([nrt"\\])', lambda item: escapes[item[1]], parsed)
+        else:
+            parsed = re.split(r'\s+#', raw, maxsplit=1)[0].rstrip()
+        result[key] = parsed
+    return result
+
+
 class Dokploy:
     def __init__(self, key):
         self.key = key
@@ -96,21 +146,103 @@ class Dokploy:
                 os.close(write_fd)
 
     def app(self, short):
-        app_id, expected_name, (server_id, _), kind = APPS[short]
+        app_id, expected_name, (server_id, _), kind = (APPS | READ_ONLY_MAINTENANCE)[short]
         app = self.request('application.one?applicationId=' + app_id)
-        if (app.get('applicationId'), app.get('name'), app.get('serverId'),
-                app.get('dockerBuildStage')) != (app_id, expected_name, server_id,
-                                                 'worker' if kind == 'worker' else 'runner'):
+        if (app.get('applicationId'), app.get('name'), app.get('serverId')) != (app_id, expected_name, server_id):
+            raise ValueError(f'{short}_identity_mismatch')
+        if short in APPS and app.get('dockerBuildStage') != ('worker' if kind == 'worker' else 'runner'):
             raise ValueError(f'{short}_identity_mismatch')
         if not re.fullmatch(r'[a-z0-9-]+', app.get('appName') or ''):
             raise ValueError(f'{short}_invalid_service_name')
         return app
 
     def latest(self, short):
-        rows = self.request('deployment.all?applicationId=' + APPS[short][0])
+        rows = self.request('deployment.all?applicationId=' + (APPS | READ_ONLY_MAINTENANCE)[short][0])
         if not rows:
             raise ValueError(f'{short}_missing_deployment')
         return rows[0]
+
+
+INTEGRATION_FLAGS = ('PUBLIC_USER_AUTH_ENABLED', 'GITHUB_STAR_ENABLED',
+                     'PRODUCT_FEEDBACK_ENABLED', 'GITHUB_FEEDBACK_DELIVERY_ENABLED')
+
+
+def github_integration_preflight(client, apps):
+    """Read only configuration checks; exceptions and evidence contain names, never secret values."""
+    surfaces = {short: apps[short] for short in ('web-mini', 'web-m3', 'publisher-mini', 'publisher-m3')}
+    for short in READ_ONLY_MAINTENANCE:
+        surfaces[short] = client.app(short)
+    envs = {short: dotenv_settings(app.get('env')) for short, app in surfaces.items()}
+
+    def value(short, key):
+        if key in envs[short]:
+            return envs[short][key]
+        if key in INTEGRATION_FLAGS:
+            return 'false'
+        raise ValueError(f'{key}_line_count_0')
+
+    def matched(key, names, required=False):
+        values = [value(short, key) for short in names]
+        if required and any(not item.strip() for item in values):
+            raise ValueError(f'{key}_missing')
+        if len(set(values)) != 1:
+            raise ValueError(f'{key}_mismatch')
+        return values[0]
+
+    web = ('web-mini', 'web-m3')
+    flags = {}
+    for key in INTEGRATION_FLAGS:
+        for short in web:
+            if value(short, key) not in ('true', 'false'):
+                raise ValueError(f'{short}_{key}_invalid')
+        flags[key] = matched(key, web) == 'true'
+    for key, names in (('GITHUB_FEEDBACK_DELIVERY_ENABLED', tuple(surfaces)),):
+        for short in names:
+            if value(short, key) not in ('true', 'false'):
+                raise ValueError(f'{short}_{key}_invalid')
+        matched(key, names)
+    if ((flags['GITHUB_STAR_ENABLED'] or flags['PRODUCT_FEEDBACK_ENABLED']) and not flags['PUBLIC_USER_AUTH_ENABLED']
+            or flags['GITHUB_FEEDBACK_DELIVERY_ENABLED'] and not flags['PRODUCT_FEEDBACK_ENABLED']):
+        raise ValueError('github_integration_flag_dependency')
+    if flags['PUBLIC_USER_AUTH_ENABLED']:
+        public_secret = matched('PUBLIC_AUTH_SECRET', web, True)
+        if len(public_secret) < 32 or any(public_secret == value(short, 'AUTH_SECRET') for short in web):
+            raise ValueError('PUBLIC_AUTH_SECRET_invalid_or_reused')
+        for key in ('LOGIN_EMAIL_API_KEY', 'LOGIN_EMAIL_FROM'):
+            matched(key, web, True)
+    if any(flags.values()):
+        site_roles = tuple(surfaces) if flags['GITHUB_FEEDBACK_DELIVERY_ENABLED'] else web
+        matched('NEXT_PUBLIC_SITE_URL', site_roles, True)
+    if flags['GITHUB_STAR_ENABLED'] or flags['GITHUB_FEEDBACK_DELIVERY_ENABLED']:
+        integration_secret = matched('GITHUB_INTEGRATION_SECRET', web, True)
+        if len(integration_secret) < 32 or any(integration_secret == value(short, 'AUTH_SECRET')
+                                             or integration_secret == value(short, 'PUBLIC_AUTH_SECRET') for short in web):
+            raise ValueError('GITHUB_INTEGRATION_SECRET_invalid_or_reused')
+    if flags['GITHUB_STAR_ENABLED']:
+        for key in ('GITHUB_STAR_APP_ID', 'GITHUB_STAR_APP_WEBHOOK_SECRET'):
+            matched(key, web, True)
+        for key in ('GITHUB_STAR_APP_CLIENT_ID', 'GITHUB_STAR_APP_CLIENT_SECRET'):
+            matched(key, web, True)
+    if flags['GITHUB_FEEDBACK_DELIVERY_ENABLED']:
+        for key in ('GITHUB_FEEDBACK_APP_SLUG', 'GITHUB_FEEDBACK_APP_CLIENT_ID', 'GITHUB_FEEDBACK_APP_CLIENT_SECRET', 'GITHUB_FEEDBACK_APP_WEBHOOK_SECRET'):
+            matched(key, web, True)
+        for key in ('GITHUB_FEEDBACK_APP_ID', 'GITHUB_FEEDBACK_APP_PRIVATE_KEY'):
+            matched(key, tuple(surfaces), True)
+    if flags['GITHUB_STAR_ENABLED'] and flags['GITHUB_FEEDBACK_DELIVERY_ENABLED']:
+        if value('web-mini', 'GITHUB_STAR_APP_ID') == value('web-mini', 'GITHUB_FEEDBACK_APP_ID'):
+            raise ValueError('github_app_identity_reused')
+        for suffix in ('CLIENT_ID', 'CLIENT_SECRET', 'WEBHOOK_SECRET'):
+            if value('web-mini', 'GITHUB_STAR_APP_' + suffix) == value('web-mini', 'GITHUB_FEEDBACK_APP_' + suffix):
+                raise ValueError('github_app_' + suffix + '_reused')
+    maintenance = {}
+    for short in READ_ONLY_MAINTENANCE:
+        app = surfaces[short]
+        if (app.get('applicationStatus') != 'done' or client.latest(short).get('status') != 'done'
+                or not replicas_allowed('worker', app.get('replicas')) or value(short, 'WORKER_ROLE') != 'maintenance'):
+            raise ValueError(f'{short}_maintenance_not_ready')
+        maintenance[short] = {'sourceType': app.get('sourceType'), 'autoDeploy': app.get('autoDeploy'), 'manualReleaseRequired': True}
+    matched('RELEASE_TAG', tuple(READ_ONLY_MAINTENANCE), True)
+    return {'configurationMatched': True, 'flags': flags, 'maintenance': maintenance}
 
 
 # expected: Dokploy 에 적힌 복제본 수, 또는 'any'(실행 중인 수가 원하는 수와 같기만 하면 — 배포 전 기준선).
@@ -517,6 +649,7 @@ def main(argv=None):
     if run(['git', 'rev-parse', 'HEAD']) != target['sha']:
         raise ValueError('local_checkout_not_target_main')
     state = baseline(client, target)
+    integration = github_integration_preflight(client, state['apps'])
     changed = run(['git', 'diff', '--name-only', state['previous']['sha'], target['sha'],
                    '--', 'drizzle', 'lib/db/schema.ts', 'scripts/migrate.mjs'])
     if changed and not args.migration_verified:
@@ -525,7 +658,7 @@ def main(argv=None):
     pre_pull(target, token, setting(state['apps']['web-m3']['env'],
                                     'NEXT_SERVER_ACTIONS_ENCRYPTION_KEY'))
     print(json.dumps({'plan': list(ORDER), 'currentRelease': state['previous']['sha'],
-                      'targetRelease': target['sha']}), flush=True)
+                      'targetRelease': target['sha'], 'githubIntegration': integration}), flush=True)
     if args.action == 'run':
         deploy(client, target, token, state, args.snapshot)
 

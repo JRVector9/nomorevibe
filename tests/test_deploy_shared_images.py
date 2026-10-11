@@ -4,6 +4,7 @@ import importlib.util
 import io
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -64,6 +65,183 @@ class ReleaseSafetyTests(unittest.TestCase):
                                    'NEXT_SERVER_ACTIONS_ENCRYPTION_KEY=sample-key\n')
             apps[short]['buildSecrets'] = 'NEXT_SERVER_ACTIONS_ENCRYPTION_KEY=sample-key\n'
         return apps
+
+    def integration_apps(self, enabled=True):
+        apps = self.apps()
+        for short in ('maintenance-mini', 'maintenance-m3'):
+            apps[short] = {'sourceType': 'github', 'applicationStatus': 'done', 'autoDeploy': True, 'replicas': 1,
+                           'env': 'RELEASE_TAG=' + self.old_sha + '\nWORKER_ROLE=maintenance\n', 'appName': 'service-' + short}
+        flags = ('PUBLIC_USER_AUTH_ENABLED', 'GITHUB_STAR_ENABLED', 'PRODUCT_FEEDBACK_ENABLED', 'GITHUB_FEEDBACK_DELIVERY_ENABLED')
+        secrets = {'NEXT_PUBLIC_SITE_URL': 'https://nomorevibe.example', 'PUBLIC_AUTH_SECRET': 'p' * 40,
+                   'AUTH_SECRET': 'a' * 40, 'LOGIN_EMAIL_API_KEY': 'mail-secret', 'LOGIN_EMAIL_FROM': 'login@example.test',
+                   'GITHUB_INTEGRATION_SECRET': 'i' * 40, 'GITHUB_STAR_APP_ID': '101', 'GITHUB_STAR_APP_CLIENT_ID': 'star-client',
+                   'GITHUB_STAR_APP_CLIENT_SECRET': 'star-secret', 'GITHUB_STAR_APP_WEBHOOK_SECRET': 'star-webhook-secret',
+                   'GITHUB_FEEDBACK_APP_ID': '202', 'GITHUB_FEEDBACK_APP_SLUG': 'feedback-app', 'GITHUB_FEEDBACK_APP_CLIENT_ID': 'feedback-client',
+                   'GITHUB_FEEDBACK_APP_CLIENT_SECRET': 'feedback-secret', 'GITHUB_FEEDBACK_APP_PRIVATE_KEY': 'feedback-private-key',
+                   'GITHUB_FEEDBACK_APP_WEBHOOK_SECRET': 'feedback-webhook-secret'}
+        for short in ('web-mini', 'web-m3', 'publisher-mini', 'publisher-m3', 'maintenance-mini', 'maintenance-m3'):
+            names = flags if short.startswith('web') else ('GITHUB_FEEDBACK_DELIVERY_ENABLED',)
+            if short.startswith('maintenance'):
+                names += ('GITHUB_STAR_ENABLED',)
+            apps[short]['env'] += ''.join(key + '=' + ('true' if enabled else 'false') + '\n' for key in names)
+            apps[short]['env'] += ''.join(key + '=' + value + '\n' for key, value in secrets.items())
+        return apps
+
+    def test_integration_preflight_rejects_flag_or_secret_drift_without_any_write(self):
+        apps = self.integration_apps()
+        apps['publisher-mini']['env'] = release.replace_setting(apps['publisher-mini']['env'], 'GITHUB_FEEDBACK_APP_PRIVATE_KEY', 'different-private-key')
+        client = FakeClient(apps)
+        with self.assertRaisesRegex(ValueError, 'GITHUB_FEEDBACK_APP_PRIVATE_KEY_mismatch'):
+            release.github_integration_preflight(client, apps)
+        self.assertEqual(client.requests, [])
+        apps = self.integration_apps()
+        apps['web-mini']['env'] = release.replace_setting(apps['web-mini']['env'], 'PRODUCT_FEEDBACK_ENABLED', 'false')
+        with self.assertRaisesRegex(ValueError, 'PRODUCT_FEEDBACK_ENABLED_mismatch'):
+            release.github_integration_preflight(FakeClient(apps), apps)
+
+    def test_integration_preflight_requires_enabled_credentials_and_exact_flags(self):
+        for key in ('PUBLIC_AUTH_SECRET', 'LOGIN_EMAIL_API_KEY', 'GITHUB_STAR_APP_CLIENT_SECRET', 'GITHUB_FEEDBACK_APP_PRIVATE_KEY'):
+            apps = self.integration_apps()
+            apps['web-mini']['env'] = release.replace_setting(apps['web-mini']['env'], key, '')
+            with self.subTest(key=key), self.assertRaisesRegex(ValueError, key):
+                release.github_integration_preflight(FakeClient(apps), apps)
+        apps = self.integration_apps()
+        apps['web-mini']['env'] = release.replace_setting(apps['web-mini']['env'], 'GITHUB_STAR_ENABLED', '1')
+        with self.assertRaisesRegex(ValueError, 'GITHUB_STAR_ENABLED_invalid'):
+            release.github_integration_preflight(FakeClient(apps), apps)
+
+    def test_integration_preflight_checks_maintenance_read_only_without_deployment_assumptions(self):
+        apps = self.integration_apps()
+        output = io.StringIO()
+        client = FakeClient(apps)
+        with redirect_stdout(output):
+            report = release.github_integration_preflight(client, apps)
+        self.assertTrue(report['configurationMatched'])
+        self.assertEqual(report['maintenance']['maintenance-mini']['sourceType'], 'github')
+        self.assertTrue(report['maintenance']['maintenance-mini']['autoDeploy'])
+        self.assertEqual(client.requests, [])
+        self.assertEqual(tuple(release.APPS), release.ORDER)
+        self.assertEqual(len(release.ORDER), 8)
+        self.assertNotIn('maintenance-mini', release.ORDER)
+        self.assertNotIn('mail-secret', json.dumps(report) + output.getvalue())
+        self.assertNotIn('feedback-private-key', json.dumps(report) + output.getvalue())
+
+    def test_integration_preflight_allows_disabled_unconfigured_apps_and_rejects_shared_app_identity(self):
+        apps = self.integration_apps(False)
+        for short in ('web-mini', 'web-m3', 'publisher-mini', 'publisher-m3', 'maintenance-mini', 'maintenance-m3'):
+            apps[short]['env'] = '\n'.join(line for line in apps[short]['env'].splitlines()
+                                          if not line.startswith(('GITHUB_', 'LOGIN_', 'PUBLIC_AUTH_SECRET='))
+                                          or line.split('=', 1)[0].endswith('_ENABLED')) + '\n'
+        self.assertTrue(release.github_integration_preflight(FakeClient(apps), apps)['configurationMatched'])
+        apps = self.integration_apps()
+        for short in ('web-mini', 'web-m3', 'publisher-mini', 'publisher-m3', 'maintenance-mini', 'maintenance-m3'):
+            apps[short]['env'] = release.replace_setting(apps[short]['env'], 'GITHUB_FEEDBACK_APP_ID', '101')
+        with self.assertRaisesRegex(ValueError, 'github_app_identity_reused'):
+            release.github_integration_preflight(FakeClient(apps), apps)
+
+    def test_integration_preflight_rejects_dependencies_and_maintenance_drift(self):
+        apps = self.integration_apps()
+        for short in ('web-mini', 'web-m3'):
+            apps[short]['env'] = release.replace_setting(apps[short]['env'], 'PUBLIC_USER_AUTH_ENABLED', 'false')
+        with self.assertRaisesRegex(ValueError, 'flag_dependency'):
+            release.github_integration_preflight(FakeClient(apps), apps)
+        apps = self.integration_apps()
+        apps['maintenance-mini']['env'] = release.replace_setting(apps['maintenance-mini']['env'], 'RELEASE_TAG', '9' * 40)
+        with self.assertRaisesRegex(ValueError, 'RELEASE_TAG_mismatch'):
+            release.github_integration_preflight(FakeClient(apps), apps)
+        apps = self.integration_apps()
+        apps['maintenance-mini']['env'] = release.replace_setting(apps['maintenance-mini']['env'], 'WORKER_ROLE', 'publisher')
+        with self.assertRaisesRegex(ValueError, 'maintenance_not_ready'):
+            release.github_integration_preflight(FakeClient(apps), apps)
+
+    def test_main_runs_integration_preflight_before_any_pull_or_deployment(self):
+        apps = self.integration_apps()
+        apps['web-mini']['env'] = release.replace_setting(apps['web-mini']['env'], 'PUBLIC_AUTH_SECRET', '')
+        client = FakeClient(apps)
+        state = {'apps': apps, 'previous': {'sha': self.old_sha, 'worker': self.old_worker, 'web': self.old_web}}
+        args = ['plan', '--sha', self.new_sha, '--worker-image', self.target['worker'], '--web-image', self.target['web']]
+        with patch.object(release, 'run', side_effect=['operator-secret', self.new_sha]), \
+             patch.object(release, 'main_sha_and_token', return_value='registry-secret'), \
+             patch.object(release, 'Dokploy', return_value=client), patch.object(release, 'baseline', return_value=state), \
+             patch.object(release, 'pre_pull') as pull, patch.object(release, 'deploy') as deploy:
+            with self.assertRaisesRegex(ValueError, 'PUBLIC_AUTH_SECRET'):
+                release.main(args)
+            pull.assert_not_called()
+            deploy.assert_not_called()
+        self.assertEqual(client.requests, [])
+
+    def test_integration_preflight_accepts_minimum_worker_credential_scope(self):
+        apps = self.integration_apps()
+        publisher_keys = {'RELEASE_TAG', 'NEXT_PUBLIC_SITE_URL', 'GITHUB_FEEDBACK_DELIVERY_ENABLED', 'GITHUB_FEEDBACK_APP_ID', 'GITHUB_FEEDBACK_APP_PRIVATE_KEY'}
+        maintenance_keys = publisher_keys | {'WORKER_ROLE'}
+        for short in ('publisher-mini', 'publisher-m3', 'maintenance-mini', 'maintenance-m3'):
+            allowed = maintenance_keys if short.startswith('maintenance') else publisher_keys
+            apps[short]['env'] = '\n'.join(line for line in apps[short]['env'].splitlines() if line.split('=', 1)[0] in allowed) + '\n'
+        self.assertTrue(release.github_integration_preflight(FakeClient(apps), apps)['configurationMatched'])
+
+    def test_integration_preflight_defaults_legacy_missing_flags_to_false(self):
+        apps = self.integration_apps(False)
+        for app in apps.values():
+            app['env'] = '\n'.join(line for line in app['env'].splitlines()
+                                   if line.split('=', 1)[0] not in release.INTEGRATION_FLAGS) + '\n'
+        report = release.github_integration_preflight(FakeClient(apps), apps)
+        self.assertEqual(report['flags'], dict.fromkeys(release.INTEGRATION_FLAGS, False))
+        # An explicitly disabled peer has the same effective runtime value.
+        apps['web-mini']['env'] += 'PUBLIC_USER_AUTH_ENABLED=false\n'
+        self.assertEqual(release.github_integration_preflight(FakeClient(apps), apps)['flags'], report['flags'])
+        apps['web-mini']['env'] += 'PUBLIC_USER_AUTH_ENABLED=false\n'
+        with self.assertRaisesRegex(ValueError, 'PUBLIC_USER_AUTH_ENABLED_line_count_2'):
+            release.github_integration_preflight(FakeClient(apps), apps)
+
+    def test_main_allows_a_legacy_disabled_configuration_in_plan_and_run(self):
+        for action in ('plan', 'run'):
+            apps = self.integration_apps(False)
+            for app in apps.values():
+                app['env'] = '\n'.join(line for line in app['env'].splitlines()
+                                       if line.split('=', 1)[0] not in release.INTEGRATION_FLAGS) + '\n'
+            state = {'apps': apps, 'previous': {'sha': self.old_sha, 'worker': self.old_worker, 'web': self.old_web}}
+            args = [action, '--sha', self.new_sha, '--worker-image', self.target['worker'], '--web-image', self.target['web']]
+            if action == 'run':
+                args += ['--snapshot', '/private/tmp/unused-test-snapshot.json']
+            with self.subTest(action=action), patch.object(release, 'run', side_effect=['operator-secret', self.new_sha, '']), \
+                 patch.object(release, 'main_sha_and_token', return_value='registry-secret'), \
+                 patch.object(release, 'Dokploy', return_value=FakeClient(apps)), patch.object(release, 'baseline', return_value=state), \
+                 patch.object(release, 'monitor_gate'), patch.object(release, 'pre_pull'), patch.object(release, 'deploy') as deploy, \
+                 redirect_stdout(io.StringIO()):
+                release.main(args)
+                self.assertEqual(deploy.call_count, int(action == 'run'))
+
+    def test_integration_preflight_compares_complete_multiline_pem_without_disclosure(self):
+        apps = self.integration_apps()
+        key = 'GITHUB_FEEDBACK_APP_PRIVATE_KEY'
+        pem = '-----BEGIN PRIVATE KEY-----\nsample-body-one\n-----END PRIVATE KEY-----'
+        for short in ('web-mini', 'web-m3', 'publisher-mini', 'publisher-m3', 'maintenance-mini', 'maintenance-m3'):
+            apps[short]['env'] = release.replace_setting(apps[short]['env'], key, '"' + pem + '"')
+        output = io.StringIO()
+        with redirect_stdout(output):
+            report = release.github_integration_preflight(FakeClient(apps), apps)
+        self.assertTrue(report['configurationMatched'])
+        apps['publisher-mini']['env'] = apps['publisher-mini']['env'].replace('sample-body-one', 'sample-body-two')
+        with redirect_stdout(output), self.assertRaisesRegex(ValueError, key + '_mismatch') as raised:
+            release.github_integration_preflight(FakeClient(apps), apps)
+        evidence = json.dumps(report) + output.getvalue() + str(raised.exception)
+        self.assertNotIn('sample-body-one', evidence)
+        self.assertNotIn('sample-body-two', evidence)
+        self.assertNotIn('BEGIN PRIVATE KEY', evidence)
+        # Dotenv quoted newlines and double-quoted escaped newlines are equivalent.
+        apps['publisher-mini']['env'] = re.sub(r'(?ms)^' + key + r'=".*?"$', lambda _: key + '=' + json.dumps(pem), apps['publisher-mini']['env'])
+        self.assertTrue(release.github_integration_preflight(FakeClient(apps), apps)['configurationMatched'])
+
+    def test_dotenv_parser_rejects_duplicate_or_unterminated_quoted_keys_without_values(self):
+        apps = self.integration_apps()
+        apps['web-mini']['env'] += 'GITHUB_FEEDBACK_APP_PRIVATE_KEY="secret-body\n'
+        with self.assertRaisesRegex(ValueError, 'GITHUB_FEEDBACK_APP_PRIVATE_KEY_line_count_2') as raised:
+            release.github_integration_preflight(FakeClient(apps), apps)
+        self.assertNotIn('secret-body', str(raised.exception))
+        apps = self.integration_apps()
+        apps['web-mini']['env'] = release.replace_setting(apps['web-mini']['env'], 'GITHUB_FEEDBACK_APP_PRIVATE_KEY', '"secret-body')
+        with self.assertRaisesRegex(ValueError, 'GITHUB_FEEDBACK_APP_PRIVATE_KEY_unterminated'):
+            release.github_integration_preflight(FakeClient(apps), apps)
 
     def test_rejects_unexpected_registry_and_nonimmutable_images(self):
         with self.assertRaisesRegex(ValueError, 'invalid_worker_image'):

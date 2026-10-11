@@ -35,6 +35,14 @@ AI로 만든 제품의 마켓 데이터베이스. 메이커가 AI 코딩 툴에�
 
 ## 개발 환경
 
+일반 사용자 이메일 로그인, 개인 GitHub 스타, 서비스 피드백, 제작자 레포의 봇 이슈 전송은
+각 기능 플래그가 기본 `false`다. 이메일 로그인만으로 피드백을 작성할 수 있고, 본인 명의의
+GitHub 스타는 별도의 Star App 승인이 필요하다. 피드백 외부 전송은 작성자의 공개 동의와
+제작자의 Feedback App 선택 저장소 설치·수신 설정을 모두 요구한다.
+설정과 순차 활성화는 [GitHub 스타·피드백 운영 절차](docs/operations/github-stars-feedback-runbook.md),
+실연동 검증 상태는 [파일럿 기록](docs/operations/2026-10-11-github-integration-pilot.md)을 따른다.
+운영 관리자 OAuth와 읽기용 수집 PAT/App을 새 쓰기 연동에 재사용하지 않는다.
+
 Node.js 24와 PostgreSQL 17을 사용한다. 의존성은 lockfile과 맞춰 `npm ci`로 설치한다.
 
 ```bash

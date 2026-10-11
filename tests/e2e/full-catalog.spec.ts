@@ -46,7 +46,14 @@ test('public filtered catalogue crosses 100 and reaches the final project', asyn
 });
 
 test('the default fallback catalogue continues beyond 100 without an unclaimed section', async ({page})=>{
-  await page.goto('/?sort=weekly&q=directory&category=Dev&shown=99');
+  test.setTimeout(50_000);
+  // The preceding search spec can cache a missing season for 30 seconds. Wait
+  // for this fixture's active season without weakening the weekly URL contract.
+  await expect.poll(async()=>{
+    await page.goto('/?sort=weekly&q=directory&category=Dev&shown=99');
+    const href=await page.getByRole('link',{name:'프로젝트 더 보기 (99 / 117)',exact:true}).getAttribute('href');
+    return href?new URL(href,page.url()).searchParams.get('sort'):null;
+  },{timeout:35_000,intervals:[1_000]}).toBe('weekly');
   await expect(page.locator('.unclaimed-block')).toHaveCount(0);
   await expect(page.getByRole('heading', { name: '주인을 기다리는 프로젝트', exact: true })).toHaveCount(0);
   await expect(page.locator('.project-card')).toHaveCount(99);

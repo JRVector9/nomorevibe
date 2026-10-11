@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { eq } from "drizzle-orm";
 import { SITE_REPO_RELATION } from "@/lib/copy/terms";
@@ -320,10 +321,12 @@ test("collecting, stale-conflict, and unclaimed states remain explicit", async (
 });
 
 test("unclaimed owner guidance keeps one sidebar profile and accepts a takedown request", async ({ page }) => {
-  await db.update(products).set({ repoUrl: "https://github.com/example/open-seed" })
-    .where(eq(products.slug, PRODUCT_DETAIL_FIXTURES.unclaimed));
+  // The previous case cached the original slug without a repository.
+  const [source] = await db.select().from(products).where(eq(products.slug, PRODUCT_DETAIL_FIXTURES.unclaimed));
+  const slug = `e2e-unclaimed-owner-${randomUUID().slice(0, 8)}`;
+  await db.insert(products).values({ ...source, id: undefined, slug, url: `https://${slug}.example`, repoUrl: "https://github.com/example/open-seed" });
   const observed = observePage(page);
-  await gotoProduct(page, PRODUCT_DETAIL_FIXTURES.unclaimed);
+  await gotoProduct(page, slug);
 
   const sidebar = page.getByRole("complementary").filter({
     has: page.getByRole("heading", { name: "정보", exact: true }),
@@ -333,10 +336,11 @@ test("unclaimed owner guidance keeps one sidebar profile and accepts a takedown 
   await expect(sidebar.getByRole("heading", { name: "이 프로젝트의 운영자인가요?", exact: true })).toBeVisible();
   await expect(sidebar.locator("code")).toHaveText("/nomorevibe verify");
 
-  const request = sidebar.locator("summary", { hasText: "목록에서 내려달라고 요청하기" });
+  const request = sidebar.locator("summary", { hasText: "소개 수정·목록에서 내리기 요청하기" });
   await expect(request).toBeVisible();
   expect((await request.boundingBox())?.height).toBeGreaterThanOrEqual(44);
   await request.click();
+  await sidebar.getByRole("radio", { name: /^운영자 요청/ }).check();
   await sidebar.getByLabel("요청 이유").fill("브라우저 테스트 요청");
   await sidebar.getByRole("button", { name: "요청 보내기", exact: true }).click();
   await expect(sidebar.getByText("요청을 받았습니다. 24시간 안에 확인합니다. 확인 전에도 검색엔진 노출은 바로 멈춥니다.", { exact: true })).toBeVisible();
