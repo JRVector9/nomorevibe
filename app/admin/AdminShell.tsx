@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import { useState } from "react";
 import { AdminNav, type NavBadges } from "./AdminNav";
 import { AdminIcon } from "./components/AdminIcon";
+import { CommandSearch } from "./components/CommandSearch";
 import { ADMIN_THEME_SCRIPT, ThemeToggle } from "./components/ThemeToggle";
 import { AdminToastProvider } from "./components/Toast";
 
@@ -44,6 +45,8 @@ export function AdminShell({ children, badges, account }: { children: React.Reac
           <AdminIcon name="panel" size={16} /><span className="admin-rail-label">{railExpanded ? "메뉴 이름 접기" : "메뉴 이름 펼치기"}</span>
         </button>
         <div id="admin-sidebar-menu" className={`admin-sidebar-menu${expanded ? " is-expanded" : ""}`}>
+          {/* 전역 검색(⌘K, ADM-05) — 메뉴 맨 위. 단축키는 어느 화면에서든 듣는다 */}
+          <CommandSearch />
           <AdminNav current={pathname} badges={badges} />
           <div className="admin-sidebar-bottom">
             <ThemeToggle />

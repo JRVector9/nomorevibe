@@ -22,6 +22,7 @@ const PATHS = {
   external: <path d="M14 4h6v6m0-6-9 9M18 14v6H4V6h6" />,
   panel: <><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M9 4v16" /></>,
   close: <path d="m6 6 12 12M6 18 18 6" />,
+  search: <><circle cx="11" cy="11" r="6.5" /><path d="m16 16 4.5 4.5" /></>,
 } as const;
 
 export type AdminIconName = keyof typeof PATHS;

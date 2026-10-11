@@ -230,3 +230,24 @@ html[data-admin-theme="dark"] body:has(.admin-area) {
 .takedown-strip-go{margin-left:auto;border:1px solid var(--color-line);border-radius:8px;padding:3px 10px;font-weight:600;background:var(--color-bg-card);color:var(--color-fg-2);white-space:nowrap}
 .takedown-strip[data-tone=bad] .takedown-strip-go{border-color:transparent;background:color-mix(in srgb,var(--color-down) 12%,transparent);color:var(--color-down)}
 .takedown-strip-go:hover{color:var(--color-fg)}
+
+/* 전역 검색(⌘K, ADM-05) — 사이드바 맨 위 단추와 검색 창. 창은 확인 창(admin-confirm)의 틀을 그대로 쓴다 */
+.admin-search-trigger{display:flex;align-items:center;gap:8px;width:100%;min-height:36px;margin:0 0 10px;padding:6px 10px;border:1px solid var(--color-line);border-radius:8px;background:var(--color-bg);color:var(--color-fg-2);font-size:13px;font-weight:600;text-align:left}
+.admin-search-trigger:hover{color:var(--color-fg);border-color:color-mix(in srgb,var(--color-accent) 40%,var(--color-line))}
+.admin-search-trigger kbd{margin-left:auto;border:1px solid var(--color-line);border-radius:5px;padding:0 5px;font-family:inherit;font-size:11px;color:var(--color-fg-3)}
+.admin-search{width:min(640px,calc(100vw - 32px));margin:10vh auto auto}
+.admin-search-body{display:grid;gap:8px;padding:12px 12px 10px}
+.admin-search-field{display:flex;align-items:center;gap:8px;padding:0 6px 8px;border-bottom:1px solid var(--color-line);color:var(--color-fg-3)}
+.admin-search-field input{flex:1;min-width:0;min-height:36px;border:0;background:transparent;color:var(--color-fg);font-size:15px;outline:none}
+.admin-search-close{display:inline-flex;align-items:center;justify-content:center;width:32px;height:32px;border-radius:6px;color:var(--color-fg-3)}
+.admin-search-close:hover{background:var(--color-bg-soft);color:var(--color-fg)}
+.admin-search-results{display:grid;gap:4px;max-height:min(60dvh,520px);overflow:auto}
+.admin-search-group{margin:6px 6px 2px;font-size:11.5px;font-weight:700;letter-spacing:.04em;color:var(--color-fg-3)}
+.admin-search-item{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:2px 10px;padding:8px 10px;border-radius:8px;cursor:pointer;font-size:13px}
+.admin-search-item[aria-selected=true]{background:var(--color-accent-soft)}
+.admin-search-title{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:650;color:var(--color-fg)}
+.admin-search-badge{border-radius:6px;padding:0 6px;background:var(--color-bg-soft);color:var(--color-fg-2);font-size:12px;font-weight:600;white-space:nowrap}
+.admin-search-detail{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--color-fg-3);font-size:12.5px}
+.admin-search-extra{display:flex;gap:10px;justify-content:flex-end;font-size:12px}
+.admin-search-extra a{color:var(--color-accent-ink,var(--color-accent));text-decoration:underline}
+.admin-search-note{margin:2px 6px 0;font-size:12px;color:var(--color-fg-3)}
