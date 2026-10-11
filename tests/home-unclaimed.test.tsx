@@ -11,6 +11,7 @@ vi.mock("next/server", async (importOriginal) => ({
 }));
 import { DEFAULT_RANKING_POLICY } from "@/lib/domain/ranking/policy";
 import type { ProductListItem } from "@/lib/domain/products/view";
+import type { StarGrowthPage } from "@/lib/domain/products/star-growth";
 import type { RankingListItem, SeasonSummary } from "@/lib/domain/ranking/view";
 
 const {
@@ -23,6 +24,7 @@ const {
   getUnclaimedList,
   getVerifiedList,
   getPublicList,
+  getStarGrowthPage,
   getHomePulse,
   getCrawlSettings,
   getPublicListBySlugs,
@@ -43,6 +45,7 @@ const {
   getUnclaimedList: vi.fn(),
   getVerifiedList: vi.fn(),
   getPublicList: vi.fn(),
+  getStarGrowthPage: vi.fn(),
   getHomePulse: vi.fn(),
   getCrawlSettings: vi.fn(),
 }));
@@ -52,6 +55,7 @@ vi.mock("@/lib/crawl/settings", () => ({ getSettings: getCrawlSettings }));
 // HomeContent starts these independent loads too; never reach a database from a unit test.
 vi.mock("@/lib/news/repository", () => ({ listHomeNews: vi.fn().mockResolvedValue([]) }));
 vi.mock("@/lib/domain/products/popular", () => ({ getPopularGroups: vi.fn().mockResolvedValue([]) }));
+vi.mock("@/lib/domain/products/star-growth", () => ({ getStarGrowthPage }));
 vi.mock("@/lib/domain/products/repository", () => ({ aiLevelCounts, categoryCounts, countProducts, RISING_MAX_STARS: 2000 }));
 // 0건 화면의 추천 검색어는 검색 기록(DB)에서 읽는다 — 화면 조합만 본다
 vi.mock("@/lib/domain/products/search-log", () => ({ recordSearch: vi.fn(), popularSearches }));
@@ -115,6 +119,31 @@ function product(slug: string): ProductListItem {
   };
 }
 
+/** 급상승은 일반 공개 목록과 독립된 회차 자료다. 빈 응답은 비교 이력 준비 중이다. */
+function growthPage(slugs: string[] = []): StarGrowthPage {
+  const asOf = "2026-10-12T07:00:00.000Z";
+  const baselineAsOf = "2026-10-11T07:00:00.000Z";
+  const observedAt = "2026-10-12T06:30:00.000Z";
+  const baselineObservedAt = "2026-10-11T06:30:00.000Z";
+  const items = slugs.map((slug) => ({ ...product(slug),
+    starGrowth: { stars: 100, gain: 20, baselineStars: 80, observedAt, baselineObservedAt },
+  }));
+  return {
+    items, total: items.length, page: 1, pages: 1, pageSize: 5,
+    snapshot: {
+      status: items.length ? "ready" : "warming", reason: items.length ? null : "missing-baseline",
+      asOf, baselineAsOf, nextCycle: "2026-10-12T15:00:00.000Z", runId: 1, policyVersion: "kst-8h-v1",
+      policy: { minStars: 50, maxStarsExclusive: 2000, minGain: 10, minIntervalHours: 23, maxIntervalHours: 25, maxAgeHours: 10, collectionWindowHours: 1, retentionDays: 7 },
+      targetCount: items.length, successCount: items.length, failureCount: 0,
+      firstObservedAt: items.length ? observedAt : null, lastObservedAt: items.length ? observedAt : null,
+      comparableCount: items.length,
+      baseline: items.length ? { runId: 2, asOf: baselineAsOf, status: "closed", policyVersion: "kst-8h-v1",
+        targetCount: items.length, successCount: items.length, failureCount: 0,
+        firstObservedAt: baselineObservedAt, lastObservedAt: baselineObservedAt, closedAt: baselineAsOf } : null,
+    },
+  };
+}
+
 function ranked(slug: string, rank: number): RankingListItem {
   return {
     ...product(slug),
@@ -155,6 +184,7 @@ beforeEach(() => {
   getUnclaimedList.mockResolvedValue([]);
   getVerifiedList.mockResolvedValue([]);
   getPublicList.mockResolvedValue([]);
+  getStarGrowthPage.mockResolvedValue(growthPage());
   searchRelevance.mockResolvedValue({ head: [], total: 0, semantic: false, reranked: false, plan: [], translated: null });
   relevanceWindow.mockResolvedValue([]);
   getPublicListBySlugs.mockResolvedValue([]);
@@ -205,9 +235,10 @@ describe("미클레임 구획을 붙이는 기준", () => {
     const html = await render();
 
     expect(getUnclaimedList).not.toHaveBeenCalled();
-    // 공개 목록은 첫 화면 급상승 띠 한 번뿐 — 피드는 순위로 채운다
-    expect(getPublicList).toHaveBeenCalledTimes(1);
-    expect(getPublicList).toHaveBeenCalledWith(5, { sort: "rising", rising: true });
+    // 피드는 순위로 채우고, 급상승은 전용 회차 reader로 한 번만 읽는다
+    expect(getPublicList).not.toHaveBeenCalled();
+    expect(getStarGrowthPage).toHaveBeenCalledTimes(1);
+    expect(getStarGrowthPage).toHaveBeenCalledWith({ pageSize: 5, now: expect.any(Date) });
     expect(html).toContain("ranked-0");
     expect(html).not.toContain("주인을 기다리는 프로젝트");
   });
@@ -218,17 +249,17 @@ describe("미클레임 구획을 붙이는 기준", () => {
    */
   it("검증 제품이 모자라면 추천 탭은 순위 대신 스타가 는 목록을 보여주고 구획을 붙이지 않는다", async () => {
     getSeasonRanking.mockResolvedValue({ season, items: [ranked("verified-one", 1)] });
-    // 스타가 는 제품 8개 — 앞 5개는 급상승 띠가 보여 주고 피드는 나머지 3개를 센다
+    // 일평균 스타가 는 대체 제품 8개 — 독립 급상승 띠와 관계없이 피드는 전체를 센다
     countProducts.mockResolvedValue(8);
     getPublicList.mockResolvedValue([product("rising-one")]);
 
     const html = await render();
 
-    expect(getPublicList).toHaveBeenCalledWith(3, expect.objectContaining({ sort: "rising", rising: true, excludeDown: true }));
+    expect(getPublicList).toHaveBeenCalledWith(9, expect.objectContaining({ sort: "rising", rising: true, excludeDown: true, offset: 0 }));
     expect(getSeasonRanking).not.toHaveBeenCalled();
     expect(getUnclaimedList).not.toHaveBeenCalled();
     expect(html).toContain("rising-one");
-    expect(html).toContain("지금 뜨는 3개");
+    expect(html).toContain("지금 뜨는 8개");
     // 순위가 서기 전 '추천' 탭은 스타가 는 목록이라 이름도 '지금 뜨는'(UX-35)
     expect(html).toMatch(/aria-selected="true"[^>]*>지금 뜨는</);
     expect(html).toContain('href="/?metric=rising"');
@@ -403,6 +434,7 @@ describe("빈 화면 문구", () => {
 
   it("최신 탭은 수집 제품을 포함한 공개 목록을 사용한다", async () => {
     categoryCounts.mockResolvedValue({ Other: 1_119 });
+    countProducts.mockResolvedValue(1);
     getPublicList.mockResolvedValue([product("seeded-project")]);
 
     const html = await render({ sort: "recent" });
@@ -562,12 +594,13 @@ describe("끝까지 닿는 목록", () => {
     expect(html).not.toContain("프로젝트 더 보기");
   });
 
-  it("급상승 띠가 앞 다섯을 가져간 추천 목록도 띠 다음부터 창을 민다", async () => {
+  it("추천 대체 목록은 독립 급상승 띠와 관계없이 같은 창으로 민다", async () => {
     catalogue();
+    getStarGrowthPage.mockResolvedValue(growthPage(["g1", "g2", "g3", "g4", "g5"]));
 
     await render({ shown: "207" });
 
-    expect(getPublicList).toHaveBeenCalledWith(198, expect.objectContaining({ sort: "rising", offset: 5 + 9 }));
+    expect(getPublicList).toHaveBeenCalledWith(198, expect.objectContaining({ sort: "rising", offset: 9 }));
   });
 
   it("주인을 기다리는 제품 목록도 같은 창으로 끝까지 닿는다", async () => {
@@ -601,16 +634,19 @@ describe("구획 제목", () => {
     expect(html).toContain("주인을 기다리는 프로젝트");
   });
 
-  it("첫 화면에 급상승 띠가 오고 피드는 그다음 항목부터 이어진다", async () => {
+  it("첫 화면에 급상승 띠가 오고 독립된 추천 피드는 첫 항목부터 시작한다", async () => {
     categoryCounts.mockResolvedValue({ Dev: 3 });
-    // 검증 0 · 맞는 제품 20 — 급상승이 띠(5)를 채우고도 남아야 띠와 피드가 나뉜다. 검증 수를 먼저 센다(app/page.tsx)
+    // 검증 0 · 대체 목록 20 — 회차 급상승 5개와 피드의 일평균 목록은 별도로 읽는다
     countProducts.mockResolvedValueOnce(0).mockResolvedValueOnce(20);
     const rising = ["r1", "r2", "r3", "r4", "r5", "r6"].map(product);
+    getStarGrowthPage.mockResolvedValue(growthPage(["g1", "g2", "g3", "g4", "g5"]));
     getPublicList.mockImplementation(async (limit: number, options: { offset?: number } = {}) => rising.slice(options.offset ?? 0, (options.offset ?? 0) + limit));
     const html = await render({});
-    expect(html.indexOf("지금 뜨는 프로젝트")).toBeLessThan(html.indexOf("발견할 가치가 있는 프로젝트"));
-    expect(getPublicList).toHaveBeenCalledWith(5, expect.objectContaining({ sort: "rising", rising: true }));
-    expect(getPublicList).toHaveBeenCalledWith(expect.any(Number), expect.objectContaining({ sort: "rising", offset: 5 }));
+    expect(html).toContain("전일 대비 스타 급상승");
+    expect(html.indexOf("전일 대비 스타 급상승")).toBeLessThan(html.indexOf("발견할 가치가 있는 프로젝트"));
+    expect(html.split('id="projects"')[0]).toContain("g5 태그라인");
+    expect(getStarGrowthPage).toHaveBeenCalledWith({ pageSize: 5, now: expect.any(Date) });
+    expect(getPublicList).toHaveBeenCalledWith(9, expect.objectContaining({ sort: "rising", rising: true, offset: 0 }));
   });
 });
 

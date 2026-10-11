@@ -17,6 +17,7 @@ import {
 import { ActiveList } from "@/components/home/ActiveList";
 import { CompactRow } from "@/components/home/CompactRow";
 import { CompactCard } from "@/components/home/CompactCard";
+import { StarGrowthSummary, STAR_GROWTH_TITLE, starGrowthNote } from "@/components/home/StarGrowthSummary";
 import { IntroLine } from "@/components/home/IntroLine";
 import { LaunchBand } from "@/components/home/LaunchBand";
 import { listHomeNews } from "@/lib/news/repository";
@@ -25,7 +26,8 @@ import { PopularTiers } from "@/components/home/PopularTiers";
 import { MethodologyDialog } from "@/components/home/MethodologyDialog";
 import { ProjectGrid } from "@/components/home/ProjectGrid";
 import { ToolsBoard } from "@/components/home/ToolsBoard";
-import { aiLevelCounts, categoryCounts, countProducts, RISING_MAX_STARS } from "@/lib/domain/products/repository";
+import { aiLevelCounts, categoryCounts, countProducts } from "@/lib/domain/products/repository";
+import { getStarGrowthPage } from "@/lib/domain/products/star-growth";
 import { resolveSearchQuery, warmQueryTranslation } from "@/lib/domain/products/search-translation";
 import { relevanceWindow, searchRelevance } from "@/lib/domain/products/relevance";
 import type { SearchQuery } from "@/lib/domain/products/search";
@@ -459,7 +461,6 @@ export async function HomeContent({ params }: { params: HomeParams }) {
   let rankingReady = true;
   /** 결과 수가 관련도순 검색(낱말·의미 섞음)의 수인가 — 그러면 '관련 결과 약 n개'로 쓴다 */
   let approximate = false;
-  let stripShown = 0;
   /** 창이 접은 앞 항목 수(shownWindow) — 순위 목록은 다 받아 두므로 늘 0 */
   let listStart = 0;
   let unclaimedStart = 0;
@@ -473,12 +474,14 @@ export async function HomeContent({ params }: { params: HomeParams }) {
    */
   const asideLoad = Promise.allSettled([getHomePulse(now), listHomeNews()]);
 
-  /** 첫 화면의 '지금 뜨는' 띠 — 필터·검색이 없을 때만. 피드의 '추천'(대체 목록)은 띠 다음부터 이어 받는다 */
-  const RISING_STRIP = 5;
+  /** 새 급상승은 고정 회차 비교다. 피드의 기존 주간 방문 순위·일평균 대체 목록과 독립적으로 읽는다. */
   const filtered = Boolean(query || category || builder || observedTool || ai);
   /** 검색·분야 화면 — 아래 홈 구획(인기·새로 나온·도구·활발한·소식)은 필터가 걸리지 않은 전체 기준이라 숨긴다(UX-35) */
   const scoped = Boolean(query || category);
-  const stripLoad = filtered ? Promise.resolve<ProductListItem[]>([]) : publicRead("list", ["strip", RISING_STRIP], () => getPublicList(RISING_STRIP, { sort: "rising", rising: true })).catch(() => []);
+  const stripLoad = filtered ? Promise.resolve(null) : getStarGrowthPage({ pageSize: 5, now }).catch((error) => {
+    logger.error("home.star_growth_failed", { error });
+    return null;
+  });
   const newWindow = completedWindows(now);
   const newLoad = filtered ? Promise.resolve<ProductListItem[]>([]) : publicRead("list", ["new-repositories", newWindow.weekStart, newWindow.asOf, NEW_THIS_WEEK_MIN_STARS, 5, 0], () => getNewThisWeek(5, newWindow.weekStart, newWindow.asOf)).catch(() => []);
 
@@ -554,14 +557,9 @@ export async function HomeContent({ params }: { params: HomeParams }) {
     const matchingLoad = relevanceLoad
       ? relevanceLoad.then((ranked) => ranked.total)
       : publicRead("count", ["matching", listOptions], () => countProducts({ statuses: ["verified", "seeded"], ...listOptions }));
-    /*
-     * 목록이 개수를 기다리는 것은 띠를 나눌지 정할 때뿐이다(거르기 없음 · 추천 대체 목록). 나머지는 LIMIT 이 이미 막으니
-     * 개수와 함께 받는다 — 넓은 검색에서 개수(214ms)를 기다린 뒤 목록(183ms)을 받던 것을 겹친다.
-     */
-    const stripPossible = !filtered && !savedOnly && fallback === "rising";
     // 창이 앞을 접을 수 있으면(HOME_MAX_SHOWN 초과) 어디서부터 받을지가 개수에 달려 있어 기다린다
     const windowed = publicCatalogue && requestedLimit > HOME_MAX_SHOWN;
-    const earlyList = stripPossible || windowed ? null : loadList(publicCatalogue ? requestedLimit : verifiedTotal, 0);
+    const earlyList = windowed ? null : loadList(publicCatalogue ? requestedLimit : verifiedTotal, 0);
     earlyList?.catch(() => {});
     const [loadedCounts, matchingTotal] = await Promise.all([countsLoad, matchingLoad]);
     // 0건이라 번역을 기다려 다시 찾았으면 그 번역을 밝힌다
@@ -569,15 +567,10 @@ export async function HomeContent({ params }: { params: HomeParams }) {
     counts = loadedCounts;
     total = Object.values(counts).reduce((sum, count) => sum + count, 0);
     // Public lists load only what is visible. Rankings retain their separate eligibility.
-    // 급상승 띠가 앞 5개를 보여 준 '추천'은 그 뒤부터 이어 받는다 — 띠와 피드가 겹치지 않게
-    // 저장 목록 보기(savedOnly)는 브라우저가 거르므로 띠의 다섯을 건너뛰면 그 안의 저장 제품이 사라진다
-    // 급상승이 띠 하나를 채우고도 남을 때만 띠와 피드를 나눈다 — 다섯 이하면 띠가 다 가져가 피드가 '없다'고 말한다
-    stripShown = stripPossible && matchingTotal > RISING_STRIP ? RISING_STRIP : 0;
-    const catalogueTotal = Math.max(0, matchingTotal - stripShown);
-    const span = publicCatalogue ? spanOf(catalogueTotal) : { start: 0, count: verifiedTotal };
+    const span = publicCatalogue ? spanOf(matchingTotal) : { start: 0, count: verifiedTotal };
     listStart = span.start;
-    list = earlyList ? (await earlyList).slice(0, span.count) : await loadList(span.count, stripShown + span.start);
-    resultCount = publicCatalogue ? catalogueTotal : list.length;
+    list = earlyList ? (await earlyList).slice(0, span.count) : await loadList(span.count, span.start);
+    resultCount = publicCatalogue ? matchingTotal : list.length;
 
     if (!publicCatalogue && !rankingReady) {
       unclaimedTotal = await publicRead("count", ["unclaimed", options], () => countProducts({ statuses: ["seeded"], ...options }));
@@ -630,16 +623,16 @@ export async function HomeContent({ params }: { params: HomeParams }) {
    * 목록이 화면 첫 그림인가 — '지금 뜨는' 띠가 위에 없을 때(검색·분야·거르기·대체 목록). 그때만 첫 줄 세 장(넓은 화면의 한 줄)을
    * 먼저 받는다(PERF-03). 띠가 위에 있으면 첫 그림은 띠의 것이라 목록 그림이 그 받기와 다투지 않게 둔다.
    */
-  const stripVisible = !filtered && (fallback !== "rising" || stripShown > 0) && strip.length > 0;
-  const feedPriority = stripVisible ? 0 : FEED_PRIORITY_TILES;
+  const feedPriority = !filtered && (strip?.items.length ?? 0) > 0 ? 0 : FEED_PRIORITY_TILES;
 
   return (
     <main className="wrap">
       {!scoped && <IntroLine pulse={pulse} total={total} state={state} />}
-      {stripVisible && (
-        <CompactRow id="rising" priority title="지금 뜨는 프로젝트" note={`최근 두 확인 사이 하루 평균 GitHub 스타가 가장 많이 늘었습니다 · 스타 ${formatCount(RISING_MAX_STARS)} 미만`}
-          more={fallback === "rising" ? { href: "#projects", label: `${formatCount(resultCount)}개 모두 보기` } : { href: "/?sort=weekly#projects", label: "모두 보기" }}
-          items={strip} trailing="category" />
+      {!filtered && (
+        <CompactRow id="rising" priority title={STAR_GROWTH_TITLE} note={<>{starGrowthNote(strip?.snapshot ?? null)} · <Link prefetch={false} href={metricHref(state, "star-growth")} scroll={false}>집계 기준</Link></>}
+          summary={<StarGrowthSummary snapshot={strip?.snapshot ?? null} now={now} />}
+          more={{ href: strip ? `/rising?${new URLSearchParams({ cycle: strip.snapshot.asOf })}` : "/rising", label: "모두 보기" }}
+          items={strip?.items ?? []} trailing="category" />
       )}
 
       <section id="projects" aria-labelledby="projects-title" className="feed">
@@ -727,7 +720,7 @@ export async function HomeContent({ params }: { params: HomeParams }) {
       {!query && <LaunchBand />}
 
       <Suspense>
-        <MethodologyDialog pulse={serializePulse(pulse, now)} rankingFallback={!rankingReady} aiLevels={aiLevelTotals(aiCounts)} />
+        <MethodologyDialog pulse={serializePulse(pulse, now)} rankingFallback={!rankingReady} aiLevels={aiLevelTotals(aiCounts)} starGrowth={filtered ? undefined : strip?.snapshot ?? null} />
       </Suspense>
     </main>
   );

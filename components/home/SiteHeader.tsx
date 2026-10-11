@@ -44,16 +44,16 @@ const COLLAPSE_AFTER_PX = 120;
 /** 이보다 작은 움직임은 방향으로 치지 않는다 — 손가락 떨림·관성 끝자락에 접혔다 펴지지 않게 */
 const SCROLL_SLACK_PX = 6;
 
-/** '지금 뜨는' 메뉴 — 활성 표시만 주소의 쿼리에 달려 있다. Suspense 가 기다리는 동안은 표시 없이 같은 링크를 그린다 */
+/** 급상승 모두 보기 — 활성 표시만 주소에 달려 있다. */
 function RisingLink({ active = false }: { active?: boolean }) {
-  return <Link prefetch={false} href="/#rising" className={active ? "active" : undefined}>지금 뜨는</Link>;
+  return <Link prefetch={false} href="/rising" className={active ? "active" : undefined}>스타 급상승</Link>;
 }
 
-/** 거르기 없는 홈에서만 '지금 뜨는'을 켠다 — 검색 결과·분야 화면에서 켜져 있으면 지금 어디인지 틀리게 말한다 */
+/** 급상승 화면과 거르기 없는 홈에서 켠다. 신규 모두 보기·검색·분야 화면에서는 끈다. */
 function RisingNavLink() {
   const pathname = usePathname();
   const params = useSearchParams();
-  return <RisingLink active={pathname === "/" && FILTER_PARAMS.every((name) => !params.has(name))} />;
+  return <RisingLink active={pathname === "/rising" || (pathname === "/" && params.get("new") !== "1" && FILTER_PARAMS.every((name) => !params.has(name)))} />;
 }
 
 /** 헤더 검색 입력칸. 검색어가 바뀌면 새로 그려 기본값을 다시 채운다(key) */
