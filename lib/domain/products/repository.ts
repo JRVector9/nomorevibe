@@ -9,6 +9,7 @@ import { DOWN_THRESHOLD } from "./health";
 import {
   products,
   crawlCandidates,
+  crawlDocuments,
   ogImages,
   clickEvents,
   productClickDaily,
@@ -365,6 +366,44 @@ export const LIST_COLUMNS = {
   verifiedAt: true, createdAt: true, status: true, source: true, claimedAt: true, repoRenamedTo: true, aiLevel: true,
 } as const;
 export type ProductListRow = Pick<Product, keyof typeof LIST_COLUMNS> & { repoGone?: boolean; taglineKo?: string | null };
+
+/** 홈 신규 목록의 생성일 — 지금 연결된 GitHub 저장소의 원본만 쓴다. */
+const repositoryBornAt = sql`(
+  select case when d.repo_meta->>'created_at' ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}([.][0-9]{1,6})?(Z|[+-][0-9]{2}:[0-9]{2})$'
+    and pg_input_is_valid(d.repo_meta->>'created_at', 'timestamp with time zone')
+    then (d.repo_meta->>'created_at')::timestamptz end
+  from ${crawlDocuments} d
+  where lower(d.repo) = regexp_replace(rtrim(regexp_replace(lower(btrim(${products.repoUrl})), '^https?://(www[.])?github[.]com/', ''), '/'), '[.]git$', '')
+  order by d.fetched_at desc, d.id desc limit 1
+)`;
+
+/** 신규 띠와 모두 보기의 기간·공개·저장소·스타 조건을 함께 정한다. 생성일 미상은 비교에서 빠진다. */
+function newRepositoryConditions(since: Date, until: Date, minStars: number) {
+  return and(inArray(products.status, ["verified", "seeded"]), notDown, listedByDefault,
+    eq(products.repoStatus, "ok"),
+    sql`btrim(${products.repoUrl}) ~* '^https?://(www[.])?github[.]com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/?$'`,
+    sql`${products.stars} >= ${minStars}`,
+    sql`${repositoryBornAt} >= ${since.toISOString()}::timestamptz`,
+    sql`${repositoryBornAt} < ${until.toISOString()}::timestamptz`);
+}
+
+export async function listNewRepositoryRows(limit: number, since: Date, until: Date, minStars: number, offset = 0): Promise<(ProductListRow & { repoCreatedAt: Date })[]> {
+  const rows = await db.query.products.findMany({
+    columns: LIST_COLUMNS,
+    extras: { ...repoGoneField, ...taglineKoField,
+      repoCreatedAt: sql<string>`${repositoryBornAt}::text`.as("repo_created_at") },
+    where: newRepositoryConditions(since, until, minStars),
+    orderBy: [sql`${repositoryBornAt} desc`, products.slug],
+    limit, offset,
+  });
+  return rows.map((row) => ({ ...row, repoCreatedAt: new Date(row.repoCreatedAt) }));
+}
+
+export async function countNewRepositories(since: Date, until: Date, minStars: number): Promise<number> {
+  const [row] = await db.select({ count: sql<number>`count(*)::int` }).from(products)
+    .where(newRepositoryConditions(since, until, minStars));
+  return row?.count ?? 0;
+}
 
 export async function listProducts(options: ListOptions): Promise<Product[]> {
   return db.query.products.findMany(await listQuery(options));

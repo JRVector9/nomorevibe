@@ -82,6 +82,7 @@ export const crawlDocuments = pgTable("crawl_documents", {
   fetchedAt: timestamp("fetched_at").notNull().defaultNow(),
 }, (t) => [
   index("crawl_documents_github_id_idx").on(sql`${t.repoMeta}->>'id'`),
+  index("crawl_documents_repository_birth_lookup_idx").on(sql`lower(${t.repo})`, t.fetchedAt.desc(), t.id.desc()),
 ]);
 
 // ─────────────────────────── 판정 ───────────────────────────
