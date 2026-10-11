@@ -36,7 +36,7 @@ describe("/popular 좁은 화면 카드 행(UX-23)", () => {
     expect(row).toContain("★ 4,900");
     expect(row).toContain("+50");
     // 소개는 ProductTagline 으로, 좁은 행이라 출처 줄은 끈다
-    expect(row).toContain('<p class="popular-description" title="League client helper">League client helper</p>');
+    expect(row).toContain('<p class="popular-description" title="League client helper" lang="en">League client helper</p>');
     expect(row).not.toContain("AI가 요약");
   });
 
