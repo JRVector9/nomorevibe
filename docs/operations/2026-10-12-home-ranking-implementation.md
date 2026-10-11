@@ -8,8 +8,8 @@
 |---|---|---|
 | PR01 신규 목록 | `feat/home-new-repository-birth-20261012`; repository/view와 홈 신규 카드·설명 | [PR369](https://github.com/JRVector9/nomorevibe/pull/369), head5231fbb, 필수CI38157584835 성공 후 main9424d6e 병합 |
 | PR02 관측 | delivery `feat/home-star-observations-20261012`; DB migration·schema·job·scheduler/worker 최소 연결 | [PR370](https://github.com/JRVector9/nomorevibe/pull/370), 필수CI38158817772 성공 후 main de4c894 병합 |
-| PR03 상승 조회 | delivery `feat/home-star-growth-reader-20261012`; 전용 조회·회차 캐시·응답 타입 | [PR371](https://github.com/JRVector9/nomorevibe/pull/371), 조회1파일 독립 전달, 필수 CI 중 |
-| PR04 상승 UI | `feat/star-growth-ui-20261012`; 홈·/rising·카드·설명·헤더 | 소스 커밋03a2b73 통합 완료, 부모 및 독립 소스 리뷰 추가 지적 없음; PR03 병합 뒤 전달 |
+| PR03 상승 조회 | delivery `feat/home-star-growth-reader-20261012`; 전용 조회·회차 캐시·응답 타입 | [PR371](https://github.com/JRVector9/nomorevibe/pull/371), 필수CI38159154251 성공 후 main 병합 |
+| PR04 상승 UI | `feat/star-growth-ui-20261012`; 홈·/rising·카드·설명·헤더 | delivery `feat/home-star-growth-ui-20261012`, 부모 및 독립 소스 리뷰 추가 지적 없음; PR372 전달 및 필수 CI 확인 중 |
 
 모든 서브에이전트는 `gpt-6.1-sol / xhigh`다. 각 작업은 저장소 밖 독립 worktree에서 진행하며 다른 작업자의 파일을 수정하지 않는다. 부모는 공통 화면 파일을 순차 통합하고 handoff·운영 기록·리뷰·커밋·PR을 관리한다. 사용자 root 작업 트리의 기존 PPT·prototype·미추적 자료를 보존한다.
 
