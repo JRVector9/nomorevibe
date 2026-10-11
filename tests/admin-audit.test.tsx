@@ -6,6 +6,7 @@ const mocks = vi.hoisted(() => ({
   overview: vi.fn(), findings: vi.fn(), start: vi.fn(), cancel: vi.fn(), remove: vi.fn(), keep: vi.fn(),
   groups: vi.fn(), removeMany: vi.fn(), translations: vi.fn(), log: vi.fn(), reasons: vi.fn(), decisions: vi.fn(),
   takedownSummary: vi.fn(), takedownQueue: vi.fn(), takedownHistory: vi.fn(),
+  introQueue: vi.fn(), introCount: vi.fn(), introFix: vi.fn(), introResolve: vi.fn(),
 }));
 vi.mock('@/lib/auth/admin', () => ({ currentAdmin: mocks.admin }));
 vi.mock('next/navigation', () => ({ redirect: mocks.redirect }));
@@ -23,8 +24,15 @@ vi.mock('@/lib/domain/products/takedown', () => ({
   takedownSummary: mocks.takedownSummary, takedownQueue: mocks.takedownQueue, takedownHistory: mocks.takedownHistory,
 }));
 
+// 소개 수정 요청(UX-18)도 DB를 읽는다
+vi.mock('@/lib/domain/products/intro-requests', () => ({
+  introRequestQueue: mocks.introQueue, pendingIntroRequestCount: mocks.introCount, fixIntroFromRequest: mocks.introFix,
+  resolveIntroRequest: mocks.introResolve, isIntroRequestOutcome: (value: unknown) => value === 'fixed' || value === 'dismissed',
+}));
+
 import AdminAuditPage from '@/app/admin/audit/page';
-import { cancelAudit, decideAuditFinding, removeAuditGroup, restartStalledAudit, startAudit } from '@/app/admin/audit/actions';
+import { cancelAudit, decideAuditFinding, fixIntroRequest, removeAuditGroup, resolveIntroRequestAction, restartStalledAudit,
+  startAudit } from '@/app/admin/audit/actions';
 import { REVIEW_PROMPT_VERSION } from '@/lib/crawl/agent-review-contract';
 
 const campaign = {
@@ -58,6 +66,8 @@ beforeEach(() => {
   mocks.takedownQueue.mockResolvedValue([]);
   mocks.takedownHistory.mockResolvedValue([]);
   mocks.decisions.mockResolvedValue([]);
+  mocks.introQueue.mockResolvedValue([]);
+  mocks.introCount.mockResolvedValue(0);
 });
 
 describe('내릴 후보 화면', () => {
@@ -218,6 +228,45 @@ describe('내릴 후보 화면', () => {
     expect(mocks.findings).toHaveBeenCalledTimes(2);
   });
 
+  /** 소개 수정 요청(UX-18) — 내려달라는 요청 아래 따로, 지금 소개와 요청 글을 나란히 */
+  it('소개 수정 요청만 기다려도 요청 탭을 열고, 따로 된 목록에 지금 소개·요청·시각·처리 단추를 보인다', async () => {
+    mocks.introCount.mockResolvedValue(1);
+    mocks.introQueue.mockResolvedValue([{
+      id: 5, slug: 'hwp-tool', message: '설치형 CLI 인데 웹 서비스라고 적혀 있습니다', createdAt: '2026-10-11T01:00:00.000Z', ageHours: 3,
+      requesterHash: 'abcd1234', product: { name: 'HWP 도구', url: 'https://github.com/acme/hwp', tagline: 'Web service for HWP', status: 'seeded' },
+    }]);
+    const html = await render();
+    expect(html).toMatch(/aria-current="page"[^>]*>내려달라는 요청/);
+    expect(html).toMatch(/<span class="td-count">소개 (<!-- -->)?1<\/span>/);
+    expect(html).toMatch(/<h2 id="intro-requests-title">소개 수정 요청 (<!-- -->)?1<\/h2>/);
+    expect(html).toContain('HWP 도구');
+    expect(html).toContain('Web service for HWP');
+    expect(html).toContain('설치형 CLI 인데 웹 서비스라고 적혀 있습니다');
+    expect(html).toContain('2026-10-11 10:00:00 KST');
+    expect(html).toContain('href="/admin/products/hwp-tool"');
+    expect(html).toContain('href="/p/hwp-tool"');
+    const introForms = forms(html).filter((form) => form.includes('name="id" value="5"'));
+    expect(introForms).toHaveLength(2);
+    expect(introForms[0]).toMatch(/name="tagline" value="Web service for HWP"/);
+    expect(introForms[0]).toContain('>소개 고치기</button>');
+    expect(introForms[1]).toMatch(/<button type="submit" value="fixed"[^>]*name="outcome"[^>]*>처리함<\/button>/);
+    expect(introForms[1]).toMatch(/<button type="submit" value="dismissed"[^>]*name="outcome"[^>]*>둠<\/button>/);
+    expect(mocks.findings).not.toHaveBeenCalled();
+  });
+
+  it('내려간 제품의 소개 수정 요청은 고치기 칸 없이 닫기만 둔다', async () => {
+    mocks.introCount.mockResolvedValue(1);
+    mocks.introQueue.mockResolvedValue([{
+      id: 6, slug: 'gone', message: '소개가 틀렸습니다', createdAt: '2026-10-11T01:00:00.000Z', ageHours: 30, requesterHash: null,
+      product: { name: '내려간 것', url: 'https://gone.test', tagline: 'old', status: 'banned' },
+    }]);
+    const html = await render({ tab: 'requests' });
+    const introForms = forms(html).filter((form) => form.includes('name="id" value="6"'));
+    expect(introForms).toHaveLength(1);
+    expect(introForms[0]).not.toContain('name="tagline"');
+    expect(html).toContain('지금 고칠 수 없는 제품');
+  });
+
   it('끝난 감사 뒤에는 재감사를 열 수 있다', async () => {
     mocks.overview.mockResolvedValue({ campaign: { ...campaign, status: 'done' }, counts, paused: null, stalled: false });
     const html = await render();
@@ -298,5 +347,55 @@ describe('내릴 후보 서버 액션', () => {
     expect(mocks.start).toHaveBeenLastCalledWith({ startedBy: 'jr', reason: '기준이 엄격해짐', reauditKept: false });
     await startAudit(null, decision([['reason', '기준이 엄격해짐'], ['reauditKept', 'on']]));
     expect(mocks.start).toHaveBeenLastCalledWith({ startedBy: 'jr', reason: '기준이 엄격해짐', reauditKept: true });
+  });
+});
+
+describe('소개 수정 요청 서버 액션', () => {
+  const form = (entries: [string, string][]) => {
+    const data = new FormData();
+    for (const [key, value] of entries) data.append(key, value);
+    return data;
+  };
+
+  it('로그인하지 않았으면 아무것도 고치지 않는다', async () => {
+    mocks.admin.mockResolvedValue(null);
+    expect(await fixIntroRequest(null, form([['id', '5'], ['slug', 'a'], ['tagline', '새 소개']]))).toMatchObject({ error: expect.any(String) });
+    expect(await resolveIntroRequestAction(null, form([['id', '5'], ['slug', 'a'], ['outcome', 'fixed']]))).toMatchObject({ error: expect.any(String) });
+    expect(mocks.introFix).not.toHaveBeenCalled();
+    expect(mocks.introResolve).not.toHaveBeenCalled();
+  });
+
+  it('소개 고치기는 로그인한 사람 이름으로 고치고 전·후 소개를 작업 로그에 남긴다', async () => {
+    mocks.introFix.mockResolvedValue({ slug: 'a', before: '옛 소개', closed: [5, 7] });
+    const result = await fixIntroRequest(null, form([['id', '5'], ['slug', 'a'], ['tagline', '  새 소개  ']]));
+    expect(mocks.introFix).toHaveBeenCalledWith(5, '새 소개', 'jr');
+    expect(mocks.log).toHaveBeenCalledWith('jr', expect.objectContaining({ action: 'intro-request-edit', target: 'a', ok: true,
+      detail: { requestId: 5, closed: [5, 7], before: '옛 소개', after: '새 소개' } }));
+    expect(result).toEqual({ message: '소개를 고치고 요청 2건을 닫았습니다.' });
+    expect(mocks.revalidate).toHaveBeenCalledWith('/p/a');
+  });
+
+  it('빈 소개·너무 긴 소개·번호가 둘인 폼은 고치지 않는다', async () => {
+    expect(await fixIntroRequest(null, form([['id', '5'], ['slug', 'a'], ['tagline', '  ']]))).toMatchObject({ error: expect.any(String) });
+    expect(await fixIntroRequest(null, form([['id', '5'], ['slug', 'a'], ['tagline', 'x'.repeat(201)]]))).toMatchObject({ error: expect.any(String) });
+    expect(await fixIntroRequest(null, form([['id', '5'], ['id', '6'], ['slug', 'a'], ['tagline', '새 소개']]))).toMatchObject({ error: expect.any(String) });
+    expect(mocks.introFix).not.toHaveBeenCalled();
+  });
+
+  it('이미 처리된 요청이면 실패로 기록하고 알린다', async () => {
+    mocks.introFix.mockResolvedValue(null);
+    expect(await fixIntroRequest(null, form([['id', '5'], ['slug', 'a'], ['tagline', '새 소개']]))).toMatchObject({ error: expect.any(String) });
+    expect(mocks.log).toHaveBeenCalledWith('jr', expect.objectContaining({ action: 'intro-request-edit', ok: false, error: 'stale' }));
+  });
+
+  it('처리함·둠은 고른 결과만 받고 작업 로그에 남긴다', async () => {
+    mocks.introResolve.mockResolvedValue({ id: 5, slug: 'a' });
+    expect(await resolveIntroRequestAction(null, form([['id', '5'], ['slug', 'a'], ['outcome', 'dismissed'], ['note', '맞는 소개']])))
+      .toEqual({ message: '두었습니다.' });
+    expect(mocks.introResolve).toHaveBeenCalledWith(5, 'dismissed', 'jr', '맞는 소개');
+    expect(mocks.log).toHaveBeenCalledWith('jr', expect.objectContaining({ action: 'intro-request-dismissed', target: 'a', ok: true }));
+
+    expect(await resolveIntroRequestAction(null, form([['id', '5'], ['slug', 'a'], ['outcome', 'removed']]))).toMatchObject({ error: expect.any(String) });
+    expect(mocks.introResolve).toHaveBeenCalledTimes(1);
   });
 });

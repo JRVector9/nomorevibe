@@ -2,13 +2,15 @@
 
 import { startTransition, useActionState, useEffect, useMemo, useRef, useState } from "react";
 import { resolveTakedownRequest, resolveTakedownRequests, type BulkTakedownState, type ReviewState } from "../actions";
+import { fixIntroRequest, resolveIntroRequestAction, type AuditActionState } from "./actions";
 import { ConfirmAction } from "../components/ConfirmAction";
 import { ScrollTable } from "../components/ScrollTable";
 import { resultError, useAdminToast } from "../components/Toast";
 import {
   DISMISS_REASONS, formatWait, groupTakedowns, senderLabel, waitTone,
-  type GroupMode, type TakedownEntry,
+  type GroupMode, type IntroRequestEntry, type TakedownEntry,
 } from "@/lib/domain/products/takedown-view";
+import { LIMITS } from "@/lib/domain/products/limits";
 import { formatDay, formatDetailTime } from "@/lib/format/time";
 
 const n = (value: number) => value.toLocaleString("ko-KR");
@@ -263,5 +265,65 @@ function TakedownDetail({ entry, handleRef }: { entry: TakedownEntry; handleRef:
         </div>
       )}
     </aside>
+  );
+}
+
+/**
+ * 소개 수정 요청(UX-18) — 내려달라는 요청 아래 따로 둔 목록. 이 요청은 검색 노출·CDN 에 영향이 없고 내리지도 않는다.
+ * 줄마다 지금 소개와 요청 글을 나란히 보고, 새 소개를 적어 바로 고치거나(그 제품의 대기 요청을 모두 닫는다),
+ * 소개는 그대로 두고 처리함(이미 고침)·둠(고칠 것이 아님)으로 닫는다.
+ */
+export function IntroRequestList({ entries }: { entries: IntroRequestEntry[] }) {
+  return (
+    <section className="ir-list" aria-labelledby="intro-requests-title">
+      <h2 id="intro-requests-title">소개 수정 요청 {n(entries.length)}</h2>
+      <p className="td-note">상세의 요청 폼에서 들어온 것입니다. 검색 노출은 그대로이고, 요청자 연락처는 받지 않습니다 — 결과는 고친 소개로만 전해집니다.</p>
+      {entries.length === 0
+        ? <p className="ir-empty">기다리는 소개 수정 요청이 없습니다.</p>
+        : <ol>{entries.map((entry) => <IntroRequestItem key={entry.id} entry={entry} />)}</ol>}
+    </section>
+  );
+}
+
+function IntroRequestItem({ entry }: { entry: IntroRequestEntry }) {
+  const [fixState, fixAction, fixing] = useActionState<AuditActionState, FormData>(fixIntroRequest, null);
+  const [doneState, doneAction, closing] = useActionState<AuditActionState, FormData>(resolveIntroRequestAction, null);
+  const product = entry.product;
+  const editable = product !== null && (product.status === "seeded" || product.status === "verified");
+  return (
+    <li className="ir-item">
+      <div className="td-row td-between">
+        <b>{product?.name ?? entry.slug}</b>
+        <span className="td-wait" data-tone={waitTone(entry.ageHours)} title={formatDetailTime(entry.createdAt)}>{formatWait(entry.ageHours)} 전</span>
+      </div>
+      <div className="td-links">
+        <a href={`/admin/products/${entry.slug}`}>제품 관리</a>
+        {product && <a href={`/p/${entry.slug}`} target="_blank" rel="noreferrer noopener">공개 페이지 ↗</a>}
+        <span className="td-note">{formatDetailTime(entry.createdAt)} · {senderLabel(entry.requesterHash)}{editable ? "" : " · 지금 고칠 수 없는 제품"}</span>
+      </div>
+      <div className="ir-pair">
+        <div><h3>지금 소개</h3><p className="ir-now">{product?.tagline ?? "제품이 이미 없습니다"}</p></div>
+        <div><h3>요청</h3><p className="td-quote">{entry.message}</p></div>
+      </div>
+      {editable && (
+        <form action={fixAction} className="td-row">
+          <input type="hidden" name="id" value={entry.id} />
+          <input type="hidden" name="slug" value={entry.slug} />
+          <input name="tagline" defaultValue={product.tagline} maxLength={LIMITS.tagline} required
+            aria-label={`${product.name} 새 소개`} className="td-field td-grow" />
+          <button type="submit" className="td-btn" disabled={fixing || closing}>소개 고치기</button>
+        </form>
+      )}
+      <form action={doneAction} className="td-row">
+        <input type="hidden" name="id" value={entry.id} />
+        <input type="hidden" name="slug" value={entry.slug} />
+        <input name="note" maxLength={1000} placeholder="메모(선택)" aria-label="메모" className="td-field td-grow" />
+        <button type="submit" name="outcome" value="fixed" className="td-btn" disabled={fixing || closing}>처리함</button>
+        <button type="submit" name="outcome" value="dismissed" className="td-btn" disabled={fixing || closing}>둠</button>
+      </form>
+      {[fixState, doneState].map((state, index) => state && (
+        state.error ? <p key={index} role="alert" className="text-down">{state.error}</p> : <p key={index} role="status" className="text-up">{state.message}</p>
+      ))}
+    </li>
   );
 }
