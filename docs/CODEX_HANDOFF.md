@@ -6393,3 +6393,50 @@ gh pr create --base main --head docs/worker-failover-p3-rollout --title 'docs: r
 ```
 
 ---
+
+## 2026-10-11 — 상세 화면 개선과 GitHub 스타·피드백 재개 (진행 중)
+
+### 현재 목적 / 완료 작업
+
+사용자가 상세 정보 패널 축소, 미리보기 이미지 확대, 도구·AI 근거 섹션 제거, 전체 README 내부 스크롤, 스타·댓글 활성화를 요청했다. PR 4개로 나누고 gpt-6.1-sol/xhigh 서브에이전트를 독립 worktree에서 병렬 실행했다. 사용자가 기능 테스트를 직접 한다. 새 테스트와 로컬 테스트·빌드·브라우저 기능 검사는 하지 않고 필수 원격 CI는 유지한다.
+
+- PR01 `/private/tmp/nomorevibe-detail-compact-20261011` / `feat/detail-compact-20261011`: FactsStrip 축소와 page의 BuildTools 섹션 제거. 기존 단위·E2E 기대만 최소 변경했다.
+- PR02 `/private/tmp/nomorevibe-detail-image-20261011` / `feat/detail-image-zoom-20261011`: PreviewFigure + 신규 PreviewImageDialog. 독립 읽기 전용 CLI 리뷰에서 지적 없음.
+- PR03 `/private/tmp/nomorevibe-detail-readme-20261011` / `feat/detail-full-readme-20261011`: IntroSection children 슬롯, 신규 ReadmeSection/readme-content helper 구현. 부모가 page에 Suspense를 연결하고 리뷰해야 한다.
+- PR04 현재 rollout worktree / `feat/detail-integration-rollout-20261011`: 계획 문서와 운영 재활성화 조사 문서 작성. GitHub App 등록·메일 설정·실제 활성화는 미완료. 아직 이번 작업 커밋·푸시·PR·배포 없음.
+
+### 수정 파일 / 주요 판단
+
+PR01은 components/product-detail/FactsStrip.tsx, app/p/[slug]/page.tsx, tests/product-detail-components.test.tsx, tests/e2e/product-detail.spec.ts. PR02는 PreviewFigure.tsx와 PreviewImageDialog.tsx. PR03는 IntroSection.tsx, ReadmeSection.tsx, lib/domain/products/readme-content.ts이며 page 연결 예정. PR04는 docs/superpowers/plans/2026-10-11-detail-ui-and-integrations.md, docs/operations/2026-10-11-star-feedback-reactivation.md, 이 handoff다.
+
+정보 패널 글자는 기존 최소 13px를 지키고 여백·주요 값 크기를 줄인다. README 검색 저장본은 2,000자여서 전문으로 표시할 수 없다. 공개 GitHub 원문을 안전한 익명 요청으로 256KiB 한도/8초 예산으로 읽고 기존 캐시를 재사용한다. 실패·초과는 발췌임을 명시하고 원문 링크를 제공한다. 스키마·crawler·검색 저장범위는 변경하지 않는다. 소개 검수 중단은 유지한다.
+
+### 실행한 검사 / 실패 접근
+
+각 agent git diff --check 통과. 첫 부모 codex review 명령에 실행 금지를 전달하지 못해 기존 4개 테스트 파일이 실행됐다(2파일 실패/2통과, 5실패/56통과). baseline은 4파일/61통과. 관련 로그는 /private/tmp/nomorevibe-detail-compact-review-tests.log 및 -baseline.log. 사용자가 직접 테스트한다는 지시를 놓쳤음을 알리고 리뷰를 중단했다. 글자13px·radius12·희소 fallback 복원과 제거/배치 변경 기대를 수정했지만 테스트는 다시 실행하지 않았다. 이후 CLI 리뷰는 읽기 전용/테스트·빌드·브라우저·DB·쓰기 금지를 명시한다. image 리뷰 완료, compact 최종 리뷰가 지적한 오래된 기대는 agent가 수정했다. README 독립 리뷰는 미실행.
+
+### 운영/브라우저 상태 / 남은 작업
+
+main 기준 8b608b2a7abc89cfacb830d3fdf14825b22d4d13. 두 웹 앱의 release 설정/배포 done은 이 SHA. 재활성화 조사에서 6개 앱 네 feature flag 모두 미설정(실효 false), 새 웹 인증 관련 14개 키 모두 비어 있다. 실제 OAuth·메일·스타·Issue 동작은 미검증.
+
+GitHub @JRVector9 재인증을 사용자가 완료했다. Chrome https://github.com/settings/apps/new 의 Star App 초안은 이름 NoMoreVibe Star, 홈페이지 nomorevibe.com, 사용자 callback /api/auth/user/github/callback, webhook /api/github/webhooks/star, expiring token ON, Starring read/write + Metadata read, Any account로 준비됐다. Secret은 비었고 Create를 누르지 않았다. Feedback App 초안도 준비 후 등록 직전 승인이 필요하다. 기존 App/Resend 보유 여부 질문은 아직 답변이 없다. 새 키를 대화/문서에 출력하지 않는다. 자격증명 없이 flag ON 금지.
+
+### 다음 에이전트 명령
+
+```sh
+cd /private/tmp/nomorevibe-detail-compact-20261011
+git diff --check
+git diff -- components/product-detail/FactsStrip.tsx app/p/\[slug\]/page.tsx tests/product-detail-components.test.tsx tests/e2e/product-detail.spec.ts
+cd /private/tmp/nomorevibe-detail-readme-20261011
+git status --short
+```
+
+CUA 재개 첫 호출은 await cua.rewriteDocumentation(); 후 Chrome을 새로 선택하고 인덱스를 새로 읽는다. PR01/02 커밋·push·PR, PR03 page 연결과 읽기 전용 CLI 리뷰, PR04 실제 설정/문서 상태 정리 후 PR을 진행한다. 최신 main의 필수 CI check 성공 뒤 순차 병합한다. UI 릴리스는 두 웹만 같은 검증된 이미지로 배포한다. 기존 소스 방식·replica·worker 설정·사용자 untracked 산출물·stash는 보존한다.
+
+### 2026-10-11 23:32 KST — PR 생성·첫 병합
+
+PR01 #363은 540cda52 head 필수 CI check 성공 후 main 3607fa2716510aab3d5136655e5c7dd947b70f0a로 병합했다. PR02 #364는 최신 main을 merge한 head 39c7036으로 push했고 CI 진행 중이다. PR03 page의 IntroSection children에 Suspense + ReadmeFallback/ReadmeSection을 연결했다. 읽기 전용 CLI 리뷰(로그 /private/tmp/nomorevibe-detail-readme-review-20261011.log)에서 루트 상대 README 링크가 github.com 호스트 루트로 잘못 향하는 P2 한 건을 찾아 detail_readme가 명시적인 저장소/기본 branch를 사용하도록 수정 중이다. 해당 리뷰는 테스트를 실행하지 않았다.
+
+두 GitHub App 양식이 준비됐다. Feedback은 callback /api/auth/maker/github/callback, setup /api/github/installations/setup, webhook /api/github/webhooks/feedback, Issues read/write + 자동 Metadata read, Issues 이벤트, Any account, expiring token ON, installation OAuth OFF, SSL ON이다. 두 secret은 비어 있고 두 Create는 누르지 않았다. 새 보안 권한 생성과 운영 키 저장을 위한 브라우저 정책상의 확인 요청을 사용자에게 보냈고 답변 대기 중이다. Resend 보유/발신주소 질문도 대기 중이다. 키를 생성/전송하거나 flag를 켜지 않았다.
+
+다음 명령: gh pr checks 364 (latest base 3607fa2); PR03 수정 diff 리뷰 및 git diff --check 뒤 커밋/push/PR. 웹 배포는 최종 main CI 및 private web image 발행 후 두 웹만 함께 진행한다. 이미 존재하는 /private/tmp/nomorevibe-primary-origin-20261011.py apply는 과거650b SHA가 고정되어 있으므로 재사용하지 않는다.

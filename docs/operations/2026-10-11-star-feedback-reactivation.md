@@ -1,0 +1,114 @@
+# 개인 GitHub 스타·상세 피드백 활성화 준비 — 2026-10-11
+
+## 실제 설정 상태
+
+2026-10-11 **23:11:05 KST**, Dokploy의 `application.one`을 읽기 전용으로 새로 조회했다.
+환경값은 메모리에서만 비교했고 비밀값·이메일·개인키를 출력하거나 저장하지 않았다.
+아래는 **앱에 저장된 설정**이며 실행 컨테이너, 제공자 계정 또는 기능 동작을 확인한 결과가 아니다.
+
+| 앱 쌍 | `NEXT_PUBLIC_SITE_URL` | 설정 `RELEASE_TAG` | 새 연동 키 |
+| --- | --- | --- | --- |
+| 웹 mini·M3 | `https://nomorevibe.com` | `8b608b2a7abc89cfacb830d3fdf14825b22d4d13` | 아래 14개 모두 없음/빈 값 |
+| publisher mini·M3 | 없음 | `8b608b2a7abc89cfacb830d3fdf14825b22d4d13` | Feedback App ID·private key 없음/빈 값 |
+| maintenance mini·M3 | 없음 | `650b341c8889f06b2ec3daa3b99da4e5712fee1a` | Feedback App ID·private key 없음/빈 값 |
+
+6개 앱 모두 `applicationStatus=done`이었다. 네 플래그
+`PUBLIC_USER_AUTH_ENABLED`, `GITHUB_STAR_ENABLED`, `PRODUCT_FEEDBACK_ENABLED`,
+`GITHUB_FEEDBACK_DELIVERY_ENABLED`는 **설정에 존재하지 않아 유효 값이 모두 `false`**다.
+키가 운영 환경에 없다는 사실은 제공자 계정에 App이나 발신 도메인이 존재하지 않는다는 뜻이 아니다.
+키 유효성·권한·메일 도착·실제 GitHub 쓰기는 아직 확인하지 않았다.
+
+## 이미 구현된 진입점
+
+`app/p/[slug]/page.tsx`는 플래그가 켜지면 기존 개인 스타 버튼과 피드백 영역을 렌더한다.
+`GithubStarButton.tsx`에 로그인/연결·조회·등록/취소·재연결이 있고,
+`FeedbackForm.tsx`와 `FeedbackList.tsx`에 오류/기능 제안/질문 제출, 공개 동의,
+공개 목록·내 기록·원문 및 GitHub 전송 상태가 있다. 제작자 수신 설정은 `/p/<slug>/github`다.
+이메일 로그인만으로 로컬 피드백을 작성하며 개인 스타에는 별도 Star App 승인이 필요하다.
+현재 요청의 기능을 노출하기 위해 새 API나 폼을 추가해야 한다는 근거는 확인되지 않았다.
+이 기록은 소스 읽기 결과이고 화면·실제 흐름 검증은 아니다.
+
+## 필요한 설정
+
+웹 두 앱에 다음 14개 값을 같은 값으로 주입한다. 관리자 `AUTH_SECRET`이나 수집용
+`GITHUB_TOKEN`, 기존 관리자 OAuth 자격 정보를 재사용하지 않는다.
+
+| 용도 | 필요한 이름 |
+| --- | --- |
+| 일반 로그인 | `PUBLIC_AUTH_SECRET`, `LOGIN_EMAIL_API_KEY`, `LOGIN_EMAIL_FROM` |
+| 사용자 토큰 암호화 | `GITHUB_INTEGRATION_SECRET` |
+| 개인 Star App | `GITHUB_STAR_APP_ID`, `GITHUB_STAR_APP_CLIENT_ID`, `GITHUB_STAR_APP_CLIENT_SECRET`, `GITHUB_STAR_APP_WEBHOOK_SECRET` |
+| Feedback App | `GITHUB_FEEDBACK_APP_ID`, `GITHUB_FEEDBACK_APP_SLUG`, `GITHUB_FEEDBACK_APP_CLIENT_ID`, `GITHUB_FEEDBACK_APP_CLIENT_SECRET`, `GITHUB_FEEDBACK_APP_PRIVATE_KEY`, `GITHUB_FEEDBACK_APP_WEBHOOK_SECRET` |
+
+`PUBLIC_AUTH_SECRET`과 `GITHUB_INTEGRATION_SECRET`은 각각 32자 이상이며 서로 및
+관리자 `AUTH_SECRET`과 다르게 준비한다. 두 webhook secret도 각각 32자 이상이고 서로 달라야 한다.
+두 GitHub App의 ID·client ID·client secret·webhook secret은 각각 다른 값이어야 한다.
+Feedback private key는 해당 App이 발급한 PEM 전체를 보존한다.
+
+publisher·maintenance 네 앱에는 `GITHUB_FEEDBACK_APP_ID`,
+`GITHUB_FEEDBACK_APP_PRIVATE_KEY`, `NEXT_PUBLIC_SITE_URL=https://nomorevibe.com`을 주입한다.
+전송 플래그는 웹을 포함한 6개 앱에 같은 값으로 명시한다.
+웹 두 앱에는 네 플래그를 명시한다. 처음에는 모두 `false`로 저장하고 준비가 끝난 단계만 연다.
+
+메일 발송 구현은 Resend다. `LOGIN_EMAIL_API_KEY`에는 발송 가능한 서버 API key,
+`LOGIN_EMAIL_FROM`에는 운영자가 정한 검증 도메인의 발신 주소가 필요하다.
+Resend 계정의 발신 도메인 검증 완료 여부를 확인해야 한다.
+[Resend 공식 문서](https://resend.com/docs/dashboard/domains/introduction)
+
+## GitHub App 설정값
+
+두 앱의 Homepage URL은 `https://nomorevibe.com`이다.
+
+| 설정 | Star App | Feedback App |
+| --- | --- | --- |
+| OAuth callback | `https://nomorevibe.com/api/auth/user/github/callback` | `https://nomorevibe.com/api/auth/maker/github/callback` |
+| Setup URL | 이 흐름에서 사용하지 않음 | `https://nomorevibe.com/api/github/installations/setup` |
+| Webhook URL | `https://nomorevibe.com/api/github/webhooks/star` | `https://nomorevibe.com/api/github/webhooks/feedback` |
+| Account permissions | Starring: Read and write | 추가 account 권한 없음 |
+| Repository permissions | Metadata: Read | Issues: Read and write, Metadata: Read |
+
+개인 스타의 조회·등록·취소는 GitHub App **user access token**과 Starring 권한을 사용한다.
+[GitHub Star API 권한](https://docs.github.com/en/rest/activity/starring#star-a-repository-for-the-authenticated-user)
+Feedback은 제작자가 **Only select repositories**로 설치하고 공개·비보관·Issues 활성 저장소를 선택해야 한다.
+서버가 발송할 숫자 repository ID 하나로 installation token을 제한한다.
+Issues 쓰기 권한은 [GitHub Issue API 문서](https://docs.github.com/en/rest/issues/issues#create-an-issue)를 따른다.
+
+두 앱 모두 **Expire user authorization tokens**를 켜 둔다. 현재 토큰 파서는 만료 시각이 있는
+access token과 refresh token 쌍을 요구한다. 다른 제작자 계정·조직에도 설치하게 하려면
+**Where can this GitHub App be installed? → Any account**로 설정한다.
+Feedback App은 별도 Setup URL을 쓰므로 **Request user authorization (OAuth) during installation**을
+끄고 OAuth→설치의 기존 사이트 흐름을 사용한다. Webhook은 Active·SSL verification을 켜고
+각각의 secret을 적용한다. Feedback은 Issues 이벤트도 구독한다. 서버는
+`github_app_authorization`, `installation`, `installation_repositories`, `issues` 이벤트를 처리한다.
+[GitHub App 등록 공식 문서](https://docs.github.com/en/apps/creating-github-apps/registering-a-github-app/registering-a-github-app)
+
+제작자 연결은 일반 로그인, 해당 제품 수정키, 현재 저장소의 GitHub admin 권한 및 설치 확인을
+모두 요구한다. 조직 설치 승인 대기는 연결 완료로 처리하지 않는다.
+
+## 활성화 순서와 남은 일
+
+1. 운영자가 두 App의 실제 설정과 Resend 발신 도메인을 확인하고 위 값을 비밀 저장소에서 주입한다.
+   이 설정 조사 단계에서는 자격 정보를 생성·회전하거나 제공자 설정을 바꾸지 않았다.
+2. 웹·publisher·maintenance의 origin을 맞추고, 각 역할 쌍의 설정과 실행 릴리스를 확인한다.
+   maintenance 설정 릴리스는 이번 조회에서 웹/publisher와 달랐다. 공통 배포 스크립트의
+   maintenance 검사는 읽기 전용이며 두 앱의 수동 릴리스 절차는 기존 runbook을 따른다.
+3. 웹 두 앱에 `PUBLIC_USER_AUTH_ENABLED=true`를 적용한 뒤 사용자가 이메일 로그인을 확인한다.
+4. 로컬 피드백은 웹 두 앱에 `PRODUCT_FEEDBACK_ENABLED=true`를 적용한다.
+   개인 스타는 유효 Star App 설정이 준비된 뒤 웹 두 앱에 `GITHUB_STAR_ENABLED=true`를 적용한다.
+5. GitHub 이슈 전송은 Feedback App 설정·제작자 binding·별도 공개 동의가 준비된 제품부터 연다.
+   `GITHUB_FEEDBACK_DELIVERY_ENABLED=true`는 웹·publisher·maintenance 6개 앱에 맞춘다.
+   과거 피드백을 자동 일괄 전송하지 않는다.
+6. 사용자가 직접 확인한 이메일 로그인·개인 스타·피드백·봇 이슈·웹훅 결과만
+   [파일럿 기록](2026-10-11-github-integration-pilot.md)에 실제 증거로 남긴다.
+
+기존 상세 운영 절차는 [GitHub 스타·피드백 runbook](github-stars-feedback-runbook.md)과
+[독립 워커 runbook](independent-workers-runbook.md)을 따른다.
+이 읽기 전용 설정 조사 단계에서는 테스트를 작성하거나 실행하지 않았고, DB·브라우저·CI·배포·기능 플래그 변경·
+실제 메일·스타·이슈 쓰기를 수행하지 않았다. 소개 검수의 중단 상태도 변경하지 않았다.
+
+## 등록 준비 후속 상태
+
+사용자가 GitHub 재인증을 완료했다. @JRVector9 계정에서 `NoMoreVibe Star`와
+`NoMoreVibe Feedback` 등록 양식을 위 URL·최소 권한으로 준비했다. 두 앱의 secret은
+비어 있으며 Create를 누르지 않았다. 브라우저 도구의 새 보안 권한 생성 확인과
+자격증명 입력 인계 절차를 거친 뒤 등록·키 주입을 이어간다. 운영 플래그는 그대로다.
