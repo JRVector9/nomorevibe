@@ -5,6 +5,7 @@ import { SiteHeader } from "@/components/home/SiteHeader";
 import { HOME_TITLE } from "@/lib/copy/brand";
 import { SITE_DESCRIPTION, SITE_SHARE } from "@/lib/copy/share";
 import { siteOrigin, THEME_COLOR_DARK, THEME_COLOR_LIGHT } from "@/lib/site";
+import { publicUserAuthEnabled } from "@/lib/domain/github-integration/flags";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -70,7 +71,7 @@ export default function RootLayout({
           헤더는 Suspense 로 감싸지 않는다(PERF-01·ROB-02) — 감싸면 빈 헤더가 먼저 나가고 진짜 헤더가 뒤에 스트리밍돼
           본문이 밀리고, 스크립트가 없으면 헤더가 끝까지 빈다. 주소의 쿼리를 읽는 조각만 SiteHeader 안에서 따로 감싼다.
         */}
-        <SiteHeader />
+        <SiteHeader authEnabled={publicUserAuthEnabled()} />
         <div className="flex-1" id="main" tabIndex={-1}>{children}</div>
         <SiteFooter>{seasonfooter}</SiteFooter>
         <MobileNav />

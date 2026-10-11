@@ -16,6 +16,7 @@ test.beforeAll(async () => {
     starsAt: new Date(),
     starsPrevious: 140,
     starsPreviousAt: new Date(Date.now() - 24 * 60 * 60 * 1_000),
+    repoStatus: "ok",
   }).where(eq(products.slug, PRODUCT_DETAIL_FIXTURES.rich));
 });
 
@@ -30,15 +31,21 @@ function observePage(page: Page) {
 }
 
 test("home discovery, saved projects, search, methodology, and mobile layout work together", async ({ page }) => {
+  test.setTimeout(60_000);
   const observed = observePage(page);
   await page.setViewportSize({ width: 1440, height: 1000 });
-  await page.goto("/", { waitUntil: "domcontentloaded" });
+  const card = page.locator(".project-card").filter({ hasText: "Evidence Studio" });
+  // DB fixture replacement does not invalidate the server's 30-second public
+  // count/list memos. Keep the real home URL and wait for its fresh fixture.
+  await expect.poll(async () => {
+    await page.goto("/", { waitUntil: "load" });
+    return card.count();
+  }, { timeout: 35_000, intervals: [1_000] }).toBe(1);
 
   await expect(page.getByRole("heading", { name: /AI로 만든 것들이/ })).toBeVisible();
   await expect(page.getByRole("heading", { name: "발견할 가치가 있는 프로젝트" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "많이 쓰이는 프로젝트" })).toBeVisible();
 
-  const card = page.locator(".project-card").filter({ hasText: "Evidence Studio" });
   const tile = card.locator(".project-tile");
   const save = card.getByRole("button", { name: "Evidence Studio 저장" });
   // 카드 하나 = 링크 하나(UX-30) — 커버 링크는 탭·읽기 도구에서 빠지고 제목 링크가 카드를 덮는다

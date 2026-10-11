@@ -1,3 +1,53 @@
+# 2026-10-11 16:21 KST — GitHub PR01~09 로컬 구현·리뷰·검증 완료
+
+## Current objective / completed work
+
+사용자가 승인한 PR01~09를 3개 서브에이전트로 병렬 구현하고 root가 파일 소유권·DB를 격리했다. 에이전트 종료 후 직접 코드 리뷰·계획 대조·회귀 수정·전체 검사 및 9개 논리 커밋을 수행한다. 작업 branch `feat/github-stars-feedback-20261011`, worktree `/private/tmp/nomorevibe-github-integration-20261011`, base `6839194dc47e1f1993f54471c0fb94b6857cd6aa`다. 모든 agents와 직접 Codex CLI는 `gpt-6.1-sol`/`xhigh`다.
+
+완료 커밋:01 `a03f638`,02 `c4606ac`,03 `b25731f`,04 `2992598`,05 `9df60e0`,06 `0ea6656`,07 `cba7eed`,08 `007d65f`;09는 이 인계 문서·최종검사·배포준비를 담은 검증 커밋이다. PR 번호는 계획상의 논리 번호이며 원격 PR를 생성하지 않았다. user root main/PPT/미추적 자료 보존, 외부 push/merge/배포/메일·스타·이슈 쓰기 없음. 소개 검수 중단 유지.
+
+## Modified files / key design decisions
+
+01~08은 `lib/domain/{accounts,github-integration,github-user,github-stars,feedback,github-installations,github-webhooks}`, 공개/제작자/GitHub API와 로그인·제품·관리자 UI, DB schema와 migrations0066~0072, job catalog/registry 및 unit/integration/E2E를 변경했다. 09는 `.env.example`, `compose.yml`, `README.md`, `PENDING.md`, deploy script/Python 테스트, 기존 E2E8파일, 새 흐름 E2E와 운영/계획/인계 문서다. 정확한 전체 목록은 아래 git diff 명령으로 확인한다.
+
+- 이메일 피드백과 개인 GitHub Star 인증을 구분하고 관리자 세션/수집용 인증과 분리한다. 제작자만 수정키와 repo관리 권한·선택저장소 FeedbackApp 설치로 수신을 켠다.
+- unknownStar는 영구 외부순서 fence이며 GET/재연결/lease 만료로 해제하지 않는다. 자동·관리자 unlock API 없음은 PENDING/runbook에 명시했다.
+- outbox는 원문·동의·숫자repoID·bindingrevision/hash를 검증하고 외부HTTP중 DB transaction을 유지하지 않는다. uncertain 자동POST금지, state=all 전체marker·개별이슈 확인, rate-limit backoff, 명시적1회재전송/감사.
+- signed lifecycle/첫binding/재전송은 installation advisory lock-before-product를 사용한다. presentpermissions의Issues생략은 explicitnone, permissions부재는 optionalnull, malformed400. deliveryUUID전역PK는 app/hash충돌거절.
+- maker token10분사용만료, flagsOFF에도 다음15분maintenance에서암호문폐기. maintenance/publisher에는 FeedbackApp키만 필요하고 Starclient/복호화secret불필요.
+- Node 공유 worker7파일의 Next전용 server-only 표식을 최소제거했다. 웹전용표식은유지, Node/DB가서버경계. 실제 Node registry/역할worker기동 검증했다.
+- 배포8개쓰기대상유지. maintenance2개는읽기전용preflight이며 동일SHA 수동 mini→M3 절차다. 네featureflag는defaultfalse.
+
+## Test commands and results / failed approaches
+
+최종 실제 실행: typegen·tsc·linter exit0(기존vendor경고1), unit246파일/2256pass, DB통합140파일/1370pass+기존TODO1, 새5spec E2E18pass, 기존flagsOFF전체E2E30pass/새18skip, Python23pass, CI-scopeNode4pass, 빈55444DB 전체migration0, productionbuild0·bundle gate0(홈129.1KB/상세128.8KB/등록120.1KB br), compose config0, diff check0. build에는기존agent-review.ts동적파일경고가있다. 실제워커선출/SIGTERM drain/standby/crashfailover6개도GREEN이다. 원격GitHubCI check를실행한결과로표현하지않는다.
+
+01 및02b/03b/04c/05b/06b/07c/08b/09b 직접Codex재리뷰OK, 기존E2E8개rootdiff리뷰+github_core읽기전용추가리뷰에서새P0/P1/P2없음. 실제키/외부파일럿은아직없다.
+
+실패 접근: PG17transaction_timeout FATAL은postgres3.4.9 socket=nulldriver오류로폐기했다. scoped쿼리/SQL남은deadline·COMMIT전lease체크/awaitrollback으로실제DB통과. plainNodeworker는server-onlydefaultthrow를정리했다. Nextbuild 외부node_modules symlink panic은APFS물리clone으로해결. 기존E2E의캐시slug·30초memo·현행DOM·srcsetnaturalWidth를test-only보완했다. 늦은RSCbody읽기경합도제거하고 DB/새formversion/저장판/reload로저장을확인한다.
+
+별도미해결: 기존관리자fallback저장은실제action ok:true/version+revalidatedprops가확인됐으나dirty표시가남아성공알림이숨겨졌다. 관련생산코드는기준6839194와동일. PENDING에별도기록했으며UI문제를해결했다고주장하지않는다. 당시c원본trace는다음실행에서덮였다;d의수명경합trace는 `/private/tmp/nomorevibe-gh-baseline-ui-defect-20261011/`에보존했다.
+
+## Remaining work / exact commands for the next agent
+
+로컬코드/리뷰/검증커밋단계를마무리했다. 실제Star/FeedbackApp·Resend/암호화/일반인증키와승인된사용자/개인·조직repo/email이미제공이라capability/실메일수신/실스타·봇이슈/웹훅/운영주예비배포·파일럿은미검증이다. 계획01/04/07/08의실연동완료및09운영항목을체크하지않았다. 준비후runbook/PENDING/파일럿기록을따른다. 중단소개검수는재개하지않는다. 모든에이전트파일동결, 추가수정시검증범위갱신.
+
+전용 pgvector0.8.6-pg17 컨테이너의exactDB이름은nomorevibe_test.55441auth/55442feedback/55443browser(43127)/55444freshfullDB이다. 같은DB의통합/E2E동시초기화금지. node_modules는root원본과분리한물리clone이며사용자원본deps변경없음. 임시snapshotblobs/로그는커밋대상이아니다. 주요최종log `/private/tmp/nomorevibe-gh-final-{unit-b,integration-b,feature-e2e-b,baseline-e2e-e,python,ci-scope,fresh-migration,bundle-b,lint-d,tsc-d}.log`.
+
+```sh
+cd /private/tmp/nomorevibe-github-integration-20261011
+git status --short --branch
+git log --oneline -9
+git diff 6839194 --name-only
+cat docs/operations/2026-10-11-github-integration-implementation.md
+cat docs/operations/github-stars-feedback-runbook.md
+cat docs/operations/2026-10-11-github-integration-pilot.md
+TEST_DATABASE_URL=postgres://nomorevibe:nomorevibe@localhost:55444/nomorevibe_test npm run test:integration
+PUBLIC_USER_AUTH_ENABLED=true GITHUB_STAR_ENABLED=true PRODUCT_FEEDBACK_ENABLED=true GITHUB_FEEDBACK_DELIVERY_ENABLED=true TEST_DATABASE_URL=postgres://nomorevibe:nomorevibe@localhost:55443/nomorevibe_test npx playwright test tests/e2e/public-user-auth.spec.ts tests/e2e/github-user-connection.spec.ts tests/e2e/github-star-action.spec.ts tests/e2e/product-feedback.spec.ts tests/e2e/github-integration-flow.spec.ts
+```
+
+---
+
 # 2026-10-01 — 최신 수집 수정·배포·실제 저장 검증 완료
 
 ## Current objective / completed work

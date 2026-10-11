@@ -24,6 +24,15 @@ x-worker-environment: &worker-environment
   WORKER_DRAIN_SECONDS: "45"
   WORKER_HEARTBEAT_TIMEOUT_SECONDS: "30"
   WORKER_PROGRESS_TIMEOUT_SECONDS: "90"
+  PUBLIC_USER_AUTH_ENABLED: ${PUBLIC_USER_AUTH_ENABLED:-false}
+  GITHUB_STAR_ENABLED: ${GITHUB_STAR_ENABLED:-false}
+  PRODUCT_FEEDBACK_ENABLED: ${PRODUCT_FEEDBACK_ENABLED:-false}
+  GITHUB_FEEDBACK_DELIVERY_ENABLED: ${GITHUB_FEEDBACK_DELIVERY_ENABLED:-false}
+
+# GitHub 쓰기용 키는 publisher와 maintenance에만 전달한다. 수집기의 읽기 인증은 별도다.
+x-github-feedback-environment: &github-feedback-environment
+  GITHUB_FEEDBACK_APP_ID: ${GITHUB_FEEDBACK_APP_ID:-}
+  GITHUB_FEEDBACK_APP_PRIVATE_KEY: ${GITHUB_FEEDBACK_APP_PRIVATE_KEY:-}
 
 x-worker: &worker
   <<: *runtime
@@ -112,6 +121,24 @@ services:
       ADMIN_LOCAL_LOGIN: ${ADMIN_LOCAL_LOGIN:-1}
       GITHUB_OAUTH_CLIENT_ID: ${GITHUB_OAUTH_CLIENT_ID:-}
       GITHUB_OAUTH_CLIENT_SECRET: ${GITHUB_OAUTH_CLIENT_SECRET:-}
+      PUBLIC_USER_AUTH_ENABLED: ${PUBLIC_USER_AUTH_ENABLED:-false}
+      GITHUB_STAR_ENABLED: ${GITHUB_STAR_ENABLED:-false}
+      PRODUCT_FEEDBACK_ENABLED: ${PRODUCT_FEEDBACK_ENABLED:-false}
+      GITHUB_FEEDBACK_DELIVERY_ENABLED: ${GITHUB_FEEDBACK_DELIVERY_ENABLED:-false}
+      PUBLIC_AUTH_SECRET: ${PUBLIC_AUTH_SECRET:-}
+      LOGIN_EMAIL_API_KEY: ${LOGIN_EMAIL_API_KEY:-}
+      LOGIN_EMAIL_FROM: ${LOGIN_EMAIL_FROM:-}
+      GITHUB_INTEGRATION_SECRET: ${GITHUB_INTEGRATION_SECRET:-}
+      GITHUB_STAR_APP_ID: ${GITHUB_STAR_APP_ID:-}
+      GITHUB_STAR_APP_CLIENT_ID: ${GITHUB_STAR_APP_CLIENT_ID:-}
+      GITHUB_STAR_APP_CLIENT_SECRET: ${GITHUB_STAR_APP_CLIENT_SECRET:-}
+      GITHUB_STAR_APP_WEBHOOK_SECRET: ${GITHUB_STAR_APP_WEBHOOK_SECRET:-}
+      GITHUB_FEEDBACK_APP_ID: ${GITHUB_FEEDBACK_APP_ID:-}
+      GITHUB_FEEDBACK_APP_SLUG: ${GITHUB_FEEDBACK_APP_SLUG:-}
+      GITHUB_FEEDBACK_APP_CLIENT_ID: ${GITHUB_FEEDBACK_APP_CLIENT_ID:-}
+      GITHUB_FEEDBACK_APP_CLIENT_SECRET: ${GITHUB_FEEDBACK_APP_CLIENT_SECRET:-}
+      GITHUB_FEEDBACK_APP_PRIVATE_KEY: ${GITHUB_FEEDBACK_APP_PRIVATE_KEY:-}
+      GITHUB_FEEDBACK_APP_WEBHOOK_SECRET: ${GITHUB_FEEDBACK_APP_WEBHOOK_SECRET:-}
       TRUSTED_PROXY_HOPS: "0"
       LOG_LEVEL: info
       HOSTNAME: 0.0.0.0
@@ -168,7 +195,7 @@ services:
     entrypoint: ["sh", "scripts/codex-auth.sh"]
     command: ["node", "--import", "tsx", "scripts/worker-supervisor.ts", "--role=publisher"]
     environment:
-      <<: *worker-environment
+      <<: [*worker-environment, *github-feedback-environment]
       WORKER_ROLE: publisher
       SERVICE_INSTANCE_ID: local-publisher
       DB_POOL_MAX: "3"
@@ -218,7 +245,7 @@ services:
     <<: *worker
     command: ["node", "--import", "tsx", "scripts/worker-supervisor.ts", "--role=maintenance"]
     environment:
-      <<: *worker-environment
+      <<: [*worker-environment, *github-feedback-environment]
       WORKER_ROLE: maintenance
       SERVICE_INSTANCE_ID: local-maintenance
       DB_POOL_MAX: "3"

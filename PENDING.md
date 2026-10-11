@@ -1,7 +1,40 @@
 # 남은 작업
+- 불명확한 개인 Star 외부 요청은 GET 상태가 원하는 값과 같아도 종료를 증명하지 못하므로 추가 변경 잠금을 유지한다. 현재 자동·운영자 잠금 해제 API는 없으며 실제 GitHub 상태는 사용자가 직접 확인할 수 있다. 이미 발송된 요청의 취소는 보장하지 않는다.
 
 코드로 끝낼 수 없어 멈춰 있는 것들. 각 항목은 **막고 있는 것**과 **풀렸을 때 할 일**을
 그대로 실행할 수 있게 적는다. 끝나면 이 파일에서 지운다.
+
+---
+
+## GitHub 스타·피드백 실연동 파일럿 — 2026-10-11
+
+**막는 것:** 새 Star/Feedback GitHub App과 암호화·공개 인증·Resend 발신 설정,
+허가된 개인/조직 테스트 레포·사용자·메일 주소가 아직 제공되지 않았다. 자동 검사와 실제
+provider/운영 증거는 따로 기록한다. 기본 플래그는 모두 `false`다.
+
+**준비되면:** [연동 운영 절차](docs/operations/github-stars-feedback-runbook.md)에 따라
+0066~0072 migration을 직접 primary DB에 적용하고 웹 두 앱·publisher 주/예비와
+maintenance 주/예비의 실제 릴리스 및 역할별 설정을 확인한다. 개인 스타 등록/취소,
+GitHub 미연결 이메일 사용자의 피드백, 봇 이슈 한 건·재조회·설치 철회,
+publisher 주 중단 후 예비 복구를 검증하고 [파일럿 기록](docs/operations/2026-10-11-github-integration-pilot.md)에
+GitHub URL·DB state·두 웹 결과와 지연을 남긴다. 소개 검수 중단은 유지한다.
+
+---
+
+## 기존 관리자 설정의 저장 알림 — 2026-10-11
+
+GitHub 기능 false 회귀 검사에서 기존 2차 심사 대체 모델을 새로 추가해 저장하면
+서버 action은 `ok:true`와 새 version을 반환하고 revalidated props에도 새 값이 있으나,
+화면의 `data-dirty=true`와 “2차 심사 모델” 변경 표시가 남아 성공 알림이 숨겨지는 현상을
+확인했다. 관련 설정 화면 코드는 기준 main `6839194`와 동일하다. 이번 GitHub 연동에서
+관리자 설정 생산 코드를 변경하지 않았으며 별도 UI 수정이 남는다.
+
+**다음:** `SettingsForm`의 저장 후 baseline과 동적 `ModelRows` form reset 시점을
+실제 브라우저에서 재현하고 성공 후 변경 표시가 해제되는지 검사한다. 현재 저장/DB/새 판/
+reload 검사는 유지하되 이 UI 결함을 해결 완료로 표시하지 않는다. 근거는
+`/private/tmp/nomorevibe-gh-final-baseline-e2e-c.log` 및 당시 Playwright trace에서 직접
+확인한 성공 action/새 version/revalidated props다. 원본 trace는 다음 검사에서 덮였으며
+아직 보존된 파일처럼 안내하지 않는다.
 
 ---
 

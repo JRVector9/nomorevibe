@@ -58,7 +58,7 @@ test("administrator mode changes and decisions preserve audited queue boundaries
   await page.waitForLoadState("networkidle");
   const approval = page.getByRole("complementary").filter({ has: page.getByRole("heading", { name: repos[0], exact: true }) });
   await expect(approval).toHaveCount(1);
-  await approval.getByLabel("관리자 판단 사유", { exact: true }).fill("Browser fixture verified by administrator");
+  await approval.getByLabel("메모 (선택)", { exact: true }).fill("Browser fixture verified by administrator");
   await approval.getByRole("button", { name: "승인", exact: true }).click();
   await expect.poll(async () => (await db.select().from(crawlCandidates).where(eq(crawlCandidates.repo, repos[0])))[0].decidedBy).toBe("admin");
   await page.getByRole("row").filter({ has: page.getByRole("checkbox", { name: `${repos[1]} 선택`, exact: true }) }).click();

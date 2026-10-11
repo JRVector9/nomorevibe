@@ -1,4 +1,5 @@
 import Link from "next/link";
+import type { ReactNode } from "react";
 import { ProductIcon } from "@/components/ProductIcon";
 import { ProductTagline } from "@/components/ProductTagline";
 import { UNCLAIMED_HINT, UNCLAIMED_LABEL } from "@/lib/copy/terms";
@@ -53,7 +54,7 @@ function HealthStatus({ health }: { health: ProductDetailView["health"] }) {
  * 단추는 [제품 방문하기][GitHub][공유][저장] 넷이다(UX-31). 같은 사이트로 가는 도메인 글자 링크는 뺐다 —
  * 사이트 주소는 정보 카드의 '웹사이트' 줄이 보여 준다.
  */
-export function ProductHero({ product, unclaimed, risingRank, health, languages, repositoryUrl = null }: {
+export function ProductHero({ product, unclaimed, risingRank, health, languages, repositoryUrl = null, personalGithubStar }: {
   product: ProductDetailView["product"];
   unclaimed: boolean;
   risingRank: number | null;
@@ -62,6 +63,7 @@ export function ProductHero({ product, unclaimed, risingRank, health, languages,
   languages: string[];
   /** GitHub 이 알려 준 저장소의 정식 주소(RepositoryFacts.repositoryUrl) — 운영 주체를 지금 주인으로 정한다(UX-15) */
   repositoryUrl?: string | null;
+  personalGithubStar?: ReactNode;
 }) {
   const owner = repositoryOperator(product.repoUrl, repositoryUrl)?.owner ?? null;
   const installable = product.accessMode === "installable";
@@ -115,6 +117,7 @@ export function ProductHero({ product, unclaimed, risingRank, health, languages,
             )}
             <ShareButton title={product.name} path={`/p/${product.slug}`} />
             <SaveButton slug={product.slug} name={product.name} />
+            {personalGithubStar}
           </div>
           {product.repoGone && (
             <p className="text-[13px] text-fg-2">

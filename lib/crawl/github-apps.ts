@@ -1,10 +1,12 @@
-import { createPrivateKey, createSign } from "node:crypto";
 import { eq } from "drizzle-orm";
+import { appJwt } from "@/lib/github/app-jwt";
 import { db } from "@/lib/db";
 import { githubCollectorApps, operationsAudit } from "@/lib/db/schema";
 import { adminAuditRow } from "@/lib/operations/admin-log";
 import { seal, unseal } from "@/lib/operations/credential-vault";
 import { collectorSecret, parseCoreQuota, type CoreQuota } from "./github-secret";
+
+export { appJwt } from "@/lib/github/app-jwt";
 
 /**
  * GitHub App 수집 자격(0064) — 개인 토큰은 계정마다 한도가 하나라 같은 계정의 토큰을 더해도 한도가 늘지 않는다.
@@ -21,18 +23,6 @@ const REFRESH_BEFORE_MS = 5 * 60_000;
 const FAILURE_BACKOFF_MS = 5 * 60_000;
 
 export type AppIdentity = { appId: number; appSlug: string; installationId: number; accountLogin: string; core: CoreQuota | null };
-
-const base64url = (input: Buffer | string) => Buffer.from(input).toString("base64url");
-
-/** App 으로 GitHub 에 묻는 JWT(RS256) — 시계가 어긋나도 받아들이게 1분 앞에서 시작해 9분 */
-export function appJwt(appId: number, privateKeyPem: string, now = Date.now()): string {
-  const seconds = Math.floor(now / 1000);
-  const header = base64url(JSON.stringify({ alg: "RS256", typ: "JWT" }));
-  const payload = base64url(JSON.stringify({ iat: seconds - 60, exp: seconds + 540, iss: String(appId) }));
-  const signer = createSign("RSA-SHA256");
-  signer.update(`${header}.${payload}`);
-  return `${header}.${payload}.${base64url(signer.sign(createPrivateKey(privateKeyPem)))}`;
-}
 
 async function githubJson<T>(path: string, init: { token: string; method?: "GET" | "POST" }): Promise<{ status: number; body: T | null }> {
   const res = await fetch(`${API_ORIGIN}${path}`, { method: init.method ?? "GET", headers: { ...HEADERS, Authorization: `Bearer ${init.token}` },

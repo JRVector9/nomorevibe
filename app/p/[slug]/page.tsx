@@ -11,8 +11,11 @@ import { IntroSection } from "@/components/product-detail/IntroSection";
 import { LanguageBar } from "@/components/product-detail/LanguageBar";
 import { PreviewFigure } from "@/components/product-detail/PreviewFigure";
 import { ProductHero } from "@/components/product-detail/ProductHero";
+import { GithubStarButton } from "@/components/product-detail/GithubStarButton";
 import { RelatedRow } from "@/components/product-detail/RelatedRow";
 import { UpdateTimeline } from "@/components/product-detail/UpdateTimeline";
+import { FeedbackForm } from "@/components/product-detail/FeedbackForm";
+import { FeedbackList } from "@/components/product-detail/FeedbackList";
 import { UnclaimedOwnerContact } from "@/components/product-detail/UnclaimedOwnerContact";
 import { categoryHref } from "@/components/home/browse-state";
 import { productShareImage, shareMetadata } from "@/lib/copy/share";
@@ -25,6 +28,9 @@ import { countProducts } from "@/lib/domain/products/repository";
 import type { Category } from "@/lib/domain/products/schema";
 import { productJsonLd, serializeJsonLd } from "@/lib/seo/product-json-ld";
 import { siteOrigin } from "@/lib/site";
+import { githubFeedbackDeliveryEnabled, githubStarEnabled, productFeedbackEnabled } from "@/lib/domain/github-integration/flags";
+import { parseGithubRepository } from "@/lib/github/repositories";
+import { getProductGithubBinding } from "@/lib/domain/github-installations/bindings";
 
 export const dynamic = "force-dynamic";
 
@@ -77,6 +83,8 @@ async function ProductDetail({ slug, category }: { slug: string; category: strin
 
   const languages = (detail.repository?.facts?.languages ?? []).slice(0, 2).map((item) => item.name);
   const risingTotal = await risingLoad;
+  const githubDeliveryAvailable = githubFeedbackDeliveryEnabled()
+    && Boolean((await getProductGithubBinding(detail.product.id).catch(() => null))?.enabled);
   // 날짜의 '올해'를 정하는 시각 — 업데이트 목록(클라이언트)도 서버가 읽은 이 값으로 그린다
   const now = new Date();
   // 구조화 데이터(SEO-06) — 우리가 가진 사실만, 화면의 경로 nav 와 같은 빵부스러기. 소개는 메타 description 과 같은 값
@@ -100,7 +108,9 @@ async function ProductDetail({ slug, category }: { slug: string; category: strin
       </nav>
 
       <ProductHero product={detail.product} unclaimed={detail.unclaimed} risingRank={detail.risingRank} health={detail.health} languages={languages}
-        repositoryUrl={detail.repository?.facts?.repositoryUrl ?? null} />
+        repositoryUrl={detail.repository?.facts?.repositoryUrl ?? null}
+        personalGithubStar={githubStarEnabled() && !detail.product.repoGone && detail.product.repoUrl && parseGithubRepository(detail.product.repoUrl)
+          ? <GithubStarButton key={detail.product.slug} slug={detail.product.slug} /> : undefined} />
 
       {/* 넓으면 2:1 두 열, 좁으면 오른쪽 열이 본문 아래로 */}
       <div className="flex flex-wrap items-start gap-x-12 gap-y-9 pt-7">
@@ -117,6 +127,15 @@ async function ProductDetail({ slug, category }: { slug: string; category: strin
           <IntroSection product={detail.product} profile={detail.profile} readmeExcerpt={detail.readmeExcerpt} unclaimed={detail.unclaimed} />
           <LanguageBar repository={detail.repository} />
           <UpdateTimeline updates={detail.updates} now={now} />
+          {productFeedbackEnabled() && (
+            <section className="space-y-5" aria-label="프로젝트 피드백">
+              <FeedbackForm key={detail.product.slug} slug={detail.product.slug} githubDeliveryAvailable={githubDeliveryAvailable} />
+              <FeedbackList key={detail.product.slug} slug={detail.product.slug} />
+              {detail.product.repoUrl && parseGithubRepository(detail.product.repoUrl) && (
+                <Link prefetch={false} href={`/p/${encodeURIComponent(detail.product.slug)}/github`} className="text-[13px] text-fg-2 underline underline-offset-2">제작자 GitHub 이슈 수신 설정</Link>
+              )}
+            </section>
+          )}
         </div>
 
         <aside id="evidence" className="flex min-w-0 flex-[1_1_300px] flex-col gap-4">

@@ -66,6 +66,7 @@ test.beforeEach(async ({ context, baseURL }) => {
 test("오류 칩 클릭에서만 Codex 인증을 시작하고 승인 완료를 자동 표시한다", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/admin/status");
+  await page.getByRole("button", { name: "나머지 지표 보기 — 처리량·파이프라인·모델·신호", exact: true }).click();
   const button = page.getByRole("button", { name: "Codex 연결 access_denied · 다시 인증", exact: true });
   await expect(button).toBeVisible();
   expect(calls).toEqual([]);

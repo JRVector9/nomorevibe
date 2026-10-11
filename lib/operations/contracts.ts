@@ -22,6 +22,8 @@ export const classifyPayloadSchema = z.object({
   definitions: categoryDefinitionsSchema.optional(),
 }).strict();
 export const JOB_LABELS: Record<string, string> = {
+  'github-integration-reconcile': 'GitHub 연동 재조회',
+  'github-feedback-delivery': 'GitHub 피드백 전송',
   heartbeat: '스케줄러 관측', 'crawl-seed': '수집 대상 탐색', 'hn-show-seed': 'Show HN 수집', 'crawl-fetch': '프로젝트 원본 수집',
   'crawl-judge': '규칙 심사', 'crawl-agent-review': 'AI 후보 심사', 'second-review': '2차 심사', 'reason-translate': '사유 번역', 'crawl-publish': '제품 분류·발행',
   'uptime-ping': '서비스 응답 점검', 'click-rollup': '유효 방문 집계', 'ranking-refresh': '랭킹 갱신',

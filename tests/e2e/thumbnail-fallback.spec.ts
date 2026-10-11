@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import{test,expect}from'@playwright/test';import sharp from'sharp';import{inArray}from'drizzle-orm';import{db}from'@/lib/db';import{products,ogImages}from'@/lib/db/schema';
 const kinds=['og','site_icon','repository_image','github_avatar','default'] as const;
 const labels=['사이트 미리보기 이미지','프로젝트 아이콘','GitHub 저장소 이미지','GitHub 프로필 이미지','nomorevibe 기본 이미지'];
@@ -31,8 +32,12 @@ test('hero icons and source-labelled previews render on desktop and mobile',asyn
 test('wide repository wordmarks stay whole in covers and never in the icon square',async({page})=>{
  const{execFileSync}=await import('node:child_process');
  const data=await sharp({create:{width:512,height:128,channels:4,background:'#345678'}}).webp().toBuffer();
- await db.update(ogImages).set({data}).where(inArray(ogImages.slug,['thumbnail-e2e-repository-image']));
- const ogImage='/api/og-cache/thumbnail-e2e-repository-image?thumbnail=repository_image&w=512&h=128&v=2';
+ const slug=`thumbnail-e2e-wide-${randomUUID().slice(0,8)}`;
+ const ogImage=`/api/og-cache/${slug}?thumbnail=repository_image&w=512&h=128&v=2`;
+ const[source]=await db.select().from(products).where(inArray(products.slug,['thumbnail-e2e-repository-image']));
+ await db.insert(products).values({...source,id:undefined,slug,url:`https://${slug}.example`,ogImage});
+ await db.insert(ogImages).values({slug,contentType:'image/webp',data});
+ await page.setViewportSize({width:1440,height:900});
  await page.goto('/');
  // 실제 React 마크업으로 커버와 아이콘의 원본 비율을 확인한다.
  const html=execFileSync(process.execPath,['--import','tsx','--input-type=module','-e',`
@@ -46,7 +51,13 @@ test('wide repository wordmarks stay whole in covers and never in the icon squar
  // README 그림은 커버에만 — 정사각 아이콘 자리에는 모노그램(UX-32). 커버는 늘리지 않고 잘리지 않게(scale-down)
  const images=page.locator('#wide-logo-check img');await expect(images).toHaveCount(1);
  const cover=images.first();await expect(cover).toBeVisible();
- await expect.poll(()=>cover.evaluate((e:HTMLImageElement)=>e.complete&&e.naturalWidth===512)).toBe(true);
+ await expect.poll(()=>cover.evaluate((e:HTMLImageElement)=>e.complete&&e.naturalWidth>0)).toBe(true);
+ // srcset density-corrects naturalWidth; verify the actual resource remains 512×128.
+ const resource=await page.request.get(await cover.evaluate((e:HTMLImageElement)=>e.currentSrc));
+ expect(resource.status()).toBe(200);
+ const metadata=await sharp(await resource.body()).metadata();
+ expect({width:metadata.width,height:metadata.height}).toEqual({width:512,height:128});
+ expect(await cover.evaluate((e:HTMLImageElement)=>e.naturalWidth/e.naturalHeight)).toBeCloseTo(4,1);
  expect(await cover.evaluate(e=>getComputedStyle(e).objectFit)).toBe('scale-down');
  expect((await cover.boundingBox())!.width).toBe(360);
  const monogram=page.locator('#wide-logo-check > .product-monogram');await expect(monogram).toHaveText('W');

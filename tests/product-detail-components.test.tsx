@@ -184,6 +184,12 @@ const observedFact: ProductDetailView["observedAgentFacts"][number] = {
 };
 
 describe("evidence product detail components", () => {
+  it("개인 GitHub 스타를 서비스 저장 버튼과 별개 액션으로 표시한다", () => {
+    const html = renderHero({ personalGithubStar: <button type="button">내 GitHub 스타</button> });
+    expect(html).toContain("내 GitHub 스타</button>");
+    expect(html).toContain('aria-label="simpleHWP 저장"');
+    expect(renderHero()).not.toContain("내 GitHub 스타");
+  });
   it("renders the name, the unclaimed mark, save and share, and a 44px outbound action", () => {
     const html = renderHero({ unclaimed: true, health: { uptime30d: 99, latencyMs: 84, checkedAt: new Date(), down: false } });
 

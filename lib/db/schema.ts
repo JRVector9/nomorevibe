@@ -684,3 +684,11 @@ export * from './second-review-schema';
 export * from './translation-schema';
 export * from './news-schema';
 export * from './product-audit-schema';
+export * from './public-user-schema';
+export * from './github-user-schema';
+export * from './github-star-schema';
+export * from './product-feedback-schema';
+export * from './github-binding-schema';
+export * from './github-issue-outbox-schema';
+
+export { githubWebhookEvents, githubIntegrationActions } from "./github-webhook-schema";
