@@ -77,7 +77,7 @@ describe("ranking season page", () => {
     expect(html).toContain("2026년 33주 랭킹");
     // 규칙 표는 표 아래 '집계 기준' 접힘 안에 있다
     expect(html.indexOf("History One")).toBeLessThan(html.indexOf("<details"));
-    expect(html).toContain("집계 기준</summary>");
+    expect(html).toContain("집계 기준</h2></summary>");
     expect(html).toContain("24h 유효 방문 변동률");
     expect(html).toContain("History One");
   });

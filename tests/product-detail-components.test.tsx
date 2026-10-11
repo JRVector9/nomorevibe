@@ -546,10 +546,11 @@ describe("evidence product detail components", () => {
     // 공개 이메일은 두지 않는다(D5)
     expect(html).not.toMatch(/mailto:|[\w.+-]+@[\w-]+\.[a-z]{2,}/i);
     expect(html).not.toContain("운영 주체와 연락");
-    // 내려달라는 요청 — 갈래 둘, 운영자 확인 방법, 처리 약속과 절차 링크, 연락처 칸 없음(UX-19, D5)
-    expect(html.match(/<input type="radio"[^>]*name="kind"/g)).toHaveLength(2);
+    // 내려달라는 요청 — 갈래 둘과 소개 수정 요청(UX-18), 운영자 확인 방법, 처리 약속과 절차 링크, 연락처 칸 없음(UX-19, D5)
+    expect(html.match(/<input type="radio"[^>]*name="kind"/g)).toHaveLength(3);
     expect(textOf(html)).toContain("운영자 요청 · 운영자가 목록에서 빼 달라는 요청");
     expect(textOf(html)).toContain("스팸·악성 신고 · 스팸이거나 악성 코드·사기로 이어지는 프로젝트");
+    expect(textOf(html)).toContain("소개 수정 요청 · 한 줄 소개가 틀렸거나 바꾸고 싶을 때 — 목록에서는 내리지 않습니다");
     expect(textOf(html)).toContain("저장소에 이 요청을 적은 이슈를 열거나 저장소에 파일을 하나 더한 뒤");
     expect(textOf(html)).toContain(TAKEDOWN_PROMISE);
     expect(html).toMatch(/<a [^>]*href="\/policy#takedown"[^>]*>처리 절차 보기<\/a>/);
@@ -557,7 +558,7 @@ describe("evidence product detail components", () => {
     expect(html).not.toContain("@AgentWorkforce");
     expect(html).not.toContain("https://github.com/AgentWorkforce");
     expect(html).not.toContain("<img");
-    expect(html).toContain("목록에서 내려달라고 요청하기");
+    expect(html).toContain("소개 수정·목록에서 내리기 요청하기");
 
     expect(renderToStaticMarkup(<UnclaimedOwnerContact repoUrl="https://gitlab.com/acme/app" slug="app" />))
       .toBe("");
@@ -577,9 +578,11 @@ describe("evidence product detail components", () => {
   it("설치형 프로젝트의 소유권 확인 안내는 지원하지 않는 도메인 확인 명령을 권하지 않는다", () => {
     const html = renderToStaticMarkup(<UnclaimedOwnerContact repoUrl={product.repoUrl} slug={product.slug} installable />);
     expect(textOf(html)).toContain("설치형 프로젝트는 배포 도메인이 없어 명령으로 소유를 확인할 수 없습니다.");
+    // 소개를 고쳐 달라는 길은 바로 아래 폼의 셋째 갈래다(UX-18)
+    expect(textOf(html)).toContain("소개를 고치려면 아래 요청에서 ‘소개 수정 요청’을 골라");
     expect(html).toMatch(/<a [^>]*href="\/policy#contact"[^>]*>관리자에게 요청<\/a>/);
     expect(textOf(html)).toContain("GitHub 로그인으로 저장소 주인을 확인하는 방법은 준비 중입니다.");
-    expect(html).toContain("목록에서 내려달라고 요청하기");
+    expect(html).toContain("소개 수정·목록에서 내리기 요청하기");
     expect(html).not.toContain("/nomorevibe verify");
     expect(html).not.toContain("/launch#verify");
   });

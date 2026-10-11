@@ -14,14 +14,19 @@ import "./cards.css";
  * 칸이 좁아 '최근 업데이트 n일 전'까지 넣으면 잘리고, '지금 뜨는' 띠에서 '0회' 같은 부정 신호가 됐다.
  * '이번 주 새로 나온' 띠(listed)는 등록한 날을 붙인다.
  */
-export function CompactCard({ product, trailing }: { product: ProductListItem; trailing: "category" | "listed" }) {
+export function CompactCard({ product, trailing, priority = false }: {
+  product: ProductListItem;
+  trailing: "category" | "listed";
+  /** 화면 첫 줄의 띠('지금 뜨는') — 커버 그림을 먼저 받는다(PERF-03) */
+  priority?: boolean;
+}) {
   const now = new Date();
   const href = `/p/${product.slug}`;
   return (
     <article className="compact-card">
       <Link prefetch={false} href={href} className="compact-visual" tabIndex={-1} aria-hidden="true">
         <ProjectTile slug={product.slug} name={product.name} ogImage={product.ogImage} size={44} installable={product.accessMode === "installable"}
-          ai={product.aiLevel != null} category={product.category} />
+          ai={product.aiLevel != null} category={product.category} priority={priority} />
       </Link>
       <div className="compact-body">
         <h3 className="compact-title"><Link prefetch={false} href={href} className="card-link">{product.name}</Link></h3>

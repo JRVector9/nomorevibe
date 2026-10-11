@@ -1,0 +1,9 @@
+{
+  "note": "주요 화면의 첫 로드 JS(brotli 품질 11, 바이트) — scripts/bundle-size.mjs 가 CI 에서 견준다. 2026-10-10 main 빌드(Next 16.3.8 Turbopack)에서 쟀다.",
+  "tolerance": 0.1,
+  "routes": {
+    "/": 130994,
+    "/p/[slug]": 127182,
+    "/launch": 122163
+  }
+}

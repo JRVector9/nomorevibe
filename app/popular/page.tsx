@@ -14,8 +14,10 @@ import {logger} from '@/lib/observability/logger';
 import {PopularCards} from './PopularCards';
 import {TierTabs} from './TierTabs';
 import './popular.css';
+import { canonicalAlternates } from '@/app/page';
 export const dynamic='force-dynamic';
-export const metadata:Metadata={title:pageTitle('많이 쓰이는 프로젝트'),description:'GitHub 스타 2천부터 10만 미만까지, 구간별로 살펴보는 공개 프로젝트.'};
+// 구간 탭(?tier=)은 같은 화면의 보기다 — 정식 주소는 /popular 하나(SEO-04)
+export const metadata:Metadata={title:pageTitle('많이 쓰이는 프로젝트'),description:'GitHub 스타 2천부터 10만 미만까지, 구간별로 살펴보는 공개 프로젝트.',alternates:canonicalAlternates('/popular')};
 export default async function PopularPage({searchParams}:{searchParams:Promise<Record<string,string|string[]|undefined>>}){
  const {tier,personal,page}=parsePopularParams(await searchParams);
  const selected=STAR_TIERS.find(t=>t.key===tier)!;

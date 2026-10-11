@@ -15,7 +15,8 @@ import { CancelAudit, RestartStalledAudit, StartAudit } from "./AuditControls";
 import { ScrollTable } from "../components/ScrollTable";
 import { ReasonLanguageToggle, ReasonText } from "../review/ReasonText";
 import { pageWindow } from "../paging";
-import { TakedownQueue } from "./TakedownQueue";
+import { IntroRequestList, TakedownQueue } from "./TakedownQueue";
+import { introRequestQueue, pendingIntroRequestCount } from "@/lib/domain/products/intro-requests";
 import { takedownHistory, takedownQueue, takedownSummary } from "@/lib/domain/products/takedown";
 import { DISMISS_REASONS, formatWait, isBurst, isDismissReason, senderLabel, takedownSignal, type TakedownSummary } from "@/lib/domain/products/takedown-view";
 import "../status/dashboard/dashboard.css";
@@ -60,11 +61,13 @@ export default async function AdminAuditPage({ searchParams }: Props) {
 
   // 목록의 "13:38 (3분 전)"은 이 시각을 기준으로 센다
   const now = new Date();
-  const [overview, summary] = await Promise.all([productAuditOverview(), takedownSummary()]);
+  const [overview, summary, introPending] = await Promise.all([productAuditOverview(), takedownSummary(), pendingIntroRequestCount()]);
   const { campaign, counts } = overview;
-  const tab: Tab = rawTab && Object.hasOwn(TABS, rawTab) ? rawTab as Tab : rawView ? "audit" : summary.pending > 0 ? "requests" : "audit";
-  const [queue, history, auditHistory] = await Promise.all([
+  // 소개 수정 요청(UX-18)도 요청 탭에 있다 — 그것만 기다려도 요청 탭을 먼저 연다
+  const tab: Tab = rawTab && Object.hasOwn(TABS, rawTab) ? rawTab as Tab : rawView ? "audit" : summary.pending + introPending > 0 ? "requests" : "audit";
+  const [queue, introRequests, history, auditHistory] = await Promise.all([
     tab === "requests" ? takedownQueue() : Promise.resolve([]),
+    tab === "requests" ? introRequestQueue() : Promise.resolve([]),
     tab === "history" ? takedownHistory() : Promise.resolve([]),
     tab === "history" ? auditDecisionHistory() : Promise.resolve([]),
   ]);
@@ -105,6 +108,7 @@ export default async function AdminAuditPage({ searchParams }: Props) {
           <Link key={name} href={`/admin/audit?tab=${name}`} aria-current={name === tab ? "page" : undefined}>
             {TABS[name]}
             {name === "requests" && (signal ? <b className="admin-nav-badge" data-tone={signal.tone}>{count(summary.pending)}</b> : <span className="td-count">0</span>)}
+            {name === "requests" && introPending > 0 && <span className="td-count">소개 {count(introPending)}</span>}
             {name === "audit" && <span className="td-count">{count(auditOpen)}</span>}
           </Link>
         ))}
@@ -124,6 +128,7 @@ export default async function AdminAuditPage({ searchParams }: Props) {
             </div>
           )}
           <TakedownQueue entries={queue} />
+          <IntroRequestList entries={introRequests} />
         </>
       )}
 

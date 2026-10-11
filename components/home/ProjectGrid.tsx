@@ -23,6 +23,8 @@ export function ProjectGrid({
   start = 0,
   approximate = false,
   now,
+  priorityCount = 0,
+  cardHeading = 3,
 }: {
   products: HomeCardProduct[];
   browseState: BrowseState;
@@ -34,6 +36,10 @@ export function ProjectGrid({
   approximate?: boolean;
   /** 서버가 그린 시각(ISO) — 카드의 'n일 전'·'새 프로젝트'가 서버와 브라우저에서 같은 글자를 낸다 */
   now?: string;
+  /** 앞에서 몇 장의 커버를 먼저 받을지 — 이 목록이 화면 첫 그림일 때만(PERF-03). 기본 0(모두 늦게 받기) */
+  priorityCount?: number;
+  /** 카드 제목·빈 화면 제목의 단계 — 위 제목 다음 단계(A11Y-05) */
+  cardHeading?: 2 | 3;
 }) {
   const raw = useSyncExternalStore(subscribeSaved, savedSnapshot, () => "[]");
   const saved = useMemo(() => parseSaved(raw), [raw]);
@@ -52,12 +58,13 @@ export function ProjectGrid({
   const visible = rows.slice(0, limit - start);
   const total = onlySaved ? rows.length : Math.max(start + rows.length, totalCount ?? rows.length);
 
+  const EmptyHeading = cardHeading === 2 ? "h2" : "h3";
   if (rows.length === 0) {
     return (
       <div className="projects-grid">
         <div className="empty-state">
           <Icon name="bookmark" size={29} />
-          <h3>아직 저장한 프로젝트가 없습니다.</h3>
+          <EmptyHeading>아직 저장한 프로젝트가 없습니다.</EmptyHeading>
           <p>관심 있는 프로젝트의 북마크를 눌러 모아보세요.</p>
           <Link prefetch={false} className="secondary" href={hrefWith(browseState)}>
             전체 프로젝트 보기
@@ -86,9 +93,11 @@ export function ProjectGrid({
         </div>
       )}
       <div className="projects-grid" id="project-grid" role="tabpanel" aria-label="프로젝트 목록">
-        {visible.map((product) => (
+        {visible.map((product, index) => (
           <ProjectCard
             key={product.slug}
+            priority={index < priorityCount}
+            headingLevel={cardHeading}
             product={product}
             saved={saved.has(product.slug)}
             onToggleSave={toggleSave}

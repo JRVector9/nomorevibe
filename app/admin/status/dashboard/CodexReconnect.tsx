@@ -1,4 +1,4 @@
-/* eslint-disable @next/next/no-html-link-for-pages -- 완료 후 기존 AI 설정 화면을 새로 읽는다 */
+/* 완료 후 기존 AI 설정 화면을 새로 읽는다 — 그래서 <Link> 가 아니라 <a> 로 옮긴다 */
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";

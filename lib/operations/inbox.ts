@@ -7,6 +7,7 @@ import { humanQueueOverview } from "@/lib/crawl/review-overview";
 import { getSettings } from "@/lib/crawl/settings";
 import { DOWN_THRESHOLD, downProductCount } from "@/lib/domain/products/health";
 import { repoGone, SPAM_AUTO_BAN_ACTOR, SPAM_AUTO_BAN_REASON } from "@/lib/domain/products/repository";
+import { introRequestQueue, pendingIntroRequestCount } from "@/lib/domain/products/intro-requests";
 import { takedownQueue, takedownSummary } from "@/lib/domain/products/takedown";
 import { logger } from "@/lib/observability/logger";
 import { attentionCounts } from "./dashboard";
@@ -20,7 +21,7 @@ import { attentionCounts } from "./dashboard";
  * 칸은 따로 읽는다 — 하나가 실패해도 그 칸만 "불러오지 못함"이다(attentionCounts 를 쓰는 네 칸은 함께 실패한다).
  */
 
-export type InboxKey = "takedown" | "human" | "agreed" | "audit" | "down" | "intro" | "repoGone" | "spam";
+export type InboxKey = "takedown" | "introRequest" | "human" | "agreed" | "audit" | "down" | "intro" | "repoGone" | "spam";
 
 /** 미리 보기 한 줄 — 이름, 왜 여기 왔나, 언제부터 기다렸나(ISO, UTC). 심사 후보의 why 는 사유 코드다 */
 export type InboxItem = { id: string; name: string; why: string; since: string | null };
@@ -146,7 +147,7 @@ export async function loadInbox(now = new Date()): Promise<InboxSnapshot> {
   // 아무도 기다리지 않는 사이에 실패해도 처리되지 않은 거부로 남지 않게
   for (const shared of [takedowns, overview, attention]) shared.catch(() => undefined);
 
-  const [takedown, human, agreed, audit, down, intro, gone, spam, decided, handled] = await Promise.all([
+  const [takedown, introRequest, human, agreed, audit, down, intro, gone, spam, decided, handled] = await Promise.all([
     settle("takedown", async () => {
       const [summary, queue] = await Promise.all([takedowns, takedownQueue(INBOX_PREVIEW)]);
       return {
@@ -155,6 +156,12 @@ export async function loadInbox(now = new Date()): Promise<InboxSnapshot> {
         items: queue.map((entry) => ({ id: entry.slug, name: entry.product?.name ?? entry.slug, why: entry.reason ?? "사유 없음",
           since: entry.requestedAt })),
       };
+    }),
+    // 소개 수정 요청(UX-18) — 처리 화면(요청 탭)의 목록과 같은 함수·같은 차례
+    settle("introRequest", async () => {
+      const [total, queue] = await Promise.all([pendingIntroRequestCount(), introRequestQueue(INBOX_PREVIEW)]);
+      return { count: total, items: queue.map((entry) => ({ id: String(entry.id), name: entry.product?.name ?? entry.slug,
+        why: clip(entry.message), since: entry.createdAt })) };
     }),
     settle("human", async () => {
       const { ids, stages, wait } = await overview;
@@ -193,7 +200,7 @@ export async function loadInbox(now = new Date()): Promise<InboxSnapshot> {
   ]);
   return {
     fetchedAt: now.toISOString(),
-    results: { takedown, human, agreed, audit, down, intro, repoGone: gone, spam },
+    results: { takedown, introRequest, human, agreed, audit, down, intro, repoGone: gone, spam },
     done: [decided, handled],
   };
 }

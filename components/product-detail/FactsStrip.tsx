@@ -19,7 +19,8 @@ function Tile({ label, value, note, tone, title }: Fact) {
     <div className="flex min-w-0 flex-col gap-1 border-l border-t border-line px-[18px] pb-3.5 pt-4" title={title}>
       <dt className="text-[13px] text-fg-2">{label}</dt>
       <dd className={`m-0 truncate text-[20px] font-semibold tracking-[-0.02em] tabular-nums ${color}`}>{value}</dd>
-      {note && <span className="text-[13px] text-fg-2">{note}</span>}
+      {/* 덧말도 값의 일부로 둘째 dd 에 둔다 — dl 묶음 안에는 dt·dd 만 와야 스크린리더가 짝을 읽는다(A11Y-04) */}
+      {note && <dd className="m-0 text-[13px] text-fg-2">{note}</dd>}
     </div>
   );
 }

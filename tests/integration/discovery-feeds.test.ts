@@ -73,7 +73,7 @@ describe("sitemap", () => {
 });
 
 describe("feed.xml", () => {
-  it("검증된 제품과 발견한 제품을 함께 싣고 제목에 어느 쪽인지 적는다", async () => {
+  it("검증된 제품과 발견한 제품을 함께 싣고 어느 쪽인지는 제목이 아니라 분류에 적는다(SEO-05)", async () => {
     await product({ slug: "mine", status: "verified", name: "Mine" });
     await product({ slug: "found", status: "seeded", name: "Found" });
 
@@ -81,10 +81,12 @@ describe("feed.xml", () => {
     const parsed = new XMLParser({ ignoreAttributes: false }).parse(await res.text());
 
     expect(res.headers.get("content-type")).toContain("application/rss+xml");
-    type Item = { title: string; link: string; description: string };
+    type Item = { title: string; link: string; description: string; category: string[] };
     const raw = parsed.rss.channel.item as Item | Item[];
     const items = Array.isArray(raw) ? raw : [raw];
-    expect(items.map((i) => i.title).sort()).toEqual(["Found — 운영자 미확인", "Mine — ✓ 검증됨"]);
+    expect(items.map((i) => i.title).sort()).toEqual(["Found", "Mine"]);
+    expect(items.find((i) => i.title === "Mine")?.category).toContain("✓ 검증됨");
+    expect(items.find((i) => i.title === "Found")?.category).toContain("운영자 미확인");
     // origin은 NEXT_PUBLIC_SITE_URL이 무엇이냐에 달렸다 — 경로만 본다
     expect(items.map((i) => new URL(i.link).pathname).sort()).toEqual(["/p/found", "/p/mine"]);
     // 태그라인의 <b>와 &는 글자로 남아야 한다 — 이스케이프가 깨지면 피드 전체가 안 읽힌다
@@ -128,7 +130,7 @@ describe("feed.xml", () => {
     expect(illegalControls(xml)).toEqual([]);
     expect(XMLValidator.validate(xml)).toBe(true);
     const parsed = new XMLParser({ ignoreAttributes: false }).parse(xml);
-    expect(parsed.rss.channel.item.title).toBe("CtrlName — 운영자 미확인");
+    expect(parsed.rss.channel.item.title).toBe("CtrlName");
     expect(parsed.rss.channel.item.description).toBe("한 줄 소개");
   });
 
@@ -162,11 +164,12 @@ describe("feed.xml", () => {
     <atom:link href="${origin}/feed.xml" rel="self" type="application/rss+xml"/>
     <lastBuildDate>Fri, 02 Jan 2026 03:04:05 GMT</lastBuildDate>
     <item>
-      <title>Golden — ✓ 검증됨</title>
+      <title>Golden</title>
       <link>${origin}/p/golden</link>
       <guid isPermaLink="true">${origin}/p/golden</guid>
       <description>한 줄 소개</description>
       <category>Dev</category>
+      <category>✓ 검증됨</category>
       <pubDate>Fri, 02 Jan 2026 03:04:05 GMT</pubDate>
     </item>
   </channel>

@@ -4,6 +4,8 @@ import { revalidatePath } from 'next/cache';
 import { currentAdmin } from '@/lib/auth/admin';
 import { cancelProductAudit, GROUP_REMOVE_MAX, keepAuditedProduct, removeAuditedProduct, removeAuditedProducts,
   startProductAudit } from '@/lib/crawl/product-audit';
+import { fixIntroFromRequest, isIntroRequestOutcome, resolveIntroRequest } from '@/lib/domain/products/intro-requests';
+import { LIMITS } from '@/lib/domain/products/limits';
 import { logger } from '@/lib/observability/logger';
 import { recordAdminAction, recordAdminActions } from '@/lib/operations/admin-log';
 
@@ -120,4 +122,54 @@ export async function restartStalledAudit(form: FormData): Promise<AuditActionSt
   revalidatePath('/admin/audit');
   revalidatePath('/admin/status');
   return { message: `감사 #${campaignId}을 닫고 #${result.campaignId}을 열었습니다 — ${result.enrolled.toLocaleString('ko-KR')}건.` };
+}
+
+/** 요청 번호 — 폼이 하나만 싣는다 */
+function requestId(form: FormData): number | null {
+  const ids = form.getAll('id');
+  const id = Number(ids[0]);
+  return ids.length === 1 && Number.isSafeInteger(id) && id > 0 ? id : null;
+}
+
+/**
+ * 소개 수정 요청의 소개 고치기(UX-18) — 요청을 보고 새 한 줄을 적는다. 그 제품의 처리 전 요청을 모두 '고침'으로 닫고,
+ * 고치기 전·후 소개를 작업 로그에 남긴다. 검색 노출과 CDN 은 건드리지 않는다(내려달라는 요청과 다른 길).
+ */
+export async function fixIntroRequest(_previous: AuditActionState, form: FormData): Promise<AuditActionState> {
+  const admin = await currentAdmin();
+  if (!admin) return UNAUTHORIZED;
+  const id = requestId(form);
+  const slug = String(form.get('slug') ?? '');
+  const tagline = String(form.get('tagline') ?? '').trim();
+  if (!id || !slug) return { error: '요청을 읽지 못했습니다. 새로고침해주세요.' };
+  if (!tagline) return { error: '새 소개를 적어 주세요.' };
+  if (tagline.length > LIMITS.tagline) return { error: `소개는 ${LIMITS.tagline}자까지입니다.` };
+  const fixed = await fixIntroFromRequest(id, tagline, admin.login);
+  await recordAdminAction(admin.login, { action: 'intro-request-edit', target: fixed?.slug ?? slug,
+    detail: fixed ? { requestId: id, closed: fixed.closed, before: fixed.before, after: tagline } : { requestId: id },
+    ok: fixed !== null, error: fixed ? null : 'stale' });
+  if (!fixed) return { error: '이미 처리했거나 고칠 수 없는 제품입니다(내려갔거나 주인이 생김). 새로고침해주세요.' };
+  logger.info('admin.intro_request_fixed', { slug: fixed.slug, id, login: admin.login });
+  revalidatePath('/admin/audit');
+  revalidatePath('/admin/products');
+  revalidatePath(`/p/${fixed.slug}`);
+  return { message: fixed.closed.length > 1 ? `소개를 고치고 요청 ${fixed.closed.length}건을 닫았습니다.` : '소개를 고쳤습니다.' };
+}
+
+/** 소개 수정 요청의 처리함·둠 — 소개는 그대로 두고 요청 하나에 결과만 적는다 */
+export async function resolveIntroRequestAction(_previous: AuditActionState, form: FormData): Promise<AuditActionState> {
+  const admin = await currentAdmin();
+  if (!admin) return UNAUTHORIZED;
+  const id = requestId(form);
+  const outcome = form.get('outcome');
+  const slug = String(form.get('slug') ?? '');
+  if (!id || !slug || !isIntroRequestOutcome(outcome)) return { error: '요청을 읽지 못했습니다. 새로고침해주세요.' };
+  const note = String(form.get('note') ?? '') || null;
+  const done = await resolveIntroRequest(id, outcome, admin.login, note);
+  await recordAdminAction(admin.login, { action: `intro-request-${outcome}`, target: done?.slug ?? slug,
+    detail: { requestId: id, note }, ok: done !== null, error: done ? null : 'stale' });
+  if (!done) return { error: '이미 처리한 요청입니다. 새로고침해주세요.' };
+  logger.info('admin.intro_request_resolved', { slug: done.slug, id, outcome, login: admin.login });
+  revalidatePath('/admin/audit');
+  return { message: outcome === 'fixed' ? '처리함으로 닫았습니다.' : '두었습니다.' };
 }

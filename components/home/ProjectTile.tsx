@@ -1,7 +1,14 @@
 /* eslint-disable @next/next/no-img-element -- 내부에 저장한 썸네일의 원본 비율과 크기를 그대로 쓴다 */
 import { ProductIcon, tileTint } from "@/components/ProductIcon";
 import { thumbnailPresentation } from "@/lib/domain/products/thumbnails/presentation";
-import { ogVariantSrc } from "@/lib/domain/products/og-variants";
+import { ogVariantSrc, ogVariantSrcSet } from "@/lib/domain/products/og-variants";
+
+/** 칸 폭 — 큰 카드는 home.css .projects-grid(최소 300px, 본문 1056px 에 세 칸), 작은 카드는 .compact-grid(최소 188px, 좁은 화면은 74%) */
+const TILE_SIZES = {
+  64: "(max-width: 652px) 100vw, (max-width: 1004px) 50vw, 340px",
+  44: "(max-width: 640px) 75vw, 220px",
+} as const;
+const TILE_WIDTHS = [320, 640] as const;
 
 /**
  * 카드 커버 — 카드의 대표 이미지 구획이다. 대표 이미지·README 그림은 전체 폭으로 자르지 않고,
@@ -9,8 +16,11 @@ import { ogVariantSrc } from "@/lib/domain/products/og-variants";
  * 바탕색은 slug 로 정해 같은 제품은 늘 같은 색이다.
  * 커버 규칙(토큰 바탕·README 그림)은 cards.css 에 있고 이 커버를 쓰는 카드(ProjectCard·CompactCard)가 가져온다 —
  * 여기서 CSS 를 가져오면 Node 에서 마크업만 그리는 검사(e2e thumbnail-fallback)가 깨진다.
+ *
+ * 그림은 칸 폭에 맞는 사본을 브라우저가 고른다(PERF-04, srcset 320·640 — 지금까지 늘 받던 640 보다 크게 받지 않는다).
+ * 목록 첫 줄(priority)은 바로 받는다(PERF-03) — 화면 첫 그림(LCP)이 늦게 받기(lazy) 때문에 늦었다.
  */
-export function ProjectTile({ slug, name, ogImage, size, installable = false, ai = false, category }: {
+export function ProjectTile({ slug, name, ogImage, size, installable = false, ai = false, category, priority = false }: {
   slug: string;
   name: string;
   ogImage: string | null;
@@ -21,6 +31,8 @@ export function ProjectTile({ slug, name, ogImage, size, installable = false, ai
   ai?: boolean;
   /** 모노그램 색을 정하는 분야 */
   category?: string;
+  /** 목록 첫 줄 — 늦게 받지 않고 먼저 받는다. 기본은 늦게 받기(lazy) */
+  priority?: boolean;
 }) {
   const internalImage = ogImage?.startsWith("/") && !ogImage.startsWith("//") ? ogImage : null;
   const presentation = thumbnailPresentation(internalImage);
@@ -30,12 +42,15 @@ export function ProjectTile({ slug, name, ogImage, size, installable = false, ai
       {preview ? (
         <img
           src={ogVariantSrc(internalImage, 640)!}
+          srcSet={ogVariantSrcSet(internalImage, TILE_WIDTHS) ?? undefined}
+          sizes={TILE_SIZES[size]}
           alt={`${name} · ${presentation.label}`}
           width={presentation.width}
           height={presentation.height}
           // 작은 README 로고는 늘리지 않는다(scale-down) — 대표 이미지는 커버에 맞춘다
           className={`tile-preview${presentation.kind === "repository_image" ? " tile-preview-readme" : ""}`}
-          loading="lazy"
+          loading={priority ? "eager" : "lazy"}
+          fetchPriority={priority ? "high" : undefined}
         />
       ) : (
         <span className="tile-icon"><ProductIcon name={name} ogImage={internalImage} size={size === 64 ? 96 : 64} category={category} /></span>

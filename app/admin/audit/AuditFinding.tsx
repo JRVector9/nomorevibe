@@ -17,6 +17,8 @@ export type AuditFindingView = {
  *
  * 주소는 새 탭으로 연다. 사람이 판단하는 근거는 모델의 사유가 아니라 지금 떠 있는 그 페이지다.
  * 사유는 두 줄로 접어 두고 눌러서 편다 — 한 화면에 더 많은 줄이 들어오게(ADM-32). 한글·원문은 화면 위 토글을 따른다.
+ * 이름·주소는 한 줄에, 사유 갈래는 사유 앞에 붙여 한 줄을 4줄(130~150px)에서 2~3줄(약 80px)로 줄였다.
+ * 긴 주소는 줄을 넘기지 않고 말줄임 — 전체는 마우스를 올리면 보이고, 이름을 누르면 그 페이지가 열린다.
  * 내리기는 다른 화면의 차단·내리기와 같은 확인 창(ConfirmAction)을 거친다(ADM-06) — 전에는 window.confirm 이었다.
  */
 export function AuditFinding({ finding }: { finding: AuditFindingView }) {
@@ -24,22 +26,26 @@ export function AuditFinding({ finding }: { finding: AuditFindingView }) {
   const [expanded, setExpanded] = useState(false);
   return (
     <tr className="border-t border-line align-top">
-      <td className="px-3 py-2">
-        <a href={finding.url} target="_blank" rel="noreferrer noopener" className="font-semibold hover:text-accent">{finding.name}</a>
-        {finding.owned && <span className="ml-2 rounded bg-bg-soft px-1.5 py-0.5 text-fg-3">주인 있음</span>}
-        <span className="mt-0.5 block break-all font-mono text-fg-3">{finding.url.replace(/^https?:\/\//, '')}</span>
-        <span className="mt-1 inline-block rounded bg-bg-soft px-1.5 py-0.5 font-semibold text-fg-2">{finding.reasonCategory}</span>
-        {finding.reason ? (
-          <button type="button" aria-expanded={expanded} onClick={() => setExpanded((now) => !now)} title={expanded ? '접기' : '사유 펼치기'}
-            className={`mt-1 block w-full text-left leading-[1.6] text-fg-2 ${expanded ? 'whitespace-pre-line' : 'line-clamp-2'}`}>
-            <ReasonText text={finding.reason} korean={finding.reasonKo} />
-          </button>
-        ) : <p className="mt-1 text-fg-3">사유 없음</p>}
+      <td className="w-full max-w-0 px-3 py-2">
+        <div className="flex min-w-0 items-baseline gap-2">
+          <a href={finding.url} target="_blank" rel="noreferrer noopener" className="max-w-[60%] shrink-0 truncate font-semibold hover:text-accent">{finding.name}</a>
+          {finding.owned && <span className="shrink-0 rounded bg-bg-soft px-1.5 py-0.5 text-fg-3">주인 있음</span>}
+          <span title={finding.url} className="min-w-0 truncate font-mono text-fg-3">{finding.url.replace(/^https?:\/\//, '')}</span>
+        </div>
+        <div className="mt-1 flex items-start gap-2">
+          <span className="shrink-0 rounded bg-bg-soft px-1.5 py-0.5 font-semibold text-fg-2">{finding.reasonCategory}</span>
+          {finding.reason ? (
+            <button type="button" aria-expanded={expanded} onClick={() => setExpanded((now) => !now)} title={expanded ? '접기' : '사유 펼치기'}
+              className={`min-w-0 flex-1 text-left leading-[1.6] text-fg-2 ${expanded ? 'whitespace-pre-line' : 'line-clamp-2'}`}>
+              <ReasonText text={finding.reason} korean={finding.reasonKo} />
+            </button>
+          ) : <p className="text-fg-3">사유 없음</p>}
+        </div>
         {state?.error && <p className="mt-1 text-down">{state.error}</p>}
         {state?.message && <p className="mt-1 text-up">{state.message}</p>}
       </td>
       <td className="whitespace-nowrap px-2 py-2 text-fg-2">{finding.category}</td>
-      <td className="whitespace-nowrap px-2 py-2 font-mono text-fg-2">
+      <td className="min-w-[7.5rem] whitespace-nowrap px-2 py-2 font-mono text-fg-2">
         {typeof finding.confidence === 'number' ? finding.confidence.toFixed(2) : '—'}
         <span className="block font-sans text-fg-3">{finding.reviewedAt ?? ''}</span>
       </td>

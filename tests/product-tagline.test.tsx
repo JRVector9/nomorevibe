@@ -7,8 +7,11 @@ const render = (props: Parameters<typeof ProductTagline>[0]) => renderToStaticMa
 
 describe("ProductTagline — 한국어 소개를 먼저, 원문은 뒤에(UX-13)", () => {
   it("한국어가 없으면 원문과 AI 출처만 — 메이커 원문에는 출처를 붙이지 않는다", () => {
+    // 영어 원문 줄에는 lang="en" — 카드·행에서도 화면 읽기 프로그램이 영어로 읽는다(A11Y-06)
     expect(render({ tagline: "Edit videos locally", source: "maker", className: "t" }))
-      .toBe('<p class="t" title="Edit videos locally">Edit videos locally</p>');
+      .toBe('<p class="t" title="Edit videos locally" lang="en">Edit videos locally</p>');
+    expect(render({ tagline: "로컬 동영상 편집기", source: "maker", className: "t" }))
+      .toBe('<p class="t" title="로컬 동영상 편집기">로컬 동영상 편집기</p>');
     expect(render({ tagline: "Edit videos locally", source: "ai_readme" })).toContain("AI가 요약 · README에서");
   });
 

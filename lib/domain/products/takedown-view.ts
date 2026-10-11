@@ -38,6 +38,36 @@ export function takedownReasonText(kind: TakedownKind | null | undefined, reason
   return text ? `[${TAKEDOWN_KINDS[kind]}] ${text}` : `[${TAKEDOWN_KINDS[kind]}]`;
 }
 
+/**
+ * 소개 수정 요청(2026-10-08 UX 감사 UX-18) — 상세 폼의 셋째 갈래. 내려달라는 요청과 다른 길로 간다(intro-requests.ts):
+ * 따로 쌓이고, 검색엔진 노출·CDN 에 아무 영향이 없다. 무엇이 틀렸는지 적어야 받는다(빈 요청은 고칠 수 없다).
+ * 연락처는 받지 않는다(D5) — 고쳐졌는지는 상세의 소개로만 보인다.
+ */
+export const INTRO_REQUEST_LABEL = "소개 수정 요청";
+export const INTRO_REQUEST_MIN = 5;
+export const INTRO_REQUEST_MAX = 500;
+export const INTRO_REQUEST_RECEIVED = "소개 수정 요청을 받았습니다. 관리자가 확인한 뒤 고칠 내용이면 소개를 고칩니다. 연락처는 받지 않으니 결과는 이 페이지의 소개로 확인해 주세요.";
+
+/** 받을 요청 글 — 앞뒤 빈칸을 빼고 길이를 본다. 맞지 않으면 화면에 보일 까닭 */
+export function introRequestMessage(raw: unknown): { ok: true; message: string } | { ok: false; error: string } {
+  const message = typeof raw === "string" ? raw.trim() : "";
+  if (message.length < INTRO_REQUEST_MIN) return { ok: false, error: `무엇이 틀렸고 어떻게 적어야 하는지 ${INTRO_REQUEST_MIN}자 이상 적어 주세요` };
+  if (message.length > INTRO_REQUEST_MAX) return { ok: false, error: `요청은 ${INTRO_REQUEST_MAX}자까지입니다` };
+  return { ok: true, message };
+}
+
+/** 관리자 목록 한 줄 — 서버가 만들어 화면으로 넘긴다(시각은 ISO 문자열) */
+export type IntroRequestEntry = {
+  id: number;
+  slug: string;
+  message: string;
+  createdAt: string;
+  ageHours: number;
+  requesterHash: string | null;
+  /** 제품이 그 사이 지워졌으면 null */
+  product: { name: string; url: string; tagline: string; status: string } | null;
+};
+
 export const DISMISS_REASONS = {
   test_spam: "테스트·장난",
   not_owner: "주인이 아닌 것 같음",

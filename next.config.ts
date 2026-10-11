@@ -46,13 +46,20 @@ const nextConfig: NextConfig = {
       { source: "/c/:category", headers: tag("html,lists") },
       { source: "/popular", headers: tag("html,lists") },
       { source: "/policy", headers: tag("html") },
+      { source: "/launch", headers: tag("html") },
       { source: "/rankings/:key", headers: tag("html,lists") },
       { source: "/p/:slug", headers: tag("html,p-:slug") },
+      // sitemap 은 상세 주소 목록이다 — 제품이 내려가면 목록 화면과 함께 지운다
+      { source: "/sitemap.xml", headers: tag("html,lists") },
       { source: "/", ...edge(60) },
       { source: "/c/:category", ...edge(60) },
       { source: "/popular", ...edge(60) },
       // 게재 기준은 글이 거의 바뀌지 않는다 — 배포 뒤에는 html 태그로 지운다
       { source: "/policy", ...edge(600) },
+      // 등록 안내도 명령과 글뿐이라 거의 바뀌지 않는다(PERF-05) — 게재 기준과 같이 10분, 배포 뒤 html 태그로 지운다
+      { source: "/launch", ...edge(600) },
+      // 검색엔진만 읽고 서버 안에서도 제품 목록을 10분 들고 있다(app/sitemap.ts) — 한 시간 저장한다(SEO-07)
+      { source: "/sitemap.xml", ...edge(3600) },
       { source: "/rankings/:key", ...edge(60) },
       { source: "/p/:slug", ...edge(240) },
     ];

@@ -628,6 +628,34 @@ export const takedownRequests = pgTable("takedown_requests", {
 export type TakedownRequest = typeof takedownRequests.$inferSelect;
 
 /**
+ * 소개 수정 요청(2026-10-08 UX 감사 UX-18, 0065).
+ *
+ * 주인 없는 제품의 운영자가 상세의 요청 폼에서 한 줄 소개를 고쳐 달라고 한다. 내려달라는 요청과 표를 나눈다 —
+ * 그 표는 제품마다 한 행이라 덮이고, 처리 전 행이 있으면 상세가 바로 noindex 가 된다(indexing.ts 2번).
+ * 이 요청은 노출에 영향이 없다. 요청마다 한 행이고, 관리자가 고치거나 두면 처리 시각과 결과를 적는다.
+ */
+export const introCorrectionRequests = pgTable("intro_correction_requests", {
+  id: serial("id").primaryKey(),
+  productId: integer("product_id").notNull().references(() => products.id, { onDelete: "cascade" }),
+  slug: varchar("slug", { length: 80 }).notNull(),
+  /** 무엇이 틀렸고 어떻게 적어야 하는지 — 비울 수 없다 */
+  message: varchar("message", { length: 500 }).notNull(),
+  /** 보낸이 — 내려달라는 요청과 같은 해시(takedownRequesterHash). 주소를 모르면 null */
+  requesterHash: varchar("requester_hash", { length: 64 }),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  /** 처리 시각. null 이면 아직 사람이 안 봤다 */
+  handledAt: timestamp("handled_at"),
+  handledBy: varchar("handled_by", { length: 120 }),
+  /** 'fixed' | 'dismissed' */
+  outcome: varchar("outcome", { length: 20 }),
+  note: text("note"),
+}, (table) => [
+  index("intro_correction_requests_pending_idx").on(table.productId).where(sql`${table.handledAt} is null`),
+]);
+
+export type IntroCorrectionRequest = typeof introCorrectionRequests.$inferSelect;
+
+/**
  * rate limit 버킷.
  *
  * 인메모리로 두면 인스턴스마다 한도가 따로 생겨, 2대로 늘리는 순간 실제 한도가 2배가 된다.

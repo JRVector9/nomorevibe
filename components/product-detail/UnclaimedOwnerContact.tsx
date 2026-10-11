@@ -2,7 +2,8 @@ import Link from "next/link";
 import { githubOwnerFromRepositoryUrl } from "@/lib/domain/products/github-owner";
 import { TakedownForm } from "@/app/p/[slug]/TakedownForm";
 
-const LINK = "text-accent-ink hover:underline";
+/** 글 속 링크 — 색만으로 가려지지 않게 밑줄을 늘 긋는다(A11Y-03) */
+const LINK = "text-accent-ink underline underline-offset-2";
 
 /**
  * 운영자 상자 — 막다른 안내가 되지 않게 다음 걸음을 링크로 준다(2026-10-08 UX 감사 UX-18).
@@ -20,7 +21,8 @@ export function UnclaimedOwnerContact({ repoUrl, slug, installable = false }: { 
       {installable ? (
         <>
           <p className="mt-1 text-[13px] leading-5 text-fg-2">
-            설치형 프로젝트는 배포 도메인이 없어 명령으로 소유를 확인할 수 없습니다. 소개를 고치거나 저장소 소유를 확인하려면 관리자에게 요청해 주세요.
+            설치형 프로젝트는 배포 도메인이 없어 명령으로 소유를 확인할 수 없습니다. 소개를 고치려면 아래 요청에서 &lsquo;소개 수정 요청&rsquo;을 골라
+            무엇이 틀렸는지 적어 주세요. 저장소 소유를 확인하려면 관리자에게 요청해 주세요.
           </p>
           <Link prefetch={false} href="/policy#contact"
             className="mt-3 inline-flex min-h-11 items-center rounded-full bg-bg-soft px-5 text-[14px] font-medium text-fg">
