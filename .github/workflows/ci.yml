@@ -56,6 +56,8 @@ jobs:
       - run: npm run build
         env:
           DATABASE_URL: postgres://build:build@localhost:5432/build
+      # 주요 화면의 첫 로드 JS(br)가 기준선(scripts/bundle-baseline.json)보다 10% 넘게 커지면 실패한다(PERF-06)
+      - run: node scripts/bundle-size.mjs
 
   integration:
     needs: scope

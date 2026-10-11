@@ -97,6 +97,28 @@ export function checkKoreanTagline(output: string, source: { name: string; tagli
   return { ok: true, line };
 }
 
+/** 다시 보낼 앞부분 — 이 길이 안에서 처음 끝나는 문장·구절. 너무 짧은 머리(이름뿐)는 건너뛴다 */
+const LEAD_MAX = 120;
+const LEAD_MIN = 20;
+/** 문장·구절이 끝나는 자리 — 낱말 사이의 마침표·쌀점(5.5 같은 소수점은 아니다), 전각 문장부호, 띄어 쓴 | — – */
+const CLAUSE_END = /[.!?:;](?=\s)|[。！？：；]|\s[|—–]\s/g;
+
+/**
+ * 긴 소개의 앞 문장 — 같은 소개가 '너무 긺'·'빈 줄'로 버려졌을 때 다시 보낼 글(lib/jobs/products/korean-tagline.ts).
+ *
+ * 모델은 180자짜리 영어 소개를 80자 안으로 줄이지 못해 같은 입력에 네 번 버려지곤 했다(ShellRS·lemo-opuscar, 2026-10-11).
+ * 앞 문장만 보내면 한 줄로 선다. 검사(checkKoreanTagline)는 보낸 앞부분을 원문으로 삼으므로 지어낸 말은 그대로 걸린다.
+ * 끊을 자리가 없으면 원문 그대로다.
+ */
+export function leadClause(tagline: string): string {
+  const text = tagline.trim();
+  for (const match of text.matchAll(CLAUSE_END)) {
+    if (match.index > LEAD_MAX) break;
+    if (match.index >= LEAD_MIN) return text.slice(0, match.index).trim();
+  }
+  return text;
+}
+
 export type KoreanTaglineBatch = { ok: true; outputs: string[] } | { ok: false; error: string };
 
 /**

@@ -14,6 +14,11 @@ import { listProductSlugs } from "./repository";
 const PUBLIC: ProductStatus[] = ["seeded", "verified"];
 /** 검사에서 이만큼 버리면 손을 뗀다 — 원문이 보인다. 게이트웨이 실패는 세지 않고 하루 간격까지 늘려 가며 계속 본다 */
 export const MAX_REJECTIONS = 4;
+/**
+ * 홈에 보이는 제품은 손을 뗀 뒤에도 이만큼 더 본다 — 다시 볼 때는 앞 문장만 보내므로(잡의 taglineSource) 같은 입력의 되풀이가 아니다.
+ * 지금 뜨는 상위의 ShellRS·lemo-opuscar 가 '너무 긺'으로 네 번 버려져 원문으로 남았다(2026-10-11).
+ */
+export const HOME_EXTRA_REJECTIONS = 2;
 /** 등재 뒤 이 기간은 '새 제품'으로 맨 앞에 선다 */
 const NEW_DAYS = 3;
 /** 홈 목록 하나에서 앞쪽 몇 개를 '홈에 보이는 제품'으로 칠지 — 첫 화면과 '더 보기' 한두 번 */
@@ -26,6 +31,8 @@ export type KoreanTaglineTask = {
   productId: number; name: string; tagline: string; repoUrl: string | null;
   /** 같은 소개로 시도한 횟수(소개가 바뀌었으면 0) */
   attempts: number;
+  /** 같은 소개의 마지막 실패 코드(소개가 바뀌었거나 실패가 없으면 null) */
+  lastError?: string | null;
 };
 
 /**
@@ -46,21 +53,26 @@ export async function homeListSlugs(depth = HOME_DEPTH): Promise<string[]> {
  * 옮길 공개 제품 — 아직 안 옮겼거나, 소개가 바뀌었거나, 실패를 다시 볼 때가 된 것. 이미 한국어인 소개(isKoreanLine)는 빼고.
  *
  * 차례(2026-10-09 운영자 결정 D3): 새로 올라온 제품(NEW_DAYS 안, 최신순) → 홈에 보이는 제품 → 나머지는 스타 많은 순.
- * 실패는 retry_at 이 지나야 다시 서므로 한 건이 앞을 막지 않는다.
+ * 실패는 retry_at 이 지나야 다시 서므로 한 건이 앞을 막지 않는다. 검사에서 MAX_REJECTIONS 번 버린 것은 손을 떼지만,
+ * 홈에 보이는 제품은 HOME_EXTRA_REJECTIONS 번 더 본다 — 첫 화면에 원문이 남는 것이 가장 눈에 띈다.
  */
 export async function pendingKoreanTaglines(limit: number, homeSlugs: readonly string[]): Promise<KoreanTaglineTask[]> {
+  const home = slugArrayPredicate(products.slug, [...homeSlugs]);
   const tier = sql`case when ${listedAt} > now() - make_interval(days => ${NEW_DAYS}::int) then 0
-    when ${slugArrayPredicate(products.slug, [...homeSlugs])} then 1 else 2 end`;
+    when ${home} then 1 else 2 end`;
+  const same = sql`${k.sourceTagline} = ${products.tagline}`;
   const rows = await db.select({
     productId: products.id, name: products.name, tagline: products.tagline, repoUrl: products.repoUrl,
-    attempts: sql<number>`case when ${k.sourceTagline} = ${products.tagline} then ${k.attempts} else 0 end`,
+    attempts: sql<number>`case when ${same} then ${k.attempts} else 0 end`,
+    lastError: sql<string | null>`case when ${same} then ${k.errorCode} end`,
   }).from(products)
     .leftJoin(k, eq(k.productId, products.id))
     .where(and(
       inArray(products.status, PUBLIC),
       NEEDS_KOREAN,
       sql`(${k.productId} is null or ${k.sourceTagline} <> ${products.tagline}
-        or (${k.errorCode} is not null and (${k.errorCode} not like 'rejected:%' or ${k.attempts} < ${MAX_REJECTIONS})
+        or (${k.errorCode} is not null and (${k.errorCode} not like 'rejected:%' or ${k.attempts} < ${MAX_REJECTIONS}
+              or (${home} and ${k.attempts} < ${MAX_REJECTIONS + HOME_EXTRA_REJECTIONS}))
             and (${k.retryAt} is null or ${k.retryAt} <= now())))`,
     ))
     .orderBy(tier, sql`case when ${listedAt} > now() - make_interval(days => ${NEW_DAYS}::int) then ${listedAt} end desc nulls last`,
