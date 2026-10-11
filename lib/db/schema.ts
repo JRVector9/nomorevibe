@@ -688,3 +688,4 @@ export * from './product-audit-schema';
 export * from './public-user-schema';
 export * from './github-user-schema';
 export * from './github-star-schema';
+export * from './product-feedback-schema';

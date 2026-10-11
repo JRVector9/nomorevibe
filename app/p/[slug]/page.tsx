@@ -14,6 +14,8 @@ import { ProductHero } from "@/components/product-detail/ProductHero";
 import { GithubStarButton } from "@/components/product-detail/GithubStarButton";
 import { RelatedRow } from "@/components/product-detail/RelatedRow";
 import { UpdateTimeline } from "@/components/product-detail/UpdateTimeline";
+import { FeedbackForm } from "@/components/product-detail/FeedbackForm";
+import { FeedbackList } from "@/components/product-detail/FeedbackList";
 import { UnclaimedOwnerContact } from "@/components/product-detail/UnclaimedOwnerContact";
 import { categoryHref } from "@/components/home/browse-state";
 import { productShareImage, shareMetadata } from "@/lib/copy/share";
@@ -26,7 +28,7 @@ import { countProducts } from "@/lib/domain/products/repository";
 import type { Category } from "@/lib/domain/products/schema";
 import { productJsonLd, serializeJsonLd } from "@/lib/seo/product-json-ld";
 import { siteOrigin } from "@/lib/site";
-import { githubStarEnabled } from "@/lib/domain/github-integration/flags";
+import { githubStarEnabled, productFeedbackEnabled } from "@/lib/domain/github-integration/flags";
 import { parseGithubRepository } from "@/lib/github/repositories";
 
 export const dynamic = "force-dynamic";
@@ -122,6 +124,12 @@ async function ProductDetail({ slug, category }: { slug: string; category: strin
           <IntroSection product={detail.product} profile={detail.profile} readmeExcerpt={detail.readmeExcerpt} unclaimed={detail.unclaimed} />
           <LanguageBar repository={detail.repository} />
           <UpdateTimeline updates={detail.updates} now={now} />
+          {productFeedbackEnabled() && (
+            <section className="space-y-5" aria-label="프로젝트 피드백">
+              <FeedbackForm key={detail.product.slug} slug={detail.product.slug} />
+              <FeedbackList key={detail.product.slug} slug={detail.product.slug} />
+            </section>
+          )}
         </div>
 
         <aside id="evidence" className="flex min-w-0 flex-[1_1_300px] flex-col gap-4">
