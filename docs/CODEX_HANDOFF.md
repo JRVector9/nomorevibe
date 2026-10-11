@@ -6544,3 +6544,32 @@ gh pr create --base main --head docs/home-ranking-policy-proposal-20261012 --tit
 현재 누락은 두 APP_CLIENT_SECRET과 LOGIN_EMAIL_API_KEY/LOGIN_EMAIL_FROM 네 입력이다. 생성 완료와 로컬 입력 완료를 구별한다. 사용자에게 Client secret 보관 파일 경로 또는 staging 직접 입력 후 완료 답변을 async로 요청했다. 값 자체를 채팅에 요청하지 않았다. 운영 주입·flag ON·브라우저 자격증명 생성/Save·기능 테스트는 하지 않았다. 사용자 입력이 도착하면 준비 상태를 다시 메모리에서 확인한다.
 
 제안문서와 앞 handoff를 head88778cd로 커밋·push하고 PR368을 만들었다. 최신-base240cbdfd에서 CI38153698272의 필수 check 성공(문서용 quality/integration/image 발행 skip). 이 추가 기록을 push한 후 **새 head의 필수 CI를 다시 확인**하고 정상 병합한다. 문서 병합은 정책 구현/운영 활성화가 아니다. 다음 명령: git diff --check; handoff만 커밋/push; gh pr checks 368; gh pr view 368 --json headRefOid,baseRefOid,mergeStateStatus,statusCheckRollup. 최신 main/CI를 확인한 뒤 gh pr merge 368 --merge --match-head-commit <확인한HEAD> 하고 사용자 root main을 fast-forward한다.
+
+### 2026-10-12 — .env.local Client Secret 연결
+
+사용자가 두 secret을 root `.env.local`에 저장했다고 명시했다. integration_reactivation(gpt-6.1-sol/xhigh)이 해당 파일에서 `GITHUB_STAR_SECRET`과 `GITHUB_FEEDBACK_SECRET`의 존재를 확인했고, Root는 사용자 생성 맥락에 따라 각 `GITHUB_*_APP_CLIENT_SECRET`으로만 매핑하도록 승인했다. staging 반영 후 원본 바이트 보존·대상 값 일치·0600/0700·12개 GitHub/내부 키 존재를 확인했다. 웹훅 값으로 매핑하거나 기존 DB/collector/admin 인증값을 복사하지 않았다. `.env.local`에 Resend/EMAIL/MAIL/SMTP 관련 필드는 없으며 현재 누락은 LOGIN_EMAIL_API_KEY/LOGIN_EMAIL_FROM 두 개다. 필요한 이름과 검증 발신 주소를 async로 요청했다. 비밀값 원문은 요청/출력/커밋하지 않았다.
+
+Feedback PEM은 메모리 JWT를 사용한 GitHub READ ONLY GET /app에서 HTTP200/App5275280 일치까지 확인했다. 실제 이메일·OAuth·스타·Issue·웹훅 기능 테스트는 하지 않았다. 준비된 값을 웹2/publisher2/maintenance2 저장 설정에만 주입하는 임시 helper/preflight를 서브에이전트가 준비 중이다. Root 코드 검토 전 쓰기 금지, 배포/기능 ON 금지. 메일·사용자 직접 웹훅 secret Save가 준비된 후 실행 반영을 함께 진행한다. 별도 정책 제안/운영 상태 문서를 검토했고 git diff --check 통과, 로컬 테스트/빌드/E2E 미실행.
+
+수정 파일은 정책 제안, 이 handoff, docs/operations/2026-10-11-star-feedback-reactivation.md의 최신 키 상태다. PR368 head d752320의 최신-base240cbdfd 필수 CI38153917814 check가 성공했다. 이 추가 기록을 push하면 새 head에 대해 다시 확인해야 한다. 정책은 여전히 제안 단계이며 DB·스케줄·앱 코드를 작성/변경하지 않았다. 사용자 untracked PPT/prototypes 및 paused 소개 검수는 보존한다.
+
+### 2026-10-12 01:21 KST — 준비된 App 키 운영 저장 설정 반영
+
+Root가 /private/tmp/nomorevibe-integration-env-stage-20261012.py를 읽고 두 Client Secret distinct 및 새 PUBLIC_AUTH_SECRET/GITHUB_INTEGRATION_SECRET의 기존 관리자 AUTH_SECRET 재사용 방지 guard를 추가하게 한 뒤 다시 검토했다. read-only preflight의 새 rollback snapshot /private/tmp/nomorevibe-integration-env-preflight-uf3b5sr8/before.json은 상위0700/파일0600이다. 내용 출력/커밋 금지. 이 snapshot으로 --apply를 승인했고 서브에이전트가 application.saveEnvironment만 호출해 6앱을 모두 저장했다. 오류/부분 실패 없이 완료했다.
+
+01:21:47KST 별도 fresh GET 확인: 두웹12키존재·두웹간12값일치, worker4개FeedbackID/PEM/origin존재, 전체6앱FeedbackID/PEM/primaryorigin일치. 네flags모든6앱명시false. 비대상env·이미지·source·replicas·기존credential·RELEASE_TAG 보존, applicationStatus=done 확인. saveDockerProvider/deploy/메일/스타/Issue/제공자설정 변경은 하지 않았다. **저장설정만 반영했으며 runtime 배포/키 전달·OAuth·기능 성공은 아직 검증하지 않았다.**
+
+남은 일: 사용자에게 요청한 LOGIN_EMAIL_API_KEY/LOGIN_EMAIL_FROM 및 각 GitHub General의 staging 웹훅 secret 직접 입력·Save 확인. 현재 helper는 메일 키 주입이나 flag ON/배포를 하지 않는 목적이다. 입력이 추가되면 별도 최신 snapshot·원본 설정 검토 후 메일을 웹2앱에 반영하고, runbook의 공통 키·origin·publisher/maintenance 실행 릴리스 요건을 확인해 배포/활성화한다. 과거 apply snapshot을 그대로 재실행하지 않는다. 기능 테스트는 사용자 담당, paused소개검수 유지.
+
+다음 문서 마무리 명령:
+```sh
+cd /private/tmp/nomorevibe-home-ranking-policy-proposal-20261012
+git diff --check
+git add docs/CODEX_HANDOFF.md docs/operations/2026-10-11-star-feedback-reactivation.md
+git commit -m 'docs: record GitHub app credential staging'
+git push
+gh pr edit 368 --body-file /private/tmp/nomorevibe-home-ranking-policy-pr-body.md
+gh pr checks 368
+gh pr view 368 --json headRefOid,baseRefOid,mergeStateStatus,statusCheckRollup
+```
+최신-base 필수CI가 성공한 실제head를 --match-head-commit으로 정상병합한 후 root main을 fast-forward한다. 홈 정책 보고서 링크를 사용자에게 전달하되 실제 신규/급상승 코드가 아직 변경되지 않았음을 알린다.

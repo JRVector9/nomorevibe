@@ -128,3 +128,26 @@ PR #363(정보 패널 축소·도구 섹션 제거), #364(미리보기 확대), 
 기존 웹 설정과 복제본 수를 보존했다. 기능 플래그는 여전히 실효 false이고
 App 등록·키 주입·메일 발신 설정·기능 실사용 검증은 미완료다. 사용자에게 요청한
 등록 확인과 Resend 발신 정보가 도착하면 해당 설정을 이어간다.
+
+## 사용자 생성 키 연결 — 2026-10-12
+
+두 GitHub App은 등록 완료했고 공개 설치·최소 권한·콜백·웹훅 설정을 확인했다.
+사용자가 Client Secret을 `.env.local`에 보관했다고 알려 주어
+`GITHUB_STAR_SECRET`을 `GITHUB_STAR_APP_CLIENT_SECRET`으로,
+`GITHUB_FEEDBACK_SECRET`을 `GITHUB_FEEDBACK_APP_CLIENT_SECRET`으로 연결했다.
+원본 파일은 변경하지 않았다. 이 두 값은 OAuth Client Secret이며 웹훅 secret으로 사용하지 않는다.
+
+사용자가 제공한 Feedback PEM은 비밀값을 출력하지 않고 형식·키 크기를 확인했고,
+메모리에서 만든 JWT로 GitHub `GET /app`을 읽어 HTTP 200과 App ID 일치를 확인했다.
+이 확인은 개인 스타·OAuth·메일 발송·이슈 작성의 성공을 의미하지 않는다.
+
+저장소 밖 0700 디렉터리의 0600 staging 파일에는 GitHub와 서버 내부 12개 값이 준비됐다.
+현재 누락은 **`LOGIN_EMAIL_API_KEY`와 `LOGIN_EMAIL_FROM`**이다.
+Root가 사전 점검과 반영 코드를 검토한 뒤 준비된 값을 운영 저장 설정에 반영했다.
+**2026-10-12 01:21:47 KST** 재조회에서 두 웹의 12개 값과
+publisher·maintenance 네 앱의 Feedback App ID·PEM·origin을 확인했다.
+앱 간 값 일치와 비대상 환경값·기존 자격 정보·이미지·source·복제본·릴리스 보존도 확인했다.
+네 플래그는 6개 앱 모두 명시적으로 false다. **배포하지 않았으므로 실행 컨테이너 반영은 아직이다.**
+메일·스타·이슈 쓰기는 수행하지 않았다. 메일 두 항목을 준비하고 제공자 웹훅 입력을 확인한 뒤
+실행 반영과 단계별 활성화를 이어간다.
+GitHub General의 웹훅 secret은 staging의 해당 값으로 사용자 직접 입력·Save가 필요하다.
