@@ -6636,3 +6636,17 @@ PR372 headbd378705/최신base01b9d6d의 CI38159743423는 통합3개 모두성공
 
 
 PR04 fixture 보완 완료: Root가 tests2개diff를 읽고 기존목적을보존한전용getStarGrowthPage mock/typedfixture, recent feed count1, fallbackcount8/offset0·9, 새제목과실제띠렌더, /rising활성·new=1비활성기대를확인했다. 새it/test케이스와로컬실행없음. git diff --check실제exit0. tests2+docs2최소커밋push후새HEAD의최신base원격CI결과로판단한다.
+
+
+### 2026-10-12 — 홈 PR01~04 구현·리뷰·전달 완료 (최신 상태)
+
+- 현재 목적: API-key 입력을 제외한 승인된 홈 기준 PR01~04의 병렬 구현·충돌 관리·부모 리뷰·최종 보고. 코드 단계 완료이며 운영 적용은 별도다. 모든 서브에이전트/독립 CLI는 gpt-6.1-sol/xhigh였다.
+- 완료: PR369→370→371→372를 의존 순서대로 정상 병합. 마지막 main SHA `ccc7ed3b3ba168a67f7dbe09ba06325b88654b00`; 사용자 root main도 이 SHA로 fast-forward 완료. 원래 미추적 PPT/prototype 자료를 보존했다.
+- 실제 필수 CI: PR369 run38157584835, PR370 run38158817772, PR371 run38159154251, PR372 최종 run38160248035 모두 scope/quality/integration3개/check success. PR372 head25f83db/최신base01b9d6d 확인 후 --match-head-commit 정상merge했다. PR372 첫 run38159743423 quality6실패/check실패도 기록했으며 기존 화면 fixture2파일 보완 후 새HEAD에서 성공했다.
+- 검증 명령/결과: `git diff --check` 및 `git diff --cached --check` exit0; `gh pr checks 372 --watch --interval 10` exit0; `gh pr view 372 --json state,mergeCommit,mergedAt,headRefOid` MERGED/ccc7ed3 확인. 로컬 테스트/typecheck/lint/build/E2E/앱 실행은 사용자 지시로 미실행. 새 테스트 케이스 없음. 소스 재리뷰 추가 지적 없음.
+- 수정 파일: PR369의 repository/view/신규 홈·CompactCard·Methodology·crawl-schema/0073/journal와 기존 integration fixture3개; PR370의 schema/0074/journal/policy/observation job/catalog/registry/click-rollup/worker, collector github-repositories/github/accounts/apps와 기존 fixture2개; PR371의 lib/domain/products/star-growth.ts; PR372의 app/page.tsx/app/rising/page.tsx, CompactCard/CompactRow/MethodologyDialog/SiteHeader/StarGrowthMetric/StarGrowthSummary, 기존 home-unclaimed/head-chrome fixture2개. 최종 상태 보고는 docs/operations/2026-10-12-home-ranking-implementation.md와 이 handoff다.
+- 핵심 결정: 신규는 현재 GitHub 저장소 생성일의 KST완료7일/스타50이상; 급상승은 KST00/08/16 닫힌 T/T−24h, 실측23~25h, 회차스타50~1,999/+10이상, 연결버전/GitHubID 일치와 고정순위. 기존 job 엔진·별도stars lane·quota/lease를 재사용하고 분당 DB 재개점검과 하루3회 관측창의 GitHub수집을 구별한다. 기존20h writer/일반 StarMetric 유지.
+- 실패/보완: 신규 현재URL누락/Date decoder 유실/헤더활성표시 및 관측 cooldown재시도소모/마감후dispatch/느린Appmint를 최소 수정하고 재리뷰했다. 문서 덮어쓰기 dcf6d1b는 bd37870 새 일반커밋으로 원래 handoff이력을 복원했으며 최종PR에는 역사 삭제 없음. forcepush/이력재작성 없음.
+- 남은 운영 작업: 이미지 발행 확인→소비자 drain→migration0073/0074 한 번 적용·검증→관측워커 같은SHA 배포→최소24시간/4닫힌회차 자료축적→공개UI 전환 및 사용자 기능확인. 이번 단계에서 운영DB/migration/deploy/flagON/제공자설정/API-key 입력 없었음. Resend키/검증FROM과 사용자 직접 GitHub webhook Save는 기존 활성화대기항목. 스테이징에 저장한6앱 GitHub설정과 flags false 유지. paused소개검수 재개금지.
+- 정확한 다음 읽기 명령 (사용자 root main): `git status --short --branch`; `git log -5 --oneline`; `gh run list --branch main --workflow CI --limit 3`; `cat docs/operations/2026-10-12-home-ranking-implementation.md`; `sed -n '90,150p' docs/operations/independent-workers-runbook.md`; `cat docs/operations/github-stars-feedback-runbook.md`. 실제 운영migration의직접DB설정은 최신 안전스냅샷으로 확인하고 stale로컬.env를 사용하지 않는다. 배포의 --migration-verified는실제적용성공후에만사용. 비밀 .env/PEM/rollbacksnapshot 출력/커밋금지.
+- 로컬 프로젝트 일지: `/Users/jr/Library/CloudStorage/SynologyDrive-sync_data/Obsidian-Vault/프로젝트 일지/nomorevibe/2026-10-12 신규 프로젝트 기준과 8시간 스타 관측 구현.md`에 코드완료/운영미반영을 구별해 갱신한다.
