@@ -19,6 +19,8 @@ export type RepositoryRef = { owner: string; name: string };
 
 /** 저장소 객체를 받았을 때 함께 적는 것 */
 export type RepositoryFacts = {
+  /** Immutable GitHub node ID; optional for older injected collector results. */
+  repositoryId?: string;
   stars: number | null;
   ownerType: "User" | "Organization" | null;
   archived: boolean;
@@ -39,7 +41,7 @@ export type RepositoryBatchResult =
   | { ok: false; error: GitHubFailure };
 
 const SEGMENT = /^[A-Za-z0-9_.-]+$/;
-const FIELDS = "nameWithOwner isArchived isEmpty isDisabled isLocked pushedAt stargazerCount owner { __typename }";
+const FIELDS = "id nameWithOwner isPrivate isArchived isEmpty isDisabled isLocked pushedAt stargazerCount owner { __typename }";
 const alias = (index: number) => `r${index}`;
 
 /** owner·name 은 githubOwnerFromRepositoryUrl 이 이미 걸렀지만 질의에 바로 넣으므로 여기서도 막는다 */
@@ -60,7 +62,7 @@ function asObject(value: unknown): Record<string, unknown> | null {
 
 /**
  * 별칭 하나의 답을 상태로 바꾼다.
- * - 객체: 비활성·잠김 → blocked, 빈 저장소(isEmpty) → empty, 나머지 → ok
+ * - 객체: 비공개·비활성·잠김 → blocked, 빈 저장소(isEmpty) → empty, 나머지 → ok
  * - null + NOT_FOUND → not_found, null + FORBIDDEN → blocked
  * - 그 밖의 오류나 깨진 객체 → 모름(null). 상태를 바꾸지 않는다
  */
@@ -75,11 +77,13 @@ export function mapRepositoryBatch(repos: readonly RepositoryRef[], data: Record
       const stars = node.stargazerCount;
       const ownerType = asObject(node.owner)?.__typename;
       const pushedAt = typeof node.pushedAt === "string" && Number.isFinite(Date.parse(node.pushedAt)) ? node.pushedAt : null;
-      const status: RepoStatus = node.isDisabled === true || node.isLocked === true ? "blocked"
+      const repositoryId = typeof node.id === "string" && node.id.trim() && node.id.length <= 200 ? node.id : null;
+      const status: RepoStatus = node.isPrivate === true || node.isDisabled === true || node.isLocked === true ? "blocked"
         : node.isEmpty === true ? "empty" : "ok";
       return {
         status,
         facts: {
+          ...(repositoryId ? { repositoryId } : {}),
           stars: typeof stars === "number" && Number.isInteger(stars) && stars >= 0 && stars <= 2147483647 ? stars : null,
           ownerType: ownerType === "User" || ownerType === "Organization" ? ownerType : null,
           archived: node.isArchived === true,
@@ -95,8 +99,8 @@ export function mapRepositoryBatch(repos: readonly RepositoryRef[], data: Record
   });
 }
 
-/** 한 묶음(최대 100개). 한도·인증 실패는 묶음 전체의 실패로 돌려준다 — 부른 쪽이 기다린다 */
-export async function checkRepositories(repos: readonly RepositoryRef[], options: { timeoutMs?: number } = {}): Promise<RepositoryBatchResult> {
+/** 한 묶음(최대 50개). 한도·인증 실패는 묶음 전체의 실패로 돌려준다 — 부른 쪽이 기다린다 */
+export async function checkRepositories(repos: readonly RepositoryRef[], options: { timeoutMs?: number; deadlineAt?: number } = {}): Promise<RepositoryBatchResult> {
   const result = await githubGraphql<Record<string, unknown>>(repositoryBatchQuery(repos), options);
   if (!result.ok) return result;
   // 별칭 오류 없이 data 가 통째로 없으면(질의 오류·서버 시간 초과) 묶음 전체를 모른다

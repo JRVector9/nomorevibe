@@ -83,6 +83,8 @@ export const products = pgTable("products", {
   ogImage: text("og_image"),
   makerName: varchar("maker_name", { length: 120 }),
   repoUrl: text("repo_url"),
+  /** DB increments only when repo_url changes; observations must not bridge a relink. */
+  repoLinkVersion: integer("repo_link_version").notNull().default(1),
   /** GitHub 저장소 메타. 조회하지 못한 값은 0이나 개인 계정으로 추정하지 않는다. */
   stars: integer("stars"),
   starsAt: timestamp("stars_at"),
@@ -690,5 +692,6 @@ export * from './github-star-schema';
 export * from './product-feedback-schema';
 export * from './github-binding-schema';
 export * from './github-issue-outbox-schema';
+export * from './product-star-observation-schema';
 
 export { githubWebhookEvents, githubIntegrationActions } from "./github-webhook-schema";

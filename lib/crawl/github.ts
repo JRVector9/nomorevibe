@@ -56,7 +56,7 @@ export async function githubRequest<T>(
   path: string,
   conditional: ConditionalRequest = {},
   /** body 가 있으면 JSON 으로 POST 한다(GraphQL) */
-  options: { timeoutMs?: number; body?: unknown } = {},
+  options: { timeoutMs?: number; body?: unknown; deadlineAt?: number } = {},
 ): Promise<GitHubHttpResult<T>> {
   // Paths come from repository metadata and cursors; never let them change the API origin.
   let decoded: string;
@@ -66,12 +66,24 @@ export async function githubRequest<T>(
     || decoded.split("/").some((part) => part === "." || part === "..")) {
     return { ok: false, error: { kind: "invalid_response" } };
   }
-  const accounts = await collectorTokens();
+  // Deadline-aware callers include token preparation in their one request budget.
+  // Legacy callers retain the timeout starting after collectorTokens().
+  const preparationDeadline = options.deadlineAt === undefined ? undefined
+    : Math.min(options.deadlineAt, Date.now() + Math.max(1, Math.min(options.timeoutMs ?? 10_000, 10_000)));
+  if (preparationDeadline !== undefined && (!Number.isFinite(preparationDeadline) || preparationDeadline <= Date.now()))
+    return { ok: false, error: { kind: "transport" } };
+  const accounts = preparationDeadline === undefined ? await collectorTokens() : await collectorTokens({ deadlineAt: preparationDeadline });
+  if (preparationDeadline !== undefined && (preparationDeadline <= Date.now() || accounts.length === 0)) {
+    // Missing credentials or an exhausted preparation budget are auth waits.
+    // Preserve observer retries until the real collection cutoff.
+    return { ok: false, error: { kind: "auth_unavailable", reason: "cooldown",
+      resetAt: new Date(Math.min(options.deadlineAt ?? preparationDeadline, Date.now() + 60_000)) } };
+  }
   if (accounts.length === 0) throw new Error("GitHub 수집 토큰이 없습니다 — 인증된 토큰이 필요합니다");
   const resource = githubResource(path);
   const start = (rotation[resource] ?? 0) % accounts.length;
   rotation[resource] = start + 1;
-  const deadline = Date.now() + Math.max(1, Math.min(options.timeoutMs ?? 10_000, 10_000));
+  const deadline = preparationDeadline ?? Date.now() + Math.max(1, Math.min(options.timeoutMs ?? 10_000, 10_000));
   let earliestReset: Date | null = null;
   let authFailure: Extract<GitHubFailure, { kind: "auth_unavailable" }> | null = null;
   for (let offset = 0; offset < accounts.length; offset++) {
@@ -85,7 +97,8 @@ export async function githubRequest<T>(
         ? { ok: false, error: { ...authFailure, resetAt: new Date(Math.min(
           authFailure.resetAt?.getTime() ?? Infinity, Date.now() + 60_000)) } }
         : { ok: false, error: { kind: "transport" } };
-      result = await githubRequestWithToken<T>(path, conditional, { timeoutMs: remainingMs, body: options.body }, account, () => { secondary = true; });
+      result = await githubRequestWithToken<T>(path, conditional, { timeoutMs: remainingMs, body: options.body,
+        ...(preparationDeadline === undefined ? {} : { deadlineAt: deadline }) }, account, () => { secondary = true; });
       if (!result.ok && result.error.kind === "http" && result.error.status === 403 && sawUnauthorized) {
         const resetAt = await recordGitHubAuthCooldown(account.token, new Date(Date.now() + AUTH_COOLDOWN_MS));
         logger.warn("github.auth_rejected", { accountId: account.userId, installationId: account.installationId, reason: "blocked" });
@@ -118,7 +131,7 @@ export async function githubRequest<T>(
 }
 
 async function githubRequestWithToken<T>(
-  path: string, conditional: ConditionalRequest, options: { timeoutMs?: number; body?: unknown },
+  path: string, conditional: ConditionalRequest, options: { timeoutMs?: number; body?: unknown; deadlineAt?: number },
   account: CollectorToken, onSecondary: () => void,
 ): Promise<GitHubHttpResult<T>> {
   const token = account.token;
@@ -127,6 +140,7 @@ async function githubRequestWithToken<T>(
   if (authUntil) return { ok: false, error: { kind: "auth_unavailable", reason: "cooldown", resetAt: authUntil } };
   const waitingUntil = await readGitHubCooldown(token, resource);
   if (waitingUntil) return { ok: false, error: { kind: "rate_limited", resetAt: waitingUntil } };
+  if (options.deadlineAt !== undefined && options.deadlineAt <= Date.now()) return { ok: false, error: { kind: "transport" } };
   const headers: Record<string, string> = {
     Authorization: `Bearer ${token}`,
     Accept: "application/vnd.github+json",
@@ -138,13 +152,17 @@ async function githubRequestWithToken<T>(
   if (post) headers["Content-Type"] = "application/json";
 
   let res: Response;
-  const signal = AbortSignal.timeout(Math.max(1, Math.min(options.timeoutMs ?? 10_000, 10_000)));
+  const signal = options.deadlineAt === undefined ? AbortSignal.timeout(Math.max(1, Math.min(options.timeoutMs ?? 10_000, 10_000))) : null;
   let url = `${API_ORIGIN}${path}`;
   const visited = new Set([url]);
   try {
     for (let redirects = 0; ; redirects++) {
+      // Quota reads and redirect body cancellation can outlive the cutoff.
+      const remainingMs = options.deadlineAt === undefined ? Infinity : options.deadlineAt - Date.now();
+      if (remainingMs <= 0) return { ok: false, error: { kind: "transport" } };
+      const requestSignal = signal ?? AbortSignal.timeout(Math.max(1, Math.min(options.timeoutMs ?? 10_000, 10_000, remainingMs)));
       res = await fetch(url, { method: post ? "POST" : "GET", headers, body: post ? JSON.stringify(options.body) : undefined,
-        redirect: "manual", signal });
+        redirect: "manual", signal: requestSignal });
       if (![301, 302, 303, 307, 308].includes(res.status)) break;
       const location = res.headers.get("location");
       await res.body?.cancel().catch(() => {});
@@ -247,7 +265,7 @@ export type GitHubGraphqlResult<T> = { ok: true; data: T | null; errors: Graphql
  * 한도가 바닥나면 GitHub 이 200 에 RATE_LIMITED 오류로 답하기도 한다 — 그때는 rate_limited 로 바꾼다
  * (기다릴 시각은 githubRequest 가 응답 머리 x-ratelimit-remaining: 0 으로 이미 적었다).
  */
-export async function githubGraphql<T>(query: string, options: { timeoutMs?: number } = {}): Promise<GitHubGraphqlResult<T>> {
+export async function githubGraphql<T>(query: string, options: { timeoutMs?: number; deadlineAt?: number } = {}): Promise<GitHubGraphqlResult<T>> {
   const result = await githubRequest<{ data?: unknown; errors?: unknown }>("/graphql", {}, { ...options, body: { query } });
   if (!result.ok) return result;
   if (result.status !== 200 || !result.value || typeof result.value !== "object") return { ok: false, error: { kind: "invalid_response" } };

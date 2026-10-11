@@ -24,18 +24,21 @@ const FAILURE_BACKOFF_MS = 5 * 60_000;
 
 export type AppIdentity = { appId: number; appSlug: string; installationId: number; accountLogin: string; core: CoreQuota | null };
 
-async function githubJson<T>(path: string, init: { token: string; method?: "GET" | "POST" }): Promise<{ status: number; body: T | null }> {
+async function githubJson<T>(path: string, init: { token: string; method?: "GET" | "POST"; deadlineAt?: number }): Promise<{ status: number; body: T | null }> {
+  const remainingMs = init.deadlineAt === undefined ? Infinity : init.deadlineAt - Date.now();
+  if (remainingMs <= 0) throw new Error("github_request_deadline");
   const res = await fetch(`${API_ORIGIN}${path}`, { method: init.method ?? "GET", headers: { ...HEADERS, Authorization: `Bearer ${init.token}` },
-    redirect: "error", signal: AbortSignal.timeout(10_000), cache: "no-store" });
+    redirect: "error", signal: AbortSignal.timeout(Math.max(1, Math.min(10_000, remainingMs))), cache: "no-store" });
   const body = res.ok ? await res.json() as T : null;
   if (!res.ok) await res.body?.cancel().catch(() => {});
   return { status: res.status, body };
 }
 
 /** 설치 토큰 하나 — App JWT 로 받는다. 실패하면 사유 코드를 던진다(값은 남기지 않는다) */
-export async function mintInstallationToken(appId: number, installationId: number, privateKeyPem: string): Promise<{ token: string; expiresAt: number }> {
+export async function mintInstallationToken(appId: number, installationId: number, privateKeyPem: string,
+  options: { deadlineAt?: number } = {}): Promise<{ token: string; expiresAt: number }> {
   const result = await githubJson<{ token?: unknown; expires_at?: unknown }>(`/app/installations/${installationId}/access_tokens`,
-    { token: appJwt(appId, privateKeyPem), method: "POST" });
+    { token: appJwt(appId, privateKeyPem), method: "POST", deadlineAt: options.deadlineAt });
   if (result.status === 401) throw new Error("github_app_invalid");
   if (result.status === 404) throw new Error("github_app_installation_missing");
   const token = result.body?.token;
@@ -106,22 +109,31 @@ export async function listGitHubCollectorApps() {
 const cache = new Map<number, { token: string; expiresAt: number } | { failedUntil: number }>();
 
 /** 켜 둔 App 마다 쓸 수 있는 설치 토큰 — github-accounts.ts collectorTokens 가 개인 토큰 뒤에 붙인다. 받지 못한 설치는 빼고 돌려준다 */
-export async function appCollectorTokens(secret: string, now = Date.now()): Promise<{ token: string; installationId: number; login: string }[]> {
+export async function appCollectorTokens(secret: string, now = Date.now(), options: { deadlineAt?: number } = {}): Promise<{ token: string; installationId: number; login: string }[]> {
+  if (options.deadlineAt !== undefined && options.deadlineAt <= Date.now()) return [];
+  // Optional token minting must leave time for the caller's GraphQL dispatch.
+  const mintDeadline = options.deadlineAt === undefined ? undefined : options.deadlineAt - 5_000;
   const rows = await db.select({ installationId: githubCollectorApps.installationId, appId: githubCollectorApps.appId, appSlug: githubCollectorApps.appSlug,
     encryptedPrivateKey: githubCollectorApps.encryptedPrivateKey }).from(githubCollectorApps).where(eq(githubCollectorApps.enabled, true));
   const tokens: { token: string; installationId: number; login: string }[] = [];
   for (const row of rows) {
+    if (options.deadlineAt !== undefined && options.deadlineAt <= Date.now()) break;
     const cached = cache.get(row.installationId);
     if (cached && "failedUntil" in cached && cached.failedUntil > now) continue;
     if (cached && "token" in cached && cached.expiresAt - REFRESH_BEFORE_MS > now) {
       tokens.push({ token: cached.token, installationId: row.installationId, login: `${row.appSlug} (앱)` });
       continue;
     }
+    if (mintDeadline !== undefined && mintDeadline <= Date.now()) continue;
     try {
-      const minted = await mintInstallationToken(row.appId, row.installationId, unseal(row.encryptedPrivateKey, secret));
+      const minted = await mintInstallationToken(row.appId, row.installationId, unseal(row.encryptedPrivateKey, secret),
+        mintDeadline === undefined ? options : { deadlineAt: mintDeadline });
       cache.set(row.installationId, minted);
       tokens.push({ token: minted.token, installationId: row.installationId, login: `${row.appSlug} (앱)` });
-    } catch {
+    } catch (error) {
+      // A caller's exhausted collection budget is not a broken shared credential.
+      if (mintDeadline !== undefined && error instanceof Error && (error.message === "github_request_deadline"
+        || mintDeadline <= Date.now() && (error.name === "TimeoutError" || error.name === "AbortError"))) continue;
       cache.set(row.installationId, { failedUntil: now + FAILURE_BACKOFF_MS });
     }
   }

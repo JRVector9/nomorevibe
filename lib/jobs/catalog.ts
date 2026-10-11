@@ -6,7 +6,7 @@ export const JOB_ROLES: readonly JobRole[] = ["crawler", "reviewer", "publisher"
  * lane: 같은 역할 워커 안에서 따로 도는 줄. 역할 lease 는 하나라 워커를 늘려도 한 대만 일한다 — 줄이 다르면 한 프로세스 안에서
  * 동시에 돈다. 줄을 적지 않은 잡은 기본 줄(main)에서 차례로 돈다(scripts/worker.ts runWorker).
  */
-export type JobLane = "main" | "evidence" | "scan";
+export type JobLane = "main" | "evidence" | "scan" | "stars";
 export const JOB_CATALOG: readonly { name: string; role: JobRole | "scheduler"; intervalMs: number | null; lane?: JobLane }[] = [
   { name: "heartbeat", role: "scheduler", intervalMs: null },
   /**
@@ -118,6 +118,8 @@ export const JOB_CATALOG: readonly { name: string; role: JobRole | "scheduler"; 
    * 새 묶음은 틱 14초 안에서만 연다 — 기본 예산 25초 안에 끝나 수집 예산을 크게 늘리지 않는다(stars-refresh.ts).
    */
   { name: "product-stars-refresh", role: "crawler", intervalMs: 5 * 60_000 },
+  // Only the hour before KST 00/08/16 collects; minute ticks resume/finalize the same frozen cycle.
+  { name: "product-star-observation", role: "crawler", intervalMs: 60_000, lane: "stars" },
   // Crawler already owns GitHub authentication; two recrawl-invalidated READMEs per tick.
   { name: "product-readme-refresh", role: "crawler", intervalMs: 5 * 60_000 },
 ];

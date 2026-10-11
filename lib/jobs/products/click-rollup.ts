@@ -2,6 +2,7 @@ import type { JobContext, JobOutcome } from "@/lib/jobs/runner";
 import { rollupDaily, pruneEvents } from "@/lib/domain/products/clicks";
 import { pruneExpiredRateLimits } from "@/lib/rate-limit";
 import { pruneSearchQueries } from "@/lib/domain/products/search-log";
+import { pruneStarObservations } from "./star-observation";
 
 /**
  * 클릭 집계 잡.
@@ -22,6 +23,7 @@ export async function rollupClicks(ctx: JobContext<null>): Promise<JobOutcome<nu
   // 클릭 중복 제거가 rate_limits에 (제품 × 방문자)마다 키를 남긴다. 같이 지운다.
   const prunedLimits = await pruneExpiredRateLimits(ctx.lease);
   const prunedSearches = await pruneSearchQueries(90, ctx.lease);
-  ctx.log("clicks.rolled", { rows: rolled, prunedRateLimits: prunedLimits, prunedSearches });
+  const prunedStarObservations = await pruneStarObservations(ctx);
+  ctx.log("clicks.rolled", { rows: rolled, prunedRateLimits: prunedLimits, prunedSearches, prunedStarObservations });
   return { done: true };
 }
