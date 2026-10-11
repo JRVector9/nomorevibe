@@ -519,6 +519,13 @@
       "when": 1792600000000,
       "tag": "0073_repository_birth_lookup",
       "breakpoints": true
+    },
+    {
+      "idx": 74,
+      "version": "7",
+      "when": 1792700000000,
+      "tag": "0074_product_star_observations",
+      "breakpoints": true
     }
   ]
 }

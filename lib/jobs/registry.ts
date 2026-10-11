@@ -24,6 +24,7 @@ import { refreshAgentEvidenceJob } from "@/lib/jobs/products/agent-evidence-refr
 import { refreshAiLevelsJob } from "@/lib/jobs/products/ai-level-refresh";
 import { refreshProductEvidenceJob } from "@/lib/jobs/products/evidence-refresh";
 import { refreshProductStars } from "@/lib/jobs/products/stars-refresh";
+import { observeProductStars } from "@/lib/jobs/products/star-observation";
 import { reviewGoneRepositories } from "@/lib/jobs/products/repo-review";
 import { writeKoreanTaglines } from "@/lib/jobs/products/korean-tagline";
 import { refreshProductThumbnails } from "@/lib/jobs/products/thumbnail-refresh";
@@ -105,6 +106,7 @@ export const JOBS: Record<string, AnyJob> = {
   "agent-evidence-refresh": refreshAgentEvidenceJob,
   "ai-level-refresh": refreshAiLevelsJob,
   "product-stars-refresh": refreshProductStars,
+  "product-star-observation": observeProductStars,
   /** 저장소가 사라진 웹사이트가 아직 그 제품인지 본다 — 판정만 적고 운영자가 정한다 */
   "product-repo-review": (ctx) => reviewGoneRepositories(ctx),
   /** 공개 제품의 소개를 한국어 한 줄로 옮긴다 — 검사를 통과한 줄만 화면에 먼저 보이고 원문은 토글로 */

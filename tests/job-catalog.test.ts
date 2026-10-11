@@ -76,10 +76,10 @@ it('maintenance 풀이 생존 확인이 동시에 쥐는 연결을 담는다', (
 });
 
 describe('lanesForRole', () => {
-  it('puts the AI-level judging and the repository scan in their own crawler lanes and keeps every other role in one lane', () => {
+  it('puts the AI-level judging, repository scan, and star observation in their own crawler lanes and keeps every other role in one lane', () => {
     const crawler = lanesForRole('crawler');
-    expect(crawler).toHaveLength(3);
-    expect(crawler.slice(1)).toEqual([['agent-evidence-refresh'], ['ai-level-refresh']]);
+    expect(crawler).toHaveLength(4);
+    expect(crawler.slice(1)).toEqual([['agent-evidence-refresh'], ['ai-level-refresh'], ['product-star-observation']]);
     expect(crawler[0]).toContain('crawl-fetch');
     expect(crawler.flat().sort()).toEqual(jobsForRole('crawler').sort());
     for (const role of ['reviewer', 'publisher', 'text', 'maintenance'] as const) expect(lanesForRole(role)).toEqual([jobsForRole(role)]);

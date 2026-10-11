@@ -21,7 +21,7 @@ const repos = [
   { owner: "twitter", name: "bootstrap" }, { owner: "acme", name: "flaky" }, { owner: "Acme", name: "Case" },
 ];
 const node = (nameWithOwner: string, extra: Record<string, unknown> = {}) => ({
-  nameWithOwner, isArchived: false, isEmpty: false, isDisabled: false, isLocked: false, pushedAt: "2026-10-07T03:54:23Z",
+  id: `R_${nameWithOwner}`, nameWithOwner, isPrivate: false, isArchived: false, isEmpty: false, isDisabled: false, isLocked: false, pushedAt: "2026-10-07T03:54:23Z",
   stargazerCount: 12, defaultBranchRef: { name: "main" }, owner: { __typename: "Organization" }, ...extra,
 });
 
@@ -31,7 +31,7 @@ describe("저장소 묶음 질의", () => {
     expect(query).toContain('r0: repository(owner: "acme", name: "app.js") { ...R }');
     expect(query).toContain('r1: repository(owner: "a-b", name: "c_d") { ...R }');
     expect(query).toContain("rateLimit { cost remaining resetAt }");
-    expect(query).toContain("fragment R on Repository { nameWithOwner isArchived isEmpty isDisabled isLocked pushedAt stargazerCount");
+    expect(query).toContain("fragment R on Repository { id nameWithOwner isPrivate isArchived isEmpty isDisabled isLocked pushedAt stargazerCount");
   });
 
   it("질의를 깨뜨릴 수 있는 이름과 묶음 상한을 넘는 묶음은 받지 않는다", () => {
@@ -52,7 +52,7 @@ describe("저장소 묶음 질의", () => {
       { type: "SERVICE_UNAVAILABLE", path: ["r7"] },
     ];
     const checks = mapRepositoryBatch(repos, data, errors);
-    expect(checks[0]).toEqual({ status: "ok", facts: { stars: 12, ownerType: "Organization", archived: false, pushedAt: "2026-10-07T03:54:23Z", renamedTo: null } });
+    expect(checks[0]).toEqual({ status: "ok", facts: { repositoryId: "R_acme/alive", stars: 12, ownerType: "Organization", archived: false, pushedAt: "2026-10-07T03:54:23Z", renamedTo: null } });
     expect(checks[1]).toEqual({ status: "not_found", facts: null });
     expect(checks[2]).toMatchObject({ status: "empty", facts: { stars: 0, pushedAt: null } });
     // 보관은 상태가 아니다 — 'ok' 그대로 두고 기록만 한다
