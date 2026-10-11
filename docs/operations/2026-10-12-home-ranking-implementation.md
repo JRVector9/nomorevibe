@@ -1,6 +1,6 @@
 # 홈 신규·전일 대비 스타 상승 구현 보고서
 
-상태: PR01~04 코드 작성과 부모·독립 소스 리뷰 완료. PR01~03은 필수 CI 성공 후 main 병합했고, PR04는 기존 화면 테스트의 fixture/기대값 보완 후 필수 CI 재확인 단계다. 사용자가 승인한 범위는 API-key 입력을 제외한 병렬 구현·충돌 관리·리뷰·최종 보고다. [기준과 PR 범위](../superpowers/specs/2026-10-12-home-ranking-policy-proposal.md)를 적용했으며 기능 테스트는 사용자가 직접 수행한다.
+상태: PR01~04 구현·부모 및 독립 소스 리뷰·커밋·푸시·최신 base 필수 CI·main 병합 완료. 마지막 구현 병합은 `ccc7ed3b3ba168a67f7dbe09ba06325b88654b00`이다. 운영 DB 적용과 배포는 아직 수행하지 않았다. 사용자가 승인한 범위는 API-key 입력을 제외한 병렬 구현·충돌 관리·리뷰·최종 보고다. [기준과 PR 범위](../superpowers/specs/2026-10-12-home-ranking-policy-proposal.md)를 적용했으며 기능 테스트는 사용자가 직접 수행한다.
 
 ## PR별 결과
 
@@ -9,7 +9,7 @@
 | PR01 [#369](https://github.com/JRVector9/nomorevibe/pull/369) | 현재 GitHub 저장소 생성일 조회, 신규 홈/전체 목록 동일 조건, 생성일 표시, 조회 인덱스 | CI [38157584835](https://github.com/JRVector9/nomorevibe/actions/runs/38157584835) 성공; main `9424d6e` 병합 |
 | PR02 [#370](https://github.com/JRVector9/nomorevibe/pull/370) | 독립 8시간 관측, 회차/관측 이력, 대상 고정, 재개·마감·이력 정리 | CI [38158817772](https://github.com/JRVector9/nomorevibe/actions/runs/38158817772) 성공; main `de4c894` 병합 |
 | PR03 [#371](https://github.com/JRVector9/nomorevibe/pull/371) | 닫힌 회차의 전일 대비 증가량 조회, 같은 회차 순위/전체 수/페이지 | CI [38159154251](https://github.com/JRVector9/nomorevibe/actions/runs/38159154251) 성공; main `01b9d6d` 병합 |
-| PR04 [#372](https://github.com/JRVector9/nomorevibe/pull/372) | 새 제목·증가량·관측 시각·자료 부족 상태, /rising 전체 목록, 회차 유지 페이지 이동 | 부모·독립 소스 리뷰 추가 지적 없음; 기존 화면 테스트 fixture/기대값 수정 후 필수 CI 확인 중 |
+| PR04 [#372](https://github.com/JRVector9/nomorevibe/pull/372) | 새 제목·증가량·관측 시각·자료 부족 상태, /rising 전체 목록, 회차 유지 페이지 이동 | CI [38160248035](https://github.com/JRVector9/nomorevibe/actions/runs/38160248035) 성공; main `ccc7ed3` 병합 |
 
 모든 서브에이전트와 독립 Codex 리뷰는 `gpt-6.1-sol / xhigh`다. 독립 worktree와 파일 소유권으로 병렬 작업을 분리했다. 부모는 PR01/04의 공통 화면 파일을 순차 통합하고 관측 migration을0074로 조정해 PR01의0073과 번호 충돌을 해결했다. 기존 PPT·prototype·미추적 자료와 중단한 소개 검수는 보존했다.
 
@@ -56,7 +56,7 @@
 
 사용자 요청대로 새 테스트를 작성하지 않았고 로컬 테스트·typecheck·lint·build·E2E·브라우저 앱 실행은 하지 않았다. 기존 의미 변경으로 영향을 받은 fixture/기대값만 최소 수정했다. `git diff --check`와 protected-main의 최신 base 필수 원격 CI를 구별해 확인했다.
 
-PR04 첫 CI [38159743423](https://github.com/JRVector9/nomorevibe/actions/runs/38159743423)는 통합3개 성공, quality의 기존 화면 테스트6개 실패였다. 원인은 예전 급상승 호출·피드 앞5개 건너뛰기·헤더 링크 기대와 전용 reader mock 누락이었다. `tests/home-unclaimed.test.tsx`, `tests/p12-head-chrome.test.tsx`의 기존 fixture/기대값을 보완하며 실패 결과를 성공으로 기록하지 않는다.
+PR04 첫 CI [38159743423](https://github.com/JRVector9/nomorevibe/actions/runs/38159743423)는 통합3개 성공, quality의 기존 화면 테스트6개 실패였다. 원인은 예전 급상승 호출·피드 앞5개 건너뛰기·헤더 링크 기대와 전용 reader mock 누락이었다. `tests/home-unclaimed.test.tsx`, `tests/p12-head-chrome.test.tsx`의 기존 fixture/기대값을 보완했다. 후속 CI [38160248035](https://github.com/JRVector9/nomorevibe/actions/runs/38160248035)는 head `25f83db`, 최신 base `01b9d6d`에서 scope·quality·통합3개·check 모두 성공했고 정상 병합했다. 첫 실패 결과와 후속 성공을 구별해 기록한다.
 
 ## 운영 상태와 남은 확인
 
