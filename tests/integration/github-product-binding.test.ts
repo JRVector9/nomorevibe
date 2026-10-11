@@ -1,4 +1,4 @@
-import { generateKeyPairSync, randomUUID } from "node:crypto";
+import { createHmac, generateKeyPairSync, randomUUID } from "node:crypto";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { eq } from "drizzle-orm";
 import { db } from "@/lib/db";
@@ -10,6 +10,7 @@ import { disableProductGithubBinding, getProductGithubBinding } from "@/lib/doma
 import { hashToken } from "@/lib/tokens";
 import { csrfForToken, newPublicSession } from "@/lib/domain/accounts/session";
 import { ensureSchema, resetTables } from "./setup";
+vi.mock("server-only", () => ({}));
 
 let productId: number, userId: number;
 const repoUrl = "https://github.com/Owner/Repo";
@@ -164,7 +165,7 @@ async function startedFlow() {
 }
 async function awaitingSetup() {
   const flow = await startedFlow();
-  github([json(oauthTokens), json(rawRepository)]);
+  github([json(oauthTokens), json(rawRepository), json({ id: 77, login: "feedback-maker" })]);
   const { finishMakerGithubAuthorization } = await import("@/lib/domain/github-installations/authorization");
   const finished = await finishMakerGithubAuthorization(flow);
   return { state: new URL(finished.installUrl).searchParams.get("state")!, browserNonce: flow.browserNonce, actorUserId: userId, sessionTokenHash, installationId: 12 };
@@ -176,7 +177,7 @@ function setupResponses(repo = rawRepository, app = installation) {
 describe("Feedback OAuth callback and installation setup", () => {
   it("uses dedicated Feedback OAuth PKCE, preserves the session and stores only an encrypted short-lived user token", async () => {
     const flow = await startedFlow();
-    const fetch = github([json(oauthTokens), json(rawRepository)]);
+    const fetch = github([json(oauthTokens), json(rawRepository), json({ id: 77, login: "feedback-maker" })]);
     const { finishMakerGithubAuthorization } = await import("@/lib/domain/github-installations/authorization");
     const finished = await finishMakerGithubAuthorization(flow);
     const url = new URL(finished.installUrl);
@@ -187,13 +188,21 @@ describe("Feedback OAuth callback and installation setup", () => {
     expect(body).toMatchObject({ client_id: "Iv1.feedback-test", client_secret: "feedback-secret-test", code: flow.code, redirect_uri: "https://nomorevibe.test/api/auth/maker/github/callback" });
     expect(body.code_verifier).toMatch(/^[A-Za-z0-9_-]{43}$/);
     const [context] = await db.select().from(githubMakerAuthContexts);
-    expect(context).toMatchObject({ state: "awaiting_setup", sessionTokenHash });
+    expect(context).toMatchObject({ state: "awaiting_setup", sessionTokenHash, githubUserId: 77 });
     expect(context.encryptedUserToken).toBeTruthy();
     expect(context.encryptedUserToken).not.toContain(userToken);
     expect(JSON.stringify(context)).not.toContain(oauthTokens.refresh_token);
     const replayFetch = github([]);
     await expect(finishMakerGithubAuthorization(flow)).rejects.toMatchObject({ code: "invalid_github_flow" });
     expect(replayFetch).not.toHaveBeenCalled();
+  });
+
+  it.each([0, "77", Number.MAX_SAFE_INTEGER + 1])("rejects an invalid Feedback OAuth user ID %s and wipes the temporary context", async id => {
+    const flow = await startedFlow();
+    github([json(oauthTokens), json(rawRepository), json({ id })]);
+    const { finishMakerGithubAuthorization } = await import("@/lib/domain/github-installations/authorization");
+    await expect(finishMakerGithubAuthorization(flow)).rejects.toMatchObject({ code: "github_user_identity_invalid" });
+    expect((await db.select().from(githubMakerAuthContexts))[0]).toMatchObject({ state: "failed", encryptedUserToken: null, githubUserId: null });
   });
 
   it.each(["session", "nonce", "purpose", "actor"])("rejects OAuth callback with mismatched %s before token exchange", async changed => {
@@ -284,6 +293,25 @@ describe("Feedback OAuth callback and installation setup", () => {
     expect(await db.select().from(githubProductBindings)).toHaveLength(0);
     expect((await db.select().from(githubMakerAuthContexts))[0]).toMatchObject({ state: "failed", encryptedUserToken: null });
   });
+
+  it("does not create a new binding when a signed installation deletion commits after live verification started", async () => {
+    const setup = await awaitingSetup(), responses = setupResponses();
+    const secret = "feedback-webhook-secret-at-least-32-bytes";
+    vi.stubEnv("GITHUB_FEEDBACK_APP_WEBHOOK_SECRET", secret);
+    vi.stubEnv("GITHUB_STAR_APP_WEBHOOK_SECRET", "different-star-webhook-secret-at-least32");
+    vi.stubGlobal("fetch", vi.fn(async () => {
+      if (responses.length === 1) {
+        const raw = JSON.stringify({ action: "deleted", installation });
+        const { receiveGithubWebhook } = await import("@/lib/domain/github-webhooks/receive");
+        await receiveGithubWebhook(new Request("https://nomorevibe.test/api/github/webhooks/feedback", { method: "POST", headers: { "content-type": "application/json", "x-github-delivery": randomUUID(), "x-github-event": "installation", "x-hub-signature-256": "sha256=" + createHmac("sha256", secret).update(raw).digest("hex") }, body: raw }), "feedback");
+      }
+      return responses.shift()!;
+    }));
+    const { completeMakerGithubInstallation } = await import("@/lib/domain/github-installations/authorization");
+    await expect(completeMakerGithubInstallation(setup)).rejects.toMatchObject({ code: "github_installation_revoked" });
+    expect(await db.select().from(githubProductBindings)).toHaveLength(0);
+    expect((await db.select().from(githubMakerAuthContexts))[0]).toMatchObject({ state: "failed", encryptedUserToken: null });
+  });
 });
 
 
@@ -342,7 +370,7 @@ describe("maker API authorization boundaries", () => {
     expect(cookie).toContain("SameSite=lax");
     expect(cookie).not.toContain(editToken);
     const callbackHeaders = { cookie: headers.cookie + "; " + cookie.split(";", 1)[0] };
-    github([json(oauthTokens), json(rawRepository)]);
+    github([json(oauthTokens), json(rawRepository), json({ id: 77, login: "feedback-maker" })]);
     const { GET: callback } = await import("@/app/api/auth/maker/github/callback/route");
     const oauth = await callback(new Request(`https://nomorevibe.test/api/auth/maker/github/callback?state=${new URL(result.authorizeUrl).searchParams.get("state")}&code=github-code`, { headers: callbackHeaders }));
     expect(oauth.status).toBe(307);

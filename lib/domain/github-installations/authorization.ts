@@ -99,9 +99,12 @@ export async function finishMakerGithubAuthorization(input: MakerCallbackInput &
     const exchange = await exchangeGithubAppCode({ code: input.code, verifier: claimed.verifier, ...config });
     if (exchange.outcome !== "confirmed_success") throw new GithubInstallationError(400, "github_authorization_failed");
     await verifyMakerGithubRepository(exchange.tokens.accessToken, claimed.context.productRepoUrl, claimed.context.repositoryId);
+    const identity = await githubRequest<{ id?: unknown }>({ path: "/user", token: exchange.tokens.accessToken, auth: "user" });
+    if (identity.outcome !== "confirmed_success" || !isGithubNumericId(identity.data?.id)) throw new GithubInstallationError(409, "github_user_identity_invalid");
+    const githubUserId = identity.data.id;
     const setupState = randomBytes(32).toString("base64url");
     const expiresAt = new Date(Math.min(claimed.context.expiresAt.getTime(), exchange.tokens.accessExpiresAt.getTime()));
-    const changed = await onPrimary(() => db.update(githubMakerAuthContexts).set({ state: "awaiting_setup", encryptedUserToken: encryptGithubSecret(exchange.tokens.accessToken), setupStateHash: hashSessionToken(setupState), expiresAt }).where(and(eq(githubMakerAuthContexts.flowId, claimed.context.flowId), eq(githubMakerAuthContexts.state, "verifying"), gt(githubMakerAuthContexts.expiresAt, sql`clock_timestamp()`))).returning({ id: githubMakerAuthContexts.flowId }));
+    const changed = await onPrimary(() => db.update(githubMakerAuthContexts).set({ state: "awaiting_setup", githubUserId, encryptedUserToken: encryptGithubSecret(exchange.tokens.accessToken), setupStateHash: hashSessionToken(setupState), expiresAt }).where(and(eq(githubMakerAuthContexts.flowId, claimed.context.flowId), eq(githubMakerAuthContexts.state, "verifying"), gt(githubMakerAuthContexts.expiresAt, sql`clock_timestamp()`))).returning({ id: githubMakerAuthContexts.flowId }));
     if (changed.length !== 1) throw new GithubInstallationError(400, "invalid_github_flow");
     const url = new URL(`https://github.com/apps/${app.slug}/installations/new`);
     url.searchParams.set("state", setupState);

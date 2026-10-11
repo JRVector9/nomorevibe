@@ -3,14 +3,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { getFeedbackInstallationToken, verifyFeedbackInstallation } from "@/lib/domain/github-installations/credentials";
 import type { GithubProductBinding } from "@/lib/db/github-binding-schema";
 import { verifyMakerGithubRepository, verifyMakerInstallationAccess } from "@/lib/domain/github-installations/authorization";
-
 vi.mock("server-only", () => ({}));
 
 const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
 const privateKeyPem = privateKey.export({ type: "pkcs1", format: "pem" }).toString();
 const installation = { id: 12, app_id: 123, repository_selection: "selected", suspended_at: null, permissions: { issues: "write", metadata: "read" } };
 const repository = { id: 42, name: "Repo", owner: { login: "Owner" }, full_name: "Owner/Repo", html_url: "https://github.com/Owner/Repo", private: false, archived: false, has_issues: true, permissions: { admin: true } };
-const binding: GithubProductBinding = { productId: 1, repositoryId: 42, installationId: 12, repositoryFullName: "Owner/Repo", repositoryUrl: "https://github.com/Owner/Repo", productRepoUrl: "https://github.com/Owner/Repo", consentedByUserId: 1, revision: 1, enabled: true, blockedReason: null, lastVerifiedAt: new Date(), createdAt: new Date(), updatedAt: new Date() };
+const binding: GithubProductBinding = { productId: 1, repositoryId: 42, installationId: 12, repositoryFullName: "Owner/Repo", repositoryUrl: "https://github.com/Owner/Repo", productRepoUrl: "https://github.com/Owner/Repo", consentedByUserId: 1, revision: 1, enabled: true, blockedReason: null, lastVerifiedAt: new Date(), verificationRetryAt: null, createdAt: new Date(), updatedAt: new Date() };
 const credential = () => ({ token: "ghs_123_test_installation_1234567890", expires_at: new Date(Date.now() + 3_600_000).toISOString(), permissions: { issues: "write", metadata: "read" }, repository_selection: "selected", repositories: [{ id: 42 }] });
 const json = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status });
 function github(responses: Response[]) { const fetch = vi.fn(); for (const response of responses) fetch.mockResolvedValueOnce(response); vi.stubGlobal("fetch", fetch); return fetch; }

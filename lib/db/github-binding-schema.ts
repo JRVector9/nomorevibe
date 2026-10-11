@@ -16,6 +16,7 @@ export const githubProductBindings = pgTable("github_product_bindings", {
   enabled: boolean("enabled").notNull().default(false),
   blockedReason: varchar("blocked_reason", { length: 80 }),
   lastVerifiedAt: timestamp("last_verified_at", { withTimezone: true }),
+  verificationRetryAt: timestamp("verification_retry_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 }, table => [index("github_product_bindings_installation_idx").on(table.installationId),
@@ -34,10 +35,12 @@ export const githubMakerAuthContexts = pgTable("github_maker_auth_contexts", {
   sessionTokenHash: varchar("session_token_hash", { length: 64 }).notNull(),
   setupStateHash: varchar("setup_state_hash", { length: 64 }).unique(),
   encryptedUserToken: text("encrypted_user_token"),
+  githubUserId: bigint("github_user_id", { mode: "number" }),
   state: varchar("state", { length: 20 }).$type<"authorizing" | "awaiting_setup" | "verifying" | "completed" | "failed" | "expired">().notNull().default("authorizing"),
   expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 }, table => [index("github_maker_auth_contexts_expiry_idx").on(table.expiresAt),
+  check("github_maker_auth_contexts_user_id_check", sql`${table.githubUserId} IS NULL OR ${table.githubUserId} BETWEEN 1 AND 9007199254740991`),
   check("github_maker_auth_contexts_id_check", sql`${table.repositoryId} > 0 AND ${table.repositoryId} <= 9007199254740991 AND ${table.expectedRevision} >= 0`),
   check("github_maker_auth_contexts_state_check", sql`${table.state} IN ('authorizing', 'awaiting_setup', 'verifying', 'completed', 'failed', 'expired')`)]);
 

@@ -3,6 +3,12 @@ import { JOB_CATALOG, jobsForRole, lanesForRole } from '@/lib/jobs/catalog';
 import { dbPoolConfig } from '@/lib/db/pool';
 import { runWorker } from '@/scripts/worker';
 
+it('GitHub 연동 재조회는 maintenance에서 15분마다 실행한다', () => {
+  expect(JOB_CATALOG.find(job => job.name === 'github-integration-reconcile')).toEqual({
+    name: 'github-integration-reconcile', role: 'maintenance', intervalMs: 15 * 60_000,
+  });
+});
+
 it('GitHub 피드백 전송은 publisher에서 1분마다 기존 역할 lease를 따른다', () => {
   expect(JOB_CATALOG.find(job => job.name === 'github-feedback-delivery')).toEqual({
     name: 'github-feedback-delivery', role: 'publisher', intervalMs: 60_000,
@@ -20,7 +26,7 @@ it('생존 확인은 maintenance 역할에서 1분마다 돈다', () => {
   expect(JOB_CATALOG.find(job => job.name === 'uptime-ping')).toEqual({
     name: 'uptime-ping', role: 'maintenance', intervalMs: 60_000,
   });
-  expect(new Set(jobsForRole('maintenance'))).toEqual(new Set(['uptime-ping', 'click-rollup', 'ranking-refresh', 'news-refresh', 'product-thumbnail-refresh', 'product-search-refresh', 'product-search-health', 'product-spam-rescan']));
+  expect(new Set(jobsForRole('maintenance'))).toEqual(new Set(['uptime-ping', 'click-rollup', 'ranking-refresh', 'news-refresh', 'product-thumbnail-refresh', 'product-search-refresh', 'product-search-health', 'product-spam-rescan', 'github-integration-reconcile']));
   expect(jobsForRole('crawler')).not.toContain('uptime-ping');
 });
 

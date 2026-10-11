@@ -4,6 +4,7 @@ import { products } from "@/lib/db/schema";
 import { githubMakerAuthContexts, githubProductBindings, type GithubProductBinding } from "@/lib/db/github-binding-schema";
 import { isGithubNumericId, type GithubRepository } from "@/lib/github/repositories";
 import { GithubInstallationError } from "./credentials";
+import { hasGithubInstallationRevocation, lockGithubFeedbackInstallation } from "@/lib/domain/github-webhooks/lifecycle";
 import { cancelBindingFeedbackOutbox } from "@/lib/domain/feedback/github/outbox";
 
 /** Lock product before binding everywhere, so invalidation and maker completion serialize. */
@@ -40,6 +41,7 @@ export async function completeProductGithubBinding(input: { flowId: string; acto
   return onPrimary(() => db.transaction(async tx => {
     const [snapshot] = await tx.select().from(githubMakerAuthContexts).where(eq(githubMakerAuthContexts.flowId, input.flowId));
     if (!snapshot) throw new GithubInstallationError(400, "invalid_github_flow");
+    await lockGithubFeedbackInstallation(tx, input.installationId);
     const [product] = await tx.select().from(products).where(eq(products.id, snapshot.productId)).for("update");
     const [previous] = await tx.select().from(githubProductBindings).where(eq(githubProductBindings.productId, snapshot.productId)).for("update");
     const [context] = await tx.select().from(githubMakerAuthContexts).where(eq(githubMakerAuthContexts.flowId, input.flowId)).for("update");
@@ -48,7 +50,8 @@ export async function completeProductGithubBinding(input: { flowId: string; acto
     if (!context || context.actorUserId !== input.actorUserId || context.state !== "verifying" || context.expiresAt <= now) throw new GithubInstallationError(400, "invalid_github_flow");
     if (!product || product.status === "banned" || product.repoUrl !== context.productRepoUrl || product.editTokenHash !== context.editTokenHash || context.repositoryId !== input.repository.id) throw new GithubInstallationError(409, "github_maker_authorization_changed");
     if ((previous?.revision ?? 0) !== context.expectedRevision) throw new GithubInstallationError(409, "github_binding_revision_conflict");
-    const values = { productId: product.id, repositoryId: input.repository.id, repositoryFullName: input.repository.fullName, repositoryUrl: input.repository.htmlUrl, productRepoUrl: context.productRepoUrl, installationId: input.installationId, consentedByUserId: input.actorUserId, enabled: true, blockedReason: null, revision: (previous?.revision ?? 0) + 1, lastVerifiedAt: now, updatedAt: now };
+    if (await hasGithubInstallationRevocation(tx, { installationId: input.installationId, repositoryId: input.repository.id, verifiedAfter: context.createdAt })) throw new GithubInstallationError(409, "github_installation_revoked");
+    const values = { productId: product.id, repositoryId: input.repository.id, repositoryFullName: input.repository.fullName, repositoryUrl: input.repository.htmlUrl, productRepoUrl: context.productRepoUrl, installationId: input.installationId, consentedByUserId: input.actorUserId, enabled: true, blockedReason: null, revision: (previous?.revision ?? 0) + 1, lastVerifiedAt: now, verificationRetryAt: null, updatedAt: now };
     const [binding] = await tx.insert(githubProductBindings).values(values).onConflictDoUpdate({ target: githubProductBindings.productId, set: values }).returning();
     if (previous) await cancelBindingFeedbackOutbox(tx, product.id, "feedback_binding_replaced");
     await tx.update(githubMakerAuthContexts).set({ state: "completed", encryptedUserToken: null, setupStateHash: null }).where(eq(githubMakerAuthContexts.flowId, input.flowId));
