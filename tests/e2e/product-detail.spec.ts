@@ -215,7 +215,7 @@ test("rich desktop profile shows objective evidence and behaves without provider
   await gotoProduct(page, PRODUCT_DETAIL_FIXTURES.rich);
 
   await expect(page.getByRole("heading", { name: "Evidence Studio" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "무엇으로 만들었나" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "무엇으로 만들었나" })).toHaveCount(0);
   await expect(page.getByRole("heading", { name: "정보", exact: true })).toBeVisible();
   await expect(page.getByRole("heading", { name: "근거", exact: true })).toHaveCount(0);
   await expect(page.getByText("최근 코드 업데이트", { exact: true })).toBeVisible();
@@ -224,8 +224,8 @@ test("rich desktop profile shows objective evidence and behaves without provider
   await expect(page.getByText(/저장소 생성 \d{4}년/)).toBeVisible();
   await expect(page.getByText("포크 18", { exact: true })).toBeVisible();
   await expect(page.getByText("12명")).toBeVisible();
-  await expect(page.getByText("OpenAI · Codex · GPT-5")).toBeVisible();
-  await expect(page.getByText("openai/review@1.0.0")).toBeVisible();
+  await expect(page.getByText("OpenAI · Codex · GPT-5")).toHaveCount(0);
+  await expect(page.getByText("openai/review@1.0.0")).toHaveCount(0);
 
   const gallery = page.getByRole("img", { name: "Evidence Studio 제품 근거 대시보드 화면" });
   await expect(gallery).toBeVisible();
@@ -258,11 +258,10 @@ test("mobile profile keeps the approved reading order and visible core content",
   const observed = observePage(page);
   await gotoProduct(page, PRODUCT_DETAIL_FIXTURES.rich);
 
-  // 히어로 → 핵심 사실 → 무엇으로 만들었나 → 소개 → 업데이트 → 정보 (오른쪽 열은 본문 아래로)
+  // 히어로 → 핵심 사실 → 소개 → 업데이트 → 정보 (오른쪽 열은 본문 아래로)
   const readingOrder = (name: string) => [
     page.getByRole("heading", { level: 1, name }),
     page.getByText("nomorevibe 등록", { exact: true }),
-    page.getByRole("heading", { name: "무엇으로 만들었나" }),
     page.getByRole("heading", { name: "소개", exact: true }),
     page.getByRole("heading", { name: /^업데이트/ }),
     page.getByRole("heading", { name: "정보", exact: true }),
