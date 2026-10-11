@@ -8,10 +8,16 @@ export const REPO_REVIEW_OVERDUE_HOURS = 48;
 
 const n = (value: number) => value.toLocaleString("ko-KR");
 const filter = (name: string) => `/admin/products?filter=${encodeURIComponent(name)}`;
+/**
+ * 없음·빈 저장소 칩은 제품 관리 '저장소 사라짐'의 대기 포함 보기(?pending=1)로 보낸다 — 24시간이 지나지 않은 것까지
+ * 지금 없거나 빈 저장소를 모두 든다(repository.ts repoMissing). 두 칩의 수를 더한 것이 그 화면의 수다(ADM-33)
+ */
+const MISSING = `${filter("저장소 사라짐")}&pending=1`;
+const MISSING_TITLE = "제품 관리에서 없음·빈 저장소를 함께 봅니다 — 24시간이 지나지 않은 것도 듭니다";
 const STATES = [
   { key: "ok", label: "있음" },
-  { key: "not_found", label: "없음" },
-  { key: "empty", label: "빈 저장소" },
+  { key: "not_found", label: "없음", href: MISSING, title: MISSING_TITLE },
+  { key: "empty", label: "빈 저장소", href: MISSING, title: MISSING_TITLE },
   { key: "blocked", label: "막힘" },
   { key: "archived", label: "보관됨", href: filter("저장소 보관됨") },
   { key: "renamed", label: "이름 바뀜", href: filter("저장소 이름 바뀜") },
@@ -35,7 +41,7 @@ export function RepoHealthCard({ health, review }: { health: AttentionCounts["re
           const value = health.states[state.key];
           const body = <>{state.label} <b>{n(value.total)}</b>{value.new24h > 0 && <span>· 24시간 새로 {n(value.new24h)}</span>}</>;
           return "href" in state
-            ? <Link key={state.key} className="dash-pill" href={state.href}>{body}</Link>
+            ? <Link key={state.key} className="dash-pill" href={state.href} title={"title" in state ? state.title : undefined}>{body}</Link>
             : <span key={state.key} className="dash-pill">{body}</span>;
         })}
       </div>
