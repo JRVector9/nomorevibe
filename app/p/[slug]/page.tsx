@@ -2,7 +2,6 @@ import { Suspense } from "react";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { BuildTools } from "@/components/product-detail/BuildTools";
 import { DetailEntry } from "@/components/product-detail/DetailEntry";
 import { DetailSkeleton } from "@/components/product-detail/DetailSkeleton";
 import { FactsStrip } from "@/components/product-detail/FactsStrip";
@@ -116,14 +115,6 @@ async function ProductDetail({ slug, category }: { slug: string; category: strin
       <div className="flex flex-wrap items-start gap-x-12 gap-y-9 pt-7">
         <div className="flex min-w-0 flex-[2_1_560px] flex-col gap-9">
           <FactsStrip product={detail.product} repository={detail.repository} license={detail.license} health={detail.health} visits={detail.visits} />
-          <BuildTools
-            product={detail.product}
-            unclaimed={detail.unclaimed}
-            agents={detail.agents}
-            observedAgentFacts={detail.observedAgentFacts}
-            skills={detail.skills}
-            aiLevel={detail.aiLevel}
-          />
           <IntroSection product={detail.product} profile={detail.profile} readmeExcerpt={detail.readmeExcerpt} unclaimed={detail.unclaimed} />
           <LanguageBar repository={detail.repository} />
           <UpdateTimeline updates={detail.updates} now={now} />
