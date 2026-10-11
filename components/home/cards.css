@@ -25,6 +25,9 @@
 /* 조각 사이 가운뎃점 — 빠진 조각 옆에 점이 남지 않게 CSS 가 넣는다 */
 .card-dots > * + *::before { content: "·"; margin: 0 0.3em; color: var(--text-2); font-weight: 400; }
 
+/* 순위 목록의 자리(홈 '많이 쓰이는 프로젝트'·/popular 카드 보기) — 제목 앞 옅은 숫자 */
+.project-rank { margin-right: 8px; color: var(--text-3); font-variant-numeric: tabular-nums; }
+
 /* 소유자 줄 — 제목 바로 아래 */
 .card-byline { margin: -2px 0 0; display: flex; align-items: center; min-width: 0; font-size: 13px; line-height: 1.5; color: var(--text-2); white-space: nowrap; }
 .card-byline > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
