@@ -9,6 +9,7 @@ import { InfoCard } from "@/components/product-detail/InfoCard";
 import { IntroSection } from "@/components/product-detail/IntroSection";
 import { LanguageBar } from "@/components/product-detail/LanguageBar";
 import { PreviewFigure } from "@/components/product-detail/PreviewFigure";
+import { ReadmeFallback, ReadmeSection } from "@/components/product-detail/ReadmeSection";
 import { ProductHero } from "@/components/product-detail/ProductHero";
 import { GithubStarButton } from "@/components/product-detail/GithubStarButton";
 import { RelatedRow } from "@/components/product-detail/RelatedRow";
@@ -115,7 +116,11 @@ async function ProductDetail({ slug, category }: { slug: string; category: strin
       <div className="flex flex-wrap items-start gap-x-12 gap-y-9 pt-7">
         <div className="flex min-w-0 flex-[2_1_560px] flex-col gap-9">
           <FactsStrip product={detail.product} repository={detail.repository} license={detail.license} health={detail.health} visits={detail.visits} />
-          <IntroSection product={detail.product} profile={detail.profile} readmeExcerpt={detail.readmeExcerpt} unclaimed={detail.unclaimed} />
+          <IntroSection product={detail.product} profile={detail.profile} readmeExcerpt={detail.readmeExcerpt} unclaimed={detail.unclaimed}>
+            <Suspense fallback={<ReadmeFallback product={detail.product} readmeExcerpt={detail.readmeExcerpt} pending />}>
+              <ReadmeSection product={detail.product} readmeExcerpt={detail.readmeExcerpt} />
+            </Suspense>
+          </IntroSection>
           <LanguageBar repository={detail.repository} />
           <UpdateTimeline updates={detail.updates} now={now} />
           {productFeedbackEnabled() && (
