@@ -578,6 +578,8 @@ describe("evidence product detail components", () => {
   it("설치형 프로젝트의 소유권 확인 안내는 지원하지 않는 도메인 확인 명령을 권하지 않는다", () => {
     const html = renderToStaticMarkup(<UnclaimedOwnerContact repoUrl={product.repoUrl} slug={product.slug} installable />);
     expect(textOf(html)).toContain("설치형 프로젝트는 배포 도메인이 없어 명령으로 소유를 확인할 수 없습니다.");
+    // 소개를 고쳐 달라는 길은 바로 아래 폼의 셋째 갈래다(UX-18)
+    expect(textOf(html)).toContain("소개를 고치려면 아래 요청에서 ‘소개 수정 요청’을 골라");
     expect(html).toMatch(/<a [^>]*href="\/policy#contact"[^>]*>관리자에게 요청<\/a>/);
     expect(textOf(html)).toContain("GitHub 로그인으로 저장소 주인을 확인하는 방법은 준비 중입니다.");
     expect(html).toContain("소개 수정·목록에서 내리기 요청하기");

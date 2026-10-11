@@ -21,7 +21,8 @@ export function UnclaimedOwnerContact({ repoUrl, slug, installable = false }: { 
       {installable ? (
         <>
           <p className="mt-1 text-[13px] leading-5 text-fg-2">
-            설치형 프로젝트는 배포 도메인이 없어 명령으로 소유를 확인할 수 없습니다. 소개를 고치거나 저장소 소유를 확인하려면 관리자에게 요청해 주세요.
+            설치형 프로젝트는 배포 도메인이 없어 명령으로 소유를 확인할 수 없습니다. 소개를 고치려면 아래 요청에서 &lsquo;소개 수정 요청&rsquo;을 골라
+            무엇이 틀렸는지 적어 주세요. 저장소 소유를 확인하려면 관리자에게 요청해 주세요.
           </p>
           <Link prefetch={false} href="/policy#contact"
             className="mt-3 inline-flex min-h-11 items-center rounded-full bg-bg-soft px-5 text-[14px] font-medium text-fg">

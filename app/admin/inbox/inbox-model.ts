@@ -13,12 +13,14 @@ export const AUDIT_TAB_HREF = "/admin/audit?tab=audit";
  * 칸의 차례 — 급한 것부터. 내려달라는 요청은 24시간 안에 처리한다고 상세 페이지에 약속했으므로 맨 위,
  * 그다음 심사(직접 판단 → 확정만), 감사, 제품 목록의 거르기들.
  */
-export const INBOX_KEYS = ["takedown", "human", "agreed", "audit", "down", "intro", "repoGone", "spam"] as const satisfies readonly InboxKey[];
+export const INBOX_KEYS = ["takedown", "introRequest", "human", "agreed", "audit", "down", "intro", "repoGone", "spam"] as const satisfies readonly InboxKey[];
 
 /** 칸마다 이름, 할 일 한 줄, 처리하는 화면 */
 export const INBOX_SECTIONS: Record<InboxKey, { title: string; hint: string; href: string; action: string }> = {
   takedown: { title: "내려달라는 요청", hint: "제품 주인이 내려 달라고 한 것 — 24시간 안에 내리거나 사유를 남겨 둡니다.",
     href: ACTION_LINKS.takedowns, action: "요청 처리" },
+  introRequest: { title: "소개 수정 요청", hint: "주인 없는 제품의 운영자가 한 줄 소개를 고쳐 달라고 한 것 — 보고 고치거나 둡니다(목록 노출과는 무관).",
+    href: ACTION_LINKS.takedowns, action: "요청 탭에서 처리" },
   human: { title: "직접 판단", hint: "AI가 결론을 내지 못한 후보 — 직접 승인하거나 거부합니다.",
     href: ACTION_LINKS.reviewHuman, action: "심사 큐에서 판단" },
   agreed: { title: "확정만 하면 됨", hint: "두 모델이 같은 결론을 낸 후보 — 보고 확정만 누릅니다.",

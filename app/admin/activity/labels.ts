@@ -22,6 +22,9 @@ export const ACTION_LABELS: Record<string, string> = {
   "product-unban": "제품 차단 해제",
   "intro-keep": "소개 그대로 둠",
   "intro-edit": "소개 고침",
+  "intro-request-edit": "소개 수정 요청으로 고침",
+  "intro-request-fixed": "소개 수정 요청 처리함",
+  "intro-request-dismissed": "소개 수정 요청 둠",
   "repo-review-delist": "저장소 사라진 사이트 내림",
   "repo-review-keep": "저장소 사라진 사이트 둠",
   "claim-invite": "클레임 초대 표시",
@@ -108,7 +111,7 @@ export const ACTION_GROUPS = {
   settings: { label: "설정·연결", actions: ["settings-save", "collection-enabled", "attention-ack", "attention-unack", "review-mode", "evidence-settings", "ranking-schedule", "ranking-cancel",
     "github-collector-token-save", "github-collector-enable", "github-collector-disable",
     "ai-connect", "ai-input", "ai-cancel", "ai-probe", "ai-test", "ai-apply"] },
-  content: { label: "제품·소식·작업", actions: ["claim-invite", "intro-keep", "intro-edit", "product-refresh", "update-hide", "update-restore", "news-approve", "news-hide", "request-job",
+  content: { label: "제품·소식·작업", actions: ["claim-invite", "intro-keep", "intro-edit", "intro-request-edit", "intro-request-fixed", "intro-request-dismissed", "product-refresh", "update-hide", "update-restore", "news-approve", "news-hide", "request-job",
     "retry-exhausted-transport-once", "resume-after-github-redirect-fix", "export", "operator-name",
     "normalize-product-names", "revert-product-names"] },
 } as const;

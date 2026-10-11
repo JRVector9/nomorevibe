@@ -3,6 +3,7 @@ import { countBadge, type NavBadges } from "./AdminNav";
 import { currentAdmin } from "@/lib/auth/admin";
 import { humanQueueOverview } from "@/lib/crawl/review-overview";
 import { getSettings } from "@/lib/crawl/settings";
+import { pendingIntroRequestCount } from "@/lib/domain/products/intro-requests";
 import { takedownSummary } from "@/lib/domain/products/takedown";
 import { takedownSignal } from "@/lib/domain/products/takedown-view";
 import { criticalActionCount } from "./status/attention";
@@ -31,13 +32,16 @@ function humanBadgeCount(): number | null {
 
 async function navBadges(): Promise<NavBadges> {
   // 하나가 실패해도 나머지 배지와 페이지는 그린다
-  const [takedown, critical] = await Promise.all([
+  const [takedown, introRequests, critical] = await Promise.all([
     takedownSummary().then(takedownSignal).catch(() => null),
+    pendingIntroRequestCount().catch(() => 0),
     criticalActionCount(),
   ]);
   return {
-    // 내려달라는 요청 — 24시간 넘은 것이 있으면 빨강
-    "/admin/audit": takedown ? { label: takedown.label, tone: takedown.tone === "bad" ? "critical" : "warn" } : undefined,
+    // 내려달라는 요청 — 24시간 넘은 것이 있으면 빨강. 소개 수정 요청(UX-18)은 주황으로만 덧붙인다(약속 시간이 없다)
+    "/admin/audit": takedown
+      ? { label: introRequests > 0 ? `${takedown.label} · 소개 ${introRequests}` : takedown.label, tone: takedown.tone === "bad" ? "critical" : "warn" }
+      : introRequests > 0 ? { label: `소개 ${introRequests.toLocaleString("ko-KR")}`, tone: "warn", title: "소개 수정 요청" } : undefined,
     "/admin/review": countBadge(humanBadgeCount(), "warn", (count) => `직접 판단 ${count}건`),
     // 운영센터 — 조치할 일의 critical 수(운영센터와 같은 buildActions, 30초 담아 둠·기다리지 않음·실패하면 배지 없음)
     "/admin/status": countBadge(critical, "critical", (count) => `긴급 ${count}건`),
