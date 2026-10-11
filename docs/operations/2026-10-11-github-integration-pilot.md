@@ -2,7 +2,7 @@
 
 ## 현재 상태
 
-PR01~09 코드를 구현하고 최종 로컬 자동 검증을 실행했다. 결과를 9개 논리 커밋으로 정리한다. 실제 제공자 키, 허가된 파일럿 계정·저장소, 운영 활성화는 이 작업에서 설정하거나 실행하지 않았다. 아래 외부 연동과 릴리스 항목은 **미검증**이며 mock/fixture 결과로 완료 처리하지 않는다. 운영 절차는 [GitHub runbook](github-stars-feedback-runbook.md)을 따른다.
+PR01~09 코드를 구현하고 최종 로컬 자동 검증을 실행했다. 결과를 9개 논리 커밋으로 정리한다. 실제 제공자 키, 허가된 파일럿 계정·저장소, 운영 활성화는 이 작업에서 설정하거나 실행하지 않았다. 후속 요청으로 코드·DB·14개 앱의 운영 배포를 완료했다. [배포 검증](2026-10-11-github-integration-rollout.md)에 실제 근거를 기록했다. 아래 실제 외부 연동은 **미검증**이며 mock/fixture 결과로 완료 처리하지 않는다. 운영 절차는 [GitHub runbook](github-stars-feedback-runbook.md)을 따른다.
 
 ## 실제 실행한 로컬 검증
 
@@ -52,9 +52,10 @@ TDD에서 URL 검수·제품별 내 기록의 회귀는 단위 RED 2 failed/21 p
 | Star App 별도 ID·승인·callback·webhook | 미검증 | App 식별자, 승인 권한, callback 성공/웹훅 delivery ID |
 | Feedback App 선택 저장소·Issues/Metadata·callback·setup·webhook | 미검증 | App/설치/repository 숫자 ID, 승인 권한, 성공 callback/웹훅 ID |
 | staging migrations 0066~0072 | 미검증 | 적용 journal·최종 migration·schema 확인 |
-| 웹 2개 | 미검증 | 동일 SHA/digest, 공개 health의 두 instance ID, 개인 작업 즉시 조회 |
-| publisher 주/예비 | 미검증 | 동일 SHA/digest·환경 일치·lease/health/진행 결과 |
-| maintenance 주/예비 수동 릴리스 | 미검증 | 실제 source/autoDeploy 상태, mini→M3 deployment ID·실행 SHA·역할·lease |
+| 운영 웹 2개 | 코드 배포·양쪽 health 검증 | 동일 SHA/digest·6복제본·새 공개 화면 확인; 실제 개인 인증 작업은 미검증 |
+| 운영 publisher 주/예비 | 코드 배포 검증 | 동일 SHA/digest·primary/standby·lease/health/진행 정상; 실제 이슈 전송 미검증 |
+| 운영 maintenance 주/예비 수동 릴리스 | 코드 배포 검증 | Git source·autoDeploy=false 유지, mini→M3·SHA·500소스파일·역할/lease 정상 |
+| 운영 migrations 0066~0072 | 적용·schema 검증 | 직접5432 실행 exit0, journal73·새14표·7migration hash 일치 |
 | 기능 플래그 단계별 활성화 | 미실행 | 인증→스타→로컬 피드백→지정 binding 외부 전송의 각 확인 시각 |
 
 maintenance 읽기 전용 식별자는 M3 `7OlFqQdacbyQseQM72E7b`, mini `T6ATm-paaE03hfSsQX8-S`이다. 기존 배포 스크립트의 8개 쓰기 대상은 유지한다. maintenance가 같은 Docker immutable/autoDeploy=false 정책이라고 가정하지 않으며 실제 설정과 수동 릴리스 결과를 따로 확인한다.

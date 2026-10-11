@@ -131,7 +131,9 @@ TEST_DATABASE_URL=postgres://nomorevibe:nomorevibe@localhost:55435/nomorevibe_te
 운영은 Dokploy를 사용한다. 웹 2개와 crawler·reviewer·publisher의 주·예비 6개는
 main CI가 만든 GHCR 이미지의 digest로 배포한다. scheduler·text·maintenance는
 계속 main Git 소스로 배포한다. M3에는 웹·scheduler(2복제본)·crawler·reviewer·publisher·text·maintenance,
-mini에는 두 번째 웹과 다섯 역할의 예비를 둬 총 13개 앱을 운영한다. 두 웹은 로드밸런서 뒤에서
+mini에는 두 번째 웹과 다섯 역할의 예비를 둬 13개 core 앱을 운영한다. 2026-10-11 실제 조회에서는 M3 connect-agent를 포함한
+총14앱·19복제본을 [GitHub 연동 배포 검증](docs/operations/2026-10-11-github-integration-rollout.md)에서 확인했다.
+두 웹은 로드밸런서 뒤에서
 동작한다. 다섯 역할 모두 M3 주 후보가 작업하고 mini 예비는 같은 릴리스로 대기한다.
 2026-09-29 릴리스 `20208d3`에서 주 재시작·mini 인계·복귀와 crawler 문서, reviewer 심사,
 maintenance 점검, text 검수의 예비 저장을 확인했다. publisher 예비의 새 제품 발행은 적격 후보가
