@@ -1,3 +1,84 @@
+# 2026-10-11 22:10 KST — nomorevibe.com 공개 전환·양쪽 웹 배포 검증 완료
+
+## Current objective / completed work
+
+사용자가 GoDaddy 로그인 상태에서 nomorevibe.com을 기본 도메인으로 전환하라고 요청했다. Cloudflare 로그인 후 사용자 브라우저 사용 중단 확인을 받고 전환을 완료했다. 현재 기본 주소는 https://nomorevibe.com이다. 전용 worktree /private/tmp/nomorevibe-domain-20261011, branch feat/primary-domain-cutover-20261011, base f2e36d8770f7bfc14ea81b893a4e178591d3b4d7 (준비PR358 병합). 공개 전환 및 운영 env 배포는 실제 완료했다. 변경 커밋685249b를 push하고 PR360을 열었다. 병행 작업인 인기 화면 PR359가 main def8953f7c9d71613ec850f45dbeec0d6e55f931에 병합돼 충돌 없이 branch에 merge했다. 최신 base 필수 CI/병합을 마무리한다. 상세 증거·복구·새 App URL은 docs/operations/2026-10-11-primary-domain-cutover.md다.
+
+## Modified files / key decisions
+
+README.md, AGENTS.md, PENDING.md, docs/CODEX_HANDOFF.md, 기존 도메인 준비 기록, 신규 도메인 완료 기록, github-integration-capability-check.md, github-stars-feedback-runbook.md, production-multi-instance.env.example, scripts/ops/deploy_shared_images.py를 변경했다. 서비스 앱 코드는 변경하지 않았다. 배포 script는 public health 주소와 purge zone ID만 바꿨다. 스크립트 변경은 현재 웹 이미지를 다시 빌드할 이유가 아니다.
+
+GoDaddy NS emely.ns.cloudflare.com/tony.ns.cloudflare.com 저장 및 UI/공개DNS 확인. Cloudflare Free zone9fc499cc4b48354cf9738ac039c9fd70, apex→nomorevibe.brut.bot/www→apex proxied, 기존DMARC/domainconnect 보존. 기존 wildcard LB 두 tunnel/60:40/Hostoverride없음 유지. 두 cloudflared 실제 재시작 및 ingress validate0. UniversalSSL Active/2027-01-09, AlwaysUseHTTPS on. 새www 및 옛GET/HEAD웹페이지308는경로query보존. 옛API health/install/skill200 유지. 제품 GET /api/products/nanomuse도 새/옛 호스트200이며 JSON이 동일하고 verify 안내는 새주소다. 관리자 OAuth 시작은 키미설정503으로 실제OAuth 검증은 하지 않았다.
+
+M3web oipo2OAnIrtcnILBCRoG2 deploymentMXlEPzk4andlIBCn2xRL5, miniweb llv4rlABSJOcFauSxaHdx deploymentXqiJUxLGdOrMYYNgt2EG8 done. 각NEXT_PUBLIC_SITE_URL만새주소로변경하고 같은운영창배포. 실제6컨테이너 origin/image/release/health 정상, M3 4/4·mini2/2. Code release650b341c8889f06b2ec3daa3b99da4e5712fee1a, web digest8b65fed0865672f2ab942874a897f9ff00850ad6d309238f58fa4921deeb2ab6 유지. flags4개OFF. worker/DBmigration/키회전/소개검수재개없음. root main/PPT/stash/미추적사용자자료 보존.
+
+비밀snapshot /private/tmp/nomorevibe-primary-origin-before-20261011.json, /private/tmp/nomorevibe-domain-web-before-20261011.json는각0600이며출력/커밋금지. 양쪽tunnel원본backup경로는 config.yml.nomorevibe-domain-20261011.backup. 도메인operator /private/tmp/nomorevibe-primary-origin-20261011.py verify로 실제재확인가능. apply재실행금지(기존snapshot O_EXCL·이미새origin).
+
+## Actual tests / failed approaches
+
+Python23pass, NodeCI-scope4pass, diffcheck0. 수정한 public_gate(650b341…) 실제실행ok, 공개m3-web/mini-web모두관측. 새홈canonical/홈상세oldorigin0, robots/RSS/skill/install주소neworigin, sitemapHTTP200/XMLparse/15860loc모두새주소. NativeChrome홈스크린샷과상세이동렌더링확인. console/network오류0검사를이번에했다고주장하지않는다. 실제old/www308Location경로쿼리인코딩유지, HTTPapex301, oldAPI/CLI200.
+
+CF기존cert/API토큰create403은로그인UI로해결. DNS API토큰2개새zone읽기403이므로UI설정. 처음CF인증서대기중curlTLS35→발급후정상HTTPS. 첫sitemap검사실패후다음실제200/2.525초/2584655bytes, 코드수정없음. mini재시작후helperjson import누락outerexit1은고친뒤M3만이어실행exit0. 실제재시작이안됐다고해석하지않는다.
+
+## Remaining work / exact commands
+
+PR https://github.com/JRVector9/nomorevibe/pull/360 의 latest base 필수 check 성공 후 병합한다. 기존 base의 CI38142075061은 새 base 성공을 대신하지 않는다. 원격PR/CI/병합의현재상태는아래명령으로직접조회한다. 기존Cloudflarepurge키인증은미해결. 새zoneHTMLcache-everything미적용으로DYNAMIC응답, purge성공으로표시하지않는다. 새GitHubApp/Resend/공개키와실제파일럿은별도PENDING. 기능활성화전웹/publisher/maintenance6앱origin/키일치필수;이번엔OFF워커origin변경/재배포없음. 새호스트에서다시로그인한다.
+
+```sh
+cd /private/tmp/nomorevibe-domain-20261011
+git status --short --branch
+gh pr list --head feat/primary-domain-cutover-20261011 --state all --json number,state,url,mergeCommit
+gh pr checks feat/primary-domain-cutover-20261011
+python3 -m unittest tests/test_deploy_shared_images.py
+node --test scripts/ci-scope.node-test.mjs
+git diff --check
+python3 /private/tmp/nomorevibe-primary-origin-20261011.py verify
+dig @1.1.1.1 +short NS nomorevibe.com
+curl -fsS --max-time 10 https://nomorevibe.com/api/health
+```
+
+CUA를 계속 사용할 때 compaction 이후 rewriteDocumentation을 실행하고 현재 화면의 fresh AX를 확인한다. Dokployinspecthelper의inventory()재실행금지. 과거준비/진행기록은아래이력이며최상단현재상태와git/실제검사우선.
+
+---
+
+# 2026-10-11 — nomorevibe.com 전환 진행 중: Cloudflare DNS 준비·Tunnel 반영 완료
+
+## Current objective
+
+사용자가 GoDaddy 로그인 상태에서 nomorevibe.com을 기본 도메인으로 전환하도록 요청했다. 로그인과 Chrome 임시 사용 중단을 확인했으며 작업을 계속한다. 전용 worktree /private/tmp/nomorevibe-domain-20261011, branch feat/primary-domain-cutover-20261011, base f2e36d8770f7bfc14ea81b893a4e178591d3b4d7 (준비 PR358 병합)이다. 공개 전환은 아직 완료되지 않았다.
+
+## Completed work / modified files / key decisions
+
+이전 준비 기록대로 양쪽 Dokploy 웹 apex/www domain 및 tunnel ingress를 추가했다. 이번 단계에서 Cloudflare native Chrome UI로 Free zone을 만들고 apex CNAME→nomorevibe.brut.bot, www CNAME→apex를 proxied로, 기존 _domainconnect CNAME과 _dmarc TXT를 DNS only로 넣었다. 아직 GoDaddy NS는 ns73/ns74.domaincontrol.com이다. Cloudflare Continue to activation을 클릭한 뒤 nameserver-directions 화면까지 진행했다. 실제 배정 NS를 다음에 읽어 적용한다.
+
+기존 brut.bot wildcard LB는 brut-bot-pool(54b63d9b4e0e1129444eea6e423d2b95), M3 tunnel9e3903e4-0752-42ea-a275-7ccd2beb7105/mini815302dd-6f8d-4708-919d-bfce671b27ab, 60/40 및 Host override 없음이 UI에서 확인됐다. 새 CNAME은 기존 양쪽 LB를 재사용한다. 기존 LB를 변경하지 않았다.
+
+두 cloudflared gui/501/com.cloudflare.cloudflared를 실제 재시작했다. mini PID17360→89299, M3 PID1474→9929, 각각 running 및 ingress validate 성공. 양쪽 재시작 후 기존 공개 health 10회 모두 ok/dbok/release650b341c8889f06b2ec3daa3b99da4e5712fee1a, m3-web와mini-web 둘 다 관측했다. 기존 config backup과 전환 전 웹 snapshot0600을 보존한다. 두 웹 NEXT_PUBLIC_SITE_URL은 아직 옛 주소, immutable image/replicas/source/기능flagOFF는 그대로다.
+
+현재 수정 파일은 이 인계 문서뿐이다. root main/PPT/미추적 사용자 자료와 소개 검수 중단 상태는 보존한다. Next redirects/environment/proxy 설치 문서와 prod 절차는 이전 단계에서 읽었다.
+
+## Tests / failed approaches
+
+실제 실행: 두 서버 ingress validate, launchctl 재시작/상태, 기존 공개 health10회 모두 성공. 이전 내부6health와 Node CI-scope4검사 성공 기록은 이전 단계 결과다. 새 공개 DNS/TLS/OAuth/redirect는 아직 미검증이다.
+
+기존 Cloudflare 인증은 brut.bot 읽기만 가능하며 새 zone 생성과 LB 조회403이었다. 로그인 UI로 해결했다. UI Type 콤보에 setValue+Return 방식은 DNS 기록을 추가하지 못해 실제 목록에서 CNAME/TXT를 클릭하는 방식으로 완료했다. mini 재시작 후 operator helper의 json import 누락으로 outer helper exit1; import를 고치고 M3만 이어 실행했으며 최종 helper exit0이다. Chrome 창 변경으로 UI 액션이 중단됐으나 사용자가 잠시 브라우저 사용을 멈춰 진행 허용했다. 기존 purge key 인증 실패는 아직 해결되지 않았다.
+
+## Remaining work / exact commands
+
+Cloudflare 배정 NS 읽기→GoDaddy NS 변경→공개 DNS/TLS/양쪽 health, 웹 두 개 origin env 변경 및 순차 배포, metadata/robots/sitemap/RSS/skill/install 검증, www/옛 HTML redirect와 API 호환, 운영 script/docs 반영 후 protected PR CI/병합이 남았다. 새 기능 flag는 계속 OFF이며 실제 GitHub App/메일 키와 실제 파일럿은 별도 미완료다.
+
+```sh
+cd /private/tmp/nomorevibe-domain-20261011
+git status --short --branch
+dig +short NS nomorevibe.com
+curl -fsS --max-time 10 https://nomorevibe.brut.bot/api/health
+curl -fsS --max-time 10 https://nomorevibe.com/api/health
+```
+
+Dokploy helper /private/tmp/nomorevibe-release-inspect-20261011.py의 client()는 Keychain 내부 읽기. inventory() 재실행 금지. M3 web oipo2OAnIrtcnILBCRoG2, mini llv4rlABSJOcFauSxaHdx. SSH root@100.92.77.66/root@100.116.119.93. CUA compaction 이후 rewriteDocumentation 후 actual UI를 확인한다. 마지막 Chrome URL은 Cloudflare nomorevibe.com/nameserver-directions다.
+
+---
+
 # 2026-10-11 — nomorevibe.com 전환: 서버 준비 완료, Cloudflare 로그인 대기
 
 ## Current objective

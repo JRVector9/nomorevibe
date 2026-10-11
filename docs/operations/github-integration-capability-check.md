@@ -4,7 +4,7 @@
 
 ## App 등록 설정
 
-`SITE_ORIGIN`은 검증 대상 환경의 승인된 HTTPS origin이다. 운영 origin은 `https://nomorevibe.brut.bot`이고 staging은 별도 승인된 주소를 사용한다. callback과 webhook은 실제 구현이 배포된 환경에 등록한다. callback wildcard matching은 끈다. GitHub의 [callback URL](https://docs.github.com/en/apps/creating-github-apps/registering-a-github-app/about-the-user-authorization-callback-url)과 [setup URL](https://docs.github.com/en/apps/creating-github-apps/registering-a-github-app/about-the-setup-url)은 서로 다른 흐름이다.
+`SITE_ORIGIN`은 검증 대상 환경의 승인된 HTTPS origin이다. 운영 origin은 `https://nomorevibe.com`이고 staging은 별도 승인된 주소를 사용한다. callback과 webhook은 실제 구현이 배포된 환경에 등록한다. callback wildcard matching은 끈다. GitHub의 [callback URL](https://docs.github.com/en/apps/creating-github-apps/registering-a-github-app/about-the-user-authorization-callback-url)과 [setup URL](https://docs.github.com/en/apps/creating-github-apps/registering-a-github-app/about-the-setup-url)은 서로 다른 흐름이다.
 
 | 설정 | Star App | Feedback App |
 |---|---|---|

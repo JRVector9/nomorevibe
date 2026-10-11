@@ -2,7 +2,9 @@
 
 [![CI](https://github.com/JRVector9/nomorevibe/actions/workflows/ci.yml/badge.svg)](https://github.com/JRVector9/nomorevibe/actions/workflows/ci.yml)
 
-운영 서비스: [nomorevibe.brut.bot](https://nomorevibe.brut.bot) · [공개 GitHub 저장소](https://github.com/JRVector9/nomorevibe)
+운영 서비스: [nomorevibe.com](https://nomorevibe.com) · [공개 GitHub 저장소](https://github.com/JRVector9/nomorevibe)
+
+[2026-10-11 기본 도메인 전환 기록](docs/operations/2026-10-11-primary-domain-cutover.md): `www`와 기존 웹 페이지는 새 기본 주소로 이동하며 기존 API·CLI 주소는 호환을 유지한다.
 
 AI로 만든 제품의 마켓 데이터베이스. 메이커가 AI 코딩 툴에서 `/nomorevibe` 한 번을 실행하면
 배포한 서비스가 등록된다.
@@ -150,7 +152,7 @@ PR의 GitHub CI 성공은 배포 완료를 뜻하지 않는다. [독립 워커 �
 한 번에 실행할 수 있다. 실패한 단계에서 중단하고 권한 0600의 복구 스냅샷을 남긴다.
 `RELEASE_TAG`만 보고 최신 소스라고 판단하지 않는다. 실제 남은 운영 검증은 [PENDING.md](PENDING.md)에 기록한다.
 
-[관리자 상태](https://nomorevibe.brut.bot/admin/status)는 최근 구간의 수집·심사·발행·생존 확인 처리 속도와
+[관리자 상태](https://nomorevibe.com/admin/status)는 최근 구간의 수집·심사·발행·생존 확인 처리 속도와
 단계별 대기량, worker 생존, GitHub 대기, 마지막 실패를 함께 보여준다. 요청 접수·heartbeat 증가만으로
 수집 성공을 판단하지 않는다. 관리자 인증이 필요하다.
 독립 감시용 CLI는 같은 DB 관측을 JSON으로 내며 종료 코드 0은 정상·유휴·정책 중단, 1은 판별 불가,
