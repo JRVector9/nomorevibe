@@ -12,16 +12,18 @@ import "./cards.css";
  *
  * 카드 하나가 링크 하나다(UX-30, ProjectCard 와 같다). 메타는 한 줄로 고정하고(UX-29) 활동 날짜·빈 집계는 싣지 않는다 —
  * 칸이 좁아 '최근 업데이트 n일 전'까지 넣으면 잘리고, '지금 뜨는' 띠에서 '0회' 같은 부정 신호가 됐다.
- * '이번 주 새로 나온' 띠(listed)는 등록한 날을 붙인다.
+ * 신규 띠(listed)는 GitHub 저장소 생성일이 있으면 그 날을 붙인다.
  */
-export function CompactCard({ product, trailing, priority = false }: {
+export function CompactCard({ product, trailing, priority = false, headingLevel = 3 }: {
   product: ProductListItem;
   trailing: "category" | "listed";
   /** 화면 첫 줄의 띠('지금 뜨는') — 커버 그림을 먼저 받는다(PERF-03) */
   priority?: boolean;
+  headingLevel?: 2 | 3;
 }) {
   const now = new Date();
   const href = `/p/${product.slug}`;
+  const Heading = headingLevel === 2 ? "h2" : "h3";
   return (
     <article className="compact-card">
       <Link prefetch={false} href={href} className="compact-visual" tabIndex={-1} aria-hidden="true">
@@ -29,13 +31,13 @@ export function CompactCard({ product, trailing, priority = false }: {
           ai={product.aiLevel != null} category={product.category} priority={priority} />
       </Link>
       <div className="compact-body">
-        <h3 className="compact-title"><Link prefetch={false} href={href} className="card-link">{product.name}</Link></h3>
+        <Heading className="compact-title"><Link prefetch={false} href={href} className="card-link">{product.name}</Link></Heading>
         <ProductTagline tagline={product.tagline} taglineKo={product.taglineKo} source={product.taglineSource} className="compact-tagline" />
         {/* 조각 사이 '·'는 CSS 가 넣는다(card-dots) */}
         <p className="card-meta card-meta-compact card-dots">
           <StarMetric value={product} now={now} listedAt={product.listedAt} />
           <span>{categoryLabel(product.category)}</span>
-          {trailing === "listed" && <span title="등록한 날">{formatPublicDate(product.listedAt, now)}</span>}
+          {trailing === "listed" && <span title={product.repoCreatedAt ? "GitHub 저장소 생성일" : "등록한 날"}>{formatPublicDate(product.repoCreatedAt ?? product.listedAt, now)}</span>}
         </p>
       </div>
     </article>

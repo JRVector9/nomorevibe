@@ -16,6 +16,7 @@ import {
 } from "@/components/home/browse-state";
 import { ActiveList } from "@/components/home/ActiveList";
 import { CompactRow } from "@/components/home/CompactRow";
+import { CompactCard } from "@/components/home/CompactCard";
 import { IntroLine } from "@/components/home/IntroLine";
 import { LaunchBand } from "@/components/home/LaunchBand";
 import { listHomeNews } from "@/lib/news/repository";
@@ -32,6 +33,7 @@ import type { Category } from "@/lib/domain/products/schema";
 import { categoryLabel } from "@/lib/domain/products/labels";
 import {
   getNewThisWeek,
+  countNewThisWeek,
   getPublicList,
   getPublicListBySlugs,
   getUnclaimedList,
@@ -48,7 +50,7 @@ import {
   type HomePulse as Pulse,
 } from "@/lib/domain/products/home-pulse";
 import { formatCount } from "@/lib/format/number";
-import { formatPublicDateTime } from "@/lib/format/time";
+import { formatPublicDate, formatPublicDateTime } from "@/lib/format/time";
 import {
   getAllTimeRanking,
   getCurrentSeason,
@@ -82,6 +84,8 @@ type Props = {
     shown?: SearchValue;
     saved?: SearchValue;
     personal?: SearchValue;
+    new?: SearchValue;
+    page?: SearchValue;
   }>;
 };
 
@@ -295,6 +299,7 @@ export function canonicalAlternates(path: string): NonNullable<Metadata["alterna
 /** 검색어·분야로 탭 제목을 정한다(UX-39) — "“가계부” 검색 결과 — nomorevibe" */
 export async function generateMetadata({ searchParams }: Props): Promise<Metadata> {
   const params = await searchParams;
+  if (firstValue(params.new) === "1") return { title: "최근 7일에 생성된 프로젝트", alternates: canonicalAlternates("/") };
   const query = firstValue(params.q)?.trim().slice(0, 200) || undefined;
   // 검색 결과는 색인하지 않는다 — 검색어마다 얇은 목록 페이지가 끝없이 생긴다. 분야는 /c/[category] 정식 주소가 맡는다
   if (query) return { title: browseTitle({ query }), robots: { index: false, follow: true } };
@@ -309,7 +314,7 @@ export async function generateMetadata({ searchParams }: Props): Promise<Metadat
  */
 export default async function HomePage({ searchParams }: Props) {
   const params = await searchParams;
-  const moved = categoryRedirect(params);
+  const moved = firstValue(params.new) === "1" ? null : categoryRedirect(params);
   if (moved) redirect(moved);
   return HomeScreen({ params });
 }
@@ -329,13 +334,63 @@ export default async function HomePage({ searchParams }: Props) {
  */
 export async function HomeScreen({ params }: { params: HomeParams }) {
   const query = firstValue(params.q)?.trim().slice(0, 200) || undefined;
-  const key = [query, params.category, params.sort, params.builder, params.observedTool, params.ai, params.saved].map((value) => firstValue(value) ?? "").join("|");
+  const newOnly = firstValue(params.new) === "1";
+  const key = newOnly ? `new|${firstValue(params.page) ?? ""}` : [query, params.category, params.sort, params.builder, params.observedTool, params.ai, params.saved].map((value) => firstValue(value) ?? "").join("|");
   const category = parseCategory(firstValue(params.category));
-  const title = query ? `“${query}” 검색 결과` : category ? `${categoryLabel(category)} 프로젝트` : undefined;
+  const title = newOnly ? "최근 7일에 생성된 프로젝트" : query ? `“${query}” 검색 결과` : category ? `${categoryLabel(category)} 프로젝트` : undefined;
   return (
-    <Suspense key={key} fallback={<FeedSkeleton title={title} busy={query ? "찾는 중입니다…" : "불러오는 중입니다…"} />}>
+    <Suspense key={key} fallback={<FeedSkeleton title={title} busy={!newOnly && query ? "찾는 중입니다…" : "불러오는 중입니다…"} />}>
       <HomeContent params={params} />
     </Suspense>
+  );
+}
+
+/** 신규 모두 보기는 일반 최신순·필터와 독립된 목록이다. 기간은 매 요청 서버에서 정한다. */
+async function NewRepositories({ pageParam }: { pageParam: SearchValue }) {
+  const now = new Date();
+  const { weekStart, asOf } = completedWindows(now);
+  const pageSize = 15;
+  const value = firstValue(pageParam);
+  const requested = value && /^[1-9][0-9]{0,6}$/.test(value) ? Number(value) : 1;
+  const key = ["new-repositories", weekStart, asOf, NEW_THIS_WEEK_MIN_STARS];
+  let items: ProductListItem[] = [];
+  let total = 0;
+  let page = 1;
+  let pages = 1;
+  let failed = false;
+  try {
+    total = await publicRead("count", key, () => countNewThisWeek(weekStart, asOf));
+    pages = Math.max(1, Math.ceil(total / pageSize));
+    page = requested <= pages ? requested : 1;
+    const offset = (page - 1) * pageSize;
+    items = await publicRead("list", [...key, pageSize, offset], () => getNewThisWeek(pageSize, weekStart, asOf, offset));
+  } catch (error) {
+    logger.error("home.new_list_failed", { error });
+    failed = true;
+  }
+  const href = (next: number) => `/?${new URLSearchParams({ new: "1", page: String(next) })}`;
+  return (
+    <main className="wrap">
+      <section id="new" className="row-section" aria-labelledby="new-title">
+        <div className="row-head">
+          <div>
+            <h1 id="new-title" className="row-title">최근 7일에 생성된 프로젝트</h1>
+            <p className="row-note">GitHub 저장소 생성일 기준 · 스타 {NEW_THIS_WEEK_MIN_STARS} 이상</p>
+            <p className="row-note">{formatPublicDate(weekStart, now)} 00시부터 {formatPublicDate(asOf, now)} 00시 전까지 KST · 생성일 최신순</p>
+            {!failed && <p className="row-note">스타 기준을 충족한 프로젝트 {formatCount(total)}개 · 홈 상단 신규 집계는 스타 제한 없는 전체 수입니다.</p>}
+          </div>
+          <Link prefetch={false} href="/" className="row-more">홈으로</Link>
+        </div>
+        {failed ? <p>일시적으로 목록을 불러올 수 없습니다. 잠시 후 다시 시도해주세요.</p>
+          : items.length === 0 ? <p>이 기간에 생성된 스타 {NEW_THIS_WEEK_MIN_STARS} 이상 프로젝트가 없습니다.</p>
+            : <div className="compact-grid">{items.map((product, index) => <CompactCard key={product.slug} product={product} trailing="listed" priority={index < 3} headingLevel={2} />)}</div>}
+        {!failed && pages > 1 && <nav className="row-head" aria-label="신규 프로젝트 페이지">
+          {page > 1 && <Link prefetch={false} href={href(page - 1)}>이전</Link>}
+          <span>{page} / {pages}</span>
+          {page < pages && <Link prefetch={false} href={href(page + 1)}>다음</Link>}
+        </nav>}
+      </section>
+    </main>
   );
 }
 
@@ -368,6 +423,7 @@ function FeedSkeleton({ title, busy }: { title?: string; busy: string }) {
 }
 
 export async function HomeContent({ params }: { params: HomeParams }) {
+  if (firstValue(params.new) === "1") return NewRepositories({ pageParam: params.page });
   const sortParam = firstValue(params.sort);
   const query = firstValue(params.q)?.trim().slice(0, 200) || undefined;
   // A plain header search should cover the public catalogue. Preserve an explicitly
@@ -423,7 +479,8 @@ export async function HomeContent({ params }: { params: HomeParams }) {
   /** 검색·분야 화면 — 아래 홈 구획(인기·새로 나온·도구·활발한·소식)은 필터가 걸리지 않은 전체 기준이라 숨긴다(UX-35) */
   const scoped = Boolean(query || category);
   const stripLoad = filtered ? Promise.resolve<ProductListItem[]>([]) : publicRead("list", ["strip", RISING_STRIP], () => getPublicList(RISING_STRIP, { sort: "rising", rising: true })).catch(() => []);
-  const newLoad = filtered ? Promise.resolve<ProductListItem[]>([]) : publicRead("list", ["new", completedWindows(now).weekStart], () => getNewThisWeek(5, completedWindows(now).weekStart)).catch(() => []);
+  const newWindow = completedWindows(now);
+  const newLoad = filtered ? Promise.resolve<ProductListItem[]>([]) : publicRead("list", ["new-repositories", newWindow.weekStart, newWindow.asOf, NEW_THIS_WEEK_MIN_STARS, 5, 0], () => getNewThisWeek(5, newWindow.weekStart, newWindow.asOf)).catch(() => []);
 
   /*
    * 서로 기다릴 필요가 없는 것은 함께 시작한다 — 시즌·검색어 해석·카테고리 개수·검증 수(2026-10-06: 시즌을 받은 뒤에야
@@ -657,8 +714,8 @@ export async function HomeContent({ params }: { params: HomeParams }) {
         </Suspense>
       )}
       {!filtered && (
-        <CompactRow id="new" title="이번 주 새로 나온 프로젝트" note={`최근 7일에 처음 공개된 프로젝트 중 스타 ${NEW_THIS_WEEK_MIN_STARS} 이상`}
-          more={{ href: "/?sort=recent", label: "최신순 모두 보기" }} items={fresh} trailing="listed" />
+        <CompactRow id="new" title="최근 7일에 생성된 프로젝트" note={`GitHub 저장소 생성일 기준 · 스타 ${NEW_THIS_WEEK_MIN_STARS} 이상`}
+          more={{ href: "/?new=1", label: "모두 보기" }} items={fresh} trailing="listed" />
       )}
       {!scoped && (
         <div className="two-col">

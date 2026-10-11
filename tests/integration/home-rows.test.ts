@@ -5,7 +5,7 @@ import { eq } from "drizzle-orm";
 vi.mock("server-only", () => ({}));
 
 import { db } from "@/lib/db";
-import { productHealth, products, type ProductStatus } from "@/lib/db/schema";
+import { crawlCandidates, crawlDocuments, productHealth, products, type ProductStatus } from "@/lib/db/schema";
 import { getProductDetail } from "@/lib/domain/products/detail-view";
 import { DOWN_THRESHOLD } from "@/lib/domain/products/health";
 import { getRisingRank } from "@/lib/domain/products/repository";
@@ -18,27 +18,37 @@ const daysAgo = (days: number) => new Date(now.getTime() - days * DAY);
 
 /** 공개 제품 하나 — 스타는 "어제 → 오늘" 두 번 확인한 값으로 넣는다(starGain 이 계산되게) */
 async function product(slug: string, options: {
-  category?: string; status?: ProductStatus; createdAt?: Date; stars?: number; starsPrevious?: number;
+  category?: string; status?: ProductStatus; createdAt?: Date; bornAt?: Date; stars?: number; starsPrevious?: number;
 } = {}) {
   await db.insert(products).values({
     slug, url: `https://${slug}.example`, name: slug, tagline: "t", description: "d",
     category: options.category ?? "Dev", status: options.status ?? "seeded", source: "crawler",
     verifyToken: `v-${slug}`, editTokenHash: "a".repeat(64),
     createdAt: options.createdAt ?? daysAgo(30),
+    ...(options.bornAt ? { repoUrl: `https://github.com/acme/${slug}`, repoStatus: "ok" as const } : {}),
     stars: options.stars ?? null, starsAt: options.stars === undefined ? null : daysAgo(0),
     starsPrevious: options.starsPrevious ?? null, starsPreviousAt: options.starsPrevious === undefined ? null : daysAgo(1),
   });
+  if (options.bornAt) {
+    const repo = `acme/${slug}`;
+    await db.insert(crawlDocuments).values({ repo, repoMeta: { created_at: options.bornAt.toISOString() } });
+    await db.insert(crawlCandidates).values({ repo, state: "published", publishedSlug: slug });
+  }
 }
 
 beforeAll(ensureSchema);
-beforeEach(resetTables);
+beforeEach(async () => {
+  await resetTables();
+  await db.delete(crawlCandidates);
+  await db.delete(crawlDocuments);
+});
 
-describe("이번 주 새로 공개된 프로젝트", () => {
-  it("최근 7일에 등재됐고 스타가 기준 이상인 것만, 최신순", async () => {
-    await product("old", { createdAt: daysAgo(10), stars: 500, starsPrevious: 500 });
-    await product("new-small", { createdAt: daysAgo(2), stars: 10, starsPrevious: 10 });
-    await product("new-a", { createdAt: daysAgo(3), stars: 120, starsPrevious: 120 });
-    await product("new-b", { createdAt: daysAgo(1), stars: 80, starsPrevious: 80 });
+describe("최근 7일에 생성된 프로젝트", () => {
+  it("저장소가 최근 7일에 생성됐고 스타가 기준 이상인 것만, 생성일 최신순", async () => {
+    await product("old", { createdAt: daysAgo(1), bornAt: daysAgo(10), stars: 500, starsPrevious: 500 });
+    await product("new-small", { bornAt: daysAgo(2), stars: 10, starsPrevious: 10 });
+    await product("new-a", { status: "verified", bornAt: daysAgo(3), stars: 120, starsPrevious: 120 });
+    await product("new-b", { bornAt: daysAgo(1), stars: 80, starsPrevious: 80 });
     const rows = await getNewThisWeek(5, daysAgo(7));
     expect(rows.map((row) => row.slug)).toEqual(["new-b", "new-a"]);
   });
