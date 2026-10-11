@@ -6612,3 +6612,6 @@ gh pr view 368 --json headRefOid,baseRefOid,mergeStateStatus,statusCheckRollup
 
 
 전달 명령 정정(아래가 최신): Root 통합 HEAD에는 PR04까지 들어 있으므로 PR03 branch를 Root HEAD로 이동시키지 않는다. PR03/04 전용 delivery worktree를 만들었다. /private/tmp/nomorevibe-home-reader-delivery-20261012 = feat/home-star-growth-reader-20261012 HEAD54e6b2a(조회1파일만), /private/tmp/nomorevibe-home-ui-delivery-20261012 = feat/home-star-growth-ui-20261012 HEADb270d42(UI8+Root문서2). PR370 최신base9424d6e의 check 성공 후 정상merge, git fetch origin main, reader-delivery에서 git merge --no-edit origin/main; git push -u origin feat/home-star-growth-reader-20261012; gh pr create --base main --head feat/home-star-growth-reader-20261012 --title 'feat(stars): 닫힌 회차 기반 전일 대비 상승 조회' --body-file /private/tmp/nomorevibe-home-reviews.5VapVm/pr03-body.md. PR03 최신baseCI/병합 후 ui-delivery에서 fetch/mergeoriginmain 후 별도push/PR04로 전달한다. 각 PR diff가 reader1파일/UI8+문서2인지 확인한다. 최신 auth-empty통합/0074journal순서의 독립최종소스리뷰 완료 추가지적없음. API-key/환경/DB/배포 변경없음.
+
+
+2026-10-12 전달진행: PR370 head a9887bfc44cefe9ed02fcb6dd4ecbc5565e39402/최신base9424d6e의 CI38158817772 scope/quality/integration3개/check 모두실제성공, 정상병합main de4c894. reader-delivery에서origin/main정상merge후diff는star-growth.ts239줄1파일만확인, push/PR371 생성진행(최신HEAD아래최종기록참조). ui-delivery도동일mainmerge완료이며DB74와reader+UI의파일충돌없음. PR371필수CI/정상병합후ui-delivery mainmerge하고PR04를전달한다. Runtime배포/DB적용/API-key입력/기능테스트없음.
