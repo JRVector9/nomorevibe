@@ -11,6 +11,22 @@ const respond = (response: Response) => { const fetch = vi.fn().mockResolvedValu
 afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers(); });
 
 describe("integration transport boundary", () => {
+  it("reads only public repository metadata anonymously before the maker OAuth flow", async () => {
+    const fetch = respond(json({ id: 42 }));
+    expect(await githubRequest({ path: "/repos/Owner/Repo", auth: "public" })).toMatchObject({ outcome: "confirmed_success", data: { id: 42 } });
+    expect(fetch.mock.calls[0][1].headers).not.toHaveProperty("Authorization");
+    expect(Object.keys(fetch.mock.calls[0][1].headers).sort()).toEqual(["Accept", "User-Agent", "X-GitHub-Api-Version"]);
+  });
+
+  it.each([
+    { path: "/user" }, { path: "/repos/Owner/Repo/issues" }, { path: "/user/starred/Owner/Repo", method: "PUT" },
+    { path: "/repos/Owner/Repo", method: "POST" }, { path: "/repos/Owner/Repo?page=1" }, { path: "/repos/Owner/Repo", token },
+  ])("does not broaden public authentication beyond anonymous metadata GET", async input => {
+    const fetch = respond(json({}));
+    expect(await githubRequest({ ...input, auth: "public" } as GithubRequestOptions)).toMatchObject({ outcome: "confirmed_rejection", code: "github_invalid_request" });
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
   it.each([null, undefined, "invalid", [], {}])("returns a safe local rejection for malformed runtime options", async options => {
     const fetch = respond(json({}));
     expect(await githubRequest(options as unknown as GithubRequestOptions)).toMatchObject({ outcome: "confirmed_rejection", status: null, code: "github_invalid_request" });

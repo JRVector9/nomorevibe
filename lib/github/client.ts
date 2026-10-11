@@ -1,13 +1,13 @@
 import { isGithubNumericId, isGithubRepositoryName } from "./repositories";
 
-export type GithubAuthKind = "user" | "installation" | "app";
+export type GithubAuthKind = "user" | "installation" | "app" | "public";
 export type GithubMethod = "GET" | "POST" | "PUT" | "DELETE";
 export type GithubRequestBody =
   | { title: string; body: string }
   | { repository_ids: number[]; permissions: { issues: "write"; metadata?: "read" } };
 export type GithubRequestOptions = {
   path: string;
-  token: string;
+  token?: string;
   auth?: GithubAuthKind;
   method?: GithubMethod;
   body?: GithubRequestBody;
@@ -41,6 +41,9 @@ function endpointFor(path: string, method: GithubMethod, auth: GithubAuthKind): 
   const [pathname, query, extra] = path.split("?");
   if (extra !== undefined || query === "") return null;
   const parts = pathname.split("/").slice(1);
+  if (auth === "public" && (method !== "GET" || query !== undefined
+    || !(parts[0] === "repos" && parts.length === 3 && isGithubRepositoryName(parts[1], parts[2]))
+      && !(parts[0] === "repositories" && parts.length === 2 && numericSegment(parts[1])))) return null;
   let endpoint: Endpoint | null = null;
   if (parts[0] === "repos" && parts.length >= 3 && isGithubRepositoryName(parts[1], parts[2])) {
     if (parts.length === 3 && method === "GET" && auth !== "app") endpoint = { expectedStatus: 200, body: "none" };
@@ -150,16 +153,18 @@ export async function githubRequest<T>(options: GithubRequestOptions): Promise<G
   try {
     if (!record(options) || !onlyKeys(options, ["path", "token", "auth", "method", "body", "timeoutMs"])) return failure("confirmed_rejection", "github_invalid_request");
     method = options.method ?? "GET"; auth = options.auth ?? "user";
-    if (typeof options.path !== "string" || typeof options.token !== "string" || !/^[A-Za-z0-9_.-]{20,4096}$/.test(options.token)
-      || !["GET", "POST", "PUT", "DELETE"].includes(method) || !["user", "installation", "app"].includes(auth)
+    if (typeof options.path !== "string" || (auth === "public" ? options.token !== undefined
+      : typeof options.token !== "string" || !/^[A-Za-z0-9_.-]{20,4096}$/.test(options.token))
+      || !["GET", "POST", "PUT", "DELETE"].includes(method) || !["user", "installation", "app", "public"].includes(auth)
       || (options.timeoutMs !== undefined && (!Number.isFinite(options.timeoutMs) || options.timeoutMs <= 0))) return failure("confirmed_rejection", "github_invalid_request");
     endpoint = endpointFor(options.path, method, auth);
     if (!endpoint || !validBody(options.body, endpoint)) return failure("confirmed_rejection", "github_invalid_request");
     body = options.body === undefined ? undefined : JSON.stringify(options.body);
     if (body !== undefined && Buffer.byteLength(body) > 64 * 1024) return failure("confirmed_rejection", "github_invalid_request");
   } catch { return failure("confirmed_rejection", "github_invalid_request"); }
-  const headers: Record<string, string> = { Accept: "application/vnd.github+json", Authorization: `Bearer ${options.token}`,
+  const headers: Record<string, string> = { Accept: "application/vnd.github+json",
     "User-Agent": "NoMoreVibe/1.0", "X-GitHub-Api-Version": "2026-03-10" };
+  if (auth !== "public") headers.Authorization = `Bearer ${options.token}`;
   if (body !== undefined) headers["Content-Type"] = "application/json";
   if ((method === "PUT" || method === "DELETE") && body === undefined) headers["Content-Length"] = "0";
   const controller = new AbortController();
