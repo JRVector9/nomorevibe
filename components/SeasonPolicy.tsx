@@ -101,8 +101,9 @@ function PolicyGroup({ title, children }: { title: string; children: React.React
 function PolicyRow({ label, value }: { label: string; value: string }) {
   return (
     <div className="flex justify-between gap-4">
-      <dt className="text-fg-2">{label}</dt>
-      <dd className="text-right font-medium">{value}</dd>
+      {/* 라벨은 한 줄로 두고 줄바꿈은 값 쪽에서 한다 — 모바일에서 '유효 방문 기준'이 두 줄로 끊겼다(ROB-04) */}
+      <dt className="shrink-0 whitespace-nowrap text-fg-2">{label}</dt>
+      <dd className="min-w-0 text-right font-medium">{value}</dd>
     </div>
   );
 }

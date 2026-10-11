@@ -32,7 +32,8 @@ export default async function LaunchPage() {
   return (
     <main className="mx-auto max-w-[1080px] px-4 pb-20 sm:px-6">
       <section className="pb-10 pt-16 text-center">
-        <span className="inline-block rounded-full border border-accent bg-accent-soft px-[22px] py-2 font-mono text-[15px] font-bold text-accent">
+        {/* 글자는 accent-ink — accent 는 accent-soft 바탕 위 4.0:1 로 AA 미달, accent-ink 는 라이트 4.8:1·다크 5.5:1(A11Y-02) */}
+        <span className="inline-block rounded-full border border-accent bg-accent-soft px-[22px] py-2 font-mono text-[15px] font-bold text-accent-ink">
           {LAUNCH_COMMAND}
         </span>
         <h1 className="mt-[22px] text-[34px] font-extrabold tracking-tight">
@@ -101,7 +102,8 @@ export default async function LaunchPage() {
         ].map((s) => (
           <div key={s.n} className="rounded-[12px] border border-line bg-bg-card p-[22px]">
             <div className="font-mono text-[13px] font-bold text-accent">{s.n}</div>
-            <h3 className="mt-2 text-[15px] font-bold">{s.title}</h3>
+            {/* h1 다음 단계라 h2 — h3 로 건너뛰면 제목 목록이 비어 보인다(A11Y-05) */}
+            <h2 className="mt-2 text-[15px] font-bold">{s.title}</h2>
             <p className="mt-2 text-[13px] leading-[1.7] text-fg-2">{s.body}</p>
           </div>
         ))}

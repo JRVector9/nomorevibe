@@ -20,7 +20,8 @@ const loadSeason = cache((key: string) => getSeasonByKey(key));
 export async function generateMetadata({ params }: PageProps<"/rankings/[key]">): Promise<Metadata> {
   const { key } = await params;
   const result = await loadSeason(key);
-  if (!result) return {};
+  // 없는 시즌은 본문이 404 로 바뀌지만 탭 제목은 여기 값이 남는다 — 비우면 홈 제목이 뜬다(UX-10·UX-39)
+  if (!result) return { title: pageTitle("페이지를 찾을 수 없습니다") };
   return {
     title: pageTitle(`${seasonLabel(result.season.key)} 랭킹`),
     robots: result.items.length > 0 ? undefined : { index: false, follow: true },
@@ -64,8 +65,9 @@ export default async function RankingSeasonPage({
       </div>
       {/* 시즌 규칙 값은 순위를 보는 데 필요하지 않다 — 궁금한 사람만 연다 */}
       <details className="mt-6 rounded-[12px] border border-line bg-bg-card">
+        {/* 제목 단계 h1 → h2 → h3(SeasonPolicy 안 묶음 제목) — 건너뛰지 않게 여기서 h2 를 둔다(A11Y-05) */}
         <summary className="flex min-h-11 cursor-pointer items-center px-5 text-[14px] font-semibold text-fg">
-          집계 기준
+          <h2 className="text-[14px] font-semibold">집계 기준</h2>
         </summary>
         <div className="border-t border-line p-5">
           <SeasonPolicy season={result.season} now={new Date()} />

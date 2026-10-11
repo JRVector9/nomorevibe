@@ -14,7 +14,7 @@ import { siteOrigin } from "@/lib/site";
  * 개발자이고, 그들은 아직 RSS를 읽는다.
  *
  * 홈의 발견 보드와 같은 것을 내보낸다 — 검증된 제품과 우리가 대신 올린 제품을 등재 시각순으로.
- * 어느 쪽인지는 제목에 밝힌다. 피드 리더에는 배지가 없으므로 글자로 적는 수밖에 없다.
+ * 어느 쪽인지는 항목의 분류(category) 하나로 밝힌다. 피드 리더에는 배지가 없으므로 글자로 적되, 제목에는 붙이지 않는다(SEO-05).
  */
 const FEED_LIMIT = 50;
 
@@ -60,11 +60,13 @@ export const GET = withRoute("feed", async (req: Request) => {
         "atom:link": { "@_href": `${origin}/feed.xml`, "@_rel": "self", "@_type": "application/rss+xml" },
         lastBuildDate: (items[0]?.listedAt ?? new Date()).toUTCString(),
         item: items.map((product) => ({
-          title: xmlText(`${product.name} — ${product.status === "verified" ? "✓ 검증됨" : UNCLAIMED_LABEL}`),
+          // 제목은 이름만 — 상태 꼬리표('— 운영자 미확인')가 피드 리더 제목에 그대로 붙었다(SEO-05). 상태는 분류 하나로 옮긴다
+          title: xmlText(product.name),
           link: `${origin}/p/${product.slug}`,
           guid: { "@_isPermaLink": "true", "#text": `${origin}/p/${product.slug}` },
-          description: xmlText(product.tagline),
-          category: product.category,
+          // 상세 페이지 설명과 같은 순서 — AI 가 옮긴 한국어 한 줄이 있으면 그것, 없으면 원문(app/p/[slug]/page.tsx)
+          description: xmlText(product.taglineKo?.trim() || product.tagline),
+          category: [product.category, product.status === "verified" ? "✓ 검증됨" : UNCLAIMED_LABEL],
           pubDate: product.listedAt.toUTCString(),
         })),
       },
