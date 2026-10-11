@@ -55,12 +55,23 @@ export default async function RankingSeasonPage({
             mode="season"
           />
         ) : (
-          <p className="rounded-[12px] border border-dashed border-line bg-bg-card px-5 py-10 text-center text-[15px] text-fg-2">
-            {emptyMessage(result.season)} —{" "}
-            <Link prefetch={false} href="/#rising" className="font-semibold text-accent-ink underline underline-offset-4">
-              지금 뜨는 프로젝트 보기
-            </Link>
-          </p>
+          // 왜 비었는지 말한다 — 랭킹은 메이커가 등록·확인한 최근 프로젝트만 센다(refresh.ts 후보: status verified, 출시 참가 기간 안).
+          // 수집한 프로젝트는 들어가지 않으므로 등록이 없으면 늘 빈다(2026-10-11 운영 확인: 확인된 제품 0건)
+          <div className="rounded-[12px] border border-dashed border-line bg-bg-card px-5 py-10 text-center">
+            <p className="text-[15px] font-semibold text-fg">{emptyMessage(result.season)}</p>
+            <p className="mx-auto mt-2 max-w-[560px] text-[14px] leading-6 text-fg-2">
+              랭킹은 메이커가 <code className="font-mono">/nomorevibe</code>로 등록하고 소유를 확인한 최근 프로젝트만,
+              상세 페이지에서 제품으로 나간 방문 수로 줄 세웁니다. 사이트가 찾아 모은 프로젝트는 들어가지 않습니다.
+            </p>
+            <p className="mt-4 flex flex-wrap justify-center gap-x-6 gap-y-2 text-[15px]">
+              <Link prefetch={false} href="/launch" className="inline-flex min-h-11 items-center font-semibold text-accent-ink underline underline-offset-4">
+                내 프로젝트 공개하기
+              </Link>
+              <Link prefetch={false} href="/#rising" className="inline-flex min-h-11 items-center font-semibold text-accent-ink underline underline-offset-4">
+                지금 뜨는 프로젝트 보기
+              </Link>
+            </p>
+          </div>
         )}
       </div>
       {/* 시즌 규칙 값은 순위를 보는 데 필요하지 않다 — 궁금한 사람만 연다 */}

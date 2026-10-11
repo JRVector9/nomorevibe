@@ -127,6 +127,10 @@ describe("ranking season page", () => {
     const metadata = await generateMetadata({ params: Promise.resolve({ key: "2026-W41" }), searchParams: Promise.resolve({}) });
 
     expect(html).toContain("이번 주는 아직 집계된 제품이 없습니다");
+    // 왜 비었는지 — 등록·확인한 프로젝트만 센다 — 와 등록하는 길을 함께 보인다
+    expect(html).toContain("소유를 확인한 최근 프로젝트만");
+    expect(html).toContain("사이트가 찾아 모은 프로젝트는 들어가지 않습니다");
+    expect(html).toMatch(/href="\/launch"[^>]*>\s*내 프로젝트 공개하기/);
     expect(html).toContain('href="/#rising"');
     expect(html).toContain("지금 뜨는 프로젝트 보기");
     expect(html).not.toContain("<table");
