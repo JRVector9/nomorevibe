@@ -1,9 +1,11 @@
 import Link from "next/link";
 import { ProductTagline } from "@/components/ProductTagline";
 import { StarMetric } from "@/components/StarMetric";
+import { StarGrowthMetric } from "@/components/home/StarGrowthMetric";
 import { ProjectTile } from "@/components/home/ProjectTile";
 import { categoryLabel } from "@/lib/domain/products/labels";
 import type { ProductListItem } from "@/lib/domain/products/view";
+import type { StarGrowthItem } from "@/lib/domain/products/star-growth";
 import { formatPublicDate } from "@/lib/format/time";
 import "./cards.css";
 
@@ -15,7 +17,7 @@ import "./cards.css";
  * 신규 띠(listed)는 GitHub 저장소 생성일이 있으면 그 날을 붙인다.
  */
 export function CompactCard({ product, trailing, priority = false, headingLevel = 3 }: {
-  product: ProductListItem;
+  product: ProductListItem & { starGrowth?: StarGrowthItem["starGrowth"] };
   trailing: "category" | "listed";
   /** 화면 첫 줄의 띠('지금 뜨는') — 커버 그림을 먼저 받는다(PERF-03) */
   priority?: boolean;
@@ -35,8 +37,8 @@ export function CompactCard({ product, trailing, priority = false, headingLevel 
         <ProductTagline tagline={product.tagline} taglineKo={product.taglineKo} source={product.taglineSource} className="compact-tagline" />
         {/* 조각 사이 '·'는 CSS 가 넣는다(card-dots) */}
         <p className="card-meta card-meta-compact card-dots">
-          <StarMetric value={product} now={now} listedAt={product.listedAt} />
-          <span>{categoryLabel(product.category)}</span>
+          {product.starGrowth ? <StarGrowthMetric value={product.starGrowth} /> : <StarMetric value={product} now={now} listedAt={product.listedAt} />}
+          {!product.starGrowth && <span>{categoryLabel(product.category)}</span>}
           {trailing === "listed" && <span title={product.repoCreatedAt ? "GitHub 저장소 생성일" : "등록한 날"}>{formatPublicDate(product.repoCreatedAt ?? product.listedAt, now)}</span>}
         </p>
       </div>

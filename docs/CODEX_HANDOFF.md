@@ -6573,3 +6573,39 @@ gh pr checks 368
 gh pr view 368 --json headRefOid,baseRefOid,mergeStateStatus,statusCheckRollup
 ```
 최신-base 필수CI가 성공한 실제head를 --match-head-commit으로 정상병합한 후 root main을 fast-forward한다. 홈 정책 보고서 링크를 사용자에게 전달하되 실제 신규/급상승 코드가 아직 변경되지 않았음을 알린다.
+
+
+### 2026-10-12 — 승인된 홈 PR01~04 병렬 구현 진행
+
+현재 목적: 사용자가 API-key 입력을 제외하고 홈 기준 수정 PR01~04를 gpt-6.1-sol/xhigh 서브에이전트 병렬로 구현하고 Root가 충돌 관리·코드 리뷰·최종 보고하도록 승인했다. PR368은 필수 CI 성공 후 main674c62bd615a7e2ed3039a9745905295b1a50c16으로 병합됐다. 추천 기준(50~1,999스타, 전일 동시간대 순증가10이상, KST00/08/16 집계)을 구현한다. 실제 기능 테스트는 사용자 담당이며 로컬 테스트·typecheck·lint·build·E2E를 실행하지 않는다. 필요한 보호 main 원격 CI와 소스/diff 검토는 구분해 보고한다.
+
+독립 worktree와 소유권: /private/tmp/nomorevibe-home-new-20261012 (feat/home-new-repository-birth-20261012, home_new)은 신규 저장소 생성일 조회·전체 목록·기존 fixture 최소 수정 8파일; /private/tmp/nomorevibe-home-observer-20261012 (feat/star-observation-cycles-20261012, home_observer)은 관측 스키마·마이그레이션0073·정책·job·worker·유지보수 연결; /private/tmp/nomorevibe-home-growth-20261012 (feat/star-growth-query-20261012, home_growth)은 신규 star-growth.ts 독립 조회만; /private/tmp/nomorevibe-home-integration-20261012 (feat/home-policy-integration-20261012)은 Root 문서·통합 관리. 아직 구현 커밋/PR/배포/DB 마이그레이션은 없다. PR04 UI는 PR01 소스 검토 완료 후 그 커밋 기반으로 별도 에이전트가 작성하도록 한다. app/page.tsx 등 공통 UI 파일을 동시에 수정하지 않는다.
+
+작성된 코드: PR01 GitHub 저장소 생성 시각의 완료7일 양쪽 경계와 동일 조건 /?new=1&page=N, 생성일 카드 표시. PR02 회차/관측 두 표와 최소 repo_link_version 재연결 트리거, 공개 대상 고정·회차 직전1시간 관측·3회 재시도·회차 종료·7일 정리. 기존 job 엔진을 재사용해 분당 DB 재개 점검하지만 GitHub 수집은 하루3회 관측창에만 한다. PR03 닫힌 T/T−24시간 회차의 실측23~25시간 비교·정책 고정·정렬/페이지/캐시·자료 부족 상태. 현재 소스 리뷰 중이며 성공 확정이 아니다. 비공개 저장소 감지와 실제 GitHub 저장소 식별자의 필요성을 추가 검토한다.
+
+검사: 에이전트 git diff --check와 Root 소스 읽기만 수행했다. 독립 CLI PR01 리뷰가 session51256에서 진행 중이며 모델 gpt-6.1-sol, effort xhigh, read-only/ephemeral; 로그와 결과는 /private/tmp/nomorevibe-home-reviews.5VapVm/pr01-log.txt 및 pr01-result.txt. 테스트 통과 주장 금지. PR02/03 독립 리뷰와 PR04 구현·검토, 정상 PR/최신-base CI, 배포 계획 구분이 남았다. 자료 축적은 최소24시간/4회차가 필요하며 코드 완료를 급상승 자료 준비와 혼동하지 않는다.
+
+운영 App 키 저장 설정은 앞 기록대로 준비된6앱/flags false이며 이번 구현은 API-key 입력·메일 키·브라우저 webhook Save·기능 ON과 무관하다. 사용자 untracked PPT/prototypes와 중단한 소개 검수 보존. 실패 접근은 새로 없으며 stale 로컬 DB를 운영 마이그레이션에 사용하지 않는다.
+
+다음 정확한 명령: cd /private/tmp/nomorevibe-home-integration-20261012; git diff --check; git status --short. PR01 결과는 cat /private/tmp/nomorevibe-home-reviews.5VapVm/pr01-result.txt (완료 후). 각 worktree 변경을 Root가 검토·stage·git diff --cached --check 후 커밋하고, 의존 순서01 독립/02→03→04로 통합한다. codex 호출 시 반드시 -m gpt-6.1-sol -c model_reasoning_effort=xhigh. 비밀 .env/PEM/운영 rollback snapshot은 출력/커밋하지 않는다.
+
+
+진행 추가: PR01 CLI 소스 리뷰 완료, P2 현재URL자료 누락/P3 Date decoder 유실/P3 신규뷰헤더활성표시3건을 수정한다. 신규 direct lower(repo) lookup의 인덱스 추가를 PR01 migration0073으로 지시했으며 관측 migration은0074로 Root가 순차 재번호해야 한다. UI는 /private/tmp/nomorevibe-home-ui-20261012 feat/star-growth-ui-20261012의 사전 스냅샷0937a1e 기반 /root/home_growth_ui(gpt-6.1-sol/xhigh)가 작성 중. UI 공통 파일만소유, PR01 추가backendfix는 Root가합친다. PR02 stageddiff 독립CLI session15691/pr02-result.txt, PR03 stageddiff 독립CLI session21833/pr03-result.txt, 둘다 /private/tmp/nomorevibe-home-reviews.5VapVm에 저장. PR02 관측에 GitHub node repositoryId+isPrivate guard 보완, PR03 양쪽 repositoryId 일치추가. 기존 회차policyVersion상수불일치 gate 제거. 새 DB migration/배포/로컬테스트는 아직 미실행.
+
+
+2026-10-12 진행: PR01 추가인덱스/현재URL/Date변환의독립범위재리뷰 추가지적없음. 실제 PR01커밋5231fbb push/PR369 생성, CI38157584835 진행중. Root통합branch에는동일내용db3f65c로cherry-pick. PR03 독립CLI추가지적없음, e3031a2커밋(아직push/PR없음). PR04 소스8파일완료/stage하고CLI session65978/pr04-result.txt 검토중. PR02 독립CLI P2/highconfidence2건(cooldown재시도소모/토큰준비후timeout으로마감후requeststart) 수정지시, scopegithub.ts/github-accounts.ts/github-apps.ts deadline선택옵션으로최소확장. 기존jobcatalog3→4lanefixture만수정. 마이그레이션실행/배포/로컬테스트없음. 다음: PR02수정완료후새코드만재리뷰하고0074로번호조정, PR01최신baseCI→정상병합, PR02→03→04순차의존PR. PR04홈/모두보기는code완료와24시간warmup운영반영을구별해최종보고.
+
+
+2026-10-12 02시경: PR369 head5231fbb/최신base674c62b의 필수 CI38157584835 scope/quality/integration3개/check 모두 실제success확인, 정상merge요청했다. PR04 CLI staged8파일소스검토 추가지적없음, UIcommit완료(아래후속기록에SHA). PR03 reader도소스검토추가지적없음. PR02 P2수정은콜백 인증/쿼터waitreserveattempt반환+선택적절대deadline을공유collector의tokenmint부터HTTPdispatch까지전달하며, 기존callers/credential기본동작보존방식으로작성중. 코드완료후Root복사통합branch에서observermigration74/journal순서해결, PR02/03/04 actualdeliverybranch와원격CI결과는아직미확정.
+
+
+최신 전달 상태: PR369은 2026-10-12 02:01KST경 main9424d6e6cebe3bbfd4311461275d3063def9928b로정상병합, 사용자rootmain도같은SHA로ff. Root통합branch가origin/main을정상merge했으며 사용자untracked산출물보존. PR04UIcommit03a2b73(사전PR01스냅샷0937a1e의후속), PR03e3031a2는아직deliveryPR없음. Root통합worktree에관측16파일복사하고SQL파일0074_product_star_observations.sql, journalidx74/when1792700000000으로번호충돌해결(아직commit없음).
+
+관측재리뷰추가지적P2/highconfidence: 느린Appmint가10초준비예산전부를쓰면정상PAT/cachedApp으로도GraphQL을못시작함. home_observer에deadline선택경로에서dispatch5초를남겨optionalAppmint예산을제한하고,짧은예산종료시공유실패캐시를오염시키거나뒤cached토큰을건너뛰지않도록최소수정지시. 아직재리뷰완료아님. 완료후Root통합에서github-apps/accounts/request최신수정만다시복사해야함. PR02최종stage검토→최소경로독립재리뷰→commit/deliverybranch/PR370(실제번호확인), PR03/04순차의존PR/필수CI가남음.
+
+독립리뷰파일: /private/tmp/nomorevibe-home-reviews.5VapVm/pr01-result.txt,pr01-fix-result.txt,pr02-result.txt,pr02-fix-result.txt,pr03-result.txt,pr04-result.txt. PR02-fixCLI session98167은완료됐으며result에는위느린mint지적이있음. PR04 CLI session65978완료추가지적없음. 추가CLI도gpt-6.1-sol/xhigh/read-only/실행금지로한다. 운영migration/deploy/기능ON/테스트미실행. 코드PRCI는GitHub필수검사만실제로확인해보고.
+
+
+구현 phase 완료 상태: 모든 에이전트작성완료. Root가최종관측16파일을0074로통합하고a9887bf커밋/deliveryfeat/home-star-observations-20261012/push/PR370생성. PR03e3031a2를54e6b2a로cherry-pick, deliveryfeat/home-star-growth-reader-20261012branch준비. PR04UI03a2b73의8파일을no-commitcherry-pick해stage, Rootdocs도아래최종UIcommit에포함예정. 마지막auth-empty보완은중복return없이optionaldeadline&& (예산종료||accounts0)로3줄작동을합쳤다. 선택적mintreserve5s+후행cachedtoken취합경로 독립재리뷰추가지적없음, 마지막auth-emptyFocusedCLI session11338/pr02-final-result.txt진행중. 기능테스트미실행, gitdiffcachedcheck0.
+
+다음정확한명령: cd /private/tmp/nomorevibe-home-integration-20261012; git add app/page.tsx app/rising/page.tsx components/home/CompactCard.tsx components/home/CompactRow.tsx components/home/MethodologyDialog.tsx components/home/SiteHeader.tsx components/home/StarGrowthMetric.tsx components/home/StarGrowthSummary.tsx docs/CODEX_HANDOFF.md docs/operations/2026-10-12-home-ranking-implementation.md; git diff --cached --check; git commit -m 'feat: present daily star growth with cycle evidence'. PR370最新base9424d6e/HEADa9887bfの필수CI성공확인후정상merge하고origin/main을fetch/Root통합merge. PR03deliverybranch를Root통합의mainmergecommit까지ff한뒤push/mainbasePR생성. PR03병합후같은방법으로PR04전달. 임의force-push/보호규칙우회금지. 사용자rootmain은trackedclean확인후ff,untracked보존. 운영migration/deploy/24시간warmup아직없으며CODE완료와다르게보고한다.

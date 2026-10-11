@@ -10,6 +10,9 @@ import { formatCount } from "@/lib/format/number";
 import { categoryLabel } from "@/lib/domain/products/labels";
 import { hiddenByDefault } from "@/lib/domain/products/visibility";
 import type { HomePulseView } from "@/components/home/types";
+import type { StarGrowthSnapshot } from "@/lib/domain/products/star-growth";
+import { StarGrowthSummary, STAR_GROWTH_TITLE, starGrowthNote } from "@/components/home/StarGrowthSummary";
+import { formatDetailTime, formatPublicDateTime } from "@/lib/format/time";
 
 /**
  * 계산식·세부 조건은 '자세히' 안에 접는다(UX-37) — 본문은 지표마다 쉬운 문장 하나로 읽힌다.
@@ -31,19 +34,20 @@ function Formula({ children }: { children: React.ReactNode }) {
 /** 대화창이 열리는 화면 — 홈과 분야 화면(/c/…)이 같은 목록을 쓴다 */
 const isBrowsePath = (pathname: string) => pathname === "/" || pathname.startsWith("/c/");
 
-export function MethodologyDialog({ pulse, rankingFallback = false, aiLevels = null }: {
+export function MethodologyDialog({ pulse, rankingFallback = false, aiLevels = null, starGrowth }: {
   pulse: HomePulseView;
   /** 검증 제품이 모자라 순위 탭이 스타 목록을 대신 보여주는 동안(app/page.tsx fallbackSort) 그 기준도 적는다 */
   rankingFallback?: boolean;
   /** AI 제작 근거 단계마다의 공개 수(홈 '만든 방식' 칩과 같은 집계) — 못 읽었으면 null(수 없이 기준만) */
   aiLevels?: Record<AiLevel, number> | null;
+  starGrowth?: StarGrowthSnapshot | null;
 }) {
   const dialog = useRef<HTMLDialogElement>(null);
   const skipClose = useRef(false);
   const params = useSearchParams();
   const pathname = usePathname();
   const metric = params.get("metric") ?? "";
-  const open = isBrowsePath(pathname) && ["all", "born", "updates", "active", "categories", "ai", "tools", "popular", "rising"].includes(metric);
+  const open = isBrowsePath(pathname) && ["all", "born", "updates", "active", "categories", "ai", "tools", "popular", "rising", "star-growth"].includes(metric);
 
   useEffect(() => {
     const node = dialog.current;
@@ -79,7 +83,8 @@ export function MethodologyDialog({ pulse, rankingFallback = false, aiLevels = n
 
   const metrics: [string, string][] = [["popular", "스타 구간"], ["born", NEW_PROJECTS_LABEL], ["updates", "새 버전"], ["active", "활발한 프로젝트"], ["categories", "분야 순위"], ["ai", "만든 방식"]];
   if (pulse.tools) metrics.push(["tools", "제작 도구"]);
-  if (rankingFallback) metrics.push(["rising", "지금 뜨는"]);
+  metrics.push(["star-growth", STAR_GROWTH_TITLE]);
+  if (rankingFallback) metrics.push(["rising", "추천 대체 목록"]);
   const nav = (
     <div className="metric-links">
       {metrics.map(([key, label]) => (
@@ -98,6 +103,27 @@ export function MethodologyDialog({ pulse, rankingFallback = false, aiLevels = n
   const categories = pulse.categories.filter((item) => !hiddenByDefault(item.key));
 
   const blocks: Record<string, React.ReactNode> = {
+    "star-growth": (
+      <>
+        <h3>{STAR_GROWTH_TITLE} — 전날 같은 회차의 관측값과 비교합니다.</h3>
+        <p>{starGrowthNote(starGrowth ?? null)}.</p>
+        {starGrowth !== undefined && <StarGrowthSummary snapshot={starGrowth} now={pulse.asOf} />}
+        <Details>
+          <p>공개된 프로젝트의 정상 공개 GitHub 저장소를 비교합니다. KST 00시·08시·16시 회차 직전 {starGrowth?.policy?.collectionWindowHours ?? 1}시간 안의 성공 관측만 사용하며, 실제 두 관측 간격은 {starGrowth?.policy?.minIntervalHours ?? 23}~{starGrowth?.policy?.maxIntervalHours ?? 25}시간입니다.</p>
+          <Formula>전일 대비 증가 = 해당 회차의 스타 − 전날 같은 회차의 스타</Formula>
+          <p>증가량이 많은 순, 같으면 해당 회차 스타가 많은 순, 다시 같으면 프로젝트 주소 순입니다. 홈 상위 5개와 모두 보기는 같은 회차·조건·순서를 사용합니다. 카드에는 해당 회차 스타와 순증가를 표시하며, 숫자에 마우스를 올리면 두 실제 관측 시각을 확인할 수 있습니다. 보조 기술에도 같은 시각을 제공합니다.</p>
+          {starGrowth && <table className="method-table">
+            <thead><tr><th>관측</th><th>기준 회차 KST</th><th>실제 성공 관측 시각 KST</th></tr></thead>
+            <tbody>
+              <tr><td>이번 회차</td><td>{formatPublicDateTime(starGrowth.asOf, pulse.asOf)}</td><td>{starGrowth.firstObservedAt ? `${formatDetailTime(starGrowth.firstObservedAt)} ~ ${formatDetailTime(starGrowth.lastObservedAt)}` : "성공 관측 없음"}</td></tr>
+              <tr><td>전날 같은 회차</td><td>{formatPublicDateTime(starGrowth.baselineAsOf, pulse.asOf)}</td><td>{starGrowth.baseline?.firstObservedAt ? `${formatDetailTime(starGrowth.baseline.firstObservedAt)} ~ ${formatDetailTime(starGrowth.baseline.lastObservedAt)}` : "성공 관측 없음"}</td></tr>
+            </tbody>
+          </table>}
+          <p>최신 예정 회차의 성공 관측을 쓰며 마지막 관측은 {starGrowth?.policy?.maxAgeHours ?? 10}시간 이내여야 합니다. 실패·비교 자료 없음·저장소 연결 변경·관측 마감 초과는 제외합니다. 새로 발굴된 프로젝트는 다음 관측 회차부터 수집하고 전날 비교 자료가 확보된 뒤 진입합니다.</p>
+          <p>정확한 최근 24시간의 모든 스타 이벤트를 센 값은 아닙니다. 기존 추천 대체 목록의 마지막 두 관측 사이 일평균과도 계산이 다릅니다. 자료가 부족하면 이전 회차나 일평균 목록으로 대체하지 않습니다. 차단·삭제·공개 범위 변경 프로젝트는 즉시 숨기며, 그 외 순위는 다음 회차까지 고정됩니다.</p>
+        </Details>
+      </>
+    ),
     popular: (<>
       <h3>많이 쓰이는 프로젝트 — GitHub 스타 구간.</h3>
       <p>공개된 프로젝트를 GitHub 스타 수로 2천+ · 5천+ · 1만+ · 3만+ 네 구간으로 나눠, 구간마다 스타가 많은 순으로 보여 줍니다.</p>
@@ -211,11 +237,11 @@ export function MethodologyDialog({ pulse, rankingFallback = false, aiLevels = n
     ...(rankingFallback ? {
       rising: (
         <>
-          <h3>지금 뜨는 — 최근 GitHub 스타가 하루 평균 가장 많이 는 순.</h3>
+          <h3>추천 대체 목록 — 최근 GitHub 스타가 하루 평균 가장 많이 는 순.</h3>
           <p>최근 두 번 확인한 사이에 GitHub 스타가 하루 평균 가장 많이 늘어난 프로젝트 순입니다.</p>
           <Details>
             <p>
-              순위는 검증된 프로젝트의 유효 방문으로 매기는데, 검증된 프로젝트가 아직 모자랍니다. 그동안 &ldquo;지금 뜨는&rdquo;은 공개 프로젝트를
+              순위는 검증된 프로젝트의 유효 방문으로 매기는데, 검증된 프로젝트가 아직 모자랍니다. 그동안 추천 탭의 대체 목록은 공개 프로젝트를
               <b> 마지막 두 번 확인한 사이에 하루 평균 늘어난 스타</b> 순으로 보여줍니다 — 늘어난 것만, 스타 2천 미만만입니다(그 위는 스타 구간이
               따로 보여줍니다). 마지막 확인이 운영자가 정한 기간(기본 7일)보다 오래된 프로젝트(저장소가 사라졌거나 확인이 계속 실패한 것)는 뺍니다.
               &ldquo;관심 많은 순&rdquo;은 같은 동안 스타 많은 순입니다.
@@ -303,7 +329,9 @@ export function MethodologyDialog({ pulse, rankingFallback = false, aiLevels = n
           AI 업계 전체의 시장 점유율·심리·사용량을 뜻하지 않습니다. 확인된 0과 계산할 수 없는 비율을 구별합니다.
         </div>
         {body}
-        <p className="method-foot">{pulse.asOfLabel} 기준 · 기간은 시작 포함, 끝 제외 · 집계 방식 v{pulse.methodVersion}</p>
+        <p className="method-foot">{metric === "star-growth"
+          ? starGrowth ? `${formatPublicDateTime(starGrowth.asOf, pulse.asOf)} KST 기준 회차 · 정책 ${starGrowth.policyVersion ?? "확인 전"}` : "회차별 실제 관측 시각은 급상승 카드에서 확인할 수 있습니다."
+          : `${pulse.asOfLabel} 기준 · 기간은 시작 포함, 끝 제외 · 집계 방식 v${pulse.methodVersion}`}</p>
       </div>
     </dialog>
   );
