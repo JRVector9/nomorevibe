@@ -1,4 +1,4 @@
-# 2026-10-11 — nomorevibe.com 전환 완료, PR360 병합
+# 2026-10-11 — nomorevibe.com 전환 완료, PR360 병합·주차 경로 복구
 
 ## Current objective / completed work
 
@@ -19,11 +19,17 @@ M3 web oipo2OAnIrtcnILBCRoG2 deploymentMXlEPzk4andlIBCn2xRL5 및 mini web llv4rl
 
 최종 재확인 중 병행 PR359 배포가 두 웹에 반영됐다. 실제 현재 웹 release는 def8953f7c9d71613ec850f45dbeec0d6e55f931, digest26f73703a15024394465f8a77bdff1eb0a707351b10596c1045eee99006afa2b이다. mini deployment4VK_pxZ-eDJZEeRUTIyYX, M3 HxouTaTLdDzi_O1T5LQFB done. 각각2/2·4/4 실제 컨테이너 image/deploymentID/release/health가 정상이며 새 origin 및 flagOFF가 유지됐다. 이 코드를 domain agent가 배포했다고 해석하지 않는다.
 
-Mac 일반curl에404가 발생했으나 remote_ip3.33.130.190/HTTP1.1로 옛 주차 서버였다. 기본 DNS100.100.100.100(Tailscale)은 옛A 두 개/TTL460을 반환했다. 같은 시각 .com TLD위임은 새NS, Cloudflare1.1.1.1와Google8.8.8.8은 새CF A를 반환했다. 두 서버 직접 Host health와 cloudflared ingress/PID는 정상이었다. 새CF IP로--resolve한 HTTPS는 인증서 검증을 유지하면서200/dbok였다. 코드/서비스/네트워크 설정을 더 바꾸지 않고 TTL 전파를 관측한다. 로컬 DNS 수렴 helper /private/tmp/nomorevibe-dns-convergence-20261011.py의 성공 여부는 실제 종료 결과로 확인한다.
+Mac 일반curl에404가 발생했으나 remote_ip3.33.130.190/HTTP1.1로 옛 주차 서버였다. 기본 DNS100.100.100.100(Tailscale)은 옛A 두 개/TTL460을 반환했다. 같은 시각 .com TLD위임은 새NS, Cloudflare1.1.1.1와Google8.8.8.8은 새CF A를 반환했다. 두 서버 직접 Host health와 cloudflared ingress/PID는 정상이었다. 새CF IP로--resolve한 HTTPS는 인증서 검증을 유지하면서200/dbok였다. 코드/웹/터널/시스템 DNS를 바꾸지 않고 TTL 전파를 관측했다. 로컬 DNS 수렴 helper /private/tmp/nomorevibe-dns-convergence-20261011.py는 실제 exit0: localDnsConverged true, A104.21.85.139/172.67.206.111, 일반 HTTPS health mini-web/def8953/dbok였다. 이후 일반 curl 홈200도 확인했다.
+
+사용자 /lander 증상은 옛IP의114바이트 HTML에서 window.location.href="/lander"를 직접 확인해 원인을 입증했다. 이미 주차 경로에 도착한 사용자를 복구하기 위해 새 zone에 NoMoreVibe parking path to home 규칙 dbd6662d2a764d78bb454b43c80036ad를 추가해 Active를 확인했다. 정확한 apex Host + /lander + GET/HEAD만 새 홈으로308 이동하며 query보존, www다음 순서다. 실제 /lander?x=a%2Fb → /?x=a%2Fb 한 번 이동 후200. 사용자가 열어둔 GoDaddy 주차 탭을 강력 새로고침한 뒤 nomorevibe.com/ 서비스 홈·이미지·프로젝트 목록 렌더링을 AX/screenshot으로 확인했다. 현재 그 탭에 정상 홈을 띄워두었다. 전체 지역 resolver의 수렴을 검증한 것으로 주장하지 않는다.
 
 ## Actual tests / failed approaches
 
 PR CI38142169371의 scope·quality·integration3분할·필수check 모두 success. 최초 옛 base CI38142075061은 최신 base 검증을 대신하지 않는다. 실제 로컬 Python23pass, Node CI-scope4pass, diffcheck0. 최신 base 합류 뒤 두 검사도 다시 pass했다.
+
+병합 후 main CI38142499118도 quality·통합3분할·필수check·두 이미지 게시 모두 success였다. 도메인 최종 기록 PR361은 docs-only다. 최신 head의 원격 상태를 확인하고 필수 check 성공 뒤 병합한다.
+
+DNS 수렴 뒤 현재 release def8953 대상의 수정한 public_gate를 실제 실행해 publicHealth ok/m3-web·mini-web 모두 관측했다. 일반 DNS apex200, lander/www/old 상세308 정확한 Location, HTTP301, 옛health/install/skill200도 최종 재확인했다.
 
 수정한 public_gate(650b341…) 실제 실행은 publicHealth ok, m3-web/mini-web 모두 관측했다. 새 홈 canonical과 홈/상세/robots/RSS/skill/install 절대 주소에서 옛 origin0. sitemap 재조회200/2.525초/2584655bytes, XML parse 및15860loc 새 origin. Native Chrome 홈·상세 screenshot과 이동 렌더링 확인. console/network 오류0 검사를 이번에 실행했다고 주장하지 않는다. 실제 old/www308의 경로·query·인코딩 보존, HTTP apex301, old health/install/skill200. 제품 GET /api/products/nanomuse는 새/옛200 및 JSON 동일, verify 안내가 새주소다. 관리자 OAuth 시작503은 키 미설정이며 실제 OAuth 성공이 아니다.
 
@@ -37,8 +43,10 @@ PR CI38142169371의 scope·quality·integration3분할·필수check 모두 succe
 cd /Users/jr/Desktop/projects/nomorevibe
 git status --short --branch
 gh pr view 360 --json state,mergeCommit,url
+gh pr view 361 --json state,headRefOid,baseRefOid,mergeCommit,url,statusCheckRollup
 gh run view 38142169371
 curl -fsS --max-time 10 https://nomorevibe.com/api/health
+curl -sS -I 'https://nomorevibe.com/lander?x=a%2Fb'
 curl -sS -I 'https://nomorevibe.brut.bot/p/nanomuse?utm_source=cutover&x=a%2Fb'
 cd /private/tmp/nomorevibe-domain-20261011
 gh pr list --head docs/primary-domain-final-handoff-20261011 --state all --json number,state,url,mergeCommit

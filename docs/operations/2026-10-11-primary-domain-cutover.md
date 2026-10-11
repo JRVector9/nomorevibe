@@ -1,6 +1,6 @@
 # nomorevibe.com 기본 도메인 전환 완료
 
-2026-10-11 22:05 KST 기준 운영 기본 주소는 <https://nomorevibe.com>이다.
+2026-10-11 전환 및 최종 재확인 기준 운영 기본 주소는 <https://nomorevibe.com>이다.
 GoDaddy 등록은 유지하고 Cloudflare Free DNS·공개 TLS를 연결했다. 기존 M3·mini
 로드밸런서를 공유하며 웹 2개·6복제본을 같은 기존 이미지로 재배포했다.
 [전환 전 준비 기록](2026-10-11-primary-domain-preparation.md)은 이력으로 보존한다.
@@ -52,7 +52,7 @@ DB migration·worker 재배포·암호화 키 회전은 수행하지 않았다. 
 
 ## 주소 이동과 API 호환
 
-Cloudflare Single Redirect 두 규칙을 실제 Active로 확인했다.
+Cloudflare Single Redirect 세 규칙을 실제 Active로 확인했다.
 
 - 새 zone `NoMoreVibe www to primary`, ID `cc6f8ae131d441cc8bd3253282c870f6`:
   Host가 정확히 `www.nomorevibe.com`인 요청만 apex로308 이동한다.
@@ -64,6 +64,11 @@ Cloudflare Single Redirect 두 규칙을 실제 Active로 확인했다.
 - 두 규칙은 `concat("https://nomorevibe.com", http.request.uri.path)`와
   Preserve query string을 사용한다. 실제 `utm_source=cutover&x=a%2Fb`를 포함한
   상세 주소에서 경로·query·인코딩 보존을 확인했다.
+- 새 zone `NoMoreVibe parking path to home`, ID `dbd6662d2a764d78bb454b43c80036ad`:
+  Host가 정확히 `nomorevibe.com`, 경로가 `/lander`, GET/HEAD인 요청만
+  `https://nomorevibe.com/`으로308 이동한다. query를 보존한다. www 규칙 다음에
+  배치했으며, 주차 페이지에 이미 도착한 사용자를 홈으로 돌려보낸다.
+  `/lander?x=a%2Fb`는 한 번 이동 후 `/?x=a%2Fb`에서200이었다.
 - 기존 `/api/health`, `/install.sh`, `/skill.md`는200 유지다. 제품 GET
   `/api/products/nanomuse`도 새/옛 호스트200이며 JSON이 동일하고 verify 안내가 새주소다. API·자산·기존 POST를
   도메인 간 리다이렉트하지 않아 기존 CLI의 인증 헤더를 유지한다. 새 apex 요청은
@@ -90,6 +95,7 @@ Cloudflare Single Redirect 두 규칙을 실제 Active로 확인했다.
 PR [#360](https://github.com/JRVector9/nomorevibe/pull/360)은 최신 base `def8953`에서
 필수 CI38142169371의 scope·quality·통합3분할·check가 모두 성공한 뒤 병합했다.
 merge SHA는 `9944254975e9d7ba2e1eb0eb7e986186567708eb`이며 보호 규칙을 우회하지 않았다.
+병합 후 main CI38142499118도 quality·통합3분할·필수check·두 이미지 게시가 모두 성공했다.
 배포 operator는 Docker context에서 제외되므로 이번 상수/문서 기록을 위해
 추가 서비스 코드 배포를 수행하지 않는다.
 
@@ -108,8 +114,21 @@ Tailscale DNS `100.100.100.100`이 옛 주차 A를 TTL460으로 반환했다. �
 .com TLD는 Cloudflare NS를 위임했고 1.1.1.1·8.8.8.8은 새 Cloudflare IP를 반환했다.
 두 서버 Host health와 tunnel ingress/실제PID는 정상이었고, 새CF IP를--resolve한
 HTTPS는 인증서 검증을 유지하면서200/dbok였다. 원인이 DNS 캐시여서 추가 코드나
-서비스 설정 변경을 하지 않았다. 일부 resolver의 옛 DNS가 만료되기 전에는 주차
-서버의404가 보일 수 있으며 전체 지역의 DNS 캐시 수렴을 확인했다고 주장하지 않는다.
+웹·터널·시스템 DNS 설정 변경을 하지 않았다.
+
+사용자가 보고한 `/lander` 이동도 같은 옛 주차 서버의 응답이었다. 옛 IP로 명시적으로
+조회한114바이트 HTML에 `window.location.href="/lander"`가 있었다. 관측 helper는 이후
+Mac 기본 DNS가 새 Cloudflare A 두 개로 갱신되고 일반 HTTPS health가200/dbok임을
+확인한 뒤 exit0으로 종료했다. 특정 IP를 강제하지 않은 일반 curl에서도 새 홈200이다.
+이미 주차 경로에 도착한 사용자를 위해 위의 정확한 `/lander` redirect를 추가했다.
+사용자의 실제 GoDaddy 주차 탭을 강력 새로고침한 뒤 주소가 `nomorevibe.com/`으로
+바뀌고 서비스 홈·이미지·프로젝트 목록이 렌더링되는 것을 AX와 screenshot으로 확인했다.
+다른 지역 전체 resolver의 캐시 수렴까지 확인했다고 주장하지 않는다.
+
+DNS 수렴 뒤 현재 release `def8953`를 대상으로 수정한 배포 스크립트의
+`public_gate`를 실제 실행했다. `publicHealth: ok`, `m3-web`·`mini-web` 모두 관측했다.
+일반 DNS로 apex200, lander/www/옛 상세308의 정확한 Location, HTTP301,
+옛 health/install/skill200을 최종 재확인했다.
 
 ## GitHub 앱 등록과 남은 설정
 
@@ -135,6 +154,7 @@ origin을 맞추고 [연동 runbook](github-stars-feedback-runbook.md)을 따른
 ```sh
 dig @1.1.1.1 +short NS nomorevibe.com
 curl -fsS --max-time 10 https://nomorevibe.com/api/health
+curl -sS -I 'https://nomorevibe.com/lander?x=a%2Fb'
 curl -sS -I 'https://www.nomorevibe.com/p/nanomuse?x=a%2Fb'
 curl -sS -I 'https://nomorevibe.brut.bot/p/nanomuse?utm_source=cutover&x=a%2Fb'
 curl -fsS --max-time 10 https://nomorevibe.brut.bot/api/health
