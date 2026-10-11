@@ -112,3 +112,19 @@ Feedback App은 별도 Setup URL을 쓰므로 **Request user authorization (OAut
 `NoMoreVibe Feedback` 등록 양식을 위 URL·최소 권한으로 준비했다. 두 앱의 secret은
 비어 있으며 Create를 누르지 않았다. 브라우저 도구의 새 보안 권한 생성 확인과
 자격증명 입력 인계 절차를 거친 뒤 등록·키 주입을 이어간다. 운영 플래그는 그대로다.
+
+## 화면 변경 운영 반영 — 2026-10-11 23:50 KST
+
+PR #363(정보 패널 축소·도구 섹션 제거), #364(미리보기 확대), #365(README 전문·내부 스크롤)는
+각각 최신 main 기준 필수 CI check 성공 후 병합했다. 최종 main CI `38148216532`가
+성공했고 private web image가 발행됐다. 두 웹에 같은 릴리스를 함께 배포했다.
+
+- 실행 릴리스: `a91eecf2a3e3ef1e457acce47d9234c685f7c4a6`
+- 웹 이미지: `ghcr.io/jrvector9/nomorevibe-runtime-web@sha256:638039d10f6cf75364c814d3c3c2a10659962f89a3f22dea3b97afb2ce67f2bc`
+- mini 배포: `jReyg8165rBJSiZRJABFF`, 실행 복제본2개 확인
+- M3 배포: `2JMxitPFP1q_9BVvlBc8S`, 실행 복제본4개 확인
+- 공개 health에서 `mini-web`·`m3-web` 모두 새 release·status/db ok 확인
+
+기존 웹 설정과 복제본 수를 보존했다. 기능 플래그는 여전히 실효 false이고
+App 등록·키 주입·메일 발신 설정·기능 실사용 검증은 미완료다. 사용자에게 요청한
+등록 확인과 Resend 발신 정보가 도착하면 해당 설정을 이어간다.

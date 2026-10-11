@@ -6440,3 +6440,31 @@ PR01 #363은 540cda52 head 필수 CI check 성공 후 main 3607fa2716510aab3d513
 두 GitHub App 양식이 준비됐다. Feedback은 callback /api/auth/maker/github/callback, setup /api/github/installations/setup, webhook /api/github/webhooks/feedback, Issues read/write + 자동 Metadata read, Issues 이벤트, Any account, expiring token ON, installation OAuth OFF, SSL ON이다. 두 secret은 비어 있고 두 Create는 누르지 않았다. 새 보안 권한 생성과 운영 키 저장을 위한 브라우저 정책상의 확인 요청을 사용자에게 보냈고 답변 대기 중이다. Resend 보유/발신주소 질문도 대기 중이다. 키를 생성/전송하거나 flag를 켜지 않았다.
 
 다음 명령: gh pr checks 364 (latest base 3607fa2); PR03 수정 diff 리뷰 및 git diff --check 뒤 커밋/push/PR. 웹 배포는 최종 main CI 및 private web image 발행 후 두 웹만 함께 진행한다. 이미 존재하는 /private/tmp/nomorevibe-primary-origin-20261011.py apply는 과거650b SHA가 고정되어 있으므로 재사용하지 않는다.
+
+### 2026-10-11 23:42 KST — 화면 변경 세 PR 병합 완료
+
+PR02 #364 최신-base CI 38147536149 check 성공 후 cd940e8a860c48eabc5972eb41ccd21ee2febf82로 병합. PR03 #365 최신-base CI 38147892606 check 성공 후 a91eecf2a3e3ef1e457acce47d9234c685f7c4a6으로 병합. README 상대 링크 P2는 기본 branch 전체를 인코딩한 저장소 루트 URL로 고쳤다. 최초 PR01 제거와 PR03 children 통합의 page 충돌은 부모가 BuildTools 없이 Suspense를 유지하도록 해결했다. 새 캐시 키 버전 문자열은 미배포 코드라 필요 없어 제거했다. 세 PR의 원격 필수 CI는 통과했으며 로컬 테스트를 추가 실행하지 않았다.
+
+PR04 #366 생성. 현재 rollout worktree는 최신 main a91eecf를 merge했지만 아직 그 merge/이 기록을 push하기 전이다. #366은 docs-only CI check가 통과했던 이전 head이고 최신 head를 push하면 다시 받아야 한다. 운영 화면 배포는 아직이다. main CI 38148216532의 성공과 private web image 발행을 기다린다. docs-only #366은 web image를 발행하지 않으므로 a91eecf 이미지 배포 후 병합한다.
+
+운영용 임시 도구 /private/tmp/nomorevibe-detail-web-rollout-20261011.py는 두 웹만 baseline·공통 action key·replicas·origin을 확인하고 같은 새 private image를 선행 pull하여 같은 창에 배포·실행 컨테이너/health를 확인한다. 아직 실행하지 않았다. 비밀 스냅샷은 외부0600만 허용한다. 다음 실행 인자는 SHA a91eecf2a3e3ef1e457acce47d9234c685f7c4a6과 main CI가 발행한 web digest다. GitHub 앱 등록 확인/Resend 답변은 여전히 대기 중, App 등록·키/플래그 변경 없음.
+
+### 2026-10-11 23:50 KST — 상세 화면 배포 완료, 후속 홈 목록 검토 요청
+
+현재 목적: 사용자가 화면 변경 뒤 ‘이번 주 새로 나온 프로젝트’와 ‘지금 뜨는 프로젝트’ 기준/운영 반영을 검토하라고 추가 요청했다. 오래된 프로젝트가 신규 목록에 나오고 급상승 목록 변화가 거의 없는 원인을 소스·실제 데이터로 대조해야 한다. 아직 해당 조사는 시작하지 않았다. 스타/피드백 App 등록 승인과 Resend 답변 대기는 원래 작업의 남은 단계로 유지한다.
+
+완료: PR363/364/365 최신-base CI 성공·병합, main a91eecf CI38148216532 전체 성공 및 private web image 발행. 임시 web-only 도구를 실행해 mini2/M3 4 같은 이미지 sha256:638039d10f6cf75364c814d3c3c2a10659962f89a3f22dea3b97afb2ce67f2bc로 배포했다. mini 배포 jReyg8165rBJSiZRJABFF, M3 배포2JMxitPFP1q_9BVvlBc8S. 실제 컨테이너 revision/건강/개수와 공개 health에서 두 instanceId 새 release/status/db ok 확인. 로컬 기능 테스트는 추가 실행하지 않았다. 두 웹의 원래 인증키/registry/replicas/source/worker 설정을 보존했고 기능 플래그는 false다. 외부0600 rollback snapshot /private/tmp/nomorevibe-detail-web-before-a91eecf2a3e3.json은 비밀이므로 출력/커밋 금지.
+
+수정 파일은 앞서 기록한 세 UI PR과 PR366의 계획/운영 기록/이 handoff다. 실패한 첫 CLI 리뷰와 해결한 page merge 충돌/README 링크 P2는 앞 기록을 따른다. PR366은 최신 main을 합치고 이 배포 기록까지 커밋/push한 뒤 docs-only 필수 CI 성공으로 병합해야 한다. 그 다음 사용자 root main을 fast-forward하되 untracked PPT/prototypes/stash는 보존한다.
+
+다음 명령:
+```sh
+cd /private/tmp/nomorevibe-detail-rollout-20261011
+git diff --check
+git add docs/CODEX_HANDOFF.md docs/operations/2026-10-11-star-feedback-reactivation.md docs/superpowers/plans/2026-10-11-detail-ui-and-integrations.md
+git commit -m 'docs: record detail web rollout and pending app setup'
+git push
+gh pr checks 366
+```
+
+이후 root에서 rg -n '이번 주|새로 나온|지금 뜨는|trending|rising|recent' app components lib 로 홈 목록 경로를 찾는다. 소스와 운영의 repository createdAt/publishedAt/ranking window·snapshot 시각·주기·증가량을 읽기 전용으로 대조한다. 사용자 요청은 우선 검토이며 새 기준을 임의로 정해 배포하지 않는다. 중단한 소개 검수는 재개하지 않는다.

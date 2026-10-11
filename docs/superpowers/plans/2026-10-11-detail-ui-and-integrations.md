@@ -58,7 +58,9 @@
 
 - PR01 [#363](https://github.com/JRVector9/nomorevibe/pull/363): 최신 main 기준 필수 check 성공 후 병합, main `3607fa2`.
 - PR02 [#364](https://github.com/JRVector9/nomorevibe/pull/364): 최신 main을 합친 뒤 필수 check 성공 후 병합, main `cd940e8`.
-- PR03 [#365](https://github.com/JRVector9/nomorevibe/pull/365): 독립 CLI 리뷰의 저장소 루트 상대 링크 수정을 반영하고 최신 main을 합쳤다. CI 진행 중.
+- PR03 [#365](https://github.com/JRVector9/nomorevibe/pull/365): 독립 CLI 리뷰의 저장소 루트 상대 링크 수정을 반영하고 최신 main을 합쳤다. 최신 main 기준 필수 check 성공 후 병합, main `a91eecf`.
 - PR04: 키가 비어 있어 아직 기능을 켜지 않았다. 두 GitHub App 초안은 새 도메인 URL·최소 권한으로 준비됐으며 등록 확인과 Resend 발신 정보가 필요하다.
 
 PR01 첫 CLI 리뷰는 테스트 실행 금지를 누락해 기존 검사가 실행·실패했다. 리뷰 중단 후 기존 글자13px/radius 계약과 변경된 UI 기대를 고쳤고 로컬 재실행은 하지 않았다. 그 뒤 CLI 리뷰는 실행 금지를 명시했다. CI의 실행 여부와 기능 실사용 검증은 구분한다.
+
+화면 변경은 최종 main `a91eecf2`의 private web image로 mini2개·M3 4개에 배포했고, 실행 컨테이너와 공개 health 양쪽을 확인했다. 기능 실사용은 사용자가 직접 확인한다. 스타·피드백은 키 등록 대기 상태로 아직 ON이 아니다.
