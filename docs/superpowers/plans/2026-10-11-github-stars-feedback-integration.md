@@ -8,7 +8,7 @@
 
 **Tech Stack:** 현재 Next.js 16.3.8 App Router, React 19, TypeScript, PostgreSQL/Drizzle, 기존 worker·job lease·rate limit·credential vault, GitHub REST API. 이메일 로그인은 Resend HTTP API로 구현한다.
 
-기준: 2026-10-11, 로컬·원격 main `6839194dc47e1f1993f54471c0fb94b6857cd6aa`. 같은 날 읽은 공개 health의 mini-web 릴리스도 이 SHA였다. 초안은 구현 전 계획이었다. 사용자 승인 후 아래 코드 항목을 실행했으며 최종 커밋·검사 기록은 [구현 기록](../../operations/2026-10-11-github-integration-implementation.md)에 남긴다. 실제 앱 등록·외부 쓰기·배포·파일럿은 별도 미검증이다.
+기준: 2026-10-11, 로컬·원격 main `6839194dc47e1f1993f54471c0fb94b6857cd6aa`. 같은 날 읽은 공개 health의 mini-web 릴리스도 이 SHA였다. 초안은 구현 전 계획이었다. 사용자 승인 후 아래 코드 항목을 실행했으며 최종 커밋·검사 기록은 [구현 기록](../../operations/2026-10-11-github-integration-implementation.md)에 남긴다. 후속 사용자 요청으로 PR #356 push·CI·병합과 운영 코드·DB·14앱 배포를 완료했다. [배포 검증](../../operations/2026-10-11-github-integration-rollout.md)을 따른다. 실제 App 등록·외부 쓰기·활성화·파일럿은 계속 미검증이다.
 
 ## 1. 로그인 질문에 대한 답
 
@@ -229,14 +229,14 @@ type FeedbackWrite = {
 
 **파일:** Create `tests/e2e/github-integration-flow.spec.ts`, `docs/operations/github-stars-feedback-runbook.md`, `docs/operations/2026-10-11-github-integration-pilot.md`; Modify `README.md`, `PENDING.md`, `.env.example`, `compose.yml`, `scripts/ops/deploy_shared_images.py`, `lib/domain/github-integration/flags.ts`. 배포 스크립트에는 새 환경값의 존재/역할별 일치 확인만 추가하고 비밀값을 기록하지 않는다.
 
-- [x] 로컬 흐름 E2E4개와 기능 E2E18개, 배포 preflight Python23개, 공통 단위/DB통합/타입/lint/build를 실행하고 운영·파일럿 문서를 작성했다. 실제 외부 제공자와 배포는 아래 별도 미검증이다.
+- [x] 로컬 흐름 E2E4개와 기능 E2E18개, 배포 preflight Python23개, 공통 단위/DB통합/타입/lint/build를 실행하고 운영·파일럿 문서를 작성했다. 후속 원격 CI와 운영 코드 배포도 완료했으며 실제 외부 제공자·활성화는 아래 별도 미검증이다.
 
 - [ ] 공식 키 설정은 Star App과 Feedback App을 구분하고 값은 비밀 저장소에서 주입한다. Resend 발신 도메인과 테스트 메일 수신, 승인된 앱 callback/webhook URL을 확인한다. 새 공개 로그인은 운영 관리자 로그인과 별도 검증한다.
 - [ ] staging에서 새 migration·웹 2개·publisher 주/예비·관련 maintenance 주/예비의 릴리스/설정 일치를 확인한다. 통합 검증은 primary DB를 쓰고, 공개 읽기 replica 지연과 별개로 내 작업 결과는 즉시 확인 가능해야 한다.
 - [ ] 허가된 테스트 사용자 2명, 제작자 1명, 공개 개인 repo 1개와 조직 repo 1개로 파일럿한다. 스타 등록/취소, GitHub 미연결 이메일 사용자의 피드백, 이슈 생성, 실패/재조회, 설치 철회, 주 worker 중단 후 예비 복구를 확인한다.
 - [ ] 플래그는 일반 인증 → 개인 스타 → 로컬 피드백 → 지정 제품의 GitHub 피드백 순으로 연다. 기능을 끄면 새 쓰기를 중지하고 남은 in-flight 결과만 확인한다. migrations/원문/전송 기록은 삭제하지 않는다.
 - [ ] **완료 기준:** upstream 응답·GitHub 결과 URL·DB state·두 웹 UI가 일치하는 증거를 기록한다. 단위/mock CI만으로 실연동 완료를 선언하지 않는다. 정상 큐 대기가 없는 파일럿에서 전송 지연 목표 90초 이내를 측정하며 목표치를 보장 SLA로 표시하지 않는다.
-- [ ] `npx playwright test tests/e2e/github-integration-flow.spec.ts`와 공통 CI를 실행한 뒤 기존 runbook의 `scripts/ops/deploy_shared_images.py plan → run` 절차로 필요한 앱을 배포한다. 사용자 중단 상태의 소개 검수는 건드리지 않는다.
+- [x] `npx playwright test tests/e2e/github-integration-flow.spec.ts`를 포함한 로컬 E2E와 PR/main 공통 CI를 실행한 뒤 기존 runbook의 `scripts/ops/deploy_shared_images.py plan → run`으로 공통8앱을 배포했다. 별도Git source6앱과 직접DB migration도 확인해 총14앱의 실제 코드/health/lease를 검증했다. 기능은false이며 사용자 중단 소개 검수의not_before/processed_version은 그대로다.
 
 ## 6. 모든 구현 PR의 공통 검증·병합 규칙
 
@@ -262,7 +262,7 @@ git diff --check
 
 착수 준비: 별도 Star App과 Feedback App 등록 권한, 개인/조직 테스트 repo와 테스트 계정의 실검증 허가, 이메일 발신 도메인·Resend 키, 서버 전용 암호화 키. 이 준비는 계획 작성으로 충족된 것으로 보지 않는다.
 
-2026-10-11 사용자 승인 후 PR01~09의 코드를 구현하고 PR별 직접 리뷰·회귀 수정·검사를 진행했다. 체크한 항목은 로컬 구현/검증이며 실제 GitHub App capability, Resend 수신과 운영 파일럿을 대신하지 않는다. 현재 검사·커밋·미검증 근거는 구현 기록과 파일럿 문서가 기준이다. 운영 설정과 사용자 중단 소개 검수는 변경하지 않았다.
+2026-10-11 사용자 승인 후 PR01~09의 코드를 구현하고 PR별 직접 리뷰·회귀 수정·검사를 진행했다. 체크한 항목은 로컬 구현/검증이며 실제 GitHub App capability, Resend 수신과 운영 파일럿을 대신하지 않는다. 현재 검사·커밋·미검증 근거는 구현 기록과 파일럿 문서가 기준이다. 후속 요청으로 운영 소스 릴리스를 교체했으며 네 신규flag는false, 사용자 중단 소개 검수는그대로유지했다.
 
 다음 실행자는 `docs/CODEX_HANDOFF.md`와 구현 기록을 읽고 현재 브랜치에서 이어간다. 실제 capability/파일럿은 별도 앱과 승인된 대상이 준비된 뒤 runbook 순서로 수행한다. 신규 브라우저 테스트 명령에는 해당 기능 플래그를 명시적으로 true로 설정한다. 기본 false 회귀 구성에서는 신규18개를 skip한다.
 

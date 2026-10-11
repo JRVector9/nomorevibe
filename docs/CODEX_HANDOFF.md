@@ -1,3 +1,58 @@
+# 2026-10-11 17:24 KST — PR #356 push·병합·운영 코드 배포 검증 완료
+
+## Current objective / completed work
+
+사용자가 PR01~09 구현 이후 commit/push/deploy를 요청했다. 9개 논리 구현 커밋을 원격에 push했고 PR https://github.com/JRVector9/nomorevibe/pull/356 을 최신 base 필수 CI 성공 후 merge로 병합했다. 코드 release `650b341c8889f06b2ec3daa3b99da4e5712fee1a`를 운영 DB와 14개 앱·19개 복제본에 배포하고 실제 컨테이너 코드/이미지·health·역할 lease·공개 화면을 확인했다. 로컬 구현 검증에 더해 실제 배포도 완료했다. 실제 GitHub/메일 기능 활성화는 아직 하지 않았다.
+
+논리 커밋01~09: `a03f638`, `c4606ac`, `b25731f`, `2992598`, `9df60e0`, `0ea6656`, `cba7eed`, `007d65f`, `4f87832`. 원격 PR 번호는356이며 01~09는 계획 번호다. branch `feat/github-stars-feedback-20261011`, 구현 worktree `/private/tmp/nomorevibe-github-integration-20261011`; 배포·기록 worktree `/private/tmp/nomorevibe-release-20261011`. 전 agent와 직접 Codex CLI는 지정된 gpt-6.1-sol/xhigh를 사용했다.
+
+## Modified files / key design decisions
+
+구현01~09의 변경 목록/설계/로컬 결과는 아래 이전 완료 기록과 `docs/operations/2026-10-11-github-integration-implementation.md`다. 이번 후속 문서 커밋은 README, PENDING, 구현/파일럿/계획/인계 문서 및 신규 `docs/operations/2026-10-11-github-integration-rollout.md`를 갱신한다. 서비스 source 코드·package lock·PPT·.env.local은 이번 기록 단계의 변경 대상이 아니다.
+
+- 8개 Docker 앱은 두 immutable digest로 배포했다. worker `sha256:b2f81cd8179770c364452e9d2cbb1fb19c1a1ac9607c79496b3282dbde1070ab`, private web `sha256:8b65fed0865672f2ab942874a897f9ff00850ad6d309238f58fa4921deeb2ab6`. 두 서버 ARM64/OCI release/web 빌드 키 일치를 확인했고 웹 암호화 키를 회전하지 않았다.
+- maintenance/text 주예비·scheduler·connect-agent의 6개 Git source 앱은 source/autoDeploy/command 정책을 보존해 동일 main 코드로 교체했다. 실제 컨테이너의 worker source500파일을 git SHA256과 대조했다. 기존13 core앱 외 connect-agent1개도 실제 inventory에서 확인해 총14앱을 검증했다.
+- scheduler·5역할 주예비 총11서비스 정상 drain 후, 직접5432에서 새 worker 이미지의 scripts/migrate.mjs를 한 번 실행(exit0), 소비자를 복구하고 역할별 순차 배포했다. runtime PgBouncer6432는 유지했다. DB초기화/복구덮어쓰기/수동lease조작을 하지 않았다.
+- 네 기능flag false 유지. Star/FeedbackApp·공개세션/암호화·메일설정은 아직 운영에 없다. 실제스타/봇이슈/메일수신/웹훅 파일럿을 mock이나 코드배포의 성공으로 대신하지 않는다.
+- 중단 소개검수 product-intro-check의 not_before2100-01-01/processed_version741/leasedfalse가 배포 전후 동일하다. root의PPT·미추적 사용자자료는 보존한다.
+
+## Test commands and actual results
+
+- PR CI38123311591: scope·quality·integration3분할·필수check success. 최신 base6839194와 같음을 병합 직전 확인했다. main CI38123539692: 같은 필수검사와 worker/web image build 모두 success. main보호 우회없음.
+- 운영 scripts/migrate.mjs exit0. journal66→73, 새14표, 최신7migration hash가 배포SQL과 일치했다.
+- deploy_shared_images.py plan/run exit0. 각 publisher/reviewer/crawler 쌍의 readiness ready/progress ok, web6복제본 실제digest·release·deploymentID·health 정상. 별도 Git source6앱 총7복제본의500파일과worker health 정상.
+- 최종 operator verify exit0:14앱 done/healthy, DB5역할 M3primary live+mini standby관측, failover readiness/worker progress ok, scheduler fresh2, 공개m3-web/mini-web health ok/dbok/release650b341.
+- 실제 공개 Playwright 홈·/p/nanomuse 상세200, pageerror/consoleerror0·실패리소스0. HTML JS/CSS dpl650b341을 별도 확인하고 홈스크린샷도 직접 봤다. 단발홈load5953→2730ms는 성능개선 통계가 아니다.
+- 이전 실제로컬검증:unit246파일/2256pass, DB통합140파일/1370pass+기존TODO1, 신규E2E18pass, 기존flagsOFF전체30pass/18skip, Python23pass, CI-scopeNode4pass, typegen/tsc/lint/build/bundle/빈DBmigration/compose/diff0(기존vendor경고1). 해당 결과를 이번 문서 커밋에서 재실행한 것으로 표현하지 않는다.
+- 이번 문서 단계에서는 Node CI-scope 4개를 실제 다시 실행하여 pass/exit0, 문서 diff check도 exit0을 확인했다.
+
+## Failed approaches / remaining work
+
+source 최초502파일probe에는 .dockerignore가 제외하는 scripts/ops2개가 들어 있었다. operator검증을500으로 고친 뒤 완료된컨테이너를 재배포 없이 확인했다. 처음 pollinghelper만SIGTERM(exit143)했고 서비스코드는 바꾸지 않았다. 전체복구를mini먼저시작해 예비가 정상lease를 먼저받았다. maintenance/text순차교체 및 나머지3역할의 mini개별 정상drain→M3소유권 확인→mini재시작으로5역할 M3primary를 회복했다. 이후operatorresume은M3→mini순서다.
+
+Cloudflare HTML purge는 Authentication error로 실패했다. 새홈/상세dpl·실제브라우저로딩은 정상이며 배포실패로 되돌리지 않았다. `nomorevibe-cloudflare-purge-token` Keychain의 유효zonepurge키 복구와 purge_html ok를 PENDING에 기록했다. purge가 성공했다고 주장하지 않는다.
+
+실제App capability·Resend/사용자키·허가된일반사용자/제작자·개인/조직repo가 준비된 뒤 runbook으로 인증→Star→로컬feedback→지정제품외부전송을 활성화하고 실메일/스타/이슈/권한철회/외부전송failover 파일럿을 검증한다. staging행은 실제staging서비스미검증으로 남겼고 운영14앱과DB행만 실제증거로갱신했다. unknownStar영구fence/관리자unlock미구현 및 기존fallback저장dirty표시는 PENDING의 별도항목이다. 코드배포 완료를 기능활성화 완료로 해석하지 않는다. 소개검수 재개·migrations 재적용·테스트DB초기화를 운영에서 실행하지 않는다.
+
+## Evidence / exact commands for the next agent
+
+운영근거문서 `docs/operations/2026-10-11-github-integration-rollout.md`. 비밀 포함 all-apps/swarm/shared-image snapshot은 `/private/tmp/nomorevibe-{all-apps-before-20261011,swarm-before-20261011,release-650b341-20261011}.json`, 모두0600이며 raw출력/커밋금지. 안전한검증기록은 `/private/tmp/nomorevibe-{migration-result-20261011,db-after-migration-20261011,production-release-20261011,public-after-20261011}.json`와 공개스크린샷이다. operator Python helper도 같은/private/tmp에 남겼다.
+
+```sh
+cd /Users/jr/Desktop/projects/nomorevibe
+git status --short --branch
+gh pr view 356 --json state,mergeCommit,url
+gh pr list --head docs/github-integration-rollout-20261011 --state all --json number,state,url
+gh run view 38123539692
+curl -fsS --max-time 10 https://nomorevibe.brut.bot/api/health
+cd /private/tmp/nomorevibe-release-20261011
+python3 /private/tmp/nomorevibe-release-ops-20261011.py verify --worker-image ghcr.io/jrvector9/nomorevibe-worker@sha256:b2f81cd8179770c364452e9d2cbb1fb19c1a1ac9607c79496b3282dbde1070ab --web-image ghcr.io/jrvector9/nomorevibe-runtime-web@sha256:8b65fed0865672f2ab942874a897f9ff00850ad6d309238f58fa4921deeb2ab6
+```
+
+이 문서를 담은 운영증거 docs-only PR의 최종 필수CI/병합 상태는 위 명령으로 직접조회한다. 변경범위가 README/PENDING/docs이므로 운영코드재배포는 필요하지 않다. 이전 기록은 아래 보존하되 위 현재 상태와 실제Git/DB검사 결과를 우선한다.
+
+---
+
 # 2026-10-11 16:21 KST — GitHub PR01~09 로컬 구현·리뷰·검증 완료
 
 ## Current objective / completed work

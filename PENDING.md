@@ -12,12 +12,27 @@
 허가된 개인/조직 테스트 레포·사용자·메일 주소가 아직 제공되지 않았다. 자동 검사와 실제
 provider/운영 증거는 따로 기록한다. 기본 플래그는 모두 `false`다.
 
+**코드 배포 완료:** [PR #356 운영 배포](docs/operations/2026-10-11-github-integration-rollout.md)에서
+0066~0072를 직접5432로 적용했고 웹·publisher·maintenance를 포함한 14앱의 실제
+릴리스·health·역할 lease를 확인했다. 기본 플래그 false 유지, 실제 App·메일 키는 아직 없다.
+
 **준비되면:** [연동 운영 절차](docs/operations/github-stars-feedback-runbook.md)에 따라
-0066~0072 migration을 직접 primary DB에 적용하고 웹 두 앱·publisher 주/예비와
-maintenance 주/예비의 실제 릴리스 및 역할별 설정을 확인한다. 개인 스타 등록/취소,
+역할별 키와 플래그를 일치시키고 개인 스타 등록/취소,
 GitHub 미연결 이메일 사용자의 피드백, 봇 이슈 한 건·재조회·설치 철회,
 publisher 주 중단 후 예비 복구를 검증하고 [파일럿 기록](docs/operations/2026-10-11-github-integration-pilot.md)에
 GitHub URL·DB state·두 웹 결과와 지연을 남긴다. 소개 검수 중단은 유지한다.
+
+---
+
+## Cloudflare HTML purge 키 인증 — 2026-10-11
+
+운영 릴리스 `650b341` 배포 후 `nomorevibe-cloudflare-purge-token` Keychain 항목의
+HTML 태그 purge 요청이 Authentication error로 실패했다. 공개 홈·상세는 새 SHA의
+JS/CSS deployment ID·HTTP200·브라우저/리소스 오류0을 확인했다. 배포·DB·14앱은 정상이다.
+
+**다음:** zone purge 권한의 유효한 토큰으로 해당 비밀 항목을 갱신한 후
+`scripts/ops/deploy_shared_images.py`의 `purge_html()` 결과 `htmlPurge=ok`를 확인한다.
+키 값과 Authorization 헤더는 출력·커밋하지 않는다. 이번 purge를 성공으로 기록하지 않는다.
 
 ---
 
@@ -44,6 +59,8 @@ reload 검사는 유지하되 이 UI 결함을 해결 완료로 표시하지 않
 Dokploy의 M3 7개 앱과 mini 웹·다섯 역할 예비 6개 앱이 운영된다. 웹과
 crawler·reviewer·publisher의 주·예비 8개 앱은 GHCR digest를 사용하고 나머지는
 main Git 소스를 사용한다.
+2026-10-11 실제 inventory에서는 M3 connect-agent 1개가 추가되어 총14앱이며,
+새 코드 릴리스의 14앱·19복제본을 [배포 기록](docs/operations/2026-10-11-github-integration-rollout.md)에서 확인했다.
 scheduler는 M3에서 2복제본이다. 공개 GitHub main은 최신 base의 CI `check` 성공과 PR을 요구한다.
 2026-09-29 릴리스 `20208d3`의 13개 앱 배포와 다섯 역할의 주/예비 인계를 확인했다.
 
