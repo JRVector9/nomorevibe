@@ -52,8 +52,10 @@ describe("헤더는 첫 HTML 에 바로 있다(PERF-01·ROB-02)", () => {
     expect(html.indexOf("nmb-header")).toBeLessThan(html.indexOf('id="main"'));
   });
 
-  it("거르기 없는 홈에서만 '지금 뜨는'을 켠다", () => {
-    expect(header("/")).toContain('class="active" href="/#rising"');
+  it("급상승 화면과 거르기 없는 홈에서 '스타 급상승'을 켠다", () => {
+    expect(header("/")).toContain('class="active" href="/rising"');
+    expect(header("/rising")).toContain('class="active" href="/rising"');
+    expect(header("/", "new=1")).not.toContain('class="active"');
     expect(header("/", "q=pdf")).not.toContain('class="active"');
     expect(header("/", "category=Dev")).not.toContain('class="active"');
     expect(header("/launch")).not.toContain('class="active"');

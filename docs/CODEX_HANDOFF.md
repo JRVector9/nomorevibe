@@ -6626,3 +6626,13 @@ gh pr view 368 --json headRefOid,baseRefOid,mergeStateStatus,statusCheckRollup
 - No local tests, typecheck, lint, build, or browser testing were executed; user will perform functional testing. Protected-main remote CI is the only automated test execution recorded here. No operational database migration, deployment, or feature-flag activation has been performed.
 - Remaining: create and review PR04, wait for required remote CI, merge with matching head, update completion report and local project journal, fast-forward the user's main checkout. Runtime application and a minimum 24-hour observation warm-up remain separate operational work.
 - Next commands (in the UI delivery worktree): `git diff origin/main...HEAD --stat`; `gh pr create --base main --head feat/home-star-growth-ui-20261012 --title 'feat(home): 전일 대비 스타 급상승과 회차별 전체 목록' --body-file /private/tmp/nomorevibe-home-reviews.5VapVm/pr04-body.md`; then `gh pr checks <actual-number>` and merge only after the required check succeeds.
+
+
+### 2026-10-12 PR04 required CI failure investigation
+
+PR372 headbd378705/최신base01b9d6d의 CI38159743423는 통합3개 모두성공, quality기존화면6개실패/check실패다. tests/home-unclaimed.test.tsx의5실패는전용reader mock누락·예전getPublicList strip호출·피드앞5개skip기대·count0fixture이고 tests/p12-head-chrome.test.tsx의1실패는옛/#rising링크기대다. 제품계약을바꾸지않고기존fixture/기대값만최소수정한다. home_growth_ui가deliveryworktree의이두tests파일만소유하고Root는문서만소유한다. 새테스트/로컬실행/커밋은에이전트에게금지했다. 원문을 /private/tmp/nomorevibe-home-reviews.5VapVm/pr04-quality-failure.log 에저장했다. Root가수정diff리뷰후필수CI다시확인할것.
+
+문서이력덮어쓰기는bd37870의새일반커밋으로복원해PRdiff가handoff53줄추가/삭제0임을확인했다. forcepush/이력재작성없음. Root가implementationreport를현재상태중심으로정리했고handoff의원래이력은보존한다. RuntimeDB/deploy/기능ON없음. 다음: deliveryworktree에서 git diff -- tests/home-unclaimed.test.tsx tests/p12-head-chrome.test.tsx; git diff --check; 해당tests2+docs2만stage/commit/push; gh pr checks 372; 최신head/base/check확인후정상merge.
+
+
+PR04 fixture 보완 완료: Root가 tests2개diff를 읽고 기존목적을보존한전용getStarGrowthPage mock/typedfixture, recent feed count1, fallbackcount8/offset0·9, 새제목과실제띠렌더, /rising활성·new=1비활성기대를확인했다. 새it/test케이스와로컬실행없음. git diff --check실제exit0. tests2+docs2최소커밋push후새HEAD의최신base원격CI결과로판단한다.
