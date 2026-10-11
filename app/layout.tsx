@@ -1,11 +1,10 @@
 import type { Metadata, Viewport } from "next";
-import { Suspense } from "react";
 import { MobileNav } from "@/components/home/MobileNav";
 import { SiteFooter } from "@/components/home/SiteFooter";
 import { SiteHeader } from "@/components/home/SiteHeader";
 import { HOME_TITLE } from "@/lib/copy/brand";
 import { SITE_DESCRIPTION, SITE_SHARE } from "@/lib/copy/share";
-import { siteOrigin } from "@/lib/site";
+import { siteOrigin, THEME_COLOR_DARK, THEME_COLOR_LIGHT } from "@/lib/site";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -32,6 +31,11 @@ export const metadata: Metadata = {
  */
 export const viewport: Viewport = {
   colorScheme: "light dark",
+  /** 주소창·탭 막대 색 — 기기 테마마다 바탕(--bg)과 맞춘다(SEO-08) */
+  themeColor: [
+    { media: "(prefers-color-scheme: light)", color: THEME_COLOR_LIGHT },
+    { media: "(prefers-color-scheme: dark)", color: THEME_COLOR_DARK },
+  ],
 };
 
 /**
@@ -62,9 +66,11 @@ export default function RootLayout({
       {/* min-h-screen flex — 짧은 페이지에서도 푸터를 하단에 고정 */}
       <body className="flex min-h-screen flex-col font-sans">
         <a className="skip" href="#main">본문으로 건너뛰기</a>
-        <Suspense fallback={<header className="nmb-header" />}>
-          <SiteHeader />
-        </Suspense>
+        {/*
+          헤더는 Suspense 로 감싸지 않는다(PERF-01·ROB-02) — 감싸면 빈 헤더가 먼저 나가고 진짜 헤더가 뒤에 스트리밍돼
+          본문이 밀리고, 스크립트가 없으면 헤더가 끝까지 빈다. 주소의 쿼리를 읽는 조각만 SiteHeader 안에서 따로 감싼다.
+        */}
+        <SiteHeader />
         <div className="flex-1" id="main" tabIndex={-1}>{children}</div>
         <SiteFooter>{seasonfooter}</SiteFooter>
         <MobileNav />

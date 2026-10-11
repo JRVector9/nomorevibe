@@ -22,6 +22,12 @@
 /* 검색 중에는 브라우저의 지우기(×) 단추를 감춘다 — 좁은 화면에서 고리와 같은 자리에 겹친다 */
 .header-search[aria-busy="true"] input::-webkit-search-cancel-button { -webkit-appearance: none; appearance: none; }
 
+/* Windows·Linux 의 단축키 표시 'Ctrl K'(A11Y-07)는 '⌘K'보다 넓다 — 입력한 글자가 표시 밑으로 들어가지 않게 오른쪽을 더 비운다.
+   좁은 화면은 표시를 감추므로(home.css) 넓은 화면에만 단다 */
+@media (min-width: 521px) {
+  .nmb-header .header-search[data-shortcut="ctrl"] input { padding-right: 68px; }
+}
+
 @media (max-width: 520px) {
   /* 첫 줄(로고·저장·공개) 44px, 둘째 줄 검색 44px — 누르는 자리는 모두 44px 이상 */
   .nmb-header .header-row { padding-top: 4px; padding-bottom: 8px; row-gap: 6px; }

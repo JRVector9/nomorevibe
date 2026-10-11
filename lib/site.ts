@@ -9,3 +9,10 @@ export function siteOrigin(req?: Request): string {
   if (req) return new URL(req.url).origin;
   return "http://localhost:3000";
 }
+
+/**
+ * 브라우저 주소창·탭 막대 색(theme-color)과 웹 매니페스트 바탕색 — globals.css 의 --bg 와 같은 값이다(라이트·다크).
+ * 한쪽을 바꾸면 다른 쪽도 바꾼다.
+ */
+export const THEME_COLOR_LIGHT = "#ffffff";
+export const THEME_COLOR_DARK = "#0d1117";
