@@ -8,6 +8,7 @@ const PATHS: Record<string, React.ReactNode> = {
   close: <path d="m6 6 12 12M6 18 18 6" />,
   grid: <><rect x="4" y="4" width="6" height="6" rx="1" /><rect x="14" y="4" width="6" height="6" rx="1" /><rect x="4" y="14" width="6" height="6" rx="1" /><rect x="14" y="14" width="6" height="6" rx="1" /></>,
   code: <path d="m8 6-6 6 6 6m8-12 6 6-6 6m-3-14-2 16" />,
+  list: <path d="M9 6h11M9 12h11M9 18h11M4 6h.01M4 12h.01M4 18h.01" />,
   pen: <path d="m15 3 6 6-12 12H3v-6zM12 6l6 6" />,
   news: <><rect x="4" y="3" width="16" height="18" rx="2" /><path d="M8 7h8M8 11h8M8 15h5" /></>,
   up: <path d="m7 14 5-5 5 5" />,

@@ -2,7 +2,7 @@ import {beforeAll,beforeEach,expect,it,vi} from 'vitest';
 import {eq,sql} from 'drizzle-orm';
 import {db} from '@/lib/db';
 import {products,crawlCandidates,crawlDocuments,crawlSettings,productHealth} from '@/lib/db/schema';
-import {getPopularPage,getPopularGroups} from '@/lib/domain/products/popular';
+import {getPopularFacets,getPopularPage,getPopularGroups} from '@/lib/domain/products/popular';
 import {refreshProductStars} from '@/lib/jobs/products/stars-refresh';
 import {update} from '@/lib/domain/products/repository';
 import {ensureSchema,resetTables} from './setup';
@@ -12,6 +12,7 @@ vi.mock('server-only',()=>({}));
 beforeAll(ensureSchema);
 beforeEach(async()=>{await db.delete(crawlCandidates);await db.delete(crawlDocuments);await db.delete(crawlSettings);await resetTables();});
 let serial=0;
+const ALL={personal:false,ai:false,category:null};
 async function product(stars: number|null, ownerType: 'User'|'Organization'|null='User', status: 'seeded'|'verified'|'banned'|'unverified'='seeded') {
  const slug=`stars-${++serial}`;
  const [row]=await db.insert(products).values({slug,name:slug,url:`https://${slug}.example`,tagline:'A useful product',description:'description',category:'Dev',repoUrl:`https://github.com/test/${slug}`,stars,starsAt:stars===null?null:new Date(),ownerType,status,source:'crawler',verifyToken:`v-${slug}`,editTokenHash:'a'.repeat(64)}).returning();return row;
@@ -28,12 +29,36 @@ it('공개되고 접속 가능한 제품만 세고 동점은 ID로 정렬한다'
  for(const stars of [1999,2000,4999,5000,9999,10000,29999,30000,99999,100000])await product(stars);
  await product(4500,'Organization');await product(4500,null);await product(4500,'User','banned');await product(4500,'User','unverified');
  const down=await product(4500);await db.insert(productHealth).values({slug:down.slug,status:503,failures:3});
- const all=await getPopularPage('rising',false,1,2);
+ const all=await getPopularPage('rising',ALL,'stars',1,2);
  expect(all.total).toBe(4);expect(all.items.map(p=>p.stars)).toEqual([4999,4500]);expect(all.pages).toBe(2);
- const next=await getPopularPage('rising',false,2,2);expect(next.items.map(p=>p.stars)).toEqual([4500,2000]);
- expect((await getPopularPage('rising',true)).total).toBe(2);
+ const next=await getPopularPage('rising',ALL,'stars',2,2);expect(next.items.map(p=>p.stars)).toEqual([4500,2000]);
+ expect((await getPopularPage('rising',{...ALL,personal:true})).total).toBe(2);
  expect((await getPopularGroups(false)).map(g=>g.total)).toEqual([4,2,2,2]);
- expect((await getPopularPage('rising',false,999)).page).toBe(1);
+ expect((await getPopularPage('rising',ALL,'stars',999)).page).toBe(1);
+});
+it('분야·AI로 제작·개인 거르기와 칩 수가 누르면 나올 목록과 같고, 요즘 많이 는 순은 하루 평균 증가로 줄 세운다',async()=>{
+ // 하루 평균 증가: c 300/일, a 50/일, b 10/일, d 셀 수 없음(이전 값 없음)
+ const a=await product(3000,'User');const b=await product(4000,'Organization');const c=await product(2500,'User');const d=await product(4500,'Organization');
+ await db.execute(sql`update products set category='Data' where id in (${c.id},${d.id})`);
+ await db.execute(sql`update products set ai_level=1 where id in (${a.id},${c.id})`);
+ await db.execute(sql`update products set stars_at=now(),stars_previous=2900,stars_previous_at=now()-interval '2 days' where id=${a.id}`);
+ await db.execute(sql`update products set stars_at=now(),stars_previous=3990,stars_previous_at=now()-interval '1 day' where id=${b.id}`);
+ await db.execute(sql`update products set stars_at=now(),stars_previous=2200,stars_previous_at=now()-interval '1 day' where id=${c.id}`);
+ await product(12000,'User');
+
+ const facets=await getPopularFacets('rising',ALL);
+ expect(facets).toEqual({categories:[{category:'Data',count:2},{category:'Dev',count:2}],all:4,ai:2,personal:2});
+ // AI로 제작을 켜면 분야 칩·전체는 AI 제품만 센다. '개인 계정만' 수는 AI를 켠 채 개인만 켰을 때의 수
+ expect(await getPopularFacets('rising',{...ALL,ai:true})).toEqual({categories:[{category:'Data',count:1},{category:'Dev',count:1}],all:2,ai:2,personal:2});
+ // 분야를 고르면 AI·개인 칩은 그 분야 안의 수. 분야 칩은 다른 분야도 그대로 센다(옮겨 갈 수 있게)
+ expect(await getPopularFacets('rising',{...ALL,category:'Data'})).toEqual({categories:[{category:'Data',count:2},{category:'Dev',count:2}],all:4,ai:1,personal:1});
+
+ const data=await getPopularPage('rising',{...ALL,category:'Data'});
+ expect(data.items.map(p=>p.slug)).toEqual([d.slug,c.slug]);expect(data.totals).toEqual([2,0,0,0]);
+ expect((await getPopularPage('rising',{personal:true,ai:true,category:null})).items.map(p=>p.slug)).toEqual([a.slug,c.slug]);
+ expect((await getPopularPage('rising',ALL,'rising')).items.map(p=>p.slug)).toEqual([c.slug,a.slug,b.slug,d.slug]);
+ // 카드에 쓰는 값도 함께 읽는다
+ expect((await getPopularPage('rising',ALL)).items.find(p=>p.slug===a.slug)).toMatchObject({aiLevel:1,accessMode:'website',category:'Dev'});
 });
 it('하루에 한 번 다시 보고, 지금 값이 20시간 넘었을 때만 이전 값으로 넘긴다',async()=>{
  const stale=await product(2500);const fresh=await product(2600);
