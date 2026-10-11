@@ -50,9 +50,9 @@ export const viewport: Viewport = {
  * seasonfooter는 병렬 라우트 슬롯이다. 헤더와 푸터가 여기 있어서 페이지가 그 안에
  * 무엇을 둘 수 없는데, 슬롯으로 받으면 메인(app/@seasonfooter/page.tsx)에서만 채운다.
  *
- * 나머지 경로를 비우려면 슬롯마다 [...catchAll]/page.tsx와 default.tsx가 둘 다 필요하다.
- * default.tsx는 하드 내비게이션에서만 쓰이고, 소프트 내비게이션에서는 슬롯이 이전 활성
- * 상태를 유지하기 때문이다.
+ * 나머지 경로는 default.tsx 가 비우고(하드 내비게이션), 소프트 내비게이션에서 슬롯이 유지하는
+ * 이전 상태는 OnlyOnHome 이 경로로 가린다. 슬롯에 [...catchAll]/page.tsx 를 두면 루트 404 서버 렌더가
+ * 오류 셸로 깨진다(ROB-01) — 다시 넣지 않는다.
  */
 export default function RootLayout({
   children,

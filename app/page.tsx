@@ -299,7 +299,8 @@ export async function generateMetadata({ searchParams }: Props): Promise<Metadat
   // 검색 결과는 색인하지 않는다 — 검색어마다 얇은 목록 페이지가 끝없이 생긴다. 분야는 /c/[category] 정식 주소가 맡는다
   if (query) return { title: browseTitle({ query }), robots: { index: false, follow: true } };
   // 보기 조건이 붙은 주소(?sort=recent·?ai=…·?shown=… 등)는 홈과 같은 제목이라 홈을 정식 주소로 가리킨다
-  return { title: browseTitle({}), ...(Object.keys(params).length > 0 ? { alternates: canonicalAlternates("/") } : {}) };
+  // 보기 조건이 붙은 주소도, 붙지 않은 홈도 정식 주소는 '/' 하나다(SEO-04)
+  return { title: browseTitle({}), alternates: canonicalAlternates("/") };
 }
 
 /**
@@ -579,7 +580,7 @@ export async function HomeContent({ params }: { params: HomeParams }) {
     <main className="wrap">
       {!scoped && <IntroLine pulse={pulse} total={total} state={state} />}
       {stripVisible && (
-        <CompactRow id="rising" title="지금 뜨는 프로젝트" note={`최근 두 확인 사이 하루 평균 GitHub 스타가 가장 많이 늘었습니다 · 스타 ${formatCount(RISING_MAX_STARS)} 미만`}
+        <CompactRow id="rising" priority title="지금 뜨는 프로젝트" note={`최근 두 확인 사이 하루 평균 GitHub 스타가 가장 많이 늘었습니다 · 스타 ${formatCount(RISING_MAX_STARS)} 미만`}
           more={fallback === "rising" ? { href: "#projects", label: `${formatCount(resultCount)}개 모두 보기` } : { href: "/?sort=weekly#projects", label: "모두 보기" }}
           items={strip} trailing="category" />
       )}

@@ -25,8 +25,7 @@ export function englishLang(text: string | null | undefined): "en" | undefined {
  * 소개가 바뀌어 아직 다시 옮기지 않았으면 비어 있어 원문만 보인다.
  * 'AI가 요약' 출처 줄은 보이는 글이 AI 가 쓴 것일 때만 붙는다 — 한국어 줄(늘 AI 가 옮긴 것)이나 AI 가 지은 원문.
  *
- * 영어 원문에는 lang="en" 을 단다(englishLang, A11Y-06). 지금은 상세(toggle)에서만 — 카드·행의 원문 줄에도 붙이려면
- * 그 마크업을 그대로 비교하는 테스트(product-tagline·popular-page)를 함께 고친다.
+ * 영어 원문에는 lang="en" 을 단다(englishLang, A11Y-06) — 상세·카드·행 어디에 보이든.
  */
 export function ProductTagline({ tagline, taglineKo, source, className, showSource = true, original = "tooltip" }: {
   tagline: string;
@@ -43,7 +42,7 @@ export function ProductTagline({ tagline, taglineKo, source, className, showSour
   if (!korean) {
     return (
       <>
-        <p className={className} title={tagline} lang={original === "toggle" ? englishLang(tagline) : undefined}>{tagline}</p>
+        <p className={className} title={tagline} lang={englishLang(tagline)}>{tagline}</p>
         {showSource && <IntroductionSource source={source ?? undefined} />}
       </>
     );

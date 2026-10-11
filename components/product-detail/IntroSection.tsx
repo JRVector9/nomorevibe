@@ -42,7 +42,7 @@ export function IntroSection({ product, profile, readmeExcerpt, unclaimed }: {
           : !readmeExcerpt && (
             <p className="m-0 max-w-[720px] text-[14px] leading-[1.5] text-fg-2">
               메이커가 쓴 소개는 위의 한 줄이 전부입니다.
-              {repo && <> 더 자세한 내용은 <a href={repo} target="_blank" rel="noopener noreferrer" className="text-accent-ink hover:underline">저장소 README ↗</a>에서 읽을 수 있습니다.</>}
+              {repo && <> 더 자세한 내용은 <a href={repo} target="_blank" rel="noopener noreferrer" className="text-accent-ink underline underline-offset-2">저장소 README ↗</a>에서 읽을 수 있습니다.</>}
             </p>
           )}
         {description && <p className="m-0 text-[13px] text-fg-2">{unclaimed ? README_INTRO_SOURCE : "메이커 제공·미검증"}</p>}

@@ -36,7 +36,8 @@ const identityOf = (slug: string) => publicRead("detail", ["identity", slug], ()
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { slug } = await params;
   const product = await identityOf(slug);
-  if (!product) return {};
+  // 없는 제품의 404 탭 제목이 홈 제목으로 남지 않게 — not-found.tsx 의 제목과 같은 말(UX-10·UX-39)
+  if (!product) return { title: pageTitle("찾는 프로젝트가 없습니다") };
   // 한국어 소개가 있으면 그것으로 — 검색 결과와 공유 미리보기에 영어 원문이 그대로 뜨지 않게(SEO-05)
   const description = product.taglineKo?.trim() || product.tagline;
   return {

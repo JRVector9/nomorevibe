@@ -89,7 +89,7 @@ describe("상세 robots", () => {
     expect((await metadata("asked")).robots).toEqual(NOINDEX);
   });
 
-  it("없는 제품은 메타데이터를 비운다(본문이 404 를 낸다)", async () => {
-    expect(await metadata("nothing-here")).toEqual({});
+  it("없는 제품은 404 제목만 낸다(본문이 404 를 낸다)", async () => {
+    expect(await metadata("nothing-here")).toEqual({ title: "찾는 프로젝트가 없습니다 — nomorevibe" });
   });
 });
