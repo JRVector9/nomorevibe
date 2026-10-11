@@ -1,3 +1,44 @@
+# 2026-10-11 — nomorevibe.com 전환: 서버 준비 완료, Cloudflare 로그인 대기
+
+## Current objective
+
+사용자가 GoDaddy 로그인 상태에서 nomorevibe.com을 기본 도메인으로 전환하도록 요청했다. 전용 worktree /private/tmp/nomorevibe-domain-20261011, branch feat/primary-domain-nomorevibe-com-20261011, base bb318b4820c3309ae48356191926e848923b4d27이다. 공개 전환은 아직 완료되지 않았다. 상세 운영 기록은 docs/operations/2026-10-11-primary-domain-preparation.md다.
+
+## Completed work / modified files / key decisions
+
+GoDaddy DNS 7개를 UI에서 확인하고 A/AAAA/NS/CNAME/MX/DS/CAA를 조회했다. Parked apex A15.197.148.33 및3.33.130.190, NS ns73/ns74.domaincontrol.com, www CNAME apex, _domainconnect와_dmarc를 확인했다. DNS/GoDaddy 네임서버는 아직 변경하지 않았다.
+
+Dokploy M3/mini 웹에 nomorevibe.com과www.nomorevibe.com을 port3000/path/httpsfalse로 추가했다. 기존 brut.bot 도메인을 보존했고 두 서버80포트에 Host 헤더를 넣어 세 호스트의 health 총6개를 실제 확인했다. 모두 status/dbok, 각 instanceId와 동일 코드 release650b341을 반환했다. env/site origin과 이미지·source·replicas·DB·네기능flagOFF·소개검수 중단 상태는 변경하지 않았다.
+
+두 서버 /Users/jr/.cloudflared/config.yml에 새 두 호스트→localhost80을 마지막404 앞에 추가했다. 각각 ingress validate exit0. 원본 backup은 같은 디렉터리 config.yml.nomorevibe-domain-20261011.backup,0600이다. 실행 프로세스는 재시작하지 않았으므로 새 ingress는 아직 런타임 미반영이다. M3 tunnel9e3903e4-0752-42ea-a275-7ccd2beb7105, mini815302dd-6f8d-4708-919d-bfce671b27ab. 두 웹의 전환 전 전체 snapshot /private/tmp/nomorevibe-domain-web-before-20261011.json은0600이며 비밀 출력/커밋금지다.
+
+수정 파일은 이 인계 문서 및 새 도메인 준비 운영 기록이다. root main/PPT/미추적 자료는 보존했다. Next 설치 문서 redirects/environment/proxy를 읽었으며 서비스 코드 수정은 아직 없다.
+
+## Test commands / results / failed approaches
+
+실제 실행: DNS 조회, Dokploy 두 웹 domain/env 상태, SSH tunnel 설정/프로세스 읽기, 내부6health status/dbok/release650, 두 ingress validate exit0, git diff --check exit0. node --test scripts/ci-scope.node-test.mjs 실제4검사 pass/exit0. 새 공개도메인/TLS/기본주소/OAuth/redirect 검사는 아직 실행하지 않았다.
+
+Chrome browser provider가 없어 native Chrome cua_repl로 조작한다. Cloudflare 로그인 화면을 열고 사용자에게 로그인 완료를 비동기로 요청했다. 계정975a92815b3140c4bc264f90721a4375의 새 zone 생성은 기존 cloudflared cert와 Keychain cloudflare-api-token/cloudflare-dns-api-token 모두403. 명시 오류 com.cloudflare.api.account.zone.create 권한 필요. 같은 계정 brut.bot DNS 읽기는 성공, nomorevibe.com zone 결과 빈목록, LB 조회403이다. 새 zone은 생성되지 않았다. 기존 Cloudflare purge key도 앞선 배포에서 인증 실패했다.
+
+## Remaining work / exact commands
+
+Cloudflare 로그인 후 Free full zone 추가·배정 NS 확인, 기존 LB의 대상/Host헤더와 두 웹 연결을 유지하는 CNAME 검토, 기존 DMARC 등 보존, ingress 서버별 재시작, GoDaddy NS 변경, 공개DNS/TLS 확인이 남았다. 그 후 두 웹 NEXT_PUBLIC_SITE_URL=https://nomorevibe.com 변경·양쪽 배포·runtime metadata/robots/sitemap/RSS/skill/install 검증·www/옛HTML308·API호환검토·deploy script health/purge 설정·현재주소 문서를 반영한다. 아직 README/AGENTS 현재운영주소를 새주소로 바꾸지 않는다. GitHub 앱 새 callback 전체값은 운영 기록에 있으며 새HTTPS 준비후사용한다. 새기능flag는 도메인전환과별도로 계속OFF다.
+
+```sh
+cd /private/tmp/nomorevibe-domain-20261011
+git status --short --branch
+node --test scripts/ci-scope.node-test.mjs
+git diff --check
+dig +short NS nomorevibe.com
+curl -fsS --max-time 10 https://nomorevibe.brut.bot/api/health
+curl -fsS --max-time 10 -H 'Host: nomorevibe.com' http://100.92.77.66/api/health
+curl -fsS --max-time 10 -H 'Host: nomorevibe.com' http://100.116.119.93/api/health
+```
+
+Dokploy helper /private/tmp/nomorevibe-release-inspect-20261011.py의 client()가 Keychain을 내부에서 읽는다. inventory()는 기존 snapshot O_EXCL 때문에 다시 실행하지 않는다. M3 web oipo2OAnIrtcnILBCRoG2, mini web llv4rlABSJOcFauSxaHdx. SSH root@100.92.77.66 / root@100.116.119.93. CUA 계속사용시 cua.rewriteDocumentation() 후 현재 화면을 다시 확인한다. 문서 준비 커밋/PR 상태는 git/gh에서 직접확인한다.
+
+---
+
 # 2026-10-11 17:24 KST — PR #356 push·병합·운영 코드 배포 검증 완료
 
 ## Current objective / completed work
