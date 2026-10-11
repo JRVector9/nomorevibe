@@ -168,7 +168,7 @@ const starGain = sql`case when ${products.starsPreviousAt} < ${products.starsAt}
  * 간격은 그 아래로 내려가지 않는다(stars-refresh.ts). 하루 한 번 보는 지금은 간격이 20~24시간이라 하루로 올려 나누면
  * 20시간 구간이 6분의 1 덜 늘어난 것처럼 보인다 — 바닥을 그 길이로 맞춘다. 혹시 짧아도 몇 시간 사이의 몇 개가 부풀지 않는다.
  */
-const starGainPerDay = sql`${starGain} / greatest(extract(epoch from (${products.starsAt} - ${products.starsPreviousAt})) / 86400, ${sql.raw(String(STARS_BASELINE_HOURS))} / 24.0)`;
+export const starGainPerDay = sql`${starGain} / greatest(extract(epoch from (${products.starsAt} - ${products.starsPreviousAt})) / 86400, ${sql.raw(String(STARS_BASELINE_HOURS))} / 24.0)`;
 /** 홈의 스타 구간(popular.ts)이 2천부터 따로 보여주므로 그 아래만 */
 export const RISING_MAX_STARS = 2000;
 /**

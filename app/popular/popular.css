@@ -1,27 +1,77 @@
 /*
- * /popular 좁은 화면(≤640px) — 가로로 밀리던 표 대신 카드 행, 구간 탭은 가로로 밀리는 칩 줄(2026-10-08 UX 감사 UX-23).
- * 표·탭의 넓은 화면 규칙은 app/home.css 에 있다. 이 파일은 640px 이하만 바꾼다 — 불러오는 순서와 무관하게
- * home.css 를 이기도록 .popular-page 를 앞에 붙인다.
+ * /popular — 많이 쓰이는 프로젝트(2026-10-11 시안 보완안).
+ * 구간 탭·칩·필터 줄은 발견하기 부품(home.css .tabs·.chips·.filter-top·.clear-filters)을, 카드 보기는 ProjectCard 를 그대로 쓴다.
+ * 이 파일은 머리·요약 줄·목록 줄·쪽 넘김만 정한다.
  */
-.popular-cards { display: none; }
+.popular-page { padding-top: 12px; padding-bottom: 65px; display: flex; flex-direction: column; gap: 18px; }
 
+.popular-crumbs { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text-2); }
+.popular-crumbs a { display: inline-flex; align-items: center; min-height: 44px; color: var(--text-2); }
+.popular-crumbs a:hover { color: var(--text); }
+.popular-crumbs [aria-current] { color: var(--text); }
+
+.popular-heading h1 { margin: 0; font-size: 24px; font-weight: 600; letter-spacing: -0.02em; line-height: 1.25; }
+.popular-heading p { margin: 6px 0 0; font-size: 13px; line-height: 1.6; color: var(--text-2); }
+.popular-heading p a { color: var(--accent-ink); text-decoration: underline; text-underline-offset: 3px; }
+
+/* 요약 줄 — 지금 보는 목록의 범위·수, 오른쪽에 정렬·보기·필터 초기화 */
+.popular-summary { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px 16px; padding-bottom: 10px; border-bottom: 1px solid var(--border); }
+.popular-summary h2 { margin: 0; font-size: 15px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.popular-summary p { margin: 2px 0 0; font-size: 13px; color: var(--text-2); }
+.popular-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+.tabs-sm .tab { height: 36px; padding: 0 14px; font-size: 13px; }
+.tabs-sm .tab-icon { width: 44px; padding: 0; justify-content: center; }
+
+/* 목록 줄 — 순위 · 커버 · 본문 · ★와 저장. 줄 전체가 링크 하나(.card-link::after, cards.css) */
+.popular-list { list-style: none; margin: 0; padding: 0; }
+/* 구분선은 곧게 — 줄에 둥근 모서리를 주면 아래 선 양끝이 휘어 보인다 */
+.popular-row { position: relative; display: grid; grid-template-columns: 32px 176px minmax(0, 1fr) auto; gap: 20px; align-items: center; padding: 16px 12px; margin: 0 -12px; border-bottom: 1px solid var(--border); }
+.popular-row:hover { background: var(--bg-soft); }
+.popular-rank { font-size: 17px; font-weight: 600; color: var(--text-3); text-align: right; font-variant-numeric: tabular-nums; }
+.popular-thumb { position: relative; display: block; width: 176px; border-radius: 12px; overflow: hidden; }
+/* 카드 커버의 표시(직접 설치·AI)를 작은 커버에 맞게 줄인다 */
+.popular-thumb .tile-flag { top: 7px; left: 7px; font-size: 11px; padding: 3px 8px; }
+.popular-thumb .tile-flag-ai { left: auto; right: 7px; }
+.popular-thumb .tile-icon img, .popular-thumb .tile-icon > span { width: 52px !important; height: 52px !important; border-radius: 12px; }
+.popular-thumb-rank { display: none; }
+.popular-row-body { min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.popular-row-title { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 10px; min-width: 0; }
+.popular-row-title h3 { margin: 0; font-size: 17px; font-weight: 600; letter-spacing: -0.015em; line-height: 1.3; overflow-wrap: anywhere; }
+.popular-row-title .card-owner { font-size: 13px; }
+.popular-row .popular-description { font-size: 14px; line-height: 1.5; }
+.popular-row-meta { margin: 0; font-size: 13px; color: var(--text-2); }
+.popular-row-end { display: flex; align-items: center; gap: 6px; }
+.popular-row-end .star-metric { flex-direction: column; align-items: flex-end; gap: 0; min-width: 76px; font-size: 15px; font-weight: 600; color: var(--text); font-variant-numeric: tabular-nums; }
+.popular-row-end .star-metric small { font-size: 13px; font-weight: 500; }
+/* 덮개 위에서 따로 눌리는 것 — 저장(44×44)과 소유자 링크 */
+.popular-row .cover-saved, .popular-row .card-owner { position: relative; z-index: 1; }
+.popular-row .cover-saved { margin: 0; }
+
+/* 카드 보기는 요약 줄과 띄운다 */
+.popular-summary + .projects-grid { margin-top: 18px; }
+
+.popular-pagination { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding-top: 6px; font-size: 14px; color: var(--text-2); font-variant-numeric: tabular-nums; }
+.popular-pagination a { display: inline-flex; align-items: center; min-height: 44px; padding: 0 18px; border-radius: 980px; background: var(--bg-soft); color: var(--text); font-weight: 500; }
+.popular-pagination a:hover { background: var(--bg-hover); }
+.popular-pagination [aria-disabled] { display: inline-flex; align-items: center; min-height: 44px; padding: 0 18px; color: var(--text-3); }
+
+/* 좁은 화면 — 구간 탭은 넷으로 나눈 한 줄(개수는 숨김), 목록 줄은 작은 커버 위에 순위를 얹는다 */
 @media (max-width: 640px) {
-  .popular-page .popular-table-scroll { display: none; }
-
-  .popular-page .popular-cards { display: block; list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--border); }
-  /* 한 줄: 순위 · 아이콘 · 이름 · ★수와 증감, 그 아래 소개 두 줄(이름 칸부터) */
-  .popular-card { display: grid; grid-template-columns: 22px 28px minmax(0, 1fr) auto; column-gap: 10px; align-items: center; padding: 8px 0 14px; border-bottom: 1px solid var(--border); }
-  .popular-card-rank { font-size: 13px; color: var(--text-2); font-variant-numeric: tabular-nums; text-align: right; }
-  /* 줄 높이 44px — 이름이 곧 누르는 자리다 */
-  .popular-card-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 15px; font-weight: 600; line-height: 44px; }
-  .popular-card .star-metric { flex-wrap: nowrap; font-variant-numeric: tabular-nums; }
-  .popular-card-intro { grid-column: 3 / -1; min-width: 0; }
-
-  /* 칩 줄 — 화면 끝까지 밀어 잘린 칩이 "더 있음"을 보이게 한다 */
-  .popular-page .popular-tabs { gap: 8px; margin: 22px -16px 20px; padding: 0 16px; border-bottom: 0; scrollbar-width: none; }
-  .popular-page .popular-tabs::-webkit-scrollbar { display: none; }
-  .popular-page .popular-tabs a { flex-shrink: 0; min-height: 44px; padding: 0 16px; border: 0; border-radius: 980px; background: var(--bg-soft); color: var(--text); }
-  .popular-page .popular-tabs a[aria-current] { background: var(--text); color: var(--bg-card); }
-  .popular-page .popular-tabs b { padding: 0; background: none; font-weight: 400; color: var(--text-2); }
-  .popular-page .popular-tabs a[aria-current] b { color: color-mix(in srgb, var(--bg-card) 72%, var(--text)); }
+  .popular-tier-tabs { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); width: 100%; }
+  .popular-tier-tabs .tab { justify-content: center; padding: 0 8px; }
+  .popular-tier-tabs .tab-count { display: none; }
+  .popular-row { grid-template-columns: 104px minmax(0, 1fr) auto; gap: 12px; align-items: start; padding: 14px 0; margin: 0; }
+  .popular-row:hover { background: none; }
+  .popular-rank { display: none; }
+  .popular-thumb { width: 104px; border-radius: 10px; }
+  .popular-thumb-rank { position: absolute; left: 4px; bottom: 4px; display: inline-flex; align-items: center; justify-content: center; min-width: 20px; height: 20px; padding: 0 5px; box-sizing: border-box; border-radius: 980px; background: rgba(29, 29, 31, 0.78); color: white; font-size: 11px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .popular-thumb .tile-flag { display: none; }
+  .popular-thumb .tile-flag-ai { display: inline-block; top: 4px; right: 4px; font-size: 10px; padding: 2px 6px; }
+  .popular-thumb .tile-icon img, .popular-thumb .tile-icon > span { width: 34px !important; height: 34px !important; border-radius: 9px; }
+  .popular-row-title h3 { font-size: 15px; }
+  .popular-row .popular-description { font-size: 13px; line-height: 1.45; }
+  .popular-row-end { flex-direction: column-reverse; align-items: flex-end; gap: 0; }
+  .popular-row-end .star-metric { min-width: 0; font-size: 13px; }
+  .popular-row-end .star-metric small { font-size: 12px; }
+  .popular-row .cover-saved { margin: -10px -10px 0 0; }
 }

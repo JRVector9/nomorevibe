@@ -19,17 +19,19 @@ import "./cards.css";
  * 미클레임·저장소·관심 수는 방문자에게 뜻이 없어 뺐다(상세에서 밝힌다). 메이커가 신고한 제작 도구만
  * 소유자 옆에 붙는다 — 수집기 추정값은 공개 뷰모델에서 이미 null 이다(view.ts toListItem).
  */
-export function ProjectCard({ product, saved, onToggleSave, now, priority = false, headingLevel = 3 }: {
+export function ProjectCard({ product, saved, onToggleSave, now, priority = false, headingLevel = 3, rank }: {
   product: HomeCardProduct & { listedAt?: TimeInput };
   saved: boolean;
   onToggleSave: (slug: string) => void;
-  browseState: BrowseState;
+  browseState?: BrowseState;
   /** 서버가 읽은 시각 — 넘기면 서버와 브라우저가 같은 'n일 전'을 그린다. 없으면 지금 */
   now?: Date | string | number;
   /** 목록 첫 줄 — 커버 그림을 먼저 받는다(PERF-03) */
   priority?: boolean;
   /** 카드 제목의 단계 — 목록 제목이 h1 인 검색·분야 화면은 h2 라야 단계를 건너뛰지 않는다(A11Y-05). 크기는 class 가 정한다 */
   headingLevel?: 2 | 3;
+  /** 순위 목록(홈 '많이 쓰이는 프로젝트'·/popular 카드 보기)의 자리 — 제목 앞에 숫자로 */
+  rank?: number;
 }) {
   const owner = listedRepositoryOwner(product.repoUrl, product.repoRenamedTo);
   const maker = owner ? `@${owner.login}` : product.makerName ? `@${product.makerName.replace(/^@/, "")}` : null;
@@ -46,7 +48,10 @@ export function ProjectCard({ product, saved, onToggleSave, now, priority = fals
       </Link>
       <div className="project-body">
         <div className="project-title-row">
-          <Heading className="project-title"><Link prefetch={false} href={href} className="card-link">{product.name}</Link></Heading>
+          <Heading className="project-title">
+            {rank !== undefined && <span className="project-rank">{rank}<span className="sr-only">위</span></span>}
+            <Link prefetch={false} href={href} className="card-link">{product.name}</Link>
+          </Heading>
           <button
             type="button"
             className={`cover-saved${saved ? " active" : ""}`}
