@@ -30,7 +30,13 @@ GitHub URL·DB state·두 웹 결과와 지연을 남긴다. 소개 검수 중�
 HTML 태그 purge 요청이 Authentication error로 실패했다. 공개 홈·상세는 새 SHA의
 JS/CSS deployment ID·HTTP200·브라우저/리소스 오류0을 확인했다. 배포·DB·14앱은 정상이다.
 
-**다음:** zone purge 권한의 유효한 토큰으로 해당 비밀 항목을 갱신한 후
+2026-10-11 기본 도메인 전환 후 배포 스크립트의 purge 대상은 `nomorevibe.com` zone
+`9fc499cc4b48354cf9738ac039c9fd70`이다. 기존 DNS API 토큰 두 개는 이 zone 읽기도403이며 새
+purge 성공은 확인하지 않았다. 새 zone은 HTML cache-everything 규칙을 넣지 않았고
+홈·상세·API·설치 파일의 `cf-cache-status: DYNAMIC`을 확인했다. 옛 zone의
+HTML 캐시 규칙은 유지하되 해당 서비스 페이지는 edge308로 먼저 이동한다.
+
+**다음:** 새 zone purge 권한의 유효한 토큰으로 해당 비밀 항목을 갱신한 후
 `scripts/ops/deploy_shared_images.py`의 `purge_html()` 결과 `htmlPurge=ok`를 확인한다.
 키 값과 Authorization 헤더는 출력·커밋하지 않는다. 이번 purge를 성공으로 기록하지 않는다.
 
@@ -55,7 +61,7 @@ reload 검사는 유지하되 이 UI 결함을 해결 완료로 표시하지 않
 
 ## 현재 남은 운영 검증 — 2026-09-29
 
-첫 배포·운영 DB 연결·역할 워커 시작은 완료됐다. 서비스는 `https://nomorevibe.brut.bot`에서 운영하며,
+첫 배포·운영 DB 연결·역할 워커 시작은 완료됐다. 서비스는 `https://nomorevibe.com`에서 운영하며,
 Dokploy의 M3 7개 앱과 mini 웹·다섯 역할 예비 6개 앱이 운영된다. 웹과
 crawler·reviewer·publisher의 주·예비 8개 앱은 GHCR digest를 사용하고 나머지는
 main Git 소스를 사용한다.

@@ -523,7 +523,7 @@ def public_gate(sha, *, attempts=24):
     for _ in range(attempts):
         try:
             health = json.loads(run(['curl', '-fsS', '--max-time', '10',
-                                     'https://nomorevibe.brut.bot/api/health'], timeout=12))
+                                     'https://nomorevibe.com/api/health'], timeout=12))
             if (health.get('status'), health.get('db'), health.get('release')) == ('ok', 'ok', sha):
                 seen.add(health.get('instanceId'))
                 if seen == {'mini-web', 'm3-web'}:
@@ -533,7 +533,7 @@ def public_gate(sha, *, attempts=24):
     raise TimeoutError('public_health_gate_timeout')
 
 
-CLOUDFLARE_ZONE_ID = '986aecb54a017f95119a8b81f9bc4296'  # brut.bot — 비밀이 아니다
+CLOUDFLARE_ZONE_ID = '9fc499cc4b48354cf9738ac039c9fd70'  # nomorevibe.com — 비밀이 아니다
 PURGE_TOKEN_ITEM = 'nomorevibe-cloudflare-purge-token'
 
 
