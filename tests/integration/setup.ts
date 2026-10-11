@@ -36,7 +36,8 @@ export function ensureSchema() {
  */
 export async function resetTables() {
   await db.execute(sql`
-    TRUNCATE email_login_challenges, public_sessions, public_identities, public_users, rate_limits,
+    TRUNCATE github_auth_flows, github_user_connections,
+             email_login_challenges, public_sessions, public_identities, public_users, rate_limits,
              product_audit_campaigns, product_refresh_requests, agent_repository_observations, agent_repository_scans, crawl_discovery_evidence, repository_ai_levels,
              product_evidence_audit, product_skills, product_agents, product_updates,
              product_media, product_media_declarations, media_assets, product_evidence_sources, product_links,

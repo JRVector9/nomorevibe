@@ -470,6 +470,13 @@
       "when": 1791900000000,
       "tag": "0066_public_user_auth",
       "breakpoints": true
+    },
+    {
+      "idx": 67,
+      "version": "7",
+      "when": 1792000000000,
+      "tag": "0067_github_user_connections",
+      "breakpoints": true
     }
   ]
 }

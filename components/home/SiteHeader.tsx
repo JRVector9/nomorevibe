@@ -96,7 +96,7 @@ function SearchFields() {
  * 주소의 쿼리(useSearchParams)를 읽는 두 조각만 Suspense 로 감싼다. 정적으로 굳는 화면에서는 그 조각만 기다림 모양으로
  * 나가는데, 기다림 모양도 같은 링크·입력칸이라 자리가 바뀌지 않는다.
  */
-export function SiteHeader({ authEnabled = false }: { authEnabled?: boolean } = {}) {
+export function SiteHeader({ authEnabled = false }: { authEnabled?: boolean }) {
   const router = useRouter();
   const [searching, startSearch] = useTransition();
   const [collapsed, setCollapsed] = useState(false);
