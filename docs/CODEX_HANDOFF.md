@@ -6505,3 +6505,71 @@ git commit -m 'docs: audit home new and rising criteria'
 git push -u origin docs/home-criteria-audit-20261011
 gh pr create --base main --head docs/home-criteria-audit-20261011 --title 'docs: audit home new and rising project criteria' --body-file /private/tmp/nomorevibe-home-criteria-audit-pr-body.md
 ```
+
+### 2026-10-12 — 8시간 독립 관측 정책·PR 제안, GitHub App 수동 키 인계
+
+현재 목적: 사용자가 검토 보고서를 바탕으로 수정 범위를 PR별로 보고하고 급상승의 스타 구간/비교 기간/표기를 명확히 제안하라고 요청했다. 이어 **매시간 대신8시간**, 발굴과 독립된 관측 스케줄·DB 스키마를 지정했다. 앱 설정은 gpt-6.1-sol/xhigh 서브에이전트에 맡기도록 명시 요청했다.
+
+완료: 앞 검토 PR367은 head08238d7/최신-base298eb926의 필수 CI38150052766 check 성공 후 main240cbdfd로 병합했고 사용자 main을 fast-forward했다. 새 제안은 독립 worktree /private/tmp/nomorevibe-home-ranking-policy-proposal-20261012, branch docs/home-ranking-policy-proposal-20261012의 docs/superpowers/specs/2026-10-12-home-ranking-policy-proposal.md에 작성했다. 수정 파일은 그 제안과 이 handoff뿐이다. 코드/DB/운영 순위·스케줄 변경 없음.
+
+주요 판단: 8시간 갱신 및 관측 독립은 사용자 지정, 스타50~1,999·전일동시간대 순증가10이상·00/08/16KST 집계는 나머지 추천 기준이다. 회차직전1시간에 고정 대상만관측, 동일제품·저장소의24시간전회차 비교(실측23~25시간)를 사용하므로 표기는 ‘전일 대비 스타 급상승’이다. 관측값을 정확한24시간 이벤트 총계로 표시하지 않는다. 회차/관측2개표, 닫힌회차·정책불변, 신규발굴다음회차+24시간이력확보후진입, 공개차단즉시숨김을 제안했다. 기존20시간product-stars-refresh writer는 보존한다(8시간으로단순변경하면20시간 baseline 이동이안되는함정). 별도관측 job/기존 crawler 별도stars lane/공유lease·quota를사용하고 추가서버를전제하지않는다.
+
+PR 제안:01 신규생성일·양쪽경계·생성일표시·같은범위모두보기;02 독립관측job+2개스키마+불변회차;03 T/T−24시간비교·고정순위조회·회차캐시;04 새이름/전일대비증가/집계시각/자료부족UI.01은독립,02→자료축적→03→04 순서다. 앱코드구현은 아직 요청/합의 범위가 아니라 기준과PR제안을 보고하는 단계다.
+
+운영 READ ONLY 추가 표본00:40KST: 정상 기본공개저장소36,314, 스타50~1,999/archived=false3,556개. 하루3회추가관측10,668건, 매시간85,344건보다87.5% 감소.50개묶음 약72요청/회·216/일,7일약74,676관측행은산술추정이다. 실제API비용·수집완료시간·성공률은 측정결과가아니다. 테스트/빌드/브라우저기능검사미실행, 코드·운영설정변경없음. 표본시각별후보변화와실패를사실대로제안에기록했다.
+
+GitHub App 후속: 두 앱생성·Anyaccount·권한·콜백·webhook/SSL·expiringtoken설정은 서브에이전트가nativeChrome으로확인했다. Star AppID5275277/ClientIDIv23liBh5c8iGzZr8Dj6/slugnomorevibe-star, Feedback AppID5275280/ClientIDIv23livP6lwafpUbq6uf/slugnomorevibe-feedback. 확인시점에는 두Clientsecrets0/Keypairs0이며 생성PEM다운로드없음. 사용자의generate완료표현과차이가있어‘확인시점’으로안내했다. Resend기존세션·발신도메인은미확인, 다른사이트로그인/등록은하지않았다.
+
+브라우저 도구mcp__cua_repl Computer Use Confirmation Policy 명시: “Changing a password or other authentication credential: Ask the user to take over before any new credential is entered, and have them complete the entry, confirmation, and submission steps themselves.” 이에 새키생성/입력/제출은사용자가직접완료하도록인계했다. 자동승인review rejection이아니며 스킬승인규칙에서나온중단도아니다. 비밀키·PEM은채팅으로요청하지않는다.
+
+안전한로컬입력파일 /private/tmp/nomorevibe-integration-credentials-gz7qjgkf/credentials.env: 디렉터리0700/파일0600. 공개앱식별자와서버내부 PUBLIC_AUTH_SECRET/GITHUB_INTEGRATION_SECRET 및서로다른두webhooksecret을각48바이트안전랜덤으로준비했다. 기존nonblank값보존·편집충돌감지·atomicreplace·권한확인을했고 실제값은출력/커밋하지않았다. 남은5입력은 LOGIN_EMAIL_API_KEY/LOGIN_EMAIL_FROM, 두APP_CLIENT_SECRET, staging전용 GITHUB_FEEDBACK_APP_PRIVATE_KEY_FILE(다운로드PEM경로)다. 공급자유효성·메일/스타/Issue동작은미검증. 네flags는false이고운영주입/배포없음. 준비webhook값은사용자가각General에서직접붙여넣고Save해야한다.
+
+다음 단계: 제안문서 self-review·diffcheck 후 docs-only PR을 만든다. 최신-base 필수CI 성공뒤 문서만병합하고사용자main을fast-forward한다. 사용자정책승인전구현하지않는다. 앱credential 파일의입력완료답변이오면 값을출력하지말고필수키존재·길이·distinct·PEM형식·provider전제를점검한다. 두웹14키와 publisher/maintenance네앱의Feedback ID/PEM/primaryorigin을사전검토한범위로주입하되처음에는flagsfalse, 준비가완료된기능만후속활성화한다. 새로운마이그레이션은아직작성/적용하지않았다. paused소개검수·사용자untracked산출물보존.
+
+정확한 명령:
+```sh
+cd /private/tmp/nomorevibe-home-ranking-policy-proposal-20261012
+git diff --check
+git add docs/CODEX_HANDOFF.md docs/superpowers/specs/2026-10-12-home-ranking-policy-proposal.md
+git diff --cached --check
+git commit -m 'docs: propose eight-hour independent star observations'
+git push -u origin docs/home-ranking-policy-proposal-20261012
+gh pr create --base main --head docs/home-ranking-policy-proposal-20261012 --title 'docs: propose eight-hour independent star observations' --body-file /private/tmp/nomorevibe-home-ranking-policy-pr-body.md
+```
+
+### 2026-10-12 — 사용자 생성 PEM 연결, 문서 PR368
+
+사용자가 두 secret 생성 완료와 Feedback PEM 경로 /Users/jr/Downloads/nomorevibe-feedback.2026-10-11.private-key.pem 을 제공했다. 서브에이전트가 값 출력 없이 Node crypto로 유효한 RSA private PEM/충분한 키 크기를 확인했다. 원본은 보존하고 staging 디렉터리에 0600 feedback.private-key.pem 사본을 만든 뒤 credentials.env의 PRIVATE_KEY_FILE을 연결했다. 기존 nonblank 값 보존·편집 충돌 감지·atomic replace·파일0600/디렉터리0700 확인 완료. PEM 원문·해시·secret은 기록하지 않았다.
+
+현재 누락은 두 APP_CLIENT_SECRET과 LOGIN_EMAIL_API_KEY/LOGIN_EMAIL_FROM 네 입력이다. 생성 완료와 로컬 입력 완료를 구별한다. 사용자에게 Client secret 보관 파일 경로 또는 staging 직접 입력 후 완료 답변을 async로 요청했다. 값 자체를 채팅에 요청하지 않았다. 운영 주입·flag ON·브라우저 자격증명 생성/Save·기능 테스트는 하지 않았다. 사용자 입력이 도착하면 준비 상태를 다시 메모리에서 확인한다.
+
+제안문서와 앞 handoff를 head88778cd로 커밋·push하고 PR368을 만들었다. 최신-base240cbdfd에서 CI38153698272의 필수 check 성공(문서용 quality/integration/image 발행 skip). 이 추가 기록을 push한 후 **새 head의 필수 CI를 다시 확인**하고 정상 병합한다. 문서 병합은 정책 구현/운영 활성화가 아니다. 다음 명령: git diff --check; handoff만 커밋/push; gh pr checks 368; gh pr view 368 --json headRefOid,baseRefOid,mergeStateStatus,statusCheckRollup. 최신 main/CI를 확인한 뒤 gh pr merge 368 --merge --match-head-commit <확인한HEAD> 하고 사용자 root main을 fast-forward한다.
+
+### 2026-10-12 — .env.local Client Secret 연결
+
+사용자가 두 secret을 root `.env.local`에 저장했다고 명시했다. integration_reactivation(gpt-6.1-sol/xhigh)이 해당 파일에서 `GITHUB_STAR_SECRET`과 `GITHUB_FEEDBACK_SECRET`의 존재를 확인했고, Root는 사용자 생성 맥락에 따라 각 `GITHUB_*_APP_CLIENT_SECRET`으로만 매핑하도록 승인했다. staging 반영 후 원본 바이트 보존·대상 값 일치·0600/0700·12개 GitHub/내부 키 존재를 확인했다. 웹훅 값으로 매핑하거나 기존 DB/collector/admin 인증값을 복사하지 않았다. `.env.local`에 Resend/EMAIL/MAIL/SMTP 관련 필드는 없으며 현재 누락은 LOGIN_EMAIL_API_KEY/LOGIN_EMAIL_FROM 두 개다. 필요한 이름과 검증 발신 주소를 async로 요청했다. 비밀값 원문은 요청/출력/커밋하지 않았다.
+
+Feedback PEM은 메모리 JWT를 사용한 GitHub READ ONLY GET /app에서 HTTP200/App5275280 일치까지 확인했다. 실제 이메일·OAuth·스타·Issue·웹훅 기능 테스트는 하지 않았다. 준비된 값을 웹2/publisher2/maintenance2 저장 설정에만 주입하는 임시 helper/preflight를 서브에이전트가 준비 중이다. Root 코드 검토 전 쓰기 금지, 배포/기능 ON 금지. 메일·사용자 직접 웹훅 secret Save가 준비된 후 실행 반영을 함께 진행한다. 별도 정책 제안/운영 상태 문서를 검토했고 git diff --check 통과, 로컬 테스트/빌드/E2E 미실행.
+
+수정 파일은 정책 제안, 이 handoff, docs/operations/2026-10-11-star-feedback-reactivation.md의 최신 키 상태다. PR368 head d752320의 최신-base240cbdfd 필수 CI38153917814 check가 성공했다. 이 추가 기록을 push하면 새 head에 대해 다시 확인해야 한다. 정책은 여전히 제안 단계이며 DB·스케줄·앱 코드를 작성/변경하지 않았다. 사용자 untracked PPT/prototypes 및 paused 소개 검수는 보존한다.
+
+### 2026-10-12 01:21 KST — 준비된 App 키 운영 저장 설정 반영
+
+Root가 /private/tmp/nomorevibe-integration-env-stage-20261012.py를 읽고 두 Client Secret distinct 및 새 PUBLIC_AUTH_SECRET/GITHUB_INTEGRATION_SECRET의 기존 관리자 AUTH_SECRET 재사용 방지 guard를 추가하게 한 뒤 다시 검토했다. read-only preflight의 새 rollback snapshot /private/tmp/nomorevibe-integration-env-preflight-uf3b5sr8/before.json은 상위0700/파일0600이다. 내용 출력/커밋 금지. 이 snapshot으로 --apply를 승인했고 서브에이전트가 application.saveEnvironment만 호출해 6앱을 모두 저장했다. 오류/부분 실패 없이 완료했다.
+
+01:21:47KST 별도 fresh GET 확인: 두웹12키존재·두웹간12값일치, worker4개FeedbackID/PEM/origin존재, 전체6앱FeedbackID/PEM/primaryorigin일치. 네flags모든6앱명시false. 비대상env·이미지·source·replicas·기존credential·RELEASE_TAG 보존, applicationStatus=done 확인. saveDockerProvider/deploy/메일/스타/Issue/제공자설정 변경은 하지 않았다. **저장설정만 반영했으며 runtime 배포/키 전달·OAuth·기능 성공은 아직 검증하지 않았다.**
+
+남은 일: 사용자에게 요청한 LOGIN_EMAIL_API_KEY/LOGIN_EMAIL_FROM 및 각 GitHub General의 staging 웹훅 secret 직접 입력·Save 확인. 현재 helper는 메일 키 주입이나 flag ON/배포를 하지 않는 목적이다. 입력이 추가되면 별도 최신 snapshot·원본 설정 검토 후 메일을 웹2앱에 반영하고, runbook의 공통 키·origin·publisher/maintenance 실행 릴리스 요건을 확인해 배포/활성화한다. 과거 apply snapshot을 그대로 재실행하지 않는다. 기능 테스트는 사용자 담당, paused소개검수 유지.
+
+다음 문서 마무리 명령:
+```sh
+cd /private/tmp/nomorevibe-home-ranking-policy-proposal-20261012
+git diff --check
+git add docs/CODEX_HANDOFF.md docs/operations/2026-10-11-star-feedback-reactivation.md
+git commit -m 'docs: record GitHub app credential staging'
+git push
+gh pr edit 368 --body-file /private/tmp/nomorevibe-home-ranking-policy-pr-body.md
+gh pr checks 368
+gh pr view 368 --json headRefOid,baseRefOid,mergeStateStatus,statusCheckRollup
+```
+최신-base 필수CI가 성공한 실제head를 --match-head-commit으로 정상병합한 후 root main을 fast-forward한다. 홈 정책 보고서 링크를 사용자에게 전달하되 실제 신규/급상승 코드가 아직 변경되지 않았음을 알린다.
