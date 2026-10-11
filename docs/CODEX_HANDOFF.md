@@ -16,6 +16,11 @@ M3 web oipo2OAnIrtcnILBCRoG2 deploymentMXlEPzk4andlIBCn2xRL5 및 mini web llv4rl
 
 전환 전 비밀 snapshot /private/tmp/nomorevibe-primary-origin-before-20261011.json와 /private/tmp/nomorevibe-domain-web-before-20261011.json는각0600이며 출력/커밋 금지. 각 서버 tunnel 원본 backup은 /Users/jr/.cloudflared/config.yml.nomorevibe-domain-20261011.backup이다. 도메인 operator의 apply 재실행은 금지한다(이미 새 origin 및 snapshot O_EXCL). 상세 DNS/redirect/API/복구/App URL은 docs/operations/2026-10-11-primary-domain-cutover.md를 따른다.
 
+
+최종 재확인 중 병행 PR359 배포가 두 웹에 반영됐다. 실제 현재 웹 release는 def8953f7c9d71613ec850f45dbeec0d6e55f931, digest26f73703a15024394465f8a77bdff1eb0a707351b10596c1045eee99006afa2b이다. mini deployment4VK_pxZ-eDJZEeRUTIyYX, M3 HxouTaTLdDzi_O1T5LQFB done. 각각2/2·4/4 실제 컨테이너 image/deploymentID/release/health가 정상이며 새 origin 및 flagOFF가 유지됐다. 이 코드를 domain agent가 배포했다고 해석하지 않는다.
+
+Mac 일반curl에404가 발생했으나 remote_ip3.33.130.190/HTTP1.1로 옛 주차 서버였다. 기본 DNS100.100.100.100(Tailscale)은 옛A 두 개/TTL460을 반환했다. 같은 시각 .com TLD위임은 새NS, Cloudflare1.1.1.1와Google8.8.8.8은 새CF A를 반환했다. 두 서버 직접 Host health와 cloudflared ingress/PID는 정상이었다. 새CF IP로--resolve한 HTTPS는 인증서 검증을 유지하면서200/dbok였다. 코드/서비스/네트워크 설정을 더 바꾸지 않고 TTL 전파를 관측한다. 로컬 DNS 수렴 helper /private/tmp/nomorevibe-dns-convergence-20261011.py의 성공 여부는 실제 종료 결과로 확인한다.
+
 ## Actual tests / failed approaches
 
 PR CI38142169371의 scope·quality·integration3분할·필수check 모두 success. 최초 옛 base CI38142075061은 최신 base 검증을 대신하지 않는다. 실제 로컬 Python23pass, Node CI-scope4pass, diffcheck0. 최신 base 합류 뒤 두 검사도 다시 pass했다.

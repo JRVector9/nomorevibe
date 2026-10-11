@@ -93,6 +93,24 @@ merge SHA는 `9944254975e9d7ba2e1eb0eb7e986186567708eb`이며 보호 규칙을 �
 배포 operator는 Docker context에서 제외되므로 이번 상수/문서 기록을 위해
 추가 서비스 코드 배포를 수행하지 않는다.
 
+## 병행 릴리스와 DNS 캐시 재확인
+
+전환 이후 별도 PR359 배포가 두 웹에 반영됐다. 실제 현재 release는
+`def8953f7c9d71613ec850f45dbeec0d6e55f931`, digest
+`sha256:26f73703a15024394465f8a77bdff1eb0a707351b10596c1045eee99006afa2b`다.
+mini deployment `4VK_pxZ-eDJZEeRUTIyYX`, M3 `HxouTaTLdDzi_O1T5LQFB`는done이며
+실제2/2·4/4 컨테이너의 image·deployment ID·release·health를 확인했다.
+새 origin 및 네 flagOFF가 보존됐다. 위650b341 표는 도메인 env 변경 당시의 증거다.
+다른 agent의 코드 배포를 도메인 작업이 수행했다고 해석하지 않는다.
+
+최종 일반curl404는 옛 GoDaddy IP `3.33.130.190`의 응답이었다. Mac 기본
+Tailscale DNS `100.100.100.100`이 옛 주차 A를 TTL460으로 반환했다. 같은 시각
+.com TLD는 Cloudflare NS를 위임했고 1.1.1.1·8.8.8.8은 새 Cloudflare IP를 반환했다.
+두 서버 Host health와 tunnel ingress/실제PID는 정상이었고, 새CF IP를--resolve한
+HTTPS는 인증서 검증을 유지하면서200/dbok였다. 원인이 DNS 캐시여서 추가 코드나
+서비스 설정 변경을 하지 않았다. 일부 resolver의 옛 DNS가 만료되기 전에는 주차
+서버의404가 보일 수 있으며 전체 지역의 DNS 캐시 수렴을 확인했다고 주장하지 않는다.
+
 ## GitHub 앱 등록과 남은 설정
 
 Homepage는 `https://nomorevibe.com`이다. 새 Star/Feedback 앱은 다음 정확한 값을 사용한다.
