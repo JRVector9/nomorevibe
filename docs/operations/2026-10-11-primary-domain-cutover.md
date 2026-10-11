@@ -64,7 +64,8 @@ Cloudflare Single Redirect 두 규칙을 실제 Active로 확인했다.
 - 두 규칙은 `concat("https://nomorevibe.com", http.request.uri.path)`와
   Preserve query string을 사용한다. 실제 `utm_source=cutover&x=a%2Fb`를 포함한
   상세 주소에서 경로·query·인코딩 보존을 확인했다.
-- 기존 `/api/health`, `/install.sh`, `/skill.md`는200 유지다. API·자산·기존 POST를
+- 기존 `/api/health`, `/install.sh`, `/skill.md`는200 유지다. 제품 GET
+  `/api/products/nanomuse`도 새/옛 호스트200이며 JSON이 동일하고 verify 안내가 새주소다. API·자산·기존 POST를
   도메인 간 리다이렉트하지 않아 기존 CLI의 인증 헤더를 유지한다. 새 apex 요청은
   옛 호스트 전용 규칙에 매칭하지 않는다. 실제 apex 홈·상세가 정상200이다.
 

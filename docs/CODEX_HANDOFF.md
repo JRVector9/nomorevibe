@@ -2,13 +2,13 @@
 
 ## Current objective / completed work
 
-사용자가 GoDaddy 로그인 상태에서 nomorevibe.com을 기본 도메인으로 전환하라고 요청했다. Cloudflare 로그인 후 사용자 브라우저 사용 중단 확인을 받고 전환을 완료했다. 현재 기본 주소는 https://nomorevibe.com이다. 전용 worktree /private/tmp/nomorevibe-domain-20261011, branch feat/primary-domain-cutover-20261011, base f2e36d8770f7bfc14ea81b893a4e178591d3b4d7 (준비PR358 병합). 공개 전환 및 운영 env 배포는 실제 완료했고, 이 변경의 commit/push/protected PR CI/병합을 마무리한다. 상세 증거·복구·새 App URL은 docs/operations/2026-10-11-primary-domain-cutover.md다.
+사용자가 GoDaddy 로그인 상태에서 nomorevibe.com을 기본 도메인으로 전환하라고 요청했다. Cloudflare 로그인 후 사용자 브라우저 사용 중단 확인을 받고 전환을 완료했다. 현재 기본 주소는 https://nomorevibe.com이다. 전용 worktree /private/tmp/nomorevibe-domain-20261011, branch feat/primary-domain-cutover-20261011, base f2e36d8770f7bfc14ea81b893a4e178591d3b4d7 (준비PR358 병합). 공개 전환 및 운영 env 배포는 실제 완료했다. 변경 커밋685249b를 push하고 PR360을 열었다. 병행 작업인 인기 화면 PR359가 main def8953f7c9d71613ec850f45dbeec0d6e55f931에 병합돼 충돌 없이 branch에 merge했다. 최신 base 필수 CI/병합을 마무리한다. 상세 증거·복구·새 App URL은 docs/operations/2026-10-11-primary-domain-cutover.md다.
 
 ## Modified files / key decisions
 
 README.md, AGENTS.md, PENDING.md, docs/CODEX_HANDOFF.md, 기존 도메인 준비 기록, 신규 도메인 완료 기록, github-integration-capability-check.md, github-stars-feedback-runbook.md, production-multi-instance.env.example, scripts/ops/deploy_shared_images.py를 변경했다. 서비스 앱 코드는 변경하지 않았다. 배포 script는 public health 주소와 purge zone ID만 바꿨다. 스크립트 변경은 현재 웹 이미지를 다시 빌드할 이유가 아니다.
 
-GoDaddy NS emely.ns.cloudflare.com/tony.ns.cloudflare.com 저장 및 UI/공개DNS 확인. Cloudflare Free zone9fc499cc4b48354cf9738ac039c9fd70, apex→nomorevibe.brut.bot/www→apex proxied, 기존DMARC/domainconnect 보존. 기존 wildcard LB 두 tunnel/60:40/Hostoverride없음 유지. 두 cloudflared 실제 재시작 및 ingress validate0. UniversalSSL Active/2027-01-09, AlwaysUseHTTPS on. 새www 및 옛GET/HEAD웹페이지308는경로query보존. 옛API/install/skill200 유지.
+GoDaddy NS emely.ns.cloudflare.com/tony.ns.cloudflare.com 저장 및 UI/공개DNS 확인. Cloudflare Free zone9fc499cc4b48354cf9738ac039c9fd70, apex→nomorevibe.brut.bot/www→apex proxied, 기존DMARC/domainconnect 보존. 기존 wildcard LB 두 tunnel/60:40/Hostoverride없음 유지. 두 cloudflared 실제 재시작 및 ingress validate0. UniversalSSL Active/2027-01-09, AlwaysUseHTTPS on. 새www 및 옛GET/HEAD웹페이지308는경로query보존. 옛API health/install/skill200 유지. 제품 GET /api/products/nanomuse도 새/옛 호스트200이며 JSON이 동일하고 verify 안내는 새주소다. 관리자 OAuth 시작은 키미설정503으로 실제OAuth 검증은 하지 않았다.
 
 M3web oipo2OAnIrtcnILBCRoG2 deploymentMXlEPzk4andlIBCn2xRL5, miniweb llv4rlABSJOcFauSxaHdx deploymentXqiJUxLGdOrMYYNgt2EG8 done. 각NEXT_PUBLIC_SITE_URL만새주소로변경하고 같은운영창배포. 실제6컨테이너 origin/image/release/health 정상, M3 4/4·mini2/2. Code release650b341c8889f06b2ec3daa3b99da4e5712fee1a, web digest8b65fed0865672f2ab942874a897f9ff00850ad6d309238f58fa4921deeb2ab6 유지. flags4개OFF. worker/DBmigration/키회전/소개검수재개없음. root main/PPT/stash/미추적사용자자료 보존.
 
@@ -22,7 +22,7 @@ CF기존cert/API토큰create403은로그인UI로해결. DNS API토큰2개새zone
 
 ## Remaining work / exact commands
 
-전환이완료된현재변경을PR로commit/push하고latestbase필수check성공후병합한다. 원격PR/CI/병합의현재상태는아래명령으로직접조회한다. 기존Cloudflarepurge키인증은미해결. 새zoneHTMLcache-everything미적용으로DYNAMIC응답, purge성공으로표시하지않는다. 새GitHubApp/Resend/공개키와실제파일럿은별도PENDING. 기능활성화전웹/publisher/maintenance6앱origin/키일치필수;이번엔OFF워커origin변경/재배포없음. 새호스트에서다시로그인한다.
+PR https://github.com/JRVector9/nomorevibe/pull/360 의 latest base 필수 check 성공 후 병합한다. 기존 base의 CI38142075061은 새 base 성공을 대신하지 않는다. 원격PR/CI/병합의현재상태는아래명령으로직접조회한다. 기존Cloudflarepurge키인증은미해결. 새zoneHTMLcache-everything미적용으로DYNAMIC응답, purge성공으로표시하지않는다. 새GitHubApp/Resend/공개키와실제파일럿은별도PENDING. 기능활성화전웹/publisher/maintenance6앱origin/키일치필수;이번엔OFF워커origin변경/재배포없음. 새호스트에서다시로그인한다.
 
 ```sh
 cd /private/tmp/nomorevibe-domain-20261011
