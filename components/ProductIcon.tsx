@@ -2,7 +2,7 @@
 
 import type { Category } from "@/lib/domain/products/categories";
 import { thumbnailPresentation } from "@/lib/domain/products/thumbnails/presentation";
-import { ogVariantSrc } from "@/lib/domain/products/og-variants";
+import { ogVariantSrc, variantAtLeast } from "@/lib/domain/products/og-variants";
 
 /** 타일 바탕색 이름 — globals.css 의 --tile-* 토큰과 같다(다크에서는 어두운 값으로 바뀐다) */
 const TILE_TINTS = ["paper", "day", "invoice", "form", "hue", "note"] as const;
@@ -57,9 +57,13 @@ export function ProductIcon({
     // 작은 아이콘(32px 파비콘 등)은 늘리지 않는다 — 여백으로 제 크기에 두면 흐려지지 않는다
     const natural = Math.max(presentation.width, presentation.height);
     const padding = natural < size ? Math.max(4, Math.floor((size - natural) / 2)) : 4;
+    // 칸 크기에 맞는 사본 — 보통 화면은 1배, 고해상도 화면은 2배(PERF-04). 28px 칸에 192px 를 받지 않는다
+    const oneX = ogVariantSrc(ogImage, variantAtLeast(size))!;
+    const twoX = ogVariantSrc(ogImage, variantAtLeast(size * 2))!;
     return (
       <img
-        src={ogVariantSrc(ogImage, size > 96 ? 320 : 192)!}
+        src={twoX}
+        srcSet={oneX !== twoX ? `${oneX} 1x, ${twoX} 2x` : undefined}
         alt={name}
         width={size}
         height={size}

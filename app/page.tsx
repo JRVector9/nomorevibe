@@ -61,11 +61,14 @@ import { logger } from "@/lib/observability/logger";
 import { getSettings as getCrawlSettings } from "@/lib/crawl/settings";
 import { agentClientLabel } from "@/lib/domain/evidence/agents/view";
 import { AI_FILTER_LEVELS, parseAiFilter, type AiLevel } from "@/lib/domain/evidence/ai-level-labels";
+import { siteOrigin } from "@/lib/site";
 
 export const dynamic = "force-dynamic";
 
 // Saved IDs are filtered in the browser; preserve the existing candidate pool.
 const SAVED_INITIAL_CANDIDATES = 100;
+/** 목록이 화면 첫 그림일 때 먼저 받을 커버 수 — 넓은 화면 한 줄(세 칸) */
+const FEED_PRIORITY_TILES = 3;
 
 type SearchValue = string | string[] | undefined;
 type Props = {
@@ -163,12 +166,13 @@ export function searchSuggestions(fromLog: readonly string[], query: string | un
   return picked;
 }
 
-/** 0건 화면에서 고를 거리 — 칩 한 줄 */
-function SuggestionChips({ title, items }: { title: string; items: { href: string; label: string }[] }) {
+/** 0건 화면에서 고를 거리 — 칩 한 줄. 제목은 빈 화면 제목의 한 단계 아래 */
+function SuggestionChips({ title, items, heading }: { title: string; items: { href: string; label: string }[]; heading: "h3" | "h4" }) {
   if (items.length === 0) return null;
+  const Heading = heading;
   return (
     <nav className="empty-suggest" aria-label={title}>
-      <h4>{title}</h4>
+      <Heading>{title}</Heading>
       <ul className="chips">
         {items.map((item) => (
           <li key={item.href}><Link prefetch={false} href={item.href} className="chip">{item.label}</Link></li>
@@ -190,6 +194,7 @@ function SuggestionChips({ title, items }: { title: string; items: { href: strin
  * 순위에 들어가지 않기 때문이다.
  *
  * 걸러서 0건이면 다음 수를 준다 — 찾을 만한 말과 분야(UX-24). 초기화 링크는 위 결과 줄에 하나만 둔다.
+ * 제목 단계는 목록 제목 바로 아래다 — 검색·분야 화면은 목록 제목이 h1 이라 h2(A11Y-05). 크기는 CSS 가 같게 맞춘다.
  */
 function EmptyReason({
   sort,
@@ -199,6 +204,7 @@ function EmptyReason({
   query,
   suggestions = [],
   categories = [],
+  headingLevel = 3,
 }: {
   sort: HomeSort;
   fallback: FallbackSort | null;
@@ -209,15 +215,19 @@ function EmptyReason({
   suggestions?: string[];
   /** 둘러볼 분야 — 공개 수가 많은 순 */
   categories?: string[];
+  headingLevel?: 2 | 3;
 }) {
+  const Heading = headingLevel === 2 ? "h2" : "h3";
   if (filtered && !hasUnclaimed) {
     return (
       <div className="projects-grid">
         <div className="empty-state">
-          <h3>{query ? `“${query}”에 맞는 프로젝트가 없습니다` : "조건에 맞는 프로젝트가 없습니다"}</h3>
+          <Heading>{query ? `“${query}”에 맞는 프로젝트가 없습니다` : "조건에 맞는 프로젝트가 없습니다"}</Heading>
           <p>{query ? "철자를 확인하거나 더 짧고 흔한 말로 찾아보세요." : "다른 분야를 고르거나 필터를 초기화해 보세요."}</p>
-          <SuggestionChips title="이런 검색어는 어떠세요" items={suggestions.map((text) => ({ href: `/?q=${encodeURIComponent(text)}`, label: text }))} />
-          <SuggestionChips title="분야에서 찾아보기" items={categories.map((category) => ({ href: categoryHref(category), label: categoryLabel(category) }))} />
+          <SuggestionChips title="이런 검색어는 어떠세요" heading={headingLevel === 2 ? "h3" : "h4"}
+            items={suggestions.map((text) => ({ href: `/?q=${encodeURIComponent(text)}`, label: text }))} />
+          <SuggestionChips title="분야에서 찾아보기" heading={headingLevel === 2 ? "h3" : "h4"}
+            items={categories.map((category) => ({ href: categoryHref(category), label: categoryLabel(category) }))} />
         </div>
       </div>
     );
@@ -228,7 +238,7 @@ function EmptyReason({
     return (
       <div className="projects-grid">
         <div className="empty-state">
-          <h3>아직 스타 변화를 확인한 프로젝트가 없습니다</h3>
+          <Heading>아직 스타 변화를 확인한 프로젝트가 없습니다</Heading>
           <p>GitHub 스타는 프로젝트마다 하루가 지난 뒤 차례로 다시 확인합니다(지금은 보통 2~3일 간격). 두 번 확인되면 나타납니다.</p>
           <Link prefetch={false} href="/?sort=recent" className="secondary">최신순으로 보기</Link>
         </div>
@@ -240,7 +250,7 @@ function EmptyReason({
     return (
       <div className="projects-grid">
         <div className="empty-state">
-          <h3>아직 순위에 오른 프로젝트가 없습니다</h3>
+          <Heading>아직 순위에 오른 프로젝트가 없습니다</Heading>
           <p>검증된 프로젝트에 유효 방문이 쌓이면 나타납니다.</p>
           <Link prefetch={false} href="/?sort=recent" className="secondary">최신순으로 보기</Link>
         </div>
@@ -253,7 +263,7 @@ function EmptyReason({
   return (
     <div className="projects-grid">
       <div className="empty-state">
-        <h3>아직 등록된 프로젝트가 없습니다</h3>
+        <Heading>아직 등록된 프로젝트가 없습니다</Heading>
         <p>
           <Link href="/launch" className="font-semibold text-accent">/nomorevibe</Link>
           {" "}로 첫 번째 프로젝트를 등록해보세요.
@@ -274,12 +284,22 @@ function serializePulse(pulse: Pulse, now: Date) {
 
 export type HomeParams = Awaited<Props["searchParams"]>;
 
+/**
+ * 정식 주소(canonical, SEO-04) — 정렬·거르기·더 보기 같은 보기 조건은 떼고 경로만 둔다. 상대 주소는 레이아웃의 metadataBase 가 채운다.
+ * alternates 는 얕게 병합돼 레이아웃의 RSS 알림(types)이 지워지므로 같은 값을 함께 단다(app/layout.tsx).
+ */
+export function canonicalAlternates(path: string): NonNullable<Metadata["alternates"]> {
+  return { canonical: path, types: { "application/rss+xml": `${siteOrigin()}/feed.xml` } };
+}
+
 /** 검색어·분야로 탭 제목을 정한다(UX-39) — "“가계부” 검색 결과 — nomorevibe" */
 export async function generateMetadata({ searchParams }: Props): Promise<Metadata> {
   const params = await searchParams;
   const query = firstValue(params.q)?.trim().slice(0, 200) || undefined;
   // 검색 결과는 색인하지 않는다 — 검색어마다 얇은 목록 페이지가 끝없이 생긴다. 분야는 /c/[category] 정식 주소가 맡는다
-  return { title: browseTitle({ query }), ...(query ? { robots: { index: false, follow: true } } : {}) };
+  if (query) return { title: browseTitle({ query }), robots: { index: false, follow: true } };
+  // 보기 조건이 붙은 주소(?sort=recent·?ai=…·?shown=… 등)는 홈과 같은 제목이라 홈을 정식 주소로 가리킨다
+  return { title: browseTitle({}), ...(Object.keys(params).length > 0 ? { alternates: canonicalAlternates("/") } : {}) };
 }
 
 /**
@@ -545,13 +565,20 @@ export async function HomeContent({ params }: { params: HomeParams }) {
     : [];
   const browseCategories = empty && filtered ? chipCategories(counts).filter((item) => item !== category).slice(0, 8) : [];
   const feedTitle = query ? `“${query}” 검색 결과` : category ? `${categoryLabel(category)} 프로젝트` : "발견할 가치가 있는 프로젝트";
-  // 소개 줄이 없는 검색·분야 화면은 목록 제목이 화면의 제목(h1)이다
+  // 소개 줄이 없는 검색·분야 화면은 목록 제목이 화면의 제목(h1)이다 — 카드 제목은 그 바로 아래 단계(A11Y-05)
   const FeedTitle = scoped ? "h1" : "h2";
+  const cardHeading = scoped ? 2 : 3;
+  /**
+   * 목록이 화면 첫 그림인가 — '지금 뜨는' 띠가 위에 없을 때(검색·분야·거르기·대체 목록). 그때만 첫 줄 세 장(넓은 화면의 한 줄)을
+   * 먼저 받는다(PERF-03). 띠가 위에 있으면 첫 그림은 띠의 것이라 목록 그림이 그 받기와 다투지 않게 둔다.
+   */
+  const stripVisible = !filtered && (fallback !== "rising" || stripShown > 0) && strip.length > 0;
+  const feedPriority = stripVisible ? 0 : FEED_PRIORITY_TILES;
 
   return (
     <main className="wrap">
       {!scoped && <IntroLine pulse={pulse} total={total} state={state} />}
-      {!filtered && (fallback !== "rising" || stripShown > 0) && (
+      {stripVisible && (
         <CompactRow id="rising" title="지금 뜨는 프로젝트" note={`최근 두 확인 사이 하루 평균 GitHub 스타가 가장 많이 늘었습니다 · 스타 ${formatCount(RISING_MAX_STARS)} 미만`}
           more={fallback === "rising" ? { href: "#projects", label: `${formatCount(resultCount)}개 모두 보기` } : { href: "/?sort=weekly#projects", label: "모두 보기" }}
           items={strip} trailing="category" />
@@ -597,6 +624,8 @@ export async function HomeContent({ params }: { params: HomeParams }) {
             initialOnlySaved={savedOnly}
             start={listStart}
             approximate={approximate}
+            priorityCount={feedPriority}
+            cardHeading={cardHeading}
           />
         ) : (
           <EmptyReason
@@ -607,6 +636,7 @@ export async function HomeContent({ params }: { params: HomeParams }) {
             query={query}
             suggestions={suggestions}
             categories={browseCategories}
+            headingLevel={cardHeading}
           />
         )}
 

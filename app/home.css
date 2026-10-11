@@ -37,11 +37,16 @@ button {
 
 /* 소개 줄 */
 .intro-line { display: flex; align-items: baseline; justify-content: space-between; gap: 16px 24px; flex-wrap: wrap; padding: 30px 0 6px; }
+.intro-head { flex: 1 1 420px; min-width: 0; }
 .intro-title { margin: 0; font-size: 26px; line-height: 1.2; font-weight: 600; letter-spacing: -0.025em; }
+/* 부제 한 줄(UX-06) — 무엇을 모았고 표시가 무슨 뜻인지, 게재 기준으로 가는 링크 */
+.intro-sub { margin: 6px 0 0; font-size: 14px; line-height: 1.5; color: var(--text-2); text-wrap: pretty; }
+.intro-sub a { color: var(--accent-ink); text-decoration: underline; text-underline-offset: 3px; white-space: nowrap; }
 .intro-title em { font-style: normal; color: var(--accent); }
 .intro-stats { margin: 0; font-size: 13px; color: var(--text-2); font-variant-numeric: tabular-nums; }
 .intro-stats b { color: var(--text); font-weight: 600; }
-.intro-stats a { color: var(--text-2); }
+/* 문장 안 링크는 색만으로 가르지 않는다(A11Y-03) — 숫자 링크는 옅은 밑줄 */
+.intro-stats a { color: var(--text-2); text-decoration: underline; text-decoration-color: var(--border-strong); text-underline-offset: 3px; }
 
 /* 구획 머리 — 모든 구획이 같은 머리를 쓴다 */
 .row-section { padding: 22px 0 40px; display: flex; flex-direction: column; gap: 16px; }
@@ -49,7 +54,7 @@ button {
 .row-title { margin: 0; font-size: 22px; font-weight: 600; letter-spacing: -0.02em; line-height: 1.2; }
 .row-title-sm { font-size: 15px; }
 .row-note { margin: 4px 0 0; font-size: 13px; color: var(--text-2); }
-.row-note a { color: var(--accent-ink); }
+.row-note a { color: var(--accent-ink); text-decoration: underline; text-underline-offset: 3px; }
 .row-more { font-size: 13px; color: var(--accent-ink); display: inline-flex; align-items: center; height: 44px; white-space: nowrap; }
 .row-foot { margin: 0; font-size: 13px; color: var(--text-2); line-height: 1.5; }
 
@@ -260,8 +265,9 @@ button {
   padding: 50px 20px;
 }
 .empty-state svg { margin: 0 auto; }
-.empty-state p a { color: var(--accent-ink); }
-.empty-state h3 {
+.empty-state p a { color: var(--accent-ink); text-decoration: underline; text-underline-offset: 3px; }
+/* 검색·분야 화면은 목록 제목이 h1 이라 빈 화면 제목이 h2 다(A11Y-05) — 크기는 같다 */
+.empty-state h2, .empty-state h3 {
   font-size: 18px;
   margin-top: 10px;
   margin-bottom: 8px;
@@ -277,7 +283,7 @@ button {
 .empty-suggest { max-width: 640px; margin: 0 auto; }
 .empty-suggest + .empty-suggest { margin-top: 20px; }
 .empty-suggest + .secondary { margin-top: 24px; }
-.empty-suggest h4 { margin: 0 0 10px; font-size: 13px; font-weight: 500; color: var(--text-2); }
+.empty-suggest h3, .empty-suggest h4 { margin: 0 0 10px; font-size: 13px; font-weight: 500; color: var(--text-2); }
 .empty-suggest .chips { justify-content: center; }
 
 /* 목록을 찾는 동안의 골격(app/page.tsx FeedSkeleton) — 카드와 같은 격자·모서리 */

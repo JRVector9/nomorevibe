@@ -6,7 +6,8 @@
  * 주소는 Cloudflare 기본 캐시 대상이라 원 서버까지 오는 것이 드물어진다. 원본 주소는 그대로 둔다(OG 메타 등).
  */
 
-export const OG_VARIANT_SIZES = [96, 192, 320, 640, 960, 1200] as const;
+/** 64 는 목록 줄의 28px 아이콘용(2026-10-11 PERF-04) — 96 도 그 자리엔 세 배가 넘었다 */
+export const OG_VARIANT_SIZES = [64, 96, 192, 320, 640, 960, 1200] as const;
 export type OgVariantSize = typeof OG_VARIANT_SIZES[number];
 const PREFIX = "/api/og-cache/";
 
@@ -20,6 +21,22 @@ export function ogVariantSrc(src: string | null | undefined, size: OgVariantSize
   const params = new URLSearchParams(query);
   params.set("size", String(size));
   return `${PREFIX}${slug}.webp?${params}`;
+}
+
+/**
+ * 폭 기준 srcset — "주소 320w, 주소 640w". 우리 사본이 아니면 크기를 고를 수 없어 null(src 만 쓴다).
+ * 브라우저가 칸 폭(sizes)과 화면 배율로 고른다 — 작은 칸에 640px 를 받지 않는다.
+ */
+export function ogVariantSrcSet(src: string | null | undefined, widths: readonly OgVariantSize[]): string | null {
+  if (!src) return null;
+  const urls = widths.map((width) => ({ width, url: ogVariantSrc(src, width)! }));
+  if (urls.some(({ url }) => url === src)) return null;
+  return urls.map(({ width, url }) => `${url} ${width}w`).join(", ");
+}
+
+/** 화면 px 를 채우는 가장 작은 사본 크기 — 그보다 큰 것이 없으면 가장 큰 것 */
+export function variantAtLeast(px: number): OgVariantSize {
+  return OG_VARIANT_SIZES.find((size) => size >= px) ?? OG_VARIANT_SIZES[OG_VARIANT_SIZES.length - 1];
 }
 
 /** 요청의 크기 — 정해 둔 것만(캐시 열쇠가 끝없이 늘지 않게). 모르는 값은 640 */

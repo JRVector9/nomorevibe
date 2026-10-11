@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { notFound, redirect } from "next/navigation";
 import Link from "next/link";
-import { HomeScreen, type HomeParams } from "@/app/page";
+import { canonicalAlternates, HomeScreen, type HomeParams } from "@/app/page";
 import { browseTitle, categoryRedirect, categorySlug, parseCategory } from "@/components/home/browse-state";
 import { pageTitle } from "@/lib/copy/brand";
 import { categoryLabel } from "@/lib/domain/products/labels";
@@ -16,6 +16,7 @@ export const dynamic = "force-dynamic";
  * - 대문자가 섞이면(/c/Finance) 소문자 주소로 보낸다. 옛 주소 /?category=… 도 홈이 여기로 보낸다.
  * - 모르는 분야는 '없는 분야입니다'(not-found.tsx).
  * - 기본 목록에서 빼는 분야(개인 프로필, 계약 C3)는 목록 대신 왜 없는지 말한다 — 검색에 싣지 않는다(noindex).
+ * - 분야 안 검색(?q=)은 홈 검색처럼 색인하지 않고, 정렬·거르기 같은 보기 조건이 붙은 주소는 /c/<분야>를 정식 주소로 둔다(SEO-04).
  */
 type Props = {
   params: Promise<{ category: string }>;
@@ -32,7 +33,9 @@ export async function generateMetadata({ params, searchParams }: Props): Promise
   const category = parseCategory(raw);
   if (!category) return { title: pageTitle("없는 분야"), robots: { index: false, follow: true } };
   if (hiddenByDefault(category)) return { title: pageTitle(`${categoryLabel(category)} 프로젝트`), robots: { index: false, follow: true } };
-  return { title: browseTitle({ query: queryOf(search), category }) };
+  const query = queryOf(search);
+  if (query) return { title: browseTitle({ query, category }), robots: { index: false, follow: true } };
+  return { title: browseTitle({ category }), alternates: canonicalAlternates(`/c/${categorySlug(category)}`) };
 }
 
 export default async function CategoryPage({ params, searchParams }: Props) {
