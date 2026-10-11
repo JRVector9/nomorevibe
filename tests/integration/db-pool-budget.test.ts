@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
 import { connect, type Socket } from "node:net";
-import { createDbClient, dbPoolConfig, DbPoolWaitTimeoutError } from "@/lib/db/pool";
+import { createDbClient, dbPoolConfig, DbPoolWaitTimeoutError, withDbDeadline } from "@/lib/db/pool";
 import { TEST_DATABASE_URL } from "./setup";
 
 function latch() {
@@ -129,4 +129,39 @@ it("preserves a BEGIN assigned to a slow replacement while other queued work sti
     expect(await begin).toBe(42);
     expect(await sql.begin(async tx => (await tx.unsafe("select 7 as value"))[0].value)).toBe(7);
   } finally { release.release(); allowConnect.release(); await held?.catch(() => {}); await sql.end({ timeout: 2 }); }
+});
+
+it("shortens only the scoped pool wait and removes a timed-out write before later release", async () => {
+  const sql = createDbClient(TEST_DATABASE_URL, { ...dbPoolConfig({ DB_POOL_MAX: "1" }), waitMs: 1000 });
+  const entered = latch(), release = latch();
+  let held: Promise<unknown> | undefined;
+  try {
+    await sql.unsafe("create temporary table scoped_deadline_probe (value integer)");
+    held = sql.begin(async () => { entered.release(); await release.promise; });
+    await entered.promise;
+    const started = Date.now();
+    await expect(withDbDeadline(Date.now() + 75, async () => { await sql.unsafe("insert into scoped_deadline_probe values (1)"); }))
+      .rejects.toBeInstanceOf(DbPoolWaitTimeoutError);
+    expect(Date.now() - started).toBeLessThan(500);
+    // This operation is outside the scope and keeps its existing longer limit.
+    const unscoped = sql.unsafe("insert into scoped_deadline_probe values (2)").execute();
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    release.release();
+    await held;
+    await unscoped;
+    expect(await sql.unsafe("select value from scoped_deadline_probe")).toMatchObject([{ value: 2 }]);
+  } finally { release.release(); await held?.catch(() => {}); await sql.end({ timeout: 2 }); }
+});
+
+it("preserves an existing shorter pool deadline inside a longer scope", async () => {
+  const sql = client(), entered = latch(), release = latch();
+  let held: Promise<unknown> | undefined;
+  try {
+    await sql.unsafe("select 1");
+    held = sql.begin(async () => { entered.release(); await release.promise; });
+    await entered.promise;
+    const started = Date.now();
+    await expect(withDbDeadline(Date.now() + 2000, async () => { await sql.unsafe("select 1"); })).rejects.toBeInstanceOf(DbPoolWaitTimeoutError);
+    expect(Date.now() - started).toBeLessThan(500);
+  } finally { release.release(); await held?.catch(() => {}); await sql.end({ timeout: 2 }); }
 });

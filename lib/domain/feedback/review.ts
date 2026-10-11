@@ -6,6 +6,7 @@ import { productFeedback } from "@/lib/db/product-feedback-schema";
 import { adminAuditRow } from "@/lib/operations/admin-log";
 import { FeedbackError } from "./contract";
 import type { FeedbackTransactionHook } from "./repository";
+import { enqueueFeedbackIssue } from "./github/enqueue";
 
 /** adminLogin must come from the existing administrator session, never a form field. */
 export function reviewFeedback(input: { id: string; decision: "accepted" | "rejected"; reason: string; adminLogin: string }, options: { onAccepted?: FeedbackTransactionHook } = {}) {
@@ -23,9 +24,13 @@ export function reviewFeedback(input: { id: string; decision: "accepted" | "reje
     if (!product || (input.decision === "accepted" && product.status === "banned")) throw new FeedbackError("feedback_not_found", 404);
     const [feedback] = await tx.update(productFeedback).set({ reviewState: input.decision, reviewReason: input.reason.trim(),
       reviewedBy: input.adminLogin, reviewedAt: new Date() }).where(eq(productFeedback.id, current.id)).returning();
-    if (input.decision === "accepted" && options.onAccepted) await options.onAccepted(tx, feedback);
+    if (input.decision === "accepted") {
+      if (options.onAccepted) await options.onAccepted(tx, feedback);
+      else await enqueueFeedbackIssue(tx, feedback);
+    }
     await tx.insert(operationsAudit).values(await adminAuditRow(input.adminLogin, { action: "feedback.review", target: feedback.id,
       detail: { before: current.reviewState, decision: input.decision, reason: input.reason.trim() } }));
-    return feedback;
+    const [reviewed] = await tx.select().from(productFeedback).where(eq(productFeedback.id, feedback.id));
+    return reviewed;
   }));
 }

@@ -35,6 +35,8 @@ export const JOB_CATALOG: readonly { name: string; role: JobRole | "scheduler"; 
    * 1분마다 한 요청이면 Free 요금제의 태그 지우기 한도(계정 전체 분당 5회)를 넘지 않는다.
    */
   { name: "cdn-purge", role: "publisher", intervalMs: 60_000 },
+  // 사용자 동의와 제품별 binding을 확인한 outbox만 처리한다. 기본 플래그는 꺼져 있다.
+  { name: "github-feedback-delivery", role: "publisher", intervalMs: 60_000 },
   // 사유 번역 — 전용 text 워커에서 1분마다 옮긴다(틱 55초, 한 번에 4건·1,600자까지)
   { name: "reason-translate", role: "text", intervalMs: 60_000 },
   /**

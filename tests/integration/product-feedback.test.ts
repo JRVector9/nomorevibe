@@ -15,6 +15,7 @@ beforeAll(() => ensureSchema());
 beforeEach(async () => {
   await resetTables();
   await db.delete(rateLimits).where(sql`${rateLimits.key} like 'feedback:%'`);
+  vi.stubEnv("GITHUB_FEEDBACK_DELIVERY_ENABLED", "false");
 });
 
 async function seed() {

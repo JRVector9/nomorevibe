@@ -9,6 +9,16 @@ const DELIVERY = {
   local_only: "서비스에 접수됨", queued: "GitHub 전송 대기", sending: "GitHub 전송 확인 중", delivered: "GitHub에 전송됨",
   retry_wait: "GitHub 전송 재시도 대기", uncertain: "GitHub 전송 결과 확인 중", blocked: "GitHub 전송 중지", cancelled: "GitHub 전송 취소",
 };
+const EXTERNAL = { open: "열림", closed: "닫힘", deleted: "삭제됨", unknown: "상태 확인 중" };
+
+export function FeedbackDeliveryStatus({ feedback }: { feedback: FeedbackView }) {
+  return <>
+    <span>{DELIVERY[feedback.deliveryState]}</span>
+    {feedback.githubIssueUrl && <> · <a href={feedback.githubIssueUrl} target="_blank" rel="noopener noreferrer" className="underline underline-offset-2">GitHub 이슈 보기</a>
+      {feedback.externalIssueState && <span> · GitHub 이슈 {EXTERNAL[feedback.externalIssueState]}</span>}</>}
+    {feedback.lastErrorCode && <span> · 전송 상태 코드: {feedback.lastErrorCode}</span>}
+  </>;
+}
 
 export function FeedbackItem({ feedback }: { feedback: FeedbackView }) {
   return (
@@ -21,7 +31,7 @@ export function FeedbackItem({ feedback }: { feedback: FeedbackView }) {
       <p className="mt-3 text-[13px] text-fg-2">
         {feedback.reviewState === "held" ? "검토 중 · 작성자와 관리자만 볼 수 있음"
           : feedback.reviewState === "rejected" ? "공개되지 않음 · 작성자와 관리자만 볼 수 있음" : "서비스에 공개됨"}
-        {" · "}{DELIVERY[feedback.deliveryState]}
+        {" · "}<FeedbackDeliveryStatus feedback={feedback} />
       </p>
       {feedback.reviewReason && <p className="mt-1 whitespace-pre-wrap break-words text-[13px] text-fg-2">검토 사유: {feedback.reviewReason}</p>}
     </article>

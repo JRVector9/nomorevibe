@@ -4,6 +4,7 @@ import { products } from "@/lib/db/schema";
 import { githubMakerAuthContexts, githubProductBindings, type GithubProductBinding } from "@/lib/db/github-binding-schema";
 import { isGithubNumericId, type GithubRepository } from "@/lib/github/repositories";
 import { GithubInstallationError } from "./credentials";
+import { cancelBindingFeedbackOutbox } from "@/lib/domain/feedback/github/outbox";
 
 /** Lock product before binding everywhere, so invalidation and maker completion serialize. */
 export async function getProductGithubBinding(productId: number): Promise<GithubProductBinding | null> {
@@ -15,6 +16,7 @@ export async function getProductGithubBinding(productId: number): Promise<Github
     const reason = product?.status === "banned" ? "product_banned" : product?.repoUrl !== binding.productRepoUrl ? "product_repository_changed" : null;
     if (!binding.enabled || !reason) return binding;
     const [disabled] = await tx.update(githubProductBindings).set({ enabled: false, revision: binding.revision + 1, blockedReason: reason, updatedAt: new Date() }).where(eq(githubProductBindings.productId, productId)).returning();
+    await cancelBindingFeedbackOutbox(tx, productId, reason);
     return disabled;
   }));
 }
@@ -28,6 +30,7 @@ export async function disableProductGithubBinding(productId: number, reason: str
     if (expectedRevision !== undefined && binding?.revision !== expectedRevision) throw new GithubInstallationError(409, "github_binding_revision_conflict");
     if (!binding || !binding.enabled) return binding ?? null;
     const [disabled] = await tx.update(githubProductBindings).set({ enabled: false, revision: binding.revision + 1, blockedReason: reason, updatedAt: new Date() }).where(eq(githubProductBindings.productId, productId)).returning();
+    await cancelBindingFeedbackOutbox(tx, productId, reason);
     return disabled;
   }));
 }
@@ -47,6 +50,7 @@ export async function completeProductGithubBinding(input: { flowId: string; acto
     if ((previous?.revision ?? 0) !== context.expectedRevision) throw new GithubInstallationError(409, "github_binding_revision_conflict");
     const values = { productId: product.id, repositoryId: input.repository.id, repositoryFullName: input.repository.fullName, repositoryUrl: input.repository.htmlUrl, productRepoUrl: context.productRepoUrl, installationId: input.installationId, consentedByUserId: input.actorUserId, enabled: true, blockedReason: null, revision: (previous?.revision ?? 0) + 1, lastVerifiedAt: now, updatedAt: now };
     const [binding] = await tx.insert(githubProductBindings).values(values).onConflictDoUpdate({ target: githubProductBindings.productId, set: values }).returning();
+    if (previous) await cancelBindingFeedbackOutbox(tx, product.id, "feedback_binding_replaced");
     await tx.update(githubMakerAuthContexts).set({ state: "completed", encryptedUserToken: null, setupStateHash: null }).where(eq(githubMakerAuthContexts.flowId, input.flowId));
     return binding;
   }));

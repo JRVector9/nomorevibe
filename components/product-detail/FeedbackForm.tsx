@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import type { FeedbackKind, FeedbackView } from "@/lib/domain/feedback/contract";
+import { FeedbackDeliveryStatus } from "./FeedbackList";
 
 type Draft = { requestId: string; kind: FeedbackKind; title: string; body: string; serviceDisclosureConsent: boolean; sendToGithub: boolean; githubDisclosureConsent: boolean };
 const blank = (): Draft => ({ requestId: crypto.randomUUID(), kind: "bug", title: "", body: "", serviceDisclosureConsent: false, sendToGithub: false, githubDisclosureConsent: false });
@@ -90,7 +91,7 @@ export function FeedbackForm({ slug, githubDeliveryAvailable = false }: { slug: 
         </fieldset>
       </form>}
       {error && <p role="alert" className="mt-3 text-[14px] leading-6">{error}</p>}
-      {submitted && <p role="status" className="mt-3 text-[14px] leading-6">{submitted.reviewState === "held" ? "접수되었습니다. 검토가 끝나기 전에는 작성자와 관리자만 볼 수 있습니다." : "접수되어 서비스에 공개되었습니다."} {submitted.deliveryState === "delivered" ? "GitHub에 전송되었습니다." : submitted.deliveryState === "local_only" ? "GitHub에는 전송되지 않았습니다." : "GitHub 전송 결과는 원문에서 확인할 수 있습니다."} <Link prefetch={false} className="underline underline-offset-2" href={`/feedback/${submitted.id}`}>접수 원문 보기</Link></p>}
+      {submitted && <p role="status" className="mt-3 text-[14px] leading-6">{submitted.reviewState === "held" ? "접수되었습니다. 검토가 끝나기 전에는 작성자와 관리자만 볼 수 있습니다." : "접수되어 서비스에 공개되었습니다."} <FeedbackDeliveryStatus feedback={submitted} /> {submitted.deliveryState === "local_only" && "GitHub에는 전송되지 않았습니다."} <Link prefetch={false} className="underline underline-offset-2" href={`/feedback/${submitted.id}`}>접수 원문 보기</Link></p>}
     </section>
   );
 }

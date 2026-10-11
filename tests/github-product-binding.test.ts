@@ -4,6 +4,8 @@ import { getFeedbackInstallationToken, verifyFeedbackInstallation } from "@/lib/
 import type { GithubProductBinding } from "@/lib/db/github-binding-schema";
 import { verifyMakerGithubRepository, verifyMakerInstallationAccess } from "@/lib/domain/github-installations/authorization";
 
+vi.mock("server-only", () => ({}));
+
 const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
 const privateKeyPem = privateKey.export({ type: "pkcs1", format: "pem" }).toString();
 const installation = { id: 12, app_id: 123, repository_selection: "selected", suspended_at: null, permissions: { issues: "write", metadata: "read" } };

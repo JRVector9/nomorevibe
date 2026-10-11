@@ -183,4 +183,18 @@ describe("feedback request boundaries", () => {
     expect(markup).not.toContain("<script>");
     expect(markup).not.toContain("<img");
   });
+
+  it("links verified GitHub delivery and labels a closed issue without claiming resolution", async () => {
+    const { FeedbackItem } = await import("@/components/product-detail/FeedbackList");
+    const markup = renderToStaticMarkup(createElement(FeedbackItem, { feedback: {
+      id: valid.requestId, productId: 1, slug: "tool", productName: "Tool", authorUserId: 1, authorDisplayName: "참여자",
+      kind: "bug", title: "설치 오류", body: valid.body, reviewState: "accepted", reviewReason: null,
+      deliveryState: "delivered", createdAt: "2026-10-11T00:00:00.000Z", githubIssueUrl: "https://github.com/acme/tool/issues/7",
+      externalIssueState: "closed", lastErrorCode: null,
+    } }));
+    expect(markup).toContain('href="https://github.com/acme/tool/issues/7"');
+    expect(markup).toContain("GitHub 이슈");
+    expect(markup).toContain("닫힘");
+    expect(markup).not.toMatch(/해결 완료|배포 완료/);
+  });
 });

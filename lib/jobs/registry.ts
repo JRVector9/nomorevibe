@@ -30,6 +30,7 @@ import { refreshProductThumbnails } from "@/lib/jobs/products/thumbnail-refresh"
 import { refreshProductSearchDocuments } from "@/lib/jobs/products/search-refresh";
 import { refreshProductEmbeddings } from "@/lib/jobs/products/embedding-refresh";
 import { refreshNews } from "@/lib/news/refresh";
+import { deliverGithubFeedback } from "@/lib/jobs/github/feedback-delivery";
 
 /**
  * 이름 → 작업 매핑.
@@ -72,6 +73,7 @@ export const JOBS: Record<string, AnyJob> = {
   "crawl-publish": publishCandidates,
   /** 내려간 제품의 Cloudflare 사본(상세·썸네일·목록)을 지운다 */
   "cdn-purge": (ctx) => purgeRemovedProducts(ctx),
+  "github-feedback-delivery": deliverGithubFeedback,
   /** 심사 화면의 영어 사유를 미리 한국어로 옮겨 둔다 */
   "reason-translate": translateReasons,
   /** 소개가 없어 멈춘 후보의 한 줄 소개를 짓는다 — 목록에는 지은 것이라고 밝히고 올린다 */

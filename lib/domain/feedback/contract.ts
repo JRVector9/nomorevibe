@@ -9,6 +9,7 @@ export type FeedbackView = {
   id: string; productId: number; slug: string; productName: string; authorUserId: number; authorDisplayName: string;
   kind: FeedbackKind; title: string; body: string; reviewState: FeedbackReviewState; reviewReason: string | null;
   deliveryState: IssueDeliveryState; createdAt: string;
+  githubIssueUrl?: string | null; externalIssueState?: "open" | "closed" | "deleted" | "unknown" | null; lastErrorCode?: string | null;
 };
 
 export class FeedbackError extends Error {

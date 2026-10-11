@@ -3,6 +3,13 @@ import { JOB_CATALOG, jobsForRole, lanesForRole } from '@/lib/jobs/catalog';
 import { dbPoolConfig } from '@/lib/db/pool';
 import { runWorker } from '@/scripts/worker';
 
+it('GitHub 피드백 전송은 publisher에서 1분마다 기존 역할 lease를 따른다', () => {
+  expect(JOB_CATALOG.find(job => job.name === 'github-feedback-delivery')).toEqual({
+    name: 'github-feedback-delivery', role: 'publisher', intervalMs: 60_000,
+  });
+  expect(jobsForRole('publisher')).toContain('github-feedback-delivery');
+});
+
 /**
  * 생존 확인은 1분마다 maintenance가 돈다.
  *

@@ -5,6 +5,8 @@ import { products, rateLimits } from "@/lib/db/schema";
 import { productFeedback } from "@/lib/db/product-feedback-schema";
 import { FeedbackError, feedbackFingerprint, initialFeedbackReview, normalizedFeedbackBodyHash, validateFeedbackWrite } from "./contract";
 import type { FeedbackTransaction, FeedbackTransactionHook } from "./repository";
+import { githubFeedbackDeliveryEnabled } from "@/lib/domain/github-integration/flags";
+import { enqueueFeedbackIssue } from "./github/enqueue";
 
 async function consumeQuota(tx: FeedbackTransaction, key: string, limit: number, seconds: number) {
   const window = sql.raw(`interval '${seconds} seconds'`);
@@ -42,8 +44,12 @@ export function submitFeedback(slug: string, authorUserId: number, raw: unknown,
     )).limit(1);
     const review = initialFeedbackReview(input.body, Boolean(repeat), input.title);
     const [feedback] = await tx.insert(productFeedback).values({ ...input, productId: product.id, authorUserId, requestHash, normalizedBodyHash,
-      reviewState: review.state, reviewReason: review.reason, deliveryState: "local_only", githubDeliveryEligible: false }).returning();
-    if (feedback.reviewState === "accepted" && options.onAccepted) await options.onAccepted(tx, feedback);
-    return { feedback, replayed: false };
+      reviewState: review.state, reviewReason: review.reason, deliveryState: "local_only", githubDeliveryEligible: githubFeedbackDeliveryEnabled() }).returning();
+    if (feedback.reviewState === "accepted") {
+      if (options.onAccepted) await options.onAccepted(tx, feedback);
+      else await enqueueFeedbackIssue(tx, feedback);
+    }
+    const [current] = await tx.select().from(productFeedback).where(eq(productFeedback.id, feedback.id));
+    return { feedback: current, replayed: false };
   }));
 }

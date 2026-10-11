@@ -498,6 +498,13 @@
       "when": 1792300000000,
       "tag": "0070_github_product_bindings",
       "breakpoints": true
+    },
+    {
+      "idx": 71,
+      "version": "7",
+      "when": 1792400000000,
+      "tag": "0071_github_issue_outbox",
+      "breakpoints": true
     }
   ]
 }

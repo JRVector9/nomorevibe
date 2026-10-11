@@ -1,4 +1,14 @@
 import postgres from "postgres";
+import { AsyncLocalStorage } from "node:async_hooks";
+
+const dbDeadlineScope = new AsyncLocalStorage<number>();
+/** Shortens cancellable pool wait in this operation; executing SQL is bounded server-side. */
+export function withDbDeadline<T>(deadlineAt: number, load: () => Promise<T>): Promise<T> {
+  const enclosing = dbDeadlineScope.getStore();
+  const deadline = Math.min(deadlineAt, enclosing ?? Infinity);
+  if (!Number.isFinite(deadline) || deadline <= Date.now()) return Promise.reject(new DbPoolWaitTimeoutError());
+  return dbDeadlineScope.run(deadline, load);
+}
 
 const ROLE_POOL_MAX = { web: 8, crawler: 4, reviewer: 3, publisher: 3, text: 3, maintenance: 3, scheduler: 2, monitor: 1, "connect-agent": 1 } as const;
 export type DbRole = keyof typeof ROLE_POOL_MAX;
@@ -95,6 +105,8 @@ type WaitingQueries = Map<DriverQuery, { assigned: () => void }>;
 
 function waitDeadline<T>(value: T, waitMs: number, waiting: WaitingQueries,
   trackConnection: (connection: DriverConnection) => void): T {
+  const scopedDeadline = dbDeadlineScope.getStore();
+  if (scopedDeadline !== undefined && scopedDeadline <= Date.now()) throw new DbPoolWaitTimeoutError();
   const query = value as T & DriverQuery;
   if (!query || typeof query.handler !== "function" || typeof query.resolve !== "function" || typeof query.reject !== "function" || !query.options) {
     throw new Error("Unsupported postgres query internals; validate the pool adapter before upgrading");
@@ -134,7 +146,7 @@ function waitDeadline<T>(value: T, waitMs: number, waiting: WaitingQueries,
       // A connection already owns the query. PostgreSQL statement/lock timeouts bound that work.
       // Only a query that has not been sent is cancelled; no detached in-flight write is reported failed.
       cancelWaiting(new DbPoolWaitTimeoutError());
-    }, waitMs);
+    }, Math.min(waitMs, Math.max(1, (scopedDeadline ?? Infinity) - Date.now())));
     timer.unref?.();
     const connection = originalHandler(pending);
     // Initial connect returns its Connection before state is set. connect_timeout bounds it;

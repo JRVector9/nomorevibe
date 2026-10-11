@@ -690,3 +690,4 @@ export * from './github-user-schema';
 export * from './github-star-schema';
 export * from './product-feedback-schema';
 export * from './github-binding-schema';
+export * from './github-issue-outbox-schema';
