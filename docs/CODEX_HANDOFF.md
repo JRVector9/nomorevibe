@@ -1,3 +1,51 @@
+# 2026-10-11 — nomorevibe.com 전환 완료, PR360 병합
+
+## Current objective / completed work
+
+GoDaddy의 nomorevibe.com을 서비스 기본 도메인으로 전환하라는 요청을 완료했다. 현재 운영 기본 주소는 https://nomorevibe.com이다. 사용자가 로그인한 Cloudflare/GoDaddy에서 DNS·NS·공개 TLS·redirect를 적용했고 M3·mini 웹의 origin 변경과 실제 배포를 검증했다. 브라우저 화면 작업을 끝내고 새 홈을 띄워두었다. 사용자에게 Chrome을 다시 사용해도 된다고 알렸다.
+
+PR https://github.com/JRVector9/nomorevibe/pull/360 은 MERGED, merge SHA9944254975e9d7ba2e1eb0eb7e986186567708eb이다. 변경685249b, 최신 main 합류 merge 및 API 증거 커밋baa2ecd를 push했다. 병행 인기 화면 PR359의 base def8953f7c9d71613ec850f45dbeec0d6e55f931와 병합 직전 원격 main이 같고 필수 check 성공임을 확인했다. 보호 규칙/관리자 우회 없이 --match-head-commit baa2ecd5a7d22cd825a152884e0f2f64820a98ea로 병합했다. 최종 인계 문서만 새 docs branch에서 기록한다.
+
+## Modified files / key decisions
+
+전환 PR은 README.md, AGENTS.md, PENDING.md, docs/CODEX_HANDOFF.md, 도메인 준비/완료 운영 기록, GitHub capability/runbook, production-multi-instance.env.example, scripts/ops/deploy_shared_images.py를 변경했다. 서비스 앱 코드 변경은 없다. 배포 script의 공개 gate는 새 health, purge 대상은 새 zone9fc499cc4b48354cf9738ac039c9fd70이다. 스크립트는 Docker context에서 제외되므로 이 두 상수 변경을 위해 웹 이미지를 다시 빌드/배포하지 않는다. 최종 기록 branch는 docs/primary-domain-final-handoff-20261011, worktree /private/tmp/nomorevibe-domain-20261011이다.
+
+GoDaddy NS는 실제 배정된 emely.ns.cloudflare.com/tony.ns.cloudflare.com이다. Cloudflare Free zone의 apex→nomorevibe.brut.bot 및 www→apex CNAME을 proxied로 설정했다. DMARC/domainconnect 내용 보존, DS 없음. 기존 wildcard LB 두 tunnel/60:40/Host override 없음 유지. 두 cloudflared ingress validate0 및 실제 재시작 완료. UniversalSSL Active/2027-01-09, AlwaysUseHTTPS on. 새www와 옛 GET/HEAD 웹페이지308는 경로·query 보존, 옛 API와 CLI는 그대로 응답한다.
+
+M3 web oipo2OAnIrtcnILBCRoG2 deploymentMXlEPzk4andlIBCn2xRL5 및 mini web llv4rlABSJOcFauSxaHdx deploymentXqiJUxLGdOrMYYNgt2EG8 done. NEXT_PUBLIC_SITE_URL만 새주소로 바꿨고 이미지·source·replicas·build 설정·비밀키·네 feature flag OFF를 보존했다. 실제 M3 4/4·mini2/2 모든 컨테이너 origin/digest/release/health 정상. 이 env 배포의 코드 release는650b341c8889f06b2ec3daa3b99da4e5712fee1a, web digest8b65fed0865672f2ab942874a897f9ff00850ad6d309238f58fa4921deeb2ab6이다. 다른 병행 작업의 새 코드 릴리스를 이 도메인 작업에서 배포했다고 주장하지 않는다. DB migration·worker 배포·키 회전·소개 검수 재개는 하지 않았다. root main/PPT/stash/미추적 사용자 자료를 보존한다.
+
+전환 전 비밀 snapshot /private/tmp/nomorevibe-primary-origin-before-20261011.json와 /private/tmp/nomorevibe-domain-web-before-20261011.json는각0600이며 출력/커밋 금지. 각 서버 tunnel 원본 backup은 /Users/jr/.cloudflared/config.yml.nomorevibe-domain-20261011.backup이다. 도메인 operator의 apply 재실행은 금지한다(이미 새 origin 및 snapshot O_EXCL). 상세 DNS/redirect/API/복구/App URL은 docs/operations/2026-10-11-primary-domain-cutover.md를 따른다.
+
+## Actual tests / failed approaches
+
+PR CI38142169371의 scope·quality·integration3분할·필수check 모두 success. 최초 옛 base CI38142075061은 최신 base 검증을 대신하지 않는다. 실제 로컬 Python23pass, Node CI-scope4pass, diffcheck0. 최신 base 합류 뒤 두 검사도 다시 pass했다.
+
+수정한 public_gate(650b341…) 실제 실행은 publicHealth ok, m3-web/mini-web 모두 관측했다. 새 홈 canonical과 홈/상세/robots/RSS/skill/install 절대 주소에서 옛 origin0. sitemap 재조회200/2.525초/2584655bytes, XML parse 및15860loc 새 origin. Native Chrome 홈·상세 screenshot과 이동 렌더링 확인. console/network 오류0 검사를 이번에 실행했다고 주장하지 않는다. 실제 old/www308의 경로·query·인코딩 보존, HTTP apex301, old health/install/skill200. 제품 GET /api/products/nanomuse는 새/옛200 및 JSON 동일, verify 안내가 새주소다. 관리자 OAuth 시작503은 키 미설정이며 실제 OAuth 성공이 아니다.
+
+기존 CF cert/API 토큰 create403은 로그인 UI로 해결했다. 기존 DNS 토큰2개 새 zone 읽기403, UI에서 설정했다. 인증서 발급 전 curl TLS35는 Active 이후 정상 HTTPS가 됐다. 첫 sitemap 조회 실패 뒤 재조회 정상, 코드 수정 없음. mini 재시작 후 helper의 json import 누락으로 outer exit1은 고친 뒤 M3만 이어 수행exit0이었다. Chrome 사용자 조작으로 선택이 바뀔 때 fresh getApp/AX를 다시 읽었고 사용자의 일시 중단 허용 후 완료했다.
+
+## Remaining work / exact commands
+
+도메인 운영 전환은 완료다. 기존 Cloudflare purge 키 인증은 미해결이므로 PENDING에 남겼다. 새 zone은 HTML cache-everything을 복사하지 않았고 실제 홈·상세 DYNAMIC을 확인했다. purge 성공으로 기록하지 않는다. Star/Feedback App·Resend·공개 인증키와 실제 파일럿은 별도 PENDING이며 네 기능은 OFF다. 활성화 전 웹/publisher/maintenance6앱의 origin·키를 맞춘다. 이번엔 비활성 워커의 origin을 변경/재배포하지 않았다. 호스트별 쿠키 때문에 새 도메인에서 다시 로그인한다.
+
+```sh
+cd /Users/jr/Desktop/projects/nomorevibe
+git status --short --branch
+gh pr view 360 --json state,mergeCommit,url
+gh run view 38142169371
+curl -fsS --max-time 10 https://nomorevibe.com/api/health
+curl -sS -I 'https://nomorevibe.brut.bot/p/nanomuse?utm_source=cutover&x=a%2Fb'
+cd /private/tmp/nomorevibe-domain-20261011
+gh pr list --head docs/primary-domain-final-handoff-20261011 --state all --json number,state,url,mergeCommit
+python3 -m unittest tests/test_deploy_shared_images.py
+node --test scripts/ci-scope.node-test.mjs
+git diff --check
+```
+
+최종 docs-only PR의 상태는 위 명령으로 직접 조회한다. 해당 기록 변경으로 운영 앱을 다시 배포할 필요는 없다. CUA를 계속 사용할 때 compaction 후 rewriteDocumentation을 실행하고 현재 fresh AX를 확인한다. Dokploy inspect helper의 inventory() 재실행 금지. 이전 준비/진행 기록은 아래 이력이며 최상단 현재 상태와 Git/실제 검사가 우선한다.
+
+---
+
 # 2026-10-11 22:10 KST — nomorevibe.com 공개 전환·양쪽 웹 배포 검증 완료
 
 ## Current objective / completed work

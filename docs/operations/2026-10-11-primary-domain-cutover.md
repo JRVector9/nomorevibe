@@ -87,6 +87,12 @@ Cloudflare Single Redirect 두 규칙을 실제 Active로 확인했다.
 복사하지 않았고 홈·상세의 `cf-cache-status: DYNAMIC`을 확인했다. 자산은 기본 Cloudflare
 캐시 정책을 사용한다. 옛 zone의 기존 HTML 캐시는 edge redirect보다 우선하지 않는다.
 
+PR [#360](https://github.com/JRVector9/nomorevibe/pull/360)은 최신 base `def8953`에서
+필수 CI38142169371의 scope·quality·통합3분할·check가 모두 성공한 뒤 병합했다.
+merge SHA는 `9944254975e9d7ba2e1eb0eb7e986186567708eb`이며 보호 규칙을 우회하지 않았다.
+배포 operator는 Docker context에서 제외되므로 이번 상수/문서 기록을 위해
+추가 서비스 코드 배포를 수행하지 않는다.
+
 ## GitHub 앱 등록과 남은 설정
 
 Homepage는 `https://nomorevibe.com`이다. 새 Star/Feedback 앱은 다음 정확한 값을 사용한다.
