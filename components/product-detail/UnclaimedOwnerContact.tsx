@@ -2,7 +2,8 @@ import Link from "next/link";
 import { githubOwnerFromRepositoryUrl } from "@/lib/domain/products/github-owner";
 import { TakedownForm } from "@/app/p/[slug]/TakedownForm";
 
-const LINK = "text-accent-ink hover:underline";
+/** 글 속 링크 — 색만으로 가려지지 않게 밑줄을 늘 긋는다(A11Y-03) */
+const LINK = "text-accent-ink underline underline-offset-2";
 
 /**
  * 운영자 상자 — 막다른 안내가 되지 않게 다음 걸음을 링크로 준다(2026-10-08 UX 감사 UX-18).

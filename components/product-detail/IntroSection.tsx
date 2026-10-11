@@ -2,6 +2,7 @@ import type { ComponentPropsWithoutRef, ReactNode } from "react";
 import ReactMarkdown from "react-markdown";
 import rehypeSanitize from "rehype-sanitize";
 import remarkGfm from "remark-gfm";
+import { englishLang } from "@/components/ProductTagline";
 import { README_INTRO_SOURCE } from "@/lib/copy/terms";
 import type { ProductDetailView } from "@/lib/domain/products/detail-view";
 import { safeExternalUrl } from "./format";
@@ -19,6 +20,7 @@ function Heading({ id, children }: { id: string; children: ReactNode }) {
 /**
  * 소개 — 설명이 한 줄 소개와 다를 때만 설명을, 그다음 README 발췌를. 둘 다 없으면 README 로 가라는 한 줄.
  * 메이커 프로필(문제·사용자·기능·활용)은 있을 때만 그 아래.
+ * 설명·README 발췌가 영어 원문이면 lang="en" 을 단다(A11Y-06) — 스크린리더가 한국어 규칙으로 읽지 않게.
  */
 export function IntroSection({ product, profile, readmeExcerpt, unclaimed }: {
   product: ProductDetailView["product"];
@@ -36,7 +38,7 @@ export function IntroSection({ product, profile, readmeExcerpt, unclaimed }: {
       <section aria-labelledby="intro-title" className="flex flex-col gap-3">
         <Heading id="intro-title">소개</Heading>
         {description
-          ? <p className="m-0 max-w-[720px] whitespace-pre-line text-[17px] leading-[1.6] text-fg">{description}</p>
+          ? <p lang={englishLang(description)} className="m-0 max-w-[720px] whitespace-pre-line text-[17px] leading-[1.6] text-fg">{description}</p>
           : !readmeExcerpt && (
             <p className="m-0 max-w-[720px] text-[14px] leading-[1.5] text-fg-2">
               메이커가 쓴 소개는 위의 한 줄이 전부입니다.
@@ -48,7 +50,7 @@ export function IntroSection({ product, profile, readmeExcerpt, unclaimed }: {
       {readmeExcerpt && (
         <section aria-labelledby="readme-title" className="flex flex-col gap-3">
           <Heading id="readme-title">README에서</Heading>
-          <blockquote className="m-0 max-w-[720px] whitespace-pre-line border-l-2 border-line pl-[18px] text-[15px] leading-[1.6] text-fg">{readmeExcerpt}</blockquote>
+          <blockquote lang={englishLang(readmeExcerpt)} className="m-0 max-w-[720px] whitespace-pre-line border-l-2 border-line pl-[18px] text-[15px] leading-[1.6] text-fg">{readmeExcerpt}</blockquote>
           {repo && <a href={repo} target="_blank" rel="noopener noreferrer" className="inline-flex min-h-11 items-center self-start text-[13px] text-accent-ink hover:underline">README 전문 보기 ↗</a>}
         </section>
       )}

@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useId, useState } from "react";
 import { TAKEDOWN_KINDS, TAKEDOWN_PROMISE, TAKEDOWN_RECEIVED, type TakedownKind } from "@/lib/domain/products/takedown-view";
 
 /** 갈래마다 한 줄 설명과 이유 칸 안내 */
@@ -19,11 +19,15 @@ const KINDS = Object.keys(TAKEDOWN_KINDS) as TakedownKind[];
  *
  * 운영자의 요청과 스팸·악성 신고를 고르게 하고(사유 앞에 갈래가 붙는다 — takedown-view.ts), 처리 약속(24시간 안 확인,
  * 확인 전 검색엔진 노출 중지)과 운영자임을 보이는 방법(저장소 이슈·파일)을 함께 적는다(UX-19). 연락처는 받지 않는다(D5).
+ *
+ * 이유 칸에는 보이는 이름표를 단다 — 안내 글(placeholder)은 쓰기 시작하면 사라진다. 오류는 alert, 접수는 status 로
+ * 알려 스크린리더가 결과를 읽는다(A11Y-01). 글 속 링크는 색만으로 가려지지 않게 밑줄을 늘 긋는다(A11Y-03).
  */
 export function TakedownForm({ slug }: { slug: string }) {
   const [state, setState] = useState<"idle" | "sending" | "sent">("idle");
   const [error, setError] = useState<string | null>(null);
   const [kind, setKind] = useState<TakedownKind>("owner");
+  const reasonId = useId();
 
   async function submit(form: FormData) {
     setState("sending");
@@ -49,7 +53,7 @@ export function TakedownForm({ slug }: { slug: string }) {
 
   if (state === "sent") {
     return (
-      <p className="mt-4 rounded-[10px] border border-up/40 bg-up/10 px-4 py-3 text-[13px] text-up">
+      <p role="status" className="mt-4 rounded-[10px] border border-up/40 bg-up/10 px-4 py-3 text-[13px] text-up">
         {TAKEDOWN_RECEIVED}
       </p>
     );
@@ -76,17 +80,18 @@ export function TakedownForm({ slug }: { slug: string }) {
             운영자임을 빨리 확인할 수 있게, 저장소에 이 요청을 적은 이슈를 열거나 저장소에 파일을 하나 더한 뒤 그 주소를 아래 칸에 적어 주세요.
           </p>
         )}
+        <label htmlFor={reasonId} className="text-[13px] font-semibold text-fg">요청 이유 <span className="font-normal text-fg-2">(선택)</span></label>
         <textarea
+          id={reasonId}
           name="reason"
           rows={2}
           maxLength={500}
-          aria-label="요청 이유"
           placeholder={KIND_COPY[kind].placeholder}
           className="w-full rounded-[10px] border border-line bg-bg-soft px-3 py-2 text-[13px] text-fg outline-none focus:border-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
         />
         <p className="m-0 text-[13px] leading-5 text-fg-2">
           {TAKEDOWN_PROMISE}{" "}
-          <Link prefetch={false} href="/policy#takedown" className="text-accent-ink hover:underline">처리 절차 보기</Link>
+          <Link prefetch={false} href="/policy#takedown" className="text-accent-ink underline underline-offset-2">처리 절차 보기</Link>
         </p>
         <button
           type="submit"
@@ -95,7 +100,7 @@ export function TakedownForm({ slug }: { slug: string }) {
         >
           {state === "sending" ? "보내는 중…" : "요청 보내기"}
         </button>
-        {error && <p className="text-[13px] text-down">{error}</p>}
+        {error && <p role="alert" className="text-[13px] text-down">{error}</p>}
       </form>
     </details>
   );

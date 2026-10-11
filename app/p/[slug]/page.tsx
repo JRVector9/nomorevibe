@@ -23,6 +23,8 @@ import { categoryLabel } from "@/lib/domain/products/labels";
 import { publicRead } from "@/lib/domain/products/public-reads";
 import { countProducts } from "@/lib/domain/products/repository";
 import type { Category } from "@/lib/domain/products/schema";
+import { productJsonLd, serializeJsonLd } from "@/lib/seo/product-json-ld";
+import { siteOrigin } from "@/lib/site";
 
 export const dynamic = "force-dynamic";
 
@@ -76,9 +78,17 @@ async function ProductDetail({ slug, category }: { slug: string; category: strin
   const risingTotal = await risingLoad;
   // 날짜의 '올해'를 정하는 시각 — 업데이트 목록(클라이언트)도 서버가 읽은 이 값으로 그린다
   const now = new Date();
+  // 구조화 데이터(SEO-06) — 우리가 가진 사실만, 화면의 경로 nav 와 같은 빵부스러기. 소개는 메타 description 과 같은 값
+  const jsonLd = productJsonLd({
+    origin: siteOrigin(), slug, name: detail.product.name, description: detail.product.taglineKo?.trim() || detail.product.tagline,
+    url: detail.product.url, category: detail.product.category, categoryName: categoryLabel(detail.product.category),
+    categoryPath: categoryHref(detail.product.category), accessMode: detail.product.accessMode,
+    repoUrl: detail.product.repoUrl, repoGone: detail.product.repoGone, image: detail.product.ogImage, languages,
+  });
 
   return (
     <main className="wrap pb-14">
+      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: serializeJsonLd(jsonLd) }} />
       <DetailEntry slug={slug} />
       <nav aria-label="경로" className="flex items-center gap-2 pt-4 text-[13px] text-fg-2">
         <Link prefetch={false} href="/" className="shrink-0 hover:text-fg">발견하기</Link>
