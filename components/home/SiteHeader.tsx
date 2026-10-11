@@ -4,6 +4,7 @@ import Link from "next/link";
 import { Suspense, useEffect, useState, useSyncExternalStore, useTransition } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Icon } from "@/components/home/icons";
+import { AccountMenu } from "@/components/auth/AccountMenu";
 import { parseSaved, savedSnapshot, subscribeSaved } from "@/components/home/saved";
 import { BRAND } from "@/lib/copy/brand";
 import "./chrome.css";
@@ -95,7 +96,7 @@ function SearchFields() {
  * 주소의 쿼리(useSearchParams)를 읽는 두 조각만 Suspense 로 감싼다. 정적으로 굳는 화면에서는 그 조각만 기다림 모양으로
  * 나가는데, 기다림 모양도 같은 링크·입력칸이라 자리가 바뀌지 않는다.
  */
-export function SiteHeader() {
+export function SiteHeader({ authEnabled = false }: { authEnabled?: boolean } = {}) {
   const router = useRouter();
   const [searching, startSearch] = useTransition();
   const [collapsed, setCollapsed] = useState(false);
@@ -201,6 +202,7 @@ export function SiteHeader() {
           <Icon name="bookmark" />
           <i className={`saved-dot${hasSaved ? " on" : ""}`} />
         </button>
+        {authEnabled && <AccountMenu />}
         <Link className="primary" href="/launch">프로젝트 공개</Link>
       </div>
     </header>

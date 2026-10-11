@@ -684,3 +684,5 @@ export * from './second-review-schema';
 export * from './translation-schema';
 export * from './news-schema';
 export * from './product-audit-schema';
+
+export * from './public-user-schema';

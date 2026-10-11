@@ -44,6 +44,12 @@ export default defineConfig({
       CRON_SECRET: "playwright-cron-secret",
       VISITOR_HASH_SECRET: "playwright-visitor-hash-secret-32-characters",
       GITHUB_TOKEN: "",
+      // 기능 E2E는 실행 명령에서 플래그를 켠다. 기존 회귀 검사는 기본 비활성 구성으로 실행한다.
+      PUBLIC_USER_AUTH_ENABLED: process.env.PUBLIC_USER_AUTH_ENABLED ?? "false",
+      GITHUB_STAR_ENABLED: process.env.GITHUB_STAR_ENABLED ?? "false",
+      PRODUCT_FEEDBACK_ENABLED: process.env.PRODUCT_FEEDBACK_ENABLED ?? "false",
+      GITHUB_FEEDBACK_DELIVERY_ENABLED: process.env.GITHUB_FEEDBACK_DELIVERY_ENABLED ?? "false",
+      PUBLIC_AUTH_SECRET: "playwright-public-auth-secret-with-at-least-32-characters",
       // 재인증 브라우저 검사는 테스트 파일의 로컬 RPC만 쓰며 실제 계정에는 접근하지 않는다.
       CONNECT_AGENT_URL: "http://127.0.0.1:43129",
       OPERATIONS_AGENT_SECRET: "playwright-operations-agent-secret-32-characters",
