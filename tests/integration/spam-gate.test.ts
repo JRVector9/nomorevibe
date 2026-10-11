@@ -28,6 +28,7 @@ const { requeueResolvedCandidates, reviewQueueCauses } = await import("@/lib/cra
 const { runJob } = await import("@/lib/jobs/runner");
 const products = await import("@/lib/domain/products/repository");
 const { getNewThisWeek, getPublicList } = await import("@/lib/domain/products/view");
+const { completedWindows } = await import("@/lib/domain/products/home-pulse");
 const { ensureSchema, resetTables } = await import("./setup");
 
 /** 프로드 /p/codex-deepseek 를 줄인 것 — 틀 제목·다운로드 미끼·남의 github.io 첫 화면·★1·이슈 꺼짐 */
@@ -156,6 +157,7 @@ describe("spam gate", () => {
 });
 
 describe("newest lists wait for the repository check", () => {
+  const newWindow = completedWindows(new Date());
   const listed = async (slug: string, repoUrl: string | null, repoStatus: "ok" | "not_found" | null, stars = 100) => {
     await products.insert({ slug, url: `https://${slug}.test`, repoUrl, repoStatus, stars, name: slug, tagline: slug,
       description: slug, category: "Dev", status: "seeded", source: "crawler", verifyToken: `verify-${slug}`, editTokenHash: "x".repeat(64) });
@@ -168,12 +170,17 @@ describe("newest lists wait for the repository check", () => {
     await listed("unchecked", "https://github.com/maker/unchecked", null);
     await listed("no-repo", null, null);
     await listed("gitlab", "https://gitlab.com/maker/tool", null);
+    for (const slug of ["checked", "unchecked"]) {
+      const repo = `maker/${slug}`;
+      await db.insert(crawlDocuments).values({ repo, repoMeta: { created_at: new Date(newWindow.asOf.getTime() - 86_400_000).toISOString() } });
+      await db.insert(crawlCandidates).values({ repo, state: "published", publishedSlug: slug });
+    }
   });
 
   it("hides unchecked GitHub repositories from the recent list, its count, new-this-week and the discovery board", async () => {
     expect(slugs(await getPublicList(10, { sort: "recent", repoChecked: true }))).toEqual(["checked", "gitlab", "no-repo"]);
     expect(await products.countProducts({ statuses: ["seeded", "verified"], excludeDown: true, repoChecked: true })).toBe(3);
-    expect(slugs(await getNewThisWeek(10, new Date(Date.now() - 86_400_000)))).toEqual(["checked", "gitlab", "no-repo"]);
+    expect(slugs(await getNewThisWeek(10, newWindow.weekStart, newWindow.asOf))).toEqual(["checked"]);
     expect(slugs(await products.listRecentlyDiscovered(10))).toEqual(["checked", "gitlab", "no-repo"]);
   });
 

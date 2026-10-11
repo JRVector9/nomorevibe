@@ -1,7 +1,8 @@
 import { displayProjectName } from './display-name';
 import type { StarObservation } from '@/lib/domain/products/star-change';
 import type { Product, ProductStatus, TaglineSource } from "@/lib/db/schema";
-import { listProductRows, listRecentlyDiscovered, type ListOptions, type ProductListRow, type ProductSort } from "./repository";
+import { countNewRepositories, listNewRepositoryRows, listProductRows, listRecentlyDiscovered, type ListOptions, type ProductListRow, type ProductSort } from "./repository";
+import { kstMidnightUtc } from "./home-pulse";
 import type { SearchQuery } from "./search";
 import type { Category } from "./schema";
 import { clickMetrics, type ClickMetrics } from "./clicks";
@@ -45,6 +46,8 @@ export type ProductListItem = StarObservation & {
   /** GitHub 이 돌려준 지금 owner/name(이름 바뀜·옮김) — 카드의 운영 주체(github-owner.ts listedRepositoryOwner) */
   repoRenamedTo?: string | null;
   listedAt: Date;
+  /** 신규 전용 목록의 GitHub 저장소 생성일. 일반 최신순의 등재일과 구별한다. */
+  repoCreatedAt?: Date;
   status: ProductStatus;
   /** 우리가 대신 올렸고 아직 주인이 나타나지 않았다 */
   unclaimed: boolean;
@@ -218,10 +221,15 @@ export async function getRankedList(limit: number, options: BrowseOptions = {}):
 // 스타 구간은 별도 조회 모듈에 두되 공개 제품 뷰 진입점에서도 제공한다.
 export { getPopularGroups, getPopularPage } from "./popular";
 
-/** 홈 '이번 주 새로 나온' — 등재 7일 안·스타 NEW_THIS_WEEK_MIN_STARS 이상, 최신순 */
+/** 홈 신규 띠와 모두 보기 — 완료된 7일의 GitHub 저장소 생성일 최신순, 스타 기준 이상. */
 export const NEW_THIS_WEEK_MIN_STARS = 50;
-export async function getNewThisWeek(limit: number, since: Date): Promise<ProductListItem[]> {
-  return getPublicList(limit, { sort: "recent", listedSince: since, minStars: NEW_THIS_WEEK_MIN_STARS, repoChecked: true });
+export async function getNewThisWeek(limit: number, since: Date, until = kstMidnightUtc(new Date()), offset = 0): Promise<ProductListItem[]> {
+  const rows = await listNewRepositoryRows(limit, since, until, NEW_THIS_WEEK_MIN_STARS, offset);
+  return withMetrics(rows.map((row) => ({ ...toListItem(row), repoCreatedAt: row.repoCreatedAt })));
+}
+
+export function countNewThisWeek(since: Date, until: Date): Promise<number> {
+  return countNewRepositories(since, until, NEW_THIS_WEEK_MIN_STARS);
 }
 
 /** 상세 끝의 '같은 분야에서 지금 뜨는' — 자기 자신은 뺀다 */

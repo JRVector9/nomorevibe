@@ -19,12 +19,15 @@ const QUERY = Array.from({ length: 1024 }, (_, k) => (k === 0 ? 1 : 0));
 
 async function product(slug: string, values: Partial<typeof products.$inferInsert> = {}) {
   const [row] = await db.insert(products).values({
-    slug, url: `https://${slug}.example`, name: slug, tagline: "portfolio of a designer", description: "portfolio of a designer",
+    slug, url: `https://${slug}.example`, repoUrl: `https://github.com/acme/${slug}`, repoStatus: "ok", name: slug, tagline: "portfolio of a designer", description: "portfolio of a designer",
     category: "Profile", status: "seeded", source: "crawler", verifyToken: `v-${slug}`, editTokenHash: "e",
     // 급상승(스타 2천 미만, 하루 사이 늚)에 든다. 인기 구간은 그 테스트에서 2천 위로 올린다
     stars: 1_500, starsAt: new Date(), starsPrevious: 1_400, starsPreviousAt: sql`now() - interval '1 day'` as unknown as Date,
     createdAt: sql`now() - interval '10 days'` as unknown as Date, ...values,
   }).returning({ id: products.id });
+  const repo = `acme/${slug}`;
+  await db.insert(crawlDocuments).values({ repo, repoMeta: { created_at: new Date(Date.now() - 10 * 86_400_000).toISOString() } });
+  await db.insert(crawlCandidates).values({ repo, state: "published", publishedSlug: slug });
   await db.execute(sql`insert into product_embeddings (product_id, model, text_hash, embedding)
     values (${row.id}, ${EMBEDDING_MODEL}, 'h', ${vectorLiteral(QUERY)}::halfvec)`);
   // 홈 '이번 주 새 버전' 집계에 들 새 릴리스

@@ -110,7 +110,7 @@ export function MethodologyDialog({ pulse, rankingFallback = false, aiLevels = n
     born: (
       <>
         <h3>{NEW_PROJECTS_LABEL} — 저장소를 처음 만든 날로 셉니다.</h3>
-        <p>지난 7일 동안 GitHub에 새로 만들어진 저장소 수입니다.</p>
+        <p>오늘 KST 0시에 끝난 7일 동안 GitHub에 새로 만들어진 저장소 수입니다. 스타 수에 제한을 두지 않은 전체 집계입니다.</p>
         <table className="method-table">
           <tbody>
             <tr><td>최근 7일</td><td>{formatCount(pulse.born.current)}개</td></tr>
@@ -126,6 +126,7 @@ export function MethodologyDialog({ pulse, rankingFallback = false, aiLevels = n
             증감률 = (이번 7일 − 직전 7일) ÷ 직전 7일 × 100
           </Formula>
           <p>찾고 심사하는 데 시간이 걸려, 최근 며칠에 생긴 프로젝트는 뒤늦게 더해질 수 있습니다. 확인할 수 없을 때 0%를 채우지 않습니다.</p>
+          <p>홈의 &ldquo;최근 7일에 생성된 프로젝트&rdquo; 목록과 모두 보기는 같은 생성일 기간 중 스타 50 이상이고 정상 GitHub 저장소로 확인된 공개 프로젝트만, 저장소 생성일 최신순으로 보여줍니다. 생성일을 확인할 수 없는 저장소는 목록에서 제외합니다.</p>
         </Details>
       </>
     ),
@@ -258,7 +259,7 @@ export function MethodologyDialog({ pulse, rankingFallback = false, aiLevels = n
     ? (
       <>
         <h3>출처, 기간, 분모가 보이는 숫자.</h3>
-        <p>윗줄과 순위는 전체 nomorevibe 기준입니다. 아래 목록의 검색·필터를 바꿔도 집계 범위는 바뀌지 않습니다. &ldquo;이번 주&rdquo;는 어제 자정에 끝난 7일입니다.</p>
+        <p>윗줄과 순위는 전체 nomorevibe 기준입니다. 아래 목록의 검색·필터를 바꿔도 집계 범위는 바뀌지 않습니다. &ldquo;이번 주&rdquo;는 오늘 KST 0시에 끝난 7일입니다.</p>
         {nav}
         {Object.values(blocks).map((block, index) => (
           <div key={index}>
