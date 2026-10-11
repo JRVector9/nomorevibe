@@ -7,7 +7,7 @@ import { README_INTRO_SOURCE } from "@/lib/copy/terms";
 import type { ProductDetailView } from "@/lib/domain/products/detail-view";
 import { safeExternalUrl } from "./format";
 
-function SafeMarkdownLink({ href, children }: ComponentPropsWithoutRef<"a">) {
+export function SafeMarkdownLink({ href, children }: ComponentPropsWithoutRef<"a">) {
   const safe = href?.startsWith("/") ? href : safeExternalUrl(href ?? null);
   if (!safe) return <span>{children}</span>;
   return <a href={safe} target="_blank" rel="noopener noreferrer" className="font-medium text-accent-ink hover:underline">{children}</a>;
@@ -18,15 +18,16 @@ function Heading({ id, children }: { id: string; children: ReactNode }) {
 }
 
 /**
- * 소개 — 설명이 한 줄 소개와 다를 때만 설명을, 그다음 README 발췌를. 둘 다 없으면 README 로 가라는 한 줄.
+ * 소개 — 설명이 한 줄 소개와 다를 때만 설명을, 그다음 README 서버 구획(없으면 저장된 발췌)을.
  * 메이커 프로필(문제·사용자·기능·활용)은 있을 때만 그 아래.
  * 설명·README 발췌가 영어 원문이면 lang="en" 을 단다(A11Y-06) — 스크린리더가 한국어 규칙으로 읽지 않게.
  */
-export function IntroSection({ product, profile, readmeExcerpt, unclaimed }: {
+export function IntroSection({ product, profile, readmeExcerpt, unclaimed, children }: {
   product: ProductDetailView["product"];
   profile: ProductDetailView["profile"];
   readmeExcerpt: string | null;
   unclaimed: boolean;
+  children?: ReactNode;
 }) {
   // 수집 발행분은 설명이 없으면 소개를 그대로 쓴다 — 히어로의 한 줄을 여기서 되풀이하지 않는다
   const description = product.description.trim() !== product.tagline.trim() ? product.description : null;
@@ -47,13 +48,13 @@ export function IntroSection({ product, profile, readmeExcerpt, unclaimed }: {
           )}
         {description && <p className="m-0 text-[13px] text-fg-2">{unclaimed ? README_INTRO_SOURCE : "메이커 제공·미검증"}</p>}
       </section>
-      {readmeExcerpt && (
+      {children ?? (readmeExcerpt && (
         <section aria-labelledby="readme-title" className="flex flex-col gap-3">
           <Heading id="readme-title">README에서</Heading>
           <blockquote lang={englishLang(readmeExcerpt)} className="m-0 max-w-[720px] whitespace-pre-line border-l-2 border-line pl-[18px] text-[15px] leading-[1.6] text-fg">{readmeExcerpt}</blockquote>
           {repo && <a href={repo} target="_blank" rel="noopener noreferrer" className="inline-flex min-h-11 items-center self-start text-[13px] text-accent-ink hover:underline">README 전문 보기 ↗</a>}
         </section>
-      )}
+      ))}
       {profile && hasProfile && (
         <section aria-labelledby="profile-title" className="flex flex-col gap-4">
           <Heading id="profile-title">메이커가 밝힌 것</Heading>
