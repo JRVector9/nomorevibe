@@ -6536,3 +6536,11 @@ git commit -m 'docs: propose eight-hour independent star observations'
 git push -u origin docs/home-ranking-policy-proposal-20261012
 gh pr create --base main --head docs/home-ranking-policy-proposal-20261012 --title 'docs: propose eight-hour independent star observations' --body-file /private/tmp/nomorevibe-home-ranking-policy-pr-body.md
 ```
+
+### 2026-10-12 — 사용자 생성 PEM 연결, 문서 PR368
+
+사용자가 두 secret 생성 완료와 Feedback PEM 경로 /Users/jr/Downloads/nomorevibe-feedback.2026-10-11.private-key.pem 을 제공했다. 서브에이전트가 값 출력 없이 Node crypto로 유효한 RSA private PEM/충분한 키 크기를 확인했다. 원본은 보존하고 staging 디렉터리에 0600 feedback.private-key.pem 사본을 만든 뒤 credentials.env의 PRIVATE_KEY_FILE을 연결했다. 기존 nonblank 값 보존·편집 충돌 감지·atomic replace·파일0600/디렉터리0700 확인 완료. PEM 원문·해시·secret은 기록하지 않았다.
+
+현재 누락은 두 APP_CLIENT_SECRET과 LOGIN_EMAIL_API_KEY/LOGIN_EMAIL_FROM 네 입력이다. 생성 완료와 로컬 입력 완료를 구별한다. 사용자에게 Client secret 보관 파일 경로 또는 staging 직접 입력 후 완료 답변을 async로 요청했다. 값 자체를 채팅에 요청하지 않았다. 운영 주입·flag ON·브라우저 자격증명 생성/Save·기능 테스트는 하지 않았다. 사용자 입력이 도착하면 준비 상태를 다시 메모리에서 확인한다.
+
+제안문서와 앞 handoff를 head88778cd로 커밋·push하고 PR368을 만들었다. 최신-base240cbdfd에서 CI38153698272의 필수 check 성공(문서용 quality/integration/image 발행 skip). 이 추가 기록을 push한 후 **새 head의 필수 CI를 다시 확인**하고 정상 병합한다. 문서 병합은 정책 구현/운영 활성화가 아니다. 다음 명령: git diff --check; handoff만 커밋/push; gh pr checks 368; gh pr view 368 --json headRefOid,baseRefOid,mergeStateStatus,statusCheckRollup. 최신 main/CI를 확인한 뒤 gh pr merge 368 --merge --match-head-commit <확인한HEAD> 하고 사용자 root main을 fast-forward한다.
