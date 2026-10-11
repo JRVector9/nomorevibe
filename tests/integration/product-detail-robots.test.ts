@@ -44,6 +44,23 @@ async function evidence(slug: string) {
 const metadata = (slug: string) => generateMetadata({ params: Promise.resolve({ slug }) });
 const NOINDEX = { index: false, follow: false };
 
+/** 공유 미리보기(2026-10-08 점검 SEO-01·UX-07) — 상세가 실제로 내는 Open Graph·Twitter 값 */
+describe("상세 공유 미리보기", () => {
+  it("제목·소개와 함께, 대표 이미지가 있으면 그 그림을 없거나 아이콘이면 사이트 기본 그림을 싣는다", async () => {
+    await product("with-og", { ogImage: "/api/og-cache/with-og?thumbnail=og&w=1200&h=630" });
+    await product("with-icon", { ogImage: "/api/og-cache/with-icon?thumbnail=site_icon&w=64&h=64" });
+    await product("no-image");
+
+    const og = await metadata("with-og");
+    expect(og.openGraph).toMatchObject({ siteName: "nomorevibe", locale: "ko_KR", title: "with-og — nomorevibe", description: "Useful project",
+      images: [{ url: "/api/og-cache/with-og?thumbnail=og&w=1200&h=630", width: 1200, height: 630 }] });
+    expect(og.twitter).toMatchObject({ card: "summary_large_image", images: ["/api/og-cache/with-og?thumbnail=og&w=1200&h=630"] });
+    for (const slug of ["with-icon", "no-image"]) {
+      expect((await metadata(slug)).openGraph, slug).toMatchObject({ images: [{ url: "/og/nomorevibe.png", width: 1200, height: 630 }] });
+    }
+  });
+});
+
 describe("상세 robots", () => {
   it("주인 있는 제품과 AI 근거가 확인된 미확인 제품은 색인하고, 근거가 없거나 개인 프로필이면 noindex", async () => {
     await product("owned", { status: "verified", source: "skill" });
