@@ -8,6 +8,7 @@ import { hashSessionToken, LOGIN_NONCE_COOKIE } from "@/lib/domain/accounts/sess
 import { ensureSchema, resetTables } from "@/tests/integration/setup";
 import { E2E_BASE_URL } from "../../playwright.config";
 
+test.skip(process.env.PUBLIC_USER_AUTH_ENABLED !== "true", "명시적으로 활성화한 GitHub 연동 기능 구성에서 실행합니다.");
 test.describe.configure({ mode: "serial" });
 
 test.beforeAll(() => {
@@ -48,14 +49,23 @@ test("email-only participant signs in, stays outside admin, and revokes the sess
   await page.getByLabel("인증 코드", { exact: true }).fill(receivedCode());
   await page.getByRole("button", { name: "로그인", exact: true }).click();
   await expect(page).toHaveURL(`${E2E_BASE_URL}/`);
-  const me = await page.request.get("/api/me");
-  expect(me.status()).toBe(200);
-  const body = await me.json();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(page.getByRole("button", { name: "로그아웃", exact: true })).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
+  // Chromium sends loopback Secure cookies; Node APIRequestContext applies a different policy.
+  const me = await page.evaluate(async () => {
+    const response = await fetch("/api/me", { cache: "no-store" });
+    return { status: response.status, cacheControl: response.headers.get("cache-control"), vary: response.headers.get("vary"), body: await response.json() };
+  });
+  expect(me.status).toBe(200);
+  const body = me.body;
   expect(body.user.id).toBeGreaterThan(0);
   expect(body.user.displayName).not.toContain("browser-reader");
-  expect(me.headers()["cache-control"]).toBe("private, no-store");
+  expect(me.cacheControl).toBe("private, no-store");
+  expect(me.vary?.split(",").map((field) => field.trim().toLowerCase())).toContain("cookie");
   const cookie = (await context.cookies()).find((entry) => entry.name === "nmv_user")!;
   expect(cookie.httpOnly).toBe(true);
+  expect(cookie.secure).toBe(true);
   expect(cookie.sameSite).toBe("Lax");
   expect((await db.select().from(publicIdentities))).toHaveLength(1);
   await page.goto("/admin");
@@ -63,7 +73,7 @@ test("email-only participant signs in, stays outside admin, and revokes the sess
   await page.goto("/");
   await page.getByRole("button", { name: "로그아웃", exact: true }).click();
   await expect(page.getByRole("link", { name: "로그인", exact: true })).toBeVisible();
-  expect((await (await page.request.get("/api/me")).json()).user).toBeNull();
+  expect(await page.evaluate(async () => (await (await fetch("/api/me", { cache: "no-store" })).json()).user)).toBeNull();
   const [stored] = await db.select().from(publicSessions).where(eq(publicSessions.tokenHash, hashSessionToken(cookie.value)));
   expect(stored.revokedAt).not.toBeNull();
 });
@@ -76,7 +86,7 @@ test("wrong code preserves the form and an external return URL becomes the local
   await expect(page.getByLabel("인증 코드", { exact: true })).toBeVisible();
   await page.getByLabel("인증 코드", { exact: true }).fill(receivedCode() === "00000000" ? "11111111" : "00000000");
   await page.getByRole("button", { name: "로그인", exact: true }).click();
-  await expect(page.getByRole("alert")).toContainText("코드가 올바르지 않거나 만료");
+  await expect(page.locator("form").filter({ has: page.getByLabel("이메일", { exact: true }) }).getByRole("alert")).toContainText("코드가 올바르지 않거나 만료");
   await expect(page.getByLabel("이메일", { exact: true })).toHaveValue("retry-reader@example.com");
   await page.getByLabel("인증 코드", { exact: true }).fill(receivedCode());
   await page.getByRole("button", { name: "로그인", exact: true }).click();

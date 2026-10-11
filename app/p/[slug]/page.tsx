@@ -11,6 +11,7 @@ import { IntroSection } from "@/components/product-detail/IntroSection";
 import { LanguageBar } from "@/components/product-detail/LanguageBar";
 import { PreviewFigure } from "@/components/product-detail/PreviewFigure";
 import { ProductHero } from "@/components/product-detail/ProductHero";
+import { GithubStarButton } from "@/components/product-detail/GithubStarButton";
 import { RelatedRow } from "@/components/product-detail/RelatedRow";
 import { UpdateTimeline } from "@/components/product-detail/UpdateTimeline";
 import { UnclaimedOwnerContact } from "@/components/product-detail/UnclaimedOwnerContact";
@@ -25,6 +26,8 @@ import { countProducts } from "@/lib/domain/products/repository";
 import type { Category } from "@/lib/domain/products/schema";
 import { productJsonLd, serializeJsonLd } from "@/lib/seo/product-json-ld";
 import { siteOrigin } from "@/lib/site";
+import { githubStarEnabled } from "@/lib/domain/github-integration/flags";
+import { parseGithubRepository } from "@/lib/github/repositories";
 
 export const dynamic = "force-dynamic";
 
@@ -100,7 +103,9 @@ async function ProductDetail({ slug, category }: { slug: string; category: strin
       </nav>
 
       <ProductHero product={detail.product} unclaimed={detail.unclaimed} risingRank={detail.risingRank} health={detail.health} languages={languages}
-        repositoryUrl={detail.repository?.facts?.repositoryUrl ?? null} />
+        repositoryUrl={detail.repository?.facts?.repositoryUrl ?? null}
+        personalGithubStar={githubStarEnabled() && !detail.product.repoGone && detail.product.repoUrl && parseGithubRepository(detail.product.repoUrl)
+          ? <GithubStarButton key={detail.product.slug} slug={detail.product.slug} /> : undefined} />
 
       {/* 넓으면 2:1 두 열, 좁으면 오른쪽 열이 본문 아래로 */}
       <div className="flex flex-wrap items-start gap-x-12 gap-y-9 pt-7">
