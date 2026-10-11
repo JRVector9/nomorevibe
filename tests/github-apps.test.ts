@@ -6,6 +6,12 @@ const { privateKey, publicKey } = generateKeyPairSync("rsa", { modulusLength: 20
 const pem = privateKey.export({ type: "pkcs1", format: "pem" }).toString();
 afterEach(() => vi.unstubAllGlobals());
 
+it("shares the extracted pure JWT signer without changing collector signatures", async () => {
+  const pure = await import("@/lib/github/app-jwt").catch(() => ({})) as { appJwt?: typeof appJwt };
+  expect(pure.appJwt).toBe(appJwt);
+  expect(pure.appJwt?.(123, pem, 1_800_000_000_000)).toBe(appJwt(123, pem, 1_800_000_000_000));
+});
+
 it("signs a 9-minute RS256 app JWT that starts a minute early and verifies with the app's public key", () => {
   const token = appJwt(123, pem, 1_800_000_000_000);
   const [header, payload, signature] = token.split(".");
