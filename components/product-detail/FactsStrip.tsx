@@ -16,11 +16,11 @@ const GRID_MIN = 3;
 function Tile({ label, value, note, tone, title }: Fact) {
   const color = tone === "up" ? "text-up" : tone === "down" ? "text-down" : "text-fg";
   return (
-    <div className="flex min-w-0 flex-col gap-1 border-l border-t border-line px-[18px] pb-3.5 pt-4" title={title}>
-      <dt className="text-[13px] text-fg-2">{label}</dt>
-      <dd className={`m-0 truncate text-[20px] font-semibold tracking-[-0.02em] tabular-nums ${color}`}>{value}</dd>
+    <div className="flex min-w-0 flex-[1_1_160px] flex-col gap-0.5 border-l border-t border-line px-3 py-2.5" title={title}>
+      <dt className="text-[13px] leading-[1.4] text-fg-2">{label}</dt>
+      <dd className={`m-0 truncate text-[16px] font-semibold leading-[1.35] tracking-[-0.02em] tabular-nums ${color}`}>{value}</dd>
       {/* 덧말도 값의 일부로 둘째 dd 에 둔다 — dl 묶음 안에는 dt·dd 만 와야 스크린리더가 짝을 읽는다(A11Y-04) */}
-      {note && <dd className="m-0 text-[13px] text-fg-2">{note}</dd>}
+      {note && <dd className="m-0 text-[13px] leading-[1.4] text-fg-2">{note}</dd>}
     </div>
   );
 }
@@ -44,8 +44,8 @@ const licenseName = (license: LicenseValue) => hasSpdx(license) ? license.spdxId
  * 값이 없는 칸('—'·'확인 안 됨'·'확인 전')은 그리지 않는다(UX-16) — 저장소를 아직 읽지 않은 제품은 칸 대부분이 비어
  * 고장 난 페이지처럼 보였다. 남은 칸이 셋보다 적으면 격자 대신 한 줄로 적는다.
  *
- * 칸 사이 선은 칸마다 왼쪽·위 선을 긋고 바깥 틀이 첫 줄·첫 칸의 선을 가린다 —
- * 칸 수가 열 수로 나누어떨어지지 않아도 빈 자리가 회색 덩어리로 보이지 않는다.
+ * 각 줄의 칸이 남은 너비를 나눠 갖고, 칸마다 왼쪽·위 선을 긋고 바깥 틀이 첫 줄·첫 칸의 선을 가린다 —
+ * 마지막 줄에 남은 칸도 줄 너비를 채운다.
  */
 export function FactsStrip({ product, repository, license, health, visits }: {
   product: ProductDetailView["product"];
@@ -130,8 +130,8 @@ export function FactsStrip({ product, repository, license, health, visits }: {
   }
 
   return (
-    <div className="overflow-hidden rounded-[18px] border border-line bg-bg-card">
-      <dl className="-ml-px -mt-px grid grid-cols-[repeat(auto-fit,minmax(min(200px,100%),1fr))]">
+    <div className="overflow-hidden rounded-[12px] border border-line bg-bg-card">
+      <dl className="-ml-px -mt-px flex flex-wrap">
         {tiles.map((tile) => <Tile key={tile.label} {...tile} />)}
       </dl>
     </div>

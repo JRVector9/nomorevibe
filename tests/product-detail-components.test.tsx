@@ -364,7 +364,7 @@ describe("evidence product detail components", () => {
     const missing: ProductDetailView["license"] = { state: "missing", label: "라이선스 확인 안 됨", maker: null, observed: null };
     const unread = renderFacts({ repository: null, license: missing });
     // 값이 없는 칸은 그리지 않고, 셋보다 적게 남으면 격자 대신 한 줄
-    expect(unread).not.toContain("grid");
+    expect(unread).not.toContain("flex-[1_1_160px]");
     expect(unread.match(/<dt/g)).toHaveLength(1);
     expect(textOf(unread)).toContain("nomorevibe 등록7월 1일");
     expect(textOf(unread)).toContain("저장소 정보는 아직 수집하지 않았습니다.");
@@ -377,16 +377,16 @@ describe("evidence product detail components", () => {
     // 확인한 가동 상태 하나가 더해져도 둘 — 아직 한 줄
     const checked = { uptime30d: null, latencyMs: null, checkedAt: new Date(), down: false };
     const two = renderFacts({ repository: null, license: missing, health: checked });
-    expect(two).not.toContain("grid");
+    expect(two).not.toContain("flex-[1_1_160px]");
     expect(textOf(two)).toContain("가동 상태온라인");
-    // 셋이면 격자
+    // 셋이면 여러 칸으로 줄을 채운다
     const three = renderFacts({ repository: null, license: observedLicense, health: checked });
-    expect(three).toContain("grid");
+    expect(three).toContain("flex-[1_1_160px]");
     expect(three.match(/<dt/g)).toHaveLength(3);
     // 라이선스를 읽지 못했으면 그 칸만 빠진다
     const noLicense = renderFacts({ license: missing });
     expect(noLicense).not.toContain("라이선스");
-    expect(noLicense).toContain("grid");
+    expect(noLicense).toContain("flex-[1_1_160px]");
 
     const unknown = renderFacts({ repository: { ...observedRepository, facts: { ...observedRepository.facts!, archived: null, fork: null } } });
     expect(unknown).not.toContain("활성");
@@ -816,6 +816,8 @@ describe("evidence product detail components", () => {
     expect(source).toContain("risingRank={detail.risingRank}");
     expect(source).not.toContain("<ProductGallery");
     expect(source).not.toContain("<EvidenceCard");
+    expect(source).not.toContain("<BuildTools");
+    expect(source).not.toContain("무엇으로 만들었나");
     // 홈과 같은 폭 — 상세만의 1220px 틀은 버렸다
     expect(source).toContain('<main className="wrap pb-14">');
     expect(source).not.toContain("max-w-[1220px]");
@@ -829,11 +831,10 @@ describe("evidence product detail components", () => {
     expect(notFoundAt).toBeGreaterThan(-1);
     expect(notFoundAt).toBeLessThan(source.indexOf("<Suspense fallback={<DetailSkeleton />}>"));
     expect(renderToStaticMarkup(<DetailSkeleton />)).toContain('aria-busy="true"');
-    // 읽기 순서: 히어로 → 핵심 사실 → 무엇으로 만들었나 → 소개 → 언어 → 업데이트 → 정보 → 미리보기 → 운영자 → 같은 분야
+    // 읽기 순서: 히어로 → 핵심 사실 → 소개 → 언어 → 업데이트 → 정보 → 미리보기 → 운영자 → 같은 분야
     const order = [
       "<ProductHero",
       "<FactsStrip",
-      "<BuildTools",
       "<IntroSection",
       "<LanguageBar",
       "<UpdateTimeline",
