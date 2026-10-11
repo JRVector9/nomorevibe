@@ -4,6 +4,7 @@ import { MobileNav } from "@/components/home/MobileNav";
 import { SiteFooter } from "@/components/home/SiteFooter";
 import { SiteHeader } from "@/components/home/SiteHeader";
 import { HOME_TITLE } from "@/lib/copy/brand";
+import { SITE_DESCRIPTION, SITE_SHARE } from "@/lib/copy/share";
 import { siteOrigin } from "@/lib/site";
 import "./globals.css";
 
@@ -13,14 +14,13 @@ export const metadata: Metadata = {
    * 틀을 두면 이미 브랜드를 붙여 쓰는 관리자 화면 제목에 브랜드가 두 번 붙는다.
    */
   title: HOME_TITLE,
-  description:
-    "AI로 만들어 배포한 서비스를 /nomorevibe 한 번으로 등록하세요. 우리가 직접 확인한 것만 보여줍니다.",
-  /**
-   * 피드 리더가 /feed.xml을 스스로 찾게 한다 — 주소를 알려주지 않으면 있어도 없는 것이다.
-   *
-   * metadataBase를 두지 않았으므로 상대 경로는 빌드를 막는다. robots.ts·sitemap.ts와 같이
-   * siteOrigin()으로 절대 URL을 만든다.
-   */
+  // 약속은 실제와 맞춘다(UX-05) — 예전 "우리가 직접 확인한 것만 보여줍니다"는 찾아 올린 목록과 어긋났다(lib/copy/share.ts)
+  description: SITE_DESCRIPTION,
+  /** 공유 미리보기의 상대 주소(그림 등)를 절대 주소로 — robots.ts·sitemap.ts 와 같은 siteOrigin() */
+  metadataBase: new URL(siteOrigin()),
+  /** 공유 미리보기 기본값 — 사이트 이름·한국어·기본 그림(SEO-01·UX-07). 제품 상세는 제 그림과 소개로 바꾼다 */
+  ...SITE_SHARE,
+  /** 피드 리더가 /feed.xml을 스스로 찾게 한다 — 주소를 알려주지 않으면 있어도 없는 것이다 */
   alternates: {
     types: { "application/rss+xml": `${siteOrigin()}/feed.xml` },
   },

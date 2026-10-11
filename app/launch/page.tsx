@@ -90,11 +90,12 @@ export default async function LaunchPage() {
           {
             n: "02",
             title: "도메인 소유권을 검증합니다",
-            body: `AI가 /.well-known/nomorevibe.txt 파일을 프로젝트에 추가해줍니다. 재배포 후 ${VERIFY_COMMAND} — 검증된 제품만 공개 목록에 오릅니다.`,
+            // 직접 등록한 프로젝트 이야기다 — 공개 목록 전체가 검증된 것처럼 읽히지 않게(UX-05)
+            body: `AI가 /.well-known/nomorevibe.txt 파일을 프로젝트에 추가해줍니다. 재배포 후 ${VERIFY_COMMAND} — 직접 등록한 프로젝트는 소유권 확인을 마쳐야 공개되고 ✓가 붙습니다.`,
           },
           {
             n: "03",
-            title: "확인한 것만 보여줍니다",
+            title: "확인한 곳에만 ✓를 붙입니다",
             body: "검증한 척하지 않습니다. '만든 AI'는 메이커 신고로 표기되고, ✓ 표시는 우리가 직접 확인한 도메인 소유권에만 붙습니다.",
           },
         ].map((s) => (

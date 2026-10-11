@@ -15,6 +15,7 @@ import { RelatedRow } from "@/components/product-detail/RelatedRow";
 import { UpdateTimeline } from "@/components/product-detail/UpdateTimeline";
 import { UnclaimedOwnerContact } from "@/components/product-detail/UnclaimedOwnerContact";
 import { categoryHref } from "@/components/home/browse-state";
+import { productShareImage, shareMetadata } from "@/lib/copy/share";
 import { pageTitle } from "@/lib/copy/brand";
 import { getProductDetail, getProductIdentity } from "@/lib/domain/products/detail-view";
 import { productIndexable } from "@/lib/domain/products/indexing";
@@ -34,9 +35,13 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { slug } = await params;
   const product = await identityOf(slug);
   if (!product) return {};
+  // 한국어 소개가 있으면 그것으로 — 검색 결과와 공유 미리보기에 영어 원문이 그대로 뜨지 않게(SEO-05)
+  const description = product.taglineKo?.trim() || product.tagline;
   return {
     title: pageTitle(product.name),
-    description: product.tagline,
+    description,
+    // 공유 미리보기 — 그 사이트의 대표 이미지가 있으면 그것, 없으면 사이트 기본 그림(lib/copy/share.ts, SEO-01·UX-07)
+    ...shareMetadata({ title: pageTitle(product.name), description, image: productShareImage(product.ogImage) }),
     // 색인 규칙은 sitemap 과 하나다(indexing.ts, UX-08·D1) — 내려달라는 요청이 들어오면 바로 noindex(엣지 사본은 그때 지운다 — takedown.ts)
     robots: productIndexable(product) ? undefined : { index: false, follow: false },
   };
