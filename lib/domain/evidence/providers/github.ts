@@ -159,6 +159,7 @@ export function mapGitHubRepositoryFacts(input: {
   const updatedAt = iso(input.repository.updated_at);
   if (!createdAt || !updatedAt) throw new Error("GitHub repository timestamps are invalid");
   const releases = normalizeReleases(input.releases);
+  const licenseSpdxId = input.repository.license?.spdx_id?.trim();
   return {
     type: "github_repository",
     repositoryKey: input.repository.full_name.toLowerCase(),
@@ -178,7 +179,9 @@ export function mapGitHubRepositoryFacts(input: {
     license: input.repository.license
       ? {
           value: input.repository.license.name.slice(0, 120),
-          spdxId: input.repository.license.spdx_id?.slice(0, 80) ?? null,
+          // NOASSERTION is an unknown value, not a license identity.
+          spdxId: licenseSpdxId && !/^(NOASSERTION|NONE)$/i.test(licenseSpdxId)
+            ? licenseSpdxId.slice(0, 80) : null,
           url: input.repository.license.url?.slice(0, 1_000) ?? null,
         }
       : null,
