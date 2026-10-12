@@ -1,4 +1,4 @@
-import { getFeedback, listProductFeedback } from "@/lib/domain/feedback/repository";
+import { getFeedback, listProductFeedbackWithTotal } from "@/lib/domain/feedback/repository";
 import { submitFeedback } from "@/lib/domain/feedback/submit";
 import { FeedbackError, readFeedbackJson } from "@/lib/domain/feedback/contract";
 import { PublicAuthError, publicAuthErrorResponse, requirePublicMutation } from "@/lib/domain/accounts/request-auth";
@@ -10,7 +10,7 @@ type Context = { params: Promise<{ slug: string }> };
 export async function GET(_request: Request, context: Context) {
   if (!productFeedbackEnabled()) return Response.json({ error: "feedback_disabled" }, { status: 404, headers });
   const { slug } = await context.params;
-  return Response.json({ feedback: await listProductFeedback(slug) }, { headers });
+  return Response.json(await listProductFeedbackWithTotal(slug), { headers });
 }
 
 export async function POST(request: Request, context: Context) {

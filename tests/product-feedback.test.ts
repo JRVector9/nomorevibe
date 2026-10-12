@@ -65,7 +65,7 @@ vi.mock("@/lib/domain/accounts/request-auth", () => {
     publicAuthErrorResponse: (error: PublicAuthError) => Response.json({ error: error.code }, { status: error.status, headers: { "Cache-Control": "private, no-store" } }) };
 });
 vi.mock("@/lib/domain/feedback/submit", () => ({ submitFeedback: requestMocks.submit }));
-vi.mock("@/lib/domain/feedback/repository", () => ({ listProductFeedback: requestMocks.productList, listMyFeedback: requestMocks.mine, getFeedback: requestMocks.lookup }));
+vi.mock("@/lib/domain/feedback/repository", () => ({ listProductFeedbackWithTotal: requestMocks.productList, listMyFeedback: requestMocks.mine, getFeedback: requestMocks.lookup }));
 vi.mock("@/lib/domain/feedback/review", () => ({ reviewFeedback: requestMocks.review }));
 vi.mock("@/lib/auth/admin", () => ({ currentAdmin: requestMocks.admin, authSecret: () => "a".repeat(32), adminLocalLoginEnabled: () => false, LOCAL_ADMIN_LOGIN: "local" }));
 vi.mock("next/headers", () => ({ headers: requestMocks.headerList }));
@@ -100,7 +100,7 @@ describe("feedback request boundaries", () => {
   it("keeps public and personal feedback responses private and disables routes when flagged off", async () => {
     const { GET } = await import("@/app/api/products/[slug]/feedback/route");
     const mine = await import("@/app/api/me/feedback/route");
-    requestMocks.productList.mockResolvedValue([]);
+    requestMocks.productList.mockResolvedValue({ feedback: [], total: 0 });
     const response = await GET(new Request("https://nomorevibe.example/api/products/tool/feedback"), { params: Promise.resolve({ slug: "tool" }) });
     expect(response.headers.get("Cache-Control")).toBe("private, no-store");
     expect((await mine.GET(new Request("https://nomorevibe.example/api/me/feedback"))).status).toBe(401);
