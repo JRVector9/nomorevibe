@@ -6960,3 +6960,18 @@ main CI38223908991(head a5b390b20428b43dfecce8c85215a97c3a846f32)의 scope/quali
 
 
 postdeploy진단60609 actualexit0: activeconnection1/만료0, unstarred3(페이지재조회로최초관측행1증가)/desired_starrednonnull0, product-intro-check not_before2100-01-01/requested742/processed741/unleased 보존. 기존diagnostic의writes_requested는현재desirednonnull행수이며역대쓰기횟수지표가아님을구분한다. 도구는개인스타를누르지않았고정상GET관측행이생겼다. 사용자진행문의에는운영배포/브라우저조회복구완료·최종문서병합진행중이라고답변했다.
+
+
+### 2026-10-12 — ManimGX 실제 별 클릭 실패 직접 재현
+
+- 목적: 사용자가 /p/manimgx에서 여전히 즉각 반응하지 않는다고 하여 스킬·서브에이전트 없이 기존 로그인 Chrome에서 직접 별 클릭을 재현한다. 앞선 PR388은 Threadplane의 최초 저장소 조회 복구이고, 실제 스타 쓰기 성공까지 확인한 작업은 아니었다.
+- 증거: ManimGX 로그인 화면의 상단447개 별을 직접 클릭하면 숫자가 유지되고 `변경 결과를 확인할 수 없습니다`가 뜬다. Network에서 API PUT502/약1.34초/약6.7KB 응답을 확인했다. 운영 DB read-only diagnostic7276 actualexit0에서 두 실패 영수증(state unstarred/failure star_write_rejected502/desirednull/lease없음)을 확인했다. 해당 쓰기는 앱까지 도달했고 unknown timeout이 아닌 확정 거절로 처리됐다.
+- 제공자 확인: private operator provider-read.py9319/69098 actualexit0. 같은 사용자 토큰 GET스타404, Check-token POST200/StarApp client일치/유효, 공개 StarApp metadataread/starringwrite, user/installations200/count0. 같은 공식 API에 해당 사용자의 ManimGX 별 추가를 한번 확인한85359 actualexit0은403 Resource not accessible by integration/accepted starringwrite+metadataread. 실제 성공한 스타 변경은 없음. 설치0만으로 원인확정하지 않는다. GitHubApp scope offline_access는 공식문서상 refresh용이며 권한을 줄이지 않음.
+- 실패한 접근: GraphQL의 viewerCanStar는 실제 스키마에 없어서27943의 조회에 validation error → 공식 Starrable 문서 확인 후 제거했다. 6178의 읽기 actualexit0은 공개repo/id R_kgDOU9OKFg/viewerHasStarredfalse/live711을 확인했다. 27974의 단일 addStar 검증은 HTTP200 + FORBIDDEN Resource not accessible by integration/addStarnull. 다른 API로 쓰기우회에 성공했다고 주장하지 않는다. graphql-write-attempted0600 sentinel로 재실행금지. 일부 추정파일/글롭 읽기실패는 올바른 GithubConnection.tsx/secrets.ts로 정정했다.
+- UI 작업: 기존 Chrome Device emulation 상태 때문에 AX 클릭 좌표가 어긋나는 일부 실패가 있어 기기 툴바만 임시 해제한 뒤 실제 retry GET와PUT를 기록했다. 사용자가 Drive를 보는 중 탭 전환 경고 발생 시 freshAX 확인 후 서비스 탭만선택했고 Drive내용을 처리/수정하지 않았다. 새 GitHub /settings/apps/authorizations 탭은 Confirm access OTP를 요구한다. async 질문으로 사용자 인증 완료를 기다림. 비밀번호/OTP/새앱권한 입력 안함, 계정 연결 해제/키회전 안함.
+- 최소 코드 변경: lib/domain/github-stars/service.ts에서 non-rate-limit upstream403을502로 덮지 않고403으로 유지; components/product-detail/GithubStarButton.tsx에서 해당 확정거절을 명확한 GitHub 승인 권한 오류로 표시하고 불필요한 refresh/JSON502오류 추측을 피함. OAuth/앱권한 원인은 추가 확인 중이므로 기능복구 완료라고 주장하지 않는다. DB/lease/CSRF/숫자 보정/디자인/플래그 변경없음.
+- 검증: 아직 diff-check/새CI 미실행. 사용자의 페이지 직접 확인 요청에 따라 실제 제한된 클릭/제공자 진단을 했으나 새테스트·로컬 suite/typecheck/lint/build는 실행하지 않았다. 기존 필수 PR CI만 진행한다.
+- 작업 상태: rootmain1d2943a/사용자미추적자산보존. worktree /private/tmp/nomorevibe-star-denial-20261012 branchfix/star-provider-denial-20261012에2code파일+이인계 수정 중. 운영웹a5b390b/worker33349ed 유지. private진단폴더 /private/tmp/nomorevibe-manimgx-star-20261012는0700/파일0600이며 토큰은 프로세스 메모리만사용/출력없음. 소개검수2100-01-01/unleased를 확인했고 재개금지.
+- 다음명령: owned worktree에서 git diff --check와 직접 source review → 사용자 GitHub 추가 인증 완료 답변이오면 fresh CUA AX로 StarApp 실제 승인권한 확인(도구 재개시 cua.rewriteDocumentation 먼저) → 권한 범위/필요한 재승인 확인. 기능원인을확정할때까지 OAuth앱교체·대상제작자 설치요청을단정하지말고 불필요한 새 코드 추가안함. 확정된 코드만commit/push/body-file PR/최신base CI/matching-headmerge/정상배포. 이전 release.py deploy는before.json이있어 재실행금지. 관리자Tailscale 요청은여전히별도후속.
+
+직접 diff검토 및 git diff --check actualexit0: rate-limit403+Retry-After는 기존429 우선 처리,401reconnect/unknown fence/현재값복원 유지. 기존 통합 소스403rate-limit검증과충돌없음, 새로컬테스트실행안함. 현재승인확인OTP답변대기. 오류표시코드2줄변경이며기능복구완료와별개이다.
