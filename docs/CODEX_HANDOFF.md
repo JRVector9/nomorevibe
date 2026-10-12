@@ -1,17 +1,53 @@
+# 2026-10-13 — 댓글 PR01~04 운영 배포 진행 중
+
+## Current objective / completed work
+
+사용자가 댓글 작업을 커밋·푸시하고 운영에 배포하라고 명시했다. PR01~04 코드는 이미 커밋·푸시·교차 리뷰·기존 CI 통과 상태다. 스킬이나 추가 서브에이전트 없이 실제 Git/CI/운영 상태를 확인하고 보호된 main에 순차 병합한다. root의 기존 미추적 사용자 자산과 앞 단계 소유 문서를 보존한다.
+
+PR01 #393을 최신 base cd95de0 / head68940aa / check SUCCESS에서 matching-head 일반 merge로 병합했다. 실제 merge1d3b31a07ee08fe8843d0547e636a28eb7dc0ea7 (2026-10-12T15:04:39Z). PR02 #394는 main 반영 head41e3ca7d737405f8e6a5123e5f430e6e6cc9ad6f / CI38267679323 필수check 포함 전체 성공을 실제 확인하고 일반 merge452ae5643652f7964c797c364a71c783bcde1ecc (15:10:59Z)로 병합했다. PR03 #395는 main 반영 head653237c3200c25462433883369263f8d8a4f4234 / CI38268389005 필수check 포함 전체 성공을 실제 확인하고 일반 mergec731167c70e71aa276143e1ef4136df6e24fbee6 (15:16:32Z)로 병합했다. PR04 #396은 main 대상으로 바꾸고 해당 최신 main을 worktree에 정상 merge했다. 이 진행 기록을 포함해 commit·push한 다음 새 필수 CI를 확인한다. 아직 PR04 병합 또는 운영 배포 완료가 아니다.
+
+## Modified files / key design decisions
+
+현재 제품 코드 추가 수정은 없으며 루트 인계 문서만 갱신했다. GitHub 보호는 strict check·PR·관리자 적용, linear history false이며 merge commit이 허용된다. 기존 ancestry를 보존해 #393→#394→#395→#396 순으로 병합하고 매 단계 최신 main을 다음 브랜치에 반영·push하여 실제 필수check를 확인한다. force push·보호 우회는 사용하지 않는다.
+
+이번 변경은 웹 댓글 읽기/작성·공개 total API의 범위다. worker의 기존 공개 조회 계약은 유지하며 신규 total getter 소비자는 feedback GET route뿐이다. DB migration·worker 재배포·OAuth 키·플래그·스타 기능·소개 검수 설정은 변경하지 않는다. 웹 mini2개→M3 4개를 최종 main CI의 같은 private immutable digest로 교체한다. 기존 build/runtime action key·origin·registry·환경·replicas·source·autoDeploy를 유지한다.
+
+운영자 도구는 새 `/private/tmp/nomorevibe-comments-release-20261013-uyggqrv7/release.py`를 준비했다(폴더0700/파일0600). 기존 안전한 웹 전용 helper를 복사하고 현재 웹23e13d4/digest26fe7165·worker33349ed/digestce17a8의 mixed baseline 및 신규 feedback total의 web-only 소비자 범위로 guard를 맞췄다. 이전 operator의 before.json이 이미 있으므로 이전 deploy를 재실행하지 않는다. 새 capture/plan/deploy는 아직 수행하지 않았다. 새 before.json을 만들면 deploy를 반복하지 않으며 해당 세션부터 확인한다. secret-bearing preflight/before snapshot과 토큰은 출력·커밋 금지다.
+
+## Actual verification / failed approaches
+
+AGENTS.md·README CI/배포 절차·독립 워커 runbook의 공통 이미지/자동화 절차와 실제 helper 코드를 읽었다. `git fetch origin` 실제 성공. 네 PR의 이전 최종 check 성공과 head/base를 확인하고 #393을 병합했다. 새 helper의 Python compile 성공. read-only 운영 baseline·flags·소비자 guard 세션86244는 실제 exit0이었다. 두 웹23e13d4 / worker33349ed의 설정·실제 digest/health·mini2/M3 4 및 four flags true를 확인했다. 공개 상세 HEAD와 health는 curl에서 HTTP200/현재release23e13d4를 확인했다. 처음 Python urllib 상세 GET은403으로 실패했고 기존 curl 확인 방법을 사용했다. 배포 후 공개 읽기 확인은 curl 기반으로 준비했으며 제출·로그인은 하지 않는다. 로컬 기능/E2E 테스트·GitHub 스타/댓글 쓰기 시험은 하지 않는다. 기존 첫 구현 CI 실패/보정은 아래 이전 기록을 따른다.
+
+## Remaining work / exact commands
+
+PR04에 이 진행 문서만 추가 commit하고 latest-main merge를 push한 뒤 새 필수check를 확인해 matching-head merge한다. 최종 main의 전체 CI와 private web image 발행 성공 후 새 helper capture→plan(실제 pull/key/revision 확인)→deploy 한 번→verify 및 공개 GET을 확인한다. 배포 완료 후 실제 결과만 담은 문서 커밋/PR/필수check/병합과 root main FF를 마친다. 루트의 소유 문서에 충돌하는 미추적 파일을 지우지 말고 정확한 경로만 별도 보존한 뒤 FF한다. 소개 검수 재개 금지.
+
+```sh
+cd /Users/jr/Desktop/projects/nomorevibe
+git status --short --branch
+gh pr checks 396 --json name,state,link
+gh pr view 396 --json state,baseRefName,headRefOid,mergeStateStatus,statusCheckRollup
+python3 /private/tmp/nomorevibe-comments-release-20261013-uyggqrv7/release.py plan
+```
+
+마지막 plan 명령은 최종 main CI 성공 후 capture가 target.json을 만들었을 때만 실행한다. 아래는 이전 단계의 당시 기록이다.
+
+---
+
 # 2026-10-12 — 댓글 PR01~04 구현·통합·코드 리뷰 완료
 
 ## Current objective / completed work
 
-사용자가 PR01~04를 서브에이전트 병렬로 구현하고 오케스트레이터가 충돌 관리·완료 후 코드 리뷰·보고하도록 지시했다. 네 PR의 구현·통합·교차 리뷰 보정·커밋·푸시·PR 게시를 완료했다. PR01 #393, PR02 #394, PR03 #395 및 PR04 #396 코드 통합본의 필수 CI 성공을 실제 확인했다. 최종 문서 커밋 후 PR04의 최신 head check를 다시 확인한다. 아직 병합·운영 배포를 하지 않았다. 사용자 직접 화면 기능 테스트와 실제 GitHub 전송 확인은 남아 있다.
+사용자가 PR01~04를 서브에이전트 병렬로 구현하고 오케스트레이터가 충돌 관리·완료 후 코드 리뷰·보고하도록 지시했다. 네 PR의 구현·통합·교차 리뷰 보정·커밋·푸시·PR 게시를 완료했다. PR01 #393, PR02 #394, PR03 #395 및 문서를 포함한 PR04 #396 최종 head의 필수 CI 성공을 실제 확인했다. 구현·리뷰·검사·PR 게시 작업을 완료했으며 사용자에게 결과를 보고한다. 아직 병합·운영 배포를 하지 않았다. 사용자 직접 화면 기능 테스트와 실제 GitHub 전송 확인은 남아 있다.
 
 | PR / base | worktree / branch | 확인한 코드 head / CI |
 | --- | --- | --- |
 | [PR01 #393](https://github.com/JRVector9/nomorevibe/pull/393) / main | /private/tmp/nomorevibe-comments-pr01-20261012 / feat/comments-list-20261012 | 68940aa / CI38263733075 성공 |
 | [PR02 #394](https://github.com/JRVector9/nomorevibe/pull/394) / PR01 branch | /private/tmp/nomorevibe-comments-pr02-20261012 / feat/comments-compose-20261012 | f9d7ffa / CI38263748425 성공 |
 | [PR03 #395](https://github.com/JRVector9/nomorevibe/pull/395) / PR02 branch | /private/tmp/nomorevibe-comments-pr03-20261012 / feat/comments-results-20261012 | 7eb0ddb / CI38264257084 성공 |
-| [PR04 #396](https://github.com/JRVector9/nomorevibe/pull/396) / PR03 branch | /private/tmp/nomorevibe-comments-pr04-20261012 / feat/comments-github-20261012 | c695954 코드 통합 / CI38265357907 성공 |
+| [PR04 #396](https://github.com/JRVector9/nomorevibe/pull/396) / PR03 branch | /private/tmp/nomorevibe-comments-pr04-20261012 / feat/comments-github-20261012 | 147a9b35d993858776a4f0b7e0b9faeea08cfc92 최종 head / CI38265898225 성공 (코드 c695954 / CI38265357907도 성공) |
 
-각 CI 성공은 해당 시점 head 및 stacked base의 scope·quality·integration3분할·필수check 성공이다. 미래 main 병합 결과로 해석하지 않는다. GitGuardian 성공도 확인했다. 최종 문서 커밋 후 PR04의 최신 check를 확인한다.
+각 CI 성공은 해당 시점 head 및 stacked base의 scope·quality·integration3분할·필수check 성공이다. 미래 main 병합 결과로 해석하지 않는다. GitGuardian 성공도 확인했다. PR04 문서 커밋147a9b3의 최신 check까지 실제 SUCCESS를 확인했다. 원격 head와 일치하며 네 worktree는 모두 clean이다. 마지막 fetch에서도 root HEAD와 origin/main은 cd95de0으로 같고 네 PR은 OPEN이다. PR04의 mergeable=MERGEABLE을 확인했다. 이 최신 CI 관측은 루트 인계 문서에 기록하며 PR04의 커밋된 인계 문서는 문서 작성 시점의 CI 기록이다.
 
 ## Modified files / key design decisions
 
@@ -44,7 +80,7 @@ git diff --check cd95de0..HEAD
 
 ## Remaining work / exact commands
 
-PR04 최종 문서 커밋·push 후 최신 check를 확인하고 최종 보고한다. 이후 사용자 기능 테스트, #393→#394→#395→#396 순 병합 및 최신 main base의 필수check 재확인, 운영 웹 배포가 남아 있다. protected main을 직접 push하거나 체크를 우회하지 않는다. PR01 병합 후 후속 PR을 main 대상으로 바꾸고 실제 main 반영·CI를 확인한다. 사용자 미추적 파일을 일괄 stage/삭제하지 않는다.
+구현·리뷰 결과를 최종 보고한다. 다음 단계는 사용자 기능 테스트, #393→#394→#395→#396 순 병합 및 최신 main base의 필수check 재확인, 운영 웹 배포가 남아 있다. protected main을 직접 push하거나 체크를 우회하지 않는다. PR01 병합 후 후속 PR을 main 대상으로 바꾸고 실제 main 반영·CI를 확인한다. 사용자 미추적 파일을 일괄 stage/삭제하지 않는다.
 
 ```sh
 cd /Users/jr/Desktop/projects/nomorevibe
