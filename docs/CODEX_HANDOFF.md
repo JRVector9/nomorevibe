@@ -1,36 +1,56 @@
-# 2026-10-13 — 댓글 PR01~04 운영 배포 진행 중
+# 2026-10-13 — 댓글 PR01~04 커밋·푸시·병합·운영 배포 완료
 
 ## Current objective / completed work
 
-사용자가 댓글 작업을 커밋·푸시하고 운영에 배포하라고 명시했다. PR01~04 코드는 이미 커밋·푸시·교차 리뷰·기존 CI 통과 상태다. 스킬이나 추가 서브에이전트 없이 실제 Git/CI/운영 상태를 확인하고 보호된 main에 순차 병합한다. root의 기존 미추적 사용자 자산과 앞 단계 소유 문서를 보존한다.
+사용자가 댓글 작업을 커밋·푸시하고 운영에 배포하라고 명시했다. 네 PR의 코드·리뷰 보정·커밋·푸시 및 최신 main 기준 CI 확인·일반 matching-head 순차 병합을 마쳤다. 최종 코드 main0db24f0의 전체 CI·private web image 발행을 확인한 뒤 mini 웹2개→M3 웹4개를 같은 immutable digest로 배포했다. 실제 플랫폼/컨테이너·공개 페이지/API·DB·워커 상태 확인까지 완료했다. 스킬·추가 서브에이전트·Codex CLI를 사용하지 않았다.
 
-PR01 #393을 최신 base cd95de0 / head68940aa / check SUCCESS에서 matching-head 일반 merge로 병합했다. 실제 merge1d3b31a07ee08fe8843d0547e636a28eb7dc0ea7 (2026-10-12T15:04:39Z). PR02 #394는 main 반영 head41e3ca7d737405f8e6a5123e5f430e6e6cc9ad6f / CI38267679323 필수check 포함 전체 성공을 실제 확인하고 일반 merge452ae5643652f7964c797c364a71c783bcde1ecc (15:10:59Z)로 병합했다. PR03 #395는 main 반영 head653237c3200c25462433883369263f8d8a4f4234 / CI38268389005 필수check 포함 전체 성공을 실제 확인하고 일반 mergec731167c70e71aa276143e1ef4136df6e24fbee6 (15:16:32Z)로 병합했다. PR04 #396은 main 대상으로 바꾸고 해당 최신 main을 worktree에 정상 merge했다. 이 진행 기록을 포함해 commit·push한 다음 새 필수 CI를 확인한다. 아직 PR04 병합 또는 운영 배포 완료가 아니다.
+| PR | 실제 검증 head / CI | merge |
+| --- | --- | --- |
+| #393 | 68940aa / 38263733075 SUCCESS | 1d3b31a07ee08fe8843d0547e636a28eb7dc0ea7 |
+| #394 | 41e3ca7d737405f8e6a5123e5f430e6e6cc9ad6f / 38267679323 SUCCESS | 452ae5643652f7964c797c364a71c783bcde1ecc |
+| #395 | 653237c3200c25462433883369263f8d8a4f4234 / 38268389005 SUCCESS | c731167c70e71aa276143e1ef4136df6e24fbee6 |
+| #396 | 589c9afc1c45022380fd273a98f22ba8b223d7b2 / 38269164775 SUCCESS | 0db24f0d4afec7c7a70065f45103446f22fd024f |
+
+각 후속 PR은 main 대상 변경 후 실제 최신 main을 브랜치에 merge·push하고 필수check를 확인했다. force push/보호 우회/브랜치 삭제는 없었다. main CI38269773018의 scope·quality·integration3분할·필수check·worker/web publish는 실제 completed/success다. 문서 전달 main SHA와 실제 운영 code release가 다를 수 있으며 문서만으로 재배포하지 않는다.
 
 ## Modified files / key design decisions
 
-현재 제품 코드 추가 수정은 없으며 루트 인계 문서만 갱신했다. GitHub 보호는 strict check·PR·관리자 적용, linear history false이며 merge commit이 허용된다. 기존 ancestry를 보존해 #393→#394→#395→#396 순으로 병합하고 매 단계 최신 main을 다음 브랜치에 반영·push하여 실제 필수check를 확인한다. force push·보호 우회는 사용하지 않는다.
+제품 추가 코드는 작성하지 않았다. 이번 단계는 PR04 진행 인계 커밋589c9af, 최종 인계 문서, 신규 `docs/operations/2026-10-13-comments-production-rollout.md`, 계획/리뷰 보고서의 배포 상태 갱신이다. 문서 전달은 `/private/tmp/nomorevibe-comments-release-docs-20261013` / `docs/comments-production-release-20261013` worktree에서 수행한다. 사용자 미추적 산출물은 stage/삭제하지 않았다.
 
-이번 변경은 웹 댓글 읽기/작성·공개 total API의 범위다. worker의 기존 공개 조회 계약은 유지하며 신규 total getter 소비자는 feedback GET route뿐이다. DB migration·worker 재배포·OAuth 키·플래그·스타 기능·소개 검수 설정은 변경하지 않는다. 웹 mini2개→M3 4개를 최종 main CI의 같은 private immutable digest로 교체한다. 기존 build/runtime action key·origin·registry·환경·replicas·source·autoDeploy를 유지한다.
+실행 release0db24f0d4afec7c7a70065f45103446f22fd024f, private web `ghcr.io/jrvector9/nomorevibe-runtime-web@sha256:62fb6c59836afa46186d0b5dbbd7ae8fd88d94e0d2eeb5f06d86318098ec17e9`이다. mini deployment1lOdFUzb9YGg3oBh5sBFr, M3S6PJE-SWveHQ0o1NaPcFO 모두 done/healthy. 실제 mini2/2·M3 4/4 컨테이너 digest/release/환경·공개 health가 일치했다. worker33349ed1352caabcb434ac4906bc2a2213ac2a51 / ce17a8f84c31bbab98bd9186e2ecaefc4fd8855a6c55d1c2a7ff84f32952ade9를 유지했다. 이번 CI worker df75d8a44f9caf4d65baedf0030eb438767b9e61522403e4e1c58ac6cd857dfe는 발행만 확인했고 배포하지 않았다.
 
-운영자 도구는 새 `/private/tmp/nomorevibe-comments-release-20261013-uyggqrv7/release.py`를 준비했다(폴더0700/파일0600). 기존 안전한 웹 전용 helper를 복사하고 현재 웹23e13d4/digest26fe7165·worker33349ed/digestce17a8의 mixed baseline 및 신규 feedback total의 web-only 소비자 범위로 guard를 맞췄다. 이전 operator의 before.json이 이미 있으므로 이전 deploy를 재실행하지 않는다. 새 capture/plan/deploy는 아직 수행하지 않았다. 새 before.json을 만들면 deploy를 반복하지 않으며 해당 세션부터 확인한다. secret-bearing preflight/before snapshot과 토큰은 출력·커밋 금지다.
+기존 four GitHub flags true·configurationMatched true다. 웹 환경에서 RELEASE_TAG/NEXT_DEPLOYMENT_ID만 변경했고 인증키/origin/source/autoDeploy/replicas/명령/buildSecrets를 보존했다. 새 DB schema·migration·worker 교체·키 회전·스타 기능 변경은 없었다. 공유 repository의 신규 total getter는 web GET 소비자만 있으며 기존 worker 계약은 호환을 유지한다. 소개 검수2100-01-01/unleased를 배포 전후 실제 읽기로 확인했고 재개하지 않았다.
 
-## Actual verification / failed approaches
+## Test commands and actual results / failed approaches
 
-AGENTS.md·README CI/배포 절차·독립 워커 runbook의 공통 이미지/자동화 절차와 실제 helper 코드를 읽었다. `git fetch origin` 실제 성공. 네 PR의 이전 최종 check 성공과 head/base를 확인하고 #393을 병합했다. 새 helper의 Python compile 성공. read-only 운영 baseline·flags·소비자 guard 세션86244는 실제 exit0이었다. 두 웹23e13d4 / worker33349ed의 설정·실제 digest/health·mini2/M3 4 및 four flags true를 확인했다. 공개 상세 HEAD와 health는 curl에서 HTTP200/현재release23e13d4를 확인했다. 처음 Python urllib 상세 GET은403으로 실패했고 기존 curl 확인 방법을 사용했다. 배포 후 공개 읽기 확인은 curl 기반으로 준비했으며 제출·로그인은 하지 않는다. 로컬 기능/E2E 테스트·GitHub 스타/댓글 쓰기 시험은 하지 않는다. 기존 첫 구현 CI 실패/보정은 아래 이전 기록을 따른다.
+AGENTS.md·README CI/배포 절차·독립 워커 runbook 및 기존 웹 전용 helper를 읽었다. root fetch/FF와 최신 main 기준 PR check/merge를 실제 수행했다. capture84168·plan56867·deploy33747·verify34895·public61485·health9177/99936 모두 실제 exit0이었다. capture는 전체 main CI success와 정확한 digest를 확인했다. plan은 양 서버의 실제 private pull·arm64/OCI revision·build/runtime action key 일치를 확인했다. deploy는 새0600 snapshot 후 한 번만 실행했다.
+
+verify는 두 웹 포함 Docker8앱12컨테이너의 image/release·전체 saved/runtime env·health·배포 정책 보존을 확인했다. 공개 health가 mini-web/m3-web 둘 다 새release/status/db ok였다. curl GET의 홈/login/api-me/ManimGX/OpenFilm/ManimGX feedback6곳은200이었다. 두 상세의 asset dpl은 새release이며 댓글 영역/anchor/작성 진입 각각1개·초기 열린 composer0개였다. 익명 me 응답은 기존 계약, ManimGX total0/목록0이다. workerFailover/workerProgress ok 및 introPaused true를 실제 확인했다.
+
+최초 urllib 상세 GET은403으로 실패했다. 기존 curl 방식의 상세 HEAD/후속 GET200으로 확인했다. 존재하지 않는 추정 glob 검색은 실제 파일 검색으로 바로잡았다. 기존 Cloudflare purge token 인증 실패는 재시도하지 않았으며 canonical GET의 새 asset ID로 반영을 확인했다. 배포·현재 CI 실패는 없었다. 이전 구현 CI 실패와 보정은 아래 역사 기록을 따른다.
+
+로컬 자동 기능/E2E·브라우저 테스트·실제 인증·댓글 제출·GitHub 스타/이슈 쓰기는 사용자 선호에 따라 실행하지 않았다. 원격 기존 CI의 타입/lint/unit/빌드/번들·DB 통합 성공과 사용자 직접 기능 테스트를 구분한다. ON 플래그 또는 HTML 확인을 실제 GitHub 쓰기 성공으로 해석하지 않는다.
 
 ## Remaining work / exact commands
 
-PR04에 이 진행 문서만 추가 commit하고 latest-main merge를 push한 뒤 새 필수check를 확인해 matching-head merge한다. 최종 main의 전체 CI와 private web image 발행 성공 후 새 helper capture→plan(실제 pull/key/revision 확인)→deploy 한 번→verify 및 공개 GET을 확인한다. 배포 완료 후 실제 결과만 담은 문서 커밋/PR/필수check/병합과 root main FF를 마친다. 루트의 소유 문서에 충돌하는 미추적 파일을 지우지 말고 정확한 경로만 별도 보존한 뒤 FF한다. 소개 검수 재개 금지.
+제품 운영 배포의 필수 작업은 완료했다. 사용자는 로그인 전/후 작성 진입·인증 복귀·취소/초안·검토 상태·응답 유실/동일 요청 재시도·GitHub 별도 동의·모바일을 직접 확인한다. 실제 GitHub 전달은 제작자가 수신을 연결한 프로젝트에서 별도 동의 후 이슈/원문으로 확인한다. 중단 소개 검수·별 스타/OAuth 전환·관리자 Tailscale 인증은 별도 지시 없이 재개하지 않는다.
+
+운영자 폴더 `/private/tmp/nomorevibe-comments-release-20261013-uyggqrv7`는0700, helper/snapshot은0600이다. target/verification/public-get/health metadata는 읽기 결과이며 preflight.json/before.json은 비밀을 포함하므로 출력·공유·커밋 금지다. before.json이 이미 생성돼 deploy 재실행 금지. 아래 verify는 읽기만 하며 새 변경/문제가 없으면 같은 검사를 반복할 필요가 없다.
 
 ```sh
 cd /Users/jr/Desktop/projects/nomorevibe
 git status --short --branch
-gh pr checks 396 --json name,state,link
-gh pr view 396 --json state,baseRefName,headRefOid,mergeStateStatus,statusCheckRollup
-python3 /private/tmp/nomorevibe-comments-release-20261013-uyggqrv7/release.py plan
+git rev-parse HEAD origin/main
+gh pr view 393 --json state,mergeCommit
+gh pr view 394 --json state,mergeCommit
+gh pr view 395 --json state,mergeCommit
+gh pr view 396 --json state,mergeCommit
+python3 /private/tmp/nomorevibe-comments-release-20261013-uyggqrv7/release.py verify
+python3 /private/tmp/nomorevibe-comments-release-20261013-uyggqrv7/public_get.py 0db24f0d4afec7c7a70065f45103446f22fd024f
+python3 /private/tmp/nomorevibe-comments-release-20261013-uyggqrv7/health_verify.py after
 ```
 
-마지막 plan 명령은 최종 main CI 성공 후 capture가 target.json을 만들었을 때만 실행한다. 아래는 이전 단계의 당시 기록이다.
+소유 시안/계획/리뷰/인계를 정확한 경로로 보존한 stash a7813ffdb053286bffee61df83a6ce19424f8a4e와 진행 인계만 보존한 f5d30cc246b22a932e46478261542b3cd483ac28을 유지한다. 사용자 나머지 미추적 파일은 그대로다. 최신 main에 이 과거 stash를 적용/삭제하지 않는다. 안전한 상세 배포 기록은 docs/operations/2026-10-13-comments-production-rollout.md이며 아래는 이전 단계의 당시 기록이다.
 
 ---
 
