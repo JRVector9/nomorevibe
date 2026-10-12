@@ -2,7 +2,7 @@ import Link from "next/link";
 import type { Metadata } from "next";
 import { canonicalAlternates } from "@/app/page";
 import { CompactCard } from "@/components/home/CompactCard";
-import { StarGrowthSummary, STAR_GROWTH_TITLE, starGrowthNote } from "@/components/home/StarGrowthSummary";
+import { StarGrowthSummary, STAR_GROWTH_TITLE, starGrowthTitle, starGrowthNote } from "@/components/home/StarGrowthSummary";
 import { getStarGrowthPage, type StarGrowthPage } from "@/lib/domain/products/star-growth";
 import { pageTitle } from "@/lib/copy/brand";
 import { formatCount } from "@/lib/format/number";
@@ -33,14 +33,14 @@ export default async function RisingPage({ searchParams }: { searchParams: Promi
       <section id="star-growth-list" className="row-section" aria-labelledby="star-growth-title">
         <div className="row-head">
           <div>
-            <h1 id="star-growth-title" className="row-title">{STAR_GROWTH_TITLE}</h1>
+            <h1 id="star-growth-title" className="row-title">{starGrowthTitle(result?.snapshot ?? null)}</h1>
             <p className="row-note">{starGrowthNote(result?.snapshot ?? null)} · <Link prefetch={false} href="/?metric=star-growth">집계 기준</Link></p>
           </div>
           <Link prefetch={false} href="/#rising" className="row-more">홈으로</Link>
         </div>
         <StarGrowthSummary snapshot={result?.snapshot ?? null} now={now} />
-        {result?.snapshot.status === "ready" && <>
-          <p className="row-note">전일 대비 순증가가 많은 순 · {formatCount(result.total)}개</p>
+        {(result?.snapshot.status === "ready" || result?.snapshot.status === "observing") && <>
+          <p className="row-note">{result.snapshot.status === "observing" ? "이번 회차 스타가 많은 순" : "전일 대비 순증가가 많은 순"} · {formatCount(result.total)}개</p>
           <div className="compact-grid">
             {result.items.map((product, index) => <CompactCard key={product.slug} product={product} trailing="category" priority={index < 3} headingLevel={2} />)}
           </div>

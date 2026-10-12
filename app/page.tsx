@@ -17,7 +17,7 @@ import {
 import { ActiveList } from "@/components/home/ActiveList";
 import { CompactRow } from "@/components/home/CompactRow";
 import { CompactCard } from "@/components/home/CompactCard";
-import { STAR_GROWTH_TITLE, starGrowthNote } from "@/components/home/StarGrowthSummary";
+import { starGrowthTitle, starGrowthNote } from "@/components/home/StarGrowthSummary";
 import { IntroLine } from "@/components/home/IntroLine";
 import { LaunchBand } from "@/components/home/LaunchBand";
 import { listHomeNews } from "@/lib/news/repository";
@@ -629,7 +629,7 @@ export async function HomeContent({ params }: { params: HomeParams }) {
     <main className="wrap">
       {!scoped && <IntroLine pulse={pulse} total={total} state={state} />}
       {!filtered && (
-        <CompactRow id="rising" priority title={STAR_GROWTH_TITLE} note={<>{starGrowthNote(strip?.snapshot ?? null)} · <Link prefetch={false} href={metricHref(state, "star-growth")} scroll={false}>집계 기준</Link></>}
+        <CompactRow id="rising" priority title={starGrowthTitle(strip?.snapshot ?? null)} note={<>{starGrowthNote(strip?.snapshot ?? null)} · <Link prefetch={false} href={metricHref(state, "star-growth")} scroll={false}>집계 기준</Link></>}
           summary={(strip?.items.length ?? 0) === 0 ? <p className="row-note" role="status">{!strip
             ? "급상승 집계를 불러오지 못했습니다. 잠시 후 다시 확인해 주세요."
             : strip.snapshot.status === "warming"

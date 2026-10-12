@@ -46,7 +46,7 @@ export type StarGrowthRunSummary = {
 };
 
 export type StarGrowthSnapshot = {
-  status: "ready" | "warming" | "late" | "no-results";
+  status: "ready" | "observing" | "warming" | "late" | "no-results";
   reason: "missing-run" | "run-not-closed" | "run-failed" | "missing-baseline" | "baseline-not-closed"
     | "invalid-policy" | "invalid-cycle" | "cycle-changed" | "no-comparable-observations" | "below-threshold" | null;
   asOf: string;
@@ -65,7 +65,7 @@ export type StarGrowthSnapshot = {
 };
 
 export type StarGrowthPage = {
-  items: StarGrowthItem[];
+  items: (ProductListItem & { starGrowth?: StarGrowthItem["starGrowth"] })[];
   total: number;
   page: number;
   pages: number;
@@ -133,26 +133,62 @@ async function loadRuns(asOf: Date, baselineAt: Date) {
     baselineSummary: baseline ? summary(baseline) : null, hasHistory: Boolean(hasHistory) };
 }
 
-/** Only immutable T/T−24h evidence ranks products; live rows can hide unsafe products. */
+const observedListFields = {
+  slug: products.slug, name: products.name, repoUrl: products.repoUrl, tagline: products.tagline,
+  taglineSource: products.taglineSource, taglineKo, category: products.category, accessMode: products.accessMode,
+  builder: products.builder, stack: products.stack, ogImage: products.ogImage, makerName: products.makerName,
+  verifiedAt: products.verifiedAt, createdAt: products.createdAt, status: products.status,
+  source: products.source, claimedAt: products.claimedAt, repoRenamedTo: products.repoRenamedTo, aiLevel: products.aiLevel,
+  stars: observations.stars, starsAt: observations.observedAt,
+};
+
+function currentObservationConditions(current: ProductStarObservationRun, policy: StarObservationPolicy, now: Date) {
+  return and(
+    eq(observations.runId, current.id), eq(observations.status, "ok"), eq(observations.archived, false),
+    gte(observations.stars, policy.minStars), lt(observations.stars, policy.maxStarsExclusive),
+    gte(observations.observedAt, current.windowStartsAt), lt(observations.observedAt, current.deadlineAt),
+    gte(observations.observedAt, new Date(current.cycleAt.getTime() - policy.collectionWindowHours * HOUR_MS)),
+    gte(observations.observedAt, new Date(now.getTime() - policy.maxAgeHours * HOUR_MS)),
+    inArray(products.status, ["verified", "seeded"]), listedByDefault, notDown, sql`not ${repoGone}`,
+    eq(products.repoUrl, observations.repoUrl), eq(products.repoLinkVersion, observations.repoLinkVersion),
+    sql`${products.repoStatus} is distinct from 'blocked'`,
+  );
+}
+
+/** During initial history collection, show measured candidates without claiming growth. */
+async function loadObservedPage(current: ProductStarObservationRun, policy: StarObservationPolicy,
+  now: Date, requested: number, pageSize: number) {
+  const conditions = currentObservationConditions(current, policy, now);
+  const result = await db.transaction(async (tx) => {
+    const [count] = await tx.select({ total: sql<number>`count(*)::int` }).from(observations)
+      .innerJoin(products, eq(products.id, observations.productId)).where(conditions);
+    const total = Number(count.total);
+    const pages = Math.max(1, Math.ceil(total / pageSize));
+    const page = Math.min(requested, pages);
+    const rows = total === 0 ? [] : await tx.select(observedListFields).from(observations)
+      .innerJoin(products, eq(products.id, observations.productId)).where(conditions)
+      .orderBy(sql`${observations.stars} desc`, asc(observations.slug))
+      .limit(pageSize).offset((page - 1) * pageSize);
+    return { rows, total, page, pages };
+  }, { isolationLevel: "repeatable read", accessMode: "read only" });
+  const items = await withProductHealth(result.rows.map((row) => toListItem({
+    ...row, starsPrevious: null, starsPreviousAt: null,
+  })));
+  return { items, total: result.total, page: result.page, pages: result.pages };
+}
+
+/** Only immutable T/T−24h evidence ranks growth; live rows can hide unsafe products. */
 async function loadPage(current: ProductStarObservationRun, baseline: ProductStarObservationRun,
   policy: StarObservationPolicy, now: Date, requested: number, pageSize: number) {
   const gain = sql<number>`(${observations.stars} - ${baselineObservations.stars})`;
   const gap = sql`extract(epoch from (${observations.observedAt} - ${baselineObservations.observedAt}))`;
   const conditions = and(
-    eq(observations.runId, current.id), eq(baselineObservations.runId, baseline.id),
-    eq(observations.status, "ok"), eq(baselineObservations.status, "ok"),
-    eq(observations.archived, false), eq(baselineObservations.archived, false),
-    gte(observations.stars, policy.minStars), lt(observations.stars, policy.maxStarsExclusive),
-    gte(observations.observedAt, current.windowStartsAt), lt(observations.observedAt, current.deadlineAt),
+    currentObservationConditions(current, policy, now),
+    eq(baselineObservations.runId, baseline.id), eq(baselineObservations.status, "ok"),
+    eq(baselineObservations.archived, false),
     gte(baselineObservations.observedAt, baseline.windowStartsAt), lt(baselineObservations.observedAt, baseline.deadlineAt),
-    gte(observations.observedAt, new Date(current.cycleAt.getTime() - policy.collectionWindowHours * HOUR_MS)),
     gte(baselineObservations.observedAt, new Date(baseline.cycleAt.getTime() - policy.collectionWindowHours * HOUR_MS)),
-    gte(observations.observedAt, new Date(now.getTime() - policy.maxAgeHours * HOUR_MS)),
     sql`${gap} >= ${policy.minIntervalHours * 3600} and ${gap} <= ${policy.maxIntervalHours * 3600}`,
-    inArray(products.status, ["verified", "seeded"]), listedByDefault, notDown, sql`not ${repoGone}`,
-    // Immediate current repository safety cannot revive or re-rank a different link.
-    eq(products.repoUrl, observations.repoUrl), eq(products.repoLinkVersion, observations.repoLinkVersion),
-    sql`${products.repoStatus} is distinct from 'blocked'`,
   );
   const sameRepository = and(eq(baselineObservations.productId, observations.productId),
     eq(baselineObservations.repositoryKey, observations.repositoryKey),
@@ -172,12 +208,7 @@ async function loadPage(current: ProductStarObservationRun, baseline: ProductSta
     const pages = Math.max(1, Math.ceil(total / pageSize));
     const page = Math.min(requested, pages);
     const rows = total === 0 ? [] : await tx.select({
-      slug: products.slug, name: products.name, repoUrl: products.repoUrl, tagline: products.tagline,
-      taglineSource: products.taglineSource, taglineKo, category: products.category, accessMode: products.accessMode,
-      builder: products.builder, stack: products.stack, ogImage: products.ogImage, makerName: products.makerName,
-      verifiedAt: products.verifiedAt, createdAt: products.createdAt, status: products.status,
-      source: products.source, claimedAt: products.claimedAt, repoRenamedTo: products.repoRenamedTo, aiLevel: products.aiLevel,
-      stars: observations.stars, starsAt: observations.observedAt,
+      ...observedListFields,
       starsPrevious: baselineObservations.stars, starsPreviousAt: baselineObservations.observedAt, gain,
     }).from(observations).innerJoin(baselineObservations, sameRepository)
       .innerJoin(products, eq(products.id, observations.productId))
@@ -224,7 +255,13 @@ export async function getStarGrowthPage(options: StarGrowthPageOptions = {}): Pr
   if (current.status === "failed") return empty("late", "run-failed");
   if (current.status !== "closed") return empty("late", "run-not-closed");
   if (!snapshot.policy) return empty("late", "invalid-policy");
-  if (!baseline) return empty("warming", "missing-baseline");
+  if (!baseline) {
+    const page = await publicRead("list", ["star-growth-observed", snapshot.asOf, current.id,
+      current.policyVersion, current.policy, requested, pageSize],
+      () => loadObservedPage(current, snapshot.policy!, now, requested, pageSize));
+    return { ...page, pageSize, snapshot: { ...snapshot,
+      status: page.total > 0 ? "observing" : "warming", reason: "missing-baseline" } };
+  }
   if (baseline.status !== "closed") return empty("late", "baseline-not-closed");
 
   const page = await publicRead("list", ["star-growth-page", snapshot.asOf, current.id, current.policyVersion, current.policy,

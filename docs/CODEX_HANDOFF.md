@@ -1,3 +1,34 @@
+# 2026-10-13 — 급상승 초기 관측 기간의 빈 화면 수정
+
+## Current objective / completed work
+
+사용자가 전일 대비 스타 급상승에 프로젝트가 나오지 않는다고 확인·수정을 요청했다. 실제 공개 홈과/rising의 HTML 및 운영 DB를 읽어 원인을 확인했다. 2026-10-13 03:59 KST 현재 닫힌 회차는 10월12일16시·10월13일00시 두 개뿐이며 각3627/3667건 전부 성공했다. product-star-observation은 매분 정상 완료, 오류/정지 없이 동작한다. 24시간 전 같은 회차가 없어 기존 reader가 items=[]를 반환한 것이 원인이다. 첫 실제 전일 비교는 정상 수집이 이어지면 10월13일16시 회차부터 가능하다.
+
+## Modified files / key design decisions
+
+별도 worktree /private/tmp/nomorevibe-star-growth-20261013, branch fix/star-growth-warmup-20261013에서 최소 웹 수정 중이다. lib/domain/products/star-growth.ts에 전날 회차가 없는 초기 상태만 최신 닫힌 회차의 실측 프로젝트 조회를 추가했다. 기존 공개/생존/저장소 연결/관측 성공·창·10시간 이내/스타50~1999 조건을 공통으로 사용한다. 새 후보 목록은 이번 회차 스타 내림차순·고정 slug 순, 홈5개·전체15개가 같은 조회/페이지/회차를 사용한다. starsPrevious는 null이며 증가량과 starGrowth는 생성하지 않는다.
+
+app/page.tsx, app/rising/page.tsx, components/home/StarGrowthSummary.tsx, components/home/MethodologyDialog.tsx는 observing 상태에서 ‘스타 관측 중인 프로젝트’ 제목과 이번 회차 스타 순·전일 비교 준비 중임을 표시한다. 전날 닫힌 회차가 생기면 기존 전일+10/23~25시간 조건과 ‘전일 대비 스타 급상승’ 제목으로 자동 전환한다. 실패·차단·마감 미완료 상태는 예비 목록으로 바꾸지 않는다. 정책 완화/과거값 생성/DB migration/수집 추가/워커 변경/키·flags 변경이 없다. 사용자 미추적 자료와 중단한 소개 검수는 보존한다.
+
+## Test commands and actual results / failed approaches
+
+curl -fsSL 공개 홈/rising GET exit0: 양쪽 프로젝트0개, 기준13일00시 성공3667/3667와 전날 비교 자료 없음 확인. 운영 Docker crawler에서 read-only SQL로 두 닫힌 회차·jobs의 last_success 및 last_error=null·24시간 비교쌍0·23~25시간 legacy 대체쌍0을 확인했다. 비밀값/원본env/DB URL 출력 없이 기존 Dokploy/SSH helper를 재사용했다. 설치된 Next16.3.8 Server and Client Components 문서와 운영 CI/runbook을 읽었다. 수정 후 git diff --check exit0. 로컬 기능·E2E·실제 인증/쓰기 테스트는 사용자 직접 수행 선호에 따라 하지 않았고 새 테스트도 작성하지 않았다. 앞으로 필수 원격 CI 결과를 실제 실행 기록으로 추가한다.
+
+초기 tests/*growth* glob은 일치 파일 없음으로 검색에 실패했고 rg --files로 바로잡았다. 기존 관측 실행은 실패하지 않았고 전날 자료가 아직 없는 정상 준비 상태다.
+
+## Remaining work / exact commands
+
+소스 최종 리뷰→명시적 파일 commit/push→PR 필수 최신-base check→normal merge→main image CI→현재 web0db24f0에서 두 웹만 새 immutable image로 배포→실제 홈5개/rising15개 노출·동일순서·증가량 없음 확인→최종 기록. 워커33349ed와 intro pause 및 네 flags ON을 보존한다. 사용자 기능 테스트 성공을 주장하지 않는다.
+
+```sh
+cd /private/tmp/nomorevibe-star-growth-20261013
+git diff --check
+git diff -- lib/domain/products/star-growth.ts app/page.tsx app/rising/page.tsx components/home/StarGrowthSummary.tsx components/home/MethodologyDialog.tsx
+git status --short --branch
+```
+
+---
+
 # 2026-10-13 — 댓글 PR01~04 커밋·푸시·병합·운영 배포 완료
 
 ## Current objective / completed work

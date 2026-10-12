@@ -5,15 +5,22 @@ import { formatPublicDateTime } from "@/lib/format/time";
 
 export const STAR_GROWTH_TITLE = "전일 대비 스타 급상승";
 
+export function starGrowthTitle(snapshot: StarGrowthSnapshot | null) {
+  return snapshot?.status === "observing" ? "스타 관측 중인 프로젝트" : STAR_GROWTH_TITLE;
+}
+
 export function starGrowthNote(snapshot: StarGrowthSnapshot | null) {
   const policy = snapshot?.policy;
+  if (snapshot?.status === "observing") {
+    return `스타 ${formatCount(policy?.minStars ?? 50)}~${formatCount((policy?.maxStarsExclusive ?? 2000) - 1)}개 · 전일 비교 준비 중 · 이번 회차 스타가 많은 순 · 8시간마다 갱신`;
+  }
   return `스타 ${formatCount(policy?.minStars ?? 50)}~${formatCount((policy?.maxStarsExclusive ?? 2000) - 1)}개 · 전날 같은 시간대보다 ${formatCount(policy?.minGain ?? 10)}개 이상 증가 · 8시간마다 갱신`;
 }
 
 const REASONS: Partial<Record<NonNullable<StarGrowthSnapshot["reason"]>, string>> = {
   "run-not-closed": "이번 회차 관측이 아직 마감되지 않아 집계가 지연되고 있습니다.",
   "run-failed": "이번 회차 관측에 실패해 순위를 만들 수 없습니다.",
-  "missing-baseline": "전날 같은 시간대의 비교 관측을 쌓는 중입니다. 24시간 전 자료가 확보되면 순위를 보여드립니다.",
+  "missing-baseline": "전날 같은 시간대의 비교 관측을 쌓는 중입니다. 자료가 확보되면 전일 대비 10개 이상 증가한 프로젝트로 자동 전환합니다.",
   "baseline-not-closed": "전날 같은 시간대의 관측이 정상 마감되지 않아 비교할 수 없습니다.",
   "invalid-policy": "이번 회차의 집계 기준을 확인할 수 없습니다.",
   "invalid-cycle": "유효하지 않은 회차 주소입니다. 최신 회차를 다시 확인해 주세요.",
