@@ -46,8 +46,10 @@ export function FeedbackForm({ slug, githubDeliveryAvailable = false }: { slug: 
       const saved = JSON.parse(sessionStorage.getItem(storageKey) ?? "null") as Draft | null;
       if (saved && typeof saved.title === "string" && typeof saved.body === "string" && typeof saved.requestId === "string"
         && ["bug", "feature", "question"].includes(saved.kind)) initial = { ...initial, ...saved };
-      // Empty-title legacy drafts could never be accepted; valid legacy titles and IDs remain unchanged.
-      if (initial.body.trim() && !initial.title.trim()) initial = { ...initial, title: titleFromBody(initial.body), requestId: crypto.randomUUID() };
+      if (initial.body.trim() && !initial.title.trim()) {
+        // Empty-title legacy drafts could never be accepted by the existing API.
+        initial = { ...initial, title: titleFromBody(initial.body), requestId: crypto.randomUUID() };
+      }
     } catch { /* Storage may be unavailable; the live form remains usable. */ }
     const controller = new AbortController();
     fetch("/api/me", { cache: "no-store", signal: controller.signal }).then(async (response) => {

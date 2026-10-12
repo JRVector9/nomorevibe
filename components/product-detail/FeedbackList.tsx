@@ -7,6 +7,12 @@ import type { FeedbackView } from "@/lib/domain/feedback/contract";
 export const FEEDBACK_SUBMITTED_EVENT = "nmv:feedback-submitted";
 export type FeedbackSubmittedDetail = { feedback: FeedbackView; replayed: boolean; created: boolean };
 
+function upsertReceipt(items: FeedbackView[], item: FeedbackView, limit: number): FeedbackView[] {
+  return [item, ...items.filter((previous) => previous.id !== item.id)]
+    .sort((left, right) => Date.parse(right.createdAt) - Date.parse(left.createdAt) || (left.id < right.id ? 1 : left.id > right.id ? -1 : 0))
+    .slice(0, limit);
+}
+
 const KIND = { bug: "오류", feature: "기능 제안", question: "질문" };
 const DELIVERY = {
   local_only: "서비스에 접수됨", queued: "GitHub 전송 대기", sending: "GitHub 전송 확인 중", delivered: "GitHub에 전송됨",
@@ -138,7 +144,7 @@ export function FeedbackList({ slug, children }: { slug: string; children?: Reac
       receiptIds.current.add(item.id);
       if (item.reviewState === "accepted") {
         publicIds.current.add(item.id);
-        setPublicFeedback((items) => [{ ...item, reviewReason: null }, ...items.filter((previous) => previous.id !== item.id)].slice(0, 50));
+        setPublicFeedback((items) => upsertReceipt(items, { ...item, reviewReason: null }, 50));
         if (detail.created && !detail.replayed && !known) setPublicTotal((total) => total === null ? null : total + 1);
         setPublicLoaded(true);
         setView("public");
@@ -149,7 +155,7 @@ export function FeedbackList({ slug, children }: { slug: string; children?: Reac
       }
       const sameAuthor = mineAuthor.current === null || mineAuthor.current === item.authorUserId;
       mineAuthor.current = item.authorUserId;
-      setMine((items) => [item, ...(sameAuthor ? items ?? [] : []).filter((previous) => previous.id !== item.id)].slice(0, 100));
+      setMine((items) => upsertReceipt(sameAuthor ? items ?? [] : [], item, 100));
       setMineLoaded(true);
       setMineError(null);
       setShowAll(false);
