@@ -360,11 +360,11 @@ describe("evidence product detail components", () => {
     expect(html).toContain("두 값을 모두 확인하세요");
   });
 
-  it("does not invent activity, a release, or a license from an unread repository — empty cells fold into one line (UX-16)", () => {
+  it("does not invent activity, a release, or a license from an unread repository — known facts retain the grid", () => {
     const missing: ProductDetailView["license"] = { state: "missing", label: "라이선스 확인 안 됨", maker: null, observed: null };
     const unread = renderFacts({ repository: null, license: missing });
-    // 값이 없는 칸은 그리지 않고, 셋보다 적게 남으면 격자 대신 한 줄
-    expect(unread).not.toContain("flex-[1_1_160px]");
+    // 값이 없는 칸은 그리지 않고, 확인된 항목은 개수와 관계없이 격자에 표시
+    expect(unread).toContain("grid-cols-[repeat(auto-fit,minmax(min(200px,100%),1fr))]");
     expect(unread.match(/<dt/g)).toHaveLength(1);
     expect(textOf(unread)).toContain("nomorevibe 등록7월 1일");
     expect(textOf(unread)).toContain("저장소 정보는 아직 수집하지 않았습니다.");
@@ -374,19 +374,19 @@ describe("evidence product detail components", () => {
     expect(unread).not.toContain("없음");
     // 저장소가 없는 제품은 '수집 전'이라고 하지 않는다
     expect(renderFacts({ product: { ...product, repoUrl: null }, repository: null, license: missing })).not.toContain("수집하지 않았습니다");
-    // 확인한 가동 상태 하나가 더해져도 둘 — 아직 한 줄
+    // 확인한 가동 상태 하나가 더해지면 같은 격자 안에 두 칸
     const checked = { uptime30d: null, latencyMs: null, checkedAt: new Date(), down: false };
     const two = renderFacts({ repository: null, license: missing, health: checked });
-    expect(two).not.toContain("flex-[1_1_160px]");
+    expect(two).toContain("grid-cols-[repeat(auto-fit,minmax(min(200px,100%),1fr))]");
     expect(textOf(two)).toContain("가동 상태온라인");
     // 셋이면 여러 칸으로 줄을 채운다
     const three = renderFacts({ repository: null, license: observedLicense, health: checked });
-    expect(three).toContain("flex-[1_1_160px]");
+    expect(three).toContain("grid-cols-[repeat(auto-fit,minmax(min(200px,100%),1fr))]");
     expect(three.match(/<dt/g)).toHaveLength(3);
     // 라이선스를 읽지 못했으면 그 칸만 빠진다
     const noLicense = renderFacts({ license: missing });
     expect(noLicense).not.toContain("라이선스");
-    expect(noLicense).toContain("flex-[1_1_160px]");
+    expect(noLicense).toContain("grid-cols-[repeat(auto-fit,minmax(min(200px,100%),1fr))]");
 
     const unknown = renderFacts({ repository: { ...observedRepository, facts: { ...observedRepository.facts!, archived: null, fork: null } } });
     expect(unknown).not.toContain("활성");
