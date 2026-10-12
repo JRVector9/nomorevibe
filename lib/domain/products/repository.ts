@@ -1,8 +1,10 @@
 import { hasSearchQuery, productSearchPredicate, productSearchRank, type SearchQuery } from './search';
 import { syncRepositoryLink } from "@/lib/domain/evidence/repository-link-sync";
+import { normalizeTypedLink } from "@/lib/domain/evidence/contracts";
+import { queueProductRefresh } from "@/lib/domain/evidence/refresh-requests";
 import { isAiLevel, type AiLevel } from "@/lib/domain/evidence/ai-level-labels";
 import { aiLevelRepositoryKey } from "@/lib/domain/evidence/ai-level-store";
-import { and, desc, eq, inArray, isNotNull, like, ne, notInArray, or, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNotNull, isNull, like, ne, notInArray, or, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { lockProductGeneration, type ProductTransaction } from "./generation";
 import { DOWN_THRESHOLD } from "./health";
@@ -594,8 +596,13 @@ export async function insert(values: NewProduct, beforeInsert?: (tx: ProductTran
     await lockProductRepository(tx, values.repoUrl);
     await beforeInsert?.(tx);
     const [product] = await tx.insert(products).values(values).returning();
-    await syncRepositoryLink({ productId: product.id, slug: product.slug, repoUrl: product.repoUrl,
+    const link = await syncRepositoryLink({ productId: product.id, slug: product.slug, repoUrl: product.repoUrl,
       declarationSource: product.source === "crawler" ? "discovered" : "maker", mode: "explicit" }, tx);
+    if (link.action === "created" && (product.status === "seeded" || product.status === "verified")) {
+      // Commit the first collection request with publication, before optional OG work.
+      await queueProductRefresh({ slug: product.slug, productId: product.id,
+        actor: "system:product_created", force: false }, tx);
+    }
   });
 }
 
@@ -636,7 +643,7 @@ export async function markVerified(
 ): Promise<boolean> {
   return db.transaction(async (tx) => {
     if (!(await lockProductGeneration(tx, id, slug))) return false;
-    const updated = await tx.update(products)
+    const [updated] = await tx.update(products)
       .set({ ...values, status: "verified", updatedAt: new Date() })
       .where(and(
         eq(products.id, id),
@@ -644,8 +651,21 @@ export async function markVerified(
         ne(products.status, "banned"),
         eq(products.verifyToken, verifyToken),
       ))
-      .returning({ id: products.id });
-    return updated.length === 1;
+      .returning();
+    if (!updated) return false;
+    const repository = updated.repoUrl ? normalizeTypedLink("repository", updated.repoUrl) : null;
+    if (repository) {
+      const [link] = await tx.select({ id: productLinks.id }).from(productLinks)
+        .leftJoin(productEvidenceSources, and(eq(productEvidenceSources.slug, productLinks.slug),
+          eq(productEvidenceSources.kind, "repository"), eq(productEvidenceSources.sourceKey, productLinks.normalizedKey)))
+        .where(and(
+        eq(productLinks.slug, slug), eq(productLinks.kind, "repository"),
+        eq(productLinks.normalizedKey, repository.normalizedKey), eq(productLinks.visible, true),
+        isNull(productEvidenceSources.id),
+      )).limit(1);
+      if (link) await queueProductRefresh({ slug, productId: id, actor: "system:product_verified", force: false }, tx);
+    }
+    return true;
   });
 }
 

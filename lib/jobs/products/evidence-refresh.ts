@@ -2,6 +2,7 @@ import type { JobContext, JobOutcome } from "@/lib/jobs/runner";
 import { currentEvidenceSettings } from "@/lib/domain/evidence/settings-store";
 import {
   dueEvidenceProductSlugs,
+  queueInitialProductEvidenceRefresh,
   refreshProductEvidence,
   type EvidenceRefreshDependencies,
 } from "@/lib/domain/evidence/refresh";
@@ -49,6 +50,15 @@ export async function refreshProductEvidenceJob(
     },
   };
   const [pendingRequest] = await dueProductRefreshRequests(now);
+  if (!pendingRequest) {
+    try {
+      const queued = await queueInitialProductEvidenceRefresh({ lease: ctx.lease, hasBudget: ctx.hasBudget });
+      if (queued) ctx.log("evidence.initial_refresh_queued", queued);
+    } catch (error) {
+      if (error instanceof JobLeaseLostError) throw error;
+      ctx.log("evidence.initial_refresh_queue_failed", { errorCode: refreshErrorCode(error) });
+    }
+  }
   let requestProcessed = false;
   let requestTurn = ctx.cursor?.requestTurn ?? true;
   const saveCursor = () => ctx.save({ ...(afterSlug ? { afterSlug } : {}),
