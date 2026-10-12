@@ -1,32 +1,51 @@
-# 2026-10-13 — 8시간 스타 증가량·모두보기 통일, 이후 상세 저장소 미수집 문구 원인 조사
+# 2026-10-13 — 8시간 스타 증가량 운영 반영·저장소 미수집 조사·상세 압축 시안 완료
 
 ## Current objective / completed work
 
-사용자가 총 스타 순의 임시 노출을 바로잡고 직전8시간 증가량 순으로 정렬·표시하며 모두보기 스타일을 다른 목록과 맞추라고 요청했다. 추가로 이 작업 완료 후 상세페이지의 ‘저장소 정보는 아직 수집하지 않았습니다’ 문구가 나오는 원인을 설명해 달라고 했다. 추가 조사는 첫 작업 완료 후에 진행하며 아직 시작하지 않았다.
+사용자는 총 스타 순의 임시 노출을 직전8시간 증가량 순으로 바로잡고 모두보기 스타일을 다른 목록과 맞추라고 요청했다. 이 구현·소스 리뷰·커밋/푸시·PR400 최신 base CI 성공·일반 병합·양 운영 웹 배포·실제 공개 증가량/스타일 확인을 완료했다. 추가 요청인 상세 ‘저장소 정보는 아직 수집하지 않았습니다’ 원인도 코드·운영 read-only DB·실제 페이지로 확인했다. 새 요청은 상세 정보 전체를 유지하며 공간을 줄이는 시안, 업데이트 기본3개/모두보기 시안, 업데이트 상세내용 제공 가능 여부 검토다. 후속 시안과 실제 수집/DB 구조 검토까지 완료했다. 사용자는 브라우저가 열리지 않으면 건너뛰고 시안 파일 경로만 달라고 명시했다.
 
-8시간 두 회차의 실제 운영 read-only SQL 비교에서 ManimGX648→801(+153), skills-46 +97, mygo +82 등 기존 관측값이 있음을 확인했다. 직전 수정 PR398의 총스타 후보 노출은 목적에 맞지 않아 삭제했다. /private/tmp/nomorevibe-star-growth-8h-20261013, branch fix/star-growth-8h-20261013에서 구현·부모 소스 리뷰를 완료했고 아직 commit/CI/배포 전이다.
+PR400 head a5050200f649664672ec13a95521c184f931091b, base bdc123864fd161b01d19132605d583b4c8dd003a, PR CI38298265219 success, merge de55c8e8182de49ad05cc23018f3c3b4bce4c25a를 root main에 FF했다. main CI38298733079 전체 success 후 private web image 0cd4f78da5ea66b444f0d4cda9e9be74e9990956b2037840d810f64a3cf1c57a를 mini→M3에 배포했다. 실제 release de55c8e, mini2/2·M3 4/4 image/release/전체 env/health 일치. Docker worker6개33349ed 유지·healthy, 네 GitHub flags ON/설정 일치, workerProgress/Failover ok, 소개 검수2100/unleased 보존. docs/operations/2026-10-13-star-growth-8h.md에 실제 증거를 기록한다. 이전 PR398 총스타 후보/전일 비교 설명은 PR400으로 대체된 역사 기록이다.
+
+저장소 조사04:50 KST: 공개 상태 정규 GitHub 연결43203개 중 표시가능 근거40403개, 연결 없음1046·source없음1593·최초근거 실패161개(not_found142/rate_limited12/collection_failed5/http4031/invalid_response1). 모두 실제 안내 표시 페이지수 또는 refresh 요청 대기수는 아니다. 수집잡 last_error=null, 최근 성공·cursor 이동·실제 근거40401→40403 증가로 진행 중을 확인했다. 실제 GET5개에서 미수집 문구 재현, 현재ManimGX 포함7개 정상. UI는 facts null만 보고 대기/실패 구분없이 같은문구다. 스타와 상세근거 수집은 별도다. 근거잡은1분 요청/25초 예산, 최초복구 한건접수·일반갱신과 공유, 기본24h갱신. 보고만 했고 정책/DB/코드 미변경. docs/operations/2026-10-13-repository-facts-coverage.md 참조.
 
 ## Modified files / key design decisions
 
-lib/domain/products/star-growth.ts: 최신 마감 T와T−8시간 비교, 실제 관측 간격7~9시간·순증가1개 이상·스타50~1999·기존 공개/생존/동일저장소/연결 버전·관측 창/신선도 조건. 증가량 desc→같으면 총스타 desc→고정 slug asc. 관측 회차의 immutable policy/수집잡/DB를 변경하지 않고 웹의 effective policy와 growth-8h-v1 표시 버전을 별도로 부여했다. 이전24시간과 cached missing-baseline 자료가 섞이지 않도록 캐시 namespace를8h로 바꿨다. 총스타 후보 observing 상태와 reader를 삭제해 비교불가/실패 때 총스타 순으로 대체하지 않는다.
+PR400: lib/domain/products/star-growth.ts, app/page.tsx, app/rising/page.tsx, components/home/StarGrowthSummary.tsx, StarGrowthMetric.tsx, MethodologyDialog.tsx, types.ts, ProjectCard.tsx, cards.css, app/popular/PopularList.tsx, tests/home-unclaimed.test.tsx, docs/CODEX_HANDOFF.md.
 
-app/page.tsx·components/home/StarGrowthSummary.tsx·StarGrowthMetric.tsx·MethodologyDialog.tsx: ‘최근8시간 스타 급상승’, ‘8시간 +153’을 주지표, 총스타를 보조로 표시. 실제 시각 tooltip과 마지막 마감 회차 비교임을 설명한다. app/rising/page.tsx는 /popular의 경로/머리/요약/목록·카드 토글/쪽 넘김 및 기존 PopularList·RankedCards/ProjectCard·저장 기능·CSS를 그대로 재사용한다. HomeCardProduct에 optional starGrowth만 추가하고 ProjectCard/PopularList에서 있을 때만 기존 metric 대신 표시한다. cards.css에 주/보조 숫자 스타일2개를 추가했다. tests/home-unclaimed.test.tsx의 기존 제목·정책/시각 fixture만 보정했고 새 테스트는 작성하지 않았다.
+T와T−8h/실제간격7~9h/순증가>=1/스타50~1999/공개·생존·동일저장소·연결버전/GitHubID·관측창·10h신선도 유지. 증가량desc→동률총스타desc→고정slugasc. 수집 immutable 정책/8h잡/schema는 변경하지 않고 웹 effective policy 및 growth-8h-v1/8h cache를 사용한다. observing/총스타 fallback 삭제. ‘8시간 +153’을 주지표, 총스타 보조·관측시각 tooltip. /rising은 /popular CSS/PopularList/RankedCards/저장·보기·회차고정페이지 넘김을 재사용, 기본목록. 다른목록은 optional starGrowth 없으면 기존표시.
+
+현재 최종 보고 문서는 /private/tmp/nomorevibe-star-growth-8h-docs-20261013, branch docs/star-growth-8h-production-20261013에서 운영문서2개·handoff와 docs/design/2026-10-13-detail-compact/index.html·README.md를 수정했다. 사용자 미추적 PT/prototypes 및 다른산출물은 stage/삭제하지 않는다. 문서만으로 재배포하지 않는다.
+
+시안은 기존 서비스 토큰의 다크/라이트와 모바일 배치를 사용한다. 정보7개+부가설명을 유지한4열2행(등록2칸)·모바일2열, 업데이트기본3개·제목클릭내용펼침·별도원문·19건모두보기dialog내부스크롤·기존출처필터를 제안한다. HTML은 외부설치/빌드 없이 직접열기 가능하며 메이커/댓글 등 주변은 배치맥락용이다. 생산 코드 추가는 없다. MyGo 실제운영 업데이트19건의summary/before_after는 전부없고 GitHub provider가 body를 버린다. 같은릴리스API응답 body를 기존summary로 저장하면 추가호출/schema 없이2,000자plain발췌+원문링크가 가능하다. 전문보존은 별도계약 필요. 기존onConflictDoNothing은 과거빈본문을 채우지 않으므로 선택적보충 필요. reader최대50건이므로 일반모두보기는 실제총건수+페이지조회 필요하다. 첫3개한국어요약은 실제원문기반 시안예시이며 자동번역/AI 기능을 제안한것이 아니다.
 
 ## Test commands and actual results / failed approaches
 
-운영 crawler Docker에서 read-only SQL로 실제2회차/8시간 증가값 확인. 설치된 Next16.3.8 server/client 및 CSS 가이드·실제 /popular 목록·저장/카드/스타 부품을 읽었다. 수정 후 git diff --check 실제 exit0. 로컬 기능/단위/E2E/브라우저·실제인증/댓글/스타 쓰기는 사용자 직접 테스트 선호로 수행하지 않았다. 필수 원격 CI는 아직 실행하지 않았다. 새 테스트 없음. 원격 초기 SQL은 전체 공개 가시성 필터를 적용하기 전 증거라 최종 순위와 같다고 아직 주장하지 않는다.
+실제 git diff --check exit0, PR CI38298265219/main CI38298733079의 타입/lint/unit/build·DB integration3/check success·main이미지발행 success. 새 테스트 없음, 기존 홈fixture만 보정. 로컬 기능/단위/E2E·실제 인증/댓글/스타 쓰기는 사용자 직접 테스트 선호로 실행하지 않았다. 스킬·추가 서브에이전트·Codex CLI 미사용. 설치된 Next16.3.8 server/client/CSS 가이드·README·운영runbook을 읽었다.
 
-검색에서 존재하지 않는 docs/PENDING.md 경로를 포함해 rg exit2를 받았고 실제 root PENDING.md/파일목록을 기준으로 확인했다. 문구 수정 중 오탈자(は)를 즉시 ‘는’으로 보정했다. 테스트 성공 주장 없음. 스킬·추가 서브에이전트·Codex CLI를 사용하지 않았다.
+운영자 /private/tmp/nomorevibe-star-growth-8h-release-20261013-cil525hy의 capture93457/plan8918/deploy45234/verify61817/public44873/health-after31037 모두 exit0. 홈5·목록15·카드15·page2 15의 동일순위/증가량내림차순/총스타순과다름/증가량주지표/공통스타일/중복없음 확인. 실제 ManimGX+153/801, skills46+97/1195, mygo+82/1693, baocut2+70/818, linkedin-agent+54/1905. deployment mini ude5h_-YOFmCdOZkdqJtn/M3 vaRvw9uANof4uJUb965QR done.
+
+저장소 조사 private detail_diagnosis.py read-only transaction과 detail-page-proof.json의6개 GET 모두 exit0. 04:50 DB 결과를 보고서에 구분해 기록했다. 최초 DB 출력이 context에서 잘려 안전한selected JSON을 저장하는 읽기로 재조회했다. 설정행없음→settings-store/기본schema로24h/20 적용 확인. 실패rate_limited 표본이 예정시각 이후도 첫성공없음 확인했지만 전체복구ETA/원인별실행시간은 측정하지 않았다.
+
+잘못 입력한 CI38297652049 조회404는 실제38298265219로 정정했으며 CI실패가 아니다. 검색의 추정 docs/PENDING.md/evidence github경로·glob 불일치를 rg --files/실제 root PENDING.md/providers/github.ts로 정정했다. 문구 오탈자는 커밋 전에 보정했다. 새 CI/배포 실패 없음. 기존 Cloudflare purge auth실패는 재시도하지 않았고 canonical GET의새release/내용으로 확인했다.
+
+시안 렌더링: headless Chromium 데스크톱1440/모바일390 렌더링·스크린샷·높이/가로폭 읽기 exit0. 같은폭의 기존패널289.625px→제안166.5625px(약42%감소), 모바일327.125px·문서430px/viewport430px 가로넘침없음. 제품 기능테스트/E2E가 아닌 시안의 렌더링 확인이다. 브라우저열기 CUA Chrome/IAB 둘다 Browser is not available였고 사용자 지시로 추가열기를 건너뛰었다. 로컬 http.server4318/session94836은 이 docs worktree의 시안 폴더만 제공하고 계속 실행 중이다.
 
 ## Remaining work / exact commands
 
-명시적 파일 commit/push·PR 최신 main 필수 check·normal matching-head merge·main image발행→현재 web b48b3d3에서 두 웹만 배포→홈5/전체15의 실제 증가량·순위·8시간 표기/총수 보조·목록/카드 스타일·두 웹health 확인→상세 문구 원인 조사/사용자 보고. worker33349ed, 8h 관측 빈도, 네 flags ON, intro pause2100/unleased, 사용자 미추적 자료 보존. 최신 main bdc1238은 문서뿐이며 실제 웹 b48b3d3다. 지난 operator /private/tmp/nomorevibe-star-growth-release-20261013-88ou02hb를 그대로 deploy 재실행하지 않는다. 새0600 snapshot을 생성하는 새 디렉토리로 baseline/image scope를 갱신해야 한다.
+본 요청의 8시간 증가량 운영수정·미수집 원인설명·상세UI시안/업데이트내용가능성 검토는 완료했다. 최종문서5개만 docs-only PR의 최신base필수check와 일반matching-head merge로 전달하고 root main을 FF한다. 문서 전달로 운영이미지를 다시 발행/배포하지 않는다. 시안은 운영코드에 적용하지 않았다. 사용자 실제기능테스트는 미수행이며 테스트 성공으로 보고하지 않는다. 근거수집/실패표시 수정·시안실제적용·소개검수재개·별스타/OAuth·관리자Tailscale은 이번완료범위에 추가하지 않는다.
+
+운영자 before/preflight는 비밀가능하므로 출력/공유/커밋 금지·deploy 반복 금지. root 사용자 미추적자료와 과거stash a7813ffdb053286bffee61df83a6ce19424f8a4e/f5d30cc246b22a932e46478261542b3cd483ac28 보존, 적용/삭제하지 않는다. 아래 historical 기록의당시현재 상태보다 이최신정보와actual repo를 우선한다.
 
 ```sh
-cd /private/tmp/nomorevibe-star-growth-8h-20261013
+cd /private/tmp/nomorevibe-star-growth-8h-docs-20261013
 git diff --check
 git status --short --branch
-git diff -- lib/domain/products/star-growth.ts app/rising/page.tsx components/home/StarGrowthMetric.tsx
+gh pr view 400 --json state,mergeCommit,url
+gh run view 38298733079 --json status,conclusion
+# 시안 파일은 직접 열 수 있고 현재 아래 주소도 제공 중이다.
+# docs/design/2026-10-13-detail-compact/index.html
+curl -fsS http://127.0.0.1:4318/ -o /private/tmp/nomorevibe-detail-preview.html
+# 설명/가능성 검토: docs/design/2026-10-13-detail-compact/README.md
 ```
 
 ---
