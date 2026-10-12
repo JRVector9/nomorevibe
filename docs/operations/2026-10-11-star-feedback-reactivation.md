@@ -163,3 +163,17 @@ GitHub numeric identity로 일반 계정과 세션을 만들므로 Resend 없이
 이 변경은 로그인 화면·배포 검사 코드 단계이며, 이 기록 시점의 운영 플래그는 여전히 false다.
 실제 실행 릴리스 반영·사용자 GitHub 승인·스타/피드백 확인은 별도로 기록한다.
 제공자 웹훅 Save 확인과 제작자 Feedback App 설치·수신 조건은 메일 설정과 별개다.
+
+
+## 로그인 코드 반영 완료 — 2026-10-12 09:07 KST
+
+[PR374](https://github.com/JRVector9/nomorevibe/pull/374)의 최신 base 필수 CI가 성공했고
+`58a63a3bc180f3e9cce3670ebb5b52a11cf6c3ef`로 main에 병합했다. GitHub 우선 가입·로그인,
+메일 설정이 없을 때 이메일 폼 숨김, GitHub-only 배포 검사 수정이 완료됐다.
+독립 gpt-6.1-sol/xhigh 소스 리뷰는 수정 지적이 없었다. 실제 기능 테스트는 사용자 담당이다.
+
+09:07:17 KST Dokploy 저장 설정 재조회에서는 두 웹 `a91eecf`, publisher `8b608b2`,
+maintenance `650b341` 릴리스와 6개 앱의 네 플래그 false를 확인했다.
+이 작업에서는 운영 배포·DB 적용·플래그 ON·제공자 Save를 하지 않았다.
+Resend는 이메일 로그인 선택 시에만 필요하다. 운영 적용은 같은 실행 릴리스·키/origin과
+제공자 웹훅 Save를 확인하고 기존 홈 관측 마이그레이션·자료 축적 절차와 함께 진행한다.
