@@ -6,21 +6,22 @@
 
 ---
 
-## GitHub 스타·피드백 실연동 파일럿 — 2026-10-11
+## GitHub 스타·피드백 실연동 파일럿 — 2026-10-12
 
-**막는 것:** 새 Star/Feedback GitHub App과 암호화·공개 인증·Resend 발신 설정,
-허가된 개인/조직 테스트 레포·사용자·메일 주소가 아직 제공되지 않았다. 자동 검사와 실제
-provider/운영 증거는 따로 기록한다. 기본 플래그는 모두 `false`다.
+**남은 확인:** 사용자가 직접 수행할 실제 GitHub 가입·로그인, 개인 스타 등록/취소,
+서비스 댓글 제출과 제작자 저장소의 봇 Issue 전송·재조회·설치 철회 및 외부 전송 중
+failover 확인. 허가된 개인/조직 테스트 레포와 사용자 범위의 실연동 증거는 아직 없다.
+Resend는 이메일 로그인을 추가할 때만 필요하며 GitHub 로그인 활성화 조건은 아니다.
 
-**코드 배포 완료:** [PR #356 운영 배포](docs/operations/2026-10-11-github-integration-rollout.md)에서
-0066~0072를 직접5432로 적용했고 웹·publisher·maintenance를 포함한 14앱의 실제
-릴리스·health·역할 lease를 확인했다. 기본 플래그 false 유지, 실제 App·메일 키는 아직 없다.
+**운영 활성화 완료:** [2026-10-12 운영 기록](docs/operations/2026-10-12-github-feature-activation.md)에서
+Star/Feedback App 키와 웹훅 저장, 실행 코드58a63a3, migration0073/0074까지 journal75,
+14앱·19컨테이너의 실제release/health/환경값 일치·다섯primary lease를 확인했다.
+웹의 네 플래그와 publisher/maintenance 전송 플래그는true다.
 
-**준비되면:** [연동 운영 절차](docs/operations/github-stars-feedback-runbook.md)에 따라
-역할별 키와 플래그를 일치시키고 개인 스타 등록/취소,
-GitHub 미연결 이메일 사용자의 피드백, 봇 이슈 한 건·재조회·설치 철회,
-publisher 주 중단 후 예비 복구를 검증하고 [파일럿 기록](docs/operations/2026-10-11-github-integration-pilot.md)에
-GitHub URL·DB state·두 웹 결과와 지연을 남긴다. 소개 검수 중단은 유지한다.
+**사용자 확인 시:** [연동 운영 절차](docs/operations/github-stars-feedback-runbook.md)에 따라
+GitHub URL·DB state·두 웹 결과와 지연을 [파일럿 기록](docs/operations/2026-10-11-github-integration-pilot.md)에
+남긴다. 이메일 로그인을 선택하면 발신 설정과 메일 수신을 별도로 확인한다. 제작자 Feedback App
+설치·저장소binding·수신허용 및 작성자의 전송 동의가 필요하다. 소개 검수 중단은 유지한다.
 
 ---
 

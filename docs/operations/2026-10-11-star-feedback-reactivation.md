@@ -240,3 +240,12 @@ Issues 구독을 확인했다. 서버 저장 설정과 제공자 입력에 서�
 제공자 웹훅 설정 단계는 완료했다. Secret 마스킹/UI 상태만으로 실제 전송의
 HMAC 성공을 주장하지 않는다. 서비스 실행 릴리스 반영·네 기능 플래그 ON·실제
 로그인/스타/피드백 검증은 별도 운영 단계이며 이번 작업에서는 수행하지 않았다.
+
+
+## 운영 배포·플래그 ON 완료 — 2026-10-12 11:10 KST
+
+[운영 활성화 기록](2026-10-12-github-feature-activation.md)에 따라 웹 두 곳의 네 플래그와
+publisher/maintenance 주·예비의 전송 플래그를 true로 실행 반영했다. 14개 앱·19개 컨테이너의
+새 릴리스와 health, 실행 키/origin 일치, 다섯 primary lease/readiness/progress 정상,
+migration0073/0074와 DB journal75, 소개 검수 중단 유지를 확인했다.
+GitHub-only 로그인은 Resend 없이 운영에 적용됐다. 실제 OAuth·스타·댓글·봇 Issue는 사용자 확인 항목이다.
