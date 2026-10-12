@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { StarView } from "@/lib/domain/github-stars/contract";
+import { formatCount } from "@/lib/format/number";
 
 const reconnectErrors = new Set(["login_required", "github_not_connected", "github_needs_reconnect"]);
 type ConnectionNeeded = false | "connect" | "reconnect";
@@ -15,18 +16,20 @@ function unknownMessage(view: StarView): string {
 async function loadControl(endpoint: string, signal?: AbortSignal): Promise<Control> {
   const meResponse = await fetch("/api/me", { cache: "no-store", signal });
   const me = await meResponse.json();
-  if (!meResponse.ok || !me.user || typeof me.csrfToken !== "string") return { connectionNeeded: "connect", message: "" };
+  if (!meResponse.ok || (me.user && typeof me.csrfToken !== "string")) return { connectionNeeded: false, message: "GitHub 스타 상태를 확인할 수 없습니다. 잠시 후 다시 확인해 주세요." };
+  if (!me.user) return { connectionNeeded: "connect", message: "" };
   const response = await fetch(endpoint, { cache: "no-store", signal });
   const result = await response.json();
   if (!response.ok) return { csrf: me.csrfToken, connectionNeeded: result.error === "github_needs_reconnect" ? "reconnect" : reconnectErrors.has(result.error) ? "connect" : false, message: reconnectErrors.has(result.error) ? "" : "GitHub 스타 상태를 확인할 수 없습니다. 잠시 후 다시 확인해 주세요." };
   return { csrf: me.csrfToken, view: result, connectionNeeded: result.state === "needs_reconnect" ? "reconnect" : false, message: result.state === "unknown" ? unknownMessage(result) : "" };
 }
-export function GithubStarButton({ slug }: { slug: string }) {
+export function GithubStarButton({ slug, stars = null }: { slug: string; stars?: number | null }) {
   const [view, setView] = useState<StarView | null>(null);
   const [csrf, setCsrf] = useState<string | null>(null);
   const [connectionNeeded, setConnectionNeeded] = useState<ConnectionNeeded>(false);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
+  const [showMessage, setShowMessage] = useState(false);
   const requestGeneration = useRef(0);
   const endpoint = `/api/products/${encodeURIComponent(slug)}/github-star`;
   const loginHref = `/login?connectGithub=1&returnTo=${encodeURIComponent(`/p/${slug}`)}`;
@@ -37,6 +40,7 @@ export function GithubStarButton({ slug }: { slug: string }) {
   }, []);
   const refresh = useCallback(async () => {
     const generation = ++requestGeneration.current;
+    setBusy(true); setMessage("");
     try {
       const result = await loadControl(endpoint);
       if (generation !== requestGeneration.current) return null;
@@ -47,17 +51,20 @@ export function GithubStarButton({ slug }: { slug: string }) {
       const message = "GitHub 스타 상태를 확인할 수 없습니다. 잠시 후 다시 확인해 주세요.";
       setMessage(message);
       return { generation, message };
-    }
+    } finally { if (generation === requestGeneration.current) setBusy(false); }
   }, [endpoint, applyControl]);
 
   useEffect(() => {
     const controller = new AbortController();
     const generationState = requestGeneration;
     const generation = ++generationState.current;
+    setBusy(true);
     void loadControl(endpoint, controller.signal).then((result) => {
       if (!controller.signal.aborted && generation === requestGeneration.current) applyControl(result);
     }).catch(() => {
       if (!controller.signal.aborted && generation === requestGeneration.current) setMessage("GitHub 스타 상태를 확인할 수 없습니다. 잠시 후 다시 확인해 주세요.");
+    }).finally(() => {
+      if (!controller.signal.aborted && generation === requestGeneration.current) setBusy(false);
     });
     return () => { controller.abort(); ++generationState.current; };
   }, [endpoint, applyControl]);
@@ -95,14 +102,18 @@ export function GithubStarButton({ slug }: { slug: string }) {
     } finally { if (generation === requestGeneration.current) setBusy(false); }
   }
 
-  const pending = busy || view?.pending;
-  const uncertain = !view || view.state === "unknown";
-  return <div className="flex flex-col items-start gap-2" data-testid="github-star-control">
-    {connectionNeeded ? <a href={loginHref} className="inline-flex min-h-11 items-center rounded-full border border-line px-4 text-sm font-medium">{connectionNeeded === "reconnect" ? "GitHub 재연결 후 스타" : "GitHub 연결 후 스타"}</a>
-      : <button type="button" aria-pressed={view?.state === "starred"} disabled={!!pending || uncertain} onClick={() => void toggle()} className="inline-flex min-h-11 items-center rounded-full border border-line px-4 text-sm font-medium disabled:opacity-60">
-        {pending ? "GitHub 스타 처리 중…" : view?.state === "starred" ? "GitHub 스타 취소" : view?.state === "unstarred" ? "GitHub 스타" : view?.state === "unknown" ? "GitHub 스타 확인 불가" : "GitHub 스타 확인 중…"}
+  const checking = !connectionNeeded && !view && !message;
+  const retry = !view || view.state === "unknown" || view.pending;
+  const label = connectionNeeded ? (connectionNeeded === "reconnect" ? "GitHub 재연결 후 스타" : "GitHub 연결 후 스타")
+    : busy || checking ? "GitHub 스타 확인 중…" : retry ? "스타 상태 다시 확인" : view.state === "starred" ? "GitHub 스타 취소" : "GitHub 스타";
+  const accessibleLabel = stars === null ? label : `${label}, 전체 스타 ${formatCount(stars)}개`;
+  const style = `inline-flex min-h-6 items-center gap-1 rounded font-medium outline-offset-4 hover:text-accent-ink focus-visible:outline-2 focus-visible:outline-accent-solid disabled:cursor-wait ${view?.state === "starred" ? "text-accent-ink" : "text-fg"}`;
+  const count = <><span aria-hidden>★</span><span>{stars === null ? "스타" : formatCount(stars)}</span></>;
+  return <span className="relative inline-flex items-center" data-testid="github-star-control">
+    {connectionNeeded ? <a href={loginHref} aria-label={accessibleLabel} title={label} className={style}>{count}</a>
+      : <button type="button" aria-label={accessibleLabel} title={message || label} aria-pressed={view?.state === "starred"} aria-busy={busy || !!view?.pending} disabled={busy || checking} onBlur={() => setShowMessage(false)} onClick={() => { setShowMessage(true); void (retry ? refresh() : toggle()); }} className={style}>
+        {count}
       </button>}
-    {!connectionNeeded && (uncertain || view?.pending || message) && <button type="button" disabled={busy} onClick={() => void refresh()} className="text-sm text-fg-muted underline underline-offset-4">스타 상태 다시 확인</button>}
-    {message && <p role="status" className="max-w-sm text-sm text-fg-muted">{message}</p>}
-  </div>;
+    {message && <span role="status" className={showMessage ? "absolute left-0 top-full z-20 mt-2 w-64 max-w-[80vw] rounded-lg border border-line bg-bg-card p-3 text-[13px] font-normal leading-5 text-fg-2 shadow-lg" : "sr-only"}>{message}</span>}
+  </span>;
 }
