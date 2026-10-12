@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import type { FeedbackKind, FeedbackView } from "@/lib/domain/feedback/contract";
-import { FeedbackDeliveryStatus } from "./FeedbackList";
+import { FEEDBACK_SUBMITTED_EVENT, FeedbackDeliveryStatus, type FeedbackSubmittedDetail } from "./FeedbackList";
 
 type Draft = { requestId: string; kind: FeedbackKind; title: string; body: string; serviceDisclosureConsent: boolean; sendToGithub: boolean; githubDisclosureConsent: boolean };
 type Session = { user: { displayName: string } | null; csrfToken: string | null };
@@ -30,10 +30,12 @@ export function FeedbackForm({ slug, githubDeliveryAvailable = false }: { slug: 
   const [sessionError, setSessionError] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const [pending, setPending] = useState(false);
+  const [reauthRequired, setReauthRequired] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [submitted, setSubmitted] = useState<FeedbackView | null>(null);
   const textarea = useRef<HTMLTextAreaElement>(null);
   const entry = useRef<HTMLButtonElement>(null);
+  const submission = useRef<AbortController | null>(null);
   const storageKey = `nmv:feedback-draft:${slug}`;
   const intentKey = `nmv:feedback-write-intent:${slug}`;
   const retryKey = `nmv:feedback-retry:${slug}`;
@@ -74,9 +76,11 @@ export function FeedbackForm({ slug, githubDeliveryAvailable = false }: { slug: 
       setDraft(initial);
       setSession(value);
       setSessionError(false);
+      setPending(false);
+      setReauthRequired(false);
       setExpanded(!!value.user && (writeIntent || retryDraft));
     }).catch(() => { if (!controller.signal.aborted) setSessionError(true); });
-    return () => controller.abort();
+    return () => { controller.abort(); submission.current?.abort(); submission.current = null; };
   }, [storageKey, intentKey, retryKey, slug, sessionAttempt]);
 
   useEffect(() => {
@@ -89,7 +93,7 @@ export function FeedbackForm({ slug, githubDeliveryAvailable = false }: { slug: 
   }, [expanded]);
 
   function change(values: Partial<Draft>) {
-    if (!draft || pending || Object.entries(values).every(([key, value]) => draft[key as keyof Draft] === value)) return;
+    if (!draft || submission.current || Object.entries(values).every(([key, value]) => draft[key as keyof Draft] === value)) return;
     const next = { ...draft, ...values };
     setDraft({ ...next, title: titleFromBody(next.body), requestId: crypto.randomUUID() });
     setSubmitted(null);
@@ -98,14 +102,19 @@ export function FeedbackForm({ slug, githubDeliveryAvailable = false }: { slug: 
   }
 
   function open() {
-    if (!session || pending) return;
-    if (session.user) {
+    if (!session || submission.current) return;
+    if (session.user && !reauthRequired) {
       setExpanded(true);
       return;
     }
+    login();
+  }
+
+  function login() {
     const token = crypto.randomUUID();
     let returnTo = `/p/${encodeURIComponent(slug)}#feedback`;
     try {
+      if (draft) sessionStorage.setItem(storageKey, JSON.stringify(draft));
       sessionStorage.setItem(intentKey, JSON.stringify({ token, expiresAt: Date.now() + 10 * 60_000 }));
       returnTo = `/p/${encodeURIComponent(slug)}?feedbackCompose=${token}#feedback`;
     } catch { /* Login still works when storage is unavailable. */ }
@@ -113,7 +122,7 @@ export function FeedbackForm({ slug, githubDeliveryAvailable = false }: { slug: 
   }
 
   function cancel() {
-    if (pending) return;
+    if (submission.current) return;
     setExpanded(false);
     try { sessionStorage.removeItem(retryKey); } catch { /* The draft is also kept in memory. */ }
     requestAnimationFrame(() => entry.current?.focus({ preventScroll: true }));
@@ -121,21 +130,38 @@ export function FeedbackForm({ slug, githubDeliveryAvailable = false }: { slug: 
 
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!draft || !session?.user || !session.csrfToken || pending) return;
+    if (!draft || !session?.user || !session.csrfToken || submission.current || reauthRequired) return;
+    const controller = new AbortController();
+    submission.current = controller;
     setPending(true); setError(null); setSubmitted(null);
     try {
+      sessionStorage.setItem(storageKey, JSON.stringify(draft));
+      sessionStorage.setItem(retryKey, draft.requestId);
+    } catch { /* Reload can restore the same request whenever storage is available. */ }
+    try {
       const response = await fetch(`/api/products/${encodeURIComponent(slug)}/feedback`, { method: "POST",
-        headers: { "Content-Type": "application/json", "x-csrf-token": session.csrfToken }, body: JSON.stringify(draft) });
-      const data = await response.json() as { feedback?: FeedbackView; error?: string };
+        headers: { "Content-Type": "application/json", "x-csrf-token": session.csrfToken }, body: JSON.stringify(draft), signal: controller.signal });
+      const data = await response.json() as { feedback?: FeedbackView; error?: string; replayed?: boolean };
+      if (controller.signal.aborted) return;
       if (!response.ok || !data.feedback) throw new Error(data.error ?? "feedback_unavailable");
       setSubmitted(data.feedback);
       setDraft(blank());
+      setExpanded(false);
       try { sessionStorage.removeItem(retryKey); } catch { /* A successful receipt remains visible. */ }
-      window.dispatchEvent(new Event("nmv:feedback-submitted"));
+      window.dispatchEvent(new CustomEvent<FeedbackSubmittedDetail>(FEEDBACK_SUBMITTED_EVENT, {
+        detail: { feedback: data.feedback, replayed: data.replayed === true, created: response.status === 201 && data.replayed !== true },
+      }));
+      requestAnimationFrame(() => entry.current?.focus({ preventScroll: true }));
     } catch (error) {
+      if (controller.signal.aborted) return;
       try { sessionStorage.setItem(retryKey, draft.requestId); } catch { /* The live draft remains available for retry. */ }
-      setError(error instanceof Error ? ERROR[error.message] ?? "접수 결과를 확인하지 못했습니다. 작성 내용은 보관되어 있습니다. 다시 제출하면 같은 요청으로 확인합니다." : "접수하지 못했습니다. 다시 시도해 주세요.");
-    } finally { setPending(false); }
+      if (error instanceof Error && ["login_required", "invalid_csrf"].includes(error.message)) {
+        setReauthRequired(true);
+        setError("로그인 상태를 다시 확인해야 합니다. 작성 내용은 보관되어 있습니다. 로그인한 뒤 같은 요청으로 다시 등록해 주세요.");
+      } else setError(error instanceof Error ? ERROR[error.message] ?? "접수 결과를 확인하지 못했습니다. 작성 내용은 보관되어 있습니다. 다시 제출하면 같은 요청으로 확인합니다." : "접수하지 못했습니다. 다시 시도해 주세요.");
+    } finally {
+      if (!controller.signal.aborted) { submission.current = null; setPending(false); }
+    }
   }
 
   return (
@@ -165,12 +191,15 @@ export function FeedbackForm({ slug, githubDeliveryAvailable = false }: { slug: 
           <div className="flex flex-wrap items-center gap-2">
             <p className="mr-auto text-[13px] text-fg-2">이메일과 인증 정보는 적지 마세요.</p>
             <button type="button" onClick={cancel} className="min-h-11 px-3 text-[13px] text-fg-2">취소</button>
-            <button type="submit" disabled={!draft.body.trim() || !draft.title.trim() || !draft.serviceDisclosureConsent || (draft.sendToGithub && !draft.githubDisclosureConsent)} className="min-h-11 rounded-lg bg-accent-solid px-4 text-[13px] font-medium text-white disabled:opacity-50">{pending ? "접수 중…" : "등록"}</button>
+            <button type="submit" disabled={reauthRequired || !draft.body.trim() || !draft.title.trim() || !draft.serviceDisclosureConsent || (draft.sendToGithub && !draft.githubDisclosureConsent)} className="min-h-11 rounded-lg bg-accent-solid px-4 text-[13px] font-medium text-white disabled:opacity-50">{pending ? "접수 중…" : "등록"}</button>
           </div>
         </fieldset>
       </form>}
       {error && <p role="alert" className="mt-3 text-[14px] leading-6">{error}</p>}
-      {submitted && <p role="status" className="mt-3 text-[14px] leading-6">{submitted.reviewState === "held" ? "접수되었습니다. 검토가 끝나기 전에는 작성자와 관리자만 볼 수 있습니다." : "접수되어 서비스에 공개되었습니다."} <FeedbackDeliveryStatus feedback={submitted} /> {submitted.deliveryState === "local_only" && "GitHub에는 전송되지 않았습니다."} <Link prefetch={false} className="underline underline-offset-2" href={`/feedback/${submitted.id}`}>접수 원문 보기</Link></p>}
+      {reauthRequired && <button type="button" onClick={login} className="min-h-11 text-[14px] underline underline-offset-2">로그인하고 다시 등록</button>}
+      {submitted && <p role="status" className="mt-3 text-[14px] leading-6">{submitted.reviewState === "accepted" ? "접수되어 서비스에 공개되었습니다."
+        : submitted.reviewState === "held" ? "검토 중입니다. 검토가 끝나기 전에는 작성자와 관리자만 볼 수 있습니다."
+          : "공개되지 않음. 작성자와 관리자만 볼 수 있습니다."} <FeedbackDeliveryStatus feedback={submitted} /> {submitted.deliveryState === "local_only" && "GitHub에는 전송되지 않았습니다."} <Link prefetch={false} className="underline underline-offset-2" href={`/feedback/${submitted.id}`}>접수 원문 보기</Link></p>}
     </div>
   );
 }

@@ -1,8 +1,17 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import type { FeedbackView } from "@/lib/domain/feedback/contract";
+
+export const FEEDBACK_SUBMITTED_EVENT = "nmv:feedback-submitted";
+export type FeedbackSubmittedDetail = { feedback: FeedbackView; replayed: boolean; created: boolean };
+
+function upsertReceipt(items: FeedbackView[], item: FeedbackView, limit: number): FeedbackView[] {
+  return [item, ...items.filter((previous) => previous.id !== item.id)]
+    .sort((left, right) => Date.parse(right.createdAt) - Date.parse(left.createdAt) || (left.id < right.id ? 1 : left.id > right.id ? -1 : 0))
+    .slice(0, limit);
+}
 
 const KIND = { bug: "오류", feature: "기능 제안", question: "질문" };
 const DELIVERY = {
@@ -76,24 +85,37 @@ export function FeedbackList({ slug, children }: { slug: string; children?: Reac
   const [mineLoaded, setMineLoaded] = useState(false);
   const [publicError, setPublicError] = useState<string | null>(null);
   const [mineError, setMineError] = useState<string | null>(null);
-  const load = useCallback(async (signal?: AbortSignal) => {
+  const activeLoad = useRef<AbortController | null>(null);
+  const loadVersion = useRef(0);
+  const publicIds = useRef(new Set<string>());
+  const receiptIds = useRef(new Set<string>());
+  const mineAuthor = useRef<number | null>(null);
+  const load = useCallback(async () => {
+    activeLoad.current?.abort();
+    const controller = new AbortController();
+    activeLoad.current = controller;
+    const version = ++loadVersion.current;
+    const current = () => !controller.signal.aborted && version === loadVersion.current;
+    const signal = controller.signal;
     await Promise.all([
       fetch(`/api/products/${encodeURIComponent(slug)}/feedback`, { cache: "no-store", signal }).then(async (response) => {
         if (!response.ok) throw new Error("feedback_unavailable");
         const data = await response.json() as { feedback: FeedbackView[]; total?: number };
         if (!Array.isArray(data.feedback) || data.total !== undefined && (!Number.isSafeInteger(data.total) || data.total < data.feedback.length)) throw new Error("feedback_unavailable");
-        if (signal?.aborted) return;
+        if (!current()) return;
+        publicIds.current = new Set(data.feedback.map((item) => item.id));
         setPublicFeedback(data.feedback);
         setPublicTotal(data.total ?? null);
         setPublicError(null);
       }).catch(() => {
-        if (signal?.aborted) return;
+        if (!current()) return;
         setPublicTotal(null);
-        setPublicError("공개 댓글을 불러오지 못했습니다. 다시 시도해 주세요.");
-      }).finally(() => { if (!signal?.aborted) setPublicLoaded(true); }),
+        setPublicError(receiptIds.current.size ? "접수 결과는 보관되어 있습니다. 공개 댓글 목록을 갱신하지 못했습니다. 다시 시도해 주세요." : "공개 댓글을 불러오지 못했습니다. 다시 시도해 주세요.");
+      }).finally(() => { if (current()) setPublicLoaded(true); }),
       fetch(`/api/me/feedback?slug=${encodeURIComponent(slug)}`, { cache: "no-store", signal }).then(async (response) => {
         if (response.status === 401) {
-          if (signal?.aborted) return;
+          if (!current()) return;
+          mineAuthor.current = null;
           setMine(null);
           setMineError(null);
           setView("public");
@@ -102,22 +124,49 @@ export function FeedbackList({ slug, children }: { slug: string; children?: Reac
         if (!response.ok) throw new Error("feedback_unavailable");
         const data = await response.json() as { feedback: FeedbackView[] };
         if (!Array.isArray(data.feedback)) throw new Error("feedback_unavailable");
-        if (signal?.aborted) return;
+        if (!current()) return;
+        mineAuthor.current = data.feedback[0]?.authorUserId ?? null;
         setMine(data.feedback);
         setMineError(null);
       }).catch(() => {
-        if (!signal?.aborted) setMineError("내 댓글을 불러오지 못했습니다. 다시 시도해 주세요.");
-      }).finally(() => { if (!signal?.aborted) setMineLoaded(true); }),
+        if (current()) setMineError(receiptIds.current.size ? "접수 결과는 보관되어 있습니다. 내 댓글 목록을 갱신하지 못했습니다. 다시 시도해 주세요." : "내 댓글을 불러오지 못했습니다. 다시 시도해 주세요.");
+      }).finally(() => { if (current()) setMineLoaded(true); }),
     ]);
   }, [slug]);
 
   useEffect(() => {
-    const controller = new AbortController();
-    void load(controller.signal);
-    const refresh = () => { void load(controller.signal); };
-    window.addEventListener("nmv:feedback-submitted", refresh);
-    return () => { controller.abort(); window.removeEventListener("nmv:feedback-submitted", refresh); };
-  }, [load]);
+    void load();
+    const refresh = (event: Event) => {
+      const detail = (event as CustomEvent<FeedbackSubmittedDetail>).detail;
+      if (!detail || detail.feedback.slug !== slug) return;
+      const item = detail.feedback;
+      const known = publicIds.current.has(item.id) || receiptIds.current.has(item.id);
+      receiptIds.current.add(item.id);
+      if (item.reviewState === "accepted") {
+        publicIds.current.add(item.id);
+        setPublicFeedback((items) => upsertReceipt(items, { ...item, reviewReason: null }, 50));
+        if (detail.created && !detail.replayed && !known) setPublicTotal((total) => total === null ? null : total + 1);
+        setPublicLoaded(true);
+        setView("public");
+      } else {
+        publicIds.current.delete(item.id);
+        setPublicFeedback((items) => items.filter((previous) => previous.id !== item.id));
+        setView("mine");
+      }
+      const sameAuthor = mineAuthor.current === null || mineAuthor.current === item.authorUserId;
+      mineAuthor.current = item.authorUserId;
+      setMine((items) => upsertReceipt(sameAuthor ? items ?? [] : [], item, 100));
+      setMineLoaded(true);
+      setMineError(null);
+      setShowAll(false);
+      void load();
+    };
+    window.addEventListener(FEEDBACK_SUBMITTED_EVENT, refresh);
+    return () => {
+      activeLoad.current?.abort();
+      window.removeEventListener(FEEDBACK_SUBMITTED_EVENT, refresh);
+    };
+  }, [load, slug]);
 
   const feedback = view === "mine" ? mine ?? [] : publicFeedback;
   const loaded = view === "mine" ? mineLoaded : publicLoaded;
