@@ -16,6 +16,7 @@ import { RelatedRow } from "@/components/product-detail/RelatedRow";
 import { UpdateTimeline } from "@/components/product-detail/UpdateTimeline";
 import { FeedbackForm } from "@/components/product-detail/FeedbackForm";
 import { FeedbackList } from "@/components/product-detail/FeedbackList";
+import { FeedbackSettingsMenu } from "@/components/product-detail/FeedbackSettingsMenu";
 import { UnclaimedOwnerContact } from "@/components/product-detail/UnclaimedOwnerContact";
 import { categoryHref } from "@/components/home/browse-state";
 import { productShareImage, shareMetadata } from "@/lib/copy/share";
@@ -125,12 +126,10 @@ async function ProductDetail({ slug, category }: { slug: string; category: strin
           <UpdateTimeline updates={detail.updates} now={now} />
           {productFeedbackEnabled() && (
             <section id="feedback" className="scroll-mt-24 space-y-4 border-t border-line pt-5" aria-label="프로젝트 댓글">
-              <FeedbackList key={detail.product.slug} slug={detail.product.slug}>
+              <FeedbackList key={detail.product.slug} slug={detail.product.slug}
+                settings={detail.product.repoUrl && parseGithubRepository(detail.product.repoUrl) ? <FeedbackSettingsMenu slug={detail.product.slug} /> : undefined}>
                 <FeedbackForm slug={detail.product.slug} githubDeliveryAvailable={githubDeliveryAvailable} />
               </FeedbackList>
-              {detail.product.repoUrl && parseGithubRepository(detail.product.repoUrl) && (
-                <Link prefetch={false} href={`/p/${encodeURIComponent(detail.product.slug)}/github`} className="text-[13px] text-fg-2 underline underline-offset-2">제작자 GitHub 이슈 수신 설정</Link>
-              )}
             </section>
           )}
         </div>
