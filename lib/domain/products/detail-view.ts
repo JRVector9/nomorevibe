@@ -102,8 +102,8 @@ export type LicenseValue = {
 };
 
 export type LicensePresentation = {
-  state: "matched" | "conflict" | "maker_only" | "observed_only" | "missing";
-  label: "GitHub에서 확인" | "정보 충돌" | "메이커 제공·미검증" | "라이선스 확인 안 됨";
+  state: "matched" | "conflict" | "maker_only" | "observed_only" | "unidentified" | "missing";
+  label: "GitHub에서 확인" | "정보 충돌" | "메이커 제공·미검증" | "라이선스 식별 미확인" | "라이선스 확인 안 됨";
   maker: LicenseValue | null;
   observed: LicenseValue | null;
 };
@@ -287,31 +287,47 @@ function licenseValue(
 ): LicenseValue | null {
   const item = record(value);
   if (!item) return null;
-  const spdxId = text(item.spdxId, 80);
-  const name = spdxId ?? text(item.value, 120) ?? text(item.name, 120);
+  const spdxId = licenseSpdxId(item.spdxId);
+  const name = text(item.value, 120)?.trim() || text(item.name, 120)?.trim() || spdxId;
   if (!name) return null;
-  return {
-    value: text(item.value, 120) ?? text(item.name, 120) ?? name,
+  const license = {
+    value: name,
     spdxId,
     url: text(item.url),
     sourceLabel,
   };
+  return unidentifiedLicense(license)
+    ? { ...license, sourceLabel: sourceLabel === "GitHub에서 확인" ? "GitHub 감지·식별 미확인" : "출처 감지·식별 미확인" }
+    : license;
+}
+
+function licenseSpdxId(value: unknown): string | null {
+  const id = text(value, 80)?.trim();
+  return id && !/^(NOASSERTION|NONE)$/i.test(id) ? id : null;
+}
+
+function unidentifiedLicense(value: LicenseValue): boolean {
+  return !value.spdxId && /^(other|unknown|noassertion|none)$/i.test(value.value.trim());
 }
 
 function makerLicense(value: MakerLicense | null): LicenseValue | null {
-  if (!value?.value) return null;
+  const spdxId = licenseSpdxId(value?.spdxId);
+  const name = value?.value?.trim() || spdxId;
+  if (!name) return null;
   return {
-    value: value.value,
-    spdxId: value.spdxId ?? null,
-    url: value.url ?? null,
+    value: name,
+    spdxId,
+    url: value?.url ?? null,
     sourceLabel: "메이커 제공·미검증",
   };
 }
 
 function sameLicense(left: LicenseValue, right: LicenseValue): boolean {
-  const leftIdentity = (left.spdxId ?? left.value).trim().toLocaleLowerCase();
-  const rightIdentity = (right.spdxId ?? right.value).trim().toLocaleLowerCase();
-  return leftIdentity === rightIdentity;
+  const identity = (value: string) => value.trim().toLowerCase();
+  if (left.spdxId && right.spdxId) return identity(left.spdxId) === identity(right.spdxId);
+  if (left.spdxId) return identity(right.value) === identity(left.spdxId) || identity(right.value) === identity(left.value);
+  if (right.spdxId) return identity(left.value) === identity(right.spdxId) || identity(left.value) === identity(right.value);
+  return identity(left.value) === identity(right.value);
 }
 
 export function presentLicense(
@@ -322,6 +338,12 @@ export function presentLicense(
   const makerView = makerLicense(maker);
   const observedLabel = provider === "github" ? "GitHub에서 확인" : "공식 출처에서 확인";
   const observed = licenseValue(observedValue, observedLabel);
+  if (observed && unidentifiedLicense(observed)) {
+    return { state: "unidentified", label: "라이선스 식별 미확인", maker: makerView, observed };
+  }
+  if (makerView && observed && unidentifiedLicense(makerView)) {
+    return { state: "observed_only", label: "GitHub에서 확인", maker: makerView, observed };
+  }
   if (makerView && observed) {
     return sameLicense(makerView, observed)
       ? { state: "matched", label: "GitHub에서 확인", maker: makerView, observed }
