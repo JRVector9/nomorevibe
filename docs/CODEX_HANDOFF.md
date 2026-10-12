@@ -1,3 +1,31 @@
+# 2026-10-12 — ManimGX 스타 쓰기 거절: 오류 표시 배포 완료, 앱 설치 승인 대기
+
+## Current objective / completed work
+
+사용자가 `https://nomorevibe.com/p/manimgx`의 별이 반응하지 않는다고 하여 스킬·서브에이전트·Codex CLI 없이 로그인된 Chrome에서 직접 확인했다. 서비스 PUT502와 운영 DB의 확정된 `star_write_rejected` 영수증을 확인했다. 같은 유효 사용자 토큰의 REST PUT403 및 GraphQL FORBIDDEN은 모두 `Resource not accessible by integration`이었다. 실제 성공한 스타 추가·취소는 아직 없으므로 기능 복구 완료로 해석하지 않는다.
+
+사용자의 GitHub 추가 인증 완료는 실제 Authorized GitHub Apps 화면으로 확인했다. Star 앱 승인 상세에는 `View and manage your starred repositories`가 있어 스타 관리 권한은 승인되어 있다. 동일 화면은 설치된 계정이 없음을 표시했다. Chrome의 공식 앱 설치 화면에서 JRVector9 개인 계정, `Only select repositories`, 공개 `JRVector9/nomorevibe` 하나를 선택했다. 요청 권한은 repository metadata read 및 user starring read/write이며 All repositories는 선택하지 않았다. 최종 Install은 누르지 않았다. 새 앱 접근 권한 부여에 대한 브라우저 제어 규칙상 action-time 확인을 async 질문으로 요청했고 답변을 기다린다. 설치가 외부 ManimGX 저장소의 스타 거절을 해결한다는 것은 아직 검증되지 않았다. 비밀번호·OTP·새 키 입력, 기존 연결 해제·토큰 회전·권한 확대는 수행하지 않았다.
+
+## Modified files / key design decisions
+
+PR390 `https://github.com/JRVector9/nomorevibe/pull/390`는 코드 커밋012a553298e6e9d4557ff92b7c5176afdd704e34, 일반 matching-head merge23e13d4dd86ca12673fbbfd097b5d5b09d36912d로 병합했다. 코드 변경은 두 줄이다. `lib/domain/github-stars/service.ts`는 확정된 non-rate-limit provider403을502로 덮지 않고403으로 유지한다. `components/product-detail/GithubStarButton.tsx`는 해당 결과에 GitHub의 스타 변경 권한 거절 안내를 표시한다. rate-limit429 우선 처리,401 재연결, unknown fence/lease/CSRF/현재 상태 복원과 숫자 보정은 보존했다. 이 인계 문서 외 새 기능·테스트·DB migration·디자인 변경은 없다. OAuth 앱 교체나 제작자 설치 요구를 아직 원인으로 단정하지 않는다.
+
+## Actual verification / failed approaches
+
+직접 diff 검토 및 `git diff --check` 실제exit0. PR CI38228411920의 필수check 및 main CI38228833529의 scope/quality/integration3/check/worker·web publish 모두 실제success다. 새 로컬 test/typecheck/lint/build suite는 실행하지 않았다. GraphQL viewerCanStar는 실제 스키마에 없어 처음 읽기가 실패했고 공식 Starrable 필드로 정정했다. valid GraphQL 읽기에서는 ManimGX 공개 저장소의 viewerHasStarredfalse/live711을 확인했으나 단일 addStar는 거절됐다. API version downgrade/반복 쓰기 우회는 수행하지 않았다. 최초502의 응답 body는 직접 읽지 않았으므로 HTML 여부는 추정이다. Chrome 사용자 창 전환 시 fresh AX를 읽고 Star 앱 창만 다시 선택했으며 다른 페이지는 수정하지 않았다.
+
+capture3437/plan68235/deploy59464/verify24808 실제exit0. 웹 immutable digest는 `ghcr.io/jrvector9/nomorevibe-runtime-web@sha256:26fe7165e9de6274b66d233c7cc921dc6061bc801b3c09a172d534b5c6ef8553`, release23e13d4이다. mini2→M3 4 순차 배포 및 공개 health 양 instance ok, 실제8앱12컨테이너 saved/runtime environment·image·replicas·health·source/autoDeploy/command/buildSecrets 보존을 확인했다. 네 feature flag ON/configurationMatched 유지. worker는33349ed1352caabcb434ac4906bc2a2213ac2a51/ce17a8 digest를 유지했고 이번 CI worker 이미지는 배포하지 않았다. 기존 cache purge 인증 실패는 재시도하지 않았다. 이 배포는 오류 표시 수정이며 실제 스타 성공 검증은 남았다.
+
+## Remaining work / exact commands
+
+설치 승인 답변이 오면 `cua.rewriteDocumentation()` 및 fresh AX로 공식 Star 설치 창과 선택 범위를 재확인한 뒤 승인된 최종 Install만 수행한다. 사용자가 직접 Install을 누른 경우 설치 완료 UI를 확인한다. 이어 기본 read-only provider 진단으로 설치·개인 상태를 관측하고 로그인된 ManimGX에서 실제 별 클릭/숫자 및 GitHub 결과를 확인한다. 설치 이후에도403이면 원인을 다시 평가하며 성공한 것으로 보고하지 않는다. 추가 user grant/범위 확대는 별도 확인이 필요하다.
+
+private operator 폴더 `/private/tmp/nomorevibe-manimgx-star-20261012`는0700/파일0600이며 토큰·비밀 snapshot은 출력/커밋 금지다. `graphql-write-attempted` sentinel 삭제 및 write-once 반복 금지. 이미 `before.json`이 생성되어 release.py deploy 재실행 금지. 필요시 `python3 /private/tmp/nomorevibe-manimgx-star-20261012/release.py verify`만 실행한다. 소개 검수 not_before2100-01-01/unleased는 기존 read-only 진단으로 확인했고 재개하지 않았다. 관리자 Tailscale 전용 접근·아이디/비밀번호는 별도 미구현 후속이다.
+
+현재 root main23e13d4/사용자 미추적 자산 보존, owned worktree `/private/tmp/nomorevibe-star-denial-20261012`의 docs/star-denial-release-20261012에서 이 최종 인계 문서만 변경했다. 다음 명령은 `git diff --check` → 이 파일만 stage/commit/push → body-file docs PR → 최신 base 및 필수check 확인 → 일반 matching-head merge → root main FF이다. 이전 기록은 이 최상단 상태와 실제 Git/운영 결과보다 우선하지 않는다.
+
+---
+
 # 2026-10-11 — nomorevibe.com 전환 완료, PR360 병합·주차 경로 복구
 
 ## Current objective / completed work
