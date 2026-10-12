@@ -19,6 +19,9 @@ import {
 import { toListItem, withProductHealth, type ProductListItem } from "./view";
 
 const HOUR_MS = 60 * 60_000;
+// Collection stays at KST 00/08/16; ranking compares adjacent completed cycles.
+const COMPARISON_HOURS = 8;
+const GROWTH_POLICY_VERSION = "growth-8h-v1";
 const MAX_PAGE_SIZE = 100;
 const baselineObservations = alias(observations, "baseline_star_observations");
 
@@ -46,7 +49,7 @@ export type StarGrowthRunSummary = {
 };
 
 export type StarGrowthSnapshot = {
-  status: "ready" | "observing" | "warming" | "late" | "no-results";
+  status: "ready" | "warming" | "late" | "no-results";
   reason: "missing-run" | "run-not-closed" | "run-failed" | "missing-baseline" | "baseline-not-closed"
     | "invalid-policy" | "invalid-cycle" | "cycle-changed" | "no-comparable-observations" | "below-threshold" | null;
   asOf: string;
@@ -65,7 +68,7 @@ export type StarGrowthSnapshot = {
 };
 
 export type StarGrowthPage = {
-  items: (ProductListItem & { starGrowth?: StarGrowthItem["starGrowth"] })[];
+  items: StarGrowthItem[];
   total: number;
   page: number;
   pages: number;
@@ -155,29 +158,7 @@ function currentObservationConditions(current: ProductStarObservationRun, policy
   );
 }
 
-/** During initial history collection, show measured candidates without claiming growth. */
-async function loadObservedPage(current: ProductStarObservationRun, policy: StarObservationPolicy,
-  now: Date, requested: number, pageSize: number) {
-  const conditions = currentObservationConditions(current, policy, now);
-  const result = await db.transaction(async (tx) => {
-    const [count] = await tx.select({ total: sql<number>`count(*)::int` }).from(observations)
-      .innerJoin(products, eq(products.id, observations.productId)).where(conditions);
-    const total = Number(count.total);
-    const pages = Math.max(1, Math.ceil(total / pageSize));
-    const page = Math.min(requested, pages);
-    const rows = total === 0 ? [] : await tx.select(observedListFields).from(observations)
-      .innerJoin(products, eq(products.id, observations.productId)).where(conditions)
-      .orderBy(sql`${observations.stars} desc`, asc(observations.slug))
-      .limit(pageSize).offset((page - 1) * pageSize);
-    return { rows, total, page, pages };
-  }, { isolationLevel: "repeatable read", accessMode: "read only" });
-  const items = await withProductHealth(result.rows.map((row) => toListItem({
-    ...row, starsPrevious: null, starsPreviousAt: null,
-  })));
-  return { items, total: result.total, page: result.page, pages: result.pages };
-}
-
-/** Only immutable T/T−24h evidence ranks growth; live rows can hide unsafe products. */
+/** Only immutable T/T−8h evidence ranks growth; live rows can hide unsafe products. */
 async function loadPage(current: ProductStarObservationRun, baseline: ProductStarObservationRun,
   policy: StarObservationPolicy, now: Date, requested: number, pageSize: number) {
   const gain = sql<number>`(${observations.stars} - ${baselineObservations.stars})`;
@@ -229,17 +210,19 @@ async function loadPage(current: ProductStarObservationRun, baseline: ProductSta
 export async function getStarGrowthPage(options: StarGrowthPageOptions = {}): Promise<StarGrowthPage> {
   const now = options.now ?? new Date();
   const asOf = latestStarObservationCycleAt(now);
-  const baselineAt = new Date(asOf.getTime() - 24 * HOUR_MS);
+  const baselineAt = new Date(asOf.getTime() - COMPARISON_HOURS * HOUR_MS);
   const pageSize = boundedPageSize(options.pageSize);
   const requested = requestedPage(options.page);
-  const context = await publicRead("list", ["star-growth-runs", asOf, STAR_OBSERVATION_POLICY_VERSION],
+  const context = await publicRead("list", ["star-growth-8h-runs", asOf, STAR_OBSERVATION_POLICY_VERSION],
     () => loadRuns(asOf, baselineAt));
   const { current, baseline, currentSummary } = context;
   const snapshot: StarGrowthSnapshot = {
     status: "warming", reason: "missing-run", asOf: asOf.toISOString(),
     nextCycle: nextStarObservationCycleAt(now).toISOString(), baselineAsOf: baselineAt.toISOString(),
-    runId: current?.id ?? null, policyVersion: current?.policyVersion ?? null,
-    policy: current && validPolicy(current.policy) ? current.policy : null,
+    runId: current?.id ?? null, policyVersion: current ? `${current.policyVersion}/${GROWTH_POLICY_VERSION}` : null,
+    // Preserve the immutable collector policy; these are the effective display criteria.
+    policy: current && validPolicy(current.policy) ? { ...current.policy,
+      minGain: 1, minIntervalHours: COMPARISON_HOURS - 1, maxIntervalHours: COMPARISON_HOURS + 1 } : null,
     targetCount: current?.targetCount ?? null, successCount: current?.successCount ?? null, failureCount: current?.failureCount ?? null,
     firstObservedAt: currentSummary?.firstObservedAt ?? null, lastObservedAt: currentSummary?.lastObservedAt ?? null,
     baseline: context.baselineSummary, comparableCount: 0,
@@ -255,16 +238,10 @@ export async function getStarGrowthPage(options: StarGrowthPageOptions = {}): Pr
   if (current.status === "failed") return empty("late", "run-failed");
   if (current.status !== "closed") return empty("late", "run-not-closed");
   if (!snapshot.policy) return empty("late", "invalid-policy");
-  if (!baseline) {
-    const page = await publicRead("list", ["star-growth-observed", snapshot.asOf, current.id,
-      current.policyVersion, current.policy, requested, pageSize],
-      () => loadObservedPage(current, snapshot.policy!, now, requested, pageSize));
-    return { ...page, pageSize, snapshot: { ...snapshot,
-      status: page.total > 0 ? "observing" : "warming", reason: "missing-baseline" } };
-  }
+  if (!baseline) return empty("warming", "missing-baseline");
   if (baseline.status !== "closed") return empty("late", "baseline-not-closed");
 
-  const page = await publicRead("list", ["star-growth-page", snapshot.asOf, current.id, current.policyVersion, current.policy,
+  const page = await publicRead("list", ["star-growth-8h-page", snapshot.asOf, current.id, snapshot.policyVersion, snapshot.policy,
     baseline.id, baseline.policyVersion, baseline.policy, requested, pageSize],
     () => loadPage(current, baseline, snapshot.policy!, now, requested, pageSize));
   return {

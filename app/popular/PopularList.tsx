@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { ProductTagline } from "@/components/ProductTagline";
 import { StarMetric } from "@/components/StarMetric";
+import { StarGrowthMetric } from "@/components/home/StarGrowthMetric";
 import { Icon } from "@/components/home/icons";
 import type { RankedCardProduct } from "@/components/home/popular-cards";
 import { ProjectTile } from "@/components/home/ProjectTile";
@@ -47,7 +48,7 @@ export function PopularList({ items, now }: { items: RankedCardProduct[]; now: s
               </p>
             </div>
             <div className="popular-row-end">
-              <StarMetric value={product} now={now} />
+              {product.starGrowth ? <StarGrowthMetric value={product.starGrowth} /> : <StarMetric value={product} now={now} />}
               <button type="button" className={`cover-saved${isSaved ? " active" : ""}`} aria-label={`${product.name} ${isSaved ? "저장 취소" : "저장"}`}
                 aria-pressed={isSaved} onClick={() => toggle(product.slug)}>
                 <Icon name="bookmark" size={16} />

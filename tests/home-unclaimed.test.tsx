@@ -122,9 +122,9 @@ function product(slug: string): ProductListItem {
 /** 급상승은 일반 공개 목록과 독립된 회차 자료다. 빈 응답은 비교 이력 준비 중이다. */
 function growthPage(slugs: string[] = []): StarGrowthPage {
   const asOf = "2026-10-12T07:00:00.000Z";
-  const baselineAsOf = "2026-10-11T07:00:00.000Z";
+  const baselineAsOf = "2026-10-11T23:00:00.000Z";
   const observedAt = "2026-10-12T06:30:00.000Z";
-  const baselineObservedAt = "2026-10-11T06:30:00.000Z";
+  const baselineObservedAt = "2026-10-11T22:30:00.000Z";
   const items = slugs.map((slug) => ({ ...product(slug),
     starGrowth: { stars: 100, gain: 20, baselineStars: 80, observedAt, baselineObservedAt },
   }));
@@ -133,7 +133,7 @@ function growthPage(slugs: string[] = []): StarGrowthPage {
     snapshot: {
       status: items.length ? "ready" : "warming", reason: items.length ? null : "missing-baseline",
       asOf, baselineAsOf, nextCycle: "2026-10-12T15:00:00.000Z", runId: 1, policyVersion: "kst-8h-v1",
-      policy: { minStars: 50, maxStarsExclusive: 2000, minGain: 10, minIntervalHours: 23, maxIntervalHours: 25, maxAgeHours: 10, collectionWindowHours: 1, retentionDays: 7 },
+      policy: { minStars: 50, maxStarsExclusive: 2000, minGain: 1, minIntervalHours: 7, maxIntervalHours: 9, maxAgeHours: 10, collectionWindowHours: 1, retentionDays: 7 },
       targetCount: items.length, successCount: items.length, failureCount: 0,
       firstObservedAt: items.length ? observedAt : null, lastObservedAt: items.length ? observedAt : null,
       comparableCount: items.length,
@@ -642,8 +642,8 @@ describe("구획 제목", () => {
     getStarGrowthPage.mockResolvedValue(growthPage(["g1", "g2", "g3", "g4", "g5"]));
     getPublicList.mockImplementation(async (limit: number, options: { offset?: number } = {}) => rising.slice(options.offset ?? 0, (options.offset ?? 0) + limit));
     const html = await render({});
-    expect(html).toContain("전일 대비 스타 급상승");
-    expect(html.indexOf("전일 대비 스타 급상승")).toBeLessThan(html.indexOf("발견할 가치가 있는 프로젝트"));
+    expect(html).toContain("최근 8시간 스타 급상승");
+    expect(html.indexOf("최근 8시간 스타 급상승")).toBeLessThan(html.indexOf("발견할 가치가 있는 프로젝트"));
     expect(html.split('id="projects"')[0]).toContain("g5 태그라인");
     expect(getStarGrowthPage).toHaveBeenCalledWith({ pageSize: 5, now: expect.any(Date) });
     expect(getPublicList).toHaveBeenCalledWith(9, expect.objectContaining({ sort: "rising", rising: true, offset: 0 }));

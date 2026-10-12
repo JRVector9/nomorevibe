@@ -105,22 +105,22 @@ export function MethodologyDialog({ pulse, rankingFallback = false, aiLevels = n
   const blocks: Record<string, React.ReactNode> = {
     "star-growth": (
       <>
-        <h3>{STAR_GROWTH_TITLE} — 전날 같은 회차의 관측값과 비교합니다.</h3>
+        <h3>{STAR_GROWTH_TITLE} — 직전 8시간 회차의 관측값과 비교합니다.</h3>
         <p>{starGrowthNote(starGrowth ?? null)}.</p>
         {starGrowth !== undefined && <StarGrowthSummary snapshot={starGrowth} now={pulse.asOf} />}
         <Details>
-          <p>공개된 프로젝트의 정상 공개 GitHub 저장소를 비교합니다. KST 00시·08시·16시 회차 직전 {starGrowth?.policy?.collectionWindowHours ?? 1}시간 안의 성공 관측만 사용하며, 실제 두 관측 간격은 {starGrowth?.policy?.minIntervalHours ?? 23}~{starGrowth?.policy?.maxIntervalHours ?? 25}시간입니다.</p>
-          <Formula>전일 대비 증가 = 해당 회차의 스타 − 전날 같은 회차의 스타</Formula>
-          <p>증가량이 많은 순, 같으면 해당 회차 스타가 많은 순, 다시 같으면 프로젝트 주소 순입니다. 홈 상위 5개와 모두 보기는 같은 회차·조건·순서를 사용합니다. 카드에는 해당 회차 스타와 순증가를 표시하며, 숫자에 마우스를 올리면 두 실제 관측 시각을 확인할 수 있습니다. 보조 기술에도 같은 시각을 제공합니다.</p>
+          <p>공개된 프로젝트의 정상 공개 GitHub 저장소를 비교합니다. KST 00시·08시·16시 회차 직전 {starGrowth?.policy?.collectionWindowHours ?? 1}시간 안의 성공 관측만 사용하며, 실제 두 관측 간격은 {starGrowth?.policy?.minIntervalHours ?? 7}~{starGrowth?.policy?.maxIntervalHours ?? 9}시간입니다. 이번 회차 스타50~1,999개 중 순증가1개 이상인 프로젝트를 표시합니다.</p>
+          <Formula>8시간 증가량 = 해당 회차의 스타 − 8시간 전 회차의 스타</Formula>
+          <p>증가량이 많은 순, 같으면 해당 회차 스타가 많은 순, 다시 같으면 프로젝트 주소 순입니다. 홈 상위 5개와 모두 보기는 같은 회차·조건·순서를 사용합니다. 카드에는 ‘8시간 +증가량’을 먼저, 총 스타 수를 보조로 표시하며 숫자에 마우스를 올리면 두 실제 관측 시각을 확인할 수 있습니다. 보조 기술에도 같은 시각을 제공합니다.</p>
           {starGrowth && <table className="method-table">
             <thead><tr><th>관측</th><th>기준 회차 KST</th><th>실제 성공 관측 시각 KST</th></tr></thead>
             <tbody>
               <tr><td>이번 회차</td><td>{formatPublicDateTime(starGrowth.asOf, pulse.asOf)}</td><td>{starGrowth.firstObservedAt ? `${formatDetailTime(starGrowth.firstObservedAt)} ~ ${formatDetailTime(starGrowth.lastObservedAt)}` : "성공 관측 없음"}</td></tr>
-              <tr><td>전날 같은 회차</td><td>{formatPublicDateTime(starGrowth.baselineAsOf, pulse.asOf)}</td><td>{starGrowth.baseline?.firstObservedAt ? `${formatDetailTime(starGrowth.baseline.firstObservedAt)} ~ ${formatDetailTime(starGrowth.baseline.lastObservedAt)}` : "성공 관측 없음"}</td></tr>
+              <tr><td>8시간 전 회차</td><td>{formatPublicDateTime(starGrowth.baselineAsOf, pulse.asOf)}</td><td>{starGrowth.baseline?.firstObservedAt ? `${formatDetailTime(starGrowth.baseline.firstObservedAt)} ~ ${formatDetailTime(starGrowth.baseline.lastObservedAt)}` : "성공 관측 없음"}</td></tr>
             </tbody>
           </table>}
-          <p>최신 예정 회차의 성공 관측을 쓰며 마지막 관측은 {starGrowth?.policy?.maxAgeHours ?? 10}시간 이내여야 합니다. 실패·비교 자료 없음·저장소 연결 변경·관측 마감 초과는 제외합니다. 새로 발굴된 프로젝트는 다음 관측 회차부터 수집하고 전날 비교 자료가 확보된 뒤 진입합니다.</p>
-          <p>정확한 최근 24시간의 모든 스타 이벤트를 센 값은 아닙니다. 기존 추천 대체 목록의 마지막 두 관측 사이 일평균과도 계산이 다릅니다. 전날 회차가 없을 때는 ‘스타 관측 중인 프로젝트’로 표시하고 이번 회차의 실측 스타가 많은 순으로 보여 줍니다. 이 목록에는 증가량을 표시하지 않으며 전날 자료가 확보되면 급상승 기준으로 자동 전환합니다. 차단·삭제·공개 범위 변경 프로젝트는 즉시 숨기며, 그 외 순위는 다음 회차까지 고정됩니다.</p>
+          <p>최신 예정 회차의 성공 관측을 쓰며 마지막 관측은 {starGrowth?.policy?.maxAgeHours ?? 10}시간 이내여야 합니다. 실패·비교 자료 없음·저장소 연결 변경·관측 마감 초과는 제외합니다. 새로 발굴된 프로젝트는 다음 관측 회차부터 수집하고 직전 회차의 비교 자료가 확보된 뒤 진입합니다.</p>
+          <p>‘최근 8시간’은 마지막 마감 회차와 그8시간 전 회차 사이의 순변화입니다. 현재 시각에서 실시간으로 거슬러8시간의 모든 스타 이벤트를 센 값은 아닙니다. 비교 자료가 없을 때는 상태를 안내하며 총 스타 순으로 대체하지 않습니다. 차단·삭제·공개 범위 변경 프로젝트는 즉시 숨기며, 그 외 순위는 다음 회차까지 고정됩니다.</p>
         </Details>
       </>
     ),
