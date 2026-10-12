@@ -23,11 +23,12 @@ async function resolveTarget(slug: string, userId: number): Promise<{ target: St
   const name = product.repoUrl && parseGithubRepository(product.repoUrl);
   if (!name) throw new PublicAuthError(400, "star_repository_unsupported");
   const credential = await getGithubUserCredential(userId);
-  const expectedId = await knownStarRepositoryId(userId, product.id, product.repoUrl!);
+  let expectedId = await knownStarRepositoryId(userId, product.id, product.repoUrl!);
   let result = await githubRequest({ path: githubRepositoryPath(name), token: credential.token });
-  // A renamed repository is followed through its persisted numeric identity only.
-  if (result.outcome === "confirmed_rejection" && result.code === "github_redirect" && expectedId !== undefined) {
-    result = await githubRequest({ path: `/repositories/${expectedId}`, token: credential.token });
+  // Existing identity wins; first visits accept only a checked GitHub API numeric destination.
+  if (result.outcome === "confirmed_rejection" && result.code === "github_redirect") {
+    expectedId ??= result.redirectRepositoryId;
+    if (expectedId !== undefined) result = await githubRequest({ path: `/repositories/${expectedId}`, token: credential.token });
   }
   if (result.outcome !== "confirmed_success") {
     if (result.outcome === "confirmed_rejection" && result.code === "github_rate_limited") throw new StarProviderRateLimit(result.retryAt);

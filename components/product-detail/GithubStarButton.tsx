@@ -115,7 +115,7 @@ export function GithubStarButton({ slug, stars = null }: { slug: string; stars?:
   const displayedStars = stars === null ? null : Math.max(0, stars + (countState ? Number(countState.state === "starred") - Number(countState.initial === "starred") : 0));
   const accessibleLabel = displayedStars === null ? label : `${label}, 전체 스타 ${formatCount(displayedStars)}개`;
   const style = `inline-flex min-h-6 items-center gap-1 rounded font-medium outline-offset-4 hover:text-accent-ink focus-visible:outline-2 focus-visible:outline-accent-solid disabled:cursor-wait ${view?.state === "starred" ? "text-accent-ink" : "text-fg"}`;
-  const count = <><span aria-hidden>★</span><span>{displayedStars === null ? "스타" : formatCount(displayedStars)}</span></>;
+  const count = <><span aria-hidden className={busy || checking ? "animate-pulse" : undefined}>★</span><span>{displayedStars === null ? "스타" : formatCount(displayedStars)}</span></>;
   return <span className="relative inline-flex items-center" data-testid="github-star-control">
     {connectionNeeded ? <a href={loginHref} aria-label={accessibleLabel} title={label} className={style}>{count}</a>
       : <button type="button" aria-label={accessibleLabel} title={message || label} aria-pressed={view?.state === "starred"} aria-busy={busy || !!view?.pending} disabled={busy || checking} onBlur={() => setShowMessage(false)} onClick={() => { setShowMessage(true); void (retry ? refresh() : toggle()); }} className={style}>
