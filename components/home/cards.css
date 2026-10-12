@@ -45,3 +45,6 @@
 .card-meta-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .card-meta .star-metric { flex: none; flex-wrap: nowrap; color: var(--text); font-weight: 500; }
 .card-meta-compact { display: block; padding-top: 4px; overflow: hidden; text-overflow: ellipsis; }
+/* 급상승은 증가량이 주 지표, 총 스타는 보조 값이다. */
+.star-growth-metric strong { font-weight: 650; }
+.star-growth-metric small { color: var(--text-2); font-weight: 400; }

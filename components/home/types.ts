@@ -1,6 +1,7 @@
 import type { StarObservation } from '@/lib/domain/products/star-change';
 import type { TaglineSource } from "@/lib/db/schema";
 import type { ProductActivity } from "@/lib/domain/products/activity";
+import type { StarGrowthItem } from "@/lib/domain/products/star-growth";
 export type HomePulseView = {
   asOf: string;
   asOfLabel: string;
@@ -15,6 +16,7 @@ export type HomePulseView = {
 };
 
 export type HomeCardProduct = StarObservation & {
+  starGrowth?: StarGrowthItem["starGrowth"];
   slug: string;
   name: string;
   tagline: string;

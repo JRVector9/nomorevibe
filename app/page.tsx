@@ -17,7 +17,7 @@ import {
 import { ActiveList } from "@/components/home/ActiveList";
 import { CompactRow } from "@/components/home/CompactRow";
 import { CompactCard } from "@/components/home/CompactCard";
-import { starGrowthTitle, starGrowthNote } from "@/components/home/StarGrowthSummary";
+import { STAR_GROWTH_TITLE, starGrowthNote } from "@/components/home/StarGrowthSummary";
 import { IntroLine } from "@/components/home/IntroLine";
 import { LaunchBand } from "@/components/home/LaunchBand";
 import { listHomeNews } from "@/lib/news/repository";
@@ -629,11 +629,11 @@ export async function HomeContent({ params }: { params: HomeParams }) {
     <main className="wrap">
       {!scoped && <IntroLine pulse={pulse} total={total} state={state} />}
       {!filtered && (
-        <CompactRow id="rising" priority title={starGrowthTitle(strip?.snapshot ?? null)} note={<>{starGrowthNote(strip?.snapshot ?? null)} · <Link prefetch={false} href={metricHref(state, "star-growth")} scroll={false}>집계 기준</Link></>}
+        <CompactRow id="rising" priority title={STAR_GROWTH_TITLE} note={<>{starGrowthNote(strip?.snapshot ?? null)} · <Link prefetch={false} href={metricHref(state, "star-growth")} scroll={false}>집계 기준</Link></>}
           summary={(strip?.items.length ?? 0) === 0 ? <p className="row-note" role="status">{!strip
             ? "급상승 집계를 불러오지 못했습니다. 잠시 후 다시 확인해 주세요."
             : strip.snapshot.status === "warming"
-              ? "전일 비교 자료를 준비하고 있습니다. 자료가 쌓이면 프로젝트를 보여드립니다."
+              ? "8시간 전 회차의 비교 관측을 준비하고 있습니다. 두 회차가 확보되면 증가량순으로 보여드립니다."
               : strip.snapshot.status === "no-results"
                 ? "이번 회차에 표시할 급상승 프로젝트가 없습니다."
                 : "급상승 관측이 지연되고 있습니다. 집계 기준에서 상태를 확인해 주세요."}</p> : undefined}

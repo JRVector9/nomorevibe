@@ -1,3 +1,36 @@
+# 2026-10-13 — 8시간 스타 증가량·모두보기 통일, 이후 상세 저장소 미수집 문구 원인 조사
+
+## Current objective / completed work
+
+사용자가 총 스타 순의 임시 노출을 바로잡고 직전8시간 증가량 순으로 정렬·표시하며 모두보기 스타일을 다른 목록과 맞추라고 요청했다. 추가로 이 작업 완료 후 상세페이지의 ‘저장소 정보는 아직 수집하지 않았습니다’ 문구가 나오는 원인을 설명해 달라고 했다. 추가 조사는 첫 작업 완료 후에 진행하며 아직 시작하지 않았다.
+
+8시간 두 회차의 실제 운영 read-only SQL 비교에서 ManimGX648→801(+153), skills-46 +97, mygo +82 등 기존 관측값이 있음을 확인했다. 직전 수정 PR398의 총스타 후보 노출은 목적에 맞지 않아 삭제했다. /private/tmp/nomorevibe-star-growth-8h-20261013, branch fix/star-growth-8h-20261013에서 구현·부모 소스 리뷰를 완료했고 아직 commit/CI/배포 전이다.
+
+## Modified files / key design decisions
+
+lib/domain/products/star-growth.ts: 최신 마감 T와T−8시간 비교, 실제 관측 간격7~9시간·순증가1개 이상·스타50~1999·기존 공개/생존/동일저장소/연결 버전·관측 창/신선도 조건. 증가량 desc→같으면 총스타 desc→고정 slug asc. 관측 회차의 immutable policy/수집잡/DB를 변경하지 않고 웹의 effective policy와 growth-8h-v1 표시 버전을 별도로 부여했다. 이전24시간과 cached missing-baseline 자료가 섞이지 않도록 캐시 namespace를8h로 바꿨다. 총스타 후보 observing 상태와 reader를 삭제해 비교불가/실패 때 총스타 순으로 대체하지 않는다.
+
+app/page.tsx·components/home/StarGrowthSummary.tsx·StarGrowthMetric.tsx·MethodologyDialog.tsx: ‘최근8시간 스타 급상승’, ‘8시간 +153’을 주지표, 총스타를 보조로 표시. 실제 시각 tooltip과 마지막 마감 회차 비교임을 설명한다. app/rising/page.tsx는 /popular의 경로/머리/요약/목록·카드 토글/쪽 넘김 및 기존 PopularList·RankedCards/ProjectCard·저장 기능·CSS를 그대로 재사용한다. HomeCardProduct에 optional starGrowth만 추가하고 ProjectCard/PopularList에서 있을 때만 기존 metric 대신 표시한다. cards.css에 주/보조 숫자 스타일2개를 추가했다. tests/home-unclaimed.test.tsx의 기존 제목·정책/시각 fixture만 보정했고 새 테스트는 작성하지 않았다.
+
+## Test commands and actual results / failed approaches
+
+운영 crawler Docker에서 read-only SQL로 실제2회차/8시간 증가값 확인. 설치된 Next16.3.8 server/client 및 CSS 가이드·실제 /popular 목록·저장/카드/스타 부품을 읽었다. 수정 후 git diff --check 실제 exit0. 로컬 기능/단위/E2E/브라우저·실제인증/댓글/스타 쓰기는 사용자 직접 테스트 선호로 수행하지 않았다. 필수 원격 CI는 아직 실행하지 않았다. 새 테스트 없음. 원격 초기 SQL은 전체 공개 가시성 필터를 적용하기 전 증거라 최종 순위와 같다고 아직 주장하지 않는다.
+
+검색에서 존재하지 않는 docs/PENDING.md 경로를 포함해 rg exit2를 받았고 실제 root PENDING.md/파일목록을 기준으로 확인했다. 문구 수정 중 오탈자(は)를 즉시 ‘는’으로 보정했다. 테스트 성공 주장 없음. 스킬·추가 서브에이전트·Codex CLI를 사용하지 않았다.
+
+## Remaining work / exact commands
+
+명시적 파일 commit/push·PR 최신 main 필수 check·normal matching-head merge·main image발행→현재 web b48b3d3에서 두 웹만 배포→홈5/전체15의 실제 증가량·순위·8시간 표기/총수 보조·목록/카드 스타일·두 웹health 확인→상세 문구 원인 조사/사용자 보고. worker33349ed, 8h 관측 빈도, 네 flags ON, intro pause2100/unleased, 사용자 미추적 자료 보존. 최신 main bdc1238은 문서뿐이며 실제 웹 b48b3d3다. 지난 operator /private/tmp/nomorevibe-star-growth-release-20261013-88ou02hb를 그대로 deploy 재실행하지 않는다. 새0600 snapshot을 생성하는 새 디렉토리로 baseline/image scope를 갱신해야 한다.
+
+```sh
+cd /private/tmp/nomorevibe-star-growth-8h-20261013
+git diff --check
+git status --short --branch
+git diff -- lib/domain/products/star-growth.ts app/rising/page.tsx components/home/StarGrowthMetric.tsx
+```
+
+---
+
 # 2026-10-13 — 급상승 준비 기간 프로젝트 노출·운영 배포 완료
 
 ## Current objective / completed work

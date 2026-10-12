@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { ProductTagline } from "@/components/ProductTagline";
 import { StarMetric } from "@/components/StarMetric";
+import { StarGrowthMetric } from "@/components/home/StarGrowthMetric";
 import type { BrowseState } from "@/components/home/browse-state";
 import { Icon } from "@/components/home/icons";
 import { ProjectTile } from "@/components/home/ProjectTile";
@@ -78,7 +79,7 @@ export function ProjectCard({ product, saved, onToggleSave, now, priority = fals
             <ProductActivityRow activity={product.activity} now={at} />
             {product.health?.down && <span className="meta-down">응답 없음</span>}
           </span>
-          <StarMetric value={product} now={at} listedAt={product.listedAt} />
+          {product.starGrowth ? <StarGrowthMetric value={product.starGrowth} /> : <StarMetric value={product} now={at} listedAt={product.listedAt} />}
         </div>
       </div>
     </article>
