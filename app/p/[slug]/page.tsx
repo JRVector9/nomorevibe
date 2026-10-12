@@ -124,7 +124,7 @@ async function ProductDetail({ slug, category }: { slug: string; category: strin
           <LanguageBar repository={detail.repository} />
           <UpdateTimeline updates={detail.updates} now={now} />
           {productFeedbackEnabled() && (
-            <section className="space-y-4 border-t border-line pt-5" aria-label="프로젝트 댓글">
+            <section id="feedback" className="scroll-mt-24 space-y-4 border-t border-line pt-5" aria-label="프로젝트 댓글">
               <FeedbackList key={detail.product.slug} slug={detail.product.slug}>
                 <FeedbackForm slug={detail.product.slug} githubDeliveryAvailable={githubDeliveryAvailable} />
               </FeedbackList>

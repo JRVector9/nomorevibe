@@ -40,8 +40,8 @@ async function login(context: BrowserContext) {
 test("email account can submit while preserving a failed draft and the same retry request ID", async ({ page, context }) => {
   await login(context);
   await page.goto(`/p/${slug}`);
-  await page.getByRole("textbox", { name: "피드백 제목", exact: true }).fill("설치 오류");
-  await page.getByRole("textbox", { name: "피드백 내용", exact: true }).fill("원문을 보관하고 다시 제출합니다.");
+  await page.getByRole("button", { name: "댓글 남기기", exact: true }).click();
+  await page.getByRole("textbox", { name: "댓글 내용", exact: true }).fill("원문을 보관하고 다시 제출합니다.");
   await page.getByLabel("닉네임·제목·내용을 NoMoreVibe에 공개하는 데 동의합니다.").check();
   let failedRequestId: string | null = null;
   await page.route(`**/api/products/${slug}/feedback`, async (route) => {
@@ -50,16 +50,15 @@ test("email account can submit while preserving a failed draft and the same retr
       await route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ error: "feedback_unavailable" }) });
     } else await route.continue();
   });
-  await page.getByRole("button", { name: "피드백 제출", exact: true }).click();
+  await page.getByRole("button", { name: "등록", exact: true }).click();
   await expect(page.locator("#feedback").getByRole("alert")).toContainText("작성 내용은 보관되어 있습니다");
   await page.reload();
-  await expect(page.getByRole("textbox", { name: "피드백 제목", exact: true })).toHaveValue("설치 오류");
-  await expect(page.getByRole("textbox", { name: "피드백 내용", exact: true })).toHaveValue("원문을 보관하고 다시 제출합니다.");
+  await expect(page.getByRole("textbox", { name: "댓글 내용", exact: true })).toHaveValue("원문을 보관하고 다시 제출합니다.");
   await page.unroute(`**/api/products/${slug}/feedback`);
   const posted = page.waitForRequest((request) => request.url().endsWith(`/api/products/${slug}/feedback`) && request.method() === "POST");
-  await page.getByRole("button", { name: "피드백 제출", exact: true }).click();
+  await page.getByRole("button", { name: "등록", exact: true }).click();
   expect((await posted).postDataJSON().requestId).toBe(failedRequestId);
-  await expect(page.locator("#feedback").getByRole("status")).toContainText("GitHub에는 전송되지 않았습니다");
+  await expect(page.locator("#feedback").getByRole("status").filter({ hasText: "GitHub에는 전송되지 않았습니다" })).toBeVisible();
   await page.getByRole("link", { name: "접수 원문 보기" }).click();
   await expect(page.getByText("원문을 보관하고 다시 제출합니다.", { exact: true })).toBeVisible();
 });
