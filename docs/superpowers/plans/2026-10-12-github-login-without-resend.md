@@ -44,5 +44,10 @@ Files: docs/operations/github-stars-feedback-runbook.md, docs/operations/2026-10
 
 - [x] 이메일 필수였던 운영 설명을 GitHub-only 가능으로 바로잡고 기존 시간별 과거 상태 기록과 실제 배포 상태를 구별한다.
 - [x] `git diff --check` exit0와 읽기 전용 독립 Codex 리뷰의 실제 결과를 기록한다. 리뷰 명령은 `codex exec -m gpt-6.1-sol -c model_reasoning_effort=xhigh -s read-only --ephemeral`이며 원본 env/PEM·테스트·앱·네트워크 실행은 금지한다.
-- [ ] 변경 파일만 커밋·push/PR한 뒤 최신 base의 `gh pr checks` 필수 check 성공을 확인하고 matching head 정상 병합한다. 로컬 기능 테스트 성공을 주장하지 않는다.
-- [ ] handoff와 로컬 프로젝트 일지에 코드 완료·운영 반영·사용자 OAuth 확인을 구별해 기록한다.
+- [x] 변경 파일만 커밋·push/PR한 뒤 최신 base의 `gh pr checks` 필수 check 성공을 확인하고 matching head 정상 병합한다. 로컬 기능 테스트 성공을 주장하지 않는다.
+- [x] handoff와 로컬 프로젝트 일지에 코드 완료·운영 반영·사용자 OAuth 확인을 구별해 기록한다.
+
+
+완료: PR374 head045db77/최신base192b572 원격CI38186468194 필수 check·quality·통합3개 성공,
+main58a63a3으로 정상 병합했다. 독립 소스 리뷰 추가 지적 없음. 운영 배포·플래그 ON과
+실제 GitHub 승인은 이번 코드 완료와 구별한다. 새 테스트와 로컬 실행은 하지 않았다.
