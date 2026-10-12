@@ -177,3 +177,66 @@ maintenance `650b341` 릴리스와 6개 앱의 네 플래그 false를 확인했�
 이 작업에서는 운영 배포·DB 적용·플래그 ON·제공자 Save를 하지 않았다.
 Resend는 이메일 로그인 선택 시에만 필요하다. 운영 적용은 같은 실행 릴리스·키/origin과
 제공자 웹훅 Save를 확인하고 기존 홈 관측 마이그레이션·자료 축적 절차와 함께 진행한다.
+
+
+## GitHub 웹훅 제공자 설정 — 2026-10-12 10:09 KST
+
+사용자가 GitHub 웹훅 설정을 요청했다. 두 웹의 저장 환경에서 App ID와 각각의
+webhook secret이 일치하고 서로 다른 32자 이상 키임을 값 출력 없이 확인했다.
+일반 Client Secret을 웹훅 secret으로 재사용하지 않았다.
+
+Feedback App5275280은 사용자 제공 PEM과 저장 PEM이 일치하고 JWT `GET /app`의
+ID·slug·owner가 맞으며 Issues write/Issues 구독이 유지됨을 확인했다.
+제공자 `GET /app/hook/config`에서는 기존 Secret 미설정 상태였다.
+공식 API `PATCH /app/hook/config`로 저장 환경과 동일한 Feedback webhook secret을
+적용했고 HTTP200 뒤 fresh GET에서 Secret 설정·JSON·SSL 검증·아래 URL을 확인했다.
+General 화면의 Active도 켜져 있었다.
+
+| App | Webhook URL | 10:09 시점 확인 |
+| --- | --- | --- |
+| Star5275277 | `https://nomorevibe.com/api/github/webhooks/star` | General의 URL·Active·SSL 검증 확인. Secret 입력·Save는 사용자 인계 중 |
+| Feedback5275280 | `https://nomorevibe.com/api/github/webhooks/feedback` | 공식 API 저장과 재조회 완료, JSON·SSL 검증·Issues 구독 |
+
+GitHub 재인증 화면은 사용자가 인증을 완료해 General 진입을 확인했다.
+Star API 설정에 필요한 개인키는 발견하지 않았고 새 개인키를 만들지 않았다.
+브라우저 도구의 인증정보 변경 규칙상 Star의 새 Secret 입력과 최종 저장은 사용자에게
+인계했다. Star의 일반 공개 API에서 JRVector9/App5275277과 metadata read/starring write,
+명시적 저장소 이벤트 구독 없음도 확인했다. 서비스 코드가 처리하는 승인 철회 이벤트와
+저장소 Star 이벤트 구독을 혼동하지 않는다.
+
+이번 작업은 제공자 웹훅 설정이다. 서비스 env·키 회전·플래그 ON·배포·DB 변경·
+메일/스타/Issue 쓰기·웹훅 redelivery·기능 테스트는 하지 않았다.
+실제 전송·서명 검증 성공은 운영 반영 후 사용자 확인 항목이다.
+[GitHub 웹훅 설정 공식 API](https://docs.github.com/en/rest/apps/webhooks#update-a-webhook-configuration-for-an-app)
+
+
+### 저장 후 재확인 — 2026-10-12 10:32 KST
+
+사용자가 키 파일을 요청해 TextEdit에서 `star-webhook-secret.txt`가 열린 것을
+확인했다. 내용은 출력하지 않았다. 클립보드 복사 및 저장 완료 답변 뒤 실제 Star
+General을 다시 열고 reload했으나 Secret 입력란과 설정 안내가 남아 있었고
+`Change secret` 표시가 없었다. Star Secret 저장 완료로 처리하지 않았으며
+올바른 Star 앱에서 입력·저장하도록 다시 인계했다. URL·Active·SSL은 맞았다.
+Feedback 공식 GET 재조회에서는 Secret 설정·JSON·SSL·URL·Issues 구독을 다시
+확인했다. API는 Secret을 마스킹하므로 원문 일치를 GET만으로 판단하지 않는다.
+이때 Star 사용자 저장 후 화면 확인을 기다리며 문서 PR을 보류했다.
+문서 `git diff --check`는 실제 exit0. 기능 테스트와 운영 활성화는 하지 않았다.
+
+
+### 두 웹훅 설정 완료 — 2026-10-12 10:36 KST
+
+사용자가 Star Secret을 다시 입력·저장한 뒤 올바른 `nomorevibe-star` General을
+새로고침했다. `Change secret` 표시, Active=1, SSL 검증=1, 정상 URL이 유지돼
+Secret 설정 저장을 확인했다. Secret 원문은 읽어 출력하지 않았다.
+Feedback은 같은 서버 저장 키로 최종 PATCH를 한 번 더 적용했다.
+10:36:05 KST fresh GET은 정상 URL·JSON·SSL 검증·Secret 설정 상태와
+Issues 구독을 확인했다. 서버 저장 설정과 제공자 입력에 서로 다른 앱 키를 사용했다.
+
+| App | 최종 설정 확인 |
+| --- | --- |
+| Star5275277 | 사용자 Secret 저장 후 reload 확인, `/api/github/webhooks/star`, Active·SSL 켜짐 |
+| Feedback5275280 | 서버 저장 Secret 최종 API 적용·GET 확인, `/api/github/webhooks/feedback`, JSON·SSL·Issues 구독 |
+
+제공자 웹훅 설정 단계는 완료했다. Secret 마스킹/UI 상태만으로 실제 전송의
+HMAC 성공을 주장하지 않는다. 서비스 실행 릴리스 반영·네 기능 플래그 ON·실제
+로그인/스타/피드백 검증은 별도 운영 단계이며 이번 작업에서는 수행하지 않았다.
