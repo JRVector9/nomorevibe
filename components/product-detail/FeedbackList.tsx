@@ -3,6 +3,9 @@
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import type { FeedbackView } from "@/lib/domain/feedback/contract";
+import { FeedbackDeliveryStatus } from "./FeedbackDeliveryStatus";
+
+export { FeedbackDeliveryStatus };
 
 export const FEEDBACK_SUBMITTED_EVENT = "nmv:feedback-submitted";
 export type FeedbackSubmittedDetail = { feedback: FeedbackView; replayed: boolean; created: boolean };
@@ -14,20 +17,6 @@ function upsertReceipt(items: FeedbackView[], item: FeedbackView, limit: number)
 }
 
 const KIND = { bug: "오류", feature: "기능 제안", question: "질문" };
-const DELIVERY = {
-  local_only: "서비스에 접수됨", queued: "GitHub 전송 대기", sending: "GitHub 전송 확인 중", delivered: "GitHub에 전송됨",
-  retry_wait: "GitHub 전송 재시도 대기", uncertain: "GitHub 전송 결과 확인 중", blocked: "GitHub 전송 중지", cancelled: "GitHub 전송 취소",
-};
-const EXTERNAL = { open: "열림", closed: "닫힘", deleted: "삭제됨", unknown: "상태 확인 중" };
-
-export function FeedbackDeliveryStatus({ feedback }: { feedback: FeedbackView }) {
-  return <>
-    <span>{DELIVERY[feedback.deliveryState]}</span>
-    {feedback.githubIssueUrl && <> · <a href={feedback.githubIssueUrl} target="_blank" rel="noopener noreferrer" className="underline underline-offset-2">GitHub 이슈 보기</a>
-      {feedback.externalIssueState && <span> · GitHub 이슈 {EXTERNAL[feedback.externalIssueState]}</span>}</>}
-    {feedback.lastErrorCode && <span> · 전송 상태 코드: {feedback.lastErrorCode}</span>}
-  </>;
-}
 
 export function FeedbackItem({ feedback }: { feedback: FeedbackView }) {
   return (
@@ -48,6 +37,8 @@ export function FeedbackItem({ feedback }: { feedback: FeedbackView }) {
 }
 
 function CompactFeedbackItem({ feedback }: { feedback: FeedbackView }) {
+  const privateReview = feedback.reviewState !== "accepted";
+  const githubDelivery = feedback.deliveryState !== "local_only" || !!feedback.githubIssueUrl;
   return (
     <article className="border-b border-line py-4 last:border-b-0">
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[13px] text-fg-2">
@@ -65,17 +56,16 @@ function CompactFeedbackItem({ feedback }: { feedback: FeedbackView }) {
         </summary>
         <p className="mt-1 whitespace-pre-wrap break-words text-[14px] leading-6">{feedback.body}</p>
       </details>
-      <p className="mt-2 text-[13px] leading-5 text-fg-2">
-        {feedback.reviewState === "held" ? "검토 중 · 작성자와 관리자만 볼 수 있음"
-          : feedback.reviewState === "rejected" ? "공개되지 않음 · 작성자와 관리자만 볼 수 있음" : "서비스에 공개됨"}
-        {" · "}<FeedbackDeliveryStatus feedback={feedback} />
-      </p>
+      {(privateReview || githubDelivery) && <p className="mt-2 text-[13px] leading-5 text-fg-2">
+        {privateReview && <>{feedback.reviewState === "held" ? "검토 중 · 작성자와 관리자만 볼 수 있음" : "공개되지 않음 · 작성자와 관리자만 볼 수 있음"}{githubDelivery && " · "}</>}
+        {githubDelivery && <FeedbackDeliveryStatus feedback={feedback} compact />}
+      </p>}
       {feedback.reviewReason && <p className="mt-1 whitespace-pre-wrap break-words text-[13px] text-fg-2">검토 사유: {feedback.reviewReason}</p>}
     </article>
   );
 }
 
-export function FeedbackList({ slug, children }: { slug: string; children?: ReactNode }) {
+export function FeedbackList({ slug, children, settings }: { slug: string; children?: ReactNode; settings?: ReactNode }) {
   const [publicFeedback, setPublicFeedback] = useState<FeedbackView[]>([]);
   const [publicTotal, setPublicTotal] = useState<number | null>(null);
   const [mine, setMine] = useState<FeedbackView[] | null>(null);
@@ -180,6 +170,7 @@ export function FeedbackList({ slug, children }: { slug: string; children?: Reac
           <button type="button" aria-pressed={view === "public"} onClick={() => { setView("public"); setShowAll(false); }} className={`min-h-11 ${view === "public" ? "font-semibold text-fg" : "text-fg-2"}`}>전체</button>
           {(mine !== null || mineError) && <button type="button" aria-pressed={view === "mine"} onClick={() => { setView("mine"); setShowAll(false); }} className={`min-h-11 ${view === "mine" ? "font-semibold text-fg" : "text-fg-2"}`}>내 댓글</button>}
           <span className="text-[13px] text-fg-2">최신순</span>
+          {settings}
         </div>
       </div>
       {children}

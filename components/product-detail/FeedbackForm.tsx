@@ -4,7 +4,9 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import type { FeedbackKind, FeedbackView } from "@/lib/domain/feedback/contract";
-import { FEEDBACK_SUBMITTED_EVENT, FeedbackDeliveryStatus, type FeedbackSubmittedDetail } from "./FeedbackList";
+import { FEEDBACK_SUBMITTED_EVENT, type FeedbackSubmittedDetail } from "./FeedbackList";
+import { FeedbackDeliveryStatus } from "./FeedbackDeliveryStatus";
+import { FeedbackGithubOptions } from "./FeedbackGithubOptions";
 
 type Draft = { requestId: string; kind: FeedbackKind; title: string; body: string; serviceDisclosureConsent: boolean; sendToGithub: boolean; githubDisclosureConsent: boolean };
 type Session = { user: { displayName: string } | null; csrfToken: string | null };
@@ -94,7 +96,7 @@ export function FeedbackForm({ slug, githubDeliveryAvailable = false }: { slug: 
 
   function change(values: Partial<Draft>) {
     if (!draft || submission.current || Object.entries(values).every(([key, value]) => draft[key as keyof Draft] === value)) return;
-    const next = { ...draft, ...values };
+    const next = { ...draft, ...values, ...(!githubDeliveryAvailable ? { sendToGithub: false, githubDisclosureConsent: false } : {}) };
     setDraft({ ...next, title: titleFromBody(next.body), requestId: crypto.randomUUID() });
     setSubmitted(null);
     setError(null);
@@ -180,14 +182,14 @@ export function FeedbackForm({ slug, githubDeliveryAvailable = false }: { slug: 
           <textarea ref={textarea} id="feedback-body" className="min-h-28 w-full resize-y rounded-md bg-bg-card p-1 text-[14px] leading-6 text-fg outline-offset-2" required maxLength={5000} value={draft.body} placeholder="사용해 본 의견이나 궁금한 점을 남겨주세요." onChange={(event) => change({ body: event.target.value })} />
           <div className="flex flex-wrap items-center gap-1 border-b border-line pb-3">
             <div role="group" aria-label="댓글 종류" className="flex gap-1">{KINDS.map((kind) => <button key={kind.value} type="button" aria-pressed={draft.kind === kind.value} onClick={() => change({ kind: kind.value })}
-              className={`min-h-9 rounded-md px-3 text-[13px] ${draft.kind === kind.value ? "bg-accent-soft text-accent" : "text-fg-2"}`}>{kind.label}</button>)}</div>
+              className={`min-h-11 rounded-md px-3 text-[13px] ${draft.kind === kind.value ? "bg-accent-soft text-accent" : "text-fg-2"}`}>{kind.label}</button>)}</div>
             <span className="ml-auto text-[13px] text-fg-2">{draft.body.length.toLocaleString("ko-KR")} / 5,000</span>
           </div>
-          <label className="flex items-start gap-2 text-[13px] leading-6"><input className="mt-1.5" type="checkbox" required checked={draft.serviceDisclosureConsent} onChange={(event) => change({ serviceDisclosureConsent: event.target.checked })} />닉네임·제목·내용을 NoMoreVibe에 공개하는 데 동의합니다.</label>
-          {githubDeliveryAvailable ? <>
-            <label className="flex min-h-11 items-center gap-3 text-[14px]"><input type="checkbox" checked={draft.sendToGithub} onChange={(event) => change({ sendToGithub: event.target.checked, githubDisclosureConsent: false })} />제작자가 연결한 GitHub 저장소에 이슈로 전송합니다.</label>
-            {draft.sendToGithub && <label className="flex min-h-11 items-center gap-3 text-[14px]"><input type="checkbox" required checked={draft.githubDisclosureConsent} onChange={(event) => change({ githubDisclosureConsent: event.target.checked })} />닉네임·원문 링크·내용이 앱 봇의 GitHub 공개 이슈에 게시되는 데 별도로 동의합니다.</label>}
-          </> : <p className="text-[13px] leading-5 text-fg-2">이 제품의 GitHub 전송은 아직 사용할 수 없습니다. 피드백은 서비스에서 접수합니다.</p>}
+          <label className="flex min-h-11 items-start gap-2 py-2 text-[13px] leading-6"><input className="mt-1.5 shrink-0" type="checkbox" required checked={draft.serviceDisclosureConsent} onChange={(event) => change({ serviceDisclosureConsent: event.target.checked })} />닉네임·제목·내용을 NoMoreVibe에 공개하는 데 동의합니다.</label>
+          {githubDeliveryAvailable && <FeedbackGithubOptions selected={draft.sendToGithub} consent={draft.githubDisclosureConsent} onChange={change} disabled={pending} />}
+          {!githubDeliveryAvailable && draft.sendToGithub && <p className="text-[13px] leading-5 text-fg-2">
+            저장한 초안의 GitHub 전달을 현재 사용할 수 없습니다. <button type="button" onClick={() => change({ sendToGithub: false, githubDisclosureConsent: false })} className="min-h-11 underline underline-offset-2">GitHub 전달 선택 해제</button>
+          </p>}
           <div className="flex flex-wrap items-center gap-2">
             <p className="mr-auto text-[13px] text-fg-2">이메일과 인증 정보는 적지 마세요.</p>
             <button type="button" onClick={cancel} className="min-h-11 px-3 text-[13px] text-fg-2">취소</button>
@@ -199,7 +201,7 @@ export function FeedbackForm({ slug, githubDeliveryAvailable = false }: { slug: 
       {reauthRequired && <button type="button" onClick={login} className="min-h-11 text-[14px] underline underline-offset-2">로그인하고 다시 등록</button>}
       {submitted && <p role="status" className="mt-3 text-[14px] leading-6">{submitted.reviewState === "accepted" ? "접수되어 서비스에 공개되었습니다."
         : submitted.reviewState === "held" ? "검토 중입니다. 검토가 끝나기 전에는 작성자와 관리자만 볼 수 있습니다."
-          : "공개되지 않음. 작성자와 관리자만 볼 수 있습니다."} <FeedbackDeliveryStatus feedback={submitted} /> {submitted.deliveryState === "local_only" && "GitHub에는 전송되지 않았습니다."} <Link prefetch={false} className="underline underline-offset-2" href={`/feedback/${submitted.id}`}>접수 원문 보기</Link></p>}
+          : "공개되지 않음. 작성자와 관리자만 볼 수 있습니다."} <FeedbackDeliveryStatus feedback={submitted} compact /> {submitted.deliveryState === "local_only" && "GitHub에는 전송되지 않았습니다."} <Link prefetch={false} className="underline underline-offset-2" href={`/feedback/${submitted.id}`}>접수 원문 보기</Link></p>}
     </div>
   );
 }
