@@ -1,3 +1,25 @@
+# 2026-10-12 — Star App 설치 후에도403: 문서 조사·보고 완료
+
+## Current objective / completed work
+
+사용자가 최종 Install을 직접 누른 뒤 UI의 Installed GitHub App/설치170548389/selected JRVector9/nomorevibe 및 read-only provider36572 actualexit0의 설치 수1·appMatches·suspendedfalse를 확인했다. 같은 유효 Star user token의 GET스타404는 유지됐다. 로그인된 ManimGX에서 상단 별을 직접 한번 클릭한 결과,447 유지 및 GitHub 스타 변경 권한 거절 안내를 확인했다. read-only diagnostic73212 actualexit0은 최신 영수증 star_write_rejected403/stateunstarred/desirednull/lease없음과 소개 검수2100-01-01/unleased를 확인했다. 여러 영수증 전체를 도구가 반복 클릭한 것으로 해석하지 않는다. 성공한 별 추가·취소는 아직 없다.
+
+이후 사용자가 "먼저 문서 리서치를 다 해보고 보고해"라고 지시했다. 그 뒤 외부 쓰기·등록·재승인·권한 확대·앱 코드 구현·운영 배포를 수행하지 않고 공식 문서와 개발자 직접 보고·현재 소스를 조사했다. 보고서는 [GitHub 개인 스타 연동 조사](operations/2026-10-12-github-star-auth-research.md)다. 실제 확정 결과와 설치 범위 원인 추론을 구분했다. 공식 endpoint는 GitHub App user token을 지원하지만, 앱의 대상 저장소 접근과 개인 승인을 함께 요구한다. 미설치 타인 프로젝트 전체 연동은 미검증/실제 실패다. OAuth App의public_repo 대안은 공개 repo 쓰기 권한이 넓고, 이 서비스에서 성공을 실검증한 것은 아니며 아직 구현 승인·착수하지 않았다.
+
+## Modified files / key decisions / actual verification
+
+이번 변경은 위 조사 보고서와 이 인계 문서뿐이다. no skill/subagent/CodexCLI/new test/local suite. 조사 과정의 추정파일·없는 glob 읽기는 실제 rg --files 경로로 정정했고, 이전 출력에서 확인하지 않은 세션ID94676의 poll은 Unknown process id였으므로 성공으로 기록하지 않는다. 정확한73212 진단을 읽기 전용으로 다시 실행해exit0을 확인했다. 직접 소스 검토에서 token parser는ghu_/empty scope, credential DB는auth 종류/clientID/scope구분없음, 옛 Star webhook은githubUserId로active연결을회수, feedback은installation token으로봇POST임을 확인했다. OAuth 전환을 환경변수 교체만으로 처리하면 안 된다. 보고서PR-R01~03은 정책·capability/인증이행/UI총수 제안이다.
+
+이미 병합한 오류 안내PR390의 실제운영 release23e13d4/webdigest26fe7165 유지, fourflagsON, worker33349ed/ce17a8 유지. 최종 인계PR391은 필수check 성공 후matching-head일반merge9182f74e2e69cc7c96212adadb12e01cc4676863 및rootFF 완료였다. docs-only main과운영코드release가다름은정상이며문서만으로다시배포하지않는다. private operator before/preflight는비밀이므로출력·커밋금지; release.py deploy와 graphql-write-attempted 재실행금지.
+
+## Remaining work / exact commands
+
+사용자에게 조사 결과를 먼저 보고한다. 추가 구현·새App등록·OAuth넓은권한승인은그후의명시지시에서처리한다. installedrepo 대조/동일범위fresh token비교/제작자의실제설치직접조회/GitHub지원판정은미수행이다. 피드백BBBB명의전송과관리자Tailscale/아이디비밀번호는별도후속이며중단소개검수재개금지.
+
+root main9182f74와사용자미추적자료보존. owned worktree /private/tmp/nomorevibe-star-denial-20261012 branchdocs/github-star-research-20261012에서문서2개변경. 다음정확한명령: git diff --check → 두문서만stage/commit/push → body-file docsPR → 최신base9182f74와필수check확인 → 일반matching-headmerge → root git fetch origin/git merge --ff-only origin/main. 필수docsCI결과는실제로확인한후보고한다. 운영재확인은필요할때 python3 /private/tmp/nomorevibe-manimgx-star-20261012/release.py verify (read-only)만사용한다.
+
+---
+
 # 2026-10-12 — ManimGX 스타 쓰기 거절: 오류 표시 배포 완료, 앱 설치 승인 대기
 
 ## Current objective / completed work
