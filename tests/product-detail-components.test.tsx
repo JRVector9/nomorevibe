@@ -812,7 +812,8 @@ describe("evidence product detail components", () => {
     expect(source).toContain('export const dynamic = "force-dynamic"');
     expect(source).toContain("getProductDetail(slug)");
     expect(source).not.toContain("findBySlug");
-    expect(source).not.toMatch(/댓글|comment/i);
+    expect(source).toContain("productFeedbackEnabled() &&");
+    expect(source).toContain('aria-label="프로젝트 댓글"');
     expect(source).toContain("risingRank={detail.risingRank}");
     expect(source).not.toContain("<ProductGallery");
     expect(source).not.toContain("<EvidenceCard");
@@ -831,13 +832,15 @@ describe("evidence product detail components", () => {
     expect(notFoundAt).toBeGreaterThan(-1);
     expect(notFoundAt).toBeLessThan(source.indexOf("<Suspense fallback={<DetailSkeleton />}>"));
     expect(renderToStaticMarkup(<DetailSkeleton />)).toContain('aria-busy="true"');
-    // 읽기 순서: 히어로 → 핵심 사실 → 소개 → 언어 → 업데이트 → 정보 → 미리보기 → 운영자 → 같은 분야
+    // 읽기 순서: 히어로 → 핵심 사실 → 소개 → 언어 → 업데이트 → 댓글 → 정보 → 미리보기 → 운영자 → 같은 분야
     const order = [
       "<ProductHero",
       "<FactsStrip",
       "<IntroSection",
       "<LanguageBar",
       "<UpdateTimeline",
+      "<FeedbackList",
+      "<FeedbackForm",
       "<InfoCard",
       "<PreviewFigure",
       "<UnclaimedOwnerContact",
