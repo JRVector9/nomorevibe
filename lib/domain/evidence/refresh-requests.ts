@@ -9,7 +9,9 @@ import {
 } from "@/lib/db/product-evidence-schema";
 import {
   findProductGenerationId,
+  lockProductGeneration,
   ProductGenerationChangedError,
+  type ProductTransaction,
   withProductGeneration,
 } from "@/lib/domain/products/generation";
 import { requestJob, assertJobLease, type JobLease } from "@/lib/jobs/control";
@@ -46,11 +48,16 @@ export function nextProductRefreshVersion(current: Pick<ProductRefreshRequest,
     : current.requestedVersion + 1;
 }
 
-export async function queueProductRefresh(input: z.input<typeof requestSchema>): Promise<ProductRefreshReceipt> {
+export async function queueProductRefresh(
+  input: z.input<typeof requestSchema>,
+  transaction?: ProductTransaction,
+): Promise<ProductRefreshReceipt> {
   const value = requestSchema.parse(input);
-  const productId = value.productId ?? await findProductGenerationId(value.slug);
+  const productId = value.productId ?? (transaction
+    ? (await transaction.select({ id: products.id }).from(products).where(eq(products.slug, value.slug)).limit(1))[0]?.id ?? null
+    : await findProductGenerationId(value.slug));
   if (productId === null) throw new ProductGenerationChangedError();
-  return withProductGeneration(value.slug, productId, async tx => {
+  const enqueue = async (tx: ProductTransaction): Promise<ProductRefreshReceipt> => {
     const now = new Date();
     const [current] = await tx.select().from(productRefreshRequests)
       .where(eq(productRefreshRequests.productId, productId)).for("update");
@@ -90,7 +97,12 @@ export async function queueProductRefresh(input: z.input<typeof requestSchema>):
     });
     await requestJob("product-evidence-refresh", tx);
     return { productId, requestedVersion, status: "queued" };
-  });
+  };
+  if (transaction) {
+    if (!(await lockProductGeneration(transaction, productId, value.slug))) throw new ProductGenerationChangedError();
+    return enqueue(transaction);
+  }
+  return withProductGeneration(value.slug, productId, enqueue);
 }
 
 export async function getProductRefreshRequest(slug: string): Promise<ProductRefreshRequest | null> {

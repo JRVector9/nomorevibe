@@ -15,10 +15,12 @@ import { z } from "zod";
 import { db } from "@/lib/db";
 import {
   productEvidenceSources,
+  productEvidenceAudit,
   productLinks,
   productMedia,
   productMediaDeclarations,
   products,
+  productRefreshRequests,
 } from "@/lib/db/schema";
 import type { LinkKind, ProductRefreshProgress } from "@/lib/db/product-evidence-schema";
 import { fetchCapped } from "@/lib/net/fetch";
@@ -42,6 +44,10 @@ import {
 } from "./providers/links";
 import { upsertObservedSource } from "./repository";
 import { insertUpdateCandidates } from "./updates";
+import { normalizeTypedLink } from "./contracts";
+import { syncRepositoryLink } from "./repository-link-sync";
+import { queueProductRefresh } from "./refresh-requests";
+import { assertJobLease, type JobLease } from "@/lib/jobs/control";
 
 const slugSchema = z.string().min(1).max(80).regex(/^[a-z0-9][a-z0-9-]*$/);
 const GENERIC_LINK_CAP = 64 * 1024;
@@ -200,6 +206,63 @@ export function retryAt(now: Date, attempts: number, settings: EvidenceSettings)
   const exponent = Math.min(Math.max(0, attempts - 1), settings.maxRetries - 1);
   const delayMinutes = Math.min(7 * 24 * 60, 6 * 60 * (2 ** exponent));
   return new Date(now.getTime() + delayMinutes * 60 * 1000);
+}
+
+/** A single recovery intake; collection stays in the existing request lane. */
+export async function queueInitialProductEvidenceRefresh(options: {
+  lease?: JobLease;
+  hasBudget?: () => boolean;
+} = {}): Promise<{
+  slug: string;
+  linkAction: "created" | "updated" | "unchanged";
+} | null> {
+  const primaryKey = sql<string>`regexp_replace(rtrim(regexp_replace(lower(btrim(${products.repoUrl})),
+    '^https?://(www[.])?github[.]com/', ''), '/'), '[.]git$', '')`;
+  const [candidate] = await db.select({ productId: products.id, slug: products.slug,
+    repositoryKey: primaryKey }).from(products)
+    .leftJoin(productLinks, and(eq(productLinks.slug, products.slug), eq(productLinks.kind, "repository"),
+      eq(productLinks.normalizedKey, primaryKey)))
+    .leftJoin(productEvidenceSources, and(eq(productEvidenceSources.slug, products.slug),
+      eq(productEvidenceSources.kind, "repository"), eq(productEvidenceSources.sourceKey, primaryKey)))
+    .where(and(
+      inArray(products.status, ["seeded", "verified"]),
+      sql`btrim(${products.repoUrl}) ~* '^https?://(www[.])?github[.]com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/?$'`,
+      sql`${primaryKey} ~ '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$'`,
+      sql`${primaryKey} !~ '^([.]{1,2}/|[^/]+/[.]{1,2}$)'`,
+      sql`not exists (select 1 from ${productRefreshRequests}
+        where ${productRefreshRequests.productId} = ${products.id}
+          and ${productRefreshRequests.requestedVersion} > ${productRefreshRequests.completedVersion})`,
+      or(
+        and(eq(productLinks.visible, true), isNull(productEvidenceSources.id)),
+        and(isNull(productLinks.id), eq(products.source, "crawler"), isNull(products.claimedAt),
+          sql`not exists (select 1 from ${productEvidenceAudit}
+            where ${productEvidenceAudit.slug} = ${products.slug}
+              and ${productEvidenceAudit.action} like 'maker.links.%')`),
+      ),
+    )).orderBy(asc(products.id)).limit(1);
+  if (!candidate || (options.hasBudget && !options.hasBudget())) return null;
+  return withProductGeneration(candidate.slug, candidate.productId, async tx => {
+    if (options.lease) await assertJobLease(tx, options.lease);
+    const [product] = await tx.select({ repoUrl: products.repoUrl, status: products.status }).from(products)
+      .where(eq(products.id, candidate.productId));
+    const repository = product?.repoUrl ? normalizeTypedLink("repository", product.repoUrl) : null;
+    if (!product || !["seeded", "verified"].includes(product.status)
+      || repository?.normalizedKey !== candidate.repositoryKey) return null;
+    const [request] = await tx.select().from(productRefreshRequests)
+      .where(eq(productRefreshRequests.productId, candidate.productId)).for("update");
+    if (request && request.requestedVersion > request.completedVersion) return null;
+    const link = await syncRepositoryLink({ productId: candidate.productId, slug: candidate.slug,
+      repoUrl: product.repoUrl, declarationSource: "discovered", mode: "backfill" }, tx);
+    if (link.action === "preserved_hidden" || link.action === "review_required") return null;
+    const [source] = await tx.select({ id: productEvidenceSources.id }).from(productEvidenceSources).where(and(
+      eq(productEvidenceSources.slug, candidate.slug), eq(productEvidenceSources.kind, "repository"),
+      eq(productEvidenceSources.sourceKey, candidate.repositoryKey),
+    )).limit(1);
+    if (source && link.action !== "created") return null;
+    await queueProductRefresh({ slug: candidate.slug, productId: candidate.productId,
+      actor: "system:evidence_bootstrap", force: false }, tx);
+    return { slug: candidate.slug, linkAction: link.action };
+  });
 }
 
 export async function dueEvidenceProductSlugs(input: {
