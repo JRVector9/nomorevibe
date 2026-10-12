@@ -2,9 +2,10 @@ import type { ReactNode } from "react";
 import { BRAND } from "@/lib/copy/brand";
 import { LAST_CODE_UPDATE_LABEL, LATEST_VERSION_LABEL } from "@/lib/copy/terms";
 import { formatCount } from "@/lib/format/number";
-import { formatPublicDate } from "@/lib/format/time";
+import { formatPublicDate, formatPublicDateTime } from "@/lib/format/time";
 import type { LicenseValue, ProductDetailView } from "@/lib/domain/products/detail-view";
 import { isHealthCurrent } from "@/lib/domain/products/health-freshness";
+import { LicenseDialog } from "./LicenseDialog";
 import { safeExternalUrl } from "./format";
 
 /** 칸 하나 — 값이 있는 것만 만든다 */
@@ -13,9 +14,9 @@ type Fact = { label: string; value: ReactNode; note?: string; tone?: "up" | "dow
 function Tile({ label, value, note, tone, title }: Fact) {
   const color = tone === "up" ? "text-up" : tone === "down" ? "text-down" : "text-fg";
   return (
-    <div className="flex min-w-0 flex-col gap-1 border-l border-t border-line px-[18px] pb-3.5 pt-4" title={title}>
+    <div className="flex min-w-0 flex-col gap-1 border-l border-t border-line px-[14px] py-3" title={title}>
       <dt className="text-[13px] text-fg-2">{label}</dt>
-      <dd className={`m-0 truncate text-[20px] font-semibold tracking-[-0.02em] tabular-nums ${color}`}>{value}</dd>
+      <dd className={`m-0 truncate text-[18px] font-semibold tracking-[-0.02em] tabular-nums ${color}`}>{value}</dd>
       {/* 덧말도 값의 일부로 둘째 dd 에 둔다 — dl 묶음 안에는 dt·dd 만 와야 스크린리더가 짝을 읽는다(A11Y-04) */}
       {note && <dd className="m-0 text-[13px] text-fg-2">{note}</dd>}
     </div>
@@ -62,6 +63,21 @@ export function FactsStrip({ product, repository, license, health, visits }: {
   const activity = !facts ? "" : facts.archived === true ? "보관됨" : facts.fork === true ? "fork 저장소"
     : facts.archived === false && facts.fork === false ? "활성 저장소" : "상태 미확인";
   const shown = license.observed ?? license.maker;
+  const unidentifiedLicense = license.state === "unidentified";
+  const licenseSource = repository ? {
+    state: repository.state,
+    lastSuccess: formatPublicDateTime(repository.lastSuccessAt, now, ""),
+    lastFailure: formatPublicDateTime(repository.lastFailureAt, now, ""),
+  } : null;
+  const licenseObservationWarning = repository?.state === "disconnected" ? "연결 끊김·이전 수집 값"
+    : repository?.state === "failed" ? "최근 갱신 실패·이전 수집 값"
+      : repository?.state === "stale" ? "갱신 지연·이전 수집 값"
+        : repository?.lastSuccessAt && now.getTime() - repository.lastSuccessAt.getTime() > 48 * 60 * 60 * 1_000 ? "이전 수집 값" : "";
+  const licenseObservationNote = license.observed ? joinNote(
+    license.observed.sourceLabel.includes("GitHub") ? "GitHub 자동 판별" : license.observed.sourceLabel,
+    licenseObservationWarning,
+    licenseObservationWarning && repository?.lastSuccessAt ? `${formatPublicDate(repository.lastSuccessAt, now)} 수집 기준` : "",
+  ) : "";
   const measured = !visits.collecting && visits.uniqueVisitors !== null && visits.validVisits > 0;
   const pushed = formatPublicDate(facts?.pushedAt, now, "");
   const created = yearMonth(facts?.createdAt);
@@ -91,10 +107,19 @@ export function FactsStrip({ product, repository, license, health, visits }: {
       note: facts!.forks === null ? undefined : `포크 ${formatCount(facts!.forks)}`,
     },
     Boolean(shown) && {
-      label: "라이선스", value: license.state === "conflict" ? "정보 충돌" : licenseName(shown!), tone: license.state === "conflict" ? "down" : undefined,
+      label: "라이선스",
+      value: <LicenseDialog
+        license={license}
+        source={licenseSource}
+        repositoryUrl={product.repoGone ? null : safeExternalUrl(facts?.repositoryUrl ?? repository?.sourceUrl ?? product.repoUrl)}
+        label={license.state === "conflict" ? "정보 충돌" : unidentifiedLicense ? "식별 미확인" : licenseName(shown!)}
+      />,
+      tone: license.state === "conflict" ? "down" : undefined,
       note: license.state === "conflict" && license.maker && license.observed
-        ? `메이커 ${licenseName(license.maker)} · 저장소 ${licenseName(license.observed)} — 두 값을 모두 확인하세요`
-        : joinNote(shown!.sourceLabel, license.observed && !hasSpdx(license.observed) ? "SPDX 미확인" : ""),
+        ? joinNote(`메이커 ${licenseName(license.maker)} · 저장소 ${licenseName(license.observed)} — 두 값을 모두 확인하세요`, licenseObservationWarning ? licenseObservationNote : "")
+        : unidentifiedLicense
+          ? joinNote("식별 미확인·원문 확인 필요", license.maker ? `메이커 ${licenseName(license.maker)}·미검증` : "")
+          : joinNote(licenseObservationNote || shown!.sourceLabel, license.observed && !hasSpdx(license.observed) ? "SPDX 미확인" : ""),
     },
     {
       label: `${BRAND} 등록`, value: formatPublicDate(product.createdAt, now),
@@ -112,7 +137,7 @@ export function FactsStrip({ product, repository, license, health, visits }: {
       <dl className="-ml-px -mt-px grid grid-cols-[repeat(auto-fit,minmax(min(200px,100%),1fr))]">
         {tiles.map((tile) => <Tile key={tile.label} {...tile} />)}
       </dl>
-      {!facts && product.repoUrl && !product.repoGone && <p className="m-0 border-t border-line px-[18px] py-3 text-[13px] text-fg-2">저장소 정보는 아직 수집하지 않았습니다.</p>}
+      {!facts && product.repoUrl && !product.repoGone && <p className="m-0 border-t border-line px-[14px] py-3 text-[13px] text-fg-2">저장소 정보는 아직 수집하지 않았습니다.</p>}
     </div>
   );
 }
