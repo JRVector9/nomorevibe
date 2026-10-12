@@ -50,3 +50,14 @@ ManimGX는 보이는 현재 링크 `academa-labs/manimgx`가 있지만 출처·�
 복구 접수율은 회차당 최대 1개이며, 명시적 요청이 계속 있으면 복구 접수는 미뤄진다. 일반 수집도 함께 진행하지만 신규 발행량, 제공자 대기와 실제 워커 처리량에 따라 전체 해소 시간은 달라진다. 이번 변경은 신규 최초 요청 누락과 과거 수집 대상 누락의 복구 경로를 마련한 것이며, 전체 누락·오래된 facts가 이미 해소됐다는 기록이 아니다. 소개 검수 중단 상태는 변경하지 않았다.
 
 독립 `gpt-6.1-sol / xhigh` 읽기 전용 소스 리뷰는 actionable finding 없이 완료됐다. 같은 트랜잭션 큐·세대 잠금·예산·lease·백필 보호를 검토했으며, 실제 SQL 실행·동시성·복구 처리량을 실행 검증한 결과는 아니다.
+
+
+## 통합·운영 반영 결과
+
+PR381 https://github.com/JRVector9/nomorevibe/pull/381의 최신base 필수 CI38202661496 성공 후 일반 merge2f3920d. 라이선스 PR380과 화면 PR382를 통합한 운영 code33349ed1352caabcb434ac4906bc2a2213ac2a51 / main CI38203533979도 실제 success다. source6앱과 Docker8앱을 기존 주예비 절차로 반영했으며, 최종 read-only 검증에서14앱19컨테이너 saved/runtime 전체환경일치·immutable이미지/소스hash·fiveprimarylivelease·readiness/progressok·DBjournal75·중단소개검수pause 보존을 확인했다. 네 GitHub 플래그 ON과 기존 인증키·source·autoDeploy·복제본 유지. migration 없음.
+
+2026-10-12 04:41 UTC 읽기 관측에서 `system:evidence_bootstrap` 자동복구4건(opencovibe, apps-by-tim-wu-haotian, avibe, claude-directory)이 모두 requestedVersion=completedVersion=1, activeVersion null, lastError null이었다. 현재 visible repository link와 github_repository facts/stateok/실제 provider 수집시점도 확인했다. 운영자가 별도 강제 큐를 쓰거나 사실 데이터를 삽입하지 않았다. 신규 발행·verified 이벤트의 runtime 수집은 이 관측기간 발생하지 않아 실제 행사례 성공으로 기록하지 않는다.
+
+대표9상세와홈/rising/popular/login/policy GET14곳 모두HTTP200. 기존정보6·7칸, installable제품, license-null생략, 이전성공license한정표시, 미수집2칸을 구분했다. 이것은 HTML 응답·수집상태 확인이며 UI 클릭·OAuth/Star/댓글 E2E가 아니다. 사용자 직접 테스트 지시를 유지하며 로컬 tests/typecheck/lint/build/E2E와 새 테스트 작성은 하지 않았다. 전체 backlog는 순차복구 중이며 전량완료시간은 확정하지 않는다.
+
+추가 targeted GET2곳도 실제HTTP200: 미식별 agentmesh-officialrecruitment는6facts/13행안내표/식별미확인, 자동복구 opencovibe는6facts/미수집안내없음. 앞선14곳과합쳐16개서로다른공개페이지 응답을확인했다. UI 상호작용 테스트는 수행하지 않았다.

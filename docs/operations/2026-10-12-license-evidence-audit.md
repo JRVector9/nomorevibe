@@ -89,3 +89,14 @@ GitHub는 여러 라이선스나 복잡한 조건이 탐지를 방해할 수 있
 실제로 실행한 확인: 관련 소스·schema·최근 Git 이력 읽기, 수정 diff 읽기, 전달된 운영 JSON 두 파일 읽기, 위 공개 REST GET 12건, GitHub/SPDX/Licensee/Rust 공식 문서 열람, `git diff --check` (exit 0, 출력 없음). 코드의 함수나 UI를 실행하는 검증 명령은 실행하지 않았다.
 
 독립 `gpt-6.1-sol / xhigh` 소스 리뷰에서 공백 메이커 이름과 유효 SPDX 조합을 버리는 P2 회귀 1건(confidence 9/10)을 발견했다. 이름이 비면 정규화된 SPDX로 대체하도록 수정했고, 후속 좁은 독립 리뷰는 해당 P2 해결 및 추가 actionable finding 없음으로 완료됐다. 두 리뷰 모두 테스트를 실행하지 않았다.
+
+
+## UI·운영 통합 확인
+
+PR380 https://github.com/JRVector9/nomorevibe/pull/380의 최신base CI38202319232 실제 success 후 일반merge3aba236. UI PR382 https://github.com/JRVector9/nomorevibe/pull/382와 최초수집 PR381도 필수 CI 통과·병합했고 최종main33349ed1352caabcb434ac4906bc2a2213ac2a51의 CI38203533979/worker·web이미지생성 success 후 운영반영했다.
+
+기존 모든 사실 항목을 유지하며 값20→18px, 좌우여백18→14px, 세로여백12px로 조정했다. 라이선스 값의 안내버튼은 GitHub 대표 자동판별과 미검증 메이커 선언을 구분하며, MIT/Apache/BSD/ISC/GPL/LGPL/MPL/AGPL/Unlicense/CC0 13행 조건표·공식 원문 링크를 제공한다. 식별자를 제품의 모든 파일·의존성에 관한 완전한 법적 검증으로 해석하지 않는다. license-null에는 임의라이선스칸을 만들지 않는다. 실패 후 이전값은 수집시점·갱신실패상태로 한정하고 제공된 일반 license API URL을 저장소 LICENSE 파일 링크로 오인하지 않게 표기했다.
+
+독립 UI 소스리뷰에서 focus outline clipping, 배경scroll잠금, native close→reopen 경합 P2를 수정했다. 마지막 좁은 gpt-6.1-sol/xhigh 리뷰 actionable findings 없음. 공개 표본14 GET에서는13행표·안내dialog HTML, 실제정보칸 유지, aet-go의null생략, agent-studio-2의이전수집표시를 확인했다. 모달 클릭/ESC/가로·세로scroll/초점 실제 UI 테스트는 사용자직접검증 범위다. 운영14앱19컨테이너 정상·runtime환경일치·네기능ON·DBjournal75/소개검수pause 유지 확인. 실제 repo_urlnull 공개제품이0이라 primary삭제 후 visible secondary fallback분기는 운영표본으로 검증하지 않았다.
+
+추가 targeted GET2곳도 실제HTTP200: 미식별 agentmesh-officialrecruitment는6facts/13행안내표/식별미확인, 자동복구 opencovibe는6facts/미수집안내없음. 앞선14곳과합쳐16개서로다른공개페이지 응답을확인했다. UI 상호작용 테스트는 수행하지 않았다.
