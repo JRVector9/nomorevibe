@@ -30,6 +30,7 @@ export function GithubStarButton({ slug, stars = null }: { slug: string; stars?:
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const [showMessage, setShowMessage] = useState(false);
+  const [countState, setCountState] = useState<{ initial: StarView["state"]; state: StarView["state"]; revision: number } | null>(null);
   const requestGeneration = useRef(0);
   const endpoint = `/api/products/${encodeURIComponent(slug)}/github-star`;
   const loginHref = `/login?connectGithub=1&returnTo=${encodeURIComponent(`/p/${slug}`)}`;
@@ -37,6 +38,12 @@ export function GithubStarButton({ slug, stars = null }: { slug: string; stars?:
   const applyControl = useCallback((result: Control) => {
     setCsrf(result.csrf ?? null); setView((current) => result.view ? newerStarView(current, result.view) : null);
     setConnectionNeeded(result.connectionNeeded); setMessage(result.message);
+    const incoming = result.view;
+    if (incoming && !incoming.pending && !incoming.uncertain && (incoming.state === "starred" || incoming.state === "unstarred")) {
+      setCountState((current) => current && current.revision > incoming.revision ? current : {
+        initial: current?.initial ?? incoming.state, state: incoming.state, revision: incoming.revision,
+      });
+    }
   }, []);
   const refresh = useCallback(async () => {
     const generation = ++requestGeneration.current;
@@ -89,7 +96,7 @@ export function GithubStarButton({ slug, stars = null }: { slug: string; stars?:
         }
         return;
       }
-      setView((current) => newerStarView(current, result)); setConnectionNeeded(result.state === "needs_reconnect" ? "reconnect" : false);
+      applyControl({ view: result, csrf, connectionNeeded: result.state === "needs_reconnect" ? "reconnect" : false, message: "" });
       if (result.state === "unknown") setMessage(unknownMessage(result));
       else if (result.retryAt) setMessage("GitHub 스타 요청이 제한되었습니다. 잠시 후 다시 시도해 주세요.");
       else if (result.state !== (starred ? "starred" : "unstarred") && result.state !== "needs_reconnect") setMessage("GitHub가 스타 변경을 확인하지 못했습니다. 다시 확인해 주세요.");
@@ -105,9 +112,10 @@ export function GithubStarButton({ slug, stars = null }: { slug: string; stars?:
   const retry = !view || view.state === "unknown" || view.pending;
   const label = connectionNeeded ? (connectionNeeded === "reconnect" ? "GitHub 재연결 후 스타" : "GitHub 연결 후 스타")
     : busy || checking ? "GitHub 스타 확인 중…" : retry ? "스타 상태 다시 확인" : view.state === "starred" ? "GitHub 스타 취소" : "GitHub 스타";
-  const accessibleLabel = stars === null ? label : `${label}, 전체 스타 ${formatCount(stars)}개`;
+  const displayedStars = stars === null ? null : Math.max(0, stars + (countState ? Number(countState.state === "starred") - Number(countState.initial === "starred") : 0));
+  const accessibleLabel = displayedStars === null ? label : `${label}, 전체 스타 ${formatCount(displayedStars)}개`;
   const style = `inline-flex min-h-6 items-center gap-1 rounded font-medium outline-offset-4 hover:text-accent-ink focus-visible:outline-2 focus-visible:outline-accent-solid disabled:cursor-wait ${view?.state === "starred" ? "text-accent-ink" : "text-fg"}`;
-  const count = <><span aria-hidden>★</span><span>{stars === null ? "스타" : formatCount(stars)}</span></>;
+  const count = <><span aria-hidden>★</span><span>{displayedStars === null ? "스타" : formatCount(displayedStars)}</span></>;
   return <span className="relative inline-flex items-center" data-testid="github-star-control">
     {connectionNeeded ? <a href={loginHref} aria-label={accessibleLabel} title={label} className={style}>{count}</a>
       : <button type="button" aria-label={accessibleLabel} title={message || label} aria-pressed={view?.state === "starred"} aria-busy={busy || !!view?.pending} disabled={busy || checking} onBlur={() => setShowMessage(false)} onClick={() => { setShowMessage(true); void (retry ? refresh() : toggle()); }} className={style}>

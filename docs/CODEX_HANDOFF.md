@@ -6894,3 +6894,17 @@ PR384 https://github.com/JRVector9/nomorevibe/pull/384 생성/head2d5e492ad0a44f
 - 제한/실패: Cloudflare HTML cachepurge는 Authentication error로실패했다. 이어진 canonical 공개8GET에서는이미새배포마크업·양releasehealth를확인하여UI배포를저지하는문제는아니다. 저장된purgetoken 갱신은별도운영후속이다. 실제GitHub상단숫자는최근관측값이며개인별추가/취소확인은색/aria-pressed로표시한다. 스크린샷upstream조회실패의정확한원인은확정하지않았고명시적인조회오류/재시도UI만수정했다.
 - 남은일: 문서전달commit/push/정상docs PR check/merge/rootFF와작업일지최종기록. 관리자Tailscale전용접근/아이디비밀번호요청은별도후속으로미구현이며멈춘소개검수는재개금지. 실제스타클릭/계정연결/모바일오류표시기능테스트는user수행.
 - 다음정확한명령: docsbranch에서git diff --check→docs/CODEX_HANDOFF.md만add/commit/push→body-file로docsPR→최신base9cf8286/필수check/일반matching-headmerge. rootmainFF. 이미성공한deploy/plan/capture를재실행하지않는다. 현재운영web9cf8286/worker33349ed이다. 기록은private/tmp의 verification.json/public-get.json에0600safe메타로있으며 before.json/preflight.json은비밀포함이므로출력·커밋금지.
+
+
+### 2026-10-12 — 상단 스타 숫자 즉시 반영 구현
+
+- 현재 목적: 사용자의 상세 상단 개인 GitHub 스타 추가·취소가 확정되면 같은 화면의 숫자를 즉시 +1/−1 표시한다. 사용자 요청은 최소 코드 변경이며 실제 클릭 테스트는 사용자 수행을 유지한다.
+- 변경 파일: components/product-detail/GithubStarButton.tsx, 이 인계. 최초 확정된 개인 상태를 기준으로 가장 최신 확정 상태와의 차이만 수집 숫자에 더한다. 추가→취소는 원래 숫자로 돌아오며 반복 조회/동일 응답은 중복 증가시키지 않는다. pending/unknown/uncertain에서는 마지막 확정 숫자를 유지하고 null 원천 숫자는 발명하지 않으며 0 미만은 표시하지 않는다. 기존 request generation/revision/CSRF/operationId/uncertainty 잠금과 상단 디자인은 유지한다. 접근성 이름도 같은 변경 숫자를 사용한다.
+- 범위: 현재 상세 UI의 확정된 개인 상태 차이만 반영한다. 공개 DB의 관측된 총 스타 수·스냅샷·급상승 순위·수집 주기 또는 다른 방문자의 변경을 push하는 전역 동기화는 변경하지 않는다. 새로고침 시 공개 원천 숫자는 기존 수집값을 사용한다.
+- 실제 검증: git diff --check exit0. 설치된 Next use-client.md를 읽었다. 잘못 추정한 .mdx 경로 및 tests/unit glob 조회는 실패했으며 실제 .md 가이드/tests/github-star-action.test.ts 소스를 확인했다. 사용자가 직접 테스트하므로 새 테스트 작성·로컬 test/typecheck/lint/build/E2E/브라우저 기능시험은 실행하지 않았다. 독립 Codex gpt-6.1-sol/xhigh source-only review session96585 진행 중; 결과 미확정. 필수 정상 GitHub CI는 그대로 수행한다.
+- Git 상태: root main ef37a717f3f60cfe5e5ea9b3bec51b5339d80404, 사용자 미추적 자산 보존. 독립 worktree /private/tmp/nomorevibe-star-count-20261012, branch fix/detail-live-star-count-20261012. 현재 운영 웹9cf8286/worker33349ed로 최근 UI-only 배포 때문에 공통 이미지 helper baseline을 그대로 호출하면 release 불일치로 거절되는 정상 상태다.
+- 남은 일: 독립 리뷰 결과 반영→변경2파일 commit/push/PR→최신base 필수check 및 일반 matching-head merge→main CI/image digest 확인→웹 mini2/M3 4만 같은 immutable image로 배포→환경/flags/replicas/health/소개 검수 pause 읽기 전용 확인→최종 기록·일지. 관리자 Tailscale/아이디비밀번호 미구현은 별도 후속으로 보존하고 소개검수는 재개하지 않는다.
+- 다음 명령: 먼저 source-review session96585와 /private/tmp/nomorevibe-star-count-review-20261012/review.txt 확인; worktree에서 git diff --check. 새 private release.py는 mixed web/worker baseline을 검증하도록 지난 안전 helper를 재사용했으며 아직 capture/plan/deploy 미실행. main CI 완료 뒤 repo cwd에서 python3 /private/tmp/nomorevibe-star-count-review-20261012/release.py capture <merge-sha> <main-ci-id> → plan → deploy 한 번 → verify. snapshot before.json 생성 후 deploy 반복 금지. snapshot은 비밀 포함/0600이며 출력·커밋금지. 기존 Cloudflare purge token은 지난 배포에서 Authentication error여서 이번 purge는 시도하지 않고 canonical public GET/health로 읽기 전용 확인한다.
+
+
+독립 source-only 리뷰 session96585 actual exit0/clean: 새 결함 없음. reviewer는 파일 변경·테스트·lint/typecheck/build/browser/network/live action을 실행하지 않았음을 명시했다. 운영 baseline read-only session91744 actual exit0: Docker8앱 ready, 웹9cf8286/worker33349ed, mini2/M3 4, fourflags ON. 코드 변경은 버튼1파일 11추가/3삭제이며 새 API·DB·워커 코드 없음. 정상 PR commit/push/CI 진행한다.
