@@ -208,8 +208,12 @@ def github_integration_preflight(client, apps):
         public_secret = matched('PUBLIC_AUTH_SECRET', web, True)
         if len(public_secret) < 32 or any(public_secret == value(short, 'AUTH_SECRET') for short in web):
             raise ValueError('PUBLIC_AUTH_SECRET_invalid_or_reused')
-        for key in ('LOGIN_EMAIL_API_KEY', 'LOGIN_EMAIL_FROM'):
-            matched(key, web, True)
+        mail_keys = ('LOGIN_EMAIL_API_KEY', 'LOGIN_EMAIL_FROM')
+        if any(envs[short].get(key, '').strip() for short in web for key in mail_keys):
+            for key in mail_keys:
+                matched(key, web, True)
+        elif not flags['GITHUB_STAR_ENABLED']:
+            raise ValueError('public_auth_login_method_missing')
     if any(flags.values()):
         site_roles = tuple(surfaces) if flags['GITHUB_FEEDBACK_DELIVERY_ENABLED'] else web
         matched('NEXT_PUBLIC_SITE_URL', site_roles, True)

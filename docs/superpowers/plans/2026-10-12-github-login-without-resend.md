@@ -14,20 +14,20 @@
 
 Files: app/login/page.tsx, components/auth/GithubConnection.tsx, lib/domain/accounts/email-delivery.ts, lib/domain/accounts/email-login.ts.
 
-- [ ] 이메일 설정 판정 하나를 추가하고 발송 전 guard·페이지에 재사용한다.
+- [x] 이메일 설정 판정 하나를 추가하고 발송 전 guard·페이지에 재사용한다.
 ```ts
 export function emailLoginConfigured(): boolean {
   return Boolean(process.env.LOGIN_EMAIL_API_KEY?.trim() && process.env.LOGIN_EMAIL_FROM?.trim());
 }
 ```
-- [ ] /login은 GitHub 섹션을 먼저 렌더하고 `signedIn={!!session}`을 넘긴다. 익명 이메일 폼은 `emailLoginConfigured()`일 때만 렌더한다. 두 수단 모두 없으면 ‘로그인을 준비하고 있습니다.’를 표시한다.
-- [ ] GithubConnection은 signedIn boolean으로 로그인/연결 문구와 primary CTA를 구분한다. consent·nonce GET·POST·callback·에러 처리와 연결 해제는 유지한다.
+- [x] /login은 GitHub 섹션을 먼저 렌더하고 `signedIn={!!session}`을 넘긴다. 익명 이메일 폼은 `emailLoginConfigured()`일 때만 렌더한다. 두 수단 모두 없으면 ‘로그인을 준비하고 있습니다.’를 표시한다.
+- [x] GithubConnection은 signedIn boolean으로 로그인/연결 문구와 primary CTA를 구분한다. consent·nonce GET·POST·callback·에러 처리와 연결 해제는 유지한다.
 
 ### Task 2: 메일 없이 동작하는 배포 검사
 
-Files: scripts/ops/deploy_shared_images.py, tests/test_deploy_shared_images.py, tests/public-login-page.test.tsx, tests/e2e/github-user-connection.spec.ts.
+Files: scripts/ops/deploy_shared_images.py, tests/public-login-page.test.tsx, tests/e2e/github-user-connection.spec.ts. 기존 tests/test_deploy_shared_images.py는 소스 대조만 한다.
 
-- [ ] PUBLIC_USER_AUTH_ENABLED의 세션 키 검사를 유지하고 다음 메일 분기로 기존 필수 조건을 바꾼다.
+- [x] PUBLIC_USER_AUTH_ENABLED의 세션 키 검사를 유지하고 다음 메일 분기로 기존 필수 조건을 바꾼다.
 ```python
 mail_keys = ('LOGIN_EMAIL_API_KEY', 'LOGIN_EMAIL_FROM')
 if any(envs[short].get(key, '').strip() for short in web for key in mail_keys):
@@ -36,13 +36,13 @@ if any(envs[short].get(key, '').strip() for short in web for key in mail_keys):
 elif not flags['GITHUB_STAR_ENABLED']:
     raise ValueError('public_auth_login_method_missing')
 ```
-- [ ] 기존 테스트 케이스 안에서 GitHub-only·완전한 메일 구성·부분 입력·로그인 수단 없음 기대를 맞추며 새 케이스를 추가하지 않는다. 익명 OAuth의 기존 E2E 버튼명은 ‘GitHub로 로그인’으로 맞춘다.
+- [x] 기존 로그인 화면 fixture에 GitHub-only·이메일 대체 경로를 반영하고 익명 OAuth의 기존 E2E 버튼명을 ‘GitHub로 로그인’으로 맞춘다. Python의 기존 부분 메일 입력 거절 기대는 유지한다. 새 테스트 케이스는 추가하지 않으며 로그인 수단 없음 분기는 소스로 대조한다.
 
 ### Task 3: 소스 검토와 전달
 
 Files: docs/operations/github-stars-feedback-runbook.md, docs/operations/2026-10-11-star-feedback-reactivation.md, docs/CODEX_HANDOFF.md.
 
-- [ ] 이메일 필수였던 운영 설명을 GitHub-only 가능으로 바로잡고 기존 시간별 과거 상태 기록과 실제 배포 상태를 구별한다.
-- [ ] `git diff --check` exit0와 읽기 전용 독립 Codex 리뷰의 실제 결과를 기록한다. 리뷰 명령은 `codex exec -m gpt-6.1-sol -c model_reasoning_effort=xhigh -s read-only --ephemeral`이며 원본 env/PEM·테스트·앱·네트워크 실행은 금지한다.
+- [x] 이메일 필수였던 운영 설명을 GitHub-only 가능으로 바로잡고 기존 시간별 과거 상태 기록과 실제 배포 상태를 구별한다.
+- [x] `git diff --check` exit0와 읽기 전용 독립 Codex 리뷰의 실제 결과를 기록한다. 리뷰 명령은 `codex exec -m gpt-6.1-sol -c model_reasoning_effort=xhigh -s read-only --ephemeral`이며 원본 env/PEM·테스트·앱·네트워크 실행은 금지한다.
 - [ ] 변경 파일만 커밋·push/PR한 뒤 최신 base의 `gh pr checks` 필수 check 성공을 확인하고 matching head 정상 병합한다. 로컬 기능 테스트 성공을 주장하지 않는다.
 - [ ] handoff와 로컬 프로젝트 일지에 코드 완료·운영 반영·사용자 OAuth 확인을 구별해 기록한다.

@@ -10,7 +10,7 @@ const ERRORS: Record<string, string> = {
   github_integration_unconfigured: "GitHub 연결을 준비하고 있습니다.",
 };
 
-export function GithubConnection({ returnTo = "/" }: { returnTo?: string }) {
+export function GithubConnection({ returnTo = "/", signedIn = false }: { returnTo?: string; signedIn?: boolean }) {
   const [connection, setConnection] = useState<Connection | null>(null);
   const [sessionCsrf, setSessionCsrf] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -65,9 +65,9 @@ export function GithubConnection({ returnTo = "/" }: { returnTo?: string }) {
     finally { setBusy(false); }
   }
   return (
-    <section className="mt-7 border-t border-line pt-6" aria-label="개인 GitHub 연결">
-      <h2 className="text-[17px] font-semibold">개인 GitHub 연결</h2>
-      <p className="mt-2 text-[14px] leading-6 text-fg-2">본인 GitHub 계정으로 프로젝트에 스타를 추가하거나 취소하려면 연결해 주세요.</p>
+    <section className={signedIn ? "mt-7 border-t border-line pt-6" : "mt-6"} aria-label={signedIn ? "개인 GitHub 연결" : "GitHub 로그인"}>
+      <h2 className="text-[17px] font-semibold">{signedIn ? "개인 GitHub 연결" : "GitHub로 로그인"}</h2>
+      <p className="mt-2 text-[14px] leading-6 text-fg-2">{signedIn ? "본인 GitHub 계정으로 프로젝트에 스타를 추가하거나 취소하려면 연결해 주세요." : "본인 GitHub 계정으로 로그인하고 프로젝트에 스타와 피드백을 남기세요. 처음 이용하면 NoMoreVibe 계정이 자동으로 만들어집니다."}</p>
       {loading ? <p className="mt-3 text-[14px]" role="status">연결 상태 확인 중…</p> : connection?.state === "active" ? <>
         <p className="mt-3 text-[14px]" role="status">@{connection.login} 연결됨</p>
         <p className="mt-2 text-[14px] text-fg-2">연결을 해제해도 이미 남긴 GitHub 스타는 유지됩니다.</p>
@@ -75,7 +75,7 @@ export function GithubConnection({ returnTo = "/" }: { returnTo?: string }) {
       </> : <>
         {connection?.state === "needs_reconnect" && <p className="mt-3 text-[14px]" role="status">권한이 만료되거나 회수되었습니다. 다시 연결해 주세요.</p>}
         <label className="mt-4 flex items-start gap-2 text-[14px] leading-6"><input type="checkbox" checked={consent} onChange={(event) => setConsent(event.target.checked)} disabled={busy} className="mt-1" />본인 계정의 GitHub 스타 추가·취소 권한을 승인합니다.</label>
-        <button type="button" disabled={busy || loading || !consent} onClick={connect} className="mt-4 min-h-11 w-full rounded-lg border border-line px-4 text-[14px] font-semibold disabled:opacity-50">{busy ? "연결 중…" : connection?.state === "needs_reconnect" ? "GitHub 다시 연결" : "GitHub 연결"}</button>
+        <button type="button" disabled={busy || loading || !consent} onClick={connect} className={`mt-4 min-h-11 w-full rounded-lg px-4 py-3 text-[14px] font-semibold disabled:opacity-50 ${signedIn ? "border border-line" : "bg-accent-solid text-white"}`}>{busy ? "GitHub 인증 중…" : connection?.state === "needs_reconnect" ? "GitHub 다시 연결" : signedIn ? "GitHub 연결" : "GitHub로 로그인"}</button>
       </>}
       {error && <p role="alert" className="mt-3 text-[14px] text-down">{error}</p>}
     </section>

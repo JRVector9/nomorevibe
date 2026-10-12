@@ -35,7 +35,7 @@ test("explicit personal star consent starts a real flow and denial consumes it w
     await route.fulfill({ contentType: "text/html; charset=utf-8", body: `<!doctype html><html><head><meta charset="utf-8"><title>Local OAuth provider fixture</title></head><body><a href="${callback.replace(/&/g, "&amp;")}">취소하고 돌아가기</a></body></html>` });
   });
   await page.goto("/login?connectGithub=1");
-  const button = page.getByRole("button", { name: "GitHub 연결", exact: true });
+  const button = page.getByRole("button", { name: "GitHub로 로그인", exact: true });
   await expect(button).toBeDisabled();
   await page.getByLabel("본인 계정의 GitHub 스타 추가·취소 권한을 승인합니다.", { exact: true }).check();
   await expect(button).toBeEnabled();
@@ -44,7 +44,7 @@ test("explicit personal star consent starts a real flow and denial consumes it w
   expect(intercepted).toBe(true);
   await page.getByRole("link", { name: "취소하고 돌아가기" }).click();
   await expect(page).toHaveURL(/githubError=github_authorization_declined/);
-  await expect(page.getByRole("region", { name: "개인 GitHub 연결", exact: true }).getByRole("alert")).toContainText("GitHub 연결을 취소했습니다");
+  await expect(page.getByRole("region", { name: "GitHub 로그인", exact: true }).getByRole("alert")).toContainText("GitHub 연결을 취소했습니다");
   const [flow] = await db.select().from(githubAuthFlows);
   expect(flow.consumedAt).not.toBeNull();
   expect(flow.stateHash).not.toBe(authorizeState);

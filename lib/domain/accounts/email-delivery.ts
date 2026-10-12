@@ -2,6 +2,10 @@ export type LoginEmail = { challengeId: string; email: string; code: string };
 export type EmailDeliveryState = "accepted" | "rejected" | "unknown";
 export type LoginEmailDelivery = (email: LoginEmail) => Promise<EmailDeliveryState>;
 
+export function emailLoginConfigured(): boolean {
+  return Boolean(process.env.LOGIN_EMAIL_API_KEY?.trim() && process.env.LOGIN_EMAIL_FROM?.trim());
+}
+
 /** A timeout/5xx may have sent mail. Never automatically repeat that POST. */
 export async function sendLoginEmail(email: LoginEmail, fetcher: typeof fetch = fetch): Promise<EmailDeliveryState> {
   const key = process.env.LOGIN_EMAIL_API_KEY;
