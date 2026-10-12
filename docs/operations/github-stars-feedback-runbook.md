@@ -10,7 +10,7 @@
 
 | 플래그 | 활성화 전 확인 |
 | --- | --- |
-| `PUBLIC_USER_AUTH_ENABLED` | 일반 계정 세션 키, Resend 발신 주소·도메인, 허가된 수신자에게 메일 도착 |
+| `PUBLIC_USER_AUTH_ENABLED` | 일반 계정 세션 키와 로그인 수단. GitHub 로그인은 Star App 승인, 이메일 로그인은 선택적으로 Resend 발신 설정·메일 도착 확인 |
 | `GITHUB_STAR_ENABLED` | 일반 인증, Star App 승인, 개인 계정의 스타 조회·등록·취소 |
 | `PRODUCT_FEEDBACK_ENABLED` | 일반 인증, 서비스 공개 동의·작성 한도·검토·원문 조회 |
 | `GITHUB_FEEDBACK_DELIVERY_ENABLED` | 로컬 피드백, Feedback App, 제작자 설치·수신 설정, publisher·maintenance 주/예비 릴리스 |
@@ -19,9 +19,18 @@
 
 | 역할 | 활성 기능에 필요한 값 |
 | --- | --- |
-| 웹 2개 | 네 플래그, `NEXT_PUBLIC_SITE_URL`; 일반 인증의 `PUBLIC_AUTH_SECRET`, `LOGIN_EMAIL_API_KEY`, `LOGIN_EMAIL_FROM`; GitHub 연동의 `GITHUB_INTEGRATION_SECRET`; Star App ID·client ID·client secret·webhook secret; Feedback App ID·slug·client ID·client secret·private key·webhook secret |
+| 웹 2개 | 네 플래그, `NEXT_PUBLIC_SITE_URL`; 일반 인증의 `PUBLIC_AUTH_SECRET`; 이메일 로그인 사용 시 `LOGIN_EMAIL_API_KEY`·`LOGIN_EMAIL_FROM`; GitHub 연동의 `GITHUB_INTEGRATION_SECRET`; Star App ID·client ID·client secret·webhook secret; Feedback App ID·slug·client ID·client secret·private key·webhook secret |
 | publisher 주/예비 | `GITHUB_FEEDBACK_DELIVERY_ENABLED`, `NEXT_PUBLIC_SITE_URL`, Feedback App ID·private key |
 | maintenance 주/예비 | `WORKER_ROLE=maintenance`, `GITHUB_FEEDBACK_DELIVERY_ENABLED`, `NEXT_PUBLIC_SITE_URL`, Feedback App ID·private key |
+
+GitHub 로그인만 사용할 때는 웹 두 앱의 `PUBLIC_USER_AUTH_ENABLED=true`와
+`GITHUB_STAR_ENABLED=true`를 함께 적용하고 Star App·세션·암호화 키를 준비한다.
+Resend 없이 가입·로그인할 수 있으며 `LOGIN_EMAIL_API_KEY`와 `LOGIN_EMAIL_FROM`은
+두 웹 모두 비워 둔다. 메일 값이 하나라도 입력되면 두 항목 모두 존재하고 웹 간 값이
+일치해야 한다. `/login`은 GitHub 로그인을 먼저 표시하고, 완전한 메일 설정이 있을 때만
+이메일 폼을 표시한다. 익명 OAuth의 nonce GET은 이메일을 발송하지 않는다.
+피드백 작성은 별도로 `PRODUCT_FEEDBACK_ENABLED=true`가 필요하며, 외부 이슈 전송은
+아래 제작자 설치·공개 동의 조건을 그대로 따른다.
 
 비활성 기능의 제공자 키는 초기 배포에서 비워 둘 수 있다. 기능을 껐더라도 이미 발송한 요청의 결과를 확인할 키는 확인 작업이 끝날 때까지 유지한다. maintenance는 설치 및 이슈를 15분마다 확인하며 개인 스타 토큰을 선제적으로 갱신하지 않는다. Star App client secret과 사용자 토큰 복호화용 `GITHUB_INTEGRATION_SECRET`은 웹에만 제공한다. 배포 검사는 여러 줄 또는 escaped newline으로 저장한 quoted PEM의 전체 값을 비교하며 개인키를 출력하지 않는다.
 
@@ -87,9 +96,9 @@ python3 scripts/ops/deploy_shared_images.py run \
 
 허가된 테스트 사용자 2명, 제작자 1명, 공개 개인 repo 1개와 조직 repo 1개를 준비한다. 실험 범위를 확인하고 [파일럿 기록](2026-10-11-github-integration-pilot.md)의 각 행에 실제 증거를 기록한다.
 
-1. 일반 인증을 웹 2개에 열고 동일 이메일 계정의 로그인·만료·로그아웃·CSRF/Origin 거절을 확인한다. 두 웹의 `/api/me`가 같은 사용자와 `private, no-store`를 반환해야 한다.
+1. 일반 인증을 웹 2개에 연다. GitHub 로그인만 쓰면 개인 스타도 함께 열고 동일 GitHub 계정의 가입·재로그인·승인 취소·만료·로그아웃·CSRF/Origin 거절을 확인한다. 이메일 설정을 추가했다면 이메일 로그인도 확인한다. 두 웹의 `/api/me`가 같은 사용자와 `private, no-store`를 반환해야 한다.
 2. 개인 스타를 열고 연결 승인·조회·등록·취소·재연결을 확인한다. GitHub 개인 starred 상태와 사이트 표시가 같아야 한다. 공개 별 수에 클릭으로 임의 가감이 생기지 않아야 한다.
-3. 서비스 피드백을 열고 GitHub 미연결 이메일 사용자의 제출·원문·내 기록·중복 요청을 확인한다. URL 4개 또는 정규화 본문 반복은 held이고 작성자·관리자만 원문을 볼 수 있어야 한다.
+3. 서비스 피드백을 열고 GitHub 로그인 사용자의 제출·원문·내 기록·중복 요청을 확인한다. 이메일 로그인을 켰다면 GitHub 미연결 이메일 사용자도 확인한다. URL 4개 또는 정규화 본문 반복은 held이고 작성자·관리자만 원문을 볼 수 있어야 한다.
 4. 지정한 두 제품만 제작자 binding을 활성화한 뒤 GitHub 전송 플래그를 웹·publisher·maintenance의 주/예비에 맞춘다. 별도 동의가 있는 새 accepted 글 하나가 봇 이슈 하나와 연결되는지 확인한다. 활성화 전 과거 글을 자동 일괄 전송하지 않는다.
 5. 정상 큐 대기가 없는 상태에서 접수 시각과 검증된 GitHub 201/사이트 delivered 시각을 기록한다. 목표는 90초 이내이며 보장 SLA가 아니다.
 6. 허가된 실패·재조회·설치 철회와 publisher 주 후보 중단→예비 후보 복구를 확인한다. 중단 범위와 재시작 결과를 기록하며 소개 검수는 재개하지 않는다.
