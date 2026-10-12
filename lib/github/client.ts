@@ -18,7 +18,7 @@ export type GithubErrorCode =
   | "github_forbidden" | "github_not_found" | "github_gone" | "github_validation_failed"
   | "github_redirect" | "github_server_error" | "github_timeout" | "github_network_error"
   | "github_invalid_json" | "github_response_too_large" | "github_unexpected_response";
-type GithubMetadata = { status: number | null; retryAt: number | null; requestId: string | null };
+type GithubMetadata = { status: number | null; retryAt: number | null; requestId: string | null; redirectRepositoryId?: number };
 export type GithubResult<T> =
   | (GithubMetadata & { outcome: "confirmed_success"; code: null; data: T | null })
   | (GithubMetadata & { outcome: "confirmed_rejection" | "unknown"; code: GithubErrorCode });
@@ -179,6 +179,11 @@ export async function githubRequest<T>(options: GithubRequestOptions): Promise<G
     if (controller.signal.aborted) { void response.body?.cancel().catch(() => {}); return failure("unknown", "github_timeout"); }
     if (response.status >= 300 && response.status < 400) {
       void response.body?.cancel().catch(() => {});
+      if (method === "GET" && /^\/repos\/[^/]+\/[^/?]+$/.test(options.path)) {
+        const destination = /^(?:https:\/\/api\.github\.com)?\/repositories\/([1-9]\d*)$/.exec(response.headers.get("location") ?? "");
+        const repositoryId = destination && Number(destination[1]);
+        if (isGithubNumericId(repositoryId)) metadata.redirectRepositoryId = repositoryId;
+      }
       return failure(method === "GET" ? "confirmed_rejection" : "unknown", "github_redirect");
     }
     if (response.status >= 500 || response.status === 408) {
