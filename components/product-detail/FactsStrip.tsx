@@ -10,17 +10,14 @@ import { safeExternalUrl } from "./format";
 /** 칸 하나 — 값이 있는 것만 만든다 */
 type Fact = { label: string; value: ReactNode; note?: string; tone?: "up" | "down"; title?: string };
 
-/** 남은 칸이 이보다 적으면 격자 대신 한 줄로(UX-16) — 칸 두 개짜리 격자는 빈 페이지처럼 보인다 */
-const GRID_MIN = 3;
-
 function Tile({ label, value, note, tone, title }: Fact) {
   const color = tone === "up" ? "text-up" : tone === "down" ? "text-down" : "text-fg";
   return (
-    <div className="flex min-w-0 flex-[1_1_160px] flex-col gap-0.5 border-l border-t border-line px-3 py-2.5" title={title}>
-      <dt className="text-[13px] leading-[1.4] text-fg-2">{label}</dt>
-      <dd className={`m-0 truncate text-[16px] font-semibold leading-[1.35] tracking-[-0.02em] tabular-nums ${color}`}>{value}</dd>
+    <div className="flex min-w-0 flex-col gap-1 border-l border-t border-line px-[18px] pb-3.5 pt-4" title={title}>
+      <dt className="text-[13px] text-fg-2">{label}</dt>
+      <dd className={`m-0 truncate text-[20px] font-semibold tracking-[-0.02em] tabular-nums ${color}`}>{value}</dd>
       {/* 덧말도 값의 일부로 둘째 dd 에 둔다 — dl 묶음 안에는 dt·dd 만 와야 스크린리더가 짝을 읽는다(A11Y-04) */}
-      {note && <dd className="m-0 text-[13px] leading-[1.4] text-fg-2">{note}</dd>}
+      {note && <dd className="m-0 text-[13px] text-fg-2">{note}</dd>}
     </div>
   );
 }
@@ -41,11 +38,10 @@ const licenseName = (license: LicenseValue) => hasSpdx(license) ? license.spdxId
  * 핵심 사실 — 이미지 자리 대신 첫 화면을 사실로 채운다.
  * 유입 지표는 값이 있을 때만 일곱째 칸으로 — 공개 제품 대부분이 0·신규라 늘 보이면 빈 숫자가 가장 눈에 띈다.
  *
- * 값이 없는 칸('—'·'확인 안 됨'·'확인 전')은 그리지 않는다(UX-16) — 저장소를 아직 읽지 않은 제품은 칸 대부분이 비어
- * 고장 난 페이지처럼 보였다. 남은 칸이 셋보다 적으면 격자 대신 한 줄로 적는다.
+ * 값이 없는 칸('—'·'확인 안 됨'·'확인 전')은 그리지 않는다(UX-16).
+ * 확인된 항목 수에 관계없이 같은 격자 스타일로 표시한다.
  *
- * 각 줄의 칸이 남은 너비를 나눠 갖고, 칸마다 왼쪽·위 선을 긋고 바깥 틀이 첫 줄·첫 칸의 선을 가린다 —
- * 마지막 줄에 남은 칸도 줄 너비를 채운다.
+ * 칸마다 왼쪽·위 선을 긋고 바깥 틀이 첫 줄·첫 칸의 선을 가린다.
  */
 export function FactsStrip({ product, repository, license, health, visits }: {
   product: ProductDetailView["product"];
@@ -111,29 +107,12 @@ export function FactsStrip({ product, repository, license, health, visits }: {
   ];
   const tiles = cells.filter((cell): cell is Fact => Boolean(cell));
 
-  if (tiles.length < GRID_MIN) {
-    return (
-      <div className="rounded-[18px] border border-line bg-bg-card px-[18px] py-3.5">
-        <dl className="m-0 flex flex-wrap items-baseline gap-x-2 gap-y-1 text-[14px]">
-          {tiles.map((tile) => (
-            <div key={tile.label} title={tile.title}
-              className="inline-flex items-baseline gap-1.5 not-first:before:mr-0.5 not-first:before:text-fg-2 not-first:before:content-['·']">
-              <dt className="text-fg-2">{tile.label}</dt>
-              <dd className={`m-0 font-medium tabular-nums ${tile.tone === "down" ? "text-down" : "text-fg"}`}>{tile.value}</dd>
-            </div>
-          ))}
-        </dl>
-        {/* 칸이 빈 까닭 — 저장소를 아직 읽지 않았다(저장소가 없으면 말하지 않는다) */}
-        {!facts && product.repoUrl && !product.repoGone && <p className="m-0 mt-1 text-[13px] text-fg-2">저장소 정보는 아직 수집하지 않았습니다.</p>}
-      </div>
-    );
-  }
-
   return (
-    <div className="overflow-hidden rounded-[12px] border border-line bg-bg-card">
-      <dl className="-ml-px -mt-px flex flex-wrap">
+    <div className="overflow-hidden rounded-[18px] border border-line bg-bg-card">
+      <dl className="-ml-px -mt-px grid grid-cols-[repeat(auto-fit,minmax(min(200px,100%),1fr))]">
         {tiles.map((tile) => <Tile key={tile.label} {...tile} />)}
       </dl>
+      {!facts && product.repoUrl && !product.repoGone && <p className="m-0 border-t border-line px-[18px] py-3 text-[13px] text-fg-2">저장소 정보는 아직 수집하지 않았습니다.</p>}
     </div>
   );
 }

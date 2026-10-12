@@ -38,7 +38,7 @@ export function CompactCard({ product, trailing, priority = false, headingLevel 
         {/* 조각 사이 '·'는 CSS 가 넣는다(card-dots) */}
         <p className="card-meta card-meta-compact card-dots">
           {product.starGrowth ? <StarGrowthMetric value={product.starGrowth} /> : <StarMetric value={product} now={now} listedAt={product.listedAt} />}
-          {!product.starGrowth && <span>{categoryLabel(product.category)}</span>}
+          <span>{categoryLabel(product.category)}</span>
           {trailing === "listed" && <span title={product.repoCreatedAt ? "GitHub 저장소 생성일" : "등록한 날"}>{formatPublicDate(product.repoCreatedAt ?? product.listedAt, now)}</span>}
         </p>
       </div>
