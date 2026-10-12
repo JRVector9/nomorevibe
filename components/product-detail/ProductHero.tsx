@@ -93,7 +93,8 @@ export function ProductHero({ product, unclaimed, risingRank, health, languages,
           )}
           <p className="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-[14px] text-fg-2 tabular-nums">
             <span className="text-fg">{categoryLabel(product.category)}</span>
-            {product.stars !== null && product.stars !== undefined && <><span aria-hidden>·</span><span className="font-medium text-fg">★ {formatCount(product.stars)}</span></>}
+            {personalGithubStar ? <><span aria-hidden>·</span>{personalGithubStar}</>
+              : product.stars !== null && product.stars !== undefined && <><span aria-hidden>·</span><span className="font-medium text-fg">★ {formatCount(product.stars)}</span></>}
             {languages.length > 0 && <><span aria-hidden>·</span><span>{languages.join(" · ")}</span></>}
             {owner && <><span aria-hidden>·</span><span>GitHub @{owner.login}</span></>}
             <span aria-hidden>·</span>
@@ -117,7 +118,6 @@ export function ProductHero({ product, unclaimed, risingRank, health, languages,
             )}
             <ShareButton title={product.name} path={`/p/${product.slug}`} />
             <SaveButton slug={product.slug} name={product.name} />
-            {personalGithubStar}
           </div>
           {product.repoGone && (
             <p className="text-[13px] text-fg-2">

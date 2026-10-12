@@ -110,7 +110,7 @@ async function ProductDetail({ slug, category }: { slug: string; category: strin
       <ProductHero product={detail.product} unclaimed={detail.unclaimed} risingRank={detail.risingRank} health={detail.health} languages={languages}
         repositoryUrl={detail.repository?.facts?.repositoryUrl ?? null}
         personalGithubStar={githubStarEnabled() && !detail.product.repoGone && detail.product.repoUrl && parseGithubRepository(detail.product.repoUrl)
-          ? <GithubStarButton key={detail.product.slug} slug={detail.product.slug} /> : undefined} />
+          ? <GithubStarButton key={detail.product.slug} slug={detail.product.slug} stars={detail.product.stars} /> : undefined} />
 
       {/* 넓으면 2:1 두 열, 좁으면 오른쪽 열이 본문 아래로 */}
       <div className="flex flex-wrap items-start gap-x-12 gap-y-9 pt-7">
