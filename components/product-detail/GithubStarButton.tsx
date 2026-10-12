@@ -88,6 +88,7 @@ export function GithubStarButton({ slug, stars = null }: { slug: string; stars?:
         if (result.star) setView((current) => newerStarView(current, result.star));
         if (reconnectErrors.has(result.error)) { setConnectionNeeded(result.error === "github_needs_reconnect" ? "reconnect" : "connect"); setView(null); }
         else if (response.status === 429) setMessage("GitHub 스타 요청이 제한되었습니다. 잠시 후 다시 시도해 주세요.");
+        else if (result.error === "star_write_rejected" && response.status === 403) setMessage("GitHub에서 스타 변경 권한을 거부했습니다. GitHub 앱의 승인 권한을 확인해 주세요.");
         else {
           const refreshed = await refresh();
           if (!refreshed || refreshed.generation !== requestGeneration.current) return;

@@ -87,7 +87,7 @@ export async function writeGithubStar(slug: string, userId: number, value: unkno
   else if (result.outcome === "confirmed_rejection") {
     state = result.status === 401 ? "needs_reconnect" : claim.previousState;
     if (state === "needs_reconnect") await markGithubUserNeedsReconnect(userId, credential.revision);
-    else failure = { status: result.code === "github_rate_limited" ? 429 : 502, code: result.code === "github_rate_limited" ? "star_rate_limited" : "star_write_rejected" };
+    else failure = { status: result.code === "github_rate_limited" ? 429 : result.status === 403 ? 403 : 502, code: result.code === "github_rate_limited" ? "star_rate_limited" : "star_write_rejected" };
   }
   let response: StarView;
   try {
