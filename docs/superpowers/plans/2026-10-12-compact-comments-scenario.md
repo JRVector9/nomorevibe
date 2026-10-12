@@ -1,6 +1,10 @@
 # 댓글 전체 시나리오 적용 계획 — PR01~04
 
-2026-10-12. 상태: **계획 확정, 제품 구현·실제 PR 생성·배포 전**.
+2026-10-12. 상태: **PR01~04 구현·통합·코드 리뷰 및 PR 게시 완료, 병합·운영 배포 전**.
+
+실제 PR: [PR01 #393](https://github.com/JRVector9/nomorevibe/pull/393) → [PR02 #394](https://github.com/JRVector9/nomorevibe/pull/394) → [PR03 #395](https://github.com/JRVector9/nomorevibe/pull/395) → [PR04 #396](https://github.com/JRVector9/nomorevibe/pull/396). 후속 PR은 앞 PR의 브랜치를 대상으로 쌓았다. [구현 리뷰 보고서](../../operations/2026-10-12-comments-review.md)에 완료 범위·리뷰 보정·실행한 확인을 기록했다. 아래는 승인된 계획과 완료 기준이다. 사용자 화면 기능 테스트와 실제 GitHub 전송은 아직 수행하지 않았다.
+
+구현 보정: 로그인 복귀는 프로젝트별 작성 의도와 일회성 query nonce가 일치할 때만 자동 펼친다. 생성 제목에서 HTTP(S) URL을 제외해 본문 링크가 검토 규칙에 중복 계산되지 않게 했다. 유효한 기존 초안의 payload/ID는 편집 전 유지하며, 접수될 수 없는 빈 제목 초안은 파생 제목과 새 ID로 복원한다. 실패 초안의 자동 펼침은 문서 새로고침으로 한정했다. 오래된 접수 재확인도 생성일 최신순을 유지한다. 추가 전역 상태나 통합 래퍼는 만들지 않았다.
 
 기준 시안: [전체 화면 시나리오](../../design/2026-10-12-comments-compact/scenario.html), [화면별 설명](../../design/2026-10-12-comments-compact/README.md).
 

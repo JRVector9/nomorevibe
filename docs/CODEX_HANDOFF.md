@@ -1,3 +1,169 @@
+# 2026-10-12 — 댓글 PR01~04 구현·통합·코드 리뷰 완료
+
+## Current objective / completed work
+
+사용자가 PR01~04를 서브에이전트 병렬로 구현하고 오케스트레이터가 충돌 관리·완료 후 코드 리뷰·보고하도록 지시했다. 네 PR의 구현·통합·교차 리뷰 보정·커밋·푸시·PR 게시를 완료했다. PR01 #393, PR02 #394, PR03 #395 및 PR04 #396 코드 통합본의 필수 CI 성공을 실제 확인했다. 최종 문서 커밋 후 PR04의 최신 head check를 다시 확인한다. 아직 병합·운영 배포를 하지 않았다. 사용자 직접 화면 기능 테스트와 실제 GitHub 전송 확인은 남아 있다.
+
+| PR / base | worktree / branch | 확인한 코드 head / CI |
+| --- | --- | --- |
+| [PR01 #393](https://github.com/JRVector9/nomorevibe/pull/393) / main | /private/tmp/nomorevibe-comments-pr01-20261012 / feat/comments-list-20261012 | 68940aa / CI38263733075 성공 |
+| [PR02 #394](https://github.com/JRVector9/nomorevibe/pull/394) / PR01 branch | /private/tmp/nomorevibe-comments-pr02-20261012 / feat/comments-compose-20261012 | f9d7ffa / CI38263748425 성공 |
+| [PR03 #395](https://github.com/JRVector9/nomorevibe/pull/395) / PR02 branch | /private/tmp/nomorevibe-comments-pr03-20261012 / feat/comments-results-20261012 | 7eb0ddb / CI38264257084 성공 |
+| [PR04 #396](https://github.com/JRVector9/nomorevibe/pull/396) / PR03 branch | /private/tmp/nomorevibe-comments-pr04-20261012 / feat/comments-github-20261012 | c695954 코드 통합 / CI38265357907 성공 |
+
+각 CI 성공은 해당 시점 head 및 stacked base의 scope·quality·integration3분할·필수check 성공이다. 미래 main 병합 결과로 해석하지 않는다. GitGuardian 성공도 확인했다. 최종 문서 커밋 후 PR04의 최신 check를 확인한다.
+
+## Modified files / key design decisions
+
+제품 변경: `app/api/products/[slug]/feedback/route.ts`, `app/p/[slug]/page.tsx`, `components/product-detail/FeedbackForm.tsx`, `FeedbackList.tsx`, 신규 `FeedbackGithubOptions.tsx`·`FeedbackDeliveryStatus.tsx`·`FeedbackSettingsMenu.tsx`, `lib/domain/feedback/repository.ts`. 기존 fixture/선택자 보정: `tests/product-feedback.test.ts`, `tests/product-detail-components.test.tsx`, `tests/e2e/product-feedback.spec.ts`. 문서: 승인된 시안3파일·계획, `docs/operations/2026-10-12-comments-pr01.md`~`comments-pr04.md`, 최종 `comments-review.md`, 이 인계 문서.
+
+모든 서브에이전트는 gpt-6.1-sol / xhigh / fork none으로 실행했다. root 포함4슬롯을 따라 PR01·02·04 독립 작업을 먼저 병렬 실행하고 PR03은 PR01·02 인터페이스 확정 후 진행했다. 별도 worktree 소유 범위를 지키고 공통 파일 연결·브랜치 전달은 parent가 순서대로 수행했다. node_modules는 root 설치본 symlink이며 .env/비밀키를 복사하지 않았다. 게시 후 보정은 일반 커밋/병합으로 전달했고 force push를 하지 않았다. root main cd95de0b5b097290380a79c37927fa025f55e233과 사용자 미추적 자료를 보존했다.
+
+PR01은 헤더→children Form→작은 목록이며 별도 전역 상태/통합 wrapper를 만들지 않았다. total은 accepted·비금지 제품·동일 작성자 join 조건을 같은 읽기 전용 repeatable-read snapshot에서 집계한다. 공개50/내100 제한은 유지한다. API 롤링 이전 응답에 total이 없으면 알 수 없는 개수로 두며0으로 오인하지 않는다. 원문·관리자 전체 본문과 기본 전달 상태는 보존한다.
+
+PR02는 프로젝트별 작성 의도·10분 nonce와 #feedback이 일치하는 인증 복귀에서만 한 번 펼친다. 일반 로그인·실패 callback은 자동 제출/펼침하지 않는다. 유효한 저장 초안의 payload/requestId는 편집 전 유지하며 빈 제목 초안만 파생 제목/새ID로 복원한다. 생성 제목에서 HTTP(S) URL을 제외해 링크 검토 중복을 방지한다. retry marker로 자동 펼침하는 경우는 실제 문서 reload뿐이다.
+
+PR03은 실제 POST 영수증을 같은 기존 window event로 전달한다. accepted는 공개, held/rejected는 내 댓글에만 반영하며 지연 GET을 generation/AbortController로 차단한다. 새201만 개수를 한 번 늘리고 replay는 중복 증가시키지 않는다. createdAt DESC/id DESC 정렬 후 조회 제한을 적용해 오래된 replay가 최신순 맨 위에 끼어들지 않는다. POST 전에 초안/재시도 ID를 저장하며 응답 유실·재로그인에도 동일 요청을 확인한다.
+
+PR04는 연결된 프로젝트에서만 접힌 GitHub 전달 옵션·별도 공개 동의를 보이며 앱 봇 명의 이슈임을 안내한다. 연결이 사라진 선택 초안은 payload/ID를 유지하고 실제 편집/선택 해제 때 새ID로 변경한다. 작은 전달 상태·확인된 이슈 링크·헤더 설정 메뉴를 적용했다. UI 글자 최소13px과 주요 조작44px을 유지한다. 새 키/스키마/워커/플래그/스타 기능·소개 검수는 변경하지 않았다.
+
+## Test commands and actual results / failed approaches
+
+설치된 Next16.3.8 Server/Client/use-client/Link/page/CLI 가이드 및 README CI 절차·운영 runbook 관련 부분을 읽었다. `git fetch origin` 실제 exit0. 에이전트별 ESLint·next typegen·TypeScript·diff 검사가 실제 종료 코드0이었고 parent가 최종 코드 통합 c695954에서 아래를 실행해 모두 종료 코드0을 확인했다.
+
+```sh
+cd /private/tmp/nomorevibe-comments-pr04-20261012
+npx eslint components/product-detail/FeedbackForm.tsx components/product-detail/FeedbackList.tsx components/product-detail/FeedbackGithubOptions.tsx components/product-detail/FeedbackDeliveryStatus.tsx components/product-detail/FeedbackSettingsMenu.tsx 'app/p/[slug]/page.tsx' 'app/api/products/[slug]/feedback/route.ts' lib/domain/feedback/repository.ts tests/product-feedback.test.ts tests/product-detail-components.test.tsx tests/e2e/product-feedback.spec.ts
+npx tsc --noEmit --incremental false
+git diff --check cd95de0..HEAD
+```
+
+첫 PR01 CI38262652567은 최소13px보다 작은 신규 글자와 기존 상세 테스트의 '댓글이 없어야 함' 기대 때문에 unit3건 실패했으며 integration3분할은 성공했다. 실제 앱 글자를13px 이상으로 고치고 기존 테스트의 댓글 feature flag·읽기 순서 기대를 변경해 해결했다. 새 worktree의 첫 tsc는 생성 라우트 타입 누락으로 기존 PageProps4건 실패했고 next typegen 후 통과했다. 창 이동 직접 호출의 lint 경고는 기존 Next router push로 보정했다. 없는 파일/추정 patch anchor 탐색 실패는 실제 검색·정확한 문맥으로 바로잡았으며 실패한 patch는 원자적으로 적용되지 않았다.
+
+새 테스트 체계는 작성하지 않았다. 로컬 자동 기능/E2E·브라우저·운영 댓글 제출·실제 GitHub 이슈 생성은 실행하지 않았다. 기존 필수 원격 CI의 quality는 타입/lint/unit/빌드/번들 크기, integration은3분할 DB 통합 테스트를 수행한다. 스킬·Codex CLI는 사용하지 않았다.
+
+## Remaining work / exact commands
+
+PR04 최종 문서 커밋·push 후 최신 check를 확인하고 최종 보고한다. 이후 사용자 기능 테스트, #393→#394→#395→#396 순 병합 및 최신 main base의 필수check 재확인, 운영 웹 배포가 남아 있다. protected main을 직접 push하거나 체크를 우회하지 않는다. PR01 병합 후 후속 PR을 main 대상으로 바꾸고 실제 main 반영·CI를 확인한다. 사용자 미추적 파일을 일괄 stage/삭제하지 않는다.
+
+```sh
+cd /Users/jr/Desktop/projects/nomorevibe
+git status --short --branch
+git -C /private/tmp/nomorevibe-comments-pr04-20261012 status --short --branch
+gh pr checks 393 --json name,state,link
+gh pr checks 394 --json name,state,link
+gh pr checks 395 --json name,state,link
+gh pr checks 396 --json name,state,link
+gh pr view 396 --json state,baseRefName,headRefName,headRefOid,statusCheckRollup,url
+cat docs/operations/2026-10-12-comments-review.md
+```
+
+최종 코드 리뷰 보고서는 `docs/operations/2026-10-12-comments-review.md`이며 PR04 stack에도 포함한다. 아래는 이전 단계의 당시 기록이다.
+
+---
+
+# 2026-10-12 — 댓글 시나리오 구현을 PR01~04로 계획
+
+## Current objective / completed work
+
+사용자가 전체 댓글 시나리오를 적용하기 위한 계획을 PR 단위로 설정하라고 요청했다. 현재 작업 범위는 계획 문서이며 제품 구현·실제 PR 생성·커밋/푸시·배포를 시작하지 않았다. 실제 폼·목록·상세페이지·공개 GET/POST·조회 repository·계정 returnTo 처리와 기존 테스트를 읽고 `docs/superpowers/plans/2026-10-12-compact-comments-scenario.md`에 네 PR의 변경 범위·완료 기준·의존 관계·검증 방법을 기록했다.
+
+## Modified files / key design decisions
+
+이번 단계의 변경은 위 신규 계획 문서와 이 인계 문서다. 앞 단계의 미커밋 시안 및 사용자 미추적 자료는 보존한다. main은 cd95de0b5b097290380a79c37927fa025f55e233이며 제품 코드는 변경하지 않았다. PR01 통합 영역·작은 목록·정확한 공개 total, PR02 접힌 작성·로그인 복귀·본문에서 제목 생성, PR03 서버 접수 상태·내 댓글·초안/동일 요청 재시도, PR04 선택적 GitHub 전달·작은 상태/설정 메뉴 순이다. 폼/목록이 겹치므로 동시 파일 수정 없이 순서대로 연결한다.
+
+공개 조회50개/내 댓글100개 제한을 전체 개수로 오인하지 않게 한다. total은 공개 accepted·비금지 제품·기존 join의 같은 가시성 조건으로 집계하고 held/rejected를 제외한다. 원문·관리자에서 공통 FeedbackItem을 쓰므로 상세페이지에서만 본문을 축약한다. 기존 저장 초안의 title/body/requestId는 편집 전 유지한다. GitHub 로그인·POST·동의·CSRF·검토·중복 방지·outbox를 재사용하며 새 키/스키마/워커/스타 변경은 계획에 포함하지 않는다. 기존 E2E 선택자는 새 폼 진입에 맞춰 보정해야 한다. 사용자 직접 기능 테스트와 저장소 필수 CI를 구분한다.
+
+## Actual verification / failed approaches
+
+이번 단계는 저장소 상태와 소스/시안 문서 읽기로 현재 구현을 대조했다. 테스트·lint·typecheck·빌드·실제 인증/접수/GitHub 전송·배포는 실행하지 않았다. 스킬·서브에이전트·Codex CLI도 사용하지 않았다. 테스트 파일 검색에 존재하지 않는 `tests/github-user-auth.test.ts`를 포함해 rg가 exit2를 반환했으며 실제 계정 테스트/소스에서 returnTo를 확인했다. 이는 테스트 실행 결과가 아니다. 문서 작성 후 `git diff --check`는 실제 exit0이었다. 신규 파일의 `git diff --no-index --check /dev/null ...`은 출력 없이 exit1(신규 파일 차이)을 반환했으며 별도 Python 줄 끝 공백 검사에서 빈 오류 목록/exit0을 확인했다.
+
+## Remaining work / exact commands
+
+사용자에게 네 PR 계획과 문서 링크를 보고한다. 다음에 구현 지시가 오면 설치된 Next 문서를 먼저 읽고 PR01부터 별도 브랜치/작업 경계로 진행한다. 지금 제품 코드나 배포를 시작하지 않는다. 소개 검수와 스타 반복 요청도 재개하지 않는다.
+
+```sh
+cd /Users/jr/Desktop/projects/nomorevibe
+git status --short --branch
+cat docs/superpowers/plans/2026-10-12-compact-comments-scenario.md
+git diff --check
+git diff --no-index --check /dev/null docs/superpowers/plans/2026-10-12-compact-comments-scenario.md
+```
+
+시안은 기존 `http://127.0.0.1:8767/scenario.html`이며 이번 계획 단계에서는 브라우저/서버를 다시 조작하지 않았다. 서버가 살아 있으면 중복 실행하지 않는다. 아래 이전 기록은 당시 확인 범위이며 이번 계획을 구현 완료로 해석하지 않는다.
+
+---
+
+# 2026-10-12 — 댓글 전체 화면·로그인·접수 결과 시나리오 보완
+
+## Current objective / completed work
+
+사용자가 이전 부분 시안만으로는 언제 나오는 화면인지 알기 어렵다며 전체 화면 시나리오를 요청했다. `docs/design/2026-10-12-comments-compact/scenario.html`을 추가했다. 기존 index는 좌우 비교용임을 설명하고 새 전체 흐름으로 가는 링크를 넣었다. README도 시점별 표와 실제 확인 내용을 보완했다. 현재 단계는 디자인 제안이며 제품 소스·인증 설정·DB·운영 배포 변경은 없다. 스타 기능 재작업·소개 검수 재개·스킬/서브에이전트/Codex CLI 사용은 하지 않았다.
+
+## Modified files / key decisions
+
+신규 scenario.html, 수정 index.html/README.md 및 이 인계 문서. 현재 root main cd95de0b5b097290380a79c37927fa025f55e233, 사용자 미추적 자료 보존. 사이트 메뉴·프로젝트 hero·정보 표·README 내부 스크롤·업데이트·우측 정보·관련 프로젝트·footer를 포함한 전체 문맥을 표시한다. 댓글은 기존 상세페이지의 README/업데이트 아래에 둔다. 기본은 비로그인/댓글 없음/ManimGX GitHub 수신 미연결이다. 읽기는 로그인 불필요, 작성 클릭 시 비로그인은 로그인으로 이동, 인증 후 같은 댓글 위치에서 작성창을 자동 펼치는 제안이다. 로그인 상태에서는 작성창만 펼친다. 공개 완료/검토 중/실패 및 내 댓글을 재현하고 공개 수에는 held를 포함하지 않는다. 상단 단계·조건 컨트롤은 검토용이며 제품 UI에 추가하지 않는다.
+
+실제 `FeedbackForm.tsx`, `FeedbackList.tsx`, 상세페이지, login page/GithubConnection 및 feedback contract를 읽었다. 현재 API 필수 제목120자·본문5000자·공개 동의·GitHub 별도 동의를 유지해야 한다. 별도 제목 입력 제거는 본문 첫 줄 제목 생성으로 구현을 검토할 제안이다. 초기 검토 조건은 repeated body 또는 제목/본문 HTTP(S) 링크4개 이상이며 나머지는 accepted다. 현재 GitHub 로그인은 스타 추가·취소 동의를 포함한다. 시안에도 반영했으며 댓글 전용 인증으로 변경하지 않았다. GitHub 외부 인증은 개념도다. 모든 댓글/인증/전송은 메모리 재현이며 외부 요청이 없다.
+
+## Actual verification / failed approaches
+
+`curl -fsS -o /dev/null -w '%{http_code}\\n' http://127.0.0.1:8767/scenario.html` 실제200/exit0. Chrome에서 전체 상세페이지 screenshot, 작성 진입 클릭→로그인, 시안 동의→외부 인증 개념도→인증 완료→동일 상세페이지의 빈 작성창 복귀를 실제 확인했다. 단계4로 예시 본문을 채우고 공개 동의·등록을 눌러 접수 중→공개 완료 및 댓글 수1을 확인했다. 단계6에서 내 댓글의 held 글, 전체 목록의 빈 상태와 공개 수0을 확인했다. 단계7은 본문 유지/다시 등록 AX 및 모바일 작성 screenshot을 확인했다. 모바일 footer 버튼 줄바꿈을 CSS flex:none/nowrap으로 보완했다. 자동 테스트·lint/typecheck/build 및 실제 운영 댓글 제출/인증/GitHub 전달은 수행하지 않았다.
+
+선언하지 않은 새 CUA 변수를 할당한 첫 호출은 오류였으며 var 선언으로 정정했다. 사용자의 다른 Chrome 창 전환 때문에 stale action은 거절되어 fresh AX와 Window 메뉴의 정확한 `NoMoreVibe · 댓글 전체 시나리오` 창을 선택했다. 사용자 다른 페이지는 변경하지 않았다. 잘못 추정한 feedback/service.ts는 없었으며 실제 contract.ts를 읽어 초기 검토 기준을 확인했다.
+
+## Remaining work / exact commands
+
+사용자에게 전체 시나리오를 보여주고 등장 시점을 설명한다. 실제 제품 UI 적용은 후속 지시에 맞춰 최소 변경으로 수행한다. 제품 코드를 쓰기 전 설치된 Next 문서를 읽고 기존 draft/CSRF/idempotency/검토/권한 계약을 보존한다. 미리보기 HTTP8767은 이미 동작 중이며 중복 실행하지 않는다.
+
+```sh
+cd /Users/jr/Desktop/projects/nomorevibe
+git status --short
+curl -fsS -o /dev/null http://127.0.0.1:8767/scenario.html
+git diff --check
+```
+
+브라우저 주소는 http://127.0.0.1:8767/scenario.html. 시안 파일 자체를 열어도 작동한다. CUA compaction 후 rewriteDocumentation/fresh AX부터 시작한다. 현재 변경은 미커밋 디자인 문서이며 배포하지 않았다. 과거 스타 조사 PR392/maincd95de0 및 운영 오류 표시 release23e13d4는 유지한다.
+
+---
+
+# 2026-10-12 — 댓글 영역 축소 UI 시안 작성·브라우저 표시
+
+## Current objective
+
+사용자가 스타 기능의 우선순위를 낮추고, 화면을 많이 차지하는 댓글 작성 영역의 새 UI 시안을 보여 달라고 했다. 현재 단계는 디자인 제안이다. 스타 조사·OAuth 구현을 이어서 진행하지 않는다.
+
+## Completed work / modified files
+
+실제 `https://nomorevibe.com/p/manimgx#feedback`의 로그인된 댓글 작성 폼과 공개 댓글 없는 상태를 Chrome AX/screenshot으로 확인했고 `FeedbackForm.tsx`, `FeedbackList.tsx`, 상세페이지 소스와 테마를 읽었다. 제목·종류·본문·공개 동의·미연결 GitHub 안내가 항상 펼쳐져 있는 큰 폼을 한 줄 작성 진입으로 바꾸는 독립 HTML 시안을 작성했다.
+
+신규 파일은 `docs/design/2026-10-12-comments-compact/index.html`과 같은 폴더의 `README.md`다. 이 인계 문서도 수정했다. 제품 소스·환경변수·DB·운영 배포는 변경하지 않았다. 스킬·서브에이전트·Codex CLI는 사용하지 않았다. root main은 cd95de0b5b097290380a79c37927fa025f55e233이며 사용자 미추적 자산을 보존한다.
+
+## Key design decisions
+
+기존 흰색/빨간색 스타일을 유지한다. 작성 진입은 약48px 한 줄, 본문·분류·동의는 클릭 시 같은 영역에서 펼친다. 별도 제목 입력을 없애는 제안이며 실제 구현에서는 기존 API 필수 제목 계약을 검토해야 한다. 공개/내 댓글과 검토 중 상태 구분을 유지하고 기본3개·긴 글2줄로 제한하는 방향이다. 답글·좋아요 기능은 새로 만들지 않는다. GitHub 연결 프로젝트의 별도 전송 동의는 작성 중 접힌 선택으로 유지하며 현재 ManimGX 미연결 상태에서는 숨긴다. 시안 내용은 예시이며 서버에 전송하지 않는다.
+
+## Actual verification / failed approaches
+
+로컬 HTTP8767에서 HTML 응답을 실제 curl exit0으로 확인했다. Chrome에서 기본/작성 비교 화면 screenshot, 한 줄 작성 진입 클릭 후 펼침, 빈 본문·동의 미체크 상태 등록 비활성화, 취소 후 접힘, 댓글 없는 상태 AX, 360px 모바일 배치 screenshot을 확인했다. 모바일 작성 동작 전체, 운영 댓글 제출, GitHub 전송 성공은 검증하지 않았다. 자동 테스트·lint·typecheck·build는 실행하지 않았다.
+
+Chrome 주소 자동완성이 과거 `work-history-parity-2026-10-10.html` 경로를 선택해404가 발생했으며 전체 주소를 paste해 `http://127.0.0.1:8767/`로 정정했다. 사용자가 다른 탭/창으로 전환할 때 오래된 app 상태 입력은 거절되어 fresh AX/getApp 후 시안 탭만 선택했다. 다른 탭 내용은 변경하지 않았다. 시안 모바일 폼의 복제 이벤트 누락과 ID 중복은 공통 바인딩 및 복제 ID 제거로 정리했다.
+
+## Remaining work / exact commands
+
+사용자에게 시안 파일과 브라우저 미리보기를 제시한다. 실제 제품 적용은 다음 지시에 맞춰 최소 변경으로 진행한다. 현재 미리보기 서버는127.0.0.1:8767이며 Chrome에 시안 탭이 열려 있다. 서버가 살아 있으면 중복 시작하지 않는다. 다음 에이전트는 먼저 다음 명령으로 상태를 확인한다.
+
+```sh
+cd /Users/jr/Desktop/projects/nomorevibe
+git status --short
+curl -fsS -o /dev/null http://127.0.0.1:8767/
+git diff --check
+```
+
+서버가 종료된 경우에만 `python3 -m http.server 8767 --bind 127.0.0.1 --directory docs/design/2026-10-12-comments-compact`를 실행한다. CUA 사용은 compaction 후 rewriteDocumentation 및 fresh AX부터 시작한다. 제품 코드를 쓸 때 AGENTS 및 설치된 Next 문서를 읽는다. API 제목·공개 동의·검토 상태·CSRF·draft·기존 GitHub 전달 계약을 보존한다. 소개 검수 재개 및 스타 반복 쓰기/앱 등록은 수행하지 않는다. 기존 조사 PR392는 병합cd95de0이며 운영 코드는 오류 표시 release23e13d4를 유지한다.
+
+---
+
 # 2026-10-12 — Star App 설치 후에도403: 문서 조사·보고 완료
 
 ## Current objective / completed work
