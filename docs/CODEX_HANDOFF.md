@@ -6908,3 +6908,24 @@ PR384 https://github.com/JRVector9/nomorevibe/pull/384 생성/head2d5e492ad0a44f
 
 
 독립 source-only 리뷰 session96585 actual exit0/clean: 새 결함 없음. reviewer는 파일 변경·테스트·lint/typecheck/build/browser/network/live action을 실행하지 않았음을 명시했다. 운영 baseline read-only session91744 actual exit0: Docker8앱 ready, 웹9cf8286/worker33349ed, mini2/M3 4, fourflags ON. 코드 변경은 버튼1파일 11추가/3삭제이며 새 API·DB·워커 코드 없음. 정상 PR commit/push/CI 진행한다.
+
+
+### 2026-10-12 — 실시간 스타 숫자 PR386 병합, 운영 이미지 대기
+
+- 코드 commit3429e43b402aa291b2fb0b05243ba5f693bb9320 / PR386 https://github.com/JRVector9/nomorevibe/pull/386. PR CI38219063153 actual completed/success: scope/quality(타입/lint/기존 단위/빌드)/integration3/check/GitGuardian success. 최신base ef37a71와 actual remote/head 대조 후 일반 matching-head merge223d87ace1ae13f1e492b7812c38798c4533655b(07:44:26Z). root main FF 완료, 사용자 자료 보존.
+- 실제 git diff --exit-code33349ed HEAD --lib/scripts/drizzle/package/tsconfig exit0(worker 관련 코드 불변). 운영은 아직 웹9cf8286/worker33349ed. 이번 웹code223d87a 배포는 아직 시작하지 않았다. 사전 read-only 진단13169 actualexit0에서 active GitHub connection1/만료0, unstarred2/writesRequested0, 소개검수2100-01-01/requested742/processed741/unleased 보존. 직접 개인 스타/댓글/OAuth 쓰기 없음.
+- main CI38219435980 진행 중; 실제 completed/success 및 immutable web digest를 확인한 후 배포한다. docs 기록 branchdocs/detail-live-star-count-release-20261012 생성. code배포가 끝나기 전에 docs merge로 remote main을 바꾸지 않는다.
+- 정확한 다음명령: cwd/Users/jr/Desktop/projects/nomorevibe에서 gh run view38219435980의 실제완료를 먼저확인. private release.py capture 223d87ace1ae13f1e492b7812c38798c4533655b 38219435980 → plan → deploy 한번 → verify 순서. operator경로 /private/tmp/nomorevibe-star-count-review-20261012/release.py. before.json 생긴뒤 deploy 반복금지. public_get.py/diagnose.py는 postdeploy read-only 확인용. 실제 GitHub 클릭 기능테스트 user수행. 배포완료 뒤 최종 docs-only commit/push/PR/check/일반merge/rootFF/일지완료.
+
+
+main CI38219435980(head223d87ace1ae13f1e492b7812c38798c4533655b) actual completed/success: scope/quality/integration3/check/worker·web publish 모두success. capture93318 actualexit0. 운영용 web ghcr.io/jrvector9/nomorevibe-runtime-web@sha256:6d2597a0575f838bc1b8dc5b5be7e73bd60d612f636814ca1c5dac5511de72b5; 이번 CI worker6e015a7f8acbbbdff274d408bf1ef74ed0b54481b45789355e02876358dd3dc7는 발행만확인했고 배포하지않는다. 기존worker33349ed/ce17a8 유지. private target.json0600저장. mixed-baseline 웹 전용 plan47738 진행중이며 preflight완료/배포는 아직미확정. 이세션성공과 preflight.json실제생성을먼저확인한뒤 deploy한번. before.json생긴뒤반복금지.
+
+
+### 2026-10-12 — 스타 숫자 즉시 반영 운영 배포 완료
+
+- 실제 plan47738 exit0: 양서버 ARM64/OCIrevision223d87a/private immutable web6d2597a0 pull/build-runtime키 일치/fourflags ON/mini2·M3 4 보존. deploy58740 actualexit0: 양웹done/healthy, 공개health 양instance release223d87a/DBok. before.json0600/O_EXCL 생성됨. 이 deploy는 완료되어 재실행하지 않는다.
+- 최종 runtime verify58205 actualexit0: Docker8앱12컨테이너 saved/runtime 전체환경·digest·release·health 일치, source/autoDeploy/replicas/command/buildSecrets 및 원래환경 보존. 변경env는 두웹 RELEASE_TAG/NEXT_DEPLOYMENT_ID뿐. worker는33349ed/ce17a8 그대로, 웹만223d87a/sha256:6d2597a0575f838bc1b8dc5b5be7e73bd60d612f636814ca1c5dac5511de72b5. 네 GitHub flags ON/configurationMatched. 전체14앱을 새release로 바꿨다고 주장하지 않는다.
+- 공개 read-only GET87820 actualexit0: threadplane305/dawn-ai311/manimgx447/openfilm123/agent-skills-30178의5상세 모두 단일 상단메타 starcontrol/같은 숫자·accessibleName, 홈/login/익명api-me까지8GET HTTP200. 이는 서버 HTML/위치/정상응답 확인이며 JS hydration·실제 개인별 추가/취소 클릭 시험이 아니다. 사용자 직접기능테스트 유지. 숫자는 현재상세UI에서 최초확정상태 대비 +1/−1이며 공개수집 DB·다른방문자변경 push/새로고침원천은 기존수집값이다.
+- postdeploy read-only 진단84135 actualexit0: active GitHub connection1/토큰만료0, unstarred2/writesRequested0; product-intro-check not_before2100-01-01/requested742/processed741/unleased 보존. 직접 OAuth/스타/댓글/DB 쓰기는 없음. 기존purgetoken Authentication error는별도후속으로남기고 이번 purge는시도하지않았다. canonical GET/두instancehealth는 정상이다.
+- 남은 작업: 이 최종인계 docs-only commit/push/PR/check/일반matching-headmerge/rootFF/Obsidian 최종기록. 관리자 Tailscale 전용 접근·아이디비밀번호 요청은 별도미구현후속. 실제 클릭시험은user수행. 코드/정상PR/운영배포 완료를 기능시험완료로 과장하지 않는다.
+- 다음 정확한 명령: /private/tmp/nomorevibe-star-count-20261012의 docs/detail-live-star-count-release-20261012에서 git diff --check → docs/CODEX_HANDOFF.md만stage/commit/push → body-file docsPR → latestbase223d87a 및필수check 확인 → 일반matching-headmerge → rootmainFF. 문서merge는 앱소스변경이아니며 operating web223d87a/worker33349ed를 유지한다. 마지막 roottrackedclean/문서diff만검증·publichealth/소개검수pause read-only확인·일지에 실제docsPR/merge/CI를기록한다. private/tmp verification.json/public-get.json은 safe메타0600, before/preflight는 비밀포함이므로 출력·커밋금지.
