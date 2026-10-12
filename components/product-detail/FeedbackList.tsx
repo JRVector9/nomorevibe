@@ -41,7 +41,7 @@ export function FeedbackItem({ feedback }: { feedback: FeedbackView }) {
 function CompactFeedbackItem({ feedback }: { feedback: FeedbackView }) {
   return (
     <article className="border-b border-line py-4 last:border-b-0">
-      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[12px] text-fg-2">
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[13px] text-fg-2">
         <strong className="break-words font-medium text-fg">{feedback.authorDisplayName}</strong>
         <span className="rounded bg-bg-card px-1.5 py-0.5">{KIND[feedback.kind]}</span>
         <time dateTime={feedback.createdAt}>{new Date(feedback.createdAt).toLocaleDateString("ko-KR", { timeZone: "Asia/Seoul" })}</time>
@@ -50,18 +50,18 @@ function CompactFeedbackItem({ feedback }: { feedback: FeedbackView }) {
       <details className="group mt-2">
         <summary className="cursor-pointer list-none [&::-webkit-details-marker]:hidden">
           <span className="line-clamp-2 whitespace-pre-wrap break-words text-[14px] leading-6 group-open:hidden">{feedback.body}</span>
-          <span className="mt-1 inline-block text-[12px] text-fg-2 underline underline-offset-2">
+          <span className="mt-1 inline-block text-[13px] text-fg-2 underline underline-offset-2">
             <span className="group-open:hidden">내용 더보기</span><span className="hidden group-open:inline">접기</span>
           </span>
         </summary>
         <p className="mt-1 whitespace-pre-wrap break-words text-[14px] leading-6">{feedback.body}</p>
       </details>
-      <p className="mt-2 text-[12px] leading-5 text-fg-2">
+      <p className="mt-2 text-[13px] leading-5 text-fg-2">
         {feedback.reviewState === "held" ? "검토 중 · 작성자와 관리자만 볼 수 있음"
           : feedback.reviewState === "rejected" ? "공개되지 않음 · 작성자와 관리자만 볼 수 있음" : "서비스에 공개됨"}
         {" · "}<FeedbackDeliveryStatus feedback={feedback} />
       </p>
-      {feedback.reviewReason && <p className="mt-1 whitespace-pre-wrap break-words text-[12px] text-fg-2">검토 사유: {feedback.reviewReason}</p>}
+      {feedback.reviewReason && <p className="mt-1 whitespace-pre-wrap break-words text-[13px] text-fg-2">검토 사유: {feedback.reviewReason}</p>}
     </article>
   );
 }
@@ -130,15 +130,15 @@ export function FeedbackList({ slug, children }: { slug: string; children?: Reac
         <div className="flex items-center gap-3 text-[13px]">
           <button type="button" aria-pressed={view === "public"} onClick={() => { setView("public"); setShowAll(false); }} className={`min-h-11 ${view === "public" ? "font-semibold text-fg" : "text-fg-2"}`}>전체</button>
           {(mine !== null || mineError) && <button type="button" aria-pressed={view === "mine"} onClick={() => { setView("mine"); setShowAll(false); }} className={`min-h-11 ${view === "mine" ? "font-semibold text-fg" : "text-fg-2"}`}>내 댓글</button>}
-          <span className="text-[12px] text-fg-2">최신순</span>
+          <span className="text-[13px] text-fg-2">최신순</span>
         </div>
       </div>
       {children}
-      {view === "mine" && publicError && <p className="text-[12px] text-fg-2">공개 댓글 개수를 확인하지 못했습니다.</p>}
+      {view === "mine" && publicError && <p className="text-[13px] text-fg-2">공개 댓글 개수를 확인하지 못했습니다.</p>}
       {!loaded && <p role="status" className="text-[14px] text-fg-2">댓글을 불러오는 중입니다.</p>}
       {error && <div role="alert"><p className="text-[14px]">{error}</p><button type="button" className="min-h-11 text-[14px] underline" onClick={() => { void load(); }}>다시 불러오기</button></div>}
       {loaded && !error && feedback.length === 0 && <p className="py-5 text-[14px] text-fg-2">{view === "mine" ? "아직 작성한 댓글이 없습니다." : "아직 댓글이 없습니다. 첫 의견을 남겨보세요."}</p>}
-      {((view === "public" && (publicTotal !== null && publicTotal > 50 || feedback.length >= 50)) || (view === "mine" && feedback.length >= 100)) && <p className="text-[12px] text-fg-2">{view === "mine" ? "내 댓글은 최근 100개까지 표시합니다." : "공개 댓글은 최근 50개까지 표시합니다."}</p>}
+      {((view === "public" && (publicTotal !== null && publicTotal > 50 || feedback.length >= 50)) || (view === "mine" && feedback.length >= 100)) && <p className="text-[13px] text-fg-2">{view === "mine" ? "내 댓글은 최근 100개까지 표시합니다." : "공개 댓글은 최근 50개까지 표시합니다."}</p>}
       {visibleFeedback.length > 0 && <div>{visibleFeedback.map((item) => <CompactFeedbackItem key={item.id} feedback={item} />)}</div>}
       {feedback.length > 3 && <button type="button" aria-expanded={showAll} onClick={() => setShowAll(!showAll)} className="min-h-11 text-[13px] text-fg-2 underline underline-offset-2">{showAll ? "댓글 접기" : `댓글 더보기 (${feedback.length - 3}개)`}</button>}
     </div>
