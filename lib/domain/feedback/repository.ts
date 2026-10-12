@@ -1,5 +1,5 @@
 import "server-only";
-import { and, desc, eq, ne, or } from "drizzle-orm";
+import { and, count, desc, eq, ne, or } from "drizzle-orm";
 import { db, onPrimary } from "@/lib/db";
 import { products } from "@/lib/db/schema";
 import { productFeedback, type ProductFeedback } from "@/lib/db/product-feedback-schema";
@@ -34,15 +34,30 @@ export function feedbackView(row: SelectedFeedback, privateReview = false): Feed
     lastErrorCode: delivery?.errorCode && /^(?:github|feedback)_[a-z0-9_]{1,100}$/.test(delivery.errorCode) ? delivery.errorCode : null };
 }
 
+function publicFeedbackQuery(slug: string, source: typeof db | FeedbackTransaction = db) {
+  return source.select(selection).from(productFeedback).innerJoin(products, eq(productFeedback.productId, products.id))
+    .innerJoin(publicUsers, eq(productFeedback.authorUserId, publicUsers.id))
+    .leftJoin(githubIssueOutbox, eq(productFeedback.id, githubIssueOutbox.feedbackId))
+    .where(publicFeedbackVisibility(slug)).orderBy(desc(productFeedback.createdAt), desc(productFeedback.id)).limit(50);
+}
+
+function publicFeedbackVisibility(slug: string) {
+  return and(eq(products.slug, slug), ne(products.status, "banned"), eq(productFeedback.reviewState, "accepted"));
+}
+
 export function listProductFeedback(slug: string): Promise<FeedbackView[]> {
-  return onPrimary(async () => {
-    const rows = await db.select(selection).from(productFeedback).innerJoin(products, eq(productFeedback.productId, products.id))
+  return onPrimary(async () => (await publicFeedbackQuery(slug)).map((row) => feedbackView(row)));
+}
+
+export function listProductFeedbackWithTotal(slug: string): Promise<{ feedback: FeedbackView[]; total: number }> {
+  return onPrimary(() => db.transaction(async (tx) => {
+    const rows = await publicFeedbackQuery(slug, tx);
+    const [summary] = await tx.select({ total: count() }).from(productFeedback)
+      .innerJoin(products, eq(productFeedback.productId, products.id))
       .innerJoin(publicUsers, eq(productFeedback.authorUserId, publicUsers.id))
-      .leftJoin(githubIssueOutbox, eq(productFeedback.id, githubIssueOutbox.feedbackId))
-      .where(and(eq(products.slug, slug), ne(products.status, "banned"), eq(productFeedback.reviewState, "accepted")))
-      .orderBy(desc(productFeedback.createdAt), desc(productFeedback.id)).limit(50);
-    return rows.map((row) => feedbackView(row));
-  });
+      .where(publicFeedbackVisibility(slug));
+    return { feedback: rows.map((row) => feedbackView(row)), total: summary.total };
+  }, { isolationLevel: "repeatable read", accessMode: "read only" }));
 }
 
 export function listMyFeedback(userId: number, slug?: string): Promise<FeedbackView[]> {
