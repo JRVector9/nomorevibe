@@ -1,8 +1,8 @@
 # 댓글 전체 시나리오 적용 계획 — PR01~04
 
-2026-10-12. 상태: **PR01~04 구현·통합·코드 리뷰 및 PR 게시 완료, 병합·운영 배포 전**.
+2026-10-12. 상태: **PR01~04 구현·통합·코드 리뷰·병합·운영 배포 완료**.
 
-실제 PR: [PR01 #393](https://github.com/JRVector9/nomorevibe/pull/393) → [PR02 #394](https://github.com/JRVector9/nomorevibe/pull/394) → [PR03 #395](https://github.com/JRVector9/nomorevibe/pull/395) → [PR04 #396](https://github.com/JRVector9/nomorevibe/pull/396). 후속 PR은 앞 PR의 브랜치를 대상으로 쌓았다. [구현 리뷰 보고서](../../operations/2026-10-12-comments-review.md)에 완료 범위·리뷰 보정·실행한 확인을 기록했다. 아래는 승인된 계획과 완료 기준이다. 사용자 화면 기능 테스트와 실제 GitHub 전송은 아직 수행하지 않았다.
+실제 PR: [PR01 #393](https://github.com/JRVector9/nomorevibe/pull/393) → [PR02 #394](https://github.com/JRVector9/nomorevibe/pull/394) → [PR03 #395](https://github.com/JRVector9/nomorevibe/pull/395) → [PR04 #396](https://github.com/JRVector9/nomorevibe/pull/396). 후속 PR은 앞 PR의 브랜치를 대상으로 쌓고, 순차 병합 시 최신 main을 반영해 필수check를 다시 확인했다. [2026-10-13 운영 배포 기록](../../operations/2026-10-13-comments-production-rollout.md)에 실제 결과를 기록했다. [구현 리뷰 보고서](../../operations/2026-10-12-comments-review.md)에 완료 범위·리뷰 보정·실행한 확인을 기록했다. 아래는 승인된 계획과 완료 기준이다. 사용자 화면 기능 테스트와 실제 GitHub 전송은 아직 수행하지 않았다.
 
 구현 보정: 로그인 복귀는 프로젝트별 작성 의도와 일회성 query nonce가 일치할 때만 자동 펼친다. 생성 제목에서 HTTP(S) URL을 제외해 본문 링크가 검토 규칙에 중복 계산되지 않게 했다. 유효한 기존 초안의 payload/ID는 편집 전 유지하며, 접수될 수 없는 빈 제목 초안은 파생 제목과 새 ID로 복원한다. 실패 초안의 자동 펼침은 문서 새로고침으로 한정했다. 오래된 접수 재확인도 생성일 최신순을 유지한다. 추가 전역 상태나 통합 래퍼는 만들지 않았다.
 
@@ -85,4 +85,4 @@
 
 사용자 확인 항목은 비로그인/로그인 작성, 인증 취소·복귀, 취소 후 초안 복원, 공개/검토 중/공개 거절, 접수 실패·동일 요청 재시도, 50개 초과 개수, 내 댓글 접근 제한, GitHub 연결/미연결·별도 동의, 모바일 배치다. 실제 GitHub 전송 성공은 연결된 테스트 프로젝트의 이슈로 확인하며 로컬 시안의 동작을 성공 증거로 쓰지 않는다.
 
-네 PR을 마친 뒤 한 번에 운영 웹 배포하고, 기존 feature flag를 유지한 상태에서 실제 화면을 확인한다. DB migration·워커 재배포·플래그/키 변경을 이번 UI 작업에 추가하지 않는다. 배포는 구현·리뷰·CI 완료 후의 작업이며 현재 수행하지 않았다.
+2026-10-13에 네 PR을 순차 병합하고 최종 main의 검증된 같은 이미지로 두 운영 웹을 배포했다. 기존 feature flag·키를 유지하고 실제 컨테이너/공개 health·상세 HTML/API를 확인했다. DB migration·워커 재배포·플래그/키 변경은 없었다. 사용자 화면 작성·인증 복귀·실제 GitHub 전달 확인은 남아 있으며 [배포 기록](../../operations/2026-10-13-comments-production-rollout.md)의 실제 확인 범위를 따른다.
