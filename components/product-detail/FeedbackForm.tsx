@@ -44,6 +44,10 @@ export function FeedbackForm({ slug, githubDeliveryAvailable = false }: { slug: 
       const saved = JSON.parse(sessionStorage.getItem(storageKey) ?? "null") as Draft | null;
       if (saved && typeof saved.title === "string" && typeof saved.body === "string" && typeof saved.requestId === "string"
         && ["bug", "feature", "question"].includes(saved.kind)) initial = { ...initial, ...saved };
+      if (initial.body.trim() && !initial.title.trim()) {
+        // Empty-title legacy drafts could never be accepted by the existing API.
+        initial = { ...initial, title: titleFromBody(initial.body), requestId: crypto.randomUUID() };
+      }
     } catch { /* Storage may be unavailable; the live form remains usable. */ }
     const controller = new AbortController();
     fetch("/api/me", { cache: "no-store", signal: controller.signal }).then(async (response) => {
@@ -60,7 +64,8 @@ export function FeedbackForm({ slug, githubDeliveryAvailable = false }: { slug: 
           && location.pathname === `/p/${encodeURIComponent(slug)}` && location.hash === "#feedback"
           && !location.searchParams.has("githubError") && !location.searchParams.has("error");
         sessionStorage.removeItem(intentKey);
-        retryDraft = !!initial.body.trim() && sessionStorage.getItem(retryKey) === initial.requestId;
+        const navigation = performance.getEntriesByType("navigation")[0] as PerformanceNavigationTiming | undefined;
+        retryDraft = navigation?.type === "reload" && !!initial.body.trim() && sessionStorage.getItem(retryKey) === initial.requestId;
       } catch { /* Without storage, only an explicit click opens the composer. */ }
       if (returnToken !== null) {
         location.searchParams.delete("feedbackCompose");
@@ -137,8 +142,8 @@ export function FeedbackForm({ slug, githubDeliveryAvailable = false }: { slug: 
     <div>
       {!expanded && <button ref={entry} type="button" onClick={open} disabled={!session} aria-label="댓글 남기기" aria-expanded={expanded} aria-controls="feedback-composer"
         className="flex min-h-12 w-full items-center gap-3 rounded-lg border border-line bg-bg-soft px-3 py-2 text-left text-[13px] text-fg-2 disabled:opacity-60">
-        <span aria-hidden="true" className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-bg-card text-[12px] text-fg">{session?.user ? session.user.displayName.slice(0, 1) : "+"}</span>
-        <span>댓글 남기기…</span><span className="ml-auto text-[12px] text-fg">{session?.user ? "작성" : "로그인 후 작성"}</span>
+        <span aria-hidden="true" className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-bg-card text-[13px] text-fg">{session?.user ? session.user.displayName.slice(0, 1) : "+"}</span>
+        <span>댓글 남기기…</span><span className="ml-auto text-[13px] text-fg">{session?.user ? "작성" : "로그인 후 작성"}</span>
       </button>}
       {!session && !sessionError && <p role="status" className="mt-2 text-[13px] text-fg-2">로그인 상태를 확인하는 중입니다.</p>}
       {sessionError && <p role="alert" className="mt-2 text-[13px] leading-6">로그인 상태를 불러오지 못했습니다. <button type="button" onClick={() => { setSessionError(false); setSessionAttempt((attempt) => attempt + 1); }} className="min-h-11 underline underline-offset-2">다시 확인</button></p>}
@@ -149,8 +154,8 @@ export function FeedbackForm({ slug, githubDeliveryAvailable = false }: { slug: 
           <textarea ref={textarea} id="feedback-body" className="min-h-28 w-full resize-y rounded-md bg-bg-card p-1 text-[14px] leading-6 text-fg outline-offset-2" required maxLength={5000} value={draft.body} placeholder="사용해 본 의견이나 궁금한 점을 남겨주세요." onChange={(event) => change({ body: event.target.value })} />
           <div className="flex flex-wrap items-center gap-1 border-b border-line pb-3">
             <div role="group" aria-label="댓글 종류" className="flex gap-1">{KINDS.map((kind) => <button key={kind.value} type="button" aria-pressed={draft.kind === kind.value} onClick={() => change({ kind: kind.value })}
-              className={`min-h-9 rounded-md px-3 text-[12px] ${draft.kind === kind.value ? "bg-accent-soft text-accent" : "text-fg-2"}`}>{kind.label}</button>)}</div>
-            <span className="ml-auto text-[11px] text-fg-2">{draft.body.length.toLocaleString("ko-KR")} / 5,000</span>
+              className={`min-h-9 rounded-md px-3 text-[13px] ${draft.kind === kind.value ? "bg-accent-soft text-accent" : "text-fg-2"}`}>{kind.label}</button>)}</div>
+            <span className="ml-auto text-[13px] text-fg-2">{draft.body.length.toLocaleString("ko-KR")} / 5,000</span>
           </div>
           <label className="flex items-start gap-2 text-[13px] leading-6"><input className="mt-1.5" type="checkbox" required checked={draft.serviceDisclosureConsent} onChange={(event) => change({ serviceDisclosureConsent: event.target.checked })} />닉네임·제목·내용을 NoMoreVibe에 공개하는 데 동의합니다.</label>
           {githubDeliveryAvailable ? <>
@@ -158,7 +163,7 @@ export function FeedbackForm({ slug, githubDeliveryAvailable = false }: { slug: 
             {draft.sendToGithub && <label className="flex min-h-11 items-center gap-3 text-[14px]"><input type="checkbox" required checked={draft.githubDisclosureConsent} onChange={(event) => change({ githubDisclosureConsent: event.target.checked })} />닉네임·원문 링크·내용이 앱 봇의 GitHub 공개 이슈에 게시되는 데 별도로 동의합니다.</label>}
           </> : <p className="text-[13px] leading-5 text-fg-2">이 제품의 GitHub 전송은 아직 사용할 수 없습니다. 피드백은 서비스에서 접수합니다.</p>}
           <div className="flex flex-wrap items-center gap-2">
-            <p className="mr-auto text-[11px] text-fg-2">이메일과 인증 정보는 적지 마세요.</p>
+            <p className="mr-auto text-[13px] text-fg-2">이메일과 인증 정보는 적지 마세요.</p>
             <button type="button" onClick={cancel} className="min-h-11 px-3 text-[13px] text-fg-2">취소</button>
             <button type="submit" disabled={!draft.body.trim() || !draft.title.trim() || !draft.serviceDisclosureConsent || (draft.sendToGithub && !draft.githubDisclosureConsent)} className="min-h-11 rounded-lg bg-accent-solid px-4 text-[13px] font-medium text-white disabled:opacity-50">{pending ? "접수 중…" : "등록"}</button>
           </div>
