@@ -58,7 +58,6 @@ export function GithubStarButton({ slug, stars = null }: { slug: string; stars?:
     const controller = new AbortController();
     const generationState = requestGeneration;
     const generation = ++generationState.current;
-    setBusy(true);
     void loadControl(endpoint, controller.signal).then((result) => {
       if (!controller.signal.aborted && generation === requestGeneration.current) applyControl(result);
     }).catch(() => {
