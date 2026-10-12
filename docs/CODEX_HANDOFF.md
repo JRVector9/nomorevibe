@@ -1,35 +1,39 @@
-# 2026-10-13 — 급상승 초기 관측 기간의 빈 화면 수정
+# 2026-10-13 — 급상승 준비 기간 프로젝트 노출·운영 배포 완료
 
 ## Current objective / completed work
 
-사용자가 전일 대비 스타 급상승에 프로젝트가 나오지 않는다고 확인·수정을 요청했다. 실제 공개 홈과/rising의 HTML 및 운영 DB를 읽어 원인을 확인했다. 2026-10-13 03:59 KST 현재 닫힌 회차는 10월12일16시·10월13일00시 두 개뿐이며 각3627/3667건 전부 성공했다. product-star-observation은 매분 정상 완료, 오류/정지 없이 동작한다. 24시간 전 같은 회차가 없어 기존 reader가 items=[]를 반환한 것이 원인이다. 첫 실제 전일 비교는 정상 수집이 이어지면 10월13일16시 회차부터 가능하다.
+사용자가 전일 대비 스타 급상승에 프로젝트가 나오지 않는다고 수정 요청했다. 운영 공개 GET/read-only SQL에서 정상 관측3627/3667건과 전날 회차 없음이 원인임을 확인했다. 최신 닫힌 회차의 실측 프로젝트를 ‘스타 관측 중인 프로젝트’로 노출하는 최소 웹 수정을 완료했다. PR398 head921b8606a1a3a054547b74d88bcf06aa4ffe3698·최신 base5a66d07 CI38295058222 completed/success를 확인해 normal matching-head merge했다. root main은 code b48b3d3972f7f6e5149f632e1de75e544427f86f다. main CI38295610184 전체 success·immutable private web image 발행 후 mini→M3 웹을 배포했고 실제 공개 홈5개/rising15개/page2 15개 노출 확인을 마쳤다.
 
 ## Modified files / key design decisions
 
-별도 worktree /private/tmp/nomorevibe-star-growth-20261013, branch fix/star-growth-warmup-20261013에서 최소 웹 수정 중이다. lib/domain/products/star-growth.ts에 전날 회차가 없는 초기 상태만 최신 닫힌 회차의 실측 프로젝트 조회를 추가했다. 기존 공개/생존/저장소 연결/관측 성공·창·10시간 이내/스타50~1999 조건을 공통으로 사용한다. 새 후보 목록은 이번 회차 스타 내림차순·고정 slug 순, 홈5개·전체15개가 같은 조회/페이지/회차를 사용한다. starsPrevious는 null이며 증가량과 starGrowth는 생성하지 않는다.
+lib/domain/products/star-growth.ts, app/page.tsx, app/rising/page.tsx, components/home/StarGrowthSummary.tsx, components/home/MethodologyDialog.tsx를 수정했다. 전날 회차가 없고 최신 정상 마감/성공 관측이 있을 때만 observing 후보 목록을 보여준다. 기존 공개·생존·저장소 연결·관측 창/10시간 이내·스타50~1999 조건을 공통 사용하며 이번 회차 스타 내림차순·고정 slug 순으로 정렬한다. 증가량과 과거값을 생성하지 않는다. 전날 정상 자료 확보 후 기존 전일+10/23~25시간·동일 저장소/연결 버전 기준과 제목으로 자동 전환한다. 수집이 이어지면 첫 전일 비교는 2026-10-13 16시 KST 회차부터 가능하다.
 
-app/page.tsx, app/rising/page.tsx, components/home/StarGrowthSummary.tsx, components/home/MethodologyDialog.tsx는 observing 상태에서 ‘스타 관측 중인 프로젝트’ 제목과 이번 회차 스타 순·전일 비교 준비 중임을 표시한다. 전날 닫힌 회차가 생기면 기존 전일+10/23~25시간 조건과 ‘전일 대비 스타 급상승’ 제목으로 자동 전환한다. 실패·차단·마감 미완료 상태는 예비 목록으로 바꾸지 않는다. 정책 완화/과거값 생성/DB migration/수집 추가/워커 변경/키·flags 변경이 없다. 사용자 미추적 자료와 중단한 소개 검수는 보존한다.
+실제 web release b48b3d3972f7f6e5149f632e1de75e544427f86f, image ghcr.io/jrvector9/nomorevibe-runtime-web@sha256:f605fc68cabef4731ce1e5d6aa8bf75125986132217aa45b94697e2798f99f63. mini2/2·M3 4/4 동일 image/release/env/health를 확인했다. worker33349ed/ce17a8f를 유지했다. 키/flags·도메인·worker/schedule/schema/migration·중단한 intro 검수를 변경하지 않았다. 원격 최신 main check를 우회하거나 force push하지 않았다. 사용자 미추적 자료는 stage/삭제하지 않았다. 상세 실행 증거는 docs/operations/2026-10-13-star-growth-warmup.md다.
 
 ## Test commands and actual results / failed approaches
 
-curl -fsSL 공개 홈/rising GET exit0: 양쪽 프로젝트0개, 기준13일00시 성공3667/3667와 전날 비교 자료 없음 확인. 운영 Docker crawler에서 read-only SQL로 두 닫힌 회차·jobs의 last_success 및 last_error=null·24시간 비교쌍0·23~25시간 legacy 대체쌍0을 확인했다. 비밀값/원본env/DB URL 출력 없이 기존 Dokploy/SSH helper를 재사용했다. 설치된 Next16.3.8 Server and Client Components 문서와 운영 CI/runbook을 읽었다. 수정 후 git diff --check exit0. 로컬 기능·E2E·실제 인증/쓰기 테스트는 사용자 직접 수행 선호에 따라 하지 않았고 새 테스트도 작성하지 않았다. 앞으로 필수 원격 CI 결과를 실제 실행 기록으로 추가한다.
+운영 initial curl 홈/rising exit0: 카드0·전날 자료 없음. crawler read-only SQL: 정상 닫힌 회차2개, last_error=null, 24시간 비교쌍0, 23~25시간 legacy 비교쌍0. 설치된 Next16.3.8 Server and Client Components 및 README/운영 runbook을 읽고 소스를 리뷰했다. git diff --check exit0. PR CI38295058222 및 main CI38295610184의 타입/lint/unit/build·DB integration3·check 실제 성공, main worker/web publish 실제 성공을 확인했다.
 
-초기 tests/*growth* glob은 일치 파일 없음으로 검색에 실패했고 rg --files로 바로잡았다. 기존 관측 실행은 실패하지 않았고 전날 자료가 아직 없는 정상 준비 상태다.
+/private/tmp/nomorevibe-star-growth-release-20261013-88ou02hb/release.py capture83246·plan84086·deploy15327·verify82580, public_get.py10299, health_verify.py before38633/after79788 모두 실제 exit0. capture는 mainCI와 exact image digest를 대조했고 plan은 두 서버 private pull/arm64/OCI revision/build-runtime key 일치를 확인했다. deploy는 새0600 O_EXCL snapshot 후 한 번만 수행했다. verify는 Docker8앱12컨테이너 healthy·release/digest/전체env/배포정책 보존·두 공개web+DB health ok·네 flags true/설정 일치를 확인했다. public GET은 홈5/rising15/page2 15, 첫5개 동일·스타 내림차순·증가량 없음·페이지 중복 없음과 새 asset dpl을 확인했다. workerFailover/workerProgress ok, introPaused2100/unleased를 배포 전후 확인했다. mini deployment c2-oYFFC2vutdNrPx9Yqr/M3 pC8vsYZDJdYioMbqP-0Ow.
+
+초기 추정 tests glob 불일치만 있었고 rg --files로 정정했다. 새 CI/배포 실패 없음. 기존 Cloudflare purge auth 실패는 재시도하지 않고 canonical GET의 새 content/release로 배포를 확인했다. 스킬·서브에이전트·Codex CLI·새 테스트는 사용하지 않았다. 로컬 기능/E2E·실제 인증·GitHub 스타/댓글/이슈 쓰기는 사용자 선호에 따라 수행하지 않았다. 직접 페이지 확인과 필수 원격 CI 결과를 구분한다.
 
 ## Remaining work / exact commands
 
-소스 최종 리뷰→명시적 파일 commit/push→PR 필수 최신-base check→normal merge→main image CI→현재 web0db24f0에서 두 웹만 새 immutable image로 배포→실제 홈5개/rising15개 노출·동일순서·증가량 없음 확인→최종 기록. 워커33349ed와 intro pause 및 네 flags ON을 보존한다. 사용자 기능 테스트 성공을 주장하지 않는다.
+현재 요청의 코드·병합·운영 노출 확인은 완료했다. 이 최종 문서 변경을 docs/star-growth-production-20261013 /private/tmp/nomorevibe-star-growth-docs-20261013에서 명시적 파일 commit/push→docs-only PR 필수 check→normal merge→root FF로 전달한다. 문서만으로 이미지를 다시 만들거나 배포하지 않는다. /private/tmp 운영자 preflight/before snapshot은 비밀 포함 가능하므로 출력/커밋하지 않으며 deploy를 재실행하지 않는다. 사용자 실제 UI 기능 테스트와 13일16시 이후 실제 전일 비교/조건충족 수 확인은 아직 수행하지 않았다.
 
 ```sh
-cd /private/tmp/nomorevibe-star-growth-20261013
-git diff --check
-git diff -- lib/domain/products/star-growth.ts app/page.tsx app/rising/page.tsx components/home/StarGrowthSummary.tsx components/home/MethodologyDialog.tsx
+cd /Users/jr/Desktop/projects/nomorevibe
 git status --short --branch
+gh pr view 398 --json state,mergeCommit,url
+gh run view 38295610184 --json status,conclusion
+python3 /private/tmp/nomorevibe-star-growth-release-20261013-88ou02hb/release.py verify
+curl -fsSL https://nomorevibe.com/rising
 ```
 
 ---
 
-# 2026-10-13 — 댓글 PR01~04 커밋·푸시·병합·운영 배포 완료
+2026-10-13 — 댓글 PR01~04 커밋·푸시·병합·운영 배포 완료
 
 ## Current objective / completed work
 
