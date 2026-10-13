@@ -2,7 +2,7 @@
 
 ## Current objective
 
-사용자가 독립 병렬 리뷰에서 확인한 세 결함을 보완하라고 지시했다. root가 최소 수정했고 gpt-6.1-sol/xhigh 담당 에이전트2개가 재검토했다. 리뷰 대상 HEAD ba9c3fd53889fc5344ee7a94c15f8b249496b069 위 후속 수정이며 base6b3fdfe3ccb9a150a0c82d32fe8d14884ea89427, PR406이다. 새 탭은 이미 운영에 반영됐고 다국어는 운영 배포 전이다.
+사용자가 독립 병렬 리뷰에서 확인한 세 결함을 보완하라고 지시했다. root가 최소 수정했고 gpt-6.1-sol/xhigh 담당 에이전트2개가 재검토했다. 리뷰 대상 HEAD ba9c3fd53889fc5344ee7a94c15f8b249496b069 위 수정 aa24e8faabed01be19ca475eee1ef9d660973e07은 커밋/푸시했다. PR406이며 최신 base는 아래 main 동기화 기록을 따른다. 새 탭은 이미 운영에 반영됐고 다국어는 운영 배포 전이다.
 
 ## Completed work / modified files
 
@@ -11,6 +11,8 @@
 - R3 완료: lib/i18n/routing.ts의 switchLocale은 로그인의 단일 검증 returnTo에도 선택 locale을 적용한다. duplicate/unsafe는 선택 언어 홈 fallback, 나머지 query/hash 유지. API/페이지/인증 스키마를 늘리지 않았다.
 - 담당 리뷰 에이전트2개 종료, 수정 후 신규 확정 finding 없다. 추가 수정 파일은 이 handoff와 docs/operations/2026-10-13-public-i18n-parallel-code-review.md, 2026-10-13-public-i18n-final-review.md다. 운영·DB·실제 인증/LLM 변경과 호출은 없다. 최초 리뷰의 문서 변경도 이 후속 커밋에 포함한다.
 - 기존 baseline explicit category/product 빈404 SSR은 별도 알려진 한계다. UI/SEO 추가 확정 finding은 없다.
+- 수정 push 시 GitHub는 PR mergeable=false/dirty로 표시하고 CI가 없었다. fetch로 main에 병합된 별도 PR405(b8ae1a4727f46f3c4a8c5bfd61656726d081d60e)를 확인했다. 로컬 merge-tree는 충돌 없이 성공했고 정상 merge f03b650으로 최신 main을 반영했다. 13개 파일의 예상 merge-tree와 실제 tree4ff9470ada71edc2648b9bf3cf33bcab0285c262가 일치한다. 관리자 변경은 (operator) 경로로 합쳐지고 세 보완 코드는 유지됐다. main PR405 자체의 기존 검사 변화는 이번 보완에서 새 테스트를 작성한 것이 아니다. 이 문서와 함께 push 후 최신 base/head 필수CI를 확인해야 한다.
+- 최신 main merge 뒤 typegen/check:i18n4/8/11/diff exit0, tsc25219 exit0, 자동 병합된 catalog·관리자4파일 scoped ESLint15933 exit0 확인. 이전 수정 head의 검사를 대신 재사용하지 않았다.
 
 ## Key design decisions / actual checks / failed approaches
 

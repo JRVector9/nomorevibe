@@ -17,6 +17,8 @@ root의 실제 worker+fixture 재현에서5틱의 모델 함수 호출4회/기�
 
 수정 후 next typegen, tsc69931, 세 수정 파일 ESLint53335, check:i18n(4언어/8namespace/11page), diff 검사는 실제 exit0이다. 새 suite·E2E를 추가하거나 실행하지 않았다. 담당 에이전트 두 개는 수정 후 신규 확정 결함을 찾지 못했다. 최신 필수 CI의 상태는 [PR406 checks](https://github.com/JRVector9/nomorevibe/pull/406/checks)에서 해당 최신 head와 대조한다. 아래는 최초 결함의 재현·근거 기록이며 수정 후 동작과 구분한다.
 
+보완 커밋은 aa24e8f다. 이후 main에 병합된 별도 저장소 검수 PR405(b8ae1a4)를 정상 merge f03b650으로 동기화했다. 예상 merge-tree와 실제 tree가 일치하고 관리자 변경은 이동된 (operator) 경로로 합쳐졌다. 병합 뒤 typegen/tsc25219/check:i18n/scoped ESLint15933/diff도 실제 exit0이다. 기존6b3fdfe의 검토 근거와 최신base의 CI를 구분한다. 운영 배포는 실행하지 않았다.
+
 ## 확인한 결함
 
 ### R1 — P2: 시간 예산 종료 시 번역 실패 횟수와 재시도 대기를 기록하지 않는다
