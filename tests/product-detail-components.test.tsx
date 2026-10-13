@@ -19,6 +19,7 @@ import { UnclaimedOwnerContact } from "@/components/product-detail/UnclaimedOwne
 import { LAST_CODE_UPDATE_LABEL, LATEST_VERSION_LABEL, SITE_REPO_RELATION_LABEL, UNCLAIMED_HINT } from "@/lib/copy/terms";
 import { AI_LEVEL_LABELS } from "@/lib/domain/evidence/ai-level-labels";
 import type { ProductDetailView } from "@/lib/domain/products/detail-view";
+import { detail as detailKorean } from "@/messages/ko/detail";
 import { TAKEDOWN_PROMISE } from "@/lib/domain/products/takedown-view";
 import type { ProductListItem } from "@/lib/domain/products/view";
 
@@ -165,12 +166,14 @@ function renderFacts(overrides: Partial<ComponentProps<typeof FactsStrip>> = {})
   return renderToStaticMarkup(<FactsStrip product={product} repository={observedRepository} license={observedLicense} health={unchecked} visits={collectingVisits} {...overrides} />);
 }
 
-function renderIntro(overrides: Partial<ComponentProps<typeof IntroSection>> = {}) {
-  return renderToStaticMarkup(<IntroSection product={product} profile={null} readmeExcerpt={null} unclaimed={false} {...overrides} />);
+async function renderIntro(overrides: Partial<ComponentProps<typeof IntroSection>> = {}) {
+  const section = await IntroSection({ product, profile: null, readmeExcerpt: null, unclaimed: false, ...overrides });
+  return renderToStaticMarkup(section);
 }
 
-function renderTools(overrides: Partial<ComponentProps<typeof BuildTools>> = {}) {
-  return renderToStaticMarkup(<BuildTools product={product} unclaimed={false} agents={[]} observedAgentFacts={[]} skills={[]} aiLevel={{ checked: true, level: null }} {...overrides} />);
+async function renderTools(overrides: Partial<ComponentProps<typeof BuildTools>> = {}) {
+  const section = await BuildTools({ product, unclaimed: false, agents: [], observedAgentFacts: [], skills: [], aiLevel: { checked: true, level: null }, ...overrides });
+  return renderToStaticMarkup(section);
 }
 
 /** 태그를 걷어낸 글자만 — 알약 안의 숫자처럼 span 으로 나뉜 문구를 한 줄로 확인한다 */
@@ -448,30 +451,30 @@ describe("evidence product detail components", () => {
     }
   });
 
-  it("drops the description line when it repeats the tagline word for word", () => {
-    const html = renderIntro({ product: { ...product, description: `  ${product.tagline}  ` } });
+  it("drops the description line when it repeats the tagline word for word", async () => {
+    const html = await renderIntro({ product: { ...product, description: `  ${product.tagline}  ` } });
     // 소개는 히어로의 한 줄 한 번만 — 소개 구획에는 아예 없고 README 로 가라는 한 줄이 선다
     expect(html).not.toContain(product.tagline);
     expect(html).toContain("메이커가 쓴 소개는 위의 한 줄이 전부입니다");
     expect(html).toContain(`href="${product.repoUrl}"`);
   });
 
-  it("keeps the description when it says something the tagline does not", () => {
-    const html = renderIntro();
+  it("keeps the description when it says something the tagline does not", async () => {
+    const html = await renderIntro();
     expect(html).toContain(product.description);
     expect(html).not.toContain("위의 한 줄이 전부입니다");
   });
 
-  it("adds a readme excerpt when the intro is a single line", () => {
-    const html = renderIntro({ product: { ...product, description: product.tagline }, readmeExcerpt: "The README says more.\n\nSecond paragraph." });
+  it("adds a readme excerpt when the intro is a single line", async () => {
+    const html = await renderIntro({ product: { ...product, description: product.tagline }, readmeExcerpt: "The README says more.\n\nSecond paragraph." });
     expect(html).toContain("README에서");
     expect(html).toContain("Second paragraph");
     expect(html).toContain("README 전문 보기");
     expect(html).not.toContain("위의 한 줄이 전부입니다");
   });
 
-  it("shows structured introduction and safe markdown without raw scripts", () => {
-    const html = renderIntro({ profile });
+  it("shows structured introduction and safe markdown without raw scripts", async () => {
+    const html = await renderIntro({ profile });
     expect(html).toContain(">소개<");
     expect(html).toContain("해결하는 문제");
     expect(html).toContain("주요 기능");
@@ -481,7 +484,7 @@ describe("evidence product detail components", () => {
     expect(html).not.toContain("alert(1)");
     expect(html).not.toContain("tracker.example");
 
-    const unclaimed = renderIntro({ profile, unclaimed: true });
+    const unclaimed = await renderIntro({ profile, unclaimed: true });
     expect(unclaimed).toContain("저장소 README에서 가져옴");
     expect(unclaimed).not.toContain("메이커 제공·미검증");
   });
@@ -593,8 +596,8 @@ describe("evidence product detail components", () => {
     expect(html).not.toContain("/launch#verify");
   });
 
-  it("renders one chip per observed tool with its citation while preserving maker reporting", () => {
-    const html = renderTools({
+  it("renders one chip per observed tool with its citation while preserving maker reporting", async () => {
+    const html = await renderTools({
       observedAgentFacts: [observedFact, { ...observedFact, label: "커밋 기여 표기 확인", commitSha: "b".repeat(40) }],
       agents: [{
         id: 1, slug: product.slug, provider: "OpenAI", client: "Codex", model: "GPT-5", roles: ["planning", "implementation", "review"],
@@ -619,35 +622,35 @@ describe("evidence product detail components", () => {
     expect(html).toContain("외 1");
     expect(html).toContain("일부 미확인 · 제품과 저장소 관계 미확인");
     // 흔적은 사용 주장일 뿐 — 미클레임이면 메이커 신고값을 쓰지 않는다
-    expect(renderTools({ unclaimed: true, observedAgentFacts: [observedFact] })).not.toContain("메이커 신고");
+    expect(await renderTools({ unclaimed: true, observedAgentFacts: [observedFact] })).not.toContain("메이커 신고");
   });
 
-  it("names a known model after the tool and leaves an unknown one out", () => {
-    expect(textOf(renderTools({ observedAgentFacts: [{ ...observedFact, modelLabel: "claude-sonnet-4" }] }))).toContain("Claude Code · claude-sonnet-4");
+  it("names a known model after the tool and leaves an unknown one out", async () => {
+    expect(textOf(await renderTools({ observedAgentFacts: [{ ...observedFact, modelLabel: "claude-sonnet-4" }] }))).toContain("Claude Code · claude-sonnet-4");
     for (const modelLabel of ["미확인", "미확인 (자동 선택)"]) {
-      const html = textOf(renderTools({ observedAgentFacts: [{ ...observedFact, modelLabel }] }));
+      const html = textOf(await renderTools({ observedAgentFacts: [{ ...observedFact, modelLabel }] }));
       expect(html, modelLabel).toContain("Claude Code");
       expect(html, modelLabel).not.toContain("Claude Code ·");
     }
     // 같은 도구의 흔적 중 모델을 아는 것이 하나라도 있으면 그 이름
-    const mixed = textOf(renderTools({ observedAgentFacts: [{ ...observedFact, modelLabel: "미확인" }, { ...observedFact, modelLabel: "glm-4.7" }] }));
+    const mixed = textOf(await renderTools({ observedAgentFacts: [{ ...observedFact, modelLabel: "미확인" }, { ...observedFact, modelLabel: "glm-4.7" }] }));
     expect(mixed).toContain("Claude Code · glm-4.7");
   });
 
-  it("says the AI-trace scan is pending, or that no trace was found, instead of omitting the section", () => {
+  it("says the AI-trace scan is pending, or that no trace was found, instead of omitting the section", async () => {
     const empty = { product: { ...product, builder: null }, agents: [], observedAgentFacts: [], skills: [] };
     const unchecked = { checked: false, level: null };
     // 정보 카드의 '정보 갱신'과 다른 일 — '확인'이라 부르지 않는다(UX-16)
-    const pending = renderTools({ ...empty, aiLevel: unchecked });
+    const pending = await renderTools({ ...empty, aiLevel: unchecked });
     expect(pending).toContain("AI 흔적 검사 대기 중");
     expect(pending).not.toContain("확인하지 않았습니다");
     // 검사했지만 근거가 없다 — AI 없이 만들었다는 말로 읽히지 않게
-    expect(renderTools({ ...empty, aiLevel: { checked: true, level: null } }))
+    expect(await renderTools({ ...empty, aiLevel: { checked: true, level: null } }))
       .toContain("검사에서 AI 코딩 도구 흔적을 찾지 못했습니다 — AI 없이 만들었다는 뜻은 아닙니다.");
     // GitHub 저장소가 없으면 기다릴 검사가 없다 — 남아 있는 단계(AI 표시)도 보이지 않는다
     for (const changed of [{ repoUrl: "https://gitlab.com/acme/app" }, { repoUrl: null }]) {
       for (const aiLevel of [unchecked, { checked: true, level: 2 as const }]) {
-        const html = renderTools({ ...empty, product: { ...empty.product, ...changed }, aiLevel });
+        const html = await renderTools({ ...empty, product: { ...empty.product, ...changed }, aiLevel });
         expect(html, JSON.stringify(changed)).toContain("AI 흔적 검사를 할 수 없습니다");
         expect(html, JSON.stringify(changed)).not.toContain("대기 중");
         expect(html, JSON.stringify(changed)).not.toContain("AI 코딩 도구로 만든 근거가 있습니다");
@@ -655,13 +658,13 @@ describe("evidence product detail components", () => {
     }
     // 저장소가 사라졌으면 다시 검사할 수 없지만, 그 전에 찾은 근거로 AI 표시는 남는다(홈 필터도 그 단계로 거른다)
     const gone = { ...empty, product: { ...empty.product, repoGone: true } };
-    expect(renderTools({ ...gone, aiLevel: unchecked })).toContain("AI 흔적 검사를 할 수 없습니다");
-    expect(renderTools({ ...gone, aiLevel: { checked: true, level: 2 } })).toContain("저장소에 AI 코딩 도구로 만든 근거가 있습니다.");
+    expect(await renderTools({ ...gone, aiLevel: unchecked })).toContain("AI 흔적 검사를 할 수 없습니다");
+    expect(await renderTools({ ...gone, aiLevel: { checked: true, level: 2 } })).toContain("저장소에 AI 코딩 도구로 만든 근거가 있습니다.");
   });
 
   // 단계는 나눠 보이지 않고 'AI' 하나로 적는다(2026-10-11 운영자 결정)
-  it.each([1, 2, 3] as const)("shows AI level %i as one 'AI' line without the level, links or tool names", (level) => {
-    const html = renderTools({ product: { ...product, builder: null }, aiLevel: { checked: true, level } });
+  it.each([1, 2, 3] as const)("shows AI level %i as one 'AI' line without the level, links or tool names", async (level) => {
+    const html = await renderTools({ product: { ...product, builder: null }, aiLevel: { checked: true, level } });
     const text = textOf(html);
     expect(text).toContain("AI저장소에 AI 코딩 도구로 만든 근거가 있습니다.");
     expect(text).not.toContain("단계");
@@ -671,12 +674,12 @@ describe("evidence product detail components", () => {
     expect(text).not.toContain("대기 중");
   });
 
-  it("keeps the maker-reported builder next to the AI line", () => {
-    const text = textOf(renderTools({ aiLevel: { checked: true, level: 1 } }));
+  it("keeps the maker-reported builder next to the AI line", async () => {
+    const text = textOf(await renderTools({ aiLevel: { checked: true, level: 1 } }));
     expect(text).toContain("메이커 신고");
     expect(text).toContain("저장소에 AI 코딩 도구로 만든 근거가 있습니다.");
     // 신고값만 있고 검사 전이면 지금처럼 신고값만
-    const pending = textOf(renderTools({ aiLevel: { checked: false, level: null } }));
+    const pending = textOf(await renderTools({ aiLevel: { checked: false, level: null } }));
     expect(pending).toContain("메이커 신고");
     expect(pending).not.toContain("대기 중");
   });
@@ -786,8 +789,8 @@ describe("evidence product detail components", () => {
     expect(html).not.toContain("v2.8.0");
   });
 
-  it("keeps source badges explicit and every touched visible font at least 13px", () => {
-    expect(renderToStaticMarkup(<SourceBadge label="메이커 제공·미검증" />)).toContain("메이커 제공·미검증");
+  it("keeps source badges explicit and every touched visible font at least 13px", async () => {
+    expect(renderToStaticMarkup(await SourceBadge({ label: "메이커 제공·미검증" }))).toContain("메이커 제공·미검증");
     const files = [
       "ProductHero.tsx",
       "FactsStrip.tsx",
@@ -813,7 +816,8 @@ describe("evidence product detail components", () => {
     expect(source).toContain("getProductDetail(slug)");
     expect(source).not.toContain("findBySlug");
     expect(source).toContain("productFeedbackEnabled() &&");
-    expect(source).toContain('aria-label="프로젝트 댓글"');
+    expect(source).toContain('aria-label={t("page.feedback")}');
+    expect(detailKorean["page.feedback"]).toBe("프로젝트 댓글");
     expect(source).toContain("risingRank={detail.risingRank}");
     expect(source).not.toContain("<ProductGallery");
     expect(source).not.toContain("<EvidenceCard");
@@ -822,9 +826,10 @@ describe("evidence product detail components", () => {
     // 홈과 같은 폭 — 상세만의 1220px 틀은 버렸다
     expect(source).toContain('<main className="wrap pb-14">');
     expect(source).not.toContain("max-w-[1220px]");
-    // 분야 총수는 꾸밈 — 세다가 실패해도 페이지는 선다
-    // 30초 읽기 캐시(publicRead)로 감싸도 실패는 null 로 삼킨다
-    expect(source).toMatch(/countProducts\(\{[^}]*excludeDown: true[^}]*\}\)\)?\.catch\(\(\) => null\)/);
+    // 분야 급상승 총수는 상세 모델이 같은 완료된 8시간 회차로 읽은 값이다 — 실패하면 숫자 없이 표시한다.
+    expect(source).toContain("const risingTotal = detail.relatedTotal ?? null;");
+    expect(source).toMatch(/<RelatedRow[^>]*total=\{risingTotal\}/);
+    expect(source).not.toMatch(/countProducts|risingLoad/);
     // 없는 제품은 진짜 404 — 기본 정보로 notFound() 를 먼저 부르고, 본문만 Suspense 안에서 머리 골격을 보이며 채운다.
     // 구간 loading.tsx 는 응답을 먼저 흘려 상태를 200 으로 굳히므로 두지 않는다(UX-38)
     expect(existsSync("app/(public)/[locale]/(content)/p/[slug]/loading.tsx")).toBe(false);
@@ -861,9 +866,9 @@ describe("evidence product detail components", () => {
     // total 은 그 분야에서 지금 뜨는 수다 — 분야 전체가 아니다
     const html = renderToStaticMarkup(<RelatedRow category="Productivity" items={[item("alpha"), item("beta")]} total={37} />);
     expect(html).toContain("생산성 분야에서 지금 뜨는");
-    expect(html).toContain("하루 평균");
-    expect(html).toContain("스타 2천 미만");
-    // 홈의 기본 정렬('추천')이 같은 급상승 순서다 — 최신순(sort=recent)으로 보내지 않는다
+    expect(html).toContain("최근 완료된 8시간 회차 사이 GitHub 스타 증가량 순");
+    expect(html).not.toMatch(/하루 평균|스타 2천 미만/);
+    // 홈의 기본 급상승 정렬이 같은 완료된 8시간 회차 순서다 — 최신순(sort=recent)으로 보내지 않는다
     // 분야는 정식 주소(/c/<소문자>)로 보낸다 — 옛 /?category= 는 307 로 넘어간다(UX-40)
     expect(html).toContain('href="/c/productivity"');
     expect(html).not.toContain("sort=recent");
