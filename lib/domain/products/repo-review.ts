@@ -12,12 +12,26 @@ import type { RepoReviewDecision } from "@/lib/db/schema";
 
 /** github.com 저장소 페이지를 지금 열어 본 결과. unknown 은 막힘·오류라 이번에는 정하지 않는다 */
 export type RepoCheck = { state: "alive" } | { state: "gone" } | { state: "moved"; to: string } | { state: "unknown" };
-/** 새로 연 제품 페이지. status 0 은 연결 자체가 안 됐다. githubLinks 는 extractGithubLinks 의 owner/repo(소문자) */
-export type RepoReviewPage = { status: number; finalUrl: string | null; title: string; text: string; githubLinks: string[] };
-export type RepoReviewReason = "repo_alive" | "repo_moved" | "repo_link_alive" | "repo_gone";
+/**
+ * 새로 연 제품 페이지. status 0 은 연결 자체가 안 됐다. githubLinks 는 extractGithubLinks 의 owner/repo(소문자).
+ * complete 는 본문을 끝까지 읽었는지 — 못 읽었으면 링크가 비어 있어도 "링크 없음"이 아니다
+ */
+export type RepoReviewPage = { status: number; finalUrl: string | null; title: string; text: string; githubLinks: string[]; complete: boolean };
+export type RepoReviewReason = "repo_alive" | "repo_moved" | "repo_link_alive" | "repo_links_unchecked" | "repo_gone";
 
-/** 같은 프로젝트로 보고 열어 볼 페이지 링크 수 — 한 건에 github.com 을 이보다 많이 열지 않는다 */
+/** 같은 프로젝트로 보고 열어 볼 페이지 링크 수 — 한 건에 github.com 을 이보다 많이 열지 않는다. 남은 것이 있으면 내리지 않는다 */
 export const MAX_RELATED_LINKS = 3;
+/** 사이트가 이만큼 이어서 죽어 있으면 페이지를 못 열어도 내린다(생존 확인 product_health.down_since 기준) */
+export const SITE_DOWN_DAYS = 3;
+
+/**
+ * 페이지의 링크를 믿을 수 있나 — 2xx·3xx 를 끝까지 읽었거나 사이트가 없다고 답했다(404·410).
+ * 연결 실패·막힘(401·403·429)·서버 오류는 옮겨 간 저장소 링크를 가렸을 수 있다 — 사이트가 사흘 넘게 죽어 있지 않으면 내리지 않는다
+ */
+export function pageConclusive(page: RepoReviewPage, downSince: Date | null, now = new Date()): boolean {
+  if (page.complete && (page.status >= 200 && page.status < 400 || page.status === 404 || page.status === 410)) return true;
+  return downSince !== null && now.getTime() - downSince.getTime() >= SITE_DOWN_DAYS * 86_400_000;
+}
 
 /** github.com/owner/repo 꼴에서 owner/repo(소문자). 아니면 null */
 export function repositoryKey(url: string | null | undefined): string | null {
@@ -51,14 +65,15 @@ export function relatedRepositoryLinks(input: { repo: string; name: string; url:
   const links = page.githubLinks.filter((key) => key.includes("/") && key !== input.repo)
     .filter((key) => key.split("/").some((part) => marks.has(normalize(part))));
   const renamed = input.renamedTo?.toLowerCase();
-  return [...new Set([...(renamed && renamed !== input.repo ? [renamed] : []), ...links])].slice(0, MAX_RELATED_LINKS);
+  return [...new Set([...(renamed && renamed !== input.repo ? [renamed] : []), ...links])];
 }
 
 /**
  * 옛 저장소가 없을 때 — 같은 프로젝트로 보이는 저장소가 하나라도 살아 있으면 사람, 하나라도 못 열었으면 다음에 다시,
- * 아무것도 없으면 내린다. 내리는 판정은 delist_candidate 로 적고 잡이 그 자리에서 차단한다(repo-reviews.ts delistGoneRepository).
+ * 열어 보지 못한 링크가 남았으면(MAX_RELATED_LINKS 초과) 사람, 아무것도 없으면 내린다.
+ * 내리는 판정은 delist_candidate 로 적고 잡이 그 자리에서 차단한다(repo-reviews.ts delistGoneRepository).
  */
-export function decideGoneRepository(related: { key: string; check: RepoCheck }[]):
+export function decideGoneRepository(related: { key: string; check: RepoCheck }[], unchecked: string[] = []):
   { decision: RepoReviewDecision; reason: RepoReviewReason; note: string | null } | null {
   const live = related.filter(({ check }) => check.state === "alive" || check.state === "moved");
   if (live.length) {
@@ -66,5 +81,6 @@ export function decideGoneRepository(related: { key: string; check: RepoCheck }[
       note: live.map(({ key, check }) => `github.com/${check.state === "moved" ? check.to : key}`).join(" · ") };
   }
   if (related.some(({ check }) => check.state === "unknown")) return null;
+  if (unchecked.length) return { decision: "human", reason: "repo_links_unchecked", note: unchecked.map((key) => `github.com/${key}`).join(" · ") };
   return { decision: "delist_candidate", reason: "repo_gone", note: null };
 }

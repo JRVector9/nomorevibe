@@ -1,8 +1,9 @@
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, eq, inArray, sql, type SQL } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { productEvidenceAudit, productRepoReviews, products, type ProductRepoReview, type RepoReviewAnswers,
+import { productEvidenceAudit, productHealth, productRepoReviews, products, type ProductRepoReview, type RepoReviewAnswers,
   type RepoReviewDecision } from "@/lib/db/schema";
 import { withJobLeaseWrite, type JobLease } from "@/lib/jobs/control";
+import { lockProductGeneration } from "./generation";
 import { repoGone, setStatusWithAudit } from "./repository";
 
 /**
@@ -38,6 +39,8 @@ export type RepoReviewTarget = {
   id: number; slug: string; name: string; url: string; repoUrl: string | null; renamedTo: string | null;
   /** 운영자가 전에 고른 것 — '유지'였으면 잡이 스스로 내리지 않는다 */
   operatorDecision: string | null;
+  /** 생존 확인이 본 사이트 중단 시작 — 페이지를 못 열었을 때 사흘 넘게 죽은 사이트만 내린다 */
+  downSince: Date | null;
 };
 
 /** 이번에 볼 것 — 아직 안 본 것 먼저, 그다음 다시 볼 때가 지난 것. 운영자가 내린 것은 공개가 아니라 빠진다 */
@@ -45,9 +48,10 @@ export async function dueRepoReviews(limit: number): Promise<RepoReviewTarget[]>
   const due = sql`(${productRepoReviews.productId} is null or ${productRepoReviews.nextReviewAt} <= now())`;
   return db.select({
     id: products.id, slug: products.slug, name: products.name, url: products.url, repoUrl: products.repoUrl,
-    renamedTo: products.repoRenamedTo, operatorDecision: productRepoReviews.operatorDecision,
+    renamedTo: products.repoRenamedTo, operatorDecision: productRepoReviews.operatorDecision, downSince: productHealth.downSince,
   }).from(products)
     .leftJoin(productRepoReviews, eq(productRepoReviews.productId, products.id))
+    .leftJoin(productHealth, eq(productHealth.slug, products.slug))
     .where(and(target, due, sql`${productRepoReviews.operatorDecision} is distinct from 'delist'`))
     .orderBy(sql`(${productRepoReviews.productId} is null) desc`, sql`${productRepoReviews.nextReviewAt} asc nulls first`, products.id)
     .limit(limit);
@@ -86,20 +90,29 @@ export async function repoGoneDelistsLastDay(): Promise<number> {
 
 /**
  * 저장소가 없다고 확인된 제품을 내린다 — 운영자 '내리기'(decideRepoReview)와 같은 차단(admin.product.ban, 차단 해제로 되돌린다).
- * 판정과 운영자 칸(auto:repo-gone)을 같은 트랜잭션에 적는다. 고르고 나서 공개가 아니게 됐거나 저장소가 돌아왔으면 아무것도 하지 않는다.
+ * 판정과 운영자 칸(auto:repo-gone)을 같은 트랜잭션에 적는다.
+ *
+ * 잠금은 운영자 경로와 같은 순서다 — 판정 행 → 제품 수명 잠금(lockProductGeneration: advisory → 제품 행). 그래야 운영자와 교착하지 않고,
+ * 잡이 고른 뒤 운영자가 '유지'를 골랐으면 그 결정을 여기서 본다(그때는 내리지 않고 내릴 후보로만 적는다).
+ * 공개가 아니게 됐거나 저장소가 돌아왔으면 아무것도 하지 않는다.
  */
-export async function delistGoneRepository(record: RepoReviewRecord & { slug: string }, lease?: JobLease): Promise<boolean> {
+export async function delistGoneRepository(record: RepoReviewRecord & { slug: string }, lease?: JobLease):
+  Promise<"delisted" | "operator_keep" | "skipped"> {
   return withJobLeaseWrite(lease, async (tx) => {
-    const [row] = await tx.select({ status: products.status, gone: sql<boolean>`${repoGone}` }).from(products)
-      .where(eq(products.id, record.productId)).for("update");
-    if (!row || !["seeded", "verified"].includes(row.status) || !row.gone) return false;
+    const [current] = await tx.select({ operatorDecision: productRepoReviews.operatorDecision }).from(productRepoReviews)
+      .where(eq(productRepoReviews.productId, record.productId)).for("update");
+    const upsert = (values: ReturnType<typeof reviewValues> & { operatorDecision?: "delist"; operatorBy?: string; operatorAt?: SQL }) => tx.insert(productRepoReviews)
+      .values({ productId: record.productId, ...values })
+      .onConflictDoUpdate({ target: productRepoReviews.productId, set: { ...values, reviewedAt: sql`now()` } });
+    if (current?.operatorDecision === "keep") { await upsert(reviewValues(record)); return "operator_keep"; }
+    if (!(await lockProductGeneration(tx, record.productId, record.slug))) return "skipped";
+    const [row] = await tx.select({ status: products.status, gone: sql<boolean>`${repoGone}` }).from(products).where(eq(products.id, record.productId));
+    if (!row || !["seeded", "verified"].includes(row.status) || !row.gone) return "skipped";
     const banned = await setStatusWithAudit({ id: record.productId, slug: record.slug, status: "banned", action: "admin.product.ban",
       actor: REPO_GONE_AUTO_ACTOR, reason: REPO_GONE_AUTO_REASON }, tx);
-    if (!banned) return false;
-    const values = { ...reviewValues(record), operatorDecision: "delist" as const, operatorBy: REPO_GONE_AUTO_ACTOR, operatorAt: sql`now()` };
-    await tx.insert(productRepoReviews).values({ productId: record.productId, ...values })
-      .onConflictDoUpdate({ target: productRepoReviews.productId, set: { ...values, reviewedAt: sql`now()` } });
-    return true;
+    if (!banned) return "skipped";
+    await upsert({ ...reviewValues(record), operatorDecision: "delist" as const, operatorBy: REPO_GONE_AUTO_ACTOR, operatorAt: sql`now()` });
+    return "delisted";
   });
 }
 

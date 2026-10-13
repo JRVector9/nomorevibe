@@ -2,8 +2,8 @@ import type { JobContext, JobOutcome } from "@/lib/jobs/runner";
 import { fetchPage, readBodyCapped, safeFetch } from "@/lib/net/fetch";
 import { extractPageMeta, extractTextSample, metaRefreshTarget } from "@/lib/net/normalize";
 import { extractGithubLinks } from "@/lib/crawl/github-links";
-import { classifyRepoResponse, decideGoneRepository, relatedRepositoryLinks, repositoryKey, type RepoCheck,
-  type RepoReviewPage } from "@/lib/domain/products/repo-review";
+import { classifyRepoResponse, decideGoneRepository, MAX_RELATED_LINKS, pageConclusive, relatedRepositoryLinks, repositoryKey,
+  type RepoCheck, type RepoReviewPage } from "@/lib/domain/products/repo-review";
 import { delistGoneRepository, dueRepoReviews, MAX_REPO_GONE_DELISTS_PER_DAY, repoGoneDelistsLastDay, saveRepoReview,
   type RepoReviewRecord, type RepoReviewTarget } from "@/lib/domain/products/repo-reviews";
 
@@ -11,7 +11,8 @@ import { delistGoneRepository, dueRepoReviews, MAX_REPO_GONE_DELISTS_PER_DAY, re
  * 저장소가 사라진 공개 제품을 다시 본다 — github.com 을 지금 열어 정말 없으면 내린다(repo-review.ts).
  *
  * text 워커에서 5분마다 8건까지, 셋씩 동시에. 한 건은 github.com 한 번, 저장소가 없으면 제품 페이지 한 번과
- * 같은 프로젝트로 보이는 링크 최대 셋이다. GitHub 로그인은 쓰지 않는다 — 공개 페이지가 열리는지만 본다(비공개도 404).
+ * 같은 프로젝트로 보이는 링크 최대 셋이다. 페이지를 못 열었으면(연결 실패·막힘·서버 오류) 사이트가 사흘 넘게 죽어 있지 않은 한
+ * 내리지 않는다 — 옮겨 간 저장소 링크가 그 페이지에 있었을 수 있다. GitHub 로그인은 쓰지 않는다 — 공개 페이지가 열리는지만 본다(비공개도 404).
  * github.com 이 막히면(429·5xx·연결 실패) 그 제품은 적지 않고 다음 틱에 다시 본다 — 잇따라 둘이 막히면 이번 틱을 접는다.
  * 내리는 것은 하루 MAX_REPO_GONE_DELISTS_PER_DAY 건까지다. 넘으면 내릴 후보로 적어 운영자에게 넘긴다.
  */
@@ -27,7 +28,7 @@ const EXCERPT_CHARS = 500;
 /** 생존 확인(uptime.ts)과 같은 규칙으로 연다 — 같은 SSRF 가드, meta refresh 한 번 따라가기, 256KB 까지 */
 export async function openProductPage(url: string): Promise<RepoReviewPage> {
   const fetched = await safeFetch(url, "background");
-  if (!fetched) return { status: 0, finalUrl: null, title: "", text: "", githubLinks: [] };
+  if (!fetched) return { status: 0, finalUrl: null, title: "", text: "", githubLinks: [], complete: false };
   const status = fetched.response.status;
   try {
     let html = (await readBodyCapped(fetched.response, PAGE_BYTES)).toString("utf-8");
@@ -38,10 +39,10 @@ export async function openProductPage(url: string): Promise<RepoReviewPage> {
       if (next) { html = next.html; finalUrl = next.finalUrl; }
     }
     return { status, finalUrl, title: extractPageMeta(html, finalUrl).title ?? "", text: extractTextSample(html) ?? "",
-      githubLinks: extractGithubLinks(html, finalUrl) };
+      githubLinks: extractGithubLinks(html, finalUrl), complete: true };
   } catch {
-    // 본문을 못 읽어도 응답 코드는 안다 — 링크가 없는 페이지로 본다
-    return { status, finalUrl: fetched.finalUrl, title: "", text: "", githubLinks: [] };
+    // 본문을 못 읽어도 응답 코드는 안다 — 링크를 못 본 것이지 링크가 없는 것은 아니다
+    return { status, finalUrl: fetched.finalUrl, title: "", text: "", githubLinks: [], complete: false };
   }
 }
 
@@ -66,7 +67,7 @@ export async function reviewGoneRepositories(ctx: JobContext<null>, dependencies
   const openPage = dependencies.openPage ?? openProductPage;
   const checkRepo = dependencies.checkRepo ?? checkGithubRepository;
   let delistsLeft = Math.max(0, MAX_REPO_GONE_DELISTS_PER_DAY - await repoGoneDelistsLastDay());
-  const counts = { keep: 0, human: 0, delist_candidate: 0, delisted: 0, capped: 0, unknown: 0 };
+  const counts = { keep: 0, human: 0, delist_candidate: 0, delisted: 0, capped: 0, operatorKeep: 0, unknown: 0 };
   let blocked = false, inARow = 0, next = 0;
   // 쓰기는 한 번에 하나 — text 워커의 DB 풀(3)에 러너 임대 갱신 몫을 남긴다(uptime.ts 와 같은 까닭)
   let writing: Promise<unknown> = Promise.resolve();
@@ -95,14 +96,16 @@ export async function reviewGoneRepositories(ctx: JobContext<null>, dependencies
     if (own.state === "moved") return save(record("human", "repo_moved", null, `github.com/${own.to}`));
 
     const page = await openPage(target.url);
+    if (!pageConclusive(page, target.downSince)) return save(record("human", "page_unavailable", page, null));
+    const keys = relatedRepositoryLinks({ repo, name: target.name, url: target.url, renamedTo: target.renamedTo }, page);
     const related: { key: string; check: RepoCheck }[] = [];
-    for (const key of relatedRepositoryLinks({ repo, name: target.name, url: target.url, renamedTo: target.renamedTo }, page)) {
+    for (const key of keys.slice(0, MAX_RELATED_LINKS)) {
       if (blocked || ctx.signal?.aborted) return;
       const check = await checkRepo(key);
       if (check.state === "unknown") return unknown();
       related.push({ key, check });
     }
-    const decided = decideGoneRepository(related);
+    const decided = decideGoneRepository(related, keys.slice(MAX_RELATED_LINKS));
     if (!decided) return;
     if (decided.decision !== "delist_candidate") return save(record(decided.decision, decided.reason, page, decided.note));
     // 운영자가 전에 '유지'를 골랐거나 하루 한도를 넘었으면 내리지 않고 운영자에게
@@ -111,8 +114,9 @@ export async function reviewGoneRepositories(ctx: JobContext<null>, dependencies
       return save(record("delist_candidate", "repo_gone", page, null));
     }
     delistsLeft--;
-    const delisted = await oneAtATime(() => delistGoneRepository({ ...record("delist_candidate", "repo_gone", page, null), slug: target.slug }, ctx.lease));
-    if (delisted) counts.delisted++;
+    const outcome = await oneAtATime(() => delistGoneRepository({ ...record("delist_candidate", "repo_gone", page, null), slug: target.slug }, ctx.lease));
+    if (outcome === "delisted") counts.delisted++;
+    else if (outcome === "operator_keep") counts.operatorKeep++;
   };
 
   const settled = await Promise.allSettled(Array.from({ length: CONCURRENCY }, async () => {

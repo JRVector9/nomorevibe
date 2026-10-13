@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { classifyRepoResponse, decideGoneRepository, relatedRepositoryLinks, repositoryKey,
+import { classifyRepoResponse, decideGoneRepository, pageConclusive, relatedRepositoryLinks, repositoryKey,
   type RepoReviewPage } from "@/lib/domain/products/repo-review";
 
 const page = (over: Partial<RepoReviewPage> = {}): RepoReviewPage => ({
-  status: 200, finalUrl: "https://honsulmap.vercel.app/", title: "Honsul Map", text: "Honsul Map helps you find bars.", githubLinks: [], ...over,
+  status: 200, finalUrl: "https://honsulmap.vercel.app/", title: "Honsul Map", text: "Honsul Map helps you find bars.", githubLinks: [], complete: true, ...over,
 });
 const listing = { repo: "jinu/honsul-map", name: "Honsul Map", url: "https://honsulmap.vercel.app", renamedTo: null };
 
@@ -47,9 +47,25 @@ describe("같은 프로젝트로 보이는 링크", () => {
       page({ finalUrl: "https://pawdelta.com/brindle", githubLinks: ["pawdelta/brindle"] }))).toEqual(["pawdelta/brindle"]);
   });
 
-  it("하루 확인이 적어 둔 새 이름을 먼저 보고, 셋까지만 연다", () => {
+  it("하루 확인이 적어 둔 새 이름을 맨 앞에 둔다 — 자르지 않는다(몇 개를 열지는 잡이 정한다)", () => {
     const links = ["jinu/a", "jinu/b", "jinu/c", "jinu/d"];
-    expect(relatedRepositoryLinks({ ...listing, renamedTo: "Jinu/Honsul" }, page({ githubLinks: links }))).toEqual(["jinu/honsul", "jinu/a", "jinu/b"]);
+    expect(relatedRepositoryLinks({ ...listing, renamedTo: "Jinu/Honsul" }, page({ githubLinks: links })))
+      .toEqual(["jinu/honsul", "jinu/a", "jinu/b", "jinu/c", "jinu/d"]);
+  });
+});
+
+describe("페이지를 믿을 수 있나", () => {
+  const now = new Date("2026-10-13T00:00:00Z");
+  const daysAgo = (days: number) => new Date(now.getTime() - days * 86_400_000);
+  it("끝까지 읽은 2xx·3xx 와 사이트 없음(404·410)만 믿는다", () => {
+    expect(pageConclusive(page(), null, now)).toBe(true);
+    expect(pageConclusive(page({ status: 404 }), null, now)).toBe(true);
+    expect(pageConclusive(page({ status: 200, complete: false }), null, now)).toBe(false);
+    for (const status of [0, 401, 403, 429, 503]) expect(pageConclusive(page({ status, complete: status !== 0 }), null, now)).toBe(false);
+  });
+  it("못 연 페이지라도 사이트가 사흘 넘게 죽어 있으면 믿는다", () => {
+    expect(pageConclusive(page({ status: 0, complete: false }), daysAgo(4), now)).toBe(true);
+    expect(pageConclusive(page({ status: 503 }), daysAgo(1), now)).toBe(false);
   });
 });
 
@@ -62,5 +78,8 @@ describe("옛 저장소가 없을 때", () => {
     expect(decideGoneRepository([{ key: "jinu/new", check: { state: "moved", to: "org/new" } }]))
       .toMatchObject({ decision: "human", note: "github.com/org/new" });
     expect(decideGoneRepository([{ key: "jinu/new", check: { state: "unknown" } }])).toBeNull();
+    // 열어 보지 못한 링크가 남았으면 내리지 않는다
+    expect(decideGoneRepository([{ key: "jinu/a", check: { state: "gone" } }], ["jinu/d"]))
+      .toEqual({ decision: "human", reason: "repo_links_unchecked", note: "github.com/jinu/d" });
   });
 });

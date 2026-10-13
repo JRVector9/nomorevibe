@@ -1,12 +1,12 @@
 import { afterEach, beforeAll, beforeEach, expect, it, vi } from "vitest";
 import { eq, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { productEvidenceAudit, productRepoReviews, products } from "@/lib/db/schema";
+import { productEvidenceAudit, productHealth, productRepoReviews, products } from "@/lib/db/schema";
 import type { RepositoryCheck, RepositoryFacts, RepositoryRef } from "@/lib/crawl/github-repositories";
 import { countProducts, listProductSlugs, listProducts } from "@/lib/domain/products/repository";
 import { getPublicList } from "@/lib/domain/products/view";
 import type { RepoCheck, RepoReviewPage } from "@/lib/domain/products/repo-review";
-import { MAX_REPO_GONE_DELISTS_PER_DAY } from "@/lib/domain/products/repo-reviews";
+import { delistGoneRepository, MAX_REPO_GONE_DELISTS_PER_DAY } from "@/lib/domain/products/repo-reviews";
 import { refreshProductStars, type StarsCursor } from "@/lib/jobs/products/stars-refresh";
 import { reviewGoneRepositories } from "@/lib/jobs/products/repo-review";
 import type { JobContext } from "@/lib/jobs/runner";
@@ -150,7 +150,7 @@ it("급상승의 하루 평균은 20시간 구간을 하루로 늘려 나누지 
 // ─────────────────────────── B. 2단계 확인 ───────────────────────────
 
 const site = (name: string, githubLinks: string[] = []): RepoReviewPage => ({ status: 200, finalUrl: `https://${name}.example/`, title: name,
-  text: `${name} is a working product that helps people plan trips with friends.`, githubLinks });
+  text: `${name} is a working product that helps people plan trips with friends.`, githubLinks, complete: true });
 const reviewContext = (): JobContext<null> => ({ cursor: null, save: vi.fn(), hasBudget: () => true, log: vi.fn() });
 /** github.com 흉내 — 키마다 정한 답, 없으면 404 */
 const github = (answers: Record<string, RepoCheck> = {}) => vi.fn(async (key: string): Promise<RepoCheck> => answers[key] ?? { state: "gone" });
@@ -205,6 +205,40 @@ it("github.com 이 답하지 않으면 적지 않고 틱을 접는다", async ()
   // 잇따라 둘이 막히면 그 뒤로는 묻지 않는다(동시 셋)
   expect(checkRepo.mock.calls.length).toBeLessThanOrEqual(3);
   expect(openPage).not.toHaveBeenCalled();
+});
+
+it("페이지를 못 열면 내리지 않는다 — 사이트가 사흘 넘게 죽어 있을 때만 내린다", async () => {
+  const blink = await seed({ name: "Blink" });
+  const dead = await seed({ name: "Dead" });
+  const busy = await seed({ name: "Busy" });
+  for (const row of [blink, dead, busy]) await markGone(row.id);
+  await db.insert(productHealth).values([{ slug: dead.slug, status: 0, failures: 30, downSince: new Date(Date.now() - 4 * 86_400_000) },
+    { slug: blink.slug, status: 0, failures: 1, downSince: new Date(Date.now() - 3_600_000) }]);
+  const unreachable: RepoReviewPage = { status: 0, finalUrl: null, title: "", text: "", githubLinks: [], complete: false };
+  const openPage = vi.fn(async (url: string) => url === busy.url ? { ...site("busy"), status: 503 } : unreachable);
+  await reviewGoneRepositories(reviewContext(), { openPage, checkRepo: github() });
+  expect(await read(blink.id)).toMatchObject({ status: "seeded" });
+  expect(await review(blink.id)).toMatchObject({ decision: "human", reason: "page_unavailable" });
+  expect(await review(busy.id)).toMatchObject({ decision: "human", reason: "page_unavailable" });
+  expect(await read(dead.id)).toMatchObject({ status: "banned" });
+});
+
+it("열어 볼 링크가 셋을 넘으면 남은 것을 사람에게 넘긴다", async () => {
+  const row = await seed({ name: "Many" });
+  await markGone(row.id);
+  await reviewGoneRepositories(reviewContext(), { openPage: async () => site("many", ["test/a", "test/b", "test/c", "test/d"]), checkRepo: github() });
+  expect(await read(row.id)).toMatchObject({ status: "seeded" });
+  expect(await review(row.id)).toMatchObject({ decision: "human", reason: "repo_links_unchecked", pageExcerpt: "github.com/test/d" });
+});
+
+it("잡이 고른 뒤 운영자가 '유지'를 골랐으면 내리지 않는다", async () => {
+  const p = await reviewed("Raced", "human");
+  expect(await operator(p.slug, "keep")).toMatchObject({ ok: true });
+  const record = { productId: p.id, decision: "delist_candidate" as const, reason: "repo_gone", answers: null, model: null,
+    pageHttpStatus: 200, finalUrl: p.url, pageTitle: null, pageExcerpt: null };
+  expect(await delistGoneRepository({ ...record, slug: p.slug })).toBe("operator_keep");
+  expect(await read(p.id)).toMatchObject({ status: "seeded" });
+  expect(await review(p.id)).toMatchObject({ decision: "delist_candidate", operatorDecision: "keep", operatorBy: "operator" });
 });
 
 it("하루 한도만큼 내렸으면 더 내리지 않고 운영자 몫으로 둔다", async () => {

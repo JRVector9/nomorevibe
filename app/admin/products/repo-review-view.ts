@@ -11,6 +11,8 @@ const REASONS: Record<string, string> = {
   repo_alive: "저장소가 다시 열림",
   repo_moved: "저장소가 다른 주소로 옮겨 감",
   repo_link_alive: "사이트가 살아 있는 다른 저장소를 가리킴",
+  repo_links_unchecked: "사이트의 저장소 링크가 많아 다 열어 보지 못함",
+  page_unavailable: "사이트를 열지 못함 — 사흘 뒤 다시 봄",
   repo_unparsable: "GitHub 저장소 주소 꼴이 아님",
   model: "AI 판단",
   deployment_gone: "배포 없음(호스팅 오류 페이지)",
