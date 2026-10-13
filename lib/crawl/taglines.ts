@@ -2,7 +2,7 @@ import { isDeepStrictEqual } from "node:util";
 import { assertJobLease, requestJob, type JobLease } from "@/lib/jobs/control";
 import { emitPipelineEvent } from "@/lib/observability/review-pipeline";
 import { taglineEvidence, taglineHash } from "./tagline";
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { crawlCandidates, crawlDocuments, crawlTaglines, type CrawlCandidate, type CrawlDocument, type CrawlTagline } from "@/lib/db/schema";
 import type { TaglineEvidenceSource } from "./tagline";
@@ -22,7 +22,8 @@ export type TaglineTask = { candidate: CrawlCandidate; document: CrawlDocument; 
 /**
  * 소개를 지어 줘야 하는 후보.
  *
- * 소개가 없어 발행이 멈춘 자동 후보만이다(사람이 본 것은 사람의 결정이다). 다시 집는 경우는 셋 —
+ * 소개가 없어 발행이 멈춘 후보다 — 자동 후보와, 사람이 승인했지만 소개가 없어 멈춘 후보(2026-10-14, publish.ts).
+ * 소개를 짓는 일은 사람의 결정을 뒤집지 않는다 — 승인을 발행까지 잇는다. 다시 집는 경우는 셋 —
  * 아직 한 번도 안 지었거나, 실패가 다시 볼 때가 됐거나, **지은 뒤에 원본이 바뀌었거나**.
  * 세 번째가 있어야 "증거로는 알 수 없다"(빈 줄)로 남은 후보가 페이지가 바뀌었을 때 다시 불린다.
  * 원본이 그대로면 잡이 해시를 보고 부르지 않고 넘어간다(recordTaglineResult의 reuse).
@@ -36,7 +37,7 @@ export async function pendingTaglines(limit: number): Promise<TaglineTask[]> {
     .where(and(
       eq(crawlCandidates.state, "needs_review"),
       eq(crawlCandidates.reason, "no_description"),
-      eq(crawlCandidates.decidedBy, "auto"),
+      inArray(crawlCandidates.decidedBy, ["auto", "admin"]),
       // 사람이 적은 줄은 다시 짓지 않는다 — 그 사람이 페이지를 보고 적었다
       sql`${crawlTaglines.writtenBy} is null`,
       sql`(${crawlTaglines.repo} is null
@@ -63,7 +64,7 @@ export async function recordTaglineResult(task: TaglineTask, lease: JobLease, re
     const [candidate] = await tx.select().from(crawlCandidates).where(eq(crawlCandidates.id, task.candidate.id)).for("update");
     const [document] = await tx.select().from(crawlDocuments).where(eq(crawlDocuments.id, task.document.id)).for("share");
     const [written] = await tx.select().from(crawlTaglines).where(eq(crawlTaglines.repo, task.candidate.repo)).for("update");
-    if (!candidate || candidate.state !== "needs_review" || candidate.reason !== "no_description" || candidate.decidedBy !== "auto"
+    if (!candidate || candidate.state !== "needs_review" || candidate.reason !== "no_description" || !["auto", "admin"].includes(candidate.decidedBy ?? "")
       || written?.writtenBy || !isDeepStrictEqual(candidate, task.candidate) || !isDeepStrictEqual(document, task.document)
       || !isDeepStrictEqual(written ?? null, task.written)) return { stored: false, released: false };
     const sourceHash = taglineHash(taglineEvidence(candidate.repo, document!));
