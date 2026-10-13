@@ -1,6 +1,6 @@
 # 네 언어 공개 페이지 통합 검토 — 2026-10-13
 
-새 탐색 탭의 한국어 운영 배포는 완료했다. 다국어 코드는 공유 페이지 트리로 통합하고 [PR406](https://github.com/JRVector9/nomorevibe/pull/406)에 푸시했다. 최종 구현 head `a79ed0e5d9c8d5c0e546078f33e54899690139bd`는 [필수 CI38344601125](https://github.com/JRVector9/nomorevibe/actions/runs/38344601125)의 모든 검사를 통과했다. 언어 운영 공개·migration·번역 모델 호출은 아직 하지 않았다. 사용자 직접 기능 확인 이후 공개하는 설계 조건을 유지한다.
+새 탐색 탭의 한국어 운영 배포는 완료했다. 다국어 코드는 공유 페이지 트리로 통합하고 [PR406](https://github.com/JRVector9/nomorevibe/pull/406)에 푸시했다. 초기 통합 head `a79ed0e5d9c8d5c0e546078f33e54899690139bd`는 [필수 CI38344601125](https://github.com/JRVector9/nomorevibe/actions/runs/38344601125)의 모든 검사를 통과했다. 후속 독립 병렬 리뷰에서 확인한 P2 세 건도 보완했다: 틱 예산 종료의 시도 기록, 원문 복원의 stale_source 재접수, 로그인 언어 전환의 returnTo 언어 동기화다. 세 코드 파일의 최소 변경과 담당 에이전트 재검토·실제 로컬 검증은 `2026-10-13-public-i18n-parallel-code-review.md`를 따른다. 최신 필수 CI는 PR checks의 최신 head와 대조한다. 언어 운영 공개·migration·번역 모델 호출은 아직 하지 않았다. 사용자 직접 기능 확인 이후 공개하는 설계 조건을 유지한다.
 
 ## 설계 작업별 결과
 

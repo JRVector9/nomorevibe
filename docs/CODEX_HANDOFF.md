@@ -1,3 +1,41 @@
+# 2026-10-13 — PR406 병렬 리뷰의 P2 세 건 보완 완료
+
+## Current objective
+
+사용자가 독립 병렬 리뷰에서 확인한 세 결함을 보완하라고 지시했다. root가 최소 수정했고 gpt-6.1-sol/xhigh 담당 에이전트2개가 재검토했다. 리뷰 대상 HEAD ba9c3fd53889fc5344ee7a94c15f8b249496b069 위 후속 수정이며 base6b3fdfe3ccb9a150a0c82d32fe8d14884ea89427, PR406이다. 새 탭은 이미 운영에 반영됐고 다국어는 운영 배포 전이다.
+
+## Completed work / modified files
+
+- R1 완료: lib/jobs/products/translations.ts는 호출 후 외부 ctx.signal shutdown만 건너뛴다. 내부 budget abort도 이미 보낸 시도로 기록하고 실제 lease 상실은 기존 최종 transaction assert가 거부한다. 신규 호출 전 budget/abort 조건 유지.
+- R2 완료: lib/domain/products/translations.ts의 demand setWhere에 stale_source만 추가했다. 일반 검수실패/source_too_long의4회 제한은 재설정하지 않는다.
+- R3 완료: lib/i18n/routing.ts의 switchLocale은 로그인의 단일 검증 returnTo에도 선택 locale을 적용한다. duplicate/unsafe는 선택 언어 홈 fallback, 나머지 query/hash 유지. API/페이지/인증 스키마를 늘리지 않았다.
+- 담당 리뷰 에이전트2개 종료, 수정 후 신규 확정 finding 없다. 추가 수정 파일은 이 handoff와 docs/operations/2026-10-13-public-i18n-parallel-code-review.md, 2026-10-13-public-i18n-final-review.md다. 운영·DB·실제 인증/LLM 변경과 호출은 없다. 최초 리뷰의 문서 변경도 이 후속 커밋에 포함한다.
+- 기존 baseline explicit category/product 빈404 SSR은 별도 알려진 한계다. UI/SEO 추가 확정 finding은 없다.
+
+## Key design decisions / actual checks / failed approaches
+
+기존 source CAS/최종 lease 검사, 요청·batch 상한, same-origin 공개 allowlist를 유지했다. runner 공통 API·인증 API·DB 스키마·스케줄은 변경하지 않는다. 이전 CI38345403384는 기존 head 성공 근거이며 이 후속 수정의 CI로 주장하지 않는다. 이번 로컬 보완은 새 suite/브라우저/E2E/DB migration/원격/모델 요청을 실행하지 않았다.
+
+수정 후 root 실제 worker+fixture의5틱에서 modelCalls4·recordedEntries4·attempts4 확인. 실제 lease 실패 전파·외부 shutdown 기록0건, 네 언어 로그인 복귀/query/hash·unsafe fallback/일반 링크 보존 assertion exit0. 에이전트는 로그인 경계89assertion exit0, 실제 demand upsert SQL의 허용 오류 ineligible/stale_source만 확인했고 실제 저장 함수 attempts1~4/backoff5·10·20분/최종retry없음/lease 오류전파를 fixture로 확인했다. DB/network/LLM0이며 실제 DB rollback 실행은 아니다. next typegen0, tsc69931 exit0, scopedESLint53335 exit0, check:i18n4/8/11 exit0, diff0. 과거 실패 재현은 신규 보고서에 보존했다. 한국어 cache-header 후보는 설치 Next headers→middleware 순서로 신규 결함에서 제외했다.
+
+## Remaining work / exact commands
+
+세 P2의 최소 수정·경계 확인·수정 리뷰는 완료했다. 이 후속 변경을 PR406 branch에 커밋/푸시하고 해당 최신 head 필수CI를 확인한 뒤 최종 보고한다. 최신 결과는 PR checks/head로 대조하며 이전 head CI를 새 수정에 재사용하지 않는다. 사용자 직접 기능 확인→최신base필수check→일반PR병합/main이미지→runbook drain/0075→호환web/text/scheduler교체 순서의 다국어 운영 공개는 아직 실행하지 않았다. 사용자 미추적 PT/prototypes·기존 stash와 관련 없는 서버는 보존한다.
+
+```sh
+cd /private/tmp/nomorevibe-i18n-integration-20261013
+git status --short --branch
+git rev-parse HEAD origin/main
+git diff --check
+cat docs/operations/2026-10-13-public-i18n-parallel-code-review.md
+gh pr checks 406
+gh pr view 406 --json headRefOid,baseRefOid,mergeStateStatus,url
+gh run list --branch feat/public-i18n-integration-20261013 --limit 3 --json databaseId,status,conclusion,headSha
+# 해당 최신 수정 head의 CI 결과를 확인하고 보고한다. 다국어 운영 공개는 직접 기능 확인 이후.
+```
+
+---
+
 # 2026-10-13 — 고정 탐색 탭 운영 배포·다국어 구현과 필수 CI 완료
 
 ## Current objective

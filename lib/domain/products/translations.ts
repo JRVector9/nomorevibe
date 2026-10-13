@@ -94,7 +94,7 @@ export async function requestProductTranslations(
     const inserted = await tx.insert(t).values(values).onConflictDoUpdate({ target: [t.productId, t.locale, t.field],
       set: { sourceHash: sql`excluded.source_hash`, sourceLocale: sql`excluded.source_locale`, text: null, status: "pending",
         provenance: sql`excluded.provenance`, model: "", attempts: 0, errorCode: null, retryAt: null, updatedAt: sql`now()` },
-      setWhere: sql`${t.sourceHash} <> excluded.source_hash or ${t.errorCode} = 'ineligible'`,
+      setWhere: sql`${t.sourceHash} <> excluded.source_hash or ${t.errorCode} in ('ineligible', 'stale_source')`,
     }).returning({ productId: t.productId });
     const requested = inserted.length;
     if (requested) await requestJob(PRODUCT_TRANSLATION_JOB, tx);

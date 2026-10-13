@@ -34,7 +34,13 @@ export function localePath(locale: Locale, logicalPath: string): string {
 }
 
 export function switchLocale(path: string, locale: Locale): string {
-  return localePath(locale, stripLocale(path));
+  const localized = localePath(locale, stripLocale(path));
+  const url = new URL(localized, "https://return.invalid");
+  if (stripLocale(url.pathname).replace(/\/$/, "") !== "/login" || !url.searchParams.has("returnTo")) return localized;
+  const destinations = url.searchParams.getAll("returnTo");
+  const destination = safePublicReturnUrl(destinations.length === 1 ? destinations[0] : undefined, localePath(locale, "/"));
+  url.searchParams.set("returnTo", localePath(locale, destination));
+  return `${url.pathname}${url.search}${url.hash}`;
 }
 
 /** Machine endpoints and public files retain their existing contracts. */

@@ -33,7 +33,9 @@ export async function translateDemandedProductFields(ctx: JobContext<null>): Pro
     if (!batch.length || !ctx.hasBudget() || signal.aborted) return { done: true };
     const response = await translateProductFields(batch.map((task) => ({ name: task.source.name, locale: task.locale,
       field: task.field, text: translationSourceText(task.source, task.field) })), 20_000, fetch, signal);
-    if (signal.aborted || !ctx.hasBudget()) return { done: false };
+    if (ctx.signal?.aborted) return { done: false };
+    // Account for calls aborted by the tick budget. The final lease check in
+    // recordProductTranslations rolls back writes if ownership was actually lost.
     const entries = batch.map((task, index): { task: typeof task; result: ProductTranslationResult } => {
       if (!response.ok) return { task, result: { ok: false, error: response.error, model: TRANSLATE_MODEL } };
       const checked = checkProductTranslation(response.outputs[index], task.source, task.locale, task.field);
