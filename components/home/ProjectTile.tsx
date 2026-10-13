@@ -1,4 +1,7 @@
+"use client";
+
 /* eslint-disable @next/next/no-img-element -- 내부에 저장한 썸네일의 원본 비율과 크기를 그대로 쓴다 */
+import { useTranslations } from "@/lib/i18n/context";
 import { ProductIcon, tileTint } from "@/components/ProductIcon";
 import { thumbnailPresentation } from "@/lib/domain/products/thumbnails/presentation";
 import { ogVariantSrc, ogVariantSrcSet } from "@/lib/domain/products/og-variants";
@@ -34,6 +37,7 @@ export function ProjectTile({ slug, name, ogImage, size, installable = false, ai
   /** 목록 첫 줄 — 늦게 받지 않고 먼저 받는다. 기본은 늦게 받기(lazy) */
   priority?: boolean;
 }) {
+  const t = useTranslations("labels");
   const internalImage = ogImage?.startsWith("/") && !ogImage.startsWith("//") ? ogImage : null;
   const presentation = thumbnailPresentation(internalImage);
   const preview = internalImage && (presentation.kind === "og" || presentation.kind === "repository_image");
@@ -44,7 +48,7 @@ export function ProjectTile({ slug, name, ogImage, size, installable = false, ai
           src={ogVariantSrc(internalImage, 640)!}
           srcSet={ogVariantSrcSet(internalImage, TILE_WIDTHS) ?? undefined}
           sizes={TILE_SIZES[size]}
-          alt={`${name} · ${presentation.label}`}
+          alt={t(presentation.kind === "repository_image" ? "card.readmeImage" : "card.preview", { name })}
           width={presentation.width}
           height={presentation.height}
           // 작은 README 로고는 늘리지 않는다(scale-down) — 대표 이미지는 커버에 맞춘다
@@ -55,7 +59,7 @@ export function ProjectTile({ slug, name, ogImage, size, installable = false, ai
       ) : (
         <span className="tile-icon"><ProductIcon name={name} ogImage={internalImage} size={size === 64 ? 96 : 64} category={category} /></span>
       )}
-      {installable && <span className="tile-flag">직접 설치</span>}
+      {installable && <span className="tile-flag">{t("card.installable")}</span>}
       {ai && <span className="tile-flag tile-flag-ai">AI</span>}
     </span>
   );

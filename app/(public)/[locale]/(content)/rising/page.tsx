@@ -1,29 +1,35 @@
+import { getRequestLocale } from "@/lib/i18n/server";
+import { getTranslator, getDictionary } from "@/lib/i18n/dictionary";
+import { I18nProvider } from "@/lib/i18n/context";
+import { localePath } from "@/lib/i18n/routing";
+import { formatNumber, formatDateTime } from "@/lib/i18n/format";
 import Link from "next/link";
 import type { Metadata } from "next";
 import { canonicalAlternates } from "@/app/(public)/[locale]/(content)/page";
 import { Icon } from "@/components/home/icons";
 import { RankedCards } from "@/components/home/RankedCards";
 import { PopularList } from "@/app/(public)/[locale]/(content)/popular/PopularList";
-import { StarGrowthSummary, STAR_GROWTH_TITLE, starGrowthNote } from "@/components/home/StarGrowthSummary";
+import { StarGrowthSummary } from "@/components/home/StarGrowthSummary";
+import { starGrowthNote } from "@/components/home/star-growth-copy";
 import { getStarGrowthPage, type StarGrowthPage } from "@/lib/domain/products/star-growth";
 import { pageTitle } from "@/lib/copy/brand";
-import { formatCount } from "@/lib/format/number";
-import { formatPublicDateTime } from "@/lib/format/time";
 import { logger } from "@/lib/observability/logger";
 import "@/app/(public)/[locale]/(content)/popular/popular.css";
 
 export const dynamic = "force-dynamic";
-export const metadata: Metadata = {
-  title: pageTitle(STAR_GROWTH_TITLE),
-  description: "GitHub 스타 50~1,999개 프로젝트 중 직전 8시간 회차 대비 스타가 많이 늘어난 순. KST 00시·08시·16시에 갱신합니다.",
-  alternates: canonicalAlternates("/rising"),
-};
+export async function generateMetadata(): Promise<Metadata> {
+  const locale = await getRequestLocale(); const t = await getTranslator(locale, "browse");
+  return { title: pageTitle(t("growth.title")), description: t("growth.description"), alternates: canonicalAlternates(localePath(locale, "/rising")) };
+}
 
 type SearchValue = string | string[] | undefined;
 const firstValue = (value: SearchValue) => Array.isArray(value) ? value[0] : value;
-const VIEWS = [{ key: "list", label: "목록으로 보기", icon: "list" }, { key: "cards", label: "카드로 보기", icon: "grid" }] as const;
+const VIEWS = [{ key: "list", label: "nav.listView", icon: "list" }, { key: "cards", label: "nav.cardView", icon: "grid" }] as const;
 
 export default async function RisingPage({ searchParams }: { searchParams: Promise<{ page?: SearchValue; cycle?: SearchValue; view?: SearchValue }> }) {
+  const locale = await getRequestLocale();
+  const [t,dictionary] = await Promise.all([getTranslator(locale,"browse"),getDictionary(locale,"browse")]);
+  const count = (n: number) => formatNumber(n,locale);
   const params = await searchParams;
   const view = firstValue(params.view) === "cards" ? "cards" : "list";
   const now = new Date();
@@ -33,42 +39,42 @@ export default async function RisingPage({ searchParams }: { searchParams: Promi
   } catch (error) {
     logger.error("rising.list_failed", { error });
   }
-  const href = (page: number, nextView = view) => `/rising?${new URLSearchParams({ cycle: result!.snapshot.asOf, page: String(page), view: nextView })}`;
+  const href = (page: number, nextView = view) => localePath(locale, `/rising?${new URLSearchParams({ cycle: result!.snapshot.asOf, page: String(page), view: nextView })}`);
   const first = result ? (result.page - 1) * result.pageSize + 1 : 1;
   const items = result?.items.map((product, index) => ({ ...product, rank: first + index })) ?? [];
   return (
-    <main className="wrap popular-page">
-      <nav aria-label="경로" className="popular-crumbs">
-        <Link prefetch={false} href="/">발견하기</Link><span aria-hidden="true">›</span><span aria-current="page">{STAR_GROWTH_TITLE}</span>
+    <I18nProvider locale={locale} dictionaries={{browse:dictionary}}><main className="wrap popular-page">
+      <nav aria-label={t("nav.breadcrumb")} className="popular-crumbs">
+        <Link prefetch={false} href={localePath(locale,"/")}>{t("nav.discover")}</Link><span aria-hidden="true">›</span><span aria-current="page">{t("growth.title")}</span>
       </nav>
       <div className="popular-heading">
-        <h1 id="star-growth-title">{STAR_GROWTH_TITLE}</h1>
-        <p>{starGrowthNote(result?.snapshot ?? null)} · <Link prefetch={false} href="/?metric=star-growth">집계 기준</Link></p>
+        <h1 id="star-growth-title">{t("growth.title")}</h1>
+        <p>{starGrowthNote(result?.snapshot ?? null,locale,t)} · <Link prefetch={false} href={localePath(locale,"/?metric=star-growth")}>{t("nav.methodology")}</Link></p>
       </div>
       <section id="star-growth-list" aria-labelledby="star-growth-list-title">
         <div className="popular-summary">
           <div>
-            <h2 id="star-growth-list-title">8시간 증가량순{result && <> · {formatCount(result.total)}개</>}</h2>
-            <p>8시간 +숫자는 직전 회차보다 늘어난 스타 · ★는 총 스타 수</p>
+            <h2 id="star-growth-list-title">{t("growth.order")}{result && <> · {t("count.projects", { count:count(result.total) })}</>}</h2>
+            <p>{t("growth.legend")}</p>
           </div>
-          {result && <nav className="tabs tabs-sm" aria-label="보기">
+          {result && <nav className="tabs tabs-sm" aria-label={t("nav.view")}>
             {VIEWS.map((option) => <Link prefetch={false} key={option.key} href={href(result.page, option.key)}
               className={`tab tab-icon${view === option.key ? " active" : ""}`} aria-current={view === option.key ? "true" : undefined}
-              aria-label={option.label} title={option.label}><Icon name={option.icon} size={16} /></Link>)}
+              aria-label={t(option.label)} title={t(option.label)}><Icon name={option.icon} size={16} /></Link>)}
           </nav>}
         </div>
         {!result || result.snapshot.status !== "ready" ? <div className="popular-empty" role="status">
           <StarGrowthSummary snapshot={result?.snapshot ?? null} now={now} />
         </div> : <>
-          <p className="row-note">기준 {formatPublicDateTime(result.snapshot.asOf, now)} KST · 다음 갱신 {formatPublicDateTime(result.snapshot.nextCycle, now)} KST</p>
+          <p className="row-note">{t("growth.cycle", { asOf:formatDateTime(result.snapshot.asOf,now,locale),next:formatDateTime(result.snapshot.nextCycle,now,locale) })}</p>
           {view === "cards" ? <RankedCards items={items} now={now.toISOString()} /> : <PopularList items={items} now={now.toISOString()} />}
-          <nav className="popular-pagination" aria-label="페이지 이동">
-            {result.page > 1 ? <Link prefetch={false} href={href(result.page - 1)}>‹ 이전</Link> : <span aria-disabled="true">‹ 이전</span>}
-            <span aria-live="polite">{formatCount(first)}–{formatCount(first + items.length - 1)}위 / {formatCount(result.total)}</span>
-            {result.page < result.pages ? <Link prefetch={false} href={href(result.page + 1)}>다음 ›</Link> : <span aria-disabled="true">다음 ›</span>}
+          <nav className="popular-pagination" aria-label={t("nav.pages")}>
+            {result.page > 1 ? <Link prefetch={false} href={href(result.page - 1)}>‹ {t("nav.previous")}</Link> : <span aria-disabled="true">‹ {t("nav.previous")}</span>}
+            <span aria-live="polite">{t("popular.position", { first:count(first),last:count(first+items.length-1),total:count(result.total) })}</span>
+            {result.page < result.pages ? <Link prefetch={false} href={href(result.page + 1)}>{t("nav.next")} ›</Link> : <span aria-disabled="true">{t("nav.next")} ›</span>}
           </nav>
         </>}
       </section>
-    </main>
+    </main></I18nProvider>
   );
 }

@@ -4,24 +4,25 @@ import { useEffect, useRef } from "react";
 import { usePathname, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { Icon } from "@/components/home/icons";
-import { NEW_PROJECTS_LABEL } from "@/lib/copy/terms";
-import { AI_LEVEL_LABELS, AI_LEVELS, type AiLevel } from "@/lib/domain/evidence/ai-level-labels";
-import { formatCount } from "@/lib/format/number";
-import { categoryLabel } from "@/lib/domain/products/labels";
+import { AI_LEVELS, type AiLevel } from "@/lib/domain/evidence/ai-level-labels";
+import { useLocale, useTranslations } from "@/lib/i18n/context";
+import { formatNumber, formatDateTime } from "@/lib/i18n/format";
+import { stripLocale } from "@/lib/i18n/routing";
+import { translatedCategory } from "./i18n";
 import { hiddenByDefault } from "@/lib/domain/products/visibility";
 import type { HomePulseView } from "@/components/home/types";
 import type { StarGrowthSnapshot } from "@/lib/domain/products/star-growth";
-import { StarGrowthSummary, STAR_GROWTH_TITLE, starGrowthNote } from "@/components/home/StarGrowthSummary";
-import { formatDetailTime, formatPublicDateTime } from "@/lib/format/time";
+import { StarGrowthSummary, starGrowthNote } from "@/components/home/StarGrowthSummary";
 
 /**
  * 계산식·세부 조건은 '자세히' 안에 접는다(UX-37) — 본문은 지표마다 쉬운 문장 하나로 읽힌다.
  * 식을 궁금해하는 사람만 펼친다.
  */
 function Details({ children }: { children: React.ReactNode }) {
+  const t = useTranslations("browse");
   return (
     <details className="method-more">
-      <summary>자세히</summary>
+      <summary>{t("method.details")}</summary>
       {children}
     </details>
   );
@@ -32,7 +33,7 @@ function Formula({ children }: { children: React.ReactNode }) {
 }
 
 /** 대화창이 열리는 화면 — 홈과 분야 화면(/c/…)이 같은 목록을 쓴다 */
-const isBrowsePath = (pathname: string) => pathname === "/" || pathname.startsWith("/c/");
+const isBrowsePath = (pathname: string) => stripLocale(pathname) === "/" || stripLocale(pathname).startsWith("/c/");
 
 export function MethodologyDialog({ pulse, aiLevels = null, starGrowth }: {
   pulse: HomePulseView;
@@ -40,6 +41,10 @@ export function MethodologyDialog({ pulse, aiLevels = null, starGrowth }: {
   aiLevels?: Record<AiLevel, number> | null;
   starGrowth?: StarGrowthSnapshot | null;
 }) {
+  const locale = useLocale();
+  const t = useTranslations("browse");
+  const labels = useTranslations("labels");
+  const count = (n: number) => formatNumber(n, locale);
   const dialog = useRef<HTMLDialogElement>(null);
   const skipClose = useRef(false);
   const params = useSearchParams();
@@ -80,9 +85,9 @@ export function MethodologyDialog({ pulse, aiLevels = null, starGrowth }: {
     window.history.replaceState(null, "", hrefWithMetric(null));
   }
 
-  const metrics: [string, string][] = [["popular", "스타 구간"], ["born", NEW_PROJECTS_LABEL], ["updates", "새 버전"], ["active", "활발한 프로젝트"], ["categories", "분야 순위"], ["ai", "만든 방식"]];
-  if (pulse.tools) metrics.push(["tools", "제작 도구"]);
-  metrics.push(["star-growth", STAR_GROWTH_TITLE]);
+  const metrics: [string, string][] = [["popular", t("popular.tiers")], ["born", t("intro.new")], ["updates", t("intro.updates")], ["active", t("active.title")], ["categories", t("filter.category")], ["ai", t("filter.ai")]];
+  if (pulse.tools) metrics.push(["tools", t("tools.title")]);
+  metrics.push(["star-growth", t("growth.title")]);
   const nav = (
     <div className="metric-links">
       {metrics.map(([key, label]) => (
@@ -100,169 +105,78 @@ export function MethodologyDialog({ pulse, aiLevels = null, starGrowth }: {
   // 기본 목록에서 빼는 분야(개인 프로필, 계약 C3)는 분야 순위에도 싣지 않는다
   const categories = pulse.categories.filter((item) => !hiddenByDefault(item.key));
 
+  const projects = (n: number) => t("count.projects", { count: count(n) });
+  const title = (level: AiLevel) => t(({ 1: "method.aiLevel1", 2: "method.aiLevel2", 3: "method.aiLevel3" } as const)[level]);
+  const description = (level: AiLevel) => t(({ 1: "method.aiDescription1", 2: "method.aiDescription2", 3: "method.aiDescription3" } as const)[level]);
+  const time = (value: string | null | undefined) => formatDateTime(value, pulse.asOf, locale);
+  const observation = (first: string | null | undefined, last: string | null | undefined) => first ? `${time(first)} ~ ${time(last)}` : t("method.noObservation");
   const blocks: Record<string, React.ReactNode> = {
-    "star-growth": (
-      <>
-        <h3>{STAR_GROWTH_TITLE} — 직전 8시간 회차의 관측값과 비교합니다.</h3>
-        <p>{starGrowthNote(starGrowth ?? null)}.</p>
-        {starGrowth !== undefined && <StarGrowthSummary snapshot={starGrowth} now={pulse.asOf} />}
-        <Details>
-          <p>공개된 프로젝트의 정상 공개 GitHub 저장소를 비교합니다. KST 00시·08시·16시 회차 직전 {starGrowth?.policy?.collectionWindowHours ?? 1}시간 안의 성공 관측만 사용하며, 실제 두 관측 간격은 {starGrowth?.policy?.minIntervalHours ?? 7}~{starGrowth?.policy?.maxIntervalHours ?? 9}시간입니다. 이번 회차 스타50~1,999개 중 순증가1개 이상인 프로젝트를 표시합니다.</p>
-          <Formula>8시간 증가량 = 해당 회차의 스타 − 8시간 전 회차의 스타</Formula>
-          <p>증가량이 많은 순, 같으면 해당 회차 스타가 많은 순, 다시 같으면 프로젝트 주소 순입니다. 홈 상위 5개·8시간 스타 급상승 탭·모두 보기는 같은 회차·조건·순서를 사용합니다. 탭의 분야·AI 필터는 이 대상 안에서만 좁힙니다. 카드에는 ‘8시간 +증가량’을 먼저, 총 스타 수를 보조로 표시하며 숫자에 마우스를 올리면 두 실제 관측 시각을 확인할 수 있습니다. 보조 기술에도 같은 시각을 제공합니다.</p>
-          {starGrowth && <table className="method-table">
-            <thead><tr><th>관측</th><th>기준 회차 KST</th><th>실제 성공 관측 시각 KST</th></tr></thead>
-            <tbody>
-              <tr><td>이번 회차</td><td>{formatPublicDateTime(starGrowth.asOf, pulse.asOf)}</td><td>{starGrowth.firstObservedAt ? `${formatDetailTime(starGrowth.firstObservedAt)} ~ ${formatDetailTime(starGrowth.lastObservedAt)}` : "성공 관측 없음"}</td></tr>
-              <tr><td>8시간 전 회차</td><td>{formatPublicDateTime(starGrowth.baselineAsOf, pulse.asOf)}</td><td>{starGrowth.baseline?.firstObservedAt ? `${formatDetailTime(starGrowth.baseline.firstObservedAt)} ~ ${formatDetailTime(starGrowth.baseline.lastObservedAt)}` : "성공 관측 없음"}</td></tr>
-            </tbody>
-          </table>}
-          <p>최신 예정 회차의 성공 관측을 쓰며 마지막 관측은 {starGrowth?.policy?.maxAgeHours ?? 10}시간 이내여야 합니다. 실패·비교 자료 없음·저장소 연결 변경·관측 마감 초과는 제외합니다. 새로 발굴된 프로젝트는 다음 관측 회차부터 수집하고 직전 회차의 비교 자료가 확보된 뒤 진입합니다.</p>
-          <p>‘최근 8시간’은 마지막 마감 회차와 그8시간 전 회차 사이의 순변화입니다. 현재 시각에서 실시간으로 거슬러8시간의 모든 스타 이벤트를 센 값은 아닙니다. 비교 자료가 없을 때는 상태를 안내하며 총 스타 순으로 대체하지 않습니다. 차단·삭제·공개 범위 변경 프로젝트는 즉시 숨기며, 그 외 순위는 다음 회차까지 고정됩니다.</p>
-        </Details>
-      </>
-    ),
-    popular: (<>
-      <h3>많이 쓰이는 프로젝트 — GitHub 스타 구간.</h3>
-      <p>공개된 프로젝트를 GitHub 스타 수로 2천+ · 5천+ · 1만+ · 3만+ 네 구간으로 나눠, 구간마다 스타가 많은 순으로 보여 줍니다.</p>
+    "star-growth": <>
+      <h3>{t("method.growthTitle")}</h3>
+      <p>{starGrowthNote(starGrowth ?? null, locale, t)}.</p>
+      {starGrowth !== undefined && <StarGrowthSummary snapshot={starGrowth} now={pulse.asOf} />}
       <Details>
-        <p>각 구간은 다음 구간의 시작 바로 아래까지이고(3만+는 10만 미만), 스타가 같으면 등재 ID 순입니다. 홈에는 구간별 상위 3개, 전체 목록에는 페이지당 15개를 보여줍니다.</p>
-        <p>스타는 저장소에 남긴 관심 표시로, 실제 이용자 수나 품질을 보증하지 않습니다. 개인 계정만 필터는 GitHub의 User 유형만 포함합니다. 조직과 미확인 계정은 포함하지 않습니다.</p>
-        <p>스타는 저장된 GitHub 원본에서 시작해 프로젝트마다 하루가 지난 뒤 차례로 다시 확인합니다(지금은 보통 2~3일 간격). 실패하면 마지막 성공 값과 확인일을 유지하며, 작업 대기로 더 늦어질 수 있습니다. 미공개·차단·접속 불가 프로젝트와 스타 10만 이상은 제외합니다. 제작 근거는 각 프로젝트 상세에서 확인할 수 있습니다.</p>
+        <p>{t("method.growthEligibility", { window: count(starGrowth?.policy?.collectionWindowHours ?? 1), min: count(starGrowth?.policy?.minIntervalHours ?? 7), max: count(starGrowth?.policy?.maxIntervalHours ?? 9) })}</p>
+        <Formula>{t("method.growthFormula")}</Formula>
+        <p>{t("method.growthOrder")}</p>
+        {starGrowth && <table className="method-table">
+          <thead><tr><th>{t("method.observation")}</th><th>{t("method.cycleTime")}</th><th>{t("method.actualTime")}</th></tr></thead>
+          <tbody>
+            <tr><td>{t("method.thisCycle")}</td><td>{time(starGrowth.asOf)}</td><td>{observation(starGrowth.firstObservedAt, starGrowth.lastObservedAt)}</td></tr>
+            <tr><td>{t("method.baselineCycle")}</td><td>{time(starGrowth.baselineAsOf)}</td><td>{observation(starGrowth.baseline?.firstObservedAt, starGrowth.baseline?.lastObservedAt)}</td></tr>
+          </tbody>
+        </table>}
+        <p>{t("method.growthFreshness", { hours: count(starGrowth?.policy?.maxAgeHours ?? 10) })}</p>
+        <p>{t("method.growthMeaning")}</p>
       </Details>
-    </>),
-    born: (
-      <>
-        <h3>{NEW_PROJECTS_LABEL} — 저장소를 처음 만든 날로 셉니다.</h3>
-        <p>오늘 KST 0시에 끝난 7일 동안 GitHub에 새로 만들어진 저장소 수입니다. 스타 수에 제한을 두지 않은 전체 집계입니다.</p>
-        <table className="method-table">
-          <tbody>
-            <tr><td>최근 7일</td><td>{formatCount(pulse.born.current)}개</td></tr>
-            <tr><td>직전 7일</td><td>{formatCount(pulse.born.previous)}개</td></tr>
-            <tr><td>증감률</td><td>{pulse.born.change === null ? "표본 부족 (직전 20개 미만)" : `${pulse.born.change}%`}</td></tr>
-          </tbody>
-        </table>
-        <Details>
-          <p>공개 프로젝트 중 <b>GitHub 저장소를 처음 만든 날</b>이 최근 끝난 7일 안인 것을 셉니다. 우리 목록에 오른 날도, 새 버전을 낸 날도 아닙니다.</p>
-          <Formula>
-            {NEW_PROJECTS_LABEL} = 저장소를 만든 때가 최근 7일 안인 공개 프로젝트 수
-            <br />
-            증감률 = (이번 7일 − 직전 7일) ÷ 직전 7일 × 100
-          </Formula>
-          <p>찾고 심사하는 데 시간이 걸려, 최근 며칠에 생긴 프로젝트는 뒤늦게 더해질 수 있습니다. 확인할 수 없을 때 0%를 채우지 않습니다.</p>
-          <p>홈의 &ldquo;최근 7일에 생성된 프로젝트&rdquo; 목록과 모두 보기는 같은 생성일 기간 중 스타 50 이상이고 정상 GitHub 저장소로 확인된 공개 프로젝트만, 저장소 생성일 최신순으로 보여줍니다. 생성일을 확인할 수 없는 저장소는 목록에서 제외합니다.</p>
-        </Details>
-      </>
-    ),
-    updates: (
-      <>
-        <h3>새 버전을 낸 프로젝트 — 출시 뒤에도 계속 만드는가.</h3>
-        <p>지난 7일 동안 새 버전(GitHub 릴리스·제작자 업데이트)을 낸 프로젝트 수입니다.</p>
-        <Details>
-          <p>
-            같은 프로젝트가 여러 번 내도 한 번만 셉니다 — 릴리스 {formatCount(pulse.updates.releases)}건을 프로젝트로 합치면 {formatCount(pulse.updates.projects)}개입니다.
-          </p>
-          <Formula>
-            새 버전을 낸 프로젝트 = 최근 7일에 공개 릴리스가 있는 서로 다른 프로젝트 수
-            <br />
-            릴리스 건수 = 최근 7일의 공개 GitHub 릴리스·제작자 업데이트 수
-          </Formula>
-          <p>소개문 수정이나 자동 재배포는 넣지 않습니다. 코드 품질이나 가동률을 보증하지 않습니다.</p>
-        </Details>
-      </>
-    ),
-    active: (
-      <>
-        <h3>가장 활발한 프로젝트 — 새 버전을 낸 횟수.</h3>
-        <p>지난 7일 동안 새 버전을 가장 많이 낸 프로젝트 순입니다.</p>
-        <Details>
-          <p>새 버전은 GitHub 릴리스와 제작자 업데이트입니다. 횟수가 같으면 이름 순입니다.</p>
-          <Formula>활발함 = 최근 7일 공개 릴리스 수 · 상위 {formatCount(pulse.active.length)}개</Formula>
-          <p>릴리스를 잘게 나눠 내는 프로젝트가 앞에 설 수 있습니다. 좋고 나쁨이 아니라 움직임의 크기입니다.</p>
-        </Details>
-      </>
-    ),
-    categories: (
-      <>
-        <h3>분야 순위 — 공개 수와 {NEW_PROJECTS_LABEL} 수.</h3>
-        <p>분야마다 공개된 프로젝트 수와, 그중 지난 7일 동안 저장소가 새로 만들어진 수입니다.</p>
-        <table className="method-table">
-          <thead><tr><th>분야</th><th>공개</th><th>이번 주 새로 생김</th></tr></thead>
-          <tbody>
-            {categories.map((item) => (
-              <tr key={item.key}>
-                <td>{categoryLabel(item.key)}</td>
-                <td>{formatCount(item.total)}개</td>
-                <td>{formatCount(item.born)}개</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-        <Details>
-          <p>어디에도 맞지 않는 &ldquo;기타&rdquo;는 순위에서 뺍니다. 개인 프로필은 본인이 등록하거나 확인한 것만 보이므로 분야 순위에 싣지 않습니다.</p>
-        </Details>
-      </>
-    ),
-    ai: (
-      <>
-        <h3>만든 방식 — 저장소에 남은 AI 제작 근거로 봅니다.</h3>
-        <p>
-          공개 GitHub 저장소에서 AI 코딩 도구가 남긴 근거를 찾습니다. 아래 근거 중 하나라도 있으면 카드와 상세에 &ldquo;AI&rdquo;로 표시하고
-          홈의 &ldquo;AI로 제작&rdquo;에 들어갑니다. 근거가 여러 개인 프로젝트는 표의 위쪽 한 줄로 셉니다.
-        </p>
-        <table className="method-table">
-          <thead><tr><th>근거</th>{aiLevels && <th>프로젝트 수</th>}</tr></thead>
-          <tbody>
-            {AI_LEVELS.map((level) => (
-              <tr key={level}>
-                <td>{AI_LEVEL_LABELS[level].title}</td>
-                {aiLevels && <td>{formatCount(aiLevels[level])}개</td>}
-              </tr>
-            ))}
-          </tbody>
-        </table>
-        <p>&ldquo;AI&rdquo; 표시가 없다고 AI 없이 만든 것은 아닙니다. 아직 검사하지 않았거나, 흔적을 남기지 않는 방식으로 만들었을 수 있습니다.</p>
-        <Details>
-          {AI_LEVELS.map((level) => <p key={level}><b>{AI_LEVEL_LABELS[level].title}</b> — {AI_LEVEL_LABELS[level].description}</p>)}
-          <p>
-            어느 근거도 제품 전체를 AI가 만들었다는 증명은 아닙니다. 에이전트가 연 PR도 병합된 그 PR의 변경까지만 말하고, 커밋 서명·설정 파일은
-            저장소가 밝힌 것이라 꾸밀 수 있습니다. 여러 도구가 함께 읽는 지침 파일(CLAUDE.md·AGENTS.md)만 있는 저장소는 &ldquo;AI&rdquo;로 표시하지 않습니다.
-          </p>
-          <p>저장소는 사흘마다 다시 봅니다. 저장소가 없는 프로젝트는 검사할 수 없어 &ldquo;AI&rdquo; 표시가 없습니다.</p>
-        </Details>
-      </>
-    ),
-    ...(pulse.tools ? {
-      tools: (
-        <>
-          <h3>제작 도구 — 저장소에 남은 흔적으로 셉니다.</h3>
-          <p>공개 프로젝트의 저장소에서 AI 코딩 도구의 흔적을 찾은 프로젝트 수입니다.</p>
-          <table className="method-table">
-            <thead><tr><th>도구</th><th>프로젝트 수</th></tr></thead>
-            <tbody>
-              {pulse.tools.rows.map((row) => (
-                <tr key={row.label}><td>{row.label}</td><td>{formatCount(row.count)}개</td></tr>
-              ))}
-              <tr><td>확인 범위</td><td>저장소를 확인한 {formatCount(pulse.tools.scanned)}개 중 {formatCount(pulse.tools.withTool)}개에서 흔적</td></tr>
-            </tbody>
-          </table>
-          <Details>
-            <p>
-              흔적은 커밋 기여 표기, 도구 설정 파일, 에이전트 지침 파일 같은 것입니다. 제작자 신고가 아니고, 실제 생성 코드 비율이나 전 세계 점유율도 아닙니다.
-            </p>
-            <Formula>도구별 프로젝트 수 = 그 도구의 흔적을 찾은 서로 다른 공개 프로젝트 수</Formula>
-            <p>한 프로젝트가 여러 도구를 쓸 수 있어 합은 흔적을 찾은 프로젝트 수보다 클 수 있습니다. 지침 파일은 다른 도구도 읽을 수 있어 사용을 증명하지 않습니다.</p>
-          </Details>
-        </>
-      ),
-    } : {}),
+    </>,
+    popular: <>
+      <h3>{t("method.popularTitle")}</h3><p>{t("method.popularSummary")}</p>
+      <Details><p>{t("method.popularRange")}</p><p>{t("method.popularCaveat")}</p><p>{t("method.popularFreshness")}</p></Details>
+    </>,
+    born: <>
+      <h3>{t("method.bornTitle")}</h3><p>{t("method.bornSummary")}</p>
+      <table className="method-table"><tbody>
+        <tr><td>{t("method.lastWeek")}</td><td>{projects(pulse.born.current)}</td></tr>
+        <tr><td>{t("method.previousWeek")}</td><td>{projects(pulse.born.previous)}</td></tr>
+        <tr><td>{t("method.change")}</td><td>{pulse.born.change === null ? t("method.smallSample") : `${count(pulse.born.change)}%`}</td></tr>
+      </tbody></table>
+      <Details><p>{t("method.bornEligibility")}</p><Formula>{t("method.bornFormula")}<br />{t("method.changeFormula")}</Formula><p>{t("method.bornDelay")}</p><p>{t("method.bornList")}</p></Details>
+    </>,
+    updates: <>
+      <h3>{t("method.updatesTitle")}</h3><p>{t("method.updatesSummary")}</p>
+      <Details><p>{t("method.updatesCount", { releases: count(pulse.updates.releases), projects: count(pulse.updates.projects) })}</p><Formula>{t("method.updatesFormula")}<br />{t("method.releasesFormula")}</Formula><p>{t("method.updatesCaveat")}</p></Details>
+    </>,
+    active: <>
+      <h3>{t("method.activeTitle")}</h3><p>{t("method.activeSummary")}</p>
+      <Details><p>{t("method.activeOrder")}</p><Formula>{t("method.activeFormula", { count: count(pulse.active.length) })}</Formula><p>{t("method.activeCaveat")}</p></Details>
+    </>,
+    categories: <>
+      <h3>{t("method.categoriesTitle")}</h3><p>{t("method.categoriesSummary")}</p>
+      <table className="method-table"><thead><tr><th>{t("filter.category")}</th><th>{t("intro.public")}</th><th>{t("method.bornColumn")}</th></tr></thead>
+        <tbody>{categories.map(item => <tr key={item.key}><td>{translatedCategory(item.key, labels)}</td><td>{projects(item.total)}</td><td>{projects(item.born)}</td></tr>)}</tbody>
+      </table><Details><p>{t("method.categoriesCaveat")}</p></Details>
+    </>,
+    ai: <>
+      <h3>{t("method.aiTitle")}</h3><p>{t("method.aiSummary")}</p>
+      <table className="method-table"><thead><tr><th>{t("method.evidence")}</th>{aiLevels && <th>{t("method.projectCount")}</th>}</tr></thead>
+        <tbody>{AI_LEVELS.map(level => <tr key={level}><td>{title(level)}</td>{aiLevels && <td>{projects(aiLevels[level])}</td>}</tr>)}</tbody>
+      </table><p>{t("method.aiAbsence")}</p>
+      <Details>{AI_LEVELS.map(level => <p key={level}><b>{title(level)}</b> — {description(level)}</p>)}<p>{t("method.aiCaveat")}</p><p>{t("method.aiRefresh")}</p></Details>
+    </>,
+    ...(pulse.tools ? { tools: <>
+      <h3>{t("method.toolsTitle")}</h3><p>{t("method.toolsSummary")}</p>
+      <table className="method-table"><thead><tr><th>{t("method.tool")}</th><th>{t("method.projectCount")}</th></tr></thead>
+        <tbody>{pulse.tools.rows.map(row => <tr key={row.label}><td>{row.label}</td><td>{projects(row.count)}</td></tr>)}<tr><td>{t("method.coverage")}</td><td>{t("method.toolsCoverage", { scanned: count(pulse.tools.scanned), found: count(pulse.tools.withTool) })}</td></tr></tbody>
+      </table><Details><p>{t("method.toolsEvidence")}</p><Formula>{t("method.toolsFormula")}</Formula><p>{t("method.toolsCaveat")}</p></Details>
+    </> } : {}),
   };
 
   const body = metric === "all" || !blocks[metric]
     ? (
       <>
-        <h3>출처, 기간, 분모가 보이는 숫자.</h3>
-        <p>윗줄과 순위는 전체 nomorevibe 기준입니다. 아래 목록의 검색·필터를 바꿔도 집계 범위는 바뀌지 않습니다. &ldquo;이번 주&rdquo;는 오늘 KST 0시에 끝난 7일입니다.</p>
+        <h3>{t("method.overviewTitle")}</h3>
+        <p>{t("method.overview")}</p>
         {nav}
         {Object.values(blocks).map((block, index) => (
           <div key={index}>
@@ -296,19 +210,19 @@ export function MethodologyDialog({ pulse, aiLevels = null, starGrowth }: {
       }}
     >
       <div className="modal-head">
-        <h2 id="dialog-title">숫자의 기준</h2>
-        <Link prefetch={false} href={hrefWithMetric(null)} className="close-btn" aria-label="닫기" scroll={false}>
+        <h2 id="dialog-title">{t("method.title")}</h2>
+        <Link prefetch={false} href={hrefWithMetric(null)} className="close-btn" aria-label={t("method.close")} scroll={false}>
           <Icon name="close" />
         </Link>
       </div>
       <div className="modal-body">
         <div className="notice">
-          AI 업계 전체의 시장 점유율·심리·사용량을 뜻하지 않습니다. 확인된 0과 계산할 수 없는 비율을 구별합니다.
+          {t("method.notice")}
         </div>
         {body}
         <p className="method-foot">{metric === "star-growth"
-          ? starGrowth ? `${formatPublicDateTime(starGrowth.asOf, pulse.asOf)} KST 기준 회차 · 정책 ${starGrowth.policyVersion ?? "확인 전"}` : "회차별 실제 관측 시각은 급상승 카드에서 확인할 수 있습니다."
-          : `${pulse.asOfLabel} 기준 · 기간은 시작 포함, 끝 제외 · 집계 방식 v${pulse.methodVersion}`}</p>
+          ? starGrowth ? t("method.growthFoot", { time: time(starGrowth.asOf), version: starGrowth.policyVersion ?? t("method.policyUnknown") }) : t("method.growthFootUnknown")
+          : t("method.foot", { time: time(pulse.asOf), version: pulse.methodVersion })}</p>
       </div>
     </dialog>
   );

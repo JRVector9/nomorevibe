@@ -1,33 +1,28 @@
+"use client";
+
 import Link from "next/link";
 import { ProductTagline } from "@/components/ProductTagline";
-import { UNCLAIMED_HINT, UNCLAIMED_LABEL } from "@/lib/copy/terms";
-import { formatCount } from "@/lib/format/number";
+import { useLocale,useTranslations } from "@/lib/i18n/context";
+import { formatNumber,formatRelativeTime } from "@/lib/i18n/format";
+import { localePath } from "@/lib/i18n/routing";
 import type { ProductListItem } from "@/lib/domain/products/view";
 import type { getDiscoveryBoards, RankingListItem } from "@/lib/domain/ranking/view";
 
 type Boards = Awaited<ReturnType<typeof getDiscoveryBoards>>;
 
-function relativeDate(date: Date, now: Date): string {
-  const minutes = Math.max(0, Math.floor((now.getTime() - date.getTime()) / 60_000));
-  if (minutes < 60) return minutes < 1 ? "방금" : `${minutes}분 전`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}시간 전`;
-  const days = Math.floor(hours / 24);
-  if (days < 30) return `${days}일 전`;
-  return `${Math.floor(days / 30)}개월 전`;
-}
-
 function ProductLink({ product, detail }: { product: ProductListItem; detail: React.ReactNode }) {
+  const locale=useLocale();
+  const labels=useTranslations("labels");
   return (
     <li className="border-t border-line py-3 first:border-0 first:pt-0 last:pb-0">
-      <Link prefetch={false} href={`/p/${product.slug}`} className="group block">
+      <Link prefetch={false} href={localePath(locale,`/p/${product.slug}`)} className="group block">
         <div className="flex items-center gap-2">
           <span className="min-w-0 flex-1 truncate font-bold group-hover:text-accent">
             {product.name}
           </span>
           {product.unclaimed && (
-            <span className="shrink-0 rounded-full border border-line px-2 py-0.5 text-[13px] font-semibold text-fg-2" title={UNCLAIMED_HINT}>
-              {UNCLAIMED_LABEL}
+            <span className="shrink-0 rounded-full border border-line px-2 py-0.5 text-[13px] font-semibold text-fg-2" title={labels("status.unclaimedHint")}>
+              {labels("status.unclaimed")}
             </span>
           )}
         </div>
@@ -54,40 +49,44 @@ function Entries({
   items: ProductListItem[];
   detail: (item: ProductListItem) => React.ReactNode;
 }) {
-  if (items.length === 0) return <p className="text-[13px] text-fg-2">아직 표시할 프로젝트가 없습니다.</p>;
+  const t=useTranslations("browse");
+  if (items.length === 0) return <p className="text-[13px] text-fg-2">{t("boards.empty")}</p>;
   return <ol>{items.map((item) => <ProductLink key={item.slug} product={item} detail={detail(item)} />)}</ol>;
 }
 
 export function DiscoveryBoards({ boards, now = new Date() }: { boards: Boards; now?: Date }) {
+  const locale=useLocale();
+  const t=useTranslations("browse");
+  const count=(n:number)=>formatNumber(n,locale);
   return (
     <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
-      <Board title="이번 시즌">
+      <Board title={t("boards.season")}>
         <Entries
           items={boards.weekly}
           detail={(item) => {
             const ranked = item as RankingListItem;
             if (ranked.scoreMode === "unique_visitors") {
-              return `#${ranked.rank} · 고유 유입자 ${formatCount(ranked.uniqueVisitors)} · 유효 방문 ${formatCount(ranked.validClicks)}`;
+              return t("boards.uniqueDetail", {rank:count(ranked.rank),unique:count(ranked.uniqueVisitors),visits:count(ranked.validClicks)});
             }
-            return `#${ranked.rank} · 유효 방문 ${formatCount(ranked.validClicks)}`;
+            return t("boards.visitDetail", {rank:count(ranked.rank),visits:count(ranked.validClicks)});
           }}
         />
       </Board>
-      <Board title="방문 증가">
+      <Board title={t("boards.growing")}>
         <Entries
           items={boards.trending}
           detail={(item) => {
             const change = (item as RankingListItem).changePercent;
-            if (change === null) return "신규";
-            return <span className={change >= 0 ? "text-up" : "text-down"}>{change > 0 ? "+" : ""}{change}%</span>;
+            if (change === null) return t("ranking.new");
+            return <span className={change >= 0 ? "text-up" : "text-down"}>{change > 0 ? "+" : ""}{count(change)}%</span>;
           }}
         />
       </Board>
-      <Board title="새로 검증됨">
-        <Entries items={boards.verifiedNew} detail={(item) => relativeDate(item.listedAt, now)} />
+      <Board title={t("boards.verified")}>
+        <Entries items={boards.verifiedNew} detail={(item) => formatRelativeTime(item.listedAt,now,locale)} />
       </Board>
-      <Board title="새로 발견됨">
-        <Entries items={boards.discoveredNew} detail={(item) => relativeDate(item.listedAt, now)} />
+      <Board title={t("boards.discovered")}>
+        <Entries items={boards.discoveredNew} detail={(item) => formatRelativeTime(item.listedAt,now,locale)} />
       </Board>
     </div>
   );

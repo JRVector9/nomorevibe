@@ -1,10 +1,16 @@
+import { getRequestLocale } from "@/lib/i18n/server";
+import { getTranslator,getDictionary } from "@/lib/i18n/dictionary";
+import { I18nProvider } from "@/lib/i18n/context";
+import { localePath } from "@/lib/i18n/routing";
 import type { Metadata } from "next";
 import { notFound, redirect } from "next/navigation";
 import Link from "next/link";
 import { canonicalAlternates, HomeScreen, type HomeParams } from "@/app/(public)/[locale]/(content)/page";
 import { browseTitle, categoryRedirect, categorySlug, parseCategory } from "@/components/home/browse-state";
 import { pageTitle } from "@/lib/copy/brand";
-import { categoryLabel } from "@/lib/domain/products/labels";
+import { translatedCategory } from "@/components/home/i18n";
+import type { Locale } from "@/lib/i18n/locales";
+import type { Translator } from "@/lib/i18n/messages";
 import { hiddenByDefault } from "@/lib/domain/products/visibility";
 import { CategoryLinks } from "./CategoryLinks";
 
@@ -29,38 +35,42 @@ const queryOf = (params: HomeParams) => {
 };
 
 export async function generateMetadata({ params, searchParams }: Props): Promise<Metadata> {
+  const locale=await getRequestLocale();
+  const [t,labels]=await Promise.all([getTranslator(locale,"browse"),getTranslator(locale,"labels")]);
   const [{ category: raw }, search] = await Promise.all([params, searchParams]);
   const category = parseCategory(raw);
-  if (!category) return { title: pageTitle("없는 분야"), robots: { index: false, follow: true } };
-  if (hiddenByDefault(category)) return { title: pageTitle(`${categoryLabel(category)} 프로젝트`), robots: { index: false, follow: true } };
+  if (!category) return { title: pageTitle(t("category.missing")), robots: { index: false, follow: true } };
+  if (hiddenByDefault(category)) return { title: pageTitle(t("home.categoryTitle", {category:translatedCategory(category,labels)})), robots: { index: false, follow: true } };
   const query = queryOf(search);
-  if (query) return { title: browseTitle({ query, category }), robots: { index: false, follow: true } };
-  return { title: browseTitle({ category }), alternates: canonicalAlternates(`/c/${categorySlug(category)}`) };
+  if (query) return { title: browseTitle({query,category},locale,t,labels), robots: { index: false, follow: true } };
+  return { title: browseTitle({category},locale,t,labels), alternates: canonicalAlternates(localePath(locale,`/c/${categorySlug(category)}`)) };
 }
 
 export default async function CategoryPage({ params, searchParams }: Props) {
+  const locale=await getRequestLocale();
+  const [t,labels,dictionary]=await Promise.all([getTranslator(locale,"browse"),getTranslator(locale,"labels"),getDictionary(locale,"browse")]);
   const [{ category: raw }, search] = await Promise.all([params, searchParams]);
   const category = parseCategory(raw);
   if (!category) notFound();
   // 정식 주소는 소문자 하나 — 나머지 조건은 그대로 붙여 보낸다(홈의 옛 주소와 같은 규칙)
-  if (raw !== categorySlug(category)) redirect(categoryRedirect({ ...search, category }) ?? `/c/${categorySlug(category)}`);
-  if (hiddenByDefault(category)) return <HiddenCategory label={categoryLabel(category)} />;
+  if (raw !== categorySlug(category)) redirect(categoryRedirect({ ...search, category },locale) ?? localePath(locale,`/c/${categorySlug(category)}`));
+  if (hiddenByDefault(category)) return <I18nProvider locale={locale} dictionaries={{browse:dictionary}}><HiddenCategory locale={locale} t={t} label={translatedCategory(category,labels)} /></I18nProvider>;
   return HomeScreen({ params: { ...search, category } });
 }
 
 /** 기본 목록에서 뺀 분야 — 지운 것이 아니라 본인이 등록·확인한 것만 보인다(운영자 결정 D2) */
-function HiddenCategory({ label }: { label: string }) {
+function HiddenCategory({label,locale,t}:{label:string;locale:Locale;t:Translator<"browse">}) {
   return (
     <main className="wrap">
       <section className="feed" aria-labelledby="category-hidden-title">
         <div className="empty-state">
-          <h1 id="category-hidden-title" className="row-title">{label} 분야는 목록에 싣지 않습니다</h1>
+          <h1 id="category-hidden-title" className="row-title">{t("category.hidden", {category:label})}</h1>
           <p>
-            개인 포트폴리오·이력 페이지는 본인이 직접 등록하거나 운영자 확인을 마친 경우에만 보입니다.{" "}
-            <Link prefetch={false} href="/policy#excluded">게재 기준</Link>
+            {t("category.hiddenHint")}{" "}
+            <Link prefetch={false} href={localePath(locale,"/policy#excluded")}>{t("nav.listingPolicy")}</Link>
           </p>
           <CategoryLinks />
-          <Link prefetch={false} href="/" className="secondary">홈으로</Link>
+          <Link prefetch={false} href={localePath(locale,"/")} className="secondary">{t("nav.home")}</Link>
         </div>
       </section>
     </main>

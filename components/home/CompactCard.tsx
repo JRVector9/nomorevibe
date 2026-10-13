@@ -1,12 +1,16 @@
+"use client";
+
 import Link from "next/link";
 import { ProductTagline } from "@/components/ProductTagline";
 import { StarMetric } from "@/components/StarMetric";
 import { StarGrowthMetric } from "@/components/home/StarGrowthMetric";
 import { ProjectTile } from "@/components/home/ProjectTile";
-import { categoryLabel } from "@/lib/domain/products/labels";
+import { translatedCategory } from "./i18n";
+import { useLocale, useTranslations } from "@/lib/i18n/context";
+import { localePath } from "@/lib/i18n/routing";
 import type { ProductListItem } from "@/lib/domain/products/view";
 import type { StarGrowthItem } from "@/lib/domain/products/star-growth";
-import { formatPublicDate } from "@/lib/format/time";
+import { formatDate } from "@/lib/i18n/format";
 import "./cards.css";
 
 /**
@@ -23,8 +27,10 @@ export function CompactCard({ product, trailing, priority = false, headingLevel 
   priority?: boolean;
   headingLevel?: 2 | 3;
 }) {
+  const locale = useLocale();
+  const t = useTranslations("labels");
   const now = new Date();
-  const href = `/p/${product.slug}`;
+  const href = localePath(locale, `/p/${product.slug}`);
   const Heading = headingLevel === 2 ? "h2" : "h3";
   return (
     <article className="compact-card">
@@ -38,8 +44,8 @@ export function CompactCard({ product, trailing, priority = false, headingLevel 
         {/* 조각 사이 '·'는 CSS 가 넣는다(card-dots) */}
         <p className="card-meta card-meta-compact card-dots">
           {product.starGrowth ? <StarGrowthMetric value={product.starGrowth} /> : <StarMetric value={product} now={now} listedAt={product.listedAt} />}
-          <span>{categoryLabel(product.category)}</span>
-          {trailing === "listed" && <span title={product.repoCreatedAt ? "GitHub 저장소 생성일" : "등록한 날"}>{formatPublicDate(product.repoCreatedAt ?? product.listedAt, now)}</span>}
+          <span>{translatedCategory(product.category, t)}</span>
+          {trailing === "listed" && <span title={t(product.repoCreatedAt ? "card.repositoryCreated" : "card.listedDate")}>{formatDate(product.repoCreatedAt ?? product.listedAt, now, locale)}</span>}
         </p>
       </div>
     </article>

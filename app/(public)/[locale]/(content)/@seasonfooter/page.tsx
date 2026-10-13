@@ -1,3 +1,4 @@
+import { getRequestLocale } from "@/lib/i18n/server";
 import { SeasonFooter } from "@/components/SeasonFooter";
 import { OnlyOnHome } from "@/components/home/OnlyOnHome";
 import { publicRead } from "@/lib/domain/products/public-reads";
@@ -33,5 +34,6 @@ export default async function SeasonFooterSlot() {
   }
 
   if (!loaded) return null;
-  return <OnlyOnHome><SeasonFooter season={loaded.season} latestClosed={loaded.latestClosed} now={new Date()} /></OnlyOnHome>;
+  const locale=await getRequestLocale();
+  return <OnlyOnHome><SeasonFooter locale={locale} season={loaded.season} latestClosed={loaded.latestClosed} now={new Date()} /></OnlyOnHome>;
 }

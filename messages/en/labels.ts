@@ -63,4 +63,8 @@ export const labels = defineCatalog<typeof KoreanLabels>()({
   "stars.delta": "Change since previous observation: {delta} ({before} → {after})",
   "stars.growth8h": "8h +{count}",
   "stars.growthDetail": "Stars +{gain} since the preceding 8h cycle · {stars} total · {before} ({baseline}) → {after} ({stars})",
+  "card.repositoryCreated": "GitHub repository creation date",
+  "card.listedDate": "Date listed",
+  "card.personal": "Personal",
+  "card.organization": "Organization",
 });

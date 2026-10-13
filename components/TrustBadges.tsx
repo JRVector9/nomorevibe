@@ -1,5 +1,6 @@
-import { BRAND } from "@/lib/copy/brand";
-import { UNCLAIMED_HINT, UNCLAIMED_LABEL } from "@/lib/copy/terms";
+"use client";
+
+import { useTranslations } from "@/lib/i18n/context";
 import type { ProductStatus } from "@/lib/db/schema";
 import type { BuilderClaim } from "@/lib/domain/products/view";
 
@@ -25,6 +26,7 @@ export function StatusBadge({
   unclaimed: boolean;
   size?: "sm" | "md";
 }) {
+  const t = useTranslations("labels");
   const md = size === "md";
   const shell = md ? "rounded-full px-2.5 py-0.5 text-[13px] border" : "text-[13px]";
 
@@ -32,16 +34,16 @@ export function StatusBadge({
     return (
       <span
         className={`shrink-0 font-semibold text-up ${shell} ${md ? "border-up/40 bg-up/10" : ""}`}
-        title={`도메인 소유권을 ${BRAND}가 직접 확인했습니다.`}
+        title={t("status.verifiedHint")}
       >
-        ✓ {md ? "도메인 검증됨" : "검증됨"}
+        ✓ {t(md ? "status.domainVerified" : "status.verified")}
       </span>
     );
   }
 
   const [label, tip] = unclaimed
-    ? ([UNCLAIMED_LABEL, UNCLAIMED_HINT] as const)
-    : (["미검증", "등록은 됐지만 도메인 소유권 확인이 끝나지 않았습니다."] as const);
+    ? ([t("status.unclaimed"), t("status.unclaimedHint")] as const)
+    : ([t("status.unverified"), t("status.unverifiedHint")] as const);
 
   return (
     <span
@@ -60,9 +62,10 @@ export function StatusBadge({
  * 메이커가 신고한 것과 우리가 추정한 것은 신뢰도가 다르다.
  */
 export function BuilderBadge({ builder, claim }: { builder: string; claim: BuilderClaim }) {
+  const t = useTranslations("labels");
   const guessed = claim === "guessed";
   if (guessed) return <span className="rounded-full border border-line bg-bg-soft px-2 py-0.5 text-[13px] font-semibold text-fg-2"
-    title="이전 검색 분류만으로 개발 도구나 모델을 확인할 수 없습니다.">개발 AI 미확인</span>;
+    title={t("status.aiUnknownHint")}>{t("status.aiUnknown")}</span>;
   return (
     <span
       className={`rounded-full px-2 py-0.5 text-[13px] font-semibold ${
@@ -72,12 +75,12 @@ export function BuilderBadge({ builder, claim }: { builder: string; claim: Build
       }`}
       title={
         guessed
-          ? "공개 저장소의 흔적을 보고 우리가 추정한 값입니다. 아무도 확인해주지 않았습니다."
-          : "메이커가 신고한 값입니다. 기술적으로 검증할 방법은 없습니다."
+          ? t("status.aiUnknownHint")
+          : t("status.builderReportedHint")
       }
     >
       ● {builder}
-      <span className="ml-1 font-normal text-fg-2">{guessed ? "우리 추정" : "메이커 신고"}</span>
+      <span className="ml-1 font-normal text-fg-2">{t(guessed ? "status.aiUnknown" : "status.builderReported")}</span>
     </span>
   );
 }

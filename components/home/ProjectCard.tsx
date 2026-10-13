@@ -1,3 +1,5 @@
+"use client";
+
 import Link from "next/link";
 import { ProductTagline } from "@/components/ProductTagline";
 import { StarMetric } from "@/components/StarMetric";
@@ -7,7 +9,10 @@ import { Icon } from "@/components/home/icons";
 import { ProjectTile } from "@/components/home/ProjectTile";
 import type { HomeCardProduct } from "@/components/home/types";
 import { listedRepositoryOwner } from "@/lib/domain/products/github-owner";
-import { categoryLabel } from "@/lib/domain/products/labels";
+import { useLocale, useTranslations } from "@/lib/i18n/context";
+import { localePath } from "@/lib/i18n/routing";
+import { translatedCategory } from "./i18n";
+import { formatNumber } from "@/lib/i18n/format";
 import type { TimeInput } from "@/lib/format/time";
 import { ProductActivityRow } from "./ProductActivityRow";
 import "./cards.css";
@@ -34,11 +39,13 @@ export function ProjectCard({ product, saved, onToggleSave, now, priority = fals
   /** 순위 목록(홈 '많이 쓰이는 프로젝트'·/popular 카드 보기)의 자리 — 제목 앞에 숫자로 */
   rank?: number;
 }) {
+  const locale = useLocale();
+  const t = useTranslations("labels");
   const owner = listedRepositoryOwner(product.repoUrl, product.repoRenamedTo);
   const maker = owner ? `@${owner.login}` : product.makerName ? `@${product.makerName.replace(/^@/, "")}` : null;
   const builder = product.builder && product.builderClaim === "reported" ? product.builder : null;
   const at = now ?? new Date();
-  const href = `/p/${product.slug}`;
+  const href = localePath(locale, `/p/${product.slug}`);
   const Heading = headingLevel === 2 ? "h2" : "h3";
 
   return (
@@ -50,13 +57,13 @@ export function ProjectCard({ product, saved, onToggleSave, now, priority = fals
       <div className="project-body">
         <div className="project-title-row">
           <Heading className="project-title">
-            {rank !== undefined && <span className="project-rank">{rank}<span className="sr-only">위</span></span>}
+            {rank !== undefined && <span className="project-rank">{formatNumber(rank, locale)}<span className="sr-only"> {t("card.rank", { rank: formatNumber(rank, locale) })}</span></span>}
             <Link prefetch={false} href={href} className="card-link">{product.name}</Link>
           </Heading>
           <button
             type="button"
             className={`cover-saved${saved ? " active" : ""}`}
-            aria-label={`${product.name} ${saved ? "저장 취소" : "저장"}`}
+            aria-label={t(saved ? "card.unsave" : "card.save", { name: product.name })}
             aria-pressed={saved}
             onClick={() => onToggleSave(product.slug)}
           >
@@ -66,7 +73,7 @@ export function ProjectCard({ product, saved, onToggleSave, now, priority = fals
         {(maker || builder) && (
           <p className="card-byline card-dots">
             {maker && (owner
-              ? <a className="card-owner" href={owner.profileUrl} target="_blank" rel="noopener noreferrer" title="GitHub 저장소 소유자"><span>{maker}</span></a>
+              ? <a className="card-owner" href={owner.profileUrl} target="_blank" rel="noopener noreferrer" title={t("card.owner")}><span>{maker}</span></a>
               : <span>{maker}</span>)}
             {builder && <span>{builder}</span>}
           </p>
@@ -75,9 +82,9 @@ export function ProjectCard({ product, saved, onToggleSave, now, priority = fals
         <div className="card-meta">
           {/* 조각 사이 '·'는 CSS 가 넣는다(card-dots) — 빠진 조각 옆에 점만 남지 않게 */}
           <span className="card-meta-text card-dots">
-            <span>{categoryLabel(product.category)}</span>
+            <span>{translatedCategory(product.category, t)}</span>
             <ProductActivityRow activity={product.activity} now={at} />
-            {product.health?.down && <span className="meta-down">응답 없음</span>}
+            {product.health?.down && <span className="meta-down">{t("card.down")}</span>}
           </span>
           {product.starGrowth ? <StarGrowthMetric value={product.starGrowth} /> : <StarMetric value={product} now={at} listedAt={product.listedAt} />}
         </div>

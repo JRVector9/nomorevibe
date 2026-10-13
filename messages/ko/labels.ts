@@ -61,4 +61,8 @@ export const labels = {
   "stars.delta": "이전 측정 대비 {delta} ({before} → {after})",
   "stars.growth8h": "8시간 +{count}",
   "stars.growthDetail": "최근 8시간 회차 대비 스타 +{gain}개 · 총 {stars}개 · {before} ({baseline}개) → {after} ({stars}개)",
+  "card.repositoryCreated": "GitHub 저장소 생성일",
+  "card.listedDate": "등록한 날",
+  "card.personal": "개인",
+  "card.organization": "조직",
 } as const;

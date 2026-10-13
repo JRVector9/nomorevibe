@@ -18,7 +18,8 @@ import {
 import { ActiveList } from "@/components/home/ActiveList";
 import { CompactRow } from "@/components/home/CompactRow";
 import { CompactCard } from "@/components/home/CompactCard";
-import { StarGrowthSummary, STAR_GROWTH_TITLE, starGrowthNote } from "@/components/home/StarGrowthSummary";
+import { StarGrowthSummary } from "@/components/home/StarGrowthSummary";
+import { starGrowthNote } from "@/components/home/star-growth-copy";
 import { IntroLine } from "@/components/home/IntroLine";
 import { LaunchBand } from "@/components/home/LaunchBand";
 import { listHomeNews } from "@/lib/news/repository";
@@ -33,7 +34,14 @@ import { resolveSearchQuery, warmQueryTranslation } from "@/lib/domain/products/
 import { relevanceWindow, searchRelevance } from "@/lib/domain/products/relevance";
 import type { SearchQuery } from "@/lib/domain/products/search";
 import type { Category } from "@/lib/domain/products/schema";
-import { categoryLabel } from "@/lib/domain/products/labels";
+import { translatedCategory } from "@/components/home/i18n";
+import { getRequestLocale } from "@/lib/i18n/server";
+import { getDictionary, getTranslator } from "@/lib/i18n/dictionary";
+import { I18nProvider } from "@/lib/i18n/context";
+import { localePath } from "@/lib/i18n/routing";
+import type { Locale } from "@/lib/i18n/locales";
+import type { Translator } from "@/lib/i18n/messages";
+import { formatNumber, formatDate, formatDateTime } from "@/lib/i18n/format";
 import {
   getNewThisWeek,
   countNewThisWeek,
@@ -51,8 +59,6 @@ import {
   getHomePulse,
   type HomePulse as Pulse,
 } from "@/lib/domain/products/home-pulse";
-import { formatCount } from "@/lib/format/number";
-import { formatPublicDate, formatPublicDateTime } from "@/lib/format/time";
 import {
   getCurrentSeason,
   getSeasonRanking,
@@ -141,11 +147,11 @@ export const FALLBACK_SUGGESTIONS = ["가계부", "회의록 요약", "PDF 합�
 const SUGGESTION_COUNT = 6;
 
 /** 검색 기록에서 고른 말 앞에 두고 정해 둔 말로 채운다 — 대소문자·빈칸만 다른 말과 지금 친 말은 뺀다 */
-export function searchSuggestions(fromLog: readonly string[], query: string | undefined, limit = SUGGESTION_COUNT): string[] {
+export function searchSuggestions(fromLog: readonly string[], query: string | undefined, limit = SUGGESTION_COUNT, fallback: readonly string[] = FALLBACK_SUGGESTIONS): string[] {
   const key = (text: string) => text.trim().toLowerCase().replace(/\s+/g, " ");
   const seen = new Set(query ? [key(query)] : []);
   const picked: string[] = [];
-  for (const text of [...fromLog, ...FALLBACK_SUGGESTIONS]) {
+  for (const text of [...fromLog, ...fallback]) {
     if (picked.length >= limit || seen.has(key(text))) continue;
     seen.add(key(text));
     picked.push(text.trim());
@@ -191,7 +197,11 @@ function EmptyReason({
   suggestions = [],
   categories = [],
   headingLevel = 3,
+  locale, t, labels,
 }: {
+  locale: Locale;
+  t: Translator<"browse">;
+  labels: Translator<"labels">;
   sort: HomeSort;
   filtered: boolean;
   hasUnclaimed: boolean;
@@ -207,12 +217,12 @@ function EmptyReason({
     return (
       <div className="projects-grid">
         <div className="empty-state">
-          <Heading>{query ? `“${query}”에 맞는 프로젝트가 없습니다` : "조건에 맞는 프로젝트가 없습니다"}</Heading>
-          <p>{query ? "철자를 확인하거나 더 짧고 흔한 말로 찾아보세요." : "다른 분야를 고르거나 필터를 초기화해 보세요."}</p>
-          <SuggestionChips title="이런 검색어는 어떠세요" heading={headingLevel === 2 ? "h3" : "h4"}
-            items={suggestions.map((text) => ({ href: `/?q=${encodeURIComponent(text)}`, label: text }))} />
-          <SuggestionChips title="분야에서 찾아보기" heading={headingLevel === 2 ? "h3" : "h4"}
-            items={categories.map((category) => ({ href: categoryHref(category), label: categoryLabel(category) }))} />
+          <Heading>{query ? t("empty.query", { query }) : t("empty.filtered")}</Heading>
+          <p>{t(query ? "empty.queryHint" : "empty.filterHint")}</p>
+          <SuggestionChips title={t("empty.searchIdeas")} heading={headingLevel === 2 ? "h3" : "h4"}
+            items={suggestions.map((text) => ({ href: localePath(locale, `/?q=${encodeURIComponent(text)}`), label: text }))} />
+          <SuggestionChips title={t("empty.categoryIdeas")} heading={headingLevel === 2 ? "h3" : "h4"}
+            items={categories.map((category) => ({ href: categoryHref(category, {}, locale), label: translatedCategory(category, labels) }))} />
         </div>
       </div>
     );
@@ -222,9 +232,9 @@ function EmptyReason({
     return (
       <div className="projects-grid">
         <div className="empty-state">
-          <Heading>아직 순위에 오른 프로젝트가 없습니다</Heading>
-          <p>검증된 프로젝트에 유효 방문이 쌓이면 나타납니다.</p>
-          <Link prefetch={false} href="/?sort=recent" className="secondary">최신순으로 보기</Link>
+          <Heading>{t("empty.ranking")}</Heading>
+          <p>{t("empty.rankingHint")}</p>
+          <Link prefetch={false} href={localePath(locale, "/?sort=recent")} className="secondary">{t("empty.recentLink")}</Link>
         </div>
       </div>
     );
@@ -235,10 +245,8 @@ function EmptyReason({
   return (
     <div className="projects-grid">
       <div className="empty-state">
-        <Heading>아직 등록된 프로젝트가 없습니다</Heading>
-        <p>
-          <Link href="/launch" className="font-semibold text-accent">/nomorevibe</Link>
-          {" "}로 첫 번째 프로젝트를 등록해보세요.
+        <Heading>{t("empty.noProjects")}</Heading>
+        <p><Link href={localePath(locale, "/launch")} className="font-semibold text-accent">{t("empty.launchHint", { command: "/nomorevibe" })}</Link>
         </p>
       </div>
     </div>
@@ -246,11 +254,11 @@ function EmptyReason({
 }
 
 /** 집계 기준 창에 넘기는 집계 — 기준 시각은 이 창에서만 KST 를 밝힌다(UX-28) */
-function serializePulse(pulse: Pulse, now: Date) {
+function serializePulse(pulse: Pulse, now: Date, locale: Locale = "ko") {
   return {
     ...pulse,
     asOf: pulse.asOf.toISOString(),
-    asOfLabel: `${formatPublicDateTime(pulse.asOf, now)} KST`,
+    asOfLabel: `${formatDateTime(pulse.asOf, now, locale)} KST`,
   };
 }
 
@@ -266,14 +274,16 @@ export function canonicalAlternates(path: string): NonNullable<Metadata["alterna
 
 /** 검색어·분야로 탭 제목을 정한다(UX-39) — "“가계부” 검색 결과 — nomorevibe" */
 export async function generateMetadata({ searchParams }: Props): Promise<Metadata> {
+  const locale = await getRequestLocale();
+  const t = await getTranslator(locale, "browse");
   const params = await searchParams;
-  if (firstValue(params.new) === "1") return { title: "최근 7일에 생성된 프로젝트", alternates: canonicalAlternates("/") };
+  if (firstValue(params.new) === "1") return { title: t("new.title"), alternates: canonicalAlternates(localePath(locale,"/")) };
   const query = firstValue(params.q)?.trim().slice(0, 200) || undefined;
   // 검색 결과는 색인하지 않는다 — 검색어마다 얇은 목록 페이지가 끝없이 생긴다. 분야는 /c/[category] 정식 주소가 맡는다
-  if (query) return { title: browseTitle({ query }), robots: { index: false, follow: true } };
+  if (query) return { title: browseTitle({ query }, locale, t), robots: { index: false, follow: true } };
   // 보기 조건이 붙은 주소(?sort=recent·?ai=…·?shown=… 등)는 홈과 같은 제목이라 홈을 정식 주소로 가리킨다
   // 보기 조건이 붙은 주소도, 붙지 않은 홈도 정식 주소는 '/' 하나다(SEO-04)
-  return { title: browseTitle({}), alternates: canonicalAlternates("/") };
+  return { title: browseTitle({}, locale, t), alternates: canonicalAlternates(localePath(locale,"/")) };
 }
 
 /**
@@ -281,8 +291,9 @@ export async function generateMetadata({ searchParams }: Props): Promise<Metadat
  * 나머지 조건(정렬·검색어 등)은 그대로 따라간다.
  */
 export default async function HomePage({ searchParams }: Props) {
+  const locale = await getRequestLocale();
   const params = await searchParams;
-  const moved = firstValue(params.new) === "1" ? null : categoryRedirect(params);
+  const moved = firstValue(params.new) === "1" ? null : categoryRedirect(params, locale);
   if (moved) redirect(moved);
   return HomeScreen({ params });
 }
@@ -301,13 +312,15 @@ export default async function HomePage({ searchParams }: Props) {
  * 아래 구획만 바꾸는 것이라 골격으로 덮지 않는다.
  */
 export async function HomeScreen({ params }: { params: HomeParams }) {
+  const locale = await getRequestLocale();
+  const [t, labels] = await Promise.all([getTranslator(locale, "browse"), getTranslator(locale, "labels")]);
   const query = firstValue(params.q)?.trim().slice(0, 200) || undefined;
   const newOnly = firstValue(params.new) === "1";
   const key = newOnly ? `new|${firstValue(params.page) ?? ""}` : [query, params.category, params.sort, params.builder, params.observedTool, params.ai, params.saved].map((value) => firstValue(value) ?? "").join("|");
   const category = parseCategory(firstValue(params.category));
-  const title = newOnly ? "최근 7일에 생성된 프로젝트" : query ? `“${query}” 검색 결과` : category ? `${categoryLabel(category)} 프로젝트` : undefined;
+  const title = newOnly ? t("new.title") : query ? t("home.searchTitle", { query }) : category ? t("home.categoryTitle", { category: translatedCategory(category, labels) }) : undefined;
   return (
-    <Suspense key={key} fallback={<FeedSkeleton title={title} busy={!newOnly && query ? "찾는 중입니다…" : "불러오는 중입니다…"} />}>
+    <Suspense key={key} fallback={<FeedSkeleton title={title} busy={t(!newOnly && query ? "home.searching" : "home.loading")} label={t("home.projects")} />}>
       <HomeContent params={params} />
     </Suspense>
   );
@@ -315,6 +328,9 @@ export async function HomeScreen({ params }: { params: HomeParams }) {
 
 /** 신규 모두 보기는 일반 최신순·필터와 독립된 목록이다. 기간은 매 요청 서버에서 정한다. */
 async function NewRepositories({ pageParam }: { pageParam: SearchValue }) {
+  const locale = await getRequestLocale();
+  const [t, dictionary] = await Promise.all([getTranslator(locale, "browse"), getDictionary(locale, "browse")]);
+  const count = (n: number) => formatNumber(n, locale);
   const now = new Date();
   const { weekStart, asOf } = completedWindows(now);
   const pageSize = 15;
@@ -336,37 +352,37 @@ async function NewRepositories({ pageParam }: { pageParam: SearchValue }) {
     logger.error("home.new_list_failed", { error });
     failed = true;
   }
-  const href = (next: number) => `/?${new URLSearchParams({ new: "1", page: String(next) })}`;
+  const href = (next: number) => localePath(locale, `/?${new URLSearchParams({ new: "1", page: String(next) })}`);
   return (
-    <main className="wrap">
+    <I18nProvider locale={locale} dictionaries={{ browse: dictionary }}><main className="wrap">
       <section id="new" className="row-section" aria-labelledby="new-title">
         <div className="row-head">
           <div>
-            <h1 id="new-title" className="row-title">최근 7일에 생성된 프로젝트</h1>
-            <p className="row-note">GitHub 저장소 생성일 기준 · 스타 {NEW_THIS_WEEK_MIN_STARS} 이상</p>
-            <p className="row-note">{formatPublicDate(weekStart, now)} 00시부터 {formatPublicDate(asOf, now)} 00시 전까지 KST · 생성일 최신순</p>
-            {!failed && <p className="row-note">스타 기준을 충족한 프로젝트 {formatCount(total)}개 · 홈 상단 신규 집계는 스타 제한 없는 전체 수입니다.</p>}
+            <h1 id="new-title" className="row-title">{t("new.title")}</h1>
+            <p className="row-note">{t("new.note", { stars: count(NEW_THIS_WEEK_MIN_STARS) })}</p>
+            <p className="row-note">{t("new.period", { start: formatDate(weekStart, now, locale), end: formatDate(asOf, now, locale) })}</p>
+            {!failed && <p className="row-note">{t("new.count", { count: count(total) })}</p>}
           </div>
-          <Link prefetch={false} href="/" className="row-more">홈으로</Link>
+          <Link prefetch={false} href={localePath(locale, "/")} className="row-more">{t("nav.home")}</Link>
         </div>
-        {failed ? <p>일시적으로 목록을 불러올 수 없습니다. 잠시 후 다시 시도해주세요.</p>
-          : items.length === 0 ? <p>이 기간에 생성된 스타 {NEW_THIS_WEEK_MIN_STARS} 이상 프로젝트가 없습니다.</p>
+        {failed ? <p>{t("error.list")} {t("error.retry")}</p>
+          : items.length === 0 ? <p>{t("new.empty", { stars: count(NEW_THIS_WEEK_MIN_STARS) })}</p>
             : <div className="compact-grid">{items.map((product, index) => <CompactCard key={product.slug} product={product} trailing="listed" priority={index < 3} headingLevel={2} />)}</div>}
-        {!failed && pages > 1 && <nav className="row-head" aria-label="신규 프로젝트 페이지">
-          {page > 1 && <Link prefetch={false} href={href(page - 1)}>이전</Link>}
-          <span>{page} / {pages}</span>
-          {page < pages && <Link prefetch={false} href={href(page + 1)}>다음</Link>}
+        {!failed && pages > 1 && <nav className="row-head" aria-label={t("new.pages")}>
+          {page > 1 && <Link prefetch={false} href={href(page - 1)}>{t("nav.previous")}</Link>}
+          <span>{count(page)} / {count(pages)}</span>
+          {page < pages && <Link prefetch={false} href={href(page + 1)}>{t("nav.next")}</Link>}
         </nav>}
       </section>
-    </main>
+    </main></I18nProvider>
   );
 }
 
 /** 목록을 찾는 동안 — 카드 9장(첫 쪽 분량)의 골격. 검색·분야면 결과 화면과 같은 제목을 두어 다 찾았을 때 자리가 튀지 않게 */
-function FeedSkeleton({ title, busy }: { title?: string; busy: string }) {
+function FeedSkeleton({ title, busy, label }: { title?: string; busy: string; label: string }) {
   return (
     <main className="wrap">
-      <section id="projects" aria-labelledby={title ? "projects-title" : undefined} aria-label={title ? undefined : "프로젝트 목록"} aria-busy="true" className="feed">
+      <section id="projects" aria-labelledby={title ? "projects-title" : undefined} aria-label={title ? undefined : label} aria-busy="true" className="feed">
         <div className="row-head">
           <div>
             {title ? <h1 id="projects-title" className="row-title">{title}</h1> : <div className="skeleton-line skeleton-title" aria-hidden="true" />}
@@ -391,6 +407,9 @@ function FeedSkeleton({ title, busy }: { title?: string; busy: string }) {
 }
 
 export async function HomeContent({ params }: { params: HomeParams }) {
+  const locale = await getRequestLocale();
+  const [t, labels, dictionary] = await Promise.all([getTranslator(locale, "browse"), getTranslator(locale, "labels"), getDictionary(locale, "browse")]);
+  const count = (n: number) => formatNumber(n, locale);
   if (firstValue(params.new) === "1") return NewRepositories({ pageParam: params.page });
   const sortParam = firstValue(params.sort);
   const query = firstValue(params.q)?.trim().slice(0, 200) || undefined;
@@ -594,10 +613,10 @@ export async function HomeContent({ params }: { params: HomeParams }) {
   const empty = !dbDown && !savedOnly && list.length === 0 && unclaimed.length === 0;
   // 검색어로 0건이면 찾아볼 말을 준다 — 검색 기록에서 여러 번 찾은 말, 모자라면 정해 둔 말(UX-24)
   const suggestions = empty && query
-    ? searchSuggestions(await publicRead("count", ["popular-searches"], () => popularSearches(SUGGESTION_COUNT)).catch(() => []), query)
+    ? searchSuggestions(await publicRead("count", ["popular-searches"], () => popularSearches(SUGGESTION_COUNT)).catch(() => []), query, SUGGESTION_COUNT, [t("suggestion.budget"), t("suggestion.meeting"), t("suggestion.pdf"), t("suggestion.tasks"), t("suggestion.images"), t("suggestion.review")])
     : [];
   const browseCategories = empty && filtered ? chipCategories(counts).filter((item) => item !== category).slice(0, 8) : [];
-  const feedTitle = query ? `“${query}” 검색 결과` : category ? `${categoryLabel(category)} 프로젝트` : "발견할 가치가 있는 프로젝트";
+  const feedTitle = query ? t("home.searchTitle", { query }) : category ? t("home.categoryTitle", { category: translatedCategory(category, labels) }) : t("home.feedTitle");
   // 소개 줄이 없는 검색·분야 화면은 목록 제목이 화면의 제목(h1)이다 — 카드 제목은 그 바로 아래 단계(A11Y-05)
   const FeedTitle = scoped ? "h1" : "h2";
   const cardHeading = scoped ? 2 : 3;
@@ -608,18 +627,18 @@ export async function HomeContent({ params }: { params: HomeParams }) {
   const feedPriority = !filtered && (strip?.items.length ?? 0) > 0 ? 0 : FEED_PRIORITY_TILES;
 
   return (
-    <main className="wrap">
+    <I18nProvider locale={locale} dictionaries={{ browse: dictionary }}><main className="wrap">
       {!scoped && <IntroLine pulse={pulse} total={total} state={state} />}
       {!filtered && (
-        <CompactRow id="rising" priority title={STAR_GROWTH_TITLE} note={<>{starGrowthNote(strip?.snapshot ?? null)} · <Link prefetch={false} href={metricHref(state, "star-growth")} scroll={false}>집계 기준</Link></>}
+        <CompactRow id="rising" priority title={t("growth.title")} note={<>{starGrowthNote(strip?.snapshot ?? null, locale, t)} · <Link prefetch={false} href={metricHref(state, "star-growth", locale)} scroll={false}>{t("nav.methodology")}</Link></>}
           summary={(strip?.items.length ?? 0) === 0 ? <p className="row-note" role="status">{!strip
-            ? "급상승 집계를 불러오지 못했습니다. 잠시 후 다시 확인해 주세요."
+            ? t("growth.unavailable")
             : strip.snapshot.status === "warming"
-              ? "8시간 전 회차의 비교 관측을 준비하고 있습니다. 두 회차가 확보되면 증가량순으로 보여드립니다."
+              ? t("growth.baseline")
               : strip.snapshot.status === "no-results"
-                ? "이번 회차에 표시할 급상승 프로젝트가 없습니다."
-                : "급상승 관측이 지연되고 있습니다. 집계 기준에서 상태를 확인해 주세요."}</p> : undefined}
-          more={{ href: strip ? `/rising?${new URLSearchParams({ cycle: strip.snapshot.asOf })}` : "/rising", label: "모두 보기" }}
+                ? t("growth.empty")
+                : t("growth.delayed")}</p> : undefined}
+          more={{ href: strip ? `/rising?${new URLSearchParams({ cycle: strip.snapshot.asOf })}` : "/rising", label: t("nav.all") }}
           items={strip?.items ?? []} trailing="category" />
       )}
 
@@ -628,13 +647,13 @@ export async function HomeContent({ params }: { params: HomeParams }) {
           <div>
             <FeedTitle id="projects-title" className="row-title">{feedTitle}</FeedTitle>
             {/* 목록이 영어라 한국어 검색어는 영어 낱말로 한 번 더 찾는다. 무엇으로 찾았는지 밝힌다 */}
-            {translatedQuery && <p className="row-note">영어로 “{translatedQuery}”도 함께 찾았습니다.</p>}
+            {translatedQuery && <p className="row-note">{t("home.translatedSearch", { query: translatedQuery })}</p>}
             {effectiveSort === "weekly" && <>
-              <p className="row-note">{starGrowthNote(growth?.snapshot ?? null)} · <Link prefetch={false} href={metricHref(state, "star-growth")} scroll={false}>집계 기준</Link></p>
-              {growth?.snapshot.status === "ready" && <p className="row-note">기준 회차 {formatPublicDateTime(growth.snapshot.asOf, now)} KST · 다음 예정 {formatPublicDateTime(growth.snapshot.nextCycle, now)} KST</p>}
+              <p className="row-note">{starGrowthNote(growth?.snapshot ?? null, locale, t)} · <Link prefetch={false} href={metricHref(state, "star-growth", locale)} scroll={false}>{t("nav.methodology")}</Link></p>
+              {growth?.snapshot.status === "ready" && <p className="row-note">{t("growth.cycle", { asOf: formatDateTime(growth.snapshot.asOf, now, locale), next: formatDateTime(growth.snapshot.nextCycle, now, locale) })}</p>}
             </>}
-            {effectiveSort === "recent" && <p className="row-note">서비스에 등록·검증된 시각 기준 · 검증된 프로젝트를 먼저 표시합니다. GitHub 저장소 생성일과 다릅니다.</p>}
-            {effectiveSort === "all-time" && <p className="row-note">총 GitHub 스타가 많은 순입니다.</p>}
+            {effectiveSort === "recent" && <p className="row-note">{t("home.recentNote")}</p>}
+            {effectiveSort === "all-time" && <p className="row-note">{t("home.starsNote")}</p>}
           </div>
         </div>
 
@@ -652,8 +671,8 @@ export async function HomeContent({ params }: { params: HomeParams }) {
         {dbDown ? (
           <div className="projects-grid">
             <div className="empty-state">
-              <h3>일시적으로 목록을 불러올 수 없습니다</h3>
-              <p>잠시 후 다시 시도해주세요.</p>
+              <h3>{t("error.list")}</h3>
+              <p>{t("error.retry")}</p>
             </div>
           </div>
         ) : effectiveSort === "weekly" && growth?.snapshot.status !== "ready" && growth?.snapshot.reason !== "filtered-out" ? (
@@ -673,6 +692,7 @@ export async function HomeContent({ params }: { params: HomeParams }) {
           />
         ) : (
           <EmptyReason
+            locale={locale} t={t} labels={labels}
             sort={effectiveSort}
             filtered={filtered}
             hasUnclaimed={unclaimed.length > 0}
@@ -685,7 +705,7 @@ export async function HomeContent({ params }: { params: HomeParams }) {
 
         {!savedOnly && unclaimed.length > 0 && (
           <section className="unclaimed-block">
-            <h2>주인을 기다리는 프로젝트</h2>
+            <h2>{t("home.unclaimed")}</h2>
             <div className="mt-3">
               <ProjectGrid now={now.toISOString()} products={unclaimed} browseState={state} totalCount={unclaimedTotal} start={unclaimedStart} />
             </div>
@@ -694,13 +714,13 @@ export async function HomeContent({ params }: { params: HomeParams }) {
       </section>
 
       {!scoped && (
-        <Suspense fallback={<section className="popular-section" id="popular"><h2>많이 쓰이는 프로젝트</h2></section>}>
+        <Suspense fallback={<section className="popular-section" id="popular"><h2>{t("popular.title")}</h2></section>}>
           <PopularTiers personal={firstValue(params.personal) === "1"} />
         </Suspense>
       )}
       {!filtered && (
-        <CompactRow id="new" title="최근 7일에 생성된 프로젝트" note={`GitHub 저장소 생성일 기준 · 스타 ${NEW_THIS_WEEK_MIN_STARS} 이상`}
-          more={{ href: "/?new=1", label: "모두 보기" }} items={fresh} trailing="listed" />
+        <CompactRow id="new" title={t("new.title")} note={t("new.note", { stars: count(NEW_THIS_WEEK_MIN_STARS) })}
+          more={{ href: "/?new=1", label: t("nav.all") }} items={fresh} trailing="listed" />
       )}
       {!scoped && (
         <div className="two-col">
@@ -712,8 +732,8 @@ export async function HomeContent({ params }: { params: HomeParams }) {
       {!query && <LaunchBand />}
 
       <Suspense>
-        <MethodologyDialog pulse={serializePulse(pulse, now)} aiLevels={aiLevelTotals(aiCounts)} starGrowth={growth?.snapshot ?? (filtered ? undefined : strip?.snapshot ?? null)} />
+        <MethodologyDialog pulse={serializePulse(pulse, now, locale)} aiLevels={aiLevelTotals(aiCounts)} starGrowth={growth?.snapshot ?? (filtered ? undefined : strip?.snapshot ?? null)} />
       </Suspense>
-    </main>
+    </main></I18nProvider>
   );
 }

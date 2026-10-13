@@ -1,7 +1,12 @@
+"use client";
+
 import Link from "next/link";
 import type { ProductListItem } from "@/lib/domain/products/view";
-import { formatCount } from "@/lib/format/number";
-import { formatPublicDate } from "@/lib/format/time";
+import { useLocale, useTranslations } from "@/lib/i18n/context";
+import { formatNumber, formatDate } from "@/lib/i18n/format";
+import { localePath } from "@/lib/i18n/routing";
+import { translatedCategory } from "./home/i18n";
+import type { Translator } from "@/lib/i18n/messages";
 import { ProductIcon } from "./ProductIcon";
 import { ProductTagline } from "./ProductTagline";
 import { StatusBadge, BuilderBadge } from "./TrustBadges";
@@ -14,19 +19,22 @@ import { Tag } from "./Tag";
  * page.tsx 안에 있으면 복사해 가게 된다 — 그러면 배지 하나 고칠 때 화면마다 어긋난다.
  */
 /** 며칠째 죽어 있는지 — 어제부터인지 2주째인지는 사용자에게 다른 뜻이다 */
-function downFor(since: Date | null): string {
-  if (!since) return "응답 없음";
+function downFor(since: Date | null, t: Translator<"labels">, count: (n: number) => string): string {
+  if (!since) return t("card.down");
   const days = Math.floor((Date.now() - since.getTime()) / 86_400_000);
-  return days < 1 ? "응답 없음" : `${days}일째 응답 없음`;
+  return days < 1 ? t("card.down") : t("card.downDays", { days: count(days) });
 }
 
 export function ProductCard({ product, rank }: { product: ProductListItem; rank?: number }) {
+  const locale = useLocale();
+  const t = useTranslations("labels");
+  const count = (n: number) => formatNumber(n, locale);
   const { metrics, health } = product;
   const now = new Date();
 
   return (
     <Link prefetch={false}
-      href={`/p/${product.slug}`}
+      href={localePath(locale, `/p/${product.slug}`)}
       className="flex items-center gap-4 border-b border-line bg-bg-card px-5 py-4 transition-colors last:border-b-0 hover:bg-bg-hover"
     >
       {rank !== undefined && (
@@ -42,15 +50,15 @@ export function ProductCard({ product, rank }: { product: ProductListItem; rank?
           <StatusBadge status={product.status} unclaimed={product.unclaimed} />
           {health?.down && (
             <span className="shrink-0 rounded-full border border-down/40 bg-down/10 px-2 py-0.5 text-[13px] font-semibold text-down">
-              {downFor(health.since)}
+              {downFor(health.since, t, count)}
             </span>
           )}
         </div>
         {/* 메이커가 쓴 소개가 없어 모델이 지은 줄은 ProductTagline 이 출처를 밝힌다 */}
         <ProductTagline tagline={product.tagline} source={product.taglineSource} className="mt-0.5 truncate text-[13px] text-fg-2" />
         <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
-          <Tag>{product.category}</Tag>
-          {product.accessMode === "installable" && <Tag>직접 설치</Tag>}
+          <Tag>{translatedCategory(product.category, t)}</Tag>
+          {product.accessMode === "installable" && <Tag>{t("card.installable")}</Tag>}
           {product.aiLevel != null && <Tag>AI</Tag>}
           {product.builder && <BuilderBadge builder={product.builder} claim={product.builderClaim} />}
           {product.stack.slice(0, 4).map((item) => (
@@ -62,7 +70,7 @@ export function ProductCard({ product, rank }: { product: ProductListItem; rank?
       <div className="hidden shrink-0 text-right text-[13px] text-fg-2 sm:block">
         {metrics && metrics.clicks > 0 && (
           <div className="font-mono text-[13px] font-bold text-fg-2">
-            {formatCount(metrics.clicks)}
+            {count(metrics.clicks)}
             {metrics.changePercent !== null && metrics.changePercent !== 0 && (
               <span className={metrics.changePercent > 0 ? "ml-1 text-up" : "ml-1 text-down"}>
                 {metrics.changePercent > 0 ? "▲" : "▼"}
@@ -71,7 +79,7 @@ export function ProductCard({ product, rank }: { product: ProductListItem; rank?
             )}
           </div>
         )}
-        {formatPublicDate(product.listedAt, now)} 등록
+        {t("card.registered", { date: formatDate(product.listedAt, now, locale) })}
       </div>
     </Link>
   );

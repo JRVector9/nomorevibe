@@ -1,7 +1,12 @@
 import Link from "next/link";
 import { seasonLabel } from "@/lib/domain/ranking/season-label";
 import { RANKING_STALE_MS, type SeasonSummary } from "@/lib/domain/ranking/view";
-import { formatPublicDateTime } from "@/lib/format/time";
+import { getTranslator } from "@/lib/i18n/dictionary";
+import { formatNumber, formatDateTime, formatRelativeTime } from "@/lib/i18n/format";
+import type { Locale } from "@/lib/i18n/locales";
+import type { Translator } from "@/lib/i18n/messages";
+import { translatedSeason } from "./home/i18n";
+import { localePath } from "@/lib/i18n/routing";
 
 /**
  * 푸터의 시즌 한 줄.
@@ -11,44 +16,44 @@ import { formatPublicDateTime } from "@/lib/format/time";
  * 것이라 푸터에 둔다. 카드가 아니라 푸터 글자 크기(13px)로 맞춘다.
  * 순위에 오른 제품이 없는 시즌은 슬롯(app/@seasonfooter/page.tsx)이 이 줄을 아예 그리지 않는다(UX-09).
  */
-function remainingTime(endsAt: Date, now: Date): string {
+function remainingTime(endsAt: Date, now: Date, locale: Locale, t: Translator<"browse">): string {
   const milliseconds = endsAt.getTime() - now.getTime();
-  if (milliseconds <= 0) return "경계 처리 대기";
+  if (milliseconds <= 0) return t("season.boundaryPending");
   const hours = Math.ceil(milliseconds / 3_600_000);
-  if (hours < 24) return `${hours}시간 남음`;
-  return `${Math.ceil(hours / 24)}일 남음`;
+  return hours < 24 ? t("season.hoursRemaining", { count: formatNumber(hours,locale) }) : t("season.daysRemaining", { count: formatNumber(Math.ceil(hours/24),locale) });
 }
 
-function snapshotAge(refreshedAt: Date | null, now: Date): string {
-  if (!refreshedAt) return "스냅샷 집계 대기";
-  const age = Math.max(0, now.getTime() - refreshedAt.getTime());
-  const minutes = Math.floor(age / 60_000);
-  const label = minutes < 1 ? "방금" : minutes < 60 ? `${minutes}분 전` : `${Math.floor(minutes / 60)}시간 전`;
-  return `스냅샷 ${label}${age > RANKING_STALE_MS ? " · 오래됨" : ""}`;
+function snapshotAge(refreshedAt: Date | null, now: Date, locale: Locale, t: Translator<"browse">): string {
+  if (!refreshedAt) return t("season.snapshotPending");
+  const age = Math.max(0, now.getTime()-refreshedAt.getTime());
+  return `${t("season.snapshot", { time: formatRelativeTime(refreshedAt,now,locale) })}${age > RANKING_STALE_MS ? ` · ${t("season.stale")}` : ""}`;
 }
 
-export function SeasonFooter({
+export async function SeasonFooter({
   season,
   latestClosed,
   now,
+  locale = "ko",
 }: {
+  locale?: Locale;
   season: SeasonSummary;
   /** 순위에 오른 제품이 있는 지난 시즌만 — 빈 시즌으로는 보내지 않는다 */
   latestClosed: SeasonSummary | null;
   now: Date;
 }) {
+  const t = await getTranslator(locale,"browse");
   return (
     <div className="mb-4 flex flex-wrap items-baseline gap-x-3 gap-y-1 border-b border-line pb-4">
-      <span className="font-bold text-fg">{seasonLabel(season.key)}</span>
+      <span className="font-bold text-fg">{translatedSeason(season.key,seasonLabel(season.key),t)}</span>
       <span className="text-fg-2">
-        {formatPublicDateTime(season.startsAt, now)} – {formatPublicDateTime(season.endsAt, now)}
+        {formatDateTime(season.startsAt,now,locale)} – {formatDateTime(season.endsAt,now,locale)}
       </span>
-      <span className="font-semibold text-accent">{remainingTime(season.endsAt, now)}</span>
-      <span>{snapshotAge(season.refreshedAt, now)}</span>
+      <span className="font-semibold text-accent">{remainingTime(season.endsAt,now,locale,t)}</span>
+      <span>{snapshotAge(season.refreshedAt,now,locale,t)}</span>
       <div className="ml-auto flex gap-3 font-semibold">
-        <Link prefetch={false} href={`/rankings/${season.key}`} className="inline-flex min-h-11 items-center text-accent hover:underline">이번 랭킹 보기</Link>
+        <Link prefetch={false} href={localePath(locale,`/rankings/${season.key}`)} className="inline-flex min-h-11 items-center text-accent hover:underline">{t("season.currentRanking")}</Link>
         {latestClosed && (
-          <Link prefetch={false} href={`/rankings/${latestClosed.key}`} className="inline-flex min-h-11 items-center text-fg-2 hover:text-fg">지난 시즌</Link>
+          <Link prefetch={false} href={localePath(locale,`/rankings/${latestClosed.key}`)} className="inline-flex min-h-11 items-center text-fg-2 hover:text-fg">{t("season.previous")}</Link>
         )}
       </div>
     </div>

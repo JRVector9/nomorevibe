@@ -4,7 +4,10 @@ import Link from "next/link";
 import { useId, useRef, useState, type KeyboardEvent } from "react";
 import type { RankedCardProduct } from "@/components/home/popular-cards";
 import { RankedCards } from "@/components/home/RankedCards";
-import { formatCount } from "@/lib/format/number";
+import { useLocale, useTranslations } from "@/lib/i18n/context";
+import { formatNumber } from "@/lib/i18n/format";
+import { localePath } from "@/lib/i18n/routing";
+
 
 export type PopularTierGroup = { key: string; label: string; range: string; total: number; href: string; items: RankedCardProduct[] };
 
@@ -15,6 +18,9 @@ export type PopularTierGroup = { key: string; label: string; range: string; tota
  * 화살표·Home·End 로 탭을 옮긴다(WAI-ARIA 탭 패턴).
  */
 export function PopularTierCards({ groups, now }: { groups: PopularTierGroup[]; now: string }) {
+  const locale = useLocale();
+  const t = useTranslations("browse");
+  const count = (n: number) => formatNumber(n, locale);
   const [current, setCurrent] = useState(0);
   const tabs = useRef<(HTMLButtonElement | null)[]>([]);
   const id = useId();
@@ -37,26 +43,24 @@ export function PopularTierCards({ groups, now }: { groups: PopularTierGroup[]; 
   return (
     <>
       <div className="popular-tier-bar">
-        <div className="tabs" role="tablist" aria-label="스타 구간" onKeyDown={onKeyDown}>
+        <div className="tabs" role="tablist" aria-label={t("popular.tiers")} onKeyDown={onKeyDown}>
           {groups.map((tier, index) => (
             <button key={tier.key} ref={(element) => { tabs.current[index] = element; }} type="button" role="tab" id={`${id}-tab-${tier.key}`}
               aria-selected={index === current} aria-controls={`${id}-panel-${tier.key}`} tabIndex={index === current ? 0 : -1}
               className={`tab${index === current ? " active" : ""}`} onClick={() => setCurrent(index)}>
-              {tier.label} <span className="tab-count">{formatCount(tier.total)}</span>
+              {tier.label} <span className="tab-count">{count(tier.total)}</span>
             </button>
           ))}
         </div>
-        <Link prefetch={false} className="row-more" href={group.href}>{moreLabel(group)}</Link>
+        <Link prefetch={false} className="row-more" href={localePath(locale, group.href)}>{t("popular.more", { tier: group.label, count: count(group.total) })}</Link>
       </div>
       {groups.map((tier, index) => (
         <div key={tier.key} role="tabpanel" id={`${id}-panel-${tier.key}`} aria-labelledby={`${id}-tab-${tier.key}`} hidden={index !== current}
           className="popular-tier-panel">
-          <p className="row-note">★ {tier.range} · 스타 많은 순</p>
-          {tier.items.length ? <RankedCards items={tier.items} now={now} /> : <p className="popular-empty">아직 없음</p>}
+          <p className="row-note">★ {tier.range} · {t("popular.stars")}</p>
+          {tier.items.length ? <RankedCards items={tier.items} now={now} /> : <p className="popular-empty">{t("popular.empty")}</p>}
         </div>
       ))}
     </>
   );
 }
-
-const moreLabel = (group: PopularTierGroup) => `${group.label} ${formatCount(group.total)}개 모두 보기 ›`;
