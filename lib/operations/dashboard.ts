@@ -77,8 +77,9 @@ export type AttentionCounts = {
     states: Record<"ok" | "not_found" | "empty" | "blocked" | "archived" | "renamed", { total: number; new24h: number }>;
   };
   /**
-   * 2단계 확인(product-repo-review) — 저장소가 사라진 공개 웹사이트. pending 은 아직 AI 가 안 본 것,
-   * delistCandidates·human 은 운영자를 기다리는 것(repoReviewOpen), kept 는 AI 가 그대로 둔 것.
+   * 2단계 확인(product-repo-review) — 저장소가 사라진 공개 제품. pending 은 아직 잡이 안 본 것,
+   * delistCandidates·human 은 운영자를 기다리는 것(repoReviewOpen), kept 는 저장소가 다시 열려 그대로 둔 것.
+   * 잡이 스스로 내린 것은 공개가 아니라 여기서 빠진다.
    * oldestHours 는 안 본 것·기다리는 것 중 사라졌다고 확정된 뒤(repo_missing_since + 24시간) 가장 오래된 것
    */
   repoReview: { pending: number; delistCandidates: number; human: number; kept: number; oldestHours: number | null };
@@ -391,7 +392,7 @@ export async function attentionCounts(now = new Date()): Promise<AttentionCounts
         (max(extract(epoch FROM ${at(now)} - (${products.repoMissingSince} + interval '24 hours')))
           FILTER (WHERE ${productRepoReviews.productId} IS NULL OR ${repoReviewOpen}) / 3600)::float8 AS oldest_hours
       FROM ${products} LEFT JOIN ${productRepoReviews} ON ${productRepoReviews.productId} = ${products.id}
-      WHERE ${products.status} IN ('seeded', 'verified') AND ${products.accessMode} = 'website' AND ${repoGone}
+      WHERE ${products.status} IN ('seeded', 'verified') AND ${repoGone}
     `),
   ]);
   // 한 바퀴를 재확인 간격 안에 돌려면 시간당 몇 건을 봐야 하나 — 제품이 늘면 목표도 는다(고정값 3,224 는 1만9천 개 때 것)

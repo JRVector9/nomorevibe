@@ -1,36 +1,33 @@
 import type { JobContext, JobOutcome } from "@/lib/jobs/runner";
 import { fetchPage, readBodyCapped, safeFetch } from "@/lib/net/fetch";
 import { extractPageMeta, extractTextSample, metaRefreshTarget } from "@/lib/net/normalize";
-import { askRepoReview, decideFromAnswers, preFilter, REPO_REVIEW_MODEL, type RepoReviewPage } from "@/lib/domain/products/repo-review";
-import { dueRepoReviews, saveRepoReview, type RepoReviewTarget } from "@/lib/domain/products/repo-reviews";
+import { extractGithubLinks } from "@/lib/crawl/github-links";
+import { classifyRepoResponse, decideGoneRepository, relatedRepositoryLinks, repositoryKey, type RepoCheck,
+  type RepoReviewPage } from "@/lib/domain/products/repo-review";
+import { delistGoneRepository, dueRepoReviews, MAX_REPO_GONE_DELISTS_PER_DAY, repoGoneDelistsLastDay, saveRepoReview,
+  type RepoReviewRecord, type RepoReviewTarget } from "@/lib/domain/products/repo-reviews";
 
 /**
- * 저장소가 사라졌거나 빈 웹사이트 제품을 다시 본다 — 사이트가 아직 그 제품인가(repo-review.ts).
+ * 저장소가 사라진 공개 제품을 다시 본다 — github.com 을 지금 열어 정말 없으면 내린다(repo-review.ts).
  *
- * text 워커에서 돈다 — 게이트웨이 키(ABCLLM_API_KEY)가 있는 역할이고, 키워드 검수와 같은 Qwen3.8 을 쓴다.
- * 5분마다 8건까지, 셋씩 동시에. 한 건은 페이지 열기(10초 상한) + 모델 한 번(시험 중앙값 0.8초)이다.
- * 저장소가 사라진 웹사이트는 2026-10-08 공개 3만7천 개 중 4% 남짓(약 1,400개)으로 보여 처음 채우는 데 하루쯤,
- * 그 뒤로는 새로 사라진 것과 다시 볼 때가 된 것만 본다.
- *
- * 답이 깨지면 한 번 더 묻고, 또 깨지면 사람에게 넘긴다(human · invalid_output). 게이트웨이가 막힌 것(키 없음·시간 초과·
- * 연결·5xx)은 제품의 문제가 아니라 적지 않는다 — 잇따라 둘이 막히면 이번 틱을 접는다.
- * 아무것도 가리지 않는다. 판정만 적고, 운영자가 어드민 '저장소 사라짐'에서 유지·내리기를 고른다.
+ * text 워커에서 5분마다 8건까지, 셋씩 동시에. 한 건은 github.com 한 번, 저장소가 없으면 제품 페이지 한 번과
+ * 같은 프로젝트로 보이는 링크 최대 셋이다. GitHub 로그인은 쓰지 않는다 — 공개 페이지가 열리는지만 본다(비공개도 404).
+ * github.com 이 막히면(429·5xx·연결 실패) 그 제품은 적지 않고 다음 틱에 다시 본다 — 잇따라 둘이 막히면 이번 틱을 접는다.
+ * 내리는 것은 하루 MAX_REPO_GONE_DELISTS_PER_DAY 건까지다. 넘으면 내릴 후보로 적어 운영자에게 넘긴다.
  */
 const BATCH = 8;
 const CONCURRENCY = 3;
 /** 틱 예산(worker.ts jobRunOptions 55초)보다 조금 짧게 */
 const TICK_MS = 50_000;
-/** 페이지 열기(10초)와 모델 한 번을 끝낼 시간이 남았을 때만 새 건을 시작한다 */
+/** 페이지 열기(10초)와 github.com 몇 번을 끝낼 시간이 남았을 때만 새 건을 시작한다 */
 const MIN_START_MS = 25_000;
-const CALL_MS = 15_000;
 const PAGE_BYTES = 256 * 1024;
 const EXCERPT_CHARS = 500;
-const GATEWAY_DOWN = new Set(["no_key", "model_unavailable", "rate_limit", "timeout", "network"]);
 
 /** 생존 확인(uptime.ts)과 같은 규칙으로 연다 — 같은 SSRF 가드, meta refresh 한 번 따라가기, 256KB 까지 */
 export async function openProductPage(url: string): Promise<RepoReviewPage> {
   const fetched = await safeFetch(url, "background");
-  if (!fetched) return { status: 0, finalUrl: null, title: "", text: "" };
+  if (!fetched) return { status: 0, finalUrl: null, title: "", text: "", githubLinks: [] };
   const status = fetched.response.status;
   try {
     let html = (await readBodyCapped(fetched.response, PAGE_BYTES)).toString("utf-8");
@@ -40,20 +37,25 @@ export async function openProductPage(url: string): Promise<RepoReviewPage> {
       const next = await fetchPage(hop, "background");
       if (next) { html = next.html; finalUrl = next.finalUrl; }
     }
-    return { status, finalUrl, title: extractPageMeta(html, finalUrl).title ?? "", text: extractTextSample(html) ?? "" };
+    return { status, finalUrl, title: extractPageMeta(html, finalUrl).title ?? "", text: extractTextSample(html) ?? "",
+      githubLinks: extractGithubLinks(html, finalUrl) };
   } catch {
-    // 본문을 못 읽어도 응답 코드는 안다 — 글이 없는 페이지로 본다(거르기가 사람에게 넘긴다)
-    return { status, finalUrl: fetched.finalUrl, title: "", text: "" };
+    // 본문을 못 읽어도 응답 코드는 안다 — 링크가 없는 페이지로 본다
+    return { status, finalUrl: fetched.finalUrl, title: "", text: "", githubLinks: [] };
   }
 }
 
-type Dependencies = { openPage?: (url: string) => Promise<RepoReviewPage>; request?: typeof fetch };
+/** github.com/owner/repo 를 로그인 없이 연다 — 이름을 바꾼 저장소는 새 주소로 넘어간다(safeFetch 가 따라간다) */
+export async function checkGithubRepository(key: string): Promise<RepoCheck> {
+  const fetched = await safeFetch(`https://github.com/${key}`, "background");
+  if (!fetched) return { state: "unknown" };
+  await fetched.response.body?.cancel().catch(() => {});
+  return classifyRepoResponse(key, fetched.response.status, fetched.finalUrl);
+}
+
+type Dependencies = { openPage?: (url: string) => Promise<RepoReviewPage>; checkRepo?: (key: string) => Promise<RepoCheck> };
 
 export async function reviewGoneRepositories(ctx: JobContext<null>, dependencies: Dependencies = {}): Promise<JobOutcome<null>> {
-  if (!process.env.ABCLLM_API_KEY?.trim()) {
-    ctx.log("repo_review.skipped", { reason: "no_key" });
-    return { done: true };
-  }
   const startedAt = Date.now();
   const remaining = () => TICK_MS - (Date.now() - startedAt);
   const targets = await dueRepoReviews(BATCH);
@@ -62,37 +64,55 @@ export async function reviewGoneRepositories(ctx: JobContext<null>, dependencies
     return { done: true };
   }
   const openPage = dependencies.openPage ?? openProductPage;
-  const counts = { keep: 0, delist_candidate: 0, human: 0, prefiltered: 0, invalid: 0, gatewayFailed: 0 };
-  let blocked = "", inARow = 0, next = 0;
+  const checkRepo = dependencies.checkRepo ?? checkGithubRepository;
+  let delistsLeft = Math.max(0, MAX_REPO_GONE_DELISTS_PER_DAY - await repoGoneDelistsLastDay());
+  const counts = { keep: 0, human: 0, delist_candidate: 0, delisted: 0, capped: 0, unknown: 0 };
+  let blocked = false, inARow = 0, next = 0;
   // 쓰기는 한 번에 하나 — text 워커의 DB 풀(3)에 러너 임대 갱신 몫을 남긴다(uptime.ts 와 같은 까닭)
   let writing: Promise<unknown> = Promise.resolve();
-  const oneAtATime = (write: () => Promise<void>) => {
+  const oneAtATime = <T,>(write: () => Promise<T>) => {
     const run = writing.then(write);
     writing = run.catch(() => {});
     return run;
   };
+  /** github.com 이 답하지 않았다 — 적지 않고 다음 틱에. 잇따라 둘이면 이번 틱을 접는다 */
+  const unknown = () => { counts.unknown++; if (++inARow >= 2) blocked = true; };
 
   const review = async (target: RepoReviewTarget) => {
+    const repo = repositoryKey(target.repoUrl);
+    const record = (decision: RepoReviewRecord["decision"], reason: string, page: RepoReviewPage | null, note: string | null): RepoReviewRecord => ({
+      productId: target.id, decision, reason, answers: null, model: null, pageHttpStatus: page?.status ?? null, finalUrl: page?.finalUrl ?? null,
+      pageTitle: page?.title || null, pageExcerpt: note ?? (page?.text ? page.text.slice(0, EXCERPT_CHARS) : null),
+    });
+    const save = (value: RepoReviewRecord) => oneAtATime(() => saveRepoReview(value, ctx.lease)).then(() => { counts[value.decision]++; });
+    // 하루 확인(stars-refresh)은 github.com/owner/repo 꼴만 묻는다 — 그 밖의 주소는 사라졌다고 판정될 일이 없다
+    if (!repo) return save(record("human", "repo_unparsable", null, target.repoUrl));
+
+    const own = await checkRepo(repo);
+    if (own.state === "unknown") return unknown();
+    inARow = 0;
+    if (own.state === "alive") return save(record("keep", "repo_alive", null, null));
+    if (own.state === "moved") return save(record("human", "repo_moved", null, `github.com/${own.to}`));
+
     const page = await openPage(target.url);
-    const save = (decision: "keep" | "delist_candidate" | "human", reason: string, answers: Parameters<typeof decideFromAnswers>[0] | null) =>
-      oneAtATime(() => saveRepoReview({ productId: target.id, decision, reason, answers, model: answers || reason === "invalid_output" ? REPO_REVIEW_MODEL : null,
-        pageHttpStatus: page.status, finalUrl: page.finalUrl, pageTitle: page.title || null,
-        pageExcerpt: page.text ? page.text.slice(0, EXCERPT_CHARS) : null }, ctx.lease)).then(() => { counts[decision]++; });
-    const filtered = preFilter(target, page, { downSince: target.downSince });
-    if (filtered) { counts.prefiltered++; return save(filtered.decision, filtered.reason, null); }
-    for (let attempt = 0; attempt < 2; attempt++) {
+    const related: { key: string; check: RepoCheck }[] = [];
+    for (const key of relatedRepositoryLinks({ repo, name: target.name, url: target.url, renamedTo: target.renamedTo }, page)) {
       if (blocked || ctx.signal?.aborted) return;
-      const asked = await askRepoReview(target, page, { timeoutMs: Math.max(1_000, Math.min(CALL_MS, remaining())),
-        request: dependencies.request, signal: ctx.signal });
-      if (asked.ok) { inARow = 0; return save(decideFromAnswers(asked.answers), "model", asked.answers); }
-      if (asked.error === "invalid_output") { counts.invalid++; continue; }
-      // 게이트웨이가 막혔다 — 이 제품은 적지 않고 다음 틱에 다시 본다
-      counts.gatewayFailed++;
-      if (asked.error === "cancelled") return;
-      if ((GATEWAY_DOWN.has(asked.error) || asked.error.startsWith("http_5")) && ++inARow >= 2) blocked = asked.error;
-      return;
+      const check = await checkRepo(key);
+      if (check.state === "unknown") return unknown();
+      related.push({ key, check });
     }
-    return save("human", "invalid_output", null);
+    const decided = decideGoneRepository(related);
+    if (!decided) return;
+    if (decided.decision !== "delist_candidate") return save(record(decided.decision, decided.reason, page, decided.note));
+    // 운영자가 전에 '유지'를 골랐거나 하루 한도를 넘었으면 내리지 않고 운영자에게
+    if (target.operatorDecision === "keep" || delistsLeft <= 0) {
+      if (delistsLeft <= 0) counts.capped++;
+      return save(record("delist_candidate", "repo_gone", page, null));
+    }
+    delistsLeft--;
+    const delisted = await oneAtATime(() => delistGoneRepository({ ...record("delist_candidate", "repo_gone", page, null), slug: target.slug }, ctx.lease));
+    if (delisted) counts.delisted++;
   };
 
   const settled = await Promise.allSettled(Array.from({ length: CONCURRENCY }, async () => {
@@ -104,9 +124,10 @@ export async function reviewGoneRepositories(ctx: JobContext<null>, dependencies
   const failure = settled.find((item) => item.status === "rejected");
   if (failure) throw failure.reason;
   if (blocked) {
-    ctx.log("repo_review.blocked", { error: blocked, ...counts });
+    ctx.log("repo_review.blocked", { error: "github_unavailable", ...counts });
     return { done: true };
   }
+  if (counts.capped) ctx.log("repo_review.capped", { limit: MAX_REPO_GONE_DELISTS_PER_DAY, ...counts });
   ctx.log("repo_review.reviewed", counts);
   return { done: targets.length < BATCH };
 }
