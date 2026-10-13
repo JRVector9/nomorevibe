@@ -9,7 +9,7 @@ import { listProducts, SPAM_AUTO_BAN_ACTOR, SPAM_AUTO_BAN_REASON } from "@/lib/d
 import { takedownSummary } from "@/lib/domain/products/takedown";
 import { attentionCounts } from "@/lib/operations/dashboard";
 import { loadInbox, type InboxSnapshot } from "@/lib/operations/inbox";
-import { PRODUCT_FILTERS, type ProductFilterName } from "@/app/admin/products/filters";
+import { PRODUCT_FILTERS, type ProductFilterName } from "@/app/(operator)/admin/products/filters";
 import { ensureSchema, resetTables } from "./setup";
 
 /**

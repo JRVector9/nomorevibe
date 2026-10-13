@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
-import { AdminNav, countBadge, NAV_GROUPS } from '@/app/admin/AdminNav';
+import { AdminNav, countBadge, NAV_GROUPS } from '@/app/(operator)/admin/AdminNav';
 
 describe('shared administrator navigation', () => {
   it('keeps feedback moderation and the selected page visible', () => {

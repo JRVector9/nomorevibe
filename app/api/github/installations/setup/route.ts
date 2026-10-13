@@ -15,7 +15,11 @@ export async function GET(request: Request) {
     const id = url.searchParams.get("installation_id"), action = url.searchParams.get("setup_action") ?? undefined;
     if (action !== "request" && (!id || !/^[1-9]\d*$/.test(id))) throw new GithubInstallationError(400, "github_invalid_request");
     const result = await completeMakerGithubInstallation({ state: url.searchParams.get("state") ?? "", actorUserId: session.user.id, browserNonce: requestCookie(request, GITHUB_NONCE_COOKIE) ?? "", sessionTokenHash: hashSessionToken(requestCookie(request, PUBLIC_SESSION_COOKIE)!), installationId: id ? Number(id) : undefined, setupAction: action });
-    const response = NextResponse.redirect(new URL(`/p/${encodeURIComponent(result.slug)}/github?${result.status === "pending" ? "pending" : "connected"}=1`, feedbackOAuthConfig().origin));
+    const target = new URL(result.returnTo, feedbackOAuthConfig().origin);
+    target.searchParams.delete("pending");
+    target.searchParams.delete("connected");
+    target.searchParams.set(result.status === "pending" ? "pending" : "connected", "1");
+    const response = NextResponse.redirect(target);
     for (const [name, value] of Object.entries(PUBLIC_PRIVATE_HEADERS)) response.headers.set(name, value);
     response.headers.set("Referrer-Policy", "no-referrer");
     response.cookies.set(GITHUB_NONCE_COOKIE, "", { ...githubNonceCookieOptions(), maxAge: 0 });

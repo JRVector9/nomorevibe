@@ -1,14 +1,15 @@
 import { and, eq, sql } from "drizzle-orm";
 import { db, onPrimary } from "@/lib/db";
 import { textTranslations } from "@/lib/db/schema";
-import { GLOSSARY_VERSION, glossaryHints, QUERY_PROMPT_VERSION, queryExpansions, queryTranslationPhrases, textHash, TRANSLATE_MODEL,
-  translateQueryToEnglish } from "@/lib/crawl/translate";
+import { CHINESE_QUERY_PROMPT_VERSION, GLOSSARY_VERSION, glossaryHints, QUERY_PROMPT_VERSION, queryExpansions, queryTranslationPhrases, textHash, TRANSLATE_MODEL,
+  translateChineseQueryToEnglish, translateQueryToEnglish } from "@/lib/crawl/translate";
+import { isLocale, type Locale } from "@/lib/i18n/locales";
 import { recordTranslations } from "@/lib/crawl/translations";
 import { logger } from "@/lib/observability/logger";
 import { planTerms, RELAX_MIN_TERMS, type SearchPlan, type SearchQuery } from "./search";
 
 /**
- * 한국어 검색어를 영어 낱말로 바꿔 한 번 더 찾는다.
+ * 한국어·확실한 중국어 검색어를 영어 낱말로 바꿔 같은 제품 색인에서 한 번 더 찾는다.
  *
  * 목록은 영어다 — 소개의 62%가 ASCII 뿐이고 한글이 든 것은 3%뿐이다(2026-09-18 프로드).
  * 그래서 "PDF 합치는 도구"·"코드 리뷰 자동화"·"회의록 요약"·"사진 배경 제거"가 모두 0건이었다.
@@ -42,15 +43,26 @@ export function normalizeQuery(query: string): string {
 }
 
 /**
- * 번역 캐시의 열쇠 — 지시문 판이 들어 있어, 판을 올리면 옛 지시문으로 옮긴 말을 다시 쓰지 않는다.
+ * 번역 캐시의 열쇠 — 입력 언어·목적 언어·정책/지시문 판이 들어 있어 방향이나 규칙이 다른 결과를 섞지 않는다.
  * 용어표 낱말이 든 질의만 용어표 판도 넣는다 — 용어표를 바꿔도 다른 질의의 번역은 그대로 쓴다.
  */
-export function queryTranslationKey(query: string): string {
-  const glossary = glossaryHints(normalizeQuery(query)) ? `g${GLOSSARY_VERSION}` : "";
-  return textHash(`q${QUERY_PROMPT_VERSION}${glossary}:${normalizeQuery(query)}`);
+export function queryTranslationKey(query: string, targetLocale: Locale = "en"): string {
+  if (!isLocale(targetLocale)) throw new Error("Invalid search translation target");
+  const sourceLocale = searchQuerySourceLocale(query);
+  const glossary = sourceLocale === "ko" && glossaryHints(normalizeQuery(query)) ? GLOSSARY_VERSION : null;
+  const prompt = sourceLocale === "ko" ? QUERY_PROMPT_VERSION : CHINESE_QUERY_PROMPT_VERSION;
+  return textHash(JSON.stringify(["search-keywords-v3", sourceLocale, targetLocale, prompt, glossary, normalizeQuery(query)]));
 }
 
-const hasHangul = (text: string) => /[가-힣]/.test(text);
+/** Input evidence, never the UI locale. Generic Han and Japanese without kana stay unknown. */
+export function searchQuerySourceLocale(text: string): "ko" | "zh-Hans" | "zh-Hant" | null {
+  if (/[가-힣]/.test(text)) return "ko";
+  if (/[぀-ヿ]/u.test(text)) return null;
+  // These software constructions are Mandarin; shared Han nouns such as 工具/筆記 alone are ambiguous.
+  const simplified = /软件|代码|数据库|文件夹|浏览器|网页|导出|开源|人工智能|图像识别|语音识别|自动化/.test(text);
+  const traditional = /軟體|程式碼|資料庫|資料夾|瀏覽器|網頁|匯出|開源|人工智慧|圖像辨識|語音辨識/.test(text);
+  return simplified && !traditional ? "zh-Hans" : traditional && !simplified ? "zh-Hant" : null;
+}
 
 async function cachedTranslation(hash: string): Promise<string | null> {
   const [row] = await db
@@ -96,13 +108,16 @@ export async function planSearch(texts: readonly string[]): Promise<SearchPlan> 
  * 번역을 붙이자 3위였다. 한국어 정답 질의 26개 중 나머지는 순위가 같았다. 옮긴 말은 캐시에 남아 처음 한 번만
  * 게이트웨이를 부른다(지금 1.4~1.7초).
  */
-async function translateKorean(raw: string): Promise<string | null> {
+async function translateDetectedQuery(raw: string): Promise<string | null> {
+  const sourceLocale = searchQuerySourceLocale(raw);
+  if (!sourceLocale) return null;
   try {
     const hash = queryTranslationKey(raw);
     const cached = await cachedTranslation(hash);
     if (cached) return cached;
 
-    const result = await translateQueryToEnglish(raw, TIMEOUT_MS);
+    const result = sourceLocale === "ko" ? await translateQueryToEnglish(raw, TIMEOUT_MS)
+      : await translateChineseQueryToEnglish(raw, sourceLocale, TIMEOUT_MS);
     // 관련도순 검색은 0건이면 공개 읽기(복제본) 안에서 번역을 기다린다 — 기록은 쓰기라 늘 주 DB 로 보낸다.
     // 복제본에서 쓰면 25006 으로 실패하고, 아래 catch 가 받아 온 번역까지 버렸다
     await onPrimary(() => recordTranslations(
@@ -130,7 +145,7 @@ async function translateKorean(raw: string): Promise<string | null> {
  */
 export async function warmQueryTranslation(query: string): Promise<void> {
   const raw = query.trim();
-  if (raw && hasHangul(raw)) await translateKorean(raw);
+  if (raw && searchQuerySourceLocale(raw)) await translateDetectedQuery(raw);
 }
 
 /** 캐시에만 묻는다 — 없으면 null. 캐시가 죽어도 검색은 돈다 */
@@ -147,10 +162,11 @@ export async function resolveSearchQuery(query: string | undefined, options: { w
   const raw = query?.trim() ?? "";
   if (!raw) return { queries: [], translated: null };
   const wait = options.waitForTranslation ?? true;
-  const stored = !hasHangul(raw) ? null : wait ? await translateKorean(raw) : await storedTranslation(raw);
-  const translationPending = !wait && hasHangul(raw) && stored === null;
+  const sourceLocale = searchQuerySourceLocale(raw);
+  const stored = !sourceLocale ? null : wait ? await translateDetectedQuery(raw) : await storedTranslation(raw);
+  const translationPending = !wait && sourceLocale !== null && stored === null;
   // 영어로 옮기면 엉뚱한 것이 걸리는 한국식 영어는 정해 둔 영어 말로도 찾는다(translate.ts QUERY_EXPANSIONS)
-  const phrases = [...new Set([...(stored ? queryTranslationPhrases(stored) : []), ...queryExpansions(raw)])];
+  const phrases = [...new Set([...(stored ? queryTranslationPhrases(stored) : []), ...(sourceLocale === "ko" ? queryExpansions(raw) : [])])];
   const translated = phrases.length ? phrases.join(" / ") : null;
   const texts = [raw, ...phrases];
   const pending = translationPending ? { translationPending } : {};

@@ -1,4 +1,6 @@
 import type { NextConfig } from "next";
+import { LOCALES } from "./lib/i18n/locales";
+import { localePath } from "./lib/i18n/routing";
 
 const nextConfig: NextConfig = {
   // Docker/Dokploy 배포용 — .next/standalone만 복사해도 동작하게
@@ -37,31 +39,41 @@ const nextConfig: NextConfig = {
      * 관리자(쿠키)·검색(q, 응답 뒤 검색 기록을 남긴다)은 저장하지 않는다.
      */
     const edge = (seconds: number) => ({
-      missing: [{ type: "cookie" as const, key: "nmv_admin" }, { type: "query" as const, key: "q" }],
+      missing: [{ type: "cookie" as const, key: "nmv_admin" }, { type: "cookie" as const, key: "nmv_user" },
+        { type: "cookie" as const, key: "nmv_login_nonce" }, { type: "query" as const, key: "q" }],
       headers: [{ key: "Cloudflare-CDN-Cache-Control", value: `max-age=${seconds}, stale-while-revalidate=60, stale-if-error=3600` }],
     });
+    const pages = [
+      { path: "/", tags: "html,lists", seconds: 60 },
+      { path: "/c/:category", tags: "html,lists", seconds: 60 },
+      { path: "/popular", tags: "html,lists", seconds: 60 },
+      { path: "/rising", tags: "html,lists", seconds: 60 },
+      { path: "/policy", tags: "html", seconds: 600 },
+      { path: "/launch", tags: "html", seconds: 600 },
+      { path: "/rankings/:key", tags: "html,lists", seconds: 60 },
+      { path: "/p/:slug", tags: "html,p-:slug", seconds: 240 },
+    ];
+    const localized = LOCALES.flatMap((locale) => pages.flatMap((page) => [
+      { source: localePath(locale, page.path), headers: tag(page.tags) },
+      { source: localePath(locale, page.path), ...edge(page.seconds) },
+    ]));
+    const noStore = [{ key: "Cloudflare-CDN-Cache-Control", value: "no-store" }];
     return [
-      { source: "/", headers: tag("html,lists") },
-      // 분야 주소(/c/[category], UX-40)는 홈 목록과 같은 화면이다 — 같은 태그·같은 시간
-      { source: "/c/:category", headers: tag("html,lists") },
-      { source: "/popular", headers: tag("html,lists") },
-      { source: "/policy", headers: tag("html") },
-      { source: "/launch", headers: tag("html") },
-      { source: "/rankings/:key", headers: tag("html,lists") },
-      { source: "/p/:slug", headers: tag("html,p-:slug") },
-      // sitemap 은 상세 주소 목록이다 — 제품이 내려가면 목록 화면과 함께 지운다
+      ...localized,
+      // Every language shares p-<slug>/lists; one purge removes all localized HTML/RSC copies.
       { source: "/sitemap.xml", headers: tag("html,lists") },
-      { source: "/", ...edge(60) },
-      { source: "/c/:category", ...edge(60) },
-      { source: "/popular", ...edge(60) },
-      // 게재 기준은 글이 거의 바뀌지 않는다 — 배포 뒤에는 html 태그로 지운다
-      { source: "/policy", ...edge(600) },
-      // 등록 안내도 명령과 글뿐이라 거의 바뀌지 않는다(PERF-05) — 게재 기준과 같이 10분, 배포 뒤 html 태그로 지운다
-      { source: "/launch", ...edge(600) },
-      // 검색엔진만 읽고 서버 안에서도 제품 목록을 10분 들고 있다(app/sitemap.ts) — 한 시간 저장한다(SEO-07)
+      { source: "/sitemaps/:locale/:file", headers: tag("html,lists") },
       { source: "/sitemap.xml", ...edge(3600) },
-      { source: "/rankings/:key", ...edge(60) },
-      { source: "/p/:slug", ...edge(240) },
+      { source: "/sitemaps/:locale/:file", ...edge(600) },
+      ...LOCALES.flatMap((locale) => [
+        { source: localePath(locale, "/login"), headers: noStore },
+        { source: localePath(locale, "/feedback/:id"), headers: noStore },
+        { source: localePath(locale, "/p/:slug/github"), headers: [...tag("html,p-:slug"), ...noStore] },
+      ]),
+      ...["nmv_admin", "nmv_user", "nmv_login_nonce"].map((key) => ({
+        source: "/:path*", has: [{ type: "cookie" as const, key }], headers: noStore,
+      })),
+      { source: "/:path*", has: [{ type: "query" as const, key: "q" }], headers: noStore },
     ];
   },
 };

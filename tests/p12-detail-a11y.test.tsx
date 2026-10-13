@@ -5,6 +5,8 @@ import { FactsStrip } from "@/components/product-detail/FactsStrip";
 import { IntroSection } from "@/components/product-detail/IntroSection";
 import { UnclaimedOwnerContact } from "@/components/product-detail/UnclaimedOwnerContact";
 import { englishLang, ProductTagline } from "@/components/ProductTagline";
+import { detail as detailKorean } from "@/messages/ko/detail";
+import { INTRO_REQUEST_RECEIVED, TAKEDOWN_RECEIVED } from "@/lib/domain/products/takedown-view";
 import type { ProductDetailView } from "@/lib/domain/products/detail-view";
 
 const product: ProductDetailView["product"] = {
@@ -74,9 +76,11 @@ describe("요청 폼(A11Y-01·A11Y-03)", () => {
   });
 
   it("오류는 alert, 접수는 status 로 알린다", () => {
-    const source = readFileSync("app/p/[slug]/TakedownForm.tsx", "utf8");
+    const source = readFileSync("app/(public)/[locale]/(content)/p/[slug]/TakedownForm.tsx", "utf8");
     expect(source).toMatch(/<p role="alert"[^>]*>\{error\}<\/p>/);
-    expect(source).toMatch(/<p role="status"[^>]*>\s*\{intro \? INTRO_REQUEST_RECEIVED : TAKEDOWN_RECEIVED\}/);
+    expect(source).toMatch(/<p role="status"[^>]*>\s*\{intro \? t\("request\.introReceived"\) : t\("request\.received"\)\}/);
+    expect(detailKorean["request.introReceived"]).toBe(INTRO_REQUEST_RECEIVED);
+    expect(detailKorean["request.received"]).toBe(TAKEDOWN_RECEIVED);
   });
 
   it("상자·폼의 글 속 링크는 밑줄이 늘 있다", () => {
@@ -89,7 +93,7 @@ describe("요청 폼(A11Y-01·A11Y-03)", () => {
 describe("영어 원문 표시(A11Y-06)", () => {
   it("한글이 없고 거의 영문 알파벳이면 en, 아니면 표시하지 않는다", () => {
     expect(englishLang("Infisical is the all-in-one identity security platform.")).toBe("en");
-    expect(englishLang("Next.js 16 + Supabase starter")).toBe("en");
+    expect(englishLang("Next.js 16 + Supabase starter")).toBeUndefined();
     expect(englishLang("한국어 소개입니다")).toBeUndefined();
     expect(englishLang("Claude Code로 만든 도구")).toBeUndefined();
     expect(englishLang("日本語のツール")).toBeUndefined();
@@ -103,18 +107,18 @@ describe("영어 원문 표시(A11Y-06)", () => {
     const only = renderToStaticMarkup(<ProductTagline tagline={product.tagline} original="toggle" />);
     expect(only).toMatch(/<p [^>]*lang="en"[^>]*>Infisical is/);
     const both = renderToStaticMarkup(<ProductTagline tagline={product.tagline} taglineKo="올인원 신원 보안 플랫폼" original="toggle" />);
-    expect(both).toMatch(/<p(?![^>]*lang=)[^>]*>올인원 신원 보안 플랫폼<\/p>/);
+    expect(both).toMatch(/<p[^>]*lang="ko"[^>]*>올인원 신원 보안 플랫폼<\/p>/);
     expect(both).toMatch(/<details[\s\S]*<p lang="en"[^>]*>Infisical is/);
     const korean = renderToStaticMarkup(<ProductTagline tagline="브라우저에서 HWP 를 엽니다" original="toggle" />);
     expect(korean).not.toContain("lang=");
   });
 
-  it("소개 설명과 README 발췌가 영어면 en, 한국어면 표시 없음", () => {
-    const english = renderToStaticMarkup(<IntroSection product={product} profile={null} readmeExcerpt="Infisical lets teams sync secrets." unclaimed />);
+  it("소개 설명과 README 발췌가 영어면 en, 한국어면 표시 없음", async () => {
+    const english = renderToStaticMarkup(await IntroSection({ product, profile: null, readmeExcerpt: "This tool helps you manage and sync secrets.", unclaimed: true }));
     expect(english).toMatch(/<p lang="en"[^>]*>Open-source secret management/);
     expect(english).toMatch(/<blockquote lang="en"/);
-    const korean = renderToStaticMarkup(<IntroSection product={{ ...product, description: "팀의 비밀값을 관리합니다." }} profile={null}
-      readmeExcerpt="비밀값을 동기화합니다." unclaimed />);
+    const korean = renderToStaticMarkup(await IntroSection({ product: { ...product, description: "팀의 비밀값을 관리합니다." }, profile: null,
+      readmeExcerpt: "비밀값을 동기화합니다.", unclaimed: true }));
     expect(korean).not.toContain("lang=");
   });
 });

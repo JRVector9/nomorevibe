@@ -1,3 +1,8 @@
+import type { Locale } from "@/lib/i18n/locales";
+import type { Translator } from "@/lib/i18n/messages";
+import { localePath } from "@/lib/i18n/routing";
+import { formatNumber } from "@/lib/i18n/format";
+import { translatedCategory } from "./i18n";
 import { pageTitle } from "@/lib/copy/brand";
 import { formatApprox, formatCount } from "@/lib/format/number";
 import { CATEGORIES, type Category } from "@/lib/domain/products/categories";
@@ -67,7 +72,7 @@ export function parseCategory(value: string | null | undefined): Category | null
 }
 
 /** 지금 상태에서 한 가지만 바꾼 주소 — 필터를 겹쳐 걸 수 있어야 한다. 분야가 있으면 /c/<분야> 아래로 간다 */
-export function hrefWith(state: BrowseState, patch: Partial<BrowseState> = {}): string {
+export function hrefWith(state: BrowseState, patch: Partial<BrowseState> = {}, locale: Locale = "ko"): string {
   const next = { ...state, ...patch };
   const filterChanged = ["sort", "category", "builder", "observedTool", "ai", "query"].some((key) => key in patch);
   if (filterChanged && patch.shown === undefined) next.shown = undefined;
@@ -80,16 +85,16 @@ export function hrefWith(state: BrowseState, patch: Partial<BrowseState> = {}): 
   if (next.shown && next.shown > HOME_FIRST_PAGE) params.set("shown", String(next.shown));
   const path = next.category ? `/c/${encodeURIComponent(categorySlug(next.category))}` : "/";
   const qs = params.toString();
-  return qs ? `${path}?${qs}` : path;
+  return localePath(locale, qs ? `${path}?${qs}` : path);
 }
 
 /** 분야 화면의 주소 — 다른 화면(상세의 분야 링크 등)이 /?category= 대신 쓴다 */
-export function categoryHref(category: string, patch: Partial<BrowseState> = {}): string {
-  return hrefWith({ sort: "weekly" }, { ...patch, category });
+export function categoryHref(category: string, patch: Partial<BrowseState> = {}, locale: Locale = "ko"): string {
+  return hrefWith({ sort: "weekly" }, { ...patch, category }, locale);
 }
 
-export function metricHref(state: BrowseState, metric: string): string {
-  const next = hrefWith(state);
+export function metricHref(state: BrowseState, metric: string, locale: Locale = "ko"): string {
+  const next = hrefWith(state, {}, locale);
   const [path, qs = ""] = next.split("?");
   const params = new URLSearchParams(qs);
   params.set("metric", metric);
@@ -102,7 +107,7 @@ type SearchValue = string | string[] | undefined;
  * 옛 주소 /?category=X 가 갈 곳 — /c/<소문자>, 나머지 조건은 그대로 붙인다. category 가 없거나 비었으면 null.
  * 모르는 값도 /c/<값> 으로 보낸다 — 거기서 '없는 분야입니다'를 보인다(조용히 전체 목록을 보이지 않는다).
  */
-export function categoryRedirect(params: Record<string, SearchValue>): string | null {
+export function categoryRedirect(params: Record<string, SearchValue>, locale: Locale = "ko"): string | null {
   const raw = Array.isArray(params.category) ? params.category[0] : params.category;
   const value = raw?.trim();
   if (!value) return null;
@@ -114,11 +119,14 @@ export function categoryRedirect(params: Record<string, SearchValue>): string | 
   }
   const path = `/c/${encodeURIComponent(known ? categorySlug(known) : value.toLowerCase().slice(0, 40))}`;
   const qs = rest.toString();
-  return qs ? `${path}?${qs}` : path;
+  return localePath(locale, qs ? `${path}?${qs}` : path);
 }
 
 /** 탭 제목 — 검색이면 "“가계부” 검색 결과", 분야면 "금융 프로젝트"(UX-39). 둘 다 없으면 홈 제목 */
-export function browseTitle({ query, category }: { query?: string; category?: string }): string {
+export function browseTitle({ query, category }: { query?: string; category?: string }, _locale: Locale = "ko", t?: Translator<"browse">, labels?: Translator<"labels">): string {
+  // The requested catalog carries locale-specific words; default callers retain Korean.
+  void _locale;
+  if (t) return query || category ? pageTitle(query ? t("home.searchTitle", {query}) : null, category ? t("home.categoryTitle", {category: labels ? translatedCategory(category,labels) : categoryLabel(category)}) : null) : t("home.metaTitle");
   return pageTitle(query ? `“${query}” 검색 결과` : null, category ? `${categoryLabel(category)} 프로젝트` : null);
 }
 
@@ -126,7 +134,12 @@ export function browseTitle({ query, category }: { query?: string; category?: st
  * 결과 수 — 관련도순 검색은 낱말·의미 검색을 섞은 수라 꼬리까지 세어 정확한 수처럼 보이면 안 된다(UX-24).
  * 그래서 100개부터는 유효숫자 두 자리로 "약 1,800"이라 쓴다. 그보다 작으면 반올림해도 같은 수라 그대로 쓴다.
  */
-export function formatResultCount(count: number, approximate = false): string {
+export function formatResultCount(count: number, approximate = false, locale: Locale = "ko", t?: Translator<"browse">): string {
+  if (t) {
+    const rounded = approximate && count >= 100 ? Math.round(count / 10 ** (Math.floor(Math.log10(count)) - 1)) * 10 ** (Math.floor(Math.log10(count)) - 1) : count;
+    const formatted = formatNumber(rounded, locale);
+    return approximate && count >= 100 ? t("count.approx", { count: formatted }) : formatted;
+  }
   return approximate && count >= 100 ? formatApprox(count) : formatCount(count);
 }
 
@@ -144,7 +157,13 @@ const SORT_LABELS: Record<HomeSort, string> = {
  * ("개발 도구 9,157개"), 아무것도 없으면 정렬 이름. 수는 모두 천 단위 쉼표.
  * 순위 탭이 다른 목록을 대신 보여 주면(listLabel) 필터 이름 뒤에 그 이름을 붙인다 — 분야 알약의 전체 수와 다른 까닭이 보이게.
  */
-export function resultLine(state: BrowseState, count: number, { approximate = false, listLabel }: { approximate?: boolean; listLabel?: string } = {}): string {
+export function resultLine(state: BrowseState, count: number, { approximate = false, listLabel, locale = "ko", t, labels }: { approximate?: boolean; listLabel?: string; locale?: Locale; t?: Translator<"browse">; labels?: Translator<"labels"> } = {}): string {
+  if (t) {
+    const formatted = formatResultCount(count, approximate, locale, t);
+    if (state.query) return t(approximate ? "result.related" : "result.search", { count: formatted });
+    const filters = [state.category ? labels ? translatedCategory(state.category, labels) : categoryLabel(state.category) : null, state.ai ? labels ? labels("ai.made") : AI_FILTER_LABELS[state.ai] : null, state.observedTool, state.builder].filter(Boolean);
+    return filters.length ? t("result.filtered", { filters: [...filters, listLabel].filter(Boolean).join(" · "), count: formatted }) : t("result.sorted", { sort: listLabel ?? sortLabel(state.sort, locale, t), count: formatted });
+  }
   if (state.query) return approximate ? `관련 결과 ${formatResultCount(count, true)}개` : `검색 결과 ${formatCount(count)}개`;
   const filters = [state.category ? categoryLabel(state.category) : null, state.ai ? AI_FILTER_LABELS[state.ai] : null, state.observedTool, state.builder].filter(Boolean);
   if (filters.length) return `${[...filters, listLabel].filter(Boolean).join(" · ")} ${formatCount(count)}개`;
@@ -152,8 +171,10 @@ export function resultLine(state: BrowseState, count: number, { approximate = fa
 }
 
 /** 탐색 탭의 의미는 검증 제품 수와 무관하게 고정한다. */
-export function sortLabel(sort: HomeSort): string {
-  return SORT_LABELS[sort];
+export function sortLabel(sort: HomeSort, _locale: Locale = "ko", t?: Translator<"browse">): string {
+  void _locale;
+  const keys = { weekly: "sort.weekly", recent: "sort.recent", "all-time": "sort.allTime", open: "sort.open", trending: "sort.trending", relevance: "sort.relevance" } as const;
+  return t ? t(keys[sort]) : SORT_LABELS[sort];
 }
 
 /** 현재 목록 자격 안의 분야·단계별 수 — 선택 분야·AI를 빼고 집계한다. */

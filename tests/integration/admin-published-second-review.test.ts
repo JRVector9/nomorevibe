@@ -2,7 +2,7 @@ import { beforeAll, beforeEach, expect, it, vi } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { db } from '@/lib/db';
 import { crawlCandidates, productEvidenceAudit, products, secondReviews } from '@/lib/db/schema';
-import { resolvePublishedSecondReview } from '@/app/admin/review/actions';
+import { resolvePublishedSecondReview } from '@/app/(operator)/admin/review/actions';
 import { ensureSchema, resetTables } from './setup';
 
 const mocks = vi.hoisted(() => ({ admin: vi.fn(), revalidate: vi.fn() }));

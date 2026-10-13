@@ -1,3 +1,4 @@
+import type { ResolvingMetadata } from "next";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -86,7 +87,7 @@ vi.mock("@/lib/domain/ranking/view", () => ({
   getSeasonRanking,
 }));
 
-import HomePage, { HomeContent, generateMetadata, needsUnclaimedFill, searchSuggestions } from "@/app/page";
+import HomePage, { HomeContent, generateMetadata, needsUnclaimedFill, searchSuggestions } from "@/app/(public)/[locale]/(content)/page";
 
 const season: SeasonSummary = {
   key: "2026-W34",
@@ -700,12 +701,13 @@ describe("분야 주소·검색 상태 (UX-12·24·35·39·40)", () => {
 
   it("탭 제목은 검색어로 정한다(UX-39)", async () => {
     // 검색 결과는 색인하지 않는다 — 검색어마다 얇은 목록이 끝없이 생긴다(분야는 /c/ 정식 주소가 맡는다)
-    expect(await generateMetadata({ searchParams: Promise.resolve({ q: "가계부" }) }))
-      .toEqual({ title: "“가계부” 검색 결과 — nomorevibe", robots: { index: false, follow: true } });
+    expect(await generateMetadata({ searchParams: Promise.resolve({ q: "가계부" }) }, Promise.resolve({ openGraph: null } as Awaited<ResolvingMetadata>)))
+      .toMatchObject({ title: "“가계부” 검색 결과 — nomorevibe", robots: { index: false, follow: true }, alternates: { canonical: "http://localhost:3000/", languages: {} } });
     // 쿼리 없는 홈도 정식 주소 '/'를 밝힌다(SEO-04)
-    expect(await generateMetadata({ searchParams: Promise.resolve({}) })).toEqual({
+    expect(await generateMetadata({ searchParams: Promise.resolve({}) }, Promise.resolve({ openGraph: null } as Awaited<ResolvingMetadata>))).toMatchObject({
       title: "nomorevibe — AI로 만든 것들, 세상에 나오다.",
-      alternates: { canonical: "/", types: { "application/rss+xml": "http://localhost:3000/feed.xml" } },
+      alternates: { canonical: "http://localhost:3000/", types: { "application/rss+xml": "http://localhost:3000/feed.xml" },
+        languages: { ko: "http://localhost:3000/", en: "http://localhost:3000/en", "zh-Hans": "http://localhost:3000/zh-Hans", "zh-Hant": "http://localhost:3000/zh-Hant", "x-default": "http://localhost:3000/" } },
     });
   });
 });

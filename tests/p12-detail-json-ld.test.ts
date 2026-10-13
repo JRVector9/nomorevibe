@@ -63,7 +63,7 @@ describe("상세 구조화 데이터(SEO-06)", () => {
   });
 
   it("상세 페이지가 ld+json 스크립트로 그린다", () => {
-    const source = readFileSync("app/p/[slug]/page.tsx", "utf8");
+    const source = readFileSync("app/(public)/[locale]/(content)/p/[slug]/page.tsx", "utf8");
     expect(source).toContain('<script type="application/ld+json" dangerouslySetInnerHTML={{ __html: serializeJsonLd(jsonLd) }} />');
   });
 });

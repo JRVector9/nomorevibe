@@ -4,7 +4,7 @@ vi.mock('@/lib/auth/admin', () => ({ currentAdmin: mocks.admin }));
 vi.mock('@/lib/crawl/admin-review', () => ({ requestCandidateEvidence: mocks.collect }));
 vi.mock('@/lib/crawl/settings', () => ({ changeReviewMode: mocks.mode }));
 vi.mock('next/cache', () => ({ revalidatePath: mocks.revalidate }));
-import { collectCandidateEvidence, setReviewMode } from '@/app/admin/review/actions';
+import { collectCandidateEvidence, setReviewMode } from '@/app/(operator)/admin/review/actions';
 beforeEach(() => { vi.clearAllMocks(); });
 it('checks authorization on every action before touching settings or collection requests', async () => {
   mocks.admin.mockResolvedValue(null);

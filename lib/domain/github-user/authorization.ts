@@ -32,9 +32,11 @@ export async function startGithubAuthorization(input: { actorUserId: number | nu
   return { authorizeUrl: githubAuthorizeUrl({ state: flow.state, challenge: flow.codeChallenge }), browserNonce: flow.browserNonce };
 }
 
-export async function finishGithubAuthorization(input: { state: string; code: string; browserNonce: string; actorUserId: number | null; previousToken?: string }) {
+export async function finishGithubAuthorization(input: { state: string; code: string; browserNonce: string; actorUserId: number | null; previousToken?: string }, onConsumed?: (returnTo: string) => void) {
   requireGithubStarEnabled();
   const flow = await consumeGithubAuthFlow({ state: input.state, browserNonce: input.browserNonce, actorUserId: input.actorUserId, purpose: "star" });
+  // Only a validated, one-time flow can supply navigation context on later errors.
+  onConsumed?.(flow.returnTo);
   if (!input.code || input.code.length > 512 || /[\s\u0000-\u001f\u007f]/.test(input.code)) throw new PublicAuthError(400, "invalid_github_code");
   const exchange = await exchangeGithubCode({ code: input.code, verifier: flow.pkceVerifier });
   if (exchange.outcome !== "confirmed_success") throw new PublicAuthError(400, "github_authorization_failed");

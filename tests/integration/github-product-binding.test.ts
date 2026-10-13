@@ -258,7 +258,7 @@ describe("Feedback OAuth callback and installation setup", () => {
     const setup = await awaitingSetup();
     const fetch = github([]);
     const { completeMakerGithubInstallation } = await import("@/lib/domain/github-installations/authorization");
-    expect(await completeMakerGithubInstallation({ ...setup, setupAction: "request" })).toEqual({ status: "pending", slug: "github-maker" });
+    expect(await completeMakerGithubInstallation({ ...setup, setupAction: "request" })).toEqual({ status: "pending", slug: "github-maker", returnTo: "/p/github-maker/github" });
     expect(fetch).not.toHaveBeenCalled();
     expect((await db.select().from(githubMakerAuthContexts))[0]).toMatchObject({ state: "failed", encryptedUserToken: null });
   });

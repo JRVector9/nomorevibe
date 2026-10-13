@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { describeReset } from "@/app/admin/settings/reset-diff";
+import { describeReset } from "@/app/(operator)/admin/settings/reset-diff";
 import { resetChanges } from "@/lib/crawl/settings";
 import { DEFAULT_CRAWL_SETTINGS } from "@/lib/crawl/settings-schema";
 import { shortSettingsVersion, storedSettingsVersion } from "@/lib/crawl/settings-version";

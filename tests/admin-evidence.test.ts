@@ -32,16 +32,16 @@ vi.mock("@/lib/domain/evidence/admin", () => ({
   setAutomaticUpdateVisibility: mocks.setAutomaticUpdateVisibility,
 }));
 
-import AdminEvidencePage from "@/app/admin/evidence/page";
-import AdminEvidenceProductPage from "@/app/admin/products/[slug]/page";
+import AdminEvidencePage from "@/app/(operator)/admin/evidence/page";
+import AdminEvidenceProductPage from "@/app/(operator)/admin/products/[slug]/page";
 import {
   saveEvidenceSettings,
-} from "@/app/admin/evidence/actions";
+} from "@/app/(operator)/admin/evidence/actions";
 import {
   forceProductRefresh,
   hideAutomaticUpdate,
   restoreAutomaticUpdate,
-} from "@/app/admin/products/[slug]/actions";
+} from "@/app/(operator)/admin/products/[slug]/actions";
 
 function evidenceForm(values: Record<string, string> = {}) {
   const form = new FormData();

@@ -9,7 +9,7 @@ import { auditFloor, auditRowsAfter, ensureSchema } from "./setup";
 const mocks = vi.hoisted(() => ({ admin: vi.fn() }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("@/lib/auth/admin", () => ({ currentAdmin: mocks.admin }));
-const { acknowledgeAttention, setCollectionEnabled } = await import("@/app/admin/status/actions");
+const { acknowledgeAttention, setCollectionEnabled } = await import("@/app/(operator)/admin/status/actions");
 
 /**
  * 조치할 일의 기억(ADM-08)과 수집 스위치(ADM-18) — 새 표 없이 관측 표 한 줄과 작업 로그로 돈다.

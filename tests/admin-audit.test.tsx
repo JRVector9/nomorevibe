@@ -30,9 +30,9 @@ vi.mock('@/lib/domain/products/intro-requests', () => ({
   resolveIntroRequest: mocks.introResolve, isIntroRequestOutcome: (value: unknown) => value === 'fixed' || value === 'dismissed',
 }));
 
-import AdminAuditPage from '@/app/admin/audit/page';
+import AdminAuditPage from '@/app/(operator)/admin/audit/page';
 import { cancelAudit, decideAuditFinding, fixIntroRequest, removeAuditGroup, resolveIntroRequestAction, restartStalledAudit,
-  startAudit } from '@/app/admin/audit/actions';
+  startAudit } from '@/app/(operator)/admin/audit/actions';
 import { REVIEW_PROMPT_VERSION } from '@/lib/crawl/agent-review-contract';
 
 const campaign = {

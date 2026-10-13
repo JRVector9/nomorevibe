@@ -1,0 +1,132 @@
+"use client";
+
+import { useLocale, useTranslations } from "@/lib/i18n/context";
+import { formatNumber } from "@/lib/i18n/format";
+import { localePath } from "@/lib/i18n/routing";
+import Link from "next/link";
+import { useId, useState } from "react";
+import {
+  INTRO_REQUEST_MAX, INTRO_REQUEST_MIN,
+  type TakedownKind,
+} from "@/lib/domain/products/takedown-view";
+
+/** 고를 수 있는 갈래 — 내려달라는 요청 둘과 소개 수정 요청(UX-18, 다른 길로 간다) */
+type RequestKind = TakedownKind | "intro";
+const KINDS: RequestKind[] = ["owner", "abuse", "intro"];
+const KIND_COPY = {
+  owner: { hint: "request.ownerHint", placeholder: "request.ownerPlaceholder" },
+  abuse: { hint: "request.abuseHint", placeholder: "request.abusePlaceholder" },
+  intro: { hint: "request.introHint", placeholder: "request.introPlaceholder" },
+} as const;
+
+/**
+ * 내려달라는 요청 폼.
+ *
+ * 상세 페이지가 "원치 않으시면 내려드립니다"라고 적어 두었으니 그 자리에 말할 곳이 있어야 한다.
+ * 이유는 선택이다 — 이유를 대야 내려준다고 하면 약속이 조건부가 된다.
+ *
+ * 운영자의 요청과 스팸·악성 신고를 고르게 하고(사유 앞에 갈래가 붙는다 — takedown-view.ts), 처리 약속(24시간 안 확인,
+ * 확인 전 검색엔진 노출 중지)과 운영자임을 보이는 방법(저장소 이슈·파일)을 함께 적는다(UX-19). 연락처는 받지 않는다(D5).
+ *
+ * 셋째 갈래 '소개 수정 요청'은 내려달라는 요청이 아니다 — 다른 주소(intro-request)로 보내 검색엔진 노출·CDN 에 영향이 없고,
+ * 무엇이 틀렸는지 적어야 보낼 수 있다(UX-18). 처리 약속 대신 결과를 어디서 보는지 적는다.
+ *
+ * 이유 칸에는 보이는 이름표를 단다 — 안내 글(placeholder)은 쓰기 시작하면 사라진다. 오류는 alert, 접수는 status 로
+ * 알려 스크린리더가 결과를 읽는다(A11Y-01). 글 속 링크는 색만으로 가려지지 않게 밑줄을 늘 긋는다(A11Y-03).
+ */
+export function TakedownForm({ slug }: { slug: string }) {
+  const t = useTranslations("detail");
+  const locale = useLocale();
+  const [state, setState] = useState<"idle" | "sending" | "sent">("idle");
+  const [error, setError] = useState<string | null>(null);
+  const [kind, setKind] = useState<RequestKind>("owner");
+  const intro = kind === "intro";
+  const reasonId = useId();
+
+  async function submit(form: FormData) {
+    setState("sending");
+    setError(null);
+    try {
+      const text = String(form.get("reason") ?? "");
+      const res = await fetch(intro ? `/api/products/${slug}/intro-request` : `/api/products/${slug}/takedown`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(intro ? { message: text } : { reason: text, kind }),
+      });
+      await res.json();
+      if (!res.ok) {
+        setError(res.status === 429 ? t("request.rateLimited") : res.status === 404 ? t("request.notFound") : res.status === 400 && intro ? t("request.length", { min: formatNumber(INTRO_REQUEST_MIN, locale), max: formatNumber(INTRO_REQUEST_MAX, locale) }) : t("request.failed"));
+        setState("idle");
+        return;
+      }
+      setState("sent");
+    } catch {
+      setError(t("request.failed"));
+      setState("idle");
+    }
+  }
+
+  if (state === "sent") {
+    return (
+      <p role="status" className="mt-4 rounded-[10px] border border-up/40 bg-up/10 px-4 py-3 text-[13px] text-up">
+        {intro ? t("request.introReceived") : t("request.received")}
+      </p>
+    );
+  }
+
+  return (
+    <details className="mt-4">
+      <summary className="cursor-pointer text-[13px] font-semibold text-fg-2 hover:text-fg">
+        {t("request.title")}
+      </summary>
+      <form action={submit} className="mt-3 flex flex-col gap-2">
+        <fieldset className="m-0 flex flex-col border-0 p-0">
+          <legend className="mb-1 text-[13px] font-semibold text-fg">{t("request.kind")}</legend>
+          {KINDS.map((value) => (
+            <label key={value} className="flex min-h-11 cursor-pointer items-center gap-2.5 text-[13px] leading-5 text-fg">
+              <input type="radio" name="kind" value={value} checked={kind === value} onChange={() => setKind(value)}
+                className="h-4 w-4 shrink-0 accent-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent" />
+              <span>{t(`request.${value}`)} <span className="text-fg-2">· {t(KIND_COPY[value].hint)}</span></span>
+            </label>
+          ))}
+        </fieldset>
+        {kind === "owner" && (
+          <p className="m-0 text-[13px] leading-5 text-fg-2">
+            {t("request.ownerProof")}
+          </p>
+        )}
+        <label htmlFor={reasonId} className="text-[13px] font-semibold text-fg">
+          {intro ? t("request.correction") : t("request.reason")} <span className="font-normal text-fg-2">{intro ? t("request.required") : t("request.optional")}</span>
+        </label>
+        <textarea
+          id={reasonId}
+          name="reason"
+          rows={2}
+          required={intro}
+          minLength={intro ? INTRO_REQUEST_MIN : undefined}
+          maxLength={intro ? INTRO_REQUEST_MAX : 500}
+          placeholder={t(KIND_COPY[kind].placeholder)}
+          className="w-full rounded-[10px] border border-line bg-bg-soft px-3 py-2 text-[13px] text-fg outline-none focus:border-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+        />
+        {intro ? (
+          <p className="m-0 text-[13px] leading-5 text-fg-2">
+            {t("request.introNote")}
+          </p>
+        ) : (
+          <p className="m-0 text-[13px] leading-5 text-fg-2">
+            {t("request.promise")}{" "}
+            <Link prefetch={false} href={localePath(locale, "/policy#takedown")} className="text-accent-ink underline underline-offset-2">{t("request.procedure")}</Link>
+          </p>
+        )}
+        <button
+          type="submit"
+          disabled={state === "sending"}
+          className="min-h-11 self-start rounded-[10px] border border-line px-4 text-[13px] font-semibold text-fg-2 hover:text-fg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:opacity-50"
+        >
+          {state === "sending" ? t("request.sending") : t("request.send")}
+        </button>
+        {error && <p role="alert" className="text-[13px] text-down">{error}</p>}
+      </form>
+    </details>
+  );
+}

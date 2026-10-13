@@ -1,11 +1,13 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import { DEFAULT_SHARE_IMAGE, SITE_DESCRIPTION, SITE_SHARE, productShareImage, shareMetadata } from "@/lib/copy/share";
-import { metadata as rootMetadata } from "@/app/layout";
-import LaunchPage from "@/app/launch/page";
+import { generateMetadata } from "@/app/(public)/[locale]/layout";
+import LaunchPage from "@/app/(public)/[locale]/(content)/launch/page";
 
 // /launch 는 요청마다 그린다(connection) — 정적 그리기에는 요청 맥락이 없다
 vi.mock("next/server", async (importOriginal) => ({ ...(await importOriginal<typeof import("next/server")>()), connection: async () => {} }));
+vi.mock("server-only", () => ({}));
+const rootMetadata = await generateMetadata({ params: Promise.resolve({ locale: "ko" }) });
 
 /** 공유 미리보기(2026-10-08 점검 SEO-01·UX-07)와 약속 문구(UX-05) */
 describe("공유 미리보기", () => {

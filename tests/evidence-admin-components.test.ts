@@ -3,13 +3,13 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 
-vi.mock("@/app/admin/evidence/actions", () => ({
+vi.mock("@/app/(operator)/admin/evidence/actions", () => ({
   saveEvidenceSettings: vi.fn(),
 }));
 import {
   EvidenceSettingsForm,
   numberOrPrevious,
-} from "@/app/admin/evidence/EvidenceSettingsForm";
+} from "@/app/(operator)/admin/evidence/EvidenceSettingsForm";
 import { DEFAULT_EVIDENCE_SETTINGS } from "@/lib/domain/evidence/settings";
 
 describe("evidence settings form", () => {
@@ -35,9 +35,9 @@ describe("evidence settings form", () => {
     ]) expect(html).toContain(label);
     expect(html).toContain("aria-live=\"polite\"");
     for (const file of [
-      "app/admin/evidence/EvidenceSettingsForm.tsx",
-      "app/admin/evidence/page.tsx",
-      "app/admin/products/[slug]/page.tsx",
+      "app/(operator)/admin/evidence/EvidenceSettingsForm.tsx",
+      "app/(operator)/admin/evidence/page.tsx",
+      "app/(operator)/admin/products/[slug]/page.tsx",
     ]) {
       expect(readFileSync(file, "utf8"))
         .not.toMatch(/text-\[(?:1[0-2](?:\.\d+)?|[0-9](?:\.\d+)?)px\]/);

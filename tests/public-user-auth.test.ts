@@ -1,5 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+vi.mock("next/navigation", async () => ({
+  ...await vi.importActual<typeof import("next/navigation")>("next/navigation"),
+  usePathname: () => "/",
+  useSearchParams: () => new URLSearchParams(),
+}));
+
 async function sessionModule() {
   const loaded = await import("@/lib/domain/accounts/session").catch(() => null);
   expect(loaded, "opaque public session helpers are missing").not.toBeNull();
@@ -205,7 +211,7 @@ describe("public account authentication", () => {
     expect(loaded, "public account menu is missing").not.toBeNull();
     const { renderToStaticMarkup } = await import("react-dom/server");
     const { createElement } = await import("react");
-    expect(renderToStaticMarkup(createElement(loaded!.AccountMenu))).toContain('href="/login"');
+    expect(renderToStaticMarkup(createElement(loaded!.AccountMenu))).toContain('href="/login?returnTo=%2F"');
   });
 
   it("refreshes pre-login CSRF from the browser nonce bootstrap before a replacement code request", async () => {

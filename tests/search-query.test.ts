@@ -58,6 +58,6 @@ it("영어로 옮기면 엉뚱한 것이 걸리는 말은 정해 둔 영어로�
 });
 
 it("용어표 낱말이 든 질의만 번역 캐시 열쇠가 바뀐다 — 다른 질의의 번역은 그대로 쓴다", () => {
-  expect(queryTranslationKey("회의록 요약")).toBe(textHash("q2:회의록 요약"));
-  expect(queryTranslationKey("드라마 추천")).toBe(textHash("q2g1:드라마 추천"));
+  expect(queryTranslationKey("회의록 요약")).toBe(textHash(JSON.stringify(["search-keywords-v3", "ko", "en", 2, null, "회의록 요약"])));
+  expect(queryTranslationKey("드라마 추천")).toBe(textHash(JSON.stringify(["search-keywords-v3", "ko", "en", 2, 1, "드라마 추천"])));
 });

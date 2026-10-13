@@ -1,3 +1,5 @@
+"use client";
+
 import Link from "next/link";
 import {
   aiFilterCounts,
@@ -9,10 +11,11 @@ import {
   type BrowseState,
   type HomeSort,
 } from "@/components/home/browse-state";
-import { formatCount } from "@/lib/format/number";
-import { AI_FILTER_LABELS, AI_FILTERS } from "@/lib/domain/evidence/ai-level-labels";
-import { CATEGORY_LABELS } from "@/lib/domain/products/labels";
-import { CATEGORIES } from "@/lib/domain/products/schema";
+import { useLocale, useTranslations } from "@/lib/i18n/context";
+import { formatNumber } from "@/lib/i18n/format";
+import { translatedCategory } from "@/components/home/i18n";
+import { AI_FILTERS } from "@/lib/domain/evidence/ai-level-labels";
+import { CATEGORIES } from "@/lib/domain/products/categories";
 import { hiddenByDefault } from "@/lib/domain/products/visibility";
 
 export type { BrowseState, HomeSort } from "@/components/home/browse-state";
@@ -60,6 +63,10 @@ export function BrowseFilters({
   /** 결과 수가 관련도순 검색(섞은 수)이라 '약 n개'로 써야 하는지 */
   approximate?: boolean;
 }) {
+  const locale = useLocale();
+  const t = useTranslations("browse");
+  const labels = useTranslations("labels");
+  const count = (n: number) => formatNumber(n, locale);
   const narrowed = Boolean(state.query || state.category || state.builder || state.observedTool || state.ai);
   // 검색·도구·빌더 상태에서는 기존 정책대로 수를 숨긴다.
   const countable = countsKnown && !(state.query || state.builder || state.observedTool);
@@ -75,57 +82,57 @@ export function BrowseFilters({
   return (
     <div>
       <div className="filter-top">
-        <div className="tabs" role="tablist" aria-label="프로젝트 정렬">
+        <div className="tabs" role="tablist" aria-label={t("filter.sort")}>
           {tabs.map((key) => {
             const active = state.sort === key;
             return (
               <Link prefetch={false}
                 key={key}
-                href={hrefWith(state, { sort: key })}
+                href={hrefWith(state, { sort: key }, locale)}
                 className={`tab${active ? " active" : ""}`}
                 role="tab"
                 aria-selected={active}
                 tabIndex={active ? 0 : -1}
               >
-                {sortLabel(key)}
+                {sortLabel(key, locale, t)}
               </Link>
             );
           })}
         </div>
         {/* 만든 방식 — 고른 칩을 다시 누르면 푼다. 근거 단계 이름만 쓰고 근거(PR·커밋·파일)는 내지 않는다(2026-10-10 운영자 결정) */}
-        <nav className="chips chips-ai" aria-label="만든 방식">
+        <nav className="chips chips-ai" aria-label={t("filter.ai")}>
           {AI_FILTERS.map((filter) => {
             const active = state.ai === filter;
             if (!active && aiChipCounts?.[filter] === 0) return (
-              <span key={filter} className="chip" aria-disabled="true">{AI_FILTER_LABELS[filter]} <span className="chip-count">0</span></span>
+              <span key={filter} className="chip" aria-disabled="true">{labels("ai.made")} <span className="chip-count">0</span></span>
             );
             return (
-              <Link prefetch={false} key={filter} href={hrefWith(state, { ai: active ? undefined : filter })} className={`chip${active ? " chip-dark" : ""}`} aria-current={active ? "true" : undefined}>
-                {AI_FILTER_LABELS[filter]}
-                {aiChipCounts && <> <span className="chip-count">{formatCount(aiChipCounts[filter])}</span></>}
+              <Link prefetch={false} key={filter} href={hrefWith(state, { ai: active ? undefined : filter }, locale)} className={`chip${active ? " chip-dark" : ""}`} aria-current={active ? "true" : undefined}>
+                {labels("ai.made")}
+                {aiChipCounts && <> <span className="chip-count">{count(aiChipCounts[filter])}</span></>}
               </Link>
             );
           })}
         </nav>
-        <nav className="chips chips-filter" aria-label="분야">
-          <Link prefetch={false} href={hrefWith(state, { category: undefined })} className={`chip${state.category ? "" : " chip-dark"}`} aria-current={state.category ? undefined : "true"}>전체</Link>
+        <nav className="chips chips-filter" aria-label={t("filter.category")}>
+          <Link prefetch={false} href={hrefWith(state, { category: undefined }, locale)} className={`chip${state.category ? "" : " chip-dark"}`} aria-current={state.category ? undefined : "true"}>{t("filter.all")}</Link>
           {categories.map((category) => {
             const active = state.category === category;
-            const label = <>{CATEGORY_LABELS[category as keyof typeof CATEGORY_LABELS]}{showCounts && <> <span className="chip-count">{formatCount(categoryCounts[category] ?? 0)}</span></>}</>;
+            const label = <>{translatedCategory(category, labels)}{showCounts && <> <span className="chip-count">{count(categoryCounts[category] ?? 0)}</span></>}</>;
             if (!active && showCounts && (categoryCounts[category] ?? 0) === 0) return <span key={category} className="chip" aria-disabled="true">{label}</span>;
-            return <Link prefetch={false} key={category} href={hrefWith(state, { category: active ? undefined : category })} className={`chip${active ? " chip-dark" : ""}`} aria-current={active ? "true" : undefined}>{label}</Link>;
+            return <Link prefetch={false} key={category} href={hrefWith(state, { category: active ? undefined : category }, locale)} className={`chip${active ? " chip-dark" : ""}`} aria-current={active ? "true" : undefined}>{label}</Link>;
           })}
         </nav>
       </div>
       <div className="filter-summary">
         <span>
-          {resultLine(state, resultCount, { approximate, listLabel })}
-          {total > 0 && !narrowed ? ` · 공개 ${formatCount(total)}개` : ""}
+          {resultLine(state, resultCount, { approximate, listLabel, locale, t, labels })}
+          {total > 0 && !narrowed ? ` · ${t("filter.publicTotal", { count: count(total) })}` : ""}
         </span>
         {narrowed && (
           // 관련도는 검색어가 있을 때만 있는 순서라, 검색어를 지우면 기본 순서로 돌린다
-          <Link prefetch={false} href={hrefWith(state, { category: undefined, builder: undefined, observedTool: undefined, ai: undefined, query: undefined, ...(state.sort === "relevance" ? { sort: "weekly" as const } : {}) })} className="clear-filters show">
-            필터 초기화
+          <Link prefetch={false} href={hrefWith(state, { category: undefined, builder: undefined, observedTool: undefined, ai: undefined, query: undefined, ...(state.sort === "relevance" ? { sort: "weekly" as const } : {}) }, locale)} className="clear-filters show">
+            {t("filter.reset")}
           </Link>
         )}
       </div>

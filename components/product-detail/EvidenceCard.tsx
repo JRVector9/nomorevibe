@@ -1,3 +1,7 @@
+"use client";
+
+import { useLocale, useTranslations } from "@/lib/i18n/context";
+import { formatNumber } from "@/lib/i18n/format";
 import type { ProductDetailView } from "@/lib/domain/products/detail-view";
 
 const CHIP = "rounded-full bg-bg-card px-[11px] py-1.5 text-[13px] font-medium tabular-nums";
@@ -11,26 +15,28 @@ export function EvidenceCard({ links, freshness }: {
   links: ProductDetailView["links"];
   freshness: ProductDetailView["freshness"];
 }) {
+  const t = useTranslations("detail");
+  const locale = useLocale();
   const count = (label: ProductDetailView["links"][number]["evidenceLabel"]) => links.filter((link) => link.evidenceLabel === label).length;
   const github = freshness.filter((item) => item.provider === "github" && item.lastSuccessAt !== null).length;
   const problems = freshness.filter((item) => item.state === "failed" || item.state === "stale" || item.state === "disconnected").length;
   const chips: Array<[string, number]> = [
-    ["GitHub에서 확인", github],
-    ["공식 출처", count("공식 출처에서 확인")],
-    ["메이커 제공", count("메이커 제공·미검증")],
-    ...([["출처 응답 확인", count("출처 응답 확인·관계 미확인")], ["자동 감지", count("자동 감지")]] as Array<[string, number]>)
+    [t("source.github"), github],
+    [t("evidence.official"), count("공식 출처에서 확인")],
+    [t("source.makerReported"), count("메이커 제공·미검증")],
+    ...([[t("evidence.response"), count("출처 응답 확인·관계 미확인")], [t("source.detected"), count("자동 감지")]] as Array<[string, number]>)
       .filter(([, n]) => n > 0),
   ];
 
   return (
     <section aria-labelledby="evidence-title" className="rounded-[18px] bg-bg-soft px-5 py-[18px]">
-      <h2 id="evidence-title" className="m-0 text-[13px] font-semibold tracking-[0.02em] text-fg-2">근거</h2>
+      <h2 id="evidence-title" className="m-0 text-[13px] font-semibold tracking-[0.02em] text-fg-2">{t("evidence.title")}</h2>
       {links.length === 0 && freshness.length === 0 ? (
-        <p className="m-0 mt-2.5 text-[13px] leading-[1.5] text-fg-2">연결된 외부 출처가 없습니다.</p>
+        <p className="m-0 mt-2.5 text-[13px] leading-[1.5] text-fg-2">{t("evidence.empty")}</p>
       ) : (
         <ul className="m-0 mt-2.5 flex list-none flex-wrap gap-1.5 p-0">
-          {chips.map(([label, n]) => <li key={label} className={CHIP}>{label} <span className="text-fg-2">{n}</span></li>)}
-          {problems > 0 && <li className="rounded-full border border-down/30 bg-down/5 px-[11px] py-1.5 text-[13px] font-medium text-down">확인 필요 {problems}</li>}
+          {chips.map(([label, n]) => <li key={label} className={CHIP}>{label} <span className="text-fg-2">{formatNumber(n, locale)}</span></li>)}
+          {problems > 0 && <li className="rounded-full border border-down/30 bg-down/5 px-[11px] py-1.5 text-[13px] font-medium text-down">{t("evidence.problems", { count: formatNumber(problems, locale) })}</li>}
         </ul>
       )}
     </section>

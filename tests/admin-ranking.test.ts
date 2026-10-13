@@ -23,18 +23,18 @@ vi.mock("@/lib/domain/ranking/view", () => ({
   getRankingAdminState: mocks.getRankingAdminState,
 }));
 
-import AdminRankingPage from "@/app/admin/ranking/page";
+import AdminRankingPage from "@/app/(operator)/admin/ranking/page";
 import {
   cancelRankingPolicy,
   saveRankingPolicy,
-} from "@/app/admin/ranking/actions";
+} from "@/app/(operator)/admin/ranking/actions";
 import {
   numberOrPrevious,
   percentList,
   policyWithCooldownDrafts,
   policyForScoringMode,
   RankingPolicyForm,
-} from "@/app/admin/ranking/RankingPolicyForm";
+} from "@/app/(operator)/admin/ranking/RankingPolicyForm";
 import {
   DEFAULT_RANKING_POLICY,
   UNIQUE_FIRST_RANKING_POLICY,
@@ -164,7 +164,7 @@ describe("ranking policy form parsing", () => {
     expect(html).toContain("최소 고유 유입자");
     expect(html).toContain("이전 최소 고유 유입자");
     for (const file of [
-      "app/admin/ranking/RankingPolicyForm.tsx",
+      "app/(operator)/admin/ranking/RankingPolicyForm.tsx",
       "components/Panel.tsx",
     ]) {
       expect(readFileSync(file, "utf8"))
@@ -242,8 +242,8 @@ describe("ranking transition preview", () => {
     expect(html).toContain("고유 유입자 기준 순위");
     expect(html).toContain("다음 시즌");
     for (const file of [
-      "app/admin/ranking/page.tsx",
-      "app/admin/AdminNav.tsx",
+      "app/(operator)/admin/ranking/page.tsx",
+      "app/(operator)/admin/AdminNav.tsx",
     ]) {
       expect(readFileSync(file, "utf8"))
         .not.toMatch(/text-\[(?:1[0-2](?:\.\d+)?|[0-9](?:\.\d+)?)px\]/);

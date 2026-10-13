@@ -1,30 +1,29 @@
 import type { RankingPolicy } from "@/lib/domain/ranking/policy";
 import type { SeasonSummary } from "@/lib/domain/ranking/view";
-import { formatCount } from "@/lib/format/number";
-import { formatPublicDateTime } from "@/lib/format/time";
-
-function cadenceLabel(cadence: RankingPolicy["season"]["cadence"]): string {
-  return cadence === "weekly" ? "주간" : "월간";
-}
+import { createTranslator, type Dictionary } from "@/lib/i18n/messages";
+import { browse as koreanBrowse } from "@/messages/ko/browse";
+import { formatNumber, formatDateTime } from "@/lib/i18n/format";
+import type { Locale } from "@/lib/i18n/locales";
 
 type SeasonPolicyProps =
-  | { policy: RankingPolicy }
+  | { policy: RankingPolicy; locale?: Locale; messages?: Dictionary["browse"] }
   /** now 는 날짜의 "올해"를 정한다 — 화면이 읽은 시각을 넘긴다(lib/format/time.ts formatPublicDateTime) */
-  | { season: SeasonSummary; now: Date };
+  | { season: SeasonSummary; now: Date; locale?: Locale; messages?: Dictionary["browse"] };
 
 export function SeasonPolicy(props: SeasonPolicyProps) {
+  const locale=props.locale ?? "ko";
+  const t=createTranslator("browse",props.messages ?? koreanBrowse);
+  const count=(n:number)=>formatNumber(n,locale);
+  const projects=(n:number)=>t("count.projects",{count:count(n)});
+  const days=(n:number)=>t("season.days",{count:count(n)});
   const season = "season" in props ? props.season : undefined;
   const now = "season" in props ? props.now : undefined;
   const policy = "season" in props ? props.season.policy : props.policy;
   const launchWindowDays = season?.effectiveLaunchWindowDays
     ?? policy.eligibility.launchWindowDays;
   const uniqueScoring = policy.scoring.mode === "unique_visitors";
-  const trendMinimum = uniqueScoring
-    ? `${formatCount(policy.trend.minimumPreviousUniqueVisitors)}명`
-    : `${formatCount(policy.trend.minimumPreviousClicks)}회`;
-  const scoringMethod = policy.scoring.mode === "unique_visitors"
-    ? `제품별 고유 브라우저 · 반복 유효 방문 ${policy.scoring.repeatVisitWeightBasisPoints / 100}% 반영 · 최대 ${policy.scoring.maxExtraVisitsPerUnique}회`
-    : "봇 제외 · 방문자·제품별 10분 중복 제외 · 외부 이동 방문";
+  const trendMinimum = uniqueScoring ? t("season.people", {count:count(policy.trend.minimumPreviousUniqueVisitors)}) : t("season.visits", {count:count(policy.trend.minimumPreviousClicks)});
+  const scoringMethod = policy.scoring.mode === "unique_visitors" ? t("season.uniqueMethod", {weight:count(policy.scoring.repeatVisitWeightBasisPoints/100),max:count(policy.scoring.maxExtraVisitsPerUnique)}) : t("season.visitMethod");
   const minimumUniqueVisitors = policy.scoring.mode === "unique_visitors"
     ? policy.scoring.minimumUniqueVisitors
     : null;
@@ -33,52 +32,52 @@ export function SeasonPolicy(props: SeasonPolicyProps) {
     <div className="grid grid-cols-1 gap-5 text-[13px] sm:grid-cols-2">
       {season && now && (
         <div className="sm:col-span-2">
-          <PolicyGroup title="시즌 스냅샷">
+          <PolicyGroup title={t("season.snapshotTitle")}>
             <PolicyRow
-              label="기간"
-              value={`${formatPublicDateTime(season.startsAt, now)} – ${formatPublicDateTime(season.endsAt, now)}`}
+              label={t("season.period")}
+              value={`${formatDateTime(season.startsAt,now,locale)} – ${formatDateTime(season.endsAt,now,locale)}`}
             />
-            <PolicyRow label="상태" value={season.state === "active" ? "진행 중" : "종료"} />
-            <PolicyRow label="전환" value={season.isTransition ? "전환 시즌" : "정규 시즌"} />
+            <PolicyRow label={t("season.status")} value={t(season.state === "active" ? "season.active" : "season.closed")} />
+            <PolicyRow label={t("season.transition")} value={t(season.isTransition ? "season.transitionSeason" : "season.regularSeason")} />
             <PolicyRow
-              label="마지막 집계"
-              value={formatPublicDateTime(season.refreshedAt, now, "집계 대기")}
+              label={t("season.lastAggregation")}
+              value={season.refreshedAt ? formatDateTime(season.refreshedAt,now,locale) : t("season.snapshotPending")}
             />
           </PolicyGroup>
         </div>
       )}
-      <PolicyGroup title="시즌과 참가">
-        <PolicyRow label="주기" value={`${cadenceLabel(policy.season.cadence)} · ${policy.season.timezone}`} />
-        <PolicyRow label={season ? "확정 참가 기간" : "출시 참가 기간"} value={`${launchWindowDays}일`} />
-        <PolicyRow label="최소 참가 제품" value={`${formatCount(policy.eligibility.minimumProducts)}개`} />
-        <PolicyRow label="최대 확장 기간" value={`${policy.eligibility.maximumWindowDays}일`} />
+      <PolicyGroup title={t("season.participation")}>
+        <PolicyRow label={t("season.cadence")} value={`${t(policy.season.cadence === "weekly" ? "season.weekly" : "season.monthly")} · ${policy.season.timezone}`} />
+        <PolicyRow label={t(season ? "season.confirmedWindow" : "season.launchWindow")} value={days(launchWindowDays)} />
+        <PolicyRow label={t("season.minimumProjects")} value={projects(policy.eligibility.minimumProducts)} />
+        <PolicyRow label={t("season.maximumWindow")} value={days(policy.eligibility.maximumWindowDays)} />
         <PolicyRow
-          label={uniqueScoring ? "고유 유입자 기준" : "유효 방문 기준"}
+          label={t(uniqueScoring ? "season.uniqueCriteria" : "season.visitCriteria")}
           value={scoringMethod}
         />
         {minimumUniqueVisitors !== null && (
-          <PolicyRow label="최소 고유 유입자" value={`${formatCount(minimumUniqueVisitors)}명`} />
+          <PolicyRow label={t("season.minimumUnique")} value={t("season.people", {count:count(minimumUniqueVisitors)})} />
         )}
       </PolicyGroup>
-      <PolicyGroup title="노출과 급상승">
-        <PolicyRow label="전체 랭킹" value={`${formatCount(policy.leaderboard.limit)}개`} />
-        <PolicyRow label="보드" value={`${formatCount(policy.boards.weeklyLimit)} / ${formatCount(policy.boards.verifiedNewLimit)} / ${formatCount(policy.boards.discoveredNewLimit)}개`} />
-        <PolicyRow label="변동률" value={`${formatCount(policy.trend.windowHours)}시간 · 이전 ${trendMinimum} 이상`} />
-        <PolicyRow label="급상승" value={`${formatCount(policy.trend.limit)}개`} />
+      <PolicyGroup title={t("season.exposure")}>
+        <PolicyRow label={t("season.fullRanking")} value={projects(policy.leaderboard.limit)} />
+        <PolicyRow label={t("season.boards")} value={t("season.boardCounts", {weekly:count(policy.boards.weeklyLimit),verified:count(policy.boards.verifiedNewLimit),discovered:count(policy.boards.discoveredNewLimit)})} />
+        <PolicyRow label={t("season.changeRate")} value={t("season.trendWindow", {hours:count(policy.trend.windowHours),minimum:trendMinimum})} />
+        <PolicyRow label={t("season.trending")} value={projects(policy.trend.limit)} />
       </PolicyGroup>
       <div className="sm:col-span-2">
-        <h3 className="mb-2 font-semibold text-fg-2">소프트 쿨다운</h3>
+        <h3 className="mb-2 font-semibold text-fg-2">{t("season.cooldown")}</h3>
         {!policy.cooldown.enabled ? (
-          <p className="text-fg-2">사용하지 않음</p>
+          <p className="text-fg-2">{t("season.disabled")}</p>
         ) : policy.cooldown.tiers.length === 0 ? (
-          <p className="text-fg-2">설정된 구간 없음</p>
+          <p className="text-fg-2">{t("season.noTiers")}</p>
         ) : (
           <ul className="flex flex-col gap-1.5">
             {policy.cooldown.tiers.map((tier, index) => (
               <li key={`${tier.rankFrom}-${tier.rankTo}-${index}`} className="flex flex-wrap gap-x-2">
-                <span className="font-semibold">{tier.rankFrom}–{tier.rankTo}위</span>
+                <span className="font-semibold">{t("season.rankRange", {from:count(tier.rankFrom),to:count(tier.rankTo)})}</span>
                 <span className="font-mono text-fg-2">
-                  {tier.factorsBasisPoints.map((factor) => `${factor / 100}%`).join(" → ")}
+                  {tier.factorsBasisPoints.map((factor) => `${count(factor / 100)}%`).join(" → ")}
                 </span>
               </li>
             ))}

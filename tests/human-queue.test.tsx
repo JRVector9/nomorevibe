@@ -3,9 +3,9 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import { buildHumanQueueOverview, heldStages, humanFlowLabel, humanWaitLabel } from "@/lib/crawl/human-queue";
 import type { ReviewAiDecision } from "@/lib/crawl/admin-review";
-import { StageRail } from "@/app/admin/status/dashboard/StageRail";
-import { ReviewStageRail } from "@/app/admin/review/ReviewStageRail";
-import { AttentionList, sortActions, type ActionItem } from "@/app/admin/status/dashboard/AttentionList";
+import { StageRail } from "@/app/(operator)/admin/status/dashboard/StageRail";
+import { ReviewStageRail } from "@/app/(operator)/admin/review/ReviewStageRail";
+import { AttentionList, sortActions, type ActionItem } from "@/app/(operator)/admin/status/dashboard/AttentionList";
 import { humanOverview } from "./fixtures/human-queue";
 
 // 쌓인 일의 "확인함" 단추가 router 를 쓴다 — 정적 그리기에는 앱 라우터가 없다

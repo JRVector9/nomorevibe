@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { reviewShortcut } from "@/app/admin/review/shortcuts";
-import { approvalNote, CAUSE_GUIDE, causeShort, modelsAgree, recommendDecision, type CauseKey } from "@/app/admin/review/causes";
+import { reviewShortcut } from "@/app/(operator)/admin/review/shortcuts";
+import { approvalNote, CAUSE_GUIDE, causeShort, modelsAgree, recommendDecision, type CauseKey } from "@/app/(operator)/admin/review/causes";
 import { HUMAN_ONLY_REASONS } from "@/lib/crawl/admin-review";
 
 /**

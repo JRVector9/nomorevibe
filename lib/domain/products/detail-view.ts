@@ -42,10 +42,13 @@ import { EVIDENCE_LABELS } from "@/lib/domain/evidence/provenance";
 import type { EvidenceSettings } from "@/lib/domain/evidence/settings";
 import { parseRankingPolicy } from "@/lib/domain/ranking/policy";
 import { healthMetrics, DOWN_THRESHOLD } from "./health";
-import { getRelatedRising, isUnclaimed, type ProductListItem } from "./view";
+import { isUnclaimed, type ProductListItem } from "./view";
 import { indexingFields } from "./indexing";
 import { taglineKoField } from "./korean-tagline";
-import { getRisingRank, repoGoneField } from "./repository";
+import { productTranslationEligibilityField } from "./translations";
+import type { ProductTranslationSelection } from "./translation-policy";
+import { repoGoneField } from "./repository";
+import { getStarGrowthPage } from "./star-growth";
 import { readmeExcerpt } from "./readme-excerpt";
 import type { Category } from "./schema";
 import { METRICS_WINDOW_DAYS, visitMetrics, type VisitMetrics } from "./clicks";
@@ -178,6 +181,10 @@ export type PublicProduct = StarObservation & Pick<Product,
   takedownPending: boolean;
   /** 지금 소개로 지은 한국어 한 줄 소개(korean-tagline.ts) — 없으면 원문만 */
   taglineKo: string | null;
+  translationName?: string;
+  translationEligible?: boolean;
+  translation?: ProductTranslationSelection;
+  descriptionTranslation?: ProductTranslationSelection;
 };
 
 export type ProductDetailView = {
@@ -202,10 +209,11 @@ export type ProductDetailView = {
   observedAgentFacts: ObservedAgentFactView[];
   skills: SkillView[];
   freshness: FreshnessView[];
-  /** 홈 '지금 뜨는' 띠·피드의 자리 — 20위 밖이거나 조건 밖이면 null (repository.ts getRisingRank) */
+  /** Same completed 8-hour observation used by the home strip and browse tab. */
   risingRank: number | null;
   /** 같은 분야에서 지금 뜨는, 자기 자신 제외, 최대 5 */
   related: ProductListItem[];
+  relatedTotal?: number | null;
   /** README 첫 문단들 — 소개가 한 줄뿐일 때 상세 본문이 된다 */
   readmeExcerpt: string | null;
   /**
@@ -242,12 +250,12 @@ async function findPublicProduct(slug: string): Promise<PublicProduct | null> {
       updatedAt: true,
     },
     // 상세 메타데이터의 robots 가 이 행 하나로 정해진다(UX-08) — sitemap 과 같은 규칙(indexing.ts)
-    extras: { ...repoGoneField, ...indexingFields, ...taglineKoField },
+    extras: { ...repoGoneField, ...indexingFields, ...taglineKoField, ...productTranslationEligibilityField },
   });
   if (!product) return null;
   // 사라진 저장소의 스타는 마지막으로 본 옛 값이다 — 상세에 ★ 를 그리지 않는다(목록 카드의 toListItem 과 같다)
   const stars = product.repoGone ? { stars: null, starsAt: null, starsPrevious: null, starsPreviousAt: null } : {};
-  return {...product, ...stars, name: displayProjectName(product.name, product.repoUrl)};
+  return {...product, ...stars, translationName: product.name, name: displayProjectName(product.name, product.repoUrl)};
 }
 
 export const getProductIdentity = cache(async (slugInput: string): Promise<PublicProduct | null> => {
@@ -677,7 +685,7 @@ export async function getProductDetail(slugInput: string): Promise<ProductDetail
   const now = new Date();
   const primaryRepository = product.repoUrl ? normalizeTypedLink("repository", product.repoUrl) : null;
   const [rank, visitMap, health, profile, links, sources, media, updates, provenance, settings,
-    risingRank, related, readmeRow, aiLevel, crawlSettings] = await Promise.all([
+    risingPage, relatedPage, readmeRow, aiLevel, crawlSettings] = await Promise.all([
     activeRank(slug),
     visitMetrics([slug], { windowHours: METRICS_WINDOW_DAYS * 24, minimumPreviousUniqueVisitors: 5 }),
     detailHealth(slug),
@@ -688,8 +696,8 @@ export async function getProductDetail(slugInput: string): Promise<ProductDetail
     visibleUpdates(slug),
     visibleProvenance(slug),
     currentEvidenceSettings(),
-    getRisingRank(slug),
-    getRelatedRising(slug, product.category as Category, 5),
+    getStarGrowthPage({ limit: 20, now }).catch(() => null),
+    getStarGrowthPage({ category: product.category as Category, limit: 6, now }).catch(() => null),
     db.select({ readme: products.searchReadme }).from(products).where(eq(products.slug, slug)).then((rows) => rows[0] ?? null),
     // GitHub 저장소가 아니면 키가 없어 검사도 없다(checked=false)
     getRepositoryAiLevel(product.repoUrl),
@@ -752,8 +760,10 @@ export async function getProductDetail(slugInput: string): Promise<ProductDetail
     observedAgentFacts,
     skills: withEvidenceLabels(provenance.skills),
     freshness: sources.map((source) => sourceFreshness(source, settings, now)),
-    risingRank,
-    related,
+    risingRank: risingPage?.items.some((item) => item.slug === slug)
+      ? risingPage.items.findIndex((item) => item.slug === slug) + 1 : null,
+    related: relatedPage?.items.filter((item) => item.slug !== slug).slice(0, 5) ?? [],
+    relatedTotal: relatedPage?.total ?? null,
     readmeExcerpt: readmeExcerpt(readmeRow?.readme ?? null, currentProduct.tagline),
     aiLevel: { checked: aiLevel.checked, level: aiLevel.level },
   };

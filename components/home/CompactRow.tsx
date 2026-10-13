@@ -1,4 +1,8 @@
+"use client";
+
 import Link from "next/link";
+import { useLocale } from "@/lib/i18n/context";
+import { localePath } from "@/lib/i18n/routing";
 import { CompactCard } from "@/components/home/CompactCard";
 import type { ProductListItem } from "@/lib/domain/products/view";
 
@@ -14,6 +18,7 @@ export function CompactRow({ id, title, note, summary, more, items, trailing, pr
   /** 화면 첫 띠 — 앞 세 장의 그림을 늦추지 않고 먼저 받는다(PERF-03, 홈 LCP 는 '지금 뜨는' 첫 카드) */
   priority?: boolean;
 }) {
+  const locale = useLocale();
   if (items.length === 0 && !summary) return null;
   return (
     <section id={id} className="row-section" aria-labelledby={`${id}-title`}>
@@ -22,7 +27,7 @@ export function CompactRow({ id, title, note, summary, more, items, trailing, pr
           <h2 id={`${id}-title`} className="row-title">{title}</h2>
           {note && <p className="row-note">{note}</p>}
         </div>
-        {more && <Link prefetch={false} className="row-more" href={more.href}>{more.label} ›</Link>}
+        {more && <Link prefetch={false} className="row-more" href={localePath(locale, more.href)}>{more.label} ›</Link>}
       </div>
       {summary}
       {items.length > 0 && <div className="compact-grid">

@@ -2,8 +2,8 @@ import { createElement, Fragment } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import { attentionBaseline, readAttentionHistory, type AttentionAck } from "@/lib/operations/attention";
-import { actionCounts, buildActions, deriveStatus, splitActions, type ActionInputs } from "@/app/admin/status/attention";
-import type { ActionItem } from "@/app/admin/status/dashboard/AttentionList";
+import { actionCounts, buildActions, deriveStatus, splitActions, type ActionInputs } from "@/app/(operator)/admin/status/attention";
+import type { ActionItem } from "@/app/(operator)/admin/status/dashboard/AttentionList";
 import { humanOverview } from "./fixtures/human-queue";
 
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh() {} }) }));

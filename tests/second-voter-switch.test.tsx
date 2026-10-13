@@ -9,9 +9,9 @@ vi.mock('@/lib/crawl/agent-review-gateway', async (importOriginal) => ({
   ...await importOriginal<typeof import('@/lib/crawl/agent-review-gateway')>(), listGatewayModels: mocks.gateway,
 }));
 
-import { switchSecondVoter } from '@/app/admin/review/actions';
-import { SecondVoterSwitch } from '@/app/admin/review/SecondVoterSwitch';
-import { parseVoterValue, voterChoices } from '@/app/admin/review/voters';
+import { switchSecondVoter } from '@/app/(operator)/admin/review/actions';
+import { SecondVoterSwitch } from '@/app/(operator)/admin/review/SecondVoterSwitch';
+import { parseVoterValue, voterChoices } from '@/app/(operator)/admin/review/voters';
 
 const GATEWAY = ['[MLX] gpt-oss-120b', '[supa] Qwen3.8-27B-NVFP4', 'qwen3-coder:30b'];
 const settings = { firstReview: { provider: 'abcllm', model: '[MLX] gpt-oss-120b' },

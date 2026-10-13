@@ -1,5 +1,9 @@
 "use client";
 
+import { useLocale, useTranslations } from "@/lib/i18n/context";
+import { formatNumber } from "@/lib/i18n/format";
+import { localePath, stripLocale } from "@/lib/i18n/routing";
+import type { DetailTextKey } from "./format";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
@@ -11,20 +15,23 @@ import { FeedbackGithubOptions } from "./FeedbackGithubOptions";
 type Draft = { requestId: string; kind: FeedbackKind; title: string; body: string; serviceDisclosureConsent: boolean; sendToGithub: boolean; githubDisclosureConsent: boolean };
 type Session = { user: { displayName: string } | null; csrfToken: string | null };
 const blank = (): Draft => ({ requestId: crypto.randomUUID(), kind: "bug", title: "", body: "", serviceDisclosureConsent: false, sendToGithub: false, githubDisclosureConsent: false });
-const KINDS: { value: FeedbackKind; label: string }[] = [{ value: "question", label: "질문" }, { value: "bug", label: "오류" }, { value: "feature", label: "제안" }];
-function titleFromBody(body: string): string {
+const KINDS: { value: FeedbackKind }[] = [{ value: "question" }, { value: "bug" }, { value: "feature" }];
+function titleFromBody(body: string, fallbackTitle: string): string {
   const firstLine = body.split(/\r\n|\r|\n/).find((line) => line.trim()) ?? "";
   // Moderation counts URLs in both fields; do not duplicate body links in the generated title.
-  return firstLine.replace(/https?:\/\/[^\s<>]+/gi, "").replace(/\s+/g, " ").trim().slice(0, 120) || (body.trim() ? "댓글" : "");
+  return firstLine.replace(/https?:\/\/[^\s<>]+/gi, "").replace(/\s+/g, " ").trim().slice(0, 120) || (body.trim() ? fallbackTitle : "");
 }
-const ERROR: Record<string, string> = {
-  feedback_invalid: "내용·공개 동의를 확인해 주세요.", feedback_conflict: "이전 요청과 내용이 다릅니다. 내용을 수정한 뒤 다시 제출해 주세요.",
-  feedback_rate_limited: "작성 한도를 넘었습니다. 잠시 후 다시 제출해 주세요.", login_required: "로그인한 뒤 다시 제출해 주세요.",
-  invalid_csrf: "로그인 상태를 다시 확인해 주세요. 작성 내용은 이 브라우저에 남아 있습니다.",
-  feedback_not_found: "현재 이 제품의 피드백을 접수할 수 없습니다.", feedback_disabled: "현재 피드백 접수가 중지되어 있습니다.",
+const ERROR: Record<string, DetailTextKey> = {
+  feedback_invalid: "error.feedback_invalid", feedback_conflict: "error.feedback_conflict",
+  feedback_rate_limited: "error.feedback_rate_limited", login_required: "error.login_required",
+  invalid_csrf: "error.invalid_csrf",
+  feedback_not_found: "error.feedback_not_found", feedback_disabled: "error.feedback_disabled",
 };
 
 export function FeedbackForm({ slug, githubDeliveryAvailable = false }: { slug: string; githubDeliveryAvailable?: boolean }) {
+  const t = useTranslations("detail");
+  const locale = useLocale();
+  const fallbackTitle = t("feedback.defaultTitle");
   const router = useRouter();
   const [draft, setDraft] = useState<Draft | null>(null);
   const [session, setSession] = useState<Session | null>(null);
@@ -33,7 +40,7 @@ export function FeedbackForm({ slug, githubDeliveryAvailable = false }: { slug: 
   const [expanded, setExpanded] = useState(false);
   const [pending, setPending] = useState(false);
   const [reauthRequired, setReauthRequired] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<DetailTextKey | null>(null);
   const [submitted, setSubmitted] = useState<FeedbackView | null>(null);
   const textarea = useRef<HTMLTextAreaElement>(null);
   const entry = useRef<HTMLButtonElement>(null);
@@ -50,7 +57,7 @@ export function FeedbackForm({ slug, githubDeliveryAvailable = false }: { slug: 
         && ["bug", "feature", "question"].includes(saved.kind)) initial = { ...initial, ...saved };
       if (initial.body.trim() && !initial.title.trim()) {
         // Empty-title legacy drafts could never be accepted by the existing API.
-        initial = { ...initial, title: titleFromBody(initial.body), requestId: crypto.randomUUID() };
+        initial = { ...initial, title: titleFromBody(initial.body, fallbackTitle), requestId: crypto.randomUUID() };
       }
     } catch { /* Storage may be unavailable; the live form remains usable. */ }
     const controller = new AbortController();
@@ -65,7 +72,7 @@ export function FeedbackForm({ slug, githubDeliveryAvailable = false }: { slug: 
       try {
         const intent = JSON.parse(sessionStorage.getItem(intentKey) ?? "null") as { token?: string; expiresAt?: number } | null;
         writeIntent = !!returnToken && intent?.token === returnToken && typeof intent.expiresAt === "number" && intent.expiresAt > Date.now()
-          && location.pathname === `/p/${encodeURIComponent(slug)}` && location.hash === "#feedback"
+          && stripLocale(location.pathname) === `/p/${encodeURIComponent(slug)}` && location.hash === "#feedback"
           && !location.searchParams.has("githubError") && !location.searchParams.has("error");
         sessionStorage.removeItem(intentKey);
         const navigation = performance.getEntriesByType("navigation")[0] as PerformanceNavigationTiming | undefined;
@@ -83,7 +90,7 @@ export function FeedbackForm({ slug, githubDeliveryAvailable = false }: { slug: 
       setExpanded(!!value.user && (writeIntent || retryDraft));
     }).catch(() => { if (!controller.signal.aborted) setSessionError(true); });
     return () => { controller.abort(); submission.current?.abort(); submission.current = null; };
-  }, [storageKey, intentKey, retryKey, slug, sessionAttempt]);
+  }, [storageKey, intentKey, retryKey, slug, sessionAttempt, fallbackTitle]);
 
   useEffect(() => {
     if (!draft) return;
@@ -97,7 +104,7 @@ export function FeedbackForm({ slug, githubDeliveryAvailable = false }: { slug: 
   function change(values: Partial<Draft>) {
     if (!draft || submission.current || Object.entries(values).every(([key, value]) => draft[key as keyof Draft] === value)) return;
     const next = { ...draft, ...values, ...(!githubDeliveryAvailable ? { sendToGithub: false, githubDisclosureConsent: false } : {}) };
-    setDraft({ ...next, title: titleFromBody(next.body), requestId: crypto.randomUUID() });
+    setDraft({ ...next, title: titleFromBody(next.body, fallbackTitle), requestId: crypto.randomUUID() });
     setSubmitted(null);
     setError(null);
     try { sessionStorage.removeItem(retryKey); } catch { /* The current composer remains open. */ }
@@ -114,13 +121,16 @@ export function FeedbackForm({ slug, githubDeliveryAvailable = false }: { slug: 
 
   function login() {
     const token = crypto.randomUUID();
-    let returnTo = `/p/${encodeURIComponent(slug)}#feedback`;
+    const location = new URL(window.location.href);
+    location.pathname = localePath(locale, `/p/${encodeURIComponent(slug)}`);
+    location.hash = "#feedback";
     try {
       if (draft) sessionStorage.setItem(storageKey, JSON.stringify(draft));
       sessionStorage.setItem(intentKey, JSON.stringify({ token, expiresAt: Date.now() + 10 * 60_000 }));
-      returnTo = `/p/${encodeURIComponent(slug)}?feedbackCompose=${token}#feedback`;
+      location.searchParams.set("feedbackCompose", token);
     } catch { /* Login still works when storage is unavailable. */ }
-    router.push(`/login?returnTo=${encodeURIComponent(returnTo)}`);
+    const returnTo = `${location.pathname}${location.search}${location.hash}`;
+    router.push(localePath(locale, `/login?returnTo=${encodeURIComponent(returnTo)}`));
   }
 
   function cancel() {
@@ -159,8 +169,8 @@ export function FeedbackForm({ slug, githubDeliveryAvailable = false }: { slug: 
       try { sessionStorage.setItem(retryKey, draft.requestId); } catch { /* The live draft remains available for retry. */ }
       if (error instanceof Error && ["login_required", "invalid_csrf"].includes(error.message)) {
         setReauthRequired(true);
-        setError("로그인 상태를 다시 확인해야 합니다. 작성 내용은 보관되어 있습니다. 로그인한 뒤 같은 요청으로 다시 등록해 주세요.");
-      } else setError(error instanceof Error ? ERROR[error.message] ?? "접수 결과를 확인하지 못했습니다. 작성 내용은 보관되어 있습니다. 다시 제출하면 같은 요청으로 확인합니다." : "접수하지 못했습니다. 다시 시도해 주세요.");
+        setError("error.feedbackReauth");
+      } else setError(error instanceof Error ? ERROR[error.message] ?? "error.feedbackUncertain" : "error.feedbackFailed");
     } finally {
       if (!controller.signal.aborted) { submission.current = null; setPending(false); }
     }
@@ -168,40 +178,40 @@ export function FeedbackForm({ slug, githubDeliveryAvailable = false }: { slug: 
 
   return (
     <div>
-      {!expanded && <button ref={entry} type="button" onClick={open} disabled={!session} aria-label="댓글 남기기" aria-expanded={expanded} aria-controls="feedback-composer"
+      {!expanded && <button ref={entry} type="button" onClick={open} disabled={!session} aria-label={t("feedback.compose")} aria-expanded={expanded} aria-controls="feedback-composer"
         className="flex min-h-12 w-full items-center gap-3 rounded-lg border border-line bg-bg-soft px-3 py-2 text-left text-[13px] text-fg-2 disabled:opacity-60">
         <span aria-hidden="true" className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-bg-card text-[13px] text-fg">{session?.user ? session.user.displayName.slice(0, 1) : "+"}</span>
-        <span>댓글 남기기…</span><span className="ml-auto text-[13px] text-fg">{session?.user ? "작성" : "로그인 후 작성"}</span>
+        <span>{t("feedback.composePlaceholder")}</span><span className="ml-auto text-[13px] text-fg">{session?.user ? t("feedback.write") : t("feedback.loginWrite")}</span>
       </button>}
-      {!session && !sessionError && <p role="status" className="mt-2 text-[13px] text-fg-2">로그인 상태를 확인하는 중입니다.</p>}
-      {sessionError && <p role="alert" className="mt-2 text-[13px] leading-6">로그인 상태를 불러오지 못했습니다. <button type="button" onClick={() => { setSessionError(false); setSessionAttempt((attempt) => attempt + 1); }} className="min-h-11 underline underline-offset-2">다시 확인</button></p>}
+      {!session && !sessionError && <p role="status" className="mt-2 text-[13px] text-fg-2">{t("feedback.checkingSession")}</p>}
+      {sessionError && <p role="alert" className="mt-2 text-[13px] leading-6">{t("feedback.sessionFailed")} <button type="button" onClick={() => { setSessionError(false); setSessionAttempt((attempt) => attempt + 1); }} className="min-h-11 underline underline-offset-2">{t("action.retry")}</button></p>}
       {expanded && session?.user && draft && <form id="feedback-composer" onSubmit={submit} aria-busy={pending} className="rounded-lg border border-line p-3">
-        <p className="mb-3 text-[13px] font-medium">{session.user.displayName}<span className="ml-2 font-normal text-fg-2">댓글 작성</span></p>
+        <p className="mb-3 text-[13px] font-medium">{session.user.displayName}<span className="ml-2 font-normal text-fg-2">{t("feedback.writing")}</span></p>
         <fieldset disabled={pending} className="space-y-3">
-          <label className="sr-only" htmlFor="feedback-body">댓글 내용</label>
-          <textarea ref={textarea} id="feedback-body" className="min-h-28 w-full resize-y rounded-md bg-bg-card p-1 text-[14px] leading-6 text-fg outline-offset-2" required maxLength={5000} value={draft.body} placeholder="사용해 본 의견이나 궁금한 점을 남겨주세요." onChange={(event) => change({ body: event.target.value })} />
+          <label className="sr-only" htmlFor="feedback-body">{t("feedback.body")}</label>
+          <textarea ref={textarea} id="feedback-body" className="min-h-28 w-full resize-y rounded-md bg-bg-card p-1 text-[14px] leading-6 text-fg outline-offset-2" required maxLength={5000} value={draft.body} placeholder={t("feedback.placeholder")} onChange={(event) => change({ body: event.target.value })} />
           <div className="flex flex-wrap items-center gap-1 border-b border-line pb-3">
-            <div role="group" aria-label="댓글 종류" className="flex gap-1">{KINDS.map((kind) => <button key={kind.value} type="button" aria-pressed={draft.kind === kind.value} onClick={() => change({ kind: kind.value })}
-              className={`min-h-11 rounded-md px-3 text-[13px] ${draft.kind === kind.value ? "bg-accent-soft text-accent" : "text-fg-2"}`}>{kind.label}</button>)}</div>
-            <span className="ml-auto text-[13px] text-fg-2">{draft.body.length.toLocaleString("ko-KR")} / 5,000</span>
+            <div role="group" aria-label={t("feedback.kindLabel")} className="flex gap-1">{KINDS.map((kind) => <button key={kind.value} type="button" aria-pressed={draft.kind === kind.value} onClick={() => change({ kind: kind.value })}
+              className={`min-h-11 rounded-md px-3 text-[13px] ${draft.kind === kind.value ? "bg-accent-soft text-accent" : "text-fg-2"}`}>{t(kind.value === "feature" ? "feedback.kind.featureShort" : `feedback.kind.${kind.value}`)}</button>)}</div>
+            <span className="ml-auto text-[13px] text-fg-2">{formatNumber(draft.body.length, locale)} / {formatNumber(5000, locale)}</span>
           </div>
-          <label className="flex min-h-11 items-start gap-2 py-2 text-[13px] leading-6"><input className="mt-1.5 shrink-0" type="checkbox" required checked={draft.serviceDisclosureConsent} onChange={(event) => change({ serviceDisclosureConsent: event.target.checked })} />닉네임·제목·내용을 NoMoreVibe에 공개하는 데 동의합니다.</label>
+          <label className="flex min-h-11 items-start gap-2 py-2 text-[13px] leading-6"><input className="mt-1.5 shrink-0" type="checkbox" required checked={draft.serviceDisclosureConsent} onChange={(event) => change({ serviceDisclosureConsent: event.target.checked })} />{t("feedback.disclosure")}</label>
           {githubDeliveryAvailable && <FeedbackGithubOptions selected={draft.sendToGithub} consent={draft.githubDisclosureConsent} onChange={change} disabled={pending} />}
           {!githubDeliveryAvailable && draft.sendToGithub && <p className="text-[13px] leading-5 text-fg-2">
-            저장한 초안의 GitHub 전달을 현재 사용할 수 없습니다. <button type="button" onClick={() => change({ sendToGithub: false, githubDisclosureConsent: false })} className="min-h-11 underline underline-offset-2">GitHub 전달 선택 해제</button>
+            {t("feedback.githubUnavailable")} <button type="button" onClick={() => change({ sendToGithub: false, githubDisclosureConsent: false })} className="min-h-11 underline underline-offset-2">{t("feedback.githubDeselect")}</button>
           </p>}
           <div className="flex flex-wrap items-center gap-2">
-            <p className="mr-auto text-[13px] text-fg-2">이메일과 인증 정보는 적지 마세요.</p>
-            <button type="button" onClick={cancel} className="min-h-11 px-3 text-[13px] text-fg-2">취소</button>
-            <button type="submit" disabled={reauthRequired || !draft.body.trim() || !draft.title.trim() || !draft.serviceDisclosureConsent || (draft.sendToGithub && !draft.githubDisclosureConsent)} className="min-h-11 rounded-lg bg-accent-solid px-4 text-[13px] font-medium text-white disabled:opacity-50">{pending ? "접수 중…" : "등록"}</button>
+            <p className="mr-auto text-[13px] text-fg-2">{t("feedback.noSecrets")}</p>
+            <button type="button" onClick={cancel} className="min-h-11 px-3 text-[13px] text-fg-2">{t("action.cancel")}</button>
+            <button type="submit" disabled={reauthRequired || !draft.body.trim() || !draft.title.trim() || !draft.serviceDisclosureConsent || (draft.sendToGithub && !draft.githubDisclosureConsent)} className="min-h-11 rounded-lg bg-accent-solid px-4 text-[13px] font-medium text-white disabled:opacity-50">{pending ? t("feedback.submitting") : t("feedback.submit")}</button>
           </div>
         </fieldset>
       </form>}
-      {error && <p role="alert" className="mt-3 text-[14px] leading-6">{error}</p>}
-      {reauthRequired && <button type="button" onClick={login} className="min-h-11 text-[14px] underline underline-offset-2">로그인하고 다시 등록</button>}
-      {submitted && <p role="status" className="mt-3 text-[14px] leading-6">{submitted.reviewState === "accepted" ? "접수되어 서비스에 공개되었습니다."
-        : submitted.reviewState === "held" ? "검토 중입니다. 검토가 끝나기 전에는 작성자와 관리자만 볼 수 있습니다."
-          : "공개되지 않음. 작성자와 관리자만 볼 수 있습니다."} <FeedbackDeliveryStatus feedback={submitted} compact /> {submitted.deliveryState === "local_only" && "GitHub에는 전송되지 않았습니다."} <Link prefetch={false} className="underline underline-offset-2" href={`/feedback/${submitted.id}`}>접수 원문 보기</Link></p>}
+      {error && <p role="alert" className="mt-3 text-[14px] leading-6">{t(error)}</p>}
+      {reauthRequired && <button type="button" onClick={login} className="min-h-11 text-[14px] underline underline-offset-2">{t("feedback.loginRetry")}</button>}
+      {submitted && <p role="status" className="mt-3 text-[14px] leading-6">{submitted.reviewState === "accepted" ? t("feedback.received")
+        : submitted.reviewState === "held" ? t("feedback.receivedHeld")
+          : t("feedback.receivedRejected")} <FeedbackDeliveryStatus feedback={submitted} compact /> {submitted.deliveryState === "local_only" && t("feedback.notSent")} <Link prefetch={false} className="underline underline-offset-2" href={localePath(locale, `/feedback/${submitted.id}`)}>{t("feedback.receipt")}</Link></p>}
     </div>
   );
 }

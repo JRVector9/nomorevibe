@@ -13,7 +13,7 @@ vi.mock("react", async (importOriginal) => {
   return { ...actual, useState: (initial: unknown) => actual.useState(initial === "owner" ? state.start : initial) };
 });
 
-const { TakedownForm } = await import("@/app/p/[slug]/TakedownForm");
+const { TakedownForm } = await import("@/app/(public)/[locale]/(content)/p/[slug]/TakedownForm");
 const { INTRO_REQUEST_MAX, INTRO_REQUEST_MIN, TAKEDOWN_PROMISE, introRequestMessage } = await import("@/lib/domain/products/takedown-view");
 
 const textOf = (html: string) => html.replace(/<!-- -->/g, "").replace(/<[^>]+>/g, "").replace(/\s+/g, " ");
@@ -52,7 +52,7 @@ describe("요청 폼 — 소개 수정 요청", () => {
   });
 
   it("소개 수정은 내려달라는 요청 주소가 아니라 따로 된 주소로 글만 보낸다", () => {
-    const source = readFileSync("app/p/[slug]/TakedownForm.tsx", "utf8");
+    const source = readFileSync("app/(public)/[locale]/(content)/p/[slug]/TakedownForm.tsx", "utf8");
     expect(source).toContain("intro ? `/api/products/${slug}/intro-request` : `/api/products/${slug}/takedown`");
     expect(source).toContain("intro ? { message: text } : { reason: text, kind }");
   });

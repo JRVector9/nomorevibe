@@ -1,3 +1,6 @@
+"use client";
+
+import { useTranslations } from "@/lib/i18n/context";
 /** 회색 막대 하나 — 실제 글자 자리의 크기로 */
 const BAR = "animate-pulse rounded-[8px] bg-bg-soft";
 
@@ -11,9 +14,10 @@ const BAR = "animate-pulse rounded-[8px] bg-bg-soft";
  * 없는 제품도 404 대신 200 을 낸다. 페이지가 제품을 먼저 찾고(없으면 404) 그다음에 이 골격을 흘린다(app/p/[slug]/page.tsx).
  */
 export function DetailSkeleton() {
+  const t = useTranslations("detail");
   return (
     <main aria-busy="true" aria-live="polite" className="wrap pb-14">
-      <span className="sr-only">프로젝트를 불러오는 중</span>
+      <span className="sr-only">{t("page.loading")}</span>
       <div className={`mt-4 h-[18px] w-[180px] ${BAR}`} />
       <section className="border-b border-line pb-7 pt-6">
         <div className="flex flex-wrap items-start gap-[22px]">

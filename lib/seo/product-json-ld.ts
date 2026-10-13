@@ -35,6 +35,10 @@ export type ProductJsonLdInput = {
   image?: string | null;
   /** 저장소 언어 상위 몇 개 */
   languages?: string[];
+  /** Localized public addresses and breadcrumb label; Korean remains the default. */
+  pagePath?: string;
+  homePath?: string;
+  homeName?: string;
 };
 
 /** http(s) 주소만 — 그 밖의 값(javascript: 등)은 적지 않는다 */
@@ -49,7 +53,7 @@ function httpUrl(value: string | null | undefined): string | undefined {
 }
 
 export function productJsonLd(input: ProductJsonLdInput): JsonLd[] {
-  const page = `${input.origin}/p/${encodeURIComponent(input.slug)}`;
+  const page = `${input.origin}${input.pagePath ?? `/p/${encodeURIComponent(input.slug)}`}`;
   const repo = input.repoGone ? undefined : httpUrl(input.repoUrl);
   const site = httpUrl(input.url);
   const image = input.image?.startsWith("/api/og-cache/") ? `${input.origin}${input.image}` : undefined;
@@ -68,7 +72,7 @@ export function productJsonLd(input: ProductJsonLdInput): JsonLd[] {
   const breadcrumb: JsonLd = {
     "@type": "BreadcrumbList",
     itemListElement: [
-      { "@type": "ListItem", position: 1, name: "발견하기", item: `${input.origin}/` },
+      { "@type": "ListItem", position: 1, name: input.homeName ?? "발견하기", item: `${input.origin}${input.homePath ?? "/"}` },
       { "@type": "ListItem", position: 2, name: input.categoryName, item: `${input.origin}${input.categoryPath}` },
       { "@type": "ListItem", position: 3, name: input.name, item: page },
     ],

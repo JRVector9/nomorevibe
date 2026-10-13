@@ -66,6 +66,8 @@ export const JOB_CATALOG: readonly { name: string; role: JobRole | "scheduler"; 
    * 8건 묶음으로. 새 제품·홈에 보이는 제품이 먼저고, 나머지 3만여 건은 하루이틀에 걸쳐 채운다(korean-tagline.ts)
    */
   { name: "product-tagline-ko", role: "text", intervalMs: 60_000 },
+  // Bounded, visible-product demand only; independent of the paused introduction-review queue.
+  { name: "product-translate", role: "text", intervalMs: 60_000 },
   /** 소개 검수 — AI 소개와 쓸모없어 보이는 메이커 소개를 Sonnet 이 근거와 대조한다. 새로 발행된 것부터 */
   { name: "product-intro-check", role: "reviewer", intervalMs: 60_000 },
   /** Grok 로그인 확인 — 6시간 토큰이 심사가 뜸한 사이 만료되지 않게 4시간마다 가장 짧은 호출 한 번(grok-cli 설정이 있을 때만) */

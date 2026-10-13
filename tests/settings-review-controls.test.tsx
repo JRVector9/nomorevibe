@@ -5,9 +5,9 @@ vi.mock('@/lib/auth/admin', () => ({ currentAdmin: vi.fn() }));
 vi.mock('next/cache', () => ({ revalidatePath: vi.fn() }));
 vi.mock('@/lib/crawl/settings', () => ({ getSettings: vi.fn(), saveSettings: vi.fn(), changeReviewMode: vi.fn() }));
 
-import { ReviewModeForm } from '@/app/admin/review/ReviewModeForm';
-import { SecondVoterSwitch } from '@/app/admin/review/SecondVoterSwitch';
-import { voterChoices } from '@/app/admin/review/voters';
+import { ReviewModeForm } from '@/app/(operator)/admin/review/ReviewModeForm';
+import { SecondVoterSwitch } from '@/app/(operator)/admin/review/SecondVoterSwitch';
+import { voterChoices } from '@/app/(operator)/admin/review/voters';
 
 /**
  * 발행 보호·2차 표 바로 바꾸기는 크롤 설정 폼 안(#second)에 그린다(2026-10-08 UX 감사 ADM-24).

@@ -14,13 +14,21 @@ import { completeProductGithubBinding, expireMakerGithubAuthorizations, failMake
 import { githubAuthFlows } from "@/lib/db/github-user-schema";
 import { decryptGithubSecret, encryptGithubSecret, exchangeGithubAppCode } from "@/lib/domain/github-user/credentials";
 import { randomBytes } from "node:crypto";
+import { safePublicReturnUrl, stripLocale } from "@/lib/i18n/routing";
 
 export function requireMakerGithubEnabled(): void {
   requirePublicAuthEnabled();
   if (!productFeedbackEnabled()) throw new GithubInstallationError(404, "github_feedback_disabled");
 }
 
-export async function startMakerGithubAuthorization(input: { actorUserId: number; slug: string; editToken: string; deliveryConsent: boolean; sessionTokenHash: string }): Promise<{ authorizeUrl: string; browserNonce: string }> {
+function makerGithubReturnUrl(value: unknown, slug: string): string {
+  const fallback = `/p/${slug}/github`;
+  const target = safePublicReturnUrl(value, fallback);
+  const pathname = stripLocale(decodeURIComponent(new URL(target, "https://return.invalid").pathname)).replace(/\/$/, "");
+  return pathname === fallback ? target : fallback;
+}
+
+export async function startMakerGithubAuthorization(input: { actorUserId: number; slug: string; editToken: string; deliveryConsent: boolean; sessionTokenHash: string; returnTo?: string }): Promise<{ authorizeUrl: string; browserNonce: string }> {
   requireMakerGithubEnabled();
   if (input.deliveryConsent !== true) throw new GithubInstallationError(400, "github_feedback_consent_required");
   if (!isGithubNumericId(input.actorUserId) || !/^[a-f0-9]{64}$/.test(input.sessionTokenHash)) throw new GithubInstallationError(400, "github_invalid_request");
@@ -39,7 +47,7 @@ export async function startMakerGithubAuthorization(input: { actorUserId: number
     const [binding] = await tx.select().from(githubProductBindings).where(eq(githubProductBindings.productId, product.id)).for("update");
     if (!current || current.status === "banned" || current.repoUrl !== product.repoUrl || current.editTokenHash !== product.editTokenHash) throw new GithubInstallationError(409, "github_maker_authorization_changed");
     if ((binding?.revision ?? 0) !== (previous?.revision ?? 0)) throw new GithubInstallationError(409, "github_binding_revision_conflict");
-    const flow = await createGithubAuthFlow({ purpose: "maker", actorUserId: input.actorUserId, productId: product.id, returnTo: `/p/${product.slug}/github` }, tx);
+    const flow = await createGithubAuthFlow({ purpose: "maker", actorUserId: input.actorUserId, productId: product.id, returnTo: makerGithubReturnUrl(input.returnTo, product.slug) }, tx);
     await tx.insert(githubMakerAuthContexts).values({ flowId: flow.id, actorUserId: input.actorUserId, productId: product.id, repositoryId: repository.id, productRepoUrl: current.repoUrl!, editTokenHash: current.editTokenHash!, expectedRevision: binding?.revision ?? 0, browserNonceHash: hashSessionToken(flow.browserNonce), sessionTokenHash: input.sessionTokenHash, expiresAt: flow.expiresAt });
     return flow;
   }));
@@ -121,11 +129,15 @@ export async function completeMakerGithubInstallation(input: MakerCallbackInput 
     eq(githubMakerAuthContexts.sessionTokenHash, input.sessionTokenHash), eq(githubMakerAuthContexts.state, "awaiting_setup"), gt(githubMakerAuthContexts.expiresAt, sql`clock_timestamp()`))).returning());
   if (!context) throw new GithubInstallationError(400, "invalid_github_flow");
   try {
+    const [flow] = await onPrimary(() => db.select({ returnTo: githubAuthFlows.returnTo }).from(githubAuthFlows).where(and(
+      eq(githubAuthFlows.id, context.flowId), eq(githubAuthFlows.purpose, "maker"),
+      eq(githubAuthFlows.productId, context.productId), eq(githubAuthFlows.actorUserId, input.actorUserId))));
+    if (!flow) throw new GithubInstallationError(400, "invalid_github_flow");
     if (input.setupAction === "request") {
       await failMakerGithubAuthorization(context.flowId);
       const [product] = await onPrimary(() => db.select({ slug: products.slug }).from(products).where(eq(products.id, context.productId)));
       if (!product) throw new GithubInstallationError(404, "product_not_found");
-      return { status: "pending" as const, slug: product.slug };
+      return { status: "pending" as const, slug: product.slug, returnTo: makerGithubReturnUrl(flow.returnTo, product.slug) };
     }
     if (input.setupAction !== undefined && !["install", "update"].includes(input.setupAction)) throw new GithubInstallationError(400, "github_invalid_request");
     if (!isGithubNumericId(input.installationId) || !context.encryptedUserToken) throw new GithubInstallationError(400, "github_invalid_request");
@@ -135,7 +147,7 @@ export async function completeMakerGithubInstallation(input: MakerCallbackInput 
     await verifyMakerInstallationAccess(token, input.installationId, context.repositoryId);
     const verified = await verifyFeedbackInstallation({ installationId: input.installationId, repositoryId: context.repositoryId });
     const binding = await completeProductGithubBinding({ flowId: context.flowId, actorUserId: input.actorUserId, installationId: input.installationId, repository: verified.repository });
-    return { status: "connected" as const, binding, slug: product.slug };
+    return { status: "connected" as const, binding, slug: product.slug, returnTo: makerGithubReturnUrl(flow.returnTo, product.slug) };
   } catch (error) { await failMakerGithubAuthorization(context.flowId); throw error; }
 }
 export async function verifyMakerGithubRepository(token: string, repositoryUrl: string, expectedId?: number): Promise<GithubRepository> {

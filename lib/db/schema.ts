@@ -1,4 +1,5 @@
 import { sql } from "drizzle-orm";
+import type { Locale } from "@/lib/i18n/locales";
 import {
   pgTable,
   serial,
@@ -17,6 +18,7 @@ import {
   uniqueIndex,
   halfvec,
   smallint,
+  check,
 } from "drizzle-orm/pg-core";
 
 // drizzle pg-core에 내장 bytea 타입이 없어 customType으로 정의
@@ -466,6 +468,41 @@ export const productKoreanTaglines = pgTable("product_korean_taglines", {
 });
 
 export type ProductKoreanTagline = typeof productKoreanTaglines.$inferSelect;
+
+export type ProductTranslationLocale = Exclude<Locale, "ko">;
+export type ProductTranslationField = "tagline" | "description";
+export type ProductTranslationStatus = "pending" | "ready" | "failed" | "reviewed";
+
+/** Requested public fields only; Korean remains in its existing table and worker. */
+export const productTranslations = pgTable("product_translations", {
+  productId: integer("product_id").notNull().references(() => products.id, { onDelete: "cascade" }),
+  locale: varchar("locale", { length: 16 }).$type<ProductTranslationLocale>().notNull(),
+  field: varchar("field", { length: 16 }).$type<ProductTranslationField>().notNull(),
+  sourceHash: varchar("source_hash", { length: 64 }).notNull(),
+  sourceLocale: varchar("source_locale", { length: 16 }).$type<Locale>(),
+  text: text("text"),
+  status: varchar("status", { length: 16 }).$type<ProductTranslationStatus>().notNull().default("pending"),
+  provenance: jsonb("provenance").$type<{ kind: "machine" | "maker" | "editor"; source: string; policy: string }>().notNull(),
+  model: varchar("model", { length: 160 }).notNull().default(""),
+  attempts: integer("attempts").notNull().default(0),
+  errorCode: varchar("error_code", { length: 60 }),
+  retryAt: timestamp("retry_at"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+}, (table) => [
+  primaryKey({ columns: [table.productId, table.locale, table.field] }),
+  index("product_translations_pending_idx").on(table.retryAt, table.updatedAt, table.productId)
+    .where(sql`${table.status} in ('pending', 'failed')`),
+  check("product_translations_locale_check", sql`${table.locale} in ('en', 'zh-Hans', 'zh-Hant')`),
+  check("product_translations_field_check", sql`${table.field} in ('tagline', 'description')`),
+  check("product_translations_status_check", sql`${table.status} in ('pending', 'ready', 'failed', 'reviewed')`),
+  check("product_translations_source_locale_check", sql`${table.sourceLocale} is null or ${table.sourceLocale} in ('ko', 'en', 'zh-Hans', 'zh-Hant')`),
+  check("product_translations_value_check", sql`${table.sourceHash} ~ '^[0-9a-f]{64}$' and ${table.attempts} >= 0
+    and ((${table.status} in ('ready', 'reviewed') and ${table.text} is not null and length(btrim(${table.text})) > 0 and ${table.errorCode} is null)
+      or (${table.status} in ('pending', 'failed') and ${table.text} is null))`),
+]);
+
+export type ProductTranslation = typeof productTranslations.$inferSelect;
 
 export type RepoStatus = "ok" | "not_found" | "empty" | "blocked";
 export type RepoReviewDecision = "keep" | "delist_candidate" | "human";

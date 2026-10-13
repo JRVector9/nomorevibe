@@ -20,7 +20,9 @@ import { DEFAULT_RANKING_POLICY } from "@/lib/domain/ranking/policy";
 import { seasonKeysWithEntries } from "@/lib/domain/ranking/season-entries";
 import { ensureSchema, resetTables } from "./setup";
 
-const { default: sitemap } = await import("@/app/sitemap");
+const { productSitemapEntries, productSitemapRanges, staticSitemapEntries } = await import("@/lib/domain/products/sitemap");
+const sitemap = async () => [...await staticSitemapEntries("ko"),
+  ...(await Promise.all((await productSitemapRanges()).map((range) => productSitemapEntries("ko", range)))).flat()];
 
 /**
  * sitemap(UX-08·UX-09, 운영자 결정 D1·D2) — 상세는 색인해도 되는 제품만(indexing.ts), 분야 목록은 가리는 분야를 뺀 전부,
@@ -123,12 +125,12 @@ it("색인할 제품·분야 목록·순위가 있는 시즌만 싣는다", asyn
   expect(paths.length).toBeLessThanOrEqual(50_000);
 });
 
-it("색인할 제품 목록은 담아 두었다가 쓴다 — 새 제품은 담은 값이 지난 뒤에 실린다", async () => {
+it("제품 파일은 현재 원문·번역 준비를 조회한다 — 새 제품을 고정 목록 캐시에 가두지 않는다", async () => {
   await product("first", { status: "verified", source: "skill" });
   expect((await sitemap()).some((entry) => entry.url.endsWith("/p/first"))).toBe(true);
 
   await product("second", { status: "verified", source: "skill" });
-  expect((await sitemap()).some((entry) => entry.url.endsWith("/p/second"))).toBe(false);
+  expect((await sitemap()).some((entry) => entry.url.endsWith("/p/second"))).toBe(true);
 
   clearAllMemos();
   expect((await sitemap()).some((entry) => entry.url.endsWith("/p/second"))).toBe(true);

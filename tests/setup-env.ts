@@ -9,7 +9,7 @@
  * 그래서 개발 전용 스위치를 여기서 지운다. 필요한 테스트는 스스로 값을 세운다.
  * 통합 테스트는 tests/integration/env.ts가 자기 값을 명시적으로 넣으므로 여기 대상이 아니다.
  */
-import { beforeEach } from "vitest";
+import { beforeEach, vi } from "vitest";
 import { clearAllMemos } from "@/lib/cache/memo";
 
 const DEV_ONLY = ["ALLOW_PRIVATE_URLS", "NEXT_PUBLIC_SITE_URL"];
@@ -18,3 +18,27 @@ for (const name of DEV_ONLY) delete process.env[name];
 
 // 공개 화면의 짧은 읽기 캐시(lib/cache/memo.ts)는 모듈에 남는다 — 앞 테스트의 값을 다음 테스트가 받지 않게
 beforeEach(() => clearAllMemos());
+
+// Existing standalone component fixtures exercise Korean output without a Next request.
+// Production keeps strict providers and server-selected dictionaries.
+vi.mock("server-only", () => ({}));
+vi.mock("@/lib/i18n/server", () => ({ getRequestLocale: async () => "ko" }));
+vi.mock("@/lib/i18n/context", async () => {
+  const { createTranslator } = await import("@/lib/i18n/messages");
+  const catalogs = {
+    common: (await import("@/messages/ko/common")).common,
+    globalError: (await import("@/messages/ko/global-error")).globalError,
+    labels: (await import("@/messages/ko/labels")).labels,
+    browse: (await import("@/messages/ko/browse")).browse,
+    detail: (await import("@/messages/ko/detail")).detail,
+    auth: (await import("@/messages/ko/auth")).auth,
+    launch: (await import("@/messages/ko/launch")).launch,
+    policy: (await import("@/messages/ko/policy")).policy,
+  };
+  return {
+    I18nProvider: ({ children }: { children: React.ReactNode }) => children,
+    useLocale: () => "ko",
+    useServerNow: () => new Date(),
+    useTranslations: (namespace: keyof typeof catalogs) => createTranslator(namespace, catalogs[namespace]),
+  };
+});

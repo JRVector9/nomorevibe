@@ -1,3 +1,7 @@
+import {localizeProductList} from "@/lib/i18n/products";
+import { getRequestLocale } from "@/lib/i18n/server";
+import { getTranslator } from "@/lib/i18n/dictionary";
+import { localePath } from "@/lib/i18n/routing";
 import {Suspense} from 'react';
 import Link from 'next/link';
 import {getPopularGroups} from '@/lib/domain/products/popular';
@@ -12,16 +16,18 @@ import {logger} from '@/lib/observability/logger';
  * 예전 네 칸 순위 줄은 이름이 잘리고 소개·미리보기 그림이 없었다. 구간은 탭으로 고르고, 전체는 /popular 에서 본다.
  */
 export async function PopularTiers({personal=false}:{personal?:boolean}){
+ const locale=await getRequestLocale();
+ const t=await getTranslator(locale,"browse");
  let groups;
  try{groups=await getPopularGroups(personal);}catch(error){
   logger.warn('home.popular_unavailable',{error});
-  return <section className="popular-section" id="popular"><h2>많이 쓰이는 프로젝트</h2><p role="status">목록을 불러오지 못했습니다. 잠시 후 다시 확인해 주세요.</p></section>;
+  return <section className="popular-section" id="popular"><h2>{t("popular.title")}</h2><p role="status">{t("error.load")}</p></section>;
  }
- const tiers=groups.map(group=>({key:group.key,label:group.label,range:group.range,total:group.total,href:popularHref(group.key,personal),
-  items:group.items.map((item,index)=>rankedCard(item,index+1))}));
+ const tiers=await Promise.all(groups.map(async group=>({key:group.key,label:t(`tier.${group.key}`),range:t(`tierRange.${group.key}`),total:group.total,href:localePath(locale,popularHref(group.key,personal)),
+  items:(await localizeProductList(group.items,locale)).map((item,index)=>rankedCard(item,index+1))})));
  return <section className="popular-section" id="popular" aria-labelledby="popular-title">
-  <div className="row-head"><div><h2 id="popular-title" className="row-title">많이 쓰이는 프로젝트</h2>
-   <p className="row-note">GitHub 스타 2천 이상 · 구간마다 상위 3 · <Link prefetch={false} href="/?metric=popular#popular" scroll={false}>집계 기준</Link></p></div>
+  <div className="row-head"><div><h2 id="popular-title" className="row-title">{t("popular.title")}</h2>
+   <p className="row-note">{t("popular.homeNote")} · <Link prefetch={false} href={localePath(locale,"/?metric=popular#popular")} scroll={false}>{t("nav.methodology")}</Link></p></div>
    <div><Suspense><PopularFilter personal={personal}/></Suspense></div></div>
   <PopularTierCards groups={tiers} now={new Date().toISOString()}/>
  </section>;

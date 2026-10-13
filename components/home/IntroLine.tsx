@@ -1,7 +1,11 @@
+"use client";
+
 import Link from "next/link";
 import { metricHref, type BrowseState } from "@/components/home/browse-state";
-import { NEW_THIS_WEEK_LABEL } from "@/lib/copy/terms";
-import { formatCount } from "@/lib/format/number";
+import { useLocale, useTranslations } from "@/lib/i18n/context";
+import { formatNumber } from "@/lib/i18n/format";
+import { localePath } from "@/lib/i18n/routing";
+
 import type { HomePulse } from "@/lib/domain/products/home-pulse";
 
 /**
@@ -15,20 +19,23 @@ import type { HomePulse } from "@/lib/domain/products/home-pulse";
  * 자세한 수집·근거·내려달라는 요청은 게재 기준(/policy)이 맡는다.
  */
 export function IntroLine({ pulse, total, state }: { pulse: HomePulse; total: number; state: BrowseState }) {
+  const locale = useLocale();
+  const t = useTranslations("browse");
+  const count = (n: number) => formatNumber(n, locale);
   return (
-    <section className="intro-line" aria-label="소개">
+    <section className="intro-line" aria-label={t("intro.label")}>
       <div className="intro-head">
-        <h1 className="intro-title">AI로 만든 것들이 <em>제품</em>이 되는 곳.</h1>
+        <h1 className="intro-title">{t("intro.titleLead")}<em>{t("intro.titleFocus")}</em>{t("intro.titleTail")}</h1>
         <p className="intro-sub">
-          공개 저장소에서 찾아 모은 프로젝트입니다. ‘AI’는 저장소에 남은 AI 코딩 도구 흔적으로, ✓는 메이커가 도메인을 확인한 곳에만 붙습니다.{" "}
-          <Link prefetch={false} href="/policy#listing">어떻게 고르나요</Link>
+          {t("intro.note")}{" "}
+          <Link prefetch={false} href={localePath(locale, "/policy#listing")}>{t("intro.selection")}</Link>
         </p>
       </div>
       <p className="intro-stats">
-        공개 <b>{formatCount(total)}</b>
-        {" · "}<Link prefetch={false} href={metricHref(state, "born")}>{NEW_THIS_WEEK_LABEL} <b>{formatCount(pulse.born.current)}</b></Link>
-        {" · "}<Link prefetch={false} href={metricHref(state, "updates")}>새 버전 낸 프로젝트 <b>{formatCount(pulse.updates.projects)}</b></Link>
-        {" · "}이번 주 = 어제 자정까지 7일
+        {t("intro.public")} <b>{count(total)}</b>
+        {" · "}<Link prefetch={false} href={metricHref(state, "born", locale)}>{t("intro.new")} <b>{count(pulse.born.current)}</b></Link>
+        {" · "}<Link prefetch={false} href={metricHref(state, "updates", locale)}>{t("intro.updates")} <b>{count(pulse.updates.projects)}</b></Link>
+        {" · "}{t("intro.week")}
       </p>
     </section>
   );

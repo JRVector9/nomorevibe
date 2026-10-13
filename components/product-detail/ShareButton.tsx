@@ -1,5 +1,6 @@
 "use client";
 
+import { useTranslations } from "@/lib/i18n/context";
 import { useState } from "react";
 
 /**
@@ -7,6 +8,7 @@ import { useState } from "react";
  * 바깥 링크 화살표(↗)와 헷갈리지 않게 공유 아이콘에 '공유' 글자를 붙인다.
  */
 export function ShareButton({ title, path }: { title: string; path: string }) {
+  const t = useTranslations("detail");
   const [note, setNote] = useState<string | null>(null);
 
   function flash(message: string) {
@@ -27,9 +29,9 @@ export function ShareButton({ title, path }: { title: string; path: string }) {
     }
     try {
       await navigator.clipboard.writeText(url);
-      flash("링크 복사됨");
+      flash(t("share.copied"));
     } catch {
-      flash("복사하지 못했습니다");
+      flash(t("share.failed"));
     }
   }
 
@@ -43,7 +45,7 @@ export function ShareButton({ title, path }: { title: string; path: string }) {
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
           <path d="M12 15V3m-4 4 4-4 4 4M6 11H5a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-8a1 1 0 0 0-1-1h-1" />
         </svg>
-        공유
+        {t("share.title")}
       </button>
       {/* 단추 글자는 그대로 두고 — 줄이 흔들리지 않게 — 복사했다는 말은 단추 아래에 잠깐 띄운다 */}
       <span

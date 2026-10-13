@@ -13,7 +13,9 @@ import { Icon } from "@/components/home/icons";
 import { ProjectCard } from "@/components/home/ProjectCard";
 import { parseSaved, persistSaved, savedSnapshot, subscribeSaved } from "@/components/home/saved";
 import type { HomeCardProduct } from "@/components/home/types";
-import { formatCount } from "@/lib/format/number";
+import { useLocale, useTranslations } from "@/lib/i18n/context";
+import { formatNumber } from "@/lib/i18n/format";
+
 
 export function ProjectGrid({
   products,
@@ -41,6 +43,9 @@ export function ProjectGrid({
   /** 카드 제목·빈 화면 제목의 단계 — 위 제목 다음 단계(A11Y-05) */
   cardHeading?: 2 | 3;
 }) {
+  const locale = useLocale();
+  const t = useTranslations("browse");
+  const count = (n: number) => formatNumber(n, locale);
   const raw = useSyncExternalStore(subscribeSaved, savedSnapshot, () => "[]");
   const saved = useMemo(() => parseSaved(raw), [raw]);
   const onlySaved = initialOnlySaved;
@@ -64,10 +69,10 @@ export function ProjectGrid({
       <div className="projects-grid">
         <div className="empty-state">
           <Icon name="bookmark" size={29} />
-          <EmptyHeading>아직 저장한 프로젝트가 없습니다.</EmptyHeading>
-          <p>관심 있는 프로젝트의 북마크를 눌러 모아보세요.</p>
-          <Link prefetch={false} className="secondary" href={hrefWith(browseState)}>
-            전체 프로젝트 보기
+          <EmptyHeading>{t("saved.empty")}</EmptyHeading>
+          <p>{t("saved.hint")}</p>
+          <Link prefetch={false} className="secondary" href={hrefWith(browseState, {}, locale)}>
+            {t("saved.all")}
           </Link>
         </div>
       </div>
@@ -78,21 +83,21 @@ export function ProjectGrid({
     <>
       {onlySaved && (
         <div className="saved-banner">
-          이 브라우저에 저장한 프로젝트 {formatCount(rows.length)}개
-          <Link prefetch={false} className="text-button" href={hrefWith(browseState)}>
-            전체 보기
+          {t("saved.banner", { count: count(rows.length) })}
+          <Link prefetch={false} className="text-button" href={hrefWith(browseState, {}, locale)}>
+            {t("saved.full")}
           </Link>
         </div>
       )}
       {start > 0 && (
         <div className="saved-banner">
-          앞의 {formatCount(start)}개는 접었습니다
-          <Link prefetch={false} className="text-button" href={hrefWith(browseState, { shown: undefined })}>
-            처음부터 보기
+          {t("saved.folded", { count: count(start) })}
+          <Link prefetch={false} className="text-button" href={hrefWith(browseState, { shown: undefined }, locale)}>
+            {t("saved.first")}
           </Link>
         </div>
       )}
-      <div className="projects-grid" id="project-grid" role="tabpanel" aria-label="프로젝트 목록">
+      <div className="projects-grid" id="project-grid" role="tabpanel" aria-label={t("home.projects")}>
         {visible.map((product, index) => (
           <ProjectCard
             key={product.slug}
@@ -109,15 +114,15 @@ export function ProjectGrid({
       {limit < total && (
         onlySaved ? (
           <button type="button" className="more-btn" onClick={() => setLocalLimit((current) => current + HOME_PAGE_SIZE)}>
-            프로젝트 더 보기 ({formatCount(visible.length)} / {formatCount(total)})
+            {t("saved.more", { shown: count(visible.length), total: count(total) })}
           </button>
         ) : (
           <Link prefetch={false}
             className="more-btn"
-            href={hrefWith(browseState, { shown: Math.min(limit + HOME_PAGE_SIZE, total) })}
+            href={hrefWith(browseState, { shown: Math.min(limit + HOME_PAGE_SIZE, total) }, locale)}
             scroll={false}
           >
-            프로젝트 더 보기 ({formatCount(start + visible.length)} / {formatResultCount(total, approximate)})
+            {t("saved.more", { shown: count(start + visible.length), total: formatResultCount(total, approximate, locale, t) })}
           </Link>
         )
       )}

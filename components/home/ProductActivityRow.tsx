@@ -1,6 +1,8 @@
-import { LAST_CODE_UPDATE_LABEL } from "@/lib/copy/terms";
+"use client";
+
+import { useLocale, useTranslations } from "@/lib/i18n/context";
 import type { ProductActivity } from "@/lib/domain/products/activity";
-import { formatAgo, formatPublicDateTime } from "@/lib/format/time";
+import { formatRelativeTime, formatDateTime } from "@/lib/i18n/format";
 
 /**
  * 카드 메타 줄의 활동 — 공개 업데이트와 코드 업데이트 중 늦은 쪽 하나만 "최근 업데이트 3일 전"으로(UX-29).
@@ -10,13 +12,15 @@ import { formatAgo, formatPublicDateTime } from "@/lib/format/time";
  * 수집되지 않은 값은 그리지 않는다.
  */
 export function ProductActivityRow({ activity, now }: { activity?: ProductActivity; now: Date | string | number }) {
+  const locale = useLocale();
+  const t = useTranslations("labels");
   // 둘 다 toISOString() 글자라 글자 순서가 시각 순서다
   const at = [activity?.updatedAt, activity?.pushedAt].filter((value): value is string => Boolean(value)).sort().at(-1);
   if (!at) return null;
-  const ago = formatAgo(at, now);
+  const ago = formatRelativeTime(at, now, locale);
   // 브라우저 시계가 서버보다 늦으면 '3분 후'가 나온다 — 방금으로 본다
-  const label = ago === "방금" || ago.endsWith("후") ? "방금 업데이트" : `최근 업데이트 ${ago}`;
-  const kind = at === activity?.pushedAt ? LAST_CODE_UPDATE_LABEL : "최근 업데이트";
+  const label = new Date(at).getTime() >= new Date(now).getTime() - 60_000 ? t("card.updatedNow") : t("card.updated", { time: ago });
+  const title = t(at === activity?.pushedAt ? "card.codeUpdateTime" : "card.updateTime", { time: formatDateTime(at, now, locale) });
   // 서버가 그린 'n분 전'과 브라우저의 지금이 몇 초 어긋날 수 있다 — 그 차이로 hydration 경고를 내지 않는다
-  return <time dateTime={at} title={`${kind} ${formatPublicDateTime(at, now)}`} suppressHydrationWarning>{label}</time>;
+  return <time dateTime={at} title={title} suppressHydrationWarning>{label}</time>;
 }

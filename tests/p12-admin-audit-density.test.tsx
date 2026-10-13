@@ -2,9 +2,9 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
 
 // 결정 버튼은 서버 액션을 부른다 — 이 테스트는 그리기만 본다(DB 없음)
-vi.mock('@/app/admin/audit/actions', () => ({ decideAuditFinding: vi.fn() }));
+vi.mock('@/app/(operator)/admin/audit/actions', () => ({ decideAuditFinding: vi.fn() }));
 
-import { AuditFinding, type AuditFindingView } from '@/app/admin/audit/AuditFinding';
+import { AuditFinding, type AuditFindingView } from '@/app/(operator)/admin/audit/AuditFinding';
 
 const LONG_URL = 'https://very-long-subdomain-name.example-hosting-platform.app/path/to/landing?ref=producthunt&utm=x';
 const finding = (overrides: Partial<AuditFindingView> = {}): AuditFindingView => ({

@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { detail } from "@/messages/ko/detail";
 
 afterEach(() => vi.unstubAllEnvs());
 
@@ -111,7 +112,8 @@ describe("personal GitHub star writes", () => {
       const tree = loaded.GithubStarButton({ slug: "test" });
       tree.props.children[0].props.onClick();
       await vi.waitFor(() => expect(states[3]).toBe(false));
-      expect(states[4]).toContain("재조회로 해제되지 않습니다");
+      expect(states[4]).toBe("star.uncertain");
+      expect(detail["star.uncertain"]).toContain("재조회로 해제되지 않습니다");
     } finally { vi.doUnmock("react"); vi.resetModules(); vi.unstubAllGlobals(); }
   });
 });

@@ -4,6 +4,14 @@
  * home.css 의 같은 자리를 바꾸는 규칙은 부모 클래스를 하나 더 붙여 우선한다.
  */
 
+.language-switcher { position: relative; flex-shrink: 0; font-size: 13px; }
+.language-switcher summary { display: flex; align-items: center; min-height: 44px; padding: 0 6px; cursor: pointer; list-style: none; }
+.language-switcher summary::-webkit-details-marker { display: none; }
+.language-switcher summary::after { content: "▾"; margin-left: 5px; font-size: 11px; }
+.language-switcher ul { position: absolute; right: 0; top: 100%; z-index: 30; min-width: 148px; margin: 0; padding: 6px; list-style: none; border: 1px solid var(--border); border-radius: 12px; background: var(--bg-card); box-shadow: 0 8px 24px rgb(0 0 0 / 10%); }
+.language-switcher li a { display: flex; align-items: center; min-height: 44px; padding: 0 10px; border-radius: 6px; white-space: nowrap; }
+.language-switcher li a:hover, .language-switcher li a[aria-current] { background: var(--bg-soft); }
+
 /* 검색 중 — 입력창 오른쪽, ⌘K 자리에 도는 고리 */
 .header-search .search-spinner {
   position: absolute;

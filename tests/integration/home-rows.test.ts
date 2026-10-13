@@ -133,8 +133,11 @@ describe("상세 뷰모델", () => {
       searchReadme: "Madeira runs Windows games on iOS.\n\nIt combines FEX-Emu, Wine and DXMT into one app so that x86-64 titles start on a jailed device without a computer.",
     }).where(eq(products.slug, "me"));
     const detail = (await getProductDetail("me"))!;
-    expect(detail.risingRank).toBe(1);
-    expect(detail.related.map((row) => row.slug)).toEqual(["g1"]);
+    // The detail now uses completed 8-hour observations, never legacy daily averages.
+    // These products have no observation runs, so they cannot claim a live rising rank.
+    expect(detail.risingRank).toBeNull();
+    expect(detail.related).toEqual([]);
+    expect(detail.relatedTotal).toBe(0);
     expect(detail.readmeExcerpt).toContain("FEX-Emu");
     // AI 제작 근거 단계 검사 전 — 상세는 '대기 중'이라고 말한다
     expect(detail.aiLevel).toEqual({ checked: false, level: null });

@@ -1,3 +1,4 @@
+import type { ResolvingMetadata } from "next";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { PopularFacets, PopularProduct } from "@/lib/domain/products/popular";
@@ -5,7 +6,7 @@ import type { PopularFacets, PopularProduct } from "@/lib/domain/products/popula
 const { getPopularPage, getPopularFacets } = vi.hoisted(() => ({ getPopularPage: vi.fn(), getPopularFacets: vi.fn() }));
 vi.mock("@/lib/domain/products/popular", () => ({ getPopularPage, getPopularFacets }));
 
-import PopularPage, { metadata } from "@/app/popular/page";
+import PopularPage, { generateMetadata } from "@/app/(public)/[locale]/(content)/popular/page";
 import { STAR_TIERS } from "@/lib/domain/products/stars";
 
 const product = (over: Partial<PopularProduct> = {}): PopularProduct => ({
@@ -37,7 +38,7 @@ describe("/popular 목록 보기 — 발견하기 부품으로(2026-10-11 시안
       .map((mark) => row.indexOf(mark));
     expect(order.every((at, i) => at >= 0 && (i === 0 || at > order[i - 1]))).toBe(true);
     // 둘째 쪽이라 16위부터 — 좁은 화면은 커버 위 숫자로 같은 순위를 보인다
-    expect(row).toContain('<span class="popular-rank">16<span class="sr-only">위</span></span>');
+    expect(row).toContain('<span class="popular-rank"><span aria-hidden="true">16</span><span class="sr-only">16위</span></span>');
     expect(row).toContain('<span class="popular-thumb-rank">16</span>');
     // 커버는 발견하기 카드와 같은 ProjectTile — 직접 설치·AI 표시를 함께 단다
     expect(row).toContain("tile-flag-ai");
@@ -48,7 +49,7 @@ describe("/popular 목록 보기 — 발견하기 부품으로(2026-10-11 시안
     expect(row).toContain("★ 4,900");
     expect(row).toContain("+50");
     expect(row).toContain('aria-label="LCU 저장"');
-    expect(html).toContain('<span class="popular-rank">17<span class="sr-only">위</span></span>');
+    expect(html).toContain('<span class="popular-rank"><span aria-hidden="true">17</span><span class="sr-only">17위</span></span>');
     expect(html).toContain("<span>조직</span>");
     expect(html).toContain("16–17위 / 1,234");
   });
@@ -57,7 +58,7 @@ describe("/popular 목록 보기 — 발견하기 부품으로(2026-10-11 시안
     const html = await render({ view: "cards" });
     expect(html).not.toContain('class="popular-list"');
     expect(html.match(/class="project-card"/g)).toHaveLength(2);
-    expect(html).toContain('<span class="project-rank">16<span class="sr-only">위</span></span>');
+    expect(html).toContain('<span class="project-rank"><span aria-hidden="true">16</span><span class="sr-only">16위</span></span>');
   });
 
   it("구간 탭은 발견하기 탭 모양에 수를 달고, 지금 거르기를 지킨 채 첫 쪽으로 간다", async () => {
@@ -120,7 +121,7 @@ describe("스타 구간 이름(UX-35)", () => {
     }
   });
 
-  it("제목은 브랜드 표기 하나로", () => {
-    expect(metadata.title).toBe("많이 쓰이는 프로젝트 — nomorevibe");
+  it("제목은 브랜드 표기 하나로", async () => {
+    expect((await generateMetadata({ params: Promise.resolve({ locale: "ko" }), searchParams: Promise.resolve({}) }, Promise.resolve({ openGraph: null } as Awaited<ResolvingMetadata>))).title).toBe("많이 쓰이는 프로젝트 — nomorevibe");
   });
 });

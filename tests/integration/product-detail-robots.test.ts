@@ -6,7 +6,7 @@ import { db } from "@/lib/db";
 import { agentRepositoryObservations, agentRepositoryScans, crawlCandidates, crawlDocuments, products, takedownRequests } from "@/lib/db/schema";
 import type { AgentObservation } from "@/lib/domain/evidence/agents/types";
 import { requestTakedown } from "@/lib/domain/products/takedown";
-import { generateMetadata } from "@/app/p/[slug]/page";
+import { generateMetadata } from "@/app/(public)/[locale]/(content)/p/[slug]/page";
 import { ensureSchema, resetTables } from "./setup";
 
 /**

@@ -11,6 +11,7 @@ import { expect, it } from "vitest";
  */
 const ROOTS = ["app", "components"];
 const SKIP = /(^|\/)(admin)(\/|$)/;
+const STATIC_LAUNCH = /\bhref=(?:"\/launch(?:[?#][^"]*)?"|\{localePath\(locale,\s*"\/launch(?:[?#][^"]*)?"\)\})/;
 
 function files(dir: string): string[] {
   return readdirSync(dir).flatMap((name) => {
@@ -27,7 +28,7 @@ it("공개 화면의 동적 화면 링크는 prefetch={false} 를 단다", () =>
     const source = readFileSync(file, "utf8");
     for (const match of source.matchAll(/<Link\b[^>]*>/g)) {
       const tag = match[0];
-      if (tag.includes("prefetch=") || /href="\/launch/.test(tag)) continue;
+      if (tag.includes("prefetch=") || STATIC_LAUNCH.test(tag)) continue;
       missing.push(`${file}: ${tag.slice(0, 80)}`);
     }
   }

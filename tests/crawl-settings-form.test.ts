@@ -14,8 +14,8 @@ vi.mock("@/lib/crawl/settings", () => ({
   settingsFormVersion: () => "v-saved",
 }));
 
-const { SettingsForm } = await import("@/app/admin/SettingsForm");
-const { saveCrawlSettings } = await import("@/app/admin/actions");
+const { SettingsForm } = await import("@/app/(operator)/admin/SettingsForm");
+const { saveCrawlSettings } = await import("@/app/(operator)/admin/actions");
 const { DEFAULT_CRAWL_SETTINGS } = await import("@/lib/crawl/settings-schema");
 type CrawlSettings = import("@/lib/crawl/settings-schema").CrawlSettings;
 

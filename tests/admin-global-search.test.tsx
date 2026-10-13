@@ -8,7 +8,7 @@ vi.mock("next/navigation", () => ({ useRouter: () => ({ push() {} }) }));
 vi.mock("@/lib/db", () => ({ db: {} }));
 
 import { activityHref, candidateHref, searchTerm, type AdminSearchResult } from "@/lib/operations/admin-search";
-import { CommandSearch, searchItems } from "@/app/admin/components/CommandSearch";
+import { CommandSearch, searchItems } from "@/app/(operator)/admin/components/CommandSearch";
 
 /** 관리자 전역 검색(⌘K, 2026-10-08 UX 점검 ADM-05) */
 describe("전역 검색 — 찾는 말과 가는 곳", () => {
@@ -60,7 +60,7 @@ describe("전역 검색 경로", () => {
   beforeEach(() => vi.clearAllMocks());
   it("관리자가 아니면 403 이고 검색하지 않는다", async () => {
     mocks.admin.mockResolvedValue(null);
-    const { GET } = await import("@/app/admin/search/route");
+    const { GET } = await import("@/app/(operator)/admin/search/route");
     const response = await GET(new Request("https://admin.test/admin/search?q=lcu"), {} as never);
     expect(response.status).toBe(403);
   });

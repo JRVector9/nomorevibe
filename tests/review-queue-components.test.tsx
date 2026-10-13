@@ -3,9 +3,9 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import type { AdminReviewEntry } from "@/lib/crawl/admin-review";
 import type { ModelHealth } from "@/lib/operations/dashboard";
-import { secondVoteView } from "@/app/admin/review/secondVote";
-import { ReviewStatusChips } from "@/app/admin/review/ReviewStatusChips";
-import { ReviewStageRail } from "@/app/admin/review/ReviewStageRail";
+import { secondVoteView } from "@/app/(operator)/admin/review/secondVote";
+import { ReviewStatusChips } from "@/app/(operator)/admin/review/ReviewStatusChips";
+import { ReviewStageRail } from "@/app/(operator)/admin/review/ReviewStageRail";
 import { humanOverview } from "./fixtures/human-queue";
 
 /**

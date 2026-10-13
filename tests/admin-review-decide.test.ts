@@ -13,9 +13,9 @@ vi.mock("@/lib/operations/admin-log", async (original) => ({
   ...await original<typeof import("@/lib/operations/admin-log")>(), recordAdminAction: mocks.record, recordAdminActions: mocks.records,
 }));
 
-const { decideCrawlCandidate, decideCrawlCandidates } = await import("@/app/admin/actions");
-const { undoCandidateDecisions } = await import("@/app/admin/review/actions");
-const { packSelection } = await import("@/app/admin/review/contract");
+const { decideCrawlCandidate, decideCrawlCandidates } = await import("@/app/(operator)/admin/actions");
+const { undoCandidateDecisions } = await import("@/app/(operator)/admin/review/actions");
+const { packSelection } = await import("@/app/(operator)/admin/review/contract");
 
 const HASH = { inputHash: "a".repeat(64), sourceRevisionHash: "b".repeat(64), candidateRevisionHash: "c".repeat(64) };
 function form(values: Record<string, string | string[]>) {

@@ -1,3 +1,108 @@
+# 2026-10-13 — PR406 병렬 리뷰의 P2 세 건 보완 완료
+
+## Current objective
+
+사용자가 독립 병렬 리뷰에서 확인한 세 결함을 보완하라고 지시했다. root가 최소 수정했고 gpt-6.1-sol/xhigh 담당 에이전트2개가 재검토했다. 리뷰 대상 HEAD ba9c3fd53889fc5344ee7a94c15f8b249496b069 위 수정 aa24e8faabed01be19ca475eee1ef9d660973e07은 커밋/푸시했다. PR406이며 최신 base는 아래 main 동기화 기록을 따른다. 새 탭은 이미 운영에 반영됐고 다국어는 운영 배포 전이다.
+
+## Completed work / modified files
+
+- R1 완료: lib/jobs/products/translations.ts는 호출 후 외부 ctx.signal shutdown만 건너뛴다. 내부 budget abort도 이미 보낸 시도로 기록하고 실제 lease 상실은 기존 최종 transaction assert가 거부한다. 신규 호출 전 budget/abort 조건 유지.
+- R2 완료: lib/domain/products/translations.ts의 demand setWhere에 stale_source만 추가했다. 일반 검수실패/source_too_long의4회 제한은 재설정하지 않는다.
+- R3 완료: lib/i18n/routing.ts의 switchLocale은 로그인의 단일 검증 returnTo에도 선택 locale을 적용한다. duplicate/unsafe는 선택 언어 홈 fallback, 나머지 query/hash 유지. API/페이지/인증 스키마를 늘리지 않았다.
+- 담당 리뷰 에이전트2개 종료, 수정 후 신규 확정 finding 없다. 추가 수정 파일은 이 handoff와 docs/operations/2026-10-13-public-i18n-parallel-code-review.md, 2026-10-13-public-i18n-final-review.md다. 운영·DB·실제 인증/LLM 변경과 호출은 없다. 최초 리뷰의 문서 변경도 이 후속 커밋에 포함한다.
+- 기존 baseline explicit category/product 빈404 SSR은 별도 알려진 한계다. UI/SEO 추가 확정 finding은 없다.
+- 수정 push 시 GitHub는 PR mergeable=false/dirty로 표시하고 CI가 없었다. fetch로 main에 병합된 별도 PR405(b8ae1a4727f46f3c4a8c5bfd61656726d081d60e)를 확인했다. 로컬 merge-tree는 충돌 없이 성공했고 정상 merge f03b650으로 최신 main을 반영했다. 13개 파일의 예상 merge-tree와 실제 tree4ff9470ada71edc2648b9bf3cf33bcab0285c262가 일치한다. 관리자 변경은 (operator) 경로로 합쳐지고 세 보완 코드는 유지됐다. main PR405 자체의 기존 검사 변화는 이번 보완에서 새 테스트를 작성한 것이 아니다. 이 문서와 함께 push 후 최신 base/head 필수CI를 확인해야 한다.
+- 최신 main merge 뒤 typegen/check:i18n4/8/11/diff exit0, tsc25219 exit0, 자동 병합된 catalog·관리자4파일 scoped ESLint15933 exit0 확인. 이전 수정 head의 검사를 대신 재사용하지 않았다.
+
+## Key design decisions / actual checks / failed approaches
+
+기존 source CAS/최종 lease 검사, 요청·batch 상한, same-origin 공개 allowlist를 유지했다. runner 공통 API·인증 API·DB 스키마·스케줄은 변경하지 않는다. 이전 CI38345403384는 기존 head 성공 근거이며 이 후속 수정의 CI로 주장하지 않는다. 이번 로컬 보완은 새 suite/브라우저/E2E/DB migration/원격/모델 요청을 실행하지 않았다.
+
+수정 후 root 실제 worker+fixture의5틱에서 modelCalls4·recordedEntries4·attempts4 확인. 실제 lease 실패 전파·외부 shutdown 기록0건, 네 언어 로그인 복귀/query/hash·unsafe fallback/일반 링크 보존 assertion exit0. 에이전트는 로그인 경계89assertion exit0, 실제 demand upsert SQL의 허용 오류 ineligible/stale_source만 확인했고 실제 저장 함수 attempts1~4/backoff5·10·20분/최종retry없음/lease 오류전파를 fixture로 확인했다. DB/network/LLM0이며 실제 DB rollback 실행은 아니다. next typegen0, tsc69931 exit0, scopedESLint53335 exit0, check:i18n4/8/11 exit0, diff0. 과거 실패 재현은 신규 보고서에 보존했다. 한국어 cache-header 후보는 설치 Next headers→middleware 순서로 신규 결함에서 제외했다.
+
+## Remaining work / exact commands
+
+세 P2의 최소 수정·경계 확인·수정 리뷰는 완료했다. 이 후속 변경을 PR406 branch에 커밋/푸시하고 해당 최신 head 필수CI를 확인한 뒤 최종 보고한다. 최신 결과는 PR checks/head로 대조하며 이전 head CI를 새 수정에 재사용하지 않는다. 사용자 직접 기능 확인→최신base필수check→일반PR병합/main이미지→runbook drain/0075→호환web/text/scheduler교체 순서의 다국어 운영 공개는 아직 실행하지 않았다. 사용자 미추적 PT/prototypes·기존 stash와 관련 없는 서버는 보존한다.
+
+```sh
+cd /private/tmp/nomorevibe-i18n-integration-20261013
+git status --short --branch
+git rev-parse HEAD origin/main
+git diff --check
+cat docs/operations/2026-10-13-public-i18n-parallel-code-review.md
+gh pr checks 406
+gh pr view 406 --json headRefOid,baseRefOid,mergeStateStatus,url
+gh run list --branch feat/public-i18n-integration-20261013 --limit 3 --json databaseId,status,conclusion,headSha
+# 해당 최신 수정 head의 CI 결과를 확인하고 보고한다. 다국어 운영 공개는 직접 기능 확인 이후.
+```
+
+---
+
+# 2026-10-13 — 고정 탐색 탭 운영 배포·다국어 구현과 필수 CI 완료
+
+## Current objective
+
+사용자는 새 탐색 탭 운영 배포와 설계대로 네 언어 병렬 구현·root 코드 리뷰를 명시했다. 모든 서브에이전트는 gpt-6.1-sol/xhigh다. 새 탭 배포는 완료했다. 다국어 공개는 설계의 사용자 직접 기능 확인 이후이며 아직 migration/운영 배포하지 않았다. 새 기능 테스트/E2E·실제 로그인/댓글/스타 쓰기는 수행하지 않는다.
+
+## Completed work / modified files
+
+- FILTER01 PR403, FILTER02 PR404를 최신 base 필수 CI 성공 후 정상 병합. main=6b3fdfe3ccb9a150a0c82d32fe8d14884ea89427, main CI38335186074 전체 성공. 탭은 8시간 스타 급상승/최근 등록/GitHub 스타 많은 순으로 고정했고 sort/facet/count/pagination이 같은 자격을 쓴다. 스케줄·관측 schema는 변경하지 않았다.
+- 운영 웹 실제 배포 완료. image ghcr.io/jrvector9/nomorevibe-runtime-web@sha256:ed356b96404657a50b82e5d41af959fcc5fcf29847fd4046a06d529149d8c487. mini2→M3 4개 모두 healthy/release/env/정책 일치. worker33349ed1352caabcb434ac4906bc2a2213ac2a51 유지. 네 flags ON 유지, maintenance autoDeploy=false 유지.
+- 배포 후 읽기12GET: weekly784/public39186, Dev428/AI594/Dev+AI315; shown18=18개, shown207=198개. release/count/facet/중복/라벨 검사 성공. health_verify.py fixed-tabs-6b3fdfe exit0, workerFailover/progress ok, intro-check 2100-01-01/unleased 보존. private helper /private/tmp/nomorevibe-fixed-tabs-release-20261013-b631hknb는 capture/plan/deploy/verify 완료. before/preflight/env/키는 비밀 가능: 출력/공유/커밋 금지·deploy 반복 금지.
+- authoritative worktree /private/tmp/nomorevibe-i18n-integration-20261013, branch feat/public-i18n-integration-20261013, PR406 https://github.com/JRVector9/nomorevibe/pull/406, 최종 source HEAD a79ed0e5d9c8d5c0e546078f33e54899690139bd. generic NF2개 삭제/기존site-chrome import/bundle baseline 실측 갱신 완료. core locale/dictionary/Intl/provider/server-now, shared root/proxy/nav/404, 모든 browse UI, auth/launch/policy, demand ledger/text job, sitemap/readiness/cache/search/CI guard 통합. 8개 namespace 모두 네 언어 완료, detail 405키씩 통합됐다.
+- source HEAD의 필수 CI38344601125 https://github.com/JRVector9/nomorevibe/actions/runs/38344601125 전체 성공: scope/quality/integration1·2·3/check. 단위247파일/2264사례, DB통합140파일/1371사례(기존todo1), Python23사례 성공. typegen/tsc/catalog/lint/기본Turbopack/bundle-size 성공. PR base6b3fdfe·source head a79ed0e·mergeState CLEAN 확인. PR 이미지 publish skipped이며 다국어 운영 이미지/배포 완료를 주장하지 않는다. 이 후속 문서 변경의 최신 head check는 PR에서 확인한다.
+- foundation 최종0182362/72f4987 통합 후 에이전트는 /private/tmp/nomorevibe-i18n-detail-ui-20261013에서 상세 /p/** 및 components/product-detail/**·detail 카탈로그만 소유한다. owned de5af7b를 root739ef9b로 통합했고 duplicate domain c51bea1은 통합하지 않았다. 기존 상세 SSR fixture2파일 68b4b0e를 리뷰·0246962로 통합했고 모든 에이전트 작업·리뷰가 종료됐다.
+- browse 완료 ca3573e/912ff34/0ed9989/53bacbe/0b4e1a1/a8d0fe0 통합. content backend458b662, SEO530aab2, auth6d53c7a 통합. browse/content의 추가 경계 리뷰 완료. user callback926c192→bb8bb51, maker return e917bfb→3741831을 검토·통합했다. 미검증flow는 기존KO 복귀, 검증된flow만 locale/query/hash를 유지한다.
+- root 소유: semantic registry, view DTO/raw DB name, ProductTagline/IntroductionSource, 번역 response 수요 cap80, AccountMenu/common, metadata 최종 glue, 기존 한국어 fixture의 이동/동적 metadata 호환, 이 handoff. 추가 root 보완: 404 추천8h/localize, login/feedback/privateGithub noindex hreflang 제거, 제품 reciprocal readiness/meta/OG751f03c, pending 상세만 noindex, 원문언어 확신검사5645f76, Unicode 숫자·부호 보존, machine provenance 표시, soft navigation 이후 페이지 clock 갱신. 캐시 layout clock은 보존되어 상세 data읽기 뒤 빈namespace provider로 표시now만 갱신한다. 새 provider에 모든 언어 카탈로그를 싣지 않는다.
+- 수정 경로 묶음: app/(public)/[locale]/(content), app/layout.tsx, proxy.ts, components/home·auth·product-detail, lib/i18n, messages/{ko,en,zh-Hans,zh-Hant}, lib/domain/products/translations·translation-policy, lib/jobs/products/translations, migration0075, cache/search/sitemap/CI, 기존 tests fixture 및 operations 문서. main의 사용자 미추적 PT/prototypes·산출물과 오래된 stash 보존.
+
+## Key design decisions
+
+ko URL은 비접두사, /en·/zh-Hans·/zh-Hant를 단일 [locale]/(content) 공개 트리로 관리한다. 선택 locale/필요 namespace만 client에 전달한다. 전역 catastrophic error의 6개 문구만 네 언어 tiny slice를 예외로 묶는다. request locale header는 proxy가 검증·덮어쓰며 관리자/API/인증 callback/webhook/machine endpoint는 locale 별칭을 만들지 않는다. 언어 링크는 query/hash/identifier 보존, 인증 복귀는 same-origin 공개 allowlist다.
+
+Next16.3.8 기존 untouched baseline79fea63에서도 explicit notFound는 빈 __next_error__ 문서를 만드는 실패가 재현됐다. 다중 HTML root·동적 root·parallel footer 실험은 정리했다. 최소 단일 app/layout HTML root+검증 header로 변경하여 unmatched URL의 진짜404/noindex/선택 lang/셸은 성공했다. explicit 잘못된 category/product는 진짜404/noindex이나 셸/lang이 없는 기존 프레임워크 한계가 남는다. 200/Suspense 우회·proxy DB 조회·프레임워크 패치는 하지 않는다. 설계 구조의 변경 근거를 문서화해야 한다.
+
+집합/8h 관측/KST 기준은 locale 중립, 숫자는 정확한 Intl 표기, 표시 clock은 서버 now를 provider로 전달한다. 공개 GET에서 모델 호출하지 않으며 버전 일치 번역/확신 가능한 동일 언어 원문만 ready다. request 전체 visible 최대80개 제품의 누락 번역만 after→primary 예약한다. 캐시는 locale 선택 전 공통 데이터를 유지한다. 제품 SEO는 두 필드 ready의 같은 reciprocal 언어 집합+KO x-default, pending 언어 noindex/follow, 기존 base noindex는 보존한다. 기존 KO writer와 중단 intro-check는 변경하지 않는다. 전체39k×3 backfill은 없다.
+
+## Actual checks / failed approaches
+
+root next typegen/tsc는 e7af4b6 및 3741831 시점 exit0. 전체 ESLint exit0, 기존 vendor _ctx 경고1. check:i18n exit0:4locales/8namespaces/11publicpages. 27839 webpack build는 compile/type/prerender 모두 exit0. 751f03c 최종 webpack build12300 compile/type/prerender exit0. fixture통합0246962 이후 tsc95805 exit0, check:i18n exit0. 첫 PR406 CI38342233959는 quality9파일/10사례와 integration2 sitemap3사례 실패였다. 최소 수정 후 두 번째38343034700의 타입/카탈로그/lint/단위/Python/DB3/기본Turbopack build는 성공, 번들 기준만 실패했다. 아래 최종 성능 보완 이후 source head a79ed0e의 CI38344601125는 필수 check까지 전체 성공했다. 각 에이전트 owned-file typegen/lint/diff와 pure 계약 검사는 완료했다. backend는 기존4파일30test+source hash pure assertions exit0. foundation 최종 webpack build/tsc/typegen exit0 및 spoofed locale header 포함30읽기GET: 네 언어 일반·unmatched404 lang/셸, KO308 query, prefixed admin/API404, missing admin secret307/loginKO, machine path 유지 확인. 상세를 포함한 통합 webpack build12300은 실제 exit0이다. 새suite/기능/E2E를 실행하지 않았다.
+
+기존 launch/policy/popular metadata fixtures를 실제 dynamic함수로 변경했다. 첫 통합 webpack build79902는 compile은 성공했으나 Next生成 metadata타입이 optional props/parent를 거부해 실패. 5개 route의 props/parent를 필수 ResolvingMetadata 계약으로 바꾸고 기존 fixtures에 parent를 제공했다. 다음 build27839 exit0. SourceBadge/IntroSection/BuildTools의 기존 SSR fixture는 실제 server JSX를 await하도록 보완됐다. 새로운 suite/case는 없다. integration product robots/title 계약은 실제 root metadata 작성 후 보존/검토한다. 노출 namespace의 빈 schema는 check:i18n에서 실패하며 완성된 8개 namespace gate는 실제 exit0이다. node_modules symlink의 Turbopack 경계 문제는 webpack 검증으로 구분한다. Cloudflare purge 기존 token 인증 실패는 반복하지 않았고 canonical 새 release GET로 확인했다.
+
+## CI follow-up / failed approaches
+
+PR406 첫 run38342233959의 실제 실패만 보완했다. browse e01b9e6→4a8059b: (operator) fixture 경로2곳, 순위 aria-hidden+sr-only 전체1위, 정확한 literal/localePath launch 정적링크 허용, KO 기존 tooltip/AI근거문구 복원. backend f281c70→838ff6e: sitemap DISTINCT 계산식.as(range), ORDER BY 선택alias; parameter가 서로 달라 발생한 PG42P10 해소. 기존 공개WHERE/chunk/모든구간/fixtures 유지, 순수 SQL10계약 확인. root c6abc5b: semantic state key+기존KO설명 검사, 실제 lang=ko, 보수적 영어근거를 만족하는 원문fixture, SSR navigation mock/returnTo href, 기존 Playwright bind0.0.0.0. 새tests/cases/E2E 없다. root tsc63263/scopedlint27796/diff exit0, 두agent typegen/tsc/scopedlint/diff exit0.
+
+로컬 next start --hostname127.0.0.1은 Next localhost 정규화와 initURL.origin 불일치로 rewrite를외부proxy 처리해 KO자기308 반복을만든 실패 접근이다. 기본hostname/운영Standalone0.0.0.0은 정상이라 proxy소스수정은하지않았다. 기존E2E서버binding만운영값으로보완했으며 실행하지않았다. noDB 로컬읽기에서404추천준비가DATABASE_URL없음 경고를남겼지만 정책/등록응답은200/정상이다. 읽기근거 /private/tmp/nomorevibe-i18n-final-static-get-20261013.json; CI실패로그 /private/tmp/nomorevibe-i18n-ci38342233959-failed.log.
+
+## Final bundle review
+
+fresh /private/tmp/nomorevibe-i18n-bundle-20261013에 npmci --ignore-scripts(528packages)로실제설치하여 defaultTPack 빌드57271 exit0 및 CI162/172/149KBbr 정확재현. main6b3 CI38335186074 실제131.4/135.7/120.1KB. Next analyzer --output32909 exit0, 전체browse/detail clientcatalog0;4locale global-error tiny예외뿐. 동일ProductIcon/ProductTagline/CompactRow source가 root/locale/contentNF3개 mergedchunk, MobileNav/shell2개에중복임을root+에이전트가확인했다. generic [locale]/not-found.tsx와(content)/not-found.tsx만삭제하고root app/not-found의locale/provider/fullshell에통합;전용c/pNF보존. 기존site-chrome fixture import만root로변경.
+
+NF삭제 후 defaultbuild74034 exit0, 148.8/158.8/135.9KB로각13.2KB감소. 12읽기GET은4locale unmatched404/lang/fullshell/noindex·c/p explicit404/noindex(기존빈SSR한계)보존. threshold20k/0 및generateComponentChunks 실험은불채택, root next.config 변경없음. componentchunks 통계110KBvs실제coldlaunch139458Bbr의누락을근거로수치우회를배제. 최종defaultbuild37336 exit0, 값152327/162561/139137B로기존bundle-size --update절차의세기준만갱신(tolerance10%/missing실패불변). 마지막readonlyChromiumlaunch4GET:200/lang/pageerror0/13JS합139137B가route통계와정확일치. 클릭/계정/CRUD/suite/E2E없음;진단서버70532/28409/88186모두종료. typegen/scopedlint67803/check:i18n/diff0,root최종tsc47817 exit0 확인완료. 로컬첫NF삭제build47995 exit1;기존fixture 경로보완후74034성공이며최초실패원인은출력으로확정하지않음. 잘못된mainqualityjobID조회404는실제115093609548로정정했고CI실패가아니다. 추가코드/실험설정/실험카탈로그를운영에배포하지않았다.
+
+## Remaining work / exact commands
+
+전체 구현·에이전트 리뷰·최종 build/type/gate와 source필수CI 완료. 정상 PR406 push 완료. 첫 CI 실패와 두번째bundle 실패의최소보완은최종 CI38344601125에서통과했다. 결과문서·handoff를커밋/푸시하고해당문서head의필수check를확인한뒤최종보고한다. 최종 빌드의 기본 hostname 읽기8GET(정책/등록4언어) 및 운영조건 standalone0.0.0.0의9GET은 lang/metadata/KO308 query/admin/API 유지 성공. 서버34884/26487는 종료했다. 실제 제품/인증/댓글/스타 기능 테스트는 사용자 범위로 남는다. 14개 순수 language/numeric assertions exit0이며 원격/DB/LLM 호출 없다. 검색의 기존 synchronous keyword expansion은 제품필드 GET 모델0 계약과 구분한다. migration0075/LLM/다국어 운영 배포는 아직 하지 않는다. 사용자 직접 기능 확인 조건을 유지한다. 남은 출시 단계는 직접화면확인→최신base필수check→일반PR병합/main이미지→runbook drain/0075→호환web/text/scheduler교체→read-onlyhealth다.
+
+```sh
+cd /private/tmp/nomorevibe-i18n-integration-20261013
+git status --short --branch
+git log -5 --oneline
+git diff --check
+gh pr checks 406
+gh pr view 406 --json headRefOid,baseRefOid,mergeStateStatus,url
+gh run list --branch feat/public-i18n-integration-20261013 --limit 5 --json databaseId,status,conclusion,headSha
+# source CI38344601125 성공 로그는 /private/tmp/nomorevibe-i18n-ci38344601125-success.log.
+# 후속 문서 head의 check 성공 확인 뒤 최종 보고한다. 성공한 source 검사를 이유 없이 반복하지 않는다.
+# 정상 PR과 최신 base 필수 CI를 우회하지 않는다. 언어 운영 배포는 사용자 기능 확인 이후.
+```
+
+아래는 이전 단계의 역사 기록이다. 현재 지시와 실제 저장소/실행 결과를 우선한다.
+
+---
+
 # 2026-10-13 — 홈 필터 운영 검토·한국어/영어/간체/번체 다국어 설계
 
 ## Current objective

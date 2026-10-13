@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { CopyCommand, copyOrSelect } from "@/app/launch/CopyCommand";
+import { CopyCommand, copyOrSelect } from "@/app/(public)/[locale]/(content)/launch/CopyCommand";
 
 /** /launch 명령 복사 단추(UX-20) — 클립보드에 넣고, 못 넣으면 명령 글자를 선택해 둔다 */
 afterEach(() => vi.unstubAllGlobals());

@@ -4,7 +4,7 @@ vi.mock('next/cache',()=>({revalidatePath:vi.fn()}));
 vi.mock('@/lib/auth/admin',()=>({currentAdmin:mocks.admin}));
 vi.mock('@/lib/operations/agent-client',()=>({agentRequest:mocks.agent}));
 vi.mock('@/lib/db',()=>({db:{insert:()=>({values:mocks.audit})}}));
-import { codexOperation } from '@/app/admin/status/actions';
+import { codexOperation } from '@/app/(operator)/admin/status/actions';
 beforeEach(()=>{vi.clearAllMocks();});
 
 // 관리자 화면을 여는 사람이면 GitHub 로그인 없이도 다시 인증한다(운영은 로그인 없는 관리자 — ADMIN_LOCAL_LOGIN)

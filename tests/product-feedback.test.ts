@@ -143,7 +143,7 @@ describe("feedback request boundaries", () => {
   });
 
   it("does not allow a general account to review feedback", async () => {
-    const { reviewFeedbackAction } = await import("@/app/admin/feedback/actions");
+    const { reviewFeedbackAction } = await import("@/app/(operator)/admin/feedback/actions");
     const form = new FormData();
     form.set("id", valid.requestId); form.set("decision", "accepted"); form.set("reason", "승인");
     await expect(reviewFeedbackAction(form)).rejects.toThrow("unauthorized");
@@ -151,7 +151,7 @@ describe("feedback request boundaries", () => {
   });
 
   it("requires the administrator's bound nonce and exact configured origin", async () => {
-    const { reviewFeedbackAction } = await import("@/app/admin/feedback/actions");
+    const { reviewFeedbackAction } = await import("@/app/(operator)/admin/feedback/actions");
     const admin = { login: "reviewer", exp: Math.floor(Date.now() / 1000) + 3600 };
     requestMocks.admin.mockResolvedValue(admin);
     vi.stubEnv("NEXT_PUBLIC_SITE_URL", "https://nomorevibe.example");

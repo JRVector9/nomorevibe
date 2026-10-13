@@ -3,6 +3,8 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { Icon } from "@/components/home/icons";
+import { useLocale, useTranslations } from "@/lib/i18n/context";
+import { localePath, stripLocale } from "@/lib/i18n/routing";
 
 /** '인기' 탭 아이콘 — 트로피. 발견(격자)과 같은 그림을 쓰면 두 탭이 구분되지 않았다(UX-26) */
 function TrophyIcon() {
@@ -20,12 +22,14 @@ function TrophyIcon() {
  * '공개'는 뺐다 — 헤더 첫 줄의 '프로젝트 공개' 버튼이 늘 보인다. 검색은 헤더의 검색창으로 초점을 옮긴다(접혀 있으면 펴진다).
  */
 export function MobileNav() {
-  const pathname = usePathname();
+  const pathname = stripLocale(usePathname());
   const router = useRouter();
+  const locale = useLocale();
+  const t = useTranslations("common");
   if (pathname.startsWith("/admin")) return null;
 
   function openSaved() {
-    router.push("/?saved=1#projects");
+    router.push(localePath(locale, "/?saved=1#projects"));
   }
 
   function focusSearch() {
@@ -40,22 +44,22 @@ export function MobileNav() {
   const popular = pathname.startsWith("/popular");
 
   return (
-    <nav className="mobile-bottom" aria-label="모바일 탐색">
-      <Link prefetch={false} href="/" className={discover ? "active" : undefined}>
+    <nav className="mobile-bottom" aria-label={t("navigation.mobile")}>
+      <Link prefetch={false} href={localePath(locale, "/")} className={discover ? "active" : undefined}>
         <Icon name="grid" />
-        발견
+        {t("navigation.discoverShort")}
       </Link>
       <button type="button" onClick={focusSearch}>
         <Icon name="search" />
-        검색
+        {t("navigation.search")}
       </button>
-      <Link prefetch={false} href="/popular" className={popular ? "active" : undefined}>
+      <Link prefetch={false} href={localePath(locale, "/popular")} className={popular ? "active" : undefined}>
         <TrophyIcon />
-        인기
+        {t("navigation.popular")}
       </Link>
       <button type="button" onClick={openSaved}>
         <Icon name="bookmark" />
-        저장
+        {t("navigation.savedShort")}
       </button>
     </nav>
   );

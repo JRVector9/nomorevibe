@@ -3,8 +3,8 @@ import { eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { crawlCandidates, operationsAudit } from "@/lib/db/schema";
 import { recordAdminAction } from "@/lib/operations/admin-log";
-import { activityLog } from "@/app/admin/activity/query";
-import { GET } from "@/app/admin/export/route";
+import { activityLog } from "@/app/(operator)/admin/activity/query";
+import { GET } from "@/app/(operator)/admin/export/route";
 import { auditFloor, auditRowsAfter, ensureSchema } from "./setup";
 
 /**

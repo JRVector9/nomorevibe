@@ -10,8 +10,8 @@ import { workerIsHealthy } from "@/scripts/worker-healthcheck";
 it("owns text jobs once, with an executable role, bounded pool and health identity", () => {
   expect(JOB_ROLES).toContain("text");
   expect(jobsForRole("publisher")).toEqual(["crawl-publish", "cdn-purge", "github-feedback-delivery"]);
-  expect(jobsForRole("text")).toEqual(["reason-translate", "crawl-tagline", "product-search-profile", "product-search-verify", "product-embedding", "product-repo-review", "product-tagline-ko"]);
-  expect(JOB_CATALOG.filter(job => ["reason-translate", "crawl-tagline", "product-search-profile", "product-search-verify", "product-embedding", "product-repo-review", "product-tagline-ko"].includes(job.name))).toHaveLength(7);
+  expect(jobsForRole("text")).toEqual(["reason-translate", "crawl-tagline", "product-search-profile", "product-search-verify", "product-embedding", "product-repo-review", "product-tagline-ko", "product-translate"]);
+  expect(JOB_CATALOG.filter(job => ["reason-translate", "crawl-tagline", "product-search-profile", "product-search-verify", "product-embedding", "product-repo-review", "product-tagline-ko", "product-translate"].includes(job.name))).toHaveLength(8);
   expect(parseWorkerArgs(["--role=text"])).toMatchObject({ role: "text" });
   expect(dbPoolConfig({ WORKER_ROLE: "text" }).max).toBe(3);
   expect(supervisorLimits("text", {}).jobMs).toBe(180_000);

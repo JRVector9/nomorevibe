@@ -1,3 +1,4 @@
+import type { ResolvingMetadata } from "next";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -17,7 +18,7 @@ const { getSeasonByKey, notFound } = vi.hoisted(() => ({
 vi.mock("@/lib/domain/ranking/view", () => ({ getSeasonByKey }));
 vi.mock("next/navigation", () => ({ notFound }));
 
-import RankingSeasonPage, { dynamic, generateMetadata } from "@/app/rankings/[key]/page";
+import RankingSeasonPage, { dynamic, generateMetadata } from "@/app/(public)/[locale]/(content)/rankings/[key]/page";
 
 const season: SeasonSummary = {
   key: "2026-W33",
@@ -67,7 +68,7 @@ describe("ranking season page", () => {
     getSeasonByKey.mockResolvedValue({ season, items: [item] });
 
     const page = await RankingSeasonPage({
-      params: Promise.resolve({ key: season.key }),
+      params: Promise.resolve({ locale: "ko", key: season.key }),
       searchParams: Promise.resolve({}),
     });
     const html = renderToStaticMarkup(createElement(() => page));
@@ -96,7 +97,7 @@ describe("ranking season page", () => {
     });
 
     const page = await RankingSeasonPage({
-      params: Promise.resolve({ key: season.key }),
+      params: Promise.resolve({ locale: "ko", key: season.key }),
       searchParams: Promise.resolve({}),
     });
     const html = renderToStaticMarkup(createElement(() => page));
@@ -110,7 +111,7 @@ describe("ranking season page", () => {
   it("titles the page from the season key and keeps a ranked season indexable", async () => {
     getSeasonByKey.mockResolvedValue({ season: { ...season, key: "2026-W41" }, items: [item] });
 
-    const metadata = await generateMetadata({ params: Promise.resolve({ key: "2026-W41" }), searchParams: Promise.resolve({}) });
+    const metadata = await generateMetadata({ params: Promise.resolve({ locale: "ko", key: "2026-W41" }), searchParams: Promise.resolve({}) }, Promise.resolve({ openGraph: null } as Awaited<ResolvingMetadata>));
 
     expect(metadata.title).toBe("2026년 41주 랭킹 — nomorevibe");
     expect(metadata.robots).toBeUndefined();
@@ -120,11 +121,11 @@ describe("ranking season page", () => {
     getSeasonByKey.mockResolvedValue({ season: { ...season, key: "2026-W41", state: "active" }, items: [] });
 
     const page = await RankingSeasonPage({
-      params: Promise.resolve({ key: "2026-W41" }),
+      params: Promise.resolve({ locale: "ko", key: "2026-W41" }),
       searchParams: Promise.resolve({}),
     });
     const html = renderToStaticMarkup(createElement(() => page));
-    const metadata = await generateMetadata({ params: Promise.resolve({ key: "2026-W41" }), searchParams: Promise.resolve({}) });
+    const metadata = await generateMetadata({ params: Promise.resolve({ locale: "ko", key: "2026-W41" }), searchParams: Promise.resolve({}) }, Promise.resolve({ openGraph: null } as Awaited<ResolvingMetadata>));
 
     expect(html).toContain("이번 주는 아직 집계된 제품이 없습니다");
     // 왜 비었는지 — 등록·확인한 프로젝트만 센다 — 와 등록하는 길을 함께 보인다
@@ -141,7 +142,7 @@ describe("ranking season page", () => {
     getSeasonByKey.mockResolvedValue({ season, items: [] });
 
     const page = await RankingSeasonPage({
-      params: Promise.resolve({ key: season.key }),
+      params: Promise.resolve({ locale: "ko", key: season.key }),
       searchParams: Promise.resolve({}),
     });
     const html = renderToStaticMarkup(createElement(() => page));
@@ -153,7 +154,7 @@ describe("ranking season page", () => {
     getSeasonByKey.mockResolvedValue(null);
 
     await expect(RankingSeasonPage({
-      params: Promise.resolve({ key: "missing" }),
+      params: Promise.resolve({ locale: "ko", key: "missing" }),
       searchParams: Promise.resolve({}),
     })).rejects.toThrow("NEXT_NOT_FOUND");
     expect(notFound).toHaveBeenCalledOnce();

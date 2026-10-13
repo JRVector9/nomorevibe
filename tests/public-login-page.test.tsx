@@ -10,7 +10,7 @@ vi.mock("@/lib/domain/accounts/request-auth", () => ({
 vi.mock("@/lib/domain/github-integration/flags", () => ({ publicUserAuthEnabled: () => true, githubStarEnabled: () => account.starEnabled }));
 vi.mock("@/components/auth/EmailLoginForm", () => ({ EmailLoginForm: () => <div>email-form</div> }));
 vi.mock("@/components/auth/GithubConnection", () => ({ GithubConnection: ({ returnTo, signedIn }: { returnTo: string; signedIn: boolean }) => <div>{signedIn ? "github-connection" : "github-login"}:{returnTo}</div> }));
-import LoginPage from "@/app/login/page";
+import LoginPage from "@/app/(public)/[locale]/(content)/login/page";
 
 beforeEach(() => {
   account.signedIn = false;

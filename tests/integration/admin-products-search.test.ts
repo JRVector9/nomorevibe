@@ -3,7 +3,7 @@ import { db } from "@/lib/db";
 import { productHealth, products, type ProductStatus } from "@/lib/db/schema";
 import { countProducts, countProductsByFilter, listProducts } from "@/lib/domain/products/repository";
 import { DOWN_THRESHOLD, downProductCount } from "@/lib/domain/products/health";
-import { PRODUCT_FILTERS } from "@/app/admin/products/filters";
+import { PRODUCT_FILTERS } from "@/app/(operator)/admin/products/filters";
 import { ensureSchema, resetTables } from "./setup";
 
 /**

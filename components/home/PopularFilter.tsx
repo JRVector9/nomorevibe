@@ -1,7 +1,10 @@
 'use client';
+import {useTranslations} from '@/lib/i18n/context';
+import {stripLocale} from '@/lib/i18n/routing';
 import {useOptimistic,useTransition} from 'react';
 import {usePathname,useRouter,useSearchParams} from 'next/navigation';
 export function PopularFilter({personal}:{personal:boolean}){
+ const t=useTranslations("browse");
  const router=useRouter(),pathname=usePathname(),params=useSearchParams();
  const [pending,startTransition]=useTransition();
  const [checked,setChecked]=useOptimistic(personal);
@@ -12,7 +15,7 @@ export function PopularFilter({personal}:{personal:boolean}){
   next.delete('page');
   startTransition(()=>{
    setChecked(selected);
-   router.push(`${pathname}?${next}${pathname==='/'?'#popular':''}`,{scroll:false});
+   router.push(`${pathname}?${next}${stripLocale(pathname)==='/'?'#popular':''}`,{scroll:false});
   });
- }}/><span>개인 계정만</span></label>;
+ }}/><span>{t("popular.personal")}</span></label>;
 }

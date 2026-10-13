@@ -9,6 +9,7 @@ import { clickMetrics, type ClickMetrics } from "./clicks";
 import { healthFor, type HealthSignal } from "./health";
 import { logger } from "@/lib/observability/logger";
 import { withProductActivity, type ProductActivity } from "./activity";
+import type { ProductTranslationSelection } from "./translation-policy";
 
 /**
  * 목록 화면이 쓰는 뷰모델.
@@ -28,6 +29,10 @@ import { withProductActivity, type ProductActivity } from "./activity";
 export type BuilderClaim = "reported" | "guessed";
 
 export type ProductListItem = StarObservation & {
+  id?: number;
+  /** Original DB name participates in the translation hash; the display name may differ. */
+  translationName?: string;
+  translation?: ProductTranslationSelection;
   slug: string;
   name: string;
   tagline: string;
@@ -71,6 +76,8 @@ export function builderClaimOf(product: Pick<Product, "source" | "claimedAt">): 
 export function toListItem(p: ProductListRow): ProductListItem {
   const builderClaim = builderClaimOf(p);
   return {
+    id: p.id,
+    translationName: p.name,
     slug: p.slug,
     name: displayProjectName(p.name, p.repoUrl),
     tagline: p.tagline,

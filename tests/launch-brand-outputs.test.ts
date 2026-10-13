@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { GET as serveInstaller } from "@/app/install.sh/route";
-import { metadata as launchMetadata } from "@/app/launch/page";
+import { generateMetadata as launchMetadata } from "@/app/(public)/[locale]/(content)/launch/page";
 import { BRAND } from "@/lib/copy/brand";
 import { verifiedBadgeSvg } from "@/lib/domain/products/badge";
 import { claimInviteUrl } from "@/lib/domain/products/claim-invite";
@@ -14,8 +14,8 @@ describe("등록 명령 표기", () => {
     expect(installCommand("https://registry.example")).toBe("curl -fsSL https://registry.example/install.sh | sh");
   });
 
-  it("/launch 제목은 한국어 조각과 브랜드", () => {
-    expect(launchMetadata.title).toBe("프로젝트 공개하기 — nomorevibe");
+  it("/launch 제목은 한국어 조각과 브랜드", async () => {
+    expect((await launchMetadata()).title).toBe("프로젝트 공개하기 — nomorevibe");
   });
 });
 

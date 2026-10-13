@@ -1,5 +1,6 @@
 "use client";
 
+import { useTranslations } from "@/lib/i18n/context";
 /* eslint-disable @next/next/no-img-element -- 미리보기와 같은 내부 보관 이미지를 원래 비율로 보여 준다. */
 import { useId, useRef, type ReactNode } from "react";
 import { Icon } from "@/components/home/icons";
@@ -11,6 +12,7 @@ export function PreviewImageDialog({ src, width, height, caption, children }: {
   caption: string;
   children: ReactNode;
 }) {
+  const t = useTranslations("detail");
   const dialog = useRef<HTMLDialogElement>(null);
   const trigger = useRef<HTMLButtonElement>(null);
   const id = useId();
@@ -31,7 +33,7 @@ export function PreviewImageDialog({ src, width, height, caption, children }: {
         type="button"
         aria-haspopup="dialog"
         aria-controls={id}
-        aria-label={`${caption} 크게 보기`}
+        aria-label={t("preview.expand", { caption })}
         onClick={open}
         className="block w-full rounded-[10px] text-left"
         style={{ cursor: "zoom-in" }}
@@ -63,11 +65,11 @@ export function PreviewImageDialog({ src, width, height, caption, children }: {
         }}
       >
         <div className="flex items-center justify-between gap-3 p-3">
-          <h2 id={`${id}-title`} className="m-0 truncate text-[16px] font-semibold leading-6">이미지 크게 보기</h2>
+          <h2 id={`${id}-title`} className="m-0 truncate text-[16px] font-semibold leading-6">{t("preview.title")}</h2>
           <button
             type="button"
             onClick={close}
-            aria-label="닫기"
+            aria-label={t("action.close")}
             className="grid h-11 w-11 shrink-0 cursor-pointer place-items-center rounded-[10px] bg-bg-soft text-fg-2 hover:text-fg"
           >
             <Icon name="close" />

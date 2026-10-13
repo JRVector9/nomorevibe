@@ -8,9 +8,9 @@ import {
 import { countProducts, listProducts } from "@/lib/domain/products/repository";
 import { productHistory } from "@/lib/domain/products/history";
 import { repoGonePending } from "@/lib/domain/products/repo-pending";
-import { banProducts, setProductBan } from "@/app/admin/actions";
-import { editIntroAction, keepIntroAction } from "@/app/admin/products/actions";
-import { PRODUCT_FILTERS } from "@/app/admin/products/filters";
+import { banProducts, setProductBan } from "@/app/(operator)/admin/actions";
+import { editIntroAction, keepIntroAction } from "@/app/(operator)/admin/products/actions";
+import { PRODUCT_FILTERS } from "@/app/(operator)/admin/products/filters";
 import { auditFloor, auditRowsAfter, ensureSchema, resetTables } from "./setup";
 
 const mocks = vi.hoisted(() => ({ admin: vi.fn(), revalidate: vi.fn() }));
