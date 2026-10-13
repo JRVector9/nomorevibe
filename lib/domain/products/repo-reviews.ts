@@ -92,8 +92,10 @@ export async function repoGoneDelistsLastDay(): Promise<number> {
  * 저장소가 없다고 확인된 제품을 내린다 — 운영자 '내리기'(decideRepoReview)와 같은 차단(admin.product.ban, 차단 해제로 되돌린다).
  * 판정과 운영자 칸(auto:repo-gone)을 같은 트랜잭션에 적는다.
  *
- * 잠금은 운영자 경로와 같은 순서다 — 판정 행 → 제품 수명 잠금(lockProductGeneration: advisory → 제품 행). 그래야 운영자와 교착하지 않고,
- * 잡이 고른 뒤 운영자가 '유지'를 골랐으면 그 결정을 여기서 본다(그때는 내리지 않고 내릴 후보로만 적는다).
+ * 잠금은 운영자 경로(decideRepoReview)와 같은 순서다 — 판정 행 → 제품 수명 잠금(lockProductGeneration: advisory → 제품 행).
+ * 그래야 운영자와 교착하지 않고, 잡이 고른 뒤 운영자가 '유지'를 골랐으면 그 결정을 여기서 본다(그때는 내리지 않고 내릴 후보로만 적는다).
+ * 제품 수정(repository.update)은 수명 잠금 → 판정 행 삭제 순서라 운영자 경로처럼 드물게 교착할 수 있다 — Postgres 가 한쪽을 끊고,
+ * 잡이면 다음 틱에 다시 본다.
  * 공개가 아니게 됐거나 저장소가 돌아왔으면 아무것도 하지 않는다.
  */
 export async function delistGoneRepository(record: RepoReviewRecord & { slug: string }, lease?: JobLease):

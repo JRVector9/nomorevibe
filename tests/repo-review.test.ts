@@ -63,6 +63,12 @@ describe("페이지를 믿을 수 있나", () => {
     expect(pageConclusive(page({ status: 200, complete: false }), null, now)).toBe(false);
     for (const status of [0, 401, 403, 429, 503]) expect(pageConclusive(page({ status, complete: status !== 0 }), null, now)).toBe(false);
   });
+  it("200 이어도 봇 확인 화면이거나 링크가 모으기 상한에 닿았으면 믿지 않는다", () => {
+    expect(pageConclusive(page({ title: "Just a moment...", text: "Checking your browser before accessing." }), null, now)).toBe(false);
+    expect(pageConclusive(page({ title: "Vercel Security Checkpoint" }), null, now)).toBe(false);
+    expect(pageConclusive(page({ githubLinks: Array.from({ length: 20 }, (_, index) => `lib/${index}`) }), null, now)).toBe(false);
+  });
+
   it("못 연 페이지라도 사이트가 사흘 넘게 죽어 있으면 믿는다", () => {
     expect(pageConclusive(page({ status: 0, complete: false }), daysAgo(4), now)).toBe(true);
     expect(pageConclusive(page({ status: 503 }), daysAgo(1), now)).toBe(false);

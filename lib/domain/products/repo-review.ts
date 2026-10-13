@@ -1,4 +1,5 @@
 import type { RepoReviewDecision } from "@/lib/db/schema";
+import { MAX_LINKS as MAX_GITHUB_LINKS } from "@/lib/crawl/github-links";
 
 /**
  * 저장소가 사라진 공개 제품을 다시 본다 — 저장소가 정말 없으면 내린다(product-repo-review).
@@ -14,7 +15,8 @@ import type { RepoReviewDecision } from "@/lib/db/schema";
 export type RepoCheck = { state: "alive" } | { state: "gone" } | { state: "moved"; to: string } | { state: "unknown" };
 /**
  * 새로 연 제품 페이지. status 0 은 연결 자체가 안 됐다. githubLinks 는 extractGithubLinks 의 owner/repo(소문자).
- * complete 는 본문을 끝까지 읽었는지 — 못 읽었으면 링크가 비어 있어도 "링크 없음"이 아니다
+ * complete 는 본문을 끝까지 읽었는지 — 끊겼거나 상한에서 잘렸거나 meta refresh 로 넘어간 곳을 못 열었으면 false.
+ * 그때는 링크가 비어 있어도 "링크 없음"이 아니다
  */
 export type RepoReviewPage = { status: number; finalUrl: string | null; title: string; text: string; githubLinks: string[]; complete: boolean };
 export type RepoReviewReason = "repo_alive" | "repo_moved" | "repo_link_alive" | "repo_links_unchecked" | "repo_gone";
@@ -24,12 +26,19 @@ export const MAX_RELATED_LINKS = 3;
 /** 사이트가 이만큼 이어서 죽어 있으면 페이지를 못 열어도 내린다(생존 확인 product_health.down_since 기준) */
 export const SITE_DOWN_DAYS = 3;
 
+/** 봇 확인·검사 화면 — 200 으로 와도 진짜 페이지가 아니다(옛 사이트 확인의 거르기와 같은 글) */
+const CHECKPOINT = /Vercel Security Checkpoint|verifying your browser|Just a moment\.\.\.|Attention Required! \| Cloudflare|checking your browser/i;
+const SHORT_PAGE_CHARS = 600;
+
 /**
  * 페이지의 링크를 믿을 수 있나 — 2xx·3xx 를 끝까지 읽었거나 사이트가 없다고 답했다(404·410).
- * 연결 실패·막힘(401·403·429)·서버 오류는 옮겨 간 저장소 링크를 가렸을 수 있다 — 사이트가 사흘 넘게 죽어 있지 않으면 내리지 않는다
+ * 연결 실패·막힘(401·403·429)·서버 오류·봇 확인 화면, 링크가 모으기 상한(20개)에 닿은 페이지는 옮겨 간 저장소 링크를
+ * 가렸을 수 있다 — 사이트가 사흘 넘게 죽어 있지 않으면 내리지 않는다
  */
 export function pageConclusive(page: RepoReviewPage, downSince: Date | null, now = new Date()): boolean {
-  if (page.complete && (page.status >= 200 && page.status < 400 || page.status === 404 || page.status === 410)) return true;
+  const checkpoint = CHECKPOINT.test(page.title) || page.text.length < SHORT_PAGE_CHARS && CHECKPOINT.test(page.text);
+  if (page.complete && !checkpoint && page.githubLinks.length < MAX_GITHUB_LINKS
+    && (page.status >= 200 && page.status < 400 || page.status === 404 || page.status === 410)) return true;
   return downSince !== null && now.getTime() - downSince.getTime() >= SITE_DOWN_DAYS * 86_400_000;
 }
 

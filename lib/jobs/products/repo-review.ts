@@ -29,17 +29,22 @@ const EXCERPT_CHARS = 500;
 export async function openProductPage(url: string): Promise<RepoReviewPage> {
   const fetched = await safeFetch(url, "background");
   if (!fetched) return { status: 0, finalUrl: null, title: "", text: "", githubLinks: [], complete: false };
-  const status = fetched.response.status;
+  let status = fetched.response.status;
   try {
-    let html = (await readBodyCapped(fetched.response, PAGE_BYTES)).toString("utf-8");
+    const body = await readBodyCapped(fetched.response, PAGE_BYTES);
+    let html = body.toString("utf-8");
     let finalUrl = fetched.finalUrl;
+    // 상한에서 잘렸으면 뒤쪽 링크를 못 본 것이다
+    let complete = body.length < PAGE_BYTES;
     const hop = status >= 200 && status < 400 ? metaRefreshTarget(html, finalUrl) : null;
     if (hop) {
       const next = await fetchPage(hop, "background");
-      if (next) { html = next.html; finalUrl = next.finalUrl; }
+      // 넘어간 곳을 못 열었으면 남은 것은 빈 안내 페이지뿐이다 — 링크를 못 본 것으로 둔다
+      if (!next) complete = false;
+      else { html = next.html; finalUrl = next.finalUrl; status = next.status; }
     }
     return { status, finalUrl, title: extractPageMeta(html, finalUrl).title ?? "", text: extractTextSample(html) ?? "",
-      githubLinks: extractGithubLinks(html, finalUrl), complete: true };
+      githubLinks: extractGithubLinks(html, finalUrl), complete };
   } catch {
     // 본문을 못 읽어도 응답 코드는 안다 — 링크를 못 본 것이지 링크가 없는 것은 아니다
     return { status, finalUrl: fetched.finalUrl, title: "", text: "", githubLinks: [], complete: false };
