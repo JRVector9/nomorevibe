@@ -15,7 +15,7 @@ import { useLocale, useTranslations } from "@/lib/i18n/context";
 import { formatNumber } from "@/lib/i18n/format";
 import { translatedCategory } from "@/components/home/i18n";
 import { AI_FILTERS } from "@/lib/domain/evidence/ai-level-labels";
-import { CATEGORIES } from "@/lib/domain/products/schema";
+import { CATEGORIES } from "@/lib/domain/products/categories";
 import { hiddenByDefault } from "@/lib/domain/products/visibility";
 
 export type { BrowseState, HomeSort } from "@/components/home/browse-state";

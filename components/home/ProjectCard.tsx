@@ -9,7 +9,7 @@ import { Icon } from "@/components/home/icons";
 import { ProjectTile } from "@/components/home/ProjectTile";
 import type { HomeCardProduct } from "@/components/home/types";
 import { listedRepositoryOwner } from "@/lib/domain/products/github-owner";
-import { useLocale, useTranslations } from "@/lib/i18n/context";
+import { useLocale, useTranslations, useServerNow } from "@/lib/i18n/context";
 import { localePath } from "@/lib/i18n/routing";
 import { translatedCategory } from "./i18n";
 import { formatNumber } from "@/lib/i18n/format";
@@ -39,12 +39,13 @@ export function ProjectCard({ product, saved, onToggleSave, now, priority = fals
   /** 순위 목록(홈 '많이 쓰이는 프로젝트'·/popular 카드 보기)의 자리 — 제목 앞에 숫자로 */
   rank?: number;
 }) {
+  const serverNow = useServerNow();
   const locale = useLocale();
   const t = useTranslations("labels");
   const owner = listedRepositoryOwner(product.repoUrl, product.repoRenamedTo);
   const maker = owner ? `@${owner.login}` : product.makerName ? `@${product.makerName.replace(/^@/, "")}` : null;
   const builder = product.builder && product.builderClaim === "reported" ? product.builder : null;
-  const at = now ?? new Date();
+  const at = now ?? serverNow;
   const href = localePath(locale, `/p/${product.slug}`);
   const Heading = headingLevel === 2 ? "h2" : "h3";
 

@@ -1,7 +1,7 @@
 "use client";
 
 import { starChange, type StarObservation } from '@/lib/domain/products/star-change';
-import { useLocale, useTranslations } from '@/lib/i18n/context';
+import { useLocale, useTranslations, useServerNow } from '@/lib/i18n/context';
 import { formatNumber, formatDate, formatDateTime } from '@/lib/i18n/format';
 import { toDate, type TimeInput } from '@/lib/format/time';
 
@@ -13,7 +13,9 @@ const NEW_PROJECT_DAYS = 30;
  * 스타 0은 별을 숨긴다 — 등록 시각(listedAt)을 넘기면 최근 등록이면 '새 프로젝트'를 대신 보인다.
  * now 는 서버가 읽은 시각을 넘긴다(없으면 지금).
  */
-export function StarMetric({ value, now = new Date(), listedAt }: { value: StarObservation; now?: Date | string | number; listedAt?: TimeInput }) {
+export function StarMetric({ value, now: requestedNow, listedAt }: { value: StarObservation; now?: Date | string | number; listedAt?: TimeInput }) {
+  const serverNow = useServerNow();
+  const now = requestedNow ?? serverNow;
   const locale = useLocale();
   const t = useTranslations("labels");
   const count = (n: number) => formatNumber(n, locale);

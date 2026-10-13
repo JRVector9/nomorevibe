@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { ProductTagline } from "@/components/ProductTagline";
-import { useLocale,useTranslations } from "@/lib/i18n/context";
+import { useLocale,useTranslations,useServerNow } from "@/lib/i18n/context";
 import { formatNumber,formatRelativeTime } from "@/lib/i18n/format";
 import { localePath } from "@/lib/i18n/routing";
 import type { ProductListItem } from "@/lib/domain/products/view";
@@ -54,7 +54,9 @@ function Entries({
   return <ol>{items.map((item) => <ProductLink key={item.slug} product={item} detail={detail(item)} />)}</ol>;
 }
 
-export function DiscoveryBoards({ boards, now = new Date() }: { boards: Boards; now?: Date }) {
+export function DiscoveryBoards({ boards, now: requestedNow }: { boards: Boards; now?: Date }) {
+  const serverNow=useServerNow();
+  const now=requestedNow ?? serverNow;
   const locale=useLocale();
   const t=useTranslations("browse");
   const count=(n:number)=>formatNumber(n,locale);

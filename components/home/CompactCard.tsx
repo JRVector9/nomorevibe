@@ -6,7 +6,7 @@ import { StarMetric } from "@/components/StarMetric";
 import { StarGrowthMetric } from "@/components/home/StarGrowthMetric";
 import { ProjectTile } from "@/components/home/ProjectTile";
 import { translatedCategory } from "./i18n";
-import { useLocale, useTranslations } from "@/lib/i18n/context";
+import { useLocale, useTranslations, useServerNow } from "@/lib/i18n/context";
 import { localePath } from "@/lib/i18n/routing";
 import type { ProductListItem } from "@/lib/domain/products/view";
 import type { StarGrowthItem } from "@/lib/domain/products/star-growth";
@@ -29,7 +29,7 @@ export function CompactCard({ product, trailing, priority = false, headingLevel 
 }) {
   const locale = useLocale();
   const t = useTranslations("labels");
-  const now = new Date();
+  const now = useServerNow();
   const href = localePath(locale, `/p/${product.slug}`);
   const Heading = headingLevel === 2 ? "h2" : "h3";
   return (

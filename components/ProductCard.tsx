@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import type { ProductListItem } from "@/lib/domain/products/view";
-import { useLocale, useTranslations } from "@/lib/i18n/context";
+import { useLocale, useTranslations, useServerNow } from "@/lib/i18n/context";
 import { formatNumber, formatDate } from "@/lib/i18n/format";
 import { localePath } from "@/lib/i18n/routing";
 import { translatedCategory } from "./home/i18n";
@@ -19,9 +19,9 @@ import { Tag } from "./Tag";
  * page.tsx 안에 있으면 복사해 가게 된다 — 그러면 배지 하나 고칠 때 화면마다 어긋난다.
  */
 /** 며칠째 죽어 있는지 — 어제부터인지 2주째인지는 사용자에게 다른 뜻이다 */
-function downFor(since: Date | null, t: Translator<"labels">, count: (n: number) => string): string {
+function downFor(since: Date | null, now: Date, t: Translator<"labels">, count: (n: number) => string): string {
   if (!since) return t("card.down");
-  const days = Math.floor((Date.now() - since.getTime()) / 86_400_000);
+  const days = Math.floor((now.getTime() - since.getTime()) / 86_400_000);
   return days < 1 ? t("card.down") : t("card.downDays", { days: count(days) });
 }
 
@@ -30,7 +30,7 @@ export function ProductCard({ product, rank }: { product: ProductListItem; rank?
   const t = useTranslations("labels");
   const count = (n: number) => formatNumber(n, locale);
   const { metrics, health } = product;
-  const now = new Date();
+  const now = useServerNow();
 
   return (
     <Link prefetch={false}
@@ -50,7 +50,7 @@ export function ProductCard({ product, rank }: { product: ProductListItem; rank?
           <StatusBadge status={product.status} unclaimed={product.unclaimed} />
           {health?.down && (
             <span className="shrink-0 rounded-full border border-down/40 bg-down/10 px-2 py-0.5 text-[13px] font-semibold text-down">
-              {downFor(health.since, t, count)}
+              {downFor(health.since, now, t, count)}
             </span>
           )}
         </div>
