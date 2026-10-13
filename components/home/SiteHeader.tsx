@@ -211,7 +211,7 @@ export function SiteHeader({ authEnabled = false }: { authEnabled?: boolean }) {
           <i className={`saved-dot${hasSaved ? " on" : ""}`} />
         </button>
         <LanguageSwitcher />
-        {authEnabled && <AccountMenu />}
+        {authEnabled && <Suspense fallback={<Link prefetch={false} href={localePath(locale, "/login")} className="text-[14px] font-semibold">{t("account.login")}</Link>}><AccountMenu /></Suspense>}
         <Link className="primary" href={localePath(locale, "/launch")}>{t("navigation.launch")}</Link>
       </div>
     </header>

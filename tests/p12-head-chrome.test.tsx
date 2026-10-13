@@ -39,7 +39,7 @@ beforeEach(() => {
 
 describe("헤더는 첫 HTML 에 바로 있다(PERF-01·ROB-02)", () => {
   it("공개 인증을 켜면 로그인 진입점을 제공하고 기본 비활성에서는 숨긴다", () => {
-    expect(renderToStaticMarkup(<I18nProvider locale="ko" dictionaries={{ common }}><SiteHeader authEnabled /></I18nProvider>)).toContain('href="/login"');
+    expect(renderToStaticMarkup(<I18nProvider locale="ko" dictionaries={{ common }}><SiteHeader authEnabled /></I18nProvider>)).toContain('href="/login?returnTo=%2F"');
     expect(header("/")).not.toContain('href="/login"');
   });
   it("루트 레이아웃이 빈 헤더 폴백 없이 로고·메뉴·검색창을 그린다", async () => {

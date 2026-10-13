@@ -1,11 +1,18 @@
 "use client";
 
-import Link from "next/link";
 import { useEffect, useState } from "react";
+import { usePathname, useSearchParams } from "next/navigation";
+import { useLocale, useTranslations } from "@/lib/i18n/context";
+import { localePath, safePublicReturnUrl } from "@/lib/i18n/routing";
 
 type PublicAccount = { user: { id: number; displayName: string }; csrfToken: string };
 
 export function AccountMenu() {
+  const locale = useLocale();
+  const t = useTranslations("common");
+  const pathname = usePathname();
+  const query = useSearchParams().toString();
+  const loginHref = (returnTo: string) => localePath(locale, `/login?returnTo=${encodeURIComponent(safePublicReturnUrl(returnTo, localePath(locale, "/")))}`);
   const [account, setAccount] = useState<PublicAccount | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -28,16 +35,20 @@ export function AccountMenu() {
       if (!response.ok) throw new Error();
       window.location.reload();
     } catch {
-      setError("로그아웃하지 못했습니다. 다시 시도해 주세요.");
+      setError(t("account.logoutFailed"));
       setBusy(false);
     }
   }
 
-  if (!account) return <Link prefetch={false} href="/login" className="text-[14px] font-semibold">로그인</Link>;
+  // Authentication uses a fresh document; include the current hash at click time.
+  // eslint-disable-next-line @next/next/no-html-link-for-pages -- Preserve the complete authentication return address.
+  if (!account) return <a href={loginHref(`${pathname}${query ? `?${query}` : ""}`)} onClick={(event) => {
+    event.currentTarget.href = loginHref(`${window.location.pathname}${window.location.search}${window.location.hash}`);
+  }} className="text-[14px] font-semibold">{t("account.login")}</a>;
   return (
     <div className="flex items-center gap-2 text-[13px]">
       <span className="max-w-28 truncate" title={account.user.displayName}>{account.user.displayName}</span>
-      <button type="button" disabled={busy} onClick={logout} className="min-h-11 px-1 text-fg-2 disabled:opacity-50">{busy ? "처리 중…" : "로그아웃"}</button>
+      <button type="button" disabled={busy} onClick={logout} className="min-h-11 px-1 text-fg-2 disabled:opacity-50">{t(busy ? "account.busy" : "account.logout")}</button>
       {error && <span role="alert">{error}</span>}
     </div>
   );
