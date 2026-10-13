@@ -32,7 +32,8 @@ import { storedAiLevel } from "@/lib/domain/evidence/ai-level-store";
  * 미클레임 배지가 붙는다(view.ts). 주인이 나타나 도메인을 증명하면 그때 verified가 된다.
  *
  * 없는 값을 지어내지 않는다. 수집 결과에는 제품 이름도 소개도 없고, 우리가 가진 것은
- * 배포 페이지의 메타와 레포 설명뿐이다. 그것으로 채우고 모자라면 사실(레포 이름)로 메운다.
+ * 배포 페이지의 메타와 레포 설명뿐이다. 그것으로 채우고 이름이 모자라면 사실(레포 이름)로 메운다.
+ * 소개는 레포 이름으로 메우지 않는다 — 소개가 없으면 올리지 않는다(no_description).
  */
 
 const MAX_SLUG_ATTEMPTS = 4;
@@ -136,8 +137,13 @@ async function preparePublication(candidate: CrawlCandidate): Promise<
       draft = draftFrom(candidate.repo, document, access.mode === "installable", { text: written.tagline, source: written.source, by: written.writtenBy });
     }
   }
-  // 별 자동승인도 소개 없이는 올리지 않는다(2026-10-02 사용자 결정) — 소개가 지어지면 평소 경로로 다시 온다
-  if (!draft.hasDescription && candidate.decidedBy !== "admin") {
+  /**
+   * 소개 없이는 아무것도 올리지 않는다 — 별 자동승인(2026-10-02 사용자 결정)도, 사람의 승인(2026-10-14)도.
+   * 사람의 승인만 예외로 두었더니 소개 자리에 레포 이름("owner/repo")이 들어간 공개 제품이 572건 쌓였다.
+   * 멈춘 후보는 소개 짓기 잡이 한 줄을 지어 approved 로 돌려보낸다. 사람의 승인(decidedBy)은 그대로라
+   * 평소 경로로 올라간다. 모델도 못 지으면 심사 큐에 남고, 사람이 "이 소개로 승인"으로 적는다.
+   */
+  if (!draft.hasDescription) {
     return { ok: false, reason: "no_description" };
   }
   return { ok: true, snapshot: { document, url, settings, checkedEvidence, starAutoApproved, draft } };
@@ -163,8 +169,8 @@ export async function publishCandidate(
    * 들어갔다. 무엇을 하는 것인지 아무도 모르는 항목을 목록에 올리는 것은 "직접 확인한
    * 것만 보여준다"는 원칙과 어긋난다.
    *
-   * 사람이 이미 본 것(decidedBy=admin)은 그대로 올린다. 그러지 않으면 심사에서 승인한
-   * 항목이 곧바로 심사로 되돌아와 끝나지 않는다.
+   * 사람이 이미 본 것(decidedBy=admin)도 소개가 없으면 멈춘다(2026-10-14, preparePublication).
+   * 심사로 되돌아와 끝나지 않는 왕복은 소개 짓기 잡이 막는다 — 한 줄을 지어 돌려보내고, 못 지으면 사람이 적는다.
    */
   /**
    * 카테고리는 문장을 읽어야 정해진다.
@@ -297,19 +303,22 @@ export async function prepareCandidateClassification(
 function draftFrom(repo: string, document: CrawlDocument, installable: boolean, written?: { text: string; source: TaglineEvidenceSource; by?: string | null }) {
   const page = (document.pageMeta ?? {}) as { title?: unknown; description?: unknown; ogImage?: unknown; textSample?: unknown; readmeSample?: unknown };
   const meta = document.repoMeta;
-  const repoDescription = typeof meta.description === "string" ? meta.description.trim() : "";
+  // 레포 경로("owner/repo")는 소개가 아니다 — 레포 설명에 그렇게 적힌 원본도 있다(2026-10-14 프로드 8건). 소개 없음으로 본다
+  const described = (text: string) => text.toLowerCase() === repo.toLowerCase() ? "" : text;
+  const repoDescription = typeof meta.description === "string" ? described(meta.description.trim()) : "";
   const pageTitle = typeof page.title === "string" ? page.title.trim() : "";
   // 제목에 이름이 없을 때 README 첫 제목을 이름으로 쓴다(display-name.ts readmeHeading)
   const readmeSample = typeof page.readmeSample === "string" ? page.readmeSample : null;
   // Repository/documentation wrapper metadata describes the host page, not the installed software.
-  const pageDescription = !installable && typeof page.description === "string" ? page.description.trim() : "";
+  const pageDescription = !installable && typeof page.description === "string" ? described(page.description.trim()) : "";
   const language = typeof meta.language === "string" ? meta.language : null;
 
   /**
-   * 소개가 아무 데도 없으면 지어 둔 줄을, 그것도 없으면 레포 이름을 쓴다.
+   * 소개가 아무 데도 없으면 지어 둔 줄을, 그것도 없으면 레포 이름을 쓴다. 레포 이름 자리는 분류 입력을 채울 뿐
+   * 발행되지 않는다 — hasDescription 이 거짓이면 preparePublication 이 no_description 으로 멈춘다.
    * 지은 줄을 쓸 때는 출처를 함께 남긴다 — 밝히지 않으면 메이커가 쓴 소개와 구분되지 않는다.
    */
-  const generated = (written?.text ?? "").trim();
+  const generated = described((written?.text ?? "").trim());
   const tagline = pageDescription || repoDescription || generated || repo;
 
   return {
