@@ -4,9 +4,9 @@ import { PublicShell } from "@/components/home/PublicShell";
 import { I18nProvider } from "@/lib/i18n/context";
 import { getDictionary } from "@/lib/i18n/dictionary";
 import { getRequestLocale } from "@/lib/i18n/server";
-import { pageTitle } from "@/lib/copy/brand";
+import { BRAND } from "@/lib/copy/brand";
 
-export const metadata: Metadata = { title: pageTitle("페이지를 찾을 수 없습니다"), robots: { index: false, follow: false } };
+export const metadata: Metadata = { title: BRAND, robots: { index: false, follow: false } };
 
 /** App-level missing paths do not pass through the locale provider or public shell. */
 export default async function NotFound() {

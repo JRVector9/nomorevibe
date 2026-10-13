@@ -68,6 +68,10 @@ App-level unmatched 404s create their own selected provider/public shell. This
 avoids experimental globalNotFound and fixes the observed multiple/dynamic-root
 unmatched-URL regression.
 
+Static not-found metadata uses the language-neutral brand name because these
+boundaries receive no locale props. Their selected body supplies the localized
+page title; an English/Chinese boundary never inherits hardcoded Korean copy.
+
 Language switching uses ordinary full-document anchors, preserving pathname,
 query, and hash, so the document root language changes reliably. Choice labels
 are 한국어, English, 简体中文, 繁體中文; all touch targets are at least 44px.

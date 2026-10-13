@@ -113,7 +113,7 @@ describe("없는 주소", () => {
 
     const html = await render(NotFound());
 
-    expect(notFoundMetadata.title).toBe("페이지를 찾을 수 없습니다 — nomorevibe");
+    expect(notFoundMetadata.title).toBe("nomorevibe");
     expect(html).toContain("찾는 페이지가 없거나 내려갔습니다");
     expect(html).toMatch(/<form role="search"[^>]* action="\/" method="get"/);
     expect(html).toContain('name="q"');
