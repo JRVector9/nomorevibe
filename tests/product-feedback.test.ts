@@ -145,7 +145,7 @@ describe("feedback request boundaries", () => {
   it("does not allow a general account to review feedback", async () => {
     const { reviewFeedbackAction } = await import("@/app/(operator)/admin/feedback/actions");
     const form = new FormData();
-    form.set("id", valid.requestId); form.set("decision", "accepted"); form.set("reason", "승인");
+    form.set("id", valid.requestId); form.set("expectedReviewState", "held"); form.set("decision", "accepted"); form.set("reason", "승인");
     await expect(reviewFeedbackAction(form)).rejects.toThrow("unauthorized");
     expect(requestMocks.review).not.toHaveBeenCalled();
   });
@@ -156,7 +156,7 @@ describe("feedback request boundaries", () => {
     requestMocks.admin.mockResolvedValue(admin);
     vi.stubEnv("NEXT_PUBLIC_SITE_URL", "https://nomorevibe.example");
     const form = new FormData();
-    form.set("id", valid.requestId); form.set("decision", "accepted"); form.set("reason", "검토 완료");
+    form.set("id", valid.requestId); form.set("expectedReviewState", "held"); form.set("decision", "accepted"); form.set("reason", "검토 완료");
     form.set("csrfExpiresAt", String(admin.exp));
     await expect(reviewFeedbackAction(form)).rejects.toThrow("forbidden");
     form.set("csrfToken", createHmac("sha256", "a".repeat(32)).update(`feedback-admin:${admin.login}:${admin.exp}`).digest("hex"));
@@ -168,7 +168,7 @@ describe("feedback request boundaries", () => {
     await expect(reviewFeedbackAction(form)).rejects.toThrow("forbidden");
     form.set("csrfExpiresAt", String(admin.exp));
     await reviewFeedbackAction(form);
-    expect(requestMocks.review).toHaveBeenCalledWith({ id: valid.requestId, decision: "accepted", reason: "검토 완료", adminLogin: "reviewer" });
+    expect(requestMocks.review).toHaveBeenCalledWith({ id: valid.requestId, expectedReviewState: "held", decision: "accepted", reason: "검토 완료", adminLogin: "reviewer" });
   });
 
   it("renders original HTML as escaped text", async () => {
