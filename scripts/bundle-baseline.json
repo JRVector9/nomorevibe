@@ -1,9 +1,9 @@
 {
-  "note": "주요 화면의 첫 로드 JS(brotli 품질 11, 바이트) — scripts/bundle-size.mjs 가 CI 에서 견준다. 2026-10-10 main 빌드(Next 16.3.8 Turbopack)에서 쟀다.",
+  "note": "주요 화면의 첫 로드 JS(brotli 품질 11, 바이트) — 2026-10-13 공개 다국어·중복 404 정리 후 Next 16.3.8 기본 Turbopack 빌드 실측. 증거·증가 범위는 docs/operations/2026-10-13-public-i18n-final-review.md. 허용 폭 10% 유지.",
   "tolerance": 0.1,
   "routes": {
-    "/[locale]": 130994,
-    "/[locale]/p/[slug]": 127182,
-    "/[locale]/launch": 122163
+    "/[locale]": 152327,
+    "/[locale]/p/[slug]": 162561,
+    "/[locale]/launch": 139137
   }
 }

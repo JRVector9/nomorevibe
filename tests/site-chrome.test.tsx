@@ -41,7 +41,7 @@ vi.mock("@/lib/domain/ranking/season-entries", () => ({ seasonKeysWithEntries: m
 
 const { MobileNav } = await import("@/components/home/MobileNav");
 const { SiteFooter } = await import("@/components/home/SiteFooter");
-const { default: NotFound, metadata: notFoundMetadata } = await import("@/app/(public)/[locale]/not-found");
+const { default: NotFound, metadata: notFoundMetadata } = await import("@/app/not-found");
 const { default: RouteError } = await import("@/app/(public)/[locale]/(content)/error");
 const { default: GlobalError } = await import("@/app/global-error");
 const { default: PolicyPage, generateMetadata: policyMetadata } = await import("@/app/(public)/[locale]/(content)/policy/page");
