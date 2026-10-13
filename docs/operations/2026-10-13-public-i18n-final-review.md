@@ -1,6 +1,6 @@
 # 네 언어 공개 페이지 통합 검토 — 2026-10-13
 
-새 탐색 탭의 한국어 운영 배포는 완료했다. 다국어 코드는 공유 페이지 트리로 통합했으며 언어 운영 공개·migration·번역 모델 호출은 아직 하지 않았다. 사용자 직접 기능 확인 이후 공개하는 설계 조건을 유지한다.
+새 탐색 탭의 한국어 운영 배포는 완료했다. 다국어 코드는 공유 페이지 트리로 통합하고 [PR406](https://github.com/JRVector9/nomorevibe/pull/406)에 푸시했다. 언어 운영 공개·migration·번역 모델 호출은 아직 하지 않았다. 사용자 직접 기능 확인 이후 공개하는 설계 조건을 유지한다.
 
 ## 설계 작업별 결과
 
@@ -39,11 +39,15 @@ ko는 기존 비접두사 주소다. 영어 `/en`, 간체 `/zh-Hans`, 번체 `/z
 
 - 새 탭: main6b3fdfe, 필수 CI38335186074 성공. mini2→M3 4개 웹의 새 image/release/health/env를 확인했다. worker33349ed 유지, 네 flags ON 유지. 공개 읽기12GET의 release·count/facet·카드 중복·노출 수·라벨 확인 성공. worker health/progress 및 중단 intro 상태도 읽기로 확인했다.
 - 기반: 최종 foundation webpack/typegen/tsc 성공, spoofed locale header를 포함한30개 읽기GET로 네 언어 일반/없는 경로, KO308 query, prefixed admin/API404, missing admin secret 차단 및 기계용 경로 보존을 확인했다.
-- 통합: 카탈로그 gate는4locales/8namespaces/11publicpages 성공. 전체 lint는 오류0·기존 vendor 경고1. webpack 빌드27839 compile/type/prerender 완료 성공. 마지막 source clock 보완751f03c의 webpack build12300도 compile/type/prerender exit0. fixture통합0246962 이후 tsc95805와카탈로그gate exit0. 모든 에이전트 작업과 리뷰가 종료됐다.
+- 통합: 카탈로그 gate는4locales/8namespaces/11publicpages 성공. 전체 lint는 오류0·기존 vendor 경고1. webpack 빌드27839 compile/type/prerender 완료 성공. 마지막 source clock 보완751f03c의 webpack build12300도 compile/type/prerender exit0. fixture통합0246962 이후 tsc95805와 카탈로그gate exit0. 초기 구현 에이전트 작업과 리뷰가 종료됐고, 아래 CI 보완을 추가 검토했다.
+- 최종 빌드 읽기: 기본 hostname의 깨끗한 환경에서 정책·등록4언어×2, 총8GET 모두200·해당 html lang·제목·self canonical·5개 hreflang·OG locale 성공. 간체/번체 제목도 별개다. 실제 origin 설정을 공급하지 않았으므로 canonical origin은 로컬 기본값이다. 별도로 실제 standalone HOSTNAME=0.0.0.0의9GET에서 네 언어 정책, KO308 query 보존, prefixed API404, 관리자 차단, 비활성 DB health503 보존을 확인했다. 서버는 종료했고 실제 제품·인증 쓰기는 하지 않았다.
+- 첫 필수 CI38342233959는 실패했다. quality는238파일/2254사례 성공,9파일/10사례 실패; integration1/3 성공, integration2의 sitemap 관련3사례 실패다. sitemap DISTINCT의 계산식이 SELECT와 ORDER BY에서 서로 다른 바인딩으로 생성되어 PG42P10이 발생했다. 그 외는 기존 route group·localePath 정적 링크·순위 접근성·문구 및 semantic state/SSR navigation fixture의 변경 반영 누락이다. 기준을 삭제하거나 CI를 끄지 않고 최소 보완했다(c6abc5b/4a8059b/838ff6e). SQL은 계산식의 선택 alias 정렬로 바꿔 기존 WHERE/전체 chunk를 유지했고 한국어 tooltip·근거 문구는 원문으로 복원했다. 수정 후 필수 CI를 다시 실행한다.
 - 순수 검증: root language/numeric14사례, 에이전트 maker return35사례·제품 준비 상태14사례·signed number10사례 성공. DB/원격/LLM 호출 없는 assertion이다. 실제 제품·계정 동작 테스트로 해석하지 않는다.
 - 사용자 직접 기능 테스트 선호로 새 suite/E2E·로그인/댓글/스타 쓰기는 수행하지 않았다. 기존 CI fixture는 route 이동·dynamic metadata·서버 async 계약에 맞춰 보완하며 검증 기준 자체를 삭제하지 않는다. 최종 필수 CI 결과는 확정 후 기록한다.
 
 Next16.3.8의 explicit invalid category/product notFound가 빈 `__next_error__` 문서를 만드는 문제는 untouched baseline에서도 재현했다. 단일 root로 unmatched URL의 선택 lang/셸/진짜404/noindex는 복원했다. explicit404의 셸/lang은 기존 프레임워크 한계가 남는다. 상태200 우회·proxy DB 조회·프레임워크 패치는 추가하지 않았다.
+
+최종 로컬 확인에서 `next start --hostname 127.0.0.1`은 rewrite host를 localhost로 정규화하는 Next 처리 때문에 KO 자기308 반복을 만들었다. 기본 hostname 및 운영과 같은 standalone0.0.0.0에서는 정상이다. proxy를 바꾸지 않고 기존 Playwright 서버 바인딩만0.0.0.0으로 맞췄다. 브라우저 요청 주소127.0.0.1은 유지했고 E2E를 실행한 것으로 주장하지 않는다.
 
 다국어 운영 공개 전 순서는 사용자 직접 언어/로그인 복귀/필터/상세 확인, 최신 필수 CI·이미지 확인, 기존 drain 절차에서 migration0075 한 번 적용, 호환된 web 및 text/scheduler 릴리스 교체, 읽기 health/번역 진행/중단 intro 상태 확인이다. 운영 migration·이 후속 배포는 이 단계에서 실행하지 않았다.
 
