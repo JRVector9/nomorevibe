@@ -39,7 +39,7 @@ ko는 기존 비접두사 주소다. 영어 `/en`, 간체 `/zh-Hans`, 번체 `/z
 
 - 새 탭: main6b3fdfe, 필수 CI38335186074 성공. mini2→M3 4개 웹의 새 image/release/health/env를 확인했다. worker33349ed 유지, 네 flags ON 유지. 공개 읽기12GET의 release·count/facet·카드 중복·노출 수·라벨 확인 성공. worker health/progress 및 중단 intro 상태도 읽기로 확인했다.
 - 기반: 최종 foundation webpack/typegen/tsc 성공, spoofed locale header를 포함한30개 읽기GET로 네 언어 일반/없는 경로, KO308 query, prefixed admin/API404, missing admin secret 차단 및 기계용 경로 보존을 확인했다.
-- 통합: 카탈로그 gate는4locales/8namespaces/11publicpages 성공. 전체 lint는 오류0·기존 vendor 경고1. webpack 빌드27839 compile/type/prerender 완료 성공. 마지막 source clock 보완 이후 최종 빌드는 실행 중이며 결과를 후속 기록한다.
+- 통합: 카탈로그 gate는4locales/8namespaces/11publicpages 성공. 전체 lint는 오류0·기존 vendor 경고1. webpack 빌드27839 compile/type/prerender 완료 성공. 마지막 source clock 보완751f03c의 webpack build12300도 compile/type/prerender exit0. fixture통합0246962 이후 tsc95805와카탈로그gate exit0. 모든 에이전트 작업과 리뷰가 종료됐다.
 - 순수 검증: root language/numeric14사례, 에이전트 maker return35사례·제품 준비 상태14사례·signed number10사례 성공. DB/원격/LLM 호출 없는 assertion이다. 실제 제품·계정 동작 테스트로 해석하지 않는다.
 - 사용자 직접 기능 테스트 선호로 새 suite/E2E·로그인/댓글/스타 쓰기는 수행하지 않았다. 기존 CI fixture는 route 이동·dynamic metadata·서버 async 계약에 맞춰 보완하며 검증 기준 자체를 삭제하지 않는다. 최종 필수 CI 결과는 확정 후 기록한다.
 
