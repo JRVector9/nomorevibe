@@ -1,3 +1,27 @@
+# 2026-10-13 — 필수 관리자 구현 병렬 재리뷰·운영 배포 진행
+
+## Current objective / completed work
+
+사용자가 서브에이전트 병렬 코드리뷰와 운영 배포를 요청했다. 대상은 feat/admin-essential-integration-20261013의 구현 6848016, base main b8147dc다. gpt-6.1-sol/xhigh 3담당이 인증·댓글/번역·운영/자동 차단을 독립 읽기 리뷰 중이며 root가 보완·PR·필수 CI·배포를 전담한다. 이전 단위161/통합76/타입/lint/i18n/webpack build 성공은 그대로 유효하며 새 변경이 있을 때 관련 범위만 재실행한다.
+
+## Design / modified files / verification
+
+이번 단계는 리뷰 결과 보완과 릴리스 기록이다. prod skill을 읽었으며 Keychain 자격으로 Dokploy API 직접 curl을 사용한다. 현재 main b8147dc, 운영 웹707/백엔드b592, core13앱 구성이다. 새 migration/schema는 없으므로 migration·소비자 drain을 반복하지 않는다. 공개 소개 검수2100 중단, 기능4개 ON, 관리자 production local 우회0, 독립 source 앱 정책과 별도 connect-agent를 보존한다. 원격 push/PR/CI/운영 배포는 아직 진행 전이며 성공을 주장하지 않는다. 사용자 main의 미추적 산출물은 보존한다.
+
+## Remaining work / exact next commands
+
+세 리뷰 결과→필요 보완/관련 체크→정상 PR 필수 check→정상 merge→main CI·web/worker digest/양 서버 pull→13앱 현재 상태 snapshot·각 단계 readiness→양웹/public 본문·관리 API 차단·runtime source/env·failover/progress 검증→최종 보고 순서다. 관리자 private ingress/ACL/자격 설치는 기존 runbook 경계이며 설치 미검증을 배포 완료와 혼동하지 않는다. 비밀/환경 전문·쿠키·DB본문은 로그나 Git에 넣지 않는다.
+
+```sh
+cd /private/tmp/nomorevibe-admin-essential-integration-20261013
+git status --short --branch
+git diff origin/main --check
+# 정상 PR과 최신 main CI가 성공한 뒤에만 새 immutable image를 운영에 배포한다.
+# 읽기/실측 private state와 이전 release state 전체를 공유·커밋하지 않는다.
+```
+
+---
+
 # 2026-10-13 — 관리자 16개 제안 실측·범위 축소·병렬 구현
 
 ## Current objective / completed work
