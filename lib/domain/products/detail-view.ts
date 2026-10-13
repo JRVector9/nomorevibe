@@ -45,6 +45,8 @@ import { healthMetrics, DOWN_THRESHOLD } from "./health";
 import { getRelatedRising, isUnclaimed, type ProductListItem } from "./view";
 import { indexingFields } from "./indexing";
 import { taglineKoField } from "./korean-tagline";
+import { productTranslationEligible } from "./translations";
+import type { ProductTranslationSelection } from "./translation-policy";
 import { getRisingRank, repoGoneField } from "./repository";
 import { readmeExcerpt } from "./readme-excerpt";
 import type { Category } from "./schema";
@@ -178,6 +180,10 @@ export type PublicProduct = StarObservation & Pick<Product,
   takedownPending: boolean;
   /** 지금 소개로 지은 한국어 한 줄 소개(korean-tagline.ts) — 없으면 원문만 */
   taglineKo: string | null;
+  translationName?: string;
+  translationEligible?: boolean;
+  translation?: ProductTranslationSelection;
+  descriptionTranslation?: ProductTranslationSelection;
 };
 
 export type ProductDetailView = {
@@ -242,12 +248,13 @@ async function findPublicProduct(slug: string): Promise<PublicProduct | null> {
       updatedAt: true,
     },
     // 상세 메타데이터의 robots 가 이 행 하나로 정해진다(UX-08) — sitemap 과 같은 규칙(indexing.ts)
-    extras: { ...repoGoneField, ...indexingFields, ...taglineKoField },
+    extras: { ...repoGoneField, ...indexingFields, ...taglineKoField,
+      translationEligible: sql<boolean>`${productTranslationEligible}`.as("translation_eligible") },
   });
   if (!product) return null;
   // 사라진 저장소의 스타는 마지막으로 본 옛 값이다 — 상세에 ★ 를 그리지 않는다(목록 카드의 toListItem 과 같다)
   const stars = product.repoGone ? { stars: null, starsAt: null, starsPrevious: null, starsPreviousAt: null } : {};
-  return {...product, ...stars, name: displayProjectName(product.name, product.repoUrl)};
+  return {...product, ...stars, translationName: product.name, name: displayProjectName(product.name, product.repoUrl)};
 }
 
 export const getProductIdentity = cache(async (slugInput: string): Promise<PublicProduct | null> => {

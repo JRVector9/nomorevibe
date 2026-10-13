@@ -363,11 +363,11 @@ async function listConditions({ statuses, category, query, builder, observedTool
  * 카드 9장에 78KB 였다 — 쓰는 것은 4KB(2026-10-06 실측).
  */
 export const LIST_COLUMNS = {
-  slug: true, name: true, repoUrl: true, tagline: true, taglineSource: true, category: true, accessMode: true, builder: true,
+  id: true, slug: true, name: true, repoUrl: true, tagline: true, taglineSource: true, category: true, accessMode: true, builder: true,
   stack: true, ogImage: true, makerName: true, stars: true, starsAt: true, starsPrevious: true, starsPreviousAt: true,
   verifiedAt: true, createdAt: true, status: true, source: true, claimedAt: true, repoRenamedTo: true, aiLevel: true,
 } as const;
-export type ProductListRow = Pick<Product, keyof typeof LIST_COLUMNS> & { repoGone?: boolean; taglineKo?: string | null };
+export type ProductListRow = Pick<Product, Exclude<keyof typeof LIST_COLUMNS, "id">> & { id?: number; repoGone?: boolean; taglineKo?: string | null };
 
 /** 홈 신규 목록의 생성일 — 지금 연결된 GitHub 저장소의 원본만 쓴다. */
 const repositoryBornAt = sql`(

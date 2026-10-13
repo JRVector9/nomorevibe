@@ -1,60 +1,39 @@
+"use client";
+
 import type { TaglineSource } from "@/lib/db/schema";
+import type { ProductTranslationSelection } from "@/lib/domain/products/translation-policy";
+import { useLocale, useTranslations } from "@/lib/i18n/context";
+import { englishLang } from "@/lib/i18n/content-language";
 import { IntroductionSource } from "./home/IntroductionSource";
+export { englishLang } from "@/lib/i18n/content-language";
 
-/** 한글·한자·가나가 한 자라도 있으면 영어로 보지 않는다 */
-const CJK = /[\p{Script=Hangul}\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}]/u;
-
-/**
- * 원문 글이 영어로 보이면 "en" — 페이지는 lang=ko 라 표시가 없으면 스크린리더가 영어 문장을 한국어 규칙으로 읽는다(A11Y-06).
- *
- * 짐작은 작게 한다: 한글·한자·가나가 없고, 글자의 90% 이상이 영문 알파벳이며, 글자가 셋 이상일 때만.
- * 악센트가 조금 섞인 유럽어도 "en" 으로 볼 수 있다 — 한국어 규칙으로 읽는 것보다는 낫다. 아니면 표시하지 않는다(undefined).
- */
-export function englishLang(text: string | null | undefined): "en" | undefined {
-  if (!text || CJK.test(text)) return undefined;
-  const letters = text.match(/\p{L}/gu) ?? [];
-  const latin = letters.filter((letter) => /[A-Za-z]/.test(letter)).length;
-  return letters.length >= 3 && latin / letters.length >= 0.9 ? "en" : undefined;
-}
-
-/**
- * 제품 한 줄 소개 — 카드·상세·인기·랭킹·홈 보드가 모두 이 컴포넌트로 그린다. 화면 쪽은 소개를 직접 그리지 말고 값만 넘긴다.
- *
- * 한국어 소개(taglineKo, UX-13)가 있으면 그것을 먼저 보이고 원문은 뒤에 둔다 — 좁은 자리(카드·행)는 툴팁(title)으로,
- * 상세는 '원문 보기' 토글로(original="toggle"). taglineKo 는 지금 소개에서 옮긴 것만 온다(korean-tagline.ts taglineKoField) —
- * 소개가 바뀌어 아직 다시 옮기지 않았으면 비어 있어 원문만 보인다.
- * 'AI가 요약' 출처 줄은 보이는 글이 AI 가 쓴 것일 때만 붙는다 — 한국어 줄(늘 AI 가 옮긴 것)이나 AI 가 지은 원문.
- *
- * 영어 원문에는 lang="en" 을 단다(englishLang, A11Y-06) — 상세·카드·행 어디에 보이든.
- */
-export function ProductTagline({ tagline, taglineKo, source, className, showSource = true, original = "tooltip" }: {
+/** Original text stays available; each locale chooses only a current translation. */
+export function ProductTagline({ tagline, taglineKo, translation, source, className, showSource = true, original = "tooltip" }: {
   tagline: string;
-  /** 한국어 한 줄 소개 — 없으면 원문만 */
   taglineKo?: string | null;
+  translation?: ProductTranslationSelection;
   source?: TaglineSource | null;
   className?: string;
-  /** 출처 줄('AI가 요약 · …')을 붙일지 — 좁은 행에서는 끈다 */
   showSource?: boolean;
-  /** 한국어 줄이 있을 때 원문을 어디에 둘지 — tooltip: 줄의 title(카드·행), toggle: 아래 '원문 보기'(상세) */
   original?: "tooltip" | "toggle";
 }) {
-  const korean = taglineKo?.trim() || null;
-  if (!korean) {
-    return (
-      <>
-        <p className={className} title={tagline} lang={englishLang(tagline)}>{tagline}</p>
-        {showSource && <IntroductionSource source={source ?? undefined} />}
-      </>
-    );
-  }
+  const locale = useLocale();
+  const t = useTranslations("labels");
+  const korean = locale === "ko" ? taglineKo?.trim() || null : null;
+  const translated = locale === "ko" ? Boolean(korean) : translation?.translated === true;
+  const text = locale === "ko" ? korean ?? tagline : translation?.text ?? tagline;
+  const lang = locale === "ko" ? korean ? "ko" : englishLang(tagline) : translation?.lang;
+  const pending = locale !== "ko" && (translation?.pending ?? Boolean(tagline.trim()));
+  const title = translated && original === "tooltip" ? t("content.originalText", { text: tagline }) : text;
   return (
     <>
-      <p className={className} title={original === "tooltip" ? `원문: ${tagline}` : korean}>{korean}</p>
+      <p className={className} title={title} lang={lang}>{text}</p>
+      {pending && <p className="card-intro-source">{t("content.pending")}</p>}
       {showSource && <IntroductionSource source={source ?? undefined} />}
-      {original === "toggle" && (
+      {translated && original === "toggle" && (
         <details className="text-[13px] leading-[1.5] text-fg-2">
-          <summary className="inline-flex min-h-8 cursor-pointer select-none items-center text-accent-ink hover:underline">원문 보기</summary>
-          <p lang={englishLang(tagline)} className="m-0 mt-1 max-w-[720px] text-[15px] leading-[1.5] text-fg-2">{tagline}</p>
+          <summary className="inline-flex min-h-8 cursor-pointer select-none items-center text-accent-ink hover:underline">{t("content.original")}</summary>
+          <p lang={locale === "ko" ? englishLang(tagline) : translation?.sourceLocale ?? undefined} className="m-0 mt-1 max-w-[720px] text-[15px] leading-[1.5] text-fg-2">{tagline}</p>
         </details>
       )}
     </>

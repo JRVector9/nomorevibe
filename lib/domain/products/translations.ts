@@ -15,10 +15,11 @@ export const PRODUCT_TRANSLATION_JOB = "product-translate";
 const t = productTranslations;
 const sourceColumns = { id: products.id, name: products.name, tagline: products.tagline, description: products.description };
 // The intro-review queue is neither requested nor resumed. Current editor holds and takedowns block translation.
-const eligible = sql`${products.status} in ('seeded', 'verified')
+export const productTranslationEligible = sql`${products.status} in ('seeded', 'verified')
   and not exists (select 1 from ${takedownRequests} r where r.slug = ${products.slug} and r.handled_at is null)
   and not exists (select 1 from ${productIntroChecks} i where i.product_id = ${products.id}
     and i.checked_tagline = ${products.tagline} and i.outcome = 'needs_editor')`;
+const eligible = productTranslationEligible;
 
 function demandIds(ids: readonly number[]): number[] {
   return [...new Set(ids.filter((id) => Number.isSafeInteger(id) && id > 0))].slice(0, PRODUCT_TRANSLATION_DEMAND_LIMIT).sort((a, b) => a - b);

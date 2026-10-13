@@ -1,5 +1,6 @@
 import { displayProjectName } from './display-name';
 import type { StarObservation } from './star-change';
+import type { ProductTranslationSelection } from './translation-policy';
 import {and,asc,eq,inArray,isNotNull,sql} from 'drizzle-orm';
 import {db} from '@/lib/db';
 import {products,type TaglineSource} from '@/lib/db/schema';
@@ -7,12 +8,12 @@ import {listedByDefault,notDown,repoGone,starGainPerDay} from './repository';
 import {taglineKo} from './korean-tagline';
 import {STAR_TIERS,type PopularSort,type StarTier} from './stars';
 
-export type PopularProduct=StarObservation&{slug:string;name:string;tagline:string;taglineKo:string|null;taglineSource:TaglineSource;category:string;repoUrl:string|null;repoRenamedTo:string|null;ogImage:string|null;stars:number;ownerType:'User'|'Organization'|null;starsAt:string|null;
+export type PopularProduct=StarObservation&{id?:number;translationName?:string;translation?:ProductTranslationSelection;slug:string;name:string;tagline:string;taglineKo:string|null;taglineSource:TaglineSource;category:string;repoUrl:string|null;repoRenamedTo:string|null;ogImage:string|null;stars:number;ownerType:'User'|'Organization'|null;starsAt:string|null;
  accessMode:'website'|'installable';aiLevel:number|null;makerName:string|null};
 /** /popular 거르기 — 개인 계정만, AI로 제작(근거 단계가 있는 것), 분야 하나. 홈 구간은 개인 계정만 쓴다 */
 export type PopularFilters={personal:boolean;ai:boolean;category:string|null};
 const NO_FILTERS:PopularFilters={personal:false,ai:false,category:null};
-const fields={slug:products.slug,name:products.name,tagline:products.tagline,taglineKo,taglineSource:products.taglineSource,category:products.category,repoUrl:products.repoUrl,repoRenamedTo:products.repoRenamedTo,ogImage:products.ogImage,
+const fields={id:products.id,slug:products.slug,name:products.name,tagline:products.tagline,taglineKo,taglineSource:products.taglineSource,category:products.category,repoUrl:products.repoUrl,repoRenamedTo:products.repoRenamedTo,ogImage:products.ogImage,
  starsPrevious:products.starsPrevious,starsPreviousAt:sql<string|null>`${products.starsPreviousAt}::text`,
  stars:sql<number>`${products.stars}`,ownerType:products.ownerType,starsAt:sql<string|null>`${products.starsAt}::text`,
  accessMode:products.accessMode,aiLevel:products.aiLevel,makerName:products.makerName};
@@ -35,7 +36,7 @@ const order=(sort:PopularSort)=>sort==='rising'?[sql`${starGainPerDay} desc null
 async function items(tier:StarTier,f:PopularFilters,sort:PopularSort,limit:number,offset=0):Promise<PopularProduct[]>{
  const rows = await db.select(fields).from(products).where(and(publicStars(f),inTier(tier)))
   .orderBy(...order(sort),asc(products.id)).limit(limit).offset(offset);
- return rows.map(p=>({...p,name:displayProjectName(p.name,p.repoUrl)}));
+ return rows.map(p=>({...p,translationName:p.name,name:displayProjectName(p.name,p.repoUrl)}));
 }
 export async function getPopularGroups(personal=false){
  const f={...NO_FILTERS,personal};

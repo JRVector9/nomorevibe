@@ -2,7 +2,7 @@ import type { ComponentPropsWithoutRef, ReactNode } from "react";
 import ReactMarkdown from "react-markdown";
 import rehypeSanitize from "rehype-sanitize";
 import remarkGfm from "remark-gfm";
-import { englishLang } from "@/components/ProductTagline";
+import { englishLang } from "@/lib/i18n/content-language";
 import { README_INTRO_SOURCE } from "@/lib/copy/terms";
 import type { ProductDetailView } from "@/lib/domain/products/detail-view";
 import { safeExternalUrl } from "./format";

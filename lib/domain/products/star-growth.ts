@@ -160,7 +160,7 @@ async function loadRuns(asOf: Date, baselineAt: Date) {
 }
 
 const observedListFields = {
-  slug: products.slug, name: products.name, repoUrl: products.repoUrl, tagline: products.tagline,
+  id: products.id, slug: products.slug, name: products.name, repoUrl: products.repoUrl, tagline: products.tagline,
   taglineSource: products.taglineSource, taglineKo, category: products.category, accessMode: products.accessMode,
   builder: products.builder, stack: products.stack, ogImage: products.ogImage, makerName: products.makerName,
   verifiedAt: products.verifiedAt, createdAt: products.createdAt, status: products.status,
