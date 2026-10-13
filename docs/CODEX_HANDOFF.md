@@ -1,3 +1,54 @@
+# 2026-10-13 — 홈 필터 운영 검토·한국어/영어/간체/번체 다국어 설계
+
+## Current objective
+
+사용자는 분야 칩 숫자에 맞게 프로젝트가 보이는지 확인하고, 지금 뜨는/최신/관심 많은 순의 차이를 설명하며, 앞으로 페이지가 늘어도 한 번에 관리할 수 있는 영어·중국어 페이지 구조를 설계하라고 요청했다. 후속으로 중국어 간체와 번체를 모두 지원하라고 지정했다. 이번 범위는 확인·보고서·구현 전 설계다. 제품 필터 정책/페이지/번역 워커를 구현하거나 운영에 배포하라는 지시는 아직 없다.
+
+## Completed work / modified files
+
+- 코드와 공개 GET66개(19분야×3=57, 전체3, AI 전체/개발 도구×3=6), 추가 pagination GET7개, 운영 read-only repeatable-read snapshot을 대조했다. 기본 카드582개의 공개/분야/AI/정렬 자격 위반0, 주 정렬값 역전0, 중복0이다. 기본9개 또는 소수 대상만큼 표시·18개 더 보기·198개 sliding window를 확인했다. 실제 사용자 기능 테스트나 전체39,179개 브라우저 순회, 분야 분류의 의미 검수는 하지 않았다.
+- 화면10:17:37~10:22:04 KST에서 공개39,179, 지금 뜨는1,807, 최신37,839. 개발 도구 칩10,405 vs weekly947/recent10,315/all-time10,405. 마지막 DB10:22:23에는 공개39,179/weekly1,808/recent37,839, AI32,505/1,370/32,188이다. 66 결과 중59개 정확 일치,7개1~2차이. 개별 변화 원인을 전부 추적하지 않았으며 캐시/동시 갱신과 일치하는 작은 차이와 대상 조건이 다른 큰 차이를 구분한다. Profile 공개 행0이다.
+- 분야/AI 칩은 글로벌 공개 집합을 세고 실제 weekly/recent는 별도 자격을 적용한다. 큰 차이는 목록 누락 아닌 칩의 집계 의미다. weekly는 현재 legacy 평균일간 증가량(총스타<2000/최근7일), recent는 서비스 등록·검증순+GitHub ok, all-time은 총스타 대체 목록이다. 홈8시간 띠와 /rising은 별도 회차 집계이며 weekly는 그 reader로 전환되지 않았다.
+- 활성 시즌2026-W42/minimumProducts20/valid_visits, 공개 verified0.20개 도달 시 weekly는 ‘추천’ 시즌 방문 랭킹, all-time은3650일 서비스 방문 랭킹으로 바뀌는 코드 확인. 이름/기준 고정과 기존8시간 reader 통일을 FILTER-01~02로 제안했다. 관측 스케줄/DB schema 변경은 제안하지 않는다.
+- 다국어는 ko 비접두사 한국어 URL 보존, /en, /zh-Hans, /zh-Hant, 공유 locale 페이지 트리+타입 카탈로그+source version 번역 테이블. 간체·번체 개별 검수, URL 상태/인증 복귀/관리자 차단/API 제외/KST/캐시/SEO/sitemap 분할 포함. I18N-01~04 계획이며 구현 완료가 아니다.
+- 문서 worktree `/private/tmp/nomorevibe-filter-i18n-docs-20261013`, branch `docs/browse-filter-i18n-audit-20261013`, base3f72332. 변경은 이 handoff와 `docs/operations/2026-10-13-browse-filter-audit.md`, `docs/plans/2026-10-13-public-i18n-design.md` 세 파일뿐이다. 사용자 미추적 PT/prototypes 등을 stage/삭제하지 않는다.
+
+## Key design decisions / test commands and actual results
+
+칩은 현재 sort 자격을 유지하고 바꿀 facet만 제외해 각 칩을 클릭할 때 결과 수를 보여주는 수정안이다. 전체 공개 총수는 별도 표시한다. 세 탐색 탭은8시간 증가/최근 등록/총GitHub스타로 고정하고 서비스 방문 랭킹은 별도 페이지에서 유지할 것을 제안한다. 제품 기준과 회차는 모든 언어가 공유하며 번역 준비는 필터 대상 수를 바꾸지 않는다. 원문 fallback·번역 출처·버전 검증을 관리하고 LLM GET/전체 일괄 번역/중단 소개 검수 재개를 하지 않는다.
+
+스킬·새 서브에이전트·Codex CLI·새 테스트 suites는 사용하지 않았다. 사용자의 직접 기능 테스트 선호를 보존했다. 설치된 Next16.3.8 국제화/layout/route-groups/not-found 가이드와 공식 Next/Google 언어·sitemap 문서를 읽었다. locale root 이동의404/슬롯/인증 검증은 실제 구현 PR에서 해야 한다. 이번 작업은 해당 검증을 이미 성공했다고 주장하지 않는다.
+
+실제 실행한 read-only 도구: private `audit.py pages` 최신66 GET exit0, React segment 보정 후 root2 GET exit0, `audit.py sql` 최종 snapshot exit0, pagination7 GET exit0, 비교 결과 invalidMembership/nonDescending 빈 배열. 문서 whitespace 검사와 CI 여부는 전달 단계의 실제 결과로만 보고한다. 제품 타입/단위/E2E를 로컬에서 새로 실행하지 않았다.
+
+## Failed approaches
+
+원시 HTML에서 첫 projects section만 읽으면 SSR skeleton/외부 streamed grid 때문에0장이었다. 이어 nav만 읽으면 streamed 숫자/링크 때문에17~18칩이었다. 실제 grid를 선택하고 `$RS` 삽입을 반영해19칩을 확인했다. 서비스 누락으로 보고하지 않았다. PostgreSQL unsafe의 jsonb 파라미터 추론이 이미 JSON 직렬화한 문자열을 다시 직렬화해 `jsonb_array_elements`가22023을 냈다. 안전한 text→jsonb cast로 보정하고 출력 JSON/스냅샷 존재를 확인했다. 모든 SQL은 읽기 전용이었다. 초기09:27 GET은 오래되어 최신10:17 GET과 구분해 보관했다.
+
+## Remaining work / exact commands
+
+검토 보고와 네 언어 설계 작성은 완료했다. 문서 전달 후 사용자 지시가 있으면 FILTER-01~02 및 I18N-01~04를 구현한다. 이번 문서로 필터 기준이 바뀌거나 영어/중국어 페이지가 운영에 생긴 것은 아니다. 사용자 지시 없는 제품 코드/운영 설정 변경·소개 검수 재개·기존 스타/관리자 작업 확장을 하지 않는다. 브라우저 열기 실패 시 건너뛰라는 지시를 유지한다.
+
+private 읽기 결과 폴더 `/private/tmp/nomorevibe-filter-i18n-audit-20261013-6d38v996`: 최종 public-pages.json/pagination-pages.json/db-snapshot.json/comparison.json. 임시 helper·안전한 selected 근거는 제품 코드를 만들기 위한 의존성이 아니며 커밋하지 않는다. 운영 배포 helper의 before/preflight 또는 env/인증키는 출력/공유/커밋 금지. 이번 작업에 배포 helper의 deploy를 실행하지 않았다.
+
+```sh
+cd /private/tmp/nomorevibe-filter-i18n-docs-20261013
+git diff --check
+git status --short --branch
+cat docs/operations/2026-10-13-browse-filter-audit.md
+cat docs/plans/2026-10-13-public-i18n-design.md
+# 실제 구현 시작 전에 아래 설치 문서와 최신 repository 상태를 확인한다.
+cd /Users/jr/Desktop/projects/nomorevibe
+git status --short --branch
+git rev-parse HEAD origin/main
+sed -n '1,230p' node_modules/next/dist/docs/01-app/02-guides/internationalization.md
+# 기존 한국어 URL, /admin 차단, API/OAuth 경로와 paused 소개 검수를 유지한다.
+```
+
+이 아래는 완료한 이전 단계의 역사 기록이다. 최신 저장소 상태와 이 위의 검토 범위를 우선한다.
+
+---
+
 # 2026-10-13 — 8시간 스타 증가량 운영 반영·저장소 미수집 조사·상세 압축 시안 완료
 
 ## Current objective / completed work
