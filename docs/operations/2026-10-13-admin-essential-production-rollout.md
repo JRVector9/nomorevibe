@@ -41,7 +41,7 @@ source main은 `8e767a5fce5f935513e1d942e79593fedd5c4517`이다. [main CI3836398
 
 실제 명령 결과: capture/plan59067, web28256, 공개13154, 최종verify20025, 위조경계76301 모두exit0다. private state의verification/database-preservation/public-get/administrator-boundary에는 안전한 결과가 남으며 env snapshot은 공유하지 않는다.
 
-검증 과정의 실패도 구분했다. 최초verify는 새 웹의tracked 파일목록을 보존backend checkout에서 찾다가 FileNotFound로 실패했다. 파일목록만 backend git checkout 기준으로 고쳤다. 다음1회publisher-m3 snapshot이ready=false여서 중단했지만 재조회에서1/1·healthy·failingStreak0·health exit3회0·기존digest/release를 확인했고 최종 전체검증은 성공했다. 추가 재배포나 재시작은 하지 않았다. 최초 직접경계 probe는127.0.0.1 가정 때문에 실패해 실제standalone의HOSTNAME/PORT로 고친 뒤6컨테이너의12요청을 확인했다. 애플리케이션 인증 경계를 느슨하게 바꾸지 않았다.
+검증 과정의 실패도 구분했다. 최초verify는 새 웹의tracked 파일목록을 보존backend checkout에서 찾다가 FileNotFound로 실패했다. 파일목록만 backend git checkout 기준으로 고쳤다. 다음1회publisher-m3 snapshot이ready=false여서 중단했지만 재조회에서1/1·healthy·failingStreak0·health exit3회0·기존digest/release를 확인했고 최종 전체검증은 성공했다. 추가 재배포나 재시작은 하지 않았다. 최초 직접경계 probe는 응답 JSON을 얻지 못했다. 실제standalone의HOSTNAME/PORT를 사용하고 exec 실패도 JSON으로 출력하게 고친 뒤6컨테이너의12요청을 확인했다. 애플리케이션 인증 경계를 느슨하게 바꾸지 않았다.
 
 ## 관리자 내부 접속 경계
 
