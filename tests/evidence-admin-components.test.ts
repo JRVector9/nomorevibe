@@ -3,13 +3,13 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 
-vi.mock("@/app/admin/evidence/actions", () => ({
+vi.mock("@/app/(operator)/admin/evidence/actions", () => ({
   saveEvidenceSettings: vi.fn(),
 }));
 import {
   EvidenceSettingsForm,
   numberOrPrevious,
-} from "@/app/admin/evidence/EvidenceSettingsForm";
+} from "@/app/(operator)/admin/evidence/EvidenceSettingsForm";
 import { DEFAULT_EVIDENCE_SETTINGS } from "@/lib/domain/evidence/settings";
 
 describe("evidence settings form", () => {

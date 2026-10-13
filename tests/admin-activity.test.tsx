@@ -7,14 +7,14 @@ vi.mock('next/navigation', () => ({ redirect: mocks.redirect }));
 vi.mock('@/lib/operations/admin-log', async (importOriginal) => ({
   ...await importOriginal<typeof import('@/lib/operations/admin-log')>(), adminLogFacets: mocks.facets,
 }));
-vi.mock('@/app/admin/activity/query', async (importOriginal) => ({
-  ...await importOriginal<typeof import('@/app/admin/activity/query')>(), activityLog: mocks.log,
+vi.mock('@/app/(operator)/admin/activity/query', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/app/(operator)/admin/activity/query')>(), activityLog: mocks.log,
 }));
 
-import AdminActivityPage from '@/app/admin/activity/page';
-import { actionLabel, targetLabel } from '@/app/admin/activity/labels';
-import { normalizeTarget } from '@/app/admin/activity/query';
-import { isScriptRow, summaryLine } from '@/app/admin/activity/summary';
+import AdminActivityPage from '@/app/(operator)/admin/activity/page';
+import { actionLabel, targetLabel } from '@/app/(operator)/admin/activity/labels';
+import { normalizeTarget } from '@/app/(operator)/admin/activity/query';
+import { isScriptRow, summaryLine } from '@/app/(operator)/admin/activity/summary';
 import { actorKind, settingsChanges } from '@/lib/operations/admin-log';
 
 const row = (id: number, patch: Record<string, unknown> = {}) => ({

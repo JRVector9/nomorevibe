@@ -5,10 +5,10 @@ import type { AdminReviewEntry } from "@/lib/crawl/admin-review";
 
 // 정적 그리기에는 앱 라우터·서버 액션이 없다
 vi.mock("next/navigation", () => ({ useRouter: () => ({ push() {}, refresh() {} }) }));
-vi.mock("@/app/admin/review/actions", () => ({ undoCandidateDecisions: vi.fn(), approveWithTagline: vi.fn(), collectCandidateEvidence: vi.fn() }));
-vi.mock("@/app/admin/actions", () => ({ decideCrawlCandidate: vi.fn() }));
+vi.mock("@/app/(operator)/admin/review/actions", () => ({ undoCandidateDecisions: vi.fn(), approveWithTagline: vi.fn(), collectCandidateEvidence: vi.fn() }));
+vi.mock("@/app/(operator)/admin/actions", () => ({ decideCrawlCandidate: vi.fn() }));
 
-const { ReviewConsole } = await import("@/app/admin/review/ReviewConsole");
+const { ReviewConsole } = await import("@/app/(operator)/admin/review/ReviewConsole");
 
 const entry = (id: number, repo: string, productUrl: string | null, name = repo) => ({
   candidate: { id, repo, productUrl, state: "needs_review", reason: null, publishedSlug: null, signals: {}, decidedBy: "auto",

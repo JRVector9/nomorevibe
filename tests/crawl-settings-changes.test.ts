@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { describeChanges } from "@/app/admin/settings/changes";
-import { missingDefaults, searchUsage } from "@/app/admin/settings/model";
+import { describeChanges } from "@/app/(operator)/admin/settings/changes";
+import { missingDefaults, searchUsage } from "@/app/(operator)/admin/settings/model";
 import { DEFAULT_CRAWL_SETTINGS } from "@/lib/crawl/settings-schema";
 
 /** 크롤 설정 저장 바 — 처음 그린 값과 지금 값을 견줘 사람이 읽는 문장으로 */

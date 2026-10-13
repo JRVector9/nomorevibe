@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ReviewAiDecision } from "@/lib/crawl/admin-review";
-import { heldStages, stageHref, STAGE_GROUPS, STAGE_KEYS } from "@/app/admin/review/stages";
+import { heldStages, stageHref, STAGE_GROUPS, STAGE_KEYS } from "@/app/(operator)/admin/review/stages";
 
 const noSecond = { unanimous_reject: [], unanimous_approve: [], agreed_reject: [], agreed_approve: [], needs_human: [] };
 

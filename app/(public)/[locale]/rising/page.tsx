@@ -1,16 +1,16 @@
 import Link from "next/link";
 import type { Metadata } from "next";
-import { canonicalAlternates } from "@/app/page";
+import { canonicalAlternates } from "@/app/(public)/[locale]/page";
 import { Icon } from "@/components/home/icons";
 import { RankedCards } from "@/components/home/RankedCards";
-import { PopularList } from "@/app/popular/PopularList";
+import { PopularList } from "@/app/(public)/[locale]/popular/PopularList";
 import { StarGrowthSummary, STAR_GROWTH_TITLE, starGrowthNote } from "@/components/home/StarGrowthSummary";
 import { getStarGrowthPage, type StarGrowthPage } from "@/lib/domain/products/star-growth";
 import { pageTitle } from "@/lib/copy/brand";
 import { formatCount } from "@/lib/format/number";
 import { formatPublicDateTime } from "@/lib/format/time";
 import { logger } from "@/lib/observability/logger";
-import "@/app/popular/popular.css";
+import "@/app/(public)/[locale]/popular/popular.css";
 
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = {

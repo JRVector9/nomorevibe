@@ -23,18 +23,18 @@ vi.mock("@/lib/domain/ranking/view", () => ({
   getRankingAdminState: mocks.getRankingAdminState,
 }));
 
-import AdminRankingPage from "@/app/admin/ranking/page";
+import AdminRankingPage from "@/app/(operator)/admin/ranking/page";
 import {
   cancelRankingPolicy,
   saveRankingPolicy,
-} from "@/app/admin/ranking/actions";
+} from "@/app/(operator)/admin/ranking/actions";
 import {
   numberOrPrevious,
   percentList,
   policyWithCooldownDrafts,
   policyForScoringMode,
   RankingPolicyForm,
-} from "@/app/admin/ranking/RankingPolicyForm";
+} from "@/app/(operator)/admin/ranking/RankingPolicyForm";
 import {
   DEFAULT_RANKING_POLICY,
   UNIQUE_FIRST_RANKING_POLICY,

@@ -1,9 +1,9 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { ACTION_LINKS, jobHref, STATUS_TABS } from "@/app/admin/status/action-links";
-import { PRODUCT_FILTERS, PRODUCT_SORTS } from "@/app/admin/products/filters";
-import { SECOND_FILTER_KEYS, STAGE_KEYS } from "@/app/admin/review/stages";
+import { ACTION_LINKS, jobHref, STATUS_TABS } from "@/app/(operator)/admin/status/action-links";
+import { PRODUCT_FILTERS, PRODUCT_SORTS } from "@/app/(operator)/admin/products/filters";
+import { SECOND_FILTER_KEYS, STAGE_KEYS } from "@/app/(operator)/admin/review/stages";
 import { REVIEW_SORTS } from "@/lib/crawl/admin-review";
 import { JOB_NAMES } from "@/lib/jobs/catalog";
 

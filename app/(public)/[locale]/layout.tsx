@@ -6,7 +6,7 @@ import { HOME_TITLE } from "@/lib/copy/brand";
 import { SITE_DESCRIPTION, SITE_SHARE } from "@/lib/copy/share";
 import { siteOrigin, THEME_COLOR_DARK, THEME_COLOR_LIGHT } from "@/lib/site";
 import { publicUserAuthEnabled } from "@/lib/domain/github-integration/flags";
-import "./globals.css";
+import "../../globals.css";
 
 export const metadata: Metadata = {
   /**

@@ -5,19 +5,19 @@ vi.mock('@/lib/auth/admin', () => ({ currentAdmin: mocks.admin }));
 vi.mock('@/lib/operations/admin-log', async (importOriginal) => ({
   ...await importOriginal<typeof import('@/lib/operations/admin-log')>(), recordAdminAction: mocks.log,
 }));
-vi.mock('@/app/admin/news/list', async (importOriginal) => ({
-  ...await importOriginal<typeof import('@/app/admin/news/list')>(), listNewsPage: mocks.news,
+vi.mock('@/app/(operator)/admin/news/list', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/app/(operator)/admin/news/list')>(), listNewsPage: mocks.news,
 }));
-vi.mock('@/app/admin/activity/query', async (importOriginal) => ({
-  ...await importOriginal<typeof import('@/app/admin/activity/query')>(), activityLog: mocks.activity,
+vi.mock('@/app/(operator)/admin/activity/query', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/app/(operator)/admin/activity/query')>(), activityLog: mocks.activity,
 }));
 vi.mock('@/lib/domain/products/repository', async (importOriginal) => ({
   ...await importOriginal<typeof import('@/lib/domain/products/repository')>(), listProducts: mocks.products,
 }));
 
-import { GET } from '@/app/admin/export/route';
-import { CSV_BOM, csvCell, toCsv } from '@/app/admin/export/csv';
-import { MAX_EXPORT_ROWS } from '@/app/admin/export/views';
+import { GET } from '@/app/(operator)/admin/export/route';
+import { CSV_BOM, csvCell, toCsv } from '@/app/(operator)/admin/export/csv';
+import { MAX_EXPORT_ROWS } from '@/app/(operator)/admin/export/views';
 
 const call = (query: string) => GET(new Request(`http://localhost:3476/admin/export?${query}`), { params: Promise.resolve({}) });
 const newsRow = (id: number, title = `글 ${id}`) => ({

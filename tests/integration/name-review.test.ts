@@ -8,7 +8,7 @@ import { auditFloor, auditRowsAfter, ensureSchema, resetTables } from "./setup";
 const { db } = await import("@/lib/db");
 const { products } = await import("@/lib/db/schema");
 const { countProducts, countProductsByFilter, listProducts } = await import("@/lib/domain/products/repository");
-const { PRODUCT_FILTERS } = await import("@/app/admin/products/filters");
+const { PRODUCT_FILTERS } = await import("@/app/(operator)/admin/products/filters");
 const { scanProductNames } = await import("@/lib/domain/products/name-review");
 const { clearAllMemos } = await import("@/lib/cache/memo");
 const { main } = await import("@/scripts/normalize-product-names");

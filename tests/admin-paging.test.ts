@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { pageWindow } from "@/app/admin/paging";
+import { pageWindow } from "@/app/(operator)/admin/paging";
 
 describe("쪽 번호 줄", () => {
   it("쪽이 적으면 모두 보인다", () => {

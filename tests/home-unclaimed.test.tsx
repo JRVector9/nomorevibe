@@ -86,7 +86,7 @@ vi.mock("@/lib/domain/ranking/view", () => ({
   getSeasonRanking,
 }));
 
-import HomePage, { HomeContent, fallbackSort, generateMetadata, needsUnclaimedFill, searchSuggestions } from "@/app/page";
+import HomePage, { HomeContent, fallbackSort, generateMetadata, needsUnclaimedFill, searchSuggestions } from "@/app/(public)/[locale]/page";
 
 const season: SeasonSummary = {
   key: "2026-W34",

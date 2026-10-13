@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
-import { RepoHealthCard } from '@/app/admin/status/dashboard/RepoHealthCard';
-import { PRODUCT_FILTERS } from '@/app/admin/products/filters';
+import { RepoHealthCard } from '@/app/(operator)/admin/status/dashboard/RepoHealthCard';
+import { PRODUCT_FILTERS } from '@/app/(operator)/admin/products/filters';
 
 const state = (total: number) => ({ total, new24h: 0 });
 const html = renderToStaticMarkup(<RepoHealthCard

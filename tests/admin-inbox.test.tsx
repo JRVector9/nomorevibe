@@ -2,9 +2,9 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { ACTION_LINKS } from "@/app/admin/status/action-links";
-import { assembleInbox, AUDIT_TAB_HREF, INBOX_KEYS, INBOX_SECTIONS } from "@/app/admin/inbox/inbox-model";
-import { InboxCard } from "@/app/admin/inbox/InboxCard";
+import { ACTION_LINKS } from "@/app/(operator)/admin/status/action-links";
+import { assembleInbox, AUDIT_TAB_HREF, INBOX_KEYS, INBOX_SECTIONS } from "@/app/(operator)/admin/inbox/inbox-model";
+import { InboxCard } from "@/app/(operator)/admin/inbox/InboxCard";
 import type { InboxKey, InboxSectionData, InboxSectionResult } from "@/lib/operations/inbox";
 
 /** 오늘 할 일(2026-10-08 UX 감사 ADM-07) — 칸의 차례·합계와 칸 하나의 그림 */
@@ -55,7 +55,7 @@ describe("assembleInbox", () => {
     }
     expect(INBOX_SECTIONS.audit.href).toBe(AUDIT_TAB_HREF);
     // /admin/audit 이 ?tab=audit 을 읽는다
-    const audit = readFileSync(path.resolve(__dirname, "../app/admin/audit/page.tsx"), "utf8");
+    const audit = readFileSync(path.resolve(__dirname, "../app/(operator)/admin/audit/page.tsx"), "utf8");
     expect(audit).toMatch(/const TABS = \{[^}]*\baudit:/);
     expect(INBOX_SECTIONS.takedown.href).toBe(ACTION_LINKS.takedowns);
     expect(INBOX_SECTIONS.human.href).toBe("/admin/review?stage=human&sort=wait#review-list");

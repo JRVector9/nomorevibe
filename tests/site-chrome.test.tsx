@@ -39,7 +39,7 @@ const { SiteFooter } = await import("@/components/home/SiteFooter");
 const { default: NotFound, metadata: notFoundMetadata } = await import("@/app/not-found");
 const { default: RouteError } = await import("@/app/error");
 const { default: GlobalError } = await import("@/app/global-error");
-const { default: PolicyPage, metadata: policyMetadata } = await import("@/app/policy/page");
+const { default: PolicyPage, metadata: policyMetadata } = await import("@/app/(public)/[locale]/policy/page");
 const { default: SeasonFooterSlot } = await import("@/app/@seasonfooter/page");
 
 const hrefs = (html: string) => [...html.matchAll(/href="([^"]*)"/g)].map((match) => match[1]);

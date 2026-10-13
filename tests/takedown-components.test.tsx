@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { TakedownStrip } from "@/app/admin/TakedownStrip";
-import { AdminNav } from "@/app/admin/AdminNav";
+import { TakedownStrip } from "@/app/(operator)/admin/TakedownStrip";
+import { AdminNav } from "@/app/(operator)/admin/AdminNav";
 import type { TakedownSummary } from "@/lib/domain/products/takedown-view";
 
 /** 내려달라는 요청 알림 — 심사 큐 한 줄과 메뉴 배지 */

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { AUDIT_REASON_KEYS, classifyAuditReason, groupAuditReasons, isAuditReasonCategory } from "@/lib/crawl/audit-reason-category";
-import { banReasonLabel } from "@/app/admin/products/ban-reasons";
+import { banReasonLabel } from "@/app/(operator)/admin/products/ban-reasons";
 
 /** 감사 사유 갈래(2026-10-11) — 감사 #3 미처리 사유에서 옮긴 문장들 */
 describe("감사 사유 갈래", () => {

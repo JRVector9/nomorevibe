@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { notFound, redirect } from "next/navigation";
 import Link from "next/link";
-import { canonicalAlternates, HomeScreen, type HomeParams } from "@/app/page";
+import { canonicalAlternates, HomeScreen, type HomeParams } from "@/app/(public)/[locale]/page";
 import { browseTitle, categoryRedirect, categorySlug, parseCategory } from "@/components/home/browse-state";
 import { pageTitle } from "@/lib/copy/brand";
 import { categoryLabel } from "@/lib/domain/products/labels";

@@ -5,7 +5,7 @@ import type { PopularFacets, PopularProduct } from "@/lib/domain/products/popula
 const { getPopularPage, getPopularFacets } = vi.hoisted(() => ({ getPopularPage: vi.fn(), getPopularFacets: vi.fn() }));
 vi.mock("@/lib/domain/products/popular", () => ({ getPopularPage, getPopularFacets }));
 
-import PopularPage, { metadata } from "@/app/popular/page";
+import PopularPage, { metadata } from "@/app/(public)/[locale]/popular/page";
 import { STAR_TIERS } from "@/lib/domain/products/stars";
 
 const product = (over: Partial<PopularProduct> = {}): PopularProduct => ({

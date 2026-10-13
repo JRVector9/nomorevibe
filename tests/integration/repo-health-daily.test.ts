@@ -10,7 +10,7 @@ import { refreshProductStars, type StarsCursor } from "@/lib/jobs/products/stars
 import { reviewGoneRepositories } from "@/lib/jobs/products/repo-review";
 import type { JobContext } from "@/lib/jobs/runner";
 import { attentionCounts } from "@/lib/operations/dashboard";
-import { decideRepoReviewAction } from "@/app/admin/actions";
+import { decideRepoReviewAction } from "@/app/(operator)/admin/actions";
 import { auditFloor, auditRowsAfter, ensureSchema, resetTables } from "./setup";
 
 const mocks = vi.hoisted(() => ({ admin: vi.fn(), revalidate: vi.fn() }));

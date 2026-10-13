@@ -1,10 +1,10 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { ConfirmAction } from "@/app/admin/components/ConfirmAction";
-import { ScrollTable } from "@/app/admin/components/ScrollTable";
-import { StatusDot } from "@/app/admin/components/StatusDot";
-import { AdminToastProvider, resultError, resultToast } from "@/app/admin/components/Toast";
-import { ADMIN_THEME_SCRIPT } from "@/app/admin/components/ThemeToggle";
+import { ConfirmAction } from "@/app/(operator)/admin/components/ConfirmAction";
+import { ScrollTable } from "@/app/(operator)/admin/components/ScrollTable";
+import { StatusDot } from "@/app/(operator)/admin/components/StatusDot";
+import { AdminToastProvider, resultError, resultToast } from "@/app/(operator)/admin/components/Toast";
+import { ADMIN_THEME_SCRIPT } from "@/app/(operator)/admin/components/ThemeToggle";
 
 /** 관리자 공통 부품(2026-10-08 UX 감사) — 상호작용은 브라우저에서, 여기서는 그려지는 모양과 순수 규칙만 본다 */
 describe("상태 점", () => {

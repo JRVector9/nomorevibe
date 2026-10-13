@@ -17,7 +17,7 @@ const loadSeason = cache((key: string) => getSeasonByKey(key));
  * 시즌 이름 — 열쇠("2026-W41")가 아니라 "2026년 41주"로(2026-10-08 UX 감사 UX-09·UX-39).
  * 순위가 빈 시즌은 sitemap 에서 빠지고(app/sitemap.ts) 여기서도 색인하지 말라고 한다.
  */
-export async function generateMetadata({ params }: PageProps<"/rankings/[key]">): Promise<Metadata> {
+export async function generateMetadata({ params }: PageProps<"/[locale]/rankings/[key]">): Promise<Metadata> {
   const { key } = await params;
   const result = await loadSeason(key);
   // 없는 시즌은 본문이 404 로 바뀌지만 탭 제목은 여기 값이 남는다 — 비우면 홈 제목이 뜬다(UX-10·UX-39)
@@ -38,7 +38,7 @@ function emptyMessage(season: SeasonSummary): string {
 
 export default async function RankingSeasonPage({
   params,
-}: PageProps<"/rankings/[key]">) {
+}: PageProps<"/[locale]/rankings/[key]">) {
   const { key } = await params;
   const result = await loadSeason(key);
   if (!result) notFound();

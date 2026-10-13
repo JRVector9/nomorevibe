@@ -11,7 +11,7 @@ import { ensureSchema } from "./setup";
 
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("@/lib/auth/admin", () => ({ currentAdmin: vi.fn().mockResolvedValue({ login: "jr" }) }));
-const { saveCrawlSettings } = await import("@/app/admin/actions");
+const { saveCrawlSettings } = await import("@/app/(operator)/admin/actions");
 
 beforeAll(() => ensureSchema());
 beforeEach(async () => {

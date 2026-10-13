@@ -13,7 +13,7 @@ vi.mock("react", async (importOriginal) => {
   return { ...actual, useState: (initial: unknown) => actual.useState(initial === "owner" ? state.start : initial) };
 });
 
-const { TakedownForm } = await import("@/app/p/[slug]/TakedownForm");
+const { TakedownForm } = await import("@/app/(public)/[locale]/p/[slug]/TakedownForm");
 const { INTRO_REQUEST_MAX, INTRO_REQUEST_MIN, TAKEDOWN_PROMISE, introRequestMessage } = await import("@/lib/domain/products/takedown-view");
 
 const textOf = (html: string) => html.replace(/<!-- -->/g, "").replace(/<[^>]+>/g, "").replace(/\s+/g, " ");

@@ -2,7 +2,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import { DEFAULT_SHARE_IMAGE, SITE_DESCRIPTION, SITE_SHARE, productShareImage, shareMetadata } from "@/lib/copy/share";
 import { metadata as rootMetadata } from "@/app/layout";
-import LaunchPage from "@/app/launch/page";
+import LaunchPage from "@/app/(public)/[locale]/launch/page";
 
 // /launch 는 요청마다 그린다(connection) — 정적 그리기에는 요청 맥락이 없다
 vi.mock("next/server", async (importOriginal) => ({ ...(await importOriginal<typeof import("next/server")>()), connection: async () => {} }));

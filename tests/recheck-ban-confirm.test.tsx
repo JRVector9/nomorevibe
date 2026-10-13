@@ -2,8 +2,8 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 
-vi.mock("@/app/admin/actions", () => ({ banProducts: vi.fn() }));
-const { BanHits } = await import("@/app/admin/products/recheck/BanHits");
+vi.mock("@/app/(operator)/admin/actions", () => ({ banProducts: vi.fn() }));
+const { BanHits } = await import("@/app/(operator)/admin/products/recheck/BanHits");
 
 /**
  * 일괄 내리기는 누르는 즉시 돌면 안 된다.

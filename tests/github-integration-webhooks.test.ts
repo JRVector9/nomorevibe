@@ -177,7 +177,7 @@ describe("administrator recovery form protection", () => {
   });
   it("rejects anonymous administrator actions before accepting any form target", async () => {
     vi.doMock("@/lib/auth/admin", () => ({ currentAdmin: async () => null, authSecret: () => secret, adminLocalLoginEnabled: () => false, LOCAL_ADMIN_LOGIN: "local" }));
-    const { requeryGithubIntegrationAction, retransmitGithubIntegrationAction } = await import("@/app/admin/github-integrations/actions");
+    const { requeryGithubIntegrationAction, retransmitGithubIntegrationAction } = await import("@/app/(operator)/admin/github-integrations/actions");
     await expect(requeryGithubIntegrationAction(new FormData())).rejects.toThrow("unauthorized");
     await expect(retransmitGithubIntegrationAction(new FormData())).rejects.toThrow("unauthorized");
     vi.doUnmock("@/lib/auth/admin");

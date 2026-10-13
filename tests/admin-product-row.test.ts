@@ -2,16 +2,16 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 
-vi.mock("@/app/admin/actions", () => ({
+vi.mock("@/app/(operator)/admin/actions", () => ({
   setProductBan: vi.fn(),
   markClaimInvite: vi.fn(),
   decideRepoReviewAction: vi.fn(),
 }));
-vi.mock("@/app/admin/products/actions", () => ({ keepIntroAction: vi.fn() }));
-import { ProductRow, type AdminProduct } from "@/app/admin/products/ProductRow";
-import { repoReviewView } from "@/app/admin/products/repo-review-view";
-import { PRODUCT_FILTERS } from "@/app/admin/products/filters";
-import { ACTION_LINKS } from "@/app/admin/status/action-links";
+vi.mock("@/app/(operator)/admin/products/actions", () => ({ keepIntroAction: vi.fn() }));
+import { ProductRow, type AdminProduct } from "@/app/(operator)/admin/products/ProductRow";
+import { repoReviewView } from "@/app/(operator)/admin/products/repo-review-view";
+import { PRODUCT_FILTERS } from "@/app/(operator)/admin/products/filters";
+import { ACTION_LINKS } from "@/app/(operator)/admin/status/action-links";
 import type { ProductRepoReview } from "@/lib/db/schema";
 
 const base: AdminProduct = {

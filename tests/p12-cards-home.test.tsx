@@ -50,8 +50,8 @@ vi.mock("@/lib/domain/ranking/view", () => ({
   getSeasonRanking: vi.fn().mockResolvedValue({ items: [] }),
 }));
 
-import { generateMetadata as categoryMetadata } from "@/app/c/[category]/page";
-import { generateMetadata, HomeContent } from "@/app/page";
+import { generateMetadata as categoryMetadata } from "@/app/(public)/[locale]/c/[category]/page";
+import { generateMetadata, HomeContent } from "@/app/(public)/[locale]/page";
 import { IntroLine } from "@/components/home/IntroLine";
 import { emptyHomePulse } from "@/lib/domain/products/home-pulse";
 import type { ProductListItem } from "@/lib/domain/products/view";
