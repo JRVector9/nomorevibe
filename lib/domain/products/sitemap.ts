@@ -19,7 +19,8 @@ export type SitemapEntry = { url: string; lastModified?: Date; changeFrequency?:
 /** Populated stable ID ranges; no rank/order offset and no 49,000-product cutoff. */
 export async function productSitemapRanges(): Promise<number[]> {
   return onReplica(async () => {
-    const range = sql<number>`floor((${products.id} - 1)::numeric / ${SITEMAP_ID_RANGE})::int`;
+    // Sort the selected alias: repeating the parameterized expression creates a distinct $2 for PostgreSQL.
+    const range = sql<number>`floor((${products.id} - 1)::numeric / ${SITEMAP_ID_RANGE})::int`.as("range");
     const rows = await db.selectDistinct({ range }).from(products).where(indexableProduct).orderBy(range);
     return rows.map((row) => row.range);
   });

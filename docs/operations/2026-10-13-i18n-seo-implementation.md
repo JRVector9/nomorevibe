@@ -69,3 +69,19 @@ git diff --check
 ```
 
 페이지 metadata 호출부는 위 readiness reader/공통 helper를 연결하고, 통합 브랜치의 eligibility SQL/extra alias를 하나로 합친다. 최종 routing/root와 카탈로그 변경은 이 문서의 중간 검증 결과와 구분해 기록한다.
+
+## 필수 CI38342233959의 sitemap SQL 수정
+
+PR406 첫 필수 CI의 integration shard2에서 기존 `sitemap.test.ts` 2건과 `discovery-feeds.test.ts` 1건이 같은 PostgreSQL `42P10`으로 실패했다. 실제 cause는 `for SELECT DISTINCT, ORDER BY expressions must appear in select list`다. Drizzle이 같은 구간 계산식을 SELECT와 ORDER BY에 각각 넣으면서 `/ $1`과 `/ $2`를 생성했다. 두 값이 10,000으로 같아도 PostgreSQL의 식 비교에서는 서로 다른 parameter다.
+
+`lib/domain/products/sitemap.ts`의 구간 계산에 `.as("range")`만 추가했다. 생성 SQL은 `select distinct floor(("id" - 1)::numeric / $1)::int as "range" ... order by "range"`이고 parameter는 `[10000]` 한 개다. 공개 자격 WHERE, 10,000개 안정된 ID 구간, 전체 구간 순회 및 기존 sitemap/discovery fixture의 기대값은 유지했다. 새 테스트나 기대값 완화는 없다.
+
+격리 worktree `/private/tmp/nomorevibe-i18n-ci-content-20261013`, base `8d92f43`에서 실제 실행한 검증:
+
+- `node_modules/.bin/next typegen`: exit0.
+- `node_modules/.bin/tsc --noEmit --incremental false`: exit0.
+- `node_modules/.bin/eslint lib/domain/products/sitemap.ts`: exit0.
+- `git diff --check`: exit0.
+- `node --conditions=react-server --import tsx` 임시 순수 assertion: exit0, 10개 SQL 계약 검사. 실제 함수의 AST에서 계산식과 query builder를 읽어 `drizzle.mock().toSQL()`로 전후 SQL을 생성했다. 수정 전 parameter2개/ORDER BY 재계산, 수정 후 parameter1개/선택 alias 정렬, WHERE 동일, top-level limit/offset 없음과 builder 유지가 확인됐다. 첫 시도는 전체 SQL에서 LIMIT을 금지하여 기존 AI 근거 하위 query의 `limit 1`에 걸렸다. top-level builder를 검사하도록 검증만 정정한 뒤 통과했다.
+
+DB·운영·마이그레이션·LLM 호출, 로컬 test suite/E2E 및 CI 재실행은 이 수정 단계에서 수행하지 않았다. PostgreSQL integration 성공 여부는 수정 commit의 필수 CI 결과로 확인해야 한다.
