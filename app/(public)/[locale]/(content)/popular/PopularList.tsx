@@ -36,7 +36,7 @@ export function PopularList({ items, now }: { items: RankedCardProduct[]; now: s
         const account = product.ownerType === "User" ? t("card.personal") : product.ownerType === "Organization" ? t("card.organization") : null;
         return (
           <li key={product.slug} className="popular-row">
-            <span className="popular-rank">{count(product.rank)}<span className="sr-only"> {t("card.rank", { rank:count(product.rank) })}</span></span>
+            <span className="popular-rank"><span aria-hidden="true">{count(product.rank)}</span><span className="sr-only">{t("card.rank", { rank:count(product.rank) })}</span></span>
             <Link prefetch={false} href={href} className="popular-thumb" tabIndex={-1} aria-hidden="true">
               <ProjectTile slug={product.slug} name={product.name} ogImage={product.ogImage} size={44} installable={product.accessMode === "installable"}
                 ai={product.aiLevel != null} category={product.category} />
@@ -47,7 +47,7 @@ export function PopularList({ items, now }: { items: RankedCardProduct[]; now: s
                 <h3><Link prefetch={false} href={href} className="card-link">{product.name}</Link></h3>
                 {owner && <a className="card-owner" href={owner.profileUrl} target="_blank" rel="noopener noreferrer" title={t("card.owner")}><span>@{owner.login}</span></a>}
               </div>
-              <ProductTagline tagline={product.tagline} taglineKo={product.taglineKo} source={product.taglineSource} className="popular-description" showSource={false} />
+              <ProductTagline translation={product.translation} tagline={product.tagline} taglineKo={product.taglineKo} source={product.taglineSource} className="popular-description" showSource={false} />
               <p className="popular-row-meta card-dots">
                 <span>{translatedCategory(product.category,t)}</span>
                 {account && <span>{account}</span>}

@@ -57,7 +57,7 @@ export function ProjectCard({ product, saved, onToggleSave, now, priority = fals
       <div className="project-body">
         <div className="project-title-row">
           <Heading className="project-title">
-            {rank !== undefined && <span className="project-rank">{formatNumber(rank, locale)}<span className="sr-only"> {t("card.rank", { rank: formatNumber(rank, locale) })}</span></span>}
+            {rank !== undefined && <span className="project-rank"><span aria-hidden="true">{formatNumber(rank, locale)}</span><span className="sr-only">{t("card.rank", { rank: formatNumber(rank, locale) })}</span></span>}
             <Link prefetch={false} href={href} className="card-link">{product.name}</Link>
           </Heading>
           <button
@@ -78,7 +78,7 @@ export function ProjectCard({ product, saved, onToggleSave, now, priority = fals
             {builder && <span>{builder}</span>}
           </p>
         )}
-        <ProductTagline tagline={product.tagline} taglineKo={product.taglineKo} source={product.taglineSource} className="project-tagline" />
+        <ProductTagline translation={product.translation} tagline={product.tagline} taglineKo={product.taglineKo} source={product.taglineSource} className="project-tagline" />
         <div className="card-meta">
           {/* 조각 사이 '·'는 CSS 가 넣는다(card-dots) — 빠진 조각 옆에 점만 남지 않게 */}
           <span className="card-meta-text card-dots">

@@ -55,7 +55,7 @@ export function ProductCard({ product, rank }: { product: ProductListItem; rank?
           )}
         </div>
         {/* 메이커가 쓴 소개가 없어 모델이 지은 줄은 ProductTagline 이 출처를 밝힌다 */}
-        <ProductTagline tagline={product.tagline} source={product.taglineSource} className="mt-0.5 truncate text-[13px] text-fg-2" />
+        <ProductTagline translation={product.translation} tagline={product.tagline} source={product.taglineSource} className="mt-0.5 truncate text-[13px] text-fg-2" />
         <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
           <Tag>{translatedCategory(product.category, t)}</Tag>
           {product.accessMode === "installable" && <Tag>{t("card.installable")}</Tag>}

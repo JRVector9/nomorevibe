@@ -124,7 +124,9 @@ export function categoryRedirect(params: Record<string, SearchValue>, locale: Lo
 
 /** 탭 제목 — 검색이면 "“가계부” 검색 결과", 분야면 "금융 프로젝트"(UX-39). 둘 다 없으면 홈 제목 */
 export function browseTitle({ query, category }: { query?: string; category?: string }, _locale: Locale = "ko", t?: Translator<"browse">, labels?: Translator<"labels">): string {
-  if (t) return `${query ? t("home.searchTitle", { query }) : category ? t("home.categoryTitle", { category: labels ? translatedCategory(category, labels) : categoryLabel(category) }) : t("home.metaTitle")} — nomorevibe`;
+  // The requested catalog carries locale-specific words; default callers retain Korean.
+  void _locale;
+  if (t) return query || category ? pageTitle(query ? t("home.searchTitle", {query}) : null, category ? t("home.categoryTitle", {category: labels ? translatedCategory(category,labels) : categoryLabel(category)}) : null) : t("home.metaTitle");
   return pageTitle(query ? `“${query}” 검색 결과` : null, category ? `${categoryLabel(category)} 프로젝트` : null);
 }
 
@@ -170,6 +172,7 @@ export function resultLine(state: BrowseState, count: number, { approximate = fa
 
 /** 탐색 탭의 의미는 검증 제품 수와 무관하게 고정한다. */
 export function sortLabel(sort: HomeSort, _locale: Locale = "ko", t?: Translator<"browse">): string {
+  void _locale;
   const keys = { weekly: "sort.weekly", recent: "sort.recent", "all-time": "sort.allTime", open: "sort.open", trending: "sort.trending", relevance: "sort.relevance" } as const;
   return t ? t(keys[sort]) : SORT_LABELS[sort];
 }

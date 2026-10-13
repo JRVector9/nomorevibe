@@ -13,7 +13,7 @@ export function LaunchBand() {
   return (
     <section className="launch-band" aria-labelledby="launch-title">
       <div>
-        <h2 id="launch-title" className="launch-title">{t("launch.title")}</h2>
+        <h2 id="launch-title" className="launch-title">{t("launch.titleLead")}<em>{t("launch.titleFocus")}</em>{t("launch.titleTail")}</h2>
         <p className="launch-note">{t("launch.note")}</p>
       </div>
       <div className="launch-actions">

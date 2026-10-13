@@ -1,3 +1,4 @@
+import { localizeProductList } from "@/lib/i18n/products";
 import { Suspense } from "react";
 import type { Metadata } from "next";
 import { redirect } from "next/navigation";
@@ -352,6 +353,7 @@ async function NewRepositories({ pageParam }: { pageParam: SearchValue }) {
     logger.error("home.new_list_failed", { error });
     failed = true;
   }
+  items = await localizeProductList(items,locale);
   const href = (next: number) => localePath(locale, `/?${new URLSearchParams({ new: "1", page: String(next) })}`);
   return (
     <I18nProvider locale={locale} dictionaries={{ browse: dictionary }}><main className="wrap">
@@ -605,7 +607,14 @@ export async function HomeContent({ params }: { params: HomeParams }) {
   const asideFailure = [pulseResult, newsResult]
     .find((result): result is PromiseRejectedResult => result.status === "rejected");
   if (asideFailure) logger.warn("home.pulse_unavailable", { error: asideFailure.reason });
-  const [strip, fresh, aiCounts] = await Promise.all([stripLoad, newLoad, aiCountsLoad]);
+  const [stripData, freshData, aiCounts] = await Promise.all([stripLoad, newLoad, aiCountsLoad]);
+  const [localizedList, localizedUnclaimed, localizedStrip, fresh] = await Promise.all([
+    localizeProductList(list,locale), localizeProductList(unclaimed,locale),
+    localizeProductList(stripData?.items ?? [],locale), localizeProductList(freshData,locale),
+  ]);
+  list = localizedList;
+  unclaimed = localizedUnclaimed;
+  const strip = stripData ? { ...stripData, items: localizedStrip } : null;
 
   const state = { ...browseState, sort: effectiveSort };
   const savedCandidates = savedOnly ? [...list, ...unclaimed] : list;

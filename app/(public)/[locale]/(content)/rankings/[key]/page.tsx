@@ -1,3 +1,4 @@
+import { localizeProductList } from "@/lib/i18n/products";
 import { getRequestLocale } from "@/lib/i18n/server";
 import { getTranslator,getDictionary } from "@/lib/i18n/dictionary";
 import { I18nProvider } from "@/lib/i18n/context";
@@ -48,6 +49,7 @@ export default async function RankingSeasonPage({
   const { key } = await params;
   const result = await loadSeason(key);
   if (!result) notFound();
+  const items=await localizeProductList(result.items,locale);
 
   return (
     <I18nProvider locale={locale} dictionaries={{browse:dictionary}}><main className="mx-auto max-w-[1280px] px-6 pb-20 pt-9">
@@ -55,7 +57,7 @@ export default async function RankingSeasonPage({
       <div className="mt-6">
         {result.items.length > 0 ? (
           <RankingTable
-            items={result.items}
+            items={items}
             windowHours={result.season.policy.trend.windowHours}
             scoreMode={result.season.policy.scoring.mode}
             mode="season"

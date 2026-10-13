@@ -9,8 +9,9 @@ export function translatedCategory(category: string, t: Translator<"labels">): s
 
 /** Presentation only; persisted season keys and KST boundaries never change. */
 export function translatedSeason(key: string, fallback: string, t: Translator<"browse">): string {
-  const week = /^(\d{4})-W(\d{2})$/.exec(key);
-  if (week) return t("season.weekLabel", { year: week[1], week: String(Number(week[2])) });
-  const month = /^(\d{4})-(\d{2})$/.exec(key);
-  return month ? t("season.monthLabel", { year: month[1], month: String(Number(month[2])) }) : fallback;
+  const match = /^(\d{4})-(?:W(\d{2})|(\d{2}))(?:-transition-\d{4}(\d{2})(\d{2}))?$/.exec(key);
+  if (!match) return fallback;
+  const [,year,week,month,fromMonth,fromDay] = match;
+  const period = week ? t("season.weekLabel", {year,week:String(Number(week))}) : t("season.monthLabel", {year,month:String(Number(month))});
+  return fromMonth ? t("season.transitionLabel", {period,month:String(Number(fromMonth)),day:String(Number(fromDay))}) : period;
 }

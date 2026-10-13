@@ -26,7 +26,7 @@ function ProductLink({ product, detail }: { product: ProductListItem; detail: Re
             </span>
           )}
         </div>
-        <ProductTagline tagline={product.tagline} source={product.taglineSource} className="mt-0.5 truncate text-[13px] text-fg-2" showSource={false} />
+        <ProductTagline translation={product.translation} tagline={product.tagline} source={product.taglineSource} className="mt-0.5 truncate text-[13px] text-fg-2" showSource={false} />
         <div className="mt-1 font-mono text-[13px] font-semibold text-fg-2">{detail}</div>
       </Link>
     </li>

@@ -1,3 +1,4 @@
+import { localizeProductList } from "@/lib/i18n/products";
 import { getRequestLocale } from "@/lib/i18n/server";
 import { getTranslator, getDictionary } from "@/lib/i18n/dictionary";
 import { I18nProvider } from "@/lib/i18n/context";
@@ -41,7 +42,7 @@ export default async function RisingPage({ searchParams }: { searchParams: Promi
   }
   const href = (page: number, nextView = view) => localePath(locale, `/rising?${new URLSearchParams({ cycle: result!.snapshot.asOf, page: String(page), view: nextView })}`);
   const first = result ? (result.page - 1) * result.pageSize + 1 : 1;
-  const items = result?.items.map((product, index) => ({ ...product, rank: first + index })) ?? [];
+  const items = (await localizeProductList(result?.items ?? [],locale)).map((product, index) => ({ ...product, rank: first + index }));
   return (
     <I18nProvider locale={locale} dictionaries={{browse:dictionary}}><main className="wrap popular-page">
       <nav aria-label={t("nav.breadcrumb")} className="popular-crumbs">

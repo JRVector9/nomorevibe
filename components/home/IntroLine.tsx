@@ -25,7 +25,7 @@ export function IntroLine({ pulse, total, state }: { pulse: HomePulse; total: nu
   return (
     <section className="intro-line" aria-label={t("intro.label")}>
       <div className="intro-head">
-        <h1 className="intro-title">{t("intro.title")}</h1>
+        <h1 className="intro-title">{t("intro.titleLead")}<em>{t("intro.titleFocus")}</em>{t("intro.titleTail")}</h1>
         <p className="intro-sub">
           {t("intro.note")}{" "}
           <Link prefetch={false} href={localePath(locale, "/policy#listing")}>{t("intro.selection")}</Link>

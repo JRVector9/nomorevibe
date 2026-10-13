@@ -40,7 +40,7 @@ export function CompactCard({ product, trailing, priority = false, headingLevel 
       </Link>
       <div className="compact-body">
         <Heading className="compact-title"><Link prefetch={false} href={href} className="card-link">{product.name}</Link></Heading>
-        <ProductTagline tagline={product.tagline} taglineKo={product.taglineKo} source={product.taglineSource} className="compact-tagline" />
+        <ProductTagline translation={product.translation} tagline={product.tagline} taglineKo={product.taglineKo} source={product.taglineSource} className="compact-tagline" />
         {/* 조각 사이 '·'는 CSS 가 넣는다(card-dots) */}
         <p className="card-meta card-meta-compact card-dots">
           {product.starGrowth ? <StarGrowthMetric value={product.starGrowth} /> : <StarMetric value={product} now={now} listedAt={product.listedAt} />}

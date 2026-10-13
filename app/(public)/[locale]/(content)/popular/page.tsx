@@ -1,3 +1,4 @@
+import {localizeProductList} from "@/lib/i18n/products";
 import { getRequestLocale } from "@/lib/i18n/server";
 import { getTranslator, getDictionary } from "@/lib/i18n/dictionary";
 import { I18nProvider } from "@/lib/i18n/context";
@@ -47,7 +48,7 @@ export default async function PopularPage({searchParams}:{searchParams:Promise<R
  const narrowed=state.personal||state.ai||Boolean(state.category);
  const href=(patch:Partial<PopularState>)=>localePath(locale,popularStateHref(state,patch));
  const first=result?(result.page-1)*result.pageSize+1:1;
- const items=result?.items.map((item,index)=>rankedCard(item,first+index))??[];
+ const items=(await localizeProductList(result?.items??[],locale)).map((item,index)=>rankedCard(item,first+index));
 
  return <I18nProvider locale={locale} dictionaries={{browse:dictionary}}><main className="wrap popular-page">
   <nav aria-label={t("nav.breadcrumb")} className="popular-crumbs"><Link prefetch={false} href={localePath(locale,"/")}>{t("nav.discover")}</Link><span aria-hidden="true">›</span><span aria-current="page">{t("popular.title")}</span></nav>
@@ -100,7 +101,7 @@ export default async function PopularPage({searchParams}:{searchParams:Promise<R
      {narrowed&&<Link prefetch={false} href={href({personal:false,ai:false,category:null})} className="clear-filters show">{t("filter.reset")}</Link>}
     </div>
    </div>
-   {items.length===0?<p className="popular-empty">{t("empty.filtered")}</p>
+   {items.length===0?<p className="popular-empty">{t("popular.filteredEmpty")}</p>
     :state.view==='cards'?<RankedCards items={items} now={now}/>:<PopularList items={items} now={now}/>}
    {result.total>0&&<nav className="popular-pagination" aria-label={t("nav.pages")}>
     {result.page>1?<Link prefetch={false} href={href({page:result.page-1})}>‹ {t("nav.previous")}</Link>:<span aria-disabled="true">‹ {t("nav.previous")}</span>}
