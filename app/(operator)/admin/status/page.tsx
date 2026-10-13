@@ -29,6 +29,7 @@ import { SignalTable } from "./dashboard/SignalTable";
 import { TodayFeed } from "./dashboard/TodayFeed";
 import { RepoHealthCard } from "./dashboard/RepoHealthCard";
 import { StatusChips } from "./dashboard/StatusChips";
+import { OperationsGuidance } from "./OperationsGuidance";
 import { manualCandidates } from "@/lib/operations/categories";
 import { ManualClassification } from "./ManualClassification";
 import { logger, redact } from "@/lib/observability/logger";
@@ -105,12 +106,13 @@ async function StageSlot({ inputs, derived }: { inputs: Awaited<ReturnType<typeo
 }
 
 async function SignalSlot({ settings }: { settings: CrawlSettings }) {
-  return <SignalTable rows={await signalYields(settings).catch(warn("operations.signals_unavailable")) ?? []} />;
+  const rows = await signalYields(settings).catch(warn("operations.signals_unavailable"));
+  return rows ? <SignalTable rows={rows} /> : <p className="dash-card dash-4">신호별 수율을 읽지 못했습니다.</p>;
 }
 
 async function TodaySlot({ down, now }: { down: number; now: string }) {
   const today = await todayPublications().catch(warn("operations.today_unavailable"));
-  return <TodayFeed today={today ?? { total24h: 0, korean24h: 0, latest: [] }} down={down} now={now} />;
+  return today ? <TodayFeed today={today} down={down} now={now} /> : <p className="dash-card dash-12">오늘 발행 집계를 읽지 못했습니다.</p>;
 }
 
 async function ManualSlot() {
@@ -382,8 +384,8 @@ export default async function StatusPage() {
     .sort((a, b) => new Date(b.observedAt).getTime() - new Date(a.observedAt).getTime())[0];
   if (grokConfigured) probes.push({ provider: "grok", checkedAt: grok?.observedAt ?? null,
     result: !grok ? null : derived.ageMs(grok.observedAt) > 5 * 3_600_000 ? "오래됨" : typeof grok.value.result === "string" ? grok.value.result : null });
-  const roleRows = roles?.roles ?? [];
-  const scheduler = roles?.scheduler ?? { freshReplicas: 0, alarm: true };
+  const roleRows = roles?.roles ?? null;
+  const scheduler = roles?.scheduler ?? null;
 
   /*
    * 전체 현황 — 지금 조치 · 쌓인 일 · 사람 확인 한 줄, 그다음 지표.
@@ -407,18 +409,18 @@ export default async function StatusPage() {
       </div>
       <RolesTable roles={roleRows} scheduler={scheduler} web={web} />
       <div className="ops-phone-rest">
-        <ModelCards rows={models ?? []} probes={probes} />
+        {models ? <ModelCards rows={models} probes={probes} /> : <p className="dash-card dash-12">모델 상태를 읽지 못했습니다.</p>}
         <Suspense fallback={<CardPending span="dash-4" label="신호별 수율" />}><SignalSlot settings={settings} /></Suspense>
         <Suspense fallback={<CardPending span="dash-12" label="오늘 발행" />}><TodaySlot down={downCount} now={now} /></Suspense>
         {attention && <RepoHealthCard health={attention.repoHealth} review={attention.repoReview} />}
       </div>
     </>
   );
-  const statusChips = <StatusChips roles={roleRows} scheduler={scheduler} web={web} models={models ?? []} now={now}
-    quota={quota ? { remaining: quota.remaining, limit: quota.limit, resetAt: new Date(quota.reset * 1000).toISOString() } : null} />;
+  const statusChips = <StatusChips roles={roleRows} scheduler={scheduler} web={web} models={models} now={now} quota={quota} />;
   const diagnostics = (
     <>
       <SearchHealthPanel health={health} observedAt={healthObservation?.observedAt} />
+      <OperationsGuidance quota={quota} now={now} />
       <Suspense fallback={<TranslationProgressPending />}><TranslationProgressSlot now={now} /></Suspense>
       <Suspense fallback={<p className="mt-3 text-[13px] text-fg-3" aria-busy="true">진단 지표를 세는 중…</p>}>
         <DiagnosticsPanels inputs={inputs} derived={derived} />

@@ -119,7 +119,20 @@ describe("역할 표와 상태 칩", () => {
   const scheduler = { freshReplicas: 2, alarm: false };
   const web = [{ instance: "m3-web", release: "6170584abc" }, { instance: "mini-web", release: "6170584abc" }];
 
-  it("예비가 일하는 역할은 주황 알약으로 보이고 공통 이미지 릴리스가 갈릴 때만 안내를 붙인다", () => {
+  it("빈 역할·모델 관측을 정상 0/0으로 표시하지 않는다", () => {
+    const out = html(createElement(StatusChips, { roles: [], scheduler, web: [], models: [], quota: null, now: "2026-10-02T13:53:00.000Z" }));
+    expect(out).not.toContain("0/0");
+    expect(out).toContain("모델 관측 없음");
+  });
+
+  it("한 웹 또는 오래된 웹으로 두 웹 같은 릴리스를 보증하지 않는다", () => {
+    for (const observed of [[web[0]], [web[0], { ...web[1], stale: true }]]) {
+      const out = html(createElement(StatusChips, { roles, scheduler, web: observed, models: [], quota: null, now: "2026-10-02T13:53:00.000Z" }));
+      expect(out).not.toContain("웹 m3·mini 같은 릴리스");
+    }
+  });
+
+  it("예비가 일하는 역할과 주·예비 릴리스/담당 기한을 보이며 웹은 웹끼리 비교한다", () => {
     const out = html(createElement(RolesTable, { roles, scheduler, web }));
     expect(out).toContain("mini 예비");
     expect(out).toContain("· 예비가 일함");
@@ -128,8 +141,9 @@ describe("역할 표와 상태 칩", () => {
     expect(out).toContain("ce64737");
     expect(out).not.toContain("릴리스가"); // maintenance 는 git 빌드 — 릴리스가 달라도 정상
     expect(out).toContain("2/2 복제");
+    expect(out).toContain("30초 남음");
     const split = html(createElement(RolesTable, { roles, scheduler, web: [web[0], { instance: "mini-web", release: "ce64737xyz" }] }));
-    expect(split).toContain("릴리스가 2가지");
+    expect(split).toContain("두 웹 릴리스 불일치");
   });
 
   it("머리말 칩은 주 n/5·예비·스케줄러·웹·모델·한도를 한 줄로 요약한다", () => {
@@ -137,13 +151,13 @@ describe("역할 표와 상태 칩", () => {
       { key: "first", label: "1차 심사", model: "gpt-oss", calls1h: 300, failed1h: 10, avgSeconds: 12, agreement1h: null, lastSuccessAt: null },
       { key: "second", label: "2차 투표", model: "qwen", calls1h: 200, failed1h: 5, avgSeconds: 11, agreement1h: 0.53, lastSuccessAt: null },
     ];
-    const out = html(createElement(StatusChips, { roles, scheduler, web, models, quota: { remaining: 400, limit: 5000, resetAt: "2026-10-02T14:35:00.000Z" }, now: "2026-10-02T13:53:00.000Z" }));
-    expect(out).toContain("워커 주 1/2 · 예비가 일함 1");
+    const out = html(createElement(StatusChips, { roles, scheduler, web, models, quota: { readFailed: false, sources: [{ label: "PAT test", quota: { remaining: 400, limit: 5000, used: 4600, reset: 1790945700 }, observedAt: "2026-10-02T13:53:00.000Z", stale: false }] }, now: "2026-10-02T13:53:00.000Z" }));
+    expect(out).toContain("워커 주 1/5 · 예비가 일함 1");
     expect(out).toContain("스케줄러 2/2");
     expect(out).toContain("웹 m3·mini 같은 릴리스");
     expect(out).toContain("모델 1/2 정상");
-    expect(out).toContain("GitHub 한도 400/5,000 · 23:35 (42분 후) 초기화");
-    expect(out).toContain('data-tone="bad"');
+    expect(out).toContain("GitHub core 최신 1/1");
+    expect(out).toContain('data-tone="warn"');
   });
 });
 

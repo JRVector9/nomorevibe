@@ -79,7 +79,7 @@ describe("조치 문구 — 코드 대신 사람이 읽는 이름", () => {
     downCount: 0,
     overview: humanOverview(),
     secondFailures: [],
-    throughput: null, models: null, accounts: null, takedowns: null, modelServers: null,
+    throughput: null, models: null, accounts: null, apps: null, takedowns: null, modelServers: null,
     roles: { roles: [{ role: "maintenance", reason: "standby_active", ownerKind: "standby", ownerRelease: null, epoch: 3 }], scheduler: { freshReplicas: 2, alarm: false } },
     attention: {
       auditRejectsOpen: 0, healthOverdue: 90, healthTargetPerHour: 3_000, introNeedsEditor: 0, auditCampaign: null, cdnPurgesPending: 0,
@@ -118,5 +118,27 @@ describe("조치 문구 — 코드 대신 사람이 읽는 이름", () => {
     const row = buildActions(lagging, deriveStatus(lagging)).find((item) => item.key === "settings-apply");
     expect(row).toMatchObject({ tone: "hold", count: 2, unit: "개", action: { href: "/admin#apply" } });
     expect(splitActions([row!], { samples: [], acks: new Map(), now: NOW }).urgent.map((item) => item.key)).toEqual(["settings-apply"]);
+  });
+
+  it("조회 실패와 역할별 예비·담당 문제를 같은 조치 목록에 올린다", () => {
+    const unknown = { ...inputs, roles: null };
+    expect(buildActions(unknown, deriveStatus(unknown))).toContainEqual(expect.objectContaining({ key: "roles-unknown", count: "미확인" }));
+    for (const reason of ["primary_missing", "standby_missing", "lease_missing", "lease_expired", "owner_mismatch", "release_mismatch", "primary_quarantined"] as const) {
+      const changed = { ...inputs, roles: { ...inputs.roles!, roles: [{ ...inputs.roles!.roles[0], role: "maintenance", reason }] } };
+      const action = buildActions(changed, deriveStatus(changed)).find((row) => row.key === "role-maintenance");
+      expect(action).toMatchObject({ tone: reason === "standby_missing" || reason === "release_mismatch" ? "hold" : "critical", action: { href: "/admin/status#roles" } });
+    }
+  });
+
+  it("의도한 웹·워커 별도 릴리스와 일부 PAT 소진을 전체 장애로 표시하지 않는다", () => {
+    const changed = { ...inputs, ops: { ...inputs.ops, serviceInstances: ["m3-web", "mini-web"].map((instanceId) => ({
+      key: `service:app:${instanceId}`, role: "app", instanceId, observedAt: NOW.toISOString(), value: { release: "frontend-new" },
+    })) }, accounts: [{ enabled: true, login: "first", quotaObservedAt: NOW, coreQuota: { remaining: 0, used: 5000, limit: 5000, reset: NOW.getTime() / 1000 + 3600 } },
+      { enabled: true, login: "second", quotaObservedAt: NOW, coreQuota: { remaining: 4000, used: 1000, limit: 5000, reset: NOW.getTime() / 1000 + 3600 } }], apps: [] } as unknown as ActionInputs;
+    const derived = deriveStatus(changed), actions = buildActions(changed, derived);
+    expect(actions.some((row) => row.key === "release" || row.key === "web")).toBe(false);
+    expect(actions.find((row) => row.key === "quota")).toMatchObject({ tone: "hold", count: 1 });
+    const stale = { ...changed, accounts: changed.accounts!.map((row) => ({ ...row, quotaObservedAt: new Date(NOW.getTime() - 3_600_001) })) };
+    expect(buildActions(stale, deriveStatus(stale)).some((row) => row.key === "quota")).toBe(false);
   });
 });
