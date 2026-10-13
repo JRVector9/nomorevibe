@@ -1,6 +1,6 @@
 import Link from 'next/link';
 import type {Metadata} from 'next';
-import {canonicalAlternates} from '@/app/(public)/[locale]/page';
+import {canonicalAlternates} from '@/app/(public)/[locale]/(content)/page';
 import {Icon} from '@/components/home/icons';
 import {rankedCard} from '@/components/home/popular-cards';
 import {RankedCards} from '@/components/home/RankedCards';

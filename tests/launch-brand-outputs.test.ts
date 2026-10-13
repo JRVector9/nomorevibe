@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { GET as serveInstaller } from "@/app/install.sh/route";
-import { metadata as launchMetadata } from "@/app/(public)/[locale]/launch/page";
+import { metadata as launchMetadata } from "@/app/(public)/[locale]/(content)/launch/page";
 import { BRAND } from "@/lib/copy/brand";
 import { verifiedBadgeSvg } from "@/lib/domain/products/badge";
 import { claimInviteUrl } from "@/lib/domain/products/claim-invite";

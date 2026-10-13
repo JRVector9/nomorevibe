@@ -17,7 +17,7 @@ const { getSeasonByKey, notFound } = vi.hoisted(() => ({
 vi.mock("@/lib/domain/ranking/view", () => ({ getSeasonByKey }));
 vi.mock("next/navigation", () => ({ notFound }));
 
-import RankingSeasonPage, { dynamic, generateMetadata } from "@/app/(public)/[locale]/rankings/[key]/page";
+import RankingSeasonPage, { dynamic, generateMetadata } from "@/app/(public)/[locale]/(content)/rankings/[key]/page";
 
 const season: SeasonSummary = {
   key: "2026-W33",

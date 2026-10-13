@@ -19,9 +19,9 @@ vi.mock("next/server", async (importOriginal) => ({ ...(await importOriginal<typ
 vi.mock("@/lib/domain/products/repository", () => ({ listRecentlyDiscovered: mocks.listRecentlyDiscovered }));
 vi.mock("@/lib/domain/ranking/view", () => ({ getSeasonByKey: mocks.getSeasonByKey }));
 
-const { default: LaunchPage } = await import("@/app/(public)/[locale]/launch/page");
-const { default: PolicyPage } = await import("@/app/(public)/[locale]/policy/page");
-const { default: RankingSeasonPage, generateMetadata: rankingMetadata } = await import("@/app/(public)/[locale]/rankings/[key]/page");
+const { default: LaunchPage } = await import("@/app/(public)/[locale]/(content)/launch/page");
+const { default: PolicyPage } = await import("@/app/(public)/[locale]/(content)/policy/page");
+const { default: RankingSeasonPage, generateMetadata: rankingMetadata } = await import("@/app/(public)/[locale]/(content)/rankings/[key]/page");
 const { SeasonPolicy } = await import("@/components/SeasonPolicy");
 const { GET: feed } = await import("@/app/feed.xml/route");
 
