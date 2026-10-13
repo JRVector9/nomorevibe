@@ -70,7 +70,7 @@ describe("만든 방식 칩", () => {
     expect(made).toContain('<a class="chip chip-dark" aria-current="true" href="/?sort=recent">AI로 제작 <span class="chip-count">1,753</span></a>');
     // 분야 알약은 단계가 있는 제품의 수, 차례와 목록은 전체 수대로(디자인 0개도 남는다)
     expect(made).toContain('href="/c/dev?sort=recent&amp;ai=made">개발 도구 <span class="chip-count">1,734</span>');
-    expect(made).toMatch(/href="\/c\/design\?sort=recent&amp;ai=made">[^<]+<span class="chip-count">0<\/span>/);
+    expect(made).toContain('<span class="chip" aria-disabled="true">디자인 <span class="chip-count">0</span></span>');
     expect(made).toContain("AI로 제작 1,246개");
     // 초기화는 만든 방식도 지운다, 공개 전체 수는 걸린 동안 숨긴다
     expect(made).toContain('class="clear-filters show" href="/?sort=recent"');

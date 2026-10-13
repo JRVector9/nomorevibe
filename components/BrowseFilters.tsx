@@ -40,16 +40,17 @@ export function BrowseFilters({
   counts,
   aiCounts = null,
   categoryOrderCounts = counts,
+  countsKnown = true,
   total,
   resultCount,
   listLabel,
   approximate = false,
-  rankingReady = true,
 }: {
   state: BrowseState;
   counts: Record<string, number>;
   /** 공개 전체 집계로 분야 순서를 고정한다. 숫자는 현재 목록 자격의 counts를 쓴다. */
   categoryOrderCounts?: Record<string, number>;
+  countsKnown?: boolean;
   /** 분야·단계마다의 공개 수 — 못 읽었으면 null(칩은 두고 수만 숨긴다) */
   aiCounts?: readonly AiLevelCount[] | null;
   total: number;
@@ -58,12 +59,10 @@ export function BrowseFilters({
   listLabel?: string;
   /** 결과 수가 관련도순 검색(섞은 수)이라 '약 n개'로 써야 하는지 */
   approximate?: boolean;
-  /** 순위가 섰는지 — 서기 전 '추천' 탭은 '지금 뜨는' 목록을 대신 보여 준다 */
-  rankingReady?: boolean;
 }) {
   const narrowed = Boolean(state.query || state.category || state.builder || state.observedTool || state.ai);
   // 검색·도구·빌더 상태에서는 기존 정책대로 수를 숨긴다.
-  const countable = !(state.query || state.builder || state.observedTool);
+  const countable = countsKnown && !(state.query || state.builder || state.observedTool);
   // '만든 방식'과 분야는 서로의 칩 수를 좁힌다 — 같은 집계(분야×단계) 하나로 세어 누른 목록의 수와 맞는다
   const showCounts = countable && !(state.ai && !aiCounts);
   const categoryCounts = state.ai && aiCounts ? categoryCountsForAi(aiCounts, state.ai) : counts;
@@ -88,7 +87,7 @@ export function BrowseFilters({
                 aria-selected={active}
                 tabIndex={active ? 0 : -1}
               >
-                {sortLabel(key, rankingReady)}
+                {sortLabel(key)}
               </Link>
             );
           })}
@@ -97,6 +96,9 @@ export function BrowseFilters({
         <nav className="chips chips-ai" aria-label="만든 방식">
           {AI_FILTERS.map((filter) => {
             const active = state.ai === filter;
+            if (!active && aiChipCounts?.[filter] === 0) return (
+              <span key={filter} className="chip" aria-disabled="true">{AI_FILTER_LABELS[filter]} <span className="chip-count">0</span></span>
+            );
             return (
               <Link prefetch={false} key={filter} href={hrefWith(state, { ai: active ? undefined : filter })} className={`chip${active ? " chip-dark" : ""}`} aria-current={active ? "true" : undefined}>
                 {AI_FILTER_LABELS[filter]}
@@ -107,12 +109,12 @@ export function BrowseFilters({
         </nav>
         <nav className="chips chips-filter" aria-label="분야">
           <Link prefetch={false} href={hrefWith(state, { category: undefined })} className={`chip${state.category ? "" : " chip-dark"}`} aria-current={state.category ? undefined : "true"}>전체</Link>
-          {categories.map((category) => (
-            <Link prefetch={false} key={category} href={hrefWith(state, { category: state.category === category ? undefined : category })} className={`chip${state.category === category ? " chip-dark" : ""}`} aria-current={state.category === category ? "true" : undefined}>
-              {CATEGORY_LABELS[category as keyof typeof CATEGORY_LABELS]}
-              {showCounts && <> <span className="chip-count">{formatCount(categoryCounts[category] ?? 0)}</span></>}
-            </Link>
-          ))}
+          {categories.map((category) => {
+            const active = state.category === category;
+            const label = <>{CATEGORY_LABELS[category as keyof typeof CATEGORY_LABELS]}{showCounts && <> <span className="chip-count">{formatCount(categoryCounts[category] ?? 0)}</span></>}</>;
+            if (!active && showCounts && (categoryCounts[category] ?? 0) === 0) return <span key={category} className="chip" aria-disabled="true">{label}</span>;
+            return <Link prefetch={false} key={category} href={hrefWith(state, { category: active ? undefined : category })} className={`chip${active ? " chip-dark" : ""}`} aria-current={active ? "true" : undefined}>{label}</Link>;
+          })}
         </nav>
       </div>
       <div className="filter-summary">

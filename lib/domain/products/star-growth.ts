@@ -2,13 +2,17 @@ import { and, asc, eq, gte, inArray, isNotNull, lt, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { db } from "@/lib/db";
 import { products } from "@/lib/db/schema";
+import { isAiLevel, type AiLevel } from "@/lib/domain/evidence/ai-level-labels";
+import { observedToolPredicate } from "./observed-tool";
+import { hasSearchQuery, productSearchPredicate, type SearchQuery } from "./search";
+import type { Category } from "./schema";
 import {
   productStarObservationRuns as runs,
   productStarObservations as observations,
   type ProductStarObservationRun,
 } from "@/lib/db/product-star-observation-schema";
 import { taglineKo } from "./korean-tagline";
-import { listedByDefault, notDown, repoGone } from "./repository";
+import { aiLevelPredicate, listedByDefault, notDown, repoGone } from "./repository";
 import { publicRead } from "./public-reads";
 import {
   latestStarObservationCycleAt,
@@ -51,7 +55,7 @@ export type StarGrowthRunSummary = {
 export type StarGrowthSnapshot = {
   status: "ready" | "warming" | "late" | "no-results";
   reason: "missing-run" | "run-not-closed" | "run-failed" | "missing-baseline" | "baseline-not-closed"
-    | "invalid-policy" | "invalid-cycle" | "cycle-changed" | "no-comparable-observations" | "below-threshold" | null;
+    | "invalid-policy" | "invalid-cycle" | "cycle-changed" | "no-comparable-observations" | "below-threshold" | "filtered-out" | null;
   asOf: string;
   nextCycle: string;
   baselineAsOf: string;
@@ -67,12 +71,20 @@ export type StarGrowthSnapshot = {
   comparableCount: number;
 };
 
+export type StarGrowthFacets = {
+  categories: Record<string, number>;
+  aiLevels: { category: string; level: AiLevel; count: number }[];
+};
+
 export type StarGrowthPage = {
   items: StarGrowthItem[];
   total: number;
   page: number;
   pages: number;
   pageSize: number;
+  offset: number;
+  /** Full eligible facet matrix, before the card slice and without selected category/AI. */
+  facets: StarGrowthFacets | null;
   snapshot: StarGrowthSnapshot;
 };
 
@@ -82,6 +94,17 @@ export type StarGrowthPageOptions = {
   /** Pin pagination to the homepage cutoff. An older cutoff returns an empty late state. */
   cycle?: string;
   now?: Date;
+  category?: Category;
+  aiLevels?: readonly AiLevel[];
+  query?: SearchQuery;
+  builder?: string;
+  observedTool?: string;
+  includeFacets?: boolean;
+  /** Browse cards use a bounded slice; page/pageSize remain the /rising contract. */
+  limit?: number;
+  offset?: number;
+  /** Exclusive result endpoint, allowing a trailing window beyond the card limit. */
+  end?: number;
 };
 
 /** Strict UTC cutoffs; reject normalized invalid dates and non-KST 00/08/16 times. */
@@ -160,7 +183,7 @@ function currentObservationConditions(current: ProductStarObservationRun, policy
 
 /** Only immutable T/T−8h evidence ranks growth; live rows can hide unsafe products. */
 async function loadPage(current: ProductStarObservationRun, baseline: ProductStarObservationRun,
-  policy: StarObservationPolicy, now: Date, requested: number, pageSize: number) {
+  policy: StarObservationPolicy, now: Date, requested: number, pageSize: number, options: StarGrowthPageOptions) {
   const gain = sql<number>`(${observations.stars} - ${baselineObservations.stars})`;
   const gap = sql`extract(epoch from (${observations.observedAt} - ${baselineObservations.observedAt}))`;
   const conditions = and(
@@ -178,32 +201,59 @@ async function loadPage(current: ProductStarObservationRun, baseline: ProductSta
     eq(baselineObservations.repoLinkVersion, observations.repoLinkVersion),
     eq(baselineObservations.repoUrl, observations.repoUrl));
 
-  // The count and slice share one read snapshot, including the allowed live safety exclusions.
+  const textFilters = and(
+    hasSearchQuery(options.query) ? productSearchPredicate(options.query!) : undefined,
+    options.observedTool ? observedToolPredicate(options.observedTool) : undefined,
+    options.builder ? sql`${products.builder} = ${options.builder} and (${products.source} <> 'crawler' or ${products.claimedAt} is not null)` : undefined,
+  );
+  const selectedFilters = and(textFilters,
+    options.category ? eq(products.category, options.category) : undefined,
+    options.aiLevels ? aiLevelPredicate(options.aiLevels) : undefined);
+  const eligible = gte(gain, policy.minGain);
+  // Counts, facets and slice share one read snapshot with the same live safety exclusions.
   const result = await db.transaction(async (tx) => {
     const [counts] = await tx.select({
       comparableCount: sql<number>`count(*)::int`,
-      total: sql<number>`count(*) filter (where ${gain} >= ${policy.minGain})::int`,
+      eligibleCount: sql<number>`count(*) filter (where ${eligible})::int`,
+      total: sql<number>`count(*) filter (where ${and(eligible, selectedFilters)})::int`,
     }).from(observations).innerJoin(baselineObservations, sameRepository)
       .innerJoin(products, eq(products.id, observations.productId)).where(conditions);
     const total = Number(counts.total);
     const pages = Math.max(1, Math.ceil(total / pageSize));
     const page = Math.min(requested, pages);
-    const rows = total === 0 ? [] : await tx.select({
+    const limit = options.limit === undefined ? pageSize
+      : Number.isSafeInteger(options.limit) ? Math.min(198, Math.max(0, options.limit)) : pageSize;
+    const end = options.end !== undefined && Number.isSafeInteger(options.end) && options.end >= 0
+      ? Math.min(options.end, total) : undefined;
+    const offset = end !== undefined ? Math.max(0, end - limit)
+      : options.offset !== undefined && Number.isSafeInteger(options.offset) && options.offset >= 0
+        ? Math.min(options.offset, total) : (page - 1) * pageSize;
+    const facetRows = options.includeFacets ? await tx.select({
+      category: products.category, level: products.aiLevel, count: sql<number>`count(*)::int`,
+    }).from(observations).innerJoin(baselineObservations, sameRepository)
+      .innerJoin(products, eq(products.id, observations.productId))
+      .where(and(conditions, eligible, textFilters)).groupBy(products.category, products.aiLevel) : null;
+    const facets: StarGrowthFacets | null = facetRows ? {
+      categories: {}, aiLevels: facetRows.flatMap(({ category, level, count }) => isAiLevel(level) ? [{ category, level, count }] : []),
+    } : null;
+    if (facets) for (const row of facetRows!) facets.categories[row.category] = (facets.categories[row.category] ?? 0) + row.count;
+    const rows = total === 0 || limit === 0 ? [] : await tx.select({
       ...observedListFields,
       starsPrevious: baselineObservations.stars, starsPreviousAt: baselineObservations.observedAt, gain,
     }).from(observations).innerJoin(baselineObservations, sameRepository)
       .innerJoin(products, eq(products.id, observations.productId))
-      .where(and(conditions, gte(gain, policy.minGain)))
+      .where(and(conditions, eligible, selectedFilters))
       .orderBy(sql`${gain} desc`, sql`${observations.stars} desc`, asc(observations.slug))
-      .limit(pageSize).offset((page - 1) * pageSize);
-    return { rows, total, comparableCount: Number(counts.comparableCount), page, pages };
+      .limit(end === undefined ? limit : end - offset).offset(offset);
+    return { rows, total, eligibleCount: Number(counts.eligibleCount), comparableCount: Number(counts.comparableCount), page, pages, offset, facets };
   }, { isolationLevel: "repeatable read", accessMode: "read only" });
   const items = await withProductHealth(result.rows.map((row): StarGrowthItem => ({
     ...toListItem(row),
     starGrowth: { gain: row.gain, stars: row.stars!, baselineStars: row.starsPrevious!,
       observedAt: row.starsAt!.toISOString(), baselineObservedAt: row.starsPreviousAt!.toISOString() },
   })));
-  return { items, total: result.total, comparableCount: result.comparableCount, page: result.page, pages: result.pages };
+  return { items, total: result.total, eligibleCount: result.eligibleCount, comparableCount: result.comparableCount,
+    page: result.page, pages: result.pages, offset: result.offset, facets: result.facets };
 }
 
 /** Homepage five and /rising pages use this same cutoff, policy, predicates and order. */
@@ -228,7 +278,8 @@ export async function getStarGrowthPage(options: StarGrowthPageOptions = {}): Pr
     baseline: context.baselineSummary, comparableCount: 0,
   };
   const empty = (status: StarGrowthSnapshot["status"], reason: StarGrowthSnapshot["reason"]): StarGrowthPage =>
-    ({ items: [], total: 0, page: 1, pages: 1, pageSize, snapshot: { ...snapshot, status, reason } });
+    ({ items: [], total: 0, page: 1, pages: 1, pageSize, offset: 0,
+      facets: options.includeFacets ? { categories: {}, aiLevels: [] } : null, snapshot: { ...snapshot, status, reason } });
   if (options.cycle !== undefined) {
     const cycle = parseStarGrowthCycle(options.cycle);
     if (!cycle) return empty("late", "invalid-cycle");
@@ -242,12 +293,15 @@ export async function getStarGrowthPage(options: StarGrowthPageOptions = {}): Pr
   if (baseline.status !== "closed") return empty("late", "baseline-not-closed");
 
   const page = await publicRead("list", ["star-growth-8h-page", snapshot.asOf, current.id, snapshot.policyVersion, snapshot.policy,
-    baseline.id, baseline.policyVersion, baseline.policy, requested, pageSize],
-    () => loadPage(current, baseline, snapshot.policy!, now, requested, pageSize));
+    baseline.id, baseline.policyVersion, baseline.policy, requested, pageSize,
+    { category: options.category, aiLevels: options.aiLevels, query: options.query, builder: options.builder,
+      observedTool: options.observedTool, includeFacets: options.includeFacets, limit: options.limit, offset: options.offset, end: options.end }],
+    () => loadPage(current, baseline, snapshot.policy!, now, requested, pageSize, options));
   return {
-    items: page.items, total: page.total, page: page.page, pages: page.pages, pageSize,
+    items: page.items, total: page.total, page: page.page, pages: page.pages, pageSize, offset: page.offset, facets: page.facets,
     snapshot: { ...snapshot, comparableCount: page.comparableCount,
       status: page.total > 0 ? "ready" : "no-results",
-      reason: page.total > 0 ? null : page.comparableCount > 0 ? "below-threshold" : "no-comparable-observations" },
+      reason: page.total > 0 ? null : page.eligibleCount > 0 ? "filtered-out"
+        : page.comparableCount > 0 ? "below-threshold" : "no-comparable-observations" },
   };
 }

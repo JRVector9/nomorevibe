@@ -34,11 +34,9 @@ function Formula({ children }: { children: React.ReactNode }) {
 /** 대화창이 열리는 화면 — 홈과 분야 화면(/c/…)이 같은 목록을 쓴다 */
 const isBrowsePath = (pathname: string) => pathname === "/" || pathname.startsWith("/c/");
 
-export function MethodologyDialog({ pulse, rankingFallback = false, aiLevels = null, starGrowth }: {
+export function MethodologyDialog({ pulse, aiLevels = null, starGrowth }: {
   pulse: HomePulseView;
-  /** 검증 제품이 모자라 순위 탭이 스타 목록을 대신 보여주는 동안(app/page.tsx fallbackSort) 그 기준도 적는다 */
-  rankingFallback?: boolean;
-  /** AI 제작 근거 단계마다의 공개 수(홈 '만든 방식' 칩과 같은 집계) — 못 읽었으면 null(수 없이 기준만) */
+  /** AI 제작 근거 단계마다의 전체 공개 수(탐색 칩은 현재 정렬 자격 안에서 별도 집계) — 못 읽었으면 null(수 없이 기준만) */
   aiLevels?: Record<AiLevel, number> | null;
   starGrowth?: StarGrowthSnapshot | null;
 }) {
@@ -46,7 +44,8 @@ export function MethodologyDialog({ pulse, rankingFallback = false, aiLevels = n
   const skipClose = useRef(false);
   const params = useSearchParams();
   const pathname = usePathname();
-  const metric = params.get("metric") ?? "";
+  const rawMetric = params.get("metric") ?? "";
+  const metric = rawMetric === "rising" ? "star-growth" : rawMetric;
   const open = isBrowsePath(pathname) && ["all", "born", "updates", "active", "categories", "ai", "tools", "popular", "rising", "star-growth"].includes(metric);
 
   useEffect(() => {
@@ -84,7 +83,6 @@ export function MethodologyDialog({ pulse, rankingFallback = false, aiLevels = n
   const metrics: [string, string][] = [["popular", "스타 구간"], ["born", NEW_PROJECTS_LABEL], ["updates", "새 버전"], ["active", "활발한 프로젝트"], ["categories", "분야 순위"], ["ai", "만든 방식"]];
   if (pulse.tools) metrics.push(["tools", "제작 도구"]);
   metrics.push(["star-growth", STAR_GROWTH_TITLE]);
-  if (rankingFallback) metrics.push(["rising", "추천 대체 목록"]);
   const nav = (
     <div className="metric-links">
       {metrics.map(([key, label]) => (
@@ -111,7 +109,7 @@ export function MethodologyDialog({ pulse, rankingFallback = false, aiLevels = n
         <Details>
           <p>공개된 프로젝트의 정상 공개 GitHub 저장소를 비교합니다. KST 00시·08시·16시 회차 직전 {starGrowth?.policy?.collectionWindowHours ?? 1}시간 안의 성공 관측만 사용하며, 실제 두 관측 간격은 {starGrowth?.policy?.minIntervalHours ?? 7}~{starGrowth?.policy?.maxIntervalHours ?? 9}시간입니다. 이번 회차 스타50~1,999개 중 순증가1개 이상인 프로젝트를 표시합니다.</p>
           <Formula>8시간 증가량 = 해당 회차의 스타 − 8시간 전 회차의 스타</Formula>
-          <p>증가량이 많은 순, 같으면 해당 회차 스타가 많은 순, 다시 같으면 프로젝트 주소 순입니다. 홈 상위 5개와 모두 보기는 같은 회차·조건·순서를 사용합니다. 카드에는 ‘8시간 +증가량’을 먼저, 총 스타 수를 보조로 표시하며 숫자에 마우스를 올리면 두 실제 관측 시각을 확인할 수 있습니다. 보조 기술에도 같은 시각을 제공합니다.</p>
+          <p>증가량이 많은 순, 같으면 해당 회차 스타가 많은 순, 다시 같으면 프로젝트 주소 순입니다. 홈 상위 5개·8시간 스타 급상승 탭·모두 보기는 같은 회차·조건·순서를 사용합니다. 탭의 분야·AI 필터는 이 대상 안에서만 좁힙니다. 카드에는 ‘8시간 +증가량’을 먼저, 총 스타 수를 보조로 표시하며 숫자에 마우스를 올리면 두 실제 관측 시각을 확인할 수 있습니다. 보조 기술에도 같은 시각을 제공합니다.</p>
           {starGrowth && <table className="method-table">
             <thead><tr><th>관측</th><th>기준 회차 KST</th><th>실제 성공 관측 시각 KST</th></tr></thead>
             <tbody>
@@ -234,27 +232,6 @@ export function MethodologyDialog({ pulse, rankingFallback = false, aiLevels = n
         </Details>
       </>
     ),
-    ...(rankingFallback ? {
-      rising: (
-        <>
-          <h3>추천 대체 목록 — 최근 GitHub 스타가 하루 평균 가장 많이 는 순.</h3>
-          <p>최근 두 번 확인한 사이에 GitHub 스타가 하루 평균 가장 많이 늘어난 프로젝트 순입니다.</p>
-          <Details>
-            <p>
-              순위는 검증된 프로젝트의 유효 방문으로 매기는데, 검증된 프로젝트가 아직 모자랍니다. 그동안 추천 탭의 대체 목록은 공개 프로젝트를
-              <b> 마지막 두 번 확인한 사이에 하루 평균 늘어난 스타</b> 순으로 보여줍니다 — 늘어난 것만, 스타 2천 미만만입니다(그 위는 스타 구간이
-              따로 보여줍니다). 마지막 확인이 운영자가 정한 기간(기본 7일)보다 오래된 프로젝트(저장소가 사라졌거나 확인이 계속 실패한 것)는 뺍니다.
-              &ldquo;관심 많은 순&rdquo;은 같은 동안 스타 많은 순입니다.
-            </p>
-            <Formula>하루 평균 증가 = (이번 확인 스타 − 직전 확인 스타) ÷ 두 확인 사이 일수(1일 미만은 1일) · 확인 간격은 지금 보통 2~3일</Formula>
-            <p>
-              각 카드의 ★ 옆 숫자는 두 확인 사이에 는 전체이고, 확인한 두 시각은 그 숫자에 올리면 보입니다. 간격이 프로젝트마다 달라 순서는
-              그 숫자를 일수로 나눈 값으로 정합니다 — 숫자가 작은 카드가 앞에 설 수 있습니다. 검증된 프로젝트가 모이면 방문 순위로 돌아갑니다.
-            </p>
-          </Details>
-        </>
-      ),
-    } : {}),
     ...(pulse.tools ? {
       tools: (
         <>
