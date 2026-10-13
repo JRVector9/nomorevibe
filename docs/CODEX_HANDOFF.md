@@ -2,15 +2,15 @@
 
 ## Current objective / completed work
 
-사용자가 서브에이전트 병렬 코드리뷰와 운영 배포를 요청했다. 대상은 feat/admin-essential-integration-20261013의 구현 6848016, base main b8147dc다. gpt-6.1-sol/xhigh 3담당이 인증·댓글/번역·운영/자동 차단을 독립 읽기 리뷰 중이며 root가 보완·PR·필수 CI·배포를 전담한다. 이전 단위161/통합76/타입/lint/i18n/webpack build 성공은 그대로 유효하며 새 변경이 있을 때 관련 범위만 재실행한다.
+사용자가 서브에이전트 병렬 코드리뷰와 운영 배포를 요청했다. 대상은 feat/admin-essential-integration-20261013의 구현 6848016, base main b8147dc다. gpt-6.1-sol/xhigh 3담당이 인증·댓글/번역·운영/자동 차단을 독립 읽기 리뷰했고 P1/P2 발견 없이 완료했다. root가 보완·PR·필수 CI·배포를 전담한다. 이전 단위161/통합76/타입/lint/i18n/webpack build 성공은 그대로 유효하며 새 변경이 있을 때 관련 범위만 재실행한다.
 
 ## Design / modified files / verification
 
-이번 단계는 리뷰 결과 보완과 릴리스 기록이다. prod skill을 읽었으며 Keychain 자격으로 Dokploy API 직접 curl을 사용한다. 현재 main b8147dc, 운영 웹707/백엔드b592, core13앱 구성이다. 새 migration/schema는 없으므로 migration·소비자 drain을 반복하지 않는다. 공개 소개 검수2100 중단, 기능4개 ON, 관리자 production local 우회0, 독립 source 앱 정책과 별도 connect-agent를 보존한다. 원격 push/PR/CI/운영 배포는 아직 진행 전이며 성공을 주장하지 않는다. 사용자 main의 미추적 산출물은 보존한다.
+이번 단계는 리뷰 결과 보완과 릴리스 기록이다. PR410을 생성했고 첫 CI38362899860의 quality가 feedback/page.tsx의 12px 한 곳 때문에 공통 typography fixture2개에서 실패했다. 이를13px로 교정하고 관련 검사를 재실행한다. 세 리뷰 담당이 worker/job/schema/정책 호환성을 대조해 양 웹만 새 image로 배포 가능함을 확인했다. prod skill을 읽었으며 Keychain 자격으로 Dokploy API 직접 curl을 사용한다. 현재 main b8147dc, 운영 웹707/백엔드b592, core13앱 구성이다. 새 migration/schema는 없으므로 migration·소비자 drain을 반복하지 않는다. 공개 소개 검수2100 중단, 기능4개 ON, 관리자 production local 우회0와 별도 connect-agent를 보존한다. scheduler의 autoDeploy=true만 예외적으로false로 맞춰 main 병합 때 CI/릴리스와 무관한 재시작을 막고 기존2복제본·실행 환경/주기를 유지한다. 나머지 worker/source5는 b592로 유지한다. branch push·PR410은 완료했고 최신 수정의 CI/운영 배포는 아직 완료 전이다. 성공을 미리 주장하지 않는다. 사용자 main의 미추적 산출물은 보존한다.
 
 ## Remaining work / exact next commands
 
-세 리뷰 결과→필요 보완/관련 체크→정상 PR 필수 check→정상 merge→main CI·web/worker digest/양 서버 pull→13앱 현재 상태 snapshot·각 단계 readiness→양웹/public 본문·관리 API 차단·runtime source/env·failover/progress 검증→최종 보고 순서다. 관리자 private ingress/ACL/자격 설치는 기존 runbook 경계이며 설치 미검증을 배포 완료와 혼동하지 않는다. 비밀/환경 전문·쿠키·DB본문은 로그나 Git에 넣지 않는다.
+세 리뷰 결과→필요 보완/관련 체크→정상 PR 필수 check→정상 merge→main CI·web/worker digest/양 서버 pull→13앱 현재 상태 snapshot·양웹 배포 readiness→양웹/public 본문·관리 API 차단·runtime source/env·failover/progress 검증→최종 보고 순서다. 관리자 private ingress/ACL/자격 설치는 기존 runbook 경계이며 설치 미검증을 배포 완료와 혼동하지 않는다. 비밀/환경 전문·쿠키·DB본문은 로그나 Git에 넣지 않는다.
 
 ```sh
 cd /private/tmp/nomorevibe-admin-essential-integration-20261013

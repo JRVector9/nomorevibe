@@ -40,7 +40,7 @@ export default async function AdminFeedbackPage({ searchParams }: { searchParams
     {queue.items.map((item) => <section key={`${item.id}-${item.reviewState}`} className="space-y-3 rounded-xl border border-line p-4">
       <Link prefetch={false} href={`/p/${item.slug}`} className="text-[14px] underline">{item.productName}</Link>
       <FeedbackItem feedback={item} />
-      <p className="break-all text-[12px] text-fg-3">댓글 {item.id} · 작성자 #{item.authorUserId}</p>
+      <p className="break-all text-[13px] text-fg-3">댓글 {item.id} · 작성자 #{item.authorUserId}</p>
       <FeedbackReviewForm id={item.id} reviewState={item.reviewState} csrfToken={csrfToken} expiresAt={admin.exp} />
     </section>)}
     {queue.nextCursor && <Link prefetch={false} href={`/admin/feedback?${next}`} className="inline-block min-h-11 py-3 text-[14px] underline">다음 댓글</Link>}
