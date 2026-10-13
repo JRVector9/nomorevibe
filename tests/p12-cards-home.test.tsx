@@ -18,6 +18,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock("@/lib/crawl/settings", () => ({ getSettings: vi.fn().mockResolvedValue({ agentEvidence: { displayObservedFacts: true } }) }));
 vi.mock("@/lib/news/repository", () => ({ listHomeNews: vi.fn().mockResolvedValue([]) }));
 vi.mock("@/lib/domain/products/popular", () => ({ getPopularGroups: vi.fn().mockResolvedValue([]) }));
+vi.mock("@/lib/domain/products/star-growth", () => ({ getStarGrowthPage: vi.fn().mockResolvedValue(null) }));
 vi.mock("@/lib/domain/products/repository", () => ({
   aiLevelCounts: vi.fn().mockResolvedValue([]),
   categoryCounts: vi.fn().mockResolvedValue({}),
@@ -137,7 +138,7 @@ describe("목록 첫 줄 그림 (PERF-03)", () => {
 
 describe("홈 부제 (UX-06)", () => {
   it("타이틀 아래 무엇을 모았고 표시가 무슨 뜻인지 한 줄, 게재 기준 링크", () => {
-    const html = renderToStaticMarkup(createElement(IntroLine, { pulse: emptyHomePulse(new Date("2026-10-11T00:00:00Z")), total: 10, state: { sort: "weekly" } }));
+    const html = renderToStaticMarkup(createElement(IntroLine, { pulse: emptyHomePulse(new Date("2026-10-11T00:00:00Z")), total: 10, state: { sort: "ai" } }));
     expect(html).toContain('<p class="intro-sub">');
     expect(html).toContain("공개 저장소에서 찾아 모은 프로젝트");
     expect(html).toContain("✓는 메이커가 도메인을 확인한 곳에만");

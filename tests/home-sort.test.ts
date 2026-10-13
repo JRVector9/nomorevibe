@@ -15,10 +15,12 @@ describe("home sort", () => {
     expect(html).toContain("Claude Code 2개");
     expect(html).toContain('class="clear-filters show" href="/?sort=recent"');
   });
-  it("defaults to weekly and keeps the old popular URL compatible", () => {
-    expect(parseHomeSort(undefined)).toBe("weekly");
-    expect(parseHomeSort("popular")).toBe("weekly");
-    expect(parseHomeSort("featured")).toBe("weekly");
+  it("defaults to AI and keeps legacy home sort URLs compatible", () => {
+    expect(parseHomeSort(undefined)).toBe("ai");
+    expect(parseHomeSort("ai")).toBe("ai");
+    expect(parseHomeSort("weekly")).toBe("ai");
+    expect(parseHomeSort("popular")).toBe("ai");
+    expect(parseHomeSort("featured")).toBe("ai");
   });
 
   it("accepts the public sorts including products with repository links", () => {
@@ -27,10 +29,10 @@ describe("home sort", () => {
     expect(parseHomeSort("newest")).toBe("recent");
     expect(parseHomeSort("all-time")).toBe("all-time");
     expect(parseHomeSort("open")).toBe("open");
-    expect(parseHomeSort("unknown")).toBe("weekly");
+    expect(parseHomeSort("unknown")).toBe("ai");
   });
 
-  it("preserves category and query with an explicit weekly sort when searching", () => {
+  it("preserves category and query with an explicit AI sort when searching", () => {
     const html = renderToStaticMarkup(createElement(BrowseFilters, {
       state: { sort: "recent", category: "Dev", query: "ai tool" },
       counts: { Dev: 1 },
@@ -38,9 +40,9 @@ describe("home sort", () => {
       resultCount: 1,
     }));
 
-    expect(html).toContain('href="/c/dev?sort=weekly&amp;q=ai+tool"');
+    expect(html).toContain('href="/c/dev?sort=ai&amp;q=ai+tool"');
     expect(html).toContain('href="/c/dev?sort=all-time&amp;q=ai+tool"');
-    expect(html).toContain("8시간 스타 급상승");
+    expect(html).toContain("AI로 제작");
     expect(html).toContain("GitHub 스타 많은 순");
     // '저장소 있음' 탭은 내렸다 — 주소 ?sort=open 은 parseHomeSort 가 계속 받는다
     expect(html).not.toContain("저장소 있음");
@@ -56,9 +58,9 @@ describe("home sort", () => {
     expect(parseShown("108")).toBe(108);
     expect(parseShown("Infinity")).toBe(9);
     expect(parseShown("9007199254740992")).toBe(9);
-    expect(hrefWith({ sort: "weekly", shown: 18 })).toBe("/?shown=18");
-    expect(hrefWith({ sort: "weekly", query: "directory", shown: 99 }, { shown: 108 })).toBe("/?sort=weekly&q=directory&shown=108");
-    expect(hrefWith({ sort: "weekly", shown: 18 }, { sort: "recent" })).toBe("/?sort=recent");
+    expect(hrefWith({ sort: "ai", shown: 18 })).toBe("/?shown=18");
+    expect(hrefWith({ sort: "ai", query: "directory", shown: 99 }, { shown: 108 })).toBe("/?sort=ai&q=directory&shown=108");
+    expect(hrefWith({ sort: "ai", shown: 18 }, { sort: "recent" })).toBe("/?sort=recent");
     expect(hrefWith({ sort: "recent", shown: 18 }, { shown: 30 })).toBe("/?sort=recent&shown=30");
   });
 
@@ -75,27 +77,27 @@ describe("home sort", () => {
 
   it("순위 탭이 다른 목록을 대신 보여줄 때는 그 목록의 이름을 쓰고, 필터가 걸리면 그 필터 이름이다", () => {
     const html = renderToStaticMarkup(createElement(BrowseFilters, {
-      state: { sort: "weekly" }, counts: {}, total: 0, resultCount: 7, listLabel: "스타 증가 순",
+      state: { sort: "ai" }, counts: {}, total: 0, resultCount: 7, listLabel: "스타 증가 순",
     }));
     expect(html).toContain("스타 증가 순 7개");
     expect(html).not.toContain("에디터 추천");
 
     const narrowed = renderToStaticMarkup(createElement(BrowseFilters, {
-      state: { sort: "weekly", category: "Dev" }, counts: { Dev: 1 }, total: 1, resultCount: 1, listLabel: "스타 증가 순",
+      state: { sort: "ai", category: "Dev" }, counts: { Dev: 1 }, total: 1, resultCount: 1, listLabel: "스타 증가 순",
     }));
     expect(narrowed).toContain("개발 도구 · 스타 증가 순 1개");
     expect(narrowed).not.toContain("검색 결과");
   });
 
-  it("uses the fixed eight-hour growth label for the default sort", () => {
+  it("uses the AI-made label for the default sort", () => {
     const html = renderToStaticMarkup(createElement(BrowseFilters, {
-      state: { sort: "weekly" },
+      state: { sort: "ai" },
       counts: {},
       total: 0,
       resultCount: 0,
     }));
 
-    expect(html).toContain("8시간 스타 급상승");
+    expect(html).toContain("AI로 제작");
     expect(html).not.toContain("이번 주");
   });
 });

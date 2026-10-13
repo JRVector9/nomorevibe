@@ -11,7 +11,7 @@ const now = new Date("2026-10-02T03:00:00+09:00");
 describe("홈 소개 줄", () => {
   it("타이틀 한 줄과 세 숫자를 낸다 — 공개 수는 목록과 같은 지금 값, 이번 주 기준은 말로", () => {
     const pulse = { ...emptyHomePulse(now), total: 25183, born: { current: 157, previous: 100, change: 57 }, updates: { projects: 3483, releases: 17553 } };
-    const html = renderToStaticMarkup(createElement(IntroLine, { pulse, total: 25_402, state: { sort: "weekly" } }));
+    const html = renderToStaticMarkup(createElement(IntroLine, { pulse, total: 25_402, state: { sort: "ai" } }));
     expect(html).toContain("AI로 만든 것들이");
     // 같은 화면의 '공개' 수는 하나 — 자정 집계(pulse.total)가 아니라 목록이 세는 값(UX-27)
     expect(html).toContain("공개 <b>25,402</b>");
@@ -36,11 +36,11 @@ describe("무엇으로 만들었나", () => {
     expect(html).not.toContain("shown=");
   });
   it("도구 집계가 없으면 구획을 내지 않는다", () => {
-    expect(renderToStaticMarkup(createElement(ToolsBoard, { tools: null, state: { sort: "weekly" } }))).toBe("");
+    expect(renderToStaticMarkup(createElement(ToolsBoard, { tools: null, state: { sort: "ai" } }))).toBe("");
   });
   it("도구 알약과 조사 범위를 낸다", () => {
     const html = renderToStaticMarkup(createElement(ToolsBoard, {
-      tools: { scanned: 20864, withTool: 16650, rows: [{ label: "Claude Code", count: 11798 }, { label: "Codex", count: 788 }] }, state: { sort: "weekly" },
+      tools: { scanned: 20864, withTool: 16650, rows: [{ label: "Claude Code", count: 11798 }, { label: "Codex", count: 788 }] }, state: { sort: "ai" },
     }));
     expect(html).toContain("Claude Code");
     expect(html).toContain("11,798");

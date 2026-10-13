@@ -11,7 +11,7 @@ import { hiddenByDefault } from "@/lib/domain/products/visibility";
 import { AI_FILTER_LABELS, AI_FILTER_LEVELS, AI_FILTERS, type AiFilter, type AiLevel } from "@/lib/domain/evidence/ai-level-labels";
 
 /** relevance 는 검색어가 있을 때만 쓰는 순서다 — 검색 중에만 '관련도' 탭으로 맨 앞에 선다 */
-export type HomeSort = "weekly" | "trending" | "recent" | "all-time" | "open" | "relevance";
+export type HomeSort = "ai" | "trending" | "recent" | "all-time" | "open" | "relevance";
 export const HOME_FIRST_PAGE = 9;
 export const HOME_PAGE_SIZE = 9;
 /**
@@ -58,12 +58,12 @@ export function shownWindow(shown: number, total: number): { start: number; coun
 }
 
 export function parseHomeSort(value: string | undefined): HomeSort {
-  if (value === "popular" || value === "featured") return "weekly";
+  if (value === "weekly" || value === "popular" || value === "featured") return "ai";
   if (value === "newest") return "recent";
   if (value === "trending" || value === "recent" || value === "all-time" || value === "open" || value === "relevance") {
     return value;
   }
-  return "weekly";
+  return "ai";
 }
 
 /**
@@ -84,10 +84,12 @@ export function parseCategory(value: string | null | undefined): Category | null
 /** 지금 상태에서 한 가지만 바꾼 주소 — 필터를 겹쳐 걸 수 있어야 한다. 분야가 있으면 /c/<분야> 아래로 간다 */
 export function hrefWith(state: BrowseState, patch: Partial<BrowseState> = {}, locale: Locale = "ko"): string {
   const next = { ...state, ...patch };
+  // 만든 방식은 AI 탭이 맡는다. 다른 탭으로 옮기면 이전 주소의 AI 조건도 푼다.
+  if (patch.sort !== undefined) next.ai = undefined;
   const filterChanged = ["sort", "category", "builder", "observedTool", "ai", "query"].some((key) => key in patch);
   if (filterChanged && patch.shown === undefined) next.shown = undefined;
   const params = new URLSearchParams();
-  if (next.sort !== "weekly" || next.query) params.set("sort", next.sort);
+  if (next.sort !== "ai" || next.query) params.set("sort", next.sort);
   if (next.builder) params.set("builder", next.builder);
   if (next.observedTool) params.set("observedTool", next.observedTool);
   if (next.ai) params.set("ai", next.ai);
@@ -100,7 +102,7 @@ export function hrefWith(state: BrowseState, patch: Partial<BrowseState> = {}, l
 
 /** 분야 화면의 주소 — 다른 화면(상세의 분야 링크 등)이 /?category= 대신 쓴다 */
 export function categoryHref(category: string, patch: Partial<BrowseState> = {}, locale: Locale = "ko"): string {
-  return hrefWith({ sort: "weekly" }, { ...patch, category }, locale);
+  return hrefWith({ sort: "ai" }, { ...patch, category }, locale);
 }
 
 export function metricHref(state: BrowseState, metric: string, locale: Locale = "ko"): string {
@@ -154,7 +156,7 @@ export function formatResultCount(count: number, approximate = false, locale: Lo
 }
 
 const SORT_LABELS: Record<HomeSort, string> = {
-  weekly: "8시간 스타 급상승",
+  ai: "AI로 제작",
   recent: "최근 등록",
   "all-time": "GitHub 스타 많은 순",
   open: "저장소 있음",
@@ -183,7 +185,7 @@ export function resultLine(state: BrowseState, count: number, { approximate = fa
 /** 탐색 탭의 의미는 검증 제품 수와 무관하게 고정한다. */
 export function sortLabel(sort: HomeSort, _locale: Locale = "ko", t?: Translator<"browse">): string {
   void _locale;
-  const keys = { weekly: "sort.weekly", recent: "sort.recent", "all-time": "sort.allTime", open: "sort.open", trending: "sort.trending", relevance: "sort.relevance" } as const;
+  const keys = { ai: "sort.ai", recent: "sort.recent", "all-time": "sort.allTime", open: "sort.open", trending: "sort.trending", relevance: "sort.relevance" } as const;
   return t ? t(keys[sort]) : SORT_LABELS[sort];
 }
 

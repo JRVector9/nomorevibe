@@ -1,3 +1,37 @@
+# 2026-10-13 — 하단 첫 탐색 탭을 AI로 제작으로 통합
+
+## Current objective / completed work
+
+사용자가 상단 8시간 급상승과 하단 첫 탭의 중복을 지적하여 하단 첫 탭을 AI로 제작으로 바꾸라고 했다. gpt-6.1-sol/xhigh 담당이 isolated worktree에서 구현했고 root가 소스·기존 fixture diff와 DAL 조건을 검토했다. 기존 운영 배포와 병렬 1인 관리자 감사도 계속 진행한다. 관리자 감사 최종 문서는 별도 docs/single-operator-admin-audit-20261013 작업에서 보존 중이다.
+
+## Modified files / design decisions
+
+공개 홈 page.tsx, BrowseFilters, 순수 browse-state, 네 언어 browse 카탈로그와 기존 fixture 6개를 변경했다. 하단 탭은 AI로 제작/최근 등록/GitHub 스타 많은 순이다. AI 탭은 기존 1·2·3단계 근거 조건을 목록·개수·분야 집계에 동일하게 적용하며 최근 등록순으로 보여준다. AI 기본 자격은 사용자 필터로 취급하지 않아 상단 8시간 급상승·신규 영역을 유지한다. 기존 오른쪽 AI 칩과 하단 급상승 중복 조회는 제거했다. 분야·검색·더 보기와 기존 정렬 URL 호환은 유지한다. 최근 등록/스타 탭으로 이동하면 AI 제약을 해제한다. 스키마·DB·lib·scripts·jobs·패키지·Dockerfile은 변경하지 않았다.
+
+## Test commands / results / failed approaches
+
+담당이 실제 next typegen, tsc --noEmit, check:i18n(4언어/8namespace/11page), scoped ESLint, diff --check와 관련 기존 unit 7파일83사례 exit0를 확인했다. 처음 기존 라벨/HTML 속성순서 기대값3건이 실패하여 새 동작에 맞게 수정했고 최종83사례가 통과했다. p12 fixture의 미모킹 급상승 조회가 외부 DB 예외를 기록해 기존 fixture에 모킹1줄을 추가했다. 새 suite/E2E/실사용자 스타·댓글 쓰기/모델 호출은 실행하지 않았다. root가 같은 7파일83사례를 별도로 재실행하여 exit0를 확인했다(세션62681). 실패 경로의 모킹 로그는 의도된 기존 fixture다. git diff --quiet b5924ac -- lib scripts drizzle package.json package-lock.json tsconfig.json 'Dockerfile*' exit0로 백엔드 변경이 없음을 확인했다.
+
+## Remaining work / exact commands
+
+소스 커밋/푸시→정상 PR과 최신 base 필수 check→정상 merge→main 이미지 발행→양웹만 새 digest로 배포→네 언어 실제 AI 탭/개수/프로젝트·상단 급상승 유지 확인→13앱 건강·기존 백엔드 b592 소스523파일/환경/역할 확인→관리자 감사·배포 문서 최종 커밋/보고. b592 13앱 배포와 journal76 migration은 이미 완료했으므로 반복하지 않는다. 소개 검수2100 중단, 네 기능 flag ON, ADMIN_LOCAL_LOGIN=0을 유지한다. Tailscale/관리자 ID비밀번호는 아직 제안이며 정상 관리자 OAuth 미설정으로 로그인 잠김이다.
+
+```sh
+cd /private/tmp/nomorevibe-ai-made-tab-20261013
+git diff --check
+git status --short --branch
+# PR와 main CI의 해당 최신 SHA check/이미지 성공 뒤 private helper SHA/CI를 갱신한다.
+python3 /private/tmp/nomorevibe-ai-made-tab-release-state-20261013/release.py capture
+python3 /private/tmp/nomorevibe-ai-made-tab-release-state-20261013/release.py plan
+python3 /private/tmp/nomorevibe-ai-made-tab-release-state-20261013/release.py web_roll
+python3 /private/tmp/nomorevibe-ai-made-tab-release-state-20261013/public_content_get.py
+python3 /private/tmp/nomorevibe-ai-made-tab-release-state-20261013/release.py verify
+# capture/plan 완료 proof를 확인한 뒤 다음 단계, 성공 단계 중복 실행 금지.
+# private helper/state는 환경·비밀 가능: 출력/공유/커밋 금지. source/docker_roll/migrate 불필요.
+```
+
+---
+
 # 2026-10-13 — 운영 홈의 RSC 함수 import 경계 교정
 
 ## Current objective / completed work
