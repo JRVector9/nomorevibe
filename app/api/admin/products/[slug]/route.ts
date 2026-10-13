@@ -4,10 +4,12 @@ import { errorResponse } from "@/lib/http/respond";
 import { withRoute } from "@/lib/http/handler";
 import { bearerMatches } from "@/lib/auth/bearer";
 import { recordAdminAction } from "@/lib/operations/admin-log";
+import { adminIngressAllowed } from "@/lib/auth/admin-access";
 
 type Params = { params: Promise<{ slug: string }> };
 
 export const DELETE = withRoute("admin.ban", async (req: Request, { params }: Params) => {
+  if (!adminIngressAllowed(req.headers)) return new NextResponse(null, { status: 404 });
   const { slug } = await params;
   if (!bearerMatches(req.headers.get("authorization"), process.env.ADMIN_TOKEN)) {
     return NextResponse.json({ error: "권한이 없습니다" }, { status: 403 });

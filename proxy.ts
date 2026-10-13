@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { SESSION_COOKIE, verifySession } from "@/lib/auth/session";
+import { SESSION_COOKIE } from "@/lib/auth/session";
+import { adminIngressAllowed, adminLocalLoginEnabled, adminOrigin, isAdminProtectedPath, verifyAdminSession } from "@/lib/auth/admin-access";
 import { DEFAULT_LOCALE, PUBLIC_LOCALE_HEADER, type Locale } from "@/lib/i18n/locales";
 import { isLocaleExcludedPath, pathLocale, stripLocale } from "@/lib/i18n/routing";
 
@@ -17,13 +18,16 @@ import { isLocaleExcludedPath, pathLocale, stripLocale } from "@/lib/i18n/routin
  */
 export async function proxy(req: NextRequest) {
   const pathname = req.nextUrl.pathname;
+  const locale = pathLocale(pathname);
+  if (isAdminProtectedPath(stripLocale(pathname))) {
+    if (locale || !adminIngressAllowed(req.headers)) return new NextResponse(null, { status: 404, headers: { "Cache-Control": "private, no-store" } });
+  }
   // Keep the administrator gate first, independently of all locale routing.
   if (pathname === "/admin" || pathname.startsWith("/admin/")) {
     if (pathname === "/admin/login" || pathname === "/admin/login/") return passThrough(req, DEFAULT_LOCALE);
     return protectAdmin(req);
   }
 
-  const locale = pathLocale(pathname);
   // A prefixed machine/admin address is never normalized into an endpoint alias.
   if (locale && isLocaleExcludedPath(stripLocale(pathname))) return passThrough(req, locale);
   if (!locale && isLocaleExcludedPath(pathname)) return passThrough(req, DEFAULT_LOCALE);
@@ -52,19 +56,12 @@ function passThrough(req: NextRequest, locale: Locale) {
 
 async function protectAdmin(req: NextRequest) {
   // GitHub OAuth 없이 로컬에서 어드민을 연다. 운영에는 ADMIN_LOCAL_LOGIN을 넣지 않는다.
-  if (process.env.ADMIN_LOCAL_LOGIN === "1") {
+  if (adminLocalLoginEnabled()) {
     return passThrough(req, DEFAULT_LOCALE);
   }
 
-  const secret = process.env.AUTH_SECRET;
-  const loginUrl = new URL("/admin/login", req.url);
-
-  // 비밀키가 없으면 세션을 검증할 방법이 없다 — 열지 않는다
-  if (!secret || secret.length < 32) {
-    return NextResponse.redirect(loginUrl);
-  }
-
-  const session = await verifySession(req.cookies.get(SESSION_COOKIE)?.value, secret);
+  const loginUrl = new URL("/admin/login", adminOrigin() ?? req.url);
+  const session = await verifyAdminSession(req.cookies.get(SESSION_COOKIE)?.value);
   if (!session) {
     return NextResponse.redirect(loginUrl);
   }

@@ -5,6 +5,7 @@ import { KpiStrip } from "@/app/(operator)/admin/status/dashboard/KpiStrip";
 import { StageRail } from "@/app/(operator)/admin/status/dashboard/StageRail";
 import { RolesTable } from "@/app/(operator)/admin/status/dashboard/RolesTable";
 import { StatusChips } from "@/app/(operator)/admin/status/dashboard/StatusChips";
+import { StarObservationCard } from "@/app/(operator)/admin/status/StarObservationCard";
 import { AttentionList, trendLabel, type SplitItem } from "@/app/(operator)/admin/status/dashboard/AttentionList";
 import { SignalTable } from "@/app/(operator)/admin/status/dashboard/SignalTable";
 import { ModelCards } from "@/app/(operator)/admin/status/dashboard/ModelCards";
@@ -12,6 +13,7 @@ import { Sparkline } from "@/app/(operator)/admin/status/dashboard/Sparkline";
 import type { HourlySeries, ModelHealth } from "@/lib/operations/dashboard";
 import type { ThroughputStage } from "@/lib/operations/throughput-model";
 import type { RoleOverview } from "@/lib/operations/roles";
+import type { StarGrowthPage } from "@/lib/domain/products/star-growth";
 import { humanOverview } from "./fixtures/human-queue";
 
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh() {} }) }));
@@ -117,9 +119,22 @@ describe("역할 표와 상태 칩", () => {
     ownerRelease: "6170584abc", epoch: 18, secondsUntilExpiry: 30, primaryRelease: "6170584abc", standbyRelease: "6170584abc", ...over });
   const roles = [role({}), role({ role: "maintenance", reason: "standby_active", ownerInstanceId: "mini-maintenance-standby", ownerKind: "standby", ownerRelease: "ce64737xyz", epoch: 9 })];
   const scheduler = { freshReplicas: 2, alarm: false };
-  const web = [{ instance: "m3-web", release: "6170584abc" }, { instance: "mini-web", release: "6170584abc" }];
+  const web = [{ instance: "m3-web", release: "6170584abc", observedAt: "2026-10-02T13:53:00.000Z" }, { instance: "mini-web", release: "6170584abc", observedAt: "2026-10-02T13:53:00.000Z" }];
 
-  it("예비가 일하는 역할은 주황 알약으로 보이고 공통 이미지 릴리스가 갈릴 때만 안내를 붙인다", () => {
+  it("빈 역할·모델 관측을 정상 0/0으로 표시하지 않는다", () => {
+    const out = html(createElement(StatusChips, { roles: [], scheduler, web: [], models: [], quota: null, now: "2026-10-02T13:53:00.000Z" }));
+    expect(out).not.toContain("0/0");
+    expect(out).toContain("모델 관측 없음");
+  });
+
+  it("한 웹 또는 오래된 웹으로 두 웹 같은 릴리스를 보증하지 않는다", () => {
+    for (const observed of [[web[0]], [web[0], { ...web[1], stale: true }], web.map((row) => ({ ...row, observedAt: undefined }))]) {
+      const out = html(createElement(StatusChips, { roles, scheduler, web: observed, models: [], quota: null, now: "2026-10-02T13:53:00.000Z" }));
+      expect(out).not.toContain("웹 m3·mini 같은 릴리스");
+    }
+  });
+
+  it("예비가 일하는 역할과 주·예비 릴리스/담당 기한을 보이며 웹은 웹끼리 비교한다", () => {
     const out = html(createElement(RolesTable, { roles, scheduler, web }));
     expect(out).toContain("mini 예비");
     expect(out).toContain("· 예비가 일함");
@@ -128,8 +143,9 @@ describe("역할 표와 상태 칩", () => {
     expect(out).toContain("ce64737");
     expect(out).not.toContain("릴리스가"); // maintenance 는 git 빌드 — 릴리스가 달라도 정상
     expect(out).toContain("2/2 복제");
-    const split = html(createElement(RolesTable, { roles, scheduler, web: [web[0], { instance: "mini-web", release: "ce64737xyz" }] }));
-    expect(split).toContain("릴리스가 2가지");
+    expect(out).toContain("30초 남음");
+    const split = html(createElement(RolesTable, { roles, scheduler, web: [web[0], { ...web[1], release: "ce64737xyz" }] }));
+    expect(split).toContain("두 웹 릴리스 불일치");
   });
 
   it("머리말 칩은 주 n/5·예비·스케줄러·웹·모델·한도를 한 줄로 요약한다", () => {
@@ -137,13 +153,31 @@ describe("역할 표와 상태 칩", () => {
       { key: "first", label: "1차 심사", model: "gpt-oss", calls1h: 300, failed1h: 10, avgSeconds: 12, agreement1h: null, lastSuccessAt: null },
       { key: "second", label: "2차 투표", model: "qwen", calls1h: 200, failed1h: 5, avgSeconds: 11, agreement1h: 0.53, lastSuccessAt: null },
     ];
-    const out = html(createElement(StatusChips, { roles, scheduler, web, models, quota: { remaining: 400, limit: 5000, resetAt: "2026-10-02T14:35:00.000Z" }, now: "2026-10-02T13:53:00.000Z" }));
-    expect(out).toContain("워커 주 1/2 · 예비가 일함 1");
+    const out = html(createElement(StatusChips, { roles, scheduler, web, models, quota: { readFailed: false, sources: [{ label: "PAT test", quota: { remaining: 400, limit: 5000, used: 4600, reset: 1790945700 }, observedAt: "2026-10-02T13:53:00.000Z", stale: false }] }, now: "2026-10-02T13:53:00.000Z" }));
+    expect(out).toContain("워커 주 1/5 · 예비가 일함 1");
     expect(out).toContain("스케줄러 2/2");
     expect(out).toContain("웹 m3·mini 같은 릴리스");
     expect(out).toContain("모델 1/2 정상");
-    expect(out).toContain("GitHub 한도 400/5,000 · 23:35 (42분 후) 초기화");
-    expect(out).toContain('data-tone="bad"');
+    expect(out).toContain("GitHub core 최신 1/1");
+    expect(out).toContain('data-tone="warn"');
+  });
+
+  it("8시간 관측은 수집 수가 모두 성공해도 열린 회차와 미집계를 표시하고 자료 실패를 0건과 구분한다", () => {
+    const page = { total: 0, snapshot: { status: "late", reason: "run-not-closed", runStatus: "collecting", closedAt: null,
+      asOf: "2026-10-13T07:00:00.000Z", baselineAsOf: "2026-10-12T23:00:00.000Z", nextCycle: "2026-10-13T15:00:00.000Z",
+      targetCount: 3721, successCount: 3721, failureCount: 0, firstObservedAt: null, lastObservedAt: null,
+      baseline: null, comparableCount: 0 } } as StarGrowthPage;
+    const collecting = html(createElement(StarObservationCard, { page }));
+    expect(collecting).toContain("수집 중 · 아직 닫히지 않음");
+    expect(collecting).toContain("3,721 / 3,721 / 0");
+    expect(collecting).toContain("미집계 · 닫힌 두 회차가 필요합니다");
+    const empty = html(createElement(StarObservationCard, { page: { ...page, snapshot: { ...page.snapshot, status: "no-results", reason: "below-threshold", runStatus: "closed", comparableCount: 3400 } } }));
+    expect(empty).toContain("급상승 0건");
+    expect(empty).toContain("3,400 / 0");
+    expect(empty).toContain("공개 급상승 기준을 만족한 제품이 없습니다");
+    const failed = html(createElement(StarObservationCard, { page: null }));
+    expect(failed).toContain("관측 자료를 읽지 못했습니다");
+    expect(failed).not.toContain("3,400 / 0");
   });
 });
 

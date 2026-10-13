@@ -60,6 +60,9 @@ export type StarGrowthSnapshot = {
   nextCycle: string;
   baselineAsOf: string;
   runId: number | null;
+  /** Domain closure, separate from the job's last successful idle/resume tick. */
+  runStatus?: ProductStarObservationRun["status"] | null;
+  closedAt?: string | null;
   policyVersion: string | null;
   policy: StarObservationPolicy | null;
   targetCount: number | null;
@@ -269,7 +272,8 @@ export async function getStarGrowthPage(options: StarGrowthPageOptions = {}): Pr
   const snapshot: StarGrowthSnapshot = {
     status: "warming", reason: "missing-run", asOf: asOf.toISOString(),
     nextCycle: nextStarObservationCycleAt(now).toISOString(), baselineAsOf: baselineAt.toISOString(),
-    runId: current?.id ?? null, policyVersion: current ? `${current.policyVersion}/${GROWTH_POLICY_VERSION}` : null,
+    runId: current?.id ?? null, runStatus: current?.status ?? null, closedAt: current?.closedAt?.toISOString() ?? null,
+    policyVersion: current ? `${current.policyVersion}/${GROWTH_POLICY_VERSION}` : null,
     // Preserve the immutable collector policy; these are the effective display criteria.
     policy: current && validPolicy(current.policy) ? { ...current.policy,
       minGain: 1, minIntervalHours: COMPARISON_HOURS - 1, maxIntervalHours: COMPARISON_HOURS + 1 } : null,

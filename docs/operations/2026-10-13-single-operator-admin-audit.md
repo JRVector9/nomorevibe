@@ -6,6 +6,8 @@
 
 이 문서는 기능 검토와 다음 PR 제안이다. 아래 관리자 기능 전체를 이번에 구현했다는 뜻은 아니다. 운영 다국어 배포의 실제 명령·DB·이미지·13개 core 앱 결과는 [배포 기록](2026-10-13-public-i18n-production-rollout.md)과 구분한다. 세 담당자는 코드와 문서만 읽었고 브라우저 기능 시험·운영 DB·키·외부 API에 접근하지 않았다. root의 배포 전후 읽기 검증과 환경 조치는 별도 증거로 기록한다.
 
+후속 요청에 따라 main b8147dc와 운영 DB 집계를 다시 대조해 ADM01~16을 **6개 최소 개발 PR로 축소**했다. 이미 있는 기능·보류 이유·실측 수치·담당별 소유 범위는 [최종 개발 계획](../superpowers/plans/2026-10-13-admin-essential.md)에 있다. 아래 16개 행은 최초 제안 기록이다.
+
 ## 먼저 확인한 관리자 접근 문제
 
 - root가 쿠키 없는 `https://nomorevibe.com/admin/status`에서 HTTP200, Cloudflare edge 응답과 관리자 내용을 확인했다. 두 웹의 실행 설정에 개발용 `ADMIN_LOCAL_LOGIN=1`이 있었다. 코드의 proxy와 `currentAdmin()`이 이를 신원 확인 없이 허용한다. 관리자 쓰기는 시험하지 않았다.

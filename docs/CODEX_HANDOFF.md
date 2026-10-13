@@ -1,3 +1,69 @@
+# 2026-10-13 — 필수 관리자 구현 병렬 재리뷰·운영 배포 진행
+
+## Current objective / completed work
+
+사용자가 서브에이전트 병렬 코드리뷰와 운영 배포를 요청했다. 대상은 feat/admin-essential-integration-20261013의 구현 6848016, base main b8147dc다. gpt-6.1-sol/xhigh 3담당이 인증·댓글/번역·운영/자동 차단을 독립 읽기 리뷰했고 P1/P2 발견 없이 완료했다. root가 보완·PR·필수 CI·배포를 전담한다. 이전 단위161/통합76/타입/lint/i18n/webpack build 성공은 그대로 유효하며 새 변경이 있을 때 관련 범위만 재실행한다.
+
+## Design / modified files / verification
+
+이번 단계는 리뷰 결과 보완과 릴리스 기록이다. PR410을 생성했고 첫 CI38362899860의 quality가 feedback/page.tsx의 12px 한 곳 때문에 공통 typography fixture2개에서 실패했다. 이를13px로 교정하고 관련 검사를 재실행한다. 세 리뷰 담당이 worker/job/schema/정책 호환성을 대조해 양 웹만 새 image로 배포 가능함을 확인했다. prod skill을 읽었으며 Keychain 자격으로 Dokploy API 직접 curl을 사용한다. 현재 main b8147dc, 운영 웹707/백엔드b592, core13앱 구성이다. 새 migration/schema는 없으므로 migration·소비자 drain을 반복하지 않는다. 공개 소개 검수2100 중단, 기능4개 ON, 관리자 production local 우회0와 별도 connect-agent를 보존한다. scheduler의 autoDeploy=true만 예외적으로false로 맞춰 main 병합 때 CI/릴리스와 무관한 재시작을 막고 기존2복제본·실행 환경/주기를 유지한다. 나머지 worker/source5는 b592로 유지한다. branch push·PR410은 완료했고 최신 수정의 CI/운영 배포는 아직 완료 전이다. 성공을 미리 주장하지 않는다. 사용자 main의 미추적 산출물은 보존한다.
+
+## Remaining work / exact next commands
+
+세 리뷰 결과→필요 보완/관련 체크→정상 PR 필수 check→정상 merge→main CI·web/worker digest/양 서버 pull→13앱 현재 상태 snapshot·양웹 배포 readiness→양웹/public 본문·관리 API 차단·runtime source/env·failover/progress 검증→최종 보고 순서다. 관리자 private ingress/ACL/자격 설치는 기존 runbook 경계이며 설치 미검증을 배포 완료와 혼동하지 않는다. 비밀/환경 전문·쿠키·DB본문은 로그나 Git에 넣지 않는다.
+
+```sh
+cd /private/tmp/nomorevibe-admin-essential-integration-20261013
+git status --short --branch
+git diff origin/main --check
+# 정상 PR과 최신 main CI가 성공한 뒤에만 새 immutable image를 운영에 배포한다.
+# 읽기/실측 private state와 이전 release state 전체를 공유·커밋하지 않는다.
+```
+
+---
+
+# 2026-10-13 — 관리자 16개 제안 실측·범위 축소·병렬 구현
+
+## Current objective / completed work
+
+사용자가 기존 ADM01~16을 현재 코드와 실제 운영에 대조하고, 이미 구현되었거나 과한 범위를 제외한 최종 PR 계획과 병렬 구현을 요청했다. main b8147dc(문서 PR409까지 병합)를 기준으로 root와 gpt-6.1-sol/xhigh 3담당이 재감사한 뒤 6개 PR로 줄였다. 최종 계획은 docs/superpowers/plans/2026-10-13-admin-essential.md다. PR01 access, PR02/06 ops, PR03/04 content, PR05 및 공통 Origin 연결은 root가 구현했다. 담당별 commit을 root가 리뷰·cherry-pick했고 세 담당의 최종 통합 읽기 리뷰도 중요 잔여 발견 없이 완료했다. 코드 구현과 아래 로컬 체크는 완료했으며 운영 설치·배포는 하지 않았다.
+
+## Modified files / key design decisions
+
+root integration: /private/tmp/nomorevibe-admin-essential-integration-20261013, branch feat/admin-essential-integration-20261013. auth/ops/content는 별도 worktree이고 node_modules symlink만 공유한다. 통합 commit: PR01 4914506, PR02 01d3649/1b3a2c9, PR03 5369e2d/cc4f384, PR04 b7dea37/bce67aa, PR05 67ce2c2, PR06 43c64b4/e333134, 공통 Origin 94a68f2. docs/README/.env.example는 설정 발견과 실측·결과를 기록한다. lib/auth와 auth API/proxy, admin/status·feedback·translations·inbox·products·nav/activity, 관련 기존 DAL/fixture가 변경됐다. schema/package/dependency/collector는 변경하지 않았다.
+
+신규 RBAC·CMS·monitor·비용 collector·계정 삭제는 제외했다. production local 우회는 금지하며 private proof를 proxy/currentAdmin/API에서 검증한다. 단일 ID/password scrypt + DB 실패 제한 + credential 교체 세션 무효화를 적용했다. 댓글 잠금 순서는 product→binding→outbox→feedback이며 sending/uncertain/delivered 외부 Issue를 삭제하지 않고 복원 시 재전송하지 않는다. 번역은 4회 상한/hash·상태 CAS/backoff·보류를 유지한다. inbox는 held 댓글/failed 번역/현재 최신 자동 소실 차단을 기존 수신 화면과 같은 predicate로 읽는다. 전 접근 방식의 저장소 판정·기존 차단 해제를 연결했다. frontend707/backendb592 독립 배포는 정상이며 역할 쌍·웹 쌍끼리만 릴리스를 비교한다. 소개 검수 중단은 유지한다.
+
+## Test commands / results / failed approaches
+
+root 운영 read-only 15:50:44 KST: accepted2/held0/outbox0/users1; 번역 ready116/pending2/failed53(quality45/timeout8/4회 소진4), auto:repo-gone 현재2, 내림 pending0/소개0/newsapproved451pending0. health200/adminlogin200/status+feedback307/adminOAuth503/enadmin404. core13개 done, 웹2+4는707/워커b592, local0/password·ingress없음. 별도 runtime probe에서 두 웹 ready=true. Docker HEALTHCHECK가 없는 6웹의 healthy0은 unhealthy가 아니다. 서버 tailscale CLI가 PATH에 없어 ACL/Serve는 미확인이다. reserved SQL alias day를 day_count로 고쳤고 CLI FileNotFound를 미확인 상태로 기록했다. 운영 DB·환경 쓰기와 환경 전문 출력은 하지 않았다.
+
+root 최종 체크: next typegen + tsc --noEmit --incremental false exit0; check:i18n(4 locales/8 namespaces/11 public pages) exit0; 변경 범위 ESLint exit0; 기존 단위 13파일 161사례 및 독립 local DB 통합 6파일 76사례 성공(아래 실패 두 fixture 보완 후 해당 파일 재실행 포함); DATABASE_URL=postgres://build:build@localhost:5432/build npx next build --webpack exit0. git diff --check와 base-to-working-tree diff --check 성공. 테스트 전용 Docker nmv-admin-root-test-20261013/localhost55448을 사용했고 끝난 뒤 이 컨테이너만 stop했다. 담당별 추가 DB probe는 댓글 microsecond cursor/CAS/outbox 취소·복원·감사 rollback, 번역 같은 원문 attempt/backoff/4회 상한·source 변경·중단/CAS/lease를 확인했다고 보고했다. 별도 새 suite/E2E는 만들지 않았다. GitHub 전체 CI·실제 브라우저·운영 로그인/쓰기·외부 Issue 파일럿은 실행하지 않았다.
+
+실패 접근: 초기 단위 product-feedback mock에 새 adminOrigin export가 없어 1건 실패했다. 실제 admin-access의 origin 함수를 모킹에 연결하고 public origin 거절/private origin 허용을 확인해 24사례 성공했다. 초기 inbox 통합 fixture가 새 server-only 번역 reader를 import해 실패했다. 기존 integration fixture와 같은 server-only mock을 추가해 3사례 성공했다. 담당 leaf의 Turbopack build는 외부 node_modules symlink를 허용하지 않아 실패했다. root는 코드 우회 없이 지원되는 webpack build를 실행해 성공했다. 같은 전체 suite/운영 배포를 반복하지 않는다.
+
+## Remaining work / exact next commands
+
+코드 구현·병렬/통합 리뷰·관련 로컬 체크·최종 문서 정리를 완료했다. 아직 원격 push/GitHub PR 생성/merge/deploy는 하지 않았다. 이후 배포 시 최신 main 기반 필수 CI check를 통과한 정상 PR로 진행한다. private ingress/Tailscale ACL/방화벽/양 웹 자격 설치·실제 로그인 전 관리자 운영 접속 완료로 표기하지 않는다. ADMIN_LOCAL_LOGIN을 운영에 켜지 않는다. 별도 사용자 GitHub 댓글 파일럿과 백업·외부 경보 등 PENDING은 미완료로 유지한다. 0075 migration/이전 양웹 배포를 반복하지 않는다.
+
+```sh
+cd /private/tmp/nomorevibe-admin-essential-integration-20261013
+git status --short --branch
+git diff --check
+npx next typegen
+npx tsc --noEmit --incremental false
+# 위 체크는 이미 성공했다. 후속 변경이 있는 경우에만 관련 범위를 재실행한다.
+# 측정 helper의 measurement.json은 안전한 집계지만 private state 전체나 앱 JSON/env를 공유/커밋하지 않는다.
+# auth WT: /private/tmp/nomorevibe-admin-access-essential-20261013
+# ops WT: /private/tmp/nomorevibe-admin-ops-essential-20261013
+# content WT: /private/tmp/nomorevibe-admin-content-essential-20261013
+# root 테스트 컨테이너 stop은 완료했다. 다른 작업의 55435/55447 DB를 건드리지 않는다.
+# 원격/배포 후속은 README·docs/operations/independent-workers-runbook.md·admin-private-access.md를 따른다.
+# 사용자 main의 미추적 PT/prototypes 산출물과 기존 stash는 보존한다.
+```
+
+---
+
 # 2026-10-13 — 운영 배포·AI 탐색 탭·1인 관리자 병렬 감사 최종화
 
 ## Current objective / completed work

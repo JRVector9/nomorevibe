@@ -21,6 +21,7 @@ describe("GitHub 없이 로컬 어드민 로그인", () => {
   });
 
   afterEach(() => {
+    vi.unstubAllEnvs();
     restore("ADMIN_LOCAL_LOGIN", saved.local);
     restore("AUTH_SECRET", saved.secret);
     restore("ADMIN_GITHUB_LOGINS", saved.logins);
@@ -52,6 +53,30 @@ describe("GitHub 없이 로컬 어드민 로그인", () => {
     process.env.ADMIN_LOCAL_LOGIN = "1";
     const res = await proxy(new NextRequest("http://localhost:3200/admin"));
     expect(res.headers.get("location")).toBeNull();
+  });
+
+  it("production에서는 local=1과 위조 내부 헤더로 관리자 경계를 열 수 없다", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("ADMIN_LOCAL_LOGIN", "1");
+    vi.stubEnv("ADMIN_ORIGIN", "");
+    vi.stubEnv("ADMIN_INGRESS_SECRET", "");
+    expect(isAdminLogin("local")).toBe(false);
+    const res = await proxy(new NextRequest("https://public.example/admin/login", {
+      headers: { host: "internal.example", "x-forwarded-for": "100.64.0.1", "x-nmv-admin-ingress-token": "forged" },
+    }));
+    expect(res.status).toBe(404);
+  });
+
+  it("설정된 private ingress 증명만 통과하고 언어 접두사는 관리자 별칭이 되지 않는다", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("ADMIN_ORIGIN", "https://internal.example");
+    vi.stubEnv("ADMIN_INGRESS_SECRET", "private-ingress-fixture-key-at-least-32-bytes");
+    const headers = { "x-nmv-admin-ingress-token": process.env.ADMIN_INGRESS_SECRET! };
+    expect((await proxy(new NextRequest("https://public.example/admin/status"))).status).toBe(404);
+    const res = await proxy(new NextRequest("https://internal.example/admin/status", { headers }));
+    expect(res.status).toBe(307);
+    expect(res.headers.get("location")).toBe("https://internal.example/admin/login");
+    expect((await proxy(new NextRequest("https://internal.example/en/admin/status", { headers }))).status).toBe(404);
   });
 });
 

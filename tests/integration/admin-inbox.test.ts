@@ -1,4 +1,5 @@
-import { beforeAll, expect, it } from "vitest";
+import { beforeAll, expect, it, vi } from "vitest";
+vi.mock("server-only", () => ({}));
 import { db } from "@/lib/db";
 import { crawlCandidates, crawlReviewAttempts, crawlTaglines, productAuditCampaigns, productAuditItems, productEvidenceAudit, productHealth,
   productIntroChecks, products, secondReviews, takedownRequests } from "@/lib/db/schema";
@@ -40,6 +41,7 @@ beforeAll(async () => {
     // 하루가 안 됐다 — 아직 사라졌다고 하지 않는다
     product("gone-fresh", { repoUrl: "https://github.com/a/fresh", repoStatus: "not_found", repoMissingSince: ago(5), repoCheckedAt: ago(1) }),
     product("spam-new", { status: "banned" }), product("spam-old", { status: "banned" }),
+    product("auto-gone", { status: "banned", accessMode: "installable" }),
     product("audit-open"), product("audit-kept"),
   ]).returning();
   const id = (slug: string) => rows.find((row) => row.slug === slug)!.id;
@@ -71,6 +73,7 @@ beforeAll(async () => {
   const ban = (slug: string, createdAt: Date) => ({ slug, actor: SPAM_AUTO_BAN_ACTOR, action: "admin.product.ban", reason: SPAM_AUTO_BAN_REASON,
     metadata: { confidence: 0.97, status: "banned" }, createdAt });
   await db.insert(productEvidenceAudit).values([ban("spam-new", ago(3)), ban("spam-old", ago(30))]);
+  await db.insert(productEvidenceAudit).values({ slug: "auto-gone", actor: "auto:repo-gone", action: "admin.product.ban", reason: "repo_gone", createdAt: ago(2) });
 
   const campaign = { startedBy: "test", reason: "test", promptVersion: "test", rulesVersion: "test", provider: "abcllm", model: "m" };
   const [latest] = await db.insert(productAuditCampaigns).values(campaign).returning();
@@ -100,6 +103,9 @@ it("칸마다 수는 처리 화면이 쓰는 함수의 값과 같다", async () 
   expect(data("intro").count).toBe(attention.introNeedsEditor);
   expect(data("repoGone").count).toBe(attention.repoGone.installable + attention.repoGone.website);
   expect(data("spam").count).toBe(attention.spamAutoBans.day);
+  expect(data("repoAutoBanned").count).toBe(1);
+  expect(data("feedback").count).toBe(0);
+  expect(data("translations").count).toBe(0);
   // 심은 값 그대로
   expect([summary.pending, summary.overdue, overview.stages.human, attention.auditRejectsOpen, down, attention.introNeedsEditor,
     attention.repoGone.installable + attention.repoGone.website, attention.spamAutoBans.day]).toEqual([2, 1, 2, 1, 2, 1, 2, 1]);
@@ -125,7 +131,7 @@ it("줄은 오래 기다린 것부터이고, 첫 줄이 가장 오래된 것이�
 });
 
 it("제품 칸의 줄은 연결된 제품 목록 거르기와 같은 제품이다", async () => {
-  const filters: [keyof InboxSnapshot["results"], ProductFilterName][] = [["down", "응답 없음"], ["intro", "소개 확인 필요"], ["repoGone", "저장소 사라짐"]];
+  const filters: [keyof InboxSnapshot["results"], ProductFilterName][] = [["down", "응답 없음"], ["intro", "소개 확인 필요"], ["repoGone", "저장소 사라짐"], ["repoAutoBanned", "저장소 소실 자동 차단"]];
   for (const [key, name] of filters) {
     const { statuses, ...flags } = PRODUCT_FILTERS[name];
     const listed = await listProducts({ statuses: [...statuses], ...flags, limit: 100 });

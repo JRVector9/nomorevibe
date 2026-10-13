@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { withRoute } from "@/lib/http/handler";
 import { siteOrigin } from "@/lib/site";
+import { adminIngressAllowed, adminOrigin } from "@/lib/auth/admin-access";
 import { logger } from "@/lib/observability/logger";
 import { isAdminLogin, authSecret } from "@/lib/auth/admin";
 import { signSession, SESSION_COOKIE, sessionCookieOptions } from "@/lib/auth/session";
@@ -19,7 +20,8 @@ function deny(origin: string, reason: string, detail: Record<string, unknown> = 
 }
 
 export const GET = withRoute("auth.github.callback", async (req: Request) => {
-  const origin = siteOrigin(req);
+  if (!adminIngressAllowed(req.headers)) return new NextResponse(null, { status: 404 });
+  const origin = adminOrigin() ?? siteOrigin(req);
   const url = new URL(req.url);
   const code = url.searchParams.get("code");
   const state = url.searchParams.get("state");

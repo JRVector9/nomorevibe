@@ -11,7 +11,7 @@
 export const SESSION_COOKIE = "nmv_admin";
 const SESSION_TTL_SECONDS = 12 * 60 * 60; // 12시간
 
-export type Session = { login: string; exp: number };
+export type Session = { login: string; exp: number; method?: "password" | "github" | "local" };
 
 function b64urlEncode(bytes: Uint8Array): string {
   return Buffer.from(bytes).toString("base64url");
@@ -54,8 +54,9 @@ export async function verifySession(
   nowSeconds?: number,
 ): Promise<Session | null> {
   if (!value) return null;
-  const [bodyPart, signaturePart] = value.split(".");
-  if (!bodyPart || !signaturePart) return null;
+  const parts = value.split(".");
+  const [bodyPart, signaturePart] = parts;
+  if (parts.length !== 2 || !bodyPart || !signaturePart) return null;
 
   let body: Uint8Array<ArrayBuffer>;
   let signature: Uint8Array<ArrayBuffer>;
@@ -75,7 +76,7 @@ export async function verifySession(
   } catch {
     return null;
   }
-  if (typeof session.login !== "string" || typeof session.exp !== "number") return null;
+  if (!session || typeof session.login !== "string" || !Number.isSafeInteger(session.exp)) return null;
 
   const now = nowSeconds ?? Math.floor(Date.now() / 1000);
   if (session.exp <= now) return null;

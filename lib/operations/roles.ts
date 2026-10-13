@@ -15,7 +15,7 @@ export type RoleOverview = {
   primaryRelease: string | null; standbyRelease: string | null;
 };
 
-/** 공통 이미지로 함께 올리는 역할 — 릴리스가 웹과 같아야 한다. maintenance·text 는 git 빌드라 따로 간다. */
+/** 공통 이미지 배포 대상 역할. 웹만 별도 배포할 수 있으므로 전체 역할·웹의 동일 릴리스를 강제하지 않는다. */
 export const SHARED_IMAGE_ROLES = new Set(["crawler", "reviewer", "publisher"]);
 
 export async function roleOverview(): Promise<{ roles: RoleOverview[]; scheduler: { freshReplicas: number; alarm: boolean } }> {
@@ -48,7 +48,9 @@ export async function roleOverview(): Promise<{ roles: RoleOverview[]; scheduler
   const report = classifyFailoverReadiness({ leases, candidates, schedulers });
   const roles = FAILOVER_ROLES.map((role) => {
     const lease = leases.find((row) => row.role === role);
-    const fresh = (kind: string) => candidates.find((row) => row.role === role && row.kind === kind && row.ageSeconds <= 60);
+    const fresh = (kind: string) => candidates.find((row) => row.role === role && row.kind === kind &&
+      row.instanceId === (kind === "primary" ? `m3-${role}` : `mini-${role}-standby`) &&
+      Number.isFinite(row.ageSeconds) && row.ageSeconds >= -5 && row.ageSeconds <= 60);
     return {
       role, reason: report.roles.find((row) => row.role === role)?.reason ?? "primary_missing",
       ownerInstanceId: lease?.ownerInstanceId ?? null, ownerKind: lease?.ownerKind ?? null, ownerRelease: lease?.ownerRelease ?? null,

@@ -1,7 +1,7 @@
 import { beforeAll, beforeEach, expect, it } from "vitest";
 import { db } from "@/lib/db";
-import { productHealth, products, type ProductStatus } from "@/lib/db/schema";
-import { countProducts, countProductsByFilter, listProducts } from "@/lib/domain/products/repository";
+import { productEvidenceAudit, productHealth, products, type ProductStatus } from "@/lib/db/schema";
+import { countProducts, countProductsByFilter, listProducts, REPO_GONE_AUTO_ACTOR, REPO_GONE_AUTO_REASON } from "@/lib/domain/products/repository";
 import { DOWN_THRESHOLD, downProductCount } from "@/lib/domain/products/health";
 import { PRODUCT_FILTERS } from "@/app/(operator)/admin/products/filters";
 import { ensureSchema, resetTables } from "./setup";
@@ -70,4 +70,21 @@ it("거르기 칩 수는 한 번의 집계로, 칩을 누른 목록의 수와 �
   expect(counts).toMatchObject({ 전체: 4, 검증됨: 1, 미클레임: 2, 차단됨: 1, "응답 없음": 1 });
   const searched = await countProductsByFilter(PRODUCT_FILTERS, "alpha");
   expect(searched).toMatchObject({ 전체: 3, 검증됨: 1, 미클레임: 1, 차단됨: 1, "응답 없음": 0 });
+});
+
+it("저장소 소실 자동 차단은 현재 마지막 결정을 보고, 수동 재차단과 해제된 결과는 제외한다", async () => {
+  await product("auto-gone", { status: "banned" });
+  await product("manual-reban", { status: "banned" });
+  await product("restored", { status: "seeded" });
+  const auto = (slug: string) => ({ slug, action: "admin.product.ban", actor: REPO_GONE_AUTO_ACTOR, reason: REPO_GONE_AUTO_REASON });
+  await db.insert(productEvidenceAudit).values([auto("auto-gone"), auto("manual-reban"), auto("restored")]);
+  await db.insert(productEvidenceAudit).values([
+    { slug: "manual-reban", action: "admin.product.unban", actor: "admin" },
+    { slug: "manual-reban", action: "admin.product.ban", actor: "admin", reason: "unsafe_download" },
+    { slug: "restored", action: "admin.product.unban", actor: "admin" },
+  ]);
+  const filter = PRODUCT_FILTERS["저장소 소실 자동 차단"];
+  expect((await listProducts({ ...filter, limit: 25 })).map(row => row.slug)).toEqual(["auto-gone"]);
+  expect(await countProducts(filter)).toBe(1);
+  expect((await countProductsByFilter(PRODUCT_FILTERS))["저장소 소실 자동 차단"]).toBe(1);
 });

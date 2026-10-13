@@ -74,7 +74,7 @@ describe("feedback transactional GitHub outbox", () => {
     const { feedback } = await seed({ autoEnqueue: true, body: "https://a.test https://b.test https://c.test https://d.test" });
     expect(feedback.reviewState).toBe("held");
     expect(await db.select().from(githubIssueOutbox)).toEqual([]);
-    const approved = await reviewFeedback({ id: feedback.id, decision: "accepted", reason: "관련 문서 확인", adminLogin: "reviewer" });
+    const approved = await reviewFeedback({ expectedReviewState: "held", id: feedback.id, decision: "accepted", reason: "관련 문서 확인", adminLogin: "reviewer" });
     expect(approved.deliveryState).toBe("queued");
     expect(await db.select().from(githubIssueOutbox)).toHaveLength(1);
   });
@@ -86,7 +86,7 @@ describe("feedback transactional GitHub outbox", () => {
     const [stored] = await db.select().from(productFeedback);
     expect(stored.githubDeliveryEligible).toBe(false);
     vi.stubEnv("GITHUB_FEEDBACK_DELIVERY_ENABLED", "true");
-    const approved = await reviewFeedback({ id: feedback.id, decision: "accepted", reason: "관련 문서 확인", adminLogin: "reviewer" });
+    const approved = await reviewFeedback({ expectedReviewState: "held", id: feedback.id, decision: "accepted", reason: "관련 문서 확인", adminLogin: "reviewer" });
     expect(approved.deliveryState).toBe("local_only");
     expect(await db.select().from(githubIssueOutbox)).toEqual([]);
   });

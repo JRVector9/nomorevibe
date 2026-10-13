@@ -31,6 +31,8 @@ const QUERY: Record<string, Record<string, readonly string[]>> = {
   "/admin/products": { filter: Object.keys(PRODUCT_FILTERS), sort: Object.keys(PRODUCT_SORTS) },
   "/admin/audit": { tab: auditTabs() },
   "/admin/github-accounts": {},
+  "/admin/feedback": { state: ["accepted", "held", "rejected", "all"] },
+  "/admin/translations": { state: ["pending", "ready", "failed", "reviewed", "all"] },
 };
 
 /** 그 경로의 화면을 그리는 파일들 — 하위 경로(자기 page.tsx 가 있는 폴더)는 빼고 */
