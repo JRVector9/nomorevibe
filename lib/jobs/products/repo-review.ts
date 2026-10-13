@@ -39,9 +39,9 @@ export async function openProductPage(url: string): Promise<RepoReviewPage> {
     const hop = status >= 200 && status < 400 ? metaRefreshTarget(html, finalUrl) : null;
     if (hop) {
       const next = await fetchPage(hop, "background");
-      // 넘어간 곳을 못 열었으면 남은 것은 빈 안내 페이지뿐이다 — 링크를 못 본 것으로 둔다
+      // 넘어간 곳을 못 열었으면 남은 것은 빈 안내 페이지뿐이다 — 링크를 못 본 것으로 둔다. 넘어간 곳도 같은 상한으로 본다
       if (!next) complete = false;
-      else { html = next.html; finalUrl = next.finalUrl; status = next.status; }
+      else { html = next.html; finalUrl = next.finalUrl; status = next.status; complete = complete && Buffer.byteLength(html, "utf-8") < PAGE_BYTES; }
     }
     return { status, finalUrl, title: extractPageMeta(html, finalUrl).title ?? "", text: extractTextSample(html) ?? "",
       githubLinks: extractGithubLinks(html, finalUrl), complete };

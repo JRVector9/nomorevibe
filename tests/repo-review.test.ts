@@ -47,6 +47,11 @@ describe("같은 프로젝트로 보이는 링크", () => {
       page({ finalUrl: "https://pawdelta.com/brindle", githubLinks: ["pawdelta/brindle"] }))).toEqual(["pawdelta/brindle"]);
   });
 
+  it("두 글자 이름도 알아본다(uv → neworg/uv)", () => {
+    expect(relatedRepositoryLinks({ repo: "me/uv", name: "UV", url: "https://uv.example", renamedTo: null },
+      page({ finalUrl: "https://uv.example/", githubLinks: ["neworg/uv", "mrdoob/three.js"] }))).toEqual(["neworg/uv"]);
+  });
+
   it("하루 확인이 적어 둔 새 이름을 맨 앞에 둔다 — 자르지 않는다(몇 개를 열지는 잡이 정한다)", () => {
     const links = ["jinu/a", "jinu/b", "jinu/c", "jinu/d"];
     expect(relatedRepositoryLinks({ ...listing, renamedTo: "Jinu/Honsul" }, page({ githubLinks: links })))

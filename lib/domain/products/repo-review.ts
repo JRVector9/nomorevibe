@@ -67,10 +67,13 @@ function hostLabel(url: string | null): string {
  * 페이지가 가리키는 저장소 중 같은 프로젝트일 수 있는 것 — 주인이나 이름이 옛 저장소·제품 이름·사이트 주소와 겹친다.
  * three.js·DataDog SDK 같은 남의 라이브러리는 빠진다. 같은 주인의 다른 저장소는 이름을 바꾼 것일 수 있어 연다 —
  * 재검수에서는 다른 프로젝트인 때가 더 많았지만(9건) 가르는 일은 사람에게 둔다.
+ * 알려진 한계: 자바스크립트로만 링크를 그리는 사이트는 받아 온 HTML 에 링크가 없어 옮겨 간 저장소를 못 찾는다 —
+ * 2026-10-13 재검수(1,486건 내림)도 같은 기준이었고, 내린 것은 차단 해제로 되돌린다.
  */
 export function relatedRepositoryLinks(input: { repo: string; name: string; url: string; renamedTo: string | null }, page: RepoReviewPage): string[] {
   const [owner, name] = input.repo.split("/");
-  const marks = new Set([normalize(owner), normalize(name), normalize(input.name), hostLabel(input.url), hostLabel(page.finalUrl)].filter((mark) => mark.length >= 3));
+  // 두 글자 이름(uv·qt)도 센다 — 겹치는 것이 늘면 사람에게 가는 쪽이라 안전하다
+  const marks = new Set([normalize(owner), normalize(name), normalize(input.name), hostLabel(input.url), hostLabel(page.finalUrl)].filter((mark) => mark.length >= 2));
   const links = page.githubLinks.filter((key) => key.includes("/") && key !== input.repo)
     .filter((key) => key.split("/").some((part) => marks.has(normalize(part))));
   const renamed = input.renamedTo?.toLowerCase();
