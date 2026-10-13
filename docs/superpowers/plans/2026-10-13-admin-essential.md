@@ -51,41 +51,41 @@
 
 ### PR01 — 관리자 private 경계와 1인 로그인 (access 담당)
 
-- [ ] `lib/auth/admin-access.ts`의 ingress·Origin·세션 검증을 proxy/currentAdmin/관리 API 모두 사용. production에서 local 플래그 무효. 공개·잘못된 proof는404.
-- [ ] `ADMIN_ORIGIN`, `ADMIN_INGRESS_SECRET`, `ADMIN_USERNAME`, `ADMIN_PASSWORD_HASH`로 단일 로그인. scrypt hash, DB 실패 제한, 정확한 Origin, 기존12h HttpOnly 쿠키·로그아웃 재사용. ID/hash 교체는 기존 비밀번호 세션 무효화.
-- [ ] 관리자 login, 관리자 OAuth/로그아웃·API, `lib/operations/admin-log.ts`, hash 생성 CLI·private 설치 runbook만 담당. 일반 user/maker 인증 유지.
-- [ ] header strip/overwrite, private proxy·Tailscale ACL·direct-origin firewall의 설치 경계를 문서화. Host/XFF/IP 주장만으로 허용하지 않음. 운영 설치 전 완료로 표기하지 않음.
-- [ ] root가 피드백·GitHub action Origin을 공통 `adminOrigin()`에 연결. 담당은 이 두 action의 중복 편집 금지.
+- [x] `lib/auth/admin-access.ts`의 ingress·Origin·세션 검증을 proxy/currentAdmin/관리 API 모두 사용. production에서 local 플래그 무효. 공개·잘못된 proof는404.
+- [x] `ADMIN_ORIGIN`, `ADMIN_INGRESS_SECRET`, `ADMIN_USERNAME`, `ADMIN_PASSWORD_HASH`로 단일 로그인. scrypt hash, DB 실패 제한, 정확한 Origin, 기존12h HttpOnly 쿠키·로그아웃 재사용. ID/hash 교체는 기존 비밀번호 세션 무효화.
+- [x] 관리자 login, 관리자 OAuth/로그아웃·API, `lib/operations/admin-log.ts`, hash 생성 CLI·private 설치 runbook만 담당. 일반 user/maker 인증 유지.
+- [x] header strip/overwrite, private proxy·Tailscale ACL·direct-origin firewall의 설치 경계를 문서화. Host/XFF/IP 주장만으로 허용하지 않음. 운영 설치 전 완료로 표기하지 않음.
+- [x] root가 피드백·GitHub 복구·번역 action Origin을 공통 `adminOrigin()`에 연결. 담당은 공통 Origin 연결의 중복 편집 금지.
 
 ### PR02 — 운영 상태 정확성과 기존 안내 (ops 담당)
 
-- [ ] `app/(operator)/admin/status/*`, 관련 기존 상태 reader/model: null/unknown/stale 보존, 기대 m3-web/mini-web 두 관측·5역할과 모든 readiness reason→조치/배지.
-- [ ] 역할 주·예비끼리, 두 웹끼리 릴리스 일치 검사. 독립 프런트/백엔드 릴리스는 합쳐서 경고하지 않음. lease/만료/epoch 등 기존 읽기 표시.
-- [ ] 첫 PAT을 전체 풀 고갈로 부르는 문구 제거. 기존 safe metadata·stale/reset 활용. maintenance uptime /text기존4업무 /공개번역ledger의 coverage 구분.
-- [ ] 중단의 실제 범위·job접수와 처리완료 차이·외부 runbook 설명만 추가. monitor/workerguard/운영 중단 정책 재설계 없음.
+- [x] `app/(operator)/admin/status/*`, 관련 기존 상태 reader/model: null/unknown/stale 보존, 기대 m3-web/mini-web 두 관측·5역할과 모든 readiness reason→조치/배지.
+- [x] 역할 주·예비끼리, 두 웹끼리 릴리스 일치 검사. 독립 프런트/백엔드 릴리스는 합쳐서 경고하지 않음. lease/만료/epoch 등 기존 읽기 표시.
+- [x] 첫 PAT을 전체 풀 고갈로 부르는 문구 제거. 기존 safe metadata·stale/reset 활용. maintenance uptime /text기존4업무 /공개번역ledger의 coverage 구분.
+- [x] 중단의 실제 범위·job접수와 처리완료 차이·외부 runbook 설명만 추가. monitor/workerguard/운영 중단 정책 재설계 없음.
 
 ### PR03 — 공개 댓글 사후 조치 (content 담당)
 
-- [ ] `admin/feedback/{page,actions}`, `lib/domain/feedback/{repository,review}`: 상태/검색/keyset조회, count와preview 동일 predicate.
-- [ ] 사유·expectedReviewState CAS·동일tx감사. product→binding(필요시)→outbox→feedback 잠금 순서 유지.
-- [ ] 숨길 때 queued/retry_wait만cancel. sending/uncertain/delivered는 그대로 남을 수 있음을 안내. 복원은 사이트공개만, 자동 외부 재전송 없음.
+- [x] `admin/feedback/{page,actions}`, `lib/domain/feedback/{repository,review}`: 상태/검색/keyset조회, count와preview 동일 predicate.
+- [x] 사유·expectedReviewState CAS·동일tx감사. product→binding(필요시)→outbox→feedback 잠금 순서 유지.
+- [x] 숨길 때 queued/retry_wait만cancel. sending/uncertain/delivered는 그대로 남을 수 있음을 안내. 복원은 사이트공개만, 자동 외부 재전송 없음.
 
 ### PR04 — 공개 번역 실패 운영 (content 담당, PR03 뒤 별도 commit)
 
-- [ ] `admin/translations/{page,actions}`와 기존 ledger의 read/failure summary·bounded retry helper. locale/field/status/원문/hash/error/attempts/retryAt/eligibility를 확인.
-- [ ] 단건 retry는 현재 대상/hash/상태 CAS, attempts4상한·too_long·retryAt·품질 검수 유지. 같은 원문 상한을 초기화하지 않음. stale_source는 현재 원문 요청 경로 재사용.
-- [ ] 외부LLM 직접 호출·일괄 백필·별도worker·소개검수 재개 없음.
+- [x] `admin/translations/{page,actions}`와 기존 ledger의 read/failure summary·bounded retry helper. locale/field/status/원문/hash/error/attempts/retryAt/eligibility를 확인.
+- [x] 단건 retry는 현재 대상/hash/상태 CAS, attempts4상한·too_long·retryAt·품질 검수 유지. 같은 원문 상한을 초기화하지 않음. stale_source는 현재 원문 요청 경로 재사용.
+- [x] 외부LLM 직접 호출·일괄 백필·별도worker·소개검수 재개 없음.
 
 ### PR05 — 기존 오늘 할 일·자동 내림 연결 (root)
 
-- [ ] `lib/operations/inbox.ts`, `admin/inbox/inbox-model.ts`, `AdminNav.tsx`에 PR03/04의 동일 queue helper와 자동소실 필터 연결. 조회 실패는0과 구분, 오래된5건 표시.
-- [ ] `lib/domain/products/repository.ts`, `admin/products/{filters,page}`, 관련 제품 상세에서 auto:repo-gone 감사의 최신 차단 결과 필터·현재 근거·기존해제 재사용. installable도 판정 조회.
-- [ ] 정상 자동번역pending/빈outbox/미사용뉴스를 새 사람 일로 추가하지 않음. 메뉴/상태 배지를 위해 같은 큰inbox전체를 매페이지 중복 조회하지 않음.
+- [x] `lib/operations/inbox.ts`, `admin/inbox/inbox-model.ts`, `AdminNav.tsx`에 PR03/04의 동일 queue helper와 자동소실 필터 연결. 조회 실패는0과 구분, 오래된5건 표시.
+- [x] `lib/domain/products/repository.ts`, `admin/products/{filters,page}`, 관련 제품 상세에서 auto:repo-gone 감사의 최신 차단 결과 필터·현재 근거·기존해제 재사용. installable도 판정 조회.
+- [x] 정상 자동번역pending/빈outbox/미사용뉴스를 새 사람 일로 추가하지 않음. 메뉴/상태 배지를 위해 같은 큰inbox전체를 매페이지 중복 조회하지 않음.
 
 ### PR06 — 닫힌 8시간 관측 운영 카드 (ops 담당, PR02 뒤 별도 commit)
 
-- [ ] 기존 `getStarGrowthPage({limit:0})` snapshot과 필요한 현재 runstatus 노출만 연결. T/T−8h, 성공/실패/비교가능, reader reason/다음마감을 async 진단 카드로 보여줌.
-- [ ] `lib/operations/contracts.ts` joblabel. 1분job tick과8시간관측마감을 구분. collecting중 성공수를closed로 간주하지 않음.
+- [x] 기존 `getStarGrowthPage({limit:0})` snapshot과 필요한 현재 runstatus 노출만 연결. T/T−8h, 성공/실패/비교가능, reader reason/다음마감을 async 진단 카드로 보여줌.
+- [x] `lib/operations/contracts.ts` joblabel. 1분job tick과8시간관측마감을 구분. collecting중 성공수를closed로 간주하지 않음.
 
 ## 병렬·통합·검증
 
@@ -106,3 +106,30 @@ git status --short --branch
 ```
 
 실제 ID/비밀번호 선택, private ingress/ACL 연결, 사용자 GitHub 댓글/외부전송 파일럿, 외부 경보 수신·복원 검증은 코드 체크와 별도다. PENDING의 미검증 항목을 코드 구현만으로 완료 처리하지 않는다.
+
+
+## 구현·통합 리뷰 결과
+
+2026-10-13 코드 구현과 관련 로컬 확인을 완료했다. 위 체크는 코드·설치 계약 문서의 완료이며 실제 Tailscale/자격 설치·운영 배포 완료를 뜻하지 않는다. 세 담당이 서로 다른 worktree에서 구현하고 root가 각 diff를 리뷰·통합했다. 최종 통합 읽기 리뷰도 3명이 병렬로 수행했으며 중요 잔여 문제를 발견하지 못했다.
+
+| PR 단위 | integration의 로컬 commit | 구현 결과 |
+|---|---|---|
+| PR01 | `4914506` | private proof/production 우회 금지, 1인 ID·password, 실패 제한·자격 교체 시 세션 무효화, 설치 runbook |
+| PR02 | `01d3649`, `1b3a2c9` | unknown/stale·기대 관측·각 release 쌍·readiness·안전한 토큰 메타데이터·관측 범위 안내 |
+| PR03 | `5369e2d`, `cc4f384` | 세 상태·검색·정확한 cursor, 사유/CAS/감사, 공개 숨김·복원과 외부 상태 보존 |
+| PR04 | `b7dea37`, `bce67aa` | 실패 ledger·현재 원문 비교, 상한/backoff/보류/CAS를 유지하는 단건 재요청 |
+| PR05 | `67ce2c2` | held/failed/자동 소실 차단 inbox, 같은 수신 조건·count·preview, 설치형 판정·기존 복구 연결 |
+| PR06 | `43c64b4`, `e333134` | 닫힌 8시간 관측 reader 카드·미마감 구분·실제 조치 화면 링크 |
+| 공통 인증 연결 | `94a68f2` | 피드백·GitHub 복구·번역 action의 private Origin 검증 |
+
+root 확인 결과:
+
+- `next typegen`와 `tsc --noEmit --incremental false` 성공.
+- `check:i18n`: 4 locales / 8 namespaces / 11 public pages 성공. 변경 범위 ESLint·`git diff --check` 성공.
+- 기존 단위 13파일 **161사례**, 독립 local DB 통합 6파일 **76사례** 성공. 초기 테스트 mock 두 곳을 보완한 뒤 해당 파일을 재실행한 결과를 포함한다.
+- `DATABASE_URL=postgres://build:build@localhost:5432/build npx next build --webpack` 성공. 별도 worktree의 외부 node_modules symlink 때문에 Turbopack이 거절한 경로를 지원되는 webpack 옵션으로 확인했다.
+- 담당의 별도 local DB probe에서 댓글 CAS·대기 전송 취소·복원 시 재전송 없음·감사 rollback, 번역 attempt/backoff/4회 상한·보류·원문 변경·CAS/lease를 확인했다.
+
+전체 GitHub CI·브라우저 수동 시험·실제 운영 로그인/관리 쓰기·외부 Issue 전송은 실행하지 않았다. 새 suite/E2E, migration, dependency, 별도 collector는 추가하지 않았다. 사용자 main의 미추적 산출물은 보존했다.
+
+개발 브랜치는 `/private/tmp/nomorevibe-admin-essential-integration-20261013`의 `feat/admin-essential-integration-20261013`다. PR01~06은 개발 범위 번호이며 아직 GitHub PR 생성·원격 push·merge·운영 배포는 하지 않았다. 다음 운영 적용에는 정상 PR/최신 base의 필수 CI와 `admin-private-access.md`의 양 웹 설정·private proxy·Tailscale ACL·direct-origin 방화벽 검증이 필요하다. 공개 소개 검수 중단은 그대로 유지한다.

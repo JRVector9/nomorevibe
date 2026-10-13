@@ -2,29 +2,40 @@
 
 ## Current objective / completed work
 
-사용자가 기존 1인 운영 감사의 ADM01~16을現在source와 실제 운영에 대조하고, 이미 구현되었거나 과한 범위를 제외한 최종 PR 계획 및 병렬 구현을 요청했다. base/main b8147dc(문서 PR409까지 정상 병합)를 기준으로 root와 gpt-6.1-sol/xhigh 3담당이 재감사를 마쳤고6개PR로축소한 계획 docs/superpowers/plans/2026-10-13-admin-essential.md를 작성했다. access는PR01,ops는PR02/06,content는PR03/04,root는PR05/공통Origin/docs를 구현한다. PR03 dc5b331+0f8a241, PR02 be8484e+caf86c1을 root가 리뷰 후 integration에 cherry-pick했다(현재5369e2d/cc4f384/01d3649/1b3a2c9). PR01/04/06은 담당이 이어서 진행 중이다.
+사용자가 기존 ADM01~16을 현재 코드와 실제 운영에 대조하고, 이미 구현되었거나 과한 범위를 제외한 최종 PR 계획과 병렬 구현을 요청했다. main b8147dc(문서 PR409까지 병합)를 기준으로 root와 gpt-6.1-sol/xhigh 3담당이 재감사한 뒤 6개 PR로 줄였다. 최종 계획은 docs/superpowers/plans/2026-10-13-admin-essential.md다. PR01 access, PR02/06 ops, PR03/04 content, PR05 및 공통 Origin 연결은 root가 구현했다. 담당별 commit을 root가 리뷰·cherry-pick했고 세 담당의 최종 통합 읽기 리뷰도 중요 잔여 발견 없이 완료했다. 코드 구현과 아래 로컬 체크는 완료했으며 운영 설치·배포는 하지 않았다.
 
 ## Modified files / key design decisions
 
-root integration: /private/tmp/nomorevibe-admin-essential-integration-20261013, branch feat/admin-essential-integration-20261013. auth/ops/content 각각 별도 worktree/node_modules만공유. root PR05는 inbox/제품auto:repo-gone 최신결정필터·전접근방식판정조회/nav/사후미노출안내·기존fixture를수정중이며아직미커밋/미검증이다. 신규 RBAC·CMS·monitor·비용 collector·계정 삭제 schema는 제외, 기존 세션·댓글 review state·번역 ledger·감사·차단 복구·8h reader를 재사용한다. 공개 소개 검수 중단 유지. production local 우회 금지/private proof를 proxy/currentAdmin/API에서검증. 댓글 product→binding→outbox→feedback 잠금과 외부 Issue 보존, 번역4회상한/hashCAS. frontend707/backendb592는의도된독립배포라전체SHA일치를정상조건으로삼지않는다.
+root integration: /private/tmp/nomorevibe-admin-essential-integration-20261013, branch feat/admin-essential-integration-20261013. auth/ops/content는 별도 worktree이고 node_modules symlink만 공유한다. 통합 commit: PR01 4914506, PR02 01d3649/1b3a2c9, PR03 5369e2d/cc4f384, PR04 b7dea37/bce67aa, PR05 67ce2c2, PR06 43c64b4/e333134, 공통 Origin 94a68f2. docs/README/.env.example는 설정 발견과 실측·결과를 기록한다. lib/auth와 auth API/proxy, admin/status·feedback·translations·inbox·products·nav/activity, 관련 기존 DAL/fixture가 변경됐다. schema/package/dependency/collector는 변경하지 않았다.
+
+신규 RBAC·CMS·monitor·비용 collector·계정 삭제는 제외했다. production local 우회는 금지하며 private proof를 proxy/currentAdmin/API에서 검증한다. 단일 ID/password scrypt + DB 실패 제한 + credential 교체 세션 무효화를 적용했다. 댓글 잠금 순서는 product→binding→outbox→feedback이며 sending/uncertain/delivered 외부 Issue를 삭제하지 않고 복원 시 재전송하지 않는다. 번역은 4회 상한/hash·상태 CAS/backoff·보류를 유지한다. inbox는 held 댓글/failed 번역/현재 최신 자동 소실 차단을 기존 수신 화면과 같은 predicate로 읽는다. 전 접근 방식의 저장소 판정·기존 차단 해제를 연결했다. frontend707/backendb592 독립 배포는 정상이며 역할 쌍·웹 쌍끼리만 릴리스를 비교한다. 소개 검수 중단은 유지한다.
 
 ## Test commands / results / failed approaches
 
-root 운영readonly집계15:50:44KST:accepted2/held0/outbox0/users1;번역ready116/pending2/failed53(quality45/timeout8/4회소진4),auto:repo-gone2,내림pending0/소개0/newsapproved451pending0. health200/adminlogin200/status+feedback307/adminOAuth503/enadmin404.13appsdone/web2+4/workerb592web707/local0/password·ingress없음. 별도runtimeprobe양웹readytrue. DockerHealthcheck없는6웹의healthy0은unhealthy아님. 서버tailscaleCLI PATH없어ACL/Serve미검증. 첫집계reservedSQLalias day→day_count로수정,infraCLI FileNotFound→미설치/미확인기록수정. 어떠한운영쓰기/env전체출력도안함. 담당PR03기존unit38/integration53+독립DBprobe/type/lint실행성공보고;PR02기존32+review35/type/lint성공보고(초기PageProps누락은nexttypegen으로해결). root는아직통합체크미실행. 실제브라우저/운영쓰기/GitHub파일럿은미검증.
+root 운영 read-only 15:50:44 KST: accepted2/held0/outbox0/users1; 번역 ready116/pending2/failed53(quality45/timeout8/4회 소진4), auto:repo-gone 현재2, 내림 pending0/소개0/newsapproved451pending0. health200/adminlogin200/status+feedback307/adminOAuth503/enadmin404. core13개 done, 웹2+4는707/워커b592, local0/password·ingress없음. 별도 runtime probe에서 두 웹 ready=true. Docker HEALTHCHECK가 없는 6웹의 healthy0은 unhealthy가 아니다. 서버 tailscale CLI가 PATH에 없어 ACL/Serve는 미확인이다. reserved SQL alias day를 day_count로 고쳤고 CLI FileNotFound를 미확인 상태로 기록했다. 운영 DB·환경 쓰기와 환경 전문 출력은 하지 않았다.
+
+root 최종 체크: next typegen + tsc --noEmit --incremental false exit0; check:i18n(4 locales/8 namespaces/11 public pages) exit0; 변경 범위 ESLint exit0; 기존 단위 13파일 161사례 및 독립 local DB 통합 6파일 76사례 성공(아래 실패 두 fixture 보완 후 해당 파일 재실행 포함); DATABASE_URL=postgres://build:build@localhost:5432/build npx next build --webpack exit0. git diff --check와 base-to-working-tree diff --check 성공. 테스트 전용 Docker nmv-admin-root-test-20261013/localhost55448을 사용했고 끝난 뒤 이 컨테이너만 stop했다. 담당별 추가 DB probe는 댓글 microsecond cursor/CAS/outbox 취소·복원·감사 rollback, 번역 같은 원문 attempt/backoff/4회 상한·source 변경·중단/CAS/lease를 확인했다고 보고했다. 별도 새 suite/E2E는 만들지 않았다. GitHub 전체 CI·실제 브라우저·운영 로그인/쓰기·외부 Issue 파일럿은 실행하지 않았다.
+
+실패 접근: 초기 단위 product-feedback mock에 새 adminOrigin export가 없어 1건 실패했다. 실제 admin-access의 origin 함수를 모킹에 연결하고 public origin 거절/private origin 허용을 확인해 24사례 성공했다. 초기 inbox 통합 fixture가 새 server-only 번역 reader를 import해 실패했다. 기존 integration fixture와 같은 server-only mock을 추가해 3사례 성공했다. 담당 leaf의 Turbopack build는 외부 node_modules symlink를 허용하지 않아 실패했다. root는 코드 우회 없이 지원되는 webpack build를 실행해 성공했다. 같은 전체 suite/운영 배포를 반복하지 않는다.
 
 ## Remaining work / exact next commands
 
-PR01/04/06 담당commit→root리뷰/cherry-pick→공통Origin두actions와passwordactivitylabel연결→PR05최종기존fixture/독립localDB/type/lint/build(webpack모드로node_modules외부symlink회피)→최종개발보고. 아직원격push/PR생성/merge/deploy는안함. 실제privateingress/ACL/자격설치전관리자접근완료로표기금지. 0075 migration/이전양웹배포반복금지. 관리자동일Origin actions및action-links3key/번역모듈이담당종료전integration미존재라통합타입검증은그후한다.
+코드 구현·병렬/통합 리뷰·관련 로컬 체크·최종 문서 정리를 완료했다. 아직 원격 push/GitHub PR 생성/merge/deploy는 하지 않았다. 이후 배포 시 최신 main 기반 필수 CI check를 통과한 정상 PR로 진행한다. private ingress/Tailscale ACL/방화벽/양 웹 자격 설치·실제 로그인 전 관리자 운영 접속 완료로 표기하지 않는다. ADMIN_LOCAL_LOGIN을 운영에 켜지 않는다. 별도 사용자 GitHub 댓글 파일럿과 백업·외부 경보 등 PENDING은 미완료로 유지한다. 0075 migration/이전 양웹 배포를 반복하지 않는다.
 
 ```sh
 cd /private/tmp/nomorevibe-admin-essential-integration-20261013
 git status --short --branch
 git diff --check
-# 측정 helper의 measurement.json은 안전한 집계지만 private state 전체나 기존 앱 JSON/env를 공유/커밋하지 않는다.
+npx next typegen
+npx tsc --noEmit --incremental false
+# 위 체크는 이미 성공했다. 후속 변경이 있는 경우에만 관련 범위를 재실행한다.
+# 측정 helper의 measurement.json은 안전한 집계지만 private state 전체나 앱 JSON/env를 공유/커밋하지 않는다.
 # auth WT: /private/tmp/nomorevibe-admin-access-essential-20261013
 # ops WT: /private/tmp/nomorevibe-admin-ops-essential-20261013
 # content WT: /private/tmp/nomorevibe-admin-content-essential-20261013
-# 담당 커밋은 root 리뷰 후 integration에 순서대로 cherry-pick. 사용자 main 미추적 산출물 보존.
+# root 테스트 컨테이너 stop은 완료했다. 다른 작업의 55435/55447 DB를 건드리지 않는다.
+# 원격/배포 후속은 README·docs/operations/independent-workers-runbook.md·admin-private-access.md를 따른다.
+# 사용자 main의 미추적 PT/prototypes 산출물과 기존 stash는 보존한다.
 ```
 
 ---
