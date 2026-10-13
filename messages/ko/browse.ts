@@ -199,7 +199,7 @@ export const browse = {
   "method.aiAbsence": "‘AI’ 표시가 없다고 AI 없이 만든 것은 아닙니다. 아직 검사하지 않았거나, 흔적을 남기지 않는 방식으로 만들었을 수 있습니다.",
   "method.aiLevel1": "AI 에이전트가 연 PR 병합",
   "method.aiLevel2": "AI 도구 서명이 있는 개발 커밋",
-  "method.aiLevel3": "도구 전용 설정 파일",
+  "method.aiLevel3": "AI 도구 전용 설정 파일",
   "method.aiDescription1": "AI 에이전트 서비스가 연 PR 이 기본 브랜치에 병합됐습니다. PR 을 연 계정은 GitHub 이 기록합니다.",
   "method.aiDescription2": "코드를 바꾼 커밋에 AI 코딩 도구의 서명이나 작성자 표기가 있습니다. 저장소가 밝힌 것이라 실제 실행을 증명하지는 않습니다.",
   "method.aiDescription3": "저장소에 AI 코딩 도구 전용 설정·규칙 파일이 있습니다. 그 도구를 쓰도록 설정했다는 뜻입니다.",

@@ -46,7 +46,7 @@ export const labels = {
   "card.codeUpdateTime": "최근 코드 업데이트 {time}",
   "status.verified": "검증됨",
   "status.domainVerified": "도메인 검증됨",
-  "status.verifiedHint": "nomorevibe가 도메인 소유권을 직접 확인했습니다.",
+  "status.verifiedHint": "도메인 소유권을 nomorevibe가 직접 확인했습니다.",
   "status.unverified": "미검증",
   "status.unverifiedHint": "등록은 됐지만 도메인 소유권 확인이 끝나지 않았습니다.",
   "status.unclaimed": "운영자 미확인",

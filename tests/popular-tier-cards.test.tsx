@@ -41,7 +41,7 @@ describe("홈 '많이 쓰이는 프로젝트' — 구간 탭 + 발견하기 카�
   it("카드는 이름을 자르지 않고 한국어 소개·미리보기 커버·순위·저장을 보인다", async () => {
     const html = renderToStaticMarkup(await PopularTiers({}));
     const card = html.match(/<article class="project-card">([\s\S]*?)<\/article>/)![1];
-    expect(card).toContain('<span class="project-rank">1<span class="sr-only">위</span></span>');
+    expect(card).toContain('<span class="project-rank"><span aria-hidden="true">1</span><span class="sr-only">1위</span></span>');
     expect(card).toContain("Name rising-1 with a long title that used to be cut");
     expect(card).toContain("rising-1 한국어 소개");
     expect(card).toContain('class="tile-preview"');

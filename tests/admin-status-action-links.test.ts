@@ -41,12 +41,12 @@ function routeFiles(dir: string): string[] {
     return /\.tsx?$/.test(name) ? [full] : [];
   });
 }
-const anchorsOf = (pathname: string) => new Set(routeFiles(path.join(root, "app", pathname))
+const anchorsOf = (pathname: string) => new Set(routeFiles(path.join(root, "app", "(operator)", pathname))
   .flatMap((file) => [...readFileSync(file, "utf8").matchAll(/\bid="([\w-]+)"/g)].map((match) => match[1])));
 
 function assertResolves(href: string) {
   const url = new URL(href, "http://localhost");
-  expect(existsSync(path.join(root, "app", url.pathname, "page.tsx")), `${href} — 경로가 없다`).toBe(true);
+  expect(existsSync(path.join(root, "app", "(operator)", url.pathname, "page.tsx")), `${href} — 경로가 없다`).toBe(true);
   const accepted = QUERY[url.pathname];
   expect(accepted, `${href} — 받는 쿼리를 이 테스트에 적어야 한다`).toBeDefined();
   for (const [key, value] of url.searchParams) {
