@@ -16,7 +16,7 @@ const iso = (value: AnyColumn | SQL) => sql<string | null>`to_char(${value}, 'YY
 const timestamp = (value: unknown): value is string => {
   if (typeof value !== "string" || !/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{6}Z$/.test(value)) return false;
   const date = new Date(value);
-  return Number.isFinite(date.getTime()) && date.toISOString().slice(0, 19) === value.slice(0, 19);
+  return Number.isFinite(date.getTime()) && date.getUTCFullYear() > 0 && date.toISOString().slice(0, 19) === value.slice(0, 19);
 };
 const hash = (value: string) => /^[a-f0-9]{64}$/.test(value);
 const selection = {

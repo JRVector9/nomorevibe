@@ -95,7 +95,7 @@ function feedbackCursor(value?: string): { at: string; id: string } | null {
     if (typeof at !== "string" || !/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{6}Z$/.test(at)
       || typeof id !== "string" || !UUID.test(id)) return null;
     const date = new Date(at);
-    if (!Number.isFinite(date.getTime()) || date.toISOString().slice(0, 19) !== at.slice(0, 19)) return null;
+    if (!Number.isFinite(date.getTime()) || date.getUTCFullYear() < 1 || date.toISOString().slice(0, 19) !== at.slice(0, 19)) return null;
     return { at, id };
   } catch { return null; }
 }
