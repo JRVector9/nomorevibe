@@ -37,6 +37,7 @@ const FLOW: Record<string, { reads: string; writes: string }> = {
   'click-rollup': { reads: '클릭 원천', writes: '일별 집계' },
   'ranking-refresh': { reads: '일별 집계', writes: '시즌 스냅샷' },
   'news-refresh': { reads: '공식 피드', writes: 'AI 소식' },
+  'product-star-observation': { reads: '마감 회차의 고정 대상', writes: '닫힌 8시간 스타 관측' },
 };
 
 /**
@@ -104,6 +105,7 @@ export function JobTimeline({ jobs, now, onOpen }: { jobs: OperationJob[]; now: 
                     <span className="rounded border border-line bg-bg-soft px-1.5 py-0.5 font-mono text-[13px]">{flow.writes}</span>
                   </p>
                 )}
+                {job.name === 'product-star-observation' && <p className="mt-2 text-[13px] text-fg-3">1분 주기는 같은 회차의 재개·마감 확인입니다. 실제 수집은 한국 시간 00·08·16시 마감 전 1시간에 진행하며, 완료 여부는 진단의 닫힌 회차 자료로 확인합니다.</p>}
 
                 <div className="mt-2.5 flex flex-wrap gap-x-5 gap-y-1 border-t border-line pt-2 text-[13px] text-fg-3">
                   <span>주기 <b className="font-mono font-semibold text-fg-2">{catalog?.intervalMs ? `${catalog.intervalMs / 60_000}분` : '요청될 때'}</b></span>

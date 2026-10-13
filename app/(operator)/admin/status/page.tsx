@@ -30,6 +30,8 @@ import { TodayFeed } from "./dashboard/TodayFeed";
 import { RepoHealthCard } from "./dashboard/RepoHealthCard";
 import { StatusChips } from "./dashboard/StatusChips";
 import { OperationsGuidance } from "./OperationsGuidance";
+import { StarObservationCard } from "./StarObservationCard";
+import { getStarGrowthPage } from "@/lib/domain/products/star-growth";
 import { manualCandidates } from "@/lib/operations/categories";
 import { ManualClassification } from "./ManualClassification";
 import { logger, redact } from "@/lib/observability/logger";
@@ -131,6 +133,11 @@ async function TranslationProgressSlot({ now }: { now: string }) {
 function TranslationProgressPending({ failed = false }: { failed?: boolean }) {
   return <p aria-busy={!failed} className="rounded-[12px] border border-line bg-bg-card px-3 py-2 text-[13px] text-fg-3">
     사유 번역 {failed ? "진행을 읽지 못했습니다" : "진행을 세는 중"}</p>;
+}
+
+async function StarObservationSlot({ now }: { now: string }) {
+  const page = await getStarGrowthPage({ now: new Date(now), limit: 0 }).catch(warn("operations.star_observation_unavailable"));
+  return <StarObservationCard page={page} />;
 }
 
 /**
@@ -421,6 +428,7 @@ export default async function StatusPage() {
     <>
       <SearchHealthPanel health={health} observedAt={healthObservation?.observedAt} />
       <OperationsGuidance quota={quota} now={now} />
+      <Suspense fallback={<CardPending span="dash-12" label="8시간 스타 관측" />}><StarObservationSlot now={now} /></Suspense>
       <Suspense fallback={<TranslationProgressPending />}><TranslationProgressSlot now={now} /></Suspense>
       <Suspense fallback={<p className="mt-3 text-[13px] text-fg-3" aria-busy="true">진단 지표를 세는 중…</p>}>
         <DiagnosticsPanels inputs={inputs} derived={derived} />

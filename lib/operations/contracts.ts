@@ -35,6 +35,7 @@ export const JOB_LABELS: Record<string, string> = {
   'product-intro-check': '소개 검수',
   'cdn-purge': 'CDN 캐시 지우기', 'crawl-tagline': '한 줄 소개 짓기', 'product-embedding': '의미 검색 벡터',
   'product-search-refresh': '검색 데이터 갱신', 'product-stars-refresh': 'GitHub 저장소·스타 확인',
+  'product-star-observation': '8시간 스타 관측',
   'product-repo-review': '저장소 사라진 사이트 확인',
   'product-tagline-ko': '한국어 소개 짓기',
   'product-spam-rescan': '공개 제품 스팸 재검사',

@@ -5,6 +5,7 @@ import { KpiStrip } from "@/app/(operator)/admin/status/dashboard/KpiStrip";
 import { StageRail } from "@/app/(operator)/admin/status/dashboard/StageRail";
 import { RolesTable } from "@/app/(operator)/admin/status/dashboard/RolesTable";
 import { StatusChips } from "@/app/(operator)/admin/status/dashboard/StatusChips";
+import { StarObservationCard } from "@/app/(operator)/admin/status/StarObservationCard";
 import { AttentionList, trendLabel, type SplitItem } from "@/app/(operator)/admin/status/dashboard/AttentionList";
 import { SignalTable } from "@/app/(operator)/admin/status/dashboard/SignalTable";
 import { ModelCards } from "@/app/(operator)/admin/status/dashboard/ModelCards";
@@ -12,6 +13,7 @@ import { Sparkline } from "@/app/(operator)/admin/status/dashboard/Sparkline";
 import type { HourlySeries, ModelHealth } from "@/lib/operations/dashboard";
 import type { ThroughputStage } from "@/lib/operations/throughput-model";
 import type { RoleOverview } from "@/lib/operations/roles";
+import type { StarGrowthPage } from "@/lib/domain/products/star-growth";
 import { humanOverview } from "./fixtures/human-queue";
 
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh() {} }) }));
@@ -158,6 +160,24 @@ describe("역할 표와 상태 칩", () => {
     expect(out).toContain("모델 1/2 정상");
     expect(out).toContain("GitHub core 최신 1/1");
     expect(out).toContain('data-tone="warn"');
+  });
+
+  it("8시간 관측은 수집 수가 모두 성공해도 열린 회차와 미집계를 표시하고 자료 실패를 0건과 구분한다", () => {
+    const page = { total: 0, snapshot: { status: "late", reason: "run-not-closed", runStatus: "collecting", closedAt: null,
+      asOf: "2026-10-13T07:00:00.000Z", baselineAsOf: "2026-10-12T23:00:00.000Z", nextCycle: "2026-10-13T15:00:00.000Z",
+      targetCount: 3721, successCount: 3721, failureCount: 0, firstObservedAt: null, lastObservedAt: null,
+      baseline: null, comparableCount: 0 } } as StarGrowthPage;
+    const collecting = html(createElement(StarObservationCard, { page }));
+    expect(collecting).toContain("수집 중 · 아직 닫히지 않음");
+    expect(collecting).toContain("3,721 / 3,721 / 0");
+    expect(collecting).toContain("미집계 · 닫힌 두 회차가 필요합니다");
+    const empty = html(createElement(StarObservationCard, { page: { ...page, snapshot: { ...page.snapshot, status: "no-results", reason: "below-threshold", runStatus: "closed", comparableCount: 3400 } } }));
+    expect(empty).toContain("급상승 0건");
+    expect(empty).toContain("3,400 / 0");
+    expect(empty).toContain("공개 급상승 기준을 만족한 제품이 없습니다");
+    const failed = html(createElement(StarObservationCard, { page: null }));
+    expect(failed).toContain("관측 자료를 읽지 못했습니다");
+    expect(failed).not.toContain("3,400 / 0");
   });
 });
 
