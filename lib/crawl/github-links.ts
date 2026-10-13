@@ -15,7 +15,7 @@ const RESERVED = new Set([
   "join", "login", "marketplace", "new", "notifications", "orgs", "pricing", "readme", "security", "settings",
   "signup", "site", "solutions", "sponsors", "team", "topics", "trending",
 ]);
-const MAX_LINKS = 20;
+export const MAX_LINKS = 20;
 
 /** 링크를 owner 또는 owner/repo(소문자)로 모은다. 순서는 처음 나온 순, 최대 20개 */
 export function extractGithubLinks(html: string, baseUrl: string): string[] {

@@ -73,7 +73,7 @@ describe("admin product row — 저장소 사라짐", () => {
   });
 });
 
-describe("admin product row — 저장소 사라진 웹사이트의 AI 판정", () => {
+describe("admin product row — 저장소 사라진 제품의 2단계 판정", () => {
   const row: ProductRepoReview = {
     productId: 1, decision: "delist_candidate", reason: "model", answers: { same_product: false, parked: true, shutdown: false, no_content: false },
     model: "m", pageHttpStatus: 200, finalUrl: "https://found.test/", pageTitle: "found.test is for sale", pageExcerpt: null,
@@ -82,7 +82,7 @@ describe("admin product row — 저장소 사라진 웹사이트의 AI 판정", 
 
   it("판정·이유·걸린 질문·페이지를 보여 주고 운영자 버튼 둘을 단다 — 내리기는 확인 창부터 연다", () => {
     const html = render({ repoReview: repoReviewView(row, new Date("2026-10-08T05:00:00Z")) });
-    expect(html).toContain("AI: 내릴 후보");
+    expect(html).toContain("내릴 후보");
     expect(html).toContain("AI 판단 · 다른 제품 · 주차·오류 페이지");
     expect(html).toContain("200 · https://found.test/ · “found.test is for sale”");
     // 목록 시각(lib/format/time) — 오늘이면 "12:00 (2시간 전)"
@@ -94,7 +94,7 @@ describe("admin product row — 저장소 사라진 웹사이트의 AI 판정", 
   });
 
   it("아직 안 본 것·차단된 것·운영자가 정한 것", () => {
-    expect(render({ repoReview: null })).toContain("AI 사이트 확인 대기");
+    expect(render({ repoReview: null })).toContain("저장소 다시 확인 대기");
     expect(render({ repoReview: repoReviewView(row), status: "banned" })).not.toContain(">내리기<");
     const kept = repoReviewView({ ...row, operatorDecision: "keep", operatorBy: "jr", operatorAt: new Date("2026-10-08T04:00:00Z") });
     expect(kept.open).toBe(false);
@@ -102,9 +102,16 @@ describe("admin product row — 저장소 사라진 웹사이트의 AI 판정", 
     // 운영자 결정 뒤에 AI 가 다시 봤으면 다시 기다린다
     expect(repoReviewView({ ...row, operatorDecision: "keep", operatorAt: new Date("2026-10-01T00:00:00Z") }).open).toBe(true);
     expect(repoReviewView({ ...row, decision: "keep", answers: { same_product: true, parked: false, shutdown: false, no_content: false } }))
-      .toMatchObject({ open: false, decision: "AI: 유지", reason: "AI 판단 · 네 질문 모두 정상" });
+      .toMatchObject({ open: false, decision: "유지", reason: "AI 판단 · 네 질문 모두 정상" });
     expect(repoReviewView({ ...row, reason: "site_down", answers: null, pageHttpStatus: 0, finalUrl: null, pageTitle: null }))
       .toMatchObject({ reason: "사흘 넘게 응답 없음", page: "연결 안 됨" });
+    // 2026-10-13 부터 — 저장소를 다시 열어 본 이유, 잡이 스스로 내린 것
+    const auto = repoReviewView({ ...row, reason: "repo_gone", answers: null, operatorDecision: "delist", operatorBy: "auto:repo-gone",
+      operatorAt: row.reviewedAt });
+    expect(auto).toMatchObject({ open: false, reason: "저장소 없음 확인(github.com 404)" });
+    expect(auto.operator).toContain("자동 내림 · auto:repo-gone");
+    expect(repoReviewView({ ...row, decision: "human", reason: "repo_link_alive", answers: null }))
+      .toMatchObject({ open: true, decision: "사람 확인", reason: "사이트가 살아 있는 다른 저장소를 가리킴" });
   });
 
   it("보관·이름 바뀜 거르기의 기록을 보여 준다", () => {

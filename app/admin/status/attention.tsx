@@ -386,14 +386,14 @@ export function buildActions(inputs: ActionInputs, derived: DerivedStatus): Acti
   }
   if (attention && attention.repoGone.installable + attention.repoGone.website > 0) {
     const review = attention.repoReview;
-    // 2단계(AI 사이트 확인)가 사라졌다고 확정된 뒤 이틀 넘게 끝나지 않은 것이 있으면 맨 앞 급으로
+    // 2단계(저장소 다시 열어 보기)가 사라졌다고 확정된 뒤 이틀 넘게 끝나지 않은 것이 있으면 맨 앞 급으로
     const overdue = review.oldestHours !== null && review.oldestHours > REPO_REVIEW_OVERDUE_HOURS;
     actions.push({
       key: "repo-gone", tone: overdue ? "critical" : "hold", count: attention.repoGone.installable + attention.repoGone.website, unit: "건",
       title: overdue ? `저장소가 사라진 공개 제품 — ${REPO_REVIEW_OVERDUE_HOURS}시간 넘게 처리 안 됨` : "저장소가 사라진 공개 제품",
       detail: <>GitHub 저장소가 없거나 빈 채로 하루 넘게 이어짐 — 설치형 {n(attention.repoGone.installable)}건은 목록에서 가려짐 · 웹 {n(attention.repoGone.website)}건은 GitHub 표시만 뺌.
-        {" "}웹은 AI 가 사이트를 다시 봅니다: 확인 대기 {n(review.pending)} · 내릴 후보 {n(review.delistCandidates)} · 사람 확인 {n(review.human)} · AI 유지 {n(review.kept)}
-        {review.oldestHours !== null && <> · 가장 오래 기다린 것 {Math.round(review.oldestHours)}시간</>}. 내리는 것은 사람이 정합니다.</>,
+        {" "}잡이 github.com 을 다시 열어 정말 없으면 내립니다(하루 100건까지): 확인 대기 {n(review.pending)} · 내릴 후보 {n(review.delistCandidates)} · 사람 확인(옮겨 간 흔적) {n(review.human)} · 저장소 다시 열림 {n(review.kept)}
+        {review.oldestHours !== null && <> · 가장 오래 기다린 것 {Math.round(review.oldestHours)}시간</>}.</>,
       action: { label: "제품 관리", href: ACTION_LINKS.productsRepoGone },
     });
   }
