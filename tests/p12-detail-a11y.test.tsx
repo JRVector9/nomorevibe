@@ -74,7 +74,7 @@ describe("요청 폼(A11Y-01·A11Y-03)", () => {
   });
 
   it("오류는 alert, 접수는 status 로 알린다", () => {
-    const source = readFileSync("app/p/[slug]/TakedownForm.tsx", "utf8");
+    const source = readFileSync("app/(public)/[locale]/(content)/p/[slug]/TakedownForm.tsx", "utf8");
     expect(source).toMatch(/<p role="alert"[^>]*>\{error\}<\/p>/);
     expect(source).toMatch(/<p role="status"[^>]*>\s*\{intro \? INTRO_REQUEST_RECEIVED : TAKEDOWN_RECEIVED\}/);
   });

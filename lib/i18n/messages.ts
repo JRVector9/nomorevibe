@@ -1,4 +1,5 @@
 import type { common } from "@/messages/ko/common";
+import type { globalError } from "@/messages/ko/global-error";
 import type { labels } from "@/messages/ko/labels";
 import type { browse } from "@/messages/ko/browse";
 import type { detail } from "@/messages/ko/detail";
@@ -9,6 +10,7 @@ import type { policy } from "@/messages/ko/policy";
 /** Korean declares semantic keys and interpolation contracts, not translated values. */
 export interface MessageSchemas {
   common: typeof common;
+  globalError: typeof globalError;
   labels: typeof labels;
   browse: typeof browse;
   detail: typeof detail;

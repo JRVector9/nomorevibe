@@ -4,6 +4,7 @@ import { publicUserAuthEnabled } from "@/lib/domain/github-integration/flags";
 import { PublicAuthError } from "./errors";
 import { getSessionUser } from "./repository";
 import { csrfForToken, isOpaqueToken, LOGIN_NONCE_COOKIE, matchesSecretHash, PUBLIC_SESSION_COOKIE } from "./session";
+import { safePublicReturnUrl } from "@/lib/i18n/routing";
 
 export { PublicAuthError } from "./errors";
 export type { PublicUser } from "@/lib/db/public-user-schema";
@@ -36,16 +37,7 @@ export function requirePublicOrigin(request: Request): void {
 
 /** Keep navigation relative, including after percent-decoding browser parser escapes. */
 export function safeReturnUrl(value: unknown): string {
-  if (typeof value !== "string" || value.length > 2_000 || !value.startsWith("/") || value.startsWith("//")) return "/";
-  try {
-    const decoded = decodeURIComponent(value);
-    if (decoded.startsWith("//") || /[\\\u0000-\u0020\u007f]/.test(decoded)) return "/";
-    const parsed = new URL(value, "https://return.invalid");
-    if (parsed.origin !== "https://return.invalid" || parsed.pathname.startsWith("//")) return "/";
-    return `${parsed.pathname}${parsed.search}${parsed.hash}`;
-  } catch {
-    return "/";
-  }
+  return safePublicReturnUrl(value);
 }
 
 export function requireLoginMutation(request: Request): string {

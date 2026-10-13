@@ -1,3 +1,4 @@
+import { globalError } from "./global-error";
 import { defineCatalog } from "@/lib/i18n/messages";
 import type { common as KoreanCommon } from "@/messages/ko/common";
 
@@ -15,7 +16,7 @@ export const common = defineCatalog<typeof KoreanCommon>()({
   "navigation.saved": "Saved projects",
   "navigation.savedShort": "Saved",
   "navigation.launch": "Share a project",
-  "navigation.homeLink": "Go to home",
+  "navigation.homeLink": globalError.home,
   "navigation.viewAll": "View all",
   "search.placeholder": "Search projects, tools, and ideas",
   "search.label": "Search projects",
@@ -30,10 +31,10 @@ export const common = defineCatalog<typeof KoreanCommon>()({
   "notFound.heading": "This page is missing or has been removed",
   "notFound.description": "The address may have changed, or the project may no longer be listed. Try searching for it.",
   "notFound.rising": "Trending projects",
-  "error.title": "Error",
+  "error.title": globalError.title,
   "error.heading": "We couldn't load this page",
-  "error.globalHeading": "We couldn't load the site",
-  "error.description": "This may be a temporary issue. Try again, or come back in a little while if it continues.",
-  "error.retry": "Try again",
-  "error.reference": "Error reference {digest}",
+  "error.globalHeading": globalError.heading,
+  "error.description": globalError.description,
+  "error.retry": globalError.retry,
+  "error.reference": globalError.reference,
 });

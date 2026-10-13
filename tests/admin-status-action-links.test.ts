@@ -19,7 +19,7 @@ const source = (file: string) => readFileSync(path.join(root, file), "utf8");
 
 /** 감사 화면의 탭은 page.tsx 안의 상수라 가져올 수 없다 — 소스에서 키를 읽는다 */
 function auditTabs(): string[] {
-  const body = source("app/admin/audit/page.tsx").match(/const TABS = \{([^}]*)\}/)?.[1] ?? "";
+  const body = source("app/(operator)/admin/audit/page.tsx").match(/const TABS = \{([^}]*)\}/)?.[1] ?? "";
   return [...body.matchAll(/(\w+):/g)].map((match) => match[1]);
 }
 
@@ -68,15 +68,15 @@ describe("조치할 일 링크", () => {
 
   it("운영센터는 모아 둔 주소만 쓰고, 이름으로 고른 작업은 실제 작업이다", () => {
     // 조치할 일은 attention.tsx 가 세운다(운영센터 화면과 메뉴 배지가 같이 쓴다)
-    const page = source("app/admin/status/attention.tsx") + source("app/admin/status/page.tsx");
+    const page = source("app/(operator)/admin/status/attention.tsx") + source("app/(operator)/admin/status/page.tsx");
     const hrefs = [...page.matchAll(/\bhref:\s*([^}\n]+)/g)].map((match) => match[1]);
     expect(hrefs.length).toBeGreaterThan(20);
     for (const value of hrefs) expect(value, value).toMatch(/^(ACTION_LINKS\.|jobHref\(|[\w.!\s=><[\]0-9]+\?\s*(ACTION_LINKS\.|jobHref\())/);
     expect(page).not.toMatch(/\bhref:\s*["'`]/);
-    expect(source("app/admin/status/page.tsx")).not.toMatch(/href=\{?["'`]\/admin/);
+    expect(source("app/(operator)/admin/status/page.tsx")).not.toMatch(/href=\{?["'`]\/admin/);
     for (const [, name] of page.matchAll(/jobHref\("([^"]+)"\)/g)) expect(JOB_NAMES).toContain(name);
     // 받는 쪽이 ?tab= ?job= 을 주소에서 읽는다(ADM-29 — 처음 열 때만이 아니라 늘)
-    const center = source("app/admin/status/OperationsCenter.tsx");
+    const center = source("app/(operator)/admin/status/OperationsCenter.tsx");
     expect(center).toContain("STATUS_TABS");
     expect(center).toContain("params.get('tab')");
     expect(center).toContain("params.get('job')");

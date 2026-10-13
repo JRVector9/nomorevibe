@@ -35,9 +35,9 @@ describe("evidence settings form", () => {
     ]) expect(html).toContain(label);
     expect(html).toContain("aria-live=\"polite\"");
     for (const file of [
-      "app/admin/evidence/EvidenceSettingsForm.tsx",
-      "app/admin/evidence/page.tsx",
-      "app/admin/products/[slug]/page.tsx",
+      "app/(operator)/admin/evidence/EvidenceSettingsForm.tsx",
+      "app/(operator)/admin/evidence/page.tsx",
+      "app/(operator)/admin/products/[slug]/page.tsx",
     ]) {
       expect(readFileSync(file, "utf8"))
         .not.toMatch(/text-\[(?:1[0-2](?:\.\d+)?|[0-9](?:\.\d+)?)px\]/);

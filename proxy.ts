@@ -1,5 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { SESSION_COOKIE, verifySession } from "@/lib/auth/session";
+import { DEFAULT_LOCALE, PUBLIC_LOCALE_HEADER, type Locale } from "@/lib/i18n/locales";
+import { isLocaleExcludedPath, pathLocale, stripLocale } from "@/lib/i18n/routing";
 
 /**
  * /admin 을 기본 차단한다.
@@ -14,9 +16,44 @@ import { SESSION_COOKIE, verifySession } from "@/lib/auth/session";
  * 끊기는 순간 차단이 조용히 풀린다.
  */
 export async function proxy(req: NextRequest) {
+  const pathname = req.nextUrl.pathname;
+  // Keep the administrator gate first, independently of all locale routing.
+  if (pathname === "/admin" || pathname.startsWith("/admin/")) {
+    if (pathname === "/admin/login" || pathname === "/admin/login/") return passThrough(req, DEFAULT_LOCALE);
+    return protectAdmin(req);
+  }
+
+  const locale = pathLocale(pathname);
+  // A prefixed machine/admin address is never normalized into an endpoint alias.
+  if (locale && isLocaleExcludedPath(stripLocale(pathname))) return passThrough(req, locale);
+  if (!locale && isLocaleExcludedPath(pathname)) return passThrough(req, DEFAULT_LOCALE);
+  if (locale === DEFAULT_LOCALE) {
+    const canonical = req.nextUrl.clone();
+    canonical.pathname = stripLocale(pathname);
+    return NextResponse.redirect(canonical, 308);
+  }
+  // Locale-prefixed machine/admin paths stay in the public tree and become 404s.
+  if (locale) return passThrough(req, locale);
+
+  const internal = req.nextUrl.clone();
+  internal.pathname = `/${DEFAULT_LOCALE}${pathname === "/" ? "" : pathname}`;
+  return NextResponse.rewrite(internal, { request: { headers: localeHeaders(req, DEFAULT_LOCALE) } });
+}
+
+function localeHeaders(req: NextRequest, locale: Locale): Headers {
+  const headers = new Headers(req.headers);
+  headers.set(PUBLIC_LOCALE_HEADER, locale);
+  return headers;
+}
+
+function passThrough(req: NextRequest, locale: Locale) {
+  return NextResponse.next({ request: { headers: localeHeaders(req, locale) } });
+}
+
+async function protectAdmin(req: NextRequest) {
   // GitHub OAuth 없이 로컬에서 어드민을 연다. 운영에는 ADMIN_LOCAL_LOGIN을 넣지 않는다.
   if (process.env.ADMIN_LOCAL_LOGIN === "1") {
-    return NextResponse.next();
+    return passThrough(req, DEFAULT_LOCALE);
   }
 
   const secret = process.env.AUTH_SECRET;
@@ -31,10 +68,10 @@ export async function proxy(req: NextRequest) {
   if (!session) {
     return NextResponse.redirect(loginUrl);
   }
-  return NextResponse.next();
+  return passThrough(req, DEFAULT_LOCALE);
 }
 
 export const config = {
-  // 로그인 화면 자체는 열려 있어야 한다
-  matcher: ["/admin", "/admin/((?!login).*)"],
+  // The function excludes APIs/files explicitly; never narrow away the admin gate.
+  matcher: ["/((?!_next/static|_next/image).*)"],
 };

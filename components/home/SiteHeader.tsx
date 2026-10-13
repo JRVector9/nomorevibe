@@ -7,6 +7,9 @@ import { Icon } from "@/components/home/icons";
 import { AccountMenu } from "@/components/auth/AccountMenu";
 import { parseSaved, savedSnapshot, subscribeSaved } from "@/components/home/saved";
 import { BRAND } from "@/lib/copy/brand";
+import { useLocale, useTranslations } from "@/lib/i18n/context";
+import { localePath, stripLocale } from "@/lib/i18n/routing";
+import { LanguageSwitcher } from "./LanguageSwitcher";
 import "./chrome.css";
 
 function subscribeHydration(): () => void {
@@ -46,25 +49,28 @@ const SCROLL_SLACK_PX = 6;
 
 /** 급상승 모두 보기 — 활성 표시만 주소에 달려 있다. */
 function RisingLink({ active = false }: { active?: boolean }) {
-  return <Link prefetch={false} href="/rising" className={active ? "active" : undefined}>스타 급상승</Link>;
+  const locale = useLocale();
+  const t = useTranslations("common");
+  return <Link prefetch={false} href={localePath(locale, "/rising")} className={active ? "active" : undefined}>{t("navigation.rising")}</Link>;
 }
 
 /** 급상승 화면과 거르기 없는 홈에서 켠다. 신규 모두 보기·검색·분야 화면에서는 끈다. */
 function RisingNavLink() {
-  const pathname = usePathname();
+  const pathname = stripLocale(usePathname());
   const params = useSearchParams();
   return <RisingLink active={pathname === "/rising" || (pathname === "/" && params.get("new") !== "1" && FILTER_PARAMS.every((name) => !params.has(name)))} />;
 }
 
 /** 헤더 검색 입력칸. 검색어가 바뀌면 새로 그려 기본값을 다시 채운다(key) */
 function SearchInput({ query = "" }: { query?: string }) {
+  const t = useTranslations("common");
   return (
     <input
       id="search"
       type="search"
       name="q"
-      placeholder="프로젝트, 도구, 아이디어 검색"
-      aria-label="프로젝트 검색"
+      placeholder={t("search.placeholder")}
+      aria-label={t("search.label")}
       autoComplete="off"
       maxLength={200}
       defaultValue={query}
@@ -77,7 +83,7 @@ function SearchInput({ query = "" }: { query?: string }) {
  * 스크립트 없이 다시 검색하면 도구 거르기가 풀리지 않게. 그 밖의 화면에서는 빈 칸이다.
  */
 function SearchFields() {
-  const pathname = usePathname();
+  const pathname = stripLocale(usePathname());
   const params = useSearchParams();
   const browse = isBrowsePath(pathname);
   const query = browse ? params.get("q") ?? "" : "";
@@ -98,6 +104,8 @@ function SearchFields() {
  */
 export function SiteHeader({ authEnabled = false }: { authEnabled?: boolean }) {
   const router = useRouter();
+  const locale = useLocale();
+  const t = useTranslations("common");
   const [searching, startSearch] = useTransition();
   const [collapsed, setCollapsed] = useState(false);
   // 단축키 표시는 기기를 알아야 해서 붙은 뒤에만 그린다 — 서버와 첫 클라이언트 그림을 같게 둔다
@@ -151,7 +159,7 @@ export function SiteHeader({ authEnabled = false }: { authEnabled?: boolean }) {
   }, []);
 
   function openSaved() {
-    router.push("/?saved=1#projects");
+    router.push(localePath(locale, "/?saved=1#projects"));
   }
 
   /**
@@ -164,27 +172,27 @@ export function SiteHeader({ authEnabled = false }: { authEnabled?: boolean }) {
     for (const [name, value] of new FormData(event.currentTarget)) {
       if (typeof value === "string") query.append(name, value);
     }
-    startSearch(() => router.push(`/?${query}`));
+    startSearch(() => router.push(localePath(locale, `/?${query}`)));
   }
 
   return (
     <header className="nmb-header" data-collapsed={collapsed || undefined}>
       <div className="wrap header-row">
-        <Link prefetch={false} className="brand" href="/" aria-label={`${BRAND} 홈`}>
+        <Link prefetch={false} className="brand" href={localePath(locale, "/")} aria-label={t("navigation.home", { brand: BRAND })}>
           <i className="brand-dot" aria-hidden="true" />
           {BRAND}
         </Link>
-        <nav className="navigation" aria-label="주 메뉴">
+        <nav className="navigation" aria-label={t("navigation.main")}>
           <Suspense fallback={<RisingLink />}>
             <RisingNavLink />
           </Suspense>
-          <Link prefetch={false} href="/#projects">발견하기</Link>
-          <Link prefetch={false} href="/#popular">인기</Link>
-          <Link prefetch={false} href="/#new">새로 나온</Link>
+          <Link prefetch={false} href={localePath(locale, "/#projects")}>{t("navigation.discover")}</Link>
+          <Link prefetch={false} href={localePath(locale, "/#popular")}>{t("navigation.popular")}</Link>
+          <Link prefetch={false} href={localePath(locale, "/#new")}>{t("navigation.new")}</Link>
         </nav>
         <form
           className="header-search"
-          action="/"
+          action={localePath(locale, "/")}
           method="get"
           role="search"
           onSubmit={submitSearch}
@@ -195,15 +203,16 @@ export function SiteHeader({ authEnabled = false }: { authEnabled?: boolean }) {
             <SearchFields />
           </Suspense>
           {searching
-            ? <span className="search-spinner" role="status"><span className="sr-only">검색 중</span></span>
+            ? <span className="search-spinner" role="status"><span className="sr-only">{t("search.busy")}</span></span>
             : shortcut && <kbd className="key">{shortcut}</kbd>}
         </form>
-        <button type="button" className="saved-nav" onClick={openSaved} aria-label="저장한 프로젝트">
+        <button type="button" className="saved-nav" onClick={openSaved} aria-label={t("navigation.saved")}>
           <Icon name="bookmark" />
           <i className={`saved-dot${hasSaved ? " on" : ""}`} />
         </button>
+        <LanguageSwitcher />
         {authEnabled && <AccountMenu />}
-        <Link className="primary" href="/launch">프로젝트 공개</Link>
+        <Link className="primary" href={localePath(locale, "/launch")}>{t("navigation.launch")}</Link>
       </div>
     </header>
   );

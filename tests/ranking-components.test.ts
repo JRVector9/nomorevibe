@@ -282,8 +282,8 @@ describe("ranking typography", () => {
       "components/RankingTable.tsx",
       "components/SeasonPolicy.tsx",
       "components/DiscoveryBoards.tsx",
-      "app/page.tsx",
-      "app/rankings/[key]/page.tsx",
+      "app/(public)/[locale]/(content)/page.tsx",
+      "app/(public)/[locale]/(content)/rankings/[key]/page.tsx",
     ];
 
     for (const file of files) {

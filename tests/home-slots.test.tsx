@@ -6,7 +6,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({ pathname: "/" }));
 vi.mock("next/navigation", () => ({ usePathname: () => mocks.pathname }));
 
-const { default: NoSeasonFooterDefault } = await import("@/app/@seasonfooter/default");
+const { default: NoSeasonFooterDefault } = await import("@/app/(public)/[locale]/(content)/@seasonfooter/default");
 const { OnlyOnHome } = await import("@/components/home/OnlyOnHome");
 
 /**
@@ -25,8 +25,8 @@ beforeEach(() => {
 describe("홈 병렬 슬롯", () => {
   it("슬롯마다 default 를 두고, catch-all 페이지는 두지 않는다", () => {
     for (const slot of SLOTS) {
-      expect(existsSync(join(process.cwd(), "app", slot, "default.tsx"))).toBe(true);
-      expect(existsSync(join(process.cwd(), "app", slot, "[...catchAll]"))).toBe(false);
+      expect(existsSync(join(process.cwd(), "app", "(public)", "[locale]", "(content)", slot, "default.tsx"))).toBe(true);
+      expect(existsSync(join(process.cwd(), "app", "(public)", "[locale]", "(content)", slot, "[...catchAll]"))).toBe(false);
     }
   });
 

@@ -4,6 +4,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ProductListItem } from "@/lib/domain/products/view";
 import type { SeasonSummary } from "@/lib/domain/ranking/view";
 import { DEFAULT_RANKING_POLICY } from "@/lib/domain/ranking/policy";
+import { I18nProvider } from "@/lib/i18n/context";
+import { common } from "@/messages/ko/common";
 
 /**
  * 사이트 틀(UX-10·UX-21·UX-26·UX-09) — 아래 탭·푸터·없는 주소·오류 화면·게재 기준·푸터 시즌 줄.
@@ -21,8 +23,11 @@ const mocks = vi.hoisted(() => ({
 vi.mock("next/navigation", () => ({
   usePathname: () => mocks.pathname,
   useRouter: () => ({ push: mocks.push }),
+  useSearchParams: () => new URLSearchParams(),
 }));
 vi.mock("next/server", () => ({ connection: async () => {} }));
+vi.mock("server-only", () => ({}));
+vi.mock("@/lib/i18n/server", () => ({ getRequestLocale: async () => "ko" }));
 vi.mock("@/lib/domain/products/public-reads", () => ({
   publicRead: (_kind: string, _key: unknown[], load: () => Promise<unknown>) => load(),
 }));
@@ -36,16 +41,17 @@ vi.mock("@/lib/domain/ranking/season-entries", () => ({ seasonKeysWithEntries: m
 
 const { MobileNav } = await import("@/components/home/MobileNav");
 const { SiteFooter } = await import("@/components/home/SiteFooter");
-const { default: NotFound, metadata: notFoundMetadata } = await import("@/app/not-found");
-const { default: RouteError } = await import("@/app/error");
+const { default: NotFound, metadata: notFoundMetadata } = await import("@/app/(public)/[locale]/not-found");
+const { default: RouteError } = await import("@/app/(public)/[locale]/(content)/error");
 const { default: GlobalError } = await import("@/app/global-error");
 const { default: PolicyPage, metadata: policyMetadata } = await import("@/app/(public)/[locale]/(content)/policy/page");
-const { default: SeasonFooterSlot } = await import("@/app/@seasonfooter/page");
+const { default: SeasonFooterSlot } = await import("@/app/(public)/[locale]/(content)/@seasonfooter/page");
 
 const hrefs = (html: string) => [...html.matchAll(/href="([^"]*)"/g)].map((match) => match[1]);
+const renderWithLocale = (node: React.ReactNode) => renderToStaticMarkup(<I18nProvider locale="ko" dictionaries={{ common }}>{node}</I18nProvider>);
 const render = async (pending: Promise<React.ReactNode> | React.ReactNode) => {
   const node = await pending;
-  return renderToStaticMarkup(createElement(() => node));
+  return renderWithLocale(node);
 };
 
 beforeEach(() => {
@@ -59,7 +65,7 @@ beforeEach(() => {
 
 describe("모바일 아래 탭", () => {
   it("발견·검색·인기·저장 순서이고 인기는 /popular 로 간다 — 공개 탭은 없다", () => {
-    const html = renderToStaticMarkup(createElement(MobileNav));
+    const html = renderWithLocale(createElement(MobileNav));
     const labels = [...html.matchAll(/<\/svg>([^<]+)<\/(?:a|button)>/g)].map((match) => match[1]);
 
     expect(labels).toEqual(["발견", "검색", "인기", "저장"]);
@@ -72,22 +78,22 @@ describe("모바일 아래 탭", () => {
 
   it("지금 있는 탭을 켠다 — 분야 화면은 발견, /popular 는 인기", () => {
     mocks.pathname = "/c/finance";
-    expect(renderToStaticMarkup(createElement(MobileNav))).toContain('class="active" href="/"');
+    expect(renderWithLocale(createElement(MobileNav))).toContain('class="active" href="/"');
     mocks.pathname = "/popular";
-    expect(renderToStaticMarkup(createElement(MobileNav))).toContain('class="active" href="/popular"');
+    expect(renderWithLocale(createElement(MobileNav))).toContain('class="active" href="/popular"');
     mocks.pathname = "/p/some";
-    expect(renderToStaticMarkup(createElement(MobileNav))).not.toContain("active");
+    expect(renderWithLocale(createElement(MobileNav))).not.toContain("active");
   });
 
   it("관리자 화면에서는 그리지 않는다", () => {
     mocks.pathname = "/admin/products";
-    expect(renderToStaticMarkup(createElement(MobileNav))).toBe("");
+    expect(renderWithLocale(createElement(MobileNav))).toBe("");
   });
 });
 
 describe("푸터", () => {
   it("한국어 슬로건과 게재 기준 링크(/policy#listing)", () => {
-    const html = renderToStaticMarkup(createElement(SiteFooter, null, null));
+    const html = renderToStaticMarkup(createElement(SiteFooter, { locale: "ko", messages: common, children: null }));
     expect(html).toContain("만들고, 세상에 내놓으세요.");
     expect(html).not.toContain("Build something");
     expect(hrefs(html)).toContain("/policy#listing");
@@ -131,7 +137,7 @@ describe("없는 주소", () => {
 
 describe("오류 화면", () => {
   it("본문 오류 — 한국어 문구와 다시 시도", () => {
-    const html = renderToStaticMarkup(createElement(RouteError, { error: Object.assign(new Error("x"), { digest: "abc123" }), retry: () => {} }));
+    const html = renderWithLocale(createElement(RouteError, { error: Object.assign(new Error("x"), { digest: "abc123" }), retry: () => {} }));
     expect(html).toContain("화면을 불러오지 못했습니다");
     expect(html).toContain(">다시 시도</button>");
     expect(html).toContain("오류 번호 abc123");

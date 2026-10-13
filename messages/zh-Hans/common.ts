@@ -1,3 +1,4 @@
+import { globalError } from "./global-error";
 import { defineCatalog } from "@/lib/i18n/messages";
 import type { common as KoreanCommon } from "@/messages/ko/common";
 
@@ -15,7 +16,7 @@ export const common = defineCatalog<typeof KoreanCommon>()({
   "navigation.saved": "已收藏的项目",
   "navigation.savedShort": "收藏",
   "navigation.launch": "发布项目",
-  "navigation.homeLink": "返回首页",
+  "navigation.homeLink": globalError.home,
   "navigation.viewAll": "查看全部",
   "search.placeholder": "搜索项目、工具和创意",
   "search.label": "搜索项目",
@@ -30,10 +31,10 @@ export const common = defineCatalog<typeof KoreanCommon>()({
   "notFound.heading": "此页面不存在或已被移除",
   "notFound.description": "地址可能已变更，或项目已不再收录。请尝试搜索。",
   "notFound.rising": "正在热门的项目",
-  "error.title": "错误",
+  "error.title": globalError.title,
   "error.heading": "无法加载页面",
-  "error.globalHeading": "无法加载网站",
-  "error.description": "这可能是暂时的问题。请重试；如果问题持续，请稍后再来。",
-  "error.retry": "重试",
-  "error.reference": "错误编号 {digest}",
+  "error.globalHeading": globalError.heading,
+  "error.description": globalError.description,
+  "error.retry": globalError.retry,
+  "error.reference": globalError.reference,
 });

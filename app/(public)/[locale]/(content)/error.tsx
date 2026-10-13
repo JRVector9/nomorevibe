@@ -1,6 +1,8 @@
 "use client";
 
 import Link from "next/link";
+import { useLocale, useTranslations } from "@/lib/i18n/context";
+import { localePath } from "@/lib/i18n/routing";
 
 /**
  * 화면을 그리다 난 오류 — Next 기본 영어 화면 대신(2026-10-08 UX 감사 UX-10).
@@ -13,22 +15,24 @@ export default function RouteError({ error, retry }: {
   error: Error & { digest?: string };
   retry: () => void;
 }) {
+  const locale = useLocale();
+  const t = useTranslations("common");
   return (
     <main className="wrap">
       <div className="pb-16 pt-12">
-        <h1 className="text-[26px] font-semibold tracking-tight">화면을 불러오지 못했습니다</h1>
+        <h1 className="text-[26px] font-semibold tracking-tight">{t("error.heading")}</h1>
         <p className="mt-2 text-[15px] leading-relaxed text-fg-2">
-          잠깐 생긴 문제일 수 있습니다. 다시 시도해 보시고, 계속되면 잠시 후 다시 들러 주세요.
+          {t("error.description")}
         </p>
         <div className="mt-6 flex flex-wrap items-center gap-3">
           <button type="button" onClick={() => retry()} className="h-11 rounded-full bg-fg px-6 text-[15px] font-medium text-bg-card hover:opacity-90">
-            다시 시도
+            {t("error.retry")}
           </button>
-          <Link prefetch={false} href="/" className="inline-flex min-h-11 items-center px-2 text-[15px] font-medium text-accent-ink underline underline-offset-4">
-            홈으로 가기
+          <Link prefetch={false} href={localePath(locale, "/")} className="inline-flex min-h-11 items-center px-2 text-[15px] font-medium text-accent-ink underline underline-offset-4">
+            {t("navigation.homeLink")}
           </Link>
         </div>
-        {error.digest && <p className="mt-6 text-[13px] text-fg-2">오류 번호 {error.digest}</p>}
+        {error.digest && <p className="mt-6 text-[13px] text-fg-2">{t("error.reference", { digest: error.digest })}</p>}
       </div>
     </main>
   );

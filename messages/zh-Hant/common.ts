@@ -1,3 +1,4 @@
+import { globalError } from "./global-error";
 import { defineCatalog } from "@/lib/i18n/messages";
 import type { common as KoreanCommon } from "@/messages/ko/common";
 
@@ -15,7 +16,7 @@ export const common = defineCatalog<typeof KoreanCommon>()({
   "navigation.saved": "已收藏的專案",
   "navigation.savedShort": "收藏",
   "navigation.launch": "發布專案",
-  "navigation.homeLink": "返回首頁",
+  "navigation.homeLink": globalError.home,
   "navigation.viewAll": "查看全部",
   "search.placeholder": "搜尋專案、工具與創意",
   "search.label": "搜尋專案",
@@ -30,10 +31,10 @@ export const common = defineCatalog<typeof KoreanCommon>()({
   "notFound.heading": "此頁面不存在或已被移除",
   "notFound.description": "網址可能已變更，或專案已不再收錄。請嘗試搜尋。",
   "notFound.rising": "近期熱門專案",
-  "error.title": "錯誤",
+  "error.title": globalError.title,
   "error.heading": "無法載入頁面",
-  "error.globalHeading": "無法載入網站",
-  "error.description": "這可能是暫時的問題。請重試；若問題持續，請稍後再來。",
-  "error.retry": "重試",
-  "error.reference": "錯誤編號 {digest}",
+  "error.globalHeading": globalError.heading,
+  "error.description": globalError.description,
+  "error.retry": globalError.retry,
+  "error.reference": globalError.reference,
 });

@@ -2,6 +2,8 @@
 export const LOCALES = ["ko", "en", "zh-Hans", "zh-Hant"] as const;
 export type Locale = (typeof LOCALES)[number];
 export const DEFAULT_LOCALE: Locale = "ko";
+/** Proxy overwrites this request header; callers cannot choose its value. */
+export const PUBLIC_LOCALE_HEADER = "x-nmv-public-locale";
 
 export const LOCALE_CONFIG = {
   ko: { label: "한국어", intl: "ko-KR", htmlLang: "ko", openGraph: "ko_KR" },

@@ -1,3 +1,4 @@
+import { globalError } from "./global-error";
 export const common = {
   "accessibility.skipToContent": "본문으로 건너뛰기",
   "navigation.main": "주 메뉴",
@@ -12,7 +13,7 @@ export const common = {
   "navigation.saved": "저장한 프로젝트",
   "navigation.savedShort": "저장",
   "navigation.launch": "프로젝트 공개",
-  "navigation.homeLink": "홈으로 가기",
+  "navigation.homeLink": globalError.home,
   "navigation.viewAll": "모두 보기",
   "search.placeholder": "프로젝트, 도구, 아이디어 검색",
   "search.label": "프로젝트 검색",
@@ -27,10 +28,10 @@ export const common = {
   "notFound.heading": "찾는 페이지가 없거나 내려갔습니다",
   "notFound.description": "주소가 바뀌었거나 프로젝트가 목록에서 내려갔을 수 있습니다. 찾던 것을 검색해 보세요.",
   "notFound.rising": "지금 뜨는 프로젝트",
-  "error.title": "오류",
+  "error.title": globalError.title,
   "error.heading": "화면을 불러오지 못했습니다",
-  "error.globalHeading": "사이트를 불러오지 못했습니다",
-  "error.description": "잠깐 생긴 문제일 수 있습니다. 다시 시도해 보시고, 계속되면 잠시 후 다시 들러 주세요.",
-  "error.retry": "다시 시도",
-  "error.reference": "오류 번호 {digest}",
+  "error.globalHeading": globalError.heading,
+  "error.description": globalError.description,
+  "error.retry": globalError.retry,
+  "error.reference": globalError.reference,
 } as const;

@@ -67,7 +67,7 @@ describe("랭킹 시즌", () => {
   it("h1 → h2(집계 기준) → h3(묶음 제목) — 단계를 건너뛰지 않는다", async () => {
     mocks.getSeasonByKey.mockResolvedValue({ season, items: [] });
 
-    const html = renderToStaticMarkup(await RankingSeasonPage({ params: Promise.resolve({ key: "2026-W41" }) } as PageProps<"/rankings/[key]">));
+    const html = renderToStaticMarkup(await RankingSeasonPage({ params: Promise.resolve({ key: "2026-W41" }) } as PageProps<"/[locale]/rankings/[key]">));
 
     expect(html).toContain(">집계 기준</h2>");
     const levels = headingLevels(html);
@@ -78,7 +78,7 @@ describe("랭킹 시즌", () => {
   it("없는 시즌은 홈 제목이 아니라 '페이지를 찾을 수 없습니다'", async () => {
     mocks.getSeasonByKey.mockResolvedValue(null);
 
-    const metadata = await rankingMetadata({ params: Promise.resolve({ key: "2099-W01" }) } as PageProps<"/rankings/[key]">);
+    const metadata = await rankingMetadata({ params: Promise.resolve({ key: "2099-W01" }) } as PageProps<"/[locale]/rankings/[key]">);
 
     expect(metadata.title).toBe("페이지를 찾을 수 없습니다 — nomorevibe");
   });

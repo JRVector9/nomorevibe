@@ -160,7 +160,7 @@ body:has(.admin-area) {
   --color-accent-ink: var(--accent-ink);
   --color-accent-solid: var(--accent-solid);
   --color-accent-soft: var(--accent-soft);
-  --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Apple SD Gothic Neo", "Pretendard", system-ui, "Helvetica Neue", sans-serif;
+  --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Apple SD Gothic Neo", "Pretendard", "PingFang SC", "PingFang TC", "Microsoft YaHei", "Microsoft JhengHei", system-ui, "Helvetica Neue", sans-serif;
   --font-mono: "SF Mono", ui-monospace, Menlo, monospace;
 }
 

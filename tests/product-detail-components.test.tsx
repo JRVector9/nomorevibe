@@ -808,7 +808,7 @@ describe("evidence product detail components", () => {
   });
 
   it("composes the dynamic page from the safe detail model in the mobile reading order", () => {
-    const source = readFileSync("app/p/[slug]/page.tsx", "utf8");
+    const source = readFileSync("app/(public)/[locale]/(content)/p/[slug]/page.tsx", "utf8");
     expect(source).toContain('export const dynamic = "force-dynamic"');
     expect(source).toContain("getProductDetail(slug)");
     expect(source).not.toContain("findBySlug");
@@ -827,7 +827,7 @@ describe("evidence product detail components", () => {
     expect(source).toMatch(/countProducts\(\{[^}]*excludeDown: true[^}]*\}\)\)?\.catch\(\(\) => null\)/);
     // 없는 제품은 진짜 404 — 기본 정보로 notFound() 를 먼저 부르고, 본문만 Suspense 안에서 머리 골격을 보이며 채운다.
     // 구간 loading.tsx 는 응답을 먼저 흘려 상태를 200 으로 굳히므로 두지 않는다(UX-38)
-    expect(existsSync("app/p/[slug]/loading.tsx")).toBe(false);
+    expect(existsSync("app/(public)/[locale]/(content)/p/[slug]/loading.tsx")).toBe(false);
     const notFoundAt = source.indexOf("if (!identity) notFound();");
     expect(notFoundAt).toBeGreaterThan(-1);
     expect(notFoundAt).toBeLessThan(source.indexOf("<Suspense fallback={<DetailSkeleton />}>"));

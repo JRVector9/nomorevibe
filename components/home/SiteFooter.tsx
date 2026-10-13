@@ -1,9 +1,14 @@
 import Link from "next/link";
 import { BRAND } from "@/lib/copy/brand";
-import { FOOTER_SLOGAN } from "@/lib/copy/terms";
+import { createTranslator, type Dictionary } from "@/lib/i18n/messages";
+import type { Locale } from "@/lib/i18n/locales";
+import { localePath } from "@/lib/i18n/routing";
 import "./chrome.css";
 
-export function SiteFooter({ children }: { children: React.ReactNode }) {
+export function SiteFooter({ children, locale, messages }: {
+  children: React.ReactNode; locale: Locale; messages: Dictionary["common"];
+}) {
+  const t = createTranslator("common", messages);
   return (
     <footer className="nmb-footer">
       <div className="wrap">
@@ -11,12 +16,12 @@ export function SiteFooter({ children }: { children: React.ReactNode }) {
         <div className="footer">
           <div>
             <span className="footer-brand">{BRAND}</span>
-            {FOOTER_SLOGAN}
+            {t("footer.slogan")}
           </div>
           <div className="footer-right">
-            <Link prefetch={false} href="/?metric=all">데이터와 집계 기준</Link>
-            <Link href="/launch">프로젝트 공개</Link>
-            <Link prefetch={false} href="/policy#listing">게재 기준</Link>
+            <Link prefetch={false} href={localePath(locale, "/?metric=all")}>{t("footer.metrics")}</Link>
+            <Link href={localePath(locale, "/launch")}>{t("navigation.launch")}</Link>
+            <Link prefetch={false} href={localePath(locale, "/policy#listing")}>{t("footer.listingPolicy")}</Link>
           </div>
         </div>
       </div>
