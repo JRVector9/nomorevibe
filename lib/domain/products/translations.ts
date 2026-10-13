@@ -23,7 +23,7 @@ const eligible = productTranslationEligible;
 
 /** Detail/query extras can expose the same current-source hold guard to metadata. */
 export const productTranslationEligibilityField = {
-  translationContentEligible: sql<boolean>`(${eligible})`.as("translation_content_eligible"),
+  translationEligible: sql<boolean>`(${eligible})`.as("translation_eligible"),
 };
 
 function demandIds(ids: readonly number[]): number[] {

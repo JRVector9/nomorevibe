@@ -13,7 +13,7 @@ export const PUBLIC_PAGE_NAMESPACES = {
   '/rankings/[key]': ['browse', 'labels'],
   '/p/[slug]': ['detail', 'labels'],
   '/p/[slug]/github': ['detail'],
-  '/feedback/[id]': ['auth'],
+  '/feedback/[id]': ['auth', 'detail'],
   '/login': ['auth'],
   '/launch': ['launch'],
   '/policy': ['policy'],

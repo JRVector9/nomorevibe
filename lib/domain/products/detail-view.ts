@@ -45,7 +45,7 @@ import { healthMetrics, DOWN_THRESHOLD } from "./health";
 import { getRelatedRising, isUnclaimed, type ProductListItem } from "./view";
 import { indexingFields } from "./indexing";
 import { taglineKoField } from "./korean-tagline";
-import { productTranslationEligible } from "./translations";
+import { productTranslationEligibilityField } from "./translations";
 import type { ProductTranslationSelection } from "./translation-policy";
 import { getRisingRank, repoGoneField } from "./repository";
 import { readmeExcerpt } from "./readme-excerpt";
@@ -248,8 +248,7 @@ async function findPublicProduct(slug: string): Promise<PublicProduct | null> {
       updatedAt: true,
     },
     // 상세 메타데이터의 robots 가 이 행 하나로 정해진다(UX-08) — sitemap 과 같은 규칙(indexing.ts)
-    extras: { ...repoGoneField, ...indexingFields, ...taglineKoField,
-      translationEligible: sql<boolean>`${productTranslationEligible}`.as("translation_eligible") },
+    extras: { ...repoGoneField, ...indexingFields, ...taglineKoField, ...productTranslationEligibilityField },
   });
   if (!product) return null;
   // 사라진 저장소의 스타는 마지막으로 본 옛 값이다 — 상세에 ★ 를 그리지 않는다(목록 카드의 toListItem 과 같다)

@@ -8,14 +8,14 @@
 - `productReadyLocales(source, rows, contentEligible)`는 기존 한국어를 유지하고, 새 언어는 tagline과 description이 모두 현재 원문에 대해 준비됐을 때만 포함한다. 빈 description은 준비됨이다. 확실한 같은 언어 원문은 재사용하고, 확실하지 않은 언어는 준비됐다고 판단하지 않는다. 검수 보류일 때 `contentEligible=false`를 반드시 넘긴다.
 - `productLocaleMetadata(locale, path, source, rows, baseIndexable, contentEligible)`는 기존 `productIndexable` 결과를 추가로 지킨다. 기존 색인 불가 제품은 `{index:false, follow:false}`다. 공개 제품의 번역 대기는 `{index:false, follow:true}`다. 대기 페이지도 self canonical을 유지한다.
 - metadata에는 `readProductTranslationReadiness(sources)`의 **모든 언어** ready/reviewed 상태를 넘긴다. 요청 언어의 행만 넘기면 상호 alternate 목록이 달라진다. 최대80개 제품의 상태·원문 hash·비어 있지 않은 text 표식만 읽는다. 공개/내림 요청/현재 원문 소개 보류 조건과 요청 원문 및 DB 원문 hash를 함께 확인하며 쓰기와 LLM 호출은 없다. 기존 본문용 `readProductTranslations`는 그대로다.
-- `source.name`은 표시용 이름이 아니라 원문 hash에 쓰는 DB 제품 이름이다. 통합 브랜치의 `translationName`을 사용한다. `productTranslationEligibilityField.translationContentEligible`은 같은 eligibility SQL의 detail extra다. 통합 담당자가 기존 `productTranslationEligible` export와 하나의 predicate/alias로 합친다.
+- `source.name`은 표시용 이름이 아니라 원문 hash에 쓰는 DB 제품 이름이다. 통합 브랜치의 `translationName`을 사용한다. `productTranslationEligibilityField.translationEligible`은 같은 eligibility SQL의 detail extra다. 공유 `productTranslationEligible` predicate와 `translationEligible` detail alias를 사용한다.
 
 ```ts
 const source = { id: product.id, name: product.translationName,
   tagline: product.tagline, description: product.description };
 const ready = await readProductTranslationReadiness([source]);
 const localized = productLocaleMetadata(locale, `/p/${product.slug}`, source, ready,
-  productIndexable(product), product.translationContentEligible);
+  productIndexable(product), product.translationEligible);
 ```
 
 ## Sitemap
