@@ -117,7 +117,7 @@ describe("역할 표와 상태 칩", () => {
     ownerRelease: "6170584abc", epoch: 18, secondsUntilExpiry: 30, primaryRelease: "6170584abc", standbyRelease: "6170584abc", ...over });
   const roles = [role({}), role({ role: "maintenance", reason: "standby_active", ownerInstanceId: "mini-maintenance-standby", ownerKind: "standby", ownerRelease: "ce64737xyz", epoch: 9 })];
   const scheduler = { freshReplicas: 2, alarm: false };
-  const web = [{ instance: "m3-web", release: "6170584abc" }, { instance: "mini-web", release: "6170584abc" }];
+  const web = [{ instance: "m3-web", release: "6170584abc", observedAt: "2026-10-02T13:53:00.000Z" }, { instance: "mini-web", release: "6170584abc", observedAt: "2026-10-02T13:53:00.000Z" }];
 
   it("빈 역할·모델 관측을 정상 0/0으로 표시하지 않는다", () => {
     const out = html(createElement(StatusChips, { roles: [], scheduler, web: [], models: [], quota: null, now: "2026-10-02T13:53:00.000Z" }));
@@ -126,7 +126,7 @@ describe("역할 표와 상태 칩", () => {
   });
 
   it("한 웹 또는 오래된 웹으로 두 웹 같은 릴리스를 보증하지 않는다", () => {
-    for (const observed of [[web[0]], [web[0], { ...web[1], stale: true }]]) {
+    for (const observed of [[web[0]], [web[0], { ...web[1], stale: true }], web.map((row) => ({ ...row, observedAt: undefined }))]) {
       const out = html(createElement(StatusChips, { roles, scheduler, web: observed, models: [], quota: null, now: "2026-10-02T13:53:00.000Z" }));
       expect(out).not.toContain("웹 m3·mini 같은 릴리스");
     }
@@ -142,7 +142,7 @@ describe("역할 표와 상태 칩", () => {
     expect(out).not.toContain("릴리스가"); // maintenance 는 git 빌드 — 릴리스가 달라도 정상
     expect(out).toContain("2/2 복제");
     expect(out).toContain("30초 남음");
-    const split = html(createElement(RolesTable, { roles, scheduler, web: [web[0], { instance: "mini-web", release: "ce64737xyz" }] }));
+    const split = html(createElement(RolesTable, { roles, scheduler, web: [web[0], { ...web[1], release: "ce64737xyz" }] }));
     expect(split).toContain("두 웹 릴리스 불일치");
   });
 

@@ -13,8 +13,8 @@ export const READINESS_LABELS: Record<ReadinessReason, string> = {
 
 export function webSummary(rows: WebStatus[]) {
   const expected = EXPECTED_WEB_INSTANCES.map((id) => rows.find((row) => row.instance === id));
-  const fresh = expected.filter((row) => row && !row.stale && row.observedAt !== null).length;
-  if (expected.some((row) => !row || row.observedAt === null)) return { tone: "warn" as const, ready: false, label: `웹 관측 ${fresh}/2 · 누락` };
+  const fresh = expected.filter((row) => row?.observedAt && !row.stale).length;
+  if (expected.some((row) => !row?.observedAt)) return { tone: "warn" as const, ready: false, label: `웹 관측 ${fresh}/2 · 누락` };
   if (fresh !== 2) return { tone: "warn" as const, ready: false, label: `웹 관측 ${fresh}/2 · 지연` };
   if (expected.some((row) => !row?.release || row.release === "unknown")) return { tone: "warn" as const, ready: false, label: "웹 릴리스 미확인" };
   if (expected[0]!.release !== expected[1]!.release) return { tone: "warn" as const, ready: false, label: "두 웹 릴리스 불일치" };

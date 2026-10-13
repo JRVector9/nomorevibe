@@ -42,7 +42,7 @@ export function RolesTable({ roles, scheduler, web }: {
               <td>—</td>
             </tr>
             {web.map((row) => {
-              const missing = row.observedAt === null;
+              const missing = !row.observedAt;
               const tone = row.stale || missing ? "warn" : row.release && row.release !== "unknown" ? "ok" : "warn";
               return (
               <tr key={row.instance}>
