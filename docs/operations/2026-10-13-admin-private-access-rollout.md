@@ -54,7 +54,7 @@ identity header 제거·loopback listener 계약을 따랐다.
 | Origin·CSRF 오류 | 각403, 로그인되지 않음 |
 | 로그아웃 | POST303, nmv_admin 쿠키 제거, inbox 재방문은 로그인 폼 |
 | 위 브라우저 흐름의 pageerror | 0 |
-| 공개 origin에 유효한 실제 secret·세션을 보냄 | 양 host×3domain×3경로18건404, Cloudflare3건403으로 차단 |
+| 공개 origin에 유효한 실제 secret·세션을 보냄 | 양 host×3domain×3경로18건404, Cloudflare curl3건404(Python3건403)로 차단 |
 | 공개 /admin 일반 요청 | 404 |
 | 공개 health·홈·일반 로그인 | 모두200 |
 | private proxy의 identity 없음/다른 값 | 각403 |

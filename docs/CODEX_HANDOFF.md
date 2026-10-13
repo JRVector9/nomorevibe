@@ -10,13 +10,13 @@
 
 ## Test commands / results / failed approaches
 
-실제 browser-check.mjs PTY95591 exit0: noncebootstrap뒤폼,ID/비밀번호로그인→오늘할일,운영센터/제품200,Origin·CSRF각403,logout303+cookie삭제+로그인복귀,pageerror0. 6웹Dockerenv설정exactmatch/hash형식정상. runtime PTY61232 exit0 13앱ready. readonlyDB PTY10318 exit0 journal76/intro2100미임대/schedulerManualtrue·replicas2. 네트워크 PTY22445 exit0 mini→M3Tailscale/LAN19391양쪽closed;proxyidentity없음/다른값403. Traefikruntimequery PTY28312 exit0 양3routermiddlewareactive+liveproofcookie404. publiccurl PTY9738 exit0 health/home/login200/admin404. boundary-check.py는 Cloudflare3건403/양host공개3domain×3경로18건404를확인하며 최종helper결과는아래배포문서와private증거를따른다. 새단위/통합테스트는실행하지않았다. 관리쓰기·실제다른계정·교체/만료/초과·재부팅은미실행.
+실제 browser-check.mjs PTY95591 exit0: noncebootstrap뒤폼,ID/비밀번호로그인→오늘할일,운영센터/제품200,Origin·CSRF각403,logout303+cookie삭제+로그인복귀,pageerror0. 6웹Dockerenv설정exactmatch/hash형식정상. runtime PTY61232 exit0 13앱ready. readonlyDB PTY10318 exit0 journal76/intro2100미임대/schedulerManualtrue·replicas2. 네트워크 PTY22445 exit0 mini→M3Tailscale/LAN19391양쪽closed;proxyidentity없음/다른값403. Traefikruntimequery PTY28312 exit0 양3routermiddlewareactive+liveproofcookie404. publiccurl PTY9738 exit0 health/home/login200/admin404. boundary-check.py PTY41330 exit0 CloudflarePython3건403/양host공개3domain×3경로18건404·일반public200/admin404확인. 추가FD보안headercurl PTY57242 exit0 실제secret/관리쿠키Cloudflare3건도404확인. 새단위/통합테스트는실행하지않았다. 관리쓰기·실제다른계정·교체/만료/초과·재부팅은미실행.
 
 실패와교정: domain배열순서변경으로zip오판→domainId비교. root0700configOrbStack읽기실패126→jr0700/0600. 공개middleware root0600읽기실패/oldruntime유지→jr0644/재읽기/실제runtime검사(전체Traefik재시작없음). 새env에기존키전용replace_setting행수0→새키append. 최초HTTPScert발급timeout→발급후TLS정상. urllibnoncebootstrap단순HTML무폼→실제브라우저확인. 첫heading검사명오류(오늘처리할일)→실제오늘할일로전체성공. 최초boundary자동redirect/DNS·CF까지404가정→NoRedirect와경계별403/404측정. publicPythonUA403은curl의실제일반public200/404로확인했다.
 
 ## Remaining work / exact commands
 
-문서PR최신baseCI check성공후merge하고usermainff-only동기화한다. 기존useruntracked보존. active운영접속작업은완료. 이후관리쓰기/다른계정/교체/재부팅확인은PENDING범위를따른다. setup.py capture/install/deploy는현재baseline과맞지않으므로반복실행하지않는다.
+문서PR412 최신baseCI check성공후merge하고usermainff-only동기화한다. 기존useruntracked보존. active운영접속작업은완료. 이후관리쓰기/다른계정/교체/재부팅확인은PENDING범위를따른다. setup.py capture/install/deploy는현재baseline과맞지않으므로반복실행하지않는다.
 
 읽기확인:
 - ssh root@100.92.77.66 '/opt/homebrew/bin/tailscale serve status --json'
