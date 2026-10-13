@@ -18,6 +18,7 @@ const REASONS: Partial<Record<NonNullable<StarGrowthSnapshot["reason"]>, string>
   "invalid-policy": "이번 회차의 집계 기준을 확인할 수 없습니다.",
   "invalid-cycle": "유효하지 않은 회차 주소입니다. 최신 회차를 다시 확인해 주세요.",
   "cycle-changed": "새 회차로 갱신되어 이 목록의 회차가 만료되었습니다.",
+  "filtered-out": "현재 필터에 맞는 8시간 스타 급상승 프로젝트가 없습니다.",
   "no-comparable-observations": "두 회차에서 비교 조건을 충족한 관측 자료가 없습니다.",
 };
 

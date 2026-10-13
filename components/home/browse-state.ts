@@ -131,9 +131,9 @@ export function formatResultCount(count: number, approximate = false): string {
 }
 
 const SORT_LABELS: Record<HomeSort, string> = {
-  weekly: "추천",
-  recent: "최신",
-  "all-time": "관심 많은 순",
+  weekly: "8시간 스타 급상승",
+  recent: "최근 등록",
+  "all-time": "GitHub 스타 많은 순",
   open: "저장소 있음",
   trending: "방문 증가 순",
   relevance: "관련도",
@@ -151,13 +151,12 @@ export function resultLine(state: BrowseState, count: number, { approximate = fa
   return `${listLabel ?? SORT_LABELS[state.sort]} ${formatCount(count)}개`;
 }
 
-/** 탭 이름 — 순위가 서기 전 '추천'은 스타가 는 목록을 대신 보여 주므로 그 이름('지금 뜨는')을 쓴다(UX-35) */
-export function sortLabel(sort: HomeSort, rankingReady = true): string {
-  if (sort === "weekly" && !rankingReady) return "지금 뜨는";
+/** 탐색 탭의 의미는 검증 제품 수와 무관하게 고정한다. */
+export function sortLabel(sort: HomeSort): string {
   return SORT_LABELS[sort];
 }
 
-/** 분야·단계마다의 공개 수(repository.ts aiLevelCounts) — 칩의 수를 이것 하나로 센다 */
+/** 현재 목록 자격 안의 분야·단계별 수 — 선택 분야·AI를 빼고 집계한다. */
 export type AiLevelCount = { category: string; level: AiLevel; count: number };
 
 /** '만든 방식' 칩의 수 — 분야를 골랐으면 그 분야 안의 수(누른 목록의 수와 같게) */

@@ -18,7 +18,7 @@ import {
 import { ActiveList } from "@/components/home/ActiveList";
 import { CompactRow } from "@/components/home/CompactRow";
 import { CompactCard } from "@/components/home/CompactCard";
-import { STAR_GROWTH_TITLE, starGrowthNote } from "@/components/home/StarGrowthSummary";
+import { StarGrowthSummary, STAR_GROWTH_TITLE, starGrowthNote } from "@/components/home/StarGrowthSummary";
 import { IntroLine } from "@/components/home/IntroLine";
 import { LaunchBand } from "@/components/home/LaunchBand";
 import { listHomeNews } from "@/lib/news/repository";
@@ -28,7 +28,7 @@ import { MethodologyDialog } from "@/components/home/MethodologyDialog";
 import { ProjectGrid } from "@/components/home/ProjectGrid";
 import { ToolsBoard } from "@/components/home/ToolsBoard";
 import { aiLevelCounts, categoryCounts, countProducts } from "@/lib/domain/products/repository";
-import { getStarGrowthPage } from "@/lib/domain/products/star-growth";
+import { getStarGrowthPage, type StarGrowthPage } from "@/lib/domain/products/star-growth";
 import { resolveSearchQuery, warmQueryTranslation } from "@/lib/domain/products/search-translation";
 import { relevanceWindow, searchRelevance } from "@/lib/domain/products/relevance";
 import type { SearchQuery } from "@/lib/domain/products/search";
@@ -40,7 +40,6 @@ import {
   getPublicList,
   getPublicListBySlugs,
   getUnclaimedList,
-  getVerifiedList,
   NEW_THIS_WEEK_MIN_STARS,
   type ProductListItem,
 } from "@/lib/domain/products/view";
@@ -55,7 +54,6 @@ import {
 import { formatCount } from "@/lib/format/number";
 import { formatPublicDate, formatPublicDateTime } from "@/lib/format/time";
 import {
-  getAllTimeRanking,
   getCurrentSeason,
   getSeasonRanking,
   type RankingListItem,
@@ -92,7 +90,7 @@ type Props = {
   }>;
 };
 
-/** 최신순 목록('최신'·'저장소 있음')은 저장소 확인을 마친 제품만 — 한 곳에서 정해 목록과 개수가 같은 조건을 쓴다(repoCheckedForNewest) */
+/** 최근 등록순 목록('최근 등록'·'저장소 있음')은 저장소 확인을 마친 제품만 — 한 곳에서 정해 목록과 개수가 같은 조건을 쓴다(repoCheckedForNewest) */
 const newestOnly = (sort: HomeSort) => sort === "recent" || sort === "open" ? true : undefined;
 
 function firstValue(value: SearchValue): string | undefined {
@@ -101,7 +99,7 @@ function firstValue(value: SearchValue): string | undefined {
 
 function listFor(
   sort: HomeSort,
-  active: SeasonSummary,
+  active: SeasonSummary | null,
   category: Category | undefined,
   query: SearchQuery | undefined,
   builder: string | undefined,
@@ -114,15 +112,11 @@ function listFor(
   if (sort === "open") {
     return getPublicList(limit, { ...options, sort: "recent", hasRepository: true, repoChecked: newestOnly(sort), offset });
   }
-  if (sort === "weekly") {
-    return getSeasonRanking({ ...options, limit, seasonKey: active.key, order: "rank" })
-      .then((result) => result.items);
-  }
-  if (sort === "trending") {
+  if (sort === "trending" && active) {
     return getSeasonRanking({ ...options, limit, seasonKey: active.key, order: "trending" })
       .then((result) => result.items);
   }
-  if (sort === "all-time") return getAllTimeRanking({ ...options, limit });
+  if (sort === "all-time") return getPublicList(limit, { ...options, sort: "stars", offset });
   return getPublicList(limit, { ...options, sort: sort === "relevance" ? "relevance" : "recent", repoChecked: newestOnly(sort), offset });
 }
 
@@ -137,20 +131,6 @@ function listFor(
  */
 export function needsUnclaimedFill(verifiedTotal: number, minimumProducts: number): boolean {
   return verifiedTotal < minimumProducts;
-}
-
-/**
- * 검증 제품이 모자라 방문 순위를 세울 수 없는 동안 순위 탭이 대신 보여주는 공개 목록의 순서.
- *
- * 2026-10-02 운영: 공개 25,757건에 검증 0 — 기본 탭 '추천'과 '관심 많은 순'이 늘 "아직 순위에 오른
- * 제품이 없습니다"였다. 그동안은 GitHub 이 주는 숫자로 채운다: 추천은 마지막 확인 사이에 스타가 는 순
- * (스타 2천 미만 — 그 위는 스타 구간이 따로 보여준다), 관심 많은 순은 스타 많은 순. 기준은
- * needsUnclaimedFill 과 같다 — 순위가 서는 순간 둘 다 원래 자리로 돌아간다.
- */
-export type FallbackSort = "rising" | "stars";
-export function fallbackSort(sort: HomeSort, verifiedTotal: number, minimumProducts: number): FallbackSort | null {
-  if (!needsUnclaimedFill(verifiedTotal, minimumProducts)) return null;
-  return sort === "weekly" ? "rising" : sort === "all-time" ? "stars" : null;
 }
 
 /**
@@ -205,7 +185,6 @@ function SuggestionChips({ title, items, heading }: { title: string; items: { hr
  */
 function EmptyReason({
   sort,
-  fallback,
   filtered,
   hasUnclaimed,
   query,
@@ -214,7 +193,6 @@ function EmptyReason({
   headingLevel = 3,
 }: {
   sort: HomeSort;
-  fallback: FallbackSort | null;
   filtered: boolean;
   hasUnclaimed: boolean;
   query?: string;
@@ -240,20 +218,7 @@ function EmptyReason({
     );
   }
 
-  // 순위 대신 보여주는 목록이 비었다 — 순위 이야기를 하면 화면과 어긋난다
-  if (fallback) {
-    return (
-      <div className="projects-grid">
-        <div className="empty-state">
-          <Heading>아직 스타 변화를 확인한 프로젝트가 없습니다</Heading>
-          <p>GitHub 스타는 프로젝트마다 하루가 지난 뒤 차례로 다시 확인합니다(지금은 보통 2~3일 간격). 두 번 확인되면 나타납니다.</p>
-          <Link prefetch={false} href="/?sort=recent" className="secondary">최신순으로 보기</Link>
-        </div>
-      </div>
-    );
-  }
-
-  if (sort !== "recent" && sort !== "open") {
+  if (sort === "trending") {
     return (
       <div className="projects-grid">
         <div className="empty-state">
@@ -460,7 +425,7 @@ export async function HomeContent({ params }: { params: HomeParams }) {
   let unclaimedTotal = 0;
   let dbDown = false;
   let translatedQuery: string | null = null;
-  let fallback: FallbackSort | null = null;
+  let growth: StarGrowthPage | null = null;
   let rankingReady = true;
   /** 결과 수가 관련도순 검색(낱말·의미 섞음)의 수인가 — 그러면 '관련 결과 약 n개'로 쓴다 */
   let approximate = false;
@@ -477,7 +442,7 @@ export async function HomeContent({ params }: { params: HomeParams }) {
    */
   const asideLoad = Promise.allSettled([getHomePulse(now), listHomeNews()]);
 
-  /** 새 급상승은 고정 회차 비교다. 피드의 기존 주간 방문 순위·일평균 대체 목록과 독립적으로 읽는다. */
+  /** 홈 띠와 weekly 피드는 같은 닫힌 8시간 회차 reader를 쓴다. */
   const filtered = Boolean(query || category || builder || observedTool || ai);
   /** 검색·분야 화면 — 아래 홈 구획(인기·새로 나온·도구·활발한·소식)은 필터가 걸리지 않은 전체 기준이라 숨긴다(UX-35) */
   const scoped = Boolean(query || category);
@@ -492,20 +457,20 @@ export async function HomeContent({ params }: { params: HomeParams }) {
    * 서로 기다릴 필요가 없는 것은 함께 시작한다 — 시즌·검색어 해석·카테고리 개수·검증 수(2026-10-06: 시즌을 받은 뒤에야
    * 개수를 세 홈이 한 왕복 더 기다렸다). 먼저 실패한 것이 처리되지 않은 거절로 남지 않게 잡아 두고, 아래 await 가 다시 던진다.
    */
-  const seasonLoad = publicRead("count", ["season"], () => getCurrentSeason());
+  const seasonLoad = requestedSort === "trending" ? publicRead("count", ["season"], () => getCurrentSeason()) : Promise.resolve(null);
   // 관련도순은 번역을 기다리지 않는다 — 의미 검색이 한국어 문장을 그대로 잰다(search-translation.ts warmQueryTranslation)
   const searchLoad = resolveSearchQuery(query, { waitForTranslation: requestedSort !== "relevance" });
   const countsLoad = publicRead("count", ["categories"], () => categoryCounts({ statuses: ["verified", "seeded"], excludeDown: true }));
-  const verifiedLoad = publicRead("count", ["verified"], () => countProducts({ statuses: ["verified"], excludeDown: true }));
+  const verifiedLoad = requestedSort === "trending" ? publicRead("count", ["verified"], () => countProducts({ statuses: ["verified"], excludeDown: true })) : Promise.resolve(0);
   // '만든 방식' 칩의 수 — 못 세도 목록은 선다(칩은 수 없이)
   const aiCountsLoad = publicRead("count", ["ai-levels"], () => aiLevelCounts()).catch(() => null);
   for (const load of [seasonLoad, searchLoad, countsLoad, verifiedLoad]) load.catch(() => {});
 
   try {
     active = await seasonLoad;
-    if (!active) {
+    if (!active && requestedSort === "trending") {
       logger.warn("home.ranking_unavailable");
-      effectiveSort = requestedSort === "weekly" || requestedSort === "trending" ? "recent" : requestedSort;
+      effectiveSort = "recent";
     }
     /**
      * 한국어로 목적을 치면 영어 목록에 닿지 않는다. 그대로 찾아 보고 몇 건 안 되면 영어 낱말로
@@ -515,70 +480,64 @@ export async function HomeContent({ params }: { params: HomeParams }) {
     translatedQuery = search.translated;
     if (query && search.translationPending) after(() => warmQueryTranslation(query));
     const options = { category, query: search.queries, builder, observedTool, aiLevels, excludeDown: true };
-    /**
-     * 순위 탭의 개수는 순위가 서지 않을 때(fallbackSort)만 쓴다 — 그때 '추천'은 스타가 는 제품만 센다.
-     * 순위가 서면 이 값은 쓰이지 않으므로 검증 수를 기다리지 않고 함께 센다.
-     */
     const listOptions = {
       ...options,
       hasRepository: effectiveSort === "open" ? true : undefined,
-      rising: effectiveSort === "weekly" ? true : undefined,
       repoChecked: newestOnly(effectiveSort),
     };
     const verifiedTotal = await verifiedLoad;
     const minimumProducts = (active?.policy ?? DEFAULT_RANKING_POLICY).eligibility.minimumProducts;
     rankingReady = !needsUnclaimedFill(verifiedTotal, minimumProducts);
-    fallback = fallbackSort(effectiveSort, verifiedTotal, minimumProducts);
-    const publicCatalogue = effectiveSort === "recent" || effectiveSort === "open" || effectiveSort === "relevance" || fallback !== null;
-    // 각 facet을 대체할 수 있도록 분야·AI 자체는 집계 바탕에서 뺀다.
-    // 방문 순위는 전체 자격 목록의 slug만 사용해 공개 전체와 다른 대상도 맞춘다.
+    const publicCatalogue = effectiveSort !== "trending";
+    // 저장 목록 보기는 브라우저가 후보를 거르므로 창을 밀지 않고 앞에서부터 받는다
+    const requestedLimit = savedOnly ? Math.max(Math.min(shown, HOME_MAX_SHOWN), SAVED_INITIAL_CANDIDATES) : shown;
+    const growthLoad = effectiveSort === "weekly" ? getStarGrowthPage({
+      category, query: search.queries, builder, observedTool, aiLevels, now, includeFacets: true,
+      limit: Math.min(requestedLimit, HOME_MAX_SHOWN), ...(savedOnly ? {} : { end: shown }),
+    }) : null;
+    growthLoad?.catch(() => {});
+    // 집계 바탕에서 선택 분야·AI를 빼고 반대 facet을 유지해 칩 수를 만든다.
     const rankedSlugs = !publicCatalogue && active
       ? (await publicRead("list", ["home-facet-rankings", effectiveSort, active.key, verifiedTotal],
-        () => listFor(effectiveSort, active!, undefined, undefined, undefined, undefined, undefined, verifiedTotal)))
+        () => listFor(effectiveSort, active, undefined, undefined, undefined, undefined, undefined, verifiedTotal)))
         .map((product) => product.slug)
       : undefined;
     const facetOptions = { ...listOptions, category: undefined, aiLevels: undefined,
-      rising: publicCatalogue ? listOptions.rising : undefined,
       ...(rankedSlugs ? { statuses: ["verified"] as const, slugs: rankedSlugs } : { statuses: ["verified", "seeded"] as const }) };
-    const facetLoad = Promise.all([
-      publicRead("count", ["browse-categories-v1", effectiveSort, active?.key, facetOptions],
-        () => categoryCounts({ ...facetOptions, statuses: [...facetOptions.statuses] })),
-      publicRead("count", ["browse-ai-levels-v1", effectiveSort, active?.key, facetOptions],
-        () => aiLevelCounts({ ...facetOptions, statuses: [...facetOptions.statuses] })).catch(() => null),
-    ]);
+    const facetLoad = growthLoad ? growthLoad.then((result) => [result.facets?.categories ?? {}, result.facets?.aiLevels ?? []] as const)
+      : Promise.all([
+        publicRead("count", ["browse-categories-v2", effectiveSort, active?.key, facetOptions],
+          () => categoryCounts({ ...facetOptions, statuses: [...facetOptions.statuses] })),
+        publicRead("count", ["browse-ai-levels-v2", effectiveSort, active?.key, facetOptions],
+          () => aiLevelCounts({ ...facetOptions, statuses: [...facetOptions.statuses] })).catch(() => null),
+      ]);
     facetLoad.catch(() => {});
-    // 저장 목록 보기는 브라우저가 후보를 거르므로 창을 밀지 않고 앞에서부터 받는다
-    const requestedLimit = savedOnly ? Math.max(Math.min(shown, HOME_MAX_SHOWN), SAVED_INITIAL_CANDIDATES) : shown;
     /**
      * 관련도순 검색은 낱말 검색과 의미 검색을 섞고 앞 30개를 재정렬한다(lib/domain/products/relevance.ts).
      * 순위와 전체 수를 30초 동안 웹 여러 대가 함께 쓴다 — "더 보기"가 같은 순위를 이어 받는다.
      */
     const filters = { category, builder, observedTool, aiLevels };
-    const relevanceLoad = query && effectiveSort === "relevance" && !fallback
+    const relevanceLoad = query && effectiveSort === "relevance"
       ? publicRead("list", ["relevance", query, search.queries, filters],
         () => searchRelevance(query, search, filters, () => resolveSearchQuery(query, { waitForTranslation: true })))
       : null;
     relevanceLoad?.catch(() => {});
     approximate = relevanceLoad !== null;
     // 같은 정렬·거르기·구간이면 30초 동안 한 번만 읽는다(lib/domain/products/public-reads.ts)
-    const loadList = (limit: number, offset: number) => relevanceLoad
-      ? publicRead("list", ["relevance-rows", query, search.queries, filters, limit, offset], async () => {
-        const ranked = await relevanceLoad;
-        return getPublicListBySlugs(await relevanceWindow(ranked, ranked.plan, filters, offset, limit));
-      })
-      : publicRead("list", ["home", effectiveSort, fallback, active?.key ?? null, listOptions, limit, offset], () => fallback
-      ? getPublicList(limit, { ...listOptions, sort: fallback, offset })
-      : active
-        ? listFor(effectiveSort, active, category, search.queries, builder, observedTool, aiLevels, limit, offset)
-        : publicCatalogue
-          ? getPublicList(limit, { ...listOptions, sort: effectiveSort === "relevance" ? "relevance" : "recent", offset })
-          : getVerifiedList(limit, { ...options, sort: "recent" }));
+    const loadList = (limit: number, offset: number) => growthLoad ? growthLoad.then((result) => result.items)
+      : relevanceLoad
+        ? publicRead("list", ["relevance-rows", query, search.queries, filters, limit, offset], async () => {
+          const ranked = await relevanceLoad;
+          return getPublicListBySlugs(await relevanceWindow(ranked, ranked.plan, filters, offset, limit));
+        })
+        : publicRead("list", ["home-fixed-tabs-v2", effectiveSort, active?.key ?? null, listOptions, limit, offset],
+          () => listFor(effectiveSort, active, category, search.queries, builder, observedTool, aiLevels, limit, offset));
     const spanOf = (count: number) => savedOnly ? { start: 0, count: Math.min(requestedLimit, count) } : shownWindow(shown, count);
-    const matchingLoad = relevanceLoad
-      ? relevanceLoad.then((ranked) => ranked.total)
+    const matchingLoad = growthLoad ? growthLoad.then((result) => result.total)
+      : relevanceLoad ? relevanceLoad.then((ranked) => ranked.total)
       : publicRead("count", ["matching", listOptions], () => countProducts({ statuses: ["verified", "seeded"], ...listOptions }));
     // 창이 앞을 접을 수 있으면(HOME_MAX_SHOWN 초과) 어디서부터 받을지가 개수에 달려 있어 기다린다
-    const windowed = publicCatalogue && requestedLimit > HOME_MAX_SHOWN;
+    const windowed = !growthLoad && publicCatalogue && requestedLimit > HOME_MAX_SHOWN;
     const earlyList = windowed ? null : loadList(publicCatalogue ? requestedLimit : verifiedTotal, 0);
     earlyList?.catch(() => {});
     const [loadedCounts, matchingTotal, [loadedFacetCounts, loadedFacetAiCounts]] = await Promise.all([countsLoad, matchingLoad, facetLoad]);
@@ -589,7 +548,8 @@ export async function HomeContent({ params }: { params: HomeParams }) {
     counts = loadedCounts;
     total = Object.values(counts).reduce((sum, count) => sum + count, 0);
     // Public lists load only what is visible. Rankings retain their separate eligibility.
-    const span = publicCatalogue ? spanOf(matchingTotal) : { start: 0, count: verifiedTotal };
+    growth = growthLoad ? await growthLoad : null;
+    const span = growth ? { start: growth.offset, count: growth.items.length } : publicCatalogue ? spanOf(matchingTotal) : { start: 0, count: verifiedTotal };
     listStart = span.start;
     list = earlyList ? (await earlyList).slice(0, span.count) : await loadList(span.count, span.start);
     resultCount = publicCatalogue ? matchingTotal : list.length;
@@ -642,7 +602,7 @@ export async function HomeContent({ params }: { params: HomeParams }) {
   const FeedTitle = scoped ? "h1" : "h2";
   const cardHeading = scoped ? 2 : 3;
   /**
-   * 목록이 화면 첫 그림인가 — '지금 뜨는' 띠가 위에 없을 때(검색·분야·거르기·대체 목록). 그때만 첫 줄 세 장(넓은 화면의 한 줄)을
+   * 목록이 화면 첫 그림인가 — 8시간 급상승 띠가 위에 없을 때(검색·분야·거르기). 그때만 첫 줄 세 장(넓은 화면의 한 줄)을
    * 먼저 받는다(PERF-03). 띠가 위에 있으면 첫 그림은 띠의 것이라 목록 그림이 그 받기와 다투지 않게 둔다.
    */
   const feedPriority = !filtered && (strip?.items.length ?? 0) > 0 ? 0 : FEED_PRIORITY_TILES;
@@ -669,9 +629,12 @@ export async function HomeContent({ params }: { params: HomeParams }) {
             <FeedTitle id="projects-title" className="row-title">{feedTitle}</FeedTitle>
             {/* 목록이 영어라 한국어 검색어는 영어 낱말로 한 번 더 찾는다. 무엇으로 찾았는지 밝힌다 */}
             {translatedQuery && <p className="row-note">영어로 “{translatedQuery}”도 함께 찾았습니다.</p>}
-            {/* 순위 대신 보여주는 목록은 무엇으로 줄 세웠는지 밝힌다 — 숫자의 기준이 보여야 한다 */}
-            {!query && fallback === "rising" && <p className="row-note">최근 두 확인 사이 하루 평균 GitHub 스타가 늘어난 순 · <Link prefetch={false} href={metricHref(state, "rising")} scroll={false}>집계 기준</Link></p>}
-            {!query && fallback === "stars" && <p className="row-note">GitHub 스타가 많은 순.</p>}
+            {effectiveSort === "weekly" && <>
+              <p className="row-note">{starGrowthNote(growth?.snapshot ?? null)} · <Link prefetch={false} href={metricHref(state, "star-growth")} scroll={false}>집계 기준</Link></p>
+              {growth?.snapshot.status === "ready" && <p className="row-note">기준 회차 {formatPublicDateTime(growth.snapshot.asOf, now)} KST · 다음 예정 {formatPublicDateTime(growth.snapshot.nextCycle, now)} KST</p>}
+            </>}
+            {effectiveSort === "recent" && <p className="row-note">서비스에 등록·검증된 시각 기준 · 검증된 프로젝트를 먼저 표시합니다. GitHub 저장소 생성일과 다릅니다.</p>}
+            {effectiveSort === "all-time" && <p className="row-note">총 GitHub 스타가 많은 순입니다.</p>}
           </div>
         </div>
 
@@ -679,12 +642,11 @@ export async function HomeContent({ params }: { params: HomeParams }) {
           state={state}
           counts={facetCounts}
           categoryOrderCounts={counts}
+          countsKnown={!dbDown}
           aiCounts={facetAiCounts}
           total={total}
           resultCount={resultCount}
-          listLabel={fallback === "rising" ? "지금 뜨는" : fallback === "stars" ? "스타 많은 순" : undefined}
           approximate={approximate}
-          rankingReady={rankingReady}
         />
 
         {dbDown ? (
@@ -694,6 +656,8 @@ export async function HomeContent({ params }: { params: HomeParams }) {
               <p>잠시 후 다시 시도해주세요.</p>
             </div>
           </div>
+        ) : effectiveSort === "weekly" && growth?.snapshot.status !== "ready" && growth?.snapshot.reason !== "filtered-out" ? (
+          <div className="projects-grid"><div className="empty-state"><StarGrowthSummary snapshot={growth?.snapshot ?? null} now={now} /></div></div>
         ) : savedOnly || list.length > 0 ? (
           <ProjectGrid
             now={now.toISOString()}
@@ -710,7 +674,6 @@ export async function HomeContent({ params }: { params: HomeParams }) {
         ) : (
           <EmptyReason
             sort={effectiveSort}
-            fallback={fallback}
             filtered={filtered}
             hasUnclaimed={unclaimed.length > 0}
             query={query}
@@ -749,7 +712,7 @@ export async function HomeContent({ params }: { params: HomeParams }) {
       {!query && <LaunchBand />}
 
       <Suspense>
-        <MethodologyDialog pulse={serializePulse(pulse, now)} rankingFallback={!rankingReady} aiLevels={aiLevelTotals(aiCounts)} starGrowth={filtered ? undefined : strip?.snapshot ?? null} />
+        <MethodologyDialog pulse={serializePulse(pulse, now)} aiLevels={aiLevelTotals(aiCounts)} starGrowth={growth?.snapshot ?? (filtered ? undefined : strip?.snapshot ?? null)} />
       </Suspense>
     </main>
   );

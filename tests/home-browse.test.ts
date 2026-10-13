@@ -77,14 +77,14 @@ describe("결과 수 (UX-24·27)", () => {
     // 분야 알약(전체 수)과 다른 까닭 — 대신 보여 주는 목록의 이름을 붙인다
     expect(resultLine({ sort: "weekly", category: "Finance" }, 4, { listLabel: "지금 뜨는" })).toBe("금융 · 지금 뜨는 4개");
     expect(resultLine({ sort: "weekly", query: "가계부" }, 4, { listLabel: "지금 뜨는" })).toBe("검색 결과 4개");
-    expect(resultLine({ sort: "recent" }, 36_300)).toBe("최신 36,300개");
+    expect(resultLine({ sort: "recent" }, 36_300)).toBe("최근 등록 36,300개");
   });
 
-  it("순위가 서기 전 '추천' 탭은 스타가 는 목록이라 '지금 뜨는'이라 부른다(UX-35)", () => {
-    expect(sortLabel("weekly", false)).toBe("지금 뜨는");
-    expect(sortLabel("weekly", true)).toBe("추천");
+  it("탐색 탭은 고정된 기준 이름을 쓴다", () => {
+    expect(sortLabel("weekly")).toBe("8시간 스타 급상승");
+    expect(sortLabel("weekly")).toBe("8시간 스타 급상승");
     expect(sortLabel("relevance")).toBe("관련도");
-    expect(sortLabel("all-time", false)).toBe("관심 많은 순");
+    expect(sortLabel("all-time")).toBe("GitHub 스타 많은 순");
   });
 });
 
@@ -102,7 +102,7 @@ describe("분야 알약 (UX-12, 계약 C3)", () => {
     const html = renderToStaticMarkup(createElement(BrowseFilters, {
       state: { sort: "relevance", query: "가계부" }, counts, total: 11_734, resultCount: 285, approximate: true,
     }));
-    expect(html.indexOf("관련도")).toBeLessThan(html.indexOf("추천"));
+    expect(html.indexOf("관련도")).toBeLessThan(html.indexOf("8시간 스타 급상승"));
     expect(html).toMatch(/class="tab active"[^>]*aria-selected="true"[^>]*>관련도</);
     expect(html).not.toContain("chip-count");
     expect(html).not.toContain("개인프로필");
@@ -117,7 +117,7 @@ describe("분야 알약 (UX-12, 계약 C3)", () => {
     }));
     expect(html).not.toContain("관련도");
     expect(html).toContain('<span class="chip-count">9,157</span>');
-    expect(html).toContain("최신 11,734개 · 공개 11,734개");
+    expect(html).toContain("최근 등록 11,734개 · 공개 11,734개");
     expect(html).toContain('href="/c/dev?sort=recent"');
     expect(html).not.toContain("category=");
   });

@@ -98,6 +98,7 @@ button.tab.active { background: var(--bg-card); }
 .chip-dark .chip-count { color: color-mix(in srgb, var(--bg-card) 60%, var(--text)); }
 .chip:hover { color: var(--text); background: var(--bg-hover); }
 .chip-dark:hover { color: var(--bg-card); background: var(--text); }
+.chip[aria-disabled="true"] { color: var(--text-3); background: var(--bg-soft); cursor: default; opacity: .6; }
 
 .projects-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(300px, 100%), 1fr)); gap: 20px; }
 .project-card { background: var(--bg-soft); border-radius: 18px; overflow: hidden; display: flex; flex-direction: column; }

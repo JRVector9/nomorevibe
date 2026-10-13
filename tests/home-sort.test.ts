@@ -40,8 +40,8 @@ describe("home sort", () => {
 
     expect(html).toContain('href="/c/dev?sort=weekly&amp;q=ai+tool"');
     expect(html).toContain('href="/c/dev?sort=all-time&amp;q=ai+tool"');
-    expect(html).toContain("추천");
-    expect(html).toContain("관심 많은 순");
+    expect(html).toContain("8시간 스타 급상승");
+    expect(html).toContain("GitHub 스타 많은 순");
     // '저장소 있음' 탭은 내렸다 — 주소 ?sort=open 은 parseHomeSort 가 계속 받는다
     expect(html).not.toContain("저장소 있음");
   });
@@ -87,7 +87,7 @@ describe("home sort", () => {
     expect(narrowed).not.toContain("검색 결과");
   });
 
-  it("uses 추천 for the default season sort instead of a weekly cadence label", () => {
+  it("uses the fixed eight-hour growth label for the default sort", () => {
     const html = renderToStaticMarkup(createElement(BrowseFilters, {
       state: { sort: "weekly" },
       counts: {},
@@ -95,7 +95,7 @@ describe("home sort", () => {
       resultCount: 0,
     }));
 
-    expect(html).toContain("추천");
+    expect(html).toContain("8시간 스타 급상승");
     expect(html).not.toContain("이번 주");
   });
 });
