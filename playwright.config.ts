@@ -27,7 +27,8 @@ export default defineConfig({
       "cp -R public .next/standalone/public",
       "mkdir -p .next/standalone/.next",
       "cp -R .next/static .next/standalone/.next/static",
-      `HOSTNAME=127.0.0.1 PORT=${E2E_PORT} node .next/standalone/server.js`,
+      // Match production binding; Next normalizes 127.* rewrite hosts to localhost.
+      `HOSTNAME=0.0.0.0 PORT=${E2E_PORT} node .next/standalone/server.js`,
     ].join(" && "),
     url: E2E_BASE_URL,
     reuseExistingServer: false,

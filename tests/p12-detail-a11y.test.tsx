@@ -107,7 +107,7 @@ describe("영어 원문 표시(A11Y-06)", () => {
     const only = renderToStaticMarkup(<ProductTagline tagline={product.tagline} original="toggle" />);
     expect(only).toMatch(/<p [^>]*lang="en"[^>]*>Infisical is/);
     const both = renderToStaticMarkup(<ProductTagline tagline={product.tagline} taglineKo="올인원 신원 보안 플랫폼" original="toggle" />);
-    expect(both).toMatch(/<p(?![^>]*lang=)[^>]*>올인원 신원 보안 플랫폼<\/p>/);
+    expect(both).toMatch(/<p[^>]*lang="ko"[^>]*>올인원 신원 보안 플랫폼<\/p>/);
     expect(both).toMatch(/<details[\s\S]*<p lang="en"[^>]*>Infisical is/);
     const korean = renderToStaticMarkup(<ProductTagline tagline="브라우저에서 HWP 를 엽니다" original="toggle" />);
     expect(korean).not.toContain("lang=");
