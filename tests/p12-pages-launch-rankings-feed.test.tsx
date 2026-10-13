@@ -1,3 +1,4 @@
+import type { ResolvingMetadata } from "next";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { XMLParser } from "fast-xml-parser";
@@ -78,7 +79,7 @@ describe("랭킹 시즌", () => {
   it("없는 시즌은 홈 제목이 아니라 '페이지를 찾을 수 없습니다'", async () => {
     mocks.getSeasonByKey.mockResolvedValue(null);
 
-    const metadata = await rankingMetadata({ params: Promise.resolve({ key: "2099-W01" }) } as PageProps<"/[locale]/rankings/[key]">);
+    const metadata = await rankingMetadata({ params: Promise.resolve({ key: "2099-W01" }) } as PageProps<"/[locale]/rankings/[key]">, Promise.resolve({ openGraph: null } as Awaited<ResolvingMetadata>));
 
     expect(metadata.title).toBe("페이지를 찾을 수 없습니다 — nomorevibe");
   });

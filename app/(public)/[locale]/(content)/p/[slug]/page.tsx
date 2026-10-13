@@ -19,7 +19,7 @@ import { FeedbackList } from "@/components/product-detail/FeedbackList";
 import { FeedbackSettingsMenu } from "@/components/product-detail/FeedbackSettingsMenu";
 import { UnclaimedOwnerContact } from "@/components/product-detail/UnclaimedOwnerContact";
 import { categoryHref } from "@/components/home/browse-state";
-import { productShareImage, shareMetadata } from "@/lib/copy/share";
+import { DEFAULT_SHARE_IMAGE, productShareImage, shareMetadata } from "@/lib/copy/share";
 import { pageTitle } from "@/lib/copy/brand";
 import { getProductDetail, getProductIdentity } from "@/lib/domain/products/detail-view";
 import { productIndexable } from "@/lib/domain/products/indexing";
@@ -29,7 +29,11 @@ import { getDictionary, getTranslator } from "@/lib/i18n/dictionary";
 import type { Locale } from "@/lib/i18n/locales";
 import { getRequestLocale } from "@/lib/i18n/server";
 import { localePath } from "@/lib/i18n/routing";
-import { localizeProductList } from "@/lib/i18n/products";
+import { localizeProductList, productTranslationSource, readTranslationsForProducts } from "@/lib/i18n/products";
+import { productLocaleMetadata } from "@/lib/i18n/metadata";
+import { readProductTranslationReadiness, selectProductTranslation } from "@/lib/domain/products/translations";
+import { onReplica } from "@/lib/db";
+import { logger } from "@/lib/observability/logger";
 import { publicRead } from "@/lib/domain/products/public-reads";
 import { productJsonLd, serializeJsonLd } from "@/lib/seo/product-json-ld";
 import { siteOrigin } from "@/lib/site";
@@ -50,15 +54,30 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const product = await identityOf(slug);
   // 없는 제품의 404 탭 제목이 홈 제목으로 남지 않게 — not-found.tsx 의 제목과 같은 말(UX-10·UX-39)
   if (!product) return { title: pageTitle((await getTranslator(locale, "detail"))("notFound.title")) };
-  // 한국어 소개가 있으면 그것으로 — 검색 결과와 공유 미리보기에 영어 원문이 그대로 뜨지 않게(SEO-05)
-  const description = product.taglineKo?.trim() || product.tagline;
+  const source = productTranslationSource(product);
+  const baseIndexable = productIndexable(product);
+  const contentEligible = product.translationEligible !== false;
+  const [translations, readiness, common] = await Promise.all([
+    readTranslationsForProducts([product], locale).catch((error) => {
+      logger.warn("i18n.product_metadata_translation_unavailable", { error }); return [];
+    }),
+    baseIndexable && contentEligible ? onReplica(() => readProductTranslationReadiness([source])).catch((error) => {
+      logger.warn("i18n.product_metadata_readiness_unavailable", { error }); return [];
+    }) : [],
+    getTranslator(locale, "common"),
+  ]);
+  const description = locale === "ko" ? product.taglineKo?.trim() || product.tagline
+    : selectProductTranslation(source, locale, "tagline", translations.find((row) => row.field === "tagline")).text;
+  const title = pageTitle(product.name);
+  const image = productShareImage(product.ogImage);
+  const share = shareMetadata({ title, description, image: { ...image,
+    alt: image.url === DEFAULT_SHARE_IMAGE.url ? `nomorevibe — ${common("site.tagline")}` : product.name } });
+  const localized = productLocaleMetadata(locale, `/p/${slug}`, source, readiness, baseIndexable, contentEligible);
   return {
-    title: pageTitle(product.name),
-    description,
-    // 공유 미리보기 — 그 사이트의 대표 이미지가 있으면 그것, 없으면 사이트 기본 그림(lib/copy/share.ts, SEO-01·UX-07)
-    ...shareMetadata({ title: pageTitle(product.name), description, image: productShareImage(product.ogImage) }),
-    // 색인 규칙은 sitemap 과 하나다(indexing.ts, UX-08·D1) — 내려달라는 요청이 들어오면 바로 noindex(엣지 사본은 그때 지운다 — takedown.ts)
-    robots: productIndexable(product) ? undefined : { index: false, follow: false },
+    ...share, ...localized, title, description,
+    openGraph: { ...share.openGraph, ...localized.openGraph, url: `${siteOrigin()}${localePath(locale, `/p/${slug}`)}` },
+    // Preserve the existing Korean indexability contract; incomplete translations follow public links.
+    robots: locale === "ko" && baseIndexable ? undefined : localized.robots,
   };
 }
 
@@ -73,8 +92,9 @@ export default async function ProductPage({ params }: Props) {
   const identity = await identityOf(slug);
   if (!identity) notFound();
   const dictionary = await getDictionary(locale, "detail");
+  const now = new Date();
   return (
-    <I18nProvider locale={locale} dictionaries={{ detail: dictionary }}>
+    <I18nProvider locale={locale} dictionaries={{ detail: dictionary }} now={now.toISOString()}>
       <Suspense fallback={<DetailSkeleton />}>
         <ProductDetail slug={slug} locale={locale} />
       </Suspense>
@@ -110,7 +130,7 @@ async function ProductDetail({ slug, locale }: { slug: string; locale: Locale })
   });
 
   return (
-    <main className="wrap pb-14">
+    <I18nProvider locale={locale} dictionaries={{}} now={now.toISOString()}><main className="wrap pb-14">
       <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: serializeJsonLd(jsonLd) }} />
       <DetailEntry slug={slug} />
       <nav aria-label={t("page.breadcrumb")} className="flex items-center gap-2 pt-4 text-[13px] text-fg-2">
@@ -165,6 +185,6 @@ async function ProductDetail({ slug, locale }: { slug: string; locale: Locale })
       </div>
 
       <RelatedRow category={product.category} items={related} total={risingTotal} />
-    </main>
+    </main></I18nProvider>
   );
 }

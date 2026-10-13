@@ -21,7 +21,7 @@ import {PopularList} from './PopularList';
 import './popular.css';
 export const dynamic='force-dynamic';
 // 구간·거르기·정렬·보기(?tier= 등)는 같은 화면의 보기다 — 정식 주소는 /popular 하나(SEO-04)
-export async function generateMetadata(props?: PageProps<"/[locale]/popular">, parent?: ResolvingMetadata): Promise<Metadata> {
+export async function generateMetadata(props: PageProps<"/[locale]/popular">, parent: ResolvingMetadata): Promise<Metadata> {
  void props;
  const locale = await getRequestLocale();
  const t = await getTranslator(locale, "browse");
@@ -58,7 +58,7 @@ export default async function PopularPage({searchParams}:{searchParams:Promise<R
  const first=result?(result.page-1)*result.pageSize+1:1;
  const items=(await localizeProductList(result?.items??[],locale)).map((item,index)=>rankedCard(item,first+index));
 
- return <I18nProvider locale={locale} dictionaries={{browse:dictionary}}><main className="wrap popular-page">
+ return <I18nProvider locale={locale} dictionaries={{browse:dictionary}} now={now}><main className="wrap popular-page">
   <nav aria-label={t("nav.breadcrumb")} className="popular-crumbs"><Link prefetch={false} href={localePath(locale,"/")}>{t("nav.discover")}</Link><span aria-hidden="true">›</span><span aria-current="page">{t("popular.title")}</span></nav>
   <div className="popular-heading">
    <h1>{t("popular.title")}</h1>

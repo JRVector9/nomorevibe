@@ -33,7 +33,7 @@ export default async function FeedbackPage({ params }: { params: Promise<{ id: s
   const [session, admin] = await Promise.all([getPublicSession(), currentAdmin()]);
   const feedback = await getFeedback(id, { userId: session?.user.id, admin: Boolean(admin) });
   if (!feedback) notFound();
-  return <I18nProvider locale={locale} dictionaries={{ detail }}><main className="mx-auto max-w-3xl space-y-5 px-5 py-10">
+  return <I18nProvider locale={locale} dictionaries={{ detail }} now={new Date().toISOString()}><main className="mx-auto max-w-3xl space-y-5 px-5 py-10">
     <Link prefetch={false} href={localePath(locale, `/p/${feedback.slug}`)} className="text-[14px] underline underline-offset-2">{t("feedback.backToProduct", { name: feedback.productName })}</Link>
     <h1 className="text-[22px] font-semibold">{t("feedback.heading")}</h1>
     <FeedbackItem feedback={feedback} />

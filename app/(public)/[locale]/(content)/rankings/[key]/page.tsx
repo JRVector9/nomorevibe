@@ -27,7 +27,7 @@ const loadSeason = cache((key: string) => getSeasonByKey(key));
  * 시즌 이름 — 열쇠("2026-W41")가 아니라 "2026년 41주"로(2026-10-08 UX 감사 UX-09·UX-39).
  * 순위가 빈 시즌은 sitemap 에서 빠지고(app/sitemap.ts) 여기서도 색인하지 말라고 한다.
  */
-export async function generateMetadata({ params }: PageProps<"/[locale]/rankings/[key]">, parent?: ResolvingMetadata): Promise<Metadata> {
+export async function generateMetadata({ params }: PageProps<"/[locale]/rankings/[key]">, parent: ResolvingMetadata): Promise<Metadata> {
   const locale = await getRequestLocale();
   const t = await getTranslator(locale, "browse");
   const { key } = await params;
@@ -61,7 +61,7 @@ export default async function RankingSeasonPage({
   const items=await localizeProductList(result.items,locale);
 
   return (
-    <I18nProvider locale={locale} dictionaries={{browse:dictionary}}><main className="mx-auto max-w-[1280px] px-6 pb-20 pt-9">
+    <I18nProvider locale={locale} dictionaries={{browse:dictionary}} now={new Date().toISOString()}><main className="mx-auto max-w-[1280px] px-6 pb-20 pt-9">
       <h1 className="text-[26px] font-extrabold">{t("ranking.title",{season:translatedSeason(result.season.key,seasonLabel(result.season.key),t)})}</h1>
       <div className="mt-6">
         {result.items.length > 0 ? (

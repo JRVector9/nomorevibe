@@ -2,6 +2,7 @@ import { I18nProvider } from "@/lib/i18n/context";
 import { getDictionary, getTranslator } from "@/lib/i18n/dictionary";
 import { getRequestLocale } from "@/lib/i18n/server";
 import { localePath } from "@/lib/i18n/routing";
+import { localizedAlternates } from "@/lib/i18n/metadata";
 import { Suspense } from "react";
 import Link from "next/link";
 import { notFound } from "next/navigation";
@@ -14,8 +15,14 @@ import { parseGithubRepository } from "@/lib/github/repositories";
 
 export const dynamic = "force-dynamic";
 export const fetchCache = "force-no-store";
-export async function generateMetadata() { const t = await getTranslator(await getRequestLocale(), "detail"); return { title: t("settings.title"), robots: { index: false, follow: false } }; }
 type Props = { params: Promise<{ slug: string }>; searchParams: Promise<Record<string, string | string[] | undefined>> };
+
+export async function generateMetadata({ params }: Pick<Props, "params">) {
+  const [locale, { slug }] = await Promise.all([getRequestLocale(), params]);
+  const t = await getTranslator(locale, "detail");
+  return { title: t("settings.title"), robots: { index: false, follow: false },
+    alternates: localizedAlternates(locale, `/p/${encodeURIComponent(slug)}/github`, []) };
+}
 
 async function MakerSettings({ slug, searchParams }: { slug: string; searchParams: Props["searchParams"] }) {
   const locale = await getRequestLocale();

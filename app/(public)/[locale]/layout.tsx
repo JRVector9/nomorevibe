@@ -25,8 +25,6 @@ export async function generateMetadata({ params }: { params: Promise<{ locale: s
     /** 공유 미리보기 기본값 — 사이트 이름·한국어·기본 그림(SEO-01·UX-07). 제품 상세는 제 그림과 소개로 바꾼다 */
     openGraph: { siteName: BRAND, locale: LOCALE_CONFIG[locale].openGraph, type: "website", images: [{ ...DEFAULT_SHARE_IMAGE, alt: `${BRAND} — ${t("site.tagline")}` }] },
     twitter: { card: "summary_large_image", images: [DEFAULT_SHARE_IMAGE.url] },
-    // Page UI and content readiness are completed in follow-up phases before indexing.
-    ...(locale !== "ko" ? { robots: { index: false, follow: true } } : {}),
     /** 피드 리더가 /feed.xml을 스스로 찾게 한다 — 주소를 알려주지 않으면 있어도 없는 것이다 */
     alternates: {
       types: { "application/rss+xml": `${siteOrigin()}/feed.xml` },

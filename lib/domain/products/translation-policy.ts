@@ -78,7 +78,7 @@ const MARKUP = /<\/?[a-z][^>]*>|```|\]\(\s*(?:javascript|data):|\bon\w+\s*=/i;
 const BOILERPLATE = /^(?:translation|translated text|here is|as an ai|i cannot|翻译|翻譯|译文|譯文)\s*[:：]|i'?m sorry/i;
 const URL = /https?:\/\/[^\s<>"\])]+/g;
 const QUOTE = /"[^"\n]{2,}"|“[^”\n]{2,}”|「[^」\n]{2,}」/g;
-const NUMBERS = /\d+(?:[.,]\d+)*/g;
+const NUMBERS = /[+\-−＋－]?\p{Nd}+(?:[.,]\p{Nd}+)*/gu;
 // Semantic vocabulary is checked separately from script; 軟件/數據庫 alone is not a reviewed Hant translation.
 const WRONG_TERMS: Record<ProductTranslationLocale, readonly string[]> = {
   en: [],

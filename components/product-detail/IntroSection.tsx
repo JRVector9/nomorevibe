@@ -51,7 +51,7 @@ export async function IntroSection({ product, profile, readmeExcerpt, unclaimed,
               {repo && <> {t("intro.moreReadme")} <a href={repo} target="_blank" rel="noopener noreferrer" className="text-accent-ink underline underline-offset-2">{t("intro.readmeLink")} ↗</a></>}
             </p>
           )}
-        {description && selected?.translated && "provenance" in selected && selected.provenance === "machine" && <p className="m-0 text-[13px] text-fg-2">{labels("content.machineTranslation")}</p>}
+        {description && selected?.translated && selected.provenance === "machine" && <p className="m-0 text-[13px] text-fg-2">{labels("content.machineTranslation")}</p>}
         {description && selected?.pending && <p role="status" className="m-0 text-[13px] text-fg-2">{labels("content.pending")}</p>}
         {description && selected?.translated && originalDescription && <details className="text-[13px] text-fg-2"><summary className="min-h-11 cursor-pointer">{labels("content.original")}</summary><p lang={selected.sourceLocale ?? englishLang(originalDescription)} className="whitespace-pre-line">{originalDescription}</p></details>}
         {description && <p className="m-0 text-[13px] text-fg-2">{unclaimed ? t("source.readme") : t("source.maker")}</p>}

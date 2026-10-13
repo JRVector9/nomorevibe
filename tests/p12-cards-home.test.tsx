@@ -1,3 +1,4 @@
+import type { ResolvingMetadata } from "next";
 import { readFileSync } from "node:fs";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -65,9 +66,9 @@ function product(slug: string): ProductListItem {
   };
 }
 const rss = { "application/rss+xml": "http://localhost:3000/feed.xml" };
-const home = (params: Record<string, string>) => generateMetadata({ searchParams: Promise.resolve(params) });
+const home = (params: Record<string, string>) => generateMetadata({ searchParams: Promise.resolve(params) }, Promise.resolve({ openGraph: null } as Awaited<ResolvingMetadata>));
 const category = (slug: string, params: Record<string, string> = {}) =>
-  categoryMetadata({ params: Promise.resolve({ category: slug }), searchParams: Promise.resolve(params) });
+  categoryMetadata({ params: Promise.resolve({ category: slug }), searchParams: Promise.resolve(params) }, Promise.resolve({ openGraph: null } as Awaited<ResolvingMetadata>));
 /** 제목 태그를 문서 차례대로 — h1·h2·h3… 의 숫자만 */
 const headingLevels = (html: string) => [...html.matchAll(/<h([1-6])[\s>]/g)].map((match) => Number(match[1]));
 const skipsLevel = (levels: number[]) => levels.some((level, index) => index > 0 && level > levels[index - 1] + 1);
@@ -83,20 +84,21 @@ describe("정식 주소 (SEO-04)", () => {
   it("보기 조건이 붙은 홈은 홈을 정식 주소로 — 레이아웃의 RSS 알림은 지우지 않는다", async () => {
     const variants: Record<string, string>[] = [{ sort: "recent" }, { ai: "1" }, { shown: "36" }, { saved: "1" }, { personal: "1" }, { q: "  " }];
     for (const params of variants) {
-      expect(await home(params)).toEqual({ title: "nomorevibe — AI로 만든 것들, 세상에 나오다.", alternates: { canonical: "/", types: rss } });
+      expect(await home(params)).toMatchObject({ title: "nomorevibe — AI로 만든 것들, 세상에 나오다.", alternates: { canonical: "http://localhost:3000/", types: rss,
+        languages: { ko: "http://localhost:3000/", en: "http://localhost:3000/en", "zh-Hans": "http://localhost:3000/zh-Hans", "zh-Hant": "http://localhost:3000/zh-Hant", "x-default": "http://localhost:3000/" } } });
     }
   });
 
-  it("검색 결과는 정식 주소 없이 색인하지 않는다", async () => {
-    expect(await home({ q: "pdf", sort: "recent" })).toEqual({ title: "“pdf” 검색 결과 — nomorevibe", robots: { index: false, follow: true } });
+  it("검색 결과는 같은 언어 정식 주소와 noindex를 유지하고 언어 대안은 싣지 않는다", async () => {
+    expect(await home({ q: "pdf", sort: "recent" })).toMatchObject({ title: "“pdf” 검색 결과 — nomorevibe", robots: { index: false, follow: true }, alternates: { canonical: "http://localhost:3000/", languages: {} } });
   });
 
   it("분야 화면은 /c/<분야>가 정식 주소, 분야 안 검색은 색인하지 않는다", async () => {
-    expect(await category("dev")).toMatchObject({ alternates: { canonical: "/c/dev", types: rss } });
-    expect(await category("dev", { sort: "recent", ai: "1" })).toMatchObject({ alternates: { canonical: "/c/dev" } });
+    expect(await category("dev")).toMatchObject({ alternates: { canonical: "http://localhost:3000/c/dev", types: rss } });
+    expect(await category("dev", { sort: "recent", ai: "1" })).toMatchObject({ alternates: { canonical: "http://localhost:3000/c/dev" } });
     const searched = await category("dev", { q: "pdf" });
     expect(searched.robots).toEqual({ index: false, follow: true });
-    expect(searched.alternates).toBeUndefined();
+    expect(searched.alternates).toMatchObject({ canonical: "http://localhost:3000/c/dev", languages: {} });
     expect(String(searched.title)).toContain("pdf");
   });
 });

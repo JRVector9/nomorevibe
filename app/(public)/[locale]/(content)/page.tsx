@@ -277,7 +277,7 @@ export function canonicalAlternates(path: string, locale: Locale = "ko", readyLo
 }
 
 /** Search stays noindex; view parameters share the unfiltered language canonical. */
-export async function generateMetadata({ searchParams }: Props, parent?: ResolvingMetadata): Promise<Metadata> {
+export async function generateMetadata({ searchParams }: Props, parent: ResolvingMetadata): Promise<Metadata> {
   const locale = await getRequestLocale();
   const t = await getTranslator(locale, "browse");
   const params = await searchParams;
@@ -362,7 +362,7 @@ async function NewRepositories({ pageParam }: { pageParam: SearchValue }) {
   items = await localizeProductList(items,locale);
   const href = (next: number) => localePath(locale, `/?${new URLSearchParams({ new: "1", page: String(next) })}`);
   return (
-    <I18nProvider locale={locale} dictionaries={{ browse: dictionary }}><main className="wrap">
+    <I18nProvider locale={locale} dictionaries={{ browse: dictionary }} now={now.toISOString()}><main className="wrap">
       <section id="new" className="row-section" aria-labelledby="new-title">
         <div className="row-head">
           <div>
@@ -642,7 +642,7 @@ export async function HomeContent({ params }: { params: HomeParams }) {
   const feedPriority = !filtered && (strip?.items.length ?? 0) > 0 ? 0 : FEED_PRIORITY_TILES;
 
   return (
-    <I18nProvider locale={locale} dictionaries={{ browse: dictionary }}><main className="wrap">
+    <I18nProvider locale={locale} dictionaries={{ browse: dictionary }} now={now.toISOString()}><main className="wrap">
       {!scoped && <IntroLine pulse={pulse} total={total} state={state} />}
       {!filtered && (
         <CompactRow id="rising" priority title={t("growth.title")} note={<>{starGrowthNote(strip?.snapshot ?? null, locale, t)} · <Link prefetch={false} href={metricHref(state, "star-growth", locale)} scroll={false}>{t("nav.methodology")}</Link></>}

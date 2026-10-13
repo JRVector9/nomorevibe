@@ -36,7 +36,7 @@ const queryOf = (params: HomeParams) => {
   return value?.trim().slice(0, 200) || undefined;
 };
 
-export async function generateMetadata({ params, searchParams }: Props, parent?: ResolvingMetadata): Promise<Metadata> {
+export async function generateMetadata({ params, searchParams }: Props, parent: ResolvingMetadata): Promise<Metadata> {
   const locale = await getRequestLocale();
   const [t, labels] = await Promise.all([getTranslator(locale, "browse"), getTranslator(locale, "labels")]);
   const [{ category: raw }, search] = await Promise.all([params, searchParams]);

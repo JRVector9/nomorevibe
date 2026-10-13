@@ -1,3 +1,4 @@
+import type { ResolvingMetadata } from "next";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { PopularFacets, PopularProduct } from "@/lib/domain/products/popular";
@@ -121,6 +122,6 @@ describe("스타 구간 이름(UX-35)", () => {
   });
 
   it("제목은 브랜드 표기 하나로", async () => {
-    expect((await generateMetadata()).title).toBe("많이 쓰이는 프로젝트 — nomorevibe");
+    expect((await generateMetadata({ params: Promise.resolve({ locale: "ko" }), searchParams: Promise.resolve({}) }, Promise.resolve({ openGraph: null } as Awaited<ResolvingMetadata>))).title).toBe("많이 쓰이는 프로젝트 — nomorevibe");
   });
 });

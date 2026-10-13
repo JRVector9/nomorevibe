@@ -19,7 +19,7 @@ import { logger } from "@/lib/observability/logger";
 import "@/app/(public)/[locale]/(content)/popular/popular.css";
 
 export const dynamic = "force-dynamic";
-export async function generateMetadata(props?: PageProps<"/[locale]/rising">, parent?: ResolvingMetadata): Promise<Metadata> {
+export async function generateMetadata(props: PageProps<"/[locale]/rising">, parent: ResolvingMetadata): Promise<Metadata> {
   void props;
   const locale = await getRequestLocale();
   const t = await getTranslator(locale, "browse");
@@ -52,7 +52,7 @@ export default async function RisingPage({ searchParams }: { searchParams: Promi
   const first = result ? (result.page - 1) * result.pageSize + 1 : 1;
   const items = (await localizeProductList(result?.items ?? [],locale)).map((product, index) => ({ ...product, rank: first + index }));
   return (
-    <I18nProvider locale={locale} dictionaries={{browse:dictionary}}><main className="wrap popular-page">
+    <I18nProvider locale={locale} dictionaries={{browse:dictionary}} now={now.toISOString()}><main className="wrap popular-page">
       <nav aria-label={t("nav.breadcrumb")} className="popular-crumbs">
         <Link prefetch={false} href={localePath(locale,"/")}>{t("nav.discover")}</Link><span aria-hidden="true">›</span><span aria-current="page">{t("growth.title")}</span>
       </nav>
