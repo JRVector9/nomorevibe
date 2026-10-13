@@ -1,5 +1,7 @@
-import { cookies } from "next/headers";
-import { SESSION_COOKIE, verifySession, type Session } from "./session";
+import { cookies, headers } from "next/headers";
+import { SESSION_COOKIE, type Session } from "./session";
+import { adminIngressAllowed, adminIngressRequired, adminLocalLoginEnabled, verifyAdminSession } from "./admin-access";
+export { adminLocalLoginEnabled, adminLogins, isAdminLogin, authSecret, adminOrigin } from "./admin-access";
 
 /**
  * 어드민 자격.
@@ -13,26 +15,6 @@ import { SESSION_COOKIE, verifySession, type Session } from "./session";
  */
 
 export const LOCAL_ADMIN_LOGIN = "local";
-
-export function adminLocalLoginEnabled(): boolean {
-  return process.env.ADMIN_LOCAL_LOGIN === "1";
-}
-
-/** 설정이 비어 있으면 아무도 어드민이 아니다 — 실수로 열려 있는 것보다 낫다 */
-export function adminLogins(): string[] {
-  return (process.env.ADMIN_GITHUB_LOGINS ?? "")
-    .split(",")
-    .map((s) => s.trim().toLowerCase())
-    .filter(Boolean);
-}
-
-/** GitHub 로그인명은 대소문자를 구분하지 않는다 */
-export function isAdminLogin(login: string): boolean {
-  const normalized = login.trim().toLowerCase();
-  if (adminLocalLoginEnabled() && normalized === LOCAL_ADMIN_LOGIN) return true;
-  const allowed = adminLogins();
-  return allowed.length > 0 && allowed.includes(normalized);
-}
 
 /**
  * 로컬 로그인의 운영자 이름(2026-10-08 UX 감사 ADM-21).
@@ -57,28 +39,17 @@ export async function localOperatorName(): Promise<string | null> {
   return normalizeOperatorName((await cookies()).get(OPERATOR_COOKIE)?.value);
 }
 
-export function authSecret(): string | null {
-  const secret = process.env.AUTH_SECRET;
-  // 짧은 비밀키는 서명의 의미를 없앤다
-  return secret && secret.length >= 32 ? secret : null;
-}
-
 /**
  * 현재 요청의 어드민 세션. 없으면 null.
  * 화면과 서버 액션이 이걸로 자격을 확인한다.
  */
 export async function currentAdmin(): Promise<Session | null> {
+  // Actions can be invoked on routes other than /admin: retain the ingress check here.
+  if (adminIngressRequired() && !adminIngressAllowed(await headers())) return null;
   if (adminLocalLoginEnabled()) {
-    return { login: LOCAL_ADMIN_LOGIN, exp: Math.floor(Date.now() / 1000) + 12 * 60 * 60 };
+    return { login: LOCAL_ADMIN_LOGIN, exp: Math.floor(Date.now() / 1000) + 12 * 60 * 60, method: "local" };
   }
 
-  const secret = authSecret();
-  if (!secret) return null;
-
   const cookie = (await cookies()).get(SESSION_COOKIE)?.value;
-  const session = await verifySession(cookie, secret);
-  if (!session) return null;
-
-  // 쿠키를 발급한 뒤 허용목록에서 빠졌을 수 있다. 매 요청 다시 확인한다.
-  return isAdminLogin(session.login) ? session : null;
+  return verifyAdminSession(cookie);
 }

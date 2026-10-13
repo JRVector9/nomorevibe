@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { withRoute } from "@/lib/http/handler";
 import { siteOrigin } from "@/lib/site";
+import { adminIngressAllowed, adminOrigin } from "@/lib/auth/admin-access";
 import { OAUTH_STATE_COOKIE, oauthStateCookieOptions } from "@/lib/auth/oauth";
 
 /**
@@ -11,6 +12,7 @@ import { OAUTH_STATE_COOKIE, oauthStateCookieOptions } from "@/lib/auth/oauth";
  * 로그인시킬 수 있다(CSRF).
  */
 export const GET = withRoute("auth.github.start", async (req: Request) => {
+  if (!adminIngressAllowed(req.headers)) return new NextResponse(null, { status: 404 });
   const clientId = process.env.GITHUB_OAUTH_CLIENT_ID;
   if (!clientId) {
     return NextResponse.json({ error: "GitHub OAuth가 설정되지 않았습니다" }, { status: 503 });
@@ -19,7 +21,7 @@ export const GET = withRoute("auth.github.start", async (req: Request) => {
   const state = crypto.randomUUID();
   const authorize = new URL("https://github.com/login/oauth/authorize");
   authorize.searchParams.set("client_id", clientId);
-  authorize.searchParams.set("redirect_uri", `${siteOrigin(req)}/api/auth/github/callback`);
+  authorize.searchParams.set("redirect_uri", `${adminOrigin() ?? siteOrigin(req)}/api/auth/github/callback`);
   // 어드민 로그인에 필요한 것은 신원뿐이다. 레포 권한은 요구하지 않는다.
   authorize.searchParams.set("scope", "read:user");
   authorize.searchParams.set("state", state);
