@@ -7,16 +7,21 @@ import { localizedAlternates, localizedOpenGraph } from "@/lib/i18n/metadata";
 import { redirect } from "next/navigation";
 import { after } from "next/server";
 import Link from "next/link";
-import { BrowseFilters, chipCategories, metricHref, parseHomeSort, parseShown, type HomeSort } from "@/components/BrowseFilters";
+import { BrowseFilters } from "@/components/BrowseFilters";
 import {
   aiLevelTotals,
   type AiLevelCount,
+  type HomeSort,
   browseTitle,
   categoryHref,
   categoryRedirect,
+  chipCategories,
   HOME_FIRST_PAGE,
   HOME_MAX_SHOWN,
+  metricHref,
   parseCategory,
+  parseHomeSort,
+  parseShown,
   shownWindow,
 } from "@/components/home/browse-state";
 import { ActiveList } from "@/components/home/ActiveList";

@@ -1,12 +1,13 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { BrowseFilters, chipCategories } from "@/components/BrowseFilters";
+import { BrowseFilters } from "@/components/BrowseFilters";
 import {
   browseTitle,
   categoryHref,
   categoryRedirect,
   categorySlug,
+  chipCategories,
   formatResultCount,
   hrefWith,
   metricHref,

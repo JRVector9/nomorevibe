@@ -4,6 +4,7 @@ import Link from "next/link";
 import {
   aiFilterCounts,
   categoryCountsForAi,
+  chipCategories,
   hrefWith,
   resultLine,
   sortLabel,
@@ -15,11 +16,8 @@ import { useLocale, useTranslations } from "@/lib/i18n/context";
 import { formatNumber } from "@/lib/i18n/format";
 import { translatedCategory } from "@/components/home/i18n";
 import { AI_FILTERS } from "@/lib/domain/evidence/ai-level-labels";
-import { CATEGORIES } from "@/lib/domain/products/categories";
-import { hiddenByDefault } from "@/lib/domain/products/visibility";
 
 export type { BrowseState, HomeSort } from "@/components/home/browse-state";
-export { hrefWith, metricHref, parseHomeSort, parseShown } from "@/components/home/browse-state";
 
 /**
  * 목록을 좁히는 줄.
@@ -28,15 +26,6 @@ export { hrefWith, metricHref, parseHomeSort, parseShown } from "@/components/ho
  */
 
 const TABS: readonly HomeSort[] = ["weekly", "recent", "all-time"];
-
-/**
- * 분야 알약에 올릴 분야 — 개수 순, 기본 목록에서 빼는 분야(개인 프로필, 계약 C3)는 칩에도 없다.
- * 0건 분야도 위치를 유지하고 선택을 해제할 수 있다.
- */
-export function chipCategories(counts: Record<string, number>): string[] {
-  return CATEGORIES.filter((category) => !hiddenByDefault(category))
-    .sort((a, b) => (counts[b] ?? 0) - (counts[a] ?? 0));
-}
 
 export function BrowseFilters({
   state,
