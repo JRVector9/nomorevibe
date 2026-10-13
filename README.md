@@ -6,6 +6,8 @@
 
 [2026-10-11 기본 도메인 전환 기록](docs/operations/2026-10-11-primary-domain-cutover.md): `www`와 기존 웹 페이지는 새 기본 주소로 이동하며 기존 API·CLI 주소는 호환을 유지한다.
 
+[2026-10-13 다국어·탐색 탭 운영 배포 기록](docs/operations/2026-10-13-public-i18n-production-rollout.md) · [1인 관리자 기능 검토와 후속 PR 계획](docs/operations/2026-10-13-single-operator-admin-audit.md)
+
 AI로 만든 제품의 마켓 데이터베이스. 메이커가 AI 코딩 툴에서 `/nomorevibe` 한 번을 실행하면
 배포한 서비스가 등록된다.
 
