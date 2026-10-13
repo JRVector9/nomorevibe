@@ -14,7 +14,7 @@ import { common } from "@/messages/ko/common";
 const mocks = vi.hoisted(() => ({
   pathname: "/",
   push: vi.fn(),
-  getPublicList: vi.fn(),
+  getStarGrowthPage: vi.fn(),
   getCurrentSeason: vi.fn(),
   getSeasonHistory: vi.fn(),
   seasonKeysWithEntries: vi.fn(),
@@ -31,7 +31,7 @@ vi.mock("@/lib/i18n/server", () => ({ getRequestLocale: async () => "ko" }));
 vi.mock("@/lib/domain/products/public-reads", () => ({
   publicRead: (_kind: string, _key: unknown[], load: () => Promise<unknown>) => load(),
 }));
-vi.mock("@/lib/domain/products/view", () => ({ getPublicList: mocks.getPublicList }));
+vi.mock("@/lib/domain/products/star-growth", () => ({ getStarGrowthPage: mocks.getStarGrowthPage }));
 vi.mock("@/lib/domain/ranking/view", () => ({
   RANKING_STALE_MS: 2 * 60 * 60 * 1000,
   getCurrentSeason: mocks.getCurrentSeason,
@@ -44,7 +44,7 @@ const { SiteFooter } = await import("@/components/home/SiteFooter");
 const { default: NotFound, metadata: notFoundMetadata } = await import("@/app/(public)/[locale]/not-found");
 const { default: RouteError } = await import("@/app/(public)/[locale]/(content)/error");
 const { default: GlobalError } = await import("@/app/global-error");
-const { default: PolicyPage, metadata: policyMetadata } = await import("@/app/(public)/[locale]/(content)/policy/page");
+const { default: PolicyPage, generateMetadata: policyMetadata } = await import("@/app/(public)/[locale]/(content)/policy/page");
 const { default: SeasonFooterSlot } = await import("@/app/(public)/[locale]/(content)/@seasonfooter/page");
 
 const hrefs = (html: string) => [...html.matchAll(/href="([^"]*)"/g)].map((match) => match[1]);
@@ -57,7 +57,7 @@ const render = async (pending: Promise<React.ReactNode> | React.ReactNode) => {
 beforeEach(() => {
   mocks.pathname = "/";
   mocks.push.mockReset();
-  mocks.getPublicList.mockReset();
+  mocks.getStarGrowthPage.mockReset();
   mocks.getCurrentSeason.mockReset();
   mocks.getSeasonHistory.mockReset();
   mocks.seasonKeysWithEntries.mockReset();
@@ -109,7 +109,7 @@ const rising = (slug: string): ProductListItem => ({
 
 describe("없는 주소", () => {
   it("한국어 안내·검색창·지금 뜨는 다섯·홈 링크", async () => {
-    mocks.getPublicList.mockResolvedValue(["a", "b", "c", "d", "e"].map(rising));
+    mocks.getStarGrowthPage.mockResolvedValue({ items: ["a", "b", "c", "d", "e"].map(rising) });
 
     const html = await render(NotFound());
 
@@ -118,14 +118,14 @@ describe("없는 주소", () => {
     expect(html).toMatch(/<form role="search"[^>]* action="\/" method="get"/);
     expect(html).toContain('name="q"');
     expect(html).toContain("지금 뜨는 프로젝트");
-    expect(mocks.getPublicList).toHaveBeenCalledWith(5, { sort: "rising", rising: true });
+    expect(mocks.getStarGrowthPage).toHaveBeenCalledWith({ limit: 5 });
     for (const slug of ["a", "b", "c", "d", "e"]) expect(hrefs(html)).toContain(`/p/${slug}`);
     expect(hrefs(html)).toContain("/");
     expect(html).not.toContain("This page could not be found");
   });
 
   it("목록을 못 읽어도 안내와 검색창은 선다", async () => {
-    mocks.getPublicList.mockRejectedValue(new Error("db down"));
+    mocks.getStarGrowthPage.mockRejectedValue(new Error("db down"));
 
     const html = await render(NotFound());
 
@@ -158,7 +158,7 @@ describe("게재 기준", () => {
   it("다른 화면이 가리키는 앵커를 모두 갖고, 이메일 주소를 싣지 않는다", async () => {
     const html = await render(PolicyPage());
 
-    expect(policyMetadata.title).toBe("게재 기준 — nomorevibe");
+    expect((await policyMetadata()).title).toBe("게재 기준 — nomorevibe");
     for (const id of ["listing", "ai-evidence", "excluded", "unclaimed", "takedown", "contact"]) {
       expect(html).toContain(`id="${id}"`);
       expect(hrefs(html)).toContain(`#${id}`);

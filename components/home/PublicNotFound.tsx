@@ -3,11 +3,12 @@ import Link from "next/link";
 import { connection } from "next/server";
 import { CompactRow } from "@/components/home/CompactRow";
 import { pageTitle } from "@/lib/copy/brand";
-import { publicRead } from "@/lib/domain/products/public-reads";
-import { getPublicList, type ProductListItem } from "@/lib/domain/products/view";
+import type { ProductListItem } from "@/lib/domain/products/view";
+import { getStarGrowthPage } from "@/lib/domain/products/star-growth";
 import { logger } from "@/lib/observability/logger";
 import { getTranslator } from "@/lib/i18n/dictionary";
 import { localePath } from "@/lib/i18n/routing";
+import { localizeProductList } from "@/lib/i18n/products";
 
 /**
  * 없는 주소 — Next 기본 영어 404 대신 길을 낸다(2026-10-08 UX 감사 UX-10).
@@ -21,7 +22,7 @@ const RISING_COUNT = 5;
 
 async function risingProjects(): Promise<ProductListItem[]> {
   try {
-    return await publicRead("list", ["strip", RISING_COUNT], () => getPublicList(RISING_COUNT, { sort: "rising", rising: true }));
+    return (await getStarGrowthPage({ limit: RISING_COUNT })).items;
   } catch (error) {
     // 목록을 못 읽어도 안내와 검색창은 선다
     logger.warn("not_found.rising_unavailable", { error });
@@ -33,7 +34,7 @@ export async function PublicNotFound({ locale }: { locale: Locale }) {
   // 빌드 때 굳히지 않는다 — 그때는 DB 가 없어 빈 목록이 박히고, 헤더(검색어를 읽는다)가 브라우저에서야 그려진다
   await connection();
   const t = await getTranslator(locale, "common");
-  const rising = await risingProjects();
+  const rising = await localizeProductList(await risingProjects(), locale);
 
   return (
     // 위아래 여백은 안쪽 상자에 — .wrap(app/home.css)이 레이어 밖 규칙이라 main 의 padding 유틸리티를 덮는다(error·global-error 도 같다)
@@ -64,7 +65,7 @@ export async function PublicNotFound({ locale }: { locale: Locale }) {
             {t("navigation.homeLink")}
           </Link>
         </p>
-        <CompactRow id="rising" title={t("notFound.rising")} items={rising} trailing="category" more={{ href: localePath(locale, "/#rising"), label: t("navigation.viewAll") }} />
+        <CompactRow id="rising" title={t("notFound.rising")} items={rising} trailing="category" more={{ href: localePath(locale, "/rising"), label: t("navigation.viewAll") }} />
       </div>
     </main>
   );

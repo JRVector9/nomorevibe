@@ -20,8 +20,8 @@ export async function generateMetadata({ params }: { params: Promise<{ id: strin
   const share = shareMetadata({ title, description: t("feedback.heading"), image: { ...DEFAULT_SHARE_IMAGE, alt: title } });
   return { ...share, title, robots: { index: false, follow: false },
     ...(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)
-      ? { alternates: localizedAlternates(locale, `/feedback/${id}`) } : {}),
-    openGraph: { ...share.openGraph, ...localizedOpenGraph(locale) } };
+      ? { alternates: localizedAlternates(locale, `/feedback/${id}`, []) } : {}),
+    openGraph: { ...share.openGraph, ...localizedOpenGraph(locale, []) } };
 }
 
 export default async function FeedbackPage({ params }: { params: Promise<{ id: string }> }) {

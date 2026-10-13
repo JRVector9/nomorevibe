@@ -18,7 +18,7 @@ export async function generateMetadata(): Promise<Metadata> {
   const title = t("login.metadataTitle");
   const share = shareMetadata({ title, description: t("login.description"), image: { ...DEFAULT_SHARE_IMAGE, alt: title } });
   return { ...share, title, robots: { index: false, follow: false },
-    alternates: localizedAlternates(locale, "/login"), openGraph: { ...share.openGraph, ...localizedOpenGraph(locale) } };
+    alternates: localizedAlternates(locale, "/login", []), openGraph: { ...share.openGraph, ...localizedOpenGraph(locale, []) } };
 }
 
 export default async function LoginPage({ searchParams }: { searchParams: Promise<{ returnTo?: string | string[]; connectGithub?: string | string[] }> }) {
