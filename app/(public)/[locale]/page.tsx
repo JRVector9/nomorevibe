@@ -6,6 +6,7 @@ import Link from "next/link";
 import { BrowseFilters, chipCategories, metricHref, parseHomeSort, parseShown, type HomeSort } from "@/components/BrowseFilters";
 import {
   aiLevelTotals,
+  type AiLevelCount,
   browseTitle,
   categoryHref,
   categoryRedirect,
@@ -451,6 +452,8 @@ export async function HomeContent({ params }: { params: HomeParams }) {
   let list: ProductListItem[] | RankingListItem[] = [];
   let unclaimed: ProductListItem[] = [];
   let counts: Record<string, number> = {};
+  let facetCounts: Record<string, number> = {};
+  let facetAiCounts: AiLevelCount[] | null = null;
   let pulse = emptyHomePulse(now);
   let total = 0;
   let resultCount = 0;
@@ -527,6 +530,23 @@ export async function HomeContent({ params }: { params: HomeParams }) {
     rankingReady = !needsUnclaimedFill(verifiedTotal, minimumProducts);
     fallback = fallbackSort(effectiveSort, verifiedTotal, minimumProducts);
     const publicCatalogue = effectiveSort === "recent" || effectiveSort === "open" || effectiveSort === "relevance" || fallback !== null;
+    // 각 facet을 대체할 수 있도록 분야·AI 자체는 집계 바탕에서 뺀다.
+    // 방문 순위는 전체 자격 목록의 slug만 사용해 공개 전체와 다른 대상도 맞춘다.
+    const rankedSlugs = !publicCatalogue && active
+      ? (await publicRead("list", ["home-facet-rankings", effectiveSort, active.key, verifiedTotal],
+        () => listFor(effectiveSort, active!, undefined, undefined, undefined, undefined, undefined, verifiedTotal)))
+        .map((product) => product.slug)
+      : undefined;
+    const facetOptions = { ...listOptions, category: undefined, aiLevels: undefined,
+      rising: publicCatalogue ? listOptions.rising : undefined,
+      ...(rankedSlugs ? { statuses: ["verified"] as const, slugs: rankedSlugs } : { statuses: ["verified", "seeded"] as const }) };
+    const facetLoad = Promise.all([
+      publicRead("count", ["browse-categories-v1", effectiveSort, active?.key, facetOptions],
+        () => categoryCounts({ ...facetOptions, statuses: [...facetOptions.statuses] })),
+      publicRead("count", ["browse-ai-levels-v1", effectiveSort, active?.key, facetOptions],
+        () => aiLevelCounts({ ...facetOptions, statuses: [...facetOptions.statuses] })).catch(() => null),
+    ]);
+    facetLoad.catch(() => {});
     // 저장 목록 보기는 브라우저가 후보를 거르므로 창을 밀지 않고 앞에서부터 받는다
     const requestedLimit = savedOnly ? Math.max(Math.min(shown, HOME_MAX_SHOWN), SAVED_INITIAL_CANDIDATES) : shown;
     /**
@@ -561,7 +581,9 @@ export async function HomeContent({ params }: { params: HomeParams }) {
     const windowed = publicCatalogue && requestedLimit > HOME_MAX_SHOWN;
     const earlyList = windowed ? null : loadList(publicCatalogue ? requestedLimit : verifiedTotal, 0);
     earlyList?.catch(() => {});
-    const [loadedCounts, matchingTotal] = await Promise.all([countsLoad, matchingLoad]);
+    const [loadedCounts, matchingTotal, [loadedFacetCounts, loadedFacetAiCounts]] = await Promise.all([countsLoad, matchingLoad, facetLoad]);
+    facetCounts = loadedFacetCounts;
+    facetAiCounts = loadedFacetAiCounts;
     // 0건이라 번역을 기다려 다시 찾았으면 그 번역을 밝힌다
     if (relevanceLoad) translatedQuery = (await relevanceLoad).translated;
     counts = loadedCounts;
@@ -655,8 +677,9 @@ export async function HomeContent({ params }: { params: HomeParams }) {
 
         <BrowseFilters
           state={state}
-          counts={counts}
-          aiCounts={aiCounts}
+          counts={facetCounts}
+          categoryOrderCounts={counts}
+          aiCounts={facetAiCounts}
           total={total}
           resultCount={resultCount}
           listLabel={fallback === "rising" ? "지금 뜨는" : fallback === "stars" ? "스타 많은 순" : undefined}

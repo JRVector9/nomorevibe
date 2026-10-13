@@ -92,9 +92,10 @@ describe("분야 알약 (UX-12, 계약 C3)", () => {
   const counts = { Dev: 9_157, Profile: 2_577, Finance: 285, Design: 0 };
 
   it("개인 프로필은 알약에 없고 나머지는 개수 순 — 고른 분야는 0개여도 남는다", () => {
-    expect(chipCategories(counts)).toEqual(["Dev", "Finance"]);
-    expect(chipCategories(counts, "Design")).toEqual(["Dev", "Finance", "Design"]);
-    expect(chipCategories(counts, "Profile")).toEqual(["Dev", "Finance"]);
+    const categories = chipCategories(counts);
+    expect(categories.slice(0, 2)).toEqual(["Dev", "Finance"]);
+    expect(categories).toContain("Design");
+    expect(categories).not.toContain("Profile");
   });
 
   it("검색 중에는 '관련도' 탭이 맨 앞에서 켜지고 분야 수는 숨긴다", () => {

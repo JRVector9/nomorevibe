@@ -564,11 +564,13 @@ export async function categoryCounts(
  * 단계가 있는 행만 센다(부분 색인 products_ai_level_idx). 분야를 고른 화면은 그 분야 칸만, 단계를 고른 화면의 분야 알약은
  * 그 단계 칸만 더한다(browse-state.ts) — 한 번 세어 두 칩이 함께 쓴다.
  */
-export async function aiLevelCounts(): Promise<{ category: string; level: AiLevel; count: number }[]> {
+export async function aiLevelCounts(
+  options: Omit<ListOptions, "limit" | "sort" | "offset" | "category" | "aiLevels"> = { statuses: ["verified", "seeded"], excludeDown: true },
+): Promise<{ category: string; level: AiLevel; count: number }[]> {
   const rows = await db
     .select({ category: products.category, level: products.aiLevel, count: sql<number>`count(*)::int` })
     .from(products)
-    .where(and(...(await listConditions({ statuses: ["verified", "seeded"], excludeDown: true })), isNotNull(products.aiLevel)))
+    .where(and(...(await listConditions(options)), isNotNull(products.aiLevel)))
     .groupBy(products.category, products.aiLevel);
   return rows.flatMap(({ category, level, count }) => isAiLevel(level) ? [{ category, level, count }] : []);
 }
