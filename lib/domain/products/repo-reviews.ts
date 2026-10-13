@@ -5,6 +5,8 @@ import { productEvidenceAudit, productHealth, productRepoReviews, products, type
 import { withJobLeaseWrite, type JobLease } from "@/lib/jobs/control";
 import { lockProductGeneration } from "./generation";
 import { repoGone, setStatusWithAudit } from "./repository";
+import { REPO_GONE_AUTO_ACTOR, REPO_GONE_AUTO_REASON } from "./repository";
+export { REPO_GONE_AUTO_ACTOR, REPO_GONE_AUTO_REASON } from "./repository";
 
 /**
  * 2단계 확인(product_repo_reviews)의 읽기·쓰기 — 잡(product-repo-review)과 어드민 '저장소 사라짐'이 함께 쓴다.
@@ -20,8 +22,6 @@ export const OPERATOR_KEEP_DAYS = 30;
 /** 2단계 대상 — 공개 제품 중 저장소가 사라졌다고 확정된 것(repository.ts repoGone). 2026-10-13 부터 설치형도 본다 */
 const target = sql`${products.status} in ('seeded', 'verified') and ${repoGone}`;
 /** 잡이 스스로 내릴 때 감사 행·운영자 칸에 남기는 이름과 사유 */
-export const REPO_GONE_AUTO_ACTOR = "auto:repo-gone";
-export const REPO_GONE_AUTO_REASON = "repo_gone";
 /**
  * 하루에 스스로 내리는 수의 상한 — 넘으면 내리지 않고 운영자 몫(delist_candidate)으로 둔다.
  * 새로 사라지는 저장소는 하루 수십 건 꼴이다. 하루 확인이나 github.com 이 잘못 답해 한꺼번에 내리는 일을 막는다(spam-rescan 과 같은 장치)

@@ -10,7 +10,7 @@ import { formatDetailTime } from "@/lib/format/time";
 import { TranslationRetryForm } from "./TranslationRetryForm";
 
 export const dynamic = "force-dynamic";
-export const metadata: Metadata = { title: "제품 번역 — NoMoreVibe", robots: { index: false, follow: false } };
+export const metadata: Metadata = { title: "공개 번역 — NoMoreVibe", robots: { index: false, follow: false } };
 const LOCALES = { en: "영어", "zh-Hans": "중국어 간체", "zh-Hant": "중국어 번체" };
 const FIELDS = { tagline: "한 줄 소개", description: "설명" };
 const STATES = { failed: "실패", pending: "자동 처리 대기", ready: "번역 저장됨", reviewed: "검토값 저장됨", all: "전체" };
@@ -41,7 +41,7 @@ export default async function AdminTranslationsPage({ searchParams }: { searchPa
   if (field) next.set("field", field);
   if (queue.nextCursor) next.set("cursor", queue.nextCursor);
   return <main className="mx-auto max-w-5xl space-y-5 p-5">
-    <h1 className="text-[22px] font-semibold">제품 번역</h1>
+    <h1 className="text-[22px] font-semibold">공개 번역</h1>
     <p className="text-[14px] leading-6 text-fg-2">공개 제품의 언어별 수요 기록입니다. 한국어 심사 사유 번역과 별개이며, 중단된 소개 검수를 재개하지 않습니다. 모델 호출은 기존 text 워커만 수행합니다.</p>
     <div className="overflow-x-auto"><table className="w-full min-w-[780px] text-left text-[13px]">
       <caption className="pb-2 text-left text-fg-2">저장 상태 집계입니다. 현재 공개 준비 여부는 아래 원문 일치·보류 상태를 함께 확인하세요. 소진·재시도 대기는 실패 건수에 포함됩니다.</caption>

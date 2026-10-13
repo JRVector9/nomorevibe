@@ -58,6 +58,7 @@ export default async function AdminProductsPage({ searchParams }: Props) {
   const sort: ProductAdminSort = typeof rawSort === "string" && Object.hasOwn(PRODUCT_SORTS, rawSort) ? rawSort as ProductAdminSort : "recent";
   const { statuses, ...flags } = PRODUCT_FILTERS[active];
   const repoGone = active === "저장소 사라짐";
+  const repoAutoBanned = active === "저장소 소실 자동 차단";
   // ?pending=1 — 저장소 사라짐에 아직 24시간이 지나지 않은 '지금 없음'까지 넣어 본다(2026-10-08 UX 감사 ADM-33)
   const pending = repoGone && rawPending === "1";
   const conditions = { statuses: [...statuses], ...flags, ...(pending ? { repoGone: undefined, repoMissing: true } : {}), adminSearch: q || undefined };
@@ -71,7 +72,7 @@ export default async function AdminProductsPage({ searchParams }: Props) {
   ]);
   const intro = active === "소개 확인 필요";
   const [reviews, waiting, introNotes, nameReviews] = await Promise.all([
-    repoGone ? repoReviewsFor(products.filter((product) => product.accessMode === "website").map((product) => product.id)) : null,
+    repoGone || repoAutoBanned ? repoReviewsFor(products.map((product) => product.id)) : null,
     // 빈 거르기가 운영센터의 '없음'과 어긋나 보이지 않게 — 못 읽으면 안내만 뺀다
     repoGone && !pending ? repoGonePending().catch(() => null) : null,
     intro ? introEditorNotes(products.map((product) => product.id)) : null,
@@ -216,12 +217,13 @@ export default async function AdminProductsPage({ searchParams }: Props) {
                 inviteUrl: claimInviteUrl(product, origin),
                 publicOriginMissing,
                 invitedAt: time(product.claimInvitedAt),
-                repoGone: repoGone ? [
-                  product.accessMode === "website" ? "웹 · GitHub 표시만 뺌" : "설치형 · 목록에서 가려짐",
+                repoGone: repoGone || repoAutoBanned ? [
+                  repoAutoBanned && "저장소 소실로 자동 차단 · 잘못 내렸으면 차단 해제",
+                  repoAutoBanned ? "공개 목록 차단 중" : product.accessMode === "website" ? "웹 · GitHub 표시만 뺌" : "설치형 · 목록에서 가려짐",
                   product.repoMissingSince && `${time(product.repoMissingSince)}부터 ${product.repoStatus === "empty" ? "빈 저장소" : "없음"}`,
                   pending && !confirmedGone(product) && "24시간 확인 대기 — 아직 공개 화면은 그대로",
                 ].filter(Boolean).join(" · ") : null,
-                ...(reviews && product.accessMode === "website" ? { repoReview: reviews.has(product.id) ? repoReviewView(reviews.get(product.id)!, now) : null } : {}),
+                ...(reviews ? { repoReview: reviews.has(product.id) ? repoReviewView(reviews.get(product.id)!, now) : null } : {}),
                 repoNote: repoArchived ? `보관됨 · 마지막 push ${time(product.repoPushedAt) ?? "모름"}`
                   : repoRenamed ? `이름 바뀜 → ${product.repoRenamedTo} (repo_url 은 옛 이름 그대로)`
                   : nameNote(product.slug),

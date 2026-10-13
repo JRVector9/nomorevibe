@@ -6,7 +6,9 @@ import { crawlCandidates, productAuditCampaigns, productAuditItems, productEvide
 import { humanQueueOverview } from "@/lib/crawl/review-overview";
 import { getSettings } from "@/lib/crawl/settings";
 import { DOWN_THRESHOLD, downProductCount } from "@/lib/domain/products/health";
-import { repoGone, SPAM_AUTO_BAN_ACTOR, SPAM_AUTO_BAN_REASON } from "@/lib/domain/products/repository";
+import { countProducts, repoGone, repoGoneAutoBanned, SPAM_AUTO_BAN_ACTOR, SPAM_AUTO_BAN_REASON } from "@/lib/domain/products/repository";
+import { feedbackAdminQueue } from "@/lib/domain/feedback/repository";
+import { productTranslationAdminQueue } from "@/lib/domain/products/translation-admin";
 import { introRequestQueue, pendingIntroRequestCount } from "@/lib/domain/products/intro-requests";
 import { takedownQueue, takedownSummary } from "@/lib/domain/products/takedown";
 import { logger } from "@/lib/observability/logger";
@@ -21,7 +23,7 @@ import { attentionCounts } from "./dashboard";
  * 칸은 따로 읽는다 — 하나가 실패해도 그 칸만 "불러오지 못함"이다(attentionCounts 를 쓰는 네 칸은 함께 실패한다).
  */
 
-export type InboxKey = "takedown" | "introRequest" | "human" | "agreed" | "audit" | "down" | "intro" | "repoGone" | "spam";
+export type InboxKey = "takedown" | "introRequest" | "feedback" | "human" | "agreed" | "audit" | "down" | "intro" | "translations" | "repoGone" | "repoAutoBanned" | "spam";
 
 /** 미리 보기 한 줄 — 이름, 왜 여기 왔나, 언제부터 기다렸나(ISO, UTC). 심사 후보의 why 는 사유 코드다 */
 export type InboxItem = { id: string; name: string; why: string; since: string | null };
@@ -114,6 +116,19 @@ async function repoGonePreview(): Promise<InboxItem[]> {
     why: `${row.repoStatus === "empty" ? "빈 저장소" : "저장소 없음"} · ${row.accessMode === "website" ? "웹사이트 — GitHub 표시만 뺌" : "설치형 — 목록에서 가려짐"}` }));
 }
 
+/** 제품 필터와 같은 최신 결정 조건. 정상 자동 차단은 해제할 필요가 없다. */
+async function repoAutoBannedSection(): Promise<InboxSectionData> {
+  const since = sql`(select a.created_at from ${productEvidenceAudit} a where a.slug = ${products.slug}
+    and a.action in ('admin.product.ban', 'admin.product.unban') order by a.id desc limit 1)`;
+  const [total, rows] = await Promise.all([
+    countProducts({ statuses: ["banned"], repoAutoBanned: true }),
+    db.select({ slug: products.slug, name: products.name, since: iso(since) }).from(products)
+      .where(repoGoneAutoBanned).orderBy(asc(since), asc(products.slug)).limit(INBOX_PREVIEW),
+  ]);
+  return { count: total, note: "자동 처리 결과 · 정상 차단이면 유지",
+    items: rows.map((row) => ({ id: row.slug, name: row.name, since: row.since, why: "저장소 소실 자동 차단 · 현재 근거를 확인" })) };
+}
+
 /** 스팸 자동 차단 — attentionCounts 의 spamAutoBans.day 와 같은 조건(지난 24시간의 자동 차단 기록) */
 async function spamPreview(now: Date): Promise<InboxItem[]> {
   const rows = await db.select({ id: productEvidenceAudit.id, slug: productEvidenceAudit.slug, name: products.name, status: products.status,
@@ -147,7 +162,7 @@ export async function loadInbox(now = new Date()): Promise<InboxSnapshot> {
   // 아무도 기다리지 않는 사이에 실패해도 처리되지 않은 거부로 남지 않게
   for (const shared of [takedowns, overview, attention]) shared.catch(() => undefined);
 
-  const [takedown, introRequest, human, agreed, audit, down, intro, gone, spam, decided, handled] = await Promise.all([
+  const [takedown, introRequest, feedback, human, agreed, audit, down, intro, translations, gone, repoAutoBanned, spam, decided, handled] = await Promise.all([
     settle("takedown", async () => {
       const [summary, queue] = await Promise.all([takedowns, takedownQueue(INBOX_PREVIEW)]);
       return {
@@ -162,6 +177,11 @@ export async function loadInbox(now = new Date()): Promise<InboxSnapshot> {
       const [total, queue] = await Promise.all([pendingIntroRequestCount(), introRequestQueue(INBOX_PREVIEW)]);
       return { count: total, items: queue.map((entry) => ({ id: String(entry.id), name: entry.product?.name ?? entry.slug,
         why: clip(entry.message), since: entry.createdAt })) };
+    }),
+    settle("feedback", async () => {
+      const queue = await feedbackAdminQueue({ state: "held", limit: INBOX_PREVIEW });
+      return { count: queue.count, items: queue.items.map((item) => ({ id: item.id, name: item.productName,
+        why: clip(item.title), since: item.createdAt })) };
     }),
     settle("human", async () => {
       const { ids, stages, wait } = await overview;
@@ -186,11 +206,18 @@ export async function loadInbox(now = new Date()): Promise<InboxSnapshot> {
       const [counts, items] = await Promise.all([attention, introPreview()]);
       return { count: counts.introNeedsEditor, items };
     }),
+    settle("translations", async () => {
+      const queue = await productTranslationAdminQueue({ state: "failed", limit: INBOX_PREVIEW });
+      return { count: queue.count, note: "소진·원문 변경·검수 탈락을 구분해 확인",
+        items: queue.items.map((item) => ({ id: `${item.productId}:${item.locale}:${item.field}`, name: item.name,
+          why: `${item.locale} ${item.field} · ${item.errorCode ?? "실패"} · ${item.attempts}/4`, since: item.updatedAt })) };
+    }),
     settle("repoGone", async () => {
       const [counts, items] = await Promise.all([attention, repoGonePreview()]);
       const { installable, website } = counts.repoGone;
       return { count: installable + website, note: `설치형 ${count(installable)} · 웹 ${count(website)}`, items };
     }),
+    settle("repoAutoBanned", repoAutoBannedSection),
     settle("spam", async () => {
       const [counts, items] = await Promise.all([attention, spamPreview(now)]);
       return { count: counts.spamAutoBans.day, note: `차단으로 남은 것 모두 ${count(counts.spamAutoBans.banned)}건`, items };
@@ -200,7 +227,7 @@ export async function loadInbox(now = new Date()): Promise<InboxSnapshot> {
   ]);
   return {
     fetchedAt: now.toISOString(),
-    results: { takedown, introRequest, human, agreed, audit, down, intro, repoGone: gone, spam },
+    results: { takedown, introRequest, feedback, human, agreed, audit, down, intro, translations, repoGone: gone, repoAutoBanned, spam },
     done: [decided, handled],
   };
 }

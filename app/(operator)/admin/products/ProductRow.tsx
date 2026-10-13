@@ -25,7 +25,7 @@ export type AdminProduct = {
   /** '저장소 사라짐' 거르기에서만 — 이용 방식과 공개 화면에 생긴 일, 404 가 이어진 시작 */
   repoGone?: string | null;
   /**
-   * '저장소 사라짐'의 웹사이트 — AI 2단계 판정(product_repo_reviews). undefined 면 줄을 그리지 않고,
+   * 저장소 소실 관련 필터의 프로젝트 — AI 2단계 판정(product_repo_reviews). undefined 면 줄을 그리지 않고,
    * null 이면 아직 AI 가 보지 않았다
    */
   repoReview?: {
@@ -113,7 +113,7 @@ export function ProductRow({ product, dropUp = false }: { product: AdminProduct;
 }
 
 /**
- * 저장소가 사라진 웹사이트의 AI 판정과 운영자 버튼. 판정은 아무것도 가리지 않는다 — '내리기'를 눌러야 차단된다
+ * 저장소가 사라진 프로젝트의 AI 판정과 운영자 버튼. 판정은 아무것도 가리지 않는다 — '내리기'를 눌러야 차단된다
  * (⋯ 메뉴의 차단과 같은 길). 운영자를 기다리는 것은 굵게 보인다.
  * 내리기는 확인 창을 거치고, 끝나면 알림에 되돌리기(차단 해제)와 기록 보기를 단다(2026-10-08 UX 감사 ADM-06·12).
  */
@@ -145,7 +145,7 @@ function RepoReview({ slug, name, review, banned }: { slug: string; name: string
             }
           }}>유지</button>
           <ConfirmAction
-            title="이 웹사이트를 공개 목록에서 내립니다"
+            title="이 프로젝트를 공개 목록에서 내립니다"
             targets={[name]}
             summary={<p className="text-[13px] leading-[1.6]">{review.decision} · {review.reason}<br />차단과 같습니다 — 행은 남고 같은 주소의 재수집·재등록이 막힙니다.</p>}
             confirmLabel="내리기"

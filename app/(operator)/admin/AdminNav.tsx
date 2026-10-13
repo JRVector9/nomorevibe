@@ -17,7 +17,8 @@ export const NAV_GROUPS: readonly { title: string; pages: readonly NavPage[] }[]
       { href: "/admin/review", label: "심사 큐", hint: "후보 검토·승인", icon: "check" },
       // /admin/products 아래에 두지 않는다 — 아래에 두면 제품과 함께 선택된 것으로 보인다
       { href: "/admin/audit", label: "내릴 후보", hint: "요청·AI가 걸러낸 발행분", icon: "down" },
-      { href: "/admin/feedback", label: "피드백 검수", hint: "보류된 글·공개 승인", icon: "file" },
+      { href: "/admin/feedback", label: "피드백 검수", hint: "보류·공개 글 숨김·복원", icon: "file" },
+      { href: "/admin/translations", label: "공개 번역", hint: "언어별 실패·제한 재요청", icon: "file" },
       { href: "/admin/github-integrations", label: "GitHub 연동", hint: "전송 상태·재조회·수동 재전송", icon: "key" },
       { href: "/admin/products", label: "제품", hint: "목록·제품 근거", icon: "box" },
     ],
