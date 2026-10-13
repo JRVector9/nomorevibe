@@ -11,7 +11,7 @@ export const metadata: Metadata = { title: BRAND, robots: { index: false, follow
 /** App-level missing paths do not pass through the locale provider or public shell. */
 export default async function NotFound() {
   const locale = await getRequestLocale();
-  const common = await getDictionary(locale, "common");
+  const [common, labels] = await Promise.all([getDictionary(locale, "common"), getDictionary(locale, "labels")]);
   const shell = await PublicShell({ locale, children: await PublicNotFound({ locale }) });
-  return <I18nProvider locale={locale} dictionaries={{ common }}>{shell}</I18nProvider>;
+  return <I18nProvider locale={locale} dictionaries={{ common, labels }} now={new Date().toISOString()}>{shell}</I18nProvider>;
 }

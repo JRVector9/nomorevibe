@@ -34,7 +34,7 @@ export async function generateMetadata({ params }: { params: Promise<{ locale: s
   };
 }
 
-/** Validate the URL locale and pass only its selected common namespace to clients. */
+/** Validate the URL locale and pass only selected shared namespaces to clients. */
 export default async function PublicLocaleLayout({
   children,
   params,
@@ -44,6 +44,6 @@ export default async function PublicLocaleLayout({
 }) {
   const { locale } = await params;
   if (!isLocale(locale)) notFound();
-  const messages = await getDictionary(locale, "common");
-  return <I18nProvider locale={locale} dictionaries={{ common: messages }}>{children}</I18nProvider>;
+  const [common, labels] = await Promise.all([getDictionary(locale, "common"), getDictionary(locale, "labels")]);
+  return <I18nProvider locale={locale} dictionaries={{ common, labels }} now={new Date().toISOString()}>{children}</I18nProvider>;
 }
