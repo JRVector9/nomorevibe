@@ -12,6 +12,7 @@ export { selectProductTranslation, productTranslationSourceHash, detectTranslati
 export type { ProductTranslationSource, ProductTranslationSelection } from "./translation-policy";
 export type { ProductTranslation, ProductTranslationField } from "@/lib/db/schema";
 export const PRODUCT_TRANSLATION_JOB = "product-translate";
+export type ProductTranslationTransaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
 const t = productTranslations;
 const sourceColumns = { id: products.id, name: products.name, tagline: products.tagline, description: products.description };
 // The intro-review queue is neither requested nor resumed. Current editor holds and takedowns block translation.
@@ -70,13 +71,14 @@ export async function readProductTranslationReadiness(sources: readonly ProductT
 /** Post-render demand only. Primary scope is explicit, even if a caller accidentally retains replica scope. */
 export async function requestProductTranslations(
   productIds: readonly number[], locale: Locale, fields: readonly ProductTranslationField[] = ["tagline"],
+  transaction?: ProductTranslationTransaction,
 ): Promise<number> {
   requireLocale(locale);
   if (fields.some((field) => !isProductTranslationField(field))) throw new Error("invalid_translation_field");
   if (locale === "ko") return 0;
   const ids = demandIds(productIds), requestedFields = [...new Set(fields)].sort();
   if (!ids.length || !requestedFields.length) return 0;
-  return onPrimary(() => db.transaction(async (tx) => {
+  const demand = async (tx: ProductTranslationTransaction) => {
     const sources = await tx.select({ ...sourceColumns, sourceOrigin: products.taglineSource })
       .from(products).where(and(inArray(products.id, ids), eligible)).orderBy(products.id).for("share");
     const values: (typeof t.$inferInsert)[] = [];
@@ -99,7 +101,8 @@ export async function requestProductTranslations(
     const requested = inserted.length;
     if (requested) await requestJob(PRODUCT_TRANSLATION_JOB, tx);
     return requested;
-  }));
+  };
+  return onPrimary(() => transaction ? demand(transaction) : db.transaction(demand));
 }
 
 export type ProductTranslationTask = {
