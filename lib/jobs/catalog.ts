@@ -57,8 +57,8 @@ export const JOB_CATALOG: readonly { name: string; role: JobRole | "scheduler"; 
    */
   { name: "product-embedding", role: "text", intervalMs: 60_000 },
   /**
-   * 저장소가 사라졌거나 빈 웹사이트를 다시 본다 — 페이지를 새로 열고 게이트웨이 Qwen3.8 에 한 번 묻는다(repo-review.ts).
-   * 게이트웨이 키가 있는 text 워커에서 5분마다 8건까지. 판정만 적고 아무것도 가리지 않는다
+   * 저장소가 사라진 공개 제품을 다시 본다 — github.com 을 지금 열어 정말 없으면 내린다(repo-review.ts, 2026-10-13 운영자 결정).
+   * text 워커에서 5분마다 8건까지. 옮겨 간 흔적이 있으면 사람 확인, 하루 100건을 넘게 내리지는 않는다
    */
   { name: "product-repo-review", role: "text", intervalMs: 5 * 60_000 },
   /**

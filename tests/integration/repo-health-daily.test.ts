@@ -1,11 +1,12 @@
 import { afterEach, beforeAll, beforeEach, expect, it, vi } from "vitest";
 import { eq, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { productEvidenceAudit, productRepoReviews, products } from "@/lib/db/schema";
+import { productEvidenceAudit, productHealth, productRepoReviews, products } from "@/lib/db/schema";
 import type { RepositoryCheck, RepositoryFacts, RepositoryRef } from "@/lib/crawl/github-repositories";
 import { countProducts, listProductSlugs, listProducts } from "@/lib/domain/products/repository";
 import { getPublicList } from "@/lib/domain/products/view";
-import type { RepoReviewPage } from "@/lib/domain/products/repo-review";
+import type { RepoCheck, RepoReviewPage } from "@/lib/domain/products/repo-review";
+import { delistGoneRepository, MAX_REPO_GONE_DELISTS_PER_DAY } from "@/lib/domain/products/repo-reviews";
 import { refreshProductStars, type StarsCursor } from "@/lib/jobs/products/stars-refresh";
 import { reviewGoneRepositories } from "@/lib/jobs/products/repo-review";
 import type { JobContext } from "@/lib/jobs/runner";
@@ -19,7 +20,7 @@ vi.mock("@/lib/auth/admin", () => ({ currentAdmin: mocks.admin }));
 vi.mock("next/cache", () => ({ revalidatePath: mocks.revalidate, revalidateTag: vi.fn(), unstable_cache: (fn: unknown) => fn }));
 
 /**
- * 하루 저장소 확인(GraphQL 묶음, 0061)과 저장소가 사라진 웹사이트의 2단계 확인(product-repo-review), 운영자 결정, 운영센터 지표.
+ * 하루 저장소 확인(GraphQL 묶음, 0061)과 저장소가 사라진 제품의 2단계 확인(product-repo-review), 운영자 결정, 운영센터 지표.
  */
 
 beforeAll(() => ensureSchema());
@@ -148,87 +149,107 @@ it("급상승의 하루 평균은 20시간 구간을 하루로 늘려 나누지 
 
 // ─────────────────────────── B. 2단계 확인 ───────────────────────────
 
-const healthy = (name: string): RepoReviewPage => ({ status: 200, finalUrl: `https://${name}.example/`, title: name,
-  text: `${name} is a working product that helps people plan trips with friends. `.repeat(12) });
+const site = (name: string, githubLinks: string[] = []): RepoReviewPage => ({ status: 200, finalUrl: `https://${name}.example/`, title: name,
+  text: `${name} is a working product that helps people plan trips with friends.`, githubLinks, complete: true });
 const reviewContext = (): JobContext<null> => ({ cursor: null, save: vi.fn(), hasBudget: () => true, log: vi.fn() });
-const gatewayReply = (answers: Record<string, unknown> | string) => new Response(JSON.stringify({ choices: [{
-  message: { content: typeof answers === "string" ? answers : JSON.stringify(answers) }, finish_reason: "stop" }] }), { status: 200 });
-const GOOD = { same_product: true, parked: false, shutdown: false, no_content: false };
-/** 모델에 보낸 글에서 제품 이름을 읽어 답을 고른다 */
-const gateway = (answer: (name: string) => Response) => vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
-  const user = JSON.parse(String(init!.body)).messages[1].content as string;
-  return answer(JSON.parse(user.slice(user.indexOf("{"), user.lastIndexOf("}") + 1)).listing.name);
-});
+/** github.com 흉내 — 키마다 정한 답, 없으면 404 */
+const github = (answers: Record<string, RepoCheck> = {}) => vi.fn(async (key: string): Promise<RepoCheck> => answers[key] ?? { state: "gone" });
+const repoKey = (row: { repoUrl: string | null }) => row.repoUrl!.replace("https://github.com/", "").toLowerCase();
 
-it("저장소가 사라진 웹사이트만 보고, 페이지를 새로 열어 거르기·모델로 판정한다 — 아무것도 가리지 않는다", async () => {
-  vi.stubEnv("ABCLLM_API_KEY", "test-key");
-  const keep = await seed({ name: "Keeper" });
-  const other = await seed({ name: "Switched" });
-  const parked = await seed({ name: "Parked" });
-  const empty = await seed({ name: "Shell" });
-  const broken = await seed({ name: "Garbled" });
-  const installable = await seed({ name: "Tool", accessMode: "installable", url: "https://github.com/test/tool" });
+it("저장소가 정말 없으면 사이트가 살아 있어도 내리고, 다시 열렸거나 옮겨 간 흔적이 있으면 남긴다 — 설치형도 본다", async () => {
+  const gone = await seed({ name: "Gone" });
+  const tool = await seed({ name: "Tool", accessMode: "installable", url: "https://github.com/test/tool" });
+  const back = await seed({ name: "Back" });
+  const moved = await seed({ name: "Moved" });
+  const linked = await seed({ name: "Linked" });
   const alive = await seed({ name: "Alive" });
   const banned = await seed({ name: "Banned", status: "banned" });
-  for (const row of [keep, other, parked, empty, broken, installable, banned]) await markGone(row.id);
-  await markGone(empty.id, "empty");
-  const pages: Record<string, RepoReviewPage> = {
-    [keep.url]: healthy("Keeper"), [other.url]: healthy("Switched"), [empty.url]: healthy("Shell"), [broken.url]: healthy("Garbled"),
-    [parked.url]: { status: 200, finalUrl: parked.url, title: "parked.example is for sale | Dan.com", text: "Make an offer on this domain." },
-  };
-  const openPage = vi.fn(async (url: string) => pages[url]);
-  const request = gateway((name) => name === "Switched" ? gatewayReply({ ...GOOD, same_product: false })
-    : name === "Shell" ? gatewayReply({ ...GOOD, no_content: true })
-    : name === "Garbled" ? gatewayReply("I think it is fine") : gatewayReply(GOOD));
+  for (const row of [gone, tool, back, moved, linked, banned]) await markGone(row.id);
+  const checkRepo = github({ [repoKey(back)]: { state: "alive" }, [repoKey(moved)]: { state: "moved", to: "org/moved" }, "test/linked-v2": { state: "alive" } });
+  const openPage = vi.fn(async (url: string) => url === linked.url ? site("linked", ["test/linked-v2", "mrdoob/three.js"]) : site("plain"));
 
-  expect(await reviewGoneRepositories(reviewContext(), { openPage, request })).toEqual({ done: true });
-  expect(openPage.mock.calls.map(([url]) => url).sort()).toEqual([keep.url, other.url, parked.url, empty.url, broken.url].sort());
-  expect(await review(keep.id)).toMatchObject({ decision: "keep", reason: "model", answers: GOOD, model: "[supa] Qwen3.8-27B-NVFP4",
-    pageHttpStatus: 200, finalUrl: "https://Keeper.example/", pageTitle: "Keeper", operatorDecision: null });
-  expect(await review(other.id)).toMatchObject({ decision: "delist_candidate", reason: "model" });
-  // 판매 페이지는 모델 없이 거른다
-  expect(await review(parked.id)).toMatchObject({ decision: "delist_candidate", reason: "parked", answers: null, model: null });
-  expect(await review(empty.id)).toMatchObject({ decision: "human", reason: "model" });
-  // 깨진 답은 한 번 더 묻고, 또 깨지면 사람에게
-  expect(await review(broken.id)).toMatchObject({ decision: "human", reason: "invalid_output", answers: null });
-  expect(request.mock.calls.filter(([, init]) => String(init!.body).includes("Garbled"))).toHaveLength(2);
-  // 다시 볼 때 — keep 은 일주일, human 은 사흘, 내릴 후보는 운영자를 기다린다
-  const [due] = await db.execute<{ keep: number; human: number }>(sql`select
-    round(extract(epoch from (select next_review_at - reviewed_at from product_repo_reviews where product_id = ${keep.id})) / 86400)::int as keep,
-    round(extract(epoch from (select next_review_at - reviewed_at from product_repo_reviews where product_id = ${empty.id})) / 86400)::int as human`);
-  expect(due).toEqual({ keep: 7, human: 3 });
-  expect((await review(other.id)).nextReviewAt).toBeNull();
-  for (const row of [installable, alive, banned]) expect(await review(row.id)).toBeUndefined();
-
-  // 공개 화면은 그대로 — 내릴 후보도 목록에 있다
-  expect((await getPublicList(20)).map((item) => item.slug).sort()).toEqual([keep, other, parked, empty, broken, alive].map((row) => row.slug).sort());
-  expect((await db.select({ status: products.status }).from(products)).filter((row) => row.status === "banned")).toHaveLength(1);
+  expect(await reviewGoneRepositories(reviewContext(), { openPage, checkRepo })).toEqual({ done: true });
+  // 정말 없는 둘은 내렸다 — 관리자 차단과 같은 길, 운영자 칸은 auto
+  for (const row of [gone, tool]) {
+    expect(await read(row.id)).toMatchObject({ status: "banned" });
+    expect(await review(row.id)).toMatchObject({ decision: "delist_candidate", reason: "repo_gone", operatorDecision: "delist", operatorBy: "auto:repo-gone" });
+  }
+  expect(await db.select().from(productEvidenceAudit).where(eq(productEvidenceAudit.slug, gone.slug)))
+    .toEqual([expect.objectContaining({ action: "admin.product.ban", actor: "auto:repo-gone", reason: "repo_gone", metadata: { status: "banned" } })]);
+  expect(await read(back.id)).toMatchObject({ status: "seeded" });
+  expect(await review(back.id)).toMatchObject({ decision: "keep", reason: "repo_alive", operatorDecision: null });
+  expect(await review(moved.id)).toMatchObject({ decision: "human", reason: "repo_moved", pageExcerpt: "github.com/org/moved" });
+  expect(await review(linked.id)).toMatchObject({ decision: "human", reason: "repo_link_alive", pageExcerpt: "github.com/test/linked-v2" });
+  // 다시 열렸거나 옮겨 간 것은 페이지를 열지 않고, 남의 라이브러리 링크는 열어 보지 않는다
+  expect(openPage.mock.calls.map(([url]) => url).sort()).toEqual([gone.url, tool.url, linked.url].sort());
+  expect(checkRepo.mock.calls.map(([key]) => key)).not.toContain("mrdoob/three.js");
+  for (const row of [alive, banned]) expect(await review(row.id)).toBeUndefined();
+  // 운영센터 — 내린 것은 공개가 아니라 빠진다
+  expect((await attentionCounts()).repoReview).toMatchObject({ pending: 0, human: 2, delistCandidates: 0, kept: 1 });
 
   // 다시 돌려도 볼 때가 안 된 것은 다시 열지 않는다
   openPage.mockClear();
-  expect(await reviewGoneRepositories(reviewContext(), { openPage, request })).toEqual({ done: true });
-  expect(openPage).not.toHaveBeenCalled();
+  checkRepo.mockClear();
+  expect(await reviewGoneRepositories(reviewContext(), { openPage, checkRepo })).toEqual({ done: true });
+  expect(checkRepo).not.toHaveBeenCalled();
 });
 
-it("게이트웨이가 막히면 적지 않고 틱을 접는다", async () => {
-  vi.stubEnv("ABCLLM_API_KEY", "test-key");
-  const rows = [await seed({ name: "One" }), await seed({ name: "Two" }), await seed({ name: "Three" }), await seed({ name: "Four" })];
+it("github.com 이 답하지 않으면 적지 않고 틱을 접는다", async () => {
+  const rows = [await seed(), await seed(), await seed(), await seed()];
   for (const row of rows) await markGone(row.id);
-  const request = vi.fn(async () => new Response("bad gateway", { status: 502 }));
-  const result = await reviewGoneRepositories(reviewContext(), { openPage: async (url) => healthy(url), request });
-  expect(result).toEqual({ done: true });
+  const checkRepo = vi.fn(async (): Promise<RepoCheck> => ({ state: "unknown" }));
+  const openPage = vi.fn();
+  expect(await reviewGoneRepositories(reviewContext(), { openPage, checkRepo })).toEqual({ done: true });
   expect(await db.select().from(productRepoReviews)).toHaveLength(0);
-  // 둘이 잇따라 막히면 그 뒤로는 묻지 않는다(동시 셋)
-  expect(request.mock.calls.length).toBeLessThanOrEqual(3);
+  expect(await read(rows[0].id)).toMatchObject({ status: "seeded" });
+  // 잇따라 둘이 막히면 그 뒤로는 묻지 않는다(동시 셋)
+  expect(checkRepo.mock.calls.length).toBeLessThanOrEqual(3);
+  expect(openPage).not.toHaveBeenCalled();
 });
 
-it("키가 없으면 아무것도 하지 않는다", async () => {
-  vi.stubEnv("ABCLLM_API_KEY", "");
-  const row = await seed();
+it("페이지를 못 열면 내리지 않는다 — 사이트가 사흘 넘게 죽어 있을 때만 내린다", async () => {
+  const blink = await seed({ name: "Blink" });
+  const dead = await seed({ name: "Dead" });
+  const busy = await seed({ name: "Busy" });
+  for (const row of [blink, dead, busy]) await markGone(row.id);
+  await db.insert(productHealth).values([{ slug: dead.slug, status: 0, failures: 30, downSince: new Date(Date.now() - 4 * 86_400_000) },
+    { slug: blink.slug, status: 0, failures: 1, downSince: new Date(Date.now() - 3_600_000) }]);
+  const unreachable: RepoReviewPage = { status: 0, finalUrl: null, title: "", text: "", githubLinks: [], complete: false };
+  const openPage = vi.fn(async (url: string) => url === busy.url ? { ...site("busy"), status: 503 } : unreachable);
+  await reviewGoneRepositories(reviewContext(), { openPage, checkRepo: github() });
+  expect(await read(blink.id)).toMatchObject({ status: "seeded" });
+  expect(await review(blink.id)).toMatchObject({ decision: "human", reason: "page_unavailable" });
+  expect(await review(busy.id)).toMatchObject({ decision: "human", reason: "page_unavailable" });
+  expect(await read(dead.id)).toMatchObject({ status: "banned" });
+});
+
+it("열어 볼 링크가 셋을 넘으면 남은 것을 사람에게 넘긴다", async () => {
+  const row = await seed({ name: "Many" });
   await markGone(row.id);
-  const openPage = vi.fn();
-  expect(await reviewGoneRepositories(reviewContext(), { openPage })).toEqual({ done: true });
-  expect(openPage).not.toHaveBeenCalled();
+  await reviewGoneRepositories(reviewContext(), { openPage: async () => site("many", ["test/a", "test/b", "test/c", "test/d"]), checkRepo: github() });
+  expect(await read(row.id)).toMatchObject({ status: "seeded" });
+  expect(await review(row.id)).toMatchObject({ decision: "human", reason: "repo_links_unchecked", pageExcerpt: "github.com/test/d" });
+});
+
+it("잡이 고른 뒤 운영자가 '유지'를 골랐으면 내리지 않는다", async () => {
+  const p = await reviewed("Raced", "human");
+  expect(await operator(p.slug, "keep")).toMatchObject({ ok: true });
+  const record = { productId: p.id, decision: "delist_candidate" as const, reason: "repo_gone", answers: null, model: null,
+    pageHttpStatus: 200, finalUrl: p.url, pageTitle: null, pageExcerpt: null };
+  expect(await delistGoneRepository({ ...record, slug: p.slug })).toBe("operator_keep");
+  expect(await read(p.id)).toMatchObject({ status: "seeded" });
+  expect(await review(p.id)).toMatchObject({ decision: "delist_candidate", operatorDecision: "keep", operatorBy: "operator" });
+});
+
+it("하루 한도만큼 내렸으면 더 내리지 않고 운영자 몫으로 둔다", async () => {
+  const row = await seed({ name: "Capped" });
+  await markGone(row.id);
+  await db.insert(productEvidenceAudit).values(Array.from({ length: MAX_REPO_GONE_DELISTS_PER_DAY },
+    (_, index) => ({ slug: `earlier-${index}`, actor: "auto:repo-gone", action: "admin.product.ban", reason: "repo_gone" })));
+  await reviewGoneRepositories(reviewContext(), { openPage: async () => site("capped"), checkRepo: github() });
+  expect(await read(row.id)).toMatchObject({ status: "seeded" });
+  expect(await review(row.id)).toMatchObject({ decision: "delist_candidate", reason: "repo_gone", operatorDecision: null });
+  expect((await attentionCounts()).repoReview).toMatchObject({ delistCandidates: 1 });
 });
 
 // ─────────────────────────── C. 운영자 결정 ───────────────────────────
@@ -236,7 +257,7 @@ it("키가 없으면 아무것도 하지 않는다", async () => {
 async function reviewed(name: string, decision: "keep" | "delist_candidate" | "human") {
   const row = await seed({ name });
   await markGone(row.id);
-  await db.insert(productRepoReviews).values({ productId: row.id, decision, reason: "model", answers: GOOD, model: "m",
+  await db.insert(productRepoReviews).values({ productId: row.id, decision, reason: "model", answers: { same_product: true, parked: false, shutdown: false, no_content: false }, model: "m",
     pageHttpStatus: 200, finalUrl: row.url, reviewedAt: sql`now() - interval '1 hour'` as unknown as Date,
     nextReviewAt: decision === "keep" ? sql`now() + interval '7 days'` as unknown as Date : null });
   return row;
@@ -259,14 +280,13 @@ it("'내리기'는 어드민 차단과 같은 길로 차단하고 결정·작업
   expect(await auditRowsAfter(floor, "repo-review-delist")).toEqual([expect.objectContaining({ actor: "operator", target: p.slug, ok: true })]);
   expect(mocks.revalidate).toHaveBeenCalledWith("/admin/products");
   // 내린 것은 다시 보지 않는다
-  vi.stubEnv("ABCLLM_API_KEY", "test-key");
   await db.execute(sql`update product_repo_reviews set next_review_at = now() - interval '1 day'`);
-  const openPage = vi.fn();
-  await reviewGoneRepositories(reviewContext(), { openPage });
-  expect(openPage).not.toHaveBeenCalled();
+  const checkRepo = github();
+  await reviewGoneRepositories(reviewContext(), { openPage: vi.fn(), checkRepo });
+  expect(checkRepo).not.toHaveBeenCalled();
 });
 
-it("'유지'는 결정만 적고 30일 뒤에 다시 본다 — 다시 봐도 운영자 결정은 남고, 새 판정이 나쁘면 다시 줄에 선다", async () => {
+it("'유지'는 결정만 적고 30일 뒤에 다시 본다 — 다시 봐도 운영자 결정은 남고, 저장소가 여전히 없으면 내리지 않고 다시 줄에 선다", async () => {
   const p = await reviewed("Kept Site", "human");
   const floor = await auditFloor();
   expect((await attentionCounts()).repoReview).toMatchObject({ human: 1, delistCandidates: 0 });
@@ -278,11 +298,11 @@ it("'유지'는 결정만 적고 30일 뒤에 다시 본다 — 다시 봐도 �
   expect(await auditRowsAfter(floor, "repo-review-keep")).toHaveLength(1);
   expect((await attentionCounts()).repoReview).toMatchObject({ human: 0, delistCandidates: 0 });
 
-  // 30일 뒤 다시 본다 — 이번엔 주차 페이지
-  vi.stubEnv("ABCLLM_API_KEY", "test-key");
+  // 30일 뒤 다시 본다 — 저장소는 여전히 없다. 운영자가 남긴 것이라 스스로 내리지 않는다
   await db.execute(sql`update product_repo_reviews set next_review_at = now() - interval '1 minute', operator_at = now() - interval '31 days'`);
-  await reviewGoneRepositories(reviewContext(), { openPage: async () => ({ status: 200, finalUrl: p.url, title: "Domain for sale", text: "Buy this domain." }) });
-  expect(await review(p.id)).toMatchObject({ decision: "delist_candidate", reason: "parked", operatorDecision: "keep", operatorBy: "operator" });
+  await reviewGoneRepositories(reviewContext(), { openPage: async () => site("kept"), checkRepo: github() });
+  expect(await read(p.id)).toMatchObject({ status: "seeded" });
+  expect(await review(p.id)).toMatchObject({ decision: "delist_candidate", reason: "repo_gone", operatorDecision: "keep", operatorBy: "operator" });
   expect((await attentionCounts()).repoReview).toMatchObject({ delistCandidates: 1 });
 });
 
@@ -324,9 +344,10 @@ it("확인 범위·상태별 수·2단계 줄을 센다", async () => {
     archived: { total: 1, new24h: 1 }, renamed: { total: 1, new24h: 1 },
   } });
   expect(counts.repoGone).toEqual({ installable: 1, website: 1 });
-  // 사라진 웹사이트 하나 — 아직 AI 가 안 봤고, 확정된 지 이틀(사흘 전 시작 + 하루)
-  expect(counts.repoReview).toMatchObject({ pending: 1, delistCandidates: 0, human: 0, kept: 0 });
+  // 사라진 제품 둘(웹·설치형) — 아직 잡이 안 봤고, 확정된 지 이틀(사흘 전 시작 + 하루)
+  expect(counts.repoReview).toMatchObject({ pending: 2, delistCandidates: 0, human: 0, kept: 0 });
   expect(Math.round(counts.repoReview.oldestHours!)).toBe(48);
-  await db.insert(productRepoReviews).values({ productId: gone.id, decision: "keep", reason: "model" });
-  expect((await attentionCounts()).repoReview).toEqual({ pending: 0, delistCandidates: 0, human: 0, kept: 1, oldestHours: null });
+  await db.insert(productRepoReviews).values([{ productId: gone.id, decision: "keep", reason: "repo_alive" },
+    { productId: emptyRepo.id, decision: "keep", reason: "repo_alive" }]);
+  expect((await attentionCounts()).repoReview).toEqual({ pending: 0, delistCandidates: 0, human: 0, kept: 2, oldestHours: null });
 });

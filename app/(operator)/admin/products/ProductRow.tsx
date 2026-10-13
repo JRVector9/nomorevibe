@@ -70,7 +70,7 @@ export function ProductRow({ product, dropUp = false }: { product: AdminProduct;
           </a>
         </div>
         {product.repoGone && <p className="text-[13px] text-fg-3">{product.repoGone}</p>}
-        {product.repoReview === null && <p className="text-[13px] text-fg-3">AI 사이트 확인 대기</p>}
+        {product.repoReview === null && <p className="text-[13px] text-fg-3">저장소 다시 확인 대기</p>}
         {product.repoReview && <RepoReview slug={product.slug} name={product.name} review={product.repoReview} banned={banned} />}
         {product.repoNote && <p className="text-[13px] text-fg-3">{product.repoNote}</p>}
         {product.intro && !banned && <IntroCheck product={product} intro={product.intro} />}

@@ -1,22 +1,32 @@
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, eq, inArray, sql, type SQL } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { productHealth, productRepoReviews, products, type ProductRepoReview, type RepoReviewAnswers,
+import { productEvidenceAudit, productHealth, productRepoReviews, products, type ProductRepoReview, type RepoReviewAnswers,
   type RepoReviewDecision } from "@/lib/db/schema";
 import { withJobLeaseWrite, type JobLease } from "@/lib/jobs/control";
+import { lockProductGeneration } from "./generation";
 import { repoGone, setStatusWithAudit } from "./repository";
 
 /**
  * 2단계 확인(product_repo_reviews)의 읽기·쓰기 — 잡(product-repo-review)과 어드민 '저장소 사라짐'이 함께 쓴다.
  *
- * 다시 볼 때: keep 은 일주일 뒤, human 은 사흘 뒤(잠깐 죽었거나 막힌 사이트가 돌아오면 저절로 풀린다),
- * delist_candidate 는 운영자를 기다린다. 운영자가 '유지'를 고르면 30일 뒤에 다시 본다.
- * 다시 봐도 운영자 결정은 지우지 않는다 — 운영자 결정보다 새 AI 판정이 keep 이 아니면 다시 줄에 선다(repoReviewOpen).
+ * 다시 볼 때: keep 은 일주일 뒤, human 은 사흘 뒤(옮겨 간 저장소가 사라지거나 옛 저장소가 돌아오면 저절로 풀린다).
+ * 저장소가 없다고 확인된 것은 잡이 그 자리에서 내린다(delistGoneRepository) — 하루 한도를 넘었거나 운영자가 전에 '유지'를
+ * 고른 것만 delist_candidate 로 운영자를 기다린다. 운영자가 '유지'를 고르면 30일 뒤에 다시 본다.
+ * 다시 봐도 운영자 결정은 지우지 않는다 — 운영자 결정보다 새 판정이 keep 이 아니면 다시 줄에 선다(repoReviewOpen).
  */
 export const NEXT_REVIEW_DAYS: Record<RepoReviewDecision, number | null> = { keep: 7, human: 3, delist_candidate: null };
 export const OPERATOR_KEEP_DAYS = 30;
 
-/** 2단계 대상 — 공개 웹사이트 중 저장소가 사라졌다고 확정된 것(repository.ts repoGone) */
-const target = sql`${products.status} in ('seeded', 'verified') and ${products.accessMode} = 'website' and ${repoGone}`;
+/** 2단계 대상 — 공개 제품 중 저장소가 사라졌다고 확정된 것(repository.ts repoGone). 2026-10-13 부터 설치형도 본다 */
+const target = sql`${products.status} in ('seeded', 'verified') and ${repoGone}`;
+/** 잡이 스스로 내릴 때 감사 행·운영자 칸에 남기는 이름과 사유 */
+export const REPO_GONE_AUTO_ACTOR = "auto:repo-gone";
+export const REPO_GONE_AUTO_REASON = "repo_gone";
+/**
+ * 하루에 스스로 내리는 수의 상한 — 넘으면 내리지 않고 운영자 몫(delist_candidate)으로 둔다.
+ * 새로 사라지는 저장소는 하루 수십 건 꼴이다. 하루 확인이나 github.com 이 잘못 답해 한꺼번에 내리는 일을 막는다(spam-rescan 과 같은 장치)
+ */
+export const MAX_REPO_GONE_DELISTS_PER_DAY = 100;
 
 /**
  * 운영자를 기다리는 것 — AI 가 keep 이 아니라고 했고, 운영자가 아직 안 봤거나 운영자 결정 뒤에 다시 본 것.
@@ -26,7 +36,10 @@ export const repoReviewOpen = sql`(${productRepoReviews.decision} <> 'keep'
   and (${productRepoReviews.operatorDecision} is null or ${productRepoReviews.operatorAt} < ${productRepoReviews.reviewedAt}))`;
 
 export type RepoReviewTarget = {
-  id: number; slug: string; name: string; tagline: string; description: string; url: string;
+  id: number; slug: string; name: string; url: string; repoUrl: string | null; renamedTo: string | null;
+  /** 운영자가 전에 고른 것 — '유지'였으면 잡이 스스로 내리지 않는다 */
+  operatorDecision: string | null;
+  /** 생존 확인이 본 사이트 중단 시작 — 페이지를 못 열었을 때 사흘 넘게 죽은 사이트만 내린다 */
   downSince: Date | null;
 };
 
@@ -34,8 +47,8 @@ export type RepoReviewTarget = {
 export async function dueRepoReviews(limit: number): Promise<RepoReviewTarget[]> {
   const due = sql`(${productRepoReviews.productId} is null or ${productRepoReviews.nextReviewAt} <= now())`;
   return db.select({
-    id: products.id, slug: products.slug, name: products.name, tagline: products.tagline, description: products.description,
-    url: products.url, downSince: productHealth.downSince,
+    id: products.id, slug: products.slug, name: products.name, url: products.url, repoUrl: products.repoUrl,
+    renamedTo: products.repoRenamedTo, operatorDecision: productRepoReviews.operatorDecision, downSince: productHealth.downSince,
   }).from(products)
     .leftJoin(productRepoReviews, eq(productRepoReviews.productId, products.id))
     .leftJoin(productHealth, eq(productHealth.slug, products.slug))
@@ -49,17 +62,60 @@ export type RepoReviewRecord = {
   pageHttpStatus: number | null; finalUrl: string | null; pageTitle: string | null; pageExcerpt: string | null;
 };
 
-/** 판정을 적는다. 운영자 결정 칸은 건드리지 않는다 */
-export async function saveRepoReview(record: RepoReviewRecord, lease?: JobLease): Promise<void> {
+function reviewValues(record: RepoReviewRecord) {
   const days = NEXT_REVIEW_DAYS[record.decision];
-  const nextReviewAt = days === null ? null : sql`now() + ${days}::int * interval '1 day'`;
-  const values = {
+  return {
     decision: record.decision, reason: record.reason.slice(0, 40), answers: record.answers,
     model: record.model?.slice(0, 80) ?? null, pageHttpStatus: record.pageHttpStatus, finalUrl: record.finalUrl,
-    pageTitle: record.pageTitle?.slice(0, 300) ?? null, pageExcerpt: record.pageExcerpt?.slice(0, 600) ?? null, nextReviewAt,
+    pageTitle: record.pageTitle?.slice(0, 300) ?? null, pageExcerpt: record.pageExcerpt?.slice(0, 600) ?? null,
+    nextReviewAt: days === null ? null : sql`now() + ${days}::int * interval '1 day'`,
   };
+}
+
+/** 판정을 적는다. 운영자 결정 칸은 건드리지 않는다 */
+export async function saveRepoReview(record: RepoReviewRecord, lease?: JobLease): Promise<void> {
+  const values = reviewValues(record);
   await withJobLeaseWrite(lease, (tx) => tx.insert(productRepoReviews).values({ productId: record.productId, ...values })
     .onConflictDoUpdate({ target: productRepoReviews.productId, set: { ...values, reviewedAt: sql`now()` } }));
+}
+
+/** 지난 24시간에 잡이 스스로 내린 수 — 하루 한도(MAX_REPO_GONE_DELISTS_PER_DAY)와 견준다 */
+export async function repoGoneDelistsLastDay(): Promise<number> {
+  const [row] = await db.select({ count: sql<number>`count(*)::int` }).from(productEvidenceAudit).where(and(
+    eq(productEvidenceAudit.action, "admin.product.ban"), eq(productEvidenceAudit.actor, REPO_GONE_AUTO_ACTOR),
+    eq(productEvidenceAudit.reason, REPO_GONE_AUTO_REASON), sql`${productEvidenceAudit.createdAt} > now() - interval '24 hours'`,
+  ));
+  return row?.count ?? 0;
+}
+
+/**
+ * 저장소가 없다고 확인된 제품을 내린다 — 운영자 '내리기'(decideRepoReview)와 같은 차단(admin.product.ban, 차단 해제로 되돌린다).
+ * 판정과 운영자 칸(auto:repo-gone)을 같은 트랜잭션에 적는다.
+ *
+ * 잠금은 운영자 경로(decideRepoReview)와 같은 순서다 — 판정 행 → 제품 수명 잠금(lockProductGeneration: advisory → 제품 행).
+ * 그래야 운영자와 교착하지 않고, 잡이 고른 뒤 운영자가 '유지'를 골랐으면 그 결정을 여기서 본다(그때는 내리지 않고 내릴 후보로만 적는다).
+ * 제품 수정(repository.update)은 수명 잠금 → 판정 행 삭제 순서라 운영자 경로처럼 드물게 교착할 수 있다 — Postgres 가 한쪽을 끊고,
+ * 잡이면 다음 틱에 다시 본다.
+ * 공개가 아니게 됐거나 저장소가 돌아왔으면 아무것도 하지 않는다.
+ */
+export async function delistGoneRepository(record: RepoReviewRecord & { slug: string }, lease?: JobLease):
+  Promise<"delisted" | "operator_keep" | "skipped"> {
+  return withJobLeaseWrite(lease, async (tx) => {
+    const [current] = await tx.select({ operatorDecision: productRepoReviews.operatorDecision }).from(productRepoReviews)
+      .where(eq(productRepoReviews.productId, record.productId)).for("update");
+    const upsert = (values: ReturnType<typeof reviewValues> & { operatorDecision?: "delist"; operatorBy?: string; operatorAt?: SQL }) => tx.insert(productRepoReviews)
+      .values({ productId: record.productId, ...values })
+      .onConflictDoUpdate({ target: productRepoReviews.productId, set: { ...values, reviewedAt: sql`now()` } });
+    if (current?.operatorDecision === "keep") { await upsert(reviewValues(record)); return "operator_keep"; }
+    if (!(await lockProductGeneration(tx, record.productId, record.slug))) return "skipped";
+    const [row] = await tx.select({ status: products.status, gone: sql<boolean>`${repoGone}` }).from(products).where(eq(products.id, record.productId));
+    if (!row || !["seeded", "verified"].includes(row.status) || !row.gone) return "skipped";
+    const banned = await setStatusWithAudit({ id: record.productId, slug: record.slug, status: "banned", action: "admin.product.ban",
+      actor: REPO_GONE_AUTO_ACTOR, reason: REPO_GONE_AUTO_REASON }, tx);
+    if (!banned) return "skipped";
+    await upsert({ ...reviewValues(record), operatorDecision: "delist" as const, operatorBy: REPO_GONE_AUTO_ACTOR, operatorAt: sql`now()` });
+    return "delisted";
+  });
 }
 
 /** 어드민 줄에 붙일 판정 */

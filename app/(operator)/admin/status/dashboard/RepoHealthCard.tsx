@@ -47,8 +47,8 @@ export function RepoHealthCard({ health, review }: { health: AttentionCounts["re
       </div>
       <p className="dash-line">
         <span>
-          저장소가 사라진 웹사이트 2단계 — 확인 대기 <b>{n(review.pending)}</b> · 내릴 후보 <b>{n(review.delistCandidates)}</b> ·
-          사람 확인 <b>{n(review.human)}</b> · AI 유지 <b>{n(review.kept)}</b>
+          저장소가 사라진 제품 2단계(정말 없으면 자동으로 내림) — 확인 대기 <b>{n(review.pending)}</b> · 내릴 후보 <b>{n(review.delistCandidates)}</b> ·
+          사람 확인 <b>{n(review.human)}</b> · 저장소 다시 열림 <b>{n(review.kept)}</b>
           {review.oldestHours !== null && <> · 가장 오래 기다린 것 <b className={overdue ? "text-down" : ""}>{Math.round(review.oldestHours)}시간</b></>}
           {" "}<Link href={filter("저장소 사라짐")} className="text-accent">제품 관리</Link>
         </span>
