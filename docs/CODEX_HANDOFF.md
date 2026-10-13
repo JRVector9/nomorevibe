@@ -1,3 +1,32 @@
+# 2026-10-13 — 관리자 실제 접속 복구 완료
+
+## Current objective / completed work
+
+사용자 ‘admin 페이지 안 들어가져’ 원인은 PR410의 private 차단 코드 배포 후 ingress/자격 설치 누락이었다. Tailscale HTTPS와 ID/비밀번호를 실제 설치하고 브라우저 로그인·관리 읽기·로그아웃을 확인했다. 운영자 Mac의 Tailscale 연결 후 https://m3ultra.tail02799e.ts.net/admin, ID jr, 비밀번호는 /Users/jr/.config/nomorevibe/admin-login.txt(0600,상위0700)이다. 비밀번호·secret·hash·cookie를Git/도구출력/명령인자에남기지않는다. 공개 nomorevibe.com/admin은404 유지.
+
+## Modified files / key design decisions
+
+문서worktree /private/tmp/nomorevibe-admin-access-docs-20261013, branch fix/admin-private-access-20261013, basef63e469. README/PENDING/이인계/admin-private-access.md와 새 2026-10-13-admin-private-access-rollout.md를갱신했다. 앱코드변경없음. 실제setup/rollbackbaseline/증거는 /private/tmp/nomorevibe-admin-access-20261013(0700/0600). 양웹6복제본에같은5개관리설정, 기존AUTH_SECRET와4flags·기타env보존. 같은8e767a5webimage(cea3b1bd)로같은배포window양웹재배포done/ready. backend11앱b592/85c69그대로,13core앱18복제본ready. M3별도nginxcontainer1개(96MiB/0.25CPU/unless-stopped,officialimagea8b39bd9). Serve443→loopback127.0.0.1:19391→overlayweb서비스DNS3000. Serve검증owneridentity정확비교+고정Host/Proto/proof주입. 중앙ACL기존넓은정책은변경하지않았고 서비스owner제한은proxy에서검사한다. Funnel없음. 양공개Traefik별도비밀없는middleware0644와domain3개씩영구참조설치;실제runtime6router참조와유효secret/쿠키차단확인. privateconf jr0700/0600. productionADMIN_LOCAL_LOGIN=0,소개검수중단/DB/scheduler정책보존.
+
+## Test commands / results / failed approaches
+
+실제 browser-check.mjs PTY95591 exit0: noncebootstrap뒤폼,ID/비밀번호로그인→오늘할일,운영센터/제품200,Origin·CSRF각403,logout303+cookie삭제+로그인복귀,pageerror0. 6웹Dockerenv설정exactmatch/hash형식정상. runtime PTY61232 exit0 13앱ready. readonlyDB PTY10318 exit0 journal76/intro2100미임대/schedulerManualtrue·replicas2. 네트워크 PTY22445 exit0 mini→M3Tailscale/LAN19391양쪽closed;proxyidentity없음/다른값403. Traefikruntimequery PTY28312 exit0 양3routermiddlewareactive+liveproofcookie404. publiccurl PTY9738 exit0 health/home/login200/admin404. boundary-check.py PTY41330 exit0 CloudflarePython3건403/양host공개3domain×3경로18건404·일반public200/admin404확인. 추가FD보안headercurl PTY57242 exit0 실제secret/관리쿠키Cloudflare3건도404확인. 새단위/통합테스트는실행하지않았다. 관리쓰기·실제다른계정·교체/만료/초과·재부팅은미실행.
+
+실패와교정: domain배열순서변경으로zip오판→domainId비교. root0700configOrbStack읽기실패126→jr0700/0600. 공개middleware root0600읽기실패/oldruntime유지→jr0644/재읽기/실제runtime검사(전체Traefik재시작없음). 새env에기존키전용replace_setting행수0→새키append. 최초HTTPScert발급timeout→발급후TLS정상. urllibnoncebootstrap단순HTML무폼→실제브라우저확인. 첫heading검사명오류(오늘처리할일)→실제오늘할일로전체성공. 최초boundary자동redirect/DNS·CF까지404가정→NoRedirect와경계별403/404측정. publicPythonUA403은curl의실제일반public200/404로확인했다.
+
+## Remaining work / exact commands
+
+문서PR412 최신baseCI check성공후merge하고usermainff-only동기화한다. 기존useruntracked보존. active운영접속작업은완료. 이후관리쓰기/다른계정/교체/재부팅확인은PENDING범위를따른다. setup.py capture/install/deploy는현재baseline과맞지않으므로반복실행하지않는다.
+
+읽기확인:
+- ssh root@100.92.77.66 '/opt/homebrew/bin/tailscale serve status --json'
+- ssh root@100.92.77.66 'docker ps --filter name=nomorevibe-admin-ingress'
+- curl -I https://nomorevibe.com/admin
+- git -C /private/tmp/nomorevibe-admin-access-docs-20261013 diff --check
+
+
+---
+
 # 2026-10-13 — PR410 병렬 리뷰·CI·운영 배포 완료
 
 ## Current objective / completed work

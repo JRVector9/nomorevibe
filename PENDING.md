@@ -6,18 +6,17 @@
 
 ---
 
-## 관리자 private 접속 설치 — 2026-10-13
+## 관리자 private 접속의 추가 운영 검증 — 2026-10-13
 
-**완료한 것:** PR410 코드와 양 웹 배포, 전체 CI·공개 페이지·13앱 런타임 검증을
-[운영 기록](docs/operations/2026-10-13-admin-essential-production-rollout.md)에 남겼다.
-공개·직접 컨테이너에서 가짜 ingress/Host/XFF/쿠키로 관리 경로를 열 수 없으며404다.
-production local 우회는 금지한다.
+**접속 설치 완료:** [실제 접속 기록](docs/operations/2026-10-13-admin-private-access-rollout.md)에
+Tailscale HTTPS·private proxy·양 웹 ID/비밀번호 적용과 실제 로그인/읽기/로그아웃,
+공개 경계 차단·6웹runtime 일치를 기록했다. production ADMIN_LOCAL_LOGIN=0 유지.
 
-**남은 설치:** Tailscale는 양 host에서 Running이지만 Serve/지정 운영자 ACL·private
-proxy·직접 origin 방화벽·양 웹의 ADMIN_ORIGIN/INGRESS_SECRET/USERNAME/PASSWORD_HASH
-설치와 실제 로그인·로그아웃·관리 action 확인은 아직 없다.
-[접속 설치 계약](docs/operations/admin-private-access.md)을 따라 적용하고 증거를 남긴다.
-이를 해결하려고 ADMIN_LOCAL_LOGIN을 운영에 켜지 않는다.
+**남은 수동 검증:** 관리 쓰기·실제 다른 Tailscale 사용자·비밀번호 교체/만료·한도 초과·
+서버 재부팅 후 접속은 이번 운영 단계에서 실행하지 않았다. 중앙 tailnet ACL은 기존 정책을
+유지하고 Serve의 단일 운영자 identity를 private proxy에서 검사한다. 서비스 접속 복구와
+네트워크 ACL을 축소한 작업을 혼동하지 않는다.
+
 
 ---
 
