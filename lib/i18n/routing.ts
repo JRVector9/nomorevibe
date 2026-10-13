@@ -51,17 +51,17 @@ export function isLocaleExcludedPath(pathname: string): boolean {
 export function safePublicReturnUrl(value: unknown, fallback: string = "/"): string {
   if (typeof value !== "string" || value.length > 2_000) return fallback;
   try {
-    splitPath(value);
-    const decoded = decodeURIComponent(value);
-    if (decoded.startsWith("//") || /[\\\u0000-\u0020\u007f]/.test(decoded)) return fallback;
+    const { suffix } = splitPath(value);
     const parsed = new URL(value, "https://return.invalid");
     if (parsed.origin !== "https://return.invalid" || parsed.pathname.startsWith("//")) return fallback;
-    const logical = stripLocale(decodeURIComponent(parsed.pathname));
+    const decoded = decodeURIComponent(parsed.pathname);
+    if (decoded.startsWith("//") || /[\\\u0000-\u0020\u007f]/.test(decoded)) return fallback;
+    const logical = stripLocale(decoded);
     if (isLocaleExcludedPath(logical)) return fallback;
     const publicRoute = /^(?:\/|\/(?:rising|popular|login|launch|policy)\/?|\/c\/[^/]+\/?|\/p\/[^/]+(?:\/github)?\/?|\/rankings\/[^/]+\/?|\/feedback\/[^/]+\/?)$/;
     if (!publicRoute.test(logical)) return fallback;
     const locale = pathLocale(parsed.pathname) ?? DEFAULT_LOCALE;
-    return localePath(locale, `${parsed.pathname}${parsed.search}${parsed.hash}`);
+    return localePath(locale, `${parsed.pathname}${suffix}`);
   } catch {
     return fallback;
   }
