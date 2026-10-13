@@ -1,10 +1,12 @@
 import "server-only";
+import { cache } from "react";
 import { after } from "next/server";
 import { onReplica } from "@/lib/db";
 import type { Locale } from "./locales";
 import { readProductTranslations, requestProductTranslations, selectProductTranslation,
   type ProductTranslation, type ProductTranslationField, type ProductTranslationSource } from "@/lib/domain/products/translations";
 import type { ProductTranslationSelection } from "@/lib/domain/products/translation-policy";
+import { PRODUCT_TRANSLATION_DEMAND_LIMIT } from "@/lib/domain/products/translation-policy";
 import { logger } from "@/lib/observability/logger";
 
 type PublicTranslationProduct = {
@@ -14,6 +16,37 @@ export type TranslatedProduct<T> = T & {
   translation?: ProductTranslationSelection;
   descriptionTranslation?: ProductTranslationSelection;
 };
+
+// React cache scopes this budget to one render request, across every visible list.
+const responseDemand = cache((_locale: Locale) => ({
+  fields: new Map<number, Set<ProductTranslationField>>(), scheduled: false,
+}));
+
+function requestVisibleTranslations(ids: readonly number[], locale: Locale, fields: readonly ProductTranslationField[]) {
+  const demand = responseDemand(locale);
+  for (const id of ids) {
+    if (!demand.fields.has(id) && demand.fields.size >= PRODUCT_TRANSLATION_DEMAND_LIMIT) continue;
+    const requested = demand.fields.get(id) ?? new Set<ProductTranslationField>();
+    fields.forEach((field) => requested.add(field));
+    demand.fields.set(id, requested);
+  }
+  if (demand.scheduled || !demand.fields.size) return;
+  demand.scheduled = true;
+  after(async () => {
+    // Keep description demand exclusive to products whose descriptions are visible.
+    const groups = new Map<string, { ids: number[]; fields: ProductTranslationField[] }>();
+    for (const [id, requested] of demand.fields) {
+      const fields = [...requested].sort(), key = fields.join(",");
+      const group = groups.get(key) ?? { ids: [], fields };
+      group.ids.push(id);
+      groups.set(key, group);
+    }
+    for (const group of groups.values()) {
+      try { await requestProductTranslations(group.ids, locale, group.fields); }
+      catch (error) { logger.warn("i18n.product_translation_demand_failed", { locale, error }); }
+    }
+  });
+}
 
 export function productTranslationSource(product: PublicTranslationProduct): ProductTranslationSource {
   return { id: product.id ?? 0, name: product.translationName ?? product.name,
@@ -49,9 +82,6 @@ export async function localizeProductList<T extends PublicTranslationProduct>(
   });
   const ids = result.filter((product) => product.translation.pending || product.descriptionTranslation?.pending)
     .map((product) => product.id).filter((id): id is number => Number.isSafeInteger(id) && id! > 0).slice(0, 80);
-  if (ids.length) after(async () => {
-    try { await requestProductTranslations(ids, locale, fields); }
-    catch (error) { logger.warn("i18n.product_translation_demand_failed", { locale, error }); }
-  });
+  if (ids.length) requestVisibleTranslations(ids, locale, fields);
   return result;
 }
