@@ -130,6 +130,6 @@ root 확인 결과:
 - `DATABASE_URL=postgres://build:build@localhost:5432/build npx next build --webpack` 성공. 별도 worktree의 외부 node_modules symlink 때문에 Turbopack이 거절한 경로를 지원되는 webpack 옵션으로 확인했다.
 - 담당의 별도 local DB probe에서 댓글 CAS·대기 전송 취소·복원 시 재전송 없음·감사 rollback, 번역 attempt/backoff/4회 상한·보류·원문 변경·CAS/lease를 확인했다.
 
-전체 GitHub CI·브라우저 수동 시험·실제 운영 로그인/관리 쓰기·외부 Issue 전송은 실행하지 않았다. 새 suite/E2E, migration, dependency, 별도 collector는 추가하지 않았다. 사용자 main의 미추적 산출물은 보존했다.
+초기 구현 완료 시점에는 전체 GitHub CI·브라우저 수동 시험·실제 운영 로그인/관리 쓰기·외부 Issue 전송을 실행하지 않았다. 새 suite/E2E, migration, dependency, 별도 collector는 추가하지 않았다. 사용자 main의 미추적 산출물은 보존했다.
 
-개발 브랜치는 `/private/tmp/nomorevibe-admin-essential-integration-20261013`의 `feat/admin-essential-integration-20261013`다. PR01~06은 개발 범위 번호이며 아직 GitHub PR 생성·원격 push·merge·운영 배포는 하지 않았다. 다음 운영 적용에는 정상 PR/최신 base의 필수 CI와 `admin-private-access.md`의 양 웹 설정·private proxy·Tailscale ACL·direct-origin 방화벽 검증이 필요하다. 공개 소개 검수 중단은 그대로 유지한다.
+개발 브랜치는 `/private/tmp/nomorevibe-admin-essential-integration-20261013`의 `feat/admin-essential-integration-20261013`다. PR01~06은 개발 범위 번호이며 후속 배포 지시로 실제 [PR410](https://github.com/JRVector9/nomorevibe/pull/410)에 통합했다. 독립 병렬 리뷰·전체 PR/main CI 이후 정상 병합한 source8e767a5를 양 웹에 배포하고, 13앱·네 언어 공개 본문·관리자 차단을 검증했다. 전체 단위2271/통합1375사례가 통과했다. [운영 배포 기록](../../operations/2026-10-13-admin-essential-production-rollout.md)을 따른다. `admin-private-access.md`의 private proxy·Tailscale ACL·양 웹 자격·방화벽 설치와 실제 관리자 로그인은 별도 후속이다. 공개 소개 검수 중단은 그대로 유지한다.
