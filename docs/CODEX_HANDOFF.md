@@ -1,3 +1,34 @@
+# 2026-10-13 — 관리자 16개 제안 실측·범위 축소·병렬 구현
+
+## Current objective / completed work
+
+사용자가 기존 1인 운영 감사의 ADM01~16을現在source와 실제 운영에 대조하고, 이미 구현되었거나 과한 범위를 제외한 최종 PR 계획 및 병렬 구현을 요청했다. base/main b8147dc(문서 PR409까지 정상 병합)를 기준으로 root와 gpt-6.1-sol/xhigh 3담당이 재감사를 마쳤고6개PR로축소한 계획 docs/superpowers/plans/2026-10-13-admin-essential.md를 작성했다. access는PR01,ops는PR02/06,content는PR03/04,root는PR05/공통Origin/docs를 구현한다. PR03 dc5b331+0f8a241, PR02 be8484e+caf86c1을 root가 리뷰 후 integration에 cherry-pick했다(현재5369e2d/cc4f384/01d3649/1b3a2c9). PR01/04/06은 담당이 이어서 진행 중이다.
+
+## Modified files / key design decisions
+
+root integration: /private/tmp/nomorevibe-admin-essential-integration-20261013, branch feat/admin-essential-integration-20261013. auth/ops/content 각각 별도 worktree/node_modules만공유. root PR05는 inbox/제품auto:repo-gone 최신결정필터·전접근방식판정조회/nav/사후미노출안내·기존fixture를수정중이며아직미커밋/미검증이다. 신규 RBAC·CMS·monitor·비용 collector·계정 삭제 schema는 제외, 기존 세션·댓글 review state·번역 ledger·감사·차단 복구·8h reader를 재사용한다. 공개 소개 검수 중단 유지. production local 우회 금지/private proof를 proxy/currentAdmin/API에서검증. 댓글 product→binding→outbox→feedback 잠금과 외부 Issue 보존, 번역4회상한/hashCAS. frontend707/backendb592는의도된독립배포라전체SHA일치를정상조건으로삼지않는다.
+
+## Test commands / results / failed approaches
+
+root 운영readonly집계15:50:44KST:accepted2/held0/outbox0/users1;번역ready116/pending2/failed53(quality45/timeout8/4회소진4),auto:repo-gone2,내림pending0/소개0/newsapproved451pending0. health200/adminlogin200/status+feedback307/adminOAuth503/enadmin404.13appsdone/web2+4/workerb592web707/local0/password·ingress없음. 별도runtimeprobe양웹readytrue. DockerHealthcheck없는6웹의healthy0은unhealthy아님. 서버tailscaleCLI PATH없어ACL/Serve미검증. 첫집계reservedSQLalias day→day_count로수정,infraCLI FileNotFound→미설치/미확인기록수정. 어떠한운영쓰기/env전체출력도안함. 담당PR03기존unit38/integration53+독립DBprobe/type/lint실행성공보고;PR02기존32+review35/type/lint성공보고(초기PageProps누락은nexttypegen으로해결). root는아직통합체크미실행. 실제브라우저/운영쓰기/GitHub파일럿은미검증.
+
+## Remaining work / exact next commands
+
+PR01/04/06 담당commit→root리뷰/cherry-pick→공통Origin두actions와passwordactivitylabel연결→PR05최종기존fixture/독립localDB/type/lint/build(webpack모드로node_modules외부symlink회피)→최종개발보고. 아직원격push/PR생성/merge/deploy는안함. 실제privateingress/ACL/자격설치전관리자접근완료로표기금지. 0075 migration/이전양웹배포반복금지. 관리자동일Origin actions및action-links3key/번역모듈이담당종료전integration미존재라통합타입검증은그후한다.
+
+```sh
+cd /private/tmp/nomorevibe-admin-essential-integration-20261013
+git status --short --branch
+git diff --check
+# 측정 helper의 measurement.json은 안전한 집계지만 private state 전체나 기존 앱 JSON/env를 공유/커밋하지 않는다.
+# auth WT: /private/tmp/nomorevibe-admin-access-essential-20261013
+# ops WT: /private/tmp/nomorevibe-admin-ops-essential-20261013
+# content WT: /private/tmp/nomorevibe-admin-content-essential-20261013
+# 담당 커밋은 root 리뷰 후 integration에 순서대로 cherry-pick. 사용자 main 미추적 산출물 보존.
+```
+
+---
+
 # 2026-10-13 — 운영 배포·AI 탐색 탭·1인 관리자 병렬 감사 최종화
 
 ## Current objective / completed work
