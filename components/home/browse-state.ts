@@ -7,6 +7,7 @@ import { pageTitle } from "@/lib/copy/brand";
 import { formatApprox, formatCount } from "@/lib/format/number";
 import { CATEGORIES, type Category } from "@/lib/domain/products/categories";
 import { categoryLabel } from "@/lib/domain/products/labels";
+import { hiddenByDefault } from "@/lib/domain/products/visibility";
 import { AI_FILTER_LABELS, AI_FILTER_LEVELS, AI_FILTERS, type AiFilter, type AiLevel } from "@/lib/domain/evidence/ai-level-labels";
 
 /** relevance 는 검색어가 있을 때만 쓰는 순서다 — 검색 중에만 '관련도' 탭으로 맨 앞에 선다 */
@@ -29,6 +30,15 @@ export type BrowseState = {
   ai?: AiFilter;
   shown?: number;
 };
+
+/**
+ * 분야 알약에 올릴 분야 — 개수 순, 기본 목록에서 빼는 분야(개인 프로필, 계약 C3)는 칩에도 없다.
+ * 0건 분야도 위치를 유지하고 선택을 해제할 수 있다.
+ */
+export function chipCategories(counts: Record<string, number>): string[] {
+  return CATEGORIES.filter((category) => !hiddenByDefault(category))
+    .sort((a, b) => (counts[b] ?? 0) - (counts[a] ?? 0));
+}
 
 export function parseShown(value: string | undefined): number {
   const count = Number(value);

@@ -1,8 +1,8 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { BrowseFilters, hrefWith, parseHomeSort, parseShown } from "@/components/BrowseFilters";
-import { HOME_MAX_SHOWN, shownWindow } from "@/components/home/browse-state";
+import { BrowseFilters } from "@/components/BrowseFilters";
+import { HOME_MAX_SHOWN, hrefWith, parseHomeSort, parseShown, shownWindow } from "@/components/home/browse-state";
 
 describe("home sort", () => {
   it("도구 흔적 필터는 정렬·분야·더 보기에서 유지하고 초기화하면 지운다", () => {

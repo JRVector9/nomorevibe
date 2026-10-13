@@ -1,3 +1,34 @@
+# 2026-10-13 — 운영 홈의 RSC 함수 import 경계 교정
+
+## Current objective / completed work
+
+사용자 운영 배포 지시에 따라 PR406/main ca2c8c3은 13core 앱과 양웹6복제본에 실제 배포했다. DB0075/journal76/product_translations 및 소개 검수2100 중단 보존, failover/progress/네flags ON 확인. 이어 1인 관리자3담당 read-only 감사 완료; 통합 보고서/배포 상세 기록은 별도 docs 작업에서 보존한다.
+
+쿠키 없는 홈의 HTTP200/lang만 통과했으나 실제 본문은 Loading만 보였다. 네 웹 로그의 Error Attempted to call parseShown() from the server but parseShown is on the client, digest854463322로 원인 확정. client로 바뀐 BrowseFilters 재export를 서버 HomeContent가 호출했다. gpt-6.1-sol/xhigh content agent가 UI는 client import 그대로 두고 순수 browse-state에서 helper를 직접 import하게 교정했다. chipCategories 기존본문을 공유모듈로 그대로 이동하고 기존2fixture의 import만 바꿨다. 제품 기준/정렬/노출/8시간 관측/UI/DB/번역 정책은 변경 없다.
+
+## Modified files / actual checks / design
+
+app/(public)/[locale]/(content)/page.tsx, components/BrowseFilters.tsx, components/home/browse-state.ts, tests/home-browse.test.ts, tests/home-sort.test.ts와 이 인계. root가 diff와 같은 clientmodule import를 검토했다. 담당이 실제 next typegen, tsc --noEmit, scopedESLint, diff --check exit0 확인. root 기존 두파일 unit19사례/2파일6293 exit0. 최신 PR/main 필수CI는 후속 기록을 따른다. 새 test/suite/E2E/실사용자 OAuth·댓글·스타 쓰기는 추가하지 않았다. Next 설치 server-and-client-boundary guide를 읽고 경계를 교정했다.
+
+## Remaining work / failed checks / exact next commands
+
+정상PR/최신base 필수check 이후 merge/main image발행→양서버 배포→4언어홈 실제필터·제품·오류digest 없음 검증→배포/관리자 보고서최종화. 본 head 아직 배포 성공/CI 성공을 주장하지 않음. 기존200-only확인으로 화면 정상이라고 판단한 접근은 폐기한다.
+
+운영 자동번역은 기본 Node24 fetch의 IPv4 연결250ms 종료/IPv6 ENETUNREACH 실패를 확인했다. 같은 컨테이너 https.get family4 및 fetch family attempt timeout2000은 GET models200(약1.6s). 키/게이트웨이 변경 없이 최소 연결 환경을 양서버에 적용해 실제 정상text저장을 확인할 예정. 전체백필/소개검수재개/수동모델POST 없음.
+
+공개관리자 ADMIN_LOCAL_LOGIN=1 문제는 이전 사용자접근제한 요청에 따라 양웹0으로 차단완료. status/review307로그인, 관리자OAuth503(미설정); Tailscale/ID비밀번호는 미구현이고 현재관리자 정상로그인 잠김. 이를 완료구현으로 보고하지 않음.
+
+```sh
+cd /private/tmp/nomorevibe-home-boundary-fix-20261013
+git diff --check
+git status --short --branch
+gh pr checks <신규PR번호>
+# 필수CI/최신base를 우회하지 않음. ca2 완료migration/rollout 중복 실행 금지.
+# private 상태 /private/tmp/nomorevibe-i18n-release-state-20261013는 env/secret 가능; 출력/공유/commit금지.
+```
+
+---
+
 # 2026-10-13 — PR406 병렬 리뷰의 P2 세 건 보완 완료
 
 ## Current objective
