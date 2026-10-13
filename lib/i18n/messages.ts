@@ -1,8 +1,14 @@
 import type { common } from "@/messages/ko/common";
+import type { labels } from "@/messages/ko/labels";
+import type { browse } from "@/messages/ko/browse";
+import type { detail } from "@/messages/ko/detail";
 
 /** Korean declares semantic keys and interpolation contracts, not translated values. */
 export interface MessageSchemas {
   common: typeof common;
+  labels: typeof labels;
+  browse: typeof browse;
+  detail: typeof detail;
 }
 export type Namespace = keyof MessageSchemas;
 export type MessageCatalog<Schema> = { readonly [Key in keyof Schema]: string };
