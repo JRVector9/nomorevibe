@@ -41,7 +41,6 @@ export function AccountMenu() {
   }
 
   // Authentication uses a fresh document; include the current hash at click time.
-  // eslint-disable-next-line @next/next/no-html-link-for-pages -- Preserve the complete authentication return address.
   if (!account) return <a href={loginHref(`${pathname}${query ? `?${query}` : ""}`)} onClick={(event) => {
     event.currentTarget.href = loginHref(`${window.location.pathname}${window.location.search}${window.location.hash}`);
   }} className="text-[14px] font-semibold">{t("account.login")}</a>;

@@ -18,12 +18,12 @@ export type TranslatedProduct<T> = T & {
 };
 
 // React cache scopes this budget to one render request, across every visible list.
-const responseDemand = cache((_locale: Locale) => ({
+const responseDemand = cache(() => ({
   fields: new Map<number, Set<ProductTranslationField>>(), scheduled: false,
 }));
 
 function requestVisibleTranslations(ids: readonly number[], locale: Locale, fields: readonly ProductTranslationField[]) {
-  const demand = responseDemand(locale);
+  const demand = responseDemand();
   for (const id of ids) {
     if (!demand.fields.has(id) && demand.fields.size >= PRODUCT_TRANSLATION_DEMAND_LIMIT) continue;
     const requested = demand.fields.get(id) ?? new Set<ProductTranslationField>();

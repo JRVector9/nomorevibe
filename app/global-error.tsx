@@ -43,7 +43,6 @@ export default function GlobalError({ error, retry }: {
               <button type="button" onClick={() => retry()} className="h-11 rounded-full bg-fg px-6 text-[15px] font-medium text-bg-card hover:opacity-90">
                 {t("retry")}
               </button>
-              {/* eslint-disable-next-line @next/next/no-html-link-for-pages -- 레이아웃이 무너진 상태라 앱 이동 대신 새로 불러온다 */}
               <a href={localePath(locale, "/")} className="inline-flex min-h-11 items-center px-2 text-[15px] font-medium text-accent-ink underline underline-offset-4">
                 {t("home")}
               </a>

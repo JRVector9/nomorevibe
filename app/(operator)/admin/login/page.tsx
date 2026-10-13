@@ -29,6 +29,7 @@ export default async function AdminLoginPage({
 
         {/* OAuth 시작은 API 라우트라 페이지 링크가 아니다. <Link>로 바꾸면 hover prefetch가
             로그인 요청을 미리 쏜다. (슬롯 catch-all 이 있던 때는 lint 규칙이 이것을 페이지로 오탐해 예외를 뒀다) */}
+        {/* eslint-disable-next-line @next/next/no-html-link-for-pages -- OAuth starts with a full document request, never prefetch. */}
         <a
           href="/api/auth/github"
           className="mt-6 flex items-center justify-center gap-2 rounded-[10px] bg-accent-solid px-4 py-2.5 text-[13.5px] font-semibold text-white hover:brightness-110"

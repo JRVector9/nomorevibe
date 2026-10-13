@@ -29,6 +29,7 @@ export function ProductTagline({ tagline, taglineKo, translation, source, classN
     <>
       <p className={className} title={title} lang={lang}>{text}</p>
       {pending && <p className="card-intro-source">{t("content.pending")}</p>}
+      {showSource && translated && translation?.provenance === "machine" && <p className="card-intro-source">{t("content.machineTranslation")}</p>}
       {showSource && <IntroductionSource source={source ?? undefined} />}
       {translated && original === "toggle" && (
         <details className="text-[13px] leading-[1.5] text-fg-2">

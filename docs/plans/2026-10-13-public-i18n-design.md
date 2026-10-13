@@ -39,8 +39,9 @@
 
 ```text
 app/
+  layout.tsx            # 단일 HTML root: 검증된 요청 locale로 html lang
   (public)/[locale]/
-    layout.tsx          # 공개 root layout: html lang, 공통 셸, 언어 선택
+    layout.tsx          # locale 검증·선택 문구 provider; (content)에 공통 셸
     page.tsx            # 기존 홈을 한 번만 구현
     c/[category]/page.tsx
     p/[slug]/page.tsx
@@ -56,7 +57,7 @@ app/
     not-found.tsx
     error.tsx
   (operator)/
-    layout.tsx          # 관리자용 root layout
+    layout.tsx          # 관리자용 inner layout: 기존 한국어·인증 유지
     admin/...           # 기존 /admin URL·인증·허용목록 유지
   api/...               # 기존 API·OAuth·웹훅 계약 유지
   go/[slug]/route.ts    # 기존 외부 방문·계측 주소 유지
@@ -80,7 +81,7 @@ messages/
   zh-Hant/{...}.ts
 ```
 
-`app/layout.tsx`를 그대로 둔 채 아래에 또 html root layout을 추가하지 않는다. 공개와 관리자 root layout을 나누므로 두 영역 간 이동은 전체 문서 이동이 될 수 있다. 언어 변경도 초기에는 일반 링크 이동으로 처리해 root lang와 metadata가 확실히 바뀌게 한다.
+`app/layout.tsx`만 HTML root로 사용하고 공개·관리자는 각각 inner layout을 둔다. 초기 다중 root 설계는 설치된 Next16.3.8의 explicit notFound 문제를 실제 빌드/응답과 기존 baseline에서 확인한 뒤 단일 root로 조정했다. proxy는 모든 처리 분기에서 검증한 요청 locale header를 덮어쓰고 root는 그 값으로 html lang을 정한다. 공개 provider는 URL의 [locale]를 다시 검증한다. 언어 변경은 일반 링크 이동으로 처리해 root lang와 metadata가 확실히 바뀌게 한다.
 
 공개 locale 검증은 레이아웃·metadata·URL helper에서 같은 등록 목록을 쓴다. 관리자 인증 분기는 관리자 요청에서만 실행하고, 비밀키가 없을 때 차단하는 기존 동작과 `/admin/login` 예외를 유지한다. `/api`, `/admin`, `/_next`, 파일·이미지, OAuth callback, 웹훅, `/go`, `/badge`, feed·sitemap·robots·설치 스크립트는 locale rewrite에서 제외한다. 접두사를 붙인 `/en/admin`, `/zh-Hant/api/...`를 공개 트리를 통해 관리자/API 별칭으로 열지 않는다.
 
@@ -88,7 +89,9 @@ messages/
 
 root layout 전환 PR에서는 `/`, 한국어 내부 rewrite, 네 언어 상세, invalid locale, 존재하지 않는 제품/경로의 404·noindex·전체 오류 화면, seasonfooter의 hard/soft 이동을 먼저 검증한다. 기존 슬롯에 catch-all을 넣어 404 셸이 깨졌던 이력이 있으므로 그 접근을 반복하지 않는다. `global-not-found`는 현재 설치 문서에서 experimental이며 이 설계만으로 활성화를 확정하지 않는다. 공개 missing-route 처리와 root layout 전환의 빌드/응답 상태가 확인되기 전 후속 페이지 이동을 진행하지 않는다.
 
-`next/root-params`는 locale가 공개 root layout 위 동적 segment가 된 뒤 Server Component에서 사용할 수 있다. Client Component·Server Action·Route Handler는 명시적 locale 전달/검증을 사용한다. locale를 전역 변경 가능한 변수로 두지 않는다.
+단일 HTML root 구조에서는 `next/root-params`에 locale root parameter가 등록되지 않으므로 Server Component는 검증된 요청 locale helper를 사용한다. Client Component·Server Action·Route Handler는 명시적 locale 전달/검증을 사용한다. locale를 전역 변경 가능한 변수로 두지 않는다.
+
+단일 root에서 unmatched 주소는 네 언어의 셸·진짜404·noindex·lang을 확인했다. 명시적 invalid category/product의 notFound는 기존 baseline에서도 빈 `__next_error__` 문서를 반환한다. 상태404/noindex는 지키지만 해당 응답의 셸·lang은 현재 프레임워크 한계로 남는다. 이 한계는 정상404 성공으로 보고하지 않으며 상태200 우회나 proxy DB 조회를 추가하지 않는다.
 
 ## 문구를 한 번에 관리하는 계약
 

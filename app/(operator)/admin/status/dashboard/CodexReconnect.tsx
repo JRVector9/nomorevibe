@@ -67,6 +67,7 @@ function CodexReconnectDialog({ onClose }: { onClose: () => void }) {
       {busy && !authenticating && <p>다른 AI 작업이 진행 중입니다. 완료 후 다시 인증해주세요.</p>}
       {!starting && connection?.state === "stored" ? <>
         <p>인증을 저장했습니다. 모델 응답을 검사한 뒤 설정을 적용해주세요.</p>
+        {/* eslint-disable-next-line @next/next/no-html-link-for-pages -- Reload the settings after credentials change. */}
         <a className="ops-button codex-settings-link" href="/admin/status?tab=ai">모델 검사·적용으로 이동</a>
       </> : authenticating ? <>
         <p>공식 페이지에서 아래 코드를 입력하고 계정을 승인해주세요. 승인 결과는 이 창에 자동으로 표시됩니다.</p>

@@ -53,9 +53,12 @@ export function detectTranslationSourceLocale(text: string): Locale | null {
 export type ProductTranslationSelection = {
   text: string; lang: Locale | undefined; translated: boolean; ready: boolean; pending: boolean;
   sourceHash: string; sourceLocale: Locale | null;
+  provenance?: ProductTranslation["provenance"]["kind"];
 };
 export type ProductTranslationReadiness = Pick<ProductTranslation,
-  "productId" | "locale" | "field" | "sourceHash" | "status" | "text" | "errorCode">;
+  "productId" | "locale" | "field" | "sourceHash" | "status" | "text" | "errorCode"> & {
+    provenance?: ProductTranslation["provenance"];
+  };
 
 /** Pure rendering decision; Korean callers continue to use their current taglineKo path. */
 export function selectProductTranslation(
@@ -68,7 +71,8 @@ export function selectProductTranslation(
   if (translation?.productId === source.id && translation.locale === locale && translation.field === field
     && translation.sourceHash === sourceHash && ["ready", "reviewed"].includes(translation.status)
     && translation.text && !translation.errorCode) {
-    return { text: translation.text, lang: locale, translated: true, ready: true, pending: false, sourceHash, sourceLocale };
+    return { text: translation.text, lang: locale, translated: true, ready: true, pending: false, sourceHash, sourceLocale,
+      provenance: translation.provenance?.kind };
   }
   const ready = !text.trim() || sourceLocale === locale;
   return { text, lang: sourceLocale ?? undefined, translated: false, ready, pending: !ready, sourceHash, sourceLocale };

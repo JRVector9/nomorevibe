@@ -93,7 +93,7 @@ describe("모바일 아래 탭", () => {
 
 describe("푸터", () => {
   it("한국어 슬로건과 게재 기준 링크(/policy#listing)", () => {
-    const html = renderToStaticMarkup(createElement(SiteFooter, { locale: "ko", messages: common, children: null }));
+    const html = renderToStaticMarkup(<SiteFooter locale="ko" messages={common}>{null}</SiteFooter>);
     expect(html).toContain("만들고, 세상에 내놓으세요.");
     expect(html).not.toContain("Build something");
     expect(hrefs(html)).toContain("/policy#listing");
