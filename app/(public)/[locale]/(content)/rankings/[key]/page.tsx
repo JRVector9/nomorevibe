@@ -3,7 +3,10 @@ import { getRequestLocale } from "@/lib/i18n/server";
 import { getTranslator,getDictionary } from "@/lib/i18n/dictionary";
 import { I18nProvider } from "@/lib/i18n/context";
 import { localePath } from "@/lib/i18n/routing";
-import type { Metadata } from "next";
+import type { Metadata, ResolvingMetadata } from "next";
+import { LOCALES } from "@/lib/i18n/locales";
+import { localizedOpenGraph } from "@/lib/i18n/metadata";
+import { canonicalAlternates } from "@/app/(public)/[locale]/(content)/page";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { cache } from "react";
@@ -24,15 +27,21 @@ const loadSeason = cache((key: string) => getSeasonByKey(key));
  * 시즌 이름 — 열쇠("2026-W41")가 아니라 "2026년 41주"로(2026-10-08 UX 감사 UX-09·UX-39).
  * 순위가 빈 시즌은 sitemap 에서 빠지고(app/sitemap.ts) 여기서도 색인하지 말라고 한다.
  */
-export async function generateMetadata({ params }: PageProps<"/[locale]/rankings/[key]">): Promise<Metadata> {
-  const locale=await getRequestLocale();const t=await getTranslator(locale,"browse");
+export async function generateMetadata({ params }: PageProps<"/[locale]/rankings/[key]">, parent?: ResolvingMetadata): Promise<Metadata> {
+  const locale = await getRequestLocale();
+  const t = await getTranslator(locale, "browse");
   const { key } = await params;
   const result = await loadSeason(key);
-  // 없는 시즌은 본문이 404 로 바뀌지만 탭 제목은 여기 값이 남는다 — 비우면 홈 제목이 뜬다(UX-10·UX-39)
-  if (!result) return { title: pageTitle(t("ranking.notFound")) };
+  const path = `/rankings/${encodeURIComponent(result?.season.key ?? key)}`;
+  const indexable = Boolean(result && result.items.length > 0);
+  const readyLocales = indexable ? LOCALES : [];
+  const title = result ? pageTitle(t("ranking.title", { season: translatedSeason(result.season.key, seasonLabel(result.season.key), t) }))
+    : pageTitle(t("ranking.notFound"));
   return {
-    title: pageTitle(t("ranking.title",{season:translatedSeason(result.season.key,seasonLabel(result.season.key),t)})),
-    robots: result.items.length > 0 ? undefined : { index: false, follow: true },
+    title,
+    ...(indexable ? {} : { robots: { index: false, follow: true } }),
+    alternates: canonicalAlternates(path, locale, readyLocales),
+    openGraph: { ...(await parent)?.openGraph, ...localizedOpenGraph(locale, readyLocales), title, url: localePath(locale, path) },
   };
 }
 

@@ -5,7 +5,8 @@ import { I18nProvider } from "@/lib/i18n/context";
 import { localePath } from "@/lib/i18n/routing";
 import { formatNumber } from "@/lib/i18n/format";
 import Link from 'next/link';
-import type {Metadata} from 'next';
+import type { Metadata, ResolvingMetadata } from 'next';
+import { localizedOpenGraph } from '@/lib/i18n/metadata';
 import {canonicalAlternates} from '@/app/(public)/[locale]/(content)/page';
 import {Icon} from '@/components/home/icons';
 import {rankedCard} from '@/components/home/popular-cards';
@@ -20,9 +21,16 @@ import {PopularList} from './PopularList';
 import './popular.css';
 export const dynamic='force-dynamic';
 // 구간·거르기·정렬·보기(?tier= 등)는 같은 화면의 보기다 — 정식 주소는 /popular 하나(SEO-04)
-export async function generateMetadata():Promise<Metadata>{
- const locale=await getRequestLocale();const t=await getTranslator(locale,"browse");
- return {title:pageTitle(t("popular.title")),description:t("popular.description"),alternates:canonicalAlternates(localePath(locale,"/popular"))};
+export async function generateMetadata(props?: PageProps<"/[locale]/popular">, parent?: ResolvingMetadata): Promise<Metadata> {
+ void props;
+ const locale = await getRequestLocale();
+ const t = await getTranslator(locale, "browse");
+ const title = pageTitle(t("popular.title"));
+ const description = t("popular.description");
+ return {
+  title, description, alternates: canonicalAlternates("/popular", locale),
+  openGraph: { ...(await parent)?.openGraph, ...localizedOpenGraph(locale), title, description, url: localePath(locale, "/popular") },
+ };
 }
 
 const SORTS=[{key:'stars',label:'popular.stars'},{key:'rising',label:'popular.rising'}] as const;

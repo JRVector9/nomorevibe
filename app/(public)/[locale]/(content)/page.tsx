@@ -1,6 +1,9 @@
 import { localizeProductList } from "@/lib/i18n/products";
 import { Suspense } from "react";
-import type { Metadata } from "next";
+import type { Metadata, ResolvingMetadata } from "next";
+import { pageTitle } from "@/lib/copy/brand";
+import { LOCALES } from "@/lib/i18n/locales";
+import { localizedAlternates, localizedOpenGraph } from "@/lib/i18n/metadata";
 import { redirect } from "next/navigation";
 import { after } from "next/server";
 import Link from "next/link";
@@ -266,25 +269,28 @@ function serializePulse(pulse: Pulse, now: Date, locale: Locale = "ko") {
 export type HomeParams = Awaited<Props["searchParams"]>;
 
 /**
- * 정식 주소(canonical, SEO-04) — 정렬·거르기·더 보기 같은 보기 조건은 떼고 경로만 둔다. 상대 주소는 레이아웃의 metadataBase 가 채운다.
+ * 정식 주소(canonical, SEO-04) — 보기 조건을 떼고 자기 언어 경로를 쓴다. 준비된 언어끼리 같은 대체 주소를 낸다.
  * alternates 는 얕게 병합돼 레이아웃의 RSS 알림(types)이 지워지므로 같은 값을 함께 단다(app/layout.tsx).
  */
-export function canonicalAlternates(path: string): NonNullable<Metadata["alternates"]> {
-  return { canonical: path, types: { "application/rss+xml": `${siteOrigin()}/feed.xml` } };
+export function canonicalAlternates(path: string, locale: Locale = "ko", readyLocales: readonly Locale[] = LOCALES): NonNullable<Metadata["alternates"]> {
+  return { ...localizedAlternates(locale, path, readyLocales), types: { "application/rss+xml": `${siteOrigin()}/feed.xml` } };
 }
 
-/** 검색어·분야로 탭 제목을 정한다(UX-39) — "“가계부” 검색 결과 — nomorevibe" */
-export async function generateMetadata({ searchParams }: Props): Promise<Metadata> {
+/** Search stays noindex; view parameters share the unfiltered language canonical. */
+export async function generateMetadata({ searchParams }: Props, parent?: ResolvingMetadata): Promise<Metadata> {
   const locale = await getRequestLocale();
   const t = await getTranslator(locale, "browse");
   const params = await searchParams;
-  if (firstValue(params.new) === "1") return { title: t("new.title"), alternates: canonicalAlternates(localePath(locale,"/")) };
-  const query = firstValue(params.q)?.trim().slice(0, 200) || undefined;
-  // 검색 결과는 색인하지 않는다 — 검색어마다 얇은 목록 페이지가 끝없이 생긴다. 분야는 /c/[category] 정식 주소가 맡는다
-  if (query) return { title: browseTitle({ query }, locale, t), robots: { index: false, follow: true } };
-  // 보기 조건이 붙은 주소(?sort=recent·?ai=…·?shown=… 등)는 홈과 같은 제목이라 홈을 정식 주소로 가리킨다
-  // 보기 조건이 붙은 주소도, 붙지 않은 홈도 정식 주소는 '/' 하나다(SEO-04)
-  return { title: browseTitle({}, locale, t), alternates: canonicalAlternates(localePath(locale,"/")) };
+  const newOnly = firstValue(params.new) === "1";
+  const query = newOnly ? undefined : firstValue(params.q)?.trim().slice(0, 200) || undefined;
+  const readyLocales = query ? [] : LOCALES;
+  const title = newOnly ? pageTitle(t("new.title")) : browseTitle({ query }, locale, t);
+  return {
+    title,
+    ...(query ? { robots: { index: false, follow: true } } : {}),
+    alternates: canonicalAlternates("/", locale, readyLocales),
+    openGraph: { ...(await parent)?.openGraph, ...localizedOpenGraph(locale, readyLocales), title, url: localePath(locale, "/") },
+  };
 }
 
 /**

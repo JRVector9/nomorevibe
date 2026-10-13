@@ -5,7 +5,8 @@ import { I18nProvider } from "@/lib/i18n/context";
 import { localePath } from "@/lib/i18n/routing";
 import { formatNumber, formatDateTime } from "@/lib/i18n/format";
 import Link from "next/link";
-import type { Metadata } from "next";
+import type { Metadata, ResolvingMetadata } from "next";
+import { localizedOpenGraph } from "@/lib/i18n/metadata";
 import { canonicalAlternates } from "@/app/(public)/[locale]/(content)/page";
 import { Icon } from "@/components/home/icons";
 import { RankedCards } from "@/components/home/RankedCards";
@@ -18,9 +19,16 @@ import { logger } from "@/lib/observability/logger";
 import "@/app/(public)/[locale]/(content)/popular/popular.css";
 
 export const dynamic = "force-dynamic";
-export async function generateMetadata(): Promise<Metadata> {
-  const locale = await getRequestLocale(); const t = await getTranslator(locale, "browse");
-  return { title: pageTitle(t("growth.title")), description: t("growth.description"), alternates: canonicalAlternates(localePath(locale, "/rising")) };
+export async function generateMetadata(props?: PageProps<"/[locale]/rising">, parent?: ResolvingMetadata): Promise<Metadata> {
+  void props;
+  const locale = await getRequestLocale();
+  const t = await getTranslator(locale, "browse");
+  const title = pageTitle(t("growth.title"));
+  const description = t("growth.description");
+  return {
+    title, description, alternates: canonicalAlternates("/rising", locale),
+    openGraph: { ...(await parent)?.openGraph, ...localizedOpenGraph(locale), title, description, url: localePath(locale, "/rising") },
+  };
 }
 
 type SearchValue = string | string[] | undefined;

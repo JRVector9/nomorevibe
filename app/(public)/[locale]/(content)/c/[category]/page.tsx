@@ -2,7 +2,9 @@ import { getRequestLocale } from "@/lib/i18n/server";
 import { getTranslator,getDictionary } from "@/lib/i18n/dictionary";
 import { I18nProvider } from "@/lib/i18n/context";
 import { localePath } from "@/lib/i18n/routing";
-import type { Metadata } from "next";
+import type { Metadata, ResolvingMetadata } from "next";
+import { LOCALES } from "@/lib/i18n/locales";
+import { localizedOpenGraph } from "@/lib/i18n/metadata";
 import { notFound, redirect } from "next/navigation";
 import Link from "next/link";
 import { canonicalAlternates, HomeScreen, type HomeParams } from "@/app/(public)/[locale]/(content)/page";
@@ -34,16 +36,25 @@ const queryOf = (params: HomeParams) => {
   return value?.trim().slice(0, 200) || undefined;
 };
 
-export async function generateMetadata({ params, searchParams }: Props): Promise<Metadata> {
-  const locale=await getRequestLocale();
-  const [t,labels]=await Promise.all([getTranslator(locale,"browse"),getTranslator(locale,"labels")]);
+export async function generateMetadata({ params, searchParams }: Props, parent?: ResolvingMetadata): Promise<Metadata> {
+  const locale = await getRequestLocale();
+  const [t, labels] = await Promise.all([getTranslator(locale, "browse"), getTranslator(locale, "labels")]);
   const [{ category: raw }, search] = await Promise.all([params, searchParams]);
   const category = parseCategory(raw);
-  if (!category) return { title: pageTitle(t("category.missing")), robots: { index: false, follow: true } };
-  if (hiddenByDefault(category)) return { title: pageTitle(t("home.categoryTitle", {category:translatedCategory(category,labels)})), robots: { index: false, follow: true } };
+  const hidden = category ? hiddenByDefault(category) : false;
   const query = queryOf(search);
-  if (query) return { title: browseTitle({query,category},locale,t,labels), robots: { index: false, follow: true } };
-  return { title: browseTitle({category},locale,t,labels), alternates: canonicalAlternates(localePath(locale,`/c/${categorySlug(category)}`)) };
+  const path = `/c/${category ? categorySlug(category) : encodeURIComponent(raw)}`;
+  const noindex = !category || hidden || Boolean(query);
+  const readyLocales = noindex ? [] : LOCALES;
+  const title = !category ? pageTitle(t("category.missing"))
+    : hidden ? pageTitle(t("home.categoryTitle", { category: translatedCategory(category, labels) }))
+      : browseTitle({ query, category }, locale, t, labels);
+  return {
+    title,
+    ...(noindex ? { robots: { index: false, follow: true } } : {}),
+    alternates: canonicalAlternates(path, locale, readyLocales),
+    openGraph: { ...(await parent)?.openGraph, ...localizedOpenGraph(locale, readyLocales), title, url: localePath(locale, path) },
+  };
 }
 
 export default async function CategoryPage({ params, searchParams }: Props) {
