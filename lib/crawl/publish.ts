@@ -303,12 +303,14 @@ export async function prepareCandidateClassification(
 function draftFrom(repo: string, document: CrawlDocument, installable: boolean, written?: { text: string; source: TaglineEvidenceSource; by?: string | null }) {
   const page = (document.pageMeta ?? {}) as { title?: unknown; description?: unknown; ogImage?: unknown; textSample?: unknown; readmeSample?: unknown };
   const meta = document.repoMeta;
-  const repoDescription = typeof meta.description === "string" ? meta.description.trim() : "";
+  // 레포 경로("owner/repo")는 소개가 아니다 — 레포 설명에 그렇게 적힌 원본도 있다(2026-10-14 프로드 8건). 소개 없음으로 본다
+  const described = (text: string) => text.toLowerCase() === repo.toLowerCase() ? "" : text;
+  const repoDescription = typeof meta.description === "string" ? described(meta.description.trim()) : "";
   const pageTitle = typeof page.title === "string" ? page.title.trim() : "";
   // 제목에 이름이 없을 때 README 첫 제목을 이름으로 쓴다(display-name.ts readmeHeading)
   const readmeSample = typeof page.readmeSample === "string" ? page.readmeSample : null;
   // Repository/documentation wrapper metadata describes the host page, not the installed software.
-  const pageDescription = !installable && typeof page.description === "string" ? page.description.trim() : "";
+  const pageDescription = !installable && typeof page.description === "string" ? described(page.description.trim()) : "";
   const language = typeof meta.language === "string" ? meta.language : null;
 
   /**
@@ -316,7 +318,7 @@ function draftFrom(repo: string, document: CrawlDocument, installable: boolean, 
    * 발행되지 않는다 — hasDescription 이 거짓이면 preparePublication 이 no_description 으로 멈춘다.
    * 지은 줄을 쓸 때는 출처를 함께 남긴다 — 밝히지 않으면 메이커가 쓴 소개와 구분되지 않는다.
    */
-  const generated = (written?.text ?? "").trim();
+  const generated = described((written?.text ?? "").trim());
   const tagline = pageDescription || repoDescription || generated || repo;
 
   return {

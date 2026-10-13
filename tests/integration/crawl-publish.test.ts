@@ -366,6 +366,20 @@ describe("발행 잡", () => {
     expect(await crawl.getCandidate("someone/mystery")).toMatchObject({ state: "published", decidedBy: "admin" });
   });
 
+  it("레포 설명이 레포 경로 그대로면 소개가 없는 것으로 본다", async () => {
+    // 프로드 원본 8건이 레포 설명에 "owner/repo" 를 그대로 적어 두었다(2026-10-14)
+    await approved("someone/mystery", {
+      meta: { description: "Someone/Mystery", language: null },
+      pageMeta: { title: null, description: null, ogImage: null },
+    });
+    await crawl.recordJudgement({ repo: "someone/mystery", productUrl: "https://my-app.test", state: "approved", reason: "passed", decidedBy: "admin" });
+
+    await tick();
+
+    expect(await products.findByUrl("https://my-app.test")).toBeUndefined();
+    expect(await crawl.getCandidate("someone/mystery")).toMatchObject({ state: "needs_review", reason: "no_description" });
+  });
+
   it("제목의 마케팅 문구를 이름에서 뗀다", async () => {
     // 실제 수집: "RevealUI | Build it once. Every product after starts ahead." 가 통째로 이름이 됐다
     await approved("someone/reveal", {
