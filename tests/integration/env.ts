@@ -1,4 +1,8 @@
 import { TEST_DATABASE_URL } from "./setup";
+import { vi } from "vitest";
+
+// Existing server metadata fixtures run without a Next request and target Korean.
+vi.mock("@/lib/i18n/server", () => ({ getRequestLocale: async () => "ko" }));
 
 // lib/db는 첫 쿼리 시점에 초기화되므로, import 순서와 무관하게 여기서 지정하면 된다
 process.env.DATABASE_URL = TEST_DATABASE_URL;

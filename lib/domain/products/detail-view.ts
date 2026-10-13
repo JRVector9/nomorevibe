@@ -42,12 +42,13 @@ import { EVIDENCE_LABELS } from "@/lib/domain/evidence/provenance";
 import type { EvidenceSettings } from "@/lib/domain/evidence/settings";
 import { parseRankingPolicy } from "@/lib/domain/ranking/policy";
 import { healthMetrics, DOWN_THRESHOLD } from "./health";
-import { getRelatedRising, isUnclaimed, type ProductListItem } from "./view";
+import { isUnclaimed, type ProductListItem } from "./view";
 import { indexingFields } from "./indexing";
 import { taglineKoField } from "./korean-tagline";
 import { productTranslationEligibilityField } from "./translations";
 import type { ProductTranslationSelection } from "./translation-policy";
-import { getRisingRank, repoGoneField } from "./repository";
+import { repoGoneField } from "./repository";
+import { getStarGrowthPage } from "./star-growth";
 import { readmeExcerpt } from "./readme-excerpt";
 import type { Category } from "./schema";
 import { METRICS_WINDOW_DAYS, visitMetrics, type VisitMetrics } from "./clicks";
@@ -208,10 +209,11 @@ export type ProductDetailView = {
   observedAgentFacts: ObservedAgentFactView[];
   skills: SkillView[];
   freshness: FreshnessView[];
-  /** 홈 '지금 뜨는' 띠·피드의 자리 — 20위 밖이거나 조건 밖이면 null (repository.ts getRisingRank) */
+  /** Same completed 8-hour observation used by the home strip and browse tab. */
   risingRank: number | null;
   /** 같은 분야에서 지금 뜨는, 자기 자신 제외, 최대 5 */
   related: ProductListItem[];
+  relatedTotal?: number | null;
   /** README 첫 문단들 — 소개가 한 줄뿐일 때 상세 본문이 된다 */
   readmeExcerpt: string | null;
   /**
@@ -683,7 +685,7 @@ export async function getProductDetail(slugInput: string): Promise<ProductDetail
   const now = new Date();
   const primaryRepository = product.repoUrl ? normalizeTypedLink("repository", product.repoUrl) : null;
   const [rank, visitMap, health, profile, links, sources, media, updates, provenance, settings,
-    risingRank, related, readmeRow, aiLevel, crawlSettings] = await Promise.all([
+    risingPage, relatedPage, readmeRow, aiLevel, crawlSettings] = await Promise.all([
     activeRank(slug),
     visitMetrics([slug], { windowHours: METRICS_WINDOW_DAYS * 24, minimumPreviousUniqueVisitors: 5 }),
     detailHealth(slug),
@@ -694,8 +696,8 @@ export async function getProductDetail(slugInput: string): Promise<ProductDetail
     visibleUpdates(slug),
     visibleProvenance(slug),
     currentEvidenceSettings(),
-    getRisingRank(slug),
-    getRelatedRising(slug, product.category as Category, 5),
+    getStarGrowthPage({ limit: 20, now }).catch(() => null),
+    getStarGrowthPage({ category: product.category as Category, limit: 6, now }).catch(() => null),
     db.select({ readme: products.searchReadme }).from(products).where(eq(products.slug, slug)).then((rows) => rows[0] ?? null),
     // GitHub 저장소가 아니면 키가 없어 검사도 없다(checked=false)
     getRepositoryAiLevel(product.repoUrl),
@@ -758,8 +760,10 @@ export async function getProductDetail(slugInput: string): Promise<ProductDetail
     observedAgentFacts,
     skills: withEvidenceLabels(provenance.skills),
     freshness: sources.map((source) => sourceFreshness(source, settings, now)),
-    risingRank,
-    related,
+    risingRank: risingPage?.items.some((item) => item.slug === slug)
+      ? risingPage.items.findIndex((item) => item.slug === slug) + 1 : null,
+    related: relatedPage?.items.filter((item) => item.slug !== slug).slice(0, 5) ?? [],
+    relatedTotal: relatedPage?.total ?? null,
     readmeExcerpt: readmeExcerpt(readmeRow?.readme ?? null, currentProduct.tagline),
     aiLevel: { checked: aiLevel.checked, level: aiLevel.level },
   };
