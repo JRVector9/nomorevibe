@@ -54,10 +54,12 @@ export type ProductTranslationSelection = {
   text: string; lang: Locale | undefined; translated: boolean; ready: boolean; pending: boolean;
   sourceHash: string; sourceLocale: Locale | null;
 };
+export type ProductTranslationReadiness = Pick<ProductTranslation,
+  "productId" | "locale" | "field" | "sourceHash" | "status" | "text" | "errorCode">;
 
 /** Pure rendering decision; Korean callers continue to use their current taglineKo path. */
 export function selectProductTranslation(
-  source: ProductTranslationSource, locale: Locale, field: ProductTranslationField, translation?: ProductTranslation | null,
+  source: ProductTranslationSource, locale: Locale, field: ProductTranslationField, translation?: ProductTranslationReadiness | null,
 ): ProductTranslationSelection {
   if (!isLocale(locale)) throw new Error("invalid_translation_locale");
   const text = translationSourceText(source, field);

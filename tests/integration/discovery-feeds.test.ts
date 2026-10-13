@@ -4,7 +4,9 @@ import { XMLParser, XMLValidator } from "fast-xml-parser";
 const repo = await import("@/lib/domain/products/repository");
 const { siteOrigin } = await import("@/lib/site");
 const { GET: feed } = await import("@/app/feed.xml/route");
-const { default: sitemap } = await import("@/app/sitemap");
+const { productSitemapEntries, productSitemapRanges, staticSitemapEntries } = await import("@/lib/domain/products/sitemap");
+const sitemap = async () => [...await staticSitemapEntries("ko"),
+  ...(await Promise.all((await productSitemapRanges()).map((range) => productSitemapEntries("ko", range)))).flat()];
 const { ensureSchema, resetTables } = await import("./setup");
 
 /**

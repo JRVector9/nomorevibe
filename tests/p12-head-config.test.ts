@@ -12,7 +12,8 @@ describe("Cloudflare 저장 규칙 — /launch·/sitemap.xml", async () => {
     expect(header("/launch", "Cache-Tag").map((item) => item.value)).toEqual(["html"]);
     const [edge] = header("/launch", "Cloudflare-CDN-Cache-Control");
     expect(edge.value).toBe("max-age=600, stale-while-revalidate=60, stale-if-error=3600");
-    expect(edge.rule.missing).toEqual([{ type: "cookie", key: "nmv_admin" }, { type: "query", key: "q" }]);
+    expect(edge.rule.missing).toEqual([{ type: "cookie", key: "nmv_admin" }, { type: "cookie", key: "nmv_user" },
+      { type: "cookie", key: "nmv_login_nonce" }, { type: "query", key: "q" }]);
   });
 
   it("/sitemap.xml 은 한 시간, 제품이 내려가면 목록과 함께 지운다", () => {

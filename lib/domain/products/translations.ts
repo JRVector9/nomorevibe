@@ -6,7 +6,7 @@ import { isLocale, type Locale } from "@/lib/i18n/locales";
 import { assertJobLease, requestJob, type JobLease } from "@/lib/jobs/control";
 import { detectTranslationSourceLocale, isProductTranslationField, productTranslationSourceHash, translationSourceText,
   PRODUCT_TRANSLATION_DEMAND_LIMIT, PRODUCT_TRANSLATION_MAX_ATTEMPTS, PRODUCT_TRANSLATION_POLICY,
-  type ProductTranslationSource } from "./translation-policy";
+  type ProductTranslationReadiness, type ProductTranslationSource } from "./translation-policy";
 
 export { selectProductTranslation, productTranslationSourceHash, detectTranslationSourceLocale } from "./translation-policy";
 export type { ProductTranslationSource, ProductTranslationSelection } from "./translation-policy";
@@ -20,6 +20,11 @@ export const productTranslationEligible = sql`${products.status} in ('seeded', '
   and not exists (select 1 from ${productIntroChecks} i where i.product_id = ${products.id}
     and i.checked_tagline = ${products.tagline} and i.outcome = 'needs_editor')`;
 const eligible = productTranslationEligible;
+
+/** Detail/query extras can expose the same current-source hold guard to metadata. */
+export const productTranslationEligibilityField = {
+  translationContentEligible: sql<boolean>`(${eligible})`.as("translation_content_eligible"),
+};
 
 function demandIds(ids: readonly number[]): number[] {
   return [...new Set(ids.filter((id) => Number.isSafeInteger(id) && id > 0))].slice(0, PRODUCT_TRANSLATION_DEMAND_LIMIT).sort((a, b) => a - b);
@@ -38,6 +43,23 @@ export async function readProductTranslations(sources: readonly ProductTranslati
   const rows = await db.select({ translation: t, source: sourceColumns }).from(t)
     .innerJoin(products, eq(products.id, t.productId))
     .where(and(inArray(t.productId, ids), eq(t.locale, locale), inArray(t.status, ["ready", "reviewed"]), eligible));
+  return rows.flatMap(({ translation, source }) => {
+    const requested = visible.get(source.id);
+    return requested && translation.sourceHash === productTranslationSourceHash(requested, translation.field)
+      && translation.sourceHash === productTranslationSourceHash(source, translation.field) ? [translation] : [];
+  });
+}
+
+/** SEO reads all ready locales together so every HTML language emits the same reciprocal set. */
+export async function readProductTranslationReadiness(sources: readonly ProductTranslationSource[]): Promise<ProductTranslationReadiness[]> {
+  const ids = demandIds(sources.map((source) => source.id));
+  if (!ids.length) return [];
+  const visible = new Map(sources.slice(0, PRODUCT_TRANSLATION_DEMAND_LIMIT).map((source) => [source.id, source]));
+  const rows = await db.select({ translation: {
+    productId: t.productId, locale: t.locale, field: t.field, sourceHash: t.sourceHash, status: t.status, errorCode: t.errorCode,
+    text: sql<string | null>`case when length(btrim(${t.text})) > 0 then 'present' end`,
+  }, source: sourceColumns }).from(t).innerJoin(products, eq(products.id, t.productId))
+    .where(and(inArray(t.productId, ids), inArray(t.status, ["ready", "reviewed"]), eligible));
   return rows.flatMap(({ translation, source }) => {
     const requested = visible.get(source.id);
     return requested && translation.sourceHash === productTranslationSourceHash(requested, translation.field)
