@@ -120,6 +120,8 @@ export type ListOptions = {
   repoChecked?: boolean;
   /** 스팸 재검사가 자동으로 내린 것만(spamAutoBanned) — 어드민 '스팸 자동 차단' */
   spamBanned?: boolean;
+  /** 마지막 차단/해제 결정이 저장소 소실 자동 차단인 현재 차단 제품 */
+  repoAutoBanned?: boolean;
   /** 이름 정리가 필요한 주인 없는 공개분만(name-review.ts) — 어드민 '이름 확인 필요' */
   nameNeedsReview?: boolean;
 };
@@ -224,6 +226,14 @@ export const spamAutoBanned = sql`(${products.status} = 'banned' and exists (sel
   where a.slug = ${products.slug} and a.action = 'admin.product.ban' and a.actor = ${SPAM_AUTO_BAN_ACTOR}
   and a.reason = ${SPAM_AUTO_BAN_REASON}))`;
 
+export const REPO_GONE_AUTO_ACTOR = "auto:repo-gone";
+export const REPO_GONE_AUTO_REASON = "repo_gone";
+/** 과거 자동 차단 뒤 운영자가 다시 내린 제품은 자동 결정으로 분류하지 않는다. */
+export const repoGoneAutoBanned = sql`(${products.status} = 'banned' and
+  (select a.actor || ':' || coalesce(a.reason, '') from ${productEvidenceAudit} a
+    where a.slug = ${products.slug} and a.action in ('admin.product.ban', 'admin.product.unban')
+    order by a.id desc limit 1) = ${`${REPO_GONE_AUTO_ACTOR}:${REPO_GONE_AUTO_REASON}`})`;
+
 /** 목록·상세 행에 판정을 같이 실어 온다 — 화면이 같은 식을 JS 로 다시 쓰지 않게 */
 export const repoGoneField = { repoGone: sql<boolean>`${repoGone}`.as("repo_gone") };
 
@@ -327,7 +337,7 @@ export function aiLevelPredicate(levels: readonly AiLevel[]) {
 }
 
 /** 목록과 개수가 같은 조건을 쓰도록 한 곳에서 만든다. 급상승 기간은 설정에서 읽으므로 비동기다 */
-async function listConditions({ statuses, category, query, builder, observedTool, aiLevels, hasRepository, excludeDown, introNeedsEditor: needsEditor, rising, listedSince, minStars, slugs, excludeSlugs, repoGone: goneOnly, repoMissing, repoArchived, repoRenamed, down, adminSearch, repoChecked, spamBanned, nameNeedsReview }: Omit<ListOptions, "limit" | "sort" | "offset">) {
+async function listConditions({ statuses, category, query, builder, observedTool, aiLevels, hasRepository, excludeDown, introNeedsEditor: needsEditor, rising, listedSince, minStars, slugs, excludeSlugs, repoGone: goneOnly, repoMissing, repoArchived, repoRenamed, down, adminSearch, repoChecked, spamBanned, repoAutoBanned, nameNeedsReview }: Omit<ListOptions, "limit" | "sort" | "offset">) {
   const conditions = [inArray(products.status, statuses)];
   if (slugs) conditions.push(slugs.length ? inArray(products.slug, [...slugs]) : sql`false`);
   if (excludeSlugs?.length) conditions.push(notInArray(products.slug, [...excludeSlugs]));
@@ -341,6 +351,7 @@ async function listConditions({ statuses, category, query, builder, observedTool
   if (adminSearch?.trim()) conditions.push(adminSearchPredicate(adminSearch));
   if (repoChecked) conditions.push(repoCheckedForNewest);
   if (spamBanned) conditions.push(spamAutoBanned);
+  if (repoAutoBanned) conditions.push(repoGoneAutoBanned);
   // 규칙이 JS 하나라 걸린 주소를 받아 건다(1분 담아 둔 결과)
   if (nameNeedsReview) conditions.push(slugArrayPredicate(products.slug, [...(await namesNeedingReview()).keys()]));
   if (rising) conditions.push(risingStars(await risingFreshDays()));

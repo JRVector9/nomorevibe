@@ -2,7 +2,7 @@
 
 import { headers } from "next/headers";
 import { revalidatePath } from "next/cache";
-import { adminLocalLoginEnabled, authSecret, currentAdmin, LOCAL_ADMIN_LOGIN } from "@/lib/auth/admin";
+import { adminLocalLoginEnabled, adminOrigin, authSecret, currentAdmin, LOCAL_ADMIN_LOGIN } from "@/lib/auth/admin";
 import { requestGithubIntegrationRequery, requestGithubIntegrationRetransmit } from "@/lib/domain/github-webhooks/admin";
 import { assertAdminRecoveryCsrf } from "@/lib/domain/github-webhooks/admin-auth";
 
@@ -14,8 +14,7 @@ function field(form: FormData, name: string): string {
 async function authorized(form: FormData) {
   const admin = await currentAdmin();
   if (!admin) throw new Error("unauthorized");
-  let configuredOrigin: string | null = null;
-  try { configuredOrigin = new URL(process.env.NEXT_PUBLIC_SITE_URL ?? "").origin; } catch {}
+  const configuredOrigin = adminOrigin();
   assertAdminRecoveryCsrf({ admin, secret: authSecret(), origin: (await headers()).get("origin"), configuredOrigin, token: field(form, "csrfToken"), expiresAt: Number(field(form, "csrfExpiresAt")), local: adminLocalLoginEnabled() && admin.login === LOCAL_ADMIN_LOGIN });
   return { requestId: field(form, "requestId"), outboxId: field(form, "outboxId"), expectedDispatchId: field(form, "expectedDispatchId"), reason: field(form, "reason"), adminLogin: admin.login };
 }

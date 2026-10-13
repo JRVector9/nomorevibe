@@ -20,8 +20,8 @@ export function CollectionSwitch({ enabled }: { enabled: boolean }) {
       tone={enabled ? 'danger' : 'neutral'}
       confirmLabel={enabled ? '수집 끄기' : '수집 켜기'}
       summary={<ul>{enabled
-        ? <><li>다음 예약부터 새 레포 탐색·수집·판정을 멈춥니다.</li><li>이미 공개된 제품과 다른 설정은 그대로입니다.</li></>
-        : <><li>다음 예약부터 탐색·수집·판정을 다시 돌립니다.</li><li>다른 설정은 그대로입니다.</li></>}</ul>}
+        ? <><li>다음 회차부터 탐색·수집·규칙/AI/2차 심사·소개 생성·분류/발행·발행분 감사를 멈춥니다.</li><li>서비스 점검·스타 관측·기존 제품 갱신 등 다른 자동 작업은 계속됩니다. 실행 중 호출을 강제 취소하지 않습니다.</li><li>사람이 중단한 소개 검수는 계속 중단 상태입니다.</li></>
+        : <><li>다음 회차부터 탐색·수집·심사·소개 생성·분류/발행·발행분 감사를 다시 돌립니다.</li><li>사람이 중단한 소개 검수는 계속 중단 상태입니다.</li></>}</ul>}
       reasons={{ label: enabled ? '끄는 사유' : '켜는 사유', options: enabled ? COLLECTION_OFF_REASONS : COLLECTION_ON_REASONS }}
       note={{ label: '메모', optional: true, maxLength: 500, placeholder: '기타를 골랐으면 꼭 적어 주세요' }}
       onConfirm={async ({ reason, note }) => {

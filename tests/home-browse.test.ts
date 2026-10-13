@@ -1,12 +1,13 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { BrowseFilters, chipCategories } from "@/components/BrowseFilters";
+import { BrowseFilters } from "@/components/BrowseFilters";
 import {
   browseTitle,
   categoryHref,
   categoryRedirect,
   categorySlug,
+  chipCategories,
   formatResultCount,
   hrefWith,
   metricHref,
@@ -40,13 +41,13 @@ describe("분야 주소 (UX-40, 계약 C4)", () => {
   });
 
   it("분야가 걸린 주소는 /c/<분야> 아래로 만들고, 분야를 풀면 홈으로 돌아온다", () => {
-    expect(hrefWith({ sort: "weekly", category: "Finance" })).toBe("/c/finance");
+    expect(hrefWith({ sort: "ai", category: "Finance" })).toBe("/c/finance");
     expect(hrefWith({ sort: "recent", category: "Dev", query: "ai" }, { shown: 18 })).toBe("/c/dev?sort=recent&q=ai&shown=18");
     expect(hrefWith({ sort: "recent", category: "Dev" }, { category: undefined })).toBe("/?sort=recent");
     expect(categoryHref("Finance")).toBe("/c/finance");
     expect(categoryHref("Dev", { sort: "recent" })).toBe("/c/dev?sort=recent");
-    expect(metricHref({ sort: "weekly", category: "Dev" }, "born")).toBe("/c/dev?metric=born");
-    expect(metricHref({ sort: "weekly" }, "born")).toBe("/?metric=born");
+    expect(metricHref({ sort: "ai", category: "Dev" }, "born")).toBe("/c/dev?metric=born");
+    expect(metricHref({ sort: "ai" }, "born")).toBe("/?metric=born");
   });
 
   it("탭 제목은 검색어·분야로 정한다(UX-39)", () => {
@@ -71,18 +72,18 @@ describe("결과 수 (UX-24·27)", () => {
   it("검색은 '관련 결과 약 n개'(관련도순) 또는 '검색 결과 n개', 필터만 걸리면 필터 이름, 아무것도 없으면 정렬 이름", () => {
     expect(resultLine({ sort: "relevance", query: "calender" }, 1_779, { approximate: true })).toBe("관련 결과 약 1,800개");
     expect(resultLine({ sort: "recent", query: "calender" }, 1_779)).toBe("검색 결과 1,779개");
-    expect(resultLine({ sort: "weekly", category: "Dev" }, 9_157)).toBe("개발 도구 9,157개");
+    expect(resultLine({ sort: "ai", category: "Dev" }, 9_157)).toBe("개발 도구 9,157개");
     expect(resultLine({ sort: "recent", category: "Dev", observedTool: "Claude Code" }, 1_234)).toBe("개발 도구 · Claude Code 1,234개");
-    expect(resultLine({ sort: "weekly" }, 2_126, { listLabel: "지금 뜨는" })).toBe("지금 뜨는 2,126개");
+    expect(resultLine({ sort: "ai" }, 2_126, { listLabel: "지금 뜨는" })).toBe("지금 뜨는 2,126개");
     // 분야 알약(전체 수)과 다른 까닭 — 대신 보여 주는 목록의 이름을 붙인다
-    expect(resultLine({ sort: "weekly", category: "Finance" }, 4, { listLabel: "지금 뜨는" })).toBe("금융 · 지금 뜨는 4개");
-    expect(resultLine({ sort: "weekly", query: "가계부" }, 4, { listLabel: "지금 뜨는" })).toBe("검색 결과 4개");
+    expect(resultLine({ sort: "ai", category: "Finance" }, 4, { listLabel: "지금 뜨는" })).toBe("금융 · 지금 뜨는 4개");
+    expect(resultLine({ sort: "ai", query: "가계부" }, 4, { listLabel: "지금 뜨는" })).toBe("검색 결과 4개");
     expect(resultLine({ sort: "recent" }, 36_300)).toBe("최근 등록 36,300개");
   });
 
   it("탐색 탭은 고정된 기준 이름을 쓴다", () => {
-    expect(sortLabel("weekly")).toBe("8시간 스타 급상승");
-    expect(sortLabel("weekly")).toBe("8시간 스타 급상승");
+    expect(sortLabel("ai")).toBe("AI로 제작");
+    expect(sortLabel("ai")).toBe("AI로 제작");
     expect(sortLabel("relevance")).toBe("관련도");
     expect(sortLabel("all-time")).toBe("GitHub 스타 많은 순");
   });
@@ -102,7 +103,7 @@ describe("분야 알약 (UX-12, 계약 C3)", () => {
     const html = renderToStaticMarkup(createElement(BrowseFilters, {
       state: { sort: "relevance", query: "가계부" }, counts, total: 11_734, resultCount: 285, approximate: true,
     }));
-    expect(html.indexOf("관련도")).toBeLessThan(html.indexOf("8시간 스타 급상승"));
+    expect(html.indexOf("관련도")).toBeLessThan(html.indexOf("AI로 제작"));
     expect(html).toMatch(/class="tab active"[^>]*aria-selected="true"[^>]*>관련도</);
     expect(html).not.toContain("chip-count");
     expect(html).not.toContain("개인프로필");

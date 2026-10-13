@@ -10,7 +10,8 @@ import { latestServiceInstance } from "@/lib/operations/instance";
 import { pipelineThroughput } from "@/lib/operations/throughput";
 import { buildWorkerProgress } from "@/lib/operations/worker-progress-query";
 import { attentionCounts, modelHealth } from "@/lib/operations/dashboard";
-import { roleOverview, SHARED_IMAGE_ROLES } from "@/lib/operations/roles";
+import { roleOverview } from "@/lib/operations/roles";
+import { FAILOVER_ROLES } from "@/lib/operations/failover-readiness";
 import { JOB_LABELS, ROLE_LABELS, type AgentStatus } from "@/lib/operations/contracts";
 import { readSearchHealth, searchHealthAlerts } from "@/lib/operations/search-health-model";
 import { modelServerHealth } from "@/lib/operations/model-servers";
@@ -18,6 +19,7 @@ import { attentionBaseline, BACKLOG_KEYS, recordAttentionSample, type AttentionA
 import { takedownSummary } from "@/lib/domain/products/takedown";
 import { formatWait, isBurst } from "@/lib/domain/products/takedown-view";
 import { listGitHubCollectorAccounts, parseCoreQuota } from "@/lib/crawl/github-accounts";
+import { listGitHubCollectorApps } from "@/lib/crawl/github-apps";
 import { getSettings } from "@/lib/crawl/settings";
 import { humanQueueOverview } from "@/lib/crawl/review-overview";
 import { humanFlowLabel, humanWaitLabel } from "@/lib/crawl/human-queue";
@@ -30,6 +32,7 @@ import { ACTION_LINKS, jobHref } from "./action-links";
 import { REPO_COVERAGE_TARGET, REPO_REVIEW_OVERDUE_HOURS } from "./dashboard/RepoHealthCard";
 import { sortActions, type ActionItem, type SplitItem } from "./dashboard/AttentionList";
 import { modelName } from "./dashboard/ModelCards";
+import { EXPECTED_WEB_INSTANCES, READINESS_LABELS, webSummary, type CollectorQuotaStatus } from "./status-summary";
 
 /**
  * 조치할 일 — 무엇을 읽어(loadActionInputs) 어떤 줄을 세우는지(buildActions), 그 줄을 "지금 조치"와 "쌓인 일"로 나누는 것(splitActions).
@@ -52,6 +55,7 @@ export type ActionInputs = {
   attention: Awaited<ReturnType<typeof attentionCounts>> | null;
   roles: Awaited<ReturnType<typeof roleOverview>> | null;
   accounts: Awaited<ReturnType<typeof listGitHubCollectorAccounts>> | null;
+  apps: Awaited<ReturnType<typeof listGitHubCollectorApps>> | null;
   takedowns: Awaited<ReturnType<typeof takedownSummary>> | null;
   modelServers: Awaited<ReturnType<typeof modelServerHealth>> | null;
 };
@@ -64,7 +68,7 @@ const warn = (event: string) => (error: unknown) => {
 
 /** 조치할 일과 머리말 칩이 읽는 것 — 서로 기다릴 까닭이 없어 한꺼번에 띄운다 */
 export async function loadActionInputs(settings: CrawlSettings): Promise<ActionInputs> {
-  const [ops, jobStates, evidenceSummary, downCount, overview, secondFailures, throughput, models, attention, roles, accounts, takedowns, modelServers, settingsApply] = await Promise.all([
+  const [ops, jobStates, evidenceSummary, downCount, overview, secondFailures, throughput, models, attention, roles, accounts, apps, takedowns, modelServers, settingsApply] = await Promise.all([
     operationsData(), listJobStates(), getEvidenceStatusSummary(new Date()), downProductCount(),
     // 사람 몫의 수(직접 판단·확정만·나이·24시간 흐름)는 심사 큐와 같은 humanQueueOverview 하나에서 온다
     humanQueueOverview(settings), recentSecondReviewFailures(),
@@ -73,11 +77,12 @@ export async function loadActionInputs(settings: CrawlSettings): Promise<ActionI
     attentionCounts().catch(warn("operations.attention_unavailable")),
     roleOverview().catch(warn("operations.roles_unavailable")),
     listGitHubCollectorAccounts().catch(warn("operations.accounts_unavailable")),
+    listGitHubCollectorApps().catch(warn("operations.apps_unavailable")),
     takedownSummary().catch(warn("operations.takedowns_unavailable")),
     modelServerHealth().catch(warn("operations.model_servers_unavailable")),
     readSettingsApply().catch(warn("operations.settings_apply_unavailable")),
   ]);
-  return { settings, settingsApply, ops, jobStates, evidenceSummary, downCount, overview, secondFailures, throughput, models, attention, roles, accounts, takedowns, modelServers };
+  return { settings, settingsApply, ops, jobStates, evidenceSummary, downCount, overview, secondFailures, throughput, models, attention, roles, accounts, apps, takedowns, modelServers };
 }
 
 /** 조치할 일과 화면 조각이 함께 쓰는 판단 — 웹 인스턴스, 워커 진행, 검색 점검, GitHub 한도, AI 연결 */
@@ -87,17 +92,24 @@ export function deriveStatus(inputs: ActionInputs) {
   const ageMs = (at: string | Date) => fetchedAt - new Date(at).getTime();
   const states = new Map(jobStates.map((job) => [job.name, job]));
   const agentInstance = latestServiceInstance(ops.serviceInstances, "connect-agent");
-  /**
-   * 웹 인스턴스의 릴리스 — 머리말 칩과 릴리스 불일치 판단이 본다. 1시간 넘게 관측이 없는 키는 지난 배포의 것이라 뺀다.
-   * 45초가 지나면 "관측 지연" — 릴리스 문자열만 있으면 "응답"으로 보였다.
-   */
-  const web = ops.serviceInstances.filter((instance) => instance.role === "app" && ageMs(instance.observedAt) <= 60 * 60_000)
-    .map((instance) => ({ instance: instance.instanceId, release: typeof instance.value.release === "string" ? instance.value.release : null,
-      stale: ageMs(instance.observedAt) > 45_000 }));
+  // 두 관측 ID 는 웹 사이트 두 곳이다. 같은 ID 를 쓰는 개별 복제본의 health probe 는 아니다.
+  const web = EXPECTED_WEB_INSTANCES.map((id) => {
+    const instance = latestServiceInstance(ops.serviceInstances.filter((row) => row.instanceId === id), "app");
+    const age = instance ? ageMs(instance.observedAt) : Number.NaN;
+    return { instance: id, release: typeof instance?.value.release === "string" ? instance.value.release : null,
+      observedAt: instance?.observedAt ?? null, stale: !Number.isFinite(age) || age < -5_000 || age > 45_000 };
+  });
   const healthObservation = ops.observations.find((row) => row.key === "job:product-search-health");
   const health = states.get("product-search-health")?.lastError ? null : readSearchHealth(healthObservation);
-  const quotaAccount = inputs.accounts?.find((row) => row.enabled && row.coreQuota);
-  const quota = quotaAccount ? parseCoreQuota(quotaAccount.coreQuota) : null;
+  const quota: CollectorQuotaStatus = { readFailed: !inputs.accounts || !inputs.apps, sources: [
+    ...(inputs.accounts ?? []).filter((row) => row.enabled).map((row) => ({ ...row, label: `PAT ${row.login}` })),
+    ...(inputs.apps ?? []).filter((row) => row.enabled).map((row) => ({ ...row, label: `App ${row.appSlug} · 설치 ${row.installationId}` })),
+  ].map((row) => {
+    const value = parseCoreQuota(row.coreQuota);
+    const age = row.quotaObservedAt ? ageMs(row.quotaObservedAt) : Number.NaN;
+    return { label: row.label, quota: value, observedAt: row.quotaObservedAt?.toISOString() ?? null,
+      stale: !value || !Number.isFinite(age) || age < -5_000 || age > 3_600_000 || value.reset * 1000 <= fetchedAt };
+  }) };
   return {
     ageMs, states, web, healthObservation, health, quota, agentInstance,
     agent: agentInstance?.value as AgentStatus | undefined,
@@ -127,6 +139,17 @@ export function buildActions(inputs: ActionInputs, derived: DerivedStatus): Acti
   const now = ops.fetchedAt;
   const failedJobs = jobStates.filter((row) => row.lastError);
   const actions: ActionItem[] = [];
+  const unavailable = [[roles, "roles", "역할·예비", ACTION_LINKS.roles], [models, "models", "모델", ACTION_LINKS.models],
+    [throughput, "throughput", "저장 진행", ACTION_LINKS.jobs], [attention, "attention", "제품 운영 집계", ACTION_LINKS.jobs]] as const;
+  for (const [value, key, label, href] of unavailable) if (value === null) {
+    actions.push({ key: `${key}-unknown`, tone: "hold", count: "미확인", unit: "상태", title: `${label} 상태를 읽지 못했습니다`,
+      detail: "조회 실패는 정상이나 대기 0건을 뜻하지 않습니다. 새로고침 뒤에도 계속되면 DB·서비스 로그를 확인합니다.",
+      action: { label: "상태 확인", href } });
+  }
+  const webState = webSummary(web);
+  if (!webState.ready) actions.push({ key: "web", tone: "hold", count: "확인 필요", unit: "상태", title: webState.label,
+    detail: "M3·mini 웹의 두 관측 ID와 45초 이내 시각·릴리스를 확인합니다. 개별 웹 복제본 상태는 Dokploy에서 확인합니다.",
+    action: { label: "웹 관측", href: ACTION_LINKS.roles } });
   if (health) {
     actions.push(...searchHealthAlerts(health).map((alert) => ({ ...alert, unit: "건", key: `search-${alert.key}`,
       action: { label: "점검 작업", href: ACTION_LINKS.jobs } })));
@@ -257,19 +280,19 @@ export function buildActions(inputs: ActionInputs, derived: DerivedStatus): Acti
   if (standbyActive.length > 0) {
     actions.push({
       key: "standby", tone: "critical", count: standbyActive.length, unit: "개", title: "예비가 일하고 있는 역할",
-      detail: <>{joined(standbyActive.map((row) => role(row.role)))} — 주(M3)가 담당을 되찾지 못합니다. 예비를 잠깐 0으로 줄여 돌려놓습니다(runbook).</>,
+      detail: <>{joined(standbyActive.map((row) => role(row.role)))} — 현재 담당·주 관측·격리 사유를 확인하고 외부 runbook의 주 복귀 절차를 따릅니다.</>,
       action: { label: "역할 표", href: ACTION_LINKS.roles },
     });
   }
-  // 공통 이미지 역할과 웹만 비교한다 — maintenance·text 는 git 빌드라 릴리스가 다른 것이 정상이다(2026-10-03 오경보)
-  const releases = new Set([...(roles?.roles ?? []).filter((row) => SHARED_IMAGE_ROLES.has(row.role)).map((row) => row.ownerRelease),
-    ...web.map((row) => row.release)].filter((value): value is string => Boolean(value)));
-  if (releases.size > 1) {
-    actions.push({
-      key: "release", tone: "hold", count: releases.size, unit: "가지", title: "공통 이미지 릴리스가 갈렸습니다",
-      detail: <>{[...releases].map((value) => value.slice(0, 7)).join(" · ")} — 릴리스 도구(deploy_shared_images.py)로 8개 앱을 같은 SHA 로 맞춥니다.</>,
-      action: { label: "역할 표", href: ACTION_LINKS.roles },
-    });
+  // 역할마다 주·예비를 비교한다. 웹만 새로 배포한 정상 상태를 전체 SHA 불일치로 경보하지 않는다.
+  if (roles) for (const name of FAILOVER_ROLES) {
+    const row = roles.roles.find((item) => item.role === name);
+    if (row?.reason === "ready" || row?.reason === "standby_active") continue;
+    const reason = row ? READINESS_LABELS[row.reason] : "역할 관측 없음";
+    actions.push({ key: `role-${name}`, tone: row?.reason === "standby_missing" || row?.reason === "release_mismatch" ? "hold" : "critical",
+      count: reason, unit: "상태", title: `${ROLE_LABELS[name]} · ${reason}`,
+      detail: <>현재 담당 {row?.ownerInstanceId ?? "미확인"} · 담당 차례 {row?.epoch ?? "미확인"} — 역할 표의 주·예비 릴리스와 담당 기한을 확인합니다.</>,
+      action: { label: "역할 표", href: ACTION_LINKS.roles } });
   }
   const workerAlarms = workerProgress?.liveness.filter((row) => row.alarm) ?? [];
   if (workerAlarms.length > 0) {
@@ -291,11 +314,10 @@ export function buildActions(inputs: ActionInputs, derived: DerivedStatus): Acti
       action: { label: "역할 표", href: ACTION_LINKS.roles },
     });
   }
-  // 두 대 중 한 대만 남은 경우 — 둘 다 없으면 위 관측 끊김(scheduler)이 이미 잡는다
-  if (roles && roles.scheduler.freshReplicas === 1) {
+  if (roles && roles.scheduler.freshReplicas < 2) {
     actions.push({
-      key: "scheduler-replicas", tone: "hold", count: "1/2", unit: "대", title: "스케줄러 복제가 한 대뿐입니다",
-      detail: <>관측되는 스케줄러가 1대입니다 — 이것마저 죽으면 예약이 멈춥니다.</>,
+      key: "scheduler-replicas", tone: roles.scheduler.freshReplicas === 0 ? "critical" : "hold", count: `${roles.scheduler.freshReplicas}/2`, unit: "대", title: "스케줄러 복제 관측이 부족합니다",
+      detail: <>최근 관측 {roles.scheduler.freshReplicas}대 — scheduler 앱의 두 복제본과 로그를 확인합니다.</>,
       action: { label: "역할 표", href: ACTION_LINKS.roles },
     });
   }
@@ -426,10 +448,14 @@ export function buildActions(inputs: ActionInputs, derived: DerivedStatus): Acti
       action: { label: "적용 확인", href: ACTION_LINKS.settingsApply },
     });
   }
-  if (quota && quota.limit > 0 && quota.remaining / quota.limit < 0.1) {
+  if (quota.readFailed) actions.push({ key: "quota-unknown", tone: "hold", count: "미확인", unit: "상태", title: "GitHub 수집 자격 일부를 읽지 못했습니다",
+    detail: "PAT·App의 저장된 core 관측을 모두 읽어야 합니다. 환경 토큰·인증·search·GraphQL 가용성은 이 집계로 판단하지 않습니다.",
+    action: { label: "수집 계정", href: ACTION_LINKS.githubAccounts } });
+  const lowQuota = quota.sources.filter((row) => !row.stale && row.quota && row.quota.limit > 0 && row.quota.remaining / row.quota.limit < 0.1);
+  if (lowQuota.length > 0) {
     actions.push({
-      key: "quota", tone: "critical", count: quota.remaining, unit: "회", title: "GitHub API 한도가 거의 남지 않았습니다",
-      detail: <>{n(quota.remaining)}/{n(quota.limit)} 남음 · {formatListTime(quota.reset * 1000, now)} 초기화</>,
+      key: "quota", tone: "hold", count: lowQuota.length, unit: "자격", title: "일부 수집 자격의 core 잔량이 적습니다",
+      detail: <>{lowQuota.map((row) => `${row.label} ${n(row.quota!.remaining)}/${n(row.quota!.limit)} · ${formatListTime(row.quota!.reset * 1000, now)} 초기화`).join(" · ")} — 다른 자격과 환경 토큰은 별도입니다. 풀 전체 고갈을 뜻하지 않습니다.</>,
       action: { label: "수집 계정", href: ACTION_LINKS.githubAccounts },
     });
   }

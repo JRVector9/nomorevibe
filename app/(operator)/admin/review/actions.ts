@@ -23,8 +23,8 @@ const TAGLINE_MAX = 200;
 /**
  * 소개를 직접 적고 승인한다 — 소개가 없어 멈춘 후보(no_description)를 사람이 푸는 길이다.
  *
- * 승인만 하면 소개 자리에 레포 이름이 들어간다. 페이지를 열어 본 사람이 한 줄 적어 두면
- * 발행이 그 줄로 올린다(products.tagline_source = editor, 화면에 "직접 요약"으로 밝힌다).
+ * 소개 없이는 발행하지 않는다(2026-10-14) — 승인만 하면 AI 가 소개를 지을 때까지 기다리고, 못 지으면 심사로 돌아온다.
+ * 페이지를 열어 본 사람이 한 줄 적어 두면 발행이 그 줄로 올린다(products.tagline_source = editor, 화면에 "직접 요약"으로 밝힌다).
  * 적은 줄은 모델이 다시 짓지 않는다.
  */
 export async function approveWithTagline(_previous: ReviewActionState, form: FormData): Promise<ReviewActionState> {

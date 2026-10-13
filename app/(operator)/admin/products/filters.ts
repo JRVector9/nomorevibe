@@ -7,7 +7,7 @@ import type { ProductStatus } from "@/lib/db/schema";
  * page.tsx 는 Next 가 정한 것만 내보낼 수 있어 따로 둔다. 운영센터의 링크 검사(admin-status-action-links)가
  * 이 이름들을 읽어 "조치할 일"이 없는 거르기로 보내지 않는지 본다.
  */
-export type ProductFilter = { statuses: ProductStatus[] } & Pick<ListOptions, "introNeedsEditor" | "repoGone" | "repoArchived" | "repoRenamed" | "down" | "spamBanned" | "nameNeedsReview">;
+export type ProductFilter = { statuses: ProductStatus[] } & Pick<ListOptions, "introNeedsEditor" | "repoGone" | "repoArchived" | "repoRenamed" | "down" | "spamBanned" | "repoAutoBanned" | "nameNeedsReview">;
 
 export const PRODUCT_FILTERS = {
   전체: { statuses: ["verified", "seeded", "unverified", "banned"] },
@@ -29,10 +29,11 @@ export const PRODUCT_FILTERS = {
   "이름 확인 필요": { statuses: ["seeded", "verified"], nameNeedsReview: true },
   /**
    * GitHub 저장소가 없거나 빈 채로 하루 넘게 이어진 공개 제품(repository.ts repoGone) — 설치형은 이미 목록에서 가려졌고
-   * 웹사이트는 목록에 두고 GitHub 표시만 뺐다. 웹사이트는 AI 가 사이트를 다시 본 판정(product-repo-review)을 붙이고
-   * 사람이 유지·내리기를 고른다
+   * 웹사이트는 목록에 두고 GitHub 표시만 뺐다. 두 접근 방식 모두 재확인 판정을 붙인다.
+   * 자동으로 내려간 결과는 아래 별도 필터에서 본다.
    */
   "저장소 사라짐": { statuses: ["seeded", "verified"], repoGone: true },
+  "저장소 소실 자동 차단": { statuses: ["banned"], repoAutoBanned: true },
   /** GitHub 이 보관(archived)이라고 한 저장소 — 다루는 방법을 아직 정하지 않아 기록만 한다 */
   "저장소 보관됨": { statuses: ["seeded", "verified"], repoArchived: true },
   /** GitHub 이 다른 이름으로 돌려준 저장소 — repo_url 은 아직 옛 이름이다(고쳐 쓰기는 뒤에 따로) */

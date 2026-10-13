@@ -329,10 +329,11 @@ describe("발행 잡", () => {
     expect(await crawl.getCandidate("someone/mystery")).toMatchObject({ state: "needs_review", reason: "no_description" });
   });
 
-  it("사람이 승인한 것은 소개가 없어도 올린다 — 심사로 되돌아오면 끝나지 않는다", async () => {
+  it("사람이 승인해도 소개가 없으면 올리지 않는다 — 레포 이름을 소개로 쓰지 않는다", async () => {
+    // 예전에는 레포 이름("owner/repo")을 소개로 올렸다 — 그렇게 쌓인 공개 제품이 572건이었다(2026-10-14)
     await approved("someone/mystery", {
       meta: { description: null, language: null },
-      pageMeta: { title: null, description: null, ogImage: null },
+      pageMeta: { title: null, description: null, ogImage: null, textSample: "바를 등록하면 손님이 찾을 수 있습니다" },
     });
     // 심사에서 사람이 통과시킨 상태
     await crawl.recordJudgement({
@@ -345,12 +346,38 @@ describe("발행 잡", () => {
 
     await tick();
 
-    // 지어내지 않고 레포 이름을 쓴다
-    expect(await products.findByUrl("https://my-app.test")).toMatchObject({
-      name: "mystery",
-      tagline: "someone/mystery",
-      stack: [],
+    expect(await products.findByUrl("https://my-app.test")).toBeUndefined();
+    // 소개 짓기 잡이 집는 자리로 멈춘다 — 사람의 승인은 그대로 남는다
+    expect(await crawl.getCandidate("someone/mystery")).toMatchObject({ state: "needs_review", reason: "no_description", decidedBy: "admin" });
+
+    // 소개 짓기 잡이 한 줄을 지어 돌려보내면(crawl-tagline.test) 사람의 승인으로 그 줄과 함께 올라간다
+    const document = await crawl.getDocument("someone/mystery");
+    await db.insert(crawlTaglines).values({
+      repo: "someone/mystery", tagline: "바를 등록하면 손님이 찾습니다", source: "page", model: "[MLX] qwen",
+      sourceHash: taglineHash(taglineEvidence("someone/mystery", document!)), documentAt: document!.fetchedAt,
     });
+    await db.update(crawlCandidates).set({ state: "approved", reason: "passed" }).where(eq(crawlCandidates.repo, "someone/mystery"));
+
+    await tick();
+
+    expect(await products.findByUrl("https://my-app.test")).toMatchObject({
+      name: "mystery", tagline: "바를 등록하면 손님이 찾습니다", taglineSource: "ai_page",
+    });
+    expect(await crawl.getCandidate("someone/mystery")).toMatchObject({ state: "published", decidedBy: "admin" });
+  });
+
+  it("레포 설명이 레포 경로 그대로면 소개가 없는 것으로 본다", async () => {
+    // 프로드 원본 8건이 레포 설명에 "owner/repo" 를 그대로 적어 두었다(2026-10-14)
+    await approved("someone/mystery", {
+      meta: { description: "Someone/Mystery", language: null },
+      pageMeta: { title: null, description: null, ogImage: null },
+    });
+    await crawl.recordJudgement({ repo: "someone/mystery", productUrl: "https://my-app.test", state: "approved", reason: "passed", decidedBy: "admin" });
+
+    await tick();
+
+    expect(await products.findByUrl("https://my-app.test")).toBeUndefined();
+    expect(await crawl.getCandidate("someone/mystery")).toMatchObject({ state: "needs_review", reason: "no_description" });
   });
 
   it("제목의 마케팅 문구를 이름에서 뗀다", async () => {

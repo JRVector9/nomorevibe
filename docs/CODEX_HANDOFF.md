@@ -1,3 +1,232 @@
+# 2026-10-13 — 관리자 실제 접속 복구 완료
+
+## Current objective / completed work
+
+사용자 ‘admin 페이지 안 들어가져’ 원인은 PR410의 private 차단 코드 배포 후 ingress/자격 설치 누락이었다. Tailscale HTTPS와 ID/비밀번호를 실제 설치하고 브라우저 로그인·관리 읽기·로그아웃을 확인했다. 운영자 Mac의 Tailscale 연결 후 https://m3ultra.tail02799e.ts.net/admin, ID jr, 비밀번호는 /Users/jr/.config/nomorevibe/admin-login.txt(0600,상위0700)이다. 비밀번호·secret·hash·cookie를Git/도구출력/명령인자에남기지않는다. 공개 nomorevibe.com/admin은404 유지.
+
+## Modified files / key design decisions
+
+문서worktree /private/tmp/nomorevibe-admin-access-docs-20261013, branch fix/admin-private-access-20261013, basef63e469. README/PENDING/이인계/admin-private-access.md와 새 2026-10-13-admin-private-access-rollout.md를갱신했다. 앱코드변경없음. 실제setup/rollbackbaseline/증거는 /private/tmp/nomorevibe-admin-access-20261013(0700/0600). 양웹6복제본에같은5개관리설정, 기존AUTH_SECRET와4flags·기타env보존. 같은8e767a5webimage(cea3b1bd)로같은배포window양웹재배포done/ready. backend11앱b592/85c69그대로,13core앱18복제본ready. M3별도nginxcontainer1개(96MiB/0.25CPU/unless-stopped,officialimagea8b39bd9). Serve443→loopback127.0.0.1:19391→overlayweb서비스DNS3000. Serve검증owneridentity정확비교+고정Host/Proto/proof주입. 중앙ACL기존넓은정책은변경하지않았고 서비스owner제한은proxy에서검사한다. Funnel없음. 양공개Traefik별도비밀없는middleware0644와domain3개씩영구참조설치;실제runtime6router참조와유효secret/쿠키차단확인. privateconf jr0700/0600. productionADMIN_LOCAL_LOGIN=0,소개검수중단/DB/scheduler정책보존.
+
+## Test commands / results / failed approaches
+
+실제 browser-check.mjs PTY95591 exit0: noncebootstrap뒤폼,ID/비밀번호로그인→오늘할일,운영센터/제품200,Origin·CSRF각403,logout303+cookie삭제+로그인복귀,pageerror0. 6웹Dockerenv설정exactmatch/hash형식정상. runtime PTY61232 exit0 13앱ready. readonlyDB PTY10318 exit0 journal76/intro2100미임대/schedulerManualtrue·replicas2. 네트워크 PTY22445 exit0 mini→M3Tailscale/LAN19391양쪽closed;proxyidentity없음/다른값403. Traefikruntimequery PTY28312 exit0 양3routermiddlewareactive+liveproofcookie404. publiccurl PTY9738 exit0 health/home/login200/admin404. boundary-check.py PTY41330 exit0 CloudflarePython3건403/양host공개3domain×3경로18건404·일반public200/admin404확인. 추가FD보안headercurl PTY57242 exit0 실제secret/관리쿠키Cloudflare3건도404확인. 새단위/통합테스트는실행하지않았다. 관리쓰기·실제다른계정·교체/만료/초과·재부팅은미실행.
+
+실패와교정: domain배열순서변경으로zip오판→domainId비교. root0700configOrbStack읽기실패126→jr0700/0600. 공개middleware root0600읽기실패/oldruntime유지→jr0644/재읽기/실제runtime검사(전체Traefik재시작없음). 새env에기존키전용replace_setting행수0→새키append. 최초HTTPScert발급timeout→발급후TLS정상. urllibnoncebootstrap단순HTML무폼→실제브라우저확인. 첫heading검사명오류(오늘처리할일)→실제오늘할일로전체성공. 최초boundary자동redirect/DNS·CF까지404가정→NoRedirect와경계별403/404측정. publicPythonUA403은curl의실제일반public200/404로확인했다.
+
+## Remaining work / exact commands
+
+문서PR412 최신baseCI check성공후merge하고usermainff-only동기화한다. 기존useruntracked보존. active운영접속작업은완료. 이후관리쓰기/다른계정/교체/재부팅확인은PENDING범위를따른다. setup.py capture/install/deploy는현재baseline과맞지않으므로반복실행하지않는다.
+
+읽기확인:
+- ssh root@100.92.77.66 '/opt/homebrew/bin/tailscale serve status --json'
+- ssh root@100.92.77.66 'docker ps --filter name=nomorevibe-admin-ingress'
+- curl -I https://nomorevibe.com/admin
+- git -C /private/tmp/nomorevibe-admin-access-docs-20261013 diff --check
+
+
+---
+
+# 2026-10-13 — PR410 병렬 리뷰·CI·운영 배포 완료
+
+## Current objective / completed work
+
+사용자 병렬 코드리뷰·운영 배포 지시를 수행했다. gpt-6.1-sol/xhigh 인증·댓글/번역·운영3담당 독립 리뷰에서 P1/P2 발견 없음. 실제 job/worker/schema/수집/outbox/번역정책 diff를 대조해 새 웹과 기존b592 backend 호환을 확인했다. 첫PR CI의feedback12px 위반만13px로 고쳤고 관련2파일6사례/lint/diff 성공 후 PR410 최신CI38363457760 필수전체성공으로 정상merge했다. source main8e767a5fce5f935513e1d942e79593fedd5c4517의 mainCI38363987161도 check/quality/integration1~3·양image publish 모두성공했다. 실제 단위247파일2271/통합140파일1375사례, 타입/i18n/lint/Python ops/Turbopack/bundle 검사 성공이다.
+
+## Modified files / design / operations
+
+배포 기록 worktree /private/tmp/nomorevibe-admin-essential-release-main-20261013, branch docs/admin-essential-release-20261013, base8e767a5. README/PENDING/이인계/최종plan/private접속설치문서/새operations rollout 기록을 업데이트한다. 본 단계 소스 보완은 feedback/page 식별자13px 한 곳이다. private state /private/tmp/nomorevibe-admin-essential-release-state-20261013는0700/0600이며 앱env/키/토큰을 공유·커밋하지 않는다. Keychain 자격과 Dokploy direct curl로 양웹 같은window에 배포했다. 새web digest cea3b1bd, mini2/M3 4 실제6복제본은8e767a5이고 backend13앱 중worker/source5는b592·worker85c69 그대로다. 새 migration·drain·collector·소개검수 재개 없음. scheduler autoDeploy=true만false로 맞췄고 before/after 모든필드 대조에서다른설정/환경변경없음·2복제본 유지 확인했다. 별도connect-agent는건드리지않았다.
+
+## Test commands / results / failed approaches
+
+최종 검증 2026-10-13 16:54:54 KST: capture/plan59067 exit0(13앱 baseline·양host 실제pull·buildkey·flags), web28256 exit0(양웹done·public두인스턴스ok), public13154 exit0(4언어24페이지/6경계·lang/canonical/새asset·같은제품집합·서버Suspense오류없음·댓글기본접힘), verify20025 exit0(core13runtime/env·source5앱523파일·failover/progressok·flags4ON/local0), boundary76301 exit0(public9+6웹direct12 가짜proof/Host/XFF/cookie요청모두404), readonlyDB journal76/번역테이블/intro2100미임대 확인. 전체 사용자기능/운영관리쓰기/외부Issue/browserE2E는시험하지않았다.
+
+실패: 최초PRCI38362899860 typography2fixture→13px교정. verify42559의새웹git파일목록과보존backend파일혼용→git ls-files만backendcheckout기준교정. verify66620의publisher-m3 단발ready=false→재조회1/1healthy/failingStreak0/health3회exit0/기존digest·release확인후최종전체성공,재시작/재배포없음. directprobe25594의127loopback가정→실제HOSTNAME/PORT로교정후12개404확인. 인증코드우회로검사만통과시키지않았다.
+
+## Remaining work / exact commands
+
+운영 코드 배포와 안전한읽기검증은완료다. 릴리스기록docs PR의필수check→정상merge→사용자main의trackedclean확인후ff-only→최종보고만마무리한다. 이미 성공한capture/plan/web_roll/public/verify를반복하지않는다. 실제TailscaleCLI는/opt/homebrew/bin/tailscale에있고양hostRunning/MagicDNS를확인했지만Serve미설정,양웹ADMIN_ORIGIN/ingress/password미설정이다. 공개관리자404가정상이며privateproxy/ACL/방화벽/ID/password설치와실제브라우저로그인은별도후속이다. ADMIN_LOCAL_LOGIN을운영에켜지않는다. PENDING의실연동/백업/외부경보/장기관측을완료처리하지않는다.
+
+```sh
+cd /private/tmp/nomorevibe-admin-essential-release-main-20261013
+git status --short --branch
+git diff origin/main --check
+# 문서만 정상PR로 반영한다. 필수check를 우회하지 않는다.
+# 사용자의main에서미추적PT/prototypes/기존stash는보존하고trackedclean일때만ff-only한다.
+# source8e767a5 mainCI38363987161/web digest cea3b1bd가운영이다. docs후속merge에는새이미지가없다.
+# private state snapshot/env/토큰원문공유·커밋금지. 반복배포/마이그레이션/소개검수재개불필요.
+```
+
+---
+
+# 2026-10-13 — 필수 관리자 구현 병렬 재리뷰·운영 배포 진행
+
+## Current objective / completed work
+
+사용자가 서브에이전트 병렬 코드리뷰와 운영 배포를 요청했다. 대상은 feat/admin-essential-integration-20261013의 구현 6848016, base main b8147dc다. gpt-6.1-sol/xhigh 3담당이 인증·댓글/번역·운영/자동 차단을 독립 읽기 리뷰했고 P1/P2 발견 없이 완료했다. root가 보완·PR·필수 CI·배포를 전담한다. 이전 단위161/통합76/타입/lint/i18n/webpack build 성공은 그대로 유효하며 새 변경이 있을 때 관련 범위만 재실행한다.
+
+## Design / modified files / verification
+
+이번 단계는 리뷰 결과 보완과 릴리스 기록이다. PR410을 생성했고 첫 CI38362899860의 quality가 feedback/page.tsx의 12px 한 곳 때문에 공통 typography fixture2개에서 실패했다. 이를13px로 교정하고 관련 검사를 재실행한다. 세 리뷰 담당이 worker/job/schema/정책 호환성을 대조해 양 웹만 새 image로 배포 가능함을 확인했다. prod skill을 읽었으며 Keychain 자격으로 Dokploy API 직접 curl을 사용한다. 현재 main b8147dc, 운영 웹707/백엔드b592, core13앱 구성이다. 새 migration/schema는 없으므로 migration·소비자 drain을 반복하지 않는다. 공개 소개 검수2100 중단, 기능4개 ON, 관리자 production local 우회0와 별도 connect-agent를 보존한다. scheduler의 autoDeploy=true만 예외적으로false로 맞춰 main 병합 때 CI/릴리스와 무관한 재시작을 막고 기존2복제본·실행 환경/주기를 유지한다. 나머지 worker/source5는 b592로 유지한다. branch push·PR410은 완료했고 최신 수정의 CI/운영 배포는 아직 완료 전이다. 성공을 미리 주장하지 않는다. 사용자 main의 미추적 산출물은 보존한다.
+
+## Remaining work / exact next commands
+
+세 리뷰 결과→필요 보완/관련 체크→정상 PR 필수 check→정상 merge→main CI·web/worker digest/양 서버 pull→13앱 현재 상태 snapshot·양웹 배포 readiness→양웹/public 본문·관리 API 차단·runtime source/env·failover/progress 검증→최종 보고 순서다. 관리자 private ingress/ACL/자격 설치는 기존 runbook 경계이며 설치 미검증을 배포 완료와 혼동하지 않는다. 비밀/환경 전문·쿠키·DB본문은 로그나 Git에 넣지 않는다.
+
+```sh
+cd /private/tmp/nomorevibe-admin-essential-integration-20261013
+git status --short --branch
+git diff origin/main --check
+# 정상 PR과 최신 main CI가 성공한 뒤에만 새 immutable image를 운영에 배포한다.
+# 읽기/실측 private state와 이전 release state 전체를 공유·커밋하지 않는다.
+```
+
+---
+
+# 2026-10-13 — 관리자 16개 제안 실측·범위 축소·병렬 구현
+
+## Current objective / completed work
+
+사용자가 기존 ADM01~16을 현재 코드와 실제 운영에 대조하고, 이미 구현되었거나 과한 범위를 제외한 최종 PR 계획과 병렬 구현을 요청했다. main b8147dc(문서 PR409까지 병합)를 기준으로 root와 gpt-6.1-sol/xhigh 3담당이 재감사한 뒤 6개 PR로 줄였다. 최종 계획은 docs/superpowers/plans/2026-10-13-admin-essential.md다. PR01 access, PR02/06 ops, PR03/04 content, PR05 및 공통 Origin 연결은 root가 구현했다. 담당별 commit을 root가 리뷰·cherry-pick했고 세 담당의 최종 통합 읽기 리뷰도 중요 잔여 발견 없이 완료했다. 코드 구현과 아래 로컬 체크는 완료했으며 운영 설치·배포는 하지 않았다.
+
+## Modified files / key design decisions
+
+root integration: /private/tmp/nomorevibe-admin-essential-integration-20261013, branch feat/admin-essential-integration-20261013. auth/ops/content는 별도 worktree이고 node_modules symlink만 공유한다. 통합 commit: PR01 4914506, PR02 01d3649/1b3a2c9, PR03 5369e2d/cc4f384, PR04 b7dea37/bce67aa, PR05 67ce2c2, PR06 43c64b4/e333134, 공통 Origin 94a68f2. docs/README/.env.example는 설정 발견과 실측·결과를 기록한다. lib/auth와 auth API/proxy, admin/status·feedback·translations·inbox·products·nav/activity, 관련 기존 DAL/fixture가 변경됐다. schema/package/dependency/collector는 변경하지 않았다.
+
+신규 RBAC·CMS·monitor·비용 collector·계정 삭제는 제외했다. production local 우회는 금지하며 private proof를 proxy/currentAdmin/API에서 검증한다. 단일 ID/password scrypt + DB 실패 제한 + credential 교체 세션 무효화를 적용했다. 댓글 잠금 순서는 product→binding→outbox→feedback이며 sending/uncertain/delivered 외부 Issue를 삭제하지 않고 복원 시 재전송하지 않는다. 번역은 4회 상한/hash·상태 CAS/backoff·보류를 유지한다. inbox는 held 댓글/failed 번역/현재 최신 자동 소실 차단을 기존 수신 화면과 같은 predicate로 읽는다. 전 접근 방식의 저장소 판정·기존 차단 해제를 연결했다. frontend707/backendb592 독립 배포는 정상이며 역할 쌍·웹 쌍끼리만 릴리스를 비교한다. 소개 검수 중단은 유지한다.
+
+## Test commands / results / failed approaches
+
+root 운영 read-only 15:50:44 KST: accepted2/held0/outbox0/users1; 번역 ready116/pending2/failed53(quality45/timeout8/4회 소진4), auto:repo-gone 현재2, 내림 pending0/소개0/newsapproved451pending0. health200/adminlogin200/status+feedback307/adminOAuth503/enadmin404. core13개 done, 웹2+4는707/워커b592, local0/password·ingress없음. 별도 runtime probe에서 두 웹 ready=true. Docker HEALTHCHECK가 없는 6웹의 healthy0은 unhealthy가 아니다. 서버 tailscale CLI가 PATH에 없어 ACL/Serve는 미확인이다. reserved SQL alias day를 day_count로 고쳤고 CLI FileNotFound를 미확인 상태로 기록했다. 운영 DB·환경 쓰기와 환경 전문 출력은 하지 않았다.
+
+root 최종 체크: next typegen + tsc --noEmit --incremental false exit0; check:i18n(4 locales/8 namespaces/11 public pages) exit0; 변경 범위 ESLint exit0; 기존 단위 13파일 161사례 및 독립 local DB 통합 6파일 76사례 성공(아래 실패 두 fixture 보완 후 해당 파일 재실행 포함); DATABASE_URL=postgres://build:build@localhost:5432/build npx next build --webpack exit0. git diff --check와 base-to-working-tree diff --check 성공. 테스트 전용 Docker nmv-admin-root-test-20261013/localhost55448을 사용했고 끝난 뒤 이 컨테이너만 stop했다. 담당별 추가 DB probe는 댓글 microsecond cursor/CAS/outbox 취소·복원·감사 rollback, 번역 같은 원문 attempt/backoff/4회 상한·source 변경·중단/CAS/lease를 확인했다고 보고했다. 별도 새 suite/E2E는 만들지 않았다. GitHub 전체 CI·실제 브라우저·운영 로그인/쓰기·외부 Issue 파일럿은 실행하지 않았다.
+
+실패 접근: 초기 단위 product-feedback mock에 새 adminOrigin export가 없어 1건 실패했다. 실제 admin-access의 origin 함수를 모킹에 연결하고 public origin 거절/private origin 허용을 확인해 24사례 성공했다. 초기 inbox 통합 fixture가 새 server-only 번역 reader를 import해 실패했다. 기존 integration fixture와 같은 server-only mock을 추가해 3사례 성공했다. 담당 leaf의 Turbopack build는 외부 node_modules symlink를 허용하지 않아 실패했다. root는 코드 우회 없이 지원되는 webpack build를 실행해 성공했다. 같은 전체 suite/운영 배포를 반복하지 않는다.
+
+## Remaining work / exact next commands
+
+코드 구현·병렬/통합 리뷰·관련 로컬 체크·최종 문서 정리를 완료했다. 아직 원격 push/GitHub PR 생성/merge/deploy는 하지 않았다. 이후 배포 시 최신 main 기반 필수 CI check를 통과한 정상 PR로 진행한다. private ingress/Tailscale ACL/방화벽/양 웹 자격 설치·실제 로그인 전 관리자 운영 접속 완료로 표기하지 않는다. ADMIN_LOCAL_LOGIN을 운영에 켜지 않는다. 별도 사용자 GitHub 댓글 파일럿과 백업·외부 경보 등 PENDING은 미완료로 유지한다. 0075 migration/이전 양웹 배포를 반복하지 않는다.
+
+```sh
+cd /private/tmp/nomorevibe-admin-essential-integration-20261013
+git status --short --branch
+git diff --check
+npx next typegen
+npx tsc --noEmit --incremental false
+# 위 체크는 이미 성공했다. 후속 변경이 있는 경우에만 관련 범위를 재실행한다.
+# 측정 helper의 measurement.json은 안전한 집계지만 private state 전체나 앱 JSON/env를 공유/커밋하지 않는다.
+# auth WT: /private/tmp/nomorevibe-admin-access-essential-20261013
+# ops WT: /private/tmp/nomorevibe-admin-ops-essential-20261013
+# content WT: /private/tmp/nomorevibe-admin-content-essential-20261013
+# root 테스트 컨테이너 stop은 완료했다. 다른 작업의 55435/55447 DB를 건드리지 않는다.
+# 원격/배포 후속은 README·docs/operations/independent-workers-runbook.md·admin-private-access.md를 따른다.
+# 사용자 main의 미추적 PT/prototypes 산출물과 기존 stash는 보존한다.
+```
+
+---
+
+# 2026-10-13 — 운영 배포·AI 탐색 탭·1인 관리자 병렬 감사 최종화
+
+## Current objective / completed work
+
+사용자는 운영 배포와 gpt-6.1-sol/xhigh 병렬 1인 관리자 검토를 요청했고, 후속으로 하단 중복 8시간 탭을 AI로 제작으로 바꾸라고 했다. 콘텐츠/운영/계정 3담당 감사, root 주요 코드 대조와 계정·운영 담당의 통합 보고서 재리뷰를 완료했다. 기존36기능영역과 최소 후속 ADM01~16을 통합/담당3메모로 정리했다. 이번에는 검토 보고이며 제안된 관리자 PR 전체를 구현한 것이 아니다.
+
+PR406 다국어, PR407 홈 RSC 교정까지 b592의 13개 core 앱 실제 배포와 DB0075/journal76, 환경·런타임 source523·다섯 역할 주/예비·scheduler2·웹6개·네 flag ON 검증을 완료했다. 소개 검수2100 중단과 별도 connect-agent를 유지했다. Node24 IPv4/IPv6 연결은 family attempt2000 환경으로 교정했고 마지막 읽기는 실제 중국어 ready36/검수실패5/pending28/network0이었다. 모든 제품 번역완료를 뜻하지 않는다.
+
+하단 AI 탭은 담당 최소 구현, root 리뷰와 기존7파일83사례 재실행을 통과했다. PR408 head4a4f7b3의 CI38353635696 필수전체성공 후 정상 merge main707e9c2. lib/scripts/schema/package/Dockerfile diff 없음, 상단8h/관측/rising 유지. main CI38354066578 필수 check/quality/integration1~3와 이미지 발행 모두 성공했다. 양웹만707e9c2/새 web digest3e19c381로 교체49515 exit0, 공개 두 인스턴스 healthy. verify96936 exit0로13앱/source523/환경/네flags/admin0/worker readiness·progress를 확인했고 백엔드는b592/worker85c69 유지했다. contentGET14972의24페이지/6경계, AI 최종18페이지, 실제39제품·목록/분야수 DB 대조5849 모두 exit0다. 검증 수는 AI32552/최근37980/총스타38110/DevAI7781이었다.
+
+## Modified files / design / checks / failures
+
+이번 문서 worktree /private/tmp/nomorevibe-admin-audit-final-20261013, branch docs/admin-audit-and-i18n-rollout-20261013, base707e9c2. 변경은 README 링크, 이 인계와 operations의 통합 관리자 보고서·담당3메모·다국어 배포 기록이다. 이전 report worktree는 초안이며 최종 문서는 여기다. 소스 worktree /private/tmp/nomorevibe-ai-made-tab-20261013는 main707e9c2 detached/clean, PR408 소스는 이미 커밋/푸시/병합됐다.
+
+관리자 ADMIN_LOCAL_LOGIN1로 공개 status가200이던 것은 이전 접근제한 요청에 따라 양웹0으로 차단했다. status/review307, 관리자 OAuth503 미설정이며 정상 관리자 로그인은 잠김이다. Tailscale 전용 ingress와 ID/비밀번호는 아직 ADM01/02 제안이다. local 우회 재허용 금지. 일반 사용자 GitHub 인증과 별개다.
+
+HTTP200/lang/asset만 보는 처음 검사로 홈 Loading 오류를 놓친 접근은 폐기했다. 실제 본문과 Suspense error template 및 프로젝트 링크를 검사해 PR407 원인을 찾고 교정했다. 초기 번역 Node ipv4first만 적용은 실패, family timeout2000은 실제 모델 목록 GET200과 정상 worker 저장으로 확인했다. UI fixture 처음 기대값3건 실패를 교정해 최종83사례 성공했다. 공개 AI 최초 언어별count 비교는 비동일로 실패, 재독일치 뒤 최신DB32,551과 캐시화면32,544는7개 차이가 났다. 공개읽기30초 캐시와 지속수집으로 읽기 시점을 구분했고 최종 이어읽은18페이지/DB count와 facet는 모두 일치했다. 워커 중지나 숫자 조작은 하지 않았다. 보고서 행수 최초 내부 assertion은 헤더 제외 계산을 고친 뒤36영역/16PR/상대링크 정상 확인했다. 신규 suite/E2E/실사용자 OAuth·댓글·스타 쓰기, 전체 번역 백필, 수동 LLM POST, 소개검수 재개는 하지 않았다.
+
+## Remaining work / exact commands
+
+운영 배포·기본 공개 읽기·13앱 검증·병렬 감사/재리뷰는 완료했다. 신규 source/private helper의 capture/plan/web/verify 성공 단계를 반복하지 않는다. 15:07 KST 번역 진행은 ready62/pending77/검수실패11/network0, intro2100/unleased였다. docs81b756c commit/push와 PR409를 만들었다. 첫 CI38355235157은 계정 메모의 EOF 추가 빈줄1건으로 scope/check 실패했다. 새 미추적 문서가 처음 working-tree diff 검사에 포함되지 않은 점을 확인하고 빈줄을 제거했다. 전체 base-to-working-tree 및 staged diff 검사 후 수정 커밋/푸시하고 PR409 최신 head 필수CI→정상 병합→사용자 working tree의 tracked clean 확인/안전한 ff-only 동기화→최종 보고만 남았다. 관리자 ADM01~16은 후속 제안이며 새 지시 없이 구현하지 않는다. 사용자 실연동·장기관측·외부경보·격리복원 PENDING는 완료 처리하지 않는다.
+
+```sh
+cd /private/tmp/nomorevibe-admin-audit-final-20261013
+git diff --check
+git status --short --branch
+git add README.md docs/CODEX_HANDOFF.md docs/operations/2026-10-13-public-i18n-production-rollout.md docs/operations/2026-10-13-single-operator-admin-audit.md docs/operations/2026-10-13-single-operator-audit-content.md docs/operations/2026-10-13-single-operator-audit-operations.md docs/operations/2026-10-13-single-operator-audit-accounts.md
+git commit -m 'docs: record multilingual rollout and single-operator admin audit'
+git push -u origin docs/admin-audit-and-i18n-rollout-20261013
+# PR body /private/tmp/nomorevibe-admin-audit-docs-pr-body-20261013.md 사용. 필수 check/최신base 성공 후 정상 병합.
+# AI 배포 완료 private state /private/tmp/nomorevibe-ai-made-tab-release-state-20261013, 이전 b592 증거도 보존.
+# private state는 env/키 포함 가능: 출력/공유/commit 금지. migrate/source/docker_roll/web_roll 반복 불필요.
+# 사용자 main의 미추적 PT/prototypes/산출물 및 기존 stash는 보존한다.
+```
+
+---
+
+# 2026-10-13 — 하단 첫 탐색 탭을 AI로 제작으로 통합
+
+## Current objective / completed work
+
+사용자가 상단 8시간 급상승과 하단 첫 탭의 중복을 지적하여 하단 첫 탭을 AI로 제작으로 바꾸라고 했다. gpt-6.1-sol/xhigh 담당이 isolated worktree에서 구현했고 root가 소스·기존 fixture diff와 DAL 조건을 검토했다. 기존 운영 배포와 병렬 1인 관리자 감사도 계속 진행한다. 관리자 감사 최종 문서는 별도 docs/single-operator-admin-audit-20261013 작업에서 보존 중이다.
+
+## Modified files / design decisions
+
+공개 홈 page.tsx, BrowseFilters, 순수 browse-state, 네 언어 browse 카탈로그와 기존 fixture 6개를 변경했다. 하단 탭은 AI로 제작/최근 등록/GitHub 스타 많은 순이다. AI 탭은 기존 1·2·3단계 근거 조건을 목록·개수·분야 집계에 동일하게 적용하며 최근 등록순으로 보여준다. AI 기본 자격은 사용자 필터로 취급하지 않아 상단 8시간 급상승·신규 영역을 유지한다. 기존 오른쪽 AI 칩과 하단 급상승 중복 조회는 제거했다. 분야·검색·더 보기와 기존 정렬 URL 호환은 유지한다. 최근 등록/스타 탭으로 이동하면 AI 제약을 해제한다. 스키마·DB·lib·scripts·jobs·패키지·Dockerfile은 변경하지 않았다.
+
+## Test commands / results / failed approaches
+
+담당이 실제 next typegen, tsc --noEmit, check:i18n(4언어/8namespace/11page), scoped ESLint, diff --check와 관련 기존 unit 7파일83사례 exit0를 확인했다. 처음 기존 라벨/HTML 속성순서 기대값3건이 실패하여 새 동작에 맞게 수정했고 최종83사례가 통과했다. p12 fixture의 미모킹 급상승 조회가 외부 DB 예외를 기록해 기존 fixture에 모킹1줄을 추가했다. 새 suite/E2E/실사용자 스타·댓글 쓰기/모델 호출은 실행하지 않았다. root가 같은 7파일83사례를 별도로 재실행하여 exit0를 확인했다(세션62681). 실패 경로의 모킹 로그는 의도된 기존 fixture다. git diff --quiet b5924ac -- lib scripts drizzle package.json package-lock.json tsconfig.json 'Dockerfile*' exit0로 백엔드 변경이 없음을 확인했다.
+
+## Remaining work / exact commands
+
+소스 커밋/푸시→정상 PR과 최신 base 필수 check→정상 merge→main 이미지 발행→양웹만 새 digest로 배포→네 언어 실제 AI 탭/개수/프로젝트·상단 급상승 유지 확인→13앱 건강·기존 백엔드 b592 소스523파일/환경/역할 확인→관리자 감사·배포 문서 최종 커밋/보고. b592 13앱 배포와 journal76 migration은 이미 완료했으므로 반복하지 않는다. 소개 검수2100 중단, 네 기능 flag ON, ADMIN_LOCAL_LOGIN=0을 유지한다. Tailscale/관리자 ID비밀번호는 아직 제안이며 정상 관리자 OAuth 미설정으로 로그인 잠김이다.
+
+```sh
+cd /private/tmp/nomorevibe-ai-made-tab-20261013
+git diff --check
+git status --short --branch
+# PR와 main CI의 해당 최신 SHA check/이미지 성공 뒤 private helper SHA/CI를 갱신한다.
+python3 /private/tmp/nomorevibe-ai-made-tab-release-state-20261013/release.py capture
+python3 /private/tmp/nomorevibe-ai-made-tab-release-state-20261013/release.py plan
+python3 /private/tmp/nomorevibe-ai-made-tab-release-state-20261013/release.py web_roll
+python3 /private/tmp/nomorevibe-ai-made-tab-release-state-20261013/public_content_get.py
+python3 /private/tmp/nomorevibe-ai-made-tab-release-state-20261013/release.py verify
+# capture/plan 완료 proof를 확인한 뒤 다음 단계, 성공 단계 중복 실행 금지.
+# private helper/state는 환경·비밀 가능: 출력/공유/커밋 금지. source/docker_roll/migrate 불필요.
+```
+
+---
+
+# 2026-10-13 — 운영 홈의 RSC 함수 import 경계 교정
+
+## Current objective / completed work
+
+사용자 운영 배포 지시에 따라 PR406/main ca2c8c3은 13core 앱과 양웹6복제본에 실제 배포했다. DB0075/journal76/product_translations 및 소개 검수2100 중단 보존, failover/progress/네flags ON 확인. 이어 1인 관리자3담당 read-only 감사 완료; 통합 보고서/배포 상세 기록은 별도 docs 작업에서 보존한다.
+
+쿠키 없는 홈의 HTTP200/lang만 통과했으나 실제 본문은 Loading만 보였다. 네 웹 로그의 Error Attempted to call parseShown() from the server but parseShown is on the client, digest854463322로 원인 확정. client로 바뀐 BrowseFilters 재export를 서버 HomeContent가 호출했다. gpt-6.1-sol/xhigh content agent가 UI는 client import 그대로 두고 순수 browse-state에서 helper를 직접 import하게 교정했다. chipCategories 기존본문을 공유모듈로 그대로 이동하고 기존2fixture의 import만 바꿨다. 제품 기준/정렬/노출/8시간 관측/UI/DB/번역 정책은 변경 없다.
+
+## Modified files / actual checks / design
+
+app/(public)/[locale]/(content)/page.tsx, components/BrowseFilters.tsx, components/home/browse-state.ts, tests/home-browse.test.ts, tests/home-sort.test.ts와 이 인계. root가 diff와 같은 clientmodule import를 검토했다. 담당이 실제 next typegen, tsc --noEmit, scopedESLint, diff --check exit0 확인. root 기존 두파일 unit19사례/2파일6293 exit0. 최신 PR/main 필수CI는 후속 기록을 따른다. 새 test/suite/E2E/실사용자 OAuth·댓글·스타 쓰기는 추가하지 않았다. Next 설치 server-and-client-boundary guide를 읽고 경계를 교정했다.
+
+## Remaining work / failed checks / exact next commands
+
+정상PR/최신base 필수check 이후 merge/main image발행→양서버 배포→4언어홈 실제필터·제품·오류digest 없음 검증→배포/관리자 보고서최종화. 본 head 아직 배포 성공/CI 성공을 주장하지 않음. 기존200-only확인으로 화면 정상이라고 판단한 접근은 폐기한다.
+
+운영 자동번역은 기본 Node24 fetch의 IPv4 연결250ms 종료/IPv6 ENETUNREACH 실패를 확인했다. 같은 컨테이너 https.get family4 및 fetch family attempt timeout2000은 GET models200(약1.6s). 키/게이트웨이 변경 없이 최소 연결 환경을 양서버에 적용해 실제 정상text저장을 확인할 예정. 전체백필/소개검수재개/수동모델POST 없음.
+
+공개관리자 ADMIN_LOCAL_LOGIN=1 문제는 이전 사용자접근제한 요청에 따라 양웹0으로 차단완료. status/review307로그인, 관리자OAuth503(미설정); Tailscale/ID비밀번호는 미구현이고 현재관리자 정상로그인 잠김. 이를 완료구현으로 보고하지 않음.
+
+```sh
+cd /private/tmp/nomorevibe-home-boundary-fix-20261013
+git diff --check
+git status --short --branch
+gh pr checks <신규PR번호>
+# 필수CI/최신base를 우회하지 않음. ca2 완료migration/rollout 중복 실행 금지.
+# private 상태 /private/tmp/nomorevibe-i18n-release-state-20261013는 env/secret 가능; 출력/공유/commit금지.
+```
+
+---
+
 # 2026-10-13 — PR406 병렬 리뷰의 P2 세 건 보완 완료
 
 ## Current objective

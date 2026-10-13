@@ -82,6 +82,10 @@ export default async function AdminEvidenceProductPage({ params }: Props) {
         </a>
       </div>
       <div className="mt-5"><ForceRefreshForm slug={view.product.slug} /></div>
+      {view.product.status === "banned" && <p className="mt-2 text-[13px] text-fg-3">
+        차단 해제 뒤에도 설치형의 저장소 소실이나 사이트 응답 없음 등 공개 목록 조건에 따라 노출되지 않을 수 있습니다.
+        현재 출처를 확인하고 필요한 경우 근거 갱신을 요청하세요.
+      </p>}
       {refresh && (
         <div className="mt-3 rounded-[10px] border border-line p-3 text-[13px]" aria-live="polite">
           <strong>{refreshPending ? (refresh.activeVersion ? "갱신 진행 중" : "갱신 예약됨") : "갱신 완료"}</strong>

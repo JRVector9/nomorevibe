@@ -73,7 +73,7 @@ describe("service-local product feedback", () => {
     expect(await getFeedback(held.feedback.id, { userId: other.id })).toBeNull();
     expect(await getFeedback(held.feedback.id, { userId: author.id })).not.toBeNull();
     expect(await getFeedback(held.feedback.id, { admin: true })).not.toBeNull();
-    await reviewFeedback({ id: held.feedback.id, decision: "rejected", reason: "중복 링크", adminLogin: "reviewer" });
+    await reviewFeedback({ expectedReviewState: "held", id: held.feedback.id, decision: "rejected", reason: "중복 링크", adminLogin: "reviewer" });
     expect(await getFeedback(held.feedback.id, { userId: other.id })).toBeNull();
     expect((await listMyFeedback(author.id))[0].reviewState).toBe("rejected");
   });
@@ -122,13 +122,13 @@ describe("service-local product feedback", () => {
     const { author } = await seed();
     const floor = await auditFloor();
     const held = await submitFeedback("feedback-tool", author.id, write({ body: "https://a.test https://b.test https://c.test https://d.test" }));
-    const reviewed = await reviewFeedback({ id: held.feedback.id, decision: "accepted", reason: "관련 문서 링크 확인", adminLogin: "reviewer" });
+    const reviewed = await reviewFeedback({ expectedReviewState: "held", id: held.feedback.id, decision: "accepted", reason: "관련 문서 링크 확인", adminLogin: "reviewer" });
     expect(reviewed).toMatchObject({ reviewState: "accepted", reviewedBy: "reviewer", reviewReason: "관련 문서 링크 확인", deliveryState: "local_only" });
     expect(reviewed.reviewedAt).not.toBeNull();
     const audit = await db.select().from(operationsAudit).where(and(sql`${operationsAudit.id} > ${floor}`, eq(operationsAudit.action, "feedback.review")));
     expect(audit).toHaveLength(1);
     expect(audit[0]).toMatchObject({ actor: "reviewer", target: held.feedback.id });
-    await expect(reviewFeedback({ id: held.feedback.id, decision: "rejected", reason: "다시", adminLogin: "reviewer" })).rejects.toMatchObject({ status: 409 });
+    await expect(reviewFeedback({ expectedReviewState: "held", id: held.feedback.id, decision: "rejected", reason: "다시", adminLogin: "reviewer" })).rejects.toMatchObject({ status: 409 });
   });
 
   it("waits for the product lock before holding feedback during concurrent invalidation", async () => {
@@ -144,7 +144,7 @@ describe("service-local product feedback", () => {
       await release;
     });
     await ready;
-    const review = reviewFeedback({ id: held.feedback.id, decision: "accepted", reason: "문서 확인", adminLogin: "reviewer" });
+    const review = reviewFeedback({ expectedReviewState: "held", id: held.feedback.id, decision: "accepted", reason: "문서 확인", adminLogin: "reviewer" });
     try {
       let waiting = false;
       for (let attempt = 0; attempt < 100; attempt += 1) {

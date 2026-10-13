@@ -1,5 +1,5 @@
 export const browse = {
-  "sort.weekly": "8시간 스타 급상승",
+  "sort.ai": "AI로 제작",
   "sort.recent": "최근 등록",
   "sort.allTime": "GitHub 스타 많은 순",
   "sort.open": "저장소 있음",
@@ -26,6 +26,7 @@ export const browse = {
   "home.searching": "찾는 중입니다…",
   "home.loading": "불러오는 중입니다…",
   "home.translatedSearch": "영어로 “{query}”도 함께 찾았습니다.",
+  "home.aiNote": "저장소에서 AI 코딩 도구 흔적을 확인한 공개 프로젝트 · 최근 등록순입니다.",
   "home.recentNote": "서비스에 등록·검증된 시각 기준 · 검증된 프로젝트를 먼저 표시합니다. GitHub 저장소 생성일과 다릅니다.",
   "home.starsNote": "총 GitHub 스타가 많은 순입니다.",
   "home.unclaimed": "주인을 기다리는 프로젝트",
@@ -152,7 +153,7 @@ export const browse = {
   "method.growthTitle": "최근 8시간 스타 급상승 — 직전 8시간 회차의 관측값과 비교합니다.",
   "method.growthEligibility": "공개된 프로젝트의 정상 공개 GitHub 저장소를 비교합니다. KST 00시·08시·16시 회차 직전 {window}시간 안의 성공 관측만 사용하며, 실제 두 관측 간격은 {min}~{max}시간입니다. 이번 회차 스타50~1,999개 중 순증가1개 이상인 프로젝트를 표시합니다.",
   "method.growthFormula": "8시간 증가량 = 해당 회차의 스타 − 8시간 전 회차의 스타",
-  "method.growthOrder": "증가량이 많은 순, 같으면 해당 회차 스타가 많은 순, 다시 같으면 프로젝트 주소 순입니다. 홈 상위 5개·8시간 스타 급상승 탭·모두 보기는 같은 회차·조건·순서를 사용합니다. 탭의 분야·AI 필터는 이 대상 안에서만 좁힙니다. 카드에는 ‘8시간 +증가량’을 먼저, 총 스타 수를 보조로 표시하며 숫자에 마우스를 올리면 두 실제 관측 시각을 확인할 수 있습니다. 보조 기술에도 같은 시각을 제공합니다.",
+  "method.growthOrder": "증가량이 많은 순, 같으면 해당 회차 스타가 많은 순, 다시 같으면 프로젝트 주소 순입니다. 홈의 급상승 상위 5개와 급상승 모두 보기는 같은 회차·조건·순서를 사용합니다. 아래 탐색 탭은 별도의 공개 프로젝트 목록입니다. 급상승 카드에는 ‘8시간 +증가량’을 먼저, 총 스타 수를 보조로 표시하며 숫자에 마우스를 올리면 두 실제 관측 시각을 확인할 수 있습니다. 보조 기술에도 같은 시각을 제공합니다.",
   "method.observation": "관측",
   "method.cycleTime": "기준 회차 KST",
   "method.actualTime": "실제 성공 관측 시각 KST",

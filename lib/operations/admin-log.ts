@@ -3,6 +3,7 @@ import { db } from '@/lib/db';
 import { operationsAudit } from '@/lib/db/schema';
 import { logger } from '@/lib/observability/logger';
 import { trustedClientIp } from '@/lib/rate-limit';
+import { adminLocalLoginEnabled } from '@/lib/auth/admin-access';
 
 /**
  * 관리자 작업 로그(operations_audit).
@@ -14,7 +15,7 @@ import { trustedClientIp } from '@/lib/rate-limit';
  * adminAuditRow 로 쓰고, 나머지는 액션이 끝난 뒤 recordAdminActions 로 쓴다.
  */
 
-export type ActorKind = 'github' | 'local' | 'token';
+export type ActorKind = 'github' | 'local' | 'password' | 'token';
 export type AdminLogEntry = {
   action: string;
   target: string;
@@ -28,30 +29,33 @@ export type AdminLogEntry = {
  * 판정은 lib/auth/admin 과 같다. 그 모듈은 next/headers 를 바로 불러 설정 저장을 거치는 워커에 넣지 않는다.
  */
 export function actorKind(login: string): ActorKind {
-  return process.env.ADMIN_LOCAL_LOGIN === '1' && login === 'local' ? 'local' : 'github';
+  return adminLocalLoginEnabled() && login === 'local' ? 'local' : 'github';
 }
 
 /**
  * 요청한 곳과 로컬 운영자 이름(lib/auth/admin localOperatorName). 서버 액션·라우트 밖(워커·스크립트·테스트)에서는
  * 머리가 없으니 비운다.
  */
-async function requestOrigin(): Promise<{ ip: string | null; userAgent: string | null; operator: string | null }> {
+async function requestOrigin(): Promise<{ ip: string | null; userAgent: string | null; operator: string | null; admin?: { login: string; kind: ActorKind } }> {
   try {
     // 워커도 설정 저장 경로를 거친다 — Next 서버 모듈은 요청 안에서만 부른다
     const { headers } = await import('next/headers');
     const list = await headers();
-    const { localOperatorName } = await import('@/lib/auth/admin');
-    return { ip: trustedClientIp({ headers: list }), userAgent: list.get('user-agent')?.slice(0, 300) || null, operator: await localOperatorName() };
+    const { currentAdmin, localOperatorName } = await import('@/lib/auth/admin');
+    const admin = await currentAdmin();
+    return { ip: trustedClientIp({ headers: list }), userAgent: list.get('user-agent')?.slice(0, 300) || null, operator: await localOperatorName(),
+      admin: admin ? { login: admin.login, kind: admin.method ?? 'github' } : undefined };
   } catch {
     return { ip: null, userAgent: null, operator: null };
   }
 }
 
-export async function adminAuditRow(actor: string, entry: AdminLogEntry, kind: ActorKind = actorKind(actor)) {
+export async function adminAuditRow(actor: string, entry: AdminLogEntry, kind?: ActorKind) {
   const origin = await requestOrigin();
+  const resolvedKind = kind ?? (origin.admin?.login === actor ? origin.admin.kind : actorKind(actor));
   return {
     // 로컬 로그인은 모두 'local' 이다 — 운영자가 적어 둔 이름이 있으면 그 이름으로 남긴다(방식은 그대로 local)
-    actor: (kind === 'local' && origin.operator ? origin.operator : actor).slice(0, 120), actorKind: kind, ip: origin.ip, userAgent: origin.userAgent,
+    actor: (resolvedKind === 'local' && origin.operator ? origin.operator : actor).slice(0, 120), actorKind: resolvedKind, ip: origin.ip, userAgent: origin.userAgent,
     action: entry.action, target: entry.target.slice(0, 200), detail: entry.detail ?? {},
     ok: entry.ok ?? true, error: entry.error?.slice(0, 300) ?? null,
   } satisfies typeof operationsAudit.$inferInsert;

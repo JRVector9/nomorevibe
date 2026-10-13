@@ -6,6 +6,20 @@
 
 ---
 
+## 관리자 private 접속의 추가 운영 검증 — 2026-10-13
+
+**접속 설치 완료:** [실제 접속 기록](docs/operations/2026-10-13-admin-private-access-rollout.md)에
+Tailscale HTTPS·private proxy·양 웹 ID/비밀번호 적용과 실제 로그인/읽기/로그아웃,
+공개 경계 차단·6웹runtime 일치를 기록했다. production ADMIN_LOCAL_LOGIN=0 유지.
+
+**남은 수동 검증:** 관리 쓰기·실제 다른 Tailscale 사용자·비밀번호 교체/만료·한도 초과·
+서버 재부팅 후 접속은 이번 운영 단계에서 실행하지 않았다. 중앙 tailnet ACL은 기존 정책을
+유지하고 Serve의 단일 운영자 identity를 private proxy에서 검사한다. 서비스 접속 복구와
+네트워크 ACL을 축소한 작업을 혼동하지 않는다.
+
+
+---
+
 ## GitHub 스타·피드백 실연동 파일럿 — 2026-10-12
 
 **남은 확인:** 사용자가 직접 수행할 실제 GitHub 가입·로그인, 개인 스타 등록/취소,

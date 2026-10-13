@@ -13,7 +13,7 @@ export const AUDIT_TAB_HREF = "/admin/audit?tab=audit";
  * 칸의 차례 — 급한 것부터. 내려달라는 요청은 24시간 안에 처리한다고 상세 페이지에 약속했으므로 맨 위,
  * 그다음 심사(직접 판단 → 확정만), 감사, 제품 목록의 거르기들.
  */
-export const INBOX_KEYS = ["takedown", "introRequest", "human", "agreed", "audit", "down", "intro", "repoGone", "spam"] as const satisfies readonly InboxKey[];
+export const INBOX_KEYS = ["takedown", "introRequest", "feedback", "human", "agreed", "audit", "down", "intro", "translations", "repoGone", "repoAutoBanned", "spam"] as const satisfies readonly InboxKey[];
 
 /** 칸마다 이름, 할 일 한 줄, 처리하는 화면 */
 export const INBOX_SECTIONS: Record<InboxKey, { title: string; hint: string; href: string; action: string }> = {
@@ -21,6 +21,8 @@ export const INBOX_SECTIONS: Record<InboxKey, { title: string; hint: string; hre
     href: ACTION_LINKS.takedowns, action: "요청 처리" },
   introRequest: { title: "소개 수정 요청", hint: "주인 없는 제품의 운영자가 한 줄 소개를 고쳐 달라고 한 것 — 보고 고치거나 둡니다(목록 노출과는 무관).",
     href: ACTION_LINKS.takedowns, action: "요청 탭에서 처리" },
+  feedback: { title: "보류된 피드백", hint: "원문을 확인하고 공개 승인하거나 거절합니다. 이미 공개된 글도 검수 화면에서 숨길 수 있습니다.",
+    href: ACTION_LINKS.feedbackHeld, action: "피드백 검수" },
   human: { title: "직접 판단", hint: "AI가 결론을 내지 못한 후보 — 직접 승인하거나 거부합니다.",
     href: ACTION_LINKS.reviewHuman, action: "심사 큐에서 판단" },
   agreed: { title: "확정만 하면 됨", hint: "두 모델이 같은 결론을 낸 후보 — 보고 확정만 누릅니다.",
@@ -31,8 +33,12 @@ export const INBOX_SECTIONS: Record<InboxKey, { title: string; hint: string; hre
     href: ACTION_LINKS.productsDown, action: "제품 목록에서 보기" },
   intro: { title: "소개 확인", hint: "소개 검수가 근거로는 무엇인지 알 수 없다고 한 제품 — 페이지를 보고 소개를 고치거나 내립니다.",
     href: ACTION_LINKS.productsIntro, action: "제품 목록에서 보기" },
+  translations: { title: "공개 번역 실패", hint: "언어별 실패·원문 변경·재시도 소진을 확인합니다. 자동 처리 중인 대기 행은 여기에 포함하지 않습니다.",
+    href: ACTION_LINKS.productTranslationsFailed, action: "공개 번역에서 확인" },
   repoGone: { title: "저장소 사라짐", hint: "GitHub 저장소가 없거나 빈 채로 하루 넘게 이어진 공개 제품 — 유지할지 내릴지 정합니다.",
     href: ACTION_LINKS.productsRepoGone, action: "제품 목록에서 보기" },
+  repoAutoBanned: { title: "저장소 소실 자동 차단", hint: "현재 자동 차단 결과를 확인합니다. 정상 차단은 유지하고 잘못 내려간 것만 기존 차단 해제로 복구합니다.",
+    href: ACTION_LINKS.productsRepoAutoBanned, action: "근거·차단 결과 확인" },
   spam: { title: "스팸 자동 차단 확인", hint: "지난 24시간에 스팸 재검사가 자동으로 내린 것 — 잘못 내려간 것은 차단을 풉니다.",
     href: ACTION_LINKS.productsSpamBanned, action: "제품 목록에서 보기" },
 };

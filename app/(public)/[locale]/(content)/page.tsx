@@ -7,22 +7,25 @@ import { localizedAlternates, localizedOpenGraph } from "@/lib/i18n/metadata";
 import { redirect } from "next/navigation";
 import { after } from "next/server";
 import Link from "next/link";
-import { BrowseFilters, chipCategories, metricHref, parseHomeSort, parseShown, type HomeSort } from "@/components/BrowseFilters";
+import { BrowseFilters } from "@/components/BrowseFilters";
 import {
   aiLevelTotals,
-  type AiLevelCount,
+  type HomeSort,
   browseTitle,
   categoryHref,
   categoryRedirect,
+  chipCategories,
   HOME_FIRST_PAGE,
   HOME_MAX_SHOWN,
+  metricHref,
   parseCategory,
+  parseHomeSort,
+  parseShown,
   shownWindow,
 } from "@/components/home/browse-state";
 import { ActiveList } from "@/components/home/ActiveList";
 import { CompactRow } from "@/components/home/CompactRow";
 import { CompactCard } from "@/components/home/CompactCard";
-import { StarGrowthSummary } from "@/components/home/StarGrowthSummary";
 import { starGrowthNote } from "@/components/home/star-growth-copy";
 import { IntroLine } from "@/components/home/IntroLine";
 import { LaunchBand } from "@/components/home/LaunchBand";
@@ -33,7 +36,7 @@ import { MethodologyDialog } from "@/components/home/MethodologyDialog";
 import { ProjectGrid } from "@/components/home/ProjectGrid";
 import { ToolsBoard } from "@/components/home/ToolsBoard";
 import { aiLevelCounts, categoryCounts, countProducts } from "@/lib/domain/products/repository";
-import { getStarGrowthPage, type StarGrowthPage } from "@/lib/domain/products/star-growth";
+import { getStarGrowthPage } from "@/lib/domain/products/star-growth";
 import { resolveSearchQuery, warmQueryTranslation } from "@/lib/domain/products/search-translation";
 import { relevanceWindow, searchRelevance } from "@/lib/domain/products/relevance";
 import type { SearchQuery } from "@/lib/domain/products/search";
@@ -423,7 +426,7 @@ export async function HomeContent({ params }: { params: HomeParams }) {
   const query = firstValue(params.q)?.trim().slice(0, 200) || undefined;
   // A plain header search should cover the public catalogue. Preserve an explicitly
   // selected sort, but do not limit an unqualified search to ranked products.
-  const requestedSort = sortParam ? parseHomeSort(sortParam) : query ? "relevance" : "weekly";
+  const requestedSort = sortParam ? parseHomeSort(sortParam) : query ? "relevance" : "ai";
   // 분야는 대소문자를 가리지 않는다 — 홈(/)은 그 전에 /c/<분야>로 보냈고, 분야 화면은 정식 값을 넘긴다
   const category = parseCategory(firstValue(params.category)) ?? undefined;
   const builder = firstValue(params.builder)?.trim() || undefined;
@@ -432,8 +435,9 @@ export async function HomeContent({ params }: { params: HomeParams }) {
   const displayTools = toolParam ? await getCrawlSettings().then(settings => settings.agentEvidence.displayObservedFacts).catch(() => false) : false;
   const observedTool = toolParam && displayTools ? agentClientLabel(toolParam) : undefined;
   // 만든 방식 — 모르는 값은 거르지 않는다(전체 목록)
-  const ai = parseAiFilter(firstValue(params.ai)) ?? undefined;
-  const aiLevels = ai ? AI_FILTER_LEVELS[ai] : undefined;
+  const ai = requestedSort === "ai" || requestedSort === "recent" || requestedSort === "all-time"
+    ? undefined : parseAiFilter(firstValue(params.ai)) ?? undefined;
+  const aiLevels = requestedSort === "ai" ? AI_FILTER_LEVELS.made : ai ? AI_FILTER_LEVELS[ai] : undefined;
   const shown = parseShown(firstValue(params.shown));
   const savedOnly = firstValue(params.saved) === "1";
   const now = new Date();
@@ -445,14 +449,12 @@ export async function HomeContent({ params }: { params: HomeParams }) {
   let unclaimed: ProductListItem[] = [];
   let counts: Record<string, number> = {};
   let facetCounts: Record<string, number> = {};
-  let facetAiCounts: AiLevelCount[] | null = null;
   let pulse = emptyHomePulse(now);
   let total = 0;
   let resultCount = 0;
   let unclaimedTotal = 0;
   let dbDown = false;
   let translatedQuery: string | null = null;
-  let growth: StarGrowthPage | null = null;
   let rankingReady = true;
   /** 결과 수가 관련도순 검색(낱말·의미 섞음)의 수인가 — 그러면 '관련 결과 약 n개'로 쓴다 */
   let approximate = false;
@@ -469,7 +471,7 @@ export async function HomeContent({ params }: { params: HomeParams }) {
    */
   const asideLoad = Promise.allSettled([getHomePulse(now), listHomeNews()]);
 
-  /** 홈 띠와 weekly 피드는 같은 닫힌 8시간 회차 reader를 쓴다. */
+  /** AI 탭의 기본 조건은 사용자 필터가 아니다 — 홈 급상승·신규 띠는 유지한다. */
   const filtered = Boolean(query || category || builder || observedTool || ai);
   /** 검색·분야 화면 — 아래 홈 구획(인기·새로 나온·도구·활발한·소식)은 필터가 걸리지 않은 전체 기준이라 숨긴다(UX-35) */
   const scoped = Boolean(query || category);
@@ -489,7 +491,7 @@ export async function HomeContent({ params }: { params: HomeParams }) {
   const searchLoad = resolveSearchQuery(query, { waitForTranslation: requestedSort !== "relevance" });
   const countsLoad = publicRead("count", ["categories"], () => categoryCounts({ statuses: ["verified", "seeded"], excludeDown: true }));
   const verifiedLoad = requestedSort === "trending" ? publicRead("count", ["verified"], () => countProducts({ statuses: ["verified"], excludeDown: true })) : Promise.resolve(0);
-  // '만든 방식' 칩의 수 — 못 세도 목록은 선다(칩은 수 없이)
+  // 집계 기준 창의 AI 단계별 수 — 못 세도 목록은 선다.
   const aiCountsLoad = publicRead("count", ["ai-levels"], () => aiLevelCounts()).catch(() => null);
   for (const load of [seasonLoad, searchLoad, countsLoad, verifiedLoad]) load.catch(() => {});
 
@@ -518,26 +520,16 @@ export async function HomeContent({ params }: { params: HomeParams }) {
     const publicCatalogue = effectiveSort !== "trending";
     // 저장 목록 보기는 브라우저가 후보를 거르므로 창을 밀지 않고 앞에서부터 받는다
     const requestedLimit = savedOnly ? Math.max(Math.min(shown, HOME_MAX_SHOWN), SAVED_INITIAL_CANDIDATES) : shown;
-    const growthLoad = effectiveSort === "weekly" ? getStarGrowthPage({
-      category, query: search.queries, builder, observedTool, aiLevels, now, includeFacets: true,
-      limit: Math.min(requestedLimit, HOME_MAX_SHOWN), ...(savedOnly ? {} : { end: shown }),
-    }) : null;
-    growthLoad?.catch(() => {});
-    // 집계 바탕에서 선택 분야·AI를 빼고 반대 facet을 유지해 칩 수를 만든다.
+    // 분야 선택만 풀고 현재 탭의 AI 자격은 유지하여 목록과 분야 수의 조건을 맞춘다.
     const rankedSlugs = !publicCatalogue && active
       ? (await publicRead("list", ["home-facet-rankings", effectiveSort, active.key, verifiedTotal],
         () => listFor(effectiveSort, active, undefined, undefined, undefined, undefined, undefined, verifiedTotal)))
         .map((product) => product.slug)
       : undefined;
-    const facetOptions = { ...listOptions, category: undefined, aiLevels: undefined,
+    const facetOptions = { ...listOptions, category: undefined,
       ...(rankedSlugs ? { statuses: ["verified"] as const, slugs: rankedSlugs } : { statuses: ["verified", "seeded"] as const }) };
-    const facetLoad = growthLoad ? growthLoad.then((result) => [result.facets?.categories ?? {}, result.facets?.aiLevels ?? []] as const)
-      : Promise.all([
-        publicRead("count", ["browse-categories-v2", effectiveSort, active?.key, facetOptions],
-          () => categoryCounts({ ...facetOptions, statuses: [...facetOptions.statuses] })),
-        publicRead("count", ["browse-ai-levels-v2", effectiveSort, active?.key, facetOptions],
-          () => aiLevelCounts({ ...facetOptions, statuses: [...facetOptions.statuses] })).catch(() => null),
-      ]);
+    const facetLoad = publicRead("count", ["browse-categories-v2", effectiveSort, active?.key, facetOptions],
+      () => categoryCounts({ ...facetOptions, statuses: [...facetOptions.statuses] }));
     facetLoad.catch(() => {});
     /**
      * 관련도순 검색은 낱말 검색과 의미 검색을 섞고 앞 30개를 재정렬한다(lib/domain/products/relevance.ts).
@@ -551,8 +543,7 @@ export async function HomeContent({ params }: { params: HomeParams }) {
     relevanceLoad?.catch(() => {});
     approximate = relevanceLoad !== null;
     // 같은 정렬·거르기·구간이면 30초 동안 한 번만 읽는다(lib/domain/products/public-reads.ts)
-    const loadList = (limit: number, offset: number) => growthLoad ? growthLoad.then((result) => result.items)
-      : relevanceLoad
+    const loadList = (limit: number, offset: number) => relevanceLoad
         ? publicRead("list", ["relevance-rows", query, search.queries, filters, limit, offset], async () => {
           const ranked = await relevanceLoad;
           return getPublicListBySlugs(await relevanceWindow(ranked, ranked.plan, filters, offset, limit));
@@ -560,23 +551,20 @@ export async function HomeContent({ params }: { params: HomeParams }) {
         : publicRead("list", ["home-fixed-tabs-v2", effectiveSort, active?.key ?? null, listOptions, limit, offset],
           () => listFor(effectiveSort, active, category, search.queries, builder, observedTool, aiLevels, limit, offset));
     const spanOf = (count: number) => savedOnly ? { start: 0, count: Math.min(requestedLimit, count) } : shownWindow(shown, count);
-    const matchingLoad = growthLoad ? growthLoad.then((result) => result.total)
-      : relevanceLoad ? relevanceLoad.then((ranked) => ranked.total)
+    const matchingLoad = relevanceLoad ? relevanceLoad.then((ranked) => ranked.total)
       : publicRead("count", ["matching", listOptions], () => countProducts({ statuses: ["verified", "seeded"], ...listOptions }));
     // 창이 앞을 접을 수 있으면(HOME_MAX_SHOWN 초과) 어디서부터 받을지가 개수에 달려 있어 기다린다
-    const windowed = !growthLoad && publicCatalogue && requestedLimit > HOME_MAX_SHOWN;
+    const windowed = publicCatalogue && requestedLimit > HOME_MAX_SHOWN;
     const earlyList = windowed ? null : loadList(publicCatalogue ? requestedLimit : verifiedTotal, 0);
     earlyList?.catch(() => {});
-    const [loadedCounts, matchingTotal, [loadedFacetCounts, loadedFacetAiCounts]] = await Promise.all([countsLoad, matchingLoad, facetLoad]);
+    const [loadedCounts, matchingTotal, loadedFacetCounts] = await Promise.all([countsLoad, matchingLoad, facetLoad]);
     facetCounts = loadedFacetCounts;
-    facetAiCounts = loadedFacetAiCounts;
     // 0건이라 번역을 기다려 다시 찾았으면 그 번역을 밝힌다
     if (relevanceLoad) translatedQuery = (await relevanceLoad).translated;
     counts = loadedCounts;
     total = Object.values(counts).reduce((sum, count) => sum + count, 0);
     // Public lists load only what is visible. Rankings retain their separate eligibility.
-    growth = growthLoad ? await growthLoad : null;
-    const span = growth ? { start: growth.offset, count: growth.items.length } : publicCatalogue ? spanOf(matchingTotal) : { start: 0, count: verifiedTotal };
+    const span = publicCatalogue ? spanOf(matchingTotal) : { start: 0, count: verifiedTotal };
     listStart = span.start;
     list = earlyList ? (await earlyList).slice(0, span.count) : await loadList(span.count, span.start);
     resultCount = publicCatalogue ? matchingTotal : list.length;
@@ -663,10 +651,7 @@ export async function HomeContent({ params }: { params: HomeParams }) {
             <FeedTitle id="projects-title" className="row-title">{feedTitle}</FeedTitle>
             {/* 목록이 영어라 한국어 검색어는 영어 낱말로 한 번 더 찾는다. 무엇으로 찾았는지 밝힌다 */}
             {translatedQuery && <p className="row-note">{t("home.translatedSearch", { query: translatedQuery })}</p>}
-            {effectiveSort === "weekly" && <>
-              <p className="row-note">{starGrowthNote(growth?.snapshot ?? null, locale, t)} · <Link prefetch={false} href={metricHref(state, "star-growth", locale)} scroll={false}>{t("nav.methodology")}</Link></p>
-              {growth?.snapshot.status === "ready" && <p className="row-note">{t("growth.cycle", { asOf: formatDateTime(growth.snapshot.asOf, now, locale), next: formatDateTime(growth.snapshot.nextCycle, now, locale) })}</p>}
-            </>}
+            {effectiveSort === "ai" && <p className="row-note">{t("home.aiNote")}</p>}
             {effectiveSort === "recent" && <p className="row-note">{t("home.recentNote")}</p>}
             {effectiveSort === "all-time" && <p className="row-note">{t("home.starsNote")}</p>}
           </div>
@@ -677,7 +662,6 @@ export async function HomeContent({ params }: { params: HomeParams }) {
           counts={facetCounts}
           categoryOrderCounts={counts}
           countsKnown={!dbDown}
-          aiCounts={facetAiCounts}
           total={total}
           resultCount={resultCount}
           approximate={approximate}
@@ -690,8 +674,6 @@ export async function HomeContent({ params }: { params: HomeParams }) {
               <p>{t("error.retry")}</p>
             </div>
           </div>
-        ) : effectiveSort === "weekly" && growth?.snapshot.status !== "ready" && growth?.snapshot.reason !== "filtered-out" ? (
-          <div className="projects-grid"><div className="empty-state"><StarGrowthSummary snapshot={growth?.snapshot ?? null} now={now} /></div></div>
         ) : savedOnly || list.length > 0 ? (
           <ProjectGrid
             now={now.toISOString()}
@@ -747,7 +729,7 @@ export async function HomeContent({ params }: { params: HomeParams }) {
       {!query && <LaunchBand />}
 
       <Suspense>
-        <MethodologyDialog pulse={serializePulse(pulse, now, locale)} aiLevels={aiLevelTotals(aiCounts)} starGrowth={growth?.snapshot ?? (filtered ? undefined : strip?.snapshot ?? null)} />
+        <MethodologyDialog pulse={serializePulse(pulse, now, locale)} aiLevels={aiLevelTotals(aiCounts)} starGrowth={filtered ? undefined : strip?.snapshot ?? null} />
       </Suspense>
     </main></I18nProvider>
   );

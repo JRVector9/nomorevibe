@@ -18,7 +18,7 @@ export const metadata: Metadata = { title: "작업 로그 — NoMoreVibe", robot
 type Props = { searchParams: Promise<{ group?: string; actor?: string; failed?: string; before?: string; target?: string }> };
 
 const count = (value: number) => value.toLocaleString("ko-KR");
-const KIND: Record<string, string> = { github: "GitHub", local: "로컬 로그인", token: "API 토큰" };
+const KIND: Record<string, string> = { github: "GitHub", password: "아이디·비밀번호", local: "로컬 로그인", token: "API 토큰" };
 
 /**
  * 관리자 작업 로그 — 누가 어디서 무엇을 바꿨는지. 읽기만 한다: 이 화면에도, 앱 어디에도 지우는 수단이 없고

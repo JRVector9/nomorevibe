@@ -1,11 +1,11 @@
 import "server-only";
-import { and, count, desc, eq, ne, or } from "drizzle-orm";
+import { and, asc, count, desc, eq, ilike, ne, or, sql } from "drizzle-orm";
 import { db, onPrimary } from "@/lib/db";
 import { products } from "@/lib/db/schema";
 import { productFeedback, type ProductFeedback } from "@/lib/db/product-feedback-schema";
 import { publicUsers } from "@/lib/db/public-user-schema";
 import { githubIssueOutbox } from "@/lib/db/github-issue-outbox-schema";
-import type { FeedbackView } from "./contract";
+import type { FeedbackReviewState, FeedbackView } from "./contract";
 
 export type FeedbackTransaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
 /** Only DB work belongs in this hook; external requests must run after the transaction. */
@@ -85,12 +85,50 @@ export function getFeedback(id: string, viewer: { userId?: number; admin?: boole
   });
 }
 
-export function feedbackReviewQueue(): Promise<FeedbackView[]> {
-  return onPrimary(async () => {
-    const rows = await db.select(selection).from(productFeedback).innerJoin(products, eq(productFeedback.productId, products.id))
+export type FeedbackAdminFilter = { state?: FeedbackReviewState | "all"; q?: string; cursor?: string; limit?: number };
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function feedbackCursor(value?: string): { at: string; id: string } | null {
+  if (!value || value.length > 200) return null;
+  try {
+    const [at, id] = JSON.parse(Buffer.from(value, "base64url").toString("utf8"));
+    if (typeof at !== "string" || !/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{6}Z$/.test(at)
+      || typeof id !== "string" || !UUID.test(id)) return null;
+    const date = new Date(at);
+    if (!Number.isFinite(date.getTime()) || date.getUTCFullYear() < 1 || date.toISOString().slice(0, 19) !== at.slice(0, 19)) return null;
+    return { at, id };
+  } catch { return null; }
+}
+
+/** The administrator list and inbox share this predicate, count and oldest-first preview. */
+export function feedbackAdminQueue(input: FeedbackAdminFilter = {}): Promise<{ count: number; items: FeedbackView[]; nextCursor: string | null }> {
+  const state = ["accepted", "held", "rejected", "all"].includes(input.state ?? "") ? input.state! : "held";
+  const query = input.q?.trim().slice(0, 120);
+  const pattern = query ? `%${query.replace(/[\\%_]/g, "\\$&")}%` : null;
+  const predicate = and(state === "all" ? undefined : eq(productFeedback.reviewState, state), pattern ? or(
+    ilike(products.slug, pattern), ilike(products.name, pattern), ilike(productFeedback.title, pattern),
+    sql`${productFeedback.id}::text ilike ${pattern}`,
+  ) : undefined);
+  const cursor = feedbackCursor(input.cursor);
+  const after = cursor ? sql`(${productFeedback.createdAt}, ${productFeedback.id}) > (${cursor.at}::timestamptz, ${cursor.id}::uuid)` : undefined;
+  const limit = Number.isSafeInteger(input.limit) ? Math.max(1, Math.min(100, input.limit!)) : 50;
+  return onPrimary(() => db.transaction(async (tx) => {
+    const [summary] = await tx.select({ total: count() }).from(productFeedback)
+      .innerJoin(products, eq(productFeedback.productId, products.id))
+      .innerJoin(publicUsers, eq(productFeedback.authorUserId, publicUsers.id)).where(predicate);
+    const rows = await tx.select({ ...selection,
+      cursorAt: sql<string>`to_char(${productFeedback.createdAt} at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`,
+    }).from(productFeedback).innerJoin(products, eq(productFeedback.productId, products.id))
       .innerJoin(publicUsers, eq(productFeedback.authorUserId, publicUsers.id))
-      .leftJoin(githubIssueOutbox, eq(productFeedback.id, githubIssueOutbox.feedbackId)).where(eq(productFeedback.reviewState, "held"))
-      .orderBy(productFeedback.createdAt, productFeedback.id).limit(100);
-    return rows.map((row) => feedbackView(row, true));
-  });
+      .leftJoin(githubIssueOutbox, eq(productFeedback.id, githubIssueOutbox.feedbackId)).where(and(predicate, after))
+      .orderBy(asc(productFeedback.createdAt), asc(productFeedback.id)).limit(limit + 1);
+    const items = rows.slice(0, limit).map((row) => feedbackView(row, true));
+    const last = rows[Math.min(rows.length, limit) - 1];
+    return { count: summary.total, items, nextCursor: rows.length > limit && last
+      ? Buffer.from(JSON.stringify([last.cursorAt, last.feedback.id])).toString("base64url") : null };
+  }, { isolationLevel: "repeatable read", accessMode: "read only" }));
+}
+
+export async function feedbackReviewQueue(): Promise<FeedbackView[]> {
+  return (await feedbackAdminQueue({ state: "held", limit: 100 })).items;
 }
