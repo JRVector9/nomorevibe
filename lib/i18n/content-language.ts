@@ -1,7 +1,14 @@
-/** Original bodies remain unchanged; only strong Latin-script evidence is labelled. */
+const ENGLISH_WORDS = new Set(["the", "with", "your", "that", "this", "from", "for", "and", "into", "you", "helps", "using", "built", "create", "is"]);
+const SOFTWARE_WORDS = new Set(["tool", "tools", "software", "browser", "files", "code", "coding", "search", "notes", "manage", "build", "track", "open", "source", "app", "platform", "data", "server", "developer", "developers", "agent", "agents", "automate", "generate"]);
+
+/** Latin letters alone do not establish English. Shared by display and readiness. */
+export function hasEnglishEvidence(text: string): boolean {
+  if (/[^\x00-\x7f\p{P}\p{S}\p{N}\s]/u.test(text)) return false;
+  const words = new Set(text.toLowerCase().match(/[a-z]+/g) ?? []);
+  const markers = [...words].filter((word) => ENGLISH_WORDS.has(word)).length;
+  return markers >= 2 || (markers >= 1 && [...words].filter((word) => SOFTWARE_WORDS.has(word)).length >= 2);
+}
+
 export function englishLang(text: string | null | undefined): "en" | undefined {
-  if (!text || /[\p{Script=Hangul}\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}]/u.test(text)) return undefined;
-  const letters = text.match(/\p{L}/gu) ?? [];
-  const latin = letters.filter((letter) => /[A-Za-z]/.test(letter)).length;
-  return letters.length >= 3 && latin / letters.length >= 0.9 ? "en" : undefined;
+  return text && hasEnglishEvidence(text) ? "en" : undefined;
 }

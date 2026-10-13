@@ -89,7 +89,7 @@ describe("요청 폼(A11Y-01·A11Y-03)", () => {
 describe("영어 원문 표시(A11Y-06)", () => {
   it("한글이 없고 거의 영문 알파벳이면 en, 아니면 표시하지 않는다", () => {
     expect(englishLang("Infisical is the all-in-one identity security platform.")).toBe("en");
-    expect(englishLang("Next.js 16 + Supabase starter")).toBe("en");
+    expect(englishLang("Next.js 16 + Supabase starter")).toBeUndefined();
     expect(englishLang("한국어 소개입니다")).toBeUndefined();
     expect(englishLang("Claude Code로 만든 도구")).toBeUndefined();
     expect(englishLang("日本語のツール")).toBeUndefined();

@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { isLocale, type Locale } from "@/lib/i18n/locales";
 import type { ProductTranslation, ProductTranslationField, ProductTranslationLocale } from "@/lib/db/schema";
+import { hasEnglishEvidence } from "@/lib/i18n/content-language";
 
 export const PRODUCT_TRANSLATION_POLICY = "public-fields-v1";
 export const PRODUCT_TRANSLATION_MAX_ATTEMPTS = 4;
@@ -29,8 +30,6 @@ const SCRIPT_PAIRS = ["软軟", "码碼", "数數", "据據", "户戶", "网網"
 const HANS = new RegExp(`[${SCRIPT_PAIRS.map((pair) => pair[0]).join("")}]`, "u");
 const HANT = new RegExp(`[${SCRIPT_PAIRS.map((pair) => pair[1]).join("")}]`, "u");
 const CHINESE_WORDS = /软件|軟體|代码|代碼|数据|數據|用户|用戶|应用|應用|支持|管理|工具|平台|文件|自动|自動|创建|建立/gu;
-const ENGLISH_WORDS = new Set(["the", "with", "your", "that", "this", "from", "for", "and", "into", "you", "helps", "using", "built", "create"]);
-const ENGLISH_SOFTWARE_WORDS = new Set(["tool", "tools", "software", "browser", "files", "code", "coding", "search", "notes", "manage", "build", "track", "open", "source", "app", "platform", "data", "server", "developer", "developers", "agent", "agents", "automate", "generate"]);
 
 /** Conservative evidence only; ASCII, generic Han and short names remain unknown. */
 export function detectTranslationSourceLocale(text: string): Locale | null {
@@ -44,10 +43,7 @@ export function detectTranslationSourceLocale(text: string): Locale | null {
     if (HANT.test(text) && !HANS.test(text)) return "zh-Hant";
     return null;
   }
-  if (/[^\x00-\x7f\p{P}\p{S}\p{N}\s]/u.test(text)) return null;
-  const markers = new Set((text.toLowerCase().match(/[a-z]+/g) ?? []).filter((word) => ENGLISH_WORDS.has(word)));
-  const softwareWords = new Set((text.toLowerCase().match(/[a-z]+/g) ?? []).filter((word) => ENGLISH_SOFTWARE_WORDS.has(word)));
-  return markers.size >= 2 || (markers.size >= 1 && softwareWords.size >= 2) ? "en" : null;
+  return hasEnglishEvidence(text) ? "en" : null;
 }
 
 export type ProductTranslationSelection = {
