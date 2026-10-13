@@ -3,7 +3,7 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { headers } from "next/headers";
 import { revalidatePath } from "next/cache";
-import { adminLocalLoginEnabled, authSecret, currentAdmin, LOCAL_ADMIN_LOGIN } from "@/lib/auth/admin";
+import { adminLocalLoginEnabled, adminOrigin, authSecret, currentAdmin, LOCAL_ADMIN_LOGIN } from "@/lib/auth/admin";
 import { ProductTranslationAdminError, retryProductTranslation } from "@/lib/domain/products/translation-admin";
 import { isProductTranslationField } from "@/lib/domain/products/translation-policy";
 import type { ProductTranslationLocale } from "@/lib/db/schema";
@@ -21,8 +21,7 @@ export async function retryTranslationAction(_previous: TranslationActionState, 
     const admin = await currentAdmin();
     if (!admin) throw new Error("unauthorized");
     const secret = authSecret(), origin = (await headers()).get("origin");
-    let configuredOrigin: string | null = null;
-    try { configuredOrigin = new URL(process.env.NEXT_PUBLIC_SITE_URL ?? "").origin; } catch {}
+    const configuredOrigin = adminOrigin();
     const nonce = field(form, "csrfToken"), expiresAt = Number(field(form, "csrfExpiresAt")), now = Math.floor(Date.now() / 1000);
     const local = adminLocalLoginEnabled() && admin.login === LOCAL_ADMIN_LOGIN;
     if (!secret || !configuredOrigin || origin !== configuredOrigin || !Number.isSafeInteger(expiresAt) || expiresAt <= now

@@ -67,7 +67,10 @@ vi.mock("@/lib/domain/accounts/request-auth", () => {
 vi.mock("@/lib/domain/feedback/submit", () => ({ submitFeedback: requestMocks.submit }));
 vi.mock("@/lib/domain/feedback/repository", () => ({ listProductFeedbackWithTotal: requestMocks.productList, listMyFeedback: requestMocks.mine, getFeedback: requestMocks.lookup }));
 vi.mock("@/lib/domain/feedback/review", () => ({ reviewFeedback: requestMocks.review }));
-vi.mock("@/lib/auth/admin", () => ({ currentAdmin: requestMocks.admin, authSecret: () => "a".repeat(32), adminLocalLoginEnabled: () => false, LOCAL_ADMIN_LOGIN: "local" }));
+vi.mock("@/lib/auth/admin", async () => {
+  const { adminOrigin } = await import("@/lib/auth/admin-access");
+  return { currentAdmin: requestMocks.admin, adminOrigin, authSecret: () => "a".repeat(32), adminLocalLoginEnabled: () => false, LOCAL_ADMIN_LOGIN: "local" };
+});
 vi.mock("next/headers", () => ({ headers: requestMocks.headerList }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 
@@ -155,6 +158,7 @@ describe("feedback request boundaries", () => {
     const admin = { login: "reviewer", exp: Math.floor(Date.now() / 1000) + 3600 };
     requestMocks.admin.mockResolvedValue(admin);
     vi.stubEnv("NEXT_PUBLIC_SITE_URL", "https://nomorevibe.example");
+    vi.stubEnv("ADMIN_ORIGIN", "https://admin.nomorevibe.example");
     const form = new FormData();
     form.set("id", valid.requestId); form.set("expectedReviewState", "held"); form.set("decision", "accepted"); form.set("reason", "검토 완료");
     form.set("csrfExpiresAt", String(admin.exp));
@@ -164,6 +168,8 @@ describe("feedback request boundaries", () => {
     await expect(reviewFeedbackAction(form)).rejects.toThrow("forbidden");
     expect(requestMocks.review).not.toHaveBeenCalled();
     requestMocks.headerList.mockResolvedValue(new Headers({ origin: "https://nomorevibe.example" }));
+    await expect(reviewFeedbackAction(form)).rejects.toThrow("forbidden");
+    requestMocks.headerList.mockResolvedValue(new Headers({ origin: "https://admin.nomorevibe.example" }));
     form.set("csrfExpiresAt", String(admin.exp - 1));
     await expect(reviewFeedbackAction(form)).rejects.toThrow("forbidden");
     form.set("csrfExpiresAt", String(admin.exp));

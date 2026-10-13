@@ -3,7 +3,7 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { headers } from "next/headers";
 import { revalidatePath } from "next/cache";
-import { adminLocalLoginEnabled, authSecret, currentAdmin, LOCAL_ADMIN_LOGIN } from "@/lib/auth/admin";
+import { adminLocalLoginEnabled, adminOrigin, authSecret, currentAdmin, LOCAL_ADMIN_LOGIN } from "@/lib/auth/admin";
 import { reviewFeedback } from "@/lib/domain/feedback/review";
 import { FeedbackError } from "@/lib/domain/feedback/contract";
 
@@ -12,7 +12,7 @@ export async function reviewFeedbackAction(form: FormData): Promise<void> {
   if (!admin) throw new Error("unauthorized");
   const secret = authSecret();
   const origin = (await headers()).get("origin");
-  const configuredOrigin = process.env.NEXT_PUBLIC_SITE_URL ? new URL(process.env.NEXT_PUBLIC_SITE_URL).origin : null;
+  const configuredOrigin = adminOrigin();
   if (!secret || !configuredOrigin || origin !== configuredOrigin) throw new Error("forbidden");
   const nonce = form.get("csrfToken");
   const expiresAt = Number(form.get("csrfExpiresAt"));
