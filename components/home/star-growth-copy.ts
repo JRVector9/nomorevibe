@@ -12,4 +12,3 @@ export function starGrowthNote(snapshot: StarGrowthSnapshot | null, locale: Loca
   return t ? t("growth.note", { min: formatNumber(min, locale), max: formatNumber(max, locale) })
     : `스타 ${formatCount(min)}~${formatCount(max)}개 · 직전 8시간 회차 대비 증가량순 · 8시간마다 갱신`;
 }
-

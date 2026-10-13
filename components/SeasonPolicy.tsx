@@ -1,17 +1,18 @@
 import type { RankingPolicy } from "@/lib/domain/ranking/policy";
 import type { SeasonSummary } from "@/lib/domain/ranking/view";
-import { getTranslator } from "@/lib/i18n/dictionary";
+import { createTranslator, type Dictionary } from "@/lib/i18n/messages";
+import { browse as koreanBrowse } from "@/messages/ko/browse";
 import { formatNumber, formatDateTime } from "@/lib/i18n/format";
 import type { Locale } from "@/lib/i18n/locales";
 
 type SeasonPolicyProps =
-  | { policy: RankingPolicy; locale?: Locale }
+  | { policy: RankingPolicy; locale?: Locale; messages?: Dictionary["browse"] }
   /** now 는 날짜의 "올해"를 정한다 — 화면이 읽은 시각을 넘긴다(lib/format/time.ts formatPublicDateTime) */
-  | { season: SeasonSummary; now: Date; locale?: Locale };
+  | { season: SeasonSummary; now: Date; locale?: Locale; messages?: Dictionary["browse"] };
 
-export async function SeasonPolicy(props: SeasonPolicyProps) {
+export function SeasonPolicy(props: SeasonPolicyProps) {
   const locale=props.locale ?? "ko";
-  const t=await getTranslator(locale,"browse");
+  const t=createTranslator("browse",props.messages ?? koreanBrowse);
   const count=(n:number)=>formatNumber(n,locale);
   const projects=(n:number)=>t("count.projects",{count:count(n)});
   const days=(n:number)=>t("season.days",{count:count(n)});

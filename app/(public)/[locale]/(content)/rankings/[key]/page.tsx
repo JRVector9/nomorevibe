@@ -88,7 +88,7 @@ export default async function RankingSeasonPage({
           <h2 className="text-[14px] font-semibold">{t("nav.methodology")}</h2>
         </summary>
         <div className="border-t border-line p-5">
-          <SeasonPolicy locale={locale} season={result.season} now={new Date()} />
+          <SeasonPolicy locale={locale} messages={dictionary} season={result.season} now={new Date()} />
         </div>
       </details>
     </main></I18nProvider>

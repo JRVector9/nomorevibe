@@ -1,7 +1,8 @@
 import Link from "next/link";
 import { seasonLabel } from "@/lib/domain/ranking/season-label";
 import { RANKING_STALE_MS, type SeasonSummary } from "@/lib/domain/ranking/view";
-import { getTranslator } from "@/lib/i18n/dictionary";
+import { createTranslator, type Dictionary } from "@/lib/i18n/messages";
+import { browse as koreanBrowse } from "@/messages/ko/browse";
 import { formatNumber, formatDateTime, formatRelativeTime } from "@/lib/i18n/format";
 import type { Locale } from "@/lib/i18n/locales";
 import type { Translator } from "@/lib/i18n/messages";
@@ -29,19 +30,21 @@ function snapshotAge(refreshedAt: Date | null, now: Date, locale: Locale, t: Tra
   return `${t("season.snapshot", { time: formatRelativeTime(refreshedAt,now,locale) })}${age > RANKING_STALE_MS ? ` · ${t("season.stale")}` : ""}`;
 }
 
-export async function SeasonFooter({
+export function SeasonFooter({
   season,
   latestClosed,
   now,
   locale = "ko",
+  messages,
 }: {
   locale?: Locale;
+  messages?: Dictionary["browse"];
   season: SeasonSummary;
   /** 순위에 오른 제품이 있는 지난 시즌만 — 빈 시즌으로는 보내지 않는다 */
   latestClosed: SeasonSummary | null;
   now: Date;
 }) {
-  const t = await getTranslator(locale,"browse");
+  const t = createTranslator("browse", messages ?? koreanBrowse);
   return (
     <div className="mb-4 flex flex-wrap items-baseline gap-x-3 gap-y-1 border-b border-line pb-4">
       <span className="font-bold text-fg">{translatedSeason(season.key,seasonLabel(season.key),t)}</span>
