@@ -2,7 +2,7 @@ import { defineCatalog } from "@/lib/i18n/messages";
 import type { browse as schema } from "@/messages/ko/browse";
 
 export const browse = defineCatalog<typeof schema>()({
-  "sort.weekly": "8小时星数飙升",
+  "sort.ai": "使用AI制作",
   "sort.recent": "最新收录",
   "sort.allTime": "GitHub星数最多",
   "sort.open": "有代码仓库",
@@ -29,6 +29,7 @@ export const browse = defineCatalog<typeof schema>()({
   "home.searching": "正在搜索…",
   "home.loading": "正在加载…",
   "home.translatedSearch": "同时搜索了英文“{query}”。",
+  "home.aiNote": "在代码仓库中发现AI编程工具痕迹的公开项目，按最近收录排序。",
   "home.recentNote": "按本站收录或验证时间排序，已验证项目优先。这与GitHub仓库创建时间不同。",
   "home.starsNote": "按GitHub总星数排序。",
   "home.unclaimed": "等待创建者确认的项目",
@@ -155,7 +156,7 @@ export const browse = defineCatalog<typeof schema>()({
   "method.growthTitle": "最近8小时星标增长 — 与上一轮8小时观测值比较。",
   "method.growthEligibility": "比较公开项目的正常公开GitHub仓库。仅使用韩国时间00:00、08:00和16:00周期前{window}小时内的成功观测，两次实际观测间隔须为{min}至{max}小时。本轮星标为50至1,999且净增至少1的项目才会展示。",
   "method.growthFormula": "8小时增量 = 本轮星标 − 8小时前周期星标",
-  "method.growthOrder": "先按增量，再按本轮星标，最后按项目地址排序。首页前5项、8小时增长标签和完整列表使用相同周期、条件和顺序。分类和AI筛选仅缩小合格范围。卡片优先显示“8小时 +增量”，星标总数为辅助信息。悬停数字或使用辅助技术可查看两次实际观测时间。",
+  "method.growthOrder": "先按增量，再按本轮星标，最后按项目地址排序。首页星数飙升前5项与完整飙升列表使用相同周期、条件和顺序。下方浏览标签显示独立的公开项目列表。飙升卡片优先显示“8小时 +增量”，星标总数为辅助信息。悬停数字或使用辅助技术可查看两次实际观测时间。",
   "method.observation": "观测",
   "method.cycleTime": "基准周期 KST",
   "method.actualTime": "实际成功观测时间 KST",

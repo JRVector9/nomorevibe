@@ -2,7 +2,7 @@ import { defineCatalog } from "@/lib/i18n/messages";
 import type { browse as schema } from "@/messages/ko/browse";
 
 export const browse = defineCatalog<typeof schema>()({
-  "sort.weekly": "8小時星數飆升",
+  "sort.ai": "使用AI製作",
   "sort.recent": "最新收錄",
   "sort.allTime": "GitHub星數最多",
   "sort.open": "有程式碼儲存庫",
@@ -29,6 +29,7 @@ export const browse = defineCatalog<typeof schema>()({
   "home.searching": "正在搜尋…",
   "home.loading": "正在載入…",
   "home.translatedSearch": "同時搜尋了英文「{query}」。",
+  "home.aiNote": "在程式碼倉庫中發現AI程式設計工具痕跡的公開專案，依最近收錄排序。",
   "home.recentNote": "依本站收錄或驗證時間排序，已驗證專案優先。這與GitHub儲存庫建立時間不同。",
   "home.starsNote": "依GitHub總星數排序。",
   "home.unclaimed": "等待創作者確認的專案",
@@ -155,7 +156,7 @@ export const browse = defineCatalog<typeof schema>()({
   "method.growthTitle": "最近8小時星標成長 — 與上一輪8小時觀測值比較。",
   "method.growthEligibility": "比較公開專案的正常公開GitHub儲存庫。僅使用韓國時間00:00、08:00和16:00週期前{window}小時內的成功觀測，兩次實際觀測間隔須為{min}至{max}小時。本輪星標為50至1,999且淨增至少1的專案才會顯示。",
   "method.growthFormula": "8小時增量 = 本輪星標 − 8小時前週期星標",
-  "method.growthOrder": "先依增量，再依本輪星標，最後依專案網址排序。首頁前5項、8小時成長標籤和完整列表使用相同週期、條件和順序。分類和AI篩選僅縮小合格範圍。卡片優先顯示「8小時 +增量」，星標總數為輔助資訊。懸停數字或使用輔助技術可查看兩次實際觀測時間。",
+  "method.growthOrder": "先依增量，再依本輪星標，最後依專案網址排序。首頁星數飆升前5項與完整飆升列表使用相同週期、條件和順序。下方瀏覽標籤顯示獨立的公開專案列表。飆升卡片優先顯示「8小時 +增量」，星標總數為輔助資訊。懸停數字或使用輔助技術可查看兩次實際觀測時間。",
   "method.observation": "觀測",
   "method.cycleTime": "基準週期 KST",
   "method.actualTime": "實際成功觀測時間 KST",

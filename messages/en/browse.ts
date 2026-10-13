@@ -2,7 +2,7 @@ import { defineCatalog } from "@/lib/i18n/messages";
 import type { browse as schema } from "@/messages/ko/browse";
 
 export const browse = defineCatalog<typeof schema>()({
-  "sort.weekly": "8-hour star growth",
+  "sort.ai": "Made with AI",
   "sort.recent": "Recently listed",
   "sort.allTime": "Most GitHub stars",
   "sort.open": "With repository",
@@ -29,6 +29,7 @@ export const browse = defineCatalog<typeof schema>()({
   "home.searching": "Searching…",
   "home.loading": "Loading…",
   "home.translatedSearch": "Also searched for “{query}” in English.",
+  "home.aiNote": "Public projects with traces of AI coding tools in their repositories, sorted by newest listing.",
   "home.recentNote": "Based on service listing or verification time; verified projects appear first. This is separate from GitHub repository creation.",
   "home.starsNote": "Sorted by total GitHub stars.",
   "home.unclaimed": "Projects awaiting their maker",
@@ -155,7 +156,7 @@ export const browse = defineCatalog<typeof schema>()({
   "method.growthTitle": "8-hour star growth — compared with observations from the previous cycle.",
   "method.growthEligibility": "We compare healthy public GitHub repositories of public projects. Only successful observations within {window} hour(s) before the 00:00, 08:00 and 16:00 KST cycles are used; the actual interval between observations must be {min}–{max} hours. Projects must have 50–1,999 stars this cycle and gain at least one.",
   "method.growthFormula": "8-hour gain = stars this cycle − stars in the cycle 8 hours earlier",
-  "method.growthOrder": "Sorted by gain, then current stars, then project URL. The home top five, the 8-hour growth tab and the full list use the same cycle, eligibility and order. Category and AI filters narrow only this eligible pool. Cards emphasize “8h +gain” with total stars secondary. Hovering the number, or using assistive technology, exposes both actual observation times.",
+  "method.growthOrder": "Sorted by gain, then current stars, then project URL. The home growth top five and the full rising list use the same cycle, eligibility and order. The browse tabs below show a separate public project catalogue. Growth cards emphasize “8h +gain” with total stars secondary. Hovering the number, or using assistive technology, exposes both actual observation times.",
   "method.observation": "Observation",
   "method.cycleTime": "Cycle time KST",
   "method.actualTime": "Actual successful observation time KST",
