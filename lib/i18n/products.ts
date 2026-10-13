@@ -1,5 +1,6 @@
 import "server-only";
 import { after } from "next/server";
+import { onReplica } from "@/lib/db";
 import type { Locale } from "./locales";
 import { readProductTranslations, requestProductTranslations, selectProductTranslation,
   type ProductTranslation, type ProductTranslationField, type ProductTranslationSource } from "@/lib/domain/products/translations";
@@ -25,7 +26,7 @@ export async function readTranslationsForProducts(products: readonly PublicTrans
   const sources = products.filter((product) => Number.isSafeInteger(product.id) && product.id! > 0).map(productTranslationSource);
   const batches: ProductTranslation[][] = [];
   for (let start = 0; start < sources.length; start += 80) {
-    batches.push(await readProductTranslations(sources.slice(start, start + 80), locale));
+    batches.push(await onReplica(() => readProductTranslations(sources.slice(start, start + 80), locale)));
   }
   return batches.flat();
 }
