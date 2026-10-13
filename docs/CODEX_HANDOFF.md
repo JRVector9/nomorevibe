@@ -18,7 +18,7 @@ HTTP200/lang/asset만 보는 처음 검사로 홈 Loading 오류를 놓친 접�
 
 ## Remaining work / exact commands
 
-운영 배포·기본 공개 읽기·13앱 검증·병렬 감사/재리뷰는 완료했다. 신규 source/private helper의 capture/plan/web/verify 성공 단계를 반복하지 않는다. 15:07 KST 번역 진행은 ready62/pending77/검수실패11/network0, intro2100/unleased였다. docs commit/push→정상 PR/최신base 필수CI→병합→사용자 working tree의 tracked clean 확인 후 안전한 ff-only 동기화→최종 보고만 남았다. 관리자 ADM01~16은 후속 제안이며 새 지시 없이 구현하지 않는다. 사용자 실연동·장기관측·외부경보·격리복원 PENDING는 완료 처리하지 않는다.
+운영 배포·기본 공개 읽기·13앱 검증·병렬 감사/재리뷰는 완료했다. 신규 source/private helper의 capture/plan/web/verify 성공 단계를 반복하지 않는다. 15:07 KST 번역 진행은 ready62/pending77/검수실패11/network0, intro2100/unleased였다. docs81b756c commit/push와 PR409를 만들었다. 첫 CI38355235157은 계정 메모의 EOF 추가 빈줄1건으로 scope/check 실패했다. 새 미추적 문서가 처음 working-tree diff 검사에 포함되지 않은 점을 확인하고 빈줄을 제거했다. 전체 base-to-working-tree 및 staged diff 검사 후 수정 커밋/푸시하고 PR409 최신 head 필수CI→정상 병합→사용자 working tree의 tracked clean 확인/안전한 ff-only 동기화→최종 보고만 남았다. 관리자 ADM01~16은 후속 제안이며 새 지시 없이 구현하지 않는다. 사용자 실연동·장기관측·외부경보·격리복원 PENDING는 완료 처리하지 않는다.
 
 ```sh
 cd /private/tmp/nomorevibe-admin-audit-final-20261013

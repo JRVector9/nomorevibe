@@ -118,4 +118,3 @@ docs/operations/2026-09-22-admin-deployment.md:21은 당시 관리자 익명 접
 - 테스트: **실행하지 않음**. unit/integration/E2E/build/typegen/lint/migration/DB/HTTP/OAuth/GitHub실쓰기 없음.
 - 운영: **이 담당자는 접근하지 않음**. 부모가 별도로 실제 조회한 양웹 local 우회 활성화·무쿠키 public 관리자 HTTP200을 인용했다. TailscaleACL/관리자실로그인/실외부전송/실제관리자mutation/현재번역처리량·SEO색인은 이 담당자 검증없음.
 - 작업범위: 공유repo와 docs/CODEX_HANDOFF.md 수정안함(부모가 major phase handoff를 담당). 이메모는 구현지시·배포승인이 아니다.
-
