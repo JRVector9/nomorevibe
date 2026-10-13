@@ -28,10 +28,10 @@ const TABS: readonly HomeSort[] = ["weekly", "recent", "all-time"];
 
 /**
  * 분야 알약에 올릴 분야 — 개수 순, 기본 목록에서 빼는 분야(개인 프로필, 계약 C3)는 칩에도 없다.
- * 고른 분야는 개수가 0이어도 남긴다(지금 어디에 있는지 보여야 한다).
+ * 0건 분야도 위치를 유지하고 선택을 해제할 수 있다.
  */
-export function chipCategories(counts: Record<string, number>, selected?: string): string[] {
-  return CATEGORIES.filter((category) => !hiddenByDefault(category) && ((counts[category] ?? 0) > 0 || selected === category))
+export function chipCategories(counts: Record<string, number>): string[] {
+  return CATEGORIES.filter((category) => !hiddenByDefault(category))
     .sort((a, b) => (counts[b] ?? 0) - (counts[a] ?? 0));
 }
 
@@ -39,6 +39,7 @@ export function BrowseFilters({
   state,
   counts,
   aiCounts = null,
+  categoryOrderCounts = counts,
   total,
   resultCount,
   listLabel,
@@ -47,6 +48,8 @@ export function BrowseFilters({
 }: {
   state: BrowseState;
   counts: Record<string, number>;
+  /** 공개 전체 집계로 분야 순서를 고정한다. 숫자는 현재 목록 자격의 counts를 쓴다. */
+  categoryOrderCounts?: Record<string, number>;
   /** 분야·단계마다의 공개 수 — 못 읽었으면 null(칩은 두고 수만 숨긴다) */
   aiCounts?: readonly AiLevelCount[] | null;
   total: number;
@@ -59,14 +62,14 @@ export function BrowseFilters({
   rankingReady?: boolean;
 }) {
   const narrowed = Boolean(state.query || state.category || state.builder || state.observedTool || state.ai);
-  // 분야 알약 수는 전체 공개 수다 — 검색어·도구 흔적으로 좁힌 결과와 다른 수라 그동안은 숨긴다(UX-12)
+  // 검색·도구·빌더 상태에서는 기존 정책대로 수를 숨긴다.
   const countable = !(state.query || state.builder || state.observedTool);
   // '만든 방식'과 분야는 서로의 칩 수를 좁힌다 — 같은 집계(분야×단계) 하나로 세어 누른 목록의 수와 맞는다
   const showCounts = countable && !(state.ai && !aiCounts);
   const categoryCounts = state.ai && aiCounts ? categoryCountsForAi(aiCounts, state.ai) : counts;
   const aiChipCounts = countable && aiCounts ? aiFilterCounts(aiCounts, state.category) : null;
   // 알약의 차례·목록은 전체 수로 정한다 — 만든 방식을 켜고 끌 때 분야 알약이 사라지거나 자리를 바꾸지 않게
-  const categories = chipCategories(counts, state.category);
+  const categories = chipCategories(categoryOrderCounts);
   // 검색어가 있으면 기본 순서(관련도)를 맨 앞 탭으로 둔다 — 없으면 아무 탭도 켜지지 않았다(UX-12)
   const tabs: readonly HomeSort[] = state.query ? ["relevance", ...TABS] : TABS;
 
@@ -105,7 +108,7 @@ export function BrowseFilters({
         <nav className="chips chips-filter" aria-label="분야">
           <Link prefetch={false} href={hrefWith(state, { category: undefined })} className={`chip${state.category ? "" : " chip-dark"}`} aria-current={state.category ? undefined : "true"}>전체</Link>
           {categories.map((category) => (
-            <Link prefetch={false} key={category} href={hrefWith(state, { category })} className={`chip${state.category === category ? " chip-dark" : ""}`} aria-current={state.category === category ? "true" : undefined}>
+            <Link prefetch={false} key={category} href={hrefWith(state, { category: state.category === category ? undefined : category })} className={`chip${state.category === category ? " chip-dark" : ""}`} aria-current={state.category === category ? "true" : undefined}>
               {CATEGORY_LABELS[category as keyof typeof CATEGORY_LABELS]}
               {showCounts && <> <span className="chip-count">{formatCount(categoryCounts[category] ?? 0)}</span></>}
             </Link>
