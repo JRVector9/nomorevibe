@@ -4,6 +4,8 @@
 양 웹의 자격 설정과 실제 로그인이 검증되기 전에는 내부 관리자 접속이 완료된 것이 아니다.
 2026-10-13 확인된 운영은 `ADMIN_LOCAL_LOGIN=0`이며 이 ingress와 비밀번호 설정은 아직 없다.
 
+[PR410 운영 배포 기록](2026-10-13-admin-essential-production-rollout.md): 코드와 공개 관리자404 차단은 배포·검증했다. 실제 Tailscale CLI는 양 host의 `/opt/homebrew/bin/tailscale`에 있고 Running이지만 Serve/ACL·proxy·자격 설치는 후속이다.
+
 ## 앱 설정
 
 양 웹의 모든 복제본에 같은 값을 설치한다. 비밀값은 Dokploy의 비밀 설정으로 전달하고

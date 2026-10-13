@@ -6,6 +6,21 @@
 
 ---
 
+## 관리자 private 접속 설치 — 2026-10-13
+
+**완료한 것:** PR410 코드와 양 웹 배포, 전체 CI·공개 페이지·13앱 런타임 검증을
+[운영 기록](docs/operations/2026-10-13-admin-essential-production-rollout.md)에 남겼다.
+공개·직접 컨테이너에서 가짜 ingress/Host/XFF/쿠키로 관리 경로를 열 수 없으며404다.
+production local 우회는 금지한다.
+
+**남은 설치:** Tailscale는 양 host에서 Running이지만 Serve/지정 운영자 ACL·private
+proxy·직접 origin 방화벽·양 웹의 ADMIN_ORIGIN/INGRESS_SECRET/USERNAME/PASSWORD_HASH
+설치와 실제 로그인·로그아웃·관리 action 확인은 아직 없다.
+[접속 설치 계약](docs/operations/admin-private-access.md)을 따라 적용하고 증거를 남긴다.
+이를 해결하려고 ADMIN_LOCAL_LOGIN을 운영에 켜지 않는다.
+
+---
+
 ## GitHub 스타·피드백 실연동 파일럿 — 2026-10-12
 
 **남은 확인:** 사용자가 직접 수행할 실제 GitHub 가입·로그인, 개인 스타 등록/취소,
