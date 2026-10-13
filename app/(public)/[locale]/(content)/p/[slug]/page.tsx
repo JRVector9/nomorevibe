@@ -23,10 +23,14 @@ import { productShareImage, shareMetadata } from "@/lib/copy/share";
 import { pageTitle } from "@/lib/copy/brand";
 import { getProductDetail, getProductIdentity } from "@/lib/domain/products/detail-view";
 import { productIndexable } from "@/lib/domain/products/indexing";
-import { categoryLabel } from "@/lib/domain/products/labels";
+import { translatedCategory } from "@/components/home/i18n";
+import { I18nProvider } from "@/lib/i18n/context";
+import { getDictionary, getTranslator } from "@/lib/i18n/dictionary";
+import type { Locale } from "@/lib/i18n/locales";
+import { getRequestLocale } from "@/lib/i18n/server";
+import { localePath } from "@/lib/i18n/routing";
+import { localizeProductList } from "@/lib/i18n/products";
 import { publicRead } from "@/lib/domain/products/public-reads";
-import { countProducts } from "@/lib/domain/products/repository";
-import type { Category } from "@/lib/domain/products/schema";
 import { productJsonLd, serializeJsonLd } from "@/lib/seo/product-json-ld";
 import { siteOrigin } from "@/lib/site";
 import { githubFeedbackDeliveryEnabled, githubStarEnabled, productFeedbackEnabled } from "@/lib/domain/github-integration/flags";
@@ -42,9 +46,10 @@ const identityOf = (slug: string) => publicRead("detail", ["identity", slug], ()
 
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { slug } = await params;
+  const locale = await getRequestLocale();
   const product = await identityOf(slug);
   // 없는 제품의 404 탭 제목이 홈 제목으로 남지 않게 — not-found.tsx 의 제목과 같은 말(UX-10·UX-39)
-  if (!product) return { title: pageTitle("찾는 프로젝트가 없습니다") };
+  if (!product) return { title: pageTitle((await getTranslator(locale, "detail"))("notFound.title")) };
   // 한국어 소개가 있으면 그것으로 — 검색 결과와 공유 미리보기에 영어 원문이 그대로 뜨지 않게(SEO-05)
   const description = product.taglineKo?.trim() || product.tagline;
   return {
@@ -64,95 +69,102 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
  */
 export default async function ProductPage({ params }: Props) {
   const { slug } = await params;
+  const locale = await getRequestLocale();
   const identity = await identityOf(slug);
   if (!identity) notFound();
+  const dictionary = await getDictionary(locale, "detail");
   return (
-    <Suspense fallback={<DetailSkeleton />}>
-      <ProductDetail slug={slug} category={identity.category} />
-    </Suspense>
+    <I18nProvider locale={locale} dictionaries={{ detail: dictionary }}>
+      <Suspense fallback={<DetailSkeleton />}>
+        <ProductDetail slug={slug} locale={locale} />
+      </Suspense>
+    </I18nProvider>
   );
 }
 
-async function ProductDetail({ slug, category }: { slug: string; category: string }) {
-  // '모두 보기'의 숫자일 뿐 — 세다가 실패해도 페이지는 그대로 선다. 기본 정보를 받자마자 상세와 함께 센다 —
-  // 상세를 다 받은 뒤 세던 한 왕복을 겹친다(2026-10-06)
-  // 분야 전체가 아니라 그 분야에서 지금 뜨는 수 — 링크가 여는 홈 목록이 세는 것과 같은 조건이다
-  const risingLoad = publicRead("count", ["category-rising", category], () => countProducts({ statuses: ["verified", "seeded"], excludeDown: true, rising: true, category: category as Category })).catch(() => null);
+async function ProductDetail({ slug, locale }: { slug: string; locale: Locale }) {
   // 기본 정보를 읽은 뒤 그사이 내려갔으면 여기서 404 화면(응답은 이미 흘렀으므로 상태는 200, noindex 가 붙는다)
   const detail = await publicRead("detail", ["detail", slug], () => getProductDetail(slug));
   if (!detail) notFound();
 
+  const [t, labels, localized, related] = await Promise.all([
+    getTranslator(locale, "detail"), getTranslator(locale, "labels"),
+    localizeProductList([detail.product], locale, ["tagline", "description"]),
+    localizeProductList(detail.related, locale),
+  ]);
+  const product = localized[0];
+  const categoryName = translatedCategory(product.category, labels);
   const languages = (detail.repository?.facts?.languages ?? []).slice(0, 2).map((item) => item.name);
-  const risingTotal = await risingLoad;
+  const risingTotal = detail.relatedTotal ?? null;
   const githubDeliveryAvailable = githubFeedbackDeliveryEnabled()
-    && Boolean((await getProductGithubBinding(detail.product.id).catch(() => null))?.enabled);
+    && Boolean((await getProductGithubBinding(product.id).catch(() => null))?.enabled);
   // 날짜의 '올해'를 정하는 시각 — 업데이트 목록(클라이언트)도 서버가 읽은 이 값으로 그린다
   const now = new Date();
   // 구조화 데이터(SEO-06) — 우리가 가진 사실만, 화면의 경로 nav 와 같은 빵부스러기. 소개는 메타 description 과 같은 값
   const jsonLd = productJsonLd({
-    origin: siteOrigin(), slug, name: detail.product.name, description: detail.product.taglineKo?.trim() || detail.product.tagline,
-    url: detail.product.url, category: detail.product.category, categoryName: categoryLabel(detail.product.category),
-    categoryPath: categoryHref(detail.product.category), accessMode: detail.product.accessMode,
-    repoUrl: detail.product.repoUrl, repoGone: detail.product.repoGone, image: detail.product.ogImage, languages,
+    origin: siteOrigin(), slug, name: product.name, description: product.translation?.ready ? product.translation.text : locale === "ko" ? product.taglineKo?.trim() || product.tagline : product.tagline,
+    url: product.url, category: product.category, categoryName,
+    categoryPath: localePath(locale, categoryHref(product.category)), accessMode: product.accessMode,
+    pagePath: localePath(locale, `/p/${slug}`), homePath: localePath(locale, "/"), homeName: t("page.discover"),
+    repoUrl: product.repoUrl, repoGone: product.repoGone, image: product.ogImage, languages,
   });
 
   return (
     <main className="wrap pb-14">
       <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: serializeJsonLd(jsonLd) }} />
       <DetailEntry slug={slug} />
-      <nav aria-label="경로" className="flex items-center gap-2 pt-4 text-[13px] text-fg-2">
-        <Link prefetch={false} href="/" className="shrink-0 hover:text-fg">발견하기</Link>
+      <nav aria-label={t("page.breadcrumb")} className="flex items-center gap-2 pt-4 text-[13px] text-fg-2">
+        <Link prefetch={false} href={localePath(locale, "/")} className="shrink-0 hover:text-fg">{t("page.discover")}</Link>
         <span aria-hidden>›</span>
-        <Link prefetch={false} href={categoryHref(detail.product.category, { sort: "recent" })} className="shrink-0 hover:text-fg">{categoryLabel(detail.product.category)}</Link>
+        <Link prefetch={false} href={localePath(locale, categoryHref(product.category, { sort: "recent" }))} className="shrink-0 hover:text-fg">{categoryName}</Link>
         <span aria-hidden>›</span>
-        <span className="min-w-0 truncate text-fg">{detail.product.name}</span>
+        <span className="min-w-0 truncate text-fg">{product.name}</span>
       </nav>
 
-      <ProductHero product={detail.product} unclaimed={detail.unclaimed} risingRank={detail.risingRank} health={detail.health} languages={languages}
+      <ProductHero product={product} unclaimed={detail.unclaimed} risingRank={detail.risingRank} health={detail.health} languages={languages}
         repositoryUrl={detail.repository?.facts?.repositoryUrl ?? null}
-        personalGithubStar={githubStarEnabled() && !detail.product.repoGone && detail.product.repoUrl && parseGithubRepository(detail.product.repoUrl)
-          ? <GithubStarButton key={detail.product.slug} slug={detail.product.slug} stars={detail.product.stars} /> : undefined} />
+        personalGithubStar={githubStarEnabled() && !product.repoGone && product.repoUrl && parseGithubRepository(product.repoUrl)
+          ? <GithubStarButton key={product.slug} slug={product.slug} stars={product.stars} /> : undefined} />
 
       {/* 넓으면 2:1 두 열, 좁으면 오른쪽 열이 본문 아래로 */}
       <div className="flex flex-wrap items-start gap-x-12 gap-y-9 pt-7">
         <div className="flex min-w-0 flex-[2_1_560px] flex-col gap-9">
-          <FactsStrip product={detail.product} repository={detail.repository} license={detail.license} health={detail.health} visits={detail.visits} />
-          <IntroSection product={detail.product} profile={detail.profile} readmeExcerpt={detail.readmeExcerpt} unclaimed={detail.unclaimed}>
-            <Suspense fallback={<ReadmeFallback product={detail.product} readmeExcerpt={detail.readmeExcerpt} pending />}>
-              <ReadmeSection product={detail.product} readmeExcerpt={detail.readmeExcerpt} />
+          <FactsStrip product={product} repository={detail.repository} license={detail.license} health={detail.health} visits={detail.visits} />
+          <IntroSection product={product} profile={detail.profile} readmeExcerpt={detail.readmeExcerpt} unclaimed={detail.unclaimed}>
+            <Suspense fallback={<ReadmeFallback product={product} readmeExcerpt={detail.readmeExcerpt} pending />}>
+              <ReadmeSection product={product} readmeExcerpt={detail.readmeExcerpt} />
             </Suspense>
           </IntroSection>
           <LanguageBar repository={detail.repository} />
           <UpdateTimeline updates={detail.updates} now={now} />
           {productFeedbackEnabled() && (
-            <section id="feedback" className="scroll-mt-24 space-y-4 border-t border-line pt-5" aria-label="프로젝트 댓글">
-              <FeedbackList key={detail.product.slug} slug={detail.product.slug}
-                settings={detail.product.repoUrl && parseGithubRepository(detail.product.repoUrl) ? <FeedbackSettingsMenu slug={detail.product.slug} /> : undefined}>
-                <FeedbackForm slug={detail.product.slug} githubDeliveryAvailable={githubDeliveryAvailable} />
+            <section id="feedback" className="scroll-mt-24 space-y-4 border-t border-line pt-5" aria-label={t("page.feedback")}>
+              <FeedbackList key={product.slug} slug={product.slug}
+                settings={product.repoUrl && parseGithubRepository(product.repoUrl) ? <FeedbackSettingsMenu slug={product.slug} /> : undefined}>
+                <FeedbackForm slug={product.slug} githubDeliveryAvailable={githubDeliveryAvailable} />
               </FeedbackList>
             </section>
           )}
         </div>
 
         <aside id="evidence" className="flex min-w-0 flex-[1_1_300px] flex-col gap-4">
-          <InfoCard product={detail.product} repository={detail.repository} freshness={detail.freshness} unclaimed={detail.unclaimed} />
-          <PreviewFigure product={detail.product} media={detail.media} />
+          <InfoCard product={product} repository={detail.repository} freshness={detail.freshness} unclaimed={detail.unclaimed} />
+          <PreviewFigure product={product} media={detail.media} />
           {detail.unclaimed && (
-            <UnclaimedOwnerContact repoUrl={detail.product.repoUrl} slug={detail.product.slug} installable={detail.product.accessMode === "installable"} />
+            <UnclaimedOwnerContact repoUrl={product.repoUrl} slug={product.slug} installable={product.accessMode === "installable"} />
           )}
-          {detail.product.status === "unverified" && (
+          {product.status === "unverified" && (
             <section className="rounded-[12px] border border-line bg-bg-card p-5">
-              <h2 className="text-[15px] font-extrabold text-fg">아직 공개 목록에 없습니다</h2>
+              <h2 className="text-[15px] font-extrabold text-fg">{t("page.unlisted")}</h2>
               <p className="mt-2 text-[13px] leading-6 text-fg-2">
-                도메인 소유권을 확인하면 공개 목록에 게시됩니다. 프로젝트 폴더에서{" "}
-                <code className="font-mono font-semibold text-accent">/nomorevibe verify</code>를 실행하세요.
+                {t("page.verify", { command: "/nomorevibe verify" })}
               </p>
             </section>
           )}
         </aside>
       </div>
 
-      <RelatedRow category={detail.product.category} items={detail.related} total={risingTotal} />
+      <RelatedRow category={product.category} items={related} total={risingTotal} />
     </main>
   );
 }

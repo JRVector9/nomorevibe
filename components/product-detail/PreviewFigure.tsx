@@ -1,5 +1,8 @@
+"use client";
+
 /* eslint-disable @next/next/no-img-element -- 검증 후 내부에 보관한 이미지를 저장 치수 그대로 제공한다. */
-import { formatPublicDate } from "@/lib/format/time";
+import { useLocale, useServerNow, useTranslations } from "@/lib/i18n/context";
+import { formatDate } from "@/lib/i18n/format";
 import type { ProductDetailView } from "@/lib/domain/products/detail-view";
 import { thumbnailPresentation } from "@/lib/domain/products/thumbnails/presentation";
 import { ogVariantSrc } from "@/lib/domain/products/og-variants";
@@ -12,13 +15,16 @@ import { PreviewImageDialog } from "./PreviewImageDialog";
  * 작은 로고는 늘리지 않고 원래 크기대로 가운데 둔다(카드 표지와 같다).
  */
 export function PreviewFigure({ product, media }: { product: ProductDetailView["product"]; media: ProductDetailView["media"] }) {
+  const t = useTranslations("detail");
+  const locale = useLocale();
+  const serverNow = useServerNow();
   const first = media[0] ?? null;
   const internal = product.ogImage?.startsWith("/") && !product.ogImage.startsWith("//") ? product.ogImage : null;
   const thumbnail = internal ? thumbnailPresentation(internal) : null;
   const shown = first
-    ? { src: first.src, width: first.width, height: first.height, caption: first.altText || `${product.name} 제품 화면`, at: first.lastSuccessAt, missing: first.sourceMissing, contain: false }
+    ? { src: first.src, width: first.width, height: first.height, caption: first.altText || t("preview.screen", { name: product.name }), at: first.lastSuccessAt, missing: first.sourceMissing, contain: false }
     : internal && thumbnail && (thumbnail.kind === "og" || thumbnail.kind === "repository_image")
-      ? { src: ogVariantSrc(internal, 1200)!, width: thumbnail.width, height: thumbnail.height, caption: thumbnail.label, at: null, missing: false,
+      ? { src: ogVariantSrc(internal, 1200)!, width: thumbnail.width, height: thumbnail.height, caption: t(thumbnail.kind === "repository_image" ? "preview.repository" : "preview.site"), at: null, missing: false,
         contain: thumbnail.kind === "repository_image" }
       : null;
   if (!shown) return null;
@@ -30,8 +36,8 @@ export function PreviewFigure({ product, media }: { product: ProductDetailView["
       </PreviewImageDialog>
       <figcaption className="flex flex-wrap justify-between gap-x-2 gap-y-1 text-[13px] text-fg-2">
         <span>{shown.caption}</span>
-        {shown.at && <span>사본 갱신 {formatPublicDate(shown.at, new Date())}</span>}
-        {shown.missing && <span className="w-full text-down">원본 없음 · 보관 이미지</span>}
+        {shown.at && <span>{t("preview.updated", { date: formatDate(shown.at, serverNow, locale) })}</span>}
+        {shown.missing && <span className="w-full text-down">{t("preview.missing")}</span>}
       </figcaption>
     </figure>
   );

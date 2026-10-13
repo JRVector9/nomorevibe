@@ -1,22 +1,23 @@
 "use client";
 
+import { useLocale, useTranslations } from "@/lib/i18n/context";
+import { formatNumber } from "@/lib/i18n/format";
+import { localePath } from "@/lib/i18n/routing";
 import Link from "next/link";
 import { useId, useState } from "react";
 import {
-  INTRO_REQUEST_LABEL, INTRO_REQUEST_MAX, INTRO_REQUEST_MIN, INTRO_REQUEST_RECEIVED, TAKEDOWN_KINDS, TAKEDOWN_PROMISE, TAKEDOWN_RECEIVED,
+  INTRO_REQUEST_MAX, INTRO_REQUEST_MIN,
   type TakedownKind,
 } from "@/lib/domain/products/takedown-view";
 
 /** 고를 수 있는 갈래 — 내려달라는 요청 둘과 소개 수정 요청(UX-18, 다른 길로 간다) */
 type RequestKind = TakedownKind | "intro";
-const LABELS: Record<RequestKind, string> = { ...TAKEDOWN_KINDS, intro: INTRO_REQUEST_LABEL };
-/** 갈래마다 한 줄 설명과 이유 칸 안내 */
-const KIND_COPY: Record<RequestKind, { hint: string; placeholder: string }> = {
-  owner: { hint: "운영자가 목록에서 빼 달라는 요청", placeholder: "이슈·파일 주소나 이유를 적어 주세요. 비워 두셔도 됩니다" },
-  abuse: { hint: "스팸이거나 악성 코드·사기로 이어지는 프로젝트", placeholder: "무엇이 문제인지 적어 주시면 더 빨리 확인합니다. 비워 두셔도 됩니다" },
-  intro: { hint: "한 줄 소개가 틀렸거나 바꾸고 싶을 때 — 목록에서는 내리지 않습니다", placeholder: "무엇이 틀렸는지, 어떻게 적어야 하는지 적어 주세요" },
-};
-const KINDS = Object.keys(LABELS) as RequestKind[];
+const KINDS: RequestKind[] = ["owner", "abuse", "intro"];
+const KIND_COPY = {
+  owner: { hint: "request.ownerHint", placeholder: "request.ownerPlaceholder" },
+  abuse: { hint: "request.abuseHint", placeholder: "request.abusePlaceholder" },
+  intro: { hint: "request.introHint", placeholder: "request.introPlaceholder" },
+} as const;
 
 /**
  * 내려달라는 요청 폼.
@@ -34,6 +35,8 @@ const KINDS = Object.keys(LABELS) as RequestKind[];
  * 알려 스크린리더가 결과를 읽는다(A11Y-01). 글 속 링크는 색만으로 가려지지 않게 밑줄을 늘 긋는다(A11Y-03).
  */
 export function TakedownForm({ slug }: { slug: string }) {
+  const t = useTranslations("detail");
+  const locale = useLocale();
   const [state, setState] = useState<"idle" | "sending" | "sent">("idle");
   const [error, setError] = useState<string | null>(null);
   const [kind, setKind] = useState<RequestKind>("owner");
@@ -50,15 +53,15 @@ export function TakedownForm({ slug }: { slug: string }) {
         headers: { "content-type": "application/json" },
         body: JSON.stringify(intro ? { message: text } : { reason: text, kind }),
       });
-      const body = (await res.json()) as { error?: string };
+      await res.json();
       if (!res.ok) {
-        setError(body.error ?? "요청을 보내지 못했습니다");
+        setError(res.status === 429 ? t("request.rateLimited") : res.status === 404 ? t("request.notFound") : res.status === 400 && intro ? t("request.length", { min: formatNumber(INTRO_REQUEST_MIN, locale), max: formatNumber(INTRO_REQUEST_MAX, locale) }) : t("request.failed"));
         setState("idle");
         return;
       }
       setState("sent");
     } catch {
-      setError("요청을 보내지 못했습니다. 잠시 후 다시 시도해주세요.");
+      setError(t("request.failed"));
       setState("idle");
     }
   }
@@ -66,7 +69,7 @@ export function TakedownForm({ slug }: { slug: string }) {
   if (state === "sent") {
     return (
       <p role="status" className="mt-4 rounded-[10px] border border-up/40 bg-up/10 px-4 py-3 text-[13px] text-up">
-        {intro ? INTRO_REQUEST_RECEIVED : TAKEDOWN_RECEIVED}
+        {intro ? t("request.introReceived") : t("request.received")}
       </p>
     );
   }
@@ -74,26 +77,26 @@ export function TakedownForm({ slug }: { slug: string }) {
   return (
     <details className="mt-4">
       <summary className="cursor-pointer text-[13px] font-semibold text-fg-2 hover:text-fg">
-        소개 수정·목록에서 내리기 요청하기
+        {t("request.title")}
       </summary>
       <form action={submit} className="mt-3 flex flex-col gap-2">
         <fieldset className="m-0 flex flex-col border-0 p-0">
-          <legend className="mb-1 text-[13px] font-semibold text-fg">어떤 요청인가요?</legend>
+          <legend className="mb-1 text-[13px] font-semibold text-fg">{t("request.kind")}</legend>
           {KINDS.map((value) => (
             <label key={value} className="flex min-h-11 cursor-pointer items-center gap-2.5 text-[13px] leading-5 text-fg">
               <input type="radio" name="kind" value={value} checked={kind === value} onChange={() => setKind(value)}
                 className="h-4 w-4 shrink-0 accent-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent" />
-              <span>{LABELS[value]} <span className="text-fg-2">· {KIND_COPY[value].hint}</span></span>
+              <span>{t(`request.${value}`)} <span className="text-fg-2">· {t(KIND_COPY[value].hint)}</span></span>
             </label>
           ))}
         </fieldset>
         {kind === "owner" && (
           <p className="m-0 text-[13px] leading-5 text-fg-2">
-            운영자임을 빨리 확인할 수 있게, 저장소에 이 요청을 적은 이슈를 열거나 저장소에 파일을 하나 더한 뒤 그 주소를 아래 칸에 적어 주세요.
+            {t("request.ownerProof")}
           </p>
         )}
         <label htmlFor={reasonId} className="text-[13px] font-semibold text-fg">
-          {intro ? "고칠 내용" : "요청 이유"} <span className="font-normal text-fg-2">{intro ? "(필수)" : "(선택)"}</span>
+          {intro ? t("request.correction") : t("request.reason")} <span className="font-normal text-fg-2">{intro ? t("request.required") : t("request.optional")}</span>
         </label>
         <textarea
           id={reasonId}
@@ -102,17 +105,17 @@ export function TakedownForm({ slug }: { slug: string }) {
           required={intro}
           minLength={intro ? INTRO_REQUEST_MIN : undefined}
           maxLength={intro ? INTRO_REQUEST_MAX : 500}
-          placeholder={KIND_COPY[kind].placeholder}
+          placeholder={t(KIND_COPY[kind].placeholder)}
           className="w-full rounded-[10px] border border-line bg-bg-soft px-3 py-2 text-[13px] text-fg outline-none focus:border-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
         />
         {intro ? (
           <p className="m-0 text-[13px] leading-5 text-fg-2">
-            검색엔진 노출은 그대로입니다. 관리자가 확인한 뒤 고칠 내용이면 이 페이지의 소개를 고칩니다.
+            {t("request.introNote")}
           </p>
         ) : (
           <p className="m-0 text-[13px] leading-5 text-fg-2">
-            {TAKEDOWN_PROMISE}{" "}
-            <Link prefetch={false} href="/policy#takedown" className="text-accent-ink underline underline-offset-2">처리 절차 보기</Link>
+            {t("request.promise")}{" "}
+            <Link prefetch={false} href={localePath(locale, "/policy#takedown")} className="text-accent-ink underline underline-offset-2">{t("request.procedure")}</Link>
           </p>
         )}
         <button
@@ -120,7 +123,7 @@ export function TakedownForm({ slug }: { slug: string }) {
           disabled={state === "sending"}
           className="min-h-11 self-start rounded-[10px] border border-line px-4 text-[13px] font-semibold text-fg-2 hover:text-fg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:opacity-50"
         >
-          {state === "sending" ? "보내는 중…" : "요청 보내기"}
+          {state === "sending" ? t("request.sending") : t("request.send")}
         </button>
         {error && <p role="alert" className="text-[13px] text-down">{error}</p>}
       </form>

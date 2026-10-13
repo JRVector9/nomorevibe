@@ -1,3 +1,7 @@
+import { getTranslator } from "@/lib/i18n/dictionary";
+import { getRequestLocale } from "@/lib/i18n/server";
+import { formatNumber } from "@/lib/i18n/format";
+import { translatedDetailLabel } from "./format";
 import { BuilderBadge } from "@/components/TrustBadges";
 import type { ProductDetailView } from "@/lib/domain/products/detail-view";
 import { githubOwnerFromRepositoryUrl } from "@/lib/domain/products/github-owner";
@@ -17,7 +21,7 @@ const known = (value: string) => value !== "미확인" && !value.startsWith("미
  * 검사 결과는 AI 제작 근거 단계(1~3) 이름과 설명만 쓴다 — PR·커밋·파일 링크와 도구 목록은 내지 않는다(2026-10-10 운영자 결정 D3).
  * 예전 조사의 흔적 알약(observedAgentFacts)은 agentEvidence.displayObservedFacts 가 켜졌을 때만 들어온다.
  */
-export function BuildTools({ product, unclaimed, agents, observedAgentFacts, skills, aiLevel }: {
+export async function BuildTools({ product, unclaimed, agents, observedAgentFacts, skills, aiLevel }: {
   product: ProductDetailView["product"];
   unclaimed: boolean;
   agents: ProductDetailView["agents"];
@@ -25,11 +29,13 @@ export function BuildTools({ product, unclaimed, agents, observedAgentFacts, ski
   skills: ProductDetailView["skills"];
   aiLevel: ProductDetailView["aiLevel"];
 }) {
+  const locale = await getRequestLocale();
+  const t = await getTranslator(locale, "detail");
   const reported = unclaimed ? null : product.builder;
   // 같은 도구의 흔적은 알약 하나로 — 이름을 모르는 공유 형식(AGENTS.md 등)은 한데 묶는다
   const observed = new Map<string, ProductDetailView["observedAgentFacts"]>();
   for (const fact of observedAgentFacts) {
-    const key = fact.clientLabel.startsWith("미확인") ? "미확인 도구" : fact.clientLabel;
+    const key = fact.clientLabel.startsWith("미확인") ? t("tools.unknown") : fact.clientLabel;
     observed.set(key, [...(observed.get(key) ?? []), fact]);
   }
   const nothing = !reported && agents.length === 0 && skills.length === 0 && observed.size === 0;
@@ -47,7 +53,7 @@ export function BuildTools({ product, unclaimed, agents, observedAgentFacts, ski
 
   return (
     <section aria-labelledby="tools-title" className="flex flex-col gap-2.5">
-      <h2 id="tools-title" className="m-0 text-[13px] font-semibold tracking-[0.02em] text-fg-2">무엇으로 만들었나</h2>
+      <h2 id="tools-title" className="m-0 text-[13px] font-semibold tracking-[0.02em] text-fg-2">{t("tools.title")}</h2>
       {!nothing && (
         <ul className="m-0 flex list-none flex-wrap gap-2 p-0">
           {/* 배지가 이미 '메이커 신고'를 달고 있어 알약을 한 겹 더 씌우지 않는다 */}
@@ -55,23 +61,23 @@ export function BuildTools({ product, unclaimed, agents, observedAgentFacts, ski
           {agents.map((agent) => (
             <li key={agent.id} className={CHIP}>
               {[agent.provider, agent.client, agent.model].filter(Boolean).join(" · ")}
-              <span className="text-[13px] text-fg-2">{agent.evidenceLabel}</span>
+              <span className="text-[13px] text-fg-2">{t(({ maker_reported: "source.makerReported", repository_evidenced: "source.repository", nomorevibe_recorded: "source.recorded", signed_build: "source.signed" } as const)[agent.evidenceLevel])}</span>
             </li>
           ))}
           {[...observed].map(([label, facts]) => (
             <li key={label} className={CHIP}>
               {/* 모델은 도구만큼 궁금한 값 — 흔적 중 하나라도 이름을 알면 도구 뒤에 */}
               {[label, facts.map((fact) => fact.modelLabel).find(known)].filter(Boolean).join(" · ")}
-              <span className="text-[13px] text-fg-2">{facts[0].label}</span>
+              <span className="text-[13px] text-fg-2">{translatedDetailLabel(facts[0].label, t)}</span>
               <a href={facts[0].sourceUrl} target="_blank" rel="noopener noreferrer" className="text-[13px] text-accent-ink hover:underline"
-                aria-label={`${label} 근거 ${facts[0].commitSha.slice(0, 7)}`}>근거 {facts[0].commitSha.slice(0, 7)} ↗</a>
-              {facts.length > 1 && <span className="text-[13px] text-fg-2">외 {facts.length - 1}</span>}
+                aria-label={t("tools.evidenceLabel", { tool: label, sha: facts[0].commitSha.slice(0, 7) })}>{t("tools.evidence", { sha: facts[0].commitSha.slice(0, 7) })} ↗</a>
+              {facts.length > 1 && <span className="text-[13px] text-fg-2">{t("tools.more", { count: formatNumber(facts.length - 1, locale) })}</span>}
             </li>
           ))}
           {skills.map((skill) => (
             <li key={skill.id} className="inline-flex h-10 items-center gap-2 rounded-full bg-bg-soft px-3.5 font-mono text-[13px] text-fg">
               {skill.namespace}/{skill.name}{skill.version ? `@${skill.version}` : ""}
-              <span className="font-sans text-[13px] text-fg-2">{skill.evidenceLabel}</span>
+              <span className="font-sans text-[13px] text-fg-2">{t(({ maker_reported: "source.makerReported", repository_evidenced: "source.repository", nomorevibe_recorded: "source.recorded", signed_build: "source.signed" } as const)[skill.evidenceLevel])}</span>
             </li>
           ))}
         </ul>
@@ -80,18 +86,18 @@ export function BuildTools({ product, unclaimed, agents, observedAgentFacts, ski
       {level ? (
         <div className="flex max-w-[720px] items-center gap-2">
           <span className="rounded-full bg-fg px-2.5 py-0.5 text-[13px] font-semibold text-bg">AI</span>
-          <p className="m-0 text-[14px] leading-[1.5] text-fg">저장소에 AI 코딩 도구로 만든 근거가 있습니다.</p>
+          <p className="m-0 text-[14px] leading-[1.5] text-fg">{t("tools.ai")}</p>
         </div>
       ) : noTrace ? (
-        <p className="m-0 max-w-[720px] text-[14px] leading-[1.5] text-fg-2">검사에서 AI 코딩 도구 흔적을 찾지 못했습니다 — AI 없이 만들었다는 뜻은 아닙니다.</p>
+        <p className="m-0 max-w-[720px] text-[14px] leading-[1.5] text-fg-2">{t("tools.noTrace")}</p>
       ) : nothing && (
         <p className="m-0 max-w-[720px] text-[14px] leading-[1.5] text-fg-2">
           {scannable
-            ? "AI 흔적 검사 대기 중 — 검사가 끝나면 저장소의 설정 파일과 커밋 서명에서 찾은 AI 코딩 도구 흔적이 여기에 보입니다."
-            : `${product.repoGone ? "GitHub 저장소가 사라져" : "공개 GitHub 저장소가 없어"} AI 흔적 검사를 할 수 없습니다. 메이커가 신고하면 여기에 표시됩니다.`}
+            ? t("tools.pending")
+            : t(product.repoGone ? "tools.gone" : "tools.noRepository")}
         </p>
       )}
-      {observed.size > 0 && notes.length > 0 && <p className="m-0 text-[13px] text-fg-2">{notes.join(" · ")}</p>}
+      {observed.size > 0 && notes.length > 0 && <p className="m-0 text-[13px] text-fg-2">{notes.map(note => translatedDetailLabel(note!, t)).join(" · ")}</p>}
     </section>
   );
 }

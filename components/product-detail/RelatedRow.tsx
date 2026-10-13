@@ -1,7 +1,11 @@
+"use client";
+
+import { useLocale, useTranslations } from "@/lib/i18n/context";
+import { translatedCategory } from "@/components/home/i18n";
+import { localePath } from "@/lib/i18n/routing";
+import { formatNumber } from "@/lib/i18n/format";
 import { categoryHref } from "@/components/home/browse-state";
 import { CompactRow } from "@/components/home/CompactRow";
-import { formatCount } from "@/lib/format/number";
-import { categoryLabel } from "@/lib/domain/products/labels";
 import type { ProductListItem } from "@/lib/domain/products/view";
 
 /**
@@ -10,15 +14,17 @@ import type { ProductListItem } from "@/lib/domain/products/view";
  * 개수를 못 세면 숫자 없이 '모두 보기'.
  */
 export function RelatedRow({ category, items, total }: { category: string; items: ProductListItem[]; total: number | null }) {
-  const label = categoryLabel(category);
+  const t = useTranslations("detail");
+  const locale = useLocale();
+  const label = translatedCategory(category, useTranslations("labels"));
   return (
     <CompactRow
       id="related"
-      title={`${label} 분야에서 지금 뜨는`}
-      note="최근 두 확인 사이 하루 평균 GitHub 스타가 많이 는 순 · 스타 2천 미만"
+      title={t("related.title", { category: label })}
+      note={t("related.note")}
       more={{
-        href: categoryHref(category),
-        label: total === null ? "모두 보기" : `${formatCount(total)}개 모두 보기`,
+        href: localePath(locale, categoryHref(category)),
+        label: total === null ? t("related.all") : t("related.count", { count: formatNumber(total, locale) }),
       }}
       items={items}
       trailing="category"
