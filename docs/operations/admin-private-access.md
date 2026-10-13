@@ -2,9 +2,21 @@
 
 이 문서는 PR01의 설치 계약이다. 코드가 병합되어도 Tailscale ingress, ACL, 방화벽,
 양 웹의 자격 설정과 실제 로그인이 검증되기 전에는 내부 관리자 접속이 완료된 것이 아니다.
-2026-10-13 확인된 운영은 `ADMIN_LOCAL_LOGIN=0`이며 이 ingress와 비밀번호 설정은 아직 없다.
+2026-10-13 설치 완료: `ADMIN_LOCAL_LOGIN=0`을 유지하며 ingress와 ID/비밀번호를 양 웹에 적용했고 실제 로그인·로그아웃을 확인했다.
 
-[PR410 운영 배포 기록](2026-10-13-admin-essential-production-rollout.md): 코드와 공개 관리자404 차단은 배포·검증했다. 실제 Tailscale CLI는 양 host의 `/opt/homebrew/bin/tailscale`에 있고 Running이지만 Serve/ACL·proxy·자격 설치는 후속이다.
+[PR410 운영 배포 기록](2026-10-13-admin-essential-production-rollout.md): 코드와 공개 관리자404 차단은 배포·검증했다. 해당 기록 시점의 설치 미완료는 아래 실제 접속 설치로 해결했다.
+
+## 현재 접속
+
+Tailscale 연결 후 `https://m3ultra.tail02799e.ts.net/admin`으로 접속한다.
+ID `jr`, 비밀번호는 운영자 Mac의 `~/.config/nomorevibe/admin-login.txt`(0600)에 보관한다.
+공개 `nomorevibe.com/admin`은404다.
+
+[실제 접속 설치·검증 기록](2026-10-13-admin-private-access-rollout.md):
+M3 Serve443→loopback19391→owner identity 필터·증명 주입proxy→Swarm 웹DNS를 사용한다.
+mini2/M3 4 모두 같은 origin/secret/ID/hash를 적용했다. 중앙 tailnet ACL은 변경하지 않았고
+서비스의 단일 운영자 제한은 Serve가 검증한 identity를 private proxy에서 검사한다.
+양 공개 Traefik router6개에서 header 제거를 실제 확인했다.
 
 ## 앱 설정
 
@@ -43,7 +55,7 @@ IP, Host, `X-Forwarded-For`, Tailscale identity header만으로 앱 권한을 �
 
 1. 운영 host에서 실제 Tailscale MagicDNS host, loopback proxy port, 양 웹 upstream을 먼저
    확인한다. 아래 `<...>`는 아직 측정하지 않은 설치 값이다. 포트나 컨테이너 주소를 임의로 정하지 않는다.
-2. Tailscale ACL로 지정 운영자의 device/user만 관리자 host의 HTTPS에 접근하도록 허용한다.
+2. Tailscale ACL로 지정 운영자의 device/user만 관리자 host의 HTTPS에 접근하도록 허용하는 것이 권장된다. 현재 설치는 중앙 ACL을 바꾸지 않고 Serve가 검증한 단일 운영자 identity를 loopback proxy에서 검사해 서비스 접근을 제한한다.
    `tailscale serve` 또는 같은 경계의 TLS reverse proxy를 사용하고 **Funnel을 켜지 않는다**.
    TLS 종료 뒤의 private proxy listener는 loopback 또는 ACL로 제한한 tailnet 주소에만 bind한다.
 3. private proxy는 요청의 ingress header를 제거한 뒤 서버 비밀로 덮어쓰고, 고정된 웹 upstream으로만
@@ -91,4 +103,4 @@ private browser host를 그대로 전달하면 Next16 Server Action의 Origin/Ho
   내부 관리자 자격을 설치한 것만으로 일반 계정 인증의 성공을 주장하지 않는다.
 
 검증 시각·각 ingress 경계·양 웹의 적용 범위를 기록한다. 비밀이나 cookie 원문을 증거에 넣지 않는다.
-private proxy의 설치·ACL·방화벽·실제 로그인은 이 문서 작성으로 검증된 것이 아니다.
+실제 설치와 검증 결과·실행하지 않은 항목은 위 운영 기록을 따른다. 중앙 ACL 변경이나 재부팅 시험을 완료했다고 주장하지 않는다.
