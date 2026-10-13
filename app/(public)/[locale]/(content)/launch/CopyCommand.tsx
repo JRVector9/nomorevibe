@@ -1,6 +1,7 @@
 "use client";
 
 import { useRef, useState } from "react";
+import { useTranslations } from "@/lib/i18n/context";
 
 type CopyResult = "copied" | "selected" | "failed";
 
@@ -20,13 +21,6 @@ export async function copyOrSelect(text: string, target: Node | null): Promise<C
   }
 }
 
-const STATUS: Record<CopyResult | "idle", string> = {
-  idle: "",
-  copied: "복사했습니다.",
-  selected: "자동 복사가 안 됩니다. 선택된 명령을 복사해 주세요(⌘C 또는 Ctrl+C).",
-  failed: "자동 복사가 안 됩니다. 명령을 직접 선택해 복사해 주세요.",
-};
-
 /**
  * 복사 단추가 붙은 명령 한 줄(2026-10-08 UX 감사 UX-20).
  * 명령은 꺾지 않고 한 줄로 둔다 — 좁은 화면에서는 줄 안에서 가로로 밀린다. 출력 예시와 섞이지 않게 테두리 칸에 담는다.
@@ -39,6 +33,7 @@ export function CopyCommand({ command, label, prompt }: {
   /** 명령 앞 표시('$') — 복사되지 않는다 */
   prompt?: string;
 }) {
+  const t = useTranslations("launch");
   const commandRef = useRef<HTMLSpanElement>(null);
   const [state, setState] = useState<CopyResult | "idle">("idle");
 
@@ -55,13 +50,13 @@ export function CopyCommand({ command, label, prompt }: {
           {prompt && <span aria-hidden="true" className="mr-2 select-none font-normal text-fg-2">{prompt}</span>}
           <span ref={commandRef}>{command}</span>
         </code>
-        <button type="button" onClick={copy} aria-label={`${label} 복사`}
+        <button type="button" onClick={copy} aria-label={t("copy.aria", { label })}
           className="inline-flex min-h-11 shrink-0 items-center rounded-[8px] px-3 text-[13px] font-medium text-fg hover:bg-line">
-          {state === "copied" ? "복사됨 ✓" : "복사"}
+          {state === "copied" ? t("copy.copiedButton") : t("copy.button")}
         </button>
       </div>
       <p role="status" className={state === "selected" || state === "failed" ? "mt-1.5 text-[13px] text-fg-2" : "sr-only"}>
-        {STATUS[state]}
+        {state !== "idle" && t(`copy.${state}`)}
       </p>
     </div>
   );
