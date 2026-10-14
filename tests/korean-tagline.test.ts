@@ -71,6 +71,45 @@ describe("checkKoreanTagline — 모델이 옮긴 줄을 그대로 믿지 않는
     expect(checkKoreanTagline("3인칭 시점으로 줄 공책 위를 누비는 슈팅 게임", shooter).ok).toBe(true);
     expect(checkKoreanTagline("1인칭 슈팅 게임에서 무기 12종을 고른다", shooter)).toEqual({ ok: false, reason: "invented_number" });
   });
+
+  it("원문이 글로 쓴 수·단위는 값으로 맞춘다 — 맞게 옮긴 줄이 버려져 원문으로 남았다(2026-10-14)", () => {
+    const ok = (line: string, tagline: string) => expect(checkKoreanTagline(line, { name: "x", tagline }).ok).toBe(true);
+    ok("매일 새로운 퍼즐 7가지: 스도쿠, 퀴즈, 체스 등", "Seven fresh puzzles every day: sudoku variants, trivia, chess and more.");
+    ok("Pico 2용 3채널 오실로스코프", "PiLyzer — a three-channel oscilloscope for Pico 2");
+    ok("향후 8일간의 폐쇄 시간을 알려드립니다", "Closure times for the next eight days.");
+    ok("1,500건 자동 검증과 온라인 플랫폼 2개", "Deux plateformes complètes en ligne, 1 500 vérifications automatiques");
+    ok("10개가 넘는 시스템을 직접 구축해 운영", "Über zehn Systeme in Produktion, alle allein gebaut");
+    ok("로컬 또는 온라인으로 최대 4인까지 플레이", "Jugar al Pac-Man en modo local o online hasta cuatro jugadores");
+    ok("6단계 오리지널 네온 미로 게임", "原创霓虹迷宫游戏，六关递进。");
+    ok("78장의 타로 카드를 하나씩 풀어 준다", "把问题放下，让七十八张伟特塔罗一张一张说给你听。");
+    ok("조사·전략·로드맵, Orion soft 3년 경험", "Исследования, стратегия, roadmap. Три года в Orion soft.");
+    ok("제2차 세계대전 동안 한 국가를 지휘", "Command a single nation through World War II");
+    ok("1100만 가정이 신뢰하는 아기 활동 계획", "Daily activity plans for your baby. Trusted by 11M+ families.");
+    ok("50만 MAU 제품과 85개 이상의 강좌", "85+ курсов, продукт на 500 000 MAU");
+    ok("20만 명 이상이 쓰는 플릿 플랫폼", "shipped fleet platforms for 200,000+ users");
+    ok("가입자 30만 명", "注册用户30万");
+    ok("월 4.99달러/TB 객체 저장소", "S3-compatible object storage. $4.99/TB/month");
+  });
+
+  it("값이 다른 수는 그대로 버린다 — 단위가 붙으면 같은 숫자 글자가 있어도 값으로만 본다", () => {
+    expect(checkKoreanTagline("85개 이상의 강좌, 1조 원 이상 매출", { name: "x", tagline: "85+ курсов, 1+ млрд ₽ выручки" }))
+      .toEqual({ ok: false, reason: "invented_number" });
+    expect(checkKoreanTagline("110만 가정이 신뢰", { name: "x", tagline: "Trusted by 11M+ families" })).toEqual({ ok: false, reason: "invented_number" });
+    expect(checkKoreanTagline("매일 새로운 퍼즐 8가지", { name: "x", tagline: "Seven fresh puzzles every day" })).toEqual({ ok: false, reason: "invented_number" });
+    expect(checkKoreanTagline("10억 루블 이상 매출", { name: "x", tagline: "1+ млрд ₽ выручки" }).ok).toBe(true);
+    // 운영에 받아 둔 줄에서 찾은 자릿수 틀림 — 100k 를 100만, 3 crore(3천만)를 3억으로
+    expect(checkKoreanTagline("100만+ 상품을 50ms 이하로 필터링", { name: "x", tagline: "sub-50ms filters on 100k+ products" }))
+      .toEqual({ ok: false, reason: "invented_number" });
+    expect(checkKoreanTagline("직원에게 월 3억 루피 이상 지급", { name: "x", tagline: "Now disbursing Rs 3 Cr+ a month to employees" }))
+      .toEqual({ ok: false, reason: "invented_number" });
+    expect(checkKoreanTagline("직원에게 월 3천만 루피 이상 지급", { name: "x", tagline: "Now disbursing Rs 3 Cr+ a month to employees" }).ok).toBe(true);
+  });
+
+  it("단위 글자가 '뿐'·'조항'일 때는 원문에 단위 없이 적힌 같은 숫자로 받는다", () => {
+    expect(checkKoreanTagline("텍스트 선택 후 ⌘⇧1만 누르면 오타를 고친다", { name: "x", tagline: "Select text, press ⌘⇧1, review the edit, done." }).ok).toBe(true);
+    expect(checkKoreanTagline("로컬 CLI v0.7.0만 제공", { name: "x", tagline: "Local CLI v0.7.0 is the admitted artifact" }).ok).toBe(true);
+    expect(checkKoreanTagline("EU CRA 제14조 보고 시계 제공", { name: "x", tagline: "the EU CRA Article 14 reporting clock" }).ok).toBe(true);
+  });
 });
 
 describe("parseKoreanTaglines", () => {
