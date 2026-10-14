@@ -1,75 +1,154 @@
-# 2026-10-14 — 수집 복구·크롤러 활동 관리자·운영 배포 진행
+# 2026-10-14 — 수집 복구·관리자 크롤러 활동·운영 배포 진행
 
 ## Current objective / authorization
 
-사용자 `푸시하고 배포해 마이그레이션도 하고`, `크롤러들 활동하는 것들 전부 확인가능하게 관리자에서 구성해놔`,
-후속 `이어서해`·`배포 이어서해`에 따라 관리자 크롤러 활동까지 완성한 뒤 같은 릴리스를 배포한다.
-승인된 구성은 기존 운영센터에 `?tab=crawlers`, 전체 수집기의 마지막 실행·현재 상태와 주/예비·동시 실행 줄을 표시한다.
-X는 수동 API 파일럿/자동 수집 안 함으로 구분한다. 소개 검수의 중단은 유지한다.
+사용자는 변경의 푸시·운영 배포·마이그레이션과 모든 크롤러의 관리자 활동 표시를 지시했다.
+후속 `이어서해`·`배포 이어서해`에 따라 같은 릴리스를 끝까지 배포한다.
+관리자 구성은 기존 운영센터의 `?tab=crawlers` 탭이며, X는 수동 API 파일럿으로 표시한다.
+사용자가 중단한 소개 검수는 재개하지 않는다.
 
-## Completed work / current phase
+## Completed work / current state
 
-- 작업 브랜치 `feat/pipeline-review-recovery-20261014`, 최신 main91685ca를 충돌 없이 병합한45de7d0.
-  `npm ci` 완료. 관리자 소스 최종 freeze에서 전체256파일2,468단위,
-  `set -e`로 Next typegen→TypeScript→i18n→lint→diff 검사 exit0.
-  관리자48f25c2커밋/push/PR#416완료, 첫CI38549253859에서quality/integration1,2성공, integration3의GitHubdeadline검사1건실패.
-  내부timeout신호를hasBudget이검사하지않는실제bug를RED로재현해최소수정했다.
-  관련103통합/type/scopedlint/diff와루트전체2,468단위/lint/build/bundle통과, native리뷰CLEAN.
-  수정커밋을PR#416에push하고최신CI와directCLI session65009를확인한다. 운영 변경은아직없음.
-- 운영13앱 Dokploy done·실제 ready, DB journal76/quality 컬럼 없음/소개 검수2100·미임대 확인.
-  환경·설정 snapshot은 `/private/tmp/nomorevibe-pipeline-release-20261014`0700/파일0600이며 출력·Git 금지.
-- 최신 base 통합 상태 단위254파일2,434사례, 통합143파일1,546사례(464/444/638), 기존todo1 미실행.
-  Python 배포 검사23/CI scope4/Next typegen exit0. 로컬 전용 테스트 컨테이너3개 중지·exited 확인.
-- 읽기 전용 독립 서브에이전트 `release_prelanding_review`는45de7d0에서 CLEAN, 선택10파일131단위 통과.
-  설치되지 않은 gstack 체크리스트를 실행한 것으로 기록하지 않는다. 직접 CLI 백엔드 리뷰 exit0/OK.
-  관리자 직접 리뷰는 재현 가능한P2 두 개, native 리뷰는 스캔 실패 신호P2 하나를 발견했고 모두 수정했다.
-  실제 CLI Vitest는read-only temp 제한으로0검사; 루트와native의 실행 결과와 구별한다.
-- `admin_crawler_activity` 소스·spec/plan freeze 완료. 집중5파일59검사/type/scopedlint/diff exit0.
-  최신lease+runtime이 과거standby를가리지 않고, 항목실패0과별도요청오류를구별하며,
-  스캔boolean실패신호와과거미확인상태를표시한다. release도최신관측에서읽는다.
-  루트최종build/bundle exit0. native최종수정검증CLEAN/집중59검사exit0.
-  직접CLI최종followup exit0/No findings/OK (in-memory42검사, Vitest미실행).
-  이번직접CLI3회입력6,941,243(캐시6,463,360포함)/출력42,954토큰, 실제receipt집계.
+- 브랜치 `feat/pipeline-review-recovery-20261014`: main91685ca를 병합한45de7d0,
+  관리자48f25c2와 내부 deadline 취소 수정1131e72를 커밋·푸시했다.
+- [PR#416](https://github.com/JRVector9/nomorevibe/pull/416) 생성. 최신 CI38550569220 전체성공 후 정상 병합했다.
+  main `cb6b719e5222064c0657b36d2b45a0efd573ff93` detached checkout 완료.
+  main CI38551249622의 모든 검사와 양 이미지 발행이 성공했다. target.json에 실제digest를 기록했고
+  release.py plan exit0: 13앱 설정·양서버pull·빌드키 일치 확인.
+  migrate exit0: 11서비스 drain/복제본복구 완료, journal77, integer/NOTNULL/default0 확인.
+  38,593행의 보수적backfill mismatch0/invalid0, 소개 검수2100·미임대 보존.
+  private migration.json이 실제 증거다. text-mini와 text-m3 모두 실제 cb6b719 컨테이너 ready로 교체했다.
+  text 역할 monitor gate에서 evidenceProgress SQL이 운영 DB의 3초 statement_timeout(code57014)에 걸렸다.
+  전체 readiness와 다섯 역할/scheduler 생존은 정상이고 scheduler freshReplicas2다.
+  나머지11앱은 이전 정상 릴리스로 유지하며, 집계 SQL 원인 확인·최소 수정 후 새 릴리스로 전부 맞춘다.
+- 후속 브랜치 `fix/worker-progress-query-budget-20261014`에서 `ai_public AS MATERIALIZED`와
+  설명 주석만 바꿨다. 실운영 읽기 전용 A/B4,395.517→2,695.092ms, 같은 시각/파라미터 집계 동일.
+  EXPLAIN2,770.851ms이며 기존3초 한도를 보존했다. 여유 약300ms이므로 보편적 성능 보장은 아니다.
+  긴 유효 주소80,000개 회귀에서 실제57014 RED→같은3초 한도 GREEN 두 차례 확인.
+  관련 통합37/37, 두 파일lint, 루트TypeScript/전체lint exit0와 native 읽기 전용 리뷰CLEAN.
+  전체lint는 기존vendor warning1개다. 직접CLI도No findings/OK.
+  후속34c7778을커밋·푸시하고PR#417을생성했다. CI38557315298의quality/integration1,3은 성공,
+  integration2의 새80k 회귀만57014 timeout으로 실패(나머지444통합성공)하여 check 실패했다.
+  PR은 병합하지 않았으며 배포도 재개하지 않았다. 실제 CI에서 여유 부족이 확인되어 같은3초/80k 회귀를
+  유지하고 기존normalizer fallback을 보존하는 canonical URL fastpath를 추가했다.
+  실제 helper의14,407개 변형을 원래 두 모드와DB에서 비교해 mismatch0, 관련38검사/파일lint 통과.
+  CI=true/TZ=UTC의 동일 fullshard2가48파일446사례 exit0(64.61초), 루트TypeScript exit0(8.52초).
+  prod read-only repeatable-read A/B4,313.499→1,082.249ms, 같은snapshot/params 집계 전체 동일.
+  EXPLAIN1,202.197ms/기존3초한도 성공. native후속리뷰CLEAN, directCLI후속도No findings/OK.
+  추가수정498dd1a를commit/push했으나CI38558982971도80k scale만57014로실패했다.
+  quality/integration1,3과 나머지445 integration2는성공, check실패/PR417미병합/추가배포없음.
+  실제운영1.1초개선과 가상최장주소80k의CI성능은구별하며 아직전체완료아님.
+  agent가긴주소80k의실행계획/환경을추가확인중이다. 사용자의8만실적체질문에
+  로컬·CI전용가상데이터/운영추가없음/실제전체출처약8.9만이모두대기는아님을안내했다.
+  추가localplan(80k)은AI LEFT nestedloop가80000 긴PK조회로약1310ms를소비하고, agent정렬은spill했다.
+  PG17.11/en_US.utf8/work_mem4MB/parallel2/DockerCmdpostgres, 강제custom/generic둘다동일병목이다.
+  current AI projection을MATERIALIZED로공유하고 공공seen필터를PKunique의LEFTJOIN으로바꾼readonly A/B:
+  localcustom1955→1128ms/generic1987→1125ms, 집계동일; prod4320.120→1009.214ms/집계동일,
+  EXPLAIN1087.499ms였다. 같은3초/80k기준으로최소구조수정·timeout진단·회귀검증을진행한다.
+  최종source currentCTE/seenLEFTJOIN 구현후관련38/38·파일lint통과, native구조리뷰CLEAN.
+  최종CI환경fullshard2도48파일446사례exit0(66.28초), rootTypeScriptexit0(8.84초), directCLI후속No findings/OK. 최종4a2a0e6를commit/push했으나CI38561746654도scale만57014실패
+  (나머지445통합/quality/integration1,3성공). PR417은여전히미병합이며추가배포없음.
+  CI진단EXPLAIN3286.562ms: agent2241ms/AI1035ms, 긴키locale정렬이agent의새주병목이다.
+  agent_inputs MATERIALIZED로동일UNION입력과GROUPBY/min을유지해병렬locale정렬을제거했다.
+  localcustom1070.842→925.507ms/generic1045.951→947.346ms 모두집계동일이고정렬경로가없다.
+  운영readonlyrepeatable-read original4261.188→1411.068ms/집계동일, EXPLAIN1490.680ms.
+  최종focus1파일15검사/파일lint통과, fullshard2는48파일446통과/66.12초/실패진단없음.
+  roottsc exit0/3.04초, nativeCLEAN/directCLI No findings/OK(staticonly), 새GitHubCI는아직미확인.
+  사용자8만질문은성능회귀전용가상데이터이며운영추가없음으로답변했다.
+  현재13앱allready와공개양웹health정상을읽기전용재확인했다.
+  scale실패때만전용DB에서12초readonly EXPLAIN의안전메타를
+  출력하고sanitized57014로다시실패한다. 바깥테스트40초는진단완료용이며query3초/80k는불변이다.
+  현재13앱 실제ready/schema77의 별도 snapshot을
+  `/Users/jr/.config/nomorevibe/releases/2026-10-14-progress-query-fix`에 capture했다.
+  원래migration0076 proof와 새 읽기 전용schema77 확인을 연결했다. DDL/drain을 다시 실행하지 않았다.
+- 배포 전 운영13앱의 Dokploy done·실제 컨테이너 ready, DB journal76/quality 컬럼 없음,
+  소개 검수2100-01-01·미임대를 읽기 전용으로 확인했다. 현재 schema는 journal77이다.
+- 관리자 소스·spec/plan freeze 완료. 현재13개 수집기, 주·예비와 동시 작업 줄,
+  마지막 저장 회차·오류·재시도·중단·미측정 대기를 표시한다.
+- 네이티브와 직접 CLI 재검토 모두 최종 CLEAN/OK. 발견한 스캔 실패 신호 누락,
+  오래된 standby가 새 runtime을 가리는 문제, 항목실패0이 독립 요청 오류를 가리는 문제를
+  RED→GREEN으로 수정했다. release 메타데이터도 최신 관측에서 읽는다.
+
+## Tests actually executed
+
+- 최종 전체 단위256파일2,468사례 통과. 수정1131e72 뒤 전체 단위를 다시 실행해 같은 결과 확인.
+- 관리자 집중5파일59검사 통과. Next typegen·TypeScript·i18n·lint·diff exit0.
+- 최종 production build 및 번들 검사 exit0. home148.6/detail158.9/launch136.1KB(br).
+  내부 deadline 수정 뒤 lint/build/bundle도 다시 통과했다. lint는 기존 vendor warning1개.
+- 최신 base 통합 뒤 전체3shard: 143파일1,546사례(464/444/638) 통과, 기존todo1 미실행.
+  첫 PR CI는 integration3의 deadline 검사1건 실패. 아래 원인을 수정한 뒤 관련103통합과
+  TypeScript/scopedlint/diff가 통과했다. 루트 fullshard3도47파일638통과·todo1/exit0(120.48초).
+- Python 배포 검사23, CI scope4 통과. 루트 외 네이티브 backend 선택10파일131검사 통과.
+- 최초 직접 CLI4회는 모두 gpt-6.1-sol/xhigh. 입력7,095,113(캐시6,580,224 포함), 출력44,855토큰.
+  CLI Vitest는 read-only 임시 디렉터리 제한으로 실행하지 못했으며 실행 결과로 합산하지 않는다.
+- SQL 후속 scoped CLI는No findings/OK, 입력459,219(캐시406,016 포함), 출력3,826.
+  이번 배포 단계5회 합계 입력7,554,332(캐시6,986,240 포함), 출력48,681이며 private review-usage.json 증거다.
+- fastpath후속CLI No findings/OK, 입력160,661(캐시118,016 포함), 출력4,176.
+  배포 단계6회 누적 입력7,714,993(캐시7,104,256 포함), 출력52,857. native사용량은 추정하지 않는다.
+
+- currentjoin후속CLI No findings/OK, 입력330,690(캐시283,520 포함), 출력3,998.
+  배포 단계7회 누적 입력8,045,683(캐시7,387,776 포함), 출력56,855.
+
+- agentinput최소diff CLI No findings/OK, 입력55,115(캐시36,352포함), 출력407.
+  배포 단계8회누적 입력8,100,798(캐시7,424,128포함), 출력57,262. 모든CLIgpt-6.1-sol/xhigh.
 
 ## Modified files / design decisions
 
-관리자 변경은 `lib/operations/crawler-activity.ts`, status의CrawlerActivity/CSS/page/OperationsCenter/action-links,
-모델·컴포넌트 검사, `docs/superpowers/specs/2026-10-14-crawler-activity-design.md`·계획이다.
-루트 문서는 `README.md`, 이 인계, `docs/operations/2026-10-14-pipeline-recovery-rollout.md`다.
-기존 조회를 재사용하고 새 DB query/migration 없이 catalog 전체 수집기를 포함한다. 직전 성공 회차 관측만
-저장되는 한계를 명시하고, 미측정 대기·오류 수는미확인/원시 오류·cursor·detail·토큰은 투영하지 않는다.
+이번 관리자 변경: `lib/operations/crawler-activity.ts`, status의 CrawlerActivity/CSS/page/
+OperationsCenter/action-links, crawler 단위·컴포넌트 검사, agent scan emitter와 budget 검사,
+`docs/superpowers/specs/2026-10-14-crawler-activity-design.md` 및 계획.
+CI 후속 수정은 `lib/domain/evidence/providers/github.ts`와 `tests/integration/github-evidence.test.ts`.
+배포 gate 후속은 worker-progress-query와 기존 동일 이름 통합 검사에 scale 회귀를 추가한다.
+루트 문서는 README, 이 인계, `docs/operations/2026-10-14-pipeline-recovery-rollout.md`다.
+기존 조회를 재사용하고 새 DB query/migration 없이 catalog 전체 수집기를 포함한다.
+최근 결과는 각 수집기의 마지막 저장 회차이며 전체 과거 로그가 아니다.
+원시 오류·cursor·detail·토큰은 새 투영에 전달하지 않고 미측정 건수는 추정하지 않는다.
 
-## Remaining / exact next commands
+## Failed approaches / remaining work
 
-관리자최종freeze와단위/type/lint/i18n/build/bundle/native리뷰완료.
-PR#416의재실행최신CI를확인하고정상병합한다. 관리자directCLI완료/CLEAN,
-GitHub deadline전용directCLI65009는진행중. 로컬fullshard3도追加確認한다.
-현재dirty파일은배포진행상태를기록한이인계뿐이며, 병합후동일소스main checkout을방해하지않는다.
-최신 base 필수CI check 성공 뒤 정상 PR 병합, main CI의 양 이미지 발행 성공을 확인한다.
-운영 준비와 배포 도구는 저장소 runbook에 따른 private `release.py`이며 secrets를 인자/출력에 넣지 않는다.
-source5는GitHub provider/명령/복제본을 유지하고 shared8은immutable digest를 적용한다.
+첫 CI38549253859에서 quality/integration1,2는 성공, integration3의 deadline 검사1건이 실패했다.
+내부 timeout 신호가 벽시계 deadline보다 먼저 취소돼도 hasBudget이 외부 signal만 검사하여
+transport 실패 저장과 deferred 반환으로 진행했다. 이 경로를 고정적 RED로 재현하고
+결합된 signal을 검사하도록 최소 수정했다. 테스트는 요청 진입 후 취소를 시작하며
+원인·빠른 반환·늦은 응답 후 저장 없음까지 검증한다. 기대값을 느슨하게 바꾸지 않았다.
+설치되지 않은 gstack 체크리스트를 실행했다고 기록하지 않는다. 저장소 runbook과 독립 리뷰를 사용했다.
+
+PR 정상 병합·main 양 이미지 발행·preflight·마이그레이션0076·text 두 앱 교체 완료.
+현재 gate 실패의 원인은 evidenceProgress 읽기 집계 SQL의 운영 3초 제한 초과다.
+monitor_query_timeout 에이전트(gpt-6.1-sol/xhigh)가 해당 SQL과 집중 통합 검사만 담당한다.
+첫 MATERIALIZED-only 접근은 로컬GREEN/운영2.7초였지만 CI의80k 회귀에서 실패했다.
+3초를 늘리거나 fixture를 축소하지 않고 canonical URL fastpath로 CPU 시간을 줄였다.
+기존 mode별표현식을 그대로 fallback하고 기존 agent WHERE/AI현재버전/정책/통계 범위는 보존한다.
+3초 제한과 gate를 유지하고 실제 EXPLAIN으로 원인을 확인한 뒤 PR/CI를 거쳐 수정한다.
+새 main target에는 현재 혼합 릴리스를 별도 private baseline으로 capture하며 원래 snapshot은 보존한다.
+남은 순서는 수정 검증/PR/CI → 새 target 13앱 → 역할별 gate → 양웹 → 실제 파일 hash/DB/관리자 검증.
+source5는 GitHub provider, shared8은 immutable digest를 유지한다. 실제 파일 hash도 대조한다.
+원래 환경·명령·복제본·키·기능 플래그와 소개 검수 중단을 보존한다.
+
+## Exact next commands / private evidence
 
 ```sh
+gh run view 38551249622 --json status,conclusion,jobs
+gh pr view 416 --json headRefOid,baseRefOid,mergeStateStatus
 git status --short
-git log -3 --oneline
-cat docs/operations/2026-10-14-pipeline-recovery-rollout.md
-# direct backend CLI receipt/review만 읽는다. jsonl·settings snapshot에는 원시 작업 정보가 있어 출력하지 않는다.
-cat /private/tmp/nomorevibe-pipeline-release-20261014/release_backend.receipt.json
-cat /private/tmp/nomorevibe-pipeline-release-20261014/release_backend.review.md
-# main SHA와 실제 CI ID가 확정된 뒤:
-python3 /private/tmp/nomorevibe-pipeline-release-20261014/release.py target MAIN_SHA MAIN_CI_ID
-python3 /private/tmp/nomorevibe-pipeline-release-20261014/release.py plan
-python3 /private/tmp/nomorevibe-pipeline-release-20261014/release.py migrate
-# role별 mini 예비 → M3 주, 마지막 양웹. 실제 migration proof 없이는roll 금지.
-python3 /private/tmp/nomorevibe-pipeline-release-20261014/release.py roll text-mini
-python3 /private/tmp/nomorevibe-pipeline-release-20261014/release.py roll text-m3
+# cb6b719의 추가 앱 배포는 하지 않는다. 새 PR CI를 확인한다.
+gh run view 38561746654 --json status,conclusion,jobs
+gh pr view 417 --json headRefOid,baseRefOid,mergeStateStatus,state
+# 현재 CI38557315298은 실패이므로 이head/run은 병합하지 않는다.
+# 추가 source fix와 fullshard2/리뷰/새PR CI 성공 후 latest head/run으로 정상 merge gate helper 실행.
+gh run list --branch fix/worker-progress-query-budget-20261014 --limit 3 --json databaseId,headSha,status,conclusion
+# 현재head4a2a0e6bd0fa614ce27567583ec26c465ba3be98, run38561746654 역시실패:
+# 이run도실패했으므로병합명령실행금지. 추가원인확인·최종수정·새CI성공의head/run을사용한다.
+# 병합된 새 SHA checkout, main CI/양 이미지 성공 확인 후 새 directory release.py target/plan/roll.
 ```
 
-baseline은 이미capture했다. `capture`로 덮어쓰지 않는다. 일회성 migration은 소비자11서비스를drain하고
-새image의scripts/migrate.mjs를direct5432에서 실행해 journal77/컬럼/보수적backfill/소개중단을 확인한 뒤
-finally에서 기존 복제본을 복구한다. 이 도구를 현재 단계에서 아직 실행하지 않았다.
-소스빌드5는실제runtime 파일SHA256를main checkout과비교한다. rollout 중중단되면snapshot과actual앱상태부터읽는다.
-사용자의기존untracked PT/zip/prototypes/mistake파일은보존하고`git add .`금지.
+baseline은 이미 capture했다. 다시 덮어쓰지 않는다. private evidence 디렉터리는0700/파일0600이며
+원시 설정·로그·스냅샷을 출력하거나 Git에 넣지 않는다. 필수 복구 증거는
+`/Users/jr/.config/nomorevibe/releases/2026-10-14-cb6b719`에도0700/0600으로 보존했다.
+로컬 PC 종료 시 Codex 배포 제어/후속 검증은 멈추고, 이미 시작된 CI/Dokploy 서버 작업만 계속됨을 안내했다.
+전용 evidence55436 DB는38검사/fullshard2 뒤중지했지만2차CI실패프로파일용으로다시시작했다. monitor55437은
+후속 fullshard3 후 다시 중지했으며 사용자 컨테이너는 변경하지 않았다. 사용자 untracked PT/zip/prototypes/
+mistake 파일을 보존하고 `git add .`를 사용하지 않는다. 현재 dirty 문서는 진행 상황을 기록한 인계다.
 
 ---
 
@@ -646,6 +725,12 @@ git push -u origin docs/admin-audit-and-i18n-rollout-20261013
 ## Current objective / completed work
 
 사용자가 상단 8시간 급상승과 하단 첫 탭의 중복을 지적하여 하단 첫 탭을 AI로 제작으로 바꾸라고 했다. gpt-6.1-sol/xhigh 담당이 isolated worktree에서 구현했고 root가 소스·기존 fixture diff와 DAL 조건을 검토했다. 기존 운영 배포와 병렬 1인 관리자 감사도 계속 진행한다. 관리자 감사 최종 문서는 별도 docs/single-operator-admin-audit-20261013 작업에서 보존 중이다.
+
+- currentjoin후속CLI No findings/OK, 입력330,690(캐시283,520 포함), 출력3,998.
+  배포 단계7회 누적 입력8,045,683(캐시7,387,776 포함), 출력56,855.
+
+- agentinput최소diff CLI No findings/OK, 입력55,115(캐시36,352포함), 출력407.
+  배포 단계8회누적 입력8,100,798(캐시7,424,128포함), 출력57,262. 모든CLIgpt-6.1-sol/xhigh.
 
 ## Modified files / design decisions
 

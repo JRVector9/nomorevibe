@@ -50,9 +50,47 @@
 고정적RED로재현했다 (deadline실패/외부abort성공). combined신호를검사하는최소소스수정후
 같은두검사가GREEN이며, hanging요청진입·취소원인·빠른반환·늦은응답뒤쓰기없음을검사한다.
 관련통합103개와type/scopedlint/diff, 루트전체2,468단위/lint/build/bundle가다시통과했다.
-native최소diff재검토는CLEAN이고directCLI/후속CI를확인한다. 운영변경은아직시작하지않았다.
-실제 PR 병합 SHA·CI·이미지 digest·마이그레이션 종료 결과·13앱 상태·관리자 읽기는 완료 후
-이 문서와 인계 문서에 추가한다. 준비 검사와 배포 완료 증거를 구분한다.
+native와directCLI최소diff재검토는CLEAN/OK였다. 후속PR CI38550569220 전체성공 뒤
+PR#416을 정상 병합했고 main은 `cb6b719e5222064c0657b36d2b45a0efd573ff93`이다.
+main CI38551249622도 필수check와 양 이미지 발행까지 성공했다.
+
+13앱 설정 보존·양 서버의 새 이미지 pull·웹 빌드키 일치 preflight 뒤11워커 서비스를 drain했다.
+새 worker image로 직접5432 DB의 migration0076을 실행해 exit0을 확인하고 복제본을 복구했다.
+journal77, integer/NOTNULL/default0와38,593행의 보수적 backfill mismatch0/invalid0,
+소개 검수2100-01-01·미임대 보존을 확인했다. text-mini/text-m3는 cb6b719의 실제 컨테이너가 ready다.
+
+text 뒤 전체 monitor gate에서 evidenceProgress SQL이3초 statement_timeout(code57014)에 걸렸다.
+전체 역할 readiness와 scheduler2복제본 생존은 정상이며 나머지11앱은 이전 정상 릴리스로 유지했다.
+읽기 전용 진단 EXPLAIN ANALYZE는4,411.656ms: 근거246.854ms, agent1,439.238ms,
+AI2,724.212ms다. public43,958개에서 주소 정규화 계산이 지배적이며 디스크 임시 spill은 없었다.
+운영3초 한도와 gate를 보존해 `ai_public AS MATERIALIZED`로 정규화를 한 번만 계산한다.
+같은 입력 시각·파라미터의 읽기 전용 A/B는4,395.517→2,695.092ms, 세 집계 결과 전체 동일이었다.
+수정 쿼리는 실제3초 한도에서 성공했고 EXPLAIN2,770.851ms였다. 여유 약300ms인 관측이므로
+추가 성장이나 다른 부하에서도 항상3초 이내라고 보장하지 않는다. 진단만 읽기 전용12초 한도를 썼다.
+긴 유효 저장소 주소80,000개/current 버전/미발견 idle 회귀에서 기존 쿼리57014 RED를 재현하고
+같은3초 제한의 수정 쿼리가 두 차례 GREEN이었다. 관련 두 파일 통합37/37와 파일 lint가 통과했다.
+독립 읽기 전용 native와directCLI검토는CLEAN/OK였다. 후속PR#417의CI38557315298에서는
+quality/integration1,3이 성공했으나 integration2의 새80k 회귀가57014로 실패했다(나머지444사례성공).
+단일MATERIALIZED의 여유가 충분하지 않아 PR을병합하거나 추가배포하지 않았다.
+같은3초/80k기준을 보존하면서 canonical GitHub URL만 문자열 추출로 계산하고 나머지는 기존 mode별
+정규화를 그대로 fallback한다. 실제 helper의14,407개 주소 변형을 원래 두 식과 DB에서 비교해 차이0을 확인했다.
+같은 snapshot·파라미터의 운영 읽기 전용 A/B4,313.499→1,082.249ms/전체 집계 동일,
+수정 쿼리의 실제3초 한도 성공과 EXPLAIN1,202.197ms를 확인했다.
+관련38통합·두파일lint·TypeScript 및 CI=true/TZ=UTC의 전체shard2(48파일446사례)가 통과했다.
+native/directCLI후속리뷰도CLEAN/OK였다. CI38558982971도80k scale만57014로실패했고
+quality/integration1,3과integration2의 나머지445사례는성공했다. PR은미병합이며추가배포는없었다.
+
+추가localEXPLAIN은AI의 수요그룹을200개로추정해 실제80,000개 긴PK를 개별조회하는 경로가
+AIbranch약1,310ms를소비함을확인했다. generic/custom plan 모두같았다. current-version5필드의
+AI결과를MATERIALIZED로공유하고 PK unique의seenLEFTJOIN으로개별조회를줄인다.
+읽기전용local A/Bcustom1,955→1,128ms/generic1,987→1,125ms,
+prod동일snapshot4,320.120→1,009.214ms/집계전체동일과EXPLAIN1,087.499ms를확인했다.
+최종관련38통합과파일lint/TypeScript가통과했고native구조검토CLEAN이다.
+최종CI환경fullshard2(48파일446사례/66.28초)도통과했다. directCLI/새CI는확인중이다.
+실패시만전용testDB에서12초읽기전용EXPLAIN의안전메타를남기고sanitized57014로다시실패한다.
+테스트외곽40초는진단완료용이고운영집계3초/가상80k기준은유지한다.
+13앱 릴리스 일치·실제 소스hash·양웹·인증 관리자 읽기는 아직 완료하지 않았다.
+원래 private baseline은 보존하고 현재 혼합 릴리스용 별도 snapshot을 준비한다.
 
 운영 절차는 소비자 drain → 새 worker image로 직접 DB 마이그레이션0076 한 번 실행/검증 →
 기존 복제본 복구 → 역할별 mini 예비/M3 주 순차 교체 → 양 웹 교체 → 실제 DB·워커·HTTP 확인이다.
@@ -64,3 +102,18 @@ DB 서버·스트리밍 설정·X 토큰 주입·외부 메시지 전송은 변�
 배포 성공과 처리 용량 목표 달성은 별개다. 근거 성공/partial/due·최장 지연·304 비율·API quota와
 신규 수집 지연을 후속으로 측정한다. 24시간 안정성·외부 monitor 수신·X 목적 승인 및 상시 일일
 예산·프로젝트 연결 품질·공개 HOT는 별도 미완료 항목으로 유지한다.
+
+### currentjoin CI 추가 관측
+
+최종4a2a0e6의CI38561746654는quality/integration1,3과integration2의445사례가통과했으나
+80k scale은57014로실패했다. 진단EXPLAIN3286.562ms에서agent2241ms/AI1035ms였다.
+AI 반복PK조회는제거됐고, agent의긴키locale정렬이새주병목이다. 동일UNION입력을agent_inputs MATERIALIZED로옮겨같은GROUPBY/min을유지했다.
+localcustom1070.842→925.507ms/generic1045.951→947.346ms 모두집계일치이며정렬경로제거를확인했다.
+운영readonlyrepeatable-read original4261.188→1411.068ms/집계전체동일, EXPLAIN1490.680ms.
+최종focus15/15·파일lint·TypeScript0(3.04초), nativeCLEAN/directCLI No findings/OK(staticonly),
+fullshard2는48파일446검사통과(66.12초), 실패진단없음. 3초한도/80k회귀는유지하며새GitHubCI는미확인이다. PR417은미병합, 추가배포없음.
+currentjoin directCLI는No findings/OK, 입력330,690(캐시283,520포함), 출력3,998.
+배포단계7회누적 입력8,045,683(캐시7,387,776포함), 출력56,855.
+
+agentinput최소diff CLI 입력55,115(캐시36,352포함), 출력407; 배포단계8회누적
+입력8,100,798(캐시7,424,128포함), 출력57,262. 13앱실제ready와공개양웹health를재확인했다.

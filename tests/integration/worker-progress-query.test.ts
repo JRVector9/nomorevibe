@@ -1,11 +1,12 @@
 import { beforeAll, beforeEach, expect, it, vi } from "vitest";
 import { spawnSync } from "node:child_process";
-import { eq } from "drizzle-orm";
+import postgres from "postgres";
+import { eq, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { categoryDecisions, crawlCandidates, crawlDocuments, crawlFrontier, crawlPublicationChanges, crawlSettings, operationsObservations,
   products, productLinks, productEvidenceSources, agentRepositoryScans, repositoryAiLevels, jobs } from "@/lib/db/schema";
 import { saveSettings } from "@/lib/crawl/settings";
-import { buildWorkerProgress, readWorkerProgress } from "@/lib/operations/worker-progress-query";
+import { buildWorkerProgress, progressRepositoryKeySql, readWorkerProgress } from "@/lib/operations/worker-progress-query";
 import { observeService } from "@/lib/operations/observations";
 import { ensureSchema, resetTables, TEST_DATABASE_URL } from "./setup";
 import { AGENT_DETECTOR_VERSION } from "@/lib/domain/evidence/agents/types";
@@ -34,6 +35,76 @@ async function publicProduct(slug: string, now: Date, extra: Partial<typeof prod
     category: "Dev", verifyToken: slug, editTokenHash: "a".repeat(64), status: "seeded",
     createdAt: new Date(now.getTime() - 120 * 60_000), updatedAt: new Date(now.getTime() - 120 * 60_000), ...extra });
 }
+
+async function diagnoseScaleTimeout(error: unknown): Promise<boolean> {
+  let current: unknown = error;
+  let code: unknown;
+  let query: string | undefined;
+  let parameters: unknown[] | undefined;
+  for (let depth = 0; depth < 5 && current && typeof current === "object"; depth++) {
+    const failure = current as { code?: unknown; query?: unknown; params?: unknown; args?: unknown; cause?: unknown };
+    code = failure.code ?? code;
+    if (!query && typeof failure.query === "string" && failure.query.includes("WITH public_products AS MATERIALIZED")) {
+      query = failure.query;
+      const values = failure.params ?? failure.args;
+      if (Array.isArray(values)) parameters = values;
+    }
+    current = failure.cause;
+  }
+  if (code !== "57014" || !query || !parameters) return false;
+  const client = postgres(TEST_DATABASE_URL, { max: 1, connect_timeout: 3 });
+  const allowed = ["Node Type", "Join Type", "Relation Name", "CTE Name", "Strategy", "Plan Rows", "Actual Rows", "Actual Loops",
+    "Actual Total Time", "Temp Read Blocks", "Temp Written Blocks", "Sort Method", "Sort Space Type", "Hash Batches", "Peak Memory Usage"];
+  const summarize = (node: Record<string, unknown>): Record<string, unknown> => ({
+    ...Object.fromEntries(allowed.filter(key => key in node).map(key => [key, node[key]])),
+    ...(Array.isArray(node.Plans) ? { Plans: node.Plans.map(child => summarize(child as Record<string, unknown>)) } : {}),
+  });
+  try {
+    const diagnostic = await client.begin("read only", async tx => {
+      await tx`SET LOCAL jit = off`;
+      await tx`SET LOCAL statement_timeout = '12s'`;
+      await tx`SET LOCAL plan_cache_mode = force_generic_plan`;
+      const [settings] = await tx`SELECT current_setting('server_version') AS version, current_setting('work_mem') AS work_mem,
+        datcollate AS locale, current_setting('max_parallel_workers_per_gather') AS parallel_workers
+        FROM pg_database WHERE datname = current_database()`;
+      const result = await tx.unsafe("EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) " + query,
+        parameters as Parameters<typeof tx.unsafe>[1], { prepare: true });
+      const plan = result[0]["QUERY PLAN"][0];
+      return { settings, executionMs: plan["Execution Time"], plan: summarize(plan.Plan) };
+    });
+    console.error(JSON.stringify({ event: "worker_progress.scale_timeout_plan", ...diagnostic }));
+  } catch (diagnosticError) {
+    console.error(JSON.stringify({ event: "worker_progress.scale_timeout_plan_failed",
+      code: diagnosticError && typeof diagnosticError === "object" && "code" in diagnosticError ? diagnosticError.code : null }));
+  } finally {
+    await client.end({ timeout: 3 }).catch(() => {});
+  }
+  return true;
+}
+
+it("preserves both repository normalizers across canonical and legacy URL boundaries", async () => {
+  const urls: Array<string | null> = [null, "", "/", "https://github.com", "https://github.com/", "https://github.com/a", " https://github.com/a/b"];
+  for (const scheme of ["https://", "http://", "HTTPS://", "ftp://", ""])
+    for (const host of ["github.com", "www.github.com", "GitHub.COM", "githubXcom", "example.com"])
+      for (const owner of ["acme", "ACME", "", "a?b", "a#b", "a\nb", "한글", "İ"])
+        for (const repo of ["repo", ".git", ".GIT", "repo.git", "repo.GIT", "a.git.git", "a?b", "a#b", "a/b", "한글", "İ", "r".repeat(100)])
+          for (const tail of ["", "/", "//", "?x", "#x", "\n"]) urls.push(`${scheme}${host}/${owner}/${repo}${tail}`);
+  const repoUrl = sql`repo_url`;
+  const [row] = await db.execute<{ cases: number; agent_mismatches: number; ai_mismatches: number }>(sql`
+    WITH inputs AS (SELECT unnest(ARRAY[${sql.join(urls.map(url => sql`${url}`), sql`, `)}]::text[]) AS repo_url),
+    compared AS MATERIALIZED (
+      SELECT lower(substring(repo_url from '^https://github[.]com/([^/]+/[^/#?]+?)([.]git)?/?$')) AS agent_old,
+        ${progressRepositoryKeySql(repoUrl, "agent")} AS agent_new,
+        substring(regexp_replace(regexp_replace(lower(rtrim(repo_url, '/')), '^https?://(www[.])?', 'https://'), '[.]git$', '')
+          from '^https://github[.]com/([^/]+/[^/#?]+)$') AS ai_old,
+        ${progressRepositoryKeySql(repoUrl, "ai")} AS ai_new FROM inputs
+    )
+    SELECT count(*)::int AS cases,
+      count(*) FILTER (WHERE agent_old IS DISTINCT FROM agent_new)::int AS agent_mismatches,
+      count(*) FILTER (WHERE ai_old IS DISTINCT FROM ai_new)::int AS ai_mismatches FROM compared
+  `);
+  expect(row).toEqual({ cases: urls.length, agent_mismatches: 0, ai_mismatches: 0 });
+});
 
 it("does not invent missing-site demand for products the due selector cannot pick", async () => {
   const now = new Date();
@@ -154,6 +225,47 @@ it("respects public unseen AI idle while candidates and current-version due rows
   await db.update(jobs).set({ cursor: { unseenIdleUntil: new Date(now.getTime() - 1).toISOString() } });
   expect(await ai()).toMatchObject({ waiting: 1, oldestMinutes: 120, reason: "no_progress" });
 });
+
+it("bounds current AI demand during unseen idle at public catalogue scale", async () => {
+  const now = new Date();
+  const created = new Date(now.getTime() - 120 * 60_000).toISOString();
+  const due = new Date(now.getTime() - 20 * 60_000).toISOString();
+  // Valid maximum-length GitHub identities make repeated normalization exceed the real 3s query budget.
+  await db.execute(sql`
+    INSERT INTO products (slug, url, name, tagline, description, category, verify_token, edit_token_hash,
+      status, repo_url, created_at, updated_at)
+    SELECT 'scale-' || n, 'https://scale-' || n || '.example', 'scale-' || n, 'test', 'test', 'Dev',
+      'scale-' || n, repeat('a', 64), 'seeded',
+      'https://github.com/' || repeat('o', 39) || '/' || repeat('r', 94) || lpad(n::text, 6, '0'),
+      ${created}::timestamp, ${created}::timestamp
+    FROM generate_series(1, 80000) n
+  `);
+  await db.execute(sql`
+    INSERT INTO repository_ai_levels (repository_key, rules_version, checked_at, next_check_at)
+    SELECT repeat('o', 39) || '/' || repeat('r', 94) || lpad(n::text, 6, '0'),
+      ${AI_LEVEL_RULES_VERSION}, ${created}::timestamp, ${due}::timestamp
+    FROM generate_series(1, 80000) n
+  `);
+  await db.execute(sql`ANALYZE products`);
+  await db.execute(sql`ANALYZE repository_ai_levels`);
+  await db.insert(jobs).values({ name: "ai-level-refresh", nextScheduledAt: now,
+    cursor: { unseenIdleUntil: new Date(now.getTime() + 10 * 60_000).toISOString() } });
+  await observeService("crawler", { status: "running" });
+  let report: Awaited<ReturnType<typeof readWorkerProgress>>;
+  try {
+    report = await readWorkerProgress(now);
+  } catch (error) {
+    if (await diagnoseScaleTimeout(error)) {
+      // Preserve the failed 3s gate without printing Drizzle's query text or bound parameters.
+      throw Object.assign(new Error("evidenceProgress exceeded its 3s statement timeout"), { code: "57014" });
+    }
+    throw error;
+  }
+  expect(report.stages.find(row => row.stage === "ai-level"))
+    .toMatchObject({ waiting: 80000, oldestMinutes: 20, completed5m: 0 });
+  expect(report.stages.find(row => row.stage === "agent-evidence"))
+    .toMatchObject({ waiting: 80000, oldestMinutes: 120, completed5m: 0 });
+}, 40_000);
 
 it("keeps healthy leased work out of two external down samples without hiding timeouts or sibling stalls", async () => {
   const started = new Date();
