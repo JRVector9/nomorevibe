@@ -64,6 +64,13 @@ describe("checkKoreanTagline — 모델이 옮긴 줄을 그대로 믿지 않는
     expect(checkKoreanTagline("FFmpeg로 동영상 100개를 로컬 편집", ffmpeg)).toEqual({ ok: false, reason: "invented_number" });
     expect(checkKoreanTagline("iOS에서 FFmpeg로 동영상을 로컬 편집", ffmpeg)).toEqual({ ok: false, reason: "invented_term" });
   });
+
+  it("1인칭·3인칭은 숫자로 세지 않는다 — 그 밖의 숫자는 그대로 본다", () => {
+    const shooter = { name: "Doodle District", tagline: "Play a ballpoint-style first-person shooter on lined paper and choose your loadout" };
+    expect(checkKoreanTagline("줄 공책 위에서 볼펜 낙서풍 1인칭 슈팅 게임을 하고 무기 구성을 고른다", shooter).ok).toBe(true);
+    expect(checkKoreanTagline("3인칭 시점으로 줄 공책 위를 누비는 슈팅 게임", shooter).ok).toBe(true);
+    expect(checkKoreanTagline("1인칭 슈팅 게임에서 무기 12종을 고른다", shooter)).toEqual({ ok: false, reason: "invented_number" });
+  });
 });
 
 describe("parseKoreanTaglines", () => {

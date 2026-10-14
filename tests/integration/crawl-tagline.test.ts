@@ -100,14 +100,17 @@ describe("소개 짓기 잡", () => {
     expect((await db.select().from(crawlTaglines))[0]).toMatchObject({ tagline: "사람이 적은 한 줄", writtenBy: "admin" });
   });
 
-  it("사람이 이미 결정한 후보는 건드리지 않는다", async () => {
+  it("사람이 승인했지만 소개가 없어 멈춘 후보도 한 줄을 지어 승인을 발행까지 잇는다", async () => {
+    // 발행은 사람의 승인도 소개 없이는 올리지 않는다(2026-10-14) — 멈춘 그 후보다
     await held("someone/mine");
     await db.update(crawlCandidates).set({ decidedBy: "admin" }).where(eq(crawlCandidates.repo, "someone/mine"));
 
     await tick();
 
-    expect(gateway).not.toHaveBeenCalled();
-    expect(await db.select().from(crawlTaglines)).toHaveLength(0);
+    expect(gateway).toHaveBeenCalledTimes(1);
+    expect((await db.select().from(crawlTaglines))[0]).toMatchObject({ repo: "someone/mine", tagline: "바를 등록하면 손님이 찾습니다", writtenBy: null });
+    // 사람의 결정은 그대로 남는다 — 발행이 사람의 승인으로 올린다
+    expect(await crawl.getCandidate("someone/mine")).toMatchObject({ state: "approved", reason: "passed", decidedBy: "admin" });
   });
 
   it("실패는 다시 볼 시각을 달고 남는다 — 잇따라 둘이 막히면 이번 틱은 접는다", async () => {

@@ -188,10 +188,10 @@ export function ReviewDetail({ entry, reasons, onDecided }: {
               {entry.tagline.model ? ` · ${entry.tagline.model}` : entry.tagline.errorCode ? '' : ' · 모델에게 묻지 않음'}
             </p>
           )}
-          {/* 승인하면 어떻게 되는지 — 모르고 누르면 목록에 레포 이름이 소개로 올라간다 */}
+          {/* 승인하면 어떻게 되는지 — 소개 없이는 발행하지 않는다(2026-10-14). 그냥 승인하면 이 자리로 돌아온다 */}
           {!entry.tagline?.text && (
             <p className="mt-1.5 text-[13px] text-warn">
-              그냥 승인하면 소개 자리에 레포 이름(<span className="font-mono">{candidate.repo}</span>)이 들어갑니다.
+              소개 없이는 발행하지 않습니다. 그냥 승인하면 AI 가 소개를 다시 지을 때까지 기다리고, 못 지으면 이 자리로 돌아옵니다.
               페이지를 열어 보고 한 줄로 적을 수 있으면 아래에 적어 주세요.
             </p>
           )}
