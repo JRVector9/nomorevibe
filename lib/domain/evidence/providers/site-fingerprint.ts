@@ -38,11 +38,14 @@ export async function refreshSiteFingerprint(
   if (remainingMs <= 0 || options.signal?.aborted || options.hasBudget?.() === false) return "budget_exhausted";
   const deadlineSignal = Number.isFinite(remainingMs) ? AbortSignal.timeout(Math.max(1, Math.ceil(remainingMs))) : undefined;
   const signal = options.signal && deadlineSignal ? AbortSignal.any([options.signal, deadlineSignal]) : options.signal ?? deadlineSignal;
+  const hasBudget = () => !signal?.aborted && options.hasBudget?.() !== false && Date.now() < (options.deadlineAt ?? Infinity);
   const [{ fetchCapped }, { upsertObservedSource, findObservedSource }, { currentEvidenceSettings }] = await Promise.all([
     import("@/lib/net/fetch"), import("../repository"), import("../settings-store"),
   ]);
+  if (!hasBudget()) return "budget_exhausted";
   const now = options.now ?? new Date();
   const [stored, settings] = await Promise.all([findObservedSource({ slug: input.slug, kind: "documentation", sourceKey: "canonical_site" }), currentEvidenceSettings()]);
+  if (!hasBudget()) return "budget_exhausted";
   const sameUrl = stored?.sourceUrl === input.url;
   if (sameUrl && stored.nextAttemptAt > now && (!options.force || stored.lastErrorCode)) return stored.state === "ok";
   const cached = sameUrl && stored.normalizedFacts?.type === "site_fingerprint"
@@ -55,7 +58,7 @@ export async function refreshSiteFingerprint(
   if (cached && stored?.etag) headers["If-None-Match"] = stored.etag;
   if (cached && stored?.lastModified) headers["If-Modified-Since"] = stored.lastModified;
   const read = (headers: Record<string, string>) => {
-    if (signal?.aborted || options.hasBudget?.() === false) return Promise.resolve(null);
+    if (!hasBudget()) return Promise.resolve(null);
     const pending = fetch(input.url, { maxBytes: SITE_FINGERPRINT_BYTES, acceptNotModified: true, headers, signal });
     if (!signal) return pending;
     // DNS preflight may not support cancellation. Race only the read, never a DB
@@ -69,28 +72,36 @@ export async function refreshSiteFingerprint(
     });
   };
   let result = await read(headers);
-  if (!result || signal?.aborted || options.hasBudget?.() === false) return "budget_exhausted";
+  if (!result || !hasBudget()) return "budget_exhausted";
   if (result.ok && result.status === 304 && (!cached || cached.finalUrl !== result.finalUrl)) {
     result = await read({});
   }
-  if (!result || signal?.aborted || options.hasBudget?.() === false) return "budget_exhausted";
+  if (!result || !hasBudget()) return "budget_exhausted";
   const identity = { slug: input.slug, kind: "documentation", provider: "product_site", sourceKey: "canonical_site", sourceUrl: input.url };
   if (!result.ok || (result.status === 304 && (!cached || cached.finalUrl !== result.finalUrl))) {
     const attempts = (sameUrl ? stored?.attempts ?? 0 : 0) + 1;
     const delayHours = Math.min(7 * 24, 6 * 2 ** Math.min(attempts - 1, settings.maxRetries - 1));
-    await withJobLeaseWrite(options.lease, tx => upsertObservedSource({ ...identity, state: "failed", lastFailureAt: now,
-      attempts, lastErrorCode: `site_${result.ok ? "cacheless_304" : result.reason}`, nextAttemptAt: new Date(now.getTime() + delayHours * 3600000) }, tx, input.productId));
-    return false;
+    const persisted = await withJobLeaseWrite(options.lease, async tx => {
+      if (!hasBudget()) return false;
+      await upsertObservedSource({ ...identity, state: "failed", lastFailureAt: now,
+        attempts, lastErrorCode: `site_${result.ok ? "cacheless_304" : result.reason}`, nextAttemptAt: new Date(now.getTime() + delayHours * 3600000) }, tx, input.productId);
+      return true;
+    });
+    return persisted ? false : "budget_exhausted";
   }
   const digest = result.status === 304 ? cached!.bodyDigest : createHash("sha256").update(result.body).digest("hex");
   const facts = cached && cached.bodyDigest === digest && cached.finalUrl === result.finalUrl ? cached : {
     type: "site_fingerprint", finalUrl: result.finalUrl, bodyDigest: digest, parserVersion: SITE_FINGERPRINT_PARSER_VERSION,
     repositoryKeys: extractSiteRepositoryKeys(result.body.toString("utf8"), result.finalUrl),
   };
-  await withJobLeaseWrite(options.lease, tx => upsertObservedSource({ ...identity, state: "ok", normalizedFacts: facts,
-    etag: result.headers.get("etag") ?? (result.status === 304 ? stored?.etag : null),
-    lastModified: result.headers.get("last-modified") ?? (result.status === 304 ? stored?.lastModified : null),
-    observedAt: now, lastSuccessAt: now, attempts: 0, lastErrorCode: null,
-  nextAttemptAt: new Date(now.getTime() + settings.linkCheckHours * 3600000) }, tx, input.productId));
-  return true;
+  const persisted = await withJobLeaseWrite(options.lease, async tx => {
+    if (!hasBudget()) return false;
+    await upsertObservedSource({ ...identity, state: "ok", normalizedFacts: facts,
+      etag: result.headers.get("etag") ?? (result.status === 304 ? stored?.etag : null),
+      lastModified: result.headers.get("last-modified") ?? (result.status === 304 ? stored?.lastModified : null),
+      observedAt: now, lastSuccessAt: now, attempts: 0, lastErrorCode: null,
+      nextAttemptAt: new Date(now.getTime() + settings.linkCheckHours * 3600000) }, tx, input.productId);
+    return true;
+  });
+  return persisted ? true : "budget_exhausted";
 }

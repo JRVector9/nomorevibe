@@ -8,6 +8,7 @@ import {
   productMedia,
   products,
   productUpdates,
+  productRefreshRequests,
   jobs,
 } from "@/lib/db/schema";
 import {
@@ -30,6 +31,8 @@ import { ensureSchema, resetTables } from "./setup";
 import { mapGitHubRepositoryFacts, refreshGitHubEvidence } from "@/lib/domain/evidence/providers/github";
 import { refreshSiteFingerprint } from "@/lib/domain/evidence/providers/site-fingerprint";
 import { JobLeaseLostError } from "@/lib/jobs/control";
+import * as jobControl from "@/lib/jobs/control";
+import { saveProductRefreshProgress } from "@/lib/domain/evidence/refresh-requests";
 
 const NOW = new Date("2026-08-19T03:00:00.000Z");
 
@@ -84,6 +87,50 @@ async function image(color: string) {
 }
 
 describe("bounded product evidence refresh", () => {
+  it.each(["abort", "deadline"] as const)("persists the deferred retry checkpoint with CAS fencing after %s", async mode => {
+    await product("deferred-cutoff");
+    await replaceMakerLinks({ slug: "deferred-cutoff", actor: "maker:test", links: [{ kind: "repository", url: "https://github.com/owner/repo" }] });
+    await upsertObservedSource({ slug: "deferred-cutoff", kind: "repository", provider: "github", sourceKey: "owner/repo",
+      state: "failed", nextAttemptAt: NOW });
+    const [identity] = await db.select({ id: products.id }).from(products).where(eq(products.slug, "deferred-cutoff"));
+    const [request] = await db.insert(productRefreshRequests).values({ productId: identity.id, slug: "deferred-cutoff",
+      actor: "maker:test", requestedVersion: 1, activeVersion: 1, activeForce: true, nextAttemptAt: NOW }).returning();
+    const lease = { name: "deferred-cutoff", token: "owner", requestedVersion: 0 };
+    await db.insert(jobs).values({ name: lease.name, leaseToken: lease.token, lockedAt: new Date() });
+    const controller = new AbortController();
+    const deadlineAt = Date.now() + 60_000;
+    const originalAssertLease = jobControl.assertJobLease;
+    const leaseCheck = vi.spyOn(jobControl, "assertJobLease");
+    const originalClock = Date.now;
+    const clock = vi.spyOn(Date, "now").mockImplementation(() => originalClock());
+    let stopped = false;
+    leaseCheck.mockImplementation(async (tx, ownedLease, lockMode) => {
+      if (!stopped) {
+        stopped = true;
+        if (mode === "abort") controller.abort();
+        else clock.mockReturnValue(deadlineAt);
+      }
+      return originalAssertLease(tx, ownedLease, lockMode);
+    });
+    const retry = new Date(NOW.getTime() + 12 * 60 * 60 * 1_000);
+    try {
+      const result = await refreshProductEvidence("deferred-cutoff", { now: NOW, force: true, signal: controller.signal, deadlineAt, lease,
+        progress: { completedKeys: [], retryAfterByKey: {} },
+        saveProgress: progress => saveProductRefreshProgress(request, progress, { now: NOW, lease }),
+        dependencies: { github: async () => ({ status: "deferred", releases: 0, retryAt: retry }) } });
+      expect(leaseCheck.mock.calls.length).toBeGreaterThanOrEqual(2);
+      expect(result).toMatchObject({ complete: false, sourcesAttempted: 1, sourcesFailed: 1, nextAttemptAt: NOW });
+    } finally {
+      leaseCheck.mockRestore();
+      clock.mockRestore();
+    }
+    const [source] = await db.select().from(productEvidenceSources).where(eq(productEvidenceSources.slug, "deferred-cutoff"));
+    const [saved] = await db.select().from(productRefreshRequests).where(eq(productRefreshRequests.productId, identity.id));
+    expect(source.nextAttemptAt).toEqual(retry);
+    expect(saved).toMatchObject({ activeVersion: 1, completedVersion: 0, progress: { completedKeys: [] } });
+    expect(Object.values(saved.progress.retryAfterByKey)).toEqual([retry.toISOString()]);
+  });
+
   it.each([["deadline", false], ["abort", false], ["budget", false], ["deadline", true], ["abort", true], ["budget", true]] as const)
     ("starts no repository relationship read after %s during the site refresh (progress=%s)", async (stop, progress) => {
     await product("site-cutoff");
@@ -219,8 +266,7 @@ describe("bounded product evidence refresh", () => {
       },
     };
 
-    let firstBudgetChecks = 0;
-    const first = context(null, () => ++firstBudgetChecks <= 5);
+    const first = context(null, () => calls.length < 2);
     await expect(refreshProductEvidenceJob(first.ctx, dependencies)).resolves.toEqual({
       done: false,
       cursor: { afterSlug: "beta" },
@@ -315,8 +361,7 @@ describe("bounded product evidence refresh", () => {
         return { finalUrl: url, items: [] };
       },
     };
-    let budgetChecks = 0;
-    const first = context(null, () => ++budgetChecks <= 3);
+    const first = context(null, () => calls.length === 0);
 
     await expect(refreshProductEvidenceJob(first.ctx, dependencies)).resolves.toEqual({
       done: false,

@@ -146,6 +146,7 @@ export type EvidenceSourceResult = {
 type CollectedEvidenceSourceResult = EvidenceSourceResult & {
   failed?: boolean;
   complete?: boolean;
+  retryAt?: Date;
   httpClass?: "ok" | "not_modified" | "error" | "budget";
 };
 
@@ -335,14 +336,17 @@ export async function dueEvidenceProductSlugs(input: {
     .slice(0, limit);
 }
 
-async function canonicalSiteSources(slug: string, now: Date, force: boolean, progress?: ProductRefreshProgress): Promise<DeclaredEvidenceSource[]> {
+async function canonicalSiteSources(slug: string, now: Date, force: boolean, progress?: ProductRefreshProgress,
+  hasBudget: () => boolean = () => true): Promise<DeclaredEvidenceSource[]> {
+  if (!hasBudget()) return [];
   const product = await db.query.products.findFirst({ where: eq(products.slug, slug), columns: { id: true, url: true } });
-  if (!product) return [];
+  if (!hasBudget() || !product) return [];
   const stored = await db.query.productEvidenceSources.findFirst({ where: and(eq(productEvidenceSources.slug, slug),
     eq(productEvidenceSources.provider, "product_site"), eq(productEvidenceSources.sourceKey, "canonical_site")) });
+  if (!hasBudget()) return [];
   if (!stored) {
     const repository = await db.query.productLinks.findFirst({ where: and(eq(productLinks.slug, slug), eq(productLinks.kind, "repository"), eq(productLinks.visible, true)) });
-    if (!repository) return [];
+    if (!hasBudget() || !repository) return [];
   }
   const source: DeclaredEvidenceSource = { productId: product.id, slug, kind: "documentation", sourceKey: "canonical_site", sourceUrl: product.url,
     attempts: stored?.attempts ?? 0, normalizedFacts: stored?.normalizedFacts ?? null, lastSuccessAt: stored?.lastSuccessAt ?? null,
@@ -519,6 +523,7 @@ async function collectDeclaredSource(
       httpClass: succeeded ? "ok" : "error" };
   }
   if (source.kind === "repository") {
+    const hardStopped = () => Boolean(dependencies.signal?.aborted) || Date.now() >= (dependencies.deadlineAt ?? Infinity);
     // A supplied GitHub provider owns its network dependencies. The production path
     // records site-to-repository evidence before deriving the GitHub relationship.
     const result = await (dependencies.github ?? refreshGitHubEvidence)({
@@ -526,40 +531,46 @@ async function collectDeclaredSource(
       repository: source.sourceKey,
       productId: source.productId,
     }, { now: () => now, hasBudget, log: dependencies.log, deadlineAt: dependencies.deadlineAt, signal: dependencies.signal, lease: dependencies.lease });
-    if (result.status === "budget_exhausted") {
-      return {
-        factsChanged: 0,
-        eventsInserted: 0,
-        mediaInserted: 0,
-        complete: false,
-        httpClass: "budget",
-      };
-    }
+    const interrupted: CollectedEvidenceSourceResult = {
+      factsChanged: 0,
+      eventsInserted: result.releases,
+      mediaInserted: 0,
+      complete: false,
+      httpClass: "budget",
+    };
+    if (result.status === "budget_exhausted" || hardStopped()) return interrupted;
     const failed = result.status === "deferred" || result.status === "disconnected";
+    let sourceRetryAt = result.retryAt ?? undefined;
     const refreshed = await withProductGeneration(source.slug, source.productId, async (tx) => {
+      if (hardStopped()) return null;
       const [row] = await tx.select().from(productEvidenceSources).where(and(
         eq(productEvidenceSources.slug, source.slug),
         eq(productEvidenceSources.kind, source.kind),
         eq(productEvidenceSources.sourceKey, source.sourceKey),
       )).limit(1);
+      if (hardStopped()) return null;
       if (row && result.status === "deferred") {
+        sourceRetryAt = result.retryAt ?? retryAt(now, row.attempts, settings);
         await tx.update(productEvidenceSources).set({
           ...(failureState(source, now, settings) === "stale" ? { state: "stale" as const } : {}),
-          nextAttemptAt: result.retryAt ?? retryAt(now, row.attempts, settings),
+          nextAttemptAt: sourceRetryAt,
         }).where(eq(productEvidenceSources.id, row.id));
       } else if (row && !failed) {
         await tx.update(productEvidenceSources).set({
           nextAttemptAt: new Date(now.getTime() + intervalHours(source.kind, settings) * 60 * 60 * 1000),
         }).where(eq(productEvidenceSources.id, row.id));
       }
+      if (row && result.status === "disconnected") sourceRetryAt = row.nextAttemptAt;
       if (dependencies.lease) await assertJobLease(tx, dependencies.lease);
       return row;
     });
+    if (refreshed === null) return interrupted;
     return {
       factsChanged: !isDeepStrictEqual(publicEvidenceFacts(source.normalizedFacts), publicEvidenceFacts(refreshed?.normalizedFacts)) ? 1 : 0,
       eventsInserted: result.releases,
       mediaInserted: 0,
       failed,
+      retryAt: sourceRetryAt,
       httpClass: result.status === "not_modified" ? "not_modified" : failed ? "error" : "ok",
     };
   }
@@ -670,24 +681,31 @@ export async function refreshProductEvidence(
     lease: options.lease ?? options.dependencies?.lease };
   const now = options.now ?? (dependencies.now ?? (() => new Date()))();
   if (!Number.isFinite(now.getTime())) throw new Error("invalid refresh timestamp");
+  const hardStopped = () => Boolean(dependencies.signal?.aborted) || Date.now() >= (dependencies.deadlineAt ?? Infinity);
+  const hasBudget = () => (options.hasBudget?.() ?? true) && !hardStopped();
+  const totals: ProductEvidenceRefreshResult = {
+    sourcesAttempted: 0, sourcesFailed: 0, factsChanged: 0, eventsInserted: 0, mediaInserted: 0, complete: true,
+  };
+  const stopped = () => ({ ...totals, complete: false, nextAttemptAt: now });
+  if (!hasBudget()) return stopped();
   if (options.productId !== undefined) await withProductGeneration(slug, options.productId, async () => {});
+  if (!hasBudget()) return stopped();
   const settings = await currentEvidenceSettings();
+  if (!hasBudget()) return stopped();
   const progress: ProductRefreshProgress | undefined = options.progress ? {
     completedKeys: [...options.progress.completedKeys], retryAfterByKey: { ...options.progress.retryAfterByKey },
   } : undefined;
   const force = options.force ?? false;
   const [declared, site, media] = await Promise.all([
     declaredSources(slug, now, force, progress),
-    !dependencies.github || dependencies.siteFingerprint ? canonicalSiteSources(slug, now, force, progress) : [],
+    !dependencies.github || dependencies.siteFingerprint ? canonicalSiteSources(slug, now, force, progress, hasBudget) : [],
     mediaSources(slug, now, force, settings, progress),
   ]);
+  if (!hasBudget()) return stopped();
   const sources = [...site, ...declared];
   if (options.productId !== undefined && [...sources, ...media].some(source => source.productId !== options.productId)) {
     throw new ProductGenerationChangedError();
   }
-  const totals: ProductEvidenceRefreshResult = {
-    sourcesAttempted: 0, sourcesFailed: 0, factsChanged: 0, eventsInserted: 0, mediaInserted: 0, complete: true,
-  };
   const completed = new Set(progress?.completedKeys ?? []);
   const persist = async (key: string, retry?: Date) => {
     if (!progress) return;
@@ -704,20 +722,21 @@ export async function refreshProductEvidence(
     return retry && new Date(retry) > now;
   };
   const finish = async (budgetEnded = false) => {
-    if (!progress) return totals;
-    if (budgetEnded) {
+    if (budgetEnded || !hasBudget()) {
       // Resume bookkeeping can settle without starting another expired collection read.
       totals.complete = false;
       totals.nextAttemptAt = now;
-      await options.saveProgress?.(progress);
+      if (progress) await options.saveProgress?.(progress);
       return totals;
     }
+    if (!progress) return totals;
     // Re-read declarations so an edit during external I/O remains pending in this request.
     const [currentDeclared, currentSite, currentMedia] = await Promise.all([
       declaredSources(slug, now, force, progress),
-      !dependencies.github || dependencies.siteFingerprint ? canonicalSiteSources(slug, now, force, progress) : [],
+      !dependencies.github || dependencies.siteFingerprint ? canonicalSiteSources(slug, now, force, progress, hasBudget) : [],
       mediaSources(slug, now, force, settings, progress),
     ]);
+    if (!hasBudget()) return finish(true);
     const currentSources = [...currentSite, ...currentDeclared];
     const keys = [...currentSources.map(evidenceRefreshKey), ...currentMedia.map(mediaRefreshKey)];
     const currentKeys = new Set(keys);
@@ -743,7 +762,7 @@ export async function refreshProductEvidence(
       else { totals.complete = false; totals.nextAttemptAt = source.retryAt; }
       continue;
     }
-    if (options.hasBudget && !options.hasBudget()) {
+    if (!hasBudget()) {
       totals.complete = false;
       return finish(true);
     }
@@ -754,17 +773,21 @@ export async function refreshProductEvidence(
     try {
       const result = dependencies.refreshSource
         ? await dependencies.refreshSource(source)
-        : await collectDeclaredSource(source, now, settings, dependencies, options.hasBudget);
+        : await collectDeclaredSource(source, now, settings, dependencies, hasBudget);
       totals.factsChanged += result.factsChanged;
       totals.eventsInserted += result.eventsInserted;
       totals.mediaInserted += result.mediaInserted;
       const failed = "failed" in result && Boolean(result.failed);
       if (failed) {
         totals.sourcesFailed += 1;
-        const [stored] = await db.select({ nextAttemptAt: productEvidenceSources.nextAttemptAt })
-          .from(productEvidenceSources).where(and(eq(productEvidenceSources.slug, slug),
-            eq(productEvidenceSources.kind, source.kind), eq(productEvidenceSources.sourceKey, source.sourceKey))).limit(1);
-        retry = stored?.nextAttemptAt && stored.nextAttemptAt > now ? stored.nextAttemptAt : retryAt(now, source.attempts + 1, settings);
+        let nextAttemptAt = "retryAt" in result && result.retryAt instanceof Date ? result.retryAt : undefined;
+        if (!hardStopped()) {
+          const [stored] = await db.select({ nextAttemptAt: productEvidenceSources.nextAttemptAt })
+            .from(productEvidenceSources).where(and(eq(productEvidenceSources.slug, slug),
+              eq(productEvidenceSources.kind, source.kind), eq(productEvidenceSources.sourceKey, source.sourceKey))).limit(1);
+          if (stored?.nextAttemptAt && stored.nextAttemptAt > now) nextAttemptAt = stored.nextAttemptAt;
+        }
+        retry = nextAttemptAt && nextAttemptAt > now ? nextAttemptAt : retryAt(now, source.attempts + 1, settings);
       }
       partial = "complete" in result && result.complete === false;
       dependencies.log?.("evidence.source_refresh", {
@@ -776,7 +799,7 @@ export async function refreshProductEvidence(
     } catch (error) {
       if (error instanceof ProductGenerationChangedError || error instanceof JobLeaseLostError) throw error;
       totals.sourcesFailed += 1;
-      await markSourceFailure(source, now, settings, "collection_failed", dependencies.lease);
+      if (!hardStopped()) await markSourceFailure(source, now, settings, "collection_failed", dependencies.lease);
       retry = retryAt(now, source.attempts + 1, settings);
       dependencies.log?.("evidence.source_refresh", {
         sourceKind: source.kind, slug, durationMs: Math.max(0, Math.round(performance.now() - startedAt)),
@@ -790,7 +813,7 @@ export async function refreshProductEvidence(
   for (const source of media) {
     const key = mediaRefreshKey(source);
     if (completed.has(key) || waiting(key)) continue;
-    if (options.hasBudget && !options.hasBudget()) {
+    if (!hasBudget()) {
       totals.complete = false;
       return finish(true);
     }
