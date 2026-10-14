@@ -7,6 +7,7 @@ import { listJobStates } from "@/lib/jobs/runner";
 import { STALE_LOCK_MS } from "@/lib/jobs/lease";
 import { AGENT_DETECTOR_VERSION } from "@/lib/domain/evidence/agents/types";
 import { AI_LEVEL_RULES_VERSION } from "@/lib/domain/evidence/ai-level-labels";
+import { agentRefreshDueAtSql } from "@/lib/domain/evidence/agents/refresh-policy";
 import { latestServiceInstance, serviceInstancesFromObservations } from "./instance";
 import { pipelineThroughput } from "./throughput";
 import type { ThroughputSnapshot } from "./throughput-model";
@@ -134,17 +135,20 @@ async function evidenceProgress(settings: CrawlSettings, now: Date, skipUnseen: 
           AND s.provider = 'product_site' AND s.source_key = 'canonical_site'
       ), agent_inputs AS MATERIALIZED (
         -- Avoid parallel sorted finalization over long keys under the database locale.
-        SELECT ${progressRepositoryKeySql(sql`repo_url`, "agent")} AS repository_key, created_at
+        SELECT ${progressRepositoryKeySql(sql`repo_url`, "agent")} AS repository_key, created_at,
+          status NOT IN ('seeded','verified') AS requires_daily
         FROM products WHERE status != 'banned' AND repo_url ~ '^https://github.com/[^/]+/[^/#?]+/?$'
-        UNION ALL SELECT lower(repo), updated_at FROM crawl_candidates WHERE state IN ('new','needs_review','approved')
+        UNION ALL SELECT lower(repo), updated_at, true FROM crawl_candidates WHERE state IN ('new','needs_review','approved')
       ), agent_demand AS (
-        SELECT repository_key, min(created_at) AS created_at FROM agent_inputs GROUP BY repository_key
+        SELECT repository_key, min(created_at) AS created_at, bool_or(requires_daily) AS requires_daily
+        FROM agent_inputs GROUP BY repository_key
       ), latest_agent AS (
         SELECT DISTINCT ON (s.repository_key) s.* FROM agent_repository_scans s JOIN agent_demand d USING (repository_key)
         WHERE scope = '' AND detector_version = ${AGENT_DETECTOR_VERSION}
         ORDER BY s.repository_key, started_at DESC, id DESC
       ), agent_targets AS (
-        SELECT greatest(d.created_at, s.next_attempt_at) AS due_at, s.state,
+        SELECT greatest(d.created_at,
+          ${agentRefreshDueAtSql(sql`s`, sql`d.requires_daily`, settings.agentEvidence.backgroundRefreshDays, at)}) AS due_at, s.state,
           coalesce(s.last_error_code, CASE WHEN ${preScanFailure} THEN ${failure?.code ?? null} END) AS error_code,
           s.completed_at, CASE WHEN ${preScanFailure} THEN ${failure?.lastFailureAt ?? null}::timestamp ELSE s.started_at END AS started_at,
           s.file_count, s.request_count,

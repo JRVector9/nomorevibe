@@ -14,6 +14,7 @@ import { runJob } from '@/lib/jobs/runner';
 import { readWorkerProgress } from '@/lib/operations/worker-progress-query';
 import { observeService } from '@/lib/operations/observations';
 import { roleHasUnexplainedStall } from '@/scripts/role-worker';
+import { agentRefreshDueAtSql } from '@/lib/domain/evidence/agents/refresh-policy';
 const spies = vi.hoisted(() => ({ refresh: vi.fn() }));
 /** 실제 refresh 를 그대로 부르되 몇 번 불렸는지 센다 — 틱이 일반 슬롯을 어디에 썼는지의 척도다 */
 vi.mock('@/lib/domain/evidence/agents/repository', async importOriginal => {
@@ -38,6 +39,110 @@ const listProduct = async (slug: string, repositoryKey: string) => {
   await db.insert(productEvidenceSources).values({ slug, kind: 'repository', provider: 'github', sourceKey: repositoryKey, normalizedFacts: { type: 'github_repository' } });
 };
 const context = () => ({ cursor: null, save: async () => {}, hasBudget: () => true, log: () => {} });
+
+it.each([25 / 24, 89, 90])('uses the configured public background interval at scan age %s days without changing confirmation stamps', async ageDays => {
+  await saveSettings({ enabled: false, agentEvidence: { enabled: true, backgroundRefreshDays: 90 } }, 'test');
+  await db.delete(jobs);
+  await listProduct('background', 'acme/background');
+  await db.update(products).set({ status: 'seeded', createdAt: new Date(Date.now() - 200 * 86400_000) });
+  const old = new Date(Date.now() - ageDays * 86400_000 - 1000);
+  const scan = (await saveRepositoryAgentScan({ repositoryId: '81', repositoryKey: 'acme/background',
+    commitSha: 'c'.repeat(40), scope: '', state: 'complete', observations: [], requestCount: 2,
+    fileCount: 0, errorCode: null, retryAt: null, cursor: null }, old))!;
+  const before = (await readWorkerProgress()).stages.find(stage => stage.stage === 'agent-evidence');
+  expect(before).toMatchObject({ waiting: ageDays >= 90 ? 1 : 0, providerErrors: 0 });
+  const paths: string[] = [];
+  await refreshAgentEvidenceJob(context(), { request: emptyRepository(paths) });
+  expect(spies.refresh.mock.calls.map(([input]) => input.repositoryKey)).toEqual(ageDays >= 90 ? ['acme/background'] : []);
+  if (ageDays < 90) {
+    expect(paths).toEqual([]);
+    expect(await getLatestRepositoryAgentScan('acme/background')).toMatchObject({
+      id: scan.id, completedAt: scan.completedAt, nextAttemptAt: scan.nextAttemptAt,
+    });
+  }
+});
+
+it('keeps missing, incomplete, failed, limited and future confirmations on their original retry clock', async () => {
+  const at = new Date('2026-10-14T12:00:00Z');
+  const due = new Date(at.getTime() - 3600_000).toISOString();
+  const complete = new Date(at.getTime() - 2 * 86400_000).toISOString();
+  const defaults = { state: 'complete', last_error_code: null as string | null, cursor: null as unknown,
+    coverage: { limited: false } as unknown, completed_at: complete as string | null, next_attempt_at: due, requires_daily: false };
+  const cases = [
+    { name: 'ordinary', patch: {}, delayed: true },
+    { name: 'candidate', patch: { requires_daily: true } },
+    { name: 'missing', patch: { state: null, completed_at: null, next_attempt_at: null } },
+    ...['pending', 'partial', 'failed'].map(state => ({ name: state, patch: { state } })),
+    ...['timeout', 'unavailable', 'alias_recheck_required'].map(last_error_code => ({ name: last_error_code, patch: { last_error_code } })),
+    { name: 'empty-cursor', patch: { cursor: {} } },
+    { name: 'queued-complete', patch: { cursor: { pendingCommits: [{ sha: 'a'.repeat(40) }] } } },
+    { name: 'limited', patch: { coverage: { limited: true } } },
+    { name: 'malformed-limited', patch: { coverage: { limited: 'false' } } },
+    { name: 'missing-confirmation', patch: { completed_at: null } },
+    { name: 'future-confirmation', patch: { completed_at: new Date(at.getTime() + 3600_000).toISOString() } },
+    { name: 'later-retry', patch: { next_attempt_at: new Date(at.getTime() + 120 * 86400_000).toISOString() } },
+  ];
+  const inputs = cases.map(({ name, patch }) => ({ name, ...defaults, ...patch }));
+  const rows = await db.execute<{ name: string; next_attempt_at: string | null; due_at: string | null; default_due_at: string | null }>(sql`
+    WITH input AS (SELECT * FROM jsonb_to_recordset(${JSON.stringify(inputs)}::jsonb) AS row(
+      name text, state text, last_error_code text, cursor jsonb, coverage jsonb,
+      completed_at timestamp, next_attempt_at timestamp, requires_daily boolean))
+    SELECT name, next_attempt_at::text,
+      (${agentRefreshDueAtSql(sql`input`, sql`requires_daily`, 90, sql`${at.toISOString()}::timestamp`)})::text AS due_at,
+      (${agentRefreshDueAtSql(sql`input`, sql`requires_daily`, 1, sql`${at.toISOString()}::timestamp`)})::text AS default_due_at
+    FROM input
+  `);
+  for (const row of rows) {
+    expect(row.default_due_at, row.name).toBe(row.next_attempt_at);
+    if (row.name === 'ordinary') expect(Date.parse(row.due_at!)).toBe(Date.parse(complete) + 90 * 86400_000);
+    else expect(row.due_at, row.name).toBe(row.next_attempt_at);
+  }
+});
+
+it.each(['new', 'needs_review', 'approved', 'nonpublic', 'missing', 'partial', 'error', 'cursor', 'limited', 'old-detector', 'other-scope'] as const)
+  ('retains daily or unfinished demand for %s while deferring clean public background work', async kind => {
+    await saveSettings({ enabled: false, agentEvidence: { enabled: true, backgroundRefreshDays: 90 } }, 'test');
+    await db.delete(jobs);
+    await listProduct('background', 'acme/background');
+    await db.update(products).set({ status: 'verified', createdAt: new Date(Date.now() - 200 * 86400_000) });
+    if (kind !== 'missing') {
+      const old = new Date(Date.now() - 2 * 86400_000);
+      const scan = (await saveRepositoryAgentScan({ repositoryId: '81', repositoryKey: 'acme/background',
+        commitSha: 'c'.repeat(40), scope: '', state: 'complete', observations: [], requestCount: 2,
+        fileCount: 0, errorCode: null, retryAt: null, cursor: null }, old))!;
+      const patch: Partial<typeof agentRepositoryScans.$inferInsert> = kind === 'partial' ? { state: 'partial' }
+        : kind === 'error' ? { lastErrorCode: 'timeout' }
+        : kind === 'cursor' ? { cursor: { repositoryId: '81', repositoryKey: 'acme/background', commitSha: 'c'.repeat(40),
+          detectorVersion: AGENT_DETECTOR_VERSION, scope: '', pendingTrees: [], pendingBlobs: [], pendingCommits: [] } }
+        : kind === 'limited' ? { coverage: { limited: true } }
+        : kind === 'old-detector' ? { detectorVersion: 'old' }
+        : kind === 'other-scope' ? { scope: 'src', scopeHash: 'other' } : {};
+      if (Object.keys(patch).length) await db.update(agentRepositoryScans).set(patch).where(eq(agentRepositoryScans.id, scan.id));
+    }
+    if (kind === 'new' || kind === 'needs_review' || kind === 'approved')
+      await db.insert(crawlCandidates).values({ repo: 'acme/background', state: kind });
+    if (kind === 'nonpublic') await listProduct('private-demand', 'acme/background');
+    expect((await readWorkerProgress()).stages.find(stage => stage.stage === 'agent-evidence'))
+      .toMatchObject({ waiting: 1, providerErrors: kind === 'error' ? 1 : 0 });
+    await refreshAgentEvidenceJob(context(), { request: emptyRepository([]) });
+    expect(spies.refresh.mock.calls.map(([input]) => input.repositoryKey)).toEqual(['acme/background']);
+  });
+
+it('honors persisted failure backoff with active demand and a long background interval', async () => {
+  await saveSettings({ enabled: false, agentEvidence: { enabled: true, backgroundRefreshDays: 90 } }, 'test');
+  await db.delete(jobs);
+  await listProduct('background', 'acme/background');
+  await db.update(products).set({ status: 'seeded' });
+  await db.insert(crawlCandidates).values({ repo: 'acme/background', state: 'approved' });
+  const scan = (await completeScan('acme/background', '81'))!;
+  const retryAt = new Date(Date.now() + 3600_000);
+  await db.update(agentRepositoryScans).set({ lastErrorCode: 'timeout', nextAttemptAt: retryAt }).where(eq(agentRepositoryScans.id, scan.id));
+  expect((await readWorkerProgress()).stages.find(stage => stage.stage === 'agent-evidence'))
+    .toMatchObject({ waiting: 0, deferred: 1, providerErrors: 1 });
+  await refreshAgentEvidenceJob(context(), { request: emptyRepository([]) });
+  expect(spies.refresh).not.toHaveBeenCalled();
+  expect((await getLatestRepositoryAgentScan('acme/background'))?.nextAttemptAt).toEqual(retryAt);
+});
 
 it.each(['http503', 'auth'] as const)('retains pre-scan %s failure across fenced job completion and normal retry ticks', async kind => {
   await saveSettings({ enabled: false, agentEvidence: { enabled: true } }, 'test');
