@@ -138,7 +138,8 @@ async function evidenceProgress(settings: CrawlSettings, now: Date, skipUnseen: 
           CASE WHEN ${preScanFailure} THEN ${failure?.firstFailureAt ?? null}::timestamp
             ELSE greatest(d.created_at, s.completed_at) END AS error_since
         FROM agent_demand d LEFT JOIN latest_agent s USING (repository_key)
-      ), ai_public AS (
+      ), ai_public AS MATERIALIZED (
+        -- Reuse normalization across the projection, NULL filter and unseen-idle lookup.
         SELECT substring(regexp_replace(regexp_replace(lower(rtrim(repo_url, '/')), '^https?://(www[.])?', 'https://'), '[.]git$', '')
           from '^https://github[.]com/([^/]+/[^/#?]+)$') AS repository_key, created_at FROM public_products
       ), ai_demand AS (

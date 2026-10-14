@@ -1,6 +1,6 @@
 import { beforeAll, beforeEach, expect, it, vi } from "vitest";
 import { spawnSync } from "node:child_process";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { categoryDecisions, crawlCandidates, crawlDocuments, crawlFrontier, crawlPublicationChanges, crawlSettings, operationsObservations,
   products, productLinks, productEvidenceSources, agentRepositoryScans, repositoryAiLevels, jobs } from "@/lib/db/schema";
@@ -153,6 +153,36 @@ it("respects public unseen AI idle while candidates and current-version due rows
   await db.delete(repositoryAiLevels);
   await db.update(jobs).set({ cursor: { unseenIdleUntil: new Date(now.getTime() - 1).toISOString() } });
   expect(await ai()).toMatchObject({ waiting: 1, oldestMinutes: 120, reason: "no_progress" });
+});
+
+it("bounds current AI demand during unseen idle at public catalogue scale", async () => {
+  const now = new Date();
+  const created = new Date(now.getTime() - 120 * 60_000).toISOString();
+  const due = new Date(now.getTime() - 20 * 60_000).toISOString();
+  // Valid maximum-length GitHub identities make repeated normalization exceed the real 3s query budget.
+  await db.execute(sql`
+    INSERT INTO products (slug, url, name, tagline, description, category, verify_token, edit_token_hash,
+      status, repo_url, created_at, updated_at)
+    SELECT 'scale-' || n, 'https://scale-' || n || '.example', 'scale-' || n, 'test', 'test', 'Dev',
+      'scale-' || n, repeat('a', 64), 'seeded',
+      'https://github.com/' || repeat('o', 39) || '/' || repeat('r', 94) || lpad(n::text, 6, '0'),
+      ${created}::timestamp, ${created}::timestamp
+    FROM generate_series(1, 80000) n
+  `);
+  await db.execute(sql`
+    INSERT INTO repository_ai_levels (repository_key, rules_version, checked_at, next_check_at)
+    SELECT repeat('o', 39) || '/' || repeat('r', 94) || lpad(n::text, 6, '0'),
+      ${AI_LEVEL_RULES_VERSION}, ${created}::timestamp, ${due}::timestamp
+    FROM generate_series(1, 80000) n
+  `);
+  await db.execute(sql`ANALYZE products`);
+  await db.execute(sql`ANALYZE repository_ai_levels`);
+  await db.insert(jobs).values({ name: "ai-level-refresh", nextScheduledAt: now,
+    cursor: { unseenIdleUntil: new Date(now.getTime() + 10 * 60_000).toISOString() } });
+  await observeService("crawler", { status: "running" });
+  const report = await readWorkerProgress(now);
+  expect(report.stages.find(row => row.stage === "ai-level"))
+    .toMatchObject({ waiting: 80000, oldestMinutes: 20, completed5m: 0 });
 });
 
 it("keeps healthy leased work out of two external down samples without hiding timeouts or sibling stalls", async () => {

@@ -13,7 +13,12 @@ PR00~07의 코드·회귀검사와 전체 검사(단위2,318·통합1,543·타�
 [후속 설계 재검토](docs/operations/2026-10-14-pipeline-design-reaudit.md)에서 추가 취소 경계6개를
 수정했고 단위2,433·선택 통합136·타입·lint와 마지막 직접 리뷰를 통과했다.
 이전 전체 검사 횟수와 구별해 기록하며, 해당 source는 로컬 `df39c40`/파일럿은 `5c791dc`다.
-운영 배포·마이그레이션0076·개선 후 처리량은 아직 확인하지 않았다.
+후속 관리자·deadline 수정까지 [PR#416](https://github.com/JRVector9/nomorevibe/pull/416)으로 병합했고
+main CI 및 양 이미지 발행이 성공했다. 운영 migration0076은 직접5432에서 exit0·journal77·
+quality 카운터 backfill mismatch0을 확인했다. text 두 앱은 새 릴리스 ready다.
+전체 gate의 evidenceProgress 주소 정규화 집계가 운영3초 제한을 넘어 후속 최적화를 진행하며,
+나머지11앱 릴리스 교체·전체 실제 검증·개선 후 처리량은 아직 완료하지 않았다.
+[배포 기록](docs/operations/2026-10-14-pipeline-recovery-rollout.md)이 현재 적용 상태다.
 
 다음 운영 단계에서는 최신 base의 CI `check`와 PR 절차를 거쳐 같은 SHA의 웹·워커를 배포하고,
 현재 공개 source 성공·실패·partial·due·최장 지연, HTTP/304 비율·계정별 quota,

@@ -50,9 +50,28 @@
 고정적RED로재현했다 (deadline실패/외부abort성공). combined신호를검사하는최소소스수정후
 같은두검사가GREEN이며, hanging요청진입·취소원인·빠른반환·늦은응답뒤쓰기없음을검사한다.
 관련통합103개와type/scopedlint/diff, 루트전체2,468단위/lint/build/bundle가다시통과했다.
-native최소diff재검토는CLEAN이고directCLI/후속CI를확인한다. 운영변경은아직시작하지않았다.
-실제 PR 병합 SHA·CI·이미지 digest·마이그레이션 종료 결과·13앱 상태·관리자 읽기는 완료 후
-이 문서와 인계 문서에 추가한다. 준비 검사와 배포 완료 증거를 구분한다.
+native와directCLI최소diff재검토는CLEAN/OK였다. 후속PR CI38550569220 전체성공 뒤
+PR#416을 정상 병합했고 main은 `cb6b719e5222064c0657b36d2b45a0efd573ff93`이다.
+main CI38551249622도 필수check와 양 이미지 발행까지 성공했다.
+
+13앱 설정 보존·양 서버의 새 이미지 pull·웹 빌드키 일치 preflight 뒤11워커 서비스를 drain했다.
+새 worker image로 직접5432 DB의 migration0076을 실행해 exit0을 확인하고 복제본을 복구했다.
+journal77, integer/NOTNULL/default0와38,593행의 보수적 backfill mismatch0/invalid0,
+소개 검수2100-01-01·미임대 보존을 확인했다. text-mini/text-m3는 cb6b719의 실제 컨테이너가 ready다.
+
+text 뒤 전체 monitor gate에서 evidenceProgress SQL이3초 statement_timeout(code57014)에 걸렸다.
+전체 역할 readiness와 scheduler2복제본 생존은 정상이며 나머지11앱은 이전 정상 릴리스로 유지했다.
+읽기 전용 진단 EXPLAIN ANALYZE는4,411.656ms: 근거246.854ms, agent1,439.238ms,
+AI2,724.212ms다. public43,958개에서 주소 정규화 계산이 지배적이며 디스크 임시 spill은 없었다.
+운영3초 한도와 gate를 보존해 `ai_public AS MATERIALIZED`로 정규화를 한 번만 계산한다.
+같은 입력 시각·파라미터의 읽기 전용 A/B는4,395.517→2,695.092ms, 세 집계 결과 전체 동일이었다.
+수정 쿼리는 실제3초 한도에서 성공했고 EXPLAIN2,770.851ms였다. 여유 약300ms인 관측이므로
+추가 성장이나 다른 부하에서도 항상3초 이내라고 보장하지 않는다. 진단만 읽기 전용12초 한도를 썼다.
+긴 유효 저장소 주소80,000개/current 버전/미발견 idle 회귀에서 기존 쿼리57014 RED를 재현하고
+같은3초 제한의 수정 쿼리가 두 차례 GREEN이었다. 관련 두 파일 통합37/37와 파일 lint가 통과했다.
+독립 읽기 전용 native 검토는CLEAN이며 직접CLI·PR/CI 검증을 진행한다.
+13앱 릴리스 일치·실제 소스hash·양웹·인증 관리자 읽기는 아직 완료하지 않았다.
+원래 private baseline은 보존하고 현재 혼합 릴리스용 별도 snapshot을 준비한다.
 
 운영 절차는 소비자 drain → 새 worker image로 직접 DB 마이그레이션0076 한 번 실행/검증 →
 기존 복제본 복구 → 역할별 mini 예비/M3 주 순차 교체 → 양 웹 교체 → 실제 DB·워커·HTTP 확인이다.
