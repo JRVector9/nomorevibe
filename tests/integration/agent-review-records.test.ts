@@ -145,6 +145,47 @@ it("hands an approved candidate to human review after three current-source failu
   expect(await db.select().from(crawlReviewAttempts)).toHaveLength(3);
 });
 
+it("does not combine failures from before and after README recovery", async () => {
+  const base = await fixture("enforce");
+  await saveSettings({ firstReview: { provider: base.provider, model: base.model } }, "test");
+  const settings = await getSettings();
+  const context = { ...base, settings, input: await loadReviewInput(base.candidate, base.document, settings) };
+  for (let number = 0; number < 2; number++) {
+    const claim = await claimAgentReview(context);
+    if (claim.kind === "skipped") throw new Error(claim.reason);
+    await recordAgentReview({ ...context, attempt: claim.attempt, error: "timeout", retryAfter: new Date(0) });
+  }
+  const document = (await crawl.setReadmeSample(base.candidate.repo, "New recovered README", base.document))!;
+  const current = { ...context, document, input: await loadReviewInput(base.candidate, document, settings) };
+  expect(current.input.sourceRevisionHash).toBe(context.input.sourceRevisionHash);
+  expect(current.input.inputHash).not.toBe(context.input.inputHash);
+  const claim = await claimAgentReview(current);
+  if (claim.kind === "skipped") throw new Error(claim.reason);
+  await recordAgentReview({ ...current, attempt: claim.attempt, error: "timeout", retryAfter: new Date(0) });
+  expect(await handOffExhaustedFirstReviews(settings, current.lease)).toBe(0);
+  expect(await listReviewCandidates(settings, 20, { readyOnly: true })).toMatchObject([{ id: base.candidate.id }]);
+  expect(await claimAgentReview(current)).toMatchObject({ kind: "claimed", attempt: { attemptNumber: 2 } });
+});
+
+it.each(["ambiguous", "ai_evidence_insufficient"] as const)("hands exhausted %s reviews to a person and preserves the original hold reason", async reason => {
+  const base = await fixture("enforce");
+  await saveSettings({ firstReview: { provider: base.provider, model: base.model } }, "test");
+  await db.update(crawlCandidates).set({ state: "needs_review", reason, signals: { originalEvidence: true } });
+  const candidate = (await crawl.getCandidate(base.candidate.repo))!;
+  const settings = await getSettings();
+  const context = { ...base, candidate, settings, input: await loadReviewInput(candidate, base.document, settings) };
+  for (let number = 1; number <= 3; number++) {
+    const claim = await claimAgentReview(context);
+    if (claim.kind === "skipped") throw new Error(claim.reason);
+    await recordAgentReview({ ...context, attempt: claim.attempt, error: "timeout", retryAfter: new Date(0) });
+  }
+  expect(await handOffExhaustedFirstReviews(settings, context.lease)).toBe(1);
+  expect(await crawl.getCandidate(candidate.repo)).toMatchObject({ state: "needs_review", reason: "ai_review_exhausted",
+    signals: { originalEvidence: true, firstReviewExhausted: { previousReason: reason }, stoppedAt: { rule: "AI 1차 심사" } } });
+  expect(await handOffExhaustedFirstReviews(settings, context.lease)).toBe(0);
+  expect(await db.select().from(crawlReviewAttempts)).toHaveLength(3);
+});
+
 it("separates owner changes from model failures and retries after the interruption window", async () => {
   const base = await fixture("enforce");
   await saveSettings({ firstReview: { provider: base.provider, model: base.model } }, "test");

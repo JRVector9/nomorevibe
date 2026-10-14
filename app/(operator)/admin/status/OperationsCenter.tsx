@@ -23,7 +23,7 @@ import { STATUS_TABS, type StatusTab } from './action-links';
 export type OperationJob = { name:string; status:string; lastRunAt:string|null; lastSuccessAt:string|null; nextScheduledAt:string|null; notBefore:string|null; workerSeenAt:string|null; requestedVersion:number; processedVersion:number; runs:number; lastError:string|null; cursor:string };
 const ROLES=['app','scheduler','crawler','reviewer','publisher','text','maintenance','db','connect-agent'];
 const DESCRIPTIONS:Record<string,string>={app:'제품 페이지·관리자·API 요청을 처리합니다.',scheduler:'예약 시각을 확인하고 담당 워커에게 작업을 요청합니다.',crawler:'프로젝트 원본·공개 근거를 수집합니다.',reviewer:'규칙 판정과 설정된 AI 심사로 후보를 검토합니다.',publisher:'승인 후보를 분류하고 최종 발행 조건을 검사합니다.',text:'소개 생성과 심사 사유 번역을 처리합니다.',maintenance:'발행된 제품이 열리는지 확인하고, 유효 방문을 집계해 랭킹을 갱신합니다.',db:'제품·후보·작업 요청과 실행 결과를 저장합니다.','connect-agent':'Codex·Claude 인증과 모델 검증·분류 실행을 전담합니다.'};
-const TAB_LABELS:Record<StatusTab,string>={overview:'전체 현황',jobs:'작업 흐름',ai:'AI 연결',manual:'수동 분류',diagnostics:'진단'};
+const TAB_LABELS:Record<StatusTab,string>={overview:'전체 현황',jobs:'작업 흐름',crawlers:'크롤러 활동',ai:'AI 연결',manual:'수동 분류',diagnostics:'진단'};
 /** 머리의 "마지막 갱신 13:38:20" — 서버가 읽은 시각(KST)의 시:분:초 */
 const clock=(value:string)=>formatDetailTime(value).split(' ')[1]??'—';
 /**
@@ -35,7 +35,7 @@ const clock=(value:string)=>formatDetailTime(value).split(' ')[1]??'—';
  * 바꿀 때는 history.replaceState 로 주소만 바꾼다 — Next 가 useSearchParams 와 맞춰 주고(공식 문서 "Native History API"),
  * router.replace 와 달리 force-dynamic 인 이 페이지의 서버 조회 전체를 탭 하나 누를 때마다 다시 돌리지 않는다.
  */
-export function OperationsCenter({jobs,data,reviewMode,enabled,attention,dashboard,statusChips,diagnostics,manual}:{jobs:OperationJob[];data:Awaited<ReturnType<typeof operationsData>>;reviewMode:string;enabled:boolean;attention:React.ReactNode;dashboard:React.ReactNode;statusChips:React.ReactNode;diagnostics:React.ReactNode;manual:React.ReactNode}) {
+export function OperationsCenter({jobs,data,reviewMode,enabled,attention,dashboard,statusChips,diagnostics,manual,crawlers}:{jobs:OperationJob[];data:Awaited<ReturnType<typeof operationsData>>;reviewMode:string;enabled:boolean;attention:React.ReactNode;dashboard:React.ReactNode;statusChips:React.ReactNode;diagnostics:React.ReactNode;manual:React.ReactNode;crawlers:React.ReactNode}) {
   const params=useSearchParams();
   const tabParam=params.get('tab');
   const tab:StatusTab=(STATUS_TABS as readonly (string|null)[]).includes(tabParam)?tabParam as StatusTab:'overview';
@@ -84,6 +84,7 @@ export function OperationsCenter({jobs,data,reviewMode,enabled,attention,dashboa
       <button type="button" className="ops-phone-more" aria-expanded={phoneFull} onClick={()=>setPhoneFull(!phoneFull)}>{phoneFull?'나머지 지표 접기':'나머지 지표 보기 — 처리량·파이프라인·모델·신호'}</button>
     </div>}
     {tab==='jobs'&&<JobTimeline jobs={jobs.filter(j=>j.name!=='heartbeat')} now={data.fetchedAt} onOpen={openJob}/>}
+    {tab==='crawlers'&&crawlers}
     {tab==='ai'&&<AiConnection initial={agent??null} reviewMode={reviewMode}/>}
     {tab==='manual'&&manual}
     {/* 진단 — 전에는 전체 현황 아래 접힌 "상세 지표"라 펼치면 페이지가 9,589px 이었다(ADM-16) */}

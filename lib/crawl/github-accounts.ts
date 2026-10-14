@@ -82,19 +82,19 @@ export async function listGitHubCollectorAccounts() {
   }).from(githubCollectorAccounts).orderBy(githubCollectorAccounts.userId);
 }
 
-export async function collectorTokens(options: { deadlineAt?: number } = {}): Promise<CollectorToken[]> {
-  if (options.deadlineAt !== undefined && options.deadlineAt <= Date.now()) return [];
+export async function collectorTokens(options: { deadlineAt?: number; signal?: AbortSignal } = {}): Promise<CollectorToken[]> {
+  if (options.signal?.aborted || (options.deadlineAt !== undefined && options.deadlineAt <= Date.now())) return [];
   const legacy = process.env.GITHUB_TOKEN?.trim();
   // During rollout the existing worker can keep using its env token before the shared key is installed.
   if (!process.env.GITHUB_COLLECTOR_SECRET) return legacy ? [{ token: legacy, userId: null, login: "환경 토큰" }] : [];
   const rows = await db.select({ userId: githubCollectorAccounts.userId, login: githubCollectorAccounts.login,
     encryptedToken: githubCollectorAccounts.encryptedToken }).from(githubCollectorAccounts)
     .where(eq(githubCollectorAccounts.enabled, true)).orderBy(githubCollectorAccounts.userId);
-  if (options.deadlineAt !== undefined && options.deadlineAt <= Date.now()) return [];
+  if (options.signal?.aborted || (options.deadlineAt !== undefined && options.deadlineAt <= Date.now())) return [];
   const secret = collectorSecret();
   // GitHub App 설치 토큰 — 같은 계정이어도 설치마다 한도가 따로다(github-apps.ts). 받지 못한 설치는 빠진다
-  const apps = options.deadlineAt === undefined ? await appCollectorTokens(secret) : await appCollectorTokens(secret, Date.now(), options);
-  if (options.deadlineAt !== undefined && options.deadlineAt <= Date.now()) return [];
+  const apps = options.deadlineAt === undefined && !options.signal ? await appCollectorTokens(secret) : await appCollectorTokens(secret, Date.now(), options);
+  if (options.signal?.aborted || (options.deadlineAt !== undefined && options.deadlineAt <= Date.now())) return [];
   if (rows.length === 0 && apps.length === 0) return legacy ? [{ token: legacy, userId: null, login: "환경 토큰" }] : [];
   const seen = new Set<string>();
   const result: CollectorToken[] = [];

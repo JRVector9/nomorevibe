@@ -107,6 +107,25 @@ it('restarts only for unexplained demand with a healthy scheduler', () => {
   ] }, 'crawler')).toBe(false);
 });
 
+it('does not let a running or progressing sibling lane hide unexplained work', () => {
+  const report = { scheduler: { reason: 'scheduled' }, stages: [
+    { role: 'crawler', reason: 'no_progress', job: 'crawl-fetch', lane: 'main' },
+    { role: 'crawler', reason: 'progressing', job: 'ai-level-refresh', lane: 'evidence' },
+  ] };
+  expect(roleHasUnexplainedStall(report, 'crawler', ['ai-level-refresh'])).toBe(true);
+  expect(roleHasUnexplainedStall(report, 'crawler', ['crawl-fetch'])).toBe(false);
+  expect(roleHasUnexplainedStall({ ...report, stages: [
+    { role: 'crawler', reason: 'upstream_stalled', job: 'product-evidence-refresh', lane: 'sources' },
+  ] }, 'crawler')).toBe(false);
+});
+
+it('treats a stuck lane poll as unresponsive even while another job is active', () => {
+  const report = { scheduler: { reason: 'scheduled' }, stages: [
+    { role: 'crawler', reason: 'progressing', job: 'ai-level-refresh', lane: 'evidence' },
+  ], lanes: [{ role: 'crawler', reason: 'lane_poll_timeout', restartEligible: true }] };
+  expect(roleHasUnexplainedStall(report, 'crawler', ['ai-level-refresh'])).toBe(true);
+});
+
 it('exits the primary after two consecutive stalled samples for Swarm restart', async () => {
   vi.useFakeTimers();
   try {

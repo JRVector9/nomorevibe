@@ -15,6 +15,7 @@ import { reviewWithGrokCli, GROK_REVIEW_TIMEOUT_MS } from "@/lib/crawl/agent-rev
 
 const MAX_CONCURRENT_REVIEWS = 16;
 const TICK_MS = 40_000;
+const GROK_TICK_MS = 108_000;
 const MAX_STARTS = 16;
 const FIRST_GATEWAY_MS = 24_000;
 
@@ -38,7 +39,8 @@ export async function reviewCrawlCandidates(ctx: JobContext<null>): Promise<JobO
   if (handedOff) ctx.log("crawl.agent_review_exhausted_handed_off", { count: handedOff });
   const candidates = await listReviewCandidates(settings, Math.max(20, concurrency * 2));
   if (!candidates.length) return { done: true };
-  const remaining = () => TICK_MS - (Date.now() - startedAt);
+  const tickMs = reviewProvider === "grok-cli" ? GROK_TICK_MS : TICK_MS;
+  const remaining = () => tickMs - (Date.now() - startedAt);
   const ceiling = reviewProvider === "abcllm" ? Math.min(FIRST_GATEWAY_MS, REVIEW_GATEWAY_TIMEOUT_MS)
     : reviewProvider === "grok-cli" ? GROK_REVIEW_TIMEOUT_MS : REVIEW_CLI_TIMEOUT_MS;
   const visited = new Set<number>();

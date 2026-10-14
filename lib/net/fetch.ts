@@ -45,6 +45,33 @@ const ssrfSafeAgent = new Agent({
 
 export type FetchResult = { finalUrl: string; response: Response };
 
+/** The crawler opts into bounded retries; interactive callers retain null/page results. */
+type PageFetchOptions = { retryTransientErrors?: boolean };
+
+export class PageFetchError extends Error {
+  readonly name = "PageFetchError";
+  constructor(readonly reason: "timeout" | "transport" | "http", message: string,
+    readonly status?: number, readonly retryAt?: Date) {
+    super(message);
+  }
+}
+
+function permanentTransportFailure(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const errors = [error, "cause" in error ? error.cause : null];
+  return errors.some(item => item && typeof item === "object" && (
+    "code" in item && ["ENOTFOUND", "ERR_INVALID_URL", "ERR_INVALID_PROTOCOL", "ERR_UNSUPPORTED_PROTOCOL"].includes(String(item.code))
+    || "message" in item && String(item.message).startsWith("사설 IP 차단:")
+  ));
+}
+
+function retryAfterAt(value: string | null): Date | undefined {
+  if (!value?.trim()) return undefined;
+  const milliseconds = /^\d+$/.test(value.trim()) ? Date.now() + Number(value) * 1000 : Date.parse(value);
+  return Number.isFinite(milliseconds) && milliseconds > Date.now() && Number.isFinite(new Date(milliseconds).getTime())
+    ? new Date(milliseconds) : undefined;
+}
+
 export type CappedRequest = (
   url: string,
   init: {
@@ -161,6 +188,8 @@ export async function fetchCapped(
     headers?: Record<string, string>;
     /** Read a bounded excerpt instead of rejecting an oversized body. */
     allowTruncatedBody?: boolean;
+    /** The caller has a cached representation for a conditional 304 response. */
+    acceptNotModified?: boolean;
     /** 테스트 전용 주입점. 프로덕션 기본 요청은 연결 시점 DNS도 재검사한다. */
     request?: CappedRequest;
   },
@@ -193,6 +222,9 @@ export async function fetchCapped(
       return { ok: false, reason: "http", status: 0 };
     }
 
+    if (response.status === 304 && options.acceptNotModified) {
+      return { ok: true, status: 304, finalUrl: current, headers: response.headers, body: Buffer.alloc(0) };
+    }
     if (response.status >= 300 && response.status < 400) {
       const location = response.headers.get("location");
       if (!location) return { ok: false, reason: "http", status: response.status };
@@ -324,13 +356,16 @@ function releaseWhenBodyEnds(res: Response, release: () => void, signal: AbortSi
  * SSRF-안전 fetch — 리다이렉트를 수동으로 추적하며 매 hop마다 정책을 다시 적용한다.
  * (redirect:"follow"는 검증 없이 사설망으로 향하는 302를 그대로 따라가므로 쓰지 않는다)
  */
-export async function safeFetch(url: string, mode: FetchMode = "interactive"): Promise<FetchResult | null> {
+export async function safeFetch(url: string, mode: FetchMode = "interactive", options: PageFetchOptions = {}): Promise<FetchResult | null> {
   const background = mode === "background";
   const total = background ? AbortSignal.timeout(FETCH_TIMEOUT_MS) : null;
   let current = url;
   for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
     const guard = await assertPublicUrl(current);
-    if (!guard.ok) return null;
+    if (!guard.ok) {
+      if (options.retryTransientErrors && guard.transient) throw new PageFetchError("transport", guard.reason);
+      return null;
+    }
 
     const signal = total ?? AbortSignal.timeout(FETCH_TIMEOUT_MS);
     let release: (() => void) | null = null;
@@ -344,9 +379,20 @@ export async function safeFetch(url: string, mode: FetchMode = "interactive"): P
         headers: DEFAULT_HEADERS,
         dispatcher: allowPrivate() ? undefined : ssrfSafeAgent,
       })) as unknown as Response;
-    } catch {
+    } catch (error) {
       release?.();
+      if (options.retryTransientErrors && !permanentTransportFailure(error)) {
+        throw new PageFetchError(timedOut(error) ? "timeout" : "transport",
+          error instanceof Error ? `${error.name}: ${error.message}` : String(error));
+      }
       return null;
+    }
+
+    if (options.retryTransientErrors && (res.status === 408 || res.status === 429 || res.status >= 500 && res.status <= 599)) {
+      const retryAt = retryAfterAt(res.headers.get("retry-after"));
+      await res.body?.cancel().catch(() => {});
+      release?.();
+      throw new PageFetchError("http", `HTTP ${res.status}`, res.status, retryAt);
     }
 
     // Some origins return nonstandard codes (e.g. 999). Preserve that failure
@@ -410,8 +456,9 @@ export async function readBodyCapped(res: Response, maxBytes: number): Promise<B
 export async function fetchPage(
   url: string,
   mode: FetchMode = "interactive",
+  options: PageFetchOptions = {},
 ): Promise<{ status: number; html: string; finalUrl: string } | null> {
-  const fetched = await safeFetch(url, mode);
+  const fetched = await safeFetch(url, mode, options);
   if (!fetched) return null;
   const body = await readBodyCapped(fetched.response, MAX_HTML_BYTES);
   return {

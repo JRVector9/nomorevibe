@@ -6,6 +6,37 @@
 
 ---
 
+## 수집·검수 개선의 운영 검증 — 2026-10-14
+
+PR00~07의 코드·회귀검사와 전체 검사(단위2,318·통합1,543·타입·lint·빌드)는 별도 브랜치에서 실행했다. 마지막 근거·캐시 cutoff·재개 커서 경계까지 수정하고 전체 검사와 모든 범위의 최종 독립 리뷰를 통과해 로컬 커밋했다.
+[구현·검증 보고서](docs/operations/2026-10-14-pipeline-recovery-implementation.md)에 실제 결과를 기록한다.
+[후속 설계 재검토](docs/operations/2026-10-14-pipeline-design-reaudit.md)에서 추가 취소 경계6개를
+수정했고 단위2,433·선택 통합136·타입·lint와 마지막 직접 리뷰를 통과했다.
+이전 전체 검사 횟수와 구별해 기록하며, 해당 source는 로컬 `df39c40`/파일럿은 `5c791dc`다.
+후속 관리자·deadline 수정과 집계 SQL 최적화를 [PR#416](https://github.com/JRVector9/nomorevibe/pull/416),
+[PR#417](https://github.com/JRVector9/nomorevibe/pull/417)로 정상 병합했다. 최종 runtime은
+`9baf31ab5c48d0104c913e53299b776cbd106679`이며 main CI38563927498의 전체 검사와 양 이미지 발행이 성공했다.
+운영 migration0076은 직접5432에서 exit0·journal77·quality 카운터 backfill mismatch0을 확인했다.
+13개 앱/18개 컨테이너의 release·이미지·readiness, 소스 앱5개의 각532개 파일 hash,
+다섯 역할의 readiness/progress, 공개 양 웹 health가 통과했다. 정상 관리자 로그인 뒤
+크롤러 탭의13개 수집기·주/예비·최근 실행 표시와 공개 관리자404를 확인했다.
+[배포 기록](docs/operations/2026-10-14-pipeline-recovery-rollout.md)이 현재 적용 상태다.
+
+남은 것은 개선 후 처리량·장기 관측이다. 현재 공개 source 성공·실패·partial·due·최장 지연,
+HTTP/304 비율·계정별 quota·신규 수집 starvation을 함께 측정한다.
+유지 하한3,453source/h와 catch-up 목표5,500source/h는 실제 측정 전 달성으로 표시하지 않는다.
+외부 monitor 설치·Push/deadman 실제 수신과 과거 초기 gate 거절 후보의 fresh 재수집→규칙 판정도
+별도 검증이 남았다. 소개 검수는2100-01-01·미임대로 중단을 유지한다.
+
+X는 [정책 확인·독립 파일럿](docs/operations/2026-10-14-x-api-policy-and-pilot.md)을 준비했고,
+사용자가 복사한 Bearer Token을 로컬 비밀 설정에 저장했다. 원래 승인 목적이 공개 프로젝트
+발굴·HOT 분석을 포함하는지는 미확인이다. 사용자 요청의17:11 소량 테스트에서 검색/재조회
+각HTTP200·10개 게시물·공개 지표6종·`tweet.fields` 동작을 확인했다. 실제 청구액은 미확인이며,
+공개 HOT 필터와 독립 social role/lease·상시 운영의 일일 예산은 이후 구현 단계다.
+Threads는 [가능성 조사](docs/operations/2026-10-14-social-hot-crawler-feasibility.md)까지다.
+
+---
+
 ## 관리자 private 접속의 추가 운영 검증 — 2026-10-13
 
 **접속 설치 완료:** [실제 접속 기록](docs/operations/2026-10-13-admin-private-access-rollout.md)에
@@ -50,6 +81,10 @@ JS/CSS deployment ID·HTTP200·브라우저/리소스 오류0을 확인했다. �
 purge 성공은 확인하지 않았다. 새 zone은 HTML cache-everything 규칙을 넣지 않았고
 홈·상세·API·설치 파일의 `cf-cache-status: DYNAMIC`을 확인했다. 옛 zone의
 HTML 캐시 규칙은 유지하되 해당 서비스 페이지는 edge308로 먼저 이동한다.
+
+2026-10-14 배포 뒤에도 같은 purge 요청이 Authentication error로 실패했다.
+공개 홈은 새 runtime9baf31a를 참조하며 DYNAMIC/private no-store, 정적 자산17개 HTTP200,
+양 웹 health 및 공개 관리자404를 확인했다. purge 인증 문제는 해결 완료로 표시하지 않는다.
 
 **다음:** 새 zone purge 권한의 유효한 토큰으로 해당 비밀 항목을 갱신한 후
 `scripts/ops/deploy_shared_images.py`의 `purge_html()` 결과 `htmlPurge=ok`를 확인한다.

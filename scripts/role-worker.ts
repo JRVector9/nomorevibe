@@ -11,6 +11,7 @@ import { readWorkerProgress } from '@/lib/operations/worker-progress-query';
 import { maintenanceUptimeStalled, readMaintenanceUptimeProgress } from '@/lib/operations/maintenance-progress';
 import { readTextProgress, textProgressStalled } from '@/lib/operations/text-progress';
 import { hasActiveRoleJob } from '@/lib/jobs/control';
+import { laneForJob } from '@/lib/operations/worker-progress';
 import { DEFAULT_ROLE_HEALTH_PATH } from './role-health';
 
 type Dependencies = {
@@ -25,12 +26,20 @@ type Dependencies = {
 
 export function roleHasUnexplainedStall(report: {
   scheduler: { reason: string };
-  stages: Array<{ role: string; reason: string }>;
-}, role: RoleCandidate['role']): boolean {
+  stages: Array<{ role: string; reason: string; lane?: string; job?: string; restartEligible?: boolean }>;
+  lanes?: Array<{ role: string; reason: string | null; restartEligible: boolean }>;
+  activeJobs?: string[];
+}, role: RoleCandidate['role'], activeJobs: string[] = report.activeJobs ?? []): boolean {
+  if (report.lanes?.some(lane => lane.role === role && lane.restartEligible)) return true;
   if (report.scheduler.reason !== 'scheduled') return false;
   const stages = report.stages.filter(stage => stage.role === role);
-  return stages.some(stage => stage.reason === 'no_progress') &&
-    !stages.some(stage => stage.reason === 'progressing' || stage.reason === 'upstream_or_job_error');
+  return stages.some(stage => {
+    if (stage.reason !== 'no_progress' || stage.restartEligible === false) return false;
+    const siblings = stages.filter(other => other.lane === stage.lane);
+    const activeInLane = activeJobs.some(job => siblings.some(other => other.job === job) ||
+      (stage.lane !== undefined && laneForJob(role, job) === stage.lane));
+    return !activeInLane && !siblings.some(other => ['progressing', 'running', 'upstream_or_job_error', 'upstream_stalled', 'backoff', 'paused'].includes(other.reason));
+  });
 }
 
 export function parseRoleWorkerArgs(args: string[], env: Readonly<Record<string, string | undefined>> = process.env): RoleCandidate {
@@ -139,7 +148,8 @@ async function main() {
     process.exitCode = await runRoleCandidate(candidate, controller.signal, {
       acquire: tryAcquireRole, renew: renewRole, release: releaseRole,
       checkProgress: async role => {
-        if (await hasActiveRoleJob(role)) return false;
+        // These roles have a single lane and retain their existing specialized progress policy.
+        if ((role === 'maintenance' || role === 'text') && await hasActiveRoleJob(role)) return false;
         const report = await readWorkerProgress();
         if (role === 'maintenance') return maintenanceUptimeStalled({
           ...await readMaintenanceUptimeProgress(), schedulerScheduled: report.scheduler.reason === 'scheduled',

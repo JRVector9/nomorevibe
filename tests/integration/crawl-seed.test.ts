@@ -117,6 +117,46 @@ describe("레포 검색 신호", () => {
 });
 
 describe("검색 잡", () => {
+  it("keeps one exploration page when executable old fetch backlog is under pressure", async () => {
+    await saveSettings({ discover: { pagesPerTick: 6 } }, "test");
+    await db.insert(crawlFrontier).values(Array.from({ length: 500 }, (_, i) => ({ repo: `waiting/repo-${i}`, signal: "test",
+      discoveredAt: new Date(Date.now() - 10 * 60_000), nextAttemptAt: new Date(Date.now() - 10 * 60_000) })));
+    searchCommits.mockResolvedValue(searchPage(["a/one"], true));
+    await tick();
+    expect(searchCommits).toHaveBeenCalledTimes(1);
+    expect((await getJobState("crawl-seed"))?.cursor).toMatchObject({ admissionThrottled: true,
+      states: { "Claude 커밋 트레일러": { page: 2 } } });
+  });
+
+  it("ignores historical and delayed fetch rows when admitting discovery", async () => {
+    await saveSettings({ discover: { pagesPerTick: 3 } }, "test");
+    await db.insert(crawlFrontier).values(Array.from({ length: 10_001 }, (_, i) => ({ repo: `delayed/repo-${i}`, signal: "test",
+      discoveredAt: new Date(Date.now() - 24 * 3600_000), nextAttemptAt: new Date(Date.now() + 60 * 60_000) })));
+    searchCommits.mockResolvedValue(searchPage(["a/one"], true));
+    await tick();
+    expect(searchCommits).toHaveBeenCalledTimes(3);
+    expect((await getJobState("crawl-seed"))?.cursor).toMatchObject({ admissionThrottled: false });
+  });
+
+  it("caps actual new inserts under pressure and resumes the saved page without repeating search", async () => {
+    await saveSettings({ discover: { pagesPerTick: 6 } }, "test");
+    const old = new Date(Date.now() - 10 * 60_000);
+    await db.insert(crawlFrontier).values(Array.from({ length: 500 }, (_, i) => ({ repo: `waiting/repo-${i}`, signal: "test",
+      discoveredAt: old, nextAttemptAt: old })));
+    await crawl.enqueue(Array.from({ length: 99 }, (_, i) => ({ repo: `recent/repo-${i}`, signal: "test" })));
+    searchCommits.mockResolvedValue(searchPage(["recent/repo-0", "new/one", "new/two"], true));
+    await tick();
+    expect(searchCommits).toHaveBeenCalledTimes(1);
+    expect((await getJobState("crawl-seed"))?.cursor).toMatchObject({ pendingPage: { itemIndex: 2 } });
+    expect(await crawl.getCandidate("new/one")).toBeUndefined();
+    const repos = (await db.select({ repo: crawlFrontier.repo }).from(crawlFrontier)).map(row => row.repo);
+    expect(repos).toContain("new/one");
+    expect(repos).not.toContain("new/two");
+    await tick();
+    expect(searchCommits).toHaveBeenCalledTimes(1);
+    expect((await db.select({ repo: crawlFrontier.repo }).from(crawlFrontier)).map(row => row.repo)).toContain("new/two");
+  });
+
   it("검색 결과를 프론티어에 넣는다", async () => {
     searchCommits.mockResolvedValue(searchPage(["a/one", "b/two", "a/one"]));
 

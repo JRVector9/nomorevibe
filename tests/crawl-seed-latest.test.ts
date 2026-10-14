@@ -2,8 +2,9 @@ import { beforeEach, afterEach, expect, it, vi } from 'vitest';
 import { DEFAULT_CRAWL_SETTINGS, type CrawlSettings } from '@/lib/crawl/settings-schema';
 import { seedFrontier, LATEST_SCAN_INTERVAL_MS, type SeedCursor } from '@/lib/crawl/jobs/seed';
 
-const mocks = vi.hoisted(() => ({ enqueue:vi.fn(), counts:vi.fn(), search:vi.fn(), record:vi.fn(), settings:null as CrawlSettings|null }));
-vi.mock('@/lib/crawl/repository', () => ({ enqueue:mocks.enqueue, frontierCounts:mocks.counts }));
+const mocks = vi.hoisted(() => ({ enqueue:vi.fn(), admission:vi.fn(), search:vi.fn(), record:vi.fn(), settings:null as CrawlSettings|null }));
+vi.mock('@/lib/crawl/repository', () => ({ enqueue:mocks.enqueue, frontierCounts:vi.fn() }));
+vi.mock('@/lib/crawl/discovery-admission', async original => ({ ...await original<typeof import('@/lib/crawl/discovery-admission')>(), readDiscoveryAdmission:mocks.admission }));
 vi.mock('@/lib/crawl/github', () => ({ searchCommits:mocks.search, searchRepositories:mocks.search, SEARCH_PER_PAGE:100, MAX_SEARCH_PAGES:10 }));
 vi.mock('@/lib/crawl/settings', () => ({ getSettings:async () => mocks.settings, enabledQueries:(s:CrawlSettings) => s.discover.queries.filter(q => q.enabled) }));
 vi.mock('@/lib/domain/evidence/agents/repository', () => ({ recordDiscoveryEvidenceBatch:mocks.record }));
@@ -26,7 +27,7 @@ beforeEach(() => {
   vi.useFakeTimers(); vi.setSystemTime(new Date('2026-10-01T00:00:00Z'));
   mocks.enqueue.mockReset().mockImplementation(async (rows:unknown[]) => rows.length);
   mocks.record.mockReset().mockResolvedValue(undefined);
-  mocks.search.mockReset(); mocks.counts.mockReset().mockResolvedValue({ pending:0 });
+  mocks.search.mockReset(); mocks.admission.mockReset().mockResolvedValue({ recentNew:0, stages:[], secondWindowLimited:false });
   mocks.settings = { ...DEFAULT_CRAWL_SETTINGS, enabled:true,
     discover:{ ...DEFAULT_CRAWL_SETTINGS.discover, sort:'recent', pagesPerTick:1, queries:[one] } };
 });
@@ -119,16 +120,32 @@ it('a shared auth cooldown preserves both cursors and prevents a second search i
   expect(mocks.search).toHaveBeenCalledTimes(1);
 });
 
-it('inherits backlog hysteresis so a fresh preview cannot bypass a paused queue', async () => {
-  const old = {...await oldCursor(),backlogPaused:true};
-  mocks.settings!.discover.pagesPerTick = 2;
-  mocks.counts.mockResolvedValue({pending:6000});
+it('shares one readiness snapshot and exploration page across latest and full cursors', async () => {
+  const old = {...await oldCursor(),admissionThrottled:true,backlogPaused:true};
+  mocks.settings!.discover.pagesPerTick = 6;
+  mocks.admission.mockClear().mockResolvedValue({ recentNew:0, stages:[{key:'first',waiting:300,oldestMinutes:3}], secondWindowLimited:false });
   const result = (await seedFrontier(ctx(old))).cursor!;
-  expect(result.latestScan?.backlogPaused).toBe(true);
-  expect(mocks.search).not.toHaveBeenCalled();
-  mocks.counts.mockResolvedValue({pending:5000}); mocks.search.mockResolvedValue(page());
-  await seedFrontier(ctx(result));
-  expect(mocks.search).toHaveBeenCalled();
+  expect(result.admissionThrottled).toBe(true);
+  expect(mocks.search).toHaveBeenCalledTimes(1);
+  expect(mocks.admission).toHaveBeenCalledTimes(1);
+  expect(result.cycleWindow).toEqual(oldWindow);
+  mocks.admission.mockResolvedValue({ recentNew:900, stages:[{key:'first',waiting:250,oldestMinutes:2}], secondWindowLimited:false });
+  mocks.search.mockResolvedValue(page());
+  const resumed = (await seedFrontier(ctx(result))).cursor!;
+  expect(resumed.admissionThrottled).toBe(false);
+});
+
+it.each(['timeout', 'vote-window'])('keeps partial cursors and only one new candidate when the snapshot is incomplete: %s', async reason => {
+  const old = await oldCursor();
+  mocks.settings!.discover.pagesPerTick = 6;
+  mocks.admission.mockClear().mockResolvedValue({ recentNew:0, stages:[], secondWindowLimited:true,
+    secondVoteWindowLimited:reason === 'vote-window', timedOut:reason === 'timeout' });
+  mocks.search.mockResolvedValue(page(true));
+  const result = (await seedFrontier(ctx(old))).cursor!;
+  expect(mocks.admission).toHaveBeenCalledOnce();
+  expect(mocks.search).toHaveBeenCalledOnce();
+  expect(mocks.enqueue.mock.calls[0][0]).toHaveLength(1);
+  expect(result).toMatchObject({ admissionThrottled:true, cycleWindow:oldWindow, latestScan:{ pendingPage:{ itemIndex:1 } } });
 });
 
 it('sort changes reorder saved subwindows newest first without losing any old range', async () => {

@@ -1,8 +1,9 @@
 import { beforeEach, expect, it, vi } from 'vitest';
 import { ADDITIONAL_AGENT_DISCOVERY_QUERIES, DEFAULT_CRAWL_SETTINGS, type CrawlSettings } from '@/lib/crawl/settings-schema';
 import { seedFrontier, type SeedCursor } from '@/lib/crawl/jobs/seed';
-const mocks = vi.hoisted(() => ({enqueue:vi.fn(), counts:vi.fn(), search:vi.fn(), record:vi.fn(), settings:null as CrawlSettings|null}));
-vi.mock('@/lib/crawl/repository', () => ({enqueue:mocks.enqueue,frontierCounts:mocks.counts}));
+const mocks = vi.hoisted(() => ({enqueue:vi.fn(), admission:vi.fn(), search:vi.fn(), record:vi.fn(), settings:null as CrawlSettings|null}));
+vi.mock('@/lib/crawl/repository', () => ({enqueue:mocks.enqueue,frontierCounts:vi.fn()}));
+vi.mock('@/lib/crawl/discovery-admission', async original => ({ ...await original<typeof import('@/lib/crawl/discovery-admission')>(), readDiscoveryAdmission:mocks.admission }));
 vi.mock('@/lib/crawl/github', () => ({searchCommits:mocks.search,searchRepositories:mocks.search,SEARCH_PER_PAGE:100,MAX_SEARCH_PAGES:10}));
 vi.mock('@/lib/crawl/settings', () => ({getSettings:async () => mocks.settings,enabledQueries:(settings:CrawlSettings) => settings.discover.queries.filter(q => q.enabled)}));
 vi.mock('@/lib/domain/evidence/agents/repository', () => ({recordDiscoveryEvidenceBatch:mocks.record}));
@@ -13,21 +14,18 @@ const context = (cursor:SeedCursor|null = null, hasBudget = () => true) => ({cur
 const recorded = ():{repositoryKey:string;attribution:{client:string|null}|null;incomplete:boolean}[] => mocks.record.mock.calls.flatMap(([rows]) => rows);
 beforeEach(() => {
   mocks.enqueue.mockReset().mockImplementation(async (entries:unknown[]) => entries.length); mocks.record.mockReset().mockResolvedValue(undefined); mocks.search.mockReset();
-  mocks.counts.mockReset().mockResolvedValue({ pending: 0, fetching: 0 });
+  mocks.admission.mockReset().mockResolvedValue({ recentNew:0, stages:[], secondWindowLimited:false });
   mocks.settings = {...DEFAULT_CRAWL_SETTINGS,enabled:true,discover:{...DEFAULT_CRAWL_SETTINGS.discover,sort:"relevance",pagesPerTick:1,queries:[{label:'Codex hint',kind:'commits',query:'Co-authored-by: Codex',enabled:true,builder:'Codex',priority:90}]}};
 });
-it('pauses within a saved page at 10000 and resumes below 5000 without refetching', async () => {
-  mocks.counts.mockResolvedValue({ pending: 9998, fetching: 1 });
+it('retains a partial page while counting only new inserts under pressure', async () => {
+  mocks.admission.mockResolvedValue({ recentNew:99, stages:[{key:'fetch',waiting:500,oldestMinutes:10}], secondWindowLimited:false });
   mocks.search.mockResolvedValue(page([commit('acme/one'),commit('acme/two')]));
   const first = await seedFrontier(context());
-  expect(first.cursor).toMatchObject({ backlogPaused:true,pendingPage:{itemIndex:1} });
-  mocks.counts.mockResolvedValue({ pending: 5001 });
-  const waiting = await seedFrontier(context(first.cursor!));
-  expect(waiting.cursor).toEqual(first.cursor);
-  expect(mocks.enqueue).toHaveBeenCalledTimes(1);
-  mocks.counts.mockResolvedValue({ pending: 5000 });
-  const resumed = await seedFrontier(context(waiting.cursor!));
+  expect(first.cursor).toMatchObject({ admissionThrottled:true,pendingPage:{itemIndex:1} });
+  mocks.admission.mockResolvedValue({ recentNew:100, stages:[{key:'fetch',waiting:300,oldestMinutes:3}], secondWindowLimited:false });
+  const resumed = await seedFrontier(context(first.cursor!));
   expect(resumed.done).toBe(true);
+  expect(resumed.cursor?.admissionThrottled).toBe(true);
   expect(mocks.search).toHaveBeenCalledTimes(1);
   expect(mocks.enqueue.mock.calls.flatMap(([items]) => items).map(item => item.repo)).toEqual(['acme/one','acme/two']);
 });

@@ -40,7 +40,8 @@ beforeEach(() => {
   mocks.showHn.requireEvidence = false;
   mocks.repo.mockResolvedValue({ ok: true, value: { id: 7, homepage: "https://app.test" } });
   mocks.page.mockImplementation(async (url: string) => ({ status: 200, finalUrl: url, html: "<title>App</title>" }));
-  mocks.save.mockResolvedValue({ needsJudgement: true });
+  mocks.save.mockImplementation(async (_claim, _doc, _lease, initialEvidenceGate) => initialEvidenceGate
+    ? { needsJudgement: false, initialEvidenceRejected: true } : { needsJudgement: true });
   mocks.candidate.mockResolvedValue(undefined);
 });
 
@@ -68,11 +69,10 @@ it("흔적이 없으면 페이지를 열지 않고 원본만 남긴 채 거절�
 
   expect(mocks.probe).toHaveBeenCalledWith("kim/todo");
   expect(mocks.page).not.toHaveBeenCalled();
-  expect(mocks.save).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ repo: "kim/todo", productUrl: "https://app.test", pageStatus: null, pageMeta: null }), undefined);
-  expect(mocks.judge).toHaveBeenCalledWith(expect.objectContaining({
-    repo: "kim/todo", state: "rejected", reason: "ai_evidence_not_found", decidedBy: "auto",
+  expect(mocks.save).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ repo: "kim/todo", productUrl: "https://app.test", pageStatus: null, pageMeta: null }), undefined, expect.objectContaining({
     signals: { evidenceGate: { signal: "한국어 README", recentCommits: 30, found: [] } },
   }));
+  expect(mocks.judge).not.toHaveBeenCalled();
   // 거절한 것은 판정할 것이 아니다
   expect(mocks.request).not.toHaveBeenCalled();
   expect(ctx.log).toHaveBeenCalledWith("crawl.fetched", expect.objectContaining({ gated: 1, fetched: 0 }));
@@ -140,5 +140,6 @@ it("Show HN 은 설정으로 켰을 때만 더듬는다", async () => {
   mocks.probe.mockResolvedValue({ ok: true, found: [] });
   await fetchCrawlDocuments(context());
   expect(mocks.probe).toHaveBeenCalledWith("hn/app");
-  expect(mocks.judge).toHaveBeenCalledWith(expect.objectContaining({ repo: "hn/app", reason: "ai_evidence_not_found" }));
+  expect(mocks.save).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ repo: "hn/app" }), undefined,
+    expect.objectContaining({ signals: { evidenceGate: { signal: "Show HN", recentCommits: 30, found: [] } } }));
 });
