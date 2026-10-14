@@ -196,8 +196,10 @@ scheduler는 M3에서 2복제본이다. 공개 GitHub main은 최신 base의 CI 
 - **랭킹 정책 전환**: 운영 `unique_visitor_started_at`은 2026-08-29 03:56:49 UTC이며,
   2026-09-27 읽기 전용 점검에서 해시가 있는 방문 이벤트 43건을 확인했다. 고유 유입자 수집은 시작됐다.
   실제 정책 예약과 다음 자연 시즌 경계 적용은 아래 B2 절차로 별도 확인해야 한다.
-- **소개 검수 중단 유지**: 사용자가 중단한 `product-intro-check`는 허가 없이 재개하지 않는다.
-  검색 프로필 생성·키워드 검수·README 재수집과 다른 작업이다.
+- **소개 검수 재개·적체 회복 관측**: 2026-10-15 KST 사용자가 `소개 검수도 포함해`라고 명시해
+  `product-intro-check` 중단을 해제했다. 신규 GitHub/Show HN 발굴은 중단한 채 기존 소개를 실제 검수 중이다.
+  처리 완료·사람 확인 필요·재시도 상한을 따로 확인한다.
+  [적체 회복 기록](docs/operations/2026-10-14-backlog-catchup.md)을 따른다.
 
 정확한 배포 명령은 [독립 워커 운영 절차](docs/operations/independent-workers-runbook.md),
 최근 실행 결과는 `docs/operations/`의 릴리스 기록과 `docs/CODEX_HANDOFF.md`를 따른다.

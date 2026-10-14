@@ -1,4 +1,89 @@
-# 2026-10-14 — 수집 복구·관리자 크롤러 활동·운영 배포
+# 2026-10-15 — 신규 발굴 중단·소개 검수 포함 적체 회복 (진행 중)
+
+## Latest objective / authorization — 이 항목이 아래 이전 릴리스 기록보다 우선
+
+사용자는 `수집을 멈추고, 밀린 작업 전부 진행해서 앞으로 안밀리게 다시 세팅하자`고 지시했고,
+이어 `소개 검수도 포함해`라고 명시했다. **이전 소개 검수 중단은 해제하도록 승인된 상태다.**
+신규 발굴을 멈추고 기존 대상의 수집·검수·발행·근거 갱신·소개 검수를 실제 처리한다.
+이전 커밋·푸시·배포 승인과 병렬 검토 지시에 따른 후속 작업이다. 서브에이전트·직접 Codex CLI는
+항상 `gpt-6.1-sol` / `xhigh`. main은 PR와 최신 base CI check를 거쳐야 한다.
+
+### Completed operations / evidence
+
+- 현재 브랜치 `fix/backlog-catchup-policy-20261014`, 최신 base main `a809463bcff6d52e68ef61dbb7d2621c3e912269` 병합 완료.
+  운영 runtime은 아직 `9baf31ab5c48d0104c913e53299b776cbd106679`, 13앱/18컨테이너 배포 완료 상태다.
+- 2026-10-14 14:36:37 UTC 실제 트랜잭션: `crawl-seed` / `hn-show-seed`의 `not_before=2100-01-01`.
+  `product-intro-check.not_before=NULL`로 해제. 기존 lease/cursor/attempts는 보존하고 operations audit 기록.
+  소개 검수는 이후 실제 kept/replaced 결과가 증가했다. 신규 fetch/judge/AI1/AI2/publish 실행 대기는 0.
+- 14:41:50 UTC 근거 설정: GitHub facts / link check 24→96시간, release feed 6시간 유지.
+  batch20, maxRetries4, staleAfterIntervals2 및 기존 성공/재시도 시각을 보존. 기존 출처 재스케줄 0.
+  86,220출처의 반복 수요는 계산상 898.125/h; 최근 실제 성공 약1,507/h. 주기 변경이지 속도 개선 실측이 아니다.
+- 14:37 UTC 관측: 공개44,048개, 근거 due53,788, 제작 근거 waiting42,680, 소개 ready2,208.
+  14:42 UTC 제작 근거 clean complete27,486 / never14,792 / partial1,649; completed24h 약1,450.
+  한국어 소개 waiting3,395 / quality gaveUp2,726, reason translation pending12,666,
+  search verify ready8,258, CDN pending1,864. 인간 보류·품질 거절을 자동 성공으로 바꾸지 않는다.
+- link96 변경이 기존 밀린 media를 미루는지 별도 관측: prior24h media due0, postponed0.
+- 비공개 증거: `/Users/jr/.config/nomorevibe/backlog-recovery/2026-10-14` (700/files600).
+  baseline/control/source-settings/snapshot-start/demand-details/remaining-details JSON 및 재실행용 mjs.
+  raw crawl 설정·환경·토큰은 출력/커밋 금지.
+
+### Implementation in progress / design
+
+- agent `monitor_query_timeout` 소스 동결: `settings-schema.ts`의 `agentEvidence.backgroundRefreshDays`
+  (기본1, 범위1..365), 새 `agents/refresh-policy.ts`, agent refresh job, worker progress query와 테스트.
+  깨끗하게 완료된 공개 제품만 완료시각+설정일수까지 배경 재스캔을 늦춘다.
+  active candidate/비공개 제품의 공유 수요, 미완료/오류/cursor/limited/version 변경/미래 backoff는 기존 처리.
+  collector/cache/DAY/24h 심사 신선도/공개 stale 표시/영속 성공·재시도 시각은 바꾸지 않는다.
+  별도 공개 배경 주기는 사용자 선택 질문을 남겼고, 답이 없어 90일을 적용할 준비 중이다.
+  **아직 배포/운영90일 적용하지 않았다.** 설정 기본1로 과거 동작을 보존한다.
+- private `pulse.mjs` / `daemon.py`: 기존 작업 요청만 coalesce하는 기간 한정 서버 controller 준비.
+  신규 발굴 중단 확인, exact job allowlist, lease/backoff/error/cursor/quota/CAS gate 유지.
+  M3 LaunchDaemon `com.nomorevibe.backlog-catchup`, root-owned `/Library/Application Support/NoMoreVibe/backlog-20261014`
+  실제 설치/가동. 15:11:10 UTC agent/stars/thumbnail 후속 요청 성공. 15:12 UTC operations audit 기록.
+  10초 tick/45일 종료2026-11-28T15:09:07Z, configdisabled/발굴resume이면 정상종료. PC종료와 독립.
+  직전 성공 관측의 version 일치로 선별한다. 초기 clock 비교와 undefined transaction 옵션 오류는 수정했고
+  전자는 요청 누락, 후자는 DB쓰기 전 실패였다. Node15초 self deadline/SQL5초/lock1초 제한.
+  실제 처리량 개선은 아직 측정하지 않았다.
+- reviewer `release_prelanding_review`: private controller + 설정/selector/monitor 정적 재검토 CLEAN.
+- 15:12 UTC 소개ready2,208→1,708(500감소), 실제 kept428/replaced71/needs_editor기록1추가.
+  두 발굴 runs8,905/1,681 그대로. 근거 성공1,514/h, 기존24h예약 도래로 due54,483까지 증가.
+
+### Tests actually executed (agent receipts; root review pending)
+
+- schema RED2→GREEN2; public25h/89d 기존 waiting1 RED→skip GREEN, 90d due 기존 PASS.
+- 격리 DB `nomorevibe-agent-policy-test-db-20261014`, localhost55439 전용 TEST_DATABASE_URL 사용.
+  통합4파일83/83, 단위7파일54/54, scoped lint0, tsc0. PostgreSQL16-case 경계 포함.
+- background90 설정 실제80k/3초 성능회귀 PASS(5.33초 테스트 총시간; SQL3초는 유지).
+  full shard2 48파일446검사 PASS65.08초. 최신 main a809463 병합 후 root 재실행:
+  전체 단위256파일2472 PASS7.57초, full shard2 48파일446 PASS69.21초,
+  lint0(기존warning1)/TypeScript0/Nextbuild0/i18n0/bundle0. GitHub CI·운영 배포는 아직 미실행.
+- 새 private pulse read-only 호출 exit0; production mutation 없음. 이전 릴리스 검증은 아래 역사 기록.
+
+### Blockers / remaining / exact next commands
+
+- Cloudflare purge 운영 env 미설정, 기존 Keychain 토큰 Authentication error. CDN1,864건은 미처리다.
+  유효 Cache Purge 토큰 파일 경로 또는 사용자 로그인 필요한 별도 발급 안내를 질문해 둔 상태다.
+  공개홈 DYNAMIC/no-store는 purge 성공 증거가 아니다. 인증 실패를 확인 완료로 표기하지 않는다.
+- 한국어 quality gaveUp2,726 / 사람 심사 보류는 기준·상한을 지킨 진짜 별도 일감이다.
+  무조건 재시도 초기화/일괄 승인하지 않는다. 실제 처리·교정 경로와 수량을 보고해야 한다.
+- 정상 PR/최신base CI→main 이미지→13앱 배포→audited background90 저장.
+  새 릴리스 baseline은 소개NULL/신규발굴2100이다. **아래 이전 release.py verify의 소개2100 gate를 재사용하지 않는다.**
+  새 DDL은 없으므로 migration77을 읽기 전용 확인하고 불필요한 drain/migration을 하지 않는다.
+- 수십 시간/여러 날의 작업은 서버에서 지속시키고 실제 완료 수를 관측한다. 아직 전체 소진을 주장하지 않는다.
+
+```sh
+git status --short
+git diff -- lib/crawl/settings-schema.ts lib/jobs/products/agent-evidence-refresh.ts lib/operations/worker-progress-query.ts
+python3 /Users/jr/.config/nomorevibe/backlog-recovery/2026-10-14/run.py pulse-dry
+# 관측은 현재 freeze snapshot 파일을 덮지 않도록 새 이름의 mjs/json으로 실행한다.
+```
+
+사용자 untracked PT/packages/assets/prototypes/mistake.md는 보존한다. `git add .` 금지.
+아래는 **이전 릴리스 완료 시점의 역사 기록**이며 최신 소개 중단/목표를 해석하는 근거로 사용하지 않는다.
+
+---
+
+# Previous phase — 수집 복구·관리자 크롤러 활동·운영 배포
 
 ## Current objective / authorization
 

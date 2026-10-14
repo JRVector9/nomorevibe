@@ -20,4 +20,6 @@ M3의 웹·scheduler(2복제본)·crawler·reviewer·publisher·text·maintenanc
 배포·테스트 절차는 `README.md`와 `docs/operations/independent-workers-runbook.md`를 읽는다.
 `PENDING.md`에는 백업 복구·장기 관측 등 아직 직접 확인하지 않은 운영 검증을 기록한다.
 첫 배포가 아직 안 됐다는 과거 기록을 현재 상태로 해석하지 않는다.
-사용자가 중단한 소개 검수는 별도 지시 없이 재개하지 않는다.
+2026-10-15 KST 사용자가 소개 검수를 포함한 적체 회복을 지시해 소개 검수 중단을 해제했다.
+신규 GitHub·Show HN 발굴은 중단하고 기존 일감을 처리 중이다.
+현재 설정·남은 확인은 `docs/operations/2026-10-14-backlog-catchup.md`와 `docs/CODEX_HANDOFF.md`를 따른다.
