@@ -43,9 +43,14 @@ export async function refreshProductEvidenceJob(
     mediaInserted: 0,
   };
   let afterSlug = ctx.cursor?.afterSlug;
+  let providerHold = false;
+  const providerHolds = new Set(["rate_limited", "auth_unavailable", "quota", "cooldown", "backoff"]);
   const sourceDependencies: EvidenceRefreshDependencies = {
     ...dependencies,
     log: (event, fields) => {
+      for (const value of [fields?.httpClass, fields?.outcome]) {
+        if (typeof value === "string" && providerHolds.has(value)) providerHold = true;
+      }
       dependencies.log?.(event, fields);
       ctx.log(event, fields);
     },
@@ -119,9 +124,12 @@ export async function refreshProductEvidenceJob(
     }
 
     let completedPage = true;
-    for (const slug of slugs) {
+    let untouchedLater = false;
+    for (let index = 0; index < slugs.length; index += 1) {
+      const slug = slugs[index];
       if (!ctx.hasBudget()) {
         completedPage = false;
+        untouchedLater = true;
         break;
       }
       counts.attempted += 1;
@@ -152,9 +160,20 @@ export async function refreshProductEvidenceJob(
       requestTurn = true;
       await saveCursor();
       await runRequest();
-      if (!completedPage) break;
+      if (!completedPage) {
+        untouchedLater = index < slugs.length - 1;
+        break;
+      }
     }
-    if (!completedPage) break;
+    if (!completedPage) {
+      const budgetElapsed = ctx.deadlineAt !== undefined && Date.now() >= ctx.deadlineAt;
+      const ready = budgetElapsed && !ctx.signal?.aborted && counts.succeeded > 0 && counts.failed === 0
+        && !providerHold && untouchedLater;
+      ctx.log("evidence.refresh_batch", counts);
+      return { done: false, ...(ready ? { continuation: "ready" as const } : {}), cursor: pendingRequest
+        ? { ...(afterSlug ? { afterSlug } : {}), requestTurn }
+        : afterSlug ? { afterSlug } : ctx.cursor };
+    }
     if (slugs.length < settings.batchSize) {
       ctx.log("evidence.refresh_batch", counts);
       return { done: true };

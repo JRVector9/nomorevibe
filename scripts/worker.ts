@@ -29,7 +29,7 @@ type WorkerDependencies = {
   lanes?: readonly (readonly string[])[];
   pending: () => Promise<string[]>;
   seen: (names: string[]) => Promise<void>;
-  run: (name: string, options: RequestedRunOptions) => Promise<{ status: string }>;
+  run: (name: string, options: RequestedRunOptions) => Promise<{ status: string; done?: boolean; sourceContinuation?: boolean }>;
   sleep?: typeof interruptibleSleep;
   report?: RuntimeReport;
   log?: typeof runtimeLog;
@@ -112,8 +112,10 @@ export async function runWorker(options: WorkerOptions, dependencies: WorkerDepe
 
 async function runLane(options: WorkerOptions, dependencies: WorkerDependencies, names: string[], intervalMs: number, report: RuntimeReport) {
   let ticks = 0, failures = 0, nextIndex = 0;
+  const sourceLane = options.role === "crawler" && names.length === 1 && names[0] === "product-evidence-refresh";
   while (!options.signal?.aborted) {
     ticks++;
+    let sourceContinued = false;
     report('polling');
     try {
       await dependencies.seen(names);
@@ -127,6 +129,9 @@ async function runLane(options: WorkerOptions, dependencies: WorkerDependencies,
         try {
           const result = await dependencies.run(name, { requestedOnly: true, signal: options.signal });
           if (result.status === 'failed') failures++;
+          if (sourceLane && result.status === 'completed' && result.done === false && result.sourceContinuation === true) {
+            sourceContinued = true;
+          }
           dependencies.log?.('worker.job', { role: options.role, name, status: result.status });
         } catch {
           failures++;
@@ -142,6 +147,7 @@ async function runLane(options: WorkerOptions, dependencies: WorkerDependencies,
     }
     report('idle');
     if (options.once || options.signal?.aborted) break;
+    if (sourceContinued) continue;
     await (dependencies.sleep ?? interruptibleSleep)(intervalMs, options.signal);
   }
   return { ticks, failures };

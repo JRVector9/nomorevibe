@@ -110,6 +110,96 @@ it('gives the publisher batch enough cooperative time below the supervisor deadl
   expect(jobRunOptions('crawl-fetch', base)).toBe(base);
 });
 
+it('re-polls only the crawler source lane without sleeping when the runner verified a continuation', async () => {
+  const controller = new AbortController();
+  const sleeps: number[] = [];
+  let polls = 0;
+  const jobs: string[] = [];
+  await runWorker({ role: 'crawler', signal: controller.signal }, {
+    names: ['product-evidence-refresh'], lanes: [['product-evidence-refresh']],
+    seen: async () => {},
+    pending: async () => {
+      polls += 1;
+      return polls === 1 ? ['product-evidence-refresh'] : [];
+    },
+    run: async (name) => {
+      jobs.push(name);
+      return { status: 'completed', done: false, sourceContinuation: true };
+    },
+    sleep: async (ms) => { sleeps.push(ms); controller.abort(); },
+  });
+  expect(jobs).toEqual(['product-evidence-refresh']);
+  expect(polls).toBe(2);
+  expect(sleeps).toEqual([5_000]);
+});
+
+it('keeps the normal poll when continuation is missing, the lane is mixed, or the role is different', async () => {
+  const cases = [
+    { role: 'crawler' as const, names: ['product-evidence-refresh'], result: { status: 'completed', done: false } },
+    { role: 'crawler' as const, names: ['product-evidence-refresh'], result: { status: 'completed', done: false, sourceContinuation: false } },
+    { role: 'crawler' as const, names: ['product-evidence-refresh', 'crawl-fetch'], result: { status: 'completed', done: false, sourceContinuation: true } },
+    { role: 'reviewer' as const, names: ['product-evidence-refresh'], result: { status: 'completed', done: false, sourceContinuation: true } },
+    { role: 'crawler' as const, names: ['product-evidence-refresh'], result: { status: 'skipped', reason: 'locked' } },
+    { role: 'crawler' as const, names: ['product-evidence-refresh'], result: { status: 'skipped', reason: 'not_requested' } },
+    { role: 'crawler' as const, names: ['product-evidence-refresh'], result: { status: 'skipped', reason: 'backoff' } },
+    { role: 'crawler' as const, names: ['product-evidence-refresh'], result: { status: 'completed', done: true, sourceContinuation: true } },
+    { role: 'crawler' as const, names: ['product-evidence-refresh'], result: { status: 'failed', done: false, sourceContinuation: true } },
+  ];
+  for (const item of cases) {
+    const controller = new AbortController();
+    let polls = 0;
+    await runWorker({ role: item.role, signal: controller.signal }, {
+      names: item.names, lanes: [item.names], seen: async () => {},
+      pending: async () => { polls += 1; return ['product-evidence-refresh']; },
+      run: async () => item.result,
+      sleep: async (ms) => { expect(ms).toBe(5_000); controller.abort(); },
+    });
+    expect(polls).toBe(1);
+  }
+});
+
+it('does not take another poll when once or abort already ends a marked source tick', async () => {
+  const onceSleep = vi.fn(async () => { throw new Error('once must not sleep'); });
+  const once = await runWorker({ role: 'crawler', once: true }, {
+    names: ['product-evidence-refresh'], lanes: [['product-evidence-refresh']],
+    seen: async () => {}, pending: async () => ['product-evidence-refresh'],
+    run: async () => ({ status: 'completed', done: false, sourceContinuation: true }),
+    sleep: onceSleep,
+  });
+  expect(once).toEqual({ ticks: 1, failures: 0 });
+  expect(onceSleep).not.toHaveBeenCalled();
+
+  const controller = new AbortController();
+  let polls = 0;
+  await runWorker({ role: 'crawler', signal: controller.signal }, {
+    names: ['product-evidence-refresh'], lanes: [['product-evidence-refresh']],
+    seen: async () => {},
+    pending: async () => { polls += 1; return ['product-evidence-refresh']; },
+    run: async () => { controller.abort(); return { status: 'completed', done: false, sourceContinuation: true }; },
+    sleep: async () => { throw new Error('abort must not sleep'); },
+  });
+  expect(polls).toBe(1);
+});
+
+it('visits every pending job on a mixed lane and sleeps even if one result carries a marker', async () => {
+  const controller = new AbortController();
+  const seen: string[] = [];
+  let polls = 0;
+  await runWorker({ role: 'crawler', signal: controller.signal }, {
+    names: ['crawl-fetch', 'product-evidence-refresh'],
+    lanes: [['crawl-fetch', 'product-evidence-refresh']],
+    seen: async () => {},
+    pending: async () => { polls += 1; return ['crawl-fetch', 'product-evidence-refresh']; },
+    run: async (name) => {
+      seen.push(name);
+      return { status: 'completed', done: false, sourceContinuation: true };
+    },
+    sleep: async (ms) => { expect(ms).toBe(5_000); controller.abort(); },
+  });
+  expect(seen).toEqual(['crawl-fetch', 'product-evidence-refresh']);
+  expect(polls).toBe(1);
+});
+
 it('gives product evidence one 55-second cooperative budget in the existing crawler', () => {
   const options = { requestedOnly: true as const, signal: new AbortController().signal };
   expect(jobRunOptions('product-evidence-refresh', options)).toEqual({ ...options, budgetMs: 55_000 });
