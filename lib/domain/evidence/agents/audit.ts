@@ -3,11 +3,13 @@ import { db } from '@/lib/db';
 import { normalizeTypedLink } from '@/lib/domain/evidence/contracts';
 import { AGENT_DETECTOR_VERSION, agentObservationSchema } from './types';
 import { isDevelopmentPath } from './commit-changes';
+import { agentCoverageRevision, type AgentCoverageInput } from './coverage';
 
 export type AttributionAuditRow = {
   id:number; slug:string; repository_key:string|null; maker_builder:string|null;
   scan_id:number|null; scan_state:string|null; detector_version:string|null; head_sha:string|null;
   completed_ms:number|null; scan_error:string|null;
+  scan_coverage?:AgentCoverageInput['coverage']; scan_cursor?:AgentCoverageInput['cursor'];
   relationship_state:string|null; source_state:string|null; source_success_ms:number|null;
   observations:unknown[];
 };
@@ -25,6 +27,7 @@ export async function loadAttributionAuditPage(executor:Pick<typeof db,'execute'
   return executor.execute<AttributionAuditRow>(sql`
     SELECT p.id,p.slug,p.repository_key,p.maker_builder,
       scan.id scan_id,scan.state scan_state,scan.detector_version,scan.commit_sha head_sha,
+      scan.coverage scan_coverage,scan.cursor scan_cursor,
       (extract(epoch from scan.completed_at)*1000)::double precision completed_ms,scan.last_error_code scan_error,
       source.normalized_facts->>'relationshipState' relationship_state,source.state source_state,
       (extract(epoch from source.last_success_at)*1000)::double precision source_success_ms,
@@ -46,7 +49,7 @@ export async function loadAttributionAuditPage(executor:Pick<typeof db,'execute'
 export function classifyAttributionAuditRow(row:AttributionAuditRow,now:Date) {
   const fresh=(ms:number|null)=>ms!==null&&Number.isFinite(ms)&&now.getTime()-ms>=0&&now.getTime()-ms<86400000;
   const scanState=!row.scan_id?'unscanned':row.detector_version!==AGENT_DETECTOR_VERSION?'outdated_detector'
-    :row.scan_error?'failed':row.scan_state!=='complete'?'incomplete':!fresh(row.completed_ms)?'stale':'current';
+    :row.scan_error?'failed':row.scan_state!=='complete'||agentCoverageRevision({coverage:row.scan_coverage,cursor:row.scan_cursor})?'incomplete':!fresh(row.completed_ms)?'stale':'current';
   const related=row.source_state==='ok'&&fresh(row.source_success_ms)&&['site_link','bidirectional'].includes(row.relationship_state??'');
   const claims=row.observations.flatMap(raw=>{
     const parsed=agentObservationSchema.safeParse(raw);if(!parsed.success)return [];

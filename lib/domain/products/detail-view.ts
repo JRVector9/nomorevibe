@@ -34,6 +34,7 @@ import {
 import { getSettings as getCrawlSettings } from "@/lib/crawl/settings";
 import { getRepositoryAgentEvidence, getLatestRepositoryAgentScan } from "@/lib/domain/evidence/agents/repository";
 import { presentObservedAgentFacts, type ObservedAgentFactView } from "@/lib/domain/evidence/agents/view";
+import { effectiveAgentScanState } from "@/lib/domain/evidence/agents/coverage";
 import type { AiLevel } from "@/lib/domain/evidence/ai-level-labels";
 import { getRepositoryAiLevel } from "@/lib/domain/evidence/ai-level-store";
 import { currentEvidenceSettings } from "@/lib/domain/evidence/settings-store";
@@ -579,10 +580,11 @@ async function observedFacts(sources: Awaited<ReturnType<typeof evidenceSources>
       const relationshipConfirmed = sourceFreshness(source, settings, now).state === "current" && (relation === "site_link" || relation === "bidirectional");
       // Incomplete attempts cannot prove previous files disappeared. Each retained
       // fact keeps its own commit and observation date, rather than acquiring a new date.
-      const batches = evidence.scan.state !== "complete" && validLinked && validLinked.scan.id !== evidence.scan.id
+      const batches = effectiveAgentScanState(evidence.scan) !== "complete" && validLinked && validLinked.scan.id !== evidence.scan.id
         ? [validLinked, evidence] : [evidence];
       for (const batch of batches) observedAgentFacts.push(...presentObservedAgentFacts({ observations: batch.observations,
         scanState: evidence.scan.state, observedAt: batch.scan.completedAt ?? batch.scan.startedAt,
+        coverage: evidence.scan.coverage, cursor: evidence.scan.cursor,
         now, scanLastError: evidence.scan.lastErrorCode,
         relationship: relationshipConfirmed ? "same_product" : "unknown" }));
     }

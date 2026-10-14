@@ -18,6 +18,42 @@ const scan = { id: 1, startedAt: now, completedAt: now, state: "complete", detec
   lastErrorCode: null, commitSha: observation.commitSha } as AgentRepositoryScan;
 const evidence = { scan, observations: [{ id: "observation:1", observation }] };
 
+it("keeps a fresh historical completion partial when new commit coverage is unavailable", () => {
+  const complete = createReviewInput(candidate, document, DEFAULT_CRAWL_SETTINGS, evidence, now);
+  const limited = createReviewInput(candidate, document, DEFAULT_CRAWL_SETTINGS, {
+    ...evidence, scan: { ...scan, coverage: { limited: true }, cursor: null },
+  }, now);
+  expect(limited.snapshot.scanState).toBe("partial");
+  expect(limited.snapshot.evidenceSummary).toMatchObject({ eligible: false, reason: "ai_evidence_pending" });
+  expect(limited.snapshot.evidence).toEqual(complete.snapshot.evidence);
+  expect(limited.source.scanState).toBe("complete");
+  expect(limited.source.scanCompletedAt).toBe(complete.source.scanCompletedAt);
+  expect(limited.inputHash).not.toBe(complete.inputHash);
+  expect(limited.sourceRevisionHash).not.toBe(complete.sourceRevisionHash);
+  expect(complete.snapshot.scanState).toBe("complete");
+  expect(createReviewInput(candidate, document, DEFAULT_CRAWL_SETTINGS, { scan, observations: [] }, now)
+    .snapshot.evidenceSummary.reason).toBe("ai_evidence_not_found");
+});
+
+it("preserves clean complete and absent-scan source hashes from the previous contract", () => {
+  for (const currentScan of [scan, { ...scan, coverage: { limited: false }, cursor: null }, null]) {
+    const input = createReviewInput(candidate, document, DEFAULT_CRAWL_SETTINGS, { scan: currentScan, observations: [] }, now);
+    expect(input.source).not.toHaveProperty("scanCoverage");
+    expect(input.sourceRevisionHash).toBe(reviewHash({
+      candidateJudgedAt: now.toISOString(), documentId: document.id, documentFetchedAt: now.toISOString(),
+      productUrl: document.productUrl, scanId: currentScan?.id ?? null, scanSha: currentScan?.commitSha ?? null,
+      scanStartedAt: currentScan?.startedAt.toISOString() ?? null, scanCompletedAt: currentScan?.completedAt?.toISOString() ?? null,
+      scanState: currentScan?.state ?? null, scanError: currentScan?.lastErrorCode ?? null,
+      detectorVersion: DEFAULT_CRAWL_SETTINGS.agentEvidence.detectorVersion,
+    }));
+  }
+  const legacy = createReviewInput(candidate, document, DEFAULT_CRAWL_SETTINGS, evidence, now);
+  const clean = createReviewInput(candidate, document, DEFAULT_CRAWL_SETTINGS, {
+    ...evidence, scan: { ...scan, coverage: { limited: false }, cursor: null },
+  }, now);
+  expect(clean.inputHash).toBe(legacy.inputHash);
+});
+
 it("reviews a popular installation repository while preserving the original null source URL", () => {
   const input = createReviewInput({ ...candidate, productUrl: null }, { ...document, productUrl: null,
     repoMeta: { stargazers_count: 500, description: "An editor plugin" },

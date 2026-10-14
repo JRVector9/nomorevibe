@@ -28,7 +28,14 @@ PR/main 전체 CI·양 이미지·실제 readiness·source5앱533파일 hash·�
 
 남은 것은 개선 후 처리량·장기 관측이다. 현재 공개 source 성공·실패·partial·due·최장 지연,
 HTTP/304 비율·계정별 quota·신규 수집 starvation을 함께 측정한다.
-유지 하한3,453source/h와 catch-up 목표5,500source/h는 실제 측정 전 달성으로 표시하지 않는다.
+과거 24시간 갱신의 유지 하한3,453source/h와 catch-up 목표5,500source/h는 달성으로 표시하지 않는다.
+현재 facts/link는96시간으로 변경됐고, 활성 repository/site86,834개 기준 단순 재도래량은
+약905source/h다. 실제 재도래·오류·부분 재개를 포함한 여유와 장기 backlog 감소는 관측해야 한다.
+Grok CLI `grok-4.7`/`low`의 [출처 처리량 실측](docs/operations/2026-10-15-evidence-source-capacity.md)과
+[제작 근거 복구](docs/operations/2026-10-15-backlog-evidence-recovery.md),
+[현재 커버리지 판정](docs/operations/2026-10-15-evidence-capacity-recovery.md),
+[발행분 재검수](docs/operations/2026-10-15-backlog-published-audit.md),
+[텍스트 복구](docs/operations/2026-10-15-backlog-text-recovery.md)에 후속 수정과 실제 검증 상태를 기록한다.
 외부 monitor 설치·Push/deadman 실제 수신과 과거 초기 gate 거절 후보의 fresh 재수집→규칙 판정도
 별도 검증이 남았다. 소개 검수는 이후 사용자 명시 지시로 재개했다.
 최신 적체 회복 설정·신규 발굴 중단·현재 처리 상태는
@@ -73,28 +80,6 @@ Star/Feedback App 키와 웹훅 저장, 실행 코드58a63a3, migration0073/0074
 GitHub URL·DB state·두 웹 결과와 지연을 [파일럿 기록](docs/operations/2026-10-11-github-integration-pilot.md)에
 남긴다. 이메일 로그인을 선택하면 발신 설정과 메일 수신을 별도로 확인한다. 제작자 Feedback App
 설치·저장소binding·수신허용 및 작성자의 전송 동의가 필요하다. 소개 검수 중단은 유지한다.
-
----
-
-## Cloudflare HTML purge 키 인증 — 2026-10-11
-
-운영 릴리스 `650b341` 배포 후 `nomorevibe-cloudflare-purge-token` Keychain 항목의
-HTML 태그 purge 요청이 Authentication error로 실패했다. 공개 홈·상세는 새 SHA의
-JS/CSS deployment ID·HTTP200·브라우저/리소스 오류0을 확인했다. 배포·DB·14앱은 정상이다.
-
-2026-10-11 기본 도메인 전환 후 배포 스크립트의 purge 대상은 `nomorevibe.com` zone
-`9fc499cc4b48354cf9738ac039c9fd70`이다. 기존 DNS API 토큰 두 개는 이 zone 읽기도403이며 새
-purge 성공은 확인하지 않았다. 새 zone은 HTML cache-everything 규칙을 넣지 않았고
-홈·상세·API·설치 파일의 `cf-cache-status: DYNAMIC`을 확인했다. 옛 zone의
-HTML 캐시 규칙은 유지하되 해당 서비스 페이지는 edge308로 먼저 이동한다.
-
-2026-10-14 배포 뒤에도 같은 purge 요청이 Authentication error로 실패했다.
-공개 홈은 새 runtime9baf31a를 참조하며 DYNAMIC/private no-store, 정적 자산17개 HTTP200,
-양 웹 health 및 공개 관리자404를 확인했다. purge 인증 문제는 해결 완료로 표시하지 않는다.
-
-**다음:** 새 zone purge 권한의 유효한 토큰으로 해당 비밀 항목을 갱신한 후
-`scripts/ops/deploy_shared_images.py`의 `purge_html()` 결과 `htmlPurge=ok`를 확인한다.
-키 값과 Authorization 헤더는 출력·커밋하지 않는다. 이번 purge를 성공으로 기록하지 않는다.
 
 ---
 

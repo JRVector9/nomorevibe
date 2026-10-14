@@ -153,8 +153,8 @@ describe("검색 키워드 검수 잡", () => {
     // 글이 바뀌고 30일이 지나 키워드를 다시 짓는다
     await db.update(productSearchProfiles).set({ updatedAt: sql`now() - interval '31 days'` }).where(eq(productSearchProfiles.productId, id));
     await db.update(products).set({ tagline: "Class packs for a football academy" }).where(eq(products.id, id));
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => ({ choices: [{ message: { content:
-      JSON.stringify({ keywords_en: ["class pass management"], keywords_ko: ["수강권 관리"] }) } }] }) }));
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ choices: [{ message: { content:
+      JSON.stringify({ keywords_en: ["class pass management"], keywords_ko: ["수강권 관리"] }) } }] })));
     await runJob("product-search-profile", writeSearchProfiles);
 
     expect(await profile(id)).toMatchObject({ verifiedAt: null, removedKeywords: [], keywordsEn: ["class pass management"] });

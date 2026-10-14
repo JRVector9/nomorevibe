@@ -99,6 +99,7 @@ const SOURCE_NUMBER = /(\d{1,3}(?:[ \u00a0\u202f]\d{3})+(?!\d)|\d+(?:[.,]\d+)*)(
 /** 옮긴 줄의 수 — 붙여 쓴 한국어 단위(1100만·3천·1조)까지 */
 const LINE_NUMBER = /(\d+(?:[.,]\d+)*)([천만억조]*)/g;
 const ROMAN = new Map([["I", 1], ["V", 5], ["X", 10]]);
+const MONTH_NAMES = ["january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december"];
 const valueKey = (value: number) => Number(value.toPrecision(12));
 
 /** 숫자 글자의 값 — 1,500·1.500 은 1500 과 1.5 둘 다, 500 000 은 500000 */
@@ -112,9 +113,21 @@ function digitValues(text: string): number[] {
  * 원문에 적힌 수의 값 — 숫자와 뒤의 단위, 낱말 수(붙어 선 것은 하나로: seventy-eight → 78), 한자 수, 로마 숫자(II).
  * bare 는 단위 없이 적힌 숫자 글자다 — 옮긴 줄의 "1만"·"제14조"가 단위가 아니라 '만(뿐)'·'조(條)'일 때를 가린다.
  */
-function sourceNumbers(text: string): { values: Set<number>; bare: Set<string> } {
-  const values = new Set<number>(), bare = new Set<string>();
+function sourceNumbers(text: string): { values: Set<number>; bare: Set<string>; monthDates: Set<string> } {
+  // 원문의 벵골어 숫자와 프랑스어 복수 백 단위도 같은 수로 읽는다.
+  text = text.replace(/[০-৯]/g, (digit) => String(digit.charCodeAt(0) - "০".charCodeAt(0)))
+    .replace(/\b(deux|trois|quatre|cinq|six|sept|huit|neuf)([ -]+)cents\b/gi, "$1$2cent");
+  const values = new Set<number>(), bare = new Set<string>(), monthDates = new Set<string>();
   const add = (value: number) => { if (Number.isFinite(value)) values.add(valueKey(value)); };
+  // 월은 수량으로 보태지 않고 날짜의 월/일 쌍으로만 인정한다.
+  for (const [, month, day] of text.matchAll(/\b(january|february|march|april|may|june|july|august|september|october|november|december)\s+(\d{1,2})(?:st|nd|rd|th)?\b/gi)) {
+    if (Number(day) >= 1 && Number(day) <= 31) monthDates.add(`${MONTH_NAMES.indexOf(month.toLowerCase()) + 1}:${Number(day)}`);
+  }
+  if (monthDates.size) {
+    for (const [, month, day] of text.matchAll(/(?<!\d)(\d{1,2})\s*월\s*(\d{1,2})\s*일(?!\d)/g)) {
+      monthDates.add(`${Number(month)}:${Number(day)}`);
+    }
+  }
   for (const [, digits, word] of text.matchAll(SOURCE_NUMBER)) {
     const scale = word ? SCALES.get(word.toLowerCase()) ?? (CHAR_SCALE.test(word) ? SCALES.get(word[0]) : undefined) : undefined;
     for (const value of digitValues(digits)) { add(value); if (scale) add(value * scale); }
@@ -146,7 +159,7 @@ function sourceNumbers(text: string): { values: Set<number>; bare: Set<string> }
     const digits = [...numeral].map((char) => ROMAN.get(char) ?? 0);
     add(digits.reduce((sum, value, index) => sum + (value < (digits[index + 1] ?? 0) ? -value : value), 0));
   }
-  return { values, bare };
+  return { values, bare, monthDates };
 }
 
 export type KoreanTaglineCheck = { ok: true; line: string } | { ok: false; reason: KoreanTaglineReject };
@@ -183,17 +196,27 @@ export function checkKoreanTagline(output: string, source: { name: string; tagli
     return { ok: false, reason: "name_lost" };
   }
   const original = `${source.name} ${source.tagline}`.toLowerCase();
+  const peerToPeer = /\bpeer[- ]to[- ]peer\b/.test(original);
   const digits = new Set((original.match(/\d+(?:[.,]\d+)*/g) ?? []).map((value) => value.replace(/[.,]/g, "")));
-  const { values, bare } = sourceNumbers(`${source.name} ${source.tagline}`);
+  const { values, bare, monthDates } = sourceNumbers(`${source.name} ${source.tagline}`);
   // 원문에 같은 숫자 글자가 있거나 값이 같으면 된다. 한국어 단위가 붙은 수(1조)는 원문에 단위 없이 적힌 같은 글자가 있을 때만 글자로 본다 —
   // "1+ млрд"의 1 로 1조를, "100k+"의 100 으로 100만을 받지 않는다. "⌘⇧1만 누르면"·"제14조"는 원문의 1·14 로 받는다
   const invented = ([, number, units]: RegExpMatchArray) => !(units === "" ? digits : bare).has(number.replace(/[.,]/g, ""))
     && !values.has(valueKey(Number(number.replace(/,/g, "")) * [...units].reduce((product, unit) => product * (SCALES.get(unit) ?? 1), 1)));
-  if ([...line.replace(GRAMMATICAL_PERSON, "").matchAll(LINE_NUMBER)].some(invented)) {
+  // P2P의 2는 수량이 아니다. 원문에 peer-to-peer가 있을 때만 이 약어를 허용한다.
+  let mismatchedDate = false;
+  const numericLine = (peerToPeer ? line.replace(/\bp2p\b/gi, "") : line)
+    .replace(/(?<!\d)(\d{1,2})\s*월\s*(\d{1,2})\s*일(?!\d)/g,
+      (date, month, day) => {
+        if (monthDates.has(`${Number(month)}:${Number(day)}`)) return "";
+        if (monthDates.size) mismatchedDate = true;
+        return date;
+      });
+  if (mismatchedDate || [...numericLine.replace(GRAMMATICAL_PERSON, "").matchAll(LINE_NUMBER)].some(invented)) {
     return { ok: false, reason: "invented_number" };
   }
   const terms = (line.match(/[A-Za-z][A-Za-z0-9+#]*(?:[.-][A-Za-z0-9+#]+)*/g) ?? []).map((term) => term.toLowerCase());
-  if (terms.some((term) => !original.includes(term) && !COMMON_TERMS.has(term))) return { ok: false, reason: "invented_term" };
+  if (terms.some((term) => !original.includes(term) && !COMMON_TERMS.has(term) && !(term === "p2p" && peerToPeer))) return { ok: false, reason: "invented_term" };
   return { ok: true, line };
 }
 

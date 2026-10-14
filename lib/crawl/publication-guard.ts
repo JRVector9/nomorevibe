@@ -9,6 +9,7 @@ import type { CrawlSettings } from "./settings-schema";
 import { assertJobLease, type JobLease } from "@/lib/jobs/control";
 import { assertReviewApproval, ReviewApprovalChangedError } from "./agent-review-repository";
 import { lockRepositoryAgentEvidence } from "@/lib/domain/evidence/agents/lock";
+import { effectiveAgentScanState } from "@/lib/domain/evidence/agents/coverage";
 import type { StoppedAt } from "./rules";
 
 export class PublicationStateChangedError extends Error {
@@ -87,7 +88,7 @@ export async function guardPublication(tx: ProductTransaction, input: {
     const [scan] = await tx.select().from(agentRepositoryScans).where(and(
       eq(agentRepositoryScans.repositoryKey,input.candidate.repo.toLowerCase()),eq(agentRepositoryScans.scope,""),
     )).orderBy(desc(agentRepositoryScans.startedAt),desc(agentRepositoryScans.id)).limit(1).for("share");
-    if (!scan || scan.id !== input.scanId || scan.state !== "complete" || scan.lastErrorCode !== null
+    if (!scan || scan.id !== input.scanId || effectiveAgentScanState(scan) !== "complete" || scan.lastErrorCode !== null
       || scan.detectorVersion !== input.settings.agentEvidence.detectorVersion
       || !scan.completedAt || !Number.isFinite(scan.completedAt.getTime())
       || now-scan.completedAt.getTime() < 0 || now-scan.completedAt.getTime() >= 24*3600_000) throw new PublicationStateChangedError();

@@ -13,7 +13,9 @@ vi.mock("@/lib/crawl/readme-refresh", () => ({ fetchPublicReadme: sample }));
 beforeAll(ensureSchema);
 beforeEach(async () => {
   await resetTables();
-  await db.execute(sql`truncate crawl_candidates, crawl_documents, jobs restart identity cascade`);
+  // Append-only operations_audit retains candidate IDs across files and reruns.
+  // Reusing those IDs would link an unrelated fixture to an earlier audit entry.
+  await db.execute(sql`truncate crawl_candidates, crawl_documents, jobs cascade`);
   sample.mockReset();
 });
 const repo = "someone/published";

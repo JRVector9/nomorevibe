@@ -125,3 +125,23 @@ it("returns a same-SHA partial discovery to review before LIMIT and removes the 
   expect(await listReviewCandidates(input.settings,1)).toMatchObject([{id:input.candidate.id}]);
   expect(await db.select().from(crawlCandidates).where(reviewApprovalPredicate(input.settings))).toEqual([]);
 });
+
+it("rejects a coverage-only revision before LIMIT and at the publication CAS", async () => {
+  const input = await fixture();
+  expect(await listReviewCandidates(input.settings, 1)).toEqual([]);
+  expect(await db.select().from(crawlCandidates).where(reviewApprovalPredicate(input.settings))).toHaveLength(1);
+  // Keep every prior clock/state unchanged: coverage alone must invalidate the approval.
+  await db.update(agentRepositoryScans).set({ coverage: { limited: true } }).where(eq(agentRepositoryScans.id, input.scan.id));
+  const fresh = await loadReviewInput(input.candidate, input.document, input.settings);
+  expect(fresh.snapshot.scanState).toBe("partial");
+  expect(fresh.inputHash).not.toBe(input.input.inputHash);
+  expect(fresh.sourceRevisionHash).not.toBe(input.input.sourceRevisionHash);
+  expect(await listReviewCandidates(input.settings, 1)).toMatchObject([{ id: input.candidate.id }]);
+  expect(await db.select().from(crawlCandidates).where(reviewApprovalPredicate(input.settings))).toEqual([]);
+  await expect(db.transaction(tx => guardPublication(tx, { ...input, slug: "scan-lock-app", scanId: input.scan.id })))
+    .rejects.toThrow("publication_state_changed");
+  await expect(db.transaction(tx => guardPublication(tx, { ...input, slug: "scan-lock-app", scanId: null })))
+    .rejects.toThrow("review_approval_changed");
+  const [retained] = await db.select().from(agentRepositoryScans).where(eq(agentRepositoryScans.id, input.scan.id));
+  expect(retained).toMatchObject({ state: "complete", completedAt: input.scan.completedAt });
+});

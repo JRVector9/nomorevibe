@@ -9,6 +9,7 @@ import type { ProductTransaction } from '@/lib/domain/products/generation';
 import { assertJobLease, requestJob, type JobLease } from '@/lib/jobs/control';
 import { operationsAudit } from '@/lib/db/operations-schema';
 import { lockRepositoryAgentEvidence } from '@/lib/domain/evidence/agents/lock';
+import { effectiveAgentScanState } from '@/lib/domain/evidence/agents/coverage';
 import { secondReviewsFor } from './second-review';
 import { translationsFor } from './translations';
 import { createReviewInput, MAX_REVIEW_ATTEMPTS, REVIEW_PROMPT_VERSION, REVIEW_RULES_VERSION, reviewHash,
@@ -237,7 +238,7 @@ export async function requeueAfterAdminEvidenceRefresh(repo: string, lease?: Job
     if (!request || Number(current.candidate.signals?.adminEvidenceRefreshConsumedId ?? 0) >= request.id ||
         request.source.candidateJudgedAt !== (current.candidate.judgedAt?.toISOString() ?? null)) return false;
     const freshDocument = current.document.fetchedAt > new Date(request.source.documentFetchedAt);
-    const freshScan = !!current.scan?.completedAt && current.scan.state === 'complete' && !current.scan.lastErrorCode &&
+    const freshScan = !!current.scan?.completedAt && effectiveAgentScanState(current.scan) === 'complete' && !current.scan.lastErrorCode &&
       current.scan.completedAt > new Date(request.source.scanCompletedAt ?? request.startedAt.toISOString());
     if (!freshDocument && !freshScan) return false;
     await tx.update(crawlCandidates).set({ state: 'new', reason: 'source_changed', updatedAt: new Date(),

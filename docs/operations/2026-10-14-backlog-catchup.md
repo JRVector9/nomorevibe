@@ -133,3 +133,31 @@ quality gaveUp2,709도 계속 추적한다. freeze시점 현재 소개와 일치
 비공개 실행 증거는 `/Users/jr/.config/nomorevibe/backlog-recovery/2026-10-14` 및
 `/private/tmp/nomorevibe-agent-policy-20261014`에 권한 제한하여 저장했다.
 환경·토큰·원시 설정·로그를 이 문서나 공개 저장소에 복사하지 않는다.
+
+## 2026-10-15 07:34~07:44 KST 후속 실제 결과
+
+Cloudflare 인증 장애는 [실제 복구 기록](2026-10-15-cloudflare-purge-recovery.md)에 따라 해결했다.
+양 publisher credential/env·정상 주/예비·실제 HTML purge와 정상 제품 second purge를 확인했다.
+22:34:07 UTC CDN 미확인1,579/복구 후 confirmed315/오류0이며 아직 전체 소진은 진행 중이다.
+
+22:34:10 UTC 고정 cohort의 source 새성공12,528/실패195, 최초 agent 시도1,321
+(complete1,230/partial91/error2/never13,631), 소개완료1,481/사람대기67/실패0이었다.
+현재 소개 needs_editor102와 고정 cohort67은 집계 범위가 다르다. 자동 intro 일감은 소진됐다.
+발굴 runs8,905/1,681과 pause는 유지한다.
+
+22:44:33 UTC 서버 controller enabled/allowed/apply, quotaBlocked=false, status age7.76초를 확인했다.
+사용자 후속 지시에 따라 자동 처리되지 않는 오류를 병렬 조사·복구하며 사람 판단 대상은 유지한다.
+발행분 감사#4를 현재 기준으로 시작했고 22:44:32 UTC 실제 판정8개/timeout8개를 확인했다.
+첫 판정이 저장되지 않은 진단 호출은 처리 성공 건수로 계산하지 않는다.
+검색 network 상한17개·제작 근거 ID변경/compare404 커서 반복·audit의 짧은 deadline 원인을
+회귀 테스트로 확인하고 수정 중이다. 새 코드 배포 전 정상 선택이 복구됐다고 주장하지 않는다.
+
+08:23 KST 읽기 전용 재관측에서 고정 source cohort 실제 새 저장14,068, agent 완전1,402,
+소개 완료1,481/직접 편집67, CDN confirmed1,440이었다. 전체 CDN 대기는455/오류0이며
+신규 발굴 runs8,905/1,681과 중단을 보존했다. 서로 다른 시점·전체 큐와 고정 cohort를 혼합하지 않는다.
+현재 소개 직접 편집102와 자동 소개 소진도 이전 관측과 같았다.
+
+별도 Grok CLI `grok-4.7`/`low`로 공개 출처 갱신을 조사했다. 55초 틱 포화와 GitHub 수집 시간73%,
+회차 사이5~10초 대기를 실측했다. [출처 처리량 보고서](2026-10-15-evidence-source-capacity.md)에
+안전한 개선의 검증과 실제 반영 상태를 기록한다. 부적절한 cursor·quota 초기화나 예약 연기로
+갱신 완료 건수를 만들지 않는다. 새 코드의 PR·CI·운영 반영은 해당 보고서와 handoff를 따른다.

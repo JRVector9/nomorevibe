@@ -22,6 +22,7 @@ import {
   setAutomaticUpdateVisibility,
 } from "@/lib/domain/evidence/admin";
 import { ensureSchema, resetTables } from "./setup";
+import { readWorkerProgress } from "@/lib/operations/worker-progress-query";
 
 const NOW = new Date("2026-08-20T03:00:00.000Z");
 
@@ -38,6 +39,8 @@ beforeEach(async () => {
     status: "verified",
     verifyToken: "verify",
     editTokenHash: "a".repeat(64),
+    createdAt: new Date(NOW.getTime() - 4 * 60 * 60_000),
+    updatedAt: new Date(NOW.getTime() - 4 * 60 * 60_000),
   });
 });
 
@@ -181,13 +184,62 @@ describe("evidence admin read models", () => {
   });
 
   it("counts due, stale, and failed or disconnected sources", async () => {
+    const createdAt = new Date(NOW.getTime() - 4 * 60 * 60_000);
+    await db.insert(productLinks).values([
+      { slug: "evidence-admin", kind: "repository", declarationSource: "maker", normalizedKey: "a", url: "https://github.com/acme/a", createdAt },
+      { slug: "evidence-admin", kind: "support", declarationSource: "maker", normalizedKey: "b", url: "https://support.example/b", createdAt },
+      { slug: "evidence-admin", kind: "documentation", declarationSource: "maker", normalizedKey: "c", url: "https://docs.example/c", createdAt },
+    ]);
     await db.insert(productEvidenceSources).values([
-      { slug: "evidence-admin", kind: "repository", provider: "github", sourceKey: "a", state: "stale", nextAttemptAt: new Date("2026-08-20T02:00:00Z") },
-      { slug: "evidence-admin", kind: "support", provider: "support", sourceKey: "b", state: "failed", nextAttemptAt: new Date("2026-08-20T04:00:00Z") },
-      { slug: "evidence-admin", kind: "documentation", provider: "documentation", sourceKey: "c", state: "disconnected", nextAttemptAt: new Date("2026-08-20T01:00:00Z") },
+      { slug: "evidence-admin", kind: "repository", provider: "github", sourceKey: "a", sourceUrl: "https://github.com/acme/a", state: "stale", nextAttemptAt: new Date("2026-08-20T02:00:00Z"), createdAt },
+      { slug: "evidence-admin", kind: "support", provider: "support", sourceKey: "b", sourceUrl: "https://support.example/b", state: "failed", nextAttemptAt: new Date("2026-08-20T04:00:00Z"), createdAt },
+      { slug: "evidence-admin", kind: "documentation", provider: "documentation", sourceKey: "c", sourceUrl: "https://docs.example/c", state: "disconnected", nextAttemptAt: new Date("2026-08-20T01:00:00Z"), createdAt },
     ]);
 
     // 가장 오래 밀린 것은 01:00 기한 — NOW(03:00)보다 2시간
     await expect(getEvidenceStatusSummary(NOW)).resolves.toEqual({ due: 2, stale: 1, failed: 2, oldestDueHours: 2 });
+  });
+
+  it("matches current worker demand including a visible link without a source and excludes inactive history", async () => {
+    const createdAt = new Date(NOW.getTime() - 4 * 60 * 60_000), old = new Date(NOW.getTime() - 34 * 24 * 60 * 60_000);
+    await db.insert(products).values(["banned", "unverified"].map(status => ({ slug: `evidence-${status}`,
+      url: `https://evidence-${status}.example`, name: status, tagline: "test", description: "test", category: "Dev",
+      verifyToken: status, editTokenHash: "a".repeat(64), status: status as "banned" | "unverified", createdAt: old, updatedAt: old })));
+    await db.insert(productLinks).values([
+      { slug: "evidence-admin", kind: "repository", declarationSource: "maker", normalizedKey: "active", url: "https://github.com/acme/active", createdAt },
+      { slug: "evidence-admin", kind: "support", declarationSource: "maker", normalizedKey: "future", url: "https://support.example/future", createdAt },
+      { slug: "evidence-admin", kind: "npm", declarationSource: "maker", normalizedKey: "initial", url: "https://npmjs.com/package/initial", createdAt: new Date(NOW.getTime() - 30 * 60_000) },
+      { slug: "evidence-admin", kind: "support", declarationSource: "maker", normalizedKey: "hidden", url: "https://support.example/hidden", visible: false, createdAt: old },
+      ...["banned", "unverified"].map(status => ({ slug: `evidence-${status}`, kind: "repository" as const,
+        declarationSource: "maker" as const, normalizedKey: status, url: `https://github.com/acme/${status}`, createdAt: old })),
+    ]);
+    await db.insert(productEvidenceSources).values([
+      { slug: "evidence-admin", kind: "repository", provider: "github", sourceKey: "active", sourceUrl: "https://github.com/acme/active", state: "stale", nextAttemptAt: new Date(NOW.getTime() - 60 * 60_000), createdAt },
+      { slug: "evidence-admin", kind: "support", provider: "support", sourceKey: "future", sourceUrl: "https://support.example/future", state: "failed", nextAttemptAt: new Date(NOW.getTime() + 60 * 60_000), createdAt },
+      { slug: "evidence-admin", kind: "documentation", provider: "product_site", sourceKey: "canonical_site", sourceUrl: "https://evidence-admin.example", state: "disconnected", nextAttemptAt: new Date(NOW.getTime() - 2 * 60 * 60_000), createdAt },
+      { slug: "evidence-admin", kind: "support", provider: "support", sourceKey: "hidden", sourceUrl: "https://support.example/hidden", state: "failed", nextAttemptAt: old, createdAt: old },
+      { slug: "evidence-admin", kind: "repository", provider: "github", sourceKey: "obsolete", sourceUrl: "https://github.com/acme/obsolete", state: "stale", nextAttemptAt: old, createdAt: old },
+      ...["banned", "unverified"].map(status => ({ slug: `evidence-${status}`, kind: "repository" as const, provider: "github",
+        sourceKey: status, sourceUrl: `https://github.com/acme/${status}`, state: "failed" as const, nextAttemptAt: old, createdAt: old })),
+      { slug: "evidence-banned", kind: "documentation", provider: "product_site", sourceKey: "canonical_site", sourceUrl: "https://evidence-banned.example", state: "failed", nextAttemptAt: old, createdAt: old },
+    ]);
+    const before = await db.select().from(productEvidenceSources).orderBy(asc(productEvidenceSources.id));
+    const summary = await getEvidenceStatusSummary(NOW);
+    expect(summary).toEqual({ due: 3, stale: 1, failed: 2, oldestDueHours: 2 });
+    expect((await readWorkerProgress(NOW)).stages.find(stage => stage.stage === "evidence"))
+      .toMatchObject({ waiting: summary.due, oldestMinutes: summary.oldestDueHours! * 60 });
+    expect(await db.select().from(productEvidenceSources).orderBy(asc(productEvidenceSources.id))).toEqual(before);
+  });
+
+  it("counts a changed canonical URL from the current product clock without inheriting the old URL failure", async () => {
+    const updatedAt = new Date(NOW.getTime() - 12 * 60_000);
+    await db.update(products).set({ updatedAt }).where(eq(products.slug, "evidence-admin"));
+    await db.insert(productEvidenceSources).values({ slug: "evidence-admin", kind: "documentation", provider: "product_site",
+      sourceKey: "canonical_site", sourceUrl: "https://old.example", state: "failed", lastErrorCode: "site_http",
+      createdAt: new Date(NOW.getTime() - 24 * 60 * 60_000), nextAttemptAt: new Date(NOW.getTime() + 60 * 60_000) });
+    const summary = await getEvidenceStatusSummary(NOW);
+    expect(summary).toEqual({ due: 1, stale: 0, failed: 0, oldestDueHours: 0.2 });
+    expect((await readWorkerProgress(NOW)).stages.find(stage => stage.stage === "evidence"))
+      .toMatchObject({ waiting: summary.due, oldestMinutes: 12, providerErrors: 0 });
   });
 });

@@ -1,4 +1,5 @@
 import type { AgentObservation, AgentScanState } from "./types";
+import { effectiveAgentScanState, type AgentCoverageInput } from "./coverage";
 const CLIENTS: Record<string, string> = { "claude-code":"Claude Code",codex:"Codex",cursor:"Cursor",cline:"Cline",roo:"Roo Code",opencode:"OpenCode",aider:"Aider",continue:"Continue","gemini-cli":"Gemini CLI","qwen-code":"Qwen Code","grok-build":"Grok Build","kimi-cli":"Kimi CLI","kimi-code":"Kimi Code",copilot:"GitHub Copilot",windsurf:"Windsurf",goose:"Goose",factory:"Factory Droid",kiro:"Kiro",kimi:"Kimi Code","roo-code":"Roo Code","factory-droid":"Factory Droid","github-copilot":"GitHub Copilot","devin-desktop":"Devin Desktop" };
 /** 저장소에서 찾은 도구 키의 표시 이름 — 모르는 키는 그대로 */
 export const agentClientLabel = (client: string) => CLIENTS[client] ?? client;
@@ -13,10 +14,10 @@ export type ObservedAgentFactView = {
   sourceUrl:string; sourcePath:string|null; commitSha:string; observedAt:Date;
   coverageLabel:string|null; relationshipLabel:string|null; executionVerified:false;
 };
-export function presentObservedAgentFacts(input: { observations:AgentObservation[]; scanState:AgentScanState; observedAt:Date; relationship:"same_product"|"unknown"|"conflict"; now?:Date; scanLastError?:string|null }):ObservedAgentFactView[] {
+export function presentObservedAgentFacts(input: AgentCoverageInput & { observations:AgentObservation[]; scanState:AgentScanState; observedAt:Date; relationship:"same_product"|"unknown"|"conflict"; now?:Date; scanLastError?:string|null }):ObservedAgentFactView[] {
   const age = (input.now ?? new Date()).getTime() - input.observedAt.getTime();
   const coverageLabel = input.scanState === "failed" || input.scanLastError ? "최근 수집 실패 · 이전 확인 정보"
-    : input.scanState !== "complete" ? "일부 미확인"
+    : effectiveAgentScanState({ ...input, state: input.scanState }) !== "complete" ? "일부 미확인"
     : !Number.isFinite(age) || age < 0 || age >= 24 * 3600000 ? "에이전트 정보 재확인 필요" : null;
   return input.observations.map(observation => ({
     label: observation.kind === "instruction_file"

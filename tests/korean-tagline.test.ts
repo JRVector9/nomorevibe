@@ -35,6 +35,13 @@ describe("checkKoreanTagline — 모델이 옮긴 줄을 그대로 믿지 않는
       .toEqual({ ok: true, line: "'Ogu'로 지출을 기록하는 가계부" });
   });
 
+  it("원문에 명시한 월일은 숫자가 겹쳐도 바꾸지 않는다", () => {
+    const source = { name: "x", tagline: "Countdown until May 4" };
+    expect(checkKoreanTagline("5월 4일까지 시간을 세는 도구", source).ok).toBe(true);
+    expect(checkKoreanTagline("4월 4일까지 시간을 세는 도구", source)).toEqual({ ok: false, reason: "invented_number" });
+    expect(checkKoreanTagline("4월 4일과 5월 4일의 시간을 세는 도구", { name: "x", tagline: "Countdown until May 4 and 4월 4일" }).ok).toBe(true);
+  });
+
   it("빈 줄·여러 줄·링크·마크다운·거절은 버린다", () => {
     expect(checkKoreanTagline("", ffmpeg)).toEqual({ ok: false, reason: "empty" });
     expect(checkKoreanTagline("FFmpeg로 동영상 편집\n브라우저에서", ffmpeg)).toEqual({ ok: false, reason: "multiline" });
@@ -103,6 +110,34 @@ describe("checkKoreanTagline — 모델이 옮긴 줄을 그대로 믿지 않는
     expect(checkKoreanTagline("직원에게 월 3억 루피 이상 지급", { name: "x", tagline: "Now disbursing Rs 3 Cr+ a month to employees" }))
       .toEqual({ ok: false, reason: "invented_number" });
     expect(checkKoreanTagline("직원에게 월 3천만 루피 이상 지급", { name: "x", tagline: "Now disbursing Rs 3 Cr+ a month to employees" }).ok).toBe(true);
+  });
+
+  it("peer-to-peer를 P2P로 줄여도 수량 2를 지어낸 것으로 보지 않는다", () => {
+    const source = { name: "x", tagline: "A peer-to-peer file transfer tool" };
+    expect(checkKoreanTagline("P2P 연결로 파일을 주고받는 도구", source).ok).toBe(true);
+    expect(checkKoreanTagline("2개 파일을 동시에 전송하는 도구", source)).toEqual({ ok: false, reason: "invented_number" });
+    expect(checkKoreanTagline("P2P 연결로 파일을 주고받는 도구", { name: "x", tagline: "A file transfer tool" }).ok).toBe(false);
+  });
+
+  it("영문 날짜의 월을 한국어 숫자로 옮기되 다른 월은 거절한다", () => {
+    const source = { name: "x", tagline: "Countdown until December 7" };
+    expect(checkKoreanTagline("12월 7일까지 남은 시간을 세는 도구", source).ok).toBe(true);
+    expect(checkKoreanTagline("11월 7일까지 남은 시간을 세는 도구", source)).toEqual({ ok: false, reason: "invented_number" });
+    expect(checkKoreanTagline("7월 12일까지 남은 시간을 세는 도구", source)).toEqual({ ok: false, reason: "invented_number" });
+    expect(checkKoreanTagline("12개 날짜를 함께 세는 도구", source)).toEqual({ ok: false, reason: "invented_number" });
+    expect(checkKoreanTagline("3개 파일을 전송하는 도구", { name: "x", tagline: "March ahead with file transfer" })).toEqual({ ok: false, reason: "invented_number" });
+  });
+
+  it("벵골어 숫자와 아라비아 숫자의 같은 값을 받는다", () => {
+    const source = { name: "x", tagline: "২০ জনের জন্য ৫টি কাজ, ১৮০ দিনের হিসাব" };
+    expect(checkKoreanTagline("20명을 위한 5가지 작업과 180일 기록 관리", source).ok).toBe(true);
+    expect(checkKoreanTagline("20명을 위한 50가지 작업과 180일 기록 관리", source)).toEqual({ ok: false, reason: "invented_number" });
+  });
+
+  it("프랑스어 복수 단위 trois cents를 300으로 옮기되 다른 값은 거절한다", () => {
+    const source = { name: "x", tagline: "Un outil avec trois cents fiches" };
+    expect(checkKoreanTagline("300개 항목을 정리하는 도구", source).ok).toBe(true);
+    expect(checkKoreanTagline("600개 항목을 정리하는 도구", source)).toEqual({ ok: false, reason: "invented_number" });
   });
 
   it("단위 글자가 '뿐'·'조항'일 때는 원문에 단위 없이 적힌 같은 숫자로 받는다", () => {

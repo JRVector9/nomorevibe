@@ -3,13 +3,11 @@ import { db } from "@/lib/db";
 import { products, productSearchProfiles, type Product, type ProductSearchProfile } from "@/lib/db/schema";
 import { assertJobLease, type JobLease } from "@/lib/jobs/control";
 import { keywordText, profileEvidence, profileHash } from "./search-profile";
+import { isProfileProviderError, MAX_PROFILE_ATTEMPTS as MAX_ATTEMPTS, profileGenerationRetryAllowedSql } from "./search-profile-retry";
 
 /**
  * 검색 키워드의 대기열과 저장. 짓는 일(게이트웨이)은 search-profile.ts 에 있다.
  */
-
-/** 이만큼 실패하면 손을 뗀다 */
-const MAX_ATTEMPTS = 5;
 
 const FIELDS = {
   id: products.id, slug: products.slug, name: products.name, url: products.url, category: products.category,
@@ -46,7 +44,8 @@ export async function pendingProfiles(limit: number): Promise<ProfileTask[]> {
     .where(and(
       inArray(products.status, ["seeded", "verified"]),
       sql`(${productSearchProfiles.productId} is null
-        or (${productSearchProfiles.errorCode} is not null and ${productSearchProfiles.attempts} < ${MAX_ATTEMPTS}
+        or (${productSearchProfiles.errorCode} is not null
+            and ${profileGenerationRetryAllowedSql(productSearchProfiles.errorCode, productSearchProfiles.attempts)}
             and (${productSearchProfiles.retryAt} is null or ${productSearchProfiles.retryAt} <= now()))
         or (${productSearchProfiles.errorCode} is null and (${productSearchProfiles.needsRefresh}
             or ${productSearchProfiles.updatedAt} < now() - interval '30 days')))`,
@@ -96,11 +95,13 @@ export async function recordProfileResult(task: ProfileTask, lease: JobLease, re
       await tx.update(products).set({ searchKeywords: keywordText(result.en, result.ko) }).where(eq(products.id, product.id));
     } else {
       const code = result.error.slice(0, 60);
+      const providerError = isProfileProviderError(code);
       await tx.insert(productSearchProfiles).values({ productId: product.id, sourceHash, errorCode: code, attempts: 1,
-        retryAt: sql`now() + interval '5 minutes'`, updatedAt: sql`now()` })
+        retryAt: providerError ? sql`now() + interval '30 minutes'` : sql`now() + interval '5 minutes'`, updatedAt: sql`now()` })
         .onConflictDoUpdate({ target: productSearchProfiles.productId, set: { errorCode: code, updatedAt: sql`now()`,
           attempts: sql`${productSearchProfiles.attempts} + 1`,
-          retryAt: sql`now() + least(interval '24 hours', interval '5 minutes' * power(2, ${productSearchProfiles.attempts}))` } });
+          retryAt: providerError ? sql`now() + interval '30 minutes'`
+            : sql`now() + least(interval '24 hours', interval '5 minutes' * power(2, ${productSearchProfiles.attempts}))` } });
     }
     await assertJobLease(tx, lease);
     return true;
@@ -109,9 +110,6 @@ export async function recordProfileResult(task: ProfileTask, lease: JobLease, re
 
 /** 이만큼 검수에 실패하면 손을 뗀다 — 게이트웨이가 막힌 것은 세지 않는다 */
 const MAX_VERIFY_ATTEMPTS = 5;
-/** 이 제품 탓이 아닌 실패 — 한도, 모델이 내려감(supa 는 한 번에 한 모델만 띄운다), 연결, 키 없음 */
-const NOT_PRODUCT_FAULT = new Set(["rate_limited", "rate_limit", "model_unavailable", "network", "no_key"]);
-
 /**
  * 검수할 키워드 — 지은 뒤 아직 검수하지 않은 공개 제품. 오래 기다린 것부터.
  * 키워드가 하나도 없는 것은 검수할 것이 없다.
@@ -172,7 +170,7 @@ export async function recordVerificationResult(task: ProfileTask, lease: JobLeas
     } else {
       const code = result.error.slice(0, 60);
       // 게이트웨이가 막힌 것은 이 제품 탓이 아니다 — 세지 않고 오래 쉰다
-      const limited = NOT_PRODUCT_FAULT.has(code);
+      const limited = isProfileProviderError(code);
       await tx.update(productSearchProfiles).set({
         verifyError: code,
         updatedAt: sql`now()`,

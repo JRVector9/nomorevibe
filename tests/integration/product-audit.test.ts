@@ -10,6 +10,7 @@ import { auditBanReason, auditRemovalGroups, cancelProductAudit, GROUP_REMOVE_MA
   productAuditOverview, removeAuditedProduct, removeAuditedProducts, startProductAudit } from "@/lib/crawl/product-audit";
 import { auditPublishedProducts } from "@/lib/crawl/jobs/product-audit";
 import { runJob } from "@/lib/jobs/runner";
+import { jobRunOptions } from "@/scripts/worker";
 import { ensureSchema, resetTables } from "./setup";
 
 /** 외부 모델 호출만 바꾼다. 올리기·고르기·기록·lease 는 실제 DB 로 돈다 */
@@ -64,7 +65,9 @@ async function page(repo: string, text: string) {
 }
 const start = (over: Partial<Parameters<typeof startProductAudit>[0]> = {}) =>
   startProductAudit({ startedBy: "jr", reason: "첫 감사", reauditKept: false, ...over });
-const tick = () => runJob("product-audit", auditPublishedProducts);
+const tick = () => runJob("product-audit", auditPublishedProducts, {
+  budgetMs: jobRunOptions("product-audit", { requestedOnly: true }).budgetMs,
+});
 const items = () => db.select().from(productAuditItems).orderBy(asc(productAuditItems.id));
 
 describe("감사 올리기", () => {

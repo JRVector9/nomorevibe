@@ -27,7 +27,7 @@ export type JobContext<C> = {
 };
 export type JobOutcome<C> = { done: boolean; cursor?: C | null; continuation?: "ready" };
 export type RunResult =
-  | { status: "completed"; done: boolean; durationMs: number }
+  | { status: "completed"; done: boolean; durationMs: number; sourceContinuation?: true }
   | { status: "skipped"; reason: "locked" | "not_requested" | "backoff" | "stopping" }
   | { status: "failed"; error: string; durationMs: number };
 
@@ -130,6 +130,12 @@ export async function runJob<C>(
     const outcome = await handler(ctx);
     await stopHeartbeat();
     if (lost) throw new JobLeaseLostError();
+    const budgetMs = options.budgetMs ?? 25_000;
+    const sourceReady = name === "product-evidence-refresh" && outcome.done === false
+      && outcome.continuation === "ready" && !options.signal?.aborted && Date.now() - startedAt >= budgetMs;
+    const reviewReady = outcome.continuation === "ready"
+      && ["crawl-agent-review", "second-review"].includes(name) && !options.signal?.aborted;
+    let sourceContinuation = false;
     await db.transaction(async tx => {
       const [row] = await tx.update(jobs).set({
         // done은 "지금 할 일이 없다", cursor는 "내 상태"다. 둘을 묶으면 이어서 훑어야 하는
@@ -137,15 +143,27 @@ export async function runJob<C>(
         // 말이 없으면 종전대로 done에서 비운다.
         cursor: (outcome.cursor !== undefined ? outcome.cursor : (outcome.done ? null : cursor)) as never,
         processedVersion: lease.requestedVersion,
-        ...(outcome.continuation === "ready" && ["crawl-agent-review", "second-review"].includes(name) && !options.signal?.aborted ? {
-          requestedVersion: sql`case when ${jobs.requestedVersion} = ${lease.requestedVersion}
-            and ${jobs.requestedVersion} < 9007199254740991 then ${jobs.requestedVersion} + 1
-            else ${jobs.requestedVersion} end`,
+        ...(sourceReady || reviewReady ? {
+          requestedVersion: sourceReady
+            ? sql`case when ${jobs.notBefore} is not null and ${jobs.notBefore} > now() then ${jobs.requestedVersion}
+                when ${jobs.requestedVersion} = ${lease.requestedVersion}
+                  and ${jobs.requestedVersion} < 9007199254740991 then ${jobs.requestedVersion} + 1
+                else ${jobs.requestedVersion} end`
+            : sql`case when ${jobs.requestedVersion} = ${lease.requestedVersion}
+                and ${jobs.requestedVersion} < 9007199254740991 then ${jobs.requestedVersion} + 1
+                else ${jobs.requestedVersion} end`,
         } : {}),
-        lockedAt: null, leaseToken: null, notBefore: sql`case when ${PAUSED} then ${jobs.notBefore} end`,
+        lockedAt: null, leaseToken: null,
+        notBefore: sourceReady
+          ? sql`case when ${jobs.notBefore} > now() then ${jobs.notBefore} end`
+          : sql`case when ${PAUSED} then ${jobs.notBefore} end`,
         lastSuccessAt: sql`now()`, lastError: null, updatedAt: sql`now()`,
-      }).where(owned).returning({ name: jobs.name });
+      }).where(owned).returning({
+        name: jobs.name,
+        pendingReady: sql<boolean>`${jobs.requestedVersion} > ${jobs.processedVersion} and (${jobs.notBefore} is null or ${jobs.notBefore} <= now())`,
+      });
       if (!row) throw new JobLeaseLostError();
+      sourceContinuation = sourceReady && row.pendingReady === true;
       const observedAt = new Date();
       const value = { requestedVersion: lease.requestedVersion, done: outcome.done, durationMs: Date.now()-startedAt, events };
       await tx.insert(operationsObservations).values({key:`job:${name}`,value,observedAt})
@@ -155,7 +173,7 @@ export async function runJob<C>(
     });
     const durationMs = Date.now() - startedAt;
     logger.info("job.completed", { job: name, done: outcome.done, durationMs });
-    return { status: "completed", done: outcome.done, durationMs };
+    return { status: "completed", done: outcome.done, durationMs, ...(sourceContinuation ? { sourceContinuation: true as const } : {}) };
   } catch (error) {
     await stopHeartbeat();
     // PostgreSQL rejects NUL even in diagnostic text. A failed error write used to

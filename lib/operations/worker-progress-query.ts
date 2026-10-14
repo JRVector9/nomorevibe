@@ -8,6 +8,7 @@ import { STALE_LOCK_MS } from "@/lib/jobs/lease";
 import { AGENT_DETECTOR_VERSION } from "@/lib/domain/evidence/agents/types";
 import { AI_LEVEL_RULES_VERSION } from "@/lib/domain/evidence/ai-level-labels";
 import { agentRefreshDueAtSql } from "@/lib/domain/evidence/agents/refresh-policy";
+import { evidenceSourceTargetCtesSql } from "@/lib/domain/evidence/source-demand";
 import { latestServiceInstance, serviceInstancesFromObservations } from "./instance";
 import { pipelineThroughput } from "./throughput";
 import type { ThroughputSnapshot } from "./throughput-model";
@@ -114,26 +115,7 @@ async function evidenceProgress(settings: CrawlSettings, now: Date, skipUnseen: 
     await tx.execute(sql`SET LOCAL statement_timeout = '3s'`);
     return tx.execute<{ key: "evidence" | "agent-evidence" | "ai-level"; waiting: number; oldest: number | null;
       completed: number; progress: number; errors: number; deferred: number; provider_errors: number; error_age: number | null }>(sql`
-      WITH public_products AS MATERIALIZED (
-        SELECT slug, url, repo_url, created_at, updated_at FROM products WHERE status IN ('seeded','verified')
-      ), source_targets AS (
-        SELECT greatest(l.created_at, s.created_at, s.next_attempt_at) AS due_at,
-          CASE WHEN s.source_url = l.url THEN s.last_success_at END AS success_at,
-          CASE WHEN s.source_url = l.url THEN s.last_failure_at END AS failure_at,
-          CASE WHEN s.source_url = l.url THEN s.last_error_code END AS error_code,
-          greatest(l.created_at, s.created_at, s.last_success_at) AS error_since
-        FROM public_products p JOIN product_links l ON l.slug = p.slug AND l.visible
-        LEFT JOIN product_evidence_sources s ON s.slug = l.slug AND s.kind = l.kind AND s.source_key = l.normalized_key
-        UNION ALL
-        SELECT CASE WHEN s.id IS NOT NULL AND s.source_url IS DISTINCT FROM p.url THEN p.updated_at
-            ELSE greatest(p.created_at, s.created_at, s.next_attempt_at) END,
-          CASE WHEN s.source_url = p.url THEN s.last_success_at END,
-          CASE WHEN s.source_url = p.url THEN s.last_failure_at END,
-          CASE WHEN s.source_url = p.url THEN s.last_error_code END,
-          greatest(p.created_at, s.created_at, s.last_success_at)
-        FROM public_products p JOIN product_evidence_sources s ON s.slug = p.slug
-          AND s.provider = 'product_site' AND s.source_key = 'canonical_site'
-      ), agent_inputs AS MATERIALIZED (
+      WITH ${evidenceSourceTargetCtesSql()}, agent_inputs AS MATERIALIZED (
         -- Avoid parallel sorted finalization over long keys under the database locale.
         SELECT ${progressRepositoryKeySql(sql`repo_url`, "agent")} AS repository_key, created_at,
           status NOT IN ('seeded','verified') AS requires_daily

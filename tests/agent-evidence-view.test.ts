@@ -38,3 +38,10 @@ it("preserves a completed scan but labels a later failed attempt", () => {
  expect(view.coverageLabel).toBe("최근 수집 실패 · 이전 확인 정보");
  expect(view.sourceUrl).toBe(observation.sourceUrl);
 });
+it("labels retained facts as partly unconfirmed after a limited same-head recheck", () => {
+ const [view] = presentObservedAgentFacts({ observations:[observation], scanState:"complete", coverage:{limited:true},
+   observedAt:new Date("2026-09-06"), now:new Date("2026-09-06"), relationship:"same_product" });
+ expect(view.coverageLabel).toBe("일부 미확인");
+ expect(view.sourceUrl).toBe(observation.sourceUrl);
+ expect(view.observedAt).toEqual(new Date("2026-09-06"));
+});

@@ -8,6 +8,7 @@ import { assertJobLease, type JobLease } from '@/lib/jobs/control';
 import { agentObservationSchema, AGENT_DETECTOR_VERSION, type AgentObservation } from './types';
 import { collectRepositoryAgentEvidence, InvalidAgentScanCursorError, normalizeAgentRepositoryKey, type CollectResult, type AgentGitHubRequest } from './collect';
 import { lockRepositoryAgentEvidence } from './lock';
+import { effectiveAgentScanState } from './coverage';
 const DAY = 24 * 60 * 60 * 1000;
 const digest = (input: unknown) => createHash('sha256').update(JSON.stringify(input)).digest('hex');
 const observationKey = (observation: AgentObservation) => digest(Object.keys(observation).sort().map(key => [key, observation[key as keyof AgentObservation]]));
@@ -75,6 +76,11 @@ export async function saveRepositoryAgentScan(result: CollectResult, now = new D
     WHEN ${agentRepositoryScans.repositoryKey} = ${result.repositoryKey} THEN ${JSON.stringify(result.cursor)}::jsonb
     ELSE jsonb_set(${JSON.stringify(renamedCursor)}::jsonb, '{repositoryKey}', to_jsonb(${agentRepositoryScans.repositoryKey})) END`;
   const sameName = sql`${agentRepositoryScans.repositoryKey} = ${result.repositoryKey}`;
+  const coverage = { limited: result.cursor?.coverageLimited ?? false, repositoryFork: result.repositoryFork ?? null,
+    unavailableCommits: result.cursor?.unavailableCommits ?? [] };
+  const coverageUpdate = { ...(result.repositoryFork === undefined ? {} : { repositoryFork: result.repositoryFork }),
+    ...(result.state === 'complete' ? { limited: false, unavailableCommits: [] }
+      : result.cursor?.coverageLimited ? { limited: true, unavailableCommits: result.cursor.unavailableCommits ?? [] } : {}) };
   return db.transaction(async tx => {
     await lockRepositoryAgentEvidence(tx, result.repositoryKey, result.scope);
     // Complete immutable evidence can coexist with unfinished later discovery work.
@@ -83,13 +89,13 @@ export async function saveRepositoryAgentScan(result: CollectResult, now = new D
       commitSha: result.commitSha!, detectorVersion: AGENT_DETECTOR_VERSION,
       scope: result.scope, scopeHash: digest(result.scope), state: result.state, cursor: result.cursor,
       requestCount: result.requestCount, fileCount: result.fileCount,
-      coverage: { limited: result.cursor?.coverageLimited ?? false, repositoryFork: result.repositoryFork ?? null },
+      coverage,
       startedAt: now, completedAt: result.state === 'complete' ? now : null,
       lastErrorCode: result.errorCode, nextAttemptAt,
     }).onConflictDoUpdate({
       target: [agentRepositoryScans.githubRepositoryId, agentRepositoryScans.commitSha, agentRepositoryScans.detectorVersion, agentRepositoryScans.scopeHash],
       set: {
-        coverage: sql`${agentRepositoryScans.coverage} || ${JSON.stringify({...(result.repositoryFork === undefined ? {} : {repositoryFork:result.repositoryFork})})}::jsonb`,
+        coverage: sql`${agentRepositoryScans.coverage} || ${JSON.stringify(coverageUpdate)}::jsonb`,
         state: sql`CASE WHEN ${agentRepositoryScans.state} = 'complete' THEN 'complete' WHEN NOT (${sameName}) THEN 'partial' ELSE ${result.state} END`,
         cursor: conflictCursor,
         requestCount: sql`${agentRepositoryScans.requestCount} + ${result.requestCount}`,
@@ -116,7 +122,7 @@ export async function saveRepositoryAgentScan(result: CollectResult, now = new D
 export async function attachRepositoryAgentScan(input: { productSlug: string; productId: number; scanId: number }, lease?: JobLease) {
   return withProductGeneration(input.productSlug, input.productId, async tx => {
     const scan = await tx.query.agentRepositoryScans.findFirst({ where: eq(agentRepositoryScans.id, input.scanId) });
-    if (!scan || scan.state !== 'complete' || scan.lastErrorCode || scan.scope !== '') return false;
+    if (!scan || effectiveAgentScanState(scan) !== 'complete' || scan.lastErrorCode || scan.scope !== '') return false;
     const links = await tx.select().from(productLinks).where(and(eq(productLinks.slug, input.productSlug), eq(productLinks.kind, 'repository'), eq(productLinks.visible, true)));
     const link = links.find(row => row.normalizedKey.toLowerCase() === `github:${scan.repositoryKey}` || row.normalizedKey.toLowerCase() === scan.repositoryKey || row.url.replace(/\/$/, '').toLowerCase() === `https://github.com/${scan.repositoryKey}`);
     if (!link) return false;

@@ -30,4 +30,9 @@ describe('inspectable contribution audit',()=>{
   const summary=createAttributionAuditSummary();accumulateAttributionAudit(summary,classifyAttributionAuditRow({...row,maker_builder:'__proto__'},now));
   expect(summary.makerReportedTools['__proto__']).toBe(1);expect(Object.getPrototypeOf(summary.makerReportedTools)).toBeNull();
  });
+ it('does not qualify a fresh historical complete claim under limited current coverage',()=>{
+  const item=classifyAttributionAuditRow({...row,scan_coverage:{limited:true}},now);
+  expect(item.scanState).toBe('incomplete');
+  expect(item.claims[0]).toMatchObject({qualified:false,reason:'incomplete',sourceUrl:observation.sourceUrl});
+ });
 });

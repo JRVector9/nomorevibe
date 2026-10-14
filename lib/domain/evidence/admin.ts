@@ -18,6 +18,7 @@ import {
 } from "@/lib/db/schema";
 import { lockProductGeneration } from "@/lib/domain/products/generation";
 import { evidenceSettingsSchema, type EvidenceSettings } from "./settings";
+import { evidenceSourceTargetCtesSql } from "./source-demand";
 
 const slugSchema = z.string().min(1).max(80).regex(/^[a-z0-9][a-z0-9-]*$/);
 const actorSchema = z.string().trim().min(1).max(120);
@@ -222,12 +223,15 @@ export async function getEvidenceAdminProduct(slugInput: string) {
 
 export async function getEvidenceStatusSummary(now: Date) {
   if (!Number.isFinite(now.getTime())) throw new Error("invalid status timestamp");
-  const [row] = await db.select({
-    due: sql<number>`count(*) filter (where ${productEvidenceSources.nextAttemptAt} <= ${now.toISOString()}::timestamptz)::int`,
-    stale: sql<number>`count(*) filter (where ${productEvidenceSources.state} = 'stale')::int`,
-    failed: sql<number>`count(*) filter (where ${productEvidenceSources.state} in ('failed', 'disconnected'))::int`,
-    oldestDueHours: sql<number | null>`extract(epoch from (${now.toISOString()}::timestamptz - min(${productEvidenceSources.nextAttemptAt}) filter (where ${productEvidenceSources.nextAttemptAt} <= ${now.toISOString()}::timestamptz))) / 3600`,
-  }).from(productEvidenceSources);
+  const at = sql`${now.toISOString()}::timestamp`;
+  const [row] = await db.execute<{ due: number; stale: number; failed: number; oldest_due_hours: number | null }>(sql`
+    WITH ${evidenceSourceTargetCtesSql()}
+    SELECT count(*) FILTER (WHERE due_at <= ${at})::int AS due,
+      count(*) FILTER (WHERE state = 'stale')::int AS stale,
+      count(*) FILTER (WHERE state IN ('failed','disconnected'))::int AS failed,
+      extract(epoch FROM (${at} - min(due_at) FILTER (WHERE due_at <= ${at}))) / 3600 AS oldest_due_hours
+    FROM source_targets
+  `);
   return { due: row?.due ?? 0, stale: row?.stale ?? 0, failed: row?.failed ?? 0,
-    oldestDueHours: row?.oldestDueHours == null ? null : Number(row.oldestDueHours) };
+    oldestDueHours: row?.oldest_due_hours == null ? null : Number(row.oldest_due_hours) };
 }

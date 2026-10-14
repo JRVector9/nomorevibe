@@ -7,6 +7,7 @@ import { crawlCandidates, crawlDocuments, crawlFrontier, crawlSettings, crawlRev
   type CrawlCandidate, type CrawlDocument, type CrawlReviewAttempt, type DecisionReason, type ProductStatus } from "@/lib/db/schema";
 import type { ProductTransaction } from "@/lib/domain/products/generation";
 import { lockRepositoryAgentEvidence } from "@/lib/domain/evidence/agents/lock";
+import { agentCoverageRevisionSql } from "@/lib/domain/evidence/agents/coverage";
 import { assertJobLease, requestJob, type JobLease } from "@/lib/jobs/control";
 import { mergeWithDefaults } from "./settings";
 import type { CrawlSettings } from "./settings-schema";
@@ -99,6 +100,7 @@ function matchingSource(settings: CrawlSettings): SQL {
         AND date_trunc('milliseconds', rs.started_at) IS NOT DISTINCT FROM (${crawlReviewAttempts.source}->>'scanStartedAt')::timestamp
         AND date_trunc('milliseconds', rs.completed_at) IS NOT DISTINCT FROM (${crawlReviewAttempts.source}->>'scanCompletedAt')::timestamp
         AND rs.state IS NOT DISTINCT FROM ${crawlReviewAttempts.source}->>'scanState'
+        AND ${agentCoverageRevisionSql(sql`rs.coverage`, sql`rs.cursor`)} = coalesce(${crawlReviewAttempts.source}->'scanCoverage', '{}'::jsonb)
         AND rs.last_error_code IS NOT DISTINCT FROM ${crawlReviewAttempts.source}->>'scanError')`;
 }
 
