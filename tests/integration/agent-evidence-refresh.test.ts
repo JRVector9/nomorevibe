@@ -1,15 +1,19 @@
 import { beforeAll, beforeEach, expect, it, vi } from 'vitest';
 import { eq, sql } from 'drizzle-orm';
 import { db } from '@/lib/db';
-import { agentRepositoryScans, crawlCandidates, crawlDocuments, crawlReviewAttempts, crawlSettings, productEvidenceSources, productLinks, products } from '@/lib/db/schema';
+import { agentRepositoryScans, crawlCandidates, crawlDocuments, crawlReviewAttempts, crawlSettings, productEvidenceSources, productLinks, products, jobs, operationsObservations } from '@/lib/db/schema';
 import { saveRepositoryAgentScan, getLatestRepositoryAgentScan } from '@/lib/domain/evidence/agents/repository';
 import { AGENT_DETECTOR_VERSION } from '@/lib/domain/evidence/agents/types';
 import { ARTIFACT_RULES } from '@/lib/domain/evidence/agents/catalog';
 import { changeReviewMode, getSettings, saveSettings } from '@/lib/crawl/settings';
 import { listReviewCandidates } from '@/lib/crawl/agent-review-repository';
-import { refreshAgentEvidenceJob, REVIEW_SCAN_SHARE } from '@/lib/jobs/products/agent-evidence-refresh';
+import { refreshAgentEvidenceJob, REVIEW_SCAN_SHARE, type AgentEvidenceRefreshCursor } from '@/lib/jobs/products/agent-evidence-refresh';
 import type { GitHubHttpResult } from '@/lib/crawl/github';
 import { ensureSchema, resetTables } from './setup';
+import { runJob } from '@/lib/jobs/runner';
+import { readWorkerProgress } from '@/lib/operations/worker-progress-query';
+import { observeService } from '@/lib/operations/observations';
+import { roleHasUnexplainedStall } from '@/scripts/role-worker';
 const spies = vi.hoisted(() => ({ refresh: vi.fn() }));
 /** 실제 refresh 를 그대로 부르되 몇 번 불렸는지 센다 — 틱이 일반 슬롯을 어디에 썼는지의 척도다 */
 vi.mock('@/lib/domain/evidence/agents/repository', async importOriginal => {
@@ -34,6 +38,99 @@ const listProduct = async (slug: string, repositoryKey: string) => {
   await db.insert(productEvidenceSources).values({ slug, kind: 'repository', provider: 'github', sourceKey: repositoryKey, normalizedFacts: { type: 'github_repository' } });
 };
 const context = () => ({ cursor: null, save: async () => {}, hasBudget: () => true, log: () => {} });
+
+it.each(['http503', 'auth'] as const)('retains pre-scan %s failure across fenced job completion and normal retry ticks', async kind => {
+  await saveSettings({ enabled: false, agentEvidence: { enabled: true } }, 'test');
+  await db.delete(jobs).where(eq(jobs.name, 'agent-evidence-refresh'));
+  await db.delete(operationsObservations);
+  await listProduct('metadata-failure', 'acme/metadata');
+  const now = new Date(), since = new Date(now.getTime() - 40 * 60_000).toISOString();
+  await db.update(products).set({ createdAt: new Date(now.getTime() - 120 * 60_000) });
+  await db.insert(jobs).values({ name: 'agent-evidence-refresh', nextScheduledAt: now,
+    cursor: { providerFailure: { repositoryKey: 'acme/metadata', code: 'unavailable', firstFailureAt: since, lastFailureAt: since, failures: 3 } } });
+  const request = vi.fn(async (): Promise<Extract<GitHubHttpResult<never>, { ok: false }>> => kind === 'auth'
+    ? { ok: false, error: { kind: 'auth_unavailable', reason: 'expired', resetAt: new Date(Date.now() + 60 * 60_000) } }
+    : { ok: false, error: { kind: 'http', status: 503 } });
+  const run = () => runJob<AgentEvidenceRefreshCursor>('agent-evidence-refresh', ctx => refreshAgentEvidenceJob(ctx, { request }));
+  expect(await run()).toMatchObject({ status: 'completed' });
+  const [job] = await db.select().from(jobs).where(eq(jobs.name, 'agent-evidence-refresh'));
+  expect(job.cursor).toMatchObject({ providerFailure: { repositoryKey: 'acme/metadata', code: 'unavailable', firstFailureAt: since, failures: 4 } });
+  expect(await db.select().from(agentRepositoryScans)).toHaveLength(0);
+  for (const role of ['scheduler','crawler','reviewer','publisher','maintenance','text'] as const) await observeService(role, { status: 'running' });
+  const report = await readWorkerProgress();
+  expect(report.stages.find(stage => stage.stage === 'agent-evidence')).toMatchObject({ reason: 'upstream_stalled', alarm: true, restartEligible: false });
+  expect(roleHasUnexplainedStall(report, 'crawler')).toBe(false);
+  const calls = request.mock.calls.length;
+  expect(await run()).toMatchObject({ status: 'completed' });
+  const [retry] = await db.select().from(jobs).where(eq(jobs.name, 'agent-evidence-refresh'));
+  expect(retry.cursor).toMatchObject({ providerFailure: { firstFailureAt: since, failures: kind === 'auth' ? 4 : 5 } });
+  if (kind === 'auth') expect(request).toHaveBeenCalledTimes(calls);
+  else {
+    const successful = emptyRepository([]);
+    expect(await runJob<AgentEvidenceRefreshCursor>('agent-evidence-refresh', ctx => refreshAgentEvidenceJob(ctx, { request: successful }))).toMatchObject({ status: 'completed' });
+    const [recovered] = await db.select().from(jobs).where(eq(jobs.name, 'agent-evidence-refresh'));
+    expect(recovered.cursor).toBeNull();
+  }
+});
+
+it.each([
+  ['rejected', 'http503'], ['rejected', 'auth'],
+  ['banned', 'http503'], ['banned', 'auth'],
+  ['newer-scan', 'http503'], ['newer-scan', 'auth'],
+] as const)('replaces a %s pre-scan failure with the next repository\'s %s failure', async (stale, kind) => {
+  await saveSettings({ enabled: false, agentEvidence: { enabled: true } }, 'test');
+  await db.delete(jobs).where(eq(jobs.name, 'agent-evidence-refresh'));
+  await db.delete(operationsObservations);
+  if (stale === 'rejected') {
+    await db.insert(crawlCandidates).values({ repo: 'acme/old', state: 'rejected' });
+  } else {
+    await listProduct('old-provider-failure', 'acme/old');
+    if (stale === 'banned') await db.update(products).set({ status: 'banned' }).where(eq(products.slug, 'old-provider-failure'));
+    else await completeScan('acme/old', '998');
+  }
+  await listProduct('next-provider-failure', 'acme/next');
+  await db.update(products).set({ createdAt: new Date(Date.now() - 120 * 60_000) });
+  const oldAt = new Date(Date.now() - 40 * 60_000).toISOString();
+  await db.insert(jobs).values({ name: 'agent-evidence-refresh', nextScheduledAt: new Date(), cursor: {
+    providerFailure: { repositoryKey: 'acme/old', code: 'unavailable', firstFailureAt: oldAt, lastFailureAt: oldAt, failures: 3 },
+  } });
+  const request = vi.fn(async (): Promise<Extract<GitHubHttpResult<never>, { ok: false }>> => kind === 'auth'
+    ? { ok: false, error: { kind: 'auth_unavailable', reason: 'expired', resetAt: new Date(Date.now() + 60 * 60_000) } }
+    : { ok: false, error: { kind: 'http', status: 503 } });
+  const run = () => runJob<AgentEvidenceRefreshCursor>('agent-evidence-refresh', ctx => refreshAgentEvidenceJob(ctx, { request }));
+  const startedAt = Date.now();
+  expect(await run()).toMatchObject({ status: 'completed' });
+  const [first] = await db.select().from(jobs).where(eq(jobs.name, 'agent-evidence-refresh'));
+  const firstCursor = first.cursor as AgentEvidenceRefreshCursor;
+  expect(firstCursor.providerFailure).toMatchObject({ repositoryKey: 'acme/next', code: 'unavailable', failures: 1 });
+  expect(Date.parse(firstCursor.providerFailure!.firstFailureAt)).toBeGreaterThanOrEqual(startedAt);
+  expect(firstCursor.providerFailure!.lastFailureAt).toBe(firstCursor.providerFailure!.firstFailureAt);
+  expect(Date.parse(firstCursor.providerFailure!.lastFailureAt)).toBeLessThanOrEqual(Date.now());
+  // Expire only the fixture's retry clock so a second actual provider call occurs.
+  if (kind === 'auth') await db.update(jobs).set({ cursor: { ...firstCursor, retryAfter: new Date(Date.now() - 1000).toISOString() } })
+    .where(eq(jobs.name, 'agent-evidence-refresh'));
+  expect(await run()).toMatchObject({ status: 'completed' });
+  const [second] = await db.select().from(jobs).where(eq(jobs.name, 'agent-evidence-refresh'));
+  const secondCursor = second.cursor as AgentEvidenceRefreshCursor;
+  expect(secondCursor.providerFailure).toMatchObject({ repositoryKey: 'acme/next',
+    firstFailureAt: firstCursor.providerFailure!.firstFailureAt, failures: 2 });
+  expect(request).toHaveBeenCalledTimes(2);
+  const measuredAt = new Date(Date.parse(firstCursor.providerFailure!.firstFailureAt) + 31 * 60_000);
+  for (const role of ['scheduler','crawler','reviewer','publisher','maintenance','text'] as const) await observeService(role, { status: 'running' });
+  await db.update(operationsObservations).set({ observedAt: measuredAt });
+  const report = await readWorkerProgress(measuredAt);
+  expect(report.stages.find(stage => stage.stage === 'agent-evidence')).toMatchObject({
+    reason: 'upstream_stalled', alarm: true, restartEligible: false, providerErrors: 1, completed5m: 0, progress5m: 0,
+  });
+  if (kind === 'auth') await db.update(jobs).set({ cursor: { ...secondCursor, retryAfter: new Date(Date.now() - 1000).toISOString() } })
+    .where(eq(jobs.name, 'agent-evidence-refresh'));
+  expect(await runJob<AgentEvidenceRefreshCursor>('agent-evidence-refresh', ctx => refreshAgentEvidenceJob(ctx, { request: emptyRepository([]) })))
+    .toMatchObject({ status: 'completed' });
+  const [recovered] = await db.select().from(jobs).where(eq(jobs.name, 'agent-evidence-refresh'));
+  expect(recovered.cursor).toBeNull();
+  expect((await readWorkerProgress()).stages.find(stage => stage.stage === 'agent-evidence'))
+    .toMatchObject({ providerErrors: 0, alarm: false, restartEligible: false });
+});
 
 it('rechecks an alias conflict behind the normal cursor even when no queued files remain', async () => {
   await saveSettings({ agentEvidence: { enabled: true } }, 'test');

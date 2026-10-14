@@ -5,6 +5,7 @@ import { basename, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { observeService } from '../lib/operations/observations';
 import type { RuntimeHeartbeat } from './worker';
+import { parseRuntimeLanes, runtimeLaneStall, type RuntimeLane } from '../lib/operations/worker-progress';
 
 import type { JobRole } from '../lib/jobs/catalog';
 export type RuntimeRole = 'scheduler' | JobRole;
@@ -16,6 +17,8 @@ export type WorkerHealth = {
   status: 'starting' | 'running' | 'stopping' | 'failed'; reason?: string;
   /** 일하는 프로세스가 마지막으로 읽은 크롤 설정 판·시각 — 관측(service:<역할>)에 실려 설정 화면이 견준다 */
   settingsVersion?: string | null; settingsReadAt?: number | null;
+  lanes?: RuntimeLane[];
+  laneLimits?: Pick<SupervisorLimits, 'progressMs' | 'jobMs'>;
 };
 export const DEFAULT_HEALTH_PATH = '/tmp/nomorevibe-worker-health.json';
 const JOB_LIMIT_MS: Record<RuntimeRole, number> = {
@@ -39,6 +42,13 @@ export function supervisorLimits(role: RuntimeRole, env: Readonly<Record<string,
 export function stalledReason(health: WorkerHealth, now: number, limits: SupervisorLimits): string | null {
   if (health.status === 'stopping' || health.status === 'failed') return null;
   if (now - health.lastHeartbeatAt > limits.heartbeatMs) return 'heartbeat_timeout';
+  if (health.lanes?.length) {
+    for (const lane of health.lanes) {
+      const reason = runtimeLaneStall(lane, now, limits);
+      if (reason) return reason;
+    }
+    return null;
+  }
   if (health.currentJob !== null && health.jobStartedAt !== null) {
     if (now - health.jobStartedAt > limits.jobMs) return 'job_timeout';
   } else if (now - health.lastProgressAt > limits.progressMs) return 'progress_timeout';
@@ -53,7 +63,8 @@ export function isRuntimeHeartbeat(value: unknown, role: RuntimeRole, pid: numbe
     Number.isFinite(v.at) && Number.isFinite(v.lastProgressAt) &&
     (v.currentJob === null || typeof v.currentJob === 'string') &&
     (v.startedAt === null || Number.isFinite(v.startedAt)) &&
-    (v.state !== 'running' || (typeof v.currentJob === 'string' && typeof v.startedAt === 'number'));
+    (v.state !== 'running' || (typeof v.currentJob === 'string' && typeof v.startedAt === 'number')) &&
+    (v.lanes === undefined || parseRuntimeLanes(v.lanes, role) !== null);
 }
 
 /** heartbeat 의 설정 판을 건강 기록으로. 옛 워커(싣지 않음)나 모양이 틀린 값은 건너뛴다 — 지난 판을 지우지 않는다 */
@@ -114,6 +125,7 @@ export async function superviseWorker(role: RuntimeRole, options: {
     role, pid: process.pid, childPid: child.pid ?? null, updatedAt: started,
     lastHeartbeatAt: started, lastProgressAt: started, state: 'idle', currentJob: null,
     jobStartedAt: null, status: 'starting',
+    laneLimits: { progressMs: limits.progressMs, jobMs: limits.jobMs },
   };
   return await new Promise<number>(resolveResult => {
     let exitCode = 1, stopping = false, finishing = false, requestedStop = false, everHeartbeat = false;
@@ -188,6 +200,7 @@ export async function superviseWorker(role: RuntimeRole, options: {
         state: value.state, currentJob: value.currentJob, jobStartedAt: value.startedAt,
         status: stopping ? 'stopping' : 'running',
         ...settingsFromHeartbeat(value),
+        ...(value.lanes ? { lanes: parseRuntimeLanes(value.lanes, role)! } : {}),
       };
       publish();
     });

@@ -1,12 +1,12 @@
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { eq, like, sql } from "drizzle-orm";
+import { eq, inArray, like, or, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { crawlSettings, operationsObservations } from "@/lib/db/schema";
 import { getSettings, resetSettings, saveSettings, settingsFormVersion } from "@/lib/crawl/settings";
 import { DEFAULT_CRAWL_SETTINGS } from "@/lib/crawl/settings-schema";
 import { lastSettingsRead } from "@/lib/crawl/settings-version";
 import { observe } from "@/lib/operations/observations";
-import { readSettingsApply } from "@/lib/operations/settings-apply";
+import { readSettingsApply, SETTINGS_ROLES } from "@/lib/operations/settings-apply";
 import { ensureSchema } from "./setup";
 
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
@@ -16,7 +16,10 @@ const { saveCrawlSettings } = await import("@/app/(operator)/admin/actions");
 beforeAll(() => ensureSchema());
 beforeEach(async () => {
   await db.delete(crawlSettings);
-  await db.delete(operationsObservations).where(like(operationsObservations.key, "service:%"));
+  await db.delete(operationsObservations).where(or(
+    like(operationsObservations.key, "service:%"),
+    inArray(operationsObservations.key, [...SETTINGS_ROLES]),
+  ));
 });
 
 /** 워커가 하는 일 그대로 — 잡이 getSettings 로 읽고, 감시 프로세스가 마지막으로 읽은 판을 관측에 싣는다 */

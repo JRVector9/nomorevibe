@@ -2,6 +2,7 @@
 import { basename } from 'node:path';
 import { JOB_ROLES, type JobRole } from '@/lib/jobs/catalog';
 import { lastSettingsRead } from '@/lib/crawl/settings-version';
+import type { RuntimeLane } from '@/lib/operations/worker-progress';
 
 export type RuntimeState = 'idle' | 'polling' | 'running' | 'stopping';
 export type RuntimeHeartbeat = {
@@ -13,11 +14,12 @@ export type RuntimeHeartbeat = {
   currentJob: string | null;
   startedAt: number | null;
   lastProgressAt: number;
+  lanes?: RuntimeLane[];
   /** 이 프로세스의 잡이 마지막으로 읽은 크롤 설정 판과 그 시각(epoch ms) — 설정 화면의 적용 확인(ADM-19). 옛 워커는 싣지 않는다 */
   settings?: { version: string; at: number } | null;
 };
 /** startedAt: 그 잡을 시작한 시각 — 줄이 여럿이면 가장 오래 돈 잡의 시작을 그대로 넘겨야 감독(job_timeout)이 맞게 잰다 */
-export type RuntimeReport = (state: RuntimeState, currentJob?: string | null, startedAt?: number | null) => void;
+export type RuntimeReport = (state: RuntimeState, currentJob?: string | null, startedAt?: number | null, lanes?: RuntimeLane[]) => void;
 export type RequestedRunOptions = { requestedOnly: true; signal?: AbortSignal };
 export type JobRunOptions = RequestedRunOptions & { budgetMs?: number };
 type WorkerOptions = { role: JobRole; once?: boolean; intervalMs?: number; signal?: AbortSignal };
@@ -52,7 +54,8 @@ export function runtimeLog(event: string, fields: Record<string, unknown>) {
  * 번역은 별도 text 워커에서 실행하며 발행 잡의 실행 시간을 차지하지 않는다.
  */
 export function jobRunOptions(name: string, options: RequestedRunOptions): JobRunOptions {
-  if (name === 'crawl-agent-review') return { ...options, budgetMs: 40_000 };
+  // The Grok adapter needs 90 seconds plus startup; shorter providers keep their own smaller tick.
+  if (name === 'crawl-agent-review') return { ...options, budgetMs: 110_000 };
   if (name === 'crawl-publish') return { ...options, budgetMs: 120_000 };
   if (name === 'reason-translate') return { ...options, budgetMs: 55_000 };
   // 검색 키워드 한 건이 7초 안팎이다 — 기본 틱이면 동시 셋이 두 바퀴도 못 돈다
@@ -69,6 +72,7 @@ export function jobRunOptions(name: string, options: RequestedRunOptions): JobRu
   if (name === 'product-star-observation') return { ...options, budgetMs: 40_000 };
   // AI 제작 근거 단계 — GraphQL 묶음을 30초 안에서 열고 마지막 묶음·두 번째 질의(각 10초 상한)와 기록까지(ai-level-refresh.ts)
   if (name === 'ai-level-refresh') return { ...options, budgetMs: 55_000 };
+  if (name === 'product-evidence-refresh') return { ...options, budgetMs: 55_000 };
   if (name === 'product-intro-check') return { ...options, budgetMs: 110_000 };
   // 게이트웨이가 붐비면 한 건이 45초까지 간다. 틱이 짧으면 그 호출을 아예 시작하지 못한다
   if (name === 'second-review') return { ...options, budgetMs: 110_000 };
@@ -86,15 +90,19 @@ export function jobRunOptions(name: string, options: RequestedRunOptions): JobRu
 export async function runWorker(options: WorkerOptions, dependencies: WorkerDependencies) {
   const intervalMs = Math.max(1_000, Math.min(options.intervalMs ?? 5_000, 60_000));
   const lanes = (dependencies.lanes ?? [dependencies.names]).map((names) => [...new Set(names)]).filter((names) => names.length > 0);
-  const states = lanes.map((): { state: RuntimeState; job: string | null; startedAt: number | null } => ({ state: 'idle', job: null, startedAt: null }));
+  const states = lanes.map((jobs): RuntimeLane => ({ name: jobs[0], jobs, state: 'idle', currentJob: null,
+    startedAt: null, pollStartedAt: null, lastProgressAt: Date.now() }));
   const emit = () => {
-    const running = states.filter((lane) => lane.state === 'running' && lane.job !== null && lane.startedAt !== null)
+    const snapshot = states.map(lane => ({ ...lane, jobs: [...lane.jobs] }));
+    const running = states.filter((lane) => lane.state === 'running' && lane.currentJob !== null && lane.startedAt !== null)
       .sort((a, b) => a.startedAt! - b.startedAt!)[0];
-    if (running) dependencies.report?.('running', running.job, running.startedAt);
-    else dependencies.report?.(states.some((lane) => lane.state === 'polling') ? 'polling' : 'idle');
+    if (running) dependencies.report?.('running', running.currentJob, running.startedAt, snapshot);
+    else dependencies.report?.(states.some((lane) => lane.state === 'polling') ? 'polling' : 'idle', null, null, snapshot);
   };
   const laneReport = (index: number): RuntimeReport => (state, currentJob = null) => {
-    states[index] = { state, job: currentJob, startedAt: state === 'running' ? Date.now() : null };
+    const now = Date.now();
+    states[index] = { ...states[index], state, currentJob, startedAt: state === 'running' ? now : null,
+      pollStartedAt: state === 'polling' ? now : null, lastProgressAt: now };
     emit();
   };
   const results = await Promise.all(lanes.map((names, index) => runLane(options, dependencies, names, intervalMs, laneReport(index))));
@@ -154,11 +162,12 @@ export async function withRuntimeProcess<T>(
       try { process.send({ ...current, at: Date.now(), settings: lastSettingsRead() }, () => {}); } catch { /* disconnected */ }
     }
   };
-  const report: RuntimeReport = (state, currentJob = null, startedAt = null) => {
+  const report: RuntimeReport = (state, currentJob = null, startedAt = null, lanes) => {
     const now = Date.now();
     current = {
       ...current, state: controller.signal.aborted ? 'stopping' : state,
       currentJob, startedAt: state === 'running' ? startedAt ?? now : null, lastProgressAt: now,
+      ...(lanes ? { lanes } : {}),
     };
     heartbeat();
   };

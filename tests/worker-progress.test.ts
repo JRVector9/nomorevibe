@@ -26,6 +26,26 @@ it("keeps provider errors, missing queue ages, and the longer rule interval out 
   expect(classifyStage({ ...stage, oldestMinutes: null }, null, true, now).reason).toBe("unknown_age");
 });
 
+it('alerts on aged demand with persistent provider errors without making it restartable', () => {
+  const error = classifyStage({ ...stage, oldestMinutes: 120, errors5m: 4 },
+    { notBefore: new Date(now.getTime() + 60_000) }, true, now);
+  expect(error).toMatchObject({ reason: 'upstream_stalled', alarm: true, restartEligible: false });
+  expect(classifyStage({ ...stage, errors5m: 1 }, null, true, now))
+    .toMatchObject({ reason: 'upstream_or_job_error', alarm: false, restartEligible: false });
+  expect(classifyStage({ ...stage, enabled: false, oldestMinutes: 120, errors5m: 4 }, null, true, now))
+    .toMatchObject({ reason: 'paused', alarm: false, restartEligible: false });
+});
+
+it('keeps a durable job failure out of restart decisions after the five-minute error window', () => {
+  expect(classifyStage({ ...stage, oldestMinutes: 120 }, { notBefore: null, lastError: 'authentication_failed' }, true, now))
+    .toMatchObject({ reason: 'upstream_stalled', alarm: true, restartEligible: false });
+  expect(classifyStage(stage, { notBefore: null, lastError: 'upstream_unavailable' }, true, now))
+    .toMatchObject({ reason: 'upstream_or_job_error', alarm: false, restartEligible: false });
+  expect(classifyStage({ ...stage, oldestMinutes: 120, errors5m: 4 },
+    { notBefore: new Date('2100-01-01'), lastError: 'authentication_failed' }, true, now))
+    .toMatchObject({ reason: 'paused', alarm: false, restartEligible: false });
+});
+
 it("classifies eligible publisher work without restarting for held or newly approved candidates", () => {
   const publish = { ...stage, key: "publish" as const, oldestMinutes: 11 };
   expect(classifyStage(publish, null, true, now)).toMatchObject({
