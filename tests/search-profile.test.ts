@@ -1,5 +1,6 @@
-import { describe, expect, it } from "vitest";
-import { cleanKeywords, keywordText, parseKeywords, profileEvidence } from "@/lib/domain/products/search-profile";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { cleanKeywords, keywordText, parseKeywords, profileEvidence, writeKeywords } from "@/lib/domain/products/search-profile";
+import { canRetryProfileGeneration } from "@/lib/domain/products/search-profile-retry";
 
 const product = {
   name: "Coche", url: "https://coche.test", category: "Productivity", tagline: "Shopping list", description: "Shopping list",
@@ -68,5 +69,46 @@ describe("증거", () => {
   it("설명이 소개와 같으면 한 번만 준다", () => {
     expect(profileEvidence(product, null)).not.toHaveProperty("description");
     expect(profileEvidence({ ...product, description: "Groceries for families" }, null).description).toBe("Groceries for families");
+  });
+});
+
+describe("gateway transport and output failures", () => {
+  beforeEach(() => vi.stubEnv("ABCLLM_API_KEY", "fixture-key"));
+  afterEach(() => vi.unstubAllEnvs());
+
+  it.each([
+    '<html>upstream proxy response</html>',
+    'null',
+    '{"choices":[]}',
+    '{"choices":{"0":{"message":{"content":"{\\\"keywords_en\\\":[],\\\"keywords_ko\\\":[]}"}}}}',
+    '{"choices":[{"message":null}]}',
+    '{"choices":[{"message":{"content":{"keywords_en":[],"keywords_ko":[]}}}]}',
+  ])("keeps a malformed HTTP 200 response under the quality attempt cap: %s", async body => {
+    const request = vi.fn<typeof fetch>().mockResolvedValue(new Response(body, { status: 200 }));
+    const result = await writeKeywords(profileEvidence(product, null), { timeoutMs: 1_000, request });
+    expect(result).toEqual({ ok: false, error: "invalid_output" });
+    if (!result.ok) expect(canRetryProfileGeneration(result.error, 5)).toBe(false);
+  });
+
+  it("keeps an actual fetch network exception retryable", async () => {
+    const request = vi.fn<typeof fetch>().mockRejectedValue(new TypeError("fetch failed"));
+    const result = await writeKeywords(profileEvidence(product, null), { timeoutMs: 1_000, request });
+    expect(result).toEqual({ ok: false, error: "network" });
+    if (!result.ok) expect(canRetryProfileGeneration(result.error, 5)).toBe(true);
+  });
+
+  it("keeps a broken response body stream as a transport failure", async () => {
+    const body = new ReadableStream({ start(controller) { controller.error(new TypeError("terminated")); } });
+    const request = vi.fn<typeof fetch>().mockResolvedValue(new Response(body, { status: 200 }));
+    expect(await writeKeywords(profileEvidence(product, null), { timeoutMs: 1_000, request }))
+      .toEqual({ ok: false, error: "network" });
+  });
+
+  it("still accepts a valid HTTP 200 keyword envelope", async () => {
+    const request = vi.fn<typeof fetch>().mockResolvedValue(Response.json({ choices: [{ message: {
+      content: '{"keywords_en":["shopping list"],"keywords_ko":["장보기 목록"]}',
+    } }] }));
+    expect(await writeKeywords(profileEvidence(product, null), { timeoutMs: 1_000, request }))
+      .toEqual({ ok: true, en: ["shopping list"], ko: ["장보기 목록"] });
   });
 });

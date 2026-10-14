@@ -149,6 +149,7 @@ export async function writeKeywords(evidence: ProfileEvidence, options: {
   // 꺾쇠를 막아 두어야 증거 안의 글이 구분자를 끝내지 못한다 — 심사 쪽과 같은 처리다
   const prompt = JSON.stringify(evidence).replace(/</g, "\\u003c").replace(/>/g, "\\u003e");
   const deadline = AbortSignal.timeout(Math.max(1, options.timeoutMs));
+  let body: string;
   try {
     const response = await (options.request ?? fetch)(`${BASE_URL}/v1/chat/completions`, {
       method: "POST",
@@ -169,9 +170,23 @@ export async function writeKeywords(evidence: ProfileEvidence, options: {
     if (!response.ok) {
       return { ok: false, error: response.status === 404 ? "model_unavailable" : response.status === 429 ? "rate_limit" : `http_${response.status}` };
     }
-    const data = await response.json() as { choices?: { message?: { content?: string | null } }[] };
-    return parseKeywords(data.choices?.[0]?.message?.content ?? "", evidence.name);
+    body = await response.text();
   } catch (error) {
     return { ok: false, error: error instanceof Error && error.name === "TimeoutError" ? "timeout" : "network" };
+  }
+  // A complete HTTP response with malformed JSON/schema is output failure, not
+  // transport failure. Only typed provider errors may bypass the attempt cap.
+  try {
+    const data: unknown = JSON.parse(body);
+    if (!data || typeof data !== "object" || Array.isArray(data)) return { ok: false, error: "invalid_output" };
+    const choices = (data as Record<string, unknown>).choices;
+    const choice: unknown = Array.isArray(choices) ? choices[0] : null;
+    const message: unknown = choice && typeof choice === "object" && !Array.isArray(choice)
+      ? (choice as Record<string, unknown>).message : null;
+    const content = message && typeof message === "object" && !Array.isArray(message)
+      ? (message as Record<string, unknown>).content : null;
+    return typeof content === "string" ? parseKeywords(content, evidence.name) : { ok: false, error: "invalid_output" };
+  } catch {
+    return { ok: false, error: "invalid_output" };
   }
 }

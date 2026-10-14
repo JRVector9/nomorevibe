@@ -105,6 +105,34 @@ describe("checkKoreanTagline — 모델이 옮긴 줄을 그대로 믿지 않는
     expect(checkKoreanTagline("직원에게 월 3천만 루피 이상 지급", { name: "x", tagline: "Now disbursing Rs 3 Cr+ a month to employees" }).ok).toBe(true);
   });
 
+  it("peer-to-peer를 P2P로 줄여도 수량 2를 지어낸 것으로 보지 않는다", () => {
+    const source = { name: "x", tagline: "A peer-to-peer file transfer tool" };
+    expect(checkKoreanTagline("P2P 연결로 파일을 주고받는 도구", source).ok).toBe(true);
+    expect(checkKoreanTagline("2개 파일을 동시에 전송하는 도구", source)).toEqual({ ok: false, reason: "invented_number" });
+    expect(checkKoreanTagline("P2P 연결로 파일을 주고받는 도구", { name: "x", tagline: "A file transfer tool" }).ok).toBe(false);
+  });
+
+  it("영문 날짜의 월을 한국어 숫자로 옮기되 다른 월은 거절한다", () => {
+    const source = { name: "x", tagline: "Countdown until December 7" };
+    expect(checkKoreanTagline("12월 7일까지 남은 시간을 세는 도구", source).ok).toBe(true);
+    expect(checkKoreanTagline("11월 7일까지 남은 시간을 세는 도구", source)).toEqual({ ok: false, reason: "invented_number" });
+    expect(checkKoreanTagline("7월 12일까지 남은 시간을 세는 도구", source)).toEqual({ ok: false, reason: "invented_number" });
+    expect(checkKoreanTagline("12개 날짜를 함께 세는 도구", source)).toEqual({ ok: false, reason: "invented_number" });
+    expect(checkKoreanTagline("3개 파일을 전송하는 도구", { name: "x", tagline: "March ahead with file transfer" })).toEqual({ ok: false, reason: "invented_number" });
+  });
+
+  it("벵골어 숫자와 아라비아 숫자의 같은 값을 받는다", () => {
+    const source = { name: "x", tagline: "২০ জনের জন্য ৫টি কাজ, ১৮০ দিনের হিসাব" };
+    expect(checkKoreanTagline("20명을 위한 5가지 작업과 180일 기록 관리", source).ok).toBe(true);
+    expect(checkKoreanTagline("20명을 위한 50가지 작업과 180일 기록 관리", source)).toEqual({ ok: false, reason: "invented_number" });
+  });
+
+  it("프랑스어 복수 단위 trois cents를 300으로 옮기되 다른 값은 거절한다", () => {
+    const source = { name: "x", tagline: "Un outil avec trois cents fiches" };
+    expect(checkKoreanTagline("300개 항목을 정리하는 도구", source).ok).toBe(true);
+    expect(checkKoreanTagline("600개 항목을 정리하는 도구", source)).toEqual({ ok: false, reason: "invented_number" });
+  });
+
   it("단위 글자가 '뿐'·'조항'일 때는 원문에 단위 없이 적힌 같은 숫자로 받는다", () => {
     expect(checkKoreanTagline("텍스트 선택 후 ⌘⇧1만 누르면 오타를 고친다", { name: "x", tagline: "Select text, press ⌘⇧1, review the edit, done." }).ok).toBe(true);
     expect(checkKoreanTagline("로컬 CLI v0.7.0만 제공", { name: "x", tagline: "Local CLI v0.7.0 is the admitted artifact" }).ok).toBe(true);

@@ -21,8 +21,10 @@ async function seed(slug: string, values: Partial<typeof products.$inferInsert> 
   return row.id;
 }
 
-const answer = (en: string[], ko: string[]) =>
-  ({ ok: true, json: async () => ({ choices: [{ message: { content: JSON.stringify({ keywords_en: en, keywords_ko: ko }) } }] }) }) as unknown as Response;
+const answer = (en: string[], ko: string[]) => {
+  const body = { choices: [{ message: { content: JSON.stringify({ keywords_en: en, keywords_ko: ko }) } }] };
+  return { ok: true, json: async () => body, text: async () => JSON.stringify(body) } as unknown as Response;
+};
 
 const tick = () => runJob("product-search-profile", writeSearchProfiles);
 const ctx = { cursor: null, save: async () => {}, hasBudget: () => true, log: () => {} };
@@ -246,12 +248,26 @@ describe("검색 키워드 잡", () => {
 
   it("빈 객체를 받은 경우 성공 프로필이나 검색 사본을 만들지 않는다", async () => {
     const id = await seed("empty-object");
-    gateway.mockResolvedValue({ ok: true, json: async () => ({ choices: [{ message: { content: "{}" } }] }) } as Response);
+    gateway.mockResolvedValue({ ok: true, text: async () => JSON.stringify({ choices: [{ message: { content: "{}" } }] }) } as Response);
     await tick();
     const [profile] = await db.select().from(productSearchProfiles).where(eq(productSearchProfiles.productId, id));
     expect(profile).toMatchObject({ errorCode: "invalid_output", attempts: 1 });
     expect((await db.select().from(products).where(eq(products.id, id)))[0].searchKeywords).toBeNull();
   });
+
+  it.each(["<html>proxy page</html>", "null", '{"choices":[{"message":{"content":{}}}]}'])
+    ("a malformed HTTP 200 response reaches the quality cap through the normal leased writer: %s", async body => {
+      const id = await seed("malformed-response");
+      const [product] = await db.select().from(products).where(eq(products.id, id));
+      await db.insert(productSearchProfiles).values({ productId: id,
+        sourceHash: profileHash(profileEvidence(product, null)), attempts: 4, errorCode: "invalid_output", needsRefresh: true });
+      gateway.mockResolvedValue({ ok: true, text: async () => body } as Response);
+      await tick();
+      expect((await db.select().from(productSearchProfiles).where(eq(productSearchProfiles.productId, id)))[0])
+        .toMatchObject({ attempts: 5, errorCode: "invalid_output", repairVersion: 0 });
+      expect(await pendingProfiles(10)).toHaveLength(0);
+      expect((await db.select().from(products).where(eq(products.id, id)))[0].searchKeywords).toBeNull();
+    });
 
   it("실패는 다시 볼 시각을 달고 남는다 — 색인용 사본은 비운 채로", async () => {
     const id = await seed("coche");

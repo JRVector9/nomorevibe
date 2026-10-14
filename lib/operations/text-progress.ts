@@ -2,6 +2,7 @@ import { sql } from 'drizzle-orm';
 import { db } from '@/lib/db';
 import { pendingTaglines } from '@/lib/crawl/taglines';
 import { oldestPendingTranslationMinutes } from '@/lib/crawl/translations';
+import { profileGenerationRetryAllowedSql } from '@/lib/domain/products/search-profile-retry';
 
 export type TextProgress = { schedulerScheduled: boolean; oldestReadyMinutes: number | null;
   persistedWithin10m: boolean; inBackoff: boolean; providerError: boolean };
@@ -32,7 +33,8 @@ export async function readTextProgress(): Promise<Omit<TextProgress, 'schedulerS
             when error_code is not null then greatest(updated_at, retry_at)
             when needs_refresh then updated_at else updated_at + interval '30 days' end))) / 60 from active
           where product_id is null or
-            (error_code is not null and attempts < 5 and (retry_at is null or retry_at <= now())) or
+            (error_code is not null and ${profileGenerationRetryAllowedSql(sql`error_code`, sql`attempts`)}
+              and (retry_at is null or retry_at <= now())) or
             (error_code is null and (needs_refresh or updated_at < now() - interval '30 days'))) as profile_age,
         (select extract(epoch from (now() - min(greatest(updated_at, verify_retry_at)))) / 60 from active
           where product_id is not null and not needs_refresh and error_code is null and verified_at is null

@@ -3,6 +3,7 @@ import { and, eq, gt, inArray, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { products, productSearchProfiles } from "@/lib/db/schema";
 import { keywordText, profileEvidence, profileHash } from "./search-profile";
+import { canRetryProfileGeneration } from "./search-profile-retry";
 
 /** One snapshot, bounded pages; never mark or repair data from an audit. */
 export async function collectSearchHealth(hasBudget = () => true) {
@@ -45,9 +46,10 @@ export async function collectSearchHealth(hasBudget = () => true) {
           if (!p.needsRefresh) c.unmarked++;
         }
         // Match the generation selector's retry cap; exhausted work has its own alert.
-        if (p.errorCode ? p.attempts < 5 : p.needsRefresh) c.pendingGeneration++;
+        const retryGeneration = p.errorCode && canRetryProfileGeneration(p.errorCode, p.attempts);
+        if (p.errorCode ? retryGeneration : p.needsRefresh) c.pendingGeneration++;
         const activeVerification = !p.needsRefresh && !p.errorCode && !p.verifiedAt;
-        if (p.errorCode && p.attempts >= 5 || activeVerification && p.verifyError && p.verifyAttempts >= 5) c.exhausted++;
+        if (p.errorCode && !retryGeneration || activeVerification && p.verifyError && p.verifyAttempts >= 5) c.exhausted++;
         if (p.errorCode && p.attempts >= 3 || activeVerification && p.verifyError && p.verifyAttempts >= 3) c.repeatedFailures++;
         const removed = new Set(p.removedKeywords);
         const expected = keywordText(p.keywordsEn.filter(k => !removed.has(k)), p.keywordsKo.filter(k => !removed.has(k)));
