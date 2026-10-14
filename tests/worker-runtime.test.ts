@@ -1,6 +1,12 @@
 import { expect, it, vi } from 'vitest';
 import { interruptibleSleep, jobRunOptions, parseWorkerArgs, runWorker } from '@/scripts/worker';
 
+it('gives product audit a finite budget for its sixty-second call and keeps cancellation', () => {
+  const signal = new AbortController().signal;
+  expect(jobRunOptions('product-audit', { requestedOnly: true, signal }))
+    .toEqual({ requestedOnly: true, signal, budgetMs: 70_000 });
+});
+
 it('runs only pending role jobs sequentially and consumes requests without scheduling', async () => {
   const jobs: string[] = [];
   let active = 0;

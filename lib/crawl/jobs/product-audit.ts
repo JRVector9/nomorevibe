@@ -10,14 +10,12 @@ import { finishAuditCampaign, loadAuditInput, markAuditNoSource, pendingAuditIte
 /**
  * 틱의 길이와 새 호출을 시작할 여유.
  *
- * 1차 심사 잡과 같은 24초다. 같은 reviewer 워커에서 잡은 하나씩 차례로 돈다(scripts/worker.ts) —
- * 이 틱이 길수록 그 뒤에 온 새 후보가 오래 기다린다. 그래서 2차 심사(110초)처럼 늘리지 않는다.
- *
- * 남은 시간이 15초보다 적으면 새 호출을 시작하지 않는다. 실측(2026-09-18, 게이트웨이 100건)
- * p90 이 15초라, 그보다 짧게 남기고 시작한 호출은 상당수가 틱 끝에 잘려 시도만 하나 버린다.
+ * 같은 reviewer 워커에서 차례로 돌므로 한 번의 정상 gateway 호출(60초)과 기록 여유만 둔다.
+ * 실측(2026-10-15, 같은 모델·동시성4) 정상 응답이 29.7~36.3초라 이전 24초 틱은 답을 잘랐다.
+ * 다음 호출의 전체 제한 시간과 저장 여유가 없으면 다음 요청으로 넘겨 시도 횟수를 보존한다.
  */
-const TICK_MS = 24_000;
-const MIN_CALL_MS = 15_000;
+const TICK_MS = 65_000;
+const WRITE_MARGIN_MS = 2_000;
 /** 설정(reviewConcurrency)의 상한과 같다. 1차 심사 잡의 안전망과 같은 값이다 */
 const MAX_CONCURRENT_REVIEWS = 16;
 /** 항목이 아니라 심사자 쪽이 없는 실패 — 이 틱을 멈추고 잡을 실패로 남겨 운영센터에 드러낸다 */
@@ -69,29 +67,46 @@ export async function auditPublishedProducts(ctx: JobContext<null>): Promise<Job
     if (await finishAuditCampaign(campaign.id, ctx.lease)) ctx.log("product_audit.finished", { campaign: campaign.id });
     return { done: true };
   }
-  const remaining = () => TICK_MS - (Date.now() - startedAt);
+  const deadlineAt = Math.min(startedAt + TICK_MS, ctx.deadlineAt ?? Infinity);
+  const remaining = () => deadlineAt - Date.now();
   // 누가 볼지는 감사 행에 적혀 있다 — 도중에 1차 심사자를 바꿔도 한 감사는 한 모델이 본다
   const ceiling = campaign.provider === "abcllm" ? REVIEW_GATEWAY_TIMEOUT_MS : REVIEW_CLI_TIMEOUT_MS;
   let reviewed = 0, failed = 0, noSource = 0;
   let down: string | null = null;
+  const canStart = () => !down && !ctx.signal?.aborted && ctx.hasBudget() && remaining() >= ceiling + WRITE_MARGIN_MS;
 
   // 자리마다 다음 것을 집어 묻는다. 한 호출이 실패해도 그 자리는 다음 것으로 넘어간다
   const settled = await Promise.allSettled(Array.from({ length: concurrency }, async () => {
     for (let item = queue.shift(); item; item = queue.shift()) {
-      if (down || !ctx.hasBudget() || remaining() < MIN_CALL_MS) return;
+      if (!canStart()) return;
       const input = await loadAuditInput(item.slug, settings);
+      // 원본 조회도 예산을 쓴다 — 짧아진 제한 시간으로 새 호출을 시작하지 않는다.
+      if (!canStart()) return;
       if (!input) {
         noSource += 1;
         await markAuditNoSource(item.id, lease);
         continue;
       }
       const callStartedAt = new Date();
-      const options = { model: campaign.model, timeoutMs: Math.max(1, Math.min(ceiling, remaining())), signal: ctx.signal };
-      const result = campaign.provider === "abcllm"
-        ? await reviewWithGateway(input, options)
-        : await reviewWithAgent(input, options);
+      const controller = new AbortController();
+      const abort = () => controller.abort();
+      ctx.signal?.addEventListener("abort", abort, { once: true });
+      const ownershipPoll = setInterval(() => { if (!ctx.hasBudget() || remaining() <= 0) controller.abort(); }, 250);
+      ownershipPoll.unref?.();
+      let result;
+      try {
+        if (!canStart()) controller.abort();
+        const options = { model: campaign.model, timeoutMs: ceiling, signal: controller.signal };
+        result = campaign.provider === "abcllm"
+          ? await reviewWithGateway(input, options)
+          : await reviewWithAgent(input, options);
+      } finally {
+        clearInterval(ownershipPoll);
+        ctx.signal?.removeEventListener("abort", abort);
+      }
       // 멈추라고 해서 끊긴 것은 실패가 아니다 — 다음 회차가 처음부터 본다
-      if (!result.ok && (result.error === "cancelled" || ctx.signal?.aborted)) return;
+      if (controller.signal.aborted || ctx.signal?.aborted || !ctx.hasBudget() || remaining() <= 0
+        || (!result.ok && result.error === "cancelled")) return;
       const call = { itemId: item.id, startedAt: callStartedAt, provider: campaign.provider, model: campaign.model, input };
       if (result.ok) {
         reviewed += 1;

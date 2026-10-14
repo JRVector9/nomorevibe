@@ -6,7 +6,7 @@
  * 반복 실행할 때 쓴다.
  */
 import { basename } from 'node:path';
-import { withRuntimeProcess } from './worker';
+import { jobRunOptions, withRuntimeProcess } from './worker';
 
 async function main() {
   await withRuntimeProcess('manual', async (signal, report) => {
@@ -25,7 +25,7 @@ async function main() {
     report('running', name);
     await requestJob(name);
     if (signal.aborted) return;
-    const result = await runJob(name, JOBS[name], { requestedOnly: true, signal });
+    const result = await runJob(name, JOBS[name], jobRunOptions(name, { requestedOnly: true, signal }));
     const state = await getJobState(name);
     report('idle');
     console.log("결과:", result);

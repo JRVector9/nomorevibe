@@ -56,6 +56,7 @@ export function runtimeLog(event: string, fields: Record<string, unknown>) {
 export function jobRunOptions(name: string, options: RequestedRunOptions): JobRunOptions {
   // The Grok adapter needs 90 seconds plus startup; shorter providers keep their own smaller tick.
   if (name === 'crawl-agent-review') return { ...options, budgetMs: 110_000 };
+  if (name === 'product-audit') return { ...options, budgetMs: 70_000 };
   if (name === 'crawl-publish') return { ...options, budgetMs: 120_000 };
   if (name === 'reason-translate') return { ...options, budgetMs: 55_000 };
   // 검색 키워드 한 건이 7초 안팎이다 — 기본 틱이면 동시 셋이 두 바퀴도 못 돈다
