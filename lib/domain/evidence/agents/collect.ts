@@ -11,6 +11,7 @@ export type CollectCursor = {
   pendingTrees: Array<{ path: string; sha: string }>;
   pendingBlobs: Array<{ path: string; sha: string; size: number; ruleId: string }>;
   pendingCommits?: Array<{ sha: string; observations?: AgentObservation[] }>;
+  unavailableCommits?: Array<{ sha: string; headSha: string; reason: 'commit_not_found' | 'comparison_not_found' }>;
   coverageLimited?: boolean;
   repositoryFork?: boolean;
 };
@@ -23,6 +24,7 @@ export type CollectResult = {
   repositoryFork?: boolean;
 };
 const shaPattern = /^[a-f0-9]{40,64}$/;
+type RepositoryMetadata = { id: number; private: boolean; fork: boolean; default_branch?: string };
 export class InvalidAgentScanCursorError extends Error {
   constructor() {
     super('invalid agent scan cursor');
@@ -57,31 +59,56 @@ export async function collectRepositoryAgentEvidence(input: {
   const budget = () => result.requestCount < maxRequests && Date.now() <= deadlineAt - AGENT_SCAN_LIMITS.timeoutMs && (input.hasBudget?.() ?? true);
   const get = async <T>(path: string) => { result.requestCount++; return request<T>(path); };
   const fail = (error: GitHubFailure) => { Object.assign(result, failure(error)); result.state = cursor ? 'partial' : 'failed'; result.cursor = cursor; return result; };
-  if (cursor) {
-    if (!budget()) return { ...result, errorCode: 'budget_exhausted' };
-    // Visibility can change between ticks; token access is not public publication permission.
-    const repository = await get<{ id: number; private: boolean; fork: boolean }>(`/repos/${repositoryKey}`);
-    if (!repository.ok) return fail(repository.error);
-    if (repository.status !== 200 || repository.value.private !== false || String(repository.value.id) !== cursor.repositoryId) return fail({ kind: 'invalid_response' });
-    cursor.repositoryFork = repository.value.fork !== false;
-    result.repositoryFork = cursor.repositoryFork;
+  if (!budget()) return { ...result, errorCode: 'budget_exhausted' };
+  // Visibility and immutable identity can change between ticks. A reused name
+  // starts a fresh scan; its previous queue and cached claims belong to another ID.
+  const repository = await get<RepositoryMetadata>(`/repos/${repositoryKey}`);
+  if (!repository.ok) return fail(repository.error);
+  if (repository.status !== 200 || !Number.isSafeInteger(repository.value.id) || repository.value.id <= 0 || repository.value.private !== false) return fail({ kind: 'invalid_response' });
+  if (cursor && String(repository.value.id) !== cursor.repositoryId) {
+    cursor = null;
+    result.cursor = null;
+    result.commitSha = null;
   }
+  result.repositoryId = String(repository.value.id);
+  result.repositoryFork = repository.value.fork !== false;
+  if (cursor) cursor.repositoryFork = result.repositoryFork;
   if (!cursor) {
+    if (typeof repository.value.default_branch !== 'string') return fail({ kind: 'invalid_response' });
     if (!budget()) return { ...result, errorCode: 'budget_exhausted' };
-    const repo = await get<{ id: number; full_name: string; default_branch: string; private: boolean; fork: boolean }>(`/repos/${repositoryKey}`);
-    if (!repo.ok) return fail(repo.error);
-    if (repo.status !== 200 || !Number.isSafeInteger(repo.value.id) || repo.value.id <= 0 || repo.value.private !== false || typeof repo.value.default_branch !== 'string') return fail({ kind: 'invalid_response' });
-    result.repositoryId = String(repo.value.id);
-    result.repositoryFork = repo.value.fork !== false;
-    if (!budget()) return { ...result, errorCode: 'budget_exhausted' };
-    const branch = await get<{ sha: string; commit: { tree: { sha: string } } }>(`/repos/${repositoryKey}/commits/${encodeURIComponent(repo.value.default_branch)}`);
+    const branch = await get<{ sha: string; commit: { tree: { sha: string } } }>(`/repos/${repositoryKey}/commits/${encodeURIComponent(repository.value.default_branch)}`);
     if (!branch.ok) return fail(branch.error);
     if (branch.status !== 200 || !shaPattern.test(branch.value.sha) || !shaPattern.test(branch.value.commit?.tree?.sha)) return fail({ kind: 'invalid_response' });
     result.commitSha = branch.value.sha;
     const unchanged = input.knownComplete?.repositoryId === result.repositoryId && input.knownComplete.commitSha === result.commitSha;
-    cursor = { repositoryId: result.repositoryId, repositoryKey, commitSha: branch.value.sha, detectorVersion: AGENT_DETECTOR_VERSION, scope, repositoryFork: repo.value.fork !== false, pendingTrees: unchanged ? [] : [{ path: '', sha: branch.value.commit.tree.sha }], pendingBlobs: [], pendingCommits: [...new Set(input.discoveryCommitShas ?? [])].filter(sha => shaPattern.test(sha)).slice(0, 5).map(sha => ({ sha })) };
+    cursor = { repositoryId: result.repositoryId, repositoryKey, commitSha: branch.value.sha, detectorVersion: AGENT_DETECTOR_VERSION, scope, repositoryFork: result.repositoryFork, pendingTrees: unchanged ? [] : [{ path: '', sha: branch.value.commit.tree.sha }], pendingBlobs: [], pendingCommits: [...new Set(input.discoveryCommitShas ?? [])].filter(sha => shaPattern.test(sha)).slice(0, 5).map(sha => ({ sha })) };
   }
   result.cursor = cursor;
+  const recoverMissingCommit = async (sha: string, reason: 'commit_not_found' | 'comparison_not_found') => {
+    const previous = cursor!;
+    // A 404 can be a visibility/identity change or a removed pinned head. Only
+    // retire this queue entry after a fresh public, same-ID metadata/head check.
+    if (!budget()) return fail({ kind: 'not_found' });
+    const repo = await get<RepositoryMetadata>(`/repos/${repositoryKey}`);
+    if (!repo.ok) return fail(repo.error);
+    if (repo.status !== 200 || !Number.isSafeInteger(repo.value.id) || repo.value.id <= 0 || repo.value.private !== false || String(repo.value.id) !== previous.repositoryId || typeof repo.value.default_branch !== 'string') return fail({ kind: 'invalid_response' });
+    if (!budget()) return fail({ kind: 'not_found' });
+    const branch = await get<{ sha: string; commit: { tree: { sha: string } } }>(`/repos/${repositoryKey}/commits/${encodeURIComponent(repo.value.default_branch)}`);
+    if (!branch.ok) return fail(branch.error);
+    if (branch.status !== 200 || !shaPattern.test(branch.value.sha) || !shaPattern.test(branch.value.commit?.tree?.sha)) return fail({ kind: 'invalid_response' });
+    const unavailableCommits = [...(previous.unavailableCommits ?? []), { sha, headSha: previous.commitSha, reason }].slice(-5);
+    cursor = { ...previous, commitSha: branch.value.sha, repositoryFork: repo.value.fork !== false,
+      pendingTrees: [{ path: '', sha: branch.value.commit.tree.sha }], pendingBlobs: [],
+      pendingCommits: previous.pendingCommits?.filter(item => item.sha !== sha).map(item => ({ sha: item.sha })),
+      coverageLimited: true, unavailableCommits };
+    result.commitSha = cursor.commitSha;
+    result.repositoryFork = cursor.repositoryFork;
+    result.cursor = cursor;
+    // These reads may have used the old head. Preserve historical DB rows, but
+    // publish only observations actually read from the newly pinned current head.
+    result.observations = [];
+    return null;
+  };
   const traversable = (path: string) => {
     if (scope && (path === scope || scope.startsWith(path + '/'))) return true;
     const relative = scope ? (path.startsWith(scope + '/') ? path.slice(scope.length + 1) : null) : path;
@@ -111,7 +138,12 @@ export async function collectRepositoryAgentEvidence(input: {
       if (cursor.repositoryFork !== false) { cursor.pendingCommits.shift(); continue; }
       if (!item.observations) {
         const commit = await get<{ sha: string; commit: { message: string; author?: {name?: string}; committer?: {name?: string} }; parents: Array<{ sha: string }>; files?: Array<{filename:string;changes:number}> }>(`/repos/${repositoryKey}/commits/${item.sha}`);
-        if (!commit.ok) return fail(commit.error);
+        if (!commit.ok) {
+          if (commit.error.kind !== 'not_found') return fail(commit.error);
+          const failed = await recoverMissingCommit(item.sha, 'commit_not_found');
+          if (failed) return failed;
+          continue;
+        }
         if (commit.status !== 200 || commit.value.sha !== item.sha || typeof commit.value.commit?.message !== 'string' || !Array.isArray(commit.value.parents)) return fail({ kind: 'invalid_response' });
         // Merge commits may inherit unrelated upstream attribution; only inspect direct commits.
         if (commit.value.parents.length !== 1) { cursor.pendingCommits.shift(); continue; }
@@ -129,7 +161,12 @@ export async function collectRepositoryAgentEvidence(input: {
       // patches on page 1; those can exceed our shared 2MiB JSON cap. Page 2
       // retains the comparison summary even when it has no commit entries.
       const comparison = await get<{ status: string }>(`/repos/${repositoryKey}/compare/${item.sha}...${cursor.commitSha}?per_page=1&page=2`);
-      if (!comparison.ok) return fail(comparison.error);
+      if (!comparison.ok) {
+        if (comparison.error.kind !== 'not_found') return fail(comparison.error);
+        const failed = await recoverMissingCommit(item.sha, 'comparison_not_found');
+        if (failed) return failed;
+        continue;
+      }
       if (comparison.status !== 200 || !['ahead', 'identical', 'behind', 'diverged'].includes(comparison.value.status)) return fail({ kind: 'invalid_response' });
       if (['ahead', 'identical'].includes(comparison.value.status)) result.observations.push(...item.observations);
       cursor.pendingCommits.shift();

@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
-import { collectRepositoryAgentEvidence } from '@/lib/domain/evidence/agents/collect';
+import { collectRepositoryAgentEvidence, type AgentGitHubRequest, type CollectCursor } from '@/lib/domain/evidence/agents/collect';
+import { AGENT_DETECTOR_VERSION } from '@/lib/domain/evidence/agents/types';
 import type { GitHubHttpResult } from '@/lib/crawl/github';
 const COMMIT = 'a'.repeat(40), TREE = 'b'.repeat(40), BLOB = 'c'.repeat(40);
 function mockRequest(options: { truncated?: boolean; limited?: boolean; symlink?: boolean } = {}) {
@@ -60,6 +61,25 @@ describe('bounded GitHub agent collector', () => {
     expect(resumed.observations).toHaveLength(0);
     expect(requests).toBe(1);
   });
+  it('pins a replacement public repository instead of retrying the previous identity cursor', async () => {
+    const first = await collectRepositoryAgentEvidence({ repositoryKey: 'acme/app', request: mockRequest().request, maxRequests: 3 });
+    const head = '1'.repeat(40), tree = '2'.repeat(40);
+    const paths: string[] = [];
+    const request: AgentGitHubRequest = async <T>(path: string) => {
+      paths.push(path);
+      let value: unknown;
+      if (path === '/repos/acme/app') value = { id: 99, private: false, fork: false, default_branch: 'main' };
+      else if (path === '/repos/acme/app/commits/main') value = { sha: head, commit: { tree: { sha: tree } } };
+      else if (path === `/repos/acme/app/git/trees/${tree}`) value = { truncated: false, tree: [] };
+      else throw new Error(`reused previous repository work: ${path}`);
+      return { ok: true, status: 200, value: value as T, etag: null, lastModified: null, link: null };
+    };
+    const result = await collectRepositoryAgentEvidence({ repositoryKey: 'acme/app', request, cursor: first.cursor,
+      knownComplete: { repositoryId: '12', commitSha: head } });
+    expect(result).toMatchObject({ repositoryId: '99', commitSha: head, state: 'complete', cursor: null, observations: [], errorCode: null, requestCount: 3 });
+    expect(paths).toEqual(['/repos/acme/app', '/repos/acme/app/commits/main', `/repos/acme/app/git/trees/${tree}`]);
+    expect(first.cursor?.repositoryId).toBe('12');
+  });
   it('does not claim complete coverage for a truncated nonrecursive tree', async () => {
     const result = await collectRepositoryAgentEvidence({ repositoryKey: 'acme/app', request: mockRequest({ truncated: true }).request });
     expect(result.state).toBe('partial');
@@ -117,6 +137,93 @@ describe('bounded GitHub agent collector', () => {
     expect(result).toMatchObject({ state: 'complete', errorCode: null });
     expect(result.observations).toHaveLength(1);
     expect(paths).toContain(`/repos/acme/app/compare/${discovered}...${COMMIT}?per_page=1&page=2`);
+  });
+  it.each(['commit', 'comparison'] as const)('rechecks the public identity and scans the current head after a pending %s returns 404', async endpoint => {
+    const mock = mockRequest();
+    const discovered = 'e'.repeat(40), head = '1'.repeat(40), tree = '2'.repeat(40);
+    const paths: string[] = [];
+    const request: AgentGitHubRequest = async <T>(path: string) => {
+      paths.push(path);
+      let value: unknown;
+      if (path === '/repos/acme/app') value = { id: 12, private: false, fork: false, default_branch: 'main' };
+      else if (path === '/repos/acme/app/commits/main') value = { sha: head, commit: { tree: { sha: tree } } };
+      else if (path.endsWith('/commits/' + discovered)) {
+        if (endpoint === 'commit') return { ok: false, error: { kind: 'not_found' } };
+        value = { sha: discovered, commit: { message: 'Fix\n\nCo-authored-by: Codex <codex@example.com>' }, parents: [{}], files: [{ filename: 'src/app.ts', changes: 1 }] };
+      } else if (path.includes('/compare/')) return { ok: false, error: { kind: 'not_found' } };
+      else if (path === `/repos/acme/app/git/trees/${tree}`) value = { truncated: false, tree: [{ path: 'AGENTS.md', sha: BLOB, type: 'blob', mode: '100644', size: 10 }] };
+      else return mock.request<T>(path);
+      return { ok: true, status: 200, value: value as T, etag: null, lastModified: null, link: null };
+    };
+    const result = await collectRepositoryAgentEvidence({ repositoryKey: 'acme/app', request,
+      cursor: { repositoryId: '12', repositoryKey: 'acme/app', commitSha: COMMIT, detectorVersion: AGENT_DETECTOR_VERSION,
+        scope: '', repositoryFork: false, pendingTrees: [],
+        pendingBlobs: endpoint === 'comparison' ? [{ path: 'AGENTS.md', sha: BLOB, size: 10, ruleId: 'shared.agents.v1' }] : [],
+        pendingCommits: [{ sha: discovered }] } });
+    expect(result).toMatchObject({ repositoryId: '12', commitSha: head, state: 'partial', errorCode: null,
+      cursor: { coverageLimited: true, pendingTrees: [], pendingBlobs: [], pendingCommits: [],
+        unavailableCommits: [{ sha: discovered, headSha: COMMIT, reason: `${endpoint}_not_found` }] } });
+    expect(result.observations.length).toBeGreaterThan(0);
+    expect(result.observations.every(observation => observation.kind !== 'commit_attribution' && observation.commitSha === head)).toBe(true);
+    expect(paths.filter(path => path === '/repos/acme/app')).toHaveLength(2);
+    expect(paths).toContain(`/repos/acme/app/git/trees/${tree}`);
+    expect(result.requestCount).toBe(paths.length);
+    expect(result.requestCount).toBeLessThanOrEqual(12);
+  });
+  it.each(['private', 'different_id', 'not_found', 'rate_limited', 'auth_unavailable', 'transport'] as const)('preserves a missing comparison for retry when the public identity recheck is %s', async failure => {
+    const discovered = 'e'.repeat(40), resetAt = new Date('2026-09-07T00:15:00Z');
+    let metadataCalls = 0;
+    const request: AgentGitHubRequest = async <T>(path: string) => {
+      if (path === '/repos/acme/app' && ++metadataCalls === 1) return { ok: true, status: 200, value: { id: 12, private: false, fork: false } as T, etag: null, lastModified: null, link: null };
+      if (path.includes('/compare/')) return { ok: false, error: { kind: 'not_found' } };
+      if (failure === 'private' || failure === 'different_id') return { ok: true, status: 200, value: { id: failure === 'different_id' ? 99 : 12, private: failure === 'private', default_branch: 'main' } as T, etag: null, lastModified: null, link: null };
+      if (failure === 'rate_limited') return { ok: false, error: { kind: 'rate_limited', resetAt } };
+      if (failure === 'auth_unavailable') return { ok: false, error: { kind: 'auth_unavailable', reason: 'expired', resetAt } };
+      return { ok: false, error: { kind: failure } };
+    };
+    const cursor: CollectCursor = { repositoryId: '12', repositoryKey: 'acme/app', commitSha: COMMIT, detectorVersion: AGENT_DETECTOR_VERSION,
+      scope: '', pendingTrees: [], pendingBlobs: [], pendingCommits: [{ sha: discovered, observations: [] }] };
+    const result = await collectRepositoryAgentEvidence({ repositoryKey: 'acme/app', request, cursor });
+    expect(result.cursor).toEqual({ ...cursor, repositoryFork: false });
+    expect(result.observations).toEqual([]);
+    expect(result.errorCode).toBe(failure === 'private' || failure === 'different_id' ? 'invalid' : failure === 'transport' ? 'timeout' : failure === 'rate_limited' ? 'rate_limited' : 'unavailable');
+    expect(result.retryAt).toEqual(failure === 'rate_limited' || failure === 'auth_unavailable' ? resetAt : null);
+    expect(metadataCalls).toBe(2);
+  });
+  it('does not retire a comparison when the fresh metadata has an unknown identity shape', async () => {
+    const discovered = 'e'.repeat(40);
+    let metadataCalls = 0;
+    const paths: string[] = [];
+    const request: AgentGitHubRequest = async <T>(path: string) => {
+      paths.push(path);
+      if (path.includes('/compare/')) return { ok: false, error: { kind: 'not_found' } };
+      let value: unknown;
+      if (path === '/repos/acme/app') value = { id: ++metadataCalls === 1 ? 12 : '12', private: false, fork: false, default_branch: 'main' };
+      else if (path.endsWith('/commits/main')) value = { sha: COMMIT, commit: { tree: { sha: TREE } } };
+      else value = { truncated: false, tree: [] };
+      return { ok: true, status: 200, value: value as T, etag: null, lastModified: null, link: null };
+    };
+    const cursor: CollectCursor = { repositoryId: '12', repositoryKey: 'acme/app', commitSha: COMMIT, detectorVersion: AGENT_DETECTOR_VERSION,
+      scope: '', pendingTrees: [], pendingBlobs: [], pendingCommits: [{ sha: discovered, observations: [] }] };
+    const result = await collectRepositoryAgentEvidence({ repositoryKey: 'acme/app', request, cursor });
+    expect(result).toMatchObject({ errorCode: 'invalid', requestCount: 3 });
+    expect(result.cursor).toEqual({ ...cursor, repositoryFork: false });
+    expect(paths.some(path => path.includes('/commits/main'))).toBe(false);
+  });
+  it('keeps the pending comparison when its head recheck would exceed the request budget', async () => {
+    const discovered = 'e'.repeat(40);
+    const paths: string[] = [];
+    const request: AgentGitHubRequest = async <T>(path: string) => {
+      paths.push(path);
+      if (path.includes('/compare/')) return { ok: false, error: { kind: 'not_found' } };
+      return { ok: true, status: 200, value: { id: 12, private: false, fork: false, default_branch: 'main' } as T, etag: null, lastModified: null, link: null };
+    };
+    const cursor: CollectCursor = { repositoryId: '12', repositoryKey: 'acme/app', commitSha: COMMIT, detectorVersion: AGENT_DETECTOR_VERSION,
+      scope: '', pendingTrees: [], pendingBlobs: [], pendingCommits: [{ sha: discovered, observations: [] }] };
+    const result = await collectRepositoryAgentEvidence({ repositoryKey: 'acme/app', request, cursor, maxRequests: 3 });
+    expect(result).toMatchObject({ state: 'partial', commitSha: COMMIT, errorCode: 'unavailable', requestCount: 3 });
+    expect(result.cursor).toEqual({ ...cursor, repositoryFork: false });
+    expect(paths).toHaveLength(3);
   });
   it.each(['ahead', 'identical', 'diverged', 'behind'])('requires default-branch reachability for a commit attribution (%s)', async status => {
     const mock = mockRequest();

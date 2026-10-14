@@ -8,6 +8,7 @@ import { classificationReadyPredicate } from "@/lib/operations/categories";
 import { judgementQueuePredicate } from "./repository";
 import { reviewApprovalPredicate, reviewCandidatePredicate, starAutoApprovalPredicate } from "./agent-review-repository";
 import { createReviewInput, REVIEW_FRESH_MS, REVIEW_PROMPT_VERSION, REVIEW_RULES_VERSION, reviewPolicyHash } from "./agent-review-contract";
+import { agentCoverageRevisionSql } from "@/lib/domain/evidence/agents/coverage";
 import { firstReviewer } from "./agent-review";
 import { README_SAMPLE_LIMIT } from "./readme";
 import { firstReviewProviderPredicate, secondReviewInputMatches } from "./second-review-input";
@@ -173,6 +174,7 @@ export async function readDiscoveryAdmission(settings: CrawlSettings, now = new 
               and date_trunc('milliseconds', admission_scan.started_at) is not distinct from (${crawlReviewAttempts.source}->>'scanStartedAt')::timestamp
               and date_trunc('milliseconds', admission_scan.completed_at) is not distinct from (${crawlReviewAttempts.source}->>'scanCompletedAt')::timestamp
               and admission_scan.state is not distinct from ${crawlReviewAttempts.source}->>'scanState'
+              and ${agentCoverageRevisionSql(sql`admission_scan.coverage`, sql`admission_scan.cursor`)}=coalesce(${crawlReviewAttempts.source}->'scanCoverage', '{}'::jsonb)
               and admission_scan.last_error_code is not distinct from ${crawlReviewAttempts.source}->>'scanError'
               and (admission_scan.completed_at is null or admission_scan.completed_at > ${at} - ${REVIEW_FRESH_MS} * interval '1 millisecond'))`,
         sql`not exists(select 1 from ${crawlReviewAttempts} admission_newer_first where ${newer.candidateId}=${crawlCandidates.id}

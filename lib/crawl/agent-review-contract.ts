@@ -4,6 +4,7 @@ import type { CrawlCandidate, CrawlDocument, AgentRepositoryScan } from "@/lib/d
 import { CATEGORIES } from "@/lib/domain/products/schema";
 import type { AgentObservation } from "@/lib/domain/evidence/agents/types";
 import { summarizeAgentEvidence } from "@/lib/domain/evidence/agents/summary";
+import { agentCoverageRevision, effectiveAgentScanState, type AgentCoverageRevision } from "@/lib/domain/evidence/agents/coverage";
 import { TEXT_SAMPLE_LIMIT } from "@/lib/net/normalize";
 import type { CrawlSettings } from "./settings-schema";
 import { accessFromDocument, judgeStoredDocument, pageFactsFromDocument } from "./rules";
@@ -76,6 +77,7 @@ export type ReviewSource = {
   scanCompletedAt: string | null;
   scanState: string | null;
   scanError: string | null;
+  scanCoverage?: AgentCoverageRevision;
   detectorVersion: string;
 };
 export type ReviewSnapshot = {
@@ -152,7 +154,7 @@ export function createReviewInput(
   const scanFresh = scan?.completedAt && scan.completedAt <= now
     && scan.completedAt.getTime() + REVIEW_FRESH_MS > now.getTime()
     && scan.detectorVersion === settings.agentEvidence.detectorVersion && !scan.lastErrorCode;
-  const scanState = scan?.state === "complete" && !scanFresh ? "pending" : scan?.state ?? "pending";
+  const scanState = scan?.state === "complete" && !scanFresh ? "pending" : scan ? effectiveAgentScanState(scan) : "pending";
   const all = evidence.observations.filter(item => item.observation.scope === "")
     .sort((a, b) => canonical(a.observation).localeCompare(canonical(b.observation)));
   const page = document.pageMeta ?? {};
@@ -204,6 +206,7 @@ export function createReviewInput(
     scanId: scan?.id ?? null, scanSha: scan?.commitSha ?? null, scanStartedAt: scan?.startedAt?.toISOString() ?? null,
     scanCompletedAt: scan?.completedAt?.toISOString() ?? null,
     scanState: scan?.state ?? null, scanError: scan?.lastErrorCode ?? null, detectorVersion: settings.agentEvidence.detectorVersion,
+    ...(agentCoverageRevision(scan) ? { scanCoverage: agentCoverageRevision(scan)! } : {}),
   };
   const policyHash = reviewPolicyHash(settings);
   // IDs and observation timestamps locate the source, but do not change its semantic judgment.

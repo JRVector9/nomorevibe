@@ -2,6 +2,7 @@ import type { CrawlDocument } from "@/lib/db/schema";
 import type { CrawlSettings } from "./settings-schema";
 import type { SummaryInput } from "@/lib/domain/evidence/agents/summary";
 import { getLatestRepositoryAgentEvidence, getLatestRepositoryAgentScan } from "@/lib/domain/evidence/agents/repository";
+import { effectiveAgentScanState } from "@/lib/domain/evidence/agents/coverage";
 
 /** A repository homepage is a one-sided claim; require a source link from the product. */
 export async function loadAgentJudgeInput(
@@ -23,7 +24,7 @@ export async function loadAgentJudgeInput(
     && now - latest.completedAt.getTime() >= 0 && now - latest.completedAt.getTime() < 24 * 3600_000;
   return {
     relationship,
-    scanState: latest?.state === "complete" && !fresh ? "pending" : latest?.state ?? "pending",
+    scanState: latest?.state === "complete" && !fresh ? "pending" : latest ? effectiveAgentScanState(latest) : "pending",
     observations: evidence && latest && evidence.scan.id === latest.id
       ? evidence.observations.filter(observation => observation.scope === "") : [],
     scanId: latest?.id ?? null,

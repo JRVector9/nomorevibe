@@ -166,6 +166,17 @@ async function observedSecondFixture() {
   return { ...fixture, vote, input, scan };
 }
 
+it("excludes a stale AI2 vote when only current scan coverage changes", async () => {
+  const fixture = await observedSecondFixture();
+  const ready = await readDiscoveryAdmission(fixture.settings);
+  expect(ready.secondUnvalidated).toBe(1);
+  await db.update(agentRepositoryScans).set({ coverage: { limited: true } }).where(eq(agentRepositoryScans.id, fixture.scan.id));
+  const changed = await readDiscoveryAdmission(fixture.settings);
+  expect(changed.secondUnvalidated).toBe(0);
+  expect(changed.stages.find(stage => stage.key === "second")?.waiting).toBe(0);
+  expect(await loadSecondReviewInput(fixture.vote)).toBeNull();
+});
+
 it("reports valid votes omitted by the observation cap as an incomplete lower bound", async () => {
   const fixture = await observedSecondFixture();
   expect(await loadSecondReviewInput(fixture.vote)).not.toBeNull();

@@ -1,9 +1,9 @@
-import { beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { db } from '@/lib/db';
 import { agentRepositoryScans } from '@/lib/db/schema';
 import { collectRepositoryAgentEvidence, type AgentGitHubRequest, type CollectCursor, type CollectResult } from '@/lib/domain/evidence/agents/collect';
-import { getLatestRepositoryAgentEvidence, getLatestRepositoryAgentScan, refreshRepositoryAgentEvidence, saveRepositoryAgentScan } from '@/lib/domain/evidence/agents/repository';
+import { getLatestRepositoryAgentEvidence, getLatestRepositoryAgentScan, recordDiscoveryEvidence, refreshRepositoryAgentEvidence, saveRepositoryAgentScan } from '@/lib/domain/evidence/agents/repository';
 import { AGENT_DETECTOR_VERSION, type AgentObservation } from '@/lib/domain/evidence/agents/types';
 import { ensureSchema, resetTables } from './setup';
 
@@ -118,14 +118,14 @@ describe('repository rename cursor recovery', () => {
     expect(refreshed.observations).toMatchObject([{ kind: 'commit_attribution', sourceUrl: `https://github.com/${OLD}/commit/${discovered}` }]);
   });
 
-  it.each(['private', 'different_id'] as const)('does not resume renamed work if the retained name is %s', async change => {
+  it('does not resume renamed work if the retained name is private', async () => {
     await saveRepositoryAgentScan(partial(OLD));
     await saveRepositoryAgentScan(partial(RENAMED));
     const paths: string[] = [];
     const request: AgentGitHubRequest = async <T>(path: string) => {
       paths.push(path);
-      return { ok: true, status: 200, value: { id: change === 'different_id' ? 99 : 12,
-        private: change === 'private', fork: false, default_branch: 'main' } as T,
+      return { ok: true, status: 200, value: { id: 12,
+        private: true, fork: false, default_branch: 'main' } as T,
         etag: null, lastModified: null, link: null };
     };
     const refreshed = await refreshRepositoryAgentEvidence({ repositoryKey: OLD, force: true, request });
@@ -133,6 +133,80 @@ describe('repository rename cursor recovery', () => {
     expect(refreshed.scan?.state).toBe('partial');
     expect(refreshed.observations).toEqual([]);
     expect(paths).toEqual([`/repos/${OLD}`]);
+  });
+
+  it('starts separate evidence for a replacement identity without rewriting the previous partial scan', async () => {
+    const original = (await saveRepositoryAgentScan(partial(OLD), new Date('2026-09-01')))!;
+    const mock = emptyRepository(OLD, 99);
+    const refreshed = await refreshRepositoryAgentEvidence({ repositoryKey: OLD, request: mock.request });
+    expect(refreshed.scan).toMatchObject({ githubRepositoryId: BigInt(99), state: 'complete', cursor: null, lastErrorCode: null });
+    expect(refreshed.scan!.id).not.toBe(original.id);
+    expect(await db.query.agentRepositoryScans.findFirst({ where: eq(agentRepositoryScans.id, original.id) })).toEqual(original);
+    expect(await db.select().from(agentRepositoryScans)).toHaveLength(2);
+    expect(mock.paths).toEqual([`/repos/${OLD}`, `/repos/${OLD}/commits/main`, `/repos/${OLD}/git/trees/${TREE}`]);
+    expect((await getLatestRepositoryAgentScan(OLD))?.id).toBe(refreshed.scan!.id);
+  });
+
+  it('stores inaccessible comparison coverage without refreshing an earlier completion or repeating its cursor', async () => {
+    const discovered = 'c'.repeat(40);
+    const original = (await saveRepositoryAgentScan({ ...partial(OLD), state: 'complete', cursor: null }, new Date('2026-09-01')))!;
+    await saveRepositoryAgentScan({ ...partial(OLD), cursor: { ...cursor(OLD), pendingTrees: [], repositoryFork: false,
+      pendingCommits: [{ sha: discovered, observations: [] }] } }, new Date('2026-09-02'));
+    const mock = emptyRepository(OLD);
+    const request: AgentGitHubRequest = async <T>(path: string) => {
+      if (!path.includes('/compare/')) return mock.request<T>(path);
+      mock.paths.push(path);
+      return { ok: false, error: { kind: 'not_found' } };
+    };
+    const refreshed = await refreshRepositoryAgentEvidence({ repositoryKey: OLD, request });
+    expect(refreshed.scan).toMatchObject({ id: original.id, state: 'complete', completedAt: original.completedAt,
+      lastErrorCode: null, coverage: { limited: true }, cursor: { coverageLimited: true,
+        pendingTrees: [], pendingBlobs: [], pendingCommits: [], unavailableCommits: [{ sha: discovered, headSha: SHA, reason: 'comparison_not_found' }] } });
+    expect(refreshed.observations).toEqual([]);
+    expect(refreshed.scan!.nextAttemptAt.getTime()).toBeGreaterThan(Date.now() + 23 * 60 * 60_000);
+    expect(mock.paths).toEqual([`/repos/${OLD}`, `/repos/${OLD}/compare/${discovered}...${SHA}?per_page=1&page=2`,
+      `/repos/${OLD}`, `/repos/${OLD}/commits/main`, `/repos/${OLD}/git/trees/${TREE}`]);
+    const cached = await refreshRepositoryAgentEvidence({ repositoryKey: OLD, request });
+    expect(cached.cached).toBe(true);
+    expect(mock.paths).toHaveLength(5);
+  });
+
+  it('pins and scans a changed head after an empty limited cursor becomes normally due', async () => {
+    const discovered = 'c'.repeat(40), nextHead = 'd'.repeat(40), nextTree = 'e'.repeat(40);
+    await recordDiscoveryEvidence({ repositoryKey: OLD, signalId: 'codex', sourceUrl: `https://github.com/${OLD}/commit/${discovered}`, commitSha: discovered });
+    await saveRepositoryAgentScan({ ...partial(OLD), cursor: { ...cursor(OLD), pendingTrees: [], repositoryFork: false,
+      pendingCommits: [{ sha: discovered, observations: [] }] } }, new Date('2026-09-01'));
+    let head = SHA, tree = TREE;
+    const paths: string[] = [];
+    const request: AgentGitHubRequest = async <T>(path: string) => {
+      paths.push(path);
+      if (path.includes('/compare/') || path === `/repos/${OLD}/commits/${discovered}`) return { ok: false, error: { kind: 'not_found' } };
+      let value: unknown;
+      if (path === `/repos/${OLD}`) value = { id: 12, private: false, fork: false, default_branch: 'main' };
+      else if (path === `/repos/${OLD}/commits/main`) value = { sha: head, commit: { tree: { sha: tree } } };
+      else if (path === `/repos/${OLD}/git/trees/${tree}`) value = { truncated: false, tree: [] };
+      else throw new Error(`unexpected request: ${path}`);
+      return { ok: true, status: 200, value: value as T, etag: null, lastModified: null, link: null };
+    };
+    const limited = await refreshRepositoryAgentEvidence({ repositoryKey: OLD, request });
+    expect(limited.scan).toMatchObject({ state: 'partial', completedAt: null, lastErrorCode: null,
+      cursor: { pendingTrees: [], pendingBlobs: [], pendingCommits: [], coverageLimited: true } });
+    head = nextHead; tree = nextTree; paths.length = 0;
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      vi.setSystemTime(new Date(limited.scan!.nextAttemptAt.getTime() + 1));
+      const refreshed = await refreshRepositoryAgentEvidence({ repositoryKey: OLD, request });
+      expect(refreshed.cached).toBe(false);
+      expect(refreshed.scan).toMatchObject({ commitSha: nextHead, state: 'partial', completedAt: null, lastErrorCode: null,
+        coverage: { limited: true }, cursor: { pendingTrees: [], pendingBlobs: [], pendingCommits: [],
+          unavailableCommits: [{ sha: discovered, headSha: nextHead, reason: 'commit_not_found' }] } });
+      expect(refreshed.scan!.id).not.toBe(limited.scan!.id);
+      expect(paths).toContain(`/repos/${OLD}/commits/main`);
+      expect(paths).toContain(`/repos/${OLD}/git/trees/${nextTree}`);
+      expect(paths).not.toContain(`/repos/${OLD}/git/trees/${TREE}`);
+      expect(refreshed.observations).toEqual([]);
+      expect(await db.query.agentRepositoryScans.findFirst({ where: eq(agentRepositoryScans.id, limited.scan!.id) })).toEqual(limited.scan);
+    } finally { vi.useRealTimers(); }
   });
 
   it.each([

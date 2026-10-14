@@ -4,6 +4,7 @@ import { db } from '@/lib/db';
 import { agentRepositoryObservations, agentRepositoryScans, type CrawlDocument } from '@/lib/db/schema';
 import { normalizeAgentRepositoryKey } from '@/lib/domain/evidence/agents/collect';
 import { AGENT_DETECTOR_VERSION, agentObservationSchema, type AgentObservation } from '@/lib/domain/evidence/agents/types';
+import { effectiveAgentScanState } from '@/lib/domain/evidence/agents/coverage';
 import type { loadAgentJudgeInput } from './agent-evidence';
 import type { CrawlSettings } from './settings-schema';
 
@@ -75,7 +76,7 @@ export async function loadAgentJudgeInputs(
       && now - latest.completedAt.getTime() >= 0 && now - latest.completedAt.getTime() < 24 * 3600_000;
     inputs.set(document.repo, {
       relationship,
-      scanState: latest?.state === 'complete' && !fresh ? 'pending' : latest?.state ?? 'pending',
+      scanState: latest?.state === 'complete' && !fresh ? 'pending' : latest ? effectiveAgentScanState(latest) : 'pending',
       observations: latest && evidenceScanIds.has(latest.id)
         ? (observationsByScan.get(latest.id) ?? []).filter(observation => observation.scope === '') : [],
       scanId: latest?.id ?? null,
