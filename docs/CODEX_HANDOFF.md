@@ -1,3 +1,317 @@
+# 2026-10-14 — 수집·검수 개선 / HOT 가능성 조사
+
+## Current objective
+
+사용자는 처리량 보고서의 남은 수집→검수 개선을 병렬 서브에이전트로 수행하고, X/Threads 별도 인기 프로젝트 crawler와 HOT 필터의 구현 가능성을 보고하도록 요청했다. PR00~07 코드·회귀검사·직접 CLI 리뷰·문서·로컬 커밋이 범위다. HOT 기능 자체, 운영 배포·설정·대량 재판정·재발행은 이번 단계에서 실행하지 않았다. 중단된 소개 검수는 유지한다.
+
+## Completed work / repository state
+
+- 브랜치 `feat/pipeline-review-recovery-20261014`, 시작 main `edeb8cf0f95d3cb9a587a065f793aa6ce6d2fdd0`.
+- gogo·ak·TDD·codex-exec 적용. 모든 native agent와 root 직접 CLI는 사용자 규칙 **gpt-6.1-sol / xhigh**. root가 리뷰·docs·커밋을 담당한다.
+- `1fca060ba4088c038860ee4852d6ec8b9877c72b`: 수집의 기존 결정 보호, 현재 입력 실패 소진·사람 인계, 최대4회 transient retry/마지막 Retry-After, conditional fetch helper. 직접 2차 리뷰 CLEAN.
+- `5424c35`: 한국어 품질 거절 counter와 migration0076, network 실패·홈 추가 재시도 후 일반 한도 우회 방지. 직접 2차 리뷰 CLEAN.
+- `d1c9083`: sources55초 lane·lane별 progress·실행/출력 감시, 오래된 providerFailure relevance 교정. 직접 3차 리뷰 CLEAN.
+- `af5f55b`: 실제 신규·실행 가능 대기 snapshot의 유입 제어, AI2 현재 정책/출처/심사자 fences와 bounded semantic lower bound, Grok 실행 예산/AI2 provider 일치. 직접 3차 리뷰 CLEAN.
+- `2b0d993fb9fba97ef5a639d3432f8ade60cc2f09`: host/DB 시계 혼용의 통합 fixture2곳 교정. 별도 직접 CLI CLEAN.
+- `1167d5e48b65168d839452cefa001618d85eaf02`: 근거·캐시16파일 커밋. 직접 evidence_round5 실제 `No findings / CONCLUSION: OK`, exit0/460.01s. 최종6 전체 검사 완료. 이후 source 변경 없음. 이번 phase의 구현·조사는 완료했고 최종 문서 커밋에 결과를 포함한다.
+- HOT 보고서 직접 리뷰 CLEAN. X 우선 공개 GitHub 링크→기존 검수→공개 제품 HOT 가능. Threads 검색 승인/타인 반응 지표 제약. 실제 독립 프로세스는 새 social role/lease 필요. 실제 인증 API/요금·권한/필터·DB·운영 앱 미구현.
+- source 처리량 증가나3,453source/h 유지·5,500catch-up 달성을 주장하지 않는다. 실측 보고서 원래 수치 보존.
+
+## Modified files / ownership
+
+A와 C 생산 코드는 위 커밋으로 완료, agent 모두 종료·DB 반환. B의 명시16파일 목록은 private `commit-files.json`의 evidence 키다: GitHub·site provider/refresh, evidence job/runner, GitHub caller/accounts/apps 및 직접 회귀 tests. 마지막 4차 수정 뒤 delta는 GitHub provider와 그 integration test만이었다. 모두1167d5e에 커밋했다.
+
+root docs11파일은 같은 manifest의 docs 키다: README/PENDING/handoff/runbook, 기존 catch-up·모델검증·실측·감사·상태정리 보고서5개, 신규 구현·HOT 보고서2개. 최종 리뷰 결과·실제 usage·커밋/검사/remaining으로 갱신했고 본 docs commit에 포함한다. 이 문서 자체의 commit SHA는 git log로 확인한다. 사용자 PT/prototypes/nomorevibe-final 및 `docs/operations/mistake.md`를 보존하고 `git add .` 금지. push/PR/merge/deploy/운영 migration 없음.
+
+## Key design decisions
+
+- 유입 제어는 readonly repeatable-read 한 snapshot, 총3초 deadline(pool/statement/lock/CPU 포함). pressure500+최장5분 또는1000, resume250/2분, 최소 탐색과 최근5분 신규 여유 보존. AI2 창1000/관측64 하한·잘림 표시; 역사적 무효 표는 LIMIT 전에 제외하고 최종 semantic 검사 유지.
+- GitHub 부분 progress/조건부 cache는 기존 normalizedFacts 내부 저장, 전체64KiB/endpoint24KiB. canonical site는 독립 due·retry. joblease/product generation 저장 fence 유지. 304 cache 없는 경우 unconditional 본문, malformed cache는 lastgood 보존.
+- 핵심 수집 cutoff는 신규 collection/관계 조회/최종 성공 금지. 제한된 checkpoint flush는 부분 재개를 위해 허용. 이미 시작한 DB 작업을 unsafe-cancel하거나 쓰기를 detach하지 않는다.
+- 핵심과 관계가 준비된 뒤 optional activity의 soft hasBudget 소진은 기존 updated/lastSuccess를 유지. 명시 signal/deadline은 hard cutoff. 완료core partial 재개는 optional을skip해 반복 hard stop의 starvation을 막고, 다음 일반 주기에 activity를 다시 시도한다.
+- cursor는 ten-item/one-item 전환의 절대 offset·pagesRead·완료·published 상한 일관성을 검증. 잘못된 persisted/direct progress만 reset하고 valid cache 유지. live nextLink는 같은 크기 한 페이지 전진.
+- sources lane55초는 기존 crawler 역할/DB pool/쿼터/lease 공유. Grok worker110초/내부108초, 현행 handler40초. long upstream 오류 알림과 lane hang 재시작을 구분하고 사용자 pause/backoff를 보호한다.
+- migration0076 quality_rejections는 legacy rejected min(attempts,4), 그 외0; 입력별 품질 counter와 network 실패 분리. 운영 migration 미적용.
+
+## Test commands and actual results
+
+Node24.18.0, pgvector0.8.6/PG17 전용 DB3개. 같은 포트 fixture 동시 실행 금지. guard는 localhost/정확한dbname 요구; 운영 DB 사용하지 않았다.
+
+최종6 실제 검사:
+
+| 명령/범위 | 결과 |
+| --- | --- |
+| npx tsc --noEmit --incremental false | exit0/16.76s |
+| npm run lint | exit0/17.08s, 기존 vendor warning1 |
+| npm test | 251files2318pass/8.62s/exit0 |
+| integration shard1 localhost55435 | 48files461pass/71.54s/0 |
+| integration shard2 localhost55436 | 48files444pass/60.38s/0 |
+| integration shard3 localhost55437 | 47files638pass+기존todo1/116.49s/0 |
+| npm run build | exit0/11.51s, unused localhost55439 build URL |
+| node scripts/bundle-size.mjs | exit0/.60s, home148.6/detail158.9/launch136.1KB br, 모두한도안 |
+
+통합 총143files1543pass+기존todo1. 과거 실행을 중복 합산하지 않는다. 부가 실제검사: next typegen0, i18n4locale/8namespace/11pages0, Python deploy23pass, node ci-scope4pass. 로컬 docs 링크45/미존재0 및 gitdiffcheck0.
+
+B 마지막 집중 RED20failed/79pass+livecursorRED4 → GREEN103/103; broad9integration164/164, unit14files125/125, all16 ESLint/tsc/diff0. 마지막 source FROZEN 유지.
+
+감시 query 합성44k public/88k sources 다섯 번987/975/985/974/983ms, 3초limit. 운영 용량 증명이 아니다.
+
+## Failed approaches / resolved reviews
+
+수집 첫4지적·text1·runtime3+후속1·admission2+별도역사표RED17은 회귀 수정/최종CLEAN. B 첫8/후속4/후속3/후속2의 실제 경계를 재현·수정했고 다섯 번째 실제 CLEAN까지 확인했다. CLI exit0과 CLEAN은 구별한다. gogo 기본2회 rework 뒤도 실제결함이 남아 사용자 동일범위 남은작업수행/지속완료 지침으로 마무리했다. 배포 승인 흐름을 새로 만들지 않는다.
+
+기존 fixture cursor 예상값/providerFailure 및 settings cleanup의 legacy bare role key를 원인 확인 뒤 교정. production settings 변경 없음. 최종4 실패2는 host/DB clock차: exact5분 backoff의host하한8ms 부족, scan completed_at이 DBnow보다6.007ms 미래. 단독RED/계측으로 입증해 DB시각 양쪽경계·정확한backoff/4회·실제scan/currentversion/candidateID 검증을 유지했다. sleep/임의tolerance/사후scan행수정 없음.
+
+stale .next/dev/types가 삭제된32route 참조: private dir로 생성물만 가역이동/typegen0, tsconfig/app 변경 없음. PG17 transaction_timeout socket 문제를 피하고 readonly outer race+남은 statement/lock예산 사용. Meta legacydocs429는 공식newURL/index의 일반GET200로 읽음; 인증/우회 호출 없음.
+
+## Remaining work / exact next actions
+
+코드 개선·로컬검사·모든독립리뷰·코드6커밋·보고서·HOT조사는 완료. 문서최종커밋에 이인계를 포함한다. 추가 source 테스트/리뷰를 현재 변경없이 반복할 필요 없다.
+
+1. 운영 후속: 최신base CI check/PR/main→migration0076→같은SHA 웹/worker배포→source/h·due·304/quota·신규starvation·외부Push/deadman 수신 실측. 아직실행하지 않았다. 과거 gate fresh재수집→규칙 판정도 미실행. 소개 검수pause 유지.
+2. HOT는 공식 계정 공개검색/필드·비용·권한 파일럿 후 새 social 역할·관측·HOT snapshot·필터를 별도 구현한다. 현재는 가능성 조사까지다.
+3. 테스트 컨테이너 nomorevibe-pipeline-test-db-20261014/nomorevibe-evidence-test-db-20261014/nomorevibe-monitor-test-db-20261014만 docker stop 실제exit0. 삭제없음, 기존사용자컨테이너변경없음. 새검사필요시 먼저restart/pg_isready 및 DB독점확인.
+
+Private `/private/tmp/nomorevibe-pipeline-implementation-20261014`0700/output0600. run_review.py 실제 codex exec --ignore-user-config --ephemeral -m gpt-6.1-sol -c model_reasoning_effort=xhigh -s read-only --skip-git-repo-check --json, stdinDEVNULL. 완료17회 actual input29,249,292(그중cache26,870,272)/output238,586. cache는 input 일부이며 합산하지 않는다. 모든프로세스exit0/turnfailure0; 리뷰의중간지적은재현·수정해각범위최종CLEAN. 마지막CLI실행종료, session84148 재poll불필요. 원시jsonl/비밀/입력 전체출력 금지.
+
+Obsidian journal `/Users/jr/Library/CloudStorage/SynologyDrive-sync_data/Obsidian-Vault/프로젝트 일지/nomorevibe/2026-10-14 수집 검수 복구와 소셜 HOT 조사.md` 구현·조사완료로갱신, 코드6커밋/최종검사/리뷰/실제usage/운영remaining기록. 문서commit후해당SHA도 journal에추가한다.
+
+```sh
+git status --short
+git log -7 --oneline
+git diff --check
+cat /private/tmp/nomorevibe-pipeline-implementation-20261014/evidence_round5.review.md
+cat /private/tmp/nomorevibe-pipeline-implementation-20261014/evidence_round5.receipt.json
+cat docs/operations/2026-10-14-pipeline-recovery-implementation.md
+cat docs/operations/2026-10-14-social-hot-crawler-feasibility.md
+cat PENDING.md
+sed -n '1,65p' docs/operations/independent-workers-runbook.md
+```
+
+---
+
+# 2026-10-14 — 다음 운영 조치: 구버전 발행분 감사 상태 정리 완료
+
+## Current objective / completed work
+
+사용자가 “2차 모델의 1차 검수모델은 정상동작하니까 다음 작업 진행하자”라고 지시했다. 기존 처리량 보고서의 다음 운영 조치2(구버전 감사 상태·알림 정리/새 감사 필요성 판단)를 수행했다. 기본 모델 가용성 확인을 다시 설정 교체 작업으로 돌리지 않았다. careful 스킬을 운영 조회·변경에 적용했다. 앱 코드 변경은 하지 않았으며 brainstorming/TDD 구현 흐름은 시작하지 않았다.
+
+11:09:35.506 KST live read-only/repeatable-read: campaign3 running/글2026-09-19.3·규칙2026-09-19.2, 현행둘다2026-10-06.2. 총11,558/AI완료6,382/미답5,176/현재공개미답4,839/다른조건실행가능4,838, 공개거절사람미처리1,209·보류75. 마지막실제감사9/21 02:00:08.447 KST, 최근1h모델호출0. 공개전체43,621·수집원본연결43,621·유효사람유지0. 기존 startProductAudit(replacing)는 미답4,839가 아니라 공개전체를 새 감사에 등록한다.
+
+범위 async 질문(상태정리후근거갱신개선 추천/공개전체새감사)에 답이 없어 60초 이상 독립조사 후 안내한 추천을 채택했다. **11:14:05.602 KST campaign3을 cancelled로 조건부 종료하고 finished_at 기록**, operations_audit ID12160(action audit-cancel/target campaign:3/actor codex/token/요청자JR/source codex-cli-ops)을 같은 트랜잭션에 추가했다. ID3/running/정확한구버전/현재기준불일치가 모두 맞아야변경. 항목11,558·시도6,732 전후전체내용MD5digest각각동일, introrequested742/processed741/not_before2100동일. 공개제품/후보/판정삭제나변경없음. 새로운감사생성없음.
+
+11:16:34.066 KST actual productAuditOverview: #3/cancelled/stalledfalse/pausednull. actual attentionCounts.auditCampaign=null, running0. 11:15:51 KST 후속product-auditjob성공/requested=processed35,664. 기존미답5,176은이력으로보존되며새판정처리완료가아니다. intro사용자pause유지. UI가사용하는서버집계검증이며브라우저DOM검증은미실행.
+
+## Modified files / decisions / test results / failed approaches
+
+신규 docs/operations/2026-10-14-published-audit-state-cleanup.md, 기존 docs/operations/2026-10-14-pipeline-capacity-measurement.md에시점구분후속상태추가, 이인계prepend. private /private/tmp/nomorevibe-audit-state-20261014(0700/0600): baseline.py/json, close-stale.py/close-result.json, verify.py/json. 기존 reviewer 인증을쓰고비밀노출없음. SQL조건부종료+로그추가는이력삭제없는기존cancel의동일상태전환을더좁은CAS조건으로적용한운영조치다. 앱코드/모델설정/배포/commit/push없음, 사용자미추적PT/prototypes산출물유지.
+
+실제 baseline/종료트랜잭션(이력·pause보존검사)/후속집계조회모두exit0. 최종 git diff --check exit0, 신규·후속보고서 공백검사와 저장된실측의 이력/pause/후속job/관리자집계 assert검사 exit0. 기존관리자원자적재시작·감사격리테스트의소스를읽었으나실행하지않았다. unit/integration/build미실행. rg의tests/product-audit*.ts glob은zsh의nomatches로실패하여실제tests/integration/product-audit.test.ts경로로교정. lib/admin 및lib/jobs/schedule.ts/definitions.ts는존재하지않아실제admin-log/registry/refresh경로로교정했다. 상태변경실패나재시도는없다. 종료session10491/76231/68114는재실행필요없음; close-stale.py는일회성CAS라재실행하지않는다.
+
+## Remaining work / exact commands
+
+운영조치2는완료. 전체새감사는미시작이며구버전기준문자열을현행으로바꿔기존AI결과와섞지않는다. 사용자가전체새감사옵션을뒤늦게선택하면running이없는현재상태확인뒤기존startProductAudit로새캠페인을열고새모델실제진행을확인한다. 미답한정스코프는현재startProductAudit가제공하지않는다. 소개검수pause는별도지시없이지속유지.
+
+다음 구현은 기존PR03: evidence-refresh.ts의completefalse시커서중단/일반source진행누락, providers/github.ts의내부페이지checkpoint·완료핵심facts보존, refresh.ts의canonical_site독립due/retry선택. 코드·기존회귀경로를읽었지만수정하지않았다. 이후PR04cache→PR05용량계측. 이운영단계를PR03구현완료로보고하지않는다.
+
+정확한 읽기 명령:
+- cat docs/operations/2026-10-14-published-audit-state-cleanup.md
+- sed -n '80,98p' docs/operations/2026-10-14-pipeline-reliability-audit.md
+- sed -n '150,170p' docs/operations/2026-10-14-pipeline-reliability-audit.md
+- sed -n '100,174p' lib/jobs/products/evidence-refresh.ts
+- sed -n '276,319p' lib/domain/evidence/refresh.ts
+- rg -n 'budget_exhausted|deadline|release|activity' lib/domain/evidence/providers/github.ts
+- rg -n 'budget|cursor|progress|canonical' tests/integration/evidence-refresh.test.ts tests/product-refresh-progress.test.ts tests/github-evidence.test.ts
+- git diff --check
+
+재확인만 필요한 경우: python3 /private/tmp/nomorevibe-audit-state-20261014/verify.py (read-only).
+
+---
+
+# 2026-10-14 — Coder 승인 100건 Codex CLI 검증·복구된 supa Qwen 비교 완료
+
+## Current objective / completed work
+
+사용자가 “coder로 승인한거 codex 직접실행해서 유효성 체크해봐. codex cli gpt-sol-6.1 xhigh로 해”라고 지시한 뒤 “supa qwen 동작해. 지금 판별한거랑 비교해봐”라고 추가 지시했다. codex-exec 스킬을 적용해 실제 `gpt-6.1-sol / xhigh` 직접 CLI를 호출했고, 복구된 기존 AI2 기본 `[supa] Qwen3.8-27B-NVFP4`와 동일 고정 100건을 비교했다. 두 검증과 별도 형식 진단 모두 완료, 실행 중 작업 없음. 운영 모델 교체·판정 변경·배포는 하지 않았다.
+
+10:10:55.072 KST read-only/repeatable-read 추출: 현행 prompt/rules2026-10-06.2 및 policyHash7711f773d38840456d85b2ab7e7765ef883bad915ce2de06dc90146817f2a233, 동일 입력/1차 세대/원심사 시 유효기간을 만족하는 최근24시간 Coder 승인 고유후보827개. 후보당 최신 승인1개, seed2026-10-14-coder-approved-audit-v1와 candidateID SHA256 순서로100개 선택. 범위 async 질문에 답이 없어 사전 안내한 기본 random100으로 진행했다. 표본은 website92/installable8이며 당시 모두published, AI1gpt-oss 승인 뒤 기본 모델 실패 fallback으로 Coder가 승인한 기록이다. Node의 동일canonical hash 계산으로 원본100개 input_hash 전부 일치.
+
+Codex 블라인드에는 caseID/snapshot/정확한 운영 정책만 전달, AI1/Coder 결론·공개상태는 숨겼다. CLI0.162.1에서 `codex exec --ignore-user-config --ephemeral -m gpt-6.1-sol -c model_reasoning_effort=xhigh -s read-only --skip-git-repo-check -C <blind/batch-XX> --output-schema <schema.json> --json -o <결과.json> <고정prompt>`를10건씩10회 직접 subprocess 호출(stdin=DEVNULL). 다른 에이전트·운영 쓰기·네트워크 금지. 10회 exit0, ID100개 중복/누락0, 근거 원문 substring 검사 오류0. 결과 approve82/reject15/needs_review3. 입력2,556,182(그중cache1,987,968)·출력67,218, 합계2,623,400토큰. cache는 입력에 포함되며 더하지 않는다.
+
+Qwen 목록 복귀10:18:24.600 KST 확인 뒤 같은 snapshot을 기존 reviewer 환경/`reviewWithGateway`로100회 호출했다. 운영 prompt SHA25629c1bd746d239afaa2f99c7318a4aea867c2a36f40a48b25571a3a53c59c8ceb 확인, raw context/temperature0/concurrency2/timeout60초 및 실제schema·근거ID 검증 적용, DB 조회read-only·판정미저장. 10:19:54.062~10:26:20.578 KST 결과 approve69/reject14/needs_review2/failure15(12invalid_json+1unknown_evidence+1gateway_error+1timeout). 중앙3.900초/p95nearest-rank7.576초/최대60.002초. 유효85건에서Codex일치75건(88.2%), 나머지유효불일치10건. Codex거절15중Qwen거절10/승인2/보류1/실패2. installable8은Codex승인8/Qwen승인5·실패3.
+
+root가 거절15건의 원문과 규칙을 대조: 제목·JS안내뿐13, 제3자패키지등록1, 대행서비스판매1. Qwen은 제목뿐인 Mateeb/Marvin 포트폴리오2개를 README로 승인, 제목뿐Milkhama를 보류했다. 7개의 제품·서비스 혼합/짧은UI/로딩/Canvas 경계 불일치는 사람의확정정답을붙이지않았다. Coder승인표본만이며 전체정확도·오거절률·모델전반우위는확정불가. 당시수집텍스트의규칙검증이며 현재사이트실행/코드품질/AI제작검증이아니다.
+
+JSON오류3건을 최초100회와분리해동일조건재호출:286209approve성공,283403다중JSON+종료태그출력으로invalid_json재현,284750timeout. 최초결과를재호출결과로대체하지않았다. model응답필드는Inferact/Qwen3.8-27B-NVFP4였으나실제checkpoint구성은미검증. 최초usage보고98회:입력362,300/출력14,981/합계377,281, 별도진단usage보고2회:5,699/440/합계6,139. 미보고호출비용은미확정이다.
+
+## Modified files / key decisions / failed approaches
+
+repo 수정: `docs/operations/2026-10-14-coder-codex-supa-validation.md` 신규(방법·교차표·15거절/3보류·형식진단·100개대조표·토큰량), `docs/CODEX_HANDOFF.md` 갱신. 앱코드/운영설정/공개판정/발행/소개검수pause 변경 없음. 사용자 기존 미추적 PT/prototypes/운영감사문서 유지, commit/push 없음.
+
+private `/private/tmp/nomorevibe-coder-codex-validation-20261014`(0700/파일0600): extract.py/cohort-metadata.json/selected-manifest.json/blind/batch-01~10/{policy.txt,cases.json,AGENTS.md}/schema.json/prompt.txt/run_codex.py/collect.py/integrity.json/outputs/*.receipt.json,*.jsonl,*.stderr,*.json/run_supa.py/supa-availability.json/supa/batch-XX.json/compare.py/results.json/summary.json/comparison-results.json/comparison-summary.json/diagnose_supa_format.py/supa-format-diagnostic.json/root-review-notes.json. 원시snapshot과raw모델응답·비밀은공유문서/Git에넣지않는다.
+
+실패/교정: 전체827개 원본을 한 번에 export하자 기존 SSHhelper 출력상한에 JSON이 잘려, 메타데이터먼저→선택원본10개씩으로 교정했다. 비교집계에서 failure.detail=null을 문자열로 합쳐 TypeError가 나서 null정규화 후 재집계성공. 인용검사4개는 array field의 `[index]` 표기를 기존 dot전용resolver가 해석하지못한 것이며, 두 표기를지원해100개전체원문검사0오류를확인했다. 모델 원결과는 수정하지 않았다.
+
+## Tests / remaining work / exact commands
+
+실제실행: Codex10개직접CLIexit0·결과완전성/근거검사성공;Qwen100개완료기록 및 별도3개진단;`collect.py final`/`compare.py final`exit0. `git diff --check` exit0, 신규보고서 공백검사 및 대조표100개ID 유일성·원결과일치 검사 exit0. CLI10개전체 JSONL에 error/turn.failed 이벤트0, 의도하지않은변경·네트워크명령0을확인했다. 모델유효응답과프로세스exit0은구분한다. 앱코드변경없어unit/integration/build미실행. 종료session38356/93961(Codex),9718/3262(Qwen),38792(진단)는재실행·poll할필요없다.
+
+이번 요청의 비교·보고는 완료했다. 후속 구현은 미실행: supa gateway 채팅템플릿/다중JSON응답 안정화→명확한 제외 조건의 AI1/Coder/Qwen 회귀평가→짧은UI·Canvas·혼합서비스 증거/라벨 보강→승인·거절 양쪽의 사람라벨 평가로 모델선택. 파서가 서로다른다중판정중하나를임의채택하지않게 해야한다. 소개검수not_before2100은별도지시없이유지한다. 생산 판정반려/비공개/모델설정교체는이번검증권한으로임의실행하지않는다.
+
+다음 담당자의 정확한 읽기·재집계 명령(새 모델 호출 없음):
+- sed -n '1,151p' docs/operations/2026-10-14-coder-codex-supa-validation.md
+- python3 /private/tmp/nomorevibe-coder-codex-validation-20261014/collect.py final
+- python3 /private/tmp/nomorevibe-coder-codex-validation-20261014/compare.py final
+- cat /private/tmp/nomorevibe-coder-codex-validation-20261014/root-review-notes.json
+- git diff --check
+
+
+---
+
+# 2026-10-14 — AI2 대체 모델 목록·기존 품질 근거 확인
+
+## Current objective / completed work
+
+사용자가 AI2 기본 설정 확인 뒤 abcllm의 대체 가능한 모델과 qwen3-coder:30b의 품질을 물었다. 실시간 심사용 대화 모델 목록, 최근 저장된 심사표, 기존 모델 평가 문서를 확인했다. 운영 모델 교체/새 품질 평가/배포는 아직 실행하지 않았다.
+
+09:54:17 KST live 목록10개: qwen3-coder:30b, qwen3:8b, [MLX] gemma4-26b, [MLX] qwen3.5-122b, [MLX] gpt-oss-120b, [MLX] qwen3.6-35b-heretic, [MLX] gemma4-e2b-heretic, [MLX] qwen3.8-27b-uncensored, [MLX] laya, [MLX] laya-multilingual. 기존 listGatewayModels는 embedding/voice/vision 전용을 제외하므로 전체 API 모델 수와 같다고 하지 않는다. AI2는 기존 supa Qwen3.8-27B-NVFP4, fallback coder30b, AI1은 gpt-oss120b를 유지했다.
+
+같은 시점 coder 최근1시간 저장 결과는 유효52/invalid_output1의53행(approve45/reject7)이다. 최근24시간은 유효989/오류83의1072행이다. 재시도는 같은 행을 갱신할 수 있어 실제 전체 호출 성공률이 아니다. 현행 prompt/rules2026-10-06.2 및 AI1gpt-oss의 approve 입력989건에서 coderapprove867/reject122였다. 승인 입력만 선택한 집단이며, 1차 일치율을 정답률/품질로 환산하지 않는다. 사람이 현행 기준으로 붙인 정답 라벨에 대한 coder 정확도는 미확인이다.
+
+과거9/17 fallback 평가는 coder완료12/유효4/기준일치4/timeout8이며 미완료2는 제외했다. 현재 안정성이 개선됐어도 품질 평가의 유효 표본은4개뿐이고 구정책 라벨이라 현행 정확도 증거로 쓰지 않는다. Qwen3.8-27b-uncensored의 과거14사례 평가는 유효14/일치13/오승인0/보류1/median15.5235초였다. 이 역시 일반 정확도나 현재 모델 우위를 입증하지 않는다. Gemma26b의 구14사례에는 오승인2, qwen3.6heretic에는 구정책에서 오거절 패턴(mistake.md)이 있었다. gpt-oss는 현AI1과 같은 모델이라 AI2 독립표 대체 후보에서 제외한다.
+
+## Modified files / decisions / tests / remaining work
+
+이 인계 기록만 추가했다. private evidence /private/tmp/nomorevibe-model-recovery-20261014/quality-inventory.json(0600). live 목록과 postgres read-only 집계를 실제 실행해 exit0, 코드변경/새unit·integration/새AI평가호출은 없다. abcllm 스킬을 읽었고 실제 인증은 기존 reviewer 환경을 이용했다. hardcoded 자격정보는 재사용하지 않는다. Qwen 공식 GitHub/Qwen3-Coder와 공식 HF/Qwen3.5-122B-A10B도 확인했으나 gateway alias의 checkpoint/양자화 일치는 미확인이라 공개 benchmark를 이 서비스 정확도로 쓰지 않는다.
+
+권장 다음 작업은 coder를 비교 기준으로, 현행 정책으로 사람이 라벨한 동일 입력에서 Qwen3.8-27b-uncensored와 Qwen3.5-122b를 비교하고 오승인/오거절/보류/출력실패/60초 제한을 보고 AI2 기본 모델을 고르는 것이다. 크기나 모델명만으로 우열을 정하지 않는다. 사용자 질문은 정보 확인이며 이번 턴에는 설정을 변경하지 않았다. 소개검수 pause 유지, PR00~07 미구현.
+
+다음 담당자의 정확한 읽기 명령:
+- cat /private/tmp/nomorevibe-model-recovery-20261014/quality-inventory.json
+- cat docs/operations/2026-09-17-second-review-fallback.md
+- cat docs/operations/evaluations/2026-09-17-sonnet-fallback/replacement-qwen-summary.json
+- cat docs/operations/mistake.md
+- git diff --check
+
+---
+
+# 2026-10-14 — 기본 모델 복구 대상 확인 / 1차 정상 확인
+
+## Current objective / completed work
+
+사용자가 진행 순서 안내 뒤 “먼저 1차 기본모델 복구부터 해보자”라고 요청했다. 앞선 1순위 작업은 AI2 기본 모델 복구였으나 문구는 AI1을 가리켜, async 질문으로 대상 확인을 요청하고 그동안 운영 설정·모델 목록·최근 심사 기록을 읽었다. 이 시점 대상 확인 답변은 아직 받지 않았다. 명시된 AI1의 정상 동작은 확인했고 AI2 설정 변경은 실행하지 않았다.
+
+2026-10-14 08:59:26 KST 기준 live gateway 목록에 AI1 `[MLX] gpt-oss-120b`가 존재하고 최근 1시간 실제 automatic/non-rules/non-reused 완료는 succeeded73/timeout1이다. 같은 구간 AI2 `[supa] Qwen3.8-27B-NVFP4`는 목록에 없고45개 심사표가 model_unavailable→fallback으로 끝났다. 예비 qwen3-coder:30b는 유효44개(approve39/reject5), invalid_output1개였다. 이는 해당 시점 DB 저장 기록이며 모든 실제 호출 수나 판정 정확도 지표는 아니다.
+
+09:01:28 KST 운영 reviewer 컨테이너에서 기존 최신 성공 snapshot 하나를 현행 gateway adapter/24초 제한으로 다시 호출했다. 실제10,036ms/oktrue/approve, 기존approve와일치, evidenceIds1개로 출력·인용 검증을 통과했다. 판정·후보·발행 결과는 저장하지 않았다. 이1회와 최근 기록은 현재 AI1 정상의 증거이고 장기 무장애/일반 정확도 보장이 아니다. 최근24시간 gateway_error607개도 있어 과거 장애가 없었다고 해석하지 않는다(마지막17:42:44Z, 최근1시간에는없음).
+
+## Modified files / key design decisions / tests
+
+앱코드·운영 설정·환경·배포 변경 없음. 수정 파일은 이 인계 문서뿐이다. 기존 getSettings/listGatewayModels와 postgres read-only transaction을 사용했다. reviewMode=enforce/reviewConcurrency4/discover.pagesPerTick6, 소개 검수 product-intro-check not_before2100-01-01/requested742/processed741을 확인했다. AI2를 AI1 모델로 대체하거나 예비를 임의로 승격하지 않았다. 가용 `[MLX] qwen3.8-27b-uncensored`를 기존 supa 모델과 같은 모델로 가정하지 않는다. 2026-09-17 별도평가 기록은 과거정책 증거여서 현행정책 품질검증 대용으로 쓰지 않는다.
+
+새 private 증거 폴더 /private/tmp/nomorevibe-model-recovery-20261014(0700), baseline.json/first-smoke.json/first-smoke.py(0600). 비밀·원시snapshot·모델본문은 출력/공유문서에 남기지 않았다. 실제 첫 read-only baseline 조회 성공, 최종 smoke 명령 exit0 및oktrue. 새unit/integration/typecheck/build는 실행하지 않았다. 처음 smoke helper는 존재하지않는decision DB컬럼을조회해remote_node_failed가났고, schema를확인해outcome->>'decision'으로교정한뒤실제로호출에성공했다. 추정first-reviewer/settings-types/settings-validation/review-model 파일읽기실패는 agent-review/settings-schema/review-model-identity 실제경로로교정했다.
+
+## Remaining work / exact commands
+
+AI1은 현재복구할모델누락장애가없어유지한다. 사용자가 AI2(안내의1순위작업)를뜻했다고확인하면, live모델목록/현행입력으로실제성공·독립성·품질을검증한뒤saveSettings의expectedFormVersion CAS로AI2만정리하고, reviewer설정판적용·실제운영심사성공·불필요한기본실패제거를확인한다. 사용자중단소개검수는재개하지않는다. 구버전감사/PR00~07도아직실행하지않았다.
+
+다음 담당자 읽기 명령:
+- sed -n '1,48p' docs/CODEX_HANDOFF.md
+- cat /private/tmp/nomorevibe-model-recovery-20261014/baseline.json
+- cat /private/tmp/nomorevibe-model-recovery-20261014/first-smoke.json
+- git diff --check
+
+AI1 연결을 다시 확인해야 하는 경우에만 실행(실제AI호출1회/판정저장없음): python3 /private/tmp/nomorevibe-model-recovery-20261014/first-smoke.py
+
+---
+
+# 2026-10-14 — 단계별 실제 처리량·적체 원인 측정 완료
+
+## Current objective / completed work
+
+사용자가 단계별 실제 수량을 실측해서 병목과 검수 요청 적체 원인을 찾으라고 지시했다. 20분 연속 운영 관측(00:42:50~01:02:51 KST/21샘플)과 마지막 묶음 후속 관측(01:03:30~01:05:38/5샘플), 실제 저장 입력을 이용한 모델 동시성1/2/4 비교를 완료했다. 고정20분 발굴192/원본141/규칙141/AI1시작19·성공17/AI2기본8실패·예비8성공/발행7/근거고유source408성공, 후속까지 원본·규칙212/AI1시작26·성공27·실패1/유효AI2표13/발행12였다. 시작 전 AI1진행2건과 재시도1이 있어 유입/완료 단위를 맞춰야 한다. 신규 묶음 수집대기81에서 약3분48초 후5단계 runnable와AI1진행이0이었다. 현재 부하에서 신규 검수 지속 적체는 없지만 공개 근거갱신은1223source/h 대 최소3453/h, due46904→46932/최종고정시점24000제품으로 실제 부족이다. 모델 단독 환산이나 낮은 부하 완료량을 파이프라인 최대 능력이라 하지 않는다.
+
+2차 기본 supa Qwen3.8-27B-NVFP4는00:45기준1시간54회전부model_unavailable, 별도4회도실패,00:59live모델목록에도없었다. 예비 qwen3-coder:30b가 대신 처리한다. 반복8건/동시성의1차 성공환산401/733/766h(성공8/7/7),예비1026/1388/1021h(성공8/8/5),quad예비gateway_error3건이었다. 초기4건/설정 탐색까지실제76회/판정저장없음. 발행분campaign3 구버전 정책으로미답5176(현재공개4850/다른조건실행가능4849)이20틱전부policy_changed로건너뛰었다. 사용자중단소개검수대상2178/job2100을유지했다. 현재후속보류53은사람/근거/소진이며실제AI2재시도보류1별도. AI제작scan현재대상44331/due41835/최초14802;고정20분81저장소중partial63/complete18(캐시1)이라완료량을81완전스캔이라고하지않는다. 신규AI1scan대기0확인.
+
+앞선 수집량 조절 요청으로 2026-10-13T15:26:22.202Z discover.pagesPerTick만10→6으로 기존 saveSettings/CAS를 통해 변경했고4역할의설정 버전9f5fce76c5fd8d12 적용을후속종료에도확인했다.6페이지는검증된최적값/새프로젝트수상한/40%실제유입감소증거가아니다. 모델·동시성·소개중단은이번측정에서바꾸지않았다.
+
+## Modified files / key design decisions / tests
+
+앱코드 변경·배포 없음. 측정은 읽기 전용 DB와 판정을 저장하지 않는 AI 호출을 사용했다.비밀·원시입력·모델답변을출력/커밋하지않는다. private 기존증거 /private/tmp/nomorevibe-pipeline-audit-20261013, 새증거 /private/tmp/nomorevibe-pipeline-capacity-20261014(0700/0600): samples.jsonl/summary.json/drain.jsonl/benchmark.json/fallback-benchmark.json/repeat-benchmark.json/queues.json/extra.json/models.json/follow-final.json. 새 단위/통합테스트는실행하지않았다. 실제운영first timeout1건은동일candidate/input/sourceRevision/policy/provider/model로01:03:06실패→retry_after01:04:06→01:04:22재시작→01:04:31성공을확인했다. 읽기glob실패는실제경로로교정했다. source콜로그226과고유source408/완료제품199의단위가다르다. 마지막burst추가관측과기간경계상한을적용해20분cutoff와후속치를분리했다.
+
+문서 신규 docs/operations/2026-10-14-pipeline-capacity-measurement.md, 기존reliability-audit후속링크/PR00가이드, catchup최종종료기록, 이인계수정. 앞선 근거catch-up은15:24:32.733Z에65틱/jobfailed0/time_limit로자동종료/process_alive=false/finished=true. batch합시도1424/정상완료1354/제품실패5/factsChanged1345/events973이며고유수아님. 종료된PID35030명령은실행하지않는다.
+
+## Remaining work / exact commands
+
+측정·원인보고를완료했고개선구현은아직하지않았다. 우선없는AI2기본모델정리/구버전발행감사중단상태명확화·새감사필요성결정, 기존PR03→04→05의부분재개/cache/전용lane용량실측이핵심이다. PR00은후속대기시간기준유입제어(미구현),PR02소진인계,PR06정책중단/사람보류/출력감시보강. 근거5,500/h는목표이며전용55초만으로보장하지않는다. 사용자중단소개검수재개없음. 새 모델증설/신규코드/커밋/푸시/배포없음. 사용자미추적자료유지. 실제 git diff --check exit0 및 신규측정보고서/기존감사/수정catchup문서의공백검사 exit0을확인했다. 단위·통합 테스트 성공으로 보고하지 않는다.
+
+실제측정명령(재실행AI호출필요없음): python3 /private/tmp/nomorevibe-pipeline-capacity-20261014/sample.py, benchmark.py, fallback-benchmark.py, repeat-benchmark.py, queues.py, extra.py, drain.py, logs.py final, analyze.py, models.py, holds-final.py, follow-final.py. sample와drain은실제종료/모델비교도종료확인. 읽기helper /private/tmp/nomorevibe-evidence-refresh-20261013/ops.py run(js). 최종보고파일 docs/operations/2026-10-14-pipeline-capacity-measurement.md.
+
+다음 담당자가 먼저 읽을 정확한 명령:
+- sed -n '1,180p' docs/operations/2026-10-14-pipeline-capacity-measurement.md
+- sed -n '150,180p' docs/operations/2026-10-14-pipeline-reliability-audit.md
+- git diff --check
+- 필요한 때 가용성만 다시 조회: python3 /private/tmp/nomorevibe-pipeline-capacity-20261014/models.py
+
+없는2차모델 설정 변경·구버전감사 교체·PR구현은 아직 실행 전이다. 사용자가 중단한 소개 검수는 별도 재개 지시 없이 계속 중단한다.
+
+---
+
+# 2026-10-14 — 수집·검수·발행·자동 복구 병렬 감사 완료
+
+## Current objective / completed work
+
+사용자 요청은 전체 수집→검수 로직과 실패 자동 재실행의 코드·운영 대조, 공개 제품 지연 출처 약4.8만건의 해결안 보고다. gpt-6.1-sol/xhigh 3담당(collection/review_publish/recovery)의 읽기 전용 병렬 감사 및 최종 보고서 재검토가 끝났으며 root가 보완·최종 보고를 완료했다. 현재 main edeb8cf, backend b5924ac이며 감사 관련 backend 경로 diff는0이다. 2026-10-13T14:46Z monitor overall ok/5역할 ready/스케줄러2복제본 fresh, 14:50:30Z 현재 frontier pending/fetching0·failed14, 문서→후보 미연결0, approved5/needs_review43, AI1 최근1시간 성공73/실패4, AI2 resolved81이다. 실행13앱/18컨테이너, Swarm restart any/5초/unlimited 확인. 현 시점 전체 중단은 확인되지 않았다.
+
+## Modified files / key design decisions
+
+이번 감사는 앱코드·운영 설정을 수정하거나 재시작하지 않았다. 기존 1시간 evidence catch-up만 별도 계속 동작한다. 소개 검수 product-intro-check의 사용자 중단(not_before2100)을 유지한다. private 증거는 /private/tmp/nomorevibe-pipeline-audit-20261013(0700,파일0600): db-before.json/monitor-before.json/runtime.json/db-snapshot.mjs/db-deep.json/deep-snapshot.mjs 등이다. 비밀·원시본문·환경 전문을 출력/커밋하지 않는다. 최종 문서 docs/operations/2026-10-14-pipeline-reliability-audit.md 신규, 이 인계 수정이다. 이전 catchup 문서와 사용자 미추적 파일은 유지한다. 15:06:26Z 현재 공개 current link41351+canonical_site41345=source82696, due47287/24176제품/최장56h, 기존 catchup 시작14:24:31 이후 성공source1823/제품922/관측41.9분(약2610source/h)을 확인했다. 비공개 due2860/최장795h 별도, 현재visible 저장소source미생성1158개 별도다. site due 중 repo due가없는1017개는 ok/failed 합산이며 강제 요청 여부 미구분이다.
+
+## Findings / tests / failed approaches
+
+확인된 코드 결함: fetch 초기 evidence gate의 무조건 candidate UPSERT가 관리자/AI의 최신 결정을 덮을 수 있는 race(운영 발생수 미확정), 500star 예외보다 앞선 gate의 정책 불일치, 헤더전 transient site status0/429/5xx의 terminal rejected 처리(헤더후body단절은boundedretry존재). evidence 일반 갱신은 budget 미완료 시 커서를 전진하지 않고 내부페이지 진척도 저장하지 않아 느린 한 제품이 뒤의 제품을 반복 차단할 수 있다(현재 운영 커서 이동 확인, 현재 전역 정지의 증거는 아님). canonical_site 자체 due가 일반 선택에 들어가지 않고 저장소 수집 때 사이트 retry시각을 무시한다. 각 보조 GitHub endpoint의 무조건 호출로 처리량 부족. 자동 retry 소진 일부 needs_review는 상세exhausted/전체보류43에포함되나소진사유전환이없어AI1단계 manualAttention집계에서빠진다. Grok first provider는 현재40초 tick/90초 호출예산 및 AI2 success provider whitelist 불일치이나 운영은 abcllm이므로 잠재 결함이다. evidence 출력 감시 누락/개별 lane poll hang 감시 구멍/지속 provider 오류 alarm=false가 추가 개선점이다. 루트 crontab·두 host Docker service에서 monitor 설치를 찾지 못했지만 외부 host/launchd 설치 여부는 미확인이다.
+
+실제 실행한 기존 테스트: collection 10파일85사례, review_publish 13파일206사례, recovery 8파일52사례, root evidence/runtime 10파일53사례 전부 exit0. 겹치는 파일이 있으므로 합계를 독립 검증 수로 보고하지 않는다. root 명령: npm test -- tests/github-evidence.test.ts tests/product-refresh-progress.test.ts tests/evidence-scheduler.test.ts tests/evidence-worker.test.ts tests/agent-evidence-refresh-budget.test.ts tests/agent-evidence-refresh-demand.test.ts tests/worker-progress.test.ts tests/worker-supervisor.test.ts tests/role-worker.test.ts tests/maintenance-progress.test.ts. 이번 감사에서 DB integration/운영 fault injection/실제 AI 요청은 실행하지 않았다. 기존 unit은 신규 race·budget 반복·독립 사이트 due 문제를 검증하지 않는다. 존재하지 않는 glob/파일 read 실패는 실제 경로로 교정했다. ambiguous2건은15:06:28Z strict read-only/repeatable-read에서 enabled/enforce/isReviewCandidate=true/starfalse/현재 inputHash·sourceRevisionHash·policyHash·버전·provider/model 실패실제3개/owner_changed제외/유효성공없음/source fresh까지 확인해 현정책 자동소진 실제2건으로 확정했다. agent도helper를읽고조건충족확인했다. 미래publication timestamp상한 누락이 있는집계는보고서에서쓰지않았다. 새문서 whitespace 검사 exit0, tracked git diff --check exit0. no-index --check는새파일diff로exit1/공백진단없음을정상0성공이라고쓰지않는다.
+
+## Remaining work / exact commands
+
+감사·최소 PR01~07 해결안·독립최종재검토·보고를 완료했다. 제안 구현은 아직 하지 않았다. PR03(부분재개/사이트선택)→04(endpointcache)→05(전용lane55초단일제품계측,미달시2개제한병렬) 순서가 적체 해결 핵심이다. 유지최소3446source/h/catchup목표5500/h는계획하한·측정목표이며즉시달성이나24h완료약속이아니다. 보조cache최초200구축/실제304비율확인필요. quota예약DB/새상시worker/새queue·스케줄러/pool확대를필수화하지않는다. PR01/02 fetch공유,PR03/04 provider공유는순차통합/파일소유권분리필요. 보고서상rolelease는갱신실패즉시모든쓰기차단이라하지않고새선출tx jobtoken무효화시점으로정밀화했다. CONNECT분류실패hold/directkeywordfallback과헤더전transport종결/헤더후bodyretry도구분했다. 앱코드 구현·커밋·푸시·배포를 이번 감사 완료로 주장하지 않는다. 이전 catchup은 2026-10-14 00:03:52 KST 42틱완료/alive/종료전확인,00:24:31 자동종료 예정이며 아직 종료 실제확인은 하지 않았다.
+
+- python3 /private/tmp/nomorevibe-evidence-refresh-20261013/status.py
+- 운영 읽기는 해당 ops.py import→run(js), postgres read-only 또는 Drizzle repeatable-read/read-only tx만 사용하고 private snapshot에 저장한다.
+- git diff --check
+- 필요한 코드: lib/crawl/agent-review-repository.ts loadReviewInput, lib/crawl/admin-review.ts currentReviewStatus, lib/crawl/agent-review.ts firstReviewer; 필드 identity 전체를 맞춰야 exhaustion을 확정한다.
+- 사용자 main의 기존 미추적 PT/prototypes 산출물은 유지한다. 원격 push/운영 restart/fault injection을 하지 않는다.
+
+---
+
+# 2026-10-13 — 제품 근거 갱신 적체 처리 진행 중
+
+## Current objective / completed work
+
+사용자가 기한 지난 출처 51,141건의 근거 갱신을 요청했다. 운영 DB를 2026-10-13T14:19:41Z에 읽기 전용으로 측정했다. 전체 source 85,942개 중 due 51,104개/최장795시간이나 현재 공개(verified/seeded) 제품의 visible 링크에 맞는 source는 41,251개, due 23,649개/23,649제품/최장54시간이다. 최초 source 없는 visible 링크 1,236개도 별도 존재한다. 후속조회 scope.json에서 canonical_site/product_site는 visible 링크 외에 repository 갱신이 함께 수집하는 현재 사이트 근거임을 확인했다. 현재 사이트 due24,644개/최장57시간, 현재 링크 due23,667개/최장54시간, 비공개 제품 출처 due2,832개/최장795시간이었다. 따라서 23,649는 공개 제품 저장소 링크의 대기 수이며 사이트까지 포함한 출처 전체를 의미하지 않는다. 전체 경고의 최장33일은 비공개 제품에서 비롯된다. 기존 product-evidence-refresh는 중단되지 않았고 runs48,870, lastSuccess14:19:11Z, 마지막batch attempted7/succeeded6/failed0, cursor nvflare, 다음version대기였다. 최근1시간 source 관측1,274개/15분 update317개, 수집PAT1개·App설치1개 enabled, active GitHub cooldown없음이다.
+
+## Modified files / key design decisions
+
+작업문서 worktree /private/tmp/nomorevibe-evidence-refresh-docs-20261013, branch ops/evidence-refresh-catchup-20261013, base edeb8cf. 현재 파일은 이 인계만 갱신 중이다. 비공개 운영도구/증거 /private/tmp/nomorevibe-evidence-refresh-20261013(0700/0600). API키/DBURL/토큰/원시근거를 도구 출력이나 Git에 남기지 않는다. 갱신 기록 시각 변경이나 출처 삭제로 적체를 숨기지 않는다. 기존 job lease와 GitHub quota를 사용해 1시간 한정 수동 catch-up을 진행한다. 정상 crawler와 같은 product-evidence-refresh는 job lease로 상호 배제하고, requestedOnly=true로 pause/backoff를 지킨다. 55초 협력 예산을 사용하며 실행 중에는 15초 heartbeat를 갱신한다. 마감 시 AbortSignal로 종료하고 기존 scheduler/crawler는 유지한다. 수동 실행은 runbook의 run-job 경로와 같은 job lease 범위이며 역할 leader를 새로 획득하거나 교체하지 않는다. 상시 evidence-worker를 별도 설치하지 않는다. 소개 검수 product-intro-check not_before2100/미임대 보존.
+
+## Test commands / results / failed approaches
+
+현재 운영 조회만 실행했다. ops.py run()의 원격 crawler-m3 container Node/postgres 읽기 전용 트랜잭션 결과는 before.json에 저장했다. 타입·단위·통합 테스트나 새 배포는 하지 않았다. module-check.json: 운영 worker 안에서 runner/handler/control import가 실제 function임을 확인했다. catchup.mjs를 기존 crawler-m3 container의 /tmp에만 복사해 Docker exec detached로 실행 요청했다. catchup-start.json에서 실제 Node PID35030/start14:24:31.904Z를 확인했다. latest-status.json에서 4회 완료, 정상 완료 제품 합계85건, factsChanged85, release events24, jobfailed0, process_alive=true, finished=false를 확인했다. checkpoint-02.json(14:29:15.704Z)에서 배치 시작 이후 정상 관측/성공 출처210개·서로 다른 제품107개, 사이트 HTTP 실패3개, 현재 공개 출처 due48,195개/24,632제품/최장57시간, GitHub active quota cooldown0, 소개검수2100/미임대/runs741을 확인했다. source 관측210개는 같은 기간 기존 작업을 포함한 고유 source 행 수이며 manual batch 완료85제품과 별도 집계다. public /api/health 실제HTTP200이다. 최종 재조회 final-progress.json(14:32:16.507Z)에서 정상 갱신 출처340개/제품173개, 실패 기록 source5개, job error없음/임대중/cursor officialskillssh를 확인했다. latest-status.json은 추가 배치8회 완료/정상 완료 제품합계165/factsChanged165/events85/배치 제품실패1, process_alive=true/finished=false를 확인했다. 이전 4회/210source 측정은 14:29시점이며 최종 현재치와 혼동하지 않는다. zsh 경로 glob으로 존재하지 않는 quota/role 파일 조회 실패는 rg --files/실제 경로 사용으로 교정했다.
+
+## Remaining work / exact commands
+
+추가 갱신 가동과 실제 변경 검증은 완료했지만 전체 적체 해소는 아직 아니다. 1시간 추가 배치는 2026-10-14 00:24:31 KST(15:24:31Z)까지 처리 후 자동 종료 예정이며 그 뒤에도 기존 정기 crawler/scheduler는 계속 갱신한다. 운영자 요청 없는 소개 검수는 계속 중단한다. UI getEvidenceStatusSummary가 비공개 source를 포함해 최장33일 경고를 내는 현상은 확인했으나 이번 운영 작업에서 앱코드는 바꾸지 않았다. 장기 처리량·전체 초기 적체 소진·배치 자동종료의 실제 증거는 아직 없다. 런타임 source/image/flags/worker 구성과 갱신 설정 주기는 변경하지 않았다. 현재 51,104개가 모두 실제 갱신 대상이라고 주장하거나 완료됐다고 주장하지 않는다. 기존 관리자 접속 PR412는 edeb8cf에 정상 병합 완료됐으므로 이전 인계의 PR412 대기는 해소됐다.
+
+- git -C /private/tmp/nomorevibe-evidence-refresh-docs-20261013 diff --check
+- python3로 /private/tmp/nomorevibe-evidence-refresh-20261013/ops.py import 후 run(js) 호출; 비밀을 출력하지 않고 save(name,result)로 private 증거 저장
+- python3 /private/tmp/nomorevibe-evidence-refresh-20261013/status.py
+- 필요할 때 이번 추가 배치만 종료: ssh root@100.92.77.66 'docker exec 5fb72d88da66 kill -TERM 35030' (status.py로 기존 PID/컨테이너가 맞는지 먼저 확인, 정상 crawler parent를 종료하지 않는다).
+- 기존 runner의 requestedOnly=true/job lease/외부 quota를 보존하고 product-evidence-refresh에만 한정한다.
+- 작업 문서: docs/operations/2026-10-13-product-evidence-catchup.md. docs/CODEX_HANDOFF.md와 함께 user main 작업 폴더에도 기록한다. 이번 단계에 Git 커밋/푸시/배포를 실행하지 않았다.
+
+---
+
 # 2026-10-13 — 관리자 실제 접속 복구 완료
 
 ## Current objective / completed work
@@ -2459,6 +2773,7 @@ monitor heartbeat timeout을 검증한다. mini 전체 장애에 독립된 deadm
 ```sh
 cd /private/tmp/nmv-worker-failover-followup
 git status --short
+git log -7 --oneline
 git diff --check
 npx next typegen
 npx tsc --noEmit
@@ -3285,6 +3600,7 @@ README 입력은 끝났지만 키워드 자동 재생성은 pending; 진행 수�
 ```sh
 cd /private/tmp/nmv-ci-docs-20260927
 git status --short
+git log -7 --oneline
 git diff --check
 gh pr view 205 --json headRefOid,statusCheckRollup,state
 # frozen head CI 성공 뒤 full SHA를 --match-head-commit으로 지정:
@@ -3755,6 +4071,7 @@ git status --short
 ```sh
 cd /Users/jr/Desktop/projects/nomorevibe
 git status --short
+git log -7 --oneline
 git diff --check
 npm test
 TEST_DATABASE_URL=postgres://nomorevibe:nomorevibe@127.0.0.1:55435/nomorevibe_test npm run test:integration -- tests/integration/operations-throughput.test.ts tests/integration/second-review.test.ts tests/integration/agent-review-records.test.ts
@@ -6837,6 +7154,7 @@ Exact verification commands:
 ```sh
 cd /Users/jr/Desktop/projects/nomorevibe
 git status --short
+git log -7 --oneline
 git diff --check
 npx vitest run tests/admin-navigation.test.tsx
 node /tmp/nomorevibe-admin-qa.cjs

@@ -6,6 +6,23 @@
 
 ---
 
+## 수집·검수 개선의 운영 검증 — 2026-10-14
+
+PR00~07의 코드·회귀검사와 전체 검사(단위2,318·통합1,543·타입·lint·빌드)는 별도 브랜치에서 실행했다. 마지막 근거·캐시 cutoff·재개 커서 경계까지 수정하고 전체 검사와 모든 범위의 최종 독립 리뷰를 통과해 로컬 커밋했다.
+[구현·검증 보고서](docs/operations/2026-10-14-pipeline-recovery-implementation.md)에 실제 결과를 기록한다.
+운영 배포·마이그레이션0076·개선 후 처리량은 아직 확인하지 않았다.
+
+다음 운영 단계에서는 최신 base의 CI `check`와 PR 절차를 거쳐 같은 SHA의 웹·워커를 배포하고,
+현재 공개 source 성공·실패·partial·due·최장 지연, HTTP/304 비율·계정별 quota,
+신규 수집 starvation을 함께 관측한다. 유지 하한 3,453source/h와 catch-up 목표 5,500source/h는
+실제 측정 전 달성으로 표시하지 않는다. 외부 monitor 설치·Push/deadman 실제 수신과
+과거 초기 gate 거절 후보의 fresh 재수집→규칙 판정도 미실행이다. 소개 검수 중단은 유지한다.
+
+X·Threads HOT 요청은 [가능성 조사](docs/operations/2026-10-14-social-hot-crawler-feasibility.md)까지다.
+HOT 기능과 공식 계정의 실제 검색·권한·청구 파일럿은 구현하거나 실행하지 않았다.
+
+---
+
 ## 관리자 private 접속의 추가 운영 검증 — 2026-10-13
 
 **접속 설치 완료:** [실제 접속 기록](docs/operations/2026-10-13-admin-private-access-rollout.md)에

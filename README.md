@@ -409,6 +409,10 @@ App Store·Play Store·npm·PyPI·crates.io·일반 링크·RSS 수집은 각 �
 실제 스트림을 각각 2 MiB로 제한한다.
 
 DB 스케줄러는 두 evidence 잡을 매분 요청하며 crawler가 소비한다. due 시각 이전에는 외부 요청을 생략한다.
+공개 근거 `product-evidence-refresh`는 같은 crawler의 `sources` lane에서 55초 협력 예산으로
+실행한다. 부분 진행·endpoint cache를 저장해 재개하며 canonical site의 갱신 시각은 저장소와
+독립적으로 판단한다. lane을 분리해도 역할 lease와 GitHub 쿼터는 공유한다. 수집→검수 유입 제어와
+검증·남은 운영 계측은 [구현 보고서](docs/operations/2026-10-14-pipeline-recovery-implementation.md)를 따른다.
 운영 서비스와 역할 워커는 배포되어 있다. 추가 배포는 위 운영 절차를, 남은 검증은
 `PENDING.md`를 따른다. 저장소·일반 링크의 기본 갱신 간격은 24시간,
 release feed는 6시간이며, 성공한 출처만 다음 시각으로 전진한다. 일반 출처 실패 재시도는 6시간에서 시작해 12·24·48시간으로 늘고 기본 최대 재시도 설정에서는 48시간이 상한이다
