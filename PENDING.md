@@ -20,13 +20,19 @@ PR00~07의 코드·회귀검사와 전체 검사(단위2,318·통합1,543·타�
 13개 앱/18개 컨테이너의 release·이미지·readiness, 소스 앱5개의 각532개 파일 hash,
 다섯 역할의 readiness/progress, 공개 양 웹 health가 통과했다. 정상 관리자 로그인 뒤
 크롤러 탭의13개 수집기·주/예비·최근 실행 표시와 공개 관리자404를 확인했다.
-[배포 기록](docs/operations/2026-10-14-pipeline-recovery-rollout.md)이 현재 적용 상태다.
+[배포 기록](docs/operations/2026-10-14-pipeline-recovery-rollout.md)은 당시 적용 증거다.
+후속 적체 회복 PR419의 runtime `b0879eab83d7020839caef477fd512f842bcf1dc`로13앱/18컨테이너를 교체했다.
+PR/main 전체 CI·양 이미지·실제 readiness·source5앱533파일 hash·관리자HTTP200 확인을 마쳤다.
+근거96시간/완료 공개 제작근거 배경90일과 신규 발굴 중단·소개 검수 재개를 적용했다.
+최신 결과는 [적체 회복 기록](docs/operations/2026-10-14-backlog-catchup.md)에 있다.
 
 남은 것은 개선 후 처리량·장기 관측이다. 현재 공개 source 성공·실패·partial·due·최장 지연,
 HTTP/304 비율·계정별 quota·신규 수집 starvation을 함께 측정한다.
 유지 하한3,453source/h와 catch-up 목표5,500source/h는 실제 측정 전 달성으로 표시하지 않는다.
 외부 monitor 설치·Push/deadman 실제 수신과 과거 초기 gate 거절 후보의 fresh 재수집→규칙 판정도
-별도 검증이 남았다. 소개 검수는2100-01-01·미임대로 중단을 유지한다.
+별도 검증이 남았다. 소개 검수는 이후 사용자 명시 지시로 재개했다.
+최신 적체 회복 설정·신규 발굴 중단·현재 처리 상태는
+[적체 회복 기록](docs/operations/2026-10-14-backlog-catchup.md)을 따른다.
 
 X는 [정책 확인·독립 파일럿](docs/operations/2026-10-14-x-api-policy-and-pilot.md)을 준비했고,
 사용자가 복사한 Bearer Token을 로컬 비밀 설정에 저장했다. 원래 승인 목적이 공개 프로젝트
