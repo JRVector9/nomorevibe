@@ -14,6 +14,7 @@ export type JobContext<C> = {
   cursor: C | null;
   save: (cursor: C) => Promise<void>;
   hasBudget: () => boolean;
+  deadlineAt?: number;
   log: (event: string, fields?: Record<string, unknown>) => void;
   lease?: JobLease;
   /**
@@ -110,6 +111,7 @@ export async function runJob<C>(
     get cursor() { return cursor; },
     lease,
     signal: options.signal,
+    deadlineAt: startedAt + (options.budgetMs ?? 25_000),
     save: async next => {
       if (lost) throw new JobLeaseLostError();
       const [row] = await db.update(jobs).set({ cursor: next, updatedAt: sql`now()` })

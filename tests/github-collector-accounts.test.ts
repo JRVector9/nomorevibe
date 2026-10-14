@@ -1,7 +1,24 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { inspectGitHubCollectorToken, collectorSecret, encryptCollectorToken, decryptCollectorToken, parseCoreQuota, saveGitHubCollectorAccount } from "@/lib/crawl/github-accounts";
+import { inspectGitHubCollectorToken, collectorTokens, collectorSecret, encryptCollectorToken, decryptCollectorToken, parseCoreQuota, saveGitHubCollectorAccount } from "@/lib/crawl/github-accounts";
+const { appTokens, select } = vi.hoisted(() => ({ appTokens: vi.fn(), select: vi.fn() }));
+vi.mock("@/lib/crawl/github-apps", () => ({ appCollectorTokens: appTokens }));
+vi.mock("@/lib/db", () => ({ db: { select } }));
 
-afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
+afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
+
+it.each(["accounts", "apps"])("stops token preparation after abort while awaiting %s", async phase => {
+  const controller = new AbortController();
+  vi.stubEnv("GITHUB_COLLECTOR_SECRET", "a".repeat(48));
+  vi.stubEnv("GITHUB_TOKEN", "legacy-fixture-token");
+  appTokens.mockReset().mockImplementation(async () => { if (phase === "apps") controller.abort(); return []; });
+  select.mockReset().mockReturnValueOnce({ from: () => ({ where: () => ({ orderBy: async () => {
+    if (phase === "accounts") controller.abort();
+    return [];
+  } }) }) } as never);
+  expect(await collectorTokens({ signal: controller.signal } as Parameters<typeof collectorTokens>[0])).toEqual([]);
+  if (phase === "accounts") expect(appTokens).not.toHaveBeenCalled();
+  else expect(appTokens.mock.calls[0][2]).toMatchObject({ signal: controller.signal });
+});
 
 it("checks identity and quota without returning the PAT", async () => {
   const fetcher = vi.fn()

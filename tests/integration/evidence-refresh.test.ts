@@ -8,6 +8,7 @@ import {
   productMedia,
   products,
   productUpdates,
+  jobs,
 } from "@/lib/db/schema";
 import {
   dueEvidenceProductSlugs,
@@ -26,12 +27,16 @@ import {
 } from "@/lib/jobs/products/evidence-refresh";
 import type { JobContext } from "@/lib/jobs/runner";
 import { ensureSchema, resetTables } from "./setup";
+import { mapGitHubRepositoryFacts, refreshGitHubEvidence } from "@/lib/domain/evidence/providers/github";
+import { refreshSiteFingerprint } from "@/lib/domain/evidence/providers/site-fingerprint";
+import { JobLeaseLostError } from "@/lib/jobs/control";
 
 const NOW = new Date("2026-08-19T03:00:00.000Z");
 
 beforeAll(() => ensureSchema());
 beforeEach(async () => {
   await resetTables();
+  await db.delete(jobs);
 });
 
 async function product(slug: string) {
@@ -79,6 +84,125 @@ async function image(color: string) {
 }
 
 describe("bounded product evidence refresh", () => {
+  it.each([["deadline", false], ["abort", false], ["budget", false], ["deadline", true], ["abort", true], ["budget", true]] as const)
+    ("starts no repository relationship read after %s during the site refresh (progress=%s)", async (stop, progress) => {
+    await product("site-cutoff");
+    await upsertObservedSource({ slug: "site-cutoff", kind: "documentation", provider: "product_site", sourceKey: "canonical_site",
+      sourceUrl: "https://site-cutoff.example", state: "failed", nextAttemptAt: NOW });
+    const controller = new AbortController();
+    let budget = true;
+    const identityRead = vi.spyOn(db.query.products, "findFirst");
+    try {
+      const result = await refreshProductEvidence("site-cutoff", { now: NOW, signal: controller.signal,
+        deadlineAt: stop === "deadline" ? Date.now() + 30 : undefined, hasBudget: () => budget,
+        progress: progress ? { completedKeys: [], retryAfterByKey: {} } : undefined, saveProgress: vi.fn(),
+        dependencies: { siteFingerprint: async () => {
+          identityRead.mockClear();
+          if (stop === "abort") controller.abort();
+          if (stop === "budget") budget = false;
+          if (stop === "deadline") await new Promise(resolve => setTimeout(resolve, 40));
+          return true;
+        } } });
+      expect(identityRead).not.toHaveBeenCalled();
+      expect(result).toMatchObject({ complete: false, sourcesFailed: 0 });
+    } finally { identityRead.mockRestore(); }
+  });
+
+  it("preserves a known relationship for an unknown README host in default site-only selection, then confirms it at the next repository due time", async () => {
+    await product("site-host-change");
+    await replaceMakerLinks({ slug: "site-host-change", actor: "maker:test", links: [{ kind: "repository", url: "https://github.com/owner/repo" }] });
+    const content = Buffer.from([...Array.from({ length: 65 }, (_, index) => `https://unrelated-${index}.example`),
+      "https://site-host-change.example", "https://new-site.example"].join("\n")).toString("base64");
+    const request = vi.fn(async (path: string) => ({ ok: true as const, status: 200 as const, etag: '"unchanged"', lastModified: null, link: null,
+      value: path === "/repos/owner/repo" ? { html_url: "https://github.com/owner/repo", full_name: "owner/repo", created_at: NOW.toISOString(),
+        pushed_at: null, updated_at: NOW.toISOString(), stargazers_count: 1, forks_count: 0,
+        private: false, archived: false, fork: false, homepage: null, license: null }
+        : path.endsWith("/readme") ? { encoding: "base64", content } : path.endsWith("/languages") ? {} : [] }));
+    await refreshGitHubEvidence({ slug: "site-host-change", repository: "owner/repo" }, { request, now: () => NOW });
+    await db.update(products).set({ url: "https://new-site.example" }).where(eq(products.slug, "site-host-change"));
+    await upsertObservedSource({ slug: "site-host-change", kind: "documentation", provider: "product_site", sourceKey: "canonical_site",
+      sourceUrl: "https://new-site.example", state: "failed", nextAttemptAt: NOW });
+    request.mockClear();
+    const fetch = vi.fn(async () => ({ ok: true as const, status: 200, finalUrl: "https://new-site.example", headers: new Headers(), body: Buffer.from("<p>Product</p>") }));
+    await refreshProductEvidence("site-host-change", { now: NOW, dependencies: {
+      siteFingerprint: (input, options) => refreshSiteFingerprint(input, { ...options, fetch }),
+    } });
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(request).not.toHaveBeenCalled();
+    const [repository] = await db.select().from(productEvidenceSources).where(eq(productEvidenceSources.kind, "repository"));
+    expect(repository.normalizedFacts?.relationshipState).toBe("repository_link");
+    let readmeRequests = 0;
+    const recheck = async (path: string) => path.endsWith("/readme") && ++readmeRequests === 1
+      ? { ok: true as const, status: 304 as const, etag: '"unchanged"', lastModified: null, link: null } : request(path);
+    await refreshProductEvidence("site-host-change", { now: new Date(NOW.getTime() + 86400001), dependencies: {
+      github: (input, options) => refreshGitHubEvidence(input, { ...options, request: recheck }),
+    } });
+    expect(readmeRequests).toBe(2);
+    expect((await db.select().from(productEvidenceSources).where(eq(productEvidenceSources.kind, "repository")))[0].normalizedFacts)
+      .toMatchObject({ relationshipState: "repository_link", _githubCollection: { cache: {
+        "/repos/owner/repo/readme": { value: { canonicalHost: "new-site.example", linksCanonicalHost: true } },
+      } } });
+  });
+
+  it.each(["lease_error", "transport_error"])("forwards the job lease and fences provider failure after ownership loss (%s)", async failure => {
+    await product("lease-forward");
+    await replaceMakerLinks({ slug: "lease-forward", actor: "maker:test", links: [{ kind: "repository", url: "https://github.com/owner/repo" }] });
+    await upsertObservedSource({ slug: "lease-forward", kind: "repository", provider: "github", sourceKey: "owner/repo",
+      state: "unobserved", nextAttemptAt: NOW });
+    const lease = { name: "evidence-forward", token: "owner", requestedVersion: 0 };
+    await db.insert(jobs).values({ name: lease.name, leaseToken: lease.token, lockedAt: new Date() });
+    const { ctx } = context();
+    ctx.lease = lease;
+    const github = vi.fn<NonNullable<EvidenceRefreshDependencies["github"]>>(async (_input, options) => {
+      expect(options?.lease).toEqual(lease);
+      await db.update(jobs).set({ leaseToken: "next-owner" }).where(eq(jobs.name, lease.name));
+      throw failure === "lease_error" ? new JobLeaseLostError() : new Error("network_preparation_failed");
+    });
+    await expect(refreshProductEvidenceJob(ctx, { now: () => NOW, github })).rejects.toThrow("job_lease_lost");
+    expect(github).toHaveBeenCalledTimes(1);
+    const [source] = await db.select().from(productEvidenceSources);
+    expect(source).toMatchObject({ state: "unobserved", lastFailureAt: null, lastErrorCode: null });
+  });
+
+  it("selects a due canonical site independently and re-evaluates a fresh cached repository relationship", async () => {
+    await product("site-due");
+    await replaceMakerLinks({ slug: "site-due", actor: "maker:test", links: [{ kind: "repository", url: "https://github.com/owner/repo" }] });
+    await upsertObservedSource({ slug: "site-due", kind: "repository", provider: "github", sourceKey: "owner/repo",
+      state: "ok", normalizedFacts: { ...mapGitHubRepositoryFacts({ repository: {
+        html_url: "https://github.com/owner/repo", full_name: "owner/repo", created_at: NOW.toISOString(),
+        pushed_at: null, updated_at: NOW.toISOString(), stargazers_count: 1, forks_count: 0,
+        private: false, archived: false, fork: false, homepage: null, license: null,
+      }, languages: {}, contributors: { items: [], link: null }, releases: [] }), relationshipState: "maker_reported" },
+      lastSuccessAt: NOW, nextAttemptAt: new Date(NOW.getTime() + 86400000) });
+    await upsertObservedSource({ slug: "site-due", kind: "documentation", provider: "product_site", sourceKey: "canonical_site",
+      sourceUrl: "https://site-due.example", state: "failed", nextAttemptAt: NOW });
+    await db.insert(evidenceSettings).values({ id: 1, values: { linkCheckHours: 8 } });
+    expect(await dueEvidenceProductSlugs({ now: NOW, limit: 20, settings: DEFAULT_EVIDENCE_SETTINGS })).toEqual(["site-due"]);
+    const github = vi.fn();
+    const fetch = vi.fn(async () => ({ ok: true as const, status: 200, finalUrl: "https://site-due.example", headers: new Headers(),
+      body: Buffer.from('<a href="https://github.com/owner/repo">Source code</a>') }));
+    await refreshProductEvidence("site-due", { now: NOW, dependencies: { github,
+      siteFingerprint: (input, options) => refreshSiteFingerprint(input, { ...options, fetch }) } });
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(github).not.toHaveBeenCalled();
+    const sources = await db.select().from(productEvidenceSources);
+    expect(sources.find(source => source.sourceKey === "canonical_site")?.nextAttemptAt).toEqual(new Date(NOW.getTime() + 8 * 3600000));
+    expect(sources.find(source => source.sourceKey === "owner/repo")?.normalizedFacts?.relationshipState).toBe("site_link");
+  });
+
+  it("keeps a canonical-site future failure retry when a repository is due or force is requested", async () => {
+    await product("site-wait");
+    await replaceMakerLinks({ slug: "site-wait", actor: "maker:test", links: [{ kind: "repository", url: "https://github.com/owner/repo" }] });
+    await upsertObservedSource({ slug: "site-wait", kind: "documentation", provider: "product_site", sourceKey: "canonical_site",
+      sourceUrl: "https://site-wait.example", state: "failed", attempts: 2, lastErrorCode: "site_timeout",
+      nextAttemptAt: new Date(NOW.getTime() + 3600000) });
+    const siteFingerprint = vi.fn();
+    await refreshProductEvidence("site-wait", { now: NOW, force: true, dependencies: {
+      github: async () => ({ status: "deferred", releases: 0 }), siteFingerprint,
+    } });
+    expect(siteFingerprint).not.toHaveBeenCalled();
+  });
+
   it("selects due products in bounded cursor order and isolates a failed product", async () => {
     for (const slug of ["alpha", "beta", "gamma"]) {
       await product(slug);
@@ -169,7 +293,7 @@ describe("bounded product evidence refresh", () => {
     expect(run.saved()).toEqual({ afterSlug: "beta" });
   });
 
-  it("stops between sources at the runner budget and resumes the unfinished product", async () => {
+  it("advances normal traversal after a source budget stop and resumes the unfinished product next round", async () => {
     await product("budgeted");
     await replaceMakerLinks({
       slug: "budgeted",
@@ -196,10 +320,10 @@ describe("bounded product evidence refresh", () => {
 
     await expect(refreshProductEvidenceJob(first.ctx, dependencies)).resolves.toEqual({
       done: false,
-      cursor: null,
+      cursor: { afterSlug: "budgeted" },
     });
     expect(calls).toEqual(["support"]);
-    expect(first.saved()).toBeNull();
+    expect(first.saved()).toEqual({ afterSlug: "budgeted" });
     expect(await db.select().from(productEvidenceSources)).toHaveLength(1);
 
     const second = context();
@@ -208,7 +332,7 @@ describe("bounded product evidence refresh", () => {
     expect(await db.select().from(productEvidenceSources)).toHaveLength(2);
   });
 
-  it("does not advance the product cursor when GitHub stops for job budget", async () => {
+  it("continues to a later due product when an incomplete GitHub product still has tick budget", async () => {
     await product("github-budget");
     await replaceMakerLinks({
       slug: "github-budget",
@@ -216,13 +340,17 @@ describe("bounded product evidence refresh", () => {
       links: [{ kind: "repository", url: "https://github.com/Owner/Repo" }],
     });
     const run = context();
+    await product("later-product");
+    await supportLink("later-product");
+    const genericLink = vi.fn(async (url: string) => ({ finalUrl: url }));
 
     await expect(refreshProductEvidenceJob(run.ctx, {
       now: () => NOW,
       github: async () => ({ status: "budget_exhausted", releases: 0 }),
-    })).resolves.toEqual({ done: false, cursor: null });
-    expect(run.saved()).toBeNull();
-    expect(await db.select().from(productEvidenceSources)).toHaveLength(0);
+      genericLink,
+    })).resolves.toEqual({ done: true });
+    expect(run.saved()).toEqual({ afterSlug: "later-product" });
+    expect(genericLink).toHaveBeenCalledTimes(1);
   });
 
   it("skips future sources normally, supports force refresh, and increases bounded retry delay", async () => {

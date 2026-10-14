@@ -97,6 +97,17 @@ describe("runJob — 동시 실행 방지", () => {
 });
 
 describe("runJob — 시간 예산", () => {
+  it("exposes the exact shared HTTP deadline including time spent claiming the job", async () => {
+    const started = Date.now();
+    let deadline: number | undefined;
+    await runJob("shared-deadline", async ctx => {
+      deadline = (ctx as { deadlineAt?: number }).deadlineAt;
+      return { done: true };
+    }, { budgetMs: 55_000 });
+    expect(deadline).toBeGreaterThanOrEqual(started + 55_000);
+    expect(deadline).toBeLessThanOrEqual(Date.now() + 55_000);
+  });
+
   it("예산을 넘기면 hasBudget이 false가 되어 작업이 물러난다", async () => {
     let loops = 0;
     const result = await runJob<{ n: number }>(

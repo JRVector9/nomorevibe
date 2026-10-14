@@ -34,7 +34,7 @@ import {
 import type { EvidenceSettings } from "./settings";
 import { currentEvidenceSettings } from "./settings-store";
 import { fetchFeedEvidence, feedUpdateCandidates } from "./providers/feeds";
-import { refreshGitHubEvidence } from "./providers/github";
+import { refreshGitHubEvidence, recomputeRepositoryRelationships } from "./providers/github";
 import { refreshSiteFingerprint } from "./providers/site-fingerprint";
 import {
   verifyAppStoreLink,
@@ -47,10 +47,14 @@ import { insertUpdateCandidates } from "./updates";
 import { normalizeTypedLink } from "./contracts";
 import { syncRepositoryLink } from "./repository-link-sync";
 import { queueProductRefresh } from "./refresh-requests";
-import { assertJobLease, type JobLease } from "@/lib/jobs/control";
+import { assertJobLease, JobLeaseLostError, withJobLeaseWrite, type JobLease } from "@/lib/jobs/control";
 
 const slugSchema = z.string().min(1).max(80).regex(/^[a-z0-9][a-z0-9-]*$/);
 const GENERIC_LINK_CAP = 64 * 1024;
+
+function publicEvidenceFacts(facts: Record<string, unknown> | null | undefined) {
+  return facts ? Object.fromEntries(Object.entries(facts).filter(([key]) => key !== "_githubCollection")) : null;
+}
 
 /**
  * 출처 종류별 규칙 한 곳.
@@ -153,6 +157,9 @@ export type ProductEvidenceRefreshResult = EvidenceSourceResult & {
 };
 
 export type EvidenceRefreshDependencies = {
+  lease?: JobLease;
+  deadlineAt?: number;
+  signal?: AbortSignal;
   now?: () => Date;
   github?: typeof refreshGitHubEvidence;
   siteFingerprint?: typeof refreshSiteFingerprint;
@@ -168,6 +175,9 @@ export type EvidenceRefreshDependencies = {
 };
 
 export type EvidenceRefreshOptions = {
+  lease?: JobLease;
+  deadlineAt?: number;
+  signal?: AbortSignal;
   force?: boolean;
   now?: Date;
   hasBudget?: () => boolean;
@@ -314,9 +324,31 @@ export async function dueEvidenceProductSlugs(input: {
     .groupBy(productMediaDeclarations.slug)
     .orderBy(asc(productMediaDeclarations.slug))
     .limit(limit);
-  return [...new Set([...linkRows, ...mediaRows, ...declarationRows].map((row) => row.slug))]
+  const siteRows = await db.select({ slug: products.slug }).from(productEvidenceSources)
+    .innerJoin(products, eq(products.slug, productEvidenceSources.slug))
+    .where(and(eq(productEvidenceSources.provider, "product_site"), eq(productEvidenceSources.sourceKey, "canonical_site"),
+      inArray(products.status, ["verified", "seeded"]), cursor ? gt(products.slug, cursor) : undefined,
+      or(lte(productEvidenceSources.nextAttemptAt, input.now), sql`${productEvidenceSources.sourceUrl} is distinct from ${products.url}`)))
+    .orderBy(asc(products.slug)).limit(limit);
+  return [...new Set([...linkRows, ...mediaRows, ...declarationRows, ...siteRows].map((row) => row.slug))]
     .sort()
     .slice(0, limit);
+}
+
+async function canonicalSiteSources(slug: string, now: Date, force: boolean, progress?: ProductRefreshProgress): Promise<DeclaredEvidenceSource[]> {
+  const product = await db.query.products.findFirst({ where: eq(products.slug, slug), columns: { id: true, url: true } });
+  if (!product) return [];
+  const stored = await db.query.productEvidenceSources.findFirst({ where: and(eq(productEvidenceSources.slug, slug),
+    eq(productEvidenceSources.provider, "product_site"), eq(productEvidenceSources.sourceKey, "canonical_site")) });
+  if (!stored) {
+    const repository = await db.query.productLinks.findFirst({ where: and(eq(productLinks.slug, slug), eq(productLinks.kind, "repository"), eq(productLinks.visible, true)) });
+    if (!repository) return [];
+  }
+  const source: DeclaredEvidenceSource = { productId: product.id, slug, kind: "documentation", sourceKey: "canonical_site", sourceUrl: product.url,
+    attempts: stored?.attempts ?? 0, normalizedFacts: stored?.normalizedFacts ?? null, lastSuccessAt: stored?.lastSuccessAt ?? null,
+    retryAt: stored?.lastErrorCode && stored.sourceUrl === product.url && stored.nextAttemptAt > now ? stored.nextAttemptAt : null };
+  return force || !stored || stored.sourceUrl !== product.url || stored.nextAttemptAt <= now || progress?.retryAfterByKey[evidenceRefreshKey(source)]
+    ? [source] : [];
 }
 
 async function declaredSources(
@@ -423,9 +455,10 @@ async function markSourceFailure(
   now: Date,
   settings: EvidenceSettings,
   errorCode: string,
+  lease?: JobLease,
 ): Promise<void> {
   const attempts = source.attempts + 1;
-  await upsertObservedSource({
+  await withJobLeaseWrite(lease, tx => upsertObservedSource({
     slug: source.slug,
     kind: source.kind,
     provider: providerFor(source.kind),
@@ -436,7 +469,7 @@ async function markSourceFailure(
     nextAttemptAt: retryAt(now, attempts, settings),
     attempts,
     lastErrorCode: errorCode.replace(/[^a-z0-9_-]/gi, "_").slice(0, 80),
-  }, db, source.productId);
+  }, tx, source.productId));
 }
 
 function providerFor(kind: LinkKind): string {
@@ -471,19 +504,28 @@ async function collectDeclaredSource(
   dependencies: EvidenceRefreshDependencies,
   hasBudget?: () => boolean,
 ): Promise<CollectedEvidenceSourceResult> {
+  if (source.sourceKey === "canonical_site" && source.kind === "documentation") {
+    const canContinue = () => (hasBudget?.() ?? true) && !dependencies.signal?.aborted && Date.now() < (dependencies.deadlineAt ?? Infinity);
+    const succeeded = await (dependencies.siteFingerprint ?? refreshSiteFingerprint)({ slug: source.slug, productId: source.productId,
+      url: source.sourceUrl }, { now, force: true, deadlineAt: dependencies.deadlineAt, signal: dependencies.signal, hasBudget, lease: dependencies.lease });
+    if (succeeded === "budget_exhausted" || !canContinue()) return { factsChanged: 0, eventsInserted: 0, mediaInserted: 0, complete: false, httpClass: "budget" };
+    if (succeeded) await recomputeRepositoryRelationships(source.slug, source.productId, dependencies.lease, { hasBudget,
+      deadlineAt: dependencies.deadlineAt, signal: dependencies.signal });
+    if (!canContinue()) return { factsChanged: 0, eventsInserted: 0, mediaInserted: 0, complete: false, httpClass: "budget" };
+    const refreshed = await db.query.productEvidenceSources.findFirst({ where: and(eq(productEvidenceSources.slug, source.slug),
+      eq(productEvidenceSources.kind, source.kind), eq(productEvidenceSources.sourceKey, source.sourceKey)) });
+    return { factsChanged: succeeded && !isDeepStrictEqual(source.normalizedFacts, refreshed?.normalizedFacts) ? 1 : 0,
+      eventsInserted: 0, mediaInserted: 0, failed: !succeeded,
+      httpClass: succeeded ? "ok" : "error" };
+  }
   if (source.kind === "repository") {
     // A supplied GitHub provider owns its network dependencies. The production path
     // records site-to-repository evidence before deriving the GitHub relationship.
-    if (!dependencies.github || dependencies.siteFingerprint) {
-      const product = await db.query.products.findFirst({ where: eq(products.id, source.productId), columns: { url: true } });
-      if (product) await (dependencies.siteFingerprint ?? refreshSiteFingerprint)({ slug: source.slug, productId: source.productId, url: product.url }, { now });
-      if (hasBudget && !hasBudget()) return { factsChanged: 0, eventsInserted: 0, mediaInserted: 0, complete: false, httpClass: "budget" };
-    }
     const result = await (dependencies.github ?? refreshGitHubEvidence)({
       slug: source.slug,
       repository: source.sourceKey,
       productId: source.productId,
-    }, { now: () => now, hasBudget, log: dependencies.log });
+    }, { now: () => now, hasBudget, log: dependencies.log, deadlineAt: dependencies.deadlineAt, signal: dependencies.signal, lease: dependencies.lease });
     if (result.status === "budget_exhausted") {
       return {
         factsChanged: 0,
@@ -510,10 +552,11 @@ async function collectDeclaredSource(
           nextAttemptAt: new Date(now.getTime() + intervalHours(source.kind, settings) * 60 * 60 * 1000),
         }).where(eq(productEvidenceSources.id, row.id));
       }
+      if (dependencies.lease) await assertJobLease(tx, dependencies.lease);
       return row;
     });
     return {
-      factsChanged: !isDeepStrictEqual(source.normalizedFacts, refreshed?.normalizedFacts ?? null) ? 1 : 0,
+      factsChanged: !isDeepStrictEqual(publicEvidenceFacts(source.normalizedFacts), publicEvidenceFacts(refreshed?.normalizedFacts)) ? 1 : 0,
       eventsInserted: result.releases,
       mediaInserted: 0,
       failed,
@@ -622,7 +665,9 @@ export async function refreshProductEvidence(
   options: EvidenceRefreshOptions = {},
 ): Promise<ProductEvidenceRefreshResult> {
   const slug = slugSchema.parse(slugInput);
-  const dependencies = options.dependencies ?? {};
+  const dependencies = { ...options.dependencies,
+    deadlineAt: options.deadlineAt ?? options.dependencies?.deadlineAt, signal: options.signal ?? options.dependencies?.signal,
+    lease: options.lease ?? options.dependencies?.lease };
   const now = options.now ?? (dependencies.now ?? (() => new Date()))();
   if (!Number.isFinite(now.getTime())) throw new Error("invalid refresh timestamp");
   if (options.productId !== undefined) await withProductGeneration(slug, options.productId, async () => {});
@@ -631,10 +676,12 @@ export async function refreshProductEvidence(
     completedKeys: [...options.progress.completedKeys], retryAfterByKey: { ...options.progress.retryAfterByKey },
   } : undefined;
   const force = options.force ?? false;
-  const [sources, media] = await Promise.all([
+  const [declared, site, media] = await Promise.all([
     declaredSources(slug, now, force, progress),
+    !dependencies.github || dependencies.siteFingerprint ? canonicalSiteSources(slug, now, force, progress) : [],
     mediaSources(slug, now, force, settings, progress),
   ]);
+  const sources = [...site, ...declared];
   if (options.productId !== undefined && [...sources, ...media].some(source => source.productId !== options.productId)) {
     throw new ProductGenerationChangedError();
   }
@@ -658,10 +705,20 @@ export async function refreshProductEvidence(
   };
   const finish = async (budgetEnded = false) => {
     if (!progress) return totals;
+    if (budgetEnded) {
+      // Resume bookkeeping can settle without starting another expired collection read.
+      totals.complete = false;
+      totals.nextAttemptAt = now;
+      await options.saveProgress?.(progress);
+      return totals;
+    }
     // Re-read declarations so an edit during external I/O remains pending in this request.
-    const [currentSources, currentMedia] = await Promise.all([
-      declaredSources(slug, now, force, progress), mediaSources(slug, now, force, settings, progress),
+    const [currentDeclared, currentSite, currentMedia] = await Promise.all([
+      declaredSources(slug, now, force, progress),
+      !dependencies.github || dependencies.siteFingerprint ? canonicalSiteSources(slug, now, force, progress) : [],
+      mediaSources(slug, now, force, settings, progress),
     ]);
+    const currentSources = [...currentSite, ...currentDeclared];
     const keys = [...currentSources.map(evidenceRefreshKey), ...currentMedia.map(mediaRefreshKey)];
     const currentKeys = new Set(keys);
     progress.completedKeys = progress.completedKeys.filter(key => currentKeys.has(key));
@@ -717,9 +774,9 @@ export async function refreshProductEvidence(
         factsChanged: result.factsChanged, eventsInserted: result.eventsInserted, mediaInserted: result.mediaInserted,
       });
     } catch (error) {
-      if (error instanceof ProductGenerationChangedError) throw error;
+      if (error instanceof ProductGenerationChangedError || error instanceof JobLeaseLostError) throw error;
       totals.sourcesFailed += 1;
-      await markSourceFailure(source, now, settings, "collection_failed");
+      await markSourceFailure(source, now, settings, "collection_failed", dependencies.lease);
       retry = retryAt(now, source.attempts + 1, settings);
       dependencies.log?.("evidence.source_refresh", {
         sourceKind: source.kind, slug, durationMs: Math.max(0, Math.round(performance.now() - startedAt)),

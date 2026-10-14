@@ -52,11 +52,15 @@ export type GitHubHttpResult<T> =
 
 const rotation: Record<string, number> = {};
 
+function requestStopped(options: { deadlineAt?: number; signal?: AbortSignal }): boolean {
+  return Boolean(options.signal?.aborted) || (options.deadlineAt !== undefined && options.deadlineAt <= Date.now());
+}
+
 export async function githubRequest<T>(
   path: string,
   conditional: ConditionalRequest = {},
   /** body 가 있으면 JSON 으로 POST 한다(GraphQL) */
-  options: { timeoutMs?: number; body?: unknown; deadlineAt?: number } = {},
+  options: { timeoutMs?: number; body?: unknown; deadlineAt?: number; signal?: AbortSignal } = {},
 ): Promise<GitHubHttpResult<T>> {
   // Paths come from repository metadata and cursors; never let them change the API origin.
   let decoded: string;
@@ -72,7 +76,10 @@ export async function githubRequest<T>(
     : Math.min(options.deadlineAt, Date.now() + Math.max(1, Math.min(options.timeoutMs ?? 10_000, 10_000)));
   if (preparationDeadline !== undefined && (!Number.isFinite(preparationDeadline) || preparationDeadline <= Date.now()))
     return { ok: false, error: { kind: "transport" } };
-  const accounts = preparationDeadline === undefined ? await collectorTokens() : await collectorTokens({ deadlineAt: preparationDeadline });
+  if (options.signal?.aborted) return { ok: false, error: { kind: "transport" } };
+  const accounts = preparationDeadline === undefined && !options.signal ? await collectorTokens()
+    : await collectorTokens({ deadlineAt: preparationDeadline, signal: options.signal });
+  if (options.signal?.aborted) return { ok: false, error: { kind: "transport" } };
   if (preparationDeadline !== undefined && (preparationDeadline <= Date.now() || accounts.length === 0)) {
     // Missing credentials or an exhausted preparation budget are auth waits.
     // Preserve observer retries until the real collection cutoff.
@@ -92,15 +99,18 @@ export async function githubRequest<T>(
     let sawUnauthorized = false;
     let result: GitHubHttpResult<T>;
     for (let attempt = 0; ; attempt++) {
+      if (options.signal?.aborted) return { ok: false, error: { kind: "transport" } };
       const remainingMs = deadline - Date.now();
       if (remainingMs <= 0) return authFailure
         ? { ok: false, error: { ...authFailure, resetAt: new Date(Math.min(
           authFailure.resetAt?.getTime() ?? Infinity, Date.now() + 60_000)) } }
         : { ok: false, error: { kind: "transport" } };
       result = await githubRequestWithToken<T>(path, conditional, { timeoutMs: remainingMs, body: options.body,
-        ...(preparationDeadline === undefined ? {} : { deadlineAt: deadline }) }, account, () => { secondary = true; });
+        signal: options.signal, ...(preparationDeadline === undefined ? {} : { deadlineAt: deadline }) }, account, () => { secondary = true; });
+      if (requestStopped({ deadlineAt: preparationDeadline, signal: options.signal })) return { ok: false, error: { kind: "transport" } };
       if (!result.ok && result.error.kind === "http" && result.error.status === 403 && sawUnauthorized) {
         const resetAt = await recordGitHubAuthCooldown(account.token, new Date(Date.now() + AUTH_COOLDOWN_MS));
+        if (requestStopped({ deadlineAt: preparationDeadline, signal: options.signal })) return { ok: false, error: { kind: "transport" } };
         logger.warn("github.auth_rejected", { accountId: account.userId, installationId: account.installationId, reason: "blocked" });
         result = { ok: false, error: { kind: "auth_unavailable", reason: "blocked", resetAt } };
         break;
@@ -110,10 +120,12 @@ export async function githubRequest<T>(
       if (result.error.reason === "blocked" || attempt >= AUTH_RETRY_DELAYS_MS.length
         || deadline - Date.now() <= AUTH_RETRY_DELAYS_MS[attempt]) {
         const resetAt = await recordGitHubAuthCooldown(account.token, new Date(Date.now() + AUTH_COOLDOWN_MS));
+        if (requestStopped({ deadlineAt: preparationDeadline, signal: options.signal })) return { ok: false, error: { kind: "transport" } };
         result = { ok: false, error: { ...result.error, resetAt } };
         break;
       }
       await new Promise(resolve => setTimeout(resolve, AUTH_RETRY_DELAYS_MS[attempt]));
+      if (requestStopped({ deadlineAt: preparationDeadline, signal: options.signal })) return { ok: false, error: { kind: "transport" } };
     }
     if (!result.ok && result.error.kind === "auth_unavailable") {
       authFailure = result.error;
@@ -131,14 +143,17 @@ export async function githubRequest<T>(
 }
 
 async function githubRequestWithToken<T>(
-  path: string, conditional: ConditionalRequest, options: { timeoutMs?: number; body?: unknown; deadlineAt?: number },
+  path: string, conditional: ConditionalRequest, options: { timeoutMs?: number; body?: unknown; deadlineAt?: number; signal?: AbortSignal },
   account: CollectorToken, onSecondary: () => void,
 ): Promise<GitHubHttpResult<T>> {
   const token = account.token;
   const resource = githubResource(path);
+  if (requestStopped(options)) return { ok: false, error: { kind: "transport" } };
   const authUntil = await readGitHubAuthCooldown(token);
+  if (requestStopped(options)) return { ok: false, error: { kind: "transport" } };
   if (authUntil) return { ok: false, error: { kind: "auth_unavailable", reason: "cooldown", resetAt: authUntil } };
   const waitingUntil = await readGitHubCooldown(token, resource);
+  if (requestStopped(options)) return { ok: false, error: { kind: "transport" } };
   if (waitingUntil) return { ok: false, error: { kind: "rate_limited", resetAt: waitingUntil } };
   if (options.deadlineAt !== undefined && options.deadlineAt <= Date.now()) return { ok: false, error: { kind: "transport" } };
   const headers: Record<string, string> = {
@@ -159,13 +174,16 @@ async function githubRequestWithToken<T>(
     for (let redirects = 0; ; redirects++) {
       // Quota reads and redirect body cancellation can outlive the cutoff.
       const remainingMs = options.deadlineAt === undefined ? Infinity : options.deadlineAt - Date.now();
-      if (remainingMs <= 0) return { ok: false, error: { kind: "transport" } };
-      const requestSignal = signal ?? AbortSignal.timeout(Math.max(1, Math.min(options.timeoutMs ?? 10_000, 10_000, remainingMs)));
+      if (remainingMs <= 0 || options.signal?.aborted) return { ok: false, error: { kind: "transport" } };
+      const timeoutSignal = signal ?? AbortSignal.timeout(Math.max(1, Math.min(options.timeoutMs ?? 10_000, 10_000, remainingMs)));
+      const requestSignal = options.signal ? AbortSignal.any([options.signal, timeoutSignal]) : timeoutSignal;
       res = await fetch(url, { method: post ? "POST" : "GET", headers, body: post ? JSON.stringify(options.body) : undefined,
         redirect: "manual", signal: requestSignal });
+      if (requestStopped(options)) { void res.body?.cancel().catch(() => {}); return { ok: false, error: { kind: "transport" } }; }
       if (![301, 302, 303, 307, 308].includes(res.status)) break;
       const location = res.headers.get("location");
       await res.body?.cancel().catch(() => {});
+      if (requestStopped(options)) return { ok: false, error: { kind: "transport" } };
       // GraphQL 은 옮겨 가지 않는다 — 본문을 다른 곳에 다시 보내지 않는다
       if (post || !location || redirects >= 3) return { ok: false, error: { kind: "invalid_response" } };
       let next: URL;
@@ -178,6 +196,7 @@ async function githubRequestWithToken<T>(
       const redirectCooldown = githubCooldown(res.status, res.headers);
       if (redirectCooldown) {
         const resetAt = await recordGitHubCooldown(token, resource, redirectCooldown);
+        if (requestStopped(options)) return { ok: false, error: { kind: "transport" } };
         if (redirectCooldown.secondary) onSecondary();
         return { ok: false, error: { kind: "rate_limited", resetAt } };
       }
@@ -190,21 +209,26 @@ async function githubRequestWithToken<T>(
 
   try { await observeCollectorQuota(account, res.headers); }
   catch { logger.warn("github.quota_observation_failed", { accountId: account.userId, installationId: account.installationId }); }
+  if (requestStopped(options)) { void res.body?.cancel().catch(() => {}); return { ok: false, error: { kind: "transport" } }; }
   // A successful response can consume the last primary request. Persist it while retaining its body.
   let cooldown = githubCooldown(res.status, res.headers);
   if (res.status === 403 && !cooldown?.secondary) {
     // GitHub also reports secondary limits in the error message without Retry-After.
     try {
       const body = await readBodyStrictlyCapped(res, GITHUB_RESPONSE_MAX_BYTES);
+      if (requestStopped(options)) return { ok: false, error: { kind: "transport" } };
       const message = body ? (JSON.parse(body.toString("utf8")) as { message?: unknown }).message : null;
       cooldown = githubCooldown(res.status, res.headers, new Date(), typeof message === "string"
         && /secondary rate limit|abuse detection/i.test(message));
     } catch { /* The status remains an ordinary HTTP failure when the error body is invalid. */ }
   }
+  if (requestStopped(options)) return { ok: false, error: { kind: "transport" } };
   const resetAt = cooldown ? await recordGitHubCooldown(token, resource, cooldown) : null;
+  if (requestStopped(options)) return { ok: false, error: { kind: "transport" } };
   if (cooldown && (res.status === 403 || res.status === 429)) {
     if (cooldown.secondary) onSecondary();
     await res.body?.cancel().catch(() => {});
+    if (requestStopped(options)) return { ok: false, error: { kind: "transport" } };
     logger.warn("github.rate_limited", { path, resetAt: resetAt?.toISOString(), secondary: cooldown.secondary });
     return { ok: false, error: { kind: "rate_limited", resetAt } };
   }
@@ -213,6 +237,7 @@ async function githubRequestWithToken<T>(
     let reason: AuthReason = "unauthorized";
     try {
       const body = await readBodyStrictlyCapped(res, GITHUB_RESPONSE_MAX_BYTES);
+      if (requestStopped(options)) return { ok: false, error: { kind: "transport" } };
       const message = body ? (JSON.parse(body.toString("utf8")) as { message?: unknown }).message : null;
       if (typeof message === "string") {
         if (/expir/i.test(message)) reason = "expired";
@@ -220,6 +245,7 @@ async function githubRequestWithToken<T>(
         else if (/bad credentials/i.test(message)) reason = "bad_credentials";
       }
     } catch { /* Only a bounded reason code is recorded; raw response text is never logged. */ }
+    if (requestStopped(options)) return { ok: false, error: { kind: "transport" } };
     logger.warn("github.auth_rejected", { accountId: account.userId, installationId: account.installationId, reason });
     return { ok: false, error: { kind: "auth_unavailable", reason, resetAt: null } };
   }
@@ -237,9 +263,11 @@ async function githubRequestWithToken<T>(
     let value: T;
     try {
       const body = await readBodyStrictlyCapped(res, GITHUB_RESPONSE_MAX_BYTES);
+      if (requestStopped(options)) return { ok: false, error: { kind: "transport" } };
       if (body === null) return { ok: false, error: { kind: "invalid_response" } };
       value = JSON.parse(body.toString("utf8")) as T;
     } catch {
+      if (requestStopped(options)) return { ok: false, error: { kind: "transport" } };
       return { ok: false, error: { kind: "invalid_response" } };
     }
     return {
@@ -265,7 +293,7 @@ export type GitHubGraphqlResult<T> = { ok: true; data: T | null; errors: Graphql
  * 한도가 바닥나면 GitHub 이 200 에 RATE_LIMITED 오류로 답하기도 한다 — 그때는 rate_limited 로 바꾼다
  * (기다릴 시각은 githubRequest 가 응답 머리 x-ratelimit-remaining: 0 으로 이미 적었다).
  */
-export async function githubGraphql<T>(query: string, options: { timeoutMs?: number; deadlineAt?: number } = {}): Promise<GitHubGraphqlResult<T>> {
+export async function githubGraphql<T>(query: string, options: { timeoutMs?: number; deadlineAt?: number; signal?: AbortSignal } = {}): Promise<GitHubGraphqlResult<T>> {
   const result = await githubRequest<{ data?: unknown; errors?: unknown }>("/graphql", {}, { ...options, body: { query } });
   if (!result.ok) return result;
   if (result.status !== 200 || !result.value || typeof result.value !== "object") return { ok: false, error: { kind: "invalid_response" } };

@@ -5,6 +5,7 @@ import type { DeclaredEvidenceSource } from "@/lib/domain/evidence/refresh";
 const state = vi.hoisted(() => ({ sources: [] as Record<string, unknown>[], declarations: [] as Record<string, unknown>[],
   media: [] as Record<string, unknown>[] }));
 vi.mock("@/lib/db", () => ({ db: {
+  query: { products: { findFirst: async () => undefined } },
   select: () => {
     let table: unknown;
     const query = {

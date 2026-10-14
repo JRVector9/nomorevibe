@@ -6,9 +6,10 @@ import {
   productProfiles,
   products,
   productUpdates,
+  jobs,
 } from "@/lib/db/schema";
 import type { ConditionalRequest, GitHubHttpResult } from "@/lib/crawl/github";
-import { mapGitHubRepositoryFacts, refreshGitHubEvidence } from "@/lib/domain/evidence/providers/github";
+import { fetchPublishedReleases, mapGitHubRepositoryFacts, recomputeRepositoryRelationships, refreshGitHubEvidence } from "@/lib/domain/evidence/providers/github";
 import {
   replaceMakerLinks,
   saveMakerProfile,
@@ -16,10 +17,14 @@ import {
 } from "@/lib/domain/evidence/repository";
 import { insertUpdateCandidates } from "@/lib/domain/evidence/updates";
 import { ensureSchema, resetTables } from "./setup";
+import { refreshProductEvidence } from "@/lib/domain/evidence/refresh";
+import * as generation from "@/lib/domain/products/generation";
+import * as jobControl from "@/lib/jobs/control";
 
 beforeAll(() => ensureSchema());
 beforeEach(async () => {
   await resetTables();
+  await db.delete(jobs);
   await db.insert(products).values({
     slug: "github-product",
     url: "https://product.example",
@@ -121,7 +126,560 @@ function successfulRequest() {
 }
 
 describe("GitHub evidence refresh", () => {
-  it("defers persistence when the job budget expires during push pagination", async () => {
+  it.each(["page=100", "page=0", "page=invalid", "per_page=1&page=2"])("rejects an impossible next release cursor %s instead of skipping consumed items", async query => {
+    const request = vi.fn(async () => ok([], { link: `<https://api.github.com/repos/owner/repo/releases?${query}>; rel="next"` }));
+    expect(await fetchPublishedReleases(request, "owner/repo", () => true)).toMatchObject({ ok: false, error: { kind: "invalid_response" } });
+    expect(request).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(["deadline", "abort", "budget"] as const)("starts no activity or final success after %s during the relationship lookup", async stop => {
+    const now = new Date("2026-08-19T00:00:00Z");
+    const controller = new AbortController();
+    const deadlineAt = Date.now() + 5000;
+    let budget = true;
+    let clock: ReturnType<typeof vi.spyOn> | undefined;
+    const original = db.query.productLinks.findFirst.bind(db.query.productLinks);
+    const lookup = vi.spyOn(db.query.productLinks, "findFirst").mockImplementation((async (config: Parameters<typeof db.query.productLinks.findFirst>[0]) => {
+      const result = await original(config);
+      if (stop === "abort") controller.abort();
+      if (stop === "budget") budget = false;
+      if (stop === "deadline") clock = vi.spyOn(Date, "now").mockReturnValue(deadlineAt + 1);
+      return result;
+    }) as unknown as typeof db.query.productLinks.findFirst);
+    const request = successfulRequest();
+    try {
+      expect(await refreshGitHubEvidence({ slug: "github-product", repository: "owner/repo" }, { request,
+        signal: controller.signal, deadlineAt, hasBudget: () => budget, now: () => now })).toMatchObject({ status: "budget_exhausted" });
+      expect(lookup).toHaveBeenCalledTimes(1);
+      expect(request.mock.calls.some(([path]) => path.includes("/activity?"))).toBe(false);
+    } finally { lookup.mockRestore(); clock?.mockRestore(); }
+    expect((await db.select().from(productEvidenceSources))[0].lastSuccessAt).toBeNull();
+    expect(await db.select().from(productUpdates)).toHaveLength(0);
+  });
+
+  it.each(["deadline", "abort"] as const)("starts no final success write after %s while awaiting its transaction callback", async stop => {
+    const controller = new AbortController();
+    const deadlineAt = Date.now() + 5000;
+    let clock: ReturnType<typeof vi.spyOn> | undefined;
+    let writes = 0;
+    const original = jobControl.withJobLeaseWrite;
+    const write = vi.spyOn(jobControl, "withJobLeaseWrite").mockImplementation((async (lease, callback) => {
+      if (++writes === 6) {
+        if (stop === "abort") controller.abort();
+        else clock = vi.spyOn(Date, "now").mockReturnValue(deadlineAt + 1);
+      }
+      return original(lease, callback);
+    }) as typeof jobControl.withJobLeaseWrite);
+    try {
+      expect(await refreshGitHubEvidence({ slug: "github-product", repository: "owner/repo" }, {
+        request: successfulRequest(), signal: controller.signal, deadlineAt,
+      })).toMatchObject({ status: "budget_exhausted" });
+      expect(writes).toBe(6);
+    } finally { write.mockRestore(); clock?.mockRestore(); }
+    expect((await db.select().from(productEvidenceSources))[0].lastSuccessAt).toBeNull();
+    expect(await db.select().from(productUpdates)).toHaveLength(0);
+  });
+
+  it.each(["deadline", "abort", "budget"] as const)("starts no new source SELECT after %s while awaiting the generation lock", async stop => {
+    await refreshGitHubEvidence({ slug: "github-product", repository: "owner/repo" }, { request: successfulRequest() });
+    await upsertObservedSource({ slug: "github-product", kind: "documentation", provider: "product_site", sourceKey: "canonical_site",
+      state: "ok", normalizedFacts: { type: "site_fingerprint", repositoryKeys: ["owner/repo"] } });
+    const [product] = await db.select({ id: products.id }).from(products);
+    const controller = new AbortController();
+    const deadlineAt = Date.now() + 5000;
+    let budget = true;
+    let readsAfterLock = -1;
+    let clock: ReturnType<typeof vi.spyOn> | undefined;
+    const original = generation.withProductGeneration;
+    const lock = vi.spyOn(generation, "withProductGeneration").mockImplementation((async (slug, id, run) => original(slug, id, async tx => {
+      if (stop === "abort") controller.abort();
+      if (stop === "budget") budget = false;
+      if (stop === "deadline") clock = vi.spyOn(Date, "now").mockReturnValue(deadlineAt + 1);
+      const select = vi.spyOn(tx, "select");
+      try { return await run(tx); }
+      finally { readsAfterLock = select.mock.calls.length; select.mockRestore(); }
+    })) as typeof generation.withProductGeneration);
+    try {
+      await recomputeRepositoryRelationships("github-product", product.id, undefined, { signal: controller.signal, deadlineAt, hasBudget: () => budget });
+      expect(lock).toHaveBeenCalledTimes(1);
+      expect(readsAfterLock).toBe(0);
+    } finally { lock.mockRestore(); clock?.mockRestore(); }
+    expect((await db.select().from(productEvidenceSources).where(eq(productEvidenceSources.kind, "repository")))[0].normalizedFacts?.relationshipState)
+      .toBe("repository_link");
+  });
+
+  it.each(["root", "languages", "contributors", "readme", "releases"] as const)("flushes accepted %s progress but starts no relationship or success work after the core HTTP budget ends", async phase => {
+    const now = new Date("2026-08-19T00:00:00Z");
+    const base = successfulRequest();
+    await refreshGitHubEvidence({ slug: "github-product", repository: "owner/repo" }, { request: base, now: () => now });
+    const makerRead = vi.spyOn(db.query.productLinks, "findFirst");
+    const siteRead = vi.spyOn(db.query.productEvidenceSources, "findMany");
+    let budget = true;
+    const request = vi.fn(async (path: string) => {
+      const response = path === "/repos/owner/repo" ? ok({ ...repository, stargazers_count: 201 }) : await base(path);
+      if (phase === "root" ? path === "/repos/owner/repo" : path.includes(`/${phase}`)) budget = false;
+      return response;
+    });
+    try {
+      expect(await refreshGitHubEvidence({ slug: "github-product", repository: "owner/repo" }, { request,
+        now: () => new Date(now.getTime() + 60000), hasBudget: () => budget })).toMatchObject({ status: "budget_exhausted" });
+      expect(makerRead).not.toHaveBeenCalled();
+      expect(siteRead).not.toHaveBeenCalled();
+    } finally { makerRead.mockRestore(); siteRead.mockRestore(); }
+    const [source] = await db.select().from(productEvidenceSources);
+    expect(source.lastSuccessAt).toEqual(now);
+    expect(source.normalizedFacts).toMatchObject({ stars: 201, _githubCollection: { partial: {
+      releases: phase === "releases" ? { complete: true } : { pagesRead: 0 },
+    } } });
+  });
+
+  it.each(["deadline", "abort"] as const)("defers explicit %s in optional activity and completes cached core on retry without optional starvation", async stop => {
+    const now = new Date("2026-08-19T00:00:00Z");
+    const controller = new AbortController();
+    const deadlineAt = Date.now() + 5000;
+    let clock: ReturnType<typeof vi.spyOn> | undefined;
+    const base = successfulRequest();
+    const request = vi.fn(async (path: string) => {
+      if (!path.includes("/activity?")) return base(path);
+      if (stop === "abort") controller.abort();
+      else clock = vi.spyOn(Date, "now").mockReturnValue(deadlineAt + 1);
+      return ok([]);
+    });
+    try {
+      expect(await refreshGitHubEvidence({ slug: "github-product", repository: "owner/repo" }, { request,
+        signal: controller.signal, deadlineAt, now: () => now })).toMatchObject({ status: "budget_exhausted" });
+    } finally { clock?.mockRestore(); }
+    expect((await db.select().from(productEvidenceSources))[0]).toMatchObject({ lastSuccessAt: null,
+      normalizedFacts: { stars: 146, _githubCollection: { partial: { releases: { complete: true } } } } });
+    expect(await db.select().from(productUpdates)).toHaveLength(0);
+    const retry = vi.fn(async () => { throw new Error("completed cached core must not retry optional HTTP"); });
+    expect(await refreshGitHubEvidence({ slug: "github-product", repository: "owner/repo" }, { request: retry,
+      now: () => new Date(now.getTime() + 60000) })).toEqual({ status: "updated", releases: 2 });
+    expect(retry).not.toHaveBeenCalled();
+    expect((await db.select().from(productEvidenceSources))[0].lastSuccessAt).toEqual(new Date(now.getTime() + 60000));
+  });
+
+  it.each([
+    [10, 1, 0, false, true], [10, 2, 1, false, true], [10, 2, 2, true, true], [10, 10, 10, true, true],
+    [1, 1, 0, false, true], [1, 2, 1, false, true], [1, 11, 1, false, true], [1, 12, 2, false, true], [1, 21, 2, false, true],
+    [1, 2, 2, true, true], [1, 11, 2, true, true],
+    [10, 100, 0, false, false], [10, 2, 0, false, false], [10, 1, 1, false, false], [10, 3, 1, true, false],
+    [1, 100, 0, false, false], [1, 11, 0, false, false], [1, 3, 1, false, false], [1, 20, 1, false, false], [1, 10, 1, true, false],
+  ] as const)("validates cursor perPage=%s page=%s reads=%s complete=%s (valid=%s) against its consumed offset", async (perPage, page, pagesRead, complete, valid) => {
+    const now = new Date("2026-08-19T00:00:00Z");
+    const base = successfulRequest();
+    await refreshGitHubEvidence({ slug: "github-product", repository: "owner/repo" }, { request: base, now: () => now });
+    const [source] = await db.select().from(productEvidenceSources);
+    const facts = structuredClone(source.normalizedFacts!);
+    const state = facts._githubCollection as { cache: Record<string, { value: unknown }>; partial: unknown };
+    const release = (state.cache["/repos/owner/repo/releases?per_page=10&page=1"].value as unknown[])[0];
+    const progress = { page, perPage, pagesRead, published: complete ? [release] : [], complete };
+    state.partial = { startedAt: now.toISOString(), completed: Object.keys(state.cache).filter(path => !path.includes("/releases?")), releases: progress };
+    await db.update(productEvidenceSources).set({ normalizedFacts: facts }).where(eq(productEvidenceSources.id, source.id));
+    const request = vi.fn(async (path: string) => path.includes("/releases?")
+      ? ok(valid || path.endsWith("per_page=10&page=1") ? [release] : []) : base(path));
+    await refreshGitHubEvidence({ slug: "github-product", repository: "owner/repo" }, { request, now: () => now });
+    const paths = request.mock.calls.map(([path]) => path).filter(path => path.includes("/releases?"));
+    expect(paths).toEqual(valid && complete ? [] : [`/repos/owner/repo/releases?per_page=${valid ? perPage : 10}&page=${valid ? page : 1}`]);
+    if (!valid) expect(request.mock.calls.some(([path]) => path === "/repos/owner/repo")).toBe(true);
+    expect((await db.select().from(productEvidenceSources))[0].normalizedFacts?.latestRelease).toEqual(facts.latestRelease);
+    const direct = vi.fn(async () => ok([release]));
+    await fetchPublishedReleases(direct, "owner/repo", () => true, { progress: progress as NonNullable<Parameters<typeof fetchPublishedReleases>[3]>["progress"] });
+    expect(direct.mock.calls.length).toBe(valid && complete ? 0 : 1);
+    if (direct.mock.calls.length) expect(direct).toHaveBeenCalledWith(`/repos/owner/repo/releases?per_page=${valid ? perPage : 10}&page=${valid ? page : 1}`);
+  });
+
+  it.each(["deadline", "abort"] as const)("starts no identity query when %s has already stopped the caller", async stop => {
+    const controller = new AbortController();
+    if (stop === "abort") controller.abort();
+    const identityRead = vi.spyOn(db.query.products, "findFirst");
+    try {
+      expect(await refreshGitHubEvidence({ slug: "github-product", repository: "owner/repo" }, {
+        request: successfulRequest(), signal: controller.signal, deadlineAt: Date.now() + (stop === "deadline" ? -1 : 5000),
+      })).toMatchObject({ status: "budget_exhausted" });
+      expect(identityRead).not.toHaveBeenCalled();
+    } finally { identityRead.mockRestore(); }
+  });
+
+  it.each(["deadline", "abort"] as const)("starts no source query after %s during the identity lookup", async stop => {
+    const controller = new AbortController();
+    const identityRead = vi.spyOn(db.query.products, "findFirst").mockImplementationOnce((async () => {
+      await new Promise(resolve => setTimeout(resolve, 60));
+      return { id: 1, url: "https://product.example" } as never;
+    }) as unknown as typeof db.query.products.findFirst);
+    const sourceRead = vi.spyOn(db.query.productEvidenceSources, "findFirst");
+    const request = successfulRequest();
+    const timer = stop === "abort" ? setTimeout(() => controller.abort(), 15) : undefined;
+    try {
+      expect(await refreshGitHubEvidence({ slug: "github-product", repository: "owner/repo" }, {
+        request, signal: controller.signal, deadlineAt: Date.now() + (stop === "deadline" ? 15 : 5000),
+      })).toMatchObject({ status: "budget_exhausted" });
+      expect(sourceRead).not.toHaveBeenCalled();
+      expect(request).not.toHaveBeenCalled();
+    } finally {
+      clearTimeout(timer);
+      identityRead.mockRestore();
+      sourceRead.mockRestore();
+    }
+  });
+
+  it.each(["deadline", "abort"] as const)("starts no HTTP or write after %s during the source lookup", async stop => {
+    const controller = new AbortController();
+    const sourceRead = vi.spyOn(db.query.productEvidenceSources, "findFirst").mockImplementationOnce((async () => {
+      await new Promise(resolve => setTimeout(resolve, 60));
+      return undefined;
+    }) as typeof db.query.productEvidenceSources.findFirst);
+    const request = successfulRequest();
+    const timer = stop === "abort" ? setTimeout(() => controller.abort(), 15) : undefined;
+    try {
+      expect(await refreshGitHubEvidence({ slug: "github-product", repository: "owner/repo" }, {
+        request, signal: controller.signal, deadlineAt: Date.now() + (stop === "deadline" ? 15 : 5000),
+      })).toMatchObject({ status: "budget_exhausted" });
+      expect(request).not.toHaveBeenCalled();
+      expect(await db.select().from(productEvidenceSources)).toHaveLength(0);
+    } finally {
+      clearTimeout(timer);
+      sourceRead.mockRestore();
+    }
+  });
+
+  it.each([
+    ["startedAt", { startedAt: "invalid-date" }],
+    ["completed", { completed: "not-an-array" }],
+    ["completed entry", { completed: [null] }],
+    ["uncached completed entry", { completed: ["/repos/owner/repo/missing"] }],
+    ["releases", { releases: null }],
+    ["page", { releases: { page: "1" } }],
+    ["page range", { releases: { page: 0 } }],
+    ["perPage", { releases: { perPage: 0 } }],
+    ["pagesRead", { releases: { pagesRead: "0" } }],
+    ["pagesRead range", { releases: { pagesRead: -1 } }],
+    ["published", { releases: { published: {} } }],
+    ["published entry", { releases: { published: [{ id: 1 }] } }],
+    ["complete", { releases: { complete: "false" } }],
+    ["complete without a read", { releases: { complete: true } }],
+  ] as const)("restarts a malformed %s checkpoint without losing last-good facts or cache", async (_field, malformed) => {
+    const now = new Date("2026-08-19T00:00:00.000Z");
+    await refreshGitHubEvidence({ slug: "github-product", repository: "owner/repo" }, { request: successfulRequest(), now: () => now });
+    const [source] = await db.select().from(productEvidenceSources);
+    const facts = structuredClone(source.normalizedFacts!);
+    const state = facts._githubCollection as { cache: Record<string, unknown>; partial: Record<string, unknown> };
+    const releases = { page: 1, perPage: 10, pagesRead: 0, published: [], complete: false };
+    const malformedReleases = "releases" in malformed ? malformed.releases : undefined;
+    state.partial = { startedAt: now.toISOString(), completed: Object.keys(state.cache).filter(path => !path.includes("/releases?")),
+      releases, ...malformed, ...(malformedReleases && { releases: { ...releases, ...malformedReleases } }) };
+    await db.update(productEvidenceSources).set({ normalizedFacts: facts }).where(eq(productEvidenceSources.id, source.id));
+    const original = successfulRequest();
+    const request = vi.fn(async (path: string, conditional?: ConditionalRequest) => {
+      if (path === "/repos/owner/repo") {
+        expect(conditional?.etag).toBe('"repo-v1"');
+        return { ok: false as const, error: { kind: "http" as const, status: 503 } };
+      }
+      return original(path);
+    });
+    expect(await refreshGitHubEvidence({ slug: "github-product", repository: "owner/repo" }, { request, now: () => now }))
+      .toMatchObject({ status: "deferred" });
+    const [failed] = await db.select().from(productEvidenceSources);
+    expect(failed.normalizedFacts?.latestRelease).toEqual(facts.latestRelease);
+    expect((failed.normalizedFacts?._githubCollection as typeof state).cache).toEqual(state.cache);
+    request.mockReset().mockImplementation(original);
+    expect(await refreshGitHubEvidence({ slug: "github-product", repository: "owner/repo" }, { request, now: () => now }))
+      .toMatchObject({ status: "not_modified" });
+    expect(request.mock.calls.some(([path]) => path.includes("/releases?"))).toBe(true);
+    expect((await db.select().from(productEvidenceSources))[0].normalizedFacts?.latestRelease).toEqual(facts.latestRelease);
+  });
+
+  it("refreshes the full README after a canonical host change outside the cached host projection", async () => {
+    const base = successfulRequest();
+    const content = Buffer.from([
+      ...Array.from({ length: 65 }, (_, index) => `https://unrelated-${index}.example`),
+      "https://product.example", "https://new-product.example",
+    ].join("\n")).toString("base64");
+    const first = async (path: string) => path === "/repos/owner/repo" ? ok({ ...repository, homepage: null })
+      : path.endsWith("/readme") ? ok({ encoding: "base64", content }, { etag: '"readme-unchanged"' }) : base(path);
+    await refreshGitHubEvidence({ slug: "github-product", repository: "owner/repo" }, { request: first });
+    await db.update(products).set({ url: "https://new-product.example" }).where(eq(products.slug, "github-product"));
+    let reads = 0;
+    const second = async (path: string, conditional?: ConditionalRequest): Promise<GitHubHttpResult<unknown>> => {
+      if (!path.endsWith("/readme")) return first(path);
+      if (++reads === 1) return { ok: true, status: 304, etag: '"readme-unchanged"', lastModified: null, link: null };
+      expect(conditional?.etag).toBeUndefined();
+      return first(path);
+    };
+    await refreshGitHubEvidence({ slug: "github-product", repository: "owner/repo" }, { request: second });
+    expect(reads).toBe(2);
+    expect((await db.select().from(productEvidenceSources))[0].normalizedFacts?.relationshipState).toBe("repository_link");
+  });
+
+  it("invalidates a confirmed absent README so site-only recomputation cannot restore its deleted link", async () => {
+    const base = successfulRequest();
+    const first = async (path: string) => path === "/repos/owner/repo" ? ok({ ...repository, homepage: null }) : base(path);
+    await refreshGitHubEvidence({ slug: "github-product", repository: "owner/repo" }, { request: first });
+    const missing = async (path: string): Promise<GitHubHttpResult<unknown>> => path.endsWith("/readme")
+      ? { ok: false, error: { kind: "not_found" } } : first(path);
+    await refreshGitHubEvidence({ slug: "github-product", repository: "owner/repo" }, { request: missing });
+    const [source] = await db.select().from(productEvidenceSources);
+    expect(source.normalizedFacts?.relationshipState).toBe("disconnected");
+    const [product] = await db.select({ id: products.id }).from(products).where(eq(products.slug, "github-product"));
+    await recomputeRepositoryRelationships("github-product", product.id);
+    const [after] = await db.select().from(productEvidenceSources);
+    expect(after.normalizedFacts?.relationshipState).toBe("maker_reported");
+    const cache = after.normalizedFacts?._githubCollection as { cache: Record<string, unknown> };
+    expect(cache.cache["/repos/owner/repo/readme"]).toBeUndefined();
+  });
+
+  it("ignores malformed README cache in site-only relationship computation", async () => {
+    const base = successfulRequest();
+    const request = async (path: string) => path === "/repos/owner/repo" ? ok({ ...repository, homepage: null }) : base(path);
+    await refreshGitHubEvidence({ slug: "github-product", repository: "owner/repo" }, { request });
+    const [source] = await db.select().from(productEvidenceSources);
+    const facts = structuredClone(source.normalizedFacts!);
+    facts.relationshipState = "disconnected";
+    const state = facts._githubCollection as { cache: Record<string, { value: Record<string, unknown> }> };
+    state.cache["/repos/owner/repo/readme"].value = { encoding: "base64", content: "", canonicalHost: "product.example", linksCanonicalHost: "false" };
+    await db.update(productEvidenceSources).set({ normalizedFacts: facts }).where(eq(productEvidenceSources.id, source.id));
+    const [product] = await db.select({ id: products.id }).from(products).where(eq(products.slug, "github-product"));
+    await recomputeRepositoryRelationships("github-product", product.id);
+    expect((await db.select().from(productEvidenceSources))[0].normalizedFacts?.relationshipState).toBe("maker_reported");
+  });
+
+  it.each(["deadline", "abort"] as const)("bounds the entire GitHub request await by %s", async stop => {
+    const controller = new AbortController();
+    const request = vi.fn(async (): Promise<GitHubHttpResult<unknown>> => {
+      await new Promise(resolve => setTimeout(resolve, 350));
+      return ok(repository);
+    });
+    const started = Date.now();
+    const timer = stop === "abort" ? setTimeout(() => controller.abort(), 50) : undefined;
+    try {
+      expect(await refreshGitHubEvidence({ slug: "github-product", repository: "owner/repo" }, {
+        request, deadlineAt: stop === "deadline" ? started + 50 : started + 5000, signal: controller.signal,
+      })).toMatchObject({ status: "budget_exhausted" });
+      expect(Date.now() - started).toBeLessThan(250);
+      expect(await db.select().from(productEvidenceSources)).toEqual([]);
+    } finally { clearTimeout(timer); }
+  });
+
+  it.each(["checkpoint", "final"] as const)("fences %s persistence after job ownership changes", async phase => {
+    const lease = { name: `evidence-${phase}`, token: "first-owner", requestedVersion: 0 };
+    await db.insert(jobs).values({ name: lease.name, leaseToken: lease.token, lockedAt: new Date() });
+    const base = successfulRequest();
+    const request = vi.fn(async (path: string): Promise<GitHubHttpResult<unknown>> => {
+      if (phase === "checkpoint" ? path === "/repos/owner/repo" : path.includes("/activity?")) {
+        await db.update(jobs).set({ leaseToken: "next-owner" }).where(eq(jobs.name, lease.name));
+        if (phase === "final") await upsertObservedSource({ slug: "github-product", kind: "repository", provider: "github",
+          sourceKey: "owner/repo", state: "ok", normalizedFacts: { type: "github_repository", stars: 999, relationshipState: "bidirectional" } });
+      }
+      return base(path);
+    });
+    await expect(refreshGitHubEvidence({ slug: "github-product", repository: "owner/repo" }, {
+      request, lease,
+    } as Parameters<typeof refreshGitHubEvidence>[1])).rejects.toThrow("job_lease_lost");
+    const sources = await db.select().from(productEvidenceSources);
+    if (phase === "checkpoint") expect(sources).toEqual([]);
+    else expect(sources[0].normalizedFacts).toMatchObject({ stars: 999, relationshipState: "bidirectional" });
+    expect(await db.select().from(productUpdates)).toEqual([]);
+  });
+
+  it("preserves the confirmed relationship in a partial root checkpoint", async () => {
+    const base = successfulRequest();
+    await refreshGitHubEvidence({ slug: "github-product", repository: "owner/repo" }, { request: base });
+    let remaining = true;
+    const request = async (path: string) => {
+      const result = await base(path);
+      if (path === "/repos/owner/repo") remaining = false;
+      return result;
+    };
+    expect(await refreshGitHubEvidence({ slug: "github-product", repository: "owner/repo" }, { request, hasBudget: () => remaining }))
+      .toMatchObject({ status: "budget_exhausted" });
+    const [source] = await db.select().from(productEvidenceSources);
+    expect(source.state).toBe("ok");
+    expect(source.normalizedFacts?.relationshipState).toBe("repository_link");
+  });
+
+  it("preserves the consumed canonical README link beyond the first 64 hosts on 304", async () => {
+    await replaceMakerLinks({ slug: "github-product", actor: "maker:test", links: [] });
+    const base = successfulRequest();
+    const first = async (path: string) => path === "/repos/owner/repo" ? ok({ ...repository, homepage: null })
+      : path.endsWith("/readme") ? ok({ encoding: "base64", content: Buffer.from([
+        ...Array.from({ length: 65 }, (_, index) => `https://unrelated-${index}.example`), "https://product.example",
+      ].join("\n")).toString("base64") }, { etag: '"readme-v1"' }) : base(path);
+    await refreshGitHubEvidence({ slug: "github-product", repository: "owner/repo" }, { request: first });
+    const second = async (path: string): Promise<GitHubHttpResult<unknown>> => path.endsWith("/readme")
+      ? { ok: true, status: 304, etag: '"readme-v1"', lastModified: null, link: null } : first(path);
+    await refreshGitHubEvidence({ slug: "github-product", repository: "owner/repo" }, { request: second });
+    await refreshGitHubEvidence({ slug: "github-product", repository: "owner/repo" }, { request: second });
+    const [source] = await db.select().from(productEvidenceSources);
+    expect(source.normalizedFacts?.relationshipState).toBe("repository_link");
+  });
+
+  it("sorts release dates before persisting the completed top ten checkpoint", async () => {
+    const request = async (path: string) => {
+      const page = Number(new URL(`https://api.github.com${path}`).searchParams.get("page"));
+      return ok(Array.from({ length: page === 1 ? 5 : 10 }, (_, index) => {
+        const id = (page - 1) * 5 + index + 1;
+        return { id, tag_name: `v${id}`, name: `v${id}`, html_url: `https://github.com/owner/repo/releases/tag/v${id}`,
+          draft: false, published_at: `2026-08-${String(id).padStart(2, "0")}T00:00:00Z` };
+      }), page === 1 ? { link: '<https://api.github.com/repos/owner/repo/releases?per_page=10&page=2>; rel="next"' } : {});
+    };
+    const progress = { page: 1, perPage: 10, pagesRead: 0, published: [] };
+    await expect(fetchPublishedReleases(request, "owner/repo", () => true, { progress, saveProgress: async checkpoint => {
+      Object.assign(progress, structuredClone(checkpoint));
+      if (checkpoint.complete) throw new Error("simulated interruption after checkpoint");
+    } })).rejects.toThrow("simulated interruption");
+    expect(progress.published[0]).toMatchObject({ id: 15 });
+    const resumedRequest = vi.fn(request);
+    const resumed = await fetchPublishedReleases(resumedRequest, "owner/repo", () => true, { progress });
+    expect(resumed.ok && resumed.status === 200 && resumed.value[0]).toMatchObject({ id: 15 });
+    expect(resumedRequest).not.toHaveBeenCalled();
+  });
+
+  it("does not evict completed core endpoints during large draft release pagination", async () => {
+    const base = successfulRequest();
+    let remaining = true;
+    const request = async (path: string) => {
+      if (!path.includes("/releases?")) return base(path);
+      const page = Number(new URL(`https://api.github.com${path}`).searchParams.get("page"));
+      if (page === 5) remaining = false;
+      return ok(Array.from({ length: 10 }, (_, index) => ({ id: page * 10 + index,
+        tag_name: "t".repeat(160), name: "n".repeat(500), html_url: `https://github.com/owner/repo/${"x".repeat(900)}`,
+        draft: true, published_at: null })), { link: `<https://api.github.com/repos/owner/repo/releases?per_page=10&page=${page + 1}>; rel="next"` });
+    };
+    expect(await refreshGitHubEvidence({ slug: "github-product", repository: "owner/repo" }, { request, hasBudget: () => remaining }))
+      .toMatchObject({ status: "budget_exhausted" });
+    const resumed = vi.fn(async (path: string) => base(path));
+    await refreshGitHubEvidence({ slug: "github-product", repository: "owner/repo" }, { request: resumed });
+    expect(resumed.mock.calls.map(([path]) => path)).toEqual([
+      "/repos/owner/repo/releases?per_page=10&page=6", "/repos/owner/repo/activity?time_period=week&per_page=100&direction=desc",
+    ]);
+  });
+
+  it("retains newly completed root facts when unused nested metadata exceeds the cache budget", async () => {
+    const base = successfulRequest();
+    await refreshGitHubEvidence({ slug: "github-product", repository: "owner/repo" }, { request: base });
+    let remaining = true;
+    const request = async (path: string) => {
+      if (path !== "/repos/owner/repo") return base(path);
+      remaining = false;
+      return ok({ ...repository, stargazers_count: 321, license: { ...repository.license, unused: "x".repeat(30 * 1024) } });
+    };
+    expect(await refreshGitHubEvidence({ slug: "github-product", repository: "owner/repo" }, { request, hasBudget: () => remaining }))
+      .toMatchObject({ status: "budget_exhausted" });
+    const resumed = vi.fn(async (path: string) => base(path));
+    await refreshGitHubEvidence({ slug: "github-product", repository: "owner/repo" }, { request: resumed });
+    expect(resumed.mock.calls.some(([path]) => path === "/repos/owner/repo")).toBe(false);
+    expect((await db.select().from(productEvidenceSources))[0].normalizedFacts?.stars).toBe(321);
+  });
+
+
+  it.each([
+    ["archived", { archived: "false" }], ["fork", { fork: "false" }], ["pushed_at", { pushed_at: 42 }],
+    ["homepage", { homepage: 42 }], ["license", { license: { name: 42, spdx_id: null, url: null } }], ["id", { id: 0 }],
+  ])("retains last-good root facts and cache when %s is malformed", async (_field, malformed) => {
+    const base = successfulRequest();
+    await refreshGitHubEvidence({ slug: "github-product", repository: "owner/repo" }, { request: base });
+    const [before] = await db.select().from(productEvidenceSources);
+    const request = async (path: string) => path === "/repos/owner/repo" ? ok({ ...repository, ...malformed }, { etag: '"bad"' }) : base(path);
+    expect(await refreshGitHubEvidence({ slug: "github-product", repository: "owner/repo" }, { request })).toMatchObject({ status: "deferred" });
+    const [after] = await db.select().from(productEvidenceSources);
+    expect(after.normalizedFacts).toEqual(before.normalizedFacts);
+    expect(after.lastErrorCode).toBe("invalid_response");
+  });
+
+  it.each(["payload", "etag", "lastModified", "link"])("retries a 304 unconditionally when cached root %s is malformed", async field => {
+    const base = successfulRequest();
+    await refreshGitHubEvidence({ slug: "github-product", repository: "owner/repo" }, { request: base });
+    const [source] = await db.select().from(productEvidenceSources);
+    const facts = structuredClone(source.normalizedFacts!);
+    const state = facts._githubCollection as { cache: Record<string, Record<string, unknown>> };
+    state.cache["/repos/owner/repo"][field === "payload" ? "value" : field] = field === "payload" ? { ...repository, archived: "false" } : 42;
+    await db.update(productEvidenceSources).set({ normalizedFacts: facts }).where(eq(productEvidenceSources.id, source.id));
+    let roots = 0;
+    const request = async (path: string): Promise<GitHubHttpResult<unknown>> => path === "/repos/owner/repo" && ++roots === 1
+      ? { ok: true, status: 304, etag: null, lastModified: null, link: null } : base(path);
+    await refreshGitHubEvidence({ slug: "github-product", repository: "owner/repo" }, { request });
+    expect(roots).toBe(2);
+    expect((await db.select().from(productEvidenceSources))[0].normalizedFacts).toMatchObject({ archived: false, fork: false });
+  });
+
+  it("sends endpoint-specific validators and reuses each last-good payload on 304", async () => {
+    const base = successfulRequest();
+    const firstRequest = vi.fn(async (path: string): Promise<GitHubHttpResult<unknown>> => {
+      const result = await base(path);
+      return result.ok ? { ...result, etag: `"${path}"`, lastModified: "Wed, 19 Aug 2026 00:00:00 GMT" } : result;
+    });
+    await refreshGitHubEvidence({ slug: "github-product", repository: "owner/repo" }, { request: firstRequest });
+    const nextRequest = vi.fn(async (path: string, conditional?: ConditionalRequest): Promise<GitHubHttpResult<unknown>> => {
+      if (path.includes("/activity?")) return { ok: false, error: { kind: "not_found" } };
+      expect(conditional?.etag).toBe(`"${path}"`);
+      return { ok: true, status: 304, etag: `"${path}"`, lastModified: null, link: null };
+    });
+    await expect(refreshGitHubEvidence({ slug: "github-product", repository: "owner/repo" }, {
+      request: nextRequest,
+    })).resolves.toEqual({ status: "not_modified", releases: 0 });
+    expect(nextRequest.mock.calls.filter(([path]) => !path.includes("/activity?"))).toHaveLength(5);
+    const [source] = await db.select().from(productEvidenceSources);
+    expect(source.normalizedFacts).toMatchObject({ stars: 146, latestRelease: { id: 2 } });
+  });
+
+  it("retries a cacheless 304 unconditionally before considering an endpoint complete", async () => {
+    const base = successfulRequest();
+    const seen = new Set<string>();
+    const request = vi.fn(async (path: string, conditional?: ConditionalRequest): Promise<GitHubHttpResult<unknown>> => {
+      if (path.includes("/activity?")) return base(path);
+      if (!seen.has(path)) {
+        seen.add(path);
+        return { ok: true, status: 304, etag: '"orphan"', lastModified: null, link: null };
+      }
+      expect(conditional?.etag).toBeUndefined();
+      return base(path);
+    });
+    await expect(refreshGitHubEvidence({ slug: "github-product", repository: "owner/repo" }, { request }))
+      .resolves.toEqual({ status: "updated", releases: 2 });
+    expect(request.mock.calls.filter(([path]) => !path.includes("/activity?"))).toHaveLength(10);
+  });
+
+  it("does not cache a malformed supporting payload as a last-good endpoint", async () => {
+    const base = successfulRequest();
+    await refreshGitHubEvidence({ slug: "github-product", repository: "owner/repo" }, { request: base });
+    const bad = vi.fn(async (path: string): Promise<GitHubHttpResult<unknown>> =>
+      path.endsWith("/languages") ? ok({ TypeScript: "invalid" }, { etag: '"bad"' }) : base(path));
+    await expect(refreshGitHubEvidence({ slug: "github-product", repository: "owner/repo" }, { request: bad }))
+      .resolves.toMatchObject({ status: "deferred" });
+    const [source] = await db.select().from(productEvidenceSources);
+    expect(source.lastErrorCode).toBe("invalid_response");
+    expect(source.normalizedFacts?.languages).toEqual(expect.arrayContaining([expect.objectContaining({ name: "TypeScript", bytes: 700 })]));
+    const saved = source.normalizedFacts?._githubCollection as { cache: Record<string, { etag: string | null }> };
+    expect(saved.cache["/repos/owner/repo/languages"].etag).not.toBe('"bad"');
+    expect(bad.mock.calls.map(([path]) => path)).toEqual(["/repos/owner/repo", "/repos/owner/repo/languages"]);
+  });
+
+  it("does not report changed public facts for internal endpoint-validator changes", async () => {
+    const base = successfulRequest();
+    await refreshGitHubEvidence({ slug: "github-product", repository: "owner/repo" }, { request: base });
+    const changedValidators = async (path: string): Promise<GitHubHttpResult<unknown>> => {
+      const result = await base(path);
+      return result.ok ? { ...result, etag: '"validator-v2"' } : result;
+    };
+    const result = await refreshProductEvidence("github-product", { force: true, dependencies: {
+      github: (input, options) => refreshGitHubEvidence(input, { ...options, request: changedValidators }),
+    } });
+    expect(result.factsChanged).toBe(0);
+  });
+
+  it("passes the same deadline into every GitHub request, including resumed release pages and activity", async () => {
+    const base = successfulRequest();
+    const deadlineAt = Date.now() + 5_000;
+    const request = vi.fn(async (path: string, _conditional?: ConditionalRequest, options?: { deadlineAt?: number }) => {
+      expect(options?.deadlineAt).toBe(deadlineAt);
+      return base(path);
+    });
+    await refreshGitHubEvidence({ slug: "github-product", repository: "owner/repo" },
+      { request, deadlineAt } as Parameters<typeof refreshGitHubEvidence>[1]);
+    expect(request).toHaveBeenCalledTimes(6);
+  });
+
+  it("keeps completed core facts when the job budget expires during optional push pagination", async () => {
     const baseRequest = successfulRequest();
     let remaining = true;
     const request = async (path: string): Promise<GitHubHttpResult<unknown>> => {
@@ -133,9 +691,40 @@ describe("GitHub evidence refresh", () => {
     };
     await expect(refreshGitHubEvidence({ slug: "github-product", repository: "owner/repo" }, {
       request, now: () => new Date("2026-08-19T00:00:00Z"), hasBudget: () => remaining,
+    })).resolves.toEqual({ status: "updated", releases: 2 });
+    const [source] = await db.select().from(productEvidenceSources);
+    expect(source.normalizedFacts).toMatchObject({ stars: 146, pushActivity: null });
+    expect(source.lastSuccessAt).toEqual(new Date("2026-08-19T00:00:00Z"));
+    expect(await db.select().from(productUpdates)).toHaveLength(2);
+  });
+
+  it("resumes the next release page after a budget stop without fetching completed core endpoints again", async () => {
+    const baseRequest = successfulRequest();
+    let remaining = true;
+    const request = vi.fn(async (path: string): Promise<GitHubHttpResult<unknown>> => {
+      if (path.includes("/releases") && path.endsWith("page=1")) {
+        remaining = false;
+        return ok([], { link: '<https://api.github.com/repos/owner/repo/releases?per_page=10&page=2>; rel="next"' });
+      }
+      return baseRequest(path);
+    });
+    const firstAt = new Date("2026-08-19T00:00:00Z");
+    await expect(refreshGitHubEvidence({ slug: "github-product", repository: "owner/repo" }, {
+      request, now: () => firstAt, hasBudget: () => remaining,
     })).resolves.toEqual({ status: "budget_exhausted", releases: 0 });
-    expect(await db.select().from(productEvidenceSources)).toHaveLength(0);
-    expect(await db.select().from(productUpdates)).toHaveLength(0);
+    const [partial] = await db.select().from(productEvidenceSources);
+    expect(partial.normalizedFacts).toMatchObject({ stars: 146,
+      languages: expect.arrayContaining([expect.objectContaining({ name: "TypeScript" })]) });
+    expect(partial.lastSuccessAt).toBeNull();
+    request.mockClear();
+    remaining = true;
+    await expect(refreshGitHubEvidence({ slug: "github-product", repository: "owner/repo" }, {
+      request, now: () => new Date(firstAt.getTime() + 60_000), hasBudget: () => remaining,
+    })).resolves.toEqual({ status: "updated", releases: 2 });
+    expect(request.mock.calls.map(([path]) => path)).toEqual([
+      "/repos/owner/repo/releases?per_page=10&page=2",
+      "/repos/owner/repo/activity?time_period=week&per_page=100&direction=desc",
+    ]);
   });
 
   it("stores complete weekly push counts without treating an optional activity failure as zero", async () => {
@@ -391,7 +980,8 @@ describe("GitHub evidence refresh", () => {
       }, { request: successfulRequest() })).rejects.toThrow();
 
       const sources = await db.select().from(productEvidenceSources).where(eq(productEvidenceSources.slug, "github-product"));
-      expect(sources).toHaveLength(0);
+      expect(sources.every(source => source.lastSuccessAt === null)).toBe(true);
+      expect(sources.every(source => source.etag === null)).toBe(true);
     } finally {
       await db.execute(sql.raw('alter table "product_updates" rename column "title_disabled" to "title"'));
     }
