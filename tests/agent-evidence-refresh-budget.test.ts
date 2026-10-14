@@ -36,3 +36,25 @@ it('pauses the agent scan job at the auth-pool retry time', async () => {
   expect(save).toHaveBeenCalledTimes(1);
   expect(save).toHaveBeenCalledWith(result.cursor);
 });
+
+it.each([
+  { state: 'failed', errorCode: null, failed: true },
+  { state: 'partial', errorCode: 'timeout', failed: true },
+  { state: 'partial', errorCode: null, failed: false },
+])('retains a safe failure flag when a persisted scan is $state with error $errorCode', async ({ state, errorCode, failed }) => {
+  mocks.execute.mockResolvedValueOnce([]).mockResolvedValueOnce([{ repository_key: 'example/repository' }])
+    .mockResolvedValueOnce([]).mockResolvedValueOnce([]);
+  mocks.refresh.mockResolvedValue({ scan: { id: 42, state }, observations: [], cached: false, errorCode, retryAt: null });
+  const save = vi.fn(), log = vi.fn();
+
+  await refreshAgentEvidenceJob({ cursor: null, save, log, hasBudget: () => true });
+
+  const scanned = log.mock.calls.find(([event]) => event === 'agent_evidence.scanned');
+  expect(scanned?.[1]).toMatchObject({ failed });
+  // Match runner's numeric/boolean observation projection; state/errorCode are discarded.
+  const retained = Object.fromEntries(Object.entries(scanned?.[1] ?? {}).filter(([,value]) =>
+    typeof value === 'number' && Number.isFinite(value) || typeof value === 'boolean'));
+  expect(retained.failed).toBe(failed);
+  expect(retained).not.toHaveProperty('errorCode');
+  expect(retained).not.toHaveProperty('state');
+});

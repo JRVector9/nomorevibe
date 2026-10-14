@@ -1,3 +1,71 @@
+# 2026-10-14 — 수집 복구·크롤러 활동 관리자·운영 배포 진행
+
+## Current objective / authorization
+
+사용자 `푸시하고 배포해 마이그레이션도 하고`, `크롤러들 활동하는 것들 전부 확인가능하게 관리자에서 구성해놔`,
+후속 `이어서해`·`배포 이어서해`에 따라 관리자 크롤러 활동까지 완성한 뒤 같은 릴리스를 배포한다.
+승인된 구성은 기존 운영센터에 `?tab=crawlers`, 전체 수집기의 마지막 실행·현재 상태와 주/예비·동시 실행 줄을 표시한다.
+X는 수동 API 파일럿/자동 수집 안 함으로 구분한다. 소개 검수의 중단은 유지한다.
+
+## Completed work / current phase
+
+- 작업 브랜치 `feat/pipeline-review-recovery-20261014`, 최신 main91685ca를 충돌 없이 병합한45de7d0.
+  `npm ci` 완료. 관리자 소스 최종 freeze에서 전체256파일2,468단위,
+  `set -e`로 Next typegen→TypeScript→i18n→lint→diff 검사 exit0. 아직push/PR/운영 변경 없음.
+- 운영13앱 Dokploy done·실제 ready, DB journal76/quality 컬럼 없음/소개 검수2100·미임대 확인.
+  환경·설정 snapshot은 `/private/tmp/nomorevibe-pipeline-release-20261014`0700/파일0600이며 출력·Git 금지.
+- 최신 base 통합 상태 단위254파일2,434사례, 통합143파일1,546사례(464/444/638), 기존todo1 미실행.
+  Python 배포 검사23/CI scope4/Next typegen exit0. 로컬 전용 테스트 컨테이너3개 중지·exited 확인.
+- 읽기 전용 독립 서브에이전트 `release_prelanding_review`는45de7d0에서 CLEAN, 선택10파일131단위 통과.
+  설치되지 않은 gstack 체크리스트를 실행한 것으로 기록하지 않는다. 직접 CLI 백엔드 리뷰 exit0/OK.
+  관리자 직접 리뷰는 재현 가능한P2 두 개, native 리뷰는 스캔 실패 신호P2 하나를 발견했고 모두 수정했다.
+  실제 CLI Vitest는read-only temp 제한으로0검사; 루트와native의 실행 결과와 구별한다.
+- `admin_crawler_activity` 소스·spec/plan freeze 완료. 집중5파일59검사/type/scopedlint/diff exit0.
+  최신lease+runtime이 과거standby를가리지 않고, 항목실패0과별도요청오류를구별하며,
+  스캔boolean실패신호와과거미확인상태를표시한다. release도최신관측에서읽는다.
+  루트최종build/bundle exit0. native최종수정검증CLEAN/집중59검사exit0.
+  직접CLI최종followup은병합전결과확인예정이다.
+
+## Modified files / design decisions
+
+관리자 변경은 `lib/operations/crawler-activity.ts`, status의CrawlerActivity/CSS/page/OperationsCenter/action-links,
+모델·컴포넌트 검사, `docs/superpowers/specs/2026-10-14-crawler-activity-design.md`·계획이다.
+루트 문서는 `README.md`, 이 인계, `docs/operations/2026-10-14-pipeline-recovery-rollout.md`다.
+기존 조회를 재사용하고 새 DB query/migration 없이 catalog 전체 수집기를 포함한다. 직전 성공 회차 관측만
+저장되는 한계를 명시하고, 미측정 대기·오류 수는미확인/원시 오류·cursor·detail·토큰은 투영하지 않는다.
+
+## Remaining / exact next commands
+
+관리자최종freeze와단위/type/lint/i18n/build/bundle/native리뷰완료.
+명시한파일만커밋/push/PR한뒤필수CI와직접CLI followup session46313을확인하고병합한다.
+최신 base 필수CI check 성공 뒤 정상 PR 병합, main CI의 양 이미지 발행 성공을 확인한다.
+운영 준비와 배포 도구는 저장소 runbook에 따른 private `release.py`이며 secrets를 인자/출력에 넣지 않는다.
+source5는GitHub provider/명령/복제본을 유지하고 shared8은immutable digest를 적용한다.
+
+```sh
+git status --short
+git log -3 --oneline
+cat docs/operations/2026-10-14-pipeline-recovery-rollout.md
+# direct backend CLI receipt/review만 읽는다. jsonl·settings snapshot에는 원시 작업 정보가 있어 출력하지 않는다.
+cat /private/tmp/nomorevibe-pipeline-release-20261014/release_backend.receipt.json
+cat /private/tmp/nomorevibe-pipeline-release-20261014/release_backend.review.md
+# main SHA와 실제 CI ID가 확정된 뒤:
+python3 /private/tmp/nomorevibe-pipeline-release-20261014/release.py target MAIN_SHA MAIN_CI_ID
+python3 /private/tmp/nomorevibe-pipeline-release-20261014/release.py plan
+python3 /private/tmp/nomorevibe-pipeline-release-20261014/release.py migrate
+# role별 mini 예비 → M3 주, 마지막 양웹. 실제 migration proof 없이는roll 금지.
+python3 /private/tmp/nomorevibe-pipeline-release-20261014/release.py roll text-mini
+python3 /private/tmp/nomorevibe-pipeline-release-20261014/release.py roll text-m3
+```
+
+baseline은 이미capture했다. `capture`로 덮어쓰지 않는다. 일회성 migration은 소비자11서비스를drain하고
+새image의scripts/migrate.mjs를direct5432에서 실행해 journal77/컬럼/보수적backfill/소개중단을 확인한 뒤
+finally에서 기존 복제본을 복구한다. 이 도구를 현재 단계에서 아직 실행하지 않았다.
+소스빌드5는실제runtime 파일SHA256를main checkout과비교한다. rollout 중중단되면snapshot과actual앱상태부터읽는다.
+사용자의기존untracked PT/zip/prototypes/mistake파일은보존하고`git add .`금지.
+
+---
+
 # 2026-10-14 — X 실제 연결 테스트 완료 (17:11 KST)
 
 ## Current objective / completed work

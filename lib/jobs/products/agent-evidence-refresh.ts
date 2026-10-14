@@ -121,7 +121,10 @@ export async function refreshAgentEvidenceJob(ctx: JobContext<AgentEvidenceRefre
           (!result.cached || result.scan.startedAt.getTime() > Date.parse(providerFailure.lastFailureAt))) {
           providerFailure = null;
         }
-        ctx.log('agent_evidence.scanned', { repositoryKey, scanId: result.scan?.id ?? null, state: result.scan?.state ?? 'failed', observations: result.observations.length, cached: result.cached, errorCode: result.errorCode });
+        // Runner observations retain only numeric/boolean fields; preserve failure without error bodies.
+        ctx.log('agent_evidence.scanned', { repositoryKey, scanId: result.scan?.id ?? null, state: result.scan?.state ?? 'failed',
+          observations: result.observations.length, cached: result.cached, errorCode: result.errorCode,
+          failed: result.scan?.state === 'failed' || !!result.errorCode });
         if (result.scan?.state === 'complete' && !result.errorCode) {
           if (!result.cached) await requeueAfterAdminEvidenceRefresh(repositoryKey, ctx.lease);
           await db.transaction(async tx => {

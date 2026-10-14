@@ -7,7 +7,7 @@
  */
 
 /** 운영센터 탭(?tab=) — 첫 화면이 overview. diagnostics(진단)는 옛 접힌 "상세 지표"(ADM-16) */
-export const STATUS_TABS = ["overview", "jobs", "ai", "manual", "diagnostics"] as const;
+export const STATUS_TABS = ["overview", "jobs", "crawlers", "ai", "manual", "diagnostics"] as const;
 export type StatusTab = typeof STATUS_TABS[number];
 
 /** 작업 흐름 탭에서 그 작업의 상세 창을 연 채로 */
@@ -17,6 +17,8 @@ const productFilter = (name: string) => `/admin/products?filter=${encodeURICompo
 
 export const ACTION_LINKS = {
   jobs: "/admin/status?tab=jobs",
+  crawlers: "/admin/status?tab=crawlers",
+  collectorSettings: "/admin#signals",
   ai: "/admin/status?tab=ai",
   manual: "/admin/status?tab=manual",
   roles: "/admin/status#roles",
