@@ -54,6 +54,11 @@ const BOILERPLATE = /죄송|번역할 수 없|옮길 수 없|다음은|^(?:번�
 const QUOTED = /^(["'“‘「『]).*(["'”’」』])$/;
 /** 원문이 풀어 쓴 말을 모델이 줄여 쓰는 약어 — 원문에 없어도 지어낸 말이 아니다 */
 const COMMON_TERMS = new Set(["ai", "api", "cli", "gui", "ui", "ux", "sdk", "llm", "ide", "os", "pc", "sns", "url", "db", "app"]);
+/**
+ * 시점을 이르는 말(1인칭·3인칭) — 숫자가 아니다. "first-person shooter" 를 옮기면 원문에 없던 1이 생겨
+ * 지어낸 숫자로 네 번 버려지고 영어 원문이 남았다(doodle-district-2, 2026-10-14).
+ */
+const GRAMMATICAL_PERSON = /[123]인칭/g;
 
 export type KoreanTaglineCheck = { ok: true; line: string } | { ok: false; reason: KoreanTaglineReject };
 
@@ -89,7 +94,7 @@ export function checkKoreanTagline(output: string, source: { name: string; tagli
   }
   const original = `${source.name} ${source.tagline}`.toLowerCase();
   const digits = new Set((original.match(/\d+(?:[.,]\d+)*/g) ?? []).map((value) => value.replace(/[.,]/g, "")));
-  if ((line.match(/\d+(?:[.,]\d+)*/g) ?? []).some((value) => !digits.has(value.replace(/[.,]/g, "")))) {
+  if ((line.replace(GRAMMATICAL_PERSON, "").match(/\d+(?:[.,]\d+)*/g) ?? []).some((value) => !digits.has(value.replace(/[.,]/g, "")))) {
     return { ok: false, reason: "invented_number" };
   }
   const terms = (line.match(/[A-Za-z][A-Za-z0-9+#]*(?:[.-][A-Za-z0-9+#]+)*/g) ?? []).map((term) => term.toLowerCase());
