@@ -23,7 +23,8 @@ PR00~07의 코드·회귀검사와 전체 검사(단위2,318·통합1,543·타�
 
 X는 [정책 확인·독립 파일럿](docs/operations/2026-10-14-x-api-policy-and-pilot.md)을 준비했고,
 사용자가 복사한 Bearer Token을 로컬 비밀 설정에 저장했다. 원래 승인 목적이 공개 프로젝트
-발굴·HOT 분석을 포함하는지는 미확인이다. 실제 검색·재관측·필드 이름·요금 확인은 미실행이며,
+발굴·HOT 분석을 포함하는지는 미확인이다. 사용자 요청의17:11 소량 테스트에서 검색/재조회
+각HTTP200·10개 게시물·공개 지표6종·`tweet.fields` 동작을 확인했다. 실제 청구액은 미확인이며,
 공개 HOT 필터와 독립 social role/lease·상시 운영의 일일 예산은 이후 구현 단계다.
 Threads는 [가능성 조사](docs/operations/2026-10-14-social-hot-crawler-feasibility.md)까지다.
 

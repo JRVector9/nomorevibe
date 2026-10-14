@@ -1,3 +1,31 @@
+# 2026-10-14 — X 실제 연결 테스트 완료 (17:11 KST)
+
+## Current objective / completed work
+
+사용자 최신 지시: `X도 테스트로 호출 해봐. 토큰 줬잖아.` 저장된 Bearer로 공식 최근 검색과 같은 ID lookup을 소량 실제 호출하는 작업은 완료했다. 기존 목적 승인 보류는 이 단발 연결 테스트에 대한 사용자 지시로 갱신됐으며, 외부 목적 승인을 확인했다고 기록하지 않는다. 아래 이전 단계의 `실제 HTTP 미실행/금지` 기록은 이 후속 실험 전 상태다.
+
+- 08:11:34.003→34.505 UTC(17:11 KST), 약0.502초. 최근24시간 GitHub/launch 검색과 같은10개 ID 재조회 각각HTTP200/게시물10개/errors0.
+- `tweet.fields=id,created_at,entities,public_metrics,withheld`가 두 endpoint에서 동작.10개 모두 GitHub entity 링크·생성 시각과 좋아요/답글/재게시/인용/노출/북마크6종 제공. 실제2요청/보수적20 post 예약, 서로 다른 게시물은10개.
+- 별도 private 프로브 `/private/tmp/nomorevibe-x-live-test-20261014/probe.mjs`를 Node env-file로 실행, 전체20초/응답1MiB/공식 고정 endpoint/redirect manual/no retry·pagination. `--use-case-approved`를 허위 선언하지 않았고 repo source/default gate를 바꾸지 않았다.
+- 결과JSON(600)은 같은 private 디렉터리의 result.json. 상태·반환 수·필드 제공 수·최대5개 repo 예시만 보존. 토큰/원문/미디어/작성자/프로필/원시 응답을 저장·출력하지 않았다. 토큰 재발급·권한 확대·결제·운영 DB/심사/발행/배포 없음.
+
+## Modified files / decisions / actual verification
+
+정책·파일럿 보고서, PENDING, 설계 재감사 후속, 이 인계와 Obsidian 일지를 갱신한다. 프로덕션 코드는 바꾸지 않아 기존 단위/통합을 다시 실행하지 않았다. 실제 API2호출 모두200이고 private probe exit0이 확인됐다. 이전 단위2,433/통합136은 이전 구현 검사의 기록이다.
+
+실제 인증·검색·lookup·필드·공개 지표 접근은 확인했다. 신청서 목적 제출/변경 승인 여부는 여전히 미확인이고 이번 접근 성공이 이를 증명하지 않는다. `post.fields` 대체 표기는 호출하지 않았다. 실제 청구액/dedup, 프로젝트 연결/스팸 품질·두 시점 성장률·상시 일일 예산·social role/DB/HOT UI는 남는다. 소개 검수 pause 유지.
+
+## Failed approaches / remaining / exact next commands
+
+이번 연결 테스트 실패/재시도 없음. 추가 샘플·새 표기 자동 호출하지 않는다. 후속은 실제 콘솔 요금/사용량 확인과 데이터 연결 품질/독립 운영 설계다. 이 테스트를 HOT 승인이나 신규 제품 발행으로 바꾸지 않는다. 비밀 값을 cat/echo하거나 clipboard를 CLI로 읽지 않는다.
+
+```sh
+git status --short
+sed -n '75,135p' docs/operations/2026-10-14-x-api-policy-and-pilot.md
+```
+
+---
+
 # 2026-10-14 — X 파일럿 준비 / 설계 재검토 완료, live 목적 확인 대기
 
 ## Current objective
