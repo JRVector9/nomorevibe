@@ -445,19 +445,42 @@ describe("GitHub evidence refresh", () => {
 
   it.each(["deadline", "abort"] as const)("bounds the entire GitHub request await by %s", async stop => {
     const controller = new AbortController();
-    const request = vi.fn(async (): Promise<GitHubHttpResult<unknown>> => {
-      await new Promise(resolve => setTimeout(resolve, 350));
-      return ok(repository);
+    const deadline = new AbortController();
+    // A monotonic deadline signal can fire before the wall clock reaches deadlineAt.
+    const timeout = stop === "deadline" ? vi.spyOn(AbortSignal, "timeout").mockReturnValue(deadline.signal) : undefined;
+    const deadlineAt = Date.now() + 5000;
+    let started = 0;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let finishRequest: ((result: GitHubHttpResult<unknown>) => void) | undefined;
+    let requestSignal: AbortSignal | undefined;
+    const request = vi.fn((_path: string, _conditional?: ConditionalRequest, options?: { signal?: AbortSignal }): Promise<GitHubHttpResult<unknown>> => {
+      started = performance.now();
+      requestSignal = options?.signal;
+      // Arm cancellation after DB preparation so this always exercises a pending request.
+      timer = setTimeout(() => {
+        if (stop === "deadline") deadline.abort(new DOMException("Deadline reached", "TimeoutError"));
+        else controller.abort();
+      }, 50);
+      return new Promise(resolve => { finishRequest = resolve; });
     });
-    const started = Date.now();
-    const timer = stop === "abort" ? setTimeout(() => controller.abort(), 50) : undefined;
     try {
       expect(await refreshGitHubEvidence({ slug: "github-product", repository: "owner/repo" }, {
-        request, deadlineAt: stop === "deadline" ? started + 50 : started + 5000, signal: controller.signal,
+        request, deadlineAt, signal: controller.signal,
       })).toMatchObject({ status: "budget_exhausted" });
-      expect(Date.now() - started).toBeLessThan(250);
+      expect(request).toHaveBeenCalledTimes(1);
+      expect(performance.now() - started).toBeLessThan(250);
+      expect(requestSignal?.aborted).toBe(true);
+      expect(requestSignal?.reason.name).toBe(stop === "deadline" ? "TimeoutError" : "AbortError");
+      if (stop === "deadline") {
+        expect(timeout).toHaveBeenCalledTimes(1);
+        expect(controller.signal.aborted).toBe(false);
+        expect(Date.now()).toBeLessThan(deadlineAt);
+      }
+      finishRequest?.(ok(repository));
+      await request.mock.results[0].value;
       expect(await db.select().from(productEvidenceSources)).toEqual([]);
-    } finally { clearTimeout(timer); }
+      expect(await db.select().from(productUpdates)).toEqual([]);
+    } finally { clearTimeout(timer); timeout?.mockRestore(); finishRequest?.(ok(repository)); }
   });
 
   it.each(["checkpoint", "final"] as const)("fences %s persistence after job ownership changes", async phase => {

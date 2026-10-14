@@ -632,7 +632,8 @@ export async function refreshGitHubEvidence(
   if (!/^[a-z0-9_.-]+\/[a-z0-9_.-]+$/.test(repositoryKey)) {
     throw new Error("invalid GitHub repository key");
   }
-  const hasBudget = () => (dependencies.hasBudget?.() ?? true) && !dependencies.signal?.aborted
+  let signal = dependencies.signal;
+  const hasBudget = () => (dependencies.hasBudget?.() ?? true) && !signal?.aborted
     && Date.now() < (dependencies.deadlineAt ?? Infinity);
   if (!hasBudget()) return { status: "budget_exhausted", releases: 0 };
   const identity = await findProductEvidenceIdentity(input.slug);
@@ -643,7 +644,7 @@ export async function refreshGitHubEvidence(
   const productId = input.productId ?? identity.id;
   const remainingMs = (dependencies.deadlineAt ?? Infinity) - Date.now();
   const deadlineSignal = Number.isFinite(remainingMs) ? AbortSignal.timeout(Math.max(1, Math.ceil(remainingMs))) : undefined;
-  const signal = dependencies.signal && deadlineSignal ? AbortSignal.any([dependencies.signal, deadlineSignal]) : dependencies.signal ?? deadlineSignal;
+  signal = dependencies.signal && deadlineSignal ? AbortSignal.any([dependencies.signal, deadlineSignal]) : dependencies.signal ?? deadlineSignal;
   const hardStopped = () => Boolean(signal?.aborted) || Date.now() >= (dependencies.deadlineAt ?? Infinity);
   const request: EvidenceRequest = (path, conditional) => {
     const stopped = { ok: false, error: { kind: "transport" } } as const;

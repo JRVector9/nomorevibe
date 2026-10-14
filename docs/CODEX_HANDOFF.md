@@ -11,7 +11,11 @@ X는 수동 API 파일럿/자동 수집 안 함으로 구분한다. 소개 검�
 
 - 작업 브랜치 `feat/pipeline-review-recovery-20261014`, 최신 main91685ca를 충돌 없이 병합한45de7d0.
   `npm ci` 완료. 관리자 소스 최종 freeze에서 전체256파일2,468단위,
-  `set -e`로 Next typegen→TypeScript→i18n→lint→diff 검사 exit0. 아직push/PR/운영 변경 없음.
+  `set -e`로 Next typegen→TypeScript→i18n→lint→diff 검사 exit0.
+  관리자48f25c2커밋/push/PR#416완료, 첫CI38549253859에서quality/integration1,2성공, integration3의GitHubdeadline검사1건실패.
+  내부timeout신호를hasBudget이검사하지않는실제bug를RED로재현해최소수정했다.
+  관련103통합/type/scopedlint/diff와루트전체2,468단위/lint/build/bundle통과, native리뷰CLEAN.
+  수정커밋을PR#416에push하고최신CI와directCLI session65009를확인한다. 운영 변경은아직없음.
 - 운영13앱 Dokploy done·실제 ready, DB journal76/quality 컬럼 없음/소개 검수2100·미임대 확인.
   환경·설정 snapshot은 `/private/tmp/nomorevibe-pipeline-release-20261014`0700/파일0600이며 출력·Git 금지.
 - 최신 base 통합 상태 단위254파일2,434사례, 통합143파일1,546사례(464/444/638), 기존todo1 미실행.
@@ -24,7 +28,8 @@ X는 수동 API 파일럿/자동 수집 안 함으로 구분한다. 소개 검�
   최신lease+runtime이 과거standby를가리지 않고, 항목실패0과별도요청오류를구별하며,
   스캔boolean실패신호와과거미확인상태를표시한다. release도최신관측에서읽는다.
   루트최종build/bundle exit0. native최종수정검증CLEAN/집중59검사exit0.
-  직접CLI최종followup은병합전결과확인예정이다.
+  직접CLI최종followup exit0/No findings/OK (in-memory42검사, Vitest미실행).
+  이번직접CLI3회입력6,941,243(캐시6,463,360포함)/출력42,954토큰, 실제receipt집계.
 
 ## Modified files / design decisions
 
@@ -37,7 +42,9 @@ X는 수동 API 파일럿/자동 수집 안 함으로 구분한다. 소개 검�
 ## Remaining / exact next commands
 
 관리자최종freeze와단위/type/lint/i18n/build/bundle/native리뷰완료.
-명시한파일만커밋/push/PR한뒤필수CI와직접CLI followup session46313을확인하고병합한다.
+PR#416의재실행최신CI를확인하고정상병합한다. 관리자directCLI완료/CLEAN,
+GitHub deadline전용directCLI65009는진행중. 로컬fullshard3도追加確認한다.
+현재dirty파일은배포진행상태를기록한이인계뿐이며, 병합후동일소스main checkout을방해하지않는다.
 최신 base 필수CI check 성공 뒤 정상 PR 병합, main CI의 양 이미지 발행 성공을 확인한다.
 운영 준비와 배포 도구는 저장소 runbook에 따른 private `release.py`이며 secrets를 인자/출력에 넣지 않는다.
 source5는GitHub provider/명령/복제본을 유지하고 shared8은immutable digest를 적용한다.

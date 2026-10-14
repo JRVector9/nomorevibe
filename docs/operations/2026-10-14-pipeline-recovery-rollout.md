@@ -31,7 +31,7 @@
 새 실행을 가리는 경우와 항목 실패0이 별도 요청 오류를 숨기는 경우를 실제 모양으로 재현했다.
 두 표시 경계와 최신 release 메타데이터를 회귀 RED→GREEN으로 수정했다. 최종 집중5파일59검사와
 전체256파일2,468단위·Next typegen·TypeScript·i18n·lint·diff 검사가 통과했다. 최종build/bundle도exit0이고 독립 최종 재검토는CLEAN, 같은집중59검사를별도로실행해통과했다.
-직접CLI최종수정followup은진행중이며병합전결과를확인한다. CLI의 read-only 모드에서 Vitest는 임시 디렉터리 생성 제한으로
+직접CLI최종수정followup도exit0/No findings/OK였다 (in-memory42검사, Vitest미실행). CLI의 read-only 모드에서 Vitest는 임시 디렉터리 생성 제한으로
 시작하지 못했으며 CLI가 실행한 테스트로 계산하지 않는다.
 
 ## 관리자 표시 범위
@@ -44,7 +44,13 @@
 
 ## 운영 적용 상태
 
-이 기록의 최초 작성 시점에는 최종 관리자 검증과 PR/CI가 진행 중이며 운영 변경을 시작하지 않았다.
+관리자48f25c2커밋을push하고[PR#416](https://github.com/JRVector9/nomorevibe/pull/416)을생성했다.
+첫CI38549253859는quality/integration1,2성공, integration3의GitHubdeadline검사1건실패였다.
+내부deadlineAbortSignal이wall deadline보다먼저취소돼도hasBudget이외부signal만검사하는조건을
+고정적RED로재현했다 (deadline실패/외부abort성공). combined신호를검사하는최소소스수정후
+같은두검사가GREEN이며, hanging요청진입·취소원인·빠른반환·늦은응답뒤쓰기없음을검사한다.
+관련통합103개와type/scopedlint/diff, 루트전체2,468단위/lint/build/bundle가다시통과했다.
+native최소diff재검토는CLEAN이고directCLI/후속CI를확인한다. 운영변경은아직시작하지않았다.
 실제 PR 병합 SHA·CI·이미지 digest·마이그레이션 종료 결과·13앱 상태·관리자 읽기는 완료 후
 이 문서와 인계 문서에 추가한다. 준비 검사와 배포 완료 증거를 구분한다.
 
