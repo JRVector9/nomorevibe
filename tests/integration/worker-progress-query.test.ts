@@ -5,7 +5,7 @@ import { db } from "@/lib/db";
 import { categoryDecisions, crawlCandidates, crawlDocuments, crawlFrontier, crawlPublicationChanges, crawlSettings, operationsObservations,
   products, productLinks, productEvidenceSources, agentRepositoryScans, repositoryAiLevels, jobs } from "@/lib/db/schema";
 import { saveSettings } from "@/lib/crawl/settings";
-import { buildWorkerProgress, readWorkerProgress } from "@/lib/operations/worker-progress-query";
+import { buildWorkerProgress, progressRepositoryKeySql, readWorkerProgress } from "@/lib/operations/worker-progress-query";
 import { observeService } from "@/lib/operations/observations";
 import { ensureSchema, resetTables, TEST_DATABASE_URL } from "./setup";
 import { AGENT_DETECTOR_VERSION } from "@/lib/domain/evidence/agents/types";
@@ -34,6 +34,30 @@ async function publicProduct(slug: string, now: Date, extra: Partial<typeof prod
     category: "Dev", verifyToken: slug, editTokenHash: "a".repeat(64), status: "seeded",
     createdAt: new Date(now.getTime() - 120 * 60_000), updatedAt: new Date(now.getTime() - 120 * 60_000), ...extra });
 }
+
+it("preserves both repository normalizers across canonical and legacy URL boundaries", async () => {
+  const urls: Array<string | null> = [null, "", "/", "https://github.com", "https://github.com/", "https://github.com/a", " https://github.com/a/b"];
+  for (const scheme of ["https://", "http://", "HTTPS://", "ftp://", ""])
+    for (const host of ["github.com", "www.github.com", "GitHub.COM", "githubXcom", "example.com"])
+      for (const owner of ["acme", "ACME", "", "a?b", "a#b", "a\nb", "한글", "İ"])
+        for (const repo of ["repo", ".git", ".GIT", "repo.git", "repo.GIT", "a.git.git", "a?b", "a#b", "a/b", "한글", "İ", "r".repeat(100)])
+          for (const tail of ["", "/", "//", "?x", "#x", "\n"]) urls.push(`${scheme}${host}/${owner}/${repo}${tail}`);
+  const repoUrl = sql`repo_url`;
+  const [row] = await db.execute<{ cases: number; agent_mismatches: number; ai_mismatches: number }>(sql`
+    WITH inputs AS (SELECT unnest(ARRAY[${sql.join(urls.map(url => sql`${url}`), sql`, `)}]::text[]) AS repo_url),
+    compared AS MATERIALIZED (
+      SELECT lower(substring(repo_url from '^https://github[.]com/([^/]+/[^/#?]+?)([.]git)?/?$')) AS agent_old,
+        ${progressRepositoryKeySql(repoUrl, "agent")} AS agent_new,
+        substring(regexp_replace(regexp_replace(lower(rtrim(repo_url, '/')), '^https?://(www[.])?', 'https://'), '[.]git$', '')
+          from '^https://github[.]com/([^/]+/[^/#?]+)$') AS ai_old,
+        ${progressRepositoryKeySql(repoUrl, "ai")} AS ai_new FROM inputs
+    )
+    SELECT count(*)::int AS cases,
+      count(*) FILTER (WHERE agent_old IS DISTINCT FROM agent_new)::int AS agent_mismatches,
+      count(*) FILTER (WHERE ai_old IS DISTINCT FROM ai_new)::int AS ai_mismatches FROM compared
+  `);
+  expect(row).toEqual({ cases: urls.length, agent_mismatches: 0, ai_mismatches: 0 });
+});
 
 it("does not invent missing-site demand for products the due selector cannot pick", async () => {
   const now = new Date();
@@ -183,6 +207,8 @@ it("bounds current AI demand during unseen idle at public catalogue scale", asyn
   const report = await readWorkerProgress(now);
   expect(report.stages.find(row => row.stage === "ai-level"))
     .toMatchObject({ waiting: 80000, oldestMinutes: 20, completed5m: 0 });
+  expect(report.stages.find(row => row.stage === "agent-evidence"))
+    .toMatchObject({ waiting: 80000, oldestMinutes: 120, completed5m: 0 });
 });
 
 it("keeps healthy leased work out of two external down samples without hiding timeouts or sibling stalls", async () => {

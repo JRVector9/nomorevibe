@@ -26,7 +26,15 @@
   EXPLAIN2,770.851ms이며 기존3초 한도를 보존했다. 여유 약300ms이므로 보편적 성능 보장은 아니다.
   긴 유효 주소80,000개 회귀에서 실제57014 RED→같은3초 한도 GREEN 두 차례 확인.
   관련 통합37/37, 두 파일lint, 루트TypeScript/전체lint exit0와 native 읽기 전용 리뷰CLEAN.
-  전체lint는 기존vendor warning1개다. 직접CLI 진행 중이며 PR 필수CI 전 배포를 재개하지 않는다.
+  전체lint는 기존vendor warning1개다. 직접CLI도No findings/OK.
+  후속34c7778을커밋·푸시하고PR#417을생성했다. CI38557315298의quality/integration1,3은 성공,
+  integration2의 새80k 회귀만57014 timeout으로 실패(나머지444통합성공)하여 check 실패했다.
+  PR은 병합하지 않았으며 배포도 재개하지 않았다. 실제 CI에서 여유 부족이 확인되어 같은3초/80k 회귀를
+  유지하고 기존normalizer fallback을 보존하는 canonical URL fastpath를 추가했다.
+  실제 helper의14,407개 변형을 원래 두 모드와DB에서 비교해 mismatch0, 관련38검사/파일lint 통과.
+  CI=true/TZ=UTC의 동일 fullshard2가48파일446사례 exit0(64.61초), 루트TypeScript exit0(8.52초).
+  prod read-only repeatable-read A/B4,313.499→1,082.249ms, 같은snapshot/params 집계 전체 동일.
+  EXPLAIN1,202.197ms/기존3초한도 성공. native후속리뷰CLEAN, directCLI후속은 진행 중이다.
   현재13앱 실제ready/schema77의 별도 snapshot을
   `/Users/jr/.config/nomorevibe/releases/2026-10-14-progress-query-fix`에 capture했다.
   원래migration0076 proof와 새 읽기 전용schema77 확인을 연결했다. DDL/drain을 다시 실행하지 않았다.
@@ -48,8 +56,10 @@
   첫 PR CI는 integration3의 deadline 검사1건 실패. 아래 원인을 수정한 뒤 관련103통합과
   TypeScript/scopedlint/diff가 통과했다. 루트 fullshard3도47파일638통과·todo1/exit0(120.48초).
 - Python 배포 검사23, CI scope4 통과. 루트 외 네이티브 backend 선택10파일131검사 통과.
-- 직접 CLI4회는 모두 gpt-6.1-sol/xhigh. 입력7,095,113(캐시6,580,224 포함), 출력44,855토큰.
+- 최초 직접 CLI4회는 모두 gpt-6.1-sol/xhigh. 입력7,095,113(캐시6,580,224 포함), 출력44,855토큰.
   CLI Vitest는 read-only 임시 디렉터리 제한으로 실행하지 못했으며 실행 결과로 합산하지 않는다.
+- SQL 후속 scoped CLI는No findings/OK, 입력459,219(캐시406,016 포함), 출력3,826.
+  이번 배포 단계5회 합계 입력7,554,332(캐시6,986,240 포함), 출력48,681이며 private review-usage.json 증거다.
 
 ## Modified files / design decisions
 
@@ -75,6 +85,9 @@ transport 실패 저장과 deferred 반환으로 진행했다. 이 경로를 고
 PR 정상 병합·main 양 이미지 발행·preflight·마이그레이션0076·text 두 앱 교체 완료.
 현재 gate 실패의 원인은 evidenceProgress 읽기 집계 SQL의 운영 3초 제한 초과다.
 monitor_query_timeout 에이전트(gpt-6.1-sol/xhigh)가 해당 SQL과 집중 통합 검사만 담당한다.
+첫 MATERIALIZED-only 접근은 로컬GREEN/운영2.7초였지만 CI의80k 회귀에서 실패했다.
+3초를 늘리거나 fixture를 축소하지 않고 canonical URL fastpath로 CPU 시간을 줄였다.
+기존 mode별표현식을 그대로 fallback하고 기존 agent WHERE/AI현재버전/정책/통계 범위는 보존한다.
 3초 제한과 gate를 유지하고 실제 EXPLAIN으로 원인을 확인한 뒤 PR/CI를 거쳐 수정한다.
 새 main target에는 현재 혼합 릴리스를 별도 private baseline으로 capture하며 원래 snapshot은 보존한다.
 남은 순서는 수정 검증/PR/CI → 새 target 13앱 → 역할별 gate → 양웹 → 실제 파일 hash/DB/관리자 검증.
@@ -87,17 +100,20 @@ source5는 GitHub provider, shared8은 immutable digest를 유지한다. 실제 
 gh run view 38551249622 --json status,conclusion,jobs
 gh pr view 416 --json headRefOid,baseRefOid,mergeStateStatus
 git status --short
-# 다음은 진단/수정 단계이며 cb6b719의 추가 앱 배포는 하지 않는다.
-sed -n '95,220p' lib/operations/worker-progress-query.ts
-docker ps --filter name=nomorevibe-evidence-test-db-20261014
-# 수정 후 새 PR/main SHA/CI를 확인하고 새로운 private release 디렉터리에서 capture/target/plan한다.
+# cb6b719의 추가 앱 배포는 하지 않는다. 새 PR CI를 확인한다.
+gh run view 38557315298 --json status,conclusion,jobs
+gh pr view 417 --json headRefOid,baseRefOid,mergeStateStatus,state
+# 현재 CI38557315298은 실패이므로 이head/run은 병합하지 않는다.
+# 추가 source fix와 fullshard2/리뷰/새PR CI 성공 후 latest head/run으로 정상 merge gate helper 실행.
+gh run list --branch fix/worker-progress-query-budget-20261014 --limit 3 --json databaseId,headSha,status,conclusion
+# 병합된 새 SHA checkout, main CI/양 이미지 성공 확인 후 새 directory release.py target/plan/roll.
 ```
 
 baseline은 이미 capture했다. 다시 덮어쓰지 않는다. private evidence 디렉터리는0700/파일0600이며
 원시 설정·로그·스냅샷을 출력하거나 Git에 넣지 않는다. 필수 복구 증거는
 `/Users/jr/.config/nomorevibe/releases/2026-10-14-cb6b719`에도0700/0600으로 보존했다.
 로컬 PC 종료 시 Codex 배포 제어/후속 검증은 멈추고, 이미 시작된 CI/Dokploy 서버 작업만 계속됨을 안내했다.
-전용 evidence55436 DB만 SQL 수정 통합 검사 용도로 다시 시작하고37검사 종료 뒤 중지했다. monitor55437은
+전용 evidence55436 DB는37검사 종료 뒤 중지했다가 추가수정38검사/fullshard2 뒤 다시 중지했다. monitor55437은
 후속 fullshard3 후 다시 중지했으며 사용자 컨테이너는 변경하지 않았다. 사용자 untracked PT/zip/prototypes/
 mistake 파일을 보존하고 `git add .`를 사용하지 않는다. 현재 dirty 문서는 진행 상황을 기록한 인계다.
 

@@ -69,7 +69,15 @@ AI2,724.212ms다. public43,958개에서 주소 정규화 계산이 지배적이�
 추가 성장이나 다른 부하에서도 항상3초 이내라고 보장하지 않는다. 진단만 읽기 전용12초 한도를 썼다.
 긴 유효 저장소 주소80,000개/current 버전/미발견 idle 회귀에서 기존 쿼리57014 RED를 재현하고
 같은3초 제한의 수정 쿼리가 두 차례 GREEN이었다. 관련 두 파일 통합37/37와 파일 lint가 통과했다.
-독립 읽기 전용 native 검토는CLEAN이며 직접CLI·PR/CI 검증을 진행한다.
+독립 읽기 전용 native와directCLI검토는CLEAN/OK였다. 후속PR#417의CI38557315298에서는
+quality/integration1,3이 성공했으나 integration2의 새80k 회귀가57014로 실패했다(나머지444사례성공).
+단일MATERIALIZED의 여유가 충분하지 않아 PR을병합하거나 추가배포하지 않았다.
+같은3초/80k기준을 보존하면서 canonical GitHub URL만 문자열 추출로 계산하고 나머지는 기존 mode별
+정규화를 그대로 fallback한다. 실제 helper의14,407개 주소 변형을 원래 두 식과 DB에서 비교해 차이0을 확인했다.
+같은 snapshot·파라미터의 운영 읽기 전용 A/B4,313.499→1,082.249ms/전체 집계 동일,
+수정 쿼리의 실제3초 한도 성공과 EXPLAIN1,202.197ms를 확인했다.
+관련38통합·두파일lint·TypeScript 및 CI=true/TZ=UTC의 전체shard2(48파일446사례)가 통과했다.
+native후속리뷰도CLEAN이다. 직접CLI/새PR CI를 확인한 뒤 배포를 재개한다.
 13앱 릴리스 일치·실제 소스hash·양웹·인증 관리자 읽기는 아직 완료하지 않았다.
 원래 private baseline은 보존하고 현재 혼합 릴리스용 별도 snapshot을 준비한다.
 

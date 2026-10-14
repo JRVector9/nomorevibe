@@ -1,5 +1,5 @@
 import { db } from "@/lib/db";
-import { sql } from "drizzle-orm";
+import { sql, type SQL } from "drizzle-orm";
 import { operationsObservations } from "@/lib/db/schema";
 import { getSettings } from "@/lib/crawl/settings";
 import type { CrawlSettings } from "@/lib/crawl/settings-schema";
@@ -25,6 +25,18 @@ export type WorkerProgressReport = { measuredAt: string; overall: "alarm" | "unk
   stages: StageProgress[]; scheduler: ReturnType<typeof classifyScheduler>; liveness: ReturnType<typeof classifyLiveness>[];
   /** Optional for readers/fixtures written before lane metadata was introduced. */
   lanes?: WorkerLaneProgress[]; activeJobs?: string[] };
+
+/** Canonical URLs avoid capture/replacement regexes; legacy URL handling stays mode-specific. */
+export function progressRepositoryKeySql(repoUrl: SQL, mode: "agent" | "ai"): SQL {
+  const canonical = sql`CASE WHEN ${repoUrl} ~ '^https://github[.]com/[^/]+/[^/#?]+/?$'
+    AND right(lower(rtrim(${repoUrl}, '/')), 4) <> '.git'
+    THEN lower(rtrim(substring(${repoUrl} from 20), '/')) END`;
+  const fallback = mode === "agent"
+    ? sql`lower(substring(${repoUrl} from '^https://github[.]com/([^/]+/[^/#?]+?)([.]git)?/?$'))`
+    : sql`substring(regexp_replace(regexp_replace(lower(rtrim(${repoUrl}, '/')), '^https?://(www[.])?', 'https://'), '[.]git$', '')
+        from '^https://github[.]com/([^/]+/[^/#?]+)$')`;
+  return sql`coalesce(${canonical}, ${fallback})`;
+}
 
 export function buildWorkerProgress(
   throughput: ThroughputSnapshot,
@@ -122,7 +134,7 @@ async function evidenceProgress(settings: CrawlSettings, now: Date, skipUnseen: 
           AND s.provider = 'product_site' AND s.source_key = 'canonical_site'
       ), agent_demand AS (
         SELECT repository_key, min(created_at) AS created_at FROM (
-          SELECT lower(substring(repo_url from '^https://github[.]com/([^/]+/[^/#?]+?)([.]git)?/?$')) AS repository_key, created_at
+          SELECT ${progressRepositoryKeySql(sql`repo_url`, "agent")} AS repository_key, created_at
           FROM products WHERE status != 'banned' AND repo_url ~ '^https://github.com/[^/]+/[^/#?]+/?$'
           UNION ALL SELECT lower(repo), updated_at FROM crawl_candidates WHERE state IN ('new','needs_review','approved')
         ) d GROUP BY repository_key
@@ -140,8 +152,7 @@ async function evidenceProgress(settings: CrawlSettings, now: Date, skipUnseen: 
         FROM agent_demand d LEFT JOIN latest_agent s USING (repository_key)
       ), ai_public AS MATERIALIZED (
         -- Reuse normalization across the projection, NULL filter and unseen-idle lookup.
-        SELECT substring(regexp_replace(regexp_replace(lower(rtrim(repo_url, '/')), '^https?://(www[.])?', 'https://'), '[.]git$', '')
-          from '^https://github[.]com/([^/]+/[^/#?]+)$') AS repository_key, created_at FROM public_products
+        SELECT ${progressRepositoryKeySql(sql`repo_url`, "ai")} AS repository_key, created_at FROM public_products
       ), ai_demand AS (
         SELECT repository_key, min(created_at) AS created_at FROM (
           SELECT repository_key, created_at FROM ai_public p WHERE NOT ${skipUnseen} OR EXISTS (
