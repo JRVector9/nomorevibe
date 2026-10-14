@@ -506,6 +506,15 @@ npm run crawl:rejudge -- --out=.crawl-samples/after.json
 토큰은 `GITHUB_TOKEN` 또는 관리자에 등록한 수집용 PAT만 쓴다. 로컬 `gh auth` 상태를
 자동으로 읽지 않는다. 같은 GitHub 사용자에게 발급한 PAT 여러 개는 한도를 공유한다.
 
+## X 프로젝트 발견 파일럿
+
+`npm run social:x:pilot`은 기본 dry-run으로 호출 계획만 출력하며 HTTP·DB 작업을 하지 않는다.
+공식 API만 사용하고 live 실행은 Bearer Token과 승인된 사용 목적 확인을 요구한다.
+한 실행은 최대3요청·30 Post 예약·20초·응답당1MiB로 제한한다. 일일 예산을 제공하는
+상시 crawler는 아직 아니며, scheduler에 등록하지 않았다. 본문·프로필·작성자 ID를 출력하지 않는다.
+기존 심사·발행과 공개 HOT 필터 연결은 실제 계정 파일럿의 필드·비용·권한 확인 이후 단계다.
+정책 조건과 실행 방법은 [X 정책·파일럿 보고서](docs/operations/2026-10-14-x-api-policy-and-pilot.md)를 따른다.
+
 ## 클릭과 랭킹
 
 목록에서 제품으로 나가는 링크는 `/go/<slug>`를 거친다. JS 없이 동작하고, 세는 쪽이 서버라

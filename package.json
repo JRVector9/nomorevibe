@@ -16,6 +16,7 @@
     "job": "tsx --env-file=.env.local scripts/run-job.ts",
     "crawl:sample": "tsx scripts/crawl-sample.ts",
     "crawl:rejudge": "tsx scripts/rejudge.ts",
+    "social:x:pilot": "tsx scripts/x-api-pilot.ts",
     "worker": "tsx scripts/worker.ts",
     "scheduler": "tsx scripts/scheduler.ts",
     "worker:supervised": "tsx scripts/worker-supervisor.ts",
