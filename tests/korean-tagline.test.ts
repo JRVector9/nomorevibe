@@ -35,6 +35,13 @@ describe("checkKoreanTagline — 모델이 옮긴 줄을 그대로 믿지 않는
       .toEqual({ ok: true, line: "'Ogu'로 지출을 기록하는 가계부" });
   });
 
+  it("원문에 명시한 월일은 숫자가 겹쳐도 바꾸지 않는다", () => {
+    const source = { name: "x", tagline: "Countdown until May 4" };
+    expect(checkKoreanTagline("5월 4일까지 시간을 세는 도구", source).ok).toBe(true);
+    expect(checkKoreanTagline("4월 4일까지 시간을 세는 도구", source)).toEqual({ ok: false, reason: "invented_number" });
+    expect(checkKoreanTagline("4월 4일과 5월 4일의 시간을 세는 도구", { name: "x", tagline: "Countdown until May 4 and 4월 4일" }).ok).toBe(true);
+  });
+
   it("빈 줄·여러 줄·링크·마크다운·거절은 버린다", () => {
     expect(checkKoreanTagline("", ffmpeg)).toEqual({ ok: false, reason: "empty" });
     expect(checkKoreanTagline("FFmpeg로 동영상 편집\n브라우저에서", ffmpeg)).toEqual({ ok: false, reason: "multiline" });

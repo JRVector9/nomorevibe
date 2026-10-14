@@ -123,6 +123,11 @@ function sourceNumbers(text: string): { values: Set<number>; bare: Set<string>; 
   for (const [, month, day] of text.matchAll(/\b(january|february|march|april|may|june|july|august|september|october|november|december)\s+(\d{1,2})(?:st|nd|rd|th)?\b/gi)) {
     if (Number(day) >= 1 && Number(day) <= 31) monthDates.add(`${MONTH_NAMES.indexOf(month.toLowerCase()) + 1}:${Number(day)}`);
   }
+  if (monthDates.size) {
+    for (const [, month, day] of text.matchAll(/(?<!\d)(\d{1,2})\s*월\s*(\d{1,2})\s*일(?!\d)/g)) {
+      monthDates.add(`${Number(month)}:${Number(day)}`);
+    }
+  }
   for (const [, digits, word] of text.matchAll(SOURCE_NUMBER)) {
     const scale = word ? SCALES.get(word.toLowerCase()) ?? (CHAR_SCALE.test(word) ? SCALES.get(word[0]) : undefined) : undefined;
     for (const value of digitValues(digits)) { add(value); if (scale) add(value * scale); }
@@ -199,10 +204,15 @@ export function checkKoreanTagline(output: string, source: { name: string; tagli
   const invented = ([, number, units]: RegExpMatchArray) => !(units === "" ? digits : bare).has(number.replace(/[.,]/g, ""))
     && !values.has(valueKey(Number(number.replace(/,/g, "")) * [...units].reduce((product, unit) => product * (SCALES.get(unit) ?? 1), 1)));
   // P2P의 2는 수량이 아니다. 원문에 peer-to-peer가 있을 때만 이 약어를 허용한다.
+  let mismatchedDate = false;
   const numericLine = (peerToPeer ? line.replace(/\bp2p\b/gi, "") : line)
     .replace(/(?<!\d)(\d{1,2})\s*월\s*(\d{1,2})\s*일(?!\d)/g,
-      (date, month, day) => monthDates.has(`${Number(month)}:${Number(day)}`) ? "" : date);
-  if ([...numericLine.replace(GRAMMATICAL_PERSON, "").matchAll(LINE_NUMBER)].some(invented)) {
+      (date, month, day) => {
+        if (monthDates.has(`${Number(month)}:${Number(day)}`)) return "";
+        if (monthDates.size) mismatchedDate = true;
+        return date;
+      });
+  if (mismatchedDate || [...numericLine.replace(GRAMMATICAL_PERSON, "").matchAll(LINE_NUMBER)].some(invented)) {
     return { ok: false, reason: "invented_number" };
   }
   const terms = (line.match(/[A-Za-z][A-Za-z0-9+#]*(?:[.-][A-Za-z0-9+#]+)*/g) ?? []).map((term) => term.toLowerCase());
