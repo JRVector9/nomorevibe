@@ -50,21 +50,24 @@ export function isPrivateHostname(host: string): boolean {
   return host === "localhost" || host.endsWith(".local") || host.endsWith(".internal");
 }
 
-export type GuardResult = { ok: true } | { ok: false; reason: string };
+export type GuardResult = { ok: true } | { ok: false; reason: string; transient?: boolean };
 
 /**
  * 요청 전 1차 검사 — 호스트를 DNS 조회해 사설 대역으로 향하는지 본다.
  * ALLOW_PRIVATE_URLS=1(로컬 개발)에서는 통과.
  */
 export async function assertPublicUrl(url: string): Promise<GuardResult> {
-  if (allowPrivate()) return { ok: true };
-
   let host: string;
   try {
-    host = new URL(url).hostname;
+    const parsed = new URL(url);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      return { ok: false, reason: "HTTP(S) URL만 등록할 수 있습니다" };
+    }
+    host = parsed.hostname;
   } catch {
     return { ok: false, reason: "URL 형식이 올바르지 않습니다" };
   }
+  if (allowPrivate()) return { ok: true };
   if (isPrivateHostname(host)) {
     return { ok: false, reason: "사설 호스트는 등록할 수 없습니다" };
   }
@@ -76,8 +79,9 @@ export async function assertPublicUrl(url: string): Promise<GuardResult> {
     try {
       const result = await dns.lookup(host, { all: true });
       ips.push(...result.map((r) => r.address));
-    } catch {
-      return { ok: false, reason: "도메인을 확인할 수 없습니다" };
+    } catch (error) {
+      const code = error && typeof error === "object" && "code" in error ? error.code : undefined;
+      return { ok: false, reason: "도메인을 확인할 수 없습니다", transient: code === "EAI_AGAIN" || code === "ETIMEOUT" };
     }
   }
   if (ips.length === 0 || ips.some(isPrivateIp)) {

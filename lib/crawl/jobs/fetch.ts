@@ -18,6 +18,8 @@ import { requeueAfterAdminEvidenceRefresh } from "@/lib/crawl/admin-review";
 import { requestJob } from "@/lib/jobs/control";
 import { assertJobLease } from "@/lib/jobs/control";
 import { db } from "@/lib/db";
+import type { CrawlSettings } from "@/lib/crawl/settings-schema";
+import { starAutoApproval } from "@/lib/crawl/star-auto-approval";
 
 /**
  * 수집 잡 — 프론티어에서 꺼낸 레포의 원본을 확보한다.
@@ -78,12 +80,13 @@ export async function fetchCrawlDocuments(ctx: JobContext<null>): Promise<JobOut
       return { done: true };
     }
 
-    const { retryAt, pauseReason } = await fetchBatch(entries, ctx, settings.judge.docsGenerators, evidenceRequired, oneAtATime, tally);
+    const { retryAt, pauseReason, deferred } = await fetchBatch(entries, ctx, settings, evidenceRequired, oneAtATime, tally);
     if (retryAt) {
       ctx.log(pauseReason === "auth_unavailable" ? "crawl.fetch_auth_unavailable" : "crawl.fetch_rate_limited",
         { fetched: tally.fetched, resetAt: retryAt.toISOString() });
       return { done: false };
     }
+    if (deferred) return { done: false };
   }
 
   ctx.log("crawl.fetched", { ...tally, drained: false });
@@ -103,15 +106,16 @@ export async function fetchCrawlDocuments(ctx: JobContext<null>): Promise<JobOut
 async function fetchBatch(
   entries: FrontierEntry[],
   ctx: JobContext<null>,
-  docsGenerators: readonly string[],
+  settings: CrawlSettings,
   evidenceRequired: ReadonlySet<string>,
   oneAtATime: OneAtATime,
   tally: Tally,
-): Promise<{ retryAt: Date | null; pauseReason: "rate_limited" | "auth_unavailable" | null }> {
+): Promise<{ retryAt: Date | null; pauseReason: "rate_limited" | "auth_unavailable" | null; deferred: boolean }> {
   // 여러 칸이 함께 고치는 상태라 한 객체에 둔다
   const batch = {
     next: 0,
     stopped: false,
+    deferred: false,
     retryAt: null as Date | null,
     pauseReason: null as "rate_limited" | "auth_unavailable" | null,
     needsJudgement: 0,
@@ -136,7 +140,7 @@ async function fetchBatch(
         });
         if (!started) return;
 
-        const outcome = await fetchEntry(started.entry, started.result, ctx, docsGenerators, evidenceRequired, oneAtATime);
+        const outcome = await fetchEntry(started.entry, started.result, ctx, settings, evidenceRequired, oneAtATime);
         if (outcome.kind === "paused") {
           batch.stopped = true;
           if (!batch.retryAt || outcome.retryAt > batch.retryAt) batch.retryAt = outcome.retryAt;
@@ -144,6 +148,7 @@ async function fetchBatch(
           batch.giveBack.add(started.entry);
         } else if (outcome.kind === "deferred") {
           batch.stopped = true;
+          batch.deferred = true;
           batch.giveBack.add(started.entry);
         } else if (outcome.kind === "fetched") {
           tally.fetched++;
@@ -184,7 +189,7 @@ async function fetchBatch(
 
   const failure = lanes.find((settled): settled is PromiseRejectedResult => settled.status === "rejected");
   if (failure) throw failure.reason;
-  return { retryAt: batch.retryAt, pauseReason: batch.pauseReason };
+  return { retryAt: batch.retryAt, pauseReason: batch.pauseReason, deferred: batch.deferred };
 }
 
 type EntryOutcome =
@@ -197,7 +202,7 @@ async function fetchEntry(
   entry: FrontierEntry,
   result: Awaited<ReturnType<typeof getRepo>>,
   ctx: JobContext<null>,
-  docsGenerators: readonly string[],
+  settings: CrawlSettings,
   evidenceRequired: ReadonlySet<string>,
   oneAtATime: OneAtATime,
 ): Promise<EntryOutcome> {
@@ -234,7 +239,9 @@ async function fetchEntry(
    * 2026-10-05~06 1차 AI 승인을 받은 후보 237건이 그렇게 거절됐다. 그런 후보는 이미 심사(1·2차)가 흔적을 함께 본다.
    */
   let evidence: string[] | null = null;
-  if (homepage && evidenceRequired.has(entry.signal) && !(await crawl.getCandidate(entry.repo))) {
+  if (homepage && evidenceRequired.has(entry.signal)
+    && !starAutoApproval({ repo: entry.repo, repoMeta, fetchedAt: new Date() }, settings)
+    && !(await crawl.getCandidate(entry.repo))) {
     const probe = await oneAtATime(GITHUB_ORIGIN, () => probeAiEvidence(entry.repo));
     if (!probe.ok) {
       if (probe.error.kind === "rate_limited" || probe.error.kind === "auth_unavailable") {
@@ -255,21 +262,20 @@ async function fetchEntry(
     if (probe.found.length === 0) {
       const saved = await crawl.saveFetchedDocument(entry, {
         repo: entry.repo, repoMeta, productUrl: homepage, pageStatus: null, pageMeta: null,
-      }, ctx.lease);
+      }, ctx.lease, { settings,
+        signals: { evidenceGate: { signal: entry.signal, recentCommits: PROBE_COMMITS, found: [] } },
+      });
       if (!saved) {
         ctx.log("crawl.fetch_claim_lost", { repo: entry.repo });
         return { kind: "lost" };
       }
+      if (saved.initialEvidenceDeferred) return { kind: "deferred" };
       if (saved.duplicateOf) {
         ctx.log("crawl.fetch_repository_alias", { repo: entry.repo, existingRepo: saved.duplicateOf });
         return { kind: "skipped" };
       }
-      // 판정 잡이 집기 전에 거절로 적는다 — 판정 대기열은 후보가 없거나 new 인 원본만 본다
-      await crawl.recordJudgement({
-        repo: entry.repo, productUrl: homepage, state: "rejected", reason: "ai_evidence_not_found", decidedBy: "auto",
-        signals: { evidenceGate: { signal: entry.signal, recentCommits: PROBE_COMMITS, found: [] } },
-      });
-      return { kind: "gated" };
+      return saved.initialEvidenceRejected ? { kind: "gated" }
+        : { kind: "fetched", needsJudgement: saved.needsJudgement };
     }
     evidence = probe.found;
   }
@@ -305,14 +311,16 @@ async function fetchEntry(
   let page: Awaited<ReturnType<typeof visit>> | null = null;
   if (homepage) {
     try {
-      page = await visit(homepage, docsGenerators, oneAtATime);
+      page = await visit(homepage, settings.judge.docsGenerators, oneAtATime);
     } catch (error) {
       /**
-       * 헤더를 받은 뒤 본문이 끊겼거나 기한을 넘겼다(fetchPage). 이 항목만의 실패다. 잡 전체로
+       * 일시 페이지 오류와 본문 단절은 이 항목만의 실패다. 잡 전체로
        * 번지던 때는 markFailed가 불리지 않아, 항목이 fetching으로 남았다 10분 뒤 회수되기를
        * 반복했고 최대 시도 횟수가 영영 걸리지 않았다(codex 재현).
        */
-      if (ctx.lease) await crawl.markFailed(entry.repo, `페이지 본문 수신 실패 — ${describeError(error)}`, undefined, entry, ctx.lease);
+      const retryAt = error instanceof Error && "retryAt" in error && error.retryAt instanceof Date ? error.retryAt : undefined;
+      if (retryAt) await crawl.markFailed(entry.repo, `페이지 본문 수신 실패 — ${describeError(error)}`, undefined, entry, ctx.lease, retryAt);
+      else if (ctx.lease) await crawl.markFailed(entry.repo, `페이지 본문 수신 실패 — ${describeError(error)}`, undefined, entry, ctx.lease);
       else await crawl.markFailed(entry.repo, `페이지 본문 수신 실패 — ${describeError(error)}`, undefined, entry);
       return { kind: "failed" };
     }
@@ -378,7 +386,8 @@ function originOf(url: string): string {
 /**
  * 배포 URL을 확인한다.
  *
- * 닿지 않으면 상태를 0으로 남긴다. null은 "아직 확인 안 함"이라는 뜻이고, 판정은 그것을
+ * 영구 URL·SSRF 오류는 상태를 0으로 남기고, 일시 오류는 bounded frontier retry로 넘긴다.
+ * null은 "아직 확인 안 함"이라는 뜻이고, 판정은 그것을
  * 보류(needs_review)로 다룬다 — 확인해서 죽어 있는 것까지 사람에게 보내면 심사 큐가
  * 죽은 링크로 찬다.
  *
@@ -394,12 +403,12 @@ function originOf(url: string): string {
  * 걸었다(codex 재현). 기준값은 그대로 두고, 판정이 도착한 주소도 보게 한다(rules.ts).
  */
 async function visit(url: string, docsGenerators: readonly string[], oneAtATime: OneAtATime) {
-  let page = await oneAtATime(url, () => fetchPage(url, "background"));
+  let page = await oneAtATime(url, () => fetchPage(url, "background", { retryTransientErrors: true }));
   if (!page) return { productUrl: url, status: 0, meta: null };
 
   const hop = metaRefreshTarget(page.html, page.finalUrl);
   if (hop) {
-    const next = await oneAtATime(hop, () => fetchPage(hop, "background"));
+    const next = await oneAtATime(hop, () => fetchPage(hop, "background", { retryTransientErrors: true }));
     // 목적지가 열리지 않으면 껍데기 쪽을 그대로 쓴다 — 없는 주소로 바꾸면 더 나쁘다
     if (next) page = next;
   }

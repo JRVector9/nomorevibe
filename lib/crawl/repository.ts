@@ -326,7 +326,7 @@ export async function deferFrontier(entries: FrontierEntry[], retryAt?: Date, le
  * claim을 주면 아직 내 것일 때만 기록한다. 회수된 항목에 옛 워커가 실패를 적으면 새 워커의
  * claim이 풀려, 그 워커가 받아 온 원본까지 버려진다.
  */
-export async function markFailed(repo: string, error: string, now?: Date, claim?: FrontierClaim, lease?: JobLease): Promise<void> {
+export async function markFailed(repo: string, error: string, now?: Date, claim?: FrontierClaim, lease?: JobLease, retryAt?: Date): Promise<void> {
   const current = await db.query.crawlFrontier.findFirst({ where: eq(crawlFrontier.repo, repo) });
   if (!current) return;
 
@@ -338,10 +338,9 @@ export async function markFailed(repo: string, error: string, now?: Date, claim?
     await tx.update(crawlFrontier)
     .set({
       state: exhausted ? "failed" : "pending",
-      // 소진됐으면 다음 시도 시각을 건드리지 않는다 (어차피 다시 꺼내지 않는다)
       nextAttemptAt: exhausted
-        ? crawlFrontier.nextAttemptAt
-        : sql`${at} + ${`${backoff} minutes`}::interval`,
+        ? sql`greatest(${crawlFrontier.nextAttemptAt}, ${retryAt?.toISOString() ?? null}::timestamp)`
+        : sql`greatest(${at} + ${`${backoff} minutes`}::interval, ${retryAt?.toISOString() ?? null}::timestamp)`,
       lastError: error.slice(0, 2000),
       updatedAt: sql`${at}`,
     })
@@ -490,7 +489,8 @@ export async function saveFetchedDocument(
     pageMeta: Record<string, unknown> | null;
   },
   lease?: JobLease,
-): Promise<{ needsJudgement: boolean; duplicateOf?: string } | null> {
+  initialEvidenceGate?: { settings: CrawlSettings; signals: Record<string, unknown> },
+): Promise<{ needsJudgement: boolean; duplicateOf?: string; initialEvidenceRejected?: boolean; initialEvidenceDeferred?: boolean } | null> {
   return db.transaction(async (tx) => {
     const githubId = typeof doc.repoMeta.id === "number" && Number.isSafeInteger(doc.repoMeta.id)
       && doc.repoMeta.id > 0 ? String(doc.repoMeta.id) : null;
@@ -499,6 +499,18 @@ export async function saveFetchedDocument(
     if (githubId) await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`crawl-github-id:${githubId}`}))`);
     const [candidate] = await tx.select().from(crawlCandidates).where(eq(crawlCandidates.repo, doc.repo)).for("update");
     const [previous] = await tx.select().from(crawlDocuments).where(eq(crawlDocuments.repo, doc.repo)).for("update");
+    const settingsRow = initialEvidenceGate ? (await tx.select().from(crawlSettings)
+      .where(eq(crawlSettings.id, 1)).for("share"))[0] : undefined;
+    if (initialEvidenceGate) {
+      const [owned] = await tx.select({ id: crawlFrontier.id }).from(crawlFrontier)
+        .where(claimed(claim)).for("update");
+      if (lease) await assertJobLease(tx, lease);
+      if (!owned) return null;
+      // The unvisited page is usable only for a still-absent candidate under the
+      // same policy. Give the claim back so a later tick collects the real page.
+      if (candidate || !isDeepStrictEqual(mergeWithDefaults(settingsRow?.values), initialEvidenceGate.settings))
+        return { needsJudgement: false, initialEvidenceDeferred: true };
+    }
     if (githubId && (!previous || previous.repoMeta.id !== doc.repoMeta.id)) {
       const [existing] = await tx.select({ repo: crawlDocuments.repo }).from(crawlDocuments)
         .where(and(sql`${crawlDocuments.repoMeta}->>'id' = ${githubId}`, ne(crawlDocuments.repo, doc.repo)))
@@ -510,6 +522,14 @@ export async function saveFetchedDocument(
         if (lease) await assertJobLease(tx, lease);
         return owned ? { needsJudgement: false, duplicateOf: existing.repo } : null;
       }
+    }
+    if (initialEvidenceGate) {
+      const [inserted] = await tx.insert(crawlCandidates).values({
+        repo: doc.repo, productUrl: doc.productUrl, state: "rejected", reason: "ai_evidence_not_found",
+        decidedBy: "auto", signals: initialEvidenceGate.signals, judgedAt: new Date(), updatedAt: new Date(),
+      }).onConflictDoNothing({ target: crawlCandidates.repo }).returning({ id: crawlCandidates.id });
+      // An absent-row decision race must win before either source or frontier writes.
+      if (!inserted) return { needsJudgement: false, initialEvidenceDeferred: true };
     }
     const [owned] = await tx.update(crawlFrontier)
       .set({ state: "done", aliasOf: null, lastError: null, updatedAt: new Date() })
@@ -529,6 +549,7 @@ export async function saveFetchedDocument(
     const [saved] = await tx.insert(crawlDocuments).values(values)
       .onConflictDoUpdate({ target: crawlDocuments.repo, set: values })
       .returning();
+    if (initialEvidenceGate) return { needsJudgement: false, initialEvidenceRejected: true };
     if (!candidate || candidate.state === "new") return { needsJudgement: true };
     if (candidate.decidedBy !== "auto" || candidate.publishedSlug
       || !["approved", "needs_review"].includes(candidate.state)
