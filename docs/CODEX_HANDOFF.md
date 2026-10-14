@@ -1,3 +1,65 @@
+# 2026-10-14 — X 파일럿 준비 / 설계 재검토 완료, live 목적 확인 대기
+
+## Current objective
+
+사용자가 X 정책을 먼저 확인하고 기존 수집→검수 구현을 병렬 서브에이전트로 다시 설계 대조하도록 요청했다. 이번 로컬 코드·검사·직접 리뷰 단계는 완료했다. X 실제 API acceptance는 기존 승인 목적이 프로젝트 발굴·공개 HOT 분석을 포함하는지 확인될 때까지 pending이다. 소개 검수 pause는 유지한다.
+
+## Completed work / repository state
+
+- 브랜치 `feat/pipeline-review-recovery-20261014`, 시작 HEAD `1a2ae0e`. 사용자 미추적 PT/prototypes/nomorevibe-final/mistake.md 등을 보존했다.
+- 서브에이전트3개와 root 직접 CLI7회는 모두 `gpt-6.1-sol / xhigh`. collection/runtime은 추가 재현 가능한 설계 차이 없음. evidence는 초기 선택/canonical await, site final callback, GitHub provider 반환 뒤 freshness, source SELECT 뒤 UPDATE, 이미 시작한 deferred UPDATE 완료 뒤 caller retry SELECT, cutoff 예외 뒤 caller failure write의6경계를 재현·수정했다.
+- `5c791dc`: 독립 X 공식 API acceptance 파일럿과 회귀64개·계획·README/package/.env.example. 기본 dry-run/목적 gate/최대3요청·30 post 예약/20초·응답1MiB/nullable 공개 지표/공식 GitHub entity URL만 정규화. 오류200, 중복/상한·잘못된 구조의 unavailable 우선, 전역 repost 제외 수정. DB·scheduler·LLM·HOT UI 미연결.
+- `df39c40`: evidence6경계·실제 단위/DB 회귀. hard stop과 optional soft budget을 구별하고 이미 시작한 저장·필수 lease fence·제한된 checkpoint flush·저장된 release 수·재시도 시각·CAS를 보존한다. 일반 RSS/media verifier/upsert 내부는 재설계하지 않았다.
+- root 마지막 직접 리뷰 design_reaudit_round4(351.69초/55개 in-memory)와 x_pilot_round3(308.25초/27개 in-memory)는 실제 No findings/CONCLUSION: OK. 그 이전5개 리뷰는 exit0이지만 P2가 있어 CLEAN이 아니었고 실제 RED→GREEN 뒤 다시 검토했다. 최초 evidence/X의 transient503 재연결3회 후 결과 완료.
+- 이번 CLI7회 실제 receipt 합계: 입력4,823,413(캐시4,214,784 포함)·출력72,750. 캐시를 입력에 더하지 않는다. native agent 사용량은 추정하지 않는다. 원본 `/private/tmp/nomorevibe-x-policy-review-20261014`(디렉터리700/파일600).
+- 정책 보고서·재감사 보고서·PENDING·이전 구현/가능성 보고서 후속·인계와 새 Obsidian 일지를 갱신했다. 문서 commit SHA는 git log로 확인한다. push/PR/merge/배포/운영 migration0076/운영 DB 쓰기/소개 재개 없음.
+
+## Console / credential / use-case facts
+
+- native Chrome `https://console.x.com`에서 기존 pay-per-use 앱33221608과 무료 크레딧$9.71/유료$0 표시 확인. 계정/API 접근권과 프로젝트 발굴/HOT 목적 승인은 별개다. 앱의 일반 설명 `This app was created to use the X API`, 프로젝트/계정 설정에는 해당 승인 기록이 보이지 않았다.
+- 사용자가 발급/보안 저장 확인 질문에 `이어서해`라고 답했다. 초기 생성 버튼은 재생성 확인 창을 열었으며 root는 최종 재생성 버튼을 누르지 않았다. 이후 사용자가 토큰을 클립보드에 복사했다고 알렸다. 사용자 제공 Bearer는 native TextEdit/clipboard로 `/Users/jr/.config/nomorevibe/x-api.env`에 저장, 디렉터리700/파일600·단일 env 형식만 확인했다. 토큰 원문은 출력/커밋하지 않았다. 결제/자동충전/OAuth·DM 권한 변경 없음.
+- 이번 작업에서 X 신청서에 목적을 입력·제출하거나 변경 승인을 받은 적은 없다. 문서의 영어 목적 초안은 신청서가 아니다. 사용자 최신 질문 `너가 승인받을때 목적을 제대로 썼어?`에는 이 사실과 기존 승인 범위 미확인을 설명했다. 비동기 질문(기존 승인 목적에 프로젝트 발굴·인기도 분석이 포함되는가)이 pending이다. 답변 전 실제 HTTP 금지; 시간이 지났다고 승인하지 않는다.
+- real-env `--live` 단독 실행은 의도한 exit1/use_case_not_approved/요청0/예약0이었다. 인증·검색·요금 검증을 실행한 것이 아니다. `--use-case-approved`는 X 승인을 생성하지 않으며 확인 전 추가하면 안 된다.
+- 첫 TextEdit getApp 자동 응답에 기존 admin-login 문서 비밀이 포함되는 실수가 있었고 사용자에게 알렸다. 해당 값을 다시 출력하거나 문서/로그에 복사하지 않는다. 후속 AX는 emit:false와 텍스트 값 제외 방식으로 처리했다. 다른 계정 비밀을 임의로 변경하지 않는다.
+
+## Modified files
+
+- evidence5: `lib/domain/evidence/refresh.ts`, `lib/domain/evidence/providers/site-fingerprint.ts`, `tests/evidence-refresh-cancellation.test.ts`, `tests/site-fingerprint-cancellation.test.ts`, `tests/integration/evidence-refresh.test.ts`.
+- pilot7: `lib/social/x-pilot.ts`, `scripts/x-api-pilot.ts`, `tests/x-api-pilot.test.ts`, `docs/superpowers/plans/2026-10-14-x-api-pilot.md`, `.env.example`, `package.json`, `README.md`.
+- docs6: `PENDING.md`, `docs/CODEX_HANDOFF.md`, `docs/operations/2026-10-14-pipeline-recovery-implementation.md`, `docs/operations/2026-10-14-social-hot-crawler-feasibility.md`, `docs/operations/2026-10-14-pipeline-design-reaudit.md`, `docs/operations/2026-10-14-x-api-policy-and-pilot.md`.
+- 저장소 밖 일지: Obsidian `프로젝트 일지/nomorevibe/2026-10-14 X 정책 파일럿과 설계 재검토.md`.
+
+## Actual tests / key decisions / failed approaches
+
+- 최종 root 전체 unit254파일2,433통과/exit0/7.49초. evidence 선택 unit10파일104, 독점 DB55436 통합3파일136 실제 통과. 새 통합 두 경우는 실제 retry checkpoint·active-version CAS·lease fence를 검증한다. 파일럿64통과. 최종 tsc/full lint exit0, 기존 vendor `_ctx` warning1. npm pilot dry-run exit0/요청0. git diff --check 통과.
+- 새 integration fixture actor 누락 때문에 병렬 typecheck exit2 한 번. 필수 actor 추가 후 최종 전체 tsc0. lazy DB Proxy own-property spy가 불가능해 새 통합 fixture2개 실패, spy 제거 후136통과. 새 읽기 금지는 단위 실재현으로, 영속성은 실제 DB로 검증한다.
+- 단독 작업용55436 컨테이너는 정지/상태 exited 확인했다. 사용자 다른 컨테이너는 바꾸지 않았다. 이전 full integration1,543/build/i18n 기록은 재실행하지 않았으며 최신 검사로 주장하지 않는다.
+- CUA browser provider unavailable 때문에 getBrowser/createBrowserTab 실패, native Chrome AX로 성공. compaction 후 UI를 이어가면 먼저 `await cua.rewriteDocumentation()` 호출. 화면이 바뀌면 최신 AX를 재조회하고 token 화면/screenshot/raw AX 출력 금지. Clipboard는 CUA만 사용; pbpaste/osascript/exec clipboard 조회 금지.
+- 일반 X HTML/내부 API/로그인 scraping 대신 공식 API. 실제 승인 목적·소량 검색/필드(`tweet.fields` vs `post.fields` 충돌)/공개 지표/요금 확인을 첫 acceptance로 한다. 자료 미확인 상태에서 처리량/HOT 성장률/추가 발행량을 확정하지 않는다. 기존 가능성 보고서의 author ID/독립 작성자 지표는 승인된 최소 식별/보존 설계가 있을 때만 사용, 첫 파일럿에는 제외.
+
+## Remaining / exact next commands
+
+1. 기존 승인 목적 확인. 이번에는 신청하지 않았다. 목적 변경/제출·계약 동의는 구체적인 사용자 지시와 CUA 실행 시점 규칙에 따라 진행한다. unsolicited 지원 메일/메시지를 보내지 않는다.
+2. 확인된 목적·실제 계정 가격/크레딧으로 bounded live acceptance. 검색/lookup 필드·지표·가용성·비용을 실제 검증하기 전 full HOT DB/독립 social role/일일 예산/UI를 완료로 표시하지 않는다.
+3. 기존 운영 PR/latest base CI/check·migration0076·배포·지속 source 처리량(3,453/h 유지,5,500/h catch-up)/외부 monitor 수신은 아직 남는다. 소개 검수 pause 유지.
+
+```sh
+git status --short
+git log -4 --oneline
+env -u DATABASE_URL -u READ_DATABASE_URL -u GITHUB_COLLECTOR_SECRET -u GITHUB_TOKEN -u X_BEARER_TOKEN npm test
+npx tsc --noEmit --incremental false
+npm run lint
+npm run social:x:pilot
+```
+
+승인 목적 확인을 마친 후에만:
+
+```sh
+node --env-file=/Users/jr/.config/nomorevibe/x-api.env --import tsx scripts/x-api-pilot.ts --live --use-case-approved --fields-parameter tweet.fields
+```
+
+---
+
 # 2026-10-14 — 수집·검수 개선 / HOT 가능성 조사
 
 ## Current objective

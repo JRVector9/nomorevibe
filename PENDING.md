@@ -10,6 +10,9 @@
 
 PR00~07의 코드·회귀검사와 전체 검사(단위2,318·통합1,543·타입·lint·빌드)는 별도 브랜치에서 실행했다. 마지막 근거·캐시 cutoff·재개 커서 경계까지 수정하고 전체 검사와 모든 범위의 최종 독립 리뷰를 통과해 로컬 커밋했다.
 [구현·검증 보고서](docs/operations/2026-10-14-pipeline-recovery-implementation.md)에 실제 결과를 기록한다.
+[후속 설계 재검토](docs/operations/2026-10-14-pipeline-design-reaudit.md)에서 추가 취소 경계6개를
+수정했고 단위2,433·선택 통합136·타입·lint와 마지막 직접 리뷰를 통과했다.
+이전 전체 검사 횟수와 구별해 기록하며, 해당 source는 로컬 `df39c40`/파일럿은 `5c791dc`다.
 운영 배포·마이그레이션0076·개선 후 처리량은 아직 확인하지 않았다.
 
 다음 운영 단계에서는 최신 base의 CI `check`와 PR 절차를 거쳐 같은 SHA의 웹·워커를 배포하고,
@@ -18,8 +21,11 @@ PR00~07의 코드·회귀검사와 전체 검사(단위2,318·통합1,543·타�
 실제 측정 전 달성으로 표시하지 않는다. 외부 monitor 설치·Push/deadman 실제 수신과
 과거 초기 gate 거절 후보의 fresh 재수집→규칙 판정도 미실행이다. 소개 검수 중단은 유지한다.
 
-X·Threads HOT 요청은 [가능성 조사](docs/operations/2026-10-14-social-hot-crawler-feasibility.md)까지다.
-HOT 기능과 공식 계정의 실제 검색·권한·청구 파일럿은 구현하거나 실행하지 않았다.
+X는 [정책 확인·독립 파일럿](docs/operations/2026-10-14-x-api-policy-and-pilot.md)을 준비했고,
+사용자가 복사한 Bearer Token을 로컬 비밀 설정에 저장했다. 원래 승인 목적이 공개 프로젝트
+발굴·HOT 분석을 포함하는지는 미확인이다. 실제 검색·재관측·필드 이름·요금 확인은 미실행이며,
+공개 HOT 필터와 독립 social role/lease·상시 운영의 일일 예산은 이후 구현 단계다.
+Threads는 [가능성 조사](docs/operations/2026-10-14-social-hot-crawler-feasibility.md)까지다.
 
 ---
 
