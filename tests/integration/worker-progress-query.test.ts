@@ -228,6 +228,7 @@ it("respects public unseen AI idle while candidates and current-version due rows
 
 it("bounds current AI demand during unseen idle at public catalogue scale", async () => {
   const now = new Date();
+  await saveSettings({ agentEvidence: { backgroundRefreshDays: 90 } }, "test");
   const created = new Date(now.getTime() - 120 * 60_000).toISOString();
   const due = new Date(now.getTime() - 20 * 60_000).toISOString();
   // Valid maximum-length GitHub identities make repeated normalization exceed the real 3s query budget.

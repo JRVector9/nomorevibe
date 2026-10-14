@@ -10,6 +10,7 @@ import { requeueAfterAdminEvidenceRefresh } from '@/lib/crawl/admin-review';
 import { reviewCandidatePredicate } from '@/lib/crawl/agent-review-repository';
 import { assertJobLease, requestJob, type JobLease } from '@/lib/jobs/control';
 import { parseAgentProviderFailure, type AgentProviderFailure } from '@/lib/operations/worker-progress';
+import { agentRefreshDueAtSql } from '@/lib/domain/evidence/agents/refresh-policy';
 
 export type AgentEvidenceRefreshCursor = { afterRepository?: string; retryAfter?: string; providerFailure?: AgentProviderFailure };
 /**
@@ -39,10 +40,13 @@ export async function refreshAgentEvidenceJob(ctx: JobContext<AgentEvidenceRefre
   const cursor = (): AgentEvidenceRefreshCursor => ({ afterRepository, ...(providerFailure ? { providerFailure } : {}) });
   // Merge product and candidate demand. Only public GitHub owner/repo identities enter the collector.
   const demand = sql`
-      SELECT lower(regexp_replace(repo_url, '^https://github.com/([^/]+/[^/#?]+?)([.]git)?/?$', '\\1')) AS repository_key
-      FROM products WHERE status != 'banned' AND repo_url ~ '^https://github.com/[^/]+/[^/#?]+/?$'
-      UNION
-      SELECT lower(repo) AS repository_key FROM crawl_candidates WHERE state IN ('new', 'needs_review', 'approved')
+      SELECT repository_key, bool_or(requires_daily) AS requires_daily FROM (
+        SELECT lower(regexp_replace(repo_url, '^https://github.com/([^/]+/[^/#?]+?)([.]git)?/?$', '\\1')) AS repository_key,
+          status NOT IN ('seeded', 'verified') AS requires_daily
+        FROM products WHERE status != 'banned' AND repo_url ~ '^https://github.com/[^/]+/[^/#?]+/?$'
+        UNION ALL
+        SELECT lower(repo), true FROM crawl_candidates WHERE state IN ('new', 'needs_review', 'approved')
+      ) inputs GROUP BY repository_key
   `;
   if (providerFailure) {
     // Match monitoring's demand/latest-scan join before retaining the one bounded failure record.
@@ -82,7 +86,8 @@ export async function refreshAgentEvidenceJob(ctx: JobContext<AgentEvidenceRefre
   const rows = await db.execute<{ repository_key: string }>(sql`
     SELECT repository_key FROM (${demand}) demand
     WHERE repository_key > ${afterRepository} AND NOT EXISTS (
-      SELECT 1 FROM (${latestScan(sql`demand.repository_key`)}) latest WHERE latest.next_attempt_at > now()
+      SELECT 1 FROM (${latestScan(sql`demand.repository_key`)}) latest
+      WHERE ${agentRefreshDueAtSql(sql`latest`, sql`demand.requires_daily`, settings.agentEvidence.backgroundRefreshDays)} > now()
     )
     ORDER BY repository_key LIMIT 10
   `);
@@ -202,7 +207,8 @@ async function releaseEvidencePendingCandidates(detectorVersion: string, lease?:
 /** 레포 하나의 최신 스캔 (refresh 의 캐시 판단과 같은 기준: 이 탐지기 버전, 전체 범위, 가장 늦게 시작한 것) */
 function latestScan(repositoryKey: SQL) {
   return sql`
-    SELECT scan.id, scan.repository_key, scan.state, scan.last_error_code, scan.next_attempt_at, scan.started_at FROM agent_repository_scans scan
+    SELECT scan.id, scan.repository_key, scan.state, scan.last_error_code, scan.next_attempt_at, scan.started_at,
+      scan.completed_at, scan.cursor, scan.coverage FROM agent_repository_scans scan
     WHERE scan.repository_key = ${repositoryKey} AND scan.scope = '' AND scan.detector_version = ${AGENT_DETECTOR_VERSION}
     ORDER BY scan.started_at DESC, scan.id DESC LIMIT 1
   `;

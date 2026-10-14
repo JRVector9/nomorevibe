@@ -291,6 +291,7 @@ const defaultAgentEvidence = {
   enabled: false,
   enforceEligibility: false,
   displayObservedFacts: false,
+  backgroundRefreshDays: 1,
   detectorVersion: "2026-09-14.1",
   policyVersion: "2026-09-06.1",
 };
@@ -346,6 +347,8 @@ export const crawlSettingsSchema = z.object({
     enabled: z.boolean(),
     enforceEligibility: z.boolean(),
     displayObservedFacts: z.boolean(),
+    /** Clean public scans only; candidates, unfinished work and retry deadlines keep their existing cadence. */
+    backgroundRefreshDays: z.number().int().min(1).max(365).default(1),
     detectorVersion: z.string().regex(/^[a-zA-Z0-9.-]{1,40}$/),
     policyVersion: z.string().regex(/^[a-zA-Z0-9.-]{1,40}$/),
   }).default(defaultAgentEvidence),
