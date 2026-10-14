@@ -1,21 +1,26 @@
 import { beforeAll, beforeEach, expect, it, vi } from "vitest";
 import { eq } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { crawlCandidates, crawlDocuments, crawlFrontier, crawlReviewAttempts, crawlSettings, jobs } from "@/lib/db/schema";
-import { changeReviewMode, saveSettings } from "@/lib/crawl/settings";
+import { crawlCandidates, crawlDocuments, crawlFrontier, crawlReviewAttempts, crawlSettings, jobs, secondReviews } from "@/lib/db/schema";
+import { changeReviewMode, saveSettings, getSettings } from "@/lib/crawl/settings";
 import { reviewCrawlCandidates } from "@/lib/crawl/jobs/agent-review";
 import { runJob } from "@/lib/jobs/runner";
 import { ensureSchema, resetTables } from "./setup";
 
 /** 외부 CLI만 바꾼다. 규칙·claim·기록·lease는 실제 DB로 돈다 */
 const review = vi.hoisted(() => vi.fn());
+const grok = vi.hoisted(() => vi.fn());
 vi.mock("@/lib/crawl/agent-review", async importOriginal => ({
   ...await importOriginal<typeof import("@/lib/crawl/agent-review")>(), reviewWithAgent: review,
+}));
+vi.mock("@/lib/crawl/agent-review-grok", async importOriginal => ({
+  ...await importOriginal<typeof import("@/lib/crawl/agent-review-grok")>(), reviewWithGrokCli: grok,
 }));
 const approve = { ok: true, outcome: { decision: "approve", reason: "A deployed product", evidenceIds: ["product"] }, usage: {} };
 
 beforeAll(ensureSchema);
 beforeEach(async () => {
+  await db.delete(secondReviews);
   await db.delete(crawlReviewAttempts);
   await db.delete(crawlCandidates);
   await db.delete(crawlDocuments);
@@ -24,6 +29,7 @@ beforeEach(async () => {
   await db.delete(jobs);
   await resetTables();
   review.mockReset().mockResolvedValue(approve);
+  grok.mockReset().mockResolvedValue({ ...approve, outcome: { ...approve.outcome, confidence: 0.9 } });
   vi.stubEnv("CRAWL_REVIEW_MODEL", "test-model");
   vi.stubEnv("CRAWL_REVIEW_READY", "true");
   await saveSettings({ enabled: true }, "test");
@@ -38,6 +44,36 @@ async function source(repo: string, productUrl: string, candidate: { state: "app
   await db.insert(crawlCandidates).values({ repo, productUrl, ...candidate, decidedBy: "auto", judgedAt: fetchedAt, updatedAt: fetchedAt });
 }
 const tick = () => runJob("crawl-agent-review", reviewCrawlCandidates);
+
+it("passes a configured Grok first approval through the real second-review input guards", async () => {
+  await saveSettings({ firstReview: { provider: "grok-cli", model: "grok-fixture" },
+    secondReview: { enabled: true, voters: [{ provider: "claude-cli", model: "opus" }], sampleRate: 0 } }, "test");
+  await source("maker/grok-app", "https://grok.example", { state: "approved", reason: "passed" }, { title: "Grok App", description: "A deployed product" });
+  expect(await tick()).toMatchObject({ status: "completed" });
+  expect(grok).toHaveBeenCalledOnce();
+  const { enqueueSecondReviews, pendingSecondReviews, recordSecondReview } = await import("@/lib/crawl/second-review");
+  const { loadSecondReviewInput } = await import("@/lib/crawl/second-review-input");
+  expect(await enqueueSecondReviews(await getSettings())).toBe(1);
+  const [vote] = await pendingSecondReviews(10);
+  expect(vote).toMatchObject({ trigger: "ai_approved", firstModel: "grok-fixture" });
+  const { loadReviewInput } = await import("@/lib/crawl/agent-review-repository");
+  const { secondReviewGeneration } = await import("@/lib/crawl/second-review-input");
+  const [candidate] = await db.select().from(crawlCandidates);
+  const [document] = await db.select().from(crawlDocuments);
+  const [attempt] = await db.select().from(crawlReviewAttempts);
+  const input = await loadReviewInput(candidate, document, await getSettings());
+  expect({ hash: input.inputHash, source: input.sourceRevisionHash, generation: secondReviewGeneration(attempt.id, input, vote.trigger) })
+    .toEqual({ hash: attempt.inputHash, source: attempt.sourceRevisionHash, generation: vote.generationKey });
+  expect(await loadSecondReviewInput(vote)).not.toBeNull();
+  const { reviewApprovalPredicate } = await import("@/lib/crawl/agent-review-repository");
+  await recordSecondReview(vote.id, { ok: true, provider: "claude-cli", model: "opus", decision: "approve",
+    confidence: 0.95, reason: "Independent approval", status: "agreed" });
+  expect(await db.select({ id: crawlCandidates.id }).from(crawlCandidates).where(reviewApprovalPredicate(await getSettings())))
+    .toEqual([{ id: candidate.id }]);
+  await saveSettings({ firstReview: { provider: "grok-cli", model: "another-grok-model" } }, "test");
+  expect(await loadSecondReviewInput(vote)).toBeNull();
+  expect(await db.select({ id: crawlCandidates.id }).from(crawlCandidates).where(reviewApprovalPredicate(await getSettings()))).toEqual([]);
+});
 
 it.each(["seeded", "banned"] as const)("retains the %s duplicate decision and product reference in first review", async status => {
   const { insert } = await import("@/lib/domain/products/repository");

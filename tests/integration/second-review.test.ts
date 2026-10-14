@@ -80,6 +80,19 @@ it('AI 1차가 가른 보류 후보와 위험 신호가 있는 공개분을 올�
   expect(await enqueueSecondReviews(await getSettings())).toBe(0);
 });
 
+it('accepts a current Grok first judgement for a held candidate without losing upstream agreement', async () => {
+  await saveSettings({ firstReview: { provider: 'grok-cli', model: 'grok-fixture' } }, 'test');
+  await held('acme/grok-held');
+  await firstReview('acme/grok-held', 'reject');
+  await db.update(crawlReviewAttempts).set({ provider: 'grok-cli', model: 'grok-fixture' });
+  expect(await enqueueSecondReviews(await getSettings())).toBe(1);
+  const [vote] = await pendingSecondReviews(10);
+  const { loadSecondReviewInput } = await import('@/lib/crawl/second-review-input');
+  expect(await loadSecondReviewInput(vote)).not.toBeNull();
+  await db.update(crawlReviewAttempts).set({ sourceRevisionHash: 'stale' });
+  expect(await loadSecondReviewInput(vote)).toBeNull();
+});
+
 it('사람이 이미 결정했거나 공개분이 내려가면 닫는다 — 지우지 않는다', async () => {
   const decided = await held('acme/decided');
   await firstReview('acme/decided', 'reject');

@@ -8,7 +8,7 @@ import type { CrawlSettings } from "./settings-schema";
 import { mergeWithDefaults } from "./settings";
 import { REVIEW_PROMPT_VERSION, REVIEW_RULES_VERSION } from "./agent-review-contract";
 import { loadReviewInput } from "./agent-review-repository";
-import { loadSecondReviewInput, secondReviewGeneration } from "./second-review-input";
+import { firstReviewProviderPredicate, loadSecondReviewInput, secondReviewGeneration } from "./second-review-input";
 import { assertJobLease, requestJob, withJobLeaseWrite, type JobLease } from "@/lib/jobs/control";
 import { canonicalReviewModel, sameReviewModel } from "./review-model-identity";
 import { firstReviewer } from "./agent-review";
@@ -187,7 +187,7 @@ export async function enqueueSecondReviews(settings: CrawlSettings, now = new Da
     .where(and(eq(crawlCandidates.state, "needs_review"), eq(crawlCandidates.decidedBy, "auto"),
       // 관문에서 2차가 반대해 보류된 것은 이미 두 모델의 표가 있다 — 다시 올리면 같은 표를 또 부르고 관문 행을 덮는다
       ne(crawlCandidates.reason, "second_review_split"),
-      eq(crawlReviewAttempts.kind, "automatic"), eq(crawlReviewAttempts.state, "succeeded"), inArray(crawlReviewAttempts.provider, ["claude-cli", "abcllm"]),
+      eq(crawlReviewAttempts.kind, "automatic"), eq(crawlReviewAttempts.state, "succeeded"), firstReviewProviderPredicate(settings),
       // 가른 판단은 확신을 낸 것만 — 1차가 보류한 것은 애초에 확신을 재지 않는다
       or(sql`${crawlReviewAttempts.outcome}->>'confidence' is not null`,
         held ? sql`${crawlReviewAttempts.outcome}->>'decision' = 'needs_review'` : undefined)!))
@@ -309,7 +309,7 @@ export async function enqueueSecondReviews(settings: CrawlSettings, now = new Da
       candidateId: crawlReviewAttempts.candidateId, id: crawlReviewAttempts.id,
     }).from(crawlReviewAttempts).where(and(inArray(crawlReviewAttempts.candidateId, candidateIds),
       eq(crawlReviewAttempts.kind, "automatic"), eq(crawlReviewAttempts.state, "succeeded"),
-      inArray(crawlReviewAttempts.provider, ["claude-cli", "abcllm"])))
+      firstReviewProviderPredicate(settings)))
       .orderBy(crawlReviewAttempts.candidateId, desc(crawlReviewAttempts.id));
     const latestIds = new Map(currentFirst.map(row => [row.candidateId, row.id]));
     const candidates = new Map(locked.map(row => [row.id, row]));
