@@ -461,6 +461,8 @@ export const productKoreanTaglines = pgTable("product_korean_taglines", {
   model: varchar("model", { length: 160 }).notNull().default(""),
   /** 같은 소개로 시도한 횟수 — 소개가 바뀌면 1부터 다시 */
   attempts: integer("attempts").notNull().default(0),
+  /** 현재 소개의 실제 품질 거절 횟수 — 네트워크 실패는 포함하지 않는다 */
+  qualityRejections: integer("quality_rejections").notNull().default(0),
   errorCode: varchar("error_code", { length: 60 }),
   retryAt: timestamp("retry_at"),
   createdAt: timestamp("created_at").notNull().defaultNow(),

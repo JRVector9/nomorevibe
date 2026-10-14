@@ -1,10 +1,11 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { eq, sql } from "drizzle-orm";
+import { readFile } from "node:fs/promises";
 
 const { db } = await import("@/lib/db");
 const { jobs, products, productKoreanTaglines } = await import("@/lib/db/schema");
 const { writeKoreanTaglines } = await import("@/lib/jobs/products/korean-tagline");
-const { koreanTaglineProgress, koreanTaglineSample, pendingKoreanTaglines } = await import("@/lib/domain/products/korean-taglines");
+const { koreanTaglineProgress, koreanTaglineSample, pendingKoreanTaglines, recordKoreanTaglines } = await import("@/lib/domain/products/korean-taglines");
 const { getPublicList, getDiscoveryList } = await import("@/lib/domain/products/view");
 const { getPopularGroups } = await import("@/lib/domain/products/popular");
 const { runJob } = await import("@/lib/jobs/runner");
@@ -50,6 +51,85 @@ beforeEach(async () => {
 afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
 
 describe("한국어 한 줄 소개 잡", () => {
+  it("keeps the cumulative quality limit after a home retry fails on the network and leaves home", async () => {
+    const row = await seed({ slug: "exhausted-home-network", tagline: "Track your daily habits" });
+    await db.insert(productKoreanTaglines).values({ productId: row.id, sourceTagline: "Track your daily habits",
+      attempts: 4, qualityRejections: 4, errorCode: "rejected:empty" });
+    expect(await pendingKoreanTaglines(10, [])).toEqual([]);
+    const [task] = await pendingKoreanTaglines(10, [row.slug]);
+    expect(task).toBeDefined();
+    await runJob("home-network-failure", async ctx => {
+      await recordKoreanTaglines([{ task, result: { kind: "failure", error: "http_502", model: "test" } }], ctx.lease!);
+      return { done: true };
+    });
+    await db.update(productKoreanTaglines).set({ retryAt: null }).where(eq(productKoreanTaglines.productId, row.id));
+    expect(await stored(row.id)).toMatchObject({ attempts: 5, qualityRejections: 4, errorCode: "http_502" });
+    expect(await pendingKoreanTaglines(10, [])).toEqual([]);
+    expect(await koreanTaglineProgress()).toMatchObject({ gaveUp: 1, failed: 0 });
+    expect(await pendingKoreanTaglines(10, [row.slug])).toHaveLength(1);
+    await db.update(productKoreanTaglines).set({ qualityRejections: 6 }).where(eq(productKoreanTaglines.productId, row.id));
+    expect(await pendingKoreanTaglines(10, [row.slug])).toEqual([]);
+  });
+
+  it("preserves legacy rejected exhaustion and retry schedules during the conservative quality-counter migration", async () => {
+    const migration = await readFile(new URL("../../drizzle/0076_korean_tagline_quality_rejections.sql", import.meta.url), "utf8");
+    await db.transaction(async tx => {
+      await tx.execute(sql`create temporary table quality_rejections_migration_fixture
+        (product_id integer, attempts integer not null, error_code text, retry_at timestamp) on commit drop`);
+      await tx.execute(sql`insert into quality_rejections_migration_fixture values
+        (1, 9, 'http_502', '2100-01-01'), (2, 9, 'rejected:name_lost', '2100-01-01'),
+        (3, 2, 'rejected:too_long', '2100-01-01'), (4, 10, null, '2100-01-01')`);
+      for (const statement of migration.replaceAll('"product_korean_taglines"', '"quality_rejections_migration_fixture"').split("--> statement-breakpoint")) {
+        if (statement.trim()) await tx.execute(sql.raw(statement));
+      }
+      const rows = await tx.execute(sql`select product_id, quality_rejections, attempts,
+        retry_at = timestamp '2100-01-01' as retry_preserved
+        from quality_rejections_migration_fixture order by product_id`);
+      expect(rows.map(row => [row.product_id, row.quality_rejections, row.attempts])).toEqual([[1, 0, 9], [2, 4, 9], [3, 2, 2], [4, 0, 10]]);
+      expect(rows.every(row => row.retry_preserved === true)).toBe(true);
+    });
+  });
+
+  it("counts four quality rejections separately after five network failures", async () => {
+    const row = await seed({ slug: "quality-after-network", name: "Wireshark", tagline: "Wireshark is a network protocol analyzer" });
+    gateway.mockResolvedValue({ ok: false, status: 502 } as Response);
+    for (let i = 0; i < 5; i++) {
+      await tick();
+      await db.update(productKoreanTaglines).set({ retryAt: null }).where(eq(productKoreanTaglines.productId, row.id));
+    }
+    answerWith(() => "와이어샤크는 네트워크 프로토콜 분석기");
+    for (let quality = 1; quality <= 4; quality++) {
+      await tick();
+      expect(await stored(row.id)).toMatchObject({ attempts: 5 + quality, qualityRejections: quality, errorCode: "rejected:name_lost" });
+      await db.update(productKoreanTaglines).set({ retryAt: null }).where(eq(productKoreanTaglines.productId, row.id));
+      expect((await pendingKoreanTaglines(10, [])).length).toBe(quality < 4 ? 1 : 0);
+      expect(await koreanTaglineProgress()).toMatchObject({ gaveUp: quality < 4 ? 0 : 1 });
+    }
+    expect((await pendingKoreanTaglines(10, [row.slug])).length).toBe(1);
+    for (const quality of [5, 6]) {
+      await runJob("quality-home-extra", async ctx => {
+        await recordKoreanTaglines([{ task: { productId: row.id, name: "Wireshark", tagline: "Wireshark is a network protocol analyzer",
+          repoUrl: null, attempts: 5 + quality - 1 }, result: { kind: "failure", error: "rejected:name_lost", model: "test" } }], ctx.lease!);
+        return { done: true };
+      });
+      await db.update(productKoreanTaglines).set({ retryAt: null }).where(eq(productKoreanTaglines.productId, row.id));
+      expect((await pendingKoreanTaglines(10, [row.slug])).length).toBe(quality < 6 ? 1 : 0);
+    }
+  });
+
+  it("preserves same-source quality history on success and resets it for a changed source", async () => {
+    const row = await seed({ slug: "quality-reset", tagline: "Track your daily habits" });
+    await db.insert(productKoreanTaglines).values({ productId: row.id, sourceTagline: "Track your daily habits",
+      attempts: 7, qualityRejections: 2, errorCode: "rejected:empty" });
+    answerWith(() => "매일의 습관을 기록하는 도구");
+    await tick();
+    expect(await stored(row.id)).toMatchObject({ attempts: 8, qualityRejections: 2, errorCode: null, retryAt: null });
+    await db.update(products).set({ tagline: "Plan your trips" }).where(eq(products.id, row.id));
+    gateway.mockResolvedValue({ ok: false, status: 502 } as Response);
+    await tick();
+    expect(await stored(row.id)).toMatchObject({ sourceTagline: "Plan your trips", attempts: 1, qualityRejections: 0, errorCode: "http_502" });
+  });
+
   it("새 제품 → 홈에 보이는 제품 → 나머지는 스타 순으로 옮긴다", async () => {
     const rest = await seed({ slug: "rest-low", stars: 10 });
     const restHigh = await seed({ slug: "rest-high", stars: 900 });
@@ -114,7 +194,7 @@ describe("한국어 한 줄 소개 잡", () => {
 
     // 다시 볼 때가 되기 전에는 집지 않는다
     expect(await pendingKoreanTaglines(10, [])).toEqual([]);
-    await db.update(productKoreanTaglines).set({ retryAt: null, attempts: 4 }).where(eq(productKoreanTaglines.productId, row.id));
+    await db.update(productKoreanTaglines).set({ retryAt: null, attempts: 4, qualityRejections: 4 }).where(eq(productKoreanTaglines.productId, row.id));
     expect(await pendingKoreanTaglines(10, [])).toEqual([]);
     expect(await koreanTaglineProgress()).toMatchObject({ gaveUp: 1 });
   });
