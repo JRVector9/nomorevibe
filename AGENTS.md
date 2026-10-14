@@ -21,3 +21,11 @@ M3의 웹·scheduler(2복제본)·crawler·reviewer·publisher·text·maintenanc
 `PENDING.md`에는 백업 복구·장기 관측 등 아직 직접 확인하지 않은 운영 검증을 기록한다.
 첫 배포가 아직 안 됐다는 과거 기록을 현재 상태로 해석하지 않는다.
 사용자가 중단한 소개 검수는 별도 지시 없이 재개하지 않는다.
+
+## 검증 스킬
+
+코드 변경을 "고쳤다"고 말하지 않는다. 프로젝트 로컬 스킬
+[`.cursor/skills/verify-nomorevibe/SKILL.md`](.cursor/skills/verify-nomorevibe/SKILL.md)를 읽고
+[`features/`](.cursor/skills/verify-nomorevibe/features/)의 해당 Feature Map 레시피로 실제 앱을
+구동한 뒤 증거(로그, 스크린샷, 명령 출력)를 남긴다. 맵에 있는 진입점을 다른 경로로 대신
+통과했다고 보고하지 않는다.

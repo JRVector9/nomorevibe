@@ -1,0 +1,56 @@
+#!/usr/bin/env node
+/**
+ * Disposable product origin for maker register + domain verify.
+ * Serves GET / and GET /.well-known/nomorevibe.txt.
+ * POST /set-token with a raw body replaces the verify file contents.
+ */
+import http from "node:http";
+
+const port = Number(process.env.FIXTURE_PORT || 4173);
+const name = process.env.FIXTURE_NAME || "Verify Fixture";
+let token = process.env.VERIFY_TOKEN || "";
+
+function html() {
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>${name}</title>
+  <meta name="nomorevibe-verify" content="${token}">
+</head>
+<body>
+  <h1>${name}</h1>
+  <p>Local verification fixture. Not a production product.</p>
+</body>
+</html>`;
+}
+
+const server = http.createServer((req, res) => {
+  const url = new URL(req.url || "/", `http://127.0.0.1:${port}`);
+  if (req.method === "GET" && url.pathname === "/.well-known/nomorevibe.txt") {
+    res.writeHead(200, { "content-type": "text/plain; charset=utf-8" });
+    res.end(token);
+    return;
+  }
+  if (req.method === "POST" && url.pathname === "/set-token") {
+    const chunks = [];
+    req.on("data", (chunk) => chunks.push(chunk));
+    req.on("end", () => {
+      token = Buffer.concat(chunks).toString("utf8").trim();
+      res.writeHead(204);
+      res.end();
+    });
+    return;
+  }
+  if (req.method === "GET" && (url.pathname === "/" || url.pathname === "/index.html")) {
+    res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+    res.end(html());
+    return;
+  }
+  res.writeHead(404, { "content-type": "text/plain; charset=utf-8" });
+  res.end("not found\n");
+});
+
+server.listen(port, "127.0.0.1", () => {
+  process.stdout.write(`fixture-site listening on http://127.0.0.1:${port}\n`);
+});
