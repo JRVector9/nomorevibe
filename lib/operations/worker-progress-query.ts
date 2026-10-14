@@ -150,20 +150,25 @@ async function evidenceProgress(settings: CrawlSettings, now: Date, skipUnseen: 
           CASE WHEN ${preScanFailure} THEN ${failure?.firstFailureAt ?? null}::timestamp
             ELSE greatest(d.created_at, s.completed_at) END AS error_since
         FROM agent_demand d LEFT JOIN latest_agent s USING (repository_key)
+      ), ai_current AS MATERIALIZED (
+        -- Avoid one long-key index probe per target when demand cardinality is underestimated.
+        SELECT repository_key, rules_version, next_check_at, checked_at, last_error
+        FROM repository_ai_levels WHERE rules_version = ${AI_LEVEL_RULES_VERSION}
       ), ai_public AS MATERIALIZED (
         -- Reuse normalization across the projection, NULL filter and unseen-idle lookup.
         SELECT ${progressRepositoryKeySql(sql`repo_url`, "ai")} AS repository_key, created_at FROM public_products
       ), ai_demand AS (
         SELECT repository_key, min(created_at) AS created_at FROM (
-          SELECT repository_key, created_at FROM ai_public p WHERE NOT ${skipUnseen} OR EXISTS (
-            SELECT 1 FROM repository_ai_levels r WHERE r.repository_key = p.repository_key AND r.rules_version = ${AI_LEVEL_RULES_VERSION})
+          SELECT p.repository_key, p.created_at FROM ai_public p
+          LEFT JOIN ai_current seen ON seen.repository_key = p.repository_key
+          WHERE NOT ${skipUnseen} OR seen.repository_key IS NOT NULL
           UNION ALL SELECT lower(repo), updated_at FROM crawl_candidates
             WHERE state IN ('new','needs_review','approved') AND repo ~ '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$'
         ) d WHERE repository_key IS NOT NULL GROUP BY repository_key
       ), ai_targets AS (
         SELECT greatest(d.created_at, r.next_check_at) AS due_at, r.checked_at, r.last_error AS error_code,
           greatest(d.created_at, r.checked_at) AS error_since
-        FROM ai_demand d LEFT JOIN repository_ai_levels r ON r.repository_key = d.repository_key AND r.rules_version = ${AI_LEVEL_RULES_VERSION}
+        FROM ai_demand d LEFT JOIN ai_current r ON r.repository_key = d.repository_key AND r.rules_version = ${AI_LEVEL_RULES_VERSION}
       )
       SELECT 'evidence' AS key,
         count(*) FILTER (WHERE due_at <= ${at})::int AS waiting,

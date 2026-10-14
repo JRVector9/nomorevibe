@@ -77,7 +77,18 @@ quality/integration1,3이 성공했으나 integration2의 새80k 회귀가57014�
 같은 snapshot·파라미터의 운영 읽기 전용 A/B4,313.499→1,082.249ms/전체 집계 동일,
 수정 쿼리의 실제3초 한도 성공과 EXPLAIN1,202.197ms를 확인했다.
 관련38통합·두파일lint·TypeScript 및 CI=true/TZ=UTC의 전체shard2(48파일446사례)가 통과했다.
-native후속리뷰도CLEAN이다. 직접CLI/새PR CI를 확인한 뒤 배포를 재개한다.
+native/directCLI후속리뷰도CLEAN/OK였다. CI38558982971도80k scale만57014로실패했고
+quality/integration1,3과integration2의 나머지445사례는성공했다. PR은미병합이며추가배포는없었다.
+
+추가localEXPLAIN은AI의 수요그룹을200개로추정해 실제80,000개 긴PK를 개별조회하는 경로가
+AIbranch약1,310ms를소비함을확인했다. generic/custom plan 모두같았다. current-version5필드의
+AI결과를MATERIALIZED로공유하고 PK unique의seenLEFTJOIN으로개별조회를줄인다.
+읽기전용local A/Bcustom1,955→1,128ms/generic1,987→1,125ms,
+prod동일snapshot4,320.120→1,009.214ms/집계전체동일과EXPLAIN1,087.499ms를확인했다.
+최종관련38통합과파일lint/TypeScript가통과했고native구조검토CLEAN이다.
+최종CI환경fullshard2(48파일446사례/66.28초)도통과했다. directCLI/새CI는확인중이다.
+실패시만전용testDB에서12초읽기전용EXPLAIN의안전메타를남기고sanitized57014로다시실패한다.
+테스트외곽40초는진단완료용이고운영집계3초/가상80k기준은유지한다.
 13앱 릴리스 일치·실제 소스hash·양웹·인증 관리자 읽기는 아직 완료하지 않았다.
 원래 private baseline은 보존하고 현재 혼합 릴리스용 별도 snapshot을 준비한다.
 

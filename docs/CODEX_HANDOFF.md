@@ -34,7 +34,21 @@
   실제 helper의14,407개 변형을 원래 두 모드와DB에서 비교해 mismatch0, 관련38검사/파일lint 통과.
   CI=true/TZ=UTC의 동일 fullshard2가48파일446사례 exit0(64.61초), 루트TypeScript exit0(8.52초).
   prod read-only repeatable-read A/B4,313.499→1,082.249ms, 같은snapshot/params 집계 전체 동일.
-  EXPLAIN1,202.197ms/기존3초한도 성공. native후속리뷰CLEAN, directCLI후속은 진행 중이다.
+  EXPLAIN1,202.197ms/기존3초한도 성공. native후속리뷰CLEAN, directCLI후속도No findings/OK.
+  추가수정498dd1a를commit/push했으나CI38558982971도80k scale만57014로실패했다.
+  quality/integration1,3과 나머지445 integration2는성공, check실패/PR417미병합/추가배포없음.
+  실제운영1.1초개선과 가상최장주소80k의CI성능은구별하며 아직전체완료아님.
+  agent가긴주소80k의실행계획/환경을추가확인중이다. 사용자의8만실적체질문에
+  로컬·CI전용가상데이터/운영추가없음/실제전체출처약8.9만이모두대기는아님을안내했다.
+  추가localplan(80k)은AI LEFT nestedloop가80000 긴PK조회로약1310ms를소비하고, agent정렬은spill했다.
+  PG17.11/en_US.utf8/work_mem4MB/parallel2/DockerCmdpostgres, 강제custom/generic둘다동일병목이다.
+  current AI projection을MATERIALIZED로공유하고 공공seen필터를PKunique의LEFTJOIN으로바꾼readonly A/B:
+  localcustom1955→1128ms/generic1987→1125ms, 집계동일; prod4320.120→1009.214ms/집계동일,
+  EXPLAIN1087.499ms였다. 같은3초/80k기준으로최소구조수정·timeout진단·회귀검증을진행한다.
+  최종source currentCTE/seenLEFTJOIN 구현후관련38/38·파일lint통과, native구조리뷰CLEAN.
+  최종CI환경fullshard2도48파일446사례exit0(66.28초), rootTypeScriptexit0(8.84초), directCLI후속진행중.
+  scale실패때만전용DB에서12초readonly EXPLAIN의안전메타를
+  출력하고sanitized57014로다시실패한다. 바깥테스트40초는진단완료용이며query3초/80k는불변이다.
   현재13앱 실제ready/schema77의 별도 snapshot을
   `/Users/jr/.config/nomorevibe/releases/2026-10-14-progress-query-fix`에 capture했다.
   원래migration0076 proof와 새 읽기 전용schema77 확인을 연결했다. DDL/drain을 다시 실행하지 않았다.
@@ -60,6 +74,8 @@
   CLI Vitest는 read-only 임시 디렉터리 제한으로 실행하지 못했으며 실행 결과로 합산하지 않는다.
 - SQL 후속 scoped CLI는No findings/OK, 입력459,219(캐시406,016 포함), 출력3,826.
   이번 배포 단계5회 합계 입력7,554,332(캐시6,986,240 포함), 출력48,681이며 private review-usage.json 증거다.
+- fastpath후속CLI No findings/OK, 입력160,661(캐시118,016 포함), 출력4,176.
+  배포 단계6회 누적 입력7,714,993(캐시7,104,256 포함), 출력52,857. native사용량은 추정하지 않는다.
 
 ## Modified files / design decisions
 
@@ -101,11 +117,13 @@ gh run view 38551249622 --json status,conclusion,jobs
 gh pr view 416 --json headRefOid,baseRefOid,mergeStateStatus
 git status --short
 # cb6b719의 추가 앱 배포는 하지 않는다. 새 PR CI를 확인한다.
-gh run view 38557315298 --json status,conclusion,jobs
+gh run view 38558982971 --json status,conclusion,jobs
 gh pr view 417 --json headRefOid,baseRefOid,mergeStateStatus,state
 # 현재 CI38557315298은 실패이므로 이head/run은 병합하지 않는다.
 # 추가 source fix와 fullshard2/리뷰/새PR CI 성공 후 latest head/run으로 정상 merge gate helper 실행.
 gh run list --branch fix/worker-progress-query-budget-20261014 --limit 3 --json databaseId,headSha,status,conclusion
+# 현재head498dd1aab2bc614723f44705fe97f1b32954ccf1, run38558982971이 모두성공/latestbaseCLEAN이면:
+# 이run도실패했으므로병합명령실행금지. 추가원인확인·최종수정·새CI성공의head/run을사용한다.
 # 병합된 새 SHA checkout, main CI/양 이미지 성공 확인 후 새 directory release.py target/plan/roll.
 ```
 
@@ -113,7 +131,7 @@ baseline은 이미 capture했다. 다시 덮어쓰지 않는다. private evidenc
 원시 설정·로그·스냅샷을 출력하거나 Git에 넣지 않는다. 필수 복구 증거는
 `/Users/jr/.config/nomorevibe/releases/2026-10-14-cb6b719`에도0700/0600으로 보존했다.
 로컬 PC 종료 시 Codex 배포 제어/후속 검증은 멈추고, 이미 시작된 CI/Dokploy 서버 작업만 계속됨을 안내했다.
-전용 evidence55436 DB는37검사 종료 뒤 중지했다가 추가수정38검사/fullshard2 뒤 다시 중지했다. monitor55437은
+전용 evidence55436 DB는38검사/fullshard2 뒤중지했지만2차CI실패프로파일용으로다시시작했다. monitor55437은
 후속 fullshard3 후 다시 중지했으며 사용자 컨테이너는 변경하지 않았다. 사용자 untracked PT/zip/prototypes/
 mistake 파일을 보존하고 `git add .`를 사용하지 않는다. 현재 dirty 문서는 진행 상황을 기록한 인계다.
 

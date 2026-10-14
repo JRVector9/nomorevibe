@@ -1,5 +1,6 @@
 import { beforeAll, beforeEach, expect, it, vi } from "vitest";
 import { spawnSync } from "node:child_process";
+import postgres from "postgres";
 import { eq, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { categoryDecisions, crawlCandidates, crawlDocuments, crawlFrontier, crawlPublicationChanges, crawlSettings, operationsObservations,
@@ -33,6 +34,52 @@ async function publicProduct(slug: string, now: Date, extra: Partial<typeof prod
   await db.insert(products).values({ slug, url: `https://${slug}.example`, name: slug, tagline: "test", description: "test",
     category: "Dev", verifyToken: slug, editTokenHash: "a".repeat(64), status: "seeded",
     createdAt: new Date(now.getTime() - 120 * 60_000), updatedAt: new Date(now.getTime() - 120 * 60_000), ...extra });
+}
+
+async function diagnoseScaleTimeout(error: unknown): Promise<boolean> {
+  let current: unknown = error;
+  let code: unknown;
+  let query: string | undefined;
+  let parameters: unknown[] | undefined;
+  for (let depth = 0; depth < 5 && current && typeof current === "object"; depth++) {
+    const failure = current as { code?: unknown; query?: unknown; params?: unknown; args?: unknown; cause?: unknown };
+    code = failure.code ?? code;
+    if (!query && typeof failure.query === "string" && failure.query.includes("WITH public_products AS MATERIALIZED")) {
+      query = failure.query;
+      const values = failure.params ?? failure.args;
+      if (Array.isArray(values)) parameters = values;
+    }
+    current = failure.cause;
+  }
+  if (code !== "57014" || !query || !parameters) return false;
+  const client = postgres(TEST_DATABASE_URL, { max: 1, connect_timeout: 3 });
+  const allowed = ["Node Type", "Join Type", "Relation Name", "CTE Name", "Strategy", "Plan Rows", "Actual Rows", "Actual Loops",
+    "Actual Total Time", "Temp Read Blocks", "Temp Written Blocks", "Sort Method", "Sort Space Type", "Hash Batches", "Peak Memory Usage"];
+  const summarize = (node: Record<string, unknown>): Record<string, unknown> => ({
+    ...Object.fromEntries(allowed.filter(key => key in node).map(key => [key, node[key]])),
+    ...(Array.isArray(node.Plans) ? { Plans: node.Plans.map(child => summarize(child as Record<string, unknown>)) } : {}),
+  });
+  try {
+    const diagnostic = await client.begin("read only", async tx => {
+      await tx`SET LOCAL jit = off`;
+      await tx`SET LOCAL statement_timeout = '12s'`;
+      await tx`SET LOCAL plan_cache_mode = force_generic_plan`;
+      const [settings] = await tx`SELECT current_setting('server_version') AS version, current_setting('work_mem') AS work_mem,
+        datcollate AS locale, current_setting('max_parallel_workers_per_gather') AS parallel_workers
+        FROM pg_database WHERE datname = current_database()`;
+      const result = await tx.unsafe("EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) " + query,
+        parameters as Parameters<typeof tx.unsafe>[1], { prepare: true });
+      const plan = result[0]["QUERY PLAN"][0];
+      return { settings, executionMs: plan["Execution Time"], plan: summarize(plan.Plan) };
+    });
+    console.error(JSON.stringify({ event: "worker_progress.scale_timeout_plan", ...diagnostic }));
+  } catch (diagnosticError) {
+    console.error(JSON.stringify({ event: "worker_progress.scale_timeout_plan_failed",
+      code: diagnosticError && typeof diagnosticError === "object" && "code" in diagnosticError ? diagnosticError.code : null }));
+  } finally {
+    await client.end({ timeout: 3 }).catch(() => {});
+  }
+  return true;
 }
 
 it("preserves both repository normalizers across canonical and legacy URL boundaries", async () => {
@@ -204,12 +251,21 @@ it("bounds current AI demand during unseen idle at public catalogue scale", asyn
   await db.insert(jobs).values({ name: "ai-level-refresh", nextScheduledAt: now,
     cursor: { unseenIdleUntil: new Date(now.getTime() + 10 * 60_000).toISOString() } });
   await observeService("crawler", { status: "running" });
-  const report = await readWorkerProgress(now);
+  let report: Awaited<ReturnType<typeof readWorkerProgress>>;
+  try {
+    report = await readWorkerProgress(now);
+  } catch (error) {
+    if (await diagnoseScaleTimeout(error)) {
+      // Preserve the failed 3s gate without printing Drizzle's query text or bound parameters.
+      throw Object.assign(new Error("evidenceProgress exceeded its 3s statement timeout"), { code: "57014" });
+    }
+    throw error;
+  }
   expect(report.stages.find(row => row.stage === "ai-level"))
     .toMatchObject({ waiting: 80000, oldestMinutes: 20, completed5m: 0 });
   expect(report.stages.find(row => row.stage === "agent-evidence"))
     .toMatchObject({ waiting: 80000, oldestMinutes: 120, completed5m: 0 });
-});
+}, 40_000);
 
 it("keeps healthy leased work out of two external down samples without hiding timeouts or sibling stalls", async () => {
   const started = new Date();
