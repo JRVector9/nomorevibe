@@ -46,7 +46,16 @@
   localcustom1955→1128ms/generic1987→1125ms, 집계동일; prod4320.120→1009.214ms/집계동일,
   EXPLAIN1087.499ms였다. 같은3초/80k기준으로최소구조수정·timeout진단·회귀검증을진행한다.
   최종source currentCTE/seenLEFTJOIN 구현후관련38/38·파일lint통과, native구조리뷰CLEAN.
-  최종CI환경fullshard2도48파일446사례exit0(66.28초), rootTypeScriptexit0(8.84초), directCLI후속진행중.
+  최종CI환경fullshard2도48파일446사례exit0(66.28초), rootTypeScriptexit0(8.84초), directCLI후속No findings/OK. 최종4a2a0e6를commit/push했으나CI38561746654도scale만57014실패
+  (나머지445통합/quality/integration1,3성공). PR417은여전히미병합이며추가배포없음.
+  CI진단EXPLAIN3286.562ms: agent2241ms/AI1035ms, 긴키locale정렬이agent의새주병목이다.
+  agent_inputs MATERIALIZED로동일UNION입력과GROUPBY/min을유지해병렬locale정렬을제거했다.
+  localcustom1070.842→925.507ms/generic1045.951→947.346ms 모두집계동일이고정렬경로가없다.
+  운영readonlyrepeatable-read original4261.188→1411.068ms/집계동일, EXPLAIN1490.680ms.
+  최종focus1파일15검사/파일lint통과, fullshard2는48파일446통과/66.12초/실패진단없음.
+  roottsc exit0/3.04초, nativeCLEAN/directCLI No findings/OK(staticonly), 새GitHubCI는아직미확인.
+  사용자8만질문은성능회귀전용가상데이터이며운영추가없음으로답변했다.
+  현재13앱allready와공개양웹health정상을읽기전용재확인했다.
   scale실패때만전용DB에서12초readonly EXPLAIN의안전메타를
   출력하고sanitized57014로다시실패한다. 바깥테스트40초는진단완료용이며query3초/80k는불변이다.
   현재13앱 실제ready/schema77의 별도 snapshot을
@@ -76,6 +85,12 @@
   이번 배포 단계5회 합계 입력7,554,332(캐시6,986,240 포함), 출력48,681이며 private review-usage.json 증거다.
 - fastpath후속CLI No findings/OK, 입력160,661(캐시118,016 포함), 출력4,176.
   배포 단계6회 누적 입력7,714,993(캐시7,104,256 포함), 출력52,857. native사용량은 추정하지 않는다.
+
+- currentjoin후속CLI No findings/OK, 입력330,690(캐시283,520 포함), 출력3,998.
+  배포 단계7회 누적 입력8,045,683(캐시7,387,776 포함), 출력56,855.
+
+- agentinput최소diff CLI No findings/OK, 입력55,115(캐시36,352포함), 출력407.
+  배포 단계8회누적 입력8,100,798(캐시7,424,128포함), 출력57,262. 모든CLIgpt-6.1-sol/xhigh.
 
 ## Modified files / design decisions
 
@@ -117,12 +132,12 @@ gh run view 38551249622 --json status,conclusion,jobs
 gh pr view 416 --json headRefOid,baseRefOid,mergeStateStatus
 git status --short
 # cb6b719의 추가 앱 배포는 하지 않는다. 새 PR CI를 확인한다.
-gh run view 38558982971 --json status,conclusion,jobs
+gh run view 38561746654 --json status,conclusion,jobs
 gh pr view 417 --json headRefOid,baseRefOid,mergeStateStatus,state
 # 현재 CI38557315298은 실패이므로 이head/run은 병합하지 않는다.
 # 추가 source fix와 fullshard2/리뷰/새PR CI 성공 후 latest head/run으로 정상 merge gate helper 실행.
 gh run list --branch fix/worker-progress-query-budget-20261014 --limit 3 --json databaseId,headSha,status,conclusion
-# 현재head498dd1aab2bc614723f44705fe97f1b32954ccf1, run38558982971이 모두성공/latestbaseCLEAN이면:
+# 현재head4a2a0e6bd0fa614ce27567583ec26c465ba3be98, run38561746654 역시실패:
 # 이run도실패했으므로병합명령실행금지. 추가원인확인·최종수정·새CI성공의head/run을사용한다.
 # 병합된 새 SHA checkout, main CI/양 이미지 성공 확인 후 새 directory release.py target/plan/roll.
 ```
@@ -710,6 +725,12 @@ git push -u origin docs/admin-audit-and-i18n-rollout-20261013
 ## Current objective / completed work
 
 사용자가 상단 8시간 급상승과 하단 첫 탭의 중복을 지적하여 하단 첫 탭을 AI로 제작으로 바꾸라고 했다. gpt-6.1-sol/xhigh 담당이 isolated worktree에서 구현했고 root가 소스·기존 fixture diff와 DAL 조건을 검토했다. 기존 운영 배포와 병렬 1인 관리자 감사도 계속 진행한다. 관리자 감사 최종 문서는 별도 docs/single-operator-admin-audit-20261013 작업에서 보존 중이다.
+
+- currentjoin후속CLI No findings/OK, 입력330,690(캐시283,520 포함), 출력3,998.
+  배포 단계7회 누적 입력8,045,683(캐시7,387,776 포함), 출력56,855.
+
+- agentinput최소diff CLI No findings/OK, 입력55,115(캐시36,352포함), 출력407.
+  배포 단계8회누적 입력8,100,798(캐시7,424,128포함), 출력57,262. 모든CLIgpt-6.1-sol/xhigh.
 
 ## Modified files / design decisions
 

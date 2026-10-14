@@ -102,3 +102,18 @@ DB 서버·스트리밍 설정·X 토큰 주입·외부 메시지 전송은 변�
 배포 성공과 처리 용량 목표 달성은 별개다. 근거 성공/partial/due·최장 지연·304 비율·API quota와
 신규 수집 지연을 후속으로 측정한다. 24시간 안정성·외부 monitor 수신·X 목적 승인 및 상시 일일
 예산·프로젝트 연결 품질·공개 HOT는 별도 미완료 항목으로 유지한다.
+
+### currentjoin CI 추가 관측
+
+최종4a2a0e6의CI38561746654는quality/integration1,3과integration2의445사례가통과했으나
+80k scale은57014로실패했다. 진단EXPLAIN3286.562ms에서agent2241ms/AI1035ms였다.
+AI 반복PK조회는제거됐고, agent의긴키locale정렬이새주병목이다. 동일UNION입력을agent_inputs MATERIALIZED로옮겨같은GROUPBY/min을유지했다.
+localcustom1070.842→925.507ms/generic1045.951→947.346ms 모두집계일치이며정렬경로제거를확인했다.
+운영readonlyrepeatable-read original4261.188→1411.068ms/집계전체동일, EXPLAIN1490.680ms.
+최종focus15/15·파일lint·TypeScript0(3.04초), nativeCLEAN/directCLI No findings/OK(staticonly),
+fullshard2는48파일446검사통과(66.12초), 실패진단없음. 3초한도/80k회귀는유지하며새GitHubCI는미확인이다. PR417은미병합, 추가배포없음.
+currentjoin directCLI는No findings/OK, 입력330,690(캐시283,520포함), 출력3,998.
+배포단계7회누적 입력8,045,683(캐시7,387,776포함), 출력56,855.
+
+agentinput최소diff CLI 입력55,115(캐시36,352포함), 출력407; 배포단계8회누적
+입력8,100,798(캐시7,424,128포함), 출력57,262. 13앱실제ready와공개양웹health를재확인했다.

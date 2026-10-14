@@ -132,12 +132,13 @@ async function evidenceProgress(settings: CrawlSettings, now: Date, skipUnseen: 
           greatest(p.created_at, s.created_at, s.last_success_at)
         FROM public_products p JOIN product_evidence_sources s ON s.slug = p.slug
           AND s.provider = 'product_site' AND s.source_key = 'canonical_site'
+      ), agent_inputs AS MATERIALIZED (
+        -- Avoid parallel sorted finalization over long keys under the database locale.
+        SELECT ${progressRepositoryKeySql(sql`repo_url`, "agent")} AS repository_key, created_at
+        FROM products WHERE status != 'banned' AND repo_url ~ '^https://github.com/[^/]+/[^/#?]+/?$'
+        UNION ALL SELECT lower(repo), updated_at FROM crawl_candidates WHERE state IN ('new','needs_review','approved')
       ), agent_demand AS (
-        SELECT repository_key, min(created_at) AS created_at FROM (
-          SELECT ${progressRepositoryKeySql(sql`repo_url`, "agent")} AS repository_key, created_at
-          FROM products WHERE status != 'banned' AND repo_url ~ '^https://github.com/[^/]+/[^/#?]+/?$'
-          UNION ALL SELECT lower(repo), updated_at FROM crawl_candidates WHERE state IN ('new','needs_review','approved')
-        ) d GROUP BY repository_key
+        SELECT repository_key, min(created_at) AS created_at FROM agent_inputs GROUP BY repository_key
       ), latest_agent AS (
         SELECT DISTINCT ON (s.repository_key) s.* FROM agent_repository_scans s JOIN agent_demand d USING (repository_key)
         WHERE scope = '' AND detector_version = ${AGENT_DETECTOR_VERSION}
