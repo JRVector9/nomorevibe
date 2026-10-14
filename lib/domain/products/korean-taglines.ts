@@ -71,8 +71,8 @@ export async function pendingKoreanTaglines(limit: number, homeSlugs: readonly s
       inArray(products.status, PUBLIC),
       NEEDS_KOREAN,
       sql`(${k.productId} is null or ${k.sourceTagline} <> ${products.tagline}
-        or (${k.errorCode} is not null and (${k.errorCode} not like 'rejected:%' or ${k.attempts} < ${MAX_REJECTIONS}
-              or (${home} and ${k.attempts} < ${MAX_REJECTIONS + HOME_EXTRA_REJECTIONS}))
+        or (${k.errorCode} is not null and (${k.qualityRejections} < ${MAX_REJECTIONS}
+              or (${home} and ${k.qualityRejections} < ${MAX_REJECTIONS + HOME_EXTRA_REJECTIONS}))
             and (${k.retryAt} is null or ${k.retryAt} <= now())))`,
     ))
     .orderBy(tier, sql`case when ${listedAt} > now() - make_interval(days => ${NEW_DAYS}::int) then ${listedAt} end desc nulls last`,
@@ -100,16 +100,18 @@ export async function recordKoreanTaglines(entries: { task: KoreanTaglineTask; r
       if (!product || product.tagline !== task.tagline || !PUBLIC.includes(product.status)) continue;
       const same = sql`${k.sourceTagline} = excluded.source_tagline`;
       const attempts = sql`case when ${same} then ${k.attempts} + 1 else 1 end`;
-      const values = { productId: task.productId, sourceTagline: task.tagline, model: result.model, attempts: 1 };
+      const qualityDelta = result.kind === "failure" && result.error.startsWith("rejected:") ? 1 : 0;
+      const qualityRejections = sql`case when ${same} then ${k.qualityRejections} + ${qualityDelta} else ${qualityDelta} end`;
+      const values = { productId: task.productId, sourceTagline: task.tagline, model: result.model, attempts: 1, qualityRejections: qualityDelta };
       if (result.kind === "success") {
         await tx.insert(k).values({ ...values, taglineKo: result.line, errorCode: null, retryAt: null })
           .onConflictDoUpdate({ target: k.productId, set: { sourceTagline: task.tagline, taglineKo: result.line, model: result.model,
-            attempts, errorCode: null, retryAt: null, updatedAt: sql`now()` } });
+            attempts, qualityRejections, errorCode: null, retryAt: null, updatedAt: sql`now()` } });
       } else {
         const code = result.error.slice(0, 60);
         await tx.insert(k).values({ ...values, taglineKo: null, errorCode: code, retryAt: sql`now() + interval '5 minutes'` })
           .onConflictDoUpdate({ target: k.productId,
-            set: { sourceTagline: task.tagline, taglineKo: null, model: result.model, attempts, errorCode: code, updatedAt: sql`now()`,
+            set: { sourceTagline: task.tagline, taglineKo: null, model: result.model, attempts, qualityRejections, errorCode: code, updatedAt: sql`now()`,
               retryAt: sql`now() + least(interval '24 hours', interval '5 minutes' * power(2, case when ${same} then ${k.attempts} else 0 end))` },
             setWhere: sql`not (${same} and ${k.errorCode} is null)` });
       }
@@ -144,8 +146,8 @@ export async function koreanTaglineProgress(): Promise<KoreanTaglineProgress> {
     eligible: sql<number>`count(*)::int`,
     done: sql<number>`(count(*) filter (where ${current} and ${k.errorCode} is null))::int`,
     waiting: sql<number>`(count(*) filter (where ${k.productId} is null or not ${current}))::int`,
-    failed: sql<number>`(count(*) filter (where ${current} and ${k.errorCode} not like 'rejected:%'))::int`,
-    gaveUp: sql<number>`(count(*) filter (where ${current} and ${k.errorCode} like 'rejected:%' and ${k.attempts} >= ${MAX_REJECTIONS}))::int`,
+    failed: sql<number>`(count(*) filter (where ${current} and ${k.errorCode} not like 'rejected:%' and ${k.qualityRejections} < ${MAX_REJECTIONS}))::int`,
+    gaveUp: sql<number>`(count(*) filter (where ${current} and ${k.errorCode} is not null and ${k.qualityRejections} >= ${MAX_REJECTIONS}))::int`,
     lastHour: sql<number>`(count(*) filter (where ${current} and ${k.errorCode} is null and ${k.updatedAt} > now() - interval '1 hour'))::int`,
   }).from(products).leftJoin(k, eq(k.productId, products.id)).where(and(inArray(products.status, PUBLIC), NEEDS_KOREAN));
   const rejected = await db.select({ code: k.errorCode, count: sql<number>`count(*)::int` })

@@ -14,6 +14,8 @@ import { jobStatusLabel } from "@/lib/jobs/status";
 import { getCurrentSeason, RANKING_STALE_MS } from "@/lib/domain/ranking/view";
 import { Panel } from "@/components/Panel";
 import { OperationsCenter } from "./OperationsCenter";
+import { CrawlerActivity } from "./CrawlerActivity";
+import { buildCrawlerActivity } from "@/lib/operations/crawler-activity";
 import { pipelineFlow } from "@/lib/operations/pipeline";
 import { hourlyThroughput, signalYields, todayPublications } from "@/lib/operations/dashboard";
 import { JOB_LABELS, ROLE_LABELS } from "@/lib/operations/contracts";
@@ -439,6 +441,8 @@ export default async function StatusPage() {
   return (
     <main className="pb-10">
       <OperationsCenter attention={attentionCards} dashboard={dashboard} statusChips={statusChips} diagnostics={diagnostics}
+        crawlers={<CrawlerActivity report={buildCrawlerActivity({ settings, jobs: inputs.jobStates, observations: ops.observations,
+          roles: roleRows, throughput: inputs.throughput, now: new Date(now) })}/>}
         manual={<Suspense fallback={<p className="ops-note" aria-busy="true">분류할 후보를 읽는 중…</p>}><ManualSlot /></Suspense>}
         // 시간별 조치 수는 화면에 쓰지 않는다 — 브라우저로 보내지 않는다
         data={{ ...ops, observations: ops.observations.filter((row) => row.key !== ATTENTION_HISTORY_KEY) }}

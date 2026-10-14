@@ -160,9 +160,12 @@ PR의 GitHub CI 성공은 배포 완료를 뜻하지 않는다. [독립 워커 �
 한 번에 실행할 수 있다. 실패한 단계에서 중단하고 권한 0600의 복구 스냅샷을 남긴다.
 `RELEASE_TAG`만 보고 최신 소스라고 판단하지 않는다. 실제 남은 운영 검증은 [PENDING.md](PENDING.md)에 기록한다.
 
-[관리자 상태](https://nomorevibe.com/admin/status)는 최근 구간의 수집·심사·발행·생존 확인 처리 속도와
+[관리자 상태](https://m3ultra.tail02799e.ts.net/admin/status)는 최근 구간의 수집·심사·발행·생존 확인 처리 속도와
 단계별 대기량, worker 생존, GitHub 대기, 마지막 실패를 함께 보여준다. 요청 접수·heartbeat 증가만으로
-수집 성공을 판단하지 않는다. 관리자 인증이 필요하다.
+수집 성공을 판단하지 않는다. Tailscale 연결과 관리자 인증이 필요하다.
+`크롤러 활동` 탭은 수집 작업 전체의 실행·재시도·중단 상태, 주·예비 인스턴스별 실행 줄과
+수집기별 마지막 저장 결과를 모아 보여준다. 과거 회차 전체 로그가 아니며, 측정하지 않은 대기량은
+`미확인`으로 표시한다. X는 자동 수집에 연결하지 않은 수동 API 파일럿으로 구분한다.
 독립 감시용 CLI는 같은 DB 관측을 JSON으로 내며 종료 코드 0은 정상·유휴·정책 중단, 1은 판별 불가,
 2는 작업 또는 워커 정체 경보다. 운영 주기 실행·외부 알림 연결은 별도 배포 검증 항목이다.
 새 failover CLI는 주 워커가 정상이어도 mini 예비의 관측이 60초 넘게 끊기면 경보로 기록한다.
@@ -409,6 +412,10 @@ App Store·Play Store·npm·PyPI·crates.io·일반 링크·RSS 수집은 각 �
 실제 스트림을 각각 2 MiB로 제한한다.
 
 DB 스케줄러는 두 evidence 잡을 매분 요청하며 crawler가 소비한다. due 시각 이전에는 외부 요청을 생략한다.
+공개 근거 `product-evidence-refresh`는 같은 crawler의 `sources` lane에서 55초 협력 예산으로
+실행한다. 부분 진행·endpoint cache를 저장해 재개하며 canonical site의 갱신 시각은 저장소와
+독립적으로 판단한다. lane을 분리해도 역할 lease와 GitHub 쿼터는 공유한다. 수집→검수 유입 제어와
+검증·남은 운영 계측은 [구현 보고서](docs/operations/2026-10-14-pipeline-recovery-implementation.md)를 따른다.
 운영 서비스와 역할 워커는 배포되어 있다. 추가 배포는 위 운영 절차를, 남은 검증은
 `PENDING.md`를 따른다. 저장소·일반 링크의 기본 갱신 간격은 24시간,
 release feed는 6시간이며, 성공한 출처만 다음 시각으로 전진한다. 일반 출처 실패 재시도는 6시간에서 시작해 12·24·48시간으로 늘고 기본 최대 재시도 설정에서는 48시간이 상한이다
@@ -501,6 +508,15 @@ npm run crawl:rejudge -- --out=.crawl-samples/after.json
 
 토큰은 `GITHUB_TOKEN` 또는 관리자에 등록한 수집용 PAT만 쓴다. 로컬 `gh auth` 상태를
 자동으로 읽지 않는다. 같은 GitHub 사용자에게 발급한 PAT 여러 개는 한도를 공유한다.
+
+## X 프로젝트 발견 파일럿
+
+`npm run social:x:pilot`은 기본 dry-run으로 호출 계획만 출력하며 HTTP·DB 작업을 하지 않는다.
+공식 API만 사용하고 live 실행은 Bearer Token과 승인된 사용 목적 확인을 요구한다.
+한 실행은 최대3요청·30 Post 예약·20초·응답당1MiB로 제한한다. 일일 예산을 제공하는
+상시 crawler는 아직 아니며, scheduler에 등록하지 않았다. 본문·프로필·작성자 ID를 출력하지 않는다.
+기존 심사·발행과 공개 HOT 필터 연결은 실제 계정 파일럿의 필드·비용·권한 확인 이후 단계다.
+정책 조건과 실행 방법은 [X 정책·파일럿 보고서](docs/operations/2026-10-14-x-api-policy-and-pilot.md)를 따른다.
 
 ## 클릭과 랭킹
 

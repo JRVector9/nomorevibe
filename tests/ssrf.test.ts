@@ -1,4 +1,5 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { promises as dns } from "node:dns";
 import { isPrivateIp, isPrivateHostname, assertPublicUrl } from "@/lib/net/ssrf";
 import { safeFetch } from "@/lib/net/fetch";
 
@@ -53,6 +54,7 @@ describe("assertPublicUrl — 프로덕션 모드", () => {
     delete process.env.ALLOW_PRIVATE_URLS;
   });
   afterEach(() => {
+    vi.restoreAllMocks();
     if (saved !== undefined) process.env.ALLOW_PRIVATE_URLS = saved;
   });
 
@@ -63,6 +65,16 @@ describe("assertPublicUrl — 프로덕션 모드", () => {
 
   it("localhost를 차단한다", async () => {
     expect((await assertPublicUrl("http://localhost:3000/")).ok).toBe(false);
+  });
+
+  it.each(["EAI_AGAIN", "ETIMEOUT"])("marks DNS %s as transient while keeping the guard closed", async code => {
+    vi.spyOn(dns, "lookup").mockRejectedValue(Object.assign(new Error("DNS failure"), { code }));
+    expect(await assertPublicUrl("https://app.test")).toMatchObject({ ok: false, transient: true });
+  });
+
+  it("keeps an absent DNS name permanent", async () => {
+    vi.spyOn(dns, "lookup").mockRejectedValue(Object.assign(new Error("absent"), { code: "ENOTFOUND" }));
+    expect(await assertPublicUrl("https://app.test")).toMatchObject({ ok: false, transient: false });
   });
 
   it("사설 IP로 해석되는 공인 도메인도 차단한다 (DNS 기반 우회 방지)", async () => {

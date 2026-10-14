@@ -1,13 +1,57 @@
 import { createHash } from "node:crypto";
-import { and, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, or, sql } from "drizzle-orm";
+import type { AnyPgColumn } from "drizzle-orm/pg-core";
 import { db } from "@/lib/db";
-import { crawlCandidates, crawlDocuments, crawlReviewAttempts, crawlSettings, secondReviews, type SecondReview } from "@/lib/db/schema";
+import { crawlCandidates, crawlDocuments, crawlReviewAttempts, crawlSettings, secondReviews,
+  type CrawlCandidate, type CrawlDocument, type CrawlReviewAttempt, type SecondReview } from "@/lib/db/schema";
 import type { ProductTransaction } from "@/lib/domain/products/generation";
 import { lockRepositoryAgentEvidence } from "@/lib/domain/evidence/agents/lock";
 import { loadReviewInput } from "./agent-review-repository";
-import type { ReviewInput } from "./agent-review-contract";
+import { REVIEW_PROMPT_VERSION, REVIEW_RULES_VERSION, type ReviewInput } from "./agent-review-contract";
 import { mergeWithDefaults } from "./settings";
+import type { CrawlSettings } from "./settings-schema";
 import { sameReviewModel } from "./review-model-identity";
+import { firstReviewer } from "./agent-review";
+
+/** Grok upstream decisions are usable only while that exact first reviewer is configured. */
+export function firstReviewProviderPredicate(settings: CrawlSettings,
+  attempts: { provider: AnyPgColumn; model: AnyPgColumn } = crawlReviewAttempts) {
+  const reviewer = firstReviewer(settings);
+  return or(inArray(attempts.provider, ["claude-cli", "abcllm"]),
+    reviewer?.provider === "grok-cli" ? and(eq(attempts.provider, reviewer.provider),
+      eq(attempts.model, reviewer.model)) : undefined)!;
+}
+
+/** Shared pure validation for a locked worker input and the bounded admission snapshot. */
+export function secondReviewInputMatches(row: SecondReview, current: {
+  candidate: CrawlCandidate; document: CrawlDocument; settings: CrawlSettings; input: ReviewInput;
+  first?: CrawlReviewAttempt | null; root?: SecondReview | null;
+}, now = new Date()): boolean {
+  const { candidate, document, settings, input, first, root } = current;
+  const expected = row.trigger === "ai_approved" ? "approved" : "needs_review";
+  if (candidate.repo !== row.repo || (row.publishedSlug
+    ? candidate.state !== "published" || candidate.publishedSlug !== row.publishedSlug
+    : candidate.state !== expected || candidate.decidedBy !== "auto") || candidate.productUrl !== document.productUrl
+    || !settings.enabled || !settings.secondReview.enabled) return false;
+  const pool = row.fallbackForId ? settings.secondReview.fallbacks ?? [] : settings.secondReview.voters;
+  if (!pool.some(voter => voter.provider === row.provider && sameReviewModel(voter.model, row.model))) return false;
+  if (row.fallbackForId && (!root || root.fallbackForId || root.candidateId !== row.candidateId
+    || root.generationKey !== row.generationKey || root.inputHash !== row.inputHash || root.status !== "resolved"
+    || root.resolution !== "fallback" || !settings.secondReview.voters.some(voter => voter.provider === root.provider
+      && sameReviewModel(voter.model, root.model)))) return false;
+  if (secondReviewGeneration(row.firstAttemptId, input, row.trigger) !== row.generationKey
+    || (!row.fallbackForId && sameReviewModel(row.firstModel, row.model))) return false;
+  if (!row.publishedSlug) {
+    const reviewer = firstReviewer(settings);
+    if (!first || first.id !== row.firstAttemptId || first.kind !== "automatic" || first.state !== "succeeded"
+      || !["claude-cli", "abcllm", "grok-cli"].includes(first.provider ?? "")
+      || (first.provider === "grok-cli" && (reviewer?.provider !== first.provider || reviewer.model !== first.model))
+      || first.inputHash !== input.inputHash || first.sourceRevisionHash !== input.sourceRevisionHash
+      || first.policyHash !== input.policyHash || first.promptVersion !== REVIEW_PROMPT_VERSION || first.rulesVersion !== REVIEW_RULES_VERSION
+      || first.outcome?.decision !== row.firstDecision || first.model !== row.firstModel || input.validUntil <= now) return false;
+  }
+  return true;
+}
 
 /**
  * 한 1차 판단·한 입력의 2차 세대.
@@ -42,27 +86,26 @@ export async function loadSecondReviewInput(row: SecondReview, tx?: ProductTrans
   if (!settings.enabled || !settings.secondReview.enabled) return null;
   const pool = row.fallbackForId ? settings.secondReview.fallbacks ?? [] : settings.secondReview.voters;
   if (!pool.some(voter => voter.provider === row.provider && sameReviewModel(voter.model, row.model))) return null;
+  let root: SecondReview | undefined;
   if (row.fallbackForId) {
-    const [root] = await executor.select().from(secondReviews).where(eq(secondReviews.id, row.fallbackForId));
-    if (!root || root.fallbackForId || root.candidateId !== row.candidateId || root.generationKey !== row.generationKey
-      || root.inputHash !== row.inputHash || root.status !== "resolved" || root.resolution !== "fallback"
-      || !settings.secondReview.voters.some(voter => voter.provider === root.provider && sameReviewModel(voter.model, root.model))) return null;
+    [root] = await executor.select().from(secondReviews).where(eq(secondReviews.id, row.fallbackForId));
   }
   const input = await loadReviewInput(candidate, document, settings, executor);
   if (secondReviewGeneration(row.firstAttemptId, input, row.trigger) !== row.generationKey || (!row.fallbackForId && sameReviewModel(row.firstModel, row.model))) return null;
+  let first: CrawlReviewAttempt | undefined;
   if (!row.publishedSlug) {
     // 관문은 그 1차 심사자(제공자·모델)의 최신 판단에 붙는다 — 다른 심사자의 더 새 판단과 견주지 않는다(codex 2차)
     const [gateFirst] = row.trigger === "ai_approved" && row.firstAttemptId
       ? await executor.select({ provider: crawlReviewAttempts.provider, model: crawlReviewAttempts.model }).from(crawlReviewAttempts)
         .where(eq(crawlReviewAttempts.id, row.firstAttemptId)) : [];
-    const [first] = await executor.select().from(crawlReviewAttempts).where(and(
+    [first] = await executor.select().from(crawlReviewAttempts).where(and(
       eq(crawlReviewAttempts.candidateId, row.candidateId), eq(crawlReviewAttempts.kind, "automatic"),
-      eq(crawlReviewAttempts.state, "succeeded"), inArray(crawlReviewAttempts.provider, ["claude-cli", "abcllm"]),
+      eq(crawlReviewAttempts.state, "succeeded"), firstReviewProviderPredicate(settings),
       gateFirst ? sql`${crawlReviewAttempts.provider} IS NOT DISTINCT FROM ${gateFirst.provider} AND ${crawlReviewAttempts.model} IS NOT DISTINCT FROM ${gateFirst.model}` : undefined,
     )).orderBy(desc(crawlReviewAttempts.id)).limit(1);
     if (!first || first.id !== row.firstAttemptId || first.inputHash !== input.inputHash
       || first.sourceRevisionHash !== input.sourceRevisionHash || first.outcome?.decision !== row.firstDecision
       || first.model !== row.firstModel || input.validUntil <= new Date()) return null;
   }
-  return input;
+  return secondReviewInputMatches(row, { candidate, document, settings, input, first, root }) ? input : null;
 }

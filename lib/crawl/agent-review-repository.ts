@@ -12,6 +12,7 @@ import { mergeWithDefaults } from "./settings";
 import type { CrawlSettings } from "./settings-schema";
 import { firstReviewer } from "./agent-review";
 import { candidateStarAutoApproval } from "./star-auto-approval";
+import { README_SAMPLE_LIMIT } from "./readme";
 import { judgeRevision } from "./rules";
 import { lockFrontierIdentity } from "./repository";
 import {
@@ -90,6 +91,9 @@ function matchingSource(settings: CrawlSettings): SQL {
         AND rd.fetched_at <= now()
         AND rd.product_url IS NOT DISTINCT FROM ${crawlCandidates.productUrl}
         AND rd.product_url IS NOT DISTINCT FROM ${crawlReviewAttempts.source}->>'productUrl'
+        AND coalesce(${crawlReviewAttempts.snapshot}->'product'->>'readme', '') = btrim(left(
+          CASE WHEN jsonb_typeof(rd.page_meta->'readmeSample') = 'string' THEN rd.page_meta->>'readmeSample' ELSE '' END,
+          ${README_SAMPLE_LIMIT}), ${'\t\n\v\f\r \u00a0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000\ufeff'})
         AND rs.id::text IS NOT DISTINCT FROM ${crawlReviewAttempts.source}->>'scanId'
         AND rs.commit_sha IS NOT DISTINCT FROM ${crawlReviewAttempts.source}->>'scanSha'
         AND date_trunc('milliseconds', rs.started_at) IS NOT DISTINCT FROM (${crawlReviewAttempts.source}->>'scanStartedAt')::timestamp
@@ -276,8 +280,8 @@ export async function requeueStaleReviewSources(
   });
 }
 
-/** Move current-source first-review failures out of approved after the retry limit.
- * Keeping them approved hides them from the human queue while the worker can never select them again.
+/** Hand current-source first-review failures to a person after the retry limit.
+ * Retriable holds need the same exhaustion reason as approved candidates once automatic work stops.
  */
 export async function handOffExhaustedFirstReviews(
   settings: CrawlSettings, lease: JobLease, limit = 20,
@@ -286,8 +290,9 @@ export async function handOffExhaustedFirstReviews(
   return db.transaction(async tx => {
     const [saved] = await tx.select().from(crawlSettings).where(eq(crawlSettings.id, 1)).for("share");
     if (!isDeepStrictEqual(mergeWithDefaults(saved?.values), settings)) return 0;
-    const rows = await tx.select({ id: crawlCandidates.id }).from(crawlCandidates).where(and(
-      eq(crawlCandidates.state, "approved"), eq(crawlCandidates.decidedBy, "auto"),
+    const rows = await tx.select().from(crawlCandidates).where(and(
+      or(eq(crawlCandidates.state, "approved"), and(eq(crawlCandidates.state, "needs_review"),
+        inArray(crawlCandidates.reason, [...REVIEW_RETRIABLE_REASONS]))), eq(crawlCandidates.decidedBy, "auto"),
       not(starAutoApprovalPredicate(settings)),
       sql`EXISTS (SELECT 1 FROM ${crawlDocuments} d WHERE d.repo = ${crawlCandidates.repo}
         AND d.product_url IS NOT DISTINCT FROM ${crawlCandidates.productUrl}
@@ -300,12 +305,32 @@ export async function handOffExhaustedFirstReviews(
     )).orderBy(asc(crawlCandidates.updatedAt), asc(crawlCandidates.id))
       .limit(Math.max(1, Math.min(100, limit))).for("update", { skipLocked: true });
     if (!rows.length) return 0;
+    const exhausted: number[] = [];
+    for (const candidate of rows) {
+      const [document] = await tx.select().from(crawlDocuments).where(eq(crawlDocuments.repo, candidate.repo)).for("share");
+      if (!document) continue;
+      await lockRepositoryAgentEvidence(tx, candidate.repo);
+      const input = await loadReviewInput(candidate, document, settings, tx);
+      if (input.validUntil <= new Date()) continue;
+      const attempts = await tx.select().from(crawlReviewAttempts).where(and(
+        eq(crawlReviewAttempts.candidateId, candidate.id), eq(crawlReviewAttempts.kind, "automatic"),
+        activeReviewIdentity(settings), eq(crawlReviewAttempts.inputHash, input.inputHash),
+        eq(crawlReviewAttempts.sourceRevisionHash, input.sourceRevisionHash),
+        eq(crawlReviewAttempts.policyHash, input.policyHash), eq(crawlReviewAttempts.promptVersion, REVIEW_PROMPT_VERSION),
+        eq(crawlReviewAttempts.rulesVersion, REVIEW_RULES_VERSION),
+      )).for("share");
+      if (attempts.some(attempt => attempt.state === "succeeded" && attempt.validUntil > new Date())) continue;
+      if (attempts.filter(attempt => ["failed", "superseded"].includes(attempt.state)
+        && attempt.errorCode !== "owner_changed").length >= MAX_REVIEW_ATTEMPTS) exhausted.push(candidate.id);
+    }
+    if (!exhausted.length) return 0;
     const updated = await tx.update(crawlCandidates).set({
       state: "needs_review", reason: "ai_review_exhausted", updatedAt: sql`clock_timestamp()`,
       signals: sql`coalesce(${crawlCandidates.signals}, '{}'::jsonb) ||
-        jsonb_build_object('stoppedAt', jsonb_build_object('rule', 'AI 1차 심사',
+        jsonb_build_object('firstReviewExhausted', jsonb_build_object('previousReason', ${crawlCandidates.reason}),
+          'stoppedAt', jsonb_build_object('rule', 'AI 1차 심사',
           'detail', '자동 심사 재시도 한도에 도달했습니다. 사람이 확인해야 합니다.'))`,
-    }).where(inArray(crawlCandidates.id, rows.map(row => row.id))).returning({ id: crawlCandidates.id });
+    }).where(inArray(crawlCandidates.id, exhausted)).returning({ id: crawlCandidates.id });
     await assertJobLease(tx, lease);
     return updated.length;
   });

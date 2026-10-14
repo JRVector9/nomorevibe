@@ -104,6 +104,40 @@ it('gives the publisher batch enough cooperative time below the supervisor deadl
   expect(jobRunOptions('crawl-fetch', base)).toBe(base);
 });
 
+it('gives product evidence one 55-second cooperative budget in the existing crawler', () => {
+  const options = { requestedOnly: true as const, signal: new AbortController().signal };
+  expect(jobRunOptions('product-evidence-refresh', options)).toEqual({ ...options, budgetMs: 55_000 });
+});
+
+it('lets a configured Grok first review start within the same 110-second second-review budget', () => {
+  const base = { requestedOnly: true as const };
+  expect(jobRunOptions('crawl-agent-review', base).budgetMs).toBe(110_000);
+  expect(jobRunOptions('second-review', base).budgetMs).toBe(110_000);
+});
+
+it('preserves a lane polling age while another lane starts and completes jobs', async () => {
+  let unblockPoll!: () => void;
+  let finishJob!: () => void;
+  const poll = new Promise<void>(resolve => { unblockPoll = resolve; });
+  const job = new Promise<void>(resolve => { finishJob = resolve; });
+  const snapshots: Array<Array<{ name: string; state: string; pollStartedAt: number | null; lastProgressAt: number }>> = [];
+  const work = runWorker({ role: 'crawler', once: true }, {
+    names: ['crawl-fetch', 'product-evidence-refresh'], lanes: [['crawl-fetch'], ['product-evidence-refresh']],
+    seen: names => names.includes('crawl-fetch') ? poll : Promise.resolve(),
+    pending: async () => ['product-evidence-refresh'],
+    report: (_state, _job, _at, lanes) => { if (lanes) snapshots.push(lanes); },
+    run: async () => { await job; return { status: 'completed' }; },
+  });
+  try {
+    await vi.waitFor(() => expect(snapshots.at(-1)?.find(lane => lane.name === 'product-evidence-refresh')?.state).toBe('running'));
+    const waiting = snapshots.at(-1)!.find(lane => lane.name === 'crawl-fetch')!;
+    expect(waiting.pollStartedAt).toEqual(expect.any(Number));
+    finishJob();
+    await vi.waitFor(() => expect(snapshots.at(-1)?.find(lane => lane.name === 'product-evidence-refresh')?.state).toBe('idle'));
+    expect(snapshots.at(-1)!.find(lane => lane.name === 'crawl-fetch')).toMatchObject(waiting);
+  } finally { finishJob(); unblockPoll(); await work; }
+});
+
 it('runs lanes at the same time — a slow evidence job does not hold up the main lane', async () => {
   let releaseSlow!: () => void;
   const slowGate = new Promise<void>((resolve) => { releaseSlow = resolve; });

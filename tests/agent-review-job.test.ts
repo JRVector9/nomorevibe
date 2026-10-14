@@ -3,7 +3,7 @@ import { reviewCrawlCandidates } from "@/lib/crawl/jobs/agent-review";
 import { createReviewInput } from "@/lib/crawl/agent-review-contract";
 import { DEFAULT_CRAWL_SETTINGS, type CrawlSettings } from "@/lib/crawl/settings-schema";
 import type { CrawlCandidate, CrawlDocument } from "@/lib/db/schema";
-const mocks = vi.hoisted(() => ({settings:null as CrawlSettings|null,readme:vi.fn(),saveReadme:vi.fn(),requeue:vi.fn(),handOff:vi.fn(),list:vi.fn(),document:vi.fn(),input:vi.fn(),claim:vi.fn(),record:vi.fn(),review:vi.fn(),gateway:vi.fn(),existing:vi.fn(),requestJob:vi.fn()}));
+const mocks = vi.hoisted(() => ({settings:null as CrawlSettings|null,readme:vi.fn(),saveReadme:vi.fn(),requeue:vi.fn(),handOff:vi.fn(),list:vi.fn(),document:vi.fn(),input:vi.fn(),claim:vi.fn(),record:vi.fn(),review:vi.fn(),gateway:vi.fn(),grok:vi.fn(),existing:vi.fn(),requestJob:vi.fn()}));
 vi.mock("@/lib/crawl/settings", () => ({getSettings:async () => mocks.settings}));
 vi.mock("@/lib/crawl/repository", () => ({getDocument:mocks.document,setReadmeSample:mocks.saveReadme}));
 // 단위 테스트가 README 를 받으러 밖으로 나가지 않게 한다
@@ -13,6 +13,7 @@ vi.mock("@/lib/crawl/agent-review-repository", () => ({requeueStaleReviewSources
 vi.mock("@/lib/crawl/agent-review", () => ({reviewModel:()=>"tested-model",reviewWithAgent:mocks.review,REVIEW_CLI_TIMEOUT_MS:20_000,
   firstReviewer:(s:{firstReview?:{provider:string;model:string}})=>s.firstReview ?? {provider:"claude-cli",model:"tested-model"}}));
 vi.mock("@/lib/crawl/agent-review-gateway", () => ({reviewWithGateway:mocks.gateway,REVIEW_GATEWAY_TIMEOUT_MS:60_000}));
+vi.mock("@/lib/crawl/agent-review-grok", () => ({ reviewWithGrokCli: mocks.grok, GROK_REVIEW_TIMEOUT_MS: 90_000 }));
 vi.mock("@/lib/jobs/control", () => ({requestJob:mocks.requestJob}));
 const context = () => ({cursor:null,hasBudget:()=>true,save:vi.fn(),log:vi.fn(),lease:{name:"crawl-agent-review",token:"token",requestedVersion:1}});
 const candidate = () => ({id:1,repo:"acme/demo",productUrl:"https://demo.example",state:"approved",decidedBy:"auto",judgedAt:new Date()} as CrawlCandidate);
@@ -83,6 +84,15 @@ it("설정이 게이트웨이를 가리키면 CLI 대신 게이트웨이를 부�
   expect(mocks.review).not.toHaveBeenCalled();
   expect(mocks.claim).toHaveBeenCalledWith(expect.objectContaining({provider:"abcllm",model:"[MLX] gpt-oss-120b"}));
   expect(mocks.record).toHaveBeenCalledWith(expect.objectContaining({outcome:expect.objectContaining({decision:"approve"})}));
+});
+
+it("starts a configured Grok first reviewer with its full ninety-second timeout", async () => {
+  mocks.settings = { ...mocks.settings!, firstReview: { provider: "grok-cli", model: "grok-fixture" } };
+  mocks.grok.mockResolvedValue({ ok: true, outcome: { decision: "approve", reason: "Product", evidenceIds: ["product"] } });
+  await reviewCrawlCandidates(context());
+  expect(mocks.grok).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ timeoutMs: 90_000, model: "grok-fixture" }));
+  expect(mocks.claim).toHaveBeenCalledWith(expect.objectContaining({ provider: "grok-cli", model: "grok-fixture" }));
+  expect(mocks.record).toHaveBeenCalledWith(expect.objectContaining({ outcome: expect.objectContaining({ decision: "approve" }) }));
 });
 it("does not call AI for administrator decisions or hard rule rejection", async () => {
   mocks.list.mockResolvedValue([{...candidate(),decidedBy:"admin"}]);

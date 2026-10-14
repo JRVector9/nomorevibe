@@ -31,6 +31,7 @@ export async function refreshProductEvidenceJob(
   ctx: JobContext<EvidenceRefreshCursor>,
   dependencies: EvidenceRefreshDependencies = {},
 ): Promise<JobOutcome<EvidenceRefreshCursor>> {
+  const deadlineAt = Math.min(ctx.deadlineAt ?? Date.now() + 25_000, dependencies.deadlineAt ?? Infinity);
   const now = (dependencies.now ?? (() => new Date()))();
   const settings = await currentEvidenceSettings();
   const counts: EvidenceRefreshCounts = {
@@ -76,6 +77,7 @@ export async function refreshProductEvidenceJob(
     try {
       const result = await refreshProductEvidence(request.slug, {
         now, productId: request.productId, force: request.activeForce,
+        deadlineAt, signal: ctx.signal, lease: ctx.lease,
         hasBudget: ctx.hasBudget, dependencies: sourceDependencies, progress,
         saveProgress: async next => {
           await saveProductRefreshProgress(request, next, { now, lease: ctx.lease });
@@ -126,6 +128,7 @@ export async function refreshProductEvidenceJob(
       try {
         const result = await refreshProductEvidence(slug, {
           now,
+          deadlineAt, signal: ctx.signal, lease: ctx.lease,
           hasBudget: ctx.hasBudget,
           dependencies: sourceDependencies,
         });
@@ -134,13 +137,11 @@ export async function refreshProductEvidenceJob(
         counts.factsChanged += result.factsChanged;
         counts.eventsInserted += result.eventsInserted;
         counts.mediaInserted += result.mediaInserted;
-        if (!result.complete) {
-          requestTurn = true;
-          if (pendingRequest) await saveCursor();
-          completedPage = false;
-          break;
-        }
+        // Durable source checkpoints keep this product due. Advance traversal so
+        // repeated partial work cannot keep later products behind the same cursor.
+        if (!result.complete && !ctx.hasBudget()) completedPage = false;
       } catch (error) {
+        if (error instanceof JobLeaseLostError) throw error;
         counts.failed += 1;
         ctx.log("evidence.product_refresh_failed", {
           slug,
@@ -151,6 +152,7 @@ export async function refreshProductEvidenceJob(
       requestTurn = true;
       await saveCursor();
       await runRequest();
+      if (!completedPage) break;
     }
     if (!completedPage) break;
     if (slugs.length < settings.batchSize) {

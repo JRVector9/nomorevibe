@@ -9,8 +9,9 @@ import type { JobContext, JobOutcome } from '@/lib/jobs/runner';
 import { requeueAfterAdminEvidenceRefresh } from '@/lib/crawl/admin-review';
 import { reviewCandidatePredicate } from '@/lib/crawl/agent-review-repository';
 import { assertJobLease, requestJob, type JobLease } from '@/lib/jobs/control';
+import { parseAgentProviderFailure, type AgentProviderFailure } from '@/lib/operations/worker-progress';
 
-export type AgentEvidenceRefreshCursor = { afterRepository?: string; retryAfter?: string };
+export type AgentEvidenceRefreshCursor = { afterRepository?: string; retryAfter?: string; providerFailure?: AgentProviderFailure };
 /**
  * 1차 심사를 스캔 때문에 기다리는 레포를 한 틱에 몇 개까지 일반 대기보다 먼저 보는가.
  *
@@ -33,8 +34,9 @@ export async function refreshAgentEvidenceJob(ctx: JobContext<AgentEvidenceRefre
   const deadlineAt = Date.now() + 20_000;
   const settings = await getSettings();
   if (!settings.agentEvidence.enabled) { ctx.log('agent_evidence.disabled'); return { done: true }; }
-  if (ctx.cursor?.retryAfter && new Date(ctx.cursor.retryAfter).getTime() > Date.now()) return { done: false, cursor: ctx.cursor };
   let afterRepository = ctx.cursor?.afterRepository ?? '';
+  let providerFailure = parseAgentProviderFailure(ctx.cursor?.providerFailure);
+  const cursor = (): AgentEvidenceRefreshCursor => ({ afterRepository, ...(providerFailure ? { providerFailure } : {}) });
   // Merge product and candidate demand. Only public GitHub owner/repo identities enter the collector.
   const demand = sql`
       SELECT lower(regexp_replace(repo_url, '^https://github.com/([^/]+/[^/#?]+?)([.]git)?/?$', '\\1')) AS repository_key
@@ -42,6 +44,21 @@ export async function refreshAgentEvidenceJob(ctx: JobContext<AgentEvidenceRefre
       UNION
       SELECT lower(repo) AS repository_key FROM crawl_candidates WHERE state IN ('new', 'needs_review', 'approved')
   `;
+  if (providerFailure) {
+    // Match monitoring's demand/latest-scan join before retaining the one bounded failure record.
+    const [relevance] = await db.execute<{ relevant: boolean }>(sql`
+      SELECT EXISTS (
+        SELECT 1 FROM (${demand}) demand
+        LEFT JOIN LATERAL (${latestScan(sql`demand.repository_key`)}) latest ON true
+        WHERE demand.repository_key = ${providerFailure.repositoryKey}
+          AND (latest.id IS NULL OR latest.started_at <= ${providerFailure.lastFailureAt}::timestamp)
+      ) AS relevant
+    `);
+    if (!relevance?.relevant) providerFailure = null;
+  }
+  if (ctx.cursor?.retryAfter && new Date(ctx.cursor.retryAfter).getTime() > Date.now()) {
+    return { done: false, cursor: { ...cursor(), retryAfter: ctx.cursor.retryAfter } };
+  }
   const partial = await db.execute<{ repository_key: string }>(sql`
     SELECT latest.repository_key FROM (
       SELECT DISTINCT ON (repository_key) repository_key, state, next_attempt_at, cursor, last_error_code
@@ -86,17 +103,28 @@ export async function refreshAgentEvidenceJob(ctx: JobContext<AgentEvidenceRefre
     reviewWaiting.map(row => row.repository_key));
   const collect = async (): Promise<JobOutcome<AgentEvidenceRefreshCursor>> => {
     for (const row of work) {
-      if (!ctx.hasBudget() || Date.now() > deadlineAt - 8_000) return { done: false, cursor: { afterRepository } };
+      if (!ctx.hasBudget() || Date.now() > deadlineAt - 8_000) return { done: false, cursor: cursor() };
       const repositoryKey = row.repositoryKey;
       try {
         const result = await refreshRepositoryAgentEvidence({ repositoryKey, hasBudget: ctx.hasBudget, request: dependencies.request, deadlineAt, lease: ctx.lease });
         if (result.errorCode === 'budget_exhausted') {
           ctx.log('agent_evidence.deferred', { repositoryKey, scanId: result.scan?.id ?? null, state: 'pending', errorCode: result.errorCode });
-          const cursor = { afterRepository };
-          await ctx.save(cursor);
-          return { done: false, cursor };
+          const next = cursor();
+          await ctx.save(next);
+          return { done: false, cursor: next };
         }
-        ctx.log('agent_evidence.scanned', { repositoryKey, scanId: result.scan?.id ?? null, state: result.scan?.state ?? 'failed', observations: result.observations.length, cached: result.cached, errorCode: result.errorCode });
+        if (!result.scan && result.errorCode && (!providerFailure || providerFailure.repositoryKey === repositoryKey)) {
+          const at = new Date().toISOString();
+          providerFailure = { repositoryKey, code: result.errorCode, firstFailureAt: providerFailure?.firstFailureAt ?? at,
+            lastFailureAt: at, failures: Math.min(1_000_000, (providerFailure?.failures ?? 0) + 1) };
+        } else if (providerFailure?.repositoryKey === repositoryKey && !result.errorCode && result.scan &&
+          (!result.cached || result.scan.startedAt.getTime() > Date.parse(providerFailure.lastFailureAt))) {
+          providerFailure = null;
+        }
+        // Runner observations retain only numeric/boolean fields; preserve failure without error bodies.
+        ctx.log('agent_evidence.scanned', { repositoryKey, scanId: result.scan?.id ?? null, state: result.scan?.state ?? 'failed',
+          observations: result.observations.length, cached: result.cached, errorCode: result.errorCode,
+          failed: result.scan?.state === 'failed' || !!result.errorCode });
         if (result.scan?.state === 'complete' && !result.errorCode) {
           if (!result.cached) await requeueAfterAdminEvidenceRefresh(repositoryKey, ctx.lease);
           await db.transaction(async tx => {
@@ -106,16 +134,18 @@ export async function refreshAgentEvidenceJob(ctx: JobContext<AgentEvidenceRefre
         }
         if (result.errorCode === 'rate_limited' || (result.errorCode === 'unavailable' && result.retryAt)) {
           const retryAfter = result.retryAt ?? result.scan?.nextAttemptAt ?? new Date(Date.now() + 15 * 60_000);
-          const cursor = { afterRepository, retryAfter: retryAfter.toISOString() };
-          await ctx.save(cursor); return { done: false, cursor };
+          const next = { ...cursor(), retryAfter: retryAfter.toISOString() };
+          await ctx.save(next); return { done: false, cursor: next };
         }
       } catch (error) {
         ctx.log('agent_evidence.failed', { repositoryKey, errorCode: error instanceof Error ? error.name : 'unknown' });
       }
       if (row.advanceCursor) afterRepository = repositoryKey;
-      await ctx.save({ afterRepository });
+      await ctx.save(cursor());
     }
-    return rows.length < 10 ? { done: true } : { done: false, cursor: { afterRepository } };
+    // A completed traversal resets its position while retaining an unresolved pre-scan failure.
+    return rows.length < 10 ? { done: true, ...(providerFailure ? { cursor: { providerFailure } } : {}) }
+      : { done: false, cursor: cursor() };
   };
   const outcome = await collect();
   // 제품 연결은 스캔과 따로 돈다. 앞에서 예산이 끊겨도 매 틱 돌아 굶지 않는다 (GitHub를 쓰지 않는다)

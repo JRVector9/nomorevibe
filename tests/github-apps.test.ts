@@ -1,10 +1,43 @@
 import { createVerify, generateKeyPairSync } from "node:crypto";
 import { afterEach, expect, it, vi } from "vitest";
-import { appJwt, inspectGitHubApp, mintInstallationToken } from "@/lib/crawl/github-apps";
+import { appCollectorTokens, appJwt, clearAppTokenCache, inspectGitHubApp, mintInstallationToken } from "@/lib/crawl/github-apps";
+import { seal } from "@/lib/operations/credential-vault";
+
+const { select } = vi.hoisted(() => ({ select: vi.fn() }));
+vi.mock("@/lib/db", () => ({ db: { select } }));
 
 const { privateKey, publicKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
 const pem = privateKey.export({ type: "pkcs1", format: "pem" }).toString();
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); clearAppTokenCache(); });
+
+it("does not mint tokens after cancellation during the app-account database read", async () => {
+  const controller = new AbortController();
+  const secret = "s".repeat(48);
+  const row = { installationId: 456, appId: 123, appSlug: "fixture", encryptedPrivateKey: seal(pem, secret) };
+  select.mockReset().mockReturnValueOnce({ from: () => ({ where: async () => { controller.abort(); return [row]; } }) });
+  const fetcher = vi.fn().mockResolvedValue(new Response(JSON.stringify({ token: "ghs_fixture_token_1234567890", expires_at: new Date(Date.now() + 3600000).toISOString() }), { status: 201 }));
+  vi.stubGlobal("fetch", fetcher);
+  expect(await appCollectorTokens(secret, Date.now(), { signal: controller.signal } as Parameters<typeof appCollectorTokens>[2])).toEqual([]);
+  expect(fetcher).not.toHaveBeenCalled();
+});
+
+it("forwards abort to a mint request without poisoning the installation cache", async () => {
+  const controller = new AbortController();
+  const secret = "s".repeat(48);
+  const row = { installationId: 456, appId: 123, appSlug: "fixture", encryptedPrivateKey: seal(pem, secret) };
+  select.mockReset().mockReturnValue({ from: () => ({ where: async () => [row] }) });
+  let firstSignal: AbortSignal | null | undefined;
+  const fetcher = vi.fn().mockImplementationOnce(async (_url, init: RequestInit) => {
+    firstSignal = init.signal;
+    controller.abort();
+    return new Response(JSON.stringify({ token: "ghs_cancelled_token_1234567890", expires_at: new Date(Date.now() + 3600000).toISOString() }), { status: 201 });
+  }).mockResolvedValueOnce(new Response(JSON.stringify({ token: "ghs_fresh_token_1234567890", expires_at: new Date(Date.now() + 3600000).toISOString() }), { status: 201 }));
+  vi.stubGlobal("fetch", fetcher);
+  expect(await appCollectorTokens(secret, Date.now(), { signal: controller.signal } as Parameters<typeof appCollectorTokens>[2])).toEqual([]);
+  expect(firstSignal?.aborted).toBe(true);
+  expect((await appCollectorTokens(secret)).map(token => token.token)).toEqual(["ghs_fresh_token_1234567890"]);
+  expect(fetcher).toHaveBeenCalledTimes(2);
+});
 
 it("shares the extracted pure JWT signer without changing collector signatures", async () => {
   const pure = await import("@/lib/github/app-jwt").catch(() => ({})) as { appJwt?: typeof appJwt };

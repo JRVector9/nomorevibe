@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { discoveryAdmission, readDiscoveryAdmission, type DiscoveryAdmission } from '@/lib/crawl/discovery-admission';
 import type { JobContext, JobOutcome } from '@/lib/jobs/runner';
 import * as crawl from '@/lib/crawl/repository';
 import { normalizeUrl } from '@/lib/net/normalize';
@@ -10,8 +11,6 @@ import { isStorableLabel, parseCommitAttributions, type CommitAttribution } from
 import { splitSearchWindow, type SearchWindow } from '@/lib/crawl/search-window';
 
 export const MAX_SEED_ATTRIBUTIONS = 8;
-export const SEED_BACKLOG_PAUSE = 10_000;
-export const SEED_BACKLOG_RESUME = 5_000;
 const INCOMPLETE_RETRY_MS = 60 * 60_000;
 /** 몇 초짜리 구간을 훑자고 신호마다 검색을 한 번씩 쓰지는 않는다. 이만큼 쌓이면 그때 본다 */
 const MIN_CYCLE_SPAN_MS = 60_000;
@@ -26,7 +25,9 @@ type SearchCursor = {
   window?:SearchWindow; cycleWindow?:SearchWindow; pendingWindows?:SearchWindow[];
   retryAt?:string; pendingPage?:PendingPage; windowIncomplete?:boolean;
   incompleteWindows?:IncompleteWindow[]; phase?:'discovery'|'retry';
+  /** Legacy marker is cleared while retaining saved page/window progress. */
   backlogPaused?:boolean;
+  admissionThrottled?:boolean;
   /** 신호별로 어디까지 봤는지. 차례가 돌아오면 여기서 이어간다 */
   states?:Record<string,SignalState>;
   /** 이번 주기의 창을 다 본 신호. 다시 차례를 주지 않는다 */
@@ -46,24 +47,29 @@ const sameWindow = (a:SearchWindow,b:SearchWindow) => a.from === b.from && a.to 
 
 /** Search finds candidates; stored cursors contain bounded normalized facts, never commit messages. */
 export async function seedFrontier(ctx:JobContext<SeedCursor>):Promise<JobOutcome<SeedCursor>> {
-  const settings = await getSettings();
+  let settings = await getSettings();
   if (!settings.enabled) return {done:true};
+  const snapshot = await readDiscoveryAdmission(settings);
+  const admission = discoveryAdmission(snapshot, ctx.cursor?.admissionThrottled === true);
+  ctx.log('crawl.seed_admission', { ...snapshot, throttled:admission.throttled,
+    newAllowance:admission.throttled ? admission.remainingNew : null });
+  if (admission.throttled) settings = { ...settings, discover:{ ...settings.discover, pagesPerTick:1 } };
   if (settings.discover.sort !== 'recent') {
     const historical = ctx.cursor ? { ...ctx.cursor } : null;
     if (historical) { delete historical.latestScan; delete historical.latestTurn; }
-    return seedSearchCycle({ ...ctx, cursor: historical }, settings);
+    return seedSearchCycle({ ...ctx, cursor: historical }, settings, admission);
   }
   const covered = Date.parse(ctx.cursor?.cycleWindow?.to ?? '');
   // 전체 수집이 하루 이상 뒤처진 경우 최신 탐색을 먼저 배정한다. 전체 수집도 매 틱 진행한다.
   if (!Number.isFinite(covered) || covered >= Date.now() - LATEST_SCAN_LAG_MS) {
     const historical = ctx.cursor ? { ...ctx.cursor } : null;
     if (historical) { delete historical.latestScan; delete historical.latestTurn; }
-    return seedSearchCycle({ ...ctx, cursor: historical }, settings);
+    return seedSearchCycle({ ...ctx, cursor: historical }, settings, admission);
   }
   const { latestScan, latestTurn, ...historical } = ctx.cursor!;
   let full: SearchCursor = historical;
   let latest: SearchCursor | undefined = latestScan;
-  const snapshot = (): SeedCursor => ({ ...full, latestScan: latest, latestTurn: latestPages === 0 });
+  const savedSnapshot = (): SeedCursor => ({ ...full, admissionThrottled:admission.throttled, latestScan: latest, latestTurn: latestPages === 0 });
   if (latest?.retryAt && !latest.waiting && Date.parse(latest.retryAt) > Date.now()) {
     return { done:false, cursor:ctx.cursor! };
   }
@@ -74,31 +80,31 @@ export async function seedFrontier(ctx:JobContext<SeedCursor>):Promise<JobOutcom
   let latestDone = latestWaiting === true;
   if (latestPages && ctx.hasBudget()) {
     const outcome = await seedSearchCycle({ ...ctx,
-      cursor: latest ? { ...latest, backlogPaused: latest.backlogPaused || full.backlogPaused } : null,
-      save: async value => { latest = value; await ctx.save(snapshot()); },
-    }, { ...settings, discover: { ...settings.discover, pagesPerTick: latestPages } }, true, full.backlogPaused);
+      cursor: latest ?? null,
+      save: async value => { latest = value; await ctx.save(savedSnapshot()); },
+    }, { ...settings, discover: { ...settings.discover, pagesPerTick: latestPages } }, admission, true);
     latest = outcome.cursor ?? latest;
     latestDone = outcome.done;
     // 큐 상한·인증/쿼터 대기는 두 탐색에 공통이다. 같은 틱에 다시 외부 호출하지 않는다.
-    if (latest?.backlogPaused || (latest?.retryAt && !latest.waiting)) {
-      await ctx.save(snapshot());
-      return { done: false, cursor: snapshot() };
+    if (admission.remainingNew <= 0 || (latest?.retryAt && !latest.waiting)) {
+      await ctx.save(savedSnapshot());
+      return { done: false, cursor: savedSnapshot() };
     }
   }
   let fullDone = false;
-  if (fullPages && ctx.hasBudget()) {
+  if (fullPages && admission.remainingNew > 0 && ctx.hasBudget()) {
     const outcome = await seedSearchCycle({ ...ctx, cursor: full,
-      save: async value => { full = value; await ctx.save(snapshot()); },
-    }, { ...settings, discover: { ...settings.discover, pagesPerTick: fullPages } });
+      save: async value => { full = value; await ctx.save(savedSnapshot()); },
+    }, { ...settings, discover: { ...settings.discover, pagesPerTick: fullPages } }, admission);
     full = outcome.cursor ?? full;
     fullDone = outcome.done;
   }
-  await ctx.save(snapshot());
-  return { done: fullDone && latestDone, cursor: snapshot() };
+  await ctx.save(savedSnapshot());
+  return { done: fullDone && latestDone, cursor: savedSnapshot() };
 }
 
 /** 최신 탐색은 신호별 첫 페이지만 확인한다. 완전한 날짜 구간의 수집 책임은 전체 커서에 있다. */
-async function seedSearchCycle(ctx:JobContext<SearchCursor>, settings:CrawlSettings, latestOnly = false, inheritedPause = false):Promise<JobOutcome<SearchCursor>> {
+async function seedSearchCycle(ctx:JobContext<SearchCursor>, settings:CrawlSettings, admission:DiscoveryAdmission, latestOnly = false):Promise<JobOutcome<SearchCursor>> {
   const queries = enabledQueries(settings);
   if (!queries.length) return {done:true};
   const spanMs = settings.discover.windowDays*86_400_000;
@@ -145,16 +151,8 @@ async function seedSearchCycle(ctx:JobContext<SearchCursor>, settings:CrawlSetti
     Object.assign(cursor, active);
     ctx.log('crawl.seed_sort_changed', { sort: settings.discover.sort, preservedWindow: cursor.cycleWindow });
   }
-  const counts = await crawl.frontierCounts();
-  let backlog = (counts.pending ?? 0) + (counts.fetching ?? 0);
-  const shouldPause = () => backlog >= SEED_BACKLOG_PAUSE || ((cursor.backlogPaused === true || inheritedPause) && backlog > SEED_BACKLOG_RESUME);
-  if (shouldPause()) {
-    cursor.backlogPaused = true;
-    await ctx.save(cursor);
-    ctx.log('crawl.seed_backlog_paused', { backlog, resumeAt: SEED_BACKLOG_RESUME });
-    return { done: false, cursor };
-  }
   delete cursor.backlogPaused;
+  cursor.admissionThrottled = admission.throttled;
   if (cursor.retryAt && Date.parse(cursor.retryAt) > Date.now()) return {done:false,cursor};
   delete cursor.retryAt;
   let discovered = 0;
@@ -225,7 +223,7 @@ async function seedSearchCycle(ctx:JobContext<SearchCursor>, settings:CrawlSetti
     // 따라잡았다. 새로 쌓일 때까지 기다린다 — 같은 구간을 다시 검색하지 않는다.
     if (from+(latestOnly ? LATEST_SCAN_INTERVAL_MS : MIN_CYCLE_SPAN_MS) > Date.now()) {cursor.retryAt = iso(new Date(from+(latestOnly ? LATEST_SCAN_INTERVAL_MS : MIN_CYCLE_SPAN_MS))); cursor.waiting = true; return false;}
     initial = latestOnly ? freshWindow() : chunkFrom(from); index = 0;
-    cursor = {signal:queries[0].label,page:1,configHash,queryHash:queryHash(0),window:initial,cycleWindow:initial,
+    cursor = {admissionThrottled:admission.throttled,signal:queries[0].label,page:1,configHash,queryHash:queryHash(0),window:initial,cycleWindow:initial,
       pendingWindows:[],incompleteWindows:cursor.incompleteWindows,phase:'discovery',states:{},doneSignals:[]};
     return true;
   };
@@ -242,7 +240,7 @@ async function seedSearchCycle(ctx:JobContext<SearchCursor>, settings:CrawlSetti
     const retry = [...(cursor.incompleteWindows ?? [])].sort((a,b) => a.retryAt.localeCompare(b.retryAt))[0];
     if (!retry) return startNextCycle();
     index = queries.findIndex(q => q.label === retry.signal);
-    cursor = {signal:retry.signal,page:1,configHash,queryHash:queryHash(index),window:retry.window,cycleWindow:initial,pendingWindows:[],incompleteWindows:cursor.incompleteWindows,phase:'retry',retryAt:retry.retryAt,states:{},doneSignals:[]};
+    cursor = {admissionThrottled:admission.throttled,signal:retry.signal,page:1,configHash,queryHash:queryHash(index),window:retry.window,cycleWindow:initial,pendingWindows:[],incompleteWindows:cursor.incompleteWindows,phase:'retry',retryAt:retry.retryAt,states:{},doneSignals:[]};
     return true;
   };
 
@@ -250,7 +248,7 @@ async function seedSearchCycle(ctx:JobContext<SearchCursor>, settings:CrawlSetti
   // 이 확인 없이 반복하면 이미 덮은 마지막 창을 매 틱 다시 긁는다.
   if (cursor.waiting && !startNextCycle()) return {done:true,cursor};
 
-  for (let visited = 0; visited < settings.discover.pagesPerTick && ctx.hasBudget(); visited++) {
+  for (let visited = 0; visited < settings.discover.pagesPerTick && admission.remainingNew > 0 && ctx.hasBudget(); visited++) {
     if (cursor.retryAt && Date.parse(cursor.retryAt) > Date.now()) return defer();
     const signal = queries[index];
     const window = cursor.window ?? initial;
@@ -291,11 +289,11 @@ async function seedSearchCycle(ctx:JobContext<SearchCursor>, settings:CrawlSetti
      * 다시 넣을 뿐이고, 두 저장 모두 이미 있는 행은 건너뛰므로 겹치지 않는다.
      * 프론티어 enqueue 는 트랜잭션을 받지 않으므로 근거 트랜잭션에서 리스를 확인하고 근거를 먼저
      * 넣는다 (종전 순서 그대로 — 근거 없는 레포가 프론티어에 먼저 오르지 않는다).
-     * 한 번에 넣는 수는 백로그 상한까지로 자른다. 상한에 닿으면 그 자리에서 멈추고 이어 받는다.
+     * 압력이 있을 때 실제 새 삽입의 남은 몫만큼 자른다. 중복은 몫을 쓰지 않으며 미완 페이지는 그대로 이어 받는다.
      */
     while (page.itemIndex < page.items.length) {
-      if (!ctx.hasBudget()) return defer();
-      const batch = page.items.slice(page.itemIndex,page.itemIndex+SEED_BACKLOG_PAUSE-backlog);
+      if (!ctx.hasBudget() || admission.remainingNew <= 0) return defer();
+      const batch = page.items.slice(page.itemIndex,page.itemIndex+admission.remainingNew);
       await recordDiscoveryEvidenceBatch(batch.flatMap(item => storableAttributions(item).map(attribution => ({
         repositoryKey:item.repo,signalId:signal.label,sourceUrl:`https://github.com/${item.repo}${item.sha ? `/commit/${item.sha}` : ''}`,
         commitSha:item.sha,attribution,
@@ -304,13 +302,9 @@ async function seedSearchCycle(ctx:JobContext<SearchCursor>, settings:CrawlSetti
       }))),ctx.lease);
       const added = await crawl.enqueue(batch.map(item => ({repo:item.repo,signal:signal.label,builder:null,priority:signal.priority})),ctx.lease);
       discovered += added;
-      backlog += added;
+      admission.remainingNew -= added;
       page.itemIndex += batch.length;
-      if (backlog >= SEED_BACKLOG_PAUSE) {
-        cursor.backlogPaused = true;
-        ctx.log('crawl.seed_backlog_paused', { backlog, resumeAt: SEED_BACKLOG_RESUME });
-        return defer();
-      }
+      if (admission.remainingNew <= 0 && page.itemIndex < page.items.length) return defer();
     }
     delete cursor.pendingPage;
     const incomplete = page.incomplete || page.saturated || page.capped;

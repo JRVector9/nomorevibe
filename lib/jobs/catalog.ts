@@ -6,7 +6,7 @@ export const JOB_ROLES: readonly JobRole[] = ["crawler", "reviewer", "publisher"
  * lane: 같은 역할 워커 안에서 따로 도는 줄. 역할 lease 는 하나라 워커를 늘려도 한 대만 일한다 — 줄이 다르면 한 프로세스 안에서
  * 동시에 돈다. 줄을 적지 않은 잡은 기본 줄(main)에서 차례로 돈다(scripts/worker.ts runWorker).
  */
-export type JobLane = "main" | "evidence" | "scan" | "stars";
+export type JobLane = "main" | "sources" | "evidence" | "scan" | "stars";
 export const JOB_CATALOG: readonly { name: string; role: JobRole | "scheduler"; intervalMs: number | null; lane?: JobLane }[] = [
   { name: "heartbeat", role: "scheduler", intervalMs: null },
   /**
@@ -106,7 +106,7 @@ export const JOB_CATALOG: readonly { name: string; role: JobRole | "scheduler"; 
    * 다 돌면 하루 쉬고, 판정 버전이 바뀌면 곧바로 다시 돈다. 저장된 원본만 읽으므로 한가한 maintenance 에 둔다.
    */
   { name: "product-spam-rescan", role: "maintenance", intervalMs: 5 * 60_000 },
-  { name: "product-evidence-refresh", role: "crawler", intervalMs: 60_000 },
+  { name: "product-evidence-refresh", role: "crawler", lane: "sources", intervalMs: 60_000 },
   // 저장소 파일·커밋 서명 조사 — 틱마다 14초 남짓. 기본 줄에서 70초 간격으로 밀려(목표 60초) 따로 돈다(2026-10-10)
   { name: "agent-evidence-refresh", role: "crawler", intervalMs: 60_000, lane: "scan" },
   /**

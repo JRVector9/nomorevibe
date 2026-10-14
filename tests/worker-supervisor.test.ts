@@ -15,6 +15,32 @@ it('distinguishes idle observation, event-loop failure, and a stalled running jo
   expect(stalledReason({ ...health, lastHeartbeatAt: 200_000, state: 'running', currentJob: 'crawl-fetch', jobStartedAt: 1_000 }, 200_000, limits)).toBe('job_timeout');
 });
 
+it('detects a stuck poll independently of a healthy running lane', () => {
+  const now = 100_000;
+  const lanes = [
+    { name: 'crawl-fetch', jobs: ['crawl-fetch'], state: 'polling' as const, currentJob: null,
+      startedAt: null, pollStartedAt: 1_000, lastProgressAt: 1_000 },
+    { name: 'ai-level-refresh', jobs: ['ai-level-refresh'], state: 'running' as const, currentJob: 'ai-level-refresh',
+      startedAt: 90_000, pollStartedAt: null, lastProgressAt: 90_000 },
+  ];
+  expect(stalledReason({ ...health, state: 'running', currentJob: 'ai-level-refresh', jobStartedAt: 90_000,
+    lastHeartbeatAt: now, lastProgressAt: 90_000, lanes }, now, limits)).toBe('lane_poll_timeout');
+  expect(stalledReason({ ...health, lastHeartbeatAt: now, lanes: lanes.slice(1) }, now, limits)).toBeNull();
+});
+
+it('rejects malformed or unbounded optional lane IPC while accepting older heartbeat messages', () => {
+  const message = { type: 'runtime.heartbeat', role: 'crawler', pid: 2, at: 100_000,
+    state: 'idle', currentJob: null, startedAt: null, lastProgressAt: 100_000 };
+  const lane = { name: 'crawl-fetch', jobs: ['crawl-fetch'], state: 'polling', currentJob: null,
+    startedAt: null, pollStartedAt: 90_000, lastProgressAt: 90_000 };
+  expect(isRuntimeHeartbeat(message, 'crawler', 2)).toBe(true);
+  expect(isRuntimeHeartbeat({ ...message, lanes: [lane] }, 'crawler', 2)).toBe(true);
+  expect(isRuntimeHeartbeat({ ...message, lanes: [{ ...lane, pollStartedAt: NaN }] }, 'crawler', 2)).toBe(false);
+  expect(isRuntimeHeartbeat({ ...message, lanes: [{ ...lane, pollStartedAt: Date.now() + 3_600_000 }] }, 'crawler', 2)).toBe(false);
+  expect(isRuntimeHeartbeat({ ...message, lanes: [{ ...lane, jobs: ['secret payload'] }] }, 'crawler', 2)).toBe(false);
+  expect(isRuntimeHeartbeat({ ...message, lanes: Array.from({ length: 17 }, () => lane) }, 'crawler', 2)).toBe(false);
+});
+
 it('reports a fresh passive role candidate healthy without a supervisor, but requires the active child', () => {
   const standby = { role: 'crawler', kind: 'standby', instanceId: 'crawler-b', bootId: 'boot-b',
     phase: 'standby', epoch: null, pid: 123, updatedAt: 1_000 };
@@ -29,6 +55,14 @@ it('reports a fresh passive role candidate healthy without a supervisor, but req
 it('does not treat the cooperative 25-second budget as a hard timeout', () => {
   expect(stalledReason({ ...health, state: 'running', currentJob: 'crawl-fetch', jobStartedAt: 1_000, lastHeartbeatAt: 40_000 }, 40_000, limits)).toBeNull();
   expect(supervisorLimits('maintenance', {}).jobMs).toBe(600_000);
+});
+
+it('allows a legitimate 110-second reviewer call without applying the 90-second poll limit', () => {
+  const now = 120_000;
+  const lane = { name: 'crawl-agent-review', jobs: ['crawl-agent-review'], state: 'running' as const,
+    currentJob: 'crawl-agent-review', startedAt: 1_000, pollStartedAt: null, lastProgressAt: 1_000 };
+  expect(stalledReason({ ...health, role: 'reviewer', lastHeartbeatAt: now, lanes: [lane] }, now,
+    supervisorLimits('reviewer', {}))).toBeNull();
 });
 it('uses a separate drain path once stopping has started', () => {
   expect(stalledReason({ ...health, status: 'stopping' }, 1_000_000, limits)).toBeNull();

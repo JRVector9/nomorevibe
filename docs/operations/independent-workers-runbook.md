@@ -16,6 +16,15 @@ A/B 통합 검증 기록은 `docs/CODEX_HANDOFF.md`와 해당 릴리스 보고�
   웹/어드민 종료와 무관하게 동작하며 스케줄러 중단 시 이미 접수한 요청까지만 처리한다.
 - 일반 잡은 25초 협력 예산을 유지하고, publisher는 최대 20초 모델 폴백 뒤 10건 발행을 마치도록
   120초 협력 예산을 쓴다. supervisor의 publisher hard timeout은 180초다.
+- 공개 근거 `product-evidence-refresh`는 crawler의 `sources` lane에서 55초 예산으로 실행한다.
+  제품 내부의 부분 수집을 재개하되 다음 제품 순회를 막지 않는다. 다른 crawler lane과 같은 역할
+  lease·DB pool·GitHub 계정별 쿼터를 사용하므로 앱을 추가해 처리량을 늘리는 설정은 아니다.
+  AI1 worker 예산은 Grok의 90초 호출을 수용하도록 110초이며, 현재 abcllm/Claude handler의
+  내부 틱 예산은 40초다. provider 설정이 바뀌면 현재 입력과 동일 provider/model의 심사만 유효하다.
+- `crawl-seed`는 실제 새 후보와 실행 가능한 후속 대기량으로 유입을 제한한다. 제한 중에도 최소
+  탐색과 cursor를 보존한다. 사람 보류·정책 중단·미래 backoff를 실행 대기와 합산하지 않는다.
+  초기 기준·하한 집계의 제약·배포 후 재측정은
+  [수집→검수 개선 구현 보고서](2026-10-14-pipeline-recovery-implementation.md)를 따른다.
 - `npm run worker -- --role=crawler --once`, `npm run scheduler -- --once`는 제한된 한 회차다.
   큐 전체를 소진하거나 24시간 운영을 검증하는 명령이 아니다. 직접 실행에는 환경변수를 별도로 주입한다.
 - 로컬 `npm run job <name>`은 `.env.local`을 읽고 명시적 요청을 남긴 뒤 한 tick을 실행한다.
