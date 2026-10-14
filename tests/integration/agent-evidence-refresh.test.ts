@@ -325,14 +325,28 @@ it('rescans a repository whose candidate waits on first review ahead of the alph
   const candidate = await waitingOnReview('acme/waiting', 11);
   // 스캔이 24시간을 넘겨 1차 심사가 고르지 못한다
   expect(await listReviewCandidates(settings)).toEqual([]);
+  const previousScan = (await getLatestRepositoryAgentScan('acme/waiting'))!;
   const saved: string[] = [];
 
-  await refreshAgentEvidenceJob({ ...context(), cursor: { afterRepository: 'zzz/last' }, save: async cursor => { saved.push(cursor.afterRepository ?? ''); } },
-    { request: unchangedRepositories({ 'acme/waiting': 11 }) });
+  // 스캔은 앱 시각으로 저장되고 selector는 DB now()를 쓴다. 같은 DB 시각으로 완료 fixture를 만든다.
+  const [clock] = await db.execute<{ now_ms: string }>(sql`SELECT extract(epoch FROM now()) * 1000 AS now_ms`);
+  const scanAt = new Date(Math.floor(Number(clock.now_ms)));
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(scanAt);
+  try {
+    await refreshAgentEvidenceJob({ ...context(), cursor: { afterRepository: 'zzz/last' }, save: async cursor => { saved.push(cursor.afterRepository ?? ''); } },
+      { request: unchangedRepositories({ 'acme/waiting': 11 }) });
+  } finally {
+    vi.useRealTimers();
+  }
 
   expect(spies.refresh.mock.calls.map(([input]) => input.repositoryKey)).toEqual(['acme/waiting']);
   // 일반 대기의 자리는 그대로다
   expect(saved.every(after => after === 'zzz/last')).toBe(true);
+  const refreshed = (await getLatestRepositoryAgentScan('acme/waiting'))!;
+  expect(refreshed).toMatchObject({ state: 'complete', detectorVersion: AGENT_DETECTOR_VERSION,
+    lastErrorCode: null, startedAt: scanAt, completedAt: scanAt });
+  expect(refreshed.completedAt!.getTime()).toBeGreaterThan(previousScan.completedAt!.getTime());
   expect((await listReviewCandidates(settings)).map(row => row.id)).toEqual([candidate.id]);
 });
 

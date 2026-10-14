@@ -119,16 +119,21 @@ it("keeps Retry-After beyond the frontier backoff and recovers the same claim af
 
 it("does not let a short Retry-After bypass the existing backoff and stops after four failures", async () => {
   mocks.probe.mockResolvedValue({ ok: true, found: ["file:CLAUDE.md"] });
-  mocks.page.mockRejectedValue(Object.assign(new Error("HTTP 503"), { retryAt: new Date(Date.now() + 1000) }));
-  const before = Date.now();
+  // markFailed uses PostgreSQL now(); Docker and host clocks can differ by milliseconds.
+  const databaseNow = sql<Date>`now()::timestamp`.mapWith(crawlFrontier.updatedAt);
+  const [before] = await db.select({ at: databaseNow }).from(crawlFrontier);
+  mocks.page.mockRejectedValue(Object.assign(new Error("HTTP 503"), { retryAt: new Date(before.at.getTime() + 1000) }));
   expect(await tick()).toMatchObject({ status: "completed" });
-  const [pending] = await db.select().from(crawlFrontier);
-  expect(pending.nextAttemptAt.getTime()).toBeGreaterThanOrEqual(before + 5 * 60_000);
+  const [{ pending, at: after }] = await db.select({ pending: crawlFrontier, at: databaseNow }).from(crawlFrontier);
+  expect(pending.nextAttemptAt.getTime()).toBeGreaterThanOrEqual(before.at.getTime() + 5 * 60_000);
+  expect(pending.nextAttemptAt.getTime()).toBeLessThanOrEqual(after.getTime() + 5 * 60_000);
+  expect(pending.nextAttemptAt.getTime() - pending.updatedAt.getTime()).toBe(5 * 60_000);
   for (let attempt = 1; attempt < crawl.MAX_ATTEMPTS; attempt++) {
     await db.update(crawlFrontier).set({ nextAttemptAt: sql`now() - interval '1 second'` });
     expect(await tick()).toMatchObject({ status: "completed" });
   }
-  expect((await db.select().from(crawlFrontier))[0]).toMatchObject({ state: "failed", attempts: crawl.MAX_ATTEMPTS,
+  expect(mocks.page).toHaveBeenCalledTimes(4);
+  expect((await db.select().from(crawlFrontier))[0]).toMatchObject({ state: "failed", attempts: 4,
     lastError: expect.stringContaining("HTTP 503") });
   expect(await crawl.getDocument(repo)).toBeUndefined();
   expect(await crawl.getCandidate(repo)).toBeUndefined();
