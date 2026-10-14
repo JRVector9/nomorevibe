@@ -60,6 +60,95 @@ const COMMON_TERMS = new Set(["ai", "api", "cli", "gui", "ui", "ux", "sdk", "llm
  */
 const GRAMMATICAL_PERSON = /[123]인칭/g;
 
+/**
+ * 원문이 글로 쓴 수 — 모델은 "three-channel"·"Über zehn"·"七十八张"·"11M+"를 3채널·10개·78장·1100만으로 옮긴다. 원문에 숫자로
+ * 적힌 글자만 믿었더니 맞게 옮긴 줄이 지어낸 숫자로 네 번 버려져 원문으로 남았다(포기 530건, 다시 옮긴 표본 중 걸린 29건의 28건이
+ * 맞게 옮긴 것, 2026-10-14). 그래서 값으로 맞춘다 — 낱말 수·한자 수·로마 숫자·뒤에 붙은 단위를 읽고, 옮긴 줄의 한국어 단위도 값으로 친다.
+ * 값이 다르면 그대로 걸린다: "1+ млрд ₽"(10억)를 "1조 원"으로 옮긴 줄.
+ */
+const NUMBER_WORDS = new Map<string, number>(Object.entries({
+  // 영어
+  zero: 0, one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, eleven: 11, twelve: 12,
+  thirteen: 13, fourteen: 14, fifteen: 15, sixteen: 16, seventeen: 17, eighteen: 18, nineteen: 19, twenty: 20, thirty: 30,
+  forty: 40, fifty: 50, sixty: 60, seventy: 70, eighty: 80, ninety: 90, hundred: 100, thousand: 1e3, million: 1e6, millions: 1e6,
+  billion: 1e9, dozen: 12, single: 1, double: 2, twice: 2, triple: 3, first: 1, second: 2, third: 3, fourth: 4, fifth: 5,
+  sixth: 6, seventh: 7, eighth: 8, ninth: 9, tenth: 10,
+  // 스페인어·포르투갈어
+  un: 1, uno: 1, una: 1, dos: 2, tres: 3, cuatro: 4, cinco: 5, seis: 6, siete: 7, ocho: 8, nueve: 9, diez: 10, doce: 12, veinte: 20,
+  cien: 100, ciento: 100, mil: 1e3, millón: 1e6, millones: 1e6, um: 1, uma: 1, dois: 2, duas: 2, três: 3, quatro: 4, sete: 7, oito: 8,
+  nove: 9, dez: 10, vinte: 20, cem: 100, milhão: 1e6, milhões: 1e6,
+  // 프랑스어·독일어·이탈리아어
+  une: 1, deux: 2, trois: 3, quatre: 4, cinq: 5, sept: 7, huit: 8, neuf: 9, dix: 10, douze: 12, vingt: 20, cent: 100, mille: 1e3,
+  milliard: 1e9, milliards: 1e9, ein: 1, eine: 1, eins: 1, zwei: 2, drei: 3, vier: 4, fünf: 5, sechs: 6, sieben: 7, acht: 8, neun: 9,
+  zehn: 10, elf: 11, zwölf: 12, zwanzig: 20, hundert: 100, tausend: 1e3, millionen: 1e6, milliarden: 1e9, due: 2, tre: 3, quattro: 4,
+  cinque: 5, sei: 6, sette: 7, otto: 8, dieci: 10, venti: 20, cento: 100, milioni: 1e6,
+  // 러시아어
+  один: 1, одна: 1, два: 2, две: 2, три: 3, четыре: 4, пять: 5, шесть: 6, семь: 7, восемь: 8, девять: 9, десять: 10,
+  одиннадцать: 11, двенадцать: 12, двадцать: 20, тридцать: 30, сто: 100, тысяча: 1e3, тысячи: 1e3, тысяч: 1e3, тыс: 1e3,
+  миллион: 1e6, миллиона: 1e6, миллионов: 1e6, млн: 1e6, миллиард: 1e9, миллиарда: 1e9, миллиардов: 1e9, млрд: 1e9,
+}));
+/** 한자 수 — 七十八 → 78, 三百五十 → 350, 一万 → 10,000 */
+const CJK_NUMERALS = new Map<string, number>([["零", 0], ["〇", 0], ["一", 1], ["二", 2], ["两", 2], ["兩", 2], ["三", 3], ["四", 4],
+  ["五", 5], ["六", 6], ["七", 7], ["八", 8], ["九", 9], ["十", 10], ["百", 100], ["千", 1e3], ["万", 1e4], ["萬", 1e4], ["亿", 1e8], ["億", 1e8]]);
+/** 숫자 뒤에 붙는 단위 — 3M+·1.5 billion·1+ млрд·30万·5천 */
+const SCALES = new Map<string, number>([["k", 1e3], ["m", 1e6], ["mn", 1e6], ["mio", 1e6], ["b", 1e9], ["bn", 1e9], ["mrd", 1e9],
+  ["lakh", 1e5], ["lakhs", 1e5], ["cr", 1e7], ["crore", 1e7], ["crores", 1e7], ["천", 1e3], ["만", 1e4], ["억", 1e8], ["조", 1e12], ...[...CJK_NUMERALS, ...NUMBER_WORDS].filter(([, value]) => value >= 1e3)]);
+/** 한 글자 단위 — 뒤에 글자가 이어져도 단위다(30万用户, 10만명) */
+const CHAR_SCALE = /^[千万萬亿億천만억조]/;
+const SOURCE_NUMBER = /(\d{1,3}(?:[ \u00a0\u202f]\d{3})+(?!\d)|\d+(?:[.,]\d+)*)(?:\s?\+?\s?(\p{L}+))?/gu;
+/** 옮긴 줄의 수 — 붙여 쓴 한국어 단위(1100만·3천·1조)까지 */
+const LINE_NUMBER = /(\d+(?:[.,]\d+)*)([천만억조]*)/g;
+const ROMAN = new Map([["I", 1], ["V", 5], ["X", 10]]);
+const valueKey = (value: number) => Number(value.toPrecision(12));
+
+/** 숫자 글자의 값 — 1,500·1.500 은 1500 과 1.5 둘 다, 500 000 은 500000 */
+function digitValues(text: string): number[] {
+  if (/\s/.test(text)) return [Number(text.replace(/\s/g, ""))];
+  const decimal = text.replace(/[.,](?=\d+$)/, "#").replace(/[.,]/g, "").replace("#", ".");
+  return [Number(text.replace(/[.,]/g, "")), Number(decimal)];
+}
+
+/**
+ * 원문에 적힌 수의 값 — 숫자와 뒤의 단위, 낱말 수(붙어 선 것은 하나로: seventy-eight → 78), 한자 수, 로마 숫자(II).
+ * bare 는 단위 없이 적힌 숫자 글자다 — 옮긴 줄의 "1만"·"제14조"가 단위가 아니라 '만(뿐)'·'조(條)'일 때를 가린다.
+ */
+function sourceNumbers(text: string): { values: Set<number>; bare: Set<string> } {
+  const values = new Set<number>(), bare = new Set<string>();
+  const add = (value: number) => { if (Number.isFinite(value)) values.add(valueKey(value)); };
+  for (const [, digits, word] of text.matchAll(SOURCE_NUMBER)) {
+    const scale = word ? SCALES.get(word.toLowerCase()) ?? (CHAR_SCALE.test(word) ? SCALES.get(word[0]) : undefined) : undefined;
+    for (const value of digitValues(digits)) { add(value); if (scale) add(value * scale); }
+    if (!scale) bare.add(digits.replace(/[.,\s]/g, ""));
+  }
+  let total = 0, current = 0, inRun = false;
+  for (const token of [...text.toLowerCase().split(/[^\p{L}]+/u), ""]) {
+    const value = NUMBER_WORDS.get(token);
+    if (value === undefined) {
+      if (inRun) add(total + current);
+      total = 0; current = 0; inRun = false;
+      continue;
+    }
+    add(value);
+    inRun = true;
+    if (value === 100) current = (current || 1) * 100;
+    else if (value >= 1e3) { total += (current || 1) * value; current = 0; } else current += value;
+  }
+  for (const [run] of text.matchAll(/[零〇一二两兩三四五六七八九十百千万萬亿億]+/g)) {
+    let sum = 0, section = 0, digit = 0;
+    for (const char of run) {
+      const value = CJK_NUMERALS.get(char) ?? 0;
+      if (value < 10) digit = value;
+      else if (value < 1e4) { section += (digit || 1) * value; digit = 0; } else { sum += (section + digit || 1) * value; section = 0; digit = 0; }
+    }
+    add(sum + section + digit);
+  }
+  for (const [numeral] of text.matchAll(/(?<![A-Za-z])[IVX]{2,4}(?![A-Za-z])/g)) {
+    const digits = [...numeral].map((char) => ROMAN.get(char) ?? 0);
+    add(digits.reduce((sum, value, index) => sum + (value < (digits[index + 1] ?? 0) ? -value : value), 0));
+  }
+  return { values, bare };
+}
+
 export type KoreanTaglineCheck = { ok: true; line: string } | { ok: false; reason: KoreanTaglineReject };
 
 /**
@@ -70,6 +159,7 @@ export type KoreanTaglineCheck = { ok: true; line: string } | { ok: false; reaso
  *  - 너무 길거나 짧음, 한글 낱말이 절반 미만(영어를 되돌려 줌), 이름에 없는 한자·가나(중국어를 그대로 둠)
  *  - 원문에 그대로 적힌 제품 이름이 사라짐(음역함 — "Wireshark" → "와이어샤크")
  *  - 원문에 없는 숫자나 영문 낱말(지어낸 기능·플랫폼) — 원문이 풀어 쓴 흔한 약어(AI·CLI…)는 둔다
+ *    수는 값으로 맞춘다 — 원문이 글로 쓴 수·단위(three → 3, 11M → 1100만)도 원문에 있는 수다
  */
 export function checkKoreanTagline(output: string, source: { name: string; tagline: string }): KoreanTaglineCheck {
   const trimmed = output.trim();
@@ -94,7 +184,12 @@ export function checkKoreanTagline(output: string, source: { name: string; tagli
   }
   const original = `${source.name} ${source.tagline}`.toLowerCase();
   const digits = new Set((original.match(/\d+(?:[.,]\d+)*/g) ?? []).map((value) => value.replace(/[.,]/g, "")));
-  if ((line.replace(GRAMMATICAL_PERSON, "").match(/\d+(?:[.,]\d+)*/g) ?? []).some((value) => !digits.has(value.replace(/[.,]/g, "")))) {
+  const { values, bare } = sourceNumbers(`${source.name} ${source.tagline}`);
+  // 원문에 같은 숫자 글자가 있거나 값이 같으면 된다. 한국어 단위가 붙은 수(1조)는 원문에 단위 없이 적힌 같은 글자가 있을 때만 글자로 본다 —
+  // "1+ млрд"의 1 로 1조를, "100k+"의 100 으로 100만을 받지 않는다. "⌘⇧1만 누르면"·"제14조"는 원문의 1·14 로 받는다
+  const invented = ([, number, units]: RegExpMatchArray) => !(units === "" ? digits : bare).has(number.replace(/[.,]/g, ""))
+    && !values.has(valueKey(Number(number.replace(/,/g, "")) * [...units].reduce((product, unit) => product * (SCALES.get(unit) ?? 1), 1)));
+  if ([...line.replace(GRAMMATICAL_PERSON, "").matchAll(LINE_NUMBER)].some(invented)) {
     return { ok: false, reason: "invented_number" };
   }
   const terms = (line.match(/[A-Za-z][A-Za-z0-9+#]*(?:[.-][A-Za-z0-9+#]+)*/g) ?? []).map((term) => term.toLowerCase());
