@@ -46,6 +46,15 @@ it('keeps a durable job failure out of restart decisions after the five-minute e
     .toMatchObject({ reason: 'paused', alarm: false, restartEligible: false });
 });
 
+it.each(["authentication_failed", "rate_limited", "unknown"])("retains aged AI failures during policy backoff: %s", lastError => {
+  const ai = { ...stage, key: "ai-level" as const, waiting: 0, oldestMinutes: null, deferred: 1,
+    providerErrors: 1, providerErrorMinutes: 120 };
+  expect(classifyStage(ai, { notBefore: new Date(now.getTime() + 60_000), lastError }, true, now))
+    .toMatchObject({ reason: "upstream_stalled", alarm: true, restartEligible: false });
+  expect(classifyStage({ ...ai, providerErrors: 0, providerErrorMinutes: null }, null, true, now))
+    .toMatchObject({ reason: "backoff", alarm: false, restartEligible: false });
+});
+
 it("classifies eligible publisher work without restarting for held or newly approved candidates", () => {
   const publish = { ...stage, key: "publish" as const, oldestMinutes: 11 };
   expect(classifyStage(publish, null, true, now)).toMatchObject({

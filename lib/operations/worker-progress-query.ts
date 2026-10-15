@@ -183,8 +183,10 @@ async function evidenceProgress(settings: CrawlSettings, now: Date, skipUnseen: 
         extract(epoch FROM (${at} - min(due_at) FILTER (WHERE due_at <= ${at}))) / 60,
         count(*) FILTER (WHERE error_code IS NULL AND checked_at > ${at} - interval '5 minutes' AND checked_at <= ${at})::int,
         count(*) FILTER (WHERE error_code IS NULL AND checked_at > ${at} - interval '5 minutes' AND checked_at <= ${at})::int,
-        0, count(*) FILTER (WHERE due_at > ${at} AND error_code IS NOT NULL)::int, count(*) FILTER (WHERE error_code IS NOT NULL)::int,
-        extract(epoch FROM (${at} - min(error_since) FILTER (WHERE error_code IS NOT NULL))) / 60
+        0, count(*) FILTER (WHERE due_at > ${at} AND error_code IS NOT NULL)::int,
+        -- Repository absence has a normal 72h recheck; retain its deferred demand without claiming a provider outage.
+        count(*) FILTER (WHERE error_code IS NOT NULL AND error_code <> 'not_found')::int,
+        extract(epoch FROM (${at} - min(error_since) FILTER (WHERE error_code IS NOT NULL AND error_code <> 'not_found'))) / 60
       FROM ai_targets
     `);
   }, { accessMode: "read only" });

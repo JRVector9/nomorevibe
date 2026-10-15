@@ -11,6 +11,7 @@ import { observeService } from "@/lib/operations/observations";
 import { ensureSchema, resetTables, TEST_DATABASE_URL } from "./setup";
 import { AGENT_DETECTOR_VERSION } from "@/lib/domain/evidence/agents/types";
 import { AI_LEVEL_RULES_VERSION } from "@/lib/domain/evidence/ai-level-labels";
+import { dueRepositories } from "@/lib/jobs/products/ai-level-refresh";
 import { roleHasUnexplainedStall } from "@/scripts/role-worker";
 import { DEFAULT_CRAWL_SETTINGS } from "@/lib/crawl/settings-schema";
 import { combineMonitorStatus } from "@/lib/operations/failover-monitor";
@@ -224,6 +225,38 @@ it("respects public unseen AI idle while candidates and current-version due rows
   await db.delete(repositoryAiLevels);
   await db.update(jobs).set({ cursor: { unseenIdleUntil: new Date(now.getTime() - 1).toISOString() } });
   expect(await ai()).toMatchObject({ waiting: 1, oldestMinutes: 120, reason: "no_progress" });
+});
+
+it("keeps historical AI repository absence in scheduled backoff until the selector can retry it", async () => {
+  const now = new Date();
+  await publicProduct("absent", now, { repoUrl: "https://github.com/acme/absent" });
+  await db.insert(repositoryAiLevels).values({ repositoryKey: "acme/absent", rulesVersion: AI_LEVEL_RULES_VERSION,
+    checkedAt: new Date(now.getTime() - 5 * 24 * 60 * 60_000), lastError: "not_found",
+    nextCheckAt: new Date(now.getTime() + 72 * 60 * 60_000) });
+  await observeService("crawler", { status: "running" });
+  const ai = async () => (await readWorkerProgress(now)).stages.find(row => row.stage === "ai-level")!;
+  expect((await dueRepositories(10, { skipUnseen: true })).keys).toEqual([]);
+  expect(await ai()).toMatchObject({ waiting: 0, deferred: 1, completed5m: 0, providerErrors: 0,
+    providerErrorMinutes: null, reason: "backoff", alarm: false, restartEligible: false });
+
+  await db.update(repositoryAiLevels).set({ nextCheckAt: new Date(now.getTime() - 60 * 60_000) });
+  expect((await dueRepositories(10, { skipUnseen: true })).keys).toEqual(["acme/absent"]);
+  expect(await ai()).toMatchObject({ waiting: 1, deferred: 0, oldestMinutes: 60, providerErrors: 0,
+    providerErrorMinutes: null, reason: "no_progress", alarm: true, restartEligible: true });
+});
+
+it("retains aged unknown AI provider failure alarms alongside scheduled absent repositories", async () => {
+  const now = new Date();
+  for (const slug of ["absent", "unavailable"]) await publicProduct(slug, now, { repoUrl: `https://github.com/acme/${slug}` });
+  await db.insert(repositoryAiLevels).values(["absent", "unavailable"].map(slug => ({
+    repositoryKey: `acme/${slug}`, rulesVersion: AI_LEVEL_RULES_VERSION,
+    checkedAt: new Date(now.getTime() - 60 * 60_000), nextCheckAt: new Date(now.getTime() + 60 * 60_000),
+    lastError: slug === "absent" ? "not_found" : "unknown",
+  })));
+  await observeService("crawler", { status: "running" });
+  expect((await readWorkerProgress(now)).stages.find(row => row.stage === "ai-level"))
+    .toMatchObject({ waiting: 0, deferred: 2, completed5m: 0, providerErrors: 1, providerErrorMinutes: 60,
+      reason: "upstream_stalled", alarm: true, restartEligible: false });
 });
 
 it("bounds current AI demand during unseen idle at public catalogue scale", async () => {
