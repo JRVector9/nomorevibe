@@ -2,7 +2,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { sql } from "drizzle-orm";
 
 const fake = vi.hoisted(() => ({ open: vi.fn(), verify: vi.fn(), assert: vi.fn(), same: vi.fn(),
-  hooks: vi.fn(), before: vi.fn(), after: vi.fn(), commitAck: vi.fn(), rollback: vi.fn(), traces: [] as string[] }));
+  hooks: vi.fn(), before: vi.fn(), after: vi.fn(), finalWall: vi.fn(), commitAck: vi.fn(), rollback: vi.fn(), traces: [] as string[] }));
 vi.mock("@/lib/operations/pipeline-replay-execution", () => ({ currentReplayTransactionHooks: fake.hooks }));
 vi.mock("@/lib/operations/pipeline-replay-database", () => ({
   openVerifiedReplayHandlerDatabase: fake.open,
@@ -45,9 +45,11 @@ beforeEach(() => {
   fake.open.mockImplementation(async (path: string) => handle(path));
   fake.assert.mockImplementation(() => {});
   fake.verify.mockImplementation(async (tx: { id: number }) => { fake.traces.push(`verify:${tx.id}`); });
-  fake.hooks.mockReturnValue({ before: fake.before, after: fake.after, commitAck: fake.commitAck, rollback: fake.rollback });
+  fake.hooks.mockReturnValue({ before: fake.before, after: fake.after, finalWall: fake.finalWall,
+    commitAck: fake.commitAck, rollback: fake.rollback });
   fake.before.mockResolvedValue(undefined);
   fake.after.mockResolvedValue(undefined);
+  fake.finalWall.mockResolvedValue(undefined);
   fake.commitAck.mockResolvedValue(undefined);
   fake.rollback.mockResolvedValue(undefined);
 });

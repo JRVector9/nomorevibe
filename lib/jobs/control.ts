@@ -3,12 +3,11 @@ import { db } from "@/lib/db";
 import { jobs } from "@/lib/db/schema";
 import type { ProductTransaction } from "@/lib/domain/products/generation";
 import { isJobName, JOB_CATALOG, jobsForRole, type JobRole } from "./catalog";
-import { STALE_LOCK_MS } from "./lease";
+import { JobLeaseLostError, STALE_LOCK_MS } from "./lease";
+import { registerReplayJobFinalAuthority } from "@/lib/operations/pipeline-replay-execution";
 
 export type JobLease = { name: string; token: string; requestedVersion: number };
-export class JobLeaseLostError extends Error {
-  constructor() { super("job_lease_lost"); }
-}
+export { JobLeaseLostError } from "./lease";
 
 /** This is a job signal, not a payload queue. Caller transactions preserve request atomicity. */
 export async function requestJob(name: string, tx: ProductTransaction | typeof db = db) {
@@ -92,6 +91,7 @@ export async function assertJobLeaseAtWallTime(tx: ProductTransaction, lease: Jo
     sql`${jobs.lockedAt} >= clock_timestamp() - ${STALE_LOCK_MS} * interval '1 millisecond'`,
   ));
   if (!owned) throw new JobLeaseLostError();
+  await registerReplayJobFinalAuthority(tx, lease, mode);
 }
 
 /** Keep a worker side effect and its job-token check in one commit. */

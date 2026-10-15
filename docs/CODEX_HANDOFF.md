@@ -1,3 +1,45 @@
+# 2026-10-16 — PR04c-1a 최종 로컬 gate·readback/STOP 완료 / PR 제출 준비
+
+## Current objective / completed work
+
+전체 PR별 병렬 개발 active. root가 gpt-6.1-sol/xhigh A/B/C의 배타 파일·DB, actual RED 수용, 직접/교차 코드리뷰·전체 검증·Git을 취합한다. #442/main05cedd174023dcf990c5e93cd5ba033952441d49의 PR CI38788541111·main CI38789769881 필수check/웹·워커 image 전체 SUCCESS를 실제 확인했다. 마지막 직접 확인 운영 릴리스8020dca, 이번 단계 운영 deploy/DDL/provider inference/발굴 재개0. 미래 legacy image 시작 전0077 migration 필수.
+
+WT `/Users/jr/Desktop/projects/nomorevibe-pipeline-certified-wall`, branch `codex/pipeline-pr04c-certified-wall-20261016`, base통합 HEADbd82d7f12f5205c69ff28efdaaf79d5e1a6a1828. c1a feature commit/PR는 아직 없다. source/tests 소유권 A/B/C 반환·동결, root 전체 검증 완료. 기본 legacy/epoch1/contract0·새 consumer 비활성. 원본 `/Users/jr/Desktop/projects/nomorevibe` X branch는 push 금지, handoff만 동기화한다.
+
+## Modified files / key design decisions
+
+13파일: source5개 `lib/jobs/control.ts`, `lib/jobs/lease.ts`, `lib/db/replay-scope.ts`, `lib/operations/pipeline-replay-execution.ts`, `lib/operations/pipeline-replay-ledger.ts`; 단위2개 `tests/pipeline-replay-final-wall.test.ts`(NEW), `tests/db-replay-scope.test.ts`; 신규 integration2개 `pipeline-replay-certified-final-wall.test.ts`, `pipeline-replay-final-wall-authority.test.ts`; docs4개 handoff/delivery/신규 certified-final-wall 계획·검증. root가 Git과 docs 전담한다.
+
+최종 execution SHA9d3fe65e9e3146b1855c34947d4c49a3330a2c1f8085255ca881404343a2f1fd. 실제 성공한 legacy job DBwall 검사를 private raw TX ticket과 일회 TX-local challenge로 재검증·등록한다. caller JSON만으로 권한0. open→동기flushing→flushed→finalized→confirmed, callback→flush→session verify→finalWall→nativeCOMMIT→별도ack. 이미 잡은 job lock만 최종 raw DBclock/name/token 재조회하므로 run lock 뒤 새 job/domain lock0. proof0 heartbeat/claim/자기token해제/purejournal 유지, JobLeaseLostError identity 보존. item/result/domain/ownership/migration/profile/grants/증거버전/consumer/provider 변경0. 마지막 정책 검사≠물리COMMIT시각·외부종료증거.
+
+## Test commands and actual results
+
+- root whole DB session52482 **실제exit0**,180files2,112PASS/기존TODO1,465.61초. `TEST_DATABASE_URL=postgres://nomorevibe:nomorevibe@127.0.0.1:55504/nomorevibe_test PIPELINE_TEST_LOG_PREFIX=/tmp/nomorevibe-pr04c-wall-root-db node /tmp/nomorevibe-pr04c-wall-db-diagnostics-20261016.mjs`. full/locks 로그 `/tmp/nomorevibe-pr04c-wall-root-db-{full,locks}-20261016.*`. related48 먼저 실행한 같은 DB다.
+- root 최종unit280files2,928PASS9.43초, whole tsc/lint0(session90170), i18n/Python23/build/bundle0(session71247), typegen0. `/tmp/nomorevibe-pr04c-wall-root-{unit-final,tsc-final,lint-final,i18n,python,build,bundle}-20261016.log`; 기존vendorwarning1/br148.7/159.0/136.2KB한도내.
+- B actual postflush1FAIL/control1PASS/4.59s→동일2PASS/4.87s root driver/로그직접수용. C actual flushing1FAIL/19skip→동일focused1GREEN→최종20PASS29.92s. 원로그와 SHA·한계는 validation 문서에 보존. A finalunit53/lifecycle15PASS/정적0, root 전체최종source회귀 포함. root full source직접리뷰·B source/단위와A C585행교차리뷰 미해결P1/P2 0.
+- root55504 자기 candidate/document/vote/item/product/CDN/job/settings·replay schema/role/trigger/function/타연결0,3stage legacy1contract0/PUBLIC USAGEtrue CREATEfalse/timeout0·1s readback 실제0. `/tmp/nomorevibe-pr04c-wall-root-final-readback-20261016.log`. root와A55501/B55502/C55503 **4container 모두 STOP/exited0 실제확인**. 다른suitefixture/append-onlyaudit 삭제0. Dockerfree2.2GB/98%; forensic77/failed81/타사용자DB55445–55450/다른image/cache 보존.
+
+## Failed approaches / limits
+
+B 3sheadroom은 pinned1s locktimeout에 의한rollback이라 행동RED제외,500ms 실제healthy→runrowwait→expired로 수정했다. historicalfirstfixture의 actualAI2call1/final0이므로 생성된capacity_finalsrollback증명0. C 초기bigint/NULL·max1pool/endedTX fixture오류, inner runJob이assertion삼킨falsepositive는 최종근거제외; 정확한오류+innercompleted로수정했다. A 최초빈cleanup로그는증거아님, exec-i후실제readback확인. 자세한 원로그/실패와 pre/final source 구별은 validation참조. gate/timeout/품질완화0.
+
+## Remaining work / exact next commands
+
+1. frozen source/test와 docs 검토→최신main확인→13파일명시stage/commit→이branch만push/PR→필수CI→정상merge/mainCI·image확인. 원본Xbranch push금지. 현재remote main05cedd17직접확인.
+2. 다음 c1b는 **비활성 한 AI2 item lifecycle** 별도PR. A source계약 작성중, B transport계약과C test계약은 `/tmp/nomorevibe-pr04c1b-{transport,lifecycle-test}-contract-20261016.md` 읽기노트 완료. 새source/DB/운영변경0. 고정signature executeSecondReviewItem({secondReviewId,owner,signal?}),TTL90s/heartbeat15s,nonoverlap/currentrenewawait,실제transport정산전release0. unexpectedtransport/renewthrow는 원오류전파·writer/release/failure0,renewnull은 lossabort후기존writer liveCAS거절보존. 실제RED용 heartbeat0 executable scaffold→동일90s독립회귀뒤heartbeat구현. root새계획/WT/배타파일·DB를 먼저고정한다.
+3. c2 item B5 전체인증, PR05–17, provideridentity/강제상한/취소·실제30분baseline·2배·OracleDR 미완료. 소단위완료로전체goal을종료하지않는다.
+
+```sh
+cd /Users/jr/Desktop/projects/nomorevibe-pipeline-certified-wall
+git status --short --branch
+git diff --check
+gh api repos/JRVector9/nomorevibe/branches/main --jq .commit.sha
+# local gates/readback/STOP완료; 불필요한전체재실행0
+# frozen13files stage/commit후현재feature branch만push,PR/CI/normalmerge
+```
+
+---
+
 # 2026-10-16 — PR04b-2 root 전체 검증·readback/STOP 완료 / PR 제출 준비
 
 ## Current objective / completed work

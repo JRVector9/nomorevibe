@@ -65,11 +65,13 @@ function guardedClient(scope: Scope, transaction?: Transaction): postgres.Sql {
           if (ticket) await hooks.after(raw, ticket);
           await verifyReplayDatabaseSession(raw, scope.database);
           assertActive(scope, transaction);
+          if (ticket) await hooks.finalWall(raw, ticket);
+          assertActive(scope, transaction);
           return result;
         } finally {
           current.closing = true;
           for (const cancel of current.revoke) cancel(new Error("replay_transaction_closed"));
-          await Promise.allSettled([...current.running]);
+          if (current.running.size) await Promise.allSettled([...current.running]);
           current.active = false;
           scope.revoke.delete(revoke); transaction?.revoke.delete(revoke);
         }

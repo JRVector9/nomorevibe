@@ -95,6 +95,10 @@ export class ReplayLedger {
         ticket = await hooks?.before(tx);
         const result = await load(tx);
         await hooks?.after(tx, ticket);
+        if (hooks) {
+          await verifyReplayDatabaseSession(tx, this.database);
+          await hooks.finalWall(tx, ticket);
+        }
         return result;
       }) as T;
       committed = true;
