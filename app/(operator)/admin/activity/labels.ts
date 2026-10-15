@@ -19,6 +19,7 @@ export const ACTION_LABELS: Record<string, string> = {
   "audit-start": "감사 시작",
   "audit-cancel": "감사 중단",
   "product-ban": "제품 차단",
+  "product-auto-ban-uptime": "접속 실패 자동 내림",
   "product-unban": "제품 차단 해제",
   "intro-keep": "소개 그대로 둠",
   "intro-edit": "소개 고침",
@@ -104,7 +105,7 @@ export function targetLabel(target: string): { text: string; entity: boolean } {
 
 export const ACTION_GROUPS = {
   takedown: { label: "내리기·차단", actions: ["takedown-remove", "takedown-dismiss", "audit-remove", "audit-keep", "audit-start", "audit-cancel",
-    "product-ban", "product-unban", "published-second-ban", "published-second-keep", "repo-review-delist", "repo-review-keep", "ban-spam-campaign"] },
+    "product-ban", "product-auto-ban-uptime", "product-unban", "published-second-ban", "published-second-keep", "repo-review-delist", "repo-review-keep", "ban-spam-campaign"] },
   review: { label: "심사", actions: ["candidate-approve", "candidate-reject", "candidate-undo", "evidence-collect", "requeue-resolved", "manual-category",
     "requeue-evidence-gated", "requeue-rejected-under-new-policy", "requeue-rejected-under-held-rules", "reconsider-installable",
     "reconsider-star-auto", "reconsider-package", "reconcile-crawl-duplicate", "relabel-repo-deleted"] },

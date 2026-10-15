@@ -8,6 +8,7 @@ import {
   crawlDocuments,
   crawlCandidates,
   crawlSettings,
+  products,
   jobs,
   type FrontierEntry,
   type FrontierState,
@@ -23,7 +24,7 @@ import { assertJobLease, requestJob, withJobLeaseWrite, type JobLease } from "@/
 import { STALE_LOCK_MS } from "@/lib/jobs/lease";
 import { README_SAMPLE_VERSION } from "./readme";
 import type { ReadmeRefreshResult } from "./readme-refresh";
-import type { ProductTransaction } from "@/lib/domain/products/generation";
+import { lockProductGeneration, type ProductTransaction } from "@/lib/domain/products/generation";
 
 /** 크롤 파이프라인 데이터 접근 — 파이프라인 바깥에서 이 테이블들을 직접 만지지 않는다 */
 
@@ -401,12 +402,28 @@ export async function recordPublishedReadme(expected: CrawlDocument, lease: JobL
   });
 }
 
-export async function refreshTextSample(slug: string, textSample: string, lease?: JobLease): Promise<void> {
-  await withJobLeaseWrite(lease, tx => tx.execute(sql`
+export async function refreshTextSample(
+  slug: string, textSample: string, lease?: JobLease,
+  expected?: { id: number; url: string }, signal?: AbortSignal,
+): Promise<void> {
+  const write = (tx: ProductTransaction) => tx.execute(sql`
     update crawl_documents
        set page_meta = coalesce(page_meta, '{}'::jsonb) || jsonb_build_object('textSample', ${textSample}::text)
      where repo in (select repo from crawl_candidates where published_slug = ${slug})
-  `));
+  `);
+  if (!expected) {
+    await withJobLeaseWrite(lease, write);
+    return;
+  }
+  await db.transaction(async tx => {
+    if (!(await lockProductGeneration(tx, expected.id, slug))) return;
+    const [current] = await tx.select({ url: products.url }).from(products).where(eq(products.id, expected.id));
+    if (current.url !== expected.url || signal?.aborted) return;
+    await write(tx);
+    if (signal?.aborted) throw new DOMException("uptime cancelled", "AbortError");
+    if (lease) await assertJobLease(tx, lease);
+    if (signal?.aborted) throw new DOMException("uptime cancelled", "AbortError");
+  });
 }
 
 /**

@@ -3,6 +3,7 @@ import { safeFetch, readBodyCapped, fetchPage } from "@/lib/net/fetch";
 import { extractTextSample, metaRefreshTarget } from "@/lib/net/normalize";
 import { refreshTextSample } from "@/lib/crawl/repository";
 import { nextToCheck, recordPing, type PingTarget } from "@/lib/domain/products/health";
+import { autoBanUptimeProduct, nextUptimeAutoBanTargets } from "@/lib/domain/products/uptime-auto-ban";
 
 /**
  * 생존 확인 잡.
@@ -10,8 +11,8 @@ import { nextToCheck, recordPing, type PingTarget } from "@/lib/domain/products/
  * 등재된 제품이 아직 떠 있는지 본다. 죽은 링크가 목록에 남아 있으면 "직접 확인한 것만
  * 보여준다"는 말이 무의미해진다.
  *
- * 결과를 기록만 하고 목록을 건드리지 않는다 — 배포가 잠깐 흔들린 것과 서비스가 끝난 것을
- * 응답 코드만으로 가를 수 없다. 차단은 어드민이 정한다.
+ * 최근 연속 실패가 10회에 이르면 현재 제품·주소·관측을 다시 확인한 뒤 자동으로 내리고
+ * 이력을 남긴다. 기존 최근 적체도 같은 배치·예산 안에서 처리한다.
  *
  * 여는 김에 본문 앞부분도 담아 둔다. 판정 규칙이 본문을 보게 됐는데(설치 유도 아님)
  * 이미 발행된 것들은 그 값이 없던 시절에 수집됐다. 같은 주소를 어차피 여기서 여니
@@ -77,17 +78,25 @@ const BODY_BYTES = 256 * 1024;
 
 export async function pingProducts(ctx: JobContext<null>): Promise<JobOutcome<null>> {
   const capacity = uptimeCapacityConfig();
-  const targets = await nextToCheck(capacity.batch);
+  const write = oneAtATime();
+  let autoBanned = 0;
+  let swept = 0;
+  const backlog = await nextUptimeAutoBanTargets(capacity.batch);
+  for (const target of backlog) {
+    if (ctx.signal?.aborted || !ctx.hasBudget()) break;
+    swept++;
+    if (await write(() => autoBanUptimeProduct(target, ctx))) autoBanned++;
+  }
+  const targets = swept < capacity.batch && !ctx.signal?.aborted ? await nextToCheck(capacity.batch - swept) : [];
   if (targets.length === 0) {
-    ctx.log("uptime.idle", { checked: 0 });
-    return { done: true };
+    ctx.log(backlog.length ? "uptime.checked" : "uptime.idle", { checked: 0, autoBanned });
+    return { done: backlog.length === 0 };
   }
 
   let alive = 0;
   let down = 0;
   const errors: unknown[] = [];
   const lanes = byOrigin(targets);
-  const write = oneAtATime();
 
   /**
    * 한 건이 실패하면 새로 열지 않는다. 다만 이미 연 것은 끝까지 읽거나 끊고 기록한 뒤에
@@ -96,9 +105,9 @@ export async function pingProducts(ctx: JobContext<null>): Promise<JobOutcome<nu
   await Promise.all(Array.from({ length: Math.min(capacity.concurrency, lanes.length) }, async () => {
     for (let lane = lanes.shift(); lane; lane = lanes.shift()) {
       for (const target of lane) {
-        if (errors.length > 0 || !ctx.hasBudget()) return;
+        if (errors.length > 0 || ctx.signal?.aborted || !ctx.hasBudget()) return;
         try {
-          if (await ping(target, write, ctx.lease)) alive++;
+          if (await ping(target, write, ctx, () => { autoBanned++; })) alive++;
           else down++;
         } catch (error) {
           errors.push(error);
@@ -109,13 +118,13 @@ export async function pingProducts(ctx: JobContext<null>): Promise<JobOutcome<nu
   }));
   if (errors.length > 0) throw errors[0];
 
-  ctx.log("uptime.checked", { alive, down });
+  ctx.log("uptime.checked", { alive, down, autoBanned });
   // 한 바퀴를 다 돌았는지는 여기서 알 수 없다 — 오래된 것부터 계속 가져오면 그만이다
   return { done: false };
 }
 
 /** 한 제품을 열어 보고 기록한다. 살아 있으면 true */
-async function ping(target: PingTarget, write: ReturnType<typeof oneAtATime>, lease?: JobContext<null>["lease"]): Promise<boolean> {
+async function ping(target: PingTarget, write: ReturnType<typeof oneAtATime>, ctx: JobContext<null>, onBanned: () => void): Promise<boolean> {
   // GET이라 본문 스트림이 열린 채로 온다. 안 읽고 취소하지 않으면 연결이 풀로 돌아가지
   // 않고 버퍼가 남는다 — 어느 쪽이든 스트림을 반드시 닫는다.
   const startedAt = performance.now();
@@ -144,8 +153,10 @@ async function ping(target: PingTarget, write: ReturnType<typeof oneAtATime>, le
 
   const observedAt = new Date();
   await write(async () => {
-    await recordPing(target.slug, status, fetched ? latencyMs : null, observedAt, target.id, lease);
-    if (sample) await refreshTextSample(target.slug, sample, lease).catch(() => {});
+    if (ctx.signal?.aborted) return;
+    await recordPing(target.slug, status, fetched ? latencyMs : null, observedAt, target.id, ctx.lease, target.url, ctx.signal);
+    if (!up && await autoBanUptimeProduct(target, ctx)) onBanned();
+    if (sample) await refreshTextSample(target.slug, sample, ctx.lease, target, ctx.signal).catch(() => {});
   });
   return up;
 }

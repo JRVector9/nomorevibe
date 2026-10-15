@@ -15,8 +15,8 @@ import {
 /**
  * 제품 생존 확인.
  *
- * 재기만 한다. 지우거나 차단하지 않는다 — 배포가 잠깐 흔들린 것과 서비스가 끝난 것을
- * 응답 코드만으로 가를 수 없다. 차단은 어드민이 보고 정한다.
+ * 이 모듈은 관측만 기록한다. uptime 잡은 최근 연속 실패가 10회에 이르면 별도 정책으로
+ * 자동 내리고 감사 이력을 남긴다(uptime-auto-ban). 원시 관측과 일별 지표는 보존한다.
  *
  * 다만 DOWN_THRESHOLD회 연속 실패한 것은 공개 목록의 조건에서 빠진다(repository의 notDown).
  * 6시간 간격이라 하루 가까이 안 열렸다는 뜻이고, 그 주소를 목록에 두면 눌러도 아무 데도
@@ -69,6 +69,8 @@ export async function recordPing(
   observedAt = new Date(),
   expectedProductId?: number,
   lease?: JobLease,
+  expectedUrl?: string,
+  signal?: AbortSignal,
 ): Promise<void> {
   const alive = status >= 200 && status < 400;
   if (!Number.isFinite(observedAt.getTime())) throw new Error("invalid ping timestamp");
@@ -80,6 +82,21 @@ export async function recordPing(
   if (productId === null) throw new ProductGenerationChangedError();
 
   await withProductGeneration(slug, productId, async (tx) => {
+    if (signal?.aborted) return;
+    let resetStreak = false;
+    if (expectedUrl !== undefined) {
+      const [current] = await tx.select({ url: products.url, resetStreak: sql<boolean>`exists (
+        select 1 from ${productHealth} h where h.slug = ${products.slug}
+          and (h.checked_at < ${products.updatedAt} or h.down_since < ${products.updatedAt}
+            or (h.failures > 0 and h.down_since is null))
+      )` }).from(products).where(eq(products.id, productId));
+      // The request observed the old URL. Do not attach it to the replacement site's streak or daily totals.
+      if (current.url !== expectedUrl) return;
+      // Legacy health lacks a URL. A product edit after the streak began leaves its attribution unknown.
+      // The normal job starts a new streak; raw/historical recordPing callers keep their existing contract.
+      resetStreak = current.resetStreak;
+    }
+    if (signal?.aborted) return;
     await tx
       .insert(productHealth)
       .values({
@@ -96,11 +113,11 @@ export async function recordPing(
           checkedAt: observedAt,
           status,
           latencyMs: successfulLatency,
-          failures: alive ? sql`0` : sql`${productHealth.failures} + 1`,
+          failures: alive ? sql`0` : resetStreak ? sql`1` : sql`${productHealth.failures} + 1`,
           // 죽기 시작한 시각은 처음 실패한 때로 둔다 — 매번 갱신하면 얼마나 죽어 있었는지 잃는다
           downSince: alive
             ? sql`null`
-            : sql`coalesce(${productHealth.downSince}, ${observedAt.toISOString()}::timestamp)`,
+            : resetStreak ? observedAt : sql`coalesce(${productHealth.downSince}, ${observedAt.toISOString()}::timestamp)`,
         },
       });
     await tx.insert(productHealthDaily).values({
@@ -119,7 +136,9 @@ export async function recordPing(
         latencySamples: sql`${productHealthDaily.latencySamples} + ${successfulLatency === null ? 0 : 1}`,
       },
     });
+    if (signal?.aborted) throw new DOMException("uptime cancelled", "AbortError");
     if (lease) await assertJobLease(tx, lease);
+    if (signal?.aborted) throw new DOMException("uptime cancelled", "AbortError");
   });
 }
 

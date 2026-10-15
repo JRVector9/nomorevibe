@@ -29,7 +29,7 @@ export const INBOX_SECTIONS: Record<InboxKey, { title: string; hint: string; hre
     href: ACTION_LINKS.reviewAgreed, action: "심사 큐에서 확정" },
   audit: { title: "감사 거절", hint: "공개된 제품을 AI가 다시 보고 내리자고 한 것 — 열어 보고 내리거나 유지합니다.",
     href: AUDIT_TAB_HREF, action: "내릴 후보에서 처리" },
-  down: { title: "응답 없음", hint: "연속으로 열리지 않아 공개 목록에서 빠진 제품 — 끝난 서비스인지 보고 정합니다.",
+  down: { title: "응답 없음", hint: "연속 접속 실패로 공개 목록에서 빠진 제품입니다. 10회 이상이면 자동으로 내리고 작업 로그에 기록합니다.",
     href: ACTION_LINKS.productsDown, action: "제품 목록에서 보기" },
   intro: { title: "소개 확인", hint: "소개 검수가 근거로는 무엇인지 알 수 없다고 한 제품 — 페이지를 보고 소개를 고치거나 내립니다.",
     href: ACTION_LINKS.productsIntro, action: "제품 목록에서 보기" },

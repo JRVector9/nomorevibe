@@ -22,6 +22,7 @@ export function isBanReason(value: unknown): value is BanReason {
 }
 
 export function banReasonLabel(value: string): string {
+  if (value === "uptime_consecutive_failures") return "사이트 연속 접속 실패 10회 이상 · 자동 내림";
   // 감사로 내린 것은 사유 갈래를 함께 남긴다(product-audit.ts auditBanReason) — 'audit:shop' → '감사: 쇼핑몰·판매'
   const audit = /^audit:(\w+)$/.exec(value)?.[1];
   if (audit) return `감사: ${isAuditReasonCategory(audit) ? AUDIT_REASON_CATEGORIES[audit].label : audit}`;
