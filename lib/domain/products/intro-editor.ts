@@ -3,6 +3,7 @@ import { db } from "@/lib/db";
 import { productIntroChecks, products, productSearchProfiles, type IntroVerdict } from "@/lib/db/schema";
 import { lockProductGeneration } from "./generation";
 import { LIMITS } from "./schema";
+import { lockPipelineInputStages } from "@/lib/crawl/pipeline-stage-context";
 
 /**
  * 관리자 '소개 확인 필요'(검수 outcome = needs_editor)의 읽기와 '그대로 두기'(2026-10-08 UX 감사 ADM-23).
@@ -47,6 +48,7 @@ export async function editIntro(slug: string, line: string): Promise<{ before: s
   const tagline = line.trim();
   if (!tagline || tagline.length > LIMITS.tagline) return null;
   return db.transaction(async (tx) => {
+    await lockPipelineInputStages(tx);
     const [product] = await tx.select({ id: products.id, tagline: products.tagline, description: products.description, status: products.status })
       .from(products).where(eq(products.slug, slug));
     if (!product || (product.status !== "seeded" && product.status !== "verified")) return null;

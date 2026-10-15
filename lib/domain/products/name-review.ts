@@ -3,6 +3,7 @@ import { db } from "@/lib/db";
 import { operationsAudit, products } from "@/lib/db/schema";
 import { createMemo } from "@/lib/cache/memo";
 import { AUTOMATIC_NAME_SOURCES, reviewProductName, type NameReview } from "./display-name";
+import { lockPipelineInputStages } from "@/lib/crawl/pipeline-stage-context";
 
 /**
  * 이미 올라간 제품의 이름 확인(UX-33) — 관리자 '이름 확인 필요'와 백필 스크립트(scripts/normalize-product-names.ts)가 쓴다.
@@ -86,9 +87,12 @@ export async function applyNameChangesWithLog(changes: NameChange[], options: { 
 export async function applyNameChanges(changes: NameChange[]): Promise<NameChange[]> {
   const applied: NameChange[] = [];
   for (const change of changes) {
-    const updated = await db.update(products).set({ name: change.after, updatedAt: new Date() })
-      .where(and(eq(products.slug, change.slug), unclaimedPublic, eq(products.name, change.before)))
-      .returning({ id: products.id });
+    const updated = await db.transaction(async tx => {
+      await lockPipelineInputStages(tx);
+      return tx.update(products).set({ name: change.after, updatedAt: new Date() })
+        .where(and(eq(products.slug, change.slug), unclaimedPublic, eq(products.name, change.before)))
+        .returning({ id: products.id });
+    });
     if (updated.length) applied.push(change);
   }
   reviewMemo.clear();

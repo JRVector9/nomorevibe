@@ -1,11 +1,12 @@
 import { isDeepStrictEqual } from "node:util";
-import { assertJobLease, requestJob, type JobLease } from "@/lib/jobs/control";
+import { assertJobLeaseAtWallTime, requestJob, type JobLease } from "@/lib/jobs/control";
 import { emitPipelineEvent } from "@/lib/observability/review-pipeline";
 import { taglineEvidence, taglineHash } from "./tagline";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { crawlCandidates, crawlDocuments, crawlTaglines, type CrawlCandidate, type CrawlDocument, type CrawlTagline } from "@/lib/db/schema";
 import type { TaglineEvidenceSource } from "./tagline";
+import { lockPipelineInputStages } from "./pipeline-stage-context";
 
 /**
  * 지은 소개의 보관과 대기열.
@@ -61,6 +62,7 @@ type AutomaticTaglineResult =
 export async function recordTaglineResult(task: TaglineTask, lease: JobLease, result: AutomaticTaglineResult) {
   let request: Awaited<ReturnType<typeof requestJob>> | undefined;
   const recorded = await db.transaction(async tx => {
+    await lockPipelineInputStages(tx);
     const [candidate] = await tx.select().from(crawlCandidates).where(eq(crawlCandidates.id, task.candidate.id)).for("update");
     const [document] = await tx.select().from(crawlDocuments).where(eq(crawlDocuments.id, task.document.id)).for("share");
     const [written] = await tx.select().from(crawlTaglines).where(eq(crawlTaglines.repo, task.candidate.repo)).for("update");
@@ -98,7 +100,7 @@ export async function recordTaglineResult(task: TaglineTask, lease: JobLease, re
       request = await requestJob("crawl-publish", tx);
     }
     // Scheduler locks publish before tagline. Check ownership last, rolling everything back on loss.
-    await assertJobLease(tx, lease);
+    await assertJobLeaseAtWallTime(tx, lease);
     return { stored: true, released };
   });
   if (recorded.stored) emitPipelineEvent("committed", { stage: "text", candidateId: task.candidate.id, job: lease.name, state: result.kind });
@@ -114,13 +116,16 @@ export async function recordTaglineResult(task: TaglineTask, lease: JobLease, re
  */
 export async function writeTaglineByHand(row: { repo: string; tagline: string; by: string; documentAt: Date }): Promise<void> {
   const line = row.tagline.trim().slice(0, 200);
-  await db.insert(crawlTaglines).values({
-    repo: row.repo, tagline: line, source: "page", model: "", sourceHash: "",
-    documentAt: row.documentAt, attempts: 0, errorCode: null, retryAt: null, writtenBy: row.by, updatedAt: sql`now()`,
-  }).onConflictDoUpdate({
-    target: crawlTaglines.repo,
-    set: { tagline: line, source: "page", model: "", sourceHash: "", documentAt: row.documentAt,
-      errorCode: null, retryAt: null, writtenBy: row.by, updatedAt: sql`now()` },
+  await db.transaction(async tx => {
+    await lockPipelineInputStages(tx);
+    await tx.insert(crawlTaglines).values({
+      repo: row.repo, tagline: line, source: "page", model: "", sourceHash: "",
+      documentAt: row.documentAt, attempts: 0, errorCode: null, retryAt: null, writtenBy: row.by, updatedAt: sql`now()`,
+    }).onConflictDoUpdate({
+      target: crawlTaglines.repo,
+      set: { tagline: line, source: "page", model: "", sourceHash: "", documentAt: row.documentAt,
+        errorCode: null, retryAt: null, writtenBy: row.by, updatedAt: sql`now()` },
+    });
   });
 }
 

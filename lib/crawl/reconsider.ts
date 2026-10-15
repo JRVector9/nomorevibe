@@ -9,6 +9,7 @@ import { factsFromRepoMeta, judge, pageFactsFromDocument } from "./rules";
 import { getSettings, mergeWithDefaults } from "./settings";
 import { lockFrontierIdentity } from "./repository";
 import { findRepositoryProduct, lockProductRepository } from "@/lib/domain/products/repository-identity";
+import { lockPipelineInputStages } from "./pipeline-stage-context";
 
 type Entry = { repo: string; id: number; revision: string; stars: number; previousReason: string;
   previousState?: "rejected" | "needs_review" | "approved" };
@@ -77,6 +78,7 @@ export async function applyReconsideration(plan: ReconsiderationPlan, actor: str
   const queued: string[] = [], changed: string[] = [];
   for (const entry of plan.entries) {
     const applied = await db.transaction(async tx => {
+      await lockPipelineInputStages(tx);
       await lockProductRepository(tx, `https://github.com/${entry.repo}`);
       const [candidate] = await tx.select().from(crawlCandidates).where(eq(crawlCandidates.id, entry.id)).for("update");
       const [document] = await tx.select().from(crawlDocuments).where(eq(crawlDocuments.repo, entry.repo)).for("update");
