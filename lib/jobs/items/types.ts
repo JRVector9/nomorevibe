@@ -25,7 +25,7 @@ const firstBinding = z.object({ stage: z.literal("ai1"), candidateId: positive, 
 const secondBinding = z.object({ stage: z.literal("ai2"), secondReviewId: positive, candidateId: positive,
   source: z.discriminatedUnion("kind", [
     z.object({ kind: z.literal("first_attempt"), firstAttemptId: positive }).strict(),
-    z.object({ kind: z.literal("published"), slug: identity(80) }).strict(),
+    z.object({ kind: z.literal("published"), slug: identity(80), productId: positive }).strict(),
   ]), ...reviewBinding, generationKey: sha64, vote: positive, fallbackForId: positive.nullable() }).strict();
 
 /** Structural identity only: current source, human decisions and model independence remain domain checks (PR03/04). */
