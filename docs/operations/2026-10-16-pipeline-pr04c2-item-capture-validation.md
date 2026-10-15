@@ -31,3 +31,5 @@ C 최종377행 SHA `5486855bf9c2d047bff0b35d12ae53927a18817aed71870dfd3b339d4fbe
 전용55511/55513 모두 검증·정상STOP 뒤 root가 metadata `/tmp/nomorevibe-pr04c2-capture-completed-dbs-before-cleanup-20261016.json`를보존하고각volume이정확owncontainer에만연결되었음을확인해두container와전용volume만제거(actualexit0)했다. `/tmp/nomorevibe-pr04c2-capture-owned-db-storage-cleanup-20261016.log`. 최초anonymous-only검사에서C의명명volume이달라assert로중단했으며삭제0이었다. 명명volume의정확이름/단독연결을검증한뒤진행했고다른DB/image/cache/forensic은보존했다.
 
 PR 제출·필수CI전체·정상main병합/mainCI는남아있다. 별도fixture PR446/CI38803582254 결과를확인하고최신main을정상통합한다.
+
+PR446 필수CI38803582254 전체SUCCESS 뒤 실제main1fa994d2로정상병합됐다. capture feature84119d4에main을정상통합하며root소유handoff/delivery문서충돌만최신결과를보존해해결했다. 기존productionsource변경0이며통합한fixture0524·계획/validation을그대로유지한다. mainCI38804670621/최종관련회귀·이capture PR CI는별도확인한다.
