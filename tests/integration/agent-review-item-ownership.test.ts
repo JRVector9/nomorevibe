@@ -142,8 +142,8 @@ async function source(cachedReadme = true) {
 const tick = () => runJob("crawl-agent-review", reviewCrawlCandidates);
 const candidateRow = (id: number) => db.select().from(crawlCandidates).where(eq(crawlCandidates.id, id));
 const documentRow = (id: number) => db.select().from(crawlDocuments).where(eq(crawlDocuments.id, id));
-const attempts = (id: number) => db.select().from(crawlReviewAttempts).where(eq(crawlReviewAttempts.candidateId, id));
-const nextJobs = () => db.select().from(jobs).where(inArray(jobs.name, ["second-review", "crawl-publish"]));
+const attempts = (id: number) => db.select().from(crawlReviewAttempts).where(eq(crawlReviewAttempts.candidateId, id)).orderBy(crawlReviewAttempts.id);
+const nextJobs = () => db.select().from(jobs).where(inArray(jobs.name, ["second-review", "crawl-publish"])).orderBy(jobs.name);
 const approve: ReviewOutcome = { decision: "approve", confidence: 0.99, reason: "A deployed task tracker", evidenceIds: ["product"] };
 const owner = { instanceId: "pr03b-independent-item", bootId: "00000000-0000-4000-8000-000000000074" };
 type Context = Awaited<ReturnType<typeof source>>;
