@@ -20,6 +20,7 @@ import type { JobContext } from "@/lib/jobs/runner";
 import { claimItemLease, lockItemStage } from "@/lib/jobs/items/repository";
 import { createReviewInput, REVIEW_PROMPT_VERSION, REVIEW_RULES_VERSION } from "@/lib/crawl/agent-review-contract";
 import { mergeWithDefaults } from "@/lib/crawl/settings";
+import { loadReviewInput, ReviewApprovalChangedError } from "@/lib/crawl/agent-review-repository";
 import type { JobLease } from "@/lib/jobs/control";
 import { ensureSchema, TEST_DATABASE_URL } from "./setup";
 
@@ -30,6 +31,7 @@ const blocker = postgres(TEST_DATABASE_URL, { max: 1, prepare: false, onnotice: 
 const observer = postgres(TEST_DATABASE_URL, { max: 1, prepare: false, onnotice: () => {},
   connection: { application_name: "pr03c-product-stage-observer", statement_timeout: 8_000 } });
 let originalJobs: Record<string, unknown>[] = [];
+let originalSettings: Record<string, unknown>[] = [];
 let originalStages: (typeof pipelineStageModes.$inferSelect)[] = [];
 const foreignSlug = `pr03c-foreign-${randomUUID().slice(0, 8)}`, foreignRepo = `pr03c-foreign/${foreignSlug}`;
 let foreignProduct: typeof products.$inferSelect;
@@ -72,6 +74,8 @@ beforeAll(async () => {
   ensureSchema();
   originalJobs = (await db.select({ row: sql<Record<string, unknown>>`to_jsonb(${jobs})` })
     .from(jobs).where(inArray(jobs.name, jobNames)).orderBy(jobs.name)).map(({ row }) => row);
+  originalSettings = (await db.select({ row: sql<Record<string, unknown>>`to_jsonb(${crawlSettings})` })
+    .from(crawlSettings).where(eq(crawlSettings.id, 1))).map(({ row }) => row);
   originalStages = await db.select().from(pipelineStageModes);
   [foreignProduct] = await db.insert(products).values({ ...values(), slug: foreignSlug, url: `https://${foreignSlug}.github.io`,
     repoUrl: `https://github.com/${foreignRepo}` }).returning();
@@ -101,6 +105,11 @@ afterAll(async () => {
       SELECT * FROM jsonb_populate_recordset(NULL::jobs, ${JSON.stringify(originalJobs)}::text::jsonb)`);
     expect((await db.select({ row: sql<Record<string, unknown>>`to_jsonb(${jobs})` }).from(jobs)
       .where(inArray(jobs.name, jobNames)).orderBy(jobs.name)).map(({ row }) => row)).toEqual(originalJobs);
+    await db.delete(crawlSettings).where(eq(crawlSettings.id, 1));
+    if (originalSettings.length) await db.execute(sql`INSERT INTO crawl_settings
+      SELECT * FROM jsonb_populate_recordset(NULL::crawl_settings, ${JSON.stringify(originalSettings)}::text::jsonb)`);
+    expect((await db.select({ row: sql<Record<string, unknown>>`to_jsonb(${crawlSettings})` }).from(crawlSettings)
+      .where(eq(crawlSettings.id, 1))).map(({ row }) => row)).toEqual(originalSettings);
     await db.delete(crawlCandidates).where(eq(crawlCandidates.repo, foreignRepo));
     await db.delete(crawlDocuments).where(eq(crawlDocuments.repo, foreignRepo));
     await db.delete(products).where(eq(products.slug, foreignSlug));
@@ -391,12 +400,26 @@ function spamContext(productId: number, lease: JobLease): JobContext<SpamRescanC
   return { cursor: { version: SPAM_DETECTOR_VERSION, afterId: productId - 1, idleUntil: null },
     lease, save: async () => {}, hasBudget: () => true, log: () => {} };
 }
-async function publicationFixture() {
+async function publicationFixture(approved = true) {
+  // Exercise real first-review enforcement with a current approval. Do not inherit
+  // another suite's reviewer settings or bypass the publication gate for lease tests.
+  const settings = mergeWithDefaults({ reviewMode: "enforce",
+    firstReview: { provider: "claude-cli", model: "pr03c-test-model" }, secondReview: { enabled: false } });
+  await db.insert(crawlSettings).values({ id: 1, values: settings }).onConflictDoUpdate({
+    target: crawlSettings.id, set: { values: settings } });
   const candidate = await seedCandidate();
   const [document] = await db.insert(crawlDocuments).values({ repo, productUrl: candidate.productUrl, pageStatus: 200,
+    fetchedAt: sql`(clock_timestamp() at time zone 'UTC') - interval '1 second'`,
     repoMeta: {}, pageMeta: { title: "Project manager", description: "A usable project manager" } }).returning();
-  const [settings] = await db.select().from(crawlSettings).where(eq(crawlSettings.id, 1));
-  return { candidate, document, settings: mergeWithDefaults(settings?.values), slug, scanId: null };
+  const input = await loadReviewInput(candidate, document, settings);
+  if (approved) await db.insert(crawlReviewAttempts).values({ candidateId: candidate.id,
+    kind: "automatic", state: "succeeded", inputHash: input.inputHash, policyHash: input.policyHash,
+    sourceRevisionHash: input.sourceRevisionHash, snapshot: input.snapshot, source: input.source,
+    promptVersion: REVIEW_PROMPT_VERSION, rulesVersion: REVIEW_RULES_VERSION,
+    provider: "claude-cli", model: "pr03c-test-model", attemptNumber: 1,
+    outcome: { decision: "approve", reason: "Product description confirmed", evidenceIds: ["product"] },
+    validUntil: input.validUntil, startedAt: document.fetchedAt, completedAt: document.fetchedAt });
+  return { candidate, document, settings, slug, scanId: null };
 }
 
 it("rejects a publication failure when its lease expires during the stage wait", async () => {
@@ -444,6 +467,14 @@ it("rejects normal publication after a post-callback generation wait expires its
   expect((await db.select().from(crawlCandidates).where(eq(crawlCandidates.id, input.candidate.id)))[0]).toEqual(input.candidate);
   expect(await db.select().from(productRefreshRequests).where(eq(productRefreshRequests.slug, slug))).toEqual([]);
   expect(await db.select().from(jobs).where(eq(jobs.name, "product-evidence-refresh"))).toEqual([]);
+});
+it("still rejects publication without a current first-review approval", async () => {
+  const input = await publicationFixture(false), publisher = await workerLease("crawl-publish", false);
+  await expect(productRepository.insert(values(), tx => guardPublication(tx, { ...input, lease: publisher }), publisher))
+    .rejects.toBeInstanceOf(ReviewApprovalChangedError);
+  expect(await productRepository.findBySlug(slug)).toBeUndefined();
+  expect((await db.select().from(crawlCandidates).where(eq(crawlCandidates.id, input.candidate.id)))[0]).toEqual(input.candidate);
+  expect(await db.select().from(productRefreshRequests).where(eq(productRefreshRequests.slug, slug))).toEqual([]);
 });
 it("keeps healthy worker-authorized product writes working", async () => {
   const input = await publicationFixture(), publisher = await workerLease("crawl-publish", false);
