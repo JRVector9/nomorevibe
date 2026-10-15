@@ -4,6 +4,7 @@ import type postgres from "postgres";
 import { logger } from "@/lib/observability/logger";
 import { createDbClient, dbPoolConfig } from "./pool";
 import { createReplicaRouter, REPLICA_LAG_QUERY } from "./replica";
+import { currentReplayDb } from "./replay-scope";
 import * as schema from "./schema";
 
 type Db = ReturnType<typeof drizzle<typeof schema>>;
@@ -50,7 +51,9 @@ const replicaScope = new AsyncLocalStorage<Db>();
 /** db.query.* / db.insert(...) 등을 첫 접근 시점에 초기화해서 넘긴다 — onReplica 안에서는 복제본을 */
 export const db = new Proxy({} as Db, {
   get(_target, prop, receiver) {
-    return Reflect.get(replicaScope.getStore() ?? getDb(), prop, receiver);
+    const replayDb = currentReplayDb();
+    return replayDb ? Reflect.get(replayDb, prop, replayDb)
+      : Reflect.get(replicaScope.getStore() ?? getDb(), prop, receiver);
   },
 });
 
@@ -66,10 +69,12 @@ const router = createReplicaRouter<Db>({
 
 /** 익명 공개 읽기만 복제본에서 — 안 되면 주 DB 로(lib/db/replica.ts) */
 export function onReplica<T>(load: () => Promise<T>): Promise<T> {
+  if (currentReplayDb()) return load();
   return router.read(load);
 }
 
 /** 복제본 안에서 이 읽기만 주 DB 로 — 복제본이 아직 갖추지 못한 것(확장 등)을 읽을 때 */
 export function onPrimary<T>(load: () => Promise<T>): Promise<T> {
+  if (currentReplayDb()) return load();
   return replicaScope.exit(load);
 }
