@@ -1,3 +1,12 @@
+# 2026-10-16 — capture 최종 main 회귀18PASS / 제출 준비·combined 배타 병렬 착수
+
+현재capture HEAD ee6bc242는 actualmain1fa994d2/PR446정상병합을통합했다. 새55514의최종관련3files18PASS7.74s/actualexit0와전체raw·권한·원stage·함수/trigger baseline동일·STOP/exited0/OOMfalse를root가원로그직접확인했다. `/tmp/nomorevibe-pr04c2-capture-merge-c-{related18,final-readback,stop}-20261016.log`. 원source/driver동일이며최종root문서commit후이feature만push/PR/필수CI전체→normalmerge/mainCI가남았다. 첫JIT-onreadback가정오류는기능RED제외, repository0058 jitoff를추가변경없이보존했다. 55514는STOP상태보존/root정확정리대기다.
+
+다음WT `/Users/jr/Desktop/projects/nomorevibe-pipeline-combined-capture`, branch codex/pipeline-pr04c2-combined-capture-20261016/baseee6bc24/depsclone·root nexttypegen actual0. root고정계획 docs/superpowers/plans/2026-10-16-pipeline-pr04c2-combined-capture.md와새validation을작성했고A/B/C에배타배정했다. A NEW combinedcapture module+primaryunit, B NEW adversarialunit, C NEW integration+fresh55515(portunusedroot확인)/pinnedPG17/loopbackdummy. A runnableSQL+strict rawbaseline/actualprimaryRED→동결→B/C samebaselineactualbehaviorRED/control→root수용뒤A해제순서를지킨다. 기존readiness/v1/profile/entry/권한byte0·itemreplay차단유지. 현재새PASS는아직없다. rootdocs4/Git/리뷰만소유.
+
+현재전체goal active/운영미적용/2배·실30분providerbaseline·OracleDR미완료/원본X branchpush금지. 다음명령은capture에서 git diff --check, git status --short --branch 후문서명시commit/push/PR; combined에서A/B/C동결SHA·원log/actualexit를읽고수용한다.
+
+---
 # 2026-10-16 — PR446 병합·capture 최신 main 통합
 
 PR446 필수CI38803582254 모든check SUCCESS→정상squash merge **main1fa994d2d72c70d8e73bbe021201d0de3d3eb708**. mainCI38804670621 진행중/image미확인. capture localfeature **84119d4**를commit하고actualmain을정상merge했다. 충돌은root소유handoff/delivery 두문서뿐이며capture최신검증·진행표를유지하고PR446main/CI상태를반영했다. main의fixture최종0524와신규plan/validation은그대로통합했고기존productionsource변경0. 합친최종fixture/capture관련회귀후featurepush/PR필수CI를확인한다. originalX branchpush금지/운영미적용/전체goal active.

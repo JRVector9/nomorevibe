@@ -33,3 +33,9 @@ C 최종377행 SHA `5486855bf9c2d047bff0b35d12ae53927a18817aed71870dfd3b339d4fbe
 PR 제출·필수CI전체·정상main병합/mainCI는남아있다. 별도fixture PR446/CI38803582254 결과를확인하고최신main을정상통합한다.
 
 PR446 필수CI38803582254 전체SUCCESS 뒤 실제main1fa994d2로정상병합됐다. capture feature84119d4에main을정상통합하며root소유handoff/delivery문서충돌만최신결과를보존해해결했다. 기존productionsource변경0이며통합한fixture0524·계획/validation을그대로유지한다. mainCI38804670621/최종관련회귀·이capture PR CI는별도확인한다.
+
+## 최신 main 통합 후 관련 회귀
+
+HEAD ee6bc242에서 전용 새55514/pinnedPG17로 fixture2+capture9+state7 **3files18PASS / total7.74s / tests6.66s / actualexit0**. `/tmp/nomorevibe-pr04c2-capture-merge-c-related18-20261016.log`. expired negative의 job_lease_lost 로그는 예상 경계이며 test 실패/timeout은0이다. production/capture/원driver SHA는 그대로다. 전체raw·원stage timestamp·PUBLIC/effectiveACL·roleconfig·함수OID/정의·trigger 정의가 baseline과 일치하고 원stage3/visitrow1 외 행0·replay role/schema/guard/columnACL/타연결0을 확인했다. STOP/exited0/OOMfalse. `/tmp/nomorevibe-pr04c2-capture-merge-c-{final-readback,stop}-20261016.log`. root가 원로그/최종summary를 직접 읽었다.
+
+최초 readback이 PostgreSQL JIT-on을 기대해 exit1이었으나 저장소 migration0058이 database jit=off를 설정하는 것을 확인했다. 별도 ALTER/env/timeout 변경은 수행하지 않았으며 기대를 실제 repository baseline에 맞춰 재확인했다. 이 가정 오류는 기능RED가 아니다. 최종 jitoff/source=database·timeout0/1s/0과 원raw를 그대로 보존했다.
