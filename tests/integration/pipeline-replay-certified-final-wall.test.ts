@@ -36,6 +36,31 @@ let serial = 0, initialized = false;
 let initial: unknown, foreignBaseline: unknown;
 let originalSettings: unknown[] = [], originalStages: unknown[] = [];
 let originalJobs: { name: string }[] = [], originalObservations: { key: string }[] = [];
+const pendingExercises = new Set<Promise<unknown>>(), unreleasedProfiles = new Set<string>();
+
+function phaseTimer(expire: boolean) {
+  const started = performance.now();
+  let entries = 0;
+  return async function phase<T>(name: string, load: () => Promise<T>): Promise<T> {
+    const at = performance.now();
+    const log = (step: "start" | "settled") => {
+      if (entries++ < 64) console.info("certified-final-wall-phase", JSON.stringify({ expire, phase: name, step,
+        elapsedMs: Math.round(performance.now() - started), phaseMs: Math.round(performance.now() - at) }));
+    };
+    log("start");
+    try { return await load(); }
+    finally { log("settled"); }
+  };
+}
+
+async function settleExercises(): Promise<unknown[]> {
+  const started = performance.now(), pending = [...pendingExercises];
+  const results = await Promise.allSettled(pending);
+  for (const work of pending) pendingExercises.delete(work);
+  console.info("certified-final-wall-drain", JSON.stringify({ exercises: pending.length,
+    unreleasedProfiles: unreleasedProfiles.size, elapsedMs: Math.round(performance.now() - started) }));
+  return results.flatMap(result => result.status === "rejected" ? [result.reason] : []);
+}
 
 function policy(): CrawlSettings {
   return { ...structuredClone(DEFAULT_CRAWL_SETTINGS), enabled: true, reviewMode: "enforce",
@@ -104,23 +129,31 @@ beforeEach(async () => {
   await admin`UPDATE pipeline_stage_modes SET mode='legacy',draining_from=NULL,epoch=1,writer_contract_version=0`;
 });
 afterEach(async () => {
-  await cleanRows(); await restoreManaged();
-  expect(await wholeSnapshot()).toEqual(foreignBaseline);
+  // Vitest's test timeout does not settle the original async exercise. Its
+  // profile release must finish before any source/raw fixture restoration.
+  const errors = await settleExercises();
+  if (unreleasedProfiles.size) errors.push(new Error("pr04c_final_wall_profile_not_released"));
+  else {
+    try { await cleanRows(); await restoreManaged(); expect(await wholeSnapshot()).toEqual(foreignBaseline); }
+    catch (error) { errors.push(error); }
+  }
+  if (errors.length) throw new AggregateError(errors, "pr04c_final_wall_after_each_failed", { cause: errors[0] });
 });
 afterAll(async () => {
-  const errors: unknown[] = [];
+  const errors = await settleExercises();
   const finish = async (load: () => Promise<unknown>) => { try { await load(); } catch (error) { errors.push(error); } };
-  if (initialized) {
+  if (unreleasedProfiles.size) errors.push(new Error("pr04c_final_wall_profile_not_released"));
+  else if (initialized) {
     await finish(cleanRows); await finish(restoreManaged);
     await finish(async () => { expect(await wholeSnapshot()).toEqual(foreignBaseline); });
   }
-  if (initial !== undefined) {
+  if (!unreleasedProfiles.size && initial !== undefined) {
     await finish(() => cleanRows(foreignRepo));
     await finish(async () => { await db.delete(jobs).where(eq(jobs.name, sentinelName)); });
     await finish(async () => { expect(await wholeSnapshot()).toEqual(initial); });
   }
   await finish(() => admin.end({ timeout: 3 })); await finish(() => blocker.end({ timeout: 3 }));
-  if (errors.length) throw new AggregateError(errors, "pr04c_final_wall_cleanup_failed");
+  if (errors.length) throw new AggregateError(errors, "pr04c_final_wall_cleanup_failed", { cause: errors[0] });
 });
 
 async function fixture(repo = `${prefix}candidate-${++serial}`) {
@@ -163,8 +196,15 @@ async function writerSnapshot(run: ReplayRun, id: number) {
   return row.value;
 }
 
-async function exercise(expire: boolean) {
-  const value = await fixture(), reference = new Date(), input = value.input;
+function exercise(expire: boolean) {
+  const work = exerciseBody(expire);
+  pendingExercises.add(work);
+  return work;
+}
+
+async function exerciseBody(expire: boolean) {
+  const phase = phaseTimer(expire);
+  const value = await phase("fixture", () => fixture()), reference = new Date(), input = value.input;
   const manifest: CapacityManifest = { version: 1, runId: `pr04c-wall-${randomUUID()}`, revision: "2fb960a",
     mode: "fixtures", cacheMode: "cold", referenceTime: reference.toISOString(), startedAt: reference.toISOString(),
     endedAt: new Date(+reference + 10_000).toISOString(), inputPolicyHash: input.policyHash,
@@ -175,20 +215,21 @@ async function exercise(expire: boolean) {
     inputs: [{ candidateId: value.candidate.id, inputHash: input.inputHash, sourceRevisionHash: input.sourceRevisionHash,
       readyAt: reference.toISOString(), stratum: "new", reReview: false }],
     limits: { maxCalls: 4, maxTokens: 400, perCallTokenUpperBound: 100, maxDurationMs: 120_000, concurrency: 1 } };
-  const profile = await getReplayHandlerIdentityPath();
+  unreleasedProfiles.add(manifest.runId);
+  const profile = await phase("profile.provision", () => getReplayHandlerIdentityPath());
   let database: Awaited<ReturnType<typeof openVerifiedReplayHandlerDatabase>> | undefined;
   let run: ReplayRun | undefined, ledger: ReplayLedger | undefined;
   let before: Awaited<ReturnType<typeof writerSnapshot>> | undefined, after: typeof before;
   let writerError: unknown, writerResult: unknown, blockerProof: unknown;
-  let callbackError: unknown;
+  let callbackError: unknown, exerciseError: unknown, admissionClosed = false;
   try {
-    database = await openVerifiedReplayHandlerDatabase(profile.identityPath, {}); ledger = new ReplayLedger(database);
+    database = await phase("database.open", () => openVerifiedReplayHandlerDatabase(profile.identityPath, {})); ledger = new ReplayLedger(database);
     const inputs = [{ candidateId: value.candidate.id, input }];
-    manifest.initialStateHash = (await ledger.previewInitialState(manifest, inputs)).initialStateHash;
-    run = await ledger.prepareCertified(manifest, inputs, { runner: { jobs: ["second-review"], budgetMs: 110_000 }, quality: null });
-    await ledger.start(run);
+    manifest.initialStateHash = (await phase("initial.preview", () => ledger!.previewInitialState(manifest, inputs))).initialStateHash;
+    run = await phase("run.prepare", () => ledger!.prepareCertified(manifest, inputs, { runner: { jobs: ["second-review"], budgetMs: 110_000 }, quality: null }));
+    await phase("run.start", () => ledger!.start(run!));
     const replay = run, authenticDatabase = database;
-    const result = await withReplayExecutionScope(replay, () => withReplayDatabaseScope(profile.identityPath, async () => {
+    const result = await phase("execution.runJob", () => withReplayExecutionScope(replay, () => withReplayDatabaseScope(profile.identityPath, async () => {
       assertReplayDatabaseScopeIdentity(authenticDatabase);
       return withReviewReplayContext({ referenceTime: reference }, () => withReplayFinalScope(replay, () =>
         withReviewFixtureTransport({ ledger: ledger!, run: replay, inputs, fullReviewPolicyHash: manifest.fullReviewPolicyHash,
@@ -197,11 +238,11 @@ async function exercise(expire: boolean) {
           receipt: { inputTokens: 8, outputTokens: 2 } }) }, () => runJob<null>("second-review", async ctx => {
           try {
           if (!ctx.lease) throw new Error("actual_second_review_job_missing");
-          const claim = await admitLegacySecondReview(value.vote.id, ctx.lease);
+          const claim = await phase("job.admit", () => admitLegacySecondReview(value.vote.id, ctx.lease!));
           if (claim.kind !== "admitted") throw new Error(`actual_second_review_admission_${claim.kind}`);
-          const answer = await dispatchReviewFixtureCall({ stage: "second", candidateId: value.candidate.id,
+          const answer = await phase("fixture.dispatch", () => dispatchReviewFixtureCall({ stage: "second", candidateId: value.candidate.id,
             firstAttemptId: value.first.id, secondReviewId: value.vote.id, generationKey: value.vote.generationKey,
-            vote: value.vote.id, provider: "abcllm", model: "second-model" }, input, { signal: ctx.signal });
+            vote: value.vote.id, provider: "abcllm", model: "second-model" }, input, { signal: ctx.signal }));
           if (!answer?.ok) throw new Error("actual_second_review_fixture_success_missing");
           const executor = currentReplayDb();
           if (!executor) throw new Error("actual_replay_executor_missing");
@@ -217,7 +258,7 @@ async function exercise(expire: boolean) {
           let anchoredClock: { locked_at: string; expires_at: string; healthy: boolean } | undefined;
           let interceptedTransactions = 0;
           try {
-            const holderPid = await Promise.race([entered.promise, holding.then(() => { throw new Error("run holder ended before barrier"); })]);
+            const holderPid = await phase("holder.acquire", () => Promise.race([entered.promise, holding.then(() => { throw new Error("run holder ended before barrier"); })]));
             before = await writerSnapshot(replay, value.candidate.id);
             // Unlike the original committed 500ms fixture, anchor this test's
             // headroom after the real writer callback, in that same guarded TX.
@@ -237,8 +278,8 @@ async function exercise(expire: boolean) {
               return written;
             }, config);
             Object.defineProperty(executor, "transaction", { configurable: true, writable: true, value: anchoredTransaction });
-            writing = recordSecondReview({ receipt: claim.receipt, result: { ok: true, ...answer.outcome,
-              confidence: answer.outcome.confidence ?? null, provider: "abcllm", model: "second-model" } })
+            writing = phase("writer.record", () => recordSecondReview({ receipt: claim.receipt, result: { ok: true, ...answer.outcome,
+              confidence: answer.outcome.confidence ?? null, provider: "abcllm", model: "second-model" } }))
               .then(result => { writerResult = result; }, error => { writerError = error; });
             let waiters: postgres.Row[] = [];
             await expect.poll(async () => {
@@ -283,15 +324,17 @@ async function exercise(expire: boolean) {
           return { done: true };
           } catch (error) { if (error !== writerError) callbackError = error; throw error; }
         }, { budgetMs: 110_000 }))));
-    }));
+    })));
     if (callbackError) {
       console.info("certified-final-wall-callback-error", { callbackError, writerError, writerResult, blockerProof, result });
       throw callbackError;
     }
     if (!before || !after) throw new Error(`certified_writer_snapshot_missing:${JSON.stringify(result)}`);
-    await ledger.closeAdmission(replay); await ledger.fenceWriters(replay);
-    await ledger.seal(replay, replayQuiescenceProof(replay));
-    const artifact = await readSealedReplayArtifact(database, replay.runId);
+    await phase("run.closeAdmission", () => ledger!.closeAdmission(replay));
+    admissionClosed = true;
+    await phase("run.fenceWriters", () => ledger!.fenceWriters(replay));
+    await phase("run.seal", () => ledger!.seal(replay, replayQuiescenceProof(replay)));
+    const artifact = await phase("artifact.readback", () => readSealedReplayArtifact(database!, replay.runId));
     console.info("certified-final-wall-evidence", JSON.stringify({ expire, blockerProof, writerResult,
       writerError: writerError instanceof Error ? { name: writerError.name, message: writerError.message,
         code: "code" in writerError ? writerError.code : undefined } : writerError,
@@ -300,9 +343,20 @@ async function exercise(expire: boolean) {
       after: { vote: after.votes[0].status, outbox: after.outbox.map((row: { requested_version: number }) => row.requested_version),
         packets: after.packets.length, changes: after.changes.length, events: after.events.length, head: after.head.seq } }));
     return { before, after, writerError, writerResult, blockerProof, result, artifact, candidateId: value.candidate.id };
-  } finally {
-    try { if (ledger && run) await ledger.drain(run).catch(() => {}); }
-    finally { try { await database?.close(); } finally { await profile.release(); } }
+  } catch (error) { exerciseError = error; throw error; }
+  finally {
+    const cleanupErrors: unknown[] = [];
+    const finish = async (load: () => Promise<unknown>) => { try { await load(); } catch (error) { cleanupErrors.push(error); } };
+    // drain aliases closeAdmission and intentionally rejects an already-sealed
+    // run. A successful close above has already completed this cleanup step.
+    if (ledger && run && !admissionClosed) await finish(() => phase("cleanup.ledgerDrain", () => ledger!.drain(run!)));
+    if (database) await finish(() => phase("cleanup.databaseClose", () => database!.close()));
+    await finish(async () => {
+      await phase("cleanup.profileRelease", () => profile.release());
+      unreleasedProfiles.delete(manifest.runId);
+    });
+    if (cleanupErrors.length) throw new AggregateError(exerciseError === undefined ? cleanupErrors : [exerciseError, ...cleanupErrors],
+      "pr04c_final_wall_exercise_cleanup_failed", { cause: exerciseError ?? cleanupErrors[0] });
   }
 }
 
