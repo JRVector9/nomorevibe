@@ -41,3 +41,7 @@ root가 own55517/정확 container ID/loopback port/정확 단독volume을 확인
 Root는 C 작성중 build를 먼저 실행해 테스트 crowd.reason이 실제 enum에 없는 TS2769/exit1을 받았다. 최종 fixture ambiguous 보강·동결 후 build actual0을 재확인했다. 초기 로그 `/tmp/nomorevibe-pr04c2-ai2-target-root-draft-build-failed-20261016.log`. body+cleanup 동시 fault 주입·추가 자연90초 대기·분할query mutant 실험은 이번에 하지 않았다. actual provider 실행/원격 종료/인증 journal·item B5/실30분 baseline·2배 성능·Oracle DR는 이 검증으로 완료되지 않는다.
 
 로컬 구현/리뷰/검사 완료이며 실제 feature commit/main 통합·PR 필수 CI와 정상 병합 결과는 다음 기록에서 추적한다.
+
+## 실제 main 정상 통합
+
+명시9파일의 feature `1dd62ab`를 commit하고 actual main e22ec725를 정상 merge한 HEAD는 `719d6eb`다. root 문서3개(handoff/delivery/선행 combined validation)만 충돌했다. main의 tree가 feature 기준86da89e5와 완전히 같음을 실제 `git diff --quiet`로 확인한 뒤 현재 검증/병합 기록을 보존했다. `git diff --exit-code 1dd62ab HEAD` 전체 결과0이다. 코드·테스트·실행 설정을 포함한 전체 tree가 검증한 feature와 같아 로컬 gate를 다시 반복하지 않았다. 이후 PR 필수 CI와 정상 병합/main 결과를 별도로 확인한다.
