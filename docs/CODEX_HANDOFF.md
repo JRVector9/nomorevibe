@@ -1,3 +1,44 @@
+# 2026-10-16 — PR444 병합 / PR04c-2a-0 로컬 gate·직접/교차 리뷰 완료
+
+전체 PR별 개발 goal active. root가 gpt-6.1-sol/xhigh A/B/C의 배타 파일·DB·실제 RED 수용·직접/교차리뷰·전체gate/Git을 관리한다. 운영deploy/DDL/provider inference/발굴재개0, 마지막 직접확인 운영8020dca. 기본legacy/epoch1/contract0·새consumer비활성·미래legacy image전0077필수. 원본X branchpush금지, handoff만동기화한다.
+
+## 완료 작업
+
+- PR443/mainc7754651은 필수check·웹/워커image 전체SUCCESS(mainCI38797366784)를 직접확인했다.
+- PR444/headca715846의 PR CI38798204078 scope/quality/통합3shard/check 모두SUCCESS→정상squash merge **main bcf4396e51738ee4c974f72728c27ea72d8a1598**(20:08:37UTC). **mainCI38799565167 quality 기존thumbnail1case5005ms timeout/2984PASS**, 통합3 첫c1ahealthy20s timeout→guard잔류147FAIL/626PASS·17skip·TODO1, 통합1/2SUCCESS. 같은SHA failedjob재실행 actual0/진행중. c1b rootunit2985/전체DB181파일2132PASS·기존TODO1/611.49초·정적build0, 실제90초RED→동일GREEN/최종blockedrenew순서 mutant감도검증/4DBrawreadbackSTOP은 해당validation에 보존했다. 운영배포와구분한다.
+- c2 WT에서 선행featureca715846와 actualmainbcf4396e의 tree동일 확인→정상merge **cfc44c2d** 완료. 기존source 변경0. A/B/C 새기능 baseline을 root가 전체driver/원로그로 읽어 수용했고 A구현동결을 해제했다.
+
+## 현재 목표·변경 파일·배타 소유권
+
+WT `/Users/jr/Desktop/projects/nomorevibe-pipeline-item-projection`, branch `codex/pipeline-pr04c2-item-projection-20261016`, HEADcfc44c2d. root docs4는 handoff/delivery/실행계약/validation. 신규production1+unit2+integration1. 기존trackedsource byte0이며 신규모듈을 현재entry/profile에 연결하지 않는다.
+
+- A `/root/pr01_final_ai1`: NEW `lib/operations/pipeline-replay-item-state.ts` + NEW `tests/pipeline-replay-item-state.test.ts`만. sourceb07f75…601d0/primaryunitad2fb15…2e7fe scaffold **4행동FAIL·338ms·exit1** 확인 후 동결. B/C독립RED root수용 뒤 최종source01d06f0d…23221f2/unitf56fe8f9…e9490 동결·반환. 같은4GREEN뒤nestedrefine safeParse 예외누출negative 실제1FAIL/4PASS→최소보강5PASS·정적0. DB/Git/docs편집0.
+- B `/root/pr01_final_ai2`: NEW `tests/pipeline-replay-item-state-adversarial.test.ts`만, frozenSHA1e532514…1d9244. 같은scaffold **130case/71AssertionFAIL·59controlPASS/604ms·exit1**, import/setup오류0. whole tsc/scopedlint actual0. 같은driver130PASS651ms·정적0·source읽기P1/P2 0 완료/소유권반환. 추가로기존thumbnail unchanged5PASS208ms, 원인미확정으로단독PASS만의flaky판정0.
+- C `/root/provider_contract_evidence`: NEW `tests/integration/pipeline-replay-item-state.test.ts`만. 전용 **55509/nomorevibe-pr04c2-state-db-20261016**, pinnedPG17/loopback/dummy. 원2case9079dc78…29a1은 `/tmp/nomorevibe-pr04c2-c-initial-driver-20261016.ts` 보존. 실제SQL/getTableColumns 6/12열·generic90sclaim control1PASS/UTC·정렬 행동1FAIL/957ms/exit1, import/SQL/setup오류0. 원2casebyte동일2PASS→전체7PASS1.22s·정적0. 최종SHA61fbd45e…faf08/305행동결·A읽기P1/P2 0. root관련gate뒤정확fixturekeys정리·전체raw14테이블잔류0/기본3stage/권한timeout/타연결0 readback·STOP/exited0/OOMfalse 완료. actualAI2domain·인증journal이라고확장금지.
+- root: docs4/Git/직접·교차리뷰·전체gate. 필요시별도55510(아직없음). 다른담당파일동시편집0/driver기대값약화금지.
+
+## 핵심 결정·테스트·실패 접근
+
+독립payload kind=pipeline-replay-item-state/version1은 future combinedreadinessv2 구성요소다. fullstage6/item12열·전체foreign/stale/released행/복합키·정확OLDNEW·ordinal1..N·UTC/µs·전체hash/expiry만pure하게표현한다. 기존readiness/artifactv1/profilev5/entry/차단 byte0. expiry는now/ready/authority판정아니며 actualcapture/journal/profile/권한/call/final/coverage/runner후속이다. DBsourceprecision3을6자리라고주장하지않는다.
+
+새 RED는 신규기능stub TDD이며 기존운영결함재현이아니다. A `/tmp/nomorevibe-pr04c2-a-scaffold-red-20261016.log`, B `...-state-b-scaffold-red-...log`, C `...-c-initial-red-...log`. root typegen actual0 `/tmp/nomorevibe-pr04c2-root-typegen-20261016.log`. root wholeunit284파일3120PASS9.01s/관련DB4파일41PASS12.49s·모든actualexit0, type/lint/i18n/Python23/build/bundle0. 로그 /tmp/nomorevibe-pr04c2-root-{unit,focused-db,tsc,lint,i18n,python,build,bundle}-20261016.log. 로컬전체DB재실행주장0, PR CIwhole은후속. c1b 초기Python0tests/exit5는PASS아니며workflow정확명령23PASS로교정한기록을유지한다.
+
+## 남은 작업·다음 명령
+
+1. mainCI38799565167 기존thumbnailtimeout 실패원로그·단독5PASS확인. 전체CI종료뒤같은SHA failedjob재실행 actual0/진행중; 원인미확정/timeout완화0. 필수check/image 실제완료확인.
+2. A/B/C최종동결·같은GREEN/직접교차리뷰/기존v1 byte0/rootgate완료. C 최종rawreadback/STOP actual로그root확인완료. 명시8파일commit/push/PR·필수CI 확인.
+3. 필수CIwhole회귀→normalmerge/mainCI. A는후속actualcapture최소API/selector differential의구체경로를/tmp에읽기조사중이며생산편집0. 운영미적용과분리.
+4. actualcapture/selector differential→journal/coverage→불변version/profile→실authority/finalwall→고정AI1legacy+AI2itemrunner. AI1item/allitem/PR05–17/provider실30분baseline/2배/OracleDR미완료. 소단위완료로goal종료0.
+
+```sh
+cd /Users/jr/Desktop/projects/nomorevibe-pipeline-item-projection
+git status --short --branch
+git diff --check
+gh run view 38799565167 --json status,conclusion,jobs --jq '{status,conclusion,jobs:[.jobs[]|{name,status,conclusion}]}'
+# A/B/C actual결과·SHA·원driver동일성 확인 후 rootgate. C55509사용 중이므로 임의동시DB실행금지.
+```
+
+---
 # 2026-10-16 — PR443 재CI / PR04c-1b 최종 검증 취합
 
 ## 현재 목표와 운영 경계
