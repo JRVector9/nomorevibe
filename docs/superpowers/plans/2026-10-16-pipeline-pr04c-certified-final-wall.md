@@ -53,3 +53,7 @@ A self-review의 flush중 open 유지 경계를 C가 actual native ticket·실�
 ## 구현·리뷰·로컬 gate 완료
 
 source5/단위2파일·신규 integration2파일을 동결하고 root 직접/교차 리뷰의 미해결 P1/P2 0을 확인했다. root unit2,928, 전체DB180파일2,112PASS/기존TODO1, type/lint/i18n/Python23/build/bundle 실제 exit0와 자기4DB readback/STOP을 확인했다. 상세 원로그·실패 접근·한계는 [검증 기록](../../operations/2026-10-16-pipeline-pr04c-certified-final-wall-validation.md)을 따른다. PR/필수CI/정상병합은 별도로 이어간다. 운영 적용·item lifecycle/B5·2배/DR 완료로 올리지 않는다.
+
+## CI 동기화 보강
+
+PR443/af4df25 첫 CI38793351252 통합3의 racefixture1FAIL을 원로그로 조사했다. source5개는 그대로 두고 B test1개만 원 writer callback 뒤 sameTX750ms anchor·RETURNINGexacttext expiry·원 callback 오류 외부 보존으로 보강했다. 최종6bbc9186…df548 동일driver의 oldsource실제1RED/control1PASS→현재2PASS를 root가 직접 확인했다. 고정timeout/품질/권한 gate는 유지하며 자세한 로그와 실패한 timestamp serializer 접근은 validation 문서를 따른다. 필수 PR CI를 다시 확인한 뒤 정상 병합한다.
