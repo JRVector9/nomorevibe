@@ -108,3 +108,17 @@ C root 결합44 후 readback script actual0, baseline과 전public행/control/st
 root가 생성시 fullID·pinnedimage·loopback·원mount·전체container목록의 단독volume참조를 재확인했다. B 실제volume은 `nomorevibe-pr05a-model-capacity-b-20261016-data`, C는 `nomorevibe-pr05a-model-capacity-c-20261016`이다. 이름을 추측하지 않고 원inspect와 대조했다. 정상STOP 후 둘 모두 **exited0/OOMfalse**를 직접 확인하고 정확한두container와 미참조ownvolume만 제거했다(actual0). image/cache/기타volume/prune0. 원metadata `/tmp/nomorevibe-pr05a-root-owned-db-{before-cleanup,after-stop}-20261016.json`, stop로그 `-root-owned-db-stop-20261016.log`.
 
 이제55518/55519에 재접속하지 않는다. PR 제출·최신base 필수CI·정상병합·main CI/image는 다음 단계이며 운영 migration/배포/provider/새consumer 활성화0을 유지한다.
+
+## PR 제출 — 필수 CI 진행 중
+
+실제commit/head `6da1facc0656dd71467efc354b97fc7ab73497da`를 feature branch에 push하고 [PR450](https://github.com/JRVector9/nomorevibe/pull/450)을 제출했다. base는main40cca23d다. PR CI38817812703에서scope 및 quality의 typegen/tsc/i18n/lint SUCCESS를 직접확인했고 unit/build와 통합3구간은 진행 중이다(22:35:23UTC 관측). 전체check/병합/mainCI/image·운영적용 완료로 세지 않는다.
+
+## PR 필수 CI·정상 병합 — 완료 / main CI 진행 중
+
+[PR CI38817812703](https://github.com/JRVector9/nomorevibe/actions/runs/38817812703)의 scope·quality·통합3구간·check 전체 SUCCESS를 root가 직접 확인했다. PR 이벤트의 두 image job은 의도된 SKIPPED다. 결과 JSON은 `/tmp/nomorevibe-pr05a-root-pr-ci-38817812703-20261016.json`. 최신 base40cca23d/head6da1facc·mergeState CLEAN 확인 후 `gh pr merge 450 --squash --match-head-commit 6da1facc0656dd71467efc354b97fc7ab73497da`를 실제 실행해 exit0을 확인했다. 실제 병합은 **2026-10-15T22:40:46Z**, main **99a9cefcd9c82dcc86441b798332137a3604fe36**다.
+
+[main CI38818744171](https://github.com/JRVector9/nomorevibe/actions/runs/38818744171)는 진행 중이다. 운영 migration/배포/실제 provider 호출/새 consumer 활성화는 수행하지 않았다. 이 기록은 feature PR head와 별개의 로컬 문서 갱신이며 다음 코드 PR에 이전 결과로 취합한다.
+
+## main CI·이미지 — 완료
+
+root가 main99a9cefcd9c82dcc86441b798332137a3604fe36의 CI38818744171을 다시 읽어 scope·quality·통합3구간·check·웹/워커 image **전체 SUCCESS**를 직접 확인했다. JSON `/tmp/nomorevibe-pr05a-root-main-ci-38818744171-20261016.json`. image 생성은 운영 적용 증거가 아니며 배포/DDL/새 consumer 활성화0을 유지한다.
