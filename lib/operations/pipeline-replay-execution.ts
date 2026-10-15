@@ -4,6 +4,8 @@ import type postgres from "postgres";
 import { sql } from "drizzle-orm";
 import { reviewHash } from "@/lib/crawl/agent-review-contract";
 import type { ProductTransaction } from "@/lib/domain/products/generation";
+import type { JobLease } from "@/lib/jobs/control";
+import { JobLeaseLostError, STALE_LOCK_MS } from "@/lib/jobs/lease";
 import { assertSameReplayHandlerDatabase, assertVerifiedReplayDatabase, assertVerifiedReplayHandlerDatabase,
   verifyReplayDatabaseSession, type VerifiedReplayDatabase } from "./pipeline-replay-database";
 import { replayFinalRunBinding, type ReplayRun } from "./pipeline-replay-ledger";
@@ -16,7 +18,9 @@ type Raw = postgres.TransactionSql;
 type Binding = ReturnType<typeof replayFinalRunBinding>;
 type Scope = { run: ReplayRun; binding: Binding; active: boolean; pending: Set<ReplayTransactionTicket> };
 type Ticket = { scope: Scope; tx: Raw; txKey: string; txStartedAt: string; dbXid: string;
-  state: "open" | "flushed" | "confirmed" | "rolled_back"; callbacks: Array<(run: Record<string, unknown>, raw: Raw) => Promise<void>> };
+  state: "open" | "flushing" | "flushed" | "finalized" | "confirmed" | "rolled_back";
+  authorities: Map<string, string>; registering: number;
+  callbacks: Array<(run: Record<string, unknown>, raw: Raw) => Promise<void>> };
 const executions = new AsyncLocalStorage<Scope>();
 const tickets = new WeakMap<ReplayTransactionTicket, Ticket>();
 const keys = new Map<string, ReplayTransactionTicket>();
@@ -62,6 +66,7 @@ export function assertReplayQuiescence(run: ReplayRun, proof: ReplayQuiescencePr
 export type ReplayTransactionHooks = {
   before(tx: Raw, parentTicket?: ReplayTransactionTicket): Promise<ReplayTransactionTicket | undefined>;
   after(tx: Raw, ticket: ReplayTransactionTicket | undefined): Promise<void>;
+  finalWall(tx: Raw, ticket: ReplayTransactionTicket | undefined): Promise<void>;
   commitAck(ticket: ReplayTransactionTicket | undefined): Promise<void>;
   rollback(ticket: ReplayTransactionTicket | undefined): void;
 };
@@ -96,20 +101,48 @@ export function currentReplayTransactionHooks(database: VerifiedReplayDatabase):
       const txKey = randomUUID(), token = Object.freeze({ [brand]: true as const });
       await tx`SELECT set_config('pipeline_replay.run_id', ${scope.run.runId}, true),
         set_config('pipeline_replay.tx_key', ${txKey}, true), set_config('pipeline_replay.ordinal', '0', true)`;
-      tickets.set(token, { scope, tx, txKey, txStartedAt: clock.at, dbXid: clock.xid, state: "open", callbacks: [] });
+      tickets.set(token, { scope, tx, txKey, txStartedAt: clock.at, dbXid: clock.xid, state: "open",
+        authorities: new Map(), registering: 0, callbacks: [] });
       keys.set(txKey, token); scope.pending.add(token); return token;
     },
     async after(tx, token) {
       if (!token) return;
       const value = tickets.get(token);
       ensure(value?.tx === tx && value.state === "open" && value.scope.active, "replay_transaction_ticket_mismatch");
+      ensure(executions.getStore() === value.scope, "replay_transaction_ticket_mismatch");
+      ensure(value.registering === 0, "replay_transaction_work_not_awaited");
+      value.state = "flushing";
       await flushReplayTransaction(value);
       value.state = "flushed";
+    },
+    async finalWall(tx, token) {
+      if (!token) return;
+      const value = tickets.get(token);
+      ensure(value?.tx === tx && value.state === "flushed" && value.scope.active
+        && executions.getStore() === value.scope, "replay_transaction_ticket_mismatch");
+      value.scope.binding.assertActive();
+      // Registration already acquired every relevant job lock in this TX.
+      // No new row lock or verifier may follow this final wall-clock query.
+      const authorities = JSON.stringify([...value.authorities].map(([name, token]) => ({ name, token })));
+      const [wall] = await tx`SELECT current_setting('pipeline_replay.tx_key',true) AS tx_key,
+        pg_current_xact_id()::text AS xid, NOT EXISTS (
+          SELECT 1 FROM jsonb_to_recordset(${authorities}::text::jsonb) AS required(name text,token text)
+          LEFT JOIN public.jobs j ON j.name=required.name
+          WHERE j.lease_token IS DISTINCT FROM required.token
+            OR NOT coalesce(j.locked_at >= clock_timestamp()-${STALE_LOCK_MS} * interval '1 millisecond',false)
+        ) AS owned`;
+      ensure(wall?.tx_key === value.txKey && wall.xid === value.dbXid, "replay_transaction_ticket_mismatch");
+      if (!wall.owned) throw new JobLeaseLostError();
+      ensure(value.state === "flushed" && value.scope.active && executions.getStore() === value.scope,
+        "replay_transaction_ticket_mismatch");
+      value.scope.binding.assertActive();
+      value.state = "finalized";
     },
     async commitAck(token) {
       if (!token) return;
       const value = tickets.get(token);
-      ensure(value?.state === "flushed", "replay_transaction_ticket_mismatch");
+      ensure(value?.state === "finalized" && value.scope.active && executions.getStore() === value.scope,
+        "replay_transaction_ticket_mismatch");
       await value.scope.binding.database.client.begin(async tx => {
         await verifyReplayDatabaseSession(tx, value.scope.binding.database);
         await tx`INSERT INTO pipeline_replay.capacity_commit_confirmations (run_id, tx_key)
@@ -126,6 +159,48 @@ export function currentReplayTransactionHooks(database: VerifiedReplayDatabase):
       }
     },
   };
+}
+
+/** Only an actual successful wall-time check registers a final job requirement.
+ * The caller's executor is not proof: bind it to this ticket's raw transaction
+ * using a fresh TX-local challenge, then check the real locked job ourselves. */
+export async function registerReplayJobFinalAuthority(tx: ProductTransaction, lease: JobLease,
+  mode: "share" | "update"): Promise<void> {
+  const scope = executions.getStore(); if (!scope) return;
+  ensure(scope.active, "replay_execution_scope_closed"); scope.binding.assertActive();
+  const { name, token: jobToken } = lease;
+  ensure(["crawl-agent-review", "second-review"].includes(name)
+    && typeof jobToken === "string" && jobToken.length > 0 && jobToken.length <= 160
+    && ["share", "update"].includes(mode), "replay_job_final_authority_unsupported");
+  const challenge = randomUUID();
+  const [identity] = await tx.execute<{ tx_key: string; xid: string }>(sql`SELECT
+    set_config('pipeline_replay.final_authority_challenge',${challenge},true),
+    current_setting('pipeline_replay.tx_key',true) AS tx_key, pg_current_xact_id()::text AS xid`);
+  const token = identity && keys.get(identity.tx_key), value = token && tickets.get(token);
+  ensure(value && value.scope === scope && value.state === "open" && scope.active
+    && identity.xid === value.dbXid, "replay_transaction_ticket_mismatch");
+  const previous = value.authorities.get(name);
+  ensure(previous === undefined || previous === jobToken, "replay_job_final_authority_conflict");
+  value.registering++;
+  try {
+    const [actual] = await value.tx`SELECT current_setting('pipeline_replay.tx_key',true) AS tx_key,
+      pg_current_xact_id()::text AS xid,
+      current_setting('pipeline_replay.final_authority_challenge',true) AS challenge`;
+    ensure(actual?.tx_key === value.txKey && actual.xid === value.dbXid && actual.challenge === challenge,
+      "replay_transaction_ticket_mismatch");
+    // Consume only after verification, before any failure can abort the TX.
+    // A cleanup query in finally could hide the original error with 25P02.
+    await value.tx`SELECT set_config('pipeline_replay.final_authority_challenge','',true)`;
+    if (mode === "update") await value.tx`SELECT name FROM public.jobs WHERE name=${name} FOR UPDATE`;
+    else await value.tx`SELECT name FROM public.jobs WHERE name=${name} FOR SHARE`;
+    const [owned] = await value.tx`SELECT name FROM public.jobs WHERE name=${name} AND lease_token=${jobToken}
+      AND locked_at >= clock_timestamp()-${STALE_LOCK_MS} * interval '1 millisecond'`;
+    if (!owned) throw new JobLeaseLostError();
+    ensure(value.state === "open" && scope.active && executions.getStore() === scope,
+      "replay_transaction_ticket_mismatch");
+    scope.binding.assertActive();
+    value.authorities.set(name, jobToken);
+  } finally { value.registering--; }
 }
 
 /** A fresh job claim is admission; heartbeats and already admitted writers remain separate. */
