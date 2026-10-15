@@ -211,3 +211,7 @@ Exact full settings hash binds export. The separate comparison policy hash exclu
 ## Final safety review additions
 
 An offline audit reproduced WHATWG URL versus installed postgres.js3.4.9 first-@/multihost parsing disagreement without constructing a DB client. Three malicious URL regressions failed before the fix. Both replay admission and the existing shared test-DB guard now require the raw driver host segment to equal the single validated loopback host, rejecting multiple-@/encoded-comma escapes. The CLI error plan separately covers arbitrary schema/database/filesystem diagnostics. No remote DB was contacted to prove the bug.
+
+## PR CI environment regression
+
+PR429 first CI38701417690 passed quality and integration1/2, but the new actual export subprocess failed in integration3 because CI resolves the default fixture URL in setup without populating the optional TEST_DATABASE_URL environment override. Parent reproduced this by removing only that override after the isolated parent connection was selected: one test failed with explicit_TEST_DATABASE_URL_required. Both subprocess invocations now receive the imported, already-validated setup constant. The regression restores the optional override in finally. Related four-file integration62PASS after the fix; CLI admission remains strict. Latest-head CI remains the merge gate.

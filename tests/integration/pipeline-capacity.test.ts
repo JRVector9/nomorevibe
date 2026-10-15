@@ -13,7 +13,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { spawnSync } from "node:child_process";
 import { snapshotPipelineGenerations } from "@/lib/operations/pipeline-capacity-repository";
-import { ensureSchema } from "./setup";
+import { ensureSchema, TEST_DATABASE_URL } from "./setup";
 
 beforeAll(ensureSchema);
 beforeEach(async () => {
@@ -169,12 +169,15 @@ it("local export keeps only frozen manifest inputs and reports copied reuse sepa
     generations: [], readiness: [], calls: [], quality: null,
   };
   const directory = mkdtempSync(join(tmpdir(), "nomorevibe-capacity-local-"));
+  // CI resolves the fixture URL in setup without setting this optional override.
+  const originalTestDatabaseUrl = process.env.TEST_DATABASE_URL;
+  vi.stubEnv("TEST_DATABASE_URL", undefined);
   try {
     const path = join(directory, "template.json"), output = join(directory, "export.json");
     writeFileSync(path, JSON.stringify(template));
     const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !/^(PG|READ_DATABASE_URL$)/.test(key)));
     const child = spawnSync(process.execPath, ["--import", "tsx", "scripts/export-pipeline-capacity.ts", path, output], {
-      encoding: "utf8", env: { ...env, NODE_ENV: "test", TEST_DATABASE_URL: process.env.TEST_DATABASE_URL! }, timeout: 10_000,
+      encoding: "utf8", env: { ...env, NODE_ENV: "test", TEST_DATABASE_URL }, timeout: 10_000,
     });
     expect(child.stderr).toBe("");
     expect(child.status).toBe(0);
@@ -186,9 +189,12 @@ it("local export keeps only frozen manifest inputs and reports copied reuse sepa
     template.manifest.models.second[0] = identity("unconfigured-model");
     writeFileSync(path, JSON.stringify(template));
     const mismatched = spawnSync(process.execPath, ["--import", "tsx", "scripts/export-pipeline-capacity.ts", path, join(directory, "wrong-model.json")], {
-      encoding: "utf8", env: { ...env, NODE_ENV: "test", TEST_DATABASE_URL: process.env.TEST_DATABASE_URL! }, timeout: 10_000,
+      encoding: "utf8", env: { ...env, NODE_ENV: "test", TEST_DATABASE_URL }, timeout: 10_000,
     });
     expect(mismatched.status).toBe(1);
     expect(mismatched.stderr.trim()).toBe("snapshot_model_mismatch");
-  } finally { rmSync(directory, { recursive: true, force: true }); }
+  } finally {
+    vi.stubEnv("TEST_DATABASE_URL", originalTestDatabaseUrl);
+    rmSync(directory, { recursive: true, force: true });
+  }
 });

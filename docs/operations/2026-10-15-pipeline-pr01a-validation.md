@@ -86,3 +86,16 @@ Build의 기존 dynamic spawn tracing 경고와 Vitest의 기존 Vite native-con
 운영 DB 쓰기·모델 호출·공개 발행·운영 migration·PR01a 배포·30분 성능 시험은 실행하지 않았다.
 DDL이 없고 소비자 설정도 바꾸지 않는다. 제거 시 기존 운영 경로로 복구되며 새 DB 구조를 지울 필요가 없다.
 PR01b 완료 전 PR02 신규 소비자 활성화와2배/Oracle DR 완료 주장은 보류한다.
+
+## 첫 PR CI의 환경 회귀 수정
+
+[PR429](https://github.com/JRVector9/nomorevibe/pull/429)의 첫 실행38701417690에서
+quality와 통합1/2는 성공했지만 통합3의 새 CLI export 테스트1건이 실패했다.
+공통 test setup은 기본 DB URL을 상수로 해석해 `DATABASE_URL`에 넣지만 선택 환경변수
+`TEST_DATABASE_URL`은 만들지 않는다. 테스트가 자식 프로세스에 선택 변수만 넘긴 것이 원인이다.
+
+기존 부모 연결은 전용55452로 유지하면서 자식 호출 직전에 선택 변수만 지우는 회귀를 추가했다.
+실제 RED는 CI와 같은 `explicit_TEST_DATABASE_URL_required`였으며, 두 subprocess가
+setup의 검증된 `TEST_DATABASE_URL` 상수를 명시적으로 전달하도록 고친 뒤 관련4파일62PASS였다.
+선택 변수는 finally에서 복구한다. CLI의 명시 URL 요구나 로컬 DB guard는 완화하지 않았다.
+수정 후 TypeScript·해당 테스트 ESLint·diff 검사도 통과했다. 새 head의 전체 CI는 별도로 확인한다.

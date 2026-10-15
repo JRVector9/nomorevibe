@@ -1,3 +1,30 @@
+# 2026-10-15 16:57 KST — PR429 제출 / CI 환경 회귀 재현·수정
+
+PR01a commit2d20bae를 push하고 https://github.com/JRVector9/nomorevibe/pull/429 를 생성했다.
+첫 CI38701417690은 quality/통합1/2 PASS, 통합3 새 export test1건 FAIL이라 병합하지 않았다.
+setup이 선택 환경변수 대신 기본 URL 상수를 쓰는 CI에서 자식이 TEST_DATABASE_URL을 받지 못했다.
+부모 DB를 전용55452에 고정하고 자식 직전 선택 변수를 지워 같은 RED를 재현했다.
+테스트의 두 subprocess에 검증된 setup 상수를 명시 전달하고 finally에서 환경을 복원했다.
+CLI guard/제품 동작은 변경하지 않았다. 관련4파일62PASS, TypeScript/scoped ESLint/diff 검사는 PASS.
+수정 파일은 tests/integration/pipeline-capacity.test.ts 및 이 handoff/validation/snapshot 계획이다.
+새 commit/push 뒤 최신 head 전체 CI check가 성공하기 전 병합하지 않는다.
+
+PR01b 독립 읽기 검토도 완료했다. 실제 두 handler/같은 writer gate를 계측하고 별도 심사 엔진을 만들지 않는다.
+현재 abcllm의 max_tokens3000은 출력 요청 상한이며 전체 입력/템플릿/추론/숨은 재시도 상한 증거가 아니다.
+provider capability·격리 DB identity/권한·고정 semantic clock·READMEs 외부 fetch 차단·사전예약 장부가 필요하다.
+모델을 바꾸거나 임의로 상한을 인증해서 live replay를 켜지 않는다. PR01 전체/PR02 활성화는 미완료다.
+
+```sh
+cd /Users/jr/Desktop/projects/nomorevibe-pipeline-pr01
+git diff --check
+gh pr checks 429
+gh pr view 429 --json headRefOid,baseRefOid,mergeStateStatus,statusCheckRollup
+git fetch origin main
+# 최신 base·head와 필수 check 성공을 실제로 확인한 뒤에만 squash merge한다.
+```
+
+---
+
 # 2026-10-15 16:45 KST — PR01a 구현·최종 로컬 검증 완료 / 제출 준비
 
 ## Current objective
