@@ -1,3 +1,134 @@
+# 2026-10-15 12:56 KST — 키워드 두 동결 캠페인 완료, OSS 의미 오류로 단독 검수 중지
+
+## Current objective
+
+검색 키워드 검수 약 7,710건의 실제 준비대상7696와 후속252의 판정·저장·복원을 완료했고,
+abcllm OSS120도 실제 호출·검토·11제품저장했다. 현재는 근거 갱신 서버의 지속 처리와 운영 기록을 마무리한다.
+제품 근거 갱신은 별도의 Grok CLI `grok-4.7 / low` 3구간 업무다. 신규 GitHub·Show HN 발굴 중단은 유지한다.
+키워드 업무는 사용자가 명시한 `gpt-6.1-sol / high`를 사용했고, 그 외 Codex agent는 저장소 기본 xhigh다.
+
+## Completed work / current execution
+
+- 운영 runtime `347d647cc21a272e3e5b6acc1a0fd41f2190f173`, 문서 base `87b577b83422f075ac9ebe0ed97437c409c7e13d`.
+  앞선 13앱 배포·519개 자동 차단/감사/CDN 완료는 아래 11:21 기록대로이며 다시 배포하지 않는다.
+- 첫 manifest는 02:35:21.507 UTC **7,696제품 / 112,587키워드**, SHA256
+  `bc83a43246f2584079fd8004f79fd5a4cd6c26ad8820ff0461d3fa6ef6606841`.
+  UI 7,710과 차이14의 원인은 같은시각 ID집합이 없어 미확정이며 완료수량으로 세지 않는다.
+- **첫 pool48980은 03:43:05 UTC 전체 158묶음/7,696제품 검증, 최종 실패0으로 종료**했다.
+  **watcher91469는 03:43:21 UTC 7,653저장 / 43 CAS skip / 미처리0**, 전체158묶음 감사확인 후 종료했다.
+  저장모델은 Codex7,642와 OSS11. `restore.verified:true`, 원래 notBefore NULL 복원을 실제 확인했다.
+  입력이 바뀐 skip은 아래 r2에서 최신 입력으로 다시 처리했다.
+- 첫 독립 Codex 의미 QA: 387제품/5,800키워드 중 제거18개·유지표본774개에서 확정오류없음.
+  ID217/510 번역경계는 기록. 전체 정확도 추정치는 아니다.
+- **OSS API 단독 자동검수는 중지 상태다. D/api-stop을 반드시 유지한다.**
+  요청 `[MLX] gpt-oss-120b`, 실제 HTTP200 served `gpt-oss-120b`를 확인했다.
+  처음5+6제품/150키워드는 agent들이 전체 의미를 대조한 뒤 공식모델명으로 저장했고 색인도 일치한다.
+  별도 원문그대로 QA30727에서 Werewolf/마피아게임을 `대면 인간 사냥 진행 보조`로 승인했다.
+  미완성 s1-b0030의 Pippa41329에서는 정상 `document summarizer`를 직접표현부재만으로 제거했다.
+  두 semantic P1을 확인해 API worker만 멈추고 미완성50제품을 Codex로 반환했다.
+  실제 Codex 완료와 OSS 부분19제품/264키워드를 비교: 262일치/2차이(Pippa, NIKKE Overload→Overlord).
+  QA/부분결과는 저장수량에 합산하지 않으며, 실패원문을 수동수정하지 않는다.
+- `source_refresh_capacity` agent가 **원래7696 중 profile 생성이 오래된20제품+추가4제품**을 정상
+  `writeKeywords`→`recordProfileResult`/공식runJob/requestJob으로 재생성했다.
+  4bounded ticks /24시도·24저장/실패0/reuse0/CASskip0. 마지막24readback03:50:10Z hash/index일치·needsRefresh/error0.
+  그사이새로변경된1018/1019 등은이번generation pass밖후속변경으로분리하며끝없이추적하지않는다.
+  대상scope/hash를 별도보존하며 동시1/54초tick/45초call/20초slowstop/2providererrorstop/기존재시도를 유지한다.
+  일반 생성기의 기존 OSS모델은 그대로다. api-stop은 별도 검증worker에만 적용한다.
+- **r2실제동결03:50:02.877Z:252제품(원래집합24+신규ready228)/8묶음**, SHA256
+  `68f3a4c68fc8e0ea51777c7c01716d9d8435a77f217b592f3db4f902593b64c2`, sourceHashMismatch0.
+  **pool73331은03:52:38Z 252검증/실패0, watcher97022는03:52:52Z 252저장/skip0/미처리0으로종료했다.**
+  notBeforeNULL restore.verified:true를확인했다. r2최종DB조회03:53:14Z 252최신완료/색인·상태불일치0. 원래api-stop유지.
+- 43skip 실제분류: Qwen선검수36 + source/revision변경7. 별도agent가 당시readback/현재DB로확인했다.
+  r2원래집합24는 skip7 + 최초저장후입력변경17이다.
+- 양쪽합동결고유제품7924(원래7696+새228), 저장7905회/고유7888제품 + Qwen선검수36으로frozen전체를확인했다.
+  17중복저장은서로다른 evidence/input hash를root직접대조했다. 첫skip7은r2감사에서저장되어
+  original reconcile의campaignWithoutSavedAudit7은정상적인cross-campaign귀속이다. combined-final-state-20261015T0353Z.json.
+- root 최종조회03:53:14~16Z: 원래집합준비된검수0/후속근거변경profile생성3(1019,1018,1021),
+  다른모델완료36/현재Codex7646+OSS11, 색인·검증상태불일치0. 전역생성672/검수15는별도일감이다.
+  모든판정은동결시점기준이며계속바뀌는전역큐의0을주장하지않는다.
+- 최종native전체usage(agentraw감사): Codex168turn 입력14652292·cached4735872·출력1098231,
+  API51HTTP(200+usage50/403미관측1) 입력121751·cached56646·출력17072.
+  합계입력14774043/출력1115303/캐시부분4792518, 입력+출력15889346.
+  중단시request만있는2건전송·비용미관측, 정상profile생성24 및parent-agent내부사용량은범위밖/미관측이다.
+  native-usage-final-20261015T035321Z.json 및각campaign raw proof/해시/unique nativeidentity로중복없이확인했다.
+- Grok CLI 실제3세션은 각자 shard 실행요청/quorum을 남겼다. smoke는29출처저장+upstream1개6hbackoff.
+  지속 서버 **crawler-m3 PID11333**, 347d647/15파일hash일치/primary epoch94에서 원격 detached 실행 중이다.
+  03:29:01 UTC 두 productive처리에서30제품/60출처 실제저장60. root도60개 URLidentity·lastSuccess증가를 확인했다.
+  03:51:50Z root단일status재확인:PID/명령/runtime정상/notBeforeNULL/공식lease활성, checkpoint35·서버누적저장541회.
+  이541은서버집계로앞서개별DB대조60과구분한다. due47261/held-error319, backoff129/deferred28을성공에더하지않는다.
+  PAT4845/5000, App4580/5000. root-final-status-20261015T035153Z.json. PC종료와무관하게계속실행한다.
+
+## Modified files
+
+저장소 변경은 `docs/CODEX_HANDOFF.md`, `docs/operations/2026-10-15-evidence-source-capacity.md`,
+신규 `docs/operations/2026-10-15-keyword-catchup.md`뿐이다. 다른 사용자 untracked 산출물을 stage하지 않는다.
+비공개 도구·모델원문·사용량·운영proof는 아래 D/G 디렉터리에 있으며 저장소에 넣지 않는다.
+
+## Key design decisions
+
+- root가 실제 Codex CLI를 직접 실행한다. 원 evidence/전체 키워드/정확한 ID·순서·hash를 유지한다.
+  부적합 판정에는 정확한 원문 인용을 요구한다. 단순한 단어 부재만으로 넓은 기능 표현을 제거하지 않는다.
+- 모델 결과와 실제 원 CLI/API 증빙을 전체 재구성해 일치하는 proof 1개만 승인한다.
+  API `keywordChecks:[{keyword,fits}]` v2는 명시된 판정만 변환하며 누락·중복·순서변경·모델불일치는 차단한다.
+- 공식 runJob lease/CAS/recordVerificationResult/색인transaction만 쓴다. 직접SQL·버전·cursor·lease 강제수정은 없다.
+  pause는 캠페인소유설정만 CAS로 복원하며, 전송불명확시 감사·현재DB부터 읽는다.
+- 첫 전체 종료 후 최신 공식 ready를 한 번 별도 r2로 동결한다. 원본7696의 변경과 새로ready된 항목을 분리기록한다.
+  원본manifest를 덮어쓰지 않으며, r2는 **Codex8 / API0**으로 처리한다.
+- Grok 지속서버는 기존 product-evidence-refresh lease1개/전체refresh I/O1, productId%3, shard당5를 쓴다.
+  현재 GitHub 모든활성계정 quota 조건을 만족하는 출처만 처리하며 막힐 때 site-only를 허용한다.
+  실제생산적시도+현재eligible가 있을 때만 공식requestJob, no-pause, 48h/10,000ticks 제한이다.
+
+## Test commands and results
+
+이 phase에서 실제 실행한 검증: 원pipeline6 fixtures, 변조proof9종거절, 원watcher11,
+API10, APIworker16, multiwatcher17, v4pool6 모두 PASS. 초기158묶음과r2 8묶음coverage PASS.
+root가 아래 r2 도구도 실제 실행해 9/9와6/6 PASS 확인했다. reconcile3 fixtures PASS는 agent/root가 확인했다.
+source persistent Node34/Python6은 agent 실제PASS(root는이전Node33/Python6 및60저장/15hash직접확인).
+profile regeneration10 fixtures는 agent 실제PASS(root는추가fixture전9개직접PASS).
+사용량 scope5/합산3 fixtures는agent실제PASS. root양캠페인current DB/audit/index재조회와합동집합검증 PASS.
+실제명령 예시는 아래와 같으며 운영재실행과 순수검사를 구분한다.
+
+```sh
+D=/Users/jr/.config/nomorevibe/backlog-recovery/2026-10-15/codex-keyword-catchup
+node --test "$D/round2-utils.test.mjs"
+python3 "$D/init-round2.test.py"
+python3 "$D/reconcile-current.py"
+```
+
+## Failed approaches
+
+- 첫 저장 성공로그에 JSON 외 로그가 섞였다. 중복저장하지 않고 감사/DB로 확인한 뒤 LOG_LEVEL을 고쳤다.
+- strict quote/hash/키워드개수 거절 시도는 그대로 보존하고 모델에 원래 전체입력을 재제공했다.
+- 기본 urllib UA의 edge403은 명시UA로 해결했다. API key/config/skill의 비밀값은 출력·커밋하지 않는다.
+- OSS 익명boolean배열은1제품에서도 개수를 틀렸다. v2에서 정확한keyword+boolean을 요구한 뒤에만 검증했다.
+  형식검증 통과가 의미정확성을 보장하지 않아 실제오류2건 후 단독검수를 멈췄다.
+- Grok 지속서버 첫PID10887은 bridge계약오류로 crawl전 종료했다. 사용금지export를 제거/회귀검증 후PID11333 성공.
+- UI와선택기차이14, 표본QA의 전체정확도, 근거갱신전체최대처리량은 미확정이다.
+
+## Remaining work
+
+1. 세운영문서는 정상PR426(https://github.com/JRVector9/nomorevibe/pull/426)으로 반영한다.
+   실제병합/필수CI상태는 아래 gh명령으로 조회한다. 앱소스배포·DDL은 이번문서변경에 필요없다.
+2. Grok 서버는 계속실행하며 upstreambackoff를 완료로 세지 않는다. 48h/10,000tick 제한·컨테이너재시작후상태를관측한다.
+3. 이후근거변경과원래대상밖profile생성은정상작업큐에서계속처리한다. 두완료manifest를덮거나무의미하게재실행하지않는다.
+4. OSS단독자동검수를재개하지않는다. API key/config/인증홈/private원문/사용자untracked산출물은커밋하지않는다.
+
+## Exact commands for the next agent
+
+```sh
+D=/Users/jr/.config/nomorevibe/backlog-recovery/2026-10-15/codex-keyword-catchup
+G=/Users/jr/.config/nomorevibe/backlog-recovery/2026-10-15/grok-sharded-source-catchup
+# 두pool/watcher는모두종료/완료/원복확인됐다. 재실행·재동결하지않는다.
+# 아래는읽기전용최신상태확인이다. OSS api-stop은제거하지않는다.
+gh pr view 426 --json state,mergedAt,mergeCommit,statusCheckRollup
+python3 "$D/reconcile-current.py"
+python3 "$D/round2/reconcile-current.py"
+CATCHUP_TRANSPORT_APPROVED=1 python3 "$G/persistent/server-wrapper.py" status
+# 필요시동일wrapper stop; 이미살아있는서버를start중복호출하지않는다.
+```
+
+---
+
 # 2026-10-15 11:21 KST — 13앱 배포·519개 차단/감사/CDN 완료 / 전체자동적체 지속처리
 
 ## Current objective / authorization

@@ -186,3 +186,43 @@ release는 계속 `c8f04245e44cb60573cbc2f8685d2f6c4b6f0407`이었다. 실제 ru
 PAT/App core 잔량은 2,486/5,000과 2,203/5,000이었다. 신규 GitHub/Show HN 발굴의 `2100-01-01` pause와 runs 8,905/1,681은 그대로다. due 50,134건, retry·partial과 정상 복구 작업이 남아 있으며 완료로 표시하거나 시각·lease를 직접 고치지 않았다. 추가 관측은 허용된 한 번으로 끝냈다.
 
 비공개 proof(0600)는 `after-release-20261015T002606188633Z.json`과 `comparison-20261015T002643511812Z.json`이다. 비교 gate는 같은 release/tag/hash/live role·300초 이상·완전 5틱을 모두 확인한다. observer 명령은 앞선 것과 같고 `--since 2026-10-15T00:19:30Z`를 사용했다. 이 단계의 저장소 변경은 이 추가 기록뿐이며, 추가 모델 호출·운영 쓰기·코드 변경은 없다.
+
+
+## Grok 세 구간 실제 수집과 서버 지속 실행 — 2026-10-15 12:29 KST
+
+사용자 지시로 실제 Grok CLI 세 세션을 `grok-4.7 --reasoning-effort low --no-subagents`로 병렬 실행했다. 시작은 `02:32:27Z`이고 모델 usage는 `grok-4.7-build`, effort는 low로 확인했다. 세 세션은 제품 ID를 3으로 나눈 나머지로 겹치지 않는 구간을 맡아 실행 요청 파일을 각각 제출했다. 분석·runner 작성과 해당 요청은 Grok이 수행했고, 운영 연결·검토·집계는 감독자가 검증했다. 원문 수만 건을 LLM 호출로 바꾸거나 인증값·원시 환경·URL 목록을 모델에 넘기지 않았다.
+
+비공개 원본과 실행 기록은 `/Users/jr/.config/nomorevibe/backlog-recovery/2026-10-15/grok-sharded-source-catchup/`에 디렉터리0700/파일0600으로 보관한다. 고정 기준 DB `02:34:27.508Z`는 현재 공개 제품의 출처86,006개 중 due48,045개/제품24,394개이며 덮어쓰지 않았다. 처음 소규모 실제 실행은 제품15개/출처30개를 시도해29개 저장, 원문 접속 실패1개를 기존6시간 backoff로 남겼다. 프로세스 예외는0이다. 잠시 설정한 공식 작업 중단 값은 원본NULL로 조건부 복원됐고 감사12822/12833 및 정상 워커 재개를 확인했다. 이 소규모 실행의 heldFuture30은 정상 성공 후96시간 재시각도 포함하므로30실패로 읽지 않는다.
+
+지속 실행은 중단 설정을 쓰지 않는다. 기존 `product-evidence-refresh`의 공식 `runJob` lease 하나 안에서 세 구간을 돌리며, 각 `refreshProductEvidence(force:false)` 전체를 공유 permit 하나로 직렬화한다. 세 구간 요청이 HTTP 동시성3이나 처리량3배를 뜻하지 않는다. 현재 세대·출처 CAS, 공개 접근/SSRF, 시간·응답 크기, 정상 재시도와 quota를 유지한다. quota guard는 모든 활성 계정의 최신 잔량이15%+500보다 클 때만 GitHub due 제품을 선택한다. 닫히면 현재 GitHub due가 없는 제품을 골라 높은 ID의 site-only 작업이 굶지 않게 하며, 혼합 제품을 강제 수집하지 않는다.
+
+공식 claim은 `requestedOnly:true`로 기존 pause/backoff를 원자적으로 확인한다. productive 실제 시도·저장이 있고 새 quota/수요 조회에 처리 가능한 due가 남아 있으면 공식 `requestJob` 신호를 한 번만 보낸다. 직접 version·lease·cursor·출처 성공/실패/예약 시각은 고치지 않는다. 실제 시도가 있으면 다음 선택으로 이어가고, 정상 성공의96시간 예약 때문에30초 쉬지 않는다. 잠긴 claim은2초 대기하며 완료 횟수 한도를 소모하지 않는다. 초기에 검토한 jitter는 적용하지 않았다.
+
+첫 지속 launch는 남은 throw-only pause API 선언이 중앙 안전 검사에 걸려 수집 전 종료됐다. 실제 연결 모듈을 검사하는 회귀에서 RED를 확인하고 사용하지 않는 선언을 제거한 뒤 Node34/34, Python6/6을 직접 통과했다. 교정 manifest `c94280736311f6d36d1d6f81e14754e51095672ef8b52a21568037b2305e25b5`를 검토한 후 재실행했다. 실제 runtime은 `347d647cc21a272e3e5b6acc1a0fd41f2190f173`이며, 서버PID11333·명령 경로·배포 payload15개 hash·primary crawler epoch94의 live role을 확인했다. 로컬 명령 종료 뒤에도 서버는 계속 실행 중이다. 이 runner는 별도 서비스·유료 상품·역할 lease를 만들지 않는다.
+
+`03:29:01.670Z`에 **productive 처리 2회 완료**를 확인했다. 이 지속 runner 자체가 선택60/실제시도60/실저장60 출처를 기록했고, 실패0/보류0/backoff0/미시도0이었다. 제품30개가 모두 저장됐으며 각 shard는 제품10개·출처20개·저장20개다. 저장60개 전부를 DB에서 다시 읽어 같은 제품/종류/key와 현재URL=저장URL, 이전보다 엄격히 새로운 성공 시각을 확인했다(60/60). 소규모 실행과 합한 실제 저장 작업은89회이며, 그때 남은 원문 실패1개의6시간 재시도는 성공으로 세지 않는다.
+
+현재 due는47,514개/제품24,147개이고 별도 미래 error 대기197개가 남았다. PAT/App 잔량은03:28:54/43Z에3,175/1,916(각5,000)이다. 정상 worker도 동시에 공식 lease를 사용하므로 전체 due 감소나 전역 requestedVersion 증가를 전부 이 runner의 효과로 돌리지 않는다. 전역 작업은 requested53,323/processed53,322/runs51,140이며, 이 값은 scheduler·정상 worker를 포함한다. campaign 전용 official-signal 카운터는 별도로 남기지 않았으므로 그 증가분의 독점 귀속을 주장하지 않는다. 실제 Grok full 요청은3개다. 신규 발굴 두 작업은 계속2100중단이고 실행 수8,905/1,681도 변하지 않았다. source 작업 not_before는NULL이다.
+
+서버 실행 상한은48시간/완료10,000틱이다. 현재 due가0이어도 미래 원문 오류가 남으면 완료로 표시하지 않는다. 컨테이너 재시작/다음 배포로 프로세스가 종료되면 정상 worker가 계속 처리하며, runner가 중단 값을 쓰지 않아 고아 pause는 생기지 않는다. 아래 관측/중지 명령과 private 원본을 다음 운영자가 사용한다. 중지는 검증한 해당 PID에 SIGTERM만 보내며, 이후 status로 프로세스 종료와 공식 lease 종료를 확인한다.
+
+```bash
+CATCHUP_TRANSPORT_APPROVED=1 python3 /Users/jr/.config/nomorevibe/backlog-recovery/2026-10-15/grok-sharded-source-catchup/persistent/server-wrapper.py status
+python3 /Users/jr/.config/nomorevibe/backlog-recovery/2026-10-15/grok-sharded-source-catchup/persistent/observe.py
+CATCHUP_TRANSPORT_APPROVED=1 python3 /Users/jr/.config/nomorevibe/backlog-recovery/2026-10-15/grok-sharded-source-catchup/persistent/server-wrapper.py stop
+```
+
+직접 증거는 private `baseline-20261015T023432599628Z.json`, `shard-2/smoke-result-20261015T030207393827Z.json`, `smoke-upstream-backoff-proof.json`, `persistent/grok-execution-proof.json`, `persistent/review-manifest-launch-fix.json`, `persistent/node-tests-launch-fix.txt`, `persistent/python-tests-launch-fix.txt`, `persistent/observation-20261015T032902318699Z.json`이다. 실제 운영 원문 수집이 계속되는 상태이며 전체 적체 완료라고 보고하지 않는다.
+
+### 12:51 KST 지속 실행 확인
+
+root가 원격 status를 한 번 더 읽어 PID11333 생존·명령 일치·runtime347d647·
+`notBefore = NULL`·현재 공식 lease 사용을 확인했다. 03:51:50 UTC 시점 GitHub PAT 잔여는
+4,845/5,000, App은4,580/5,000이었다. 서버 checkpoint는35번째 처리와 누적 저장541회를
+보고한다. 이 누적치는 서버 집계이며, 앞서 root가 개별 DB로 대조한60개와 구분한다.
+
+전역 지연 출처47,261개와 오류 대기319개가 남아 있다. 서버의 누적 backoff129회와 deferred28회를
+성공에 더하지 않는다. 이 수치는 실행 중 서로 다른 시점의 집계이며 전체 출처 처리가 끝났다는
+뜻이 아니다. upstream 재시도 대기와 quota 조건을 유지하면서 서버가 계속 처리한다.
+
+비공개 실제 상태 증빙: `persistent/root-final-status-20261015T035153Z.json`.
