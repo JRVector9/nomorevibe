@@ -1,4 +1,4 @@
-# 2026-10-15 — PR01b-4 병렬 구현·최종 리뷰·로컬 검증 완료 / PR 제출 전
+# 2026-10-15 — PR01b-4 병렬 구현·최종 리뷰·로컬 검증 완료 / PR433 필수 CI 대기
 
 ## Objective / completed / modified files
 
@@ -7,7 +7,7 @@
 branch `codex/pipeline-pr01b-final-20261015`, 최신 base/main `664777d3175dbcded56dad96ad1e6d6f37027bb0`.
 writer 같은 tx의 final/event·strict settled-result proof·고정 handlers-v3·append-only finals 구현.
 수정 파일은 `git status --short`, 계약은 PR01b-final 계획, 실제 결과는 PR01b-final-validation 문서에 기록했다.
-아직 commit/push/PR 전. 운영 DDL/배포/provider inference/새 consumer 활성화 없음.
+[PR433](https://github.com/JRVector9/nomorevibe/pull/433) 생성·코드 b470f13 push 완료. 필수 CI 진행 중이다. 운영 DDL/배포/provider inference/새 consumer 활성화 없음.
 
 ## Decisions / tests / failed approaches
 
@@ -24,7 +24,7 @@ root 요청 정규화 RED2→GREEN, foreign-first NOWAIT55P03 RED→동일 candi
 
 ## Remaining / exact commands
 
-PR01b-4 명시적 stage→commit/push/PR→최신 base CI→exact-head merge. root X branch push 금지·사용자 assets 보존.
+PR01b-4 최신 base CI→exact-head merge→main 전체 CI 확인. root X branch push 금지·사용자 assets 보존.
 b5 coverage/artifact/seal·initialStateHash 인증, b6 provider 전체비용/identity/취소 증명·baseline은 남았다.
 실모델 unsupported_provider_budget, 원래 PR01 전체/2배/Oracle DR 미판정.
 
@@ -32,9 +32,9 @@ b5 coverage/artifact/seal·initialStateHash 인증, b6 provider 전체비용/ide
 cd /Users/jr/Desktop/projects/nomorevibe-pipeline-final
 git diff --check
 git status --short
-# 명시적 파일만 stage. 이 별도 worktree branch만 push한다.
-gh pr list --head codex/pipeline-pr01b-final-20261015 --json number,state,url
-# PR 생성 후 최신 base와 check/quality/통합3shard 성공을 확인하고 exact-head merge한다.
+gh pr view 433 --json state,baseRefOid,headRefOid,mergeStateStatus,statusCheckRollup
+gh run list --branch codex/pipeline-pr01b-final-20261015 --workflow CI --limit 2
+# check/quality/통합3shard 성공 및 최신 base를 확인하고 exact-head merge한다.
 ```
 
 ---

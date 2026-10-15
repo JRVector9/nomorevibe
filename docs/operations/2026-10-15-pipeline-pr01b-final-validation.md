@@ -108,6 +108,11 @@ PUBLIC ACL은 database CONNECT/TEMPORARY, public schema USAGE와 grant option �
 AI1/AI2 담당도 전용 DB 정리를 확인했다. 세 이번 전용 container는 stop했으며 다른 container는 변경하지 않았다.
 남은 blocking P1/P2 리뷰 지적은 없다. PR/CI 상태는 납품 현황과 handoff에 별도 기록한다.
 
+## 제출 checkpoint
+
+[PR433](https://github.com/JRVector9/nomorevibe/pull/433)을 생성했다. 최신 base는 `664777d`이며
+코드 commit은 `b470f13`이다. PR 필수 CI는 진행 중이다. CI 성공·main 병합·운영 적용을 미리 완료로 표시하지 않는다.
+
 ## 후속과 재현
 
 b5는 실제 readiness/coverage·별도 artifact/export·admission 종료/모든 call 정산/writer fence 뒤 seal이다.
