@@ -13,6 +13,7 @@ import { firstReviewer, reviewWithAgent, REVIEW_CLI_TIMEOUT_MS } from "@/lib/cra
 import { reviewWithGateway, REVIEW_GATEWAY_TIMEOUT_MS } from "@/lib/crawl/agent-review-gateway";
 import { reviewWithGrokCli, GROK_REVIEW_TIMEOUT_MS } from "@/lib/crawl/agent-review-grok";
 import { reviewSemanticNow } from "../review-replay-context";
+import { assertReviewFixtureSettings, dispatchReviewFixtureCall } from "../review-fixture-transport";
 
 const MAX_CONCURRENT_REVIEWS = 16;
 const TICK_MS = 40_000;
@@ -24,6 +25,7 @@ const FIRST_GATEWAY_MS = 24_000;
 export async function reviewCrawlCandidates(ctx: JobContext<null>): Promise<JobOutcome<null>> {
   const startedAt = Date.now();
   const settings = await getSettings();
+  assertReviewFixtureSettings(settings);
   if (!settings.enabled || settings.reviewMode === "off") {
     ctx.log("crawl.agent_review_skipped", { reason: !settings.enabled ? "disabled" : "review_off" });
     return { done: true };
@@ -118,7 +120,8 @@ export async function reviewCrawlCandidates(ctx: JobContext<null>): Promise<JobO
       // Claim may have waited on a lock. Cancel and record it instead of leaving a running row.
       if (!canStart()) controller.abort();
       const options = { model, timeoutMs: ceiling, signal: controller.signal };
-      let result = await measureReviewCall(telemetry, () => (reviewProvider === "abcllm"
+      let result = await measureReviewCall(telemetry, async () => (await dispatchReviewFixtureCall({ stage: "first",
+        candidateId: candidate.id, firstAttemptId: claim.attempt.id, provider: reviewProvider, model }, input, options)) ?? (reviewProvider === "abcllm"
         ? reviewWithGateway(input, options)
         : reviewProvider === "grok-cli" ? reviewWithGrokCli(input, options) : reviewWithAgent(input, options)), ctx.log);
       if (controller.signal.aborted) result = { ok: false, error: "cancelled" };

@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { and, eq, isNull, or, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
+import { currentReplayDb } from "@/lib/db/replay-scope";
 import { jobs, operationsObservations } from "@/lib/db/schema";
 import { logger } from "@/lib/observability/logger";
 import { JobLeaseLostError, requestJob, type JobLease } from "./control";
@@ -50,6 +51,12 @@ export async function runJob<C>(
   handler: (ctx: JobContext<C>) => Promise<JobOutcome<C>>,
   options: { budgetMs?: number; requestedOnly?: boolean; signal?: AbortSignal; roleLease?: RoleLease } = {},
 ): Promise<RunResult> {
+  // Dedicated replay scopes consume only these two existing review handlers.
+  // Check before even a stopping return, and before role leadership or a DB claim.
+  if (currentReplayDb()) {
+    if (name !== "crawl-agent-review" && name !== "second-review") throw new Error("replay_job_not_allowed");
+    if (options.roleLease) throw new Error("replay_role_lease_rejected");
+  }
   if (options.signal?.aborted) return { status: "skipped", reason: "stopping" };
   const startedAt = Date.now();
   const token = randomUUID();

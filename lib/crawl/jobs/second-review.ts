@@ -7,6 +7,7 @@ import { reviewWithGrokCli, GROK_REVIEW_TIMEOUT_MS } from "@/lib/crawl/agent-rev
 import { closeSettledSecondReviews, combineVerdicts, enqueueSecondReviews, pendingSecondReviews, recordSecondReview, reopenOrphanedGateHolds,
   retryFailedSecondReviews } from "@/lib/crawl/second-review";
 import { loadSecondReviewInput } from "@/lib/crawl/second-review-input";
+import { assertReviewFixtureSettings, dispatchReviewFixtureCall } from "../review-fixture-transport";
 
 /**
  * 한 틱에 함께 부르는 수와 틱의 길이.
@@ -29,6 +30,7 @@ const FETCH = CONCURRENT * 6;
 export async function secondReviewCandidates(ctx: JobContext<null>): Promise<JobOutcome<null>> {
   const startedAt = Date.now();
   const settings = await getSettings();
+  assertReviewFixtureSettings(settings);
   if (!settings.enabled || !settings.secondReview.enabled) {
     ctx.log("crawl.second_review_skipped", { reason: !settings.enabled ? "disabled" : "second_review_off" });
     return { done: true };
@@ -72,11 +74,14 @@ export async function secondReviewCandidates(ctx: JobContext<null>): Promise<Job
           firstAttemptId: row.firstAttemptId ?? undefined, generationKey: row.generationKey,
           provider, model, job: ctx.lease?.name, runId: String(ctx.lease?.requestedVersion) };
         if (row.createdAt) emitPipelineEvent("queue", { ...telemetry, waitMs: Date.now() - row.createdAt.getTime() }, ctx.log);
-        const result = await measureReviewCall(telemetry, () => provider === "abcllm"
+        const result = await measureReviewCall(telemetry, async () => (await dispatchReviewFixtureCall({ stage: "second",
+          candidateId: row.candidateId, firstAttemptId: row.firstAttemptId, secondReviewId: row.id,
+          generationKey: row.generationKey, vote: row.fallbackForId ?? row.id, provider, model }, input,
+        { timeoutMs: limit, signal: ctx.signal })) ?? (provider === "abcllm"
           ? reviewWithGateway(input, { model, timeoutMs: limit, signal: ctx.signal })
           : provider === "grok-cli"
             ? reviewWithGrokCli(input, { model, timeoutMs: limit, signal: ctx.signal })
-            : reviewWithAgent(input, { model, timeoutMs: limit, signal: ctx.signal }), ctx.log);
+            : reviewWithAgent(input, { model, timeoutMs: limit, signal: ctx.signal })), ctx.log);
         if (ctx.signal?.aborted) { deferred++; continue; }
         if (!result.ok) {
           // 멈추라고 해서 끊긴 것은 실패가 아니다 — 그대로 두면 다음 회차가 처음부터 본다

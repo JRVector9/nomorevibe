@@ -7,9 +7,14 @@ import { parseCapacityManifest, type CapacityManifest } from "./pipeline-capacit
 import { assertVerifiedReplayDatabase, verifyReplayDatabaseSession, type VerifiedReplayDatabase } from "./pipeline-replay-database";
 
 const hash = z.string().regex(/^[a-f0-9]{64}$/), positive = z.number().int().positive().safe();
-const callSchema = z.object({ callId: z.string().min(1).max(160), candidateId: positive, firstAttemptId: positive,
-  inputHash: hash, sourceRevisionHash: hash, stage: z.enum(["first", "second"]), provider: z.string().min(1).max(160),
-  model: z.string().min(1).max(160), requestHash: hash, tokenUpperBound: positive }).strict();
+const callBase = { callId: z.string().min(1).max(160), candidateId: positive,
+  inputHash: hash, sourceRevisionHash: hash, provider: z.string().min(1).max(160),
+  model: z.string().min(1).max(160), requestHash: hash, tokenUpperBound: positive };
+const callSchema = z.discriminatedUnion("stage", [
+  z.object({ ...callBase, stage: z.literal("first"), firstAttemptId: positive }).strict(),
+  z.object({ ...callBase, stage: z.literal("second"), firstAttemptId: positive.nullable(), secondReviewId: positive,
+    generationKey: z.string().min(1).max(160), vote: positive }).strict(),
+]);
 export type ReplayCallRequest = z.infer<typeof callSchema>;
 export type ReplayReceipt = { inputTokens: number; outputTokens: number } | null;
 const runBrand: unique symbol = Symbol("ReplayRun");
@@ -156,11 +161,13 @@ export class ReplayLedger {
       const calls = number(row.charged_calls) + 1, tokens = number(row.charged_tokens) + call.tokenUpperBound;
       ensure(Number.isSafeInteger(tokens) && calls <= manifest.limits.maxCalls && tokens <= manifest.limits.maxTokens, "replay_budget_exhausted");
       await tx`INSERT INTO pipeline_replay.capacity_calls (run_id, call_id, candidate_id, first_attempt_id, input_hash,
-        source_revision_hash, stage, provider, model, request_hash, token_upper_bound, state)
+        source_revision_hash, stage, second_review_id, generation_key, vote, provider, model, request_hash, token_upper_bound, state)
         VALUES (${run.runId}, ${call.callId}, ${call.candidateId}, ${call.firstAttemptId}, ${call.inputHash}, ${call.sourceRevisionHash},
-        ${call.stage}, ${call.provider}, ${call.model}, ${call.requestHash}, ${call.tokenUpperBound}, 'reserved')`;
+        ${call.stage}, ${call.stage === "second" ? call.secondReviewId : null}, ${call.stage === "second" ? call.generationKey : null},
+        ${call.stage === "second" ? call.vote : null}, ${call.provider}, ${call.model}, ${call.requestHash}, ${call.tokenUpperBound}, 'reserved')`;
       await tx`UPDATE pipeline_replay.capacity_runs SET charged_calls = ${calls}, charged_tokens = ${tokens} WHERE run_id = ${run.runId}`;
-      await this.event(tx, run.runId, "reserved", { callId: call.callId, tokenUpperBound: call.tokenUpperBound });
+      await this.event(tx, run.runId, "reserved", { callId: call.callId, tokenUpperBound: call.tokenUpperBound,
+        ...(call.stage === "second" ? { secondReviewId: call.secondReviewId, generationKey: call.generationKey, vote: call.vote } : {}) });
       return null;
     });
     if (denial) fail(denial);

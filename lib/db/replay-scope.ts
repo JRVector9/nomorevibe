@@ -1,7 +1,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { drizzle } from "drizzle-orm/postgres-js";
 import type postgres from "postgres";
-import { assertVerifiedReplayHandlerDatabase, openVerifiedReplayHandlerDatabase,
+import { assertSameReplayHandlerDatabase, assertVerifiedReplayHandlerDatabase, openVerifiedReplayHandlerDatabase,
   verifyReplayDatabaseSession, type VerifiedReplayDatabase } from "@/lib/operations/pipeline-replay-database";
 import * as schema from "./schema";
 
@@ -119,6 +119,14 @@ export function currentReplayDb(): Db | undefined {
   if (!scope) return undefined;
   assertActive(scope);
   return scope.executor;
+}
+
+/** Bind a separately owned ledger connection without exposing its private target/nonce. */
+export function assertReplayDatabaseScopeIdentity(expected: VerifiedReplayDatabase): void {
+  const scope = replay.getStore();
+  if (!scope) throw new Error("replay_database_scope_required");
+  assertActive(scope);
+  assertSameReplayHandlerDatabase(scope.database, expected);
 }
 
 /** Explicit runner entry only. Opens a fresh restricted local connection and always closes it. */

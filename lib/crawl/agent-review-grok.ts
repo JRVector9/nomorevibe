@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { assertLiveReviewAdapterAllowed } from "./review-fixture-transport";
 import { REVIEW_SYSTEM_PROMPT, usageFrom, type AgentReviewResult, type ReviewFailure } from "./agent-review";
 import { MAX_REVIEW_INPUT_BYTES, validateReviewOutcome, type ReviewInput } from "./agent-review-contract";
 
@@ -94,6 +95,7 @@ export function grokFailure(stdout: string, stderr: string): ReviewFailure {
 
 /** 기한·초과분은 죽이고, 자식의 close 가 확인된 뒤에만 돌아온다(runReviewCli 와 같은 규율) */
 export const runGrokCli: GrokCliRun = (args, options) => new Promise((resolve) => {
+  assertLiveReviewAdapterAllowed();
   if (options.signal?.aborted) { resolve({ kind: "cancelled" }); return; }
   const child = spawn(process.env.GROK_CLI ?? "grok", args, { cwd: options.cwd, env: options.env, stdio: ["ignore", "pipe", "pipe"], detached: false });
   const stdout: Buffer[] = [], stderr: Buffer[] = [];
@@ -118,6 +120,7 @@ export const runGrokCli: GrokCliRun = (args, options) => new Promise((resolve) =
 });
 
 export async function reviewWithGrokCli(input: ReviewInput, options: { model: string; timeoutMs?: number; signal?: AbortSignal; run?: GrokCliRun }): Promise<AgentReviewResult> {
+  assertLiveReviewAdapterAllowed();
   const model = options.model.trim();
   if (!MODEL_NAME.test(model)) return { ok: false, error: "not_configured" };
   const serialized = JSON.stringify(input.snapshot);

@@ -1,5 +1,5 @@
 import { beforeAll, beforeEach, expect, it } from "vitest";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { agentRepositoryObservations, agentRepositoryScans, crawlCandidates, crawlDocuments, crawlFrontier,
   crawlReviewAttempts, crawlSettings, jobs, secondReviews } from "@/lib/db/schema";
@@ -151,7 +151,9 @@ it("hands reference-current exhausted attempts to a person using a real event ti
       if (claim.kind === "skipped") throw new Error(claim.reason);
       await recordAgentReview({ ...context, attempt: claim.attempt, error: "timeout", retryAfter: new Date(0) });
     }
-    const wallBefore = Date.now();
+    // The writer uses the DB clock. A local Docker VM can lag the host by tens of ms.
+    const [clock] = await db.execute<{ ms: string }>(sql`select extract(epoch from clock_timestamp()) * 1000 as ms`);
+    const wallBefore = Math.floor(Number(clock.ms));
     expect(await handOffExhaustedFirstReviews(context.settings, context.lease)).toBe(1);
     const [candidate] = await db.select().from(crawlCandidates);
     expect(candidate).toMatchObject({ state: "needs_review", reason: "ai_review_exhausted" });

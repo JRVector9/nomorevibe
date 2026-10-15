@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { assertLiveReviewAdapterAllowed } from "./review-fixture-transport";
 import { CATEGORIES } from "@/lib/domain/products/schema";
 import {
   MAX_REVIEW_INPUT_BYTES, REVIEW_PROMPT_VERSION, validateReviewOutcome,
@@ -166,6 +167,7 @@ export function reviewCliArgs(model: string): string[] {
 
 /** Kill on deadline/overflow, and resolve only after the child's close event confirms exit. */
 export const runReviewCli: ReviewCliRun = async (args, stdin, options) => {
+  assertLiveReviewAdapterAllowed();
   if (options.signal?.aborted) return { kind: "cancelled" };
   const directory = await mkdtemp(path.join(os.tmpdir(), "nomorevibe-review-"));
   try {
@@ -236,6 +238,7 @@ export function cliFailure(output: Record<string, unknown>): ReviewFailure {
 }
 
 export async function reviewWithAgent(input: ReviewInput, options: { model?: string; run?: ReviewCliRun; timeoutMs?: number; signal?: AbortSignal } = {}): Promise<AgentReviewResult> {
+  assertLiveReviewAdapterAllowed();
   const model = options.model ?? reviewModel();
   if (!model || reviewModel({ CRAWL_REVIEW_MODEL: model }) !== model) return { ok: false, error: "not_configured" };
   const serialized = JSON.stringify(input.snapshot);
