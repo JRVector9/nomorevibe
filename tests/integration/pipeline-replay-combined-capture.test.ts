@@ -49,8 +49,8 @@ const settings: CrawlSettings = { ...structuredClone(DEFAULT_CRAWL_SETTINGS), en
   firstReview: { provider: "abcllm", model: "combined-first" }, secondReview: {
     ...structuredClone(DEFAULT_CRAWL_SETTINGS.secondReview), enabled: false } };
 
-async function allSteps(steps: readonly (() => Promise<unknown>)[]) {
-  const errors: unknown[] = [];
+async function allSteps(steps: readonly (() => Promise<unknown>)[], priorErrors: readonly unknown[] = []) {
+  const errors: unknown[] = [...priorErrors];
   for (const step of steps) try { await step(); } catch (error) { errors.push(error); }
   if (errors.length) throw new AggregateError(errors, "combined_capture_cleanup_failed");
 }
@@ -278,6 +278,7 @@ it("observes old-old then committed new-new across an actual paired domain/item 
   const writer = postgres(TEST_DATABASE_URL, { max: 1, prepare: false, onnotice: () => {},
     connection: { application_name: "pr04c2-combined-paired-writer" } });
   let writing: Promise<unknown> | undefined, writerError: unknown;
+  const bodyErrors: unknown[] = [];
   try {
     writing = writer.begin(async tx => {
       await tx`UPDATE crawl_candidates SET signals=jsonb_build_object('combinedPair','new') WHERE id=${fixture.candidate.id}`;
@@ -303,9 +304,9 @@ it("observes old-old then committed new-new across an actual paired domain/item 
     expect(mixed).not.toEqual(before.state); expect(mixed).not.toEqual(committed.state);
     expect(ownItem(mixed).item_epoch).toBe(lease.itemEpoch + 1);
     expect(mixed.domain.tables.crawl_candidates.find(row => row.id === fixture.candidate.id)?.signals).not.toEqual({ combinedPair: "new" });
-  } finally {
+  } catch (error) { bodyErrors.push(error); } finally {
     finish.resolve();
-    await allSteps([async () => { if (writing) await writing; }, async () => { await writer.end({ timeout: 3 }); }]);
+    await allSteps([async () => { if (writing) await writing; }, async () => { await writer.end({ timeout: 3 }); }], bodyErrors);
   }
 }));
 
@@ -415,6 +416,7 @@ it("propagates actual SQLSTATE57014 after its own blocked statement backend is c
     connection: { application_name: "pr04c2-combined-cancel-reader" } });
   let holding: Promise<unknown> | undefined, reading: Promise<unknown> | undefined;
   let holderPid: number | undefined, readerPid: number | undefined, holderError: unknown;
+  const bodyErrors: unknown[] = [];
   try {
     holding = holder.begin(async tx => {
       const [row] = await tx`SELECT pg_backend_pid() AS pid`; holderPid = row.pid;
@@ -437,10 +439,10 @@ it("propagates actual SQLSTATE57014 after its own blocked statement backend is c
     const [cancelled] = await admin`SELECT pg_cancel_backend(${readerPid!}::int) AS cancelled`;
     expect(cancelled.cancelled).toBe(true);
     expect(await reading).toMatchObject({ error: { code: "57014" } });
-  } finally {
+  } catch (error) { bodyErrors.push(error); } finally {
     finish.resolve();
     await allSteps([async () => { if (holding) await holding; }, async () => { if (reading) await reading; },
-      async () => { await reader.end({ timeout: 3 }); }, async () => { await holder.end({ timeout: 3 }); }]);
+      async () => { await reader.end({ timeout: 3 }); }, async () => { await holder.end({ timeout: 3 }); }], bodyErrors);
   }
   expect(await rawState()).toEqual(before);
 }));

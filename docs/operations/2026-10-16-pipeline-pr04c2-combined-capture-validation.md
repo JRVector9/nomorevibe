@@ -39,6 +39,22 @@ C 최종 481행 SHA `0694ed58d9ef1d7623fcc93aba65125b103c4d656ea8d1ac5727dd8a3ab
 
 root 관련 회귀: combined15 + item capture9 + item state7 + certified wall2 = 4 files / 33 PASS, 11.82s, 실제 exit0. `/tmp/nomorevibe-pr04c2-combined-root-related-db-20261016.log`. expired-owner negative control의 `job_lease_lost` 로그는 예상된 거절이며 테스트 실패가 아니다. 로컬 전체 DB suite는 다시 실행하지 않았고 이후 PR 필수 CI가 남아 있다.
 
-root가 전용55515에서 원 readback 스크립트를 실행해 전체 public raw·원 stage의 µs timestamp·effective DB/PUBLIC ACL·원 public 함수 OID/정의·trigger를 baseline과 비교했고 실제0이었다. 원 migration0058 jitoff/source=database 및 timeout0/1s/0를 보존했다. 공개 표준 초기행 stage3/visit1만 남고 replay schema/role·column ACL·다른 연결 0. `/tmp/nomorevibe-pr04c2-combined-root-related-final-readback-20261016.log` 및 C 라벨별 JSON. DB는 최신 main 통합 후 관련 회귀를 위해 아직 RUNNING이며 STOP 완료로 기록하지 않는다.
+root가 전용55515에서 원 readback 스크립트를 실행해 전체 public raw·원 stage의 µs timestamp·effective DB/PUBLIC ACL·원 public 함수 OID/정의·trigger를 baseline과 비교했고 실제0이었다. 원 migration0058 jitoff/source=database 및 timeout0/1s/0를 보존했다. 공개 표준 초기행 stage3/visit1만 남고 replay schema/role·column ACL·다른 연결 0. `/tmp/nomorevibe-pr04c2-combined-root-related-final-readback-20261016.log` 및 C 라벨별 JSON. root가 readback 뒤 정상 STOP/exited0/OOMfalse를 확인했다. `/tmp/nomorevibe-pr04c2-combined-root-db-{before-stop,after-stop}-20261016.json`, `...-root-db-stop-20261016.log`. 이후 정확한 자기 컨테이너/동일 이름 volume 및 단독 연결을 확인하고 metadata를 보존한 뒤 둘만 제거했다(각 실제0). `/tmp/nomorevibe-pr04c2-combined-root-owned-db-before-cleanup-20261016.json`, `...-owned-db-cleanup-20261016.log`. 최초 단독 연결 검사의 short/full container ID 비교는 삭제 전에 assertion으로 중단했고 `--no-trunc`로 실제 full ID를 확인한 뒤 진행했다. 다른 DB/image/cache/forensic은 보존했다.
 
-현재 root/B source 리뷰 추가 P1/P2 0, A→C 최종 리뷰는 대기 중이다. 새 source와 unit 2개는 동결했다. 기존 v1/profile/entry/권한 및 item 인증 실행 차단은 바꾸지 않았다. 실제 provider baseline·2배·Oracle DR 또는 운영 적용의 증거가 아니다.
+현재 root/B source 리뷰 추가 P1/P2 0. A→C 최종481행 읽기에서 writer/holder 두 finally의 동시 body+cleanup 실패가 원 body 예외를 대체하는 P2를 발견했다. root가 기존 allSteps의 priorErrors와 두 case의 catch 보존만 허용했다. 실제 동시 fault 실험/RED는 아니며, C가 새 전용55516에서 같은 related33/정적/원상복원·STOP를 수행하고 A가 최소 diff를 재리뷰한다. 새 source와 unit 2개는 동결했다. 기존 v1/profile/entry/권한 및 item 인증 실행 차단은 바꾸지 않았다. 실제 provider baseline·2배·Oracle DR 또는 운영 적용의 증거가 아니다.
+
+## 최신 main 통합
+
+feature `03213e4`를 명시한 8파일로 commit하고 actual main `820f7fe7`을 정상 merge한 HEAD는 `ed00aeb`다. 충돌은 root 소유 handoff·delivery 및 선행 item capture validation 문서 3개뿐이었다. 최신 진행 기록과 main의 원 검증 기록을 함께 보존했다. root가 `git diff 03213e4 HEAD -- lib tests scripts .github package.json package-lock.json` 결과가 비어 있음을 확인했다. 통합으로 코드·테스트·실행 설정이 바뀌지 않아 같은 로컬 검증을 반복하지 않았다. 최종 PR 필수 CI는 별도 추적한다.
+
+선행 PR447 main CI38806691270은 scope/quality/통합3구간/check 및 두 image 모두 SUCCESS를 root가 직접 확인했다.
+
+## 최종 오류 보존 보강·리뷰 완료
+
+A가 최종481행에서 발견한 동시 body+cleanup 오류 대체 P2는 기존 allSteps의 optional priorErrors 사본과 writer/holder 두 case의 bodyErrors catch/finally 전달만으로 보강했다. assertions/SQL/시간 제한 및 다른 case 본문은 그대로다. 최종483행 SHA `599597cbcce0d35785a4c40ac8825fe217d64c0889eedacf5ceff4a2d1f84e3f`. 역변환하면 원0694 전체 bytes와 일치한다. `/tmp/nomorevibe-pr04c2-combined-c-error-drain-diff-20261016.log`. root가 정확한 diff와 증빙을 직접 읽었고 A 재리뷰 추가 P1/P2 0, 기존 두 테스트 P2는 모두 닫혔다. 동시 fault 주입은 실행하지 않았으며 코드리뷰로 보강한 경계다.
+
+새 전용55516/pinnedPG17/loopback dummy에서 migration baseline 이후 **동일 4files33cases를 한 번** 실행했다. 33 PASS/total12.12s/tests10.78s/실제 exit0. whole tsc `--incremental false` 및 scoped lint 실제0. `/tmp/nomorevibe-pr04c2-combined-c-error-drain-{related-db,tsc,lint}-20261016.log`. 원 source 및 unit bytes는 그대로여서 전체 unit/build/bundle 결과와 이 최종 통합 검증을 구분해 기록한다.
+
+root가 baseline/final JSON의 전체 raw·원 stage timestamp·함수 OID/정의·trigger·effective ACL과 기본 jit/timeout을 직접 비교해 일치를 확인했다. replay/columnACL/타 연결0 및 C의 정상 STOP/exited0/OOMfalse도 Docker inspect로 확인했다. C 라벨 `...-c-error-drain-{baseline,final}-readback-20261016.{log,json}`. root가 정확한 단독 own volume을 확인하고 metadata 보존 후 55516 컨테이너와 그 volume만 제거했다(각 실제0). `/tmp/nomorevibe-pr04c2-combined-root-error-drain-owned-db-{before-cleanup-20261016.json,cleanup-20261016.log}`. 다른 DB/image/cache/forensic은 보존했다.
+
+로컬 검증과 직접/교차 리뷰가 완료됐으며, 이후 최종 commit/push·PR 필수 CI·정상 main 병합/main CI 결과는 별도 추적한다. 운영 적용·provider 실측·item 인증 활성화는 아직이다.

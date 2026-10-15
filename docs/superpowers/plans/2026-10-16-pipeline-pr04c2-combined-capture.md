@@ -1,6 +1,6 @@
 # PR04c-2a-2 — domain/item 단일 statement snapshot
 
-사용자 승인 PR별 배타 병렬 개발을 계속한다. root는 실제 행동 RED·직접/교차 리뷰·검증·Git을 취합하고 A/B/C는 고정 파일·DB만 소유한다. 모든 모델은 gpt-6.1-sol/xhigh다. 현재 item capture feature ee6bc242/선행 PR446 main1fa994d2 기준이며 item capture PR/CI 완료와 실제 main 통합은 후속으로 추적한다. 운영 배포·DDL·provider inference·새 consumer 활성화는 이 단계에 포함하지 않는다.
+사용자 승인 PR별 배타 병렬 개발을 계속한다. root는 실제 행동 RED·직접/교차 리뷰·검증·Git을 취합하고 A/B/C는 고정 파일·DB만 소유한다. 모든 모델은 gpt-6.1-sol/xhigh다. 착수 기준은 item capture feature ee6bc242/선행 PR446 main1fa994d2다. 이후 item capture PR447은 main820f7fe7로 병합됐고 두 main CI/image 모두 성공했다. 이 feature는 최신 main820f7fe7을 정상 통합했다. 운영 배포·DDL·provider inference·새 consumer 활성화는 이 단계에 포함하지 않는다.
 
 ## 문제와 고정 API
 

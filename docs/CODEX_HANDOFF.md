@@ -1,37 +1,58 @@
-# 2026-10-16 — PR447 병합 / combined snapshot 실제 검증
+# 2026-10-16 — combined snapshot 로컬 검증·최종 리뷰 완료
 
-전체PR별개발goal active. root가 gpt-6.1-sol/xhigh A/B/C의배타파일·DB·actualRED/동일GREEN·직접/교차리뷰·전체gate/Git을관리한다. 원본X branchpush금지/최신handoff만동기화. 운영deploy/DDL/inference/발굴재개0, 마지막운영8020dca·기본legacy1contract0·새consumer비활성·미래image전0077필수.
+## 현재 목표
 
-## 완료·실제 결과
+승인된 PR별 파이프라인 개발 전체 goal은 active다. root가 gpt-6.1-sol/xhigh 서브에이전트 3명의 배타 파일·DB, 직접/교차 리뷰, 검사와 Git을 관리한다. 원본 `/Users/jr/Desktop/projects/nomorevibe`는 사용자 X branch이므로 push하지 않는다. 이 handoff만 원본에 동기화한다.
 
-- PR446/head3f26ae03 필수CI38803582254 모든checkSUCCESS→actualmain **1fa994d2d72c70d8e73bbe021201d0de3d3eb708** 정상병합. mainCI38804670621 scope/quality·통합3구간·check·웹/워커image까지 모두SUCCESS를root가직접확인했다. 기존CI최초20초지연원인은미확정, 새fixture는원Promise정산뒤profile해제/raw복원으로강제1초timeout후cleanup오류0을확인했다.
-- itemcapture WT `/Users/jr/Desktop/projects/nomorevibe-pipeline-item-capture`는feature84119d4→실제main1fa정상mergeee6bc242→문서최종 **4a2f23c496c86c0bf45e3799b778de16593d425b** commit/push, **PR447** https://github.com/JRVector9/nomorevibe/pull/447. WT clean/필수CI38805574539 전체SUCCESS 후 정상squash main820f7fe7a0a1c8e0e5698b53f2e83d30d5f71e67, merged2026-10-15T21:01:50Z. mainCI38806691270 진행중/별도추적. source5e313/unitAee9/B792a/C548685는최종동결. root전체unit286files3216PASS7.93s·최신main통합후3files18PASS7.74s/actualexit0·tsc/lint/i18n/Python23/build/bundle0. root/A/B최종추가P1/P2 0.
-- 새55514 mergegate는whole raw/원stage timestamp·함수/trigger/ACL baseline동일·타conn0/readback·STOP/exited0/OOMfalse를원로그직접확인했다. migration0058의jitoff를추가변경없이보존했고최초JITon가정오류는기능RED제외. metadata `/tmp/nomorevibe-pr04c2-capture-merge-owned-db-before-cleanup-20261016.json` 보존/정확단독volume검증후own55514container/volume만제거actual0.logs `/tmp/nomorevibe-pr04c2-capture-merge-{c-related18,c-final-readback,c-stop,owned-db-cleanup}-20261016.log`. earlier55511/13도최종readbackSTOP/metadata뒤정확제거완료·타DB/image/cache/forensic보존.
+현재 WT는 `/Users/jr/Desktop/projects/nomorevibe-pipeline-combined-capture`, branch `codex/pipeline-pr04c2-combined-capture-20261016`. feature `03213e4` → actual main820f7 정상 merge `ed00aeb` 이후 최종 테스트 정리 보강과 문서가 아직 미커밋이다. 다음은 명시 commit/push/PR/필수 CI다.
 
-## 현재 목표·수정 파일·설계
+## 완료 작업과 수정 파일
 
-새WT `/Users/jr/Desktop/projects/nomorevibe-pipeline-combined-capture`, branch codex/pipeline-pr04c2-combined-capture-20261016/baseee6bc242.depsclone/root `npx next typegen` actualexit0(log `/tmp/nomorevibe-pr04c2-combined-root-typegen-20261016.log`).root고정계획 `docs/superpowers/plans/2026-10-16-pipeline-pr04c2-combined-capture.md`와새validation/handoff/delivery을소유한다.
+- PR446은 main1fa994d2, PR447은 main **820f7fe7a0a1c8e0e5698b53f2e83d30d5f71e67**로 정상 병합됐다. PR446 main CI38804670621 및 PR447 PR CI38805574539/main CI38806691270은 필수 check와 해당 main의 두 image까지 모두 SUCCESS를 root가 직접 확인했다.
+- 이번 PR의 diff는 신규 source1/unit2/통합1 + root 문서4, 총8파일이다. `pipeline-replay-combined-capture.ts` final SHA **b398dddd983d7bc7b8dce446eb4625523287a4d1bd05d2f033e55f8dfbed3b2d**. 단위A SHA58309803…, B a32d61e0…는 원 RED 이후 bytes 동일하다. 통합 테스트 최종483행 SHA **599597cbcce0d35785a4c40ac8825fe217d64c0889eedacf5ceff4a2d1f84e3f**.
+- root 문서: `docs/superpowers/plans/2026-10-16-pipeline-pr04c2-combined-capture.md`, `docs/operations/2026-10-16-pipeline-pr04c2-combined-capture-validation.md`, 이 handoff, `docs/superpowers/plans/2026-10-15-pipeline-delivery-status.md`.
+- A source/자체unit, B 독립unit, C 통합/전용DB의 소유권 모두 root로 반환됐다. root/B source 및 A→C 최종 재리뷰 추가 P1/P2는0. 테스트 P2 두 건(raw 전체 개수 고정, body/cleanup 동시 오류 대체)은 최소 보강했다.
 
-신규module1의captureReplayCombinedState(tx,manifest)→{state:{kind:pipeline-replay-combined-state,version1,domain:v1,items:itemstate1},stateHash} + type만공개.한literalSELECT에서domain11·run별calls/DBfrozenuniverse·전체stage/item을읽고기존parseCapacityManifest/strictschemas/applyReplayChanges(domain,[])/canonicalReplayItemState/reviewHash만재사용한다.Array/exact1·manifest정확universe/policy를failclosed.두기존capture을같은RCtransaction에서순차호출해atomic이라고주장하지않는다.현재sourcefreshness/ready/authority/coverage/commit/verifiedartifact이아닌read-onlysnapshot.기존v1/profile/entry/권한/item실행차단byte0.
+## 핵심 설계 결정
 
-- A /root/pr01_final_ai1: NEW lib/operations/pipeline-replay-combined-capture.ts + NEW tests/pipeline-replay-combined-capture.test.ts만.runnableliteralSQL+strict rawbaseline/자기actualbehaviorRED→source/unit동결을먼저통지.B/C독립samebaselineactualRED/control을root수용전완성구현0.DB/Git/docs0.
-- B /root/pr01_final_ai2: NEW tests/pipeline-replay-combined-capture-adversarial.test.ts만.A동결후독립samebaselineRED/driver동결/동일GREEN・source읽기리뷰.DB/Git/docs0.
-- C /root/provider_contract_evidence: NEW tests/integration/pipeline-replay-combined-capture.test.ts만.새55515/nomorevibe-pr04c2-combined-db-20261016/pinnedPG17/loopbackdummy(rootlsofunused확인).actualReviewInput/manifest/DBinputs·fullrows/actualgeneric·profile전paired domain/itemMVCC・제한v5SELECT/원DML·itementry거절/SQL취소 등.처음부터testworkactualPromise정산뒤registry삭제→normalprofile.release→whole rawµs복원/오류합산・readbackSTOP.repo0058jitoff/test20/hook60/generic90변경0.타DB/생산/Git/docs0.
-- root: docs4/직접·교차리뷰/전체gate/Git. source/A6/B389/C254 전체와 실제 RED 원로그를 직접 읽었다. baseline SHA32334d283b08ababc62d32a2c90997a34f8bfa8ce9d0eb9e41713dfc38b6a2bf, A3AssertionFAIL/3controlPASS510ms, B206AssertionFAIL/89PASS891ms, C1AssertionFAIL/1실제SQLcontrolPASS1.21s를 수용했다. 네 원본은 /tmp/nomorevibe-pr04c2-combined-root-frozen-{source,a-unit,b-unit,c-driver}-20261016.ts에 bytes/SHA 보존했다. A가최소구현한 source b398dddd983d7bc7b8dce446eb4625523287a4d1bd05d2f033e55f8dfbed3b2d에서 동일 A6PASS536ms/B295PASS8.93s/C원2PASS1.36s 실제exit0. A/B정적0/Bsource리뷰추가P1/P2 0. root전체unit288files3517PASS13.03s·i18n/Python23 exit0. C최종481행 SHA0694ed58d9ef1d7623fcc93aba65125b103c4d656ea8d1ac5727dd8a3ab12dba/15PASS4.51s·정적0. root관련4files33PASS11.82s actual0·wholetsc/lint/build/bundle0. root55515原readback actual0, fullpublicraw·stageµs/effectiveACL/functionsOIDdefs/triggers/baselinejitoff/timeout exact·다른conn0. DB최신main관련회귀를위해RUNNING/STOP아직. A→C최종읽기리뷰대기. A→Cfixed2rowcounts P2는raw전체count/fixture키최소수정승인, 원254prefixbytes주장은이후종료/원driver보존. A의 transform/setup fixture 오류는 RED에서 제외했다. 상세 SHA/원로그는 새 validation에 있다.
+`captureReplayCombinedState(tx, manifest)`와 반환 type만 공개한다. 한 literal parameterized SELECT에서 public domain11개·현재 run calls/DB frozen universe·전체 stage/item을 읽는다. 정확한 manifest membership/policy, full raw columns, 기존 strict schema/domain/item canonicalizer와 전체 envelope hash를 사용한다. 새 connection/transaction/lock/provider/권한은 없다.
 
-## 남은 작업·실패 접근·다음 명령
+이는 읽기 snapshot이다. 현재 source 재검증·logical eligibility·실행 authority·인증 coverage를 발급하지 않는다. 기존 v1/profile/entry/권한과 item replay 실행 차단은 그대로다. 같은 RC transaction의 별도 두 SELECT를 원자 snapshot이라고 부르지 않는다.
 
-1. PR447은main820f7fe7정상병합완료. mainCI를확인하고 combinedfeaturecommit뒤실제main정상통합/관련회귀→PR필수CI→normalmerge/mainCI.PR446mainCI38804670621은image까지전체SUCCESS직접확인완료.기존실패mainbcf/e11의20초timeout/147후속FAIL은기록보존, 성공으로덮지않는다.
-2. 새combined의동일RED→GREEN·rootwholeunit3517/관련DB33·정적/build/bundle0까지완료. A→C최종리뷰수용후8파일명시commit→실제main820f7정상merge(충돌rootdocs만)→동일source/관련회귀→push/PR필수CI/normalmerge/mainCI. C55515는root전용/타agent접속0이며추가회귀후최종readback→STOP를조율한다. import/setup/SQL/fixture오류는기능RED제외. 로그는combinedvalidation 참조.
-3. 다음targetID actualclaim differential→journal/coverage→version/profile→실authority/finalwall→혼합runner/PR05–17.A PR05inventory `/tmp/nomorevibe-pr05-model-slot-inventory-20261016.md`와B combined계약 `/tmp/nomorevibe-pr04c2-combined-selector-b-contract-20261016.md`는읽기조사일뿐새PASS아니다.실provider30분baseline/2배/OracleDR미완료, 소단위goal완료0.
+## 실제 실행한 검사
+
+- runnable source32334…에서 원 A6은3AssertionFAIL/3controlPASS, 독립B295는206FAIL/89PASS, 실제PG 원C2는1FAIL/1SQLcontrolPASS. root가 source·driver 전체/원로그를 읽고 수용한 뒤 최소 구현을 해제했다. 원본4파일은 `/tmp/nomorevibe-pr04c2-combined-root-frozen-{source,a-unit,b-unit,c-driver}-20261016.ts`에 보존했다.
+- 동일 driver A6PASS536ms, B295PASS8.93s, C원2PASS1.36s. 최초 확장 C15PASS4.51s. root 전체 `npm test`: **288files3517PASS13.03s/exit0**. root 관련 DB4files33PASS11.82s/exit0.
+- 최종 오류 합산 보강 후 C가 새55516에서 **같은4files33PASS12.12s/exit0**, whole tsc `--incremental false`/scoped lint0. `/tmp/nomorevibe-pr04c2-combined-c-error-drain-{related-db,tsc,lint}-20261016.log`. 원0694로 역변환 전체 bytes 동일 증빙과 exact diff를 root/A가 읽었다. 동시 fault 주입은 미실행 코드리뷰 경계다.
+- root whole tsc/lint/i18n(4/8/11)/Python23/build(dummy DB)/bundle 모두 exit0. lint는 기존 vendor warning1. bundle br148.7/159.0/136.2KB. `/tmp/nomorevibe-pr04c2-combined-root-{unit,related-db,tsc,lint,i18n,python,build,bundle}-20261016.log`. 로컬 전체 DB suite를 새로 실행한 것은 아니다. PR 필수 CI가 남았다.
+- 실제137 frozen/generic leases, paired domain/item TX old-old/new-new 및 별도 stitched-read 혼합 대조, 외부 run/calls 보존, universe4종 거절, SQL 열 추가/삭제 rollback, 자기 backend 실제57014, genuine v5 SELECT·원 immutable DML/item entry 거절을 검증했다. query 분할 mutant 감도를 실험한 것은 아니다.
+- main 통합 충돌은 문서3개뿐이다. root가 `git diff 03213e4 ed00aeb -- lib tests scripts .github package.json package-lock.json` 결과0을 확인했다. 그 뒤 C의 승인된 정리 hunk만 바뀌어 같은33을 한 번 재검증했다.
+
+## 실패 접근·정리 상태
+
+A 초기 transform/setup fixture 오류는 RED에서 제외했다. B/C 원 driver를 수정해 GREEN으로 만들지 않았다. C 원254행은 승인된 전체 개수/실제 key P2 수정 때문에 이후 전체 prefix bytes 동일 주장을 중단했고 원본은 보존했다. 최종483행은 두 body 오류 catch와 기존 allSteps priorErrors 보강만 추가했다.
+
+종료된 에이전트는 send_message만으로 다음 turn을 시작하지 않는다. root가 후속 리뷰 대기를 확인한 뒤 followup_task로 재개했고 최종 리뷰를 받았다.
+
+55515·55516은 각각 full raw·원 stage µs timestamp·effective DB/PUBLIC/column ACL·함수 OID/정의·trigger·repo0058 jitoff/source database·timeout0/1s/0·잔류/다른 연결0 readback 뒤 정상STOP/exited0/OOMfalse를 확인했다. root가 metadata·정확한 own 단독 volume을 확인한 뒤 각 container/volume만 제거했다. 현재 두 포트의 테스트 DB는 없다. 다른 DB/image/cache/forensic은 보존했다. 메타데이터·cleanup 로그는 `/tmp/nomorevibe-pr04c2-combined-root-{owned-db,error-drain-owned-db}-{before-cleanup-20261016.json,cleanup-20261016.log}`. 최초55515 단독 검사 short/full ID assertion은 삭제 전에 중단했고 `--no-trunc`로 확인 후 진행했다.
+
+## 남은 작업·다음 에이전트 명령
+
+1. 최종 통합 테스트1+문서4만 명시 commit, feature branch push/PR 생성. 필수 CI 성공 후 exact head normal merge/main CI/image를 확인한다. 원본 X branch push 금지.
+2. 다음 target-ID AI2 logical 판정/actual claim differential 계약을 고정한다. B 계약79줄 `/tmp/nomorevibe-pr04c2-target-claim-contract-b-20261016.md`, 공유경계47줄 `...-target-claim-sharing-b-20261016.md`, C DB계약76줄 `...-target-claim-db-contract-c-20261016.md`를 root가 전체 읽었다. 기존 public factory/predicate/binding을 사용하고 storage 조회 대응만 별도 adapter로 검증하는 안을 권장한다. explicit firstReview/복수 settings unknown, µs scan/latest exact reviewer/product 순서, ordinary actual receipt/cancel 정산, wall bounds·quiescence를 고정해야 한다. 아직 새API/plan/driver/DB 실행0이다.
+3. journal/coverage→새 version/profile→실제 authority/finalwall→혼합 runner/PR05–17를 계속한다. 실제 provider serving identity·강제 예산/취소 계약과 30분 baseline, 2배 성능, Oracle DR는 미완료다. 소단위 완료로 전체 goal을 complete 처리하지 않는다.
+
+운영 배포/DDL/provider inference/발굴 재개0. 마지막 직접 확인 운영 릴리스8020dca·legacy/epoch1/contract0·새 consumer 비활성. 향후 image 적용 전 migration0077 필수다.
 
 ```sh
 cd /Users/jr/Desktop/projects/nomorevibe-pipeline-combined-capture
 git status --short --branch
 git diff --check
-gh pr view 447 --json state,headRefOid,statusCheckRollup
-gh run view 38806691270 --json status,conclusion,jobs --jq '{status,conclusion,jobs:[.jobs[]|{name,status,conclusion}]}'
-# C55515전용사용중/root·B임의DB접속0.A/B/C동결SHA/원log/actualexit먼저읽기.
+git diff origin/main --stat
+# finalC599597/원unit·source SHA 및 기록 확인 후 명시5파일 commit/push/PR.
+# 새 DB 접속0. 로컬 검증을 이유 없이 반복하지 않는다.
+gh run view 38806691270 --json status,conclusion
+# 후속 PR 생성 후 그 exact head의 required check를 확인한다.
 ```
 
 ---
