@@ -58,3 +58,8 @@ A가 최종481행에서 발견한 동시 body+cleanup 오류 대체 P2는 기존
 root가 baseline/final JSON의 전체 raw·원 stage timestamp·함수 OID/정의·trigger·effective ACL과 기본 jit/timeout을 직접 비교해 일치를 확인했다. replay/columnACL/타 연결0 및 C의 정상 STOP/exited0/OOMfalse도 Docker inspect로 확인했다. C 라벨 `...-c-error-drain-{baseline,final}-readback-20261016.{log,json}`. root가 정확한 단독 own volume을 확인하고 metadata 보존 후 55516 컨테이너와 그 volume만 제거했다(각 실제0). `/tmp/nomorevibe-pr04c2-combined-root-error-drain-owned-db-{before-cleanup-20261016.json,cleanup-20261016.log}`. 다른 DB/image/cache/forensic은 보존했다.
 
 로컬 검증과 직접/교차 리뷰가 완료됐으며, 이후 최종 commit/push·PR 필수 CI·정상 main 병합/main CI 결과는 별도 추적한다. 운영 적용·provider 실측·item 인증 활성화는 아직이다.
+
+
+## PR448 병합과 실제 main CI
+
+최종 head `86da89e5f2042750e16042c6fe1301e3c4305433`의 [PR448](https://github.com/JRVector9/nomorevibe/pull/448)은 필수 CI38808970207의 scope/quality/통합3구간/check 및 보안 검사 전체 SUCCESS 후 정상 squash merge했다. actual main `e22ec72576aa801e320e047bb53d7d5dbf1eed69`, mergedAt `2026-10-15T21:27:09Z`. [main CI38809968134](https://github.com/JRVector9/nomorevibe/actions/runs/38809968134)의 scope/quality/통합3구간/check·worker/web image 전체 SUCCESS를 root가 직접 확인했다. 운영 배포/DDL/provider 실행은 별도이며 수행하지 않았다.
