@@ -1,3 +1,51 @@
+# 2026-10-16 — PR443 재CI / PR04c-1b 최종 검증 취합
+
+## 현재 목표와 운영 경계
+
+전체 PR별 개발 goal은 active다. root가 gpt-6.1-sol/xhigh 서브에이전트 3명의 배타 파일·DB, 실제 RED 수용, 직접/교차 리뷰, 전체 gate와 Git을 관리한다. 원본 `/Users/jr/Desktop/projects/nomorevibe`의 X branch는 push하지 않고 handoff만 동기화한다. 마지막 직접 확인 운영8020dca, 이번 단계 운영 배포·DDL·provider inference·발굴 재개는 없다. 기본 legacy/epoch1/contract0와 새 consumer 비활성을 유지한다. 미래 legacy image 시작 전0077 migration이 필수다.
+
+## 완료 작업과 변경 파일
+
+선행 c1a WT `/Users/jr/Desktop/projects/nomorevibe-pipeline-certified-wall`: PR443 첫CI38793351252의 fixture1FAIL을 조사했다. source5개는 보존하고 callback-end 같은TX750ms anchor/RETURNING exact timestamp/원오류 보존으로 test1개만 수정했다. 최종fixture6bbc 동일driver로 oldsource05cedd17 actual1RED/control1PASS→현재2PASS를 root가 직접 확인했다. A읽기리뷰 추가P1/P2 0·Bwhole tsc/lint0. docs4+test1을 **8a0810fba899147e6e93e190688af953f0296fa8**로 commit/push, **PR443 재CI38796407826 모든필수check SUCCESS→정상main c7754651 병합**이다. mainCI38797366784/image 진행 중이며8a0810fb와실제main tree동일을확인했다. 첫전체unit2928/DB2112PASS와 마지막fixture수정뒤2PASS/필수CI를 구분한다.
+
+현재 WT `/Users/jr/Desktop/projects/nomorevibe-pipeline-ai2-item-lifecycle`, branch `codex/pipeline-pr04c-ai2-item-lifecycle-20261016`, baseaf4df25. 변경11파일: source4(lifecycle신규/ownership observer/transport신규/legacyhandler3hunk), unit2신규, integration1신규, rootdocs4. 새item consumer/registry/migration/기존resultwriter/adapter3/prompt/model/quality/transporttimeout은 변경하지 않았다.
+
+A최종lifecycle64edfb51…7860a/ownership4b06fad0…6c5082/unit3f078ee7…794fd, Bhelperd73bc177…23954/handler67f60728…d466f/unit8eb515f7…d77b 모두 반환·동결. A가 Btransport, B가 Alifecycle을 읽기 교차리뷰했고 production 추가P1/P2 0. root도 전체source·unit·C582행을 직접 읽었다. C최종testddfbb793…534cc 20PASS 뒤 A가 blockedrenew 단발관측의 테스트증명경계P2를 찾아 C에게 test-only 실제TX start/end 관찰 보강을 배정했다. 원90초body와 defaulttimeout은 보존한다. 최종Ctest7e56b750…24e6/606행, short1PASS16.22초·정적0·A읽기재리뷰 P1/P2 0을 확인했다. root 독립WT awaitheartbeat삭제 mutant1FAIL16.59초 trace[start1,start2,end1,end2]→원본같은test1PASS16.28초를 직접확인해 테스트증명경계를 닫았다. 생산source변경0이며 새결함RED로 부르지 않는다. B는 c2 itemB5의 현재코드·최소납품 계약을 `/tmp/nomorevibe-pr04c2-source-contract-20261016.md`에 읽기 조사 중이며 새source/DB/Git수정0이다.
+
+## 핵심 설계 결정
+
+단일 `executeSecondReviewItem({secondReviewId,owner,signal?})`는 actualclaim90초→짧은currentobserver→actualtransport→기존writer다. 원receipt/token/owner/boot/epochs/binding을 유지하고 15초 완료후delay로 갱신을 비중첩 실행한다. callerabort는 실제transport 정산 전 갱신을 멈추지 않는다. 정산후 동기stop/delay취소/currentrenewawait 뒤 writer최대1회. unexpected transport/renew 예외는 원오류·writer/release/failure0, 둘다이면 transport오류 우선이다. renewnull은 lossabort 후 latewriter CAS거절을 보존한다. observer와 network 사이 race·durable 외부종료·itemB5는 이 PR의 지원 범위가 아니다.
+
+## 실행한 검증과 실패 접근
+
+- C actual90초 baseline heartbeat0: control1PASS/long1FAIL·exit1/91.29초. 원expiry를 실제DBclock이 넘고 sameidentity/livefalse/renewals[]·actualcompetitionclaimed·latewriter item_lease_lost를 root가 원로그/driver로 수용했다. 구현후 **동일2case2PASS/91.31초/exit0**. `/tmp/nomorevibe-pr04c1b-c-{initial-control-red,same-driver-green}-20261016.log`. 이 증거는 provider속도나 외부종료 증명이 아니다.
+- A heartbeat unit8FAIL→신규38+기존57=95PASS, tsc/lint0, actualclaim33PASS/shortcontrol1PASS. B transportstub19FAIL+기존29PASS→48PASS, 기존 itemownership/shutdown/replay3파일25PASS28.11초, whole tsc/lint0. stubRED는 기존운영결함 재현이 아니다. 최초PageProps6오류는 typegen누락으로 root nexttypegen0 후 최종tsc0을 별도로 확인했다.
+- C추가short19PASS/long1skip62.98초→동결ddfbb 전체20PASS153.25초/exit0. `/tmp/nomorevibe-pr04c1b-c-{expanded-first,final20}-20261016.log`. 기존default20초, 원90초case만120초. 최종test-proof보강 뒤 whole20 재실행했다고 주장하지 않는다.
+- root wholeunit **282파일2985PASS7.19초/exit0**, whole tsc/lint(기존vendorwarning1)/i18n/Python23/build/bundle actual0. `/tmp/nomorevibe-pr04c1b-root-{unit,tsc,lint,i18n,python-final,build,bundle}-20261016.log`. Python처음scripts폴더로 잘못 지정한0tests/exit5는 PASS아님; workflow의 `python3 -m unittest tests/test_deploy_shared_images.py`로 수정했다. bundle은 `node scripts/bundle-size.mjs`이고 br148.7/159.0/136.2KB한도내.
+- root55508 새 pinnedPG17/loopback/dummyDB migration0 후 wholeDB **session44212 actualexit0/181파일2132PASS·기존TODO1/611.49초 완료**. `/tmp/nomorevibe-pr04c1b-root-db-{full,locks}-20261016.*`, 진단driver `/tmp/nomorevibe-pr04c1b-db-diagnostics-20261016.mjs`. 전체DB최종summary/실제exit0을둘다확인했다. rootpre-integration raw잔류/권한/타연결0·3stagelegacy1contract0readback도확인했다. 이 실행 시작시 c1a fixture는 initialaf4 버전이므로 8a 통합뒤 최종fixture는 별도short검증한다.
+
+A55505/B55506 own잔류·권한/다른연결0·3stagelegacy1contract0 readback/STOP을 root가 실제원로그로 확인하고 exact완료2container/volume만 metadata보존후 제거했다. `/tmp/nomorevibe-pr04c1b-completed-db-before-cleanup-20261016.json`, `/tmp/nomorevibe-pr04c1b-owned-db-storage-cleanup-20261016.log`. C55507 최종readback/STOP/exited0·OOMfalse 반환 완료, root55508도 mainc775정상통합/최종선행fixture2PASS5.79초뒤 raw잔류/권한/다른연결0·기본stage readback과STOP/exited0·OOMfalse를확인했다. 전용4DB모두정리완료다. DockerVM가용2.4GB/98%; forensic77/failed81/타user55445–50/다른image/cache 보존.
+
+## 남은 작업과 정확한 다음 명령
+
+1. PR443 재CI/정상squashmerge c7754651 완료. actualmainCI38797366784/image 확인을이어간다. 보호 우회/force/admin 금지. c1b 실제main 통합 때 rootdocs 충돌을 보존해 해결한다.
+2. Ctest보강/단일short/정적·A재리뷰·STOP 및 rootwholeDB2132PASS/exit0 완료. 최신test변경과 이미실행된wholegate를 구분하고 root최종fixture뒤readback/STOP한다.
+3. c1b feature405dace→mainc775정상통합 HEADd0ff7b9/최종fixture2PASS·rawreadback/STOP 완료. docs최종기록commit→이feature branch만push/PR/필수CI/normalmerge/mainCI. source/code변경없으면 전체unit/build를 불필요반복하지 않는다.
+4. c2itemB5 foundation/권한/actualauthority/coverage단계를 이어간다. PR05–17, provideridentity/강제비용상한/취소·실30분baseline·2배·OracleDR 미완료이며 소단위완료로 goal종료0.
+
+```sh
+cd /Users/jr/Desktop/projects/nomorevibe-pipeline-ai2-item-lifecycle
+git diff --check
+git status --short --branch
+gh run view 38796407826 --json status,conclusion,jobs --jq '{status,conclusion,jobs:[.jobs[]|{name,status,conclusion}]}'
+# rootwholeDB session44212 actualexit0/2132PASS·TODO1 확인완료
+# C새SHA7e56·short/Areview·전용4DB STOP·mainc775통합 완료. feature branch만push/PR/CI
+```
+
+
+최신main통합: source동일feature8a0810fb와 mainc7754651을 확인했고, squash ancestry의 add/add는 기존c1a문서·최종fixture를main에서보존하고 c1b최신handoff/delivery를유지해해결했다.
+
+---
 # 2026-10-16 — PR443 CI fixture 보강 RED/GREEN 완료 / 재CI 제출 준비
 
 전체goal active. c1a branch/WT `/Users/jr/Desktop/projects/nomorevibe-pipeline-certified-wall`, HEADaf4df25/PR443. 첫CI38793351252 quality·통합1/2 SUCCESS, 통합3 1FAIL/789PASS·TODO1/checkFAIL/imageSKIP. source5개9d3계약은 보존했다. B 단독 신규race test를 same-writer-TX callback-end750ms anchor/RETURNINGexacttext expiry/원callback오류외부보존으로보강, root직접리뷰 P2holder조회예외drain보강 완료. 최종driverSHA6bbc9186e47ac627c3ba0e8550bcaecc1d6cb6f6dd6d3d88cd739b12578df548. oldsource05cedd17 임시WT 동일driver actual1RED/control1PASS→현재c1a2PASS, 둘5.07초/실제exit1→0을 root 원로그/driver로수용했다. 초기새fixturetimestampserializer9h/µs오류는행동RED제외, textcast로수정했다. 상세validation에원로그/실패접근/정확한명령·시간증거보존.
@@ -15,7 +63,6 @@ git status --short --branch
 ```
 
 ---
-
 # 2026-10-16 — PR04c-1a 최종 로컬 gate·readback/STOP 완료 / PR 제출 준비
 
 ## Current objective / completed work
