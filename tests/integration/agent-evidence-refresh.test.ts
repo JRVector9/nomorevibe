@@ -94,7 +94,8 @@ it('keeps missing, incomplete, failed, limited and future confirmations on their
   `);
   for (const row of rows) {
     expect(row.default_due_at, row.name).toBe(row.next_attempt_at);
-    if (row.name === 'ordinary') expect(Date.parse(row.due_at!)).toBe(Date.parse(complete) + 90 * 86400_000);
+    // PostgreSQL timestamp::text has no zone; these fixtures are UTC even on a KST developer machine.
+    if (row.name === 'ordinary') expect(Date.parse(row.due_at!.replace(' ', 'T') + 'Z')).toBe(Date.parse(complete) + 90 * 86400_000);
     else expect(row.due_at, row.name).toBe(row.next_attempt_at);
   }
 });

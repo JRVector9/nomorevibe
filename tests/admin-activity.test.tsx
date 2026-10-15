@@ -76,6 +76,19 @@ describe('작업 로그 화면', () => {
     expect(html).not.toContain('>products<');
   });
 
+  it('접속 실패 자동 내림을 내리기 갈래에서 찾고 실제 횟수와 마지막 응답을 확인한다', async () => {
+    mocks.log.mockResolvedValue([row(10, { actor: 'system:uptime', actorKind: 'token', ip: null, userAgent: null,
+      action: 'product-auto-ban-uptime', detail: { note: '사이트 연속 접속 실패 12회 · 마지막 HTTP 404 · 자동 내림',
+        threshold: 10, consecutiveFailures: 12, lastStatus: 404, checkedAt: '2026-10-15T00:19:00.000Z' } })]);
+    const html = await render({ group: 'takedown' });
+    expect(mocks.log).toHaveBeenCalledWith(expect.objectContaining({ actions: expect.arrayContaining(['product-auto-ban-uptime']) }));
+    expect(html).toContain('접속 실패 자동 내림');
+    expect(html).toContain('사이트 연속 접속 실패 12회');
+    expect(html).toContain('마지막 HTTP 404');
+    expect(html).toContain('2026-10-15T00:19:00.000Z');
+    expect(html).toContain('system:uptime');
+  });
+
   it('로컬 로그인이면 "내 이름" 칸을 둔다', async () => {
     mocks.local.mockReturnValue(true);
     mocks.operator.mockResolvedValue('지우');

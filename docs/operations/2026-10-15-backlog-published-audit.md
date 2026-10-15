@@ -180,3 +180,44 @@ python3 /Users/jr/.config/nomorevibe/backlog-recovery/2026-10-14/run.py publishe
 ```
 
 root가 `docs/CODEX_HANDOFF.md`, 통합 full checks, 커밋과 배포를 맡는다. 다음 담당자는 위 resume를 실제 배포 확인 뒤 실행하고, 새 progress 이름으로 저장 성공/partial/terminal/사람 대기를 다시 구분해야 한다. 별도 테스트 컨테이너 `nomorevibe-product-audit-pgvector-test-db-20261015`는 이 종료 시점에 유지했다. 기존 baseline/frozen-work와 사용자 산출물은 보존했다.
+
+## reviewer 배포 후 실제 재개와 고정 timeout 5개 회복
+
+08:48:14에는 배포가 아직 대기 중이어서 승인된 유예를 1회 더 연장했다. audit **12182**, 만료 **09:34:29.293086 KST**였으며, root12180→12181→12182의 DB 원시 timestamp 체인과 runs36850/request36850/processed36849를 보존했다. 이때는 문서 변경이 허용되지 않아 운영 증거만 root에게 전달했다.
+
+reviewer 두 대의 새 배포 후 root가 기존 `run.py ...resume`를 실행했지만 기본 대상이 아직 옛 runtime인 **crawler-m3**여서 `deployed_deadline_not_verified`/budget null/tick24000, **쓰기0**이었다. guard를 낮추지 않고, 같은 resume.mjs를 명시적으로 **reviewer-m3**에서 실행하는 mode600 wrapper를 별도로 만들었다. 기존 실패 JSON은 덮어쓰지 않았다.
+
+**09:08:49 KST** 명시 wrapper 실행에서 실제 내부65000/외부70000과 감사 체인을 확인하고 재개했다. 표준 감사 기록은 **12183**이다. not_before를 null로 복구했고 runs36850/request36850/processed36849와 이미 pending인 요청을 보존했다. 추가 request는 필요하지 않았다. 이로써 위의 “resume 미실행”은 당시 상태이며, 현재는 실제 재개가 완료됐다.
+
+root는 배포 뒤 고정 old24초 terminal **33063/33074/33096/33110/33116**만 각각 새 모델 호출 1회로 회복하도록 추가 승인했다. 모두 현재 원본을 새로 조회하고, campaign/current prompt·rules/model/설정/제품 공개 상태/미판정 item/정상 job lease를 검사했다. 저장 직전에는 candidate/document/settings/저장소 identity/최신 scan·관측의 정상 잠금 안에서 inputHash/sourceRevisionHash/source를 재계산해 대조하고 공식 `recordAuditResult`를 호출했다. 공개분 감사 계약에 없는 신규 발행용 validUntil 조건은 넣지 않았다. 이전 07:56의 미저장 응답도 재사용하지 않았다.
+
+09:11:59 첫 실행은 정기 감사 job과 겹쳐 **locked**, 모델0/intent0/저장0이었다. 읽기 전용으로 유휴를 확인한 뒤 미실행 항목만 진행했다. 모델 동시성은 현재4 이내로 유지하고, 별도 트랜잭션을 쓰는 공식 writer와 source 잠금 구간만 직렬화해 reviewer 기본 DB pool3의 중첩 트랜잭션 대기를 예방했다. 09:14:00에 네 개를 저장했고, full60초 호출 여유가 없는 마지막33116은 모델0/intent0으로 남겼다가 다음 유휴 실행에서만 한 번 처리했다. 앞의 네 개는 DB의 회복 intent로 제외해 재호출하지 않았다.
+
+| item | 새 판정 | 모델 응답 | intent → 저장 감사 기록 | 보존된 이력 |
+| --- | --- | --- | --- | --- |
+| 33063 | approve/.97 | 20.113초 | 12185 → 12191 | timeout3 + success1, attempts4 |
+| 33074 | approve/.96 | 16.306초 | 12188 → 12189 | timeout3 + success1, attempts4 |
+| 33096 | approve/.96 | 23.549초 | 12186 → 12192 | timeout3 + success1, attempts4 |
+| 33110 | approve/.86 | 18.674초 | 12187 → 12190 | timeout3 + success1, attempts4 |
+| 33116 | reject/.96 | 7.552초 | 12193 → 12194 | timeout3 + success1, attempts4 |
+
+**09:14:34에 고정5개 모두 실제 저장 완료**다. 이번 cohort의 새 모델 호출은 총5회이며 구시도·기록·시각을 초기화하거나 덮지 않았다. 다섯 제품의 humanDecision은 null이며, 제품 공개 상태나 사람의 유지·삭제 결정은 변경하지 않았다. reject 판정33116도 자동으로 내리지 않았다.
+
+09:15:10 읽기 전용 확인에서 campaign4는 실제 판정 **90개/거절23개/terminal0/skip1**, not_before null, 정상 job 실행 중/오류 없음이었다. 재개 이후 저장 성공28/실패0이었다. 09:15:35 추가 지연 측정은 저장 성공 **29개/실패0**, 그중 **24초를 넘은 정상 저장2개**, 최대 **26.23328초**였다. 이는 새 deadline이 운영에서 24초 이후의 답도 저장한 직접 증거다. 전체44,018개 감사의 완료를 뜻하지 않는다. 고정 cohort 회복 뒤 추가 수동 모델 호출은 중단하고 정기 처리에 맡겼다.
+
+실제 실행 명령과 독립 proof 파일은 아래와 같다. wrapper의 JSON은 각각 별도 이름으로 mode600 저장했고 baseline/frozen-work를 보존했다.
+
+```sh
+python3 /Users/jr/.config/nomorevibe/backlog-recovery/2026-10-14/published-audit-20261015-resume-reviewer.py
+python3 /Users/jr/.config/nomorevibe/backlog-recovery/2026-10-14/published-audit-20261015-cohort-preflight-reviewer.py
+python3 /Users/jr/.config/nomorevibe/backlog-recovery/2026-10-14/published-audit-20261015-cohort-recover-reviewer.py 1
+python3 /Users/jr/.config/nomorevibe/backlog-recovery/2026-10-14/published-audit-20261015-cohort-idle-watch-reviewer.py 1
+python3 /Users/jr/.config/nomorevibe/backlog-recovery/2026-10-14/published-audit-20261015-cohort-idle-watch-reviewer.py 2
+python3 /Users/jr/.config/nomorevibe/backlog-recovery/2026-10-14/published-audit-20261015-cohort-recover-reviewer.py 2
+python3 /Users/jr/.config/nomorevibe/backlog-recovery/2026-10-14/published-audit-20261015-cohort-idle-watch-reviewer.py 3
+python3 /Users/jr/.config/nomorevibe/backlog-recovery/2026-10-14/published-audit-20261015-cohort-recover-reviewer.py 3
+python3 /Users/jr/.config/nomorevibe/backlog-recovery/2026-10-14/published-audit-20261015-post-recovery-reviewer.py
+python3 /Users/jr/.config/nomorevibe/backlog-recovery/2026-10-14/published-audit-20261015-post-recovery-latency-reviewer.py
+```
+
+이 phase에서 코어 코드와 다른 문서는 수정하지 않았고 추가 tests를 실행했다고 주장하지 않는다. root가 handoff·통합 문서의 재개 명령을 명시 reviewer wrapper로 고친다. **resume나 회복 명령은 관측 목적으로 다시 실행하지 않는다.** 후속 관측이 필요하면 새 이름의 읽기 전용 proof를 만든다.

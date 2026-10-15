@@ -624,7 +624,7 @@ export async function update(id: number, values: Partial<Product>): Promise<void
     await lockProductRepository(tx, values.repoUrl);
     const [current] = await tx.select({ slug: products.slug }).from(products).where(eq(products.id, id));
     if (!current || !(await lockProductGeneration(tx, id, current.slug))) return;
-    const [locked] = await tx.select({ repoUrl: products.repoUrl }).from(products).where(eq(products.id, id));
+    const [locked] = await tx.select({ repoUrl: products.repoUrl, url: products.url }).from(products).where(eq(products.id, id));
     const resetStats = values.repoUrl !== undefined && values.repoUrl !== locked.repoUrl
       ? { stars: null, starsAt: null, starsPrevious: null, starsPreviousAt: null, ownerType: null, starsCheckedAt: null,
         repoStatus: null, repoCheckedAt: null, repoMissingSince: null, repoArchived: null, repoPushedAt: null, repoRenamedTo: null, repoChangedAt: null,
@@ -633,6 +633,10 @@ export async function update(id: number, values: Partial<Product>): Promise<void
     // 소개를 고쳐 쓰면 그 소개는 쓴 사람의 것이다 — "AI가 요약" 표시를 뗀다
     const wroteTagline = values.tagline !== undefined && values.taglineSource === undefined ? { taglineSource: "maker" as const } : {};
     const [product] = await tx.update(products).set({ ...values, ...resetStats, ...wroteTagline, updatedAt: new Date() }).where(eq(products.id, id)).returning();
+    // A new website starts a new current streak. Historical daily measurements still describe past visits.
+    if (values.url !== undefined && values.url !== locked.url) {
+      await tx.delete(productHealth).where(eq(productHealth.slug, current.slug));
+    }
     // 2단계 확인은 옛 저장소가 사라졌을 때의 것이다 — 새 저장소에는 맞지 않는다
     if (Object.keys(resetStats).length) await tx.delete(productRepoReviews).where(eq(productRepoReviews.productId, id));
     if (values.repoUrl !== undefined) await syncRepositoryLink({ productId: product.id, slug: product.slug,

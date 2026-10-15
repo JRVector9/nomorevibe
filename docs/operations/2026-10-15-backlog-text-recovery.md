@@ -124,3 +124,52 @@ python3 /Users/jr/.config/nomorevibe/backlog-recovery/2026-10-15-text/recover-nu
 ```
 
 검수 timeout 19301은 이미 실제 회복됐으므로 다시 적용하지 않는다. 영어 대표 3건은 새 검사에서도 pass하지 않아 저장용 helper나 apply 명령을 준비하지 않았다.
+
+## 09:12 배포 소스 검증과 고정 숫자 실제 회복
+
+root가 text-mini/text-m3의 release `c8f04245e44cb60573cbc2f8685d2f6c4b6f0407`과 readiness를 확인한 뒤, 모델 호출 전에 두 live container의 실제 파일을 추가 검증했다. 현재 main의 tracked `lib/`, `scripts/`, `drizzle/`, package/lock/tsconfig 총 **536파일**(scripts/ops 제외)의 SHA256이 각 앱에서 모두 일치했다. 컨테이너는 각 1개, mismatch 0, 실제 container RELEASE_TAG도 c8f0424였다. manifest SHA256은 `4748f2165b63e082800318c3e5b072646d98de9749a5dbfa40b05e907aabd5f3`, 최종 Korean checker SHA256은 `651cbb41358d89d784701de4218b03ea5e3adb8e3dce43a127caa9c695cc886a`다. private `text-runtime-source-match-20261015-c8f0424.json`과 `numeric-recovery-deployed-c8f0424-20261015.json`에 source/code/fingerprint 검증을 보관했다.
+
+09:13~09:18 KST 고정 숫자 **12건을 각각 fresh generation 한 번씩** 정상 leased writer로 처리했다. 실제 저장은 12건이고, 그중 strict 검사를 통과한 한국어 소개는 **7건**, 품질 실패 저장은 **5건**이다. 실패는 empty 4건과 invented_number 1건이며 다시 호출하지 않았다.
+
+| id | 실제 결과 | attempts 전→후 | qualityRejections 전→후 | audit id |
+|---|---|---|---|---|
+| 6931 | rejected:empty | 4→5 | 4→5 | 12184 |
+| 8785 | 통과·저장 | 4→5 | 4→4 | 12195 |
+| 10827 | rejected:empty | 4→5 | 4→5 | 12196 |
+| 13794 | 통과·저장 | 4→5 | 4→4 | 12197 |
+| 15033 | 통과·저장 | 4→5 | 4→4 | 12198 |
+| 15810 | 통과·저장 | 4→5 | 4→4 | 12199 |
+| 15979 | 통과·저장 | 4→5 | 4→4 | 12200 |
+| 18071 | 통과·저장 | 5→6 | 4→4 | 12201 |
+| 23147 | rejected:empty | 4→5 | 4→5 | 12202 |
+| 30191 | rejected:empty | 4→5 | 4→5 | 12203 |
+| 32579 | 통과·저장 | 4→5 | 4→4 | 12204 |
+| 34927 | rejected:invented_number | 4→5 | 4→5 | 12205 |
+
+첫 claim 이후 worker가 잡을 소유한 시점의 11개 시도는 called=false/stored=0으로 skip됐으며 모델 호출로 세지 않는다. 다음 idle에는 일부가 not_requested였다. root가 승인한 표준 manual 계약에 따라 **미실행 marker 없음·현재 fingerprint 일치·현재 not_requested**를 다시 확인한 경우만 `requestJob('product-tagline-ko')` 한 번 후 `runJob(...requestedOnly:true)`를 사용했다. 정상 request append는 9회(versions 4962~4969, 4971)이며 나머지는 이미 존재한 request를 사용했다. 직접 demand/lease/cap/cursor 변경은 없다.
+
+09:21 읽기 전용 actual readback에서 12건의 현재 name/source hash와 원문이 모두 고정 cohort와 같고, attempts/qualityRejections가 위 표와 일치하며 audit 12행을 확인했다. 성공 7건은 현재 source에 대해 배포된 checker로 다시 검사해 모두 pass였다. 모델은 기존 `[MLX] gpt-oss-120b`, 정상 45초 호출/55초 잡 예산을 사용했고 진단 출력은 재사용하지 않았다. 아직 실패한 5건은 이 제한 복구에서 추가 실행하지 않는다. 새 “10회 거절 후 내리기” 정책은 적용하지 않았다.
+
+network 17건은 09:12부터 정상 selector에 모두 재진입했으나 09:17까지 실제 새 저장 0이었다. 최초 생성(profile 없음)이 먼저 정렬되고 현재 ready가 61→81로 늘어나 기존 재시도가 뒤로 가는 상태였다. root는 이미 승인된 정확한 17건만 현재 정상 selector의 fresh task/hash/revision과 현재 모델로 각각 한 번 처리하는 bounded 복구를 승인했다. 코어 우선순위·모델·상한·원문은 바꾸지 않는다. source/runtime/model/full-call budget 검증과 per-id marker/normal request+lease/CAS/official writer를 사용하는 private helper를 준비했으며 결과는 다음에 추가한다.
+
+## 09:25 고정 network 17건 실제 회복 완료
+
+09:20:29 KST 정상 `pendingProfiles(500)`에서 정확한 고정 17건 모두 current network/attempts 5/repairVersion 0으로 선택되는 fresh 입력을 고정했다. 정상 `profileEvidence`의 실제 slice(page/readme 각각 최대 1,500자, description 최대 600자)를 그대로 사용했다. 과거 profile의 저장 hash와 현재 evidence hash가 다른 경우도 현재 원문을 정상 생성 입력으로 사용하고, 모델 호출 전과 official writer 전의 source/profile fingerprint를 다시 비교했다.
+
+모델 호출 전마다 배포 release와 검색 runtime 5파일 SHA를 검사하고, gateway 모델 목록 GET으로 현재 configured `[MLX] gpt-oss-120b`가 실제 제공되는 것을 확인했다. 각 건은 full 45초 호출+저장 여유가 있는 정상 55초 `runJob` lease 안에서 `writeKeywords`→strict parser→`recordProfileResult` CAS로 한 번씩 저장했다. normal request가 없고 job이 idle이며 아직 실행 marker가 없고 fingerprint가 같은 경우만 표준 `requestJob('product-search-profile')`를 한 번 append했다. 이 append는 12회(18366, 18368~18371, 18373~18375, 18377~18380)이며 5건은 기존 request를 사용했다. 작업별 API 호출은 1회, 전체 **17회 HTTP 200**, 최대 실제 호출 23,874ms였다.
+
+**실제 결과: 17건 생성 성공·저장, 실패 0, 미실행 0, unknown 0.** 각 attempts는 5→6, repairVersion은 0 그대로, sourceRevision도 모두 보존됐다. 새 generatedAt은 09:21:21.826~09:24:51.294 KST이며 error/retryAt은 모두 null이다. audit 12206~12222 총 17행과 각 행의 actual modelCalls 1을 확인했다. DB demand/lease/cap/cursor 직접 변경, 입력 위장, 모델/우선순위 변경은 없다. 과거 hash로 현재 source를 덮지 않았고, 저장된 hash는 실제 fresh inputHash 및 현재 sourceHash와 모두 일치한다.
+
+09:25:22 읽기 전용 확인(`network-recovery-confirm-c8f0424-20261015.json`): 17/17 current source/hash/revision/attempt delta/audit가 일치하고 정상 generation selector에서 고정 cohort는 **0건**이다. 새 키워드는 정상 계약대로 verifiedAt=null로 저장되어 기존 semantic verification queue에서 검수할 차례를 기다린다. 생성 복구 성공을 의미하며 이 17건의 별도 검수 완료를 주장하지 않는다.
+
+같은 시각 전체 텍스트 관측은 생성 ready 107/검수 ready 7,900, 한 시간 실제 생성 211/검수 243이었다. 공개 제품의 generation error는 0이고 검수 backoff 오류(model_unavailable 2,185/network 44/timeout 37/invalid_output 22)는 모두 verify cap 아래다. 한국어 소개 완료 36,397/대기 2,602/retryable 실패 8/gaveUp 2,770, 이유 번역 완료 141,150/대기 11,463/failed 0이다. 관측한 text 잡의 job_error는 모두 false다. 이 정상 대기열 전체가 비었다는 뜻은 아니다.
+
+소개 정상 ready 0/현재 사람 큐 102, crawl-tagline ready 0, agreed no_description 3은 현재 source의 유효한 empty 그대로다. 저장소 대상은 새 1건이 더해져 91/정상 due 1/기존 delist hold 36/human 35/keep 19였다. 제품 번역 selectable 266/pending 223/cap 128/backoff 4, 영어 terminal 57은 그대로다. 숫자 invented_number terminal은 정상 작업의 추가 결과를 포함해 59건이다. 신규 발굴 두 잡의 not_before 2100 및 runs(8,905/1,681)는 유지된다.
+
+**현재 고정 numeric 12건과 network 17건은 모두 각 한 번의 실제 호출을 마쳤다. 기존 apply 명령을 다시 실행하거나 marker를 삭제하지 않는다.** 필요하면 새 이름으로 아래 읽기 전용 확인만 한다. private observation/helper는 600, directory는 700이며 원시 env/키/모델 응답을 공개하지 않았다. 이번 단계의 저장소 변경은 이 보고서 append뿐이다.
+
+```sh
+python3 /Users/jr/.config/nomorevibe/backlog-recovery/2026-10-15-text/check-numeric-results.py numeric-readback-next-20261015
+python3 /Users/jr/.config/nomorevibe/backlog-recovery/2026-10-15-text/check-network-results.py network-readback-next-20261015
+python3 /Users/jr/.config/nomorevibe/backlog-recovery/2026-10-15-text/run.py text-progress-next-20261015 probe.mjs text-m3
+```
