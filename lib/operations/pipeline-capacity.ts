@@ -95,6 +95,10 @@ function validateManifest(manifest: CapacityManifest): void {
   for (const pool of [second, fallbacks])
     ensure(new Set(pool.map(row => row.canonicalModel)).size === pool.length, "duplicate_model");
 }
+/** Pure manifest consistency; it grants no DB access or provider capability. */
+export function parseCapacityManifest(value: unknown): CapacityManifest {
+  const manifest = capacityManifestSchema.parse(value); validateManifest(manifest); return manifest;
+}
 /** A strict offline record validates consistency, never the authenticity of its JSON provenance. */
 export function parseCapacityArtifact(value: unknown): CapacityArtifact {
   const artifact = capacityArtifactSchema.parse(value), { manifest, source } = artifact;

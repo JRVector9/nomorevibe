@@ -12,6 +12,7 @@ import { holdSuspectedSpam } from "@/lib/crawl/repository";
 import { firstReviewer, reviewWithAgent, REVIEW_CLI_TIMEOUT_MS } from "@/lib/crawl/agent-review";
 import { reviewWithGateway, REVIEW_GATEWAY_TIMEOUT_MS } from "@/lib/crawl/agent-review-gateway";
 import { reviewWithGrokCli, GROK_REVIEW_TIMEOUT_MS } from "@/lib/crawl/agent-review-grok";
+import { reviewSemanticNow } from "../review-replay-context";
 
 const MAX_CONCURRENT_REVIEWS = 16;
 const TICK_MS = 40_000;
@@ -52,11 +53,11 @@ export async function reviewCrawlCandidates(ctx: JobContext<null>): Promise<JobO
     const document = await loadReviewDocument(candidate.repo, lease);
     if (!document) return;
     const input = await loadReviewInput(candidate, document, settings);
-    if (input.validUntil.getTime() <= Date.now()) return;
+    if (input.validUntil <= reviewSemanticNow()) return;
     // 판정 잡과 같은 추출기로 규칙을 태운다. 여기서 PageFacts를 손으로 조립했을 때 본문이 빠져
     // "설치 유도 아님"을 지나쳤고, 재수집으로 본문에 npm install이 생긴 needs_review 후보를 모델이
     // 메타데이터만 보고 승인했다(codex 재현). 규칙이 거부하는 것은 모델에게 보내지 않는다.
-    const verdict = judgeStoredDocument(document, settings, new Date(), settings.agentEvidence.enforceEligibility ? {
+    const verdict = judgeStoredDocument(document, settings, reviewSemanticNow(), settings.agentEvidence.enforceEligibility ? {
         relationship: input.snapshot.relationship, scanState: input.snapshot.scanState,
         observations: input.snapshot.evidence.map(evidence => evidence.observation),
       } : undefined);
@@ -66,7 +67,7 @@ export async function reviewCrawlCandidates(ctx: JobContext<null>): Promise<JobO
       ctx.log("crawl.agent_review_suspected_spam", { repo: candidate.repo, held });
       return;
     }
-    const access = accessFromDocument(document, settings);
+    const access = accessFromDocument(document, settings, reviewSemanticNow());
     const existing = access && verdict.state !== "rejected"
       ? await findRepositoryProduct(document.repo, document.productUrl) : null;
     const hardReason = verdict.state === "rejected" ? verdict.reason

@@ -12,6 +12,7 @@ import { firstReviewProviderPredicate, loadSecondReviewInput, secondReviewGenera
 import { assertJobLease, requestJob, withJobLeaseWrite, type JobLease } from "@/lib/jobs/control";
 import { canonicalReviewModel, sameReviewModel } from "./review-model-identity";
 import { firstReviewer } from "./agent-review";
+import { reviewSemanticNow } from "./review-replay-context";
 
 /**
  * 2차 심사 — 무엇을 다시 보고, 두 판단을 어떻게 합치나.
@@ -166,6 +167,7 @@ const PUBLISHED_LIMIT = 25;
  * 같은 후보에 새 1차 판단이 오면 앞의 것은 superseded 로 닫는다 — 한 후보가 두 칩에 겹쳐 세어지지 않게.
  */
 export async function enqueueSecondReviews(settings: CrawlSettings, now = new Date(), lease?: JobLease): Promise<number> {
+  const semanticNow = reviewSemanticNow(now);
   const held = settings.secondReview.includeAiHeld;
   const voters = [...new Map(settings.secondReview.voters.map(voter => [canonicalReviewModel(voter.model), voter])).values()];
 
@@ -202,7 +204,7 @@ export async function enqueueSecondReviews(settings: CrawlSettings, now = new Da
   const required = sql`(select count(*) from jsonb_array_elements_text(${JSON.stringify(voters.map(voter => canonicalReviewModel(voter.model)))}::jsonb) as v(model)
     where v.model <> regexp_replace(lower(trim(coalesce(${latest.firstModel}, ''))), '^\\[mlx\\][[:space:]]*', '', 'i'))`;
   const decided = await db.select().from(latest)
-    .where(and(eq(latest.promptVersion, REVIEW_PROMPT_VERSION), eq(latest.rulesVersion, REVIEW_RULES_VERSION), gt(latest.validUntil, now), sql`${required} > 0`, sql`(select count(*) from ${secondReviews} s
+    .where(and(eq(latest.promptVersion, REVIEW_PROMPT_VERSION), eq(latest.rulesVersion, REVIEW_RULES_VERSION), gt(latest.validUntil, semanticNow), sql`${required} > 0`, sql`(select count(*) from ${secondReviews} s
       where s.candidate_id = ${latest.candidateId} and s.input_hash = ${latest.inputHash}
         and s.first_attempt_id = ${latest.firstAttemptId}
         and exists(select 1 from jsonb_array_elements(${JSON.stringify(voters)}::jsonb) v
@@ -249,7 +251,7 @@ export async function enqueueSecondReviews(settings: CrawlSettings, now = new Da
     const gate = await db.select().from(approved)
       .where(and(sql`${approved.decision} = 'approve'`, eq(approved.promptVersion, REVIEW_PROMPT_VERSION), eq(approved.rulesVersion, REVIEW_RULES_VERSION),
         // 지금 세운 모델의 행만 센다 — 모델을 바꾸면 옛 모델의 행이 수를 채워 새 모델의 표가 영영 안 올라간다
-        gt(approved.validUntil, now), sql`${gateRequired} > 0`, sql`(select count(*) from ${secondReviews} s
+        gt(approved.validUntil, semanticNow), sql`${gateRequired} > 0`, sql`(select count(*) from ${secondReviews} s
           where s.candidate_id = ${approved.candidateId} and s.first_attempt_id = ${approved.firstAttemptId} and s.trigger = 'ai_approved'
             and exists(select 1 from jsonb_array_elements(${JSON.stringify(voters)}::jsonb) v
               where v->>'provider'=s.provider and regexp_replace(lower(trim(v->>'model')), '^\\[mlx\\][[:space:]]*', '', 'i')
@@ -261,7 +263,7 @@ export async function enqueueSecondReviews(settings: CrawlSettings, now = new Da
      */
     const lone = await db.select({ candidateId: approved.candidateId }).from(approved)
       .where(and(sql`${approved.decision} = 'approve'`, eq(approved.promptVersion, REVIEW_PROMPT_VERSION), eq(approved.rulesVersion, REVIEW_RULES_VERSION),
-        gt(approved.validUntil, now), sql`${gateRequired} = 0`)).limit(ENQUEUE_LIMIT);
+        gt(approved.validUntil, semanticNow), sql`${gateRequired} = 0`)).limit(ENQUEUE_LIMIT);
     await holdGateForHuman(lone.map((row) => row.candidateId), "2차에 1차와 다른 모델이 없어 두 모델 승인을 할 수 없다 — 2차 모델 설정을 확인", now, lease);
     rows.push(...gate.flatMap((row) => voters.filter(voter => !sameReviewModel(row.firstModel, voter.model)).map((voter) => ({ ...voter,
       candidateId: row.candidateId, repo: row.repo, trigger: "ai_approved" as SecondReviewTrigger,
@@ -273,7 +275,7 @@ export async function enqueueSecondReviews(settings: CrawlSettings, now = new Da
     productUrl: crawlCandidates.productUrl, pageMeta: crawlDocuments.pageMeta, pageStatus: crawlDocuments.pageStatus, documentUrl: crawlDocuments.productUrl })
     .from(crawlCandidates).innerJoin(crawlDocuments, eq(crawlDocuments.repo, crawlCandidates.repo))
     .where(and(eq(crawlCandidates.state, "published"), eq(crawlCandidates.decidedBy, "auto"), isNotNull(crawlCandidates.publishedSlug),
-      gte(crawlCandidates.decidedAt, new Date(now.getTime() - PUBLISHED_LOOKBACK_MS))))
+      gte(crawlCandidates.decidedAt, new Date(semanticNow.getTime() - PUBLISHED_LOOKBACK_MS))))
     .limit(2_000);
   const previousPublished = published.length ? await db.select({ candidateId: secondReviews.candidateId, generationKey: secondReviews.generationKey, model: secondReviews.model })
     .from(secondReviews).where(inArray(secondReviews.candidateId, published.map(row => row.id))) : [];
@@ -341,6 +343,7 @@ export async function enqueueSecondReviews(settings: CrawlSettings, now = new Da
  * 지우지 않는다. 몇 건을 누가 어떻게 끝냈는지가 2차 심사의 정확도다.
  */
 export async function closeSettledSecondReviews(now = new Date(), lease?: JobLease): Promise<number> {
+  const semanticNow = reviewSemanticNow(now);
   // Removed voters must not keep consuming retries or influence current consensus.
   const [saved] = await db.select().from(crawlSettings).limit(1);
   const {voters, fallbacks = []} = mergeWithDefaults(saved?.values).secondReview;
@@ -378,7 +381,7 @@ export async function closeSettledSecondReviews(now = new Date(), lease?: JobLea
   const obsolete = await withJobLeaseWrite(lease, tx => tx.update(secondReviews).set({status: "resolved", resolution: "superseded", resolvedAt: now})
     .where(and(inArray(secondReviews.status, ["pending", "failed"]), or(eq(secondReviews.generationKey, "legacy"),
       sql`exists(select 1 from ${crawlReviewAttempts} a where a.id=${secondReviews.firstAttemptId}
-        and (a.prompt_version<>${REVIEW_PROMPT_VERSION} or a.rules_version<>${REVIEW_RULES_VERSION} or a.valid_until<=${now.toISOString()}::timestamp))`)))
+        and (a.prompt_version<>${REVIEW_PROMPT_VERSION} or a.rules_version<>${REVIEW_RULES_VERSION} or a.valid_until<=${semanticNow.toISOString()}::timestamp))`)))
     .returning({id: secondReviews.id}));
   // 확신 없는 옛 1차로 올린 것 — 일치할 수 없으니 닫는다. 2차 의견은 남아 심사 상세에 그대로 보인다
   const legacy = await withJobLeaseWrite(lease, tx => tx.update(secondReviews).set({ status: "resolved", resolution: "no_first_confidence", resolvedAt: now })
