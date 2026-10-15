@@ -5,6 +5,7 @@ import { categoryDecisions, crawlCandidates, crawlDocuments, operationsAudit, ty
 import { CATEGORIES, type Category } from '@/lib/domain/products/schema';
 import { requestJob } from '@/lib/jobs/control';
 import { adminAuditRow } from './admin-log';
+import { lockPipelineInputStages } from '@/lib/crawl/pipeline-stage-context';
 
 export function categorySourceHash(candidate: CrawlCandidate, document: CrawlDocument) {
   return createHash('sha256').update(JSON.stringify([candidate,document,CATEGORIES])).digest('hex');
@@ -22,6 +23,7 @@ export async function decisionFor(candidate: CrawlCandidate, document: CrawlDocu
 export async function holdClassification(candidate: CrawlCandidate, document: CrawlDocument) {
   const sourceHash=categorySourceHash(candidate,document);
   await db.transaction(async tx=>{
+    await lockPipelineInputStages(tx);
     const [c]=await tx.select().from(crawlCandidates).where(eq(crawlCandidates.id,candidate.id)).for('update');
     const [d]=await tx.select().from(crawlDocuments).where(eq(crawlDocuments.repo,candidate.repo)).for('share');
     if(!c||!d||c.state!=='approved'||categorySourceHash(c,d)!==sourceHash)return;
@@ -34,6 +36,7 @@ export async function holdClassification(candidate: CrawlCandidate, document: Cr
 export async function setManualCategory(input:{repo:string;sourceHash:string;category:Category;reason:string;actor:string}) {
   if(!CATEGORIES.includes(input.category)||input.reason.trim().length<3||input.reason.length>500)throw new Error('카테고리와 3~500자의 지정 사유를 입력해주세요.');
   return db.transaction(async tx=>{
+    await lockPipelineInputStages(tx);
     const [c]=await tx.select().from(crawlCandidates).where(eq(crawlCandidates.repo,input.repo)).for('update');
     const [d]=await tx.select().from(crawlDocuments).where(eq(crawlDocuments.repo,input.repo)).for('share');
     if(!c||!d||c.state!=='approved'||categorySourceHash(c,d)!==input.sourceHash)throw new Error('후보 또는 출처가 변경되었습니다. 새로고침 후 다시 확인해주세요.');

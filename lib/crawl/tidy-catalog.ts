@@ -4,6 +4,7 @@ import { crawlCandidates, crawlDocuments, products } from "@/lib/db/schema";
 import { CATEGORIES, LIMITS, type Category } from "@/lib/domain/products/schema";
 import { CATEGORY_BATCH_SIZE, type ClassifyInput } from "./classify";
 import { productName } from "./product-name";
+import { lockPipelineInputStages } from "./pipeline-stage-context";
 
 /**
  * 공개 목록 정리 — 이름 규칙과 분류가 나아지기 전에 올라간 것을 지금 기준으로 다시 본다.
@@ -88,10 +89,13 @@ export async function applyChanges(changes: TidyChange[]): Promise<{ applied: nu
   let applied = 0;
   for (const change of changes) {
     const column = change.field === "name" ? products.name : products.category;
-    const updated = await db.update(products)
-      .set(change.field === "name" ? { name: change.after, updatedAt: new Date() } : { category: change.after, updatedAt: new Date() })
-      .where(and(eq(products.slug, change.slug), crawlerSeeded, eq(column, change.before)))
-      .returning({ id: products.id });
+    const updated = await db.transaction(async tx => {
+      await lockPipelineInputStages(tx);
+      return tx.update(products)
+        .set(change.field === "name" ? { name: change.after, updatedAt: new Date() } : { category: change.after, updatedAt: new Date() })
+        .where(and(eq(products.slug, change.slug), crawlerSeeded, eq(column, change.before)))
+        .returning({ id: products.id });
+    });
     applied += updated.length;
   }
   return { applied, skipped: changes.length - applied };

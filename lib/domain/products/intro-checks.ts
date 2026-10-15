@@ -1,8 +1,9 @@
 import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { productIntroChecks, products, productSearchProfiles, type Product, type ProductIntroCheck } from "@/lib/db/schema";
-import { assertJobLease, type JobLease } from "@/lib/jobs/control";
+import { assertJobLeaseAtWallTime, type JobLease } from "@/lib/jobs/control";
 import { decideIntro, type IntroJudgement } from "./intro-check";
+import { lockPipelineInputStages } from "@/lib/crawl/pipeline-stage-context";
 
 /**
  * 소개 검수의 대기열과 저장. 묻는 일(claude-cli)은 intro-check.ts 에 있다.
@@ -75,6 +76,7 @@ const sameCheck = (a: ProductIntroCheck | undefined, b: ProductIntroCheck | null
  */
 export async function recordIntroCheck(task: IntroTask, lease: JobLease, result: IntroCheckRecord): Promise<IntroCheckRecordOutcome> {
   return db.transaction(async (tx) => {
+    await lockPipelineInputStages(tx);
     const [product] = await tx.select({ ...FIELDS, source: products.source, claimedAt: products.claimedAt })
       .from(products).where(eq(products.id, task.product.id)).for("update");
     if (!product || (product.status !== "seeded" && product.status !== "verified") || product.source !== "crawler"
@@ -96,7 +98,7 @@ export async function recordIntroCheck(task: IntroTask, lease: JobLease, result:
         retryAt: sql`now() + ${sql.raw(`interval '${minutes} minutes'`)}` };
       await tx.insert(productIntroChecks).values({ productId: product.id, ...values })
         .onConflictDoUpdate({ target: productIntroChecks.productId, set: values });
-      await assertJobLease(tx, lease);
+      await assertJobLeaseAtWallTime(tx, lease);
       return "failed";
     }
 
@@ -116,7 +118,7 @@ export async function recordIntroCheck(task: IntroTask, lease: JobLease, result:
         updatedAt: sql`now()` }).where(eq(products.id, product.id));
       await tx.delete(productSearchProfiles).where(eq(productSearchProfiles.productId, product.id));
     }
-    await assertJobLease(tx, lease);
+    await assertJobLeaseAtWallTime(tx, lease);
     return outcome;
   });
 }

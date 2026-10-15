@@ -1,6 +1,7 @@
 import { isDeepStrictEqual } from "node:util";
 import { and, asc, eq, isNull, or, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
+import { lockPipelineInputStages } from "./pipeline-stage-context";
 import { crawlCandidates, crawlReviewAttempts, operationsAudit, type CrawlCandidate, type Product } from "@/lib/db/schema";
 import { findRepositoryProduct, lockProductRepository } from "@/lib/domain/products/repository-identity";
 
@@ -34,6 +35,7 @@ export async function reconcileCrawlDuplicates(options: { actor: string; apply?:
     entries.push({ repo: candidate.repo, previousReason: candidate.reason, reason: next.reason, existingSlug: next.signals.existingSlug });
     if (!options.apply) continue;
     const applied = await db.transaction(async tx => {
+      await lockPipelineInputStages(tx);
       await lockProductRepository(tx, `https://github.com/${candidate.repo}`);
       const [current] = await tx.select().from(crawlCandidates).where(and(eq(crawlCandidates.id, candidate.id), repairable)).for("update");
       if (!current || !isDeepStrictEqual(current, candidate)) return false;

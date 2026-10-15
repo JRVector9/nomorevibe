@@ -8,6 +8,7 @@ import { LIMITS } from "./limits";
 import * as repo from "./repository";
 import { introRequestMessage, type IntroRequestEntry } from "./takedown-view";
 import { isUnclaimed } from "./view";
+import { lockPipelineInputStages } from "@/lib/crawl/pipeline-stage-context";
 
 /**
  * 소개 수정 요청(2026-10-08 UX 감사 UX-18).
@@ -119,6 +120,7 @@ export async function fixIntroFromRequest(
   const tagline = line.trim();
   if (!tagline || tagline.length > LIMITS.tagline) return null;
   return db.transaction(async (tx) => {
+    await lockPipelineInputStages(tx);
     const [request] = await tx.select({ productId: introCorrectionRequests.productId, slug: introCorrectionRequests.slug })
       .from(introCorrectionRequests).where(and(eq(introCorrectionRequests.id, id), isNull(introCorrectionRequests.handledAt)));
     if (!request) return null;

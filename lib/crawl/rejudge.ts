@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { and, asc, eq, isNull, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/lib/db";
+import { lockPipelineInputStages } from "./pipeline-stage-context";
 import { crawlCandidates, crawlDocuments, crawlSettings } from "@/lib/db/schema";
 import { factsFromRepoMeta, judge, pageFactsFromDocument } from "./rules";
 import { mergeWithDefaults } from "./settings";
@@ -95,6 +96,7 @@ async function unchanged(tx: Tx, entry: StarRejudgePlan["entries"][number], expe
 export async function applyStarRejudge(input: unknown, persistReceipt: (receipt: StarRejudgeReceipt) => void | Promise<void>): Promise<StarRejudgeReceipt> {
   const plan = planSchema.parse(input);
   return db.transaction(async tx => {
+    await lockPipelineInputStages(tx);
     if (await databaseId(tx) !== plan.database) throw new Error("계획과 다른 DB입니다");
     // 공유 잠금끼리는 판정 잡과 충돌하지 않고, 설정 저장은 적용이 끝날 때까지 기다린다.
     const [saved] = await tx.select().from(crawlSettings).where(eq(crawlSettings.id, 1)).for("share");
@@ -120,6 +122,7 @@ export async function applyStarRejudge(input: unknown, persistReceipt: (receipt:
 export async function revertStarRejudge(input: unknown): Promise<{ reverted: number; skipped: number }> {
   const receipt = receiptSchema.parse(input);
   return db.transaction(async tx => {
+    await lockPipelineInputStages(tx);
     if (await databaseId(tx) !== receipt.database) throw new Error("영수증과 다른 DB입니다");
     let reverted = 0;
     for (const entry of [...receipt.entries].sort((a, b) => a.id - b.id)) {
