@@ -1,4 +1,4 @@
-# 2026-10-15 11:18 KST — 13앱 배포·519개 차단/감사/CDN 완료 / 전체자동적체 지속처리
+# 2026-10-15 11:21 KST — 13앱 배포·519개 차단/감사/CDN 완료 / 전체자동적체 지속처리
 
 ## Current objective / authorization
 
@@ -24,7 +24,9 @@ main은 최신 base의 필수 CI와 정상 PR을 요구한다. bypass/force/dire
 - **후속 PR423** https://github.com/JRVector9/nomorevibe/pull/423:
   ba2fbdd07a97382fe2538c9d7508c7c8a3f19562의 PR CI38667723469 모두PASS 후01:54:20UTC 정상 squash.
   새 main `347d647cc21a272e3e5b6acc1a0fd41f2190f173`, **main CI38668156608 전체검증·이미지 모두실제PASS**.
-  root는 이 main의 detached HEAD. 아래운영적용시각과구별한다.
+  이 SHA는 운영 코드 기준이다. 이후 문서 전용 main 커밋과 구별한다.
+  문서 PR424는 main a52a4c596d4ca65d20f15f8c05de1709b8b3c148로02:19:47UTC 정상병합됐다.
+  PR CI38670314669/main CI38670406690 실제성공(docs-only scope/check, 코드검사·이미지는정상skip).
   target session21273실제exit0. worker0f19016253c951069551f8c4cc8cb03ceb6c0e84fb2f90b679f0568c6b61ce1f,
   web16008a0db09f90351579d4d32d7631e239ea5d5af4df9da5f34930ff18ffe5de.
   새helper plan session3721와 migrate session15595는 모두 exit0. 양서버 이미지 pull/사전검사, schema77/qualityColumntrue/introNULL/noDDL을 실제 확인했다.
@@ -131,7 +133,7 @@ intro1548중completed1481/needs_editor67/failed0, 기존CDN1868모두confirmed.
 - PR423 production query1파일/통합1파일/unit1파일만변경. 실제RED2→통합2파일27PASS,
   unit3파일31PASS/scopedlint/diff/Nexttypegen후tscPASS. 독립review추가P0/P1/P2없음/unit11직접PASS.
   PR/main전체CI와웹·워커이미지모두실제PASS.
-- root 미커밋 docs5개: README.md / docs/CODEX_HANDOFF.md / 새자동내림운영보고서/
+- 정상병합된 문서 PR424의 5개파일: README.md / docs/CODEX_HANDOFF.md / 새자동내림운영보고서/
   docs/operations/2026-10-15-ai-not-found-monitoring.md /
   docs/operations/2026-10-14-backlog-catchup.md(후보1개정상회복·고정cohort재관측).
   README의 오래된uptime상한과‘기록만’을현재정책으로교정했다.
@@ -190,9 +192,9 @@ mainCI38668156608/target/plan3721/migrate15595/rollout89922/전체13앱verify/HT
 
 1. 원본535/최초보호16을보존한다. 3개는정상실패1부터시작,13개는미확인이다.
    이13개의다음정상ping과새실패누적은향후관측대상이며지금수동으로강제하지않는다.
-2. 문서5개 후속은 docs/backlog-recovery-verification-20261015의 정상docs-only
-   [PR424](https://github.com/JRVector9/nomorevibe/pull/424)에기록한다.
-   최신base필수CI후병합하며상태는GitHub가정본이다. 운영codeSHA347d647는문서mainSHA와구별하고재배포하지않는다.
+2. 문서5개는 정상 docs-only [PR424](https://github.com/JRVector9/nomorevibe/pull/424)로
+   최신base필수CI성공후병합완료했고 main CI도실제성공했다.
+   운영codeSHA347d647는문서전용mainSHA와구별하고문서만으로재배포하지않는다.
 3. 전체자동적체는서버에서계속처리중이다. source/agent/audit/번역의장기관측,
    실제품질cap과사람판단을구별한다. 품질cap삭제/가짜완료금지. 신규발굴자동재개금지.
 
