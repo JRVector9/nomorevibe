@@ -5,11 +5,12 @@ import { jobs, crawlCandidates, crawlDocuments, crawlSettings, crawlReviewAttemp
 import * as crawl from "@/lib/crawl/repository";
 import { getSettings, saveSettings, changeReviewMode } from "@/lib/crawl/settings";
 import { claimAgentReview, loadReviewInput, recordAgentReview } from "@/lib/crawl/agent-review-repository";
-import { enqueueSecondReviews, recordSecondReview } from "@/lib/crawl/second-review";
+import { recordSecondReview } from "@/lib/crawl/second-review";
 import { getJobState } from "@/lib/jobs/runner";
 import { ensureSchema } from "./setup";
 import { tryAcquireRole } from "@/lib/jobs/role-leader";
-import { withLegacySecondReviewJob, admitSecondReviewFixture } from "./second-review-receipt-fixtures";
+import { withLegacySecondReviewJob, admitSecondReviewFixture,
+  enqueueSecondReviewsFixture as enqueueSecondReviews } from "./second-review-receipt-fixtures";
 beforeAll(ensureSchema);
 beforeEach(async () => {
   for (const table of [secondReviews, crawlReviewAttempts, crawlCandidates, crawlDocuments, crawlSettings, jobs]) await db.delete(table);

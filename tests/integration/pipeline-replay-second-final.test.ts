@@ -23,6 +23,7 @@ import { reviewCrawlCandidates } from "@/lib/crawl/jobs/agent-review";
 import { secondReviewCandidates } from "@/lib/crawl/jobs/second-review";
 import { ensureSchema, TEST_DATABASE_URL } from "./setup";
 import { getReplayHandlerIdentityPath } from "./replay-handler-setup";
+import { withLegacySecondReviewJob } from "./second-review-receipt-fixtures";
 
 const reference = new Date("2001-11-01T00:00:00.000Z");
 const publishedSlug = "pr04b-second-final-published-sample";
@@ -226,7 +227,7 @@ it("appends actual cleanup in the authentic run scope without rewriting its earl
         expect(finals).toHaveLength(1);
         const [finalEvent] = await admin`SELECT seq FROM pipeline_replay.capacity_transitions WHERE kind = 'final'`;
         await admin`UPDATE crawl_candidates SET state = 'rejected', decided_by = 'admin' WHERE id = ${value.candidate.id}`;
-        expect(await closeSettledSecondReviews()).toBe(2);
+        expect(await withLegacySecondReviewJob(lease => closeSettledSecondReviews(undefined, lease))).toBe(2);
         expect(await admin`SELECT * FROM pipeline_replay.capacity_finals`).toEqual(finals);
         const events = await admin`SELECT seq, kind, payload FROM pipeline_replay.capacity_transitions WHERE kind = 'second_review_cleanup' ORDER BY seq`;
         expect(events).toHaveLength(1);

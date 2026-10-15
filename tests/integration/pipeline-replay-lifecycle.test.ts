@@ -3,7 +3,7 @@ import postgres from "postgres";
 import { eq, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { crawlCandidates, crawlDocuments, crawlSettings, secondReviews } from "@/lib/db/schema";
-import { closeSettledSecondReviews } from "@/lib/crawl/second-review";
+import { closeSettledSecondReviewsFixture as closeSettledSecondReviews } from "./second-review-receipt-fixtures";
 import { createReviewInput, reviewHash } from "@/lib/crawl/agent-review-contract";
 import { DEFAULT_CRAWL_SETTINGS } from "@/lib/crawl/settings-schema";
 import { README_SAMPLE_VERSION } from "@/lib/crawl/readme";
@@ -175,6 +175,39 @@ it("journals actual AI2 cleanup before fencing and permits no cleanup mutation a
     await value.ledger.seal(value.run, replayQuiescenceProof(value.run));
     await expect(readSealedReplayArtifact(value.database, value.run.runId)).resolves.toMatchObject({ finals: [], readiness: {
       transactions: expect.arrayContaining([expect.objectContaining({ changes: [expect.objectContaining({ table_name: "second_reviews" })] })]) } });
+  } finally { await value.database.close(); }
+});
+
+it("cleans a genuinely missing candidate outside replay under the actual worker job", async () => {
+  const value = await prepare(false, async (candidateId, inputHash) => {
+    await db.insert(secondReviews).values({ candidateId, repo: "lifecycle/app", trigger: "risk", firstDecision: "approve",
+      firstConfidence: .99, provider: "abcllm", model: "removed-voter", inputHash });
+  });
+  try {
+    await admin`DELETE FROM crawl_candidates WHERE id=${value.candidate.id}`;
+    const transitions = await admin`SELECT * FROM pipeline_replay.capacity_transitions ORDER BY seq`;
+    expect(await closeSettledSecondReviews(reference)).toBe(1);
+    expect(await admin`SELECT status,resolution FROM second_reviews`)
+      .toEqual([{ status: "resolved", resolution: "model_removed" }]);
+    expect(await admin`SELECT * FROM pipeline_replay.capacity_transitions ORDER BY seq`).toEqual(transitions);
+  } finally { await value.database.close(); }
+});
+
+it("rolls back missing-candidate cleanup when replay cannot certify candidate membership", async () => {
+  const value = await prepare(false, async (candidateId, inputHash) => {
+    await db.insert(secondReviews).values({ candidateId, repo: "lifecycle/app", trigger: "risk", firstDecision: "approve",
+      firstConfidence: .99, provider: "abcllm", model: "removed-voter", inputHash });
+  });
+  try {
+    await admin`DELETE FROM crawl_candidates WHERE id=${value.candidate.id}`;
+    const before = await admin`SELECT to_jsonb(v) AS row FROM second_reviews v ORDER BY id`;
+    const transitions = await admin`SELECT * FROM pipeline_replay.capacity_transitions ORDER BY seq`;
+    await expect(withReplayDatabaseScope(value.identityPath, () =>
+      withReplayFinalScope(value.run, () => closeSettledSecondReviews(reference))))
+      .rejects.toThrow("replay_final_binding_mismatch");
+    expect(await admin`SELECT to_jsonb(v) AS row FROM second_reviews v ORDER BY id`).toEqual(before);
+    expect(await admin`SELECT * FROM pipeline_replay.capacity_transitions ORDER BY seq`).toEqual(transitions);
+    expect(await admin`SELECT 1 FROM pipeline_replay.capacity_finals`).toHaveLength(0);
   } finally { await value.database.close(); }
 });
 

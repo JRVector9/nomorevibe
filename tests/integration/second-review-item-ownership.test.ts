@@ -19,13 +19,14 @@ import { crawlCandidates, crawlDocuments, crawlReviewAttempts, crawlSettings, se
 import { DEFAULT_CRAWL_SETTINGS, type CrawlSettings } from "@/lib/crawl/settings-schema";
 import { README_SAMPLE_VERSION } from "@/lib/crawl/readme";
 import { loadReviewInput } from "@/lib/crawl/agent-review-repository";
-import { enqueueSecondReviews } from "@/lib/crawl/second-review";
+import { enqueueSecondReviewsFixture as enqueueSecondReviews } from "./second-review-receipt-fixtures";
 import { loadSecondReviewInput } from "@/lib/crawl/second-review-input";
 import { secondReviewCandidates } from "@/lib/crawl/jobs/second-review";
 import { REVIEW_PROMPT_VERSION, REVIEW_RULES_VERSION, reviewHash } from "@/lib/crawl/agent-review-contract";
 import { claimItemLease, lockItemStage } from "@/lib/jobs/items/repository";
 import type { Ai2ItemBinding } from "@/lib/jobs/items/types";
 import { runJob } from "@/lib/jobs/runner";
+import { requestJob } from "@/lib/jobs/control";
 import { ensureSchema, TEST_DATABASE_URL } from "./setup";
 
 const admin = postgres(TEST_DATABASE_URL, { max: 1, prepare: false, onnotice: () => {},
@@ -169,6 +170,14 @@ async function source() {
     completedAt: fetchedAt, validUntil: input.validUntil,
     outcome: { decision: "reject", confidence: 0.95, reason: "First fixture rejection", evidenceIds: ["product"] } }).returning();
   await enqueueSecondReviews(settings);
+  // The real fixture runner acknowledges its own job. Signal the later handler
+  // tick through the same producer API used by live upstream work.
+  await requestJob("second-review");
+  // Arrange the later handler's diagnostic/cursor sentinels after fixture work.
+  // Keep the actual runner's versions and ownership history intact.
+  await admin`UPDATE jobs SET cursor='{"marker":"pr04-resume","page":7}'::jsonb,
+    last_success_at='2026-01-01 01:02:03.123456',last_error='old fixture error'
+    WHERE name='second-review'`;
   const votes = await db.select().from(secondReviews).where(eq(secondReviews.candidateId, candidate.id));
   expect(votes).toHaveLength(1);
   const vote = votes[0];
@@ -220,8 +229,9 @@ it("legacy control dispatches and records exactly one current vote", async () =>
   const after = await domain(context);
   expect({ ...after, votes: before.votes }).toEqual(before);
   const [job] = await admin`SELECT requested_version,processed_version,lease_token,locked_at FROM jobs WHERE name='second-review'`;
-  expect(Number(job.processed_version)).toBe(9);
-  expect(Number(job.requested_version)).toBe(9);
+  // The fixture's direct runner requests version10; the later producer requests11.
+  expect(Number(job.processed_version)).toBe(11);
+  expect(Number(job.requested_version)).toBe(11);
   expect(job.lease_token).toBeNull();
   expect(job.locked_at).toBeNull();
 });

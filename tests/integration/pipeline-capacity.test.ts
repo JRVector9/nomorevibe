@@ -5,8 +5,8 @@ import { crawlCandidates, crawlDocuments, crawlFrontier, crawlReviewAttempts, cr
 import * as crawl from "@/lib/crawl/repository";
 import { changeReviewMode, getSettings, saveSettings } from "@/lib/crawl/settings";
 import { claimAgentReview, loadReviewInput, recordAgentReview } from "@/lib/crawl/agent-review-repository";
-import { enqueueSecondReviews, closeSettledSecondReviews } from "@/lib/crawl/second-review";
-import { recordSecondReviewFixture } from "./second-review-receipt-fixtures";
+import { enqueueSecondReviewsFixture as enqueueSecondReviews, closeSettledSecondReviewsFixture as closeSettledSecondReviews,
+  recordSecondReviewFixture } from "./second-review-receipt-fixtures";
 import { reviewPolicyHash } from "@/lib/crawl/agent-review-contract";
 import { fullReviewPolicyHash, comparisonReviewPolicyHash, reportCapacityRun, type CapacityArtifact } from "@/lib/operations/pipeline-capacity";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";

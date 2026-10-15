@@ -6,7 +6,7 @@ import { changeReviewMode, saveSettings, getSettings } from "@/lib/crawl/setting
 import { reviewCrawlCandidates } from "@/lib/crawl/jobs/agent-review";
 import { runJob } from "@/lib/jobs/runner";
 import { ensureSchema, resetTables } from "./setup";
-import { recordSecondReviewFixture } from "./second-review-receipt-fixtures";
+import { enqueueSecondReviewsFixture, recordSecondReviewFixture } from "./second-review-receipt-fixtures";
 
 /** 외부 CLI만 바꾼다. 규칙·claim·기록·lease는 실제 DB로 돈다 */
 const review = vi.hoisted(() => vi.fn());
@@ -52,9 +52,9 @@ it("passes a configured Grok first approval through the real second-review input
   await source("maker/grok-app", "https://grok.example", { state: "approved", reason: "passed" }, { title: "Grok App", description: "A deployed product" });
   expect(await tick()).toMatchObject({ status: "completed" });
   expect(grok).toHaveBeenCalledOnce();
-  const { enqueueSecondReviews, pendingSecondReviews } = await import("@/lib/crawl/second-review");
+  const { pendingSecondReviews } = await import("@/lib/crawl/second-review");
   const { loadSecondReviewInput } = await import("@/lib/crawl/second-review-input");
-  expect(await enqueueSecondReviews(await getSettings())).toBe(1);
+  expect(await enqueueSecondReviewsFixture(await getSettings())).toBe(1);
   const [vote] = await pendingSecondReviews(10);
   expect(vote).toMatchObject({ trigger: "ai_approved", firstModel: "grok-fixture" });
   const { loadReviewInput } = await import("@/lib/crawl/agent-review-repository");
