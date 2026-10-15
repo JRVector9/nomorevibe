@@ -12,13 +12,14 @@ PR 번호·의존성은 유지하며, 아래 PR01 소단위는 원래 PR01 안�
 | **PR01a** 현재 검수 snapshot·오프라인 비교 | 완료 | [#429](https://github.com/JRVector9/nomorevibe/pull/429), `2ce8cff` | 미적용 | 로컬 unit 2,633 / 관련 DB 62 PASS, main CI [38702607101](https://github.com/JRVector9/nomorevibe/actions/runs/38702607101) 전체 성공. snapshot은 `as_of_snapshot_only` / `unverified` |
 | **PR01b-1** 격리 DB·semantic clock·fixture 호출 예약 장부 | 완료 | [#430](https://github.com/JRVector9/nomorevibe/pull/430), `2c7a71c` | 미적용 | 로컬 unit 2,669 PASS; 전체 DB 1,657 PASS/기존 TODO 1은 마지막 예산 산술 회귀 전, 최종 관련 DB 35 PASS. main CI [38710286609](https://github.com/JRVector9/nomorevibe/actions/runs/38710286609)의 quality·통합 3shard·check·웹/워커 image 모두 성공 |
 | **PR01b-2** 명시 verified Drizzle DB scope·좁은 handler table profile | 완료 | [#431](https://github.com/JRVector9/nomorevibe/pull/431), `9601e3b` | 미적용 | unit2,679·DB1,675 PASS/기존 TODO1. main CI [38716366046](https://github.com/JRVector9/nomorevibe/actions/runs/38716366046) 전체 성공. 기존 AI1 repository/writer/outbox와 실제 rollback 확인 |
-| **PR01b-3** 실제 AI1/AI2 fixture handler runner | 구현·전체 검증·리뷰 완료 | 제출 준비 | 미적용 | unit2,762·전체 DB1,689 PASS/기존 TODO1(새 실제 handler8개 포함), 타입/lint/빌드/bundle 통과. 두 검수 job만 실행·실제 모델 차단·AI2 gate/실패/보류/폴백·held outbox 확인. 상세 결과는 검증 문서에 기록 |
-| **원래 PR01 전체** 측정 기준·격리 replay | **부분 완료** | 위 기반만 병합 | replay/새 consumer 비활성 | 실제 handler fixture는 이번 PR에서 검증; 최종/준비 전이·artifact/seal·provider 상한·실모델 baseline 미완료. **2배 성능 미판정** |
+| **PR01b-3** 실제 AI1/AI2 fixture handler runner | 구현·전체 검증·리뷰 완료 | [#432](https://github.com/JRVector9/nomorevibe/pull/432), `664777d`; PR·main 전체 CI 성공 | 미적용 | unit2,762·전체 DB1,689 PASS/기존 TODO1(새 실제 handler8개 포함), 타입/lint/빌드/bundle 통과. 두 검수 job만 실행·실제 모델 차단·AI2 gate/실패/보류/폴백·held outbox 확인. PR CI [38719944888](https://github.com/JRVector9/nomorevibe/actions/runs/38719944888)·main CI [38720568825](https://github.com/JRVector9/nomorevibe/actions/runs/38720568825) 전체 성공(image 포함) |
+| **PR01b-4** 실제 writer 원자 final | **구현·로컬 검증·root/교차 리뷰 완료** | 미제출 | 미적용 | unit2,781·전체 DB1,715 PASS/기존TODO1; 마지막 보완 후 관련 DB68 및 AI2/기존79 PASS. 실제 원자 rollback·다중 slot·fallback·cleanup 잠금·tokenless 공개분·외부 후보 잠금 회귀 통과 |
+| **원래 PR01 전체** 측정 기준·격리 replay | **부분 완료** | 위 기반만 병합 | replay/새 consumer 비활성 | 실제 handler fixture는 이번 PR에서 검증; 최종 원자 기록은 b4 로컬 검증 완료/PR 제출 전; 준비 coverage·artifact/seal·provider 상한·실모델 baseline 미완료. **2배 성능 미판정** |
 | **PR02–17** | 미착수 | 미병합 | 비활성 | 아래는 예정된 검증이며 PASS 기록이 아님 |
 
 PR430은 `2026-10-15T09:04:44Z`, PR431은 `2026-10-15T09:54:08Z` 병합됐다. 두 main CI는 image 작업까지 전체 성공을 직접 확인했다.
 image 생성 성공은 운영 적용 증거가 아니다. 마지막 확인된 운영 릴리스는 **`8020dca`**이며
-PR429–431과 이번 checkpoint를 위한 운영 migration·provider 설정 변경·공개 발행·수동 배포는 수행하지 않았다.
+PR429–432를 위한 운영 migration·provider 설정 변경·공개 발행·수동 배포는 수행하지 않았다.
 실제 검수 모델·품질 gate·신규 GitHub/Show HN 발굴 중단·사람 판단·검색어 `api-stop`을 유지한다.
 
 ## PR01의 다음 검토 단위
@@ -29,13 +30,14 @@ PR429–431과 이번 checkpoint를 위한 운영 migration·provider 설정 변
 | 단위 | 납품 결과 | 반드시 확인할 경계 | 복구 / 아직 포함하지 않는 범위 |
 | --- | --- | --- | --- |
 | **PR01b-2 — 병합 완료** | verified dedicated client의 Drizzle scope, 고정 table/sequence allowlist·OID/ACL과 결합한 handler profile | global/replica를 poison해도 접근 0, `onPrimary/onReplica` scope 유지, concurrent/nested 교차 거절, 같은 writer transaction 검증, privilege drift 거절, products 쓰기 거절 | scope/profile 사용 중단으로 복구. 일반 worker·실제 handler·provider 실행은 열지 않음 |
-| **PR01b-3 — 현재** | 기존 AI1/AI2 handler를 fixture transport로 실행하고 downstream 요청을 격리 outbox에 보존 | 허용 job 두 종류만 claim, 실제 provider/fetch/publisher 실행 0, 기존 lease/heartbeat/backoff 유지, 공개 products 불변 | replay runner admission 중단·heartbeat 종료. 새 심사 엔진이나 별도 승인 규칙을 만들지 않음 |
+| **PR01b-3 — 병합 완료** | 기존 AI1/AI2 handler를 fixture transport로 실행하고 downstream 요청을 격리 outbox에 보존 | 허용 job 두 종류만 claim, 실제 provider/fetch/publisher 실행 0, 기존 lease/heartbeat/backoff 유지, 공개 products 불변 | replay runner admission 중단·heartbeat 종료. 새 심사 엔진이나 별도 승인 규칙을 만들지 않음 |
 | **PR01b-4** | 기존 결과 writer와 **같은 transaction**에 고유 final 전이 기록 | writer/recorder 어느 쪽 rollback에도 result/event 동시 0, 필수 AI2 gate 재사용, 중복·부분표·rules/reuse/human/stale 결과의 신규 final 0 | recorder 결합 비활성, 격리 장부 보존. 완료 뒤 별도 append로 원자성을 대신하지 않음 |
 | **PR01b-5** | 실제 준비/보류/재개 coverage, 별도 artifact/export·seal | 0-ready·재시작 gap·30분 미달은 미판정, admission 종료·모든 call 정산·writer fence 뒤 seal, unresolved call이면 seal/겹친 run 거절 | admission 닫고 drain, 불명 비용/이력 유지. v1 snapshot parser를 완화하지 않음 |
 | **PR01b-6** | 실제 serving identity·강제 전체 비용 상한을 입증한 제한 replay와 유효 baseline | exact 모델/정책/고정 입력·시각, 숨은 retry/fallback과 실제 usage/취소 계약, 사전 call/token/time 한도, 준비 대기가 유지되는 30분 baseline | provider admission 차단·drain. 모델 교체/품질 완화 금지; fixture 속도를 모델 처리량으로 쓰지 않음 |
 
 provider 증거 확인은 handler 구현과 독립적으로 진행할 수 있다. 현재 `model-replay`는
-`unsupported_provider_budget`으로 막혀 있다. 로컬 abcLLM 소스 audit은 실제 serving revision의 증거가 아니며,
+`unsupported_provider_budget`으로 막혀 있다. 게이트웨이 실행 컨테이너의 감사 대상8파일 hash와 upstream metadata를 읽기 확인했지만, 전체 serving identity와 비용/취소 계약은 아직 입증되지 않았다.
+
 무제한 retry·추정 usage·상한 미확인을 manifest boolean만으로 해소하지 않는다.
 
 **PR01은 비교를 신뢰할 수 있는 측정 도구와 baseline을 준비하는 선행 단계다.**
@@ -83,10 +85,11 @@ Oracle가 설치됐거나 standby라는 이유로 PR11·16·17을 완료 처리�
   `gh run view 38710286609 --json databaseId,headSha,status,conclusion,jobs`를 읽기 전용으로 실행해 병합·전체 성공을 재확인했다.
   기존 로컬 테스트를 이번 문서 작업에서 재실행한 것으로 주장하지 않는다.
 - 이번 변경은 서브에이전트3명 병렬 구현 후 root 전체 리뷰와 담당 간 교차 검토를 마쳤다.
-  **PR01b-3의 실제 변경 파일·회귀 결과·PR/CI·운영 적용 여부**를 갱신하며 final/coverage는 계속 미완료다.
+  **PR01b-4의 실제 변경 파일·회귀 결과·PR/CI·운영 적용 여부**를 갱신하며 coverage/seal·실모델 baseline은 계속 미완료다.
   운영 적체의 감소와 고정 입력 성능을 합산하지 않는다.
 - PR01b-2: [DB scope 검증](../../operations/2026-10-15-pipeline-pr01b-handler-scope-validation.md).
-- 이번 PR01b-3: [runtime 계획](2026-10-15-pipeline-pr01b-runtime.md), [실제 handler 검증](../../operations/2026-10-15-pipeline-pr01b-runtime-validation.md).
+- PR01b-4: [계획](2026-10-15-pipeline-pr01b-final.md), [실제 원자성 검증](../../operations/2026-10-15-pipeline-pr01b-final-validation.md).
+- PR01b-3: [runtime 계획](2026-10-15-pipeline-pr01b-runtime.md), [실제 handler 검증](../../operations/2026-10-15-pipeline-pr01b-runtime-validation.md).
 
 공통 복구는 새 admission/claim 중단→inflight drain→token/epoch fence→이전 consumer/image다.
 실패·quota·사람 판단·불명 호출·외부 반영 이력은 보존하고, DB DROP이나 장부 초기화로 복구하지 않는다.

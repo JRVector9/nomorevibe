@@ -17,9 +17,14 @@ const callSchema = z.discriminatedUnion("stage", [
 ]);
 export type ReplayCallRequest = z.infer<typeof callSchema>;
 export type ReplayReceipt = { inputTokens: number; outputTokens: number } | null;
+const resultProofSchema = z.discriminatedUnion("ok", [
+  z.object({ ok: z.literal(true), outcomeHash: hash, decisionHash: hash }).strict(),
+  z.object({ ok: z.literal(false), outcomeHash: z.null(), decisionHash: z.null() }).strict(),
+]);
+export type ReplayResultProof = z.infer<typeof resultProofSchema>;
 const runBrand: unique symbol = Symbol("ReplayRun");
 export type ReplayRun = Readonly<{ [runBrand]: true; runId: string }>;
-type RunIdentity = { ledger: ReplayLedger; ownerId: string; manifest: CapacityManifest; admissionClosed: boolean };
+type RunIdentity = { ledger: ReplayLedger; database: VerifiedReplayDatabase; ownerId: string; manifest: CapacityManifest; admissionClosed: boolean };
 const runs = new WeakMap<object, RunIdentity>();
 class ReplayLedgerError extends Error { constructor(readonly code: string) { super(code); } }
 const fail = (code: string): never => { throw new ReplayLedgerError(code); };
@@ -30,6 +35,19 @@ const active = ["reserved", "dispatching", "in_flight", "indeterminate"];
 const key = (value: { candidateId: number; inputHash: string; sourceRevisionHash: string }) =>
   `${value.candidateId}:${value.inputHash}:${value.sourceRevisionHash}`;
 const number = (value: unknown) => { const result = Number(value); ensure(Number.isSafeInteger(result), "replay_counter_overflow"); return result; };
+
+/** Internal bridge: only an authentic owner handle can construct the final recorder scope. */
+export function replayFinalRunBinding(run: ReplayRun) {
+  const identity = run && runs.get(run);
+  ensure(identity, "replay_run_required");
+  assertVerifiedReplayDatabase(identity.database);
+  return Object.freeze({ database: identity.database, ownerId: identity.ownerId,
+    manifest: structuredClone(identity.manifest),
+    assertActive() {
+      ensure(runs.get(run) === identity && !identity.admissionClosed, "replay_final_scope_closed");
+      assertVerifiedReplayDatabase(identity.database);
+    } });
+}
 
 function frozenInputs(manifest: CapacityManifest, inputs: { candidateId: number; input: ReviewInput }[]) {
   const expected = new Map(manifest.inputs.map(item => [key(item), item]));
@@ -105,7 +123,7 @@ export class ReplayLedger {
       await this.event(tx, manifest.runId, "prepared");
     });
     const run = Object.freeze({ [runBrand]: true as const, runId: manifest.runId });
-    runs.set(run, { ledger: this, ownerId, manifest, admissionClosed: false }); return run;
+    runs.set(run, { ledger: this, database: this.database, ownerId, manifest, admissionClosed: false }); return run;
   }
   async start(run: ReplayRun): Promise<void> {
     await this.transaction(async tx => {
@@ -191,7 +209,12 @@ export class ReplayLedger {
   markDispatching(run: ReplayRun, callId: string) { return this.move(run, callId, "reserved", "dispatching"); }
   markInFlight(run: ReplayRun, callId: string) { return this.move(run, callId, "dispatching", "in_flight"); }
   cancelBeforeDispatch(run: ReplayRun, callId: string) { return this.move(run, callId, "reserved", "cancelled_before_dispatch"); }
-  async settle(run: ReplayRun, callId: string, receipt: ReplayReceipt): Promise<void> {
+  async settle(run: ReplayRun, callId: string, receipt: ReplayReceipt, result?: ReplayResultProof): Promise<void> {
+    let proof: ReplayResultProof | undefined;
+    if (result !== undefined) {
+      const parsed = resultProofSchema.safeParse(result);
+      ensure(parsed.success, "replay_result_proof_invalid"); proof = parsed.data;
+    }
     const uncertain = await this.transaction(async tx => {
       await this.locked(tx, run);
       const [call] = await tx`SELECT * FROM pipeline_replay.capacity_calls WHERE run_id = ${run.runId} AND call_id = ${callId} FOR UPDATE`;
@@ -202,7 +225,9 @@ export class ReplayLedger {
         && receipt.inputTokens + receipt.outputTokens <= number(call.token_upper_bound);
       if (!valid) { this.identity(run).admissionClosed = true; await this.uncertain(tx, run, callId); return true; }
       await tx`UPDATE pipeline_replay.capacity_calls SET state = 'settled', settled_at = clock_timestamp(),
-        input_tokens = ${receipt.inputTokens}, output_tokens = ${receipt.outputTokens} WHERE run_id = ${run.runId} AND call_id = ${callId}`;
+        input_tokens = ${receipt.inputTokens}, output_tokens = ${receipt.outputTokens}, result_ok = ${proof?.ok ?? null},
+        result_hash = ${proof?.outcomeHash ?? null}, result_decision_hash = ${proof?.decisionHash ?? null}
+        WHERE run_id = ${run.runId} AND call_id = ${callId}`;
       await this.event(tx, run.runId, "settled", { callId }); return false;
     });
     if (uncertain) fail("replay_call_indeterminate");

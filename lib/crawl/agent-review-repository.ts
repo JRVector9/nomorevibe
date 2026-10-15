@@ -9,6 +9,7 @@ import type { ProductTransaction } from "@/lib/domain/products/generation";
 import { lockRepositoryAgentEvidence } from "@/lib/domain/evidence/agents/lock";
 import { agentCoverageRevisionSql } from "@/lib/domain/evidence/agents/coverage";
 import { assertJobLease, requestJob, type JobLease } from "@/lib/jobs/control";
+import { prepareReplayFinalWrite, recordReplayFinalWrite, recordReplayFirstReviewTransition } from "@/lib/operations/pipeline-replay-final";
 import { mergeWithDefaults } from "./settings";
 import type { CrawlSettings } from "./settings-schema";
 import { firstReviewer } from "./agent-review";
@@ -39,10 +40,14 @@ export async function loadReviewInput(
     observations: observations.map(row => ({ id: `observation:${row.id}`, observation: row.facts })) });
 }
 
+type LockedReviewContext = {
+  candidate: CrawlCandidate; document: CrawlDocument; settings: CrawlSettings; input: ReviewInput;
+};
+
 /** Lock candidate → document → settings → repository identity → scan → lease, with no network. */
 async function currentReviewInput(tx: ProductTransaction, expected: {
   candidate: CrawlCandidate; document: CrawlDocument; settings: CrawlSettings; input: ReviewInput; lease: JobLease;
-}): Promise<ReviewInput | null> {
+}): Promise<LockedReviewContext | null> {
   const [candidate] = await tx.select().from(crawlCandidates).where(eq(crawlCandidates.id, expected.candidate.id)).for("update");
   const [document] = await tx.select().from(crawlDocuments).where(eq(crawlDocuments.id, expected.document.id)).for("share");
   const [settingsRow] = await tx.select().from(crawlSettings).where(eq(crawlSettings.id, 1)).for("share");
@@ -53,15 +58,17 @@ async function currentReviewInput(tx: ProductTransaction, expected: {
   if (scan) await tx.select({ id: agentRepositoryObservations.id }).from(agentRepositoryObservations)
     .where(eq(agentRepositoryObservations.scanId, scan.id)).for("share");
   await assertJobLease(tx, expected.lease);
+  const settings = mergeWithDefaults(settingsRow?.values);
   if (!candidate || !document || !isReviewCandidate(candidate)
     || candidate.productUrl !== document.productUrl
     || !isDeepStrictEqual(candidate, expected.candidate) || !isDeepStrictEqual(document, expected.document)
-    || !isDeepStrictEqual(mergeWithDefaults(settingsRow?.values), expected.settings)) return null;
-  const input = await loadReviewInput(candidate, document, expected.settings, tx);
+    || !isDeepStrictEqual(settings, expected.settings)) return null;
+  const input = await loadReviewInput(candidate, document, settings, tx);
   const now = reviewSemanticNow();
   return input.inputHash === expected.input.inputHash && input.sourceRevisionHash === expected.input.sourceRevisionHash
     && input.validUntil > now && document.fetchedAt <= now
-    && (!input.source.scanCompletedAt || new Date(input.source.scanCompletedAt) <= now) ? input : null;
+    && (!input.source.scanCompletedAt || new Date(input.source.scanCompletedAt) <= now)
+    ? { candidate, document, settings, input } : null;
 }
 
 /** Cheap current revision comparison used before LIMIT; final transactions also recompute inputHash. */
@@ -442,7 +449,8 @@ export async function claimAgentReview(input: ReviewContext & {
 }): Promise<ReviewClaim> {
   if (!input.settings.enabled || input.settings.reviewMode === "off") return { kind: "skipped", reason: "disabled" };
   return db.transaction(async tx => {
-    const current = await currentReviewInput(tx, input);
+    const locked = await currentReviewInput(tx, input);
+    const current = locked?.input;
     if (!current) return { kind: "skipped", reason: "input_changed" };
     const now = input.now ?? new Date();
     const semanticNow = reviewSemanticNow(now);
@@ -508,21 +516,28 @@ export async function recordAgentReview(input: ReviewContext & {
 }): Promise<{ applied: boolean; state: "succeeded" | "failed" | "superseded" }> {
   const requests: Awaited<ReturnType<typeof requestJob>>[] = [];
   const result = await db.transaction(async tx => {
-    const current = await currentReviewInput(tx, input);
+    const locked = await currentReviewInput(tx, input);
+    const current = locked?.input;
     const [attempt] = await tx.select().from(crawlReviewAttempts).where(eq(crawlReviewAttempts.id, input.attempt.id)).for("update");
     const now = input.now ?? new Date();
     const owns = attempt?.state === "running" && attempt.leaseToken === input.lease.token;
     const reusable = attempt?.state === "succeeded";
     if (!attempt || attempt.candidateId !== input.candidate.id || (!owns && !reusable)) return { applied: false, state: "superseded" as const };
-    if (!current || attempt.inputHash !== current.inputHash || attempt.sourceRevisionHash !== current.sourceRevisionHash) {
-      if (owns) await tx.update(crawlReviewAttempts).set({ state: "superseded", errorCode: "input_changed", completedAt: now })
-        .where(eq(crawlReviewAttempts.id, attempt.id));
+    if (!locked || !current || attempt.inputHash !== current.inputHash || attempt.sourceRevisionHash !== current.sourceRevisionHash) {
+      if (owns) {
+        await tx.update(crawlReviewAttempts).set({ state: "superseded", errorCode: "input_changed", completedAt: now })
+          .where(eq(crawlReviewAttempts.id, attempt.id));
+        await recordReplayFirstReviewTransition(tx, { kind: "superseded", candidateId: attempt.candidateId, firstAttemptId: attempt.id });
+      }
       return { applied: false, state: "superseded" as const };
     }
+    const finalWrite = await prepareReplayFinalWrite(tx, { stage: "first", candidateId: locked.candidate.id,
+      firstAttemptId: attempt.id, input: current, settings: locked.settings });
     if (input.error) {
       if (owns) await tx.update(crawlReviewAttempts).set({ state: "failed", errorCode: input.error.slice(0, 120),
         retryAfter: input.retryAfter ?? new Date(now.getTime() + 60_000), completedAt: now })
         .where(eq(crawlReviewAttempts.id, attempt.id));
+      await recordReplayFinalWrite(tx, finalWrite, requests);
       return { applied: false, state: reusable ? "succeeded" as const : "failed" as const };
     }
     const outcome = validateReviewOutcome(current, reusable ? attempt.outcome : input.outcome ?? attempt.outcome);
@@ -548,6 +563,7 @@ export async function recordAgentReview(input: ReviewContext & {
       if (outcome.decision === "approve" && !secondGateRequired(input.settings))
         requests.push(await requestJob("crawl-publish", tx));
     }
+    await recordReplayFinalWrite(tx, finalWrite, requests);
     return { applied, state: "succeeded" as const };
   });
   for (const request of requests) emitPipelineEvent("requested", { stage: "first", candidateId: input.candidate.id,

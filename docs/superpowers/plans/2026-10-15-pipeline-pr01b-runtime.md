@@ -51,3 +51,23 @@ PR01 합격은 신뢰할 수 있는 측정과 baseline이다. 변경2배 판정�
 typegen·tsc·lint·i18n·build·bundle·Python23·diff도 실제 PASS다.
 최초 DB 실패와 수정, 한계/후속은 [runtime 검증](../../operations/2026-10-15-pipeline-pr01b-runtime-validation.md)을 따른다.
 PR/CI·운영 적용은 [납품 상태](2026-10-15-pipeline-delivery-status.md)에 별도 기록한다.
+
+## 다음 b4 사전 읽기 검토 — 구현하지 않은 항목
+
+PR432 CI 대기 중 두 담당이 기존 AI1/AI2 writer를 읽기만 검토했다. 편집·DB·테스트 실행은 없었다.
+
+- `recordAgentReview`는 기존 candidate 갱신과 모든 `requestJob(..., tx)` 뒤 성공 반환 전에 같은 `tx`의
+  private recorder를 호출해야 한다. 반환 `applied`는 enforce 여부라 hold/reuse도 포함한다.
+  별도 appliedAttemptId 컬럼은 없으며 `candidate.signals.agentReviewAttemptId`가 실제 적용 연결이다.
+- 전환 전 running·automatic·비규칙/비재사용·actor/lease와 현재 input/source/policy/version/유효기간,
+  적용 후 auto candidate·실제 settled call을 확인한다. observe/hold/rules/reuse/human/stale/부분표는 신규 final0이다.
+- `recordSecondReview`도 같은 transaction에서 표 저장·outbox·후보 hold를 마친 뒤 기록한다.
+  현재 한 표의 agreed만으로 부족하며 잠근 first attempt와 전체 current generation/root/fallback 표에
+  기존 `secondReviewApprovalPredicate`를 재사용한다. AI2 reject나 ai_decided 일치만으로 자동 거절 final을 만들지 않는다.
+- **잠금순서 추가 설계가 필요하다.** AI2 writer가 job UPDATE를 잡은 뒤 recorder에서 형제/root 표를
+  잠그면, 표 UPDATE 뒤 job SHARE를 얻는 cleanup과 교착할 수 있다. gate 전체행은 job보다 먼저 정렬해
+  취득하고 cleanup과 공통 순서를 입증해야 한다. run/event는 모든 domain/job/outbox 작업 뒤 마지막으로 잠근다.
+- cleanup은 하나의 transaction이 아니다. 각 withJobLeaseWrite와 별도 human hold/close transaction에
+  전이 recorder를 결합해야 한다. 기존 final 이력은 보존하고 다시 세지 않는다.
+
+이 항목의 구현·원자 rollback/두 연결 교착 회귀는 다음 PR에 남아 있다.

@@ -70,6 +70,19 @@ export function secondReviewGeneration(firstAttemptId: number | null, input: Pic
 
 /** No network or mutation. With a transaction, lock in the same order as first-review recording. */
 export async function loadSecondReviewInput(row: SecondReview, tx?: ProductTransaction): Promise<ReviewInput | null> {
+  return (await secondReviewInputContext(row, tx))?.input ?? null;
+}
+
+/** Replay final writers hold every row read by the publication gate before taking the job lock. */
+export function loadLockedSecondReviewInput(row: SecondReview, tx: ProductTransaction): Promise<{
+  input: ReviewInput; settings: CrawlSettings;
+} | null> {
+  return secondReviewInputContext(row, tx, true);
+}
+
+async function secondReviewInputContext(row: SecondReview, tx?: ProductTransaction, lockGate = false): Promise<{
+  input: ReviewInput; settings: CrawlSettings;
+} | null> {
   const executor = tx ?? db;
   const candidateQuery = executor.select().from(crawlCandidates).where(eq(crawlCandidates.id, row.candidateId)).limit(1);
   const [candidate] = await (tx ? candidateQuery.for("update") : candidateQuery);
@@ -88,26 +101,37 @@ export async function loadSecondReviewInput(row: SecondReview, tx?: ProductTrans
   if (!settings.enabled || !settings.secondReview.enabled) return null;
   const pool = row.fallbackForId ? settings.secondReview.fallbacks ?? [] : settings.secondReview.voters;
   if (!pool.some(voter => voter.provider === row.provider && sameReviewModel(voter.model, row.model))) return null;
-  let root: SecondReview | undefined;
-  if (row.fallbackForId) {
-    [root] = await executor.select().from(secondReviews).where(eq(secondReviews.id, row.fallbackForId));
-  }
   const input = await loadReviewInput(candidate, document, settings, executor);
   if (secondReviewGeneration(row.firstAttemptId, input, row.trigger) !== row.generationKey || (!row.fallbackForId && sameReviewModel(row.firstModel, row.model))) return null;
   let first: CrawlReviewAttempt | undefined;
   if (!row.publishedSlug) {
     // 관문은 그 1차 심사자(제공자·모델)의 최신 판단에 붙는다 — 다른 심사자의 더 새 판단과 견주지 않는다(codex 2차)
-    const [gateFirst] = row.trigger === "ai_approved" && row.firstAttemptId
-      ? await executor.select({ provider: crawlReviewAttempts.provider, model: crawlReviewAttempts.model }).from(crawlReviewAttempts)
-        .where(eq(crawlReviewAttempts.id, row.firstAttemptId)) : [];
-    [first] = await executor.select().from(crawlReviewAttempts).where(and(
+    const identityQuery = row.trigger === "ai_approved" && row.firstAttemptId
+      ? executor.select({ provider: crawlReviewAttempts.provider, model: crawlReviewAttempts.model }).from(crawlReviewAttempts)
+        .where(and(eq(crawlReviewAttempts.id, row.firstAttemptId), eq(crawlReviewAttempts.candidateId, row.candidateId))) : null;
+    const [gateFirst] = identityQuery ? await (lockGate ? identityQuery.for("share") : identityQuery) : [];
+    const firstQuery = executor.select().from(crawlReviewAttempts).where(and(
       eq(crawlReviewAttempts.candidateId, row.candidateId), eq(crawlReviewAttempts.kind, "automatic"),
       eq(crawlReviewAttempts.state, "succeeded"), firstReviewProviderPredicate(settings),
       gateFirst ? sql`${crawlReviewAttempts.provider} IS NOT DISTINCT FROM ${gateFirst.provider} AND ${crawlReviewAttempts.model} IS NOT DISTINCT FROM ${gateFirst.model}` : undefined,
     )).orderBy(desc(crawlReviewAttempts.id)).limit(1);
+    [first] = await (lockGate ? firstQuery.for("share") : firstQuery);
     if (!first || first.id !== row.firstAttemptId || first.inputHash !== input.inputHash
       || first.sourceRevisionHash !== input.sourceRevisionHash || first.outcome?.decision !== row.firstDecision
       || first.model !== row.firstModel || input.validUntil <= reviewSemanticNow()) return null;
   }
-  return secondReviewInputMatches(row, { candidate, document, settings, input, first, root }) ? input : null;
+  if (lockGate) {
+    // Include all rows the SQL gate can see, even a wrongly bound candidate/root; the
+    // recorder validates their bindings instead of silently omitting them from the gate.
+    await executor.select({ id: secondReviews.id }).from(secondReviews).where(or(
+      eq(secondReviews.id, row.id),
+      row.firstAttemptId ? eq(secondReviews.firstAttemptId, row.firstAttemptId) : undefined,
+      row.fallbackForId ? eq(secondReviews.id, row.fallbackForId) : undefined,
+      row.firstAttemptId ? sql`${secondReviews.id} IN (SELECT g.fallback_for_id FROM second_reviews g
+        WHERE g.first_attempt_id = ${row.firstAttemptId} AND g.fallback_for_id IS NOT NULL)` : undefined,
+    )).orderBy(secondReviews.id).for("update");
+  }
+  let root: SecondReview | undefined;
+  if (row.fallbackForId) [root] = await executor.select().from(secondReviews).where(eq(secondReviews.id, row.fallbackForId));
+  return secondReviewInputMatches(row, { candidate, document, settings, input, first, root }) ? { input, settings } : null;
 }

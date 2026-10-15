@@ -6,7 +6,7 @@ import { canonicalReviewModel } from "@/lib/crawl/review-model-identity";
 
 const fake = vi.hoisted(() => ({
   open: vi.fn(), close: vi.fn(), prepare: vi.fn(), start: vi.fn(), drain: vi.fn(), inspect: vi.fn(),
-  dbScope: vi.fn(), currentDb: vi.fn(), identity: vi.fn(), semantic: vi.fn(), transport: vi.fn(), runJob: vi.fn(),
+  finalScope: vi.fn(), dbScope: vi.fn(), currentDb: vi.fn(), identity: vi.fn(), semantic: vi.fn(), transport: vi.fn(), runJob: vi.fn(),
   first: vi.fn(), second: vi.fn(), settings: vi.fn(), traces: [] as string[],
 }));
 vi.mock("@/lib/operations/pipeline-replay-database", () => ({ openVerifiedReplayHandlerDatabase: fake.open }));
@@ -14,6 +14,7 @@ vi.mock("@/lib/operations/pipeline-replay-ledger", () => ({ ReplayLedger: class 
   prepare = fake.prepare; start = fake.start; drain = fake.drain; inspect = fake.inspect;
 } }));
 vi.mock("@/lib/db/replay-scope", () => ({ withReplayDatabaseScope: fake.dbScope, currentReplayDb: fake.currentDb, assertReplayDatabaseScopeIdentity: fake.identity }));
+vi.mock("@/lib/operations/pipeline-replay-final", () => ({ withReplayFinalScope: fake.finalScope }));
 vi.mock("@/lib/crawl/review-replay-context", () => ({ withReviewReplayContext: fake.semantic }));
 vi.mock("@/lib/crawl/review-fixture-transport", () => ({ withReviewFixtureTransport: fake.transport }));
 vi.mock("@/lib/jobs/runner", () => ({ runJob: fake.runJob }));
@@ -56,6 +57,9 @@ beforeEach(() => {
     fake.traces.push("db-enter"); try { return await load(); } finally { fake.traces.push("db-exit"); }
   });
   fake.identity.mockImplementation(() => { fake.traces.push("same-identity"); });
+  fake.finalScope.mockImplementation(async (_run: unknown, load: () => Promise<unknown>) => {
+    fake.traces.push("final-enter"); try { return await load(); } finally { fake.traces.push("final-exit"); }
+  });
   fake.semantic.mockImplementation(async (_options: unknown, load: () => Promise<unknown>) => {
     fake.traces.push("clock-enter"); try { return await load(); } finally { fake.traces.push("clock-exit"); }
   });
@@ -72,6 +76,7 @@ it("opens owned connections and runs only the fixed actual handlers under frozen
   expect(fake.open).toHaveBeenCalledWith(value.identityPath, {});
   expect(fake.identity).toHaveBeenCalledWith(rawDatabase);
   expect(fake.prepare).toHaveBeenCalledWith(value.manifest, value.inputs);
+  expect(fake.finalScope).toHaveBeenCalledWith(run, expect.any(Function));
   expect(fake.semantic).toHaveBeenCalledWith({ referenceTime: new Date(reference) }, expect.any(Function));
   expect(fake.transport).toHaveBeenCalledWith(expect.objectContaining({ run, fixture: value.fixture,
     fullReviewPolicyHash: value.manifest.fullReviewPolicyHash, tokenUpperBound: 100 }), expect.any(Function));
@@ -81,8 +86,8 @@ it("opens owned connections and runs only the fixed actual handlers under frozen
   ]);
   expect(result).toMatchObject({ runId: run.runId, jobs: [{ name: "crawl-agent-review" }, { name: "second-review" }],
     diagnostics: { evidence: "fixture_call_ledger_only", authenticity: "unverified", finalThroughput: null } });
-  expect(fake.traces).toEqual(["open-raw", "prepare", "start", "db-enter", "same-identity", "clock-enter", "fixture-enter",
-    "crawl-agent-review", "second-review", "fixture-exit", "clock-exit", "db-exit", "drain", "inspect", "close-raw"]);
+  expect(fake.traces).toEqual(["open-raw", "prepare", "start", "db-enter", "same-identity", "final-enter", "clock-enter", "fixture-enter",
+    "crawl-agent-review", "second-review", "fixture-exit", "clock-exit", "final-exit", "db-exit", "drain", "inspect", "close-raw"]);
 });
 
 it.each(["crawl-fetch", "crawl-publish", "unknown"])("rejects caller job %s before opening connections", async name => {
