@@ -45,6 +45,7 @@ let originalJobs: typeof jobs.$inferSelect[] = [];
 let originalSettings: typeof crawlSettings.$inferSelect[] = [];
 let originalStages: typeof pipelineStageModes.$inferSelect[] = [];
 let originalCandidates: typeof crawlCandidates.$inferSelect[] = [];
+let originalJobRows: unknown[] = [], originalSettingRows: unknown[] = [], originalCandidateRows: unknown[] = [];
 let initialized = false, sequence = 0;
 
 function fixtureSettings(): CrawlSettings {
@@ -65,7 +66,8 @@ async function restoreFixtures() {
   await db.delete(crawlFrontier).where(like(crawlFrontier.repo, `${prefix}%`));
   await db.delete(jobs).where(inArray(jobs.name, jobNames));
   await db.delete(crawlSettings).where(eq(crawlSettings.id, 1));
-  if (originalSettings.length) await db.insert(crawlSettings).values(originalSettings);
+  if (originalSettingRows.length) await admin`INSERT INTO crawl_settings SELECT * FROM
+    jsonb_populate_recordset(NULL::crawl_settings, ${JSON.stringify(originalSettingRows)}::text::jsonb)`;
   for (const stage of originalStages) await db.update(pipelineStageModes).set(stage).where(eq(pipelineStageModes.stage, stage.stage));
 }
 
@@ -75,6 +77,9 @@ beforeAll(async () => {
   originalSettings = await db.select().from(crawlSettings).where(eq(crawlSettings.id, 1));
   originalStages = await db.select().from(pipelineStageModes);
   originalCandidates = await db.select().from(crawlCandidates).orderBy(crawlCandidates.id);
+  originalJobRows = [...await admin`SELECT to_jsonb(j) AS value FROM jobs j WHERE name = ANY(${jobNames}) ORDER BY name`].map(row => row.value);
+  originalSettingRows = [...await admin`SELECT to_jsonb(s) AS value FROM crawl_settings s WHERE id=1`].map(row => row.value);
+  originalCandidateRows = [...await admin`SELECT to_jsonb(c) AS value FROM crawl_candidates c ORDER BY id`].map(row => row.value);
   initialized = true;
   // This file exercises the actual global handler. Keep earlier files' inputs
   // out of its model universe, then restore every row exactly in afterAll.
@@ -99,14 +104,18 @@ afterAll(async () => {
   try {
     if (initialized) {
       await restoreFixtures();
-      if (originalJobs.length) await db.insert(jobs).values(originalJobs);
-      for (const candidate of originalCandidates) await db.update(crawlCandidates).set(candidate)
+      if (originalJobRows.length) await admin`INSERT INTO jobs SELECT * FROM
+        jsonb_populate_recordset(NULL::jobs, ${JSON.stringify(originalJobRows)}::text::jsonb)`;
+      for (const candidate of originalCandidates) await db.update(crawlCandidates).set({ decidedBy: candidate.decidedBy })
         .where(eq(crawlCandidates.id, candidate.id));
       await db.delete(jobs).where(eq(jobs.name, sentinel.name));
       expect(await db.select().from(jobs).where(inArray(jobs.name, jobNames)).orderBy(jobs.name)).toEqual(originalJobs);
       expect(await db.select().from(crawlSettings).where(eq(crawlSettings.id, 1))).toEqual(originalSettings);
       expect(await db.select().from(pipelineStageModes)).toEqual(originalStages);
       expect(await db.select().from(crawlCandidates).orderBy(crawlCandidates.id)).toEqual(originalCandidates);
+      expect([...await admin`SELECT to_jsonb(j) AS value FROM jobs j WHERE name = ANY(${jobNames}) ORDER BY name`].map(row => row.value)).toEqual(originalJobRows);
+      expect([...await admin`SELECT to_jsonb(s) AS value FROM crawl_settings s WHERE id=1`].map(row => row.value)).toEqual(originalSettingRows);
+      expect([...await admin`SELECT to_jsonb(c) AS value FROM crawl_candidates c ORDER BY id`].map(row => row.value)).toEqual(originalCandidateRows);
     }
   } finally { await Promise.all([admin.end({ timeout: 3 }), observer.end({ timeout: 3 })]); }
 });

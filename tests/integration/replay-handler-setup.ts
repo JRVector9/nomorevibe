@@ -52,10 +52,20 @@ export async function getReplayHandlerIdentityPath(options: { beforeProvision?: 
   try {
     await admin.unsafe(await readFile("scripts/sql/pipeline-replay-ledger.sql", "utf8"));
     await options.beforeProvision?.(admin);
+    await admin.end({ timeout: 3 });
+    await provisionReplayHandlerProfile({ databaseUrl: TEST_DATABASE_URL, identityPath: bootstrap.identityPath,
+      acknowledgeDedicatedCluster: true, env: {} });
+  } catch (error) {
+    const errors = [error];
+    try { await admin.end({ timeout: 3 }); }
+    catch (cleanupError) { if (cleanupError !== error) errors.push(cleanupError); }
+    // The bootstrap owns the exact identity, original ACLs and runtime role.
+    // Its verified release must reject mismatches rather than remove another fixture.
+    try { await bootstrap.release(); }
+    catch (cleanupError) { errors.push(cleanupError); }
+    if (errors.length > 1) throw new AggregateError(errors, "replay_handler_setup_cleanup_failed", { cause: error });
+    throw error;
   }
-  finally { await admin.end({ timeout: 3 }); }
-  await provisionReplayHandlerProfile({ databaseUrl: TEST_DATABASE_URL, identityPath: bootstrap.identityPath,
-    acknowledgeDedicatedCluster: true, env: {} });
   return { identityPath: bootstrap.identityPath, async release() {
     await removeReplayHandlerTestProfile(bootstrap.identityPath);
     await bootstrap.release();
