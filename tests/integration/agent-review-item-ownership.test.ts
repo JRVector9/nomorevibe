@@ -44,6 +44,7 @@ const sentinel = { name: "pr03b-ai1-independent-unrelated", requestedVersion: 13
 let originalJobs: typeof jobs.$inferSelect[] = [];
 let originalSettings: typeof crawlSettings.$inferSelect[] = [];
 let originalStages: typeof pipelineStageModes.$inferSelect[] = [];
+let originalCandidates: typeof crawlCandidates.$inferSelect[] = [];
 let initialized = false, sequence = 0;
 
 function fixtureSettings(): CrawlSettings {
@@ -63,7 +64,6 @@ async function restoreFixtures() {
   await db.delete(crawlDocuments).where(like(crawlDocuments.repo, `${prefix}%`));
   await db.delete(crawlFrontier).where(like(crawlFrontier.repo, `${prefix}%`));
   await db.delete(jobs).where(inArray(jobs.name, jobNames));
-  if (originalJobs.length) await db.insert(jobs).values(originalJobs);
   await db.delete(crawlSettings).where(eq(crawlSettings.id, 1));
   if (originalSettings.length) await db.insert(crawlSettings).values(originalSettings);
   for (const stage of originalStages) await db.update(pipelineStageModes).set(stage).where(eq(pipelineStageModes.stage, stage.stage));
@@ -71,11 +71,16 @@ async function restoreFixtures() {
 
 beforeAll(async () => {
   ensureSchema();
-  originalJobs = await db.select().from(jobs).where(inArray(jobs.name, jobNames));
+  originalJobs = await db.select().from(jobs).where(inArray(jobs.name, jobNames)).orderBy(jobs.name);
   originalSettings = await db.select().from(crawlSettings).where(eq(crawlSettings.id, 1));
   originalStages = await db.select().from(pipelineStageModes);
-  await db.insert(jobs).values(sentinel);
+  originalCandidates = await db.select().from(crawlCandidates).orderBy(crawlCandidates.id);
   initialized = true;
+  // This file exercises the actual global handler. Keep earlier files' inputs
+  // out of its model universe, then restore every row exactly in afterAll.
+  if (originalCandidates.length) await db.update(crawlCandidates).set({ decidedBy: "admin" })
+    .where(inArray(crawlCandidates.id, originalCandidates.map(row => row.id)));
+  await db.insert(jobs).values(sentinel);
 });
 beforeEach(async () => {
   await restoreFixtures();
@@ -94,10 +99,14 @@ afterAll(async () => {
   try {
     if (initialized) {
       await restoreFixtures();
+      if (originalJobs.length) await db.insert(jobs).values(originalJobs);
+      for (const candidate of originalCandidates) await db.update(crawlCandidates).set(candidate)
+        .where(eq(crawlCandidates.id, candidate.id));
       await db.delete(jobs).where(eq(jobs.name, sentinel.name));
-      expect(await db.select().from(jobs).where(inArray(jobs.name, jobNames))).toEqual(originalJobs);
+      expect(await db.select().from(jobs).where(inArray(jobs.name, jobNames)).orderBy(jobs.name)).toEqual(originalJobs);
       expect(await db.select().from(crawlSettings).where(eq(crawlSettings.id, 1))).toEqual(originalSettings);
       expect(await db.select().from(pipelineStageModes)).toEqual(originalStages);
+      expect(await db.select().from(crawlCandidates).orderBy(crawlCandidates.id)).toEqual(originalCandidates);
     }
   } finally { await Promise.all([admin.end({ timeout: 3 }), observer.end({ timeout: 3 })]); }
 });
@@ -235,7 +244,10 @@ it("preserves a healthy foreign actual item and its running attempt after a lega
 });
 
 it("binds a fresh actual attempt and its input to the item token without requiring a legacy job", async () => {
-  const { context, claim } = await itemContext();
+  const context = await source();
+  const beforeJobs = await db.select().from(jobs).where(eq(jobs.name, "crawl-agent-review"));
+  expect(beforeJobs).toEqual([]);
+  const claim = await claimItem(context);
   expect(claim).toMatchObject({ kind: "claimed", receipt: { attemptId: claim.attempt.id, origin: "fresh", ownership: { kind: "item" } } });
   const item = await actualItem(context);
   expect(item).toMatchObject({ workKey: `ai1:${context.candidate.id}`, ownerInstanceId: owner.instanceId, ownerBootId: owner.bootId,
@@ -245,7 +257,7 @@ it("binds a fresh actual attempt and its input to the item token without requiri
       reviewer: { provider: context.provider, model: context.model } } });
   expect(claim.attempt).toMatchObject({ candidateId: context.candidate.id, state: "running", leaseToken: item.token,
     inputHash: context.input.inputHash, sourceRevisionHash: context.input.sourceRevisionHash, policyHash: context.input.policyHash });
-  expect(await db.select().from(jobs).where(eq(jobs.name, "crawl-agent-review"))).toEqual(originalJobs.filter(row => row.name === "crawl-agent-review"));
+  expect(await db.select().from(jobs).where(eq(jobs.name, "crawl-agent-review"))).toEqual(beforeJobs);
   expect(await recordAgentReview({ ...context, receipt: claim.receipt, outcome: approve })).toEqual({ applied: true, state: "succeeded" });
   expect(await actualItem(context)).toMatchObject({ token: null, leaseUntil: null, ownerInstanceId: null });
   expect(await nextJobs()).toMatchObject([{ name: "crawl-publish", requestedVersion: 1 }]);
