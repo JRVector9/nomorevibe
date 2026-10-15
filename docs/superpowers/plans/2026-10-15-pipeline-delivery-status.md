@@ -1,0 +1,89 @@
+# 파이프라인 PR별 개발·적용 현황 — 2026-10-15
+
+승인된 [PR00–17 로드맵](2026-10-15-pipeline-pr-roadmap.md)의 납품 상태를 기록한다.
+PR 번호·의존성은 유지하며, 아래 PR01 소단위는 원래 PR01 안의 검토 경계다.
+전체 요구와 합격 기준은 [설계](../specs/2026-10-15-pipeline-two-times-design.md)를 따른다.
+
+## 현재 확인된 결과
+
+| 범위 | 개발 | main 병합 | 운영 적용 | 확인된 검증 |
+| --- | --- | --- | --- | --- |
+| **PR00** 응답 body 회수·근거 continuation | 완료 | [#427](https://github.com/JRVector9/nomorevibe/pull/427), `94d2f9e`; 설계 문서 포함 배포 SHA `8020dca` | **M3·mini 13앱 적용** | 회귀·전체 unit·관련 DB·CI, 실제 image/source hash·health·역할 progress·근거 helper 단일 인계 확인. 전체 적체 해소·24h·2배 검증은 아님 |
+| **PR01a** 현재 검수 snapshot·오프라인 비교 | 완료 | [#429](https://github.com/JRVector9/nomorevibe/pull/429), `2ce8cff` | 미적용 | 로컬 unit 2,633 / 관련 DB 62 PASS, main CI [38702607101](https://github.com/JRVector9/nomorevibe/actions/runs/38702607101) 전체 성공. snapshot은 `as_of_snapshot_only` / `unverified` |
+| **PR01b-1** 격리 DB·semantic clock·fixture 호출 예약 장부 | 완료 | [#430](https://github.com/JRVector9/nomorevibe/pull/430), `2c7a71c` | 미적용 | 로컬 unit 2,669 PASS; 전체 DB 1,657 PASS/기존 TODO 1은 마지막 예산 산술 회귀 전, 최종 관련 DB 35 PASS. main CI [38710286609](https://github.com/JRVector9/nomorevibe/actions/runs/38710286609)의 quality·통합 3shard·check·웹/워커 image 모두 성공 |
+| **PR01b-2** 명시 verified Drizzle DB scope·좁은 handler table profile | 구현·로컬 검증 완료 | 제출 준비 | 미적용 | unit2,679·DB1,675 PASS/기존 TODO1, 타입/lint/빌드 통과. 기존 AI1 repository/writer/outbox와 실제 rollback 확인. 실제 두 handler 실행·atomic final·readiness는 후속 |
+| **원래 PR01 전체** 측정 기준·격리 replay | **부분 완료** | 위 기반만 병합 | replay/새 consumer 비활성 | 실제 handler·최종/준비 전이·artifact/seal·provider 상한·실모델 baseline 미완료. **2배 성능 미판정** |
+| **PR02–17** | 미착수 | 미병합 | 비활성 | 아래는 예정된 검증이며 PASS 기록이 아님 |
+
+PR430은 `2026-10-15T09:04:44Z` 병합됐고, main image 두 작업도 완료됐다.
+image 생성 성공은 운영 적용 증거가 아니다. 마지막 확인된 운영 릴리스는 **`8020dca`**이며
+PR429/430을 위한 운영 migration·provider 설정 변경·공개 발행·수동 배포는 수행하지 않았다.
+실제 검수 모델·품질 gate·신규 GitHub/Show HN 발굴 중단·사람 판단·검색어 `api-stop`을 유지한다.
+
+## PR01의 다음 검토 단위
+
+기존 [handler 상세 계획](2026-10-15-pipeline-pr01b-handlers.md)을 다음처럼 나눠 진행한다.
+각 행은 회귀와 검토를 마치면 독립 PR로 제출할 수 있다. 작은 기반 PR의 병합을 PR01 전체 완료로 올리지 않는다.
+
+| 단위 | 납품 결과 | 반드시 확인할 경계 | 복구 / 아직 포함하지 않는 범위 |
+| --- | --- | --- | --- |
+| **PR01b-2 — 현재** | verified dedicated client의 Drizzle scope, 고정 table/sequence allowlist·OID/ACL과 결합한 handler profile | global/replica를 poison해도 접근 0, `onPrimary/onReplica` scope 유지, concurrent/nested 교차 거절, 같은 writer transaction 검증, privilege drift 거절, products 쓰기 거절 | scope/profile 사용 중단으로 복구. 일반 worker·실제 handler·provider 실행은 열지 않음 |
+| **PR01b-3** | 기존 AI1/AI2 handler를 fixture transport로 실행하고 downstream 요청을 격리 outbox에 보존 | 허용 job 두 종류만 claim, 실제 provider/fetch/publisher 실행 0, 기존 lease/heartbeat/backoff 유지, 공개 products 불변 | replay runner admission 중단·heartbeat 종료. 새 심사 엔진이나 별도 승인 규칙을 만들지 않음 |
+| **PR01b-4** | 기존 결과 writer와 **같은 transaction**에 고유 final 전이 기록 | writer/recorder 어느 쪽 rollback에도 result/event 동시 0, 필수 AI2 gate 재사용, 중복·부분표·rules/reuse/human/stale 결과의 신규 final 0 | recorder 결합 비활성, 격리 장부 보존. 완료 뒤 별도 append로 원자성을 대신하지 않음 |
+| **PR01b-5** | 실제 준비/보류/재개 coverage, 별도 artifact/export·seal | 0-ready·재시작 gap·30분 미달은 미판정, admission 종료·모든 call 정산·writer fence 뒤 seal, unresolved call이면 seal/겹친 run 거절 | admission 닫고 drain, 불명 비용/이력 유지. v1 snapshot parser를 완화하지 않음 |
+| **PR01b-6** | 실제 serving identity·강제 전체 비용 상한을 입증한 제한 replay와 유효 baseline | exact 모델/정책/고정 입력·시각, 숨은 retry/fallback과 실제 usage/취소 계약, 사전 call/token/time 한도, 준비 대기가 유지되는 30분 baseline | provider admission 차단·drain. 모델 교체/품질 완화 금지; fixture 속도를 모델 처리량으로 쓰지 않음 |
+
+provider 증거 확인은 handler 구현과 독립적으로 진행할 수 있다. 현재 `model-replay`는
+`unsupported_provider_budget`으로 막혀 있다. 로컬 abcLLM 소스 audit은 실제 serving revision의 증거가 아니며,
+무제한 retry·추정 usage·상한 미확인을 manifest boolean만으로 해소하지 않는다.
+
+**PR01은 비교를 신뢰할 수 있는 측정 도구와 baseline을 준비하는 선행 단계다.**
+계속 소비자를 구현한 뒤의 변경 실행·2배 판정은 PR06/17에서 수행한다.
+PR02는 기본 `legacy`인 비활성 기반이므로 독립 개발·검토를 준비할 수 있지만,
+PR01 합격 전 새 consumer를 활성화하지 않는다. Oracle/최종 DR 준비를 기다리느라
+정상 검수의 PR02–06 경로를 뒤로 미루지 않는다.
+
+## PR00–17 납품·의존성·검증 경계
+
+PR00의 실행 결과와 PR01의 부분 완료는 위 표를 따른다. **PR02–17의 아래 검증은 모두 예정**이다.
+각 코드 PR은 최신 main에서 상세 회귀→구현→CI/검토→병합을 마친 뒤 필요한 migration·canary를 별도 기록한다.
+
+| PR | 선행 | 납품 결과 | 핵심 검증 / 복구 경계 |
+| --- | --- | --- | --- |
+| **00** | 없음 | unread body 회수, full-page deadline 뒤 근거 continuation | error/oversize/redirect cleanup과 cursor/quota/abort 보존. DDL 없음; drain 뒤 이전 image |
+| **01** | 00 | 동일 조건 manifest·고유 완료 집계·격리 replay/예산/coverage | 실제 final·필수 AI2·30분 baseline, 불일치/고갈/미확인 비용은 미판정. 관측/replay admission 중단; 장부 보존 |
+| **02** | 01 | item lease·owner/boot/token/epoch와 `legacy/draining/items` 비활성 기반 | 두 DB 연결 claim·SKIP LOCKED·만료 재할당·늦은 저장 거절·원자 handoff. claim 중단→drain/fence→legacy; additive table 유지 |
+| **03** | 02 | 원본·AI1의 모든 결과 writer를 item 소유권에 결합 | 살아 있는 타 owner의 frontier/attempt 보존, 결과·실패·cursor·입력/admin 변경 token 검사. 새 consumer 비활성 유지 |
+| **04** | 02 | AI2 vote claim과 모든 쓰기 fencing | enqueue/close/retry/sweep/invalidation/admin 경로, 오래된 세대·동일 모델 승인 거절. legacy 유지, 새 claim drain |
+| **05** | 02, 03, 04 | gateway·CLI·웹 질의 번역까지 공통 실제 모델 슬롯 | alias별 공유 한도, retry/chunk/fallback 직전 예약, deferred는 실패/attempt 미소모, 외부 대기 중 DB 점유 0. 전 caller 교체·구 호출 drain 후 활성화; 기존 동시성 복귀 |
+| **06** | 01–05 | AI1·AI2·배경 독립 계속 소비 | 빈 큐 호출 0·fairness·heartbeat/shutdown, 한 stage씩 canary, 같은 조건 30분 변경 비교·품질·지연·실패 기준. drain 후 legacy 복귀 실제 시험 |
+| **07** | 02 | host 공통 per-hop HTTP origin permit | redirect마다 SSRF/DNS, body 읽기/취소까지 permit, crash/TTL/두 host 경합. 새 claim drain 후 기존 단일 consumer |
+| **08** | 02, 07 | 출처별 근거 refresh | GitHub 대기와 canonical 분리, source/input/policy CAS·공정 배분·잘못된 304/부분완료 거절. 실제 due canonical 10·공식 source 1 readback; 기존 product consumer |
+| **09** | 02, 07 | 멱등 uptime raw 관측과 지역/광역 장애 보호 | observation ID/6h slot/URL·세대 CAS, Oracle 단독 실패는 hold, 3회 숨김·10회 내림·기존 sweep 보호. raw canary 뒤 정책 gate; authoritative 이전 중단 |
+| **10** | 03–05, 08, 09 | 3서버 역할 선출·번역 분리·실처리 readiness | 현 owner 비선점·새 epoch, 세 번역 handler만 분리, host+release+실제 결과 canary, Oracle HTTP 합 2/origin 1·모델 1·pool/heartbeat 여유. 기존 text/maintenance drain 뒤 전환 |
+| **11** | 07–10 | osaka-smoke의 상시 번역·canonical/news·uptime 실제 배포 | tenancy/region/instance guard, nonroot·ARM·독립 scheduler, 실저장/실갱신·양방향 인계·24h. Oracle drain 후 M3/mini 인계; X/Mautic 보존 |
+| **12** | 01–06 | 발견 shard·원본 공급·시간 버퍼 | dedup·query/window claim·계정 예산, R 실측 후 2h 목표/6h 상한, 필요할 때만 원본 3→6 비교. selector/admission flag 복귀; 기존 발굴 pause 자동 해제 금지 |
+| **13** | 01, 05–11 | 관리자 stage·host·적체·공통 예산 표시 | 완료/호출/재사용/표·ready/backoff/human·lease/epoch·Oracle/DR 상태 구분, 인증·좁은 화면 확인. 읽기 UI 복귀 |
+| **14** | 병렬 조사 가능; 활성 구성은 용량 검증 후 | Oracle 전용 logical DR 데이터와 실제 복원 | PG17 x86→ARM physical standby 금지, 용량·실복원·table/DDL/sequence/extension/retention·RPO/RTO. 기존 writer 변경 전 복구안; 복원만으로 승격 허용 금지 |
+| **15** | 02, 05, 07, 14 | 단일 writer 승격과 복원 뒤 외부 호출 barrier | 독립 fencing 없으면 승격 차단, 옛 epoch/token 거절, 구 호출 종료 또는 증명된 deadline+skew 뒤 permit. split-brain/중복 발행·내림 0; 계획 failback, DB 양방향 merge 금지 |
+| **16** | 11, 14, 15 | 독립 모델·동일 embedding·최소 웹/관리자·비상 운영 | M3 독립 serving/키/DNS·품질/비용, embedding 동일 revision/1024차원 또는 degraded, 앱+DB+모델 동반 장애·복귀 RPO/RTO. 비상 우선순위·1CPU 합계 예산, 준비 안 된 기능은 대기 |
+| **17** | 06, 11–16 | 최종 2배·장애·24h 운영 보고 | 같은 조건 고유 final ≥2.0배, p95 악화 없음, 기술 실패 ≤기준+1%p, 오판 증가 없음, lease 위반/사람 덮음/중복 발행 0. 미검증 범위 미완료, 회귀 시 consumer drain/복귀 |
+
+우선 경로는 **00→01→02→03/04→05→06**이다.
+Oracle 상시 업무는 **02→07→08/09→10→11**, 최종 생존 서버의 DB·모델·웹 복구는
+**14→15→16**의 별도 합격 조건을 갖는다. PR14 조사는 병렬로 가능하지만
+Oracle가 설치됐거나 standby라는 이유로 PR11·16·17을 완료 처리하지 않는다.
+
+## 증거와 다음 보고
+
+- PR00: [로컬 검증](../../operations/2026-10-15-pipeline-pr00-validation.md), [13앱 적용·실제 readback](../../operations/2026-10-15-pipeline-pr00-rollout.md).
+- PR01: [snapshot 검증](../../operations/2026-10-15-pipeline-pr01a-validation.md), [격리 기반 검증](../../operations/2026-10-15-pipeline-pr01b-validation.md), [provider 미확인 계약](../../operations/2026-10-15-pipeline-pr01b-provider-audit.md).
+- 이 상태 보고 작성 중 `gh pr view 430 --json number,url,state,mergedAt,mergeCommit,headRefOid`와
+  `gh run view 38710286609 --json databaseId,headSha,status,conclusion,jobs`를 읽기 전용으로 실행해 병합·전체 성공을 재확인했다.
+  기존 로컬 테스트를 이번 문서 작업에서 재실행한 것으로 주장하지 않는다.
+- 다음 보고는 **PR01b-2의 실제 변경 파일·회귀 결과·PR/CI·운영 적용 여부**를 먼저 갱신한다.
+  handler 실행/final/coverage가 남아 있으면 해당 항목은 계속 미완료다. 운영 적체의 감소와 고정 입력 성능을 합산하지 않는다.
+- 이번 checkpoint의 실제 파일·회귀·실패 이력은 [DB scope 검증](../../operations/2026-10-15-pipeline-pr01b-handler-scope-validation.md)에 기록했다.
+
+공통 복구는 새 admission/claim 중단→inflight drain→token/epoch fence→이전 consumer/image다.
+실패·quota·사람 판단·불명 호출·외부 반영 이력은 보존하고, DB DROP이나 장부 초기화로 복구하지 않는다.

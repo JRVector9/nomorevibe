@@ -16,6 +16,8 @@
 [PR-00 상세 계획](2026-10-15-pipeline-pr00-evidence-progress.md)을 따른다.
 설계 근거는 [전체 설계](../specs/2026-10-15-pipeline-two-times-design.md)와
 [비교 흐름도](../../design/2026-10-15-pipeline-two-times/index.html)다.
+개발·병합·운영 적용을 구분한 최신 표와 PR01의 작은 후속 경계는
+[PR별 납품 현황](2026-10-15-pipeline-delivery-status.md)을 따른다.
 
 ## 운영 중 보존할 조건
 
@@ -103,7 +105,9 @@ git diff --check
 - [x] PR-00 main8020dca를 M3·mini13앱에 배포, 실제digest/source·health/role progress·근거helper 단일인계 확인. [운영 기록](../../operations/2026-10-15-pipeline-pr00-rollout.md).
 - [x] PR-01a 현재영속스냅샷/오프라인비교·격리admission 구현과 로컬 unit2,633/관련integration62·타입/lint/build 검증 완료. [검증 기록](../../operations/2026-10-15-pipeline-pr01a-validation.md).
 - [x] PR-01a [PR429](https://github.com/JRVector9/nomorevibe/pull/429) 최신base check 성공 후 main2ce8cff 병합. main CI38702607101 전체 성공 확인.
-- [ ] PR-01b 실제replay/사전예산·준비·최종전이 장부. 첫 격리 DB·기준 시각·fixture 호출 예약 구현/검증 중이다. [기록](../../operations/2026-10-15-pipeline-pr01b-validation.md). 실제 handler/준비·최종 전이·제공자 상한/실부하는 미완료이며 원PR01 전체완료 전 PR02를 활성화하지 않는다.
+- [x] PR-01b 첫 DB/semantic clock/fixture 사전 예산 기반은 [PR430](https://github.com/JRVector9/nomorevibe/pull/430) main2c7a71c에 병합. main CI38710286609 quality·통합3shard·check·양 image 성공. 운영 배포/활성화는 미실행.
+- [x] PR-01b-2 [DB scope 상세 계획](2026-10-15-pipeline-replay-db-scope.md) 구현·로컬 검증 완료, PR 제출 준비. [검증](../../operations/2026-10-15-pipeline-pr01b-handler-scope-validation.md).
+- [ ] PR-01b 실제 두 handler·최종/준비 이력·실모델 baseline은 미완료. 원래 PR01 전체완료 전 PR02 소비자 활성화 금지. PR01의 합격은 측정 기반과 baseline이며, 변경 뒤2배 판정은 PR06/17에서 수행한다.
 - [ ] PR-02–17은 각 선행 합격 후 상세 계획·회귀·구현·검토·PR·migration/배포 증거 순서로 진행.
 
 이번 실행의 첫 결과는 PR-00이며, 최종2배/Oracle DR의 완료를 뜻하지 않는다.

@@ -4,18 +4,20 @@ import { open, unlink } from "node:fs/promises";
 import type postgres from "postgres";
 import { z } from "zod";
 import { assertLocalTestDatabase } from "../../scripts/test-database";
+import { provisionHandlerProfile, ReplayHandlerProfileError, verifyHandlerProfile } from "./pipeline-replay-handler-profile";
 
 type Environment = Readonly<Record<string, string | undefined>>;
 type ErrorCode = "local_test_database_required" | "replay_database_override_rejected" | "replay_identity_file_required"
   | "invalid_replay_identity" | "verified_replay_database_required" | "dedicated_replay_cluster_required"
   | "replay_identity_file_exists" | "replay_database_admin_required" | "replay_database_already_provisioned"
-  | "replay_database_identity_mismatch" | "replay_database_privileges_rejected" | "replay_database_operation_failed";
+  | "replay_database_identity_mismatch" | "replay_database_privileges_rejected" | "replay_database_operation_failed"
+  | "verified_replay_handler_database_required";
 class ReplayDatabaseError extends Error {
   constructor(readonly code: ErrorCode) { super(code); }
 }
 const fail = (code: ErrorCode): never => { throw new ReplayDatabaseError(code); };
 export function formatReplayDatabaseError(error: unknown): string {
-  return error instanceof ReplayDatabaseError ? error.code : "replay_database_operation_failed";
+  return error instanceof ReplayDatabaseError || error instanceof ReplayHandlerProfileError ? error.code : "replay_database_operation_failed";
 }
 const oid = z.number().int().positive().safe();
 const identitySchema = z.object({
@@ -31,6 +33,7 @@ export type VerifiedReplayDatabase = Readonly<{
   [verifiedBrand]: true; client: postgres.Sql; identity: ReplayDatabaseMetadata; close(): Promise<void>;
 }>;
 const verified = new WeakMap<object, ReplayDatabaseIdentity>();
+const handlers = new WeakSet<object>();
 
 /** Pure admission. No DB-dependent module is imported before this succeeds. */
 export function assertReplayDatabaseTarget(url: string, env: Environment = process.env): void {
@@ -64,22 +67,27 @@ export async function readReplayDatabaseIdentity(path: string): Promise<ReplayDa
 export function assertVerifiedReplayDatabase(value: unknown): asserts value is VerifiedReplayDatabase {
   if (!value || typeof value !== "object" || !verified.has(value)) fail("verified_replay_database_required");
 }
+export function assertVerifiedReplayHandlerDatabase(value: unknown): asserts value is VerifiedReplayDatabase {
+  if (!value || typeof value !== "object" || !verified.has(value) || !handlers.has(value)) fail("verified_replay_handler_database_required");
+}
 const clientOptions = {
   max: 1, connect_timeout: 3, idle_timeout: 0, max_lifetime: 0, prepare: false, fetch_types: false, ssl: false,
   onnotice: () => {},
   connection: { application_name: "nomorevibe:isolated-replay", search_path: "pg_catalog,pipeline_replay",
     statement_timeout: 5000, lock_timeout: 1000, idle_in_transaction_session_timeout: 5000 },
 } as const;
-function connectionOptions(databaseUrl: string): postgres.Options<Record<string, never>> {
+function connectionOptions(databaseUrl: string, handler = false): postgres.Options<Record<string, never>> {
   const url = new URL(databaseUrl);
   if (!url.username) fail("invalid_replay_identity");
   // Pinned3.4.9 supports arrays (BaseOptions/parseOptions); its public Options type incorrectly narrows these two fields.
-  return { ...clientOptions, host: [url.hostname.replace(/^\[|\]$/g, "")], port: [Number(url.port || 5432)],
+  return { ...clientOptions, connection: { ...clientOptions.connection,
+    search_path: handler ? "pg_catalog,pipeline_replay,public" : clientOptions.connection.search_path },
+    host: [url.hostname.replace(/^\[|\]$/g, "")], port: [Number(url.port || 5432)],
     database: url.pathname.slice(1), user: decodeURIComponent(url.username), password: () => decodeURIComponent(url.password),
     target_session_attrs: "primary", debug: false } as unknown as postgres.Options<Record<string, never>>;
 }
 
-async function verifySession(session: postgres.Sql | postgres.TransactionSql, identity: ReplayDatabaseIdentity): Promise<void> {
+async function verifySession(session: postgres.Sql | postgres.TransactionSql, identity: ReplayDatabaseIdentity, handler = false): Promise<void> {
   let rows;
   try {
     rows = await session`
@@ -112,7 +120,10 @@ async function verifySession(session: postgres.Sql | postgres.TransactionSql, id
       AND has_schema_privilege(r.oid, n.oid, 'USAGE') AND NOT has_schema_privilege(r.oid, n.oid, 'CREATE')
       AND NOT EXISTS (SELECT 1 FROM pg_catalog.pg_namespace other
         WHERE other.nspname !~ '^pg_' AND other.nspname <> 'information_schema' AND other.oid <> n.oid
+        AND NOT (${handler} AND other.nspname = 'public')
         AND (has_schema_privilege(r.oid, other.oid, 'USAGE') OR has_schema_privilege(r.oid, other.oid, 'CREATE')))
+      AND (NOT ${handler} OR EXISTS (SELECT 1 FROM pg_catalog.pg_namespace public_schema WHERE public_schema.nspname = 'public'
+        AND has_schema_privilege(r.oid, public_schema.oid, 'USAGE') AND NOT has_schema_privilege(r.oid, public_schema.oid, 'CREATE')))
       AND NOT EXISTS (SELECT 1 FROM pg_catalog.pg_class owned WHERE owned.relowner = r.oid)
       AND has_table_privilege(r.oid, c.oid, 'SELECT')
       AND NOT has_table_privilege(r.oid, c.oid, 'INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER')
@@ -124,26 +135,73 @@ async function verifySession(session: postgres.Sql | postgres.TransactionSql, id
       JOIN pg_catalog.pg_class c ON c.relnamespace = n.oid AND c.relname = 'identity'
     WHERE r.rolname = current_user`;
   if (permissions?.safe !== true) fail("replay_database_privileges_rejected");
+  if (handler) await verifyHandlerProfile(session, identity);
 }
 /** Parent must invoke this on its transaction connection before any replay write. */
 export async function verifyReplayDatabaseSession(session: postgres.Sql | postgres.TransactionSql, database: VerifiedReplayDatabase): Promise<void> {
   assertVerifiedReplayDatabase(database);
-  await verifySession(session, verified.get(database)!);
+  await verifySession(session, verified.get(database)!, handlers.has(database));
 }
 export async function openVerifiedReplayDatabase(path: string, env: Environment = process.env): Promise<VerifiedReplayDatabase> {
+  return openReplayDatabase(path, env, false);
+}
+export async function openVerifiedReplayHandlerDatabase(path: string, env: Environment = process.env): Promise<VerifiedReplayDatabase> {
+  return openReplayDatabase(path, env, true);
+}
+async function openReplayDatabase(path: string, env: Environment, handler: boolean): Promise<VerifiedReplayDatabase> {
   const identity = await readReplayDatabaseIdentity(path);
   assertReplayDatabaseTarget(identity.databaseUrl, env);
   assertAmbientOverrides();
   const url = new URL(identity.databaseUrl);
   if (url.username !== identity.roleName || !url.password) fail("invalid_replay_identity");
   const { default: postgres } = await import("postgres");
-  const client = postgres(connectionOptions(identity.databaseUrl));
-  try { await verifySession(client, identity); }
+  const client = postgres(connectionOptions(identity.databaseUrl, handler));
+  try { await verifySession(client, identity, handler); }
   catch (error) { await client.end({ timeout: 3 }).catch(() => {}); throw error; }
   const database: VerifiedReplayDatabase = Object.freeze({ [verifiedBrand]: true as const, client, identity: metadata(identity),
-    async close() { verified.delete(database); await client.end({ timeout: 3 }); } });
+    async close() { verified.delete(database); handlers.delete(database); await client.end({ timeout: 3 }); } });
   verified.set(database, identity);
+  if (handler) handlers.add(database);
   return database;
+}
+
+/** Trusted owner upgrade in a dedicated local cluster. No grant policy is accepted from callers. */
+export async function provisionReplayHandlerProfile(options: {
+  databaseUrl: string; identityPath: string; acknowledgeDedicatedCluster: boolean; env?: Environment;
+}): Promise<ReplayDatabaseMetadata> {
+  if (options.acknowledgeDedicatedCluster !== true) fail("dedicated_replay_cluster_required");
+  assertReplayDatabaseTarget(options.databaseUrl, options.env ?? process.env); assertAmbientOverrides();
+  const identity = await readReplayDatabaseIdentity(options.identityPath);
+  assertReplayDatabaseTarget(identity.databaseUrl, options.env ?? process.env);
+  const adminUrl = new URL(options.databaseUrl), runtimeUrl = new URL(identity.databaseUrl);
+  if (adminUrl.host !== runtimeUrl.host || adminUrl.pathname !== runtimeUrl.pathname) fail("replay_database_identity_mismatch");
+  const { default: postgres } = await import("postgres");
+  const admin = postgres(connectionOptions(options.databaseUrl));
+  try {
+    await admin.begin(async tx => {
+      await tx`SELECT pg_catalog.pg_advisory_xact_lock(1485803, 1)`;
+      const [owner] = await tx`SELECT current_database() AS database_name, current_user AS role_name, session_user AS session_role,
+        d.oid::int AS database_oid, d.datdba::int AS owner_oid, r.oid::int AS role_oid, r.rolsuper, r.rolcanlogin
+        FROM pg_catalog.pg_database d JOIN pg_catalog.pg_roles r ON r.rolname = current_user WHERE d.datname = current_database()`;
+      if (!owner || owner.database_name !== identity.databaseName || owner.role_name !== owner.session_role
+        || owner.role_name !== decodeURIComponent(adminUrl.username) || owner.owner_oid !== owner.role_oid
+        || owner.role_oid !== identity.ownerOid || !owner.rolsuper || !owner.rolcanlogin) fail("replay_database_admin_required");
+      const [marker] = await tx`SELECT i.*, n.oid::int AS actual_schema_oid, n.nspowner::int AS schema_owner,
+        c.relowner::int AS marker_owner, c.relkind AS marker_kind, c.relrowsecurity AS marker_rls,
+        runtime.oid::int AS actual_role_oid FROM pipeline_replay.identity i
+        JOIN pg_catalog.pg_namespace n ON n.nspname = 'pipeline_replay'
+        JOIN pg_catalog.pg_class c ON c.relnamespace = n.oid AND c.relname = 'identity'
+        JOIN pg_catalog.pg_roles runtime ON runtime.rolname = ${identity.roleName} FOR UPDATE OF i`;
+      if (!marker || owner.database_oid !== identity.databaseOid || marker.database_oid !== identity.databaseOid
+        || marker.schema_oid !== identity.schemaOid || marker.actual_schema_oid !== identity.schemaOid
+        || marker.role_oid !== identity.roleOid || marker.actual_role_oid !== identity.roleOid
+        || marker.owner_oid !== identity.ownerOid || marker.schema_owner !== identity.ownerOid || marker.marker_owner !== identity.ownerOid
+        || marker.marker_kind !== "r" || marker.marker_rls || marker.nonce !== identity.nonce) fail("replay_database_identity_mismatch");
+      await provisionHandlerProfile(tx, identity);
+    });
+    const checked = await openVerifiedReplayHandlerDatabase(options.identityPath, options.env ?? process.env);
+    await checked.close(); return metadata(identity);
+  } finally { await admin.end({ timeout: 3 }); }
 }
 
 export async function bootstrapReplayDatabase(options: {

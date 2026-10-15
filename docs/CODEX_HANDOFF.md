@@ -1,3 +1,60 @@
+# 2026-10-15 — PR01b-2 DB scope·고정 handler profile 구현·전체 검증 완료
+
+## Current objective
+
+사용자가 새 설계 개발 진행과 PR별 보고를 다시 지시했다. 기존 PR00–17을 유지하며
+`codex/pipeline-pr01b-handlers-20261015`, `/Users/jr/Desktop/projects/nomorevibe-pipeline-handlers`에서
+main2c7a71c 기반의 다음 checkpoint를 구현했다. 현재 로컬 검증·독립 검토 완료, commit/push/PR 전이다.
+PR430은 merged09:04:44Z이고 main CI38710286609 양 image 포함 전체 SUCCESS를 직접 재확인했다.
+
+## Completed / modified files / design decisions
+
+- `lib/db/replay-scope.ts`, `lib/db/index.ts`: private identity의 새 handler client를 독점 소유,
+  ALS가 global/replica보다 우선. environment/global 변경 없음. 실제 statement/transaction/savepoint 연결을
+  전후 검증하고 callback 종료 전후의 늦은 SQL·닫힌 builder·다른 scope·원본 `$client`를 차단한다.
+  parent/child별 running/revoke와 ancestor token으로 unawaited callback을 취소해 native rollback 후 닫는다.
+- `pipeline-replay-database.ts`, 신규 `pipeline-replay-handler-profile.ts`: 보호 marker에 고정 table/column/sequence
+  OID/ACL/definition을 결합한다. products SELECT만, source lock용 UPDATE(id)는 ALWAYS deny trigger로 실제 변경 거절.
+  baseline deny-public 보존, 설치 오류는 transaction 전체 rollback. 일반 worker는 scope를 호출하지 않는다.
+- 새 unit1/DB2파일·`tests/integration/replay-handler-setup.ts`와 PR별 납품 상태/상세 계획/검증 문서를 추가했다.
+  기존 실제 AI1 input/claim/result/outbox 경로를 격리 DB에서 확인했다. 아직 두 실제 handler runner/fixture dispatch는 없다.
+- 서브에이전트3개를 gpt-6.1-sol/xhigh로 병렬 사용: profile 구현, 실제 경로/독립 review, PR 보고 문서.
+  모두 종료/편집 반환. root X branch·사용자 untracked는 코드 PR에 포함하지 않는다.
+
+## Tests / failed approaches
+
+- 최종 `npm test`:268파일2,679PASS. `TEST_DATABASE_URL=postgres://nomorevibe:nomorevibe@127.0.0.1:55456/nomorevibe_test npm run test:integration`:
+  153파일1,675PASS/기존TODO1,253.59초. 실제 native nested rollback·post-write 권한 drift rollback도 포함한다.
+- `next typegen`, `tsc --noEmit`, lint/i18n/build/bundle/Python23/diff PASS. 기존 vendor `_ctx` lint warning1 유지.
+  두 신규 scope/profile 파일만 아니라 전체 unit/integration을 실제 실행했다.
+- actual RED: 닫힌 onPrimary callback 실행, 영구대기 unawaited drain_hung, nested child 미대기인데 parent committed,
+  PUBLIC ACL 허용, profile 설치 후 CREATE 오류 잔류를 재현하고 수정했다. Drizzle cause assertion/fixture 설치 순서도 바로잡았다.
+- 전용 pinned PG17 container55455/55456만 사용했다. full suite 뒤 replay schema 없음/runtime role0 확인,
+  helper가 원래 PUBLIC ACL을 복구했다. 검증 후 둘 다 stop(삭제 없음).
+  자세한 명령과 실패 이력은 `docs/operations/2026-10-15-pipeline-pr01b-handler-scope-validation.md`.
+
+## Remaining / exact next commands
+
+1. 아래 명시 파일만 commit/push/PR한다. 최신 main base의 quality·통합3shard·필수check 성공 전 병합 금지.
+2. 다음 PR01b-3은 기존 AI1/AI2 handler fixture 실행과 검수 두 job만 claim하는 runner/outbox 경계다.
+   그 뒤 same-transaction final, readiness/artifact/seal, provider proof/실모델 baseline을 각각 검증한다.
+3. PR01 합격은 신뢰할 측정 기반과 baseline이다. 변경 성능2배는 PR06/17 판정이다.
+   비활성 PR02 개발 준비는 가능하지만 PR01 gate 전 새 consumer 활성화 금지.
+4. 마지막 확인된 운영 릴리스8020dca/13앱과 기존 근거 helper는 이 단계에서 변경하지 않았다.
+   운영 migration·provider 호출·공개 발행·배포/새 consumer 활성화 없음.
+
+```sh
+cd /Users/jr/Desktop/projects/nomorevibe-pipeline-handlers
+git status --short
+git diff --check
+git fetch origin main
+# 명시 stage 목록은 실제 git status의 이번 파일14개에 한정. root X branch push 금지.
+# commit/push/PR 후 CI를 확인하고 --match-head-commit으로만 병합한다.
+# 신규 코드 계획과 상태는 docs/superpowers/plans/2026-10-15-pipeline-delivery-status.md
+```
+
+---
+
 # 2026-10-15 17:56 KST — PR01b 격리 기반 구현·로컬 검증 완료 / 제출 준비
 
 ## Current objective
