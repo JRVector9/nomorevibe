@@ -5,9 +5,29 @@ CREATE TABLE pipeline_replay.capacity_runs (
   manifest_hash text NOT NULL CHECK (manifest_hash ~ '^[a-f0-9]{64}$'),
   state text NOT NULL CHECK (state IN ('prepared','running','draining','sealed')),
   started_at timestamptz, deadline_at timestamptz,
+  admission_closed_at timestamptz, writers_fenced_at timestamptz, sealed_at timestamptz,
+  epoch integer NOT NULL DEFAULT 1 CHECK (epoch > 0),
+  initial_projection jsonb, current_projection jsonb, initial_state_hash text, comparison_state_hash text,
+  captured_at timestamptz, runner jsonb, quality jsonb, seal jsonb,
   charged_calls bigint NOT NULL DEFAULT 0 CHECK (charged_calls >= 0),
   charged_tokens bigint NOT NULL DEFAULT 0 CHECK (charged_tokens >= 0),
   event_seq bigint NOT NULL DEFAULT 0 CHECK (event_seq >= 0)
+);
+-- Trigger writes must not acquire a run-row FK lock, sequence lock, or domain read.
+CREATE TABLE pipeline_replay.capacity_changes (
+  run_id text NOT NULL, tx_key uuid NOT NULL, ordinal bigint NOT NULL CHECK (ordinal > 0),
+  table_name text NOT NULL, operation text NOT NULL CHECK (operation IN ('INSERT','UPDATE','DELETE')),
+  old_row jsonb, new_row jsonb, at timestamptz NOT NULL DEFAULT clock_timestamp(),
+  PRIMARY KEY (run_id, tx_key, ordinal)
+);
+CREATE TABLE pipeline_replay.capacity_transactions (
+  run_id text NOT NULL, tx_key uuid NOT NULL, db_xid text NOT NULL, seq bigint NOT NULL,
+  tx_started_at timestamptz NOT NULL, recorded_at timestamptz NOT NULL, changes jsonb NOT NULL,
+  PRIMARY KEY (run_id, tx_key), UNIQUE (run_id, seq)
+);
+CREATE TABLE pipeline_replay.capacity_commit_confirmations (
+  run_id text NOT NULL, tx_key uuid NOT NULL, confirmed_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+  PRIMARY KEY (run_id, tx_key)
 );
 CREATE TABLE pipeline_replay.capacity_inputs (
   run_id text NOT NULL REFERENCES pipeline_replay.capacity_runs(run_id), candidate_id bigint NOT NULL,
@@ -25,6 +45,7 @@ CREATE TABLE pipeline_replay.capacity_calls (
   state text NOT NULL CHECK (state IN ('reserved','dispatching','in_flight','settled','cancelled_before_dispatch','indeterminate')),
   dispatched_at timestamptz, settled_at timestamptz, input_tokens bigint, output_tokens bigint,
   result_ok boolean, result_hash text, result_decision_hash text,
+  failure_class text CHECK (failure_class IN ('technical','cancelled','deferred','unknown')),
   PRIMARY KEY (run_id, call_id),
   FOREIGN KEY (run_id, candidate_id, input_hash, source_revision_hash)
     REFERENCES pipeline_replay.capacity_inputs(run_id, candidate_id, input_hash, source_revision_hash),
@@ -41,6 +62,7 @@ CREATE TABLE pipeline_replay.capacity_calls (
 CREATE TABLE pipeline_replay.capacity_transitions (
   run_id text NOT NULL REFERENCES pipeline_replay.capacity_runs(run_id), seq bigint NOT NULL,
   at timestamptz NOT NULL DEFAULT clock_timestamp(), kind text NOT NULL, payload jsonb NOT NULL,
+  tx_key text DEFAULT nullif(current_setting('pipeline_replay.tx_key', true), ''),
   PRIMARY KEY (run_id, seq)
 );
 CREATE TABLE pipeline_replay.capacity_finals (
@@ -57,4 +79,24 @@ CREATE TABLE pipeline_replay.capacity_finals (
     REFERENCES pipeline_replay.capacity_inputs(run_id, candidate_id, input_hash, source_revision_hash)
 );
 REVOKE ALL ON pipeline_replay.capacity_runs, pipeline_replay.capacity_inputs,
-  pipeline_replay.capacity_calls, pipeline_replay.capacity_transitions, pipeline_replay.capacity_finals FROM PUBLIC;
+  pipeline_replay.capacity_calls, pipeline_replay.capacity_transitions, pipeline_replay.capacity_finals,
+  pipeline_replay.capacity_changes, pipeline_replay.capacity_transactions, pipeline_replay.capacity_commit_confirmations FROM PUBLIC;
+
+CREATE FUNCTION pipeline_replay.capture_handler_change() RETURNS trigger LANGUAGE plpgsql
+SECURITY INVOKER SET search_path = pg_catalog AS $$
+DECLARE replay_run text := current_setting('pipeline_replay.run_id', true);
+  replay_tx text := current_setting('pipeline_replay.tx_key', true); next_ordinal bigint;
+BEGIN
+  IF replay_run IS NULL OR replay_run = '' OR replay_tx IS NULL OR replay_tx = '' THEN RETURN NULL; END IF;
+  IF TG_TABLE_SCHEMA || '.' || TG_TABLE_NAME NOT IN ('public.crawl_candidates','public.crawl_review_attempts',
+    'public.second_reviews','public.crawl_frontier','public.jobs','public.operations_observations','pipeline_replay.capacity_calls')
+    THEN RAISE EXCEPTION 'replay_journal_table_rejected'; END IF;
+  next_ordinal := coalesce(nullif(current_setting('pipeline_replay.ordinal', true), ''), '0')::bigint + 1;
+  PERFORM set_config('pipeline_replay.ordinal', next_ordinal::text, true);
+  INSERT INTO pipeline_replay.capacity_changes(run_id,tx_key,ordinal,table_name,operation,old_row,new_row)
+    VALUES (replay_run,replay_tx::uuid,next_ordinal,TG_TABLE_NAME,TG_OP,
+      CASE WHEN TG_OP = 'INSERT' THEN NULL ELSE to_jsonb(OLD) END,
+      CASE WHEN TG_OP = 'DELETE' THEN NULL ELSE to_jsonb(NEW) END);
+  RETURN NULL;
+END $$;
+REVOKE ALL ON FUNCTION pipeline_replay.capture_handler_change() FROM PUBLIC;

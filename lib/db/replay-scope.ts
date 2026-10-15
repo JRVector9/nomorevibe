@@ -3,6 +3,7 @@ import { drizzle } from "drizzle-orm/postgres-js";
 import type postgres from "postgres";
 import { assertSameReplayHandlerDatabase, assertVerifiedReplayHandlerDatabase, openVerifiedReplayHandlerDatabase,
   verifyReplayDatabaseSession, type VerifiedReplayDatabase } from "@/lib/operations/pipeline-replay-database";
+import { currentReplayTransactionHooks, type ReplayTransactionTicket } from "@/lib/operations/pipeline-replay-execution";
 import * as schema from "./schema";
 
 type Db = ReturnType<typeof drizzle<typeof schema>>;
@@ -10,7 +11,7 @@ type Revoke = (error: Error) => void;
 type Scope = { identityPath: string; database: VerifiedReplayDatabase; executor: Db;
   active: boolean; closing: boolean; running: Set<Promise<unknown>>; revoke: Set<Revoke> };
 type Transaction = { client: postgres.TransactionSql; active: boolean; closing: boolean;
-  parent?: Transaction; running: Set<Promise<unknown>>; revoke: Set<Revoke> };
+  parent?: Transaction; ticket?: ReplayTransactionTicket; running: Set<Promise<unknown>>; revoke: Set<Revoke> };
 type DriverWork = (client: postgres.TransactionSql) => Promise<unknown>;
 const replay = new AsyncLocalStorage<Scope>();
 
@@ -35,6 +36,9 @@ function guardedClient(scope: Scope, transaction?: Transaction): postgres.Sql {
   async function transact(work: DriverWork): Promise<unknown> {
     assertActive(scope, transaction);
     return tracked(scope, async () => {
+      const hooks = currentReplayTransactionHooks(scope.database);
+      let ticket: ReplayTransactionTicket | undefined;
+      let committed = false;
       const run = async (raw: postgres.TransactionSql) => {
         const current: Transaction = { client: raw, active: true, closing: false, parent: transaction,
           running: new Set(), revoke: new Set() };
@@ -46,6 +50,9 @@ function guardedClient(scope: Scope, transaction?: Transaction): postgres.Sql {
           assertActive(scope, transaction);
           await verifyReplayDatabaseSession(raw, scope.database);
           assertActive(scope, transaction);
+          ticket = await hooks.before(raw, transaction?.ticket);
+          current.ticket = ticket;
+          assertActive(scope, transaction);
           scope.revoke.add(revoke);
           transaction?.revoke.add(revoke);
           // Revoking callback work makes the native transaction roll back. Late callback
@@ -55,6 +62,7 @@ function guardedClient(scope: Scope, transaction?: Transaction): postgres.Sql {
           if (current.running.size) throw new Error("replay_transaction_work_not_awaited");
           // Fence callback descendants before the final verifier yields to the event loop.
           current.closing = true;
+          if (ticket) await hooks.after(raw, ticket);
           await verifyReplayDatabaseSession(raw, scope.database);
           assertActive(scope, transaction);
           return result;
@@ -66,7 +74,17 @@ function guardedClient(scope: Scope, transaction?: Transaction): postgres.Sql {
           scope.revoke.delete(revoke); transaction?.revoke.delete(revoke);
         }
       };
-      return transaction ? transaction.client.savepoint(run) : scope.database.client.begin(run);
+      try {
+        const result = await (transaction ? transaction.client.savepoint(run) : scope.database.client.begin(run));
+        committed = true;
+        // A savepoint release is not a database COMMIT. Failed acknowledgments remain
+        // unresolved in the ledger; never run rollback cleanup after native commit.
+        if (!transaction && ticket) await hooks.commitAck(ticket);
+        return result;
+      } catch (error) {
+        if (!committed && ticket) await hooks.rollback(ticket);
+        throw error;
+      }
     }, transaction);
   }
   function unsafe(...args: Parameters<postgres.Sql["unsafe"]>) {

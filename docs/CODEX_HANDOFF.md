@@ -1,3 +1,98 @@
+# 2026-10-15 — PR01b-5 병렬 구현·root/교차 리뷰·로컬 필수 검증 완료
+
+## Current objective / completed
+
+사용자 지시에 따라 root가 오케스트레이터로 담당3명(gpt-6.1-sol/xhigh)의 파일별 소유권과 공통 API를 관리하고, 직접 코드 리뷰·담당 간 읽기 교차 리뷰·전체 통합을 완료했다.
+현재 구현 worktree `/Users/jr/Desktop/projects/nomorevibe-pipeline-coverage`, branch `codex/pipeline-pr01b-coverage-20261015`, base main `4af058934cb71d888e7997e0fd5aad4df2f32f7e`.
+PR433은 이전 단계에서 병합·PR/main 전체 CI/image 성공을 확인했다. b5는 로컬 필수 검증을 마쳤고 지금 commit/push/PR/최신 base CI를 진행한다. 아직 b5 main 병합·운영 적용 완료가 아니다.
+별도 다음 worktree `/Users/jr/Desktop/projects/nomorevibe-pipeline-items`, branch `codex/pipeline-pr02-items-20261015`를 main4af0589에서 준비했다. 새 PR02 상세 계획만 작성했고 코드/DB/테스트는 미착수다. b5 병합 뒤 base를 맞춘다.
+
+## Modified files / design decisions
+
+AI1: 새 readiness 모듈과 unit/DB 회귀. 전체 고정 입력·actual initial digest·rules/reuse/hold·microseconds·DB job 요청/초기 foreign owner·실제 현재 claim·failure writer history를 기록한다.
+AI2: ledger/final/SQL·새 execution 모듈·lifecycle DB 회귀. 공유 fence→domain→마지막 run/flush→COMMIT→별도 DBclock 확인; admission/drain/fence 분리; 한 번만 실행하는 authentic scope와 비공개 quiescence 뒤 seal.
+artifact 담당: 새 artifact/compare/classification 모듈과 unit 회귀. JSON은 unverified, 고정 protected DB readback만 verified capability. actual 초기 이력으로 new/reReview/unknown을 유도하고 unknown은 신규0/미판정.
+root: replay DB scope hook·jobs admission·runner·handlers-v4 profile·fixture transport·CLI·실제2단계/15초 heartbeat/내보내기 회귀·문서/Git/전체 검증.
+초기 binding은 INSERT-only, raw facts/commit 확인은 append-only다. native JSON은 text::jsonb, 정확한 native DB 시각은 text::timestamptz로 serializer 이중변환/µs 절삭을 막았다.
+
+## Test commands / actual results
+
+- npm test: 276파일/2,843PASS, 9.98초. 최종 production 소스 고정 뒤 실행; 후속 변경은 integration fixture/CLI 종료 assertion과 문서뿐.
+- root55464 npm run test:integration: 160파일/1,745PASS/기존TODO1, 345.55초.
+- 마지막 CLI child close/정상exit 실패 assertion까지 target1PASS, 14.43초; 격리3파일27PASS, 43.14초.
+- next typegen/tsc/전체 lint/i18n/Python23/build/bundle/diff PASS. 마지막 test 보완 뒤 tsc/관련 lint 재확인 PASS. build 기존 dynamic filesystem warning1.
+- 담당 actual readiness10+unit21, lifecycle13+ledger20=33(기존관련48별도), artifact unit38 PASS 보고를 취합했다. 기존 결과를 새 실행으로 세지 않는다.
+- 최종 root schema/role/trigger/runtime 연결0 및 원래 PUBLIC ACL(database CONNECT/TEMPORARY, schema USAGE) 확인. 담당55462/55463과root55464 container중지 확인.
+
+## Failed approaches / remaining
+
+실제 실패로 scope hook누락·drainwriter차단·JSONserializer·DBtimestamp µs 절삭·초기hash/owner/request·재검수 분류 경계를 수정했다.
+첫 fullDB는 coverage test45초 timeout 뒤 profile 잔여로 연쇄 실패하여 INT 종료했다.105개 잔여문서의 같은target은 단독33.33초 PASS였다. 원본 소유identity/nonce/owner 검증 뒤 전용test상태만 정리하고 fixture public11table 격리·CLI child종료 대기를 보완했다. 이후 전체PASS. 최초 cleanup 예외는 최종stack부재로 확정하지 않는다.
+shared4 제거 canary actualRED1→finally즉시원복hash동일→GREEN1. RED보조 idle CONNECTION_CLOSED1도 검증문서에 기록했다.
+세 담당 소스 소유권 반환·읽기 교차 리뷰 완료, 보고된 미해결 P1/P2 없음. provider 전체 비용/identity/취소와 실제30분 baseline은 b6 미확인, 2배/Oracle DR 미판정.
+운영 DB/DDL·수동 배포·실제 provider inference·새 consumer 활성화 없음. root 원본 X branch push금지·사용자 untracked assets 보존. 전체 목표는 아직 active다.
+
+## Exact next commands
+
+```sh
+cd /Users/jr/Desktop/projects/nomorevibe-pipeline-coverage
+git status --short
+git diff --check
+# 명시 파일만 stage/commit, origin/main 최신base 확인 후 이 새 branch만 push
+git push -u origin codex/pipeline-pr01b-coverage-20261015
+# PR body는 임시파일 --body-file로 전달. 필수 최신base check 성공 후 정상 merge.
+gh pr view --json number,url,headRefOid,baseRefOid,statusCheckRollup
+# 다음 PR02는 별도 worktree의 계획을 읽고 b5 merged main으로 base를 맞춘 뒤 시작
+cd /Users/jr/Desktop/projects/nomorevibe-pipeline-items
+cat docs/superpowers/plans/2026-10-15-pipeline-pr02-item-leases.md
+```
+
+---
+
+# 2026-10-15 — PR01b-5 병렬 구현 착수 / 공통 계약 승인
+
+## Current objective / completed
+
+PR01부터 남은 설계를 충돌 없이 병렬 구현하고 root가 목적 적합성·코드·통합 결과를 취합한다.
+현재 worktree `/Users/jr/Desktop/projects/nomorevibe-pipeline-coverage`, branch `codex/pipeline-pr01b-coverage-20261015`, base main `4af058934cb71d888e7997e0fd5aad4df2f32f7e`.
+PR433 병합 및 PR/main 전체 CI·image SUCCESS를 이전 단계에서 직접 확인했다. b5 의존성은 b4 node_modules에서 APFS copy 완료했다.
+담당3명(gpt-6.1-sol/xhigh)이 구현 중이며 root가 공통 API를 승인했다. b5는 아직 통합 완료·PR 제출·운영 적용 상태가 아니다.
+
+## Modified files / design / ownership
+
+- pr01_final_ai1: 새 readiness/projection/reducer 모듈과 관련 단위·DB 회귀. 전체 universe, 실제 rules/reuse/expiry, OLD/NEW, commit 상한.
+- pr01_final_ai2: ledger/final/SQL·새 execution 모듈·lifecycle DB 회귀. root가 기존 소유 파일 편집을 승인했다.
+- provider_contract_evidence: 새 strict artifact/compare 모듈·단위 회귀. JSON parse는 unverified, 실제 protected DB readback만 private verified handle.
+- root: DB transaction scope, runner/jobs, handlers-v4 profile, export/compare CLI, 통합 회귀, 문서/Git/전체 리뷰.
+
+잠금은 shared writer fence(1485803,4)→AI2mutex3→domain/job→마지막 journal flush/run이며 seal은 lifecycle2→exclusive4→run이다.
+certified 실행의 nested savepoint는 명시 거절, legacy 동작은 유지한다. admission 종료와 writer fence를 분리한다.
+초기 actual projection hash는 caller manifest와 대조하고 start 사이 변경을 재검증한다. 비교용 정규화는 reviewConcurrency와 명시 wall-relative timer만 허용한다.
+source/order/cursor/requestversions/결정 필드를 숨기지 않는다. transaction·commit confirmation은 append-only를 우선한다.
+
+## Tests actually executed / failed approaches
+
+AI2 전용55463 actual lifecycle RED: drain 뒤 진행 중 final writer가 replay_final_scope_closed로 거절되는 기존 결함1FAIL(1.74s).
+AI1 actual unit RED: 준비량0오계산·미확인 증가 조기인정·OLD위조미거절 3FAIL. 선행 fixture date hydration 오류는 behavioral RED에서 제외했다.
+root는 b5 새 테스트를 아직 실행하지 않았다. 기존 b4 PASS는 b5 결과로 세지 않는다.
+
+## Remaining / exact next commands
+
+담당 간 schema/API 골격을 연결하고 root generic DBguard before/after/commitAck를 구현한다. 전용 DB는 AI1 55462, AI2 55463, root 55464(아직 미생성)이다.
+운영 DB/DDL/수동 배포/provider inference/새 consumer 활성화 없음. root X branch push 금지·사용자 assets 보존.
+b6 provider 전체 비용/identity/취소 증명과 실제 baseline, PR02–17 운영 검증은 남았다.
+
+```sh
+cd /Users/jr/Desktop/projects/nomorevibe-pipeline-coverage
+git status --short
+cat docs/superpowers/plans/2026-10-15-pipeline-pr01b-coverage.md
+npm test -- tests/pipeline-replay-readiness.test.ts
+# 이 시점 위 테스트는 RED 기록이며 GREEN을 주장하지 않는다.
+# root 통합 DB는 새 loopback 55464를 사용한다. 다른 담당 DB를 동시에 사용하지 않는다.
+```
+
+---
+
 # 2026-10-15 — PR433 병합·PR/main 전체 CI/image 성공 / 다음 b5 준비
 
 ## Current objective / completed

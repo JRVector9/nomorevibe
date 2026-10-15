@@ -1,7 +1,7 @@
 # PR01b-5 — 준비 coverage·writer fence·ledger artifact 실행 계획
 
 사용자가 승인한 PR01 handler 계획4절을 구체화한다. 2026-10-15, base `4af0589` / [PR433](https://github.com/JRVector9/nomorevibe/pull/433).
-사전 읽기3명은 모두 gpt-6.1-sol/xhigh였다. 이 문서는 계획이며 아래 새 회귀·기능은 아직 실행/구현하지 않았다.
+사전 읽기3명은 모두 gpt-6.1-sol/xhigh였다. 공통 계약에 따라 세 담당 병렬 구현과 root 통합을 진행했다. 실제 결과는 [검증 기록](../../operations/2026-10-15-pipeline-pr01b-coverage-validation.md)에 구분해 기록한다. 최종 교차 리뷰·전체 로컬 검증은 완료했으며 PR 제출/최신 base CI는 남아 있다.
 PR433 main CI `38733408567`은 quality·통합3shard·check·웹/워커 image 전체 SUCCESS를 확인했다.
 
 ## 목표와 경계
@@ -52,36 +52,39 @@ fixture seal은 구현 검증이며 실제 모델 처리량 인증이 아니다.
 
 | 담당 | 단독 소유 제안 |
 | --- | --- |
-| readiness/handler | 새 pipeline-replay-readiness 모듈, AI1/AI2 claim/record/enqueue/retry/cleanup/hold/reopen hooks, 준비 전이 회귀 |
-| lifecycle/SQL | ledger/SQL·새 lifecycle/state 모듈·scope/fence의 authentic handle, seal/재시작/두 연결 회귀 |
+| readiness | 새 pipeline-replay-readiness 모듈·순수 reducer·초기 전체 projection·실제 SQL differential 회귀 |
+| lifecycle/SQL | ledger/final/SQL·새 execution 모듈·authentic handle·seal/재시작/두 연결 회귀 |
 | artifact/compare | 새 strict artifact·집계·compare 순수 모듈과 단위 회귀 |
 | root | DB transaction scope/runner/jobs 경계·고정 handlers-v4 profile·export/compare CLI·통합 회귀·문서·전체 리뷰/Git |
 
 세 담당을 병렬로 쓰되 SQL/profile/runner와 공통 마지막 flush는 각 한 소유자만 수정한다.
-초기 인터페이스 후보는 아래이며 ready count·applied boolean·caller timestamp를 받지 않는다.
+확정한 구현은 개별 handler마다 별도 집계 코드를 넣는 대신, 제한 DB scope의 공통 transaction hook과 7개 mutable table의 DB-owned OLD/NEW trigger를 사용한다. 시작 fence→domain→마지막 run flush→실제 COMMIT→별도 DBclock 확인 순서를 지킨다.
 
 ```ts
-initializeReplayReadiness(tx, run)
-prepareReplayReadinessWrite(tx, touchedIdentities) // authentic opaque token
-recordReplayReadinessWrite(tx, token)             // before/after facts, tx-local buffer
-confirmReplayReadinessCommit(run, sequence)       // DBclock upper bound, unconfirmed = unknown
-closeAdmission(run, reason)
-fenceWriters(run, quiescenceProof)
-sealReplayRun(run, quiescenceProof)
-parseReplayArtifact(value)                        // consistency only
-loadVerifiedReplayArtifact(database, runId)       // DB readback, opaque verified handle
+captureReplayReadinessProjection(tx, manifest, frozenInputs?)
+currentReplayTransactionHooks(database) // before / after / commitAck / rollback
+withReplayExecutionScope(run, load)
+assertReplayJobAdmission(tx)
+replayQuiescenceProof(run)
+ledger.closeAdmission(run)
+ledger.fenceWriters(run)
+ledger.seal(run, quiescenceProof)
+parseReplayArtifact(value)                  // 정합성만, unverified
+loadVerifiedReplayArtifact(database, runId) // 고정 DB readback, 비공개 capability
 compareVerifiedReplayRuns(baseline, candidate)
 ```
 
-## 실행 순서와 실제 검증 목표 — 미실행
+`handlers-v4`의 initial binding은 INSERT-only이고 장부/commit 확인은 append-only다. certified nested savepoint와 같은 run의 실행 scope 재진입은 거절한다. 실제 DB 전체 준비 상태를 재구성할 수 없는 env first-model fallback은 certified 경로에서 거절한다.
 
-- [ ] 공통 state/event/artifact·transaction flush API를 확정하고 소유권/세 전용 DB port를 배정한다.
-- [ ] lifecycle admission/writer 분리·공유/배타 fence·고정 profile을 실제 DB RED부터 구현한다.
-- [ ] artifact strict schema/집계/미판정은 독립 단위 RED부터 병렬 구현한다.
-- [ ] 전체 초기 projection과 actual classifier를 DB에서 인증하고 manifest initialStateHash mismatch를 거절한다.
-- [ ] 모든 readiness 변경·실시간 expiry·commit 상한·세션 gap을 실제 handler와 함께 기록한다.
-- [ ] 종료 proof·seal·검증된 DB export·별도 compare CLI를 연결한다.
-- [ ] 담당 간 교차 읽기 후 root가 목적/coverage/원자성/잠금/권한/비용/판정 경계를 전체 리뷰한다.
+## 실행 순서와 실제 검증 목표
+
+- [x] 공통 state/event/artifact·transaction flush API를 확정하고 소유권/세 전용 DB port를 배정한다.
+- [x] lifecycle admission/writer 분리·공유/배타 fence·고정 profile을 실제 DB RED부터 구현한다.
+- [x] artifact strict schema/집계/미판정은 독립 단위 RED부터 병렬 구현한다.
+- [x] 전체 초기 projection과 actual classifier를 DB에서 인증하고 manifest initialStateHash mismatch를 거절한다.
+- [x] 모든 readiness 변경·실시간 expiry·commit 상한·세션 gap을 실제 handler와 함께 기록한다.
+- [x] 종료 proof·seal·검증된 DB export·별도 compare CLI를 연결한다.
+- [x] 담당 간 교차 읽기 후 root가 목적/coverage/원자성/잠금/권한/비용/판정 경계를 전체 리뷰한다.
 - [ ] 실제 unit/전체 DB/typegen/tsc/lint/i18n/build/bundle/Python/diff와 최신 base CI를 확인하고 PR로 납품한다.
 
 필수 actual RED 제안:
@@ -94,8 +97,8 @@ compareVerifiedReplayRuns(baseline, candidate)
 - unresolved/indeterminate seal·겹친 start 거절, restart gap·30분 미달·quality 누락·fixture는 성능 미판정.
 - JSON 인증 위조/타 DB/profile/seq·digest 누락 거절, cleanup 뒤 final 이력 보존·후보당1·재검수 분리.
 
-## 아직 구현하지 않은 것
+## 남은 검증과 후속 범위
 
-위 b5 API·writer fence·coverage·artifact·seal·초기 상태 인증은 이 계획만으로 구현/검증 완료가 아니다.
+구현 체크와 최종 납품 체크를 구분한다. 교차 리뷰에서 발견한 재검수/현재 owner·CLI 종료 경계를 보완했다. 최종 전체 DB160파일1,745PASS/기존TODO1과 unit2,843PASS를 확인했다. PR/최신 base CI는 남아 있다.
 PR433의 actual tests는 b4 결과이며 b5 증거로 재사용하지 않는다. b6 provider 전체 비용/identity/취소 계약과
 실제 30분 baseline, PR02–17 개발/운영 합격, 처리량2배·Oracle DR은 별도 남은 작업이다.

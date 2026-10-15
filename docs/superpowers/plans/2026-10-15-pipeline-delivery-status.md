@@ -14,7 +14,8 @@ PR 번호·의존성은 유지하며, 아래 PR01 소단위는 원래 PR01 안�
 | **PR01b-2** 명시 verified Drizzle DB scope·좁은 handler table profile | 완료 | [#431](https://github.com/JRVector9/nomorevibe/pull/431), `9601e3b` | 미적용 | unit2,679·DB1,675 PASS/기존 TODO1. main CI [38716366046](https://github.com/JRVector9/nomorevibe/actions/runs/38716366046) 전체 성공. 기존 AI1 repository/writer/outbox와 실제 rollback 확인 |
 | **PR01b-3** 실제 AI1/AI2 fixture handler runner | 구현·전체 검증·리뷰 완료 | [#432](https://github.com/JRVector9/nomorevibe/pull/432), `664777d`; PR·main 전체 CI 성공 | 미적용 | unit2,762·전체 DB1,689 PASS/기존 TODO1(새 실제 handler8개 포함), 타입/lint/빌드/bundle 통과. 두 검수 job만 실행·실제 모델 차단·AI2 gate/실패/보류/폴백·held outbox 확인. PR CI [38719944888](https://github.com/JRVector9/nomorevibe/actions/runs/38719944888)·main CI [38720568825](https://github.com/JRVector9/nomorevibe/actions/runs/38720568825) 전체 성공(image 포함) |
 | **PR01b-4** 실제 writer 원자 final | **구현·로컬 검증·root/교차 리뷰 완료** | [#433](https://github.com/JRVector9/nomorevibe/pull/433), `4af0589`; PR·main 전체 CI 성공(image 포함) | 미적용 | unit2,781·최종 PR CI DB1,717 PASS/기존TODO1; 관련 DB68 및 AI2/기존79 PASS. 실제 원자 rollback·다중 slot·fallback·cleanup 잠금·tokenless 공개분·외부 후보 잠금 회귀 통과 |
-| **원래 PR01 전체** 측정 기준·격리 replay | **부분 완료** | 위 기반만 병합 | replay/새 consumer 비활성 | 실제 handler fixture는 이번 PR에서 검증; 최종 원자 기록은 b4 PR433 병합·최종 PR CI 통과; 준비 coverage·artifact/seal·provider 상한·실모델 baseline 미완료. **2배 성능 미판정** |
+| **PR01b-5** 준비 coverage·writer fence·인증 artifact | **병렬 구현·root/교차 리뷰·로컬 필수 검증 완료** | PR 제출 준비 | 미적용 | unit2,843·전체 DB1,745 PASS/기존 TODO1, 타입/lint/i18n/Python23/build/bundle PASS. 실제 두 단계·CLI·15초 heartbeat·양방향 fence·초기 actual binding 검증. [실제 검증 기록](../../operations/2026-10-15-pipeline-pr01b-coverage-validation.md) |
+| **원래 PR01 전체** 측정 기준·격리 replay | **부분 완료** | 위 기반만 병합 | replay/새 consumer 비활성 | 실제 handler fixture는 이번 PR에서 검증; 최종 원자 기록은 b4 PR433 병합·최종 PR CI 통과; 준비 coverage·artifact/seal은 b5 로컬 검증 완료/PR 준비, provider 상한·실모델 baseline 미완료. **2배 성능 미판정** |
 | **PR02–17** | 미착수 | 미병합 | 비활성 | 아래는 예정된 검증이며 PASS 기록이 아님 |
 
 PR433은 `2026-10-15T12:16:32Z` main4af0589로 병합했다. [PR CI38732534554](https://github.com/JRVector9/nomorevibe/actions/runs/38732534554)는 quality·통합3shard·check 모두 SUCCESS다. [main CI38733408567](https://github.com/JRVector9/nomorevibe/actions/runs/38733408567)는 quality·통합3shard·check·웹/워커 image 전체 SUCCESS다.
@@ -27,7 +28,7 @@ PR429–433를 위한 운영 migration·provider 설정 변경·공개 발행·�
 ## PR01의 다음 검토 단위
 
 기존 [handler 상세 계획](2026-10-15-pipeline-pr01b-handlers.md)을 다음처럼 나눠 진행한다.
-[b5 coverage/fence/artifact 상세 계획](2026-10-15-pipeline-pr01b-coverage.md)에 세 담당 사전 읽기 결과를 취합했다. 아직 b5 코드/새 회귀는 구현·실행하지 않았다.
+[b5 coverage/fence/artifact 상세 계획](2026-10-15-pipeline-pr01b-coverage.md)에 세 담당 사전 읽기 결과를 취합했다. b5는 세 담당 병렬 구현 후 root 통합·직접/교차 리뷰와 전체 로컬 검증을 완료했다. PR 제출·최신 base CI/병합 확인은 남아 있다.
 각 행은 회귀와 검토를 마치면 독립 PR로 제출할 수 있다. 작은 기반 PR의 병합을 PR01 전체 완료로 올리지 않는다.
 
 | 단위 | 납품 결과 | 반드시 확인할 경계 | 복구 / 아직 포함하지 않는 범위 |
@@ -84,12 +85,13 @@ Oracle가 설치됐거나 standby라는 이유로 PR11·16·17을 완료 처리�
 
 - PR00: [로컬 검증](../../operations/2026-10-15-pipeline-pr00-validation.md), [13앱 적용·실제 readback](../../operations/2026-10-15-pipeline-pr00-rollout.md).
 - PR01: [snapshot 검증](../../operations/2026-10-15-pipeline-pr01a-validation.md), [격리 기반 검증](../../operations/2026-10-15-pipeline-pr01b-validation.md), [provider 미확인 계약](../../operations/2026-10-15-pipeline-pr01b-provider-audit.md).
-- 이 상태 보고 작성 중 `gh pr view 430 --json number,url,state,mergedAt,mergeCommit,headRefOid`와
+- 이전 단계에서 `gh pr view 430 --json number,url,state,mergedAt,mergeCommit,headRefOid`와
   `gh run view 38710286609 --json databaseId,headSha,status,conclusion,jobs`를 읽기 전용으로 실행해 병합·전체 성공을 재확인했다.
   기존 로컬 테스트를 이번 문서 작업에서 재실행한 것으로 주장하지 않는다.
 - 이번 변경은 서브에이전트3명 병렬 구현 후 root 전체 리뷰와 담당 간 교차 검토를 마쳤다.
-  **PR01b-4의 실제 변경 파일·회귀 결과·PR/CI·운영 적용 여부**를 갱신하며 coverage/seal·실모델 baseline은 계속 미완료다.
+  **PR01b-5의 실제 변경 파일·회귀 결과·운영 미적용 여부**를 갱신했다. coverage/seal은 로컬 검증 완료이며 PR/CI와 실모델 baseline은 별도 남아 있다.
   운영 적체의 감소와 고정 입력 성능을 합산하지 않는다.
+- PR01b-5: [계획](2026-10-15-pipeline-pr01b-coverage.md), [준비량·종료 장부 실제 검증](../../operations/2026-10-15-pipeline-pr01b-coverage-validation.md).
 - PR01b-2: [DB scope 검증](../../operations/2026-10-15-pipeline-pr01b-handler-scope-validation.md).
 - PR01b-4: [계획](2026-10-15-pipeline-pr01b-final.md), [실제 원자성 검증](../../operations/2026-10-15-pipeline-pr01b-final-validation.md).
 - PR01b-3: [runtime 계획](2026-10-15-pipeline-pr01b-runtime.md), [실제 handler 검증](../../operations/2026-10-15-pipeline-pr01b-runtime-validation.md).

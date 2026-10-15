@@ -1,5 +1,8 @@
 import { AsyncLocalStorage } from "node:async_hooks";
+import { z } from "zod";
 import { and, eq, inArray, or, sql } from "drizzle-orm";
+import { PgDialect } from "drizzle-orm/pg-core";
+import type postgres from "postgres";
 import { assertReplayDatabaseScopeIdentity, currentReplayDb } from "@/lib/db/replay-scope";
 import { crawlCandidates, crawlDocuments, crawlReviewAttempts, crawlSettings, jobs, secondReviews,
   type CrawlCandidate, type CrawlReviewAttempt, type SecondReview } from "@/lib/db/schema";
@@ -11,6 +14,7 @@ import type { CrawlSettings } from "@/lib/crawl/settings-schema";
 import { STALE_LOCK_MS } from "@/lib/jobs/lease";
 import { comparisonReviewPolicyHash, fullReviewPolicyHash } from "./pipeline-capacity";
 import { replayFinalRunBinding, type ReplayRun } from "./pipeline-replay-ledger";
+import { deferReplayFinalWrite } from "./pipeline-replay-execution";
 
 type Binding = { stage: "first" | "second"; candidateId: number; firstAttemptId: number;
   secondReviewId?: number; input: ReviewInput; settings: CrawlSettings };
@@ -229,21 +233,29 @@ async function finalEvidence(scope: Scope, tx: ProductTransaction, write: Write,
 /** Run/event locks are always last, after all domain reads, writes, gate checks and outbox work. */
 async function lockedRun(scope: Scope, tx: ProductTransaction) {
   ensure(activeScope() === scope, "replay_final_scope_closed");
-  const [row] = await tx.execute<{ manifest_hash: string; state: string; started_at: Date; deadline_at: Date }>(sql`SELECT
-    manifest_hash, state, started_at, deadline_at FROM pipeline_replay.capacity_runs
+  const [row] = await tx.execute<{ manifest_hash: string; state: string; started_at: Date; deadline_at: Date; writers_fenced_at: Date | null }>(sql`SELECT
+    manifest_hash, state, started_at, deadline_at, writers_fenced_at FROM pipeline_replay.capacity_runs
     WHERE run_id = ${scope.run.runId} AND owner_id = ${scope.binding.ownerId}::uuid FOR UPDATE`);
   ensure(row && row.manifest_hash === reviewHash(scope.binding.manifest), "replay_run_identity_mismatch");
   const [clock] = await tx.execute<{ wall_now: Date }>(sql`SELECT clock_timestamp() AS wall_now`);
-  ensure(row.state === "running" && row.started_at && row.deadline_at && +new Date(clock.wall_now) < +new Date(row.deadline_at),
+  ensure(['running','draining'].includes(row.state) && !row.writers_fenced_at && row.started_at && row.deadline_at
+    && (scope.binding.certified || +new Date(clock.wall_now) < +new Date(row.deadline_at)),
     "replay_final_run_not_running");
   return row;
+}
+function ledgerExecutor(raw: postgres.TransactionSql): ProductTransaction {
+  const dialect = new PgDialect();
+  return { execute(query: Parameters<ProductTransaction["execute"]>[0]) {
+    const rendered = dialect.sqlToQuery(query as ReturnType<typeof sql>);
+    return raw.unsafe(rendered.sql, rendered.params as postgres.ParameterOrJSON<never>[]);
+  } } as unknown as ProductTransaction;
 }
 async function append(scope: Scope, tx: ProductTransaction, kind: string, payload: object): Promise<number> {
   const [row] = await tx.execute<{ event_seq: string | number }>(sql`UPDATE pipeline_replay.capacity_runs SET event_seq = event_seq + 1
     WHERE run_id = ${scope.run.runId} RETURNING event_seq`);
   const seq = Number(row.event_seq); ensure(positive(seq), "replay_counter_overflow");
   await tx.execute(sql`INSERT INTO pipeline_replay.capacity_transitions (run_id, seq, kind, payload)
-    VALUES (${scope.run.runId}, ${seq}, ${kind}, ${JSON.stringify(payload)}::jsonb)`);
+    VALUES (${scope.run.runId}, ${seq}, ${kind}, ${JSON.stringify(payload)}::text::jsonb)`);
   return seq;
 }
 function validateRequests(requests: Requests) {
@@ -265,29 +277,35 @@ export async function recordReplayFinalWrite(tx: ProductTransaction, token: Repl
   ensure(after.leaseAlive && after.jobToken === before.jobToken, "replay_final_lease_mismatch");
   await assertWrittenResult(scope, tx, write, after);
   const evidence = await finalEvidence(scope, tx, write, after);
-  const run = await lockedRun(scope, tx);
-  await append(scope, tx, "review_write", { stage: binding.stage, candidateId: binding.candidateId,
+  const flush = async (run: Record<string, unknown>, target: ProductTransaction) => {
+  await append(scope, target, "review_write", { stage: binding.stage, candidateId: binding.candidateId,
     firstAttemptId: binding.firstAttemptId, ...(binding.secondReviewId ? { secondReviewId: binding.secondReviewId } : {}),
     inputHash: binding.input.inputHash, sourceRevisionHash: binding.input.sourceRevisionHash,
     beforeState: binding.stage === "first" ? before.first.state : before.seconds.find(row => row.id === binding.secondReviewId)?.status,
     afterState: binding.stage === "first" ? after.first.state : after.seconds.find(row => row.id === binding.secondReviewId)?.status,
     requests: outboxRequests });
   if (!evidence) return;
-  ensure(+new Date(evidence.firstCall.dispatched_at!) >= +new Date(run.started_at)
+  const dbTimestamp = z.union([z.date(), z.string().regex(/^\d{4}-\d\d-\d\d[T ]\d\d:\d\d:\d\d(?:\.\d{1,6})?(?:Z|\+00(?::?00)?)$/)
+    .refine(value => Number.isFinite(Date.parse(value)))]);
+  const timing = z.object({ started_at: dbTimestamp, deadline_at: dbTimestamp }).parse(run);
+  ensure(+new Date(evidence.firstCall.dispatched_at!) >= +new Date(timing.started_at)
     && +new Date(evidence.firstCall.settled_at!) >= +new Date(evidence.firstCall.dispatched_at!)
-    && +new Date(evidence.firstCall.settled_at!) <= +new Date(run.deadline_at), "replay_final_call_time_mismatch");
-  const [existing] = await tx.execute(sql`SELECT 1 FROM pipeline_replay.capacity_finals WHERE run_id = ${scope.run.runId}
+    && (scope.binding.certified || +new Date(evidence.firstCall.settled_at!) <= +new Date(timing.deadline_at)), "replay_final_call_time_mismatch");
+  const [existing] = await target.execute(sql`SELECT 1 FROM pipeline_replay.capacity_finals WHERE run_id = ${scope.run.runId}
     AND candidate_id = ${binding.candidateId} AND input_hash = ${binding.input.inputHash}
     AND source_revision_hash = ${binding.input.sourceRevisionHash} AND policy_hash = ${binding.input.policyHash}`);
   if (existing) return;
-  const seq = await append(scope, tx, "final", { candidateId: binding.candidateId, firstAttemptId: binding.firstAttemptId,
+  const seq = await append(scope, target, "final", { candidateId: binding.candidateId, firstAttemptId: binding.firstAttemptId,
     inputHash: binding.input.inputHash, sourceRevisionHash: binding.input.sourceRevisionHash, policyHash: binding.input.policyHash,
     firstCallId: evidence.firstCall.call_id, decision: evidence.decision, secondWitnesses: evidence.witnesses });
-  await tx.execute(sql`INSERT INTO pipeline_replay.capacity_finals (run_id, candidate_id, input_hash, source_revision_hash,
+  await target.execute(sql`INSERT INTO pipeline_replay.capacity_finals (run_id, candidate_id, input_hash, source_revision_hash,
     policy_hash, seq, first_attempt_id, first_call_id, decision, second_witnesses)
     VALUES (${scope.run.runId}, ${binding.candidateId}, ${binding.input.inputHash}, ${binding.input.sourceRevisionHash},
       ${binding.input.policyHash}, ${seq}, ${binding.firstAttemptId}, ${evidence.firstCall.call_id}, ${evidence.decision},
-      ${JSON.stringify(evidence.witnesses)}::jsonb)`);
+      ${JSON.stringify(evidence.witnesses)}::text::jsonb)`);
+  };
+  if (await deferReplayFinalWrite(tx, (run, raw) => flush(run, ledgerExecutor(raw)))) return;
+  await flush(await lockedRun(scope, tx), tx);
 }
 
 export async function recordReplaySecondReviewTransition(tx: ProductTransaction, binding: {
@@ -307,8 +325,10 @@ export async function recordReplaySecondReviewTransition(tx: ProductTransaction,
   }
   const actual = await tx.select({ id: crawlCandidates.id }).from(crawlCandidates).where(inArray(crawlCandidates.id, [...new Set(candidates)]));
   ensure(actual.length === new Set(candidates).size, "replay_final_binding_mismatch");
-  await lockedRun(scope, tx);
-  await append(scope, tx, `second_review_${binding.kind}`, { secondReviewIds: ids, candidateIds: [...new Set(candidates)], requests: outboxRequests });
+  const flush = (target: ProductTransaction) => append(scope, target, `second_review_${binding.kind}`,
+    { secondReviewIds: ids, candidateIds: [...new Set(candidates)], requests: outboxRequests }).then(() => undefined);
+  if (await deferReplayFinalWrite(tx, (_run, raw) => flush(ledgerExecutor(raw)))) return;
+  await lockedRun(scope, tx); await flush(tx);
 }
 
 export async function recordReplayFirstReviewTransition(tx: ProductTransaction, binding: {
@@ -322,6 +342,8 @@ export async function recordReplayFirstReviewTransition(tx: ProductTransaction, 
     .innerJoin(crawlCandidates, eq(crawlCandidates.id, crawlReviewAttempts.candidateId))
     .where(and(eq(crawlReviewAttempts.id, binding.firstAttemptId), eq(crawlCandidates.id, binding.candidateId)));
   ensure(row?.candidateId === binding.candidateId && row.state === binding.kind, "replay_final_binding_mismatch");
-  await lockedRun(scope, tx);
-  await append(scope, tx, `first_review_${binding.kind}`, { candidateId: binding.candidateId, firstAttemptId: binding.firstAttemptId, requests: outboxRequests });
+  const flush = (target: ProductTransaction) => append(scope, target, `first_review_${binding.kind}`,
+    { candidateId: binding.candidateId, firstAttemptId: binding.firstAttemptId, requests: outboxRequests }).then(() => undefined);
+  if (await deferReplayFinalWrite(tx, (_run, raw) => flush(ledgerExecutor(raw)))) return;
+  await lockedRun(scope, tx); await flush(tx);
 }

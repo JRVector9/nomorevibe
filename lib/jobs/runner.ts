@@ -4,6 +4,7 @@ import { db } from "@/lib/db";
 import { currentReplayDb } from "@/lib/db/replay-scope";
 import { jobs, operationsObservations } from "@/lib/db/schema";
 import { logger } from "@/lib/observability/logger";
+import { assertReplayJobAdmission } from "@/lib/operations/pipeline-replay-execution";
 import { JobLeaseLostError, requestJob, type JobLease } from "./control";
 import { STALE_LOCK_MS } from "./lease";
 import { JOB_CATALOG } from "./catalog";
@@ -66,6 +67,7 @@ export async function runJob<C>(
   let claimed: { cursor: unknown; requestedVersion: number } | undefined;
   try {
     [claimed] = await db.transaction(async tx => {
+      await assertReplayJobAdmission(tx);
       if (options.roleLease) await assertRoleLease(tx, options.roleLease);
       await tx.insert(jobs).values({ name }).onConflictDoNothing();
       return tx.update(jobs).set({
