@@ -1,4 +1,4 @@
-# 2026-10-15 — PR433 병합·PR 전체 CI 성공 / main CI·다음 b5 준비
+# 2026-10-15 — PR433 병합·PR/main 전체 CI/image 성공 / 다음 b5 준비
 
 ## Current objective / completed
 
@@ -6,7 +6,7 @@
 PR01b-4 [PR433](https://github.com/JRVector9/nomorevibe/pull/433)은 2026-10-15T12:16:32Z
 main `4af058934cb71d888e7997e0fd5aad4df2f32f7e`로 병합됐다. exact head6d52bf5, 최신 base664777d의
 [PR CI38732534554](https://github.com/JRVector9/nomorevibe/actions/runs/38732534554) quality·통합3shard·check 전체 SUCCESS.
-[main CI38733408567](https://github.com/JRVector9/nomorevibe/actions/runs/38733408567)는 현재 진행 중이다.
+[main CI38733408567](https://github.com/JRVector9/nomorevibe/actions/runs/38733408567)는 quality·통합3shard·check·웹/워커 image 전체 SUCCESS다.
 현재 코드 worktree `/Users/jr/Desktop/projects/nomorevibe-pipeline-coverage`, branch `codex/pipeline-pr01b-coverage-20261015`를 main4af0589에서 만들었다.
 b5는 사전 읽기3명 결과를 새 상세 계획에 취합했으며 아직 코드/DB/새 테스트는 착수하지 않았다.
 
@@ -15,7 +15,7 @@ b5는 사전 읽기3명 결과를 새 상세 계획에 취합했으며 아직 �
 b4는25파일 구현·검증 문서가 PR433에 있다. 같은 writer tx의 strict settled-call proof·actual before/after·기존 mandatory gate·outbox·고유 append-only final 결합이다.
 AI2 replay-only prefix mutex와 gate/root 정렬 잠금, domain/job/outbox 다음 run/event 마지막 원칙을 적용했다.
 root 리뷰에서 proof SQL NULL 경계·host/DBclock 혼용·위조 결과 rollback·fallback root-call·job/version 정규화·foreign first SHARE를 보완했다.
-현재 b5 worktree 변경은 CODEX_HANDOFF·delivery-status·final plan/validation 갱신과 새 PR01b-coverage 계획뿐이며 코드/새 테스트는 없다. 이 문서들을 local commit으로 보존하고 b5 구현 전에는 branch를 push하지 않는다.
+현재 b5 worktree 변경은 CODEX_HANDOFF·delivery-status·final/handler/runtime 계획·validation 갱신과 새 PR01b-coverage 계획뿐이며 코드/새 테스트는 없다. 이 문서들을 local commit으로 보존하고 b5 구현 전에는 branch를 push하지 않는다.
 b5는 admission과 writer fence 분리, 모든 tx 첫 공유 fence/종료 배타 fence, 마지막 공통 journal flush,
 전체 universe/실제 expiry/commit 확인 상한·unknown gap, 별도 strict artifact/DB 인증을 계약에 넣는다.
 initialStateHash caller값·v1 parser·fixture throughput을 인증 근거로 쓰지 않는다.
@@ -32,7 +32,7 @@ b5 계획의 RED 제안들은 아직 실행하지 않았다. 실제 model-replay
 
 ## Remaining / exact next commands
 
-main CI quality·통합3shard·check·worker/web image 종료까지 확인한다. image 생성은 운영 적용 증거가 아니다.
+main CI quality·통합3shard·check·worker/web image 종료까지 SUCCESS를 직접 확인 완료했다. image 생성은 운영 적용 증거가 아니다.
 다음은 b5 공통 API/flush/초기 상태·commit상한 계약을 root가 확정하고 세 담당 소유권/전용 DB를 배정해 actual RED부터 병렬 구현한다.
 root X branch는 push하지 않으며 사용자 untracked assets를 보존한다. 운영 migration/배포/추론/새 consumer 활성화 없음.
 
@@ -40,8 +40,11 @@ root X branch는 push하지 않으며 사용자 untracked assets를 보존한다
 cd /Users/jr/Desktop/projects/nomorevibe-pipeline-coverage
 gh run view 38733408567 --json status,conclusion,jobs
 git status --short
+git log -3 --oneline
 cat docs/superpowers/plans/2026-10-15-pipeline-pr01b-coverage.md
-# b5 worktree에는 아직 node_modules가 없다. 필요 시 기존 b4의 deps를 APFS clone하고 전용 loopback DB를 새로 배정한다.
+# b5 worktree에는 아직 node_modules가 없다. 다음 명령은 이 상태에서만 실행한다.
+cp -cR /Users/jr/Desktop/projects/nomorevibe-pipeline-final/node_modules /Users/jr/Desktop/projects/nomorevibe-pipeline-coverage/node_modules
+# 새 전용 loopback DB port를 배정한다. 이번 b5 코드/새 회귀는 아직 미착수다.
 # 기존 b4 재현 경로는 /Users/jr/Desktop/projects/nomorevibe-pipeline-final, 마지막 branch는 merged/clean이다.
 ```
 

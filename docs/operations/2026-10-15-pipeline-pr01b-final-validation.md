@@ -115,7 +115,7 @@ AI1/AI2 담당도 전용 DB 정리를 확인했다. 세 이번 전용 container�
 head `6d52bf51dae0df04bb25cce0b7273ae6c569afa9` / base `664777d`에서 quality·통합3shard·check 전체 SUCCESS다.
 실제 로그에서 unit2,781과 DB484+530+703=1,717 PASS/기존TODO1을 확인했다.
 `2026-10-15T12:16:32Z` main `4af058934cb71d888e7997e0fd5aad4df2f32f7e`로 exact-head squash merge했다.
-[main CI38733408567](https://github.com/JRVector9/nomorevibe/actions/runs/38733408567)는 진행 중이다. 운영 적용은 별도 미검증이다.
+[main CI38733408567](https://github.com/JRVector9/nomorevibe/actions/runs/38733408567)는 quality·통합3shard·check·웹/워커 image 전체 SUCCESS다. 운영 적용은 별도 미검증이다.
 
 ## 후속과 재현
 
