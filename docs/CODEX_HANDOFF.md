@@ -1,3 +1,102 @@
+# 2026-10-15 — PR02 전체 로컬 검증 완료 / PR03a 병렬 구현 착수
+
+## Current objective / completed
+
+사용자 지시에 따라 root가 gpt-6.1-sol/xhigh 담당3명의 파일 소유권·공통 API를 관리하고 직접/교차 코드 리뷰·전체 통합·PR 납품을 수행한다. 전체 목표는 active다.
+PR434는 main d95c6c813ac7ee10ddf9c1e9f9ea23beb41c8cfe에 병합됐고 PR CI38743497505·main CI38744485690의 check·웹/워커 image까지 SUCCESS를 확인했다. 마지막 확인된 운영 릴리스는8020dca이며 새 배포를 주장하지 않는다.
+PR02 worktree `/Users/jr/Desktop/projects/nomorevibe-pipeline-items`, branch `codex/pipeline-pr02-items-20261015`, main base d95c6c8. 소스 commit c3234a2(schema/types), b3239f3(repository/DB회귀) 완료. 전체 로컬 검증 PASS 뒤 문서를 확정하고 이 feature branch의 push/PR/최신base CI/정상merge를 진행한다. 아직 원격 PR02 병합·운영 적용 전이다.
+
+## Modified files / key design decisions
+
+PR02: 0077 additive migration·journal·operations-schema, `lib/jobs/items/{types,repository}.ts`, binding unit 및 두 item-leases integration, 상세 계획·검증·delivery·handoff.
+기본 fetch/ai1/ai2 legacy/epoch1/계약0. stage SHARE→domain→item→jobs/outbox, DB wall expiry, 동일 logical key별 단일 owner, boot/token/stage+item epoch CAS, 같은 caller tx의 result/release/handoff다. PG17 actual xid/lock context와 deny-only local GUC로 종료 tx·초기 child-owned savepoint·item→control 승격을 거절한다. GUC는 권한을 발급하지 않는다.
+PR03/04 실제 domain·관리자·legacy drain·모델 독립성 통합 전 계약0/새 consumer 비활성을 유지한다. TTL·running0·job90s만으로 외부 호출 종료를 증명하지 않는다.
+
+## Test commands / actual results
+
+root: `npm test` 277파일/2,849PASS(8.10s); 최종 새 DB2파일33PASS(3.34s); 최종 `npm run test:integration`162파일/1,778PASS/기존TODO1(350.72s). 최종 log `/tmp/nomorevibe-pr02-root-db-scoped-final-20261015.log`, session59660 exit0.
+next typegen·tsc·전체 lint·i18n·Python23·build·bundle·diff PASS. 기존 lint warning1/build warning1. 결과를 재실행 없이 복제해 새 결과로 세지 않는다.
+fresh55468 migration defaults/seed readback PASS; migration 재실행 뒤 자체 sentinel job requested7/processed3/cursor/not_before 보존 PASS. 최종 stage legacy/epoch1/계약0·item0·replay schema/role/trigger0·다른 연결0·자체 PR02 jobs0 확인 후 root55468 컨테이너 중지. 담당55466/55467·진단55469도 자체 정리 후 중지했다.
+
+## Failed approaches
+
+실제 RED에서 committed tx/guard 재사용·autocommit control·child rollback guard·parent item→child control 잠금 대기를 재현·수정했다. Drizzle nestedIndex는 증거로 쓰지 않았다.
+첫 fullDB는 fixture publicAcl의 CONNECT_TIMEOUT1(1,777PASS/TODO1); 새55469 동일case 수정 없이1PASS, 정확한 연결 지연 원인 미확정. 두 번째 fullDB는 전역 jobs 조회가 foreign fixture를 읽어6FAIL(1,772PASS/TODO1). unrelated sentinel을 남겨actual6FAIL→조회ID/jobname scope수정 뒤14PASS, roottarget33PASS·마지막fullPASS로 닫았다. timeout·소유권 assertion·기존 기대값을 약화하지 않았다.
+
+## PR03a ownership / remaining work
+
+새 worktree `/Users/jr/Desktop/projects/nomorevibe-pipeline-writers`, branch `codex/pipeline-pr03-writers-20261015`를 b3239f3 위에 준비해 source·admin·독립 tests를 병렬 작업한다. PR02 원격 납품 뒤 merged main을 통합한다.
+- AI1: `lib/crawl/repository.ts`, `lib/crawl/jobs/fetch.ts`, 새 fetch-ownership. 필수 legacy/item typed receipt, actual source claim·result/recovery/defer/failure, 원자 완료.
+- AI2: `lib/crawl/admin-review.ts`, 새 evidence-refresh-completion. stage→domain lock/apply helper, request 소비+source 저장 같은 tx, item→job 순서.
+- 독립 담당: 관련 tests/fixtures만, actual mode/foreign-owner/atomic RED→GREEN. 첫 RED 전 source 행동 편집 대기.
+- root: items readItemStage 및 새 pipeline-stage-context, 공유 접점·문서·Git·전체 리뷰/검증. stage helper 순서는 fetch→ai1→ai2, 반환 `{fetch,ai1,ai2}` guards.
+세 담당 계획은 `/tmp/nomorevibe-pr03a-fetch-plan-20261015.md`, `pr03b-ai1-plan`, `pr04-ai2-plan`; root 계약은 writers의 `docs/superpowers/plans/2026-10-15-pipeline-pr03-04-integration-contract.md`가 우선한다. row0/TTL만 legacy 완료로 여는 초안은 거절했다. 계약0 fail-closed로 유지하며 실제 durable legacy admission/inflight 종료 증명은 남아 있다.
+격리 port는 AI1 55470, 독립 tests55471, AI2 55472, root55473. 각 담당은 자기 신규 loopback container만 쓴다. 운영DB·provider·migration번호·Git을 담당이 변경하지 않는다.
+PR02 push/PR/최신base CI/정상merge/main CI, PR03a 통합, PR01b-6 serving identity·전체 비용/취소·실제30분 baseline, PR03b–17은 남았다. 2배·Oracle DR은 미판정이다. 원본 X branch push 금지, 사용자 assets/다른 container 보존.
+
+## Exact next commands
+
+```sh
+cd /Users/jr/Desktop/projects/nomorevibe-pipeline-items
+git status --short
+git diff --check
+# PR02 명시 문서4파일만 commit하고 이 feature branch만 push
+git push -u origin codex/pipeline-pr02-items-20261015
+# PR body /tmp/nomorevibe-pr02-pr-body-20261015.md, gh pr create --base main --body-file 사용
+# 최신base required check SUCCESS 확인 뒤 exact head로 정상 squash merge, main CI/images 확인
+cd /Users/jr/Desktop/projects/nomorevibe-pipeline-writers
+cat docs/superpowers/plans/2026-10-15-pipeline-pr03-04-integration-contract.md
+git status --short
+# 담당 actual RED 보고 뒤 공통 API·소스 통합. 아직 새 테스트 PASS·운영 적용을 주장하지 않음.
+```
+
+---
+
+# 2026-10-15 — PR434 병합·전체 CI 성공 / PR02 구현 동결·root 통합 검증 중
+
+## Current objective / completed
+
+사용자 지시대로 root가 gpt-6.1-sol/xhigh 담당 3명의 파일 소유권·API를 관리하고 직접 리뷰·교차 리뷰·전체 검증을 수행한다.
+PR434는 main `d95c6c813ac7ee10ddf9c1e9f9ea23beb41c8cfe`로 병합됐고 PR CI38743497505와 main CI38744485690의 check·웹/워커 image까지 SUCCESS를 직접 확인했다.
+현재 worktree `/Users/jr/Desktop/projects/nomorevibe-pipeline-items`, branch `codex/pipeline-pr02-items-20261015`, base main d95c6c8. PR02는 아직 commit/push/PR/운영 배포 전이다.
+세 담당 구현 handback·교차 리뷰 완료, source 동결. 다음 PR03a/03b/04 상세 초안은 /tmp에 작성됐으며 root 공통계약 검토 전이다. 독립 검증 담당은 fullsuite의 자기 fixture 범위 오류를 읽기 조사 중이다.
+
+## Modified files / key design decisions
+
+0077 additive migration·journal·operations-schema, `lib/jobs/items/{types,repository}.ts`, binding unit와 두 integration 파일, PR02 계획·검증·delivery 문서를 변경했다.
+세 stage(fetch/ai1/ai2)는 legacy/계약0 기본값이며 기존 handler와 연결하지 않는다. stage SHARE→domain→item→jobs/outbox, DB wall expiry, 논리 ID별 단일 owner, boot/token/stage+item epoch CAS, 원자 result/release/handoff 기반이다.
+full transaction ID와 PostgreSQL17 실제 lock context로 ended tx·초기 child-owned savepoint guard를 거절한다. item→control SHARE upgrade는 deny-only transaction-local GUC로 다른 child adapter에서도 UPDATE 전에 거절한다. GUC는 권한 부여가 아니다.
+PR03/04가 실제 domain 입력·관리자·모델 독립성·legacy drain writer를 통합하기 전 계약 버전을 올리지 않는다. TTL 만료를 외부 호출 종료 증거로 취급하지 않는다.
+
+## Test commands / actual results
+
+root actual: next typegen PASS; npm test 277파일/2,849PASS; i18n PASS; Python23PASS; git diff --check PASS.
+root loopback55468 fresh migration PASS; fixture 전 세 stage legacy/epoch1/계약0·items0 및 DDL defaults 확인; migration 재실행 후 sentinel job의 요청7/처리3/cursor/not_before 유지 확인·자체 sentinel 삭제.
+담당 actual: types6PASS, 독립 DB14PASS, repository 마지막19PASS/tsc/lint 보고. root 새2DB파일33PASS, 마지막 소스 unit2,849PASS(8.10s), tsc/lint/build/bundle PASS. lint 기존warning1·build 기존warning1. 첫 fullDB161파일/1,777PASS+실패1+기존TODO1(364.05s): replay fixture publicAcl 초기 CONNECT_TIMEOUT, exact원인미확정. 새55469 단독1PASS 후 자체상태/연결0 확인·중지. 소스/timeout 그대로 fullsuite 재실행 중이며 독립 item 테스트6개가 전역 frontier/jobs fixture를 자기것으로 읽는 문제를 드러냈다. 최종stack 수집 전이며 fullDB PASS를 주장하지 않는다.
+로그 prefix `/tmp/nomorevibe-pr02-`, root 단위 로그 `unit-final-20261015.log`.
+
+## Failed approaches / remaining work
+
+actual RED에서 committed tx 재사용, autocommit control, child rollback 후 guard 재사용, parent item→child control 잠금 대기를 확인하고 수정했다. Drizzle nestedIndex는 child에서 증가하지 않아 증거로 쓰지 않았다.
+초기 PageProps 누락 tsc는 next typegen으로 해결했고 최종 tsc는 재확인한다. 독립 fixture 예외 wrapper assertion은 cause 검사로 보완했다. migration default 검증은 fixture 초기화와 분리해 root fresh DB readback으로 확인했다.
+root 최종 전체DB에서 드러난 test fixture 범위 보완·최종stack/회귀·격리 DB 정리·명시 파일 commit/push·최신base PR CI·정상 merge/main CI가 남았다. production소스 수정 없이 own fixtureID/jobname로 검증을 유지하는 최소 보완을 계획했다. 운영 DB/DDL·수동 배포·provider inference·새 consumer 활성화는 없다. PR01b-6 실제 provider 비용/identity/취소와 30분 baseline, PR03–17은 미완료이며 전체 goal은 active다.
+원본 X branch push 금지, 사용자 assets 보존. root DB `nomorevibe-pr02-root-db-20261015` 55468, repository 담당55466, 독립55467은 이미 중지. 다른 container를 건드리지 않는다.
+
+## Exact next commands
+
+```sh
+cd /Users/jr/Desktop/projects/nomorevibe-pipeline-items
+git status --short
+TEST_DATABASE_URL=postgres://nomorevibe:nomorevibe@localhost:55468/nomorevibe_test npm run test:integration -- tests/integration/item-leases-repository.test.ts tests/integration/item-leases.test.ts
+npx tsc --noEmit
+npm run lint
+# 현재 fullsuite 재실행 session78973; 로그 /tmp/nomorevibe-pr02-root-db-full-recheck-20261015.log
+# 최종 failure stack 확인 후 독립 test의 own ID/jobname 범위를 보완·재검증한다. build/bundle는 PASS다.
+# 정확한 PR02 파일만 stage/commit, 이 feature branch만 push한다. 최신base 필수check 뒤 정상merge.
+```
+
+---
+
 # 2026-10-15 — PR01b-5 병렬 구현·root/교차 리뷰·로컬 필수 검증 완료
 
 ## Current objective / completed
