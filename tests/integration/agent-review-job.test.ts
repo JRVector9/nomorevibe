@@ -6,6 +6,7 @@ import { changeReviewMode, saveSettings, getSettings } from "@/lib/crawl/setting
 import { reviewCrawlCandidates } from "@/lib/crawl/jobs/agent-review";
 import { runJob } from "@/lib/jobs/runner";
 import { ensureSchema, resetTables } from "./setup";
+import { recordSecondReviewFixture } from "./second-review-receipt-fixtures";
 
 /** 외부 CLI만 바꾼다. 규칙·claim·기록·lease는 실제 DB로 돈다 */
 const review = vi.hoisted(() => vi.fn());
@@ -51,7 +52,7 @@ it("passes a configured Grok first approval through the real second-review input
   await source("maker/grok-app", "https://grok.example", { state: "approved", reason: "passed" }, { title: "Grok App", description: "A deployed product" });
   expect(await tick()).toMatchObject({ status: "completed" });
   expect(grok).toHaveBeenCalledOnce();
-  const { enqueueSecondReviews, pendingSecondReviews, recordSecondReview } = await import("@/lib/crawl/second-review");
+  const { enqueueSecondReviews, pendingSecondReviews } = await import("@/lib/crawl/second-review");
   const { loadSecondReviewInput } = await import("@/lib/crawl/second-review-input");
   expect(await enqueueSecondReviews(await getSettings())).toBe(1);
   const [vote] = await pendingSecondReviews(10);
@@ -66,7 +67,7 @@ it("passes a configured Grok first approval through the real second-review input
     .toEqual({ hash: attempt.inputHash, source: attempt.sourceRevisionHash, generation: vote.generationKey });
   expect(await loadSecondReviewInput(vote)).not.toBeNull();
   const { reviewApprovalPredicate } = await import("@/lib/crawl/agent-review-repository");
-  await recordSecondReview(vote.id, { ok: true, provider: "claude-cli", model: "opus", decision: "approve",
+  await recordSecondReviewFixture(vote.id, { ok: true, provider: "claude-cli", model: "opus", decision: "approve",
     confidence: 0.95, reason: "Independent approval", status: "agreed" });
   expect(await db.select({ id: crawlCandidates.id }).from(crawlCandidates).where(reviewApprovalPredicate(await getSettings())))
     .toEqual([{ id: candidate.id }]);

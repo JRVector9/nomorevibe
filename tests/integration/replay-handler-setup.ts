@@ -28,7 +28,7 @@ export async function removeReplayHandlerTestProfile(identityPath: string): Prom
         EXISTS (SELECT 1 FROM pg_catalog.pg_class WHERE relowner = ${identity.roleOid}::oid) AS owned`;
       if (runtime.active || runtime.owned) throw new Error("replay_test_runtime_still_connected");
       for (const table of ["crawl_settings", "crawl_documents", "agent_repository_scans", "agent_repository_observations",
-        "pipeline_stage_modes", "pipeline_item_leases"])
+        "pipeline_stage_modes", "pipeline_item_leases", "products"])
         await tx.unsafe(`DROP TRIGGER IF EXISTS replay_handler_source_immutable ON public.${table}`);
       for (const table of ["public.crawl_candidates", "public.crawl_review_attempts", "public.second_reviews", "public.crawl_frontier",
         "public.jobs", "public.operations_observations", "pipeline_replay.capacity_calls"])

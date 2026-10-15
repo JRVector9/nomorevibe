@@ -10,7 +10,7 @@ import { secondReviewCandidates } from "@/lib/crawl/jobs/second-review";
 
 const mocks = vi.hoisted(() => ({ settings: null as CrawlSettings | null, input: null as ReviewInput | null,
   candidate: null as CrawlCandidate | null, document: null as CrawlDocument | null, row: null as SecondReview | null,
-  recordFirst: vi.fn(), recordSecond: vi.fn(), external: vi.fn(), claim: vi.fn() }));
+  recordFirst: vi.fn(), recordSecond: vi.fn(), external: vi.fn(), claim: vi.fn(), admitSecond: vi.fn() }));
 vi.mock("@/lib/crawl/settings", () => ({ getSettings: async () => mocks.settings }));
 vi.mock("@/lib/crawl/jobs/review-document", () => ({ loadReviewDocument: async () => mocks.document }));
 vi.mock("@/lib/domain/products/repository", () => ({ findRepositoryProduct: async () => null }));
@@ -19,7 +19,7 @@ vi.mock("@/lib/crawl/agent-review-repository", () => ({ requeueStaleReviewSource
   canStartLegacyAgentReview: async () => true,
   handOffExhaustedFirstReviews: async () => 0, listReviewCandidates: async () => [mocks.candidate],
   loadReviewInput: async () => mocks.input, claimAgentReview: mocks.claim, recordAgentReview: mocks.recordFirst }));
-vi.mock("@/lib/crawl/second-review-input", () => ({ loadSecondReviewInput: async () => mocks.input }));
+vi.mock("@/lib/crawl/second-review-ownership", () => ({ canStartLegacySecondReview: async () => true, admitLegacySecondReview: mocks.admitSecond }));
 vi.mock("@/lib/crawl/second-review", () => ({ enqueueSecondReviews: async () => 0, closeSettledSecondReviews: async () => 0,
   reopenOrphanedGateHolds: async () => 0, retryFailedSecondReviews: async () => 0, pendingSecondReviews: async () => [mocks.row],
   combineVerdicts: () => "agreed", recordSecondReview: mocks.recordSecond }));
@@ -45,6 +45,8 @@ beforeEach(() => {
   mocks.claim.mockResolvedValue({ kind: "claimed", attempt: { id: 11, attemptNumber: 1 },
     receipt: { attemptId: 11, origin: "fresh", ownership: { kind: "legacy", stageEpoch: 1, job: context("crawl-agent-review").lease } } });
   mocks.recordFirst.mockResolvedValue({ applied: false, state: "succeeded" });
+  mocks.admitSecond.mockImplementation(async () => ({ kind: "admitted", row: mocks.row, input: mocks.input,
+    receipt: Object.freeze({ admittedVoteId: mocks.row!.id }) }));
   mocks.external.mockRejectedValue(new Error("raw_model_adapter_reached"));
 });
 function harness() {
@@ -89,12 +91,14 @@ it.each(["crawl-agent-review", "second-review"] as const)("rejects changed setti
 it.each(["abcllm", "claude-cli", "grok-cli"] as const)("routes AI2 %s through fixture with actual row and root slot", async provider => {
   mocks.row!.provider = provider;
   const h = harness();
-  mocks.recordSecond.mockImplementation(async () => { h.events.push("writer"); });
+  mocks.recordSecond.mockImplementation(async () => { h.events.push("writer"); return { state: "recorded" }; });
   await withReviewFixtureTransport(h, () => secondReviewCandidates(context("second-review")));
   expect(mocks.external).not.toHaveBeenCalled();
   expect(h.fixture).toHaveBeenCalledTimes(1);
   expect(h.ledger.reserve).toHaveBeenCalledWith(h.run, expect.objectContaining({ stage: "second", candidateId: 1, firstAttemptId: 11,
     secondReviewId: 23, generationKey: "d".repeat(64), vote: 19, provider, model: "second-model" }));
-  expect(mocks.recordSecond).toHaveBeenCalledWith(23, expect.objectContaining({ ok: true, decision: "approve", model: "second-model", provider }), expect.any(Date), expect.anything());
+  expect(mocks.recordSecond).toHaveBeenCalledWith({ receipt: expect.anything(), result: expect.objectContaining({ ok: true, decision: "approve", model: "second-model", provider }) });
+  const admitted = await mocks.admitSecond.mock.results[0].value;
+  expect(mocks.recordSecond.mock.calls[0][0].receipt).toBe(admitted.receipt);
   expect(h.events).toEqual(["settled", "writer"]);
 });

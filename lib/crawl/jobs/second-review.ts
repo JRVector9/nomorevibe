@@ -4,9 +4,9 @@ import { getSettings } from "@/lib/crawl/settings";
 import { reviewWithAgent, REVIEW_CLI_TIMEOUT_MS } from "@/lib/crawl/agent-review";
 import { reviewWithGateway, REVIEW_GATEWAY_TIMEOUT_MS } from "@/lib/crawl/agent-review-gateway";
 import { reviewWithGrokCli, GROK_REVIEW_TIMEOUT_MS } from "@/lib/crawl/agent-review-grok";
-import { closeSettledSecondReviews, combineVerdicts, enqueueSecondReviews, pendingSecondReviews, recordSecondReview, reopenOrphanedGateHolds,
+import { closeSettledSecondReviews, enqueueSecondReviews, pendingSecondReviews, recordSecondReview, reopenOrphanedGateHolds,
   retryFailedSecondReviews } from "@/lib/crawl/second-review";
-import { loadSecondReviewInput } from "@/lib/crawl/second-review-input";
+import { admitLegacySecondReview, canStartLegacySecondReview } from "@/lib/crawl/second-review-ownership";
 import { assertReviewFixtureSettings, dispatchReviewFixtureCall } from "../review-fixture-transport";
 
 /**
@@ -35,23 +35,38 @@ export async function secondReviewCandidates(ctx: JobContext<null>): Promise<Job
     ctx.log("crawl.second_review_skipped", { reason: !settings.enabled ? "disabled" : "second_review_off" });
     return { done: true };
   }
-  const enqueued = await enqueueSecondReviews(settings, undefined, ctx.lease);
-  const closed = await closeSettledSecondReviews(undefined, ctx.lease);
-  const reopened = await reopenOrphanedGateHolds(settings, undefined, ctx.lease);
-  await retryFailedSecondReviews(undefined, ctx.lease);
+  const lease = ctx.lease;
+  if (!lease) throw new Error("Second review requires a valid worker job lease");
+  if (!await canStartLegacySecondReview(lease)) {
+    ctx.log("crawl.second_review_skipped", { reason: "stage_inactive" });
+    return { done: false, deferred: "stage_blocked" };
+  }
+  const enqueued = await enqueueSecondReviews(settings, undefined, lease);
+  const closed = await closeSettledSecondReviews(undefined, lease);
+  const reopened = await reopenOrphanedGateHolds(settings, undefined, lease);
+  await retryFailedSecondReviews(undefined, lease);
   const queue = [...await pendingSecondReviews(FETCH)];
   const remaining = () => TICK_MS - (Date.now() - startedAt);
   let reviewed = 0, failed = 0, deferred = 0;
   const visited = new Set<number>();
-  let stopped = false;
+  let stopped = false, stageBlocked = false;
 
   const settled = await Promise.allSettled(Array.from({ length: CONCURRENT }, async () => {
     try {
-      for (let row = queue.shift(); row; row = queue.shift()) {
-        if (stopped || ctx.signal?.aborted || visited.has(row.id)) continue;
-        // 누가 볼지는 행에 적혀 있다 — 도중에 설정이 바뀌어도 올릴 때 정한 모델이 그 표를 낸다
-        const provider = row.provider ?? "claude-cli";
-        const model = row.model ?? settings.secondReview.voters[0].model;
+      for (let hint = queue.shift(); hint; hint = queue.shift()) {
+        if (stopped || stageBlocked || ctx.signal?.aborted || visited.has(hint.id)) continue;
+        if (!ctx.hasBudget()) { deferred++; continue; }
+        visited.add(hint.id);
+        const admission = await admitLegacySecondReview(hint.id, lease);
+        if (admission.kind === "skipped") {
+          if (admission.reason === "stage_inactive") stageBlocked = true;
+          deferred++;
+          continue;
+        }
+        const { row, input, receipt } = admission;
+        // Dispatch uses the actual admitted row, never nullable queue defaults.
+        const { provider, model } = row;
+        if (!provider || !model) throw new Error("invalid_second_review_reviewer");
         const limit = provider === "abcllm" ? REVIEW_GATEWAY_TIMEOUT_MS : provider === "grok-cli" ? GROK_REVIEW_TIMEOUT_MS : REVIEW_CLI_TIMEOUT_MS;
         /*
          * 남은 시간에 끝낼 수 없는 호출은 시작하지 않는다.
@@ -59,20 +74,13 @@ export async function secondReviewCandidates(ctx: JobContext<null>): Promise<Job
          * 잘린 호출은 timeout 으로 적히고 한 시간 뒤에야 다시 본다 — 그냥 다음 온전한 틱에
          * 온전한 시간으로 부르는 편이 빠르다.
          */
-        if (!ctx.hasBudget() || remaining() < limit + 2_000) { deferred += 1; continue; }
-        visited.add(row.id);
-        const input = await loadSecondReviewInput(row);
-        if (!input) {
-          deferred += 1;
-          await recordSecondReview(row.id, { ok: false, error: "input_changed", model, provider }, new Date(), ctx.lease);
-          continue;
-        }
-        if (stopped || ctx.signal?.aborted || !ctx.hasBudget() || remaining() < limit + 2_000) { deferred++; visited.delete(row.id); continue; }
+        if (!await canStartLegacySecondReview(lease)) stageBlocked = true;
+        if (stopped || stageBlocked || ctx.signal?.aborted || !ctx.hasBudget() || remaining() < limit + 2_000) { deferred++; continue; }
         // 멈추라는 신호를 그대로 넘긴다 — 배포 때 진행 중인 호출이 바로 끊겨야 잠금을 놓고 나갈 수 있다
         const callStartedAt = Date.now();
         const telemetry = { stage: "second" as const, candidateId: row.candidateId, secondReviewId: row.id,
           firstAttemptId: row.firstAttemptId ?? undefined, generationKey: row.generationKey,
-          provider, model, job: ctx.lease?.name, runId: String(ctx.lease?.requestedVersion) };
+          provider, model, job: lease.name, runId: String(lease.requestedVersion) };
         if (row.createdAt) emitPipelineEvent("queue", { ...telemetry, waitMs: Date.now() - row.createdAt.getTime() }, ctx.log);
         const result = await measureReviewCall(telemetry, async () => (await dispatchReviewFixtureCall({ stage: "second",
           candidateId: row.candidateId, firstAttemptId: row.firstAttemptId, secondReviewId: row.id,
@@ -82,21 +90,26 @@ export async function secondReviewCandidates(ctx: JobContext<null>): Promise<Job
           : provider === "grok-cli"
             ? reviewWithGrokCli(input, { model, timeoutMs: limit, signal: ctx.signal })
             : reviewWithAgent(input, { model, timeoutMs: limit, signal: ctx.signal })), ctx.log);
-        if (ctx.signal?.aborted) { deferred++; continue; }
+        if (ctx.signal?.aborted || !result.ok && result.error === "cancelled") {
+          // The awaited transport has returned. Settle only this admitted owner;
+          // cancellation is not a failed vote or permission for early reclaim.
+          await recordSecondReview({ receipt, result: { ok: false, error: "cancelled", model, provider } });
+          deferred++;
+          continue;
+        }
         if (!result.ok) {
-          // 멈추라고 해서 끊긴 것은 실패가 아니다 — 그대로 두면 다음 회차가 처음부터 본다
-          if (result.error === "cancelled" || ctx.signal?.aborted) { deferred += 1; continue; }
+          const written = await recordSecondReview({ receipt,
+            result: { ok: false, error: result.error, detail: result.detail, model, provider } });
+          if (written.state !== "recorded") { deferred++; continue; }
           failed += 1;
           ctx.log("crawl.second_review_failed", { id: row.id, model, error: result.error,
             detail: result.detail ?? null, durationMs: Date.now() - callStartedAt });
-          await recordSecondReview(row.id, { ok: false, error: result.error, detail: result.detail, model, provider }, new Date(), ctx.lease);
           continue;
         }
-        reviewed += 1;
         const second = { decision: result.outcome.decision, confidence: result.outcome.confidence ?? null, provider, model };
-        await recordSecondReview(row.id, { ok: true, ...second, reason: result.outcome.reason,
-          status: combineVerdicts({ decision: row.firstDecision, confidence: row.firstConfidence, model: row.firstModel },
-            second, settings.secondReview.agreeAt, Boolean(row.publishedSlug)) }, new Date(), ctx.lease);
+        const written = await recordSecondReview({ receipt, result: { ok: true, ...second, reason: result.outcome.reason } });
+        if (written.state === "recorded") reviewed++;
+        else deferred++;
       }
     } catch (error) { stopped = true; throw error; }
   }));
@@ -104,6 +117,9 @@ export async function secondReviewCandidates(ctx: JobContext<null>): Promise<Job
   if (failure) throw failure.reason;
 
   ctx.log("crawl.second_reviewed", { enqueued, closed, reopened, reviewed, failed, deferred });
+  // A budget-exhausted lane may not have reached row admission. This is a stage
+  // observation, not a durable barrier between preflight and external dispatch.
+  if (stageBlocked || !await canStartLegacySecondReview(lease)) return { done: false, deferred: "stage_blocked" };
   if (reviewed && !failed && !ctx.signal?.aborted && ctx.hasBudget()) {
     const ready = await pendingSecondReviews(1);
     if (ready.some(row => !visited.has(row.id))) return { done: false, continuation: "ready" };

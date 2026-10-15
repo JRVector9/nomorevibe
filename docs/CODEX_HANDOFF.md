@@ -1,3 +1,148 @@
+# 2026-10-16 — PR04b-1 root 전체 검증 완료, PR 제출 준비
+
+## Current objective / completed work
+
+전체 PR별 병렬 개발 active. root는 gpt-6.1-sol/xhigh A/B/C의 파일·DB 경계를 관리하고 실제 RED·source 직접 리뷰, 교차 리뷰, 전체 검증과 Git 취합을 수행한다. PR04a #440 main7977089의 PR/main CI 및 웹·워커 image 전체 SUCCESS 직접 확인. PR04b-1은 결과 receipt 필수화·실제 legacy handler admission·restricted profile 제품 잠금까지 구현/리뷰/전체 로컬 검증 완료, 아직 이 checkpoint에서 feature commit/push/PR는 없다.
+
+## Modified files / key decisions
+
+WT `/Users/jr/Desktop/projects/nomorevibe-pipeline-ai2-writers`, branch `codex/pipeline-pr04b-ai2-writers-20261016`, HEAD38874a6d. 실행 계약과 실제 검증은 `docs/superpowers/plans/2026-10-16-pipeline-pr04b-ai2-results.md`, `docs/operations/2026-10-16-pipeline-pr04b-ai2-results-validation.md`다. 변경 파일은 두 AI2 source, profile source, business/independent/replay fixture·profile setup, 위 두 신규 문서·delivery/handoff다. 상세 배타 소유·SHA는 아래 직전 checkpoint에 보존한다. enqueue/close/reopen/retry는 이번 PR에서 그대로이며 b-2 대상이다.
+
+필수 원 receipt와 실제 current owner/token/epoch/DB wall time을 검사한다. context 유효이나 policy/product binding만 바뀌면 pending 보존 후 원 owner만 정산해 같은 표 재admission을 허용한다. result/fallback/hold/outbox/recorder/own release는 한 tx다. profile products는 기존 패턴의 id열 UPDATE+immutable statement guard만 추가, 실제 generation FOR UPDATE를 유지한다. old profile은 policyHash 불일치로 그대로 재사용 불가. 기본 legacy/epoch1/contract0·새 consumer 비활성. 마지막 운영 확인8020dca, 이번 단계 ops deploy/DDL/provider/발굴 재개0.
+
+## Test commands and actual results
+
+- root `npm test`: 279파일 **2,922 PASS**, 7.03초, 실제exit0.
+- root `TEST_DATABASE_URL=postgres://nomorevibe:nomorevibe@127.0.0.1:55496/nomorevibe_test PIPELINE_TEST_LOG_PREFIX=/tmp/nomorevibe-pr04b-root-db node /tmp/nomorevibe-pr04b-db-diagnostics-20261016.mjs`: 전체 **176파일 2,024 PASS/기존 TODO1, 404.51초, exit0**. session28876 종료 확인. focused를 먼저 실행한 동일DB96이므로 별도 fresh full 주장0. 로그 `/tmp/nomorevibe-pr04b-root-db-full-20261016.log`.
+- typegen/최종 whole tsc/scoped·전체lint(기존vendor warning1)/i18n/Python23/최종 build/bundle 실제exit0. 최종build `/tmp/nomorevibe-pr04b-root-build-final-20261016.log`, bundle br148.7/159.0/136.2KB. 담당 focused는 A71/B55(독립23)/C20+unit29/profile22, root replay/profile53 PASS로 중복 합산하지 않는다.
+- root DB final readback 자기 후보·문서·표·제품/CDN·item/replay role/schema/guard/functions/타 연결0, 세stage legacy1contract0, PUBLIC USAGE true/CREATE false 및 timeout 기본값 확인. `/tmp/nomorevibe-pr04b-root-db-final-readback-20261016.log`. 다른 whole-suite fixture/append-only audit은 삭제하지 않았다. root96·A93·B94·C95 모두 STOP/exited0 실제 확인. Docker 여유 작음; forensic77/실패81/다른 사용자 자료 보존.
+
+## Failed approaches
+
+실제 receipt-less 우회·stage/foreign handler·profile42501 RED→GREEN은 검증 문서에 보존한다. 첫 replay2FAIL/29PASS는 제품잠금 권한과 model 변조 fixture 원receipt 거절 cleanup 문제였다. same-live-job finally와 최소 profile 보강 뒤53PASS→전체GREEN. 첫 tsc genericunknown/runJob<null>, symlink Turbopack 실패/이WT exact APFS deps복사는 환경·fixture 오류로 구분한다. readback의 열 이름 오기42703/pg_catalog replay함수 넓은 집계는 재조회로 정정했다. gate/timeout/buildflag 완화0.
+
+## Remaining work / exact commands
+
+1. 최종 diff/docs/최신main 확인→feature commit/push/PR→최신base 필수 CI→정상 merge/main CI/image 확인. 이후 이 handoff와 delivery 장부 갱신. 운영 배포는 별도이며 향후 legacy image 시작 전0077 migration 필수.
+2. b-2 읽기 노트 3개가 `/tmp/nomorevibe-pr04b2-{controller-design,independent-test-plan,manual-writer-audit}-20261016.md`에 완료됐다. root가 mode독립/mandatoryworker·liveowner보존·candidate원자단위·좁은domainhelper·unused manual/missingcandidate replay 범위를 고정한 뒤 새WT/DB·단독파일을 배정해야 한다. 노트는 실행·합격 증거가 아니다.
+3. PR04b-2/c–17, provider identity/상한/취소/30분baseline·2배·Oracle DR 미완료. original X branch push 금지.
+
+```sh
+cd /Users/jr/Desktop/projects/nomorevibe-pipeline-ai2-writers
+git status --short
+git diff --check
+gh api repos/JRVector9/nomorevibe/branches/main --jq .commit.sha
+# actual latestmain7977089; feature만 commit/push하고 PR 필수 check 성공 뒤 정상 merge.
+```
+
+---
+
+# 2026-10-16 — PR04a #440 main CI/image 성공 / PR04b-1 전체 DB 실행 중
+
+## Current objective / completed
+
+전체 PR별 병렬 개발 active. root가 gpt-6.1-sol/xhigh 세 담당의 파일·DB·API 경계를 관리하고 직접·교차 리뷰/전체검증/Git 취합한다. 기본 legacy/epoch1/contract0, 새 consumer 비활성. 마지막 직접 확인 운영 릴리스8020dca; 이번 단계 운영 deploy/DDL/provider inference/발굴 재개0.
+
+PR04a #440은 필수 PR CI38778457336 전체 SUCCESS 뒤 2026-10-15T17:41:50Z 정상 squash 병합, **main7977089f9a0cd8bfa42c0e59dc4b53eca82ec01a**. main CI38779482314 quality/통합3shard/check/웹·워커 image 전체 SUCCESS 직접확인. 운영 배포와 구분한다.
+
+## Modified files / decisions
+
+현재 WT `/Users/jr/Desktop/projects/nomorevibe-pipeline-ai2-writers`, branch `codex/pipeline-pr04b-ai2-writers-20261016`, actualmain을내용충돌0으로통합한HEAD38874a6d. 현재 실행계약 `docs/superpowers/plans/2026-10-16-pipeline-pr04b-ai2-results.md`, 실제검증 `docs/operations/2026-10-16-pipeline-pr04b-ai2-results-validation.md`. b-1은 mandatory result receipt+기존 handler, b-2 controller는 byte-identical·후속이다. 후속04c/item lifecycle·B5 item 인증·certified postcallback deferred flush clockgap·durable 외부 종료는 미완료. 2배 처리량/Oracle DR 미판정.
+
+- A 단독: lib/crawl/second-review.ts imports/record section, 기존 second-review/review-handoffs DB tests, NEW second-review-receipt-fixtures helper. source SHA256 **9e3dc5ebcac3e1b819482cf317132f0fd169397d7a30f7150bb0c19a5d6bef42** 동결, controller 전후 byte-identical assert PASS. DB55493. 기존 business2files71PASS(7.05초), 마지막 재검증/cleanup/교차리뷰 진행.
+- B 단독: NEW second-review-item-results +기존 pipeline-capacity/review-publication-gate. DB55494. 최초 actual healthy foreign item 아래 receipt-less oldwriter가 pending→agreed 및 crawl-publish 요청을 저장한 **1RED/control1PASS exit1**을 root 직접 수용했다. `/tmp/nomorevibe-pr04b-results-initial-red-20261016.log`, API/SQL/import오류0. 구현 뒤 focused3files **55PASS(11.04초)**, independent23 포함; 정책-only/product 재등록 stale→실제 재claim/readmit 회복·rollback·취소·만료 검증. 최종 rawbaseline/cleanup/source 리뷰 중.
+- C 단독: jobs/second-review handler, unit2files, NEW independent second-review-item-ownership 및 기존 agent-review-job/shutdown. DB55495. 보존 control1PASS/3RED→GREEN, 추가 budget0/midtick stage block5RED/control1PASS→GREEN. 중간 신규14PASS(2.09초), 기존 포함 초기15PASS, unit29PASS·scopedlint0. 마지막 전체 소유 targets/freeze/readback 진행.
+- root 단독: docs/Git, review-replay-clock 및 pipeline-replay-second-final fixture 적응; lifecycle 변경0. 정상AI2는 actual runJob/admit, duplicate는 authentic replay scope에서 같은 live job의 원 receipt로 realhandler 뒤 재호출, published sample은 ledger prepare 전에 actual product 생성/자기 slug만 정리.
+- A/B/C 최종소유반환·동결: A business71PASS11.08초, B focused55/foreignraw23PASS7.18초, C actual20PASS8.24초/unit29PASS0.666초. 전원whole tsc/scopedlint0, rawµs exact·own잔류/타연결0·기본stage확인뒤STOP. A/C handler/Bwriter 및 rootfixture교차리뷰 추가P1/P2 0.
+- root actual replay42501 때문에 C에게 추가3파일 단독승인: profile products update:[id]+immutable:true 한줄, profile DB회귀, replay-handler-setup guardcleanup. **6RED/control16→최종22PASS2.22초**, matching/0rowUPDATE차단·실제generationlock·guardOID7/manifestdrift·foreignraw제품/CDN exact. sourceprofile SHA4429f8051a8bd2ef6c6e45201f6b1a3009cd795c3499467c234527aa258070a5, test3a70ed2d…56f1b1, setupeca7d721…f635ed. B교차읽기 P1/P2 0. owner/SECDEF/생산generation/input 변경0; 기존profile은policyhash불일치로재사용거절. C95최종11tables/CDN/연결/guard/schema0·STOP확인.
+
+## Test commands / actual results / failures
+
+root55496 `nomorevibe-pr04b-root-db-20261016` pinned pgvector PG17 생성/migration actualexit0. root wholeunit279파일**2922PASS7.03초**, typegen/whole tsc/scopedlint/전체lint(기존vendorwarning1)/i18n/Python23/finalbuild/bundle actualexit0. 최종frozenprofiletest뒤 root tsc/scopedlint session92148도실제exit0. br148.7/159.0/136.2KB 한도이내.
+
+첫 replay3files **2FAIL/29PASS**(원로그보존): actualproduct FORUPDATE권한부재 및 dispatch중모델변조→원receipt거절/cleanupjob상실. same livejob finally에서cleanup을기다리고 exactreceiptinvalid failed를검증해focused1PASS, profile최소보강뒤 root replay/profile4files**53PASS32.93초**(`/tmp/nomorevibe-pr04b-root-replay-profile-green-20261016.log`). genericunknown첫tsc/바깥symlink Turbopack build실패는각각runJob<null>/이WT만동일deps exactlocalcopy로해결, 원로그보존/품질gate완화0.
+
+**root 전체DB session28876 실행 중**, 위focused를실행한동일DB96이다(별도freshfull로주장하지말것). 명령 `TEST_DATABASE_URL=postgres://nomorevibe:nomorevibe@127.0.0.1:55496/nomorevibe_test PIPELINE_TEST_LOG_PREFIX=/tmp/nomorevibe-pr04b-root-db node /tmp/nomorevibe-pr04b-db-diagnostics-20261016.mjs`. 로그 `/tmp/nomorevibe-pr04b-root-db-full-20261016.log`·동명locks-20261016.jsonl. 종료/PASS 아직미확인. 도중의negative job.failed는테스트실패판정이아니며 최종 Vitest와exitcode확인필수.
+
+B 중간21PASS/2FAIL은 fixture threshold .99 vsfirst.94와 의도만료 runJob종료 기대누락이며 품질gate/timeout 완화 없이 수정했다. source/provider 실제외부종료증명을 callback await로 확대하지 않는다. 과거 ENOSPC/실패 로그는 아래 history 유지. Docker free2.3GB/98%; forensic77/실패81/다른사용자 data 보존.
+
+## Remaining work / exact next commands
+
+1. root fullDB28876 결과수용→자체fixture읽기/정리·stage/role/trigger/functions/PUBLICACL/타연결readback→STOP. 코드/전체검증리뷰·문서확정 후 featurecommit/push/PR→최신base필수CI→정상merge/mainCI/image. PR04b 아직featurecommit/push/PR0, 전체DBPASS0.
+2. b2 읽기설계 A `/tmp/nomorevibe-pr04b2-controller-design-20261016.md`137lines SHAc22b074d…050c7d, B `/tmp/nomorevibe-pr04b2-independent-test-plan-20261016.md`. 실제첫RED 후보retryS3/closeDecided terminalhumanCAS, 실행0. C manual/숨은writer 읽기audit중 `/tmp/nomorevibe-pr04b2-manual-writer-audit-20261016.md` 예정. 다음구현 전 root가 mode독립/worker필수lease·livepending무효화·candidate별원자단위·좁은domainhelper·dormantresolve/manual/missingcandidate replay 범위 결정 및 새WT/DB/단독파일배정필요. agent는현재읽기+/tmp노트만, source/DB실행0.
+3. b-2/c 및 PR05–17/provider servingidentity·비용·취소·30분baseline 미완료. 향후 legacy image 시작 전에0077 migration 필수. 원본 X branch push금지.
+
+```sh
+cd /Users/jr/Desktop/projects/nomorevibe-pipeline-ai2-writers
+git status --short
+tail -30 /tmp/nomorevibe-pr04b-root-db-full-20261016.log
+gh run view 38779482314 --json status,conclusion,jobs --jq '{status,conclusion,jobs:[.jobs[]|{name,status,conclusion}]}'
+# 전체DBsession28876 write_stdin으로종료/exit확인. root96만접속;93/94/95정리STOP확인.
+```
+
+---
+
+# 2026-10-16 — PR04a #440 CI 중 / PR04b-1 세 담당 병렬 착수
+
+## Current objective
+
+전체 PR별 병렬 개발 active. root가 전원 gpt-6.1-sol/xhigh A/B/C의 배타적 파일·DB·API·실제 RED 수용·직접/교차 리뷰·Git/문서를 관리한다. 기본 legacy/epoch1/계약0·새 consumer 비활성. 운영 릴리스 마지막 직접확인8020dca, 이번 단계 운영 deploy/DDL/provider inference/발굴 재개0. 향후 legacy image 전0077 migration 선적용 필요.
+
+## Completed work / actual tests
+
+- PR03d #439 main643bd3c의 PR CI38774067586·main CI38775007005 웹/워커 image까지 SUCCESS 직접확인, 운영 적용0.
+- PR04a WT `/Users/jr/Desktop/projects/nomorevibe-pipeline-ai2-authority` branch codex/pipeline-pr04-ai2-20261016, 고정 commit **ceb2e6a3594f9c06ed2917202d7f8a05464cf2e0**. 13파일1632+/28-, root 직접/B·C 교차 리뷰 미해결P1/P2 0. 실제 main643bd3c 통합 후 feature만 push, **PR #440 https://github.com/JRVector9/nomorevibe/pull/440**, PR CI **38778457336 진행 중**. 마지막 확인 quality/통합1·2/scope/GitGuardian SUCCESS, 통합3/check 미완료. 아직 병합/image0.
+- PR04a root 최종 unit279파일**2915PASS(10.20초)**; fresh55492 fullDB174파일**1982PASS/기존TODO1(398.46초)** session42015 실제exit0. typegen/whole tsc/전체lint(기존vendor warning1)/i18n/Python23/build/bundle exit0, 고정 최종 tsc/scopedlint0/경고0. 최초unit1FAIL/2914PASS는 기존 reference fixture의 first.candidateId/vote.inputHash 누락, 두 필드만 보완해15PASS→전체GREEN. assertion/clock/품질gate 완화0.
+- A claim33PASS(13.37초)/relatedpure64, B pure46/실제 published same-slug 세대2PASS. source↔generation·nondeferred recorder wait 후 만료 각각 actual1RED→GREEN. 상세 정본 docs/operations/2026-10-16-pipeline-pr04a-ai2-authority-validation.md.
+- root92 finalreadback item/replay schema·role/own fixture·jobs/settings/trigger/functions/타 연결0·stage3 legacy1contract0/PUBLIC ACL/timeout 원복→STOP actualexited0. A90/B91/C89도 각 raw µs 원복·잔류0/STOP 완료. Docker VM 공간을 위해 **이 네 개 자기 완료·STOP container+volume만 rm-v**, free2.5G. 기록 `/tmp/nomorevibe-owned-test-db-storage-cleanup-20261016.log`. forensic77/실패81/타 user data 보존, broad prune0.
+
+## Modified files / PR04b-1 current ownership
+
+새 WT `/Users/jr/Desktop/projects/nomorevibe-pipeline-ai2-writers`, branch **codex/pipeline-pr04b-ai2-writers-20261016**, HEADceb2e6a. node_modules는 부모 authority WT dependency symlink. **docs/superpowers/plans/2026-10-16-pipeline-pr04b-ai2-results.md 전체가 현재 실행 계약**이다. 아직 새 소스 합격/commit/push0.
+
+- A: lib/crawl/second-review.ts의 recordSecondReview 및 직접 import/privatehelper만, integration second-review.test.ts/review-handoffs.test.ts, 승인 추가 NEW second-review-receipt-fixtures.ts 단독. loopback55493 / nomorevibe-pr04b-writer-db-20261016. **B actual old writer 우회 RED를 root 수용하기 전 source 편집대기**. 실제 정상 testdriver helper 설계/fixture 준비 가능.
+- B: NEW integration second-review-item-results.test.ts + 기존 pipeline-capacity.test.ts/review-publication-gate.test.ts. loopback55494 / nomorevibe-pr04b-results-db-20261016. 첫 실제 foreign healthy ai2 claim 아래 old no-receipt result 저장 우회 RED/control 확보 중. old shape는 negative Reflect.apply만, API/import/SQL 오류 RED불인정.
+- C: lib/crawl/jobs/second-review.ts, unit second-review-job/review-fixture-handler-dispatch, 보존본복원 integration second-review-item-ownership.test.ts, 기존 agent-review-job/필요 second-review-shutdown. loopback55495 / nomorevibe-pr04b-handler-db-20261016. 보존SHA a5dadc044c913c30ccf7d869c48700f73869a157730c51e4a0a44225e0d208c8 동일복원 뒤 **actual control1PASS/3RED(1.42초)** 재확인, `/tmp/nomorevibe-pr04b-handler-initial-red-20261016.log`, raw hook PASS/importSQL환경 오류0. 승인된 handler 연결 진행.
+- root: docs/Git/공통 API·직접리뷰; integration review-replay-clock.test.ts/pipeline-replay-second-final.test.ts/pipeline-replay-lifecycle.test.ts 적응. 필요 root loopback55496 예약, 미생성. source/framework/profile/권한 확대0.
+
+A 공통 fixture exports 확정: withLegacySecondReviewJob<T>(load:(lease:JobLease)=>Promise<T>):Promise<T>; admitSecondReviewFixture(id:number,lease:JobLease):Promise<SecondReviewReceipt>; recordSecondReviewFixture(id,result:SecondReviewResult,now?:Date):Promise<SecondReviewWriteResult>. actual runJob/admit만 사용, 정상 synthetic receipt/직접token INSERT/reset0. stale/duplicate는 samecallback에서 admission 뒤 실제변경과 원 receipt 전달. helper 편집은A만.
+
+## Key design decisions
+
+PR04b를 **b-1 결과/handler 원자 API 전환**, **b-2 enqueue/close/reopen/retry current revalidation·S3·worker proof**로 나눈다. 같은 second-review.ts는 한 담당자만 편집한다. b-1만으로 전체 AI2 fencing 완료/consumer 활성화를 보고하지 않는다. PR04c item lifecycle, B5 item 인증·certified callback 뒤 deferred flush finalwall·durable 외부 종료는 별도 미완료다.
+
+mandatory recordSecondReview({receipt,result,now?}) 하나, id-only/optional job fallback0. target은 binding.secondReviewId. 반환 state recorded/input_changed(reason=context_invalid|binding_changed)/not_pending/cancelled. 기존 caller status는 무시되는 optional data로 남기며 actual combineVerdicts/fullgate는 현재 lockedsettings로 결정. 원 row/receipt/reviewer/actualowner proof 위조·상실·만료는 throw 전체rollback.
+
+ctx 유효이나 composite/productId만 바뀌면 결과/failure/fallback/outbox0·pending유지·ownitem정산만. actual UNIQUE(candidate,input,model,generation)와 status무관count 때문에 superseded하면 재검수 영구차단 가능, 새 actualclaim/samejobreadmit 회복 실제검증 필요. ctx=null은 원pending만CASsuperseded, terminal/human/candidate overwrite0. terminal은 valid원owner만정산/not_pending, 이미 release된 item duplicate는 lease_lost 거절·foreign불변. 취소도 actual awaited caller정산뒤 failure/outbox0 원owner정산.
+
+S3→replaymutex→published lifecycle/product→candidate/document/settings/evidence/first→root/votes→chain/item→DML→jobs/outbox→recorder→finalwall/release. legacy는 request 전에 actual second-review job UPDATE/DBwall로 SHARE→UPDATE 교착방지, recorder 뒤 같은job finalwall. item은 recorder(no-op)/outbox뒤 ownrelease1회. 외부대기TX0. B5 item은 mutation전 explicitunsupported, certified postcallbackflush clock gap은 이번 callback검사로닫혔다고주장0.
+
+handler preflight는 controller/budget보다 먼저, perhint actualadmit row/input/receipt, queuednullabledefault 권한0. initialbudget0/midtick stage block은 deferred/요청보존, foreignrunning은개별skip/정상emptyACK, 기존4lanes/24/108s/timeouts/provider/fixture/visited/allSettled유지. 새consumer연결0.
+
+## Failed approaches / remaining work
+
+PR04a pure/context RED·publishedfixture schema실패·rootreference누락·과거ENOSPC는 아래checkpoint/validation에 보존, 숨기지않는다. PR04b 현재 실제 source/행동 GREEN이나 전체PASS0. transient API적응 type오류는 행동RED로세지않는다.
+
+1. #440 CI actualcheck/최신base head확인→정상merge→mainCI/image. parent변경생기면04b에순차통합.
+2. B 최초actualwriterRED/root수용→A source해제, C preserved3RED→handlerGREEN, A/B/C 소유기존fixtures actualrunJob/admit적응. 각자 rawµs exact·self잔류0/연결0/STOP/최종freeze보고. root 직접/교차리뷰·전체unit/DB/static/build/최신main필수CI로취합.
+3. rootclockfixture의 second-review handmade job은actualrunJob으로전환(기존AI1 clockscope는불필요확장0). replay duplicate는종료job에서fakeproof발급대신 authentic scope+actual samejob wrapper 안에서admit→realhandler→원receipt duplicate 검증. published sample fixture에는 ledgerinitialfreeze 전에actualproduct행 필요. legacy cleanupcontroller호출은b-2로현재변경0.
+4. b-2/c 및PR05–17, provider servingidentity/전체비용·취소/30분baseline 미완료. 2배처리량·OracleDR 미판정. original X branch push금지.
+
+## Exact next commands
+
+```sh
+cd /Users/jr/Desktop/projects/nomorevibe-pipeline-ai2-authority
+gh run view 38778457336 --json status,conclusion,jobs --jq '{status,conclusion,jobs:[.jobs[]|{name,status,conclusion}]}'
+gh pr view 440 --json headRefOid,baseRefOid,state,mergeable,statusCheckRollup
+cd /Users/jr/Desktop/projects/nomorevibe-pipeline-ai2-writers
+git status --short
+cat docs/superpowers/plans/2026-10-16-pipeline-pr04b-ai2-results.md
+# B first actualRED報告→rootログ/コードreview→A source開始signal。source版切替中のtsc失敗を隠さない。
+# root96はまだ未作成。各担当DBは93/94/95だけ、他DB接続0。
+```
+
+---
+
 # 2026-10-16 — PR439 main CI/image 완료 / PR04a 전체 로컬 검증·리뷰 완료
 
 ## Current objective

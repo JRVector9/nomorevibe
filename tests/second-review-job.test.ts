@@ -4,12 +4,12 @@ import { DEFAULT_CRAWL_SETTINGS, type CrawlSettings } from "@/lib/crawl/settings
 
 const mocks = vi.hoisted(() => ({
   settings: null as CrawlSettings | null, enqueue: vi.fn(), close: vi.fn(), reopen: vi.fn(async () => 0), retry: vi.fn(), pending: vi.fn(), record: vi.fn(),
-  candidate: vi.fn(), document: vi.fn(), input: vi.fn(), review: vi.fn(), gateway: vi.fn(), grok: vi.fn(),
+  candidate: vi.fn(), document: vi.fn(), input: vi.fn(), admit: vi.fn(), canStart: vi.fn(), review: vi.fn(), gateway: vi.fn(), grok: vi.fn(),
 }));
 vi.mock("@/lib/crawl/settings", () => ({ getSettings: async () => mocks.settings }));
 vi.mock("@/lib/db", () => ({ db: { select: () => ({ from: () => ({ where: () => ({ limit: mocks.candidate }) }) }) } }));
 vi.mock("@/lib/crawl/jobs/review-document", () => ({ loadReviewDocument: mocks.document }));
-vi.mock("@/lib/crawl/second-review-input", () => ({ loadSecondReviewInput: mocks.input }));
+vi.mock("@/lib/crawl/second-review-ownership", () => ({ admitLegacySecondReview: mocks.admit, canStartLegacySecondReview: mocks.canStart }));
 vi.mock("@/lib/crawl/agent-review", () => ({ reviewWithAgent: mocks.review, REVIEW_CLI_TIMEOUT_MS: 20_000 }));
 vi.mock("@/lib/crawl/agent-review-gateway", () => ({ reviewWithGateway: mocks.gateway, REVIEW_GATEWAY_TIMEOUT_MS: 30_000 }));
 vi.mock("@/lib/crawl/agent-review-grok", () => ({ reviewWithGrokCli: mocks.grok, GROK_REVIEW_TIMEOUT_MS: 90_000 }));
@@ -32,6 +32,16 @@ beforeEach(() => {
   mocks.candidate.mockResolvedValue([{ id: 1, repo: "acme/demo" }]);
   mocks.document.mockResolvedValue({ repo: "acme/demo" });
   mocks.input.mockResolvedValue({ snapshot: {} });
+  mocks.canStart.mockResolvedValue(true);
+  mocks.record.mockResolvedValue({ state: "recorded" });
+  // Unit orchestration only: DB authority is exercised by the unmocked integration suite.
+  mocks.admit.mockImplementation(async (id: number) => {
+    const input = await mocks.input();
+    if (!input) return { kind: "skipped", reason: "input_changed" };
+    const queued = await mocks.pending(24);
+    return { kind: "admitted", row: queued.find((value: { id: number }) => value.id === id), input,
+      receipt: Object.freeze({ admittedVoteId: id }) };
+  });
   mocks.review.mockResolvedValue({ ok: true, outcome: { decision: "reject", reason: "문서 사이트", evidenceIds: ["product"], confidence: 0.95 } });
   mocks.gateway.mockResolvedValue({ ok: true, outcome: { decision: "reject", reason: "문서 사이트", evidenceIds: ["product"], confidence: 0.95 } });
 });
@@ -46,32 +56,33 @@ it("꺼져 있으면 아무것도 올리지도 부르지도 않는다", async ()
 it("1차와 다른 모델로 보고, 두 판단이 같고 확신이 높으면 일치로 적는다", async () => {
   await secondReviewCandidates(context());
   expect(mocks.review).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ model: "opus" }));
-  expect(mocks.record).toHaveBeenCalledWith(7, expect.objectContaining({ ok: true, decision: "reject", confidence: 0.95, status: "agreed", model: "opus" }), expect.any(Date), context().lease);
+  expect(mocks.record).toHaveBeenCalledWith({ receipt: expect.anything(), result: expect.objectContaining({ ok: true, decision: "reject", confidence: 0.95, model: "opus" }) });
 });
 
-it("엇갈리면 사람에게 넘긴다", async () => {
+it("엇갈린 모델 판단도 그대로 writer에게 전달한다", async () => {
   mocks.review.mockResolvedValue({ ok: true, outcome: { decision: "approve", reason: "쓸 수 있는 앱", evidenceIds: ["product"], confidence: 0.9 } });
   await secondReviewCandidates(context());
-  expect(mocks.record).toHaveBeenCalledWith(7, expect.objectContaining({ status: "needs_human" }), expect.any(Date), context().lease);
+  expect(mocks.record).toHaveBeenCalledWith({ receipt: expect.anything(), result: expect.objectContaining({ ok: true, decision: "approve" }) });
 });
 
-it("공개된 제품을 2차가 제품이 아니라고 보면 사람에게 — 내리지는 않는다", async () => {
+it("공개된 제품의 거절을 writer에게 전달하고 handler가 status를 정하지 않는다", async () => {
   mocks.pending.mockResolvedValue([row({ publishedSlug: "demo", firstDecision: "approve", firstConfidence: null })]);
   await secondReviewCandidates(context());
-  expect(mocks.record).toHaveBeenCalledWith(7, expect.objectContaining({ status: "needs_human" }), expect.any(Date), context().lease);
+  expect(mocks.record).toHaveBeenCalledWith({ receipt: expect.anything(), result: expect.objectContaining({ ok: true, decision: "reject" }) });
+  expect(mocks.record.mock.calls[0][0].result).not.toHaveProperty("status");
 });
 
 it("호출이 실패하면 판단을 지어내지 않고 실패로 적는다", async () => {
   mocks.review.mockResolvedValue({ ok: false, error: "rate_limited" });
   await secondReviewCandidates(context());
-  expect(mocks.record).toHaveBeenCalledWith(7, { ok: false, error: "rate_limited", model: "opus", provider: "claude-cli" }, expect.any(Date), context().lease);
+  expect(mocks.record).toHaveBeenCalledWith({ receipt: expect.anything(), result: { ok: false, error: "rate_limited", detail: undefined, model: "opus", provider: "claude-cli" } });
 });
 
 it("원본이 없으면 모델을 부르지 않는다", async () => {
   mocks.input.mockResolvedValue(null);
   await secondReviewCandidates(context());
   expect(mocks.review).not.toHaveBeenCalled();
-  expect(mocks.record).toHaveBeenCalledWith(7, { ok: false, error: "input_changed", model: "opus", provider: "claude-cli" }, expect.any(Date), context().lease);
+  expect(mocks.record).not.toHaveBeenCalled();
 });
 
 it("한 틱에 일감을 넉넉히 집어 끝나는 대로 이어 본다", async () => {
@@ -102,7 +113,7 @@ it("사내 게이트웨이로 설정하면 CLI 대신 그쪽으로 묻고, 누�
   // 게이트웨이는 꼬리가 길어 CLI(20초)보다 넉넉히 준다
   expect(mocks.gateway).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ model: "[MLX] gemma4-26b", timeoutMs: expect.any(Number) }));
   expect(mocks.gateway.mock.calls[0][1].timeoutMs).toBeGreaterThan(20_000);
-  expect(mocks.record).toHaveBeenCalledWith(7, expect.objectContaining({ provider: "abcllm", model: "[MLX] gemma4-26b", status: "agreed" }), expect.any(Date), context().lease);
+  expect(mocks.record).toHaveBeenCalledWith({ receipt: expect.anything(), result: expect.objectContaining({ provider: "abcllm", model: "[MLX] gemma4-26b" }) });
 });
 
 it("게이트웨이에 모델이 없으면 판단을 지어내지 않고 그 까닭으로 적는다", async () => {
@@ -111,7 +122,7 @@ it("게이트웨이에 모델이 없으면 판단을 지어내지 않고 그 까
   mocks.gateway.mockResolvedValue({ ok: false, error: "model_unavailable" });
   await secondReviewCandidates(context());
 
-  expect(mocks.record).toHaveBeenCalledWith(7, { ok: false, error: "model_unavailable", model: "[MLX] 사라진모델", provider: "abcllm" }, expect.any(Date), context().lease);
+  expect(mocks.record).toHaveBeenCalledWith({ receipt: expect.anything(), result: { ok: false, error: "model_unavailable", detail: undefined, model: "[MLX] 사라진모델", provider: "abcllm" } });
 });
 
 it("이미 중지된 워커는 모델을 새로 부르거나 실패로 기록하지 않는다", async () => {
@@ -143,11 +154,11 @@ it('모델 호출은 동시에 네 개까지만 진행한다', async () => {
   expect(mocks.record).toHaveBeenCalledTimes(12);
 });
 
-it("does not save a successful response arriving after shutdown", async () => {
+it("settles a successful response arriving after shutdown as cancelled", async () => {
   const stopping = new AbortController();
   mocks.review.mockImplementation(async () => { stopping.abort(); return { ok: true, outcome: { decision: "approve", confidence: .95 } }; });
   await secondReviewCandidates({ ...context(), signal: stopping.signal });
-  expect(mocks.record).not.toHaveBeenCalled();
+  expect(mocks.record).toHaveBeenCalledWith({ receipt: expect.anything(), result: { ok: false, error: "cancelled", model: "opus", provider: "claude-cli" } });
 });
 
 it("grok-cli 표는 Grok CLI 로 보고 그 제한 시간을 준다", async () => {
@@ -159,5 +170,48 @@ it("grok-cli 표는 Grok CLI 로 보고 그 제한 시간을 준다", async () =
   expect(mocks.grok).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ model: "grok-4.7", timeoutMs: 90_000 }));
   expect(mocks.review).not.toHaveBeenCalled();
   expect(mocks.gateway).not.toHaveBeenCalled();
-  expect(mocks.record).toHaveBeenCalledWith(7, expect.objectContaining({ ok: true, provider: "grok-cli", model: "grok-4.7", status: "agreed" }), expect.any(Date), context().lease);
+  expect(mocks.record).toHaveBeenCalledWith({ receipt: expect.anything(), result: expect.objectContaining({ ok: true, provider: "grok-cli", model: "grok-4.7" }) });
+});
+
+it("requires a real worker job lease before controller work", async () => {
+  await expect(secondReviewCandidates({ ...context(), lease: undefined })).rejects.toThrow("valid worker job lease");
+  expect(mocks.enqueue).not.toHaveBeenCalled();
+  expect(mocks.admit).not.toHaveBeenCalled();
+  expect(mocks.review).not.toHaveBeenCalled();
+});
+
+it("returns stage_blocked before controllers even with no remaining budget", async () => {
+  mocks.canStart.mockResolvedValue(false);
+  expect(await secondReviewCandidates({ ...context(), hasBudget: () => false }))
+    .toEqual({ done: false, deferred: "stage_blocked" });
+  expect(mocks.enqueue).not.toHaveBeenCalled();
+  expect(mocks.admit).not.toHaveBeenCalled();
+  expect(mocks.review).not.toHaveBeenCalled();
+});
+
+it("dispatches the admitted row and input and passes the same receipt unchanged", async () => {
+  const actualInput = { snapshot: { marker: "actual input" } }, receipt = Object.freeze({ admittedVoteId: 7 });
+  mocks.admit.mockResolvedValue({ kind: "admitted", row: row({ provider: "abcllm", model: "actual-model" }),
+    input: actualInput, receipt });
+  await secondReviewCandidates(context());
+  expect(mocks.gateway).toHaveBeenCalledWith(actualInput, expect.objectContaining({ model: "actual-model" }));
+  expect(mocks.review).not.toHaveBeenCalled();
+  expect(mocks.record).toHaveBeenCalledWith({ receipt, result: expect.objectContaining({ model: "actual-model", provider: "abcllm" }) });
+  expect(mocks.record.mock.calls[0][0].receipt).toBe(receipt);
+});
+
+it("keeps healthy foreign ownership a row skip rather than a stage block", async () => {
+  mocks.admit.mockResolvedValue({ kind: "skipped", reason: "running" });
+  expect(await secondReviewCandidates(context())).toEqual({ done: true });
+  expect(mocks.review).not.toHaveBeenCalled();
+  expect(mocks.record).not.toHaveBeenCalled();
+});
+
+it.each(["input_changed", "not_pending", "cancelled"])("does not count writer %s as an applied model result", async state => {
+  mocks.record.mockResolvedValue({ state, reason: "binding_changed" });
+  const ctx = context();
+  expect(await secondReviewCandidates(ctx)).toEqual({ done: true });
+  expect(mocks.review).toHaveBeenCalledTimes(1);
+  expect(mocks.record).toHaveBeenCalledTimes(1);
+  expect(ctx.log).toHaveBeenCalledWith("crawl.second_reviewed", expect.objectContaining({ reviewed: 0, failed: 0, deferred: 1 }));
 });
