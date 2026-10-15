@@ -14,21 +14,25 @@ PR 번호·의존성은 유지하며, 아래 PR01 소단위는 원래 PR01 안�
 | **PR01b-2** 명시 verified Drizzle DB scope·좁은 handler table profile | 완료 | [#431](https://github.com/JRVector9/nomorevibe/pull/431), `9601e3b` | 미적용 | unit2,679·DB1,675 PASS/기존 TODO1. main CI [38716366046](https://github.com/JRVector9/nomorevibe/actions/runs/38716366046) 전체 성공. 기존 AI1 repository/writer/outbox와 실제 rollback 확인 |
 | **PR01b-3** 실제 AI1/AI2 fixture handler runner | 구현·전체 검증·리뷰 완료 | [#432](https://github.com/JRVector9/nomorevibe/pull/432), `664777d`; PR·main 전체 CI 성공 | 미적용 | unit2,762·전체 DB1,689 PASS/기존 TODO1(새 실제 handler8개 포함), 타입/lint/빌드/bundle 통과. 두 검수 job만 실행·실제 모델 차단·AI2 gate/실패/보류/폴백·held outbox 확인. PR CI [38719944888](https://github.com/JRVector9/nomorevibe/actions/runs/38719944888)·main CI [38720568825](https://github.com/JRVector9/nomorevibe/actions/runs/38720568825) 전체 성공(image 포함) |
 | **PR01b-4** 실제 writer 원자 final | **구현·로컬 검증·root/교차 리뷰 완료** | [#433](https://github.com/JRVector9/nomorevibe/pull/433), `4af0589`; PR·main 전체 CI 성공(image 포함) | 미적용 | unit2,781·최종 PR CI DB1,717 PASS/기존TODO1; 관련 DB68 및 AI2/기존79 PASS. 실제 원자 rollback·다중 slot·fallback·cleanup 잠금·tokenless 공개분·외부 후보 잠금 회귀 통과 |
-| **PR01b-5** 준비 coverage·writer fence·인증 artifact | **병렬 구현·root/교차 리뷰·로컬 필수 검증 완료** | PR 제출 준비 | 미적용 | unit2,843·전체 DB1,745 PASS/기존 TODO1, 타입/lint/i18n/Python23/build/bundle PASS. 실제 두 단계·CLI·15초 heartbeat·양방향 fence·초기 actual binding 검증. [실제 검증 기록](../../operations/2026-10-15-pipeline-pr01b-coverage-validation.md) |
-| **원래 PR01 전체** 측정 기준·격리 replay | **부분 완료** | 위 기반만 병합 | replay/새 consumer 비활성 | 실제 handler fixture는 이번 PR에서 검증; 최종 원자 기록은 b4 PR433 병합·최종 PR CI 통과; 준비 coverage·artifact/seal은 b5 로컬 검증 완료/PR 준비, provider 상한·실모델 baseline 미완료. **2배 성능 미판정** |
-| **PR02–17** | 미착수 | 미병합 | 비활성 | 아래는 예정된 검증이며 PASS 기록이 아님 |
+| **PR01b-5** 준비 coverage·writer fence·인증 artifact | **구현·root/교차 리뷰・로컬 필수 검증 완료** | [#434](https://github.com/JRVector9/nomorevibe/pull/434), `d95c6c8`; PR·main 전체 CI 성공(image 포함) | 미적용 | unit2,843·전체 DB1,745 PASS/기존 TODO1, 타입/lint/i18n/Python23/build/bundle PASS. 실제 두 단계·CLI·15초 heartbeat·양방향 fence·초기 actual binding 검증. [실제 검증 기록](../../operations/2026-10-15-pipeline-pr01b-coverage-validation.md) |
+| **원래 PR01 전체** 측정 기준·격리 replay | **부분 완료** | 위 기반만 병합 | replay/새 consumer 비활성 | 실제 handler·원자 final·준비 coverage·artifact/seal 기반까지 병합. provider 상한·실모델 baseline 미완료. **2배 성능 미판정** |
+| **PR02** item lease·stage mode 비활성 기반 | **구현·root/교차 리뷰·전체 로컬 검증 완료** | 미병합 | legacy/계약0 유지 | [상세 계획](2026-10-15-pipeline-pr02-item-leases.md)·[실제 진행 장부](../../operations/2026-10-15-pipeline-pr02-item-leases-validation.md). 새 DB33·unit2,849·전체DB1,778 PASS/기존TODO1·tsc/lint/build/bundle PASS. 최신 base PR CI·병합 진행 중 |
+| **PR03a** fetch writer 결합 | 파일별 병렬 구현 착수 | 미병합 | 새 consumer 비활성 | 별도 writers worktree에서 source·관리자 근거 완료·독립 DB 회귀 담당을 분리. 아직 통합 검증 PASS 기록 없음 |
+| **PR03b–17** | 미착수 | 미병합 | 비활성 | 아래는 예정된 검증이며 PASS 기록이 아님 |
 
 PR433은 `2026-10-15T12:16:32Z` main4af0589로 병합했다. [PR CI38732534554](https://github.com/JRVector9/nomorevibe/actions/runs/38732534554)는 quality·통합3shard·check 모두 SUCCESS다. [main CI38733408567](https://github.com/JRVector9/nomorevibe/actions/runs/38733408567)는 quality·통합3shard·check·웹/워커 image 전체 SUCCESS다.
 
+PR434는 `2026-10-15T13:38:53Z` main `d95c6c8`로 병합했다. 최신 base `4af0589`·head `40d807d`의 [PR CI38743497505](https://github.com/JRVector9/nomorevibe/actions/runs/38743497505)는 quality·통합3shard·check 모두 SUCCESS다. [main CI38744485690](https://github.com/JRVector9/nomorevibe/actions/runs/38744485690)는 quality·통합3shard·check·웹/워커 image 전체 SUCCESS를 직접 확인했다.
+
 PR430은 `2026-10-15T09:04:44Z`, PR431은 `2026-10-15T09:54:08Z` 병합됐다. 두 main CI는 image 작업까지 전체 성공을 직접 확인했다.
 image 생성 성공은 운영 적용 증거가 아니다. 마지막 확인된 운영 릴리스는 **`8020dca`**이며
-PR429–433를 위한 운영 migration·provider 설정 변경·공개 발행·수동 배포는 수행하지 않았다.
+PR429–434를 위한 운영 migration·provider 설정 변경·공개 발행·수동 배포는 수행하지 않았다.
 실제 검수 모델·품질 gate·신규 GitHub/Show HN 발굴 중단·사람 판단·검색어 `api-stop`을 유지한다.
 
 ## PR01의 다음 검토 단위
 
 기존 [handler 상세 계획](2026-10-15-pipeline-pr01b-handlers.md)을 다음처럼 나눠 진행한다.
-[b5 coverage/fence/artifact 상세 계획](2026-10-15-pipeline-pr01b-coverage.md)에 세 담당 사전 읽기 결과를 취합했다. b5는 세 담당 병렬 구현 후 root 통합·직접/교차 리뷰와 전체 로컬 검증을 완료했다. PR 제출·최신 base CI/병합 확인은 남아 있다.
+[b5 coverage/fence/artifact 상세 계획](2026-10-15-pipeline-pr01b-coverage.md)에 세 담당 사전 읽기 결과를 취합했다. b5는 세 담당 병렬 구현 후 root 통합·직접/교차 리뷰와 전체 로컬 검증을 완료하고 최신 base 필수 CI를 거쳐 PR434로 병합했다. 실제 provider baseline은 b6로 남아 있다.
 각 행은 회귀와 검토를 마치면 독립 PR로 제출할 수 있다. 작은 기반 PR의 병합을 PR01 전체 완료로 올리지 않는다.
 
 | 단위 | 납품 결과 | 반드시 확인할 경계 | 복구 / 아직 포함하지 않는 범위 |
@@ -52,7 +56,7 @@ PR01 합격 전 새 consumer를 활성화하지 않는다. Oracle/최종 DR 준�
 
 ## PR00–17 납품·의존성·검증 경계
 
-PR00의 실행 결과와 PR01의 부분 완료는 위 표를 따른다. **PR02–17의 아래 검증은 모두 예정**이다.
+PR00의 실행 결과와 PR01의 부분 완료는 위 표를 따른다. **아래 표는 납품 기준이며 실제 완료 상태는 위 표를 따른다.**
 각 코드 PR은 최신 main에서 상세 회귀→구현→CI/검토→병합을 마친 뒤 필요한 migration·canary를 별도 기록한다.
 
 | PR | 선행 | 납품 결과 | 핵심 검증 / 복구 경계 |
