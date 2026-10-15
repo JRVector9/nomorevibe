@@ -5,12 +5,15 @@ import { crawlCandidates, crawlDocuments, crawlFrontier, crawlReviewAttempts, cr
 import * as crawl from '@/lib/crawl/repository';
 import { getSettings, saveSettings } from '@/lib/crawl/settings';
 import { loadReviewInput } from '@/lib/crawl/agent-review-repository';
-import { closeSettledSecondReviews, enqueueSecondReviews, pendingSecondReviews, publishedInputHash, publishedSecondReviews, recentSecondReviewFailures,
-  recordSecondReview, reopenOrphanedGateHolds, resolveSecondReviews, retryFailedSecondReviews, secondReviewSummary, secondReviewsFor, TRANSIENT_RETRY_MS } from '@/lib/crawl/second-review';
+import { closeSettledSecondReviews as closeSettledSecondReviewsWithLease, enqueueSecondReviews as enqueueSecondReviewsWithLease, pendingSecondReviews, publishedInputHash, publishedSecondReviews, recentSecondReviewFailures,
+  recordSecondReview, retryFailedSecondReviews as retryFailedSecondReviewsWithLease, secondReviewSummary, secondReviewsFor, TRANSIENT_RETRY_MS } from '@/lib/crawl/second-review';
 import { REVIEW_PROMPT_VERSION, REVIEW_RULES_VERSION } from '@/lib/crawl/agent-review-contract';
 import { ensureSchema } from './setup';
 import { randomUUID } from 'node:crypto';
-import { withLegacySecondReviewJob, admitSecondReviewFixture, recordSecondReviewFixture } from './second-review-receipt-fixtures';
+import { withLegacySecondReviewJob, admitSecondReviewFixture, recordSecondReviewFixture, enqueueSecondReviewsFixture as enqueueSecondReviews,
+  closeSettledSecondReviewsFixture as closeSettledSecondReviews, reopenOrphanedGateHoldsFixture as reopenOrphanedGateHolds,
+  retryFailedSecondReviewsFixture as retryFailedSecondReviews } from './second-review-receipt-fixtures';
+import { decidePublishedSecondReview } from '@/lib/crawl/published-second-review';
 
 const productSlug = (name: string) => `pr04b-second-${name}`;
 async function cleanFixtureProducts() {
@@ -152,9 +155,11 @@ it('does not reopen failed votes after the reviewer job token is revoked', async
   await enqueueSecondReviews(await getSettings());
   await db.update(secondReviews).set({ status: 'failed', reviewedAt: new Date('2026-01-01'),
     errorCode: 'timeout', failureCount: 1 });
-  const lease = { name: 'second-review', token: 'old-reviewer', requestedVersion: 1 };
-  await db.insert(jobs).values({ name: lease.name, lockedAt: sql`now()`, requestedVersion: 1 });
-  await expect(retryFailedSecondReviews(new Date(), lease)).rejects.toThrow('job_lease_lost');
+  await withLegacySecondReviewJob(async lease => {
+    await db.update(jobs).set({ leaseToken: randomUUID() }).where(eq(jobs.name, lease.name));
+    try { await expect(retryFailedSecondReviewsWithLease(new Date(), lease)).rejects.toThrow('job_lease_lost'); }
+    finally { await db.update(jobs).set({ leaseToken: lease.token }).where(eq(jobs.name, lease.name)); }
+  });
   expect((await db.select().from(secondReviews))[0].status).toBe('failed');
 });
 
@@ -185,8 +190,9 @@ it('일치·엇갈림·공개분을 따로 세고, 심사 화면이 후보 id �
 });
 
 it('80자 slug 도 올라간다', async () => {
-  const slug = 'x'.repeat(80);
+  const slug = 'pr04b-second-' + 'x'.repeat(80 - 'pr04b-second-'.length);
   const candidate = await published('pr04b-second/long', 'the quick way to plan all of your week with friends');
+  await db.update(products).set({ slug }).where(eq(products.slug, productSlug('long')));
   await db.update(crawlCandidates).set({ publishedSlug: slug }).where(eq(crawlCandidates.id, candidate.id));
   expect(await enqueueSecondReviews(await getSettings())).toBe(1);
 });
@@ -211,9 +217,9 @@ it('공개분은 사람이 내리거나 유지하기로 정할 때까지 남는�
   const rows = await publishedSecondReviews();
   expect(rows.map((row) => [row.publishedSlug, row.secondReason])).toEqual([[productSlug('sentence'), '문장이 이름이 됐다']]);
 
-  expect(await resolveSecondReviews([pending.id], 'kept', 'admin@test')).toBe(1);
+  expect(await decidePublishedSecondReview({ id: pending.id, slug: productSlug('sentence'), decision: 'keep', actor: 'admin@test' })).toBe(true);
   // 이미 끝낸 것을 다시 끝내지 않는다
-  expect(await resolveSecondReviews([pending.id], 'banned', 'admin@test')).toBe(0);
+  expect(await decidePublishedSecondReview({ id: pending.id, slug: productSlug('sentence'), decision: 'ban', actor: 'admin@test' })).toBe(false);
   const [row] = await db.select().from(secondReviews);
   expect(row).toMatchObject({ status: 'resolved', resolution: 'kept', resolvedBy: 'admin@test' });
   expect(await publishedSecondReviews()).toEqual([]);
@@ -406,7 +412,9 @@ it('1차 판단이 새로 오면(입력이 바뀌면) 앞선 표는 닫는다', 
   await firstReview('pr04b-second/new-input', 'reject');
   await enqueueSecondReviews(await getSettings());
   // 입력이 달라진 새 1차 판단
-  await firstReview('pr04b-second/new-input', 'approve', 0.95, 'b'.repeat(64));
+  await db.update(crawlDocuments).set({ pageMeta: { title: '새 입력', textSample: '새로운 제품 근거' } })
+    .where(eq(crawlDocuments.repo, 'pr04b-second/new-input'));
+  await firstReview('pr04b-second/new-input', 'approve', 0.95);
   await enqueueSecondReviews(await getSettings());
 
   const rows = await db.select().from(secondReviews).where(eq(secondReviews.repo, 'pr04b-second/new-input'));
@@ -742,8 +750,8 @@ it('모델을 바꾼 기존 후보에도 새 모델을 올리고 제거한 모�
   await withLegacySecondReviewJob(async lease => {
     const receipt = await admitSecondReviewFixture(old.id, lease);
     await saveSettings({ secondReview: { voters: [{ provider: 'abcllm', model: '[MLX] qwen3.8-27b' }] } }, 'fixture');
-    await closeSettledSecondReviews();
-    expect(await enqueueSecondReviews(await getSettings())).toBe(1);
+    await closeSettledSecondReviewsWithLease(undefined, lease);
+    expect(await enqueueSecondReviewsWithLease(await getSettings(), undefined, lease)).toBe(1);
     const rows = await db.select().from(secondReviews).orderBy(secondReviews.id);
     expect(rows[0]).toMatchObject({ id: old.id, status: 'resolved', resolution: 'model_removed' });
     expect(rows[1]).toMatchObject({ model: '[MLX] qwen3.8-27b', status: 'pending' });
@@ -934,9 +942,11 @@ it('지금 세우지 않은 투표자가 막은 갈림 보류만 승인으로 �
   const lone = await split('pr04b-second/lone');
 
   const settings = await getSettings();
-  expect(await reopenOrphanedGateHolds({ ...settings, reviewMode: 'observe' })).toBe(0);
+  await db.update(crawlSettings).set({ values: { ...settings, reviewMode: 'observe' } }).where(eq(crawlSettings.id, 1));
+  expect(await reopenOrphanedGateHolds(await getSettings())).toBe(0);
+  await db.update(crawlSettings).set({ values: { ...settings, reviewMode: 'enforce' } }).where(eq(crawlSettings.id, 1));
   const now = new Date();
-  expect(await reopenOrphanedGateHolds({ ...settings, reviewMode: 'enforce' }, now)).toBe(1);
+  expect(await reopenOrphanedGateHolds(await getSettings(), now)).toBe(1);
 
   const rows = new Map((await db.select().from(crawlCandidates)).map((row) => [row.id, row]));
   expect(rows.get(orphan.id)).toMatchObject({ state: 'approved', reason: 'passed', decidedBy: 'auto' });
@@ -946,5 +956,5 @@ it('지금 세우지 않은 투표자가 막은 갈림 보류만 승인으로 �
   expect(rows.get(lone.id)).toMatchObject({ state: 'needs_review', reason: 'second_review_split' });
   // 옛 표는 지우지 않는다 — 누가 왜 막았는지는 남는다
   expect(await db.select().from(secondReviews).where(eq(secondReviews.candidateId, orphan.id))).toHaveLength(1);
-  expect(await reopenOrphanedGateHolds({ ...settings, reviewMode: 'enforce' })).toBe(0);
+  expect(await reopenOrphanedGateHolds(await getSettings())).toBe(0);
 });

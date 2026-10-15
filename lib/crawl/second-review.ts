@@ -4,18 +4,21 @@ import { isDeepStrictEqual } from "node:util";
 import { and, desc, eq, gt, gte, inArray, isNotNull, isNull, lt, ne, notInArray, or, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { currentReplayDb } from "@/lib/db/replay-scope";
-import type { ProductTransaction } from "@/lib/domain/products/generation";
+import { lockProductGeneration, type ProductTransaction } from "@/lib/domain/products/generation";
+import { findRepositoryProduct } from "@/lib/domain/products/repository-identity";
+import { lockRepositoryAgentEvidence } from "@/lib/domain/evidence/agents/lock";
 import { prepareReplayFinalWrite, recordReplayFinalWrite, recordReplaySecondReviewTransition } from "@/lib/operations/pipeline-replay-final";
-import { crawlCandidates, crawlDocuments, crawlReviewAttempts, crawlSettings, secondReviews, type SecondReviewProvider, type SecondReviewStatus, type SecondReviewTrigger } from "@/lib/db/schema";
+import { crawlCandidates, crawlDocuments, crawlReviewAttempts, crawlSettings, secondReviews, products, pipelineItemLeases, agentRepositoryScans, agentRepositoryObservations,
+  type CrawlCandidate, type CrawlDocument, type CrawlReviewAttempt, type SecondReview, type SecondReviewProvider, type SecondReviewStatus, type SecondReviewTrigger } from "@/lib/db/schema";
 import { pageFactsFromDocument } from "./rules";
 import type { CrawlSettings } from "./settings-schema";
 import { mergeWithDefaults } from "./settings";
-import { REVIEW_PROMPT_VERSION, REVIEW_RULES_VERSION } from "./agent-review-contract";
+import { REVIEW_PROMPT_VERSION, REVIEW_RULES_VERSION, type ReviewInput } from "./agent-review-contract";
 import { loadReviewInput } from "./agent-review-repository";
-import { firstReviewProviderPredicate, lockSecondReviewDomain, secondReviewGeneration } from "./second-review-input";
+import { firstReviewProviderPredicate, lockSecondReviewDomain, secondReviewGeneration, secondReviewInputMatches } from "./second-review-input";
 import { assertSecondReviewOwnership, finishSecondReviewOwnership, secondReviewBinding, type SecondReviewReceipt } from "./second-review-ownership";
 import { lockPipelineInputStages } from "./pipeline-stage-context";
-import { assertJobLease, assertJobLeaseAtWallTime, requestJob, type JobLease } from "@/lib/jobs/control";
+import { JobLeaseLostError, assertJobLeaseAtWallTime, requestJob, type JobLease } from "@/lib/jobs/control";
 import { canonicalReviewModel, sameReviewModel } from "./review-model-identity";
 import { firstReviewer } from "./agent-review";
 import { reviewSemanticNow } from "./review-replay-context";
@@ -25,17 +28,140 @@ async function lockReplaySecondReviewMutation(tx: ProductTransaction): Promise<v
   if (currentReplayDb()) await tx.execute(sql`select pg_advisory_xact_lock(1485803, 3)`);
 }
 
-function withSecondReviewLeaseWrite<T extends { id: number; candidateId?: number }>(lease: JobLease | undefined,
-  kind: "cleanup" | "retry" | "hold" | "reopen", write: (tx: ProductTransaction) => Promise<T[]>): Promise<T[]> {
+type ControllerDomain = {
+  candidate: CrawlCandidate | null; document: CrawlDocument | null; settings: CrawlSettings;
+  input: ReviewInput | null; attempts: CrawlReviewAttempt[]; votes: SecondReview[];
+  publishedProductId: number | null;
+};
+type ControllerTransition = Parameters<typeof recordReplaySecondReviewTransition>[1];
+type ControllerLockOptions = { skipCandidateLocked?: boolean };
+
+/** Hints select work only. All facts used by a controller are reread after this
+ * domain prefix. A changed product hint is retried without reversing lock order. */
+async function lockControllerDomain(tx: ProductTransaction, candidateId: number,
+  options: ControllerLockOptions): Promise<ControllerDomain | null> {
+  const [hint] = await tx.select().from(crawlCandidates).where(eq(crawlCandidates.id, candidateId));
+  // Reopening only applies to unpublished orphan holds. If the hint changed,
+  // skip before acquiring a lifecycle lock that this operation does not need.
+  if (options.skipCandidateLocked && (!hint || hint.state !== "needs_review" || hint.reason !== "second_review_split"
+    || hint.decidedBy !== "auto" || hint.publishedSlug)) return null;
+  let publishedProductId: number | null = null;
+  if (hint?.publishedSlug) {
+    const [product] = await tx.select({ id: products.id }).from(products).where(eq(products.slug, hint.publishedSlug));
+    if (product) {
+      if (!(await lockProductGeneration(tx, product.id, hint.publishedSlug))) return null;
+      publishedProductId = product.id;
+    } else {
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`product-lifecycle:${hint.publishedSlug}`}))`);
+      const [appeared] = await tx.select({ id: products.id }).from(products).where(eq(products.slug, hint.publishedSlug));
+      if (appeared) return null;
+    }
+  }
+  const candidateQuery = tx.select().from(crawlCandidates).where(eq(crawlCandidates.id, candidateId));
+  const [candidate] = await (options.skipCandidateLocked ? candidateQuery.for("update", { skipLocked: true }) : candidateQuery.for("update"));
+  // A skipped row is busy, never proof of a missing candidate. Do not take any
+  // document/settings/attempt/vote/item locks without its candidate prefix.
+  if (options.skipCandidateLocked && !candidate) return null;
+  if (candidate && (candidate.repo !== hint?.repo || candidate.publishedSlug !== hint?.publishedSlug)) return null;
+  const [document] = candidate ? await tx.select().from(crawlDocuments).where(eq(crawlDocuments.repo, candidate.repo)).for("share") : [];
+  const [saved] = await tx.select().from(crawlSettings).where(eq(crawlSettings.id, 1)).for("share");
+  const settings = mergeWithDefaults(saved?.values);
+  if (candidate) {
+    await lockRepositoryAgentEvidence(tx, candidate.repo);
+    const [scan] = await tx.select().from(agentRepositoryScans).where(and(
+      eq(agentRepositoryScans.repositoryKey, candidate.repo.toLowerCase()), eq(agentRepositoryScans.scope, ""),
+    )).orderBy(desc(agentRepositoryScans.startedAt), desc(agentRepositoryScans.id)).limit(1).for("share");
+    if (scan) await tx.select({ id: agentRepositoryObservations.id }).from(agentRepositoryObservations)
+      .where(eq(agentRepositoryObservations.scanId, scan.id)).for("share");
+  }
+  if (candidate && publishedProductId && (await findRepositoryProduct(candidate.repo, candidate.productUrl, tx))?.id !== publishedProductId) publishedProductId = null;
+  const attempts = await tx.select().from(crawlReviewAttempts).where(eq(crawlReviewAttempts.candidateId, candidateId))
+    .orderBy(crawlReviewAttempts.id).for("share");
+  const votes = await tx.select().from(secondReviews).where(eq(secondReviews.candidateId, candidateId))
+    .orderBy(secondReviews.id).for("update");
+  const input = candidate && document && candidate.productUrl === document.productUrl
+    ? await loadReviewInput(candidate, document, settings, tx) : null;
+  return { candidate: candidate ?? null, document: document ?? null, settings, input, attempts, votes, publishedProductId };
+}
+
+/** Protect every generation, including malformed persisted bindings that still
+ * name an actual vote work key. Neither busy nor expired items are modified. */
+async function candidateItemsBusy(tx: ProductTransaction, candidateId: number, votes: SecondReview[]): Promise<boolean> {
+  const keys = votes.map(row => `ai2:${row.id}`);
+  const where = and(eq(pipelineItemLeases.stage, "ai2"), or(
+    sql`${pipelineItemLeases.binding}->>'candidateId' = ${String(candidateId)}`,
+    keys.length ? inArray(pipelineItemLeases.workKey, keys) : undefined,
+  ));
+  const locked = await tx.select({ workKey: pipelineItemLeases.workKey }).from(pipelineItemLeases)
+    .where(where).orderBy(pipelineItemLeases.workKey).for("update", { skipLocked: true });
+  const existing = await tx.select({ workKey: pipelineItemLeases.workKey,
+    live: sql<boolean>`${pipelineItemLeases.token} IS NOT NULL AND ${pipelineItemLeases.leaseUntil} > clock_timestamp()` })
+    .from(pipelineItemLeases).where(where);
+  return existing.some(row => row.live || !locked.some(held => held.workKey === row.workKey));
+}
+
+async function assertControllerJob(tx: ProductTransaction, lease: JobLease): Promise<void> {
+  if (!lease || lease.name !== "second-review") throw new JobLeaseLostError();
+  await assertJobLeaseAtWallTime(tx, lease);
+}
+
+/** One candidate and its gate/chain commit together. Earlier candidates may
+ * already have committed if a later one loses the job. Mode never blocks input controllers. */
+async function controllerWrite(lease: JobLease, candidateId: number | null,
+  write: (tx: ProductTransaction, domain: ControllerDomain, events: ControllerTransition[]) => Promise<number>,
+  options: ControllerLockOptions = {}): Promise<number> {
+  if (!lease || lease.name !== "second-review") throw new JobLeaseLostError();
   return db.transaction(async tx => {
+    await lockPipelineInputStages(tx);
     await lockReplaySecondReviewMutation(tx);
-    const rows = await write(tx);
-    if (lease) await assertJobLease(tx, lease);
-    if (rows.length) await recordReplaySecondReviewTransition(tx, { kind,
-      ...(kind === "hold" || kind === "reopen" ? { candidateIds: rows.map(row => row.id) }
-        : { secondReviewIds: rows.map(row => row.id), candidateIds: rows.flatMap(row => row.candidateId ? [row.candidateId] : []) }) });
-    return rows;
+    const domain = candidateId === null ? null : await lockControllerDomain(tx, candidateId, options);
+    const events: ControllerTransition[] = [];
+    const count = domain && !(await candidateItemsBusy(tx, candidateId!, domain.votes)) ? await write(tx, domain, events) : 0;
+    await assertControllerJob(tx, lease);
+    for (const event of events) await recordReplaySecondReviewTransition(tx, event);
+    // Nondeferred replay recording can wait for the run row. Recheck the same
+    // held job afterward; certified post-callback flush remains a separate boundary.
+    await assertControllerJob(tx, lease);
+    return count;
   });
+}
+
+function currentFirst(domain: ControllerDomain, gate = false): CrawlReviewAttempt | undefined {
+  const reviewer = firstReviewer(domain.settings);
+  return [...domain.attempts].reverse().find(row => row.kind === "automatic" && row.state === "succeeded"
+    && (row.provider === "claude-cli" || row.provider === "abcllm" || reviewer?.provider === "grok-cli"
+      && row.provider === reviewer.provider && row.model === reviewer.model)
+    && (!gate || reviewer && row.provider === reviewer.provider && row.model === reviewer.model));
+}
+
+function freshFirst(domain: ControllerDomain, first: CrawlReviewAttempt | undefined, now: Date): first is CrawlReviewAttempt {
+  return Boolean(first && first.model?.trim() && domain.input && first.inputHash === domain.input.inputHash
+    && first.sourceRevisionHash === domain.input.sourceRevisionHash && first.policyHash === domain.input.policyHash
+    && first.promptVersion === REVIEW_PROMPT_VERSION && first.rulesVersion === REVIEW_RULES_VERSION
+    && first.validUntil > now && domain.input.validUntil > now);
+}
+
+function controllerInputMatches(domain: ControllerDomain, row: SecondReview, now: Date): boolean {
+  const { candidate, document, input, settings } = domain;
+  if (!candidate || !document || !input) return false;
+  const identity = domain.attempts.find(first => first.id === row.firstAttemptId);
+  const reviewer = firstReviewer(settings);
+  const first = [...domain.attempts].reverse().find(attempt => attempt.kind === "automatic" && attempt.state === "succeeded"
+    && (attempt.provider === "claude-cli" || attempt.provider === "abcllm" || reviewer?.provider === "grok-cli"
+      && attempt.provider === reviewer.provider && attempt.model === reviewer.model)
+    && (row.trigger !== "ai_approved" || identity && attempt.provider === identity.provider && attempt.model === identity.model));
+  return (!row.publishedSlug || Boolean(domain.publishedProductId)) && secondReviewInputMatches(row,
+    { candidate, document, settings, input, first, root: domain.votes.find(root => root.id === row.fallbackForId) }, now);
+}
+
+async function holdLockedGate(tx: ProductTransaction, domain: ControllerDomain, detail: string, now: Date,
+  events: ControllerTransition[]): Promise<void> {
+  if (!domain.candidate) return;
+  const held = await tx.update(crawlCandidates).set({ state: "needs_review", reason: "second_review_split", updatedAt: now,
+    signals: sql`coalesce(${crawlCandidates.signals}, '{}'::jsonb) || ${JSON.stringify({ stoppedAt: { rule: "2차 심사", detail } })}::jsonb` })
+    .where(and(eq(crawlCandidates.id, domain.candidate.id), eq(crawlCandidates.state, "approved"),
+      eq(crawlCandidates.decidedBy, "auto"), isNull(crawlCandidates.publishedSlug))).returning({ id: crawlCandidates.id });
+  if (held.length) events.push({ kind: "hold", candidateIds: held.map(row => row.id) });
 }
 
 /**
@@ -190,7 +316,11 @@ const PUBLISHED_LIMIT = 25;
  *  - risk / sample: 규칙만 통과해 최근 공개된 것 중 위험 신호가 있거나 표본에 든 것
  * 같은 후보에 새 1차 판단이 오면 앞의 것은 superseded 로 닫는다 — 한 후보가 두 칩에 겹쳐 세어지지 않게.
  */
-export async function enqueueSecondReviews(settings: CrawlSettings, now = new Date(), lease?: JobLease): Promise<number> {
+export async function enqueueSecondReviews(_settingsHint: CrawlSettings, now: Date | undefined, lease: JobLease): Promise<number> {
+  now ??= new Date();
+  const [saved] = await db.select().from(crawlSettings).where(eq(crawlSettings.id, 1));
+  const settings = mergeWithDefaults(saved?.values);
+  const loneIds: number[] = [];
   const semanticNow = reviewSemanticNow(now);
   const held = settings.secondReview.includeAiHeld;
   const voters = [...new Map(settings.secondReview.voters.map(voter => [canonicalReviewModel(voter.model), voter])).values()];
@@ -213,10 +343,7 @@ export async function enqueueSecondReviews(settings: CrawlSettings, now = new Da
     .where(and(eq(crawlCandidates.state, "needs_review"), eq(crawlCandidates.decidedBy, "auto"),
       // 관문에서 2차가 반대해 보류된 것은 이미 두 모델의 표가 있다 — 다시 올리면 같은 표를 또 부르고 관문 행을 덮는다
       ne(crawlCandidates.reason, "second_review_split"),
-      eq(crawlReviewAttempts.kind, "automatic"), eq(crawlReviewAttempts.state, "succeeded"), firstReviewProviderPredicate(settings),
-      // 가른 판단은 확신을 낸 것만 — 1차가 보류한 것은 애초에 확신을 재지 않는다
-      or(sql`${crawlReviewAttempts.outcome}->>'confidence' is not null`,
-        held ? sql`${crawlReviewAttempts.outcome}->>'decision' = 'needs_review'` : undefined)!))
+      eq(crawlReviewAttempts.kind, "automatic"), eq(crawlReviewAttempts.state, "succeeded"), firstReviewProviderPredicate(settings)))
     .orderBy(crawlReviewAttempts.candidateId, desc(crawlReviewAttempts.id))
     .as("latest");
 
@@ -228,7 +355,8 @@ export async function enqueueSecondReviews(settings: CrawlSettings, now = new Da
   const required = sql`(select count(*) from jsonb_array_elements_text(${JSON.stringify(voters.map(voter => canonicalReviewModel(voter.model)))}::jsonb) as v(model)
     where v.model <> regexp_replace(lower(trim(coalesce(${latest.firstModel}, ''))), '^\\[mlx\\][[:space:]]*', '', 'i'))`;
   const decided = await db.select().from(latest)
-    .where(and(eq(latest.promptVersion, REVIEW_PROMPT_VERSION), eq(latest.rulesVersion, REVIEW_RULES_VERSION), gt(latest.validUntil, semanticNow), sql`${required} > 0`, sql`(select count(*) from ${secondReviews} s
+    .where(and(or(sql`${latest.confidence} is not null`, held ? sql`${latest.decision} = 'needs_review'` : undefined),
+      eq(latest.promptVersion, REVIEW_PROMPT_VERSION), eq(latest.rulesVersion, REVIEW_RULES_VERSION), gt(latest.validUntil, semanticNow), sql`${required} > 0`, sql`(select count(*) from ${secondReviews} s
       where s.candidate_id = ${latest.candidateId} and s.input_hash = ${latest.inputHash}
         and s.first_attempt_id = ${latest.firstAttemptId}
         and exists(select 1 from jsonb_array_elements(${JSON.stringify(voters)}::jsonb) v
@@ -288,7 +416,7 @@ export async function enqueueSecondReviews(settings: CrawlSettings, now = new Da
     const lone = await db.select({ candidateId: approved.candidateId }).from(approved)
       .where(and(sql`${approved.decision} = 'approve'`, eq(approved.promptVersion, REVIEW_PROMPT_VERSION), eq(approved.rulesVersion, REVIEW_RULES_VERSION),
         gt(approved.validUntil, semanticNow), sql`${gateRequired} = 0`)).limit(ENQUEUE_LIMIT);
-    await holdGateForHuman(lone.map((row) => row.candidateId), "2차에 1차와 다른 모델이 없어 두 모델 승인을 할 수 없다 — 2차 모델 설정을 확인", now, lease);
+    loneIds.push(...lone.map(row => row.candidateId));
     rows.push(...gate.flatMap((row) => voters.filter(voter => !sameReviewModel(row.firstModel, voter.model)).map((voter) => ({ ...voter,
       candidateId: row.candidateId, repo: row.repo, trigger: "ai_approved" as SecondReviewTrigger,
       firstDecision: "approve", firstConfidence: row.confidence, firstModel: row.firstModel, firstAttemptId: row.firstAttemptId,
@@ -326,56 +454,81 @@ export async function enqueueSecondReviews(settings: CrawlSettings, now = new Da
     if (++publishedCount >= PUBLISHED_LIMIT) break;
   }
   rows.push(...publishedRows);
-  if (!rows.length) return 0;
-  return db.transaction(async tx => {
-    await lockReplaySecondReviewMutation(tx);
-    const candidateIds = [...new Set(rows.map(row => row.candidateId))].sort((a, b) => a - b);
-    const locked = await tx.select().from(crawlCandidates).where(inArray(crawlCandidates.id, candidateIds))
-      .orderBy(crawlCandidates.id).for("update");
-    const currentFirst = await tx.selectDistinctOn([crawlReviewAttempts.candidateId], {
-      candidateId: crawlReviewAttempts.candidateId, id: crawlReviewAttempts.id,
-    }).from(crawlReviewAttempts).where(and(inArray(crawlReviewAttempts.candidateId, candidateIds),
-      eq(crawlReviewAttempts.kind, "automatic"), eq(crawlReviewAttempts.state, "succeeded"),
-      firstReviewProviderPredicate(settings)))
-      .orderBy(crawlReviewAttempts.candidateId, desc(crawlReviewAttempts.id));
-    const latestIds = new Map(currentFirst.map(row => [row.candidateId, row.id]));
-    const candidates = new Map(locked.map(row => [row.id, row]));
-    const valid = rows.filter(row => {
-      const candidate = candidates.get(row.candidateId);
-      // 관문 행은 승인 상태의 후보에, 나머지는 보류 후보에 붙는다 — 그 사이에 상태가 바뀌었으면 올리지 않는다.
-      // 관문의 1차 판단은 "지금 1차 심사자의 최신"이라 모든 심사자 중 최신과 다를 수 있다 — loadSecondReviewInput 이 다시 잰다
-      if (row.trigger === "ai_approved") return candidate?.state === "approved" && candidate.decidedBy === "auto";
-      return row.publishedSlug ? candidate?.state === "published" && candidate.publishedSlug === row.publishedSlug
-        : candidate?.state === "needs_review" && candidate.decidedBy === "auto" && latestIds.get(row.candidateId) === row.firstAttemptId;
-    });
-    if (!valid.length) return 0;
-    const inserted = await tx.insert(secondReviews).values(valid).onConflictDoNothing()
-      .returning({ id: secondReviews.id, candidateId: secondReviews.candidateId, generationKey: secondReviews.generationKey });
-    const renewed = [...new Map(inserted.map(row => [row.candidateId, row])).values()];
-    if (renewed.length) {
-      await tx.update(secondReviews).set({ status: "resolved", resolution: "superseded", resolvedAt: now })
-        .where(and(or(...renewed.map(row => and(eq(secondReviews.candidateId, row.candidateId),
-          sql`${secondReviews.generationKey} <> ${row.generationKey}`))),
-          inArray(secondReviews.status, ["pending", "agreed", "needs_human", "failed"])));
+  const candidateIds = [...new Set([...rows.map(row => row.candidateId), ...loneIds])].sort((a, b) => a - b);
+  if (!candidateIds.length) return controllerWrite(lease, null, async () => 0);
+  let count = 0;
+  for (const candidateId of candidateIds) count += await controllerWrite(lease, candidateId, async (tx, domain, events) => {
+    const { candidate, document, input, settings: current } = domain;
+    if (!candidate || !document || !input || !current.enabled || !current.secondReview.enabled || candidate.decidedBy !== "auto") return 0;
+    const currentVoters = [...new Map(current.secondReview.voters.map(voter => [canonicalReviewModel(voter.model), voter])).values()];
+    const hints = rows.filter(row => row.candidateId === candidateId);
+    const gate = loneIds.includes(candidateId) || hints.some(row => row.trigger === "ai_approved");
+    const first = currentFirst(domain, gate);
+    let proposed: (typeof secondReviews.$inferInsert)[];
+    if (gate) {
+      if (current.reviewMode !== "enforce" || candidate.state !== "approved" || candidate.publishedSlug
+        || !freshFirst(domain, first, semanticNow) || first.outcome?.decision !== "approve") return 0;
+      const independent = currentVoters.filter(voter => !sameReviewModel(first.model, voter.model));
+      if (!independent.length) {
+        await holdLockedGate(tx, domain, "2차에 1차와 다른 모델이 없어 두 모델 승인을 할 수 없다 — 2차 모델 설정을 확인", now!, events);
+        return 0;
+      }
+      proposed = independent.map(voter => ({ ...voter, candidateId, repo: candidate.repo, trigger: "ai_approved",
+        firstDecision: "approve", firstConfidence: first.outcome?.confidence ?? null, firstModel: first.model,
+        firstAttemptId: first.id, generationKey: secondReviewGeneration(first.id, input, "ai_approved"), inputHash: input.inputHash }));
+    } else if (hints.some(row => row.publishedSlug)) {
+      if (candidate.state !== "published" || !candidate.publishedSlug || !domain.publishedProductId
+        || candidate.publishedSlug !== hints[0]?.publishedSlug || !candidate.decidedAt
+        || candidate.decidedAt < new Date(semanticNow.getTime() - PUBLISHED_LOOKBACK_MS)) return 0;
+      const meta = document.pageMeta as { title?: unknown; readmeSample?: unknown } | null;
+      const facts = pageFactsFromDocument(document);
+      const signals = riskSignals({ name: typeof meta?.title === "string" ? meta.title : candidate.repo, productUrl: candidate.productUrl,
+        textSample: facts.textSample ?? null, readme: typeof meta?.readmeSample === "string" ? meta.readmeSample : null });
+      if (!signals.length && !inSample(candidate.repo, current.secondReview.sampleRate)) return 0;
+      proposed = currentVoters.map(voter => ({ ...voter, candidateId, repo: candidate.repo, publishedSlug: candidate.publishedSlug,
+        trigger: signals.length ? "risk" : "sample", signals, firstDecision: "approve", firstConfidence: null,
+        firstAttemptId: null, generationKey: secondReviewGeneration(null, input), inputHash: publishedInputHash(candidate.publishedSlug!) }));
+    } else {
+      if (candidate.state !== "needs_review" || candidate.reason === "second_review_split" || candidate.publishedSlug
+        || !freshFirst(domain, first, semanticNow)) return 0;
+      const decision = first.outcome?.decision;
+      if (!(decision === "approve" || decision === "reject" || current.secondReview.includeAiHeld && decision === "needs_review")
+        || first.outcome?.confidence == null && decision !== "needs_review") return 0;
+      proposed = currentVoters.filter(voter => !sameReviewModel(first.model, voter.model)).map(voter => ({ ...voter,
+        candidateId, repo: candidate.repo, trigger: decision === "needs_review" ? "ai_held" : "ai_decided",
+        firstDecision: decision, firstConfidence: first.outcome?.confidence ?? null, firstModel: first.model,
+        firstAttemptId: first.id, generationKey: secondReviewGeneration(first.id, input), inputHash: input.inputHash }));
     }
-    if (lease) await assertJobLease(tx, lease);
-    if (inserted.length) await recordReplaySecondReviewTransition(tx, { kind: "enqueue",
-      secondReviewIds: inserted.map(row => row.id), candidateIds: inserted.map(row => row.candidateId) });
+    proposed = proposed.filter(row => !domain.votes.some(existing => existing.generationKey === row.generationKey
+      && existing.inputHash === row.inputHash && sameReviewModel(existing.model, row.model)));
+    if (!proposed.length) return 0;
+    const inserted = await tx.insert(secondReviews).values(proposed).onConflictDoNothing()
+      .returning({ id: secondReviews.id, generationKey: secondReviews.generationKey });
+    if (inserted.length) {
+      const obsolete = await tx.update(secondReviews).set({ status: "resolved", resolution: "superseded", resolvedAt: now })
+        .where(and(eq(secondReviews.candidateId, candidateId), ne(secondReviews.generationKey, inserted[0].generationKey),
+          inArray(secondReviews.status, ["pending", "agreed", "needs_human", "failed"]))).returning({ id: secondReviews.id });
+      events.push({ kind: "enqueue", secondReviewIds: inserted.map(row => row.id), candidateIds: [candidateId] });
+      if (obsolete.length) events.push({ kind: "cleanup", secondReviewIds: obsolete.map(row => row.id), candidateIds: [candidateId] });
+    }
     return inserted.length;
   });
+  return count;
 }
 
 /**
  * 더 볼 필요가 없어진 것을 닫는다 — 사람이 이미 결정했거나(보류가 아님) 공개분이 내려갔다.
  * 지우지 않는다. 몇 건을 누가 어떻게 끝냈는지가 2차 심사의 정확도다.
  */
-export async function closeSettledSecondReviews(now = new Date(), lease?: JobLease): Promise<number> {
+export async function closeSettledSecondReviews(now: Date | undefined, lease: JobLease): Promise<number> {
+  now ??= new Date();
   const semanticNow = reviewSemanticNow(now);
-  // Removed voters must not keep consuming retries or influence current consensus.
-  const [saved] = await db.select().from(crawlSettings).limit(1);
-  const {voters, fallbacks = []} = mergeWithDefaults(saved?.values).secondReview;
-  const removed = await withSecondReviewLeaseWrite(lease, "cleanup", tx => tx.update(secondReviews).set({ status: "resolved", resolution: "model_removed", resolvedAt: now })
-    .where(and(inArray(secondReviews.status, ["pending", "failed", "agreed", "needs_human"]),
+  const active = ["pending", "failed", "agreed", "needs_human"] as const;
+  const [saved] = await db.select().from(crawlSettings).where(eq(crawlSettings.id, 1));
+  const { voters, fallbacks = [] } = mergeWithDefaults(saved?.values).secondReview;
+  // Preserve each cleanup's SQL eligibility before selecting work. Normal human
+  // waits and completed published history must never occupy the cleanup prefix.
+  const removedPredicate = and(inArray(secondReviews.status, ["pending", "failed", "agreed", "needs_human"]),
       sql`not exists(select 1 from jsonb_array_elements(case when ${secondReviews.fallbackForId} is null then ${JSON.stringify(voters)}::jsonb else ${JSON.stringify(fallbacks)}::jsonb end) v
         where v->>'provider'=coalesce(${secondReviews.provider}, 'claude-cli')
           and regexp_replace(lower(trim(v->>'model')), '^\\[mlx\\][[:space:]]*', '', 'i')
@@ -387,48 +540,20 @@ export async function closeSettledSecondReviews(now = new Date(), lease?: JobLea
               and exists(select 1 from jsonb_array_elements(${JSON.stringify(voters)}::jsonb) primary_v
                 where primary_v->>'provider'=root.provider
                   and regexp_replace(lower(trim(primary_v->>'model')), '^\\[mlx\\][[:space:]]*', '', 'i')
-                    = regexp_replace(lower(trim(root.model)), '^\\[mlx\\][[:space:]]*', '', 'i')))))`))
-    .returning({ id: secondReviews.id, candidateId: secondReviews.candidateId }));
-  const orphaned = await withSecondReviewLeaseWrite(lease, "cleanup", tx => tx.update(secondReviews).set({status: "needs_human", resolution: null, resolvedAt: null,
-    secondDecision: null, secondConfidence: null,
-    secondReason: "대체 모델 설정이 변경되어 해당 의견을 제외했습니다. 직접 확인해주세요.",
-    failureCount: sql`greatest(${secondReviews.failureCount}, coalesce((select max(child.failure_count) from second_reviews child where child.fallback_for_id=${secondReviews.id}), 0))`})
-    .where(and(eq(secondReviews.status, "resolved"), eq(secondReviews.resolution, "fallback"), isNull(secondReviews.fallbackForId),
+                    = regexp_replace(lower(trim(root.model)), '^\\[mlx\\][[:space:]]*', '', 'i')))))`);
+  const orphanedPredicate = and(eq(secondReviews.status, "resolved"), eq(secondReviews.resolution, "fallback"), isNull(secondReviews.fallbackForId),
       sql`exists(select 1 from second_reviews child where child.fallback_for_id=${secondReviews.id} and child.resolution='model_removed')`,
       sql`not exists(select 1 from second_reviews child where child.fallback_for_id=${secondReviews.id} and child.status in ('pending','failed','agreed','needs_human'))`,
       sql`exists(select 1 from jsonb_array_elements(${JSON.stringify(voters)}::jsonb) v
         where v->>'provider'=${secondReviews.provider}
           and regexp_replace(lower(trim(v->>'model')), '^\\[mlx\\][[:space:]]*', '', 'i')
-            = regexp_replace(lower(trim(${secondReviews.model})), '^\\[mlx\\][[:space:]]*', '', 'i'))`))
-    .returning({id: secondReviews.id, candidateId: secondReviews.candidateId, trigger: secondReviews.trigger}));
-  // 관문 행이 사람 확인이 됐으면 후보도 사람에게 — 승인 상태로 두면 발행도 재심사도 안 된다(codex 교차 검토)
-  await holdGateForHuman(orphaned.filter((row) => row.trigger === "ai_approved").map((row) => row.candidateId),
-    "대체 모델 설정이 바뀌어 2차 의견을 제외했다 — 직접 확인", now, lease);
-  // A prompt upgrade invalidates these inputs before any model call. Retain completed historical opinions.
-  const obsolete = await withSecondReviewLeaseWrite(lease, "cleanup", tx => tx.update(secondReviews).set({status: "resolved", resolution: "superseded", resolvedAt: now})
-    .where(and(inArray(secondReviews.status, ["pending", "failed"]), or(eq(secondReviews.generationKey, "legacy"),
+            = regexp_replace(lower(trim(${secondReviews.model})), '^\\[mlx\\][[:space:]]*', '', 'i'))`);
+  const obsoletePredicate = and(inArray(secondReviews.status, ["pending", "failed"]), or(eq(secondReviews.generationKey, "legacy"),
       sql`exists(select 1 from ${crawlReviewAttempts} a where a.id=${secondReviews.firstAttemptId}
-        and (a.prompt_version<>${REVIEW_PROMPT_VERSION} or a.rules_version<>${REVIEW_RULES_VERSION} or a.valid_until<=${semanticNow.toISOString()}::timestamp))`)))
-    .returning({id: secondReviews.id, candidateId: secondReviews.candidateId}));
-  // 확신 없는 옛 1차로 올린 것 — 일치할 수 없으니 닫는다. 2차 의견은 남아 심사 상세에 그대로 보인다
-  const legacy = await withSecondReviewLeaseWrite(lease, "cleanup", tx => tx.update(secondReviews).set({ status: "resolved", resolution: "no_first_confidence", resolvedAt: now })
-    .where(and(eq(secondReviews.trigger, "ai_decided"), isNull(secondReviews.firstConfidence),
-      inArray(secondReviews.status, ["pending", "agreed", "needs_human", "failed"])))
-    .returning({ id: secondReviews.id, candidateId: secondReviews.candidateId }));
-  return removed.length + orphaned.length + obsolete.length + legacy.length + await closeDecidedSecondReviews(now, lease);
-}
-
-async function closeDecidedSecondReviews(now: Date, lease?: JobLease): Promise<number> {
-  /*
-   * 관문 행은 후보가 발행을 기다리는 동안(승인)과, 2차가 반대해 사람에게 넘어간 동안(보류) 열려 있다 —
-   * 발행 조건이 일치한 행을 보고, 사람은 심사 화면에서 두 모델의 의견을 나란히 본다.
-   *
-   * 닫을 것을 고르는 조건은 SQL 안(LIMIT 앞)에 둔다. 열린 행을 id 순으로 1,000건 읽고 나서 거르던 때는
-   * 사람을 기다리며 오래 열려 있는 행(갈림 보류)이 1,000건을 넘자 그 뒤의 행은 영영 닫히지 않았다 —
-   * 2026-10-08 프로드에서 열린 행 1,000건이 모두 아직 열려 있어야 하는 것이었고, 그 뒤에서 발행·거부된
-   * 후보의 관문 행 95건이 "일치(승인)" 칩에 남아 있었다.
-   */
-  const settled = await db.select({ id: secondReviews.id })
+        and (a.prompt_version<>${REVIEW_PROMPT_VERSION} or a.rules_version<>${REVIEW_RULES_VERSION} or a.valid_until<=${semanticNow.toISOString()}::timestamp))`));
+  const legacyPredicate = and(eq(secondReviews.trigger, "ai_decided"), isNull(secondReviews.firstConfidence),
+      inArray(secondReviews.status, ["pending", "agreed", "needs_human", "failed"]));
+  const settledHints = await db.select({ id: secondReviews.id, candidateId: secondReviews.candidateId })
     .from(secondReviews).leftJoin(crawlCandidates, eq(crawlCandidates.id, secondReviews.candidateId))
     // 공개분의 일치는 끝난 기록이다(그대로 둔다) — 훑는 대상에 넣으면 날마다 쌓여 한도를 잡아먹는다
     .where(and(or(inArray(secondReviews.status, ["pending", "failed", "needs_human"]),
@@ -437,21 +562,65 @@ async function closeDecidedSecondReviews(now: Date, lease?: JobLease): Promise<n
         when ${secondReviews.trigger} = 'ai_approved' then coalesce(${crawlCandidates.state} not in ('approved', 'needs_review'), true)
         else ${crawlCandidates.state} is distinct from 'needs_review' end`))
     .orderBy(secondReviews.id).limit(1_000);
-  if (!settled.length) return 0;
-  await withSecondReviewLeaseWrite(lease, "cleanup", tx => tx.update(secondReviews).set({ status: "resolved", resolution: "decided_elsewhere", resolvedAt: now })
-    .where(inArray(secondReviews.id, settled.map((row) => row.id))).returning({ id: secondReviews.id, candidateId: secondReviews.candidateId }));
-  return settled.length;
-}
-
-/**
- * 두 모델 승인 관문에서 멈춘 승인 후보를 사람에게 넘긴다 — 보류, 사유 second_review_split(AI 심사가 다시 집지 않는다).
- * 사람이 이미 결정했거나 이미 발행·거부된 후보는 건드리지 않는다.
- */
-async function holdGateForHuman(candidateIds: number[], detail: string, now: Date, lease?: JobLease): Promise<void> {
-  if (!candidateIds.length) return;
-  await withSecondReviewLeaseWrite(lease, "hold", tx => tx.update(crawlCandidates).set({ state: "needs_review", reason: "second_review_split", updatedAt: now,
-    signals: sql`coalesce(${crawlCandidates.signals}, '{}'::jsonb) || ${JSON.stringify({ stoppedAt: { rule: "2차 심사", detail } })}::jsonb` })
-    .where(and(inArray(crawlCandidates.id, [...new Set(candidateIds)]), eq(crawlCandidates.state, "approved"), eq(crawlCandidates.decidedBy, "auto"))).returning({ id: crawlCandidates.id }));
+  const cleanupHints = await db.selectDistinct({ candidateId: secondReviews.candidateId }).from(secondReviews)
+    .where(or(removedPredicate, orphanedPredicate, obsoletePredicate, legacyPredicate));
+  const decidedIds = new Set(settledHints.map(row => row.id));
+  const hinted = [...new Set([...cleanupHints, ...settledHints].map(row => row.candidateId))].sort((a, b) => a - b)
+    .map(candidateId => ({ candidateId }));
+  if (!hinted.length) return controllerWrite(lease, null, async () => 0);
+  let total = 0;
+  for (const { candidateId } of hinted) total += await controllerWrite(lease, candidateId, async (tx, domain, events) => {
+    const { voters, fallbacks = [] } = domain.settings.secondReview;
+    const currentVotes = new Map(domain.votes.map(row => [row.id, { ...row }]));
+    const changed = new Set<number>();
+    const inPool = (row: SecondReview, pool: typeof voters) => pool.some(voter => voter.provider === (row.provider ?? "claude-cli") && sameReviewModel(voter.model, row.model));
+    const update = async (row: SecondReview, patch: Partial<typeof secondReviews.$inferInsert>) => {
+      const [updated] = await tx.update(secondReviews).set(patch).where(and(eq(secondReviews.id, row.id), eq(secondReviews.status, row.status),
+        sql`${secondReviews.resolution} IS NOT DISTINCT FROM ${row.resolution}`)).returning();
+      if (updated) { currentVotes.set(row.id, updated); changed.add(row.id); }
+      return updated;
+    };
+    for (const row of currentVotes.values()) {
+      if (!active.includes(row.status as typeof active[number])) continue;
+      const root = row.fallbackForId ? currentVotes.get(row.fallbackForId) : null;
+      const validFallback = root && !root.fallbackForId && root.candidateId === row.candidateId && root.generationKey === row.generationKey
+        && root.inputHash === row.inputHash && root.status === "resolved" && root.resolution === "fallback" && inPool(root, voters);
+      if (!inPool(row, row.fallbackForId ? fallbacks : voters) || row.fallbackForId && !validFallback) {
+        await update(row, { status: "resolved", resolution: "model_removed", resolvedAt: now });
+      }
+    }
+    for (const row of currentVotes.values()) {
+      const children = [...currentVotes.values()].filter(child => child.fallbackForId === row.id);
+      if (row.status !== "resolved" || row.resolution !== "fallback" || row.fallbackForId || !inPool(row, voters)
+        || !children.some(child => child.resolution === "model_removed")
+        || children.some(child => active.includes(child.status as typeof active[number]))) continue;
+      const updated = await update(row, { status: "needs_human", resolution: null, resolvedAt: null, secondDecision: null, secondConfidence: null,
+        secondReason: "대체 모델 설정이 변경되어 해당 의견을 제외했습니다. 직접 확인해주세요.",
+        failureCount: Math.max(row.failureCount, ...children.map(child => child.failureCount)) });
+      if (updated?.trigger === "ai_approved") await holdLockedGate(tx, domain, "대체 모델 설정이 바뀌어 2차 의견을 제외했다 — 직접 확인", now!, events);
+    }
+    for (const row of currentVotes.values()) {
+      const first = domain.attempts.find(attempt => attempt.id === row.firstAttemptId);
+      if ((row.status === "pending" || row.status === "failed") && (row.generationKey === "legacy"
+        || first && (first.promptVersion !== REVIEW_PROMPT_VERSION || first.rulesVersion !== REVIEW_RULES_VERSION || first.validUntil <= semanticNow))) {
+        await update(row, { status: "resolved", resolution: "superseded", resolvedAt: now });
+      } else if (active.includes(row.status as typeof active[number]) && row.trigger === "ai_decided" && row.firstConfidence === null) {
+        await update(row, { status: "resolved", resolution: "no_first_confidence", resolvedAt: now });
+      }
+    }
+    for (const row of currentVotes.values()) {
+      if (!decidedIds.has(row.id) || !(row.status === "pending" || row.status === "failed" || row.status === "needs_human"
+        || row.status === "agreed" && !row.publishedSlug)) continue;
+      const candidate = domain.candidate;
+      const settled = row.publishedSlug ? candidate?.state !== "published"
+        : row.trigger === "ai_approved" ? !candidate || !["approved", "needs_review"].includes(candidate.state)
+          : candidate?.state !== "needs_review";
+      if (settled) await update(row, { status: "resolved", resolution: "decided_elsewhere", resolvedAt: now });
+    }
+    if (changed.size) events.push({ kind: "cleanup", secondReviewIds: [...changed], candidateIds: [candidateId] });
+    return changed.size;
+  });
+  return total;
 }
 
 /** 한 틱에 되돌리는 수 — 되돌린 후보마다 원본을 다시 받고 1차가 다시 본다. 몰리지 않게 조금씩 */
@@ -471,21 +640,53 @@ const REOPEN_LIMIT = 25;
  * 지금 투표자의 열린 관문 행이 있는 후보(지금 투표자가 반대한 것)와, 관문 행이 아예 없는 후보(1차와 다른 투표자가
  * 없어 보류된 것 — 되돌리면 같은 자리로 돌아온다)는 건드리지 않는다.
  */
-export async function reopenOrphanedGateHolds(settings: CrawlSettings, now = new Date(), lease?: JobLease,
+export async function reopenOrphanedGateHolds(_settingsHint: CrawlSettings, now: Date | undefined, lease: JobLease,
   limit = REOPEN_LIMIT): Promise<number> {
-  if (settings.reviewMode !== "enforce") return 0;
-  const reopened = await withSecondReviewLeaseWrite(lease, "reopen", tx => tx.update(crawlCandidates).set({
-    state: "approved", reason: "passed", updatedAt: now,
-    signals: sql`(coalesce(${crawlCandidates.signals}, '{}'::jsonb) - 'stoppedAt')
-      || jsonb_build_object('gateReopenedAt', ${now.toISOString()}::text)`,
-  }).where(sql`${crawlCandidates.id} in (select c.id from crawl_candidates c
-      where c.state = 'needs_review' and c.reason = 'second_review_split' and c.decided_by = 'auto' and c.published_slug is null
-        and exists(select 1 from second_reviews s where s.candidate_id = c.id and s.trigger = 'ai_approved' and s.resolution = 'model_removed')
-        and not exists(select 1 from second_reviews s where s.candidate_id = c.id and s.trigger = 'ai_approved'
-          and s.status in ('pending', 'failed', 'agreed', 'needs_human'))
-      order by c.updated_at, c.id limit ${limit}
-      for update skip locked)`).returning({ id: crawlCandidates.id }));
-  return reopened.length;
+  now ??= new Date();
+  // Bound discovery to the initial ID universe so continuous new work cannot
+  // prolong this tick. Raw PostgreSQL timestamp text keeps keyset µs exact.
+  const [ceiling] = await db.select({ id: crawlCandidates.id }).from(crawlCandidates).orderBy(desc(crawlCandidates.id)).limit(1);
+  if (!ceiling || limit === 0) return controllerWrite(lease, null, async () => 0);
+  const visited = new Set<number>();
+  let cursor: { id: number; updatedAt: string } | undefined;
+  let count = 0;
+  for (;;) {
+    const hinted = await db.select({ id: crawlCandidates.id, updatedAt: sql<string>`${crawlCandidates.updatedAt}::text` })
+      .from(crawlCandidates).where(and(sql`
+        ${crawlCandidates.state} = 'needs_review' and ${crawlCandidates.reason} = 'second_review_split'
+        and ${crawlCandidates.decidedBy} = 'auto' and ${crawlCandidates.publishedSlug} is null
+        and exists(select 1 from second_reviews s where s.candidate_id = ${crawlCandidates.id} and s.trigger = 'ai_approved' and s.resolution = 'model_removed')
+        and not exists(select 1 from second_reviews s where s.candidate_id = ${crawlCandidates.id} and s.trigger = 'ai_approved'
+          and s.status in ('pending', 'failed', 'agreed', 'needs_human'))`,
+        sql`${crawlCandidates.id} <= ${ceiling.id}`,
+        cursor ? sql`(${crawlCandidates.updatedAt}, ${crawlCandidates.id}) > (${cursor.updatedAt}::timestamp, ${cursor.id})` : undefined,
+        visited.size ? notInArray(crawlCandidates.id, [...visited]) : undefined))
+      .orderBy(crawlCandidates.updatedAt, crawlCandidates.id).limit(limit);
+    if (!hinted.length) {
+      await controllerWrite(lease, null, async () => 0);
+      return count;
+    }
+    for (const hint of hinted) {
+      cursor = hint;
+      if (visited.has(hint.id)) continue;
+      visited.add(hint.id);
+      count += await controllerWrite(lease, hint.id, async (tx, domain, events) => {
+        const id = hint.id;
+        const { candidate, votes, settings } = domain;
+        if (settings.reviewMode !== "enforce" || !candidate || candidate.state !== "needs_review" || candidate.reason !== "second_review_split"
+          || candidate.decidedBy !== "auto" || candidate.publishedSlug || !votes.some(row => row.trigger === "ai_approved" && row.resolution === "model_removed")
+          || votes.some(row => row.trigger === "ai_approved" && ["pending", "failed", "agreed", "needs_human"].includes(row.status))) return 0;
+        const updated = await tx.update(crawlCandidates).set({ state: "approved", reason: "passed", updatedAt: now,
+          signals: sql`(coalesce(${crawlCandidates.signals}, '{}'::jsonb) - 'stoppedAt')
+            || jsonb_build_object('gateReopenedAt', ${now!.toISOString()}::text)` })
+          .where(and(eq(crawlCandidates.id, id), eq(crawlCandidates.state, "needs_review"), eq(crawlCandidates.reason, "second_review_split"),
+            eq(crawlCandidates.decidedBy, "auto"), isNull(crawlCandidates.publishedSlug))).returning({ id: crawlCandidates.id });
+        if (updated.length) events.push({ kind: "reopen", candidateIds: [id] });
+        return updated.length;
+      }, { skipCandidateLocked: true });
+      if (count >= limit) return count;
+    }
+  }
 }
 
 export async function pendingSecondReviews(limit: number) {
@@ -651,13 +852,21 @@ export const SECOND_REVIEW_RETRY_MS = 60 * 60_000;
  * 비교는 lt() 로 한다. sql`` 안에 Date 를 그대로 넣으면 "Fri Sep 11 2026 …" 문자열로 넘어가
  * 프로드에서 매 틱 실패했다(2026-09-11) — 컬럼 타입을 거쳐야 시각으로 바뀐다.
  */
-export async function retryFailedSecondReviews(now = new Date(), lease?: JobLease): Promise<void> {
-  await withSecondReviewLeaseWrite(lease, "retry", tx => tx.update(secondReviews).set({ status: "pending" })
-    .where(and(eq(secondReviews.status, "failed"), lt(secondReviews.failureCount, MAX_SECOND_REVIEW_FAILURES),
-      or(
-        and(inArray(secondReviews.errorCode, SECOND_REVIEW_TRANSIENT_ERRORS), lt(secondReviews.reviewedAt, new Date(now.getTime() - TRANSIENT_RETRY_MS))),
-        lt(secondReviews.reviewedAt, new Date(now.getTime() - SECOND_REVIEW_RETRY_MS)),
-      ))).returning({ id: secondReviews.id, candidateId: secondReviews.candidateId }));
+export async function retryFailedSecondReviews(now: Date | undefined, lease: JobLease): Promise<void> {
+  now ??= new Date();
+  const due = and(eq(secondReviews.status, "failed"), lt(secondReviews.failureCount, MAX_SECOND_REVIEW_FAILURES),
+    or(and(inArray(secondReviews.errorCode, SECOND_REVIEW_TRANSIENT_ERRORS), lt(secondReviews.reviewedAt, new Date(now.getTime() - TRANSIENT_RETRY_MS))),
+      lt(secondReviews.reviewedAt, new Date(now.getTime() - SECOND_REVIEW_RETRY_MS))));
+  const hinted = await db.selectDistinct({ candidateId: secondReviews.candidateId }).from(secondReviews).where(due).orderBy(secondReviews.candidateId);
+  if (!hinted.length) { await controllerWrite(lease, null, async () => 0); return; }
+  for (const { candidateId } of hinted) await controllerWrite(lease, candidateId, async (tx, domain, events) => {
+    const valid = domain.votes.filter(row => controllerInputMatches(domain, row, reviewSemanticNow(now))).map(row => row.id);
+    if (!valid.length) return 0;
+    const rows = await tx.update(secondReviews).set({ status: "pending" }).where(and(inArray(secondReviews.id, valid), eq(secondReviews.candidateId, candidateId), due))
+      .returning({ id: secondReviews.id });
+    if (rows.length) events.push({ kind: "retry", secondReviewIds: rows.map(row => row.id), candidateIds: [candidateId] });
+    return rows.length;
+  });
 }
 
 export type SecondReviewCounts = { unanimousReject: number; unanimousApprove: number; agreedReject: number; agreedApprove: number; needsHuman: number; published: number; pending: number };
@@ -735,12 +944,4 @@ export async function secondReviewsFor(candidateIds: number[]) {
 export async function publishedSecondReviews(limit = 100) {
   return db.select().from(secondReviews).where(and(eq(secondReviews.status, "needs_human"), isNotNull(secondReviews.publishedSlug)))
     .orderBy(desc(secondReviews.reviewedAt)).limit(limit);
-}
-
-export async function resolveSecondReviews(ids: number[], resolution: "kept" | "banned", actor: string, now = new Date()): Promise<number> {
-  if (!ids.length) return 0;
-  if (currentReplayDb()) throw new Error("replay_human_review_not_allowed");
-  const updated = await db.update(secondReviews).set({ status: "resolved", resolution, resolvedBy: actor, resolvedAt: now })
-    .where(and(inArray(secondReviews.id, ids), eq(secondReviews.status, "needs_human"))).returning({ id: secondReviews.id });
-  return updated.length;
 }

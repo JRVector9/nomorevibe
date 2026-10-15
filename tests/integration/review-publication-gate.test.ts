@@ -9,8 +9,8 @@ import { REVIEW_PROMPT_VERSION, REVIEW_RULES_VERSION } from "@/lib/crawl/agent-r
 import { runJob } from "@/lib/jobs/runner";
 import * as crawl from "@/lib/crawl/repository";
 import { publishCandidates } from "@/lib/crawl/jobs/publish";
-import { enqueueSecondReviews } from "@/lib/crawl/second-review";
-import { recordSecondReviewFixture } from "./second-review-receipt-fixtures";
+import { recordSecondReviewFixture, enqueueSecondReviewsFixture as enqueueSecondReviews,
+  closeSettledSecondReviewsFixture as closeSettledSecondReviews } from "./second-review-receipt-fixtures";
 import { listReviewCandidates } from "@/lib/crawl/agent-review-repository";
 import { secondReviews } from "@/lib/db/schema";
 import { ensureSchema, resetTables } from "./setup";
@@ -330,7 +330,6 @@ it("2차 모델을 바꾸면 새 모델의 표가 올라가고, 새 모델도 �
   await vote(first, "approve");
 
   await saveSettings({ secondReview: { enabled: true, voters: [{ provider: "abcllm", model: "[MLX] replacement-test" }] } }, "test");
-  const { closeSettledSecondReviews } = await import("@/lib/crawl/second-review");
   await closeSettledSecondReviews();
   await tick();
   expect(await db.select().from(products)).toHaveLength(0);
@@ -367,7 +366,6 @@ it("대체 모델을 빼서 관문 표가 사람 확인이 되면 후보를 사�
   expect(await db.select().from(secondReviews).where(eq(secondReviews.model, "sonnet"))).toHaveLength(1);
 
   await saveSettings({ secondReview: { enabled: true, voters: [{ provider: "abcllm", model: "[MLX] second-test" }], fallbacks: [] } }, "test");
-  const { closeSettledSecondReviews } = await import("@/lib/crawl/second-review");
   await closeSettledSecondReviews();
   expect((await db.select().from(crawlCandidates).where(eq(crawlCandidates.id, row.id)))[0]).toMatchObject({
     state: "needs_review", reason: "second_review_split" });

@@ -1,7 +1,9 @@
 import { runJob } from "@/lib/jobs/runner";
 import type { JobLease } from "@/lib/jobs/control";
 import { admitLegacySecondReview, type SecondReviewReceipt } from "@/lib/crawl/second-review-ownership";
-import { recordSecondReview, type SecondReviewResult, type SecondReviewWriteResult } from "@/lib/crawl/second-review";
+import { closeSettledSecondReviews, enqueueSecondReviews, recordSecondReview, reopenOrphanedGateHolds,
+  retryFailedSecondReviews, type SecondReviewResult, type SecondReviewWriteResult } from "@/lib/crawl/second-review";
+import type { CrawlSettings } from "@/lib/crawl/settings-schema";
 
 /** Normal fixtures obtain authority through the real runner, never token INSERTs. */
 export async function withLegacySecondReviewJob<T>(load: (lease: JobLease) => Promise<T>): Promise<T> {
@@ -27,4 +29,20 @@ export function recordSecondReviewFixture(id: number, result: SecondReviewResult
   return withLegacySecondReviewJob(async lease => recordSecondReview({
     receipt: await admitSecondReviewFixture(id, lease), result, now,
   }));
+}
+
+export function enqueueSecondReviewsFixture(settings: CrawlSettings, now?: Date): Promise<number> {
+  return withLegacySecondReviewJob(lease => enqueueSecondReviews(settings, now, lease));
+}
+
+export function closeSettledSecondReviewsFixture(now?: Date): Promise<number> {
+  return withLegacySecondReviewJob(lease => closeSettledSecondReviews(now, lease));
+}
+
+export function reopenOrphanedGateHoldsFixture(settings: CrawlSettings, now?: Date, limit?: number): Promise<number> {
+  return withLegacySecondReviewJob(lease => reopenOrphanedGateHolds(settings, now, lease, limit));
+}
+
+export function retryFailedSecondReviewsFixture(now?: Date): Promise<void> {
+  return withLegacySecondReviewJob(lease => retryFailedSecondReviews(now, lease));
 }
